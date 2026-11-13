@@ -1696,3 +1696,64 @@ test("my jobs shows only the department's own jobs as cards, and the warehouse g
   html = await env.render("p=orders&sel=DEMO-26001");
   assert.equal((html.match(/>ดูงาน</g) ?? []).length, 1, "a department gets the jobs link on its own row only");
 });
+
+test("a component is added from the product tree with one small form: an existing code is appended, an unknown code creates the item, the other lines and child BOMs stay", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const parent = "DEMO-TP-01(P)-Y";
+  const bomOf = (code) => json(env.store.data().boms.find((bom) => bom.itemCode === code && bom.status === "approved"));
+  const before = bomOf(parent);
+  const childBefore = bomOf("SE-TP01-OR01-100-18-65");
+  const dialog = env.context.MNP_BOM_DIALOGS.lineAdd(env.ctx(), { parentCode: parent });
+  clean(dialog.html);
+  assert.doesNotMatch(dialog.html, /<option value="P-STK-01"/, "codes already in the BOM are not offered again");
+  assert.match(dialog.html, /<option value="P-ZIP-05"/);
+  assert.equal(env.context.MNP_BOM_DIALOGS.lineAdd(env.ctx(), { parentCode: "P-STK-01" }), null, "a purchased part takes no components");
+  // เส้นยาง: บรรทัดสูตรยางเปลี่ยนช่องสูตรของเส้นยางได้ ฟอร์มเล็กจึงไม่รับ (ทั้งปุ่ม หน้าต่าง และตัวแปลงฟอร์ม)
+  const rod = "RB-DM01-02-OR01-202-18-70";
+  const compound = env.store.data().items.find((item) => item.code === rod).rubber.compound;
+  assert.equal(env.context.MNP_BOM_DIALOGS.lineAdd(env.ctx(), { parentCode: rod }), null, "no small add form under a rubber rod");
+  await env.submit(`p=find&code=${rod}`, "saveBomTree", { addCode: "XCP-NEW", addQty: "1", newName: "สูตรใหม่", newKind: "CP", newUom: "kg" }, { lineAdd: true, code: rod });
+  assert.match(env.log.toasts.at(-1)[0], /แก้หลายบรรทัด/);
+  assert.equal(env.store.data().items.find((item) => item.code === rod).rubber.compound, compound, "the rod keeps its compound");
+  assert.equal(env.store.data().items.some((item) => item.code === "XCP-NEW"), false);
+  assert.doesNotMatch(dialog.html, /<option value="RB"/, "a new rubber rod is not created from the small form");
+  const query = `p=find&code=${encodeURIComponent(parent)}`;
+  await env.submit(query, "saveBomTree", { addCode: "p-zip-05", addQty: "2", addScrap: "0", note: "" }, { lineAdd: true, code: parent });
+  let after = bomOf(parent);
+  assert.equal(after.revision, before.revision + 1);
+  assert.equal(after.lines.length, before.lines.length + 1);
+  assert.equal(after.lines.find((line) => line.childCode === "P-ZIP-05").qty, 2);
+  for (const line of before.lines) assert.equal(after.lines.find((entry) => entry.childCode === line.childCode).qty, line.qty, `${line.childCode} keeps its exact quantity`);
+  assert.equal(bomOf("SE-TP01-OR01-100-18-65").revision, childBefore.revision, "a child's own BOM is not touched");
+  env.log.toasts.length = 0;
+  await env.submit(query, "saveBomTree", { addCode: "P-ZIP-05", addQty: "1" }, { lineAdd: true, code: parent });
+  assert.match(env.log.toasts.at(-1)[0], /อยู่ใน BOM นี้แล้ว/);
+  await env.submit(query, "saveBomTree", { addCode: "XP-T-NEW", addQty: "1", newName: "" }, { lineAdd: true, code: parent });
+  assert.match(env.log.toasts.at(-1)[0], /ยังไม่มีรหัส XP-T-NEW ในทะเบียน/, "an unknown code needs a name before anything is saved");
+  assert.equal(bomOf(parent).revision, after.revision);
+  await env.submit(query, "saveBomTree", { addCode: "XP-T-NEW", addQty: "1", newName: "ชิ้นใหม่", newKind: "SUBPART", newUom: "pcs" }, { lineAdd: true, code: parent });
+  after = bomOf(parent);
+  assert.ok(after.lines.some((line) => line.childCode === "XP-T-NEW"));
+  assert.equal(env.store.data().items.find((item) => item.code === "XP-T-NEW").name, "ชิ้นใหม่");
+  const html = await env.render(query);
+  assert.match(html, /data-rf-open="lineAdd"/, "the planner gets the add button above the tree");
+  assert.match(html, />แก้หลายบรรทัด</, "the wide table stays one click away for bulk edits");
+  env.store.setUser("B04");
+  assert.doesNotMatch(await env.render(query), /data-rf-open="lineAdd"/, "a department cannot add components");
+});
+
+test("a new product is created from the product list with a four-field form", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  assert.match(await env.render("p=find"), /data-rf-open="productNew"/);
+  const dialog = env.context.MNP_BOM_DIALOGS.productNew(env.ctx());
+  clean(dialog.html);
+  assert.doesNotMatch(dialog.html, /<option value="(PURCHASED|CP|RB)"/, "only kinds that take components and need no rubber data");
+  await env.submit("p=find", "saveItem", { code: "test-new-01(p)-a", name: "สินค้าทดสอบ", kind: "FG", uom: "set" }, { create: true });
+  const item = env.store.data().items.find((entry) => entry.code === "TEST-NEW-01(P)-A");
+  assert.equal(item?.kind, "FG");
+  clean(await env.render(`p=find&code=${encodeURIComponent(item.code)}`));
+  env.store.setUser("B04");
+  assert.doesNotMatch(await env.render("p=find"), /data-rf-open="productNew"/);
+});

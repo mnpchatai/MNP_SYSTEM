@@ -39,6 +39,9 @@
   const KIND_TABS = Object.freeze([["fg", "สินค้า"], ["wip", "ชิ้นงานผลิตเอง"], ["raw", "ของซื้อ / วัตถุดิบ"], ["all", "ทั้งหมด"]]);
   const kindGroup = (ctx, kind) => (kind === "FG" ? "fg" : ctx.helpers.NO_BOM_KINDS.includes(kind) ? "raw" : "wip");
   const LIST_LIMIT = 200;
+  // เพิ่มส่วนประกอบทีละบรรทัดได้กับชิ้นที่มี BOM ได้ ยกเว้นเส้นยาง (RB): บรรทัดเดียวของมันคือสูตรยาง ซึ่งผูกกับช่องสูตรของเส้นยางและ RubberFlow จึงแก้ที่ตาราง "แก้หลายบรรทัด" ที่เห็นช่องสูตรก่อนบันทึก
+  const canAddLineTo = (ctx, item) => Boolean(item) && !ctx.helpers.NO_BOM_KINDS.includes(item.kind) && item.kind !== "RB";
+  const ADD_LIST_LIMIT = 3000; // ตัวเลือกในช่องรหัสของหน้าต่างเพิ่มส่วนประกอบ (รหัสที่เกินนี้ยังพิมพ์เองได้)
   function findList(ctx) {
     const { data, ui, rules, params } = ctx;
     const canEdit = ctx.helpers.canPlan(ctx.user);
@@ -53,7 +56,7 @@
     });
     const search = `<form novalidate class="rf-search" data-rf-search role="search"><label class="sr-only" for="bom-q">ค้นหาสินค้าหรือชิ้นงาน</label>${ui.input("q", { id: "bom-q", type: "search", value: ctx.q, placeholder: "ค้นหาด้วยชื่อหรือรหัส…" })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>`;
     const more = list.length > LIST_LIMIT ? `<p class="small muted">แสดง ${LIST_LIMIT} จาก ${list.length} รายการ พิมพ์คำค้นเพื่อกรอง</p>` : "";
-    const actions = canEdit ? `${ui.link("สร้างสินค้าใหม่", ctx.url("build"), "btn rf-btn")}` : "";
+    const actions = canEdit ? ui.openButton("สร้างสินค้าใหม่", "productNew", {}, { className: "" }) : "";
     const html = `${pageHead(ctx, "สินค้า", "", actions)}${ui.card(`${search}${tabs}${ui.table(["ชื่อ / รหัส", "แผนกที่ทำ", "BOM"], rows, { emptyText: ctx.q ? "ไม่พบสินค้าหรือชิ้นงานที่ค้นหา" : "ยังไม่มีรายการในหมวดนี้" })}${more}`)}`;
     return { html };
   }
@@ -79,7 +82,9 @@
         <td class="right"><strong>${esc(`${rules.fmtQty(line.required)} ${uomText(ctx, line.uom)}`)}</strong></td></tr>`;
     });
     const qtyForm = `<form novalidate class="bom-tree-qty" data-hub-qty><label for="bom-hub-qty">คำนวณสำหรับ</label>${ui.input("qty", { id: "bom-hub-qty", type: "number", step: "any", min: "0.0001", value: String(qty) })}<span>${esc(uomText(ctx, item.uom))}</span><button class="btn rf-btn secondary small" type="submit">คำนวณ</button></form>`;
-    const folds = rows.some((_, index) => hasChild(index)) ? `<div class="rf-row"><button class="btn rf-btn secondary small" type="button" data-tree-all="open">ขยายทั้งหมด</button><button class="btn rf-btn secondary small" type="button" data-tree-all="close">ย่อทั้งหมด</button></div>` : "";
+    const canAdd = canEdit && canAddLineTo(ctx, item);
+    const addRoot = canAdd ? ui.openButton("+ เพิ่มส่วนประกอบ", "lineAdd", { parentCode: item.code }, { className: "small" }) : "";
+    const folds = `<div class="rf-row">${rows.some((_, index) => hasChild(index)) ? `<button class="btn rf-btn secondary small" type="button" data-tree-all="open">ขยายทั้งหมด</button><button class="btn rf-btn secondary small" type="button" data-tree-all="close">ย่อทั้งหมด</button>` : ""}${addRoot}</div>`;
     const emptyText = ctx.helpers.NO_BOM_KINDS.includes(item.kind) ? "รายการนี้เป็นของซื้อหรือสูตรยาง ไม่มีส่วนประกอบ" : "ยังไม่มี BOM";
     const table = ui.table([{ label: "ส่วนประกอบ" }, { label: "ใช้ต่อชิ้นแม่ 1 หน่วย", className: "right", title: "ปริมาณที่ใช้ทำชิ้นที่อยู่เหนือบรรทัดนี้ 1 หน่วย รวมเผื่อเสียแล้ว" }, { label: `สำหรับ ${rules.fmtQty(qty)} ${uomText(ctx, item.uom)}`, className: "right" }], body, { emptyText, className: "bom-tree" });
     const warn = missing.length ? ui.callout("warn", `ไม่พบชิ้นงานในทะเบียน: ${esc(missing.join(", "))}`) : "";
@@ -104,9 +109,14 @@
         steps.length ? ["ขั้นตอน", esc(steps.join(" → "))] : null,
         ["ใช้ในรายการอื่น", usedIn.length ? `${usedIn.slice(0, 5).map((code) => ui.link(code, ctx.url("find", { code }), "rf-mono")).join(", ")}${usedIn.length > 5 ? ` และอีก ${usedIn.length - 5}` : ""}` : '<span class="muted">ไม่มี</span>'],
       ]);
+      // ลบบรรทัด = บันทึก BOM ของชิ้นแม่ใหม่โดยไม่มีบรรทัดนี้ (saveBom เดิม ได้ฉบับแก้ไขใหม่) · BOM ต้องเหลืออย่างน้อย 1 บรรทัด จึงไม่มีปุ่มลบที่บรรทัดสุดท้าย
+      const siblings = approvedBomOf(ctx, line.parentCode)?.lines ?? [];
+      const rest = siblings.filter((entry) => entry.childCode !== line.itemCode).map((entry) => ({ childCode: entry.childCode, qty: entry.qty, scrapPct: entry.scrapPct ?? 0, note: entry.note ?? "", step: entry.step ?? "", flags: entry.flags ?? [] }));
       const buttons = [
         canEdit && bomLine ? ui.openButton("แก้บรรทัดนี้", "lineEdit", { parentCode: line.parentCode, childCode: line.itemCode }, { className: "" }) : "",
+        canEdit && canAddLineTo(ctx, child) ? ui.openButton("+ ส่วนประกอบข้างใน", "lineAdd", { parentCode: line.itemCode }, { className: "secondary" }) : "",
         ui.link("เปิดหน้าของรายการนี้", ctx.url("find", { code: line.itemCode }), "btn rf-btn secondary"),
+        canEdit && bomLine && rest.length ? ui.button("ลบบรรทัดนี้", { action: "saveBom", args: { itemCode: line.parentCode, lines: rest, note: `ลบ ${line.itemCode}` }, className: "secondary", confirmText: `ลบ ${line.name} ออกจาก ${itemOf(ctx, line.parentCode)?.name ?? line.parentCode}?`, success: `ลบ ${line.itemCode} ออกจาก BOM ของ ${line.parentCode} แล้ว` }) : "",
       ].join("");
       return `<h2 class="bom-side-title">${esc(line.name)}</h2><p class="rf-mono small muted">${esc(line.itemCode)}</p>${facts}<div class="rf-row">${buttons}</div>`;
     };
@@ -145,6 +155,15 @@
         if (!side) return;
         side.innerHTML = detailHtml(rows[Number(tr.dataset.index)]);
         side.querySelectorAll("[data-rf-open]").forEach((button) => button.addEventListener("click", () => { try { ctx.openDialog(button.dataset.rfOpen, JSON.parse(button.dataset.rfArgs || "{}")); } catch { /* args ไม่ถูกต้อง: ไม่เปิด */ } }));
+        // ปุ่มคำสั่งในแผง (ลบบรรทัด): แผงถูกวาดหลังหน้าผูก event แล้ว จึงผูกเองด้วยกติกาเดียวกับ data-rf-action ของหน้า (ยืนยัน → สั่ง → วาดหน้าใหม่)
+        side.querySelectorAll("[data-rf-action]").forEach((button) => button.addEventListener("click", async () => {
+          let args = {};
+          try { args = JSON.parse(button.dataset.rfArgs || "{}"); } catch { return; }
+          if (button.dataset.rfConfirm && !(await root.confirmDialog(ui.confirmOptions(button)))) return;
+          if (!ctx.runAction(button.dataset.rfAction, args, button.dataset.rfSuccess)) return;
+          button.disabled = true;
+          root.renderRoute();
+        }));
       });
       rootNode.querySelectorAll("[data-tree-all]").forEach((button) => button.addEventListener("click", () => {
         all().forEach((tr) => setOpen(tr, button.dataset.treeAll === "open"));
@@ -189,7 +208,7 @@
     const tabs = ui.tabs(tabIds.map(([id, label]) => ({ id, label })), tab, (id) => ctx.url("find", { code: item.code, tab: id === "tree" ? null : id, qty: qty === 1 ? null : String(qty) }));
     const sub = [esc(rules.KINDS[item.kind]?.label ?? item.kind), bom ? esc(`BOM Rev.${bom.revision} บันทึก ${rules.fmtDate(bom.approvedAt)}`) : leaf ? "" : "ยังไม่มี BOM", item.active === false ? "เลิกใช้" : ""].filter(Boolean).join(" · ");
     const actions = [
-      canEdit && !leaf ? ui.link(bom ? "แก้ BOM" : "สร้าง BOM", ctx.url("build", { code: item.code }), "btn rf-btn secondary") : "",
+      canEdit && !leaf ? `<a class="btn rf-btn secondary" href="${attr(ctx.url("build", { code: item.code }))}" title="ตารางแก้ทั้งโครงสร้างในครั้งเดียว วางจาก Excel หรือคัดลอกโครงสร้างจากสินค้าอื่น">แก้หลายบรรทัด</a>` : "",
       canEdit ? ui.openButton("แก้ข้อมูล", "itemEdit", { code: item.code }, { className: "secondary" }) : "",
       canEdit && bom && item.kind === "FG" ? ui.openButton("ใส่ในใบสั่งผลิต", "useInOrder", { code: item.code }, { className: "" }) : "",
     ].join("");
@@ -221,6 +240,60 @@
       <p class="muted small">${esc(`${child.name} ใน ${parent.name}`)}</p>${rows}
       ${ui.field("เหตุผลของการแก้ครั้งนี้", ui.input("note", { placeholder: "เช่น ปรับตามผลผลิตจริง", extra: 'maxlength="300"' }))}</form>`;
     return { html: ui.dialog("lineEdit", `แก้บรรทัด ${rules.canonicalCode(childCode)}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-line-form">บันทึก</button>` }) };
+  };
+
+  // dialog: เพิ่มส่วนประกอบหนึ่งบรรทัดใต้ชิ้นแม่ · เลือกรหัสจากทะเบียน หรือพิมพ์รหัสใหม่แล้วกรอกชื่อ ชนิด หน่วย เพื่อสร้างชิ้นใหม่ในคราวเดียว
+  // ส่งด้วยคำสั่ง saveBomTree เดิม (module-bom.js ประกอบบรรทัดเดิมของ BOM จากข้อมูลล่าสุดตอนกดบันทึก แล้วต่อบรรทัดใหม่) BOM ของชิ้นลูกเดิมไม่ถูกแตะ
+  dialogs.lineAdd = (ctx, { parentCode }) => {
+    const { ui, rules, data } = ctx;
+    const parent = itemOf(ctx, parentCode);
+    if (!canAddLineTo(ctx, parent)) return null;
+    const used = new Set((approvedBomOf(ctx, parent.code)?.lines ?? []).map((line) => line.childCode));
+    const choices = data.items.filter((entry) => entry.active !== false && entry.code !== parent.code && !used.has(entry.code) && !rules.childKindError(parent.kind, entry.kind));
+    // ชนิดของชิ้นใหม่: ไม่มีสินค้า (FG) และไม่มีเส้นยาง (RB ต้องมีรหัสสูตรและข้อมูลการตัด สร้างที่ตารางแก้หลายบรรทัด)
+    const kinds = Object.entries(rules.KINDS).filter(([kind]) => kind !== "FG" && kind !== "RB" && !rules.childKindError(parent.kind, kind)).map(([value, meta]) => ({ value, label: meta.label }));
+    const uoms = Object.entries(rules.UOMS).map(([value, meta]) => ({ value, label: meta.label }));
+    const body = `<form novalidate id="bom-add-form" data-rf-form="saveBomTree" data-rf-args="${attr(JSON.stringify({ lineAdd: true, code: parent.code }))}" data-rf-success="{result}">
+      <p class="muted small">${esc(`เพิ่มใน ${parent.name}`)}</p>
+      ${ui.field("รหัสส่วนประกอบ", ui.input("addCode", { list: "bom-add-list", required: true, placeholder: "พิมพ์รหัสหรือชื่อเพื่อค้นหา", extra: 'autocapitalize="characters" autocomplete="off" data-add-code' }), { required: true })}
+      <datalist id="bom-add-list">${choices.slice(0, ADD_LIST_LIMIT).map((entry) => `<option value="${attr(entry.code)}">${esc(entry.name.slice(0, 60))}</option>`).join("")}</datalist>
+      <div class="rf-grid rf-g2">${ui.field(`ใช้ต่อ 1 ${uomText(ctx, parent.uom)}`, ui.input("addQty", { type: "number", step: "any", min: "0.000001", required: true }), { required: true })}${ui.field("เผื่อเสีย (%)", ui.input("addScrap", { type: "number", step: "any", min: 0, value: "0" }))}</div>
+      <fieldset class="bom-add-new" data-add-new hidden><legend>รหัสนี้ยังไม่มีในทะเบียน กรอกเพื่อสร้างชิ้นใหม่</legend>
+        ${ui.field("ชื่อ", ui.input("newName", { extra: 'maxlength="200"' }), { required: true })}
+        <div class="rf-grid rf-g2">${ui.field("ชนิด", ui.select("newKind", kinds, { value: kinds[0]?.value ?? "" }))}${ui.field("หน่วย", ui.select("newUom", uoms, { value: "pcs" }))}</div>
+      </fieldset>
+      ${ui.field("เหตุผลของการแก้ครั้งนี้", ui.input("note", { extra: 'maxlength="300"' }))}</form>`;
+    const bind = (dialog) => {
+      const codeInput = dialog.querySelector("[data-add-code]");
+      const fresh = dialog.querySelector("[data-add-new]");
+      if (!codeInput || !fresh) return;
+      const sync = () => { const code = rules.canonicalCode(codeInput.value); fresh.hidden = !code || Boolean(ctx.helpers.itemOf(ctx.store.data(), code)); };
+      codeInput.addEventListener("input", sync);
+      codeInput.addEventListener("change", sync);
+    };
+    return { html: ui.dialog("lineAdd", "เพิ่มส่วนประกอบ", body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-add-form">เพิ่ม</button>` }), bind };
+  };
+
+  // dialog: สร้างสินค้า/ชิ้นงานใหม่ (รหัส ชื่อ ชนิด หน่วย) ด้วยคำสั่ง saveItem เดิม แล้วเปิดหน้าของรายการนั้นเพื่อเพิ่มส่วนประกอบต่อ
+  dialogs.productNew = (ctx) => {
+    const { ui, rules } = ctx;
+    const kinds = Object.entries(rules.KINDS).filter(([kind]) => !ctx.helpers.NO_BOM_KINDS.includes(kind) && kind !== "RB").map(([value, meta]) => ({ value, label: meta.label }));
+    // รหัสที่มีอยู่ก่อนเปิดหน้าต่าง: ถ้าผู้ใช้พิมพ์รหัสเหล่านี้ การสร้างถูกปฏิเสธ จึงไม่พาไปหน้าของรายการเดิม (ข้อความแจ้งอยู่กับฟอร์มที่ยังเปิด)
+    const existed = new Set(ctx.data.items.map((entry) => entry.code));
+    const uoms = Object.entries(rules.UOMS).map(([value, meta]) => ({ value, label: meta.label }));
+    const body = `<form novalidate id="bom-new-form" data-rf-form="saveItem" data-rf-args="${attr(JSON.stringify({ create: true }))}" data-rf-success="สร้างรายการแล้ว เพิ่มส่วนประกอบได้เลย">
+      ${ui.field("รหัส", ui.input("code", { required: true, placeholder: "เช่น MEGA-ST-01(P)-Y", extra: 'autocapitalize="characters" autocomplete="off" maxlength="60" data-new-code' }), { required: true })}
+      ${ui.field("ชื่อ", ui.input("name", { required: true, extra: 'maxlength="200"' }), { required: true })}
+      <div class="rf-grid rf-g2">${ui.field("ชนิด", ui.select("kind", kinds, { value: "FG" }))}${ui.field("หน่วย", ui.select("uom", uoms, { value: "set" }))}</div></form>
+      <p class="small muted">มีข้อมูลหลายบรรทัดอยู่ใน Excel แล้ว ใช้ ${ui.link("ตารางสร้างหลายบรรทัด", ctx.url("build"))} หรือ ${ui.link("นำเข้าจาก Excel", ctx.url("import"))}</p>`;
+    const bind = (dialog) => {
+      // บันทึกสำเร็จ (รายการใหม่อยู่ในข้อมูลแล้ว) ไปหน้าของรายการนั้น · ไม่สำเร็จอยู่ที่ dialog เดิมพร้อมข้อความแจ้ง
+      dialog.querySelector("#bom-new-form")?.addEventListener("submit", () => {
+        const code = rules.canonicalCode(dialog.querySelector("[data-new-code]")?.value ?? "");
+        if (code && !existed.has(code) && ctx.helpers.itemOf(ctx.store.data(), code)) location.hash = ctx.url("find", { code });
+      });
+    };
+    return { html: ui.dialog("productNew", "สร้างสินค้าใหม่", body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-new-form">สร้าง</button>` }), bind };
   };
 
   // ---------- ใบสั่งผลิต: แถบ 5 ขั้นและแผงของขั้นที่กำลังดู (หน้า orders เรียกใช้) ----------
