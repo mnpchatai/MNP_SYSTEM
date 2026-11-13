@@ -44,6 +44,7 @@ test("the demo seed is deterministic, valid for the store and internally consist
   assert.equal(pt.status, "done");
   assert.deepEqual([pt.qtyRequired, pt.stockCounted, pt.qtyPlanned], [24, 10, 14], "the counted stock reduces the planned quantity (BOMSHEET column AK)");
   assert.equal(jobs.find((job) => job.itemCode === "RB-DM02-02-BK01-225-3-20").qtyPlanned, 15, "17.14 rods needed across both products, 3 counted → 14.14, rounded up to whole rods");
+  assert.equal(jobs.find((job) => job.itemCode === "RB-DM02-02-BK01-225-3-20").qtyRequired.toFixed(2), "17.14", "the requirement of that job stays exact");
   assert.equal(jobs.find((job) => job.itemCode === "BG-0092").status, "hold");
   assert.ok(a.audit.length > 30 && a.audit.every((entry) => entry.user && entry.action));
 });
@@ -286,6 +287,8 @@ test("a production order explodes with the current revisions, locks them at rele
   assert.equal(rules.wholeRods("RB", "kg", 1.25), 1.25, "rubber counted in kg is not rounded");
   assert.equal(rules.wholeRods("SE", "pcs", 2.5), 2.5, "only rubber rods and rolls are rounded");
   assert.equal(rules.wholeRods("RB", "rod", 3.0000004), 3, "float noise does not add a rod");
+  assert.equal(rules.wholeRods("RB", "roll", 0.4091), 1, "rolls are whole too");
+  assert.equal(rules.wholeRods("RB", "rod", 0.0001), 1, "the smallest need still makes one rod");
   assert.equal(jobs3.find((job) => job.itemCode === "PT-00320"), undefined, "enough stock → no job");
   assert.match(d3.audit[0].detail, /1 ชิ้นมีคงคลังพอ ไม่สร้างงาน/);
   // ชิ้นที่ต้องผลิตแต่ไม่มี BOM (BG ของกระเป๋า) → ปล่อยไม่ได้

@@ -247,6 +247,8 @@
       .map((row) => ({ itemCode: row.itemCode, name: row.name, uom: row.uom, required: row.needQty, onHand: row.onHandQty, held: row.reservedQty, onOrder: row.onOrderQty, short: row.shortage }))
       .sort((a, b) => (b.short > 0) - (a.short > 0) || a.itemCode.localeCompare(b.itemCode));
   }
+  // สั่งซื้อของที่ขาดของใบร่างได้เมื่อข้อมูลอยู่ในฐานข้อมูล (ใบสั่งซื้อเป็นของ RubberFlow) และผู้ใช้เป็นฝ่ายวางแผนหรือแผนก RB (เงื่อนไขเดียวกับปุ่มตรวจวัตถุดิบของใบที่ปล่อยแล้ว)
+  const canBuyParts = (ctx) => Boolean(ctx.store?.isRemote?.() && ctx.rubberflow() && ctx.helpers.canLinkRubberflow(ctx.user, { dept: "RB" }));
   pages.orderSteps = (ctx, order, { net, buttons }) => {
     const { ui, rules, data, params } = ctx;
     const current = orderStepOf(ctx, order);
@@ -277,7 +279,7 @@
         const counted = Object.keys(order.stockCounts ?? {}).length;
         const wip = `<div class="bom-step-line"><div><strong>ชิ้นงานค้างในไลน์ที่ใช้แทนได้</strong><div class="small muted">${counted ? esc(`กรอกยอดแล้ว ${counted} รายการ ระบบหักออกจากยอดที่ต้องผลิต`) : "ยังไม่ได้กรอก ถ้าไม่กรอก ระบบสั่งผลิตเต็มจำนวน"}</div></div>${ctx.helpers.canCount(ctx.user) ? ui.link(counted ? "แก้ยอดที่กรอก" : "กรอกยอดที่มีอยู่", ctx.url("count", { order: order.id }), "btn rf-btn secondary") : ""}</div>`;
         // สั่งซื้อส่วนที่ขาดได้ตั้งแต่ใบยังเป็นร่าง (หน้าต่างสั่งซื้อเดียวกับหลังปล่อยผลิต ผู้ที่สั่งซื้อได้ = ฝ่ายวางแผนหรือแผนก RB) · ใช้ได้เมื่อข้อมูลอยู่ในฐานข้อมูล (ใบสั่งซื้อเป็นของ RubberFlow)
-        const canBuy = short.length && ctx.store?.isRemote?.() && ctx.rubberflow() && ctx.helpers.canLinkRubberflow(ctx.user, { dept: "RB" });
+        const canBuy = short.length && canBuyParts(ctx);
         const buy = canBuy ? `<div class="rf-row bom-step-next"><button class="btn rf-btn" type="button" data-bom-rf-check data-bom-order="${attr(order.id)}" data-bom-wos="[]">สั่งซื้อส่วนที่ขาด</button></div>` : "";
         panel = ui.card(`${table}${buy}${wip}<div class="rf-row bom-step-next">${buttons.explode ? buttons.explode.replace("ระเบิด BOM", "คำนวณใหม่") : ""}${canPlan ? ui.link("ไปขั้น 3 ปล่อยผลิต", stepUrl(3), "btn rf-btn") : ""}</div>`,
           { title: `ขั้น 2 · ตรวจของ <span class="muted">${parts.length ? (short.length ? `ของซื้อขาด ${short.length} จาก ${parts.length} รายการ` : `ของซื้อพอทั้ง ${parts.length} รายการ`) : ""}</span>` });
@@ -293,7 +295,7 @@
       const warns = [
         !order.explosion?.length ? ui.callout("warn", "ยังไม่ได้คำนวณของที่ต้องใช้ กลับไปขั้น 2 ก่อน") : "",
         noBom.length ? ui.callout("bad", `ปล่อยผลิตไม่ได้ ชิ้นงานที่ยังไม่มี BOM: ${noBom.map((code) => ui.link(code, ctx.url("find", { code }), "rf-mono")).join(", ")}`) : "",
-        short.length ? ui.callout("warn", `ของซื้อยังขาด ${short.length} รายการและยังไม่ได้สั่ง ปล่อยผลิตได้ แต่แผนกที่ใช้ของนั้นจะติดจนกว่าของจะเข้า · ${ui.link("กลับไปสั่งซื้อที่ขั้น 2", stepUrl(2))}`) : "",
+        short.length ? ui.callout("warn", `ของซื้อยังขาด ${short.length} รายการและยังไม่ได้สั่ง ปล่อยผลิตได้ แต่แผนกที่ใช้ของนั้นจะติดจนกว่าของจะเข้า${canBuyParts(ctx) ? ` · ${ui.link("กลับไปสั่งซื้อที่ขั้น 2", stepUrl(2))}` : ""}`) : "",
       ].join("");
       panel = ui.card(`${warns}${order.explosion?.length ? `<p>ปล่อยผลิตแล้วระบบสร้างงานให้แต่ละแผนกตามนี้ และล็อกฉบับ BOM ที่ใช้</p>${list}` : ""}<div class="rf-row bom-step-next">${ui.link("กลับไปขั้น 2", stepUrl(2), "btn rf-btn secondary")}${noBom.length || !order.explosion?.length ? "" : buttons.release ?? ""}</div>`, { title: "ขั้น 3 · ปล่อยผลิต" });
     } else if (view === 4 || view === 5) {
