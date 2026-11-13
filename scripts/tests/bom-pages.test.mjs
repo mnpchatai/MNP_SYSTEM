@@ -1690,4 +1690,9 @@ test("my jobs shows only the department's own jobs as cards, and the warehouse g
   clean(html);
   assert.equal((html.match(/<article class="card rf-card bom-job/g) ?? []).length, 1, "seven part jobs of one PI are one card");
   assert.match(html, /เบิกของตามใบ DEMO-26001/);
+  assert.match(html, />ต้องทำ 1</, "the tab counts cards, not the seven part jobs");
+  assert.match(env.module.nav[0].subnav("bom"), /rf-nav-count"[^>]*>1</, "and so does the menu badge");
+  env.store.setUser("B04");
+  html = await env.render("p=orders&sel=DEMO-26001");
+  assert.equal((html.match(/>ดูงาน</g) ?? []).length, 1, "a department gets the jobs link on its own row only");
 });

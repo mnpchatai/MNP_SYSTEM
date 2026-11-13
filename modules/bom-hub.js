@@ -302,7 +302,7 @@
         const done = mine.filter((job) => job.status === "done").length;
         const late = mine.filter((job) => job.status !== "done" && job.dueAt < ctx.now).length;
         const text = dept === "ST" && mine.every((job) => ctx.helpers.isPartJob(job)) ? (done === mine.length ? `เบิกของครบ ${mine.length} รายการ` : `รอเบิกของ ${mine.length - done} จาก ${mine.length} รายการ`) : `เสร็จ ${done} จาก ${mine.length} งาน`;
-        return `<tr><td>${deptChip(ctx, dept)} ${esc(deptName(ctx, dept))}</td><td class="rf-progress-cell">${ui.progress(done, mine.length)}<div class="small muted">${esc(text)}</div></td><td>${late ? ui.badge("bad", `เลยกำหนด ${late} งาน`) : ""}</td><td class="right">${ctx.canSee("work") ? ui.link("ดูงาน", ctx.url("work", { dept, order: order.id }), "btn rf-btn secondary small") : ""}</td></tr>`;
+        return `<tr><td>${deptChip(ctx, dept)} ${esc(deptName(ctx, dept))}</td><td class="rf-progress-cell">${ui.progress(done, mine.length)}<div class="small muted">${esc(text)}</div></td><td>${late ? ui.badge("bad", `เลยกำหนด ${late} งาน`) : ""}</td><td class="right">${ctx.canSee("work") && (canPlan || ctx.user?.dept === dept) ? ui.link("ดูงาน", ctx.url("work", { dept, order: order.id }), "btn rf-btn secondary small") : ""}</td></tr>`;
       }).filter(Boolean);
       const main = view === 5 ? `<p>ทุกแผนกทำงานเสร็จแล้ว ตรวจว่าสินค้าเข้าคลังครบ แล้วปิดใบ</p><div class="rf-row bom-step-next">${buttons.complete ?? ""}</div>` : `<div class="rf-row bom-step-next">${buttons.issue ?? ""}${buttons.check ?? ""}</div>`;
       panel = ui.card(`${ui.table(["แผนก", "ความคืบหน้า", "", ""], rows, { emptyText: "ยังไม่มีงาน" })}${main}`, { title: view === 5 ? "ขั้น 5 · ปิดใบ" : "ขั้น 4 · ผลิตตามแผนก", flush: false });
@@ -328,9 +328,11 @@
     const mine = data.jobs.filter((job) => (dept === "ALL" || job.dept === dept) && live(job) && (!orderId || job.orderId === orderId));
     const open = mine.filter((job) => job.status !== "done");
     const done = mine.filter((job) => job.status === "done");
+    // จำนวนบนแท็บนับเป็นการ์ด: ของซื้อของใบเดียวกันเป็นการ์ดเดียว
+    const cardCount = (jobs) => jobs.filter((job) => !ctx.helpers.isPartJob(job)).length + new Set(jobs.filter((job) => ctx.helpers.isPartJob(job)).map((job) => job.orderId)).size;
     const keep = (extra) => ctx.url("work", { dept: planner && dept !== "ALL" ? dept : null, order: orderId || null, ...extra });
-    const deptTabs = planner ? ui.tabs([{ id: "ALL", label: "ทุกแผนก" }, ...depts.map((code) => ({ id: code, label: `${code} ${data.jobs.filter((job) => job.dept === code && job.status !== "done" && live(job)).length}` }))], dept, (id) => ctx.url("work", { dept: id === "ALL" ? null : id, st: show === "done" ? "done" : null, order: orderId || null })) : "";
-    const showTabs = ui.tabs([{ id: "open", label: `ต้องทำ ${open.length}` }, { id: "done", label: `เสร็จแล้ว ${done.length}` }], show, (id) => keep({ st: id === "done" ? "done" : null }));
+    const deptTabs = planner ? ui.tabs([{ id: "ALL", label: "ทุกแผนก" }, ...depts.map((code) => ({ id: code, label: `${code} ${cardCount(data.jobs.filter((job) => job.dept === code && job.status !== "done" && live(job)))}` }))], dept, (id) => ctx.url("work", { dept: id === "ALL" ? null : id, st: show === "done" ? "done" : null, order: orderId || null })) : "";
+    const showTabs = ui.tabs([{ id: "open", label: `ต้องทำ ${cardCount(open)}` }, { id: "done", label: `เสร็จแล้ว ${cardCount(done)}` }], show, (id) => keep({ st: id === "done" ? "done" : null }));
     const rank = (job) => (job.status === "in_progress" ? 0 : job.status === "hold" ? 2 : 1);
     const list = (show === "done" ? done : open).slice().sort((a, b) => rank(a) - rank(b) || a.dueAt - b.dueAt || a.id.localeCompare(b.id));
     // ของซื้อ (งานของคลังวัตถุดิบ): รวมเป็นการ์ดเดียวต่อใบ เพราะเบิกจ่ายครั้งเดียวทั้งใบที่หน้าใบสั่งผลิต
@@ -380,7 +382,7 @@
   // ---------- ข้อมูลตั้งต้น: ทางเข้าหน้าข้อมูลหลักที่ไม่ได้ใช้ทุกวัน ----------
   const SETUP_NOTE = Object.freeze({
     import: "นำเข้า BOM จากไฟล์ Excel", variants: "ชุดสีและแพ็กเกจของแต่ละสินค้า", compounds: "ผูกสูตรยางกับสูตรใน RubberFlow", customers: "รายชื่อลูกค้าของใบสั่งผลิต",
-    stock: "ยอดคงเหลือและสต็อกขั้นต่ำของของซื้อ", check: "รายการข้อมูลที่ยังไม่ครบ", audit: "ใครทำอะไร เมื่อไร",
+    stock: "ยอดคงเหลือและสต็อกขั้นต่ำของของซื้อ", count: "กรอกยอดชิ้นงานที่มีอยู่ของใบที่ยังเป็นร่าง", check: "รายการข้อมูลที่ยังไม่ครบ", audit: "ใครทำอะไร เมื่อไร",
   });
   pages.setup = (ctx) => {
     const store = root.MNP_BOM_STORE;

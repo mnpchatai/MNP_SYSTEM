@@ -73,7 +73,7 @@
   const isEditing = () => dirty || Boolean(document.querySelectorAll("dialog[open]").length);
   const MOVE_KEYS = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
   // ช่องค้นหา/ตัวเลือกบทบาทสาธิตไม่นับเป็นการแก้ · ปุ่มที่เปิดหน้า/dialog หรือสั่ง action เองไม่ได้แก้ฟอร์ม (dialog นับจากการเปิดอยู่)
-  const NOT_EDITING = "[data-rf-search], [data-rf-user], [data-rf-open], [data-rf-go], [data-rf-action], [data-rf-close], [data-bom-retry], [data-rf-reset], [data-bom-purge], [data-bom-audit-reload], [data-bom-rf-create], [data-bom-rf-check], [data-bom-parts-buy]";
+  const NOT_EDITING = "[data-rf-search], [data-rf-user], [data-rf-open], [data-rf-go], [data-rf-action], [data-rf-close], [data-bom-retry], [data-rf-reset], [data-bom-purge], [data-bom-audit-reload], [data-bom-rf-create], [data-bom-rf-check], [data-bom-parts-buy], [data-tree-toggle], [data-tree-pick], [data-tree-all], [data-hub-qty]";
   function markDirty(event) {
     if (!event?.isTrusted || !onBomRoute()) return;
     const target = event.target;
@@ -324,7 +324,13 @@
   };
   const navItems = (user) => storeApi.NAV.filter((id) => storeApi.canSee(user, id));
   const navCounts = (data, user) => ({
-    work: data.jobs.filter((job) => job.status !== "done" && (actions.helpers.canPlan(user) ? false : job.dept === user.dept)).length,
+    // นับเป็นการ์ดของหน้างานของฉัน: เฉพาะใบที่ปล่อยผลิตแล้ว และของซื้อของใบเดียวกันนับเป็นหนึ่ง
+    work: (() => {
+      if (actions.helpers.canPlan(user)) return 0;
+      const live = (job) => ["released", "in_progress"].includes(data.orders.find((order) => order.id === job.orderId)?.status);
+      const mine = data.jobs.filter((job) => job.status !== "done" && job.dept === user.dept && live(job));
+      return mine.filter((job) => !actions.helpers.isPartJob(job)).length + new Set(mine.filter((job) => actions.helpers.isPartJob(job)).map((job) => job.orderId)).size;
+    })(),
   });
   const countTitle = (id) => ({ work: "งานค้างของแผนก" })[id] ?? "";
 

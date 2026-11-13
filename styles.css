@@ -3107,3 +3107,11 @@ table.bom-tree td.right { white-space: nowrap; }
 .bom-setup-card { display: flex; align-items: center; gap: 12px; padding: 14px; color: var(--ink); text-decoration: none; }
 .bom-setup-card > span:last-child { display: grid; gap: 1px; min-width: 0; }
 .bom-setup-card:hover { border-color: var(--m500, var(--primary)); }
+/* ต้นไม้โครงสร้าง: แถวที่ย่ออยู่ต้องหายจริงแม้ตารางถูกจัดเป็นการ์ดบนจอแคบ (กฎการ์ดตั้ง display ให้ tr) และบรรทัดชื่อใช้เต็มความกว้าง */
+.rf-page table.rf-table.bom-tree tr[hidden] { display: none; }
+@media (max-width: 760px) {
+  .rf-page table.rf-table.bom-tree td:first-child[data-label] { padding-left: 0; }
+  .rf-page table.rf-table.bom-tree td:first-child[data-label]::before { content: none; }
+  .bom-tree-cell { padding-left: calc(var(--lv, 0) * 14px); }
+}
+@media (pointer: coarse) { .bom-tree-toggle { flex-basis: 44px; width: 44px; height: 44px; } }

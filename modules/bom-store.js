@@ -44,7 +44,7 @@
   const GROUPS = Object.freeze([...new Set(MODULES.map((entry) => entry.group))]);
   // เมนูที่แสดง (เรียงตามนี้) และหน้าที่อยู่ใต้แต่ละเมนู: หน้าที่ไม่อยู่ในเมนูทำให้เมนูแม่ของมันเป็นตัวที่เลือกอยู่
   const NAV = Object.freeze(["find", "orders", "work", "setup"]);
-  const SETUP_PAGES = Object.freeze(["import", "variants", "compounds", "customers", "stock", "check", "audit"]);
+  const SETUP_PAGES = Object.freeze(["import", "variants", "compounds", "customers", "stock", "count", "check", "audit"]);
   const NAV_PARENT = Object.freeze({ find: "find", dashboard: "find", build: "find", items: "find", product: "find", structure: "find", orders: "orders", count: "orders", work: "work", jobs: "work", setup: "setup", ...Object.fromEntries(SETUP_PAGES.map((id) => [id, "setup"])) });
   const navLabel = (id) => (id === "orders" ? "ใบสั่งผลิต" : MODULES.find((entry) => entry.id === id)?.label ?? id);
   const findModule = (id) => MODULES.find((entry) => entry.id === String(id ?? "")) ?? null;
@@ -66,8 +66,8 @@
   // หน้าโครงใหม่ทั้งสาม (สินค้า งานของฉัน ข้อมูลตั้งต้น) เปิดได้ทุกบทบาท: แต่ละหน้าแสดงเฉพาะสิ่งที่บทบาทนั้นเห็นได้อยู่แล้ว
   const HUB_PAGES = Object.freeze(["find", "work", "setup"]);
   const canSee = (user, moduleId) => Boolean(user) && Boolean(ROLES[user.role]) && (HUB_PAGES.includes(moduleId) || ROLES[user.role].modules.includes(moduleId));
-  // หน้าแรก: ผู้ที่ดูแลข้อมูล (ผู้ดูแล ผู้จัดการ ฝ่ายวางแผน ผู้ดูอย่างเดียว) เริ่มที่สินค้า · แผนกผลิตและคลังเริ่มที่งานของฉัน
-  const homeOf = (user) => (user && ROLES[user.role] ? (["admin", "manager", "planner", "viewer"].includes(user.role) ? "find" : "work") : "dashboard");
+  // หน้าแรก: ผู้ที่ดูแลข้อมูล (ผู้ดูแล ผู้จัดการ ฝ่ายวางแผน ผู้ดูอย่างเดียว) เริ่มที่สินค้า · แผนกผลิตและคลังวัตถุดิบเริ่มที่งานของฉัน · คลังสินค้า (ไม่มีงานผลิตของตัวเอง) เริ่มที่ใบสั่งผลิต
+  const homeOf = (user) => (user && ROLES[user.role] ? (["admin", "manager", "planner", "viewer"].includes(user.role) ? "find" : user.role === "wh" ? "orders" : "work") : "dashboard");
 
   const BASE_LISTS = ["users", "compounds", "items", "boms", "orders", "jobs", "audit"];
   const V3_LISTS = ["colors", "colorSets", "packages"];
