@@ -441,6 +441,7 @@ window.addEventListener("hashchange", () => {
 // กล่องยืนยันในแอป แทน confirm() ของเบราว์เซอร์: ปุ่มยืนยันบอกผลของการกด (เช่น "ลบบัญชี") กด Esc หรือยกเลิก = ไม่ทำ
 // cancelLabel: ปุ่มไม่ทำ ตั้งให้ไม่ชนกับปุ่มยืนยันที่ขึ้นต้นด้วย "ยกเลิก" (เช่น "ไม่ยกเลิก" คู่กับ "ยกเลิก NCR")
 // กล่องถามข้อความของระบบ (แทน window.prompt): บอกขั้นต่ำ ตรวจก่อนปิด ข้อความผิดอยู่ในกล่องและไม่ล้างที่พิมพ์ · คืนข้อความที่ตัดช่องว่างแล้ว หรือ null เมื่อยกเลิก
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- เรียกจาก modules/module-ncr.js (global ของ classic script)
 function textPromptDialog({ title, label, hint = "", minLength = 0, maxLength = 1000, confirmLabel, cancelLabel = "ยกเลิก", danger = false }) {
   return new Promise((resolve) => {
     const dialog = document.createElement("dialog");
