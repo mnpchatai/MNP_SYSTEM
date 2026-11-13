@@ -3115,3 +3115,5 @@ table.bom-tree td.right { white-space: nowrap; }
   .bom-tree-cell { padding-left: calc(var(--lv, 0) * 14px); }
 }
 @media (pointer: coarse) { .bom-tree-toggle { flex-basis: 44px; width: 44px; height: 44px; } }
+/* ป้ายแผนกในตาราง: ไม่ถูกบีบและไม่ตัดตัวอักษรขึ้นบรรทัดใหม่บนจอแคบ */
+.rf-page table.rf-table td .bom-dept { flex: none; min-width: 34px; white-space: nowrap; overflow-wrap: normal; }
