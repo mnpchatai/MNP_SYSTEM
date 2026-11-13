@@ -1196,7 +1196,7 @@ const UNSAVED_TEXT_SELECTOR = '#decision-comment, textarea[id^="step-reply-"], #
 function unsavedTextCount() {
   return [...document.querySelectorAll(UNSAVED_TEXT_SELECTOR)].filter((field) => {
     if (field.disabled || field.readOnly || field.closest("[hidden], [aria-busy]")) return false;
-    // แผงตัดสิน: นับเฉพาะตอนกำลังเขียนเหตุผล (ระหว่างนับถอยหลัง/ส่ง แผงจัดการเอง)
+    // แผงตัดสิน: นับเฉพาะตอนกำลังเขียนเหตุผล (ระหว่างส่ง แผงจัดการเอง)
     const panel = field.closest("#decision-panel");
     if (panel && panel.dataset.state !== "compose") return false;
     return field.value.trim() !== field.defaultValue.trim();
@@ -2414,8 +2414,6 @@ async function loadHomeQueueItems() {
 }
 
 async function renderDashboard(params = new URLSearchParams()) {
-  activeDecisionCountdown?.flush();
-  activeBulkCountdown?.flush();
   loadingShell("dashboard", "หน้าหลัก");
   const employee = state.employee;
   const rules = window.MNP_HOME_QUEUE;
@@ -2555,9 +2553,6 @@ async function selectQueueItem(id, { focus = false } = {}) {
   if (!item) return;
   homeQueueState.selectedId = id;
   homeQueueState.collapsed = false;
-  // มติที่นับถอยหลังอยู่ของใบเดิม (หรือของอนุมัติหลายรายการ) ส่งก่อน แล้วค่อยเปิดใบใหม่
-  activeDecisionCountdown?.flush();
-  activeBulkCountdown?.flush();
   document.querySelectorAll(".queue-item").forEach((node) => {
     const isSelected = node.dataset.requestId === id;
     node.classList.toggle("is-selected", isSelected);
@@ -2596,7 +2591,7 @@ async function selectQueueItem(id, { focus = false } = {}) {
 
 // จอแคบ: แถบตัดสินใจลอยติดล่างจอ แต่ใบที่ขยายอาจเลื่อนพ้นจอไปแล้ว (เลื่อนดูใบอื่นอยู่)
 // ตอนว่าง (idle) ซ่อนแถบเมื่อใบนั้นไม่อยู่ในจอ ผู้อนุมัติจะได้ไม่กดมติให้ใบที่มองไม่เห็นโดยคิดว่าเป็นใบตรงหน้า
-// ระหว่างพิมพ์เหตุผล/นับถอยหลัง/ส่ง แถบอยู่ตลอด (ต้องกดเลิกทำได้เสมอ)
+// ระหว่างพิมพ์เหตุผล/ส่ง แถบอยู่ตลอด
 let queuePanelObserver = null;
 function watchQueuePanelPlacement(li) {
   queuePanelObserver?.disconnect();
@@ -2612,13 +2607,13 @@ function watchQueuePanelPlacement(li) {
   queuePanelObserver = { disconnect: () => { io.disconnect(); states.disconnect(); } };
 }
 
-// ระหว่างที่แถบตัดสินใจกำลังยืนยัน/นับถอยหลัง/ส่ง ห้ามติ๊กอนุมัติหลายรายการ
-// (แถบหลายรายการจะซ่อนแถบนี้ ปุ่มเลิกทำจะหายทั้งที่มติยังจะถูกส่ง)
+// ระหว่างที่แถบตัดสินใจกำลังยืนยัน/ส่ง ห้ามติ๊กอนุมัติหลายรายการ
+// (แถบหลายรายการจะซ่อนแถบนี้ระหว่างที่มติกำลังส่ง)
 function watchDecisionPanelBusy() {
   const panel = document.querySelector("#decision-panel");
   if (!panel) return;
   const sync = () => {
-    // อนุมัติหลายรายการกำลังยืนยัน/นับถอยหลัง/ส่ง: bindQueueBulk ล็อกช่องติ๊กไว้ ห้ามปลดล็อกจากที่นี่ (ชุดที่ส่งต้องตรงกับที่ยืนยัน)
+    // อนุมัติหลายรายการกำลังยืนยัน/ส่ง: bindQueueBulk ล็อกช่องติ๊กไว้ ห้ามปลดล็อกจากที่นี่ (ชุดที่ส่งต้องตรงกับที่ยืนยัน)
     const bulkState = document.querySelector("#queue-bulk")?.dataset.state;
     if (bulkState && bulkState !== "idle") return;
     const busy = panel.dataset.state !== "idle";
@@ -2628,7 +2623,7 @@ function watchDecisionPanelBusy() {
   sync();
 }
 
-// หลังตัดสินใบหนึ่ง: ถ้าผู้ใช้กำลังยืนยันหรือนับถอยหลังใบอื่นอยู่ (เปิดใบใหม่ระหว่างที่ใบเดิมกำลังส่ง)
+// หลังตัดสินใบหนึ่ง: ถ้าผู้ใช้กำลังยืนยันใบอื่นอยู่ (เปิดใบใหม่ระหว่างที่ใบเดิมกำลังส่ง)
 // ห้ามวาดใหม่ทั้งหน้า เพราะจะส่งมติของใบนั้นทันทีและทิ้งข้อความที่พิมพ์ค้าง — แค่เอาแถวที่ตัดสินแล้วออก
 async function afterQueueDecision(id, decision, label = null) {
   const item = homeQueueState.ctx?.items.find((entry) => entry.id === id);
@@ -2658,7 +2653,6 @@ function announce(text) {
 }
 
 function collapseQueueItem() {
-  activeDecisionCountdown?.flush();
   homeQueueState.selectedId = null;
   homeQueueState.collapsed = true;
   document.querySelectorAll(".queue-item").forEach((node) => {
@@ -2678,7 +2672,7 @@ function bindHomeQueue() {
     if (!main) return;
     const id = main.closest(".queue-item")?.dataset.requestId;
     if (!id) return;
-    // แตะใบที่เปิดอยู่: จอแคบ = ยุบ; จอกว้าง = ไม่ทำอะไร (ไม่ส่งมติที่นับถอยหลังหรือทิ้งข้อความที่พิมพ์ค้าง)
+    // แตะใบที่เปิดอยู่: จอแคบ = ยุบ; จอกว้าง = ไม่ทำอะไร (ไม่ทิ้งข้อความที่พิมพ์ค้าง)
     if (id === homeQueueState.selectedId) return isWideLayout() ? undefined : collapseQueueItem();
     selectQueueItem(id, { focus: true });
   });
@@ -2704,10 +2698,9 @@ function bulkVerbText(steps) {
   return { only, summary: only ? `${only} ${steps.length} รายการ` : [...counts].map(([verb, n]) => `${verb} ${n}`).join(" · ") };
 }
 const QUEUE_BULK_IDLE_BUTTONS = `<button type="button" class="btn secondary" id="queue-bulk-clear">ล้างที่เลือก</button><button type="button" class="btn success is-primary" id="queue-bulk-approve">ตัดสินที่เลือก</button>`;
-let activeBulkCountdown = null;
 
-// อนุมัติหลายรายการ: ขั้นเดียวกับอนุมัติใบเดียวในแถบล่าง — "อนุมัติที่เลือก" → ยืนยันพร้อมเลขที่ใบ → เลิกทำได้ภายใน DECISION_UNDO_SECONDS วินาที → ส่ง
-// (เดิมเป็นกล่องยืนยันกลางจอแล้วส่งทันที ไม่มีเลิกทำ) ระหว่างยืนยัน/นับถอยหลัง/ส่ง ล็อกช่องติ๊กไว้ รายการที่จะส่งจึงตรงกับที่ยืนยัน
+// อนุมัติหลายรายการ: ขั้นเดียวกับอนุมัติใบเดียวในแถบล่าง — "อนุมัติที่เลือก" → ยืนยันพร้อมเลขที่ใบ → ส่งทันที (ไม่มีช่วงเลิกทำ ผู้ใช้กำหนด 2026-11-13)
+// ระหว่างยืนยัน/ส่ง ล็อกช่องติ๊กไว้ รายการที่จะส่งจึงตรงกับที่ยืนยัน
 function bindQueueBulk() {
   const bulk = document.querySelector("#queue-bulk");
   const rules = window.MNP_REQUEST_DECISION;
@@ -2718,13 +2711,6 @@ function bindQueueBulk() {
   const lockBoxes = (locked) => document.querySelectorAll(".queue-select, #queue-select-all").forEach((box) => { box.disabled = locked; });
   const button = (label, className, action, attrs = "") => `<button type="button" class="btn ${className}" data-bulk-action="${action}"${attrs}>${escapeHtml(label)}</button>`;
   const numbers = () => chosen.map((step) => step.request.request_no).join(", ");
-  const countdown = rules.createCountdown({
-    seconds: DECISION_UNDO_SECONDS,
-    // ตัวเลขบนปุ่มเท่านั้น (ไม่อยู่ใน live region) เหมือนแถบของใบเดียว
-    onTick: (secondsLeft) => { const undo = buttons.querySelector('[data-bulk-action="undo"]'); if (undo) undo.textContent = `เลิกทำ (${secondsLeft})`; },
-    onSend: () => send(),
-  });
-  activeBulkCountdown = countdown;
   const setText = (value) => { text.hidden = !value; text.textContent = value; };
   function render(name) {
     bulk.dataset.state = name;
@@ -2739,9 +2725,6 @@ function bindQueueBulk() {
       const verbs = bulkVerbText(chosen);
       setText(`${verbs.summary}: ${numbers()}`);
       buttons.innerHTML = `${button("ยกเลิก", "secondary", "cancel")}${button(verbs.only ? `ยืนยัน${verbs.only} ${chosen.length} รายการ` : `ยืนยัน ${chosen.length} รายการ`, "success is-primary", "confirm")}`;
-    } else if (name === "pending") {
-      setText(`กำลังจะ${bulkVerbText(chosen).summary}`);
-      buttons.innerHTML = `${button(`เลิกทำ (${DECISION_UNDO_SECONDS})`, "secondary", "undo")}${button("ส่งเลย", "success is-primary", "send-now")}`;
     } else if (name === "sending") {
       setText(`กำลังส่ง: ${bulkVerbText(chosen).summary}…`);
       buttons.innerHTML = button("กำลังส่ง…", "success is-primary", "none", ' disabled aria-busy="true"');
@@ -2749,7 +2732,6 @@ function bindQueueBulk() {
     trackActionBarHeight();
   }
   const toIdle = () => {
-    countdown.undo();
     detachLeaveGuards();
     chosen = [];
     render("idle");
@@ -2770,36 +2752,28 @@ function bindQueueBulk() {
       return buttons.querySelector('[data-bulk-action="confirm"]')?.focus();
     }
     const action = event.target.closest("[data-bulk-action]")?.dataset.bulkAction;
-    if (action === "cancel" || action === "undo") return toIdle();
+    if (action === "cancel") return toIdle();
     if (action === "confirm") {
-      render("pending");
-      buttons.querySelector('[data-bulk-action="undo"]')?.focus();
-      countdown.start({});
-      return attachLeaveGuards();
+      // ยืนยันแล้วส่งทันที ไม่มีช่วงเลิกทำ (ผู้ใช้กำหนด 2026-11-13)
+      attachLeaveGuards();
+      return send();
     }
-    if (action === "send-now") return countdown.flush();
   });
   bulk.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || event.defaultPrevented) return;
-    if (bulk.dataset.state === "confirm" || bulk.dataset.state === "pending") { event.preventDefault(); toIdle(); }
+    if (bulk.dataset.state === "confirm") { event.preventDefault(); toIdle(); }
   });
 
-  // ไปหน้าอื่นหรือสลับแอประหว่างนับถอยหลัง = ตั้งใจส่ง (เหมือนใบเดียว) ปิดแท็บ/รีเฟรชถามก่อน
-  function sendOnLeave() { countdown.flush(); }
-  function sendWhenHidden() { if (document.visibilityState === "hidden") countdown.flush(); }
+  // ปิดแท็บ/รีเฟรชระหว่างกำลังส่ง: ถามก่อน
   function warnBeforeUnload(event) {
-    if (!countdown.pending && bulk.dataset.state !== "sending") return;
+    if (bulk.dataset.state !== "sending") return;
     event.preventDefault();
     event.returnValue = "";
   }
   function attachLeaveGuards() {
-    window.addEventListener("hashchange", sendOnLeave);
-    document.addEventListener("visibilitychange", sendWhenHidden);
     window.addEventListener("beforeunload", warnBeforeUnload);
   }
   function detachLeaveGuards() {
-    window.removeEventListener("hashchange", sendOnLeave);
-    document.removeEventListener("visibilitychange", sendWhenHidden);
     window.removeEventListener("beforeunload", warnBeforeUnload);
   }
 
@@ -2813,7 +2787,6 @@ function bindQueueBulk() {
       summary = [`อนุมัติหลายรายการไม่ครบ: ${friendlyError(error)} · ดูรายการที่ยังค้างในคิว`, "error"];
     } finally {
       detachLeaveGuards();
-      if (activeBulkCountdown === countdown) activeBulkCountdown = null;
     }
     if (location.hash === "" || /^#\/(dashboard|approvals)?(\?|$)/.test(location.hash)) {
       try {
@@ -2838,7 +2811,7 @@ function pickedQueueSteps() {
 function syncQueueBulk() {
   const bulk = document.querySelector("#queue-bulk");
   if (!bulk) return;
-  // กำลังยืนยัน/นับถอยหลัง/ส่ง (bindQueueBulk): แถบนี้คุมข้อความและปุ่มเอง ช่องติ๊กถูกล็อก จำนวนจึงไม่เปลี่ยน
+  // กำลังยืนยัน/ส่ง (bindQueueBulk): แถบนี้คุมข้อความและปุ่มเอง ช่องติ๊กถูกล็อก จำนวนจึงไม่เปลี่ยน
   if (bulk.dataset.state && bulk.dataset.state !== "idle") {
     const panel = document.querySelector("#decision-panel");
     if (panel && panel.dataset.state === "idle") panel.hidden = true;
@@ -3933,8 +3906,6 @@ function stepReplyFormHtml(step, directory, { heading = true, optional = false, 
 }
 
 async function renderRequestDetail(params) {
-  activeDecisionCountdown?.flush();
-  activeBulkCountdown?.flush();
   const id = params.get("id");
   if (!id) return renderNotFound("ไม่พบรหัสคำร้อง");
   loadingShell("requests", "รายละเอียดคำร้อง");
@@ -4201,9 +4172,6 @@ async function renderRequestDetail(params) {
 // มติที่เพิ่งกดในแท็บนี้ เก็บไว้ทำใบเสร็จหลังวาดหน้าใหม่ (อยู่ในหน่วยความจำเท่านั้น รีเฟรชแล้วหาย ไทม์ไลน์ยังเป็นหลักฐานจริง)
 const recentDecisions = new Map();
 const RECEIPT_TTL_MS = 10 * 60 * 1000;
-const DECISION_UNDO_SECONDS = 5;
-// มติที่กำลังนับถอยหลังอยู่ (ถ้ามี) — วาดหน้าใหม่เมื่อไหร่ต้องส่งก่อน ไม่ให้ตัวนับของแถบเก่าค้างอยู่เบื้องหลัง
-let activeDecisionCountdown = null;
 
 function recentDecisionFor(requestId) {
   const entry = recentDecisions.get(requestId);
@@ -4450,7 +4418,7 @@ function confirmStepAction(area, { label, requestNo = "", consequence = "", tone
   buttons.querySelector('[data-step-action="confirm"]')?.focus();
 }
 
-// ขั้นของแถบตัดสินใจ: idle → compose (เลือกมติ กรอกเหตุผล) → pending (นับถอยหลังเลิกทำ) → sending → (สำเร็จ = วาดหน้าใหม่พร้อมใบเสร็จ | error)
+// ขั้นของแถบตัดสินใจ: idle → compose (เลือกมติ กรอกเหตุผล) → sending (ยืนยันแล้วส่งทันที ไม่มีช่วงเลิกทำ) → (สำเร็จ = วาดหน้าใหม่พร้อมใบเสร็จ | error)
 // requesterName: ชื่อผู้แจ้ง ใช้บอกว่า "ขอข้อมูลเพิ่ม" จะส่งกลับให้ใคร
 function bindDecisionPanel({ id, params, request, currentStep, nextStep, employee, extraDecisions, requesterName = "", onDecided = null }) {
   const rules = window.MNP_REQUEST_DECISION;
@@ -4478,16 +4446,6 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
   let state = { name: "idle" };
   let lastTrigger = null;
 
-  const countdown = rules.createCountdown({
-    seconds: DECISION_UNDO_SECONDS,
-    // อัปเดตเฉพาะตัวเลขบนปุ่ม (ไม่อยู่ใน live region) ไม่ให้โปรแกรมอ่านหน้าจออ่านซ้ำทุกวินาที และไม่ทำให้ focus หลุด
-    onTick: (secondsLeft) => {
-      const undo = buttons.querySelector('[data-action="undo"]');
-      if (undo) undo.textContent = `เลิกทำ (${secondsLeft})`;
-    },
-    onSend: (payload) => send(payload),
-  });
-  activeDecisionCountdown = countdown;
 
   const setLine = (text, kind = "") => {
     line.hidden = !text;
@@ -4536,14 +4494,6 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
       buttons.innerHTML = `${button("ยกเลิก", "secondary", "cancel")}${!needsComment && !state.showComment ? button("เพิ่มความเห็น", "secondary", "add-comment") : ""}${button(`ยืนยัน${labelOf(decision)}`, decisionButtonClass(decision), "confirm")}`;
       return;
     }
-    if (state.name === "pending") {
-      tapGuard.arm();
-      reason.hidden = true;
-      setLine(`กำลังจะ${labelOf(state.decision)}${onDecided ? ` ${request.request_no}` : ""}${state.comment ? ` · “${clipText(state.comment, 80)}”` : ""}`);
-      // "ส่งเลย" สีเดียวกับมติที่กำลังจะส่ง (ไม่อนุมัติเป็นสีแดง) ไม่ใช่สีน้ำเงินกลาง ๆ
-      buttons.innerHTML = `${button(`เลิกทำ (${DECISION_UNDO_SECONDS})`, "secondary", "undo")}${button("ส่งเลย", decisionButtonClass(state.decision), "send-now")}`;
-      return;
-    }
     if (state.name === "sending") {
       reason.hidden = true;
       setLine(`กำลังส่ง: ${labelOf(state.decision)}${onDecided ? ` ${request.request_no}` : ""}…`);
@@ -4558,7 +4508,6 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
   }
 
   function toIdle() {
-    countdown.undo();
     detachLeaveGuards();
     clearError();
     resetInputs();
@@ -4587,29 +4536,20 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     }
     clearError();
     hideToast();
-    state = { name: "pending", decision, comment: result.comment, files };
-    render();
-    buttons.querySelector('[data-action="undo"]')?.focus();
-    countdown.start({ decision, comment: result.comment, files });
+    // ยืนยันแล้วส่งทันที ไม่มีช่วงเลิกทำ (ผู้ใช้กำหนด 2026-11-13)
     attachLeaveGuards();
+    send({ decision, comment: result.comment, files });
   }
 
   function attachLeaveGuards() {
-    window.addEventListener("hashchange", sendOnLeave);
-    document.addEventListener("visibilitychange", sendWhenHidden);
     window.addEventListener("beforeunload", warnBeforeUnload);
   }
   function detachLeaveGuards() {
-    window.removeEventListener("hashchange", sendOnLeave);
-    document.removeEventListener("visibilitychange", sendWhenHidden);
     window.removeEventListener("beforeunload", warnBeforeUnload);
   }
-  // ย้ายไปหน้าอื่นในแอปหรือสลับไปแอปอื่นระหว่างนับถอยหลัง = ตั้งใจส่ง ส่งทันที
-  function sendOnLeave() { countdown.flush(); }
-  function sendWhenHidden() { if (document.visibilityState === "hidden") countdown.flush(); }
   // ปิดแท็บ/รีเฟรช: คำขอที่เริ่มตอนหน้ากำลังปิดอาจถูกยกเลิก จึงถามให้ผู้ใช้อยู่ต่อแทนการส่งแบบไม่แน่นอน
   function warnBeforeUnload(event) {
-    if (!countdown.pending && state.name !== "sending") return;
+    if (state.name !== "sending") return;
     event.preventDefault();
     event.returnValue = "";
   }
@@ -4633,7 +4573,6 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     }
     // มติบันทึกแล้ว: จากนี้ข้อผิดพลาดใดๆ ต้องไม่ถูกบอกว่า "ไม่สำเร็จ"
     detachLeaveGuards();
-    if (activeDecisionCountdown === countdown) activeDecisionCountdown = null;
     recentDecisions.set(id, { decision, label: labelOf(decision), comment: text, at: Date.now(), actorId: employee.id, requestNo: request.request_no, title: request.title, nextStepName: rules.forwardsToNextStep(decision) ? nextStep?.step_name ?? "" : "" });
     let warning = "";
     try { warning = await uploadExtraFiles(id, files, employee.id); } catch (uploadError) { warning = friendlyError(uploadError); }
@@ -4656,8 +4595,8 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     if (!target || target.disabled) return;
     if (target.dataset.decision) return startCompose(target.dataset.decision);
     const action = target.dataset.action;
-    // ยืนยัน/ส่งเลยที่โผล่ใต้นิ้วเดิม: การแตะซ้ำทันทีไม่นับ (คีย์บอร์ดไม่ถูกหน่วง)
-    if ((action === "confirm" || action === "send-now") && tapGuard.blocks(event)) return;
+    // ปุ่มยืนยันที่โผล่ใต้นิ้วเดิม: การแตะซ้ำทันทีไม่นับ (คีย์บอร์ดไม่ติด)
+    if (action === "confirm" && tapGuard.blocks(event)) return;
     if (action === "cancel") return toIdle();
     if (action === "add-comment") {
       state.showComment = true;
@@ -4665,14 +4604,6 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
       return comment.focus();
     }
     if (action === "confirm") return confirm();
-    if (action === "undo") {
-      countdown.undo();
-      detachLeaveGuards();
-      state = { name: "compose", decision: state.decision, showComment: Boolean(comment.value.trim()) };
-      render();
-      return buttons.querySelector('[data-action="confirm"]')?.focus();
-    }
-    if (action === "send-now") return countdown.flush();
     if (action === "retry") {
       attachLeaveGuards();
       return send(state);
@@ -4687,7 +4618,6 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
   panel.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || event.defaultPrevented) return;
     if (state.name === "compose") { event.preventDefault(); toIdle(); }
-    else if (state.name === "pending") { event.preventDefault(); buttons.querySelector('[data-action="undo"]')?.click(); }
   });
 }
 
@@ -4702,7 +4632,7 @@ function isOwnApprovalStep(step) {
 const BULK_APPROVE_LIMIT = 20;
 
 // อนุมัติหลายรายการ: เรียก app_approval_decision ทีละขั้นเหมือนกดอนุมัติในหน้ารายละเอียด (ฐานข้อมูลตรวจสิทธิ์และขั้นปัจจุบันทุกครั้ง)
-// ยืนยันและเลิกทำอยู่ในแถบล่าง (bindQueueBulk) ฟังก์ชันนี้ส่งอย่างเดียว ครั้งละไม่เกิน BULK_APPROVE_LIMIT รายการ
+// การยืนยันอยู่ในแถบล่าง (bindQueueBulk) ฟังก์ชันนี้ส่งอย่างเดียว ครั้งละไม่เกิน BULK_APPROVE_LIMIT รายการ
 // คืนข้อความสรุปสำหรับ showToast (null = ไม่มีอะไรให้ส่ง)
 // (ชีตสำรองของ MT/MG ซิงก์ตอนมีคนเปิดหน้ารายละเอียดเหมือนเดิม Supabase เป็นข้อมูลหลัก)
 async function runBulkApprove(chosen) {

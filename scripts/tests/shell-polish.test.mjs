@@ -43,8 +43,9 @@ test("the undo countdown repeats the typed reason on one line, clipped by charac
   assert.equal(clip("ไม่ผ่านเพราะ", 8), "ไม่ผ่านเพ…");
   // ใน app.js ส่วนที่เหลือของตัวจัดการแป้น: A/R ไม่ตัดสินใบที่เลือกเมื่อโฟกัสอยู่ที่แถวงาน
   assert.match(app, /if \(target instanceof HTMLElement && target\.closest\("\.queue-item\.is-task"\)\) return;\n  const panel = document\.querySelector\("#decision-panel"\);/);
-  // รอบรวม 20: หน้ารายละเอียดไม่ทวนเลขที่ใบ (หัวใบบอกแล้ว) คิวหน้าหลักยังบอก
-  assert.match(app, /setLine\(`กำลังจะ\$\{labelOf\(state\.decision\)\}\$\{onDecided \? ` \$\{request\.request_no\}` : ""\}\$\{state\.comment \? ` · “\$\{clipText\(state\.comment, 80\)\}”` : ""\}`\);/);
+  // รอบรวม 24: ไม่มีขั้นนับถอยหลังแล้ว (ผู้ใช้ 2026-11-13) clipText ยังใช้ในบรรทัดยืนยันของขั้น MT (confirmStepAction)
+  assert.doesNotMatch(app, /setLine\(`กำลังจะ/);
+  assert.match(functionSource("confirmStepAction"), /clipText\(/);
 });
 
 test("J/K walks every visible queue row: approval rows select, task rows only take focus", () => {
@@ -154,7 +155,7 @@ function stepConfirmHarness() {
     return node;
   };
   const context = {
-    escapeHtml, DECISION_UNDO_SECONDS: 5, activeDecisionCountdown: null, Intl, Array, String,
+    escapeHtml, Intl, Array, String,
     document: { createElement: element, addEventListener: () => {}, removeEventListener: () => {}, visibilityState: "visible" },
     location: { hash: "#/request?id=r1" },
   };

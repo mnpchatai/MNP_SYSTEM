@@ -132,11 +132,12 @@ test("confirmDialog takes a cancel label and keeps 'ยกเลิก' by defau
   assert.match(app, /confirmLabel: "ทิ้งใบนี้", cancelLabel: "กลับไปกรอกต่อ"/);
 });
 
-test("confirm and send-now are guarded against the double tap, and the guard re-arms in each state", () => {
+test("confirm is guarded against the double tap and sends at once (no undo window, user 2026-11-13)", () => {
   assert.match(app, /const tapGuard = rules\.createTapGuard\(\);/);
-  assert.match(app, /if \(\(action === "confirm" \|\| action === "send-now"\) && tapGuard\.blocks\(event\)\) return;/);
+  assert.match(app, /if \(action === "confirm" && tapGuard\.blocks\(event\)\) return;/);
   assert.match(app, /if \(state\.name === "compose"\) \{\n\s+tapGuard\.arm\(\);/);
-  assert.match(app, /if \(state\.name === "pending"\) \{\n\s+tapGuard\.arm\(\);/);
+  assert.doesNotMatch(app, /state\.name === "pending"|"send-now"|DECISION_UNDO_SECONDS/);
+  assert.match(app, /    attachLeaveGuards\(\);\n    send\(\{ decision, comment: result\.comment, files \}\);/);
 });
 
 test("the MT assign dates use the shared Thai date picker and are still required", () => {

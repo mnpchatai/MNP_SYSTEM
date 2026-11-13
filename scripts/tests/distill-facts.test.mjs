@@ -207,7 +207,8 @@ test("small consistency fixes: file toggle marker, read-only fields, parts table
   assert.match(css, /:is\(\.input, \.select, \.textarea\):disabled:not\(\[aria-busy\] \*\) \{ color: var\(--muted\); background: var\(--shell\); border-style: dashed; cursor: not-allowed; \}/);
   assert.match(css, /\.parts-field \{ container-type: inline-size; \}\r?\n@container \(max-width: 760px\) \{/);
   assert.match(mt, /<div class="field parts-field"><label>รายการอะไหล่/);
-  assert.match(read("modules/shortcut-help.js"), /"อนุมัติแล้วกดเลิกทำได้ภายใน 5 วินาที ส่วนเริ่มงาน เสร็จสิ้นงาน และตรวจรับส่งทันทีหลังกดยืนยัน"/);
+  assert.match(read("modules/shortcut-help.js"), /"มติ เริ่มงาน เสร็จสิ้นงาน และตรวจรับ ส่งทันทีหลังกดยืนยัน"/, "no undo window for decisions any more (user 2026-11-13)");
+  assert.doesNotMatch(read("modules/shortcut-help.js"), /เลิกทำ|5 วินาที|นับถอยหลัง/);
   assert.match(read("modules/rubberflow-pages-plan.js"), /ต้องมีสูตรยางที่อนุมัติแล้วก่อน จึงเปิดใบสั่งผลิตได้/);
 });
 
