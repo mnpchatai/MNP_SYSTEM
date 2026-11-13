@@ -2475,7 +2475,7 @@ async function renderDashboard(params = new URLSearchParams()) {
       </div>
       ${items.length > visibleCount ? `<button type="button" class="link-button queue-more" id="queue-more">แสดงอีก ${items.length - visibleCount} รายการ</button>` : ""}
       <section class="card action-panel queue-bulk" id="queue-bulk" aria-label="อนุมัติหลายรายการ" hidden>
-        <p class="queue-bulk-text" id="queue-bulk-text" role="status" hidden></p>
+        <p class="queue-bulk-text" id="queue-bulk-text" role="status" tabindex="-1" hidden></p>
         <div class="action-panel-buttons" id="queue-bulk-buttons">${QUEUE_BULK_IDLE_BUTTONS}</div>
       </section>` : `<p class="queue-empty">ไม่มีงานค้าง งานที่ส่งมาถึงคุณจะแสดงที่นี่</p>`}
     </section>` : "";
@@ -2711,6 +2711,8 @@ function bindQueueBulk() {
   const lockBoxes = (locked) => document.querySelectorAll(".queue-select, #queue-select-all").forEach((box) => { box.disabled = locked; });
   const button = (label, className, action, attrs = "") => `<button type="button" class="btn ${className}" data-bulk-action="${action}"${attrs}>${escapeHtml(label)}</button>`;
   const numbers = () => chosen.map((step) => step.request.request_no).join(", ");
+  // ปุ่มยืนยันโผล่ตรงที่นิ้วเพิ่งแตะ "ตัดสินที่เลือก" และยืนยันแล้วส่งทันที: ไม่รับการแตะซ้ำทันที (เหมือนแถบใบเดียว)
+  const tapGuard = rules.createTapGuard();
   const setText = (value) => { text.hidden = !value; text.textContent = value; };
   function render(name) {
     bulk.dataset.state = name;
@@ -2722,6 +2724,7 @@ function bindQueueBulk() {
     }
     lockBoxes(true);
     if (name === "confirm") {
+      tapGuard.arm();
       const verbs = bulkVerbText(chosen);
       setText(`${verbs.summary}: ${numbers()}`);
       buttons.innerHTML = `${button("ยกเลิก", "secondary", "cancel")}${button(verbs.only ? `ยืนยัน${verbs.only} ${chosen.length} รายการ` : `ยืนยัน ${chosen.length} รายการ`, "success is-primary", "confirm")}`;
@@ -2754,9 +2757,12 @@ function bindQueueBulk() {
     const action = event.target.closest("[data-bulk-action]")?.dataset.bulkAction;
     if (action === "cancel") return toIdle();
     if (action === "confirm") {
+      if (tapGuard.blocks(event)) return;
       // ยืนยันแล้วส่งทันที ไม่มีช่วงเลิกทำ (ผู้ใช้กำหนด 2026-11-13)
       attachLeaveGuards();
-      return send();
+      const sending = send();
+      text.focus();
+      return sending;
     }
   });
   bulk.addEventListener("keydown", (event) => {
@@ -4232,7 +4238,7 @@ function decisionPanelHtml({ request, currentStep, nextStep, extraDecisions, nex
       <p class="muted small">${escapeHtml(stepLine)}</p>
     </div>
     <p class="decision-target" id="decision-target">${escapeHtml(`${request.request_no} · ${request.title}`)}</p>
-    <p class="decision-line" id="decision-line" hidden></p>
+    <p class="decision-line" id="decision-line" tabindex="-1" hidden></p>
     <div class="decision-reason" id="decision-reason" hidden>
       <div class="field">
         <label for="decision-comment" id="decision-comment-label">ความเห็น</label>
@@ -4431,11 +4437,11 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
   const commentError = panel.querySelector("#decision-comment-error");
   const buttons = panel.querySelector("#decision-buttons");
   const options = decisionButtonsOf(extraDecisions, currentStep.step_name);
-  // ปุ่มยืนยัน/ส่งเลยโผล่ตรงที่นิ้วเพิ่งกดปุ่มมติ: ไม่รับการแตะซ้ำทันที (modules/request-decision.js createTapGuard)
+  // ปุ่มยืนยันโผล่ตรงที่นิ้วเพิ่งกดปุ่มมติ และยืนยันแล้วส่งทันที: ไม่รับการแตะซ้ำทันที (modules/request-decision.js createTapGuard)
   const tapGuard = rules.createTapGuard();
   const labelOf = (decision) => options.find((item) => item.decision === decision)?.label ?? decisionVerbs[decision] ?? decision;
   const toneOf = (decision) => options.find((item) => item.decision === decision)?.tone ?? "secondary";
-  // มติเพิ่มของโมดูล (เช่น รับทราบ) มีโทนเทาเท่าปุ่มยกเลิก/เลิกทำ ปุ่มหลักของมันจึงใช้สีแบรนด์ให้แยกออกจากปุ่มรอง
+  // มติเพิ่มของโมดูล (เช่น รับทราบ) มีโทนเทาเท่าปุ่มยกเลิก ปุ่มหลักของมันจึงใช้สีแบรนด์ให้แยกออกจากปุ่มรอง
   const decisionButtonClass = (decision) => {
     if (decision === "rejected") return "danger-solid is-primary";
     if (decision === "approved") return "success is-primary";
@@ -4539,6 +4545,7 @@ function bindDecisionPanel({ id, params, request, currentStep, nextStep, employe
     // ยืนยันแล้วส่งทันที ไม่มีช่วงเลิกทำ (ผู้ใช้กำหนด 2026-11-13)
     attachLeaveGuards();
     send({ decision, comment: result.comment, files });
+    line.focus();
   }
 
   function attachLeaveGuards() {

@@ -98,7 +98,9 @@ test("bulk approve follows the single-approve steps in the bottom bar: confirm, 
   assert.doesNotMatch(runner, /confirmDialog/, "no centred modal any more");
   const bulk = app.slice(app.indexOf("function bindQueueBulk("), app.indexOf("\n}\n", app.indexOf("function bindQueueBulk(")));
   assert.doesNotMatch(bulk, /createCountdown|DECISION_UNDO_SECONDS|send-now|"undo"/, "no undo window, like one request");
-  assert.match(bulk, /if \(action === "confirm"\) \{\r?\n[^\n]*\n\s+attachLeaveGuards\(\);\r?\n\s+return send\(\);/, "confirming sends at once");
+  assert.match(bulk, /if \(action === "confirm"\) \{\r?\n\s+if \(tapGuard\.blocks\(event\)\) return;\r?\n[^\n]*\n\s+attachLeaveGuards\(\);\r?\n\s+const sending = send\(\);/, "confirming sends at once, and a double tap on the bar never confirms");
+  assert.match(bulk, /const tapGuard = rules\.createTapGuard\(\);/);
+  assert.match(bulk, /if \(name === "confirm"\) \{\r?\n\s+tapGuard\.arm\(\);/, "armed when the confirm button appears under the finger");
   // คำของแต่ละขั้น (อนุมัติ / รับทราบ) เหมือนปุ่มของใบเดียว ปนกันบอกแยกต่อคำ ค่าที่ส่งยังเป็น approved
   assert.match(bulk, /setText\(`\$\{verbs\.summary\}: \$\{numbers\(\)\}`\)/, "confirm names the request numbers");
   assert.match(bulk, /button\(verbs\.only \? `ยืนยัน\$\{verbs\.only\} \$\{chosen\.length\} รายการ` : `ยืนยัน \$\{chosen\.length\} รายการ`, "success is-primary", "confirm"\)/);

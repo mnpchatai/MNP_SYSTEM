@@ -1397,7 +1397,7 @@ a.machine-history-no:hover { text-decoration: underline; }
   .action-panel { position: fixed; z-index: 26; right: 0; bottom: 0; left: 68px; max-height: 70dvh; margin: 0; padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); overflow-y: auto; gap: 10px; border-width: 1px 0 0; border-radius: 0; box-shadow: 0 -8px 24px rgb(16 32 59 / .12); }
   .action-panel .action-panel-head { display: none; }
   /* แถบตัดสินใจบนจอแคบยังบอกชื่อขั้นและขั้นถัดไป (คำกริยาของปุ่มมาจากชื่อขั้น) แต่ไม่ซ้ำหัวข้อ: เหลือบรรทัดเดียวสูงสุด 2 บรรทัด
-     และซ่อนเมื่อกำลังยืนยัน/นับถอยหลัง เพราะบรรทัดสถานะของแถบบอกปลายทางอยู่แล้ว */
+     และซ่อนเมื่อกำลังยืนยัน/ส่ง เพราะบรรทัดสถานะของแถบบอกปลายทางอยู่แล้ว */
   .decision-panel .action-panel-head { display: block; }
   .decision-panel .action-panel-head h2 { display: none; }
   .decision-panel .action-panel-head p { margin: 0; display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
