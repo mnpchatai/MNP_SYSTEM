@@ -182,7 +182,15 @@ test("the NCR hero states the reporter and issue date once, in the same meta lin
 // ---- รอบ 12: ข้อที่ผู้ตรวจ 3 คนเห็นตรงกัน ----
 test("the NCR register states the loss state once, in the loss column, and names the owner like a request row", () => {
   const ncr = read("modules/module-ncr.js");
-  assert.match(ncr, /status: `<span class="register-badges">\$\{statusBadgeHtml\(row\)\}<\/span>/);
+  // รอบ 23: ต่อท้ายด้วยป้ายรอแนวทางป้องกัน (ทะเบียนเท่านั้น) ความสูญเสียยังอยู่คอลัมน์ของมัน
+  assert.match(ncr, /status: `<span class="register-badges">\$\{statusBadgeHtml\(row\)\}\$\{preventionPendingBadge\(row\)\}<\/span>/);
+  assert.match(ncr, /const preventionPendingBadge = \(ncr\) => \(ncr\.status === "awaiting_followup" && Object\.hasOwn\(ncr, "prevention"\) && !ncr\.prevention \? ' <span class="badge pending_approval">รอแนวทางป้องกัน<\/span>' : ""\);/);
+  assert.match(ncr, /\.select\("id,ncr_no,status,issue_date,product_name,customer_name,qty_defect,unit,response_due,prevention,/, "the register loads the prevention text it checks");
+  // ตารางแผนกของแดชบอร์ดที่เลื่อนด้านข้างได้รับโฟกัสคีย์บอร์ดและมีชื่อ · แดชบอร์ด MT ไม่ทวนยอดใบใต้กราฟเครื่องจักร
+  assert.match(read("modules/module-ncr-dashboard.js"), /<div class="table-wrap" tabindex="0" role="region" aria-label="ตารางแผนกที่รับผิดชอบ">/);
+  const mtBoard = read("modules/module-mt-dashboard.js");
+  assert.match(mtBoard, /<div class="table-wrap" tabindex="0" role="region" aria-label="ตารางแผนกที่แจ้งซ่อมบ่อย">/);
+  assert.doesNotMatch(mtBoard, /เครื่อง รวม \$\{fmtCount/);
   // รอบ 18: คอลัมน์ชื่อ "ความสูญเสีย" อยู่แล้ว ป้ายในช่องจึงบอกแค่ "รอข้อมูล" (ชื่อเต็มใน title)
   assert.match(ncr, /loss: `\$\{row\.lossPending \? '<span class="badge loss-pending-flag" title="รอข้อมูลความสูญเสีย">รอข้อมูล<\/span>' : ""\}/);
   assert.match(ncr, /return registerSubHtml\(`\$\{party\}\$\{progress\}`, `\$\{uiIcon\("user"\)\} `, `ผู้รับผิดชอบ: /);

@@ -225,6 +225,9 @@
     return ncr.status === "awaiting_signoff" ? `${label} · ${SIGNER_SHORT_LABELS[nextSigner(ncr).key]}` : label;
   }
 
+  // ทะเบียนเท่านั้น (หน้ารายละเอียดบอกในบรรทัดรอแล้ว): ใบรอ QA ติดตามผลที่แผนกยังไม่ส่งแนวทางป้องกัน — กติกาเดียวกับ preventionPending ของแดชบอร์ด
+  const preventionPendingBadge = (ncr) => (ncr.status === "awaiting_followup" && Object.hasOwn(ncr, "prevention") && !ncr.prevention ? ' <span class="badge pending_approval">รอแนวทางป้องกัน</span>' : "");
+
   // lossPending = ผลของ MNP_NCR_COSTS.lossDataPending (ต้องโหลดยอดความสูญเสียและผลดำเนินการของใบนั้นมาก่อน)
   function statusBadgeHtml(ncr, lossPending = false) {
     // ป้ายบนจอใช้ชื่อสถานะอย่างเดียว ผู้ที่ต้องลงนามอยู่ในป้ายผู้รับผิดชอบหรือบรรทัด "ขั้นตอนนี้รอ" แล้ว (statusLabel พร้อมลำดับผู้ลงนามใช้กับชีต)
@@ -590,7 +593,7 @@
     const statusParam = embedded ? "ncrStatus" : "status";
     const filter = LIST_FILTERS.some(([value]) => value === params.get(statusParam)) ? params.get(statusParam) : "open";
     let query = sb.from("ncr_reports")
-      .select("id,ncr_no,status,issue_date,product_name,customer_name,qty_defect,unit,response_due,signoff_qa_at,signoff_factory_at,signoff_gm_by,signoff_gm_at,cancelled_by,cancelled_at,defect_type:ncr_defect_types(name_th),ncr_responsibilities(share,department_id,responder_id,department:departments(code))")
+      .select("id,ncr_no,status,issue_date,product_name,customer_name,qty_defect,unit,response_due,prevention,signoff_qa_at,signoff_factory_at,signoff_gm_by,signoff_gm_at,cancelled_by,cancelled_at,defect_type:ncr_defect_types(name_th),ncr_responsibilities(share,department_id,responder_id,department:departments(code))")
       .order("issue_date", { ascending: false })
       .order("ncr_no", { ascending: false })
       .limit(300);
@@ -652,7 +655,7 @@
           departments: escapeHtml(departments),
           issued: formatDate(row.issue_date),
           loss: `${row.lossPending ? '<span class="badge loss-pending-flag" title="รอข้อมูลความสูญเสีย">รอข้อมูล</span>' : ""}${summary ? `${row.lossPending ? "<br>" : ""}${escapeHtml(formatBaht(summary.net))}${summary.pending ? `<span class="register-sub">รอยืนยัน ${summary.pending} รายการ</span>` : ""}` : ""}`,
-          status: `<span class="register-badges">${statusBadgeHtml(row)}</span>${ownerChipHtml(row, staff, directory)}`,
+          status: `<span class="register-badges">${statusBadgeHtml(row)}${preventionPendingBadge(row)}</span>${ownerChipHtml(row, staff, directory)}`,
         },
       };
     };
@@ -1331,7 +1334,7 @@
 
     // ป้ายกำกับ/ตัวช่วยที่ modules/module-ncr-dashboard.js ใช้ร่วม — แก้ที่นี่ที่เดียว
     // ISSUE_RULES เปิดให้เทสต์ตรวจกติกาจริงของฟอร์มออก NCR (scripts/tests/ncr-detail-page.test.mjs)
-    shared: { stepDraftValues, restoreStepDraft, bindStepDraft, STEP_DRAFT_ACTIONS, evidenceFieldHtml, STATUS_LABELS, OPEN_STATUSES, SOURCES, CAUSES, LOSS_TYPES, todayBangkok, isOverdue, stepFileInput, formatQty, formatBaht, ISSUE_RULES },
+    shared: { preventionPendingBadge, stepDraftValues, restoreStepDraft, bindStepDraft, STEP_DRAFT_ACTIONS, evidenceFieldHtml, STATUS_LABELS, OPEN_STATUSES, SOURCES, CAUSES, LOSS_TYPES, todayBangkok, isOverdue, stepFileInput, formatQty, formatBaht, ISSUE_RULES },
 
     pages: {
       async ncr(params) {

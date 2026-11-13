@@ -308,7 +308,7 @@
     return `<div class="nd-head"><h2>เครื่องจักรที่เสียบ่อย</h2><p>จำนวนครั้งที่แจ้งซ่อมต่อเครื่องในช่วงที่เลือก (ใบแจ้งซ่อมที่ไม่ถูกปฏิเสธ) เครื่องเดียวกันนับรวมกันแม้พิมพ์รหัสต่างกันเล็กน้อย แตะแถบเพื่อดูตัวเลขและกรองรายการด้านล่าง</p></div>
       ${items.length ? `<div class="nd-bars">${rows}</div>
       ${items.some((item) => item.count !== items[0].count) ? `<div class="nd-legend"><span><i class="strong"></i>เครื่องที่แจ้งบ่อยสุด</span><span><i class="soft"></i>เครื่องอื่น</span></div>` : ""}
-      <p class="nd-hint">แสดง ${fmtNumber(items.length)} จาก ${fmtNumber(ranking.machines)} เครื่อง รวม ${fmtCount(ranking.total)}${notes ? ` · ${esc(notes)}` : ""}</p>` : `<p class="nd-empty">ไม่มีใบแจ้งซ่อมที่ระบุเครื่องจักรในช่วงและตัวกรองนี้${notes ? ` (${esc(notes)})` : ""}</p>`}
+      ${items.length < ranking.machines || notes ? `<p class="nd-hint">${[items.length < ranking.machines ? `แสดง ${fmtNumber(items.length)} จาก ${fmtNumber(ranking.machines)} เครื่อง` : "", notes ? esc(notes) : ""].filter(Boolean).join(" · ")}</p>` : ""}` : `<p class="nd-empty">ไม่มีใบแจ้งซ่อมที่ระบุเครื่องจักรในช่วงและตัวกรองนี้${notes ? ` (${esc(notes)})` : ""}</p>`}
       ${detailHintIfIdle("machine", "แถบเครื่องจักร", resolve)}`;
   }
 
@@ -320,7 +320,7 @@
     };
     const detailRow = (key) => { const detail = detailUnder("deptrank", key, resolve); return detail ? `<tr class="nd-detail-row"><td colspan="6">${detail}</td></tr>` : ""; };
     return `<div class="nd-head"><h2>แผนกที่แจ้งซ่อมบ่อย</h2><p>จำนวนใบแจ้งซ่อมต่อแผนกที่แจ้งในช่วงที่เลือก (ไม่นับใบคำร้องและใบที่ไม่อนุมัติ) ตารางนี้ไม่ถูกย่อด้วยตัวกรองแผนก แผนกที่เลือกอยู่จะถูกเน้น</p></div>
-      ${items.length ? `<div class="table-wrap"><table><thead><tr><th>แผนก</th><th class="nd-num">ใบแจ้งซ่อม</th><th class="nd-num">สัดส่วน</th><th class="nd-num">ยังไม่จบ</th><th class="nd-num">ด่วน</th><th class="nd-num">ปิดงานเฉลี่ย</th></tr></thead><tbody>
+      ${items.length ? `<div class="table-wrap" tabindex="0" role="region" aria-label="ตารางแผนกที่แจ้งซ่อมบ่อย"><table><thead><tr><th>แผนก</th><th class="nd-num">ใบแจ้งซ่อม</th><th class="nd-num">สัดส่วน</th><th class="nd-num">ยังไม่จบ</th><th class="nd-num">ด่วน</th><th class="nd-num">ปิดงานเฉลี่ย</th></tr></thead><tbody>
       ${items.map((item) => `<tr><td>${selectButton("deptrank", item.dept, esc(item.dept || "ไม่ระบุแผนก"), "nd-rowbtn")}${filters.dept === item.dept ? ` <span class="nd-muted">(กรองอยู่)</span>` : ""}</td><td class="nd-num">${esc(fmtNumber(item.count))}</td><td class="nd-num">${esc(fmtPercent(item.share))}</td><td class="nd-num">${esc(fmtNumber(item.open))}</td><td class="nd-num">${esc(fmtNumber(item.urgent))}</td><td class="nd-num">${esc(fmtDays(item.avgCycle))}</td></tr>${detailRow(item.dept)}`).join("")}</tbody></table></div>` : `<p class="nd-empty">ไม่มีใบแจ้งซ่อมในช่วงที่เลือก</p>`}
       ${detailHintIfIdle("deptrank", "ชื่อแผนก", resolve)}`;
   }
