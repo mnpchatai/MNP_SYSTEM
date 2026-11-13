@@ -1156,7 +1156,8 @@
       const reason = window.prompt(`เหตุผลที่ยกเลิกรายการนี้ (อย่างน้อย ${VOID_REASON_MIN} ตัวอักษร)`);
       if (reason === null) return;
       // app_ncr_void_loss รับ 3–500 ตัวอักษร (ต่างจากยกเลิกทั้งใบ 5 ตัวอักษร) ตรวจก่อนส่ง ข้อความ INVALID_REASON จึงไม่บอกเลขผิด
-      if (reason.trim().length < VOID_REASON_MIN || reason.trim().length > VOID_REASON_MAX) {
+      const reasonLength = [...reason.trim()].length; // นับเป็นตัวอักษรแบบ char_length ของฐานข้อมูล ไม่ใช่ UTF-16
+      if (reasonLength < VOID_REASON_MIN || reasonLength > VOID_REASON_MAX) {
         showToast(`เหตุผลที่ยกเลิกรายการต้องมี ${VOID_REASON_MIN}–${VOID_REASON_MAX} ตัวอักษร`, "error");
         return;
       }

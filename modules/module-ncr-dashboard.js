@@ -215,13 +215,12 @@
   function actHtml(list, top, today) {
     const open = list.filter((row) => row.isOpen);
     const slaCell = (row) => {
-      if (row.status === "awaiting_disposition") return `<span class="nd-muted">ยังไม่เริ่มนับ</span>`;
       if (row.preventionPending) {
         if (!row.prevention_due) return `<span class="nd-muted">รอแนวทางป้องกัน</span>`;
         const leftPrevention = daysBetween(today, row.prevention_due);
         return row.preventionOverdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>ป้องกัน เกิน ${Math.abs(leftPrevention)} วัน</span>` : `<span class="nd-pill">ป้องกัน อีก ${leftPrevention} วัน</span>`;
       }
-      if (row.status !== "awaiting_response") return `<span class="nd-muted">ตอบแล้ว</span>`;
+      if (!["awaiting_disposition", "awaiting_response"].includes(row.status)) return `<span class="nd-muted">ตอบแล้ว</span>`;
       if (!row.slaDue) return "—";
       const left = daysBetween(today, row.slaDue);
       return row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เกิน ${Math.abs(left)} วัน</span>` : `<span class="nd-pill">อีก ${left} วัน</span>`;
@@ -416,13 +415,13 @@
     if (list.length && !rest.length && !hasDrillFilter(filters)) return "";
     return `<div class="nd-head"><h2>รายการ NCR ที่ประกอบเป็นตัวเลขด้านบน</h2><p class="nd-keep">ทั้งหมด <b>${fmtNumber(list.length)}</b> ใบ${shownAbove ? ` · ไม่แสดงซ้ำ ${fmtNumber(shownAbove)} ใบที่อยู่ใน “ต้องลงมือตอนนี้”` : ""}</p></div>
       ${shown.length ? `<div class="table-wrap"><table class="nd-rowlink"><thead><tr><th>เลขที่</th><th>วันที่ออก</th><th>สินค้า / ข้อบกพร่อง</th><th>สถานะ</th><th class="nd-num">สุทธิยืนยัน (฿)</th><th class="nd-num">ประมาณการ (฿)</th></tr></thead><tbody>
-      ${shown.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a></td><td class="nd-nowrap">${formatDate(row.issue_date)}</td><td>${esc(row.product_name)}<br><span class="nd-muted">${esc(row.defect?.name_th ?? "—")} · ${esc(row.responsibilities.map((item) => item.dept).join("+") || "—")}</span></td><td>${row.overdue ? `<span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนดตอบ</span>` : esc(STATUS_LABELS[row.status] ?? row.status)}${row.preventionPending ? `<br><span class="nd-pill${row.preventionOverdue ? " crit" : ""}">${row.preventionOverdue ? `<span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนดส่งแนวทางป้องกัน` : "รอแนวทางป้องกัน"}</span>` : ""}</td><td class="nd-num">${row.fin.net ? fmtNumber(row.fin.net) : "—"}</td><td class="nd-num">${row.fin.estimated ? fmtNumber(row.fin.estimated) : "—"}</td></tr>`).join("")}</tbody></table></div>
+      ${shown.map((row) => `<tr><td><a class="request-no" href="#/ncr?id=${encodeURIComponent(row.id)}">${esc(row.ncr_no)}</a></td><td class="nd-nowrap">${formatDate(row.issue_date)}</td><td>${esc(row.product_name)}<br><span class="nd-muted">${esc(row.defect?.name_th ?? "—")} · ${esc(row.responsibilities.map((item) => item.dept).join("+") || "—")}</span></td><td>${esc(STATUS_LABELS[row.status] ?? row.status)}${row.overdue ? `<br><span class="nd-pill crit"><span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนดตอบ</span>` : ""}${row.preventionPending ? `<br><span class="nd-pill${row.preventionOverdue ? " crit" : ""}">${row.preventionOverdue ? `<span class="nd-ico" aria-hidden="true">▲</span>เลยกำหนดส่งแนวทางป้องกัน` : "รอแนวทางป้องกัน"}</span>` : ""}</td><td class="nd-num">${row.fin.net ? fmtNumber(row.fin.net) : "—"}</td><td class="nd-num">${row.fin.estimated ? fmtNumber(row.fin.estimated) : "—"}</td></tr>`).join("")}</tbody></table></div>
       ${rest.length > drillLimit ? `<div><button type="button" class="btn secondary" data-more>แสดงเพิ่ม (เหลือ ${fmtNumber(rest.length - drillLimit)} ใบ)</button></div>` : ""}` : `<p class="nd-empty">${list.length ? "ทุกใบอยู่ใน “ต้องลงมือตอนนี้” ด้านบนแล้ว" : "ไม่มี NCR ตรงกับตัวกรองนี้"}</p>`}`;
   }
 
   const definitionsHtml = `<details class="nd-defs"><summary>นิยามที่ใช้ในหน้านี้</summary><div><ol>
     <li><b>ฐานเวลา:</b> ทุกตัวเลขนับจากใบที่ออกในช่วงที่เลือก มูลค่าคือยอดสะสมของใบนั้น</li>
-    <li><b>SLA 5 วัน:</b> เริ่มนับเมื่อใบเข้าขั้น "รอแผนกตอบ" (ส่งกลับมาตอบใหม่ก็เริ่มนับใหม่) ขั้นรอ ผจก.โรงงานพิจารณายังไม่นับ ตอบทัน % = ตอบทัน ÷ (ตอบแล้ว + เลยกำหนดที่ยังไม่ตอบ) จึงต่างจากป้าย "เลยกำหนดตอบ" ในทะเบียน NCR ที่นับจากวันออกใบ</li>
+    <li><b>SLA 5 วัน:</b> กำหนดตอบ = วันออกใบ + 5 วัน (QA ส่งกลับให้ตอบใหม่ = วันส่งกลับ + 5 วัน) วันเดียวกับป้าย "เลยกำหนดตอบ" ในทะเบียน NCR จึงเลยกำหนดได้ตั้งแต่ยังรอผู้จัดการโรงงานพิจารณา ตอบทัน % = ตอบทัน ÷ (ตอบแล้ว + เลยกำหนดที่ยังไม่ตอบ)</li>
     <li><b>แนวทางป้องกัน:</b> การตอบภายใน 5 วันบังคับแค่สาเหตุและแนวทางแก้ไข แนวทางป้องกันส่งตามมาได้ภายในกำหนดตอบ + 7 วัน "รอแนวทางป้องกัน" = ใบที่รอ QA ติดตามผลแต่แผนกยังไม่ส่ง (QA ยังปิดประเด็นไม่ได้) นับแยกจาก SLA ตอบ 5 วัน</li>
     <li><b>ขั้นที่ต้องประเมินความสูญเสีย:</b> ตั้งแต่ขั้นรอแผนกตอบเป็นต้นไป ประเมินครบ = ติ๊กประเมินครบแล้วและไม่มีรายการประมาณการหรือรายการเดิมค้าง</li>
     <li><b>ยอดหลัก:</b> นับเฉพาะยืนยันแล้ว สุทธิ = ความสูญเสียที่ยืนยัน − ชดเชยยืนยัน ประมาณการและรายการเดิมแสดงแยก</li></ol>

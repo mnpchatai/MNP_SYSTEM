@@ -404,7 +404,13 @@ test("batch 19: one search across list fields, NCR responders read the problem i
   assert.match(read("supabase/migrations/20261118010000_request_status_board_expected_date.sql"), /can_open boolean,\r?\n\s+work_expected_date date\r?\n\)/);
   // รอบ 21: ยกเลิกรายการความสูญเสียรับเหตุผล 3–500 ตัวอักษรตามฐานข้อมูล (ข้อความ INVALID_REASON "5" เป็นของยกเลิกทั้งใบ)
   assert.match(ncr, /const VOID_REASON_MIN = 3;\r?\n\s+const VOID_REASON_MAX = 500;/);
-  assert.match(ncr, /if \(reason\.trim\(\)\.length < VOID_REASON_MIN \|\| reason\.trim\(\)\.length > VOID_REASON_MAX\) \{\r?\n\s+showToast\(`เหตุผลที่ยกเลิกรายการต้องมี \$\{VOID_REASON_MIN\}–\$\{VOID_REASON_MAX\} ตัวอักษร`, "error"\);\r?\n\s+return;/);
+  // แดชบอร์ด NCR: ช่องกำหนดและนิยามใช้กติกาเดียวกับ model (นับจากวันออกใบ รวมขั้นรอผู้จัดการโรงงานพิจารณา)
+  const ncrBoard = read("modules/module-ncr-dashboard.js");
+  assert.doesNotMatch(ncrBoard, /ยังไม่เริ่มนับ|ขั้นรอ ผจก\.โรงงานพิจารณายังไม่นับ/);
+  assert.match(ncrBoard, /if \(!\["awaiting_disposition", "awaiting_response"\]\.includes\(row\.status\)\) return `<span class="nd-muted">ตอบแล้ว<\/span>`;/);
+  assert.match(ncrBoard, /<li><b>SLA 5 วัน:<\/b> กำหนดตอบ = วันออกใบ \+ 5 วัน/);
+  assert.match(ncrBoard, /<td>\$\{esc\(STATUS_LABELS\[row\.status\] \?\? row\.status\)\}\$\{row\.overdue \? `<br><span class="nd-pill crit">/, "an overdue row still names the step it waits in");
+  assert.match(ncr, /const reasonLength = \[\.\.\.reason\.trim\(\)\]\.length;[^\n]*\r?\n\s+if \(reasonLength < VOID_REASON_MIN \|\| reasonLength > VOID_REASON_MAX\) \{\r?\n\s+showToast\(`เหตุผลที่ยกเลิกรายการต้องมี \$\{VOID_REASON_MIN\}–\$\{VOID_REASON_MAX\} ตัวอักษร`, "error"\);\r?\n\s+return;/);
   assert.match(app, /needed_date,work_expected_date,machine_code/);
   assert.match(ncr, /\$\{briefInAction \? "" : partField\("รายละเอียด \(ปัญหา สเปค และค่าที่วัดได้จริง\)"/);
   assert.match(ncr, /<h3>ส่วนที่ 3 — ตอบ NCR<\/h3>\r?\n\s+\$\{responseDueNote\(ncr\)\}/);
