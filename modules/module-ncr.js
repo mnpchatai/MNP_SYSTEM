@@ -147,25 +147,39 @@
     }
   };
   // คืน store ของร่าง (ผู้เรียกล้างเมื่อส่งสำเร็จ) หรือ null เมื่อฟอร์มนี้ไม่เก็บร่าง
-  const bindStepDraft = (form, ncrId, employeeId, draftApi = window.MNP_FORM_DRAFT) => {
+  // ร่างเป็นของเสริม: พังเมื่อไร (storage แปลก วันที่เสีย) ฟอร์มยังส่งได้ตามปกติ
+  const bindStepDraft = (form, ncrId, employeeId, { draftApi = window.MNP_FORM_DRAFT, updatedAt = null } = {}) => {
+    try {
+      return bindStepDraftUnsafe(form, ncrId, employeeId, draftApi, updatedAt);
+    } catch {
+      return null;
+    }
+  };
+  const bindStepDraftUnsafe = (form, ncrId, employeeId, draftApi, updatedAt) => {
     if (!draftApi || !employeeId || !STEP_DRAFT_ACTIONS.includes(form.dataset?.action)) return null;
     const store = draftApi.createDraftStore({ key: draftApi.draftKey(`NCR_STEP:${form.dataset.action}:${ncrId}`, employeeId) });
     const autosave = draftApi.createAutosave({ store, values: () => stepDraftValues(form) });
     form.addEventListener("input", () => autosave.schedule());
     form.addEventListener("change", () => autosave.schedule());
+    // ค่าตั้งต้นของฟอร์ม: ฟอร์มตอบที่ QA ส่งกลับมีคำตอบเดิมจากเซิร์ฟเวอร์อยู่แล้ว "เริ่มกรอกเอง" จึงนับเมื่อค่าเปลี่ยนจากนี้ ไม่ใช่เมื่อฟอร์มไม่ว่าง
+    const baseline = JSON.stringify(stepDraftValues(form));
     const draft = store.load();
     // ร่างที่ตรงกับค่าในฟอร์มอยู่แล้ว (เช่น ส่งไปแล้วแต่ล้างไม่ทัน) ไม่ต้องถาม
-    if (draft && JSON.stringify(draft.values) !== JSON.stringify(stepDraftValues(form))) {
+    if (draft && JSON.stringify(draft.values) !== baseline) {
       autosave.stop();
+      const savedAt = new Date(draft.savedAt);
+      if (Number.isNaN(savedAt.getTime())) throw new Error("bad draft date");
+      // ใบถูกแก้หลังบันทึกร่าง (เช่น QA ส่งกลับอีกรอบ): บอกก่อนให้เลือก ใช้ร่างต่อ จะแทนข้อความในฟอร์ม
+      const newer = updatedAt && Date.parse(updatedAt) > draft.savedAt ? " · ใบนี้มีการอัปเดตหลังร่างนี้ ใช้ร่างต่อจะแทนข้อความในฟอร์ม" : "";
       form.insertAdjacentHTML("afterbegin", '<div class="draft-banner" role="region" aria-label="ร่างที่ค้างอยู่" hidden></div>');
       draftApi.offerDraft({
         banner: form.querySelector(".draft-banner"),
-        message: `มีร่างที่พิมพ์ค้างไว้จาก ${formatDate(new Date(draft.savedAt).toISOString(), true)}`,
+        message: `มีร่างที่พิมพ์ค้างไว้จาก ${formatDate(savedAt.toISOString(), true)}${newer}`,
         onUse: () => { autosave.start(); restoreStepDraft(form, draft.values); form.querySelector("textarea, input:not([type=hidden])")?.focus(); },
         onDiscard: () => { autosave.start(); store.clear(); },
         form,
         onEdit: () => { autosave.start(); autosave.schedule(); },
-        hasInput: () => !draftApi.isEmptyDraft(stepDraftValues(form)),
+        hasInput: () => JSON.stringify(stepDraftValues(form)) !== baseline,
       });
     } else if (draft) {
       store.clear();
@@ -1157,7 +1171,7 @@
     });
 
     document.querySelectorAll("form.ncr-action").forEach((form) => clearActionErrorOnEdit(form));
-    const stepDrafts = new Map([...document.querySelectorAll("form.ncr-action")].map((form) => [form, bindStepDraft(form, ncr.id, state.employee?.id)]));
+    const stepDrafts = new Map([...document.querySelectorAll("form.ncr-action")].map((form) => [form, bindStepDraft(form, ncr.id, state.employee?.id, { updatedAt: ncr.updated_at ?? null })]));
     document.querySelectorAll("form.ncr-action").forEach((form) => form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const action = form.dataset.action;

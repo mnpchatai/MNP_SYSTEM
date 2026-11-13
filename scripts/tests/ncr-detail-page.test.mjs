@@ -812,4 +812,37 @@ test("long step forms keep a local draft: respond, submit prevention and answer 
   assert.equal(memory.has(key), false, "a successful submit clears the draft");
   const source = fs.readFileSync("modules/module-ncr.js", "utf8");
   assert.match(source, /if \(result\.error\) throw result\.error;\r?\n\s+stepDrafts\.get\(form\)\?\.clear\(\);/, "cleared only after the RPC succeeded");
+  assert.match(source, /bindStepDraft\(form, ncr\.id, state\.employee\?\.id, \{ updatedAt: ncr\.updated_at \?\? null \}\)/);
+
+  // ฟอร์มตอบที่ QA ส่งกลับมีคำตอบเดิมจากเซิร์ฟเวอร์: แตะฟอร์มโดยไม่ได้เปลี่ยนค่า ไม่ปิดแถบและไม่บันทึกทับร่าง (auditor รอบ 23)
+  const savedDraft = { v: 1, savedAt: Date.parse("2026-11-12T03:00:00Z"), values: { causes: ["man"], root_cause: "ร่างของฉัน" } };
+  memory.set(key, JSON.stringify(savedDraft));
+  const returned = draftForm("respond", { root_cause: "คำตอบเดิมที่ถูกส่งกลับ" });
+  bindStepDraft(returned, "ncr-1", "emp-rb", { updatedAt: "2026-11-13T01:00:00Z" });
+  assert.equal(returned.banner.hidden, false);
+  assert.match(returned.banner.innerHTML, /ใบนี้มีการอัปเดตหลังร่างนี้/, "the banner warns that the NCR changed after the draft");
+  returned.listeners.input.forEach((handler) => handler({ isTrusted: true, target: {} }));
+  assert.equal(returned.banner.hidden, false, "touching a pre-filled form without changing it keeps the choice open");
+  assert.equal(JSON.parse(memory.get(key)).values.root_cause, "ร่างของฉัน", "the draft is not overwritten by the server text");
+  returned.elements[2].value = "แก้เอง";
+  returned.listeners.input.forEach((handler) => handler({ isTrusted: true, target: {} }));
+  assert.equal(returned.banner.hidden, true, "a real edit means starting over");
+  assert.equal(JSON.parse(memory.get(key)).values.root_cause, "แก้เอง");
+
+  // เริ่มใหม่ ล้างร่าง · ร่างของใบอื่นหรือผู้ใช้อื่นไม่ถูกเสนอ · วันที่ร่างเสียไม่ทำให้ฟอร์มพัง
+  memory.set(key, JSON.stringify(savedDraft));
+  const fresh = draftForm("respond");
+  bindStepDraft(fresh, "ncr-1", "emp-rb");
+  assert.doesNotMatch(fresh.banner.innerHTML, /อัปเดตหลังร่าง/);
+  fresh.banner.listeners.click({ target: { closest: () => ({ dataset: { draft: "discard" } }) } });
+  assert.equal(memory.has(key), false);
+  memory.set(key, JSON.stringify(savedDraft));
+  const otherNcr = draftForm("respond");
+  bindStepDraft(otherNcr, "ncr-2", "emp-rb");
+  const otherUser = draftForm("respond");
+  bindStepDraft(otherUser, "ncr-1", "emp-other");
+  assert.equal(otherNcr.inserted, undefined);
+  assert.equal(otherUser.inserted, undefined);
+  memory.set(key, JSON.stringify({ ...savedDraft, savedAt: 9e15 }));
+  assert.equal(bindStepDraft(draftForm("respond"), "ncr-1", "emp-rb"), null, "a corrupt draft date returns no draft instead of breaking the page");
 });
