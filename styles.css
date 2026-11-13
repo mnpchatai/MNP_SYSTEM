@@ -884,7 +884,6 @@ a.register-title:hover { color: var(--primary); }
   .detail-actions .form-actions { position: sticky; bottom: 0; z-index: 4; margin-inline: -20px; margin-bottom: -20px; padding: 12px 20px; background: var(--paper); border-top: 1px solid var(--line); border-radius: 0 0 var(--radius-md) var(--radius-md); }
   .detail-actions .detail-reply-more .form-actions, .detail-actions .detail-action:not(:last-child) .form-actions { margin-bottom: 0; border-radius: 0; }
   .ncr-actions form.ncr-action > .form-actions { position: sticky; bottom: 0; z-index: 4; padding-block: 12px; background: var(--paper); border-top: 1px solid var(--line); }
-  .detail-actions #repair-verify .approval-actions { position: sticky; bottom: 0; z-index: 4; justify-content: flex-end; padding-block: 12px; background: var(--paper); border-top: 1px solid var(--line); }
 }
 @media (max-width: 760px) {
   :is(.ncr-actions, .detail-actions) :is(.form-actions, .approval-actions) { position: sticky; bottom: 0; z-index: 4; margin-inline: -20px; padding: 10px 20px calc(10px + env(safe-area-inset-bottom, 0px)); background: var(--paper); border-top: 1px solid var(--line); }

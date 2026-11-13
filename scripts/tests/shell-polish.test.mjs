@@ -507,4 +507,6 @@ test("round 25 (second pass): register rows open from the whole row on every scr
   assert.match(app, /if \(event\.ctrlKey \|\| event\.metaKey \|\| event\.altKey \|\| event\.defaultPrevented \|\| document\.querySelector\("#home-queue \.queue-list, #decision-panel"\)\) return;/, "the queue and detail pages keep their own J/K/A/R");
   assert.match(read("modules/shortcut-help.js"), /เลื่อนไปใบถัดไป \/ ก่อนหน้า ในหน้าหลักและในรายการ \(Enter เปิดใบ\)/);
   assert.doesNotMatch(css, /\.queue-item\.is-selected:has\(\.queue-item-main:focus-visible\)/);
+  assert.match(app, /raised\.closest\("tr"\)\?\.querySelector\("a\.register-title"\)\?\.click\(\);/, "a click on a raised sub line or badge still opens the row");
+  assert.doesNotMatch(css, /#repair-verify \.approval-actions \{ position: sticky/, "the nested confirm box keeps its own style");
 });

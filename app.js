@@ -2864,6 +2864,14 @@ function syncQueueBulk() {
   trackActionBarHeight();
 }
 
+// แถวทะเบียน: คลิกบนบรรทัดย่อยหรือป้ายที่ยกขึ้นเหนือพื้นที่คลิก (เพื่อชี้ดู title) ก็เปิดใบเหมือนคลิกที่อื่นของแถว
+document.addEventListener("click", (event) => {
+  const raised = event.target.closest?.(".register-table tbody tr :is(.register-sub[title], .badge[title])");
+  if (!raised || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  if (event.target.closest("a, button, input, select, textarea, label")) return;
+  raised.closest("tr")?.querySelector("a.register-title")?.click();
+});
+
 // J/K ในทะเบียน: เลื่อนโฟกัสไปลิงก์หัวเรื่องของแถวถัดไป/ก่อนหน้า Enter เปิดใบ (หน้าหลักและหน้ารายละเอียดใช้ตัวจัดการของคิวด้านล่าง)
 document.addEventListener("keydown", (event) => {
   if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented || document.querySelector("#home-queue .queue-list, #decision-panel")) return;
