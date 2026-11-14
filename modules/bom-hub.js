@@ -832,6 +832,9 @@
       }
     }
     if (rfCan(ctx, "purchase")) {
+      // เคมีที่ใบสั่งผลิตของ RubberFlow ที่เปิดอยู่ยังขาด (รวมใบที่ไม่ได้มาจากใบ PI): สั่งที่แท็บใบสั่งซื้อของหน้าคลัง
+      const chem = (() => { try { return ctx.rubberflow()?.openChemicalNeeds?.()?.rows.filter((row) => row.shortageKg > 0) ?? []; } catch { return []; } })();
+      if (chem.length) tasks.push({ kind: "chem", short: chem });
       for (const order of ctx.data.orders) {
         if (!["released", "in_progress"].includes(order.status) && !(order.status === "draft" && order.explosion?.length)) continue;
         const short = ctx.rules.partNeeds({ jobs: ctx.data.jobs, orders: ctx.data.orders, stock: ctx.data.stock ?? [], purchaseOrders }, order.id).rows.filter((row) => row.shortage > 0);
@@ -912,6 +915,12 @@
           <h2>${esc(`รับเข้าตามใบสั่งซื้อ ${task.po.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${task.po.sourcePi ? esc(`สั่งจากใบ ${task.po.sourcePi}`) : ""}</p>
           <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span class="rf-mono">${esc(line.materialCode)}</span><span class="nowrap">${esc(`${rules.fmtQty(line.qtyKg)} ${unit(line)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
           ${ui.link("ตรวจสอบรับเข้า", `#/rubberflow?p=warehouse&tab=po&q=${encodeURIComponent(task.po.id)}`, "btn rf-btn bom-job-main")}</article>`;
+      }
+      if (task.kind === "chem") {
+        return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">เคมีขาด ยังไม่ได้สั่ง</span></div>
+          <h2>${esc(`สั่งซื้อเคมีที่ขาด ${task.short.length} รายการ`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}สำหรับใบสั่งผลิตของแผนก RB ที่เปิดอยู่</p>
+          <ul class="bom-job-parts">${task.short.slice(0, 6).map((row) => `<li><span>${esc(row.name || row.materialCode)}</span><span class="nowrap">${esc(`ขาด ${rules.fmtQty(row.shortageKg)} กก.`)}</span></li>`).join("")}</ul>${task.short.length > 6 ? `<p class="small muted">และอีก ${task.short.length - 6} รายการ</p>` : ""}
+          ${ui.link("เปิดหน้าใบสั่งซื้อ", "#/rubberflow?p=warehouse&tab=po", "btn rf-btn bom-job-main")}</article>`;
       }
       return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">ของขาด ยังไม่ได้สั่ง</span></div>
         <h2>${esc(`สั่งซื้อของที่ขาดของใบ ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${esc(task.order.customer ?? "")}</p>

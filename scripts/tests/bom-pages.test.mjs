@@ -2295,3 +2295,45 @@ test("an inserted WIP item enters the parent at the step its line was ticked for
   A.createPurchaseOrder(d, { ...payload, safety: { [material.code]: 20 } }, ctx({ name: "ผู้ดูแล", role: "admin", planner: true }));
   assert.equal(d.materials[0].safetyKg, 20, "an account that may edit materials still changes it with the order");
 });
+
+test("the store orders chemicals for every open RubberFlow work order from the purchase-order tab, and sees the shortage as a job", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const rf = env.rf.store.data();
+  const rules = env.context.MNP_RUBBERFLOW_RULES;
+  const open = rf.orders.filter((order) => rules.OPEN_ORDER.includes(order.status));
+  assert.ok(open.length > 0, "the demo has open work orders");
+  const rfCtx = (rights, query = "p=warehouse&tab=po") => ({ ...env.rf.context(new URLSearchParams(query)), can: (permission) => rights.includes(permission) });
+  // สต็อกพอ: ปุ่มเป็นปุ่มตรวจ · ทำให้เคมีตัวหนึ่งขาด: ปุ่มบอกจำนวนรายการที่ขาด
+  let page = env.context.MNP_RUBBERFLOW_PAGES.warehouse(rfCtx(["purchase"])).html;
+  clean(page);
+  assert.match(page, /data-rf-open="purchase" data-rf-args="\{&quot;allOpen&quot;:true,&quot;parts&quot;:false\}"/);
+  const all = env.rf.openChemicalNeeds();
+  assert.ok(all.rows.length > 0);
+  const code = all.rows[0].materialCode;
+  rf.materialLots = rf.materialLots.filter((lot) => lot.materialCode !== code);
+  page = env.context.MNP_RUBBERFLOW_PAGES.warehouse(rfCtx(["purchase"])).html;
+  assert.match(page, />สั่งซื้อเคมีที่ขาด 1 รายการ</);
+  assert.doesNotMatch(env.context.MNP_RUBBERFLOW_PAGES.warehouse(rfCtx(["purchase"], "p=warehouse")).html, /allOpen/, "only on the purchase-order tab");
+  // หน้าต่าง: เคมีของทุกใบที่เปิดอยู่ ชุดเดียวกับ openChemicalNeeds · ไม่มีตารางของซื้อของ BOM
+  const dialog = env.context.MNP_RUBBERFLOW_DIALOGS.purchase(rfCtx(["purchase"]), { allOpen: true, parts: false }).html;
+  clean(dialog);
+  const needs = env.rf.openChemicalNeeds();
+  assert.equal((dialog.match(/data-rf-po-row/g) ?? []).length, needs.rows.length);
+  assert.equal((dialog.match(/class="rf-po-need"/g) ?? []).length, 1);
+  assert.match(dialog, new RegExp(`class="rf-po-need"><td><span class="rf-mono">${code}</span>`));
+  assert.doesNotMatch(dialog, /ของซื้อ \(ตามหน่วยของชิ้น\)/);
+  // งานของฉันของคลังวัตถุดิบ: การ์ดเคมีที่ขาด พาไปแท็บใบสั่งซื้อ · ผู้ที่สั่งไม่ได้ไม่เห็น
+  const hub = env.context.MNP_BOM_PAGES.hub;
+  const stUser = env.store.data().users.find((user) => user.role === "st");
+  const stCtx = (rights) => ({ ...env.ctx("p=work"), user: stUser, store: { ...env.store, isRemote: () => true }, rubberflow: () => ({ ...env.rf, can: (permission) => rights.includes(permission) }) });
+  const tasks = hub.storeTasks(stCtx(["purchase"]));
+  assert.deepEqual(json(tasks.filter((task) => task.kind === "chem").map((task) => task.short.map((row) => row.materialCode))), [[code]]);
+  const html = env.context.MNP_BOM_PAGES.work(stCtx(["purchase"])).html;
+  clean(html);
+  assert.match(html, /<h2>สั่งซื้อเคมีที่ขาด 1 รายการ<\/h2>/);
+  assert.match(html, /href="#\/rubberflow\?p=warehouse&amp;tab=po">เปิดหน้าใบสั่งซื้อ</);
+  assert.equal(hub.storeTasks(stCtx(["receiveMaterial"])).some((task) => task.kind === "chem"), false);
+  // แผนก RB ที่เคมีไม่พอ: ไม่มีปุ่มสั่ง มีข้อความให้แจ้งคลังวัตถุดิบ
+  assert.match(fs.readFileSync("modules/rubberflow-pages-line.js", "utf8"), /แจ้งคลังวัตถุดิบ \(ST\) ให้สั่งซื้อ/);
+});

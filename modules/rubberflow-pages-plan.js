@@ -392,7 +392,10 @@
         });
         return [head, ...lines];
       });
-    const listbar = `<div class="rf-listbar">${tabs}<div class="rf-row">${tab === "materials" && mayEditMaterial ? ui.openButton("เพิ่มวัตถุดิบ", "materialEdit", {}, { className: "small" }) : ""}${tab === "fg" ? `<button class="btn rf-btn small" type="submit" form="rf-ship" data-rf-ship disabled>ส่งมอบกล่องที่เลือก</button>` : ""}${searchForm(ctx, "ค้นหารหัส…", { tab: true })}</div></div>`;
+    const openWoIds = data.orders.filter((order) => rules.OPEN_ORDER.includes(order.status)).map((order) => order.id);
+    const chemShort = tab === "po" && ctx.can("purchase") && openWoIds.length ? rules.chemicalNeeds(data, openWoIds, now, { remote: ctx.store.isRemote() }).rows.filter((row) => row.shortageKg > 0).length : 0;
+    const chemButton = tab === "po" && openWoIds.length ? ui.openButton(chemShort ? `สั่งซื้อเคมีที่ขาด ${chemShort} รายการ` : "ตรวจเคมีของใบสั่งผลิตที่เปิดอยู่", "purchase", { allOpen: true, parts: false }, { className: chemShort ? "small" : "secondary small" }) : "";
+    const listbar = `<div class="rf-listbar">${tabs}<div class="rf-row">${chemButton}${tab === "materials" && mayEditMaterial ? ui.openButton("เพิ่มวัตถุดิบ", "materialEdit", {}, { className: "small" }) : ""}${tab === "fg" ? `<button class="btn rf-btn small" type="submit" form="rf-ship" data-rf-ship disabled>ส่งมอบกล่องที่เลือก</button>` : ""}${searchForm(ctx, "ค้นหารหัส…", { tab: true })}</div></div>`;
     const tableHtml = tab === "materials"
       ? ui.table(["รหัส", "ชื่อวัตถุดิบ", "หมวด", "ที่จัดเก็บ", "หน่วย", { label: "สต็อกขั้นต่ำ (kg)", className: "right" }, { label: "อายุการเก็บ (วัน)", className: "right" }, "สถานะ", { label: "", className: "right" }], materialRows, { emptyText: ctx.q ? "ไม่พบวัตถุดิบ" : "ยังไม่มีวัตถุดิบ" })
       : tab === "po"
@@ -499,7 +502,9 @@
     } else {
       // args.draftOrders = WO ชั่วคราวของใบ PI ที่ยังเป็นร่าง (จาก BOM ขั้นตรวจของ): คิดเหมือน WO ที่จะถูกเปิดตอนปล่อยผลิต จึงสั่งเคมีที่ขาดได้ก่อนปล่อย
       const draftOrders = Array.isArray(args.draftOrders) ? args.draftOrders : [];
-      const result = rules.chemicalNeeds(draftOrders.length ? { ...data, orders: [...data.orders, ...draftOrders] } : data, [...(args.woIds ?? []), ...draftOrders.map((order) => order.id)], now, { remote: ctx.store.isRemote() });
+      // args.allOpen = ใบสั่งผลิตที่ยังเปิดอยู่ทุกใบ (ปุ่มในแท็บใบสั่งซื้อของหน้าคลัง): ความต้องการรวมของทุกใบเทียบสต็อก
+      const woIds = args.allOpen ? data.orders.filter((order) => rules.OPEN_ORDER.includes(order.status)).map((order) => order.id) : args.woIds ?? [];
+      const result = rules.chemicalNeeds(draftOrders.length ? { ...data, orders: [...data.orders, ...draftOrders] } : data, [...woIds, ...draftOrders.map((order) => order.id)], now, { remote: ctx.store.isRemote() });
       rows = result.rows;
       skipped += result.skipped.length;
     }
