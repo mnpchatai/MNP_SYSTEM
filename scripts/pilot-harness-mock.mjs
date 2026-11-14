@@ -1444,7 +1444,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
             const common = { needKg: line.needKg, availableKg: line.availableKg, shortageKg: line.shortageKg, safetyKg: line.safetyKg, qtyKg: line.qtyKg, receivedKg: null, lotNo: null, expiry: null, receivedAt: null, receivedBy: null };
             if (line.source === "bom") {
               const item = bomLoad().items.find((row) => row.code === bomCode(line.materialCode) && row.kind === "PURCHASED") ?? fail(bad);
-              // สต็อกขั้นต่ำของซื้อเปลี่ยนได้เฉพาะกลุ่มวางแผน (ไม่มีแถวสต็อก = 0) · ตรงกับ rf_save_purchase_orders
+              // สต็อกขั้นต่ำของซื้อเปลี่ยนได้โดยกลุ่มวางแผนหรือแผนก ST (ไม่มีแถวสต็อก = 0) · ตรงกับ rf_save_purchase_orders
               // storedSafetyKg = ค่าที่หน้าต่างแสดงตอนเปิด: ส่งมาเท่ากัน = ผู้สั่งไม่ได้แก้ จึงไม่เขียนทับค่าที่ผู้อื่นเพิ่งตั้ง (ตรงกับ 20261120010000)
               const storedRow = bomLoad().stock.find((entry) => entry.itemCode === item.code);
               if (line.storedSafetyKg !== undefined && line.storedSafetyKg !== null && !money(line.storedSafetyKg)) fail(bad);
