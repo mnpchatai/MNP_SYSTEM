@@ -77,6 +77,10 @@ insert into auth.users (id, email, raw_user_meta_data) values ('8f100000-0000-00
 insert into public.employees (id, employee_no, first_name, last_name, email, job_title, department_id, role_id, auth_user_id) values
   ('8f100000-0000-0000-0000-000000000101', 'RF2-ADMIN', 'Rf', 'Admin', 'rf2-admin@test.local', 'System Administrator',
    (select id from public.departments where code = 'MGT'), (select id from public.roles where code = 'admin'), '8f100000-0000-0000-0000-000000000001');
+-- persona ผู้ดูแลระบบ (is_test) ไว้ตรวจว่า admin ยังรับล็อตใหม่ได้ (ไม่มี persona บทบาท admin ในชุดตั้งต้น)
+insert into public.employees (employee_no, first_name, last_name, email, job_title, department_id, role_id, is_active, is_test) values
+  ('SBX-ADMIN-T', 'ทดสอบ', 'ผู้ดูแลระบบ', 'sbx-admin-t@sandbox.local', 'ผู้ดูแลระบบ (ทดสอบ)',
+   (select id from public.departments where code = 'MGT'), (select id from public.roles where code = 'admin'), false, true);
 select count(set_config('test.p_' || lower(replace(employee_no, '-', '_')), id::text, true)) from public.employees where is_test;
 select count(set_config('test.n_' || lower(replace(employee_no, '-', '_')), first_name || ' ' || last_name, true)) from public.employees where is_test;
 -- ข้อมูลจริง (ไม่ใช่โหมดทดสอบ) ใส่ตรง: โหมดทดสอบต้องมองไม่เห็นและ purge ไม่แตะ
@@ -194,8 +198,13 @@ select is((select x ->> 'receivedBy' from jsonb_array_elements(current_setting('
 select is((select x ->> 'initialKg' from jsonb_array_elements(current_setting('test.res')::jsonb -> 'changes' -> 'materialLots' -> 'upsert') x where x ->> 'lotNo' = 'RM-A-1'), '100', 'the initial quantity equals the received quantity');
 select ok(((select x ->> 'receivedAt' from jsonb_array_elements(current_setting('test.res')::jsonb -> 'changes' -> 'materialLots' -> 'upsert') x where x ->> 'lotNo' = 'RM-A-1'))::bigint <> 1, 'the receiving time is the server time');
 select is((select x ->> 'location' from jsonb_array_elements(current_setting('test.res')::jsonb -> 'changes' -> 'materialLots' -> 'upsert') x where x ->> 'lotNo' = 'RM-A-1'), 'A-1', 'the location is stored');
+-- กติกา (20261119010000_rf_purchase_by_st.sql): รับล็อตใหม่เข้าคลังได้เฉพาะ ST และ admin · กลุ่มวางแผนและผู้จัดการแผนกอื่นได้ RF_FORBIDDEN
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
-select is(public.app_rf_save(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.ml')::jsonb || '{"lotNo":"RM-C-1","materialCode":"MAT-C","qtyKg":20}'::jsonb || jsonb_build_object('expiry', current_setting('test.now_ms')::bigint + 8640000000)))), (public.app_rf_master() ->> 'version')::bigint, 'receiveMaterial') -> 'changes' -> 'materialLots' -> 'upsert' -> 0 ->> 'lotNo', 'RM-C-1', 'a planner receives a lot too');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.ml')::jsonb || '{"lotNo":"RM-C-1","materialCode":"MAT-C","qtyKg":20}'::jsonb || jsonb_build_object('expiry', current_setting('test.now_ms')::bigint + 8640000000)))), (public.app_rf_master() ->> 'version')::bigint, 'receiveMaterial') $$, 'RF_FORBIDDEN', 'PP staff (the planning group) cannot receive material into stock');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pk_mgr')::uuid);
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.ml')::jsonb || '{"lotNo":"RM-C-1","materialCode":"MAT-C","qtyKg":20}'::jsonb || jsonb_build_object('expiry', current_setting('test.now_ms')::bigint + 8640000000)))), (public.app_rf_master() ->> 'version')::bigint, 'receiveMaterial') $$, 'RF_FORBIDDEN', 'a department manager outside ST cannot receive material into stock');
+select public.app_sandbox_enter(current_setting('test.p_sbx_admin_t')::uuid);
+select is(public.app_rf_save(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.ml')::jsonb || '{"lotNo":"RM-C-1","materialCode":"MAT-C","qtyKg":20}'::jsonb || jsonb_build_object('expiry', current_setting('test.now_ms')::bigint + 8640000000)))), (public.app_rf_master() ->> 'version')::bigint, 'receiveMaterial') -> 'changes' -> 'materialLots' -> 'upsert' -> 0 ->> 'lotNo', 'RM-C-1', 'admin receives a lot too');
 reset role;
 insert into public.rf_material_lots (is_test, lot_no, material_code, qty_kg, initial_kg, expiry) values (true, 'RM-A-X', 'MAT-A', 50, 50, current_setting('test.now_ms')::bigint - 86400000);
 -- แถวที่ใส่ตรงถูก trigger ประทับ version + 1 จึงเดินตัวนับตามแบบที่ RPC ทำ

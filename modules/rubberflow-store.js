@@ -75,7 +75,7 @@
     holdMaterial: (user) => Boolean(user.planner || user.st || user.qa),
     demoSkip: (user) => Boolean(user.planner || user.rb), // ข้ามเวลาบ่ม: คำสั่งของพนักงาน RB ที่ฐานข้อมูลประทับเวลาเอง
     // ชุดที่ย้ายขึ้นฐานข้อมูลในขั้นที่ 2: โหมดสาธิตไม่จำกัดสิทธิ์ของปุ่มเหล่านี้ (ไม่อยู่ใน CAN)
-    receiveMaterial: (user) => Boolean(user.planner || user.st), // รับวัตถุดิบเข้าคลัง
+    receiveMaterial: (user) => Boolean(user.st || user.role === "admin"), // รับวัตถุดิบเข้าคลัง (รวมรับเข้าตามใบสั่งซื้อ): แผนก ST เท่านั้น (admin ไว้แก้ปัญหา) ตาม 20261119010000_rf_purchase_by_st.sql
     requisition: (user) => Boolean(user.planner || user.rb), // เบิกเคมี (สร้างใบเบิกและจ่ายทันที) · จ่ายใบเก่าที่ค้างชั่ง
     station: (user) => Boolean(user.planner || user.rb), // บันทึกผสม/ฉีด/อบ/ตกแต่ง ทำความสะอาดแม่พิมพ์
     sendTransfer: (user) => Boolean(user.planner || user.rb), // สร้างใบส่งมอบ WIP
@@ -83,8 +83,9 @@
     shipBoxes: (user) => Boolean(user.planner || user.wh), // ส่งมอบกล่องสินค้า
     fillNcr: (user) => Boolean(user.planner || user.qa || user.rb), // กรอกการแก้ไข/ป้องกันของ NCR ที่เปิดอยู่
     editMold: (user) => Boolean(user.planner || user.rb),
-    purchase: (user) => Boolean(user.planner || user.rb), // สั่งซื้อวัตถุดิบ (สร้างใบสั่งซื้อ)
-    cancelPurchase: (user) => Boolean(user.planner), // ยกเลิกใบสั่งซื้อ
+    purchase: (user) => Boolean(user.st || user.role === "admin"), // สั่งซื้อวัตถุดิบ (สร้างใบสั่งซื้อ): แผนก ST เท่านั้น (admin ไว้แก้ปัญหา)
+    cancelPurchase: (user) => Boolean(user.st || user.role === "admin"), // ยกเลิกใบสั่งซื้อ
+    viewPurchase: (user) => Boolean(user.planner || user.rb || user.st), // เปิดหน้าต่างดูว่าขาดอะไร (กลุ่มวางแผนและ RB ดูได้ สั่งไม่ได้)
   });
 
   // ปุ่ม/ฟอร์มของคำสั่งแต่ละตัวต้องมีสิทธิ์ข้อใด (module-rubberflow.js ซ่อนปุ่ม/ปิดฟอร์มที่ไม่ใช่สิทธิ์ของบัญชี · ฐานข้อมูลตัดสินจริงอีกครั้ง) · คำสั่งที่ไม่อยู่ในตารางนี้ไม่ถูกจำกัดที่หน้าจอ
@@ -222,7 +223,7 @@
     const code = /RF_[A-Z0-9_]+/.exec(haystack)?.[0] ?? (/BOM_[A-Z0-9_]+/.exec(haystack)?.[0]) ?? (/NOT_AUTHORIZED|SANDBOX_NOT_ACTIVE/.exec(haystack)?.[0]) ?? (/PGRST202|42883/.test(haystack) ? "RF_NOT_DEPLOYED" : "RF_REMOTE_FAILED");
     const message = {
       RF_TEST_MODE_ONLY: "ข้อมูล RubberFlow ใช้ได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ",
-      RF_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้ใน RubberFlow (รับวัตถุดิบและตรวจสอบรับเข้าตามใบสั่งซื้อ: คลังวัตถุดิบ · สั่งซื้อ เบิกเคมี ผลิต ส่งมอบ: แผนก RB · ยกเลิกใบสั่งซื้อ: ฝ่ายวางแผน · รับมอบ WIP: SR · ส่งมอบกล่อง: คลังสินค้า · ผลตรวจและ NCR: QA · อนุมัติสูตรและปล่อยผลิต: ผู้จัดการแผนก RB ขึ้นไป · ฝ่ายวางแผนและผู้จัดการทำได้ทุกอย่าง)",
+      RF_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้ใน RubberFlow (สั่งซื้อ รับวัตถุดิบ ตรวจสอบรับเข้าและยกเลิกใบสั่งซื้อ: คลังวัตถุดิบ (ST) เท่านั้น · เบิกเคมี ผลิต ส่งมอบ: แผนก RB · รับมอบ WIP: SR · ส่งมอบกล่อง: คลังสินค้า · ผลตรวจและ NCR: QA · อนุมัติสูตรและปล่อยผลิต: ผู้จัดการแผนก RB ขึ้นไป · งานอื่นฝ่ายวางแผนและผู้จัดการทำได้)",
       RF_STALE: "มีผู้อื่นบันทึกข้อมูล RubberFlow ไปก่อน (หรือเลขที่ซ้ำ) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_CONFLICT: "รายการนี้ซ้ำกับที่มีอยู่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_INVALID_TRANSITION: "รายการอยู่ในสถานะที่ทำรายการนี้ไม่ได้ (อาจมีผู้อื่นเปลี่ยนสถานะไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว",

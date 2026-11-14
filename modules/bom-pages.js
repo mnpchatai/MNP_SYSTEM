@@ -373,7 +373,7 @@
     const body = plan.rows.map((row) => `<tr><td class="right">${esc(String(row.line))}</td><td>${ui.mono(row.code || "—")}</td><td>${row.status === "error" ? `${ui.badge("bad", "ข้าม")} <span class="small">${esc(row.error)}</span>` : `${badges[row.status]}${row.warn ? ` <span class="small muted">${esc(row.warn)}</span>` : ""}`}</td><td class="right">${esc(ctx.rules.fmtQty(row.qty))}</td><td class="nowrap">${esc(row.status === "error" ? "" : uomText(ctx, row.uom))}</td><td class="right">${esc(String(row.scrapPct || ""))}</td><td class="small">${esc(row.note)}</td></tr>`);
     return `${plan.header ? '<p class="small muted">ข้ามบรรทัดที่ 1 (ถือเป็นหัวตาราง)</p>' : ""}${plan.warning ? ui.callout("warn", plan.warning) : ""}${ui.table(["บรรทัด", "รหัส", "ผลการตรวจ", { label: "ปริมาณ", className: "right" }, "หน่วย", { label: "% เผื่อเสีย", className: "right" }, "หมายเหตุ"], body, { emptyText: "ยังไม่มีบรรทัดที่อ่านได้" })}${plan.truncated ? '<p class="small muted">อ่านเฉพาะ 500 บรรทัดแรก</p>' : ""}`;
   };
-  pages.tools = { editorRowsOf, copyPlan, pastePlan, purchaseOrdersOf: (ctx) => rfPurchaseOrdersOf(ctx) };
+  pages.tools = { editorRowsOf, copyPlan, pastePlan, purchaseOrdersOf: (ctx) => rfPurchaseOrdersOf(ctx), rfRecipes: (ctx) => rfRecipes(ctx), rfReady: (ctx) => rfReady(ctx) };
 
   pages.build = (ctx) => {
     const { data, ui, rules, user, params } = ctx;
@@ -1461,7 +1461,7 @@
       </div>
       <fieldset class="bom-fieldset"><legend>ข้อมูลยาง (เฉพาะ RB / SE)</legend>
         <div class="rf-grid rf-g3">
-          ${ui.field("รหัสสูตรยาง (RB)", ui.input("rubber.compound", { value: rubber.compound ?? "", list: "bom-compound-list-dialog" }))}<datalist id="bom-compound-list-dialog">${data.compounds.map((entry) => `<option value="${attr(entry.code)}"></option>`).join("")}</datalist>
+          ${ui.field("รหัสสูตรยาง (RB)", ui.input("rubber.compound", { value: rubber.compound ?? "", list: "bom-compound-list-dialog", extra: item?.kind === "RB" && rubber.compound ? 'readonly title="เปลี่ยนสูตรยางที่ปุ่ม “แก้ข้อมูลเส้นยาง” ในหน้าของเส้นยาง"' : "" }))}<datalist id="bom-compound-list-dialog">${data.compounds.map((entry) => `<option value="${attr(entry.code)}"></option>`).join("")}</datalist>
           ${ui.field("ประเภท (01 ตัน / 02 มีรู / 03 แผ่น)", ui.input("rubber.type", { value: rubber.type ?? "" }))}
           ${ui.field("สี (แม่สี+เฉด)", ui.input("rubber.color", { value: rubber.color ?? "", placeholder: "OR01" }))}
           ${ui.field("ความยาว (มม.)", ui.input("rubber.lengthMm", { type: "number", step: "any", value: rubber.lengthMm ?? "" }))}
@@ -1803,12 +1803,14 @@
 
     const order = sel ? data.orders.find((entry) => entry.id === sel) : null;
     let detail = "";
+    let stepsBind = null;
     if (order) {
       const tab = ["bom", "req", "jobs"].includes(params.get("tab")) ? params.get("tab") : "bom";
       const draft = order.status === "draft";
       const canCount = ctx.helpers.canCount(user) && draft;
+      const poNote = openPoText(openPurchaseOrdersOf(ctx, order.id));
       const headerKv = ui.kv([
-        ["ลูกค้า", esc(order.customer)], ["ประเทศ / ประเภท", `${esc(order.country)} ${status(ctx, order.orderType)}`], ["วันที่สั่งผลิต", esc(rules.fmtDate(order.orderedAt))], ["ส่งมอบคลัง (WH)", esc(rules.fmtDate(order.whDue))],
+        pages.orderSteps ? null : ["ลูกค้า", esc(order.customer)], ["ประเทศ / ประเภท", `${esc(order.country)} ${status(ctx, order.orderType)}`], ["วันที่สั่งผลิต", esc(rules.fmtDate(order.orderedAt))], ["ส่งมอบคลัง (WH)", esc(rules.fmtDate(order.whDue))],
         ["กำหนดเสร็จรายแผนก", rules.DUE_DEPTS.map((dept) => `<span class="bom-due"${(order.dueDefaults ?? []).includes(dept) ? ' title="ค่าเริ่มต้นจากระยะเวลาจัดหา (lead time)"' : ""}><b>${esc(dept)}</b> ${esc(order.due[dept] ? rules.fmtDate(order.due[dept]) : "—")}${(order.dueDefaults ?? []).includes(dept) ? "*" : ""}</span>`).join(" ")],
         order.explodedAt ? ["ระเบิด BOM ล่าสุด", esc(`${rules.fmtDateTime(order.explodedAt)} · ${order.explosion?.length ?? 0} บรรทัด${order.releasedAt ? ` · ล็อกฉบับแก้ไขเมื่อปล่อยผลิต ${rules.fmtDateTime(order.releasedAt)} โดย ${order.releasedBy}` : ""}`)] : null,
         order.stockCountedAt ? ["นับคงคลังล่าสุด", esc(`${rules.fmtDateTime(order.stockCountedAt)} โดย ${order.stockCountedBy}`)] : null,
@@ -1820,7 +1822,7 @@
       const reopen = ["released", "in_progress"].includes(order.status) && !ctx.helpers.startedJobs(data, order, rfOrdersOf(ctx)).length;
       const canEditItems = canPlan && (draft || reopen);
       const reopenNote = reopen ? " ใบนี้ปล่อยผลิตแล้ว แก้แล้วใบจะกลับเป็นร่าง งานรายแผนกถูกลบ ต้องระเบิด BOM และปล่อยผลิตใหม่" : "";
-      const itemRows = order.items.map((item) => `<tr><td>${ui.link(item.fgCode, ctx.url("items", { sel: item.fgCode }), "rf-mono")}<div class="small muted">${esc(itemOf(ctx, item.fgCode)?.name ?? "")}${item.note ? ` · ${esc(item.note)}` : ""}</div></td><td class="right rf-mono">${esc(rules.fmtQty(item.qty))}</td><td>${esc(item.colorSet || "-")}</td><td class="nowrap">${ui.link("งานทุกแผนก", ctx.url("product", { code: item.fgCode, qty: item.qty }), "btn rf-btn secondary small")} ${canPlan ? ui.link("แก้ BOM", buildUrl(ctx, item.fgCode), "btn rf-btn secondary small") : ""} ${canEditItems ? `${ui.openButton("แก้จำนวน", "orderItemEdit", { orderId: order.id, fgCode: item.fgCode }, { className: "secondary small", ariaLabel: `แก้จำนวน ${item.fgCode}` })} ${ui.button("ลบ", { action: "removeOrderItem", args: { orderId: order.id, fgCode: item.fgCode }, className: "secondary small", ariaLabel: `ลบ ${item.fgCode} ออกจากใบ`, confirmText: `ลบ ${item.fgCode} ออกจากใบ ${order.id}?${reopenNote}` })}` : ""}</td></tr>`);
+      const itemRows = order.items.map((item) => `<tr><td>${ui.link(item.fgCode, ctx.url("items", { sel: item.fgCode }), "rf-mono")}<div class="small muted">${esc(itemOf(ctx, item.fgCode)?.name ?? "")}${item.note ? ` · ${esc(item.note)}` : ""}</div></td><td class="right rf-mono">${esc(rules.fmtQty(item.qty))}</td><td>${esc(item.colorSet || "-")}</td><td class="nowrap">${ui.link("งานทุกแผนก", ctx.url("product", { code: item.fgCode, qty: item.qty }), "btn rf-btn secondary small")} ${canPlan ? ui.link("แก้ BOM", pages.find ? ctx.url("find", { code: item.fgCode }) : buildUrl(ctx, item.fgCode), "btn rf-btn secondary small") : ""} ${canEditItems ? `${ui.openButton("แก้จำนวน", "orderItemEdit", { orderId: order.id, fgCode: item.fgCode }, { className: "secondary small", ariaLabel: `แก้จำนวน ${item.fgCode}` })} ${ui.button("ลบ", { action: "removeOrderItem", args: { orderId: order.id, fgCode: item.fgCode }, className: "secondary small", ariaLabel: `ลบ ${item.fgCode} ออกจากใบ`, confirmText: `ลบ ${item.fgCode} ออกจากใบ ${order.id}?${reopenNote}${poNote ? ` ${poNote}` : ""}` })}` : ""}</td></tr>`);
       // ความต้องการสุทธิต่อรหัส (กฎ AK ของ BOMSHEET ไล่ชั้น): ใช้ร่วมกันทั้งแท็บใบคำนวณ แท็บรวม และ CSV
       const net = new Map(rules.netRequirements(order.explosion ?? [], order.stockCounts).map((entry) => [entry.itemCode, entry]));
       const buttons = [];
@@ -1846,9 +1848,9 @@
         if (order.status !== "cancelled" && returnLines.some((line) => line.returnable > 0)) buttons.push(ui.openButton("คืนของเหลือ", "returnParts", { orderId: order.id }, { className: "secondary" }));
         if (openOrder) buttons.push(ui.openButton("ยกเลิกการเบิกจ่าย", "undoParts", { orderId: order.id }, { className: "secondary" }));
       }
-      if (openOrder && (checkWos.length || partsLeft) && ctx.rubberflow() && ctx.helpers.canLinkRubberflow(user, { dept: "RB" })) main("check", `<button class="btn rf-btn secondary" type="button" data-bom-rf-check data-bom-order="${attr(order.id)}" data-bom-wos="${attr(JSON.stringify(checkWos))}" title="เทียบเคมีที่ WO ของใบนี้ต้องใช้และของซื้อที่ยังไม่เบิกจ่ายกับสต็อก แล้วสั่งซื้อส่วนที่ขาด">ตรวจวัตถุดิบ</button>`);
+      if (openOrder && (checkWos.length || partsLeft) && ctx.rubberflow() && (pages.hub?.rfCan ? pages.hub.rfCan(ctx, "purchase") || pages.hub.rfCan(ctx, "viewPurchase") : ctx.helpers.canLinkRubberflow(user, { dept: "RB" }))) main("check", `<button class="btn rf-btn secondary" type="button" data-bom-rf-check data-bom-order="${attr(order.id)}" data-bom-wos="${attr(JSON.stringify(checkWos))}" title="เทียบเคมีที่ WO ของใบนี้ต้องใช้และของซื้อที่ยังไม่เบิกจ่ายกับสต็อก (สั่งซื้อโดยคลังวัตถุดิบ ST)">ตรวจวัตถุดิบ</button>`);
       if (["released", "in_progress"].includes(order.status) && canPlan) main("complete", ui.button("ปิดใบ", { action: "completeOrder", args: { orderId: order.id }, className: "secondary", confirmText: "ปิดใบสั่งผลิตนี้?" }));
-      if (!["completed", "cancelled"].includes(order.status) && canPlan) buttons.push(ui.button("ยกเลิกใบ", { action: "cancelOrder", args: { orderId: order.id }, className: "secondary", confirmText: "ยกเลิกใบสั่งผลิตนี้?" }));
+      if (!["completed", "cancelled"].includes(order.status) && canPlan) buttons.push(ui.button("ยกเลิกใบ", { action: "cancelOrder", args: { orderId: order.id }, className: "secondary", confirmText: `ยกเลิกใบสั่งผลิตนี้?${poNote ? ` ${poNote}` : ""}` }));
       if (order.explosion?.length) buttons.push(`<button class="btn rf-btn secondary" type="button" data-bom-csv="bomsheet" data-bom-order="${attr(order.id)}" title="ใบคำนวณวัตถุดิบรูปแบบเดียวกับ BOMSHEET เปิดใน Excel ได้">ส่งออก CSV ใบคำนวณ</button>`, `<button class="btn rf-btn secondary" type="button" data-bom-csv="req" data-bom-order="${attr(order.id)}" title="รายการที่ต้องเบิก/สั่งซื้อรวมทุกสินค้าในใบ">ส่งออก CSV รายการเบิก</button>`,
         `<span class="bom-sheet-pick">${ui.select("sheet", rules.SHEETS.map((sheet) => ({ value: sheet.id, label: `${sheet.title} · ${sheet.name}` })), { value: "RB", extra: 'data-bom-sheet aria-label="เลือกใบพิมพ์"' })}${ui.openButton("เปิดใบพิมพ์", "printSheet", { orderId: order.id, sheet: "RB" }, { className: "secondary", ariaLabel: "เปิดใบพิมพ์รายสถานี" })}</span>`);
       const tabsHtml = ui.tabs([{ id: "bom", label: "ใบคำนวณวัตถุดิบ" }, { id: "req", label: "เบิก / สั่งซื้อ / ผลิต (รวม)" }, { id: "jobs", label: "งานรายแผนก" }], tab, (id) => ctx.url("orders", { sel: order.id, tab: id }));
@@ -1876,15 +1878,20 @@
       }
       // โครงใหม่ (มี modules/bom-hub.js): แถบขั้นตอน + แผงของขั้นอยู่บนสุด ปุ่มหลักอยู่ในแผงนั้น คำสั่งอื่นและเอกสารพับไว้ท้ายการ์ด · ไม่มี hub = ปุ่มทั้งหมดอยู่หัวการ์ดเหมือนเดิม
       const steps = pages.orderSteps ? pages.orderSteps(ctx, order, { net, buttons: named }) : null;
+      stepsBind = steps?.bind ?? null;
       const others = buttons.filter((html) => !(steps?.used ?? []).some((key) => named[key] === html));
       const itemsTable = `<h3 class="bom-h3">สินค้าที่สั่ง</h3>${ui.table(["สินค้า (FG)", { label: "จำนวน", className: "right" }, "ชุดสี", ""], itemRows, { emptyText: "ยังไม่มีสินค้า" })}`;
       detail = pages.orderSteps
-        ? `${steps.html}${ui.card(`${headerKv}${itemsTable}${named.add && order.items.length ? `<div class="rf-row">${named.add}</div>` : ""}${tabsHtml}${tabBody}${others.length ? `<details class="bom-more"><summary>คำสั่งอื่นและเอกสาร</summary><div class="rf-row">${others.join("")}</div></details>` : ""}`, { title: `${esc(order.id)} <span class="muted">${esc(order.customer)}</span> ${status(ctx, order.status)}` })}`
+        ? `${steps.html}${ui.card(`${headerKv}${itemsTable}${named.add && order.items.length ? `<div class="rf-row">${named.add}</div>` : ""}${tabsHtml}${tabBody}${others.length ? `<details class="bom-more"><summary>คำสั่งอื่นและเอกสาร</summary><div class="rf-row">${others.join("")}</div></details>` : ""}`)}`
         : ui.card(`${headerKv}${itemsTable}${tabsHtml}${tabBody}`, { title: `${esc(order.id)} ${status(ctx, order.status)}`, actions: buttons.join("") });
     }
-    const html = `${head(ctx, "ใบสั่งผลิต (PI)", "เปิดใบ → เพิ่มสินค้า (3 ช่องเหมือนชีต ;}o) → ระเบิด BOM (ร่างระเบิดซ้ำได้) → นับคงคลัง → ปล่อยผลิต (ล็อกฉบับแก้ไขแล้วแตกเป็นงานรายแผนก)")}
-      ${pages.orderSteps && order ? `<p class="bom-back">${ui.link("← ใบสั่งผลิตทั้งหมด", ctx.url("orders", { q: ctx.q || null }))}</p>${detail}` : `<div class="bom-split bom-split-wide">${listCard}${detail}</div>`}`;
+    // เปิดใบอยู่ (โครงใหม่): หัวหน้าเป็นเลขใบ ลูกค้า และสถานะ แทนชื่อหน้ากลาง · รายการใบทั้งหมดใช้หัวหน้าเดิม
+    const orderHead = (target) => `<header class="rf-pagehead"><div class="rf-pagehead-main"><span class="rf-mod-ico" aria-hidden="true">${pages.icon("orders")}</span><div><h1>ใบสั่งผลิต <span class="rf-mono">${esc(target.id)}</span></h1><p class="bom-hero-sub">${esc(target.customer)} ${status(ctx, target.status)}</p></div></div></header>`;
+    const html = pages.orderSteps && order
+      ? `<p class="bom-back">${ui.link("← ใบสั่งผลิตทั้งหมด", ctx.url("orders", { q: ctx.q || null }))}</p>${orderHead(order)}${detail}`
+      : `${head(ctx, "ใบสั่งผลิต (PI)", "เปิดใบ → เพิ่มสินค้า (3 ช่องเหมือนชีต ;}o) → ระเบิด BOM (ร่างระเบิดซ้ำได้) → นับคงคลัง → ปล่อยผลิต (ล็อกฉบับแก้ไขแล้วแตกเป็นงานรายแผนก)")}<div class="bom-split bom-split-wide">${listCard}${detail}</div>`;
     const bind = (rootNode) => {
+      stepsBind?.(rootNode);
       rootNode.querySelectorAll("[data-bom-csv]").forEach((button) => button.addEventListener("click", () => {
         const target = data.orders.find((entry) => entry.id === button.dataset.bomOrder);
         if (!target?.explosion) return;
@@ -2035,6 +2042,9 @@
     return { html: ui.dialog("printSheet", "ใบพิมพ์", body, { wide: true, footer: `${ui.closeButton("ปิด")}<button class="btn rf-btn" type="button" data-bom-print>พิมพ์</button>` }), bind };
   };
   // เลือกสินค้าแบบ 3 ช่องเหมือนชีต ;}o: ฐานรหัส + แพ็กเกจ + ชุดสี → รหัสเต็ม ถ้ารหัสเต็มยังไม่มีแต่ฐานรหัสมี ระบบสร้างจาก BOM ของตัวนั้น
+  const openPurchaseOrdersOf = (ctx, orderId) => (rfPurchaseOrdersOf(ctx) ?? []).filter((po) => po.status === "ordered" && po.sourcePi === orderId).map((po) => po.id);
+  const openPoText = (ids) => (ids.length ? `มีใบสั่งซื้อที่สั่งจากใบนี้และยังรับของไม่ครบ: ${ids.join(", ")} ระบบไม่ยกเลิกหรือแก้ใบสั่งซื้อให้ ตรวจที่หน้าใบสั่งซื้อของ RubberFlow` : "");
+  const openPoCallout = (ctx, order) => { const text = order ? openPoText(openPurchaseOrdersOf(ctx, order.id)) : ""; return text ? ctx.ui.callout("warn", esc(text)) : ""; };
   const reopenCallout = (ctx, order) => (order && order.status !== "draft" ? ctx.ui.callout("warn", "ใบนี้ปล่อยผลิตแล้ว บันทึกแล้วใบจะกลับเป็นร่าง (REV. +1) งานรายแผนกของใบถูกลบ ต้องระเบิด BOM และปล่อยผลิตใหม่") : "");
   // dialog: แก้จำนวนสั่ง/หมายเหตุของสินค้าหนึ่งตัวในใบ
   dialogs.orderItemEdit = (ctx, { orderId, fgCode }) => {
@@ -2043,7 +2053,7 @@
     const line = order?.items.find((item) => item.fgCode === fgCode);
     if (!line) return null;
     const body = `<form novalidate id="bom-order-item-edit-form" data-rf-form="updateOrderItem" data-rf-args="${attr(JSON.stringify({ orderId, fgCode }))}" data-rf-success="แก้จำนวน ${attr(fgCode)} แล้ว">
-      ${reopenCallout(ctx, order)}
+      ${reopenCallout(ctx, order)}${openPoCallout(ctx, order)}
       <p class="small muted">${esc(itemOf(ctx, fgCode)?.name ?? "")}</p>
       <div class="rf-grid rf-g2">
         ${ui.field(`จำนวนสั่ง (${uomText(ctx, itemOf(ctx, fgCode)?.uom ?? "pcs")})`, ui.input("qty", { type: "number", step: "any", min: 1, required: true, value: line.qty }), { required: true })}
@@ -2062,7 +2072,7 @@
     const colorOptions = [...new Set([...rules.COLOR_SETS, ...parsed.map((entry) => entry.colorSet).filter(Boolean)])].map((set) => ({ value: set, label: set }));
     const order = data.orders.find((entry) => entry.id === orderId);
     const body = `<form novalidate id="bom-order-item-form" data-rf-form="addOrderItem" data-rf-args="${attr(JSON.stringify({ orderId }))}" data-rf-success="เพิ่มสินค้าแล้ว">
-      ${reopenCallout(ctx, order)}
+      ${reopenCallout(ctx, order)}${openPoCallout(ctx, order)}
       <div class="rf-grid rf-g3">
         ${ui.field("ฐานรหัสสินค้า", ui.select("base", baseOptions, { placeholder: "เลือกฐานรหัส…", extra: "data-bom-part" }), { required: true })}
         ${ui.field("แพ็กเกจ", ui.select("pkg", pkgOptions, { placeholder: "ไม่ระบุ", extra: "data-bom-part" }))}
@@ -2070,7 +2080,7 @@
       </div>
       <div class="rf-callout is-info" role="note" data-bom-preview><span class="rf-callout-ico" aria-hidden="true">${pages.icon("orders")}</span><div class="rf-callout-body">เลือกฐานรหัสเพื่อดูรหัสเต็ม</div></div>
       ${ui.field("จำนวนสั่ง", ui.input("qty", { type: "number", step: "any", min: 1, required: true }), { required: true })}
-      <p class="small muted">ยังไม่มีฐานรหัส? สร้างที่เมนู “สร้าง BOM” ${ui.link("เปิด", ctx.url("build"))}</p>
+      <p class="small muted">ยังไม่มีสินค้านี้? สร้างที่เมนู “สินค้า” ${ui.link("เปิด", ctx.url(pages.find ? "find" : "build"))}</p>
     </form>`;
     const bind = (dialog) => {
       const preview = dialog.querySelector("[data-bom-preview]");
@@ -2267,13 +2277,16 @@
     if (!order || !["released", "in_progress"].includes(order.status) || !ctx.helpers.canIssueParts(user)) return null;
     const plan = ctx.helpers.partIssuePlan(ctx.data, orderId);
     if (!plan.lines.length) return null;
-    const rows = plan.lines.map((line) => `<tr><td>${ui.mono(line.itemCode)}<div class="small muted">${esc(line.name)}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(line.remaining)} ${uomText(ctx, line.uom)}`)}</td><td class="right rf-mono">${esc(rules.fmtQty(line.onHand))}</td><td class="right">${line.short > 0 ? ui.badge("bad", `ขาด ${rules.fmtQty(line.short)}`) : ""}</td></tr>`);
-    const canBuy = ctx.helpers.canPlan(user) || user.role === "rb";
+    const onOrder = rules.partOnOrder(rfPurchaseOrdersOf(ctx) ?? []);
+    const rows = plan.lines.map((line) => `<tr><td>${ui.mono(line.itemCode)}<div class="small muted">${esc(line.name)}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(line.remaining)} ${uomText(ctx, line.uom)}`)}</td><td class="right rf-mono">${esc(rules.fmtQty(line.onHand))}</td><td class="right">${line.short > 0 ? `${ui.badge("bad", `ขาด ${rules.fmtQty(line.short)}`)}${onOrder.get(line.itemCode) > 0 ? `<div class="small muted">สั่งแล้ว รอรับ ${esc(rules.fmtQty(onOrder.get(line.itemCode)))}</div>` : ""}` : ""}</td></tr>`);
+    const rfCan = (permission) => Boolean(pages.hub?.rfCan?.(ctx, permission));
+    const canBuy = rfCan("purchase");
+    const canView = !canBuy && rfCan("viewPurchase");
     const note = plan.anyShort
-      ? ui.callout("warn", esc(`สต็อกไม่พอ ${plan.short.length} รายการ จึงเบิกจ่ายไม่ได้ (ระบบไม่จ่ายบางรายการ)${canBuy ? " · สั่งซื้อส่วนที่ขาดได้จากปุ่มด้านล่าง" : " · แจ้งฝ่ายวางแผนให้สั่งซื้อ หรือนับยอดที่หน้าคลังของซื้อถ้ามีของเพิ่ม"}`))
+      ? ui.callout("warn", esc(`สต็อกไม่พอ ${plan.short.length} รายการ จึงเบิกจ่ายไม่ได้ (ระบบไม่จ่ายบางรายการ)${canBuy ? " · สั่งซื้อส่วนที่ขาดได้จากปุ่มด้านล่าง ของที่สั่งแล้วรับเข้าได้ที่หน้าใบสั่งซื้อ" : " · แจ้งคลังวัตถุดิบ (ST) ให้สั่งซื้อหรือรับเข้า หรือนับยอดที่หน้าคลังของซื้อถ้ามีของเพิ่ม"}`))
       : ui.callout("info", "เบิกจ่ายทุกรายการพร้อมกัน เบิกผิดยกเลิกได้จนกว่าจะปิดใบ");
     const footer = `${ui.closeButton()}${plan.anyShort
-      ? (canBuy ? '<button class="btn rf-btn" type="button" data-bom-parts-buy>สั่งซื้อส่วนที่ขาด</button>' : "")
+      ? (canBuy ? '<button class="btn rf-btn" type="button" data-bom-parts-buy>สั่งซื้อส่วนที่ขาด</button>' : canView ? '<button class="btn rf-btn secondary" type="button" data-bom-parts-buy>ดูรายการที่ต้องสั่ง</button>' : "")
       : ui.button("เบิกจ่ายทั้งหมด", { action: "issueOrderParts", args: { orderId }, className: "", success: "เบิกจ่ายของซื้อ {result} แล้ว" })}`;
     const woIds = ctx.data.jobs.filter((job) => job.orderId === orderId && job.dept === "RB" && job.externalRef?.woId).map((job) => job.externalRef.woId);
     const bind = (dialog) => {

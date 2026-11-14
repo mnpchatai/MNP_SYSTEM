@@ -3120,3 +3120,47 @@ table.bom-tree td.right { white-space: nowrap; }
 .bom-add-new { margin: 0 0 12px; padding: 12px; display: grid; gap: 8px; border: 1px dashed var(--line); border-radius: var(--radius-md); }
 .bom-add-new[hidden] { display: none; }
 .bom-add-new legend { padding: 0 6px; font-size: var(--text-meta); color: var(--muted); }
+/* BOM หน้าสินค้า: ช่องค้นหารายการ (รายการอยู่ในแนวเอกสารใต้ช่อง ไม่ลอยทับ คีย์บอร์ดมือถือจึงไม่บัง) หน้าตาเดียวกับ .ss-option */
+.bom-pick-box { display: grid; gap: 4px; min-width: 0; }
+.bom-pick-list { max-height: min(264px, 40vh); padding: 4px; overflow-y: auto; overscroll-behavior: contain; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: 0 10px 24px -10px rgba(15, 23, 42, .28); }
+.bom-pick-list[hidden] { display: none; }
+.bom-pick-option { width: 100%; min-height: 44px; padding: 6px 10px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 10px; align-items: center; color: var(--ink); background: none; border: 0; border-radius: var(--radius-sm); font: inherit; font-size: var(--text-ui); line-height: 1.4; text-align: left; cursor: pointer; }
+.bom-pick-option > span { min-width: 0; overflow-wrap: anywhere; }
+.bom-pick-option > .rf-mono { grid-column: 1 / -1; font-weight: 700; }
+.bom-pick-option:hover, .bom-pick-option[aria-selected="true"] { color: var(--primary-ink); background: var(--primary-soft); }
+.bom-pick-note { margin: 0; padding: 8px 10px; }
+.bom-add-rubber { display: grid; gap: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.bom-add-rubber[hidden], .bom-compound-change[hidden] { display: none; }
+.bom-compound-change { margin: 0 0 12px; }
+.bom-compound-change p { margin: 0 0 8px; }
+.bom-confirm-line { display: flex; align-items: center; gap: 10px; min-height: 44px; font-weight: 700; cursor: pointer; }
+.bom-confirm-line input { width: 20px; height: 20px; flex: none; }
+/* ตัวอย่างก่อนบันทึกของหน้าต่างวางจาก Excel และคัดลอกโครงสร้าง */
+.bom-paste-text { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.bom-preview { margin: 0 0 12px; }
+.bom-preview:empty { display: none; }
+.bom-preview-sum { margin: 0 0 8px; font-size: var(--text-ui); }
+.bom-preview .rf-table td { vertical-align: top; }
+.bom-paste-skip td { color: var(--muted); }
+.bom-paste-new .rf-input { min-width: 0; width: 100%; }
+.bom-paste-new .rf-select { margin-top: 6px; }
+.bom-copy-tree { margin: 0; padding: 0; list-style: none; max-height: min(360px, 46vh); overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-md); }
+.bom-copy-tree li { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 14px; padding: 8px 12px 8px calc(12px + var(--lv, 0) * 20px); border-bottom: 1px solid var(--line); font-size: var(--text-ui); }
+.bom-copy-tree li:last-child { border-bottom: 0; }
+.bom-copy-tree li > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.bom-copy-tree li.is-top .bom-copy-name { font-weight: 700; }
+.bom-copy-tree li.is-inner { color: var(--muted); background: var(--shell); }
+.bom-copy-tree li.is-skip .bom-copy-name { font-weight: 400; text-decoration: line-through; color: var(--muted); }
+.bom-tree-name[aria-current="true"] { background: var(--primary-soft); color: var(--primary-ink); }
+/* หน้าต่างสั่งซื้อ: แถวที่ต้องสั่งและช่องจำนวนสั่งของแถวนั้น */
+.rf-modal .rf-table tr.rf-po-need td { background: color-mix(in srgb, var(--warning, #b7791f) 12%, var(--paper)); }
+.rf-modal .rf-table tr.rf-po-need [data-rf-qty] { border-color: var(--warning, #b7791f); border-width: 2px; font-weight: 700; }
+/* แถบลากปรับความกว้างของแผงรายละเอียด (เฉพาะจอกว้างที่ต้นไม้กับแผงอยู่ข้างกัน) */
+.bom-tree-split { display: none; }
+@media (min-width: 1041px) {
+  .bom-tree-layout:has(> .bom-tree-split) { grid-template-columns: minmax(0, 1fr) 12px minmax(0, var(--side-w, 340px)); gap: 0; }
+  .bom-tree-split { display: block; align-self: stretch; min-height: 120px; position: relative; cursor: col-resize; touch-action: none; border-radius: 6px; }
+  .bom-tree-split::before { content: ""; position: absolute; top: 8px; bottom: 8px; left: 5px; width: 2px; border-radius: 2px; background: var(--line); }
+  .bom-tree-split:hover::before, .bom-tree-split:focus-visible::before, .bom-tree-split.is-dragging::before { left: 4px; width: 4px; background: var(--primary); }
+  .bom-tree-split:focus-visible { outline: 2px solid var(--primary); outline-offset: 0; }
+}

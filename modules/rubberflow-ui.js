@@ -111,7 +111,7 @@
     form.querySelectorAll("input, select, textarea").forEach((control) => {
       const type = String(control.type ?? "").toLowerCase();
       // ช่องพิมพ์ของ dropdown ค้นหาได้ (modules/searchable-select.js) เป็นแค่ตัวแทนของ <select> ที่ตรวจอยู่แล้ว
-      if (SKIP_TYPES.has(type) || control.disabled || control.readOnly || control.getAttribute?.("role") === "combobox") return;
+      if (SKIP_TYPES.has(type) || control.disabled || control.readOnly || (control.getAttribute?.("role") === "combobox" && !control.getAttribute?.("name"))) return;
       // ช่องวันที่ที่ปฏิทินไทยซ่อนไว้ต้องตรวจ (เป็นตัวเองที่ hidden) ส่วนช่องที่อยู่ในส่วนที่ซ่อนอยู่ (เช่น กล่องของหมวดอื่น) ไม่ตรวจ
       if (control.parentElement?.closest?.("[hidden]")) return;
       const container = control.closest?.(".field") ?? control.closest?.("td") ?? control.parentElement;
