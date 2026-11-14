@@ -3114,7 +3114,7 @@ test("part stock through the module on the (mock) database: counts send only the
   let html = await st.render("p=stock");
   assert.match(html, /data-rf-form="countPartStock"/);
   assert.match(html, /name="itemCode\[\]" value="P-TEST-01"/);
-  assert.doesNotMatch(html, /name="safetyQty\[\]"/, "ST cannot edit the safety stock");
+  assert.match(html, /name="safetyQty\[\]"/, "ST edits the safety stock");
   assert.match(html, /data-rf-open="partHistory"/);
   const outcome = st.store.run("countPartStock", { counts: [{ itemCode: "P-TEST-01", qty: 6 }] });
   assert.equal(outcome.ok, true, outcome.error?.message);
@@ -3152,10 +3152,20 @@ test("part stock through the module on the (mock) database: counts send only the
   assert.equal(st.store.run("issueOrderParts", { orderId: id }).ok, false, "nothing left to issue");
   assert.equal(st.store.run("reportJob", { jobId: partJob.id, qtyDone: 1 }).ok, false, "a part job is never reported");
 
-  // สิทธิ์ตามบัญชี: RB นับไม่ได้ (ฐานข้อมูลปฏิเสธ หน้าย้อนกลับ) · สต็อกขั้นต่ำเฉพาะฝ่ายวางแผน
+  // สิทธิ์ตามบัญชี: RB นับไม่ได้ (ฐานข้อมูลปฏิเสธ หน้าย้อนกลับ) · สต็อกขั้นต่ำ: ฝ่ายวางแผนและ ST (WH นับได้อย่างเดียว)
   const rb = await asPersona({ env: planning }, "persona-rb");
   const denied = rb.store.run("countPartStock", { counts: [{ itemCode: "P-TEST-01", qty: 1 }] });
   assert.equal(denied.ok, false, "the page rule refuses before calling");
+  assert.equal(rb.store.run("countPartStock", { counts: [{ itemCode: "P-TEST-01", safetyQty: 4 }] }).ok, false, "RB cannot set the safety stock");
+  const wh = await asPersona({ env: planning }, "persona-wh");
+  const whSafety = wh.store.run("countPartStock", { counts: [{ itemCode: "P-TEST-01", safetyQty: 4 }] });
+  assert.equal(whSafety.ok, false, "WH cannot set the safety stock (the page refuses before calling)");
+  assert.equal(database().stock[0].safetyQty, 0, "nothing was written by the refused calls");
+  const stSafety = st.store.run("countPartStock", { counts: [{ itemCode: "P-TEST-01", safetyQty: 3 }] });
+  assert.equal(stSafety.ok, true, stSafety.error?.message);
+  await stSafety.saving;
+  assert.equal(database().stock[0].safetyQty, 3, "ST sets the safety stock");
+  assert.equal(database().stockMoves.length, 3, "a safety change writes no move");
   const pp = await asPersona({ env: planning }, "persona-pp");
   const safety = pp.store.run("countPartStock", { counts: [{ itemCode: "P-TEST-01", safetyQty: 4 }] });
   assert.equal(safety.ok, true, safety.error?.message);
@@ -3249,23 +3259,34 @@ test("the mock database follows the SQL rules of the part stock: payload shapes 
   for (const bad of [{ itemCode: "SE-1", qty: 1 }, { itemCode: "NOPE", qty: 1 }, { itemCode: "P-1", qty: -1 }, { itemCode: "P-1", qty: "5" }, { itemCode: "P-1", qty: 1e10 }]) assert.equal(await code(counts([bad])), "BOM_INVALID_STOCK", JSON.stringify(bad));
   assert.equal(await code(counts([{ itemCode: "P-1", qty: 1 }, { itemCode: "p-1", qty: 2 }])), "BOM_INVALID_STOCK", "the same item twice");
 
-  // rights: ST, WH and the planner group count; RB cannot; the safety stock is the planners; stale comes before rights
+  // rights: ST, WH and the planner group count; RB cannot; the safety stock is the planner group and ST (not WH); stale comes before rights
   await as("persona-rb");
   assert.equal(await code(counts([{ itemCode: "P-1", qty: 5 }])), "BOM_FORBIDDEN");
   await as("persona-st");
   const before = await version();
   assert.equal((await counts([{ itemCode: "P-1", qty: 5 }, { itemCode: "P-2", qty: 1 }])).error, null);
   assert.equal(await version(), before + 1);
-  assert.equal(await code(counts([{ itemCode: "P-1", safetyQty: 3 }])), "BOM_FORBIDDEN", "ST cannot set the safety stock");
-  const same = await counts([{ itemCode: "P-1", qty: 5, safetyQty: 0 }]);
+  const setSafety = await counts([{ itemCode: "P-1", safetyQty: 3 }]);
+  assert.equal(setSafety.error, null, "ST sets the safety stock");
+  assert.deepEqual(setSafety.data.changes.stock.upsert.map((row) => [row.itemCode, row.qty, row.safetyQty]), [["P-1", 5, 3]], "the balance stays, the safety stock changes");
+  const mixed = await counts([{ itemCode: "P-1", qty: 5, safetyQty: 3 }, { itemCode: "P-2", qty: 1, safetyQty: 2 }]);
+  assert.equal(mixed.error, null, "ST counts and sets the safety stock in one save");
+  assert.deepEqual(mixed.data.changes.stock.upsert.map((row) => [row.itemCode, row.qty, row.safetyQty]), [["P-2", 1, 2]]);
+  const same = await counts([{ itemCode: "P-1", qty: 5, safetyQty: 3 }]);
   assert.equal(same.error, null);
   assert.deepEqual(same.data.changes.stock.upsert, [], "the same values change no row (the counter still moves, like any save)");
   const moves = (await view()).stockMoves;
   assert.deepEqual(moves.map((move) => [move.itemCode, move.kind, move.qty, move.balance, move.ref, move.by]).sort(), [["P-1", "count", 5, 5, null, "วิชัย คลังวัตถุดิบ"], ["P-2", "count", 1, 1, null, "วิชัย คลังวัตถุดิบ"]]);
   await as("persona-wh");
-  assert.equal((await counts([{ itemCode: "P-1", qty: 4 }], before + 1)).error, null, "WH counts too");
+  assert.equal((await counts([{ itemCode: "P-1", qty: 4 }])).error, null, "WH counts too");
+  assert.equal(await code(counts([{ itemCode: "P-1", safetyQty: 9 }])), "BOM_FORBIDDEN", "WH cannot set the safety stock");
+  assert.equal(await code(counts([{ itemCode: "P-1", qty: 3, safetyQty: 9 }])), "BOM_FORBIDDEN", "a count with a safety change is refused as a whole");
+  assert.equal((await view()).stock.find((row) => row.itemCode === "P-1").qty, 4, "the refused WH save changed nothing");
+  assert.equal((await counts([{ itemCode: "P-1", qty: 4, safetyQty: 3 }])).error, null, "WH may send the stored safety stock unchanged");
   await as("persona-rb");
+  assert.equal(await code(counts([{ itemCode: "P-1", safetyQty: 9 }])), "BOM_FORBIDDEN", "RB cannot set the safety stock either");
   assert.equal(await code(counts([{ itemCode: "P-1", qty: 9 }], before + 1)), "BOM_STALE", "the stale check comes before the permission check");
+  assert.equal(await code(counts([{ itemCode: "P-1", safetyQty: 9 }], before + 1)), "BOM_STALE", "…also for a safety change");
 
   // a part job is not reported any other way
   const jobs = (await view()).jobs;

@@ -195,6 +195,15 @@
       // ลบบรรทัด = บันทึก BOM ของชิ้นแม่ใหม่โดยไม่มีบรรทัดนี้ (saveBom เดิม ได้ฉบับแก้ไขใหม่) · BOM ต้องเหลืออย่างน้อย 1 บรรทัด จึงไม่มีปุ่มลบที่บรรทัดสุดท้าย
       const siblings = approvedBomOf(ctx, line.parentCode)?.lines ?? [];
       const rest = siblings.filter((entry) => entry.childCode !== line.itemCode).map((entry) => ({ childCode: entry.childCode, qty: entry.qty, scrapPct: entry.scrapPct ?? 0, note: entry.note ?? "", step: entry.step ?? "", flags: entry.flags ?? [] }));
+      // เลื่อนลำดับ: บรรทัดของ BOM เรียงตามผังงานของแผนกผู้ทำ (rules.sortLinesByFlow) จึงสลับได้กับบรรทัดติดกันของแผนกเดียวกันเท่านั้น · บันทึกด้วย saveBom (ฉบับแก้ไขใหม่ "เรียงลำดับส่วนประกอบใหม่")
+      const flowOf = (entry) => rules.flowStepOf(itemOf(ctx, entry.childCode)?.ownerDept ?? entry.producerDept);
+      const at = siblings.findIndex((entry) => entry.childCode === line.itemCode);
+      const full = (list) => list.map((entry) => ({ childCode: entry.childCode, qty: entry.qty, scrapPct: entry.scrapPct ?? 0, note: entry.note ?? "", step: entry.step ?? "", flags: entry.flags ?? [] }));
+      const swapped = (other) => { const list = siblings.slice(); [list[at], list[other]] = [list[other], list[at]]; return full(list); };
+      // ปุ่มเลื่อนขึ้นและเลื่อนลงแสดงคู่กันเสมอ: ทิศที่เลื่อนไม่ได้เป็นปุ่มปิด (title บอกเหตุ) ผู้ใช้จึงเห็นว่ามีทั้งสองทิศ
+      const moveOff = (label, why) => `<button class="btn rf-btn secondary" type="button" disabled title="${esc(why)}">${esc(label)}</button>`;
+      const moveButton = (label, other) => (!(canEdit && bomLine) ? "" : !(other >= 0 && other < siblings.length) ? moveOff(label, other < 0 ? "อยู่บนสุดแล้ว" : "อยู่ล่างสุดแล้ว") : flowOf(siblings[other]) !== flowOf(siblings[at]) ? moveOff(label, "สลับได้เฉพาะกับบรรทัดติดกันของแผนกเดียวกัน")
+        : ui.button(label, { action: "saveBom", args: { itemCode: line.parentCode, lines: swapped(other), note: `เรียงลำดับ ${line.itemCode}` }, className: "secondary", success: `เรียงลำดับ ${line.itemCode} แล้ว` }));
       // บรรทัดสูตรยางใต้เส้นยางแก้ที่ "แก้ข้อมูลเส้นยาง" ของเส้นยางนั้น (ช่องสูตรและบรรทัดต้องตรงกัน) จึงไม่มีปุ่มแก้/ลบบรรทัดที่นี่
       const underRod = itemOf(ctx, line.parentCode)?.kind === "RB";
       const buttons = [
@@ -205,6 +214,11 @@
         // แทรกชิ้นงานระหว่างทาง (WIP) คั่นระหว่างชิ้นแม่กับบรรทัดนี้ · ใต้เส้นยางแทรกไม่ได้ (ลูกของเส้นยางเป็นสูตรยางเท่านั้น)
         canEdit && bomLine && canAddLineTo(ctx, itemOf(ctx, line.parentCode)) ? ui.openButton("แทรก WIP คั่น", "wipInsert", { parentCode: line.parentCode, childCode: line.itemCode }, { className: "secondary" }) : "",
         canEdit && child && !ctx.helpers.NO_BOM_KINDS.includes(child.kind) ? ui.openButton(steps.length ? "แก้ขั้นตอน" : "+ ขั้นตอน", "routingEdit", { code: line.itemCode }, { className: "secondary" }) : "",
+        moveButton("เลื่อนขึ้น", at - 1),
+        moveButton("เลื่อนลง", at + 1),
+        // ย้ายบรรทัดนี้ (พร้อมส่วนประกอบข้างใน) ไปอยู่ใต้ชิ้นอื่นของโครงสร้างนี้ · ชิ้นแม่เดิมต้องเหลืออย่างน้อย 1 บรรทัด
+        canEdit && bomLine && !underRod && siblings.length > 1 ? ui.openButton("ย้ายไปใต้ชิ้นอื่น", "lineMove", { rootCode: item.code, parentCode: line.parentCode, childCode: line.itemCode }, { className: "secondary" }) : "",
+        canEdit && child ? ui.openButton("แก้ชื่อ / หน่วย", "itemEdit", { code: line.itemCode }, { className: "secondary" }) : "",
         ui.link("เปิดหน้าของรายการนี้", ctx.url("find", { code: line.itemCode }), "btn rf-btn secondary"),
         canEdit && bomLine && rest.length && !underRod ? ui.button("ลบบรรทัดนี้", { action: "saveBom", args: { itemCode: line.parentCode, lines: rest, note: `ลบ ${line.itemCode}` }, className: "secondary", confirmText: `ลบ ${line.name} ออกจาก ${itemOf(ctx, line.parentCode)?.name ?? line.parentCode}?`, success: `ลบ ${line.itemCode} ออกจาก BOM ของ ${line.parentCode} แล้ว` }) : "",
       ].join("");
@@ -449,6 +463,28 @@
     handle.addEventListener("dblclick", () => { layout.style.removeProperty("--side-w"); describe(Math.round(current())); try { root.localStorage?.removeItem(SIDE_KEY); } catch { /* ไม่มีอะไรต้องลบ */ } });
   }
 
+  // dialog: ย้ายบรรทัดไปอยู่ใต้ชิ้นอื่นของโครงสร้างเดียวกัน (แทนการลากย้ายชั้นในตารางกว้าง) · ตัวเลือก = ชิ้นในต้นไม้ของรายการที่เปิดอยู่ที่รับชิ้นนี้ได้
+  // บันทึกด้วย saveBomTree คำสั่งเดียว (ตัวแปลง lineMove ใน module-bom.js): BOM ของชิ้นแม่เดิมและชิ้นแม่ใหม่ได้ฉบับแก้ไขใหม่พร้อมกัน ส่วนประกอบข้างในของบรรทัดที่ย้ายไม่ถูกแตะ
+  dialogs.lineMove = (ctx, { rootCode, parentCode, childCode }) => {
+    const { ui, rules } = ctx;
+    const rootItem = itemOf(ctx, rootCode);
+    const child = itemOf(ctx, childCode);
+    const fromLines = approvedBomOf(ctx, parentCode)?.lines ?? [];
+    if (!rootItem || !child || !ctx.helpers.canPlan(ctx.user) || fromLines.length < 2 || !fromLines.some((entry) => entry.childCode === childCode)) return null;
+    const explodeOf = (code) => rules.explode(code, 1, { itemOf: (c) => itemOf(ctx, c), approvedBomOf: (c) => approvedBomOf(ctx, c) }).lines;
+    const inside = new Set(explodeOf(child.code).map((entry) => entry.itemCode)); // ชิ้นนี้และทุกอย่างข้างใต้: ย้ายเข้าไปใต้ตัวเองไม่ได้
+    const targets = [...new Map(explodeOf(rootItem.code).map((entry) => [entry.itemCode, itemOf(ctx, entry.itemCode)])).values()]
+      .filter((entry) => canAddLineTo(ctx, entry) && entry.code !== parentCode && !inside.has(entry.code) && !rules.childKindError(entry.kind, child.kind)
+        && !(approvedBomOf(ctx, entry.code)?.lines ?? []).some((line) => line.childCode === child.code));
+    const options = targets.map((entry) => ({ value: entry.code, label: `${entry.name} · ${entry.code}` }));
+    const body = `<form novalidate id="bom-move-form" data-rf-form="saveBomTree" data-rf-args="${attr(JSON.stringify({ lineMove: true, code: rootItem.code, fromCode: parentCode, childCode: child.code }))}" data-rf-success="{result}">
+      <p class="muted small">${esc(`ย้าย ${child.name} ออกจาก ${itemOf(ctx, parentCode)?.name ?? parentCode}`)}</p>
+      ${options.length ? ui.field("ย้ายไปอยู่ใต้", ui.select("toCode", options, { placeholder: "เลือกชิ้นในโครงสร้างนี้…", extra: "required" }), { required: true }) : ui.callout("warn", "ไม่มีชิ้นอื่นในโครงสร้างนี้ที่รับบรรทัดนี้ได้")}
+      <p class="small muted">ปริมาณ เผื่อเสีย หมายเหตุ และส่วนประกอบข้างในของบรรทัดนี้ตามไปด้วย ปรับปริมาณต่อชิ้นแม่ใหม่ได้ที่ “แก้บรรทัดนี้” หลังย้าย</p>
+      ${ui.field("เหตุผลของการแก้ครั้งนี้", ui.input("note", { extra: 'maxlength="300"' }))}</form>`;
+    return { html: ui.dialog("lineMove", `ย้าย ${child.code}`, body, { footer: `${ui.closeButton()}${options.length ? '<button class="btn rf-btn" type="submit" form="bom-move-form">ย้าย</button>' : ""}` }) };
+  };
+
   // dialog: แทรกชิ้นงานระหว่างทาง (WIP) คั่นระหว่างชิ้นแม่กับบรรทัดที่เลือก · ชิ้นแม่ → [WIP ใหม่] → บรรทัดเดิม
   // บรรทัดเดิมย้ายไปอยู่ใต้ WIP ใหม่พร้อมปริมาณ เผื่อเสีย และหมายเหตุของมัน · บันทึกด้วย saveBomTree ในคำสั่งเดียว (ตัวแปลง wipInsert ใน module-bom.js): สร้างชิ้นใหม่ BOM ของชิ้นใหม่ และ BOM ฉบับใหม่ของชิ้นแม่
   dialogs.wipInsert = (ctx, { parentCode, childCode }) => {
@@ -686,7 +722,8 @@
   // other = ที่ใบร่างอื่นต้องใช้ของเดียวกัน (rules.draftPartDemand) เป็นข้อมูลให้ดู ไม่เข้าสูตรขาด/พอ เพราะใบร่างไม่จองของ (จองเมื่อปล่อยผลิต)
   function draftPartRows(ctx, order) {
     const purchaseOrders = pages.tools?.purchaseOrdersOf?.(ctx) ?? [];
-    const others = ctx.rules.draftPartDemand(ctx.data.orders, order.id);
+    // ใบร่างที่คำนวณก่อนใบนี้อยู่ในยอดจองแล้ว (rules.partNeeds) คอลัมน์นี้จึงเหลือเฉพาะใบร่างที่คำนวณทีหลัง
+    const others = ctx.rules.draftPartDemand(ctx.data.orders, order.id, { relativeTo: order, side: "later" });
     return ctx.rules.partNeeds({ jobs: ctx.data.jobs, orders: ctx.data.orders, stock: ctx.data.stock ?? [], purchaseOrders }, order.id).rows
       .map((row) => ({ itemCode: row.itemCode, name: row.name, uom: row.uom, required: row.needQty, onHand: row.onHandQty, held: row.reservedQty, onOrder: row.onOrderQty, short: row.shortage, other: Math.round((others.get(row.itemCode)?.qty ?? 0) * 1e3) / 1e3, otherOrders: others.get(row.itemCode)?.orders ?? [] }))
       .sort((a, b) => (b.short > 0) - (a.short > 0) || a.itemCode.localeCompare(b.itemCode));
@@ -733,7 +770,7 @@
       return `<span class="bom-ok-text">พอ</span>${row.other > 0 && left < row.other - 1e-9 ? '<div class="small muted">ไม่พอถ้ารวมใบร่างอื่น</div>' : ""}`;
     };
     const rowHtml = (row) => `<tr${row.short > 0 ? ' class="bom-short"' : ""}><td><strong>${esc(row.name || row.itemCode)}</strong>${row.name ? `<div class="rf-mono small muted">${esc(row.itemCode)}</div>` : ""}</td><td class="right">${esc(`${rules.fmtQty(row.required)} ${uomText(ctx, row.uom)}`)}</td><td class="right">${esc(rules.fmtQty(row.onHand))}</td>${anyHeld ? `<td class="right">${esc(rules.fmtQty(row.held))}</td>` : ""}${anyOnOrder ? `<td class="right">${esc(rules.fmtQty(row.onOrder))}</td>` : ""}${anyOther ? `<td class="right"${row.otherOrders.length ? ` title="${attr(`ใบ ${row.otherOrders.join(", ")}`)}"` : ""}>${row.other > 0 ? esc(rules.fmtQty(row.other)) : '<span class="muted">—</span>'}</td>` : ""}<td class="right">${result(row)}</td></tr>`;
-    const headCells = [firstHead, { label: "ต้องใช้", className: "right" }, { label: "มีในคลัง", className: "right" }, ...(anyHeld ? [{ label: "ใบอื่นจองไว้", className: "right", title: heldTitle }] : []), ...(anyOnOrder ? [{ label: "สั่งแล้วรอรับ", className: "right" }] : []), ...(anyOther ? [{ label: "ใบร่างอื่นต้องใช้", className: "right", title: "ใบร่างอื่นที่คำนวณแล้วต้องใช้ของเดียวกัน ยังไม่ได้จอง ใบที่ปล่อยผลิตก่อนได้ของก่อน" }] : []), { label: "ผล", className: "right" }];
+    const headCells = [firstHead, { label: "ต้องใช้", className: "right" }, { label: "มีในคลัง", className: "right" }, ...(anyHeld ? [{ label: "ใบอื่นจองไว้", className: "right", title: heldTitle }] : []), ...(anyOnOrder ? [{ label: "สั่งแล้วรอรับ", className: "right" }] : []), ...(anyOther ? [{ label: "ใบร่างอื่นต้องใช้", className: "right", title: "ใบร่างที่คำนวณของหลังใบนี้และต้องใช้ของเดียวกัน (ใบนี้จองก่อน)" }] : []), { label: "ผล", className: "right" }];
     return `${short.length || enough.length <= 5 ? ui.table(headCells, (short.length ? short : enough).map(rowHtml)) : ""}${short.length && enough.length ? `<details class="bom-more"><summary>ดู${esc(noun)}อีก ${enough.length} รายการที่พอ</summary>${ui.table(headCells, enough.map(rowHtml))}</details>` : !short.length && enough.length > 5 ? `<details class="bom-more"><summary>ดู${esc(noun)}ทั้ง ${enough.length} รายการ</summary>${ui.table(headCells, enough.map(rowHtml))}</details>` : ""}`;
   }
   // สั่งซื้อของที่ขาดของใบร่างได้เมื่อข้อมูลอยู่ในฐานข้อมูล (ใบสั่งซื้อเป็นของ RubberFlow) และผู้ใช้เป็นฝ่ายวางแผนหรือแผนก RB (เงื่อนไขเดียวกับปุ่มตรวจวัตถุดิบของใบที่ปล่อยแล้ว)
@@ -766,7 +803,7 @@
         const chem = draftChemicals(ctx, order);
         const chemShort = chem.rows.filter((row) => row.short > 0);
         draftOrders = chem.orders;
-        const table = parts.length ? needTable(ctx, parts, "ของซื้อ", "ใบสั่งผลิตอื่นที่ปล่อยผลิตแล้วและยังไม่ได้เบิกจ่าย") : ui.empty("ใบนี้ไม่มีของซื้อ");
+        const table = parts.length ? needTable(ctx, parts, "ของซื้อ", "ใบสั่งผลิตอื่นที่ปล่อยผลิตแล้วและยังไม่ได้เบิกจ่าย และใบร่างที่คำนวณของก่อนใบนี้") : ui.empty("ใบนี้ไม่มีของซื้อ");
         // เคมีของเส้นยาง: มีเมื่อใบนี้ต้องรีดเส้นยาง · เส้นยางที่ยังไม่ผูกสูตร RubberFlow ประเมินไม่ได้ (และจะไม่ได้ WO ตอนปล่อยผลิต) บอกเหตุผลให้ไปแก้ก่อน
         const skippedNote = chem.skipped.length ? ui.callout("warn", `เส้นยาง ${chem.skipped.length} จาก ${chem.jobs} รายการยังประเมินเคมีไม่ได้${ctx.store?.isRemote?.() ? " และจะยังไม่ได้ WO ตอนปล่อยผลิต" : ""}: ${chem.skipped.slice(0, 5).map((entry) => `<span class="rf-mono">${esc(entry.itemCode)}</span> ${esc(entry.reason)}`).join(" · ")}${chem.skipped.length > 5 ? ` และอีก ${chem.skipped.length - 5}` : ""}${ctx.canSee("compounds") ? ` · ${ui.link("ไปผูกสูตรยาง", ctx.url("compounds"))}` : ""}`) : "";
         const chemHtml = !chem.jobs ? "" : !chem.ready ? '<p class="small muted">กำลังโหลดข้อมูลเคมีจาก RubberFlow…</p>' : `${chem.rows.length ? needTable(ctx, chem.rows, "เคมีของเส้นยาง", "ใบเบิกที่ค้างจ่าย และ WO อื่นที่ยังเปิดอยู่", "เคมี") : ""}${skippedNote}`;
@@ -828,7 +865,9 @@
       for (const po of purchaseOrders) {
         if (po.status !== "ordered") continue;
         const lines = (po.lines ?? []).filter((line) => line.receivedKg === null || line.receivedKg === undefined);
-        if (lines.length) tasks.push({ kind: "receive", po, lines });
+        // ใบสั่งผลิตที่ใบสั่งซื้อนี้สั่งให้ถูกยกเลิกแล้ว: ST ตัดสินเองว่าจะยกเลิกใบสั่งซื้อ หรือรับเข้าเป็นสต็อก
+        const cancelled = Boolean(po.sourcePi) && ctx.data.orders.find((order) => order.id === po.sourcePi)?.status === "cancelled";
+        if (lines.length) tasks.push({ kind: "receive", po, lines, cancelled, partly: (po.lines ?? []).some((line) => line.receivedKg != null) });
       }
     }
     if (rfCan(ctx, "purchase")) {
@@ -911,10 +950,10 @@
     const taskHtml = (task) => {
       if (task.kind === "receive") {
         const unit = (line) => (line.source === "bom" ? uomText(ctx, line.uom) : "กก.");
-        return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">รอรับเข้า</span><span class="muted">สั่งเมื่อ ${esc(rules.fmtDate(task.po.createdAt))}</span></div>
-          <h2>${esc(`รับเข้าตามใบสั่งซื้อ ${task.po.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${task.po.sourcePi ? esc(`สั่งจากใบ ${task.po.sourcePi}`) : ""}</p>
+        return `<article class="card rf-card bom-job ${task.cancelled ? "is-hold" : "is-now"}"><div class="bom-job-top"><span class="bom-job-state">${task.cancelled ? "ใบสั่งผลิตถูกยกเลิกแล้ว" : "รอรับเข้า"}</span><span class="muted">สั่งเมื่อ ${esc(rules.fmtDate(task.po.createdAt))}</span></div>
+          <h2>${esc(`${task.cancelled ? "ตัดสินใบสั่งซื้อ" : "รับเข้าตามใบสั่งซื้อ"} ${task.po.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${task.po.sourcePi ? esc(`สั่งจากใบ ${task.po.sourcePi}`) : ""}${task.cancelled ? (task.partly ? " · รับเข้าไปแล้วบางรายการ ใบนี้ยกเลิกไม่ได้ รับส่วนที่เหลือเข้าเป็นสต็อกไว้ใช้กับใบอื่น" : " · ยกเลิกใบสั่งซื้อ หรือรับเข้าเป็นสต็อกไว้ใช้กับใบอื่น") : ""}</p>
           <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span class="rf-mono">${esc(line.materialCode)}</span><span class="nowrap">${esc(`${rules.fmtQty(line.qtyKg)} ${unit(line)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
-          ${ui.link("ตรวจสอบรับเข้า", `#/rubberflow?p=warehouse&tab=po&q=${encodeURIComponent(task.po.id)}`, "btn rf-btn bom-job-main")}</article>`;
+          ${ui.link(task.cancelled ? "เปิดใบสั่งซื้อ" : "ตรวจสอบรับเข้า", `#/rubberflow?p=warehouse&tab=po&q=${encodeURIComponent(task.po.id)}`, "btn rf-btn bom-job-main")}</article>`;
       }
       if (task.kind === "chem") {
         return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">เคมีขาด ยังไม่ได้สั่ง</span></div>

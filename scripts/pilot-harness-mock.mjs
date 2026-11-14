@@ -703,7 +703,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       if (newQty === (old?.qty ?? 0) && newSafety === (old?.safetyQty ?? 0)) continue;
       if (old && (next.versions.stock[code] ?? 0) > base && (next.versions.stock[code] ?? 0) <= cur) fail("BOM_STALE");
       if (newQty !== (old?.qty ?? 0) && !mayCount) fail("BOM_FORBIDDEN");
-      if (newSafety !== (old?.safetyQty ?? 0) && !bomIsPlanner(actor)) fail("BOM_FORBIDDEN");
+      if (newSafety !== (old?.safetyQty ?? 0) && !(bomIsPlanner(actor) || actor.dept === "ST")) fail("BOM_FORBIDDEN"); // สต็อกขั้นต่ำ: กลุ่มวางแผนหรือแผนก ST (20261120010000)
       const countedNow = newQty !== (old?.qty ?? 0);
       const out = { itemCode: code, qty: newQty, safetyQty: newSafety, countedAt: countedNow ? at : old?.countedAt ?? null, countedBy: countedNow ? actor.name : old?.countedBy ?? "", updatedAt: at };
       if (old) next.stock[next.stock.indexOf(old)] = out; else next.stock.push(out);
@@ -1091,7 +1091,8 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       if (entry.upsert.length > 5000) fail("RF_TOO_MANY");
       // ผู้ที่ไม่ใช่กลุ่มวางแผน/สมาชิก RB: วัตถุดิบและสูตรแก้ไม่ได้เลย · ใบสั่งผลิตมาได้เฉพาะระเบียนที่ต่างจากของเดิมแค่ยอดผลิต (ฐานข้อมูลคำนวณเอง เช่นสำเนาของ QA/ SR ที่แก้ยอดตามผล) ที่เหลือ = ไม่มีสิทธิ์ ตัดสินก่อนตรวจชน
       if (entry.upsert.length && !master) {
-        if (list === "materials" || list === "recipes") fail("RF_FORBIDDEN");
+        // แผนก ST ส่งชุดวัตถุดิบได้เฉพาะพ่วงมากับใบสั่งซื้อ (แก้ได้ช่อง safetyKg ช่องเดียว ตรวจข้างล่าง) ตรงกับประตูของ app_rf_save ใน 20261120010000
+        if (list === "recipes" || (list === "materials" && !(actor.dept === "ST" && action === "createPurchaseOrder"))) fail("RF_FORBIDDEN");
         if (list === "orders" && entry.upsert.some((row) => { const old = current.orders.find((order) => order.id === row?.id); return !old || !rfSame(old, row, RF_NOOP.orders); })) fail("RF_FORBIDDEN");
       }
     }
@@ -1443,8 +1444,12 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
             const common = { needKg: line.needKg, availableKg: line.availableKg, shortageKg: line.shortageKg, safetyKg: line.safetyKg, qtyKg: line.qtyKg, receivedKg: null, lotNo: null, expiry: null, receivedAt: null, receivedBy: null };
             if (line.source === "bom") {
               const item = bomLoad().items.find((row) => row.code === bomCode(line.materialCode) && row.kind === "PURCHASED") ?? fail(bad);
-              // สต็อกขั้นต่ำของซื้อเปลี่ยนได้เฉพาะกลุ่มวางแผน (ไม่มีแถวสต็อก = 0) · ตรงกับ rf_save_purchase_orders
-              if (line.safetyKg !== (bomLoad().stock.find((entry) => entry.itemCode === item.code)?.safetyQty ?? 0) && !planner) fail("RF_FORBIDDEN");
+              // สต็อกขั้นต่ำของซื้อเปลี่ยนได้โดยกลุ่มวางแผนหรือแผนก ST (ไม่มีแถวสต็อก = 0) · ตรงกับ rf_save_purchase_orders
+              // storedSafetyKg = ค่าที่หน้าต่างแสดงตอนเปิด: ส่งมาเท่ากัน = ผู้สั่งไม่ได้แก้ จึงไม่เขียนทับค่าที่ผู้อื่นเพิ่งตั้ง (ตรงกับ 20261120010000)
+              const storedRow = bomLoad().stock.find((entry) => entry.itemCode === item.code);
+              if (line.storedSafetyKg !== undefined && line.storedSafetyKg !== null && !money(line.storedSafetyKg)) fail(bad);
+              if (storedRow && typeof line.storedSafetyKg === "number" && line.safetyKg === line.storedSafetyKg) return { materialCode: item.code, source: "bom", uom: item.uom, ...common, safetyKg: storedRow.safetyQty ?? 0 };
+              if (line.safetyKg !== (storedRow?.safetyQty ?? 0) && !(planner || actor.dept === "ST")) fail("RF_FORBIDDEN");
               ops.stock.push({ kind: "safety", code: item.code, qty: line.safetyKg });
               return { materialCode: item.code, source: "bom", uom: item.uom, ...common };
             }

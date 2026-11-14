@@ -2230,7 +2230,7 @@
   pages.stock = (ctx) => {
     const { data, ui, rules, user, params } = ctx;
     const canCount = ctx.helpers.canCount(user);
-    const canSafety = ctx.helpers.canPlan(user);
+    const canSafety = ctx.helpers.canSetSafety(user);
     const limit = Math.max(STOCK_PAGE, Math.min(5000, Number(params.get("n")) || STOCK_PAGE));
     const stockOf = new Map((data.stock ?? []).map((row) => [row.itemCode, row]));
     const list = data.items.filter((item) => item.kind === "PURCHASED" && (item.active !== false || stockOf.has(item.code)) && includes(`${item.code} ${item.name}`, ctx.q)).sort((a, b) => a.code.localeCompare(b.code));

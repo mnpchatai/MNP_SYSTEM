@@ -373,6 +373,8 @@
     const poStatus = { ordered: ["warn", "รอรับเข้า"], received: ["good", "รับครบแล้ว"], cancelled: ["bad", "ยกเลิก"] };
     // บรรทัดของซื้อ (source bom) นับเป็นหน่วยของชิ้น: ชื่อมาจาก item master ของ BOM ถ้าโหลดอยู่ · หน่วยเก็บมากับบรรทัด
     const bomItems = (() => { try { return root.MNP_BOM?.store?.isRemote?.() && root.MNP_BOM.store.status() === "ready" ? root.MNP_BOM.store.data().items : []; } catch { return []; } })();
+    const bomOrders = (() => { try { return root.MNP_BOM?.store?.isRemote?.() && root.MNP_BOM.store.status() === "ready" ? root.MNP_BOM.store.data().orders : []; } catch { return []; } })();
+    const piCancelled = (po) => po.status === "ordered" && Boolean(po.sourcePi) && bomOrders.find((order) => order.id === po.sourcePi)?.status === "cancelled";
     const lineUnit = (line) => (line.source === "bom" ? partUnit(line.uom) : "kg");
     const lineName = (line) => (line.source === "bom" ? bomItems.find((item) => item.code === line.materialCode)?.name ?? "" : data.materials.find((row) => row.code === line.materialCode)?.name ?? "");
     const poRows = purchaseOrders
@@ -382,7 +384,7 @@
         const cancel = mayCancelPo && po.status === "ordered" && !po.lines.some(receivedLine)
           ? ui.button("ยกเลิกใบ", { action: "cancelPurchaseOrder", args: { id: po.id }, className: "danger small", confirmText: `ยกเลิก ${po.id}? ใบสั่งซื้อที่ยกเลิกแล้วแก้กลับไม่ได้`, ariaLabel: `ยกเลิก ${po.id}` }) : "";
         const source = [po.sourcePi, po.sourceRequisition].filter(Boolean).join(" · ");
-        const head = `<tr class="rf-po-head"><td colspan="4"><div class="rf-row rf-between"><div><strong class="rf-mono">${esc(po.id)}</strong> ${ui.badge(...poStatus[po.status] ?? ["", po.status])}<div class="small muted">${esc(`${fmtDate(po.createdAt)} · ${po.createdBy ?? "-"}${source ? ` · ${source}` : ""}`)}</div></div>${cancel}</div></td></tr>`;
+        const head = `<tr class="rf-po-head"><td colspan="4"><div class="rf-row rf-between"><div><strong class="rf-mono">${esc(po.id)}</strong> ${ui.badge(...poStatus[po.status] ?? ["", po.status])}${piCancelled(po) ? ` ${ui.badge("bad", "ใบสั่งผลิตถูกยกเลิกแล้ว")}` : ""}<div class="small muted">${esc(`${fmtDate(po.createdAt)} · ${po.createdBy ?? "-"}${source ? ` · ${source}` : ""}`)}</div></div>${cancel}</div></td></tr>`;
         const lines = po.lines.map((line) => {
           const action = po.status === "ordered" && !receivedLine(line) && mayReceive ? ui.openButton("ตรวจสอบรับเข้า", "receivePurchase", { id: po.id, materialCode: line.materialCode }, { className: "small", ariaLabel: `ตรวจสอบรับเข้า ${po.id} ${line.materialCode}` }) : "";
           const got = receivedLine(line)
@@ -519,7 +521,7 @@
       const hidden = Object.entries({ materialCode: row.materialCode, source: row.source, uom: row.uom ?? "", needKg: row.needKg, availableKg: row.availableKg, shortageKg: row.shortageKg }).map(([name, value]) => `<input type="hidden" name="${name}[]" value="${esc(String(value))}">`).join("");
       return `<tr data-rf-po-row data-short="${esc(String(row.shortageKg))}"${row.orderKg > 0 ? ' class="rf-po-need"' : ""}><td>${ui.mono(row.materialCode)}<div class="small muted">${esc(row.name)}${row.source === "bom" ? ` · ${esc(partUnit(row.uom))}` : ""}</div>${hidden}</td>
         ${cells}
-        <td>${ui.input("safetyKg[]", { type: "number", step: "any", min: 0, value: String(row.safetyKg), extra: `data-rf-safety aria-label="สต็อกขั้นต่ำ ${code}"${readOnly || (row.source === "bom" ? !ctx.user?.planner : !ctx.can("editMaster")) ? ` readonly title="${row.source === "bom" ? "สต็อกขั้นต่ำของซื้อแก้ได้โดยฝ่ายวางแผน ที่หน้าคลังของซื้อ" : "สต็อกขั้นต่ำของเคมีแก้ได้โดยฝ่ายวางแผนหรือแผนก RB ที่หน้าวัตถุดิบ"}"` : ""}` })}<input type="hidden" name="storedSafetyKg[]" value="${esc(String(row.safetyKg))}"></td>
+        <td>${ui.input("safetyKg[]", { type: "number", step: "any", min: 0, value: String(row.safetyKg), extra: `data-rf-safety aria-label="สต็อกขั้นต่ำ ${code}"${readOnly || !(ctx.user?.st || (row.source === "bom" ? ctx.user?.planner : ctx.can("editMaster"))) ? ' readonly title="สต็อกขั้นต่ำแก้ได้โดยผู้สั่งซื้อ (คลังวัตถุดิบ ST) หรือฝ่ายวางแผน"' : ""}` })}<input type="hidden" name="storedSafetyKg[]" value="${esc(String(row.safetyKg))}"></td>
         <td>${ui.input("qtyKg[]", { type: "number", step: "any", min: 0, value: String(row.orderKg), extra: `data-rf-qty title="ตั้งต้น = ขาด + สต็อกขั้นต่ำ" aria-label="จำนวนสั่ง ${code}"${readOnly ? " readonly" : ""}` })}</td></tr>`;
     };
     const needFirst = (list, key) => [...list].sort((a, b) => (b[key] > 0) - (a[key] > 0));

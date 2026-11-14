@@ -1392,7 +1392,7 @@ test("in the in-browser demo a release opens no WOs: the confirm says nothing ab
   assert.doesNotMatch(html, /งาน RB ที่ยังไม่มี WO ใน RubberFlow/, "demo jobs are linked by hand; the database mode is the only one that opens WOs for you");
 });
 
-test("the part stock page: ST and WH count, only planners edit the safety stock, the list is searchable and paged, the history dialog lists the moves", async () => {
+test("the part stock page: ST and WH count, the planning group and ST edit the safety stock, the list is searchable and paged, the history dialog lists the moves", async () => {
   const env = load();
   env.store.setUser("B08"); // ST
   let html = await env.render("p=stock");
@@ -1400,7 +1400,8 @@ test("the part stock page: ST and WH count, only planners edit the safety stock,
   assert.match(html, /data-rf-form="countPartStock"/);
   assert.match(html, /name="itemCode\[\]" value="P-BOX-01"/);
   assert.match(html, /name="qty\[\]"[^>]*value="5"/, "the counted balance of the demo box");
-  assert.doesNotMatch(html, /name="safetyQty\[\]"/, "ST cannot edit the safety stock");
+  assert.match(html, /name="safetyQty\[\]"/, "ST edits the safety stock");
+  assert.match(html, /name="safetyQty\[\][^>]*value="\d/, "ST's safety input carries the stored value");
   assert.doesNotMatch(html, /value="(SE|RB|BG|PT)-/, "only purchased parts are listed");
   assert.match(html, /data-rf-open="partHistory"/);
   assert.match(html, /—/, "no RubberFlow purchase data in this run: the on-order column shows a dash");
@@ -1411,6 +1412,12 @@ test("the part stock page: ST and WH count, only planners edit the safety stock,
   env.store.setUser("B03"); // ฝ่ายวางแผน
   html = await env.render("p=stock");
   assert.match(html, /name="safetyQty\[\]"[^>]*value="10"/, "the planner edits the safety stock");
+  // ผู้ที่เข้าหน้านี้ได้แต่ตั้งสต็อกขั้นต่ำไม่ได้ (WH นับได้อย่างเดียว) เห็นเป็นตัวเลข: จำลองด้วยสิทธิ์ที่ canSetSafety ปฏิเสธ
+  const stockCtx = env.ctx("p=stock");
+  const asWh = { ...stockCtx, user: { id: "WH1", role: "wh", dept: "WH", name: "คลังสินค้า" }, helpers: stockCtx.helpers };
+  const whHtml = env.context.MNP_BOM_PAGES.stock(asWh).html;
+  assert.match(whHtml, /name="qty\[\]"/, "WH still counts the balance");
+  assert.doesNotMatch(whHtml, /name="safetyQty\[\]"/, "WH cannot edit the safety stock");
   env.store.setUser("B04"); // RB: เมนูนี้ไม่มี
   assert.match(await env.render("p=stock"), /ไม่มีสิทธิ์เข้าถึงหน้านี้/);
 
@@ -2073,8 +2080,25 @@ test("an open PI names itself in the page head, a draft shows what other drafts 
   assert.equal(env.context.MNP_BOM_RULES.draftPartDemand(env.store.data().orders, "DEMO-26009").has([...demand.keys()][0]), true, "each draft sees the other one");
   html = await env.render("p=orders&sel=DEMO-26002");
   clean(html);
-  assert.match(html, /<th class="right" title="[^"]*ยังไม่ได้จอง[^"]*">ใบร่างอื่นต้องใช้<\/th>/);
+  // ลำดับจองของใบร่าง: DEMO-26002 คำนวณก่อน DEMO-26009 → DEMO-26002 เห็น 26009 ในคอลัมน์ "ใบร่างอื่นต้องใช้" (ใบนี้จองก่อน) และ 26009 เห็น 26002 ในยอดจอง (ไม่มีคอลัมน์นั้น)
+  const draftRules = env.context.MNP_BOM_RULES;
+  const orderOf = (id) => env.store.data().orders.find((order) => order.id === id);
+  assert.ok(orderOf("DEMO-26002").explodedAt < orderOf("DEMO-26009").explodedAt, "the demo draft was calculated before the new one");
+  const sharedCode = [...demand.keys()][0];
+  assert.deepEqual(json([...draftRules.draftPartDemand(env.store.data().orders, "DEMO-26002", { relativeTo: orderOf("DEMO-26002"), side: "later" }).get(sharedCode).orders]), ["DEMO-26009"]);
+  assert.equal(draftRules.draftPartDemand(env.store.data().orders, "DEMO-26002", { relativeTo: orderOf("DEMO-26002"), side: "earlier" }).size, 0, "nothing was calculated before the first draft");
+  assert.match(html, /<th class="right" title="[^"]*ใบนี้จองก่อน[^"]*">ใบร่างอื่นต้องใช้<\/th>/);
+  assert.match(html, /<th class="right" title="[^"]*ที่คำนวณของก่อนใบนี้[^"]*">ใบอื่นจองไว้<\/th>/, "the held column says it includes earlier drafts");
   assert.match(html, /title="ใบ DEMO-26009"/);
+  const needsOf = (id) => draftRules.partNeeds({ jobs: env.store.data().jobs, orders: env.store.data().orders, stock: env.store.data().stock, purchaseOrders: [] }, id).rows.find((row) => row.itemCode === sharedCode);
+  const earlierNeed = draftRules.draftPartDemand(env.store.data().orders, "DEMO-26009", { relativeTo: orderOf("DEMO-26009"), side: "earlier" }).get(sharedCode).qty;
+  assert.ok(earlierNeed > 0);
+  assert.ok(Math.abs(needsOf("DEMO-26009").reservedQty - needsOf("DEMO-26002").reservedQty - earlierNeed) < 0.0011, "the later draft holds the earlier draft's need on top of the released orders'");
+  const laterHtml = await env.render("p=orders&sel=DEMO-26009");
+  clean(laterHtml);
+  assert.doesNotMatch(laterHtml, /ใบร่างอื่นต้องใช้/, "no draft was calculated after the later one: its column is gone, the earlier draft is inside the held column");
+  assert.match(laterHtml, /ใบอื่นจองไว้/);
+  html = await env.render("p=orders&sel=DEMO-26002");
   // ใบสั่งซื้อที่สั่งจากใบนี้และยังไม่รับของ
   assert.doesNotMatch(html, /มีใบสั่งซื้อที่สั่งจากใบนี้/);
   env.rf.store.data().purchaseOrders.push({ id: "PO-TEST-01", status: "ordered", sourcePi: "DEMO-26002", lines: [] }, { id: "PO-TEST-02", status: "received", sourcePi: "DEMO-26002", lines: [] }, { id: "PO-TEST-03", status: "ordered", sourcePi: "DEMO-26001", lines: [] });
@@ -2271,7 +2295,7 @@ test("purchasing belongs to the raw-material store: the purchase dialog is read-
   assert.doesNotMatch(env.context.MNP_BOM_PAGES.work(stCtx(["viewPurchase"])).html, /รับเข้าตามใบสั่งซื้อ|สั่งซื้อของที่ขาด/);
 });
 
-test("an inserted WIP item enters the parent at the step its line was ticked for in the production steps, and the store orders without touching a chemical's safety stock", async () => {
+test("an inserted WIP item enters the parent at the step its line was ticked for in the production steps, and the store's order saves a chemical's safety stock while an account without planner, RB or ST rights leaves it alone", async () => {
   const env = load();
   env.store.setUser("B03");
   const parent = "DEMO-TP-01(P)-Y";
@@ -2282,16 +2306,19 @@ test("an inserted WIP item enters the parent at the step its line was ticked for
   await env.submit("p=find", "saveBomTree", { wipCode: "WIP-STEP-1", wipName: "ชุดประกอบ", wipKind: "SUBPART", wipUom: "pcs", wipQty: "1", childQty: "" }, { wipInsert: true, code: parent, childCode: child });
   const line = env.store.data().boms.find((bom) => bom.itemCode === parent && bom.status === "approved").lines.find((entry) => entry.childCode === "WIP-STEP-1");
   assert.equal(line.step, 2, "the new item takes the step the moved line was routed to");
-  // ใบสั่งซื้อของผู้ที่แก้วัตถุดิบไม่ได้ (ST ในโหมดฐานข้อมูล): ค่าสต็อกขั้นต่ำที่เก็บแบบมีทศนิยมยาวไม่ถูกเขียนทับ จึงไม่มีชุด materials ไปกับใบ
+  // ใบสั่งซื้อในโหมดฐานข้อมูล: ST แก้สต็อกขั้นต่ำของเคมีได้พร้อมใบสั่งซื้อ (ค่านี้ถูกปัดเป็น 3 ตำแหน่งตามที่หน้าต่างส่งมา) · บัญชีที่ไม่ใช่ planner / RB / ST (ผู้ดูแลที่ไม่มี flag) สั่งได้แต่ไม่แตะวัตถุดิบ
   const A = env.context.MNP_RUBBERFLOW_ACTIONS;
   const d = json(env.rf.store.data());
   const material = d.materials[0];
   material.safetyKg = 12.3456;
   const ctx = (user) => ({ user, now: Date.now(), remote: true });
   const payload = { lines: [{ materialCode: material.code, needKg: 1, availableKg: 0, shortageKg: 1, safetyKg: 12.346, qtyKg: 5 }], safety: { [material.code]: 12.346 } };
+  A.createPurchaseOrder(d, { ...payload, safety: { [material.code]: 7 }, lines: [{ ...payload.lines[0], safetyKg: 7 }] }, ctx({ name: "ผู้ดูแล", role: "admin" }));
+  assert.equal(d.materials[0].safetyKg, 12.3456, "an account without planner, RB or ST rights does not change the stored safety stock");
+  assert.equal(d.purchaseOrders.at(0).lines[0].safetyKg, 12.346, "its order line carries the stored value (3 decimals), not the 7 it asked for");
   A.createPurchaseOrder(d, payload, ctx({ name: "คลัง", role: "store", st: true }));
-  assert.equal(d.materials[0].safetyKg, 12.3456, "the store's order leaves the stored safety stock alone");
-  assert.equal(d.purchaseOrders.at(-1).lines[0].safetyKg, 12.346);
+  assert.equal(d.materials[0].safetyKg, 12.346, "the store's order saves the changed safety stock");
+  assert.equal(d.purchaseOrders.at(0).lines[0].safetyKg, 12.346);
   A.createPurchaseOrder(d, { ...payload, safety: { [material.code]: 20 } }, ctx({ name: "ผู้ดูแล", role: "admin", planner: true }));
   assert.equal(d.materials[0].safetyKg, 20, "an account that may edit materials still changes it with the order");
 });
@@ -2336,4 +2363,82 @@ test("the store orders chemicals for every open RubberFlow work order from the p
   assert.equal(hub.storeTasks(stCtx(["receiveMaterial"])).some((task) => task.kind === "chem"), false);
   // แผนก RB ที่เคมีไม่พอ: ไม่มีปุ่มสั่ง มีข้อความให้แจ้งคลังวัตถุดิบ
   assert.match(fs.readFileSync("modules/rubberflow-pages-line.js", "utf8"), /แจ้งคลังวัตถุดิบ \(ST\) ให้สั่งซื้อ/);
+});
+
+test("lines are reordered inside one department, moved under another item of the same structure in one save, and a cancelled PI turns its purchase order into a decision for the store", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const root = "DEMO-TP-01(P)-Y";
+  const hub = env.context.MNP_BOM_PAGES.hub;
+  const itemOf = (code) => env.store.data().items.find((item) => item.code === code) ?? null;
+  const bomOf = (code) => json(env.store.data().boms.find((bom) => bom.itemCode === code && bom.status === "approved") ?? null);
+  const rowsOf = () => env.context.MNP_BOM_RULES.explode(root, 1, { itemOf, approvedBomOf: (code) => env.store.data().boms.find((bom) => bom.itemCode === code && bom.status === "approved") ?? null }).lines.slice(1);
+  const sideOf = (code) => hub.treeTab(env.ctx(), itemOf(root), 1).detailHtml(rowsOf().findIndex((row) => row.itemCode === code && row.level === 1));
+  const unescape = (value) => value.replaceAll("&quot;", '"').replaceAll("&amp;", "&").replaceAll("&#039;", "'");
+  const before = bomOf(root);
+  const codes = before.lines.map((line) => line.childCode);
+  // เลื่อนลำดับ: เฉพาะกับบรรทัดติดกันของแผนกเดียวกัน (ของซื้อสามตัวแรกเป็นของคลังวัตถุดิบ)
+  let side = sideOf(codes[0]);
+  assert.match(side, /<button class="btn rf-btn secondary" type="button" disabled title="อยู่บนสุดแล้ว">เลื่อนขึ้น</, "both directions always show: the first line has its up button switched off");
+  const down = /data-rf-action="saveBom" data-rf-args="([^"]*)"[^>]*>เลื่อนลง</.exec(side);
+  assert.ok(down, "a line with a neighbour of the same department can move down");
+  assert.match(sideOf(codes[2]), /disabled title="สลับได้เฉพาะกับบรรทัดติดกันของแผนกเดียวกัน">เลื่อนลง</, "no swap across departments (the next line belongs to another department)");
+  const args = JSON.parse(unescape(down[1]));
+  assert.deepEqual(args.lines.map((line) => line.childCode), [codes[1], codes[0], ...codes.slice(2)]);
+  assert.equal(env.store.run("saveBom", args).ok, true);
+  let after = bomOf(root);
+  assert.equal(after.revision, before.revision + 1);
+  assert.deepEqual(after.lines.map((line) => line.childCode), [codes[1], codes[0], ...codes.slice(2)]);
+  assert.match(after.changeLog[0].text, /เรียงลำดับส่วนประกอบใหม่/);
+  for (const line of before.lines) assert.equal(after.lines.find((entry) => entry.childCode === line.childCode).qty, line.qty);
+  // ย้ายไปใต้ชิ้นอื่น: ตัวเลือกคือชิ้นในโครงสร้างนี้ที่รับได้ · ชิ้นแม่เดิมและใหม่ได้ฉบับใหม่ในคำสั่งเดียว
+  const moved = codes[2];
+  const target = "SE-TP01-OR01-100-18-65";
+  const targetBefore = bomOf(target);
+  const untouched = "SE-TP01-BK01-140-3-20";
+  const untouchedBefore = bomOf(untouched);
+  assert.ok(untouchedBefore, "the demo has a second sub-assembly");
+  const dialog = env.context.MNP_BOM_DIALOGS.lineMove(env.ctx(), { rootCode: root, parentCode: root, childCode: moved });
+  clean(dialog.html);
+  assert.match(dialog.html, new RegExp(`<option value="${target}"`));
+  assert.doesNotMatch(dialog.html, /<option value="(P-STK-01|RB-[^"]*|DEMO-TP-01\(P\)-Y)"/, "no purchased part, no rubber rod and not the current parent as a target");
+  assert.match(side, /data-rf-open="lineMove"/);
+  assert.match(side, /data-rf-open="itemEdit" data-rf-args="\{&quot;code&quot;:&quot;/, "the item's name and unit are edited from the side panel");
+  const query = `p=find&code=${encodeURIComponent(root)}`;
+  await env.submit(query, "saveBomTree", { toCode: "" }, { lineMove: true, code: root, fromCode: root, childCode: moved });
+  assert.match(env.log.toasts.at(-1)[0], /เลือกชิ้นที่จะย้ายไปอยู่ใต้/);
+  await env.submit(query, "saveBomTree", { toCode: targetBefore.lines[0].childCode }, { lineMove: true, code: root, fromCode: root, childCode: target });
+  assert.match(env.log.toasts.at(-1)[0], /ข้อมูลเส้นยาง/, "a rubber rod is never a target: the move is refused before anything is saved");
+  assert.equal(bomOf(target).revision, targetBefore.revision);
+  assert.equal(bomOf(root).revision, before.revision + 1, "the refused move leaves the root as it was");
+  await env.submit(query, "saveBomTree", { toCode: target, note: "" }, { lineMove: true, code: root, fromCode: root, childCode: moved });
+  after = bomOf(root);
+  const targetAfter = bomOf(target);
+  assert.equal(after.lines.some((line) => line.childCode === moved), false);
+  assert.equal(after.lines.length, before.lines.length - 1);
+  assert.equal(targetAfter.revision, targetBefore.revision + 1);
+  assert.equal(targetAfter.lines.find((line) => line.childCode === moved).qty, before.lines.find((line) => line.childCode === moved).qty, "the quantity moves with the line");
+  for (const line of targetBefore.lines) assert.equal(targetAfter.lines.find((entry) => entry.childCode === line.childCode).qty, line.qty, "the target's own lines keep their exact quantities");
+  assert.equal(bomOf(untouched).revision, untouchedBefore.revision, "other sub-assemblies are not rewritten");
+  await env.submit(query, "saveBomTree", { toCode: target }, { lineMove: true, code: root, fromCode: root, childCode: moved });
+  assert.match(env.log.toasts.at(-1)[0], /ไม่พบ .* ใน BOM ของ/, "a stale form is refused");
+  // ชิ้นแม่ที่เหลือบรรทัดเดียวย้ายออกไม่ได้ และผู้ที่ไม่ใช่ฝ่ายวางแผนไม่มีหน้าต่างนี้
+  const single = env.store.data().boms.find((bom) => bom.status === "approved" && bom.lines.length === 1 && itemOf(bom.itemCode)?.kind !== "RB");
+  if (single) assert.equal(env.context.MNP_BOM_DIALOGS.lineMove(env.ctx(), { rootCode: single.itemCode, parentCode: single.itemCode, childCode: single.lines[0].childCode }), null);
+  env.store.setUser("B04");
+  assert.equal(env.context.MNP_BOM_DIALOGS.lineMove(env.ctx(), { rootCode: root, parentCode: root, childCode: codes[0] }), null);
+  // ใบสั่งซื้อของใบสั่งผลิตที่ถูกยกเลิก: การ์ดให้คลังวัตถุดิบตัดสิน
+  env.store.setUser("B03");
+  const rf = env.rf.store.data();
+  rf.purchaseOrders.push({ id: "PO-20261114-07", status: "ordered", sourcePi: "DEMO-26002", createdAt: Date.now(), lines: [{ materialCode: "P-BOX-01", source: "bom", uom: "box", qtyKg: 5, receivedKg: null }] });
+  const stUser = env.store.data().users.find((user) => user.role === "st");
+  const stCtx = () => ({ ...env.ctx("p=work"), user: stUser, store: { ...env.store, isRemote: () => true }, rubberflow: () => ({ ...env.rf, can: (permission) => ["receiveMaterial", "purchase"].includes(permission) }) });
+  assert.equal(hub.storeTasks(stCtx()).find((task) => task.kind === "receive").cancelled, false);
+  assert.equal(env.store.run("cancelOrder", { orderId: "DEMO-26002", reason: "ทดสอบ" }).ok, true);
+  assert.equal(hub.storeTasks(stCtx()).find((task) => task.kind === "receive").cancelled, true);
+  const work = env.context.MNP_BOM_PAGES.work(stCtx()).html;
+  clean(work);
+  assert.match(work, /<span class="bom-job-state">ใบสั่งผลิตถูกยกเลิกแล้ว<\/span>/);
+  assert.match(work, /<h2>ตัดสินใบสั่งซื้อ PO-20261114-07<\/h2>/);
+  assert.match(work, /ยกเลิกใบสั่งซื้อ หรือรับเข้าเป็นสต็อกไว้ใช้กับใบอื่น/);
 });

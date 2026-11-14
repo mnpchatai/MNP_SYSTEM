@@ -1,9 +1,10 @@
 -- สต็อกของซื้อ (ชิ้นส่วน PURCHASED ของ BOM) + ST เบิกจ่ายของซื้อรายใบ PI + บรรทัดของซื้อในใบสั่งซื้อ (20261111010000_bom_part_stock.sql)
--- ตรวจทั้งฝั่งอนุญาตและปฏิเสธ: โครงสร้าง/สิทธิ์ตารางใหม่, นับสต็อก (ST / WH / กลุ่มวางแผน / สมาชิก RB / QA), สต็อกขั้นต่ำเฉพาะกลุ่มวางแผน, รหัสที่ไม่ใช่ของซื้อ, ชนรายระเบียนก่อนสิทธิ์,
+-- ตรวจทั้งฝั่งอนุญาตและปฏิเสธ: โครงสร้าง/สิทธิ์ตารางใหม่, นับสต็อก (ST / WH / กลุ่มวางแผน / สมาชิก RB / QA), สต็อกขั้นต่ำเฉพาะกลุ่มวางแผนและ ST,รหัสที่ไม่ใช่ของซื้อ, ชนรายระเบียนก่อนสิทธิ์,
 -- งานของซื้อรายงานผ่านทางอื่นไม่ได้, issueOrderParts (สิทธิ์ ชุดงานไม่ครบ สต็อกไม่พอ = ไม่จ่ายเลย ชนรายระเบียน จ่ายสำเร็จ จ่ายซ้ำ), ใบสั่งซื้อที่มีบรรทัดของซื้อ (สร้าง/แก้สต็อกขั้นต่ำ/รับเข้า/ปฏิเสธ),
 -- snapshot / delta 13 ชุด และล้างข้อมูลทดสอบ · authenticated อ่านตาราง bom_* ตรงไม่ได้ จึงอ่านตารางด้วย reset role (สิทธิ์เจ้าของตาราง) เท่านั้น
--- สิทธิ์ใบสั่งซื้อ (20261119010000_rf_purchase_by_st.sql): สร้าง / รับบรรทัด ทำได้เฉพาะ ST และ admin · กลุ่มวางแผน RB QA ได้ RF_FORBIDDEN · สต็อกขั้นต่ำของของซื้อที่ต่างจากที่เก็บยังต้องเป็นกลุ่มวางแผน
--- (ST ธรรมดาจึงเปลี่ยนไม่ได้ admin เปลี่ยนได้เพราะนับเป็นกลุ่มวางแผน)
+-- สิทธิ์ใบสั่งซื้อ (20261119010000_rf_purchase_by_st.sql): สร้าง / รับบรรทัด ทำได้เฉพาะ ST และ admin · กลุ่มวางแผน RB QA ได้ RF_FORBIDDEN
+-- สต็อกขั้นต่ำของของซื้อ (20261120010000_st_sets_safety_stock.sql): เปลี่ยนได้โดยกลุ่มวางแผน (admin นับรวม) และแผนก ST ทั้งทาง countPartStock และทางใบสั่งซื้อ
+-- WH / QA / SR / RB / ผู้ช่วยผู้จัดการแผนกนอกกลุ่มวางแผน เปลี่ยนไม่ได้ (BOM_FORBIDDEN ที่ countPartStock · สร้างใบสั่งซื้อไม่ได้เลย RF_FORBIDDEN)
 -- ข้อควรระวัง: ถ้าอ่านตารางตรงในนาม authenticated จะเกิด 42501 และทำให้ทั้งไฟล์ล้ม ("No plan found") ตรวจฝั่ง client ผ่าน RPC และตรวจ deny ด้วย throws_ok เท่านั้น
 begin;
 create extension if not exists pgtap with schema extensions;
@@ -192,7 +193,9 @@ select is(public.app_bom_save_master('{"items":{"upsert":[
   {"code":"SE-A","kind":"SE","name":"ชิ้นยาง A","ownerDept":"GR","uom":"pcs"},
   {"code":"P-1","kind":"PURCHASED","name":"กล่อง","ownerDept":"ST","uom":"box"},
   {"code":"P-2","kind":"PURCHASED","name":"เม็ดสี","ownerDept":"ST","uom":"kg"},
-  {"code":"P-3","kind":"PURCHASED","name":"เทปกาว","ownerDept":"ST","uom":"roll"}]}}'::jsonb, 0, 'importFlat') ->> 'version', '1',
+  {"code":"P-3","kind":"PURCHASED","name":"เทปกาว","ownerDept":"ST","uom":"roll"},
+  {"code":"P-4","kind":"PURCHASED","name":"สายรัด","ownerDept":"ST","uom":"pcs"},
+  {"code":"P-5","kind":"PURCHASED","name":"น็อต","ownerDept":"ST","uom":"pcs"}]}}'::jsonb, 0, 'importFlat') ->> 'version', '1',
   'the planner seeds the item master');
 select set_config('test.res', ps_t.save(jsonb_build_object(
   'customers', jsonb_build_object('upsert', jsonb_build_array('{"name":"ACME","country":"TH","orderType":"SA","note":""}'::jsonb)),
@@ -256,17 +259,31 @@ select is(ps_t.count_stock('[{"itemCode":"P-1","qty":120}]'::jsonb) ->> 'version
 select ok(ps_t.has_move('P-1', 'count', 20, 120, null, current_setting('test.n_sbx_wh_staff')),
   'the second count wrote the difference (+20) and the new balance');
 
--- 5.4 สต็อกขั้นต่ำเฉพาะกลุ่มวางแผน · ชนรายระเบียนก่อนสิทธิ์
-select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
-select throws_ok($$ select ps_t.count_stock('[{"itemCode":"P-1","safetyQty":15}]'::jsonb) $$, 'BOM_FORBIDDEN', 'ST staff cannot change the safety stock');
-select throws_ok($$ select ps_t.count_stock('[{"itemCode":"P-3","qty":1,"safetyQty":2}]'::jsonb) $$, 'BOM_FORBIDDEN', 'a count with a safety change is refused as a whole for ST staff');
+-- 5.4 สต็อกขั้นต่ำ: กลุ่มวางแผนและแผนก ST เปลี่ยนได้ · WH / QA / SR / RB / ผู้ช่วยผู้จัดการแผนกนอกกลุ่มวางแผน เปลี่ยนไม่ได้ · ชนรายระเบียนก่อนสิทธิ์
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select throws_ok($$ select ps_t.count_stock('[{"itemCode":"P-1","safetyQty":15}]'::jsonb) $$, 'BOM_FORBIDDEN', 'WH staff can count but cannot change the safety stock');
+select throws_ok($$ select ps_t.count_stock('[{"itemCode":"P-3","qty":1,"safetyQty":2}]'::jsonb) $$, 'BOM_FORBIDDEN', 'a count with a safety change is refused as a whole for WH staff');
+select ok(ps_t.stock('P-3') is null, 'and the refused row left no stock row behind');
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
+select throws_ok($$ select ps_t.count_stock('[{"itemCode":"P-1","safetyQty":15}]'::jsonb) $$, 'BOM_FORBIDDEN', 'QA staff cannot change the safety stock');
+select public.app_sandbox_enter(current_setting('test.p_sbx_sr_staff')::uuid);
+select throws_ok($$ select ps_t.count_stock('[{"itemCode":"P-1","safetyQty":15}]'::jsonb) $$, 'BOM_FORBIDDEN', 'SR staff cannot change the safety stock');
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_amgr')::uuid);
+select throws_ok($$ select ps_t.count_stock('[{"itemCode":"P-1","safetyQty":15}]'::jsonb) $$, 'BOM_FORBIDDEN', 'an assistant department manager outside the planning group cannot change the safety stock');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select throws_ok($$ select ps_t.count_stock('[{"itemCode":"P-1","safetyQty":15}]'::jsonb) $$, 'BOM_FORBIDDEN', 'RB staff cannot change the safety stock of a part');
 select throws_ok($$ select ps_t.count_stock('[{"itemCode":"P-1","qty":50}]'::jsonb, current_setting('test.v_old')::bigint) $$, 'BOM_STALE',
   'the stale check comes before the permission check (an RB member holding an old copy gets BOM_STALE)');
 select throws_ok($$ select ps_t.count_stock('[{"itemCode":"P-1","qty":50}]'::jsonb) $$, 'BOM_FORBIDDEN', 'with a current copy the same RB member is simply not allowed');
-select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
-select is(ps_t.count_stock('[{"itemCode":"P-1","safetyQty":15}]'::jsonb) -> 'changes' -> 'stock' -> 'upsert' -> 0 ->> 'safetyQty', '15', 'the planner sets the safety stock');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select is(ps_t.count_stock('[{"itemCode":"P-1","safetyQty":15}]'::jsonb) -> 'changes' -> 'stock' -> 'upsert' -> 0 ->> 'safetyQty', '15', 'ST staff sets the safety stock of a part that has a stock row');
+select is(ps_t.qty('P-1'), 120::numeric, 'and the balance is untouched');
 select is(ps_t.move_count('P-1'), 2, 'a safety change alone writes no move');
+select is(ps_t.count_stock('[{"itemCode":"P-4","qty":3,"safetyQty":9}]'::jsonb) -> 'changes' -> 'stock' -> 'upsert' -> 0 ->> 'safetyQty', '9', 'ST staff counts a part and sets its safety stock in one row (a part with no stock row yet)');
+select is(ps_t.qty('P-4'), 3::numeric, 'and the count of that row was applied too');
+select is(ps_t.move_count('P-4'), 1, 'with one count move');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select is(ps_t.count_stock('[{"itemCode":"P-4","safetyQty":10}]'::jsonb) -> 'changes' -> 'stock' -> 'upsert' -> 0 ->> 'safetyQty', '10', 'the planner changes the safety stock too (9 -> 10)');
 select is(ps_t.count_stock('[{"itemCode":"P-3","qty":8,"safetyQty":2}]'::jsonb) -> 'changes' -> 'stock' -> 'upsert' -> 0 ->> 'qty', '8', 'the planner counts and sets the safety stock of a part in one row');
 select ok(ps_t.count_stock('[{"itemCode":"P-3","qty":0}]'::jsonb) is not null, 'a part can be counted down to zero');
 select is(ps_t.qty('P-3'), 0::numeric, 'and the balance is zero afterwards');
@@ -384,7 +401,6 @@ select throws_ok($$ select ps_t.po_save(current_setting('test.po')::jsonb || '{"
 select throws_ok($$ select ps_t.po_save(current_setting('test.po')::jsonb || '{"lines":[{"materialCode":"P-1","source":"bom","qtyKg":5,"receivedKg":5}]}'::jsonb) $$, 'RF_INVALID_PURCHASE', 'a new order cannot carry receipt data on a part line');
 select throws_ok($$ select ps_t.po_save(current_setting('test.po')::jsonb || '{"lines":[{"materialCode":"P-1","source":"bom","qtyKg":5},{"materialCode":"p-1","qtyKg":5}]}'::jsonb) $$, 'RF_INVALID_PURCHASE', 'the same code twice is refused across sources');
 select throws_ok($$ select ps_t.po_save(current_setting('test.po')::jsonb || '{"lines":[{"materialCode":"P-1","source":"bom","qtyKg":0}]}'::jsonb) $$, 'RF_INVALID_PURCHASE', 'a zero part quantity is refused');
-select throws_ok($$ select ps_t.po_save(current_setting('test.po')::jsonb) $$, 'RF_FORBIDDEN', 'ST staff cannot create an order that changes the safety stock of a part (P-1 15 -> 20)');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select throws_ok($$ select ps_t.po_save(current_setting('test.po')::jsonb) $$, 'RF_FORBIDDEN', 'PP staff (the planning group) cannot create a purchase order with parts');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pk_mgr')::uuid);
@@ -395,11 +411,11 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
 select throws_ok($$ select ps_t.po_save(current_setting('test.po')::jsonb) $$, 'RF_FORBIDDEN', 'QA staff cannot create a purchase order with parts');
 select is(ps_t.rver(), 1::bigint, 'the RubberFlow counter did not move for the refused calls');
 
--- 8.2 สร้างสำเร็จ (admin เพราะใบนี้เปลี่ยนสต็อกขั้นต่ำของ P-1): เคมี + ของซื้อ 2 บรรทัด · สต็อกขั้นต่ำของ P-1 ถูก upsert ที่ BOM · เวอร์ชัน BOM เพิ่มหนึ่งครั้ง
-select public.app_sandbox_enter(current_setting('test.p_sbx_admin_t')::uuid);
+-- 8.2 สร้างสำเร็จ (ST: ใบนี้เปลี่ยนสต็อกขั้นต่ำของ P-1): เคมี + ของซื้อ 2 บรรทัด · สต็อกขั้นต่ำของ P-1 ถูก upsert ที่ BOM · เวอร์ชัน BOM เพิ่มหนึ่งครั้ง
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select set_config('test.vb', ps_t.ver()::text, true);
 select set_config('test.res', ps_t.po_save(current_setting('test.po')::jsonb)::text, true);
-select is(current_setting('test.res')::jsonb ->> 'version', '2', 'admin creates an order that mixes a chemical and two parts (RubberFlow counter + 1)');
+select is(current_setting('test.res')::jsonb ->> 'version', '2', 'ST staff creates an order that mixes a chemical and two parts, and changes the safety stock of one part (RubberFlow counter + 1)');
 select is(ps_t.po('PO-20261111-01') -> 'lines' -> 0, '{"materialCode":"MAT-A","source":"rf","uom":null,"needKg":100,"availableKg":20,"shortageKg":80,"safetyKg":60,"qtyKg":140,"receivedKg":null,"lotNo":null,"expiry":null,"receivedAt":null,"receivedBy":null}'::jsonb,
   'the chemical line is stored with source rf and no unit');
 select is(ps_t.po('PO-20261111-01') -> 'lines' -> 1, '{"materialCode":"P-1","source":"bom","uom":"box","needKg":30,"availableKg":-10,"shortageKg":40,"safetyKg":20,"qtyKg":55,"receivedKg":null,"lotNo":null,"expiry":null,"receivedAt":null,"receivedBy":null}'::jsonb,
@@ -419,25 +435,61 @@ select is(ps_t.po_save(ps_t.po('PO-20261111-01')) ->> 'version', current_setting
 select is(ps_t.ver(), current_setting('test.vb')::bigint, 'and nothing in BOM');
 select throws_ok($$ select ps_t.po_save(ps_t.po('PO-20261111-01') || jsonb_build_object('lines',
   jsonb_set(ps_t.po('PO-20261111-01') -> 'lines', '{1,source}', '"rf"'::jsonb))) $$, 'RF_INVALID_TRANSITION', 'a line cannot change its source afterwards');
--- สต็อกขั้นต่ำของของซื้อเปลี่ยนได้เฉพาะกลุ่มวางแผน (admin นับเป็นกลุ่มวางแผน): ST สร้างใบที่ไม่แตะสต็อกขั้นต่ำได้ แต่ที่ต่างจากที่เก็บ (รวมแถวสต็อกที่ยังไม่มี) = RF_FORBIDDEN
+-- สต็อกขั้นต่ำของของซื้อเปลี่ยนได้โดยกลุ่มวางแผน (admin นับรวม) และแผนก ST (รวมชิ้นที่ยังไม่มีแถวสต็อก) · คนอื่นสร้างใบไม่ได้เลย (RF_FORBIDDEN) จึงเปลี่ยนสต็อกขั้นต่ำทางใบไม่ได้
+-- ST เปลี่ยนสองชิ้นในใบเดียว: P-1 (มีแถวสต็อกแล้ว 20 -> 99) และ P-5 (ยังไม่มีแถว: สร้างแถวพร้อมสต็อกขั้นต่ำ 4 ยอด 0) · เวอร์ชัน BOM เพิ่มหนึ่งครั้ง
 select set_config('test.vb', ps_t.ver()::text, true);
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
-select throws_ok($$ select ps_t.po_save(jsonb_build_object('id', 'PO-20261111-03', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
-  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":99,"qtyKg":2}]'::jsonb)) $$, 'RF_FORBIDDEN',
-  'ST staff cannot change the safety stock of a part through an order');
-select throws_ok($$ select ps_t.po_save(jsonb_build_object('id', 'PO-20261111-03', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
-  'lines', '[{"materialCode":"P-3","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":2,"qtyKg":2},{"materialCode":"P-2","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":7,"qtyKg":2}]'::jsonb)) $$, 'RF_FORBIDDEN',
-  'nor one line of several (the whole order is refused)');
-select is(ps_t.ver(), current_setting('test.vb')::bigint, 'and the refused orders wrote nothing to the BOM');
-select is(jsonb_array_length(public.app_rf_master() -> 'purchaseOrders'), 1, 'nor an order');
+select ok(ps_t.po_save(jsonb_build_object('id', 'PO-20261111-06', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
+  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":99,"qtyKg":2},{"materialCode":"P-5","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":4,"qtyKg":2}]'::jsonb)) is not null,
+  'ST staff changes the safety stock of two parts through an order (one with a stock row, one without)');
+select is(ps_t.stock('P-1') ->> 'safetyQty', '99', 'the safety stock of the part with a stock row was changed (20 -> 99)');
+select is(ps_t.qty('P-1'), 81::numeric, 'and its balance was not touched');
+select is(ps_t.stock('P-5') ->> 'safetyQty', '4', 'a part without a stock row got one with that safety stock');
+select is(ps_t.qty('P-5'), 0::numeric, 'and a balance of zero');
+select is(ps_t.ver(), current_setting('test.vb')::bigint + 1, 'the BOM counter moved once for both stock changes');
+select ok(exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:createPurchaseOrder' and a ->> 'detail' = 'stock +2'),
+  'the BOM history records both stock rows');
+-- ค่าเท่าที่เก็บ: ไม่แตะแถว BOM
+select set_config('test.vb', ps_t.ver()::text, true);
 select ok(ps_t.po_save(jsonb_build_object('id', 'PO-20261111-03', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
-  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":20,"qtyKg":2}]'::jsonb)) is not null, 'ST staff can order a part when its safety stock is left as stored');
+  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":99,"qtyKg":2}]'::jsonb)) is not null, 'ST staff can order a part when its safety stock is left as stored');
 select is(ps_t.ver(), current_setting('test.vb')::bigint, 'and that order changes no BOM row');
+-- หน้าต่างที่เปิดค้างไว้ (storedSafetyKg = ค่าที่หน้าต่างแสดงตอนเปิด): ผู้สั่งไม่ได้แก้ช่อง (safetyKg = storedSafetyKg = 20) แต่ที่เก็บเป็น 99 แล้ว
+-- = ไม่เขียนทับค่าที่ผู้อื่นตั้ง บรรทัดของใบเก็บค่าที่ใช้อยู่จริง และไม่เก็บช่อง storedSafetyKg · ช่องนี้ผิดรูป = RF_INVALID_PURCHASE
+select throws_ok($$ select ps_t.po_save(jsonb_build_object('id', 'PO-20261111-07', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
+  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":20,"storedSafetyKg":"20","qtyKg":2}]'::jsonb)) $$, 'RF_INVALID_PURCHASE',
+  'a malformed stored safety stock is refused');
+select ok(ps_t.po_save(jsonb_build_object('id', 'PO-20261111-07', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
+  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":20,"storedSafetyKg":20,"qtyKg":2}]'::jsonb)) is not null,
+  'ST staff orders from a dialog that still shows an older safety stock without having edited it');
+select is(ps_t.stock('P-1') ->> 'safetyQty', '99', 'the safety stock someone else set in the meantime is kept');
+select is(ps_t.ver(), current_setting('test.vb')::bigint, 'and no BOM row changed');
+select is(ps_t.po('PO-20261111-07') -> 'lines' -> 0, '{"materialCode":"P-1","source":"bom","uom":"box","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":99,"qtyKg":2,"receivedKg":null,"lotNo":null,"expiry":null,"receivedAt":null,"receivedBy":null}'::jsonb,
+  'the order line keeps the safety stock in force and not the stored-value field');
+-- คนอื่นสร้างใบไม่ได้เลย แม้ใบนั้นเปลี่ยนสต็อกขั้นต่ำ (ไม่เขียนอะไรทั้ง BOM และ RubberFlow) · RB เป็นคนสุดท้ายเพราะ 8.3 ต่อจากสมาชิก RB
+select set_config('test.vr', ps_t.rver()::text, true);
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select throws_ok($$ select ps_t.po_save(jsonb_build_object('id', 'PO-20261111-05', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
+  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":5,"qtyKg":2}]'::jsonb)) $$, 'RF_FORBIDDEN',
+  'WH staff cannot change the safety stock of a part through an order');
+select public.app_sandbox_enter(current_setting('test.p_sbx_sr_staff')::uuid);
+select throws_ok($$ select ps_t.po_save(jsonb_build_object('id', 'PO-20261111-05', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
+  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":5,"qtyKg":2}]'::jsonb)) $$, 'RF_FORBIDDEN',
+  'SR staff cannot change the safety stock of a part through an order');
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_amgr')::uuid);
+select throws_ok($$ select ps_t.po_save(jsonb_build_object('id', 'PO-20261111-05', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
+  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":5,"qtyKg":2}]'::jsonb)) $$, 'RF_FORBIDDEN',
+  'an assistant department manager outside the planning group cannot change the safety stock of a part through an order');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select ps_t.po_save(jsonb_build_object('id', 'PO-20261111-05', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
-  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":20,"qtyKg":2}]'::jsonb)) $$, 'RF_FORBIDDEN',
+  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":99,"qtyKg":2}]'::jsonb)) $$, 'RF_FORBIDDEN',
   'an RB member cannot create an order even when the safety stock is left as stored');
-select is(jsonb_array_length(public.app_rf_master() -> 'purchaseOrders'), 2, 'and no order was added by it');
+select throws_ok($$ select ps_t.po_save(jsonb_build_object('id', 'PO-20261111-05', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
+  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":5,"qtyKg":2}]'::jsonb)) $$, 'RF_FORBIDDEN',
+  'nor change the safety stock of a part through an order');
+select is(ps_t.ver(), current_setting('test.vb')::bigint, 'the refused orders wrote nothing to the BOM');
+select is(ps_t.rver(), current_setting('test.vr')::bigint, 'nor to RubberFlow');
+select is(jsonb_array_length(public.app_rf_master() -> 'purchaseOrders'), 4, 'and no order was added by them');
 
 -- 8.3 รับบรรทัดของซื้อ (ST หรือ admin): บวกยอด เขียนประวัติ ไม่มีล็อต/วันหมดอายุ
 select throws_ok($$ select ps_t.po_save(ps_t.receipt('PO-20261111-01', 1, 50), 'receivePurchaseLine') $$, 'RF_FORBIDDEN', 'an RB member cannot receive a part line');
@@ -484,7 +536,7 @@ select is(ps_t.qty('P-2'), 35::numeric, 'and the balance follows (27.5 + 7.5)');
 select throws_ok($$ select ps_t.po_save(ps_t.receipt('PO-20261111-02', 0, 3), 'receivePurchaseLine') $$, 'RF_INVALID_TRANSITION', 'a received order cannot be received again or corrected');
 -- รับบรรทัดของซื้อที่ชิ้นไม่ได้เป็น PURCHASED แล้ว (ถูกเปลี่ยนชนิดหลังสั่ง) = RF_INVALID_PURCHASE ไม่แตะสต็อก
 select ok(ps_t.po_save(jsonb_build_object('id', 'PO-20261111-04', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
-  'lines', '[{"materialCode":"P-3","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":2,"qtyKg":5}]'::jsonb)) is not null, 'admin orders a part that will change kind afterwards (its safety stock differs from the stored one, so ST could not)');
+  'lines', '[{"materialCode":"P-3","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":2,"qtyKg":5}]'::jsonb)) is not null, 'admin orders a part that will change kind afterwards');
 reset role;
 select set_config('request.jwt.claims', '', true);
 update public.bom_items set kind = 'SE' where is_test and code = 'P-3';
@@ -508,14 +560,14 @@ select is(public.app_bom_master_since(0) -> 'changes' -> 'stock', jsonb_build_ob
   'the delta from version 0 equals the stock snapshot, with no deletes');
 select is(public.app_bom_master_since(0) -> 'changes' -> 'stockMoves', jsonb_build_object('upsert', public.app_bom_master() -> 'stockMoves', 'delete', '[]'::jsonb),
   'and the move snapshot');
-select is((select jsonb_agg(s ->> 'itemCode') from jsonb_array_elements(public.app_bom_master() -> 'stock') s), '["P-1","P-2","P-3"]'::jsonb, 'stock rows are listed by code');
+select is((select jsonb_agg(s ->> 'itemCode') from jsonb_array_elements(public.app_bom_master() -> 'stock') s), '["P-1","P-2","P-3","P-4","P-5"]'::jsonb, 'stock rows are listed by code');
 select is(jsonb_array_length(public.app_bom_master_since(ps_t.ver()) -> 'changes' -> 'stock' -> 'upsert'), 0, 'a client at the current version gets an empty stock delta');
 select is(ps_t.move_count('P-1'), 5, 'the part history holds both counts, both issues and the receipt');
 select ok((select bool_and((m ->> 'balance')::numeric >= 0) from jsonb_array_elements(public.app_bom_master() -> 'stockMoves') m), 'no move leaves a negative balance');
 
 -- 10. แยกโหมด และล้างข้อมูลทดสอบ ------------------------------------------------------------------
 reset role;
-select ok((select count(*) from public.bom_stock where is_test) = 3 and (select count(*) from public.bom_stock_moves where is_test) >= 9, 'the test stock and its moves exist before the purge');
+select ok((select count(*) from public.bom_stock where is_test) = 5 and (select count(*) from public.bom_stock_moves where is_test) >= 9, 'the test stock and its moves exist before the purge');
 select ok((select bool_and(changed_version > 0) from public.bom_stock where is_test) and (select bool_and(changed_version > 0) from public.bom_stock_moves where is_test),
   'every test row is stamped with the version that changed it');
 select ok((select max(changed_version) from public.bom_stock_moves where is_test) <= (select version from public.bom_master_state where is_test), 'no move is newer than the counter');
