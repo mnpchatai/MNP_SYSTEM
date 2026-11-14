@@ -173,7 +173,8 @@
       const lines = listOf(p.materialCode).map((materialCode, index) => ({ materialCode, source: listOf(p.source)[index] === "bom" ? "bom" : "rf", uom: listOf(p.uom)[index] || undefined, storedSafetyKg: listOf(p.storedSafetyKg)[index], needKg: listOf(p.needKg)[index], availableKg: listOf(p.availableKg)[index], shortageKg: listOf(p.shortageKg)[index], safetyKg: listOf(p.safetyKg)[index], qtyKg: listOf(p.qtyKg)[index] }));
       // หน้าต่างวางตารางที่มีแถวต้องสั่งไว้บน: ใบสั่งซื้อยังเรียงเคมีก่อนของซื้อเสมอ
       lines.sort((x, y) => (x.source === "bom") - (y.source === "bom"));
-      return { lines, safety: Object.fromEntries(lines.map((line) => [line.materialCode, line.safetyKg])), sourcePi: p.sourcePi, sourceRequisition: p.sourceRequisition, note: p.note };
+      // safety มีเฉพาะแถวที่ผู้ใช้แก้จริง (ต่างจากค่าที่หน้าต่างแสดงตอนเปิด): แถวที่ไม่ได้แตะไม่ส่งค่าเก่าไปทับค่าที่ผู้อื่นเพิ่งตั้ง
+      return { lines, safety: Object.fromEntries(lines.filter((line) => line.storedSafetyKg === undefined || String(line.safetyKg ?? "").trim() !== String(line.storedSafetyKg ?? "").trim()).map((line) => [line.materialCode, line.safetyKg])), sourcePi: p.sourcePi, sourceRequisition: p.sourceRequisition, note: p.note };
     },
     createRecipe: (p) => ({ ...p, items: itemsOf(p), stages: stagesOf(p) }),
     saveRecipe: (p) => ({ ...p, items: itemsOf(p), stages: stagesOf(p) }),
@@ -217,7 +218,7 @@
   }
 
   // สต็อกขั้นต่ำของของซื้อที่แก้ในหน้าต่างสั่งซื้อแต่จำนวนสั่งเป็น 0 (ไม่อยู่ในบรรทัดใบสั่งซื้อ จึงเซิร์ฟเวอร์ไม่บันทึกให้ในคำสั่งเดียว):
-  // บันทึกเข้าคลังของซื้อของ BOM ด้วย countPartStock (เฉพาะกลุ่มวางแผน ซึ่งเป็นผู้เดียวที่แก้ช่องนี้ได้) หลังใบสั่งซื้อสำเร็จ · ไม่สำเร็จ = แจ้ง ไม่ย้อนใบสั่งซื้อ
+  // บันทึกเข้าคลังของซื้อของ BOM ด้วย countPartStock (กลุ่มวางแผนหรือแผนก ST ซึ่งแก้ช่องนี้ได้) หลังใบสั่งซื้อสำเร็จ · ไม่สำเร็จ = แจ้ง ไม่ย้อนใบสั่งซื้อ
   async function saveUnorderedPartSafety(payload) {
     // ช่องที่ถูกล้างจนว่างไม่นับเป็น 0 (บรรทัดที่สั่งจริงที่ช่องว่างก็ถูกปฏิเสธ ไม่ใช่บันทึกเป็น 0)
     const counts = (payload?.lines ?? []).filter((line) => line?.source === "bom" && !(Number(line.qtyKg) > 0) && String(line.safetyKg ?? "").trim() !== "" && Number(line.safetyKg) >= 0 && Number(line.safetyKg) !== (Number(line.storedSafetyKg) || 0))

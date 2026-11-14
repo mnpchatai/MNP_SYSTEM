@@ -865,7 +865,7 @@
         const lines = (po.lines ?? []).filter((line) => line.receivedKg === null || line.receivedKg === undefined);
         // ใบสั่งผลิตที่ใบสั่งซื้อนี้สั่งให้ถูกยกเลิกแล้ว: ST ตัดสินเองว่าจะยกเลิกใบสั่งซื้อ หรือรับเข้าเป็นสต็อก
         const cancelled = Boolean(po.sourcePi) && ctx.data.orders.find((order) => order.id === po.sourcePi)?.status === "cancelled";
-        if (lines.length) tasks.push({ kind: "receive", po, lines, cancelled });
+        if (lines.length) tasks.push({ kind: "receive", po, lines, cancelled, partly: (po.lines ?? []).some((line) => line.receivedKg != null) });
       }
     }
     if (rfCan(ctx, "purchase")) {
@@ -949,7 +949,7 @@
       if (task.kind === "receive") {
         const unit = (line) => (line.source === "bom" ? uomText(ctx, line.uom) : "กก.");
         return `<article class="card rf-card bom-job ${task.cancelled ? "is-hold" : "is-now"}"><div class="bom-job-top"><span class="bom-job-state">${task.cancelled ? "ใบสั่งผลิตถูกยกเลิกแล้ว" : "รอรับเข้า"}</span><span class="muted">สั่งเมื่อ ${esc(rules.fmtDate(task.po.createdAt))}</span></div>
-          <h2>${esc(`${task.cancelled ? "ตัดสินใบสั่งซื้อ" : "รับเข้าตามใบสั่งซื้อ"} ${task.po.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${task.po.sourcePi ? esc(`สั่งจากใบ ${task.po.sourcePi}`) : ""}${task.cancelled ? " · ยกเลิกใบสั่งซื้อ หรือรับเข้าเป็นสต็อกไว้ใช้กับใบอื่น" : ""}</p>
+          <h2>${esc(`${task.cancelled ? "ตัดสินใบสั่งซื้อ" : "รับเข้าตามใบสั่งซื้อ"} ${task.po.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${task.po.sourcePi ? esc(`สั่งจากใบ ${task.po.sourcePi}`) : ""}${task.cancelled ? (task.partly ? " · รับเข้าไปแล้วบางรายการ ใบนี้ยกเลิกไม่ได้ รับส่วนที่เหลือเข้าเป็นสต็อกไว้ใช้กับใบอื่น" : " · ยกเลิกใบสั่งซื้อ หรือรับเข้าเป็นสต็อกไว้ใช้กับใบอื่น") : ""}</p>
           <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span class="rf-mono">${esc(line.materialCode)}</span><span class="nowrap">${esc(`${rules.fmtQty(line.qtyKg)} ${unit(line)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
           ${ui.link(task.cancelled ? "เปิดใบสั่งซื้อ" : "ตรวจสอบรับเข้า", `#/rubberflow?p=warehouse&tab=po&q=${encodeURIComponent(task.po.id)}`, "btn rf-btn bom-job-main")}</article>`;
       }

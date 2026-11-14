@@ -1798,4 +1798,15 @@ test("a purchase order can carry purchased-part lines: the unit comes from the B
   assert.equal(byPage.ok, true, byPage.error?.message);
   await byPage.saving;
   assert.equal(bom().stock[0].safetyQty, 11, "the page lets ST change it with the order");
+  // A dialog opened while the value was 9 and never edited (safetyKg = storedSafetyKg = 9) does not write the old value over the 11 set in the meantime
+  const versionBeforeStale = bom().version;
+  const stale = rig.store.run("createPurchaseOrder", { lines: [{ ...part, safetyKg: 9, storedSafetyKg: 9 }], safety: {} });
+  assert.equal(stale.ok, true, stale.error?.message);
+  await stale.saving;
+  assert.equal(bom().stock[0].safetyQty, 11, "the value someone else set is kept");
+  assert.equal(bom().version, versionBeforeStale, "and no BOM row changed");
+  const staleLine = (await s.call("app_rf_master")).purchaseOrders.find((row) => row.id === stale.result).lines[0];
+  assert.equal(staleLine.safetyKg, 11, "the order line carries the safety stock in force");
+  assert.equal(Object.hasOwn(staleLine, "storedSafetyKg"), false, "the stored-value field is not kept on the order");
+  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ id: `PO-${rules.ymd(NOW)}-31`, status: "ordered", sourcePi: null, sourceRequisition: null, note: "", lines: [{ ...part, safetyKg: 9, storedSafetyKg: "9" }] }] } }), "RF_INVALID_PURCHASE", "a malformed stored value is refused");
 });

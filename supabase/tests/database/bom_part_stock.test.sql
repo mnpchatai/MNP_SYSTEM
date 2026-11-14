@@ -454,6 +454,18 @@ select set_config('test.vb', ps_t.ver()::text, true);
 select ok(ps_t.po_save(jsonb_build_object('id', 'PO-20261111-03', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
   'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":99,"qtyKg":2}]'::jsonb)) is not null, 'ST staff can order a part when its safety stock is left as stored');
 select is(ps_t.ver(), current_setting('test.vb')::bigint, 'and that order changes no BOM row');
+-- หน้าต่างที่เปิดค้างไว้ (storedSafetyKg = ค่าที่หน้าต่างแสดงตอนเปิด): ผู้สั่งไม่ได้แก้ช่อง (safetyKg = storedSafetyKg = 20) แต่ที่เก็บเป็น 99 แล้ว
+-- = ไม่เขียนทับค่าที่ผู้อื่นตั้ง บรรทัดของใบเก็บค่าที่ใช้อยู่จริง และไม่เก็บช่อง storedSafetyKg · ช่องนี้ผิดรูป = RF_INVALID_PURCHASE
+select throws_ok($$ select ps_t.po_save(jsonb_build_object('id', 'PO-20261111-07', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
+  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":20,"storedSafetyKg":"20","qtyKg":2}]'::jsonb)) $$, 'RF_INVALID_PURCHASE',
+  'a malformed stored safety stock is refused');
+select ok(ps_t.po_save(jsonb_build_object('id', 'PO-20261111-07', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
+  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":20,"storedSafetyKg":20,"qtyKg":2}]'::jsonb)) is not null,
+  'ST staff orders from a dialog that still shows an older safety stock without having edited it');
+select is(ps_t.stock('P-1') ->> 'safetyQty', '99', 'the safety stock someone else set in the meantime is kept');
+select is(ps_t.ver(), current_setting('test.vb')::bigint, 'and no BOM row changed');
+select is(ps_t.po('PO-20261111-07') -> 'lines' -> 0, '{"materialCode":"P-1","source":"bom","uom":"box","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":99,"qtyKg":2,"receivedKg":null,"lotNo":null,"expiry":null,"receivedAt":null,"receivedBy":null}'::jsonb,
+  'the order line keeps the safety stock in force and not the stored-value field');
 -- คนอื่นสร้างใบไม่ได้เลย แม้ใบนั้นเปลี่ยนสต็อกขั้นต่ำ (ไม่เขียนอะไรทั้ง BOM และ RubberFlow) · RB เป็นคนสุดท้ายเพราะ 8.3 ต่อจากสมาชิก RB
 select set_config('test.vr', ps_t.rver()::text, true);
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
@@ -477,7 +489,7 @@ select throws_ok($$ select ps_t.po_save(jsonb_build_object('id', 'PO-20261111-05
   'nor change the safety stock of a part through an order');
 select is(ps_t.ver(), current_setting('test.vb')::bigint, 'the refused orders wrote nothing to the BOM');
 select is(ps_t.rver(), current_setting('test.vr')::bigint, 'nor to RubberFlow');
-select is(jsonb_array_length(public.app_rf_master() -> 'purchaseOrders'), 3, 'and no order was added by them');
+select is(jsonb_array_length(public.app_rf_master() -> 'purchaseOrders'), 4, 'and no order was added by them');
 
 -- 8.3 รับบรรทัดของซื้อ (ST หรือ admin): บวกยอด เขียนประวัติ ไม่มีล็อต/วันหมดอายุ
 select throws_ok($$ select ps_t.po_save(ps_t.receipt('PO-20261111-01', 1, 50), 'receivePurchaseLine') $$, 'RF_FORBIDDEN', 'an RB member cannot receive a part line');

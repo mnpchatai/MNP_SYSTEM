@@ -4,7 +4,7 @@
 -- ทำไม: ผู้ใช้ตัดสิน 2026-11-14 ให้แผนก ST ตั้งสต็อกขั้นต่ำได้เองเพิ่มจากกลุ่มวางแผน (PP, ผู้จัดการแผนกขึ้นไป, admin) ที่มีสิทธิ์อยู่แล้ว
 --   เหตุ: ตั้งแต่ 20261119010000_rf_purchase_by_st.sql มีแต่ ST ที่สร้างใบสั่งซื้อได้ แต่ ST เปลี่ยนสต็อกขั้นต่ำไม่ได้ ช่องสต็อกขั้นต่ำในหน้าต่างสั่งซื้อจึงใช้ไม่ได้สำหรับคนเดียวที่สั่งของ
 --
--- สิ่งที่เปลี่ยน (เฉพาะเงื่อนไขสิทธิ์ 4 จุดใน 3 ฟังก์ชัน ไม่เปลี่ยนอย่างอื่น: ลำดับตรวจ, รหัสข้อผิดพลาด, ผลที่คืน, ลายเซ็น, สิทธิ์ EXECUTE)
+-- สิ่งที่เปลี่ยน (เงื่อนไขสิทธิ์ 4 จุดใน 3 ฟังก์ชัน กับข้อ 4 ด้านล่าง ไม่เปลี่ยนอย่างอื่น: ลำดับตรวจ, รหัสข้อผิดพลาด, ผลที่คืน, ลายเซ็น, สิทธิ์ EXECUTE)
 --   1) private.bom_save_stock (action countPartStock): เปลี่ยนสต็อกขั้นต่ำ (safetyQty)  p_planner  ->  p_planner หรือแผนก ST  (ไม่เช่นนั้น BOM_FORBIDDEN)
 --      WH ยังนับยอดได้อย่างเดียว (ไม่มีสิทธิ์สต็อกขั้นต่ำ) · QA / SR / RB / ผู้ช่วยผู้จัดการแผนกนอกกลุ่มวางแผน ยังเปลี่ยนไม่ได้
 --   2) private.rf_save_purchase_orders (สร้างใบใหม่ บรรทัดของซื้อ source 'bom'): เปลี่ยนสต็อกขั้นต่ำของชิ้นที่มีแถวสต็อกแล้ว และสร้างแถวสต็อกใหม่ที่ safetyKg <> 0
@@ -15,6 +15,11 @@
 --      ตัวเขียน private.rf_save_materials (20261110010000_rf_purchase_orders.sql ยังเป็นนิยามล่าสุด ไม่มี migration ไหนแทน) ไม่ตรวจบทบาทเอง แต่ใต้ createPurchaseOrder
 --      มันให้ต่างจากที่เก็บได้ช่อง safetyKg ช่องเดียว (ช่องอื่นต่าง = RF_INVALID_MATERIAL) และสร้างวัตถุดิบใหม่ไม่ได้ (RF_INVALID_MATERIAL) จึงไม่ต้องแก้ ST เปลี่ยนสต็อกขั้นต่ำของเคมีได้เฉพาะเป็นส่วนหนึ่งของการสร้างใบสั่งซื้อ
 --      ธุรกรรมเดียวกับการสร้างใบ: ใบถูกปฏิเสธ (เช่น ไม่ใช่ ST / admin) = สต็อกขั้นต่ำที่พ่วงมาย้อนด้วย
+--      หมายเหตุ: ด่านนี้ดูเฉพาะชื่อคำสั่ง ST จึงส่ง createPurchaseOrder ที่มีแต่ชุด materials (ไม่มีใบ) เพื่อแก้ safetyKg ของเคมีได้ด้วย
+--      ซึ่งอยู่ในกติกา "ST ตั้งสต็อกขั้นต่ำได้" (ช่องอื่นของวัตถุดิบยังแก้ไม่ได้) · Pilot ไม่ส่งแบบนั้น
+--   4) private.rf_save_purchase_orders อ่านช่อง storedSafetyKg ของบรรทัดของซื้อในใบใหม่ (ค่าที่หน้าต่างสั่งซื้อแสดงตอนเปิด ไม่บังคับ ไม่เก็บลงใบ):
+--      safetyKg = storedSafetyKg แปลว่าผู้สั่งไม่ได้แก้ช่อง จึงไม่เขียนทับ bom_stock.safety_qty ที่ผู้อื่นเพิ่งตั้ง และบรรทัดของใบเก็บค่าที่ใช้อยู่จริง
+--      (เดิมผู้สั่งที่ไม่มีสิทธิ์ได้ RF_FORBIDDEN จากหน้าต่างค่าเก่า เมื่อ ST มีสิทธิ์แล้วค่าเก่าจะถูกเขียนทับเงียบ ๆ) · ไม่ส่งช่องนี้ = เทียบกับที่เก็บเหมือนเดิม
 --   - ไม่เปลี่ยน: สิทธิ์ของกลุ่มวางแผน / RB (RB ยังตั้งสต็อกขั้นต่ำของเคมีได้ทาง saveMaterial) · RB ยังสร้างใบสั่งซื้อไม่ได้ (RF_FORBIDDEN) · สิทธิ์รับ/ยกเลิกใบ · ตารางทั้งหมด RLS สิทธิ์ตาราง
 --
 -- นิยามที่ replace (create or replace ลายเซ็นเดิมทั้งหมด; เริ่มจากนิยามล่าสุดบน main; ตัวเขียนเป็น security definer + set search_path = '' เหมือนต้นทาง)
@@ -144,6 +149,7 @@ declare
   v_stock public.bom_stock%rowtype;
   v_bal numeric;
   v_safety numeric;
+  v_stored numeric;
   v_bom_n integer := 0;
   v_part boolean := false;
   v_locked boolean := false;
@@ -277,9 +283,15 @@ begin
           select * into v_item from public.bom_items i where i.is_test and i.code = private.bom_code(v_nl ->> 'materialCode') and i.kind = 'PURCHASED';
           if not found then raise exception 'RF_INVALID_PURCHASE'; end if;
           v_safety := (v_nl ->> 'safetyKg')::numeric;
+          -- storedSafetyKg = ค่าที่หน้าต่างสั่งซื้อแสดงตอนเปิด (rf_po_parse_lines ตัดช่องนี้ออก จึงอ่านจากบรรทัดดิบ): ค่าที่ส่งมาเท่ากับค่านี้
+          -- แปลว่าผู้สั่งไม่ได้แก้ช่อง จึงไม่เขียนทับค่าที่ผู้อื่นเพิ่งตั้ง (บรรทัดของใบเก็บค่าที่ใช้อยู่จริง) · client รุ่นก่อนไม่ส่งช่องนี้ = เทียบกับที่เก็บเหมือนเดิม
+          select private.bom_num(l.value -> 'storedSafetyKg', 'RF_INVALID_PURCHASE', 0, 1000000000) into v_stored
+          from jsonb_array_elements(v_row -> 'lines') l where upper(l.value ->> 'materialCode') = upper(v_nl ->> 'materialCode') limit 1;
           if not v_locked then perform private.rf_lock_bom(); v_locked := true; end if;
           select * into v_stock from public.bom_stock s where s.is_test and s.item_code = v_item.code for update;
-          if found then
+          if found and v_stored is not null and v_safety = v_stored then
+            v_safety := v_stock.safety_qty;
+          elsif found then
             if v_stock.safety_qty <> v_safety then
               -- สต็อกขั้นต่ำเปลี่ยนได้โดยกลุ่มวางแผนหรือแผนก ST (ด่านสร้างใบด้านบนเหลือแต่ ST / admin ซึ่ง admin นับเป็นกลุ่มวางแผน)
               if not (p_planner or p_st) then raise exception 'RF_FORBIDDEN'; end if;
@@ -292,7 +304,7 @@ begin
             v_bom_n := v_bom_n + 1;
           end if;
           v_final := v_final || jsonb_build_array(v_nl || jsonb_build_object(
-            'materialCode', v_item.code, 'uom', v_item.uom, 'receivedAt', null::bigint, 'receivedBy', null::text));
+            'materialCode', v_item.code, 'uom', v_item.uom, 'safetyKg', v_safety, 'receivedAt', null::bigint, 'receivedBy', null::text));
         else
           select * into v_mat from public.rf_materials m where m.is_test and upper(m.code) = upper(v_nl ->> 'materialCode');
           if not found or not v_mat.active then raise exception 'RF_INVALID_PURCHASE'; end if;

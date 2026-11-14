@@ -1445,7 +1445,11 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
             if (line.source === "bom") {
               const item = bomLoad().items.find((row) => row.code === bomCode(line.materialCode) && row.kind === "PURCHASED") ?? fail(bad);
               // สต็อกขั้นต่ำของซื้อเปลี่ยนได้เฉพาะกลุ่มวางแผน (ไม่มีแถวสต็อก = 0) · ตรงกับ rf_save_purchase_orders
-              if (line.safetyKg !== (bomLoad().stock.find((entry) => entry.itemCode === item.code)?.safetyQty ?? 0) && !(planner || actor.dept === "ST")) fail("RF_FORBIDDEN");
+              // storedSafetyKg = ค่าที่หน้าต่างแสดงตอนเปิด: ส่งมาเท่ากัน = ผู้สั่งไม่ได้แก้ จึงไม่เขียนทับค่าที่ผู้อื่นเพิ่งตั้ง (ตรงกับ 20261120010000)
+              const storedRow = bomLoad().stock.find((entry) => entry.itemCode === item.code);
+              if (line.storedSafetyKg !== undefined && line.storedSafetyKg !== null && !money(line.storedSafetyKg)) fail(bad);
+              if (storedRow && typeof line.storedSafetyKg === "number" && line.safetyKg === line.storedSafetyKg) return { materialCode: item.code, source: "bom", uom: item.uom, ...common, safetyKg: storedRow.safetyQty ?? 0 };
+              if (line.safetyKg !== (storedRow?.safetyQty ?? 0) && !(planner || actor.dept === "ST")) fail("RF_FORBIDDEN");
               ops.stock.push({ kind: "safety", code: item.code, qty: line.safetyKg });
               return { materialCode: item.code, source: "bom", uom: item.uom, ...common };
             }
