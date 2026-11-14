@@ -19,7 +19,7 @@ end;
 $fn$;
 create temp table purge_bom_tables(name text) on commit drop;
 insert into purge_bom_tables values ('bom_jobs'), ('bom_orders'), ('bom_customers'), ('bom_bom_lines'), ('bom_boms'), ('bom_routings'), ('bom_color_sets'),
-  ('bom_packages'), ('bom_colors'), ('bom_processes'), ('bom_compounds'), ('bom_items'), ('bom_deleted_keys'), ('bom_stock'), ('bom_stock_moves');
+  ('bom_packages'), ('bom_colors'), ('bom_processes'), ('bom_compounds'), ('bom_items'), ('bom_deleted_keys'), ('bom_stock'), ('bom_stock_moves'), ('bom_fg_moves');
 create temp table purge_rf_tables(name text) on commit drop;
 insert into purge_rf_tables values ('rf_purchase_orders'), ('rf_ncrs'), ('rf_qc_records'), ('rf_fg_boxes'), ('rf_transfers'), ('rf_requisitions'), ('rf_lots'), ('rf_material_lots'),
   ('rf_molds'), ('rf_orders'), ('rf_recipes'), ('rf_materials'), ('rf_deleted_keys');
@@ -78,6 +78,8 @@ insert into public.bom_customers (name) values ('ลูกค้าจริง'
 insert into public.bom_orders (pi_no, customer, country, order_type, ordered_at, wh_due) values ('REAL-PI', 'ลูกค้าจริง', 'TH', 'SA', 1762300000000, 1762400000000);
 insert into public.bom_jobs (job_no, order_pk, dept, item_code, name, kind, uom, qty_planned, qty_required)
 select 'REAL-JOB', o.id, 'PK', 'REAL-ITEM', 'งานจริง', 'FG', 'pcs', 1, 1 from public.bom_orders o where not o.is_test and o.pi_no = 'REAL-PI';
+insert into public.bom_fg_moves (order_pk, fg_code, kind, qty)
+select o.id, 'REAL-ITEM', 'receive', 1 from public.bom_orders o where not o.is_test and o.pi_no = 'REAL-PI';
 insert into public.rf_master_state (is_test, version) values (false, 99);
 insert into public.rf_materials (code, name) values ('REAL-MAT', 'วัตถุดิบจริง');
 insert into public.rf_recipes (recipe_code, revision, product_code, uom, batch_kg, stages, yield_per_kg, items, status)
@@ -111,6 +113,8 @@ from public.bom_orders o cross join generate_series(1, 500) g where o.is_test an
 insert into public.bom_deleted_keys (is_test, list, base, code) values (true, 'jobs', '', 'T-DEL');
 insert into public.bom_stock (is_test, item_code, qty) values (true, 'T-1', 5);
 insert into public.bom_stock_moves (is_test, item_code, kind, qty, balance) values (true, 'T-1', 'count', 5, 5);
+insert into public.bom_fg_moves (is_test, order_pk, fg_code, kind, qty)
+select true, o.id, 'T-1', 'receive', 1 from public.bom_orders o where o.is_test and o.pi_no = 'T-PI';
 
 -- 3.3 RubberFlow ทดสอบ: ทุกตารางมีแถว และตารางที่มี foreign key ไปใบสั่งผลิต / ล็อต / แม่พิมพ์ มีหลายร้อยแถว
 insert into public.rf_materials (is_test, code, name) values (true, 'TM-1', 'วัตถุดิบทดสอบ');

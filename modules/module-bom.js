@@ -405,6 +405,9 @@
     countPartStock: (p) => ({ counts: listOf(p, "itemCode").map((itemCode, index) => ({ itemCode, qty: listOf(p, "qty")[index] ?? "", safetyQty: listOf(p, "safetyQty")[index] ?? "" })) }),
     // ฟอร์มคืนของเหลือ: itemCode[] + qty[] ตามลำดับแถว → lines (เฉพาะแถวที่กรอกจำนวน · เว้นว่างหรือ 0 = ไม่คืนรายการนั้น)
     returnOrderParts: (p) => ({ orderId: p.orderId, reason: p.reason, lines: listOf(p, "itemCode").map((itemCode, index) => ({ itemCode, qty: listOf(p, "qty")[index] ?? "" })).filter((line) => String(line.qty).trim() !== "" && Number(line.qty) !== 0) }),
+    // ฟอร์มรับเข้าคลัง / ส่งมอบสินค้าสำเร็จรูป: fgCode[] + qty[] ตามลำดับแถว (มีเฉพาะแถวที่มีของให้รับ/ส่ง) → lines (เว้นว่างหรือ 0 = ไม่รับ/ส่งรายการนั้น)
+    receiveFg: (p) => ({ orderId: p.orderId, lines: fgLines(p) }),
+    deliverFg: (p) => ({ orderId: p.orderId, lines: fgLines(p) }),
     // ฟอร์มขั้นตอนผลิต: processCode[] + minutesPerPc[] → steps ตามลำดับแถว (แถวที่ไม่เลือกขั้นตอนถูกข้าม)
     // inputCode[] + inputStep[] → step.inputs (ส่วนประกอบที่เลือก "ขั้นแรก" ไม่ถูกผูก จึงแสดงที่ขั้นแรก)
     saveRouting: (p) => {
@@ -418,6 +421,7 @@
     savePackage: (p) => ({ ...p, lines: listOf(p, "childCode").map((childCode, index) => ({ childCode, qty: listOf(p, "qty")[index] ?? "" })).filter((line) => String(line.childCode ?? "").trim()) }),
   };
 
+  const fgLines = (p) => listOf(p, "fgCode").map((fgCode, index) => ({ fgCode, qty: listOf(p, "qty")[index] ?? "" })).filter((line) => String(line.qty).trim() !== "" && Number(line.qty) !== 0);
   function runAction(name, payload, successText) {
     const result = store.run(name, payload);
     if (!result.ok) {
@@ -454,10 +458,13 @@
   }
 
   function bindRoot(root, ctx) {
-    root.querySelectorAll("form[data-rf-form]").forEach((form) => form.addEventListener("submit", (event) => {
+    root.querySelectorAll("form[data-rf-form]").forEach((form) => form.addEventListener("submit", async (event) => {
       event.preventDefault();
       // ตรวจช่องเป็นภาษาไทยใต้ช่องก่อน (ฟอร์มเป็น novalidate) · action ยังตรวจกติกาของตัวเองซ้ำ
       if (!ui.validateForm(form)) return;
+      // ปุ่มส่งที่มี data-rf-confirm (รับเข้าคลัง / ส่งมอบ): ถามยืนยันครั้งเดียวแล้วส่งทันที (ไม่มีนับถอยหลัง)
+      const confirmer = event.submitter?.dataset?.rfConfirm ? event.submitter : null;
+      if (confirmer && !(await confirmDialog(ui.confirmOptions(confirmer)))) return;
       const name = form.dataset.rfForm;
       const transform = TRANSFORMS[name] ?? ((payload) => payload);
       let payload;
@@ -517,6 +524,8 @@
     const counts = navCounts(store.data(), user);
     // งานรับเข้า/สั่งซื้อของคลังวัตถุดิบนับรวมในตัวเลขของเมนูงานของฉัน (การ์ดชุดเดียวกับในหน้า)
     try { if (user.dept === "ST" && pages.hub?.storeTasks) counts.work += pages.hub.storeTasks(makeContext(currentRoute().params)).length; } catch { /* นับไม่ได้: ตัวเลขเป็นงานของใบอย่างเดียว */ }
+    // งานของคลังสินค้า (WH): การ์ดรับเข้า/ส่งมอบสินค้าสำเร็จรูป (ชุดเดียวกับในหน้างานของฉัน)
+    try { if (actions.helpers.canHandleFg(user) && pages.hub?.fgTasks) counts.work += pages.hub.fgTasks(makeContext(currentRoute().params)).length; } catch { /* นับไม่ได้ */ }
     // เมนูหลัก 4 อัน (storeApi.NAV): หน้าที่ไม่อยู่ในเมนู (สร้าง BOM นับคงคลัง ฯลฯ) ทำให้เมนูแม่ของมันเป็นตัวที่เลือกอยู่
     const parent = storeApi.NAV_PARENT[page] ?? page;
     const items = navItems(user).map((id) => `<li><a class="rf-nav-item${id === parent ? " is-active" : ""}" data-rf-mod="bom-${escapeHtml(id)}" href="${escapeHtml(url(id))}"${id === page ? ' aria-current="page"' : ""}><span class="rf-nav-ico" aria-hidden="true">${pages.icon(id)}</span><span class="rf-nav-text">${escapeHtml(storeApi.navLabel(id))}</span>${counts[id] ? `<span class="rf-nav-count" title="${escapeHtml(countTitle(id))}">${counts[id]}</span>` : ""}</a></li>`).join("");

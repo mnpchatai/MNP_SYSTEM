@@ -278,8 +278,11 @@ select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders
   current_setting('test.o')::jsonb || '{"status":"in_progress"}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'releaseOrder') $$,
   'BOM_INVALID_TRANSITION', 'a draft cannot jump to in_progress');
 select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.o')::jsonb || '{"status":"completed"}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'releaseOrder') $$,
+  'BOM_FORBIDDEN', 'an order row can never be moved to completed (a draft included, whatever the action name)');
+select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.o')::jsonb || '{"status":"completed"}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'completeOrder') $$,
-  'BOM_INVALID_TRANSITION', 'a draft cannot be completed');
+  'BOM_INVALID_ACTION', 'the old closing action is no longer on the client list');
 
 select set_config('test.res', public.app_bom_save_master(jsonb_build_object(
   'orders', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.o')::jsonb || '{"status":"released"}'::jsonb)),
@@ -447,8 +450,12 @@ select is(public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_obje
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select set_config('test.o', (select o::text from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251106-25001'), true);
 select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.o')::jsonb || '{"status":"completed"}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'completeOrder') $$,
-  'BOM_INVALID_TRANSITION', 'an order cannot be completed while a PK job is not done');
+  current_setting('test.o')::jsonb || '{"status":"completed"}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'updateOrderItem') $$,
+  'BOM_FORBIDDEN', 'a planner cannot complete an order by saving its row, even through another action name');
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select throws_ok($$ select public.app_bom_save_master('{"fgMoves":{"upsert":[{"orderId":"251106-25001","kind":"receive","lines":[{"fgCode":"FG-A","qty":1}]}]}}'::jsonb,
+  (public.app_bom_master() ->> 'version')::bigint, 'receiveFg') $$,
+  'BOM_FG_EXCEEDS', 'WH cannot receive a product before PK has reported it');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pk_staff')::uuid);
 select set_config('test.j', (select j::text from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-1-PK'), true);
 select set_config('test.res', public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
@@ -469,13 +476,19 @@ select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders
 select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.o')::jsonb || '{"status":"draft","items":[{"fgCode":"FG-A","qty":1,"colorSet":"A","note":""}]}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'updateOrderItem') $$,
   'BOM_INVALID_TRANSITION', 'an order with started jobs cannot be reopened for editing');
-select set_config('test.res', public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.o')::jsonb || '{"status":"completed"}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'completeOrder')::text, true);
-select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'completed', 'the planner completes the order once PK is done');
+select throws_ok($$ select public.app_bom_save_master('{"fgMoves":{"upsert":[{"orderId":"251106-25001","kind":"receive","lines":[{"fgCode":"FG-A","qty":10}]}]}}'::jsonb,
+  (public.app_bom_master() ->> 'version')::bigint, 'receiveFg') $$,
+  'BOM_FORBIDDEN', 'the planner can no longer complete the order: receiving the goods is WH work');
+-- ปิดใบด้วยการรับของ: WH รับครบตามที่สั่ง (10 ชุด PK ทำไว้ 100) = ใบ completed เอง
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select set_config('test.res', public.app_bom_save_master('{"fgMoves":{"upsert":[{"orderId":"251106-25001","kind":"receive","lines":[{"fgCode":"FG-A","qty":10}]}]}}'::jsonb,
+  (public.app_bom_master() ->> 'version')::bigint, 'receiveFg')::text, true);
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'completed', 'WH completes the order by receiving everything that was ordered');
 select ok(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ? 'completedAt', 'the completion time is set');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select set_config('test.o', (select o::text from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251106-25001'), true);
 select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.o')::jsonb || '{"note":"แก้หลังปิด"}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'completeOrder') $$,
+  current_setting('test.o')::jsonb || '{"note":"แก้หลังปิด"}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'updateOrderItem') $$,
   'BOM_INVALID_TRANSITION', 'a completed order cannot change');
 select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.o')::jsonb || '{"status":"cancelled"}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'cancelOrder') $$,
@@ -761,7 +774,7 @@ select set_config('test.purge', public.app_sandbox_purge_bom()::text, true);
 select ok((current_setting('test.purge')::jsonb ->> 'deleted')::integer > 15, 'the purge reports the deleted rows');
 select is(public.app_bom_master() - 'epoch',
   jsonb_build_object('version', current_setting('test.pre_version')::bigint, 'items', '[]'::jsonb, 'compounds', '[]'::jsonb, 'colors', '[]'::jsonb, 'colorSets', '[]'::jsonb,
-                     'packages', '[]'::jsonb, 'boms', '[]'::jsonb, 'processes', '[]'::jsonb, 'routings', '[]'::jsonb, 'customers', '[]'::jsonb, 'orders', '[]'::jsonb, 'jobs', '[]'::jsonb, 'stock', '[]'::jsonb, 'stockMoves', '[]'::jsonb),
+                     'packages', '[]'::jsonb, 'boms', '[]'::jsonb, 'processes', '[]'::jsonb, 'routings', '[]'::jsonb, 'customers', '[]'::jsonb, 'orders', '[]'::jsonb, 'jobs', '[]'::jsonb, 'stock', '[]'::jsonb, 'stockMoves', '[]'::jsonb, 'fgMoves', '[]'::jsonb),
   'the test master is empty again and the counter keeps its value (it never goes back)');
 select isnt(public.app_bom_master() ->> 'epoch', current_setting('test.pre_epoch'), 'the purge changed the epoch');
 select is(public.app_bom_master_since(current_setting('test.pre_version')::bigint) ->> 'epoch', public.app_bom_master() ->> 'epoch',

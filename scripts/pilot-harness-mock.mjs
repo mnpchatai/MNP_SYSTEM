@@ -428,13 +428,13 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
   // กฎของ BOM ใช้ bom-rules.js ที่หน้าโหลดไว้ (window.MNP_BOM_RULES) ถ้ามี
   const BOM_KEY = "mnp-harness-bom-master";
   const PERSONA_KEY = "mnp-harness-persona";
-  const BOM_LISTS = ["items", "compounds", "colors", "colorSets", "packages", "boms", "processes", "routings", "customers", "orders", "jobs", "stock", "stockMoves"];
+  const BOM_LISTS = ["items", "compounds", "colors", "colorSets", "packages", "boms", "processes", "routings", "customers", "orders", "jobs", "stock", "stockMoves", "fgMoves"];
   const BOM_ID = {
     items: (record) => record.code, compounds: (record) => record.code, colors: (record) => record.code, processes: (record) => record.code,
     boms: (record) => record.id, routings: (record) => record.id,
     colorSets: (record) => `${record.base}|${record.code}`, packages: (record) => `${record.base}|${record.code}`,
     customers: (record) => String(record.name ?? "").trim().toLowerCase(), orders: (record) => record.id, jobs: (record) => record.id,
-    stock: (record) => record.itemCode, stockMoves: (record) => record.id,
+    stock: (record) => record.itemCode, stockMoves: (record) => record.id, fgMoves: (record) => record.id,
   };
   // ลำดับของชุดที่หน้าเห็น (ตรงกับ app_bom_master): ใบสั่งผลิตใหม่สุดก่อน · งานเรียงตามใบ แผนก ชิ้นงาน เลขงาน · ชุดอื่นตามกุญแจ
   const bomCmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -442,6 +442,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     orders: (a, b) => (Number(b.orderedAt) || 0) - (Number(a.orderedAt) || 0) || bomCmp(a.id, b.id),
     jobs: (a, b) => bomCmp(a.orderId, b.orderId) || bomCmp(a.dept, b.dept) || bomCmp(a.itemCode, b.itemCode) || bomCmp(a.id, b.id),
     stockMoves: (a, b) => (Number(a.at) || 0) - (Number(b.at) || 0) || bomCmp(a.id, b.id),
+    fgMoves: (a, b) => (Number(a.at) || 0) - (Number(b.at) || 0) || bomCmp(a.id, b.id),
   };
   const bomSorter = (list) => BOM_ORDER[list] ?? ((a, b) => bomCmp(BOM_ID[list](a), BOM_ID[list](b)));
   const BOM_DELETABLE = ["colorSets", "packages", "jobs"];
@@ -495,6 +496,8 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     ["persona-st", "วิชัย", "คลังวัตถุดิบ", "พนักงานคลังวัตถุดิบ (ST)", "ST", "คลังวัตถุดิบ"],
     ["persona-sr", "ศิริ", "รับมอบ", "พนักงานแผนก SR (รับมอบ WIP)", "SR", "รับมอบ WIP"],
     ["persona-wh", "สุดา", "คลังสินค้า", "พนักงานคลังสินค้า (WH)", "WH", "คลังสินค้า"],
+    // หัวหน้าแผนก WH (ผู้จัดการแผนก): BOM นับเป็นบทบาท manager แต่แผนกคือ WH จึงรับเข้าคลัง/ส่งมอบสินค้าสำเร็จรูปได้เหมือนพนักงาน WH
+    ["persona-whh", "ชัย", "หัวหน้าคลัง", "หัวหน้าแผนกคลังสินค้า (WH)", "WH", "คลังสินค้า", "department_manager"],
     ["persona-qa", "ธนา", "ตรวจสอบ", "เจ้าหน้าที่ QA (แผนกที่ไม่ใช่ฝ่ายผลิต)", "QA", "ประกันคุณภาพ"],
   ];
   const personaRows = () => [
@@ -577,7 +580,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     if (!planner) fail("BOM_FORBIDDEN");
   }
   // สถานะของใบ (ตรงกับ bom_save_orders): ใบใหม่ต้องเป็น draft · draft→released (ต้องมีสินค้า ระเบิดแล้ว และมีงานในคำสั่งเดียวกัน) · released→in_progress (มากับงาน) ·
-  // released/in_progress→completed (งาน PK เสร็จครบ) · ที่ยังไม่จบ→cancelled (ห้ามถ้ามีงานรายงานยอดดีหรือผูก WO; งานของใบถูกลบ) ·
+  // → completed ทุกกรณี = BOM_FORBIDDEN สำหรับทุกคน (ใบปิดเองเมื่อคลังสินค้า WH รับเข้าครบ หรือปิดรับไม่ครบ: bomFgMoves) · ที่ยังไม่จบ→cancelled (ห้ามถ้ามีงานรายงานยอดดีหรือผูก WO; งานของใบถูกลบ) ·
   // released/in_progress→draft เฉพาะเปิดใบกลับมาแก้ (ห้ามถ้ามีงานเริ่ม; งานของใบถูกลบ) · เนื้อหา/ยอดนับแก้ได้เฉพาะใบ draft
   const BOM_ORDER_CONTENT = ["customer", "country", "orderType", "orderedAt", "whDue", "due", "dueDefaults", "items", "explosion", "note"];
   const bomOrderContent = (row) => bomCanon(Object.fromEntries(BOM_ORDER_CONTENT.map((key) => [key, row[key] ?? null])));
@@ -600,6 +603,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     }
     const from = prev.status;
     const to = record.status;
+    if (to === "completed" && from !== "completed") fail("BOM_FORBIDDEN");
     const content = bomOrderContent(prev) !== bomOrderContent(record);
     const counts = bomCanon(prev.stockCounts ?? {}) !== bomCanon(record.stockCounts ?? {});
     const statusChanged = from !== to;
@@ -618,8 +622,6 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       ctx.released.push(prev.id);
     } else if (from === "draft" && to === "cancelled") {
       // ไม่มีอะไรเพิ่ม
-    } else if ((from === "released" || from === "in_progress") && to === "completed") {
-      if (jobs.some((job) => job.dept === "PK" && job.status !== "done")) fail("BOM_INVALID_TRANSITION");
     } else if ((from === "released" || from === "in_progress") && to === "cancelled") {
       if (jobs.some((job) => Number(job.qtyDone) > 0)) fail("BOM_INVALID_TRANSITION");
       ctx.rfCancel.push(bomRfCancelOp("cancelOrder", jobs));
@@ -822,6 +824,67 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     return moves;
   }
   const BOM_RETURN_ACTIONS = ["undoOrderParts", "returnOrderParts"];
+  // สินค้าสำเร็จรูป (ตรงกับสัญญา bom-wh-fg): แถวเดียว { orderId, kind, lines?, note? } ลำดับตรวจ: รูปคำขอ (รวมใบที่ไม่รู้จัก/สินค้านอกใบ) → สิทธิ์ (แผนก WH หรือ admin) → สถานะใบ → ยอด
+  // receive: ใบ released/in_progress · ยอดรับรวม ≤ ยอดที่งาน PK (FG) รายงาน · deliver: ใบ released/in_progress/completed · ยอดส่งมอบรวม ≤ ยอดรับรวม
+  // close: ใบ released/in_progress · งาน PK ทุกงานเสร็จ · ทุกสินค้ารับเท่าที่ PK ทำ · มีสินค้าที่รับน้อยกว่าที่สั่ง (ไม่ผ่าน = BOM_INVALID_TRANSITION) · รับครบทุกสินค้า / ปิดรับไม่ครบ → ใบเป็น completed
+  const BOM_FG_ACTIONS = { receiveFg: "receive", deliverFg: "deliver", closeOrderShort: "close" };
+  const bomFgKind = (action) => (Object.hasOwn(BOM_FG_ACTIONS, action) ? BOM_FG_ACTIONS[action] : null);
+  const bomFgRound = (n) => Math.round(n * 1e9) / 1e9;
+  function bomFgMoves(next, rows, nextVersion, actor, at, action) {
+    const bad = () => fail("BOM_INVALID_FG");
+    const kind = bomFgKind(action) ?? bad();
+    if (!Array.isArray(rows) || rows.length !== 1) bad();
+    const row = rows[0];
+    if (!row || typeof row !== "object" || Array.isArray(row) || row.kind !== kind) bad();
+    if (typeof row.orderId !== "string" || !row.orderId.trim() || row.orderId.length > 40) bad();
+    const note = row.note === undefined || row.note === null ? "" : typeof row.note === "string" ? row.note.trim() : bad();
+    if (note.length > 300) bad();
+    const wanted = [];
+    if (kind === "close") {
+      if (row.lines !== undefined && row.lines !== null && !(Array.isArray(row.lines) && row.lines.length === 0)) bad();
+      if (note.length < 3) bad();
+    } else {
+      if (!Array.isArray(row.lines) || row.lines.length < 1 || row.lines.length > 500) bad();
+      for (const line of row.lines) {
+        if (!line || typeof line !== "object" || Array.isArray(line) || typeof line.fgCode !== "string") bad();
+        const code = bomCode(line.fgCode);
+        if (!code || wanted.some((entry) => entry.fgCode === code)) bad();
+        if (typeof line.qty !== "number" || !Number.isFinite(line.qty) || line.qty <= 0 || line.qty > 1e9) bad();
+        wanted.push({ fgCode: code, qty: line.qty });
+      }
+    }
+    if (!(actor.role === "admin" || actor.dept === "WH")) fail("BOM_FORBIDDEN");
+    // ใบที่ไม่รู้จักและสินค้านอกใบตรวจหลังสิทธิ์ (ต้องมีแถวใบก่อน) ตรงกับ private.bom_fg_move
+    const order = next.orders.find((entry) => entry.id === row.orderId.trim().toUpperCase()) ?? bad();
+    if (wanted.some((line) => !(order.items ?? []).some((item) => item.fgCode === line.fgCode))) bad();
+    const pkJobs = next.jobs.filter((job) => job.orderId === order.id && job.dept === "PK");
+    const sum = (code, moveKind) => bomFgRound(next.fgMoves.filter((move) => move.orderId === order.id && move.fgCode === code && move.kind === moveKind).reduce((total, move) => total + move.qty, 0));
+    const made = (code) => bomFgRound(pkJobs.filter((job) => job.kind === "FG" && job.itemCode === code).reduce((total, job) => total + (Number(job.qtyDone) || 0), 0));
+    const products = [...new Set(order.items.map((item) => item.fgCode))].map((code) => ({ fgCode: code, ordered: bomFgRound(order.items.filter((item) => item.fgCode === code).reduce((total, item) => total + (Number(item.qty) || 0), 0)), made: made(code), received: sum(code, "receive"), delivered: sum(code, "deliver") }));
+    const productOf = (code) => products.find((product) => product.fgCode === code);
+    const push = (fgCode, qty) => {
+      const id = bomMoveId(next.fgMoves);
+      next.fgMoves.push({ id, orderId: order.id, fgCode, kind, qty, note, at, by: actor.name });
+      next.versions.fgMoves[id] = nextVersion;
+    };
+    const closeNow = () => { order.status = "completed"; order.completedAt = at; next.versions.orders[order.id] = nextVersion; };
+    if (kind === "receive") {
+      if (!["released", "in_progress"].includes(order.status)) fail("BOM_INVALID_TRANSITION");
+      for (const line of wanted) if (productOf(line.fgCode).received + line.qty > productOf(line.fgCode).made + 1e-9) fail("BOM_FG_EXCEEDS");
+      for (const line of wanted) push(line.fgCode, line.qty);
+      if (products.every((product) => product.received + (wanted.find((line) => line.fgCode === product.fgCode)?.qty ?? 0) + 1e-9 >= product.ordered)) closeNow();
+    } else if (kind === "deliver") {
+      if (!["released", "in_progress", "completed"].includes(order.status)) fail("BOM_INVALID_TRANSITION");
+      for (const line of wanted) if (productOf(line.fgCode).delivered + line.qty > productOf(line.fgCode).received + 1e-9) fail("BOM_FG_EXCEEDS");
+      for (const line of wanted) push(line.fgCode, line.qty);
+    } else {
+      if (!["released", "in_progress"].includes(order.status)) fail("BOM_INVALID_TRANSITION");
+      if (!pkJobs.every((job) => job.status === "done") || !products.every((product) => Math.abs(product.received - product.made) <= 1e-9) || !products.some((product) => product.received + 1e-9 < product.ordered)) fail("BOM_INVALID_TRANSITION");
+      push("", 0);
+      closeNow();
+    }
+    return 1;
+  }
   function bomApply(current, changes, base, actor, at, rfOps = { release: [], cancel: [] }, action = "", meta = {}) {
     const next = clone(current);
     const nextVersion = current.version + 1;
@@ -833,6 +896,8 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       if (list === "partReturns" && entry && typeof entry === "object" && Object.hasOwn(entry, "delete")) fail("BOM_INVALID_PAYLOAD");
       if (count > 0 && ((list === "partReturns" && !BOM_RETURN_ACTIONS.includes(action)) || (BOM_RETURN_ACTIONS.includes(action) && list !== "partReturns"))) fail("BOM_INVALID_PAYLOAD");
       if (list === "stockMoves" || (list === "stock" && entry && typeof entry === "object" && Object.hasOwn(entry, "delete"))) fail("BOM_INVALID_PAYLOAD");
+      // สินค้าสำเร็จรูป: fgMoves ส่งได้เฉพาะ receiveFg / deliverFg / closeOrderShort (upsert เท่านั้น) และสามการกระทำนี้ส่งได้เฉพาะ fgMoves · ผิดรูป = BOM_INVALID_FG
+      if ((list === "fgMoves" && entry && typeof entry === "object" && Object.hasOwn(entry, "delete")) || (count > 0 && ((list === "fgMoves" && !bomFgKind(action)) || (bomFgKind(action) && list !== "fgMoves")))) fail("BOM_INVALID_FG");
       if (count > 0 && ((list === "stock" && action !== "countPartStock") || (action === "countPartStock" && list !== "stock") || (action === "issueOrderParts" && !(list === "jobs" && !entry?.delete?.length)))) fail("BOM_INVALID_PAYLOAD");
     }
     // แถวงานของซื้อที่ issueOrderParts ส่งมาตรวจโดย bomIssueParts ด้านล่าง
@@ -854,7 +919,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     };
     for (const list of BOM_LISTS) {
       const entry = changes[list];
-      if (entry === undefined || list === "stock" || list === "stockMoves") continue; // สต็อกของซื้อเขียนโดยตัวเขียนเฉพาะด้านล่าง
+      if (entry === undefined || list === "stock" || list === "stockMoves" || list === "fgMoves") continue; // สต็อกของซื้อเขียนโดยตัวเขียนเฉพาะด้านล่าง
       if (!entry || typeof entry !== "object" || Array.isArray(entry)) fail("BOM_INVALID_CHANGES");
       const idOf = BOM_ID[list];
       for (const record of entry.upsert ?? []) {
@@ -932,6 +997,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     bomSaveStock(next, changes.stock?.upsert ?? [], base, current.version, nextVersion, actor, at);
     // ส่งทุกแถวของ jobs.upsert (เหมือน SQL): แถวที่ไม่ใช่งานของซื้อของใบเดียวกัน = BOM_INVALID_JOB
     if (action === "issueOrderParts") meta.issued = bomIssueParts(next, changes.jobs?.upsert ?? [], base, current.version, nextVersion, actor, at);
+    if (bomFgKind(action)) meta.fg = bomFgMoves(next, changes.fgMoves?.upsert ?? [], nextVersion, actor, at, action);
     if (BOM_RETURN_ACTIONS.includes(action)) meta.returned = bomReturnParts(next, changes.partReturns?.upsert ?? [], base, current.version, nextVersion, actor, at);
     // ใบที่ปล่อยผลิตต้องมีงาน (ปล่อยผลิตโดยไม่มีงานเลยไม่ได้)
     for (const orderId of released) if (!next.jobs.some((job) => job.orderId === orderId)) fail("BOM_INVALID_TRANSITION");

@@ -1,6 +1,7 @@
 // BOM รายแผนก (โหมดทดสอบ) — กฎธุรกิจทั้งหมด: item master · BOM หลายชั้น (จุดสร้างจุดเดียว บันทึกแล้วใช้ได้ทันที เก็บเป็น revision) ·
 // นำเข้าจากชีต · ใบสั่งผลิต (PI) ระเบิด/ปล่อยผลิต · งานรายแผนก · นับคงคลังตามใบ · สต็อกของซื้อ (นับ/เบิกจ่ายรายใบ) · ผูกสูตรยางกับ RubberFlow
 // ทุก action รับ (draft, payload, ctx{now,user}) ทำบนร่างและ throw เมื่อกฎไม่ผ่าน (store บันทึกเฉพาะเมื่อผ่าน)
+// รับสินค้าสำเร็จรูปเข้าคลัง / ส่งมอบลูกค้า = แผนก WH หรือผู้ดูแลระบบ (canHandleFg) · ใบปิดเองเมื่อรับครบ ไม่มีใครปิดด้วยมือ
 // สิทธิ์ (บทบาทสาธิต ไม่ใช่การควบคุมสิทธิ์ของระบบจริง): สร้าง/แก้ item และ BOM ทุกชั้น = ฝ่ายวางแผน ผู้จัดการ ผู้ดูแล · ไม่มีขั้นอนุมัติ (ตามที่ผู้ใช้ตัดสิน
 // 29 ต.ค. 2026 ให้เหมือน Excel) · "แผนกเจ้าของ" ของชิ้นงานใช้แยกงานรายแผนกตอนปล่อยผลิตเท่านั้น — ดู docs/BOM_SYSTEM_PLAN.md §3
 // โหลดหลัง modules/bom-rules.js เทสต์ด้วย node --test (scripts/tests/bom-actions.test.mjs)
@@ -934,7 +935,7 @@
     requirePlanner(ctx, "ยกเลิกใบ");
     const order = orderById(d, orderId);
     if (order.status === "completed") fail("ใบที่เสร็จแล้วยกเลิกไม่ได้");
-    if (d.jobs.some((job) => job.orderId === order.id && job.qtyDone > 0)) fail("มีงานที่รายงานผลผลิตแล้ว ยกเลิกไม่ได้ ให้ปิดใบแทน");
+    if (d.jobs.some((job) => job.orderId === order.id && job.qtyDone > 0)) fail("มีงานที่รายงานผลผลิตแล้ว ยกเลิกไม่ได้ ใบจะปิดเมื่อคลังสินค้า (WH) รับสินค้าเข้าคลัง");
     // WO ที่ยังเป็นแผนก/ปล่อยผลิต ฐานข้อมูลยกเลิกให้พร้อมใบ · ที่เริ่มแล้วต้องปิดหรือยกเลิกใน RubberFlow ก่อน
     const linked = d.jobs.filter((job) => job.orderId === order.id && woStarted(job, ctx.rfOrders));
     if (linked.length) fail(`มีงานที่สร้าง WO ใน RubberFlow แล้ว (${linked.map((job) => job.externalRef.woId).join(", ")}) ยกเลิก WO ใน RubberFlow ก่อน`);
@@ -946,16 +947,90 @@
     return order.id;
   }
 
-  function completeOrder(d, { orderId }, ctx) {
-    requirePlanner(ctx, "ปิดใบ");
-    const order = orderById(d, orderId);
-    if (!["released", "in_progress"].includes(order.status)) fail("ปิดได้เฉพาะใบที่ปล่อยผลิตแล้ว");
-    const pkJobs = d.jobs.filter((job) => job.orderId === order.id && job.dept === "PK");
-    if (pkJobs.some((job) => job.status !== "done")) fail("งานบรรจุ (PK) ยังไม่เสร็จครบทุกสินค้า");
+  // ---------- สินค้าสำเร็จรูป (FG): คลังสินค้า (WH) รับเข้า · ใบปิดเองเมื่อรับครบ · ปิดรับไม่ครบด้วยเหตุผล · ส่งมอบลูกค้า ----------
+  // ไม่มีใครปิดใบด้วยมืออีกต่อไป (ไม่มี completeOrder) · ผู้ทำ = แผนก WH ทุกบทบาท หรือผู้ดูแลระบบ (ไม่ใช่ฝ่ายวางแผน)
+  // ลำดับตรวจเหมือนฐานข้อมูล (app_bom_save_master): รูปคำขอ → สิทธิ์ → สถานะใบ → ยอด · โหมดฐานข้อมูลคืน request ที่ store ส่งในส่วน fgMoves (เซิร์ฟเวอร์เขียนประวัติและปิดใบเอง)
+  // โหมดในเครื่อง action เขียน d.fgMoves และปิดใบเอง
+  const canHandleFg = (user) => Boolean(user) && (user.role === "admin" || user.dept === "WH");
+  const FG_MAX_LINES = 500;
+  const FG_NOTE_MAX = 300;
+  const FG_REASON_MIN = 3;
+  const fgRead = (d, ctx, p, kind) => {
+    const user = requireUser(ctx);
+    const order = orderById(d, p?.orderId);
+    const R = rules();
+    const note = p?.note === undefined || p?.note === null ? "" : typeof p.note === "string" ? p.note.trim() : fail("หมายเหตุต้องเป็นข้อความ");
+    if (note.length > FG_NOTE_MAX) fail(`หมายเหตุยาวเกิน ${FG_NOTE_MAX} ตัวอักษร`);
+    let lines = [];
+    if (kind === "close") {
+      if (Array.isArray(p?.lines) && p.lines.length) fail("การปิดใบไม่ระบุรายการสินค้า");
+      if (note.length < FG_REASON_MIN) fail(`กรุณาระบุเหตุผลที่ปิดใบ (อย่างน้อย ${FG_REASON_MIN} ตัวอักษร)`);
+    } else {
+      const label = kind === "receive" ? "จำนวนที่รับ" : "จำนวนที่ส่งมอบ";
+      const entries = (Array.isArray(p?.lines) ? p.lines : []).filter((entry) => filled(entry?.qty));
+      if (!entries.length) fail(kind === "receive" ? "ยังไม่ได้กรอกจำนวนที่รับเข้าคลัง" : "ยังไม่ได้กรอกจำนวนที่ส่งมอบ");
+      if (entries.length > FG_MAX_LINES) fail(`ทำได้ไม่เกิน ${FG_MAX_LINES} รายการต่อครั้ง`);
+      const seen = new Set();
+      lines = entries.map((entry) => {
+        const code = R.canonicalCode(entry.fgCode);
+        if (seen.has(code)) fail(`${code} ซ้ำในรายการ`);
+        seen.add(code);
+        if (!order.items.some((item) => item.fgCode === code)) fail(`${code} ไม่ได้อยู่ในใบ ${order.id}`);
+        const qty = qtyRound(num(entry.qty, label));
+        if (qty > 1e9) fail("ตัวเลขใหญ่เกินไป");
+        return { fgCode: code, qty };
+      });
+    }
+    if (!canHandleFg(user)) fail(kind === "receive" ? "รับสินค้าเข้าคลังได้โดยคลังสินค้า (WH) หรือผู้ดูแลระบบเท่านั้น" : kind === "deliver" ? "บันทึกการส่งมอบได้โดยคลังสินค้า (WH) หรือผู้ดูแลระบบเท่านั้น" : "ปิดใบที่รับไม่ครบได้โดยคลังสินค้า (WH) หรือผู้ดูแลระบบเท่านั้น");
+    return { user, order, lines, note, position: R.fgPosition(d, order) };
+  };
+  const fgRequest = (order, kind, lines, note) => ({ orderId: order.id, kind, ...(kind === "close" ? {} : { lines: lines.map(({ fgCode, qty }) => ({ fgCode, qty })) }), ...(note || kind === "close" ? { note } : {}) });
+  function pushFgMoves(d, ctx, order, kind, lines, note) {
+    d.fgMoves ??= [];
+    const rows = kind === "close" ? [{ fgCode: "", qty: 0 }] : lines;
+    rows.forEach((line) => d.fgMoves.push({ id: `local-${ctx.now}-${d.fgMoves.length + 1}`, orderId: order.id, fgCode: line.fgCode, kind, qty: line.qty, note, at: ctx.now, by: ctx.user?.name ?? "" }));
+  }
+  function closeOrderNow(order, ctx) {
     order.status = "completed";
     order.completedAt = ctx.now;
-    audit(d, ctx, "ปิดใบสั่งผลิต", order.id);
-    return order.id;
+  }
+  const fgSummary = (lines) => `${lines.length} รายการ`;
+  function receiveFg(d, p, ctx) {
+    const { order, lines, note, position } = fgRead(d, ctx, p, "receive");
+    if (!["released", "in_progress"].includes(order.status)) fail("รับสินค้าเข้าคลังได้เฉพาะใบที่ปล่อยผลิตแล้วและยังไม่ปิด");
+    for (const line of lines) {
+      const product = position.products.find((entry) => entry.fgCode === line.fgCode);
+      if (line.qty > product.receivable + 1e-9) fail(`${line.fgCode} รับได้อีกไม่เกิน ${rules().fmtQty(product.receivable)} (PK ส่งมอบแล้ว ${rules().fmtQty(product.pkDone)} รับเข้าคลังไปแล้ว ${rules().fmtQty(product.received)})`);
+    }
+    // ใบปิดเองเมื่อทุกสินค้ารับครบตามที่สั่ง (โหมดฐานข้อมูล: เซิร์ฟเวอร์ทำเองและส่งใบกลับมา · ฝั่งนี้ทำล่วงหน้าให้หน้าแสดงทันที)
+    const closes = position.products.every((product) => product.received + (lines.find((line) => line.fgCode === product.fgCode)?.qty ?? 0) + 1e-9 >= product.ordered);
+    if (!ctx.remote) pushFgMoves(d, ctx, order, "receive", lines, note);
+    if (closes) closeOrderNow(order, ctx);
+    audit(d, ctx, "รับสินค้าเข้าคลัง", `${order.id} ${lines.map((line) => `${line.fgCode} × ${line.qty}`).join(", ")}${closes ? " · รับครบ ใบปิดอัตโนมัติ" : ""}`);
+    return { received: lines.length, closed: closes, summary: fgSummary(lines), request: fgRequest(order, "receive", lines, note) };
+  }
+  function deliverFg(d, p, ctx) {
+    const { order, lines, note, position } = fgRead(d, ctx, p, "deliver");
+    if (!["released", "in_progress", "completed"].includes(order.status)) fail("ส่งมอบได้เฉพาะใบที่ปล่อยผลิตแล้ว");
+    for (const line of lines) {
+      const product = position.products.find((entry) => entry.fgCode === line.fgCode);
+      if (line.qty > product.deliverable + 1e-9) fail(`${line.fgCode} ส่งมอบได้อีกไม่เกิน ${rules().fmtQty(product.deliverable)} (รับเข้าคลังแล้ว ${rules().fmtQty(product.received)} ส่งมอบไปแล้ว ${rules().fmtQty(product.delivered)})`);
+    }
+    if (!ctx.remote) pushFgMoves(d, ctx, order, "deliver", lines, note);
+    audit(d, ctx, "ส่งมอบสินค้าให้ลูกค้า", `${order.id} ${lines.map((line) => `${line.fgCode} × ${line.qty}`).join(", ")}`);
+    return { delivered: lines.length, summary: fgSummary(lines), request: fgRequest(order, "deliver", lines, note) };
+  }
+  // ปิดใบที่รับไม่ครบ: งาน PK เสร็จทุกงาน ของที่ PK ทำรับเข้าครบแล้ว และยังมีสินค้าที่รับน้อยกว่าที่สั่ง · ต้องมีเหตุผล
+  function closeOrderShort(d, p, ctx) {
+    const { order, note, position } = fgRead(d, ctx, p, "close");
+    if (!["released", "in_progress"].includes(order.status)) fail("ปิดใบได้เฉพาะใบที่ปล่อยผลิตแล้วและยังไม่ปิด");
+    if (!position.pkAllDone) fail("งานบรรจุ (PK) ยังไม่เสร็จครบทุกสินค้า");
+    if (position.products.some((product) => product.receivable > 1e-9)) fail("ยังมีสินค้าที่ PK ทำเสร็จแต่ยังไม่ได้รับเข้าคลัง รับเข้าให้ครบก่อน");
+    if (!position.products.some((product) => product.received + 1e-9 < product.ordered)) fail("รับสินค้าครบตามที่สั่งแล้ว ใบปิดเองโดยอัตโนมัติ");
+    if (!ctx.remote) pushFgMoves(d, ctx, order, "close", [], note);
+    closeOrderNow(order, ctx);
+    audit(d, ctx, "ปิดใบสั่งผลิต (รับไม่ครบ)", `${order.id} — ${note}`);
+    return { summary: order.id, request: fgRequest(order, "close", [], note) };
   }
 
   // ---------- งานรายแผนก ----------
@@ -1205,9 +1280,9 @@
   const api = {
     saveItem, saveBom, saveBomTree, linkCompound, importFlat,
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
-    saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, completeOrder,
+    saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, receiveFg, deliverFg, closeOrderShort,
     reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage, countPartStock, issueOrderParts, undoOrderParts, returnOrderParts,
-    helpers: { customerName, customerKey, startedJobs, isPartJob, canIssueParts, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canSetSafety, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
+    helpers: { customerName, customerKey, startedJobs, isPartJob, canIssueParts, canHandleFg, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canSetSafety, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_ACTIONS = api;

@@ -31,7 +31,7 @@ function fakeServer(initial = emptyMaster()) {
   for (const list of MASTER) server.master[list] ??= [];
   const key = {
     items: (r) => r.code, compounds: (r) => r.code, colors: (r) => r.code, processes: (r) => r.code, boms: (r) => r.id, routings: (r) => r.id, colorSets: (r) => `${r.base}|${r.code}`, packages: (r) => `${r.base}|${r.code}`,
-    customers: (r) => r.name.trim().toLowerCase(), orders: (r) => r.id, jobs: (r) => r.id, stock: (r) => r.itemCode, stockMoves: (r) => r.id,
+    customers: (r) => r.name.trim().toLowerCase(), orders: (r) => r.id, jobs: (r) => r.id, stock: (r) => r.itemCode, stockMoves: (r) => r.id, fgMoves: (r) => r.id,
   };
   // หลุมฝังศพ: ชุดสี/แพ็กเกจกุญแจ base|code · งานกุญแจเลขงาน (ส่งกลับเป็น { id })
   const graveId = (grave) => (grave.list === "jobs" ? grave.code : `${grave.base}|${grave.code}`);
@@ -1645,8 +1645,8 @@ test("the mock sandbox offers switchable personas (the planner group, producing 
   const { client } = createMockSupabase({ sandbox: true, now: () => NOW, storage });
   const status = (await client.rpc("app_sandbox_status")).data;
   assert.equal(status.persona.id, "persona-1", "the first persona is the simulated admin, as before");
-  assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-rbh", "persona-gr", "persona-st", "persona-sr", "persona-wh", "persona-qa"]);
-  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "st", "viewer", "wh", "viewer"], "each persona maps to a BOM role (the RB head is a department manager; SR and QA are not BOM departments)");
+  assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-rbh", "persona-gr", "persona-st", "persona-sr", "persona-wh", "persona-whh", "persona-qa"]);
+  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "st", "viewer", "wh", "manager", "viewer"], "each persona maps to a BOM role (the RB head and the WH head are department managers; SR and QA are not BOM departments)");
   assert.equal((await client.rpc("app_sandbox_enter", { p_persona_id: "persona-rb" })).error, null);
   assert.equal((await client.rpc("app_sandbox_status")).data.persona.department.code, "RB");
   assert.equal((await client.rpc("app_sandbox_enter", { p_persona_id: "nobody" })).error.code, "PERSONA_NOT_FOUND");
@@ -1726,13 +1726,13 @@ test("the mock database checks orders and jobs per section and per field for the
 
   // สถานะใบ (ฝ่ายวางแผน)
   await as("persona-pp");
-  assert.equal(await code({ orders: { upsert: [await withOrder("PI-2", { status: "completed" })] } }), "BOM_INVALID_TRANSITION", "draft cannot be completed");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-2", { status: "completed" })] } }), "BOM_FORBIDDEN", "nobody completes an order through its row: the warehouse receiving closes it");
   assert.equal(await code({ orders: { upsert: [await withOrder("PI-2", { status: "weird" })] } }), "BOM_INVALID_ORDER");
   assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "draft", revision: 1, explosion: [] })] } }), "BOM_INVALID_TRANSITION", "reopening with its jobs still there");
   assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "draft", revision: 1, explosion: [] })] }, jobs: { delete: [{ id: "JOB-RB" }, { id: "JOB-GR" }] } }), "BOM_INVALID_TRANSITION", "a job of the order has started");
   assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "released", items: [], explosion: [] })] } }), "BOM_INVALID_TRANSITION", "items change only through a reopen, not on a released order");
-  assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "completed", explosion: [] })] } }), null, "an order in progress can be completed");
-  assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "cancelled", explosion: [] })] } }), "BOM_INVALID_TRANSITION", "a completed order is final");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "completed", explosion: [] })] } }), "BOM_FORBIDDEN", "an order in progress is not completed by hand either");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "cancelled", explosion: [] })] } }), "BOM_INVALID_TRANSITION", "and one with reported output is not cancelled");
 
   // เปิดใบกลับมาแก้ได้เมื่อไม่มีงานเริ่ม: ลบงานทั้งหมดของใบ + revision + 1 ในคำสั่งเดียว
   assert.equal(await code({ orders: { upsert: [mockOrder("PI-4")] } }), null);
@@ -2048,8 +2048,9 @@ test("a planner opens a PI, releases it, a department reports, counts are saved 
   const storedJob = database.jobs.find((row) => row.id === job.id);
   assert.equal(storedJob.status, "done");
   assert.equal(storedJob.reports[0].by, "ปกรณ์ ศรีวัฒนา");
-  assert.equal(ctx.runAction("completeOrder", { orderId: id }, "ปิดใบ {result}"), true);
+  assert.equal(ctx.runAction("receiveFg", { orderId: id, lines: [{ fgCode: "FG-TEST-01", qty: 5 }] }, "รับเข้าคลัง {result} แล้ว"), true, "the admin may receive: everything PK made is received, the order closes by itself");
   await settle();
+  assert.equal(env.log.toasts.at(-1)[0], "รับเข้าคลัง 1 รายการ แล้ว");
   assert.equal(JSON.parse(env.pageStorage.getItem("mnp-harness-bom-master")).orders[0].status, "completed");
   assert.deepEqual(env.log.toasts.filter(([, kind]) => kind === "error"), []);
 
@@ -2060,13 +2061,14 @@ test("a planner opens a PI, releases it, a department reports, counts are saved 
   await settle();
   assert.ok(env.log.renders > renders, "the page is redrawn when the audit arrives");
   html = await env.render("p=audit");
-  for (const text of ["เปิดใบสั่งผลิต", "เพิ่มสินค้าในใบสั่งผลิต", "ระเบิด BOM", "นับคงคลังตามใบ", "ปล่อยผลิต", "รายงานผลผลิต", "ปิดใบสั่งผลิต"]) assert.match(html, new RegExp(text), text);
+  for (const text of ["เปิดใบสั่งผลิต", "เพิ่มสินค้าในใบสั่งผลิต", "ระเบิด BOM", "นับคงคลังตามใบ", "ปล่อยผลิต", "รายงานผลผลิต", "รับสินค้าเข้าคลัง"]) assert.match(html, new RegExp(text), text);
   assert.match(html, /ปกรณ์ ศรีวัฒนา/, "the user comes from the database row");
   assert.match(html, /data-bom-audit-reload/);
   assert.doesNotMatch(html, /undefined|NaN|\[object Object\]/);
-  assert.ok(html.indexOf("ปิดใบสั่งผลิต") < html.indexOf("เปิดใบสั่งผลิต"), "newest first");
-  const search = await env.render("p=audit&q=ปิดใบ");
-  assert.match(search, /ปิดใบสั่งผลิต/);
+  assert.ok(html.indexOf("รับสินค้าเข้าคลัง") < html.indexOf("เปิดใบสั่งผลิต"), "newest first");
+  const search = await env.render("p=audit&q=รับสินค้า");
+  assert.match(search, /รับสินค้าเข้าคลัง/);
+  assert.match(search, /รับ\/ส่งมอบสินค้าสำเร็จรูป \+1/, "the section is counted under its Thai name");
   assert.doesNotMatch(search, /เพิ่มสินค้าในใบสั่งผลิต/);
   assert.equal(env.pageStorage.getItem("mnp-bom-local-v1"), null, "nothing in the legacy BOM key");
 });
@@ -2087,7 +2089,7 @@ test("the screens show only what the persona may do: planner group everything, S
     assert.equal(buttons(draft.html, "orderItemAdd") > 0, planner, `${persona}: add products`);
     assert.equal(buttons(draft.html, "stockCount") > 0, count, `${persona}: count buttons on a draft`);
     const released = await sees(persona, "p=orders&sel=PI-R");
-    assert.equal(buttons(released.html, "completeOrder") > 0, planner, `${persona}: complete`);
+    assert.equal(buttons(released.html, "completeOrder"), 0, `${persona}: nobody gets a close button any more`);
     assert.equal(buttons(released.html, "stockCount"), 0, `${persona}: no counting once released`);
   }
 
@@ -2327,7 +2329,7 @@ test("the order that the database moves from released to in_progress because of 
   assert.equal(staff.store.hasNewer(), false);
 });
 
-test("the mock database refuses what production refuses: new orders start as drafts, a release needs an explosion and jobs, jobs are born with the release, report totals match, started jobs stay, cancel and complete rules", async () => {
+test("the mock database refuses what production refuses: new orders start as drafts, a release needs an explosion and jobs, jobs are born with the release, report totals match, started jobs stay, cancel rules and no completing by hand", async () => {
   const { client } = createMockSupabase({ sandbox: true, now: () => NOW });
   const as = (persona) => client.rpc("app_sandbox_enter", { p_persona_id: persona });
   let version = 0;
@@ -2374,7 +2376,7 @@ test("the mock database refuses what production refuses: new orders start as dra
   assert.equal(await code({ orders: { upsert: [await withOrder("PI-N", { status: "draft", revision: 1 })] } }), "BOM_INVALID_TRANSITION", "nor reopened once a job has started");
   assert.equal(await code({ orders: { upsert: [mockOrder("PI-C", { explosion: [] })] } }), null);
   assert.equal(await code({ orders: { upsert: [await withOrder("PI-C", { status: "released" })] }, jobs: { upsert: [mockJob("C-PK", "PI-C", "PK"), mockJob("C-RB", "PI-C", "RB")] } }), null);
-  assert.equal(await code({ orders: { upsert: [await withOrder("PI-C", { status: "completed" })] } }), "BOM_INVALID_TRANSITION", "a PK job that is not done blocks completing the order");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-C", { status: "completed" })] } }), "BOM_FORBIDDEN", "completing an order through its row is refused for the planning group too (the warehouse receiving closes it)");
   const before = (await view()).version;
   assert.equal(await code({ orders: { upsert: [await withOrder("PI-C", { status: "cancelled" })] } }), null, "an order without output can be cancelled");
   assert.deepEqual((await view()).jobs.filter((row) => row.orderId === "PI-C"), [], "the database deleted its jobs itself");
@@ -3489,8 +3491,9 @@ test("the mock database follows the SQL rules of the part return: payload shapes
   await as("persona-pp");
   const pk = (await jobsNow()).find((row) => row.id === "J-PK");
   assert.equal((await save({ jobs: { upsert: [done(pk)] } }, "reportJob")).error, null);
-  const open = (await view()).orders.find((row) => row.id === "PI-M1");
-  assert.equal((await save({ orders: { upsert: [{ ...open, status: "completed" }] } }, "completeOrder")).error, null);
+  await as("persona-wh");
+  assert.equal((await save({ fgMoves: { upsert: [{ orderId: "PI-M1", kind: "receive", lines: [{ fgCode: "FG-1", qty: 2 }] }] } }, "receiveFg")).error, null);
+  assert.equal((await view()).orders.find((row) => row.id === "PI-M1").status, "completed", "the warehouse receiving everything closes the PI");
   await as("persona-st");
   assert.equal(await code(undo()), "BOM_INVALID_TRANSITION", "a completed PI cannot be undone");
   assert.equal((await left([{ itemCode: "P-2", qty: 1 }])).error, null, "but it still takes leftovers");
@@ -3510,4 +3513,304 @@ test("the mock database follows the SQL rules of the part return: payload shapes
   await as("persona-st");
   assert.equal(await code(ret({ orderId: "PI-M2", mode: "leftover", reason: "x", lines: [{ itemCode: "P-1", qty: 1 }] })), "BOM_INVALID_TRANSITION", "a cancelled PI takes no return");
   assert.equal(await code(ret({ orderId: "PI-M2", mode: "undo", reason: "x" }, "undoOrderParts")), "BOM_INVALID_TRANSITION");
+});
+
+// ---------- คลังสินค้า (WH): รับสินค้าสำเร็จรูป · ใบปิดเอง · ส่งมอบลูกค้า (สัญญา bom-wh-fg) บน Supabase จำลอง ----------
+// ใบ PI-F: FG-1 × 10 และ FG-2 × 5 · งาน PK ของ FG-1 (J-F1) FG-2 (J-F2) และชิ้นย่อยของ PK (J-FS) · ใบที่สองไม่มี (ใช้ใบร่าง PI-FD ตรวจสถานะ)
+async function fgMock() {
+  const mock = createMockSupabase({ sandbox: true, now: () => NOW, storage: memoryStorage() });
+  const rpc = (name, args) => mock.client.rpc(name, args);
+  const as = (id) => rpc("app_sandbox_enter", { p_persona_id: id });
+  const view = async () => (await rpc("app_bom_master")).data;
+  const version = async () => (await view()).version;
+  const save = async (changes, action, base) => rpc("app_bom_save_master", { p_changes: changes, p_base_version: base ?? (await version()), p_action: action });
+  const code = async (promise) => (await promise).error?.code ?? null;
+  const order = (id) => view().then((data) => data.orders.find((row) => row.id === id));
+  const job = (id) => view().then((data) => data.jobs.find((row) => row.id === id));
+  const items = (...rows) => rows.map(([fgCode, qty]) => ({ fgCode, qty, colorSet: "", note: "" }));
+  const pkJob = (id, orderId, itemCode, qty, extra = {}) => mockJob(id, orderId, "PK", { itemCode, kind: "FG", uom: "set", qtyPlanned: qty, qtyRequired: qty, ...extra });
+  const release = async (orderRow, jobs) => {
+    assert.equal((await save({ orders: { upsert: [orderRow] } }, "createOrder")).error, null);
+    assert.equal((await save({ orders: { upsert: [{ ...(await order(orderRow.id)), status: "released" }] }, jobs: { upsert: jobs } }, "releaseOrder")).error, null);
+  };
+  // PK รายงานยอดเพิ่ม (ฝ่ายวางแผนรายงานแทน): done เมื่อถึงแผน
+  const report = async (id, qty) => {
+    const row = await job(id);
+    const total = row.qtyDone + qty;
+    return save({ jobs: { upsert: [{ ...row, status: total >= row.qtyPlanned ? "done" : "in_progress", qtyDone: total, reports: [...row.reports, { at: 1, by: "x", good: qty, reject: 0, note: "" }] }] } }, "reportJob");
+  };
+  const request = (orderId, kind, lines, extra = {}) => ({ orderId, kind, ...(lines ? { lines } : {}), ...extra });
+  const fg = (row, action) => save({ fgMoves: { upsert: [row] } }, action);
+  const receive = (lines, extra = {}, orderId = "PI-F") => fg(request(orderId, "receive", lines, extra), "receiveFg");
+  const deliver = (lines, extra = {}, orderId = "PI-F") => fg(request(orderId, "deliver", lines, extra), "deliverFg");
+  const close = (note, extra = {}, orderId = "PI-F") => fg(request(orderId, "close", undefined, { note, ...extra }), "closeOrderShort");
+  await as("persona-pp");
+  assert.equal((await save({ orders: { upsert: [mockOrder("PI-FD", { items: items(["FG-1", 5]), explosion: [] })] } }, "createOrder")).error, null);
+  await release(mockOrder("PI-F", { items: items(["FG-1", 10], ["FG-2", 5]), explosion: [] }), [pkJob("J-F1", "PI-F", "FG-1", 10), pkJob("J-F2", "PI-F", "FG-2", 5), mockJob("J-FS", "PI-F", "PK", { itemCode: "XP-1", kind: "SUBPART", qtyPlanned: 3 })]);
+  return { mock, rpc, as, view, version, save, code, order, job, items, pkJob, release, report, request, fg, receive, deliver, close };
+}
+
+test("the mock database follows the finished-goods contract: payload shapes first, then the permission, then the order status, then the numbers", async () => {
+  const s = await fgMock();
+  const { code, receive, deliver, close, fg, request, save, as } = s;
+  const baseline = await s.version();
+  await as("persona-wh");
+  // shapes (BOM_INVALID_FG): sections, actions, rows, lines, notes
+  const row = request("PI-F", "receive", [{ fgCode: "FG-1", qty: 1 }]);
+  assert.equal(await code(save({ fgMoves: { upsert: [row] } }, "countPartStock")), "BOM_INVALID_FG", "fgMoves only with the three finished-goods actions");
+  assert.equal(await code(save({ fgMoves: { upsert: [row] } }, "t")), "BOM_INVALID_FG");
+  assert.equal(await code(save({ fgMoves: { upsert: [row] }, customers: { upsert: [{ name: "Z" }] } }, "receiveFg")), "BOM_INVALID_FG", "a receipt carries only fgMoves");
+  assert.equal(await code(save({ jobs: { upsert: [await s.job("J-F1")] } }, "receiveFg")), "BOM_INVALID_FG");
+  assert.equal(await code(save({}, "receiveFg")), "BOM_INVALID_FG", "no request at all");
+  assert.equal(await code(save({ fgMoves: { delete: [] } }, "receiveFg")), "BOM_INVALID_FG", "no deletes");
+  assert.equal(await code(save({ fgMoves: { upsert: [row, row] } }, "receiveFg")), "BOM_INVALID_FG", "one request per call");
+  assert.equal(await code(fg(request("PI-F", "deliver", [{ fgCode: "FG-1", qty: 1 }]), "receiveFg")), "BOM_INVALID_FG", "the action and the kind must match");
+  assert.equal(await code(fg(request("PI-F", "close", undefined, { note: "เหตุผล" }), "deliverFg")), "BOM_INVALID_FG");
+  assert.equal(await code(fg(request("PI-F", "bogus", [{ fgCode: "FG-1", qty: 1 }]), "receiveFg")), "BOM_INVALID_FG");
+  assert.equal(await code(receive([{ fgCode: "FG-1", qty: 1 }], {}, "PI-NOPE")), "BOM_INVALID_FG", "an unknown order");
+  assert.equal(await code(fg({ kind: "receive", lines: [{ fgCode: "FG-1", qty: 1 }] }, "receiveFg")), "BOM_INVALID_FG", "no order id");
+  for (const lines of [undefined, [], [{ fgCode: "FG-1", qty: 0 }], [{ fgCode: "FG-1", qty: -1 }], [{ fgCode: "FG-1", qty: "2" }], [{ fgCode: "FG-1" }], [{ qty: 1 }], ["FG-1"], [{ fgCode: "FG-1", qty: 1 }, { fgCode: "fg-1", qty: 1 }], [{ fgCode: "FG-9", qty: 1 }], [{ fgCode: "FG-1", qty: 1e9 + 1 }], Array.from({ length: 501 }, (_, index) => ({ fgCode: `FG-${index}`, qty: 1 }))]) {
+    assert.equal(await code(receive(lines)), "BOM_INVALID_FG", JSON.stringify(lines)?.slice(0, 80));
+    assert.equal(await code(deliver(lines)), "BOM_INVALID_FG", `deliver ${JSON.stringify(lines)?.slice(0, 80)}`);
+  }
+  assert.equal(await code(receive([{ fgCode: "FG-1", qty: 1 }], { note: "x".repeat(301) })), "BOM_INVALID_FG", "a note is at most 300 characters");
+  assert.equal(await code(receive([{ fgCode: "FG-1", qty: 1 }], { note: 5 })), "BOM_INVALID_FG");
+  for (const note of [undefined, "", "ab", "  ab  ", "x".repeat(301)]) assert.equal(await code(close(note)), "BOM_INVALID_FG", `a reason of ${JSON.stringify(note)?.slice(0, 20)}`);
+  assert.equal(await code(close("เหตุผล", { lines: [{ fgCode: "FG-1", qty: 1 }] })), "BOM_INVALID_FG", "a close carries no lines");
+  // permission comes after the shape: a bad shape from a refused user is still a shape error
+  for (const persona of ["persona-pp", "persona-st", "persona-rb", "persona-rbh", "persona-gr", "persona-qa"]) {
+    await as(persona);
+    assert.equal(await code(receive([])), "BOM_INVALID_FG", `${persona}: shape first`);
+    assert.equal(await code(receive([{ fgCode: "FG-1", qty: 1 }])), "BOM_FORBIDDEN", `${persona} cannot receive`);
+    assert.equal(await code(deliver([{ fgCode: "FG-1", qty: 1 }])), "BOM_FORBIDDEN", `${persona} cannot deliver`);
+    assert.equal(await code(close("เหตุผล")), "BOM_FORBIDDEN", `${persona} cannot close short`);
+  }
+  // permission comes before the status: a refused user on a draft is forbidden, an allowed user on a draft is a transition error
+  await as("persona-pp");
+  assert.equal(await code(receive([{ fgCode: "FG-1", qty: 1 }], {}, "PI-FD")), "BOM_FORBIDDEN");
+  for (const persona of ["persona-wh", "persona-whh", "persona-1"]) {
+    await as(persona);
+    assert.equal(await code(receive([{ fgCode: "FG-1", qty: 1 }], {}, "PI-FD")), "BOM_INVALID_TRANSITION", `${persona}: a draft receives nothing`);
+    assert.equal(await code(deliver([{ fgCode: "FG-1", qty: 1 }], {}, "PI-FD")), "BOM_INVALID_TRANSITION", `${persona}: a draft delivers nothing`);
+    assert.equal(await code(close("เหตุผล", {}, "PI-FD")), "BOM_INVALID_TRANSITION", `${persona}: a draft is not closed short`);
+  }
+  assert.equal(await s.version(), baseline, "nothing above wrote anything");
+});
+
+test("the mock database receives and delivers finished goods: caps from PK, partial receipts, automatic close, delivery caps, atomic lines, the history", async () => {
+  const s = await fgMock();
+  const { code, receive, deliver, view, report, order, as } = s;
+  await as("persona-wh");
+  // nothing reported yet
+  assert.equal(await code(receive([{ fgCode: "FG-1", qty: 1 }])), "BOM_FG_EXCEEDS", "PK has reported nothing");
+  assert.equal(await code(deliver([{ fgCode: "FG-1", qty: 1 }])), "BOM_FG_EXCEEDS", "nothing is received");
+  await as("persona-pp");
+  assert.equal((await report("J-F1", 6)).error, null);
+  await as("persona-wh");
+  const versionBefore = await s.version();
+  assert.equal(await code(receive([{ fgCode: "FG-1", qty: 7 }])), "BOM_FG_EXCEEDS", "more than PK reported (6)");
+  assert.equal(await code(receive([{ fgCode: "FG-1", qty: 1 }, { fgCode: "FG-2", qty: 1 }])), "BOM_FG_EXCEEDS", "FG-2 has no PK report: the whole call fails");
+  assert.equal(await s.version(), versionBefore, "a refused call writes nothing");
+  assert.equal((await view()).fgMoves.length, 0);
+  const first = await receive([{ fgCode: "FG-1", qty: 4 }], { note: "  รอบเช้า " });
+  assert.equal(first.error, null);
+  assert.equal(first.data.version, versionBefore + 1, "one version step per call");
+  let data = await view();
+  assert.deepEqual(data.fgMoves.map((move) => ({ ...move, id: typeof move.id })), [{ id: "string", orderId: "PI-F", fgCode: "FG-1", kind: "receive", qty: 4, note: "รอบเช้า", at: NOW, by: "สุดา คลังสินค้า" }], "the shape of the record");
+  assert.equal((await order("PI-F")).status, "in_progress", "a partial receipt while production runs");
+  assert.equal(await code(receive([{ fgCode: "FG-1", qty: 3 }])), "BOM_FG_EXCEEDS", "4 received + 3 > 6");
+  assert.equal((await receive([{ fgCode: "FG-1", qty: 2 }])).error, null, "up to what PK reported");
+  // delivery before the order is closed: capped by the receipts
+  assert.equal(await code(deliver([{ fgCode: "FG-1", qty: 7 }])), "BOM_FG_EXCEEDS");
+  assert.equal((await deliver([{ fgCode: "FG-1", qty: 5 }], { note: "รถคันแรก" })).error, null);
+  assert.equal(await code(deliver([{ fgCode: "FG-1", qty: 2 }])), "BOM_FG_EXCEEDS", "5 delivered + 2 > 6 received");
+  assert.equal((await order("PI-F")).status, "in_progress");
+  // everything PK made and the order is received: the order closes by itself, and only then
+  await as("persona-pp");
+  assert.equal((await report("J-F1", 4)).error, null);
+  assert.equal((await report("J-F2", 5)).error, null);
+  await as("persona-wh");
+  assert.equal((await receive([{ fgCode: "FG-1", qty: 4 }])).error, null);
+  assert.equal((await order("PI-F")).status, "in_progress", "FG-2 is not received yet");
+  const before = await s.version();
+  const closing = await receive([{ fgCode: "FG-2", qty: 5 }]);
+  assert.equal(closing.error, null);
+  const closed = closing.data.changes.orders.upsert.find((row) => row.id === "PI-F");
+  assert.equal(closed.status, "completed", "the delta carries the changed order");
+  assert.equal(closed.completedAt, NOW);
+  assert.equal(closing.data.version, before + 1, "the receipt and the close are one version step");
+  assert.equal(await code(receive([{ fgCode: "FG-2", qty: 1 }])), "BOM_INVALID_TRANSITION", "a closed order receives nothing more");
+  // delivery after the close
+  assert.equal((await deliver([{ fgCode: "FG-1", qty: 5 }, { fgCode: "FG-2", qty: 5 }])).error, null);
+  assert.equal(await code(deliver([{ fgCode: "FG-2", qty: 1 }])), "BOM_FG_EXCEEDS", "all of FG-2 is delivered");
+  data = await view();
+  assert.deepEqual(data.fgMoves.map((move) => [move.kind, move.fgCode, move.qty]), [["receive", "FG-1", 4], ["receive", "FG-1", 2], ["deliver", "FG-1", 5], ["receive", "FG-1", 4], ["receive", "FG-2", 5], ["deliver", "FG-1", 5], ["deliver", "FG-2", 5]], "append-only, in the order written");
+  assert.equal(new Set(data.fgMoves.map((move) => move.id)).size, data.fgMoves.length, "unique ids");
+  const audit = (await s.rpc("app_bom_audit")).data;
+  assert.equal(audit[0].action, "deliverFg");
+  assert.equal(audit[0].detail, "fgMoves +1", "the audit counts the section");
+  const since = (await s.rpc("app_bom_master_since", { p_version: (await s.version()) - 1 })).data;
+  assert.deepEqual(since.changes.fgMoves.upsert.map((move) => [move.kind, move.fgCode]), [["deliver", "FG-1"], ["deliver", "FG-2"]], "the delta lists only what the last call wrote");
+  assert.deepEqual(since.changes.fgMoves.delete, []);
+});
+
+test("the mock database closes an order short: every PK job done, everything PK made received, something short, a reason; delivery still works after", async () => {
+  const s = await fgMock();
+  const { code, receive, deliver, close, view, report, order, as } = s;
+  await as("persona-pp");
+  assert.equal((await report("J-F1", 8)).error, null);
+  assert.equal((await report("J-F2", 5)).error, null);
+  await as("persona-wh");
+  assert.equal(await code(close("PK ทำได้ไม่ครบ")), "BOM_INVALID_TRANSITION", "J-F1 and the PK sub-part are not done");
+  await as("persona-pp");
+  assert.equal((await report("J-FS", 3)).error, null);
+  const stuck = { ...(await s.job("J-F1")), status: "done" };
+  assert.equal((await s.save({ jobs: { upsert: [stuck] } }, "reportJob")).error, null, "the PK job is marked done by the planner with 8 of 10 made");
+  await as("persona-wh");
+  assert.equal(await code(close("PK ทำได้ไม่ครบ")), "BOM_INVALID_TRANSITION", "made but not received yet");
+  assert.equal((await receive([{ fgCode: "FG-1", qty: 8 }])).error, null);
+  assert.equal(await code(close("PK ทำได้ไม่ครบ")), "BOM_INVALID_TRANSITION", "FG-2 is made but not received");
+  assert.equal((await receive([{ fgCode: "FG-2", qty: 5 }])).error, null);
+  assert.equal((await order("PI-F")).status, "in_progress", "8 of 10 does not close the order");
+  assert.equal(await code(close("ab")), "BOM_INVALID_FG");
+  await as("persona-pp");
+  assert.equal(await code(close("PK ทำได้ไม่ครบ")), "BOM_FORBIDDEN");
+  await as("persona-whh");
+  const done = await close(" PK ทำได้ไม่ครบ ลูกค้ารับเท่าที่มี ");
+  assert.equal(done.error, null);
+  assert.equal(done.data.changes.orders.upsert[0].status, "completed");
+  const row = (await view()).fgMoves.find((move) => move.kind === "close");
+  assert.deepEqual({ ...row, id: typeof row.id }, { id: "string", orderId: "PI-F", fgCode: "", kind: "close", qty: 0, note: "PK ทำได้ไม่ครบ ลูกค้ารับเท่าที่มี", at: NOW, by: "ชัย หัวหน้าคลัง" }, "one row: no product, no quantity, the reason");
+  assert.equal(await code(close("อีกครั้ง")), "BOM_INVALID_TRANSITION", "a closed order is not closed again");
+  assert.equal(await code(receive([{ fgCode: "FG-1", qty: 1 }])), "BOM_INVALID_TRANSITION");
+  assert.equal((await deliver([{ fgCode: "FG-1", qty: 8 }, { fgCode: "FG-2", qty: 5 }])).error, null, "what was received is delivered after the close");
+  assert.equal(await code(deliver([{ fgCode: "FG-1", qty: 1 }])), "BOM_FG_EXCEEDS");
+});
+
+test("nobody moves an order to completed through its row: the planning group, admin and the warehouse are all refused", async () => {
+  const s = await fgMock();
+  for (const persona of ["persona-pp", "persona-1", "persona-wh", "persona-whh", "persona-rbh"]) {
+    await s.as(persona);
+    assert.equal(await s.code(s.save({ orders: { upsert: [{ ...(await s.order("PI-F")), status: "completed" }] } }, "completeOrder")), "BOM_FORBIDDEN", persona);
+    assert.equal(await s.code(s.save({ orders: { upsert: [{ ...(await s.order("PI-FD")), status: "completed" }] } }, "t")), "BOM_FORBIDDEN", `${persona}: a draft too`);
+  }
+  assert.equal((await s.order("PI-F")).status, "released");
+});
+
+test("a finished-goods action travels as a request: the store sends one fgMoves row, merges the echoed history and order, and treats BOM_FG_EXCEEDS as a stale number", async () => {
+  const s = await fgMock();
+  await s.as("persona-pp");
+  assert.equal((await s.report("J-F1", 6)).error, null);
+  await s.as("persona-wh");
+  const whUser = storeApi.personaUser({ id: "persona-wh", first_name: "สุดา", last_name: "คลังสินค้า", role: { code: "staff" }, department: { code: "WH" } });
+  assert.deepEqual({ role: whUser.role, dept: whUser.dept }, { role: "wh", dept: "WH" });
+  const sent = [];
+  const reply = async (promise) => { const result = await promise; if (result.error) throw Object.assign(new Error(result.error.message), { code: result.error.code }); return result.data; };
+  const remote = () => ({
+    load: () => reply(s.rpc("app_bom_master")),
+    since: (version) => reply(s.rpc("app_bom_master_since", { p_version: version })),
+    save: (changes, base, action, audit, epoch) => { sent.push({ changes: structuredClone(changes), action }); return reply(s.rpc("app_bom_save_master", { p_changes: changes, p_base_version: base, p_action: action, p_audit: audit, p_epoch: epoch })); },
+  });
+  const open = async (user = whUser) => { const events = []; const store = storeApi.createStore({ actions: A, now: () => NOW, remote: remote(), persona: () => user }); store.subscribe((event) => events.push(event)); await store.ensureLoaded(); return { store, events }; };
+  const a = await open();
+  const b = await open();
+  // a: one request row, no history or order rows from the page, the echo carries the history
+  const out = a.store.run("receiveFg", { orderId: "PI-F", lines: [{ fgCode: "FG-1", qty: 4 }], note: "รอบเช้า" });
+  assert.equal(out.ok, true, out.error?.message);
+  assert.equal((await out.saving).ok, true);
+  assert.deepEqual(sent.at(-1), { changes: { fgMoves: { upsert: [{ orderId: "PI-F", kind: "receive", lines: [{ fgCode: "FG-1", qty: 4 }], note: "รอบเช้า" }] } }, action: "receiveFg" });
+  assert.deepEqual(a.store.data().fgMoves.map((move) => [move.fgCode, move.kind, move.qty, move.by, move.note]), [["FG-1", "receive", 4, "สุดา คลังสินค้า", "รอบเช้า"]], "the history is the server's row");
+  assert.equal(a.events.some((event) => event.type === "saved" && event.others), false, "the echo is ours, nobody else saved");
+  // a page that is a user without the right never sends
+  const planner = await open({ id: "p1", role: "planner", dept: "PK", name: "ณัฐพล บุญมา" });
+  const sentBefore = sent.length;
+  const refused = planner.store.run("receiveFg", { orderId: "PI-F", lines: [{ fgCode: "FG-1", qty: 1 }] });
+  assert.equal(refused.ok, false);
+  assert.match(refused.error.message, /คลังสินค้า \(WH\)/);
+  assert.equal(sent.length, sentBefore, "refused on the page: nothing is sent");
+  // b still shows 0 received (6 receivable) and asks for 3: the server knows 4 are in already
+  assert.equal(b.store.data().fgMoves.length, 0);
+  const stale = b.store.run("receiveFg", { orderId: "PI-F", lines: [{ fgCode: "FG-1", qty: 3 }] });
+  assert.equal(stale.ok, true, "the page's own copy allows it");
+  const outcome = await stale.saving;
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error.code, "BOM_FG_EXCEEDS");
+  assert.match(outcome.error.message, /ตัวเลขเปลี่ยนไปแล้ว/);
+  assert.deepEqual(b.store.data().fgMoves.map((move) => [move.kind, move.qty]), [["receive", 4]], "caught up with the server before the user tries again");
+  assert.equal(b.events.some((event) => event.type === "reverted"), true);
+  const retry = b.store.run("receiveFg", { orderId: "PI-F", lines: [{ fgCode: "FG-1", qty: 3 }] });
+  assert.equal(retry.ok, false, "with the new numbers the page itself says 3 is too many");
+  assert.match(retry.error.message, /รับได้อีกไม่เกิน 2/);
+  const again = b.store.run("receiveFg", { orderId: "PI-F", lines: [{ fgCode: "FG-1", qty: 2 }] });
+  assert.equal((await again.saving).ok, true);
+  // the order closes: the request goes out, the order is shown closed at once and the echo agrees
+  await s.as("persona-pp");
+  assert.equal((await s.report("J-F1", 4)).error, null);
+  assert.equal((await s.report("J-F2", 5)).error, null);
+  await s.as("persona-wh");
+  await a.store.catchUp();
+  const all = a.store.run("receiveFg", { orderId: "PI-F", lines: [{ fgCode: "FG-1", qty: 4 }, { fgCode: "FG-2", qty: 5 }] });
+  assert.equal(all.ok, true, all.error?.message);
+  assert.equal(a.store.data().orders.find((row) => row.id === "PI-F").status, "completed", "shown closed at once");
+  assert.equal((await all.saving).ok, true);
+  assert.equal(a.store.data().orders.find((row) => row.id === "PI-F").status, "completed");
+  assert.equal(a.events.some((event) => event.type === "saved" && event.others), false, "the closed order in the echo is ours, not another user's save");
+  assert.equal((await s.order("PI-F")).status, "completed");
+  // delivery and a close request have their own shapes
+  const delivered = a.store.run("deliverFg", { orderId: "PI-F", lines: [{ fgCode: "FG-2", qty: 5 }], note: "รถคันแรก" });
+  assert.equal((await delivered.saving).ok, true);
+  assert.deepEqual(sent.at(-1).changes, { fgMoves: { upsert: [{ orderId: "PI-F", kind: "deliver", lines: [{ fgCode: "FG-2", qty: 5 }], note: "รถคันแรก" }] } });
+  assert.equal(sent.at(-1).action, "deliverFg");
+  assert.equal(storeApi.mapRemoteError({ code: "BOM_INVALID_FG" }).message.includes("รับเข้าคลัง ส่งมอบ หรือปิดใบไม่ได้"), true);
+});
+
+test("on the screens the warehouse acts and everybody else reads: WH staff, the WH department manager and admin get the forms, the planning group and ST do not, and the mock refuses them too", async () => {
+  const env = await pageEnv();
+  await env.store.ensureLoaded();
+  const ctx = env.ctx();
+  await fgScenePt(env);
+  assert.equal(ctx.runAction("createOrder", { customer: "ลูกค้า ทดสอบ", country: "Thailand", orderedAt: NOW, whDue: NOW + 9 * 86400000, pi: "PI-W" }, ""), true);
+  await settle();
+  for (const [action, payload] of [["addOrderItem", { orderId: "PI-W", fgCode: "FG-TEST-01", qty: 5 }], ["explodeOrder", { orderId: "PI-W" }], ["releaseOrder", { orderId: "PI-W" }]]) { assert.equal(ctx.runAction(action, payload, ""), true, action); await settle(); }
+  const pk = env.store.data().jobs.find((row) => row.dept === "PK");
+  assert.equal(ctx.runAction("reportJob", { jobId: pk.id, qtyDone: 3 }, ""), true);
+  await settle();
+  const scene = { env };
+  const html = async (persona, query) => (await asPersona(scene, persona)).render(query);
+  const form = (page, name) => (page.match(new RegExp(`data-rf-form="${name}"`, "g")) ?? []).length;
+  // forms on the screen
+  for (const [persona, acts] of [["persona-wh", true], ["persona-whh", true], ["persona-1", true], ["persona-pp", false], ["persona-st", false], ["persona-rb", false], ["persona-qa", false]]) {
+    const page = await html(persona, "p=orders&sel=PI-W&step=5");
+    assert.match(page, /<th class="right">PK ส่งมอบแล้ว<\/th>/, `${persona} sees the table`);
+    assert.equal(form(page, "receiveFg"), acts ? 1 : 0, `${persona}: receive form`);
+    assert.equal(/คลังสินค้า \(WH\) เป็นผู้รับสินค้าเข้าคลัง/.test(page), !acts, `${persona}: told who acts`);
+    assert.doesNotMatch(page, /data-rf-action="completeOrder"/, `${persona}: no close button`);
+  }
+  // the work card is the warehouse's only (and admin's)
+  for (const [persona, card] of [["persona-wh", true], ["persona-whh", true], ["persona-1", true], ["persona-pp", false], ["persona-st", false], ["persona-gr", false]]) {
+    assert.equal(/รับสินค้าเข้าคลังตามใบ PI-W/.test(await html(persona, "p=work")), card, `${persona}: work card`);
+  }
+  // the mock database says the same
+  for (const persona of ["persona-pp", "persona-st", "persona-rb", "persona-rbh", "persona-qa"]) {
+    const peer = await asPersona(scene, persona);
+    const stored = (await peer.mock.client.rpc("app_bom_master")).data;
+    const reply = await peer.mock.client.rpc("app_bom_save_master", { p_changes: { fgMoves: { upsert: [{ orderId: "PI-W", kind: "receive", lines: [{ fgCode: "FG-TEST-01", qty: 1 }] }] } }, p_base_version: stored.version, p_action: "receiveFg" });
+    assert.equal(reply.error?.code, "BOM_FORBIDDEN", persona);
+  }
+  // …and the three that may act do act, through the module
+  for (const persona of ["persona-wh", "persona-whh", "persona-1"]) {
+    const peer = await asPersona(scene, persona);
+    assert.equal(peer.ctx().runAction("receiveFg", { orderId: "PI-W", lines: [{ fgCode: "FG-TEST-01", qty: 1 }] }, "รับเข้าคลัง {result} แล้ว"), true, persona);
+    await settle();
+    assert.equal(peer.log.toasts.at(-1)[0], "รับเข้าคลัง 1 รายการ แล้ว", persona);
+  }
+  const database = JSON.parse(env.pageStorage.getItem("mnp-harness-bom-master"));
+  assert.deepEqual(database.fgMoves.map((move) => [move.fgCode, move.kind, move.qty, move.by]), [["FG-TEST-01", "receive", 1, "สุดา คลังสินค้า"], ["FG-TEST-01", "receive", 1, "ชัย หัวหน้าคลัง"], ["FG-TEST-01", "receive", 1, "ปกรณ์ ศรีวัฒนา"]]);
+  assert.equal(form(await html("persona-wh", "p=orders&sel=PI-W&step=5"), "receiveFg"), 0, "all 3 reported are received: nothing left to receive");
+  // received + still producing: step 6 is reachable and delivery is the warehouse's
+  const six = await html("persona-wh", "p=orders&sel=PI-W&step=6");
+  assert.equal(form(six, "deliverFg"), 1);
+  assert.match(six, /max="3" value="3"/);
+  assert.match(await html("persona-pp", "p=orders&sel=PI-W&step=6"), /คลังสินค้า \(WH\) เป็นผู้ส่งมอบสินค้าให้ลูกค้า/);
+  assert.match(await html("persona-wh", "p=stock"), /คงคลังสินค้าสำเร็จรูป[\s\S]*FG-TEST-01/, "the stock page lists the goods on hand");
 });

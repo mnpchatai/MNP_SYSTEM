@@ -189,7 +189,8 @@
   // ทั้งหมดอยู่ในฐานข้อมูลผ่าน RPC ชุดเดียวกัน (ชนกันรายระเบียน คืนส่วนต่าง) · บันทึกการใช้งานอ่านจาก app_bom_audit · ตัวนับเลข BOM/RT/JOB อยู่ในหน่วยความจำของหน้าและตั้งต้นจากเลขสูงสุดที่ฐานข้อมูลมี
   const MASTER_LISTS = Object.freeze(["items", "compounds", "colors", "colorSets", "packages", "boms", "processes", "routings"]);
   // stock = ยอดคงเหลือของซื้อ (นับด้วย countPartStock) · stockMoves = ประวัติ (เซิร์ฟเวอร์เขียนเอง client อ่านอย่างเดียว ไม่ส่งกลับ)
-  const WORK_LISTS = Object.freeze(["customers", "orders", "jobs", "stock", "stockMoves"]);
+  // fgMoves = ประวัติรับเข้าคลัง/ส่งมอบ/ปิดใบรับไม่ครบของสินค้าสำเร็จรูป (เซิร์ฟเวอร์เขียนเอง เพิ่มต่อท้ายอย่างเดียว · client ส่งเป็นคำขอ ไม่ส่งเป็นระเบียน)
+  const WORK_LISTS = Object.freeze(["customers", "orders", "jobs", "stock", "stockMoves", "fgMoves"]);
   const REMOTE_LISTS = Object.freeze([...MASTER_LISTS, ...WORK_LISTS]);
   const LOCAL_KEY = "mnp-bom-local-v1"; // รุ่นก่อนหน้าเก็บใบสั่งผลิต/งาน/บันทึกการใช้งานไว้ที่นี่ · ตอนนี้ไม่อ่านไม่เขียน (ข้อมูลทดสอบเก่าไม่ย้ายเข้าฐานข้อมูล)
   const compareKey = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -202,7 +203,7 @@
     boms: (record) => record.id, routings: (record) => record.id,
     colorSets: (record) => `${record.base}\u0000${record.code}`, packages: (record) => `${record.base}\u0000${record.code}`,
     customers: (record) => customerKey(record.name), orders: (record) => record.id, jobs: (record) => record.id,
-    stock: (record) => record.itemCode, stockMoves: (record) => record.id,
+    stock: (record) => record.itemCode, stockMoves: (record) => record.id, fgMoves: (record) => record.id,
   });
   const MASTER_DELETABLE = Object.freeze(["colorSets", "packages", "jobs"]);
   // ลำดับของชุดตามฐานข้อมูล: ใบสั่งผลิตใหม่สุดก่อน (วันที่สั่งผลิต แล้วเลขที่) · งานเรียงตามใบ แผนก ชิ้นงาน เลขงาน · ชุดอื่นเรียงตามกุญแจ
@@ -210,6 +211,7 @@
     orders: (a, b) => (Number(b.orderedAt) || 0) - (Number(a.orderedAt) || 0) || compareKey(a.id, b.id),
     jobs: (a, b) => compareKey(a.orderId, b.orderId) || compareKey(a.dept, b.dept) || compareKey(a.itemCode, b.itemCode) || compareKey(a.id, b.id),
     stockMoves: (a, b) => (Number(a.at) || 0) - (Number(b.at) || 0) || compareKey(a.id, b.id),
+    fgMoves: (a, b) => (Number(a.at) || 0) - (Number(b.at) || 0) || compareKey(a.id, b.id),
   });
   // เป้าหมายการลบ: ชุดสี/แพ็กเกจ = {base, code} · งาน = {id}
   const deleteTarget = (list, record) => (list === "jobs" ? { id: record.id } : { base: record.base, code: record.code });
@@ -238,10 +240,12 @@
   }
   // ส่วนต่างของข้อมูลก่อน/หลังรัน action → p_changes ของ app_bom_save_master (ระเบียนที่เพิ่ม/เปลี่ยน ส่งทั้งระเบียน · ชุดสี/แพ็กเกจ/งานลบได้)
   // stockMoves เซิร์ฟเวอร์เขียนเองเสมอ · stock ส่งเฉพาะ action countPartStock (การเบิกจ่ายหักสต็อกที่เซิร์ฟเวอร์ ค่าที่คำนวณในเครื่องใช้แสดงจนกว่าคำตอบมาถึง)
-  const SERVER_WRITTEN = Object.freeze(["stockMoves"]);
+  const SERVER_WRITTEN = Object.freeze(["stockMoves", "fgMoves"]);
   // คืนของซื้อ (undoOrderParts / returnOrderParts): ผลทั้งหมด (งานกลับไปรอเบิกจ่าย สต็อก ประวัติ) เซิร์ฟเวอร์คำนวณเอง จึงส่งเฉพาะแถวคำขอ { orderId, mode, reason, lines? } ในส่วน partReturns (action คืนแถวนี้ใน result.request)
   // สำเนาที่ action คำนวณในเครื่อง (งาน สต็อก) ใช้แสดงจนกว่าคำตอบมาถึง และยังใช้เทียบว่าระเบียนไหนเป็นของเรา
   const RETURN_ACTIONS = Object.freeze(["undoOrderParts", "returnOrderParts"]);
+  // สินค้าสำเร็จรูป (receiveFg / deliverFg / closeOrderShort): เซิร์ฟเวอร์เขียนประวัติและปิดใบเอง จึงส่งเฉพาะแถวคำขอ { orderId, kind, lines?, note? } ในส่วน fgMoves (action คืนแถวนี้ใน result.request)
+  const FG_ACTIONS = Object.freeze(["receiveFg", "deliverFg", "closeOrderShort"]);
   function diffMaster(before, after, action = "") {
     const changes = {};
     for (const list of REMOTE_LISTS) {
@@ -377,6 +381,8 @@
       BOM_INSUFFICIENT_STOCK: "สต็อกของซื้อไม่พอ จึงไม่ได้เบิกจ่ายอะไรเลย ระบบโหลดข้อมูลล่าสุดให้แล้ว",
       BOM_INVALID_STOCK: "รหัสที่นับไม่ใช่ของซื้อ หรือตัวเลขไม่ถูกต้อง (ต้อง 0 ขึ้นไป)",
       BOM_INVALID_RETURN: "คืนของซื้อไม่ได้: จำนวนเกินที่คืนได้ ไม่มีของที่เบิกจ่ายแล้ว หรือไม่ได้ระบุเหตุผล (อาจมีผู้อื่นคืนไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
+      BOM_INVALID_FG: "รับเข้าคลัง ส่งมอบ หรือปิดใบไม่ได้: ข้อมูลไม่ถูกต้อง (จำนวนต้องมากกว่า 0 สินค้าต้องอยู่ในใบ เหตุผลที่ปิดใบอย่างน้อย 3 ตัวอักษร) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
+      BOM_FG_EXCEEDS: "ตัวเลขเปลี่ยนไปแล้ว: จำนวนที่รับเข้าคลังเกินที่ PK ส่งมอบ หรือจำนวนที่ส่งมอบเกินที่รับเข้าคลัง (อาจมีผู้อื่นบันทึกไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาตรวจตัวเลขแล้วทำรายการอีกครั้ง",
       BOM_RESET: "ข้อมูล BOM ทดสอบถูกล้างและเริ่มใหม่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       BOM_NOT_DEPLOYED: "ฐานข้อมูลยังไม่มีระบบ BOM (ยังไม่ได้ติดตั้ง migration) ติดต่อผู้ดูแลระบบ",
       BOM_TOO_MANY: "ข้อมูลชุดนี้มากเกินกว่าจะบันทึกในครั้งเดียว (เกิน 5,000 รายการต่อประเภท) แบ่งนำเข้าทีละส่วน",
@@ -396,7 +402,7 @@
     return Object.assign(new Error(message), { code });
   }
   // การชน: ระเบียนที่แตะถูกผู้อื่นแก้ไปก่อน · เวอร์ชันฐานไม่ตรงฐานข้อมูล · เลขซ้ำ · สถานะใบเปลี่ยนไปแล้ว → ตามทันฐานข้อมูลก่อนให้ผู้ใช้ทำรายการใหม่
-  const CONFLICT_CODES = Object.freeze(["BOM_STALE", "BOM_INVALID_PAYLOAD", "BOM_CONFLICT", "BOM_INVALID_TRANSITION", "BOM_RESET", "BOM_INSUFFICIENT_STOCK", "BOM_INVALID_RETURN"]);
+  const CONFLICT_CODES = Object.freeze(["BOM_STALE", "BOM_INVALID_PAYLOAD", "BOM_CONFLICT", "BOM_INVALID_TRANSITION", "BOM_RESET", "BOM_INSUFFICIENT_STOCK", "BOM_INVALID_RETURN", "BOM_FG_EXCEEDS"]);
 
   // บัญชีทดสอบ (state.employee ของ app.js ในโหมดทดสอบ) → ผู้ใช้ของ BOM
   // admin → admin · ผู้จัดการแผนกขึ้นไป → manager · แผนกวางแผน PP → planner · RB/GR/PT/BG/ST/WH → บทบาทของแผนกนั้น · อื่นๆ → ดูอย่างเดียว
@@ -572,7 +578,7 @@
     };
     function hasForeignRecords(delta, sent, before) {
       return REMOTE_LISTS.some((list) => {
-        if (list === "stock" || list === "stockMoves") return false;
+        if (list === "stock" || list === "stockMoves" || list === "fgMoves") return false;
         const key = MASTER_KEY[list];
         const mine = new Set((sent[list]?.upsert ?? []).map(key));
         const removed = new Set((sent[list]?.delete ?? []).map((target) => deleteKey(list, target)));
@@ -678,7 +684,8 @@
       data = draft;
       const previousCounters = counters; // คำสั่งที่ฐานข้อมูลไม่รับ: เลขที่นับไปแล้วย้อนกลับด้วย
       counters = draft.counters;
-      const sent = RETURN_ACTIONS.includes(name) && result?.request ? { partReturns: { upsert: [clone(result.request)] } } : canPlan(user) ? changes : shapeForActor(changes, before);
+      const sent = RETURN_ACTIONS.includes(name) && result?.request ? { partReturns: { upsert: [clone(result.request)] } }
+        : FG_ACTIONS.includes(name) && result?.request ? { fgMoves: { upsert: [clone(result.request)] } } : canPlan(user) ? changes : shapeForActor(changes, before);
       if (!hasChanges(sent)) return { ok: true, result: result ?? true, saving: Promise.resolve({ ok: true }) };
       // แบ่งเฉพาะการนำเข้าจาก Excel: ทำซ้ำได้ปลอดภัย (ชิ้นงานที่มีแล้วรวม BOM ที่มีแล้วข้าม) · คำสั่งอื่นที่ทำซ้ำอาจสร้าง revision ซ้ำ จึงส่งครั้งเดียวเสมอ
       const batches = name === "importFlat" ? splitForSave(sent) : [sent];

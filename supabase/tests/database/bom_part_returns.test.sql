@@ -259,8 +259,9 @@ select is(pr_t.qty('P-1'), 91::numeric, 'and the stock follows (100 - 9)');
 select ok(pr_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
   pr_t.job('JOB2-PK-A') || jsonb_build_object('status', 'done', 'qtyDone', 3, 'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 3, 'reject', 0, 'note', '')))))), 'reportJob') is not null,
   'the packing job is finished');
-select is(pr_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(pr_t.order_row('251112-25002') || '{"status":"completed"}'::jsonb))), 'completeOrder')
-          -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'completed', 'and the order is completed');
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select is(pr_t.save('{"fgMoves":{"upsert":[{"orderId":"251112-25002","kind":"receive","lines":[{"fgCode":"FG-A","qty":3}]}]}}'::jsonb, 'receiveFg')
+          -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'completed', 'and WH receives all 3 sets, which completes the order');
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select pr_t.undo('x', null, '251112-25002') $$, 'BOM_INVALID_TRANSITION', 'a completed PI cannot be undone');
 select is((pr_t.leftover('[{"itemCode":"P-1","qty":2}]'::jsonb, 'เหลือหลังปิดใบ', null, '251112-25002') -> 'changes' -> 'stock' -> 'upsert' -> 0 ->> 'qty')::numeric, 93::numeric,
@@ -268,8 +269,8 @@ select is((pr_t.leftover('[{"itemCode":"P-1","qty":2}]'::jsonb, 'เหลือ
 select throws_ok($$ select pr_t.leftover('[{"itemCode":"P-1","qty":7.5}]'::jsonb, 'เกิน', null, '251112-25002') $$, 'BOM_INVALID_RETURN', 'within the cap (9 issued, 2 returned)');
 
 -- 11. snapshot / delta และตาราง --------------------------------------------------------------------
-select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 13::bigint, 'the snapshot still has thirteen lists (partReturns is not one of them)');
-select is((select count(*) from jsonb_object_keys(public.app_bom_master_since(0) -> 'changes')), 13::bigint, 'the delta names thirteen lists');
+select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 14::bigint, 'the snapshot has fourteen lists (partReturns is not one of them, fgMoves is)');
+select is((select count(*) from jsonb_object_keys(public.app_bom_master_since(0) -> 'changes')), 14::bigint, 'the delta names fourteen lists');
 select is(public.app_bom_master_since(0) -> 'changes' -> 'stockMoves', jsonb_build_object('upsert', public.app_bom_master() -> 'stockMoves', 'delete', '[]'::jsonb),
   'the delta from version 0 equals the move snapshot, notes included');
 reset role;
