@@ -560,7 +560,7 @@
     if (order.status === "draft") return;
     if (!["released", "in_progress"].includes(order.status)) fail("ใบที่ปิดหรือยกเลิกแล้วแก้รายการสินค้าไม่ได้");
     const started = startedJobs(d, order, ctx?.rfOrders);
-    if (started.length) fail(`แก้รายการไม่ได้ มีงานที่เริ่มแล้ว (${started.map((job) => `${job.dept} ${job.itemCode}`).slice(0, 3).join(", ")}${started.length > 3 ? " …" : ""}) ให้ปิดใบแล้วเปิดใบใหม่สำหรับส่วนที่เพิ่ม`);
+    if (started.length) fail(`แก้รายการไม่ได้ มีงานที่เริ่มแล้ว (${started.map((job) => `${job.dept} ${job.itemCode}`).slice(0, 3).join(", ")}${started.length > 3 ? " …" : ""}) ให้เปิดใบใหม่สำหรับส่วนที่เพิ่ม (ใบนี้ปิดเมื่อคลังสินค้ารับเข้าครบ)`);
     const removed = d.jobs.filter((job) => job.orderId === order.id).length;
     d.jobs = d.jobs.filter((job) => job.orderId !== order.id);
     order.status = "draft";
