@@ -169,7 +169,7 @@
           : [];
         shortNote = order ? `ขาดจากใบเบิกของ ${order.id} (${n} batch)` : "";
         dialog.querySelector("[data-rf-recipe-line]").textContent = recipe ? `สูตร ${rules.recipeLabel(recipe)} · น้ำหนักรวม ${fmtNum(recipe.batchKg * n, 2)} kg` : "";
-        dialog.querySelector("[data-rf-shortage]").innerHTML = short ? ui.callout("bad", `<div>สต็อกพร้อมใช้ไม่พอ (ไม่นับล็อตหมดอายุหรือกักกัน)</div>${mayBuy ? '<button class="btn rf-btn secondary small" type="button" data-rf-po-short>สั่งซื้อส่วนที่ขาด</button>' : ""}`) : "";
+        dialog.querySelector("[data-rf-shortage]").innerHTML = short ? ui.callout("bad", `<div>สต็อกพร้อมใช้ไม่พอ (ไม่นับล็อตหมดอายุหรือกักกัน)</div>${mayBuy ? '<button class="btn rf-btn secondary small" type="button" data-rf-po-short>สั่งซื้อส่วนที่ขาด</button>' : "<div>แจ้งคลังวัตถุดิบ (ST) ให้สั่งซื้อ คลังวัตถุดิบเห็นรายการที่ขาดในแท็บใบสั่งซื้อของหน้าคลัง</div>"}`) : "";
         dialog.querySelector("[data-rf-preview]").innerHTML = ui.table(["วัตถุดิบ", "ขั้น", { label: "ต้องใช้ (kg)", className: "right" }, "ล็อตที่ระบบจะจ่าย (FEFO)"], preview.map((row) => `<tr><td class="rf-mono">${esc(row.materialCode)}</td><td class="nowrap">${esc(`ขั้น ${row.stage}`)}</td><td class="right rf-mono">${esc(fmtNum(row.need, 3))}</td><td class="small">${row.picks.map((pick) => `<div class="rf-mono">${esc(`${pick.lotNo} → ${pick.kg.toFixed(3)} kg`)}</div>`).join("")}${row.shortage > 0.0001 ? ui.badge("bad", `ขาด ${row.shortage.toFixed(2)} kg`) : ""}</td></tr>`), { emptyText: "เลือกใบสั่งผลิตก่อน" });
         if (submit) submit.disabled = !order || short;
       };

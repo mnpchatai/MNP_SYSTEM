@@ -75,7 +75,7 @@
   });
   // context(params) ให้เทสต์เรียก dialog ด้วย ctx เดียวกับหน้า
   // bomJobOfAction / showBomFeedback: ขั้น "ตกแต่งผ่าน / QA ตัดสินผ่าน → ตามทัน BOM → แจ้งยอดที่งานได้รับ" (ให้เทสต์เรียกตรง)
-  window.MNP_RUBBERFLOW = { runAction: (name, payload, successText) => runAction(name, payload, successText), store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing(), bomJobOfAction: (name, payload) => bomJobOfAction(name, payload), showBomFeedback: (before) => showBomFeedback(before), checkMaterials: (options) => checkMaterials(options), can: (permission) => storeApi.can(store.user(), permission), draftChemicalNeeds: (draftOrders) => draftChemicalNeeds(draftOrders) };
+  window.MNP_RUBBERFLOW = { runAction: (name, payload, successText) => runAction(name, payload, successText), store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing(), bomJobOfAction: (name, payload) => bomJobOfAction(name, payload), showBomFeedback: (before) => showBomFeedback(before), checkMaterials: (options) => checkMaterials(options), can: (permission) => storeApi.can(store.user(), permission), openChemicalNeeds: () => openChemicalNeeds(), draftChemicalNeeds: (draftOrders) => draftChemicalNeeds(draftOrders) };
 
   // โหมดฐานข้อมูล: โหลดเสร็จ/โหลดไม่สำเร็จ/บันทึกไม่สำเร็จ (ย้อนกลับแล้ว) วาดหน้าใหม่ · เริ่ม/เสร็จการบันทึกแค่เปลี่ยนข้อความสถานะ ไม่ทับฟอร์มที่ผู้ใช้กำลังกรอก
   const onRfRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
@@ -487,6 +487,15 @@
       if (store.status() !== "ready" || !draftOrders.length) return null;
       const ctx = makeContext(new URLSearchParams());
       return rules.chemicalNeeds({ ...ctx.data, orders: [...ctx.data.orders, ...draftOrders] }, draftOrders.map((order) => order.id), ctx.now, { remote: store.isRemote() });
+    } catch { return null; }
+  }
+  // เคมีที่ใบสั่งผลิตที่เปิดอยู่ทุกใบต้องใช้ เทียบสต็อก (การ์ดงานของคลังวัตถุดิบในหน้า BOM และปุ่มในแท็บใบสั่งซื้อ) · null = RubberFlow ยังไม่พร้อม
+  function openChemicalNeeds() {
+    try {
+      if (store.status() !== "ready") return null;
+      const ctx = makeContext(new URLSearchParams());
+      const ids = ctx.data.orders.filter((order) => rules.OPEN_ORDER.includes(order.status)).map((order) => order.id);
+      return ids.length ? rules.chemicalNeeds(ctx.data, ids, ctx.now, { remote: store.isRemote() }) : { rows: [], skipped: [], counted: [], anyShort: false };
     } catch { return null; }
   }
   async function checkMaterials({ woIds = [], sourcePi = "", skippedJobs = 0, auto = false, draftOrders = [] } = {}) {
