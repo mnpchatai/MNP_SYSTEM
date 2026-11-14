@@ -2379,10 +2379,10 @@ test("lines are reordered inside one department, moved under another item of the
   const codes = before.lines.map((line) => line.childCode);
   // เลื่อนลำดับ: เฉพาะกับบรรทัดติดกันของแผนกเดียวกัน (ของซื้อสามตัวแรกเป็นของคลังวัตถุดิบ)
   let side = sideOf(codes[0]);
-  assert.doesNotMatch(side, />เลื่อนขึ้น</, "the first line has nothing above it");
+  assert.match(side, /<button class="btn rf-btn secondary" type="button" disabled title="อยู่บนสุดแล้ว">เลื่อนขึ้น</, "both directions always show: the first line has its up button switched off");
   const down = /data-rf-action="saveBom" data-rf-args="([^"]*)"[^>]*>เลื่อนลง</.exec(side);
   assert.ok(down, "a line with a neighbour of the same department can move down");
-  assert.doesNotMatch(sideOf(codes[2]), />เลื่อนลง</, "no swap across departments (the next line belongs to another department)");
+  assert.match(sideOf(codes[2]), /disabled title="สลับได้เฉพาะกับบรรทัดติดกันของแผนกเดียวกัน">เลื่อนลง</, "no swap across departments (the next line belongs to another department)");
   const args = JSON.parse(unescape(down[1]));
   assert.deepEqual(args.lines.map((line) => line.childCode), [codes[1], codes[0], ...codes.slice(2)]);
   assert.equal(env.store.run("saveBom", args).ok, true);

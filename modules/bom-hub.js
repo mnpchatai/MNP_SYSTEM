@@ -200,8 +200,10 @@
       const at = siblings.findIndex((entry) => entry.childCode === line.itemCode);
       const full = (list) => list.map((entry) => ({ childCode: entry.childCode, qty: entry.qty, scrapPct: entry.scrapPct ?? 0, note: entry.note ?? "", step: entry.step ?? "", flags: entry.flags ?? [] }));
       const swapped = (other) => { const list = siblings.slice(); [list[at], list[other]] = [list[other], list[at]]; return full(list); };
-      const moveButton = (label, other) => (canEdit && bomLine && other >= 0 && other < siblings.length && flowOf(siblings[other]) === flowOf(siblings[at])
-        ? ui.button(label, { action: "saveBom", args: { itemCode: line.parentCode, lines: swapped(other), note: `เรียงลำดับ ${line.itemCode}` }, className: "secondary", success: `เรียงลำดับ ${line.itemCode} แล้ว` }) : "");
+      // ปุ่มเลื่อนขึ้นและเลื่อนลงแสดงคู่กันเสมอ: ทิศที่เลื่อนไม่ได้เป็นปุ่มปิด (title บอกเหตุ) ผู้ใช้จึงเห็นว่ามีทั้งสองทิศ
+      const moveOff = (label, why) => `<button class="btn rf-btn secondary" type="button" disabled title="${esc(why)}">${esc(label)}</button>`;
+      const moveButton = (label, other) => (!(canEdit && bomLine) ? "" : !(other >= 0 && other < siblings.length) ? moveOff(label, other < 0 ? "อยู่บนสุดแล้ว" : "อยู่ล่างสุดแล้ว") : flowOf(siblings[other]) !== flowOf(siblings[at]) ? moveOff(label, "สลับได้เฉพาะกับบรรทัดติดกันของแผนกเดียวกัน")
+        : ui.button(label, { action: "saveBom", args: { itemCode: line.parentCode, lines: swapped(other), note: `เรียงลำดับ ${line.itemCode}` }, className: "secondary", success: `เรียงลำดับ ${line.itemCode} แล้ว` }));
       // บรรทัดสูตรยางใต้เส้นยางแก้ที่ "แก้ข้อมูลเส้นยาง" ของเส้นยางนั้น (ช่องสูตรและบรรทัดต้องตรงกัน) จึงไม่มีปุ่มแก้/ลบบรรทัดที่นี่
       const underRod = itemOf(ctx, line.parentCode)?.kind === "RB";
       const buttons = [
