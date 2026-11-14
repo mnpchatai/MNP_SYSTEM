@@ -758,3 +758,98 @@ test("existing SUBPART items are reused by name (trim, inner spaces, case), uom 
   const remote = rules.buildFromFlat(rules.readFlatRows([head, fg, sub("Core Rod"), sub("New Part")].join("\n")), { existingSubparts: rules.subpartIndex(remoteSaved), ...rules.subpartOptions(remoteSaved, "ef34gh") });
   assert.deepEqual(xp(remote).map((item) => item.code), ["XP-00005-AB12CD", "XP-00006-EF34GH"]);
 });
+
+// ใบร่างที่ระเบิด BOM แล้ว: FG 1 บรรทัด (level 0) + ของซื้อ P-1 ต่อชุด qtyPerParent (ต้องใช้ = จำนวน FG × qtyPerParent)
+const draftOf = (id, explodedAt, fgQty, perSet = 1, extra = {}) => ({
+  id, status: "draft", explodedAt, stockCounts: {},
+  explosion: [
+    { itemCode: `FG-${id}`, name: `FG ${id}`, kind: "FG", uom: "set", level: 0, required: fgQty, parentCode: null, qtyPerParent: 1, fgCode: `FG-${id}`, producerDept: "PK" },
+    { itemCode: "P-1", name: "ของซื้อ 1", kind: "PURCHASED", uom: "pcs", level: 1, required: fgQty * perSet, parentCode: `FG-${id}`, qtyPerParent: perSet, fgCode: `FG-${id}`, producerDept: "ST" },
+  ],
+  ...extra,
+});
+
+test("partNeeds for drafts: a draft calculated earlier counts as reserved for a draft calculated later (never the other way round), released orders are never pushed back by drafts, and calculating again moves a draft to the back of the queue", () => {
+  const stock = [{ itemCode: "P-1", qty: 100, safetyQty: 0 }];
+  const released = { id: "PI-R", status: "released" };
+  const jobs = [{ id: "J-R", orderId: "PI-R", dept: "ST", kind: "PURCHASED", itemCode: "P-1", name: "ของซื้อ 1", uom: "pcs", qtyPlanned: 30, qtyRequired: 30, qtyDone: 0, status: "queued" }];
+  const draftA = draftOf("PI-A", 1000, 70); // 70 pcs
+  const draftB = draftOf("PI-B", 2000, 50); // 50 pcs
+  const needs = (orders, id) => rules.partNeeds({ jobs, orders, stock, purchaseOrders: [] }, id).rows.find((row) => row.itemCode === "P-1");
+
+  // 100 on hand, 30 held by the released order: the draft calculated first takes its 70 (exactly enough), the one calculated later finds nothing left
+  const first = needs([released, draftA, draftB], "PI-A");
+  assert.deepEqual([first.needQty, first.onHandQty, first.reservedQty, first.shortage], [70, 100, 30, 0], "the first draft sees no reservation from the later one and is enough");
+  const later = needs([released, draftA, draftB], "PI-B");
+  assert.deepEqual([later.needQty, later.reservedQty, later.shortage], [50, 100, 50], "the later draft sees the first draft's 70 on top of the released 30: short by 50");
+  assert.equal(rules.partNeeds({ jobs, orders: [released, draftA, draftB], stock, purchaseOrders: [] }, "PI-B").anyShort, true);
+  assert.equal(rules.partNeeds({ jobs, orders: [released, draftA, draftB], stock, purchaseOrders: [] }, "PI-A").anyShort, false);
+  // a draft alone, and a later draft that is not exploded yet (no explosion = not in the queue)
+  assert.deepEqual([needs([released, draftA], "PI-A").reservedQty, needs([released, draftA, { ...draftB, explosion: [] }], "PI-A").reservedQty], [30, 30]);
+  assert.equal(needs([released, draftA, { ...draftB, explosion: [] }], "PI-B"), undefined, "an order without an explosion has no part needs at all");
+  // a released order's need is not reduced by any draft: the drafts do not hold anything against it
+  const withDrafts = rules.partNeeds({ jobs, orders: [released, draftA, draftB], stock, purchaseOrders: [] }, "PI-R");
+  assert.deepEqual(withDrafts, rules.partNeeds({ jobs, orders: [released], stock, purchaseOrders: [] }, "PI-R"), "the released order is the same with or without the drafts");
+  assert.deepEqual([withDrafts.rows[0].reservedQty, withDrafts.rows[0].shortage], [0, 0]);
+  // …and a draft calculated before a released one still does not push it: the draft is the one that waits for the released order's 30
+  assert.equal(needs([{ ...released, explodedAt: 5000 }, draftA, draftB], "PI-R").reservedQty, 0);
+  // calculating the first draft again puts it behind the other one: the picture flips
+  const recalculated = { ...draftA, explodedAt: 3000 };
+  const nowFirst = needs([released, recalculated, draftB], "PI-B");
+  assert.deepEqual([nowFirst.reservedQty, nowFirst.shortage], [30, 0], "PI-B is now first: only the released 30 is held, 70 free for its 50");
+  const nowLater = needs([released, recalculated, draftB], "PI-A");
+  assert.deepEqual([nowLater.reservedQty, nowLater.shortage], [80, 50], "PI-A now holds the released 30 and PI-B's 50: 20 free for its 70");
+  // the same time: the order number breaks the tie (PI-A before PI-B)
+  const tieA = needs([released, { ...draftA, explodedAt: 2000 }, draftB], "PI-A");
+  const tieB = needs([released, { ...draftA, explodedAt: 2000 }, draftB], "PI-B");
+  assert.deepEqual([tieA.reservedQty, tieB.reservedQty], [30, 100]);
+  // a draft's own earlier explosion with released work: the part job of the released order that is already issued holds nothing
+  const issuedJobs = [{ ...jobs[0], status: "done", qtyDone: 30 }];
+  assert.equal(rules.partNeeds({ jobs: issuedJobs, orders: [released, draftA, draftB], stock, purchaseOrders: [] }, "PI-B").rows[0].reservedQty, 70, "only the earlier draft is held once the released work is issued");
+});
+
+test("draftPartDemand: side all (default) lists every other exploded draft, earlier / later only those calculated before / after the anchor draft (ties by order number); an anchor that is not an exploded draft has nothing before it", () => {
+  const orders = [
+    draftOf("PI-C", 3000, 5),
+    draftOf("PI-A", 1000, 10),
+    draftOf("PI-B", 2000, 20, 2), // 2 per set: needs 40
+    { id: "PI-D", status: "draft", explodedAt: 4000, explosion: [], stockCounts: {} }, // not exploded
+    draftOf("PI-X", 500, 99, 1, { status: "cancelled" }),
+    { id: "PI-R", status: "released", explodedAt: 100 },
+  ];
+  const [c, a, b] = orders;
+  const summary = (map) => [...map].map(([code, row]) => [code, row.qty, [...row.orders].sort()]);
+  const of = (except, options) => rules.draftPartDemand(orders, except, options);
+
+  // all: every other exploded draft (not the one asked from, not released/cancelled/unexploded ones)
+  assert.deepEqual(summary(of("PI-B")), [["P-1", 15, ["PI-A", "PI-C"]]], "default");
+  assert.deepEqual(summary(of("PI-B", { side: "all" })), summary(of("PI-B")));
+  assert.deepEqual(summary(of("PI-B", { relativeTo: b })), summary(of("PI-B")), "relativeTo alone does not narrow it");
+  assert.deepEqual(summary(rules.draftPartDemand(orders)), [["P-1", 55, ["PI-A", "PI-B", "PI-C"]]], "no order asked from: all exploded drafts");
+  // earlier / later around the middle draft
+  assert.deepEqual(summary(of("PI-B", { relativeTo: b, side: "earlier" })), [["P-1", 10, ["PI-A"]]]);
+  assert.deepEqual(summary(of("PI-B", { relativeTo: b, side: "later" })), [["P-1", 5, ["PI-C"]]]);
+  // around the first and the last
+  assert.equal(of("PI-A", { relativeTo: a, side: "earlier" }).size, 0, "nothing before the first draft");
+  assert.deepEqual(summary(of("PI-A", { relativeTo: a, side: "later" })), [["P-1", 45, ["PI-B", "PI-C"]]]);
+  assert.deepEqual(summary(of("PI-C", { relativeTo: c, side: "earlier" })), [["P-1", 50, ["PI-A", "PI-B"]]]);
+  assert.equal(of("PI-C", { relativeTo: c, side: "later" }).size, 0, "nothing after the last draft");
+  // earlier + later + the draft itself = all
+  assert.equal(of("PI-B", { relativeTo: b, side: "earlier" }).get("P-1").qty + of("PI-B", { relativeTo: b, side: "later" }).get("P-1").qty, of("PI-B").get("P-1").qty);
+  // the same time: the order number decides who is earlier
+  const tied = [{ ...a, explodedAt: 2000 }, b, c];
+  assert.deepEqual(summary(rules.draftPartDemand(tied, "PI-B", { relativeTo: b, side: "earlier" })), [["P-1", 10, ["PI-A"]]], "PI-A before PI-B at the same time");
+  assert.deepEqual(summary(rules.draftPartDemand(tied, "PI-A", { relativeTo: tied[0], side: "later" })), [["P-1", 45, ["PI-B", "PI-C"]]], "PI-B after PI-A at the same time");
+  // an exploded time of zero / missing counts as the oldest
+  const unstamped = [{ ...a, explodedAt: undefined }, b];
+  assert.deepEqual(summary(rules.draftPartDemand(unstamped, "PI-B", { relativeTo: b, side: "earlier" })), [["P-1", 10, ["PI-A"]]]);
+
+  // the anchor is a released order, a draft without an explosion, or missing: no draft is earlier; "later" is then every exploded draft
+  for (const anchor of [{ id: "PI-R", status: "released", explodedAt: 5000 }, orders[3], null, undefined]) {
+    assert.equal(of("PI-R", { relativeTo: anchor, side: "earlier" }).size, 0, `no draft is earlier than ${anchor?.id ?? "no anchor"}`);
+    assert.deepEqual(summary(of("PI-R", { relativeTo: anchor, side: "later" })), [["P-1", 55, ["PI-A", "PI-B", "PI-C"]]], `every exploded draft is later than ${anchor?.id ?? "no anchor"}`);
+  }
+  // an empty list and a missing list are tolerated
+  assert.equal(rules.draftPartDemand([], "PI-A", { relativeTo: a, side: "earlier" }).size, 0);
+  assert.equal(rules.draftPartDemand(undefined, null, { relativeTo: a, side: "later" }).size, 0);
+});

@@ -610,16 +610,28 @@ test("a purchase order can mix chemical lines and purchased-part lines: a part l
   assert.ok(d.audit.some((row) => row.action === "ตรวจสอบรับเข้าตามใบสั่งซื้อ" && row.detail === `${id} P-BOX-01 18.5 box`));
 });
 
-test("a part's safety stock keeps the stock page's 4 decimals, so ST can order a part whose stored safety has 4 decimals and still cannot change it (only the admin can do both)", () => {
+test("a part's safety stock keeps the stock page's 4 decimals: ST orders a part with the stored 4 decimals and may change it with the order, an admin without planner or ST flags may order but not change it, RB cannot order", () => {
   const d = fresh();
-  const stCtx = remoteCtx({ st: true }); // ST orders; without the planner flag the stored safety stock cannot change
+  const stCtx = remoteCtx({ st: true }); // ST orders and may change the stored safety stock with the order
   const line = { materialCode: "P-KG-01", source: "bom", uom: "kg", needKg: 2, availableKg: 0, shortageKg: 2, safetyKg: 1.2345, storedSafetyKg: 1.2345, qtyKg: 3 };
   A.createPurchaseOrder(d, { lines: [line], safety: { "P-KG-01": "1.2345" } }, stCtx);
   assert.equal(d.purchaseOrders[0].lines[0].safetyKg, 1.2345, "sent exactly as stored (the database compares numerics exactly)");
-  rejects(() => A.createPurchaseOrder(d, { lines: [{ ...line, safetyKg: 1.235 }], safety: { "P-KG-01": "1.235" } }, stCtx), /ฝ่ายวางแผนเท่านั้น/);
+  // deny: an admin account without the planner or ST flag orders (the admin role) but cannot change a part's stored safety stock
+  const adminOnly = remoteCtx({ role: "admin" });
+  A.createPurchaseOrder(d, { lines: [line], safety: { "P-KG-01": "1.2345" } }, adminOnly);
+  assert.equal(d.purchaseOrders[0].lines[0].safetyKg, 1.2345, "the unchanged value is accepted");
+  const before = d.purchaseOrders.length;
+  rejects(() => A.createPurchaseOrder(d, { lines: [{ ...line, safetyKg: 1.235 }], safety: { "P-KG-01": "1.235" } }, adminOnly), /ฝ่ายวางแผนหรือคลังวัตถุดิบ \(ST\)/);
+  rejects(() => A.createPurchaseOrder(d, { lines: [line], safety: { "P-KG-01": "2" } }, adminOnly), /ฝ่ายวางแผนหรือคลังวัตถุดิบ \(ST\)/, "a change in the safety map alone is refused too");
+  assert.equal(d.purchaseOrders.length, before, "a refused order is not created");
+  // deny: RB (even with the planner-less master right) has no purchase right at all
+  rejects(() => A.createPurchaseOrder(d, { lines: [line], safety: { "P-KG-01": "1.2345" } }, remoteCtx({ rb: true })), /ไม่มีสิทธิ์/);
+  // allow: ST changes the stored safety stock with the order (the stored value is only the page's baseline)
+  A.createPurchaseOrder(d, { lines: [{ ...line, safetyKg: 1.235 }], safety: { "P-KG-01": "1.235" } }, stCtx);
+  assert.equal(d.purchaseOrders[0].lines[0].safetyKg, 1.235, "ST changes the part's safety stock with the order");
   // the admin is in the planner group as well as ST, so a changed safety stock comes with the order
-  A.createPurchaseOrder(d, { lines: [{ ...line, safetyKg: 1.235 }], safety: { "P-KG-01": "1.235" } }, remoteCtx({ planner: true, role: "admin" }));
-  assert.equal(d.purchaseOrders[0].lines[0].safetyKg, 1.235);
+  A.createPurchaseOrder(d, { lines: [{ ...line, safetyKg: 1.236 }], safety: { "P-KG-01": "1.236" } }, remoteCtx({ planner: true, role: "admin" }));
+  assert.equal(d.purchaseOrders[0].lines[0].safetyKg, 1.236);
 });
 
 test("a missing recipe, material or record is named neutrally: no message prints undefined or null", () => {

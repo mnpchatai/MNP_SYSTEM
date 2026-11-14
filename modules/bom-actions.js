@@ -43,6 +43,8 @@
   // ---------- สิทธิ์ (บทบาทสาธิต) ----------
   const isBoss = (user) => Boolean(user) && (user.role === "admin" || user.role === "manager");
   const canPlan = (user) => isBoss(user) || user?.role === "planner"; // สร้าง/แก้ item, BOM, ใบสั่งผลิต
+  // สต็อกขั้นต่ำของของซื้อ: กลุ่มวางแผน หรือแผนก ST (ตรงกับ private.bom_save_stock ใน 20261120010000_st_sets_safety_stock.sql) · WH นับได้อย่างเดียว
+  const canSetSafety = (user) => canPlan(user) || user?.role === "st";
   const canCount = (user) => canPlan(user) || user?.role === "st" || user?.role === "wh"; // นับคงคลังของใบร่าง: ฝ่ายวางแผน ผู้จัดการ ผู้ดูแล หรือพนักงานแผนก ST / WH
   // ของซื้อ: งานของซื้อ (ST / PURCHASED) เปลี่ยนผลงานได้ทางเดียวคือ "เบิกจ่ายของซื้อ" ของใบ (issueOrderParts) · เบิกจ่าย = กลุ่มวางแผนหรือแผนก ST · สต็อกขั้นต่ำแก้ได้เฉพาะกลุ่มวางแผน
   const isPartJob = (job) => job?.dept === "ST" && job?.kind === "PURCHASED";
@@ -1029,7 +1031,7 @@
       if (qty > 1e9 || safety > 1e9) fail("ตัวเลขใหญ่เกินไป");
       if (qty === oldQty && safety === oldSafety) continue;
       if (qty !== oldQty && !canCount(user)) fail("นับสต็อกของซื้อได้โดยคลัง (ST/WH) ฝ่ายวางแผน หรือผู้จัดการ");
-      if (safety !== oldSafety && !canPlan(user)) fail("ตั้งสต็อกขั้นต่ำได้โดยฝ่ายวางแผนหรือผู้จัดการ");
+      if (safety !== oldSafety && !canSetSafety(user)) fail("ตั้งสต็อกขั้นต่ำได้โดยฝ่ายวางแผน ผู้จัดการ หรือคลังวัตถุดิบ (ST)");
       const target = row ?? { itemCode: code, qty: 0, safetyQty: 0, countedAt: null, countedBy: "", updatedAt: ctx.now };
       if (!row) d.stock.push(target);
       target.qty = qty;
@@ -1205,7 +1207,7 @@
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
     saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, completeOrder,
     reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage, countPartStock, issueOrderParts, undoOrderParts, returnOrderParts,
-    helpers: { customerName, customerKey, startedJobs, isPartJob, canIssueParts, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
+    helpers: { customerName, customerKey, startedJobs, isPartJob, canIssueParts, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canSetSafety, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_ACTIONS = api;

@@ -993,10 +993,15 @@
   const wholeRods = (kind, uom, qty) => (kind === "RB" && (uom === "rod" || uom === "roll") ? Math.ceil(Number(qty) - 1e-6) : qty);
 
   // ของซื้อที่ใบร่างอื่น (ระเบิด BOM แล้ว ยังไม่ปล่อยผลิต) ต้องใช้ ต่อรหัส → { qty, orders: [เลขใบ] } · ข้อมูลให้ดูที่ขั้นตรวจของเท่านั้น ใบร่างไม่จองของ (ของถูกจองเมื่อปล่อยผลิต = partReserved)
-  function draftPartDemand(orders, exceptOrderId = null) {
+  // ลำดับการจองของใบร่าง: ใบที่คำนวณของ (explodedAt) ก่อนได้ก่อน เวลาเท่ากันเรียงตามเลขใบ · กด "คำนวณใหม่" = ไปต่อท้าย
+  const draftBefore = (a, b) => ((Number(a.explodedAt) || 0) !== (Number(b.explodedAt) || 0) ? (Number(a.explodedAt) || 0) < (Number(b.explodedAt) || 0) : String(a.id) < String(b.id));
+  // side: "all" = ใบร่างอื่นทุกใบ · "earlier" / "later" = เฉพาะใบที่คำนวณก่อน / หลัง relativeTo (ใบร่างที่คำนวณแล้ว) · relativeTo ไม่ใช่ใบร่างที่คำนวณแล้ว: ไม่มีใบไหนมาก่อน
+  function draftPartDemand(orders, exceptOrderId = null, { relativeTo = null, side = "all" } = {}) {
     const demand = new Map();
+    const anchored = relativeTo?.status === "draft" && relativeTo.explosion?.length ? relativeTo : null;
     for (const order of orders ?? []) {
       if (order.status !== "draft" || order.id === exceptOrderId || !order.explosion?.length) continue;
+      if (side !== "all" && (side === "earlier") !== Boolean(anchored && draftBefore(order, anchored))) continue;
       for (const entry of netRequirements(order.explosion, order.stockCounts)) {
         if (entry.kind !== "PURCHASED" || !(entry.required > 0)) continue;
         const row = demand.get(entry.itemCode) ?? { qty: 0, orders: [] };
@@ -1033,6 +1038,10 @@
       }
     }
     const reserved = partReserved(jobs, orders, orderId);
+    // ใบร่างที่ถาม: ใบร่างอื่นที่คำนวณของก่อนใบนี้นับเป็นจองแล้วด้วย (คำนวณก่อน จองก่อน) · ใบที่ปล่อยผลิตแล้วไม่ถูกใบร่างจองตัดหน้า
+    if (draft?.explosion?.length) {
+      for (const [code, row] of draftPartDemand(orders, orderId, { relativeTo: draft, side: "earlier" })) reserved.set(code, (reserved.get(code) || 0) + row.qty);
+    }
     const onOrder = partOnOrder(purchaseOrders);
     const rows = [...need.keys()].filter((code) => partUp3(need.get(code)) > 0).sort().map((code) => {
       const row = stock.find((entry) => entry.itemCode === code);

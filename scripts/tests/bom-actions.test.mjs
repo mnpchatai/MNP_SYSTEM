@@ -1317,14 +1317,24 @@ test("the notice for what the database did in RubberFlow: opened count, skipped 
   assert.equal(notice("cancelOrder", { orderId: "PI-1" }, { opened: [{ jobId: "J1", woId: "WO-1", kg: 1 }] }), null, "only a release says what it opened");
 });
 
-test("part stock: ST and WH count, only planners set the safety stock, only purchased parts, blanks keep the stored value, every changed balance is a move", () => {
+test("part stock: ST and WH count, the planning group and ST set the safety stock (WH, RB, other departments cannot), only purchased parts, blanks keep the stored value, every changed balance is a move", () => {
   const d = fresh();
   const wh = { now: NOW, user: { id: "wh", role: "wh", dept: "WH", name: "คลังสินค้า" } };
   const stock = (code) => d.stock.find((row) => row.itemCode === code);
   rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "P-STK-01", qty: 5 }] }, ctx("rb")), /ST\/WH/);
   rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "P-STK-01", qty: 5 }] }, ctx("gr")), /ST\/WH/);
   rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "P-STK-01", qty: 5 }] }, { now: NOW, user: null }), /เลือกบทบาท/);
-  rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "P-STK-01", safetyQty: 50 }] }, ctx("st")), /สต็อกขั้นต่ำ.*ฝ่ายวางแผน/);
+  // สต็อกขั้นต่ำ: WH (นับได้อย่างเดียว) และแผนกอื่น/ผู้ดู ตั้งไม่ได้ · ทั้งชุดไม่ผ่านพร้อมกัน แม้ยอดนับในแถวเดียวกันผ่าน
+  rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "P-STK-01", safetyQty: 50 }] }, wh), /สต็อกขั้นต่ำ.*ฝ่ายวางแผน/);
+  rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "P-STK-01", qty: 5, safetyQty: 50 }] }, wh), /สต็อกขั้นต่ำ.*ฝ่ายวางแผน/);
+  rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "P-STK-01", safetyQty: 50 }] }, ctx("rb")), /ST\/WH|สต็อกขั้นต่ำ/);
+  rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "P-STK-01", safetyQty: 50 }] }, ctx("gr")), /ST\/WH|สต็อกขั้นต่ำ/);
+  {
+    const kept = structuredClone(d);
+    rejects(() => A.countPartStock(kept, { counts: [{ itemCode: "P-STK-01", safetyQty: 50 }] }, wh), /สต็อกขั้นต่ำ/);
+    assert.deepEqual(kept, d, "a refused safety change writes nothing");
+  }
+  assert.deepEqual([A.helpers.canSetSafety(user("st")), A.helpers.canSetSafety(user("planner")), A.helpers.canSetSafety(user("manager")), A.helpers.canSetSafety(user("admin")), A.helpers.canSetSafety(wh.user), A.helpers.canSetSafety(user("rb")), A.helpers.canSetSafety(user("gr")), A.helpers.canSetSafety(null)], [true, true, true, true, false, false, false, false]);
   rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "PT-00320", qty: 5 }] }, ctx("st")), /ไม่ใช่ของซื้อ/);
   rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "NOPE", qty: 5 }] }, ctx("st")), /ไม่พบชิ้นงาน NOPE/);
   rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "P-STK-01", qty: -1 }] }, ctx("st")), /ยอดที่นับ/);
@@ -1348,6 +1358,17 @@ test("part stock: ST and WH count, only planners set the safety stock, only purc
   A.countPartStock(d, { counts: [{ itemCode: "P-ROPE-01", qty: 0 }] }, ctx("st"));
   assert.equal(stock("P-ROPE-01").qty, 0, "a part can be counted down to zero");
   assert.match(d.audit[0].detail, /P-ROPE-01 1 → 0/);
+  // ST ตั้งสต็อกขั้นต่ำได้ (ไม่มีรายการเคลื่อนไหว) และนับกับตั้งในแถวเดียวกันได้
+  const before = d.stockMoves.length;
+  A.countPartStock(d, { counts: [{ itemCode: "P-STK-01", safetyQty: 50 }] }, ctx("st"));
+  assert.deepEqual([stock("P-STK-01").safetyQty, stock("P-STK-01").qty, d.stockMoves.length], [50, 440, before], "ST sets the safety stock alone: no move, the balance stays");
+  assert.match(d.audit[0].detail, /P-STK-01 60 → 50/);
+  A.countPartStock(d, { counts: [{ itemCode: "P-STK-01", qty: 430, safetyQty: 70 }] }, ctx("st"));
+  assert.deepEqual([stock("P-STK-01").qty, stock("P-STK-01").safetyQty, d.stockMoves.length], [430, 70, before + 1], "ST counts and sets the safety stock in one row");
+  // WH ยังนับได้ แต่แถวที่มีสต็อกขั้นต่ำเปลี่ยนจะไม่ผ่านทั้งชุด
+  rejects(() => A.countPartStock(structuredClone(d), { counts: [{ itemCode: "P-STK-01", qty: 420 }, { itemCode: "P-ROPE-01", safetyQty: 9 }] }, wh), /สต็อกขั้นต่ำ/);
+  A.countPartStock(d, { counts: [{ itemCode: "P-STK-01", qty: 420 }] }, wh);
+  assert.deepEqual([stock("P-STK-01").qty, stock("P-STK-01").safetyQty, d.stockMoves.length], [420, 70, before + 2], "the same WH count without a safety change goes through and leaves the safety stock alone");
 });
 
 test("issuing the purchased parts of a PI is all or nothing, then the part jobs are done, the stock is down and the order has started; part jobs cannot be reported any other way", () => {

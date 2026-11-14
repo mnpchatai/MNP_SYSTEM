@@ -1,5 +1,6 @@
 -- จัดซื้อเคมีของ RubberFlow (20261110010000_rf_purchase_orders.sql): ใบสั่งซื้อ + สต็อกสำรอง (safetyKg) + อายุเก็บ (shelfLifeDays) ของวัตถุดิบ
 -- กติกาสิทธิ์ (20261119010000_rf_purchase_by_st.sql): สร้างใบ / รับบรรทัด / ยกเลิก ทำได้เฉพาะ ST และ admin · กลุ่มวางแผน (PP, ผู้จัดการแผนก) สมาชิก RB QA WH SR ได้ RF_FORBIDDEN
+-- สต็อกขั้นต่ำของเคมี (20261120010000_st_sets_safety_stock.sql): ST เปลี่ยน safetyKg ได้เฉพาะเป็นส่วนหนึ่งของคำสั่ง createPurchaseOrder (ชุด materials) ไม่ใช่ทาง saveMaterial · RB ยังตั้งทาง saveMaterial ได้
 -- ตรวจทั้งฝั่งอนุญาตและปฏิเสธต่อบทบาท (ST / admin / กลุ่มวางแผน / สมาชิก RB / QA / WH / SR / ผู้ช่วยผู้จัดการแผนกอื่น) นอกโหมดทดสอบ lab-only โครงสร้าง/สิทธิ์ตาราง
 -- สร้างใบ (รวมแก้ safetyKg พ่วง) รูปข้อมูลผิด เลขใบซ้ำ ชนรายระเบียนก่อนสิทธิ์ รับเข้าทีละบรรทัดที่สร้างล็อตในคำสั่งเดียวกัน (ล็อตไม่ตรง/ขาด/เกิน = ย้อนทั้งคำสั่ง)
 -- รับซ้ำ สถานะ ordered -> received ยกเลิก snapshot/delta 12 ชุด audit และล้างข้อมูลทดสอบ
@@ -126,6 +127,12 @@ create function rf3_t.cancel_po(p_po text, p_base bigint default null, p_action 
   select public.app_rf_save(jsonb_build_object('purchaseOrders', jsonb_build_object('upsert', jsonb_build_array(rf3_t.po_with(p_po, '{"status":"cancelled"}'::jsonb)))),
                             coalesce(p_base, rf3_t.ver()), p_action)
 $$;
+-- ใบใหม่พร้อมชุด materials ที่แก้ safetyKg ของวัตถุดิบ p_code เป็น p_safety (สำเนาแถวจาก snapshot) ส่งด้วยคำสั่ง p_action
+create function rf3_t.create_po_safety(p_po jsonb, p_code text, p_safety numeric, p_action text default 'createPurchaseOrder') returns jsonb language sql volatile as $$
+  select public.app_rf_save(jsonb_build_object(
+    'materials', jsonb_build_object('upsert', jsonb_build_array((select m || jsonb_build_object('safetyKg', p_safety) from jsonb_array_elements(public.app_rf_master() -> 'materials') m where m ->> 'code' = p_code))),
+    'purchaseOrders', jsonb_build_object('upsert', jsonb_build_array(p_po))), rf3_t.ver(), p_action)
+$$;
 
 select set_config('test.now_ms', (extract(epoch from now()) * 1000)::bigint::text, true);
 select set_config('test.exp', ((extract(epoch from now()) * 1000)::bigint + 31536000000)::text, true);
@@ -187,7 +194,15 @@ select is(public.app_rf_save(jsonb_build_object('materials', jsonb_build_object(
   -> 'changes' -> 'materials' -> 'upsert' -> 0 ->> 'shelfLifeDays', '90', 'an RB member sets the safety stock and shelf life');
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('materials', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.mat')::jsonb || '{"code":"MAT-B","name":"เขม่าดำ","safetyKg":99}'::jsonb))), 3, 'saveMaterial') $$, 'RF_FORBIDDEN', 'ST staff cannot set the safety stock');
+  current_setting('test.mat')::jsonb || '{"code":"MAT-B","name":"เขม่าดำ","safetyKg":99}'::jsonb))), 3, 'saveMaterial') $$, 'RF_FORBIDDEN', 'ST staff cannot set the safety stock with saveMaterial');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('materials', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.mat')::jsonb || '{"code":"MAT-B","name":"เขม่าดำ ใหม่"}'::jsonb))), 3, 'saveMaterial') $$, 'RF_FORBIDDEN', 'nor edit any other field of a material');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('materials', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.mat')::jsonb || '{"code":"MAT-NEW","name":"ใหม่"}'::jsonb))), 3, 'saveMaterial') $$, 'RF_FORBIDDEN', 'nor add a material');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('materials', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.mat')::jsonb || '{"code":"MAT-B","name":"เขม่าดำ","safetyKg":99}'::jsonb))), 3, 'receiveMaterial') $$, 'RF_FORBIDDEN',
+  'a materials list carried by another action is refused for ST staff too');
+select is(public.app_rf_master() ->> 'version', '3', 'nothing was written by the refused calls');
 
 -- 5. สร้างใบสั่งซื้อ -------------------------------------------------------------------------
 -- 5.1 ปฏิเสธต่อบทบาท (มีแต่ ST และ admin ที่สร้างได้: กลุ่มวางแผน / ผู้จัดการแผนก / RB / QA / WH / SR / ผู้ช่วยผู้จัดการแผนกอื่น สร้างไม่ได้)
@@ -250,8 +265,8 @@ select throws_ok($$ select rf3_t.create_po(rf3_t.new_po('PO-20261110-03', jsonb_
   jsonb_build_object('materialCode', 'MAT-A', 'qtyKg', 5, 'receivedKg', 5, 'lotNo', 'L-1', 'expiry', current_setting('test.exp')::bigint))))) $$, 'RF_INVALID_PURCHASE',
   'a new order cannot carry receipt data');
 select throws_ok($$ select rf3_t.create_po(rf3_t.new_po('PO-20261110-03', '{"lines":[{"materialCode":"MAT-A","qtyKg":5,"receivedKg":5}]}')) $$, 'RF_INVALID_PURCHASE', 'receipt data must be complete or absent');
--- วัตถุดิบที่พ่วงมากับใบสั่งซื้อแก้ได้เฉพาะ safetyKg (ชุด materials ผ่านประตูหยาบได้เฉพาะกลุ่มวางแผน / RB: ST ได้ RF_FORBIDDEN ที่ประตูนั้น จึงตรวจด้วย admin ซึ่งสร้างใบได้และอยู่ในกลุ่มวางแผน)
-select public.app_sandbox_enter(current_setting('test.p_sbx_admin_t')::uuid);
+-- วัตถุดิบที่พ่วงมากับใบสั่งซื้อแก้ได้เฉพาะ safetyKg (ชุด materials ผ่านประตูหยาบได้สำหรับ ST เฉพาะกับคำสั่ง createPurchaseOrder แล้วตัวเขียนวัตถุดิบตรวจช่อง)
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object(
   'materials', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.mat')::jsonb || '{"code":"MAT-A","name":"เปลี่ยนชื่อ","safetyKg":50,"shelfLifeDays":365}'::jsonb)),
   'purchaseOrders', jsonb_build_object('upsert', jsonb_build_array(rf3_t.new_po('PO-20261110-03')))), rf3_t.ver(), 'createPurchaseOrder') $$, 'RF_INVALID_MATERIAL',
@@ -266,18 +281,30 @@ select throws_ok($$ select public.app_rf_save(jsonb_build_object(
   'an order cannot create a material');
 select is(public.app_rf_master() ->> 'version', '3', 'nothing was written by the refused calls');
 
--- 5.3 สร้างสำเร็จ: admin (พ่วงแก้ safetyKg; ชุด materials ผ่านประตูหยาบไม่ได้สำหรับ ST) และ ST (จากส่วนที่ขาดของใบเบิก)
-select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
-select throws_ok($$ select public.app_rf_save(jsonb_build_object(
-  'materials', jsonb_build_object('upsert', jsonb_build_array((select m || '{"safetyKg":60}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materials') m where m ->> 'code' = 'MAT-A'))),
-  'purchaseOrders', jsonb_build_object('upsert', jsonb_build_array(rf3_t.new_po('PO-20261110-01')))), rf3_t.ver(), 'createPurchaseOrder') $$, 'RF_FORBIDDEN',
-  'ST staff cannot change a material safety stock together with an order (the materials list is refused)');
+-- 5.3 สร้างสำเร็จ: admin (พ่วงแก้ safetyKg) และ ST (จากส่วนที่ขาดของใบเบิก · พ่วงแก้ safetyKg ในหัวข้อ 7)
+-- คนที่สร้างใบไม่ได้เปลี่ยนสต็อกขั้นต่ำของเคมีทางใบก็ไม่ได้: ชุด materials ที่พ่วงมาย้อนพร้อมใบที่ถูกปฏิเสธ (ไม่เขียนอะไรเลย)
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
-select throws_ok($$ select public.app_rf_save(jsonb_build_object(
-  'materials', jsonb_build_object('upsert', jsonb_build_array((select m || '{"safetyKg":60}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materials') m where m ->> 'code' = 'MAT-A'))),
-  'purchaseOrders', jsonb_build_object('upsert', jsonb_build_array(rf3_t.new_po('PO-20261110-01')))), rf3_t.ver(), 'createPurchaseOrder') $$, 'RF_FORBIDDEN',
+select throws_ok($$ select rf3_t.create_po_safety(rf3_t.new_po('PO-20261110-01'), 'MAT-A', 60) $$, 'RF_FORBIDDEN',
   'a planner cannot create an order even with a safety stock change (and nothing of it is written)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select throws_ok($$ select rf3_t.create_po_safety(rf3_t.new_po('PO-20261110-01'), 'MAT-A', 60) $$, 'RF_FORBIDDEN',
+  'an RB member cannot create an order even with a safety stock change (and nothing of it is written)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
+select throws_ok($$ select rf3_t.create_po_safety(rf3_t.new_po('PO-20261110-01'), 'MAT-A', 60) $$, 'RF_FORBIDDEN', 'QA staff cannot change a material safety stock together with an order');
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select throws_ok($$ select rf3_t.create_po_safety(rf3_t.new_po('PO-20261110-01'), 'MAT-A', 60) $$, 'RF_FORBIDDEN', 'WH staff cannot change a material safety stock together with an order');
+select public.app_sandbox_enter(current_setting('test.p_sbx_sr_staff')::uuid);
+select throws_ok($$ select rf3_t.create_po_safety(rf3_t.new_po('PO-20261110-01'), 'MAT-A', 60) $$, 'RF_FORBIDDEN', 'SR staff cannot change a material safety stock together with an order');
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_amgr')::uuid);
+select throws_ok($$ select rf3_t.create_po_safety(rf3_t.new_po('PO-20261110-01'), 'MAT-A', 60) $$, 'RF_FORBIDDEN',
+  'an assistant manager of another department cannot change a material safety stock together with an order');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select throws_ok($$ select rf3_t.create_po_safety(rf3_t.new_po('PO-20261110-01'), 'MAT-A', 60, 'receivePurchaseLine') $$, 'RF_FORBIDDEN',
+  'ST staff cannot carry a materials list with the receipt action');
+select throws_ok($$ select rf3_t.create_po_safety(rf3_t.new_po('PO-20261110-01'), 'MAT-A', 60, 'cancelPurchaseOrder') $$, 'RF_FORBIDDEN',
+  'nor with the cancel action');
 select is(public.app_rf_master() ->> 'version', '3', 'the refused calls wrote nothing');
+select is((select (m ->> 'safetyKg')::numeric from jsonb_array_elements(public.app_rf_master() -> 'materials') m where m ->> 'code' = 'MAT-A'), 50::numeric, 'and the safety stock of the chemical is still 50');
 select public.app_sandbox_enter(current_setting('test.p_sbx_admin_t')::uuid);
 select set_config('test.res', public.app_rf_save(jsonb_build_object(
   'materials', jsonb_build_object('upsert', jsonb_build_array((select m || '{"safetyKg":60}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materials') m where m ->> 'code' = 'MAT-A'))),
@@ -434,7 +461,15 @@ select throws_ok($$ select rf3_t.recv(rf3_t.receipt_po('PO-20261110-02', 1, 35, 
 -- 7. ยกเลิก (ST หรือ admin เฉพาะใบ ordered ที่ยังไม่มีบรรทัดไหนรับเข้า) ------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select ok(rf3_t.create_po(rf3_t.new_po('PO-20261110-03', '{"lines":[{"materialCode":"MAT-A","needKg":5,"availableKg":0,"shortageKg":5,"safetyKg":60,"qtyKg":5}]}')) is not null, 'ST staff creates a third order');
-select ok(rf3_t.create_po(rf3_t.new_po('PO-20261110-04')) is not null, 'and a fourth order');
+-- ST เปลี่ยน safetyKg ของเคมีเป็นส่วนหนึ่งของการสร้างใบ (MAT-B 20 -> 25): ช่องอื่นของวัตถุดิบไม่เปลี่ยน เวอร์ชัน RubberFlow เพิ่มหนึ่งครั้ง
+select set_config('test.vs', rf3_t.ver()::text, true);
+select set_config('test.res', rf3_t.create_po_safety(rf3_t.new_po('PO-20261110-04'), 'MAT-B', 25)::text, true);
+select is(current_setting('test.res')::jsonb ->> 'version', (current_setting('test.vs')::bigint + 1)::text, 'ST staff creates a fourth order and changes the safety stock of a chemical in one save');
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'materials' -> 'upsert' -> 0 ->> 'safetyKg', '25', 'the safety stock edited with the order is saved');
+select is((select m - 'createdAt' from jsonb_array_elements(public.app_rf_master() -> 'materials') m where m ->> 'code' = 'MAT-B'),
+  '{"code":"MAT-B","name":"เขม่าดำ","category":"เคมี","storage":"โกดัง A-1","uom":"kg","active":true,"safetyKg":25,"shelfLifeDays":90}'::jsonb,
+  'and nothing else of the material changed');
+select is((select count(*) from jsonb_array_elements(public.app_rf_master() -> 'purchaseOrders') p where p ->> 'id' = 'PO-20261110-04'), 1::bigint, 'the order was created');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select rf3_t.cancel_po('PO-20261110-03') $$, 'RF_FORBIDDEN', 'an RB member cannot cancel an order');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);

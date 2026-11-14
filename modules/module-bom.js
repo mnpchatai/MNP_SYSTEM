@@ -277,6 +277,49 @@
     if (retired.length) throw new Error(`${retired.join(", ")} เลิกใช้แล้ว เพิ่มเป็นบรรทัดใหม่ของ ${target.code} ไม่ได้`);
     return { code: target.code, note: String(p.note ?? "").trim() || `คัดลอกโครงสร้างจาก ${from}`, nodes: [...keep.map(lineNode), ...added.map(lineNode)] };
   }
+  // ย้ายบรรทัด (หน้าต่าง lineMove): p.childCode ออกจาก BOM ของ p.fromCode ไปต่อท้าย BOM ของ p.toCode · ทั้งสองต้องอยู่ในโครงสร้างของ p.code (รายการที่เปิดอยู่)
+  // ต้นไม้ที่ส่งให้ saveBomTree มี children เฉพาะกิ่งที่พาไปถึงชิ้นแม่ทั้งสอง (BOM อื่นไม่ถูกส่ง จึงไม่ถูกแตะ) · ชิ้นแม่เดิมต้องเหลืออย่างน้อย 1 บรรทัด
+  function treeFromLineMove(p) {
+    const data = store.data();
+    const rootItem = lineParent(data, p.code);
+    const from = lineParent(data, p.fromCode);
+    if (!String(p.toCode ?? "").trim()) throw new Error("เลือกชิ้นที่จะย้ายไปอยู่ใต้");
+    const to = lineParent(data, p.toCode);
+    const childCode = rules.canonicalCode(p.childCode);
+    const child = actions.helpers.itemOf(data, childCode);
+    const fromLines = linesOf(data, from.code);
+    const line = fromLines.find((entry) => entry.childCode === childCode);
+    if (!line || !child) throw new Error(`ไม่พบ ${childCode} ใน BOM ของ ${from.code} แล้ว ปิดหน้าต่างแล้วเปิดใหม่`);
+    if (from.code === to.code) throw new Error("บรรทัดนี้อยู่ใต้ชิ้นนั้นอยู่แล้ว");
+    if (fromLines.length < 2) throw new Error(`${from.code} มีบรรทัดเดียว ย้ายออกไม่ได้ (BOM ต้องมีอย่างน้อย 1 บรรทัด)`);
+    const toLines = linesOf(data, to.code);
+    if (toLines.some((entry) => entry.childCode === childCode)) throw new Error(`${childCode} อยู่ใน BOM ของ ${to.code} แล้ว`);
+    const kindError = rules.childKindError(to.kind, child.kind);
+    if (kindError) throw new Error(`${to.code} รับ ${childCode} ไม่ได้: ${kindError}`);
+    // ย้ายเข้าไปใต้ตัวเองหรือใต้ส่วนประกอบของตัวเอง = วงจร
+    const under = new Set();
+    const collect = (code, depth = 0) => { if (under.has(code) || depth > 12) return; under.add(code); linesOf(data, code).forEach((entry) => collect(entry.childCode, depth + 1)); };
+    collect(childCode);
+    if (under.has(to.code)) throw new Error(`${to.code} อยู่ข้างใต้ ${childCode} ย้ายแล้วจะเป็นวงจร`);
+    const edits = new Map([[from.code, fromLines.filter((entry) => entry !== line).map(lineNode)], [to.code, [...toLines.map(lineNode), { ...lineNode(line), step: "" }]]]);
+    const nodesOf = (code) => edits.get(code) ?? linesOf(data, code).map(lineNode);
+    const memo = new Map();
+    const touches = (code, depth = 0) => {
+      if (memo.has(code)) return memo.get(code);
+      memo.set(code, false);
+      const hit = edits.has(code) || (depth < 12 && nodesOf(code).some((node) => touches(node.code, depth + 1)));
+      memo.set(code, hit);
+      return hit;
+    };
+    const reached = new Set();
+    const build = (code, depth = 0) => {
+      if (edits.has(code)) reached.add(code);
+      return nodesOf(code).map((node) => (depth < 12 && touches(node.code) ? { ...node, children: build(node.code, depth + 1) } : node));
+    };
+    const nodes = build(rootItem.code);
+    if (reached.size !== edits.size) throw new Error("ชิ้นที่เลือกไม่อยู่ในโครงสร้างของรายการที่เปิดอยู่");
+    return { code: rootItem.code, note: String(p.note ?? "").trim() || `ย้าย ${childCode} จาก ${from.code} ไป ${to.code}`, nodes };
+  }
   // แทรก WIP คั่น (หน้าต่าง wipInsert): บรรทัด p.childCode ของชิ้นแม่ p.code ถูกแทนด้วยชิ้นใหม่ ซึ่งมีบรรทัดเดิมเป็นส่วนประกอบเดียว · บรรทัดอื่นของชิ้นแม่ส่งกลับตามที่เก็บ
   function treeFromWipInsert(p) {
     const data = store.data();
@@ -327,7 +370,7 @@
     createOrder: (p) => ({ ...p, orderedAt: rules.fromInputDate(p.orderedAt), whDue: rules.fromInputDate(p.whDue), due: dueFrom(p.due), autoDue: p.autoDue === "1" || p.autoDue === "on" }),
     // ฟอร์ม "เพิ่มส่วนประกอบ" ของหน้าสินค้า (lineAdd) ใช้คำสั่งเดียวกัน: บรรทัดเดิมของ BOM อ่านจากข้อมูลล่าสุดตอนกดบันทึก แล้วต่อบรรทัดใหม่
     // หน้าต่างของหน้าสินค้าอีกสามแบบใช้คำสั่งเดียวกัน: วางหลายบรรทัด (linesPaste) คัดลอกโครงสร้าง (treeCopy) ข้อมูลเส้นยางที่มีบรรทัดสูตรยาง (rubberEdit)
-    saveBomTree: (p) => (p.lineAdd ? treeFromLineAdd(p) : p.linesPaste ? treeFromPaste(p) : p.treeCopy ? treeFromCopy(p) : p.rubberEdit ? treeFromRubberEdit(p) : p.wipInsert ? treeFromWipInsert(p) : treeFromRows(p)),
+    saveBomTree: (p) => (p.lineAdd ? treeFromLineAdd(p) : p.linesPaste ? treeFromPaste(p) : p.treeCopy ? treeFromCopy(p) : p.rubberEdit ? treeFromRubberEdit(p) : p.wipInsert ? treeFromWipInsert(p) : p.lineMove ? treeFromLineMove(p) : treeFromRows(p)),
     // ฟอร์มแก้บรรทัดเดียวของ BOM (หน้าสินค้า): childCode[] + qty[] + scrapPct[] + lineNote[] + lineStep[] ของทุกบรรทัด → lines ของ saveBom
     // บรรทัดที่แก้ (editCode) ถ้าปริมาณในฟอร์มต่างจากเดิม (origQty) ไม่ถึง 1e-6 ใช้ค่าเดิม คงอัตราส่วนเช่น 1/31 ไว้เต็มความละเอียด
     saveBom: (p) => (Array.isArray(p.lines) ? p : {
