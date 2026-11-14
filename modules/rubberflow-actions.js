@@ -479,6 +479,8 @@
     needRight(ctx, "purchase");
     d.purchaseOrders ??= [];
     const safety = p.safety && typeof p.safety === "object" ? p.safety : {};
+    // สต็อกขั้นต่ำของเคมีแก้ได้เฉพาะผู้ที่แก้วัตถุดิบได้ (กลุ่มวางแผน / RB ตามประตูของ app_rf_save) · ผู้สั่งที่ไม่มีสิทธิ์นั้น (ST) สั่งด้วยค่าที่เก็บอยู่ ไม่แตะวัตถุดิบ
+    const maySafety = !ctx.remote || MAY.master(ctx.user);
     const given = (Array.isArray(p.lines) ? p.lines : []).filter((line) => Number(line?.qtyKg) > 0);
     if (!given.length) fail("กรุณาระบุจำนวนสั่งอย่างน้อย 1 รายการ");
     if (given.length > PO_MAX_LINES) fail(`ใบสั่งซื้อมีได้ไม่เกิน ${PO_MAX_LINES} รายการ`);
@@ -507,8 +509,8 @@
       if (material.active === false) fail(`วัตถุดิบ ${code} เลิกใช้แล้ว สั่งซื้อไม่ได้`);
       if (seen.has(code)) fail(`${code} ซ้ำในใบสั่งซื้อ`);
       seen.add(code);
-      const safetyKg = kgOf(Object.hasOwn(safety, code) ? safety[code] : line.safetyKg ?? material.safetyKg ?? 0, `สต็อกขั้นต่ำของ ${code}`);
-      if (safetyKg !== (Number(material.safetyKg) || 0)) {
+      const safetyKg = maySafety ? kgOf(Object.hasOwn(safety, code) ? safety[code] : line.safetyKg ?? material.safetyKg ?? 0, `สต็อกขั้นต่ำของ ${code}`) : kgOf(material.safetyKg ?? 0, `สต็อกขั้นต่ำของ ${code}`);
+      if (maySafety && safetyKg !== (Number(material.safetyKg) || 0)) {
         material.safetyKg = safetyKg;
         audit(d, ctx, "แก้สต็อกขั้นต่ำ", `${code} = ${safetyKg} kg`);
       }
@@ -520,6 +522,7 @@
     });
     // สต็อกขั้นต่ำที่แก้ไว้ของวัตถุดิบที่ไม่ได้สั่งครั้งนี้ก็บันทึกเข้าวัตถุดิบด้วย
     for (const [code, value] of Object.entries(safety)) {
+      if (!maySafety) break;
       const material = seen.has(code) ? null : d.materials.find((row) => row.code === code);
       if (!material || material.active === false) continue;
       const safetyKg = kgOf(value, `สต็อกขั้นต่ำของ ${code}`);

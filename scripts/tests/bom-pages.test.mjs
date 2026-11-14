@@ -2270,3 +2270,28 @@ test("purchasing belongs to the raw-material store: the purchase dialog is read-
   assert.match(html, new RegExp(`>ต้องทำ ${tasks.length + 1}<`), "the tab counts the store jobs with the part card of the released PI");
   assert.doesNotMatch(env.context.MNP_BOM_PAGES.work(stCtx(["viewPurchase"])).html, /รับเข้าตามใบสั่งซื้อ|สั่งซื้อของที่ขาด/);
 });
+
+test("an inserted WIP item enters the parent at the step its line was ticked for in the production steps, and the store orders without touching a chemical's safety stock", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const parent = "DEMO-TP-01(P)-Y";
+  const child = "PT-00320";
+  const processes = env.context.MNP_BOM_ACTIONS.helpers.processesOf(env.store.data()).filter((entry) => entry.dept === "PK").slice(0, 2).map((entry) => entry.code);
+  assert.equal(processes.length, 2);
+  assert.equal(env.store.run("saveRouting", { itemCode: parent, steps: [{ processCode: processes[0], minutesPerPc: 1, inputs: [] }, { processCode: processes[1], minutesPerPc: 1, inputs: [child] }] }).ok, true);
+  await env.submit("p=find", "saveBomTree", { wipCode: "WIP-STEP-1", wipName: "ชุดประกอบ", wipKind: "SUBPART", wipUom: "pcs", wipQty: "1", childQty: "" }, { wipInsert: true, code: parent, childCode: child });
+  const line = env.store.data().boms.find((bom) => bom.itemCode === parent && bom.status === "approved").lines.find((entry) => entry.childCode === "WIP-STEP-1");
+  assert.equal(line.step, 2, "the new item takes the step the moved line was routed to");
+  // ใบสั่งซื้อของผู้ที่แก้วัตถุดิบไม่ได้ (ST ในโหมดฐานข้อมูล): ค่าสต็อกขั้นต่ำที่เก็บแบบมีทศนิยมยาวไม่ถูกเขียนทับ จึงไม่มีชุด materials ไปกับใบ
+  const A = env.context.MNP_RUBBERFLOW_ACTIONS;
+  const d = json(env.rf.store.data());
+  const material = d.materials[0];
+  material.safetyKg = 12.3456;
+  const ctx = (user) => ({ user, now: Date.now(), remote: true });
+  const payload = { lines: [{ materialCode: material.code, needKg: 1, availableKg: 0, shortageKg: 1, safetyKg: 12.346, qtyKg: 5 }], safety: { [material.code]: 12.346 } };
+  A.createPurchaseOrder(d, payload, ctx({ name: "คลัง", role: "store", st: true }));
+  assert.equal(d.materials[0].safetyKg, 12.3456, "the store's order leaves the stored safety stock alone");
+  assert.equal(d.purchaseOrders.at(-1).lines[0].safetyKg, 12.346);
+  A.createPurchaseOrder(d, { ...payload, safety: { [material.code]: 20 } }, ctx({ name: "ผู้ดูแล", role: "admin", planner: true }));
+  assert.equal(d.materials[0].safetyKg, 20, "an account that may edit materials still changes it with the order");
+});

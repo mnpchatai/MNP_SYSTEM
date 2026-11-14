@@ -3153,8 +3153,8 @@ table.bom-tree td.right { white-space: nowrap; }
 .bom-copy-tree li.is-skip .bom-copy-name { font-weight: 400; text-decoration: line-through; color: var(--muted); }
 .bom-tree-name[aria-current="true"] { background: var(--primary-soft); color: var(--primary-ink); }
 /* หน้าต่างสั่งซื้อ: แถวที่ต้องสั่งและช่องจำนวนสั่งของแถวนั้น */
-.rf-page .rf-table tr.rf-po-need td { background: color-mix(in srgb, var(--warning, #b7791f) 12%, var(--paper)); }
-.rf-page .rf-table tr.rf-po-need [data-rf-qty] { border-color: var(--warning, #b7791f); border-width: 2px; font-weight: 700; }
+.rf-modal .rf-table tr.rf-po-need td { background: color-mix(in srgb, var(--warning, #b7791f) 12%, var(--paper)); }
+.rf-modal .rf-table tr.rf-po-need [data-rf-qty] { border-color: var(--warning, #b7791f); border-width: 2px; font-weight: 700; }
 /* แถบลากปรับความกว้างของแผงรายละเอียด (เฉพาะจอกว้างที่ต้นไม้กับแผงอยู่ข้างกัน) */
 .bom-tree-split { display: none; }
 @media (min-width: 1041px) {

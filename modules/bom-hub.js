@@ -170,7 +170,7 @@
     // แผงข้างไม่เป็น aria-live (อ่านซ้ำทั้งแผงทุกครั้งที่คลิก): โปรแกรมอ่านจอได้ยินแค่ชื่อบรรทัดที่เลือกจาก [data-tree-status] และบรรทัดที่เลือกมี aria-current
     const aside = `<aside class="card rf-card bom-tree-side" data-tree-side aria-label="รายละเอียดของบรรทัดที่เลือก"><p class="muted">เลือกบรรทัดเพื่อดูรายละเอียด</p></aside>`;
     // แถบลากระหว่างต้นไม้กับแผงรายละเอียด (จอกว้าง): ลาก หรือลูกศรซ้าย/ขวา ปรับความกว้างของแผง ดับเบิลคลิกคืนค่าเดิม · จำค่าไว้ในเบราว์เซอร์นี้
-    const split = rows.length ? '<div class="bom-tree-split" role="separator" aria-orientation="vertical" tabindex="0" aria-label="ปรับความกว้างของแผงรายละเอียด" title="ลากเพื่อปรับความกว้าง ดับเบิลคลิกเพื่อคืนค่าเดิม" data-tree-split></div>' : "";
+    const split = rows.length ? '<div class="bom-tree-split" role="separator" aria-orientation="vertical" tabindex="0" aria-label="ปรับความกว้างของแผงรายละเอียด" title="ลากหรือกดลูกศรซ้าย/ขวาเพื่อปรับความกว้าง ดับเบิลคลิกเพื่อคืนค่าเดิม" data-tree-split></div>' : "";
     const html = `${warn}${rodCard}<div class="bom-tree-layout" data-tree-layout><section class="card rf-card"><div class="bom-tree-bar">${qtyForm}${folds}</div>${table}<p class="sr-only" role="status" data-tree-status></p></section>${split}${rows.length ? aside : ""}</div>`;
     // รายละเอียดของบรรทัดที่เลือก (สร้างตอนคลิก ไม่วาดล่วงหน้าทุกบรรทัด)
     const detailHtml = (line) => {
@@ -412,35 +412,41 @@
     const handle = rootNode.querySelector("[data-tree-split]");
     if (!layout || !handle) return;
     const limit = () => Math.max(SIDE_MIN, Math.round(layout.getBoundingClientRect().width * 0.6));
+    const describe = (value) => { handle.setAttribute("aria-valuenow", String(value)); handle.setAttribute("aria-valuemax", String(limit())); handle.setAttribute("aria-valuetext", `แผงรายละเอียดกว้าง ${value} พิกเซล`); };
+    const store = (value) => { try { root.localStorage?.setItem(SIDE_KEY, String(value)); } catch { /* เก็บไม่ได้: ใช้ได้เฉพาะรอบนี้ */ } };
     const apply = (width, save = true) => {
       const value = Math.min(limit(), Math.max(SIDE_MIN, Math.round(width)));
       layout.style.setProperty("--side-w", `${value}px`);
-      handle.setAttribute("aria-valuenow", String(value));
-      if (save) { try { root.localStorage?.setItem(SIDE_KEY, String(value)); } catch { /* เก็บไม่ได้: ใช้ได้เฉพาะรอบนี้ */ } }
+      describe(value);
+      if (save) store(value);
+      return value;
     };
     const current = () => rootNode.querySelector("[data-tree-side]")?.getBoundingClientRect().width ?? 340;
     handle.setAttribute("aria-valuemin", String(SIDE_MIN));
+    const side = rootNode.querySelector("[data-tree-side]");
+    if (side) { side.id ||= "bom-tree-side"; handle.setAttribute("aria-controls", side.id); }
     let stored = 0;
     try { stored = Number(root.localStorage?.getItem(SIDE_KEY)) || 0; } catch { stored = 0; }
-    if (stored >= SIDE_MIN) apply(stored, false);
+    if (stored >= SIDE_MIN) apply(stored, false); else describe(Math.round(current()));
     handle.addEventListener("pointerdown", (event) => {
       if (event.button > 0) return;
       event.preventDefault();
       const right = layout.getBoundingClientRect().right;
       handle.setPointerCapture?.(event.pointerId);
       handle.classList.add("is-dragging");
-      const move = (moveEvent) => apply(right - moveEvent.clientX);
-      const stop = () => { handle.classList.remove("is-dragging"); handle.removeEventListener("pointermove", move); handle.removeEventListener("pointerup", stop); handle.removeEventListener("pointercancel", stop); };
+      let last = 0;
+      const move = (moveEvent) => { last = apply(right - moveEvent.clientX, false); };
+      const stop = () => { if (last) store(last); handle.classList.remove("is-dragging"); handle.removeEventListener("pointermove", move); handle.removeEventListener("pointerup", stop); handle.removeEventListener("pointercancel", stop); };
       handle.addEventListener("pointermove", move);
       handle.addEventListener("pointerup", stop);
       handle.addEventListener("pointercancel", stop);
     });
     handle.addEventListener("keydown", (event) => {
-      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
       event.preventDefault();
-      apply(current() + (event.key === "ArrowLeft" ? 24 : -24));
+      apply(event.key === "Home" ? SIDE_MIN : event.key === "End" ? limit() : current() + (event.key === "ArrowLeft" ? 24 : -24));
     });
-    handle.addEventListener("dblclick", () => { layout.style.removeProperty("--side-w"); handle.removeAttribute("aria-valuenow"); try { root.localStorage?.removeItem(SIDE_KEY); } catch { /* ไม่มีอะไรต้องลบ */ } });
+    handle.addEventListener("dblclick", () => { layout.style.removeProperty("--side-w"); describe(Math.round(current())); try { root.localStorage?.removeItem(SIDE_KEY); } catch { /* ไม่มีอะไรต้องลบ */ } });
   }
 
   // dialog: แทรกชิ้นงานระหว่างทาง (WIP) คั่นระหว่างชิ้นแม่กับบรรทัดที่เลือก · ชิ้นแม่ → [WIP ใหม่] → บรรทัดเดิม

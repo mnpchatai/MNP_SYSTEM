@@ -1472,7 +1472,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
             else if (bomCanon(bomWithout(line, stamps)) !== bomCanon(bomWithout(old, stamps))) other = true;
           });
         }
-        // ยกเลิก: สิทธิ์ก่อน (กลุ่มวางแผน) แล้วค่อยตรวจสถานะ — เฉพาะใบ ordered ที่ไม่มีบรรทัดรับเข้า
+        // ยกเลิก: สิทธิ์ก่อน (แผนก ST หรือ admin) แล้วค่อยตรวจสถานะ — เฉพาะใบ ordered ที่ไม่มีบรรทัดรับเข้า
         if (record.status === "cancelled" && prev.status !== "cancelled") {
           if (!stOrAdmin) fail("RF_FORBIDDEN");
           if (action !== "cancelPurchaseOrder") fail(bad);
@@ -1480,7 +1480,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
           put({ ...prev, status: "cancelled", cancelledAt: at });
           return null;
         }
-        // ที่เหลือที่ยอมให้มีได้ทางเดียวคือรับเข้าหนึ่งบรรทัด (ST หรือกลุ่มวางแผน) ที่มาพร้อมล็อตใหม่
+        // ที่เหลือที่ยอมให้มีได้ทางเดียวคือรับเข้าหนึ่งบรรทัด (แผนก ST หรือ admin) ที่มาพร้อมล็อตใหม่
         if (!changed.length) fail("RF_INVALID_TRANSITION");
         if (!stOrAdmin) fail("RF_FORBIDDEN");
         if (action !== "receivePurchaseLine") fail(bad);

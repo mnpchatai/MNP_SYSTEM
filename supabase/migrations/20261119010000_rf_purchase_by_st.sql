@@ -23,6 +23,8 @@
 -- ลำดับ deploy: Pilot Web ในรุ่นเดียวกันซ่อนปุ่มสั่งซื้อ / รับของ / ยกเลิกจากกลุ่มวางแผนและ RB อยู่แล้ว
 --   Pilot Web รุ่นใหม่กับฐานข้อมูลเก่า: ใช้ไม่ได้ครบ — ฐานข้อมูลเก่าปฏิเสธ ST ที่สร้างหรือยกเลิกใบสั่งซื้อ (RF_FORBIDDEN) และรุ่นใหม่ไม่มีปุ่มสั่งให้กลุ่มวางแผน / RB แล้ว จึงไม่มีใครสั่งซื้อได้
 --     (รับเข้าโดย ST ยังได้) => ต้อง apply ไฟล์นี้ก่อน merge Pilot Web ตาม "Deployment order" ใน AGENTS.md
+--     ช่วงที่ apply แล้วแต่ยังไม่ merge (Pilot รุ่นเก่ากับฐานข้อมูลใหม่) ก็ยังไม่มีใครสั่งซื้อได้เช่นกัน เพราะรุ่นเก่าไม่มีปุ่มสั่งให้ ST: apply แล้ว merge ต่อเนื่องกัน
+--   หมายเหตุ admin: private.rf_actor() คืนบัญชีทดสอบ (persona) จึงมีผลเฉพาะ persona ที่มีบทบาท admin ซึ่งชุดตั้งต้นไม่มี — ในการใช้งานจริงผู้สั่ง/รับคือ persona แผนก ST
 --   Pilot Web รุ่นเก่ากับฐานข้อมูลใหม่: กลุ่มวางแผน / RB ที่ยังเห็นปุ่มจะได้ RF_FORBIDDEN (ไม่พังอย่างอื่น)
 --   ก่อน apply ที่ production ต้องได้รับอนุมัติจากผู้ใช้ และเทียบ md5(pg_get_functiondef(oid)) ของสองฟังก์ชันกับนิยามในไฟล์ที่ระบุข้างต้นก่อน
 --
@@ -206,7 +208,7 @@ begin
           select * into v_stock from public.bom_stock s where s.is_test and s.item_code = v_item.code for update;
           if found then
             if v_stock.safety_qty <> v_safety then
-              -- สต็อกขั้นต่ำเปลี่ยนได้เฉพาะกลุ่มวางแผน (สมาชิก RB สร้างใบที่ไม่แตะสต็อกขั้นต่ำได้)
+              -- สต็อกขั้นต่ำเปลี่ยนได้เฉพาะกลุ่มวางแผน (ST สร้างใบที่ไม่แตะสต็อกขั้นต่ำได้)
               if not p_planner then raise exception 'RF_FORBIDDEN'; end if;
               update public.bom_stock set safety_qty = v_safety, updated_at = now() where id = v_stock.id;
               v_bom_n := v_bom_n + 1;

@@ -290,7 +290,10 @@
     if (actions.helpers.itemOf(data, code)) throw new Error(`มีรหัส ${code} อยู่แล้ว ใช้รหัสใหม่สำหรับชิ้นที่แทรก`);
     if (p.wipKind === "RB" || p.wipKind === "FG" || actions.helpers.NO_BOM_KINDS.includes(p.wipKind)) throw new Error("ชนิดนี้ใช้เป็นชิ้นที่แทรกคั่นไม่ได้");
     const childQty = p.childQty === undefined || p.childQty === "" || Math.abs(Number(p.childQty) - line.qty) <= 1e-6 ? line.qty : p.childQty;
-    const node = { code, qty: p.wipQty, scrapPct: 0, note: "", step: line.step ?? "", newItem: { kind: p.wipKind, name: p.wipName, uom: p.wipUom, ownerDept: p.wipDept || undefined }, children: [{ ...lineNode(line), qty: childQty, step: "" }] };
+    // ขั้นของชิ้นแม่ที่บรรทัดเดิมเข้า: "ขั้นที่" ของบรรทัด หรือขั้นตอนผลิตที่ติ๊กบรรทัดนี้ไว้ (routing inputs อ้างรหัสลูก ซึ่งจะไม่ใช่ลูกของชิ้นแม่แล้ว) ชิ้นใหม่จึงเข้าที่ขั้นเดียวกัน
+    const routed = (actions.helpers.routingOf(data, parent.code)?.steps ?? []).findIndex((step) => (step.inputs ?? []).includes(childCode));
+    const step = line.step || (routed >= 0 && routed < 20 ? routed + 1 : "");
+    const node = { code, qty: p.wipQty, scrapPct: 0, note: "", step, newItem: { kind: p.wipKind, name: p.wipName, uom: p.wipUom, ownerDept: p.wipDept || undefined }, children: [{ ...lineNode(line), qty: childQty, step: "" }] };
     return { code: parent.code, note: String(p.note ?? "").trim() || `แทรก ${code} คั่นก่อน ${childCode}`, nodes: current.map((entry) => (entry === line ? node : lineNode(entry))) };
   }
   // หน้าต่าง "ข้อมูลเส้นยาง": สูตรยาง + ข้อมูลการตัด + น้ำหนัก · เปลี่ยนสูตรที่มีอยู่ต้องติ๊กยืนยันในฟอร์ม (confirmCompound) ไม่เช่นนั้นไม่ส่งคำสั่ง
@@ -394,7 +397,7 @@
       if (notice) showToast(notice.text, notice.type);
       // WO ที่ฐานข้อมูลเปิด/ยกเลิกให้ ตามทันฝั่ง RubberFlow ให้เลข WO และหน้าของ RubberFlow เป็นปัจจุบัน
       if (outcome.rubberflow) { try { window.MNP_RUBBERFLOW?.store?.catchUp?.(); } catch { /* RubberFlow ตามทันเองตอนเปิดหน้า */ } }
-      // ปล่อยผลิตแล้วเปิด WO ให้งาน RB และ/หรือมีงานของซื้อ (ST): ตรวจเคมีที่ WO เหล่านั้นต้องใช้และของซื้อของใบเทียบสต็อก ขาด = เปิด dialog สั่งซื้อ (ผู้ที่สั่งซื้อไม่ได้ไม่เห็น) · ที่เหลือแจ้งสั้นๆ ว่าพอ
+      // ปล่อยผลิตแล้วเปิด WO ให้งาน RB และ/หรือมีงานของซื้อ (ST): ตรวจเคมีที่ WO เหล่านั้นต้องใช้และของซื้อของใบเทียบสต็อก ขาด = เปิด dialog สั่งซื้อให้ผู้ที่สั่งได้ (ST) ผู้ที่ดูได้อย่างเดียวได้ข้อความแจ้งสั้นๆ · ที่เหลือแจ้งสั้นๆ ว่าพอ
       const opened = name === "releaseOrder" && Array.isArray(outcome.rubberflow?.opened) ? outcome.rubberflow.opened : [];
       const hasParts = name === "releaseOrder" && store.isRemote() && store.data().jobs.some((job) => job.orderId === payload?.orderId && actions.helpers.isPartJob(job));
       if (opened.length || hasParts) {

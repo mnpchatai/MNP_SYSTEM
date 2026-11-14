@@ -171,6 +171,8 @@
     // ฟอร์มสั่งซื้อ: materialCode[] source[] uom[] needKg[] availableKg[] shortageKg[] safetyKg[] qtyKg[] ตามลำดับแถว (เคมีก่อน ของซื้อตาม) → lines · safety = สต็อกขั้นต่ำที่แก้ไว้ต่อวัตถุดิบ (บันทึกเข้าวัตถุดิบ) · จำนวนสั่งที่ว่าง/0 ถูกข้ามใน action
     createPurchaseOrder: (p) => {
       const lines = listOf(p.materialCode).map((materialCode, index) => ({ materialCode, source: listOf(p.source)[index] === "bom" ? "bom" : "rf", uom: listOf(p.uom)[index] || undefined, storedSafetyKg: listOf(p.storedSafetyKg)[index], needKg: listOf(p.needKg)[index], availableKg: listOf(p.availableKg)[index], shortageKg: listOf(p.shortageKg)[index], safetyKg: listOf(p.safetyKg)[index], qtyKg: listOf(p.qtyKg)[index] }));
+      // หน้าต่างวางตารางที่มีแถวต้องสั่งไว้บน: ใบสั่งซื้อยังเรียงเคมีก่อนของซื้อเสมอ
+      lines.sort((x, y) => (x.source === "bom") - (y.source === "bom"));
       return { lines, safety: Object.fromEntries(lines.map((line) => [line.materialCode, line.safetyKg])), sourcePi: p.sourcePi, sourceRequisition: p.sourceRequisition, note: p.note };
     },
     createRecipe: (p) => ({ ...p, items: itemsOf(p), stages: stagesOf(p) }),
@@ -504,6 +506,10 @@
       if (auto && !result.anyShort && !parts?.anyShort) {
         const enough = [result.rows.length ? "เคมี" : "", parts?.rows.length ? "ของซื้อ" : ""].filter(Boolean);
         if (enough.length) showToast(enough.length === 2 ? "เคมีและของซื้อพอสำหรับใบนี้" : enough[0] === "เคมี" ? "เคมีพอสำหรับ WO ที่เปิด" : "ของซื้อพอสำหรับใบนี้");
+        return { ok: true, opened: false, result, parts };
+      }
+      if (auto && !mayOrder) {
+        showToast("มีของที่ยังขาดสำหรับใบนี้ คลังวัตถุดิบ (ST) เป็นผู้สั่งซื้อ ดูรายการได้ที่ปุ่ม “ตรวจวัตถุดิบ” ของใบ");
         return { ok: true, opened: false, result, parts };
       }
       openDialog("purchase", { woIds, sourcePi, skippedJobs, draftOrders, readOnly: !mayOrder }, ctx);
