@@ -989,6 +989,61 @@
       return { ...line, issued, returned, returnable: Math.max(0, Math.round((issued - returned) * 1e4) / 1e4) };
     });
   }
+  // ---------- สินค้าสำเร็จรูป (FG) ของใบ PI: คลังสินค้า (WH) รับเข้า แล้วส่งมอบลูกค้า ----------
+  // fgMoves = { id, orderId, fgCode, kind: receive | deliver | close, qty, note, at, by } เพิ่มต่ออย่างเดียว (โหมดฐานข้อมูล: เซิร์ฟเวอร์เขียนเอง) · close = ปิดใบเมื่อรับไม่ครบ (qty 0, note = เหตุผล)
+  // ยอดรับ ≤ ยอดที่ PK รายงานของสินค้านั้น · ยอดส่งมอบ ≤ ยอดรับ (ต่อใบ) · รับครบทุกสินค้าตามที่สั่ง = ใบปิดเอง · ยอดคงคลัง FG ต่อรหัส = Σ รับ − Σ ส่งมอบ ทุกใบ (ไม่ลดงานของใบร่างอื่น)
+  const fgRound = (n) => Math.round(Number(n) * 1e4) / 1e4;
+  const FG_EPS = 1e-9;
+  function fgPosition(data, order) {
+    const { jobs = [], fgMoves = [] } = data ?? {};
+    const moves = fgMoves.filter((move) => move.orderId === order.id);
+    const total = (code, kind) => fgRound(moves.filter((move) => move.kind === kind && move.fgCode === code).reduce((sum, move) => sum + (Number(move.qty) || 0), 0));
+    const pkJobs = jobs.filter((job) => job.orderId === order.id && job.dept === "PK");
+    const ordered = new Map();
+    for (const item of order.items ?? []) ordered.set(item.fgCode, fgRound((ordered.get(item.fgCode) ?? 0) + (Number(item.qty) || 0)));
+    const products = [...ordered].map(([fgCode, qty]) => {
+      const pkDone = fgRound(pkJobs.filter((job) => job.kind === "FG" && job.itemCode === fgCode).reduce((sum, job) => sum + (Number(job.qtyDone) || 0), 0));
+      const received = total(fgCode, "receive");
+      const delivered = total(fgCode, "deliver");
+      return { fgCode, ordered: qty, pkDone, received, delivered, receivable: Math.max(0, fgRound(pkDone - received)), deliverable: Math.max(0, fgRound(received - delivered)) };
+    });
+    const open = order.status === "released" || order.status === "in_progress";
+    const pkAllDone = pkJobs.every((job) => job.status === "done");
+    const anyReceived = products.some((product) => product.received > 0);
+    const closeMove = moves.filter((move) => move.kind === "close").sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0)).at(-1) ?? null;
+    return {
+      products,
+      pkAllDone,
+      anyReceived,
+      anyReceivable: products.some((product) => product.receivable > 0),
+      anyDeliverable: products.some((product) => product.deliverable > 0),
+      // รับครบทุกสินค้าตามที่สั่ง (ใบปิดเองเมื่อรับครั้งนั้น)
+      allReceived: products.length > 0 && products.every((product) => product.received + FG_EPS >= product.ordered),
+      // ปิดใบรับไม่ครบได้: งาน PK เสร็จทุกงาน PK ทำเท่าไรรับเข้าครบเท่านั้น และยังมีสินค้าที่รับน้อยกว่าที่สั่ง
+      canCloseShort: open && pkAllDone && products.every((product) => Math.abs(product.received - product.pkDone) <= FG_EPS) && products.some((product) => product.received + FG_EPS < product.ordered),
+      // ส่งมอบแล้ว (คำนวณ ไม่มีช่องเก็บ): ใบปิดแล้ว รับเข้าอย่างน้อยหนึ่งสินค้า และทุกสินค้าส่งมอบครบเท่าที่รับ
+      fullyDelivered: order.status === "completed" && anyReceived && products.every((product) => product.delivered + FG_EPS >= product.received),
+      waitingDelivery: order.status === "completed" && products.some((product) => product.deliverable > 0),
+      shortClose: closeMove ? { reason: closeMove.note, at: closeMove.at, by: closeMove.by } : null,
+      moves: moves.slice().sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0)),
+    };
+  }
+  // สินค้าสำเร็จรูปคงคลังต่อรหัส (ทุกใบ): { fgCode, onHand, orders: [{ orderId, qty }] } qty = ที่ใบนั้นรับเข้าและยังไม่ส่งมอบ · เรียงตามรหัส
+  function fgOnHand(data) {
+    const byCode = new Map();
+    for (const move of data?.fgMoves ?? []) {
+      if (move.kind !== "receive" && move.kind !== "deliver") continue;
+      const sign = move.kind === "receive" ? 1 : -1;
+      const row = byCode.get(move.fgCode) ?? { fgCode: move.fgCode, onHand: 0, orders: new Map() };
+      row.onHand += sign * (Number(move.qty) || 0);
+      row.orders.set(move.orderId, (row.orders.get(move.orderId) ?? 0) + sign * (Number(move.qty) || 0));
+      byCode.set(move.fgCode, row);
+    }
+    return [...byCode.values()].sort((a, b) => (a.fgCode < b.fgCode ? -1 : a.fgCode > b.fgCode ? 1 : 0)).map((row) => ({
+      fgCode: row.fgCode, onHand: fgRound(row.onHand),
+      orders: [...row.orders].map(([orderId, qty]) => ({ orderId, qty: fgRound(qty) })).filter((entry) => entry.qty !== 0).sort((a, b) => (a.orderId < b.orderId ? -1 : a.orderId > b.orderId ? 1 : 0)),
+    }));
+  }
   // เส้นยาง (RB) ที่นับเป็นเส้นหรือม้วน ผลิตได้ทีละเส้น/ม้วนเต็ม: ปัดขึ้น (เผื่อเศษทศนิยมจากการคูณ 1e-6) · ชนิด/หน่วยอื่นคงเดิม
   const wholeRods = (kind, uom, qty) => (kind === "RB" && (uom === "rod" || uom === "roll") ? Math.ceil(Number(qty) - 1e-6) : qty);
 
@@ -1109,7 +1164,7 @@
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
-    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, draftPartDemand, draftRubberJobs, partReserved, partOnOrder, partReturned, partReturnLines,
+    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, draftPartDemand, draftRubberJobs, partReserved, partOnOrder, partReturned, partReturnLines, fgPosition, fgOnHand,
     DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };

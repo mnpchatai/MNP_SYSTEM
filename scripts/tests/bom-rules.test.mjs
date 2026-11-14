@@ -853,3 +853,39 @@ test("draftPartDemand: side all (default) lists every other exploded draft, earl
   assert.equal(rules.draftPartDemand([], "PI-A", { relativeTo: a, side: "earlier" }).size, 0);
   assert.equal(rules.draftPartDemand(undefined, null, { relativeTo: a, side: "later" }).size, 0);
 });
+
+test("fgPosition: per product ordered, PK made, received, delivered, what can still be received and delivered, and the order-level flags", () => {
+  const order = { id: "PI-1", status: "in_progress", items: [{ fgCode: "A", qty: 10 }, { fgCode: "B", qty: 4 }] };
+  const job = (itemCode, qtyDone, status = "in_progress", extra = {}) => ({ orderId: "PI-1", dept: "PK", kind: "FG", itemCode, qtyDone, status, ...extra });
+  const move = (kind, fgCode, qty, at = 1, note = "") => ({ id: `${kind}${fgCode}${at}`, orderId: "PI-1", fgCode, kind, qty, note, at, by: "x" });
+  const rowOf = (data) => rules.fgPosition(data, order).products.map((p) => [p.fgCode, p.ordered, p.pkDone, p.received, p.delivered, p.receivable, p.deliverable]);
+  assert.deepEqual(rowOf({ jobs: [], fgMoves: undefined }), [["A", 10, 0, 0, 0, 0, 0], ["B", 4, 0, 0, 0, 0, 0]], "no jobs, no history");
+  const data = { jobs: [job("A", 6), job("B", 4, "done"), { orderId: "PI-1", dept: "PK", kind: "SUBPART", itemCode: "XP", qtyDone: 1, status: "in_progress" }, { orderId: "PI-2", dept: "PK", kind: "FG", itemCode: "A", qtyDone: 99, status: "done" }], fgMoves: [move("receive", "A", 2.5), move("receive", "A", 0.1), move("deliver", "A", 1, 2), move("receive", "B", 4), { ...move("receive", "A", 50), orderId: "PI-2" }] };
+  assert.deepEqual(rowOf(data), [["A", 10, 6, 2.6, 1, 3.4, 1.6], ["B", 4, 4, 4, 0, 0, 4]], "sums are per order and rounded to four decimals; the SUBPART job and another order's job are not counted");
+  const position = rules.fgPosition(data, order);
+  assert.equal(position.pkAllDone, false, "A and the sub-part of PK are not done");
+  assert.equal(position.canCloseShort, false);
+  assert.equal(position.allReceived, false);
+  assert.deepEqual([position.anyReceived, position.anyReceivable, position.anyDeliverable, position.fullyDelivered, position.waitingDelivery], [true, true, true, false, false], "an open order is never delivered in full or waiting: those flags follow the closed state");
+  // closable short: all PK jobs done, everything made received, one product short
+  const done = { jobs: [job("A", 6, "done"), job("B", 4, "done")], fgMoves: [move("receive", "A", 6), move("receive", "B", 4)] };
+  assert.equal(rules.fgPosition(done, order).canCloseShort, true);
+  assert.equal(rules.fgPosition(done, { ...order, status: "draft" }).canCloseShort, false, "only released or in progress orders");
+  assert.equal(rules.fgPosition({ ...done, fgMoves: [move("receive", "A", 5), move("receive", "B", 4)] }, order).canCloseShort, false, "one made piece of A is not received");
+  const full = { jobs: [job("A", 10, "done"), job("B", 4, "done")], fgMoves: [move("receive", "A", 10), move("receive", "B", 4)] };
+  assert.equal(rules.fgPosition(full, order).allReceived, true);
+  assert.equal(rules.fgPosition(full, order).canCloseShort, false, "nothing is short");
+  // closed order: waiting for delivery, then delivered; the close row carries the reason
+  const closed = { ...order, status: "completed" };
+  const afterClose = { jobs: done.jobs, fgMoves: [...done.fgMoves, move("close", "", 0, 5, "ไม่ครบ")] };
+  const waiting = rules.fgPosition(afterClose, closed);
+  assert.deepEqual([waiting.waitingDelivery, waiting.fullyDelivered], [true, false]);
+  assert.deepEqual(waiting.shortClose, { reason: "ไม่ครบ", at: 5, by: "x" });
+  assert.deepEqual(waiting.moves.map((entry) => entry.kind), ["close", "receive", "receive"], "newest first");
+  const delivered = rules.fgPosition({ jobs: done.jobs, fgMoves: [...afterClose.fgMoves, move("deliver", "A", 6, 6), move("deliver", "B", 4, 6)] }, closed);
+  assert.deepEqual([delivered.waitingDelivery, delivered.fullyDelivered], [false, true]);
+  assert.equal(rules.fgPosition({ jobs: [], fgMoves: [] }, closed).fullyDelivered, false, "closed with nothing received: nothing was delivered");
+  assert.equal(rules.fgPosition({ jobs: [], fgMoves: [] }, closed).waitingDelivery, false);
+  // the same code twice in an order counts as one product
+  assert.deepEqual(rules.fgPosition({ jobs: [], fgMoves: [] }, { ...order, items: [{ fgCode: "A", qty: 2 }, { fgCode: "A", qty: 3 }] }).products.map((p) => [p.fgCode, p.ordered]), [["A", 5]]);
+});

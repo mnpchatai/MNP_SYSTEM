@@ -701,18 +701,20 @@
     return { html: ui.dialog("productNew", "สร้างสินค้าใหม่", body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-new-form">สร้าง</button>` }), bind };
   };
 
-  // ---------- ใบสั่งผลิต: แถบ 5 ขั้นและแผงของขั้นที่กำลังดู (หน้า orders เรียกใช้) ----------
+  // ---------- ใบสั่งผลิต: แถบ 6 ขั้นและแผงของขั้นที่กำลังดู (หน้า orders เรียกใช้) ----------
   const STEPS = Object.freeze([
     { no: 1, label: "รายการสินค้า", who: "ฝ่ายวางแผน" },
     { no: 2, label: "ตรวจของ", who: "ฝ่ายวางแผน และคลังวัตถุดิบ" },
     { no: 3, label: "ปล่อยผลิต", who: "ฝ่ายวางแผน" },
     { no: 4, label: "ผลิตตามแผนก", who: "ทุกแผนก" },
-    { no: 5, label: "ปิดใบ", who: "ฝ่ายวางแผน" },
+    { no: 5, label: "รับเข้าคลัง", who: "คลังสินค้า (WH)" },
+    { no: 6, label: "ส่งมอบลูกค้า", who: "คลังสินค้า (WH)" },
   ]);
-  // ขั้นปัจจุบันคำนวณจากสถานะของใบ (ไม่มีช่องเก็บแยก): ร่างไม่มีสินค้า = 1 · ร่างมีสินค้า = 2 · ปล่อยแล้ว = 4 · งานเสร็จครบ/ปิดแล้ว = 5
+  // ขั้นปัจจุบันคำนวณจากสถานะของใบ (ไม่มีช่องเก็บแยก): ร่างไม่มีสินค้า = 1 · ร่างมีสินค้า = 2 · ปล่อยแล้ว = 4 · งานเสร็จครบ (รอคลังสินค้ารับเข้า) = 5
+  // ปิดแล้ว (รับครบ หรือปิดรับไม่ครบ) และยังมีของรอส่งมอบ = 6 · ส่งมอบครบแล้ว (หรือไม่มีของให้ส่ง) = 7 คือทุกขั้นเสร็จ
   function orderStepOf(ctx, order) {
     if (order.status === "cancelled") return 0;
-    if (order.status === "completed") return 6;
+    if (order.status === "completed") return ctx.rules.fgPosition(ctx.data, order).waitingDelivery ? 6 : 7;
     if (order.status === "draft") return order.items.length ? 2 : 1;
     const jobs = ctx.data.jobs.filter((job) => job.orderId === order.id);
     return jobs.length && jobs.every((job) => job.status === "done") ? 5 : 4;
@@ -778,17 +780,81 @@
   const rfCan = (ctx, permission) => { try { return Boolean(ctx.store?.isRemote?.() && ctx.rubberflow()?.can?.(permission)); } catch { return false; } };
   const canBuyParts = (ctx) => rfCan(ctx, "purchase");
   const canViewBuy = (ctx) => rfCan(ctx, "purchase") || rfCan(ctx, "viewPurchase");
+  // ---------- ขั้น 5 รับเข้าคลัง / ขั้น 6 ส่งมอบลูกค้า (คลังสินค้า WH หรือผู้ดูแลระบบ · คนอื่นดูตารางเดียวกันอย่างเดียว) ----------
+  // ฟอร์มส่งทันทีหลังกดยืนยัน (ไม่มีนับถอยหลังให้ยกเลิก) · แถวที่ไม่มีของให้รับ/ส่งไม่มีช่องกรอก · ค่าตั้งต้นของช่อง = ยอดที่รับ/ส่งได้ทั้งหมด
+  const FG_MOVE_LABEL = Object.freeze({ receive: "รับเข้าคลัง", deliver: "ส่งมอบ", close: "ปิดใบ (รับไม่ครบ)" });
+  const FG_HISTORY_MAX = 30;
+  const fgProductCell = (ctx, product) => `<td>${ctx.ui.link(product.fgCode, ctx.url("items", { sel: product.fgCode }), "rf-mono")}<div class="small muted">${esc(itemOf(ctx, product.fgCode)?.name ?? "")}</div></td>`;
+  const fgQtyInput = (ctx, product, label, value) => (value > 0
+    ? `<label class="bom-count-input"><span class="sr-only">${esc(`${label} ${product.fgCode}`)}</span><input class="input rf-input" name="qty[]" type="number" inputmode="decimal" step="any" min="0" max="${attr(value)}" value="${attr(value)}"><span class="small muted">${esc(uomText(ctx, itemOf(ctx, product.fgCode)?.uom ?? "set"))}</span></label><input type="hidden" name="fgCode[]" value="${attr(product.fgCode)}">`
+    : '<span class="muted">—</span>');
+  const fgNum = (ctx, value) => `<td class="right rf-mono">${esc(ctx.rules.fmtQty(value))}</td>`;
+  function receivePanel(ctx, order, pos, canFg) {
+    const { ui, rules } = ctx;
+    const open = ["released", "in_progress"].includes(order.status);
+    const acting = open && canFg && pos.anyReceivable;
+    const head = ["สินค้า", { label: "สั่ง", className: "right" }, { label: "PK ส่งมอบแล้ว", className: "right" }, { label: "รับเข้าคลังแล้ว", className: "right" }, { label: "รอรับ", className: "right" }, ...(acting ? [{ label: "รับครั้งนี้", className: "right" }] : [])];
+    const rows = pos.products.map((product) => `<tr>${fgProductCell(ctx, product)}${fgNum(ctx, product.ordered)}${fgNum(ctx, product.pkDone)}${fgNum(ctx, product.received)}${fgNum(ctx, product.receivable)}${acting ? `<td class="right">${fgQtyInput(ctx, product, "จำนวนที่รับเข้าคลัง", product.receivable)}</td>` : ""}</tr>`);
+    const table = ui.table(head, rows, { emptyText: "ใบนี้ไม่มีสินค้า" });
+    const closeButton = pos.canCloseShort && canFg ? ui.openButton("ปิดใบ (รับไม่ครบ)", "closeShort", { orderId: order.id }, { className: "secondary" }) : "";
+    const submit = '<button class="btn rf-btn" type="submit" data-rf-confirm="รับสินค้าเข้าคลังตามจำนวนที่กรอก? รับเข้าแล้วแก้ไขหรือยกเลิกไม่ได้">รับเข้าคลัง</button>';
+    const note = !canFg ? '<p class="small muted">คลังสินค้า (WH) เป็นผู้รับสินค้าเข้าคลัง</p>'
+      : open && !pos.anyReceivable && !pos.canCloseShort ? '<p class="small muted">ยังไม่มีสินค้าที่รอรับ เมื่อ PK รายงานผลผลิต รับเข้าคลังได้ทันที ไม่ต้องรอผลิตครบทั้งใบ</p>' : "";
+    const closed = pos.shortClose ? ui.callout("info", `ปิดใบโดยรับไม่ครบ: ${esc(pos.shortClose.reason)} (${esc(pos.shortClose.by)} · ${esc(rules.fmtDateTime(pos.shortClose.at))})`) : "";
+    const actions = [acting ? submit : "", closeButton].filter(Boolean).join("");
+    const body = acting
+      ? `<form novalidate data-rf-form="receiveFg" data-rf-args="${attr(JSON.stringify({ orderId: order.id }))}" data-rf-success="รับเข้าคลัง {result} แล้ว">${table}<div class="rf-row bom-step-next">${actions}</div></form>`
+      : `${table}${actions ? `<div class="rf-row bom-step-next">${actions}</div>` : ""}`;
+    return ui.card(`${closed}${body}${note}`, { title: "ขั้น 5 · รับเข้าคลัง" });
+  }
+  function deliverPanel(ctx, order, pos, canFg) {
+    const { ui, rules } = ctx;
+    const acting = canFg && pos.anyDeliverable;
+    const head = ["สินค้า", { label: "รับเข้าคลังแล้ว", className: "right" }, { label: "ส่งมอบแล้ว", className: "right" }, { label: "คงเหลือในคลัง", className: "right" }, ...(acting ? [{ label: "ส่งครั้งนี้", className: "right" }] : [])];
+    const rows = pos.products.map((product) => `<tr>${fgProductCell(ctx, product)}${fgNum(ctx, product.received)}${fgNum(ctx, product.delivered)}${fgNum(ctx, product.deliverable)}${acting ? `<td class="right">${fgQtyInput(ctx, product, "จำนวนที่ส่งมอบ", product.deliverable)}</td>` : ""}</tr>`);
+    const table = ui.table(head, rows, { emptyText: "ใบนี้ไม่มีสินค้า" });
+    const submit = '<button class="btn rf-btn" type="submit" data-rf-confirm="ส่งมอบสินค้าตามจำนวนที่กรอก? บันทึกแล้วแก้ไขหรือยกเลิกไม่ได้">ส่งมอบให้ลูกค้า</button>';
+    const form = acting
+      ? `<form novalidate data-rf-form="deliverFg" data-rf-args="${attr(JSON.stringify({ orderId: order.id }))}" data-rf-success="ส่งมอบ {result} แล้ว">${table}<div class="rf-row bom-step-next">${submit}</div></form>`
+      : table;
+    const note = !canFg ? '<p class="small muted">คลังสินค้า (WH) เป็นผู้ส่งมอบสินค้าให้ลูกค้า</p>' : !pos.anyReceived ? '<p class="small muted">ยังไม่มีสินค้ารับเข้าคลัง ส่งมอบได้เมื่อรับเข้าแล้ว</p>' : "";
+    const history = pos.moves.slice(0, FG_HISTORY_MAX).map((move) => `<tr><td class="nowrap small">${esc(rules.fmtDateTime(move.at))}</td><td>${esc(FG_MOVE_LABEL[move.kind] ?? move.kind)}${move.fgCode ? ` <span class="rf-mono">${esc(move.fgCode)}</span>` : ""}${move.note ? `<div class="small muted">${esc(move.note)}</div>` : ""}</td><td class="right rf-mono">${move.kind === "close" ? '<span class="muted">—</span>' : esc(rules.fmtQty(move.qty))}</td><td class="small">${esc(move.by)}</td></tr>`);
+    const historyHtml = history.length ? `<h3 class="bom-h3">ประวัติรับเข้าและส่งมอบ</h3>${ui.table(["เวลา", "รายการ", { label: "จำนวน", className: "right" }, "ผู้ทำ"], history)}${pos.moves.length > FG_HISTORY_MAX ? `<p class="small muted">แสดง ${FG_HISTORY_MAX} รายการล่าสุด</p>` : ""}` : "";
+    return ui.card(`${form}${note}${historyHtml}`, { title: "ขั้น 6 · ส่งมอบลูกค้า" });
+  }
+  // ปิดใบที่รับไม่ครบ: ต้องมีเหตุผล (3-300 ตัวอักษร) · เปิดได้เฉพาะเมื่อ PK เสร็จทุกงาน ของที่ PK ทำรับเข้าครบแล้ว และยังมีสินค้าที่รับน้อยกว่าที่สั่ง
+  dialogs.closeShort = (ctx, { orderId }) => {
+    const { ui, rules, user } = ctx;
+    const order = ctx.data.orders.find((entry) => entry.id === orderId);
+    if (!order || !ctx.helpers.canHandleFg(user)) return null;
+    const pos = rules.fgPosition(ctx.data, order);
+    if (!pos.canCloseShort) return null;
+    const short = pos.products.filter((product) => product.received + 1e-9 < product.ordered);
+    const rows = short.map((product) => `<tr><td>${ui.mono(product.fgCode)}</td>${fgNum(ctx, product.ordered)}${fgNum(ctx, product.received)}${fgNum(ctx, product.ordered - product.received)}</tr>`);
+    const body = `<form novalidate id="bom-close-short-form" data-rf-form="closeOrderShort" data-rf-args="${attr(JSON.stringify({ orderId }))}" data-rf-success="ปิดใบ {result} แล้ว">
+      ${ui.callout("warn", "ใบจะปิดโดยรับสินค้าไม่ครบตามที่สั่ง ปิดแล้วเปิดกลับไม่ได้ ส่วนที่รับเข้าคลังแล้วยังส่งมอบให้ลูกค้าได้")}
+      ${ui.table(["สินค้า", { label: "สั่ง", className: "right" }, { label: "รับเข้าคลังแล้ว", className: "right" }, { label: "ขาด", className: "right" }], rows)}
+      ${ui.field("เหตุผล", ui.input("note", { required: true, placeholder: "เช่น PK ผลิตได้ไม่ครบ ลูกค้าตกลงรับเท่าที่มี", extra: 'minlength="3" maxlength="300"' }), { required: true })}</form>`;
+    return { html: ui.dialog("closeShort", `ปิดใบ (รับไม่ครบ) · ${orderId}`, body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-close-short-form">ปิดใบ</button>` }) };
+  };
+
   pages.orderSteps = (ctx, order, { net, buttons }) => {
     const { ui, rules, data, params } = ctx;
     const current = orderStepOf(ctx, order);
     const canPlan = ctx.helpers.canPlan(ctx.user);
     // ใบร่างที่มีสินค้าแล้ว: ดูขั้น 2 หรือ 3 ได้ (step=3 จากปุ่ม "ไปขั้นปล่อยผลิต") · สถานะอื่นดูขั้นปัจจุบันเท่านั้น
-    const view = current === 2 && params.get("step") === "3" ? 3 : current;
-    const stepUrl = (no) => ctx.url("orders", { sel: order.id, step: no === 3 ? "3" : null });
+    // ขั้น 5/6 ดูได้ตั้งแต่ปล่อยผลิต: คลังสินค้ารับเข้าได้ระหว่างที่ผลิตยังไม่เสร็จ (เมื่อ PK รายงานยอดแล้ว) และส่งมอบได้ตั้งแต่รับเข้าครั้งแรก · ใบที่ปิดแล้วดูได้ทั้งสองขั้น
+    const pos = rules.fgPosition(data, order);
+    const canFg = ctx.helpers.canHandleFg(ctx.user);
+    const reach = (no) => current >= 4 && (no === 5 ? current >= 5 || pos.anyReceivable || pos.anyReceived : no === 6 ? current >= 6 || pos.anyReceived : false);
+    const want = Number(params.get("step"));
+    const view = current === 2 && want === 3 ? 3 : (want === 5 || want === 6) && reach(want) ? want : current >= 7 ? 6 : current;
+    const stepUrl = (no) => ctx.url("orders", { sel: order.id, step: [3, 5, 6].includes(no) ? String(no) : null });
     const bar = `<ol class="bom-steps" aria-label="ขั้นตอนของใบสั่งผลิต">${STEPS.map((step) => {
-      const state = current === 0 ? "off" : step.no < Math.max(current, view) ? "done" : step.no === view ? "now" : "todo";
+      // ขั้น 1-3 (ใบร่าง): ขั้นก่อนขั้นที่ดูถือว่าเสร็จ · ขั้น 4 ขึ้นไป: เสร็จเฉพาะขั้นก่อนขั้นปัจจุบัน (ดูขั้น 5/6 ล่วงหน้าได้โดยขั้น 4 ยังไม่เสร็จ) · ใบที่ส่งมอบครบ = เสร็จทุกขั้น
+      const state = current === 0 ? "off" : current >= 7 ? "done" : current <= 3 ? (step.no < Math.max(current, view) ? "done" : step.no === view ? "now" : "todo") : step.no === view ? "now" : step.no < current ? "done" : "todo";
       const inner = `<span class="bom-step-no">${state === "done" ? "เสร็จ" : `ขั้น ${step.no}`}</span><strong>${esc(step.label)}</strong><span class="small">${esc(step.who)}</span>`;
-      const link = current === 2 && [2, 3].includes(step.no) && step.no !== view;
+      const link = step.no !== view && ((current === 2 && [2, 3].includes(step.no)) || ([5, 6].includes(step.no) && reach(step.no)));
       return `<li class="bom-step is-${state}"${state === "now" ? ' aria-current="step"' : ""}>${link ? `<a href="${attr(stepUrl(step.no))}">${inner}</a>` : `<div>${inner}</div>`}</li>`;
     }).join("")}</ol>`;
     let panel = "";
@@ -833,7 +899,7 @@
         lacking ? ui.callout("warn", `ยังขาด${lacking} และยังไม่ได้สั่ง ปล่อยผลิตได้ แต่แผนกที่ใช้ของนั้นจะติดจนกว่าของจะเข้า${canBuyParts(ctx) ? ` · ${ui.link("กลับไปสั่งซื้อที่ขั้น 2", stepUrl(2))}` : " · คลังวัตถุดิบ (ST) เป็นผู้สั่งซื้อ"}`) : "",
       ].join("");
       panel = ui.card(`${warns}${order.explosion?.length ? `<p>ปล่อยผลิตแล้วระบบสร้างงานให้แต่ละแผนกตามนี้ และล็อกฉบับ BOM ที่ใช้</p>${list}` : ""}<div class="rf-row bom-step-next">${ui.link("กลับไปขั้น 2", stepUrl(2), "btn rf-btn secondary")}${noBom.length || !order.explosion?.length ? "" : buttons.release ?? ""}</div>`, { title: "ขั้น 3 · ปล่อยผลิต" });
-    } else if (view === 4 || view === 5) {
+    } else if (view === 4) {
       const jobs = data.jobs.filter((job) => job.orderId === order.id);
       const rows = rules.FLOW_DEPTS.map((dept) => {
         const mine = jobs.filter((job) => job.dept === dept);
@@ -843,11 +909,14 @@
         const text = dept === "ST" && mine.every((job) => ctx.helpers.isPartJob(job)) ? (done === mine.length ? `เบิกของครบ ${mine.length} รายการ` : `รอเบิกของ ${mine.length - done} จาก ${mine.length} รายการ`) : `เสร็จ ${done} จาก ${mine.length} งาน`;
         return `<tr><td>${deptChip(ctx, dept)} ${esc(deptName(ctx, dept))}</td><td class="rf-progress-cell">${ui.progress(done, mine.length)}<div class="small muted">${esc(text)}</div></td><td>${late ? ui.badge("bad", `เลยกำหนด ${late} งาน`) : ""}</td><td class="right">${ctx.canSee("work") && (canPlan || ctx.user?.dept === dept) ? ui.link("ดูงาน", ctx.url("work", { dept, order: order.id }), "btn rf-btn secondary small") : ""}</td></tr>`;
       }).filter(Boolean);
-      const main = view === 5 ? `<p>ทุกแผนกทำงานเสร็จแล้ว ตรวจว่าสินค้าเข้าคลังครบ แล้วปิดใบ</p><div class="rf-row bom-step-next">${buttons.complete ?? ""}</div>` : `<div class="rf-row bom-step-next">${buttons.issue ?? ""}${buttons.check ?? ""}</div>`;
-      panel = ui.card(`${ui.table(["แผนก", "ความคืบหน้า", "", ""], rows, { emptyText: "ยังไม่มีงาน" })}${main}`, { title: view === 5 ? "ขั้น 5 · ปิดใบ" : "ขั้น 4 · ผลิตตามแผนก", flush: false });
-    } else if (current === 6) panel = ui.callout("info", "ใบนี้ปิดแล้ว");
-    // used = ปุ่มที่แผงของขั้นนี้แสดงแล้ว (หรือเป็นของขั้นอื่นของใบร่าง) หน้า orders จะไม่วางซ้ำใน "คำสั่งอื่น" · ปิดใบก่อนงานเสร็จครบยังทำได้จาก "คำสั่งอื่น"
-    const used = ["add", "explode", "release", ...(view === 4 ? ["issue", "check"] : view === 5 ? ["complete"] : [])];
+      // มีสินค้าที่ PK ส่งมอบแล้วรอรับเข้าคลัง: บอกเฉพาะว่ามี (ตัวเลขอยู่ในขั้น 5) · คลังสินค้ารับเข้าได้ก่อนผลิตครบทั้งใบ
+      const fgLine = pos.anyReceivable ? `<div class="bom-step-line"><div><strong>มีสินค้ารอรับเข้าคลัง</strong></div>${ui.link("ไปขั้นรับเข้าคลัง", stepUrl(5), "btn rf-btn secondary")}</div>` : "";
+      const main = `<div class="rf-row bom-step-next">${buttons.issue ?? ""}${buttons.check ?? ""}</div>${fgLine}`;
+      panel = ui.card(`${ui.table(["แผนก", "ความคืบหน้า", "", ""], rows, { emptyText: "ยังไม่มีงาน" })}${main}`, { title: "ขั้น 4 · ผลิตตามแผนก", flush: false });
+    } else if (view === 5) panel = receivePanel(ctx, order, pos, canFg);
+    else if (view === 6) panel = deliverPanel(ctx, order, pos, canFg);
+    // used = ปุ่มที่แผงของขั้นนี้แสดงแล้ว (หรือเป็นของขั้นอื่นของใบร่าง) หน้า orders จะไม่วางซ้ำใน "คำสั่งอื่น"
+    const used = ["add", "explode", "release", ...(view === 4 ? ["issue", "check"] : [])];
     // ปุ่มสั่งซื้อของใบร่าง: หน้าต่างสั่งซื้อของ RubberFlow คิดของซื้อจากใบร่าง (sourcePi) และเคมีจาก WO ชั่วคราวชุดเดียวกับที่ตารางของขั้นนี้แสดง
     const bind = (rootNode) => rootNode.querySelectorAll("[data-bom-draft-buy]").forEach((button) => button.addEventListener("click", async () => {
       button.disabled = true;
@@ -883,6 +952,19 @@
     return tasks;
   }
 
+  // งานของคลังสินค้า (WH): รับสินค้าเข้าคลังตามใบที่ PK ส่งมอบแล้ว · ส่งมอบให้ลูกค้าตามใบที่ปิดแล้วและยังมีของเหลือ · แสดงเฉพาะผู้ที่ทำได้จริง (canHandleFg) ใช้ทั้งการ์ดในหน้างานของฉันและตัวเลขที่เมนู
+  function fgTasks(ctx) {
+    if (!ctx.helpers.canHandleFg?.(ctx.user)) return [];
+    const tasks = [];
+    for (const order of ctx.data.orders) {
+      if (!["released", "in_progress", "completed"].includes(order.status)) continue;
+      const pos = ctx.rules.fgPosition(ctx.data, order);
+      if (order.status !== "completed" && pos.anyReceivable) tasks.push({ kind: "fgReceive", order, lines: pos.products.filter((product) => product.receivable > 0).map((product) => ({ fgCode: product.fgCode, qty: product.receivable })) });
+      if (order.status === "completed" && pos.anyDeliverable) tasks.push({ kind: "fgDeliver", order, lines: pos.products.filter((product) => product.deliverable > 0).map((product) => ({ fgCode: product.fgCode, qty: product.deliverable })) });
+    }
+    return tasks.sort((a, b) => (Number(a.order.whDue) || 0) - (Number(b.order.whDue) || 0) || (a.order.id < b.order.id ? -1 : 1));
+  }
+
   // ---------- งานของฉัน: การ์ดงานของแผนกตัวเอง ปุ่มหลักปุ่มเดียวต่องาน ----------
   const JOB_TONE = Object.freeze({ in_progress: ["now", "กำลังทำ"], queued: ["", "รอคิว"], hold: ["hold", "พักงาน"], done: ["done", "เสร็จ"] });
   pages.work = (ctx) => {
@@ -891,7 +973,9 @@
     const own = rules.DEPTS.includes(user?.dept) ? user.dept : null;
     const depts = rules.FLOW_DEPTS.filter((dept) => rules.DEPTS.includes(dept));
     // ฝ่ายวางแผน/ผู้จัดการเลือกดูทุกแผนกได้ · แผนกอื่นเห็นเฉพาะงานของแผนกตัวเอง
-    const dept = planner ? ([...depts, "ALL"].includes(params.get("dept")) ? params.get("dept") : "ALL") : own;
+    // คลังสินค้า (WH) ไม่มีงานผลิตของตัวเอง (ไม่อยู่ในแผนกผลิต) แต่มีการ์ดรับเข้า/ส่งมอบ
+    const handlesFg = ctx.helpers.canHandleFg(user);
+    const dept = planner ? ([...depts, "ALL"].includes(params.get("dept")) ? params.get("dept") : "ALL") : own ?? (handlesFg ? "WH" : null);
     const show = params.get("st") === "done" ? "done" : "open";
     const orderId = String(params.get("order") ?? "").toUpperCase();
     const orderOf = (id) => data.orders.find((entry) => entry.id === id);
@@ -904,7 +988,7 @@
     const keep = (extra) => ctx.url("work", { dept: planner && dept !== "ALL" ? dept : null, order: orderId || null, ...extra });
     const deptTabs = planner ? ui.tabs([{ id: "ALL", label: "ทุกแผนก" }, ...depts.map((code) => ({ id: code, label: `${code} ${cardCount(data.jobs.filter((job) => job.dept === code && job.status !== "done" && live(job)))}` }))], dept, (id) => ctx.url("work", { dept: id === "ALL" ? null : id, st: show === "done" ? "done" : null, order: orderId || null })) : "";
     // งานของคลังวัตถุดิบ (รับเข้า / สั่งซื้อ) อยู่ในรายการต้องทำของแผนก ST · ไม่กรองตามใบที่เลือกดู
-    const tasks = (dept === "ST" || dept === "ALL") && !orderId ? storeTasks(ctx) : [];
+    const tasks = [...((dept === "ST" || dept === "ALL") && !orderId ? storeTasks(ctx) : []), ...((dept === "WH" || dept === "ALL") && !orderId ? fgTasks(ctx) : [])];
     const showTabs = ui.tabs([{ id: "open", label: `ต้องทำ ${cardCount(open) + tasks.length}` }, { id: "done", label: `เสร็จแล้ว ${cardCount(done)}` }], show, (id) => keep({ st: id === "done" ? "done" : null }));
     const rank = (job) => (job.status === "in_progress" ? 0 : job.status === "hold" ? 2 : 1);
     const list = (show === "done" ? done : open).slice().sort((a, b) => rank(a) - rank(b) || a.dueAt - b.dueAt || a.id.localeCompare(b.id));
@@ -948,6 +1032,13 @@
     const sub = dept && dept !== "ALL" ? esc(rules.DEPT_LABEL[dept] ?? dept) : "";
     const filterNote = orderId ? `<p class="bom-back">เฉพาะใบ ${esc(orderId)} · ${ui.link("ดูทุกใบ", ctx.url("work", { dept: planner && dept !== "ALL" ? dept : null }))}</p>` : "";
     const taskHtml = (task) => {
+      if (task.kind === "fgReceive" || task.kind === "fgDeliver") {
+        const receive = task.kind === "fgReceive";
+        return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">${receive ? "รอรับเข้าคลัง" : "รอส่งมอบ"}</span><span class="muted">ส่งมอบคลัง ${esc(rules.fmtDate(task.order.whDue))}</span></div>
+          <h2>${esc(`${receive ? "รับสินค้าเข้าคลังตามใบ" : "ส่งมอบให้ลูกค้าตามใบ"} ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "WH")} ` : ""}${esc(task.order.customer ?? "")}</p>
+          <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span class="rf-mono">${esc(line.fgCode)}</span><span class="nowrap">${esc(rules.fmtQty(line.qty))}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
+          ${ui.link(receive ? "เปิดใบเพื่อรับเข้าคลัง" : "เปิดใบเพื่อส่งมอบ", ctx.url("orders", { sel: task.order.id, step: receive ? "5" : "6" }), "btn rf-btn bom-job-main")}</article>`;
+      }
       if (task.kind === "receive") {
         const unit = (line) => (line.source === "bom" ? uomText(ctx, line.uom) : "กก.");
         return `<article class="card rf-card bom-job ${task.cancelled ? "is-hold" : "is-now"}"><div class="bom-job-top"><span class="bom-job-state">${task.cancelled ? "ใบสั่งผลิตถูกยกเลิกแล้ว" : "รอรับเข้า"}</span><span class="muted">สั่งเมื่อ ${esc(rules.fmtDate(task.po.createdAt))}</span></div>
@@ -985,5 +1076,5 @@
     return { html: `${pageHead(ctx, "ข้อมูลตั้งต้น")}${ids.length ? `<div class="bom-setup-grid">${cards}</div>` : ctx.ui.card(ctx.ui.empty("บัญชีนี้ไม่มีหน้าข้อมูลตั้งต้นที่เปิดได้"))}` };
   };
 
-  pages.hub = { ratioText, orderStepOf, hubUrl, treeTab, pastePreview, copyPreview, draftChemicals, rfCan, storeTasks };
+  pages.hub = { ratioText, orderStepOf, hubUrl, treeTab, pastePreview, copyPreview, draftChemicals, rfCan, storeTasks, fgTasks };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -716,9 +716,9 @@ select is((select count(*)::integer from jsonb_array_elements(public.app_bom_mas
 select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
   (select j || jsonb_build_object('status', 'done', 'qtyDone', 100, 'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 100, 'reject', 0, 'note', '')))
    from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L4-PK')))), (public.app_bom_master() ->> 'version')::bigint, 'reportJob');
-select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  (select o || '{"status":"completed"}'::jsonb from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251107-25004')))),
-  (public.app_bom_master() ->> 'version')::bigint, 'completeOrder');
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select public.app_bom_save_master('{"fgMoves":{"upsert":[{"orderId":"251107-25004","kind":"receive","lines":[{"fgCode":"FG-A","qty":10}]}]}}'::jsonb,
+  (public.app_bom_master() ->> 'version')::bigint, 'receiveFg');
 select is((select o ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251107-25004'), 'completed', 'PI 25004 is completed');
 
 -- 8. ผูกงาน BOM กับ WO ---------------------------------------------------------------------------
@@ -835,9 +835,9 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
   (select j || jsonb_build_object('status', 'done', 'qtyDone', 100, 'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 100, 'reject', 0, 'note', '')))
    from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L3-PK')))), (public.app_bom_master() ->> 'version')::bigint, 'reportJob');
-select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  (select o || '{"status":"completed"}'::jsonb from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251107-25003')))),
-  (public.app_bom_master() ->> 'version')::bigint, 'completeOrder');
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select public.app_bom_save_master('{"fgMoves":{"upsert":[{"orderId":"251107-25003","kind":"receive","lines":[{"fgCode":"FG-A","qty":10}]}]}}'::jsonb,
+  (public.app_bom_master() ->> 'version')::bigint, 'receiveFg');
 select set_config('test.bv2', public.app_bom_master() ->> 'version', true);
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select is(public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
