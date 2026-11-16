@@ -1645,14 +1645,18 @@ test("finished goods: receiving is partial per product, capped by what PK report
   rejects(() => A.receiveFg(d, { orderId, lines: [{ fgCode: "NOPE-1", qty: 1 }] }, whCtx()), /ไม่ได้อยู่ในใบ/);
   rejects(() => A.receiveFg(d, { orderId: "PI-NOPE", lines: [{ fgCode: TP, qty: 1 }] }, whCtx()), /ไม่พบใบสั่งผลิต/);
   rejects(() => A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 1 }], note: "x".repeat(301) }, whCtx()), /ยาวเกิน 300/);
+  // จำนวนเล็กมากที่ปัดแล้วเป็น 0 ไม่ถูกส่งเป็นคำขอ (ฐานข้อมูลรับเฉพาะ qty > 0)
+  rejects(() => A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 0.00001 }] }, whCtx()), /จำนวนที่รับต้องมากกว่า 0/);
+  rejects(() => A.deliverFg(d, { orderId, lines: [{ fgCode: TP, qty: 0.00004 }] }, whCtx()), /จำนวนที่ส่งมอบต้องมากกว่า 0/);
   // ลำดับ: รูปคำขอก่อนสิทธิ์ · สิทธิ์ก่อนสถานะ · สถานะก่อนยอด
   rejects(() => A.receiveFg(d, { orderId, lines: [{ fgCode: "NOPE-1", qty: 1 }] }, whCtx(user("planner"))), /ไม่ได้อยู่ในใบ/, "shape before permission");
   const draft = d.orders.find((entry) => entry.status === "draft");
   rejects(() => A.receiveFg(d, { orderId: draft.id, lines: [{ fgCode: draft.items[0].fgCode, qty: 1 }] }, whCtx(user("planner"))), /คลังสินค้า \(WH\)/, "permission before status");
   rejects(() => A.receiveFg(d, { orderId: draft.id, lines: [{ fgCode: draft.items[0].fgCode, qty: 1 }] }, whCtx()), /ปล่อยผลิตแล้ว/, "status before the numbers");
   assert.equal(d.fgMoves.length, 1, "every refusal leaves the history untouched");
-  // รับเพิ่มได้จนเท่าที่ PK รายงาน
-  A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 10 }] }, whCtx());
+  // รับเพิ่มได้จนเท่าที่ PK รายงาน · เลข PI ตัวพิมพ์เล็กหรือมีช่องว่างหัวท้ายหาใบเดียวกันได้ (ฐานข้อมูลทำ upper + ตัดช่องว่าง) และประวัติเก็บเลขของใบ
+  A.receiveFg(d, { orderId: ` ${orderId.toLowerCase()} `, lines: [{ fgCode: TP, qty: 10 }] }, whCtx());
+  assert.equal(d.fgMoves.at(-1).orderId, orderId);
   assert.equal(position().products[0].receivable, 0);
   assert.equal(order.status, "in_progress", "TP is not fully received against what was ordered");
   // PK รายงานเพิ่ม → รับเพิ่มได้

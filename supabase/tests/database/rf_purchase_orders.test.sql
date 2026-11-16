@@ -470,6 +470,37 @@ select is((select m - 'createdAt' from jsonb_array_elements(public.app_rf_master
   '{"code":"MAT-B","name":"เขม่าดำ","category":"เคมี","storage":"โกดัง A-1","uom":"kg","active":true,"safetyKg":25,"shelfLifeDays":90}'::jsonb,
   'and nothing else of the material changed');
 select is((select count(*) from jsonb_array_elements(public.app_rf_master() -> 'purchaseOrders') p where p ->> 'id' = 'PO-20261110-04'), 1::bigint, 'the order was created');
+-- createPurchaseOrder ที่มีแต่ชุด materials (ไม่มีใบ): ด่านหยาบดูแค่ชื่อคำสั่ง ST จึงเปลี่ยน safetyKg ของเคมีได้ (อยู่ในกติกา "ST ตั้งสต็อกขั้นต่ำได้")
+-- ตัวเขียนวัตถุดิบใต้ createPurchaseOrder ยังปฏิเสธช่องอื่น (RF_INVALID_MATERIAL) · คำสั่งอื่น หรือคนที่ไม่ใช่กลุ่มวางแผน / RB / ST = RF_FORBIDDEN ที่ด่านหยาบ
+select set_config('test.vs', rf3_t.ver()::text, true);
+select is(public.app_rf_save(jsonb_build_object('materials', jsonb_build_object('upsert', jsonb_build_array(
+  (select m || '{"safetyKg":30}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materials') m where m ->> 'code' = 'MAT-B')))), rf3_t.ver(), 'createPurchaseOrder') ->> 'version',
+  (current_setting('test.vs')::bigint + 1)::text, 'ST staff changes the safety stock of a chemical with a materials list alone (no order) under createPurchaseOrder');
+select is((select m - 'createdAt' from jsonb_array_elements(public.app_rf_master() -> 'materials') m where m ->> 'code' = 'MAT-B'),
+  '{"code":"MAT-B","name":"เขม่าดำ","category":"เคมี","storage":"โกดัง A-1","uom":"kg","active":true,"safetyKg":30,"shelfLifeDays":90}'::jsonb,
+  'the value is stored (25 -> 30) and nothing else of the material changed');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('materials', jsonb_build_object('upsert', jsonb_build_array(
+  (select m || '{"name":"เขม่าดำ เปลี่ยนชื่อ"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materials') m where m ->> 'code' = 'MAT-B')))), rf3_t.ver(), 'createPurchaseOrder') $$,
+  'RF_INVALID_MATERIAL', 'but ST cannot change any other field of the chemical that way (name)');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('materials', jsonb_build_object('upsert', jsonb_build_array(
+  (select m || '{"safetyKg":35,"shelfLifeDays":60}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materials') m where m ->> 'code' = 'MAT-B')))), rf3_t.ver(), 'createPurchaseOrder') $$,
+  'RF_INVALID_MATERIAL', 'nor the shelf life together with the safety stock');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('materials', jsonb_build_object('upsert', jsonb_build_array(
+  (select m || '{"safetyKg":35}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materials') m where m ->> 'code' = 'MAT-B')))), rf3_t.ver(), 'saveMaterial') $$,
+  'RF_FORBIDDEN', 'nor change the safety stock with another action (saveMaterial)');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('materials', jsonb_build_object('upsert', jsonb_build_array(
+  (select m || '{"safetyKg":35}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materials') m where m ->> 'code' = 'MAT-B')))), rf3_t.ver(), 'cancelPurchaseOrder') $$,
+  'RF_FORBIDDEN', 'nor with another purchase action (cancelPurchaseOrder)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('materials', jsonb_build_object('upsert', jsonb_build_array(
+  (select m || '{"safetyKg":35}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materials') m where m ->> 'code' = 'MAT-B')))), rf3_t.ver(), 'createPurchaseOrder') $$,
+  'RF_FORBIDDEN', 'WH staff (not planning, RB or ST) cannot change a chemical safety stock with a materials list alone');
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('materials', jsonb_build_object('upsert', jsonb_build_array(
+  (select m || '{"safetyKg":35}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materials') m where m ->> 'code' = 'MAT-B')))), rf3_t.ver(), 'createPurchaseOrder') $$,
+  'RF_FORBIDDEN', 'nor can QA staff');
+select is(rf3_t.ver(), current_setting('test.vs')::bigint + 1, 'the refused calls wrote nothing');
+select is((select (m ->> 'safetyKg')::numeric from jsonb_array_elements(public.app_rf_master() -> 'materials') m where m ->> 'code' = 'MAT-B'), 30::numeric, 'and the safety stock is still 30');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select rf3_t.cancel_po('PO-20261110-03') $$, 'RF_FORBIDDEN', 'an RB member cannot cancel an order');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);

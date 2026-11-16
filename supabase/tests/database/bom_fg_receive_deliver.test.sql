@@ -3,6 +3,7 @@
 -- กลุ่มวางแผน / ผู้จัดการแผนกอื่น / แผนกอื่นไม่ได้ = BOM_FORBIDDEN) ลำดับตรวจ (รูป -> สิทธิ์ -> สถานะ -> ยอด) รับบางส่วนหลายครั้ง เพดานยอดที่ PK รายงาน (BOM_FG_EXCEEDS)
 -- ปิดอัตโนมัติเมื่อรับครบ ปิดใบรับไม่ครบ (เงื่อนไขและเหตุผล) ส่งมอบ (เพดานรับสะสม ส่งหลังปิดใบได้) แถวใบที่จะเป็น completed ถูกปฏิเสธทุก action
 -- snapshot / delta 14 ชุด (fgMoves) ฐานเวอร์ชันเก่า / epoch และล้างข้อมูลทดสอบ · authenticated อ่านตาราง bom_* ตรงไม่ได้ จึงอ่านตารางด้วย reset role เท่านั้น
+-- 20261122010000_bom_fg_guards.sql: คำสั่งของสำเร็จรูปที่ไม่มีคำขอ = BOM_INVALID_FG (เดิมสำเร็จแบบไม่ทำอะไร) · ยอดงาน PK / FG ต่ำกว่ายอดที่ WH รับแล้วไม่ได้ (BOM_INVALID_JOB)
 -- ข้อควรระวัง: ถ้าอ่านตารางตรงในนาม authenticated จะเกิด 42501 และทำให้ทั้งไฟล์ล้ม ("No plan found") ตรวจฝั่ง client ผ่าน RPC และตรวจ deny ด้วย throws_ok เท่านั้น
 begin;
 create extension if not exists pgtap with schema extensions;
@@ -228,8 +229,15 @@ select set_config('test.v_seed', fg_t.ver()::text, true);
 
 -- 5. รูป payload / รูปแถว (WH staff: ผ่านด่านสิทธิ์ได้จึงเห็นข้อผิดรูปของตัวเขียน) ทุกกรณีไม่เขียนอะไร ---------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
-select lives_ok($$ select fg_t.save('{"fgMoves":{"upsert":[]}}'::jsonb, 'receiveFg') $$, 'an empty request is a no-op');
-select is(fg_t.ver(), current_setting('test.v_seed')::bigint, 'and it does not move the version');
+-- ไม่มีคำขอ (ไม่มีส่วน fgMoves หรือ upsert ว่าง) = BOM_INVALID_FG ทั้งสาม action (20261122010000: เดิมสำเร็จแบบไม่ทำอะไร) ตามสัญญาคำขอเดียวต่อคำสั่ง
+select throws_ok($$ select fg_t.save('{"fgMoves":{"upsert":[]}}'::jsonb, 'receiveFg') $$, 'BOM_INVALID_FG', 'an empty request list is refused for a receipt');
+select throws_ok($$ select fg_t.save('{"fgMoves":{"upsert":[]}}'::jsonb, 'deliverFg') $$, 'BOM_INVALID_FG', 'and for a delivery');
+select throws_ok($$ select fg_t.save('{"fgMoves":{"upsert":[]}}'::jsonb, 'closeOrderShort') $$, 'BOM_INVALID_FG', 'and for a short close');
+select throws_ok($$ select fg_t.save('{}'::jsonb, 'receiveFg') $$, 'BOM_INVALID_FG', 'a receipt without the fgMoves section is refused');
+select throws_ok($$ select fg_t.save('{}'::jsonb, 'deliverFg') $$, 'BOM_INVALID_FG', 'a delivery without the fgMoves section is refused');
+select throws_ok($$ select fg_t.save('{}'::jsonb, 'closeOrderShort') $$, 'BOM_INVALID_FG', 'a short close without the fgMoves section is refused');
+select throws_ok($$ select fg_t.save('{"fgMoves":{"upsert":[]},"jobs":{"upsert":[]}}'::jsonb, 'receiveFg') $$, 'BOM_INVALID_FG', 'empty lists of other sections do not count as a request');
+select is(fg_t.ver(), current_setting('test.v_seed')::bigint, 'and none of them moves the version');
 -- 5.1 ส่วน / action
 select throws_ok($$ select fg_t.save('{"fgMoves":{"upsert":[{"orderId":"251121-25001","kind":"receive","lines":[{"fgCode":"FG-A","qty":1}]}]}}'::jsonb, 'reportJob') $$, 'BOM_INVALID_FG',
   'the fgMoves section can only be sent with the three finished-goods actions');
@@ -284,6 +292,7 @@ select is(public.app_bom_master() -> 'fgMoves', '[]'::jsonb, 'and none wrote a m
 -- รูปผิดมาก่อนสิทธิ์: พนักงาน PK ส่งจำนวน 0 = BOM_INVALID_FG ไม่ใช่ BOM_FORBIDDEN
 select public.app_sandbox_enter(current_setting('test.p_sbx_pk_staff')::uuid);
 select throws_ok($$ select fg_t.receive('251121-25001', '[{"fgCode":"FG-A","qty":0}]'::jsonb) $$, 'BOM_INVALID_FG', 'the shape is checked before the permission');
+select throws_ok($$ select fg_t.save('{}'::jsonb, 'receiveFg') $$, 'BOM_INVALID_FG', 'a missing request is a shape error before the permission too');
 select throws_ok($$ select fg_t.receive('251121-25001', '[{"fgCode":"FG-A","qty":1}]'::jsonb) $$, 'BOM_FORBIDDEN', 'PK staff cannot receive goods');
 select throws_ok($$ select fg_t.deliver('251121-25001', '[{"fgCode":"FG-A","qty":1}]'::jsonb) $$, 'BOM_FORBIDDEN', 'PK staff cannot record a delivery');
 select throws_ok($$ select fg_t.close_short('251121-25001', 'ปิดใบรับไม่ครบ') $$, 'BOM_FORBIDDEN', 'PK staff cannot close an order');
@@ -414,6 +423,28 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
 select throws_ok($$ select fg_t.close_short('251121-25002', 'ลูกค้ารับเท่าที่ทำได้') $$, 'BOM_INVALID_TRANSITION', 'a close is refused while what PK made (3) has not been received');
 select ok(fg_t.receive('251121-25002', '[{"fgCode":"FG-A","qty":2}]'::jsonb, '', 1) is not null,
   'a save from an old base version is accepted: totals are judged on the server, not on the client copy');
+-- 10.1 ยอดของงาน PK / FG ต่ำกว่ายอดที่ WH รับแล้วไม่ได้ (20261122010000: ใบจะค้างปิดไม่ได้) ทุกผู้เรียกรวมกลุ่มวางแผน · ลดแต่ยังไม่ต่ำกว่ายอดรับได้
+-- ตอนนี้ PK ทำได้ 3 (JOB-2A done) WH รับ 2 · ตัวตนของงานอ่านจากแถวเดิม: ย้ายงานไปสินค้า / ชนิด / แผนกอื่นในแถวเดียวกันก็คือเอายอดออกจาก A
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select throws_ok($$ select fg_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(fg_t.job('JOB-2A') || '{"qtyDone":1}'::jsonb))), 'reportJob') $$,
+  'BOM_INVALID_JOB', 'a planner cannot lower the PK output below what WH received (1 < 2)');
+select throws_ok($$ select fg_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(fg_t.job('JOB-2A') || '{"itemCode":"FG-B"}'::jsonb))), 'reportJob') $$,
+  'BOM_INVALID_JOB', 'nor move the job to another product (A would keep 0 of the 2 received)');
+select throws_ok($$ select fg_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(fg_t.job('JOB-2A') || '{"kind":"SE"}'::jsonb))), 'reportJob') $$,
+  'BOM_INVALID_JOB', 'nor change its kind away from FG');
+select throws_ok($$ select fg_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(fg_t.job('JOB-2A') || '{"dept":"GR"}'::jsonb))), 'reportJob') $$,
+  'BOM_INVALID_JOB', 'nor move it to another department');
+select throws_ok($$ select fg_t.save('{"jobs":{"delete":[{"id":"JOB-2A"}]}}'::jsonb, 'removeOrderItem') $$, 'BOM_INVALID_TRANSITION',
+  'a PK job with output cannot be deleted either (a started job is never deleted)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_admin_t')::uuid);
+select throws_ok($$ select fg_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(fg_t.job('JOB-2A') || '{"qtyDone":0}'::jsonb))), 'reportJob') $$,
+  'BOM_INVALID_JOB', 'an admin cannot lower it below the receipts either');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select is(fg_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(fg_t.job('JOB-2A') || '{"qtyDone":2}'::jsonb))), 'reportJob')
+  -> 'changes' -> 'jobs' -> 'upsert' -> 0 ->> 'qtyDone', '2', 'lowering it down to what was received is allowed (3 -> 2)');
+select is(fg_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(fg_t.job('JOB-2A') || '{"qtyDone":3}'::jsonb))), 'reportJob')
+  -> 'changes' -> 'jobs' -> 'upsert' -> 0 ->> 'qtyDone', '3', 'and the planner puts it back (2 -> 3)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
 select throws_ok($$ select fg_t.close_short('251121-25002', 'ลูกค้ารับเท่าที่ทำได้') $$, 'BOM_INVALID_TRANSITION', 'received 2 of the 3 PK made: still refused');
 select throws_ok($$ select fg_t.receive('251121-25002', '[{"fgCode":"FG-A","qty":2}]'::jsonb, '', 1) $$, 'BOM_FG_EXCEEDS',
   'with an old base the caps are still judged on the server totals (a conflict to catch up on, not BOM_STALE)');

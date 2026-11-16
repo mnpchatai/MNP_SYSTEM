@@ -957,7 +957,8 @@
   const FG_REASON_MIN = 3;
   const fgRead = (d, ctx, p, kind) => {
     const user = requireUser(ctx);
-    const order = orderById(d, p?.orderId);
+    // เลข PI เก็บเป็นตัวพิมพ์ใหญ่เสมอ (createOrder) · ตัดช่องว่างและทำเป็นตัวพิมพ์ใหญ่ก่อนหาเหมือน private.bom_fg_move (upper + ตัดช่องว่าง)
+    const order = orderById(d, String(p?.orderId ?? "").trim().toUpperCase());
     const R = rules();
     const note = p?.note === undefined || p?.note === null ? "" : typeof p.note === "string" ? p.note.trim() : fail("หมายเหตุต้องเป็นข้อความ");
     if (note.length > FG_NOTE_MAX) fail(`หมายเหตุยาวเกิน ${FG_NOTE_MAX} ตัวอักษร`);
@@ -977,6 +978,8 @@
         seen.add(code);
         if (!order.items.some((item) => item.fgCode === code)) fail(`${code} ไม่ได้อยู่ในใบ ${order.id}`);
         const qty = qtyRound(num(entry.qty, label));
+        // จำนวนเล็กมากที่ปัดแล้วเป็น 0 ส่งไปฐานข้อมูลไม่ได้ (ฐานข้อมูลรับเฉพาะ qty > 0)
+        if (qty <= 0) fail(`${label}ต้องมากกว่า 0`);
         if (qty > 1e9) fail("ตัวเลขใหญ่เกินไป");
         return { fgCode: code, qty };
       });
