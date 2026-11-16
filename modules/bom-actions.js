@@ -151,9 +151,8 @@
   const QTY_EPS = 1e-6;
   // ลำดับบรรทัดนับเป็นการเปลี่ยนแปลงด้วย (ผู้ใช้ลากเรียงส่วนประกอบได้ ลำดับใช้แสดงในต้นไม้และใบงาน)
   const sameLine = (line, other) => other.childCode === line.childCode && Math.abs(other.qty - line.qty) <= QTY_EPS && (other.scrapPct || 0) === (line.scrapPct || 0) && (other.note || "") === (line.note || "") && (Number(other.step) || null) === (Number(line.step) || null);
-  // ลำดับตามผังงาน (rules.sortLinesByFlow) เป็นลำดับตั้งต้นของ BOM ที่เกิดโดยผู้ใช้ไม่ได้ให้ลำดับ (นำเข้า Excel · BOM ใหม่ของชิ้นที่ยังไม่มี BOM · เปลี่ยนสี · คัดลอก FG)
-  // BOM ที่มีอยู่แล้วเก็บลำดับตามที่ผู้ใช้ให้ (เลื่อนขึ้น/ลง ลากในตารางสร้าง BOM ข้ามแผนกได้) บรรทัดที่เพิ่มใหม่ต่อท้าย
-  const sortLines = (d, lines) => rules().sortLinesByFlow(lines, (code) => itemOf(d, code));
+  // ลำดับตามผังงาน (rules.sortLinesByFlow) เป็นลำดับตั้งต้นเฉพาะตอนนำเข้า Excel (ชีตไม่มีลำดับที่ผู้ใช้จัด)
+  // ที่เหลือเก็บลำดับตามที่ผู้ใช้ให้ (เลื่อนขึ้น/ลง ลากในตารางสร้าง BOM ข้ามแผนกได้ ทั้ง BOM ใหม่และที่มีแล้ว) · เปลี่ยนสี/คัดลอก FG คงลำดับของต้นทาง · บรรทัดที่เพิ่มใหม่ต่อท้าย
   const sameLines = (a, b) => a.length === b.length && a.every((line, index) => sameLine(line, b[index]));
   const sameLinesAnyOrder = (a, b) => a.length === b.length && a.every((line) => b.some((other) => sameLine(line, other)));
   function diffText(before, after) {
@@ -177,7 +176,7 @@
     if (parent.kind === "CP") fail(`${parent.code} เป็นสูตรยาง ไม่มีส่วนประกอบในระบบนี้ (สูตร PHR อยู่ที่ RubberFlow)`);
     const previous = approvedBomOf(d, parent.code);
     const given = normalizeLines(d, parent, p.lines);
-    const lines = previous ? given : sortLines(d, given);
+    const lines = given;
     // เส้นยาง: บรรทัดเดียวคือสูตรยางของมัน และต้องตรงกับช่องสูตรของเส้นยาง (รหัส RB ก็มีรหัสสูตรอยู่ในตัว)
     if (parent.kind === "RB") {
       if (lines.length > 1) fail(`เส้นยาง ${parent.code} ใช้สูตรยางได้สูตรเดียว`);
@@ -698,7 +697,7 @@
         if (child?.kind === "RB" && childColor && !recolor) log.push(`${line.childCode} ใต้ ${toCode} คงสี ${childColor} (ไม่ใช่สี ${fromColors.join("/") || "-"} ของ SE เดิม)`);
         return { ...line, flags: [...(line.flags ?? [])], childCode: recolor ? ensureRecoloredItem(d, line.childCode, color, ctx, user, log) : line.childCode };
       });
-      d.boms.push({ id: masterId(d, "BOM", ctx), itemCode: toCode, revision: 1, status: "approved", ownerDept: src.ownerDept, lines: sortLines(d, lines), createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}`, changeLog: [{ at: ctx.now, by: user.name, text: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}` }] });
+      d.boms.push({ id: masterId(d, "BOM", ctx), itemCode: toCode, revision: 1, status: "approved", ownerDept: src.ownerDept, lines, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}`, changeLog: [{ at: ctx.now, by: user.name, text: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}` }] });
     }
     return toCode;
   }
@@ -751,7 +750,7 @@
       else merged.push(line);
     }
     d.items.push({ code, kind: "FG", name: `${source.name}${label ? ` (${label})` : ""}`.slice(0, 160), ownerDept: "PK", uom: source.uom, weightG: source.weightG ?? 0, group: source.group ?? "TOY", legacyCodes: [], rubber: null, active: true, createdAt: ctx.now, clonedFrom: source.code });
-    d.boms.push({ id: masterId(d, "BOM", ctx), itemCode: code, revision: 1, status: "approved", ownerDept: "PK", lines: sortLines(d, merged), createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: log[0], changeLog: log.map((text) => ({ at: ctx.now, by: user.name, text })) });
+    d.boms.push({ id: masterId(d, "BOM", ctx), itemCode: code, revision: 1, status: "approved", ownerDept: "PK", lines: merged, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: log[0], changeLog: log.map((text) => ({ at: ctx.now, by: user.name, text })) });
     audit(d, ctx, "สร้างสินค้าจากฐานรหัสเดียวกัน", `${code} ← ${source.code} Rev.${sourceBom.revision}${log.length > 1 ? ` · ${log.slice(1).join(" · ")}` : ""}`);
   }
   // สร้างรุ่นสินค้า (ฐาน + แพ็กเกจ + ชุดสี) โดยไม่ต้องผ่านใบสั่งผลิต — จุดเดียวกับที่ addOrderItem ใช้

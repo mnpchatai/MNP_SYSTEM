@@ -94,7 +94,9 @@
       A.saveItem(d, { ...item, ownerDept: item.ownerDept ?? rules().KINDS[item.kind].dept, group: "TOY", create: true }, at(t0 + index * 3600000, "planner"));
     });
     BOMS().forEach(([parentCode, lines], index) => {
-      A.saveBom(d, { itemCode: parentCode, lines: lines.map(([childCode, qty]) => ({ childCode, qty })) }, at(t0 + 2 * DAY + index * 6 * 3600000, "planner"));
+      // ข้อมูลสาธิตไม่มีลำดับที่ผู้ใช้จัด: เรียงตามผังงานเหมือน BOM ที่นำเข้าจาก Excel (saveBom เก็บลำดับตามที่ส่งมา)
+      const ordered = rules().sortLinesByFlow(lines.map(([childCode, qty]) => ({ childCode, qty })), (code) => d.items.find((entry) => entry.code === code) ?? null);
+      A.saveBom(d, { itemCode: parentCode, lines: ordered }, at(t0 + 2 * DAY + index * 6 * 3600000, "planner"));
     });
     // สี ชุดสี และแพ็กเกจเป็นข้อมูล (แทนการแก้สีมือในชีต Edit DATA): สีที่ใช้ในชุดสาธิต · ชุด Y เรียนรู้จากสินค้าที่มี · ชุด A นิยามใหม่ (ลูก/ปีกแดง แกนดำ)
     // แพ็กเกจของตอปิโด: P = ถุง + ลังรวม 40 ชุด · B = กล่องเดี่ยว (ลัง 12 กล่อง)

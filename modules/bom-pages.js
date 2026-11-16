@@ -511,7 +511,7 @@
       <datalist id="bom-item-list">${data.items.filter((entry) => entry.code !== code && entry.active !== false && entry.kind !== "FG").map((entry) => `<option value="${attr(entry.code)}">${esc(`${rules.KINDS[entry.kind]?.label ?? entry.kind} · ${entry.name.slice(0, 50)}`)}</option>`).join("")}</datalist>
       <datalist id="bom-compound-list">${data.compounds.map((entry) => `<option value="${attr(entry.code)}">${esc(entry.name)}</option>`).join("")}</datalist>
       ${itemCard}
-      ${noteCard(ui, "วิธีใส่ปริมาณและลำดับบรรทัด", `<p class="small muted">ปริมาณ = จำนวนลูกต่อ 1 หน่วยของพ่อ (ชั้นแรกต่อ 1 ${esc(uomText(ctx, item?.uom ?? defaultUom))} ของ${esc(noun)}) · RB ใต้ SE: ใส่ข้อมูลการตัดแล้วระบบแนะนำอัตราส่วน 1/(ชิ้นต่อเส้น × SE ต่อ GR) · สูตรยางใต้ RB: ปริมาณเป็น กก. ต่อเส้น (ว่าง = ใช้ กก./เส้น ของเส้นยาง) · BOM ใหม่เรียงตามผังงาน ST → RB/SE → PT → BG → PK ตอนบันทึกครั้งแรก · BOM ที่มีแล้วเก็บตามลำดับในตาราง (ลากย้ายข้ามแผนกได้) · พิมพ์รหัสที่ยังไม่มี = สร้างชิ้นใหม่ (ระบุชนิด ชื่อ หน่วย)</p>`, `
+      ${noteCard(ui, "วิธีใส่ปริมาณและลำดับบรรทัด", `<p class="small muted">ปริมาณ = จำนวนลูกต่อ 1 หน่วยของพ่อ (ชั้นแรกต่อ 1 ${esc(uomText(ctx, item?.uom ?? defaultUom))} ของ${esc(noun)}) · RB ใต้ SE: ใส่ข้อมูลการตัดแล้วระบบแนะนำอัตราส่วน 1/(ชิ้นต่อเส้น × SE ต่อ GR) · สูตรยางใต้ RB: ปริมาณเป็น กก. ต่อเส้น (ว่าง = ใช้ กก./เส้น ของเส้นยาง) · บันทึกตามลำดับในตาราง (ลากย้ายข้ามแผนกได้) · พิมพ์รหัสที่ยังไม่มี = สร้างชิ้นใหม่ (ระบุชนิด ชื่อ หน่วย)</p>`, `
         ${toolsHtml}
         <div class="table-wrap"><table class="rf-table bom-tree-table">${tableHead}<tbody data-bom-rows>${rows.map((row) => editorRowHtml(ctx, row)).join("")}</tbody></table></div>
         <template data-bom-row>${templateRow}</template>

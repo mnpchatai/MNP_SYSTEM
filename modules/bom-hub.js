@@ -116,7 +116,7 @@
     ];
   }
   function findList(ctx) {
-    const { data, ui, rules, params } = ctx;
+    const { data, ui, params } = ctx;
     const canEdit = ctx.helpers.canPlan(ctx.user);
     const kind = KIND_TABS.some(([id]) => id === params.get("kind")) ? params.get("kind") : ctx.q ? "all" : "fg";
     const matched = data.items.filter((item) => includes(`${item.code} ${item.name} ${(item.legacyCodes ?? []).join(" ")}`, ctx.q));

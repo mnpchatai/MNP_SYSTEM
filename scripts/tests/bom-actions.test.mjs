@@ -155,11 +155,11 @@ test("saveBomTree saves a whole multi-level tree in one call: new items, nested 
   assert.equal(rb.weightG, 1500);
   assert.equal(approved(d, "SE-NEW-01").lines[0].qty, 0.05);
   assert.equal(A.helpers.itemOf(d, "RB-DM02-02-BK01-225-3-20").rubber.cutLengthCm, 15, "patch updated the cutting data of an existing RB");
-  assert.deepEqual(approved(d, "NEW-TP-02(P)-Y").lines.map((line) => line.childCode), ["P-STK-01", "RB-DM02-02-BK01-225-3-20", "SE-NEW-01", "PT-00320"], "lines are stored in company-flow order (ST → RB → GR → PT) whatever order the tree sent");
+  assert.deepEqual(approved(d, "NEW-TP-02(P)-Y").lines.map((line) => line.childCode), ["SE-NEW-01", "P-STK-01", "PT-00320", "RB-DM02-02-BK01-225-3-20"], "a new BOM keeps the order the tree sent (no re-sort by company flow)");
   assert.equal(approved(d, "NEW-TP-02(P)-Y").note, "สร้างครั้งแรก");
   // บันทึกซ้ำโดยไม่เปลี่ยนอะไร = ไม่มี revision ใหม่
   const again = A.saveBomTree(d, { code: "NEW-TP-02(P)-Y", item: { name: "ตอปิโดใหม่", uom: "set" }, nodes: [
-    { code: "P-STK-01", qty: 1 }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 }, { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05 }] }, { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.02 }] },
+    { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05 }] }, { code: "P-STK-01", qty: 1 }, { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.02 }] }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 },
   ] }, ctx("planner"));
   assert.deepEqual(again.saved, []);
   assert.equal(again.summary, "ไม่มีการเปลี่ยนแปลง");
@@ -168,16 +168,16 @@ test("saveBomTree saves a whole multi-level tree in one call: new items, nested 
   // ส่งชุดเดิมแต่สลับลำดับ = เป็นการแก้ (ฉบับใหม่ "เรียงลำดับส่วนประกอบใหม่") ลำดับที่ส่งมาคือลำดับที่เก็บ
   const reordered = structuredClone(d);
   const reorderedSave = A.saveBomTree(reordered, { code: "NEW-TP-02(P)-Y", nodes: [
-    { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05 }] }, { code: "P-STK-01", qty: 1 }, { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.02 }] }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 },
+    { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.02 }] }, { code: "P-STK-01", qty: 1 }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 }, { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05 }] },
   ] }, ctx("planner"));
   assert.deepEqual(reorderedSave.saved, ["NEW-TP-02(P)-Y Rev.2"]);
-  assert.deepEqual(approved(reordered, "NEW-TP-02(P)-Y").lines.map((line) => line.childCode), ["SE-NEW-01", "P-STK-01", "PT-00320", "RB-DM02-02-BK01-225-3-20"]);
+  assert.deepEqual(approved(reordered, "NEW-TP-02(P)-Y").lines.map((line) => line.childCode), ["PT-00320", "P-STK-01", "RB-DM02-02-BK01-225-3-20", "SE-NEW-01"]);
   assert.match(approved(reordered, "NEW-TP-02(P)-Y").changeLog[0].text, /เรียงลำดับส่วนประกอบใหม่/);
   const auditCount = d.audit.length;
   assert.ok(!d.audit.slice(0, 3).some((entry) => entry.action === "บันทึกต้นไม้ BOM" && entry.detail.includes("ไม่มีการเปลี่ยนแปลง")), "no audit row for a no-op save");
   // แก้แค่ข้อมูลการตัดของ RB (patch) โดย BOM ไม่เปลี่ยน: ผลลัพธ์บอกว่าแก้ชิ้น ไม่ใช่ "ไม่มีการเปลี่ยนแปลง"
   const patchOnly = A.saveBomTree(d, { code: "NEW-TP-02(P)-Y", nodes: [
-    { code: "P-STK-01", qty: 1 }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 }, { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05, patch: { rubber: { compound: "DM01", cutLengthCm: "7", pcsPerRoll: "31", sePerGr: "1", kgPerRoll: "1.5" } } }] }, { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.02 }] },
+    { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05, patch: { rubber: { compound: "DM01", cutLengthCm: "7", pcsPerRoll: "31", sePerGr: "1", kgPerRoll: "1.5" } } }] }, { code: "P-STK-01", qty: 1 }, { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.02 }] }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 },
   ] }, ctx("planner"));
   assert.equal(patchOnly.changed, true);
   assert.deepEqual(patchOnly.saved, []);
@@ -193,7 +193,7 @@ test("saveBomTree saves a whole multi-level tree in one call: new items, nested 
   ] }, ctx("planner")), /ปรากฏหลายที่ในต้นไม้ด้วยส่วนประกอบต่างกัน/);
   // แก้ชั้นลึก (PT → เม็ด) จากต้นไม้ของสินค้าใหม่ มีผลกับ PT ที่สินค้าอื่นใช้ร่วมด้วย
   const third = A.saveBomTree(d, { code: "NEW-TP-02(P)-Y", nodes: [
-    { code: "P-STK-01", qty: 1 }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 }, { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05 }] }, { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.025 }] },
+    { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05 }] }, { code: "P-STK-01", qty: 1 }, { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.025 }] }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 },
   ] }, ctx("manager"));
   assert.deepEqual(third.saved, ["PT-00320 Rev.2"]);
   assert.equal(approved(d, "PT-00320").lines[0].qty, 0.025);
@@ -323,7 +323,7 @@ test("a product can be chosen by base code + package + color set; an unknown var
   const bom = approved(d, created.code);
   assert.equal(bom.revision, 1);
   assert.match(bom.note, /คัดลอกจาก DEMO-TP-01\(P\)-Y Rev\.1/);
-  assert.deepEqual(bom.lines.map((line) => [line.childCode, line.qty]), [["P-STK-01", 1], ["P-BAG-01", 0.01], ["P-BOX-01", 0.025], ["SE-TP01-RD01-100-18-65", 3], ["SE-TP01-BK01-140-3-20", 3], ["SE-TP01-RD01-75-3-30", 9], ["PT-00320", 0.3], ["XP-00001", 1]], "orange SE slots become red, the black core stays, packaging lines come from the package definition");
+  assert.deepEqual(bom.lines.map((line) => [line.childCode, line.qty]), [["P-STK-01", 1], ["SE-TP01-RD01-100-18-65", 3], ["SE-TP01-BK01-140-3-20", 3], ["SE-TP01-RD01-75-3-30", 9], ["PT-00320", 0.3], ["XP-00001", 1], ["P-BAG-01", 0.01], ["P-BOX-01", 0.025]], "orange SE slots become red, the black core stays, packaging lines come from the package definition");
   assert.match(bom.changeLog.map((entry) => entry.text).join(" | "), /ชุดสี A: SE-TP01-OR01-100-18-65 → SE-TP01-RD01-100-18-65, SE-TP01-OR01-75-3-30 → SE-TP01-RD01-75-3-30/);
   assert.match(bom.changeLog.map((entry) => entry.text).join(" | "), /แพ็กเกจ P: ถอด P-BAG-01, P-BOX-01 ใส่ P-BAG-01 × 0.0100, P-BOX-01 × 0.0250/);
   const redSe = A.helpers.itemOf(d, "SE-TP01-RD01-100-18-65");

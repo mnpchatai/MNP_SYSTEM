@@ -76,7 +76,7 @@
   ].map((entry) => Object.freeze(entry)));
   const flowStepOf = (dept) => PROCESS_FLOW.find((entry) => entry.dept === dept)?.no ?? 10;
   // บรรทัด BOM เรียงตามลำดับแผนกผู้ผลิตของลูกในผังงาน (ของซื้อ ST 3 → เส้นยาง RB 4 → ชิ้นยาง GR 7 → พลาสติก PT 8 → กระเป๋า BG 9 → ชิ้นทำเอง PK 10)
-  // ลำดับเท่ากันคงลำดับเดิม · ใช้ทุกจุดที่บันทึก BOM และตอนอัปเกรดข้อมูลเก่า (bom-store v5) ให้หน้าสร้าง BOM อ่านจากบนลงล่างตามผังงาน
+  // ลำดับเท่ากันคงลำดับเดิม · เป็นลำดับตั้งต้นตอนนำเข้า Excel และตอนอัปเกรดข้อมูลเก่า (bom-store v5) เท่านั้น · BOM ที่ผู้ใช้บันทึกเก็บลำดับตามที่ผู้ใช้จัด (ข้ามแผนกได้)
   const lineDept = (line, itemOf) => { const item = itemOf?.(line.childCode); return item?.ownerDept ?? line.producerDept ?? KINDS[item?.kind]?.dept ?? "ST"; };
   const sortLinesByFlow = (lines, itemOf) => lines.map((line, index) => ({ line, index, rank: flowStepOf(lineDept(line, itemOf)) })).sort((a, b) => a.rank - b.rank || a.index - b.index).map(({ line }) => line);
   // ลำดับการไหลของงานรายแผนก (ลำดับ 3 → 11 ของผังงาน) ใช้เรียงการ์ดในหน้า "สินค้า 1 ตัว → งานทุกแผนก" และตารางเวลาผลิต
