@@ -651,6 +651,38 @@ test("the mobile count page lists draft orders, shows SE + RB of the stock-check
   assert.match(await env.render("p=count"), /ไม่มีสิทธิ์เข้าถึงหน้านี้/);
 });
 
+test("a product of the order that is also a component of another product gets no count field (its figure is the amount from stock the planner sets at step 2), the other items still do", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const product = "DEMO-HL-24(B)-A";
+  const se = "SE-HL24-YE03-400-19-30";
+  // ชุดรวมที่มีห่วงฮูล่า (สินค้าของใบเดียวกัน) เป็นส่วนประกอบ
+  assert.equal(env.store.run("saveItem", { code: "KIT-01", kind: "FG", name: "ชุดรวมห่วงฮูล่า", uom: "set", create: true }).ok, true);
+  const bom = env.store.run("saveBom", { itemCode: "KIT-01", lines: [{ childCode: product, qty: 1 }] });
+  assert.equal(bom.ok, true, bom.error?.message);
+  const added = env.store.run("addOrderItem", { orderId: "DEMO-26002", fgCode: "KIT-01", qty: 2 });
+  assert.equal(added.ok, true, added.error?.message);
+  assert.equal(env.store.run("explodeOrder", { orderId: "DEMO-26002" }).ok, true);
+  const order = env.store.data().orders.find((entry) => entry.id === "DEMO-26002");
+  assert.ok(order.explosion.some((line) => line.itemCode === product && line.level > 0), "the product is also a component of the kit");
+  const field = (code) => new RegExp(`name="itemCode\\[\\]" value="${code.replace(/[()]/g, "\\$&")}"`);
+  const countButton = (code) => new RegExp(`data-rf-open="stockCount" data-rf-args="[^"]*${code.replace(/[()]/g, "\\$&")}[^"]*"`);
+  const D = env.context.MNP_BOM_DIALOGS;
+  for (const user of ["B08", "B09", "B03"]) { // ST · WH · ฝ่ายวางแผน
+    env.store.setUser(user);
+    let html = await env.render("p=count&order=DEMO-26002&all=1");
+    clean(html);
+    assert.doesNotMatch(html, field(product), `${user}: no count field for the product`);
+    assert.match(html, field(se), `${user}: the other items are still counted`);
+    html = await env.render("p=orders&sel=DEMO-26002&tab=bom");
+    clean(html);
+    assert.doesNotMatch(html, countButton(product), `${user}: no count button on the product's lines`);
+    assert.match(html, countButton(se), `${user}: a count button on the other items`);
+    assert.equal(D.stockCount(env.ctx("p=orders&sel=DEMO-26002"), { orderId: "DEMO-26002", itemCode: product }), null, `${user}: the count dialog does not open for the product`);
+    assert.ok(D.stockCount(env.ctx("p=orders&sel=DEMO-26002"), { orderId: "DEMO-26002", itemCode: se }), `${user}: it opens for the other items`);
+  }
+});
+
 test("leaving the count page with typed counts stops the link at once and goes only after the dialog confirms", async () => {
   const env = load();
   env.store.setUser("B08");
@@ -1647,11 +1679,27 @@ test("a PI that closes while a part line is partly issued: the PI page offers th
   // งานของฉัน (ST) และหน้างานแผนก: ใบที่ปิดแล้วไม่มีการ์ดรอเบิกหรือปุ่มเบิกจ่ายที่กดอะไรไม่ได้
   html = await env.render("p=work&dept=ST");
   assert.doesNotMatch(html, /เบิกของตามใบ DEMO-26001/, "no waiting card for a closed PI");
+  // หน้างานของแผนก: บรรทัดของซื้อของใบที่ปิดแล้วไม่ใช่งานค้าง (ไม่อยู่ในค้างอยู่ ไม่นับบนแท็บ) อยู่ในแท็บทั้งหมดโดยไม่มีปุ่มเบิก ไม่เลยกำหนด และสถานะบอกว่าใบปิดแล้ว
+  // (กำหนดเบิกของใบนี้ย้อนไปในอดีต: ถ้ายังนับเป็นงานค้างจะขึ้นเลยกำหนด)
+  for (const job of env.store.data().jobs) if (job.orderId === "DEMO-26001" && job.dept === "ST") job.dueAt = 1;
   html = await env.render("p=jobs&dept=ST");
+  assert.equal(rowsOf(html).length, 0, "the closed PI's part lines are not open work");
+  assert.match(html, />ST \(0\)</, "the ST tab counts no open job");
+  html = await env.render("p=jobs&dept=ST&st=all");
   assert.ok(rowsOf(html).length > 0 && rowsOf(html).every((row) => !row.includes("เบิกจ่ายที่ใบ PI")), "no issue link on the closed PI's part jobs");
+  assert.ok(rowsOf(html).every((row) => !row.includes("เลยกำหนด") && !row.includes('class="is-late"') && row.includes(">ใบปิดแล้ว<")), "no overdue mark, and the status says the PI is closed");
   env.store.setUser("B03"); // ฝ่ายวางแผน: แท็บ ST ของงานของฉันไม่นับการ์ดนั้น
   html = await env.render("p=work&dept=ST");
   assert.doesNotMatch(html, /เบิกของตามใบ DEMO-26001/);
+  // แท็บงานรายแผนกของหน้าใบ: บรรทัดของซื้อไม่เลยกำหนดและสถานะบอกว่าใบปิดแล้ว (ใบที่ปิดแล้วเปิดที่ขั้น 6 ขั้น 4 ไม่แสดง)
+  html = await env.render(`${page}&tab=jobs`);
+  clean(html);
+  const stRows = html.split("<tr").filter((row) => row.includes('<span class="rf-badge">ST</span>'));
+  assert.ok(stRows.length > 0 && stRows.every((row) => !row.includes('class="is-late"') && row.includes(">ใบปิดแล้ว<")), "the order's job tab shows the part lines as closed, not overdue");
+  // ภาพรวม: งานค้างไม่นับบรรทัดของซื้อของใบที่ปิดแล้ว
+  const openOnDashboard = env.store.data().jobs.filter((job) => job.status !== "done" && !(job.orderId === "DEMO-26001" && job.dept === "ST")).length;
+  html = await env.render("p=dashboard");
+  assert.match(html, new RegExp(`<span class="rf-stat-label">งานค้าง</span><strong class="rf-stat-value">${openOnDashboard}</strong>`), "the dashboard's open-job count leaves the closed PI's part lines out");
 });
 
 test("import page: the group selected when pressing import is saved on new items, and a second import reuses the XP- subpart", async () => {

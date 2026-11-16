@@ -655,6 +655,10 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     }
     return { action, woIds };
   }
+  // ช่องโครงสร้างของงาน (v_struct ของ bom_save_jobs) และ WO (ไม่นับเวลา/ผู้ผูก) ต่างจากแถวเดิมหรือไม่
+  const BOM_JOB_SHAPE = ["dept", "itemCode", "name", "kind", "uom", "qtyPlanned", "qtyRequired", "stockCounted", "dueAt", "fgCodes"];
+  const bomJobExt = (ref) => (ref ? bomCanon(bomWithout(ref, ["linkedAt", "by", "auto"])) : "null");
+  const bomJobShapeChanged = (prev, record) => BOM_JOB_SHAPE.some((key) => bomCanon(prev[key] ?? null) !== bomCanon(record[key] ?? null)) || bomJobExt(prev.externalRef) !== bomJobExt(record.externalRef);
   // กฎของงาน (ตรงกับ bom_save_jobs): งานใหม่เกิดตอนปล่อยผลิตเท่านั้น (queued ว่าง) · แก้งานได้เฉพาะใบที่ released / in_progress ·
   // รายงานต่อท้ายเท่านั้น (ทุกบทบาท) · พนักงานแผนก: งาน done แล้วแก้ไม่ได้ ยอดเพิ่มได้อย่างเดียวและเท่าผลรวมรายงานใหม่ · ผูก WO ได้เฉพาะงานแผนก RB
   function bomJobRules(prev, record, actor, next, released) {
@@ -671,6 +675,9 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     if (reports.length < oldReports.length || oldReports.some((entry, index) => bomCanon(entry) !== bomCanon(reports[index]))) fail("BOM_FORBIDDEN");
     if (!order || !["released", "in_progress"].includes(order.status)) fail("BOM_INVALID_TRANSITION");
     if (record.externalRef && prev.dept !== "RB") fail("BOM_INVALID_JOB");
+    // งานของซื้อที่เบิกไปแล้ว (qtyDone > 0 หรือ done): แก้ช่องโครงสร้าง / WO ไม่ได้ ทุก action ทุกผู้เรียก (ตรงกับ bom_save_jobs ของ 20261124010000)
+    // การแก้ช่องผลงานไปทาง bomCheckRecord ("part") ก่อนถึงตรงนี้ · แถวที่เท่าเดิมไม่ถูกปฏิเสธ (SQL ข้ามแถวที่ไม่เปลี่ยน)
+    if (bomIsPartJob(prev) && (Number(prev.qtyDone) > 0 || prev.status === "done") && bomJobShapeChanged(prev, record)) fail("BOM_INVALID_JOB");
     // งาน PK / FG (ตัวตนจากแถวเดิม): ยอด PK รวมของสินค้านั้นในใบหลังแก้ต้องไม่ต่ำกว่ายอดที่ WH รับเข้าคลังแล้ว ไม่งั้นใบค้างปิดไม่ได้ (ตรงกับ bom_save_jobs ของ 20261122010000) · ลดยอดหรือย้ายไปสินค้า/ชนิด/แผนกอื่นเหมือนกัน
     if (prev.dept === "PK" && prev.kind === "FG") {
       const contrib = record.dept === "PK" && record.kind === "FG" && record.itemCode === prev.itemCode ? Number(record.qtyDone) || 0 : 0;
@@ -951,7 +958,8 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     return { moves: kind === "close" ? 1 : wanted.length, closed };
   }
   // ปล่อยผลิต (draft → released): สินค้าของใบที่มี stockCounts[รหัส] = n > 0 ต้อง n ≤ จำนวนสั่ง (BOM_INVALID_ORDER) และสต็อกสินค้าสำเร็จรูปของรหัสนั้น ≥ n (BOM_FG_EXCEEDS) แล้วรับ n จากใบต้นทางเรียงใบที่ปล่อยผลิตก่อน
-  // (released_at แล้วเลข PI) แถว transfer ต่อใบต้นทาง · ถ้าทุกสินค้ามี have ≥ สั่ง (ได้ครบจากสต็อก) ใบเป็น completed ในคำสั่งเดียวกัน (ตั้ง released_at / completed_at) และกฎ "ใบที่ปล่อยผลิตต้องมีงานอย่างน้อยหนึ่งงาน" ไม่ใช้กับใบนี้
+  // (released_at แล้วเลข PI) แถว transfer ต่อใบต้นทาง · ถ้าทุกสินค้ามี have ≥ สั่ง (ได้ครบจากสต็อก) ใบเป็น completed ในคำสั่งเดียวกัน (ตั้ง released_at / completed_at) และใบนี้ต้องไม่มีงาน (แทนกฎ "ต้องมีงานอย่างน้อยหนึ่งงาน")
+  // เรียกทันทีหลังเขียนแถวใบที่ปล่อยผลิต ก่อนตรวจงาน (ลำดับเดียวกับ SQL: bom_save_orders ก่อน bom_save_jobs)
   function bomReleaseFgStock(next, order, nextVersion, actor, at) {
     const counts = order.stockCounts && typeof order.stockCounts === "object" && !Array.isArray(order.stockCounts) ? order.stockCounts : {};
     let moves = 0;
@@ -1073,6 +1081,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
         }
         // สูตรยางผูกกับสูตร PHR ของ RubberFlow ได้เฉพาะรหัสสูตรที่มีอยู่ในฐานข้อมูล RubberFlow (revision ใดก็ได้ · ตรงกับ bom_save_compounds)
         if (list === "compounds" && record.recipeId !== undefined && record.recipeId !== null && !rfLoad().recipes.some((row) => row.id === record.recipeId)) fail("BOM_INVALID_COMPOUND");
+        const releasedBefore = released.length;
         if (list === "orders") bomOrderTransition(prev, record, { jobRows: changes.jobs?.upsert ?? [], jobsOf, dropJobs, released, rfCancel: rfOps.cancel, returnFgStock: (orderId) => { meta.fgStockMoves = (meta.fgStockMoves ?? 0) + bomReturnFgStock(next, orderId, nextVersion, actor, at); } });
         if (list === "jobs") bomJobRules(prev, record, actor, next, released);
         if (index === -1) {
@@ -1102,6 +1111,12 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
         }
         if (list === "jobs" && record.status !== "queued") startedJobs.push(record);
         stamp(list, id);
+        // ปล่อยผลิต: หักสต็อกสินค้าสำเร็จรูปของใบนี้ทันทีตามลำดับแถว ก่อนตรวจงานทุกแถว (ตรงกับ bom_save_orders ที่รันก่อน bom_save_jobs)
+        // ใบที่ปล่อยก่อนในคำสั่งเดียวกันหยิบก่อน · ใบที่ได้ครบทุกสินค้าเป็น completed ในคำสั่งนี้
+        if (list === "orders" && released.length > releasedBefore) {
+          const stock = bomReleaseFgStock(next, next.orders.find((row) => idOf(row) === id), nextVersion, actor, at);
+          if (stock.moves) meta.fgStockMoves = (meta.fgStockMoves ?? 0) + stock.moves;
+        }
       }
       for (const target of entry.delete ?? []) {
         if (!BOM_DELETABLE.includes(list)) fail("BOM_INVALID_CHANGES");
@@ -1127,12 +1142,11 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     if (action === "issueOrderParts") meta.issued = bomIssueParts(next, changes.jobs?.upsert ?? [], base, current.version, nextVersion, actor, at);
     if (bomFgKind(action)) meta.fg = bomFgMoves(next, changes.fgMoves?.upsert ?? [], nextVersion, actor, at, action);
     if (BOM_RETURN_ACTIONS.includes(action)) meta.returned = bomReturnParts(next, changes.partReturns?.upsert ?? [], base, current.version, nextVersion, actor, at);
-    // ปล่อยผลิต: หักสต็อกสินค้าสำเร็จรูปตามที่ใบตั้งใช้ (ใบที่ได้ครบทุกสินค้าปิดทันที) แล้วใบที่ปล่อยผลิตต้องมีงาน (ปล่อยผลิตโดยไม่มีงานเลยไม่ได้ ยกเว้นใบที่ได้ครบจากสต็อก)
+    // ใบที่ปล่อยผลิตในคำสั่งนี้ (ตรงกับ app_bom_save_master ของ 20261124010000): ยังไม่ completed ต้องมีงาน (ปล่อยผลิตโดยไม่มีงานเลยไม่ได้)
+    // completed (ได้ครบทุกสินค้าจากสต็อกตอนปล่อย ด้านบน) ต้องไม่มีงาน เพราะงานของใบที่ปิดแล้วทำต่อไม่ได้
     for (const orderId of released) {
-      const order = next.orders.find((row) => row.id === orderId);
-      const stock = order ? bomReleaseFgStock(next, order, nextVersion, actor, at) : { moves: 0, completed: false };
-      if (stock.moves) meta.fgStockMoves = (meta.fgStockMoves ?? 0) + stock.moves;
-      if (!stock.completed && !next.jobs.some((job) => job.orderId === orderId)) fail("BOM_INVALID_TRANSITION");
+      const completed = next.orders.find((row) => row.id === orderId)?.status === "completed";
+      if (completed === next.jobs.some((job) => job.orderId === orderId)) fail("BOM_INVALID_TRANSITION");
     }
     rfOps.release = [...released];
     // งานเริ่ม (ออกจากรอคิว) ทำให้ใบที่ปล่อยผลิตแล้วเปลี่ยนเป็นกำลังผลิตเองในคำสั่งเดียวกัน (ผู้รายงานไม่ใช่ฝ่ายวางแผนก็ไม่ต้องส่งการแก้ใบ)

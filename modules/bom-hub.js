@@ -957,11 +957,15 @@
         const mine = jobs.filter((job) => job.dept === dept);
         if (!mine.length) return "";
         const done = mine.filter((job) => job.status === "done").length;
-        const late = mine.filter((job) => job.status !== "done" && job.dueAt < ctx.now).length;
-        // ของซื้อ: บรรทัดที่เบิกไปบางส่วนยังนับว่ารอเบิก (บอกจำนวนบรรทัดนั้นต่อท้าย)
+        // เลยกำหนด = งานที่ยังต้องทำ (helpers.isOpenJob): บรรทัดของซื้อของใบที่ปิดแล้วไม่นับ
+        const late = mine.filter((job) => ctx.helpers.isOpenJob(data, job) && job.dueAt < ctx.now).length;
+        // ของซื้อ: บรรทัดที่เบิกไปบางส่วนยังนับว่ารอเบิก (บอกจำนวนบรรทัดนั้นต่อท้าย) · ใบที่ปิดแล้วเบิกไม่ได้อีก บอกเฉพาะว่าเบิกไปกี่บรรทัด (รวมที่เบิกบางส่วน) ไม่มีคำว่ารอ
         const partly = mine.filter((job) => job.status !== "done" && Number(job.qtyDone) > 0).length;
-        const text = dept === "ST" && mine.every((job) => ctx.helpers.isPartJob(job)) ? (done === mine.length ? `เบิกของครบ ${mine.length} รายการ` : `รอเบิกของ ${mine.length - done} จาก ${mine.length} รายการ${partly ? ` (เบิกไปบางส่วน ${partly} รายการ)` : ""}`) : `เสร็จ ${done} จาก ${mine.length} งาน`;
-        return `<tr><td>${deptChip(ctx, dept)} ${esc(deptName(ctx, dept))}</td><td class="rf-progress-cell">${ui.progress(done, mine.length)}<div class="small muted">${esc(text)}</div></td><td>${late ? ui.badge("bad", `เลยกำหนด ${late} งาน`) : ""}</td><td class="right">${ctx.canSee("work") && (canPlan || ctx.user?.dept === dept) ? ui.link("ดูงาน", ctx.url("work", { dept, order: order.id }), "btn rf-btn secondary small") : ""}</td></tr>`;
+        const parts = dept === "ST" && mine.every((job) => ctx.helpers.isPartJob(job));
+        const closedParts = parts && done < mine.length && !mine.some((job) => ctx.helpers.isOpenJob(data, job));
+        const issued = done + partly;
+        const text = parts ? (done === mine.length ? `เบิกของครบ ${mine.length} รายการ` : closedParts ? `เบิกไป ${issued} จาก ${mine.length} รายการ` : `รอเบิกของ ${mine.length - done} จาก ${mine.length} รายการ${partly ? ` (เบิกไปบางส่วน ${partly} รายการ)` : ""}`) : `เสร็จ ${done} จาก ${mine.length} งาน`;
+        return `<tr><td>${deptChip(ctx, dept)} ${esc(deptName(ctx, dept))}</td><td class="rf-progress-cell">${ui.progress(closedParts ? issued : done, mine.length)}<div class="small muted">${esc(text)}</div></td><td>${late ? ui.badge("bad", `เลยกำหนด ${late} งาน`) : ""}</td><td class="right">${ctx.canSee("work") && (canPlan || ctx.user?.dept === dept) ? ui.link("ดูงาน", ctx.url("work", { dept, order: order.id }), "btn rf-btn secondary small") : ""}</td></tr>`;
       }).filter(Boolean);
       // มีสินค้าที่ PK ส่งมอบแล้วรอรับเข้าคลัง: บอกเฉพาะว่ามี (ตัวเลขอยู่ในขั้น 5) · คลังสินค้ารับเข้าได้ก่อนผลิตครบทั้งใบ
       const fgLine = pos.anyReceivable ? `<div class="bom-step-line"><div><strong>มีสินค้ารอรับเข้าคลัง</strong></div>${ui.link("ไปขั้นรับเข้าคลัง", stepUrl(5), "btn rf-btn secondary")}</div>` : "";
@@ -1042,9 +1046,9 @@
     const orderId = String(params.get("order") ?? "").toUpperCase();
     const orderOf = (id) => data.orders.find((entry) => entry.id === id);
     const live = (job) => ["released", "in_progress", "completed"].includes(orderOf(job.orderId)?.status);
-    // งานที่ยังต้องทำ: ยังไม่ done · งานของซื้อของใบที่ปิดแล้ว (completed) ไม่นับ เพราะเบิกจ่ายไม่ได้แล้ว (การ์ดรอเบิกจะกดอะไรไม่ได้)
+    // งานที่ยังต้องทำ (helpers.isOpenJob กติกาเดียวกับขั้น 4 ของหน้าใบและหน้างานของแผนก): งานของซื้อของใบที่ปิดแล้วไม่มีการ์ดรอเบิกที่กดอะไรไม่ได้
     // ของที่เบิกไปบางส่วนคืนของเหลือได้ที่หน้าใบ ไม่มีการ์ดของตัวเอง
-    const toDo = (job) => job.status !== "done" && !(ctx.helpers.isPartJob(job) && orderOf(job.orderId)?.status === "completed");
+    const toDo = (job) => ctx.helpers.isOpenJob(data, job);
     const mine = data.jobs.filter((job) => (dept === "ALL" || job.dept === dept) && live(job) && (!orderId || job.orderId === orderId));
     const open = mine.filter(toDo);
     const done = mine.filter((job) => job.status === "done");

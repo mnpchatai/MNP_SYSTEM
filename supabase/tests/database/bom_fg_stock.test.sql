@@ -4,6 +4,8 @@
 -- BOM_INVALID_ORDER (หยิบเกินจำนวนสั่ง) · BOM_FG_EXCEEDS (สต็อกไม่พอ) · คีย์สินค้าใน stockCounts เป็นของกลุ่มวางแผน (ST / WH นับชิ้นอื่นได้)
 -- ใบที่มาจากสต็อกทั้งหมด completed ตอนปล่อยโดยไม่มีงาน · เพดานส่งมอบของใบต้นทางและใบที่หยิบ · ยกเลิก / เปิดกลับคืนสต็อก และถูกปฏิเสธเมื่อส่งมอบแล้ว / ให้ใบอื่นไปแล้ว
 -- ด่านของ #369 ยังเทียบกับ own · ปิดอัตโนมัติ / ปิดรับไม่ครบใช้ have · รูปเรคอร์ด fgMoves (fromOrderId) · จำนวนใน audit · ล้างข้อมูลทดสอบ
+-- 20261124010000 (ข้อ 18): ใบที่ปล่อยผลิตแล้ว completed จากสต็อกมากับงานไม่ได้ · ผิดทั้งที่ใบและที่งานได้รหัสของใบก่อน · สองสินค้าได้ครบจากสต็อก
+--   · สองใบในคำสั่งเดียวแย่งสต็อก (แถวแรกหยิบก่อน แถวที่สองได้ BOM_FG_EXCEEDS ทั้งคำสั่งไม่เขียน)
 -- authenticated อ่านตาราง bom_* และเรียก private.* ตรงไม่ได้: ตัวช่วยของเทสต์ที่อ่านนิยาม (fgs_t.stock / fgs_t.free) เป็น security definer ของเจ้าของ schema เทสต์
 begin;
 create extension if not exists pgtap with schema extensions;
@@ -445,7 +447,84 @@ select is((select count(*) from public.bom_orders where is_test and status = 'co
 select is((select count(*) from public.bom_fg_moves where not is_test), 3::bigint, 'the real moves are untouched');
 set local role authenticated;
 
--- 18. ล้างข้อมูลทดสอบ (ประวัติที่ชี้ใบต้นทางก็ลบก่อนใบ) -------------------------------------------------------------------------
+-- 18. ด่านของ 20261124010000 (หลังข้อ 16 / 17 ที่นับแถวและใบ จึงไม่กระทบตัวเลขข้างบน) -------------------------------------------------------
+-- ใบที่ปล่อยผลิตแล้วได้ครบจากสต็อกต้องไม่มีงาน · ผิดทั้งที่ใบและที่งานได้รหัสของใบก่อน · สองสินค้าได้ครบจากสต็อก · สองใบในคำสั่งเดียวแย่งสต็อกเดียวกัน
+-- ใบต้นทางใหม่ 25007 (สั่ง A 1 B 1 · PK ทำ A 4 B 3 · รับครบ) ให้สต็อก A 3 B 2 (ใบอื่นไม่เหลือสต็อกแล้วหลังข้อ 15)
+select set_config('request.jwt.claims', '{"sub":"8e400000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select ok(fgs_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+    current_setting('test.ord')::jsonb || jsonb_build_object('id', '251123-25007', 'items', '[{"fgCode":"FG-A","qty":1,"colorSet":"A","note":""},{"fgCode":"FG-B","qty":1,"colorSet":"A","note":""}]'::jsonb,
+      'explosion', '[{"itemCode":"FG-A","level":0,"fgQty":1,"required":1},{"itemCode":"FG-B","level":0,"fgQty":1,"required":1}]'::jsonb),
+    current_setting('test.ord')::jsonb || jsonb_build_object('id', '251123-25008', 'items', '[{"fgCode":"FG-A","qty":2,"colorSet":"A","note":""}]'::jsonb,
+      'explosion', '[{"itemCode":"FG-A","level":0,"fgQty":2,"required":2}]'::jsonb),
+    current_setting('test.ord')::jsonb || jsonb_build_object('id', '251123-25009', 'items', '[{"fgCode":"FG-A","qty":4,"colorSet":"A","note":""}]'::jsonb,
+      'explosion', '[{"itemCode":"FG-A","level":0,"fgQty":4,"required":4}]'::jsonb),
+    current_setting('test.ord')::jsonb || jsonb_build_object('id', '251123-25010', 'items', '[{"fgCode":"FG-A","qty":1,"colorSet":"A","note":""},{"fgCode":"FG-B","qty":2,"colorSet":"A","note":""}]'::jsonb,
+      'explosion', '[{"itemCode":"FG-A","level":0,"fgQty":1,"required":1},{"itemCode":"FG-B","level":0,"fgQty":2,"required":2}]'::jsonb),
+    current_setting('test.ord')::jsonb || jsonb_build_object('id', '251123-25011', 'items', '[{"fgCode":"FG-A","qty":2,"colorSet":"A","note":""}]'::jsonb,
+      'explosion', '[{"itemCode":"FG-A","level":0,"fgQty":2,"required":2}]'::jsonb),
+    current_setting('test.ord')::jsonb || jsonb_build_object('id', '251123-25012', 'items', '[{"fgCode":"FG-A","qty":2,"colorSet":"A","note":""}]'::jsonb,
+      'explosion', '[{"itemCode":"FG-A","level":0,"fgQty":2,"required":2}]'::jsonb)))), 'createOrder') is not null,
+  'the planner creates six more drafts');
+select is(fgs_t.up_order(fgs_t.release('251123-25007', '{}'::jsonb, jsonb_build_array(
+  current_setting('test.job')::jsonb || '{"id":"JOB-7A","orderId":"251123-25007","itemCode":"FG-A","qtyPlanned":1,"qtyRequired":1}'::jsonb,
+  current_setting('test.job')::jsonb || '{"id":"JOB-7B","orderId":"251123-25007","itemCode":"FG-B","qtyPlanned":1,"qtyRequired":1}'::jsonb)), '251123-25007') ->> 'status',
+  'released', 'a new source order is released with its packing jobs');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pk_staff')::uuid);
+select ok(fgs_t.report('JOB-7A', 4, 'done') is not null, 'PK packs 4 sets of A for an order of 1');
+select ok(fgs_t.report('JOB-7B', 3, 'done') is not null, 'and 3 sets of B for an order of 1');
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select ok(fgs_t.receive('251123-25007', 'FG-A', 4) is not null, 'WH receives the 4 sets of A');
+select is(fgs_t.up_order(fgs_t.receive('251123-25007', 'FG-B', 3), '251123-25007') ->> 'status', 'completed', 'and the 3 of B, which completes the order');
+select is(fgs_t.stock('FG-A') || '/' || fgs_t.stock('FG-B'), '3/2', 'the stock is 3 sets of A and 2 of B, all from the new order');
+
+-- 18.1 ปฏิเสธ: ใบที่การปล่อยผลิตปิดให้ (ได้ครบจากสต็อก) มากับงาน · ผิดทั้งที่ใบและที่งาน (ทุกกรณีไม่เขียนอะไร)
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select set_config('test.n2', fgs_t.n()::text, true);
+select set_config('test.v2', fgs_t.ver()::text, true);
+select throws_ok($$ select fgs_t.release('251123-25008', '{"stockCounts":{"FG-A":2}}'::jsonb, jsonb_build_array(
+  current_setting('test.job')::jsonb || '{"id":"JOB-8A","orderId":"251123-25008","itemCode":"FG-A","qtyPlanned":2,"qtyRequired":2}'::jsonb)) $$,
+  'BOM_INVALID_TRANSITION', 'an order the release completes from stock cannot carry a job (it could never be worked)');
+select throws_ok($$ select fgs_t.release('251123-25008', '{"stockCounts":{"FG-A":3}}'::jsonb, jsonb_build_array(
+  current_setting('test.job')::jsonb || '{"id":"JOB-8A","orderId":"251123-25008","itemCode":"FG-A","qtyPlanned":2,"qtyRequired":2,"status":"done"}'::jsonb)) $$,
+  'BOM_INVALID_ORDER', 'wrong at the order (3 for 2 ordered) and at the job (a new job that is done): the order''s code comes first');
+select throws_ok($$ select fgs_t.release('251123-25009', '{"stockCounts":{"FG-A":4}}'::jsonb, jsonb_build_array(
+  current_setting('test.job')::jsonb || '{"id":"JOB-9A","orderId":"251123-25009","itemCode":"FG-A","qtyPlanned":1,"qtyRequired":4,"status":"done"}'::jsonb)) $$,
+  'BOM_FG_EXCEEDS', 'more than the stock (4 > 3) with a new job sent as done: the stock''s code comes first');
+select is(fgs_t.n() || '/' || fgs_t.ver(), current_setting('test.n2') || '/' || current_setting('test.v2'), 'none of them wrote a move or moved the version');
+select is(fgs_t.order_status('251123-25008') || ' ' || fgs_t.order_status('251123-25009') || ' ' || fgs_t.stock('FG-A'), 'draft draft 3',
+  'both orders are still drafts and the stock is still 3');
+select ok(fgs_t.job('JOB-8A') is null and fgs_t.job('JOB-9A') is null, 'and no job was created');
+
+-- 18.2 อนุญาต: สองสินค้าได้ครบจากสต็อก ใบปิดตอนปล่อยโดยไม่มีงาน (ใบ 25010 สั่ง A 1 B 2)
+select set_config('test.res', fgs_t.release('251123-25010', '{"stockCounts":{"FG-A":1,"FG-B":2}}'::jsonb)::text, true);
+select is(fgs_t.up_order(current_setting('test.res')::jsonb, '251123-25010') ->> 'status', 'completed', 'an order with two products, both covered by stock, completes at release');
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'upsert', '[]'::jsonb, 'without any job');
+select is((select jsonb_agg(jsonb_build_array(m ->> 'fgCode', (m ->> 'qty')::numeric, m ->> 'fromOrderId') order by m ->> 'fgCode')
+           from jsonb_array_elements(current_setting('test.res')::jsonb -> 'changes' -> 'fgMoves' -> 'upsert') m),
+  '[["FG-A",1,"251123-25007"],["FG-B",2,"251123-25007"]]'::jsonb, 'one transfer per product, both from the new source');
+select is(fgs_t.audit(), 'fgMoves +2, orders +1', 'audited with the two transfers and the order');
+select is(fgs_t.stock('FG-A') || '/' || fgs_t.stock('FG-B'), '2/0', 'the stock drops to 2 sets of A and none of B');
+
+-- 18.3 สองใบในคำสั่งเดียวแย่งสต็อก A 2: แถวแรก (25011 ใช้ 1 ผลิต 1) หยิบก่อน แถวที่สอง (25012 ใช้ 2) เหลือ 1 ไม่พอ ทั้งคำสั่งไม่เขียน
+select set_config('test.n3', fgs_t.n()::text, true);
+select set_config('test.v3', fgs_t.ver()::text, true);
+select throws_ok($$ select fgs_t.save(jsonb_build_object(
+  'orders', jsonb_build_object('upsert', jsonb_build_array(
+    fgs_t.order_row('251123-25011') || '{"status":"released","stockCounts":{"FG-A":1}}'::jsonb,
+    fgs_t.order_row('251123-25012') || '{"status":"released","stockCounts":{"FG-A":2}}'::jsonb)),
+  'jobs', jsonb_build_object('upsert', jsonb_build_array(
+    current_setting('test.job')::jsonb || '{"id":"JOB-11A","orderId":"251123-25011","itemCode":"FG-A","qtyPlanned":1,"qtyRequired":2,"stockCounted":1}'::jsonb))), 'releaseOrder') $$,
+  'BOM_FG_EXCEEDS', 'two orders released in one save: the first row takes 1 of the 2, the second needs 2 and finds 1 (each alone would fit)');
+select is(fgs_t.n() || '/' || fgs_t.ver(), current_setting('test.n3') || '/' || current_setting('test.v3'), 'nothing of the whole save was written');
+select is(fgs_t.order_status('251123-25011') || ' ' || fgs_t.order_status('251123-25012') || ' ' || fgs_t.stock('FG-A'), 'draft draft 2',
+  'both orders are still drafts and the stock is still 2');
+select ok(fgs_t.job('JOB-11A') is null, 'the job of the first row was not kept either');
+select is(fgs_t.up_order(fgs_t.release('251123-25012', '{"stockCounts":{"FG-A":2}}'::jsonb), '251123-25012') ->> 'status', 'completed',
+  'released alone, the second order takes the 2 and completes');
+select is(fgs_t.stock('FG-A'), 0::numeric, 'the stock of A is used up');
+
+-- 19. ล้างข้อมูลทดสอบ (ประวัติที่ชี้ใบต้นทางก็ลบก่อนใบ) -------------------------------------------------------------------------
 select set_config('request.jwt.claims', '{"sub":"8e400000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select ok((public.app_sandbox_purge_bom() ->> 'deleted')::integer > 20, 'the purge deletes the test rows');
