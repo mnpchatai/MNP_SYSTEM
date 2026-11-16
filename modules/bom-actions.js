@@ -894,7 +894,7 @@
       const counted = order.stockCounts?.[item.fgCode];
       d.jobs.push({ id: masterId(d, "JOB", ctx), orderId: order.id, dept: "PK", itemCode: fg.code, name: fg.name, kind: "FG", uom: fg.uom, qtyPlanned: planned, qtyRequired: item.qty, stockCounted: counted === undefined || counted === null || counted === "" ? null : Number(counted) || 0, qtyDone: 0, qtyReject: 0, dueAt: order.due.PK ?? order.whDue, status: "queued", externalRef: null, fgCodes: [fg.code], createdAt: ctx.now, reports: [] });
     }
-    // ของซื้อ: หนึ่งงาน ST ต่อรายการของซื้อที่ระเบิดได้ ยอด = ความต้องการเต็ม (ไม่หักยอดนับตามใบ สต็อกของซื้อเป็นยอดรวมต่อรหัส) · ST เบิกจ่ายครั้งเดียวต่อใบ (issueOrderParts)
+    // ของซื้อ: หนึ่งงาน ST ต่อรายการของซื้อที่ระเบิดได้ ยอด = ความต้องการเต็ม (ไม่หักยอดนับตามใบ สต็อกของซื้อเป็นยอดรวมต่อรหัส) · ST เบิกจ่ายตามงานนี้ (issueOrderParts เลือกบรรทัดและจำนวนได้ หลายครั้งจนครบ)
     for (const entry of net) {
       if (entry.kind !== "PURCHASED" || !(entry.required > 0)) continue;
       d.jobs.push({ id: masterId(d, "JOB", ctx), orderId: order.id, dept: "ST", itemCode: entry.itemCode, name: entry.name, kind: "PURCHASED", uom: entry.uom, qtyPlanned: entry.required, qtyRequired: entry.required, stockCounted: null, qtyDone: 0, qtyReject: 0, dueAt: order.due.ST ?? order.whDue, status: "queued", externalRef: null, fgCodes: entry.fgCodes, createdAt: ctx.now, reports: [] });
@@ -994,7 +994,10 @@
     requirePlanner(ctx, "ยกเลิกใบ");
     const order = orderById(d, orderId);
     if (order.status === "completed") fail("ใบที่เสร็จแล้วยกเลิกไม่ได้");
-    if (d.jobs.some((job) => job.orderId === order.id && job.qtyDone > 0)) fail("มีงานที่รายงานผลผลิตแล้ว ยกเลิกไม่ได้ ใบจะปิดเมื่อคลังสินค้า (WH) รับสินค้าเข้าคลัง");
+    // งานที่มียอด (qtyDone > 0) กันการยกเลิก ตรงกับ private.bom_save_orders · งานของซื้อที่เบิกแล้ว (ครบหรือบางส่วน) ยกเลิกการเบิกจ่ายก่อนจึงยกเลิกใบได้
+    const withOutput = d.jobs.filter((job) => job.orderId === order.id && job.qtyDone > 0);
+    if (withOutput.length && withOutput.every(isPartJob)) fail("เบิกจ่ายของซื้อของใบนี้ไปแล้ว ยกเลิกใบไม่ได้ ให้คลังวัตถุดิบ (ST) หรือฝ่ายวางแผนกด “ยกเลิกการเบิกจ่าย” ก่อน");
+    if (withOutput.length) fail("มีงานที่รายงานผลผลิตแล้ว ยกเลิกไม่ได้ ใบจะปิดเมื่อคลังสินค้า (WH) รับสินค้าเข้าคลัง");
     // WO ที่ยังเป็นแผนก/ปล่อยผลิต ฐานข้อมูลยกเลิกให้พร้อมใบ · ที่เริ่มแล้วต้องปิดหรือยกเลิกใน RubberFlow ก่อน
     const linked = d.jobs.filter((job) => job.orderId === order.id && woStarted(job, ctx.rfOrders));
     if (linked.length) fail(`มีงานที่สร้าง WO ใน RubberFlow แล้ว (${linked.map((job) => job.externalRef.woId).join(", ")}) ยกเลิก WO ใน RubberFlow ก่อน`);
@@ -1190,18 +1193,22 @@
     return { changed, summary: changed ? `${changed} รายการ` : "0 รายการ (ยอดเท่าเดิมทั้งหมด)" };
   }
 
-  // แผนเบิกจ่ายของซื้อของใบ: ทุกงานของซื้อที่ยังไม่เสร็จ จ่ายเต็มส่วนที่เหลือ · short = รายการที่สต็อกไม่พอ (เบิกจ่ายไม่ได้ทั้งใบ) · ใช้ทั้งใน action และหน้าต่างยืนยัน
+  // แผนเบิกจ่ายของซื้อของใบ: งานของซื้อที่ยังเบิกไม่ครบ (queued / in_progress) หนึ่งบรรทัดต่องาน · remaining = ส่วนที่ยังต้องเบิก (แผน - เบิกแล้ว) เป็นค่าเริ่มของจำนวนที่เบิก
+  // issued = เบิกไปแล้ว · onHand = คงเหลือในสต็อก · short = ส่วนที่ remaining เกินคงเหลือ (บรรทัดนี้เบิกเต็มส่วนที่เหลือไม่ได้ แต่เบิกเท่าที่มีได้) · ใช้ทั้งใน action และหน้าต่างเบิกจ่าย
   function partIssuePlan(d, orderId) {
     const lines = d.jobs.filter((job) => job.orderId === orderId && isPartJob(job) && job.status !== "done").sort((a, b) => a.itemCode.localeCompare(b.itemCode))
       .map((job) => {
-        const remaining = Math.max(0, qtyRound(Number(job.qtyPlanned) - Number(job.qtyDone || 0)));
+        const issued = qtyRound(Number(job.qtyDone) || 0);
+        const remaining = Math.max(0, qtyRound(Number(job.qtyPlanned) - issued));
         const onHand = stockRowOf(d, job.itemCode)?.qty ?? 0;
-        return { job, itemCode: job.itemCode, name: job.name, uom: job.uom, remaining, onHand, short: Math.max(0, qtyRound(remaining - onHand)) };
+        return { job, itemCode: job.itemCode, name: job.name, uom: job.uom, planned: Number(job.qtyPlanned), issued, remaining, onHand, short: Math.max(0, qtyRound(remaining - onHand)) };
       });
     return { lines, short: lines.filter((line) => line.short > 0), anyShort: lines.some((line) => line.short > 0) };
   }
-  // เบิกจ่ายของซื้อของใบ PI ครั้งเดียว: ทุกรายการจ่ายเต็มส่วนที่เหลือและหักสต็อก ถ้ารายการใดสต็อกไม่พอ = ไม่จ่ายอะไรเลย (บอกที่ขาด)
-  function issueOrderParts(d, { orderId }, ctx) {
+  // เบิกจ่ายของซื้อของใบ PI: lines [{ itemCode, qty }] = บรรทัดที่เลือกและจำนวนที่เบิกครั้งนี้ (> 0 ไม่เกินคงเหลือ · เกินส่วนที่ยังต้องเบิกได้)
+  // ไม่ส่ง lines = ทุกบรรทัดที่ยังเปิดเต็มส่วนที่เหลือ (แบบเดิม) · ยอดสะสมถึงแผน = งาน done ไม่ถึง = in_progress (เบิกส่วนที่เหลือครั้งหน้าได้) · บรรทัดที่ไม่ได้เลือกไม่ถูกแตะ
+  // ทั้งชุดผ่านหรือไม่ผ่านพร้อมกัน: บรรทัดใดเกินสต็อก = ไม่จ่ายอะไรเลย (บอกที่ขาด) · หักสต็อกและเขียนประวัติ issue ตามที่เบิกจริง (โหมดฐานข้อมูล: เซิร์ฟเวอร์ทำเองจากแถวงาน)
+  function issueOrderParts(d, { orderId, lines }, ctx) {
     const user = requireUser(ctx);
     if (!canIssueParts(user)) fail("เบิกจ่ายของซื้อได้โดยคลังวัตถุดิบ (ST) ฝ่ายวางแผน หรือผู้จัดการ");
     const order = orderById(d, orderId);
@@ -1209,22 +1216,39 @@
     d.stock ??= [];
     const plan = partIssuePlan(d, order.id);
     if (!plan.lines.length) fail("ใบนี้ไม่มีของซื้อที่ต้องเบิกจ่าย (เบิกจ่ายครบแล้ว หรือปล่อยผลิตก่อนมีงานของซื้อ)");
-    if (plan.anyShort) fail(`สต็อกของซื้อไม่พอ จึงไม่ได้เบิกจ่ายอะไรเลย: ${plan.short.map((line) => `${line.itemCode} ขาด ${qtyRound(line.short)} ${rules().uomLabel(line.uom)}`).join(", ")}`);
-    for (const line of plan.lines) {
+    const picks = lines === undefined ? plan.lines.map((line) => ({ itemCode: line.itemCode, qty: line.remaining })) : Array.isArray(lines) ? lines : [];
+    if (!picks.length) fail("เลือกรายการที่จะเบิกอย่างน้อยหนึ่งรายการ");
+    if (picks.length > 500) fail("เบิกได้ไม่เกิน 500 รายการต่อครั้ง");
+    const open = new Map(plan.lines.map((line) => [line.itemCode, line]));
+    const seen = new Set();
+    const issue = picks.map((entry) => {
+      const code = rules().canonicalCode(entry?.itemCode);
+      if (seen.has(code)) fail(`${code} ซ้ำในรายการ`);
+      seen.add(code);
+      const line = open.get(code) ?? fail(`${code} ไม่มีของซื้อที่ต้องเบิกในใบนี้ (เบิกครบแล้ว หรือไม่ใช่ของซื้อของใบนี้)`);
+      const qty = qtyRound(num(entry.qty, `จำนวนที่เบิก ${code} `));
+      if (!(qty > 0)) fail(`จำนวนที่เบิก ${code} ต้องมากกว่า 0`); // เล็กกว่าทศนิยม 4 ตำแหน่ง
+      if (qty > 1e9) fail("ตัวเลขใหญ่เกินไป");
+      return { line, qty };
+    }).sort((a, b) => (a.line.itemCode < b.line.itemCode ? -1 : a.line.itemCode > b.line.itemCode ? 1 : 0));
+    const short = issue.filter(({ line, qty }) => qty > line.onHand);
+    if (short.length) fail(`สต็อกของซื้อไม่พอ จึงไม่ได้เบิกจ่ายอะไรเลย: ${short.map(({ line, qty }) => `${line.itemCode} ขาด ${qtyRound(qty - line.onHand)} ${rules().uomLabel(line.uom)}`).join(", ")}`);
+    for (const { line, qty } of issue) {
       const row = stockRowOf(d, line.itemCode);
-      if (line.remaining > 0) {
-        row.qty = qtyRound(row.qty - line.remaining);
-        row.updatedAt = ctx.now;
-        pushMove(d, ctx, line.itemCode, "issue", -line.remaining, row.qty, order.id);
-      }
-      line.job.qtyDone = line.job.qtyPlanned;
-      line.job.status = "done";
-      line.job.doneAt = ctx.now;
+      row.qty = qtyRound(row.qty - qty);
+      row.updatedAt = ctx.now;
+      pushMove(d, ctx, line.itemCode, "issue", -qty, row.qty, order.id);
+      const total = qtyRound(line.issued + qty);
+      line.job.qtyDone = total;
+      if (total >= Number(line.job.qtyPlanned)) {
+        line.job.status = "done";
+        line.job.doneAt = ctx.now;
+      } else line.job.status = "in_progress";
     }
     // โหมดฐานข้อมูล: ใบ released -> in_progress เป็นของเซิร์ฟเวอร์ (กติกางานเริ่ม) ไม่ส่งเป็นการแก้ใบ
     if (!ctx.remote && order.status === "released") order.status = "in_progress";
-    audit(d, ctx, "เบิกจ่ายของซื้อ", `${order.id} ${plan.lines.length} รายการ`);
-    return { issued: plan.lines.length, summary: `${plan.lines.length} รายการ` };
+    audit(d, ctx, "เบิกจ่ายของซื้อ", `${order.id} ${issue.length} รายการ`);
+    return { issued: issue.length, summary: `${issue.length} รายการ` };
   }
 
   // ---------- คืนของซื้อเข้าสต็อก ----------
@@ -1252,8 +1276,9 @@
     for (const line of lines) {
       if (line.returnable > 0) { addReturn(d, ctx, order, line.itemCode, line.returnable, why); moves += 1; }
     }
+    // งานที่เบิกแล้ว (ครบ หรือบางส่วน: qtyDone > 0) กลับไปรอเบิก · ตรงกับ private.bom_return_parts ของ 20261123020000
     for (const job of d.jobs) {
-      if (job.orderId !== order.id || !isPartJob(job) || job.status !== "done") continue;
+      if (job.orderId !== order.id || !isPartJob(job) || !(job.status === "done" || Number(job.qtyDone) > 0)) continue;
       job.status = "queued";
       job.qtyDone = 0;
       delete job.doneAt;
@@ -1261,7 +1286,8 @@
     audit(d, ctx, "ยกเลิกการเบิกจ่ายของซื้อ", `${order.id} ${lines.length} รายการ · ${why}`);
     return { returned: moves, summary: `${lines.length} รายการ`, request: { orderId: order.id, mode: "undo", reason: why } };
   }
-  // คืนของเหลือ: lines [{ itemCode, qty }] คืนรายการละจำนวนที่พิมพ์ (ไม่เกินที่คืนได้) งานยังเป็น done ใบยังนับว่าเบิกจ่ายแล้ว · ทั้งชุดผ่านหรือไม่ผ่านพร้อมกัน
+  // คืนของเหลือ: lines [{ itemCode, qty }] คืนรายการละจำนวนที่พิมพ์ (ไม่เกินที่คืนได้ ซึ่งรวมยอดที่เบิกเกินแผน) งานยังเป็น done ใบยังนับว่าเบิกจ่ายแล้ว · ทั้งชุดผ่านหรือไม่ผ่านพร้อมกัน
+  // บรรทัดที่ยังเบิกไม่ครบ (partial) คืนของเหลือไม่ได้: เบิกส่วนที่เหลือให้ครบก่อน หรือยกเลิกการเบิกจ่าย (ตรงกับ private.bom_return_parts)
   function returnOrderParts(d, { orderId, lines, reason }, ctx) {
     const user = requireUser(ctx);
     if (!canIssueParts(user)) fail("คืนของซื้อได้โดยคลังวัตถุดิบ (ST) ฝ่ายวางแผน หรือผู้จัดการ");
@@ -1279,6 +1305,7 @@
       if (seen.has(code)) fail(`${code} ซ้ำในรายการ`);
       seen.add(code);
       const line = issued.get(code) ?? fail(`${code} ไม่ได้เบิกจ่ายให้ใบนี้`);
+      if (line.partial) fail(`${code} ยังเบิกไม่ครบ คืนของเหลือได้เมื่อเบิกครบแล้ว (หรือกด “ยกเลิกการเบิกจ่าย” เพื่อคืนทั้งหมด)`);
       const qty = qtyRound(num(entry.qty, "จำนวนที่คืน"));
       if (qty > 1e9) fail("ตัวเลขใหญ่เกินไป");
       if (qty > line.returnable) fail(`${code} คืนได้อีกไม่เกิน ${rules().fmtQty(line.returnable)} (เบิกจ่าย ${rules().fmtQty(line.issued)} คืนไปแล้ว ${rules().fmtQty(line.returned)})`);

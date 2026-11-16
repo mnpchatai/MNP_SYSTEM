@@ -3201,6 +3201,58 @@ test("part stock through the module on the (mock) database: counts send only the
   assert.doesNotMatch(html, /data-rf-open="issueParts"/, "nothing left to issue → no issue button");
 });
 
+test("issuing part of a line through the module on the (mock) database: the page sends only the ticked job with its new total and status, the line stays open with the remainder, then an over-issue finishes it and the undo gives everything back", async () => {
+  const planning = await pageEnv();
+  await planning.store.ensureLoaded();
+  await fgScene(planning);
+  const planCtx = planning.ctx();
+  assert.equal(planCtx.runAction("createOrder", { customer: "ลูกค้า ทดสอบ", country: "Thailand", orderedAt: NOW, whDue: NOW + 9 * 86400000 }, ""), true);
+  await settle();
+  const id = planning.store.data().orders[0].id;
+  for (const [action, payload] of [["addOrderItem", { orderId: id, fgCode: "FG-TEST-01", qty: 5 }], ["explodeOrder", { orderId: id }], ["releaseOrder", { orderId: id }]]) {
+    assert.equal(planCtx.runAction(action, payload, ""), true, action);
+    await settle();
+  }
+  const database = () => JSON.parse(planning.pageStorage.getItem("mnp-harness-bom-master"));
+  const st = await asPersona({ env: planning }, "persona-st");
+  await st.store.run("countPartStock", { counts: [{ itemCode: "P-TEST-01", qty: 6 }] }).saving;
+  // ดักคำขอที่หน้าส่ง (ฐานข้อมูลยังเป็น mock ตัวเดิม)
+  const sent = [];
+  const rpc = st.mock.client.rpc.bind(st.mock.client);
+  st.mock.client.rpc = (name, args) => { if (name === "app_bom_save_master") sent.push(JSON.parse(JSON.stringify(args))); return rpc(name, args); };
+  // ขาด 4 (ต้อง 10 มี 6): เบิกเท่าที่มี 4 จากหน้าต่าง → แถวงานเดียว ยอดสะสม 4 สถานะ in_progress
+  const partial = st.store.run("issueOrderParts", { orderId: id, lines: [{ itemCode: "P-TEST-01", qty: "4" }] });
+  assert.equal(partial.ok, true, partial.error?.message);
+  assert.equal((await partial.saving).ok, true);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].p_action, "issueOrderParts");
+  assert.deepEqual(Object.keys(sent[0].p_changes), ["jobs"], "only the jobs list goes out (no stock, no moves, no order)");
+  assert.deepEqual(Object.keys(sent[0].p_changes.jobs), ["upsert"]);
+  assert.deepEqual(sent[0].p_changes.jobs.upsert.map((row) => [row.dept, row.kind, row.itemCode, row.qtyPlanned, row.qtyDone, row.status]), [["ST", "PURCHASED", "P-TEST-01", 10, 4, "in_progress"]]);
+  let db = database();
+  const dbJob = () => database().jobs.find((row) => row.dept === "ST");
+  assert.deepEqual([dbJob().status, dbJob().qtyDone, db.stock[0].qty], ["in_progress", 4, 2]);
+  assert.deepEqual(db.stockMoves.filter((move) => move.kind === "issue").map((move) => [move.qty, move.balance, move.ref]), [[-4, 2, id]]);
+  assert.equal(db.orders[0].status, "in_progress");
+  assert.equal(st.store.data().stock[0].qty, 2, "the page shows the database's balance");
+  // หน้ายังเสนอส่วนที่เหลือ 6 (สต็อก 2 = ขาด ไม่ได้เลือกไว้)
+  const dialog = st.context.MNP_BOM_DIALOGS.issueParts(st.ctx(`p=orders&sel=${id}`), { orderId: id }).html;
+  assert.match(dialog, /max="2" value="6" required data-bom-issue-field aria-label="จำนวนที่เบิก P-TEST-01[^"]*" disabled>/);
+  assert.match(dialog, /เบิกแล้ว 4 จาก 10/);
+  // เบิกส่วนที่เหลือเกินแผน 2: ยอดสะสม 12 → done
+  await st.store.run("countPartStock", { counts: [{ itemCode: "P-TEST-01", qty: 10 }] }).saving;
+  const over = st.store.run("issueOrderParts", { orderId: id, lines: [{ itemCode: "P-TEST-01", qty: 8 }] });
+  assert.equal(over.ok, true, over.error?.message);
+  assert.equal((await over.saving).ok, true);
+  assert.deepEqual(sent.at(-1).p_changes.jobs.upsert.map((row) => [row.qtyDone, row.status]), [[12, "done"]]);
+  assert.deepEqual([dbJob().status, dbJob().qtyDone, database().stock[0].qty], ["done", 12, 2]);
+  // ยกเลิกการเบิกจ่าย: คืน 12 ที่เบิกไป งานกลับไปรอเบิก
+  await st.store.run("undoOrderParts", { orderId: id, reason: "ทดสอบ" }).saving;
+  db = database();
+  assert.deepEqual([dbJob().status, dbJob().qtyDone, db.stock[0].qty], ["queued", 0, 14]);
+  assert.equal(st.store.data().stock[0].qty, 14);
+});
+
 test("purchasing across the modules: releasing a PI with purchased parts opens one purchase dialog with the part table, the order lands in RubberFlow, the part's safety stock in the BOM, and the next check counts the order as on order", async () => {
   const env = await pageEnv();
   await env.store.ensureLoaded();
@@ -3319,15 +3371,24 @@ test("the mock database follows the SQL rules of the part stock: payload shapes 
   await as("persona-pp");
   assert.equal(await code(save({ jobs: { upsert: [{ ...p1, status: "hold" }] } }, "setJobStatus")), "BOM_INVALID_TRANSITION", "not even a planner");
 
-  // the issue: other department, partial set, not in full, shortage = nothing issued (stale when the stock changed after the copy), success
+  // the issue: other department, rows that issue nothing or carry the wrong status, shortage = nothing issued (stale when the stock changed after the copy), success
+  // (20261123020000: a subset of the lines, a partial quantity and an over-issue up to the stock are allowed — see the next test)
   const done = (job) => ({ ...job, status: "done", qtyDone: job.qtyPlanned });
   const p2 = jobs.find((job) => job.id === "J-P2");
   await as("persona-rb");
   assert.equal(await code(save({ jobs: { upsert: [done(p1), done(p2)] } }, "issueOrderParts")), "BOM_FORBIDDEN");
+  for (const persona of ["persona-wh", "persona-gr", "persona-qa"]) {
+    await as(persona);
+    assert.equal(await code(save({ jobs: { upsert: [{ ...p1, status: "in_progress", qtyDone: 1 }] } }, "issueOrderParts")), "BOM_FORBIDDEN", `${persona} cannot issue part of a line either`);
+  }
   await as("persona-st");
-  assert.equal(await code(save({ jobs: { upsert: [done(p1)] } }, "issueOrderParts")), "BOM_INVALID_JOB", "partial set");
+  assert.equal(await code(save({ jobs: { upsert: [p1] } }, "issueOrderParts")), "BOM_INVALID_JOB", "a row as stored issues nothing");
   assert.equal(await code(save({ jobs: { upsert: [done(p1), done(p2), jobs.find((job) => job.id === "J-PK")] } }, "issueOrderParts")), "BOM_INVALID_JOB", "an unchanged row of another kind in the set refuses it too (every row goes to the issue, like the SQL)");
-  assert.equal(await code(save({ jobs: { upsert: [done(p1), { ...done(p2), qtyDone: 1 }] } }, "issueOrderParts")), "BOM_INVALID_JOB", "must be done in full");
+  assert.equal(await code(save({ jobs: { upsert: [done(p1), { ...done(p2), qtyDone: 1 }] } }, "issueOrderParts")), "BOM_INVALID_JOB", "a total below the plan cannot be done");
+  assert.equal(await code(save({ jobs: { upsert: [{ ...p2, status: "in_progress", qtyDone: 3 }] } }, "issueOrderParts")), "BOM_INVALID_JOB", "a total at the plan must be done");
+  assert.equal(await code(save({ jobs: { upsert: [{ ...p2, status: "queued", qtyDone: 1 }] } }, "issueOrderParts")), "BOM_INVALID_JOB", "a partial total must be in_progress");
+  assert.equal(await code(save({ jobs: { upsert: [{ ...p2, status: "in_progress", qtyDone: "1" }] } }, "issueOrderParts")), "BOM_INVALID_JOB", "the total must be a number");
+  assert.equal(await code(save({ jobs: { upsert: [{ ...done(p2), qtyPlanned: 4, qtyDone: 4 }] } }, "issueOrderParts")), "BOM_INVALID_JOB", "the plan cannot change with the issue");
   assert.equal(await code(save({ jobs: { upsert: [done(p1), done(jobs.find((job) => job.id === "J-PK"))] } }, "issueOrderParts")), "BOM_FORBIDDEN", "a job of another department in the set");
   const base = await version();
   assert.equal(await code(save({ jobs: { upsert: [done(p1), done(p2)] } }, "issueOrderParts")), "BOM_INSUFFICIENT_STOCK", "P-1 has 4 of 8, P-2 has 1 of 3");
@@ -3351,6 +3412,87 @@ test("the mock database follows the SQL rules of the part stock: payload shapes 
   assert.ok((await rpc("app_sandbox_purge_bom")).data.deleted >= 9);
   const emptied = await view();
   assert.deepEqual([emptied.stock, emptied.stockMoves], [[], []]);
+});
+
+test("the mock database follows 20261123020000: issue a subset, part of a line then the rest, over the plan up to the stock; undo gives a partial issue back, a leftover needs a finished line, a partly issued PI cannot be cancelled", async () => {
+  const mock = createMockSupabase({ sandbox: true, now: () => NOW, storage: memoryStorage() });
+  const rpc = (name, args) => mock.client.rpc(name, args);
+  const as = (id) => rpc("app_sandbox_enter", { p_persona_id: id });
+  const version = async () => (await rpc("app_bom_master")).data.version;
+  const save = async (changes, action, base) => rpc("app_bom_save_master", { p_changes: changes, p_base_version: base ?? await version(), p_action: action });
+  const code = async (promise) => (await promise).error?.code;
+  const view = async () => (await rpc("app_bom_master")).data;
+  const job = async (id) => (await view()).jobs.find((row) => row.id === id);
+  const qty = async (itemCode) => (await view()).stock.find((row) => row.itemCode === itemCode)?.qty;
+  // ยอดสะสมใหม่ + สถานะที่ตรงกับยอด (แบบที่หน้าเบิกจ่ายส่ง)
+  const part = async (id, total, status) => { const row = await job(id); return { ...row, qtyDone: total, status: status ?? (total >= row.qtyPlanned ? "done" : "in_progress") }; };
+  const issue = async (rows, base) => save({ jobs: { upsert: rows } }, "issueOrderParts", base);
+  const ret = (row, action) => save({ partReturns: { upsert: [row] } }, action);
+  await as("persona-pp");
+  const item = (itemCode, kind, uom = "pcs") => ({ code: itemCode, kind, name: itemCode, ownerDept: kind === "PURCHASED" ? "ST" : "PK", uom });
+  assert.equal((await save({ items: { upsert: [item("FG-1", "FG", "set"), item("P-1", "PURCHASED"), item("P-2", "PURCHASED", "kg")] } }, "importFlat")).error, null);
+  const order = (id) => ({ id, customer: "ACME", country: "TH", orderType: "SA", orderedAt: NOW, whDue: NOW + 9 * 86400000, due: {}, dueDefaults: [], revision: 0, status: "draft", items: [{ fgCode: "FG-1", qty: 2, colorSet: "", note: "" }], explosion: [{ itemCode: "FG-1", level: 0, required: 2 }], stockCounts: {}, note: "" });
+  const partJob = (id, orderId, itemCode, planned) => ({ id, orderId, dept: "ST", itemCode, name: itemCode, kind: "PURCHASED", uom: "pcs", qtyPlanned: planned, qtyRequired: planned, stockCounted: null, qtyDone: 0, qtyReject: 0, dueAt: NOW + 86400000, status: "queued", externalRef: null, fgCodes: ["FG-1"], reports: [] });
+  const pkJob = (id, orderId) => ({ ...partJob(id, orderId, "FG-1", 2), dept: "PK", kind: "FG", uom: "set" });
+  for (const [pi, jobs] of [["PI-P1", [partJob("J-P1", "PI-P1", "P-1", 10), partJob("J-P2", "PI-P1", "P-2", 4), pkJob("J-PK1", "PI-P1")]], ["PI-P2", [partJob("J2-P1", "PI-P2", "P-1", 5), pkJob("J-PK2", "PI-P2")]]]) {
+    assert.equal((await save({ orders: { upsert: [order(pi)] } }, "createOrder")).error, null);
+    assert.equal((await save({ orders: { upsert: [{ ...order(pi), status: "released" }] }, jobs: { upsert: jobs } }, "releaseOrder")).error, null);
+  }
+  await as("persona-st");
+  assert.equal((await save({ stock: { upsert: [{ itemCode: "P-1", qty: 12 }, { itemCode: "P-2", qty: 3 }] } }, "countPartStock")).error, null);
+
+  // สิทธิ์: WH / GR / QA ไม่ได้ (เบิกบางส่วนก็ไม่ได้)
+  for (const persona of ["persona-wh", "persona-gr", "persona-qa"]) {
+    await as(persona);
+    assert.equal(await code(issue([await part("J-P1", 4)])), "BOM_FORBIDDEN", persona);
+  }
+  // เลือกบรรทัดเดียว เบิก 4 จาก 10: บรรทัดยังเปิด บรรทัดอื่นไม่ถูกแตะ ใบเริ่มแล้ว
+  await as("persona-st");
+  const first = await issue([await part("J-P1", 4)]);
+  assert.equal(first.error, null);
+  assert.deepEqual([(await job("J-P1")).status, (await job("J-P1")).qtyDone, "doneAt" in await job("J-P1")], ["in_progress", 4, false]);
+  assert.deepEqual([(await job("J-P2")).status, (await job("J-P2")).qtyDone], ["queued", 0]);
+  assert.equal(await qty("P-1"), 8);
+  assert.equal((await view()).orders.find((row) => row.id === "PI-P1").status, "in_progress");
+  assert.deepEqual((await view()).stockMoves.filter((move) => move.kind === "issue").map((move) => [move.itemCode, move.qty, move.balance, move.ref]), [["P-1", -4, 8, "PI-P1"]]);
+  assert.equal((await rpc("app_bom_audit")).data[0].detail, "jobs +1, stock +1");
+  // ปฏิเสธ: ยอดเท่าเดิม/ลดลง · สถานะผิด · เกินสต็อก (ทั้งคำสั่ง) · สองใบ
+  const before = await version();
+  assert.equal(await code(issue([await part("J-P1", 4)])), "BOM_INVALID_JOB", "the stored total again");
+  assert.equal(await code(issue([await part("J-P1", 3)])), "BOM_INVALID_JOB", "a lower total");
+  assert.equal(await code(issue([await part("J-P1", 10, "in_progress")])), "BOM_INVALID_JOB", "a total at the plan sent as in_progress");
+  assert.equal(await code(issue([await part("J-P1", 6, "done")])), "BOM_INVALID_JOB", "a total below the plan sent as done");
+  assert.equal(await code(issue([await part("J-P1", 13), await part("J-P2", 2)])), "BOM_INSUFFICIENT_STOCK", "9 more with 8 in stock refuses the whole save");
+  assert.equal(await code(issue([await part("J-P1", 5), await part("J2-P1", 1)])), "BOM_INVALID_JOB", "rows of two orders");
+  assert.equal(await version(), before, "nothing was written");
+  assert.equal(await qty("P-2"), 3);
+  // ส่วนที่เหลือ + เกินแผน 2 (เท่าที่มี) พร้อมกาวบางส่วน · บรรทัดที่เสร็จแล้วเบิกเพิ่มไม่ได้
+  assert.equal((await issue([await part("J-P1", 12), await part("J-P2", 3)])).error, null);
+  assert.deepEqual([(await job("J-P1")).status, (await job("J-P1")).qtyDone, (await job("J-P1")).doneAt], ["done", 12, NOW]);
+  assert.deepEqual([(await job("J-P2")).status, (await job("J-P2")).qtyDone], ["in_progress", 3]);
+  assert.deepEqual([await qty("P-1"), await qty("P-2")], [0, 0]);
+  assert.equal(await code(issue([{ ...(await job("J-P1")), qtyDone: 13 }])), "BOM_INVALID_JOB", "a finished line takes no more");
+  // คืนของเหลือ: บรรทัดที่เบิกเกินคืนได้ถึงยอดที่เบิก (12) · บรรทัดที่ยังเบิกไม่ครบคืนไม่ได้
+  assert.equal(await code(ret({ orderId: "PI-P1", mode: "leftover", reason: "เหลือ", lines: [{ itemCode: "P-1", qty: 12.5 }] }, "returnOrderParts")), "BOM_INVALID_RETURN");
+  assert.equal(await code(ret({ orderId: "PI-P1", mode: "leftover", reason: "เหลือ", lines: [{ itemCode: "P-2", qty: 1 }] }, "returnOrderParts")), "BOM_INVALID_RETURN", "the glue line is still partly issued");
+  assert.equal((await ret({ orderId: "PI-P1", mode: "leftover", reason: "เบิกเกิน", lines: [{ itemCode: "P-1", qty: 2 }] }, "returnOrderParts")).error, null);
+  assert.equal(await qty("P-1"), 2);
+  // ใบที่เบิกบางส่วนยกเลิกไม่ได้ · ยกเลิกการเบิกจ่ายคืนยอดที่ยังอยู่นอกคลังทั้งสองบรรทัด แล้วยกเลิกใบได้
+  await as("persona-pp");
+  const cancelled = async () => save({ orders: { upsert: [{ ...(await view()).orders.find((row) => row.id === "PI-P1"), status: "cancelled", cancelReason: "ทดสอบ" }] } }, "cancelOrder");
+  assert.equal(await code(cancelled()), "BOM_INVALID_TRANSITION");
+  await as("persona-st");
+  assert.equal((await ret({ orderId: "PI-P1", mode: "undo", reason: "ผิดใบ" }, "undoOrderParts")).error, null);
+  assert.deepEqual([await qty("P-1"), await qty("P-2")], [12, 3], "10 of P-1 (12 issued, 2 returned) and the partly issued 3 of P-2 are back");
+  assert.deepEqual((await view()).stockMoves.filter((move) => move.kind === "return" && move.note === "ผิดใบ").map((move) => [move.itemCode, move.qty, move.balance]), [["P-1", 10, 12], ["P-2", 3, 3]]);
+  for (const id of ["J-P1", "J-P2"]) assert.deepEqual([(await job(id)).status, (await job(id)).qtyDone, "doneAt" in await job(id)], ["queued", 0, false], id);
+  await as("persona-pp");
+  assert.equal((await cancelled()).error, null, "after the undo the PI can be cancelled");
+  // แบบเดิม (ทุกงานที่เปิดอยู่ qtyDone = qtyPlanned, done) ยังผ่าน: ใบที่สองเบิกบางส่วนก่อนแล้วเบิกส่วนที่เหลือด้วยแถวแบบเดิม
+  await as("persona-st");
+  assert.equal((await issue([await part("J2-P1", 2)])).error, null);
+  assert.equal((await issue([{ ...(await job("J2-P1")), status: "done", qtyDone: 5 }])).error, null, "an older page's full row issues the remaining 3");
+  assert.deepEqual([(await job("J2-P1")).status, (await job("J2-P1")).qtyDone, await qty("P-1")], ["done", 5, 7]);
 });
 
 test("returning parts through the module on the (mock) database: the page sends only the return request, the database computes stock, jobs and moves, undo then issue again, then a leftover; the order can be cancelled after an undo", async () => {

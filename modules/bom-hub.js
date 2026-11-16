@@ -958,7 +958,9 @@
         if (!mine.length) return "";
         const done = mine.filter((job) => job.status === "done").length;
         const late = mine.filter((job) => job.status !== "done" && job.dueAt < ctx.now).length;
-        const text = dept === "ST" && mine.every((job) => ctx.helpers.isPartJob(job)) ? (done === mine.length ? `เบิกของครบ ${mine.length} รายการ` : `รอเบิกของ ${mine.length - done} จาก ${mine.length} รายการ`) : `เสร็จ ${done} จาก ${mine.length} งาน`;
+        // ของซื้อ: บรรทัดที่เบิกไปบางส่วนยังนับว่ารอเบิก (บอกจำนวนบรรทัดนั้นต่อท้าย)
+        const partly = mine.filter((job) => job.status !== "done" && Number(job.qtyDone) > 0).length;
+        const text = dept === "ST" && mine.every((job) => ctx.helpers.isPartJob(job)) ? (done === mine.length ? `เบิกของครบ ${mine.length} รายการ` : `รอเบิกของ ${mine.length - done} จาก ${mine.length} รายการ${partly ? ` (เบิกไปบางส่วน ${partly} รายการ)` : ""}`) : `เสร็จ ${done} จาก ${mine.length} งาน`;
         return `<tr><td>${deptChip(ctx, dept)} ${esc(deptName(ctx, dept))}</td><td class="rf-progress-cell">${ui.progress(done, mine.length)}<div class="small muted">${esc(text)}</div></td><td>${late ? ui.badge("bad", `เลยกำหนด ${late} งาน`) : ""}</td><td class="right">${ctx.canSee("work") && (canPlan || ctx.user?.dept === dept) ? ui.link("ดูงาน", ctx.url("work", { dept, order: order.id }), "btn rf-btn secondary small") : ""}</td></tr>`;
       }).filter(Boolean);
       // มีสินค้าที่ PK ส่งมอบแล้วรอรับเข้าคลัง: บอกเฉพาะว่ามี (ตัวเลขอยู่ในขั้น 5) · คลังสินค้ารับเข้าได้ก่อนผลิตครบทั้งใบ
@@ -1062,7 +1064,8 @@
     const showTabs = ui.tabs([{ id: "open", label: `ต้องทำ ${cardCount(open) + tasks.length}` }, { id: "done", label: `เสร็จแล้ว ${cardCount(done)}` }], show, (id) => keep({ st: id === "done" ? "done" : null }));
     const rank = (job) => (job.status === "in_progress" ? 0 : job.status === "hold" ? 2 : 1);
     const list = (show === "done" ? done : open).slice().sort((a, b) => rank(a) - rank(b) || a.dueAt - b.dueAt || a.id.localeCompare(b.id));
-    // ของซื้อ (งานของคลังวัตถุดิบ): รวมเป็นการ์ดเดียวต่อใบ เพราะเบิกจ่ายครั้งเดียวทั้งใบที่หน้าใบสั่งผลิต
+    // ของซื้อ (งานของคลังวัตถุดิบ): รวมเป็นการ์ดเดียวต่อใบ เพราะเบิกจ่ายที่หน้าใบสั่งผลิต (เลือกบรรทัดและจำนวนได้ หลายครั้งจนครบ)
+    // การ์ดรอเบิกแสดงส่วนที่ยังต้องเบิกของแต่ละบรรทัด (แผน − เบิกแล้ว) · การ์ดเบิกแล้วแสดงยอดที่เบิก (รวมที่เบิกเกินแผน)
     const partGroups = new Map();
     const cards = [];
     for (const job of list) {
@@ -1080,7 +1083,7 @@
         const button = !finished && ctx.helpers.canIssueParts(user) ? ui.link("เบิกจ่ายที่ใบสั่งผลิต", ctx.url("orders", { sel: entry.parts }), "btn rf-btn bom-job-main") : ui.link("เปิดใบสั่งผลิต", ctx.url("orders", { sel: entry.parts }), "btn rf-btn secondary bom-job-main");
         return `<article class="card rf-card bom-job"><div class="bom-job-top"><span class="bom-job-state">${finished ? "เบิกแล้ว" : "รอเบิก"}</span>${dueText(Math.min(...jobs.map((job) => job.dueAt)), finished)}</div>
           <h2>${esc(`เบิกของตามใบ ${entry.parts}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${esc(order?.customer ?? "")}</p>
-          <ul class="bom-job-parts">${jobs.slice(0, 6).map((job) => `<li><span>${esc(job.name)}</span><span class="nowrap">${esc(`${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`)}</span></li>`).join("")}</ul>${jobs.length > 6 ? `<p class="small muted">และอีก ${jobs.length - 6} รายการ</p>` : ""}${button}</article>`;
+          <ul class="bom-job-parts">${jobs.slice(0, 6).map((job) => `<li><span>${esc(job.name)}</span><span class="nowrap">${esc(`${rules.fmtQty(finished ? job.qtyDone : Math.max(0, job.qtyPlanned - (Number(job.qtyDone) || 0)))} ${uomText(ctx, job.uom)}`)}</span></li>`).join("")}</ul>${jobs.length > 6 ? `<p class="small muted">และอีก ${jobs.length - 6} รายการ</p>` : ""}${button}</article>`;
       }
       const job = entry.job;
       const order = orderOf(job.orderId);

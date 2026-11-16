@@ -722,8 +722,23 @@ test("partReturned counts the returns of a (PI, item) pair since its latest issu
     jobs: [job("J1", "P-2", "done", 60), job("J2", "P-1", "done", 10), job("J3", "P-3", "queued", 0), job("J4", "P-4", "done", 5, { dept: "PK" }), job("J5", "P-1", "done", 5), job("J6", "P-9", "done", 1, { orderId: "PI-2" })],
     stockMoves: moves,
   }, "PI-1");
-  assert.deepEqual(lines.map((line) => [line.itemCode, line.issued, line.returned, line.returnable]), [["P-1", 15, 3.1, 11.9], ["P-2", 60, 50, 10]], "sorted by code; only done ST part jobs of the order");
+  assert.deepEqual(lines.map((line) => [line.itemCode, line.issued, line.returned, line.returnable, line.partial]), [["P-1", 15, 3.1, 11.9, false], ["P-2", 60, 50, 10, false]], "sorted by code; only issued ST part jobs of the order (a queued job with nothing issued is not)");
   assert.deepEqual(rules.partReturnLines({}, "PI-1"), []);
+  // 20261123020000: งานที่เบิกบางส่วน (in_progress, qtyDone > 0) นับเป็นยอดเบิกและเป็น partial · งานที่เบิกเกินแผนนับยอดที่เบิกจริง
+  const mixed = rules.partReturnLines({
+    jobs: [job("J1", "P-1", "in_progress", 4, { qtyPlanned: 10 }), job("J2", "P-2", "done", 12, { qtyPlanned: 10 }), job("J3", "P-3", "in_progress", 0, { qtyPlanned: 5 })],
+    stockMoves: [{ kind: "issue", ref: "PI-1", itemCode: "P-2", qty: -12 }, { kind: "return", ref: "PI-1", itemCode: "P-2", qty: 2 }],
+  }, "PI-1");
+  assert.deepEqual(mixed.map((line) => [line.itemCode, line.issued, line.returnable, line.partial]), [["P-1", 4, 4, true], ["P-2", 12, 10, false]]);
+});
+
+test("part reservations and needs follow a partly issued job: an open job reserves planned − issued, never negative; a finished or over-issued job reserves nothing", () => {
+  const job = (id, orderId, itemCode, qtyPlanned, extra = {}) => ({ id, orderId, dept: "ST", kind: "PURCHASED", itemCode, name: itemCode, uom: "pcs", qtyPlanned, qtyRequired: qtyPlanned, qtyDone: 0, status: "queued", ...extra });
+  const orders = [{ id: "PI-1", status: "in_progress" }, { id: "PI-2", status: "in_progress" }];
+  const jobs = [job("J1", "PI-1", "P-1", 10, { status: "in_progress", qtyDone: 4 }), job("J2", "PI-2", "P-1", 5, { status: "done", qtyDone: 7 }), job("J3", "PI-2", "P-2", 3, { status: "in_progress", qtyDone: 3.5 })];
+  const reserved = rules.partReserved(jobs, orders);
+  assert.deepEqual([reserved.get("P-1"), reserved.get("P-2")], [6, 0], "4 of 10 issued → 6 reserved; the over-issued done job reserves nothing; a stray total above the plan clamps to 0");
+  assert.deepEqual(rules.partNeeds({ jobs, orders, stock: [{ itemCode: "P-1", qty: 5 }] }, "PI-1").rows.map((row) => [row.itemCode, row.needQty, row.shortage]), [["P-1", 6, 1]], "the need of the open line is the remainder");
 });
 
 test("existing SUBPART items are reused by name (trim, inner spaces, case), uom and owner department; the smallest code wins; otherwise a new XP code is issued", () => {

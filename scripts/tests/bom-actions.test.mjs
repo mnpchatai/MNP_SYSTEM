@@ -1431,6 +1431,84 @@ test("issuing the purchased parts of a PI is all or nothing, then the part jobs 
   assert.deepEqual([job.status, job.qtyDone], ["queued", 0]);
 });
 
+test("issuing parts line by line (user rule 2026-11-16): ticked lines only, an editable quantity, a partial line stays open for the rest, over-issue up to the stock, all or nothing per save", () => {
+  const d = fresh();
+  const order = d.orders.find((entry) => entry.id === "DEMO-26001");
+  const jobOf = (code) => d.jobs.find((job) => job.orderId === order.id && A.helpers.isPartJob(job) && job.itemCode === code);
+  const stock = (code) => d.stock.find((row) => row.itemCode === code);
+  const lineOf = (code) => A.helpers.partIssuePlan(d, order.id).lines.find((line) => line.itemCode === code);
+  assert.deepEqual([lineOf("P-BOX-01").planned, lineOf("P-BOX-01").issued, lineOf("P-BOX-01").remaining, lineOf("P-BOX-01").onHand, lineOf("P-BOX-01").short], [7, 0, 7, 5, 2]);
+  // ตรวจรายการและจำนวน (ข้อความไทย) · ไม่ผ่าน = ไม่เปลี่ยนอะไร
+  const before = structuredClone(d);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [] }, ctx("st")), /เลือกรายการที่จะเบิกอย่างน้อยหนึ่งรายการ/);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 0 }] }, ctx("st")), /จำนวนที่เบิก P-STK-01 ต้องมากกว่า 0/);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: -2 }] }, ctx("st")), /ต้องมากกว่า 0/);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: "" }] }, ctx("st")), /ต้องมากกว่า 0/);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: "abc" }] }, ctx("st")), /ต้องเป็นตัวเลข/);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 0.00001 }] }, ctx("st")), /ต้องมากกว่า 0/, "below four decimals is nothing");
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 1 }, { itemCode: "p-stk-01", qty: 1 }] }, ctx("st")), /ซ้ำ/);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "NOPE", qty: 1 }] }, ctx("st")), /ไม่มีของซื้อที่ต้องเบิกในใบนี้/);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 10 }, { itemCode: "P-BOX-01", qty: 6 }] }, ctx("st")), /ไม่ได้เบิกจ่ายอะไรเลย: P-BOX-01 ขาด 1/);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 401 }] }, ctx("st")), /P-STK-01 ขาด 1/, "over-issue only up to the stock");
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 1 }] }, ctx("wh")), /ST/);
+  assert.deepEqual(d, before, "refused issues change nothing");
+  // เลือกเฉพาะกล่อง เบิก 3 จาก 7 (สต็อกมี 5): บรรทัดยังเปิด บรรทัดอื่นไม่ถูกแตะ หักสต็อกเท่าที่เบิก
+  const reservedBefore = rules.partReserved(d.jobs, d.orders).get("P-BOX-01");
+  assert.deepEqual(A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "p-box-01", qty: "3" }] }, ctx("st")), { issued: 1, summary: "1 รายการ" });
+  assert.deepEqual([jobOf("P-BOX-01").status, jobOf("P-BOX-01").qtyDone, "doneAt" in jobOf("P-BOX-01")], ["in_progress", 3, false]);
+  assert.ok(d.jobs.filter((job) => job.orderId === order.id && A.helpers.isPartJob(job) && job.itemCode !== "P-BOX-01").every((job) => job.status === "queued" && job.qtyDone === 0), "the lines that were not ticked are untouched");
+  assert.equal(stock("P-BOX-01").qty, 2);
+  assert.deepEqual(d.stockMoves.filter((move) => move.kind === "issue").map((move) => [move.itemCode, move.qty, move.balance, move.ref]), [["P-BOX-01", -3, 2, "DEMO-26001"]]);
+  assert.match(d.audit[0].detail, /DEMO-26001 1 รายการ/);
+  assert.deepEqual([lineOf("P-BOX-01").issued, lineOf("P-BOX-01").remaining, lineOf("P-BOX-01").short], [3, 4, 2], "the next issue offers the remainder");
+  assert.equal(rules.partReserved(d.jobs, d.orders).get("P-BOX-01"), reservedBefore - 3, "the open line still reserves only what is left");
+  assert.equal(rules.partNeeds({ jobs: d.jobs, orders: d.orders, stock: d.stock }, order.id).rows.find((row) => row.itemCode === "P-BOX-01").needQty, 4);
+  // ส่วนที่เหลือ + เกินแผน 2 (สต็อกพอ) → done · ยอดสะสม 9 จากแผน 7
+  A.countPartStock(d, { counts: [{ itemCode: "P-BOX-01", qty: 10 }] }, ctx("st"));
+  A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-BOX-01", qty: 6 }] }, ctx("planner"));
+  assert.deepEqual([jobOf("P-BOX-01").status, jobOf("P-BOX-01").qtyDone, jobOf("P-BOX-01").doneAt], ["done", 9, NOW]);
+  assert.equal(stock("P-BOX-01").qty, 4);
+  assert.equal(lineOf("P-BOX-01"), undefined, "a finished line is no longer offered");
+  assert.equal(rules.partReserved(d.jobs, d.orders).get("P-BOX-01") ?? 0, reservedBefore - 7, "and reserves nothing (never negative after an over-issue)");
+  // ไม่ส่ง lines = ทุกบรรทัดที่ยังเปิดเต็มส่วนที่เหลือ (แบบเดิม)
+  assert.deepEqual(A.issueOrderParts(d, { orderId: order.id }, ctx("st")), { issued: 6, summary: "6 รายการ" });
+  assert.ok(d.jobs.filter((job) => job.orderId === order.id && A.helpers.isPartJob(job)).every((job) => job.status === "done"));
+  assert.deepEqual([jobOf("P-BOX-01").qtyDone, jobOf("P-STK-01").qtyDone, stock("P-STK-01").qty], [9, 120, 280]);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 1 }] }, ctx("st")), /ไม่มีของซื้อที่ต้องเบิกจ่าย/);
+  // โหมดฐานข้อมูล: ใบ released ไม่เปลี่ยนเอง ประวัติไม่เขียนในเครื่อง แต่งานและสต็อกคำนวณไว้แสดง
+  const r = fresh();
+  const released = r.orders.find((entry) => entry.id === "DEMO-26001");
+  released.status = "released";
+  const moves = r.stockMoves.length;
+  A.issueOrderParts(r, { orderId: released.id, lines: [{ itemCode: "P-STK-01", qty: 50 }] }, { ...ctx("st"), remote: true });
+  const remoteJob = r.jobs.find((job) => job.orderId === released.id && job.itemCode === "P-STK-01" && A.helpers.isPartJob(job));
+  assert.deepEqual([released.status, r.stockMoves.length, remoteJob.status, remoteJob.qtyDone, r.stock.find((row) => row.itemCode === "P-STK-01").qty], ["released", moves, "in_progress", 50, 350]);
+});
+
+test("a partly issued line: undo gives it back and the jobs wait again (then the order can be cancelled), a leftover return needs the line finished, an over-issued line returns up to what was issued", () => {
+  const d = fresh();
+  const order = d.orders.find((entry) => entry.id === "DEMO-26001");
+  const stock = (code) => d.stock.find((row) => row.itemCode === code);
+  const jobOf = (code) => d.jobs.find((job) => job.orderId === order.id && A.helpers.isPartJob(job) && job.itemCode === code);
+  A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 50 }, { itemCode: "P-ZIP-05", qty: 30 }] }, ctx("st"));
+  assert.deepEqual([jobOf("P-STK-01").status, jobOf("P-ZIP-05").status, jobOf("P-ZIP-05").qtyDone], ["in_progress", "done", 30], "50 of 120 stickers, 30 of 21.2 m of zip (over the plan)");
+  const lines = rules.partReturnLines(d, order.id);
+  assert.deepEqual(lines.map((line) => [line.itemCode, line.issued, line.returnable, line.partial]), [["P-STK-01", 50, 50, true], ["P-ZIP-05", 30, 30, false]]);
+  rejects(() => A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 1 }], reason: "เหลือ" }, ctx("st")), /P-STK-01 ยังเบิกไม่ครบ/);
+  rejects(() => A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-ZIP-05", qty: 30.5 }], reason: "เหลือ" }, ctx("st")), /คืนได้อีกไม่เกิน 30/);
+  A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-ZIP-05", qty: 8.8 }], reason: "เบิกเกิน" }, ctx("st"));
+  assert.equal(stock("P-ZIP-05").qty, 78.8);
+  // ใบที่เหลือแต่งานของซื้อ: ยกเลิกใบไม่ได้จนกว่าจะยกเลิกการเบิกจ่าย (ยอดเบิกบางส่วนก็กัน)
+  d.jobs = d.jobs.filter((job) => job.orderId !== order.id || A.helpers.isPartJob(job));
+  rejects(() => A.cancelOrder(structuredClone(d), { orderId: order.id, reason: "x" }, ctx("planner")), /ยกเลิกการเบิกจ่าย/);
+  const undone = A.undoOrderParts(d, { orderId: order.id, reason: "ผิดใบ" }, ctx("st"));
+  assert.equal(undone.summary, "2 รายการ");
+  assert.deepEqual([stock("P-STK-01").qty, stock("P-ZIP-05").qty], [400, 100], "the partial 50 and the zip still out (30 - 8.8) are back");
+  assert.ok(d.jobs.filter((job) => job.orderId === order.id && A.helpers.isPartJob(job)).every((job) => job.status === "queued" && job.qtyDone === 0 && !("doneAt" in job)));
+  assert.equal(A.helpers.startedJobs(d, order, []).length, 0);
+  assert.equal(A.cancelOrder(d, { orderId: order.id, reason: "ลูกค้ายกเลิก" }, ctx("planner")), order.id);
+});
+
 test("returning purchased parts: undo gives the whole issue back and the jobs wait again, leftovers are limited to what is not yet returned since the latest issue, rights and reason are checked", () => {
   const d = fresh();
   const order = d.orders.find((entry) => entry.id === "DEMO-26001");
@@ -1500,8 +1578,7 @@ test("returning purchased parts: undo gives the whole issue back and the jobs wa
   rejects(() => A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 1 }], reason: "เกิน" }, ctx("st")), /ไม่เกิน 0/);
   // ใบที่มีแต่งานของซื้อ: เบิกจ่ายแล้วยกเลิกใบไม่ได้ (มียอดทำแล้ว) หลังยกเลิกการเบิกจ่ายยกเลิกใบได้ และเปิดใบกลับมาแก้ได้ (ไม่มีงานเริ่ม)
   d.jobs = d.jobs.filter((job) => job.orderId !== order.id || A.helpers.isPartJob(job));
-  rejects(() => A.cancelOrder(structuredClone(d), { orderId: order.id, reason: "x" }, ctx("planner")), /ผลผลิต/);
-  rejects(() => A.cancelOrder(structuredClone(d), { orderId: order.id, reason: "x" }, ctx("planner")), /ผลผลิต/);
+  rejects(() => A.cancelOrder(structuredClone(d), { orderId: order.id, reason: "x" }, ctx("planner")), /เบิกจ่ายของซื้อของใบนี้ไปแล้ว[\s\S]*ยกเลิกการเบิกจ่าย/, "the message names the undo when only part jobs hold output");
   assert.ok(A.helpers.startedJobs(d, order, []).length > 0, "an issued PI counts as started");
   A.undoOrderParts(d, { orderId: order.id, reason: "ยกเลิกใบ" }, ctx("st"));
   assert.equal(A.helpers.startedJobs(d, order, []).length, 0, "after the undo no job counts as started");

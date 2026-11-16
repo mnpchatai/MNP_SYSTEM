@@ -942,7 +942,8 @@
   const toMake = (required, stock) => Math.round((Number(required) - (Number(stock) || 0)) * 1e4) / 1e4;
 
   // ---------- ของซื้อ: ความต้องการเทียบสต็อก (หน้าต่างสั่งซื้อ) ----------
-  // งานของซื้อ = งาน dept ST ชนิด PURCHASED ที่ตอนปล่อยผลิตสร้างต่อรายการของซื้อของใบ (ยอด = ความต้องการเต็ม) · ST เบิกจ่ายครั้งเดียวต่อใบ ทำให้งานเสร็จและหักสต็อก
+  // งานของซื้อ = งาน dept ST ชนิด PURCHASED ที่ตอนปล่อยผลิตสร้างต่อรายการของซื้อของใบ (ยอด = ความต้องการเต็ม) · ST เบิกจ่ายได้หลายครั้ง เลือกรายการและจำนวนเอง (qtyDone = ยอดเบิกสะสม)
+  // งานยังเปิดจนยอดสะสมถึงแผน (เบิกเกินได้ไม่เกินสต็อก) ทุกครั้งหักสต็อกเท่าที่เบิก
   // data = { jobs, orders, stock, purchaseOrders } (BOM: jobs orders stock · RubberFlow: purchaseOrders) · orderId = ใบ PI ที่ถามถึง
   // แต่ละรหัสที่ใบนี้ยังไม่ได้เบิกจ่าย: needQty ต้องใช้ (ส่วนที่เหลือของงาน) · onHandQty คงเหลือ · reservedQty จองแล้ว = ที่ใบ PI อื่นที่ปล่อยผลิตแล้วยังไม่ได้เบิกจ่ายต้องใช้
   // · onOrderQty สั่งค้างรับ (บรรทัดของซื้อของใบสั่งซื้อ ordered ที่ยังไม่รับ) · shortage = max(0, needQty − (onHandQty − reservedQty + onOrderQty)) · orderQty = ค่าตั้งต้นจำนวนสั่ง (ขาด + สต็อกขั้นต่ำ ไม่ขาด = 0)
@@ -954,7 +955,7 @@
   // ถ้าปัดใกล้สุด ยอดสั่ง 1.333 จะไม่พอเบิก 1.3333 (ขาด 0.0003 แล้วเบิกจ่ายทั้งใบไม่ได้) · ปัดใกล้สุดที่ 4 ตำแหน่งก่อน (กันเศษทศนิยมของเครื่อง) แล้วปัดขึ้นที่ 3 ตำแหน่ง
   // กฎเดียวกับ up3 ใน rubberflow-rules.js (ยอดเคมีในหน้าต่างสั่งซื้อเดียวกัน)
   const partUp3 = (n) => Math.ceil(Math.round(n * 1e4) / 10 - 1e-9) / 1e3 || 0;
-  // งานของซื้อที่ยังไม่เบิกจ่ายของใบที่ปล่อยผลิตอยู่ (released / in_progress) · ส่วนที่เหลือของงาน = แผน - ที่เบิกจ่ายแล้ว
+  // งานของซื้อที่ยังเบิกจ่ายไม่ครบของใบที่ปล่อยผลิตอยู่ (released / in_progress) · ส่วนที่เหลือของงาน = แผน - ที่เบิกจ่ายแล้ว (ไม่ติดลบ: งานที่เบิกเกินเป็น done แล้ว)
   const openPartJobs = (jobs, orders) => {
     const statusOf = new Map((orders ?? []).map((order) => [order.id, order.status]));
     return (jobs ?? []).filter((job) => job.dept === "ST" && job.kind === "PURCHASED" && job.status !== "done" && PART_OPEN_ORDER.includes(statusOf.get(job.orderId)));
@@ -988,14 +989,17 @@
     }
     return Math.round(total * 1e4) / 1e4;
   }
-  // รายการของซื้อที่เบิกจ่ายแล้วของใบ (งาน ST / PURCHASED ที่ done รวมต่อรหัส) พร้อมยอดที่คืนไปแล้วและที่ยังคืนได้ · เรียงตามรหัส
+  // รายการของซื้อที่เบิกจ่ายแล้วของใบ (งาน ST / PURCHASED ที่ done หรือเบิกไปบางส่วน รวมต่อรหัส) พร้อมยอดที่คืนไปแล้วและที่ยังคืนได้ · เรียงตามรหัส
+  // partial = บรรทัดยังเบิกไม่ครบ (งานยังไม่ done): ยกเลิกการเบิกจ่ายคืนยอดนี้ได้ แต่คืนของเหลือไม่ได้ (ตรงกับ private.bom_return_parts ของ 20261123020000)
+  // ยอดเบิก (issued) = qtyDone รวมยอดที่เบิกเกินแผน
   function partReturnLines(data, orderId) {
     const { jobs = [], stockMoves = [] } = data ?? {};
     const byItem = new Map();
     for (const job of jobs) {
-      if (job.orderId !== orderId || job.dept !== "ST" || job.kind !== "PURCHASED" || job.status !== "done") continue;
-      const line = byItem.get(job.itemCode) ?? { itemCode: job.itemCode, name: job.name, uom: job.uom, issued: 0 };
+      if (job.orderId !== orderId || job.dept !== "ST" || job.kind !== "PURCHASED" || !(job.status === "done" || Number(job.qtyDone) > 0)) continue;
+      const line = byItem.get(job.itemCode) ?? { itemCode: job.itemCode, name: job.name, uom: job.uom, issued: 0, partial: false };
       line.issued += Number(job.qtyDone) || 0;
+      if (job.status !== "done") line.partial = true;
       byItem.set(job.itemCode, line);
     }
     return [...byItem.values()].sort((a, b) => (a.itemCode < b.itemCode ? -1 : a.itemCode > b.itemCode ? 1 : 0)).map((line) => {

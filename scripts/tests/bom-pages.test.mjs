@@ -1447,7 +1447,7 @@ test("the part stock page: ST and WH count, the planning group and ST edit the s
   assert.equal(D.partHistory(env.ctx("p=stock"), { code: "NOPE" }), null);
 });
 
-test("issuing parts from the PI page: the dialog lists every line, a shortage blocks the whole issue and offers the purchase, a full stock offers one button; part jobs have no report buttons", async () => {
+test("issuing parts from the PI page: the dialog has a tick box and an editable quantity per line, a short line starts unticked and marked and offers the purchase, one button issues the ticked lines; part jobs have no report buttons", async () => {
   const env = load();
   env.store.setUser("B08"); // ST
   const D = env.context.MNP_BOM_DIALOGS;
@@ -1457,8 +1457,29 @@ test("issuing parts from the PI page: the dialog lists every line, a shortage bl
   let dialog = D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html;
   clean(dialog);
   assert.match(dialog, /P-BOX-01[\s\S]*ขาด 2/, "the shortage of the boxes (7 needed, 5 on hand)");
-  assert.match(dialog, /ไม่ได้|เบิกจ่ายไม่ได้/);
-  assert.doesNotMatch(dialog, /data-rf-action="issueOrderParts"/, "a shortage hides the issue button");
+  assert.match(dialog, /สต็อกไม่พอเบิกส่วนที่เหลือ 1 รายการ จึงไม่ได้เลือกไว้/);
+  assert.doesNotMatch(dialog, /ทุกรายการพร้อมกัน|data-rf-action="issueOrderParts"/, "no more all-at-once wording or button");
+  // หนึ่งช่องเลือกต่อบรรทัด มีชื่อที่อ่านได้ · บรรทัดที่พอเลือกไว้ บรรทัดที่ขาดไม่เลือกและช่องจำนวน/รหัสปิดไว้ (ไม่ถูกตรวจและไม่ถูกส่ง)
+  assert.equal((dialog.match(/type="checkbox" data-bom-issue-pick/g) ?? []).length, 7);
+  assert.match(dialog, /<input type="checkbox" data-bom-issue-pick checked aria-label="เบิก P-STK-01 ครั้งนี้">/);
+  assert.match(dialog, /<input type="checkbox" data-bom-issue-pick aria-label="เบิก P-BOX-01 ครั้งนี้">/, "the short line starts unticked");
+  assert.match(dialog, /name="qty\[\]"[^>]*max="5" value="7" required data-bom-issue-field aria-label="จำนวนที่เบิก P-BOX-01 \(กล่อง\)" disabled>/, "its quantity is the remainder, capped by the stock, and off until ticked");
+  assert.match(dialog, /name="itemCode\[\]" value="P-BOX-01" data-bom-issue-field disabled>/);
+  assert.match(dialog, /name="qty\[\]"[^>]*max="400" value="120" required data-bom-issue-field aria-label="จำนวนที่เบิก P-STK-01 \(ชิ้น\)">/, "a covered line is prefilled with the remainder and can go up to the stock");
+  assert.match(dialog, /data-rf-form="issueOrderParts" data-rf-args="\{&quot;orderId&quot;:&quot;DEMO-26001&quot;\}"/);
+  assert.match(dialog, /<button class="btn rf-btn" type="submit" form="bom-issue-parts-form">เบิกจ่ายรายการที่เลือก<\/button>/, "one button issues the ticked lines even when a line is short");
+  // ติ๊ก/ไม่ติ๊ก: เปิด/ปิดช่องของบรรทัดนั้น (change ไม่ใช่ blur)
+  const fields = [{ disabled: true }, { disabled: true }];
+  const box = { checked: false, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; }, closest: () => ({ querySelectorAll: () => fields }) };
+  const dialogNode = { querySelectorAll: (selector) => (selector === "[data-bom-issue-pick]" ? [box] : []), querySelector: () => null };
+  D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).bind(dialogNode);
+  assert.deepEqual(Object.keys(box.handlers), ["change"]);
+  box.checked = true;
+  box.handlers.change();
+  assert.deepEqual(fields.map((field) => field.disabled), [false, false]);
+  box.checked = false;
+  box.handlers.change();
+  assert.deepEqual(fields.map((field) => field.disabled), [true, true]);
   // สั่งซื้อเป็นสิทธิ์ของ RubberFlow ในโหมดฐานข้อมูล (แผนก ST) · โหมดสาธิตในเครื่องไม่มีใบสั่งซื้อ จึงไม่มีปุ่มให้ใคร และข้อความชี้ไปที่คลังวัตถุดิบ
   assert.doesNotMatch(dialog, /data-bom-parts-buy/, "no purchase button in the in-browser demo");
   assert.match(dialog, /แจ้งคลังวัตถุดิบ \(ST\) ให้สั่งซื้อหรือรับเข้า/);
@@ -1473,11 +1494,37 @@ test("issuing parts from the PI page: the dialog lists every line, a shortage bl
   env.store.setUser("B08");
   assert.equal(env.store.run("countPartStock", { counts: [{ itemCode: "P-BOX-01", qty: 7 }] }).ok, true);
   dialog = D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html;
-  assert.match(dialog, /data-rf-action="issueOrderParts" data-rf-args="\{&quot;orderId&quot;:&quot;DEMO-26001&quot;\}"/);
+  assert.equal((dialog.match(/data-bom-issue-pick checked/g) ?? []).length, 7, "with stock for every line all lines start ticked");
+  assert.match(dialog, /เบิกเฉพาะรายการที่เลือก เบิกไม่ครบส่วนที่เหลือเบิกครั้งหน้าได้/);
   assert.doesNotMatch(dialog, /data-bom-parts-buy/);
-  // กด → เบิกจ่าย → ไม่มีอะไรเหลือ: ปุ่มและ dialog หาย
+  // ส่งฟอร์ม (บรรทัดที่เลือก = itemCode[] + qty[]): เบิกกล่อง 3 จาก 7 อย่างเดียว · ไม่เลือกเลย = แจ้งให้เลือก ไม่เขียนอะไร
+  await env.submit("p=orders&sel=DEMO-26001", "issueOrderParts", {}, { orderId: "DEMO-26001" });
+  assert.match(env.log.toasts.at(-1)[0], /เลือกรายการที่จะเบิกอย่างน้อยหนึ่งรายการ/);
+  await env.submit("p=orders&sel=DEMO-26001", "issueOrderParts", { "itemCode[]": ["P-BOX-01"], "qty[]": ["3"] }, { orderId: "DEMO-26001" });
+  const box01 = () => env.store.data().jobs.find((job) => job.orderId === "DEMO-26001" && job.dept === "ST" && job.itemCode === "P-BOX-01");
+  assert.deepEqual([box01().status, box01().qtyDone], ["in_progress", 3]);
+  dialog = D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html;
+  clean(dialog);
+  assert.match(dialog, /P-BOX-01[\s\S]*?4 <span class="small muted">กล่อง<\/span><div class="small muted">เบิกแล้ว 3 จาก 7<\/div>/, "the next issue offers the remainder and says what was issued");
+  assert.match(dialog, /max="4" value="4" required data-bom-issue-field aria-label="จำนวนที่เบิก P-BOX-01/);
+  // งานของคลังวัตถุดิบ: การ์ดรอเบิกแสดงส่วนที่เหลือ · ขั้น 4 บอกบรรทัดที่เบิกไปบางส่วน
+  html = await env.render("p=work&dept=ST");
+  assert.match(html, /กล่องนอก[^<]*<\/span><span class="nowrap">4 กล่อง</, "the waiting card shows the remainder of the partly issued line");
+  env.store.setUser("B03");
+  html = await env.render("p=orders&sel=DEMO-26001&step=4");
+  assert.match(html, /รอเบิกของ 7 จาก 7 รายการ \(เบิกไปบางส่วน 1 รายการ\)/);
+  env.store.setUser("B08");
+  // คืนของเหลือ: บรรทัดที่ยังเบิกไม่ครบคืนไม่ได้ (ไม่มีปุ่มเมื่อมีแต่บรรทัดแบบนี้) · ยกเลิกการเบิกจ่ายมีให้
+  html = await env.render("p=orders&sel=DEMO-26001");
+  assert.doesNotMatch(html, /data-rf-open="returnParts"/);
+  assert.match(html, /data-rf-open="undoParts"/);
+  const partialReturn = D.returnParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html;
+  assert.match(partialReturn, /name="qty\[\]" type="number" readonly[^>]*aria-label="P-BOX-01 ยังเบิกไม่ครบ คืนของเหลือได้เมื่อเบิกครบแล้ว"><div class="small muted">ยังเบิกไม่ครบ<\/div>/);
+  assert.match(D.undoParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html, /P-BOX-01[\s\S]*3 กล่อง/, "the undo gives back the partly issued 3");
+  // กด → เบิกจ่ายส่วนที่เหลือทั้งหมด → ไม่มีอะไรเหลือ: ปุ่มและ dialog หาย
   const issued = env.store.run("issueOrderParts", { orderId: "DEMO-26001" });
   assert.equal(issued.ok, true, issued.error?.message);
+  assert.deepEqual([box01().status, box01().qtyDone], ["done", 7]);
   html = await env.render("p=orders&sel=DEMO-26001");
   assert.doesNotMatch(html, /data-rf-open="issueParts"/);
   assert.equal(D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }), null);

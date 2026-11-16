@@ -1869,15 +1869,15 @@
       }
       // ตรวจวัตถุดิบ: เทียบเคมีที่ WO ของใบนี้ต้องใช้กับสต็อกใน RubberFlow แล้วสั่งซื้อส่วนที่ขาด (dialog เดียวกับที่เด้งหลังปล่อยผลิต) · ผู้ที่สั่งซื้อได้ = ฝ่ายวางแผนหรือแผนก RB
       const checkWos = data.jobs.filter((job) => job.orderId === order.id && job.dept === "RB" && job.externalRef?.woId).map((job) => job.externalRef.woId);
-      // ของซื้อ: ST / ฝ่ายวางแผนเบิกจ่ายครั้งเดียวต่อใบ (dialog ยืนยันแสดงรายการและที่ขาด) · ปุ่มตรวจวัตถุดิบเทียบเคมีของ WO และของซื้อที่ยังไม่เบิกจ่ายกับสต็อก
+      // ของซื้อ: ST / ฝ่ายวางแผนเบิกจ่ายได้หลายครั้งจนครบ (dialog เลือกบรรทัดและจำนวน บอกที่ขาด) · ปุ่มตรวจวัตถุดิบเทียบเคมีของ WO และของซื้อที่ยังไม่เบิกจ่ายกับสต็อก
       const openOrder = ["released", "in_progress"].includes(order.status);
       const partsLeft = ctx.helpers.partIssuePlan(data, order.id).lines.length;
       if (openOrder && partsLeft && ctx.helpers.canIssueParts(user)) main("issue", ui.openButton("เบิกจ่ายของซื้อ", "issueParts", { orderId: order.id }, { className: "" }));
-      // คืนของซื้อ: เมื่อมีของที่เบิกจ่ายแล้ว (ST / ฝ่ายวางแผน) · คืนของเหลือได้จนกว่าใบจะถูกยกเลิก (รวมใบที่ปิดแล้ว) · ยกเลิกการเบิกจ่ายได้เฉพาะใบที่ยังไม่ปิด
-      // คืนของเหลือแสดงเมื่อยังมีรายการที่คืนได้ (คืนครบแล้วไม่แสดง) · ยกเลิกการเบิกจ่ายยังแสดง เพราะพางานกลับเป็นรอเบิกได้แม้ไม่มีอะไรคืนเข้าสต็อก
+      // คืนของซื้อ: เมื่อมีของที่เบิกจ่ายแล้ว (ครบหรือบางส่วน · ST / ฝ่ายวางแผน) · คืนของเหลือได้จนกว่าใบจะถูกยกเลิก (รวมใบที่ปิดแล้ว) · ยกเลิกการเบิกจ่ายได้เฉพาะใบที่ยังไม่ปิด
+      // คืนของเหลือแสดงเมื่อยังมีบรรทัดที่เบิกครบแล้วและคืนได้ (บรรทัดที่ยังเบิกไม่ครบคืนของเหลือไม่ได้) · ยกเลิกการเบิกจ่ายยังแสดง เพราะพางานกลับเป็นรอเบิกได้แม้ไม่มีอะไรคืนเข้าสต็อก
       const returnLines = rules.partReturnLines(data, order.id);
       if (returnLines.length && ctx.helpers.canIssueParts(user)) {
-        if (order.status !== "cancelled" && returnLines.some((line) => line.returnable > 0)) buttons.push(ui.openButton("คืนของเหลือ", "returnParts", { orderId: order.id }, { className: "secondary" }));
+        if (order.status !== "cancelled" && returnLines.some((line) => !line.partial && line.returnable > 0)) buttons.push(ui.openButton("คืนของเหลือ", "returnParts", { orderId: order.id }, { className: "secondary" }));
         if (openOrder) buttons.push(ui.openButton("ยกเลิกการเบิกจ่าย", "undoParts", { orderId: order.id }, { className: "secondary" }));
       }
       if (openOrder && (checkWos.length || partsLeft) && ctx.rubberflow() && (pages.hub?.rfCan ? pages.hub.rfCan(ctx, "purchase") || pages.hub.rfCan(ctx, "viewPurchase") : ctx.helpers.canLinkRubberflow(user, { dept: "RB" }))) main("check", `<button class="btn rf-btn secondary" type="button" data-bom-rf-check data-bom-order="${attr(order.id)}" data-bom-wos="${attr(JSON.stringify(checkWos))}" title="เทียบเคมีที่ WO ของใบนี้ต้องใช้และของซื้อที่ยังไม่เบิกจ่ายกับสต็อก (สั่งซื้อโดยคลังวัตถุดิบ ST)">ตรวจวัตถุดิบ</button>`);
@@ -2319,7 +2319,10 @@
     const body = `<p class="muted small">${esc(item.name)} · หน่วย ${esc(uomText(ctx, item.uom))}</p>${ui.table(["เวลา", "รายการ", { label: "เปลี่ยน", className: "right" }, { label: "คงเหลือ", className: "right" }, "ผู้ทำ"], rows, { emptyText: "ยังไม่มีประวัติ" })}`;
     return { html: ui.dialog("partHistory", `ประวัติ ${item.code}`, body, { wide: true, footer: ui.closeButton("ปิด") }) };
   };
-  // เบิกจ่ายของซื้อของใบ PI ครั้งเดียว (ST / ฝ่ายวางแผน): ทุกรายการจ่ายเต็มส่วนที่เหลือและหักสต็อก · ถ้ารายการใดไม่พอ = ไม่จ่ายอะไรเลย บอกที่ขาดและเปิดหน้าต่างสั่งซื้อส่วนที่ขาดได้
+  // เบิกจ่ายของซื้อของใบ PI (ST / ฝ่ายวางแผน): หนึ่งบรรทัดต่องานที่ยังเบิกไม่ครบ มีช่องเลือก + จำนวนที่เบิกครั้งนี้ (ค่าเริ่ม = ส่วนที่ยังต้องเบิก แก้ได้) + คงเหลือในสต็อก
+  // บรรทัดที่สต็อกพอเลือกไว้ให้ · ไม่พอ = ไม่เลือกและมีป้ายขาด (เลือกแล้วแก้จำนวนเพื่อเบิกเท่าที่มีได้) · ไม่มีของเลย = เลือกไม่ได้
+  // ปุ่มเดียวเบิกบรรทัดที่เลือก (ทั้งชุดผ่านหรือไม่ผ่าน ส่งทันที) · เบิกไม่ครบ = บรรทัดยังเปิด เบิกส่วนที่เหลือครั้งหน้า · เบิกเกินได้ไม่เกินคงเหลือ · สั่งซื้อส่วนที่ขาดได้จากปุ่มด้านล่าง
+  // บรรทัดที่ไม่ได้เลือก: ช่องจำนวนและรหัสถูก disabled จึงไม่ถูกตรวจและไม่ถูกส่ง (TRANSFORMS.issueOrderParts ของ module-bom.js จับคู่ itemCode[] กับ qty[] ตามลำดับ)
   dialogs.issueParts = (ctx, { orderId }) => {
     const { ui, rules, user } = ctx;
     const order = ctx.data.orders.find((entry) => entry.id === orderId);
@@ -2327,25 +2330,43 @@
     const plan = ctx.helpers.partIssuePlan(ctx.data, orderId);
     if (!plan.lines.length) return null;
     const onOrder = rules.partOnOrder(rfPurchaseOrdersOf(ctx) ?? []);
-    const rows = plan.lines.map((line) => `<tr><td>${ui.mono(line.itemCode)}<div class="small muted">${esc(line.name)}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(line.remaining)} ${uomText(ctx, line.uom)}`)}</td><td class="right rf-mono">${esc(rules.fmtQty(line.onHand))}</td><td class="right">${line.short > 0 ? `${ui.badge("bad", `ขาด ${rules.fmtQty(line.short)}`)}${onOrder.get(line.itemCode) > 0 ? `<div class="small muted">สั่งแล้ว รอรับ ${esc(rules.fmtQty(onOrder.get(line.itemCode)))}</div>` : ""}` : ""}</td></tr>`);
+    const fmt = (value) => esc(rules.fmtQty(value));
+    const rows = plan.lines.map((line) => {
+      const unit = uomText(ctx, line.uom);
+      const picked = line.short <= 0 && line.onHand > 0;
+      const off = picked ? "" : " disabled";
+      const pick = `<label class="bom-issue-pick"><input type="checkbox" data-bom-issue-pick${picked ? " checked" : ""}${line.onHand > 0 ? "" : " disabled"} aria-label="${attr(`เบิก ${line.itemCode} ครั้งนี้${line.onHand > 0 ? "" : " (ไม่มีของในสต็อก)"}`)}"></label>`;
+      const qty = `<div class="bom-count-input"><input class="input rf-input" name="qty[]" type="number" inputmode="decimal" step="any" min="0" max="${attr(line.onHand)}" value="${attr(line.remaining)}" required data-bom-issue-field aria-label="${attr(`จำนวนที่เบิก ${line.itemCode} (${unit})`)}"${off}><span class="small muted">${esc(unit)}</span></div><input type="hidden" name="itemCode[]" value="${attr(line.itemCode)}" data-bom-issue-field${off}>`;
+      const need = `${fmt(line.remaining)} <span class="small muted">${esc(unit)}</span>${line.issued > 0 ? `<div class="small muted">${esc(`เบิกแล้ว ${rules.fmtQty(line.issued)} จาก ${rules.fmtQty(line.planned)}`)}</div>` : ""}`;
+      const stock = `${fmt(line.onHand)}${line.short > 0 ? `<div>${ui.badge("bad", `ขาด ${rules.fmtQty(line.short)}`)}</div>${onOrder.get(line.itemCode) > 0 ? `<div class="small muted">สั่งแล้ว รอรับ ${fmt(onOrder.get(line.itemCode))}</div>` : ""}` : ""}`;
+      return `<tr><td class="center">${pick}</td><td>${ui.mono(line.itemCode)}<div class="small muted">${esc(line.name)}</div></td><td class="right rf-mono">${need}</td><td class="right">${qty}</td><td class="right rf-mono">${stock}</td></tr>`;
+    });
     const rfCan = (permission) => Boolean(pages.hub?.rfCan?.(ctx, permission));
     const canBuy = rfCan("purchase");
     const canView = !canBuy && rfCan("viewPurchase");
     const note = plan.anyShort
-      ? ui.callout("warn", esc(`สต็อกไม่พอ ${plan.short.length} รายการ จึงเบิกจ่ายไม่ได้ (ระบบไม่จ่ายบางรายการ)${canBuy ? " · สั่งซื้อส่วนที่ขาดได้จากปุ่มด้านล่าง ของที่สั่งแล้วรับเข้าได้ที่หน้าใบสั่งซื้อ" : " · แจ้งคลังวัตถุดิบ (ST) ให้สั่งซื้อหรือรับเข้า หรือนับยอดที่หน้าคลังของซื้อถ้ามีของเพิ่ม"}`))
-      : ui.callout("info", "เบิกจ่ายทุกรายการพร้อมกัน เบิกผิดยกเลิกได้จนกว่าจะปิดใบ");
+      ? ui.callout("warn", esc(`สต็อกไม่พอเบิกส่วนที่เหลือ ${plan.short.length} รายการ จึงไม่ได้เลือกไว้ (เลือกแล้วลดจำนวนเพื่อเบิกเท่าที่มีได้)${canBuy ? " · สั่งซื้อส่วนที่ขาดได้จากปุ่มด้านล่าง ของที่สั่งแล้วรับเข้าได้ที่หน้าใบสั่งซื้อ" : " · แจ้งคลังวัตถุดิบ (ST) ให้สั่งซื้อหรือรับเข้า หรือนับยอดที่หน้าคลังของซื้อถ้ามีของเพิ่ม"}`))
+      : ui.callout("info", "เบิกเฉพาะรายการที่เลือก เบิกไม่ครบส่วนที่เหลือเบิกครั้งหน้าได้ เบิกผิดยกเลิกได้จนกว่าจะปิดใบ");
+    const issuable = plan.lines.some((line) => line.onHand > 0);
     const footer = `${ui.closeButton()}${plan.anyShort
-      ? (canBuy ? '<button class="btn rf-btn" type="button" data-bom-parts-buy>สั่งซื้อส่วนที่ขาด</button>' : canView ? '<button class="btn rf-btn secondary" type="button" data-bom-parts-buy>ดูรายการที่ต้องสั่ง</button>' : "")
-      : ui.button("เบิกจ่ายทั้งหมด", { action: "issueOrderParts", args: { orderId }, className: "", success: "เบิกจ่ายของซื้อ {result} แล้ว" })}`;
+      ? (canBuy ? '<button class="btn rf-btn secondary" type="button" data-bom-parts-buy>สั่งซื้อส่วนที่ขาด</button>' : canView ? '<button class="btn rf-btn secondary" type="button" data-bom-parts-buy>ดูรายการที่ต้องสั่ง</button>' : "")
+      : ""}${issuable ? '<button class="btn rf-btn" type="submit" form="bom-issue-parts-form">เบิกจ่ายรายการที่เลือก</button>' : ""}`;
     const woIds = ctx.data.jobs.filter((job) => job.orderId === orderId && job.dept === "RB" && job.externalRef?.woId).map((job) => job.externalRef.woId);
     const bind = (dialog) => {
+      // เลือก / ไม่เลือกบรรทัด: เปิด/ปิดช่องจำนวนและรหัสของบรรทัดนั้น (change ทำงานกับการแตะบน iPhone · ไม่ผูกกับ blur)
+      dialog.querySelectorAll("[data-bom-issue-pick]").forEach((box) => box.addEventListener("change", () => {
+        box.closest("tr")?.querySelectorAll("[data-bom-issue-field]").forEach((field) => { field.disabled = !box.checked; });
+      }));
       dialog.querySelector("[data-bom-parts-buy]")?.addEventListener("click", async (event) => {
         event.currentTarget.disabled = true;
         dialog.close?.();
         try { await ctx.rubberflow()?.checkMaterials?.({ woIds, sourcePi: orderId, auto: false }); } catch { /* หน้าต่างสั่งซื้อรายงานข้อผิดพลาดเอง */ }
       });
     };
-    return { html: ui.dialog("issueParts", `เบิกจ่ายของซื้อ · ${orderId}`, `${note}${ui.table(["ของซื้อ", { label: "จ่าย", className: "right" }, { label: "คงเหลือ", className: "right" }, ""], rows)}`, { wide: true, footer }), bind };
+    const table = ui.table([{ label: "เลือก", className: "center" }, "ของซื้อ", { label: "ต้องเบิก", className: "right", title: "ส่วนที่ยังต้องเบิก (แผน − เบิกแล้ว)" },
+      { label: "เบิกครั้งนี้", className: "right", title: "แก้จำนวนได้ เบิกไม่ครบส่วนที่เหลือเบิกครั้งหน้า เบิกเกินได้ไม่เกินคงเหลือ" }, { label: "คงเหลือ", className: "right" }], rows);
+    const body = `${note}<form novalidate id="bom-issue-parts-form" data-rf-form="issueOrderParts" data-rf-args="${attr(JSON.stringify({ orderId }))}" data-rf-success="เบิกจ่ายของซื้อ {result} แล้ว">${table}</form>`;
+    return { html: ui.dialog("issueParts", `เบิกจ่ายของซื้อ · ${orderId}`, body, { wide: true, footer }), bind };
   };
 
   // คืนของเหลือของใบ PI (ST / ฝ่ายวางแผน): คืนบางรายการ รายการละจำนวนที่พิมพ์ (ไม่เกินที่คืนได้) งานยังเป็นเบิกจ่ายแล้ว · ต้องระบุเหตุผล เก็บในประวัติสต็อก
@@ -2355,9 +2376,12 @@
     if (!order || order.status === "cancelled" || !ctx.helpers.canIssueParts(user)) return null;
     const lines = rules.partReturnLines(ctx.data, orderId);
     if (!lines.length) return null;
+    // บรรทัดที่ยังเบิกไม่ครบ (partial) คืนของเหลือไม่ได้: ช่องอ่านอย่างเดียวพร้อมเหตุผล (แถวคงลำดับ itemCode[] / qty[])
     const rows = lines.map((line) => {
       const unit = uomText(ctx, line.uom);
-      const control = line.returnable > 0
+      const control = line.partial
+        ? `<input class="input rf-input" name="qty[]" type="number" readonly tabindex="-1" placeholder="—" aria-label="${attr(`${line.itemCode} ยังเบิกไม่ครบ คืนของเหลือได้เมื่อเบิกครบแล้ว`)}"><div class="small muted">ยังเบิกไม่ครบ</div>`
+        : line.returnable > 0
         ? `<input class="input rf-input" name="qty[]" type="number" inputmode="decimal" step="any" min="0" max="${attr(line.returnable)}" placeholder="0" aria-label="${attr(`จำนวนที่คืน ${line.itemCode} (${unit}) ไม่เกิน ${rules.fmtQty(line.returnable)} เว้นว่างหรือ 0 = ไม่คืน`)}">`
         : `<input class="input rf-input" name="qty[]" type="number" readonly tabindex="-1" placeholder="—" aria-label="${attr(`${line.itemCode} คืนครบแล้ว`)}">`;
       return `<tr><td>${ui.mono(line.itemCode)}<input type="hidden" name="itemCode[]" value="${attr(line.itemCode)}"><div class="small muted">${esc(line.name)}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(line.issued)} ${unit}`)}</td><td class="right rf-mono">${esc(rules.fmtQty(line.returned))}</td><td class="right">${control}</td></tr>`;

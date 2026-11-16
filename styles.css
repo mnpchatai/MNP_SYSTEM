@@ -2863,6 +2863,9 @@ a.bom-count-order:hover { border-color: var(--rf-mod); }
 .bom-count-save .rf-btn { width: 100%; min-height: 46px; }
 .bom-check { display: flex; gap: 8px; align-items: flex-start; margin: 0 0 8px; font-size: var(--text-meta); color: var(--muted); }
 .bom-check input { margin-top: 3px; }
+/* ช่องเลือกบรรทัดของหน้าต่างเบิกจ่ายของซื้อ: พื้นที่แตะ 44px (iPhone) รอบ checkbox ของเบราว์เซอร์ */
+.bom-issue-pick { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; cursor: pointer; }
+.bom-issue-pick input[type="checkbox"] { width: 20px; height: 20px; margin: 0; }
 .bom-sheet-pick { display: inline-flex; gap: 6px; align-items: center; }
 .bom-sheet-pick .rf-select { min-width: 220px; }
 /* ใบพิมพ์รายสถานี: ตารางเส้นเต็มแบบกระดาษ แถว FG เข้ม SE/RB แต้มสีเหมือน BOMASKSHEET */

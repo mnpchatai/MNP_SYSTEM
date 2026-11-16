@@ -727,40 +727,46 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       if (countedNow) bomMove(next, nextVersion, at, code, "count", Math.round((newQty - (old?.qty ?? 0)) * 1e9) / 1e9, newQty, null, actor.name);
     }
   }
-  // เบิกจ่ายของซื้อรายใบ: ผู้เรียกกลุ่มวางแผน/ST · แถวต้องเป็นทุกงานของซื้อที่ยังไม่ done ของใบเดียว ส่ง done และ qtyDone = qtyPlanned · สต็อกพอทุกรายการหรือไม่จ่ายเลย
+  // เบิกจ่ายของซื้อรายใบ (ตรงกับ private.bom_issue_parts ของ 20261123020000): ผู้เรียกกลุ่มวางแผน/ST · แถวเป็นงานของซื้อที่ยังไม่ done ของใบเดียว อย่างน้อยหนึ่งแถว (ไม่ต้องครบทุกงาน)
+  // แต่ละแถว qtyDone = ยอดเบิกสะสมใหม่ (ตัวเลข 0..1e9 มากกว่าที่เก็บ) · qtyPlanned = ที่เก็บ · status = done เมื่อยอดสะสมใหม่ >= แผน ไม่เช่นนั้น in_progress (ผิดข้อใด = BOM_INVALID_JOB)
+  // ยอดครั้งนี้ (ใหม่ - ที่เก็บ) เกินสต็อกแถวใด = ไม่จ่ายเลย (BOM_STALE ถ้าแถวสต็อกเหล่านั้นเปลี่ยนหลัง base ไม่เช่นนั้น BOM_INSUFFICIENT_STOCK) · ผ่าน = หักสต็อก เขียน issue ตั้งยอด/สถานะของงาน
+  const bomIssueNum = (value) => (typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1e9 ? value : null);
   function bomIssueParts(next, rows, base, cur, nextVersion, actor, at) {
     if (!(bomIsPlanner(actor) || actor.dept === "ST")) fail("BOM_FORBIDDEN");
     if (!rows.length) fail("BOM_INVALID_JOB");
-    const jobs = [];
+    const picks = [];
     for (const row of rows) {
+      if (!row || typeof row !== "object" || Array.isArray(row)) fail("BOM_INVALID_JOB");
       const job = next.jobs.find((entry) => entry.id === row.id);
-      if (!job || !bomIsPartJob(job) || job.status === "done" || (jobs.length && job.orderId !== jobs[0].orderId) || jobs.includes(job)) fail("BOM_INVALID_JOB");
-      if (row.status !== "done" || Number(row.qtyDone) !== Number(job.qtyPlanned) || Number(row.qtyPlanned) !== Number(job.qtyPlanned)) fail("BOM_INVALID_JOB");
-      jobs.push(job);
+      if (!job || !bomIsPartJob(job) || job.status === "done" || (picks.length && job.orderId !== picks[0].job.orderId) || picks.some((pick) => pick.job === job)) fail("BOM_INVALID_JOB");
+      const total = bomIssueNum(row.qtyDone);
+      const stored = Number(job.qtyDone) || 0;
+      if (total === null || total <= stored || bomIssueNum(row.qtyPlanned) !== Number(job.qtyPlanned)
+          || row.status !== (total >= Number(job.qtyPlanned) ? "done" : "in_progress")) fail("BOM_INVALID_JOB");
+      picks.push({ job, total, amount: Math.round((total - stored) * 1e9) / 1e9 });
     }
-    const order = next.orders.find((entry) => entry.id === jobs[0].orderId);
+    const order = next.orders.find((entry) => entry.id === picks[0].job.orderId);
     if (!["released", "in_progress"].includes(order?.status)) fail("BOM_INVALID_TRANSITION");
-    if (next.jobs.filter((job) => job.orderId === order.id && bomIsPartJob(job) && job.status !== "done").length !== jobs.length) fail("BOM_INVALID_JOB");
-    const lines = jobs.slice().sort((a, b) => bomCmp(a.itemCode, b.itemCode)).map((job) => ({ job, remaining: Number(job.qtyPlanned) - Number(job.qtyDone), row: next.stock.find((entry) => entry.itemCode === job.itemCode) }));
-    if (lines.some((line) => line.remaining > (line.row?.qty ?? 0))) {
+    const lines = picks.slice().sort((a, b) => bomCmp(a.job.itemCode, b.job.itemCode)).map((pick) => ({ ...pick, row: next.stock.find((entry) => entry.itemCode === pick.job.itemCode) }));
+    if (lines.some((line) => line.amount > (line.row?.qty ?? 0))) {
       if (lines.some((line) => line.row && (next.versions.stock[line.row.itemCode] ?? 0) > base && (next.versions.stock[line.row.itemCode] ?? 0) <= cur)) fail("BOM_STALE");
       fail("BOM_INSUFFICIENT_STOCK");
     }
-    for (const { job, remaining, row } of lines) {
-      if (remaining > 0) {
-        const balance = Math.round((row.qty - remaining) * 1e9) / 1e9;
-        next.stock[next.stock.indexOf(row)] = { ...row, qty: balance, updatedAt: at };
-        next.versions.stock[row.itemCode] = nextVersion;
-        bomMove(next, nextVersion, at, job.itemCode, "issue", -remaining, balance, order.id, actor.name);
-      }
-      job.status = "done";
-      job.qtyDone = job.qtyPlanned;
-      job.doneAt = job.doneAt ?? at;
+    for (const { job, total, amount, row } of lines) {
+      const balance = Math.round((row.qty - amount) * 1e9) / 1e9;
+      next.stock[next.stock.indexOf(row)] = { ...row, qty: balance, updatedAt: at };
+      next.versions.stock[row.itemCode] = nextVersion;
+      bomMove(next, nextVersion, at, job.itemCode, "issue", -amount, balance, order.id, actor.name);
+      const done = total >= Number(job.qtyPlanned);
+      job.status = done ? "done" : "in_progress";
+      job.qtyDone = total;
+      if (done) job.doneAt = job.doneAt ?? at;
+      else delete job.doneAt;
       next.versions.jobs[job.id] = nextVersion;
     }
     // งานเริ่มแล้ว: ใบ released -> in_progress (กติกางานเริ่มเดิม)
     if (order.status === "released") { order.status = "in_progress"; next.versions.orders[order.id] = nextVersion; }
-    return jobs.length;
+    return picks.length;
   }
   // คืนของซื้อรายใบ PI (ตรงกับ private.bom_return_parts / bom_part_returned): แถวเดียว { orderId, mode, reason, lines? } ลำดับตรวจ: รูปแถว → ชน → สิทธิ์ → สถานะใบ → ยอด
   // ยอดที่คืนไปแล้ว = ผลรวม 'return' ของ (เลข PI, รายการ) ตั้งแต่ 'issue' ล่าสุดของคู่นั้น (ตามลำดับเขียนใน next.stockMoves) · คืนจำนวนประวัติที่เขียน
@@ -799,8 +805,10 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     const newer = (version) => (version ?? 0) > base && (version ?? 0) <= cur;
     if (partJobs.some((job) => newer(next.versions.jobs[job.id])) || next.stock.some((entry) => items.has(entry.itemCode) && newer(next.versions.stock[entry.itemCode]))) fail("BOM_STALE");
     if (!(bomIsPlanner(actor) || actor.dept === "ST")) fail("BOM_FORBIDDEN");
-    const issuedOf = (code) => {
-      const done = partJobs.filter((job) => job.status === "done" && job.itemCode === code);
+    // งานที่นับว่าเบิกแล้ว: คืนของเหลือ = done เท่านั้น · ยกเลิกการเบิกจ่าย = done หรือเบิกไปบางส่วน (qtyDone > 0) ตรงกับ private.bom_return_parts ของ 20261123020000
+    const issuedJob = (job) => job.status === "done" || Number(job.qtyDone) > 0;
+    const issuedOf = (code, withPartial = false) => {
+      const done = partJobs.filter((job) => (withPartial ? issuedJob(job) : job.status === "done") && job.itemCode === code);
       return done.length ? done.reduce((sum, job) => sum + Number(job.qtyDone), 0) : null;
     };
     const add = (code, qty) => {
@@ -814,13 +822,13 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     let moves = 0;
     if (mode === "undo") {
       if (!["released", "in_progress"].includes(order.status)) fail("BOM_INVALID_TRANSITION");
-      const codes = [...new Set(partJobs.filter((job) => job.status === "done").map((job) => job.itemCode))].sort(bomCmp);
+      const codes = [...new Set(partJobs.filter(issuedJob).map((job) => job.itemCode))].sort(bomCmp);
       if (!codes.length) bad();
       for (const code of codes) {
-        const left = Math.round((issuedOf(code) - bomPartReturned(next, order.id, code)) * 1e9) / 1e9;
+        const left = Math.round((issuedOf(code, true) - bomPartReturned(next, order.id, code)) * 1e9) / 1e9;
         if (left > 0) { add(code, left); moves += 1; }
       }
-      for (const job of partJobs.filter((entry) => entry.status === "done")) {
+      for (const job of partJobs.filter(issuedJob)) {
         job.status = "queued";
         job.qtyDone = 0;
         delete job.doneAt;
@@ -1053,7 +1061,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
           ? changedByOthers(list, id)
           : next.tombstones.some((row) => row.list === list && graveKey(row) === id && row.version > base && row.version <= current.version))) fail("BOM_STALE");
         if (bomCheckRecord(list, prev, record, actor, action) === "part") {
-          // issueOrderParts: ช่องอื่นของงานต้องไม่เปลี่ยน และใบต้องอยู่ในสถานะผลิต แล้วข้ามไป (bom_issue_parts ตั้งงานเป็น done หักสต็อก เขียนประวัติเอง)
+          // issueOrderParts: ช่องอื่นของงานต้องไม่เปลี่ยน และใบต้องอยู่ในสถานะผลิต แล้วข้ามไป (bom_issue_parts ตั้งยอดเบิกสะสม/สถานะของงาน หักสต็อก เขียนประวัติเอง)
           const workKeys = ["status", "qtyDone", "qtyReject", "reports", "doneAt"];
           if (bomCanon(bomWithout(prev, workKeys)) !== bomCanon(bomWithout(record, workKeys))) fail("BOM_INVALID_JOB");
           const owner = next.orders.find((row) => row.id === prev.orderId);
