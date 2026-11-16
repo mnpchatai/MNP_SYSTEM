@@ -1,6 +1,8 @@
 -- สต็อกของซื้อ (ชิ้นส่วน PURCHASED ของ BOM) + ST เบิกจ่ายของซื้อรายใบ PI + บรรทัดของซื้อในใบสั่งซื้อ (20261111010000_bom_part_stock.sql)
 -- ตรวจทั้งฝั่งอนุญาตและปฏิเสธ: โครงสร้าง/สิทธิ์ตารางใหม่, นับสต็อก (ST / WH / กลุ่มวางแผน / สมาชิก RB / QA), สต็อกขั้นต่ำเฉพาะกลุ่มวางแผนและ ST,รหัสที่ไม่ใช่ของซื้อ, ชนรายระเบียนก่อนสิทธิ์,
--- งานของซื้อรายงานผ่านทางอื่นไม่ได้, issueOrderParts (สิทธิ์ ชุดงานไม่ครบ สต็อกไม่พอ = ไม่จ่ายเลย ชนรายระเบียน จ่ายสำเร็จ จ่ายซ้ำ), ใบสั่งซื้อที่มีบรรทัดของซื้อ (สร้าง/แก้สต็อกขั้นต่ำ/รับเข้า/ปฏิเสธ),
+-- งานของซื้อรายงานผ่านทางอื่นไม่ได้, issueOrderParts (สิทธิ์ สต็อกไม่พอ = ไม่จ่ายเลย ชนรายระเบียน จ่ายสำเร็จ จ่ายซ้ำ · 20261123020000: เลือกบางงาน เบิกบางส่วนแล้วเบิกส่วนที่เหลือ
+-- เบิกเกินแผนไม่เกินสต็อก ยอดไม่เป็นบวก/สถานะผิด/ทศนิยมเกิน 4 ตำแหน่ง สองใบในคำสั่งเดียว ใบที่เบิกบางส่วนยกเลิกและเปิดกลับเป็นร่างไม่ได้
+-- กลุ่มวางแผนแทรกงานที่ไม่ใช่ของซื้อไม่ได้), ใบสั่งซื้อที่มีบรรทัดของซื้อ (สร้าง/แก้สต็อกขั้นต่ำ/รับเข้า/ปฏิเสธ),
 -- snapshot / delta 13 ชุด และล้างข้อมูลทดสอบ · authenticated อ่านตาราง bom_* ตรงไม่ได้ จึงอ่านตารางด้วย reset role (สิทธิ์เจ้าของตาราง) เท่านั้น
 -- สิทธิ์ใบสั่งซื้อ (20261119010000_rf_purchase_by_st.sql): สร้าง / รับบรรทัด ทำได้เฉพาะ ST และ admin · กลุ่มวางแผน RB QA ได้ RF_FORBIDDEN
 -- สต็อกขั้นต่ำของของซื้อ (20261120010000_st_sets_safety_stock.sql): เปลี่ยนได้โดยกลุ่มวางแผน (admin นับรวม) และแผนก ST ทั้งทาง countPartStock และทางใบสั่งซื้อ
@@ -136,6 +138,11 @@ $$;
 -- งานที่ client ส่งเมื่อ ST กดเบิกจ่าย: สำเนาจาก snapshot ที่เป็น done และ qtyDone = qtyPlanned
 create function ps_t.done(p_no text) returns jsonb language sql stable as $$
   select ps_t.job(p_no) || jsonb_build_object('status', 'done', 'qtyDone', (ps_t.job(p_no) ->> 'qtyPlanned')::numeric)
+$$;
+-- งานที่ client ส่งเมื่อเบิกบางส่วน / ส่วนที่เหลือ / เกินแผน (20261123020000): ยอดเบิกสะสมใหม่ และสถานะที่ตรงกับยอดนั้น (ส่ง p_status เพื่อทดสอบสถานะผิด)
+create function ps_t.part(p_no text, p_total numeric, p_status text default null) returns jsonb language sql stable as $$
+  select ps_t.job(p_no) || jsonb_build_object('qtyDone', p_total, 'status',
+    coalesce(p_status, case when p_total >= (ps_t.job(p_no) ->> 'qtyPlanned')::numeric then 'done' else 'in_progress' end))
 $$;
 create function ps_t.issue(p_jobs jsonb, p_base bigint default null) returns jsonb language sql volatile as $$
   select ps_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', p_jobs)), 'issueOrderParts', p_base)
@@ -306,18 +313,22 @@ select throws_ok($$ select ps_t.save(jsonb_build_object('jobs', jsonb_build_obje
 select is(ps_t.job('JOB-ST-P1') ->> 'status', 'queued', 'the job is still queued after the refused calls');
 
 -- 7. เบิกจ่ายของซื้อ (issueOrderParts) -----------------------------------------------------------
--- 7.1 ปฏิเสธ: แผนกอื่น · ชุดงานไม่ครบ · สถานะ/ยอดไม่ตรง · action ปน
+-- 7.1 ปฏิเสธ: แผนกอื่น · แถวที่ไม่เบิกอะไร · สถานะไม่ตรงกับยอดสะสมใหม่ · action ปน (เลือกบางงาน / บางส่วน / เกินแผน ทำได้แล้ว ดู 7.6 · 20261123020000)
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.done('JOB-ST-P1'), ps_t.done('JOB-ST-P2'))) $$, 'BOM_FORBIDDEN', 'RB staff cannot issue parts');
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
 select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.done('JOB-ST-P1'), ps_t.done('JOB-ST-P2'))) $$, 'BOM_FORBIDDEN', 'WH staff can count but cannot issue parts');
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
-select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.done('JOB-ST-P1'))) $$, 'BOM_INVALID_JOB', 'a partial set of the order''s part jobs is refused');
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.job('JOB-ST-P1'))) $$, 'BOM_INVALID_JOB', 'a row that issues nothing (qtyDone as stored) is refused');
 select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.done('JOB-ST-P1'), ps_t.done('JOB-PK-A'))) $$, 'BOM_FORBIDDEN', 'a job of another department in the set is refused for ST staff');
-select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.done('JOB-ST-P1'), ps_t.job('JOB-ST-P2') || '{"status":"in_progress","qtyDone":5}'::jsonb)) $$,
-  'BOM_INVALID_JOB', 'every row must be done');
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.done('JOB-ST-P1'), ps_t.job('JOB-ST-P2') || '{"status":"in_progress","qtyDone":12.5}'::jsonb)) $$,
+  'BOM_INVALID_JOB', 'a row that reaches its plan must be sent as done');
 select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.done('JOB-ST-P1'), ps_t.done('JOB-ST-P2') || '{"qtyDone":10}'::jsonb)) $$,
-  'BOM_INVALID_JOB', 'every row must be done in full (qtyDone = qtyPlanned)');
+  'BOM_INVALID_JOB', 'a row below its plan cannot be sent as done (10 of 12.5)');
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.job('JOB-ST-P2') || '{"status":"queued","qtyDone":5}'::jsonb)) $$,
+  'BOM_INVALID_JOB', 'a partial row must be in_progress, not queued');
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.done('JOB-ST-P1') || '{"qtyPlanned":31}'::jsonb)) $$,
+  'BOM_INVALID_JOB', 'the plan of a part job cannot change with the issue');
 select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.done('JOB-ST-P1'), ps_t.done('JOB-ST-P2'), ps_t.done('JOB-ST-P2'))) $$,
   'BOM_INVALID_JOB', 'the same job twice is refused');
 select throws_ok($$ select ps_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(ps_t.done('JOB-ST-P1'), ps_t.done('JOB-ST-P2'))),
@@ -342,10 +353,10 @@ select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.done('JOB-ST-P1'), 
 select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.done('JOB-ST-P1'), ps_t.done('JOB-ST-P2'))) $$, 'BOM_INSUFFICIENT_STOCK', 'with a current copy it is a real shortage');
 select ok(ps_t.count_stock('[{"itemCode":"P-2","qty":40}]'::jsonb) is not null, 'ST receives the missing pigment (counts 40)');
 
--- 7.3 จ่ายสำเร็จ: หักสต็อก เขียนประวัติ ตั้งงานเป็น done ใบเป็น in_progress
+-- 7.3 จ่ายสำเร็จแบบ Pilot รุ่นก่อน (ทุกงานที่เปิดอยู่ qtyDone = qtyPlanned, done): หักสต็อก เขียนประวัติ ตั้งงานเป็น done ใบเป็น in_progress
 select set_config('test.vi', ps_t.ver()::text, true);
 select set_config('test.res', ps_t.issue(jsonb_build_array(ps_t.done('JOB-ST-P1'), ps_t.done('JOB-ST-P2')))::text, true);
-select is(current_setting('test.res')::jsonb ->> 'version', (current_setting('test.vi')::bigint + 1)::text, 'ST issues the parts of the order and the counter moves once');
+select is(current_setting('test.res')::jsonb ->> 'version', (current_setting('test.vi')::bigint + 1)::text, 'ST issues every part of the order in full (the older page''s rows still work) and the counter moves once');
 select is(ps_t.job('JOB-ST-P1') ->> 'status', 'done', 'the first part job is done');
 select is(ps_t.job('JOB-ST-P1') ->> 'qtyDone', '30', 'and issued in full');
 select ok(ps_t.job('JOB-ST-P2') ? 'doneAt', 'the server set the done time of the second job');
@@ -363,6 +374,7 @@ select ok(exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a w
 
 -- 7.4 จ่ายซ้ำ / จ่ายใบที่ไม่อยู่ในสถานะผลิต
 select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.job('JOB-ST-P1'), ps_t.job('JOB-ST-P2'))) $$, 'BOM_INVALID_JOB', 'an order that was already issued cannot be issued again');
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.job('JOB-ST-P1') || '{"qtyDone":35}'::jsonb)) $$, 'BOM_INVALID_JOB', 'a done part job takes no further issue (not even with stock left)');
 select throws_ok($$ select ps_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
   ps_t.job('JOB-ST-P1') || '{"status":"in_progress","qtyDone":5}'::jsonb))), 'reportJob') $$, 'BOM_INVALID_TRANSITION', 'a done part job cannot be reopened through the report path');
 select is(ps_t.qty('P-1'), 90::numeric, 'nothing moved after the refused repeats');
@@ -384,6 +396,123 @@ select ok(ps_t.save(jsonb_build_object(
 select is(ps_t.issue(jsonb_build_array(ps_t.done('JOB2-ST-P1'))) -> 'changes' -> 'jobs' -> 'upsert' -> 0 ->> 'status', 'done', 'a planner issues the parts of the second order');
 select is(ps_t.qty('P-1'), 81::numeric, 'and the stock follows (90 - 9)');
 select ok(ps_t.has_move('P-1', 'issue', -9, 81, '251111-25002', current_setting('test.n_sbx_pp_staff')), 'the move names the second PI');
+
+-- 7.6 เลือกบางงาน · เบิกบางส่วนแล้วเบิกส่วนที่เหลือ · เบิกเกินแผนได้ไม่เกินสต็อก · สต็อกไม่พอ = ไม่เขียนอะไร · สองใบในคำสั่งเดียวไม่ได้ (20261123020000)
+-- ใช้ชิ้นใหม่ P-6 (ฝาปิด) / P-7 (กาว) และใบที่สาม / สี่ เท่านั้น ยอดของ P-1 ... P-5 ที่ส่วนถัดไปตรวจจึงไม่เปลี่ยน
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select ok(ps_t.save('{"items":{"upsert":[
+  {"code":"P-6","kind":"PURCHASED","name":"ฝาปิด","ownerDept":"ST","uom":"pcs"},
+  {"code":"P-7","kind":"PURCHASED","name":"กาว","ownerDept":"ST","uom":"kg"}]}}'::jsonb, 'importFlat') is not null, 'the planner adds two more parts');
+select ok(ps_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.ord')::jsonb || '{"id":"251111-25003"}'::jsonb))), 'createOrder') is not null, 'a third order is created');
+select set_config('test.o3', (select o::text from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251111-25003'), true);
+select ok(ps_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.o3')::jsonb || jsonb_build_object('items', '[{"fgCode":"FG-A","qty":2,"colorSet":"A","note":""}]'::jsonb,
+    'explosion', '[{"itemCode":"FG-A","level":0,"fgQty":2,"required":2},{"itemCode":"P-6","level":1,"fgQty":2,"required":10},{"itemCode":"P-7","level":1,"fgQty":2,"required":4}]'::jsonb)))), 'explodeOrder') is not null,
+  'and exploded');
+select set_config('test.o3', (select o::text from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251111-25003'), true);
+select ok(ps_t.save(jsonb_build_object(
+  'orders', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.o3')::jsonb || '{"status":"released"}'::jsonb)),
+  'jobs', jsonb_build_object('upsert', jsonb_build_array(
+    current_setting('test.job')::jsonb || '{"id":"JOB3-ST-P6","orderId":"251111-25003","itemCode":"P-6","name":"ฝาปิด","uom":"pcs","qtyPlanned":10,"qtyRequired":10}'::jsonb,
+    current_setting('test.job')::jsonb || '{"id":"JOB3-ST-P7","orderId":"251111-25003","itemCode":"P-7","name":"กาว","uom":"kg","qtyPlanned":4,"qtyRequired":4}'::jsonb,
+    current_setting('test.job')::jsonb || '{"id":"JOB3-PK-A","orderId":"251111-25003","dept":"PK","itemCode":"FG-A","name":"สินค้า A","kind":"FG","uom":"set","qtyPlanned":2,"qtyRequired":2}'::jsonb))),
+  'releaseOrder') is not null, 'and released with two part jobs (10 caps, 4 kg of glue)');
+select ok(ps_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.ord')::jsonb || '{"id":"251111-25004"}'::jsonb))), 'createOrder') is not null, 'a fourth order is created');
+select set_config('test.o4', (select o::text from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251111-25004'), true);
+select ok(ps_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.o4')::jsonb || jsonb_build_object('items', '[{"fgCode":"FG-A","qty":1,"colorSet":"A","note":""}]'::jsonb,
+    'explosion', '[{"itemCode":"FG-A","level":0,"fgQty":1,"required":1},{"itemCode":"P-6","level":1,"fgQty":1,"required":5}]'::jsonb)))), 'explodeOrder') is not null,
+  'and exploded');
+select set_config('test.o4', (select o::text from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251111-25004'), true);
+select ok(ps_t.save(jsonb_build_object(
+  'orders', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.o4')::jsonb || '{"status":"released"}'::jsonb)),
+  'jobs', jsonb_build_object('upsert', jsonb_build_array(
+    current_setting('test.job')::jsonb || '{"id":"JOB4-ST-P6","orderId":"251111-25004","itemCode":"P-6","name":"ฝาปิด","uom":"pcs","qtyPlanned":5,"qtyRequired":5}'::jsonb,
+    current_setting('test.job')::jsonb || '{"id":"JOB4-PK-A","orderId":"251111-25004","dept":"PK","itemCode":"FG-A","name":"สินค้า A","kind":"FG","uom":"set","qtyPlanned":1,"qtyRequired":1}'::jsonb))),
+  'releaseOrder') is not null, 'and released with one part job (5 caps)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select ok(ps_t.count_stock('[{"itemCode":"P-6","qty":12},{"itemCode":"P-7","qty":3}]'::jsonb) is not null, 'ST counts the new parts (12 caps, 3 kg of glue)');
+
+-- 7.6.1 สิทธิ์: WH / PK / QA เบิกบางส่วนก็ไม่ได้
+select set_config('test.vq', ps_t.ver()::text, true);
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P6', 4))) $$, 'BOM_FORBIDDEN', 'WH staff cannot issue part of a line');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pk_staff')::uuid);
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P6', 4))) $$, 'BOM_FORBIDDEN', 'PK staff cannot issue parts');
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P6', 4))) $$, 'BOM_FORBIDDEN', 'QA staff cannot issue parts');
+select is(ps_t.ver(), current_setting('test.vq')::bigint, 'the refused callers wrote nothing');
+
+-- 7.6.2 ST เลือกเฉพาะบรรทัดฝาปิดและเบิก 4 จาก 10: บรรทัดยังเปิด บรรทัดที่ไม่ได้ส่งไม่ถูกแตะ หักสต็อกเท่าที่เบิก
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select set_config('test.res', ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P6', 4)))::text, true);
+select is(current_setting('test.res')::jsonb ->> 'version', (current_setting('test.vq')::bigint + 1)::text, 'ST issues 4 of the 10 caps and leaves the glue line out (one row, not the whole order)');
+select is(ps_t.job('JOB3-ST-P6') ->> 'status', 'in_progress', 'the partly issued line stays open');
+select is((ps_t.job('JOB3-ST-P6') ->> 'qtyDone')::numeric, 4::numeric, 'with the issued total');
+select ok(not (ps_t.job('JOB3-ST-P6') ? 'doneAt'), 'and no done time');
+select is(ps_t.job('JOB3-ST-P7') ->> 'status', 'queued', 'the line that was not sent is untouched');
+select is(ps_t.qty('P-6'), 8::numeric, 'the stock dropped by what was issued (12 - 4)');
+select ok(ps_t.has_move('P-6', 'issue', -4, 8, '251111-25003', current_setting('test.n_sbx_st_staff')), 'the issue move carries the issued quantity and the balance');
+select is(ps_t.order_status('251111-25003'), 'in_progress', 'a partial issue starts the released order');
+-- รายการล่าสุดของประวัติ = การบันทึกนี้ (รายการเก่าของ 7.5 ก็เป็น jobs +1, stock +1 จึงต้องดูรายการล่าสุดเท่านั้น)
+select is(jsonb_build_array(public.app_bom_audit(1) -> 0 ->> 'action', public.app_bom_audit(1) -> 0 ->> 'user', public.app_bom_audit(1) -> 0 ->> 'detail'),
+  jsonb_build_array('issueOrderParts', current_setting('test.n_sbx_st_staff'), 'jobs +1, stock +1'), 'the history entry of this save counts one job and one stock row');
+
+-- 7.6.3 ปฏิเสธ: ยอดเท่าเดิม / ลดลง · สถานะไม่ตรงกับยอด · เกินสต็อก (ทั้งคำสั่งไม่เขียน) · สองใบในคำสั่งเดียว
+select set_config('test.vq', ps_t.ver()::text, true);
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P6', 4))) $$, 'BOM_INVALID_JOB', 'sending the stored total again issues nothing and is refused');
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P6', 3))) $$, 'BOM_INVALID_JOB', 'a lower total (a negative issue) is refused');
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P6', 10, 'in_progress'))) $$, 'BOM_INVALID_JOB', 'a total that reaches the plan must be sent as done');
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P6', 6, 'done'))) $$, 'BOM_INVALID_JOB', 'a total below the plan cannot be sent as done');
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P6', 13), ps_t.part('JOB3-ST-P7', 2))) $$, 'BOM_INSUFFICIENT_STOCK',
+  'issuing 9 more caps with 8 in stock refuses the whole save');
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P6', 5), ps_t.part('JOB4-ST-P6', 1))) $$, 'BOM_INVALID_JOB', 'rows of two orders in one save are refused');
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P6', 5.12345))) $$, 'BOM_INVALID_JOB', 'a total with more than 4 decimal places is refused');
+select is(ps_t.ver(), current_setting('test.vq')::bigint, 'nothing was written by the refused calls');
+select is(ps_t.qty('P-7'), 3::numeric, 'the glue of the refused save was not issued');
+select is((ps_t.job('JOB3-ST-P6') ->> 'qtyDone')::numeric, 4::numeric, 'and the caps line still holds 4');
+
+-- 7.6.4 ส่วนที่เหลือ + เกินแผน 2 (เท่าที่มีในสต็อก) พร้อมกาวบางส่วนในคำสั่งเดียว · บรรทัดที่เสร็จแล้วเบิกเพิ่มไม่ได้
+select set_config('test.res', ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P6', 12), ps_t.part('JOB3-ST-P7', 3)))::text, true);
+select is(ps_t.job('JOB3-ST-P6') ->> 'status', 'done', 'the rest of the caps plus 2 over the plan (8 more, all that is in stock) finish the line');
+select is((ps_t.job('JOB3-ST-P6') ->> 'qtyDone')::numeric, 12::numeric, 'the job keeps the issued total above its plan (12 of 10)');
+select ok(ps_t.job('JOB3-ST-P6') ? 'doneAt', 'and gets its done time');
+select is(ps_t.qty('P-6'), 0::numeric, 'the caps are used up (8 - 8)');
+select ok(ps_t.has_move('P-6', 'issue', -8, 0, '251111-25003', current_setting('test.n_sbx_st_staff')), 'the second move of the line carries only the new 8');
+select is(ps_t.move_count('P-6'), 3, 'the caps history: one count and two issues');
+select is(ps_t.job('JOB3-ST-P7') ->> 'status', 'in_progress', 'the glue line is issued in part (3 of 4) in the same save');
+select is(ps_t.qty('P-7'), 0::numeric, 'with all the glue in stock');
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P6', 13))) $$, 'BOM_INVALID_JOB', 'a finished line takes no further issue');
+
+-- 7.6.5 กลุ่มวางแผนเบิกส่วนที่เหลือของกาว (1 จาก 4) หลังรับของเพิ่ม
+select ok(ps_t.count_stock('[{"itemCode":"P-7","qty":1.5}]'::jsonb) is not null, 'ST receives more glue (counts 1.5 kg)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select is(ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P7', 4))) -> 'changes' -> 'jobs' -> 'upsert' -> 0 ->> 'status', 'done', 'the planner issues the remaining 1 kg of glue');
+select is(ps_t.qty('P-7'), 0.5::numeric, 'and the stock keeps what was not issued (1.5 - 1)');
+select ok(ps_t.has_move('P-7', 'issue', -1, 0.5, '251111-25003', current_setting('test.n_sbx_pp_staff')), 'the remainder move names the planner');
+
+-- 7.6.6 ใบที่มีบรรทัดของซื้อเบิกบางส่วนแล้วยกเลิกไม่ได้ (ต้องยกเลิกการเบิกจ่ายก่อน: bom_part_returns.test.sql)
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select ok(ps_t.count_stock('[{"itemCode":"P-6","qty":2}]'::jsonb) is not null, 'ST counts 2 caps for the fourth order');
+select ok(ps_t.issue(jsonb_build_array(ps_t.part('JOB4-ST-P6', 2))) is not null, 'ST issues 2 of its 5 caps');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select set_config('test.o4', (select o::text from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251111-25004'), true);
+select throws_ok($$ select ps_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.o4')::jsonb || '{"status":"cancelled","cancelReason":"ทดสอบ"}'::jsonb))), 'cancelOrder') $$, 'BOM_INVALID_TRANSITION',
+  'an order with a partly issued part line cannot be cancelled');
+select throws_ok($$ select ps_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.o4')::jsonb || '{"status":"draft","explosion":null,"explodedAt":null}'::jsonb))), 'updateOrderItem') $$, 'BOM_INVALID_TRANSITION',
+  'nor reopened as a draft (the partly issued line counts as a started job)');
+select is(ps_t.order_status('251111-25004'), 'in_progress', 'and stays in progress');
+select is((ps_t.job('JOB4-ST-P6') ->> 'qtyDone')::numeric, 2::numeric, 'with its part line still holding the 2 caps');
+
+-- 7.6.7 กลุ่มวางแผนส่งงานที่ไม่ใช่ของซื้อมากับ issueOrderParts: bom_save_jobs เขียนงาน PK ให้กลุ่มวางแผนได้ แต่ bom_issue_parts ปฏิเสธ ทั้งคำสั่งจึงไม่เขียนอะไร
+select set_config('test.vq', ps_t.ver()::text, true);
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.part('JOB4-ST-P6', 3), ps_t.job('JOB4-PK-A') || '{"status":"in_progress","qtyDone":1}'::jsonb)) $$,
+  'BOM_INVALID_JOB', 'a planner cannot slip a packing job into a part issue');
+select is(ps_t.ver(), current_setting('test.vq')::bigint, 'nothing was written');
+select ok(ps_t.job('JOB4-PK-A') ->> 'status' = 'queued' and (ps_t.job('JOB4-PK-A') ->> 'qtyDone')::numeric = 0, 'the packing job is untouched');
+select is((ps_t.job('JOB4-ST-P6') ->> 'qtyDone')::numeric, 2::numeric, 'and so is the part line of the same save');
 
 -- 8. ใบสั่งซื้อที่มีบรรทัดของซื้อ ------------------------------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
@@ -578,14 +707,14 @@ select is(public.app_bom_master_since(0) -> 'changes' -> 'stock', jsonb_build_ob
   'the delta from version 0 equals the stock snapshot, with no deletes');
 select is(public.app_bom_master_since(0) -> 'changes' -> 'stockMoves', jsonb_build_object('upsert', public.app_bom_master() -> 'stockMoves', 'delete', '[]'::jsonb),
   'and the move snapshot');
-select is((select jsonb_agg(s ->> 'itemCode') from jsonb_array_elements(public.app_bom_master() -> 'stock') s), '["P-1","P-2","P-3","P-4","P-5"]'::jsonb, 'stock rows are listed by code');
+select is((select jsonb_agg(s ->> 'itemCode') from jsonb_array_elements(public.app_bom_master() -> 'stock') s), '["P-1","P-2","P-3","P-4","P-5","P-6","P-7"]'::jsonb, 'stock rows are listed by code');
 select is(jsonb_array_length(public.app_bom_master_since(ps_t.ver()) -> 'changes' -> 'stock' -> 'upsert'), 0, 'a client at the current version gets an empty stock delta');
 select is(ps_t.move_count('P-1'), 5, 'the part history holds both counts, both issues and the receipt');
 select ok((select bool_and((m ->> 'balance')::numeric >= 0) from jsonb_array_elements(public.app_bom_master() -> 'stockMoves') m), 'no move leaves a negative balance');
 
 -- 10. แยกโหมด และล้างข้อมูลทดสอบ ------------------------------------------------------------------
 reset role;
-select ok((select count(*) from public.bom_stock where is_test) = 5 and (select count(*) from public.bom_stock_moves where is_test) >= 9, 'the test stock and its moves exist before the purge');
+select ok((select count(*) from public.bom_stock where is_test) = 7 and (select count(*) from public.bom_stock_moves where is_test) >= 9, 'the test stock and its moves exist before the purge');
 select ok((select bool_and(changed_version > 0) from public.bom_stock where is_test) and (select bool_and(changed_version > 0) from public.bom_stock_moves where is_test),
   'every test row is stamped with the version that changed it');
 select ok((select max(changed_version) from public.bom_stock_moves where is_test) <= (select version from public.bom_master_state where is_test), 'no move is newer than the counter');

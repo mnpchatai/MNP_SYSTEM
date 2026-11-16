@@ -417,6 +417,8 @@
     setStockCounts: (p) => ({ ...p, counts: listOf(p, "itemCode").map((itemCode, index) => ({ itemCode, qty: listOf(p, "qty")[index] ?? "" })) }),
     // ฟอร์มคลังของซื้อ: itemCode[] + qty[] (+ safetyQty[] ถ้าแก้สต็อกขั้นต่ำได้) ตามลำดับแถว · ช่องว่าง = ไม่แตะค่าเดิม
     countPartStock: (p) => ({ counts: listOf(p, "itemCode").map((itemCode, index) => ({ itemCode, qty: listOf(p, "qty")[index] ?? "", safetyQty: listOf(p, "safetyQty")[index] ?? "" })) }),
+    // ฟอร์มเบิกจ่ายของซื้อ: itemCode[] + qty[] ของบรรทัดที่เลือก (บรรทัดที่ไม่เลือกถูก disabled จึงไม่อยู่ในฟอร์ม) → lines · ไม่เลือกเลย = lines ว่าง (action แจ้งให้เลือก)
+    issueOrderParts: (p) => ({ orderId: p.orderId, lines: listOf(p, "itemCode").map((itemCode, index) => ({ itemCode, qty: listOf(p, "qty")[index] ?? "" })) }),
     // ฟอร์มคืนของเหลือ: itemCode[] + qty[] ตามลำดับแถว → lines (เฉพาะแถวที่กรอกจำนวน · เว้นว่างหรือ 0 = ไม่คืนรายการนั้น)
     returnOrderParts: (p) => ({ orderId: p.orderId, reason: p.reason, lines: listOf(p, "itemCode").map((itemCode, index) => ({ itemCode, qty: listOf(p, "qty")[index] ?? "" })).filter((line) => String(line.qty).trim() !== "" && Number(line.qty) !== 0) }),
     // ฟอร์มรับเข้าคลัง / ส่งมอบสินค้าสำเร็จรูป: fgCode[] + qty[] ตามลำดับแถว (มีเฉพาะแถวที่มีของให้รับ/ส่ง) → lines (เว้นว่างหรือ 0 = ไม่รับ/ส่งรายการนั้น)
@@ -437,10 +439,12 @@
 
   const fgLines = (p) => listOf(p, "fgCode").map((fgCode, index) => ({ fgCode, qty: listOf(p, "qty")[index] ?? "" })).filter((line) => String(line.qty).trim() !== "" && Number(line.qty) !== 0);
   // after = ทำต่อหลังคำสั่งนี้บันทึกสำเร็จ (โหมดในเครื่อง: ทันที · โหมดฐานข้อมูล: หลังฐานข้อมูลตอบ) ใช้ต่อคำสั่งที่ต้องเห็นผลของคำสั่งก่อนหน้า เช่น ขั้นตอนผลิตหลังแทรก WIP
-  function runAction(name, payload, successText, after = null) {
+  // failNote = บอกผู้ใช้ว่าการทำต่อนี้ล้มแล้วเหลืออะไรค้าง (ใช้กับคำสั่งที่ทำต่อจากคำสั่งก่อนหน้า เช่น ขั้นตอนผลิตหลังแทรก WIP) นำหน้าข้อความผิดพลาดตามปกติ
+  function runAction(name, payload, successText, after = null, failNote = "") {
+    const errorText = (error) => (failNote ? `${failNote} (${friendlyError(error)})` : friendlyError(error));
     const result = store.run(name, payload);
     if (!result.ok) {
-      showToast(friendlyError(result.error), "error");
+      showToast(errorText(result.error), "error");
       return false;
     }
     const report = () => {
@@ -454,7 +458,7 @@
     }
     // โหมดฐานข้อมูล: หน้าแสดงผลทันที (optimistic) แล้วแจ้งผลเมื่อฐานข้อมูลตอบ · ถ้าไม่สำเร็จ store ย้อนกลับและวาดหน้าใหม่ให้เอง
     result.saving.then((outcome) => {
-      if (!outcome.ok) { showToast(friendlyError(outcome.error), "error"); return; }
+      if (!outcome.ok) { showToast(errorText(outcome.error), "error"); return; }
       report();
       after?.();
       const notice = actions.helpers.rubberflowNotice(name, payload, outcome.rubberflow);
@@ -495,7 +499,9 @@
       }
       // แทรก WIP: ขั้นตอนผลิตของชิ้นแม่ที่อ้างบรรทัดเดิมเปลี่ยนไปอ้างรหัส WIP ด้วย (บันทึกต่อจาก BOM ด้วย saveRouting)
       const routingPayload = name === "saveBomTree" && raw.wipInsert ? routingAfterWipInsert(raw) : null;
-      if (!runAction(name, payload, form.dataset.rfSuccess, routingPayload ? () => runAction("saveRouting", routingPayload, `ขั้นตอนผลิตของ ${routingPayload.itemCode} อ้างชิ้นใหม่แล้ว`) : null)) return;
+      // ถ้าบันทึกขั้นตอนผลิตต่อไม่สำเร็จ BOM มี WIP ที่แทรกแล้ว แต่ขั้นตอนผลิตของชิ้นแม่ยังอ้างชิ้นเดิม: บอกตรงๆ ว่าอะไรเสร็จแล้ว อะไรค้าง และต้องทำอะไรต่อ
+      const wipFail = routingPayload ? `แทรก WIP ${rules.canonicalCode(raw.wipCode)} ใน BOM ของ ${routingPayload.itemCode} แล้ว แต่ยังไม่ได้ปรับขั้นตอนผลิตของ ${routingPayload.itemCode} ให้อ้าง WIP นี้แทน ${rules.canonicalCode(raw.childCode)} · เปิดหน้าของ ${routingPayload.itemCode} แล้วแก้ขั้นตอนผลิตเองที่ขั้นที่ยังอ้าง ${rules.canonicalCode(raw.childCode)}` : "";
+      if (!runAction(name, payload, form.dataset.rfSuccess, routingPayload ? () => runAction("saveRouting", routingPayload, `ขั้นตอนผลิตของ ${routingPayload.itemCode} อ้างชิ้นใหม่แล้ว`, null, wipFail) : null, "")) return;
       form.closest?.("dialog")?.close?.();
       form.querySelectorAll("button").forEach((node) => { node.disabled = true; });
       renderRoute();

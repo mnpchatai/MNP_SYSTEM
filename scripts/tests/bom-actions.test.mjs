@@ -1431,6 +1431,114 @@ test("issuing the purchased parts of a PI is all or nothing, then the part jobs 
   assert.deepEqual([job.status, job.qtyDone], ["queued", 0]);
 });
 
+test("issuing parts line by line (user rule 2026-11-16): ticked lines only, an editable quantity, a partial line stays open for the rest, over-issue up to the stock, all or nothing per save", () => {
+  const d = fresh();
+  const order = d.orders.find((entry) => entry.id === "DEMO-26001");
+  const jobOf = (code) => d.jobs.find((job) => job.orderId === order.id && A.helpers.isPartJob(job) && job.itemCode === code);
+  const stock = (code) => d.stock.find((row) => row.itemCode === code);
+  const lineOf = (code) => A.helpers.partIssuePlan(d, order.id).lines.find((line) => line.itemCode === code);
+  assert.deepEqual([lineOf("P-BOX-01").planned, lineOf("P-BOX-01").issued, lineOf("P-BOX-01").remaining, lineOf("P-BOX-01").onHand, lineOf("P-BOX-01").short], [7, 0, 7, 5, 2]);
+  // ตรวจรายการและจำนวน (ข้อความไทย) · ไม่ผ่าน = ไม่เปลี่ยนอะไร
+  const before = structuredClone(d);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [] }, ctx("st")), /เลือกรายการที่จะเบิกอย่างน้อยหนึ่งรายการ/);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 0 }] }, ctx("st")), /จำนวนที่เบิก P-STK-01 ต้องมากกว่า 0/);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: -2 }] }, ctx("st")), /ต้องมากกว่า 0/);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: "" }] }, ctx("st")), /ต้องมากกว่า 0/);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: "abc" }] }, ctx("st")), /ต้องเป็นตัวเลข/);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 0.00001 }] }, ctx("st")), /ต้องมากกว่า 0/, "below four decimals is nothing");
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 1 }, { itemCode: "p-stk-01", qty: 1 }] }, ctx("st")), /ซ้ำ/);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "NOPE", qty: 1 }] }, ctx("st")), /ไม่มีของซื้อที่ต้องเบิกในใบนี้/);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 10 }, { itemCode: "P-BOX-01", qty: 6 }] }, ctx("st")), /ไม่ได้เบิกจ่ายอะไรเลย: P-BOX-01 ขาด 1/);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 401 }] }, ctx("st")), /P-STK-01 ขาด 1/, "over-issue only up to the stock");
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 1 }] }, ctx("wh")), /ST/);
+  assert.deepEqual(d, before, "refused issues change nothing");
+  // เลือกเฉพาะกล่อง เบิก 3 จาก 7 (สต็อกมี 5): บรรทัดยังเปิด บรรทัดอื่นไม่ถูกแตะ หักสต็อกเท่าที่เบิก
+  const reservedBefore = rules.partReserved(d.jobs, d.orders).get("P-BOX-01");
+  assert.deepEqual(A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "p-box-01", qty: "3" }] }, ctx("st")), { issued: 1, summary: "1 รายการ" });
+  assert.deepEqual([jobOf("P-BOX-01").status, jobOf("P-BOX-01").qtyDone, "doneAt" in jobOf("P-BOX-01")], ["in_progress", 3, false]);
+  assert.ok(d.jobs.filter((job) => job.orderId === order.id && A.helpers.isPartJob(job) && job.itemCode !== "P-BOX-01").every((job) => job.status === "queued" && job.qtyDone === 0), "the lines that were not ticked are untouched");
+  assert.equal(stock("P-BOX-01").qty, 2);
+  assert.deepEqual(d.stockMoves.filter((move) => move.kind === "issue").map((move) => [move.itemCode, move.qty, move.balance, move.ref]), [["P-BOX-01", -3, 2, "DEMO-26001"]]);
+  assert.match(d.audit[0].detail, /DEMO-26001 1 รายการ/);
+  assert.deepEqual([lineOf("P-BOX-01").issued, lineOf("P-BOX-01").remaining, lineOf("P-BOX-01").short], [3, 4, 2], "the next issue offers the remainder");
+  assert.equal(rules.partReserved(d.jobs, d.orders).get("P-BOX-01"), reservedBefore - 3, "the open line still reserves only what is left");
+  assert.equal(rules.partNeeds({ jobs: d.jobs, orders: d.orders, stock: d.stock }, order.id).rows.find((row) => row.itemCode === "P-BOX-01").needQty, 4);
+  // ส่วนที่เหลือ + เกินแผน 2 (สต็อกพอ) → done · ยอดสะสม 9 จากแผน 7
+  A.countPartStock(d, { counts: [{ itemCode: "P-BOX-01", qty: 10 }] }, ctx("st"));
+  A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-BOX-01", qty: 6 }] }, ctx("planner"));
+  assert.deepEqual([jobOf("P-BOX-01").status, jobOf("P-BOX-01").qtyDone, jobOf("P-BOX-01").doneAt], ["done", 9, NOW]);
+  assert.equal(stock("P-BOX-01").qty, 4);
+  assert.equal(lineOf("P-BOX-01"), undefined, "a finished line is no longer offered");
+  assert.equal(rules.partReserved(d.jobs, d.orders).get("P-BOX-01") ?? 0, reservedBefore - 7, "and reserves nothing (never negative after an over-issue)");
+  // ไม่ส่ง lines = ทุกบรรทัดที่ยังเปิดเต็มส่วนที่เหลือ (แบบเดิม)
+  assert.deepEqual(A.issueOrderParts(d, { orderId: order.id }, ctx("st")), { issued: 6, summary: "6 รายการ" });
+  assert.ok(d.jobs.filter((job) => job.orderId === order.id && A.helpers.isPartJob(job)).every((job) => job.status === "done"));
+  assert.deepEqual([jobOf("P-BOX-01").qtyDone, jobOf("P-STK-01").qtyDone, stock("P-STK-01").qty], [9, 120, 280]);
+  rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 1 }] }, ctx("st")), /ไม่มีของซื้อที่ต้องเบิกจ่าย/);
+  // โหมดฐานข้อมูล: ใบ released ไม่เปลี่ยนเอง ประวัติไม่เขียนในเครื่อง แต่งานและสต็อกคำนวณไว้แสดง
+  const r = fresh();
+  const released = r.orders.find((entry) => entry.id === "DEMO-26001");
+  released.status = "released";
+  const moves = r.stockMoves.length;
+  A.issueOrderParts(r, { orderId: released.id, lines: [{ itemCode: "P-STK-01", qty: 50 }] }, { ...ctx("st"), remote: true });
+  const remoteJob = r.jobs.find((job) => job.orderId === released.id && job.itemCode === "P-STK-01" && A.helpers.isPartJob(job));
+  assert.deepEqual([released.status, r.stockMoves.length, remoteJob.status, remoteJob.qtyDone, r.stock.find((row) => row.itemCode === "P-STK-01").qty], ["released", moves, "in_progress", 50, 350]);
+});
+
+test("a partly issued line: undo gives it back and the jobs wait again (then the order can be cancelled), a leftover return needs the line finished, an over-issued line returns up to what was issued", () => {
+  const d = fresh();
+  const order = d.orders.find((entry) => entry.id === "DEMO-26001");
+  const stock = (code) => d.stock.find((row) => row.itemCode === code);
+  const jobOf = (code) => d.jobs.find((job) => job.orderId === order.id && A.helpers.isPartJob(job) && job.itemCode === code);
+  A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 50 }, { itemCode: "P-ZIP-05", qty: 30 }] }, ctx("st"));
+  assert.deepEqual([jobOf("P-STK-01").status, jobOf("P-ZIP-05").status, jobOf("P-ZIP-05").qtyDone], ["in_progress", "done", 30], "50 of 120 stickers, 30 of 21.2 m of zip (over the plan)");
+  const lines = rules.partReturnLines(d, order.id);
+  assert.deepEqual(lines.map((line) => [line.itemCode, line.issued, line.returnable, line.partial]), [["P-STK-01", 50, 50, true], ["P-ZIP-05", 30, 30, false]]);
+  rejects(() => A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 1 }], reason: "เหลือ" }, ctx("st")), /P-STK-01 ยังเบิกไม่ครบ/);
+  rejects(() => A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-ZIP-05", qty: 30.5 }], reason: "เหลือ" }, ctx("st")), /คืนได้อีกไม่เกิน 30/);
+  A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-ZIP-05", qty: 8.8 }], reason: "เบิกเกิน" }, ctx("st"));
+  assert.equal(stock("P-ZIP-05").qty, 78.8);
+  // ใบที่เหลือแต่งานของซื้อ: ยกเลิกใบไม่ได้จนกว่าจะยกเลิกการเบิกจ่าย (ยอดเบิกบางส่วนก็กัน)
+  d.jobs = d.jobs.filter((job) => job.orderId !== order.id || A.helpers.isPartJob(job));
+  rejects(() => A.cancelOrder(structuredClone(d), { orderId: order.id, reason: "x" }, ctx("planner")), /ยกเลิกการเบิกจ่าย/);
+  const undone = A.undoOrderParts(d, { orderId: order.id, reason: "ผิดใบ" }, ctx("st"));
+  assert.equal(undone.summary, "2 รายการ");
+  assert.deepEqual([stock("P-STK-01").qty, stock("P-ZIP-05").qty], [400, 100], "the partial 50 and the zip still out (30 - 8.8) are back");
+  assert.ok(d.jobs.filter((job) => job.orderId === order.id && A.helpers.isPartJob(job)).every((job) => job.status === "queued" && job.qtyDone === 0 && !("doneAt" in job)));
+  assert.equal(A.helpers.startedJobs(d, order, []).length, 0);
+  assert.equal(A.cancelOrder(d, { orderId: order.id, reason: "ลูกค้ายกเลิก" }, ctx("planner")), order.id);
+});
+
+test("a PI that closes while a part line is partly issued: the line takes a leftover return up to issued minus returned (local and database mode), the undo and the rest of the issue stay refused", () => {
+  for (const remote of [false, true]) {
+    const d = fresh();
+    const order = d.orders.find((entry) => entry.id === "DEMO-26001");
+    const stock = (code) => d.stock.find((row) => row.itemCode === code);
+    const jobOf = (code) => d.jobs.find((job) => job.orderId === order.id && A.helpers.isPartJob(job) && job.itemCode === code);
+    const c = (role) => ({ ...ctx(role), remote });
+    A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 50 }] }, ctx("st"));
+    assert.equal(stock("P-STK-01").qty, 350);
+    // ใบยังเปิด: บรรทัดที่เบิกไม่ครบคืนของเหลือไม่ได้ (เหมือนเดิม)
+    rejects(() => A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 1 }], reason: "เหลือ" }, c("st")), /P-STK-01 ยังเบิกไม่ครบ/);
+    order.status = "completed";
+    assert.deepEqual(rules.partReturnLines(d, order.id).map((line) => [line.itemCode, line.issued, line.returnable, line.partial]), [["P-STK-01", 50, 50, false]], `closed → not partial (${remote ? "database" : "local"})`);
+    rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 10 }] }, c("st")), /เฉพาะใบที่ปล่อยผลิตแล้ว/);
+    rejects(() => A.undoOrderParts(d, { orderId: order.id, reason: "ผิดใบ" }, c("st")), /ยังไม่ปิด/);
+    rejects(() => A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 50.5 }], reason: "เหลือ" }, c("st")), /คืนได้อีกไม่เกิน 50/);
+    const sent = A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 30 }], reason: "ปิดใบแล้วเหลือ" }, c("st"));
+    assert.deepEqual(sent.request, { orderId: order.id, mode: "leftover", reason: "ปิดใบแล้วเหลือ", lines: [{ itemCode: "P-STK-01", qty: 30 }] }, "the database mode sends the leftover request");
+    assert.equal(stock("P-STK-01").qty, 380);
+    assert.deepEqual([jobOf("P-STK-01").status, jobOf("P-STK-01").qtyDone], ["in_progress", 50], "the job is not changed by the return");
+    if (!remote) {
+      // ประวัติในเครื่องนับยอดที่คืนไปแล้ว (โหมดฐานข้อมูล เซิร์ฟเวอร์นับเอง)
+      rejects(() => A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 20.5 }], reason: "เหลือ" }, c("st")), /คืนได้อีกไม่เกิน 20/);
+      A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 20 }], reason: "คืนที่เหลือ" }, c("st"));
+      assert.equal(stock("P-STK-01").qty, 400);
+      assert.equal(rules.partReturnLines(d, order.id)[0].returnable, 0);
+    }
+  }
+});
+
 test("returning purchased parts: undo gives the whole issue back and the jobs wait again, leftovers are limited to what is not yet returned since the latest issue, rights and reason are checked", () => {
   const d = fresh();
   const order = d.orders.find((entry) => entry.id === "DEMO-26001");
@@ -1500,8 +1608,7 @@ test("returning purchased parts: undo gives the whole issue back and the jobs wa
   rejects(() => A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 1 }], reason: "เกิน" }, ctx("st")), /ไม่เกิน 0/);
   // ใบที่มีแต่งานของซื้อ: เบิกจ่ายแล้วยกเลิกใบไม่ได้ (มียอดทำแล้ว) หลังยกเลิกการเบิกจ่ายยกเลิกใบได้ และเปิดใบกลับมาแก้ได้ (ไม่มีงานเริ่ม)
   d.jobs = d.jobs.filter((job) => job.orderId !== order.id || A.helpers.isPartJob(job));
-  rejects(() => A.cancelOrder(structuredClone(d), { orderId: order.id, reason: "x" }, ctx("planner")), /ผลผลิต/);
-  rejects(() => A.cancelOrder(structuredClone(d), { orderId: order.id, reason: "x" }, ctx("planner")), /ผลผลิต/);
+  rejects(() => A.cancelOrder(structuredClone(d), { orderId: order.id, reason: "x" }, ctx("planner")), /เบิกจ่ายของซื้อของใบนี้ไปแล้ว[\s\S]*ยกเลิกการเบิกจ่าย/, "the message names the undo when only part jobs hold output");
   assert.ok(A.helpers.startedJobs(d, order, []).length > 0, "an issued PI counts as started");
   A.undoOrderParts(d, { orderId: order.id, reason: "ยกเลิกใบ" }, ctx("st"));
   assert.equal(A.helpers.startedJobs(d, order, []).length, 0, "after the undo no job counts as started");
@@ -1685,7 +1792,7 @@ test("finished goods: the order closes by itself when every product is received 
   assert.equal(order.status, "completed");
   assert.equal(order.completedAt, NOW);
   assert.ok(d.audit.some((entry) => entry.action === "รับสินค้าเข้าคลัง" && /ปิดอัตโนมัติ/.test(entry.detail)), "the audit says the order closed by itself");
-  rejects(() => A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 1 }] }, whCtx()), /ยังไม่ปิด/, "a closed order receives nothing more");
+  rejects(() => A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 1 }] }, whCtx()), /รับได้อีกไม่เกิน 0/, "a closed order still receives, but only what PK made beyond what was received (nothing here)");
   // รับครบทุกสินค้าในครั้งเดียว
   const e = fresh();
   reportPk(e, { [TP]: 80, [HL]: 40 });
@@ -1775,10 +1882,10 @@ test("finished goods: on hand per code is everything received minus everything d
   assert.deepEqual(rules.fgOnHand(d), []);
   A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 50 }, { fgCode: HL, qty: 40 }] }, whCtx());
   A.deliverFg(d, { orderId, lines: [{ fgCode: TP, qty: 20 }, { fgCode: HL, qty: 40 }] }, whCtx());
-  assert.deepEqual(rules.fgOnHand(d), [{ fgCode: HL, onHand: 0, orders: [] }, { fgCode: TP, onHand: 30, orders: [{ orderId, qty: 30 }] }]);
+  assert.deepEqual(rules.fgOnHand(d), [{ fgCode: HL, onHand: 0, free: 0, orders: [], freeOrders: [] }, { fgCode: TP, onHand: 30, free: 0, orders: [{ orderId, qty: 30 }], freeOrders: [] }], "what the order still owes its own customer is not free stock");
   // a second order holds the same code (history rows only: the order does not have to exist to be summed)
   d.fgMoves.push({ id: "m-x", orderId: "PI-OTHER", fgCode: TP, kind: "receive", qty: 15, note: "", at: NOW, by: "x" }, { id: "m-y", orderId: "PI-OTHER", fgCode: TP, kind: "close", qty: 0, note: "เหตุผล", at: NOW, by: "x" });
-  assert.deepEqual(rules.fgOnHand(d).find((row) => row.fgCode === TP), { fgCode: TP, onHand: 45, orders: [{ orderId, qty: 30 }, { orderId: "PI-OTHER", qty: 15 }] }, "a close row never counts");
+  assert.deepEqual(rules.fgOnHand(d).find((row) => row.fgCode === TP), { fgCode: TP, onHand: 45, free: 0, orders: [{ orderId, qty: 30 }, { orderId: "PI-OTHER", qty: 15 }], freeOrders: [] }, "a close row never counts; an order that is not in the list has no free stock");
   // it is only shown: draft orders are not calculated from it
   const draft = d.orders.find((entry) => entry.status === "draft");
   const before = JSON.stringify(rules.partNeeds({ jobs: d.jobs, orders: d.orders, stock: d.stock, purchaseOrders: [] }, draft.id));
@@ -1849,4 +1956,268 @@ test("finished goods: an order with no PK job at all cannot be closed short (the
   rejects(() => A.closeOrderShort(d, { orderId, note: "ไม่มีงาน PK" }, whCtx()), /ไม่มีงานบรรจุ \(PK\)/);
   assert.notEqual(order.status, "completed");
   assert.equal(rules.fgPosition({ jobs: [{ orderId: "X", dept: "PK", kind: "FG", itemCode: "A", status: "done", qtyDone: 0 }], fgMoves: [] }, { id: "X", status: "released", items: [{ fgCode: "A", qty: 5 }] }).canCloseShort, true, "with a finished PK job that made nothing, the close stays possible");
+});
+
+// ---------- สต็อกสินค้าสำเร็จรูป (batch C): ส่วนที่ PK ผลิตเกินเป็นสต็อก ใบร่างที่สั่งสินค้าเดียวกันใช้ลดงานผลิต ----------
+const SRC = "DEMO-26001"; // TP 80 + HL 40 (กำลังผลิต)
+const DRAFT = "DEMO-26002"; // HL 192 (ร่างที่ระเบิด BOM แล้ว)
+// PK รายงาน HL 60 (สั่ง 40) แล้ว WH รับเข้าครบ 60 → ส่วนเกิน 20 เป็นสต็อกสินค้าสำเร็จรูปของ HL
+const withSurplus = () => {
+  const d = fresh();
+  reportPk(d, { [HL]: 60 });
+  A.receiveFg(d, { orderId: SRC, lines: [{ fgCode: HL, qty: 60 }] }, whCtx());
+  return d;
+};
+const planner = (now = NOW + 60000) => ctx("planner", now);
+const clonedData = (d) => JSON.parse(JSON.stringify(d));
+// ใบร่างใหม่ที่สั่ง HL ตามจำนวน ระเบิด BOM แล้ว (ต่อท้ายคิวของใบร่าง)
+const extraDraft = (d, id, qty, now = NOW + 1000) => {
+  A.createOrder(d, { pi: id, customer: "ลูกค้าสต็อก", country: "Thailand", orderedAt: day(0), whDue: day(10) }, planner(now));
+  A.addOrderItem(d, { orderId: id, fgCode: HL, qty }, planner(now));
+  A.explodeOrder(d, { orderId: id }, planner(now));
+  return d.orders.find((entry) => entry.id === id);
+};
+const orderOf = (d, id) => d.orders.find((entry) => entry.id === id);
+const hl = (d, id) => rules.fgPosition(d, orderOf(d, id)).products.find((product) => product.fgCode === HL);
+const jobTotals = (d, id) => d.jobs.filter((job) => job.orderId === id && job.kind !== "PURCHASED" && job.dept !== "PK").reduce((sum, job) => sum + job.qtyPlanned, 0);
+
+test("fg stock: only the planning group sets how much of a product a draft takes from stock, within the ordered quantity and the stock available to this draft", () => {
+  const d = withSurplus();
+  const draft = orderOf(d, DRAFT);
+  assert.deepEqual(rules.fgStockForDraft(d, draft).map((row) => [row.fgCode, row.stock, row.available, row.max, row.planned]), [[HL, 20, 20, 20, null]], "the 20 surplus pieces of HL");
+  for (const who of ["st", "wh"]) rejects(() => A.setStockCount(d, { orderId: DRAFT, itemCode: HL, qty: 5 }, ctx(who)), /ฝ่ายวางแผนหรือผู้จัดการเท่านั้น/);
+  rejects(() => A.setStockCount(d, { orderId: DRAFT, itemCode: HL, qty: 5 }, ctx("rb")), /บันทึกยอดคงคลังได้โดย/, "a department that may not count at all");
+  rejects(() => A.setStockCounts(d, { orderId: DRAFT, counts: [{ itemCode: HL, qty: 5 }] }, ctx("st")), /ฝ่ายวางแผนหรือผู้จัดการเท่านั้น/);
+  assert.deepEqual(draft.stockCounts, {}, "nothing was saved");
+  // ST and WH staff still count the other items of a draft
+  const part = draft.explosion.find((line) => line.level > 0 && line.kind !== "PURCHASED").itemCode;
+  A.setStockCount(d, { orderId: DRAFT, itemCode: part, qty: 1 }, ctx("st"));
+  A.setStockCounts(d, { orderId: DRAFT, counts: [{ itemCode: part, qty: 2 }] }, ctx("wh"));
+  assert.equal(draft.stockCounts[part], 2);
+  // the amount: not above the stock available to this draft, not above the ordered quantity, not on a released order
+  rejects(() => A.setStockCount(d, { orderId: DRAFT, itemCode: HL, qty: 21 }, planner()), /มี 20.*ใช้ 21 ไม่ได้/);
+  rejects(() => A.setStockCount(d, { orderId: DRAFT, itemCode: HL, qty: -1 }, planner()), /มากกว่า 0/);
+  rejects(() => A.setStockCount(d, { orderId: DRAFT, itemCode: HL, qty: "x" }, planner()), /ตัวเลข/);
+  const small = extraDraft(d, "N-S1", 5);
+  rejects(() => A.setStockCount(d, { orderId: small.id, itemCode: HL, qty: 6 }, planner()), /ไม่เกินจำนวนสั่ง 5/);
+  rejects(() => A.setStockCount(d, { orderId: SRC, itemCode: HL, qty: 1 }, planner()), /ปล่อยผลิตแล้ว/);
+  A.setStockCount(d, { orderId: DRAFT, itemCode: HL, qty: 20 }, planner());
+  assert.equal(draft.stockCounts[HL], 20);
+  A.setStockCount(d, { orderId: DRAFT, itemCode: HL, qty: 0 }, { now: NOW, user: user("manager") });
+  assert.equal(draft.stockCounts[HL], 0, "a manager sets it too, and 0 is allowed");
+  // the requirement of every department follows: HL stock shrinks what is to be made
+  A.setStockCount(d, { orderId: DRAFT, itemCode: HL, qty: 20 }, planner());
+  const net = new Map(rules.netRequirements(draft.explosion, draft.stockCounts).map((entry) => [entry.itemCode, entry]));
+  assert.deepEqual([net.get(HL).required, net.get(HL).stock, net.get(HL).toMake], [192, 20, 172]);
+  const plain = new Map(rules.netRequirements(draft.explosion, {}).map((entry) => [entry.itemCode, entry]));
+  assert.ok([...net.values()].every((entry) => entry.required <= plain.get(entry.itemCode).required + 1e-9), "nothing needs more than before");
+  assert.ok([...net.values()].some((entry) => entry.kind !== "FG" && entry.required < plain.get(entry.itemCode).required), "something below the product needs less");
+});
+
+test("fg stock: release takes the amount from the stock of the oldest released orders, PK makes only the rest, and the history names the source", () => {
+  const d = withSurplus();
+  const plain = withSurplus();
+  A.releaseOrder(plain, { orderId: DRAFT }, planner());
+  A.setStockCount(d, { orderId: DRAFT, itemCode: HL, qty: 20 }, planner());
+  A.releaseOrder(d, { orderId: DRAFT }, planner());
+  const draft = orderOf(d, DRAFT);
+  assert.equal(draft.status, "released");
+  const pk = d.jobs.find((job) => job.orderId === DRAFT && job.dept === "PK" && job.kind === "FG");
+  assert.deepEqual([pk.qtyPlanned, pk.qtyRequired, pk.stockCounted], [172, 192, 20], "PK makes 192 − 20, the requirement stays the ordered quantity");
+  assert.equal(plain.jobs.find((job) => job.orderId === DRAFT && job.dept === "PK" && job.kind === "FG").qtyPlanned, 192, "without stock PK makes the full quantity");
+  assert.ok(jobTotals(d, DRAFT) < jobTotals(plain, DRAFT), "the other departments make less too");
+  const transfers = d.fgMoves.filter((move) => move.kind === "transfer");
+  assert.deepEqual(transfers.map((move) => [move.orderId, move.fgCode, move.qty, move.fromOrderId, move.note, move.at, move.by]), [[DRAFT, HL, 20, SRC, "", NOW + 60000, user("planner").name]]);
+  // both orders now see it: the source gave 20 away, the draft holds 20 for its own customer
+  assert.deepEqual([hl(d, SRC).have, hl(d, SRC).givenAway, hl(d, SRC).deliverable, hl(d, SRC).free], [60, 20, 40, 0]);
+  assert.deepEqual([hl(d, DRAFT).fromStock, hl(d, DRAFT).have, hl(d, DRAFT).deliverable, hl(d, DRAFT).free, hl(d, DRAFT).receivable], [20, 20, 20, 0, 0]);
+  assert.deepEqual(rules.fgOnHand(d).find((row) => row.fgCode === HL), { fgCode: HL, onHand: 60, free: 0, orders: [{ orderId: SRC, qty: 40 }, { orderId: DRAFT, qty: 20 }], freeOrders: [] });
+  assert.ok(d.audit.some((entry) => entry.action === "ปล่อยผลิต" && /ใช้สต็อกสินค้าสำเร็จรูป 1 รายการ/.test(entry.detail)));
+  // taken from several sources, oldest released first, one row per source
+  const e = fresh();
+  const srcOrder = orderOf(e, SRC);
+  const mkSource = (id, releasedAt, qty) => {
+    e.orders.push({ ...clonedData(srcOrder), id, releasedAt, items: [{ fgCode: HL, qty: 10, colorSet: "A", note: "" }], explosion: null });
+    e.jobs.push({ id: `J-${id}`, orderId: id, dept: "PK", itemCode: HL, name: "x", kind: "FG", uom: "set", qtyPlanned: 10, qtyRequired: 10, stockCounted: null, qtyDone: qty, qtyReject: 0, dueAt: NOW, status: "done", externalRef: null, fgCodes: [HL], createdAt: NOW, reports: [] });
+    e.fgMoves = [...(e.fgMoves ?? []), { id: `r-${id}`, orderId: id, fgCode: HL, kind: "receive", qty, note: "", at: NOW, by: "x" }];
+  };
+  mkSource("SRC-B", NOW - 5 * DAY, 14); // oldest: 4 surplus
+  mkSource("SRC-A", NOW - 2 * DAY, 17); // 7 surplus
+  const newest = extraDraft(e, "N-MANY", 9);
+  A.setStockCount(e, { orderId: newest.id, itemCode: HL, qty: 9 }, planner());
+  A.releaseOrder(e, { orderId: newest.id }, planner(NOW + 2000));
+  assert.deepEqual(e.fgMoves.filter((move) => move.kind === "transfer").map((move) => [move.fromOrderId, move.qty]), [["SRC-B", 4], ["SRC-A", 5]], "the oldest released gives all it has first, then the next");
+  assert.equal(orderOf(e, newest.id).status, "completed", "9 of 9 from stock");
+});
+
+test("fg stock: two drafts compete — the display order is a guide, the order released first gets the stock and the other is told the numbers changed", () => {
+  const d = withSurplus();
+  const early = orderOf(d, DRAFT); // calculated first
+  const late = extraDraft(d, "N-LATE", 30);
+  assert.ok(early.explodedAt < late.explodedAt, "the demo draft was calculated first");
+  A.setStockCount(d, { orderId: early.id, itemCode: HL, qty: 15 }, planner());
+  assert.deepEqual(rules.fgStockForDraft(d, late).map((row) => [row.stock, row.taken, row.available, row.max]), [[20, 15, 5, 5]], "the later draft is offered only what the earlier one leaves");
+  rejects(() => A.setStockCount(d, { orderId: late.id, itemCode: HL, qty: 6 }, planner()), /มี 5.*ใบร่างที่คำนวณก่อนใบนี้ตั้งใช้ไว้ 15/);
+  A.setStockCount(d, { orderId: late.id, itemCode: HL, qty: 5 }, planner());
+  // the later draft is released first and takes its 5; the earlier one still finds its 15 (20 − 5)
+  const a = clonedData(d);
+  A.releaseOrder(a, { orderId: late.id }, planner(NOW + 2000));
+  A.releaseOrder(a, { orderId: early.id }, planner(NOW + 3000));
+  assert.deepEqual(a.fgMoves.filter((move) => move.kind === "transfer").map((move) => [move.orderId, move.qty]), [["N-LATE", 5], [early.id, 15]]);
+  // but when the stock shrinks after both were planned (WH delivers 50 of the 60 pieces: the 40 ordered and 10 of the surplus), the one released first wins and the other fails
+  const b = clonedData(d);
+  A.deliverFg(b, { orderId: SRC, lines: [{ fgCode: HL, qty: 50 }] }, whCtx());
+  assert.equal(rules.fgOnHand(b).find((row) => row.fgCode === HL).free, 10);
+  A.releaseOrder(b, { orderId: late.id }, planner(NOW + 2000));
+  rejects(() => A.releaseOrder(b, { orderId: early.id }, planner(NOW + 3000)), /ตัวเลขเปลี่ยนไปแล้ว.*ไม่พอที่ใบนี้ตั้งใช้ 15.*เหลือ 5/);
+  assert.equal(orderOf(b, early.id).status, "draft", "a failed release changes nothing");
+  assert.equal(b.fgMoves.filter((move) => move.kind === "transfer").length, 1);
+  // the planner lowers the amount and releases: now it fits
+  A.setStockCount(b, { orderId: early.id, itemCode: HL, qty: 5 }, planner(NOW + 4000));
+  A.releaseOrder(b, { orderId: early.id }, planner(NOW + 5000));
+  assert.equal(orderOf(b, early.id).status, "released");
+  assert.equal(rules.fgOnHand(b).find((row) => row.fgCode === HL).free, 0);
+});
+
+test("fg stock: an amount above the ordered quantity (the item was lowered after) or above the stock refuses the release and creates nothing", () => {
+  const d = withSurplus();
+  A.setStockCount(d, { orderId: DRAFT, itemCode: HL, qty: 20 }, planner());
+  A.updateOrderItem(d, { orderId: DRAFT, fgCode: HL, qty: 15 }, planner());
+  assert.equal(orderOf(d, DRAFT).stockCounts[HL], 15, "lowering the ordered quantity trims the amount taken from stock to it");
+  // a stored amount above the ordered quantity (e.g. written by an older page) still refuses the release
+  orderOf(d, DRAFT).stockCounts = { ...orderOf(d, DRAFT).stockCounts, [HL]: 20 };
+  A.explodeOrder(d, { orderId: DRAFT }, planner());
+  rejects(() => A.releaseOrder(d, { orderId: DRAFT }, planner()), /ตั้งใช้จากสต็อกสินค้าสำเร็จรูป 20 เกินจำนวนสั่ง 15/);
+  assert.equal(orderOf(d, DRAFT).status, "draft");
+  assert.equal(d.jobs.filter((job) => job.orderId === DRAFT).length, 0);
+  assert.equal((d.fgMoves ?? []).filter((move) => move.kind === "transfer").length, 0);
+  // stock that is not there at all
+  const e = fresh();
+  orderOf(e, DRAFT).stockCounts = { [HL]: 3 };
+  rejects(() => A.releaseOrder(e, { orderId: DRAFT }, planner()), /เหลือ 0.*กลับไปตั้งยอดใหม่/);
+});
+
+test("fg stock: an order whose products all come from stock is released and closed in one step, with no jobs, and goes to delivery", () => {
+  const d = withSurplus();
+  const only = extraDraft(d, "N-FULL", 12);
+  A.setStockCount(d, { orderId: only.id, itemCode: HL, qty: 12 }, planner());
+  const net = rules.netRequirements(only.explosion, only.stockCounts);
+  assert.ok(net.every((entry) => entry.toMake === 0), "nothing is left to make");
+  assert.equal(net.filter((entry) => entry.kind === "PURCHASED" && entry.required > 0).length, 0, "no purchased part is needed either");
+  A.releaseOrder(d, { orderId: only.id }, planner(NOW + 2000));
+  assert.equal(rules.fgOnHand(d).find((row) => row.fgCode === HL).free, 8, "20 surplus − 12 taken");
+  assert.equal(only.status, "completed", "closed in the same save");
+  assert.deepEqual([only.releasedAt, only.completedAt], [NOW + 2000, NOW + 2000]);
+  assert.equal(d.jobs.filter((job) => job.orderId === only.id).length, 0, "no production job at all");
+  const position = rules.fgPosition(d, only);
+  assert.deepEqual([position.coveredByStock, position.waitingDelivery, position.fullyDelivered, position.allReceived, position.anyReceivable], [true, true, false, true, false]);
+  // delivery: the cap is what the order holds; the source's cap fell by what it gave away
+  rejects(() => A.deliverFg(d, { orderId: only.id, lines: [{ fgCode: HL, qty: 13 }] }, whCtx()), /ส่งมอบได้อีกไม่เกิน 12/);
+  rejects(() => A.deliverFg(d, { orderId: SRC, lines: [{ fgCode: HL, qty: 49 }] }, whCtx()), /ส่งมอบได้อีกไม่เกิน 48 .*ให้ใบอื่นไปแล้ว 12/, "60 held − 12 given to the other order");
+  A.deliverFg(d, { orderId: only.id, lines: [{ fgCode: HL, qty: 12 }] }, whCtx());
+  assert.equal(rules.fgPosition(d, only).fullyDelivered, true);
+  A.deliverFg(d, { orderId: SRC, lines: [{ fgCode: HL, qty: 48 }] }, whCtx());
+  assert.equal(hl(d, SRC).deliverable, 0);
+  // a closed order can be neither cancelled nor edited
+  rejects(() => A.cancelOrder(d, { orderId: only.id }, planner()), /เสร็จแล้วยกเลิกไม่ได้/);
+  rejects(() => A.updateOrderItem(d, { orderId: only.id, fgCode: HL, qty: 1 }, planner()), /ปิดหรือยกเลิกแล้ว/);
+  // the source delivered 48 of its 60 (40 ordered + 8 surplus): nothing is left as stock for a later draft
+  const part = extraDraft(d, "N-PART", 40, NOW + 5000);
+  assert.equal(rules.fgStockForDraft(d, part)[0].stock, 0);
+});
+
+test("fg stock: cancelling or reopening an order that took stock gives it back to the source; delivery or giving stock away refuses both", () => {
+  const d = withSurplus();
+  A.setStockCount(d, { orderId: DRAFT, itemCode: HL, qty: 20 }, planner());
+  A.releaseOrder(d, { orderId: DRAFT }, planner(NOW + 2000));
+  assert.equal(hl(d, SRC).free, 0);
+  // reopen by editing an item: back to a draft, the stock goes back, the amount stays saved
+  const reopen = clonedData(d);
+  A.updateOrderItem(reopen, { orderId: DRAFT, fgCode: HL, qty: 190 }, planner(NOW + 3000));
+  assert.equal(orderOf(reopen, DRAFT).status, "draft");
+  assert.equal(orderOf(reopen, DRAFT).stockCounts[HL], 20, "the saved amount is kept on reopen");
+  assert.deepEqual(reopen.fgMoves.filter((move) => move.kind === "untransfer").map((move) => [move.orderId, move.fgCode, move.qty, move.fromOrderId, move.at]), [[DRAFT, HL, 20, SRC, NOW + 3000]]);
+  assert.deepEqual([hl(reopen, SRC).givenAway, hl(reopen, SRC).free, hl(reopen, DRAFT).have], [0, 20, 0], "the 20 are free again and the draft holds nothing");
+  assert.equal(reopen.jobs.filter((job) => job.orderId === DRAFT).length, 0);
+  assert.ok(reopen.audit.some((entry) => /คืนสต็อกสินค้าสำเร็จรูป 1 รายการ/.test(entry.detail)));
+  // cancel: the same return, and the stock is free for another order
+  const cancelled = clonedData(d);
+  A.cancelOrder(cancelled, { orderId: DRAFT, reason: "ลูกค้ายกเลิก" }, planner(NOW + 3000));
+  assert.equal(orderOf(cancelled, DRAFT).status, "cancelled");
+  assert.equal(cancelled.fgMoves.filter((move) => move.kind === "untransfer").length, 1);
+  assert.equal(rules.fgOnHand(cancelled).find((row) => row.fgCode === HL).free, 20);
+  assert.deepEqual(rules.fgStockLock(cancelled, orderOf(cancelled, DRAFT)).took, [], "net zero: nothing is returned twice");
+  // delivery to the customer of the order that took stock refuses cancel and reopen
+  const delivered = clonedData(d);
+  A.deliverFg(delivered, { orderId: DRAFT, lines: [{ fgCode: HL, qty: 5 }] }, whCtx());
+  rejects(() => A.cancelOrder(delivered, { orderId: DRAFT }, planner()), /ส่งมอบสินค้าให้ลูกค้าแล้ว/);
+  rejects(() => A.updateOrderItem(delivered, { orderId: DRAFT, fgCode: HL, qty: 190 }, planner()), /ส่งมอบสินค้าให้ลูกค้าแล้ว/);
+  assert.equal(orderOf(delivered, DRAFT).status, "released", "a refusal changes nothing");
+  assert.equal(delivered.fgMoves.filter((move) => move.kind === "untransfer").length, 0);
+  // the source that gave stock away cannot be cancelled either (its PK reports are removed here only to reach that rule)
+  const gave = clonedData(d);
+  for (const job of gave.jobs.filter((entry) => entry.orderId === SRC)) { job.qtyDone = 0; job.qtyReject = 0; job.status = "queued"; job.reports = []; }
+  rejects(() => A.cancelOrder(gave, { orderId: SRC }, planner()), /ให้สินค้าจากสต็อกแก่ใบอื่นไปแล้ว \(DEMO-26002\)/);
+  rejects(() => A.updateOrderItem(gave, { orderId: SRC, fgCode: HL, qty: 41 }, planner()), /ให้สินค้าจากสต็อกแก่ใบอื่นไปแล้ว/);
+});
+
+test("fg stock: the warehouse receives the surplus PK made after the order closed, and it becomes stock for other orders", () => {
+  const d = fresh();
+  reportPk(d, { [TP]: 80, [HL]: 60 });
+  A.receiveFg(d, { orderId: SRC, lines: [{ fgCode: TP, qty: 80 }, { fgCode: HL, qty: 40 }] }, whCtx());
+  const order = orderOf(d, SRC);
+  assert.equal(order.status, "completed", "40 of 40 received: the order closed by itself");
+  assert.equal(hl(d, SRC).receivable, 20);
+  assert.equal(rules.fgOnHand(d).find((row) => row.fgCode === HL).free, 0, "not received yet: it is not stock");
+  // only WH or admin; no more than PK made
+  rejects(() => A.receiveFg(d, { orderId: SRC, lines: [{ fgCode: HL, qty: 20 }] }, whCtx(user("planner"))), /คลังสินค้า \(WH\)/);
+  rejects(() => A.receiveFg(d, { orderId: SRC, lines: [{ fgCode: HL, qty: 21 }] }, whCtx()), /รับได้อีกไม่เกิน 20/);
+  const closedAt = order.completedAt;
+  const result = A.receiveFg(d, { orderId: SRC, lines: [{ fgCode: HL, qty: 20 }], note: "ส่วนเกิน" }, whCtx(whStaff, NOW + 1000));
+  assert.equal(result.closed, false, "it was closed already");
+  assert.equal(order.status, "completed");
+  assert.equal(order.completedAt, closedAt, "the close time is not touched");
+  assert.deepEqual(rules.fgOnHand(d).find((row) => row.fgCode === HL), { fgCode: HL, onHand: 60, free: 20, orders: [{ orderId: SRC, qty: 60 }], freeOrders: [{ orderId: SRC, qty: 20 }] });
+  assert.equal(rules.fgPosition(d, order).waitingDelivery, true, "the customer still waits for the 40 ordered");
+  // the closed order's delivery: the customer's 40 first; the 20 surplus stays as stock
+  A.deliverFg(d, { orderId: SRC, lines: [{ fgCode: HL, qty: 40 }, { fgCode: TP, qty: 80 }] }, whCtx());
+  assert.deepEqual([rules.fgPosition(d, order).waitingDelivery, rules.fgPosition(d, order).fullyDelivered, rules.fgPosition(d, order).anyDeliverable], [false, true, true], "delivered in full to the customer; the surplus is still there");
+  assert.equal(rules.fgStockForDraft(d, orderOf(d, DRAFT))[0].stock, 20);
+  // a draft takes the surplus; what it took is out of reach of the source's own delivery
+  A.setStockCount(d, { orderId: DRAFT, itemCode: HL, qty: 20 }, planner());
+  A.releaseOrder(d, { orderId: DRAFT }, planner(NOW + 2000));
+  rejects(() => A.deliverFg(d, { orderId: SRC, lines: [{ fgCode: HL, qty: 1 }] }, whCtx()), /ส่งมอบได้อีกไม่เกิน 0/);
+});
+
+test("fg stock: in database mode the actions only check — no history, no completion, no return rows — and the same refusals apply", () => {
+  const remote = (who = user("planner"), now = NOW + 60000) => ({ now, user: who, remote: true });
+  const d = withSurplus();
+  A.setStockCount(d, { orderId: DRAFT, itemCode: HL, qty: 20 }, remote());
+  A.releaseOrder(d, { orderId: DRAFT }, remote());
+  assert.equal(orderOf(d, DRAFT).status, "released");
+  assert.equal(d.fgMoves.filter((move) => move.kind === "transfer").length, 0, "the server writes the transfers");
+  assert.equal(d.jobs.find((job) => job.orderId === DRAFT && job.dept === "PK" && job.kind === "FG").qtyPlanned, 172);
+  // fully covered: sent as released (a client may not set an order to completed); the server completes it and answers with the order
+  const e = withSurplus();
+  const only = extraDraft(e, "N-FULL", 12);
+  A.setStockCount(e, { orderId: only.id, itemCode: HL, qty: 12 }, remote());
+  A.releaseOrder(e, { orderId: only.id }, remote());
+  assert.equal(only.status, "released");
+  assert.equal(e.jobs.filter((job) => job.orderId === only.id).length, 0);
+  // refusals come from the data the page holds (what the server has written)
+  const f = withSurplus();
+  A.setStockCount(f, { orderId: DRAFT, itemCode: HL, qty: 20 }, planner());
+  A.releaseOrder(f, { orderId: DRAFT }, planner(NOW + 2000));
+  A.deliverFg(f, { orderId: DRAFT, lines: [{ fgCode: HL, qty: 1 }] }, whCtx());
+  rejects(() => A.cancelOrder(f, { orderId: DRAFT }, remote()), /ส่งมอบสินค้าให้ลูกค้าแล้ว/);
+  const g = withSurplus();
+  A.setStockCount(g, { orderId: DRAFT, itemCode: HL, qty: 20 }, planner());
+  A.releaseOrder(g, { orderId: DRAFT }, planner(NOW + 2000));
+  A.cancelOrder(g, { orderId: DRAFT }, remote(user("planner"), NOW + 3000));
+  assert.equal(g.fgMoves.filter((move) => move.kind === "untransfer").length, 0, "no return rows written locally");
+  // a receive on a closed order is sent as a request only
+  const h = fresh();
+  reportPk(h, { [TP]: 80, [HL]: 60 });
+  A.receiveFg(h, { orderId: SRC, lines: [{ fgCode: TP, qty: 80 }, { fgCode: HL, qty: 40 }] }, whCtx());
+  assert.deepEqual(A.receiveFg(h, { orderId: SRC, lines: [{ fgCode: HL, qty: 20 }] }, { now: NOW, user: whStaff, remote: true }).request, { orderId: SRC, kind: "receive", lines: [{ fgCode: HL, qty: 20 }] });
 });

@@ -1447,7 +1447,7 @@ test("the part stock page: ST and WH count, the planning group and ST edit the s
   assert.equal(D.partHistory(env.ctx("p=stock"), { code: "NOPE" }), null);
 });
 
-test("issuing parts from the PI page: the dialog lists every line, a shortage blocks the whole issue and offers the purchase, a full stock offers one button; part jobs have no report buttons", async () => {
+test("issuing parts from the PI page: the dialog has a tick box and an editable quantity per line, a short line starts unticked and marked and offers the purchase, one button issues the ticked lines; part jobs have no report buttons", async () => {
   const env = load();
   env.store.setUser("B08"); // ST
   const D = env.context.MNP_BOM_DIALOGS;
@@ -1457,8 +1457,29 @@ test("issuing parts from the PI page: the dialog lists every line, a shortage bl
   let dialog = D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html;
   clean(dialog);
   assert.match(dialog, /P-BOX-01[\s\S]*ขาด 2/, "the shortage of the boxes (7 needed, 5 on hand)");
-  assert.match(dialog, /ไม่ได้|เบิกจ่ายไม่ได้/);
-  assert.doesNotMatch(dialog, /data-rf-action="issueOrderParts"/, "a shortage hides the issue button");
+  assert.match(dialog, /สต็อกไม่พอเบิกส่วนที่เหลือ 1 รายการ จึงไม่ได้เลือกไว้/);
+  assert.doesNotMatch(dialog, /ทุกรายการพร้อมกัน|data-rf-action="issueOrderParts"/, "no more all-at-once wording or button");
+  // หนึ่งช่องเลือกต่อบรรทัด มีชื่อที่อ่านได้ · บรรทัดที่พอเลือกไว้ บรรทัดที่ขาดไม่เลือกและช่องจำนวน/รหัสปิดไว้ (ไม่ถูกตรวจและไม่ถูกส่ง)
+  assert.equal((dialog.match(/type="checkbox" data-bom-issue-pick/g) ?? []).length, 7);
+  assert.match(dialog, /<input type="checkbox" data-bom-issue-pick checked aria-label="เบิก P-STK-01 ครั้งนี้">/);
+  assert.match(dialog, /<input type="checkbox" data-bom-issue-pick aria-label="เบิก P-BOX-01 ครั้งนี้">/, "the short line starts unticked");
+  assert.match(dialog, /name="qty\[\]"[^>]*max="5" value="7" required data-bom-issue-field aria-label="จำนวนที่เบิก P-BOX-01 \(กล่อง\)" disabled>/, "its quantity is the remainder, capped by the stock, and off until ticked");
+  assert.match(dialog, /name="itemCode\[\]" value="P-BOX-01" data-bom-issue-field disabled>/);
+  assert.match(dialog, /name="qty\[\]"[^>]*max="400" value="120" required data-bom-issue-field aria-label="จำนวนที่เบิก P-STK-01 \(ชิ้น\)">/, "a covered line is prefilled with the remainder and can go up to the stock");
+  assert.match(dialog, /data-rf-form="issueOrderParts" data-rf-args="\{&quot;orderId&quot;:&quot;DEMO-26001&quot;\}"/);
+  assert.match(dialog, /<button class="btn rf-btn" type="submit" form="bom-issue-parts-form">เบิกจ่ายรายการที่เลือก<\/button>/, "one button issues the ticked lines even when a line is short");
+  // ติ๊ก/ไม่ติ๊ก: เปิด/ปิดช่องของบรรทัดนั้น (change ไม่ใช่ blur)
+  const fields = [{ disabled: true }, { disabled: true }];
+  const box = { checked: false, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; }, closest: () => ({ querySelectorAll: () => fields }) };
+  const dialogNode = { querySelectorAll: (selector) => (selector === "[data-bom-issue-pick]" ? [box] : []), querySelector: () => null };
+  D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).bind(dialogNode);
+  assert.deepEqual(Object.keys(box.handlers), ["change"]);
+  box.checked = true;
+  box.handlers.change();
+  assert.deepEqual(fields.map((field) => field.disabled), [false, false]);
+  box.checked = false;
+  box.handlers.change();
+  assert.deepEqual(fields.map((field) => field.disabled), [true, true]);
   // สั่งซื้อเป็นสิทธิ์ของ RubberFlow ในโหมดฐานข้อมูล (แผนก ST) · โหมดสาธิตในเครื่องไม่มีใบสั่งซื้อ จึงไม่มีปุ่มให้ใคร และข้อความชี้ไปที่คลังวัตถุดิบ
   assert.doesNotMatch(dialog, /data-bom-parts-buy/, "no purchase button in the in-browser demo");
   assert.match(dialog, /แจ้งคลังวัตถุดิบ \(ST\) ให้สั่งซื้อหรือรับเข้า/);
@@ -1473,11 +1494,39 @@ test("issuing parts from the PI page: the dialog lists every line, a shortage bl
   env.store.setUser("B08");
   assert.equal(env.store.run("countPartStock", { counts: [{ itemCode: "P-BOX-01", qty: 7 }] }).ok, true);
   dialog = D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html;
-  assert.match(dialog, /data-rf-action="issueOrderParts" data-rf-args="\{&quot;orderId&quot;:&quot;DEMO-26001&quot;\}"/);
+  assert.equal((dialog.match(/data-bom-issue-pick checked/g) ?? []).length, 7, "with stock for every line all lines start ticked");
+  assert.match(dialog, /เบิกเฉพาะรายการที่เลือก เบิกไม่ครบส่วนที่เหลือเบิกครั้งหน้าได้/);
   assert.doesNotMatch(dialog, /data-bom-parts-buy/);
-  // กด → เบิกจ่าย → ไม่มีอะไรเหลือ: ปุ่มและ dialog หาย
+  // ส่งฟอร์ม (บรรทัดที่เลือก = itemCode[] + qty[]): เบิกกล่อง 3 จาก 7 อย่างเดียว · ไม่เลือกเลย = แจ้งให้เลือก ไม่เขียนอะไร
+  await env.submit("p=orders&sel=DEMO-26001", "issueOrderParts", {}, { orderId: "DEMO-26001" });
+  assert.match(env.log.toasts.at(-1)[0], /เลือกรายการที่จะเบิกอย่างน้อยหนึ่งรายการ/);
+  await env.submit("p=orders&sel=DEMO-26001", "issueOrderParts", { "itemCode[]": ["P-BOX-01"], "qty[]": ["3"] }, { orderId: "DEMO-26001" });
+  const box01 = () => env.store.data().jobs.find((job) => job.orderId === "DEMO-26001" && job.dept === "ST" && job.itemCode === "P-BOX-01");
+  assert.deepEqual([box01().status, box01().qtyDone], ["in_progress", 3]);
+  dialog = D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html;
+  clean(dialog);
+  // ต้องเบิก = ส่วนที่เหลือ · ที่เบิกไปแล้วอยู่ใน title และข้อความสำหรับโปรแกรมอ่านหน้าจอ ไม่ใช่บรรทัดถาวร
+  assert.match(dialog, /<td class="right rf-mono" title="เบิกแล้ว 3 จาก 7">4 <span class="small muted">กล่อง<\/span><span class="sr-only"> \(เบิกแล้ว 3 จาก 7\)<\/span><\/td>/, "the next issue offers the remainder and says what was issued in the title");
+  assert.doesNotMatch(dialog, /<div class="small muted">เบิกแล้ว/, "no permanent issued line under the number");
+  assert.match(dialog, /max="4" value="4" required data-bom-issue-field aria-label="จำนวนที่เบิก P-BOX-01/);
+  // งานของคลังวัตถุดิบ: การ์ดรอเบิกแสดงส่วนที่เหลือ · ขั้น 4 บอกบรรทัดที่เบิกไปบางส่วน
+  html = await env.render("p=work&dept=ST");
+  assert.match(html, /กล่องนอก[^<]*<\/span><span class="nowrap">4 กล่อง</, "the waiting card shows the remainder of the partly issued line");
+  env.store.setUser("B03");
+  html = await env.render("p=orders&sel=DEMO-26001&step=4");
+  assert.match(html, /รอเบิกของ 7 จาก 7 รายการ \(เบิกไปบางส่วน 1 รายการ\)/);
+  env.store.setUser("B08");
+  // คืนของเหลือ: บรรทัดที่ยังเบิกไม่ครบคืนไม่ได้ (ไม่มีปุ่มเมื่อมีแต่บรรทัดแบบนี้) · ยกเลิกการเบิกจ่ายมีให้
+  html = await env.render("p=orders&sel=DEMO-26001");
+  assert.doesNotMatch(html, /data-rf-open="returnParts"/);
+  assert.match(html, /data-rf-open="undoParts"/);
+  const partialReturn = D.returnParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html;
+  assert.match(partialReturn, /name="qty\[\]" type="number" readonly[^>]*aria-label="P-BOX-01 ยังเบิกไม่ครบ คืนของเหลือได้เมื่อเบิกครบแล้ว"><div class="small muted">ยังเบิกไม่ครบ<\/div>/);
+  assert.match(D.undoParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html, /P-BOX-01[\s\S]*3 กล่อง/, "the undo gives back the partly issued 3");
+  // กด → เบิกจ่ายส่วนที่เหลือทั้งหมด → ไม่มีอะไรเหลือ: ปุ่มและ dialog หาย
   const issued = env.store.run("issueOrderParts", { orderId: "DEMO-26001" });
   assert.equal(issued.ok, true, issued.error?.message);
+  assert.deepEqual([box01().status, box01().qtyDone], ["done", 7]);
   html = await env.render("p=orders&sel=DEMO-26001");
   assert.doesNotMatch(html, /data-rf-open="issueParts"/);
   assert.equal(D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }), null);
@@ -1562,6 +1611,47 @@ test("returning parts from the PI page: the buttons appear only for ST and the p
   html = await env.render(page);
   assert.doesNotMatch(html, /data-rf-open="returnParts"/, "nothing left to return → no leftover button");
   assert.match(html, /data-rf-open="undoParts"/, "the undo stays");
+});
+
+test("a PI that closes while a part line is partly issued: the PI page offers the leftover return of that line (no issue, no undo), the dialog takes up to what was issued, and the ST work page has no dead waiting card", async () => {
+  const env = load();
+  const D = env.context.MNP_BOM_DIALOGS;
+  const page = "p=orders&sel=DEMO-26001";
+  env.store.setUser("B08"); // ST
+  const issued = env.store.run("issueOrderParts", { orderId: "DEMO-26001", lines: [{ itemCode: "P-STK-01", qty: 50 }] });
+  assert.equal(issued.ok, true, issued.error?.message);
+  let html = await env.render("p=work&dept=ST");
+  assert.match(html, /เบิกของตามใบ DEMO-26001/, "while the PI is open the waiting card is there");
+  // แถวงานของซื้อของใบนี้ที่หน้างานแผนก (ใบยังเปิด = มีลิงก์ไปเบิก)
+  const rowsOf = (text) => text.split("<tr").filter((row) => row.includes("orders&amp;sel=DEMO-26001") || row.includes("orders&sel=DEMO-26001"));
+  html = await env.render("p=jobs&dept=ST");
+  assert.ok(rowsOf(html).some((row) => row.includes("เบิกจ่ายที่ใบ PI")), "while the PI is open its part jobs link to the issue");
+  html = await env.render(page);
+  assert.doesNotMatch(html, /data-rf-open="returnParts"/, "an open PI: the partly issued line takes no leftover return");
+  // ใบปิด (คลังสินค้ารับครบ / ปิดใบรับไม่ครบ) ขณะบรรทัดยังเบิกไม่ครบ
+  env.store.data().orders.find((order) => order.id === "DEMO-26001").status = "completed";
+  html = await env.render(page);
+  assert.match(html, /data-rf-open="returnParts"[^>]*>คืนของเหลือ</, "the closed PI offers the leftover return of the partly issued line");
+  assert.doesNotMatch(html, /data-rf-open="issueParts"|data-rf-open="undoParts"/, "but no issue and no undo");
+  assert.equal(D.issueParts(env.ctx(page), { orderId: "DEMO-26001" }), null);
+  assert.equal(D.undoParts(env.ctx(page), { orderId: "DEMO-26001" }), null);
+  const dialog = D.returnParts(env.ctx(page), { orderId: "DEMO-26001" }).html;
+  clean(dialog);
+  assert.match(dialog, /name="qty\[\]" type="number" inputmode="decimal" step="any" min="0" max="50" placeholder="0" aria-label="จำนวนที่คืน P-STK-01/, "the line is editable up to the 50 issued");
+  assert.doesNotMatch(dialog, /ยังเบิกไม่ครบ/);
+  const sent = env.store.run("returnOrderParts", { orderId: "DEMO-26001", lines: [{ itemCode: "P-STK-01", qty: 50 }], reason: "ปิดใบแล้วเหลือ" });
+  assert.equal(sent.ok, true, sent.error?.message);
+  assert.equal(env.store.data().stock.find((row) => row.itemCode === "P-STK-01").qty, 400, "the 50 are back in stock");
+  html = await env.render(page);
+  assert.doesNotMatch(html, /data-rf-open="returnParts"/, "nothing left to return");
+  // งานของฉัน (ST) และหน้างานแผนก: ใบที่ปิดแล้วไม่มีการ์ดรอเบิกหรือปุ่มเบิกจ่ายที่กดอะไรไม่ได้
+  html = await env.render("p=work&dept=ST");
+  assert.doesNotMatch(html, /เบิกของตามใบ DEMO-26001/, "no waiting card for a closed PI");
+  html = await env.render("p=jobs&dept=ST");
+  assert.ok(rowsOf(html).length > 0 && rowsOf(html).every((row) => !row.includes("เบิกจ่ายที่ใบ PI")), "no issue link on the closed PI's part jobs");
+  env.store.setUser("B03"); // ฝ่ายวางแผน: แท็บ ST ของงานของฉันไม่นับการ์ดนั้น
+  html = await env.render("p=work&dept=ST");
+  assert.doesNotMatch(html, /เบิกของตามใบ DEMO-26001/);
 });
 
 test("import page: the group selected when pressing import is saved on new items, and a second import reuses the XP- subpart", async () => {
@@ -2273,7 +2363,8 @@ test("purchasing belongs to the raw-material store: the purchase dialog is read-
   assert.match(step2, /เคมีของเส้นยาง/, "the chemical table is there");
   assert.match(step2, /<tr class="bom-short">/, "with its short rows");
   assert.doesNotMatch(step2, /เคมีขาด \d+ จาก|เคมีพอทั้ง/, "no second count of the same shortage in the card header");
-  assert.match(step2, /ขั้น 2 · ตรวจของ <span class="muted">ของซื้อ/, "the header keeps the purchased parts summary");
+  assert.doesNotMatch(step2, /ขั้น 2 · ตรวจของ <span class="muted">/, "the header carries no summary of the purchased parts either: the table of the same card shows them");
+  assert.match(step2, /<h2>ขั้น 2 · ตรวจของ<\/h2>/);
   const args = { woIds: [], sourcePi: "DEMO-26002", draftOrders: chem.orders, parts: false };
   const order = env.context.MNP_RUBBERFLOW_DIALOGS.purchase(rfCtx(["purchase"]), args).html;
   clean(order);
@@ -2624,7 +2715,9 @@ test("receiving through the form asks once, sends at once, and the order closes 
   let html = await env.render("p=stock");
   clean(html);
   assert.match(html, /<h2>คงคลังสินค้าสำเร็จรูป<\/h2>/);
-  assert.match(html, /DEMO-TP-01\(P\)-Y[\s\S]*?<td class="right rf-mono">30 <span class="small muted">[^<]*<\/span><\/td><td><a class="rf-mono" href="[^"]*sel=DEMO-26001[^"]*">DEMO-26001<\/a> <span class="small muted">× 30<\/span>/, "on hand per code with the order that holds it");
+  assert.match(html, /DEMO-TP-01\(P\)-Y[\s\S]*?<td class="right rf-mono">30 <span class="small muted">[^<]*<\/span><\/td><td class="right rf-mono"><span class="muted">—<\/span><\/td><td><a class="rf-mono" href="[^"]*sel=DEMO-26001[^"]*">DEMO-26001<\/a> <span class="small muted">× 30<\/span>/, "in the warehouse and no free stock (the order still owes it), with the order that holds it");
+  assert.match(html, /<th class="right"[^>]*>อยู่ในคลัง<\/th>/);
+  assert.match(html, /<th class="right"[^>]*>สต็อกสินค้าสำเร็จรูป<\/th>/);
   html = await env.render(`p=orders&sel=${FG_PI}&step=5`);
   assert.equal(count(html, /name="qty\[\]"/g), 2);
   fgRun(env, "receiveFg", [[FG_TP, 50], [FG_HL, 40]]);
@@ -2643,7 +2736,7 @@ test("step 6: delivery per product with what is left prefilled, a compact histor
   assert.equal(count(html, /<li class="bom-step is-done"/g), 5, "steps 1 to 5 are done");
   assert.match(html, /<span class="rf-badge is-info">รอส่งมอบ<\/span>/, "closed and waiting for delivery");
   assert.doesNotMatch(html, /ส่งมอบแล้ว<\/span>/);
-  for (const head of ["รับเข้าคลังแล้ว", "ส่งมอบแล้ว", "คงเหลือในคลัง", "ส่งครั้งนี้"]) assert.match(html, new RegExp(`<th class="right">${head}</th>`), head);
+  for (const head of ["มีของในใบนี้", "ส่งมอบแล้ว", "คงเหลือส่งมอบได้", "ส่งครั้งนี้"]) assert.match(html, new RegExp(`<th class="right"[^>]*>${head}</th>`), head);
   assert.match(html, /data-rf-form="deliverFg"/);
   assert.match(html, /max="80" value="80"/);
   assert.match(html, /max="40" value="40"/);
@@ -2869,4 +2962,240 @@ test("component pickers do not offer finished goods: the builder's code list and
   input.value = "p-zip";
   handlers.input();
   assert.match(popup.innerHTML, /data-pick-value="P-ZIP-05"/);
+});
+
+// ---------- สต็อกสินค้าสำเร็จรูป (batch C): ขั้น 2 ตั้งยอดที่ใช้จากสต็อก · ขั้น 5/6 ส่วนเกินและของจากสต็อก · ใบที่ได้ครบจากสต็อก · ยกเลิก/เปิดใบคืนสต็อก ----------
+const FG_DRAFT = "DEMO-26002"; // HL 192 (ร่างที่ระเบิด BOM แล้ว)
+// PK รายงาน HL 60 (สั่ง 40) แล้ว WH รับเข้าครบ 60 → ส่วนเกิน 20 เป็นสต็อกสินค้าสำเร็จรูปของ HL · จบด้วยผู้ใช้ B09 (คลังสินค้า)
+const surplusEnv = () => {
+  const env = whLoad();
+  env.store.setUser("B09");
+  pkReport(env, { [FG_HL]: 60 });
+  fgRun(env, "receiveFg", [[FG_HL, 60]]);
+  return env;
+};
+const stepOneNewDraft = (env, id, qty) => {
+  env.store.setUser("B03");
+  const now = Date.now();
+  assert.equal(env.store.run("createOrder", { pi: id, customer: "ลูกค้าสต็อก", country: "Thailand", orderedAt: now, whDue: now + 10 * 86400000 }).ok, true);
+  assert.equal(env.store.run("addOrderItem", { orderId: id, fgCode: FG_HL, qty }).ok, true);
+  assert.equal(env.store.run("explodeOrder", { orderId: id }).ok, true);
+};
+
+test("draft step 2: a row per product with stock, the planner's input offers the maximum and saves only when saved, everyone else reads the saved number", async () => {
+  const env = surplusEnv();
+  env.store.setUser("B03");
+  let html = await env.render(`p=orders&sel=${FG_DRAFT}`);
+  clean(html);
+  assert.match(html, /<h3 class="bom-h3">สต็อกสินค้าสำเร็จรูป<\/h3>/);
+  assert.match(html, /<h2>ขั้น 2 · ตรวจของ<\/h2>/);
+  assert.match(html, /data-rf-form="setStockCounts" data-rf-args="\{&quot;orderId&quot;:&quot;DEMO-26002&quot;\}"/);
+  assert.match(html, /<input type="hidden" name="itemCode\[\]" value="DEMO-HL-24\(B\)-A">/);
+  assert.match(html, /name="qty\[\]" type="number" inputmode="decimal" step="any" min="0" max="20" value="20"/, "the offered value is the maximum: min(192 ordered, 20 in stock)");
+  assert.match(html, /<td class="right rf-mono">20<\/td>/, "the stock available to this draft");
+  assert.equal(env.store.data().orders.find((order) => order.id === FG_DRAFT).stockCounts[FG_HL], undefined, "offered, not saved");
+  // saving writes the amount; everyone else sees it read-only with no form
+  await env.submit(`p=orders&sel=${FG_DRAFT}`, "setStockCounts", { "itemCode[]": [FG_HL], "qty[]": ["15"] }, { orderId: FG_DRAFT });
+  assert.equal(env.log.toasts.at(-1)[0], "ok 1 รายการ");
+  assert.equal(env.store.data().orders.find((order) => order.id === FG_DRAFT).stockCounts[FG_HL], 15);
+  html = await env.render(`p=orders&sel=${FG_DRAFT}`);
+  assert.match(html, /name="qty\[\]"[^>]*value="15"/, "the saved value replaces the offer");
+  for (const id of ["B08", "B09", "B04"]) {
+    env.store.setUser(id);
+    html = await env.render(`p=orders&sel=${FG_DRAFT}`);
+    clean(html);
+    assert.match(html, /<h3 class="bom-h3">สต็อกสินค้าสำเร็จรูป<\/h3>/, `${id} sees the row`);
+    assert.doesNotMatch(html, /data-rf-form="setStockCounts"|name="itemCode\[\]"/, `${id} has no input`);
+    assert.match(html, /<td class="right">15 <span class="small muted">[^<]*<\/span><\/td>/, `${id} reads the saved amount`);
+  }
+  // ST / WH are refused by the action as well (a hand-made form)
+  env.store.setUser("B08");
+  await env.submit(`p=orders&sel=${FG_DRAFT}`, "setStockCounts", { "itemCode[]": [FG_HL], "qty[]": ["10"] }, { orderId: FG_DRAFT });
+  assert.match(env.log.toasts.at(-1)[0], /ฝ่ายวางแผนหรือผู้จัดการเท่านั้น/);
+  assert.equal(env.store.data().orders.find((order) => order.id === FG_DRAFT).stockCounts[FG_HL], 15);
+  // the raw-material table shows the reduced requirement only: the number in the calculation tab follows the amount (192 ordered, 15 taken, 177 to make)
+  env.store.setUser("B03");
+  html = await env.render(`p=orders&sel=${FG_DRAFT}`);
+  assert.match(html, /<tr class="bom-fg-row">[\s\S]*?<td class="right rf-mono">192<\/td><td>[^<]*<\/td><td class="right rf-mono">15<\/td><td class="right rf-mono">177<\/td>/, "the product row: ordered 192, from stock 15, to make 177");
+  // a draft that is not calculated, or a product with no stock at all, has no row
+  stepOneNewDraft(env, "N-NOSTOCK", 5);
+  env.store.data().fgMoves.length = 0;
+  html = await env.render("p=orders&sel=N-NOSTOCK");
+  assert.doesNotMatch(html, /<h3 class="bom-h3">สต็อกสินค้าสำเร็จรูป<\/h3>/, "no stock of the product: no row, each fact once");
+});
+
+test("draft step 2: two drafts see the stock once — the later one is offered what the earlier one leaves; step 3 says what will be taken and blocks a release the stock cannot cover", async () => {
+  const env = surplusEnv();
+  env.store.setUser("B03");
+  await env.submit(`p=orders&sel=${FG_DRAFT}`, "setStockCounts", { "itemCode[]": [FG_HL], "qty[]": ["15"] }, { orderId: FG_DRAFT });
+  stepOneNewDraft(env, "N-LATE", 30);
+  let html = await env.render("p=orders&sel=N-LATE");
+  clean(html);
+  assert.match(html, /name="qty\[\]"[^>]*max="5" value="5"/, "20 − 15 planned by the draft calculated before");
+  assert.match(html, /ใบร่างที่คำนวณก่อนตั้งใช้ไว้ 15/, "and says why");
+  // step 3 of the earlier draft: what will be taken, with the release button
+  html = await env.render(`p=orders&sel=${FG_DRAFT}&step=3`);
+  clean(html);
+  assert.match(html, /ใช้สต็อกสินค้าสำเร็จรูป <span class="rf-mono">DEMO-HL-24\(B\)-A<\/span> × 15 หักจากสต็อกเมื่อปล่อยผลิต/);
+  assert.match(html, /ระบบจะหักสต็อกสินค้าสำเร็จรูป DEMO-HL-24\(B\)-A × 15/, "the confirmation says it too");
+  assert.match(html, />ปล่อยผลิต<\/button>/);
+  // the stock shrinks under it (WH delivers 50 of the 60 pieces of the source order): the release is blocked on the page with the reason
+  env.store.setUser("B09");
+  fgRun(env, "deliverFg", [[FG_HL, 50]]);
+  env.store.setUser("B03");
+  html = await env.render(`p=orders&sel=${FG_DRAFT}&step=3`);
+  assert.match(html, /ปล่อยผลิตไม่ได้ สต็อกสินค้าสำเร็จรูปไม่พอที่ตั้งใช้: DEMO-HL-24\(B\)-A เหลือ 10 ตั้งใช้ 15/);
+  assert.doesNotMatch(html, />ปล่อยผลิต<\/button>/, "no release button");
+  assert.match(html, /กลับไปตั้งยอดใหม่ที่ขั้น 2/);
+});
+
+test("steps 5 and 6 with stock: what came from stock is its own column only when non-zero, the history names the other order, and the stock page shows free stock with the orders holding it", async () => {
+  const env = surplusEnv();
+  env.store.setUser("B03");
+  await env.submit(`p=orders&sel=${FG_DRAFT}`, "setStockCounts", { "itemCode[]": [FG_HL], "qty[]": ["20"] }, { orderId: FG_DRAFT });
+  assert.equal(env.store.run("releaseOrder", { orderId: FG_DRAFT }).ok, true);
+  env.store.setUser("B09");
+  // the receiving order of DEMO-26001 has no column (nothing came from stock to it); the draft's order does
+  let html = await env.render(`p=orders&sel=${FG_PI}&step=5`);
+  assert.doesNotMatch(html, /ได้จากสต็อก<\/th>|<th class="right"[^>]*>ได้จากสต็อก/);
+  html = await env.render(`p=orders&sel=${FG_DRAFT}&step=5`);
+  clean(html);
+  assert.match(html, /<th class="right"[^>]*>ได้จากสต็อก<\/th>/);
+  assert.match(html, /<td class="right rf-mono">192<\/td><td class="right rf-mono">0<\/td><td class="right rf-mono">0<\/td><td class="right rf-mono">20<\/td><td class="right rf-mono">0<\/td>/, "ordered 192, PK 0, received 0, from stock 20, waiting 0");
+  // step 6 of the draft's order: it holds 20 for its own customer, the history names the source order
+  html = await env.render(`p=orders&sel=${FG_DRAFT}&step=6`);
+  clean(html);
+  assert.match(html, /<h3 class="bom-h3">ประวัติรับเข้า ส่งมอบ และสต็อก<\/h3>/);
+  assert.match(html, /ได้จากสต็อกของใบ <a class="rf-mono" href="[^"]*sel=DEMO-26001[^"]*">DEMO-26001<\/a>/);
+  assert.match(html, /max="20" value="20"/, "the customer of the draft's order waits for the 20 it holds");
+  // the source order: gave 20 away (its own column), may deliver its 40 and the 20 are not an extra to deliver
+  html = await env.render(`p=orders&sel=${FG_PI}&step=6`);
+  clean(html);
+  assert.match(html, /<th class="right"[^>]*>ให้ใบอื่นแล้ว<\/th>/);
+  assert.match(html, /ให้ใบ <a class="rf-mono" href="[^"]*sel=DEMO-26002[^"]*">DEMO-26002<\/a> ใช้จากสต็อก/, "the source's history names the order that took it");
+  assert.match(html, /max="40" value="40"/, "60 held − 20 given away");
+  // the stock page: in the warehouse 60 (both orders), free stock none (the source's 20 went to the draft)
+  html = await env.render("p=stock");
+  clean(html);
+  assert.match(html, /DEMO-HL-24\(B\)-A[\s\S]*?<td class="right rf-mono">60 <span class="small muted">[^<]*<\/span><\/td><td class="right rf-mono"><span class="muted">—<\/span><\/td>/);
+  assert.match(html, /DEMO-26002<\/a> <span class="small muted">× 20<\/span>/, "the order holding stock");
+});
+
+test("an order released entirely from stock has no jobs: its step bar skips production, it waits at delivery, and the warehouse gets a card to deliver", async () => {
+  const env = surplusEnv();
+  stepOneNewDraft(env, "N-FULL", 12);
+  env.store.setUser("B03");
+  await env.submit("p=orders&sel=N-FULL", "setStockCounts", { "itemCode[]": [FG_HL], "qty[]": ["12"] }, { orderId: "N-FULL" });
+  assert.match(await env.render("p=orders&sel=N-FULL&step=3"), /ได้ครบทุกสินค้า ไม่มีงานผลิต ปล่อยแล้วใบปิดทันทีและไปที่ขั้นส่งมอบลูกค้า/);
+  assert.doesNotMatch(await env.render("p=orders&sel=N-FULL&step=3"), /ปล่อยผลิตแล้วระบบสร้างงานให้แต่ละแผนก/, "no list of jobs to create");
+  assert.equal(env.store.run("releaseOrder", { orderId: "N-FULL" }).ok, true);
+  const order = env.store.data().orders.find((entry) => entry.id === "N-FULL");
+  assert.equal(order.status, "completed");
+  assert.equal(env.store.data().jobs.filter((job) => job.orderId === "N-FULL").length, 0);
+  env.store.setUser("B09");
+  let html = await env.render("p=orders&sel=N-FULL");
+  clean(html);
+  assert.match(html, /<li class="bom-step is-now" aria-current="step"><div><span class="bom-step-no">ขั้น 6/, "waiting at delivery");
+  assert.equal(count(html, /<span class="bom-step-no">ข้าม<\/span>/g), 2, "steps 4 and 5 are skipped");
+  assert.match(html, /ใช้สต็อกสินค้าสำเร็จรูป<\/span>/);
+  assert.match(html, /<span class="rf-badge is-info">รอส่งมอบ<\/span>/);
+  assert.match(html, /max="12" value="12"/, "deliver the 12 it holds");
+  assert.match(await env.render("p=orders"), /ใช้สต็อก ไม่มีงานผลิต/, "the list says there are no jobs because of the stock");
+  html = await env.render("p=orders&sel=N-FULL&step=5");
+  assert.match(html, /ใบนี้ได้สินค้าครบจากสต็อกสินค้าสำเร็จรูป ไม่มีงานผลิตและไม่มีของให้รับเข้าคลัง/);
+  const work = await env.render("p=work");
+  assert.match(work, /<h2>ส่งมอบให้ลูกค้าตามใบ N-FULL<\/h2>/);
+  fgRunFor(env, "N-FULL", "deliverFg", [[FG_HL, 12]]);
+  html = await env.render("p=orders&sel=N-FULL");
+  assert.match(html, /<span class="rf-badge is-good">ส่งมอบแล้ว<\/span>/);
+  assert.doesNotMatch(await env.render("p=work"), /ตามใบ N-FULL/);
+  // the buttons of a closed order: nothing to cancel or edit
+  env.store.setUser("B03");
+  html = await env.render("p=orders&sel=N-FULL");
+  assert.doesNotMatch(html, /data-rf-action="cancelOrder"|data-rf-open="orderItemEdit"/);
+});
+const fgRunFor = (env, orderId, action, lines) => { const result = env.store.run(action, { orderId, lines: lines.map(([fgCode, qty]) => ({ fgCode, qty })) }); assert.equal(result.ok, true, result.error?.message); return result; };
+
+test("a closed order with surplus PK made: WH gets a receive card and the form, wording says surplus going to stock; the planning group only reads", async () => {
+  const env = whLoad();
+  env.store.setUser("B09");
+  pkReport(env, { [FG_TP]: 80, [FG_HL]: 60 });
+  fgRun(env, "receiveFg", [[FG_TP, 80], [FG_HL, 40]]);
+  assert.equal(env.store.data().orders.find((order) => order.id === FG_PI).status, "completed");
+  let html = await env.render(`p=orders&sel=${FG_PI}&step=5`);
+  clean(html);
+  assert.match(html, /ใบนี้ปิดแล้ว ส่วนที่ PK ผลิตเกินจำนวนสั่งรับเข้าคลังได้ และเป็นสต็อกสินค้าสำเร็จรูปที่ใบสั่งผลิตอื่นนำไปใช้ได้/);
+  assert.match(html, /<th class="right"[^>]*>รอรับ \(ส่วนเกิน\)<\/th>/);
+  assert.match(html, /<th class="right"[^>]*>รับเป็นสต็อก<\/th>/);
+  assert.match(html, /max="20" value="20"/);
+  assert.match(html, /data-rf-confirm="รับส่วนที่ PK ผลิตเกินเข้าคลังเป็นสต็อกสินค้าสำเร็จรูป[^"]*">รับส่วนเกินเข้าคลัง<\/button>/);
+  const work = await env.render("p=work");
+  clean(work);
+  assert.match(work, /<span class="bom-job-state">รอรับส่วนเกินเข้าคลัง<\/span>/);
+  assert.match(work, /<h2>รับส่วนเกินเข้าคลังตามใบ DEMO-26001<\/h2>/);
+  assert.match(work, /href="[^"]*sel=DEMO-26001&amp;step=5"[^>]*>เปิดใบเพื่อรับเข้าคลัง<\/a>/);
+  assert.match(work, /<span class="rf-mono">DEMO-HL-24\(B\)-A<\/span><span class="nowrap">20<\/span>/);
+  // the planning group reads the same table with no form
+  env.store.setUser("B03");
+  html = await env.render(`p=orders&sel=${FG_PI}&step=5`);
+  assert.doesNotMatch(html, /data-rf-form="receiveFg"|name="qty\[\]"/);
+  assert.match(html, /คลังสินค้า \(WH\) เป็นผู้รับสินค้าเข้าคลัง/);
+  // the receive through the form: the order stays closed and the 20 become stock
+  env.store.setUser("B09");
+  await env.submit(`p=orders&sel=${FG_PI}&step=5`, "receiveFg", { "fgCode[]": [FG_TP, FG_HL], "qty[]": ["", "20"] }, { orderId: FG_PI });
+  assert.equal(env.log.toasts.at(-1)[0], "ok 1 รายการ");
+  assert.equal(env.store.data().orders.find((order) => order.id === FG_PI).status, "completed");
+  html = await env.render("p=stock");
+  assert.match(html, /DEMO-HL-24\(B\)-A[\s\S]*?<td class="right rf-mono">60 <span class="small muted">[^<]*<\/span><\/td><td class="right rf-mono">20 <span class="small muted">[^<]*<\/span><\/td>/, "60 in the warehouse, 20 of them free stock");
+  assert.match(html, /DEMO-26001<\/a> <span class="small muted">× 60 \(ว่าง 20\)<\/span>/, "the order holding it, with its free part");
+  assert.doesNotMatch(await env.render("p=work"), /รับส่วนเกินเข้าคลัง/, "nothing left to receive");
+  // step 6: the 40 the customer waits for are prefilled; the 20 are shown as beyond the order
+  html = await env.render(`p=orders&sel=${FG_PI}&step=6`);
+  assert.match(html, /เกินที่สั่ง 20/);
+  assert.match(html, /max="60" value="40"/, "the surplus is not filled in for delivery");
+  assert.match(html, /ส่วนที่เกินที่สั่งเป็นสต็อกสินค้าสำเร็จรูป ใบสั่งผลิตอื่นนำไปใช้ได้/);
+});
+
+test("cancel and reopen of an order that took stock: the confirmation says the stock goes back; after a delivery or giving stock away the buttons explain why they are gone", async () => {
+  const env = surplusEnv();
+  env.store.setUser("B03");
+  await env.submit(`p=orders&sel=${FG_DRAFT}`, "setStockCounts", { "itemCode[]": [FG_HL], "qty[]": ["20"] }, { orderId: FG_DRAFT });
+  assert.equal(env.store.run("releaseOrder", { orderId: FG_DRAFT }).ok, true);
+  let html = await env.render(`p=orders&sel=${FG_DRAFT}`);
+  clean(html);
+  assert.match(html, /data-rf-action="cancelOrder"[^>]*data-rf-confirm="ยกเลิกใบสั่งผลิตนี้\? สินค้าสำเร็จรูปที่ใบนี้ใช้จากสต็อก \(DEMO-HL-24\(B\)-A × 20 จากใบ DEMO-26001\) จะคืนเข้าสต็อกให้อัตโนมัติ/);
+  assert.match(html, /data-rf-open="orderItemEdit"/, "the item can be edited (reopens the order)");
+  assert.match(html, /data-rf-confirm="ลบ DEMO-HL-24\(B\)-A ออกจากใบ DEMO-26002\?[^"]*จะคืนเข้าสต็อกให้อัตโนมัติ/, "and the removal says the stock goes back");
+  assert.match(env.context.MNP_BOM_DIALOGS.orderItemEdit(env.ctx(`p=orders&sel=${FG_DRAFT}`), { orderId: FG_DRAFT, fgCode: FG_HL }).html, /จะคืนเข้าสต็อกให้อัตโนมัติ/, "the edit dialog warns too");
+  // the source order gave 20 away: it can neither be cancelled nor reopened, and says so
+  html = await env.render(`p=orders&sel=${FG_PI}`);
+  assert.doesNotMatch(html, /data-rf-action="cancelOrder"/);
+  assert.match(html, /ยกเลิกใบหรือแก้รายการไม่ได้: ให้สินค้าจากสต็อกแก่ใบ DEMO-26002 ไปแล้ว/);
+  // after a delivery to the draft's customer: no cancel, no edit, with the reason
+  env.store.setUser("B09");
+  fgRunFor(env, FG_DRAFT, "deliverFg", [[FG_HL, 5]]);
+  env.store.setUser("B03");
+  html = await env.render(`p=orders&sel=${FG_DRAFT}`);
+  assert.doesNotMatch(html, /data-rf-action="cancelOrder"|data-rf-open="orderItemEdit"/);
+  assert.match(html, /ยกเลิกใบหรือแก้รายการไม่ได้: ส่งมอบสินค้าให้ลูกค้าแล้ว/);
+});
+
+test("an inserted WIP item whose production steps could not be updated says so plainly: what was saved, what was not, and what to do", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const parent = "DEMO-TP-01(P)-Y";
+  const child = "PT-00320";
+  const processes = env.context.MNP_BOM_ACTIONS.helpers.processesOf(env.store.data()).filter((entry) => entry.dept === "PK").slice(0, 2).map((entry) => entry.code);
+  assert.equal(env.store.run("saveRouting", { itemCode: parent, steps: [{ processCode: processes[0], minutesPerPc: 1, inputs: [] }, { processCode: processes[1], minutesPerPc: 1, inputs: [child] }] }).ok, true);
+  const real = env.context.MNP_BOM_ACTIONS.saveRouting;
+  env.context.MNP_BOM_ACTIONS.saveRouting = () => { throw new Error("บันทึกขั้นตอนผลิตไม่สำเร็จ"); };
+  await env.submit("p=find", "saveBomTree", { wipCode: "WIP-FAIL-1", wipName: "ชุดประกอบ", wipKind: "SUBPART", wipUom: "pcs", wipQty: "1", childQty: "" }, { wipInsert: true, code: parent, childCode: child });
+  env.context.MNP_BOM_ACTIONS.saveRouting = real;
+  assert.ok(env.store.data().boms.find((bom) => bom.itemCode === parent && bom.status === "approved").lines.some((line) => line.childCode === "WIP-FAIL-1"), "the BOM has the WIP");
+  const [message, kind] = env.log.toasts.at(-1);
+  assert.equal(kind, "error");
+  assert.match(message, /แทรก WIP WIP-FAIL-1 ใน BOM ของ DEMO-TP-01\(P\)-Y แล้ว/, "what was saved");
+  assert.match(message, /แต่ยังไม่ได้ปรับขั้นตอนผลิตของ DEMO-TP-01\(P\)-Y ให้อ้าง WIP นี้แทน PT-00320/, "what was not");
+  assert.match(message, /เปิดหน้าของ DEMO-TP-01\(P\)-Y แล้วแก้ขั้นตอนผลิตเอง/, "what to do");
+  assert.match(message, /บันทึกขั้นตอนผลิตไม่สำเร็จ/, "and the cause");
 });
