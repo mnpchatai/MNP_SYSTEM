@@ -1506,7 +1506,8 @@ test("importing a pasted BOMSHEET writes through the mock database, survives a p
 
 test("the mock database enforces the contract: test mode, writer permission, per-record versions, delta replies and the basic BOM rules", async () => {
   const { client, db } = createMockSupabase({ sandbox: true, now: () => NOW });
-  const save = (changes, version = 0, action = "t") => client.rpc("app_bom_save_master", { p_changes: changes, p_base_version: version, p_action: action });
+  // ชื่อ action ต้องอยู่ในรายการของฐานข้อมูล (private.bom_client_actions) ไม่งั้น BOM_INVALID_ACTION ก่อนอย่างอื่น
+  const save = (changes, version = 0, action = "saveItem") => client.rpc("app_bom_save_master", { p_changes: changes, p_base_version: version, p_action: action });
   const since = (version) => client.rpc("app_bom_master_since", { p_version: version });
   const item = (code, kind = "PURCHASED") => ({ code, kind, name: code, ownerDept: "ST", uom: "pcs", weightG: 0, legacyCodes: [], active: true });
   const bom = (id, itemCode, status, childCode, qty = 1) => ({ id, itemCode, revision: 1, status, ownerDept: "PK", lines: [{ childCode, qty }], note: "" });
@@ -1564,7 +1565,7 @@ test("the mock database enforces the contract: test mode, writer permission, per
   // ชุดสี/แพ็กเกจ: ลบ → หลุมฝังศพ → ส่ง delete ใน delta · ผู้อื่นลบแล้วแก้/ลบซ้ำจาก base เก่า = ชน
   assert.equal((await save({ colorSets: { upsert: [{ base: "X", code: "A", slots: [] }] }, packages: { upsert: [{ base: "X", code: "P", lines: [] }] } }, 6)).error, null);
   const removed = await save({ colorSets: { delete: [{ base: "X", code: "A" }] }, compounds: { delete: [{ code: "x" }] } }, 7);
-  assert.equal(removed.error.code, "BOM_INVALID_CHANGES", "only colour sets and packages can be deleted");
+  assert.equal(removed.error.code, "BOM_INVALID_PAYLOAD", "only colour sets, packages and jobs can be deleted (the payload shape check of app_bom_save_master)");
   assert.equal((await save({ colorSets: { delete: [{ base: "X", code: "A" }] } }, 6)).error.code, "BOM_STALE", "deleting a record that changed after the base");
   const deleted = await save({ colorSets: { delete: [{ base: "X", code: "A" }] } }, 7);
   assert.deepEqual(deleted.data.changes.colorSets, { upsert: [], delete: [{ base: "X", code: "A" }] }, "a deletion is a tombstone in the reply");
@@ -1595,12 +1596,12 @@ test("the mock database enforces the contract: test mode, writer permission, per
   const outside = createMockSupabase({ now: () => NOW });
   assert.equal((await outside.client.rpc("app_bom_master")).error.code, "BOM_TEST_MODE_ONLY");
   assert.equal((await outside.client.rpc("app_bom_master_since", { p_version: 0 })).error.code, "BOM_TEST_MODE_ONLY");
-  assert.equal((await outside.client.rpc("app_bom_save_master", { p_changes: {}, p_base_version: 0, p_action: "t" })).error.code, "BOM_TEST_MODE_ONLY");
+  assert.equal((await outside.client.rpc("app_bom_save_master", { p_changes: {}, p_base_version: 0, p_action: "saveItem" })).error.code, "BOM_TEST_MODE_ONLY");
 });
 
 test("the mock database follows the real revision rule: owner department and an appended change log may change, anything else is BOM_REVISION_IMMUTABLE", async () => {
   const { client } = createMockSupabase({ sandbox: true, now: () => NOW });
-  const save = (changes, version) => client.rpc("app_bom_save_master", { p_changes: changes, p_base_version: version, p_action: "t" });
+  const save = (changes, version) => client.rpc("app_bom_save_master", { p_changes: changes, p_base_version: version, p_action: "saveBom" });
   const part = (code, kind) => ({ code, kind, name: code, ownerDept: "ST", uom: "pcs", weightG: 0, legacyCodes: [], active: true });
   const bom = { id: "B1", itemCode: "FG-1", revision: 1, status: "approved", ownerDept: "PK", lines: [{ childCode: "P-1", qty: 1 }], note: "", changeLog: [{ at: NOW, by: "ก", text: "สร้าง" }] };
   assert.equal((await save({ items: { upsert: [part("FG-1", "FG"), part("P-1", "PURCHASED")] } }, 0)).error, null);
@@ -1661,7 +1662,8 @@ test("the mock database checks orders and jobs per section and per field for the
   const as = (persona) => client.rpc("app_sandbox_enter", { p_persona_id: persona });
   let version = 0;
   const save = async (changes, audit = [], base = version) => {
-    const reply = await client.rpc("app_bom_save_master", { p_changes: changes, p_base_version: base, p_action: "t", p_audit: audit });
+    // reportJob อยู่ทั้งในรายการของ client และของพนักงาน: ผ่านด่านหยาบของทุกบัญชี แล้วกฎรายส่วน/รายช่องตัดสินต่อ
+    const reply = await client.rpc("app_bom_save_master", { p_changes: changes, p_base_version: base, p_action: "reportJob", p_audit: audit });
     if (!reply.error) version = reply.data.version;
     return reply;
   };
@@ -1775,7 +1777,7 @@ test("the mock database stores one audit row per save (the server's own action a
 test("the mock purge empties every BOM list, keeps the counter, changes the epoch and adds an audit row; only the real admin in the test mode may call it", async () => {
   const storage = memoryStorage();
   const { client, db } = createMockSupabase({ sandbox: true, now: () => NOW, storage });
-  await client.rpc("app_bom_save_master", { p_changes: { customers: { upsert: [{ name: "A", country: "Thailand", orderType: "SA" }] }, orders: { upsert: [mockOrder("PI-1")] } }, p_base_version: 0, p_action: "t", p_audit: [{ action: "x", detail: "y" }] });
+  await client.rpc("app_bom_save_master", { p_changes: { customers: { upsert: [{ name: "A", country: "Thailand", orderType: "SA" }] }, orders: { upsert: [mockOrder("PI-1")] } }, p_base_version: 0, p_action: "createOrder", p_audit: [{ action: "x", detail: "y" }] });
   await client.rpc("app_sandbox_enter", { p_persona_id: "persona-qa" });
   const before = (await client.rpc("app_bom_master")).data;
   assert.equal((await client.rpc("app_sandbox_purge_bom")).data.deleted, 2, "the persona does not matter: the real user is the admin");
@@ -1783,10 +1785,12 @@ test("the mock purge empties every BOM list, keeps the counter, changes the epoc
   assert.deepEqual([master.version, master.orders.length, master.customers.length], [before.version, 0, 0], "the counter goes on");
   assert.notEqual(master.epoch, before.epoch, "the data round has a new epoch");
   const audit = (await client.rpc("app_bom_audit", {})).data;
-  assert.deepEqual(audit.map((row) => row.action), ["ล้างข้อมูล BOM ทดสอบ", "t"], "the history is kept and the purge adds its own row");
+  assert.deepEqual(audit.map((row) => row.action), ["ล้างข้อมูล BOM ทดสอบ", "createOrder"], "the history is kept and the purge adds its own row");
   assert.equal(audit[0].detail, "ลบ 2 แถว");
   assert.equal((await client.rpc("app_bom_master_since", { p_version: 1 })).data.epoch, master.epoch, "a browser that is only behind by version sees the new epoch");
-  assert.equal((await client.rpc("app_bom_save_master", { p_changes: { customers: { upsert: [{ name: "Z", country: "Thailand", orderType: "SA" }] } }, p_base_version: 1, p_action: "t", p_epoch: before.epoch })).error.code, "BOM_RESET", "a save that holds the old epoch is refused");
+  // บัญชีทดสอบ QA ไม่ใช่กลุ่มวางแผน: ด่านหยาบ (BOM_FORBIDDEN) มาก่อนการตรวจ epoch เหมือนฐานข้อมูลจริง จึงตรวจ epoch ด้วยบัญชีกลุ่มวางแผน
+  await client.rpc("app_sandbox_enter", { p_persona_id: "persona-pp" });
+  assert.equal((await client.rpc("app_bom_save_master", { p_changes: { customers: { upsert: [{ name: "Z", country: "Thailand", orderType: "SA" }] } }, p_base_version: 1, p_action: "saveCustomer", p_epoch: before.epoch })).error.code, "BOM_RESET", "a save that holds the old epoch is refused");
   assert.equal((await client.rpc("app_bom_master")).data.customers.length, 0, "and wrote nothing");
   assert.equal(JSON.parse(storage.getItem("mnp-harness-bom-master")).version, before.version, "the page storage keeps the counter too");
   assert.equal(JSON.parse(storage.getItem("mnp-harness-bom-master")).epoch, master.epoch);
@@ -1798,8 +1802,8 @@ test("the mock purge empties every BOM list, keeps the counter, changes the epoc
 test("the mock database keeps its data, record versions and tombstones in the page storage", async () => {
   const storage = memoryStorage();
   const first = createMockSupabase({ sandbox: true, now: () => NOW, storage });
-  await first.client.rpc("app_bom_save_master", { p_changes: { compounds: { upsert: [{ code: "DM01", name: "x" }] }, colorSets: { upsert: [{ base: "X", code: "A", slots: [] }] } }, p_base_version: 0, p_action: "t" });
-  await first.client.rpc("app_bom_save_master", { p_changes: { colorSets: { delete: [{ base: "X", code: "A" }] } }, p_base_version: 1, p_action: "t" });
+  await first.client.rpc("app_bom_save_master", { p_changes: { compounds: { upsert: [{ code: "DM01", name: "x" }] }, colorSets: { upsert: [{ base: "X", code: "A", slots: [] }] } }, p_base_version: 0, p_action: "saveColorSet" });
+  await first.client.rpc("app_bom_save_master", { p_changes: { colorSets: { delete: [{ base: "X", code: "A" }] } }, p_base_version: 1, p_action: "removeColorSet" });
   const second = createMockSupabase({ sandbox: true, now: () => NOW, storage });
   const { data } = await second.client.rpc("app_bom_master");
   assert.equal(data.version, 2);
@@ -1809,7 +1813,7 @@ test("the mock database keeps its data, record versions and tombstones in the pa
   assert.deepEqual(delta.changes.colorSets.delete, [{ base: "X", code: "A" }], "the tombstone survives a reload");
   assert.deepEqual(delta.changes.compounds.upsert, [], "and so do the record versions");
   const broken = createMockSupabase({ sandbox: true, now: () => NOW, storage: { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } } });
-  assert.equal((await broken.client.rpc("app_bom_save_master", { p_changes: { compounds: { upsert: [{ code: "DM02", name: "y" }] } }, p_base_version: 0, p_action: "t" })).data.version, 1, "a blocked storage keeps the data in memory");
+  assert.equal((await broken.client.rpc("app_bom_save_master", { p_changes: { compounds: { upsert: [{ code: "DM02", name: "y" }] } }, p_base_version: 0, p_action: "linkCompound" })).data.version, 1, "a blocked storage keeps the data in memory");
 });
 
 test("focusing the page catches up with other users' saves and redraws only when something changed", async () => {
@@ -2186,7 +2190,7 @@ test("a department member's report goes through the mock database as a field-lim
   const other = rb.ctx().runAction("reportJob", { jobId: "JOB-GR1", qtyDone: 1 }, "x");
   assert.equal(other, false);
   assert.match(rb.log.toasts.at(-1)[0], /รายงานผลได้โดยแผนก GR/);
-  const direct = await rb.mock.client.rpc("app_bom_save_master", { p_changes: { jobs: { upsert: [{ ...database.jobs.find((row) => row.id === "JOB-GR1"), qtyDone: 1 }] } }, p_base_version: database.version, p_action: "t" });
+  const direct = await rb.mock.client.rpc("app_bom_save_master", { p_changes: { jobs: { upsert: [{ ...database.jobs.find((row) => row.id === "JOB-GR1"), qtyDone: 1 }] } }, p_base_version: database.version, p_action: "reportJob" });
   assert.equal(direct.error.code, "BOM_FORBIDDEN");
 });
 
@@ -2215,7 +2219,7 @@ async function stalenessScene() {
   const { client } = createMockSupabase({ sandbox: true, now: () => NOW });
   const enter = (persona) => client.rpc("app_sandbox_enter", { p_persona_id: persona });
   const state = { version: 0 };
-  const rpc = async (changes, action = "t") => {
+  const rpc = async (changes, action = "reportJob") => {
     const data = unwrapReply(await client.rpc("app_bom_save_master", { p_changes: changes, p_base_version: state.version, p_action: action }));
     state.version = data.version;
     return data;
@@ -2334,7 +2338,7 @@ test("the mock database refuses what production refuses: new orders start as dra
   const as = (persona) => client.rpc("app_sandbox_enter", { p_persona_id: persona });
   let version = 0;
   const save = async (changes, base = version) => {
-    const reply = await client.rpc("app_bom_save_master", { p_changes: changes, p_base_version: base, p_action: "t" });
+    const reply = await client.rpc("app_bom_save_master", { p_changes: changes, p_base_version: base, p_action: "reportJob" });
     if (!reply.error) version = reply.data.version;
     return reply;
   };
@@ -2387,7 +2391,7 @@ test("the mock database refuses what production refuses: new orders start as dra
 
 test("the mock database judges a stale copy as stale before it looks at permissions or content", async () => {
   const scene = await stalenessScene();
-  const save = async (changes, base, action = "t") => (await scene.client.rpc("app_bom_save_master", { p_changes: changes, p_base_version: base, p_action: action })).error?.code ?? null;
+  const save = async (changes, base, action = "reportJob") => (await scene.client.rpc("app_bom_save_master", { p_changes: changes, p_base_version: base, p_action: action })).error?.code ?? null;
   const base = (await scene.view()).version;
   const job = await scene.cur("jobs", "JOB-X-GR");
   const entry = { at: 1, by: "x", good: 2, reject: 0, note: "" };
@@ -3558,11 +3562,17 @@ test("the mock database follows the finished-goods contract: payload shapes firs
   // shapes (BOM_INVALID_FG): sections, actions, rows, lines, notes
   const row = request("PI-F", "receive", [{ fgCode: "FG-1", qty: 1 }]);
   assert.equal(await code(save({ fgMoves: { upsert: [row] } }, "countPartStock")), "BOM_INVALID_FG", "fgMoves only with the three finished-goods actions");
-  assert.equal(await code(save({ fgMoves: { upsert: [row] } }, "t")), "BOM_INVALID_FG");
+  assert.equal(await code(save({ fgMoves: { upsert: [row] } }, "t")), "BOM_FORBIDDEN", "an unknown action from a non-planner is refused by the coarse gate first");
   assert.equal(await code(save({ fgMoves: { upsert: [row] }, customers: { upsert: [{ name: "Z" }] } }, "receiveFg")), "BOM_INVALID_FG", "a receipt carries only fgMoves");
   assert.equal(await code(save({ jobs: { upsert: [await s.job("J-F1")] } }, "receiveFg")), "BOM_INVALID_FG");
-  assert.equal(await code(save({}, "receiveFg")), "BOM_INVALID_FG", "no request at all");
-  assert.equal(await code(save({ fgMoves: { delete: [] } }, "receiveFg")), "BOM_INVALID_FG", "no deletes");
+  for (const action of ["receiveFg", "deliverFg", "closeOrderShort"]) {
+    assert.equal(await code(save({}, action)), "BOM_INVALID_FG", `${action}: no request at all`);
+    assert.equal(await code(save({ fgMoves: { upsert: [] } }, action)), "BOM_INVALID_FG", `${action}: an empty request list`);
+  }
+  // delete ส่งได้เฉพาะ colorSets / packages / jobs (วงตรวจรูปของ app_bom_save_master ตรวจก่อนกฎของสำเร็จรูป) = BOM_INVALID_PAYLOAD แม้รายการว่าง
+  assert.equal(await code(save({ fgMoves: { delete: [] } }, "receiveFg")), "BOM_INVALID_PAYLOAD", "no deletes");
+  assert.equal(await code(save({ fgMoves: { upsert: [row], delete: [] } }, "receiveFg")), "BOM_INVALID_PAYLOAD", "not even next to a request");
+  assert.equal(await code(save({ items: { delete: [] } }, "receiveFg")), "BOM_INVALID_PAYLOAD", "and no other list but colour sets, packages and jobs takes deletes");
   assert.equal(await code(save({ fgMoves: { upsert: [row, row] } }, "receiveFg")), "BOM_INVALID_FG", "one request per call");
   assert.equal(await code(fg(request("PI-F", "deliver", [{ fgCode: "FG-1", qty: 1 }]), "receiveFg")), "BOM_INVALID_FG", "the action and the kind must match");
   assert.equal(await code(fg(request("PI-F", "close", undefined, { note: "เหตุผล" }), "deliverFg")), "BOM_INVALID_FG");
@@ -3648,7 +3658,9 @@ test("the mock database receives and delivers finished goods: caps from PK, part
   assert.equal(new Set(data.fgMoves.map((move) => move.id)).size, data.fgMoves.length, "unique ids");
   const audit = (await s.rpc("app_bom_audit")).data;
   assert.equal(audit[0].action, "deliverFg");
-  assert.equal(audit[0].detail, "fgMoves +1", "the audit counts the section");
+  assert.equal(audit[0].detail, "fgMoves +2", "the audit counts the history rows written (two products delivered), like the database");
+  assert.deepEqual(audit.filter((row) => row.action === "receiveFg").map((row) => row.detail), ["fgMoves +1, orders +1", "fgMoves +1", "fgMoves +1", "fgMoves +1"],
+    "a receipt that closes the order also counts the order (newest first)");
   const since = (await s.rpc("app_bom_master_since", { p_version: (await s.version()) - 1 })).data;
   assert.deepEqual(since.changes.fgMoves.upsert.map((move) => [move.kind, move.fgCode]), [["deliver", "FG-1"], ["deliver", "FG-2"]], "the delta lists only what the last call wrote");
   assert.deepEqual(since.changes.fgMoves.delete, []);
@@ -3679,6 +3691,8 @@ test("the mock database closes an order short: every PK job done, everything PK 
   const done = await close(" PK ทำได้ไม่ครบ ลูกค้ารับเท่าที่มี ");
   assert.equal(done.error, null);
   assert.equal(done.data.changes.orders.upsert[0].status, "completed");
+  const closeAudit = (await s.rpc("app_bom_audit")).data[0];
+  assert.deepEqual([closeAudit.action, closeAudit.detail], ["closeOrderShort", "fgMoves +1, orders +1"], "the close is audited with its one history row and the closed order, like the database");
   const row = (await view()).fgMoves.find((move) => move.kind === "close");
   assert.deepEqual({ ...row, id: typeof row.id }, { id: "string", orderId: "PI-F", fgCode: "", kind: "close", qty: 0, note: "PK ทำได้ไม่ครบ ลูกค้ารับเท่าที่มี", at: NOW, by: "ชัย หัวหน้าคลัง" }, "one row: no product, no quantity, the reason");
   assert.equal(await code(close("อีกครั้ง")), "BOM_INVALID_TRANSITION", "a closed order is not closed again");
@@ -3687,12 +3701,49 @@ test("the mock database closes an order short: every PK job done, everything PK 
   assert.equal(await code(deliver([{ fgCode: "FG-1", qty: 1 }])), "BOM_FG_EXCEEDS");
 });
 
+test("the mock database keeps the PK output of a product at or above what the warehouse received, so the order can always close (like bom_save_jobs)", async () => {
+  const s = await fgMock();
+  const { code, receive, close, report, order, as, job, save } = s;
+  await as("persona-pp");
+  assert.equal((await report("J-F1", 6)).error, null);
+  await as("persona-wh");
+  assert.equal((await receive([{ fgCode: "FG-1", qty: 4 }])).error, null);
+  await as("persona-pp");
+  const row = await job("J-F1");
+  const versionBefore = await s.version();
+  // ตัวตนของงานอ่านจากแถวเดิม: ลดยอด หรือย้ายงานไปสินค้า / ชนิด / แผนกอื่นในแถวเดียวกัน = เอายอดออกจาก FG-1
+  assert.equal(await code(save({ jobs: { upsert: [{ ...row, qtyDone: 3 }] } }, "reportJob")), "BOM_INVALID_JOB", "6 made, 4 received: 3 is below the receipts");
+  assert.equal(await code(save({ jobs: { upsert: [{ ...row, itemCode: "FG-2" }] } }, "reportJob")), "BOM_INVALID_JOB", "moving the job to another product");
+  assert.equal(await code(save({ jobs: { upsert: [{ ...row, kind: "SE" }] } }, "reportJob")), "BOM_INVALID_JOB", "or to another kind");
+  assert.equal(await code(save({ jobs: { upsert: [{ ...row, dept: "GR" }] } }, "reportJob")), "BOM_INVALID_JOB", "or to another department");
+  assert.equal(await code(save({ jobs: { delete: [{ id: "J-F1" }] } }, "removeOrderItem")), "BOM_INVALID_TRANSITION", "a PK job with output is never deleted");
+  await as("persona-1");
+  assert.equal(await code(save({ jobs: { upsert: [{ ...row, qtyDone: 0 }] } }, "reportJob")), "BOM_INVALID_JOB", "not even by an admin");
+  assert.equal(await s.version(), versionBefore, "the refused saves wrote nothing");
+  await as("persona-pp");
+  assert.equal((await save({ jobs: { upsert: [{ ...row, qtyDone: 4, status: "done" }] } }, "reportJob")).error, null, "down to what was received is allowed");
+  assert.equal((await job("J-F1")).qtyDone, 4);
+  // ใบยังปิดได้: PK ทำ FG-2 ครบ ชิ้นย่อยเสร็จ WH รับ FG-2 แล้วปิดรับไม่ครบ (FG-1 รับ 4 = ยอด PK 4)
+  assert.equal((await report("J-F2", 5)).error, null);
+  assert.equal((await report("J-FS", 3)).error, null);
+  await as("persona-wh");
+  assert.equal(await code(receive([{ fgCode: "FG-1", qty: 1 }])), "BOM_FG_EXCEEDS", "nothing more of FG-1 to receive");
+  assert.equal((await receive([{ fgCode: "FG-2", qty: 5 }])).error, null);
+  assert.equal((await close("PK ทำ FG-1 ได้ 4 ชุด")).error, null, "the order closes short");
+  assert.equal((await order("PI-F")).status, "completed");
+});
+
 test("nobody moves an order to completed through its row: the planning group, admin and the warehouse are all refused", async () => {
   const s = await fgMock();
-  for (const persona of ["persona-pp", "persona-1", "persona-wh", "persona-whh", "persona-rbh"]) {
+  // ด่านหยาบก่อน (ตรงกับ app_bom_save_master): กลุ่มวางแผน (PP, ผู้จัดการแผนก, admin) ส่ง action ที่ไม่อยู่ในรายการ = BOM_INVALID_ACTION · พนักงานที่ไม่ใช่กลุ่มวางแผน = BOM_FORBIDDEN
+  // ด้วย action ที่อยู่ในรายการ แถวใบที่จะเป็น completed = BOM_FORBIDDEN ทุกคน (ตัวเขียนใบ)
+  for (const [persona, planner] of [["persona-pp", true], ["persona-1", true], ["persona-whh", true], ["persona-rbh", true], ["persona-wh", false], ["persona-rb", false]]) {
     await s.as(persona);
-    assert.equal(await s.code(s.save({ orders: { upsert: [{ ...(await s.order("PI-F")), status: "completed" }] } }, "completeOrder")), "BOM_FORBIDDEN", persona);
-    assert.equal(await s.code(s.save({ orders: { upsert: [{ ...(await s.order("PI-FD")), status: "completed" }] } }, "t")), "BOM_FORBIDDEN", `${persona}: a draft too`);
+    const gate = planner ? "BOM_INVALID_ACTION" : "BOM_FORBIDDEN";
+    assert.equal(await s.code(s.save({ orders: { upsert: [{ ...(await s.order("PI-F")), status: "completed" }] } }, "completeOrder")), gate, `${persona}: completeOrder is no action any more`);
+    assert.equal(await s.code(s.save({ orders: { upsert: [{ ...(await s.order("PI-FD")), status: "completed" }] } }, "t")), gate, `${persona}: nor an unknown name`);
+    assert.equal(await s.code(s.save({ orders: { upsert: [{ ...(await s.order("PI-F")), status: "completed" }] } }, planner ? "updateOrderItem" : "setStockCounts")), "BOM_FORBIDDEN", `${persona}: the order row is refused`);
+    assert.equal(await s.code(s.save({ orders: { upsert: [{ ...(await s.order("PI-FD")), status: "completed" }] } }, planner ? "releaseOrder" : "setStockCounts")), "BOM_FORBIDDEN", `${persona}: a draft too`);
   }
   assert.equal((await s.order("PI-F")).status, "released");
 });

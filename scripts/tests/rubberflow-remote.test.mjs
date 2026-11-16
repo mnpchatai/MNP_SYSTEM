@@ -1733,7 +1733,8 @@ test("a purchase order can carry purchased-part lines: the unit comes from the B
   assert.equal(master.materials.find((row) => row.code === "EPDM-55").safetyKg, 5, "the chemical keeps its safety stock on the material");
 
   // สต็อกขั้นต่ำของซื้อ: แก้ได้โดยผู้ที่สั่งซื้อได้และอยู่กลุ่มวางแผน (admin) หรือแผนก ST (ST สั่งได้ทั้งค่าเท่าเดิมและค่าที่เปลี่ยน) · กลุ่มวางแผนที่ไม่ใช่ ST และ RB สั่งไม่ได้เลย (ไม่มีสิทธิ์สั่งซื้อ)
-  const stOrder = (id, safetyKg) => ({ purchaseOrders: { upsert: [{ id, status: "ordered", sourcePi: null, sourceRequisition: null, note: "", lines: [{ ...part, safetyKg }] }] } });
+  // storedSafetyKg = ค่าที่หน้าต่างแสดงตอนเปิด (ไม่ส่ง = client รุ่นก่อน)
+  const stOrder = (id, safetyKg, storedSafetyKg) => ({ purchaseOrders: { upsert: [{ id, status: "ordered", sourcePi: null, sourceRequisition: null, note: "", lines: [{ ...part, safetyKg, ...(storedSafetyKg === undefined ? {} : { storedSafetyKg }) }] }] } });
   const bomBefore = bom().version;
   for (const persona of ["persona-pp", "persona-rb"]) for (const value of [3, 9]) assert.equal(await sendPo(s, persona, stOrder(`PO-${rules.ymd(NOW)}-02`, value)), "RF_FORBIDDEN", `${persona} orders nothing, even with the safety stock left as stored (${value})`);
   assert.equal(bom().version, bomBefore, "the refused orders changed no BOM row");
@@ -1788,7 +1789,10 @@ test("a purchase order can carry purchased-part lines: the unit comes from the B
   // ST changes the part's safety stock with the order (through the database and through the page): the BOM stock row follows in the same save
   const versionBeforeSafety = bom().version;
   const movesBeforeSafety = bom().stockMoves.length;
-  assert.equal(await sendPo(s, "persona-st", stOrder(`PO-${rules.ymd(NOW)}-07`, 9)), undefined, "ST changes the safety stock of a part through an order");
+  // ST ที่ไม่ใช่กลุ่มวางแผนเปลี่ยนได้เฉพาะเมื่อบรรทัดส่ง storedSafetyKg มา: client รุ่นก่อนที่ไม่ส่งอาจถือค่าเก่าแล้วเขียนทับ (ตรงกับ 20261122010000)
+  assert.equal(await sendPo(s, "persona-st", stOrder(`PO-${rules.ymd(NOW)}-07`, 9)), "RF_FORBIDDEN", "ST without the stored value (an older page) cannot change the safety stock of a part");
+  assert.equal(bom().version, versionBeforeSafety, "and nothing was written");
+  assert.equal(await sendPo(s, "persona-st", stOrder(`PO-${rules.ymd(NOW)}-07`, 9, 3)), undefined, "ST changes the safety stock of a part through an order");
   assert.deepEqual(bom().stock.map((row) => [row.itemCode, row.qty, row.safetyQty]), [["P-BOX", 14, 9]], "the safety stock changed, the balance did not");
   assert.equal(bom().version, versionBeforeSafety + 1);
   assert.equal(bom().stockMoves.length, movesBeforeSafety, "a safety change writes no move");
@@ -1808,5 +1812,8 @@ test("a purchase order can carry purchased-part lines: the unit comes from the B
   const staleLine = (await s.call("app_rf_master")).purchaseOrders.find((row) => row.id === stale.result).lines[0];
   assert.equal(staleLine.safetyKg, 11, "the order line carries the safety stock in force");
   assert.equal(Object.hasOwn(staleLine, "storedSafetyKg"), false, "the stored-value field is not kept on the order");
+  // กลุ่มวางแผน (admin สร้างใบได้) เปลี่ยนได้โดยไม่ต้องส่ง storedSafetyKg เหมือนเดิม
+  assert.equal(await sendPo(s, "persona-1", stOrder(`PO-${rules.ymd(NOW)}-41`, 12)), undefined, "admin (the planning group) changes the safety stock without the stored value");
+  assert.equal(bom().stock[0].safetyQty, 12);
   assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ id: `PO-${rules.ymd(NOW)}-31`, status: "ordered", sourcePi: null, sourceRequisition: null, note: "", lines: [{ ...part, safetyKg: 9, storedSafetyKg: "9" }] }] } }), "RF_INVALID_PURCHASE", "a malformed stored value is refused");
 });

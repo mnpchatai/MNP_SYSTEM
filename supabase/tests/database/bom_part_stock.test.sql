@@ -5,6 +5,7 @@
 -- สิทธิ์ใบสั่งซื้อ (20261119010000_rf_purchase_by_st.sql): สร้าง / รับบรรทัด ทำได้เฉพาะ ST และ admin · กลุ่มวางแผน RB QA ได้ RF_FORBIDDEN
 -- สต็อกขั้นต่ำของของซื้อ (20261120010000_st_sets_safety_stock.sql): เปลี่ยนได้โดยกลุ่มวางแผน (admin นับรวม) และแผนก ST ทั้งทาง countPartStock และทางใบสั่งซื้อ
 -- WH / QA / SR / RB / ผู้ช่วยผู้จัดการแผนกนอกกลุ่มวางแผน เปลี่ยนไม่ได้ (BOM_FORBIDDEN ที่ countPartStock · สร้างใบสั่งซื้อไม่ได้เลย RF_FORBIDDEN)
+-- 20261122010000_bom_fg_guards.sql: ทางใบสั่งซื้อ ST ที่ไม่ใช่กลุ่มวางแผนเปลี่ยนสต็อกขั้นต่ำของของซื้อได้เฉพาะเมื่อบรรทัดส่ง storedSafetyKg (ไม่ส่ง = RF_FORBIDDEN) · กลุ่มวางแผนไม่ต้องส่ง
 -- ข้อควรระวัง: ถ้าอ่านตารางตรงในนาม authenticated จะเกิด 42501 และทำให้ทั้งไฟล์ล้ม ("No plan found") ตรวจฝั่ง client ผ่าน RPC และตรวจ deny ด้วย throws_ok เท่านั้น
 begin;
 create extension if not exists pgtap with schema extensions;
@@ -163,7 +164,7 @@ select set_config('test.ord', '{"id":"X","customer":"ACME","country":"TH","order
 select set_config('test.job', '{"id":"X","orderId":"X","dept":"ST","itemCode":"P-1","name":"กล่อง","kind":"PURCHASED","uom":"box","qtyPlanned":30,"qtyRequired":30,"stockCounted":null,"qtyDone":0,"qtyReject":0,"dueAt":1764201600000,"status":"queued","externalRef":null,"fgCodes":["FG-A"],"reports":[]}', true);
 select set_config('test.expl', '[{"itemCode":"FG-A","level":0,"fgQty":10,"required":10},{"itemCode":"P-1","level":1,"fgQty":10,"required":30},{"itemCode":"P-2","level":1,"fgQty":10,"required":12.5}]', true);
 select set_config('test.mat', '{"code":"MAT-A","name":"ยาง EPDM","category":"เคมี","storage":"โกดัง A-1","uom":"kg","active":true}', true);
-select set_config('test.po', '{"id":"PO-20261111-01","status":"ordered","sourcePi":"251111-25001","sourceRequisition":null,"note":"สั่งเคมีกับของซื้อ","lines":[{"materialCode":"MAT-A","needKg":100,"availableKg":20,"shortageKg":80,"safetyKg":60,"qtyKg":140},{"materialCode":"P-1","source":"bom","uom":"ignored","needKg":30,"availableKg":-10,"shortageKg":40,"safetyKg":20,"qtyKg":55},{"materialCode":"p-2","source":"bom","needKg":12.5,"availableKg":27.5,"shortageKg":0,"safetyKg":0,"qtyKg":5}]}', true);
+select set_config('test.po', '{"id":"PO-20261111-01","status":"ordered","sourcePi":"251111-25001","sourceRequisition":null,"note":"สั่งเคมีกับของซื้อ","lines":[{"materialCode":"MAT-A","needKg":100,"availableKg":20,"shortageKg":80,"safetyKg":60,"qtyKg":140},{"materialCode":"P-1","source":"bom","uom":"ignored","needKg":30,"availableKg":-10,"shortageKg":40,"safetyKg":20,"storedSafetyKg":15,"qtyKg":55},{"materialCode":"p-2","source":"bom","needKg":12.5,"availableKg":27.5,"shortageKg":0,"safetyKg":0,"qtyKg":5}]}', true);
 
 -- 3. ปฏิเสธนอกโหมดทดสอบ ------------------------------------------------------------
 set local role authenticated;
@@ -439,9 +440,19 @@ select throws_ok($$ select ps_t.po_save(ps_t.po('PO-20261111-01') || jsonb_build
 -- ST เปลี่ยนสองชิ้นในใบเดียว: P-1 (มีแถวสต็อกแล้ว 20 -> 99) และ P-5 (ยังไม่มีแถว: สร้างแถวพร้อมสต็อกขั้นต่ำ 4 ยอด 0) · เวอร์ชัน BOM เพิ่มหนึ่งครั้ง
 select set_config('test.vb', ps_t.ver()::text, true);
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+-- client รุ่นก่อน (ไม่ส่ง storedSafetyKg): ST เปลี่ยนสต็อกขั้นต่ำของของซื้อไม่ได้ ทั้งชิ้นที่มีแถวสต็อกและชิ้นที่ยังไม่มี (20261122010000) · ทั้งใบไม่เขียนอะไร
+select throws_ok($$ select ps_t.po_save(jsonb_build_object('id', 'PO-20261111-06', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
+  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":99,"qtyKg":2}]'::jsonb)) $$, 'RF_FORBIDDEN',
+  'ST staff without the stored value (an older page) cannot change the safety stock of a part with a stock row');
+select throws_ok($$ select ps_t.po_save(jsonb_build_object('id', 'PO-20261111-06', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
+  'lines', '[{"materialCode":"P-5","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":4,"qtyKg":2}]'::jsonb)) $$, 'RF_FORBIDDEN',
+  'nor create a stock row with a safety stock for a part without one');
+select is(ps_t.stock('P-1') ->> 'safetyQty', '20', 'the refused order left the safety stock as it was');
+select ok(ps_t.stock('P-5') is null, 'and made no stock row');
+select is(ps_t.ver(), current_setting('test.vb')::bigint, 'and wrote nothing to the BOM');
 select ok(ps_t.po_save(jsonb_build_object('id', 'PO-20261111-06', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
-  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":99,"qtyKg":2},{"materialCode":"P-5","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":4,"qtyKg":2}]'::jsonb)) is not null,
-  'ST staff changes the safety stock of two parts through an order (one with a stock row, one without)');
+  'lines', '[{"materialCode":"P-1","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":99,"storedSafetyKg":20,"qtyKg":2},{"materialCode":"P-5","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":4,"storedSafetyKg":0,"qtyKg":2}]'::jsonb)) is not null,
+  'ST staff sending the stored values changes the safety stock of two parts through an order (one with a stock row, one without)');
 select is(ps_t.stock('P-1') ->> 'safetyQty', '99', 'the safety stock of the part with a stock row was changed (20 -> 99)');
 select is(ps_t.qty('P-1'), 81::numeric, 'and its balance was not touched');
 select is(ps_t.stock('P-5') ->> 'safetyQty', '4', 'a part without a stock row got one with that safety stock');
@@ -537,6 +548,13 @@ select throws_ok($$ select ps_t.po_save(ps_t.receipt('PO-20261111-02', 0, 3), 'r
 -- รับบรรทัดของซื้อที่ชิ้นไม่ได้เป็น PURCHASED แล้ว (ถูกเปลี่ยนชนิดหลังสั่ง) = RF_INVALID_PURCHASE ไม่แตะสต็อก
 select ok(ps_t.po_save(jsonb_build_object('id', 'PO-20261111-04', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
   'lines', '[{"materialCode":"P-3","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":2,"qtyKg":5}]'::jsonb)) is not null, 'admin orders a part that will change kind afterwards');
+-- กลุ่มวางแผน (admin นับรวม) เปลี่ยนสต็อกขั้นต่ำของของซื้อทางใบได้โดยไม่ต้องส่ง storedSafetyKg (20261122010000 จำกัดเฉพาะ ST)
+select set_config('test.vb', ps_t.ver()::text, true);
+select ok(ps_t.po_save(jsonb_build_object('id', 'PO-20261111-08', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
+  'lines', '[{"materialCode":"P-5","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":6,"qtyKg":2}]'::jsonb)) is not null,
+  'admin (the planning group) changes the safety stock of a part without sending the stored value');
+select is(ps_t.stock('P-5') ->> 'safetyQty', '6', 'and the value is saved (4 -> 6)');
+select is(ps_t.ver(), current_setting('test.vb')::bigint + 1, 'the BOM counter moved once for it');
 reset role;
 select set_config('request.jwt.claims', '', true);
 update public.bom_items set kind = 'SE' where is_test and code = 'P-3';
