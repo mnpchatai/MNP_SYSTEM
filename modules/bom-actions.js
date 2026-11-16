@@ -817,6 +817,8 @@
     if (!order.items.some((item) => item.fgCode === code)) fail("ไม่พบสินค้านี้ในใบ");
     editableItems(d, order, ctx);
     order.items = order.items.filter((item) => item.fgCode !== code);
+    // สินค้าที่ลบออกไม่ใช้สต็อกสินค้าสำเร็จรูปแล้ว: ล้างยอดที่ตั้งไว้ของรหัสนั้น
+    if (order.stockCounts && Object.hasOwn(order.stockCounts, code)) { const rest = { ...order.stockCounts }; delete rest[code]; order.stockCounts = rest; }
     order.explosion = null;
     audit(d, ctx, "ลบสินค้าออกจากใบสั่งผลิต", `${order.id} ${code}`);
     return order.id;
@@ -835,6 +837,8 @@
     const before = line.qty;
     line.qty = qty;
     line.note = note;
+    // ยอดที่ตั้งใช้จากสต็อกสินค้าสำเร็จรูปเกินจำนวนสั่งใหม่ไม่ได้: ตัดลงให้เท่าจำนวนสั่ง (ไม่งั้นขั้น 3 บอกว่าได้ครบจากสต็อกแต่ปล่อยผลิตไม่ผ่าน)
+    if (Number(order.stockCounts?.[code]) > qty) order.stockCounts = { ...order.stockCounts, [code]: qty };
     order.explosion = null;
     audit(d, ctx, "แก้จำนวนสินค้าในใบสั่งผลิต", `${order.id} ${code} ${before} → ${qty}`);
     return order.id;

@@ -1976,6 +1976,9 @@ test("fg stock: an amount above the ordered quantity (the item was lowered after
   const d = withSurplus();
   A.setStockCount(d, { orderId: DRAFT, itemCode: HL, qty: 20 }, planner());
   A.updateOrderItem(d, { orderId: DRAFT, fgCode: HL, qty: 15 }, planner());
+  assert.equal(orderOf(d, DRAFT).stockCounts[HL], 15, "lowering the ordered quantity trims the amount taken from stock to it");
+  // a stored amount above the ordered quantity (e.g. written by an older page) still refuses the release
+  orderOf(d, DRAFT).stockCounts = { ...orderOf(d, DRAFT).stockCounts, [HL]: 20 };
   A.explodeOrder(d, { orderId: DRAFT }, planner());
   rejects(() => A.releaseOrder(d, { orderId: DRAFT }, planner()), /ตั้งใช้จากสต็อกสินค้าสำเร็จรูป 20 เกินจำนวนสั่ง 15/);
   assert.equal(orderOf(d, DRAFT).status, "draft");
