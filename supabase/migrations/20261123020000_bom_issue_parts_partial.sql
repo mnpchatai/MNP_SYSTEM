@@ -117,7 +117,7 @@ begin
        or (v_total <> round(v_total, 4) and v_total <> v_job.qty_planned)
        or private.bom_num(v_row -> 'qtyPlanned', 'BOM_INVALID_JOB', 0, 1000000000) is distinct from v_job.qty_planned
        or private.bom_text(v_row, 'status', 20, 1, 'BOM_INVALID_JOB')
-          <> case when v_total >= v_job.qty_planned then 'done' else 'in_progress' end then
+          <> (case when v_total >= v_job.qty_planned then 'done' else 'in_progress' end) then
       raise exception 'BOM_INVALID_JOB';
     end if;
     v_jobs := v_jobs || v_job.id;
