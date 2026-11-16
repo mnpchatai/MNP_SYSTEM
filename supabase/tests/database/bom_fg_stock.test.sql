@@ -490,7 +490,7 @@ select throws_ok($$ select fgs_t.release('251123-25008', '{"stockCounts":{"FG-A"
   'BOM_INVALID_ORDER', 'wrong at the order (3 for 2 ordered) and at the job (a new job that is done): the order''s code comes first');
 select throws_ok($$ select fgs_t.release('251123-25009', '{"stockCounts":{"FG-A":4}}'::jsonb, jsonb_build_array(
   current_setting('test.job')::jsonb || '{"id":"JOB-9A","orderId":"251123-25009","itemCode":"FG-A","qtyPlanned":1,"qtyRequired":4,"status":"done"}'::jsonb)) $$,
-  'BOM_FG_EXCEEDS', 'more than the stock (4 > 3) with a job that is not new: the stock''s code comes first');
+  'BOM_FG_EXCEEDS', 'more than the stock (4 > 3) with a new job sent as done: the stock''s code comes first');
 select is(fgs_t.n() || '/' || fgs_t.ver(), current_setting('test.n2') || '/' || current_setting('test.v2'), 'none of them wrote a move or moved the version');
 select is(fgs_t.order_status('251123-25008') || ' ' || fgs_t.order_status('251123-25009') || ' ' || fgs_t.stock('FG-A'), 'draft draft 3',
   'both orders are still drafts and the stock is still 3');
