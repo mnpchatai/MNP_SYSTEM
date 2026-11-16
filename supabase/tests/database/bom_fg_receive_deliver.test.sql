@@ -4,6 +4,7 @@
 -- ปิดอัตโนมัติเมื่อรับครบ ปิดใบรับไม่ครบ (เงื่อนไขและเหตุผล) ส่งมอบ (เพดานรับสะสม ส่งหลังปิดใบได้) แถวใบที่จะเป็น completed ถูกปฏิเสธทุก action
 -- snapshot / delta 14 ชุด (fgMoves) ฐานเวอร์ชันเก่า / epoch และล้างข้อมูลทดสอบ · authenticated อ่านตาราง bom_* ตรงไม่ได้ จึงอ่านตารางด้วย reset role เท่านั้น
 -- 20261122010000_bom_fg_guards.sql: คำสั่งของสำเร็จรูปที่ไม่มีคำขอ = BOM_INVALID_FG (เดิมสำเร็จแบบไม่ทำอะไร) · ยอดงาน PK / FG ต่ำกว่ายอดที่ WH รับแล้วไม่ได้ (BOM_INVALID_JOB)
+-- 20261123010000_bom_fg_stock.sql: ใบ completed รับของได้ (ส่วนที่ PK ผลิตเกิน) เพดานยังเป็นยอด PK จึงได้ BOM_FG_EXCEEDS แทน BOM_INVALID_TRANSITION · สต็อกระหว่างใบตรวจใน bom_fg_stock.test.sql
 -- ข้อควรระวัง: ถ้าอ่านตารางตรงในนาม authenticated จะเกิด 42501 และทำให้ทั้งไฟล์ล้ม ("No plan found") ตรวจฝั่ง client ผ่าน RPC และตรวจ deny ด้วย throws_ok เท่านั้น
 begin;
 create extension if not exists pgtap with schema extensions;
@@ -407,8 +408,9 @@ select is(jsonb_array_length(current_setting('test.res')::jsonb -> 'changes' -> 
 select is(jsonb_array_length(current_setting('test.res')::jsonb -> 'changes' -> 'fgMoves' -> 'upsert'), 1, 'the move comes back with it');
 select is(current_setting('test.res')::jsonb ->> 'version', (current_setting('test.v2')::bigint + 1)::text, 'the version moved once for the receipt and the closing together');
 select is(fg_t.total('251121-25001', 'FG-A', 'receive') || '/' || fg_t.total('251121-25001', 'FG-B', 'receive'), '10/6', 'everything ordered is received');
--- ใบปิดแล้ว: รับ / ปิดซ้ำไม่ได้ ส่งมอบต่อได้จนครบรับสะสม
-select throws_ok($$ select fg_t.receive('251121-25001', '[{"fgCode":"FG-A","qty":1}]'::jsonb) $$, 'BOM_INVALID_TRANSITION', 'a completed order takes no more receipts');
+-- ใบปิดแล้ว: ปิดซ้ำไม่ได้ ส่งมอบต่อได้จนครบรับสะสม · รับหลังปิดได้เฉพาะส่วนที่ PK ผลิตเกิน (20261123010000) ใบนี้ PK ทำเท่าที่สั่งจึงรับเพิ่มไม่ได้
+select throws_ok($$ select fg_t.receive('251121-25001', '[{"fgCode":"FG-A","qty":1}]'::jsonb) $$, 'BOM_FG_EXCEEDS',
+  'a completed order still takes receipts only up to what PK reported (10 of 10 received)');
 select throws_ok($$ select fg_t.close_short('251121-25001', 'ปิดใบรับไม่ครบ') $$, 'BOM_INVALID_TRANSITION', 'a completed order cannot be closed again');
 select is(fg_t.deliver('251121-25001', '[{"fgCode":"FG-A","qty":6}]'::jsonb, 'ส่งหลังปิดใบ') -> 'changes' -> 'fgMoves' -> 'upsert' -> 0 ->> 'kind', 'deliver', 'a completed order can still be delivered');
 select throws_ok($$ select fg_t.deliver('251121-25001', '[{"fgCode":"FG-A","qty":1}]'::jsonb) $$, 'BOM_FG_EXCEEDS', 'up to what was received');
@@ -467,7 +469,8 @@ select is((current_setting('test.res')::jsonb -> 'changes' -> 'fgMoves' -> 'upse
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'fgMoves' -> 'upsert' -> 0 ->> 'note', 'ลูกค้ารับเท่าที่ทำได้', 'the reason is the note, trimmed');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'fgMoves' -> 'upsert' -> 0 ->> 'by', current_setting('test.n_sbx_wh_staff'), 'by the persona');
 select is(fg_t.n(), current_setting('test.n1')::integer + 1, 'and nothing else is written');
-select throws_ok($$ select fg_t.receive('251121-25002', '[{"fgCode":"FG-A","qty":1}]'::jsonb) $$, 'BOM_INVALID_TRANSITION', 'a closed order takes no more receipts');
+select throws_ok($$ select fg_t.receive('251121-25002', '[{"fgCode":"FG-A","qty":1}]'::jsonb) $$, 'BOM_FG_EXCEEDS',
+  'a short-closed order has received everything PK made (3), so nothing more can be received');
 select throws_ok($$ select fg_t.close_short('251121-25002', 'ปิดซ้ำไม่ได้') $$, 'BOM_INVALID_TRANSITION', 'nor a second close');
 select ok(fg_t.deliver('251121-25002', '[{"fgCode":"FG-A","qty":3}]'::jsonb) is not null, 'the 3 sets that were received are delivered after the close');
 select is(fg_t.onhand('FG-A'), 0::numeric, 'the stock of A over all orders is received minus delivered (13 - 13)');

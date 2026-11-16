@@ -261,12 +261,36 @@ test("net requirements apply the BOMSHEET column AK rule level by level: SE stoc
   assert.equal(net.RB.required.toFixed(4), (508 / 28).toFixed(4));
   assert.equal(net.FG.required, 1508, "the same FG code twice adds up (the order merges lines, this is a guard)");
   // ค่าที่นับเป็นข้อความว่าง/null = ยังไม่นับ · คงคลังของตัว FG ไม่ถูกใช้ (ต้องผลิตครบจำนวนสั่ง)
-  net = byCode(rules.netRequirements(explode(10), { SE: "", RB: null, FG: 7 }));
+  net = byCode(rules.netRequirements(explode(10), { SE: "", RB: null, FG: "" }));
   assert.equal(net.SE.stock, undefined);
   assert.equal(net.RB.stock, undefined);
   assert.equal(net.FG.stock, undefined);
   assert.equal(net.FG.toMake, 10);
   assert.equal(net.SE.required, 10);
+  // ตัว FG (ชั้น 0) ใช้ยอดที่ตั้งใช้จากสต็อกสินค้าสำเร็จรูป: ลดงานของตัวเองและความต้องการของทุกชั้นลูก (ของซื้อก็ลดตามเพราะคิดจากส่วนที่พ่อยังต้องผลิต)
+  net = byCode(rules.netRequirements(explode(10), { FG: 7 }));
+  assert.deepEqual([net.FG.required, net.FG.stock, net.FG.toMake, net.FG.surplus], [10, 7, 3, 0]);
+  assert.equal(net.SE.required, 3, "SE is needed only for what is still to be made");
+  assert.equal(net.BOX.required, 3 / 12);
+  assert.equal(net.RB.required.toFixed(4), (3 / 28).toFixed(4));
+  // ได้ครบจากสต็อก = ไม่มีอะไรต้องผลิตเลย · ตั้งเกินจำนวนสั่ง (ไม่ควรเกิดเพราะ action กั้น) ไม่ทำให้ลูกติดลบ
+  net = byCode(rules.netRequirements(explode(10), { FG: 10 }));
+  assert.deepEqual([net.FG.toMake, net.SE.required, net.SE.toMake, net.BOX.required, net.RB.required], [0, 0, 0, 0, 0]);
+  net = byCode(rules.netRequirements(explode(10), { FG: 12 }));
+  assert.deepEqual([net.FG.toMake, net.FG.surplus, net.SE.required], [0, 2, 0]);
+  // ของซื้อไม่ใช้ยอดนับตามใบแม้ใส่รหัสมา (สต็อกของซื้อเป็นยอดเดียวต่อรหัส)
+  net = byCode(rules.netRequirements(explode(10), { FG: 4, BOX: 99 }));
+  assert.equal(net.BOX.stock, undefined);
+  assert.equal(net.BOX.required, 6 / 12);
+  // รหัส FG เดียวกันที่เป็นส่วนประกอบลึกกว่าในใบเดียวกัน (entry.level = ชั้นลึกสุด): หักยอดเดียวต่อรหัสจากความต้องการรวมทั้งสองทาง
+  const mixed = [
+    { itemCode: "FG", name: "FG", kind: "FG", uom: "set", producerDept: "PK", level: 0, required: 10, qtyPerParent: 1, parentCode: null, fgCode: "FG" },
+    { itemCode: "OTHER", name: "OTHER", kind: "FG", uom: "set", producerDept: "PK", level: 0, required: 5, qtyPerParent: 1, parentCode: null, fgCode: "OTHER" },
+    { itemCode: "FG", name: "FG", kind: "FG", uom: "set", producerDept: "PK", level: 1, required: 5, qtyPerParent: 1, parentCode: "OTHER", fgCode: "OTHER" },
+  ];
+  net = byCode(rules.netRequirements(mixed, { FG: 6 }));
+  assert.deepEqual([net.FG.level, net.FG.required, net.FG.stock, net.FG.toMake], [1, 15, 6, 9], "one stock figure per code over both demands: 10 ordered itself + 5 as a component of OTHER");
+  assert.equal(rules.netRequirements(mixed, {}).find((entry) => entry.itemCode === "FG").toMake, 15, "uncounted: the whole requirement");
   // จัดกลุ่มตามแผนก ต้นน้ำ → ปลายน้ำ ข้ามแผนกที่ไม่มีงาน
   const groups = rules.groupByDept(rules.netRequirements(explode(1008), {}));
   assert.deepEqual(groups.map((group) => group.dept), ["ST", "RB", "GR", "PK"]);
@@ -888,6 +912,99 @@ test("fgPosition: per product ordered, PK made, received, delivered, what can st
   assert.equal(rules.fgPosition({ jobs: [], fgMoves: [] }, closed).waitingDelivery, false);
   // the same code twice in an order counts as one product
   assert.deepEqual(rules.fgPosition({ jobs: [], fgMoves: [] }, { ...order, items: [{ fgCode: "A", qty: 2 }, { fgCode: "A", qty: 3 }] }).products.map((p) => [p.fgCode, p.ordered]), [["A", 5]]);
+});
+
+// ---------- สต็อกสินค้าสำเร็จรูป (batch C): ส่วนที่ PK ผลิตเกินเป็นสต็อกของรหัสนั้น ใบร่างอื่นใช้ลดงานผลิต ----------
+const fgMove = (kind, orderId, fgCode, qty, extra = {}) => ({ id: `${kind}-${orderId}-${fgCode}-${qty}-${extra.fromOrderId ?? ""}`, orderId, fgCode, kind, qty, note: "", at: 1, by: "x", ...extra });
+const stockOrder = (id, status, qty, extra = {}) => ({ id, status, items: [{ fgCode: "A", qty }], releasedAt: 0, ...extra });
+const pkJob = (orderId, qtyDone, itemCode = "A") => ({ orderId, dept: "PK", kind: "FG", itemCode, qtyDone, status: "done" });
+
+test("fg stock figures: own, in, out and have per product; deliverable is have minus out minus delivered; free is only what is beyond the order's own claim", () => {
+  const order = stockOrder("SRC", "in_progress", 10);
+  const data = { jobs: [pkJob("SRC", 15)], orders: [order], fgMoves: [fgMove("receive", "SRC", "A", 15), fgMove("transfer", "DST", "A", 3, { fromOrderId: "SRC" }), fgMove("deliver", "SRC", "A", 4)] };
+  const [a] = rules.fgPosition(data, order).products;
+  assert.deepEqual([a.own, a.fromStock, a.givenAway, a.have, a.delivered, a.receivable, a.deliverable, a.free], [15, 0, 3, 15, 4, 0, 8, 2], "free = 15 − 3 − max(10, 4)");
+  assert.equal(a.owed, 6, "the customer of this order still waits for 10 − 4; the rest of the 8 is surplus");
+  // the order that took stock: have = own + in, no receivable beyond PK, free only beyond its own claim
+  const dest = stockOrder("DST", "released", 10);
+  const taken = rules.fgPosition({ jobs: [pkJob("DST", 7)], orders: [order, dest], fgMoves: data.fgMoves }, dest).products[0];
+  assert.deepEqual([taken.own, taken.fromStock, taken.have, taken.receivable, taken.deliverable, taken.free], [0, 3, 3, 7, 3, 0]);
+  const position = rules.fgPosition({ jobs: [pkJob("DST", 7)], orders: [order, dest], fgMoves: [fgMove("transfer", "DST", "A", 3, { fromOrderId: "SRC" }), fgMove("receive", "DST", "A", 7)] }, dest);
+  assert.equal(position.allReceived, true, "7 received + 3 from stock covers the 10 ordered");
+  // receivable also on a closed order (the surplus PK made beyond the order), capped by PK only
+  const closed = stockOrder("SRC", "completed", 10);
+  assert.equal(rules.fgPosition({ jobs: [pkJob("SRC", 12)], orders: [closed], fgMoves: [fgMove("receive", "SRC", "A", 10)] }, closed).products[0].receivable, 2);
+  // an untransfer cancels the transfer on both sides
+  const back = [...data.fgMoves, fgMove("untransfer", "DST", "A", 3, { fromOrderId: "SRC" })];
+  assert.deepEqual(rules.fgPosition({ ...data, fgMoves: back }, order).products.map((p) => [p.givenAway, p.free]), [[0, 5]]);
+  // history of the source lists the rows where it is the source, newest first
+  assert.deepEqual(rules.fgPosition(data, order).moves.map((move) => move.kind).sort(), ["deliver", "receive", "transfer"]);
+  // closing short compares have, not only own
+  const short = stockOrder("S2", "in_progress", 10);
+  const shortData = { jobs: [pkJob("S2", 6)], orders: [short], fgMoves: [fgMove("receive", "S2", "A", 6), fgMove("transfer", "S2", "A", 4, { fromOrderId: "SRC" })] };
+  assert.equal(rules.fgPosition(shortData, short).canCloseShort, false, "6 own + 4 from stock = 10: nothing is short");
+  assert.equal(rules.fgPosition({ ...shortData, fgMoves: shortData.fgMoves.slice(0, 1) }, short).canCloseShort, true);
+});
+
+test("fg stock: on hand is received minus delivered, free sums the surplus of released orders oldest first, goods owed to a customer never count", () => {
+  const data = {
+    jobs: [pkJob("SRC", 15), pkJob("OLD", 6)],
+    orders: [stockOrder("SRC", "in_progress", 10, { releasedAt: 100 }), stockOrder("OLD", "completed", 4, { releasedAt: 50 }), stockOrder("DRAFT", "draft", 5), stockOrder("GONE", "cancelled", 3)],
+    fgMoves: [fgMove("receive", "SRC", "A", 15), fgMove("receive", "OLD", "A", 6), fgMove("deliver", "OLD", "A", 4)],
+  };
+  assert.deepEqual(rules.fgFreeList(data).get("A"), [{ orderId: "OLD", free: 2, releasedAt: 50 }, { orderId: "SRC", free: 5, releasedAt: 100 }], "released first, then by PI number");
+  assert.deepEqual(rules.fgOnHand(data), [{ fgCode: "A", onHand: 17, free: 7, orders: [{ orderId: "OLD", qty: 2 }, { orderId: "SRC", qty: 15 }], freeOrders: [{ orderId: "OLD", qty: 2 }, { orderId: "SRC", qty: 5 }] }]);
+  // a transfer moves goods between orders without changing the warehouse; the receiver holds them and owes them to its own customer
+  const moved = { ...data, orders: [...data.orders, stockOrder("DST", "released", 3, { releasedAt: 200 })], fgMoves: [...data.fgMoves, fgMove("transfer", "DST", "A", 3, { fromOrderId: "SRC" })] };
+  const row = rules.fgOnHand(moved)[0];
+  assert.deepEqual([row.onHand, row.free], [17, 4], "SRC gave 3 away, DST holds 3 for its own customer");
+  assert.deepEqual(row.orders, [{ orderId: "DST", qty: 3 }, { orderId: "OLD", qty: 2 }, { orderId: "SRC", qty: 12 }]);
+  // a cancelled or draft order never contributes, even with rows in the history
+  assert.equal(rules.fgOnHand({ ...data, orders: data.orders.filter((order) => order.id === "DRAFT") }).find((entry) => entry.fgCode === "A").free, 0);
+  assert.deepEqual(rules.fgOnHand({ orders: [], fgMoves: [] }), []);
+});
+
+test("fg stock for a draft: stock minus what earlier drafts plan to take, capped by the ordered quantity, with the saved amount", () => {
+  const drafts = [
+    stockOrder("D1", "draft", 20, { explodedAt: 10, explosion: [{}], stockCounts: { A: 5 } }),
+    stockOrder("D2", "draft", 20, { explodedAt: 20, explosion: [{}], stockCounts: {} }),
+    stockOrder("D3", "draft", 20, { explodedAt: 5, explosion: [{}], stockCounts: { A: 99 } }),
+    stockOrder("D4", "draft", 20, { explosion: null, stockCounts: { A: 3 } }),
+  ];
+  const data = { jobs: [pkJob("SRC", 17)], orders: [stockOrder("SRC", "in_progress", 10, { releasedAt: 1 }), ...drafts], fgMoves: [fgMove("receive", "SRC", "A", 17)] };
+  const of = (id) => rules.fgStockForDraft(data, data.orders.find((order) => order.id === id))[0];
+  assert.deepEqual(of("D3"), { fgCode: "A", ordered: 20, stock: 7, taken: 0, available: 7, planned: 99, max: 7 }, "the earliest draft sees all 7 (its own saved 99 is stale, shown as saved)");
+  assert.deepEqual([of("D1").taken, of("D1").available, of("D1").planned], [20, 0, 5], "D3 is before D1: what it plans is capped by its own ordered quantity (20), not by the stock; nothing is left for D1 and D1's saved 5 is shown as saved");
+  assert.equal(of("D2").taken, 25, "D3 (99 capped at its ordered 20) and D1 (5) are both before D2");
+  assert.equal(of("D2").available, 0);
+  assert.equal(of("D4").taken, 0, "a draft that is not calculated has no draft before it");
+  assert.equal(of("D4").max, 7);
+  assert.deepEqual(rules.countedCodes({ items: [{ fgCode: "A" }], stockCounts: { A: 3, "SE-1": 2 } }), ["SE-1"], "the product's own figure is not a count of a part");
+});
+
+test("fg stock lock: a delivered order or one that gave stock away cannot be cancelled or reopened; otherwise what it took is returned per source", () => {
+  const order = stockOrder("DST", "released", 10);
+  const took = [fgMove("transfer", "DST", "A", 3, { fromOrderId: "S1" }), fgMove("transfer", "DST", "A", 2, { fromOrderId: "S2" }), fgMove("untransfer", "DST", "A", 1, { fromOrderId: "S2" })];
+  assert.deepEqual(rules.fgStockLock({ fgMoves: took }, order), { took: [{ fromOrderId: "S1", fgCode: "A", qty: 3 }, { fromOrderId: "S2", fgCode: "A", qty: 1 }], givenAway: [], delivered: false, blocked: false });
+  const delivered = rules.fgStockLock({ fgMoves: [...took, fgMove("deliver", "DST", "A", 1)] }, order);
+  assert.deepEqual([delivered.delivered, delivered.blocked], [true, true]);
+  const gave = rules.fgStockLock({ fgMoves: [fgMove("transfer", "OTHER", "A", 4, { fromOrderId: "DST" })] }, order);
+  assert.deepEqual([gave.blocked, gave.givenAway], [true, [{ orderId: "OTHER", fgCode: "A", qty: 4 }]]);
+  assert.equal(rules.fgStockLock({ fgMoves: [fgMove("transfer", "OTHER", "A", 4, { fromOrderId: "DST" }), fgMove("untransfer", "OTHER", "A", 4, { fromOrderId: "DST" })] }, order).blocked, false, "given back: free again");
+  assert.deepEqual(rules.fgStockLock({}, order), { took: [], givenAway: [], delivered: false, blocked: false });
+});
+
+test("fgPosition: an order covered entirely by stock has no jobs, is waiting for delivery, and its flags say so", () => {
+  const order = stockOrder("DST", "completed", 10);
+  const moves = [fgMove("transfer", "DST", "A", 10, { fromOrderId: "SRC" })];
+  const position = rules.fgPosition({ jobs: [], fgMoves: moves }, order);
+  assert.deepEqual([position.coveredByStock, position.waitingDelivery, position.fullyDelivered, position.anyReceivable, position.anyFromStock, position.allReceived], [true, true, false, false, true, true]);
+  assert.equal(rules.fgPosition({ jobs: [{ orderId: "DST", dept: "ST", kind: "PURCHASED" }], fgMoves: moves }, order).coveredByStock, false, "any job at all means it was produced");
+  const delivered = rules.fgPosition({ jobs: [], fgMoves: [...moves, fgMove("deliver", "DST", "A", 10)] }, order);
+  assert.deepEqual([delivered.waitingDelivery, delivered.fullyDelivered], [false, true]);
+  // surplus beyond the order is stock, not a debt to the customer: the order reads as delivered once the ordered quantity left
+  const surplus = rules.fgPosition({ jobs: [pkJob("DST", 13)], fgMoves: [fgMove("receive", "DST", "A", 13), fgMove("deliver", "DST", "A", 10)] }, order);
+  assert.deepEqual([surplus.fullyDelivered, surplus.waitingDelivery, surplus.anyDeliverable, surplus.anyFree, surplus.products[0].free, surplus.products[0].receivable], [true, false, true, true, 3, 0]);
 });
 
 test("reachedFrom walks a structure of any depth with one rule: the first target found, itself included, safe against shared children", () => {

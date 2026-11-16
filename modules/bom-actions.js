@@ -2,6 +2,7 @@
 // นำเข้าจากชีต · ใบสั่งผลิต (PI) ระเบิด/ปล่อยผลิต · งานรายแผนก · นับคงคลังตามใบ · สต็อกของซื้อ (นับ/เบิกจ่ายรายใบ) · ผูกสูตรยางกับ RubberFlow
 // ทุก action รับ (draft, payload, ctx{now,user}) ทำบนร่างและ throw เมื่อกฎไม่ผ่าน (store บันทึกเฉพาะเมื่อผ่าน)
 // รับสินค้าสำเร็จรูปเข้าคลัง / ส่งมอบลูกค้า = แผนก WH หรือผู้ดูแลระบบ (canHandleFg) · ใบปิดเองเมื่อรับครบ ไม่มีใครปิดด้วยมือ
+// ส่วนที่ PK ผลิตเกินจำนวนสั่งรับเข้าคลังเป็นสต็อกสินค้าสำเร็จรูปได้แม้ใบปิดแล้ว · ใบร่างที่สั่งสินค้าเดียวกันใช้สต็อกนั้นลดงานผลิต (ฝ่ายวางแผนตั้งที่ขั้นตรวจของ หักจริงตอนปล่อยผลิต: ใบที่ปล่อยก่อนได้ก่อน) · ยกเลิก/เปิดใบกลับมาแก้ = คืนสต็อก
 // สิทธิ์ (บทบาทสาธิต ไม่ใช่การควบคุมสิทธิ์ของระบบจริง): สร้าง/แก้ item และ BOM ทุกชั้น = ฝ่ายวางแผน ผู้จัดการ ผู้ดูแล · ไม่มีขั้นอนุมัติ (ตามที่ผู้ใช้ตัดสิน
 // 29 ต.ค. 2026 ให้เหมือน Excel) · "แผนกเจ้าของ" ของชิ้นงานใช้แยกงานรายแผนกตอนปล่อยผลิตเท่านั้น — ดู docs/BOM_SYSTEM_PLAN.md §3
 // โหลดหลัง modules/bom-rules.js เทสต์ด้วย node --test (scripts/tests/bom-actions.test.mjs)
@@ -556,6 +557,7 @@
     if (!["released", "in_progress"].includes(order.status)) fail("ใบที่ปิดหรือยกเลิกแล้วแก้รายการสินค้าไม่ได้");
     const started = startedJobs(d, order, ctx?.rfOrders);
     if (started.length) fail(`แก้รายการไม่ได้ มีงานที่เริ่มแล้ว (${started.map((job) => `${job.dept} ${job.itemCode}`).slice(0, 3).join(", ")}${started.length > 3 ? " …" : ""}) ให้เปิดใบใหม่สำหรับส่วนที่เพิ่ม (ใบนี้ปิดเมื่อคลังสินค้ารับเข้าครบ)`);
+    const returned = returnFgStock(d, ctx, order); // สินค้าที่ใบนี้ได้จากสต็อกคืนกลับให้ใบต้นทาง (ยอดที่ตั้งใช้จากสต็อกในใบคงไว้)
     const removed = d.jobs.filter((job) => job.orderId === order.id).length;
     d.jobs = d.jobs.filter((job) => job.orderId !== order.id);
     order.status = "draft";
@@ -563,7 +565,16 @@
     delete order.releasedAt;
     delete order.releasedBy;
     order.explodedAt = null; // ยอดคงคลังที่นับไว้คงอยู่ (ของในคลังไม่เปลี่ยนเพราะแก้ใบ) และถูกหักอีกครั้งตอนปล่อยผลิตใหม่
-    audit(d, ctx, "เปิดใบที่ปล่อยผลิตแล้วกลับมาแก้", `${order.id} REV.${order.revision} ลบงานรายแผนก ${removed} รายการ`);
+    audit(d, ctx, "เปิดใบที่ปล่อยผลิตแล้วกลับมาแก้", `${order.id} REV.${order.revision} ลบงานรายแผนก ${removed} รายการ${returned.length ? ` · คืนสต็อกสินค้าสำเร็จรูป ${returned.length} รายการ` : ""}`);
+  }
+  // คืนสินค้าสำเร็จรูปที่ใบนี้ได้จากสต็อก (ยกเลิกใบ / เปิดใบกลับมาแก้): ห้ามถ้าส่งมอบให้ลูกค้าแล้วหรือให้ใบอื่นไปแล้ว · ที่เหลือคืนให้ใบต้นทางทั้งหมดที่ได้สุทธิ (untransfer)
+  // โหมดในเครื่องเขียนประวัติเอง · โหมดฐานข้อมูลเซิร์ฟเวอร์เขียน (ตรงกับ app_bom_save_master) ฝั่งนี้ตรวจให้ผู้ใช้เห็นเหตุผลก่อนส่ง
+  function returnFgStock(d, ctx, order) {
+    const lock = rules().fgStockLock(d, order);
+    if (lock.delivered) fail("ใบนี้ส่งมอบสินค้าให้ลูกค้าแล้ว ยกเลิกหรือเปิดกลับมาแก้ไม่ได้");
+    if (lock.givenAway.length) fail(`ใบนี้ให้สินค้าจากสต็อกแก่ใบอื่นไปแล้ว (${[...new Set(lock.givenAway.map((entry) => entry.orderId))].join(", ")}) ยกเลิกหรือเปิดกลับมาแก้ไม่ได้ จนกว่าใบนั้นจะคืนสต็อก`);
+    if (!ctx.remote && lock.took.length) pushFgMoves(d, ctx, order, "untransfer", lock.took, "");
+    return lock.took;
   }
 
   function siblingsOf(d, base) {
@@ -861,8 +872,9 @@
     const noBom = order.explosion.filter((line) => line.noBom).map((line) => line.itemCode);
     if (noBom.length) fail(`ชิ้นที่ต้องผลิตแต่ยังไม่มี BOM: ${[...new Set(noBom)].join(", ")}`);
     // ปริมาณงาน = ความต้องการสุทธิหลังหักคงคลังที่นับ ไล่ชั้นแบบคอลัมน์ AK ของ BOMSHEET (SE ที่มีในคลังลดเส้น RB ที่ต้องรีด)
-    // งาน PK ของตัว FG ใช้จำนวนสั่งเสมอ (ใบตรวจสอบคงคลังมีแถว FG แต่ของสำเร็จรูปในคลังไม่ลดงานบรรจุของใบนี้)
+    // งาน PK ของตัว FG = จำนวนสั่ง − ที่ใช้จากสต็อกสินค้าสำเร็จรูป (ฝ่ายวางแผนตั้งที่ขั้นตรวจของ) · ได้ครบจากสต็อก = ไม่มีงาน PK ของสินค้านั้น
     const net = R.netRequirements(order.explosion, order.stockCounts);
+    const taking = fgTaking(d, order);
     let covered = 0;
     for (const entry of net) {
       if (!R.MANUFACTURED.includes(entry.kind) || entry.kind === "FG") continue;
@@ -872,7 +884,11 @@
     }
     for (const item of order.items) {
       const fg = itemOf(d, item.fgCode);
-      d.jobs.push({ id: masterId(d, "JOB", ctx), orderId: order.id, dept: "PK", itemCode: fg.code, name: fg.name, kind: "FG", uom: fg.uom, qtyPlanned: item.qty, qtyRequired: item.qty, stockCounted: null, qtyDone: 0, qtyReject: 0, dueAt: order.due.PK ?? order.whDue, status: "queued", externalRef: null, fgCodes: [fg.code], createdAt: ctx.now, reports: [] });
+      const taken = taking.find((entry) => entry.fgCode === item.fgCode)?.n ?? 0;
+      const planned = qtyRound(item.qty - taken);
+      if (planned <= 1e-9) continue; // ได้ครบจากสต็อก ไม่มีงานบรรจุของสินค้านี้
+      const counted = order.stockCounts?.[item.fgCode];
+      d.jobs.push({ id: masterId(d, "JOB", ctx), orderId: order.id, dept: "PK", itemCode: fg.code, name: fg.name, kind: "FG", uom: fg.uom, qtyPlanned: planned, qtyRequired: item.qty, stockCounted: counted === undefined || counted === null || counted === "" ? null : Number(counted) || 0, qtyDone: 0, qtyReject: 0, dueAt: order.due.PK ?? order.whDue, status: "queued", externalRef: null, fgCodes: [fg.code], createdAt: ctx.now, reports: [] });
     }
     // ของซื้อ: หนึ่งงาน ST ต่อรายการของซื้อที่ระเบิดได้ ยอด = ความต้องการเต็ม (ไม่หักยอดนับตามใบ สต็อกของซื้อเป็นยอดรวมต่อรหัส) · ST เบิกจ่ายครั้งเดียวต่อใบ (issueOrderParts)
     for (const entry of net) {
@@ -882,8 +898,42 @@
     order.status = "released";
     order.releasedAt = ctx.now;
     order.releasedBy = user.name;
-    audit(d, ctx, "ปล่อยผลิต", `${order.id} สร้างงาน ${d.jobs.filter((job) => job.orderId === order.id).length} รายการ${covered ? ` · ${covered} ชิ้นมีคงคลังพอ ไม่สร้างงาน` : ""}`);
+    // ได้ครบทุกสินค้าจากสต็อก = ใบปิดทันทีในคำสั่งเดียวกัน (ไม่มีงานผลิต ไปที่ส่งมอบลูกค้า) · โหมดในเครื่องเขียนประวัติโอนและปิดใบเอง
+    // โหมดฐานข้อมูลเซิร์ฟเวอร์เขียนประวัติโอนและปิดใบ (ใบที่ส่งขึ้นไปเป็น released เพราะการตั้งใบเป็น completed ฝั่ง client ถูกปฏิเสธ) แล้วส่งกลับมาในคำตอบ
+    const fromStock = order.items.length > 0 && order.items.every((item) => (taking.find((entry) => entry.fgCode === item.fgCode)?.n ?? 0) + 1e-9 >= item.qty);
+    if (!ctx.remote) {
+      const rows = taking.flatMap((entry) => entry.sources.map((source) => ({ fgCode: entry.fgCode, qty: source.qty, fromOrderId: source.fromOrderId })));
+      if (rows.length) pushFgMoves(d, ctx, order, "transfer", rows, "");
+      if (fromStock) closeOrderNow(order, ctx);
+    }
+    const stockText = taking.length ? ` · ใช้สต็อกสินค้าสำเร็จรูป ${taking.length} รายการ${fromStock ? " ได้ครบทุกสินค้า ไม่มีงานผลิต" : ""}` : "";
+    audit(d, ctx, "ปล่อยผลิต", `${order.id} สร้างงาน ${d.jobs.filter((job) => job.orderId === order.id).length} รายการ${covered ? ` · ${covered} ชิ้นมีคงคลังพอ ไม่สร้างงาน` : ""}${stockText}`);
     return order.id;
+  }
+  // สินค้าที่ใบร่างตั้งใช้จากสต็อกสินค้าสำเร็จรูป (stockCounts[รหัสสินค้า] > 0) พร้อมใบต้นทางที่จะได้ของ (ใบที่ปล่อยผลิตก่อนมาก่อน ตามที่ฐานข้อมูลหัก)
+  // ตรวจตอนปล่อยผลิต: ไม่เกินจำนวนสั่ง และสต็อกต้องพอ (ใบอื่นปล่อยผลิตไปก่อนและหักไปแล้ว = ตัวเลขเปลี่ยน ต้องกลับไปตั้งยอดใหม่ที่ขั้นตรวจของ)
+  function fgTaking(d, order) {
+    const R = rules();
+    const free = R.fgFreeList(d);
+    const wanted = new Map();
+    for (const item of order.items) wanted.set(item.fgCode, qtyRound((wanted.get(item.fgCode) ?? 0) + (Number(item.qty) || 0)));
+    const taking = [];
+    for (const [fgCode, ordered] of wanted) {
+      const n = qtyRound(Math.max(0, Number(order.stockCounts?.[fgCode]) || 0));
+      if (n <= 0) continue;
+      if (n > ordered + 1e-9) fail(`${fgCode} ตั้งใช้จากสต็อกสินค้าสำเร็จรูป ${R.fmtQty(n)} เกินจำนวนสั่ง ${R.fmtQty(ordered)} กลับไปแก้ที่ขั้นตรวจของ`);
+      const sources = [];
+      let left = n;
+      for (const source of free.get(fgCode) ?? []) {
+        if (left <= 1e-9) break;
+        const qty = qtyRound(Math.min(source.free, left));
+        if (qty > 0) sources.push({ fromOrderId: source.orderId, qty });
+        left = qtyRound(left - qty);
+      }
+      if (left > 1e-9) fail(`ตัวเลขเปลี่ยนไปแล้ว: สต็อกสินค้าสำเร็จรูปของ ${fgCode} ไม่พอที่ใบนี้ตั้งใช้ ${R.fmtQty(n)} (เหลือ ${R.fmtQty(n - left)} ใบอื่นอาจปล่อยผลิตไปก่อน) กลับไปตั้งยอดใหม่ที่ขั้นตรวจของ`);
+      taking.push({ fgCode, n, sources });
+    }
+    return taking;
   }
 
   // นับได้เฉพาะใบร่าง: งานรายแผนกถูกสร้างจากยอดสุทธิตอนปล่อยผลิตครั้งเดียว ยอดที่นับทีหลังจะไม่เปลี่ยนงาน
@@ -897,9 +947,16 @@
     const code = rules().canonicalCode(itemCode);
     const line = order.explosion?.find((entry) => entry.itemCode === code);
     if (!line) fail("ชิ้นงานนี้ไม่อยู่ในใบ (ระเบิด BOM ก่อน)");
-    if (line.level === 0) fail("ตัวสินค้าสำเร็จรูปไม่นับคงคลังในใบ (ต้องผลิตครบจำนวนสั่ง)");
     if (line.kind === "PURCHASED") fail(`${code} เป็นของซื้อ นับที่เมนู “คลังของซื้อ” (ยอดรวมต่อรหัส) ไม่นับตามใบ`);
-    const value = num(qty, "ยอดคงคลัง", { allowZero: true });
+    // ตัวสินค้าของใบ = ยอดที่ใช้จากสต็อกสินค้าสำเร็จรูป: ฝ่ายวางแผนตั้ง ไม่เกินจำนวนสั่งและไม่เกินสต็อกที่ใช้ได้ของใบนี้ (หักจากสต็อกจริงตอนปล่อยผลิต) · ST / WH นับชิ้นอื่นของใบได้ แต่ไม่ตั้งยอดนี้
+    const product = order.items.some((item) => item.fgCode === code);
+    const value = num(qty, product ? "ยอดที่ใช้จากสต็อก" : "ยอดคงคลัง", { allowZero: true });
+    if (product) {
+      if (!canPlan(user)) fail("ตั้งยอดที่ใช้จากสต็อกสินค้าสำเร็จรูปได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น");
+      const row = rules().fgStockForDraft(d, order).find((entry) => entry.fgCode === code);
+      if (value > row.ordered + 1e-9) fail(`${code} ใช้จากสต็อกได้ไม่เกินจำนวนสั่ง ${rules().fmtQty(row.ordered)}`);
+      if (value > row.available + 1e-9) fail(`${code} สต็อกสินค้าสำเร็จรูปที่ใช้ได้กับใบนี้มี ${rules().fmtQty(row.available)}${row.taken > 0 ? ` (ใบร่างที่คำนวณก่อนใบนี้ตั้งใช้ไว้ ${rules().fmtQty(row.taken)})` : ""} ใช้ ${rules().fmtQty(value)} ไม่ได้`);
+    }
     order.stockCounts[code] = value;
     order.stockCountedAt = ctx.now;
     order.stockCountedBy = user.name;
@@ -937,11 +994,12 @@
     // WO ที่ยังเป็นแผนก/ปล่อยผลิต ฐานข้อมูลยกเลิกให้พร้อมใบ · ที่เริ่มแล้วต้องปิดหรือยกเลิกใน RubberFlow ก่อน
     const linked = d.jobs.filter((job) => job.orderId === order.id && woStarted(job, ctx.rfOrders));
     if (linked.length) fail(`มีงานที่สร้าง WO ใน RubberFlow แล้ว (${linked.map((job) => job.externalRef.woId).join(", ")}) ยกเลิก WO ใน RubberFlow ก่อน`);
+    const returned = returnFgStock(d, ctx, order); // สินค้าที่ใบนี้ได้จากสต็อกคืนกลับให้ใบต้นทาง
     order.status = "cancelled";
     order.cancelledAt = ctx.now;
     order.cancelReason = String(reason ?? "").trim().slice(0, 200);
     d.jobs = d.jobs.filter((job) => job.orderId !== order.id);
-    audit(d, ctx, "ยกเลิกใบสั่งผลิต", `${order.id}${order.cancelReason ? ` — ${order.cancelReason}` : ""}`);
+    audit(d, ctx, "ยกเลิกใบสั่งผลิต", `${order.id}${order.cancelReason ? ` — ${order.cancelReason}` : ""}${returned.length ? ` · คืนสต็อกสินค้าสำเร็จรูป ${returned.length} รายการ` : ""}`);
     return order.id;
   }
 
@@ -986,10 +1044,11 @@
     return { user, order, lines, note, position: R.fgPosition(d, order) };
   };
   const fgRequest = (order, kind, lines, note) => ({ orderId: order.id, kind, ...(kind === "close" ? {} : { lines: lines.map(({ fgCode, qty }) => ({ fgCode, qty })) }), ...(note || kind === "close" ? { note } : {}) });
+  // lines ของ transfer / untransfer มี fromOrderId (ใบต้นทางของสต็อก) ด้วย · แถวอื่นไม่มี
   function pushFgMoves(d, ctx, order, kind, lines, note) {
     d.fgMoves ??= [];
     const rows = kind === "close" ? [{ fgCode: "", qty: 0 }] : lines;
-    rows.forEach((line) => d.fgMoves.push({ id: `local-${ctx.now}-${d.fgMoves.length + 1}`, orderId: order.id, fgCode: line.fgCode, kind, qty: line.qty, note, at: ctx.now, by: ctx.user?.name ?? "" }));
+    rows.forEach((line) => d.fgMoves.push({ id: `local-${ctx.now}-${d.fgMoves.length + 1}`, orderId: order.id, fgCode: line.fgCode, kind, qty: line.qty, note, at: ctx.now, by: ctx.user?.name ?? "", ...(line.fromOrderId ? { fromOrderId: line.fromOrderId } : {}) }));
   }
   function closeOrderNow(order, ctx) {
     order.status = "completed";
@@ -998,13 +1057,14 @@
   const fgSummary = (lines) => `${lines.length} รายการ`;
   function receiveFg(d, p, ctx) {
     const { order, lines, note, position } = fgRead(d, ctx, p, "receive");
-    if (!["released", "in_progress"].includes(order.status)) fail("รับสินค้าเข้าคลังได้เฉพาะใบที่ปล่อยผลิตแล้วและยังไม่ปิด");
+    // ใบที่ปิดแล้วรับเข้าได้เฉพาะส่วนที่ PK ผลิตเกินจำนวนสั่ง (กลายเป็นสต็อกสินค้าสำเร็จรูป) · ยอดรับ ≤ ที่ PK รายงาน เทียบกับที่รับจากงานของใบนี้เอง (ไม่รวมที่ได้จากสต็อก)
+    if (!["released", "in_progress", "completed"].includes(order.status)) fail("รับสินค้าเข้าคลังได้เฉพาะใบที่ปล่อยผลิตแล้ว");
     for (const line of lines) {
       const product = position.products.find((entry) => entry.fgCode === line.fgCode);
-      if (line.qty > product.receivable + 1e-9) fail(`${line.fgCode} รับได้อีกไม่เกิน ${rules().fmtQty(product.receivable)} (PK ส่งมอบแล้ว ${rules().fmtQty(product.pkDone)} รับเข้าคลังไปแล้ว ${rules().fmtQty(product.received)})`);
+      if (line.qty > product.receivable + 1e-9) fail(`${line.fgCode} รับได้อีกไม่เกิน ${rules().fmtQty(product.receivable)} (PK ส่งมอบแล้ว ${rules().fmtQty(product.pkDone)} รับเข้าคลังไปแล้ว ${rules().fmtQty(product.own)})`);
     }
-    // ใบปิดเองเมื่อทุกสินค้ารับครบตามที่สั่ง (โหมดฐานข้อมูล: เซิร์ฟเวอร์ทำเองและส่งใบกลับมา · ฝั่งนี้ทำล่วงหน้าให้หน้าแสดงทันที)
-    const closes = position.products.every((product) => product.received + (lines.find((line) => line.fgCode === product.fgCode)?.qty ?? 0) + 1e-9 >= product.ordered);
+    // ใบปิดเองเมื่อทุกสินค้ามีของครบตามที่สั่ง รับเอง + ได้จากสต็อก (โหมดฐานข้อมูล: เซิร์ฟเวอร์ทำเองและส่งใบกลับมา · ฝั่งนี้ทำล่วงหน้าให้หน้าแสดงทันที) · ใบที่ปิดแล้วไม่ปิดซ้ำ
+    const closes = order.status !== "completed" && position.products.every((product) => product.have + (lines.find((line) => line.fgCode === product.fgCode)?.qty ?? 0) + 1e-9 >= product.ordered);
     if (!ctx.remote) pushFgMoves(d, ctx, order, "receive", lines, note);
     if (closes) closeOrderNow(order, ctx);
     audit(d, ctx, "รับสินค้าเข้าคลัง", `${order.id} ${lines.map((line) => `${line.fgCode} × ${line.qty}`).join(", ")}${closes ? " · รับครบ ใบปิดอัตโนมัติ" : ""}`);
@@ -1015,7 +1075,7 @@
     if (!["released", "in_progress", "completed"].includes(order.status)) fail("ส่งมอบได้เฉพาะใบที่ปล่อยผลิตแล้ว");
     for (const line of lines) {
       const product = position.products.find((entry) => entry.fgCode === line.fgCode);
-      if (line.qty > product.deliverable + 1e-9) fail(`${line.fgCode} ส่งมอบได้อีกไม่เกิน ${rules().fmtQty(product.deliverable)} (รับเข้าคลังแล้ว ${rules().fmtQty(product.received)} ส่งมอบไปแล้ว ${rules().fmtQty(product.delivered)})`);
+      if (line.qty > product.deliverable + 1e-9) fail(`${line.fgCode} ส่งมอบได้อีกไม่เกิน ${rules().fmtQty(product.deliverable)} (มีของในใบ ${rules().fmtQty(product.have)}${product.givenAway > 0 ? ` ให้ใบอื่นไปแล้ว ${rules().fmtQty(product.givenAway)}` : ""} ส่งมอบไปแล้ว ${rules().fmtQty(product.delivered)})`);
     }
     if (!ctx.remote) pushFgMoves(d, ctx, order, "deliver", lines, note);
     audit(d, ctx, "ส่งมอบสินค้าให้ลูกค้า", `${order.id} ${lines.map((line) => `${line.fgCode} × ${line.qty}`).join(", ")}`);
@@ -1028,7 +1088,7 @@
     if (!position.hasPkJobs) fail("ใบนี้ไม่มีงานบรรจุ (PK) ให้ปิดแบบรับไม่ครบ");
     if (!position.pkAllDone) fail("งานบรรจุ (PK) ยังไม่เสร็จครบทุกสินค้า");
     if (position.products.some((product) => product.receivable > 1e-9)) fail("ยังมีสินค้าที่ PK ทำเสร็จแต่ยังไม่ได้รับเข้าคลัง รับเข้าให้ครบก่อน");
-    if (!position.products.some((product) => product.received + 1e-9 < product.ordered)) fail("รับสินค้าครบตามที่สั่งแล้ว ใบปิดเองโดยอัตโนมัติ");
+    if (!position.products.some((product) => product.have + 1e-9 < product.ordered)) fail("มีสินค้าครบตามที่สั่งแล้ว ใบปิดเองโดยอัตโนมัติ");
     if (!ctx.remote) pushFgMoves(d, ctx, order, "close", [], note);
     closeOrderNow(order, ctx);
     audit(d, ctx, "ปิดใบสั่งผลิต (รับไม่ครบ)", `${order.id} — ${note}`);
