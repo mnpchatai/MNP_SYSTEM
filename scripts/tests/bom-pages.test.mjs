@@ -1505,7 +1505,9 @@ test("issuing parts from the PI page: the dialog has a tick box and an editable 
   assert.deepEqual([box01().status, box01().qtyDone], ["in_progress", 3]);
   dialog = D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html;
   clean(dialog);
-  assert.match(dialog, /P-BOX-01[\s\S]*?4 <span class="small muted">กล่อง<\/span><div class="small muted">เบิกแล้ว 3 จาก 7<\/div>/, "the next issue offers the remainder and says what was issued");
+  // ต้องเบิก = ส่วนที่เหลือ · ที่เบิกไปแล้วอยู่ใน title และข้อความสำหรับโปรแกรมอ่านหน้าจอ ไม่ใช่บรรทัดถาวร
+  assert.match(dialog, /<td class="right rf-mono" title="เบิกแล้ว 3 จาก 7">4 <span class="small muted">กล่อง<\/span><span class="sr-only"> \(เบิกแล้ว 3 จาก 7\)<\/span><\/td>/, "the next issue offers the remainder and says what was issued in the title");
+  assert.doesNotMatch(dialog, /<div class="small muted">เบิกแล้ว/, "no permanent issued line under the number");
   assert.match(dialog, /max="4" value="4" required data-bom-issue-field aria-label="จำนวนที่เบิก P-BOX-01/);
   // งานของคลังวัตถุดิบ: การ์ดรอเบิกแสดงส่วนที่เหลือ · ขั้น 4 บอกบรรทัดที่เบิกไปบางส่วน
   html = await env.render("p=work&dept=ST");
@@ -1609,6 +1611,47 @@ test("returning parts from the PI page: the buttons appear only for ST and the p
   html = await env.render(page);
   assert.doesNotMatch(html, /data-rf-open="returnParts"/, "nothing left to return → no leftover button");
   assert.match(html, /data-rf-open="undoParts"/, "the undo stays");
+});
+
+test("a PI that closes while a part line is partly issued: the PI page offers the leftover return of that line (no issue, no undo), the dialog takes up to what was issued, and the ST work page has no dead waiting card", async () => {
+  const env = load();
+  const D = env.context.MNP_BOM_DIALOGS;
+  const page = "p=orders&sel=DEMO-26001";
+  env.store.setUser("B08"); // ST
+  const issued = env.store.run("issueOrderParts", { orderId: "DEMO-26001", lines: [{ itemCode: "P-STK-01", qty: 50 }] });
+  assert.equal(issued.ok, true, issued.error?.message);
+  let html = await env.render("p=work&dept=ST");
+  assert.match(html, /เบิกของตามใบ DEMO-26001/, "while the PI is open the waiting card is there");
+  // แถวงานของซื้อของใบนี้ที่หน้างานแผนก (ใบยังเปิด = มีลิงก์ไปเบิก)
+  const rowsOf = (text) => text.split("<tr").filter((row) => row.includes("orders&amp;sel=DEMO-26001") || row.includes("orders&sel=DEMO-26001"));
+  html = await env.render("p=jobs&dept=ST");
+  assert.ok(rowsOf(html).some((row) => row.includes("เบิกจ่ายที่ใบ PI")), "while the PI is open its part jobs link to the issue");
+  html = await env.render(page);
+  assert.doesNotMatch(html, /data-rf-open="returnParts"/, "an open PI: the partly issued line takes no leftover return");
+  // ใบปิด (คลังสินค้ารับครบ / ปิดใบรับไม่ครบ) ขณะบรรทัดยังเบิกไม่ครบ
+  env.store.data().orders.find((order) => order.id === "DEMO-26001").status = "completed";
+  html = await env.render(page);
+  assert.match(html, /data-rf-open="returnParts"[^>]*>คืนของเหลือ</, "the closed PI offers the leftover return of the partly issued line");
+  assert.doesNotMatch(html, /data-rf-open="issueParts"|data-rf-open="undoParts"/, "but no issue and no undo");
+  assert.equal(D.issueParts(env.ctx(page), { orderId: "DEMO-26001" }), null);
+  assert.equal(D.undoParts(env.ctx(page), { orderId: "DEMO-26001" }), null);
+  const dialog = D.returnParts(env.ctx(page), { orderId: "DEMO-26001" }).html;
+  clean(dialog);
+  assert.match(dialog, /name="qty\[\]" type="number" inputmode="decimal" step="any" min="0" max="50" placeholder="0" aria-label="จำนวนที่คืน P-STK-01/, "the line is editable up to the 50 issued");
+  assert.doesNotMatch(dialog, /ยังเบิกไม่ครบ/);
+  const sent = env.store.run("returnOrderParts", { orderId: "DEMO-26001", lines: [{ itemCode: "P-STK-01", qty: 50 }], reason: "ปิดใบแล้วเหลือ" });
+  assert.equal(sent.ok, true, sent.error?.message);
+  assert.equal(env.store.data().stock.find((row) => row.itemCode === "P-STK-01").qty, 400, "the 50 are back in stock");
+  html = await env.render(page);
+  assert.doesNotMatch(html, /data-rf-open="returnParts"/, "nothing left to return");
+  // งานของฉัน (ST) และหน้างานแผนก: ใบที่ปิดแล้วไม่มีการ์ดรอเบิกหรือปุ่มเบิกจ่ายที่กดอะไรไม่ได้
+  html = await env.render("p=work&dept=ST");
+  assert.doesNotMatch(html, /เบิกของตามใบ DEMO-26001/, "no waiting card for a closed PI");
+  html = await env.render("p=jobs&dept=ST");
+  assert.ok(rowsOf(html).length > 0 && rowsOf(html).every((row) => !row.includes("เบิกจ่ายที่ใบ PI")), "no issue link on the closed PI's part jobs");
+  env.store.setUser("B03"); // ฝ่ายวางแผน: แท็บ ST ของงานของฉันไม่นับการ์ดนั้น
+  html = await env.render("p=work&dept=ST");
+  assert.doesNotMatch(html, /เบิกของตามใบ DEMO-26001/);
 });
 
 test("import page: the group selected when pressing import is saved on new items, and a second import reuses the XP- subpart", async () => {

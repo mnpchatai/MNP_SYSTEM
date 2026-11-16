@@ -730,6 +730,15 @@ test("partReturned counts the returns of a (PI, item) pair since its latest issu
     stockMoves: [{ kind: "issue", ref: "PI-1", itemCode: "P-2", qty: -12 }, { kind: "return", ref: "PI-1", itemCode: "P-2", qty: 2 }],
   }, "PI-1");
   assert.deepEqual(mixed.map((line) => [line.itemCode, line.issued, line.returnable, line.partial]), [["P-1", 4, 4, true], ["P-2", 12, 10, false]]);
+  // ใบที่ปิดแล้ว (completed): เบิกส่วนที่เหลือไม่ได้แล้ว บรรทัดที่เบิกไม่ครบจึงไม่ใช่ partial (คืนของเหลือได้) · ใบที่ยังเปิดยังเป็น partial
+  const withOrder = (status) => rules.partReturnLines({
+    jobs: [job("J1", "P-1", "in_progress", 4, { qtyPlanned: 10 }), job("J3", "P-3", "queued", 0, { qtyPlanned: 5 })],
+    stockMoves: [{ kind: "issue", ref: "PI-1", itemCode: "P-1", qty: -4 }, { kind: "return", ref: "PI-1", itemCode: "P-1", qty: 1.5 }],
+    orders: [{ id: "PI-1", status }],
+  }, "PI-1").map((line) => [line.itemCode, line.issued, line.returned, line.returnable, line.partial]);
+  assert.deepEqual(withOrder("completed"), [["P-1", 4, 1.5, 2.5, false]], "a line never issued is still not listed");
+  assert.deepEqual(withOrder("in_progress"), [["P-1", 4, 1.5, 2.5, true]]);
+  assert.deepEqual(rules.partReturnLines({ jobs: [job("J1", "P-1", "in_progress", 4, { qtyPlanned: 10 })], orders: null }, "PI-1").map((line) => line.partial), [true], "no order list = treated as open");
 });
 
 test("part reservations and needs follow a partly issued job: an open job reserves planned − issued, never negative; a finished or over-issued job reserves nothing", () => {

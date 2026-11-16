@@ -1874,7 +1874,7 @@
       const partsLeft = ctx.helpers.partIssuePlan(data, order.id).lines.length;
       if (openOrder && partsLeft && ctx.helpers.canIssueParts(user)) main("issue", ui.openButton("เบิกจ่ายของซื้อ", "issueParts", { orderId: order.id }, { className: "" }));
       // คืนของซื้อ: เมื่อมีของที่เบิกจ่ายแล้ว (ครบหรือบางส่วน · ST / ฝ่ายวางแผน) · คืนของเหลือได้จนกว่าใบจะถูกยกเลิก (รวมใบที่ปิดแล้ว) · ยกเลิกการเบิกจ่ายได้เฉพาะใบที่ยังไม่ปิด
-      // คืนของเหลือแสดงเมื่อยังมีบรรทัดที่เบิกครบแล้วและคืนได้ (บรรทัดที่ยังเบิกไม่ครบคืนของเหลือไม่ได้) · ยกเลิกการเบิกจ่ายยังแสดง เพราะพางานกลับเป็นรอเบิกได้แม้ไม่มีอะไรคืนเข้าสต็อก
+      // คืนของเหลือแสดงเมื่อยังมีบรรทัดที่คืนได้ (บรรทัดที่ยังเบิกไม่ครบของใบที่ยังเปิดคืนของเหลือไม่ได้ · ใบที่ปิดแล้วคืนได้ทุกบรรทัดที่เบิกไป) · ยกเลิกการเบิกจ่ายยังแสดง เพราะพางานกลับเป็นรอเบิกได้แม้ไม่มีอะไรคืนเข้าสต็อก
       const returnLines = rules.partReturnLines(data, order.id);
       if (returnLines.length && ctx.helpers.canIssueParts(user)) {
         if (order.status !== "cancelled" && returnLines.some((line) => !line.partial && line.returnable > 0)) buttons.push(ui.openButton("คืนของเหลือ", "returnParts", { orderId: order.id }, { className: "secondary" }));
@@ -2337,9 +2337,11 @@
       const off = picked ? "" : " disabled";
       const pick = `<label class="bom-issue-pick"><input type="checkbox" data-bom-issue-pick${picked ? " checked" : ""}${line.onHand > 0 ? "" : " disabled"} aria-label="${attr(`เบิก ${line.itemCode} ครั้งนี้${line.onHand > 0 ? "" : " (ไม่มีของในสต็อก)"}`)}"></label>`;
       const qty = `<div class="bom-count-input"><input class="input rf-input" name="qty[]" type="number" inputmode="decimal" step="any" min="0" max="${attr(line.onHand)}" value="${attr(line.remaining)}" required data-bom-issue-field aria-label="${attr(`จำนวนที่เบิก ${line.itemCode} (${unit})`)}"${off}><span class="small muted">${esc(unit)}</span></div><input type="hidden" name="itemCode[]" value="${attr(line.itemCode)}" data-bom-issue-field${off}>`;
-      const need = `${fmt(line.remaining)} <span class="small muted">${esc(unit)}</span>${line.issued > 0 ? `<div class="small muted">${esc(`เบิกแล้ว ${rules.fmtQty(line.issued)} จาก ${rules.fmtQty(line.planned)}`)}</div>` : ""}`;
+      // ต้องเบิก = ส่วนที่เหลือ (ค่าเริ่มของช่องจำนวน) · ที่เบิกไปแล้วอยู่ใน title ของช่อง และข้อความสำหรับโปรแกรมอ่านหน้าจอ (ไม่ซ้ำเป็นข้อความถาวร)
+      const issuedText = line.issued > 0 ? `เบิกแล้ว ${rules.fmtQty(line.issued)} จาก ${rules.fmtQty(line.planned)}` : "";
+      const need = `${fmt(line.remaining)} <span class="small muted">${esc(unit)}</span>${issuedText ? `<span class="sr-only">${esc(` (${issuedText})`)}</span>` : ""}`;
       const stock = `${fmt(line.onHand)}${line.short > 0 ? `<div>${ui.badge("bad", `ขาด ${rules.fmtQty(line.short)}`)}</div>${onOrder.get(line.itemCode) > 0 ? `<div class="small muted">สั่งแล้ว รอรับ ${fmt(onOrder.get(line.itemCode))}</div>` : ""}` : ""}`;
-      return `<tr><td class="center">${pick}</td><td>${ui.mono(line.itemCode)}<div class="small muted">${esc(line.name)}</div></td><td class="right rf-mono">${need}</td><td class="right">${qty}</td><td class="right rf-mono">${stock}</td></tr>`;
+      return `<tr><td class="center">${pick}</td><td>${ui.mono(line.itemCode)}<div class="small muted">${esc(line.name)}</div></td><td class="right rf-mono"${issuedText ? ` title="${attr(issuedText)}"` : ""}>${need}</td><td class="right">${qty}</td><td class="right rf-mono">${stock}</td></tr>`;
     });
     const rfCan = (permission) => Boolean(pages.hub?.rfCan?.(ctx, permission));
     const canBuy = rfCan("purchase");
@@ -2376,7 +2378,8 @@
     if (!order || order.status === "cancelled" || !ctx.helpers.canIssueParts(user)) return null;
     const lines = rules.partReturnLines(ctx.data, orderId);
     if (!lines.length) return null;
-    // บรรทัดที่ยังเบิกไม่ครบ (partial) คืนของเหลือไม่ได้: ช่องอ่านอย่างเดียวพร้อมเหตุผล (แถวคงลำดับ itemCode[] / qty[])
+    // บรรทัดที่ยังเบิกไม่ครบของใบที่ยังเปิด (partial) คืนของเหลือไม่ได้: ช่องอ่านอย่างเดียวพร้อมเหตุผล (แถวคงลำดับ itemCode[] / qty[])
+    // ใบที่ปิดแล้ว บรรทัดที่เบิกไม่ครบไม่ใช่ partial จึงกรอกคืนได้ไม่เกินที่เบิกไปแล้ว (rules.partReturnLines)
     const rows = lines.map((line) => {
       const unit = uomText(ctx, line.uom);
       const control = line.partial
@@ -2420,7 +2423,8 @@
       const part = ctx.helpers.isPartJob(job);
       const canWork = ctx.helpers.canWorkJob(user, job) && ["released", "in_progress"].includes(order?.status) && !part;
       const buttons = [];
-      if (part && job.status !== "done" && ctx.helpers.canIssueParts(user)) buttons.push(ui.link("เบิกจ่ายที่ใบ PI", ctx.url("orders", { sel: job.orderId }), "btn rf-btn secondary small"));
+      // ใบที่ปิดแล้วเบิกจ่ายไม่ได้ (บรรทัดที่เบิกไม่ครบคืนของเหลือได้ที่หน้าใบ) จึงไม่ชี้ไปเบิก
+      if (part && job.status !== "done" && ["released", "in_progress"].includes(order?.status) && ctx.helpers.canIssueParts(user)) buttons.push(ui.link("เบิกจ่ายที่ใบ PI", ctx.url("orders", { sel: job.orderId }), "btn rf-btn secondary small"));
       if (canWork && job.status !== "done") buttons.push(ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "small" }));
       if (canWork && job.status !== "done") buttons.push(job.status === "hold" ? ui.button("คืนคิว", { action: "setJobStatus", args: { jobId: job.id, status: "queued" }, className: "secondary small" }) : ui.button("พักงาน", { action: "setJobStatus", args: { jobId: job.id, status: "hold" }, className: "secondary small" }));
       if (job.status !== "done" && ctx.helpers.canLinkRubberflow(user, job) && ["released", "in_progress"].includes(order?.status) && !job.externalRef) buttons.push(ui.openButton("สร้าง WO ใน RubberFlow", "jobRubberflow", { jobId: job.id }, { className: "secondary small" }));

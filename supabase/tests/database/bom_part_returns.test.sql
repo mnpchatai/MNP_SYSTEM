@@ -1,7 +1,8 @@
 -- คืนของซื้อเข้าสต็อก (20261112010000_bom_part_returns.sql): ยกเลิกการเบิกจ่ายทั้งใบ PI (undoOrderParts) และคืนของเหลือ (returnOrderParts)
 -- ตรวจทั้งฝั่งอนุญาตและปฏิเสธ: โครงสร้าง (kind 'return', note), รูป payload, รูปแถว/เหตุผล, ชนรายระเบียนก่อนสิทธิ์, สิทธิ์ (RB / WH ไม่ได้ ST / กลุ่มวางแผนได้), เพดานยอดที่คืนได้,
 -- ทั้งชุดผ่านหรือไม่ผ่านพร้อมกัน, ยกเลิกการเบิกจ่ายแล้วงานกลับไปรอเบิกจ่าย / ยกเลิกใบได้ / เบิกจ่ายใหม่แล้วนับยอดคืนใหม่, ใบที่ปิดแล้วคืนของเหลือได้แต่ยกเลิกการเบิกจ่ายไม่ได้, ใบที่ยกเลิกคืนไม่ได้,
--- 20261123020000: ยกเลิกการเบิกจ่ายหลังเบิกบางส่วน / เบิกเกินแผน คืนยอดที่ยังอยู่นอกคลังครบ · คืนของเหลือได้เฉพาะบรรทัดที่เบิกครบ เพดานรวมยอดที่เบิกเกิน,
+-- 20261123020000: ยกเลิกการเบิกจ่ายหลังเบิกบางส่วน / เบิกเกินแผน คืนยอดที่ยังอยู่นอกคลังครบ · ใบที่ยังเปิด คืนของเหลือได้เฉพาะบรรทัดที่เบิกครบ เพดานรวมยอดที่เบิกเกิน
+-- · ใบที่ปิดแล้วคืนของเหลือของบรรทัดที่เบิกไม่ครบได้ไม่เกินที่เบิกไปแล้ว (เบิกส่วนที่เหลือ / ยกเลิกการเบิกจ่ายไม่ได้),
 -- ประวัติมี note ใน snapshot · authenticated อ่านตาราง bom_* ตรงไม่ได้ จึงอ่านตารางด้วย reset role (สิทธิ์เจ้าของตาราง) เท่านั้น
 -- ข้อควรระวัง: ถ้าอ่านตารางตรงในนาม authenticated จะเกิด 42501 และทำให้ทั้งไฟล์ล้ม ("No plan found") ตรวจฝั่ง client ผ่าน RPC และตรวจ deny ด้วย throws_ok เท่านั้น
 begin;
@@ -321,6 +322,50 @@ select ok(pr_t.job('JOB3-ST-P2') ->> 'status' = 'queued' and pr_t.job('JOB3-ST-P
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select is(pr_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(pr_t.order_row('251112-25003') || '{"status":"cancelled","cancelReason":"ทดสอบ"}'::jsonb))), 'cancelOrder')
           -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'cancelled', 'after undoing partial and over-issues the PI can be cancelled');
+
+-- 10.6 ใบปิด (completed) ระหว่างที่บรรทัดของซื้อยังเบิกไม่ครบ (20261123020000): เบิกส่วนที่เหลือ / ยกเลิกการเบิกจ่ายไม่ได้แล้ว
+--      คืนของเหลือของบรรทัดนั้นได้ เพดาน = ที่เบิกไปแล้ว - ที่คืนไปแล้ว · บรรทัดที่ไม่เคยเบิกยังคืนไม่ได้
+select ok(pr_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.ord')::jsonb || '{"id":"251112-25004"}'::jsonb))), 'createOrder') is not null, 'the planner creates a fourth order');
+select ok(pr_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  pr_t.order_row('251112-25004') || jsonb_build_object('items', '[{"fgCode":"FG-A","qty":2,"colorSet":"A","note":""}]'::jsonb,
+    'explosion', '[{"itemCode":"FG-A","level":0,"fgQty":2,"required":2},{"itemCode":"P-2","level":1,"fgQty":2,"required":10},{"itemCode":"P-3","level":1,"fgQty":2,"required":4}]'::jsonb)))), 'explodeOrder') is not null, 'and explodes it');
+select ok(pr_t.save(jsonb_build_object(
+  'orders', jsonb_build_object('upsert', jsonb_build_array(pr_t.order_row('251112-25004') || '{"status":"released"}'::jsonb)),
+  'jobs', jsonb_build_object('upsert', jsonb_build_array(
+    current_setting('test.job')::jsonb || '{"id":"JOB4-ST-P2","orderId":"251112-25004","itemCode":"P-2","name":"เม็ดสี","uom":"kg","qtyPlanned":10,"qtyRequired":10}'::jsonb,
+    current_setting('test.job')::jsonb || '{"id":"JOB4-ST-P3","orderId":"251112-25004","itemCode":"P-3","name":"เทปกาว","uom":"roll","qtyPlanned":4,"qtyRequired":4}'::jsonb,
+    current_setting('test.job')::jsonb || '{"id":"JOB4-PK-A","orderId":"251112-25004","dept":"PK","itemCode":"FG-A","name":"สินค้า A","kind":"FG","uom":"set","qtyPlanned":2,"qtyRequired":2}'::jsonb))),
+  'releaseOrder') is not null, 'and releases it with two part jobs (10 kg of pigment, 4 rolls of tape)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select ok(pr_t.issue(jsonb_build_array(pr_t.part('JOB4-ST-P2', 4))) is not null, 'ST issues 4 of the 10 kg of pigment and none of the tape');
+select is(pr_t.qty('P-2'), 36::numeric, 'the pigment dropped by 4 (40 - 4)');
+select throws_ok($$ select pr_t.leftover('[{"itemCode":"P-2","qty":1}]'::jsonb, 'เหลือ', null, '251112-25004') $$, 'BOM_INVALID_RETURN',
+  'while the order is open the partly issued line still takes no leftover return');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select ok(pr_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  pr_t.job('JOB4-PK-A') || jsonb_build_object('status', 'done', 'qtyDone', 2, 'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 2, 'reject', 0, 'note', '')))))), 'reportJob') is not null,
+  'the packing job is finished');
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select is(pr_t.save('{"fgMoves":{"upsert":[{"orderId":"251112-25004","kind":"receive","lines":[{"fgCode":"FG-A","qty":2}]}]}}'::jsonb, 'receiveFg')
+          -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'completed', 'WH receives both sets and the order closes with the pigment line still partly issued');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select throws_ok($$ select pr_t.issue(jsonb_build_array(pr_t.part('JOB4-ST-P2', 10))) $$, 'BOM_INVALID_TRANSITION', 'the rest of the line can no longer be issued');
+select throws_ok($$ select pr_t.undo('x', null, '251112-25004') $$, 'BOM_INVALID_TRANSITION', 'nor can the issue be undone on a completed PI');
+select throws_ok($$ select pr_t.leftover('[{"itemCode":"P-2","qty":4.5}]'::jsonb, 'เหลือ', null, '251112-25004') $$, 'BOM_INVALID_RETURN',
+  'the leftover cap of the partly issued line is what was issued (4)');
+select throws_ok($$ select pr_t.leftover('[{"itemCode":"P-3","qty":1}]'::jsonb, 'เหลือ', null, '251112-25004') $$, 'BOM_INVALID_RETURN',
+  'a line that was never issued takes no leftover return on a completed PI either');
+select set_config('test.res', pr_t.leftover('[{"itemCode":"P-2","qty":3}]'::jsonb, 'ปิดใบแล้วเหลือ', null, '251112-25004')::text, true);
+select is((current_setting('test.res')::jsonb -> 'changes' -> 'stock' -> 'upsert' -> 0 ->> 'qty')::numeric, 39::numeric,
+  'but the partly issued line of the completed PI takes a leftover return (36 + 3)');
+select ok(pr_t.has_return('P-2', 3, 39, '251112-25004', current_setting('test.n_sbx_st_staff'), 'ปิดใบแล้วเหลือ'), 'the return move names the PI and the reason');
+select throws_ok($$ select pr_t.leftover('[{"itemCode":"P-2","qty":1.5}]'::jsonb, 'เหลือ', null, '251112-25004') $$, 'BOM_INVALID_RETURN',
+  'the cap counts what was already returned (4 - 3 = 1)');
+select ok(pr_t.leftover('[{"itemCode":"P-2","qty":1}]'::jsonb, 'คืนที่เหลือ', null, '251112-25004') is not null, 'the last 1 kg can be returned');
+select is(pr_t.qty('P-2'), 40::numeric, 'the pigment is back to 40');
+select throws_ok($$ select pr_t.leftover('[{"itemCode":"P-2","qty":0.5}]'::jsonb, 'เหลือ', null, '251112-25004') $$, 'BOM_INVALID_RETURN', 'and nothing is left of it');
+select ok(pr_t.job('JOB4-ST-P2') ->> 'status' = 'in_progress' and (pr_t.job('JOB4-ST-P2') ->> 'qtyDone')::numeric = 4, 'the leftover returns do not change the job');
+select is(pr_t.order_status('251112-25004'), 'completed', 'and the PI stays completed');
 
 -- 11. snapshot / delta และตาราง --------------------------------------------------------------------
 select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 14::bigint, 'the snapshot has fourteen lists (partReturns is not one of them, fgMoves is)');

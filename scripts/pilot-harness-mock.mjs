@@ -728,7 +728,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     }
   }
   // เบิกจ่ายของซื้อรายใบ (ตรงกับ private.bom_issue_parts ของ 20261123020000): ผู้เรียกกลุ่มวางแผน/ST · แถวเป็นงานของซื้อที่ยังไม่ done ของใบเดียว อย่างน้อยหนึ่งแถว (ไม่ต้องครบทุกงาน)
-  // แต่ละแถว qtyDone = ยอดเบิกสะสมใหม่ (ตัวเลข 0..1e9 มากกว่าที่เก็บ) · qtyPlanned = ที่เก็บ · status = done เมื่อยอดสะสมใหม่ >= แผน ไม่เช่นนั้น in_progress (ผิดข้อใด = BOM_INVALID_JOB)
+  // แต่ละแถว qtyDone = ยอดเบิกสะสมใหม่ (ตัวเลข 0..1e9 มากกว่าที่เก็บ ทศนิยมไม่เกิน 4 ตำแหน่งหรือเท่าแผน) · qtyPlanned = ที่เก็บ · status = done เมื่อยอดสะสมใหม่ >= แผน ไม่เช่นนั้น in_progress (ผิดข้อใด = BOM_INVALID_JOB)
   // ยอดครั้งนี้ (ใหม่ - ที่เก็บ) เกินสต็อกแถวใด = ไม่จ่ายเลย (BOM_STALE ถ้าแถวสต็อกเหล่านั้นเปลี่ยนหลัง base ไม่เช่นนั้น BOM_INSUFFICIENT_STOCK) · ผ่าน = หักสต็อก เขียน issue ตั้งยอด/สถานะของงาน
   const bomIssueNum = (value) => (typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1e9 ? value : null);
   function bomIssueParts(next, rows, base, cur, nextVersion, actor, at) {
@@ -741,7 +741,9 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       if (!job || !bomIsPartJob(job) || job.status === "done" || (picks.length && job.orderId !== picks[0].job.orderId) || picks.some((pick) => pick.job === job)) fail("BOM_INVALID_JOB");
       const total = bomIssueNum(row.qtyDone);
       const stored = Number(job.qtyDone) || 0;
-      if (total === null || total <= stored || bomIssueNum(row.qtyPlanned) !== Number(job.qtyPlanned)
+      // ทศนิยมเกิน 4 ตำแหน่ง = ปฏิเสธ เว้นแต่เท่าแผนพอดี (ตรงกับ round(v_total, 4) ของฐานข้อมูล)
+      if (total === null || total <= stored || (total !== Math.round(total * 1e4) / 1e4 && total !== Number(job.qtyPlanned))
+          || bomIssueNum(row.qtyPlanned) !== Number(job.qtyPlanned)
           || row.status !== (total >= Number(job.qtyPlanned) ? "done" : "in_progress")) fail("BOM_INVALID_JOB");
       picks.push({ job, total, amount: Math.round((total - stored) * 1e9) / 1e9 });
     }
@@ -805,7 +807,8 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     const newer = (version) => (version ?? 0) > base && (version ?? 0) <= cur;
     if (partJobs.some((job) => newer(next.versions.jobs[job.id])) || next.stock.some((entry) => items.has(entry.itemCode) && newer(next.versions.stock[entry.itemCode]))) fail("BOM_STALE");
     if (!(bomIsPlanner(actor) || actor.dept === "ST")) fail("BOM_FORBIDDEN");
-    // งานที่นับว่าเบิกแล้ว: คืนของเหลือ = done เท่านั้น · ยกเลิกการเบิกจ่าย = done หรือเบิกไปบางส่วน (qtyDone > 0) ตรงกับ private.bom_return_parts ของ 20261123020000
+    // งานที่นับว่าเบิกแล้ว (ตรงกับ private.bom_return_parts ของ 20261123020000): ยกเลิกการเบิกจ่าย = done หรือเบิกไปบางส่วน (qtyDone > 0)
+    // คืนของเหลือ = done · หรือเบิกไปบางส่วนเมื่อใบปิดแล้ว (completed: เบิกส่วนที่เหลือ / ยกเลิกการเบิกจ่ายไม่ได้แล้ว)
     const issuedJob = (job) => job.status === "done" || Number(job.qtyDone) > 0;
     const issuedOf = (code, withPartial = false) => {
       const done = partJobs.filter((job) => (withPartial ? issuedJob(job) : job.status === "done") && job.itemCode === code);
@@ -837,7 +840,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     } else {
       if (!["released", "in_progress", "completed"].includes(order.status)) fail("BOM_INVALID_TRANSITION");
       for (const code of [...wanted.keys()].sort(bomCmp)) {
-        const issued = issuedOf(code);
+        const issued = issuedOf(code, order.status === "completed");
         if (issued === null || wanted.get(code) > Math.round((issued - bomPartReturned(next, order.id, code)) * 1e9) / 1e9) bad();
         add(code, wanted.get(code));
         moves += 1;

@@ -1,7 +1,8 @@
 -- สต็อกของซื้อ (ชิ้นส่วน PURCHASED ของ BOM) + ST เบิกจ่ายของซื้อรายใบ PI + บรรทัดของซื้อในใบสั่งซื้อ (20261111010000_bom_part_stock.sql)
 -- ตรวจทั้งฝั่งอนุญาตและปฏิเสธ: โครงสร้าง/สิทธิ์ตารางใหม่, นับสต็อก (ST / WH / กลุ่มวางแผน / สมาชิก RB / QA), สต็อกขั้นต่ำเฉพาะกลุ่มวางแผนและ ST,รหัสที่ไม่ใช่ของซื้อ, ชนรายระเบียนก่อนสิทธิ์,
 -- งานของซื้อรายงานผ่านทางอื่นไม่ได้, issueOrderParts (สิทธิ์ สต็อกไม่พอ = ไม่จ่ายเลย ชนรายระเบียน จ่ายสำเร็จ จ่ายซ้ำ · 20261123020000: เลือกบางงาน เบิกบางส่วนแล้วเบิกส่วนที่เหลือ
--- เบิกเกินแผนไม่เกินสต็อก ยอดไม่เป็นบวก/สถานะผิด สองใบในคำสั่งเดียว ใบที่เบิกบางส่วนยกเลิกไม่ได้), ใบสั่งซื้อที่มีบรรทัดของซื้อ (สร้าง/แก้สต็อกขั้นต่ำ/รับเข้า/ปฏิเสธ),
+-- เบิกเกินแผนไม่เกินสต็อก ยอดไม่เป็นบวก/สถานะผิด/ทศนิยมเกิน 4 ตำแหน่ง สองใบในคำสั่งเดียว ใบที่เบิกบางส่วนยกเลิกและเปิดกลับเป็นร่างไม่ได้
+-- กลุ่มวางแผนแทรกงานที่ไม่ใช่ของซื้อไม่ได้), ใบสั่งซื้อที่มีบรรทัดของซื้อ (สร้าง/แก้สต็อกขั้นต่ำ/รับเข้า/ปฏิเสธ),
 -- snapshot / delta 13 ชุด และล้างข้อมูลทดสอบ · authenticated อ่านตาราง bom_* ตรงไม่ได้ จึงอ่านตารางด้วย reset role (สิทธิ์เจ้าของตาราง) เท่านั้น
 -- สิทธิ์ใบสั่งซื้อ (20261119010000_rf_purchase_by_st.sql): สร้าง / รับบรรทัด ทำได้เฉพาะ ST และ admin · กลุ่มวางแผน RB QA ได้ RF_FORBIDDEN
 -- สต็อกขั้นต่ำของของซื้อ (20261120010000_st_sets_safety_stock.sql): เปลี่ยนได้โดยกลุ่มวางแผน (admin นับรวม) และแผนก ST ทั้งทาง countPartStock และทางใบสั่งซื้อ
@@ -453,8 +454,9 @@ select is(ps_t.job('JOB3-ST-P7') ->> 'status', 'queued', 'the line that was not 
 select is(ps_t.qty('P-6'), 8::numeric, 'the stock dropped by what was issued (12 - 4)');
 select ok(ps_t.has_move('P-6', 'issue', -4, 8, '251111-25003', current_setting('test.n_sbx_st_staff')), 'the issue move carries the issued quantity and the balance');
 select is(ps_t.order_status('251111-25003'), 'in_progress', 'a partial issue starts the released order');
-select ok(exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'issueOrderParts'
-                  and a ->> 'detail' like '%jobs +1%' and a ->> 'detail' like '%stock +1%'), 'the history counts one job and one stock row');
+-- รายการล่าสุดของประวัติ = การบันทึกนี้ (รายการเก่าของ 7.5 ก็เป็น jobs +1, stock +1 จึงต้องดูรายการล่าสุดเท่านั้น)
+select is(jsonb_build_array(public.app_bom_audit(1) -> 0 ->> 'action', public.app_bom_audit(1) -> 0 ->> 'user', public.app_bom_audit(1) -> 0 ->> 'detail'),
+  jsonb_build_array('issueOrderParts', current_setting('test.n_sbx_st_staff'), 'jobs +1, stock +1'), 'the history entry of this save counts one job and one stock row');
 
 -- 7.6.3 ปฏิเสธ: ยอดเท่าเดิม / ลดลง · สถานะไม่ตรงกับยอด · เกินสต็อก (ทั้งคำสั่งไม่เขียน) · สองใบในคำสั่งเดียว
 select set_config('test.vq', ps_t.ver()::text, true);
@@ -465,6 +467,7 @@ select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P6', 
 select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P6', 13), ps_t.part('JOB3-ST-P7', 2))) $$, 'BOM_INSUFFICIENT_STOCK',
   'issuing 9 more caps with 8 in stock refuses the whole save');
 select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P6', 5), ps_t.part('JOB4-ST-P6', 1))) $$, 'BOM_INVALID_JOB', 'rows of two orders in one save are refused');
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P6', 5.12345))) $$, 'BOM_INVALID_JOB', 'a total with more than 4 decimal places is refused');
 select is(ps_t.ver(), current_setting('test.vq')::bigint, 'nothing was written by the refused calls');
 select is(ps_t.qty('P-7'), 3::numeric, 'the glue of the refused save was not issued');
 select is((ps_t.job('JOB3-ST-P6') ->> 'qtyDone')::numeric, 4::numeric, 'and the caps line still holds 4');
@@ -497,7 +500,19 @@ select set_config('test.o4', (select o::text from jsonb_array_elements(public.ap
 select throws_ok($$ select ps_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.o4')::jsonb || '{"status":"cancelled","cancelReason":"ทดสอบ"}'::jsonb))), 'cancelOrder') $$, 'BOM_INVALID_TRANSITION',
   'an order with a partly issued part line cannot be cancelled');
+select throws_ok($$ select ps_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.o4')::jsonb || '{"status":"draft","explosion":null,"explodedAt":null}'::jsonb))), 'updateOrderItem') $$, 'BOM_INVALID_TRANSITION',
+  'nor reopened as a draft (the partly issued line counts as a started job)');
 select is(ps_t.order_status('251111-25004'), 'in_progress', 'and stays in progress');
+select is((ps_t.job('JOB4-ST-P6') ->> 'qtyDone')::numeric, 2::numeric, 'with its part line still holding the 2 caps');
+
+-- 7.6.7 กลุ่มวางแผนส่งงานที่ไม่ใช่ของซื้อมากับ issueOrderParts: bom_save_jobs เขียนงาน PK ให้กลุ่มวางแผนได้ แต่ bom_issue_parts ปฏิเสธ ทั้งคำสั่งจึงไม่เขียนอะไร
+select set_config('test.vq', ps_t.ver()::text, true);
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.part('JOB4-ST-P6', 3), ps_t.job('JOB4-PK-A') || '{"status":"in_progress","qtyDone":1}'::jsonb)) $$,
+  'BOM_INVALID_JOB', 'a planner cannot slip a packing job into a part issue');
+select is(ps_t.ver(), current_setting('test.vq')::bigint, 'nothing was written');
+select ok(ps_t.job('JOB4-PK-A') ->> 'status' = 'queued' and (ps_t.job('JOB4-PK-A') ->> 'qtyDone')::numeric = 0, 'the packing job is untouched');
+select is((ps_t.job('JOB4-ST-P6') ->> 'qtyDone')::numeric, 2::numeric, 'and so is the part line of the same save');
 
 -- 8. ใบสั่งซื้อที่มีบรรทัดของซื้อ ------------------------------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);

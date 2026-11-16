@@ -990,16 +990,18 @@
     return Math.round(total * 1e4) / 1e4;
   }
   // รายการของซื้อที่เบิกจ่ายแล้วของใบ (งาน ST / PURCHASED ที่ done หรือเบิกไปบางส่วน รวมต่อรหัส) พร้อมยอดที่คืนไปแล้วและที่ยังคืนได้ · เรียงตามรหัส
-  // partial = บรรทัดยังเบิกไม่ครบ (งานยังไม่ done): ยกเลิกการเบิกจ่ายคืนยอดนี้ได้ แต่คืนของเหลือไม่ได้ (ตรงกับ private.bom_return_parts ของ 20261123020000)
-  // ยอดเบิก (issued) = qtyDone รวมยอดที่เบิกเกินแผน
+  // partial = บรรทัดยังเบิกไม่ครบ (งานยังไม่ done) ของใบที่ยังไม่ปิด: ยกเลิกการเบิกจ่ายคืนยอดนี้ได้ แต่คืนของเหลือไม่ได้
+  // ใบที่ปิดแล้ว (completed) เบิกส่วนที่เหลือ / ยกเลิกการเบิกจ่ายไม่ได้แล้ว บรรทัดที่เบิกไม่ครบจึงไม่ใช่ partial (คืนของเหลือได้เหมือนบรรทัดที่ done) · ตรงกับ private.bom_return_parts ของ 20261123020000
+  // ยอดเบิก (issued) = qtyDone รวมยอดที่เบิกเกินแผน · data.orders ใช้ดูสถานะใบ (ไม่ส่ง = ถือว่ายังไม่ปิด)
   function partReturnLines(data, orderId) {
-    const { jobs = [], stockMoves = [] } = data ?? {};
+    const { jobs = [], stockMoves = [], orders = [] } = data ?? {};
+    const closed = (orders ?? []).find((order) => order.id === orderId)?.status === "completed";
     const byItem = new Map();
     for (const job of jobs) {
       if (job.orderId !== orderId || job.dept !== "ST" || job.kind !== "PURCHASED" || !(job.status === "done" || Number(job.qtyDone) > 0)) continue;
       const line = byItem.get(job.itemCode) ?? { itemCode: job.itemCode, name: job.name, uom: job.uom, issued: 0, partial: false };
       line.issued += Number(job.qtyDone) || 0;
-      if (job.status !== "done") line.partial = true;
+      if (job.status !== "done" && !closed) line.partial = true;
       byItem.set(job.itemCode, line);
     }
     return [...byItem.values()].sort((a, b) => (a.itemCode < b.itemCode ? -1 : a.itemCode > b.itemCode ? 1 : 0)).map((line) => {

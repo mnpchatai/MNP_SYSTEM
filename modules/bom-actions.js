@@ -1287,7 +1287,8 @@
     return { returned: moves, summary: `${lines.length} รายการ`, request: { orderId: order.id, mode: "undo", reason: why } };
   }
   // คืนของเหลือ: lines [{ itemCode, qty }] คืนรายการละจำนวนที่พิมพ์ (ไม่เกินที่คืนได้ ซึ่งรวมยอดที่เบิกเกินแผน) งานยังเป็น done ใบยังนับว่าเบิกจ่ายแล้ว · ทั้งชุดผ่านหรือไม่ผ่านพร้อมกัน
-  // บรรทัดที่ยังเบิกไม่ครบ (partial) คืนของเหลือไม่ได้: เบิกส่วนที่เหลือให้ครบก่อน หรือยกเลิกการเบิกจ่าย (ตรงกับ private.bom_return_parts)
+  // บรรทัดที่ยังเบิกไม่ครบของใบที่ยังเปิด (partial) คืนของเหลือไม่ได้: เบิกส่วนที่เหลือให้ครบก่อน หรือยกเลิกการเบิกจ่าย
+  // ใบที่ปิดแล้ว (completed) คืนของเหลือของบรรทัดที่เบิกไม่ครบได้ ไม่เกินที่เบิกไปแล้ว - ที่คืนไปแล้ว (rules.partReturnLines · ตรงกับ private.bom_return_parts)
   function returnOrderParts(d, { orderId, lines, reason }, ctx) {
     const user = requireUser(ctx);
     if (!canIssueParts(user)) fail("คืนของซื้อได้โดยคลังวัตถุดิบ (ST) ฝ่ายวางแผน หรือผู้จัดการ");

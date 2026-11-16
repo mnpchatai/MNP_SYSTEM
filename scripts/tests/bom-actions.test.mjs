@@ -1509,6 +1509,36 @@ test("a partly issued line: undo gives it back and the jobs wait again (then the
   assert.equal(A.cancelOrder(d, { orderId: order.id, reason: "ลูกค้ายกเลิก" }, ctx("planner")), order.id);
 });
 
+test("a PI that closes while a part line is partly issued: the line takes a leftover return up to issued minus returned (local and database mode), the undo and the rest of the issue stay refused", () => {
+  for (const remote of [false, true]) {
+    const d = fresh();
+    const order = d.orders.find((entry) => entry.id === "DEMO-26001");
+    const stock = (code) => d.stock.find((row) => row.itemCode === code);
+    const jobOf = (code) => d.jobs.find((job) => job.orderId === order.id && A.helpers.isPartJob(job) && job.itemCode === code);
+    const c = (role) => ({ ...ctx(role), remote });
+    A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 50 }] }, ctx("st"));
+    assert.equal(stock("P-STK-01").qty, 350);
+    // ใบยังเปิด: บรรทัดที่เบิกไม่ครบคืนของเหลือไม่ได้ (เหมือนเดิม)
+    rejects(() => A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 1 }], reason: "เหลือ" }, c("st")), /P-STK-01 ยังเบิกไม่ครบ/);
+    order.status = "completed";
+    assert.deepEqual(rules.partReturnLines(d, order.id).map((line) => [line.itemCode, line.issued, line.returnable, line.partial]), [["P-STK-01", 50, 50, false]], `closed → not partial (${remote ? "database" : "local"})`);
+    rejects(() => A.issueOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 10 }] }, c("st")), /เฉพาะใบที่ปล่อยผลิตแล้ว/);
+    rejects(() => A.undoOrderParts(d, { orderId: order.id, reason: "ผิดใบ" }, c("st")), /ยังไม่ปิด/);
+    rejects(() => A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 50.5 }], reason: "เหลือ" }, c("st")), /คืนได้อีกไม่เกิน 50/);
+    const sent = A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 30 }], reason: "ปิดใบแล้วเหลือ" }, c("st"));
+    assert.deepEqual(sent.request, { orderId: order.id, mode: "leftover", reason: "ปิดใบแล้วเหลือ", lines: [{ itemCode: "P-STK-01", qty: 30 }] }, "the database mode sends the leftover request");
+    assert.equal(stock("P-STK-01").qty, 380);
+    assert.deepEqual([jobOf("P-STK-01").status, jobOf("P-STK-01").qtyDone], ["in_progress", 50], "the job is not changed by the return");
+    if (!remote) {
+      // ประวัติในเครื่องนับยอดที่คืนไปแล้ว (โหมดฐานข้อมูล เซิร์ฟเวอร์นับเอง)
+      rejects(() => A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 20.5 }], reason: "เหลือ" }, c("st")), /คืนได้อีกไม่เกิน 20/);
+      A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 20 }], reason: "คืนที่เหลือ" }, c("st"));
+      assert.equal(stock("P-STK-01").qty, 400);
+      assert.equal(rules.partReturnLines(d, order.id)[0].returnable, 0);
+    }
+  }
+});
+
 test("returning purchased parts: undo gives the whole issue back and the jobs wait again, leftovers are limited to what is not yet returned since the latest issue, rights and reason are checked", () => {
   const d = fresh();
   const order = d.orders.find((entry) => entry.id === "DEMO-26001");

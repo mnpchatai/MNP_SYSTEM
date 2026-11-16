@@ -1042,14 +1042,17 @@
     const orderId = String(params.get("order") ?? "").toUpperCase();
     const orderOf = (id) => data.orders.find((entry) => entry.id === id);
     const live = (job) => ["released", "in_progress", "completed"].includes(orderOf(job.orderId)?.status);
+    // งานที่ยังต้องทำ: ยังไม่ done · งานของซื้อของใบที่ปิดแล้ว (completed) ไม่นับ เพราะเบิกจ่ายไม่ได้แล้ว (การ์ดรอเบิกจะกดอะไรไม่ได้)
+    // ของที่เบิกไปบางส่วนคืนของเหลือได้ที่หน้าใบ ไม่มีการ์ดของตัวเอง
+    const toDo = (job) => job.status !== "done" && !(ctx.helpers.isPartJob(job) && orderOf(job.orderId)?.status === "completed");
     const mine = data.jobs.filter((job) => (dept === "ALL" || job.dept === dept) && live(job) && (!orderId || job.orderId === orderId));
-    const open = mine.filter((job) => job.status !== "done");
+    const open = mine.filter(toDo);
     const done = mine.filter((job) => job.status === "done");
     // จำนวนบนแท็บนับเป็นการ์ด: ของซื้อของใบเดียวกันเป็นการ์ดเดียว
     const cardCount = (jobs) => jobs.filter((job) => !ctx.helpers.isPartJob(job)).length + new Set(jobs.filter((job) => ctx.helpers.isPartJob(job)).map((job) => job.orderId)).size;
     // งานของคลังวัตถุดิบ (รับเข้า / สั่งซื้อ) อยู่ในรายการต้องทำของแผนก ST · ไม่กรองตามใบที่เลือกดู
     const tasks = dept && !orderId ? [...(dept === "ST" || dept === "ALL" ? storeTasks(ctx) : []), ...(dept === "WH" || dept === "ALL" ? fgTasks(ctx) : [])] : [];
-    return { planner, depts, dept, show, orderId, orderOf, live, open, done, cardCount, tasks };
+    return { planner, depts, dept, show, orderId, orderOf, live, toDo, open, done, cardCount, tasks };
   }
   // ตัวเลขที่เมนู "งานของฉัน" = จำนวนการ์ดที่แท็บ "ต้องทำ" แสดงตามค่าตั้งต้นของหน้า (ไม่มีพารามิเตอร์)
   function workCount(ctx) {
@@ -1058,9 +1061,9 @@
   }
   pages.work = (ctx) => {
     const { data, ui, rules, user, params } = ctx;
-    const { planner, depts, dept, show, orderId, orderOf, live, open, done, cardCount, tasks } = workBoard(ctx, params);
+    const { planner, depts, dept, show, orderId, orderOf, live, toDo, open, done, cardCount, tasks } = workBoard(ctx, params);
     const keep = (extra) => ctx.url("work", { dept: planner && dept !== "ALL" ? dept : null, order: orderId || null, ...extra });
-    const deptTabs = planner ? ui.tabs([{ id: "ALL", label: "ทุกแผนก" }, ...depts.map((code) => ({ id: code, label: `${code} ${cardCount(data.jobs.filter((job) => job.dept === code && job.status !== "done" && live(job)))}` }))], dept, (id) => ctx.url("work", { dept: id === "ALL" ? null : id, st: show === "done" ? "done" : null, order: orderId || null })) : "";
+    const deptTabs = planner ? ui.tabs([{ id: "ALL", label: "ทุกแผนก" }, ...depts.map((code) => ({ id: code, label: `${code} ${cardCount(data.jobs.filter((job) => job.dept === code && toDo(job) && live(job)))}` }))], dept, (id) => ctx.url("work", { dept: id === "ALL" ? null : id, st: show === "done" ? "done" : null, order: orderId || null })) : "";
     const showTabs = ui.tabs([{ id: "open", label: `ต้องทำ ${cardCount(open) + tasks.length}` }, { id: "done", label: `เสร็จแล้ว ${cardCount(done)}` }], show, (id) => keep({ st: id === "done" ? "done" : null }));
     const rank = (job) => (job.status === "in_progress" ? 0 : job.status === "hold" ? 2 : 1);
     const list = (show === "done" ? done : open).slice().sort((a, b) => rank(a) - rank(b) || a.dueAt - b.dueAt || a.id.localeCompare(b.id));
