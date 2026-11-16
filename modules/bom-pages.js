@@ -353,6 +353,9 @@
       if (entry.error) return bad(entry.error);
       if (above.has(entry.code)) return bad("เป็นพ่อของแถวที่เพิ่มใต้ จะเป็นวงจร");
       if (present.has(entry.code)) return bad("มีในตารางแล้วใต้พ่อเดียวกัน");
+      // ชิ้นที่ BOM ของมันมีพ่อ/บรรพบุรุษอยู่ข้างใต้ในชั้นใดก็ได้ จะเป็นวงจรเหมือนกัน (ตอนบันทึก normalizeLines ปฏิเสธด้วยกติกาเดียวกัน)
+      const cycleAt = rules.reachedFrom(entry.code, above, (code) => approvedBomOf(ctx, code));
+      if (cycleAt) return bad(`มี ${cycleAt} อยู่ข้างใต้ จะเป็นวงจร`);
       const item = itemOf(ctx, entry.code);
       if (item) {
         if (item.active === false) return bad("เลิกใช้แล้ว เพิ่มเป็นบรรทัดใหม่ไม่ได้");
@@ -379,7 +382,7 @@
     const body = plan.rows.map((row) => `<tr><td class="right">${esc(String(row.line))}</td><td>${ui.mono(row.code || "—")}</td><td>${row.status === "error" ? `${ui.badge("bad", "ข้าม")} <span class="small">${esc(row.error)}</span>` : `${badges[row.status]}${row.warn ? ` <span class="small muted">${esc(row.warn)}</span>` : ""}`}</td><td class="right">${esc(ctx.rules.fmtQty(row.qty))}</td><td class="nowrap">${esc(row.status === "error" ? "" : uomText(ctx, row.uom))}</td><td class="right">${esc(String(row.scrapPct || ""))}</td><td class="small">${esc(row.note)}</td></tr>`);
     return `${plan.header ? '<p class="small muted">ข้ามบรรทัดที่ 1 (ถือเป็นหัวตาราง)</p>' : ""}${plan.warning ? ui.callout("warn", plan.warning) : ""}${ui.table(["บรรทัด", "รหัส", "ผลการตรวจ", { label: "ปริมาณ", className: "right" }, "หน่วย", { label: "% เผื่อเสีย", className: "right" }, "หมายเหตุ"], body, { emptyText: "ยังไม่มีบรรทัดที่อ่านได้" })}${plan.truncated ? '<p class="small muted">อ่านเฉพาะ 500 บรรทัดแรก</p>' : ""}`;
   };
-  pages.tools = { editorRowsOf, copyPlan, pastePlan, purchaseOrdersOf: (ctx) => rfPurchaseOrdersOf(ctx), rfRecipes: (ctx) => rfRecipes(ctx), rfReady: (ctx) => rfReady(ctx) };
+  pages.tools = { editorRowsOf, copyPlan, pastePlan, purchaseOrdersOf: (ctx) => rfPurchaseOrdersOf(ctx), rfRecipes: (ctx) => rfRecipes(ctx), rfReady: (ctx) => rfReady(ctx), rfWake: (ctx) => rfWake(ctx) };
 
   pages.build = (ctx) => {
     const { data, ui, rules, user, params } = ctx;
@@ -505,10 +508,10 @@
         </div>` : "";
     const editor = `<form novalidate id="bom-tree-form" class="bom-editor" data-rf-form="saveBomTree" data-rf-success="{result}">
       <input type="hidden" name="code" value="${attr(code)}">
-      <datalist id="bom-item-list">${data.items.filter((entry) => entry.code !== code && entry.active !== false).map((entry) => `<option value="${attr(entry.code)}">${esc(`${rules.KINDS[entry.kind]?.label ?? entry.kind} · ${entry.name.slice(0, 50)}`)}</option>`).join("")}</datalist>
+      <datalist id="bom-item-list">${data.items.filter((entry) => entry.code !== code && entry.active !== false && entry.kind !== "FG").map((entry) => `<option value="${attr(entry.code)}">${esc(`${rules.KINDS[entry.kind]?.label ?? entry.kind} · ${entry.name.slice(0, 50)}`)}</option>`).join("")}</datalist>
       <datalist id="bom-compound-list">${data.compounds.map((entry) => `<option value="${attr(entry.code)}">${esc(entry.name)}</option>`).join("")}</datalist>
       ${itemCard}
-      ${noteCard(ui, "วิธีใส่ปริมาณและลำดับบรรทัด", `<p class="small muted">ปริมาณ = จำนวนลูกต่อ 1 หน่วยของพ่อ (ชั้นแรกต่อ 1 ${esc(uomText(ctx, item?.uom ?? defaultUom))} ของ${esc(noun)}) · RB ใต้ SE: ใส่ข้อมูลการตัดแล้วระบบแนะนำอัตราส่วน 1/(ชิ้นต่อเส้น × SE ต่อ GR) · สูตรยางใต้ RB: ปริมาณเป็น กก. ต่อเส้น (ว่าง = ใช้ กก./เส้น ของเส้นยาง) · บันทึกแล้วบรรทัดเรียงตามผังงาน ST → RB/SE → PT → BG → PK (ลากย้ายได้ภายในแผนกเดียวกัน) · พิมพ์รหัสที่ยังไม่มี = สร้างชิ้นใหม่ (ระบุชนิด ชื่อ หน่วย)</p>`, `
+      ${noteCard(ui, "วิธีใส่ปริมาณและลำดับบรรทัด", `<p class="small muted">ปริมาณ = จำนวนลูกต่อ 1 หน่วยของพ่อ (ชั้นแรกต่อ 1 ${esc(uomText(ctx, item?.uom ?? defaultUom))} ของ${esc(noun)}) · RB ใต้ SE: ใส่ข้อมูลการตัดแล้วระบบแนะนำอัตราส่วน 1/(ชิ้นต่อเส้น × SE ต่อ GR) · สูตรยางใต้ RB: ปริมาณเป็น กก. ต่อเส้น (ว่าง = ใช้ กก./เส้น ของเส้นยาง) · บันทึกตามลำดับในตาราง (ลากย้ายข้ามแผนกได้) · พิมพ์รหัสที่ยังไม่มี = สร้างชิ้นใหม่ (ระบุชนิด ชื่อ หน่วย)</p>`, `
         ${toolsHtml}
         <div class="table-wrap"><table class="rf-table bom-tree-table">${tableHead}<tbody data-bom-rows>${rows.map((row) => editorRowHtml(ctx, row)).join("")}</tbody></table></div>
         <template data-bom-row>${templateRow}</template>
@@ -1523,11 +1526,25 @@
   const rfStore = (ctx) => { try { return ctx.rubberflow()?.store ?? null; } catch { return null; } };
   const rfRemote = (ctx) => Boolean(rfStore(ctx)?.isRemote?.());
   const rfReady = (ctx) => { const store = rfStore(ctx); return Boolean(store) && (!store.isRemote?.() || store.status() === "ready"); };
+  // RubberFlow ยังไม่ได้โหลดหรือกำลังโหลดจากฐานข้อมูล (เช่น กลับมาจาก #/rubberflow ระหว่างโหลด): สั่งโหลดให้ครั้งเดียว (ตะขอเดียวต่อรอบ) แล้ววาดหน้า BOM ใหม่เมื่อเสร็จถ้ายังอยู่หน้านี้
+  // คืน true = ข้อมูลยังไม่พร้อม (ผู้เรียกแสดงสถานะกำลังโหลดแทนการเงียบ) · ใช้ร่วมกันทุกทางที่อ่าน RubberFlow (สูตร ใบสั่งซื้อ WO งานของคลัง)
+  let rfWakeHooked = false;
+  const rfWake = (ctx) => {
+    const store = rfStore(ctx);
+    if (!store?.isRemote?.() || !["idle", "loading"].includes(store.status())) return false;
+    if (!rfWakeHooked) {
+      rfWakeHooked = true;
+      // ผู้ใช้กำลังแก้ฟอร์มหรือเปิด dialog อยู่ (MNP_BOM.isEditing): ไม่วาดทับสิ่งที่พิมพ์ค้าง ข้อมูลเคมีแสดงเมื่อหน้าวาดครั้งถัดไป
+      const done = () => { rfWakeHooked = false; try { if (currentRoute().path === "bom" && !root.MNP_BOM?.isEditing?.()) renderRoute(); } catch { /* ออกจากหน้า BOM แล้ว */ } };
+      store.ensureLoaded().then(done, done);
+    }
+    return true;
+  };
   // WO ของ RubberFlow ที่โหลดจากฐานข้อมูลแล้ว (null = ยังไม่โหลด หรือโหมดในเครื่อง) · สั่งโหลดให้เมื่อยังไม่ได้โหลด (เหมือน rfRecipes) เพื่อรู้ว่างานที่ผูก WO เริ่มแล้วหรือยัง
   const rfOrdersOf = (ctx) => {
     const store = rfStore(ctx);
     if (!store?.isRemote?.()) return null;
-    if (store.status() === "idle") store.ensureLoaded().then(() => { try { if (currentRoute().path === "bom") renderRoute(); } catch { /* ออกจากหน้า BOM แล้ว */ } });
+    rfWake(ctx);
     if (!rfReady(ctx)) return null;
     try { return store.data().orders ?? null; } catch { return null; }
   };
@@ -1548,9 +1565,7 @@
   const rfRecipes = (ctx) => {
     const store = rfStore(ctx);
     if (!store) return [];
-    if (store.isRemote?.() && store.status() === "idle") {
-      store.ensureLoaded().then(() => { try { if (currentRoute().path === "bom") renderRoute(); } catch { /* ออกจากหน้า BOM แล้ว */ } });
-    }
+    rfWake(ctx);
     if (!rfReady(ctx)) return [];
     try {
       const all = store.data().recipes ?? [];
@@ -2047,8 +2062,9 @@
     return { html: ui.dialog("printSheet", "ใบพิมพ์", body, { wide: true, footer: `${ui.closeButton("ปิด")}<button class="btn rf-btn" type="button" data-bom-print>พิมพ์</button>` }), bind };
   };
   // เลือกสินค้าแบบ 3 ช่องเหมือนชีต ;}o: ฐานรหัส + แพ็กเกจ + ชุดสี → รหัสเต็ม ถ้ารหัสเต็มยังไม่มีแต่ฐานรหัสมี ระบบสร้างจาก BOM ของตัวนั้น
-  const openPurchaseOrdersOf = (ctx, orderId) => (rfPurchaseOrdersOf(ctx) ?? []).filter((po) => po.status === "ordered" && po.sourcePi === orderId).map((po) => po.id);
-  const openPoText = (ids) => (ids.length ? `มีใบสั่งซื้อที่สั่งจากใบนี้และยังรับของไม่ครบ: ${ids.join(", ")} ระบบไม่ยกเลิกหรือแก้ใบสั่งซื้อให้ ตรวจที่หน้าใบสั่งซื้อของ RubberFlow` : "");
+  // ใบสั่งซื้อสถานะ ordered ที่สั่งจากใบนี้ · received = จำนวนบรรทัดที่รับแล้ว (ใบที่รับบางบรรทัดยังเป็น ordered แต่ฐานข้อมูลยกเลิกไม่ได้)
+  const openPurchaseOrdersOf = (ctx, orderId) => (rfPurchaseOrdersOf(ctx) ?? []).filter((po) => po.status === "ordered" && po.sourcePi === orderId).map((po) => ({ id: po.id, received: (po.lines ?? []).filter((line) => line.receivedKg != null).length, total: (po.lines ?? []).length }));
+  const openPoText = (pos) => (pos.length ? `มีใบสั่งซื้อที่สั่งจากใบนี้และยังรับของไม่ครบ: ${pos.map((po) => (po.received ? `${po.id} (รับแล้ว ${po.received}/${po.total} บรรทัด)` : po.id)).join(", ")} ระบบไม่ยกเลิกหรือแก้ใบสั่งซื้อให้ ตรวจที่หน้าใบสั่งซื้อของ RubberFlow${pos.some((po) => po.received) ? " · ใบที่รับแล้วบางบรรทัดยกเลิกไม่ได้" : ""}` : "");
   const openPoCallout = (ctx, order) => { const text = order ? openPoText(openPurchaseOrdersOf(ctx, order.id)) : ""; return text ? ctx.ui.callout("warn", esc(text)) : ""; };
   const reopenCallout = (ctx, order) => (order && order.status !== "draft" ? ctx.ui.callout("warn", "ใบนี้ปล่อยผลิตแล้ว บันทึกแล้วใบจะกลับเป็นร่าง (REV. +1) งานรายแผนกของใบถูกลบ ต้องระเบิด BOM และปล่อยผลิตใหม่") : "");
   // dialog: แก้จำนวนสั่ง/หมายเหตุของสินค้าหนึ่งตัวในใบ
@@ -2226,7 +2242,7 @@
     const store = rfStore(ctx);
     if (!store) return null;
     if (store.isRemote?.()) {
-      if (store.status() === "idle") store.ensureLoaded().then(() => { try { if (currentRoute().path === "bom") renderRoute(); } catch { /* ออกจากหน้า BOM แล้ว */ } });
+      rfWake(ctx);
       if (!rfReady(ctx)) return null;
     }
     try { return store.data().purchaseOrders ?? []; } catch { return null; }

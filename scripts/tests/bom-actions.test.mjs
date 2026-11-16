@@ -25,7 +25,8 @@ test("the demo seed is deterministic, valid for the store and internally consist
   const a = fresh();
   assert.deepEqual(a, fresh());
   assert.ok(storeApi.isValidState(a));
-  assert.equal(a.users.length, 8);
+  assert.equal(a.users.length, 10);
+  assert.deepEqual(a.users.filter((user) => user.dept === "WH").map((user) => [user.id, user.role]), [["B09", "wh"], ["B10", "manager"]], "the warehouse has a staff user and a manager");
   assert.equal(a.items.length, seed.ITEMS.length);
   assert.equal(a.boms.filter((bom) => bom.status === "approved").length, 8);
   assert.equal(a.boms.filter((bom) => bom.status === "superseded").length, 1, "one edit left a superseded revision");
@@ -75,11 +76,11 @@ test("only planners and managers create or edit items and BOMs; every save is a 
   const current = approved(d, "DEMO-TP-01(P)-Y");
   assert.equal(current.id, result.id);
   assert.equal(current.status, "approved", "usable at once, no approval step");
-  // บรรทัดเรียงตามผังงาน: ของซื้อ (ST) ก่อนชิ้นยาง (GR) แม้ฟอร์มส่งมาสลับกัน
-  assert.deepEqual(current.lines.map((line) => line.childCode), ["P-BOX-01", "SE-TP01-OR01-100-18-65"]);
-  assert.equal(current.lines[0].scrapPct, 2);
-  assert.equal(current.lines[1].consumerDept, "PK");
-  assert.equal(current.lines[1].producerDept, "GR");
+  // BOM ที่มีอยู่แล้วเก็บลำดับตามที่ส่งมา (ผู้ใช้เรียงเอง) ไม่จัดตามผังงานกลับ
+  assert.deepEqual(current.lines.map((line) => line.childCode), ["SE-TP01-OR01-100-18-65", "P-BOX-01"]);
+  assert.equal(current.lines[1].scrapPct, 2);
+  assert.equal(current.lines[0].consumerDept, "PK");
+  assert.equal(current.lines[0].producerDept, "GR");
   assert.equal(d.boms.find((bom) => bom.id === before.id).status, "superseded");
   assert.equal(d.boms.filter((bom) => bom.itemCode === "DEMO-TP-01(P)-Y" && bom.status === "approved").length, 1);
   assert.match(current.changeLog[0].text, /SE-TP01-OR01-100-18-65 3→4/);
@@ -154,7 +155,7 @@ test("saveBomTree saves a whole multi-level tree in one call: new items, nested 
   assert.equal(rb.weightG, 1500);
   assert.equal(approved(d, "SE-NEW-01").lines[0].qty, 0.05);
   assert.equal(A.helpers.itemOf(d, "RB-DM02-02-BK01-225-3-20").rubber.cutLengthCm, 15, "patch updated the cutting data of an existing RB");
-  assert.deepEqual(approved(d, "NEW-TP-02(P)-Y").lines.map((line) => line.childCode), ["P-STK-01", "RB-DM02-02-BK01-225-3-20", "SE-NEW-01", "PT-00320"], "lines are stored in company-flow order (ST → RB → GR → PT) whatever order the tree sent");
+  assert.deepEqual(approved(d, "NEW-TP-02(P)-Y").lines.map((line) => line.childCode), ["SE-NEW-01", "P-STK-01", "PT-00320", "RB-DM02-02-BK01-225-3-20"], "a new BOM keeps the order the tree sent (no re-sort by company flow)");
   assert.equal(approved(d, "NEW-TP-02(P)-Y").note, "สร้างครั้งแรก");
   // บันทึกซ้ำโดยไม่เปลี่ยนอะไร = ไม่มี revision ใหม่
   const again = A.saveBomTree(d, { code: "NEW-TP-02(P)-Y", item: { name: "ตอปิโดใหม่", uom: "set" }, nodes: [
@@ -164,6 +165,14 @@ test("saveBomTree saves a whole multi-level tree in one call: new items, nested 
   assert.equal(again.summary, "ไม่มีการเปลี่ยนแปลง");
   assert.equal(again.changed, false);
   assert.equal(approved(d, "NEW-TP-02(P)-Y").revision, 1);
+  // ส่งชุดเดิมแต่สลับลำดับ = เป็นการแก้ (ฉบับใหม่ "เรียงลำดับส่วนประกอบใหม่") ลำดับที่ส่งมาคือลำดับที่เก็บ
+  const reordered = structuredClone(d);
+  const reorderedSave = A.saveBomTree(reordered, { code: "NEW-TP-02(P)-Y", nodes: [
+    { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.02 }] }, { code: "P-STK-01", qty: 1 }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 }, { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05 }] },
+  ] }, ctx("planner"));
+  assert.deepEqual(reorderedSave.saved, ["NEW-TP-02(P)-Y Rev.2"]);
+  assert.deepEqual(approved(reordered, "NEW-TP-02(P)-Y").lines.map((line) => line.childCode), ["PT-00320", "P-STK-01", "RB-DM02-02-BK01-225-3-20", "SE-NEW-01"]);
+  assert.match(approved(reordered, "NEW-TP-02(P)-Y").changeLog[0].text, /เรียงลำดับส่วนประกอบใหม่/);
   const auditCount = d.audit.length;
   assert.ok(!d.audit.slice(0, 3).some((entry) => entry.action === "บันทึกต้นไม้ BOM" && entry.detail.includes("ไม่มีการเปลี่ยนแปลง")), "no audit row for a no-op save");
   // แก้แค่ข้อมูลการตัดของ RB (patch) โดย BOM ไม่เปลี่ยน: ผลลัพธ์บอกว่าแก้ชิ้น ไม่ใช่ "ไม่มีการเปลี่ยนแปลง"
@@ -314,7 +323,7 @@ test("a product can be chosen by base code + package + color set; an unknown var
   const bom = approved(d, created.code);
   assert.equal(bom.revision, 1);
   assert.match(bom.note, /คัดลอกจาก DEMO-TP-01\(P\)-Y Rev\.1/);
-  assert.deepEqual(bom.lines.map((line) => [line.childCode, line.qty]), [["P-STK-01", 1], ["P-BAG-01", 0.01], ["P-BOX-01", 0.025], ["SE-TP01-RD01-100-18-65", 3], ["SE-TP01-BK01-140-3-20", 3], ["SE-TP01-RD01-75-3-30", 9], ["PT-00320", 0.3], ["XP-00001", 1]], "orange SE slots become red, the black core stays, packaging lines come from the package definition");
+  assert.deepEqual(bom.lines.map((line) => [line.childCode, line.qty]), [["P-STK-01", 1], ["SE-TP01-RD01-100-18-65", 3], ["SE-TP01-BK01-140-3-20", 3], ["SE-TP01-RD01-75-3-30", 9], ["PT-00320", 0.3], ["XP-00001", 1], ["P-BAG-01", 0.01], ["P-BOX-01", 0.025]], "orange SE slots become red, the black core stays, packaging lines come from the package definition");
   assert.match(bom.changeLog.map((entry) => entry.text).join(" | "), /ชุดสี A: SE-TP01-OR01-100-18-65 → SE-TP01-RD01-100-18-65, SE-TP01-OR01-75-3-30 → SE-TP01-RD01-75-3-30/);
   assert.match(bom.changeLog.map((entry) => entry.text).join(" | "), /แพ็กเกจ P: ถอด P-BAG-01, P-BOX-01 ใส่ P-BAG-01 × 0.0100, P-BOX-01 × 0.0250/);
   const redSe = A.helpers.itemOf(d, "SE-TP01-RD01-100-18-65");
@@ -1800,4 +1809,44 @@ test("finished goods: in database mode an action only checks and returns the req
   e.fgMoves = [{ id: "s-1", orderId, fgCode: TP, kind: "receive", qty: 30, note: "", at: NOW, by: "x" }];
   assert.deepEqual(A.closeOrderShort(e, { orderId, note: "เหตุผล" }, remote()).request, { orderId, kind: "close", note: "เหตุผล" });
   assert.equal(e.fgMoves.length, 1, "no history written locally");
+});
+
+test("recalculating a draft keeps its place in the reservation queue when the result is unchanged; an edit or a changed result puts it at the end, like the database", () => {
+  const d = fresh();
+  const draft = d.orders.find((order) => order.id === "DEMO-26002");
+  const placed = draft.explodedAt;
+  assert.ok(placed && draft.explosion.length, "the demo draft is calculated");
+  assert.equal(A.explodeOrder(d, { orderId: draft.id }, ctx("planner", NOW + 5000)), draft.explosion.length);
+  assert.equal(draft.explodedAt, placed, "same result: same place in the queue");
+  // the database keeps jsonb (keys re-ordered): equal content is still unchanged
+  draft.explosion = draft.explosion.map((line) => Object.fromEntries(Object.entries(line).reverse()));
+  A.explodeOrder(d, { orderId: draft.id }, ctx("planner", NOW + 6000));
+  assert.equal(draft.explodedAt, placed);
+  // a result that differs (here: a bill of materials that changed since) goes to the end
+  draft.explosion[0].required += 1;
+  A.explodeOrder(d, { orderId: draft.id }, ctx("planner", NOW + 7000));
+  assert.equal(draft.explodedAt, NOW + 7000);
+  // an edit clears the calculation: the next calculation goes to the end, then stays
+  const line = draft.items[0];
+  A.updateOrderItem(d, { orderId: draft.id, fgCode: line.fgCode, qty: line.qty + 1 }, ctx("planner", NOW + 8000));
+  assert.equal(draft.explosion, null);
+  A.explodeOrder(d, { orderId: draft.id }, ctx("planner", NOW + 9000));
+  assert.equal(draft.explodedAt, NOW + 9000, "after an edit the order goes to the end");
+  A.explodeOrder(d, { orderId: draft.id }, ctx("planner", NOW + 10000));
+  assert.equal(draft.explodedAt, NOW + 9000, "and recalculating again keeps that place");
+});
+
+test("finished goods: an order with no PK job at all cannot be closed short (the screen is stricter than the database here)", () => {
+  const d = fresh();
+  const orderId = "DEMO-26001";
+  const order = d.orders.find((entry) => entry.id === orderId);
+  assert.equal(rules.fgPosition(d, order).hasPkJobs, true);
+  d.jobs = d.jobs.filter((job) => !(job.orderId === orderId && job.dept === "PK"));
+  const position = rules.fgPosition(d, order);
+  assert.equal(position.hasPkJobs, false);
+  assert.equal(position.pkAllDone, true, "vacuously true with no PK job");
+  assert.equal(position.canCloseShort, false, "so no close button");
+  rejects(() => A.closeOrderShort(d, { orderId, note: "ไม่มีงาน PK" }, whCtx()), /ไม่มีงานบรรจุ \(PK\)/);
+  assert.notEqual(order.status, "completed");
+  assert.equal(rules.fgPosition({ jobs: [{ orderId: "X", dept: "PK", kind: "FG", itemCode: "A", status: "done", qtyDone: 0 }], fgMoves: [] }, { id: "X", status: "released", items: [{ fgCode: "A", qty: 5 }] }).canCloseShort, true, "with a finished PK job that made nothing, the close stays possible");
 });

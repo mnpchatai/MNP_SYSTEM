@@ -135,15 +135,7 @@
       if (kindError) fail(`${parent.code} → ${childCode}: ${kindError}`);
       if (seen.has(childCode)) fail(`${parent.code}: ${childCode} ซ้ำ รวมปริมาณเป็นบรรทัดเดียว`);
       seen.add(childCode);
-      const stack = [childCode];
-      const visited = new Set();
-      while (stack.length) {
-        const code = stack.pop();
-        if (code === parent.code) fail(`${parent.code}: ${childCode} มี ${parent.code} อยู่ข้างใต้ จะเป็นวงจร`);
-        if (visited.has(code)) continue;
-        visited.add(code);
-        approvedBomOf(d, code)?.lines.forEach((line) => stack.push(line.childCode));
-      }
+      if (R.reachedFrom(childCode, new Set([parent.code]), (code) => approvedBomOf(d, code))) fail(`${parent.code}: ${childCode} มี ${parent.code} อยู่ข้างใต้ จะเป็นวงจร`);
       // ขั้นที่ (1–20) = ลำดับขั้นผลิตของพ่อที่ชิ้นนี้เข้า · ว่าง = ขั้นแรก · เก็บเฉพาะเมื่อระบุ (บรรทัดเดิมจึงเท่ากับบรรทัดใหม่ที่ไม่ระบุ)
       const step = raw.step === undefined || raw.step === null || String(raw.step).trim() === "" ? null : Number(raw.step);
       if (step !== null && !(Number.isInteger(step) && step >= 1 && step <= 20)) fail(`${parent.code} → ${childCode}: ขั้นที่ต้องเป็นจำนวนเต็ม 1–20`);
@@ -159,8 +151,8 @@
   const QTY_EPS = 1e-6;
   // ลำดับบรรทัดนับเป็นการเปลี่ยนแปลงด้วย (ผู้ใช้ลากเรียงส่วนประกอบได้ ลำดับใช้แสดงในต้นไม้และใบงาน)
   const sameLine = (line, other) => other.childCode === line.childCode && Math.abs(other.qty - line.qty) <= QTY_EPS && (other.scrapPct || 0) === (line.scrapPct || 0) && (other.note || "") === (line.note || "") && (Number(other.step) || null) === (Number(line.step) || null);
-  // ทุกจุดที่เขียน BOM เรียงบรรทัดตามผังงาน (rules.sortLinesByFlow) ผู้ใช้จึงลากย้ายได้เฉพาะภายในแผนกเดียวกัน
-  const sortLines = (d, lines) => rules().sortLinesByFlow(lines, (code) => itemOf(d, code));
+  // ลำดับตามผังงาน (rules.sortLinesByFlow) เป็นลำดับตั้งต้นเฉพาะตอนนำเข้า Excel (ชีตไม่มีลำดับที่ผู้ใช้จัด)
+  // ที่เหลือเก็บลำดับตามที่ผู้ใช้ให้ (เลื่อนขึ้น/ลง ลากในตารางสร้าง BOM ข้ามแผนกได้ ทั้ง BOM ใหม่และที่มีแล้ว) · เปลี่ยนสี/คัดลอก FG คงลำดับของต้นทาง · บรรทัดที่เพิ่มใหม่ต่อท้าย
   const sameLines = (a, b) => a.length === b.length && a.every((line, index) => sameLine(line, b[index]));
   const sameLinesAnyOrder = (a, b) => a.length === b.length && a.every((line) => b.some((other) => sameLine(line, other)));
   function diffText(before, after) {
@@ -182,7 +174,9 @@
     const parent = itemOf(d, p.itemCode) ?? fail("ไม่พบชิ้นงานพ่อ");
     if (parent.kind === "PURCHASED") fail(`${parent.code} เป็นของซื้อ ไม่มีส่วนประกอบ`);
     if (parent.kind === "CP") fail(`${parent.code} เป็นสูตรยาง ไม่มีส่วนประกอบในระบบนี้ (สูตร PHR อยู่ที่ RubberFlow)`);
-    const lines = sortLines(d, normalizeLines(d, parent, p.lines));
+    const previous = approvedBomOf(d, parent.code);
+    const given = normalizeLines(d, parent, p.lines);
+    const lines = given;
     // เส้นยาง: บรรทัดเดียวคือสูตรยางของมัน และต้องตรงกับช่องสูตรของเส้นยาง (รหัส RB ก็มีรหัสสูตรอยู่ในตัว)
     if (parent.kind === "RB") {
       if (lines.length > 1) fail(`เส้นยาง ${parent.code} ใช้สูตรยางได้สูตรเดียว`);
@@ -190,12 +184,11 @@
       if (compound && R.canonicalCode(compound) !== lines[0].childCode) fail(`เส้นยาง ${parent.code} ระบุสูตร ${compound} แต่บรรทัดสูตรยางเป็น ${lines[0].childCode} แก้ให้ตรงกัน`);
     }
     const note = String(p.note ?? "").trim().slice(0, 300);
-    const previous = approvedBomOf(d, parent.code);
     // ชิ้นที่เลิกใช้: BOM เดิมที่ใช้อยู่ยังบันทึกซ้ำได้ แต่เพิ่มเป็นบรรทัดใหม่ไม่ได้
     const retired = lines.map((line) => line.childCode).filter((code) => itemOf(d, code)?.active === false && !previous?.lines.some((line) => line.childCode === code));
     if (retired.length) fail(`${parent.code}: ${retired.join(", ")} เลิกใช้แล้ว เพิ่มเป็นส่วนประกอบใหม่ไม่ได้ (ลบบรรทัดนั้นออก หรือเปิดใช้ชิ้นงานอีกครั้งที่ “แก้ข้อมูลชิ้นงาน”)`);
-    // เทียบกับ revision เดิมที่เรียงด้วยกฎปัจจุบัน: ถ้าแผนกเจ้าของของลูกเพิ่งเปลี่ยน ลำดับเก่าที่ค้างไม่นับเป็นการแก้ BOM
-    if (previous && sameLines(sortLines(d, previous.lines), lines)) return { id: previous.id, revision: previous.revision, changed: false };
+    // เทียบตามลำดับที่เก็บไว้: สลับลำดับอย่างเดียวก็นับเป็นการแก้ (ได้ revision ใหม่ "เรียงลำดับส่วนประกอบใหม่")
+    if (previous && sameLines(previous.lines, lines)) return { id: previous.id, revision: previous.revision, changed: false };
     const changes = previous ? diffText(previous.lines, lines) || (sameLinesAnyOrder(previous.lines, lines) ? "เรียงลำดับส่วนประกอบใหม่" : "แก้รายละเอียดบรรทัด (% เผื่อเสีย/หมายเหตุ/ขั้นที่)") : `สร้างใหม่ ${lines.length} บรรทัด`;
     if (previous) { previous.status = "superseded"; previous.supersededAt = ctx.now; }
     const bom = { id: masterId(d, "BOM", ctx), itemCode: parent.code, revision: (previous?.revision ?? 0) + 1, status: "approved", ownerDept: parent.ownerDept, lines, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note, changeLog: [{ at: ctx.now, by: user.name, text: `${changes}${note ? ` — ${note}` : ""}`.slice(0, 1000) }] }; // ฐานข้อมูลรับข้อความ changeLog ไม่เกิน 1,000 ตัวอักษร
@@ -264,7 +257,7 @@
           if (!seenPath.has(code)) { walk(code, node.children, [...path, code]); seenPath.add(code); } else {
             const current = approvedBomOf(d, code);
             const incoming = node.children.map((entry) => ({ childCode: R.canonicalCode(entry.code), qty: Number(entry.qty), scrapPct: Number(entry.scrapPct) || 0, note: String(entry.note ?? "").trim(), step: Number(entry.step) || null }));
-            if (!current || !sameLines(current.lines, sortLines(d, incoming))) fail(`${code} ปรากฏหลายที่ในต้นไม้ด้วยส่วนประกอบต่างกัน แก้ให้เหมือนกันหรือใช้รหัสคนละตัว`);
+            if (!current || !sameLinesAnyOrder(current.lines, incoming)) fail(`${code} ปรากฏหลายที่ในต้นไม้ด้วยส่วนประกอบต่างกัน แก้ให้เหมือนกันหรือใช้รหัสคนละตัว`);
           }
         }
         lines.push({ childCode: code, qty: node.qty, scrapPct: node.scrapPct, note: node.note, step: node.step, flags: node.flags });
@@ -293,6 +286,8 @@
   const processOf = (d, code) => processesOf(d).find((process) => process.code === code) ?? null;
   // วัตถุดิบของขั้นเทียบเป็นเซต: ฟอร์มส่งตามลำดับบรรทัด BOM ปัจจุบัน ลำดับต่างกันไม่ใช่การแก้ขั้นตอน
   const sameInputs = (a = [], b = []) => a.length === b.length && [...a].sort().every((code, index) => code === [...b].sort()[index]);
+  // JSON ที่ไม่ขึ้นกับลำดับกุญแจ (ฐานข้อมูลเก็บ jsonb ซึ่งเรียงกุญแจใหม่) ใช้เทียบว่าข้อมูลสองก้อนเท่ากัน
+  const stableJson = (value) => JSON.stringify(value, (_, node) => (node && typeof node === "object" && !Array.isArray(node) ? Object.fromEntries(Object.entries(node).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : node));
   const sameSteps = (a, b) => a.length === b.length && a.every((step, index) => step.processCode === b[index].processCode && Math.abs(step.minutesPerPc - b[index].minutesPerPc) <= QTY_EPS && (step.note || "") === (b[index].note || "") && sameInputs(step.inputs, b[index].inputs));
   // step.inputs = ลูกใน BOM ปัจจุบันที่เข้าที่ขั้นนี้ (ลูกหนึ่งตัวเข้าได้ขั้นเดียว) ลูกที่ไม่ระบุแสดงที่ขั้นแรก · เวลา 0 = ยังไม่ระบุเวลา
   function saveRouting(d, p, ctx) {
@@ -702,7 +697,7 @@
         if (child?.kind === "RB" && childColor && !recolor) log.push(`${line.childCode} ใต้ ${toCode} คงสี ${childColor} (ไม่ใช่สี ${fromColors.join("/") || "-"} ของ SE เดิม)`);
         return { ...line, flags: [...(line.flags ?? [])], childCode: recolor ? ensureRecoloredItem(d, line.childCode, color, ctx, user, log) : line.childCode };
       });
-      d.boms.push({ id: masterId(d, "BOM", ctx), itemCode: toCode, revision: 1, status: "approved", ownerDept: src.ownerDept, lines: sortLines(d, lines), createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}`, changeLog: [{ at: ctx.now, by: user.name, text: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}` }] });
+      d.boms.push({ id: masterId(d, "BOM", ctx), itemCode: toCode, revision: 1, status: "approved", ownerDept: src.ownerDept, lines, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}`, changeLog: [{ at: ctx.now, by: user.name, text: `เปลี่ยนสีจาก ${fromCode} Rev.${srcBom.revision} เป็น ${color}` }] });
     }
     return toCode;
   }
@@ -755,7 +750,7 @@
       else merged.push(line);
     }
     d.items.push({ code, kind: "FG", name: `${source.name}${label ? ` (${label})` : ""}`.slice(0, 160), ownerDept: "PK", uom: source.uom, weightG: source.weightG ?? 0, group: source.group ?? "TOY", legacyCodes: [], rubber: null, active: true, createdAt: ctx.now, clonedFrom: source.code });
-    d.boms.push({ id: masterId(d, "BOM", ctx), itemCode: code, revision: 1, status: "approved", ownerDept: "PK", lines: sortLines(d, merged), createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: log[0], changeLog: log.map((text) => ({ at: ctx.now, by: user.name, text })) });
+    d.boms.push({ id: masterId(d, "BOM", ctx), itemCode: code, revision: 1, status: "approved", ownerDept: "PK", lines: merged, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: log[0], changeLog: log.map((text) => ({ at: ctx.now, by: user.name, text })) });
     audit(d, ctx, "สร้างสินค้าจากฐานรหัสเดียวกัน", `${code} ← ${source.code} Rev.${sourceBom.revision}${log.length > 1 ? ` · ${log.slice(1).join(" · ")}` : ""}`);
   }
   // สร้างรุ่นสินค้า (ฐาน + แพ็กเกจ + ชุดสี) โดยไม่ต้องผ่านใบสั่งผลิต — จุดเดียวกับที่ addOrderItem ใช้
@@ -848,8 +843,11 @@
       result.missing.forEach((code) => missing.add(code));
     }
     if (missing.size) fail(`ระเบิดไม่ครบ ไม่พบชิ้นงาน: ${[...missing].join(", ")}`);
+    // ลำดับในคิวจองของใบร่าง (rules.draftBefore ใช้ explodedAt): กด "คำนวณใหม่" แล้วได้ผลเท่าเดิม = คงลำดับเดิม · ผลต่างจากเดิม (BOM หรือจำนวนเปลี่ยน) หรือใบที่ถูกแก้ (explosion ถูกล้าง) = ไปต่อท้ายคิว
+    // เหมือนฐานข้อมูล (bom_save_orders: exploded_at เปลี่ยนเมื่อผลต่างจากเดิมหรือยังว่าง) จึงตรงกับค่าที่ฐานข้อมูลตอบกลับ
+    const sameExplosion = Boolean(order.explodedAt) && Array.isArray(order.explosion) && stableJson(order.explosion) === stableJson(lines);
     order.explosion = lines;
-    order.explodedAt = ctx.now;
+    if (!sameExplosion) order.explodedAt = ctx.now;
     audit(d, ctx, "ระเบิด BOM", `${order.id} ${lines.length} บรรทัด`);
     return lines.length;
   }
@@ -1027,6 +1025,7 @@
   function closeOrderShort(d, p, ctx) {
     const { order, note, position } = fgRead(d, ctx, p, "close");
     if (!["released", "in_progress"].includes(order.status)) fail("ปิดใบได้เฉพาะใบที่ปล่อยผลิตแล้วและยังไม่ปิด");
+    if (!position.hasPkJobs) fail("ใบนี้ไม่มีงานบรรจุ (PK) ให้ปิดแบบรับไม่ครบ");
     if (!position.pkAllDone) fail("งานบรรจุ (PK) ยังไม่เสร็จครบทุกสินค้า");
     if (position.products.some((product) => product.receivable > 1e-9)) fail("ยังมีสินค้าที่ PK ทำเสร็จแต่ยังไม่ได้รับเข้าคลัง รับเข้าให้ครบก่อน");
     if (!position.products.some((product) => product.received + 1e-9 < product.ordered)) fail("รับสินค้าครบตามที่สั่งแล้ว ใบปิดเองโดยอัตโนมัติ");

@@ -889,3 +889,17 @@ test("fgPosition: per product ordered, PK made, received, delivered, what can st
   // the same code twice in an order counts as one product
   assert.deepEqual(rules.fgPosition({ jobs: [], fgMoves: [] }, { ...order, items: [{ fgCode: "A", qty: 2 }, { fgCode: "A", qty: 3 }] }).products.map((p) => [p.fgCode, p.ordered]), [["A", 5]]);
 });
+
+test("reachedFrom walks a structure of any depth with one rule: the first target found, itself included, safe against shared children", () => {
+  const boms = { A: ["B", "C"], B: ["D"], C: ["D"], D: ["E"], E: [] };
+  const approvedBomOf = (code) => (boms[code] ? { lines: boms[code].map((childCode) => ({ childCode })) } : null);
+  assert.equal(rules.reachedFrom("A", new Set(["E"]), approvedBomOf), "E");
+  assert.equal(rules.reachedFrom("A", new Set(["A"]), approvedBomOf), "A", "the start counts");
+  assert.equal(rules.reachedFrom("B", new Set(["C"]), approvedBomOf), "", "a sibling branch is not below");
+  assert.equal(rules.reachedFrom("X", new Set(["A"]), approvedBomOf), "", "an item without a BOM reaches only itself");
+  // a deep chain is not cut at any depth
+  const chain = (code) => (/^N\d+$/.test(code) ? { lines: [{ childCode: `N${Number(code.slice(1)) + 1}` }] } : null);
+  assert.equal(rules.reachedFrom("N0", new Set(["N60"]), (code) => (Number(code.slice(1)) < 60 ? chain(code) : null)), "N60");
+  // a loop already in the data ends instead of spinning
+  assert.equal(rules.reachedFrom("A", new Set(["Z"]), (code) => ({ lines: [{ childCode: code === "A" ? "B" : "A" }] })), "");
+});

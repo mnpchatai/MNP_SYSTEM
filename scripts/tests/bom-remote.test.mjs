@@ -549,6 +549,23 @@ test("a new BOM revision sends the superseded revision with it and numbers conti
   assert.equal(created.createdBy, planner.name, "display name of the persona");
 });
 
+test("a BOM keeps the order the user gave across departments: it is sent in that order and a reload from the database does not sort it again", async () => {
+  const server = fakeServer();
+  const item = (code, kind, ownerDept) => ({ code, kind, name: code, ownerDept, uom: kind === "PURCHASED" ? "pcs" : "set", weightG: 0, legacyCodes: [], active: true });
+  server.master.items.push(item("FG-X", "FG", "PK"), item("P-A", "PURCHASED", "ST"), item("P-B", "PURCHASED", "ST"), item("PT-C", "PT", "PT"));
+  const line = (childCode, producerDept) => ({ childCode, qty: 1, uom: "pcs", consumerDept: "PK", producerDept, scrapPct: 0, flags: [], note: "" });
+  server.master.boms.push({ id: "BOM-69-0001", itemCode: "FG-X", revision: 1, status: "approved", ownerDept: "PK", lines: [line("P-A", "ST"), line("P-B", "ST"), line("PT-C", "PT")], createdBy: "ก", createdAt: NOW - 1, approvedBy: "ก", approvedAt: NOW - 1, note: "", changeLog: [{ at: NOW - 1, by: "ก", text: "x" }] });
+  const env = await ready(remoteStore({ server }));
+  const out = env.store.run("saveBom", { itemCode: "FG-X", lines: [{ childCode: "P-A", qty: 1 }, { childCode: "PT-C", qty: 1 }, { childCode: "P-B", qty: 1 }], note: "เรียงลำดับ" });
+  assert.equal(out.ok, true);
+  await out.saving;
+  const sent = env.server.saves[0].changes.boms.upsert.find((bom) => bom.status === "approved");
+  assert.deepEqual(sent.lines.map((entry) => entry.childCode), ["P-A", "PT-C", "P-B"], "a PT part between two store parts is sent where the user put it");
+  assert.match(sent.changeLog.at(-1).text, /เรียงลำดับส่วนประกอบใหม่/);
+  const reopened = await ready(remoteStore({ server }));
+  assert.deepEqual(reopened.store.data().boms.find((bom) => bom.status === "approved").lines.map((entry) => entry.childCode), ["P-A", "PT-C", "P-B"], "loaded from the database in the stored order");
+});
+
 test("a routing that uses a standard step the database does not have yet saves that step with it", async () => {
   const env = await ready(remoteStore());
   await env.store.run("saveItem", saveItemPayload("BG-TEST", { kind: "BG", name: "กระเป๋า", uom: "pcs" })).saving;

@@ -658,6 +658,11 @@ test("purchasing screens: the check opens one dialog (escaped, safety stock and 
   const wh = pages.warehouse({ ...env.ctx("p=warehouse&tab=po"), can: (right) => right !== "receiveMaterial" && right !== "cancelPurchase" }).html;
   assert.doesNotMatch(wh, /data-rf-open="receivePurchase"|cancelPurchaseOrder/);
   assert.ok(wh.includes(po.id), "read-only accounts still see the order");
+  // the chemical check button (the variant without a shortage too) is cut at render time for accounts that cannot order, not removed afterwards by applyRights
+  assert.match(page, /data-rf-open="purchase"[^>]*>(สั่งซื้อเคมีที่ขาด \d+ รายการ|ตรวจเคมีของใบสั่งผลิตที่เปิดอยู่)</, "an account that can order sees one of the two variants");
+  const noOrder = pages.warehouse({ ...env.ctx("p=warehouse&tab=po"), can: (right) => right !== "purchase" }).html;
+  assert.doesNotMatch(noOrder, /data-rf-open="purchase"|ตรวจเคมีของใบสั่งผลิตที่เปิดอยู่|สั่งซื้อเคมีที่ขาด/);
+  assert.ok(noOrder.includes(po.id), "the orders stay visible");
   // the materials tab and the material form carry the new fields
   page = await env.render("p=warehouse&tab=materials");
   assert.match(page, /สต็อกขั้นต่ำ \(kg\)/);
@@ -770,6 +775,79 @@ test("purchasing with purchased parts: the dialog adds a part table after the ch
   assert.equal(received.ok, true, received.error?.message);
   assert.match(text(pages.warehouse({ ...env.ctx("p=warehouse&tab=po") }).html), /11\.00 box/);
   assert.equal(dialogs.receivePurchase(env.ctx("p=warehouse&tab=po"), { id: po.id, materialCode: "P-BOX-01" }), null, "a received line has no receive dialog");
+});
+
+test("purchase dialog: rows to order come first and together, chemicals and parts in one table, the rest keep their order; the posted fields follow the row order", async () => {
+  const env = load();
+  env.store.setUser("U03");
+  const { MNP_RUBBERFLOW_DIALOGS: dialogs } = env.context;
+  const part = (itemCode, orderQty, shortage = orderQty) => ({ itemCode, name: `ชื่อ ${itemCode}`, uom: "pcs", needQty: 5, onHandQty: 1, reservedQty: 0, onOrderQty: 0, shortage, safetyQty: 0, orderQty });
+  const parts = { rows: [part("P-A", 0), part("P-B", 3), part("P-C", 0), part("P-D", 2)], anyShort: true };
+  const ctx = { ...env.ctx("p=orders"), bomPartNeeds: () => parts };
+  const codesOf = (html) => [...html.matchAll(/name="materialCode\[\]" value="([^"]+)"/g)].map((match) => match[1]);
+  const needOf = (html) => [...html.matchAll(/<tr data-rf-po-row data-short="[^"]*"( class="rf-po-need")?>/g)].map((match) => Boolean(match[1]));
+  // เฉพาะของซื้อ: แถวที่ต้องสั่งขึ้นก่อน ลำดับในแต่ละกลุ่มคงเดิม
+  const only = dialogs.purchase(ctx, { woIds: [], sourcePi: "PI-9" }).html;
+  assert.deepEqual(codesOf(only), ["P-B", "P-D", "P-A", "P-C"]);
+  assert.deepEqual(needOf(only), [true, true, false, false]);
+  assert.deepEqual(codesOf(dialogs.purchase({ ...ctx, bomPartNeeds: () => ({ rows: [part("P-X", 0), part("P-Y", 0)], anyShort: false }) }, { woIds: [], sourcePi: "PI-9" }).html), ["P-X", "P-Y"], "nothing to order: the order is untouched");
+  // เคมี (ใบสั่งผลิตที่เปิดอยู่ทั้งหมด) ร่วมกับของซื้อ: ตารางเดียว แถวที่ต้องสั่งของสองชนิดอยู่บนสุดด้วยกัน
+  for (const lot of env.store.data().materialLots) if (["CBS", "OIL-PAR"].includes(lot.materialCode)) lot.qtyKg = 0; // two chemicals run short, in the middle of the code order
+  const chemOnly = dialogs.purchase(env.ctx("p=orders"), { allOpen: true }).html;
+  const chemCodes = codesOf(chemOnly);
+  const chemNeed = needOf(chemOnly);
+  assert.ok(chemCodes.length >= 2, "the demo has open work orders with chemicals");
+  assert.deepEqual(chemCodes.filter((_, at) => chemNeed[at]), ["CBS", "OIL-PAR"], "the short chemicals are the highlighted ones");
+  assert.ok(chemNeed.every((flag, at) => at === 0 || flag <= chemNeed[at - 1]), "chemicals alone: rows to order first");
+  const mixed = dialogs.purchase(ctx, { allOpen: true, sourcePi: "PI-9" }).html;
+  assert.equal((mixed.match(/<table/g) ?? []).length, 1, "one table when both kinds are listed");
+  const flags = needOf(mixed);
+  const firstRest = flags.indexOf(false);
+  assert.ok(firstRest === -1 || flags.slice(firstRest).every((flag) => !flag), "every row to order sits above every other row");
+  const codes = codesOf(mixed);
+  const needCodes = codes.filter((_, at) => flags[at]);
+  assert.deepEqual(needCodes.slice(-2), ["P-B", "P-D"], "parts to order follow the chemicals to order, in their own order");
+  const restCodes = codes.filter((_, at) => !flags[at]);
+  assert.deepEqual(restCodes.slice(-2), ["P-A", "P-C"], "and the other parts follow the other chemicals");
+  assert.deepEqual(restCodes.slice(0, restCodes.length - 2), chemCodes.filter((_, at) => !chemNeed[at]), "the chemicals that need nothing keep their order");
+  assert.deepEqual(needCodes.slice(0, needCodes.length - 2), chemCodes.filter((_, at) => chemNeed[at]), "the chemicals to order keep their order");
+  assert.equal(codes.length, chemCodes.length + 4, "no row is lost");
+  assert.match(mixed, /ชื่อ P-B[^<]* · pcs/, "the unit of a part is under its name");
+  assert.match(mixed, / · kg<\/div>/, "and the unit of a chemical, since the column heads carry no unit");
+  assert.doesNotMatch(mixed, /\(kg\)/, "no unit in the column heads of the one table");
+  assert.equal((mixed.match(/name="qtyKg\[\]"/g) ?? []).length, codes.length, "one quantity field per row, in the same order");
+});
+
+test("a purchase order line shows the part name next to its code (list and receive dialog), loads the BOM data when it is missing, and shows the code alone when no name is known", async () => {
+  const env = load();
+  env.store.setUser("U03");
+  const { MNP_RUBBERFLOW_DIALOGS: dialogs, MNP_RUBBERFLOW_PAGES: pages } = env.context;
+  const posted = env.store.run("createPurchaseOrder", {
+    lines: [{ materialCode: "ZNO", needKg: 10, availableKg: 6, shortageKg: 4, qtyKg: 5 }, { materialCode: "P-BOX-01", source: "bom", uom: "box", needKg: 7, availableKg: 5, shortageKg: 2, safetyKg: 10, qtyKg: 12 }, { materialCode: "P-NONE-01", source: "bom", uom: "pcs", needKg: 1, availableKg: 0, shortageKg: 1, safetyKg: 0, qtyKg: 1 }],
+    safety: { ZNO: 4, "P-BOX-01": 10, "P-NONE-01": 0 }, sourcePi: "PI-9",
+  });
+  assert.equal(posted.ok, true, posted.error?.message);
+  const po = env.store.data().purchaseOrders[0];
+  const material = env.store.data().materials.find((row) => row.code === "ZNO");
+  const withNames = { ...env.ctx("p=warehouse&tab=po"), bomItems: () => [{ code: "P-BOX-01", name: "กล่องนอก <b>" }] };
+  const list = pages.warehouse(withNames).html;
+  assert.match(list, /<td><span class="rf-mono">P-BOX-01<\/span><div class="small muted">กล่องนอก &lt;b&gt;<\/div><\/td>/, "the BOM item name is under the part code, escaped");
+  assert.match(list, new RegExp(`ZNO</span><div class="small muted">${material.name}</div>`), "a chemical keeps the name from the RubberFlow materials");
+  assert.match(list, /P-NONE-01<\/span><div class="small muted"><\/div>/, "a part the BOM does not know shows the code alone");
+  assert.equal((list.match(/กล่องนอก/g) ?? []).length, 1, "the name is not repeated");
+  assert.match(dialogs.receivePurchase(withNames, { id: po.id, materialCode: "P-BOX-01" }).html, /P-BOX-01 · กล่องนอก &lt;b&gt;/, "the receive dialog names the part");
+  assert.doesNotMatch(dialogs.receivePurchase(withNames, { id: po.id, materialCode: "P-NONE-01" }).html, /P-NONE-01 ·/, "no dangling separator without a name");
+  assert.doesNotMatch(pages.warehouse({ ...env.ctx("p=warehouse&tab=po"), bomItems: () => null }).html, /กล่องนอก/, "BOM data not loaded: code only");
+  // BOM ยังไม่ได้โหลด (เปิด RubberFlow ก่อนหน้า BOM): สั่งโหลดให้ครั้งเดียวแล้วเติมชื่อเมื่อพร้อม
+  let loads = 0;
+  let status = "idle";
+  env.context.MNP_BOM = { store: { isRemote: () => true, status: () => status, data: () => ({ items: [{ code: "P-BOX-01", name: "กล่องนอก" }], orders: [] }), ensureLoaded: () => { loads += 1; status = "ready"; return Promise.resolve(); } } };
+  const first = pages.warehouse(env.ctx("p=warehouse&tab=po")).html;
+  assert.doesNotMatch(first, /กล่องนอก/, "nothing yet while the BOM loads");
+  assert.equal(loads, 1, "the BOM load is requested by the page");
+  await Promise.resolve();
+  assert.match(pages.warehouse(env.ctx("p=warehouse&tab=po")).html, /P-BOX-01<\/span><div class="small muted">กล่องนอก<\/div>/, "the name appears once the BOM is ready");
+  assert.equal(loads, 1, "no second load");
 });
 
 // ---------- ฟอร์ม RubberFlow/BOM: novalidate + ข้อความไทยใต้ช่อง ----------

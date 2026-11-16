@@ -1,4 +1,4 @@
-// BOM รายแผนก (โหมดทดสอบ) — ข้อมูลสาธิตสมมติทั้งชุด: บทบาท 8 คน สูตรยาง item master BOM อนุมัติ ใบสั่งผลิต 2 ใบ และงานรายแผนก
+// BOM รายแผนก (โหมดทดสอบ) — ข้อมูลสาธิตสมมติทั้งชุด: บทบาท 10 คน สูตรยาง item master BOM อนุมัติ ใบสั่งผลิต 2 ใบ และงานรายแผนก
 // รหัส/ชื่อเลียนโครงสร้างจริงของชีต DATA BOM (FG → SE → RB · FG → PT → เม็ดพลาสติก · FG → BG → ผ้า/ซิป) แต่เป็นรหัส DEMO ไม่ใช่ข้อมูลลูกค้า
 // ประวัติสร้างโดยเรียก action จริงของ modules/bom-actions.js จึงสอดคล้องกันเอง (ผลเหมือนกันทุกครั้งเมื่อ now เท่ากัน)
 // โหลดหลัง modules/bom-rules.js และ bom-actions.js (ใน Node ตั้ง globalThis.MNP_BOM_RULES/_ACTIONS ก่อน require)
@@ -16,6 +16,8 @@
     { id: "B06", role: "pt", dept: "PT", name: "มานพ ศักดิ์ดี" },
     { id: "B07", role: "bg", dept: "BG", name: "จันทร์เพ็ญ ดวงแก้ว" },
     { id: "B08", role: "st", dept: "ST", name: "สมศักดิ์ แก้วใส" },
+    { id: "B09", role: "wh", dept: "WH", name: "สุดา คลังสินค้า" },
+    { id: "B10", role: "manager", dept: "WH", name: "ประเสริฐ ผู้จัดการคลังสินค้า" },
   ].map((user) => Object.freeze(user)));
 
   // สูตรยางสาธิต: DM01/DM02 ผูกกับสูตร PHR ของชุดสาธิต RubberFlow (rubberflow-seed.js) DM03 ยังไม่ผูก
@@ -92,7 +94,9 @@
       A.saveItem(d, { ...item, ownerDept: item.ownerDept ?? rules().KINDS[item.kind].dept, group: "TOY", create: true }, at(t0 + index * 3600000, "planner"));
     });
     BOMS().forEach(([parentCode, lines], index) => {
-      A.saveBom(d, { itemCode: parentCode, lines: lines.map(([childCode, qty]) => ({ childCode, qty })) }, at(t0 + 2 * DAY + index * 6 * 3600000, "planner"));
+      // ข้อมูลสาธิตไม่มีลำดับที่ผู้ใช้จัด: เรียงตามผังงานเหมือน BOM ที่นำเข้าจาก Excel (saveBom เก็บลำดับตามที่ส่งมา)
+      const ordered = rules().sortLinesByFlow(lines.map(([childCode, qty]) => ({ childCode, qty })), (code) => d.items.find((entry) => entry.code === code) ?? null);
+      A.saveBom(d, { itemCode: parentCode, lines: ordered }, at(t0 + 2 * DAY + index * 6 * 3600000, "planner"));
     });
     // สี ชุดสี และแพ็กเกจเป็นข้อมูล (แทนการแก้สีมือในชีต Edit DATA): สีที่ใช้ในชุดสาธิต · ชุด Y เรียนรู้จากสินค้าที่มี · ชุด A นิยามใหม่ (ลูก/ปีกแดง แกนดำ)
     // แพ็กเกจของตอปิโด: P = ถุง + ลังรวม 40 ชุด · B = กล่องเดี่ยว (ลัง 12 กล่อง)

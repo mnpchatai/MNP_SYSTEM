@@ -60,7 +60,7 @@
     } catch { return null; }
   };
   const store = storeApi.createStore({ storage, seed: () => seed.buildSeed(Date.now()), actions, remote, persona: () => storeApi.personaUser(state.employee), shouldHold: () => isEditing(), rfOrders: loadedRfOrders });
-  window.MNP_BOM = { store, PATH, url, context: (params) => makeContext(params), transforms: () => TRANSFORMS };
+  window.MNP_BOM = { store, PATH, url, context: (params) => makeContext(params), transforms: () => TRANSFORMS, isEditing: () => isEditing() };
   // โหมดฐานข้อมูล: โหลดเสร็จ/โหลดไม่สำเร็จ/บันทึกไม่สำเร็จ (ย้อนกลับแล้ว) วาดหน้าใหม่ · เริ่ม/เสร็จการบันทึกแค่เปลี่ยนข้อความสถานะ ไม่ทับฟอร์มที่ผู้ใช้กำลังกรอก
   // (บันทึกสำเร็จแต่ฐานข้อมูลตอบข้อมูลต่างจากที่แสดงอยู่ จึงวาดใหม่)
   const onBomRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
@@ -279,6 +279,7 @@
   }
   // ย้ายบรรทัด (หน้าต่าง lineMove): p.childCode ออกจาก BOM ของ p.fromCode ไปต่อท้าย BOM ของ p.toCode · ทั้งสองต้องอยู่ในโครงสร้างของ p.code (รายการที่เปิดอยู่)
   // ต้นไม้ที่ส่งให้ saveBomTree มี children เฉพาะกิ่งที่พาไปถึงชิ้นแม่ทั้งสอง (BOM อื่นไม่ถูกส่ง จึงไม่ถูกแตะ) · ชิ้นแม่เดิมต้องเหลืออย่างน้อย 1 บรรทัด
+  const MAX_MOVE_DEPTH = 12;
   function treeFromLineMove(p) {
     const data = store.data();
     const rootItem = lineParent(data, p.code);
@@ -296,28 +297,31 @@
     if (toLines.some((entry) => entry.childCode === childCode)) throw new Error(`${childCode} อยู่ใน BOM ของ ${to.code} แล้ว`);
     const kindError = rules.childKindError(to.kind, child.kind);
     if (kindError) throw new Error(`${to.code} รับ ${childCode} ไม่ได้: ${kindError}`);
-    // ย้ายเข้าไปใต้ตัวเองหรือใต้ส่วนประกอบของตัวเอง = วงจร
-    const under = new Set();
-    const collect = (code, depth = 0) => { if (under.has(code) || depth > 12) return; under.add(code); linesOf(data, code).forEach((entry) => collect(entry.childCode, depth + 1)); };
-    collect(childCode);
-    if (under.has(to.code)) throw new Error(`${to.code} อยู่ข้างใต้ ${childCode} ย้ายแล้วจะเป็นวงจร`);
+    // ย้ายเข้าไปใต้ตัวเองหรือใต้ส่วนประกอบของตัวเอง = วงจร · เดินทั้งโครงสร้างไม่จำกัดชั้น (กฎเดียวกับตอนบันทึก) จึงไม่มีกรณีที่ข้ามการตรวจเพราะลึกเกิน
+    if (rules.reachedFrom(childCode, new Set([to.code]), (code) => ({ lines: linesOf(data, code) }))) throw new Error(`${to.code} อยู่ข้างใต้ ${childCode} ย้ายแล้วจะเป็นวงจร`);
     const edits = new Map([[from.code, fromLines.filter((entry) => entry !== line).map(lineNode)], [to.code, [...toLines.map(lineNode), { ...lineNode(line), step: "" }]]]);
     const nodesOf = (code) => edits.get(code) ?? linesOf(data, code).map(lineNode);
     const memo = new Map();
-    const touches = (code, depth = 0) => {
+    const touches = (code) => {
       if (memo.has(code)) return memo.get(code);
       memo.set(code, false);
-      const hit = edits.has(code) || (depth < 12 && nodesOf(code).some((node) => touches(node.code, depth + 1)));
+      const hit = edits.has(code) || nodesOf(code).some((node) => touches(node.code));
       memo.set(code, hit);
       return hit;
     };
     const reached = new Set();
+    // ต้นไม้ที่ส่งไปมีลึกได้ไม่เกิน MAX_MOVE_DEPTH ชั้น: ถ้าชิ้นที่แก้อยู่ลึกกว่านั้น (cut) ปฏิเสธพร้อมบอกสาเหตุ ไม่ส่งต้นไม้ที่ขาดกิ่ง
+    let cut = false;
     const build = (code, depth = 0) => {
       if (edits.has(code)) reached.add(code);
-      return nodesOf(code).map((node) => (depth < 12 && touches(node.code) ? { ...node, children: build(node.code, depth + 1) } : node));
+      return nodesOf(code).map((node) => {
+        if (!touches(node.code)) return node;
+        if (depth >= MAX_MOVE_DEPTH) { cut = true; return node; }
+        return { ...node, children: build(node.code, depth + 1) };
+      });
     };
     const nodes = build(rootItem.code);
-    if (reached.size !== edits.size) throw new Error("ชิ้นที่เลือกไม่อยู่ในโครงสร้างของรายการที่เปิดอยู่");
+    if (reached.size !== edits.size) throw new Error(cut ? `โครงสร้างลึกเกิน ${MAX_MOVE_DEPTH} ชั้น ย้ายบรรทัดจากหน้านี้ไม่ได้ เปิดหน้าของชิ้นที่ลึกลงไปแล้วย้ายจากที่นั่น` : "ชิ้นที่เลือกไม่อยู่ในโครงสร้างของรายการที่เปิดอยู่");
     return { code: rootItem.code, note: String(p.note ?? "").trim() || `ย้าย ${childCode} จาก ${from.code} ไป ${to.code}`, nodes };
   }
   // แทรก WIP คั่น (หน้าต่าง wipInsert): บรรทัด p.childCode ของชิ้นแม่ p.code ถูกแทนด้วยชิ้นใหม่ ซึ่งมีบรรทัดเดิมเป็นส่วนประกอบเดียว · บรรทัดอื่นของชิ้นแม่ส่งกลับตามที่เก็บ
@@ -338,6 +342,16 @@
     const step = line.step || (routed >= 0 && routed < 20 ? routed + 1 : "");
     const node = { code, qty: p.wipQty, scrapPct: 0, note: "", step, newItem: { kind: p.wipKind, name: p.wipName, uom: p.wipUom, ownerDept: p.wipDept || undefined }, children: [{ ...lineNode(line), qty: childQty, step: "" }] };
     return { code: parent.code, note: String(p.note ?? "").trim() || `แทรก ${code} คั่นก่อน ${childCode}`, nodes: current.map((entry) => (entry === line ? node : lineNode(entry))) };
+  }
+  // ขั้นตอนผลิตของชิ้นแม่ที่อ้างรหัสบรรทัดเดิมอยู่: หลังแทรก WIP รหัสนั้นไม่ใช่ลูกของชิ้นแม่แล้ว ให้ขั้นตอนอ้างรหัส WIP แทน (revision ใหม่ของ routing)
+  // คืน payload ของ saveRouting (คำสั่งเดิมที่ฐานข้อมูลรับอยู่แล้ว) หรือ null เมื่อชิ้นแม่ไม่มีขั้นตอนผลิตที่อ้างบรรทัดนี้ · คำนวณก่อนบันทึก BOM ขณะที่ routing เดิมยังอยู่ แล้วส่งหลังบันทึก BOM สำเร็จ
+  function routingAfterWipInsert(p) {
+    const parentCode = rules.canonicalCode(p.code);
+    const childCode = rules.canonicalCode(p.childCode);
+    const wipCode = rules.canonicalCode(p.wipCode);
+    const routing = actions.helpers.routingOf(store.data(), parentCode);
+    if (!routing || !wipCode || !routing.steps.some((step) => (step.inputs ?? []).includes(childCode))) return null;
+    return { itemCode: parentCode, steps: routing.steps.map((step) => ({ processCode: step.processCode, minutesPerPc: step.minutesPerPc, note: step.note ?? "", inputs: (step.inputs ?? []).map((code) => (code === childCode ? wipCode : code)) })) };
   }
   // หน้าต่าง "ข้อมูลเส้นยาง": สูตรยาง + ข้อมูลการตัด + น้ำหนัก · เปลี่ยนสูตรที่มีอยู่ต้องติ๊กยืนยันในฟอร์ม (confirmCompound) ไม่เช่นนั้นไม่ส่งคำสั่ง
   function rubberForm(p) {
@@ -422,7 +436,8 @@
   };
 
   const fgLines = (p) => listOf(p, "fgCode").map((fgCode, index) => ({ fgCode, qty: listOf(p, "qty")[index] ?? "" })).filter((line) => String(line.qty).trim() !== "" && Number(line.qty) !== 0);
-  function runAction(name, payload, successText) {
+  // after = ทำต่อหลังคำสั่งนี้บันทึกสำเร็จ (โหมดในเครื่อง: ทันที · โหมดฐานข้อมูล: หลังฐานข้อมูลตอบ) ใช้ต่อคำสั่งที่ต้องเห็นผลของคำสั่งก่อนหน้า เช่น ขั้นตอนผลิตหลังแทรก WIP
+  function runAction(name, payload, successText, after = null) {
     const result = store.run(name, payload);
     if (!result.ok) {
       showToast(friendlyError(result.error), "error");
@@ -434,12 +449,14 @@
     };
     if (!result.saving) {
       report();
+      after?.();
       return true;
     }
     // โหมดฐานข้อมูล: หน้าแสดงผลทันที (optimistic) แล้วแจ้งผลเมื่อฐานข้อมูลตอบ · ถ้าไม่สำเร็จ store ย้อนกลับและวาดหน้าใหม่ให้เอง
     result.saving.then((outcome) => {
       if (!outcome.ok) { showToast(friendlyError(outcome.error), "error"); return; }
       report();
+      after?.();
       const notice = actions.helpers.rubberflowNotice(name, payload, outcome.rubberflow);
       if (notice) showToast(notice.text, notice.type);
       // WO ที่ฐานข้อมูลเปิด/ยกเลิกให้ ตามทันฝั่ง RubberFlow ให้เลข WO และหน้าของ RubberFlow เป็นปัจจุบัน
@@ -468,13 +485,17 @@
       const name = form.dataset.rfForm;
       const transform = TRANSFORMS[name] ?? ((payload) => payload);
       let payload;
+      let raw;
       try {
-        payload = transform({ ...formPayload(form), ...parseArgs(form) });
+        raw = { ...formPayload(form), ...parseArgs(form) };
+        payload = transform(raw);
       } catch (error) {
         showToast(friendlyError(error), "error");
         return;
       }
-      if (!runAction(name, payload, form.dataset.rfSuccess)) return;
+      // แทรก WIP: ขั้นตอนผลิตของชิ้นแม่ที่อ้างบรรทัดเดิมเปลี่ยนไปอ้างรหัส WIP ด้วย (บันทึกต่อจาก BOM ด้วย saveRouting)
+      const routingPayload = name === "saveBomTree" && raw.wipInsert ? routingAfterWipInsert(raw) : null;
+      if (!runAction(name, payload, form.dataset.rfSuccess, routingPayload ? () => runAction("saveRouting", routingPayload, `ขั้นตอนผลิตของ ${routingPayload.itemCode} อ้างชิ้นใหม่แล้ว`) : null)) return;
       form.closest?.("dialog")?.close?.();
       form.querySelectorAll("button").forEach((node) => { node.disabled = true; });
       renderRoute();
@@ -521,11 +542,9 @@
     const user = store.user();
     if (!user) return "";
     const page = currentPage(currentRoute().params);
-    const counts = navCounts(store.data(), user);
-    // งานรับเข้า/สั่งซื้อของคลังวัตถุดิบนับรวมในตัวเลขของเมนูงานของฉัน (การ์ดชุดเดียวกับในหน้า)
-    try { if (user.dept === "ST" && pages.hub?.storeTasks) counts.work += pages.hub.storeTasks(makeContext(currentRoute().params)).length; } catch { /* นับไม่ได้: ตัวเลขเป็นงานของใบอย่างเดียว */ }
-    // งานของคลังสินค้า (WH): การ์ดรับเข้า/ส่งมอบสินค้าสำเร็จรูป (ชุดเดียวกับในหน้างานของฉัน)
-    try { if (actions.helpers.canHandleFg(user) && pages.hub?.fgTasks) counts.work += pages.hub.fgTasks(makeContext(currentRoute().params)).length; } catch { /* นับไม่ได้ */ }
+    // ตัวเลขเมนูงานของฉัน = การ์ดชุดเดียวกับแท็บ "ต้องทำ" ของหน้า (pages.hub.workCount ใช้ workBoard ตัวเดียวกับหน้า) นับไม่ได้ = ไม่แสดงตัวเลข
+    const counts = { work: 0 };
+    try { counts.work = pages.hub?.workCount ? pages.hub.workCount(makeContext(currentRoute().params)) : 0; } catch { /* นับไม่ได้ */ }
     // เมนูหลัก 4 อัน (storeApi.NAV): หน้าที่ไม่อยู่ในเมนู (สร้าง BOM นับคงคลัง ฯลฯ) ทำให้เมนูแม่ของมันเป็นตัวที่เลือกอยู่
     const parent = storeApi.NAV_PARENT[page] ?? page;
     const items = navItems(user).map((id) => `<li><a class="rf-nav-item${id === parent ? " is-active" : ""}" data-rf-mod="bom-${escapeHtml(id)}" href="${escapeHtml(url(id))}"${id === page ? ' aria-current="page"' : ""}><span class="rf-nav-ico" aria-hidden="true">${pages.icon(id)}</span><span class="rf-nav-text">${escapeHtml(storeApi.navLabel(id))}</span>${counts[id] ? `<span class="rf-nav-count" title="${escapeHtml(countTitle(id))}">${counts[id]}</span>` : ""}</a></li>`).join("");
@@ -533,16 +552,7 @@
     return `<div class="nav-sub rf-nav" data-module="bom"><ul class="rf-nav-list">${items}</ul></div>`;
   };
   const navItems = (user) => storeApi.NAV.filter((id) => storeApi.canSee(user, id));
-  const navCounts = (data, user) => ({
-    // นับเป็นการ์ดของหน้างานของฉัน: เฉพาะใบที่ปล่อยผลิตแล้ว และของซื้อของใบเดียวกันนับเป็นหนึ่ง
-    work: (() => {
-      if (actions.helpers.canPlan(user)) return 0;
-      const live = (job) => ["released", "in_progress"].includes(data.orders.find((order) => order.id === job.orderId)?.status);
-      const mine = data.jobs.filter((job) => job.status !== "done" && job.dept === user.dept && live(job));
-      return mine.filter((job) => !actions.helpers.isPartJob(job)).length + new Set(mine.filter((job) => actions.helpers.isPartJob(job)).map((job) => job.orderId)).size;
-    })(),
-  });
-  const countTitle = (id) => ({ work: "งานค้างของแผนก" })[id] ?? "";
+  const countTitle = (id) => ({ work: "งานที่ต้องทำ" })[id] ?? "";
 
   // สถานะการติดต่อฐานข้อมูล (โหมดฐานข้อมูล): ว่างเมื่อไม่มีอะไรค้าง · อัปเดตที่ [data-bom-sync] โดยไม่วาดหน้าใหม่
   // คำสั่งใหญ่ (นำเข้าชีตทั้งไฟล์) ส่งหลายครั้ง: บอกว่าถึงส่วนไหนแล้ว
