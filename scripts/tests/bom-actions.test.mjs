@@ -76,11 +76,11 @@ test("only planners and managers create or edit items and BOMs; every save is a 
   const current = approved(d, "DEMO-TP-01(P)-Y");
   assert.equal(current.id, result.id);
   assert.equal(current.status, "approved", "usable at once, no approval step");
-  // บรรทัดเรียงตามผังงาน: ของซื้อ (ST) ก่อนชิ้นยาง (GR) แม้ฟอร์มส่งมาสลับกัน
-  assert.deepEqual(current.lines.map((line) => line.childCode), ["P-BOX-01", "SE-TP01-OR01-100-18-65"]);
-  assert.equal(current.lines[0].scrapPct, 2);
-  assert.equal(current.lines[1].consumerDept, "PK");
-  assert.equal(current.lines[1].producerDept, "GR");
+  // BOM ที่มีอยู่แล้วเก็บลำดับตามที่ส่งมา (ผู้ใช้เรียงเอง) ไม่จัดตามผังงานกลับ
+  assert.deepEqual(current.lines.map((line) => line.childCode), ["SE-TP01-OR01-100-18-65", "P-BOX-01"]);
+  assert.equal(current.lines[1].scrapPct, 2);
+  assert.equal(current.lines[0].consumerDept, "PK");
+  assert.equal(current.lines[0].producerDept, "GR");
   assert.equal(d.boms.find((bom) => bom.id === before.id).status, "superseded");
   assert.equal(d.boms.filter((bom) => bom.itemCode === "DEMO-TP-01(P)-Y" && bom.status === "approved").length, 1);
   assert.match(current.changeLog[0].text, /SE-TP01-OR01-100-18-65 3→4/);
@@ -159,17 +159,25 @@ test("saveBomTree saves a whole multi-level tree in one call: new items, nested 
   assert.equal(approved(d, "NEW-TP-02(P)-Y").note, "สร้างครั้งแรก");
   // บันทึกซ้ำโดยไม่เปลี่ยนอะไร = ไม่มี revision ใหม่
   const again = A.saveBomTree(d, { code: "NEW-TP-02(P)-Y", item: { name: "ตอปิโดใหม่", uom: "set" }, nodes: [
-    { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05 }] }, { code: "P-STK-01", qty: 1 }, { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.02 }] }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 },
+    { code: "P-STK-01", qty: 1 }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 }, { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05 }] }, { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.02 }] },
   ] }, ctx("planner"));
   assert.deepEqual(again.saved, []);
   assert.equal(again.summary, "ไม่มีการเปลี่ยนแปลง");
   assert.equal(again.changed, false);
   assert.equal(approved(d, "NEW-TP-02(P)-Y").revision, 1);
+  // ส่งชุดเดิมแต่สลับลำดับ = เป็นการแก้ (ฉบับใหม่ "เรียงลำดับส่วนประกอบใหม่") ลำดับที่ส่งมาคือลำดับที่เก็บ
+  const reordered = structuredClone(d);
+  const reorderedSave = A.saveBomTree(reordered, { code: "NEW-TP-02(P)-Y", nodes: [
+    { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05 }] }, { code: "P-STK-01", qty: 1 }, { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.02 }] }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 },
+  ] }, ctx("planner"));
+  assert.deepEqual(reorderedSave.saved, ["NEW-TP-02(P)-Y Rev.2"]);
+  assert.deepEqual(approved(reordered, "NEW-TP-02(P)-Y").lines.map((line) => line.childCode), ["SE-NEW-01", "P-STK-01", "PT-00320", "RB-DM02-02-BK01-225-3-20"]);
+  assert.match(approved(reordered, "NEW-TP-02(P)-Y").changeLog[0].text, /เรียงลำดับส่วนประกอบใหม่/);
   const auditCount = d.audit.length;
   assert.ok(!d.audit.slice(0, 3).some((entry) => entry.action === "บันทึกต้นไม้ BOM" && entry.detail.includes("ไม่มีการเปลี่ยนแปลง")), "no audit row for a no-op save");
   // แก้แค่ข้อมูลการตัดของ RB (patch) โดย BOM ไม่เปลี่ยน: ผลลัพธ์บอกว่าแก้ชิ้น ไม่ใช่ "ไม่มีการเปลี่ยนแปลง"
   const patchOnly = A.saveBomTree(d, { code: "NEW-TP-02(P)-Y", nodes: [
-    { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05, patch: { rubber: { compound: "DM01", cutLengthCm: "7", pcsPerRoll: "31", sePerGr: "1", kgPerRoll: "1.5" } } }] }, { code: "P-STK-01", qty: 1 }, { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.02 }] }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 },
+    { code: "P-STK-01", qty: 1 }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 }, { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05, patch: { rubber: { compound: "DM01", cutLengthCm: "7", pcsPerRoll: "31", sePerGr: "1", kgPerRoll: "1.5" } } }] }, { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.02 }] },
   ] }, ctx("planner"));
   assert.equal(patchOnly.changed, true);
   assert.deepEqual(patchOnly.saved, []);
@@ -185,7 +193,7 @@ test("saveBomTree saves a whole multi-level tree in one call: new items, nested 
   ] }, ctx("planner")), /ปรากฏหลายที่ในต้นไม้ด้วยส่วนประกอบต่างกัน/);
   // แก้ชั้นลึก (PT → เม็ด) จากต้นไม้ของสินค้าใหม่ มีผลกับ PT ที่สินค้าอื่นใช้ร่วมด้วย
   const third = A.saveBomTree(d, { code: "NEW-TP-02(P)-Y", nodes: [
-    { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05 }] }, { code: "P-STK-01", qty: 1 }, { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.025 }] }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 },
+    { code: "P-STK-01", qty: 1 }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 }, { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05 }] }, { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.025 }] },
   ] }, ctx("manager"));
   assert.deepEqual(third.saved, ["PT-00320 Rev.2"]);
   assert.equal(approved(d, "PT-00320").lines[0].qty, 0.025);

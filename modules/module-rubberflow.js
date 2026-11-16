@@ -241,6 +241,23 @@
   // ฐานข้อมูลส่งยอดดีของล็อตตกแต่งที่ QC ผ่านและนับเข้าใบสั่งผลิต (ตอนบันทึกถ้าผ่านเลย หรือตอน QA ตัดสินเป็น pass) เข้ารายงานของงาน BOM ที่ผูกใบสั่งผลิตนั้นในธุรกรรมเดียวกัน
   // การรับมอบ WIP ระหว่างสถานีไม่แตะงาน BOM · หน้าจอไม่แตะงาน BOM · หลังบันทึกจึงตามทัน BOM แล้วบอกผล
   const bomStore = () => { try { const bom = window.MNP_BOM?.store; return bom?.isRemote?.() ? bom : null; } catch { return null; } };
+  // ชิ้นงานใน item master ของ BOM (ใช้หาชื่อของซื้อในใบสั่งซื้อ ซึ่งเก็บแต่รหัส): null = ไม่ใช่โหมดฐานข้อมูลหรือ BOM ยังไม่พร้อม
+  // BOM ยังไม่ได้โหลด (เปิดหน้านี้ก่อนหน้า BOM): สั่งโหลดให้ครั้งเดียวต่อรอบ แล้ววาดหน้าใหม่เมื่อเสร็จ ถ้าผู้ใช้ยังอยู่ที่หน้านี้และไม่ได้แก้ฟอร์ม
+  let bomWakeHooked = false;
+  function bomItems() {
+    const bom = bomStore();
+    if (!bom) return null;
+    try {
+      const status = bom.status();
+      if (status === "ready") return bom.data().items ?? null;
+      if ((status === "idle" || status === "loading") && !bomWakeHooked) {
+        bomWakeHooked = true;
+        const done = () => { bomWakeHooked = false; try { if (onRfRoute() && !isEditing()) renderRoute(); } catch { /* ออกจากหน้านี้แล้ว */ } };
+        bom.ensureLoaded().then(done, done);
+      }
+    } catch { /* ไม่มีชื่อก็แสดงรหัสอย่างเดียว */ }
+    return null;
+  }
   function bomJobOfAction(name, payload) {
     if (name !== "recordFinishing" && name !== "addQcRecord") return null;
     const bom = bomStore();
@@ -473,6 +490,7 @@
           return partNeeds({ jobs: bomData.jobs, orders: bomData.orders, stock: bomData.stock ?? [], purchaseOrders: data.purchaseOrders ?? [] }, sourcePi);
         } catch { return null; }
       },
+      bomItems: () => bomItems(),
       roleLabel: (role) => storeApi.ROLES[role]?.label ?? role,
     };
     ctx.openDialog = (name, args) => openDialog(name, args, ctx); // เปิด dialog จากโค้ดของหน้า (เช่น ปุ่ม "สั่งซื้อส่วนที่ขาด" ในใบเบิก)

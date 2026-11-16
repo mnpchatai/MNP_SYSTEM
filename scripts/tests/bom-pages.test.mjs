@@ -2311,6 +2311,9 @@ test("purchasing belongs to the raw-material store: the purchase dialog is read-
   clean(html);
   assert.match(html, /<h2>รับเข้าตามใบสั่งซื้อ PO-20261113-01<\/h2>/);
   assert.match(html, /href="#\/rubberflow\?p=warehouse&amp;tab=po&amp;q=PO-20261113-01">ตรวจสอบรับเข้า</);
+  const boxName = env.store.data().items.find((item) => item.code === "P-BOX-01").name;
+  assert.ok(boxName, "the demo part has a name");
+  assert.ok(html.includes(`<span class="rf-mono">P-BOX-01</span> <span class="small muted">${boxName}</span>`), "the receive card shows the part name next to the code (a purchase order line holds only the code)");
   assert.match(html, /<h2>สั่งซื้อของที่ขาดของใบ DEMO-26002<\/h2>/);
   assert.match(html, new RegExp(`>ต้องทำ ${tasks.length + 1}<`), "the tab counts the store jobs with the part card of the released PI");
   // the menu number is that same count (workCount reads the same board as the page), for the store and for admin, who sees the store's cards on the all-department board
@@ -2428,7 +2431,7 @@ test("the store orders chemicals for every open RubberFlow work order from the p
   assert.doesNotMatch(stNodes["[data-rf-shortage]"].innerHTML, /แจ้งคลังวัตถุดิบ/);
 });
 
-test("lines are reordered inside one department, moved under another item of the same structure in one save, and a cancelled PI turns its purchase order into a decision for the store", async () => {
+test("lines are reordered across departments (the saved order is kept), moved under another item of the same structure in one save, and a cancelled PI turns its purchase order into a decision for the store", async () => {
   const env = load();
   env.store.setUser("B03");
   const root = "DEMO-TP-01(P)-Y";
@@ -2440,12 +2443,11 @@ test("lines are reordered inside one department, moved under another item of the
   const unescape = (value) => value.replaceAll("&quot;", '"').replaceAll("&amp;", "&").replaceAll("&#039;", "'");
   const before = bomOf(root);
   const codes = before.lines.map((line) => line.childCode);
-  // เลื่อนลำดับ: เฉพาะกับบรรทัดติดกันของแผนกเดียวกัน (ของซื้อสามตัวแรกเป็นของคลังวัตถุดิบ)
+  // เลื่อนลำดับ: สลับกับบรรทัดติดกันได้ทุกแผนก (ของซื้อสามตัวแรกเป็นของคลังวัตถุดิบ ตัวที่สี่เป็นของ GR)
   let side = sideOf(codes[0]);
   assert.match(side, /<button class="btn rf-btn secondary" type="button" disabled title="อยู่บนสุดแล้ว">เลื่อนขึ้น</, "both directions always show: the first line has its up button switched off");
   const down = /data-rf-action="saveBom" data-rf-args="([^"]*)"[^>]*>เลื่อนลง</.exec(side);
-  assert.ok(down, "a line with a neighbour of the same department can move down");
-  assert.match(sideOf(codes[2]), /disabled title="สลับได้เฉพาะกับบรรทัดติดกันของแผนกเดียวกัน">เลื่อนลง</, "no swap across departments (the next line belongs to another department)");
+  assert.ok(down, "a line with a neighbour can move down");
   const args = JSON.parse(unescape(down[1]));
   assert.deepEqual(args.lines.map((line) => line.childCode), [codes[1], codes[0], ...codes.slice(2)]);
   assert.equal(env.store.run("saveBom", args).ok, true);
@@ -2454,6 +2456,18 @@ test("lines are reordered inside one department, moved under another item of the
   assert.deepEqual(after.lines.map((line) => line.childCode), [codes[1], codes[0], ...codes.slice(2)]);
   assert.match(after.changeLog[0].text, /เรียงลำดับส่วนประกอบใหม่/);
   for (const line of before.lines) assert.equal(after.lines.find((entry) => entry.childCode === line.childCode).qty, line.qty);
+  // สลับข้ามแผนก (ของซื้อ ST กับชิ้นของ GR): บันทึกแล้วลำดับคงตามที่สั่ง ไม่ถูกจัดตามผังงานกลับ
+  const crossDown = /data-rf-action="saveBom" data-rf-args="([^"]*)"[^>]*>เลื่อนลง</.exec(sideOf(codes[2]));
+  assert.ok(crossDown, "the next line belongs to another department and the down button is still on");
+  const crossArgs = JSON.parse(unescape(crossDown[1]));
+  assert.deepEqual(crossArgs.lines.map((line) => line.childCode), [codes[1], codes[0], codes[3], codes[2], ...codes.slice(4)]);
+  assert.equal(env.store.run("saveBom", crossArgs).ok, true);
+  after = bomOf(root);
+  assert.deepEqual(after.lines.map((line) => line.childCode), crossArgs.lines.map((line) => line.childCode), "the order the user gave is what is stored");
+  assert.equal(after.revision, before.revision + 2);
+  assert.equal(rowsOf()[2].itemCode, codes[3], "the tree reads the stored order");
+  assert.deepEqual(env.context.MNP_BOM_STORE.migrate(json(env.store.data())).boms.find((bom) => bom.id === after.id).lines.map((line) => line.childCode), after.lines.map((line) => line.childCode), "a reload of the stored data keeps the order");
+  assert.match(sideOf(codes[1]), /disabled title="อยู่บนสุดแล้ว">เลื่อนขึ้น</, "only the top and bottom of the list switch a direction off");
   // ย้ายไปใต้ชิ้นอื่น: ตัวเลือกคือชิ้นในโครงสร้างนี้ที่รับได้ · ชิ้นแม่เดิมและใหม่ได้ฉบับใหม่ในคำสั่งเดียว
   const moved = codes[2];
   const target = "SE-TP01-OR01-100-18-65";
@@ -2473,7 +2487,7 @@ test("lines are reordered inside one department, moved under another item of the
   await env.submit(query, "saveBomTree", { toCode: targetBefore.lines[0].childCode }, { lineMove: true, code: root, fromCode: root, childCode: target });
   assert.match(env.log.toasts.at(-1)[0], /ข้อมูลเส้นยาง/, "a rubber rod is never a target: the move is refused before anything is saved");
   assert.equal(bomOf(target).revision, targetBefore.revision);
-  assert.equal(bomOf(root).revision, before.revision + 1, "the refused move leaves the root as it was");
+  assert.equal(bomOf(root).revision, before.revision + 2, "the refused move leaves the root as it was");
   await env.submit(query, "saveBomTree", { toCode: target, note: "" }, { lineMove: true, code: root, fromCode: root, childCode: moved });
   after = bomOf(root);
   const targetAfter = bomOf(target);
@@ -2485,6 +2499,12 @@ test("lines are reordered inside one department, moved under another item of the
   assert.equal(bomOf(untouched).revision, untouchedBefore.revision, "other sub-assemblies are not rewritten");
   await env.submit(query, "saveBomTree", { toCode: target }, { lineMove: true, code: root, fromCode: root, childCode: moved });
   assert.match(env.log.toasts.at(-1)[0], /ไม่พบ .* ใน BOM ของ/, "a stale form is refused");
+  // บรรทัดเดียวใต้ชิ้นแม่: ไม่มีปุ่มเลื่อนขึ้น/ลง (ไม่มีอะไรให้เรียง) และไม่มีปุ่มย้ายไปใต้ชิ้นอื่น
+  assert.equal(env.store.run("saveBom", { itemCode: root, lines: [{ childCode: codes[3], qty: 1 }], note: "เหลือบรรทัดเดียว" }).ok, true);
+  const only = sideOf(codes[3]);
+  assert.doesNotMatch(only, />เลื่อนขึ้น</);
+  assert.doesNotMatch(only, />เลื่อนลง</);
+  assert.doesNotMatch(only, /data-rf-open="lineMove"/);
   // ชิ้นแม่ที่เหลือบรรทัดเดียวย้ายออกไม่ได้ และผู้ที่ไม่ใช่ฝ่ายวางแผนไม่มีหน้าต่างนี้
   const single = env.store.data().boms.find((bom) => bom.status === "approved" && bom.lines.length === 1 && itemOf(bom.itemCode)?.kind !== "RB");
   if (single) assert.equal(env.context.MNP_BOM_DIALOGS.lineMove(env.ctx(), { rootCode: single.itemCode, parentCode: single.itemCode, childCode: single.lines[0].childCode }), null);

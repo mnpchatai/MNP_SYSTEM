@@ -195,14 +195,13 @@
       // ลบบรรทัด = บันทึก BOM ของชิ้นแม่ใหม่โดยไม่มีบรรทัดนี้ (saveBom เดิม ได้ฉบับแก้ไขใหม่) · BOM ต้องเหลืออย่างน้อย 1 บรรทัด จึงไม่มีปุ่มลบที่บรรทัดสุดท้าย
       const siblings = approvedBomOf(ctx, line.parentCode)?.lines ?? [];
       const rest = siblings.filter((entry) => entry.childCode !== line.itemCode).map((entry) => ({ childCode: entry.childCode, qty: entry.qty, scrapPct: entry.scrapPct ?? 0, note: entry.note ?? "", step: entry.step ?? "", flags: entry.flags ?? [] }));
-      // เลื่อนลำดับ: บรรทัดของ BOM เรียงตามผังงานของแผนกผู้ทำ (rules.sortLinesByFlow) จึงสลับได้กับบรรทัดติดกันของแผนกเดียวกันเท่านั้น · บันทึกด้วย saveBom (ฉบับแก้ไขใหม่ "เรียงลำดับส่วนประกอบใหม่")
-      const flowOf = (entry) => rules.flowStepOf(itemOf(ctx, entry.childCode)?.ownerDept ?? entry.producerDept);
+      // เลื่อนลำดับ: สลับกับบรรทัดติดกันได้ทุกแผนก (BOM เก็บลำดับตามที่ผู้ใช้ให้) · บันทึกด้วย saveBom (ฉบับแก้ไขใหม่ "เรียงลำดับส่วนประกอบใหม่")
       const at = siblings.findIndex((entry) => entry.childCode === line.itemCode);
       const full = (list) => list.map((entry) => ({ childCode: entry.childCode, qty: entry.qty, scrapPct: entry.scrapPct ?? 0, note: entry.note ?? "", step: entry.step ?? "", flags: entry.flags ?? [] }));
       const swapped = (other) => { const list = siblings.slice(); [list[at], list[other]] = [list[other], list[at]]; return full(list); };
-      // ปุ่มเลื่อนขึ้นและเลื่อนลงแสดงคู่กันเสมอ: ทิศที่เลื่อนไม่ได้เป็นปุ่มปิด (title บอกเหตุ) ผู้ใช้จึงเห็นว่ามีทั้งสองทิศ
+      // ปุ่มเลื่อนขึ้นและเลื่อนลงแสดงคู่กัน: ทิศที่เลื่อนไม่ได้ (บนสุด/ล่างสุด) เป็นปุ่มปิด (title บอกเหตุ) · บรรทัดเดียวใต้ชิ้นแม่ไม่มีอะไรให้เรียง จึงไม่แสดงปุ่ม
       const moveOff = (label, why) => `<button class="btn rf-btn secondary" type="button" disabled title="${esc(why)}">${esc(label)}</button>`;
-      const moveButton = (label, other) => (!(canEdit && bomLine) ? "" : !(other >= 0 && other < siblings.length) ? moveOff(label, other < 0 ? "อยู่บนสุดแล้ว" : "อยู่ล่างสุดแล้ว") : flowOf(siblings[other]) !== flowOf(siblings[at]) ? moveOff(label, "สลับได้เฉพาะกับบรรทัดติดกันของแผนกเดียวกัน")
+      const moveButton = (label, other) => (!(canEdit && bomLine) || siblings.length < 2 ? "" : !(other >= 0 && other < siblings.length) ? moveOff(label, other < 0 ? "อยู่บนสุดแล้ว" : "อยู่ล่างสุดแล้ว")
         : ui.button(label, { action: "saveBom", args: { itemCode: line.parentCode, lines: swapped(other), note: `เรียงลำดับ ${line.itemCode}` }, className: "secondary", success: `เรียงลำดับ ${line.itemCode} แล้ว` }));
       // บรรทัดสูตรยางใต้เส้นยางแก้ที่ "แก้ข้อมูลเส้นยาง" ของเส้นยางนั้น (ช่องสูตรและบรรทัดต้องตรงกัน) จึงไม่มีปุ่มแก้/ลบบรรทัดที่นี่
       const underRod = itemOf(ctx, line.parentCode)?.kind === "RB";
@@ -1056,9 +1055,12 @@
       }
       if (task.kind === "receive") {
         const unit = (line) => (line.source === "bom" ? uomText(ctx, line.uom) : "กก.");
+        // ใบสั่งซื้อเก็บแต่รหัส: ของซื้อหาชื่อจากทะเบียนชิ้นงานของ BOM ส่วนเคมีจากทะเบียนวัตถุดิบของ RubberFlow · ไม่พบแสดงรหัสอย่างเดียว
+        const materials = (() => { try { return ctx.rubberflow()?.store?.data?.().materials ?? []; } catch { return []; } })();
+        const nameOf = (line) => (line.source === "bom" ? itemOf(ctx, line.materialCode)?.name : null) || materials.find((row) => row.code === line.materialCode)?.name || "";
         return `<article class="card rf-card bom-job ${task.cancelled ? "is-hold" : "is-now"}"><div class="bom-job-top"><span class="bom-job-state">${task.cancelled ? "ใบสั่งผลิตถูกยกเลิกแล้ว" : "รอรับเข้า"}</span><span class="muted">สั่งเมื่อ ${esc(rules.fmtDate(task.po.createdAt))}</span></div>
           <h2>${esc(`${task.cancelled ? "ตัดสินใบสั่งซื้อ" : "รับเข้าตามใบสั่งซื้อ"} ${task.po.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${task.po.sourcePi ? esc(`สั่งจากใบ ${task.po.sourcePi}`) : ""}${task.cancelled ? (task.partly ? " · รับเข้าไปแล้วบางรายการ ใบนี้ยกเลิกไม่ได้ รับส่วนที่เหลือเข้าเป็นสต็อกไว้ใช้กับใบอื่น" : " · ยกเลิกใบสั่งซื้อ หรือรับเข้าเป็นสต็อกไว้ใช้กับใบอื่น") : ""}</p>
-          <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span class="rf-mono">${esc(line.materialCode)}</span><span class="nowrap">${esc(`${rules.fmtQty(line.qtyKg)} ${unit(line)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
+          <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span><span class="rf-mono">${esc(line.materialCode)}</span>${nameOf(line) ? ` <span class="small muted">${esc(nameOf(line))}</span>` : ""}</span><span class="nowrap">${esc(`${rules.fmtQty(line.qtyKg)} ${unit(line)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
           ${ui.link(task.cancelled ? "เปิดใบสั่งซื้อ" : "ตรวจสอบรับเข้า", `#/rubberflow?p=warehouse&tab=po&q=${encodeURIComponent(task.po.id)}`, "btn rf-btn bom-job-main")}</article>`;
       }
       if (task.kind === "chem") {

@@ -15,6 +15,13 @@
   // ยังไม่มีล็อตที่ผลิต = ยังไม่มีอัตราให้บอก แสดง "—" (ไม่ใช่ 100%)
   const hasOutput = (lots) => lots.some((lot) => lot.goodQty + lot.scrapQty > 0);
   const yieldText = (lots, digits = 2) => (hasOutput(lots) ? `${yieldOf(lots).toFixed(digits)}%` : "—");
+  // ชิ้นงานของ BOM ที่ใช้หาชื่อของซื้อในใบสั่งซื้อ (บรรทัดของซื้อเก็บแต่รหัส): ctx.bomItems (สั่งโหลด BOM ให้ถ้ายังไม่โหลด) · ไม่มี = รายการว่าง แสดงแต่รหัส
+  const bomItemsOf = (ctx) => {
+    if (typeof ctx.bomItems === "function") return ctx.bomItems() ?? [];
+    try { return root.MNP_BOM?.store?.isRemote?.() && root.MNP_BOM.store.status() === "ready" ? root.MNP_BOM.store.data().items : []; } catch { return []; }
+  };
+  // ชื่อของบรรทัดใบสั่งซื้อ: ของซื้อ (source bom) จาก item master ของ BOM ถ้าไม่มีลองทะเบียนวัตถุดิบ · เคมีจากทะเบียนวัตถุดิบ ไม่พบ = "" (ผู้เรียกแสดงรหัสอย่างเดียว)
+  const poLineName = (ctx, line, bomItems = bomItemsOf(ctx)) => (line.source === "bom" ? bomItems.find((item) => item.code === line.materialCode)?.name : null) || ctx.data.materials.find((row) => row.code === line.materialCode)?.name || "";
   const includes = (haystack, q) => !q || String(haystack).toLowerCase().includes(q.toLowerCase());
   const searchForm = (ctx, placeholder, { tab = null } = {}) => `<form novalidate class="rf-search" data-rf-search${tab ? ` data-rf-keep="tab"` : ""} role="search"><label class="sr-only" for="rf-q">ค้นหา</label>${ctx.ui.input("q", { id: "rf-q", type: "search", value: ctx.q, placeholder })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>`;
 
@@ -372,11 +379,11 @@
     const receivedLine = (line) => line.receivedKg !== null && line.receivedKg !== undefined;
     const poStatus = { ordered: ["warn", "รอรับเข้า"], received: ["good", "รับครบแล้ว"], cancelled: ["bad", "ยกเลิก"] };
     // บรรทัดของซื้อ (source bom) นับเป็นหน่วยของชิ้น: ชื่อมาจาก item master ของ BOM ถ้าโหลดอยู่ · หน่วยเก็บมากับบรรทัด
-    const bomItems = (() => { try { return root.MNP_BOM?.store?.isRemote?.() && root.MNP_BOM.store.status() === "ready" ? root.MNP_BOM.store.data().items : []; } catch { return []; } })();
+    const bomItems = tab === "po" && purchaseOrders.some((po) => po.lines.some((line) => line.source === "bom")) ? bomItemsOf(ctx) : [];
     const bomOrders = (() => { try { return root.MNP_BOM?.store?.isRemote?.() && root.MNP_BOM.store.status() === "ready" ? root.MNP_BOM.store.data().orders : []; } catch { return []; } })();
     const piCancelled = (po) => po.status === "ordered" && Boolean(po.sourcePi) && bomOrders.find((order) => order.id === po.sourcePi)?.status === "cancelled";
     const lineUnit = (line) => (line.source === "bom" ? partUnit(line.uom) : "kg");
-    const lineName = (line) => (line.source === "bom" ? bomItems.find((item) => item.code === line.materialCode)?.name ?? "" : data.materials.find((row) => row.code === line.materialCode)?.name ?? "");
+    const lineName = (line) => poLineName(ctx, line, bomItems);
     const poRows = purchaseOrders
       .filter((po) => includes(`${po.id} ${po.sourcePi ?? ""} ${po.sourceRequisition ?? ""} ${po.lines.map((line) => line.materialCode).join(" ")}`, ctx.q))
       .sort((a, b) => (a.status === "ordered" ? 0 : 1) - (b.status === "ordered" ? 0 : 1) || b.createdAt - a.createdAt)
@@ -471,7 +478,8 @@
     if (!po || !line || po.status !== "ordered" || (line.receivedKg !== null && line.receivedKg !== undefined)) return null;
     if (line.source === "bom") {
       // ของซื้อ: รับเฉพาะปริมาณจริง (ไม่มีล็อต ไม่มีวันหมดอายุ) ยอดคงเหลือของ BOM เพิ่มในคำสั่งเดียวกัน
-      const partBody = `${ui.kv([["ของซื้อ", esc(materialCode)]])}
+      const partName = poLineName(ctx, line);
+      const partBody = `${ui.kv([["ของซื้อ", esc(`${materialCode}${partName ? ` · ${partName}` : ""}`)]])}
         <div class="rf-grid rf-g2">${ui.field(`ปริมาณที่รับจริง (${esc(partUnit(line.uom))})`, ui.input("qtyKg", { type: "number", step: "any", min: 0, required: true, value: String(line.qtyKg), extra: 'title="ตั้งต้น = ปริมาณที่สั่ง"' }), { required: true })}</div>`;
       return { html: ui.dialog("receivePurchase", `ตรวจสอบรับเข้า · ${po.id}`, `<form novalidate data-rf-form="receivePurchaseLine" data-rf-args='${esc(JSON.stringify({ id: po.id, materialCode }))}' data-rf-success="รับเข้า {result} แล้ว" id="rf-receive-po">${partBody}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive-po">ยืนยันรับเข้า</button>` }) };
     }
@@ -516,24 +524,25 @@
     const reservedTitle = (row) => (Number.isFinite(row.requisitionKg) && Number.isFinite(row.otherNeedKg) ? `ใบเบิกเก่าที่ค้างจ่าย ${fmtNum(row.requisitionKg, 3)} + WO อื่นที่ยังไม่ได้เบิก ${fmtNum(row.otherNeedKg, 3)}` : "");
     const readOnly = Boolean(args.readOnly) || !ctx.can("purchase");
     const formArgs = { sourcePi: args.sourcePi ?? "", sourceRequisition: args.sourceRequisition ?? "", note: args.note ?? "" };
-    // แถวเคมีและแถวของซื้อใช้ชื่อช่องเดียวกัน (materialCode[] source[] uom[] ...) เรียงเคมีก่อนของซื้อตามลำดับตารางในฟอร์ม
+    // ของซื้อของ PI (จาก BOM): ความต้องการ = งานของซื้อที่ยังไม่เบิกจ่าย · คงเหลือ/จองแล้ว/สั่งค้างรับ/สต็อกขั้นต่ำ จากคลังของซื้อ · หน่วยตามชิ้น (ใต้ชื่อ) · ใบสั่งซื้อใบเดียวกับเคมี
+    const parts = args.parts === false || Array.isArray(args.rows) ? null : ctx.bomPartNeeds?.(args.sourcePi) ?? null;
+    const total = rows.length + (parts?.rows ?? []).length;
+    // มีทั้งเคมีและของซื้อ = ตารางเดียว (หัวคอลัมน์ไม่ระบุหน่วย หน่วยอยู่ใต้ชื่อของทุกแถว) เพื่อให้แถวที่ต้องสั่งของทั้งสองชนิดอยู่ด้วยกันบนสุด
+    const merged = rows.length > 0 && (parts?.rows ?? []).length > 0;
+    // แถวเคมีและแถวของซื้อใช้ชื่อช่องเดียวกัน (materialCode[] source[] uom[] ...) ลำดับในฟอร์มคือลำดับแถวในตาราง (ชื่อช่องเรียงตามลำดับ DOM)
     const rowHtml = (cells, row) => {
       const code = esc(row.materialCode);
       const hidden = Object.entries({ materialCode: row.materialCode, source: row.source, uom: row.uom ?? "", needKg: row.needKg, availableKg: row.availableKg, shortageKg: row.shortageKg }).map(([name, value]) => `<input type="hidden" name="${name}[]" value="${esc(String(value))}">`).join("");
-      return `<tr data-rf-po-row data-short="${esc(String(row.shortageKg))}"${row.orderKg > 0 ? ' class="rf-po-need"' : ""}><td>${ui.mono(row.materialCode)}<div class="small muted">${esc(row.name)}${row.source === "bom" ? ` · ${esc(partUnit(row.uom))}` : ""}</div>${hidden}</td>
+      return `<tr data-rf-po-row data-short="${esc(String(row.shortageKg))}"${row.orderKg > 0 ? ' class="rf-po-need"' : ""}><td>${ui.mono(row.materialCode)}<div class="small muted">${esc(row.name)}${row.source === "bom" ? ` · ${esc(partUnit(row.uom))}` : merged ? " · kg" : ""}</div>${hidden}</td>
         ${cells}
         <td>${ui.input("safetyKg[]", { type: "number", step: "any", min: 0, value: String(row.safetyKg), extra: `data-rf-safety aria-label="สต็อกขั้นต่ำ ${code}"${readOnly || !(ctx.user?.st || (row.source === "bom" ? ctx.user?.planner : ctx.can("editMaster"))) ? ' readonly title="สต็อกขั้นต่ำแก้ได้โดยผู้สั่งซื้อ (คลังวัตถุดิบ ST) หรือฝ่ายวางแผน"' : ""}` })}<input type="hidden" name="storedSafetyKg[]" value="${esc(String(row.safetyKg))}"></td>
         <td>${ui.input("qtyKg[]", { type: "number", step: "any", min: 0, value: String(row.orderKg), extra: `data-rf-qty title="ตั้งต้น = ขาด + สต็อกขั้นต่ำ" aria-label="จำนวนสั่ง ${code}"${readOnly ? " readonly" : ""}` })}</td></tr>`;
     };
-    const needFirst = (list, key) => [...list].sort((a, b) => (b[key] > 0) - (a[key] > 0));
-    const tableRows = needFirst(rows, "orderKg").map((row) => rowHtml(`<td class="right rf-mono">${esc(fmtNum(row.needKg, 3))}</td>${stockCell(row.onHandKg)}${stockCell(row.reservedKg, reservedTitle(row))}${stockCell(row.onOrderKg)}
-        <td class="right rf-mono">${row.shortageKg > 0 ? ui.badge("bad", fmtNum(row.shortageKg, 3)) : esc(fmtNum(0, 3))}</td>`, { ...row, source: "rf" }));
-    // ของซื้อของ PI (จาก BOM): ความต้องการ = งานของซื้อที่ยังไม่เบิกจ่าย · คงเหลือ/จองแล้ว/สั่งค้างรับ/สต็อกขั้นต่ำ จากคลังของซื้อ · หน่วยตามชิ้น (ใต้ชื่อ) · ใบสั่งซื้อใบเดียวกับเคมี
-    const parts = args.parts === false || Array.isArray(args.rows) ? null : ctx.bomPartNeeds?.(args.sourcePi) ?? null;
-    const total = rows.length + (parts?.rows ?? []).length;
-    const partRows = needFirst(parts?.rows ?? [], "orderQty").map((row) => rowHtml(`<td class="right rf-mono">${esc(fmtNum(row.needQty, 3))}</td>${stockCell(row.onHandQty)}${stockCell(row.reservedQty, "ใบสั่งผลิตอื่นที่ปล่อยผลิตแล้วและยังไม่ได้เบิกจ่าย")}${stockCell(row.onOrderQty)}
+    const tableRows = rows.map((row) => ({ need: row.orderKg > 0, html: rowHtml(`<td class="right rf-mono">${esc(fmtNum(row.needKg, 3))}</td>${stockCell(row.onHandKg)}${stockCell(row.reservedKg, reservedTitle(row))}${stockCell(row.onOrderKg)}
+        <td class="right rf-mono">${row.shortageKg > 0 ? ui.badge("bad", fmtNum(row.shortageKg, 3)) : esc(fmtNum(0, 3))}</td>`, { ...row, source: "rf" }) }));
+    const partRows = (parts?.rows ?? []).map((row) => ({ need: row.orderQty > 0, html: rowHtml(`<td class="right rf-mono">${esc(fmtNum(row.needQty, 3))}</td>${stockCell(row.onHandQty)}${stockCell(row.reservedQty, "ใบสั่งผลิตอื่นที่ปล่อยผลิตแล้วและยังไม่ได้เบิกจ่าย")}${stockCell(row.onOrderQty)}
         <td class="right rf-mono">${row.shortage > 0 ? ui.badge("bad", fmtNum(row.shortage, 3)) : esc(fmtNum(0, 3))}</td>`,
-      { materialCode: row.itemCode, name: row.name, source: "bom", uom: row.uom, needKg: row.needQty, availableKg: Math.round((row.onHandQty - row.reservedQty + row.onOrderQty) * 1e3) / 1e3, shortageKg: row.shortage, safetyKg: row.safetyQty, orderKg: row.orderQty }));
+      { materialCode: row.itemCode, name: row.name, source: "bom", uom: row.uom, needKg: row.needQty, availableKg: Math.round((row.onHandQty - row.reservedQty + row.onOrderQty) * 1e3) / 1e3, shortageKg: row.shortage, safetyKg: row.safetyQty, orderKg: row.orderQty }) }));
     // สรุปบนสุด: กี่รายการที่ต้องสั่ง (แถวที่ไฮไลต์ ช่องจำนวนสั่งเติมให้แล้ว) หรือไม่มีอะไรต้องสั่ง · ผู้ที่สั่งไม่ได้เห็นว่าใครเป็นผู้สั่ง
     const toOrder = rows.filter((row) => row.orderKg > 0).length + (parts?.rows ?? []).filter((row) => row.orderQty > 0).length;
     const lead = total
@@ -542,10 +551,13 @@
     const notes = `${lead}${skipped ? ui.callout("warn", esc(`ไม่ได้นับ ${skipped} งานที่ยังไม่มี WO หรือไม่มีสูตร`)) : ""}`;
     const chemHead = ["วัตถุดิบ", { label: "ต้องใช้ (kg)", className: "right" }, { label: "คงเหลือในคลัง (kg)", className: "right", title: "ล็อตที่ใช้ได้ (ไม่หมดอายุ ไม่กักกัน)" }, { label: "จองแล้ว (kg)", className: "right", title: "ใบเบิกเก่าที่ค้างจ่าย + ความต้องการของ WO อื่นที่ยังเปิดอยู่และยังไม่ได้เบิก" }, { label: "สั่งค้างรับ (kg)", className: "right", title: "ใบสั่งซื้อที่ยังไม่ได้รับเข้า" }, { label: "ขาด (kg)", className: "right", title: "ต้องใช้ − (คงเหลือ − จองแล้ว + สั่งค้างรับ)" }, "สต็อกขั้นต่ำ (kg)", "จำนวนสั่ง (kg)"];
     const partHead = ["ของซื้อ (ตามหน่วยของชิ้น)", { label: "ต้องใช้", className: "right" }, { label: "คงเหลือในคลัง", className: "right", title: "ยอดคงเหลือในหน้าคลังของซื้อ" }, { label: "จองแล้ว", className: "right", title: "ใบสั่งผลิตอื่นที่ปล่อยผลิตแล้วและยังไม่ได้เบิกจ่าย" }, { label: "สั่งค้างรับ", className: "right", title: "ใบสั่งซื้อที่ยังไม่ได้รับเข้า" }, { label: "ขาด", className: "right", title: "ต้องใช้ − (คงเหลือ − จองแล้ว + สั่งค้างรับ)" }, "สต็อกขั้นต่ำ", "จำนวนสั่ง"];
-    const chemTable = rows.length ? ui.table(chemHead, tableRows) : "";
-    const partTable = partRows.length ? ui.table(partHead, partRows) : "";
-    const partsLead = !rows.some((row) => row.orderKg > 0) && (parts?.rows ?? []).some((row) => row.orderQty > 0);
-    const tables = partsLead ? `${partTable}${chemTable}` : `${chemTable}${partTable}`;
+    // หัวตารางรวม: หน่วยของแต่ละแถวอยู่ใต้ชื่อ (kg สำหรับเคมี หน่วยของชิ้นสำหรับของซื้อ) จึงไม่ใส่ (kg) ที่หัวคอลัมน์
+    const mergedHead = ["วัตถุดิบและของซื้อ", ...chemHead.slice(1).map((head) => (typeof head === "string" ? head.replace(" (kg)", "") : { ...head, label: head.label.replace(" (kg)", "") }))];
+    // แถวที่ต้องสั่ง (ไฮไลต์) ขึ้นก่อนทั้งหมด แล้วแถวที่เหลือ · ลำดับในแต่ละกลุ่มคงเดิม (เคมีก่อนของซื้อ แต่ละชนิดเรียงตามเดิม) · ลำดับแถวคือลำดับช่อง materialCode[] ที่ส่งไปสร้างใบสั่งซื้อ
+    const ordered = (list) => [...list.filter((row) => row.need), ...list.filter((row) => !row.need)].map((row) => row.html);
+    const tables = merged
+      ? ui.table(mergedHead, ordered([...tableRows, ...partRows]))
+      : `${rows.length ? ui.table(chemHead, ordered(tableRows)) : ""}${partRows.length ? ui.table(partHead, ordered(partRows)) : ""}`;
     const body = total
       ? (readOnly
         ? `${notes}<div class="rf-po-view">${tables}</div>`

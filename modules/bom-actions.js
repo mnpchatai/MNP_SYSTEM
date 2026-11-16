@@ -151,7 +151,8 @@
   const QTY_EPS = 1e-6;
   // ลำดับบรรทัดนับเป็นการเปลี่ยนแปลงด้วย (ผู้ใช้ลากเรียงส่วนประกอบได้ ลำดับใช้แสดงในต้นไม้และใบงาน)
   const sameLine = (line, other) => other.childCode === line.childCode && Math.abs(other.qty - line.qty) <= QTY_EPS && (other.scrapPct || 0) === (line.scrapPct || 0) && (other.note || "") === (line.note || "") && (Number(other.step) || null) === (Number(line.step) || null);
-  // ทุกจุดที่เขียน BOM เรียงบรรทัดตามผังงาน (rules.sortLinesByFlow) ผู้ใช้จึงลากย้ายได้เฉพาะภายในแผนกเดียวกัน
+  // ลำดับตามผังงาน (rules.sortLinesByFlow) เป็นลำดับตั้งต้นของ BOM ที่เกิดโดยผู้ใช้ไม่ได้ให้ลำดับ (นำเข้า Excel · BOM ใหม่ของชิ้นที่ยังไม่มี BOM · เปลี่ยนสี · คัดลอก FG)
+  // BOM ที่มีอยู่แล้วเก็บลำดับตามที่ผู้ใช้ให้ (เลื่อนขึ้น/ลง ลากในตารางสร้าง BOM ข้ามแผนกได้) บรรทัดที่เพิ่มใหม่ต่อท้าย
   const sortLines = (d, lines) => rules().sortLinesByFlow(lines, (code) => itemOf(d, code));
   const sameLines = (a, b) => a.length === b.length && a.every((line, index) => sameLine(line, b[index]));
   const sameLinesAnyOrder = (a, b) => a.length === b.length && a.every((line) => b.some((other) => sameLine(line, other)));
@@ -174,7 +175,9 @@
     const parent = itemOf(d, p.itemCode) ?? fail("ไม่พบชิ้นงานพ่อ");
     if (parent.kind === "PURCHASED") fail(`${parent.code} เป็นของซื้อ ไม่มีส่วนประกอบ`);
     if (parent.kind === "CP") fail(`${parent.code} เป็นสูตรยาง ไม่มีส่วนประกอบในระบบนี้ (สูตร PHR อยู่ที่ RubberFlow)`);
-    const lines = sortLines(d, normalizeLines(d, parent, p.lines));
+    const previous = approvedBomOf(d, parent.code);
+    const given = normalizeLines(d, parent, p.lines);
+    const lines = previous ? given : sortLines(d, given);
     // เส้นยาง: บรรทัดเดียวคือสูตรยางของมัน และต้องตรงกับช่องสูตรของเส้นยาง (รหัส RB ก็มีรหัสสูตรอยู่ในตัว)
     if (parent.kind === "RB") {
       if (lines.length > 1) fail(`เส้นยาง ${parent.code} ใช้สูตรยางได้สูตรเดียว`);
@@ -182,12 +185,11 @@
       if (compound && R.canonicalCode(compound) !== lines[0].childCode) fail(`เส้นยาง ${parent.code} ระบุสูตร ${compound} แต่บรรทัดสูตรยางเป็น ${lines[0].childCode} แก้ให้ตรงกัน`);
     }
     const note = String(p.note ?? "").trim().slice(0, 300);
-    const previous = approvedBomOf(d, parent.code);
     // ชิ้นที่เลิกใช้: BOM เดิมที่ใช้อยู่ยังบันทึกซ้ำได้ แต่เพิ่มเป็นบรรทัดใหม่ไม่ได้
     const retired = lines.map((line) => line.childCode).filter((code) => itemOf(d, code)?.active === false && !previous?.lines.some((line) => line.childCode === code));
     if (retired.length) fail(`${parent.code}: ${retired.join(", ")} เลิกใช้แล้ว เพิ่มเป็นส่วนประกอบใหม่ไม่ได้ (ลบบรรทัดนั้นออก หรือเปิดใช้ชิ้นงานอีกครั้งที่ “แก้ข้อมูลชิ้นงาน”)`);
-    // เทียบกับ revision เดิมที่เรียงด้วยกฎปัจจุบัน: ถ้าแผนกเจ้าของของลูกเพิ่งเปลี่ยน ลำดับเก่าที่ค้างไม่นับเป็นการแก้ BOM
-    if (previous && sameLines(sortLines(d, previous.lines), lines)) return { id: previous.id, revision: previous.revision, changed: false };
+    // เทียบตามลำดับที่เก็บไว้: สลับลำดับอย่างเดียวก็นับเป็นการแก้ (ได้ revision ใหม่ "เรียงลำดับส่วนประกอบใหม่")
+    if (previous && sameLines(previous.lines, lines)) return { id: previous.id, revision: previous.revision, changed: false };
     const changes = previous ? diffText(previous.lines, lines) || (sameLinesAnyOrder(previous.lines, lines) ? "เรียงลำดับส่วนประกอบใหม่" : "แก้รายละเอียดบรรทัด (% เผื่อเสีย/หมายเหตุ/ขั้นที่)") : `สร้างใหม่ ${lines.length} บรรทัด`;
     if (previous) { previous.status = "superseded"; previous.supersededAt = ctx.now; }
     const bom = { id: masterId(d, "BOM", ctx), itemCode: parent.code, revision: (previous?.revision ?? 0) + 1, status: "approved", ownerDept: parent.ownerDept, lines, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note, changeLog: [{ at: ctx.now, by: user.name, text: `${changes}${note ? ` — ${note}` : ""}`.slice(0, 1000) }] }; // ฐานข้อมูลรับข้อความ changeLog ไม่เกิน 1,000 ตัวอักษร
@@ -256,7 +258,7 @@
           if (!seenPath.has(code)) { walk(code, node.children, [...path, code]); seenPath.add(code); } else {
             const current = approvedBomOf(d, code);
             const incoming = node.children.map((entry) => ({ childCode: R.canonicalCode(entry.code), qty: Number(entry.qty), scrapPct: Number(entry.scrapPct) || 0, note: String(entry.note ?? "").trim(), step: Number(entry.step) || null }));
-            if (!current || !sameLines(current.lines, sortLines(d, incoming))) fail(`${code} ปรากฏหลายที่ในต้นไม้ด้วยส่วนประกอบต่างกัน แก้ให้เหมือนกันหรือใช้รหัสคนละตัว`);
+            if (!current || !sameLinesAnyOrder(current.lines, incoming)) fail(`${code} ปรากฏหลายที่ในต้นไม้ด้วยส่วนประกอบต่างกัน แก้ให้เหมือนกันหรือใช้รหัสคนละตัว`);
           }
         }
         lines.push({ childCode: code, qty: node.qty, scrapPct: node.scrapPct, note: node.note, step: node.step, flags: node.flags });
