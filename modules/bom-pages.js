@@ -2473,6 +2473,7 @@
     const body = `<form novalidate id="bom-job-close-form" data-rf-form="setJobStatus" data-rf-args="${attr(JSON.stringify({ jobId, status: "done" }))}" data-rf-success="ปิดงาน {result} แล้ว">
       <p class="muted small">${esc(`${job.itemCode} · ${job.name} · ใบ ${job.orderId} · ทำแล้ว ${rules.fmtQty(job.qtyDone)} จาก ${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`)}</p>
       ${ui.callout("warn", "งานจะเป็นเสร็จโดยไม่เพิ่มยอด แผนกรายงานผลงานนี้ต่อไม่ได้ ใช้กับงานที่จะไม่ทำต่อแล้ว เพื่อให้คลังสินค้า (WH) ปิดใบได้")}
+      ${job.externalRef?.woId ? ui.callout("warn", `งานนี้ผูกกับใบสั่งผลิต ${esc(job.externalRef.woId)} ของ RubberFlow ซึ่งจะยังเปิดอยู่ ผลผลิตที่ผ่านตรวจหลังปิดงานจะไม่ถูกนับเข้างานนี้อีก`) : ""}
       ${ui.field("เหตุผล", ui.input("reason", { required: true, placeholder: "เช่น ใช้ชิ้นงานค้างไลน์แทน ไม่ผลิตเพิ่ม", extra: 'minlength="3" maxlength="200"' }), { required: true })}
     </form>`;
     return { html: ui.dialog("jobClose", `ปิดงาน ${job.id}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-job-close-form">ปิดงาน</button>` }) };
