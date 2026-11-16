@@ -1,7 +1,8 @@
 // BOM รายแผนก (โหมดทดสอบ) — กฎธุรกิจทั้งหมด: item master · BOM หลายชั้น (จุดสร้างจุดเดียว บันทึกแล้วใช้ได้ทันที เก็บเป็น revision) ·
 // นำเข้าจากชีต · ใบสั่งผลิต (PI) ระเบิด/ปล่อยผลิต · งานรายแผนก · นับคงคลังตามใบ · สต็อกของซื้อ (นับ/เบิกจ่ายรายใบ) · ผูกสูตรยางกับ RubberFlow
 // ทุก action รับ (draft, payload, ctx{now,user}) ทำบนร่างและ throw เมื่อกฎไม่ผ่าน (store บันทึกเฉพาะเมื่อผ่าน)
-// รับสินค้าสำเร็จรูปเข้าคลัง / ส่งมอบลูกค้า = แผนก WH หรือผู้ดูแลระบบ (canHandleFg) · ใบปิดเองเมื่อรับครบ ไม่มีใครปิดด้วยมือ
+// รับสินค้าสำเร็จรูปเข้าคลัง / ส่งมอบลูกค้า / ปิดใบ = แผนก WH หรือผู้ดูแลระบบ (canHandleFg) · ใบปิดเองเมื่อรับครบและทุกงานผลิตเสร็จแล้ว · รับครบก่อนงานผลิตเสร็จ = WH กดปิดใบเมื่องานเสร็จครบ
+// งานที่จะไม่มีใครรายงานแล้ว ฝ่ายวางแผนปิดงานพร้อมเหตุผล (setJobStatus status done) · งานของใบที่ปิดแล้วไม่ค้างและไม่เลยกำหนด (helpers.isOpenJob)
 // ส่วนที่ PK ผลิตเกินจำนวนสั่งรับเข้าคลังเป็นสต็อกสินค้าสำเร็จรูปได้แม้ใบปิดแล้ว · ใบร่างที่สั่งสินค้าเดียวกันใช้สต็อกนั้นลดงานผลิต (ฝ่ายวางแผนตั้งที่ขั้นตรวจของ หักจริงตอนปล่อยผลิต: ใบที่ปล่อยก่อนได้ก่อน) · ยกเลิก/เปิดใบกลับมาแก้ = คืนสต็อก
 // สิทธิ์ (บทบาทสาธิต ไม่ใช่การควบคุมสิทธิ์ของระบบจริง): สร้าง/แก้ item และ BOM ทุกชั้น = ฝ่ายวางแผน ผู้จัดการ ผู้ดูแล · ไม่มีขั้นอนุมัติ (ตามที่ผู้ใช้ตัดสิน
 // 29 ต.ค. 2026 ให้เหมือน Excel) · "แผนกเจ้าของ" ของชิ้นงานใช้แยกงานรายแผนกตอนปล่อยผลิตเท่านั้น — ดู docs/BOM_SYSTEM_PLAN.md §3
@@ -50,9 +51,9 @@
   const canCount = (user) => canPlan(user) || user?.role === "st" || user?.role === "wh"; // นับคงคลังของใบร่าง: ฝ่ายวางแผน ผู้จัดการ ผู้ดูแล หรือพนักงานแผนก ST / WH
   // ของซื้อ: งานของซื้อ (ST / PURCHASED) เปลี่ยนผลงานได้ทางเดียวคือ "เบิกจ่ายของซื้อ" ของใบ (issueOrderParts) · เบิกจ่าย = กลุ่มวางแผนหรือแผนก ST · สต็อกขั้นต่ำแก้ได้เฉพาะกลุ่มวางแผน
   const isPartJob = (job) => job?.dept === "ST" && job?.kind === "PURCHASED";
-  // งานที่ยังต้องทำ (กติกาเดียวของงานของฉัน ขั้น 4 ของหน้าใบ หน้างานของแผนก และภาพรวม): ยังไม่ done · งานของซื้อของใบที่ปิดแล้ว (completed) ไม่นับ
-  // เพราะเบิกจ่ายไม่ได้อีก จึงไม่รอเบิกและไม่เลยกำหนด (บรรทัดที่เบิกไปบางส่วนคืนของเหลือได้ที่หน้าใบ)
-  const isOpenJob = (d, job) => job.status !== "done" && !(isPartJob(job) && d.orders.find((order) => order.id === job.orderId)?.status === "completed");
+  // งานที่ยังต้องทำ (กติกาเดียวของงานของฉัน ขั้น 4 ของหน้าใบ หน้างานของแผนก และภาพรวม): ยังไม่ done และใบยังไม่ปิด · งานทุกงานของใบที่ปิดแล้ว (completed)
+  // ไม่นับ เพราะแก้หรือรายงานไม่ได้อีก จึงไม่ค้างและไม่เลยกำหนด (แถวของงานนั้นแสดง "ใบปิดแล้ว" · บรรทัดของซื้อที่เบิกไปบางส่วนคืนของเหลือได้ที่หน้าใบ)
+  const isOpenJob = (d, job) => job.status !== "done" && d.orders.find((order) => order.id === job.orderId)?.status !== "completed";
   const canIssueParts = (user) => canPlan(user) || user?.role === "st";
   const requireUser = (ctx) => ctx.user ?? fail("กรุณาเลือกบทบาทสาธิตก่อน");
   const requirePlanner = (ctx, what) => { const user = requireUser(ctx); if (!canPlan(user)) fail(`${what} ได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น`); return user; };
@@ -1013,15 +1014,21 @@
     return order.id;
   }
 
-  // ---------- สินค้าสำเร็จรูป (FG): คลังสินค้า (WH) รับเข้า · ใบปิดเองเมื่อรับครบ · ปิดรับไม่ครบด้วยเหตุผล · ส่งมอบลูกค้า ----------
-  // ไม่มีใครปิดใบด้วยมืออีกต่อไป (ไม่มี completeOrder) · ผู้ทำ = แผนก WH ทุกบทบาท หรือผู้ดูแลระบบ (ไม่ใช่ฝ่ายวางแผน)
+  // ---------- สินค้าสำเร็จรูป (FG): คลังสินค้า (WH) รับเข้า · ใบปิดเองเมื่อรับครบ · ปิดใบ (รับครบ) · ปิดรับไม่ครบด้วยเหตุผล · ส่งมอบลูกค้า ----------
+  // ไม่มี completeOrder ของฝ่ายวางแผนอีกต่อไป · ผู้ทำ = แผนก WH ทุกบทบาท หรือผู้ดูแลระบบ (ไม่ใช่ฝ่ายวางแผน)
+  // ใบปิดได้ทุกทางเมื่อทุกงานผลิตเสร็จเท่านั้น (งานผลิต = ทุกงานยกเว้นการเบิกของซื้อ ST / PURCHASED): รับครบตอนงานยังเปิด ใบเปิดต่อ แล้ว WH กด "ปิดใบ" (closeOrder) เมื่องานเสร็จครบ
   // ลำดับตรวจเหมือนฐานข้อมูล (app_bom_save_master): รูปคำขอ → สิทธิ์ → สถานะใบ → ยอด · โหมดฐานข้อมูลคืน request ที่ store ส่งในส่วน fgMoves (เซิร์ฟเวอร์เขียนประวัติและปิดใบเอง)
   // โหมดในเครื่อง action เขียน d.fgMoves และปิดใบเอง
   const canHandleFg = (user) => Boolean(user) && (user.role === "admin" || user.dept === "WH");
   const FG_MAX_LINES = 500;
   const FG_NOTE_MAX = 300;
   const FG_REASON_MIN = 3;
-  const fgRead = (d, ctx, p, kind) => {
+  // ข้อความของแถว close เมื่อปิดใบที่รับครบ (เซิร์ฟเวอร์เขียนข้อความเดียวกันใน private.bom_fg_move ของ 20261125010000)
+  const FULL_CLOSE_NOTE = "รับครบ ปิดใบโดยคลังสินค้า";
+  // แผนกที่ยังมีงานผลิตเปิด: ชื่อไทยก่อน ตัวย่อในวงเล็บ เช่น "รีดเส้นยาง (RB), ตัด/เจาะชิ้นยาง (GR)"
+  const deptText = (dept) => `${String(rules().DEPT_LABEL?.[dept] ?? dept).replace(/^\w+ · /, "")} (${dept})`;
+  const openDeptsText = (position) => position.openDepts.map(deptText).join(", ");
+  const fgRead = (d, ctx, p, kind, full = false) => {
     const user = requireUser(ctx);
     // เลข PI เก็บเป็นตัวพิมพ์ใหญ่เสมอ (createOrder) · ตัดช่องว่างและทำเป็นตัวพิมพ์ใหญ่ก่อนหาเหมือน private.bom_fg_move (upper + ตัดช่องว่าง)
     const order = orderById(d, String(p?.orderId ?? "").trim().toUpperCase());
@@ -1031,7 +1038,8 @@
     let lines = [];
     if (kind === "close") {
       if (Array.isArray(p?.lines) && p.lines.length) fail("การปิดใบไม่ระบุรายการสินค้า");
-      if (note.length < FG_REASON_MIN) fail(`กรุณาระบุเหตุผลที่ปิดใบ (อย่างน้อย ${FG_REASON_MIN} ตัวอักษร)`);
+      if (full && note) fail("การปิดใบที่รับครบไม่ต้องระบุเหตุผล");
+      if (!full && note.length < FG_REASON_MIN) fail(`กรุณาระบุเหตุผลที่ปิดใบ (อย่างน้อย ${FG_REASON_MIN} ตัวอักษร)`);
     } else {
       const label = kind === "receive" ? "จำนวนที่รับ" : "จำนวนที่ส่งมอบ";
       const entries = (Array.isArray(p?.lines) ? p.lines : []).filter((entry) => filled(entry?.qty));
@@ -1050,7 +1058,7 @@
         return { fgCode: code, qty };
       });
     }
-    if (!canHandleFg(user)) fail(kind === "receive" ? "รับสินค้าเข้าคลังได้โดยคลังสินค้า (WH) หรือผู้ดูแลระบบเท่านั้น" : kind === "deliver" ? "บันทึกการส่งมอบได้โดยคลังสินค้า (WH) หรือผู้ดูแลระบบเท่านั้น" : "ปิดใบที่รับไม่ครบได้โดยคลังสินค้า (WH) หรือผู้ดูแลระบบเท่านั้น");
+    if (!canHandleFg(user)) fail(kind === "receive" ? "รับสินค้าเข้าคลังได้โดยคลังสินค้า (WH) หรือผู้ดูแลระบบเท่านั้น" : kind === "deliver" ? "บันทึกการส่งมอบได้โดยคลังสินค้า (WH) หรือผู้ดูแลระบบเท่านั้น" : full ? "ปิดใบได้โดยคลังสินค้า (WH) หรือผู้ดูแลระบบเท่านั้น" : "ปิดใบที่รับไม่ครบได้โดยคลังสินค้า (WH) หรือผู้ดูแลระบบเท่านั้น");
     return { user, order, lines, note, position: R.fgPosition(d, order) };
   };
   const fgRequest = (order, kind, lines, note) => ({ orderId: order.id, kind, ...(kind === "close" ? {} : { lines: lines.map(({ fgCode, qty }) => ({ fgCode, qty })) }), ...(note || kind === "close" ? { note } : {}) });
@@ -1073,11 +1081,13 @@
       const product = position.products.find((entry) => entry.fgCode === line.fgCode);
       if (line.qty > product.receivable + 1e-9) fail(`${line.fgCode} รับได้อีกไม่เกิน ${rules().fmtQty(product.receivable)} (PK ส่งมอบแล้ว ${rules().fmtQty(product.pkDone)} รับเข้าคลังไปแล้ว ${rules().fmtQty(product.own)})`);
     }
-    // ใบปิดเองเมื่อทุกสินค้ามีของครบตามที่สั่ง รับเอง + ได้จากสต็อก (โหมดฐานข้อมูล: เซิร์ฟเวอร์ทำเองและส่งใบกลับมา · ฝั่งนี้ทำล่วงหน้าให้หน้าแสดงทันที) · ใบที่ปิดแล้วไม่ปิดซ้ำ
-    const closes = order.status !== "completed" && position.products.every((product) => product.have + (lines.find((line) => line.fgCode === product.fgCode)?.qty ?? 0) + 1e-9 >= product.ordered);
+    // ใบปิดเองเมื่อทุกสินค้ามีของครบตามที่สั่ง รับเอง + ได้จากสต็อก และทุกงานผลิตเสร็จแล้ว (โหมดฐานข้อมูล: เซิร์ฟเวอร์ทำเองและส่งใบกลับมา · ฝั่งนี้ทำล่วงหน้าให้หน้าแสดงทันที) · ใบที่ปิดแล้วไม่ปิดซ้ำ
+    // รับครบแต่ยังมีงานผลิตเปิด: ใบเปิดต่อ คลังสินค้า (WH) ปิดใบเมื่อทุกแผนกปิดงานแล้ว (closeOrder)
+    const full = order.status !== "completed" && position.products.every((product) => product.have + (lines.find((line) => line.fgCode === product.fgCode)?.qty ?? 0) + 1e-9 >= product.ordered);
+    const closes = full && position.productionDone;
     if (!ctx.remote) pushFgMoves(d, ctx, order, "receive", lines, note);
     if (closes) closeOrderNow(order, ctx);
-    audit(d, ctx, "รับสินค้าเข้าคลัง", `${order.id} ${lines.map((line) => `${line.fgCode} × ${line.qty}`).join(", ")}${closes ? " · รับครบ ใบปิดอัตโนมัติ" : ""}`);
+    audit(d, ctx, "รับสินค้าเข้าคลัง", `${order.id} ${lines.map((line) => `${line.fgCode} × ${line.qty}`).join(", ")}${closes ? " · รับครบ ใบปิดอัตโนมัติ" : full ? ` · รับครบ ใบยังไม่ปิด รองานของแผนก ${openDeptsText(position)}` : ""}`);
     return { received: lines.length, closed: closes, summary: fgSummary(lines), request: fgRequest(order, "receive", lines, note) };
   }
   function deliverFg(d, p, ctx) {
@@ -1091,18 +1101,33 @@
     audit(d, ctx, "ส่งมอบสินค้าให้ลูกค้า", `${order.id} ${lines.map((line) => `${line.fgCode} × ${line.qty}`).join(", ")}`);
     return { delivered: lines.length, summary: fgSummary(lines), request: fgRequest(order, "deliver", lines, note) };
   }
-  // ปิดใบที่รับไม่ครบ: งาน PK เสร็จทุกงาน ของที่ PK ทำรับเข้าครบแล้ว และยังมีสินค้าที่รับน้อยกว่าที่สั่ง · ต้องมีเหตุผล
+  // ข้อความเมื่อยังมีงานผลิตเปิด: บอกแผนกและทางออก (แผนกรายงานให้เสร็จ หรือฝ่ายวางแผนปิดงานที่ไม่ทำต่อ)
+  const productionOpenText = (position) => `งานของแผนก ${openDeptsText(position)} ยังไม่เสร็จ ให้แผนกนั้นรายงานผลให้เสร็จ หรือฝ่ายวางแผนกด “ปิดงานนี้” ที่งานที่จะไม่ทำต่อ`;
+  // ปิดใบที่รับไม่ครบ: ทุกงานผลิตเสร็จ (รวมงาน PK) ของที่ PK ทำรับเข้าครบแล้ว และยังมีสินค้าที่รับน้อยกว่าที่สั่ง · ต้องมีเหตุผล
   function closeOrderShort(d, p, ctx) {
     const { order, note, position } = fgRead(d, ctx, p, "close");
     if (!["released", "in_progress"].includes(order.status)) fail("ปิดใบได้เฉพาะใบที่ปล่อยผลิตแล้วและยังไม่ปิด");
     if (!position.hasPkJobs) fail("ใบนี้ไม่มีงานบรรจุ (PK) ให้ปิดแบบรับไม่ครบ");
     if (!position.pkAllDone) fail("งานบรรจุ (PK) ยังไม่เสร็จครบทุกสินค้า");
+    if (!position.productionDone) fail(productionOpenText(position));
     if (position.products.some((product) => product.receivable > 1e-9)) fail("ยังมีสินค้าที่ PK ทำเสร็จแต่ยังไม่ได้รับเข้าคลัง รับเข้าให้ครบก่อน");
-    if (!position.products.some((product) => product.have + 1e-9 < product.ordered)) fail("มีสินค้าครบตามที่สั่งแล้ว ใบปิดเองโดยอัตโนมัติ");
+    if (!position.products.some((product) => product.have + 1e-9 < product.ordered)) fail("มีสินค้าครบตามที่สั่งแล้ว ไม่ต้องปิดแบบรับไม่ครบ ใช้ “ปิดใบ” แทน");
     if (!ctx.remote) pushFgMoves(d, ctx, order, "close", [], note);
     closeOrderNow(order, ctx);
     audit(d, ctx, "ปิดใบสั่งผลิต (รับไม่ครบ)", `${order.id} — ${note}`);
     return { summary: order.id, request: fgRequest(order, "close", [], note) };
+  }
+  // ปิดใบ (รับครบ): ใช้เมื่อรับครบไปแล้วตอนที่ยังมีงานผลิตเปิดอยู่ (ใบจึงไม่ได้ปิดเองตอนรับ) · ทุกงานผลิตเสร็จแล้ว ไม่ต้องมีเหตุผล
+  // คำขอ { orderId, kind: "close" } ไม่มีรายการและเหตุผล (เซิร์ฟเวอร์เขียนแถว close ด้วยข้อความของตัวเอง)
+  function closeOrder(d, p, ctx) {
+    const { order, position } = fgRead(d, ctx, p, "close", true);
+    if (!["released", "in_progress"].includes(order.status)) fail("ปิดใบได้เฉพาะใบที่ปล่อยผลิตแล้วและยังไม่ปิด");
+    if (!position.productionDone) fail(`ยังปิดใบไม่ได้: ${productionOpenText(position)}`);
+    if (!position.allReceived) fail("ยังรับสินค้าเข้าคลังไม่ครบตามที่สั่ง ถ้าจะปิดโดยรับเท่าที่มี ใช้ “ปิดใบ (รับไม่ครบ)”");
+    if (!ctx.remote) pushFgMoves(d, ctx, order, "close", [], FULL_CLOSE_NOTE);
+    closeOrderNow(order, ctx);
+    audit(d, ctx, "ปิดใบสั่งผลิต (รับครบ)", order.id);
+    return { summary: order.id, request: { orderId: order.id, kind: "close" } };
   }
 
   // ---------- งานรายแผนก ----------
@@ -1132,10 +1157,35 @@
     return job.id;
   }
 
-  function setJobStatus(d, { jobId, status }, ctx) {
+  // ปิดงานที่จะไม่มีใครรายงานแล้ว (status "done" + reason): ฝ่ายวางแผน ผู้จัดการ หรือผู้ดูแลระบบเท่านั้น · ไม่เพิ่มยอด (ยอด PK ที่ WH รับไปแล้วจึงไม่ลด)
+  // เก็บเหตุผลเป็นรายการรายงานยอด 0 ของงาน (ฐานข้อมูลรับรายการยอด 0 เฉพาะกรณีนี้: private.bom_save_jobs ของ 20261125010000) และอยู่ในบันทึกการใช้งาน
+  const JOB_CLOSE_MIN = 3;
+  const JOB_CLOSE_MAX = 200;
+  // งานที่ฝ่ายวางแผนปิด: งานเสร็จที่รายการรายงานล่าสุดเป็นยอด 0 → { reason, by, at } · อื่นๆ = null
+  const jobCloseNote = (job) => {
+    const last = job?.status === "done" && Array.isArray(job.reports) ? job.reports.at(-1) : null;
+    return last && !(Number(last.good) || 0) && !(Number(last.reject) || 0) && String(last.note ?? "").trim() ? { reason: String(last.note).trim(), by: last.by ?? "", at: last.at } : null;
+  };
+  function closeJob(d, job, reason, ctx, user) {
+    if (!canPlan(user)) fail("ปิดงานที่ไม่ทำต่อได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น");
+    if (job.status === "done") fail("งานนี้เสร็จแล้ว");
+    const order = orderById(d, job.orderId);
+    if (!["released", "in_progress"].includes(order.status)) fail("ใบสั่งผลิตไม่อยู่ในสถานะผลิต");
+    const note = typeof reason === "string" ? reason.trim() : "";
+    if (note.length < JOB_CLOSE_MIN) fail(`กรุณาระบุเหตุผลที่ปิดงาน (อย่างน้อย ${JOB_CLOSE_MIN} ตัวอักษร)`);
+    if (note.length > JOB_CLOSE_MAX) fail(`เหตุผลยาวเกิน ${JOB_CLOSE_MAX} ตัวอักษร`);
+    job.reports.push({ at: ctx.now, by: user.name, good: 0, reject: 0, note });
+    job.status = "done";
+    job.doneAt = ctx.now;
+    if (order.status === "released") order.status = "in_progress";
+    audit(d, ctx, "ปิดงาน (ไม่รายงานยอดเพิ่ม)", `${job.id} ${job.itemCode} — ${note}`);
+    return job.id;
+  }
+  function setJobStatus(d, { jobId, status, reason }, ctx) {
     const user = requireUser(ctx);
     const job = jobById(d, jobId);
     if (isPartJob(job)) fail("งานของซื้อ (ST) เปลี่ยนสถานะเองไม่ได้ ใช้ปุ่ม “เบิกจ่ายของซื้อ” ที่ใบสั่งผลิต");
+    if (status === "done") return closeJob(d, job, reason, ctx, user);
     if (!canWorkJob(user, job)) fail(`เปลี่ยนสถานะได้โดยแผนก ${job.dept} หรือผู้จัดการ`);
     if (!["queued", "in_progress", "hold"].includes(status)) fail("สถานะไม่ถูกต้อง");
     if (job.status === "done") fail("งานที่เสร็จแล้วเปลี่ยนสถานะไม่ได้");
@@ -1377,9 +1427,9 @@
   const api = {
     saveItem, saveBom, saveBomTree, linkCompound, importFlat,
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
-    saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, receiveFg, deliverFg, closeOrderShort,
+    saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, receiveFg, deliverFg, closeOrderShort, closeOrder,
     reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage, countPartStock, issueOrderParts, undoOrderParts, returnOrderParts,
-    helpers: { customerName, customerKey, startedJobs, isPartJob, isOpenJob, canIssueParts, canHandleFg, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canSetSafety, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
+    helpers: { customerName, customerKey, startedJobs, isPartJob, isOpenJob, jobCloseNote, deptText, canIssueParts, canHandleFg, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canSetSafety, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_ACTIONS = api;

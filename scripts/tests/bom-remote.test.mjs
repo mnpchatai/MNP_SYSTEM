@@ -2069,6 +2069,13 @@ test("a planner opens a PI, releases it, a department reports, counts are saved 
   const storedJob = database.jobs.find((row) => row.id === job.id);
   assert.equal(storedJob.status, "done");
   assert.equal(storedJob.reports[0].by, "ปกรณ์ ศรีวัฒนา");
+  // ใบปิดได้เมื่อทุกงานผลิตเสร็จ (20261125010000): งาน PT ที่จะไม่ทำต่อ ผู้ดูแลระบบ (กลุ่มวางแผน) ปิดพร้อมเหตุผล ไม่เพิ่มยอด · บรรทัดของซื้อไม่นับ
+  const pt = env.store.data().jobs.find((row) => row.dept === "PT");
+  assert.equal(ctx.runAction("setJobStatus", { jobId: pt.id, status: "done", reason: "ใช้ชิ้นพลาสติกค้างไลน์" }, "ปิดงาน {result} แล้ว"), true);
+  await settle();
+  const closedPt = JSON.parse(env.pageStorage.getItem("mnp-harness-bom-master")).jobs.find((row) => row.id === pt.id);
+  assert.deepEqual([closedPt.status, closedPt.qtyDone, closedPt.reports.at(-1).good, closedPt.reports.at(-1).reject, closedPt.reports.at(-1).note, closedPt.reports.at(-1).by],
+    ["done", 0, 0, 0, "ใช้ชิ้นพลาสติกค้างไลน์", "ปกรณ์ ศรีวัฒนา"], "the database keeps the closing entry with the reason and no output");
   assert.equal(ctx.runAction("receiveFg", { orderId: id, lines: [{ fgCode: "FG-TEST-01", qty: 5 }] }, "รับเข้าคลัง {result} แล้ว"), true, "the admin may receive: everything PK made is received, the order closes by itself");
   await settle();
   assert.equal(env.log.toasts.at(-1)[0], "รับเข้าคลัง 1 รายการ แล้ว");
@@ -3910,10 +3917,11 @@ test("the mock database receives and delivers finished goods: caps from PK, part
   assert.equal((await deliver([{ fgCode: "FG-1", qty: 5 }], { note: "รถคันแรก" })).error, null);
   assert.equal(await code(deliver([{ fgCode: "FG-1", qty: 2 }])), "BOM_FG_EXCEEDS", "5 delivered + 2 > 6 received");
   assert.equal((await order("PI-F")).status, "in_progress");
-  // everything PK made and the order is received: the order closes by itself, and only then
+  // everything PK made and the order is received, every production job (the PK sub-part included) done: the order closes by itself, and only then
   await as("persona-pp");
   assert.equal((await report("J-F1", 4)).error, null);
   assert.equal((await report("J-F2", 5)).error, null);
+  assert.equal((await report("J-FS", 3)).error, null);
   await as("persona-wh");
   assert.equal((await receive([{ fgCode: "FG-1", qty: 4 }])).error, null);
   assert.equal((await order("PI-F")).status, "in_progress", "FG-2 is not received yet");
@@ -3974,6 +3982,142 @@ test("the mock database closes an order short: every PK job done, everything PK 
   assert.equal(await code(receive([{ fgCode: "FG-1", qty: 1 }])), "BOM_FG_EXCEEDS", "PK made 8 and 8 are received: the close does not change the cap");
   assert.equal((await deliver([{ fgCode: "FG-1", qty: 8 }, { fgCode: "FG-2", qty: 5 }])).error, null, "what was received is delivered after the close");
   assert.equal(await code(deliver([{ fgCode: "FG-1", qty: 1 }])), "BOM_FG_EXCEEDS");
+});
+
+// ---------- ปิดใบเมื่อทุกงานผลิตเสร็จ · closeOrder · ฝ่ายวางแผนปิดงานพร้อมเหตุผล (20261125010000) ----------
+test("the mock database follows the close rules: receiving everything with an open production job keeps the order open, the planner closes the job with a reason, WH closes the order", async () => {
+  const s = await fgMock();
+  const { code, receive, close, fg, request, save, report, order, view, as, job } = s;
+  const closeFull = (extra = {}, orderId = "PI-F") => fg(request(orderId, "close", undefined, extra), "closeOrder");
+  await as("persona-pp");
+  assert.equal((await report("J-F1", 10)).error, null);
+  assert.equal((await report("J-F2", 5)).error, null);
+  await as("persona-wh");
+  const received = await receive([{ fgCode: "FG-1", qty: 10 }, { fgCode: "FG-2", qty: 5 }]);
+  assert.equal(received.error, null);
+  assert.equal(received.data.changes.orders.upsert.some((row) => row.id === "PI-F"), false, "the PK sub-part is open: the order is not closed");
+  assert.equal((await order("PI-F")).status, "in_progress");
+  const baseline = await s.version();
+  assert.equal(await code(closeFull()), "BOM_INVALID_TRANSITION", "WH cannot close while a production job is open");
+  assert.equal(await code(close("ปิดก่อนงานเสร็จ")), "BOM_INVALID_TRANSITION", "nor close it short");
+  // รูปคำขอ (ก่อนสิทธิ์และสถานะ) · สิทธิ์ (ก่อนสถานะ)
+  assert.equal(await code(closeFull({ note: "ปิดเอง" })), "BOM_INVALID_FG", "a full close takes no reason");
+  assert.equal(await code(fg(request("PI-F", "close", [{ fgCode: "FG-1", qty: 1 }]), "closeOrder")), "BOM_INVALID_FG", "nor lines");
+  assert.equal(await code(fg(request("PI-F", "receive", [{ fgCode: "FG-1", qty: 1 }]), "closeOrder")), "BOM_INVALID_FG", "the kind must be close");
+  assert.equal(await code(save({}, "closeOrder")), "BOM_INVALID_FG", "a request is required");
+  assert.equal(await code(save({ fgMoves: { upsert: [request("PI-F", "close")] }, jobs: { upsert: [await job("J-FS")] } }, "closeOrder")), "BOM_INVALID_FG", "and only the fgMoves section");
+  assert.equal(await code(closeFull({}, "PI-NOPE")), "BOM_INVALID_FG", "an unknown order");
+  assert.equal(await code(closeFull({}, "PI-FD")), "BOM_INVALID_TRANSITION", "a draft cannot be closed");
+  for (const persona of ["persona-pp", "persona-rb"]) {
+    await as(persona);
+    assert.equal(await code(closeFull()), "BOM_FORBIDDEN", `${persona} cannot close an order`);
+    assert.equal(await code(closeFull({ note: "x" })), "BOM_INVALID_FG", `${persona}: the shape is checked first`);
+  }
+  // ฝ่ายวางแผนปิดงานพร้อมเหตุผล (รายการรายงานยอด 0) · คนอื่น / action อื่น / เหตุผลสั้น / สถานะอื่น / ยอดเปลี่ยน ถูกปฏิเสธ
+  const zero = (row, note, extra = {}) => ({ ...row, status: "done", reports: [...row.reports, { at: 1, by: "x", good: 0, reject: 0, note }], ...extra });
+  const sub = await job("J-FS");
+  await as("persona-wh");
+  assert.equal(await code(save({ jobs: { upsert: [zero(sub, "ไม่ทำต่อ")] } }, "setJobStatus")), "BOM_INVALID_JOB", "WH cannot add a zero report");
+  await as("persona-pp");
+  assert.equal(await code(save({ jobs: { upsert: [zero(sub, "ab")] } }, "setJobStatus")), "BOM_INVALID_JOB", "a reason of three characters at least");
+  assert.equal(await code(save({ jobs: { upsert: [zero(sub, "ไม่ทำต่อ")] } }, "reportJob")), "BOM_INVALID_JOB", "only as setJobStatus");
+  assert.equal(await code(save({ jobs: { upsert: [zero(sub, "ไม่ทำต่อ", { status: "hold" })] } }, "setJobStatus")), "BOM_INVALID_JOB", "only when the job becomes done");
+  assert.equal(await code(save({ jobs: { upsert: [zero(sub, "ไม่ทำต่อ", { qtyDone: 1 })] } }, "setJobStatus")), "BOM_INVALID_JOB", "closing adds no output");
+  assert.equal(await s.version(), baseline, "none of the refusals wrote anything");
+  assert.equal((await save({ jobs: { upsert: [zero(sub, "ไม่ทำชิ้นย่อยเพิ่ม")] } }, "setJobStatus")).error, null);
+  const closedJob = await job("J-FS");
+  assert.deepEqual([closedJob.status, closedJob.qtyDone, closedJob.reports.at(-1).good, closedJob.reports.at(-1).reject, closedJob.reports.at(-1).note, closedJob.reports.at(-1).by],
+    ["done", 0, 0, 0, "ไม่ทำชิ้นย่อยเพิ่ม", "สมศรี วางแผน"]);
+  assert.equal(await code(save({ jobs: { upsert: [zero(closedJob, "ปิดซ้ำ")] } }, "setJobStatus")), "BOM_INVALID_JOB", "a done job takes no closing entry");
+  assert.equal(await code(closeFull()), "BOM_FORBIDDEN", "the planner still cannot close the order");
+  // ทุกงานผลิตเสร็จ: WH ปิดใบ (ไม่มีเหตุผล) · ปิดรับไม่ครบไม่ได้เพราะของครบ
+  await as("persona-wh");
+  assert.equal(await code(close("รับไม่ครบ")), "BOM_INVALID_TRANSITION", "nothing is short");
+  const before = await s.version();
+  const done = await closeFull();
+  assert.equal(done.error, null);
+  assert.equal(done.data.version, before + 1);
+  const closed = done.data.changes.orders.upsert.find((row) => row.id === "PI-F");
+  assert.deepEqual([closed.status, closed.completedAt], ["completed", NOW]);
+  const row = (await view()).fgMoves.at(-1);
+  assert.deepEqual({ ...row, id: typeof row.id }, { id: "string", orderId: "PI-F", fgCode: "", kind: "close", qty: 0, note: "รับครบ ปิดใบโดยคลังสินค้า", at: NOW, by: "สุดา คลังสินค้า" }, "one close row with the server's note");
+  const audit = (await s.rpc("app_bom_audit")).data[0];
+  assert.deepEqual([audit.action, audit.detail], ["closeOrder", "fgMoves +1, orders +1"]);
+  assert.equal(await code(closeFull()), "BOM_INVALID_TRANSITION", "a closed order is not closed again");
+});
+
+test("the mock database: an open purchased-part line never holds the order, and closing short waits for every production job", async () => {
+  const s = await fgMock();
+  const { code, receive, close, save, report, order, as, job, release, pkJob, items } = s;
+  await as("persona-pp");
+  // ใบที่สอง: งาน PK + การเบิกของซื้อที่ยังไม่เบิก
+  await release(mockOrder("PI-G", { items: items(["FG-1", 2]), explosion: [] }), [pkJob("J-G1", "PI-G", "FG-1", 2), mockJob("J-GP", "PI-G", "ST", { itemCode: "P-1", kind: "PURCHASED", uom: "box", qtyPlanned: 4 })]);
+  assert.equal((await report("J-G1", 2)).error, null);
+  await as("persona-wh");
+  const g = await receive([{ fgCode: "FG-1", qty: 2 }], {}, "PI-G");
+  assert.equal(g.data.changes.orders.upsert.find((row) => row.id === "PI-G")?.status, "completed", "the queued purchased-part line does not count");
+  assert.equal((await job("J-GP")).status, "queued");
+  // PI-F: PK ทำ FG-1 ได้ 8 (ปิดงาน) FG-2 ครบ ชิ้นย่อยยังเปิด → ปิดรับไม่ครบไม่ได้จนฝ่ายวางแผนปิดงานชิ้นย่อย
+  await as("persona-pp");
+  assert.equal((await report("J-F1", 8)).error, null);
+  assert.equal((await save({ jobs: { upsert: [{ ...(await job("J-F1")), status: "done" }] } }, "reportJob")).error, null);
+  assert.equal((await report("J-F2", 5)).error, null);
+  await as("persona-wh");
+  assert.equal((await receive([{ fgCode: "FG-1", qty: 8 }, { fgCode: "FG-2", qty: 5 }])).error, null);
+  assert.equal(await code(close("PK ทำได้ 8")), "BOM_INVALID_TRANSITION", "every PK FG job is done and received, but the PK sub-part is open");
+  await as("persona-pp");
+  const sub = await job("J-FS");
+  assert.equal((await save({ jobs: { upsert: [{ ...sub, status: "done", reports: [{ at: 1, by: "x", good: 0, reject: 0, note: "ไม่ทำชิ้นย่อยเพิ่ม" }] }] } }, "setJobStatus")).error, null);
+  await as("persona-wh");
+  assert.equal(await code(s.fg(s.request("PI-F", "close"), "closeOrder")), "BOM_INVALID_TRANSITION", "a full close is refused while something is short");
+  assert.equal((await close("PK ทำได้ 8")).error, null);
+  assert.equal((await order("PI-F")).status, "completed");
+});
+
+test("the store sends closeOrder as one fgMoves request and the planner's close as a job row; the screen closes the order once the echo agrees", async () => {
+  const s = await fgMock();
+  await s.as("persona-pp");
+  assert.equal((await s.report("J-F1", 10)).error, null);
+  assert.equal((await s.report("J-F2", 5)).error, null);
+  await s.as("persona-wh");
+  assert.equal((await s.receive([{ fgCode: "FG-1", qty: 10 }, { fgCode: "FG-2", qty: 5 }])).error, null);
+  const sent = [];
+  const reply = async (promise) => { const result = await promise; if (result.error) throw Object.assign(new Error(result.error.message), { code: result.error.code }); return result.data; };
+  const remote = () => ({
+    load: () => reply(s.rpc("app_bom_master")),
+    since: (version) => reply(s.rpc("app_bom_master_since", { p_version: version })),
+    save: (changes, base, action, audit, epoch) => { sent.push({ changes: structuredClone(changes), action }); return reply(s.rpc("app_bom_save_master", { p_changes: changes, p_base_version: base, p_action: action, p_audit: audit, p_epoch: epoch })); },
+  });
+  const open = async (user) => { const store = storeApi.createStore({ actions: A, now: () => NOW, remote: remote(), persona: () => user }); await store.ensureLoaded(); return store; };
+  const wh = await open({ id: "persona-wh", role: "wh", dept: "WH", name: "สุดา คลังสินค้า" });
+  const position = () => rules.fgPosition(wh.data(), wh.data().orders.find((row) => row.id === "PI-F"));
+  assert.deepEqual([position().waitingProduction, position().openDepts, position().canClose], [true, ["PK"], false], "the PK sub-part is the open job");
+  const early = wh.run("closeOrder", { orderId: "PI-F" });
+  assert.equal(early.ok, false, "the page refuses before sending");
+  assert.match(early.error.message, /บรรจุ\/ประกอบ \(PK\) ยังไม่เสร็จ/);
+  // ฝ่ายวางแผนปิดงานชิ้นย่อย: ส่งเป็นแถวงาน (action setJobStatus) รายการรายงานยอด 0 พร้อมเหตุผล
+  await s.as("persona-pp");
+  const planner = await open({ id: "persona-pp", role: "planner", dept: "PK", name: "สมศรี วางแผน" });
+  const out = planner.run("setJobStatus", { jobId: "J-FS", status: "done", reason: "ไม่ทำชิ้นย่อยเพิ่ม" });
+  assert.equal(out.ok, true, out.error?.message);
+  assert.equal((await out.saving).ok, true);
+  assert.equal(sent.at(-1).action, "setJobStatus");
+  const jobRow = sent.at(-1).changes.jobs.upsert[0];
+  assert.deepEqual([jobRow.id, jobRow.status, jobRow.qtyDone, jobRow.reports.at(-1).good, jobRow.reports.at(-1).reject, jobRow.reports.at(-1).note], ["J-FS", "done", 0, 0, 0, "ไม่ทำชิ้นย่อยเพิ่ม"]);
+  assert.equal((await s.job("J-FS")).status, "done");
+  // WH ตามทันแล้วปิดใบ: คำขอเดียว { orderId, kind: "close" } แสดงปิดทันที คำตอบตรงกัน
+  await s.as("persona-wh");
+  await wh.catchUp();
+  assert.equal(position().canClose, true);
+  const closing = wh.run("closeOrder", { orderId: "PI-F" });
+  assert.equal(closing.ok, true, closing.error?.message);
+  assert.equal(wh.data().orders.find((row) => row.id === "PI-F").status, "completed", "shown closed at once");
+  assert.equal((await closing.saving).ok, true);
+  assert.deepEqual(sent.at(-1), { changes: { fgMoves: { upsert: [{ orderId: "PI-F", kind: "close" }] } }, action: "closeOrder" });
+  assert.equal(wh.data().orders.find((row) => row.id === "PI-F").status, "completed");
+  assert.deepEqual(wh.data().fgMoves.filter((move) => move.kind === "close").map((move) => [move.note, move.by]), [["รับครบ ปิดใบโดยคลังสินค้า", "สุดา คลังสินค้า"]], "the history row is the server's");
+  assert.deepEqual(position().fullClose?.reason, "รับครบ ปิดใบโดยคลังสินค้า");
+  assert.equal((await s.order("PI-F")).status, "completed");
 });
 
 test("the mock database keeps the PK output of a product at or above what the warehouse received, so the order can always close (like bom_save_jobs)", async () => {
@@ -4069,10 +4213,11 @@ test("a finished-goods action travels as a request: the store sends one fgMoves 
   assert.match(retry.error.message, /รับได้อีกไม่เกิน 2/);
   const again = b.store.run("receiveFg", { orderId: "PI-F", lines: [{ fgCode: "FG-1", qty: 2 }] });
   assert.equal((await again.saving).ok, true);
-  // the order closes: the request goes out, the order is shown closed at once and the echo agrees
+  // the order closes: the request goes out, the order is shown closed at once and the echo agrees (every production job is done first)
   await s.as("persona-pp");
   assert.equal((await s.report("J-F1", 4)).error, null);
   assert.equal((await s.report("J-F2", 5)).error, null);
+  assert.equal((await s.report("J-FS", 3)).error, null);
   await s.as("persona-wh");
   await a.store.catchUp();
   const all = a.store.run("receiveFg", { orderId: "PI-F", lines: [{ fgCode: "FG-1", qty: 4 }, { fgCode: "FG-2", qty: 5 }] });
@@ -4365,6 +4510,8 @@ test("through the module on the mock database: a surplus becomes stock, a draft 
   const pk = env.store.data().jobs.find((job) => job.orderId === "PI-SRC" && job.dept === "PK" && job.kind === "FG");
   assert.equal(pk.qtyPlanned, 5);
   assert.equal(await run("reportJob", { jobId: pk.id, qtyDone: 8 }), true);
+  const ptSrc = env.store.data().jobs.find((job) => job.orderId === "PI-SRC" && job.dept === "PT");
+  assert.equal(await run("reportJob", { jobId: ptSrc.id, qtyDone: ptSrc.qtyPlanned }), true, "PT finishes too: the order closes only when every production job is done");
   assert.equal(await run("receiveFg", { orderId: "PI-SRC", lines: [{ fgCode: "FG-TEST-01", qty: 8 }] }), true);
   assert.equal(orderOfStore("PI-SRC").status, "completed");
   assert.deepEqual([stockOf().onHand, stockOf().free], [8, 3], "8 in the warehouse, 3 beyond what the order asked");

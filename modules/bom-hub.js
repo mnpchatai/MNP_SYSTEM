@@ -784,7 +784,9 @@
   // ฟอร์มส่งทันทีหลังกดยืนยัน (ไม่มีนับถอยหลังให้ยกเลิก) · แถวที่ไม่มีของให้รับ/ส่งไม่มีช่องกรอก · ค่าตั้งต้นของช่อง = ยอดที่รับ/ส่งได้ทั้งหมด
   const FG_MOVE_LABEL = Object.freeze({ receive: "รับเข้าคลัง", deliver: "ส่งมอบ", close: "ปิดใบ (รับไม่ครบ)" });
   // ประวัติโอนสต็อกสินค้าสำเร็จรูประหว่างใบ: บอกจากมุมมองของใบที่เปิดอยู่ พร้อมเลขใบอีกฝั่ง
-  function fgMoveLabel(ctx, move, orderId) {
+  // แถว close ของใบที่ปิดเมื่อรับครบ (pos.fullClose) = "ปิดใบ (รับครบ)" · ของใบที่รับไม่ครบ = "ปิดใบ (รับไม่ครบ)" พร้อมเหตุผล
+  function fgMoveLabel(ctx, move, orderId, pos = null) {
+    if (move.kind === "close" && pos?.fullClose) return esc("ปิดใบ (รับครบ)");
     if (move.kind !== "transfer" && move.kind !== "untransfer") return esc(FG_MOVE_LABEL[move.kind] ?? move.kind);
     const mine = move.orderId === orderId; // ใบที่เปิดอยู่เป็นฝั่งปลายทาง (ได้ / คืน) หรือฝั่งต้นทาง (ให้ / ได้คืน)
     const other = ctx.ui.link(mine ? move.fromOrderId : move.orderId, ctx.url("orders", { sel: mine ? move.fromOrderId : move.orderId }), "rf-mono");
@@ -811,19 +813,27 @@
     const rows = pos.products.map((product) => `<tr>${fgProductCell(ctx, product)}${fgNum(ctx, product.ordered)}${fgNum(ctx, product.pkDone)}${fgNum(ctx, product.own)}${pos.anyFromStock ? fgNum(ctx, product.fromStock) : ""}${fgNum(ctx, product.receivable)}${acting ? `<td class="right">${fgQtyInput(ctx, product, closedOrder ? "จำนวนที่รับเป็นสต็อก" : "จำนวนที่รับเข้าคลัง", product.receivable)}</td>` : ""}</tr>`);
     const table = ui.table(head, rows, { emptyText: "ใบนี้ไม่มีสินค้า" });
     const closeButton = pos.canCloseShort && canFg ? ui.openButton("ปิดใบ (รับไม่ครบ)", "closeShort", { orderId: order.id }, { className: "secondary" }) : "";
+    // รับครบและทุกแผนกปิดงานแล้วแต่ใบยังเปิด (รับครบก่อนงานสุดท้ายเสร็จ): คลังสินค้า (WH) ปิดใบ ยืนยันแล้วส่งทันที ไม่ต้องมีเหตุผล
+    const fullCloseButton = pos.canClose && canFg ? ui.button("ปิดใบ", { action: "closeOrder", args: { orderId: order.id }, className: "", confirmText: `ปิดใบ ${order.id}? ทุกแผนกปิดงานและรับสินค้าเข้าคลังครบแล้ว ปิดแล้วเปิดกลับไม่ได้ สินค้าที่รับเข้าคลังยังส่งมอบให้ลูกค้าได้`, success: "ปิดใบ {result} แล้ว" }) : "";
     const submit = closedOrder
       ? '<button class="btn rf-btn" type="submit" data-rf-confirm="รับส่วนที่ PK ผลิตเกินเข้าคลังเป็นสต็อกสินค้าสำเร็จรูปตามจำนวนที่กรอก? รับเข้าแล้วแก้ไขหรือยกเลิกไม่ได้">รับส่วนเกินเข้าคลัง</button>'
       : '<button class="btn rf-btn" type="submit" data-rf-confirm="รับสินค้าเข้าคลังตามจำนวนที่กรอก? รับเข้าแล้วแก้ไขหรือยกเลิกไม่ได้">รับเข้าคลัง</button>';
-    const note = !canFg ? '<p class="small muted">คลังสินค้า (WH) เป็นผู้รับสินค้าเข้าคลัง</p>'
-      : open && !pos.anyReceivable && !pos.canCloseShort ? '<p class="small muted">ยังไม่มีสินค้าที่รอรับ เมื่อ PK รายงานผลผลิต รับเข้าคลังได้ทันที ไม่ต้องรอผลิตครบทั้งใบ</p>' : "";
+    // รับครบแต่งานผลิตยังเปิด: บอกแผนกที่ยังเปิดและใครทำอะไรต่อ (ฝ่ายวางแผนมีลิงก์ไปงานของใบนี้ที่ปิดงานได้) · ตัวเลขรับเข้าอยู่ในตารางแล้ว ไม่บอกซ้ำ
+    const waiting = pos.waitingProduction
+      ? ui.callout("info", `ยังปิดใบไม่ได้: งานของแผนก ${esc(pos.openDepts.map((dept) => `${deptName(ctx, dept)} (${dept})`).join(", "))} ยังไม่เสร็จ · แผนกนั้นรายงานผลให้เสร็จ หรือฝ่ายวางแผนปิดงานที่จะไม่ทำต่อ แล้วคลังสินค้า (WH) ปิดใบ${ctx.helpers.canPlan(ctx.user) && ctx.canSee("work") ? ` · ${ui.link("ดูงานที่ยังเปิด", ctx.url("work", { order: order.id }))}` : ""}`)
+      : "";
+    const note = pos.canClose && !canFg ? '<p class="small muted">ทุกแผนกปิดงานแล้ว รอคลังสินค้า (WH) ปิดใบ</p>'
+      : !canFg ? '<p class="small muted">คลังสินค้า (WH) เป็นผู้รับสินค้าเข้าคลัง</p>'
+      : open && !pos.anyReceivable && !pos.canCloseShort && !pos.allReceived ? '<p class="small muted">ยังไม่มีสินค้าที่รอรับ เมื่อ PK รายงานผลผลิต รับเข้าคลังได้ทันที ไม่ต้องรอผลิตครบทั้งใบ</p>' : "";
     const closed = pos.shortClose ? ui.callout("info", `ปิดใบโดยรับไม่ครบ: ${esc(pos.shortClose.reason)} (${esc(pos.shortClose.by)} · ${esc(rules.fmtDateTime(pos.shortClose.at))})`) : "";
     const surplus = closedOrder && pos.anyReceivable ? ui.callout("info", "ใบนี้ปิดแล้ว ส่วนที่ PK ผลิตเกินจำนวนสั่งรับเข้าคลังได้ และเป็นสต็อกสินค้าสำเร็จรูปที่ใบสั่งผลิตอื่นนำไปใช้ได้") : "";
     const covered = pos.coveredByStock ? ui.callout("info", "ใบนี้ได้สินค้าครบจากสต็อกสินค้าสำเร็จรูป ไม่มีงานผลิตและไม่มีของให้รับเข้าคลัง ไปที่ขั้นส่งมอบลูกค้า") : "";
-    const actions = [acting ? submit : "", closeButton].filter(Boolean).join("");
+    // ปุ่มปิดใบ (รับครบ) เป็นปุ่ม type="button" ของตัวเอง (data-rf-action) จึงวางในฟอร์มรับเข้าได้โดยไม่ส่งฟอร์ม
+    const actions = [acting ? submit : "", fullCloseButton, closeButton].filter(Boolean).join("");
     const body = acting
       ? `<form novalidate data-rf-form="receiveFg" data-rf-args="${attr(JSON.stringify({ orderId: order.id }))}" data-rf-success="${closedOrder ? "รับส่วนเกินเข้าคลัง" : "รับเข้าคลัง"} {result} แล้ว">${table}<div class="rf-row bom-step-next">${actions}</div></form>`
       : `${table}${actions ? `<div class="rf-row bom-step-next">${actions}</div>` : ""}`;
-    return ui.card(`${covered}${closed}${surplus}${body}${note}`, { title: "ขั้น 5 · รับเข้าคลัง" });
+    return ui.card(`${covered}${closed}${surplus}${waiting}${body}${note}`, { title: "ขั้น 5 · รับเข้าคลัง" });
   }
   function deliverPanel(ctx, order, pos, canFg) {
     const { ui, rules } = ctx;
@@ -841,7 +851,7 @@
       : table;
     const note = !canFg ? '<p class="small muted">คลังสินค้า (WH) เป็นผู้ส่งมอบสินค้าให้ลูกค้า</p>' : !pos.anyHave ? '<p class="small muted">ยังไม่มีสินค้ารับเข้าคลัง ส่งมอบได้เมื่อรับเข้าแล้ว</p>' : "";
     const surplus = pos.anyFree ? '<p class="small muted">ส่วนที่เกินที่สั่งเป็นสต็อกสินค้าสำเร็จรูป ใบสั่งผลิตอื่นนำไปใช้ได้ ถ้าจะเก็บไว้ให้ใบอื่น ไม่ต้องกรอกในช่องส่งครั้งนี้</p>' : "";
-    const history = pos.moves.slice(0, FG_HISTORY_MAX).map((move) => `<tr><td class="nowrap small">${esc(rules.fmtDateTime(move.at))}</td><td>${fgMoveLabel(ctx, move, order.id)}${move.fgCode ? ` <span class="rf-mono">${esc(move.fgCode)}</span>` : ""}${move.note ? `<div class="small muted">${esc(move.note)}</div>` : ""}</td><td class="right rf-mono">${move.kind === "close" ? '<span class="muted">—</span>' : esc(rules.fmtQty(move.qty))}</td><td class="small">${esc(move.by)}</td></tr>`);
+    const history = pos.moves.slice(0, FG_HISTORY_MAX).map((move) => `<tr><td class="nowrap small">${esc(rules.fmtDateTime(move.at))}</td><td>${fgMoveLabel(ctx, move, order.id, pos)}${move.fgCode ? ` <span class="rf-mono">${esc(move.fgCode)}</span>` : ""}${move.note && !(move.kind === "close" && pos.fullClose) ? `<div class="small muted">${esc(move.note)}</div>` : ""}</td><td class="right rf-mono">${move.kind === "close" ? '<span class="muted">—</span>' : esc(rules.fmtQty(move.qty))}</td><td class="small">${esc(move.by)}</td></tr>`);
     const historyHtml = history.length ? `<h3 class="bom-h3">${pos.moves.some((move) => move.kind === "transfer" || move.kind === "untransfer") ? "ประวัติรับเข้า ส่งมอบ และสต็อก" : "ประวัติรับเข้าและส่งมอบ"}</h3>${ui.table(["เวลา", "รายการ", { label: "จำนวน", className: "right" }, "ผู้ทำ"], history)}${pos.moves.length > FG_HISTORY_MAX ? `<p class="small muted">แสดง ${FG_HISTORY_MAX} รายการล่าสุด</p>` : ""}` : "";
     return ui.card(`${form}${surplus}${note}${historyHtml}`, { title: "ขั้น 6 · ส่งมอบลูกค้า" });
   }
@@ -968,7 +978,10 @@
         return `<tr><td>${deptChip(ctx, dept)} ${esc(deptName(ctx, dept))}</td><td class="rf-progress-cell">${ui.progress(closedParts ? issued : done, mine.length)}<div class="small muted">${esc(text)}</div></td><td>${late ? ui.badge("bad", `เลยกำหนด ${late} งาน`) : ""}</td><td class="right">${ctx.canSee("work") && (canPlan || ctx.user?.dept === dept) ? ui.link("ดูงาน", ctx.url("work", { dept, order: order.id }), "btn rf-btn secondary small") : ""}</td></tr>`;
       }).filter(Boolean);
       // มีสินค้าที่ PK ส่งมอบแล้วรอรับเข้าคลัง: บอกเฉพาะว่ามี (ตัวเลขอยู่ในขั้น 5) · คลังสินค้ารับเข้าได้ก่อนผลิตครบทั้งใบ
-      const fgLine = pos.anyReceivable ? `<div class="bom-step-line"><div><strong>มีสินค้ารอรับเข้าคลัง</strong></div>${ui.link("ไปขั้นรับเข้าคลัง", stepUrl(5), "btn rf-btn secondary")}</div>` : "";
+      // รับครบแล้วแต่ยังมีแผนกที่งานไม่เสร็จ (แผนกอยู่ในตารางข้างบน): ใบปิดเมื่อทุกแผนกปิดงาน · ทุกแผนกปิดงานแล้ว (เหลือแค่เบิกของซื้อ) = รอคลังสินค้า (WH) ปิดใบที่ขั้น 5
+      const fgLine = pos.anyReceivable ? `<div class="bom-step-line"><div><strong>มีสินค้ารอรับเข้าคลัง</strong></div>${ui.link("ไปขั้นรับเข้าคลัง", stepUrl(5), "btn rf-btn secondary")}</div>`
+        : pos.waitingProduction ? '<div class="bom-step-line"><div><strong>รับสินค้าเข้าคลังครบแล้ว</strong><div class="small muted">ใบปิดได้เมื่อทุกแผนกปิดงาน</div></div></div>'
+        : pos.canClose ? `<div class="bom-step-line"><div><strong>ทุกแผนกปิดงานและรับสินค้าครบแล้ว รอคลังสินค้า (WH) ปิดใบ</strong></div>${ui.link("ไปขั้นรับเข้าคลัง", stepUrl(5), "btn rf-btn secondary")}</div>` : "";
       const main = `<div class="rf-row bom-step-next">${buttons.issue ?? ""}${buttons.check ?? ""}</div>${fgLine}`;
       panel = ui.card(`${ui.table(["แผนก", "ความคืบหน้า", "", ""], rows, { emptyText: "ยังไม่มีงาน" })}${main}`, { title: "ขั้น 4 · ผลิตตามแผนก", flush: false });
     } else if (view === 5) panel = receivePanel(ctx, order, pos, canFg);
@@ -1026,6 +1039,8 @@
       const pos = ctx.rules.fgPosition(ctx.data, order);
       // ใบที่ปิดแล้วที่ PK ผลิตเกินจำนวนสั่ง: ส่วนเกินรอ WH รับเข้าเป็นสต็อกสินค้าสำเร็จรูป (surplus) · ส่งมอบ = เฉพาะส่วนที่ลูกค้าของใบรออยู่ (ส่วนเกินที่สั่งไม่ใช่งานค้าง)
       if (pos.anyReceivable) tasks.push({ kind: "fgReceive", order, surplus: order.status === "completed", lines: pos.products.filter((product) => product.receivable > 0).map((product) => ({ fgCode: product.fgCode, qty: product.receivable })) });
+      // รับครบและทุกแผนกปิดงานแล้ว แต่ใบยังเปิด (รับครบก่อนงานสุดท้ายเสร็จ): คลังสินค้า (WH) ปิดใบที่ขั้น 5
+      if (pos.canClose) tasks.push({ kind: "fgClose", order, lines: [] });
       if (order.status === "completed" && pos.anyOwed) tasks.push({ kind: "fgDeliver", order, lines: pos.products.filter((product) => product.owed > 0).map((product) => ({ fgCode: product.fgCode, qty: product.owed })) });
     }
     return tasks.sort((a, b) => (Number(a.order.whDue) || 0) - (Number(b.order.whDue) || 0) || (a.order.id < b.order.id ? -1 : 1));
@@ -1101,17 +1116,25 @@
       const main = canWork ? ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "bom-job-main" }) : "";
       const more = [];
       if (canWork) more.push(job.status === "hold" ? ui.button("คืนคิว", { action: "setJobStatus", args: { jobId: job.id, status: "queued" }, className: "secondary small" }) : ui.button("พักงาน", { action: "setJobStatus", args: { jobId: job.id, status: "hold" }, className: "secondary small" }));
+      // งานที่จะไม่มีใครรายงานแล้ว: ฝ่ายวางแผนปิดงานพร้อมเหตุผล (ไม่เพิ่มยอด) ใบจึงปิดได้
+      if (canWork && ctx.helpers.canPlan(user)) more.push(ui.openButton("ปิดงานนี้", "jobClose", { jobId: job.id }, { className: "secondary small" }));
+      const closedBy = ctx.helpers.jobCloseNote(job);
       if (job.status !== "done" && ctx.helpers.canLinkRubberflow(user, job) && ["released", "in_progress"].includes(order?.status) && !job.externalRef) more.push(ui.openButton("สร้าง WO ใน RubberFlow", "jobRubberflow", { jobId: job.id }, { className: "secondary small" }));
       if (job.externalRef) more.push(ui.link(`WO ${job.externalRef.woId}`, `#/rubberflow?p=orders&q=${encodeURIComponent(job.externalRef.woId)}`, "btn rf-btn secondary small"));
       const amount = started ? `ได้แล้ว ${rules.fmtQty(job.qtyDone)} จาก ${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}` : `ต้องได้ ${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`;
       return `<article class="card rf-card bom-job${tone ? ` is-${tone}` : ""}"><div class="bom-job-top"><span class="bom-job-state">${esc(label)}</span>${dueText(job.dueAt, job.status === "done")}</div>
         <h2>${esc(job.name)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, job.dept)} ` : ""}<span class="rf-mono">${esc(job.itemCode)}</span> · ใบ ${ui.link(job.orderId, ctx.url("orders", { sel: job.orderId }))}</p>
-        <div class="bom-job-amount"><span>${esc(amount)}</span>${started && job.status !== "done" ? `<span class="muted">เหลือ ${esc(rules.fmtQty(left))}</span>` : ""}</div>${started ? ui.progress(job.qtyDone, job.qtyPlanned, job.status === "hold" ? "bad" : "") : ""}${job.qtyReject ? `<p class="small muted">เสีย ${esc(rules.fmtQty(job.qtyReject))}</p>` : ""}
+        <div class="bom-job-amount"><span>${esc(amount)}</span>${started && job.status !== "done" ? `<span class="muted">เหลือ ${esc(rules.fmtQty(left))}</span>` : ""}</div>${started ? ui.progress(job.qtyDone, job.qtyPlanned, job.status === "hold" ? "bad" : "") : ""}${job.qtyReject ? `<p class="small muted">เสีย ${esc(rules.fmtQty(job.qtyReject))}</p>` : ""}${closedBy ? `<p class="small muted">${esc(`ปิดงานโดย ${closedBy.by}: ${closedBy.reason}`)}</p>` : ""}
         ${main}${more.length ? `<div class="rf-row bom-job-more">${more.join("")}</div>` : ""}</article>`;
     };
     const sub = dept && dept !== "ALL" ? esc(rules.DEPT_LABEL[dept] ?? dept) : "";
     const filterNote = orderId ? `<p class="bom-back">เฉพาะใบ ${esc(orderId)} · ${ui.link("ดูทุกใบ", ctx.url("work", { dept: planner && dept !== "ALL" ? dept : null }))}</p>` : "";
     const taskHtml = (task) => {
+      if (task.kind === "fgClose") {
+        return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">รอปิดใบ</span><span class="muted">ส่งมอบคลัง ${esc(rules.fmtDate(task.order.whDue))}</span></div>
+          <h2>${esc(`ปิดใบ ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "WH")} ` : ""}${esc(task.order.customer ?? "")} · ทุกแผนกปิดงานและรับสินค้าครบแล้ว</p>
+          ${ui.link("เปิดใบเพื่อปิดใบ", ctx.url("orders", { sel: task.order.id, step: "5" }), "btn rf-btn bom-job-main")}</article>`;
+      }
       if (task.kind === "fgReceive" || task.kind === "fgDeliver") {
         const receive = task.kind === "fgReceive";
         // ใบที่ปิดแล้วที่ PK ผลิตเกิน: การ์ดรับส่วนเกินเข้าเป็นสต็อกสินค้าสำเร็จรูป (ไม่ใช่ของที่ลูกค้ารอ)

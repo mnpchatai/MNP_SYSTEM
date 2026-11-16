@@ -440,7 +440,7 @@ test("colours, colour sets and packages are data: learned from a product, valida
   rejects(() => A.removePackage(d, { base: "DEMO-TP-01", code: "X" }, ctx("planner")), /ไม่พบ/);
 });
 
-test("jobs: the department reports output, hold/queue toggles, orders progress and the order closes by itself when the warehouse has received everything", () => {
+test("jobs: the department reports output, hold/queue toggles, orders progress and the order closes once the warehouse has received everything and every department has closed its jobs", () => {
   const d = fresh();
   const orderId = "DEMO-26001";
   const job = d.jobs.find((entry) => entry.orderId === orderId && entry.itemCode === "SE-TP01-OR01-100-18-65");
@@ -464,10 +464,20 @@ test("jobs: the department reports output, hold/queue toggles, orders progress a
   assert.equal(A.completeOrder, undefined, "nobody closes an order by hand any more");
   rejects(() => A.cancelOrder(d, { orderId }, ctx("planner")), /รายงานผลผลิตแล้ว/);
   d.jobs.filter((entry) => entry.orderId === orderId && entry.dept === "PK").forEach((pk) => A.reportJob(d, { jobId: pk.id, qtyDone: pk.qtyPlanned }, ctx("planner")));
-  A.receiveFg(d, { orderId, lines: order.items.map((item) => ({ fgCode: item.fgCode, qty: item.qty })) }, whCtx);
+  // รับครบขณะที่แผนกอื่นยังเปิด: ใบยังไม่ปิด (20261125010000)
+  const received = A.receiveFg(d, { orderId, lines: order.items.map((item) => ({ fgCode: item.fgCode, qty: item.qty })) }, whCtx);
+  assert.equal(received.closed, false);
+  assert.equal(order.status, "in_progress", "everything is received but other departments are open");
+  assert.match(d.audit[0].detail, /รับครบ ใบยังไม่ปิด รองานของแผนก/);
+  rejects(() => A.closeOrder(d, { orderId }, whCtx), /ยังไม่เสร็จ/);
+  // ฝ่ายวางแผนปิดงานที่ยังเปิดทุกงาน (ไม่ใช่งานของซื้อ) แล้วคลังสินค้าปิดใบ
+  d.jobs.filter((entry) => entry.orderId === orderId && entry.status !== "done" && !A.helpers.isPartJob(entry)).forEach((open) => A.setJobStatus(d, { jobId: open.id, status: "done", reason: "ไม่ผลิตต่อ ใช้ของค้างไลน์" }, ctx("planner")));
+  A.closeOrder(d, { orderId }, whCtx);
   assert.equal(order.status, "completed");
   rejects(() => A.setStockCount(d, { orderId, itemCode: "PT-00320", qty: 1 }, ctx("st")), /ปิดแล้ว/);
-  rejects(() => A.setJobStatus(d, { jobId: d.jobs.find((entry) => entry.orderId === orderId && entry.status === "queued").id, status: "hold" }, ctx("manager")), /ไม่อยู่ในสถานะผลิต/);
+  const leftover = d.jobs.filter((entry) => entry.orderId === orderId && entry.status !== "done");
+  assert.ok(leftover.every(A.helpers.isPartJob), "only purchased-part lines can be left open on a closed order");
+  assert.ok(leftover.every((entry) => !A.helpers.isOpenJob(d, entry)), "and none of them counts as open");
   A.releaseOrder(d, { orderId: "DEMO-26002" }, ctx("planner"));
   assert.ok(d.jobs.some((entry) => entry.orderId === "DEMO-26002"));
   A.cancelOrder(d, { orderId: "DEMO-26002", reason: "ลูกค้าเลื่อน" }, ctx("planner"));
@@ -1709,8 +1719,11 @@ const whCtx = (who = whStaff, now = NOW) => ({ now, user: who });
 const TP = "DEMO-TP-01(P)-Y";
 const HL = "DEMO-HL-24(B)-A";
 // ใบ DEMO-26001 (TP 80 · HL 40) ที่ PK รายงานตามจำนวนที่ให้ (ทุกงาน PK ของใบ รวมชิ้นย่อย XP- ที่ต้องเสร็จด้วย)
+// งานของแผนกผลิตอื่น (RB GR PT BG) ถือว่าเสร็จแล้ว (ใบปิดได้เมื่อทุกงานผลิตเสร็จ: 20261125010000) · การเบิกของซื้อไม่นับ จึงไม่แตะ
+const finishOtherDepts = (d, orderId) => d.jobs.filter((job) => job.orderId === orderId && job.dept !== "PK" && !A.helpers.isPartJob(job)).forEach((job) => { job.status = "done"; });
 const reportPk = (d, made) => {
   const orderId = "DEMO-26001";
+  finishOtherDepts(d, orderId);
   for (const job of d.jobs.filter((entry) => entry.orderId === orderId && entry.dept === "PK")) {
     const qty = job.kind === "FG" ? made[job.itemCode] ?? 0 : job.qtyPlanned;
     if (qty > 0) A.reportJob(d, { jobId: job.id, qtyDone: qty }, ctx("planner"));
@@ -1956,6 +1969,115 @@ test("finished goods: an order with no PK job at all cannot be closed short (the
   rejects(() => A.closeOrderShort(d, { orderId, note: "ไม่มีงาน PK" }, whCtx()), /ไม่มีงานบรรจุ \(PK\)/);
   assert.notEqual(order.status, "completed");
   assert.equal(rules.fgPosition({ jobs: [{ orderId: "X", dept: "PK", kind: "FG", itemCode: "A", status: "done", qtyDone: 0 }], fgMoves: [] }, { id: "X", status: "released", items: [{ fgCode: "A", qty: 5 }] }).canCloseShort, true, "with a finished PK job that made nothing, the close stays possible");
+});
+
+// ---------- ปิดใบเมื่อทุกงานผลิตเสร็จ (20261125010000): รับครบแต่งานแผนกอื่นเปิด = ใบเปิดต่อ · ฝ่ายวางแผนปิดงานพร้อมเหตุผล · WH ปิดใบ ----------
+// ใบ DEMO-26001: PK ทำครบ งานแผนกอื่นเสร็จหมดยกเว้นงาน RB หนึ่งงาน (การเบิกของซื้อยังไม่เบิก ไม่นับ)
+const withOpenRb = () => {
+  const d = fresh();
+  const orderId = reportPk(d, { [TP]: 80, [HL]: 40 });
+  const rb = d.jobs.find((job) => job.orderId === orderId && job.dept === "RB");
+  rb.status = "in_progress";
+  return { d, orderId, order: d.orders.find((entry) => entry.id === orderId), rb };
+};
+
+test("close rules: receiving everything while a department is open keeps the order open, and no close is offered until every production job is done", () => {
+  const { d, orderId, order, rb } = withOpenRb();
+  const result = A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 80 }, { fgCode: HL, qty: 40 }] }, whCtx());
+  assert.equal(result.closed, false);
+  assert.equal(order.status, "in_progress");
+  assert.match(d.audit[0].detail, /รับครบ ใบยังไม่ปิด รองานของแผนก รีดเส้นยาง \(RB\)/);
+  const position = rules.fgPosition(d, order);
+  assert.deepEqual([position.allReceived, position.productionDone, position.openDepts, position.waitingProduction, position.canClose, position.canCloseShort], [true, false, ["RB"], true, false, false]);
+  assert.equal(A.helpers.isOpenJob(d, rb), true, "the RB job is still open");
+  assert.ok(d.jobs.some((job) => job.orderId === orderId && A.helpers.isPartJob(job) && job.status !== "done"), "purchased-part lines are open too, and they do not count");
+  rejects(() => A.closeOrder(d, { orderId }, whCtx()), /รีดเส้นยาง \(RB\) ยังไม่เสร็จ/);
+  rejects(() => A.closeOrderShort(d, { orderId, note: "ปิดก่อนงานเสร็จ" }, whCtx()), /ยังไม่เสร็จ/);
+  // ลำดับตรวจเหมือนฐานข้อมูล: รูปคำขอ → สิทธิ์ → สถานะ → งานผลิต → ยอด
+  rejects(() => A.closeOrder(d, { orderId, note: "ปิดเอง" }, whCtx(user("planner"))), /ไม่ต้องระบุเหตุผล/, "shape before permission");
+  rejects(() => A.closeOrder(d, { orderId, lines: [{ fgCode: TP, qty: 1 }] }, whCtx()), /ไม่ระบุรายการ/);
+  rejects(() => A.closeOrder(d, { orderId }, whCtx(user("planner"))), /ปิดใบได้โดยคลังสินค้า \(WH\)/, "the planning group cannot close an order");
+  rejects(() => A.closeOrder(d, { orderId: "DEMO-26002" }, whCtx()), /ปล่อยผลิตแล้ว/, "a draft cannot be closed");
+  assert.equal(d.fgMoves.filter((move) => move.kind === "close").length, 0, "nothing was closed");
+});
+
+test("close rules: the planning group closes a job that will never be reported, with a reason and no output; then WH closes the order", () => {
+  const { d, orderId, order, rb } = withOpenRb();
+  A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 80 }, { fgCode: HL, qty: 40 }] }, whCtx());
+  const done = rb.qtyDone;
+  // ฝั่งปฏิเสธ: แผนกของงานเอง / คลังสินค้า / เหตุผลสั้นหรือยาวเกิน / งานของซื้อ
+  rejects(() => A.setJobStatus(d, { jobId: rb.id, status: "done", reason: "ไม่ทำต่อแล้ว" }, ctx("rb")), /ฝ่ายวางแผนหรือผู้จัดการ/);
+  rejects(() => A.setJobStatus(d, { jobId: rb.id, status: "done", reason: "ไม่ทำต่อแล้ว" }, whCtx()), /ฝ่ายวางแผนหรือผู้จัดการ/);
+  rejects(() => A.setJobStatus(d, { jobId: rb.id, status: "done" }, ctx("planner")), /เหตุผลที่ปิดงาน/);
+  rejects(() => A.setJobStatus(d, { jobId: rb.id, status: "done", reason: "  ab " }, ctx("planner")), /อย่างน้อย 3/);
+  rejects(() => A.setJobStatus(d, { jobId: rb.id, status: "done", reason: "ก".repeat(201) }, ctx("planner")), /ยาวเกิน 200/);
+  const part = d.jobs.find((job) => job.orderId === orderId && A.helpers.isPartJob(job));
+  rejects(() => A.setJobStatus(d, { jobId: part.id, status: "done", reason: "ไม่ต้องเบิก" }, ctx("planner")), /งานของซื้อ/);
+  assert.equal(rb.status, "in_progress", "the refusals changed nothing");
+  // ปิดงาน: เสร็จโดยไม่เพิ่มยอด เหตุผลอยู่ที่รายงานของงานและบันทึกการใช้งาน
+  A.setJobStatus(d, { jobId: rb.id, status: "done", reason: "  ใช้เส้นยางค้างไลน์แทน  " }, ctx("planner", NOW + 1000));
+  assert.equal(rb.status, "done");
+  assert.equal(rb.doneAt, NOW + 1000);
+  assert.equal(rb.qtyDone, done, "no output is added");
+  assert.deepEqual(rb.reports.at(-1), { at: NOW + 1000, by: user("planner").name, good: 0, reject: 0, note: "ใช้เส้นยางค้างไลน์แทน" });
+  assert.deepEqual(A.helpers.jobCloseNote(rb), { reason: "ใช้เส้นยางค้างไลน์แทน", by: user("planner").name, at: NOW + 1000 });
+  assert.equal(A.helpers.jobCloseNote(d.jobs.find((job) => job.orderId === orderId && job.dept === "PK" && job.kind === "FG")), null, "a job finished by its reports is not a closed job");
+  assert.deepEqual([d.audit[0].action, d.audit[0].detail], ["ปิดงาน (ไม่รายงานยอดเพิ่ม)", `${rb.id} ${rb.itemCode} — ใช้เส้นยางค้างไลน์แทน`]);
+  rejects(() => A.setJobStatus(d, { jobId: rb.id, status: "done", reason: "ปิดซ้ำ" }, ctx("planner")), /เสร็จแล้ว/);
+  // ทุกงานผลิตเสร็จ: คลังสินค้าปิดใบ (ไม่ต้องมีเหตุผล) · ปิดแบบรับไม่ครบไม่ได้เพราะของครบ
+  const position = rules.fgPosition(d, order);
+  assert.deepEqual([position.waitingProduction, position.canClose, position.openDepts], [false, true, []]);
+  rejects(() => A.closeOrderShort(d, { orderId, note: "รับไม่ครบ" }, whCtx()), /ครบตามที่สั่งแล้ว/);
+  const result = A.closeOrder(d, { orderId: ` ${orderId.toLowerCase()} ` }, whCtx(whHead, NOW + 2000));
+  assert.deepEqual(result, { summary: orderId, request: { orderId, kind: "close" } });
+  assert.equal(order.status, "completed");
+  assert.equal(order.completedAt, NOW + 2000);
+  const close = d.fgMoves.at(-1);
+  assert.deepEqual([close.kind, close.fgCode, close.qty, close.note, close.by], ["close", "", 0, "รับครบ ปิดใบโดยคลังสินค้า", whHead.name]);
+  const closed = rules.fgPosition(d, order);
+  assert.deepEqual(closed.fullClose, { reason: "รับครบ ปิดใบโดยคลังสินค้า", at: NOW + 2000, by: whHead.name });
+  assert.equal(closed.shortClose, null, "a full close is not a short close");
+  assert.equal(d.audit[0].action, "ปิดใบสั่งผลิต (รับครบ)");
+  rejects(() => A.closeOrder(d, { orderId }, whCtx()), /ยังไม่ปิด/, "closing twice");
+  // งานของใบที่ปิดแล้วไม่ค้างและไม่เลยกำหนด (เหลือแค่บรรทัดของซื้อที่ยังไม่เบิก)
+  assert.ok(d.jobs.filter((job) => job.orderId === orderId).every((job) => !A.helpers.isOpenJob(d, job)));
+});
+
+test("close rules: an admin closes too; an open purchased-part line never holds the order; closing short waits for every department", () => {
+  // ของซื้อที่ยังไม่เบิกไม่กันการปิดเองตอนรับครบ
+  const d = fresh();
+  const orderId = reportPk(d, { [TP]: 80, [HL]: 40 });
+  assert.ok(d.jobs.some((job) => job.orderId === orderId && A.helpers.isPartJob(job) && job.status !== "done"));
+  assert.equal(A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 80 }, { fgCode: HL, qty: 40 }] }, whCtx(user("admin"))).closed, true);
+  // ปิดรับไม่ครบ: งาน PK เสร็จและรับครบเท่าที่ PK ทำ แต่ RB ยังเปิด = ไม่ได้ · ฝ่ายวางแผนปิดงาน RB แล้วได้
+  const { d: e, orderId: id, order, rb } = withOpenRb();
+  e.jobs.filter((job) => job.orderId === id && job.dept === "PK" && job.kind === "FG" && job.itemCode === TP).forEach((job) => { job.qtyDone = 70; });
+  A.receiveFg(e, { orderId: id, lines: [{ fgCode: TP, qty: 70 }, { fgCode: HL, qty: 40 }] }, whCtx());
+  assert.equal(rules.fgPosition(e, order).canCloseShort, false);
+  rejects(() => A.closeOrderShort(e, { orderId: id, note: "PK ทำได้ 70" }, whCtx()), /รีดเส้นยาง \(RB\) ยังไม่เสร็จ/);
+  rejects(() => A.closeOrder(e, { orderId: id }, whCtx()), /ยังไม่เสร็จ/, "production is checked before the quantities");
+  A.setJobStatus(e, { jobId: rb.id, status: "done", reason: "ไม่รีดเพิ่ม" }, ctx("manager"));
+  rejects(() => A.closeOrder(e, { orderId: id }, whCtx()), /ยังรับสินค้าเข้าคลังไม่ครบ/);
+  assert.equal(rules.fgPosition(e, order).canCloseShort, true);
+  A.closeOrderShort(e, { orderId: id, note: "PK ทำได้ 70" }, whCtx(user("admin")));
+  assert.equal(order.status, "completed");
+  assert.deepEqual(rules.fgPosition(e, order).shortClose?.reason, "PK ทำได้ 70");
+  assert.equal(rules.fgPosition(e, order).fullClose, null);
+});
+
+test("close rules in database mode: the actions only check and return the request; the planner's close travels as a job row with a zero report", () => {
+  const { d, orderId, order, rb } = withOpenRb();
+  const remote = (who = whStaff, now = NOW) => ({ now, user: who, remote: true });
+  const received = A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 80 }, { fgCode: HL, qty: 40 }] }, remote());
+  assert.equal(received.closed, false, "the order is not shown closed while RB is open");
+  assert.equal(order.status, "in_progress");
+  d.fgMoves = [{ id: "s-1", orderId, fgCode: TP, kind: "receive", qty: 80, note: "", at: NOW, by: "x" }, { id: "s-2", orderId, fgCode: HL, kind: "receive", qty: 40, note: "", at: NOW, by: "x" }];
+  A.setJobStatus(d, { jobId: rb.id, status: "done", reason: "ไม่รีดเพิ่ม" }, remote(user("planner")));
+  assert.deepEqual(rb.reports.at(-1), { at: NOW, by: user("planner").name, good: 0, reject: 0, note: "ไม่รีดเพิ่ม" }, "the store diffs this job row and sends it");
+  const result = A.closeOrder(d, { orderId }, remote());
+  assert.deepEqual(result.request, { orderId, kind: "close" });
+  assert.equal(order.status, "completed", "shown closed at once, the server confirms");
+  assert.equal(d.fgMoves.length, 2, "no history written locally");
 });
 
 // ---------- สต็อกสินค้าสำเร็จรูป (batch C): ส่วนที่ PK ผลิตเกินเป็นสต็อก ใบร่างที่สั่งสินค้าเดียวกันใช้ลดงานผลิต ----------

@@ -479,11 +479,30 @@ select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders
 select throws_ok($$ select public.app_bom_save_master('{"fgMoves":{"upsert":[{"orderId":"251106-25001","kind":"receive","lines":[{"fgCode":"FG-A","qty":10}]}]}}'::jsonb,
   (public.app_bom_master() ->> 'version')::bigint, 'receiveFg') $$,
   'BOM_FORBIDDEN', 'the planner can no longer complete the order: receiving the goods is WH work');
--- ปิดใบด้วยการรับของ: WH รับครบตามที่สั่ง (10 ชุด PK ทำไว้ 100) = ใบ completed เอง
+-- ปิดใบ: WH รับครบตามที่สั่ง (10 ชุด PK ทำไว้ 100) ขณะที่งาน GR / RB ยังเปิด = ใบยังไม่ปิด (20261125010000)
+-- ฝ่ายวางแผนปิดงาน GR / RB ที่จะไม่รายงานต่อพร้อมเหตุผล แล้ว WH ปิดใบ (closeOrder) · กติกาเต็มอยู่ใน bom_close_rules.test.sql
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
 select set_config('test.res', public.app_bom_save_master('{"fgMoves":{"upsert":[{"orderId":"251106-25001","kind":"receive","lines":[{"fgCode":"FG-A","qty":10}]}]}}'::jsonb,
   (public.app_bom_master() ->> 'version')::bigint, 'receiveFg')::text, true);
-select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'completed', 'WH completes the order by receiving everything that was ordered');
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert', '[]'::jsonb, 'WH receives everything ordered while GR and RB are open: the order stays open');
+select throws_ok($$ select public.app_bom_save_master('{"fgMoves":{"upsert":[{"orderId":"251106-25001","kind":"close"}]}}'::jsonb,
+  (public.app_bom_master() ->> 'version')::bigint, 'closeOrder') $$,
+  'BOM_INVALID_TRANSITION', 'and WH cannot close it while a production job is open');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select is((select j ->> 'status' from jsonb_array_elements(public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  (select j || jsonb_build_object('status', 'done', 'reports', (j -> 'reports') || '[{"at":1,"by":"x","good":0,"reject":0,"note":"ไม่ตัดเพิ่ม"}]'::jsonb)
+   from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-1-GR')))),
+  (public.app_bom_master() ->> 'version')::bigint, 'setJobStatus') -> 'changes' -> 'jobs' -> 'upsert') j), 'done',
+  'the planner closes the GR job with a reason');
+select is((select j ->> 'status' from jsonb_array_elements(public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  (select j || jsonb_build_object('status', 'done', 'reports', (j -> 'reports') || '[{"at":1,"by":"x","good":0,"reject":0,"note":"ไม่รีดเพิ่ม"}]'::jsonb)
+   from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-1-RB')))),
+  (public.app_bom_master() ->> 'version')::bigint, 'setJobStatus') -> 'changes' -> 'jobs' -> 'upsert') j), 'done',
+  'and the RB job');
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select set_config('test.res', public.app_bom_save_master('{"fgMoves":{"upsert":[{"orderId":"251106-25001","kind":"close"}]}}'::jsonb,
+  (public.app_bom_master() ->> 'version')::bigint, 'closeOrder')::text, true);
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'completed', 'WH completes the order once every production job is done');
 select ok(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ? 'completedAt', 'the completion time is set');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select set_config('test.o', (select o::text from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251106-25001'), true);
