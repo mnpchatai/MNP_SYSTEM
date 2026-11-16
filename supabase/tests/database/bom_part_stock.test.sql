@@ -8,6 +8,7 @@
 -- สต็อกขั้นต่ำของของซื้อ (20261120010000_st_sets_safety_stock.sql): เปลี่ยนได้โดยกลุ่มวางแผน (admin นับรวม) และแผนก ST ทั้งทาง countPartStock และทางใบสั่งซื้อ
 -- WH / QA / SR / RB / ผู้ช่วยผู้จัดการแผนกนอกกลุ่มวางแผน เปลี่ยนไม่ได้ (BOM_FORBIDDEN ที่ countPartStock · สร้างใบสั่งซื้อไม่ได้เลย RF_FORBIDDEN)
 -- 20261122010000_bom_fg_guards.sql: ทางใบสั่งซื้อ ST ที่ไม่ใช่กลุ่มวางแผนเปลี่ยนสต็อกขั้นต่ำของของซื้อได้เฉพาะเมื่อบรรทัดส่ง storedSafetyKg (ไม่ส่ง = RF_FORBIDDEN) · กลุ่มวางแผนไม่ต้องส่ง
+-- 20261124010000_bom_followup_guards.sql: งานของซื้อที่เบิกแล้ว (บางส่วนหรือครบ) แก้ช่องโครงสร้างไม่ได้ทุก action (BOM_INVALID_JOB) · แถวที่เท่าเดิมและการเบิกส่วนที่เหลือยังผ่าน (7.6.8)
 -- ข้อควรระวัง: ถ้าอ่านตารางตรงในนาม authenticated จะเกิด 42501 และทำให้ทั้งไฟล์ล้ม ("No plan found") ตรวจฝั่ง client ผ่าน RPC และตรวจ deny ด้วย throws_ok เท่านั้น
 begin;
 create extension if not exists pgtap with schema extensions;
@@ -513,6 +514,39 @@ select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.part('JOB4-ST-P6', 
 select is(ps_t.ver(), current_setting('test.vq')::bigint, 'nothing was written');
 select ok(ps_t.job('JOB4-PK-A') ->> 'status' = 'queued' and (ps_t.job('JOB4-PK-A') ->> 'qtyDone')::numeric = 0, 'the packing job is untouched');
 select is((ps_t.job('JOB4-ST-P6') ->> 'qtyDone')::numeric, 2::numeric, 'and so is the part line of the same save');
+
+-- 7.6.8 งานของซื้อที่เบิกแล้ว (บางส่วนหรือครบ) แก้ช่องโครงสร้างไม่ได้ ทุก action ทุกผู้เรียก (20261124010000)
+-- พนักงานแผนกยังได้ BOM_FORBIDDEN ก่อน · การแก้ช่องผลงานด้วย action อื่นยังได้ BOM_INVALID_TRANSITION · แถวที่เท่าเดิมและการเบิกส่วนที่เหลือยังผ่าน
+select set_config('test.vq', ps_t.ver()::text, true);
+select throws_ok($$ select ps_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  ps_t.job('JOB4-ST-P6') || '{"qtyPlanned":2}'::jsonb))), 'reportJob') $$, 'BOM_INVALID_JOB',
+  'a planner cannot lower the plan of a partly issued line to what was issued (it would stay open and could never be issued)');
+select throws_ok($$ select ps_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  ps_t.job('JOB4-ST-P6') || '{"dueAt":1764300000000}'::jsonb))), 'releaseOrder') $$, 'BOM_INVALID_JOB',
+  'nor move its due date with another action');
+select throws_ok($$ select ps_t.issue(jsonb_build_array(ps_t.job('JOB4-ST-P6') || '{"name":"ฝาปิดใหม่"}'::jsonb)) $$, 'BOM_INVALID_JOB',
+  'nor rename it inside an issue that issues nothing');
+select throws_ok($$ select ps_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  ps_t.job('JOB3-ST-P6') || '{"qtyRequired":12}'::jsonb))), 'reportJob') $$, 'BOM_INVALID_JOB',
+  'a finished part line (issued over its plan) takes no structural change either');
+select throws_ok($$ select ps_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  ps_t.job('JOB4-ST-P6') || '{"status":"done","qtyDone":5}'::jsonb))), 'reportJob') $$, 'BOM_INVALID_TRANSITION',
+  'a work change with another action keeps its earlier code');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select throws_ok($$ select ps_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  ps_t.job('JOB4-ST-P6') || '{"qtyPlanned":2}'::jsonb))), 'reportJob') $$, 'BOM_FORBIDDEN',
+  'ST staff still get the permission error first');
+select is(ps_t.ver(), current_setting('test.vq')::bigint, 'nothing was written by the refused calls');
+select is((ps_t.job('JOB4-ST-P6') ->> 'qtyPlanned')::numeric || '/' || (ps_t.job('JOB4-ST-P6') ->> 'status'), '5/in_progress',
+  'the partly issued line keeps its plan of 5 and stays open');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select ok(ps_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(ps_t.job('JOB4-ST-P6')))), 'reportJob') is not null,
+  'a row sent as stored is not a change and passes');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select ok(ps_t.count_stock('[{"itemCode":"P-6","qty":3}]'::jsonb) is not null, 'ST counts 3 more caps');
+select is(ps_t.issue(jsonb_build_array(ps_t.part('JOB4-ST-P6', 5))) -> 'changes' -> 'jobs' -> 'upsert' -> 0 ->> 'status', 'done',
+  'the issue writer still finishes the line (2 + 3 of 5)');
+select is(ps_t.qty('P-6'), 0::numeric, 'and takes the 3 caps from stock');
 
 -- 8. ใบสั่งซื้อที่มีบรรทัดของซื้อ ------------------------------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
