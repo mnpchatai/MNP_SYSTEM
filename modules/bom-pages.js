@@ -1534,7 +1534,8 @@
     if (!store?.isRemote?.() || !["idle", "loading"].includes(store.status())) return false;
     if (!rfWakeHooked) {
       rfWakeHooked = true;
-      const done = () => { rfWakeHooked = false; try { if (currentRoute().path === "bom") renderRoute(); } catch { /* ออกจากหน้า BOM แล้ว */ } };
+      // ผู้ใช้กำลังแก้ฟอร์มหรือเปิด dialog อยู่ (MNP_BOM.isEditing): ไม่วาดทับสิ่งที่พิมพ์ค้าง ข้อมูลเคมีแสดงเมื่อหน้าวาดครั้งถัดไป
+      const done = () => { rfWakeHooked = false; try { if (currentRoute().path === "bom" && !root.MNP_BOM?.isEditing?.()) renderRoute(); } catch { /* ออกจากหน้า BOM แล้ว */ } };
       store.ensureLoaded().then(done, done);
     }
     return true;

@@ -2785,6 +2785,17 @@ test("while RubberFlow is still loading, My jobs says so instead of showing noth
   release();
   await settle();
   assert.equal(env.log.renders, renders + 1, "one redraw when it is ready");
+  // a form or dialog left open on the BOM page: RubberFlow finishing does not redraw over what the user typed
+  status = "idle";
+  const savedBom = env.context.MNP_BOM;
+  env.context.MNP_BOM = { ...(savedBom ?? {}), isEditing: () => true };
+  work();
+  assert.equal(hooks, 3);
+  status = "ready";
+  release();
+  await settle();
+  assert.equal(env.log.renders, renders + 1, "editing: no redraw");
+  env.context.MNP_BOM = savedBom;
   // an account without the store's rights is told nothing about chemicals
   status = "loading";
   rights.length = 0;
