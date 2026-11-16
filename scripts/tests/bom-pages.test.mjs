@@ -14,7 +14,7 @@ const FILES = [
 ];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 const PAGES = ["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "check", "orders", "customers", "count", "stock", "jobs", "audit"];
-const ROLES = ["admin", "manager", "planner", "rb", "gr", "pt", "bg", "st"];
+const ROLES = ["admin", "manager", "planner", "rb", "gr", "pt", "bg", "st", "wh"];
 const XSS = "<script>alert(1)</script>";
 
 function load({ sandbox = true, route = "", storage = new Map() } = {}) {
@@ -101,7 +101,7 @@ test("every page renders for every role without undefined/NaN, menus follow the 
     const NAV = env.context.MNP_BOM_STORE.NAV;
     for (const page of [...PAGES, ...NAV]) assert.equal(sub.includes(`p=${page}"`), NAV.includes(page) && env.context.MNP_BOM_STORE.canSee(user, page), `${role} menu ${page}`);
     await env.render("p=nothing");
-    assert.equal(env.log.hash, ["admin", "manager", "planner"].includes(role) ? "#/bom?p=find" : "#/bom?p=work", "unknown page → home of the role (planners land on products, departments on their own jobs)");
+    assert.equal(env.log.hash, ["admin", "manager", "planner"].includes(role) ? "#/bom?p=find" : role === "wh" ? "#/bom?p=orders" : "#/bom?p=work", "unknown page → home of the role (planners land on products, the warehouse on orders, departments on their own jobs)");
   }
 });
 
@@ -782,11 +782,13 @@ test("the sidebar sub-menu counts open jobs of the user's department; reset rebu
   env.store.setUser("B05");
   await env.render("p=jobs");
   const sub = env.module.nav[0].subnav("bom");
-  assert.match(sub, /งานค้างของแผนก">\d+</);
+  assert.match(sub, /งานที่ต้องทำ">\d+</);
   assert.doesNotMatch(sub, /รออนุมัติ/);
   env.store.setUser("B01");
   await env.render("p=jobs");
-  assert.doesNotMatch(env.module.nav[0].subnav("bom"), /งานค้างของแผนก/, "bosses see no personal job count");
+  const bossTab = Number(/>ต้องทำ (\d+)</.exec(await env.render("p=work"))?.[1]);
+  assert.ok(bossTab > 0, "a boss has open cards across the departments");
+  assert.match(env.module.nav[0].subnav("bom"), new RegExp(`งานที่ต้องทำ">${bossTab}<`), "and the menu number is the card count of the open tab, not zero");
   env.store.run("createOrder", { pi: "TMP", customer: "x", country: "Thailand", orderedAt: Date.now(), whDue: Date.now() + 1 });
   env.store.reset();
   assert.ok(!env.store.data().orders.some((order) => order.id === "TMP"));
@@ -1116,6 +1118,12 @@ test("paste from Excel: the preview tells known items, new items and bad lines a
   assert.match(tools.pastePlan(env.ctx("p=build"), "DM01\t1", { parentKind: "FG" }).rows[0].error, /สูตรยางใส่ได้เฉพาะใต้เส้นยาง/);
   assert.match(tools.pastePlan(env.ctx("p=build"), "P-STK-01\t1", { parentKind: "FG", ancestors: ["P-STK-01"] }).rows[0].error, /วงจร/);
   assert.match(tools.pastePlan(env.ctx("p=build"), "P-STK-01\t1", { parentKind: "FG", siblings: ["P-STK-01"] }).rows[0].error, /มีในตารางแล้ว/);
+  // วงจรหลายชั้น: ชิ้นที่ BOM อนุมัติของมันมีบรรพบุรุษอยู่ข้างใต้ (DEMO-TP-01 → SE → RB) ตัวอย่างต้องข้ามเหมือนตอนบันทึก
+  const deepCycle = tools.pastePlan(env.ctx("p=build"), "DEMO-TP-01(P)-Y\t1\nP-STK-01\t1", { parentKind: "SE", ancestors: ["RB-DM01-02-OR01-202-18-70"] });
+  assert.deepEqual(json(deepCycle.rows.map((row) => row.status)), ["error", "known"], "only the row whose tree reaches an ancestor is skipped");
+  assert.match(deepCycle.rows[0].error, /RB-DM01-02-OR01-202-18-70 อยู่ข้างใต้ จะเป็นวงจร/);
+  assert.equal(deepCycle.addable, 1);
+  assert.equal(tools.pastePlan(env.ctx("p=build"), "DEMO-TP-01(P)-Y\t1", { parentKind: "FG", ancestors: ["P-ROPE-01"] }).rows[0].status, "known", "an ancestor outside the pasted tree is no cycle");
   assert.match(tools.pastePlan(env.ctx("p=build"), "P-STK-01\t1\tkg", { parentKind: "FG" }).rows[0].warn, /ต่างจากชิ้นงาน/);
   env.store.run("saveItem", { code: "P-STK-01", kind: "PURCHASED", name: "สติ๊กเกอร์", uom: "pcs", active: false });
   assert.match(tools.pastePlan(env.ctx("p=build"), "P-STK-01\t1", { parentKind: "FG" }).rows[0].error, /เลิกใช้แล้ว/);
@@ -2110,6 +2118,12 @@ test("an open PI names itself in the page head, a draft shows what other drafts 
   assert.match(env.context.MNP_BOM_DIALOGS.orderItemEdit(env.ctx(), { orderId: "DEMO-26002", fgCode: first.items[0].fgCode }).html, /มีใบสั่งซื้อที่สั่งจากใบนี้และยังรับของไม่ครบ: PO-TEST-01/);
   assert.match(env.context.MNP_BOM_DIALOGS.orderItemAdd(env.ctx(), { orderId: "DEMO-26002" }).html, /PO-TEST-01/);
   assert.doesNotMatch(env.context.MNP_BOM_DIALOGS.orderItemAdd(env.ctx(), { orderId: "DEMO-26009" }).html, /PO-TEST/);
+  // ใบสั่งซื้อที่รับแล้วบางบรรทัดยังเป็น ordered: บอกว่ารับแล้วกี่บรรทัด และยกเลิกไม่ได้
+  env.rf.store.data().purchaseOrders.push({ id: "PO-TEST-04", status: "ordered", sourcePi: "DEMO-26002", lines: [{ materialCode: "A", receivedKg: 5 }, { materialCode: "B", receivedKg: null }, { materialCode: "C" }] });
+  const partly = /data-rf-action="cancelOrder"[^>]*data-rf-confirm="([^"]*)"/.exec(await env.render("p=orders&sel=DEMO-26002"))?.[1] ?? "";
+  assert.match(partly, /: PO-TEST-01, PO-TEST-04 \(รับแล้ว 1\/3 บรรทัด\) ระบบไม่ยกเลิก/, "untouched orders are named as before, the partly received one carries its count");
+  assert.match(partly, /ใบที่รับแล้วบางบรรทัดยกเลิกไม่ได้/);
+  assert.doesNotMatch(cancel, /รับแล้ว|ยกเลิกไม่ได้/, "with nothing received the sentence is unchanged");
   // ยกเลิกแล้วใบสั่งซื้อยังอยู่ (ระบบไม่ยกเลิกให้)
   assert.equal(env.store.run("cancelOrder", { orderId: "DEMO-26002" }).ok, true);
   assert.equal(env.rf.store.data().purchaseOrders.find((po) => po.id === "PO-TEST-01").status, "ordered");
@@ -2141,7 +2155,7 @@ test("chemicals of a draft PI are estimated from the WOs the release would open,
   let html = await env.render("p=orders&sel=DEMO-26002");
   clean(html);
   assert.match(html, /<th>เคมีของเส้นยาง<\/th>/);
-  assert.match(html, /เคมี(ขาด \d+ จาก|พอทั้ง) \d+ รายการ/);
+  assert.doesNotMatch(html, /เคมี(ขาด \d+ จาก|พอทั้ง) \d+ รายการ/, "the chemical count is not repeated in the card header: the table above it says it row by row");
   if (chem.skipped.length) assert.match(html, /ยังประเมินเคมีไม่ได้ และจะยังไม่ได้ WO ตอนปล่อยผลิต/);
   assert.doesNotMatch(html, /data-bom-draft-buy/, "ordering needs the database mode (purchase orders live in RubberFlow)");
   // หลังปล่อยผลิตไม่มีตารางประเมินแล้ว
@@ -2253,6 +2267,13 @@ test("purchasing belongs to the raw-material store: the purchase dialog is read-
   const code = chem.rows[0].itemCode;
   const rf = env.rf.store.data();
   rf.materialLots = rf.materialLots.filter((lot) => lot.materialCode !== code);
+  // step 2 of the draft: the chemical shortage is shown once, in the chemical table (its rows say ขาด), not again as a count in the card title
+  const step2 = await env.render("p=orders&sel=DEMO-26002");
+  clean(step2);
+  assert.match(step2, /เคมีของเส้นยาง/, "the chemical table is there");
+  assert.match(step2, /<tr class="bom-short">/, "with its short rows");
+  assert.doesNotMatch(step2, /เคมีขาด \d+ จาก|เคมีพอทั้ง/, "no second count of the same shortage in the card header");
+  assert.match(step2, /ขั้น 2 · ตรวจของ <span class="muted">ของซื้อ/, "the header keeps the purchased parts summary");
   const args = { woIds: [], sourcePi: "DEMO-26002", draftOrders: chem.orders, parts: false };
   const order = env.context.MNP_RUBBERFLOW_DIALOGS.purchase(rfCtx(["purchase"]), args).html;
   clean(order);
@@ -2292,6 +2313,13 @@ test("purchasing belongs to the raw-material store: the purchase dialog is read-
   assert.match(html, /href="#\/rubberflow\?p=warehouse&amp;tab=po&amp;q=PO-20261113-01">ตรวจสอบรับเข้า</);
   assert.match(html, /<h2>สั่งซื้อของที่ขาดของใบ DEMO-26002<\/h2>/);
   assert.match(html, new RegExp(`>ต้องทำ ${tasks.length + 1}<`), "the tab counts the store jobs with the part card of the released PI");
+  // the menu number is that same count (workCount reads the same board as the page), for the store and for admin, who sees the store's cards on the all-department board
+  const tabOf = (ctx) => Number(/>ต้องทำ (\d+)</.exec(env.context.MNP_BOM_PAGES.work(ctx).html)[1]);
+  assert.equal(hub.workCount(stCtx(["purchase", "receiveMaterial"])), tasks.length + 1);
+  const adminCtx = { ...stCtx(["purchase", "receiveMaterial"]), user: env.store.data().users.find((user) => user.role === "admin") };
+  assert.equal(hub.workCount(adminCtx), tabOf(adminCtx));
+  assert.ok(tabOf(adminCtx) >= tasks.length + 1, "admin's board holds the store's cards too");
+  assert.equal(hub.workCount(stCtx([])), tabOf(stCtx([])), "and without the rights the store's cards are in neither count");
   assert.doesNotMatch(env.context.MNP_BOM_PAGES.work(stCtx(["viewPurchase"])).html, /รับเข้าตามใบสั่งซื้อ|สั่งซื้อของที่ขาด/);
 });
 
@@ -2306,6 +2334,17 @@ test("an inserted WIP item enters the parent at the step its line was ticked for
   await env.submit("p=find", "saveBomTree", { wipCode: "WIP-STEP-1", wipName: "ชุดประกอบ", wipKind: "SUBPART", wipUom: "pcs", wipQty: "1", childQty: "" }, { wipInsert: true, code: parent, childCode: child });
   const line = env.store.data().boms.find((bom) => bom.itemCode === parent && bom.status === "approved").lines.find((entry) => entry.childCode === "WIP-STEP-1");
   assert.equal(line.step, 2, "the new item takes the step the moved line was routed to");
+  const routingNow = () => env.context.MNP_BOM_ACTIONS.helpers.routingOf(env.store.data(), parent);
+  assert.deepEqual(json(routingNow().steps.map((step) => step.inputs)), [[], ["WIP-STEP-1"]], "the parent's production steps now name the new item, not the old line");
+  const revision = routingNow().revision;
+  const previous = env.store.data().routings.find((entry) => entry.itemCode === parent && entry.revision === revision - 1);
+  assert.deepEqual(json(previous.steps.map((step) => step.inputs)), [[], [child]], "as a new routing revision: the earlier one still names the old line");
+  assert.equal(previous.status, "superseded");
+  // บรรทัดที่ไม่มีขั้นตอนผลิตอ้างอยู่: ไม่เปิด revision ใหม่ของขั้นตอน
+  const other = env.store.data().boms.find((bom) => bom.itemCode === parent && bom.status === "approved").lines.find((entry) => ![child, "WIP-STEP-1"].includes(entry.childCode));
+  await env.submit("p=find", "saveBomTree", { wipCode: "WIP-STEP-2", wipName: "ชุดอื่น", wipKind: "SUBPART", wipUom: "pcs", wipQty: "1", childQty: "" }, { wipInsert: true, code: parent, childCode: other.childCode });
+  assert.ok(env.store.data().boms.find((bom) => bom.itemCode === parent && bom.status === "approved").lines.some((entry) => entry.childCode === "WIP-STEP-2"), "the second insert saved");
+  assert.equal(routingNow().revision, revision, "a line no step names leaves the routing alone");
   // ใบสั่งซื้อในโหมดฐานข้อมูล: ST แก้สต็อกขั้นต่ำของเคมีได้พร้อมใบสั่งซื้อ (ค่านี้ถูกปัดเป็น 3 ตำแหน่งตามที่หน้าต่างส่งมา) · บัญชีที่ไม่ใช่ planner / RB / ST (ผู้ดูแลที่ไม่มี flag) สั่งได้แต่ไม่แตะวัตถุดิบ
   const A = env.context.MNP_RUBBERFLOW_ACTIONS;
   const d = json(env.rf.store.data());
@@ -2362,7 +2401,31 @@ test("the store orders chemicals for every open RubberFlow work order from the p
   assert.match(html, /href="#\/rubberflow\?p=warehouse&amp;tab=po">เปิดหน้าใบสั่งซื้อ</);
   assert.equal(hub.storeTasks(stCtx(["receiveMaterial"])).some((task) => task.kind === "chem"), false);
   // แผนก RB ที่เคมีไม่พอ: ไม่มีปุ่มสั่ง มีข้อความให้แจ้งคลังวัตถุดิบ
-  assert.match(fs.readFileSync("modules/rubberflow-pages-line.js", "utf8"), /แจ้งคลังวัตถุดิบ \(ST\) ให้สั่งซื้อ/);
+  // วาดหน้าต่างเบิกเคมีจริงของ WO ที่เคมี (code) ขาด แล้วผูกกับ dialog จำลอง: บัญชีที่สั่งซื้อไม่ได้เห็นข้อความ ไม่เห็นปุ่ม · บัญชีที่สั่งซื้อได้เห็นปุ่ม ไม่เห็นข้อความ
+  const rfRules = env.context.MNP_RUBBERFLOW_RULES;
+  const rfData = env.rf.store.data();
+  const reqOrder = rfData.orders.find((row) => {
+    const recipe = rfRules.recipeOf(rfData.recipes, row.recipeId, row.recipeRevision);
+    return ["released", "in_progress"].includes(row.status) && recipe && rfRules.nextRequisitionBatches(row, recipe, rfData.requisitions) > 0 && rfRules.recipeLines(recipe).some((line) => line.materialCode === code);
+  });
+  assert.ok(reqOrder, "a work order with batches left uses the short chemical");
+  const openRequisition = (rights, extra = {}) => {
+    const nodes = {
+      "[data-rf-order]": { value: reqOrder.id, addEventListener() {} }, "[data-rf-batches]": { value: "" }, "[data-rf-submit]": { disabled: false },
+      "[data-rf-recipe-line]": {}, "[data-rf-preview]": {}, "[data-rf-shortage]": { innerHTML: "", addEventListener() {} },
+    };
+    const built = env.context.MNP_RUBBERFLOW_DIALOGS.createRequisition({ ...rfCtx(rights, "p=requisition"), can: (permission) => rights.includes(permission), ...extra });
+    assert.match(built.html, /data-rf-shortage/, "the real dialog markup has the shortage box");
+    built.bind({ querySelector: (selector) => nodes[selector] }, extra);
+    return nodes;
+  };
+  const rbNodes = openRequisition([]);
+  assert.match(rbNodes["[data-rf-shortage]"].innerHTML, /แจ้งคลังวัตถุดิบ \(ST\) ให้สั่งซื้อ คลังวัตถุดิบเห็นรายการที่ขาดในแท็บใบสั่งซื้อของหน้าคลัง/);
+  assert.doesNotMatch(rbNodes["[data-rf-shortage]"].innerHTML, /data-rf-po-short/, "no order button for an account that cannot order");
+  assert.equal(rbNodes["[data-rf-submit]"].disabled, true, "and the requisition cannot be sent while a chemical is short");
+  const stNodes = openRequisition(["purchase"], { openDialog() {} });
+  assert.match(stNodes["[data-rf-shortage]"].innerHTML, /data-rf-po-short/, "the store gets the button");
+  assert.doesNotMatch(stNodes["[data-rf-shortage]"].innerHTML, /แจ้งคลังวัตถุดิบ/);
 });
 
 test("lines are reordered inside one department, moved under another item of the same structure in one save, and a cancelled PI turns its purchase order into a decision for the store", async () => {
@@ -2448,9 +2511,7 @@ const FG_TP = "DEMO-TP-01(P)-Y";
 const FG_HL = "DEMO-HL-24(B)-A";
 const FG_PI = "DEMO-26001";
 const whLoad = () => {
-  const env = load();
-  env.store.data().users.push({ id: "B09", role: "wh", dept: "WH", name: "สุดา คลังสินค้า" });
-  return env;
+  return load(); // B09 = พนักงานคลังสินค้าของข้อมูลสาธิต
 };
 // PK รายงานตามจำนวนที่ให้ (ชิ้นย่อย XP- ของ PK ทำครบ) โดยฝ่ายวางแผน แล้วกลับมาเป็นผู้ใช้เดิม
 const pkReport = (env, made, backTo = "B09") => {
@@ -2659,4 +2720,122 @@ test("my jobs for the warehouse: a card to receive per PI with something waiting
   assert.match(html, /href="[^"]*sel=DEMO-26001&amp;step=6"[^>]*>เปิดใบเพื่อส่งมอบ<\/a>/);
   fgRun(env, "deliverFg", [[FG_TP, 80], [FG_HL, 40]]);
   assert.doesNotMatch(await env.render("p=work"), /ตามใบ DEMO-26001/);
+});
+
+test("the My-work menu number is the open tab's card count for every role: admin, planner, both kinds of manager, the warehouse and each department", async () => {
+  const env = whLoad();
+  pkReport(env, { [FG_TP]: 30 }, "B01"); // a card to receive for the warehouse
+  const tab = (html) => Number(/>ต้องทำ (\d+)</.exec(html)?.[1] ?? 0);
+  const badge = (sub) => Number(/rf-nav-count"[^>]*>(\d+)</.exec(sub)?.[1] ?? 0);
+  const seen = {};
+  for (const user of env.store.data().users) {
+    env.store.setUser(user.id);
+    const html = await env.render("p=work");
+    clean(html);
+    seen[user.id] = tab(html);
+    assert.equal(badge(env.module.nav[0].subnav("bom")), tab(html), `${user.id} (${user.role} ${user.dept}): the menu number equals the cards on the page`);
+  }
+  assert.ok(seen.B01 > 0 && seen.B02 > 0 && seen.B03 > 0, "admin, manager and planner see every department's cards");
+  assert.equal(seen.B09, 1, "WH staff: the one card to receive");
+  assert.equal(seen.B10, seen.B02 + 1, "a manager of WH: the same cards as another manager plus the warehouse's own");
+  assert.equal(seen.B01, seen.B10, "and admin, who may act for the warehouse too");
+  // the shared board is the page's own: default parameters, no second count
+  const hub = env.context.MNP_BOM_PAGES.hub;
+  env.store.setUser("B10");
+  const board = hub.workBoard(env.ctx("p=work"), new URLSearchParams());
+  assert.equal(hub.workCount(env.ctx("p=work")), board.cardCount(board.open) + board.tasks.length);
+});
+
+test("while RubberFlow is still loading, My jobs says so instead of showing nothing, hooks one reload (not one per redraw) and redraws BOM once, only if it is still the page on screen", async () => {
+  const env = load();
+  env.store.setUser("B08");
+  const stUser = env.store.data().users.find((user) => user.role === "st");
+  let status = "loading";
+  let hooks = 0;
+  let release = () => {};
+  const fakeStore = { isRemote: () => true, status: () => status, ensureLoaded: () => { hooks += 1; return new Promise((resolve) => { release = resolve; }); }, data: () => env.rf.store.data() };
+  const rights = ["purchase", "receiveMaterial"];
+  const stCtx = () => ({ ...env.ctx("p=work"), user: stUser, store: { ...env.store, isRemote: () => true }, rubberflow: () => ({ ...env.rf, store: fakeStore, can: (permission) => rights.includes(permission) }) });
+  const work = () => env.context.MNP_BOM_PAGES.work(stCtx()).html;
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  let html = work();
+  clean(html);
+  assert.match(html, /<p class="small muted" role="status">กำลังโหลดข้อมูลเคมี…<\/p>/);
+  assert.doesNotMatch(html, /ไม่มีงานค้าง/, "a page with no card yet does not claim there is no work");
+  work();
+  env.context.MNP_BOM_PAGES.hub.storeTasks(stCtx());
+  assert.equal(hooks, 1, "one reload hook however many times the page, the tasks and the menu read RubberFlow");
+  // the user left BOM meanwhile: RubberFlow finishing must not redraw this page
+  env.log.hash = "#/rubberflow?p=warehouse";
+  const renders = env.log.renders;
+  status = "ready";
+  release();
+  await settle();
+  assert.equal(env.log.renders, renders, "not on #/bom: no redraw");
+  html = work();
+  assert.doesNotMatch(html, /กำลังโหลดข้อมูลเคมี/, "ready: no loading line, no noise");
+  assert.equal(hooks, 1, "ready needs no hook");
+  // idle (never started) hooks too, and a redraw follows when still on #/bom
+  status = "idle";
+  env.log.hash = "#/bom?p=work";
+  work();
+  work();
+  assert.equal(hooks, 2, "a new loading round hooks once");
+  status = "ready";
+  release();
+  await settle();
+  assert.equal(env.log.renders, renders + 1, "one redraw when it is ready");
+  // an account without the store's rights is told nothing about chemicals
+  status = "loading";
+  rights.length = 0;
+  assert.doesNotMatch(work(), /กำลังโหลดข้อมูลเคมี/);
+  status = "ready";
+  release();
+  await settle();
+});
+
+test("moving a line refuses a structure deeper than 12 levels with that reason, and the cycle check does not stop at depth 12", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const code = (n) => `W-DEEP-${String(n).padStart(2, "0")}`;
+  for (let n = 0; n <= 15; n += 1) assert.equal(env.store.run("saveItem", { code: code(n), kind: "SUBPART", name: `ชั้นลึก ${n}`, uom: "pcs", ownerDept: "PK" }).ok, true);
+  const bom = (itemCode, ...children) => assert.equal(env.store.run("saveBom", { itemCode, lines: children.map((childCode) => ({ childCode, qty: 1 })) }).ok, true, itemCode);
+  for (let n = 0; n < 14; n += 1) bom(code(n), code(n + 1), ...(n === 0 ? ["P-STK-01"] : []));
+  bom(code(14), "P-BOX-01", "P-ZIP-05", code(15));
+  bom(code(15), "P-ROPE-01");
+  const query = `p=find&code=${code(0)}`;
+  const move = async (args, values) => { env.log.toasts.length = 0; await env.submit(query, "saveBomTree", values, { lineMove: true, code: code(0), ...args }); return env.log.toasts.at(-1) ?? ["", ""]; };
+  // the pieces sit 14 levels down: the old message said they were not in the structure at all
+  assert.match((await move({ fromCode: code(14), childCode: "P-BOX-01" }, { toCode: code(15) }))[0], /โครงสร้างลึกเกิน 12 ชั้น/);
+  assert.equal(env.store.data().boms.find((entry) => entry.itemCode === code(15) && entry.status === "approved").lines.length, 1, "nothing was saved");
+  // a move into the child's own tree is a cycle however deep that tree is (it used to pass the check silently past depth 12)
+  assert.match((await move({ fromCode: code(0), childCode: code(1) }, { toCode: code(14) }))[0], /วงจร/);
+  assert.equal(env.store.data().boms.find((entry) => entry.itemCode === code(0) && entry.status === "approved").lines.length, 2, "nothing was saved");
+  // the same kind of move in a shallow structure still works
+  assert.notEqual((await move({ fromCode: code(0), childCode: "P-STK-01" }, { toCode: code(1) }))[1], "error", "no error toast: the shallow move saves");
+  assert.ok(env.store.data().boms.find((entry) => entry.itemCode === code(1) && entry.status === "approved").lines.some((line) => line.childCode === "P-STK-01"));
+});
+
+test("component pickers do not offer finished goods: the builder's code list and the add-component dialog", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const finished = env.store.data().items.filter((item) => item.kind === "FG").map((item) => item.code);
+  assert.ok(finished.length >= 2);
+  const html = await env.render("p=build&code=DEMO-TP-01(P)-Y");
+  const list = /<datalist id="bom-item-list">([\s\S]*?)<\/datalist>/.exec(html)?.[1] ?? "";
+  assert.ok(list.includes("P-BOX-01") && list.includes("SE-TP01-OR01-100-18-65"), "parts and pieces are offered");
+  for (const fg of finished) assert.ok(!list.includes(`value="${fg}"`), `${fg} is not offered as a component`);
+  // add-component dialog: bind with a fake picker and type what finished goods have in common
+  const built = env.context.MNP_BOM_DIALOGS.lineAdd(env.ctx(), { parentCode: "DEMO-TP-01(P)-Y" });
+  const handlers = {};
+  const popup = { id: "bom-add-code-list", hidden: true, innerHTML: "", addEventListener() {}, querySelectorAll: () => [] };
+  const input = { value: "", setAttribute() {}, removeAttribute() {}, addEventListener(type, handler) { handlers[type] = handler; } };
+  const box = { querySelector: (selector) => (selector === "[data-pick-input]" ? input : selector === "[data-popup]" ? popup : null) };
+  built.bind({ querySelector: (selector) => (selector === "[data-add-code]" ? { value: "", closest: () => box, addEventListener() {} } : selector === "[data-add-new]" ? { hidden: true } : null) });
+  input.value = "demo";
+  handlers.input();
+  assert.match(popup.innerHTML, /ไม่พบในทะเบียน/, "every code starting with DEMO is a finished good: none is offered");
+  input.value = "p-zip";
+  handlers.input();
+  assert.match(popup.innerHTML, /data-pick-value="P-ZIP-05"/);
 });

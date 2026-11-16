@@ -135,15 +135,7 @@
       if (kindError) fail(`${parent.code} → ${childCode}: ${kindError}`);
       if (seen.has(childCode)) fail(`${parent.code}: ${childCode} ซ้ำ รวมปริมาณเป็นบรรทัดเดียว`);
       seen.add(childCode);
-      const stack = [childCode];
-      const visited = new Set();
-      while (stack.length) {
-        const code = stack.pop();
-        if (code === parent.code) fail(`${parent.code}: ${childCode} มี ${parent.code} อยู่ข้างใต้ จะเป็นวงจร`);
-        if (visited.has(code)) continue;
-        visited.add(code);
-        approvedBomOf(d, code)?.lines.forEach((line) => stack.push(line.childCode));
-      }
+      if (R.reachedFrom(childCode, new Set([parent.code]), (code) => approvedBomOf(d, code))) fail(`${parent.code}: ${childCode} มี ${parent.code} อยู่ข้างใต้ จะเป็นวงจร`);
       // ขั้นที่ (1–20) = ลำดับขั้นผลิตของพ่อที่ชิ้นนี้เข้า · ว่าง = ขั้นแรก · เก็บเฉพาะเมื่อระบุ (บรรทัดเดิมจึงเท่ากับบรรทัดใหม่ที่ไม่ระบุ)
       const step = raw.step === undefined || raw.step === null || String(raw.step).trim() === "" ? null : Number(raw.step);
       if (step !== null && !(Number.isInteger(step) && step >= 1 && step <= 20)) fail(`${parent.code} → ${childCode}: ขั้นที่ต้องเป็นจำนวนเต็ม 1–20`);
@@ -293,6 +285,8 @@
   const processOf = (d, code) => processesOf(d).find((process) => process.code === code) ?? null;
   // วัตถุดิบของขั้นเทียบเป็นเซต: ฟอร์มส่งตามลำดับบรรทัด BOM ปัจจุบัน ลำดับต่างกันไม่ใช่การแก้ขั้นตอน
   const sameInputs = (a = [], b = []) => a.length === b.length && [...a].sort().every((code, index) => code === [...b].sort()[index]);
+  // JSON ที่ไม่ขึ้นกับลำดับกุญแจ (ฐานข้อมูลเก็บ jsonb ซึ่งเรียงกุญแจใหม่) ใช้เทียบว่าข้อมูลสองก้อนเท่ากัน
+  const stableJson = (value) => JSON.stringify(value, (_, node) => (node && typeof node === "object" && !Array.isArray(node) ? Object.fromEntries(Object.entries(node).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : node));
   const sameSteps = (a, b) => a.length === b.length && a.every((step, index) => step.processCode === b[index].processCode && Math.abs(step.minutesPerPc - b[index].minutesPerPc) <= QTY_EPS && (step.note || "") === (b[index].note || "") && sameInputs(step.inputs, b[index].inputs));
   // step.inputs = ลูกใน BOM ปัจจุบันที่เข้าที่ขั้นนี้ (ลูกหนึ่งตัวเข้าได้ขั้นเดียว) ลูกที่ไม่ระบุแสดงที่ขั้นแรก · เวลา 0 = ยังไม่ระบุเวลา
   function saveRouting(d, p, ctx) {
@@ -848,8 +842,11 @@
       result.missing.forEach((code) => missing.add(code));
     }
     if (missing.size) fail(`ระเบิดไม่ครบ ไม่พบชิ้นงาน: ${[...missing].join(", ")}`);
+    // ลำดับในคิวจองของใบร่าง (rules.draftBefore ใช้ explodedAt): กด "คำนวณใหม่" แล้วได้ผลเท่าเดิม = คงลำดับเดิม · ผลต่างจากเดิม (BOM หรือจำนวนเปลี่ยน) หรือใบที่ถูกแก้ (explosion ถูกล้าง) = ไปต่อท้ายคิว
+    // เหมือนฐานข้อมูล (bom_save_orders: exploded_at เปลี่ยนเมื่อผลต่างจากเดิมหรือยังว่าง) จึงตรงกับค่าที่ฐานข้อมูลตอบกลับ
+    const sameExplosion = Boolean(order.explodedAt) && Array.isArray(order.explosion) && stableJson(order.explosion) === stableJson(lines);
     order.explosion = lines;
-    order.explodedAt = ctx.now;
+    if (!sameExplosion) order.explodedAt = ctx.now;
     audit(d, ctx, "ระเบิด BOM", `${order.id} ${lines.length} บรรทัด`);
     return lines.length;
   }
@@ -1027,6 +1024,7 @@
   function closeOrderShort(d, p, ctx) {
     const { order, note, position } = fgRead(d, ctx, p, "close");
     if (!["released", "in_progress"].includes(order.status)) fail("ปิดใบได้เฉพาะใบที่ปล่อยผลิตแล้วและยังไม่ปิด");
+    if (!position.hasPkJobs) fail("ใบนี้ไม่มีงานบรรจุ (PK) ให้ปิดแบบรับไม่ครบ");
     if (!position.pkAllDone) fail("งานบรรจุ (PK) ยังไม่เสร็จครบทุกสินค้า");
     if (position.products.some((product) => product.receivable > 1e-9)) fail("ยังมีสินค้าที่ PK ทำเสร็จแต่ยังไม่ได้รับเข้าคลัง รับเข้าให้ครบก่อน");
     if (!position.products.some((product) => product.received + 1e-9 < product.ordered)) fail("รับสินค้าครบตามที่สั่งแล้ว ใบปิดเองโดยอัตโนมัติ");

@@ -368,7 +368,8 @@
     const parent = itemOf(ctx, parentCode);
     if (!canAddLineTo(ctx, parent)) return null;
     const used = new Set((approvedBomOf(ctx, parent.code)?.lines ?? []).map((line) => line.childCode));
-    const choices = data.items.filter((entry) => entry.active !== false && entry.code !== parent.code && !used.has(entry.code) && !rules.childKindError(parent.kind, entry.kind));
+    // สินค้า (FG) เป็นส่วนประกอบของชิ้นอื่นไม่ได้ จึงไม่อยู่ในรายการเลือก
+    const choices = data.items.filter((entry) => entry.active !== false && entry.kind !== "FG" && entry.code !== parent.code && !used.has(entry.code) && !rules.childKindError(parent.kind, entry.kind));
     // ชนิดของชิ้นใหม่: ทุกชนิดที่อยู่ใต้ชิ้นแม่นี้ได้ ยกเว้นสินค้า (FG)
     const kinds = Object.entries(rules.KINDS).filter(([kind]) => kind !== "FG" && !rules.childKindError(parent.kind, kind)).map(([value, meta]) => ({ value, label: meta.label }));
     const uoms = Object.entries(rules.UOMS).map(([value, meta]) => ({ value, label: meta.label }));
@@ -879,9 +880,10 @@
         const lacks = short.length || chemShort.length;
         const buy = lacks && canBuyParts(ctx) ? `<div class="rf-row bom-step-next"><button class="btn rf-btn" type="button" data-bom-draft-buy>สั่งซื้อส่วนที่ขาด</button></div>`
           : lacks && canViewBuy(ctx) ? `<div class="rf-row bom-step-next"><span class="small muted">คลังวัตถุดิบ (ST) เป็นผู้สั่งซื้อ</span><button class="btn rf-btn secondary" type="button" data-bom-draft-buy>ดูรายการที่ต้องสั่ง</button></div>` : "";
-        const sum = [parts.length ? (short.length ? `ของซื้อขาด ${short.length} จาก ${parts.length} รายการ` : `ของซื้อพอทั้ง ${parts.length} รายการ`) : "", chem.rows.length ? (chemShort.length ? `เคมีขาด ${chemShort.length} จาก ${chem.rows.length} รายการ` : `เคมีพอทั้ง ${chem.rows.length} รายการ`) : ""].filter(Boolean).join(" · ");
+        // หัวการ์ดสรุปเฉพาะของซื้อ: เคมีมีตารางของตัวเองในการ์ดเดียวกัน (ขาด/พอรายแถว) ไม่สรุปซ้ำที่หัว
+        const sum = parts.length ? (short.length ? `ของซื้อขาด ${short.length} จาก ${parts.length} รายการ` : `ของซื้อพอทั้ง ${parts.length} รายการ`) : "";
         panel = ui.card(`${table}${chemHtml}${buy}${wip}<div class="rf-row bom-step-next">${buttons.explode ? buttons.explode.replace("ระเบิด BOM", "คำนวณใหม่") : ""}${canPlan ? ui.link("ไปขั้น 3 ปล่อยผลิต", stepUrl(3), "btn rf-btn") : ""}</div>`,
-          { title: `ขั้น 2 · ตรวจของ <span class="muted">${sum}</span>` });
+          { title: `ขั้น 2 · ตรวจของ${sum ? ` <span class="muted">${sum}</span>` : ""}` });
       }
     } else if (view === 3) {
       const entries = [...net.values()].filter((entry) => (entry.toMake ?? entry.required) > 0);
@@ -927,9 +929,12 @@
 
   // งานของคลังวัตถุดิบที่ไม่ใช่งานของใบ (โหมดฐานข้อมูล): รับเข้าตามใบสั่งซื้อที่ยังรอรับ และสั่งซื้อของซื้อที่ใบยังขาด · แสดงเฉพาะผู้ที่ทำได้จริง (สิทธิ์ของ RubberFlow: แผนก ST)
   // ใช้ทั้งการ์ดในหน้างานของฉันและตัวเลขที่เมนู · ของที่ขาดคิดด้วย rules.partNeeds ตัวเดียวกับหน้าต่างสั่งซื้อ (เคมีดูที่หน้าใบ)
+  // ข้อมูลเคมีและใบสั่งซื้อของ RubberFlow ยังโหลดอยู่ (บัญชีที่มีสิทธิ์ของคลังวัตถุดิบเท่านั้น): สั่งโหลดให้และวาดหน้าใหม่เมื่อเสร็จ (pages.tools.rfWake) · การ์ดของคลังวัตถุดิบจึงยังไม่ครบ
+  const storeLoading = (ctx) => (rfCan(ctx, "receiveMaterial") || rfCan(ctx, "purchase")) && Boolean(pages.tools?.rfWake?.(ctx));
   function storeTasks(ctx) {
     const tasks = [];
-    const purchaseOrders = pages.tools?.purchaseOrdersOf?.(ctx) ?? [];
+    // บัญชีที่ไม่มีสิทธิ์ของคลังวัตถุดิบไม่ต้องรอหรือสั่งโหลด RubberFlow (เมนูนับงานทุกหน้า)
+    const purchaseOrders = rfCan(ctx, "receiveMaterial") || rfCan(ctx, "purchase") ? pages.tools?.purchaseOrdersOf?.(ctx) ?? [] : [];
     if (rfCan(ctx, "receiveMaterial")) {
       for (const po of purchaseOrders) {
         if (po.status !== "ordered") continue;
@@ -967,13 +972,13 @@
 
   // ---------- งานของฉัน: การ์ดงานของแผนกตัวเอง ปุ่มหลักปุ่มเดียวต่องาน ----------
   const JOB_TONE = Object.freeze({ in_progress: ["now", "กำลังทำ"], queued: ["", "รอคิว"], hold: ["hold", "พักงาน"], done: ["done", "เสร็จ"] });
-  pages.work = (ctx) => {
-    const { data, ui, rules, user, params } = ctx;
+  // งานที่ต้องทำของหน้างานของฉันตามพารามิเตอร์ (params ว่าง = ค่าตั้งต้นของหน้า) · ใช้ทั้งหน้าและตัวเลขที่เมนู (workCount) จึงนับชุดเดียวกันเสมอ
+  // ฝ่ายวางแผน/ผู้จัดการเลือกดูทุกแผนกได้ · แผนกอื่นเห็นเฉพาะงานของแผนกตัวเอง · คลังสินค้า (WH) ไม่มีงานผลิตของตัวเอง (ไม่อยู่ในแผนกผลิต) แต่มีการ์ดรับเข้า/ส่งมอบ
+  function workBoard(ctx, params) {
+    const { data, rules, user } = ctx;
     const planner = ctx.helpers.canPlan(user);
     const own = rules.DEPTS.includes(user?.dept) ? user.dept : null;
     const depts = rules.FLOW_DEPTS.filter((dept) => rules.DEPTS.includes(dept));
-    // ฝ่ายวางแผน/ผู้จัดการเลือกดูทุกแผนกได้ · แผนกอื่นเห็นเฉพาะงานของแผนกตัวเอง
-    // คลังสินค้า (WH) ไม่มีงานผลิตของตัวเอง (ไม่อยู่ในแผนกผลิต) แต่มีการ์ดรับเข้า/ส่งมอบ
     const handlesFg = ctx.helpers.canHandleFg(user);
     const dept = planner ? ([...depts, "ALL"].includes(params.get("dept")) ? params.get("dept") : "ALL") : own ?? (handlesFg ? "WH" : null);
     const show = params.get("st") === "done" ? "done" : "open";
@@ -985,10 +990,20 @@
     const done = mine.filter((job) => job.status === "done");
     // จำนวนบนแท็บนับเป็นการ์ด: ของซื้อของใบเดียวกันเป็นการ์ดเดียว
     const cardCount = (jobs) => jobs.filter((job) => !ctx.helpers.isPartJob(job)).length + new Set(jobs.filter((job) => ctx.helpers.isPartJob(job)).map((job) => job.orderId)).size;
+    // งานของคลังวัตถุดิบ (รับเข้า / สั่งซื้อ) อยู่ในรายการต้องทำของแผนก ST · ไม่กรองตามใบที่เลือกดู
+    const tasks = dept && !orderId ? [...(dept === "ST" || dept === "ALL" ? storeTasks(ctx) : []), ...(dept === "WH" || dept === "ALL" ? fgTasks(ctx) : [])] : [];
+    return { planner, depts, dept, show, orderId, orderOf, live, open, done, cardCount, tasks };
+  }
+  // ตัวเลขที่เมนู "งานของฉัน" = จำนวนการ์ดที่แท็บ "ต้องทำ" แสดงตามค่าตั้งต้นของหน้า (ไม่มีพารามิเตอร์)
+  function workCount(ctx) {
+    const board = workBoard(ctx, new URLSearchParams());
+    return board.dept ? board.cardCount(board.open) + board.tasks.length : 0;
+  }
+  pages.work = (ctx) => {
+    const { data, ui, rules, user, params } = ctx;
+    const { planner, depts, dept, show, orderId, orderOf, live, open, done, cardCount, tasks } = workBoard(ctx, params);
     const keep = (extra) => ctx.url("work", { dept: planner && dept !== "ALL" ? dept : null, order: orderId || null, ...extra });
     const deptTabs = planner ? ui.tabs([{ id: "ALL", label: "ทุกแผนก" }, ...depts.map((code) => ({ id: code, label: `${code} ${cardCount(data.jobs.filter((job) => job.dept === code && job.status !== "done" && live(job)))}` }))], dept, (id) => ctx.url("work", { dept: id === "ALL" ? null : id, st: show === "done" ? "done" : null, order: orderId || null })) : "";
-    // งานของคลังวัตถุดิบ (รับเข้า / สั่งซื้อ) อยู่ในรายการต้องทำของแผนก ST · ไม่กรองตามใบที่เลือกดู
-    const tasks = [...((dept === "ST" || dept === "ALL") && !orderId ? storeTasks(ctx) : []), ...((dept === "WH" || dept === "ALL") && !orderId ? fgTasks(ctx) : [])];
     const showTabs = ui.tabs([{ id: "open", label: `ต้องทำ ${cardCount(open) + tasks.length}` }, { id: "done", label: `เสร็จแล้ว ${cardCount(done)}` }], show, (id) => keep({ st: id === "done" ? "done" : null }));
     const rank = (job) => (job.status === "in_progress" ? 0 : job.status === "hold" ? 2 : 1);
     const list = (show === "done" ? done : open).slice().sort((a, b) => rank(a) - rank(b) || a.dueAt - b.dueAt || a.id.localeCompare(b.id));
@@ -1058,7 +1073,9 @@
         ${ui.link("เปิดใบเพื่อสั่งซื้อ", ctx.url("orders", { sel: task.order.id }), "btn rf-btn bom-job-main")}</article>`;
     };
     const taskCards = show === "open" ? tasks.map(taskHtml) : [];
-    const body = !dept ? ui.card(ui.empty("บัญชีนี้ไม่ได้อยู่ในแผนกผลิต จึงไม่มีงานของตัวเอง")) : cards.length || taskCards.length ? `<div class="bom-job-grid">${taskCards.join("")}${cards.map(cardHtml).join("")}</div>` : ui.card(ui.empty(show === "done" ? "ยังไม่มีงานที่เสร็จ" : "ไม่มีงานค้าง"));
+    // ข้อมูลเคมียังโหลดอยู่: บอกแทนการเงียบ (ไม่แสดงเมื่อโหลดเสร็จแล้ว) · ถ้ายังไม่มีการ์ดเลยก็ไม่บอกว่า "ไม่มีงานค้าง"
+    const waiting = show === "open" && (dept === "ST" || dept === "ALL") && !orderId && storeLoading(ctx) ? '<p class="small muted" role="status">กำลังโหลดข้อมูลเคมี…</p>' : "";
+    const body = !dept ? ui.card(ui.empty("บัญชีนี้ไม่ได้อยู่ในแผนกผลิต จึงไม่มีงานของตัวเอง")) : cards.length || taskCards.length ? `${waiting}<div class="bom-job-grid">${taskCards.join("")}${cards.map(cardHtml).join("")}</div>` : waiting ? ui.card(waiting) : ui.card(ui.empty(show === "done" ? "ยังไม่มีงานที่เสร็จ" : "ไม่มีงานค้าง"));
     const tableLink = planner && ctx.canSee("jobs") ? ui.link("ดูเป็นตาราง", ctx.url("jobs"), "btn rf-btn secondary") : "";
     return { html: `${pageHead(ctx, "งานของฉัน", sub, tableLink)}${deptTabs}${filterNote}${dept ? showTabs : ""}${body}` };
   };
@@ -1076,5 +1093,5 @@
     return { html: `${pageHead(ctx, "ข้อมูลตั้งต้น")}${ids.length ? `<div class="bom-setup-grid">${cards}</div>` : ctx.ui.card(ctx.ui.empty("บัญชีนี้ไม่มีหน้าข้อมูลตั้งต้นที่เปิดได้"))}` };
   };
 
-  pages.hub = { ratioText, orderStepOf, hubUrl, treeTab, pastePreview, copyPreview, draftChemicals, rfCan, storeTasks, fgTasks };
+  pages.hub = { ratioText, orderStepOf, hubUrl, treeTab, pastePreview, copyPreview, draftChemicals, rfCan, storeTasks, fgTasks, workBoard, workCount };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -658,6 +658,11 @@ test("purchasing screens: the check opens one dialog (escaped, safety stock and 
   const wh = pages.warehouse({ ...env.ctx("p=warehouse&tab=po"), can: (right) => right !== "receiveMaterial" && right !== "cancelPurchase" }).html;
   assert.doesNotMatch(wh, /data-rf-open="receivePurchase"|cancelPurchaseOrder/);
   assert.ok(wh.includes(po.id), "read-only accounts still see the order");
+  // the chemical check button (the variant without a shortage too) is cut at render time for accounts that cannot order, not removed afterwards by applyRights
+  assert.match(page, /data-rf-open="purchase"[^>]*>(สั่งซื้อเคมีที่ขาด \d+ รายการ|ตรวจเคมีของใบสั่งผลิตที่เปิดอยู่)</, "an account that can order sees one of the two variants");
+  const noOrder = pages.warehouse({ ...env.ctx("p=warehouse&tab=po"), can: (right) => right !== "purchase" }).html;
+  assert.doesNotMatch(noOrder, /data-rf-open="purchase"|ตรวจเคมีของใบสั่งผลิตที่เปิดอยู่|สั่งซื้อเคมีที่ขาด/);
+  assert.ok(noOrder.includes(po.id), "the orders stay visible");
   // the materials tab and the material form carry the new fields
   page = await env.render("p=warehouse&tab=materials");
   assert.match(page, /สต็อกขั้นต่ำ \(kg\)/);

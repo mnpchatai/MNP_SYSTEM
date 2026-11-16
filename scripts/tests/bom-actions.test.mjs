@@ -25,7 +25,8 @@ test("the demo seed is deterministic, valid for the store and internally consist
   const a = fresh();
   assert.deepEqual(a, fresh());
   assert.ok(storeApi.isValidState(a));
-  assert.equal(a.users.length, 8);
+  assert.equal(a.users.length, 10);
+  assert.deepEqual(a.users.filter((user) => user.dept === "WH").map((user) => [user.id, user.role]), [["B09", "wh"], ["B10", "manager"]], "the warehouse has a staff user and a manager");
   assert.equal(a.items.length, seed.ITEMS.length);
   assert.equal(a.boms.filter((bom) => bom.status === "approved").length, 8);
   assert.equal(a.boms.filter((bom) => bom.status === "superseded").length, 1, "one edit left a superseded revision");
@@ -1800,4 +1801,44 @@ test("finished goods: in database mode an action only checks and returns the req
   e.fgMoves = [{ id: "s-1", orderId, fgCode: TP, kind: "receive", qty: 30, note: "", at: NOW, by: "x" }];
   assert.deepEqual(A.closeOrderShort(e, { orderId, note: "เหตุผล" }, remote()).request, { orderId, kind: "close", note: "เหตุผล" });
   assert.equal(e.fgMoves.length, 1, "no history written locally");
+});
+
+test("recalculating a draft keeps its place in the reservation queue when the result is unchanged; an edit or a changed result puts it at the end, like the database", () => {
+  const d = fresh();
+  const draft = d.orders.find((order) => order.id === "DEMO-26002");
+  const placed = draft.explodedAt;
+  assert.ok(placed && draft.explosion.length, "the demo draft is calculated");
+  assert.equal(A.explodeOrder(d, { orderId: draft.id }, ctx("planner", NOW + 5000)), draft.explosion.length);
+  assert.equal(draft.explodedAt, placed, "same result: same place in the queue");
+  // the database keeps jsonb (keys re-ordered): equal content is still unchanged
+  draft.explosion = draft.explosion.map((line) => Object.fromEntries(Object.entries(line).reverse()));
+  A.explodeOrder(d, { orderId: draft.id }, ctx("planner", NOW + 6000));
+  assert.equal(draft.explodedAt, placed);
+  // a result that differs (here: a bill of materials that changed since) goes to the end
+  draft.explosion[0].required += 1;
+  A.explodeOrder(d, { orderId: draft.id }, ctx("planner", NOW + 7000));
+  assert.equal(draft.explodedAt, NOW + 7000);
+  // an edit clears the calculation: the next calculation goes to the end, then stays
+  const line = draft.items[0];
+  A.updateOrderItem(d, { orderId: draft.id, fgCode: line.fgCode, qty: line.qty + 1 }, ctx("planner", NOW + 8000));
+  assert.equal(draft.explosion, null);
+  A.explodeOrder(d, { orderId: draft.id }, ctx("planner", NOW + 9000));
+  assert.equal(draft.explodedAt, NOW + 9000, "after an edit the order goes to the end");
+  A.explodeOrder(d, { orderId: draft.id }, ctx("planner", NOW + 10000));
+  assert.equal(draft.explodedAt, NOW + 9000, "and recalculating again keeps that place");
+});
+
+test("finished goods: an order with no PK job at all cannot be closed short (the screen is stricter than the database here)", () => {
+  const d = fresh();
+  const orderId = "DEMO-26001";
+  const order = d.orders.find((entry) => entry.id === orderId);
+  assert.equal(rules.fgPosition(d, order).hasPkJobs, true);
+  d.jobs = d.jobs.filter((job) => !(job.orderId === orderId && job.dept === "PK"));
+  const position = rules.fgPosition(d, order);
+  assert.equal(position.hasPkJobs, false);
+  assert.equal(position.pkAllDone, true, "vacuously true with no PK job");
+  assert.equal(position.canCloseShort, false, "so no close button");
+  rejects(() => A.closeOrderShort(d, { orderId, note: "ไม่มีงาน PK" }, whCtx()), /ไม่มีงานบรรจุ \(PK\)/);
+  assert.notEqual(order.status, "completed");
+  assert.equal(rules.fgPosition({ jobs: [{ orderId: "X", dept: "PK", kind: "FG", itemCode: "A", status: "done", qtyDone: 0 }], fgMoves: [] }, { id: "X", status: "released", items: [{ fgCode: "A", qty: 5 }] }).canCloseShort, true, "with a finished PK job that made nothing, the close stays possible");
 });

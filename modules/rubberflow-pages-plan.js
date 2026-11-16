@@ -396,7 +396,8 @@
       });
     const openWoIds = data.orders.filter((order) => rules.OPEN_ORDER.includes(order.status)).map((order) => order.id);
     const chemShort = tab === "po" && ctx.can("purchase") && openWoIds.length ? rules.chemicalNeeds(data, openWoIds, now, { remote: ctx.store.isRemote() }).rows.filter((row) => row.shortageKg > 0).length : 0;
-    const chemButton = tab === "po" && openWoIds.length ? ui.openButton(chemShort ? `สั่งซื้อเคมีที่ขาด ${chemShort} รายการ` : "ตรวจเคมีของใบสั่งผลิตที่เปิดอยู่", "purchase", { allOpen: true, parts: false }, { className: chemShort ? "small" : "secondary small" }) : "";
+    // ปุ่มสั่งซื้อเคมี (ทั้งแบบขาดและแบบตรวจ) เฉพาะบัญชีที่สั่งซื้อได้ · ตัดตั้งแต่ตอนวาด ไม่รอ applyRights ลบหลังวาด
+    const chemButton = tab === "po" && openWoIds.length && ctx.can("purchase") ? ui.openButton(chemShort ? `สั่งซื้อเคมีที่ขาด ${chemShort} รายการ` : "ตรวจเคมีของใบสั่งผลิตที่เปิดอยู่", "purchase", { allOpen: true, parts: false }, { className: chemShort ? "small" : "secondary small" }) : "";
     const listbar = `<div class="rf-listbar">${tabs}<div class="rf-row">${chemButton}${tab === "materials" && mayEditMaterial ? ui.openButton("เพิ่มวัตถุดิบ", "materialEdit", {}, { className: "small" }) : ""}${tab === "fg" ? `<button class="btn rf-btn small" type="submit" form="rf-ship" data-rf-ship disabled>ส่งมอบกล่องที่เลือก</button>` : ""}${searchForm(ctx, "ค้นหารหัส…", { tab: true })}</div></div>`;
     const tableHtml = tab === "materials"
       ? ui.table(["รหัส", "ชื่อวัตถุดิบ", "หมวด", "ที่จัดเก็บ", "หน่วย", { label: "สต็อกขั้นต่ำ (kg)", className: "right" }, { label: "อายุการเก็บ (วัน)", className: "right" }, "สถานะ", { label: "", className: "right" }], materialRows, { emptyText: ctx.q ? "ไม่พบวัตถุดิบ" : "ยังไม่มีวัตถุดิบ" })

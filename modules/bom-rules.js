@@ -41,6 +41,20 @@
     if (childKind === "CP" && parentKind !== "RB") return "สูตรยางใส่ได้เฉพาะใต้เส้นยาง (RB)";
     return "";
   }
+  // รหัสแรกใน targets ที่อยู่ในโครงสร้างใต้ startCode (รวม startCode เอง) ตาม BOM อนุมัติ · "" = ไม่เจอ
+  // ตัวเดียวกันใช้ตรวจวงจรทั้งตอนบันทึก (normalizeLines) และตัวอย่างของ "วางจาก Excel" (pastePlan) · approvedBomOf(code) → { lines } หรือ null
+  function reachedFrom(startCode, targets, approvedBomOf) {
+    const stack = [startCode];
+    const visited = new Set();
+    while (stack.length) {
+      const code = stack.pop();
+      if (targets.has(code)) return code;
+      if (visited.has(code)) continue;
+      visited.add(code);
+      approvedBomOf(code)?.lines.forEach((line) => stack.push(line.childCode));
+    }
+    return "";
+  }
   const DEPTS = Object.freeze(["PK", "GR", "RB", "PT", "BG", "ST"]);
   const DEPT_LABEL = Object.freeze({ PK: "PK · บรรจุ/ประกอบ", GR: "GR · ตัด/เจาะชิ้นยาง", RB: "RB · รีดเส้นยาง", PT: "PT · ฉีดพลาสติก", BG: "BG · กระเป๋า/เย็บ", ST: "ST · คลังวัตถุดิบ", SR: "SR · คลังยางเส้นยาว", QA: "QA · ตรวจขนาดยาง", WH: "WH · คลังสินค้าสำเร็จรูป", SA: "ฝ่ายขาย", PP: "ฝ่ายวางแผน" });
   // ลำดับกำหนดเสร็จรายแผนกในหัวใบสั่งผลิต (MAIN ของไฟล์ Excel)
@@ -1009,18 +1023,21 @@
     });
     const open = order.status === "released" || order.status === "in_progress";
     const pkAllDone = pkJobs.every((job) => job.status === "done");
+    // ใบที่ไม่มีงาน PK เลย pkAllDone เป็นจริงแบบว่างเปล่า: ปิดแบบรับไม่ครบต้องมีงาน PK อย่างน้อยหนึ่งงาน (ฐานข้อมูลยอมให้ปิดได้ จึงฝั่งหน้าจอเข้มกว่า)
+    const hasPkJobs = pkJobs.length > 0;
     const anyReceived = products.some((product) => product.received > 0);
     const closeMove = moves.filter((move) => move.kind === "close").sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0)).at(-1) ?? null;
     return {
       products,
       pkAllDone,
+      hasPkJobs,
       anyReceived,
       anyReceivable: products.some((product) => product.receivable > 0),
       anyDeliverable: products.some((product) => product.deliverable > 0),
       // รับครบทุกสินค้าตามที่สั่ง (ใบปิดเองเมื่อรับครั้งนั้น)
       allReceived: products.length > 0 && products.every((product) => product.received + FG_EPS >= product.ordered),
       // ปิดใบรับไม่ครบได้: งาน PK เสร็จทุกงาน PK ทำเท่าไรรับเข้าครบเท่านั้น และยังมีสินค้าที่รับน้อยกว่าที่สั่ง
-      canCloseShort: open && pkAllDone && products.every((product) => Math.abs(product.received - product.pkDone) <= FG_EPS) && products.some((product) => product.received + FG_EPS < product.ordered),
+      canCloseShort: open && hasPkJobs && pkAllDone && products.every((product) => Math.abs(product.received - product.pkDone) <= FG_EPS) && products.some((product) => product.received + FG_EPS < product.ordered),
       // ส่งมอบแล้ว (คำนวณ ไม่มีช่องเก็บ): ใบปิดแล้ว รับเข้าอย่างน้อยหนึ่งสินค้า และทุกสินค้าส่งมอบครบเท่าที่รับ
       fullyDelivered: order.status === "completed" && anyReceived && products.every((product) => product.delivered + FG_EPS >= product.received),
       waitingDelivery: order.status === "completed" && products.some((product) => product.deliverable > 0),
@@ -1048,7 +1065,7 @@
   const wholeRods = (kind, uom, qty) => (kind === "RB" && (uom === "rod" || uom === "roll") ? Math.ceil(Number(qty) - 1e-6) : qty);
 
   // ของซื้อที่ใบร่างอื่น (ระเบิด BOM แล้ว ยังไม่ปล่อยผลิต) ต้องใช้ ต่อรหัส → { qty, orders: [เลขใบ] } · ข้อมูลให้ดูที่ขั้นตรวจของเท่านั้น ใบร่างไม่จองของ (ของถูกจองเมื่อปล่อยผลิต = partReserved)
-  // ลำดับการจองของใบร่าง: ใบที่คำนวณของ (explodedAt) ก่อนได้ก่อน เวลาเท่ากันเรียงตามเลขใบ · กด "คำนวณใหม่" = ไปต่อท้าย
+  // ลำดับการจองของใบร่าง: ใบที่คำนวณของ (explodedAt) ก่อนได้ก่อน เวลาเท่ากันเรียงตามเลขใบ · กด "คำนวณใหม่" แล้วได้ผลเท่าเดิมคงลำดับ แก้ใบหรือผลเปลี่ยนแล้วคำนวณใหม่ = ไปต่อท้าย
   const draftBefore = (a, b) => ((Number(a.explodedAt) || 0) !== (Number(b.explodedAt) || 0) ? (Number(a.explodedAt) || 0) < (Number(b.explodedAt) || 0) : String(a.id) < String(b.id));
   // side: "all" = ใบร่างอื่นทุกใบ · "earlier" / "later" = เฉพาะใบที่คำนวณก่อน / หลัง relativeTo (ใบร่างที่คำนวณแล้ว) · relativeTo ไม่ใช่ใบร่างที่คำนวณแล้ว: ไม่มีใบไหนมาก่อน
   function draftPartDemand(orders, exceptOrderId = null, { relativeTo = null, side = "all" } = {}) {
@@ -1160,7 +1177,7 @@
   const orderTypeOf = (country) => (/^(thailand|ไทย|th)$/i.test(String(country ?? "").trim()) ? "SA" : "EX");
 
   const api = {
-    DAY, KINDS, MANUFACTURED, NEEDS_BOM_KINDS, CATEGORIES, categoryOf, LEAF_KINDS, childKindError, DEPTS, DEPT_LABEL, DUE_DEPTS, PROCESS_FLOW, flowStepOf, sortLinesByFlow, FLOW_DEPTS, UOMS, PACKAGES, COLOR_SETS, COLOR_MASTERS,
+    DAY, KINDS, MANUFACTURED, NEEDS_BOM_KINDS, CATEGORIES, categoryOf, LEAF_KINDS, childKindError, reachedFrom, DEPTS, DEPT_LABEL, DUE_DEPTS, PROCESS_FLOW, flowStepOf, sortLinesByFlow, FLOW_DEPTS, UOMS, PACKAGES, COLOR_SETS, COLOR_MASTERS,
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
