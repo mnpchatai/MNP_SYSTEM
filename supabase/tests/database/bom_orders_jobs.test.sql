@@ -430,8 +430,9 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select set_config('test.j', (select j::text from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-1-GR'), true);
 select set_config('test.b0', (public.app_bom_master() ->> 'version'), true);
 select is(public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.j')::jsonb || '{"dueAt":1765000000000,"name":"ชื่อใหม่","qtyPlanned":80}'::jsonb))), current_setting('test.b0')::bigint, 'reportJob')
-  -> 'changes' -> 'jobs' -> 'upsert' -> 0 ->> 'qtyPlanned', '80', 'a planner changes the due date, name and planned quantity of a job');
+  current_setting('test.j')::jsonb || '{"dueAt":1765000000000,"name":"ชื่อใหม่","qtyPlanned":120}'::jsonb))), current_setting('test.b0')::bigint, 'reportJob')
+  -> 'changes' -> 'jobs' -> 'upsert' -> 0 ->> 'qtyPlanned', '120',
+  'a planner changes the due date, name and planned quantity of a job (raised: the job is reported, lowering it is refused since 20261127010000)');
 select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.j')::jsonb || '{"reports":[]}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'reportJob') $$,
   'BOM_FORBIDDEN', 'even a planner cannot erase report history');
@@ -695,7 +696,7 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select set_config('test.j', (select j::text from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-4-GR'), true);
 select set_config('test.b4b', (public.app_bom_master() ->> 'version'), true);
 select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.j')::jsonb || '{"dueAt":1765100000000,"qtyPlanned":90}'::jsonb))), current_setting('test.b4b')::bigint, 'reportJob');
+  current_setting('test.j')::jsonb || '{"dueAt":1765100000000,"qtyPlanned":110}'::jsonb))), current_setting('test.b4b')::bigint, 'reportJob'); -- เพิ่มยอดแผน (งานรายงานแล้ว ลดไม่ได้ตั้งแต่ 20261127010000)
 select public.app_sandbox_enter(current_setting('test.p_sbx_gr_staff')::uuid);
 select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.j')::jsonb || jsonb_build_object('qtyDone', 6, 'reports', (current_setting('test.j')::jsonb -> 'reports')

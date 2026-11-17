@@ -3,6 +3,7 @@
 -- รับครบขณะที่งาน RB / GR ยังเปิด = ใบเปิดต่อ · closeOrder / closeOrderShort ถูกปฏิเสธจนทุกงานผลิต done · งานเบิกของซื้อ (ST / PURCHASED) ที่ยังเปิดไม่กันการปิด
 -- ฝ่ายวางแผนปิดงานด้วยรายการรายงานยอด 0 + เหตุผล (setJobStatus): พนักงานแผนก action อื่น เหตุผลสั้น ยอดเปลี่ยน สถานะไม่ใช่ done งานของซื้อ งานที่ done แล้ว ถูกปฏิเสธ
 -- ปิดเองตอนรับยังมีเมื่อทุกงานผลิตเสร็จก่อน · จำนวนใน audit · ข้อความคงที่ของแถว close
+-- ลดยอดแผนของงานที่เริ่มแล้วไม่ได้ ทุกผู้เรียกรวมกลุ่มวางแผน แต่เพิ่มยอดแผน / ลดยอดแผนของงานที่ยังไม่เริ่มได้ (ข้อ 11c, 20261127010000_bom_no_lower_started_plan.sql)
 -- authenticated อ่านตาราง bom_* ตรงไม่ได้ จึงอ่านผ่าน RPC และอ่านตารางด้วย reset role เท่านั้น
 begin;
 create extension if not exists pgtap with schema extensions;
@@ -94,6 +95,11 @@ create function cr_t.close(p_order text) returns jsonb language sql volatile as 
 $$;
 create function cr_t.close_short(p_order text, p_note text) returns jsonb language sql volatile as $$
   select cr_t.fg(jsonb_build_object('orderId', p_order, 'kind', 'close', 'note', p_note), 'closeOrderShort')
+$$;
+-- ยอดแผนของงาน (ข้อ 11c): ส่งแถวงานล่าสุดที่เปลี่ยน qtyPlanned · p_extra แก้ช่องอื่นในแถวเดียวกัน
+create function cr_t.plan(p_no text, p_planned numeric, p_extra jsonb default '{}'::jsonb, p_action text default 'setJobStatus') returns jsonb language sql volatile as $$
+  select cr_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+    cr_t.job(p_no) || jsonb_build_object('qtyPlanned', p_planned) || p_extra))), p_action)
 $$;
 create function cr_t.moves(p_order text) returns jsonb language sql stable as $$
   select coalesce(jsonb_agg(t.m order by t.ord), '[]'::jsonb)
@@ -354,6 +360,50 @@ select is((cr_t.job('JOB-6-PK') ->> 'qtyDone')::numeric, 1::numeric, 'with exact
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select ok(cr_t.close_job('JOB-6-RB', 'ไม่ผลิตแล้ว ใช้เส้นยางคงคลัง') is not null, 'a planner still closes a job below the planned quantity with a reason');
 select is(cr_t.job('JOB-6-RB') ->> 'status', 'done', 'and the RB job is done');
+
+-- 11c. ลดยอดแผนของงานที่เริ่มแล้วไม่ได้ ทุกผู้เรียกรวมกลุ่มวางแผน (20261127010000) ------------------------------------------------------
+--   ใบ 25007 (ใหม่) FG-A 4 ปล่อยผลิตพร้อมงาน RB / GR / PK แผนละ 4 · ไม่ปิดใบนี้และไม่ปิดงานด้วยเหตุผล (ตารางข้อ 12 นับเหมือนเดิม)
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select ok(cr_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.ord')::jsonb || jsonb_build_object('id', '251125-25007',
+    'items', jsonb_build_array(jsonb_build_object('fgCode', 'FG-A', 'qty', 4, 'colorSet', 'A', 'note', '')),
+    'explosion', jsonb_build_array(jsonb_build_object('itemCode', 'FG-A', 'level', 0, 'fgQty', 4, 'required', 4)))))), 'createOrder') is not null,
+  'the planner creates the draft 25007');
+select ok(cr_t.save(jsonb_build_object(
+  'orders', jsonb_build_object('upsert', jsonb_build_array(cr_t.order_row('251125-25007') || '{"status":"released"}'::jsonb)),
+  'jobs', jsonb_build_object('upsert', jsonb_build_array(
+    current_setting('test.job')::jsonb || '{"id":"JOB-7-RB","orderId":"251125-25007","dept":"RB","itemCode":"RB-A","kind":"RB","uom":"pcs","qtyPlanned":4,"qtyRequired":4}'::jsonb,
+    current_setting('test.job')::jsonb || '{"id":"JOB-7-GR","orderId":"251125-25007","dept":"GR","itemCode":"SE-A","kind":"SE","uom":"pcs","qtyPlanned":4,"qtyRequired":4}'::jsonb,
+    current_setting('test.job')::jsonb || '{"id":"JOB-7-PK","orderId":"251125-25007","qtyPlanned":4,"qtyRequired":4}'::jsonb))), 'releaseOrder') is not null,
+  'the planner releases 25007 with an RB, a GR and a PK job of four units each');
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select ok(cr_t.report('JOB-7-RB', 1, 'in_progress') is not null, 'RB reports 1 of the 4 (the job is reported and in progress)');
+select throws_ok($$ select cr_t.plan('JOB-7-RB', 3) $$, 'BOM_FORBIDDEN', 'RB staff still cannot change the plan of their own job (the field check comes first)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_staff')::uuid);
+select ok(cr_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  cr_t.job('JOB-7-GR') || '{"status":"in_progress"}'::jsonb))), 'setJobStatus') is not null, 'GR starts its job without output');
+select set_config('test.v5', cr_t.ver()::text, true);
+-- ปฏิเสธ: กลุ่มวางแผน / ผู้ดูแลระบบลดยอดแผนของงานที่เริ่มแล้ว หรือลดพร้อมเริ่มงานในคำสั่งเดียวกัน
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select throws_ok($$ select cr_t.plan('JOB-7-RB', 1) $$, 'BOM_INVALID_JOB', 'a planner cannot lower the plan of a reported job (to what it made)');
+select throws_ok($$ select cr_t.plan('JOB-7-RB', 3, '{}'::jsonb, 'reportJob') $$, 'BOM_INVALID_JOB', 'nor under another action');
+select throws_ok($$ select cr_t.plan('JOB-7-GR', 2) $$, 'BOM_INVALID_JOB', 'nor lower a job that is in progress with no output');
+select throws_ok($$ select cr_t.plan('JOB-7-PK', 2, jsonb_build_object('status', 'in_progress', 'qtyDone', 2,
+  'reports', jsonb_build_array('{"at":1,"by":"x","good":2,"reject":0,"note":""}'::jsonb)), 'reportJob') $$, 'BOM_INVALID_JOB',
+  'nor lower a queued job and report on it in the same save');
+select throws_ok($$ select cr_t.plan('JOB-7-PK', 2, '{"status":"in_progress"}'::jsonb) $$, 'BOM_INVALID_JOB', 'nor lower a queued job and start it in the same save');
+select public.app_sandbox_enter(current_setting('test.p_sbx_admin_t')::uuid);
+select throws_ok($$ select cr_t.plan('JOB-7-RB', 3) $$, 'BOM_INVALID_JOB', 'an admin (planning group) cannot lower a started job either');
+select is(cr_t.ver(), current_setting('test.v5')::bigint, 'none of the refused saves moved the version');
+select is((select jsonb_agg((cr_t.job(n) ->> 'qtyPlanned')::numeric order by n) from unnest(array['JOB-7-GR', 'JOB-7-PK', 'JOB-7-RB']) n), '[4, 4, 4]'::jsonb,
+  'and every plan of 25007 is still 4');
+-- อนุญาต: เพิ่มยอดแผนของงานที่เริ่มแล้ว · ลดยอดแผนของงานที่ยังไม่เริ่ม
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select ok(cr_t.plan('JOB-7-RB', 6) is not null, 'a planner can raise the plan of a started job');
+select is((cr_t.job('JOB-7-RB') ->> 'qtyPlanned')::numeric, 6::numeric, 'the RB plan is 6');
+select throws_ok($$ select cr_t.plan('JOB-7-RB', 5) $$, 'BOM_INVALID_JOB', 'lowering it again counts from the stored plan (6), not the first one');
+select ok(cr_t.plan('JOB-7-PK', 3) is not null, 'a planner can lower the plan of a queued job that has not started');
+select is((cr_t.job('JOB-7-PK') ->> 'qtyPlanned')::numeric, 3::numeric, 'the PK plan is 3');
+select is(cr_t.job('JOB-7-PK') ->> 'status', 'queued', 'and the PK job is still queued');
 
 -- 12. ตาราง: ความสอดคล้องหลังการปิด (นับด้วยสิทธิ์เจ้าของตาราง) -------------------------------------------------------------
 reset role;

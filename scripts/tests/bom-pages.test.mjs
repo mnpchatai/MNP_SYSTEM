@@ -708,6 +708,36 @@ test("leaving the count page with typed counts stops the link at once and goes o
   assert.equal(env.log.hash, "#/bom?p=count");
 });
 
+test("leaving the BOM table from the step-3 card (switch product, back to the order) asks first when the table has unsaved edits", async () => {
+  const env = load();
+  env.store.setUser("B03"); // ฝ่ายวางแผน
+  const query = "p=build&code=DEMO-TP-01(P)-Y&focus=NOPE-123&order=DEMO-26001";
+  const html = await env.render(query);
+  assert.match(html, /<a data-bom-build-nav [^>]*href="[^"]*NOPE-123[^"]*">เปิดตารางของ NOPE-123<\/a>/, "the links of the card are marked for the unsaved-edits check");
+  const handlers = {};
+  const qty = { name: "qty[]", type: "text", value: "2" };
+  const fields = [{ name: "itemName", type: "text", value: "ตอปิโด" }, qty];
+  const form = { querySelectorAll: () => fields };
+  const link = { getAttribute: (name) => (name === "href" ? "#/bom?p=build&code=DEMO-TP-01(P)-B&focus=X&order=DEMO-26001" : null), addEventListener: (type, handler) => { handlers[type] = handler; } };
+  env.context.MNP_BOM_PAGES.build(env.ctx(query)).bind({ querySelector: (selector) => (selector === "#bom-tree-form" ? form : null), querySelectorAll: (selector) => (selector === "[data-bom-build-nav]" ? [link] : []) });
+  const click = async () => { const event = { prevented: false, preventDefault() { this.prevented = true; } }; await handlers.click(event); return event.prevented; };
+  env.log.hash = `#/bom?${query}`;
+  assert.equal(await click(), false, "nothing changed: the link opens normally");
+  assert.equal(env.log.confirms.length, 0);
+  qty.value = "3";
+  env.log.confirmAnswer = false;
+  assert.equal(await click(), true);
+  assert.equal(env.log.hash, `#/bom?${query}`, "a cancelled dialog stays on the table");
+  assert.equal(env.log.confirms.at(-1).title, "ทิ้งการแก้ไขที่ยังไม่บันทึก?");
+  assert.equal(env.log.confirms.at(-1).danger, true);
+  fields.push({ name: "rowId[]", type: "hidden", value: "n1" });
+  qty.value = "2";
+  assert.equal(await click(), true, "an added row counts as an edit too");
+  env.log.confirmAnswer = true;
+  assert.equal(await click(), true);
+  assert.equal(env.log.hash, "#/bom?p=build&code=DEMO-TP-01(P)-B&focus=X&order=DEMO-26001", "confirmed: the other product opens");
+});
+
 test("a data-rf-action button with data-rf-confirm runs only after the dialog confirms, and names the action on the confirm button", async () => {
   const env = load();
   env.store.setUser("B03");
