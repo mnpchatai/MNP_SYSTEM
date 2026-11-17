@@ -725,12 +725,12 @@
   }
   // สร้างรุ่นสินค้าใหม่จากต้นแบบฐานรหัสเดียวกัน: คัดลอก BOM แล้วใช้นิยามชุดสี (เปลี่ยนสี SE/RB ชั้นแรกและ RB ใต้ SE) และแพ็กเกจ (สลับบรรทัดบรรจุภัณฑ์)
   // ถ้าฐานรหัสยังไม่มีนิยาม ทำแบบเดิม (คัดลอกตรง) และบันทึกไว้ใน changeLog ว่าสียังเป็นของต้นแบบ
-  function cloneFg(d, code, source, { pkg, colorSet }, ctx) {
+  // ชื่อ: name ที่ผู้ใช้ตั้ง (ตรวจแล้ว) ไม่มี = R.suggestFgName (ไม่ต่อป้ายท้ายชื่อต้นแบบที่บรรยายแพ็กและสีของตัวมันเองอยู่แล้ว)
+  function cloneFg(d, code, source, { pkg, colorSet, name }, ctx) {
     const user = requireUser(ctx);
     const R = rules();
     const sourceBom = approvedBomOf(d, source.code) ?? fail(`${source.code} ยังไม่มี BOM`);
     const { base, pkg: sourcePkg, colorSet: sourceSet } = R.parseFgCode(source.code);
-    const label = [pkg ? `แพ็กเกจ ${pkg}` : "", colorSet ? `ชุดสี ${colorSet}` : ""].filter(Boolean).join(" ");
     let lines = sourceBom.lines.map((line) => ({ ...line, flags: [...(line.flags ?? [])] }));
     const log = [`คัดลอกจาก ${source.code} Rev.${sourceBom.revision}`];
     const set = colorSet ? colorSetOf(d, base, colorSet) : null;
@@ -771,10 +771,12 @@
       if (same) same.qty += line.qty;
       else merged.push(line);
     }
-    d.items.push({ code, kind: "FG", name: `${source.name}${label ? ` (${label})` : ""}`.slice(0, 160), ownerDept: "PK", uom: source.uom, weightG: source.weightG ?? 0, group: source.group ?? "TOY", legacyCodes: [], rubber: null, active: true, createdAt: ctx.now, clonedFrom: source.code });
+    d.items.push({ code, kind: "FG", name: String(name ?? "").trim() || R.suggestFgName(source, pkg, colorSet).slice(0, 160), ownerDept: "PK", uom: source.uom, weightG: source.weightG ?? 0, group: source.group ?? "TOY", legacyCodes: [], rubber: null, active: true, createdAt: ctx.now, clonedFrom: source.code });
     d.boms.push({ id: masterId(d, "BOM", ctx), itemCode: code, revision: 1, status: "approved", ownerDept: "PK", lines: merged, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note: log[0], changeLog: log.map((text) => ({ at: ctx.now, by: user.name, text })) });
     audit(d, ctx, "สร้างสินค้าจากฐานรหัสเดียวกัน", `${code} ← ${source.code} Rev.${sourceBom.revision}${log.length > 1 ? ` · ${log.slice(1).join(" · ")}` : ""}`);
   }
+  // ชื่อสินค้าใหม่ที่ผู้ใช้ตั้งตอนสร้างรุ่น (1-120 ตัวอักษรหลังตัดช่องว่าง) · ไม่ส่งมา (ว่าง) = ใช้ชื่อที่ระบบแนะนำ
+  const newName = (p) => (String(p.name ?? "").trim() ? text(p.name, "ชื่อสินค้าใหม่", 120) : "");
   // สร้างรุ่นสินค้า (ฐาน + แพ็กเกจ + ชุดสี) โดยไม่ต้องผ่านใบสั่งผลิต — จุดเดียวกับที่ addOrderItem ใช้
   function createVariant(d, p, ctx) {
     requirePlanner(ctx, "สร้างรุ่นสินค้า");
@@ -786,7 +788,8 @@
     const siblings = siblingsOf(d, p.base);
     if (!siblings.length) fail(`ไม่มีฐานรหัส ${R.canonicalCode(p.base)} ที่มี BOM ในทะเบียนชิ้นงาน`);
     const source = (p.cloneFrom && siblings.find((item) => item.code === R.canonicalCode(p.cloneFrom))) ?? pickSibling(siblings, pkg, colorSet);
-    cloneFg(d, code, source, { pkg, colorSet }, ctx);
+    // หน้าชุดสี/แพ็กเกจไม่มีช่องตั้งชื่อ: ไม่ส่งชื่อมา = ชื่อต้นแบบต่อป้ายรุ่นแบบเดิม (ชื่อสินค้าไม่หายเหลือแค่ฐานรหัส) · หน้าใบสั่งผลิตให้ผู้ใช้ยืนยันชื่อเอง
+    cloneFg(d, code, source, { pkg, colorSet, name: newName(p) || R.suggestFgName(source, pkg, colorSet, { keepName: true }).slice(0, 160) }, ctx);
     return code;
   }
 
@@ -805,7 +808,7 @@
       const siblings = siblingsOf(d, p.base);
       if (!siblings.length) fail(`ไม่มีฐานรหัส ${R.canonicalCode(p.base)} ที่มี BOM ในทะเบียนชิ้นงาน`);
       const source = (p.cloneFrom && siblings.find((item) => item.code === R.canonicalCode(p.cloneFrom))) ?? pickSibling(siblings, pkg, colorSet);
-      cloneFg(d, code, source, { pkg, colorSet }, ctx);
+      cloneFg(d, code, source, { pkg, colorSet, name: newName(p) }, ctx);
       fg = itemOf(d, code);
     }
     if (!fg) fail("ไม่พบสินค้า");

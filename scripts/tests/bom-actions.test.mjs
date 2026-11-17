@@ -2433,3 +2433,45 @@ test("fg stock: in database mode the actions only check — no history, no compl
   A.receiveFg(h, { orderId: SRC, lines: [{ fgCode: TP, qty: 80 }, { fgCode: HL, qty: 40 }] }, whCtx());
   assert.deepEqual(A.receiveFg(h, { orderId: SRC, lines: [{ fgCode: HL, qty: 20 }] }, { now: NOW, user: whStaff, remote: true }).request, { orderId: SRC, kind: "receive", lines: [{ fgCode: HL, qty: 20 }] });
 });
+
+test("the data check lists a rod line that disagrees with the rod's cutting data by more than 1% (W5), under the parent that holds the line", () => {
+  const d = fresh();
+  assert.deepEqual(rules.auditMaster(d).rbCut, [], "the demo rods follow their cutting data");
+  const parent = "SE-TP01-OR01-100-18-65";
+  const rod = "RB-DM01-02-OR01-202-18-70";
+  const lines = approved(d, parent).lines.map((line) => ({ childCode: line.childCode, qty: line.childCode === rod ? 1 : line.qty, scrapPct: line.scrapPct, note: line.note }));
+  A.saveBom(d, { itemCode: parent, lines }, ctx("planner"));
+  const found = rules.auditMaster(d).rbCut;
+  assert.deepEqual(found.map((entry) => [entry.item.code, entry.child.code, entry.qty]), [[parent, rod, 1]]);
+  assert.equal(found[0].expected, rules.rbCutQty(A.helpers.itemOf(d, rod)), "the expected figure is what the cutting data gives (1/31 here)");
+  A.saveBom(d, { itemCode: parent, lines: lines.map((line) => (line.childCode === rod ? { ...line, qty: rules.rbCutQty(A.helpers.itemOf(d, rod)) * 1.005 } : line)) }, ctx("planner"));
+  assert.deepEqual(rules.auditMaster(d).rbCut, [], "0.5% off is within the tolerance");
+  A.saveBom(d, { itemCode: parent, lines }, ctx("planner"));
+  A.saveItem(d, { code: parent, kind: "SE", name: "x", uom: "pcs", active: false }, ctx("planner"));
+  assert.deepEqual(rules.auditMaster(d).rbCut, [], "a retired parent is not listed");
+});
+
+test("a new product made from an order takes the name the user confirmed (1-120 characters), else a suggestion that does not repeat the source's pack and colour (W9)", () => {
+  const d = fresh();
+  const id = A.createOrder(d, { pi: "W9", customer: "x", country: "Thailand", orderedAt: day(0), whDue: day(9) }, ctx("planner"));
+  const nameOf = (code) => A.helpers.itemOf(d, code).name;
+  A.addOrderItem(d, { orderId: id, base: "DEMO-TP-01", pkg: "P", colorSet: "A", qty: 5, name: "  ตอปิโดยาง TP-01 แพ็กถุง ชุดสี A  " }, ctx("planner"));
+  assert.equal(nameOf("DEMO-TP-01(P)-A"), "ตอปิโดยาง TP-01 แพ็กถุง ชุดสี A", "the typed name is trimmed and used");
+  A.addOrderItem(d, { orderId: id, base: "DEMO-HL-24", pkg: "K", colorSet: "", qty: 5 }, ctx("planner"));
+  assert.equal(nameOf("DEMO-HL-24(K)"), "DEMO-HL-24 (แพ็กเกจ K)", "no name sent: the source's own description (กล่อง ชุดสี A) is not carried over");
+  assert.equal(A.createVariant(d, { base: "DEMO-HL-24", pkg: "N", colorSet: "", cloneFrom: "DEMO-HL-24(K)" }, ctx("planner")), "DEMO-HL-24(N)");
+  assert.equal(nameOf("DEMO-HL-24(N)"), "DEMO-HL-24 (แพ็กเกจ N)", "createVariant keeps working without a name");
+  assert.equal(A.createVariant(d, { base: "DEMO-HL-24", pkg: "C", colorSet: "", cloneFrom: "DEMO-HL-24(K)", name: "ห่วงฮูล่า แพ็ก C" }, ctx("planner")), "DEMO-HL-24(C)");
+  assert.equal(nameOf("DEMO-HL-24(C)"), "ห่วงฮูล่า แพ็ก C");
+  rejects(() => A.addOrderItem(d, { orderId: id, base: "DEMO-HL-24", pkg: "X", colorSet: "", qty: 1, name: "x".repeat(121) }, ctx("planner")), /ยาวเกิน 120/);
+  assert.equal(A.helpers.itemOf(d, "DEMO-HL-24(X)"), null, "a refused name creates nothing");
+  A.addOrderItem(d, { orderId: id, base: "DEMO-HL-24", pkg: "B-N", colorSet: "", qty: 1, name: "   " }, ctx("planner"));
+  assert.equal(nameOf("DEMO-HL-24(B-N)"), "DEMO-HL-24 (แพ็กเกจ B-N)", "a blank name falls back to the suggestion");
+  // สินค้าที่มีอยู่แล้ว: ชื่อที่ส่งมาไม่เปลี่ยนชื่อสินค้าเดิม
+  const before = nameOf("DEMO-TP-01(P)-Y");
+  A.addOrderItem(d, { orderId: id, base: "DEMO-TP-01", pkg: "P", colorSet: "Y", qty: 1, name: "ชื่ออื่น" }, ctx("planner"));
+  assert.equal(nameOf("DEMO-TP-01(P)-Y"), before);
+  // ชื่อที่ยาวถึง 120 ตัวอักษรผ่านการตรวจของฐานข้อมูล (ชื่อชิ้นงาน 1-160)
+  A.addOrderItem(d, { orderId: id, base: "DEMO-HL-24", pkg: "B", colorSet: "E", qty: 1, name: "ย".repeat(120) }, ctx("planner"));
+  assert.equal(nameOf("DEMO-HL-24(B)-E").length, 120);
+});

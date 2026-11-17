@@ -1664,7 +1664,7 @@
 
   // ---------- ตรวจข้อมูล ----------
   // ข้อมูลที่ควรแก้ คำนวณจากข้อมูลในหน้าด้วยกฎเดียวกับ action (rules.auditMaster) · เฉพาะกลุ่มแรก (ใช้ใน BOM แล้วแต่ยังไม่มี BOM) ที่ทำให้ปล่อยผลิต/ระเบิด BOM ไม่ได้ กลุ่มอื่นเป็นคุณภาพข้อมูล · ทุกคนที่เห็นเมนู BOM ดูได้ ปุ่มแก้เฉพาะฝ่ายวางแผนขึ้นไป
-  // ไม่ตรวจอัตราส่วน RB ของ SE ที่ใช้ร่วมกัน: ข้อมูลนั้นไม่ได้เก็บหลังนำเข้า
+  // ตรวจปริมาณเส้นยางกับข้อมูลการตัด (rbCut) เฉพาะเส้นที่มีข้อมูลการตัด · ไม่ตรวจอัตราส่วน RB ของ SE ที่ใช้ร่วมกันตอนนำเข้า: ข้อมูลนั้นไม่ได้เก็บหลังนำเข้า
   const CHECK_LIMIT = 200;
   pages.check = (ctx) => {
     const { ui, rules } = ctx;
@@ -1676,6 +1676,7 @@
     const groups = [
       { id: "noBom", title: "ใช้ใน BOM แล้วแต่ยังไม่มี BOM", hint: "ปล่อยผลิตไม่ได้จนกว่าจะมี BOM", list: audit.noBom, detail: (entry) => `ใช้ใน ${entry.usedIn.slice(0, 3).join(", ")}${entry.usedIn.length > 3 ? ` และอีก ${entry.usedIn.length - 3}` : ""}`, fix: buildLink("สร้าง BOM") },
       { id: "rbCompound", title: "เส้นยาง (RB) ที่ยังไม่มีสูตรยาง", hint: "", list: audit.rbCompound, detail: (entry) => entry.reasons.map((reason) => reasonText[reason]).join(" · "), fix: buildLink("แก้ BOM") },
+      { id: "rbCut", title: "ปริมาณเส้นยางขัดกับข้อมูลการตัด", hint: "ปริมาณในบรรทัดต่างจากที่ข้อมูลการตัดของเส้นยางบอกเกิน 1% (เช่น ตัดได้ 10 ชิ้นต่อเส้น ควรใช้ 0.1 เส้นต่อ 1 ชิ้น) แก้ปริมาณในบรรทัดให้ตรง หรือแก้ข้อมูลการตัดที่เส้นยางถ้าข้อมูลการตัดผิด", list: audit.rbCut, detail: (entry) => `${entry.child.code}: ใช้ ${rules.fmtQty(entry.qty)} ${rules.uomLabel(entry.child.uom)} ต่อ 1 ${rules.uomLabel(entry.item.uom)} · ข้อมูลการตัดบอก ${rules.fmtQty(entry.expected)} ${rules.uomLabel(entry.child.uom)}`, fix: buildLink("แก้ BOM") },
       { id: "fgNoBom", title: "สินค้า (FG) ที่ยังไม่มี BOM", hint: "", list: audit.fgNoBom, detail: null, fix: buildLink("สร้าง BOM") },
       { id: "uomOther", title: "หน่วยนับเป็น “หน่วยอื่น”", hint: "หน่วยที่ระบบไม่รู้จักตอนนำเข้า เลือกหน่วยที่ถูกต้อง", list: audit.uomOther, detail: null, fix: editButton("แก้หน่วย") },
       { id: "generated", title: "รหัสที่ระบบสร้างให้ (XP-…)", hint: "ชิ้นทำเองที่ชีตไม่มีรหัส ตรวจชื่อและชนิดให้ถูกต้อง", list: audit.generated, detail: null, fix: editButton("แก้ข้อมูล") },
@@ -2158,45 +2159,95 @@
     const parsed = fgs.map((item) => ({ item, ...rules.parseFgCode(item.code) }));
     const bases = [...new Set(parsed.map((entry) => entry.base))].sort();
     const baseOptions = bases.map((base) => ({ value: base, label: `${base} · ${parsed.find((entry) => entry.base === base).item.name.slice(0, 40)}` }));
-    const pkgOptions = [...new Set([...rules.PACKAGES, ...parsed.map((entry) => entry.pkg).filter(Boolean)])].map((pkg) => ({ value: pkg, label: `(${pkg})` }));
-    const colorOptions = [...new Set([...rules.COLOR_SETS, ...parsed.map((entry) => entry.colorSet).filter(Boolean)])].map((set) => ({ value: set, label: set }));
+    // ก่อนเลือกฐานรหัส: ทุกแพ็กเกจ/ชุดสีที่รู้จัก · เลือกฐานแล้ว: เฉพาะที่ฐานนั้นนิยามไว้ (เมนู "ชุดสี / แพ็กเกจ") หรือมีสินค้าของฐานนั้นใช้อยู่ (ตัวเลือกของสินค้าอื่นสร้างสินค้าที่บอกแพ็กและสีผิด)
+    const sorted = (values, known) => [...new Set(values)].sort((a, b) => (known.indexOf(a) + 1 || 99) - (known.indexOf(b) + 1 || 99) || a.localeCompare(b));
+    const pkgOptions = (base) => sorted(base ? [...(data.packages ?? []).filter((entry) => entry.base === base).map((entry) => entry.code), ...parsed.filter((entry) => entry.base === base).map((entry) => entry.pkg).filter(Boolean)] : [...rules.PACKAGES, ...parsed.map((entry) => entry.pkg).filter(Boolean)], rules.PACKAGES).map((pkg) => ({ value: pkg, label: `(${pkg})` }));
+    const colorOptions = (base) => sorted(base ? [...(data.colorSets ?? []).filter((entry) => entry.base === base).map((entry) => entry.code), ...parsed.filter((entry) => entry.base === base).map((entry) => entry.colorSet).filter(Boolean)] : [...rules.COLOR_SETS, ...parsed.map((entry) => entry.colorSet).filter(Boolean)], rules.COLOR_SETS).map((set) => ({ value: set, label: set }));
+    const optionsHtml = (rows) => `<option value="">ไม่ระบุ</option>${rows.map((option) => `<option value="${attr(option.value)}">${esc(option.label)}</option>`).join("")}`;
     const order = data.orders.find((entry) => entry.id === orderId);
     const body = `<form novalidate id="bom-order-item-form" data-rf-form="addOrderItem" data-rf-args="${attr(JSON.stringify({ orderId }))}" data-rf-success="เพิ่มสินค้าแล้ว">
       ${reopenCallout(ctx, order)}${openPoCallout(ctx, order)}
       <div class="rf-grid rf-g3">
         ${ui.field("ฐานรหัสสินค้า", ui.select("base", baseOptions, { placeholder: "เลือกฐานรหัส…", extra: "data-bom-part" }), { required: true })}
-        ${ui.field("แพ็กเกจ", ui.select("pkg", pkgOptions, { placeholder: "ไม่ระบุ", extra: "data-bom-part" }))}
-        ${ui.field("ชุดสี", ui.select("colorSet", colorOptions, { placeholder: "ไม่ระบุ", extra: "data-bom-part" }))}
+        ${ui.field("แพ็กเกจ", ui.select("pkg", pkgOptions(""), { placeholder: "ไม่ระบุ", extra: "data-bom-part" }))}
+        ${ui.field("ชุดสี", ui.select("colorSet", colorOptions(""), { placeholder: "ไม่ระบุ", extra: "data-bom-part" }))}
       </div>
       <div class="rf-callout is-info" role="note" data-bom-preview><span class="rf-callout-ico" aria-hidden="true">${pages.icon("orders")}</span><div class="rf-callout-body">เลือกฐานรหัสเพื่อดูรหัสเต็ม</div></div>
+      <div class="bom-add-new" data-new-fg hidden>
+        <div class="rf-callout is-warn" role="note" data-new-fg-warn hidden><div class="rf-callout-body" data-new-fg-warn-text></div></div>
+        ${ui.field("ชื่อสินค้าใหม่", ui.input("name", { extra: 'maxlength="120" data-new-fg-name disabled' }), { required: true })}
+        <label class="bom-confirm-line"><input type="checkbox" data-new-fg-confirm> <span>ยืนยันสร้างสินค้าใหม่ด้วยชื่อนี้และเพิ่มในใบ</span></label>
+      </div>
       ${ui.field("จำนวนสั่ง", ui.input("qty", { type: "number", step: "any", min: 1, required: true }), { required: true })}
       <p class="small muted">ยังไม่มีสินค้านี้? สร้างที่เมนู “สินค้า” ${ui.link("เปิด", ctx.url(pages.find ? "find" : "build"))}</p>
     </form>`;
     const bind = (dialog) => {
       const preview = dialog.querySelector("[data-bom-preview]");
       const parts = [...dialog.querySelectorAll("[data-bom-part]")];
+      const panel = dialog.querySelector("[data-new-fg]");
+      const warnBox = dialog.querySelector("[data-new-fg-warn]");
+      const warnNode = dialog.querySelector("[data-new-fg-warn-text]");
+      const nameInput = dialog.querySelector("[data-new-fg-name]");
+      const confirmBox = dialog.querySelector("[data-new-fg-confirm]");
+      const submit = dialog.querySelector("[data-orderadd-submit]");
+      let lastNew = "";
+      // รหัสที่ยังไม่มี = สร้างสินค้าใหม่จากต้นแบบ: ต้องตั้งชื่อและติ๊กยืนยันก่อนปุ่มเพิ่มจะกดได้ (ชื่อที่แนะนำไม่ต่อป้ายท้ายชื่อต้นแบบที่บรรยายแพ็กและสีของมันเองอยู่แล้ว)
+      const paintNew = (info) => {
+        if (!panel) return;
+        panel.hidden = !info;
+        if (nameInput) { nameInput.disabled = !info; nameInput.required = Boolean(info); }
+        if (info && info.code !== lastNew && nameInput) nameInput.value = rules.suggestFgName(info.source, info.pkg, info.colorSet).slice(0, 120);
+        if (info && info.code !== lastNew && confirmBox) confirmBox.checked = false;
+        lastNew = info?.code ?? "";
+        if (warnNode) warnNode.innerHTML = info ? info.warnings.map((text) => `<p>${esc(text)}</p>`).join("") : "";
+        if (warnBox) warnBox.hidden = !info?.warnings.length;
+        if (submit) submit.disabled = Boolean(info) && !confirmBox?.checked;
+      };
+      // เลือกฐานรหัสใหม่: ตัวเลือกแพ็กเกจ/ชุดสีเปลี่ยนตามฐาน ค่าที่เลือกไว้คงอยู่ถ้ายังอยู่ในรายการ
+      const refill = (select, rows) => {
+        if (!select) return;
+        const keep = String(select.value ?? "");
+        select.innerHTML = optionsHtml(rows);
+        select.value = rows.some((option) => option.value === keep) ? keep : "";
+      };
       const paint = () => {
         const [base, pkg, colorSet] = parts.map((node) => String(node.value ?? "").trim());
         const bodyNode = preview?.querySelector?.(".rf-callout-body");
         if (!preview || !bodyNode) return;
-        if (!base) { bodyNode.textContent = "เลือกฐานรหัสเพื่อดูรหัสเต็ม"; preview.className = "rf-callout is-info"; return; }
+        if (!base) { bodyNode.textContent = "เลือกฐานรหัสเพื่อดูรหัสเต็ม"; preview.className = "rf-callout is-info"; paintNew(null); return; }
         const code = rules.buildFgCode(base, pkg, colorSet);
         const item = itemOf(ctx, code);
         if (item) {
           const bom = approvedBomOf(ctx, item.code);
           bodyNode.textContent = `${code} · ${item.name} · ${bom ? `BOM Rev.${bom.revision} ${bom.lines.length} บรรทัด` : "ยังไม่มี BOM"}`;
           preview.className = `rf-callout ${bom ? "is-good" : "is-warn"}`;
+          paintNew(null);
           return;
         }
         const siblings = ctx.helpers.siblingsOf(ctx.data, base);
         const source = ctx.helpers.pickSibling(siblings, pkg.toUpperCase(), colorSet.toUpperCase());
         bodyNode.textContent = source ? `${code} ยังไม่มีในทะเบียนชิ้นงาน — จะสร้างจาก BOM ของ ${source.code} (Rev.${approvedBomOf(ctx, source.code)?.revision ?? "-"}) เมื่อกดเพิ่ม` : `ไม่มีฐานรหัส ${base} ที่มี BOM`;
         preview.className = `rf-callout ${source ? "is-warn" : "is-bad"}`;
+        if (!source) { paintNew(null); return; }
+        const own = rules.parseFgCode(source.code);
+        const warnings = [];
+        if (pkg && pkg.toUpperCase() !== own.pkg && !ctx.helpers.packageOf(ctx.data, base, pkg.toUpperCase())) warnings.push(`ฐาน ${base} ยังไม่มีนิยามแพ็กเกจ ${pkg} บรรจุภัณฑ์จึงเป็นของ ${source.code} (นิยามได้ที่เมนู “ชุดสี / แพ็กเกจ”)`);
+        if (colorSet && colorSet.toUpperCase() !== own.colorSet && !ctx.helpers.colorSetOf(ctx.data, base, colorSet.toUpperCase())) warnings.push(`ฐาน ${base} ยังไม่มีนิยามชุดสี ${colorSet} สีจึงเป็นของ ${source.code} (นิยามได้ที่เมนู “ชุดสี / แพ็กเกจ”)`);
+        paintNew({ code, source, pkg: pkg.toUpperCase(), colorSet: colorSet.toUpperCase(), warnings });
       };
-      parts.forEach((node) => node.addEventListener("change", paint));
+      const [baseNode, pkgNode, setNode] = parts;
+      baseNode?.addEventListener("change", () => {
+        const base = String(baseNode.value ?? "").trim();
+        refill(pkgNode, pkgOptions(base));
+        refill(setNode, colorOptions(base));
+        paint();
+      });
+      parts.slice(1).forEach((node) => node.addEventListener("change", paint));
+      confirmBox?.addEventListener("change", () => { if (submit) submit.disabled = !confirmBox.checked; });
+      if (String(baseNode?.value ?? "").trim()) { refill(pkgNode, pkgOptions(String(baseNode.value).trim())); refill(setNode, colorOptions(String(baseNode.value).trim())); }
       paint();
     };
-    return { html: ui.dialog("orderItemAdd", `เพิ่มสินค้าใน ${orderId}`, body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-order-item-form">เพิ่ม</button>` }), bind };
+    return { html: ui.dialog("orderItemAdd", `เพิ่มสินค้าใน ${orderId}`, body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-order-item-form" data-orderadd-submit>เพิ่ม</button>` }), bind };
   };
   dialogs.stockCount = (ctx, { orderId, itemCode }) => {
     const { ui } = ctx;
@@ -2548,12 +2599,30 @@
     const job = ctx.data.jobs.find((entry) => entry.id === jobId);
     if (!job || ctx.helpers.isLinkedJob?.(job)) return null;
     const remaining = Math.max(0, job.qtyPlanned - job.qtyDone);
+    // แผนกก่อนหน้าส่งมาพอสำหรับกี่หน่วย (null = ไม่รู้) · เตือนเมื่อยอดรวมที่รายงานเกิน ไม่ห้ามบันทึก
+    const supply = rules.jobSupplyLimit(ctx.data, job);
     const body = `<form novalidate id="bom-job-form" data-rf-form="reportJob" data-rf-args="${attr(JSON.stringify({ jobId }))}" data-rf-success="บันทึกผลผลิต {result}">
       <p class="muted small">${esc(`${job.itemCode} · ${job.name} · แผน ${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)} · ทำแล้ว ${rules.fmtQty(job.qtyDone)} · เหลือ ${rules.fmtQty(remaining)}`)}</p>
-      <div class="rf-grid rf-g2">${ui.field(`จำนวนดี (${uomText(ctx, job.uom)})`, ui.input("qtyDone", { type: "number", step: "any", min: 0, value: remaining ? String(Math.round(remaining * 1e4) / 1e4) : "" }))}${ui.field("จำนวนเสีย", ui.input("qtyReject", { type: "number", step: "any", min: 0, value: "0" }))}</div>
+      <div class="rf-grid rf-g2">${ui.field(`จำนวนดี (${uomText(ctx, job.uom)})`, ui.input("qtyDone", { type: "number", step: "any", min: 0, value: remaining ? String(Math.round(remaining * 1e4) / 1e4) : "", extra: "data-job-qty" }))}${ui.field("จำนวนเสีย", ui.input("qtyReject", { type: "number", step: "any", min: 0, value: "0" }))}</div>
+      ${supply === null ? "" : '<div class="rf-callout is-warn" role="note" data-job-supply hidden><div class="rf-callout-body"></div></div>'}
       ${ui.field("หมายเหตุ", ui.input("note", { placeholder: "เช่น รอบรีดที่ 2" }))}
     </form>`;
-    return { html: ui.dialog("jobReport", `รายงานผล ${job.id}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-job-form">บันทึก</button>` }) };
+    const bind = (dialog) => {
+      const qtyInput = dialog.querySelector("[data-job-qty]");
+      const box = dialog.querySelector("[data-job-supply]");
+      if (!qtyInput || !box || supply === null) return;
+      const paint = () => {
+        const entered = Number(qtyInput.value) || 0;
+        const total = Number(job.qtyDone) + entered;
+        const over = entered > 0 && total > supply + 1e-6;
+        box.hidden = !over;
+        const bodyNode = box.querySelector(".rf-callout-body");
+        if (bodyNode) bodyNode.textContent = over ? `แผนกก่อนหน้าส่งมาพอสำหรับ ${rules.fmtQty(supply)} ${uomText(ctx, job.uom)} แต่ยอดรวมที่รายงานจะเป็น ${rules.fmtQty(total)}` : "";
+      };
+      qtyInput.addEventListener("input", paint);
+      paint();
+    };
+    return { html: ui.dialog("jobReport", `รายงานผล ${job.id}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-job-form">บันทึก</button>` }), bind };
   };
   // ปิดงานที่จะไม่มีใครรายงานแล้ว (ฝ่ายวางแผน ผู้จัดการ ผู้ดูแลระบบ): งานเป็นเสร็จโดยไม่เพิ่มยอด เหตุผลเก็บที่รายงานของงานและบันทึกการใช้งาน
   // ไม่มีกับงานของซื้อ (ST เบิกจ่ายที่ใบ) · ใบต้องอยู่ระหว่างผลิต · ส่งทันทีเมื่อกดปิดงาน (ฟอร์มใน dialog ตามแบบเดียวกับรายงานผล)
