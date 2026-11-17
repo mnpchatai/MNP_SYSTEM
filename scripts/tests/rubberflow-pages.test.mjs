@@ -177,6 +177,20 @@ test("the dashboard, stations and quality pages show the prototype's facts from 
   assert.match(extrusion, /data-rf-form="recordExtrusion"/);
   assert.match(extrusion, new RegExp(`<option value="${transferId}">`), "the received transfer is offered as the source");
   assert.match(extrusion, /data-spec data-lsl="2.38" data-usl="2.62"/, "spec inputs carry their limits");
+  // ช่องที่ action บังคับกรอก (ความหนา ความกว้าง น้ำหนักต่อเมตร) มี (จำเป็น) · มาตรฐานเป็นของหัวดาย Door Seal เท่านั้น
+  for (const label of ["ความหนา (mm)", "ความกว้าง (mm)", "น้ำหนักต่อเมตร (g/m)"]) assert.ok(extrusion.includes(`${label} <span class="field-required">(จำเป็น)</span>`), `${label} is marked required`);
+  assert.match(extrusion, /<small class="rf-hint" data-spec-hint>มาตรฐาน 2.5 ± 0.12 mm<\/small>/, "a Door Seal die (the default) shows the standard");
+  assert.match(extrusion, /data-spec-gate="dieId"/, "the page repaints the standard when the die changes");
+  const dies = env.store.data().molds.filter((mold) => mold.kind === "die");
+  const doorSeal = dies.find((mold) => mold.id === "DIE-DS-01");
+  doorSeal.id = "DIE-XX-01";
+  const otherDie = await env.render("p=extrusion");
+  doorSeal.id = "DIE-DS-01";
+  assert.match(otherDie, /<small class="rf-hint" data-spec-hint hidden>มาตรฐาน 2.5/, "a die that is not a Door Seal die shows no standard");
+  assert.ok(env.context.MNP_RUBBERFLOW_RULES.hasExtrusionStandard("DIE-DS-02"));
+  assert.ok(!env.context.MNP_RUBBERFLOW_RULES.hasExtrusionStandard("DIE-OR-03") && !env.context.MNP_RUBBERFLOW_RULES.hasExtrusionStandard(undefined));
+  // .rf-hint ตั้ง display:block จึงต้องมีกฎ [hidden] ของตัวเอง ไม่งั้น attribute hidden ไม่ซ่อนข้อความจริง
+  assert.match(fs.readFileSync("styles.css", "utf8"), /\.rf-hint\[hidden\]\s*\{\s*display:\s*none;?\s*\}/, "a hidden spec hint is really hidden");
   const finishing = await env.render("p=finishing");
   assert.match(finishing, /ด่านรับมอบ/, "nothing received at finishing yet");
   assert.doesNotMatch(finishing, /data-rf-form="recordFinishing"/);
@@ -619,9 +633,15 @@ test("purchasing screens: the check opens one dialog (escaped, safety stock and 
   assert.match(fromRequisition.html, /ขาดจากใบเบิก/);
   assert.match(fromRequisition.html, /<td class="right muted">-<\/td>/, "a part the requisition shortage does not know is shown as a dash");
   // the stock status is separate columns (need, on hand, reserved, on order) + shortage; the signed "available" is not a column any more
-  for (const label of ["ต้องใช้ (kg)", "คงเหลือในคลัง (kg)", "จองแล้ว (kg)", "สั่งค้างรับ (kg)", "ขาด (kg)"]) assert.ok(html.includes(`>${label}</th>`), label);
+  // opened from a PI the columns are named like step 2 of the order page (มีในคลัง · สั่งแล้วรอรับ · รวมทุกใบขาด); without a PI the shortage is plain "ขาด"
+  for (const label of ["ต้องใช้ (kg)", "มีในคลัง (kg)", "จองแล้ว (kg)", "สั่งแล้วรอรับ (kg)", "รวมทุกใบขาด (kg)"]) assert.ok(html.includes(`>${label}</th>`), label);
+  assert.doesNotMatch(html, /คงเหลือในคลัง|สั่งค้างรับ|>ขาด \(kg\)/);
+  assert.ok(fromRequisition.html.includes(">ขาด (kg)</th>") && !fromRequisition.html.includes("รวมทุกใบขาด"), "no PI: the shortage column keeps its plain name");
   assert.doesNotMatch(html, /พร้อมใช้ \(kg\)/);
-  assert.match(html, /<th class="right" title="[^"]+">จองแล้ว \(kg\)<\/th>/, "the header explains what is reserved in a tooltip");
+  // "จองแล้ว" says it includes earlier drafts only when opened from a draft order (draftOrders given); a released PI or a requisition counts no drafts
+  assert.ok(!html.includes("ใบร่างที่คำนวณวัตถุดิบก่อนใบนี้") && !fromRequisition.html.includes("ใบร่างที่คำนวณวัตถุดิบก่อนใบนี้"), "not from a draft: no draft note on the reserved column");
+  const fromDraft = dialogs.purchase(env.ctx(), { rows: [{ materialCode: "ZNO", needKg: 10, availableKg: 6, shortageKg: 4 }], sourcePi: "DEMO-1", draftOrders: [{ id: "DEMO-1" }] });
+  assert.match(fromDraft.html, /<th class="right" title="[^"]*\+ ใบร่างที่คำนวณวัตถุดิบก่อนใบนี้">จองแล้ว \(kg\)<\/th>/, "opened from a draft order, the reserved column says it includes earlier drafts");
   // reserved by old open requisitions and by other open WOs is one column with the split in a tooltip; the signed balance (on hand − reserved + on order) stays stored for the order line
   const crowded = dialogs.purchase(env.ctx(), { rows: [{ materialCode: "ZNO", needKg: 225.598, onHandKg: 100, reservedKg: 260.787, requisitionKg: 5, otherNeedKg: 255.787, onOrderKg: 0, availableKg: -160.787, shortageKg: 386.385 }] });
   assert.ok(crowded.html.includes('<td class="right rf-mono">100.000</td>'), "on hand");
@@ -873,8 +893,8 @@ test("a purchase order line shows the part name next to its code (list and recei
 // ---------- ฟอร์ม RubberFlow/BOM: novalidate + ข้อความไทยใต้ช่อง ----------
 // กล่องจำลองแค่พอให้ ui.formErrors อ่านได้: ช่อง (input/select) อยู่ใน .field ที่มี label
 const fakeForm = (specs) => {
-  const controls = specs.map(({ tag = "INPUT", type = "text", name = "x", value = "", required = false, attrs = {}, label = "", marked = false, badInput = false, disabled = false, readOnly = false, role = null, hiddenAncestor = false }) => {
-    const container = { dataset: {}, querySelector: (selector) => (selector === "label" ? (label ? { textContent: label } : null) : selector === ".field-required" && marked ? {} : null) };
+  const controls = specs.map(({ tag = "INPUT", type = "text", name = "x", value = "", required = false, attrs = {}, label = "", srOnly = "", marked = false, badInput = false, disabled = false, readOnly = false, role = null, hiddenAncestor = false }) => {
+    const container = { dataset: {}, querySelector: (selector) => (selector === "label" ? (label ? { textContent: label, querySelector: (inner) => (inner === ".sr-only" && srOnly ? { textContent: srOnly } : null) } : null) : selector === ".field-required" && marked ? {} : null) };
     const all = { ...attrs, ...(role ? { role } : {}) };
     return { tagName: tag, type, name, value, required, disabled, readOnly, validity: { badInput }, getAttribute: (key) => (key in all ? all[key] : null), closest: (selector) => (selector === ".field" ? container : null), parentElement: { closest: () => (hiddenAncestor ? {} : null) }, container };
   });
@@ -888,7 +908,7 @@ const withSteps = () => {
 };
 
 test("every form of RubberFlow and BOM is novalidate, so the browser never shows its English bubble", () => {
-  const files = ["modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js", "modules/bom-pages.js", "modules/module-bom.js"];
+  const files = ["modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js"];
   let count = 0;
   for (const file of files) {
     for (const line of fs.readFileSync(file, "utf8").split("\n")) {
@@ -929,7 +949,10 @@ test("form checks: Thai messages for required, number, range and step, one per f
   assert.deepEqual(messages([{ type: "date", name: "startDate", label: "วันเริ่มผลิต (จำเป็น)", marked: true }]), ["กรุณาเลือกวันเริ่มผลิต"], "the Thai calendar drops required, the (จำเป็น) mark still counts");
   assert.deepEqual(messages([{ type: "date", name: "due", label: "วันกำหนดส่ง" }]), [], "a date without the mark stays optional");
   // ช่องที่ไม่มี label (ช่องในตาราง): ใช้ aria-label แล้วข้อความกลาง ๆ
-  assert.deepEqual(messages([{ type: "number", name: "qty[]", value: "-1", attrs: { min: "0", step: "any", "aria-label": "สต็อกขั้นต่ำ B25" } }]), ["สต็อกขั้นต่ำ B25ต้องไม่น้อยกว่า 0"]);
+  assert.deepEqual(messages([{ type: "number", name: "qty[]", value: "-1", attrs: { min: "0", step: "any", "aria-label": "สต็อกขั้นต่ำ B25" } }]), ["สต็อกขั้นต่ำ B25 ต้องไม่น้อยกว่า 0"], "a name ending in a code is spaced from the rule");
+  assert.deepEqual(messages([{ type: "number", name: "qty[]", value: "9", attrs: { max: "5", step: "any", "aria-label": "จำนวนที่รับเข้าคลัง FG-1" } }]), ["จำนวนที่รับเข้าคลัง FG-1 ต้องไม่เกิน 5"], "the over-max message from an aria-label reads as separate words");
+  // label ที่มีข้อความซ่อน + หน่วยข้างช่อง (ช่องจำนวนรับเข้าคลัง): ชื่อช่องมาจากข้อความซ่อนเท่านั้น ไม่พ่วงหน่วย
+  assert.deepEqual(messages([{ type: "number", name: "qty[]", value: "9", label: "จำนวนที่รับเข้าคลัง FG-1set", srOnly: "จำนวนที่รับเข้าคลัง FG-1", attrs: { max: "5", step: "any" } }]), ["จำนวนที่รับเข้าคลัง FG-1 ต้องไม่เกิน 5"], "the unit next to the box is not part of its name");
   assert.deepEqual(messages([{ name: "z", required: true }]), ["กรุณาระบุข้อมูลในช่องนี้"]);
 
   // ทุกช่องพร้อมกัน เรียงตามหน้าจอ ช่องละข้อความเดียว (ผิดทั้งว่างและเกินช่วงก็บอกข้อแรก)

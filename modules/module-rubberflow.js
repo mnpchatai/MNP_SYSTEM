@@ -321,15 +321,21 @@
 
   function bindSpecInputs(root) {
     root.querySelectorAll("[data-spec]").forEach((input) => {
+      // data-spec-gate = ชื่อ <select> ในฟอร์มเดียวกันที่มาตรฐานนี้ใช้กับตัวเลือกบางตัว (หัวดาย DIE-DS-*) · ตัวอื่น = ไม่มีมาตรฐาน ซ่อนข้อความและไม่ลงสี
+      const gate = input.dataset.specGate ? input.form?.elements?.[input.dataset.specGate] : null;
+      const hint = input.closest(".field")?.querySelector("[data-spec-hint]");
       const paint = () => {
+        const open = !input.dataset.specGate || (Boolean(gate) && rules.hasExtrusionStandard(gate.value));
+        if (hint) hint.hidden = !open;
         const lsl = input.dataset.lsl === "" ? undefined : Number(input.dataset.lsl);
         const usl = input.dataset.usl === "" ? undefined : Number(input.dataset.usl);
-        const filled = input.value !== "";
+        const filled = open && input.value !== "";
         const ok = filled && rules.inSpec(input.value, { min: lsl, max: usl });
         input.classList.toggle("rf-ok", filled && ok);
         input.classList.toggle("rf-out", filled && !ok);
       };
       input.addEventListener("input", paint);
+      gate?.addEventListener("change", paint);
       paint();
     });
   }

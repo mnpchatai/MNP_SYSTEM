@@ -2206,6 +2206,7 @@ test("fg stock: only the planning group sets how much of a product a draft takes
   A.setStockCount(d, { orderId: DRAFT, itemCode: part, qty: 1 }, ctx("st"));
   A.setStockCounts(d, { orderId: DRAFT, counts: [{ itemCode: part, qty: 2 }] }, ctx("wh"));
   assert.equal(draft.stockCounts[part], 2);
+  assert.equal(d.audit[0].action, "นับคงคลังตามใบ", "counting another item keeps the count wording");
   // the amount: not above the stock available to this draft, not above the ordered quantity, not on a released order
   rejects(() => A.setStockCount(d, { orderId: DRAFT, itemCode: HL, qty: 21 }, planner()), /มี 20.*ใช้ 21 ไม่ได้/);
   rejects(() => A.setStockCount(d, { orderId: DRAFT, itemCode: HL, qty: -1 }, planner()), /มากกว่า 0/);
@@ -2213,7 +2214,10 @@ test("fg stock: only the planning group sets how much of a product a draft takes
   const small = extraDraft(d, "N-S1", 5);
   rejects(() => A.setStockCount(d, { orderId: small.id, itemCode: HL, qty: 6 }, planner()), /ไม่เกินจำนวนสั่ง 5/);
   rejects(() => A.setStockCount(d, { orderId: SRC, itemCode: HL, qty: 1 }, planner()), /ปล่อยผลิตแล้ว/);
+  // the audit row of a product's use-from-stock says so (the action key stays setStockCount)
   A.setStockCount(d, { orderId: DRAFT, itemCode: HL, qty: 20 }, planner());
+  assert.equal(d.audit[0].action, "ใช้จากสต็อกสินค้าสำเร็จรูป", "a product's use-from-stock");
+  assert.match(d.audit[0].detail, new RegExp(`${DRAFT} ${HL.replace(/[()]/g, "\\$&")} = 20`));
   assert.equal(draft.stockCounts[HL], 20);
   A.setStockCount(d, { orderId: DRAFT, itemCode: HL, qty: 0 }, { now: NOW, user: user("manager") });
   assert.equal(draft.stockCounts[HL], 0, "a manager sets it too, and 0 is allowed");

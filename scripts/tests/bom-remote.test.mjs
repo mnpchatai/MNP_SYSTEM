@@ -367,7 +367,7 @@ test("orders, customers and jobs are saved through the database: one call per co
   const [job] = release.changes.jobs.upsert;
   assert.match(job.id, /^JOB-\d\d-0001-[0-9a-z]{6}$/);
   assert.equal(job.dept, "PK");
-  assert.deepEqual(release.audit.map((entry) => entry.action), ["ระเบิด BOM", "ปล่อยผลิต"], "oldest first");
+  assert.deepEqual(release.audit.map((entry) => entry.action), ["คำนวณวัตถุดิบ", "ปล่อยผลิต"], "oldest first");
   assert.equal(env.store.data().jobs.length, 2, "the PK job and the ST job of the purchased part");
   assert.deepEqual(release.changes.jobs.upsert.map((row) => [row.dept, row.kind, row.itemCode, row.qtyPlanned]), [["PK", "FG", "FG-TEST-01", 5], ["ST", "PURCHASED", "P-TEST-01", 10]], "the purchased part is a job with its gross requirement (5 sets × 2)");
 
@@ -2158,7 +2158,7 @@ test("a planner opens a PI, releases it, a department reports, counts are saved 
   await settle();
   assert.ok(env.log.renders > renders, "the page is redrawn when the audit arrives");
   html = await env.render("p=audit");
-  for (const text of ["เปิดใบสั่งผลิต", "เพิ่มสินค้าในใบสั่งผลิต", "ระเบิด BOM", "นับคงคลังตามใบ", "ปล่อยผลิต", "รายงานผลผลิต", "รับสินค้าเข้าคลัง"]) assert.match(html, new RegExp(text), text);
+  for (const text of ["เปิดใบสั่งผลิต", "เพิ่มสินค้าในใบสั่งผลิต", "คำนวณวัตถุดิบ", "นับคงคลังตามใบ", "ปล่อยผลิต", "รายงานผลผลิต", "รับสินค้าเข้าคลัง"]) assert.match(html, new RegExp(text), text);
   assert.match(html, /ปกรณ์ ศรีวัฒนา/, "the user comes from the database row");
   assert.match(html, /data-bom-audit-reload/);
   assert.doesNotMatch(html, /undefined|NaN|\[object Object\]/);

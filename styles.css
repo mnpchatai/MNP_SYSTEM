@@ -2510,6 +2510,7 @@ button.rf-badge:hover, a.rf-badge:hover { border-color: var(--m500, var(--primar
 .rf-whys { margin: 4px 0 0; padding-left: 20px; }
 .rf-alert-list { max-height: 330px; overflow-y: auto; }
 .rf-hint { display: block; }
+.rf-hint[hidden] { display: none; }
 .rf-field .rf-input, .rf-field .rf-select, .rf-field .rf-textarea { width: 100%; }
 .rf-textarea { min-height: 70px; }
 
@@ -3078,7 +3079,12 @@ table.bom-tree td.right { white-space: nowrap; }
 .bom-step.is-now .bom-step-no { color: var(--m700, var(--primary-ink)); }
 .bom-step.is-off > div { opacity: .6; }
 .bom-step > a:hover { border-color: var(--m500, var(--primary)); }
-@media (max-width: 760px) { .bom-steps { grid-template-columns: minmax(0, 1fr); gap: 4px; } .bom-step > a, .bom-step > div { grid-template-columns: 64px minmax(0, 1fr); align-items: baseline; column-gap: 8px; } .bom-step .small { grid-column: 2; } .bom-step:not(.is-now) .small { display: none; } }
+/* มือถือ: แถวเดียวเลื่อนไปข้าง (ไม่กินความสูงหกแถว) · ขั้นปัจจุบันถูกเลื่อนมากลางแถบตอนวาดหน้า (modules/bom-hub.js) · ใช้ .bom-steps > .bom-step เพราะ .bom-step ยังเป็น class ของช่องกรอกขั้นที่ในตาราง BOM */
+@media (max-width: 760px) {
+  .bom-steps { display: flex; gap: 8px; min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; padding-bottom: 4px; }
+  .bom-steps > .bom-step { flex: 0 0 auto; min-width: 112px; max-width: 80vw; scroll-snap-align: center; }
+  .bom-steps > .bom-step:not(.is-now) .small { display: none; }
+}
 .bom-short td { background: var(--danger-soft); }
 .bom-short-text { color: var(--danger-ink); }
 .bom-ok-text { color: var(--success-ink); font-weight: 600; }
