@@ -817,7 +817,7 @@ select is(public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('up
   'a work order linked to a BOM job closes without a produced quantity (the feedback moved to the transfer receipt)');
 select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L1-RB'), 0::numeric,
   'closing a linked work order writes nothing to the BOM job');
-select is((select jsonb_array_length(j -> 'reports') from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L1-RB'), 0, 'and appends no report');
+select is((select jsonb_array_length(j -> 'reports') from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L1-RB'), 1, 'and appends no report (only the hold reason entered earlier is there)');
 select is(public.app_bom_master() ->> 'version', current_setting('test.bv1'), 'and the BOM counter did not move');
 select ok(not exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:setOrderStatus'), 'the BOM history has no feedback row');
 select is((select w ->> 'producedQty' from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-11'), '0',

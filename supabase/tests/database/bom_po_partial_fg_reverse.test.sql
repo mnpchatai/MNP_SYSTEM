@@ -350,7 +350,7 @@ select throws_ok(format($$ select b2_t.reverse('251128-26001', %L) $$, current_s
 select throws_ok(format($$ select b2_t.reverse('251128-26003', %L) $$, current_setting('test.r3b')), 'BOM_FG_EXCEEDS', 'a receipt cannot be reversed below what was delivered (reverse the delivery first)');
 -- ย้อนรับ 4: เหลือ 6 >= ส่งมอบ 5 · ใบที่ปิดแล้วมีของไม่ครบ = เปิดกลับ
 select set_config('test.res', b2_t.reverse('251128-26003', current_setting('test.r3a'), '  พิมพ์ผิด ต้องเป็น 40  ')::text, true);
-select is(current_setting('test.res')::jsonb -> 'changes' -> 'fgMoves' -> 'upsert' -> 0 - 'id' - 'at',
+select is((current_setting('test.res')::jsonb -> 'changes' -> 'fgMoves' -> 'upsert' -> 0) - 'id' - 'at',
   jsonb_build_object('orderId', '251128-26003', 'fgCode', 'FG-A', 'kind', 'unreceive', 'qty', 4, 'note', 'พิมพ์ผิด ต้องเป็น 40', 'by', current_setting('test.n_sbx_wh_mgr_t'),
                      'reversesId', current_setting('test.r3a')),
   'the WH manager reverses the receipt of 4: the reversal row names the original, the trimmed reason and the manager');

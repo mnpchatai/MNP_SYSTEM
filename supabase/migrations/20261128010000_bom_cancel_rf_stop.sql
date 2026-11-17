@@ -82,7 +82,7 @@ begin
     select * into v_wo from public.rf_orders o where o.is_test and o.wo_no = (v_job.external_ref ->> 'woId') and o.source_job_no = v_job.job_no for update;
     if not found then continue; end if;
     -- planned / released = ยกเลิก · in_progress / on_hold = หยุด (สถานะ cancelled เหมือนกัน ยอดผลิต ล็อต และบันทึกผสม/ฉีด/อบ/ตกแต่งคงอยู่ทั้งหมด)
-    -- completed = ไม่มีอะไรให้หยุด คงเดิม · cancelled อยู่แล้ว = ข้าม · ไม่ปฏิเสธด้วย BOM_RF_ORDER_STARTED อีก (20261128010000)
+    -- completed = ไม่มีอะไรให้หยุด คงเดิม · cancelled อยู่แล้ว = ข้าม · ไม่ปฏิเสธ WO ที่เริ่มผลิตแล้วอีก (20261128010000)
     if v_wo.status in ('planned', 'released', 'in_progress', 'on_hold') then
       update public.rf_orders set status = 'cancelled', cancelled_at = now(), updated_at = now() where id = v_wo.id;
       v_cancelled := v_cancelled || v_wo.wo_no;

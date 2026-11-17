@@ -246,7 +246,8 @@ select is(pr_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', js
           -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'cancelled', 'after the undo the PI has no work with output and can be cancelled');
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select pr_t.undo() $$, 'BOM_INVALID_TRANSITION', 'a cancelled PI cannot be undone');
-select throws_ok($$ select pr_t.leftover('[{"itemCode":"P-1","qty":1}]'::jsonb) $$, 'BOM_INVALID_TRANSITION', 'a cancelled PI takes no leftover return');
+-- 20261128010000: ใบที่ยกเลิกคืนของเหลือได้ แต่ใบนี้ยกเลิกการเบิกไปแล้ว ไม่มีของที่เบิกค้างให้คืน
+select throws_ok($$ select pr_t.leftover('[{"itemCode":"P-1","qty":1}]'::jsonb) $$, 'BOM_INVALID_RETURN', 'a cancelled PI with nothing issued has nothing to return');
 select is(pr_t.qty('P-1'), 100::numeric, 'and the stock is as it was');
 
 -- 10. ใบที่ปิดแล้ว: คืนของเหลือได้ แต่ยกเลิกการเบิกจ่ายไม่ได้ ------------------------------------------------
