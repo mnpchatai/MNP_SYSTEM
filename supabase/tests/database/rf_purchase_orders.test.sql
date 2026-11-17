@@ -422,16 +422,19 @@ select throws_ok($$ select rf3_t.recv(rf3_t.receipt_po('PO-20261110-01', 0, 100,
   jsonb_build_array(rf3_t.lot('PO1-A2', 'MAT-A', 100, current_setting('test.exp')::bigint))) $$, 'RF_INVALID_TRANSITION', 'a received quantity cannot be corrected afterwards');
 select is(jsonb_array_length(public.app_rf_master() -> 'materialLots'), 1, 'the refused receipts left no extra lot');
 
--- 6.4 admin รับบรรทัดที่เหลือ (รับตามจริงได้ 33 จากที่สั่ง 35) ใบครบทุกบรรทัด = received
+-- 6.4 admin รับบรรทัดที่เหลือ (รับตามจริงได้ 33 จากที่สั่ง 35): 2 kg ที่ยังไม่มาค้างรับ ใบยัง ordered (20261128020000) แล้ว ST ปิดยอดที่เหลือ ใบครบทุกบรรทัด = received
 select public.app_sandbox_enter(current_setting('test.p_sbx_admin_t')::uuid);
 select set_config('test.res', rf3_t.recv(rf3_t.receipt_po('PO-20261110-01', 1, 33, 'PO1-B', current_setting('test.exp')::bigint),
   jsonb_build_array(rf3_t.lot('PO1-B', 'MAT-B', 33, current_setting('test.exp')::bigint, '{"supplier":"PO-20261110-01"}')))::text, true);
-select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 ->> 'status', 'received', 'the order becomes received once every line is received');
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 ->> 'status', 'ordered', 'a short receipt keeps the order open (the 2 kg not delivered stay on order)');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 -> 'lines' -> 1 ->> 'receivedKg', '33', 'the received quantity can differ from the ordered quantity');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 -> 'lines' -> 1 ->> 'qtyKg', '35', 'and the ordered quantity is kept');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 -> 'lines' -> 1 ->> 'receivedBy', current_setting('test.n_sbx_admin_t'), 'admin can receive too (and the stock lot is written for admin as well)');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'materialLots' -> 'upsert' -> 0 ->> 'qtyKg', '33', 'the lot holds the received quantity');
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select is(public.app_rf_save(jsonb_build_object('purchaseOrders', jsonb_build_object('upsert', jsonb_build_array(rf3_t.po_with('PO-20261110-01', jsonb_build_object('lines',
+  jsonb_set((select p -> 'lines' from jsonb_array_elements(public.app_rf_master() -> 'purchaseOrders') p where p ->> 'id' = 'PO-20261110-01'), '{1,closedRemainder}', '{"reason":"ผู้ขายส่งไม่ครบ ไม่รับส่วนที่เหลือ"}')))))),
+  rf3_t.ver(), 'closePurchaseLine') -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 ->> 'status', 'received', 'ST closes the remaining 2 kg and the order becomes received');
 select throws_ok($$ select rf3_t.recv(rf3_t.receipt_po('PO-20261110-01', 1, 33, 'PO1-B2', current_setting('test.exp')::bigint),
   jsonb_build_array(rf3_t.lot('PO1-B2', 'MAT-B', 33, current_setting('test.exp')::bigint))) $$, 'RF_INVALID_TRANSITION', 'a received order cannot be received again');
 

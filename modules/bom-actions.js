@@ -2,6 +2,7 @@
 // นำเข้าจากชีต · ใบสั่งผลิต (PI) ระเบิด/ปล่อยผลิต · งานรายแผนก · นับคงคลังตามใบ · สต็อกของซื้อ (นับ/เบิกจ่ายรายใบ) · ผูกสูตรยางกับ RubberFlow
 // ทุก action รับ (draft, payload, ctx{now,user}) ทำบนร่างและ throw เมื่อกฎไม่ผ่าน (store บันทึกเฉพาะเมื่อผ่าน)
 // รับสินค้าสำเร็จรูปเข้าคลัง / ส่งมอบลูกค้า / ปิดใบ = แผนก WH หรือผู้ดูแลระบบ (canHandleFg) · ใบปิดเองเมื่อรับครบและทุกงานผลิตเสร็จแล้ว · รับครบก่อนงานผลิตเสร็จ = WH กดปิดใบเมื่องานเสร็จครบ
+// ย้อนการรับเข้า / ส่งมอบที่บันทึกผิด (reverseFg) = ผู้จัดการแผนกคลังสินค้า (WH) หรือผู้ดูแลระบบ (canReverseFg) พร้อมเหตุผล (20261128020000)
 // งานที่จะไม่มีใครรายงานแล้ว ฝ่ายวางแผนปิดงานพร้อมเหตุผล (setJobStatus status done) · งานของใบที่ปิดแล้วไม่ค้างและไม่เลยกำหนด (helpers.isOpenJob)
 // ส่วนที่ PK ผลิตเกินจำนวนสั่งรับเข้าคลังเป็นสต็อกสินค้าสำเร็จรูปได้แม้ใบปิดแล้ว · ใบร่างที่สั่งสินค้าเดียวกันใช้สต็อกนั้นลดงานผลิต (ฝ่ายวางแผนตั้งที่ขั้นตรวจของ หักจริงตอนปล่อยผลิต: ใบที่ปล่อยก่อนได้ก่อน) · ยกเลิก/เปิดใบกลับมาแก้ = คืนสต็อก
 // สิทธิ์ (บทบาทสาธิต ไม่ใช่การควบคุมสิทธิ์ของระบบจริง): สร้าง/แก้ item และ BOM ทุกชั้น = ฝ่ายวางแผน ผู้จัดการ ผู้ดูแล · ไม่มีขั้นอนุมัติ (ตามที่ผู้ใช้ตัดสิน
@@ -51,9 +52,13 @@
   const canCount = (user) => canPlan(user) || user?.role === "st" || user?.role === "wh"; // นับคงคลังของใบร่าง: ฝ่ายวางแผน ผู้จัดการ ผู้ดูแล หรือพนักงานแผนก ST / WH
   // ของซื้อ: งานของซื้อ (ST / PURCHASED) เปลี่ยนผลงานได้ทางเดียวคือ "เบิกจ่ายของซื้อ" ของใบ (issueOrderParts) · เบิกจ่าย = กลุ่มวางแผนหรือแผนก ST · สต็อกขั้นต่ำแก้ได้เฉพาะกลุ่มวางแผน
   const isPartJob = (job) => job?.dept === "ST" && job?.kind === "PURCHASED";
-  // งานที่ยังต้องทำ (กติกาเดียวของงานของฉัน ขั้น 4 ของหน้าใบ หน้างานของแผนก และภาพรวม): ยังไม่ done และใบยังไม่ปิด · งานทุกงานของใบที่ปิดแล้ว (completed)
-  // ไม่นับ เพราะแก้หรือรายงานไม่ได้อีก จึงไม่ค้างและไม่เลยกำหนด (แถวของงานนั้นแสดง "ใบปิดแล้ว" · บรรทัดของซื้อที่เบิกไปบางส่วนคืนของเหลือได้ที่หน้าใบ)
-  const isOpenJob = (d, job) => job.status !== "done" && d.orders.find((order) => order.id === job.orderId)?.status !== "completed";
+  // งานที่ยังต้องทำ (กติกาเดียวของงานของฉัน ขั้น 4 ของหน้าใบ หน้างานของแผนก และภาพรวม): ยังไม่ done และใบยังไม่ปิดหรือถูกยกเลิก · งานทุกงานของใบที่ปิดแล้ว (completed)
+  // หรือยกเลิกแล้ว (cancelled: ยกเลิกไม่ลบงานแล้ว งานคงยอดไว้) ไม่นับ เพราะแก้หรือรายงานไม่ได้อีก จึงไม่ค้างและไม่เลยกำหนด
+  // (แถวของงานนั้นแสดง "ใบปิดแล้ว" / "ใบยกเลิกแล้ว" · บรรทัดของซื้อที่เบิกไปแล้วคืนของเหลือได้ที่หน้าใบ)
+  const CLOSED_ORDER = Object.freeze(["completed", "cancelled"]);
+  const isOpenJob = (d, job) => job.status !== "done" && !CLOSED_ORDER.includes(d.orders.find((order) => order.id === job.orderId)?.status);
+  // งานที่ผูก WO ของ RubberFlow: ยอดดี / เสียมาจาก RubberFlow เท่านั้น (ล็อตตกแต่งที่ผ่าน QC) รายงานผลด้วยมือไม่ได้ (ตรงกับ bom_save_jobs ของ 20261128010000)
+  const isLinkedJob = (job) => Boolean(job?.externalRef?.woId);
   const canIssueParts = (user) => canPlan(user) || user?.role === "st";
   const requireUser = (ctx) => ctx.user ?? fail("กรุณาเลือกบทบาทสาธิตก่อน");
   const requirePlanner = (ctx, what) => { const user = requireUser(ctx); if (!canPlan(user)) fail(`${what} ได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น`); return user; };
@@ -571,11 +576,13 @@
     order.explodedAt = null; // ยอดคงคลังที่นับไว้คงอยู่ (ของในคลังไม่เปลี่ยนเพราะแก้ใบ) และถูกหักอีกครั้งตอนปล่อยผลิตใหม่
     audit(d, ctx, "เปิดใบที่ปล่อยผลิตแล้วกลับมาแก้", `${order.id} REV.${order.revision} ลบงานรายแผนก ${removed} รายการ${returned.length ? ` · คืนสต็อกสินค้าสำเร็จรูป ${returned.length} รายการ` : ""}`);
   }
+  // ใบที่ส่งมอบแล้วยกเลิกไม่ได้: ทางที่ทำได้จริงคือฝ่ายวางแผนปิดงานที่เหลือพร้อมเหตุผล แล้วคลังสินค้า (WH) ปิดใบรับไม่ครบ
+  const DELIVERED_TEXT = "ใบนี้ส่งมอบสินค้าให้ลูกค้าแล้ว ยกเลิกหรือเปิดกลับมาแก้ไม่ได้ ให้ฝ่ายวางแผนปิดงานที่เหลือพร้อมเหตุผล แล้วให้คลังสินค้า (WH) กด “ปิดใบ (รับไม่ครบ)” แทน";
   // คืนสินค้าสำเร็จรูปที่ใบนี้ได้จากสต็อก (ยกเลิกใบ / เปิดใบกลับมาแก้): ห้ามถ้าส่งมอบให้ลูกค้าแล้วหรือให้ใบอื่นไปแล้ว · ที่เหลือคืนให้ใบต้นทางทั้งหมดที่ได้สุทธิ (untransfer)
   // โหมดในเครื่องเขียนประวัติเอง · โหมดฐานข้อมูลเซิร์ฟเวอร์เขียน (ตรงกับ app_bom_save_master) ฝั่งนี้ตรวจให้ผู้ใช้เห็นเหตุผลก่อนส่ง
   function returnFgStock(d, ctx, order) {
     const lock = rules().fgStockLock(d, order);
-    if (lock.delivered) fail("ใบนี้ส่งมอบสินค้าให้ลูกค้าแล้ว ยกเลิกหรือเปิดกลับมาแก้ไม่ได้");
+    if (lock.delivered) fail(DELIVERED_TEXT);
     if (lock.givenAway.length) fail(`ใบนี้ให้สินค้าจากสต็อกแก่ใบอื่นไปแล้ว (${[...new Set(lock.givenAway.map((entry) => entry.orderId))].join(", ")}) ยกเลิกหรือเปิดกลับมาแก้ไม่ได้ จนกว่าใบนั้นจะคืนสต็อก`);
     if (!ctx.remote && lock.took.length) pushFgMoves(d, ctx, order, "untransfer", lock.took, "");
     return lock.took;
@@ -994,23 +1001,25 @@
     return { changed, summary: changed ? `${changed} รายการ` : "0 รายการ (ยอดเท่าเดิมทั้งหมด)" };
   }
 
+  // ยกเลิกใบ (ตรงกับ private.bom_save_orders ของ 20261128010000): ฝ่ายวางแผนยกเลิกใบร่าง / ปล่อยผลิตแล้ว / กำลังผลิต ได้ทุกเมื่อพร้อมเหตุผล 3-200 ตัวอักษร
+  // งานที่มียอดแล้วไม่กันการยกเลิก · งานของใบคงอยู่พร้อมยอดและรายงาน (แก้ต่อไม่ได้ ไม่ค้างในงานของฉัน: isOpenJob) · ส่งมอบแล้ว / ให้สต็อกใบอื่นไปแล้ว = ยกเลิกไม่ได้
+  // โหมดฐานข้อมูล: เซิร์ฟเวอร์ยกเลิก WO ที่ยังไม่เริ่มและหยุด WO ที่กำลังผลิต / พักอยู่ (WO ที่ปิดแล้วคงเดิม) · เคมีที่เบิกไปแล้ว ST รับคืน · ของซื้อที่เบิกแล้วคืนด้วย "คืนของเหลือ"
+  // สินค้าที่ใบนี้รับเข้าคลังเองเป็นสต็อกสินค้าสำเร็จรูป (rules.fgFreeList นับใบที่ยกเลิก สั่ง = 0)
+  const CANCEL_REASON_MIN = 3;
+  const CANCEL_REASON_MAX = 200;
   function cancelOrder(d, { orderId, reason }, ctx) {
     requirePlanner(ctx, "ยกเลิกใบ");
     const order = orderById(d, orderId);
     if (order.status === "completed") fail("ใบที่เสร็จแล้วยกเลิกไม่ได้");
-    // งานที่มียอด (qtyDone > 0) กันการยกเลิก ตรงกับ private.bom_save_orders · งานของซื้อที่เบิกแล้ว (ครบหรือบางส่วน) ยกเลิกการเบิกจ่ายก่อนจึงยกเลิกใบได้
-    const withOutput = d.jobs.filter((job) => job.orderId === order.id && job.qtyDone > 0);
-    if (withOutput.length && withOutput.every(isPartJob)) fail("เบิกจ่ายของซื้อของใบนี้ไปแล้ว ยกเลิกใบไม่ได้ ให้คลังวัตถุดิบ (ST) หรือฝ่ายวางแผนกด “ยกเลิกการเบิกจ่าย” ก่อน");
-    if (withOutput.length) fail("มีงานที่รายงานผลผลิตแล้ว ยกเลิกไม่ได้ ใบจะปิดเมื่อคลังสินค้า (WH) รับสินค้าเข้าคลัง");
-    // WO ที่ยังเป็นแผนก/ปล่อยผลิต ฐานข้อมูลยกเลิกให้พร้อมใบ · ที่เริ่มแล้วต้องปิดหรือยกเลิกใน RubberFlow ก่อน
-    const linked = d.jobs.filter((job) => job.orderId === order.id && woStarted(job, ctx.rfOrders));
-    if (linked.length) fail(`มีงานที่สร้าง WO ใน RubberFlow แล้ว (${linked.map((job) => job.externalRef.woId).join(", ")}) ยกเลิก WO ใน RubberFlow ก่อน`);
+    if (order.status === "cancelled") fail("ใบนี้ถูกยกเลิกแล้ว");
+    const why = typeof reason === "string" ? reason.trim() : "";
+    if (why.length < CANCEL_REASON_MIN) fail(`กรุณาระบุเหตุผลที่ยกเลิก (อย่างน้อย ${CANCEL_REASON_MIN} ตัวอักษร)`);
+    if (why.length > CANCEL_REASON_MAX) fail(`เหตุผลยาวเกิน ${CANCEL_REASON_MAX} ตัวอักษร`);
     const returned = returnFgStock(d, ctx, order); // สินค้าที่ใบนี้ได้จากสต็อกคืนกลับให้ใบต้นทาง
     order.status = "cancelled";
     order.cancelledAt = ctx.now;
-    order.cancelReason = String(reason ?? "").trim().slice(0, 200);
-    d.jobs = d.jobs.filter((job) => job.orderId !== order.id);
-    audit(d, ctx, "ยกเลิกใบสั่งผลิต", `${order.id}${order.cancelReason ? ` — ${order.cancelReason}` : ""}${returned.length ? ` · คืนสต็อกสินค้าสำเร็จรูป ${returned.length} รายการ` : ""}`);
+    order.cancelReason = why;
+    audit(d, ctx, "ยกเลิกใบสั่งผลิต", `${order.id} — ${why}${returned.length ? ` · คืนสต็อกสินค้าสำเร็จรูป ${returned.length} รายการ` : ""}`);
     return order.id;
   }
 
@@ -1020,6 +1029,9 @@
   // ลำดับตรวจเหมือนฐานข้อมูล (app_bom_save_master): รูปคำขอ → สิทธิ์ → สถานะใบ → ยอด · โหมดฐานข้อมูลคืน request ที่ store ส่งในส่วน fgMoves (เซิร์ฟเวอร์เขียนประวัติและปิดใบเอง)
   // โหมดในเครื่อง action เขียน d.fgMoves และปิดใบเอง
   const canHandleFg = (user) => Boolean(user) && (user.role === "admin" || user.dept === "WH");
+  // ย้อนรับเข้า / ส่งมอบ (20261128020000): admin หรือผู้จัดการแผนก (department_manager) ของแผนก WH · พนักงาน WH และกลุ่มวางแผนแผนกอื่นไม่ได้ (ฐานข้อมูลตรวจซ้ำ: BOM_FORBIDDEN)
+  // โหมดฐานข้อมูลเทียบรหัสบทบาทของบัญชีทดสอบ (bom-store personaUser.roleCode) · โหมดสาธิตในเครื่องไม่มีรหัสบทบาท ใช้บทบาท manager ของแผนก WH
+  const canReverseFg = (user) => Boolean(user) && (user.role === "admin" || (user.dept === "WH" && (user.roleCode ? user.roleCode === "department_manager" : user.role === "manager")));
   const FG_MAX_LINES = 500;
   const FG_NOTE_MAX = 300;
   const FG_REASON_MIN = 3;
@@ -1130,6 +1142,34 @@
     return { summary: order.id, request: { orderId: order.id, kind: "close" } };
   }
 
+  // ย้อนรับเข้าคลัง / ย้อนส่งมอบหนึ่งรายการทั้งรายการ (20261128020000 · ตรงกับ private.bom_fg_reverse): { orderId, moveId, note } · เหตุผล 3-300 ตัวอักษร
+  // ย้อนได้ตามกฎ rules.fgReverseBlock (ย้อนแล้ว / ใบยกเลิก / ส่งมอบไปแล้ว / ใบอื่นใช้สต็อกไปแล้ว = ไม่ได้) · ตัวเลขที่ถูกบันทึกใหม่ด้วยรับเข้าคลัง / ส่งมอบตามปกติ
+  // ใบที่ปิดแล้วซึ่งของไม่ครบหลังย้อนรับเข้า = เปิดกลับเป็นกำลังผลิต (แถวปิดใบเดิมอยู่ในประวัติ) · โหมดฐานข้อมูล: เซิร์ฟเวอร์เขียนแถวย้อนและเปิดใบเอง ฝั่งนี้ทำล่วงหน้าให้หน้าแสดงทันที
+  function reverseFg(d, p, ctx) {
+    const user = requireUser(ctx);
+    const R = rules();
+    const order = orderById(d, String(p?.orderId ?? "").trim().toUpperCase());
+    const note = p?.note === undefined || p?.note === null ? "" : typeof p.note === "string" ? p.note.trim() : fail("เหตุผลต้องเป็นข้อความ");
+    if (note.length < FG_REASON_MIN) fail(`กรุณาระบุเหตุผลที่ย้อน (อย่างน้อย ${FG_REASON_MIN} ตัวอักษร)`);
+    if (note.length > FG_NOTE_MAX) fail(`เหตุผลยาวเกิน ${FG_NOTE_MAX} ตัวอักษร`);
+    if (!canReverseFg(user)) fail("ย้อนการรับเข้าคลังหรือการส่งมอบได้โดยผู้จัดการแผนกคลังสินค้า (WH) หรือผู้ดูแลระบบเท่านั้น");
+    const moveId = String(p?.moveId ?? "").trim();
+    const move = (d.fgMoves ?? []).find((row) => row.id === moveId) ?? fail("ไม่พบรายการที่จะย้อน");
+    const blocked = R.fgReverseBlock(d, order, move);
+    if (blocked) fail(blocked);
+    const reopens = R.fgReverseReopens(d, order, move);
+    const kind = move.kind === "receive" ? "unreceive" : "undeliver";
+    if (!ctx.remote) {
+      d.fgMoves.push({ id: `local-${ctx.now}-${d.fgMoves.length + 1}`, orderId: order.id, fgCode: move.fgCode, kind, qty: move.qty, note, at: ctx.now, by: ctx.user?.name ?? "", reversesId: move.id });
+    }
+    if (reopens) {
+      order.status = "in_progress";
+      delete order.completedAt;
+    }
+    audit(d, ctx, kind === "unreceive" ? "ย้อนรับสินค้าเข้าคลัง" : "ย้อนการส่งมอบสินค้า", `${order.id} ${move.fgCode} × ${move.qty} — ${note}${reopens ? " · ใบเปิดกลับเป็นกำลังผลิต" : ""}`);
+    return { reopened: reopens, summary: `${move.fgCode} × ${R.fmtQty(move.qty)}`, request: { orderId: order.id, kind: "reverse", moveId: move.id, note } };
+  }
+
   // ---------- งานรายแผนก ----------
   // รายงานผล/เปลี่ยนสถานะงาน: ฝ่ายวางแผน ผู้จัดการ ผู้ดูแล (ทุกแผนก) หรือพนักงานทุกบทบาทของแผนกเจ้าของงาน · แผนกอื่นดูได้อย่างเดียว
   const canWorkJob = (user, job) => canPlan(user) || (Boolean(user?.dept) && user.dept === job.dept);
@@ -1140,6 +1180,7 @@
     const user = requireUser(ctx);
     const job = jobById(d, p.jobId);
     if (isPartJob(job)) fail("งานของซื้อ (ST) รายงานผลเองไม่ได้ ใช้ปุ่ม “เบิกจ่ายของซื้อ” ที่ใบสั่งผลิต");
+    if (isLinkedJob(job)) fail(`งานนี้ผูกกับ ${job.externalRef.woId} ของ RubberFlow ยอดมาจาก RubberFlow เมื่อล็อตตกแต่งผ่าน QC รายงานผลที่นี่ไม่ได้`);
     if (!canWorkJob(user, job)) fail(`รายงานผลได้โดยแผนก ${job.dept} หรือผู้จัดการ`);
     if (job.status === "done") fail("งานนี้เสร็จแล้ว");
     const order = orderById(d, job.orderId);
@@ -1181,6 +1222,13 @@
     audit(d, ctx, "ปิดงาน (ไม่รายงานยอดเพิ่ม)", `${job.id} ${job.itemCode} — ${note}`);
     return job.id;
   }
+  // พักงานต้องมีเหตุผล (ตรงกับ private.bom_save_jobs ของ 20261128010000): เก็บเป็นรายการรายงานยอด 0 ของงาน (เครื่องหมาย kind = hold) ประวัติของงานจึงเห็นเหตุผล
+  // เหตุผลการพักล่าสุดของงานที่ยังพักอยู่ → { reason, by, at } · อื่นๆ = null
+  const jobHoldNote = (job) => {
+    if (job?.status !== "hold" || !Array.isArray(job.reports)) return null;
+    const last = [...job.reports].reverse().find((entry) => entry?.kind === "hold");
+    return last && String(last.note ?? "").trim() ? { reason: String(last.note).trim(), by: last.by ?? "", at: last.at } : null;
+  };
   function setJobStatus(d, { jobId, status, reason }, ctx) {
     const user = requireUser(ctx);
     const job = jobById(d, jobId);
@@ -1190,8 +1238,15 @@
     if (!["queued", "in_progress", "hold"].includes(status)) fail("สถานะไม่ถูกต้อง");
     if (job.status === "done") fail("งานที่เสร็จแล้วเปลี่ยนสถานะไม่ได้");
     if (!["released", "in_progress"].includes(orderById(d, job.orderId).status)) fail("ใบสั่งผลิตไม่อยู่ในสถานะผลิต");
+    let note = "";
+    if (status === "hold" && job.status !== "hold") {
+      note = typeof reason === "string" ? reason.trim() : "";
+      if (note.length < JOB_CLOSE_MIN) fail(`กรุณาระบุเหตุผลที่พักงาน (อย่างน้อย ${JOB_CLOSE_MIN} ตัวอักษร)`);
+      if (note.length > JOB_CLOSE_MAX) fail(`เหตุผลยาวเกิน ${JOB_CLOSE_MAX} ตัวอักษร`);
+      job.reports.push({ at: ctx.now, by: user.name, good: 0, reject: 0, note, kind: "hold" });
+    }
     job.status = status;
-    audit(d, ctx, "เปลี่ยนสถานะงาน", `${job.id} → ${status}`);
+    audit(d, ctx, "เปลี่ยนสถานะงาน", `${job.id} → ${status}${note ? ` — ${note}` : ""}`);
     return job.id;
   }
 
@@ -1347,7 +1402,8 @@
     if (!canIssueParts(user)) fail("คืนของซื้อได้โดยคลังวัตถุดิบ (ST) ฝ่ายวางแผน หรือผู้จัดการ");
     const why = returnReason(reason);
     const order = orderById(d, orderId);
-    if (!["released", "in_progress", "completed"].includes(order.status)) fail("คืนของเหลือได้เฉพาะใบที่ปล่อยผลิตแล้ว (ใบที่ยกเลิกคืนไม่ได้)");
+    // ใบที่ยกเลิกแล้วคืนของเหลือได้เหมือนใบที่ปิดแล้ว (ตรงกับ private.bom_return_parts ของ 20261128010000)
+    if (!["released", "in_progress", "completed", "cancelled"].includes(order.status)) fail("คืนของเหลือได้เฉพาะใบที่ปล่อยผลิตแล้ว");
     d.stock ??= [];
     const issued = new Map(rules().partReturnLines(d, order.id).map((line) => [line.itemCode, line]));
     const entries = (Array.isArray(lines) ? lines : []).filter((entry) => filled(entry?.qty));
@@ -1415,7 +1471,8 @@
       parts.push(`ปล่อยผลิต ${payload?.orderId ?? ""} แล้ว`);
       if (opened.length) parts.push(`เปิด WO ใน RubberFlow ${opened.length} ใบ`);
     }
-    if (cancelled.length) parts.push(`ยกเลิก WO ${cancelled.join(", ")} ด้วย`);
+    // ยกเลิกใบ / เปิดใบกลับมาแก้: WO ที่ยังไม่เริ่มถูกยกเลิก ที่กำลังผลิตหรือพักอยู่ถูกหยุด (20261128010000)
+    if (cancelled.length) parts.push(`ยกเลิกหรือหยุด WO ${cancelled.join(", ")} ใน RubberFlow ด้วย`);
     if (skipped.length) {
       const shown = skipped.slice(0, SKIP_SHOWN).map((row) => `${row.jobId} ${row.itemCode}: ${row.reason}`).join(" · ");
       parts.push(`ยังไม่ได้เปิด WO ${skipped.length} งาน (${shown}${skipped.length > SKIP_SHOWN ? ` · อีก ${skipped.length - SKIP_SHOWN} งาน` : ""})`);
@@ -1427,9 +1484,9 @@
   const api = {
     saveItem, saveBom, saveBomTree, linkCompound, importFlat,
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
-    saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, receiveFg, deliverFg, closeOrderShort, closeOrder,
+    saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, receiveFg, deliverFg, closeOrderShort, closeOrder, reverseFg,
     reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage, countPartStock, issueOrderParts, undoOrderParts, returnOrderParts,
-    helpers: { customerName, customerKey, startedJobs, isPartJob, isOpenJob, jobCloseNote, deptText, canIssueParts, canHandleFg, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canSetSafety, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
+    helpers: { customerName, customerKey, startedJobs, isPartJob, isOpenJob, isLinkedJob, jobCloseNote, jobHoldNote, deptText, canIssueParts, canHandleFg, canReverseFg, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canSetSafety, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_ACTIONS = api;

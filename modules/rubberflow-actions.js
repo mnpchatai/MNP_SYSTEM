@@ -78,6 +78,8 @@
     editMold: (user) => Boolean(user.planner || user.rb), // เพิ่ม/แก้แม่พิมพ์: แผนก RB
     purchase: (user) => Boolean(user.st || user.role === "admin"), // สั่งซื้อวัตถุดิบ (สร้างใบสั่งซื้อ): แผนก ST เท่านั้น (admin ไว้แก้ปัญหา)
     cancelPurchase: (user) => Boolean(user.st || user.role === "admin"), // ยกเลิกใบสั่งซื้อ: แผนก ST
+    skipRest: (user) => Boolean(user.rbHead || user.qa), // ข้ามเวลาบ่ม: หัวหน้า RB (รวมผู้ช่วยผู้จัดการโรงงานขึ้นไปและ admin) หรือแผนก QA พร้อมเหตุผล (20261128010000)
+    returnRequisition: (user) => Boolean(user.st || user.role === "admin"), // รับเคมีที่เบิกไปแล้วคืนเข้าล็อตเดิม (WO ถูกยกเลิก): แผนก ST (admin ไว้แก้ปัญหา)
   });
   const MAY_TEXT = Object.freeze({
     master: "แก้ข้อมูลหลักของ RubberFlow ได้โดยฝ่ายวางแผน ผู้จัดการ ผู้ดูแลระบบ หรือพนักงานแผนก RB",
@@ -96,6 +98,8 @@
     editMold: "เพิ่ม/แก้แม่พิมพ์ได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
     purchase: "สั่งซื้อวัตถุดิบได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
     cancelPurchase: "ยกเลิกใบสั่งซื้อได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
+    skipRest: "ข้ามเวลาบ่มได้โดยผู้จัดการแผนก RB หรือผู้ช่วยผู้จัดการแผนก RB ผู้ช่วยผู้จัดการโรงงานขึ้นไป หรือแผนก QA เท่านั้น",
+    returnRequisition: "รับเคมีคืนเข้าคลังได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
   });
   function needRight(ctx, right) {
     if (!ctx.remote) return;
@@ -453,7 +457,10 @@
 
   // ---------- ใบสั่งซื้อวัตถุดิบ ----------
   // ใบสั่งซื้อ { id: PO-yyyymmdd-nn, status: ordered|received|cancelled, sourcePi, sourceRequisition, note, lines, createdAt, createdBy, cancelledAt }
-  // บรรทัด { materialCode, source: rf|bom, uom: null|หน่วยของชิ้น, needKg, availableKg, shortageKg, safetyKg, qtyKg, receivedKg|null, lotNo|null, expiry|null, receivedAt|null, receivedBy|null }
+  // บรรทัด { materialCode, source: rf|bom, uom: null|หน่วยของชิ้น, needKg, availableKg, shortageKg, safetyKg, qtyKg, receivedKg|null, lotNo|null, expiry|null, receivedAt|null, receivedBy|null, receipts?, closedRemainder? }
+  // รับได้หลายครั้งต่อบรรทัด (20261128020000): receivedKg = ยอดรับสะสม · receipts = [{ kg, lotNo, expiry, at, by }] ทีละครั้ง · lotNo / expiry / receivedAt / receivedBy = ของครั้งล่าสุด
+  // closedRemainder = { kg, reason, at, by } เมื่อ ST ปิดยอดที่เหลือ · ฐานข้อมูลคำนวณยอดครั้งนี้จากส่วนต่างของยอดสะสมเอง และสร้าง receipts / closedRemainder เอง (ค่าของ client เมิน)
+  // กฎค้างรับ / ครบ อยู่ที่ modules/rubberflow-rules.js (poLineReceived / poLineOpen / poLineDone)
   // source "rf" = เคมี (kg สร้างล็อต + วันหมดอายุตอนรับ) · "bom" = ของซื้อจาก BOM (ชื่อช่อง ...Kg ใช้ต่อกันแต่หน่วยเป็น uom ของชิ้น รับเข้าเพิ่มยอดคงเหลือของ BOM ไม่มีล็อต ไม่มีวันหมดอายุ)
   // ฐานข้อมูลตรวจรหัสของซื้อกับ item master และตั้งหน่วยเอง · โหมดในเครื่อง RubberFlow และ BOM แยกที่เก็บ จึงรับของซื้อแล้วยอดคงเหลือของ BOM ไม่เปลี่ยน (เปลี่ยนเฉพาะโหมดฐานข้อมูล)
   // ฐานข้อมูลตรวจซ้ำทุกข้อและประทับเวลา/ผู้บันทึกเอง · สร้างได้เฉพาะ ordered ที่ยังไม่มีข้อมูลการรับ
@@ -472,7 +479,18 @@
     if (value === "" || value === null || value === undefined || !Number.isFinite(n) || Math.abs(n) > 1e9) fail(`${label}ต้องเป็นตัวเลข`);
     return Math.round(n * 1000) / 1000;
   };
-  const isReceived = (line) => line.receivedKg !== null && line.receivedKg !== undefined;
+  const round9 = (value) => Math.round(Number(value) * 1e9) / 1e9;
+  // ต่อท้ายการรับหนึ่งครั้ง: ยอดสะสมใหม่ = ยอดสะสมที่เก็บ + ครั้งนี้ (ฐานข้อมูลคิดยอดครั้งนี้จากส่วนต่างนี้) · ช่องของบรรทัด = ของครั้งล่าสุด
+  function appendReceipt(line, kg, lotNo, expiry, ctx) {
+    const by = ctx.user?.name ?? null;
+    line.receipts = [...(Array.isArray(line.receipts) ? line.receipts : []), { kg, lotNo, expiry, at: ctx.now, by }];
+    line.receivedKg = round9((Number(line.receivedKg) || 0) + kg);
+    line.lotNo = lotNo;
+    line.expiry = expiry;
+    line.receivedAt = ctx.now;
+    line.receivedBy = by;
+  }
+  const lineDoneText = (order, line) => `${line.materialCode} ในใบสั่งซื้อ ${order.id} ${line.closedRemainder ? "ปิดยอดที่เหลือแล้ว" : "รับครบแล้ว"}`;
 
   // lines: [{ materialCode, needKg, availableKg, shortageKg, safetyKg?, qtyKg }] (บรรทัดที่จำนวนสั่งเป็น 0 ถูกข้าม) · safety: { รหัสวัตถุดิบ: kg } = สต็อกขั้นต่ำที่แก้ในหน้าสั่งซื้อ บันทึกเข้าวัตถุดิบในคำสั่งเดียวกัน
   function createPurchaseOrder(d, p, ctx) {
@@ -541,43 +559,60 @@
     return id;
   }
 
-  // ตรวจสอบรับเข้า: รับได้ครั้งเดียวต่อบรรทัด (ส่งมาไม่ครบ = รับเท่าที่มา ที่เหลือสั่งใหม่) สร้างล็อตวัตถุดิบ (พร้อมใช้ ผู้ขาย = เลขใบสั่งซื้อถ้าไม่กรอก ที่เก็บ = ที่จัดเก็บของวัตถุดิบ) และปิดบรรทัดในคำสั่งเดียวกัน · ทุกบรรทัดรับครบ = ใบเป็น received
+  // ตรวจสอบรับเข้า: รับได้หลายครั้งต่อบรรทัดจนกว่าจะครบหรือปิดยอดที่เหลือ (20261128020000 · ส่งมาไม่ครบ = รับเท่าที่มา ที่เหลือยังค้างรับ)
+  // เคมี: สร้างล็อตวัตถุดิบใหม่หนึ่งล็อตต่อครั้ง (พร้อมใช้ ผู้ขาย = เลขใบสั่งซื้อถ้าไม่กรอก ที่เก็บ = ที่จัดเก็บของวัตถุดิบ) · ทุกบรรทัดครบ = ใบเป็น received · รับเกินยอดสั่งได้
   function receivePurchaseLine(d, { id, materialCode, qtyKg, expiry, supplier }, ctx) {
     needRight(ctx, "receiveMaterial");
+    const R = rules();
     const order = find(d.purchaseOrders ?? [], id, "ใบสั่งซื้อ");
     if (order.status !== "ordered") fail(`ใบสั่งซื้อ ${order.id} ${order.status === "received" ? "รับครบแล้ว" : "ถูกยกเลิกแล้ว"} รับเข้าไม่ได้`);
     const line = order.lines.find((row) => row.materialCode === materialCode) || fail(`ไม่พบวัตถุดิบ${ref(materialCode)} ในใบสั่งซื้อ ${order.id}`);
-    if (isReceived(line)) fail(`${materialCode} ในใบสั่งซื้อ ${order.id} รับเข้าแล้ว`);
+    if (R.poLineDone(line)) fail(`${lineDoneText(order, line)} รับเข้าอีกไม่ได้`);
+    // ข้อความบันทึกการใช้งานหลังรับ: ยอดสะสมและยอดที่ยังค้าง
+    const total = () => `รับแล้ว ${R.poLineReceived(line)} จาก ${line.qtyKg}${R.poLineOpen(line) > 0 ? ` ค้างรับ ${R.poLineOpen(line)}` : ""}`;
     if (line.source === "bom") {
-      // ของซื้อ: รับเฉพาะปริมาณจริง (ไม่มีล็อต/วันหมดอายุ) ยอดคงเหลือของ BOM เพิ่มที่ฐานข้อมูลในคำสั่งเดียวกัน
+      // ของซื้อ: รับเฉพาะปริมาณจริง (ไม่มีล็อต/วันหมดอายุ) ยอดคงเหลือของ BOM เพิ่มเฉพาะครั้งนี้ที่ฐานข้อมูลในคำสั่งเดียวกัน
       const qty = kgOf(qtyKg, "ปริมาณที่รับ", { positive: true });
-      line.receivedKg = qty;
-      line.lotNo = null;
-      line.expiry = null;
-      line.receivedAt = ctx.now;
-      line.receivedBy = ctx.user?.name ?? null;
-      if (order.lines.every(isReceived)) order.status = "received";
-      audit(d, ctx, "ตรวจสอบรับเข้าตามใบสั่งซื้อ", `${order.id} ${materialCode} ${qty} ${line.uom ?? ""}`.trim());
+      appendReceipt(line, qty, null, null, ctx);
+      if (order.lines.every(R.poLineDone)) order.status = "received";
+      audit(d, ctx, "ตรวจสอบรับเข้าตามใบสั่งซื้อ", `${order.id} ${materialCode} ${qty} ${line.uom ?? ""} · ${total()}`);
       return materialCode;
     }
     const lotNo = receiveMaterial(d, { materialCode, qtyKg, expiry, supplier: String(supplier ?? "").trim() || order.id }, ctx);
     const lot = d.materialLots.find((row) => row.lotNo === lotNo);
-    line.receivedKg = lot.qtyKg;
-    line.lotNo = lotNo;
-    line.expiry = lot.expiry;
-    line.receivedAt = ctx.now;
-    line.receivedBy = ctx.user?.name ?? null;
-    if (order.lines.every(isReceived)) order.status = "received";
-    audit(d, ctx, "ตรวจสอบรับเข้าตามใบสั่งซื้อ", `${order.id} ${materialCode} ${lot.qtyKg} kg → ${lotNo}`);
+    appendReceipt(line, lot.qtyKg, lotNo, lot.expiry, ctx);
+    if (order.lines.every(R.poLineDone)) order.status = "received";
+    audit(d, ctx, "ตรวจสอบรับเข้าตามใบสั่งซื้อ", `${order.id} ${materialCode} ${lot.qtyKg} kg → ${lotNo} · ${total()}`);
     return lotNo;
   }
 
-  // ยกเลิกได้เฉพาะใบ ordered ที่ยังไม่มีบรรทัดไหนรับเข้า (ฝ่ายวางแผน) · ใบสั่งซื้อไม่มีการแก้ไขหลังสร้าง
+  // ปิดยอดที่เหลือ (20261128020000): แผนก ST (admin ไว้แก้ปัญหา) ปิดบรรทัดที่ยังไม่ครบเมื่อผู้ขายจะไม่ส่งส่วนที่เหลือ · ต้องมีเหตุผล 3-300 ตัวอักษร
+  // ไม่เปลี่ยนสต็อกหรือล็อต · ส่วนที่เหลือเลิกนับเป็นสั่งแล้วรอรับ · ทุกบรรทัดครบหรือปิดแล้ว = ใบเป็น received
+  const PO_REASON_MIN = 3;
+  const PO_REASON_MAX = 300;
+  function closePurchaseLine(d, { id, materialCode, reason }, ctx) {
+    needRight(ctx, "receiveMaterial");
+    const R = rules();
+    const order = find(d.purchaseOrders ?? [], id, "ใบสั่งซื้อ");
+    if (order.status !== "ordered") fail(`ใบสั่งซื้อ ${order.id} ${order.status === "received" ? "รับครบแล้ว" : "ถูกยกเลิกแล้ว"} ปิดยอดไม่ได้`);
+    const line = order.lines.find((row) => row.materialCode === materialCode) || fail(`ไม่พบวัตถุดิบ${ref(materialCode)} ในใบสั่งซื้อ ${order.id}`);
+    if (R.poLineDone(line)) fail(`${lineDoneText(order, line)} ไม่มียอดที่เหลือให้ปิด`);
+    const text = typeof reason === "string" ? reason.trim() : "";
+    if (text.length < PO_REASON_MIN) fail(`กรุณาระบุเหตุผลที่ปิดยอดที่เหลือ (อย่างน้อย ${PO_REASON_MIN} ตัวอักษร)`);
+    if (text.length > PO_REASON_MAX) fail(`เหตุผลยาวเกิน ${PO_REASON_MAX} ตัวอักษร`);
+    const kg = R.poLineOpen(line);
+    line.closedRemainder = { kg, reason: text, at: ctx.now, by: ctx.user?.name ?? null };
+    if (order.lines.every(R.poLineDone)) order.status = "received";
+    audit(d, ctx, "ปิดยอดที่เหลือของใบสั่งซื้อ", `${order.id} ${materialCode} ไม่รับอีก ${kg} ${line.source === "bom" ? line.uom ?? "" : "kg"} — ${text}`);
+    return materialCode;
+  }
+
+  // ยกเลิกได้เฉพาะใบ ordered ที่ยังไม่มีบรรทัดไหนรับเข้าหรือปิดยอด (แผนก ST) · ใบสั่งซื้อไม่มีการแก้ไขหลังสร้าง
   function cancelPurchaseOrder(d, { id }, ctx) {
     needRight(ctx, "cancelPurchase");
     const order = find(d.purchaseOrders ?? [], id, "ใบสั่งซื้อ");
     if (order.status !== "ordered") fail(`ใบสั่งซื้อ ${order.id} ${order.status === "received" ? "รับครบแล้ว" : "ถูกยกเลิกไปแล้ว"} ยกเลิกไม่ได้`);
-    if (order.lines.some(isReceived)) fail(`ใบสั่งซื้อ ${order.id} มีรายการที่รับเข้าแล้ว ยกเลิกไม่ได้`);
+    if (rules().poTouched(order)) fail(`ใบสั่งซื้อ ${order.id} มีรายการที่รับเข้าหรือปิดยอดแล้ว ยกเลิกไม่ได้ ปิดยอดที่เหลือของบรรทัดที่ยังค้างแทน`);
     order.status = "cancelled";
     order.cancelledAt = ctx.now;
     audit(d, ctx, "ยกเลิกใบสั่งซื้อ", order.id);
@@ -658,13 +693,65 @@
     return lot.id;
   }
 
-  // โหมดฐานข้อมูล: คำสั่งของพนักงาน RB ที่ฐานข้อมูลตั้งเวลาครบบ่มเป็นเวลาของเซิร์ฟเวอร์เอง (ไม่เชื่อเวลาของเครื่อง) และบันทึกในประวัติการใช้งาน
-  function endRest(d, { lotId }, ctx) {
-    needRight(ctx, "station");
+  // ข้ามเวลาบ่ม (ตรงกับ rf_save_lots ของ 20261128010000): หัวหน้า RB หรือแผนก QA พร้อมเหตุผล 3-300 ตัวอักษร · ล็อตเก็บ { by, reason, at } ไว้ที่ params.skipRest
+  // โหมดฐานข้อมูล: เซิร์ฟเวอร์ตั้งเวลาครบบ่มเป็นเวลาของเซิร์ฟเวอร์และประทับผู้ข้าม/เวลาเอง (ส่งได้แค่เหตุผล) · โหมดสาธิตเขียนเองในเครื่อง
+  const SKIP_REASON_MIN = 3;
+  const SKIP_REASON_MAX = 300;
+  function endRest(d, { lotId, reason }, ctx) {
+    needRight(ctx, "skipRest");
     const lot = find(d.lots, lotId, "ล็อต");
     if (ctx.remote && !(lot.readyAt > ctx.now)) fail("ล็อตนี้บ่มครบเวลาแล้ว");
+    const why = typeof reason === "string" ? reason.trim() : "";
+    if (why.length < SKIP_REASON_MIN) fail(`กรุณาระบุเหตุผลที่ข้ามเวลาบ่ม (อย่างน้อย ${SKIP_REASON_MIN} ตัวอักษร)`);
+    if (why.length > SKIP_REASON_MAX) fail(`เหตุผลยาวเกิน ${SKIP_REASON_MAX} ตัวอักษร`);
     lot.readyAt = ctx.now;
-    audit(d, ctx, ctx.remote ? "ข้ามเวลาบ่ม" : "ข้ามเวลาบ่ม (โหมดสาธิต)", lotId);
+    lot.params = { ...(lot.params ?? {}), skipRest: { by: ctx.user?.name ?? "", reason: why, at: ctx.now } };
+    audit(d, ctx, ctx.remote ? "ข้ามเวลาบ่ม" : "ข้ามเวลาบ่ม (โหมดสาธิต)", `${lotId} — ${why}`);
+  }
+
+  // รับเคมีที่เบิกไปแล้วคืนเข้าล็อตเดิม (ตรงกับ private.rf_return_requisitions ของ 20261128010000): ใบเบิกที่จ่ายแล้วและยังไม่ได้ผสมของ WO ที่ถูกยกเลิก · แผนก ST
+  // kgs = ยอดที่คืนจริงตามลำดับบรรทัด (บรรทัดที่จ่ายไปต้องกรอก ไม่มีคืนใส่ 0) 0..ที่จ่าย · คืนไม่ครบต้องมีเหตุผล 3-300 · รับคืนได้ครั้งเดียวต่อใบ
+  // ยอดคืนบวกเข้าล็อตเดิมของบรรทัด (ไม่เกินยอดรับเข้าของล็อต) ล็อตคงวันหมดอายุและสถานะเดิม (ล็อตที่หมดอายุแล้วยังหมดอายุ FEFO ข้ามเหมือนเดิม)
+  function returnRequisition(d, { id, kgs, note }, ctx) {
+    needRight(ctx, "returnRequisition");
+    const requisition = find(d.requisitions, id, "ใบเบิก");
+    const state = rules().requisitionReturnState(d, requisition);
+    if (state === "returned") fail(`ใบเบิก ${requisition.id} รับคืนแล้ว (รับคืนได้ครั้งเดียว)`);
+    if (state !== "pending") fail("รับคืนได้เฉพาะใบเบิกที่จ่ายแล้วและยังไม่ได้ผสม ของใบสั่งผลิตที่ถูกยกเลิก");
+    const list = Array.isArray(kgs) ? kgs : [];
+    let short = false;
+    const amounts = requisition.lines.map((line, index) => {
+      const issued = typeof line.actualKg === "number" ? line.actualKg : 0;
+      if (!(issued > 0)) return 0;
+      const raw = list[index];
+      if (raw === undefined || raw === null || String(raw).trim() === "") fail(`กรุณาระบุจำนวนที่คืนของ ${line.materialCode} (ล็อต ${line.lotNo}) ไม่มีของคืนใส่ 0`);
+      const kg = Number(raw);
+      if (!Number.isFinite(kg) || kg < 0) fail(`จำนวนที่คืนของ ${line.materialCode} ต้องเป็นตัวเลขไม่ติดลบ`);
+      // ไม่ปัดทศนิยม: ใบเบิกเก่าที่ชั่งเองอาจจ่ายเกิน 4 ตำแหน่ง ช่องกรอกตั้งต้นที่ยอดจ่ายจริงจึงคืนเต็มยอดได้ (ตรงกับฐานข้อมูล)
+      if (kg > issued + 1e-9) fail(`${line.materialCode} คืนได้ไม่เกินที่จ่ายไป ${issued} kg`);
+      if (kg < issued - 1e-9) short = true;
+      return kg;
+    });
+    const why = typeof note === "string" ? note.trim() : "";
+    if (short && why.length < 3) fail("คืนไม่ครบตามที่จ่ายไป กรุณาระบุเหตุผล (อย่างน้อย 3 ตัวอักษร)");
+    if (why.length > 300) fail("เหตุผลยาวเกิน 300 ตัวอักษร");
+    const after = new Map();
+    requisition.lines.forEach((line, index) => {
+      if (!(amounts[index] > 0)) return;
+      const lot = d.materialLots.find((row) => row.lotNo === line.lotNo) || fail(`ไม่พบล็อต ${line.lotNo}`);
+      const qty = (after.get(lot.lotNo) ?? Number(lot.qtyKg) ?? 0) + amounts[index];
+      if (qty > Number(lot.initialKg) + 1e-6) fail(`ล็อต ${lot.lotNo} รับคืนเกินยอดที่รับเข้าคลัง (${lot.initialKg} kg) ไม่ได้`);
+      after.set(lot.lotNo, qty);
+    });
+    for (const [lotNo, qty] of after) {
+      const lot = d.materialLots.find((row) => row.lotNo === lotNo);
+      lot.qtyKg = +qty.toFixed(6);
+    }
+    requisition.lines = requisition.lines.map((line, index) => ({ ...line, returnedKg: amounts[index], returnedAt: ctx.now, returnedBy: ctx.user?.name ?? "", returnNote: why }));
+    requisition.returnNote = why;
+    const total = amounts.reduce((sum, kg) => sum + kg, 0);
+    audit(d, ctx, "รับเคมีคืนเข้าล็อตเดิม", `${requisition.id} (${requisition.orderId}) คืน ${+total.toFixed(4)} kg${why ? ` — ${why}` : ""}`);
+    return requisition.id;
   }
 
   function recordExtrusion(d, p, ctx) {
@@ -960,8 +1047,8 @@
   }
 
   const api = {
-    ORDER_FLOW, createOrder, setOrderStatus, saveMaterial, createRecipe, saveRecipe, approveRecipe, createRequisition, weighLine, issueRequisition, receiveMaterial, createPurchaseOrder, receivePurchaseLine, cancelPurchaseOrder, setMaterialLotStatus,
-    recordMixing, endRest, recordExtrusion, recordCuring, recordFinishing, shipBoxes, transferableQty, createTransfer, receiveTransfer,
+    ORDER_FLOW, createOrder, setOrderStatus, saveMaterial, createRecipe, saveRecipe, approveRecipe, createRequisition, weighLine, issueRequisition, receiveMaterial, createPurchaseOrder, receivePurchaseLine, closePurchaseLine, cancelPurchaseOrder, setMaterialLotStatus,
+    recordMixing, endRest, returnRequisition, recordExtrusion, recordCuring, recordFinishing, shipBoxes, transferableQty, createTransfer, receiveTransfer,
     addQcRecord, createNcr, updateNcr, closeNcr, saveMold, cleanMold,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

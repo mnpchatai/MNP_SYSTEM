@@ -163,14 +163,14 @@ test("the dashboard, stations and quality pages show the prototype's facts from 
   const mixing = await env.render("p=mixing");
   assert.match(mixing, /สถานีที่ 1 · ผสมยาง/);
   assert.match(mixing, /บ่มอีก/, "the batch mixed 1.5 hours ago shows its rest timer");
-  assert.match(mixing, /data-rf-action="endRest"/, "admin may skip the rest in demo mode");
+  assert.match(mixing, /data-rf-open="skipRest"/, "admin may skip the rest in demo mode (through the reason dialog)");
   const gated = await env.render("p=extrusion");
   assert.match(gated, /กักรอตัดสิน/);
   assert.match(gated, /ด่านรับมอบ/, "nothing received at extrusion yet");
   assert.doesNotMatch(gated, /data-rf-form="recordExtrusion"/);
   // ข้ามเวลาบ่ม ส่งต่อ และรับมอบ → ฟอร์มบันทึกการฉีดโผล่พร้อมช่องสเปก
   const resting = env.store.data().lots.find((lot) => lot.stage === "mixing" && lot.readyAt > Date.now());
-  env.store.run("endRest", { lotId: resting.id });
+  env.store.run("endRest", { lotId: resting.id, reason: "ทดสอบเร่งด่วน" });
   const transferId = env.store.run("createTransfer", { lotId: resting.id, qty: 10 }).result;
   env.store.run("receiveTransfer", { id: transferId, qtyReceived: 10 });
   const extrusion = await env.render("p=extrusion");
@@ -648,7 +648,7 @@ test("purchasing screens: the check opens one dialog (escaped, safety stock and 
 
   // the warehouse tab: the open order first with its receive button and cancel button, the tab counts open orders
   let page = await env.render("p=warehouse&tab=po");
-  assert.match(page, /ใบสั่งซื้อ \(1\)/);
+  assert.match(page, /ใบสั่งซื้อ \(2\)/, "the new order and the demo order that is still waiting");
   assert.ok(page.includes(po.id));
   assert.match(page, /data-rf-open="receivePurchase"/);
   assert.match(page, /data-rf-action="cancelPurchaseOrder"/);
@@ -692,13 +692,29 @@ test("purchasing screens: the check opens one dialog (escaped, safety stock and 
   await receiveForm.handlers.submit({ preventDefault() {} });
   const lot = env.store.data().materialLots.find((row) => row.supplier === po.id);
   assert.deepEqual([lot.materialCode, lot.qtyKg, lot.expiry], ["EPDM-55", 58, new Date(2027, 5, 30).getTime()]);
-  assert.equal(env.store.data().purchaseOrders[0].status, "received");
   assert.match(env.log.toasts.at(-1)[0], /^รับเข้าล็อต RM-EPDM-55-\d{8}-\d\d แล้ว$/);
   delete env.fakes["form[data-rf-form]"];
-  page = text(await env.render("p=warehouse&tab=po"));
+  // รับไม่ครบ (58 จาก 60 · 20261128020000): ใบยังรอรับ ส่วนที่เหลือค้างรับ รับเพิ่มได้ (ตั้งต้น = ยอดค้าง) หรือปิดยอดที่เหลือพร้อมเหตุผล
+  assert.equal(env.store.data().purchaseOrders[0].status, "ordered", "the 2 kg not delivered stay on order");
+  page = text(await env.render(`p=warehouse&tab=po&q=${po.id}`));
+  assert.match(page, /58\.00 kg\s*ค้างรับ 2\.00/);
+  assert.ok(page.includes(lot.lotNo));
+  const again = dialogs.receivePurchase(env.ctx(), { id: po.id, materialCode: "EPDM-55" }).html;
+  assert.match(again, /name="qtyKg"[^>]*value="2"/, "the second receipt starts at what is still due");
+  assert.match(again, /รับแล้ว[\s\S]*58\.00 จาก 60\.00 kg/);
+  const closeDialog = dialogs.closePurchase(env.ctx(), { id: po.id, materialCode: "EPDM-55" }).html;
+  assert.match(closeDialog, /data-rf-form="closePurchaseLine"/);
+  assert.match(closeDialog, /name="reason"[^>]*required[^>]*minlength="3" maxlength="300"/);
+  assert.match(closeDialog, /เหตุผล <span class="field-required">\(จำเป็น\)<\/span>/);
+  assert.doesNotMatch(closeDialog, /undefined|NaN/);
+  assert.equal(env.store.run("closePurchaseLine", { id: po.id, materialCode: "EPDM-55", reason: "ผู้ขายแจ้งว่าไม่มีของส่งเพิ่ม" }).ok, true);
+  assert.equal(env.store.data().purchaseOrders[0].status, "received");
+  assert.equal(dialogs.closePurchase(env.ctx(), { id: po.id, materialCode: "EPDM-55" }), null, "a closed line has no close dialog");
+  page = text(await env.render(`p=warehouse&tab=po&q=${po.id}`));
   assert.match(page, /รับครบแล้ว/);
   assert.ok(page.includes(lot.lotNo));
-  assert.doesNotMatch(page, /รอรับ/, "no open line is left");
+  assert.match(page, /ปิดยอดที่เหลือ 2\.00 kg: ผู้ขายแจ้งว่าไม่มีของส่งเพิ่ม/);
+  assert.doesNotMatch(page, /รอรับ|ค้างรับ/, "no open line is left");
 
   // enough stock: only a short note, no dialog
   for (const row of env.store.data().materials) env.store.run("receiveMaterial", { materialCode: row.code, qtyKg: 1e7, expiry: now + 365 * DAY });
@@ -774,7 +790,10 @@ test("purchasing with purchased parts: the dialog adds a part table after the ch
   const received = env.store.run("receivePurchaseLine", { id: po.id, materialCode: "P-BOX-01", qtyKg: 11 });
   assert.equal(received.ok, true, received.error?.message);
   assert.match(text(pages.warehouse({ ...env.ctx("p=warehouse&tab=po") }).html), /11\.00 box/);
-  assert.equal(dialogs.receivePurchase(env.ctx("p=warehouse&tab=po"), { id: po.id, materialCode: "P-BOX-01" }), null, "a received line has no receive dialog");
+  // รับไม่ครบ (11 จาก 12): ยังรับเพิ่มได้ ตั้งต้น = ยอดที่ค้าง · ปิดยอดที่เหลือแล้วไม่มีหน้าต่างรับอีก
+  assert.match(dialogs.receivePurchase(env.ctx("p=warehouse&tab=po"), { id: po.id, materialCode: "P-BOX-01" }).html, /name="qtyKg"[^>]*value="1"/);
+  assert.equal(env.store.run("closePurchaseLine", { id: po.id, materialCode: "P-BOX-01", reason: "ผู้ขายส่งไม่ครบ" }).ok, true);
+  assert.equal(dialogs.receivePurchase(env.ctx("p=warehouse&tab=po"), { id: po.id, materialCode: "P-BOX-01" }), null, "a closed line has no receive dialog");
 });
 
 test("purchase dialog: rows to order come first and together, chemicals and parts in one table, the rest keep their order; the posted fields follow the row order", async () => {
@@ -793,6 +812,7 @@ test("purchase dialog: rows to order come first and together, chemicals and part
   assert.deepEqual(codesOf(dialogs.purchase({ ...ctx, bomPartNeeds: () => ({ rows: [part("P-X", 0), part("P-Y", 0)], anyShort: false }) }, { woIds: [], sourcePi: "PI-9" }).html), ["P-X", "P-Y"], "nothing to order: the order is untouched");
   // เคมี (ใบสั่งผลิตที่เปิดอยู่ทั้งหมด) ร่วมกับของซื้อ: ตารางเดียว แถวที่ต้องสั่งของสองชนิดอยู่บนสุดด้วยกัน
   for (const lot of env.store.data().materialLots) if (["CBS", "OIL-PAR"].includes(lot.materialCode)) lot.qtyKg = 0; // two chemicals run short, in the middle of the code order
+  env.store.data().purchaseOrders.length = 0; // ใบสั่งซื้อสาธิตที่ค้างรับ CBS 30 kg จะทำให้ CBS ไม่ขาด
   const chemOnly = dialogs.purchase(env.ctx("p=orders"), { allOpen: true }).html;
   const chemCodes = codesOf(chemOnly);
   const chemNeed = needOf(chemOnly);
@@ -1024,4 +1044,72 @@ test("list empty states: nothing yet says so and offers the first step, a search
   assert.match(warehouse("p=warehouse&tab=raw&q=zzzz-no-match"), /ไม่พบล็อตวัตถุดิบ/);
   assert.match(warehouse("p=warehouse&tab=fg", { fgBoxes: [] }), /ยังไม่มีกล่องสินค้า/);
   assert.match(warehouse("p=warehouse&tab=fg&q=zzzz-no-match"), /ไม่พบกล่องสินค้า/);
+});
+
+test("skipping the rest opens a reason dialog for the manager and QC only (the rubber head or QA in the database), and the lot row says who skipped it and why (20261128010000)", async () => {
+  const env = load();
+  const resting = env.store.data().lots.find((lot) => lot.stage === "mixing" && lot.readyAt > Date.now());
+  const dialogs = env.context.MNP_RUBBERFLOW_DIALOGS;
+  env.store.setUser("U05");
+  // โหมดสาธิตจำกัดที่หน้าจอ (ฐานข้อมูลตรวจสิทธิ์จริง: rubberflow-remote / pgTAP)
+  assert.doesNotMatch(await env.render("p=mixing"), /data-rf-open="skipRest"/, "the mixer may not skip the rest");
+  env.store.setUser("U02");
+  assert.match(await env.render("p=mixing"), /data-rf-open="skipRest"/);
+  env.store.setUser("U09");
+  assert.ok(env.ctx().can("skipRest"), "QC holds the right in demo mode, as QA does in the database");
+  const dialog = dialogs.skipRest(env.ctx(), { lotId: resting.id }).html;
+  assert.match(dialog, /data-rf-form="endRest"/);
+  assert.match(dialog, /field-required/);
+  assert.equal(env.store.run("endRest", { lotId: resting.id }).ok, false, "a reason is required");
+  assert.equal(env.store.run("endRest", { lotId: resting.id, reason: "ab" }).ok, false, "at least three characters");
+  assert.equal(env.store.run("endRest", { lotId: resting.id, reason: "เร่งส่ง <ลูกค้า>" }).ok, true);
+  const lot = env.store.data().lots.find((row) => row.id === resting.id);
+  assert.equal(lot.params.skipRest.reason, "เร่งส่ง <ลูกค้า>");
+  env.store.setUser("U02");
+  const html = await env.render("p=mixing");
+  assert.match(html, /ข้ามเวลาบ่มโดย [^:<]+: เร่งส่ง &lt;ลูกค้า&gt;/, "who and why, escaped");
+});
+
+test("a requisition of a cancelled WO waits for the store to take the chemicals back once, is not offered for mixing, and shows what came back (20261128010000)", async () => {
+  const env = load();
+  const data = () => env.store.data();
+  const requisition = data().requisitions.find((row) => row.status === "issued" && row.lines.some((line) => line.actualKg > 0));
+  assert.ok(requisition, "the seed has an issued requisition");
+  const rulesApi = env.context.MNP_RUBBERFLOW_RULES;
+  assert.ok(rulesApi.mixableRequisitions(data()).some((row) => row.id === requisition.id));
+  data().orders.find((order) => order.id === requisition.orderId).status = "cancelled";
+  // ห้องปฏิบัติการ: ให้ล็อตมีที่ว่างพอรับคืน (ยอดคืนไม่เกินยอดที่รับเข้าคลัง)
+  for (const line of requisition.lines) {
+    const lot = data().materialLots.find((row) => row.lotNo === line.lotNo);
+    if (lot) lot.initialKg = Number(lot.qtyKg) + 1000;
+  }
+  assert.ok(!rulesApi.mixableRequisitions(data()).some((row) => row.id === requisition.id), "no longer offered for mixing");
+  assert.equal(rulesApi.returnableRequisitions(data()).map((row) => row.id).join(","), requisition.id);
+  env.store.setUser("U04");
+  let html = await env.render(`p=requisition&sel=${requisition.id}`);
+  assert.match(html, /WO ถูกยกเลิก · รอ ST รับคืน/);
+  assert.match(html, /data-rf-open="returnRequisition"/);
+  const dialog = env.context.MNP_RUBBERFLOW_DIALOGS.returnRequisition(env.ctx(), { id: requisition.id }).html;
+  assert.match(dialog, /data-rf-form="returnRequisition"/);
+  assert.match(dialog, /name="returnedKg\[\]"/);
+  env.store.setUser("U05");
+  assert.doesNotMatch(await env.render(`p=requisition&sel=${requisition.id}`), /data-rf-open="returnRequisition"/, "the mixer only reads");
+  env.store.setUser("U04");
+  const before = requisition.lines.map((line) => Number(data().materialLots.find((row) => row.lotNo === line.lotNo)?.qtyKg));
+  assert.equal(env.store.run("returnRequisition", { id: requisition.id, kgs: requisition.lines.map(() => 0) }).ok, false, "a short return needs a reason");
+  const kgs = requisition.lines.map((line) => line.actualKg ?? 0);
+  const sent = env.store.run("returnRequisition", { id: requisition.id, kgs });
+  assert.equal(sent.ok, true, sent.error?.message);
+  const after = data().requisitions.find((row) => row.id === requisition.id);
+  after.lines.forEach((line, index) => {
+    assert.equal(line.returnedKg, kgs[index]);
+    const lot = data().materialLots.find((row) => row.lotNo === line.lotNo);
+    if (lot && kgs[index] > 0 && after.lines.filter((other) => other.lotNo === line.lotNo).length === 1) assert.equal(Number(lot.qtyKg), +(before[index] + kgs[index]).toFixed(6), `${line.lotNo} gets its kilos back`);
+  });
+  assert.equal(env.store.run("returnRequisition", { id: requisition.id, kgs }).ok, false, "only once per requisition");
+  html = await env.render(`p=requisition&sel=${requisition.id}`);
+  assert.match(html, /รับคืนแล้ว/);
+  assert.match(html, /ผู้รับคืน/);
+  assert.match(html, /รับคืน \(kg\)/);
+  assert.doesNotMatch(html, /data-rf-open="returnRequisition"/);
 });

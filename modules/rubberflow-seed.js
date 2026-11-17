@@ -240,6 +240,28 @@
     mkOrder({ customer: "บจก. อีสเทิร์นไฮดรอลิก", customerPo: "EH-7781", recipeId: "RC-NBR-OR02", targetQty: 25000, color: "ดำ", startDate: now + 5 * DAY, dueDate: now + 15 * DAY }, now - DAY);
     release(o4, now - 1.5 * DAY);
 
+    // WO ของงาน RB ในใบ BOM สาธิต (modules/bom-seed.js demoRfLinks · เลข WO ตรงกับที่งาน BOM ผูกไว้ เมื่อโหลดชุด BOM คู่กัน ไม่มีชุด BOM = ข้าม)
+    // running: ปล่อยผลิต เบิก ผสม ส่งมอบ และฉีดแล้ว (WO กำลังผลิต) · issued: ปล่อยผลิตแล้ว เบิกเคมีแล้วรอผสม · ใช้ลองยกเลิกใบหลังเริ่มผลิต และ ST รับเคมีคืน
+    const links = (() => { try { return root.MNP_BOM_SEED?.demoRfLinks?.(now) ?? []; } catch { return []; } })();
+    for (const link of links) {
+      const opened = now - 3 * DAY;
+      const id = mkOrder({
+        customer: link.customer, customerPo: link.orderId, recipeId: link.recipeId, targetQty: link.qty, color: link.color, startDate: opened,
+        dueDate: Math.max(Number(link.dueAt) || now, opened), note: `จาก BOM งาน ${link.jobId} · PI ${link.orderId}`, sourceJobId: link.jobId, uom: link.uom, targetKg: link.kg,
+      }, opened);
+      if (id !== link.woId) continue;
+      release(id, opened + HOUR);
+      if (link.mode === "running") chain(id, now - 2 * DAY, "extrusion");
+      else chain(id, now - 2 * HOUR, "request");
+    }
+
+    // ใบสั่งซื้อเคมีที่รอรับ (ลองรับไม่ครบแล้วรับเพิ่ม หรือปิดยอดที่เหลือ): สั่ง EPDM 500 kg กับ CBS 30 kg · EPDM มาแล้ว 300 kg ค้างรับ 200 kg · CBS ยังไม่มา
+    const demoPo = A.createPurchaseOrder(d, { note: "สั่งเติมสต็อก (ข้อมูลสาธิต)", lines: [
+      { materialCode: "EPDM-55", needKg: 500, availableKg: 0, shortageKg: 500, qtyKg: 500 },
+      { materialCode: "CBS", needKg: 30, availableKg: 0, shortageKg: 30, qtyKg: 30 },
+    ] }, at(now - DAY, "store"));
+    A.receivePurchaseLine(d, { id: demoPo, materialCode: "EPDM-55", qtyKg: 300, expiry: now + 180 * DAY, supplier: "บจก. โพลีเคม ไทย" }, at(now - 4 * HOUR, "store"));
+
     // กรณีคุณภาพ
     A.createNcr(d, {
       title: "ความหนาโปรไฟล์เกินสเปก (2.68 mm)", stage: "extrusion", lotId: held.ex, severity: "major", defectQty: 120,

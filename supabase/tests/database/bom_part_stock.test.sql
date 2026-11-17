@@ -492,15 +492,15 @@ select is(ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P7', 4))) -> 'changes'
 select is(ps_t.qty('P-7'), 0.5::numeric, 'and the stock keeps what was not issued (1.5 - 1)');
 select ok(ps_t.has_move('P-7', 'issue', -1, 0.5, '251111-25003', current_setting('test.n_sbx_pp_staff')), 'the remainder move names the planner');
 
--- 7.6.6 ใบที่มีบรรทัดของซื้อเบิกบางส่วนแล้วยกเลิกไม่ได้ (ต้องยกเลิกการเบิกจ่ายก่อน: bom_part_returns.test.sql)
+-- 7.6.6 ใบที่มีบรรทัดของซื้อเบิกบางส่วน: ยกเลิกต้องมีเหตุผล (ยกเลิกได้แล้วตั้งแต่ 20261128010000 คืนของภายหลัง: bom_cancel_rf_stop.test.sql) · เปิดกลับมาแก้ไม่ได้
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select ok(ps_t.count_stock('[{"itemCode":"P-6","qty":2}]'::jsonb) is not null, 'ST counts 2 caps for the fourth order');
 select ok(ps_t.issue(jsonb_build_array(ps_t.part('JOB4-ST-P6', 2))) is not null, 'ST issues 2 of its 5 caps');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select set_config('test.o4', (select o::text from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251111-25004'), true);
 select throws_ok($$ select ps_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.o4')::jsonb || '{"status":"cancelled","cancelReason":"ทดสอบ"}'::jsonb))), 'cancelOrder') $$, 'BOM_INVALID_TRANSITION',
-  'an order with a partly issued part line cannot be cancelled');
+  current_setting('test.o4')::jsonb || '{"status":"cancelled"}'::jsonb))), 'cancelOrder') $$, 'BOM_INVALID_ORDER',
+  'a cancel without a reason is refused (since 20261128010000 a partly issued line no longer blocks a cancel: the parts are returned afterwards, bom_cancel_rf_stop.test.sql)');
 select throws_ok($$ select ps_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.o4')::jsonb || '{"status":"draft","explosion":null,"explodedAt":null}'::jsonb))), 'updateOrderItem') $$, 'BOM_INVALID_TRANSITION',
   'nor reopened as a draft (the partly issued line counts as a started job)');
@@ -695,7 +695,7 @@ select is(ps_t.ver(), current_setting('test.vb')::bigint + 1, 'the BOM counter m
 select ok(exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:receivePurchaseLine' and a ->> 'detail' = 'stock +1'),
   'the BOM history records the receipt');
 select throws_ok($$ select ps_t.po_save(ps_t.receipt('PO-20261111-01', 2, 5), 'receivePurchaseLine', 0) $$, 'RF_STALE', 'receiving another line from a copy older than the last receipt is stale (before the permission check)');
-select throws_ok($$ select ps_t.po_save(ps_t.receipt('PO-20261111-01', 1, 10), 'receivePurchaseLine') $$, 'RF_INVALID_TRANSITION', 'a received part line cannot be received or corrected again');
+select throws_ok($$ select ps_t.po_save(ps_t.receipt('PO-20261111-01', 1, 10), 'receivePurchaseLine') $$, 'RF_INVALID_TRANSITION', 'a received part quantity cannot be corrected downwards (cumulative 10 below the 50 received · 20261128020000 allows further receipts up)');
 select is(ps_t.qty('P-1'), 131::numeric, 'and the balance did not move');
 
 -- 8.4 ใบที่มีแต่ของซื้อ: รับครบ = received (ST สร้าง admin รับได้)
@@ -704,10 +704,10 @@ select ok(ps_t.po_save(jsonb_build_object('id', 'PO-20261111-02', 'status', 'ord
   'lines', '[{"materialCode":"P-2","source":"bom","needKg":5,"availableKg":0,"shortageKg":5,"safetyKg":0,"qtyKg":8}]'::jsonb)) is not null, 'ST staff creates an order of parts only');
 select public.app_sandbox_enter(current_setting('test.p_sbx_admin_t')::uuid);
 select set_config('test.res', ps_t.po_save(ps_t.receipt('PO-20261111-02', 0, 7.5), 'receivePurchaseLine')::text, true);
-select is(ps_t.po('PO-20261111-02') ->> 'status', 'received', 'the order becomes received once its only line is received (admin can receive too)');
+select is(ps_t.po('PO-20261111-02') ->> 'status', 'ordered', 'a short receipt keeps the order open (0.5 still on order · 20261128020000) and admin can receive too');
 select is(ps_t.po('PO-20261111-02') -> 'lines' -> 0 ->> 'receivedKg', '7.5', 'the received quantity can differ from the ordered quantity');
 select is(ps_t.qty('P-2'), 35::numeric, 'and the balance follows (27.5 + 7.5)');
-select throws_ok($$ select ps_t.po_save(ps_t.receipt('PO-20261111-02', 0, 3), 'receivePurchaseLine') $$, 'RF_INVALID_TRANSITION', 'a received order cannot be received again or corrected');
+select throws_ok($$ select ps_t.po_save(ps_t.receipt('PO-20261111-02', 0, 3), 'receivePurchaseLine') $$, 'RF_INVALID_TRANSITION', 'a received quantity cannot be corrected downwards');
 -- รับบรรทัดของซื้อที่ชิ้นไม่ได้เป็น PURCHASED แล้ว (ถูกเปลี่ยนชนิดหลังสั่ง) = RF_INVALID_PURCHASE ไม่แตะสต็อก
 select ok(ps_t.po_save(jsonb_build_object('id', 'PO-20261111-04', 'status', 'ordered', 'sourcePi', null, 'sourceRequisition', null, 'note', '',
   'lines', '[{"materialCode":"P-3","source":"bom","needKg":1,"availableKg":0,"shortageKg":1,"safetyKg":2,"qtyKg":5}]'::jsonb)) is not null, 'admin orders a part that will change kind afterwards');

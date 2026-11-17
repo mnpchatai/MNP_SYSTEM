@@ -2,7 +2,7 @@
 -- ตรวจทั้งฝั่งอนุญาตและปฏิเสธ: โครงสร้าง/สิทธิ์ของฟังก์ชัน, ล็อก advisory ของสอง RPC, เลข WO ต่อกัน (เฉพาะวันนี้), ช่องของ WO, กก. จากบรรทัด BOM (kg และ g) / kgPerRoll / weight_g / หน่วย kg,
 -- priority และวันครบกำหนด, ผูกงานแบบ auto (งานยัง queued ใบยัง released), เหตุผลที่ข้ามทุกข้อ, ตัวนับ RF เพิ่มครั้งเดียว + app_rf_master_since + audit RF + audit BOM,
 -- หัว RB ปล่อย WO ต่อ, พนักงาน RB รายงานงานที่ผูกอัตโนมัติ (BOM ไม่มองว่าผูกใหม่), ป้อนผลผลิตกลับเข้างาน, ผูกด้วยมือยังได้สำหรับงานที่ถูกข้าม,
--- ยกเลิกใบ (WO planned/released ทั้งที่เปิดเองและด้วยมือถูกยกเลิก) และ BOM_RF_ORDER_STARTED (in_progress / on_hold / completed, ไม่เขียนอะไรเลย), เปิดใบกลับเป็นร่างแล้วปล่อยใหม่
+-- ยกเลิกใบ (WO planned/released ทั้งที่เปิดเองและด้วยมือถูกยกเลิก · ตั้งแต่ 20261128010000 WO in_progress / on_hold ถูกหยุดเมื่อมีเหตุผล), เปิดใบกลับเป็นร่างแล้วปล่อยใหม่
 -- (authenticated อ่านตารางตรงไม่ได้ จึงอ่าน audit_logs ด้วย reset role เสมอ)
 begin;
 create extension if not exists pgtap with schema extensions;
@@ -42,8 +42,8 @@ select ok(position('pg_advisory_xact_lock' in pg_get_functiondef('public.app_bom
         < position('bom_actor' in pg_get_functiondef('public.app_bom_save_master(jsonb,bigint,text,jsonb,text)'::regprocedure)),
   'the advisory lock comes right after the lab-only guard and before anything else');
 select is((select count(*)::integer from private.lab_only_unguarded_functions()), 0, 'every callable public function keeps the lab-only guard');
-select ok(position('BOM_RF_ORDER_STARTED' in pg_get_functiondef('private.bom_cancel_rf_orders(uuid)'::regprocedure)) > 0,
-  'the cancel helper raises the new error code');
+select ok(position('BOM_RF_ORDER_STARTED' in pg_get_functiondef('private.bom_cancel_rf_orders(uuid)'::regprocedure)) = 0,
+  'the cancel helper no longer raises BOM_RF_ORDER_STARTED (20261128010000 stops a started work order instead)');
 
 -- 2. บัญชีทดสอบและค่าที่ใช้ซ้ำ -----------------------------------------------------------------
 insert into auth.users (id, email, raw_user_meta_data) values ('8f200000-0000-0000-0000-000000000001', 'rfauto-admin@test.local', '{}');
@@ -254,13 +254,20 @@ select is(public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('up
 select is((select j ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-A-01'), 'queued', 'releasing the work order does not touch the BOM job');
 
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
-select set_config('test.res', public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+-- งานที่ผูก WO รับยอดจาก RubberFlow เท่านั้น (20261128010000): รายงานด้วยมือไม่ได้ แต่พักงานพร้อมเหตุผลได้
+select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
   (select j || jsonb_build_object('status', 'in_progress', 'qtyDone', 10,
                                   'reports', (j -> 'reports') || jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 10, 'reject', 0, 'note', '')))
    from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-A-01')))),
-  (public.app_bom_master() ->> 'version')::bigint, 'reportJob')::text, true);
-select is(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'upsert' -> 0 ->> 'qtyDone', '10',
-  'RB staff report on an automatically linked job (the extra auto field is not seen as a new link)');
+  (public.app_bom_master() ->> 'version')::bigint, 'reportJob') $$,
+  'BOM_INVALID_JOB', 'RB staff cannot report output on an automatically linked job (its output comes from RubberFlow)');
+select set_config('test.res', public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  (select j || jsonb_build_object('status', 'hold',
+                                  'reports', (j -> 'reports') || jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 0, 'reject', 0, 'note', 'รอแม่พิมพ์')))
+   from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-A-01')))),
+  (public.app_bom_master() ->> 'version')::bigint, 'setJobStatus')::text, true);
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'upsert' -> 0 ->> 'status', 'hold',
+  'RB staff put an automatically linked job on hold with a reason (the extra auto field is not seen as a new link)');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'upsert' -> 0 -> 'externalRef' ->> 'auto', 'true', 'and the link keeps its automatic mark');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'upsert' -> 0 -> 'externalRef' ->> 'woId', current_setting('test.wp') || '08', 'and its work order');
 
@@ -268,13 +275,13 @@ select is(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'upsert' 
 reset role;
 select is(private.rf_apply_feedback('ผู้บันทึก', json_populate_record(null::public.rf_lots, '{"lot_no":"FN-AUTO-1","stage":"finishing","good_qty":40,"uom":"pcs"}'::json),
           (select o from public.rf_orders o where o.is_test and o.wo_no = current_setting('test.wp') || '10')), '{"jobs":1,"orders":0}'::jsonb,
-  'a passed finishing lot of an automatic work order is fed back into its job (the PI was already started by the report)');
+  'a passed finishing lot of an automatic work order is fed back into its job (the PI was already started by the hold)');
 set local role authenticated;
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select is((select jsonb_build_array(j ->> 'qtyDone', j ->> 'status', j -> 'externalRef' ->> 'woId') from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-A-03'),
   jsonb_build_array('40', 'in_progress', current_setting('test.wp') || '10'), 'the job received the quantity and started, and keeps its link');
 select is((select o ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '261108-26001'), 'in_progress',
-  'the order started with the first reported work (it was released before)');
+  'the order started with the first started job (it was released before)');
 
 -- 6. ยกเลิกใบ: WO planned / released ทั้งที่เปิดเองและด้วยมือถูกยกเลิก ----------------------------------
 select public.app_bom_save_master(jsonb_build_object(
@@ -315,8 +322,9 @@ select is((select jsonb_agg(w ->> 'status' order by w ->> 'id') from jsonb_array
   '["cancelled","cancelled","cancelled"]'::jsonb, 'all three work orders are cancelled in RubberFlow');
 select ok((select w ? 'cancelledAt' from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = current_setting('test.wp') || '13'), 'with their cancel time');
 select is((public.app_rf_master() ->> 'version')::bigint, current_setting('test.rf1')::bigint + 1, 'the RubberFlow counter moved once for the three cancellations');
-select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'orderId' = '261108-26002'), 0, 'the jobs of the cancelled order are deleted as before');
-select is(jsonb_array_length(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'delete'), 4, 'and the delta tells a client about the four deleted jobs');
+select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'orderId' = '261108-26002'), 4,
+  'the jobs of the cancelled order are kept (20261128010000: cancelling no longer deletes jobs)');
+select is(coalesce(jsonb_array_length(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'delete'), 0), 0, 'and the delta deletes no job');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'bom:cancelOrder' and a ->> 'detail' = 'orders +3'),
   'the RubberFlow audit page says the cancellations came from the BOM');
@@ -325,7 +333,7 @@ select is((select metadata -> 'rubberflow' from public.audit_logs where action =
            and entity_id = current_setting('test.res')::jsonb ->> 'version'), '{"opened":0,"skipped":0,"cancelled":3}'::jsonb, 'and the BOM audit row counts them');
 set local role authenticated;
 
--- 7. ยกเลิก/เปิดใบกลับไม่ได้เมื่อ WO เริ่มผลิตแล้ว (BOM_RF_ORDER_STARTED) · ไม่เขียนอะไรเลย --------------------
+-- 7. ยกเลิกใบที่ WO เริ่มผลิตแล้ว (20261128010000): ต้องมีเหตุผล · WO ที่กำลังผลิต / พักอยู่ถูกหยุด · เปิดใบกลับเป็นร่างยังไม่ได้ --------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select public.app_bom_save_master(jsonb_build_object(
   'orders', jsonb_build_object('upsert', jsonb_build_array(
@@ -351,7 +359,7 @@ select set_config('test.bv2', public.app_bom_master() ->> 'version', true);
 select set_config('test.o', (select o::text from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '261108-26003'), true);
 select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.o')::jsonb || '{"status":"cancelled"}'::jsonb))), current_setting('test.bv2')::bigint, 'cancelOrder') $$,
-  'BOM_RF_ORDER_STARTED', 'an order whose work order is in progress cannot be cancelled');
+  'BOM_INVALID_ORDER', 'an order whose work order is in progress cannot be cancelled without a reason (20261128010000)');
 select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.o')::jsonb || '{"status":"draft","explosion":null,"explodedAt":null,"items":[{"fgCode":"FG-A","qty":9,"colorSet":"A","note":""}]}'::jsonb))),
   current_setting('test.bv2')::bigint, 'updateOrderItem') $$,
@@ -363,29 +371,29 @@ select is(public.app_rf_master() ->> 'version', current_setting('test.rf2'), 'th
 select is(public.app_bom_master() ->> 'version', current_setting('test.bv2'), 'the BOM counter did not move');
 select is((select o ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '261108-26003'), 'released', 'the order is untouched');
 select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'orderId' = '261108-26003'), 3, 'and so are its jobs');
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.o')::jsonb || '{"status":"cancelled","cancelReason":"ลูกค้ายกเลิก"}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'cancelOrder') $$,
+  'BOM_FORBIDDEN', 'cancelling stays a planner right (RB staff are refused before any work order is looked at)');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_mgr')::uuid);
 select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   (select w || '{"status":"on_hold"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = current_setting('test.wp') || '17')))),
   (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
-select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.o')::jsonb || '{"status":"cancelled"}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'cancelOrder') $$,
-  'BOM_RF_ORDER_STARTED', 'a work order on hold also blocks the cancel');
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_mgr')::uuid);
-select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  (select w || '{"status":"in_progress"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = current_setting('test.wp') || '17')))),
-  (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus');
-select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  (select w || '{"status":"completed"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = current_setting('test.wp') || '17')))),
-  (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus');
-select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
-select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.o')::jsonb || '{"status":"cancelled"}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'cancelOrder') $$,
-  'BOM_RF_ORDER_STARTED', 'and so does a completed work order');
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
-select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.o')::jsonb || '{"status":"cancelled"}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'cancelOrder') $$,
-  'BOM_FORBIDDEN', 'cancelling stays a planner right (RB staff are refused before any work order is looked at)');
+select set_config('test.rf2', public.app_rf_master() ->> 'version', true);
+select set_config('test.o', (select o::text from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '261108-26003'), true);
+select set_config('test.res', public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.o')::jsonb || '{"status":"cancelled","cancelReason":"ลูกค้ายกเลิกหลังเริ่มผลิต"}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'cancelOrder')::text, true);
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'cancelled',
+  'with a reason the planner cancels an order whose work order already started (20261128010000)');
+select is(current_setting('test.res')::jsonb -> 'rubberflow' -> 'cancelled', jsonb_build_array(current_setting('test.wp') || '16', current_setting('test.wp') || '17'),
+  'the planned work order is cancelled and the one on hold is stopped');
+select is((select jsonb_agg(w ->> 'status' order by w ->> 'id') from jsonb_array_elements(public.app_rf_master() -> 'orders') w
+           where w ->> 'id' in (current_setting('test.wp') || '16', current_setting('test.wp') || '17')), '["cancelled","cancelled"]'::jsonb,
+  'RubberFlow shows both as cancelled');
+select is((public.app_rf_master() ->> 'version')::bigint, current_setting('test.rf2')::bigint + 1, 'with one RubberFlow version');
+select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'orderId' = '261108-26003'), 3, 'the jobs of the cancelled order are kept');
+-- WO ที่ปิดแล้ว (completed) คงเดิมเมื่อยกเลิกใบ: bom_cancel_rf_stop.test.sql
 
 -- 8. เปิดใบกลับเป็นร่างแล้วปล่อยใหม่: WO ที่ยังไม่เริ่มถูกยกเลิก ปล่อยใหม่ได้เลขต่อจากเลขสูงสุด -------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
@@ -464,7 +472,7 @@ set local role authenticated;
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select set_config('test.rf6', public.app_rf_master() ->> 'version', true);
 select set_config('test.res', public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  (select o || '{"status":"cancelled"}'::jsonb from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '261108-26005')))),
+  (select o || '{"status":"cancelled","cancelReason":"ข้อมูลค้าง"}'::jsonb from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '261108-26005')))),
   (public.app_bom_master() ->> 'version')::bigint, 'cancelOrder')::text, true);
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'cancelled', 'a link to a work order that cannot be found does not block the cancel');
 select ok(not (current_setting('test.res')::jsonb ? 'rubberflow'), 'and nothing happened in RubberFlow, so the reply has no rubberflow field');

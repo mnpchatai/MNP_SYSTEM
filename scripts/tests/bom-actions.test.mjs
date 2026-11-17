@@ -32,7 +32,21 @@ test("the demo seed is deterministic, valid for the store and internally consist
   assert.equal(a.boms.filter((bom) => bom.status === "superseded").length, 1, "one edit left a superseded revision");
   assert.equal(approved(a, "SE-TP01-OR01-100-18-65").revision, 2);
   assert.equal(approved(a, "DEMO-BL-60(K)-Z"), null, "the ball product has no BOM yet");
-  assert.deepEqual(a.orders.map((order) => [order.id, order.status]), [["DEMO-26002", "draft"], ["DEMO-26001", "in_progress"]]);
+  assert.deepEqual(a.orders.map((order) => [order.id, order.status]), [["DEMO-26008", "completed"], ["DEMO-26007", "in_progress"], ["DEMO-26006", "in_progress"], ["DEMO-26002", "draft"], ["DEMO-26001", "in_progress"]]);
+  // ใบสาธิตที่ส่งมอบครบแล้ว (ลองย้อนด้วยผู้จัดการคลังสินค้า · 20261128020000): รับเข้า 8 + 12 ส่งมอบ 20 · ย้อนรับเข้าได้หลังย้อนการส่งมอบ
+  const delivered = a.orders.find((order) => order.id === "DEMO-26008");
+  assert.deepEqual(a.fgMoves.filter((move) => move.orderId === "DEMO-26008").map((move) => [move.kind, move.qty]), [["receive", 8], ["receive", 12], ["deliver", 20]]);
+  assert.equal(rules.fgPosition(a, delivered).fullyDelivered, true, "the demo order is fully delivered");
+  assert.ok(!a.jobs.some((job) => job.orderId === "DEMO-26008" && A.helpers.isOpenJob(a, job)), "its jobs are done or belong to a closed order");
+  assert.match(rules.fgReverseBlock(a, delivered, a.fgMoves.find((move) => move.orderId === "DEMO-26008" && move.qty === 12)), /ย้อนการส่งมอบก่อน/, "a receipt waits for the delivery to be reversed first");
+  assert.equal(rules.fgReverseBlock(a, delivered, a.fgMoves.find((move) => move.orderId === "DEMO-26008" && move.kind === "deliver")), null, "the delivery can be reversed");
+  // ใบที่งาน RB ผูก WO ของชุดสาธิต RubberFlow (เลข WO ของวันที่ 3 วันก่อน ลำดับ 01 / 02 · rubberflow-seed.js เปิด WO เลขเดียวกันจาก demoRfLinks)
+  const linkedRb = ["DEMO-26006", "DEMO-26007"].map((pi) => a.jobs.find((job) => job.orderId === pi && job.dept === "RB"));
+  assert.deepEqual(linkedRb.map((job) => [job.status, job.externalRef.woId]), [["in_progress", seed.demoWoId(NOW, 0)], ["in_progress", seed.demoWoId(NOW, 1)]]);
+  assert.match(seed.demoWoId(NOW, 1), /^WO-20261026-02$/);
+  assert.deepEqual(seed.demoRfLinks(NOW).map((link) => [link.orderId, link.jobId, link.woId, link.recipeId, link.mode]),
+    [["DEMO-26006", linkedRb[0].id, seed.demoWoId(NOW, 0), "RC-NBR-OR02", "running"], ["DEMO-26007", linkedRb[1].id, seed.demoWoId(NOW, 1), "RC-NBR-OR02", "issued"]],
+    "the RubberFlow demo opens the same work orders for the linked RB jobs");
   const jobs = a.jobs.filter((job) => job.orderId === "DEMO-26001");
   assert.equal(jobs.length, 21, "one job per department × item plus one PK job per product, plus one ST job per purchased part");
   assert.deepEqual(jobs.filter((job) => !rules.MANUFACTURED.includes(job.kind)).map((job) => [job.dept, job.kind]), Array(7).fill(["ST", "PURCHASED"]), "the purchased parts are ST jobs");
@@ -47,6 +61,7 @@ test("the demo seed is deterministic, valid for the store and internally consist
   assert.equal(jobs.find((job) => job.itemCode === "RB-DM02-02-BK01-225-3-20").qtyPlanned, 15, "17.14 rods needed across both products, 3 counted → 14.14, rounded up to whole rods");
   assert.equal(jobs.find((job) => job.itemCode === "RB-DM02-02-BK01-225-3-20").qtyRequired.toFixed(2), "17.14", "the requirement of that job stays exact");
   assert.equal(jobs.find((job) => job.itemCode === "BG-0092").status, "hold");
+  assert.deepEqual(A.helpers.jobHoldNote(jobs.find((job) => job.itemCode === "BG-0092")), { reason: "รอผ้าตาข่ายล็อตใหม่", by: user("bg").name, at: NOW - 4 * DAY }, "the demo hold has its reason");
   assert.ok(a.audit.length > 30 && a.audit.every((entry) => entry.user && entry.action));
 });
 
@@ -471,7 +486,7 @@ test("jobs: the department reports output, hold/queue toggles, orders progress a
   const whCtx = { now: NOW, user: { id: "wh", role: "wh", dept: "WH", name: "คลังสินค้า" } };
   rejects(() => A.closeOrderShort(d, { orderId, note: "PK ทำไม่ครบ" }, whCtx), /PK/);
   assert.equal(A.completeOrder, undefined, "nobody closes an order by hand any more");
-  rejects(() => A.cancelOrder(d, { orderId }, ctx("planner")), /รายงานผลผลิตแล้ว/);
+  rejects(() => A.cancelOrder(d, { orderId }, ctx("planner")), /เหตุผลที่ยกเลิก/);
   d.jobs.filter((entry) => entry.orderId === orderId && entry.dept === "PK").forEach((pk) => A.reportJob(d, { jobId: pk.id, qtyDone: pk.qtyPlanned }, ctx("planner")));
   // รับครบขณะที่แผนกอื่นยังเปิด: ใบยังไม่ปิด (20261125010000)
   const received = A.receiveFg(d, { orderId, lines: order.items.map((item) => ({ fgCode: item.fgCode, qty: item.qty })) }, whCtx);
@@ -491,7 +506,62 @@ test("jobs: the department reports output, hold/queue toggles, orders progress a
   assert.ok(d.jobs.some((entry) => entry.orderId === "DEMO-26002"));
   A.cancelOrder(d, { orderId: "DEMO-26002", reason: "ลูกค้าเลื่อน" }, ctx("planner"));
   assert.equal(d.orders.find((entry) => entry.id === "DEMO-26002").status, "cancelled");
-  assert.ok(!d.jobs.some((entry) => entry.orderId === "DEMO-26002"));
+  const kept = d.jobs.filter((entry) => entry.orderId === "DEMO-26002");
+  assert.ok(kept.length > 0 && kept.every((entry) => !A.helpers.isOpenJob(d, entry)), "the jobs of a cancelled order are kept but none counts as open");
+  rejects(() => A.reportJob(d, { jobId: kept.find((entry) => !A.helpers.isPartJob(entry)).id, qtyDone: 1 }, ctx("planner")), /ไม่อยู่ในสถานะผลิต/);
+});
+
+test("cancelling an order: a reason of 3–200 characters, started work and output no longer block it, the jobs stay with their output", () => {
+  const d = fresh();
+  const orderId = "DEMO-26001";
+  const order = d.orders.find((entry) => entry.id === orderId);
+  rejects(() => A.cancelOrder(d, { orderId, reason: "ลูกค้ายกเลิก" }, ctx("rb")), /ฝ่ายวางแผนหรือผู้จัดการ/);
+  rejects(() => A.cancelOrder(d, { orderId }, ctx("planner")), /เหตุผลที่ยกเลิก \(อย่างน้อย 3 ตัวอักษร\)/);
+  rejects(() => A.cancelOrder(d, { orderId, reason: "  ab " }, ctx("planner")), /อย่างน้อย 3/);
+  rejects(() => A.cancelOrder(d, { orderId, reason: "ก".repeat(201) }, ctx("planner")), /ยาวเกิน 200/);
+  const output = d.jobs.filter((job) => job.orderId === orderId).map((job) => [job.id, job.qtyDone]);
+  assert.ok(output.some(([, qty]) => qty > 0), "the demo order has reported output");
+  A.cancelOrder(d, { orderId, reason: "  ลูกค้ายกเลิกคำสั่งซื้อ  " }, ctx("planner"));
+  assert.deepEqual([order.status, order.cancelReason, order.cancelledAt], ["cancelled", "ลูกค้ายกเลิกคำสั่งซื้อ", NOW]);
+  assert.deepEqual(d.jobs.filter((job) => job.orderId === orderId).map((job) => [job.id, job.qtyDone]), output, "every job stays with its output");
+  assert.match(d.audit[0].detail, /DEMO-26001 — ลูกค้ายกเลิกคำสั่งซื้อ/);
+  rejects(() => A.cancelOrder(d, { orderId, reason: "ซ้ำ" }, ctx("planner")), /ถูกยกเลิกแล้ว/);
+  // งานที่ผูก WO ที่เริ่มผลิตแล้วไม่กันการยกเลิก (ฐานข้อมูลหยุด WO ให้)
+  const linked = d.orders.find((entry) => entry.id === "DEMO-26006");
+  A.cancelOrder(d, { orderId: linked.id, reason: "ลูกค้ายกเลิกหลังเริ่มผลิต" }, { ...ctx("planner"), rfOrders: [{ id: seed.demoWoId(NOW, 0), sourceJobId: d.jobs.find((job) => job.orderId === linked.id && job.dept === "RB").id, status: "in_progress" }] });
+  assert.equal(linked.status, "cancelled");
+});
+
+test("holding a job needs a reason that is kept as a zero entry marked hold; resuming a job with output goes back to in progress", () => {
+  const d = fresh();
+  const job = d.jobs.find((entry) => entry.orderId === "DEMO-26001" && entry.itemCode === "SE-TP01-BK01-140-3-20");
+  rejects(() => A.setJobStatus(d, { jobId: job.id, status: "hold" }, ctx("gr")), /เหตุผลที่พักงาน/);
+  rejects(() => A.setJobStatus(d, { jobId: job.id, status: "hold", reason: "ab" }, ctx("gr")), /อย่างน้อย 3/);
+  rejects(() => A.setJobStatus(d, { jobId: job.id, status: "hold", reason: "ก".repeat(201) }, ctx("gr")), /ยาวเกิน 200/);
+  rejects(() => A.setJobStatus(d, { jobId: job.id, status: "hold", reason: "รอแม่พิมพ์" }, ctx("rb")), /แผนก GR/);
+  const before = job.reports.length;
+  A.setJobStatus(d, { jobId: job.id, status: "hold", reason: "  รอแม่พิมพ์  " }, ctx("gr"));
+  assert.equal(job.status, "hold");
+  assert.deepEqual(job.reports.at(-1), { at: NOW, by: user("gr").name, good: 0, reject: 0, note: "รอแม่พิมพ์", kind: "hold" });
+  assert.equal(job.reports.length, before + 1);
+  assert.deepEqual(A.helpers.jobHoldNote(job), { reason: "รอแม่พิมพ์", by: user("gr").name, at: NOW });
+  assert.match(d.audit[0].detail, /→ hold — รอแม่พิมพ์/);
+  A.setJobStatus(d, { jobId: job.id, status: "in_progress" }, ctx("gr"));
+  assert.equal(job.status, "in_progress", "resuming needs no reason");
+  assert.equal(A.helpers.jobHoldNote(job), null, "a job that is not on hold shows no hold reason");
+  assert.equal(A.helpers.jobCloseNote(job), null, "a hold entry is not a close note");
+});
+
+test("a job linked to a RubberFlow work order takes its output from RubberFlow only: reporting is refused for everyone", () => {
+  const d = fresh();
+  const rb = d.jobs.find((job) => job.orderId === "DEMO-26006" && job.dept === "RB");
+  assert.equal(A.helpers.isLinkedJob(rb), true);
+  for (const role of ["rb", "planner", "admin"]) rejects(() => A.reportJob(d, { jobId: rb.id, qtyDone: 1 }, ctx(role)), /RubberFlow/);
+  A.setJobStatus(d, { jobId: rb.id, status: "hold", reason: "รอแม่พิมพ์" }, ctx("rb"));
+  assert.equal(rb.status, "hold", "a linked job can still be held");
+  A.setJobStatus(d, { jobId: rb.id, status: "done", reason: "ไม่ผลิตเพิ่ม" }, ctx("planner"));
+  assert.equal(rb.status, "done", "and closed by the planner with a reason");
+  assert.equal(A.helpers.isLinkedJob(d.jobs.find((job) => job.orderId === "DEMO-26001" && job.dept === "GR")), false);
 });
 
 test("RB jobs link to a RubberFlow work order once and the compound kilograms come from the rod weight", () => {
@@ -515,7 +585,9 @@ test("RB jobs link to a RubberFlow work order once and the compound kilograms co
   A.releaseOrder(d2, { orderId: "DEMO-26002" }, ctx("planner"));
   const job2 = d2.jobs.find((job) => job.orderId === "DEMO-26002" && job.dept === "RB");
   A.linkJobToRubberFlow(d2, { jobId: job2.id, woId: "WO-X" }, ctx("rb"));
-  rejects(() => A.cancelOrder(d2, { orderId: "DEMO-26002" }, ctx("planner")), /WO-X/);
+  rejects(() => A.reportJob(d2, { jobId: job2.id, qtyDone: 1 }, ctx("rb")), /WO-X[\s\S]*RubberFlow/);
+  A.cancelOrder(d2, { orderId: "DEMO-26002", reason: "ลูกค้ายกเลิก" }, ctx("planner"));
+  assert.deepEqual([d2.orders.find((order) => order.id === "DEMO-26002").status, job2.externalRef.woId], ["cancelled", "WO-X"], "a linked order is cancelled and the job keeps its link");
 });
 
 test("importing a flat sheet adds items and revision-1 BOMs, merges legacy codes and never overwrites an existing BOM", () => {
@@ -771,7 +843,7 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   const bad = store.run("createOrder", { pi: "", customer: "x" });
   assert.equal(bad.ok, false);
   assert.match(bad.error.message, /วันที่สั่งผลิต/, "the PI number is optional (auto), dates are not");
-  assert.equal(store.data().orders.length, 2, "failed action leaves the state untouched");
+  assert.equal(store.data().orders.length, 5, "failed action leaves the state untouched");
   const ok = store.run("createOrder", { pi: "ST-1", customer: "x", country: "Thailand", orderedAt: NOW, whDue: NOW + DAY });
   assert.equal(ok.result, "ST-1");
   assert.ok(store.isPersisted());
@@ -780,7 +852,7 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   assert.equal(reloaded.user().id, "B03");
   storage.set(storeApi.STATE_KEY, "{broken");
   const repaired = storeApi.createStore({ storage: fake, seed: fresh, actions: A, now: () => NOW });
-  assert.equal(repaired.data().orders.length, 2, "corrupt storage → fresh seed");
+  assert.equal(repaired.data().orders.length, 5, "corrupt storage → fresh seed");
   const noStorage = storeApi.createStore({ storage: { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); }, removeItem() {} }, seed: fresh, actions: A, now: () => NOW });
   noStorage.setUser("B03");
   assert.equal(noStorage.run("createOrder", { pi: "M-1", customer: "x", country: "Thailand", orderedAt: NOW, whDue: NOW + DAY }).ok, true);
@@ -796,7 +868,7 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   assert.equal(upgraded.data().version, storeApi.STATE_VERSION);
   assert.equal(upgraded.data().boms.filter((bom) => ["draft", "pending"].includes(bom.status)).length, 0);
   assert.equal(upgraded.data().boms.length, old.boms.length - 2);
-  assert.equal(upgraded.data().orders.length, 2, "orders survive the upgrade");
+  assert.equal(upgraded.data().orders.length, 5, "orders survive the upgrade");
   assert.equal(JSON.parse(oldStorage.get(storeApi.STATE_KEY)).version, storeApi.STATE_VERSION, "upgraded state is written back");
   // รุ่น 2 (ไม่มีตารางสี) → รุ่น 3 เพิ่มรายการว่าง → รุ่น 4 เพิ่มขั้นตอนผลิตมาตรฐาน ข้อมูลเดิมคงอยู่
   const v2 = fresh();
@@ -1055,7 +1127,7 @@ test("order items can be edited in a draft and in a released order whose jobs ha
   // ใบที่ยกเลิกแล้วแก้ไม่ได้
   const other = A.createOrder(d, { pi: "T-CXL", customer: "x", country: "Thailand", orderedAt: day(0), whDue: day(10) }, ctx("planner"));
   A.addOrderItem(d, { orderId: other, fgCode: "DEMO-TP-01(P)-Y", qty: 1 }, ctx("planner"));
-  A.cancelOrder(d, { orderId: other }, ctx("planner"));
+  A.cancelOrder(d, { orderId: other, reason: "เปิดใบซ้ำ" }, ctx("planner"));
   rejects(() => A.updateOrderItem(d, { orderId: other, fgCode: "DEMO-TP-01(P)-Y", qty: 2 }, ctx("planner")), /ปิดหรือยกเลิก/);
   // ใบตัวอย่างที่มีงานเริ่มแล้ว
   rejects(() => A.removeOrderItem(d, { orderId: "DEMO-26001", fgCode: "DEMO-TP-01(P)-Y" }, ctx("planner")), /มีงานที่เริ่มแล้ว/);
@@ -1072,7 +1144,7 @@ test("a job started or held without output, or linked to RubberFlow, locks the o
   for (const status of ["in_progress", "hold"]) {
     const order = open(`T-${status}`);
     A.releaseOrder(d, { orderId: order.id }, ctx("planner"));
-    A.setJobStatus(d, { jobId: rbJob(order).id, status }, ctx("rb"));
+    A.setJobStatus(d, { jobId: rbJob(order).id, status, reason: "รอแม่พิมพ์" }, ctx("rb"));
     rejects(() => A.updateOrderItem(d, { orderId: order.id, fgCode: "DEMO-TP-01(P)-Y", qty: 5 }, ctx("planner")), /มีงานที่เริ่มแล้ว \(RB /);
     rejects(() => A.updateOrderItem(d, { orderId: order.id, fgCode: "DEMO-TP-01(P)-Y", qty: 80 }, ctx("planner")), /มีงานที่เริ่มแล้ว/, "a locked order explains the lock before a same-value check");
   }
@@ -1122,7 +1194,7 @@ test("who may do what with a job or a count: the planner group everywhere, a dep
 
 test("customers: a PI with a new name adds it, a known name (any case) is reused with its stored spelling, saveCustomer adds and edits by name and only for planners", () => {
   const d = fresh();
-  assert.deepEqual(d.customers.map((customer) => customer.name), ["ลูกค้าสาธิต เบลเยียม", "ลูกค้าสาธิต กรุงเทพ"], "the demo orders added their customers when the seed was built");
+  assert.deepEqual(d.customers.map((customer) => customer.name), ["ลูกค้าสาธิต เบลเยียม", "ลูกค้าสาธิต กรุงเทพ", "ลูกค้าสาธิต ระยอง"], "the demo orders added their customers when the seed was built");
   d.customers = [];
   const order = (customer, extra = {}) => A.createOrder(d, { customer, country: "Thailand", orderedAt: day(0), whDue: day(10), ...extra }, ctx("planner"));
   order("Acme");
@@ -1321,12 +1393,11 @@ test("a job linked to a RubberFlow work order is started only once the WO is pas
   assert.equal(A.helpers.startedJobs(d, a.order, []).length, 1, "a WO that cannot be found counts as started");
   assert.equal(A.helpers.startedJobs(d, a.order, [{ id: "WO-T-AUTO-A", status: "planned", sourceJobId: a.rb.id }]).length, 0);
   assert.equal(A.helpers.startedJobs(d, a.order, [{ id: "WO-T-AUTO-A", status: "planned", sourceJobId: "JOB-OTHER" }]).length, 1, "a WO that does not point back at this job counts as not found");
-  // ยกเลิกใบ: WO แผนก/ปล่อยผลิตไม่ขวาง (ฐานข้อมูลยกเลิกให้) · เริ่มแล้วหรือไม่มีรายการ WO ขวาง
-  rejects(() => A.cancelOrder(d, { orderId: a.id }, ctx("planner")), /WO-T-AUTO-A/);
-  rejects(() => A.cancelOrder(d, { orderId: a.id }, { ...ctx("planner"), rfOrders: [{ id: "WO-T-AUTO-A", status: "in_progress" }] }), /WO-T-AUTO-A/);
-  A.cancelOrder(d, { orderId: a.id }, { ...ctx("planner"), rfOrders: [{ id: "WO-T-AUTO-A", status: "released", sourceJobId: a.rb.id }] });
+  // ยกเลิกใบ (20261128010000): WO ไม่ขวางอีก ทั้งที่ยังไม่เริ่มและที่เริ่มแล้ว (ฐานข้อมูลยกเลิก / หยุดให้) · ต้องมีเหตุผล · งานของใบคงอยู่
+  rejects(() => A.cancelOrder(d, { orderId: a.id }, { ...ctx("planner"), rfOrders: [{ id: "WO-T-AUTO-A", status: "in_progress", sourceJobId: a.rb.id }] }), /เหตุผลที่ยกเลิก/);
+  A.cancelOrder(d, { orderId: a.id, reason: "ลูกค้ายกเลิก" }, { ...ctx("planner"), rfOrders: [{ id: "WO-T-AUTO-A", status: "in_progress", sourceJobId: a.rb.id }] });
   assert.equal(a.order.status, "cancelled");
-  assert.equal(d.jobs.some((job) => job.orderId === a.id), false, "the jobs go with the cancelled order");
+  assert.equal(d.jobs.some((job) => job.orderId === a.id), true, "the jobs stay with the cancelled order");
   // เปิดใบกลับมาแก้: ตามกฎเดียวกัน
   const b = open("T-AUTO-B");
   rejects(() => A.updateOrderItem(d, { orderId: b.id, fgCode: "DEMO-TP-01(P)-Y", qty: 90 }, ctx("planner")), /มีงานที่เริ่มแล้ว/);
@@ -1344,7 +1415,7 @@ test("the notice for what the database did in RubberFlow: opened count, skipped 
   assert.deepEqual(notice("releaseOrder", { orderId: "PI-1" }, { opened: [{ jobId: "J0", woId: "WO-0", kg: 1 }], skipped: skipped(1) }),
     { text: "ปล่อยผลิต PI-1 แล้ว · เปิด WO ใน RubberFlow 1 ใบ · ยังไม่ได้เปิด WO 1 งาน (J1 RB-1: ยังไม่ผูกสูตร RubberFlow)", type: "success" });
   assert.match(notice("releaseOrder", { orderId: "PI-1" }, { skipped: skipped(5) }).text, /^ปล่อยผลิต PI-1 แล้ว · ยังไม่ได้เปิด WO 5 งาน \(J1 RB-1: .* · J3 RB-3: .* · อีก 2 งาน\)$/);
-  assert.deepEqual(notice("cancelOrder", { orderId: "PI-1" }, { cancelled: ["WO-1", "WO-2"] }), { text: "ยกเลิก WO WO-1, WO-2 ด้วย", type: "success" });
+  assert.deepEqual(notice("cancelOrder", { orderId: "PI-1" }, { cancelled: ["WO-1", "WO-2"] }), { text: "ยกเลิกหรือหยุด WO WO-1, WO-2 ใน RubberFlow ด้วย", type: "success" });
   assert.equal(notice("cancelOrder", { orderId: "PI-1" }, { opened: [{ jobId: "J1", woId: "WO-1", kg: 1 }] }), null, "only a release says what it opened");
 });
 
@@ -1518,9 +1589,13 @@ test("a partly issued line: undo gives it back and the jobs wait again (then the
   rejects(() => A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-ZIP-05", qty: 30.5 }], reason: "เหลือ" }, ctx("st")), /คืนได้อีกไม่เกิน 30/);
   A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-ZIP-05", qty: 8.8 }], reason: "เบิกเกิน" }, ctx("st"));
   assert.equal(stock("P-ZIP-05").qty, 78.8);
-  // ใบที่เหลือแต่งานของซื้อ: ยกเลิกใบไม่ได้จนกว่าจะยกเลิกการเบิกจ่าย (ยอดเบิกบางส่วนก็กัน)
+  // ใบที่เหลือแต่งานของซื้อ: ยกเลิกได้ทั้งที่เบิกไปแล้ว (20261128010000: ยอดเบิกไม่กัน คืนของเหลือได้หลังยกเลิก) · เหตุผลต้องยาวพอ
   d.jobs = d.jobs.filter((job) => job.orderId !== order.id || A.helpers.isPartJob(job));
-  rejects(() => A.cancelOrder(structuredClone(d), { orderId: order.id, reason: "x" }, ctx("planner")), /ยกเลิกการเบิกจ่าย/);
+  rejects(() => A.cancelOrder(structuredClone(d), { orderId: order.id, reason: "x" }, ctx("planner")), /อย่างน้อย 3/);
+  const early = structuredClone(d);
+  assert.equal(A.cancelOrder(early, { orderId: order.id, reason: "ลูกค้ายกเลิก" }, ctx("planner")), order.id, "a partly issued order can be cancelled");
+  assert.deepEqual(rules.partReturnLines(early, order.id).map((line) => [line.itemCode, line.returnable, line.partial]), [["P-STK-01", 50, false], ["P-ZIP-05", 21.2, false]],
+    "after the cancel every issued line takes a leftover return (nothing is partial on a cancelled order)");
   const undone = A.undoOrderParts(d, { orderId: order.id, reason: "ผิดใบ" }, ctx("st"));
   assert.equal(undone.summary, "2 รายการ");
   assert.deepEqual([stock("P-STK-01").qty, stock("P-ZIP-05").qty], [400, 100], "the partial 50 and the zip still out (30 - 8.8) are back");
@@ -1626,9 +1701,9 @@ test("returning purchased parts: undo gives the whole issue back and the jobs wa
   A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 120 }], reason: "รอบสอง" }, ctx("st"));
   assert.equal(stock("P-STK-01").qty, 400, "the leftovers of the first issue do not count against the second");
   rejects(() => A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 1 }], reason: "เกิน" }, ctx("st")), /ไม่เกิน 0/);
-  // ใบที่มีแต่งานของซื้อ: เบิกจ่ายแล้วยกเลิกใบไม่ได้ (มียอดทำแล้ว) หลังยกเลิกการเบิกจ่ายยกเลิกใบได้ และเปิดใบกลับมาแก้ได้ (ไม่มีงานเริ่ม)
+  // ใบที่มีแต่งานของซื้อ: ยกเลิกใบได้แม้เบิกจ่ายแล้ว (20261128010000) · ยกเลิกการเบิกจ่ายก่อนก็ยังได้ และเปิดใบกลับมาแก้ได้ (ไม่มีงานเริ่ม)
   d.jobs = d.jobs.filter((job) => job.orderId !== order.id || A.helpers.isPartJob(job));
-  rejects(() => A.cancelOrder(structuredClone(d), { orderId: order.id, reason: "x" }, ctx("planner")), /เบิกจ่ายของซื้อของใบนี้ไปแล้ว[\s\S]*ยกเลิกการเบิกจ่าย/, "the message names the undo when only part jobs hold output");
+  assert.equal(A.cancelOrder(structuredClone(d), { orderId: order.id, reason: "ลูกค้ายกเลิก" }, ctx("planner")), order.id, "an issued PI can be cancelled with a reason");
   assert.ok(A.helpers.startedJobs(d, order, []).length > 0, "an issued PI counts as started");
   A.undoOrderParts(d, { orderId: order.id, reason: "ยกเลิกใบ" }, ctx("st"));
   assert.equal(A.helpers.startedJobs(d, order, []).length, 0, "after the undo no job counts as started");
@@ -1646,9 +1721,10 @@ test("returning purchased parts: order status rules and the planner group", () =
   rejects(() => A.undoOrderParts(d, { orderId: order.id, reason: "x" }, ctx("st")), /ยังไม่ปิด/);
   A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 5 }], reason: "เหลือหลังปิดใบ" }, ctx("manager"));
   assert.equal(d.stock.find((row) => row.itemCode === "P-STK-01").qty, 285);
-  // ใบที่ยกเลิก: คืนไม่ได้ทั้งสองทาง
+  // ใบที่ยกเลิก (20261128010000): คืนของเหลือได้เหมือนใบที่ปิดแล้ว · ยกเลิกการเบิกจ่ายไม่ได้
   order.status = "cancelled";
-  rejects(() => A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 5 }], reason: "x" }, ctx("st")), /ยกเลิก/);
+  A.returnOrderParts(d, { orderId: order.id, lines: [{ itemCode: "P-STK-01", qty: 5 }], reason: "ยกเลิกใบ" }, ctx("st"));
+  assert.equal(d.stock.find((row) => row.itemCode === "P-STK-01").qty, 290, "a cancelled order takes a leftover return");
   rejects(() => A.undoOrderParts(d, { orderId: order.id, reason: "x" }, ctx("st")), /ยังไม่ปิด/);
   rejects(() => A.undoOrderParts(d, { orderId: "NOPE", reason: "x" }, ctx("st")), /ไม่พบใบสั่งผลิต/);
   // โหมดฐานข้อมูล: ประวัติเป็นของเซิร์ฟเวอร์ (ไม่เขียนในเครื่อง) แต่สต็อกและงานคำนวณไว้แสดงทันที
@@ -1753,11 +1829,13 @@ test("finished goods: only the WH department (staff or its manager) and admin ha
     rejects(() => A.deliverFg(d, { orderId, lines }, whCtx(who)), /คลังสินค้า \(WH\) หรือผู้ดูแลระบบ/);
     rejects(() => A.closeOrderShort(d, { orderId, note: "เหตุผล" }, whCtx(who)), /คลังสินค้า \(WH\) หรือผู้ดูแลระบบ/);
   }
-  assert.equal((d.fgMoves ?? []).length, 0, "nothing was written");
+  // ประวัติของใบนี้เท่านั้น (ชุดสาธิตมีประวัติของใบ DEMO-26008 อยู่แล้ว)
+  const own = () => (d.fgMoves ?? []).filter((move) => move.orderId === orderId);
+  assert.equal(own().length, 0, "nothing was written");
   rejects(() => A.receiveFg(d, { orderId, lines }, { now: NOW }), /เลือกบทบาท/, "no user at all");
   for (const who of [whStaff, whHead, user("admin")]) A.receiveFg(d, { orderId, lines }, whCtx(who));
-  assert.equal(d.fgMoves.length, 3);
-  assert.deepEqual(d.fgMoves.map((move) => move.by), ["สุดา คลังสินค้า", "ชัย หัวหน้าคลัง", user("admin").name]);
+  assert.equal(own().length, 3);
+  assert.deepEqual(own().map((move) => move.by), ["สุดา คลังสินค้า", "ชัย หัวหน้าคลัง", user("admin").name]);
 });
 
 test("finished goods: receiving is partial per product, capped by what PK reported, checked shape first then permission then status then the numbers", () => {
@@ -1768,7 +1846,8 @@ test("finished goods: receiving is partial per product, capped by what PK report
   assert.deepEqual(position().products.map((p) => [p.fgCode, p.ordered, p.pkDone, p.received, p.receivable]), [[TP, 80, 30, 0, 30], [HL, 40, 0, 0, 0]]);
   A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 20 }], note: "รอบเช้า" }, whCtx());
   assert.equal(order.status, "in_progress", "received while production is still running");
-  assert.deepEqual(d.fgMoves.map((move) => [move.orderId, move.fgCode, move.kind, move.qty, move.note, move.at, move.by]), [[orderId, TP, "receive", 20, "รอบเช้า", NOW, "สุดา คลังสินค้า"]]);
+  const own = () => d.fgMoves.filter((move) => move.orderId === orderId);
+  assert.deepEqual(own().map((move) => [move.orderId, move.fgCode, move.kind, move.qty, move.note, move.at, move.by]), [[orderId, TP, "receive", 20, "รอบเช้า", NOW, "สุดา คลังสินค้า"]]);
   assert.equal(position().products[0].receivable, 10);
   assert.equal(position().anyReceivable, true);
   // ยอดเกิน PK / สินค้าที่ PK ยังไม่ส่ง
@@ -1792,7 +1871,7 @@ test("finished goods: receiving is partial per product, capped by what PK report
   const draft = d.orders.find((entry) => entry.status === "draft");
   rejects(() => A.receiveFg(d, { orderId: draft.id, lines: [{ fgCode: draft.items[0].fgCode, qty: 1 }] }, whCtx(user("planner"))), /คลังสินค้า \(WH\)/, "permission before status");
   rejects(() => A.receiveFg(d, { orderId: draft.id, lines: [{ fgCode: draft.items[0].fgCode, qty: 1 }] }, whCtx()), /ปล่อยผลิตแล้ว/, "status before the numbers");
-  assert.equal(d.fgMoves.length, 1, "every refusal leaves the history untouched");
+  assert.equal(own().length, 1, "every refusal leaves the history untouched");
   // รับเพิ่มได้จนเท่าที่ PK รายงาน · เลข PI ตัวพิมพ์เล็กหรือมีช่องว่างหัวท้ายหาใบเดียวกันได้ (ฐานข้อมูลทำ upper + ตัดช่องว่าง) และประวัติเก็บเลขของใบ
   A.receiveFg(d, { orderId: ` ${orderId.toLowerCase()} `, lines: [{ fgCode: TP, qty: 10 }] }, whCtx());
   assert.equal(d.fgMoves.at(-1).orderId, orderId);
@@ -1902,7 +1981,8 @@ test("finished goods: delivery is capped by what was received, possible before a
 test("finished goods: on hand per code is everything received minus everything delivered over all orders, with the orders that hold it", () => {
   const d = fresh();
   const orderId = reportPk(d, { [TP]: 80, [HL]: 40 });
-  assert.deepEqual(rules.fgOnHand(d), []);
+  // ชุดสาธิต: ใบ DEMO-26008 รับฮูล่า 20 ส่งมอบ 20 แล้ว (คงคลัง 0 ไม่มีใบใดถือของ)
+  assert.deepEqual(rules.fgOnHand(d), [{ fgCode: HL, onHand: 0, free: 0, orders: [], freeOrders: [] }]);
   A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 50 }, { fgCode: HL, qty: 40 }] }, whCtx());
   A.deliverFg(d, { orderId, lines: [{ fgCode: TP, qty: 20 }, { fgCode: HL, qty: 40 }] }, whCtx());
   assert.deepEqual(rules.fgOnHand(d), [{ fgCode: HL, onHand: 0, free: 0, orders: [], freeOrders: [] }, { fgCode: TP, onHand: 30, free: 0, orders: [{ orderId, qty: 30 }], freeOrders: [] }], "what the order still owes its own customer is not free stock");
@@ -1922,7 +2002,7 @@ test("finished goods: in database mode an action only checks and returns the req
   const remote = (who = whStaff) => ({ now: NOW, user: who, remote: true });
   const receive = A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 80 }, { fgCode: HL, qty: 10 }], note: "  รอบเช้า " }, remote());
   assert.deepEqual(receive.request, { orderId, kind: "receive", lines: [{ fgCode: TP, qty: 80 }, { fgCode: HL, qty: 10 }], note: "รอบเช้า" });
-  assert.equal(d.fgMoves ?? undefined, undefined, "the server writes the history");
+  assert.equal(d.fgMoves.filter((move) => move.orderId === orderId).length, 0, "the server writes the history");
   assert.equal(d.orders.find((entry) => entry.id === orderId).status, "in_progress");
   assert.deepEqual(A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 1 }] }, remote(user("admin"))).request, { orderId, kind: "receive", lines: [{ fgCode: TP, qty: 1 }] }, "an empty note is not sent");
   const all = A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 80 }, { fgCode: HL, qty: 40 }] }, remote());
@@ -2282,14 +2362,14 @@ test("fg stock: cancelling or reopening an order that took stock gives it back t
   // delivery to the customer of the order that took stock refuses cancel and reopen
   const delivered = clonedData(d);
   A.deliverFg(delivered, { orderId: DRAFT, lines: [{ fgCode: HL, qty: 5 }] }, whCtx());
-  rejects(() => A.cancelOrder(delivered, { orderId: DRAFT }, planner()), /ส่งมอบสินค้าให้ลูกค้าแล้ว/);
+  rejects(() => A.cancelOrder(delivered, { orderId: DRAFT, reason: "ลูกค้ายกเลิก" }, planner()), /ส่งมอบสินค้าให้ลูกค้าแล้ว[\s\S]*ปิดใบ \(รับไม่ครบ\)/);
   rejects(() => A.updateOrderItem(delivered, { orderId: DRAFT, fgCode: HL, qty: 190 }, planner()), /ส่งมอบสินค้าให้ลูกค้าแล้ว/);
   assert.equal(orderOf(delivered, DRAFT).status, "released", "a refusal changes nothing");
   assert.equal(delivered.fgMoves.filter((move) => move.kind === "untransfer").length, 0);
   // the source that gave stock away cannot be cancelled either (its PK reports are removed here only to reach that rule)
   const gave = clonedData(d);
   for (const job of gave.jobs.filter((entry) => entry.orderId === SRC)) { job.qtyDone = 0; job.qtyReject = 0; job.status = "queued"; job.reports = []; }
-  rejects(() => A.cancelOrder(gave, { orderId: SRC }, planner()), /ให้สินค้าจากสต็อกแก่ใบอื่นไปแล้ว \(DEMO-26002\)/);
+  rejects(() => A.cancelOrder(gave, { orderId: SRC, reason: "ลูกค้ายกเลิก" }, planner()), /ให้สินค้าจากสต็อกแก่ใบอื่นไปแล้ว \(DEMO-26002\)/);
   rejects(() => A.updateOrderItem(gave, { orderId: SRC, fgCode: HL, qty: 41 }, planner()), /ให้สินค้าจากสต็อกแก่ใบอื่นไปแล้ว/);
 });
 
@@ -2341,11 +2421,11 @@ test("fg stock: in database mode the actions only check — no history, no compl
   A.setStockCount(f, { orderId: DRAFT, itemCode: HL, qty: 20 }, planner());
   A.releaseOrder(f, { orderId: DRAFT }, planner(NOW + 2000));
   A.deliverFg(f, { orderId: DRAFT, lines: [{ fgCode: HL, qty: 1 }] }, whCtx());
-  rejects(() => A.cancelOrder(f, { orderId: DRAFT }, remote()), /ส่งมอบสินค้าให้ลูกค้าแล้ว/);
+  rejects(() => A.cancelOrder(f, { orderId: DRAFT, reason: "ลูกค้ายกเลิก" }, remote()), /ส่งมอบสินค้าให้ลูกค้าแล้ว/);
   const g = withSurplus();
   A.setStockCount(g, { orderId: DRAFT, itemCode: HL, qty: 20 }, planner());
   A.releaseOrder(g, { orderId: DRAFT }, planner(NOW + 2000));
-  A.cancelOrder(g, { orderId: DRAFT }, remote(user("planner"), NOW + 3000));
+  A.cancelOrder(g, { orderId: DRAFT, reason: "ลูกค้ายกเลิก" }, remote(user("planner"), NOW + 3000));
   assert.equal(g.fgMoves.filter((move) => move.kind === "untransfer").length, 0, "no return rows written locally");
   // a receive on a closed order is sent as a request only
   const h = fresh();

@@ -224,7 +224,8 @@ select throws_ok($$ select cr_t.close_job('JOB-1-GR', '') $$, 'BOM_INVALID_JOB',
 select throws_ok($$ select cr_t.close_job('JOB-1-GR', '  ab  ') $$, 'BOM_INVALID_JOB', 'of at least three characters after trimming');
 select throws_ok($$ select cr_t.close_job('JOB-1-GR', repeat('ก', 201)) $$, 'BOM_INVALID_JOB', 'and at most 200');
 select throws_ok($$ select cr_t.close_job('JOB-1-GR', 'ไม่ทำต่อแล้ว', 'reportJob') $$, 'BOM_INVALID_JOB', 'a zero report under another action is refused');
-select throws_ok($$ select cr_t.close_job('JOB-1-GR', 'ไม่ทำต่อแล้ว', 'setJobStatus', 'hold') $$, 'BOM_INVALID_JOB', 'a zero report that does not finish the job is refused');
+select throws_ok($$ select cr_t.close_job('JOB-1-GR', 'ไม่ทำต่อแล้ว', 'setJobStatus', 'in_progress') $$, 'BOM_INVALID_JOB',
+  'a zero report that neither finishes nor holds the job is refused (a hold reason is the other zero entry since 20261128010000)');
 select throws_ok($$ select cr_t.close_job('JOB-1-GR', 'ไม่ทำต่อแล้ว', 'setJobStatus', 'done', '{"qtyDone":2}'::jsonb) $$, 'BOM_INVALID_JOB',
   'closing a job does not add output');
 select throws_ok($$ select cr_t.close_job('JOB-1-GR', 'ไม่ทำต่อแล้ว', 'setJobStatus', 'done', '{"qtyReject":1}'::jsonb) $$, 'BOM_INVALID_JOB',

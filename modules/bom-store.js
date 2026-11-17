@@ -244,8 +244,8 @@
   // คืนของซื้อ (undoOrderParts / returnOrderParts): ผลทั้งหมด (งานกลับไปรอเบิกจ่าย สต็อก ประวัติ) เซิร์ฟเวอร์คำนวณเอง จึงส่งเฉพาะแถวคำขอ { orderId, mode, reason, lines? } ในส่วน partReturns (action คืนแถวนี้ใน result.request)
   // สำเนาที่ action คำนวณในเครื่อง (งาน สต็อก) ใช้แสดงจนกว่าคำตอบมาถึง และยังใช้เทียบว่าระเบียนไหนเป็นของเรา
   const RETURN_ACTIONS = Object.freeze(["undoOrderParts", "returnOrderParts"]);
-  // สินค้าสำเร็จรูป (receiveFg / deliverFg / closeOrderShort / closeOrder): เซิร์ฟเวอร์เขียนประวัติและปิดใบเอง จึงส่งเฉพาะแถวคำขอ { orderId, kind, lines?, note? } ในส่วน fgMoves (action คืนแถวนี้ใน result.request)
-  const FG_ACTIONS = Object.freeze(["receiveFg", "deliverFg", "closeOrderShort", "closeOrder"]);
+  // สินค้าสำเร็จรูป (receiveFg / deliverFg / closeOrderShort / closeOrder / reverseFg): เซิร์ฟเวอร์เขียนประวัติ ปิดใบ และเปิดใบกลับเอง จึงส่งเฉพาะแถวคำขอ { orderId, kind, lines?, note?, moveId? } ในส่วน fgMoves (action คืนแถวนี้ใน result.request)
+  const FG_ACTIONS = Object.freeze(["receiveFg", "deliverFg", "closeOrderShort", "closeOrder", "reverseFg"]);
   function diffMaster(before, after, action = "") {
     const changes = {};
     for (const list of REMOTE_LISTS) {
@@ -377,13 +377,15 @@
       BOM_STALE: "มีผู้อื่นบันทึกข้อมูล BOM ไปก่อน ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       BOM_CONFLICT: "รายการนี้ซ้ำกับที่มีอยู่แล้ว (เช่น เลขที่ PI) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       BOM_INVALID_TRANSITION: "ใบสั่งผลิตอยู่ในสถานะที่ทำรายการนี้ไม่ได้ (อาจมีผู้อื่นเปลี่ยนสถานะไปก่อน หรือมีงานที่เริ่มแล้ว) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
-      BOM_RF_ORDER_STARTED: "ยกเลิกหรือแก้ใบไม่ได้: WO ใน RubberFlow ที่ผูกงานของใบนี้เริ่มผลิตแล้ว ปิดหรือยกเลิก WO นั้นใน RubberFlow ก่อน",
+      // ฐานข้อมูลตั้งแต่ 20261128010000 ไม่ส่งรหัสนี้จากการยกเลิกใบแล้ว (หยุด WO ให้เอง) · ข้อความสำหรับฐานข้อมูลรุ่นก่อน: บอกทางที่ทำได้จริง
+      BOM_RF_ORDER_STARTED: "ยกเลิกใบไม่ได้เพราะฐานข้อมูลยังเป็นรุ่นเก่า (WO ใน RubberFlow ที่ผูกงานของใบนี้เริ่มผลิตแล้ว) ให้ฝ่ายวางแผนปิดงานที่เหลือพร้อมเหตุผล แล้วให้คลังสินค้า (WH) กด “ปิดใบ (รับไม่ครบ)” แทน",
       BOM_INSUFFICIENT_STOCK: "สต็อกของซื้อไม่พอ จึงไม่ได้เบิกจ่ายอะไรเลย ระบบโหลดข้อมูลล่าสุดให้แล้ว",
       BOM_INVALID_STOCK: "รหัสที่นับไม่ใช่ของซื้อ หรือตัวเลขไม่ถูกต้อง (ต้อง 0 ขึ้นไป)",
       BOM_INVALID_RETURN: "คืนของซื้อไม่ได้: จำนวนเกินที่คืนได้ ไม่มีของที่เบิกจ่ายแล้ว หรือไม่ได้ระบุเหตุผล (อาจมีผู้อื่นคืนไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
       BOM_INVALID_FG: "รับเข้าคลัง ส่งมอบ หรือปิดใบไม่ได้: ข้อมูลไม่ถูกต้อง (จำนวนต้องมากกว่า 0 สินค้าต้องอยู่ในใบ เหตุผลที่ปิดใบอย่างน้อย 3 ตัวอักษร)",
       BOM_FG_EXCEEDS: "ตัวเลขเปลี่ยนไปแล้ว: จำนวนที่รับเข้าคลังเกินที่ PK ส่งมอบ จำนวนที่ส่งมอบเกินที่มีในใบ หรือสต็อกสินค้าสำเร็จรูปที่ใบนี้ตั้งใช้ไม่พอ (อาจมีผู้อื่นบันทึกหรือปล่อยผลิตใบอื่นไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาตรวจตัวเลขแล้วทำรายการอีกครั้ง",
-      BOM_INVALID_ORDER: "ใบสั่งผลิตไม่ผ่านการตรวจของฐานข้อมูล (เช่น ยอดที่ใช้จากสต็อกสินค้าสำเร็จรูปเกินจำนวนสั่ง) ตรวจที่ขั้นตรวจของแล้วทำรายการอีกครั้ง",
+      BOM_INVALID_ORDER: "ใบสั่งผลิตไม่ผ่านการตรวจของฐานข้อมูล (เช่น ยกเลิกใบโดยไม่มีเหตุผล 3–200 ตัวอักษร หรือยอดที่ใช้จากสต็อกสินค้าสำเร็จรูปเกินจำนวนสั่ง) ตรวจแล้วทำรายการอีกครั้ง",
+      BOM_INVALID_JOB: "บันทึกงานไม่ได้: ยอดหรือรายงานไม่ถูกต้อง (พักงานต้องมีเหตุผล 3–200 ตัวอักษร · งานที่ผูก WO ของ RubberFlow รับยอดจาก RubberFlow เท่านั้น รายงานผลที่นี่ไม่ได้)",
       BOM_RESET: "ข้อมูล BOM ทดสอบถูกล้างและเริ่มใหม่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       BOM_NOT_DEPLOYED: "ฐานข้อมูลยังไม่มีระบบ BOM (ยังไม่ได้ติดตั้ง migration) ติดต่อผู้ดูแลระบบ",
       BOM_TOO_MANY: "ข้อมูลชุดนี้มากเกินกว่าจะบันทึกในครั้งเดียว (เกิน 5,000 รายการต่อประเภท) แบ่งนำเข้าทีละส่วน",
@@ -425,7 +427,8 @@
     // dept ใช้แยกงานรายแผนก (DEPTS ของ bom-rules): ฝ่ายวางแผนทำงานบรรจุแทนในงาน PK · แผนกอื่นที่ไม่อยู่ในรายการเก็บรหัสจริงไว้ (ไม่ตรงกับงานใดๆ)
     const dept = depts.includes(deptCode) ? deptCode : role === "planner" ? "PK" : role === "admin" ? "AD" : deptCode;
     const name = `${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim() || employee.display_name || employee.employee_no || "ผู้ใช้ทดสอบ";
-    return { id: String(employee.id ?? employee.employee_no ?? name), role, dept, name };
+    // roleCode = รหัสบทบาทจริงของบัญชีทดสอบ (เช่น department_manager): สิทธิ์ที่ผูกกับตำแหน่งเฉพาะ เช่น ย้อนรับเข้าคลัง (ผู้จัดการแผนก WH เท่านั้น) ใช้ค่านี้
+    return { id: String(employee.id ?? employee.employee_no ?? name), role, dept, name, roleCode: String(employee.role?.code ?? employee.role_code ?? "") };
   }
 
   function normalizeSnapshot(value) {

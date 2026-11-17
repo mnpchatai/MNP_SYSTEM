@@ -804,11 +804,15 @@
   const canViewBuy = (ctx) => rfCan(ctx, "purchase") || rfCan(ctx, "viewPurchase");
   // ---------- ขั้น 5 รับเข้าคลัง / ขั้น 6 ส่งมอบลูกค้า (คลังสินค้า WH หรือผู้ดูแลระบบ · คนอื่นดูตารางเดียวกันอย่างเดียว) ----------
   // ฟอร์มส่งทันทีหลังกดยืนยัน (ไม่มีนับถอยหลังให้ยกเลิก) · แถวที่ไม่มีของให้รับ/ส่งไม่มีช่องกรอก · ค่าตั้งต้นของช่อง = ยอดที่รับ/ส่งได้ทั้งหมด
-  const FG_MOVE_LABEL = Object.freeze({ receive: "รับเข้าคลัง", deliver: "ส่งมอบ", close: "ปิดใบ (รับไม่ครบ)" });
+  const FG_MOVE_LABEL = Object.freeze({ receive: "รับเข้าคลัง", deliver: "ส่งมอบ", close: "ปิดใบ (รับไม่ครบ)", unreceive: "ย้อนรับเข้า", undeliver: "ย้อนส่งมอบ" });
+  // ข้อความคงที่ของแถว close เมื่อคลังสินค้าปิดใบที่รับครบ (เซิร์ฟเวอร์เขียน: private.bom_fg_move ของ 20261125010000)
+  const FULL_CLOSE_NOTE = "รับครบ ปิดใบโดยคลังสินค้า";
   // ประวัติโอนสต็อกสินค้าสำเร็จรูประหว่างใบ: บอกจากมุมมองของใบที่เปิดอยู่ พร้อมเลขใบอีกฝั่ง
-  // แถว close ของใบที่ปิดเมื่อรับครบ (pos.fullClose) = "ปิดใบ (รับครบ)" · ของใบที่รับไม่ครบ = "ปิดใบ (รับไม่ครบ)" พร้อมเหตุผล
+  // แถว close ที่ปิดเมื่อรับครบ (ข้อความคงที่ของเซิร์ฟเวอร์ หรือ pos.fullClose) = "ปิดใบ (รับครบ)" · ของใบที่รับไม่ครบ = "ปิดใบ (รับไม่ครบ)" พร้อมเหตุผล
+  // (ใบที่เปิดกลับเพราะย้อนรับเข้ายังมีแถว close เดิม จึงดูจากข้อความของแถวด้วย)
+  const isFullClose = (move, pos) => move.kind === "close" && (move.note === FULL_CLOSE_NOTE || Boolean(pos?.fullClose));
   function fgMoveLabel(ctx, move, orderId, pos = null) {
-    if (move.kind === "close" && pos?.fullClose) return esc("ปิดใบ (รับครบ)");
+    if (isFullClose(move, pos)) return esc("ปิดใบ (รับครบ)");
     if (move.kind !== "transfer" && move.kind !== "untransfer") return esc(FG_MOVE_LABEL[move.kind] ?? move.kind);
     const mine = move.orderId === orderId; // ใบที่เปิดอยู่เป็นฝั่งปลายทาง (ได้ / คืน) หรือฝั่งต้นทาง (ให้ / ได้คืน)
     const other = ctx.ui.link(mine ? move.fromOrderId : move.orderId, ctx.url("orders", { sel: mine ? move.fromOrderId : move.orderId }), "rf-mono");
@@ -837,9 +841,10 @@
     const closeButton = pos.canCloseShort && canFg ? ui.openButton("ปิดใบ (รับไม่ครบ)", "closeShort", { orderId: order.id }, { className: "secondary" }) : "";
     // รับครบและทุกแผนกปิดงานแล้วแต่ใบยังเปิด (รับครบก่อนงานสุดท้ายเสร็จ): คลังสินค้า (WH) ปิดใบ ยืนยันแล้วส่งทันที ไม่ต้องมีเหตุผล
     const fullCloseButton = pos.canClose && canFg ? ui.button("ปิดใบ", { action: "closeOrder", args: { orderId: order.id }, className: "", confirmText: `ปิดใบ ${order.id}? ทุกแผนกปิดงานและรับสินค้าเข้าคลังครบแล้ว ปิดแล้วเปิดกลับไม่ได้ สินค้าที่รับเข้าคลังยังส่งมอบให้ลูกค้าได้`, success: "ปิดใบ {result} แล้ว" }) : "";
+    // บันทึกผิดย้อนได้โดยผู้จัดการแผนกคลังสินค้า (WH) หรือผู้ดูแลระบบเท่านั้น (20261128020000) · ยืนยันแล้วส่งทันที
     const submit = closedOrder
-      ? '<button class="btn rf-btn" type="submit" data-rf-confirm="รับส่วนที่ PK ผลิตเกินเข้าคลังเป็นสต็อกสินค้าสำเร็จรูปตามจำนวนที่กรอก? รับเข้าแล้วแก้ไขหรือยกเลิกไม่ได้">รับส่วนเกินเข้าคลัง</button>'
-      : '<button class="btn rf-btn" type="submit" data-rf-confirm="รับสินค้าเข้าคลังตามจำนวนที่กรอก? รับเข้าแล้วแก้ไขหรือยกเลิกไม่ได้">รับเข้าคลัง</button>';
+      ? '<button class="btn rf-btn" type="submit" data-rf-confirm="รับส่วนที่ PK ผลิตเกินเข้าคลังเป็นสต็อกสินค้าสำเร็จรูปตามจำนวนที่กรอก? ถ้าบันทึกผิด ย้อนได้โดยผู้จัดการแผนกคลังสินค้า (WH) เท่านั้น">รับส่วนเกินเข้าคลัง</button>'
+      : '<button class="btn rf-btn" type="submit" data-rf-confirm="รับสินค้าเข้าคลังตามจำนวนที่กรอก? ถ้าบันทึกผิด ย้อนได้โดยผู้จัดการแผนกคลังสินค้า (WH) เท่านั้น">รับเข้าคลัง</button>';
     // รับครบแต่งานผลิตยังเปิด: บอกแผนกที่ยังเปิดและใครทำอะไรต่อ (ฝ่ายวางแผนมีลิงก์ไปงานของใบนี้ที่ปิดงานได้) · ตัวเลขรับเข้าอยู่ในตารางแล้ว ไม่บอกซ้ำ
     const waiting = pos.waitingProduction
       ? ui.callout("info", `ยังปิดใบไม่ได้: งานของแผนก ${esc(pos.openDepts.map((dept) => `${deptName(ctx, dept)} (${dept})`).join(", "))} ยังไม่เสร็จ · แผนกนั้นรายงานผลให้เสร็จ หรือฝ่ายวางแผนปิดงานที่จะไม่ทำต่อ แล้วคลังสินค้า (WH) ปิดใบ${ctx.helpers.canPlan(ctx.user) && ctx.canSee("work") ? ` · ${ui.link("ดูงานที่ยังเปิด", ctx.url("work", { order: order.id }))}` : ""}`)
@@ -867,16 +872,49 @@
     // ส่วนที่เกินจำนวนสั่ง (สต็อกสินค้าสำเร็จรูป) บอกใต้ยอดคงเหลือ · ช่องส่งครั้งนี้เติมเฉพาะส่วนที่ลูกค้าของใบนี้รออยู่ จึงไม่ส่งส่วนเกินโดยไม่ตั้งใจ
     const rows = pos.products.map((product) => `<tr>${fgProductCell(ctx, product)}${fgNum(ctx, product.have)}${anyGiven ? fgNum(ctx, product.givenAway) : ""}${fgNum(ctx, product.delivered)}<td class="right rf-mono">${esc(rules.fmtQty(product.deliverable))}${product.free > 0 ? `<div class="small muted">เกินที่สั่ง ${esc(rules.fmtQty(product.free))}</div>` : ""}</td>${acting ? `<td class="right">${fgQtyInput(ctx, product, "จำนวนที่ส่งมอบ", product.owed, product.deliverable)}</td>` : ""}</tr>`);
     const table = ui.table(head, rows, { emptyText: "ใบนี้ไม่มีสินค้า" });
-    const submit = '<button class="btn rf-btn" type="submit" data-rf-confirm="ส่งมอบสินค้าตามจำนวนที่กรอก? บันทึกแล้วแก้ไขหรือยกเลิกไม่ได้">ส่งมอบให้ลูกค้า</button>';
+    const submit = '<button class="btn rf-btn" type="submit" data-rf-confirm="ส่งมอบสินค้าตามจำนวนที่กรอก? ถ้าบันทึกผิด ย้อนได้โดยผู้จัดการแผนกคลังสินค้า (WH) เท่านั้น">ส่งมอบให้ลูกค้า</button>';
     const form = acting
       ? `<form novalidate data-rf-form="deliverFg" data-rf-args="${attr(JSON.stringify({ orderId: order.id }))}" data-rf-success="ส่งมอบ {result} แล้ว">${table}<div class="rf-row bom-step-next">${submit}</div></form>`
       : table;
     const note = !canFg ? '<p class="small muted">คลังสินค้า (WH) เป็นผู้ส่งมอบสินค้าให้ลูกค้า</p>' : !pos.anyHave ? '<p class="small muted">ยังไม่มีสินค้ารับเข้าคลัง ส่งมอบได้เมื่อรับเข้าแล้ว</p>' : "";
     const surplus = pos.anyFree ? '<p class="small muted">ส่วนที่เกินที่สั่งเป็นสต็อกสินค้าสำเร็จรูป ใบสั่งผลิตอื่นนำไปใช้ได้ ถ้าจะเก็บไว้ให้ใบอื่น ไม่ต้องกรอกในช่องส่งครั้งนี้</p>' : "";
-    const history = pos.moves.slice(0, FG_HISTORY_MAX).map((move) => `<tr><td class="nowrap small">${esc(rules.fmtDateTime(move.at))}</td><td>${fgMoveLabel(ctx, move, order.id, pos)}${move.fgCode ? ` <span class="rf-mono">${esc(move.fgCode)}</span>` : ""}${move.note && !(move.kind === "close" && pos.fullClose) ? `<div class="small muted">${esc(move.note)}</div>` : ""}</td><td class="right rf-mono">${move.kind === "close" ? '<span class="muted">—</span>' : esc(rules.fmtQty(move.qty))}</td><td class="small">${esc(move.by)}</td></tr>`);
-    const historyHtml = history.length ? `<h3 class="bom-h3">${pos.moves.some((move) => move.kind === "transfer" || move.kind === "untransfer") ? "ประวัติรับเข้า ส่งมอบ และสต็อก" : "ประวัติรับเข้าและส่งมอบ"}</h3>${ui.table(["เวลา", "รายการ", { label: "จำนวน", className: "right" }, "ผู้ทำ"], history)}${pos.moves.length > FG_HISTORY_MAX ? `<p class="small muted">แสดง ${FG_HISTORY_MAX} รายการล่าสุด</p>` : ""}` : "";
+    // ประวัติตารางเดียวของใบ: แถวที่ถูกย้อนแสดงจางพร้อม "ถูกย้อน" · แถวย้อน (ย้อนรับเข้า / ย้อนส่งมอบ) จำนวนติดลบพร้อมเหตุผล ผู้ทำ เวลา
+    // ปุ่ม "ย้อน" ต่อแถวรับเข้า / ส่งมอบที่ยังไม่ถูกย้อน เฉพาะผู้จัดการแผนกคลังสินค้า (WH) และผู้ดูแลระบบ · ใบที่ยกเลิกแล้วย้อนไม่ได้ (ไม่มีปุ่ม)
+    const reversed = new Set(pos.reversedIds ?? []);
+    const canReverse = Boolean(ctx.helpers.canReverseFg?.(ctx.user)) && ["released", "in_progress", "completed"].includes(order.status);
+    const reversible = (move) => canReverse && move.orderId === order.id && (move.kind === "receive" || move.kind === "deliver") && !reversed.has(move.id);
+    const qtyCell = (move) => (move.kind === "close" ? '<span class="muted">—</span>'
+      : move.kind === "unreceive" || move.kind === "undeliver" ? esc(`−${rules.fmtQty(move.qty)}`)
+      : reversed.has(move.id) ? `<s>${esc(rules.fmtQty(move.qty))}</s>` : esc(rules.fmtQty(move.qty)));
+    const history = pos.moves.slice(0, FG_HISTORY_MAX).map((move) => `<tr${reversed.has(move.id) ? ' class="muted"' : ""}><td class="nowrap small">${esc(rules.fmtDateTime(move.at))}</td><td>${fgMoveLabel(ctx, move, order.id, pos)}${move.fgCode ? ` <span class="rf-mono">${esc(move.fgCode)}</span>` : ""}${reversed.has(move.id) ? ` ${ui.badge("", "ถูกย้อน")}` : ""}${move.note && !isFullClose(move, pos) ? `<div class="small muted">${esc(move.note)}</div>` : ""}</td><td class="right rf-mono">${qtyCell(move)}</td><td class="small">${esc(move.by)}</td>${canReverse ? `<td class="right">${reversible(move) ? ui.openButton("ย้อน", "fgReverse", { orderId: order.id, moveId: move.id }, { className: "secondary small", ariaLabel: `ย้อน${FG_MOVE_LABEL[move.kind]} ${move.fgCode} ${rules.fmtQty(move.qty)}` }) : ""}</td>` : ""}</tr>`);
+    const historyHtml = history.length ? `<h3 class="bom-h3">${pos.moves.some((move) => move.kind === "transfer" || move.kind === "untransfer") ? "ประวัติรับเข้า ส่งมอบ และสต็อก" : "ประวัติรับเข้าและส่งมอบ"}</h3>${ui.table(["เวลา", "รายการ", { label: "จำนวน", className: "right" }, "ผู้ทำ", ...(canReverse ? [{ label: "", className: "right" }] : [])], history)}${pos.moves.length > FG_HISTORY_MAX ? `<p class="small muted">แสดง ${FG_HISTORY_MAX} รายการล่าสุด</p>` : ""}` : "";
     return ui.card(`${form}${surplus}${note}${historyHtml}`, { title: "ขั้น 6 · ส่งมอบลูกค้า" });
   }
+  // ย้อนรับเข้าคลัง / ย้อนส่งมอบหนึ่งรายการทั้งรายการ (20261128020000): ผู้จัดการแผนกคลังสินค้า (WH) หรือผู้ดูแลระบบ · ต้องมีเหตุผล 3-300 ตัวอักษร
+  // ย้อนไม่ได้ (ส่งมอบไปแล้วเกินที่จะเหลือ / ใบอื่นใช้สต็อกไปแล้ว / ย้อนแล้ว) = บอกเหตุผลและไม่มีปุ่มยืนยัน · ใบที่ปิดแล้วจะเปิดกลับ = บอกในหน้าต่าง
+  dialogs.fgReverse = (ctx, { orderId, moveId }) => {
+    const { ui, rules, user } = ctx;
+    const order = ctx.data.orders.find((entry) => entry.id === orderId);
+    const move = (ctx.data.fgMoves ?? []).find((entry) => entry.id === moveId);
+    if (!order || !move || !ctx.helpers.canReverseFg?.(user)) return null;
+    const label = FG_MOVE_LABEL[move.kind] ?? move.kind;
+    const blocked = rules.fgReverseBlock(ctx.data, order, move);
+    const reopens = !blocked && rules.fgReverseReopens(ctx.data, order, move);
+    const unit = esc(uomText(ctx, itemOf(ctx, move.fgCode)?.uom ?? "set"));
+    const facts = ui.kv([[label, `<span class="rf-mono">${esc(move.fgCode)}</span> ${esc(rules.fmtQty(move.qty))} ${unit}`], ["บันทึกเมื่อ", esc(`${rules.fmtDateTime(move.at)} · ${move.by ?? "-"}`)]]);
+    const effect = move.kind === "receive"
+      ? `ยอดรับเข้าคลังของ ${move.fgCode} ลดลง ${rules.fmtQty(move.qty)} แล้วรับเข้าใหม่ด้วยจำนวนที่ถูกต้องได้ (ไม่เกินที่ PK ส่งมอบ)${reopens ? ` · ใบ ${order.id} ปิดแล้วและของจะไม่ครบตามที่สั่ง ใบจะเปิดกลับเป็นกำลังผลิต รับเข้าครบแล้วปิดเองอีกครั้ง` : ""}`
+      : `ยอดส่งมอบของ ${move.fgCode} ลดลง ${rules.fmtQty(move.qty)} ของกลับมาอยู่ในคลังของใบนี้ แล้วบันทึกส่งมอบใหม่ด้วยจำนวนที่ถูกต้องได้`;
+    if (blocked) {
+      return { html: ui.dialog("fgReverse", `ย้อน${label} · ${orderId}`, `${facts}${ui.callout("warn", esc(blocked))}`, { footer: ui.closeButton("ปิด") }) };
+    }
+    const body = `<form novalidate id="bom-fg-reverse-form" data-rf-form="reverseFg" data-rf-args="${attr(JSON.stringify({ orderId, moveId }))}" data-rf-success="ย้อน${esc(label)} {result} แล้ว">
+      ${facts}
+      ${ui.callout("warn", `${esc(effect)} · รายการเดิมยังอยู่ในประวัติ ย้อนแล้วแก้กลับไม่ได้`)}
+      ${ui.field("เหตุผล", ui.input("note", { required: true, placeholder: "เช่น พิมพ์จำนวนผิด ต้องเป็น 5", extra: 'minlength="3" maxlength="300"' }), { required: true })}</form>`;
+    return { html: ui.dialog("fgReverse", `ย้อน${label} · ${orderId}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-fg-reverse-form">ย้อน${esc(label)}</button>` }) };
+  };
+
   // ปิดใบที่รับไม่ครบ: ต้องมีเหตุผล (3-300 ตัวอักษร) · เปิดได้เฉพาะเมื่อ PK เสร็จทุกงาน ของที่ PK ทำรับเข้าครบแล้ว และยังมีสินค้าที่รับน้อยกว่าที่สั่ง
   dialogs.closeShort = (ctx, { orderId }) => {
     const { ui, rules, user } = ctx;
@@ -938,7 +976,8 @@
     let panel = "";
     let draftOrders = [];
     let reservedDraftOrders = [];
-    if (current === 0) panel = ui.callout("warn", `ใบนี้ถูกยกเลิก${order.cancelReason ? `: ${esc(order.cancelReason)}` : ""}`);
+    // ใบที่ยกเลิก: เหตุผล และคืนของซื้อที่เบิกไปแล้ว (ปุ่มคืนของเหลือ เมื่อยังมีของที่คืนได้)
+    if (current === 0) panel = `${ui.callout("warn", `ใบนี้ถูกยกเลิก${order.cancelReason ? `: ${esc(order.cancelReason)}` : ""}`)}${buttons.returnParts ? `<div class="rf-row bom-step-next">${buttons.returnParts}</div>` : ""}`;
     else if (view === 1) panel = ui.card(`<p>เพิ่มสินค้าที่ลูกค้าสั่งลงในใบ แล้วระบบจะพาไปขั้นตรวจของ</p><div class="rf-row">${buttons.add ?? ""}</div>`, { title: "ขั้น 1 · รายการสินค้า" });
     else if (view === 2) {
       if (!order.explosion?.length) panel = ui.card(`<p>ยังไม่ได้คำนวณว่าใบนี้ต้องใช้อะไรเท่าไร</p><div class="rf-row">${buttons.explode ?? ""}</div>`, { title: "ขั้น 2 · ตรวจของ" });
@@ -1019,7 +1058,7 @@
       panel = `${surplusLine}${deliverPanel(ctx, order, pos, canFg)}`;
     }
     // used = ปุ่มที่แผงของขั้นนี้แสดงแล้ว (หรือเป็นของขั้นอื่นของใบร่าง) หน้า orders จะไม่วางซ้ำใน "คำสั่งอื่น"
-    const used = ["add", "explode", "release", ...(view === 4 ? ["issue", "check"] : [])];
+    const used = ["add", "explode", "release", ...(view === 4 ? ["issue", "check"] : []), ...(current === 0 ? ["returnParts"] : [])];
     // ปุ่มสั่งซื้อของใบร่าง: หน้าต่างสั่งซื้อของ RubberFlow คิดของซื้อจากใบร่าง (sourcePi) และเคมีจาก WO ชั่วคราวชุดเดียวกับที่ตารางของขั้นนี้แสดง
     const bind = (rootNode) => rootNode.querySelectorAll("[data-bom-draft-buy]").forEach((button) => button.addEventListener("click", async () => {
       button.disabled = true;
@@ -1034,15 +1073,31 @@
   const storeLoading = (ctx) => (rfCan(ctx, "receiveMaterial") || rfCan(ctx, "purchase")) && Boolean(pages.tools?.rfWake?.(ctx));
   function storeTasks(ctx) {
     const tasks = [];
+    // ใบที่ยกเลิกแล้วที่ยังมีของซื้อเบิกจ่ายค้างนอกคลัง (เบิก − คืน > 0): การ์ดค้างจนกว่าจะคืน (ไม่มีขั้น "ไม่มีของคืน" ในฐานข้อมูล) · ผู้ทำ = ผู้ที่เบิกจ่ายได้ (ST / ฝ่ายวางแผน)
+    if (ctx.helpers.canIssueParts?.(ctx.user)) {
+      for (const order of ctx.data.orders) {
+        if (order.status !== "cancelled") continue;
+        const lines = ctx.rules.partReturnLines(ctx.data, order.id).filter((line) => line.returnable > 0);
+        if (lines.length) tasks.push({ kind: "partReturn", order, lines });
+      }
+    }
+    // เคมีที่เบิกไปแล้วของ WO ที่ถูกยกเลิก (ยกเลิกใบ / เปิดใบกลับมาแก้ / ยกเลิก WO) และยังไม่ได้รับคืน: แผนก ST (หรือ admin) รับคืนเข้าล็อตเดิมที่หน้าใบเบิกของ RubberFlow
+    if (rfCan(ctx, "returnRequisition")) {
+      const rf = (() => { try { return ctx.rubberflow()?.store?.data?.() ?? null; } catch { return null; } })();
+      const rules = (() => { try { return root.MNP_RUBBERFLOW_RULES ?? null; } catch { return null; } })();
+      for (const req of rf && rules?.returnableRequisitions ? rules.returnableRequisitions(rf) : []) tasks.push({ kind: "chemReturn", req, wo: (rf.orders ?? []).find((row) => row.id === req.orderId) ?? null });
+    }
     // บัญชีที่ไม่มีสิทธิ์ของคลังวัตถุดิบไม่ต้องรอหรือสั่งโหลด RubberFlow (เมนูนับงานทุกหน้า)
     const purchaseOrders = rfCan(ctx, "receiveMaterial") || rfCan(ctx, "purchase") ? pages.tools?.purchaseOrdersOf?.(ctx) ?? [] : [];
     if (rfCan(ctx, "receiveMaterial")) {
-      for (const po of purchaseOrders) {
+      // บรรทัดที่ยังค้างรับ (รับไม่ครบยังค้างส่วนที่เหลือ จนกว่าจะรับครบหรือปิดยอดที่เหลือ · 20261128020000) · open = ยอดที่ค้าง received = ยอดที่รับแล้ว (กฎของ RubberFlow poLine*)
+      const poRules = (() => { try { return root.MNP_RUBBERFLOW_RULES ?? null; } catch { return null; } })();
+      for (const po of poRules ? purchaseOrders : []) {
         if (po.status !== "ordered") continue;
-        const lines = (po.lines ?? []).filter((line) => line.receivedKg === null || line.receivedKg === undefined);
+        const lines = (po.lines ?? []).filter((line) => poRules.poLineOpen(line) > 0).map((line) => ({ ...line, open: poRules.poLineOpen(line), received: poRules.poLineReceived(line) }));
         // ใบสั่งผลิตที่ใบสั่งซื้อนี้สั่งให้ถูกยกเลิกแล้ว: ST ตัดสินเองว่าจะยกเลิกใบสั่งซื้อ หรือรับเข้าเป็นสต็อก
         const cancelled = Boolean(po.sourcePi) && ctx.data.orders.find((order) => order.id === po.sourcePi)?.status === "cancelled";
-        if (lines.length) tasks.push({ kind: "receive", po, lines, cancelled, partly: (po.lines ?? []).some((line) => line.receivedKg != null) });
+        if (lines.length) tasks.push({ kind: "receive", po, lines, cancelled, partly: poRules.poTouched(po) });
       }
     }
     if (rfCan(ctx, "purchase")) {
@@ -1141,18 +1196,21 @@
       const canWork = ctx.helpers.canWorkJob(user, job) && ["released", "in_progress"].includes(order?.status) && job.status !== "done";
       const left = Math.max(0, job.qtyPlanned - job.qtyDone);
       const started = job.qtyDone > 0 || job.status === "in_progress";
-      const main = canWork ? ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "bom-job-main" }) : "";
+      const linkedJob = Boolean(ctx.helpers.isLinkedJob?.(job));
+      const main = canWork && !linkedJob ? ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "bom-job-main" }) : "";
       const more = [];
-      if (canWork) more.push(job.status === "hold" ? ui.button("คืนคิว", { action: "setJobStatus", args: { jobId: job.id, status: "queued" }, className: "secondary small" }) : ui.button("พักงาน", { action: "setJobStatus", args: { jobId: job.id, status: "hold" }, className: "secondary small" }));
+      const resume = (Number(job.qtyDone) || 0) > 0;
+      if (canWork) more.push(job.status === "hold" ? ui.button(resume ? "ทำต่อ" : "คืนคิว", { action: "setJobStatus", args: { jobId: job.id, status: resume ? "in_progress" : "queued" }, className: "secondary small" }) : ui.openButton("พักงาน", "jobHold", { jobId: job.id }, { className: "secondary small" }));
       // งานที่จะไม่มีใครรายงานแล้ว: ฝ่ายวางแผนปิดงานพร้อมเหตุผล (ไม่เพิ่มยอด) ใบจึงปิดได้
       if (canWork && ctx.helpers.canPlan(user)) more.push(ui.openButton("ปิดงานนี้", "jobClose", { jobId: job.id }, { className: "secondary small" }));
       const closedBy = ctx.helpers.jobCloseNote(job);
+      const heldBy = closedBy ? null : ctx.helpers.jobHoldNote?.(job);
       if (job.status !== "done" && ctx.helpers.canLinkRubberflow(user, job) && ["released", "in_progress"].includes(order?.status) && !job.externalRef) more.push(ui.openButton("สร้าง WO ใน RubberFlow", "jobRubberflow", { jobId: job.id }, { className: "secondary small" }));
       if (job.externalRef) more.push(ui.link(`WO ${job.externalRef.woId}`, `#/rubberflow?p=orders&q=${encodeURIComponent(job.externalRef.woId)}`, "btn rf-btn secondary small"));
       const amount = started ? `ได้แล้ว ${rules.fmtQty(job.qtyDone)} จาก ${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}` : `ต้องได้ ${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`;
       return `<article class="card rf-card bom-job${tone ? ` is-${tone}` : ""}"><div class="bom-job-top"><span class="bom-job-state">${esc(label)}</span>${dueText(job.dueAt, job.status === "done")}</div>
         <h2>${esc(job.name)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, job.dept)} ` : ""}<span class="rf-mono">${esc(job.itemCode)}</span> · ใบ ${ui.link(job.orderId, ctx.url("orders", { sel: job.orderId }))}</p>
-        <div class="bom-job-amount"><span>${esc(amount)}</span>${started && job.status !== "done" ? `<span class="muted">เหลือ ${esc(rules.fmtQty(left))}</span>` : ""}</div>${started ? ui.progress(job.qtyDone, job.qtyPlanned, job.status === "hold" ? "bad" : "") : ""}${job.qtyReject ? `<p class="small muted">เสีย ${esc(rules.fmtQty(job.qtyReject))}</p>` : ""}${closedBy ? `<p class="small muted">${esc(`ปิดงานโดย ${closedBy.by}: ${closedBy.reason}`)}</p>` : ""}
+        <div class="bom-job-amount"><span>${esc(amount)}</span>${started && job.status !== "done" ? `<span class="muted">เหลือ ${esc(rules.fmtQty(left))}</span>` : ""}</div>${started ? ui.progress(job.qtyDone, job.qtyPlanned, job.status === "hold" ? "bad" : "") : ""}${job.qtyReject ? `<p class="small muted">เสีย ${esc(rules.fmtQty(job.qtyReject))}</p>` : ""}${closedBy ? `<p class="small muted">${esc(`ปิดงานโดย ${closedBy.by}: ${closedBy.reason}`)}</p>` : ""}${heldBy ? `<p class="small muted">${esc(`พักโดย ${heldBy.by}: ${heldBy.reason}`)}</p>` : ""}${canWork && linkedJob ? '<p class="small muted" title="ยอดของงานนี้เพิ่มเองเมื่อล็อตตกแต่งของ WO ผ่าน QC ใน RubberFlow">ยอดมาจาก RubberFlow</p>' : ""}
         ${main}${more.length ? `<div class="rf-row bom-job-more">${more.join("")}</div>` : ""}</article>`;
     };
     const sub = dept && dept !== "ALL" ? esc(rules.DEPT_LABEL[dept] ?? dept) : "";
@@ -1178,9 +1236,21 @@
         const materials = (() => { try { return ctx.rubberflow()?.store?.data?.().materials ?? []; } catch { return []; } })();
         const nameOf = (line) => (line.source === "bom" ? itemOf(ctx, line.materialCode)?.name : null) || materials.find((row) => row.code === line.materialCode)?.name || "";
         return `<article class="card rf-card bom-job ${task.cancelled ? "is-hold" : "is-now"}"><div class="bom-job-top"><span class="bom-job-state">${task.cancelled ? "ใบสั่งผลิตถูกยกเลิกแล้ว" : "รอรับเข้า"}</span><span class="muted">สั่งเมื่อ ${esc(rules.fmtDate(task.po.createdAt))}</span></div>
-          <h2>${esc(`${task.cancelled ? "ตัดสินใบสั่งซื้อ" : "รับเข้าตามใบสั่งซื้อ"} ${task.po.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${task.po.sourcePi ? esc(`สั่งจากใบ ${task.po.sourcePi}`) : ""}${task.cancelled ? (task.partly ? " · รับเข้าไปแล้วบางรายการ ใบนี้ยกเลิกไม่ได้ รับส่วนที่เหลือเข้าเป็นสต็อกไว้ใช้กับใบอื่น" : " · ยกเลิกใบสั่งซื้อ หรือรับเข้าเป็นสต็อกไว้ใช้กับใบอื่น") : ""}</p>
-          <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span><span class="rf-mono">${esc(line.materialCode)}</span>${nameOf(line) ? ` <span class="small muted">${esc(nameOf(line))}</span>` : ""}</span><span class="nowrap">${esc(`${rules.fmtQty(line.qtyKg)} ${unit(line)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
+          <h2>${esc(`${task.cancelled ? "ตัดสินใบสั่งซื้อ" : "รับเข้าตามใบสั่งซื้อ"} ${task.po.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${task.po.sourcePi ? esc(`สั่งจากใบ ${task.po.sourcePi}`) : ""}${task.cancelled ? (task.partly ? " · รับเข้าไปแล้วบางส่วน ใบนี้ยกเลิกไม่ได้ รับส่วนที่เหลือเข้าเป็นสต็อกไว้ใช้กับใบอื่น หรือปิดยอดที่เหลือ" : " · ยกเลิกใบสั่งซื้อ หรือรับเข้าเป็นสต็อกไว้ใช้กับใบอื่น") : ""}</p>
+          <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span><span class="rf-mono">${esc(line.materialCode)}</span>${nameOf(line) ? ` <span class="small muted">${esc(nameOf(line))}</span>` : ""}</span><span class="nowrap"${line.received > 0 ? ` title="${attr(`สั่ง ${rules.fmtQty(line.qtyKg)} รับแล้ว ${rules.fmtQty(line.received)}`)}"` : ""}>${esc(`${line.received > 0 ? "ค้างรับ " : ""}${rules.fmtQty(line.open)} ${unit(line)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
           ${ui.link(task.cancelled ? "เปิดใบสั่งซื้อ" : "ตรวจสอบรับเข้า", `#/rubberflow?p=warehouse&tab=po&q=${encodeURIComponent(task.po.id)}`, "btn rf-btn bom-job-main")}</article>`;
+      }
+      if (task.kind === "partReturn") {
+        return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">ใบสั่งผลิตถูกยกเลิกแล้ว</span></div>
+          <h2>${esc(`คืนของซื้อที่เบิกไปแล้ว ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${esc(task.order.customer ?? "")}</p>
+          <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span>${esc(line.name || line.itemCode)}</span><span class="nowrap">${esc(`${rules.fmtQty(line.returnable)} ${uomText(ctx, line.uom)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
+          ${ui.openButton("คืนของเหลือ", "returnParts", { orderId: task.order.id }, { className: "bom-job-main" })}</article>`;
+      }
+      if (task.kind === "chemReturn") {
+        const kg = task.req.lines.reduce((sum, line) => sum + (Number(line.actualKg) || 0), 0);
+        return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">WO ถูกยกเลิก · รอ ST รับคืน</span></div>
+          <h2>${esc(`รับเคมีคืนตามใบเบิก ${task.req.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${esc(`WO ${task.req.orderId}${task.wo?.customerPo ? ` · ใบ ${task.wo.customerPo}` : ""} · จ่ายไป ${rules.fmtQty(kg)} กก.`)}</p>
+          ${ui.link("เปิดใบเบิกเพื่อรับคืน", `#/rubberflow?p=requisition&sel=${encodeURIComponent(task.req.id)}`, "btn rf-btn bom-job-main")}</article>`;
       }
       if (task.kind === "chem") {
         return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">เคมีขาด ยังไม่ได้สั่ง</span></div>

@@ -268,7 +268,9 @@ test("mixing consumes an issued requisition, auto-holds on dump temperature and 
   assert.equal(lot.qc, "pass");
   rejects(() => A.createTransfer(d, { lotId, qty: 1 }, ctx("mixer")), /ยังบ่มไม่ครบเวลา/);
   assert.equal(A.transferableQty(lot, NOW + recipe.restHours * HOUR), +lot.goodQty.toFixed(3));
-  A.endRest(d, { lotId }, ctx("mixer"));
+  rejects(() => A.endRest(d, { lotId }, ctx("mixer")), /เหตุผลที่ข้ามเวลาบ่ม/);
+  A.endRest(d, { lotId, reason: "  ตรวจความหนืดแล้ว  " }, ctx("mixer"));
+  assert.deepEqual(lot.params.skipRest, { by: ctx("mixer").user.name, reason: "ตรวจความหนืดแล้ว", at: NOW }, "the lot keeps who skipped, why and when");
   assert.equal(A.transferableQty(lot, NOW), +lot.goodQty.toFixed(3));
   const transferId = A.createTransfer(d, { lotId, qty: +lot.goodQty.toFixed(3) }, ctx("mixer"));
   assert.equal(d.transfers[0].id, transferId);
@@ -319,7 +321,7 @@ test("extrusion caps rework at 10%, auto-holds out-of-spec dimensions and counts
   const d = fresh();
   // ยางที่ยังบ่มอยู่ → ข้ามเวลาบ่ม ส่งต่อ 10 kg และรับมอบที่สถานีฉีด
   const mixing = d.lots.find((lot) => lot.stage === "mixing" && lot.qc === "pass" && lot.transferredQty < lot.goodQty);
-  A.endRest(d, { lotId: mixing.id }, ctx("mixer"));
+  A.endRest(d, { lotId: mixing.id, reason: "ทดสอบเร่งด่วน" }, ctx("mixer"));
   const transferId = A.createTransfer(d, { lotId: mixing.id, qty: 10 }, ctx("mixer"));
   A.receiveTransfer(d, { id: transferId, qtyReceived: 10 }, ctx("extruder"));
   const transfer = d.transfers.find((row) => row.id === transferId);
@@ -470,6 +472,8 @@ test("materials carry a safety stock (kg) and a shelf life (days): defaults 0 an
 test("a purchase order: one line per material with an order quantity, the edited safety stock goes to the materials, the number is PO-yyyymmdd-nn", () => {
   const d = fresh();
   const user = ctx("planner");
+  // ชุดสาธิตมีใบสั่งซื้อที่รอรับอยู่แล้วหนึ่งใบ (ลองรับไม่ครบ / ปิดยอดที่เหลือ · 20261128020000)
+  const seeded = (d.purchaseOrders ?? []).length;
   rejects(() => A.createPurchaseOrder(d, { lines: [] }, user), /อย่างน้อย 1 รายการ/);
   rejects(() => A.createPurchaseOrder(d, { lines: [poLine("ZNO", { qtyKg: 0 })] }, user), /อย่างน้อย 1 รายการ/);
   rejects(() => A.createPurchaseOrder(d, { lines: [poLine("NOPE")] }, user), /ไม่พบวัตถุดิบ/);
@@ -481,7 +485,7 @@ test("a purchase order: one line per material with an order quantity, the edited
   rejects(() => A.createPurchaseOrder(d, { lines: Array.from({ length: 101 }, (_, i) => poLine(`M${i}`)) }, user), /ไม่เกิน 100/);
   d.materials.find((row) => row.code === "STA").active = false;
   rejects(() => A.createPurchaseOrder(d, { lines: [poLine("STA")] }, user), /เลิกใช้/);
-  assert.deepEqual(d.purchaseOrders ?? [], [], "refused: nothing was added");
+  assert.equal((d.purchaseOrders ?? []).length, seeded, "refused: nothing was added");
 
   const id = A.createPurchaseOrder(d, {
     lines: [poLine("ZNO", { qtyKg: "40.12345", safetyKg: 7 }), poLine("CBS", { qtyKg: 5 }), poLine("S-80", { qtyKg: "" })],
@@ -507,7 +511,7 @@ test("a purchase order: one line per material with an order quantity, the edited
   assert.equal(d.purchaseOrders[0].sourceRequisition, "ใบเบิก");
 });
 
-test("receiving a purchase line makes one lot and closes that line; the order becomes received when every line is in; a line is received once", () => {
+test("receiving a purchase line makes one lot per receipt; a short receipt keeps the rest on order until it arrives or the store closes it; the order becomes received when every line is done", () => {
   const d = fresh();
   const planner = ctx("planner");
   const id = A.createPurchaseOrder(d, { lines: [poLine("ZNO", { qtyKg: 40 }), poLine("CBS", { qtyKg: 10 })] }, planner);
@@ -525,9 +529,17 @@ test("receiving a purchase line makes one lot and closes that line; the order be
   assert.deepEqual([lot.materialCode, lot.qtyKg, lot.initialKg, lot.expiry, lot.supplier, lot.status, lot.location], ["ZNO", 38.5, 38.5, NOW + 200 * DAY, id, "available", "ห้องเคมี D-1"]);
   const line = d.purchaseOrders[0].lines[0];
   assert.deepEqual([line.receivedKg, line.lotNo, line.expiry, line.receivedAt, line.receivedBy], [38.5, lotNo, NOW + 200 * DAY, NOW, user("store").name]);
+  assert.deepEqual(line.receipts, [{ kg: 38.5, lotNo, expiry: NOW + 200 * DAY, at: NOW, by: user("store").name }]);
   assert.equal(d.purchaseOrders[0].status, "ordered", "one line still open");
-  rejects(() => A.receivePurchaseLine(d, { id, materialCode: "ZNO", qtyKg: 1, expiry: NOW + DAY }, ctx("store")), /รับเข้าแล้ว/);
-  rejects(() => A.cancelPurchaseOrder(d, { id }, planner), /รับเข้าแล้ว/);
+  // รับไม่ครบ (20261128020000): ส่วนที่เหลือยังค้างรับ รับเพิ่มได้เป็นล็อตใหม่ · ใบที่รับไปแล้วยกเลิกไม่ได้
+  assert.equal(rules.poLineOpen(line), 1.5, "the 1.5 kg not delivered yet stay on order");
+  rejects(() => A.cancelPurchaseOrder(d, { id }, planner), /รับเข้าหรือปิดยอดแล้ว/);
+  const second = A.receivePurchaseLine(d, { id, materialCode: "ZNO", qtyKg: 1.5, expiry: NOW + 150 * DAY }, ctx("store"));
+  assert.notEqual(second, lotNo, "every receipt makes its own lot");
+  assert.deepEqual([line.receivedKg, line.lotNo, line.receipts.map((receipt) => [receipt.kg, receipt.lotNo])], [40, second, [[38.5, lotNo], [1.5, second]]]);
+  assert.equal(rules.poLineDone(line), true);
+  rejects(() => A.receivePurchaseLine(d, { id, materialCode: "ZNO", qtyKg: 1, expiry: NOW + DAY }, ctx("store")), /ZNO ในใบสั่งซื้อ .* รับครบแล้ว/);
+  rejects(() => A.closePurchaseLine(d, { id, materialCode: "ZNO", reason: "ไม่ต้องรับแล้ว" }, ctx("store")), /รับครบแล้ว ไม่มียอดที่เหลือให้ปิด/);
   A.receivePurchaseLine(d, { id, materialCode: "CBS", qtyKg: 10, expiry: NOW + 100 * DAY, supplier: "ผู้ขาย ก" }, ctx("store"));
   assert.equal(d.materialLots.at(-1).supplier, "ผู้ขาย ก");
   assert.equal(d.purchaseOrders[0].status, "received");
@@ -556,14 +568,15 @@ test("purchasing rights on the database accounts: only ST (and the admin) order,
   const qa = { qa: true };
   const admin = { planner: true, role: "admin" };
   const d = fresh();
+  const seeded = new Set((d.purchaseOrders ?? []).map((order) => order.id)); // ใบสั่งซื้อของชุดสาธิต
   const make = (flags) => A.createPurchaseOrder(d, { lines: [poLine("ZNO")] }, remoteCtx(flags));
   const receive = (id, flags) => A.receivePurchaseLine(d, { id, materialCode: "ZNO", qtyKg: 1, expiry: NOW + DAY }, remoteCtx(flags));
   // order: ST and the admin; the planner group, RB, QA and an account with no flag are refused and nothing is written
   for (const flags of [planner, manager, rb, qa, {}]) rejects(() => make(flags), /ไม่มีสิทธิ์: สั่งซื้อวัตถุดิบได้โดยแผนกคลังวัตถุดิบ \(ST\) เท่านั้น/);
-  assert.equal(d.purchaseOrders.length, 0, "the refused orders wrote nothing");
+  assert.equal(d.purchaseOrders.length, seeded.size, "the refused orders wrote nothing");
   const byAdmin = make(admin);
   const bySt = make(st);
-  assert.deepEqual(d.purchaseOrders.map((order) => order.id).sort(), [byAdmin, bySt].sort());
+  assert.deepEqual(d.purchaseOrders.map((order) => order.id).filter((id) => !seeded.has(id)).sort(), [byAdmin, bySt].sort());
   // receive: ST and the admin
   for (const flags of [planner, manager, rb, qa, {}]) rejects(() => receive(bySt, flags), /ไม่มีสิทธิ์: รับวัตถุดิบเข้าคลัง/);
   assert.equal(d.purchaseOrders.find((order) => order.id === bySt).lines[0].receivedKg, null, "the refused receipts wrote nothing");
@@ -604,10 +617,18 @@ test("a purchase order can mix chemical lines and purchased-part lines: a part l
   assert.deepEqual([received.receivedKg, received.lotNo, received.expiry, received.receivedAt, received.receivedBy], [18.5, null, null, NOW, user("store").name]);
   assert.equal(d.materialLots.length, lots, "a part receipt makes no lot");
   assert.equal(d.purchaseOrders[0].status, "ordered", "the chemical line is still open");
-  rejects(() => A.receivePurchaseLine(d, { id, materialCode: "P-BOX-01", qtyKg: 1 }, ctx("store")), /รับเข้าแล้ว/);
+  // ของซื้อรับไม่ครบ (18.5 จาก 19): ส่วนที่เหลือค้างรับ ST ปิดยอดที่เหลือพร้อมเหตุผลได้ (ไม่แตะสต็อก ไม่มีล็อต)
+  assert.equal(rules.poLineOpen(received), 0.5);
+  rejects(() => A.closePurchaseLine(d, { id, materialCode: "P-BOX-01", reason: "ab" }, ctx("store")), /อย่างน้อย 3 ตัวอักษร/);
+  rejects(() => A.closePurchaseLine(d, { id, materialCode: "P-BOX-01", reason: "ก".repeat(301) }, ctx("store")), /ยาวเกิน 300/);
+  assert.equal(A.closePurchaseLine(d, { id, materialCode: "P-BOX-01", reason: "  ผู้ขายไม่มีของส่งเพิ่ม  " }, ctx("store")), "P-BOX-01");
+  assert.deepEqual(received.closedRemainder, { kg: 0.5, reason: "ผู้ขายไม่มีของส่งเพิ่ม", at: NOW, by: user("store").name });
+  assert.equal(d.materialLots.length, lots, "closing makes no lot");
+  rejects(() => A.receivePurchaseLine(d, { id, materialCode: "P-BOX-01", qtyKg: 1 }, ctx("store")), /ปิดยอดที่เหลือแล้ว/);
   A.receivePurchaseLine(d, { id, materialCode: "ZNO", qtyKg: 40, expiry: NOW + 100 * DAY }, ctx("store"));
-  assert.equal(d.purchaseOrders[0].status, "received", "the order is received once the chemical and the part line are in");
-  assert.ok(d.audit.some((row) => row.action === "ตรวจสอบรับเข้าตามใบสั่งซื้อ" && row.detail === `${id} P-BOX-01 18.5 box`));
+  assert.equal(d.purchaseOrders[0].status, "received", "the order is received once the chemical line is in and the part line is closed");
+  assert.ok(d.audit.some((row) => row.action === "ตรวจสอบรับเข้าตามใบสั่งซื้อ" && row.detail.startsWith(`${id} P-BOX-01 18.5 box`)));
+  assert.ok(d.audit.some((row) => row.action === "ปิดยอดที่เหลือของใบสั่งซื้อ" && row.detail === `${id} P-BOX-01 ไม่รับอีก 0.5 box — ผู้ขายไม่มีของส่งเพิ่ม`));
 });
 
 test("a part's safety stock keeps the stock page's 4 decimals: ST orders a part with the stored 4 decimals and may change it with the order, an admin without planner or ST flags may order but not change it, RB cannot order", () => {

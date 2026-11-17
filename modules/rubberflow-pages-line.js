@@ -64,18 +64,29 @@
       const resting = stage === "mixing" && lot.readyAt > now;
       const buttons = [
         ui.openButton("ป้าย", "tag", { kind: "lot", id: lot.id }, { className: "secondary small", ariaLabel: `พิมพ์ป้าย ${lot.id}` }),
-        resting && ctx.can("demoSkip") ? ui.button("ข้ามเวลาบ่ม", { action: "endRest", args: { lotId: lot.id }, className: "secondary small" }) : "",
+        resting && ctx.can("skipRest") ? ui.openButton("ข้ามเวลาบ่ม", "skipRest", { lotId: lot.id }, { className: "secondary small", ariaLabel: `ข้ามเวลาบ่ม ${lot.id}` }) : "",
         NEXT_STAGE[stage] && available > 0 ? ui.openButton("ส่งต่อ", "transfer", { lotId: lot.id }, { className: "small" }) : "",
         NEXT_STAGE[stage] && available === 0 && lot.transferredQty >= lot.goodQty - 1e-6 ? `<span class="small muted">ส่งต่อครบแล้ว</span>` : "",
       ].filter(Boolean).join(" ");
       return `<tr><td>${ui.mono(lot.id)}<div class="small muted">${esc(`${fmtDateTime(lot.createdAt)} · ${lot.operator ?? "-"}`)}</div></td><td class="rf-mono small">${esc(lot.orderId)}</td>
         ${columns.map((column) => `<td class="small">${column.render(lot)}</td>`).join("")}
         <td class="right nowrap">${esc(fmtNum(lot.goodQty, 2))} / <span class="muted">${esc(fmtNum(lot.scrapQty, 2))}</span> ${esc(lot.uom)}</td>
-        <td>${ui.status(lot.qc)}${lot.holdReasons?.length ? `<div class="small rf-warn-text">${esc(lot.holdReasons.join(", "))}</div>` : ""}${resting ? `<div class="small muted">⏱ บ่มอีก ${esc(fmtDuration(lot.readyAt - now))}</div>` : ""}</td>
+        <td>${ui.status(lot.qc)}${lot.holdReasons?.length ? `<div class="small rf-warn-text">${esc(lot.holdReasons.join(", "))}</div>` : ""}${resting ? `<div class="small muted">⏱ บ่มอีก ${esc(fmtDuration(lot.readyAt - now))}</div>` : ""}${lot.params?.skipRest?.reason ? `<div class="small muted">${esc(`ข้ามเวลาบ่มโดย ${lot.params.skipRest.by || "-"}: ${lot.params.skipRest.reason}`)}</div>` : ""}</td>
         <td class="right"><div class="rf-row rf-end">${buttons}</div></td></tr>`;
     });
     return ui.card(ui.table(["ล็อต", "ใบสั่งผลิต", ...columns.map((column) => column.label), { label: "งานดี / เสีย", className: "right" }, "QC", { label: "จัดการ", className: "right" }], rows, { emptyText: "ยังไม่มีล็อตที่บันทึก" }), { title: "ล็อตที่บันทึกแล้ว", flush: true });
   }
+
+  // ข้ามเวลาบ่ม (หัวหน้า RB / QA): ต้องมีเหตุผล เก็บไว้ที่ล็อตและบันทึกการใช้งาน · ส่งทันทีเมื่อกดยืนยัน
+  dialogs.skipRest = (ctx, { lotId }) => {
+    const { data, now, ui, rules } = ctx;
+    const lot = data.lots.find((row) => row.id === lotId);
+    if (!lot || !(lot.readyAt > now)) return null;
+    const body = `${ui.callout("warn", esc(`${lot.id} ยังต้องบ่มอีก ${rules.fmtDuration(lot.readyAt - now)} ข้ามแล้วส่งต่อไปฉีดได้ทันที`))}
+      ${ui.field("เหตุผลที่ข้ามเวลาบ่ม", ui.input("reason", { required: true, placeholder: "เช่น ตรวจความหนืดแล้วผ่าน", extra: 'minlength="3" maxlength="300"' }), { required: true })}`;
+    const html = ui.dialog("skipRest", `ข้ามเวลาบ่ม · ${lot.id}`, `<form novalidate data-rf-form="endRest" data-rf-args='${esc(JSON.stringify({ lotId: lot.id }))}' data-rf-success="ข้ามเวลาบ่ม ${esc(lot.id)} แล้ว" id="rf-skip-rest">${body}</form>`, { footer: `${ui.closeButton("ไม่ข้าม")}<button class="btn rf-btn" type="submit" form="rf-skip-rest">ข้ามเวลาบ่ม</button>` });
+    return { html };
+  };
 
   dialogs.transfer = (ctx, { lotId }) => {
     const { data, now, ui, rules, actions } = ctx;
@@ -97,7 +108,9 @@
     const selected = data.requisitions.find((row) => row.id === params.get("sel")) ?? list.find((row) => row.status === "weighing") ?? list[0] ?? null;
     const listHtml = list.map((requisition) => {
       const left = requisition.lines.filter((line) => line.actualKg === null).length;
-      return `<a class="rf-list-item${requisition.id === selected?.id ? " is-selected" : ""}" href="${esc(ctx.pageUrl({ sel: requisition.id }))}"${requisition.id === selected?.id ? ' aria-current="true"' : ""}><div class="rf-row rf-between"><strong class="rf-mono">${esc(requisition.id)}</strong>${ui.status(requisition.status)}</div><div class="small muted">${esc(`${requisition.orderId} · ${requisition.batches} ชุดผสม · ${fmtNum(requisition.totalKg, 1)} kg${left ? ` · ค้างจ่าย ${left}/${requisition.lines.length}` : ""}`)}</div></a>`;
+      const returnState = rules.requisitionReturnState?.(data, requisition);
+      const stateBadge = returnState === "pending" ? ui.badge("warn", "WO ถูกยกเลิก · รอ ST รับคืน") : returnState === "returned" ? ui.badge("good", "รับคืนแล้ว") : ui.status(requisition.status);
+      return `<a class="rf-list-item${requisition.id === selected?.id ? " is-selected" : ""}" href="${esc(ctx.pageUrl({ sel: requisition.id }))}"${requisition.id === selected?.id ? ' aria-current="true"' : ""}><div class="rf-row rf-between"><strong class="rf-mono">${esc(requisition.id)}</strong>${stateBadge}</div><div class="small muted">${esc(`${requisition.orderId} · ${requisition.batches} ชุดผสม · ${fmtNum(requisition.totalKg, 1)} kg${left ? ` · ค้างจ่าย ${left}/${requisition.lines.length}` : ""}`)}</div></a>`;
     }).join("");
 
     let detail = ui.card(ui.empty("ยังไม่มีใบเบิก"));
@@ -105,7 +118,13 @@
       const order = data.orders.find((row) => row.id === selected.orderId);
       const recipe = ctx.rules.recipeOf(data.recipes, selected.recipeId, selected.recipeRevision);
       const parts = [];
-      if (selected.status === "weighing") {
+      const returnState = rules.requisitionReturnState?.(data, selected);
+      if (returnState === "pending") {
+        parts.push(ui.callout("warn", `<div class="rf-row rf-between"><span>${esc(`WO ${selected.orderId} ถูกยกเลิก เคมีที่จ่ายไปแล้วยังไม่ได้ผสม รอคลังวัตถุดิบ (ST) รับคืนเข้าล็อตเดิม`)}</span>${ctx.can("returnRequisition") ? ui.openButton("รับคืนเคมี", "returnRequisition", { id: selected.id }, { className: "small" }) : ""}</div>`));
+      }
+      const returnedNote = returnState === "returned" ? selected.lines.find((line) => line.returnedAt) : null;
+      // ใบเก่าของ WO ที่ยกเลิก (รอรับคืนหรือรับคืนแล้ว) ไม่มีปุ่มเบิกทั้งใบ: เบิกต่อหลังรับคืนจะหักสต็อกที่คืนอีกไม่ได้ (ฝั่งเซิร์ฟเวอร์ยังไม่ปฏิเสธ = งานต่อ)
+      if (selected.status === "weighing" && !returnState) {
         parts.push(ui.callout("warn", `<div class="rf-row rf-between"><span>ใบเบิกเก่าที่ยังจ่ายไม่ครบ</span>${ui.button("เบิกทั้งใบ", { action: "issueRequisition", args: { id: selected.id }, className: "small", confirmText: `เบิกทั้งใบ ${selected.id}? ระบบจะหักสต็อกทุกรายการที่ยังไม่จ่ายตามสูตร`, success: `เบิก ${selected.id} แล้ว`, ariaLabel: `เบิกทั้งใบ ${selected.id}` })}</div>`));
       }
       // สถานะรายบรรทัดมีความหมายเฉพาะใบเก่าที่จ่ายไม่ครบ · ใบที่จ่ายแล้วแสดงสถานะที่ป้ายในรายการและแถบสรุปแล้ว
@@ -115,11 +134,12 @@
         const material = data.materials.find((row) => row.code === line.materialCode);
         return `<tr><td>${i + 1}</td><td>${esc(material?.name ?? "")}<div class="small muted rf-mono">${esc(line.materialCode)}</div></td><td class="nowrap">${esc(`ขั้น ${line.stage ?? 1}`)}</td><td class="rf-mono small">${esc(line.lotNo)}</td>
           <td class="small nowrap">${esc(fmtDate(lot?.expiry))}<div class="muted">${esc(lot?.location ?? "")}</div></td><td class="right rf-mono">${esc(fmtNum(line.actualKg ?? line.targetKg, 3))}</td>
-          ${lineStatus ? `<td>${line.actualKg === null ? ui.badge("warn", "รอจ่าย") : ui.badge("good", "จ่ายแล้ว")}</td>` : ""}</tr>`;
+          ${lineStatus ? `<td>${line.actualKg === null ? ui.badge("warn", "รอจ่าย") : ui.badge("good", "จ่ายแล้ว")}</td>` : ""}${returnedNote ? `<td class="right rf-mono">${esc(fmtNum(line.returnedKg ?? 0, 3))}</td>` : ""}</tr>`;
       });
       parts.push(ui.card(`<div class="rf-card-pad">${ui.kv([["ใบสั่งผลิต", esc(`${order?.id ?? "-"} · ${order?.customer ?? ""}`)], ["สูตร", esc(`${rules.recipeLabel(recipe)} · ${selected.batches} ชุดผสม · ${fmtNum(selected.totalKg, 2)} kg`)], ["ผู้ขอเบิก", esc(`${selected.requestedBy ?? "-"} · ${fmtDateTime(selected.createdAt)}`)],
-        selected.issuedBy ? ["ผู้จ่าย", esc(`${selected.issuedBy} · ${fmtDateTime(selected.issuedAt)}`)] : null, selected.consumedBy ? ["ใช้ผสมเป็น", ui.mono(selected.consumedBy)] : null])}</div>
-        ${ui.table(["#", "วัตถุดิบ", "ขั้น", "ล็อตที่จ่าย (FEFO)", "หมดอายุ", { label: "จ่าย (kg)", className: "right" }, ...(lineStatus ? ["สถานะ"] : [])], lineRows)}`,
+        selected.issuedBy ? ["ผู้จ่าย", esc(`${selected.issuedBy} · ${fmtDateTime(selected.issuedAt)}`)] : null, selected.consumedBy ? ["ใช้ผสมเป็น", ui.mono(selected.consumedBy)] : null,
+        returnedNote ? ["ผู้รับคืน", esc(`${returnedNote.returnedBy || "-"} · ${fmtDateTime(returnedNote.returnedAt)}${returnedNote.returnNote ? ` · ${returnedNote.returnNote}` : ""}`)] : null])}</div>
+        ${ui.table(["#", "วัตถุดิบ", "ขั้น", "ล็อตที่จ่าย (FEFO)", "หมดอายุ", { label: "จ่าย (kg)", className: "right" }, ...(lineStatus ? ["สถานะ"] : []), ...(returnedNote ? [{ label: "รับคืน (kg)", className: "right" }] : [])], lineRows)}`,
       { title: `ใบเบิก ${esc(selected.id)}`, actions: ui.openButton("พิมพ์ป้าย", "tag", { kind: "requisition", id: selected.id }, { className: "secondary small" }), flush: true }));
       detail = `<div class="rf-stack">${parts.join("")}</div>`;
     }
@@ -184,12 +204,36 @@
     return { html, bind };
   };
 
+  // รับเคมีคืน (แผนก ST): ใบเบิกที่จ่ายแล้วของ WO ที่ยกเลิก · กรอกยอดที่คืนจริงต่อบรรทัด (ค่าเริ่ม = ที่จ่ายไป) คืนไม่ครบต้องมีเหตุผล · รับคืนได้ครั้งเดียวต่อใบ
+  dialogs.returnRequisition = (ctx, { id }) => {
+    const { data, now, ui, rules } = ctx;
+    const { fmtDate, fmtNum } = rules;
+    const requisition = data.requisitions.find((row) => row.id === id);
+    if (!requisition || rules.requisitionReturnState?.(data, requisition) !== "pending") return null;
+    const rows = requisition.lines.map((line) => {
+      const lot = data.materialLots.find((row) => row.lotNo === line.lotNo);
+      const issued = typeof line.actualKg === "number" ? line.actualKg : 0;
+      const state = lot ? rules.lotState(lot, now) : "";
+      const control = issued > 0
+        // แสดง 3 ตำแหน่ง (ยอดจ่ายจริงอาจยาวกว่านั้น) · issuedKg[] เก็บยอดเต็ม: ค่าที่ห่างจากยอดจ่ายไม่ถึง 0.0005 ส่งเป็นยอดเต็ม (คืนครบ)
+        ? `<input type="hidden" name="issuedKg[]" value="${esc(String(issued))}">${ui.input("returnedKg[]", { type: "number", step: "any", min: 0, value: String(+issued.toFixed(3)), extra: `max="${esc(String(+issued.toFixed(3)))}" aria-label="${esc(`คืน ${line.materialCode} (kg) ไม่เกิน ${fmtNum(issued, 3)}`)}"` })}`
+        : `<input type="hidden" name="issuedKg[]" value="0"><input type="hidden" name="returnedKg[]" value="0"><span class="muted">—</span>`;
+      return `<tr><td class="rf-mono">${esc(line.materialCode)}</td><td class="rf-mono small">${esc(line.lotNo)}${state === "expired" || state === "hold" ? ` ${ui.badge("warn", state === "expired" ? "หมดอายุแล้ว" : "กักกัน")}` : ""}<div class="small muted">${esc(lot ? `หมดอายุ ${fmtDate(lot.expiry)}` : "ไม่พบล็อต")}</div></td><td class="right rf-mono">${esc(fmtNum(issued, 3))}</td><td class="right">${control}</td></tr>`;
+    });
+    const body = `${ui.callout("info", "ยอดที่คืนบวกเข้าล็อตเดิมของแต่ละบรรทัด ล็อตคงวันหมดอายุและสถานะเดิม ล็อตที่หมดอายุแล้วยังใช้เบิกไม่ได้ (ระบบจ่ายตาม FEFO ข้ามล็อตนั้น)")}
+      ${ui.table(["วัตถุดิบ", "ล็อตเดิม", { label: "จ่ายไป (kg)", className: "right" }, { label: "คืนจริง (kg)", className: "right", title: "ไม่มีของคืนใส่ 0" }], rows)}
+      ${ui.field("เหตุผล (จำเป็นเมื่อคืนไม่ครบ)", ui.input("note", { placeholder: "เช่น หกระหว่างขนย้าย", extra: 'maxlength="300"' }))}`;
+    const html = ui.dialog("returnRequisition", `รับเคมีคืน · ${requisition.id}`, `<form novalidate data-rf-form="returnRequisition" data-rf-args='${esc(JSON.stringify({ id: requisition.id }))}' data-rf-success="รับเคมีคืนตามใบเบิก {result} แล้ว" id="rf-return-req">${body}</form>`, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-return-req">รับคืนเข้าคลัง</button>` });
+    return { html };
+  };
+
   // ---------- สถานีที่ 1 ผสมยาง ----------
   pages.mixing = (ctx) => {
     const { data, now, ui, rules } = ctx;
     const { MACHINES, fmtDuration, fmtNum } = rules;
     const lots = data.lots.filter((lot) => lot.stage === "mixing");
-    const issued = data.requisitions.filter((requisition) => requisition.status === "issued");
+    // ใบเบิกของ WO ที่ถูกยกเลิกผสมต่อไม่ได้ (เคมีรอ ST รับคืน) จึงไม่อยู่ในตัวเลือก
+    const issued = rules.mixableRequisitions ? rules.mixableRequisitions(data) : data.requisitions.filter((requisition) => requisition.status === "issued");
     const resting = lots.filter((lot) => lot.readyAt > now);
     // ผสมสองขั้น: ขั้นละหนึ่งแถว (อุณหภูมิเครื่องผสม Dump temp เวลา เป็นนาที) ใต้ช่องแสดงค่ามาตรฐานของสูตรในขั้นนั้น
     const stageFields = rules.MIX_STAGES.map((stage) => [

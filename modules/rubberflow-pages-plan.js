@@ -373,10 +373,10 @@
     const materialRows = data.materials
       .filter((material) => includes(`${material.code} ${material.name} ${material.category ?? ""}`, ctx.q))
       .map((material) => `<tr><td class="rf-mono small">${esc(material.code)}</td><td>${esc(material.name)}</td><td class="small">${esc(material.category ?? "")}</td><td class="small">${esc(material.storage ?? "")}</td><td>${esc(material.uom ?? "kg")}</td><td class="right">${esc(fmtNum(material.safetyKg ?? 0, 2))}</td><td class="right">${esc(fmtNum(material.shelfLifeDays ?? 180))}</td><td>${material.active === false ? ui.badge("", "เลิกใช้") : ui.badge("good", "ใช้งาน")}</td><td class="right">${mayEditMaterial ? ui.openButton("แก้ไข", "materialEdit", { code: material.code }, { className: "secondary small", ariaLabel: `แก้ไข ${material.code}` }) : ""}</td></tr>`);
-    // ใบสั่งซื้อ: ใบที่ยังรอรับก่อน แล้วรับครบ/ยกเลิก (ใหม่สุดก่อนในแต่ละกลุ่ม) · หนึ่งแถวหัวใบ (เลขที่ สถานะ ผู้สั่ง ต้นทาง ยกเลิก) แล้วหนึ่งแถวต่อวัตถุดิบ (ปุ่มตรวจสอบรับเข้าอยู่ที่บรรทัด)
+    // ใบสั่งซื้อ: ใบที่ยังรอรับก่อน แล้วรับครบ/ยกเลิก (ใหม่สุดก่อนในแต่ละกลุ่ม) · หนึ่งแถวหัวใบ (เลขที่ สถานะ ผู้สั่ง ต้นทาง ยกเลิก) แล้วหนึ่งแถวต่อวัตถุดิบ (ปุ่มตรวจสอบรับเข้า / ปิดยอดที่เหลืออยู่ที่บรรทัด)
+    // รับได้หลายครั้งต่อบรรทัดจนครบหรือ ST ปิดยอดที่เหลือ (20261128020000): ช่องรับเข้าแสดงยอดสะสม ล็อตของแต่ละครั้ง ยอดที่ค้างรับ และยอดที่ปิดพร้อมเหตุผล
     const mayReceive = ctx.can("receiveMaterial");
     const mayCancelPo = ctx.can("cancelPurchase");
-    const receivedLine = (line) => line.receivedKg !== null && line.receivedKg !== undefined;
     const poStatus = { ordered: ["warn", "รอรับเข้า"], received: ["good", "รับครบแล้ว"], cancelled: ["bad", "ยกเลิก"] };
     // บรรทัดของซื้อ (source bom) นับเป็นหน่วยของชิ้น: ชื่อมาจาก item master ของ BOM ถ้าโหลดอยู่ · หน่วยเก็บมากับบรรทัด
     const bomItems = tab === "po" && purchaseOrders.some((po) => po.lines.some((line) => line.source === "bom")) ? bomItemsOf(ctx) : [];
@@ -388,14 +388,24 @@
       .filter((po) => includes(`${po.id} ${po.sourcePi ?? ""} ${po.sourceRequisition ?? ""} ${po.lines.map((line) => line.materialCode).join(" ")}`, ctx.q))
       .sort((a, b) => (a.status === "ordered" ? 0 : 1) - (b.status === "ordered" ? 0 : 1) || b.createdAt - a.createdAt)
       .flatMap((po) => {
-        const cancel = mayCancelPo && po.status === "ordered" && !po.lines.some(receivedLine)
+        const cancel = mayCancelPo && po.status === "ordered" && !rules.poTouched(po)
           ? ui.button("ยกเลิกใบ", { action: "cancelPurchaseOrder", args: { id: po.id }, className: "danger small", confirmText: `ยกเลิก ${po.id}? ใบสั่งซื้อที่ยกเลิกแล้วแก้กลับไม่ได้`, ariaLabel: `ยกเลิก ${po.id}` }) : "";
         const source = [po.sourcePi, po.sourceRequisition].filter(Boolean).join(" · ");
         const head = `<tr class="rf-po-head"><td colspan="4"><div class="rf-row rf-between"><div><strong class="rf-mono">${esc(po.id)}</strong> ${ui.badge(...poStatus[po.status] ?? ["", po.status])}${piCancelled(po) ? ` ${ui.badge("bad", "ใบสั่งผลิตถูกยกเลิกแล้ว")}` : ""}<div class="small muted">${esc(`${fmtDate(po.createdAt)} · ${po.createdBy ?? "-"}${source ? ` · ${source}` : ""}`)}</div></div>${cancel}</div></td></tr>`;
         const lines = po.lines.map((line) => {
-          const action = po.status === "ordered" && !receivedLine(line) && mayReceive ? ui.openButton("ตรวจสอบรับเข้า", "receivePurchase", { id: po.id, materialCode: line.materialCode }, { className: "small", ariaLabel: `ตรวจสอบรับเข้า ${po.id} ${line.materialCode}` }) : "";
-          const got = receivedLine(line)
-            ? `${esc(`${fmtNum(line.receivedKg, 2)} ${lineUnit(line)}`)}${line.source === "bom" ? "" : `<div class="small muted rf-mono">${esc(`${line.lotNo ?? "-"} · หมดอายุ ${fmtDate(line.expiry)}`)}</div>`}`
+          const open = po.status === "ordered" && !rules.poLineDone(line);
+          const action = open && mayReceive
+            ? `<div class="rf-row rf-end">${ui.openButton("ตรวจสอบรับเข้า", "receivePurchase", { id: po.id, materialCode: line.materialCode }, { className: "small", ariaLabel: `ตรวจสอบรับเข้า ${po.id} ${line.materialCode}` })}${ui.openButton("ปิดยอดที่เหลือ", "closePurchase", { id: po.id, materialCode: line.materialCode }, { className: "secondary small", ariaLabel: `ปิดยอดที่เหลือ ${po.id} ${line.materialCode}` })}</div>`
+            : "";
+          const receipts = rules.poLineReceipts(line);
+          const left = rules.poLineOpen(line);
+          // ล็อตของแต่ละครั้ง (เคมี) · ของซื้อที่รับหลายครั้งบอกยอดของแต่ละครั้ง · ครั้งเดียวไม่ต้องบอกยอดซ้ำกับยอดสะสม
+          const receiptRows = receipts.map((receipt) => (line.source === "bom"
+            ? (receipts.length > 1 ? `<div class="small muted">${esc(`${fmtDate(receipt.at)} · ${fmtNum(receipt.kg, 2)}`)}</div>` : "")
+            : `<div class="small muted rf-mono">${esc(`${receipt.lotNo ?? "-"}${receipts.length > 1 ? ` · ${fmtNum(receipt.kg, 2)} kg` : ""} · หมดอายุ ${fmtDate(receipt.expiry)}`)}</div>`)).join("");
+          const closed = line.closedRemainder ? `<div class="small muted">${esc(`ปิดยอดที่เหลือ ${fmtNum(line.closedRemainder.kg, 2)} ${lineUnit(line)}: ${line.closedRemainder.reason} (${line.closedRemainder.by ?? "-"})`)}</div>` : "";
+          const got = receipts.length || line.closedRemainder
+            ? `${receipts.length ? esc(`${fmtNum(rules.poLineReceived(line), 2)} ${lineUnit(line)}`) : ""}${open && left > 0 ? ` ${ui.badge("warn", `ค้างรับ ${fmtNum(left, 2)}`)}` : ""}${receiptRows}${closed}`
             : po.status === "cancelled" ? "-" : ui.badge("warn", "รอรับ");
           return `<tr><td>${ui.mono(line.materialCode)}<div class="small muted">${esc(lineName(line))}</div></td><td class="right nowrap">${esc(`${fmtNum(line.qtyKg, 2)} ${lineUnit(line)}`)}</td><td>${got}</td><td class="right">${action}</td></tr>`;
         });
@@ -468,31 +478,53 @@
     return { html, bind };
   };
 
-  // ตรวจสอบรับเข้าตามใบสั่งซื้อ: ตั้งต้นเป็นปริมาณที่สั่งและวันหมดอายุ = วันนี้ + อายุการเก็บของวัตถุดิบ · คลังแก้ปริมาณจริงและวันหมดอายุได้ แล้วยืนยัน (ไม่มีขั้นอนุมัติ)
-  // ได้ล็อตวัตถุดิบพร้อมใช้ (ผู้ขาย = เลขใบสั่งซื้อถ้าไม่กรอก ที่เก็บ = ที่จัดเก็บของวัตถุดิบ) และบรรทัดนั้นถูกปิดในคำสั่งเดียวกัน
+  // ตรวจสอบรับเข้าตามใบสั่งซื้อ: ตั้งต้นเป็นยอดที่ยังค้างรับและวันหมดอายุ = วันนี้ + อายุการเก็บของวัตถุดิบ · คลังแก้ปริมาณจริงและวันหมดอายุได้ แล้วยืนยัน (ไม่มีขั้นอนุมัติ)
+  // ได้ล็อตวัตถุดิบพร้อมใช้หนึ่งล็อตต่อครั้ง (ผู้ขาย = เลขใบสั่งซื้อถ้าไม่กรอก ที่เก็บ = ที่จัดเก็บของวัตถุดิบ) · รับไม่ครบ = ส่วนที่เหลือยังค้างรับ รับเพิ่มหรือปิดยอดที่เหลือภายหลังได้ (20261128020000)
   dialogs.receivePurchase = (ctx, { id, materialCode } = {}) => {
     const { data, now, ui, rules } = ctx;
-    const { DAY, toInputDate } = rules;
+    const { DAY, toInputDate, fmtNum } = rules;
     const po = (data.purchaseOrders ?? []).find((row) => row.id === id);
     const line = po?.lines.find((row) => row.materialCode === materialCode);
-    if (!po || !line || po.status !== "ordered" || (line.receivedKg !== null && line.receivedKg !== undefined)) return null;
+    if (!po || !line || po.status !== "ordered" || rules.poLineDone(line)) return null;
+    // ค่าตั้งต้น = ยอดที่ยังค้างรับ · รับไปแล้วบางส่วนบอกยอดที่รับแล้ว (ครั้งแรกไม่ต้องบอก ช่องตั้งต้นเท่ายอดสั่ง)
+    const left = rules.poLineOpen(line);
+    const got = rules.poLineReceived(line);
+    const unit = line.source === "bom" ? partUnit(line.uom) : "kg";
+    const sofar = got > 0 ? [["รับแล้ว", esc(`${fmtNum(got, 2)} จาก ${fmtNum(line.qtyKg, 2)} ${unit}`)]] : [];
+    const qtyTitle = got > 0 ? "ตั้งต้น = ยอดที่ยังค้างรับ ส่งมาไม่ครบใส่เท่าที่มา ส่วนที่เหลือยังค้างรับ" : "ตั้งต้น = ปริมาณที่สั่ง ส่งมาไม่ครบใส่เท่าที่มา ส่วนที่เหลือยังค้างรับ";
     if (line.source === "bom") {
       // ของซื้อ: รับเฉพาะปริมาณจริง (ไม่มีล็อต ไม่มีวันหมดอายุ) ยอดคงเหลือของ BOM เพิ่มในคำสั่งเดียวกัน
       const partName = poLineName(ctx, line);
-      const partBody = `${ui.kv([["ของซื้อ", esc(`${materialCode}${partName ? ` · ${partName}` : ""}`)]])}
-        <div class="rf-grid rf-g2">${ui.field(`ปริมาณที่รับจริง (${esc(partUnit(line.uom))})`, ui.input("qtyKg", { type: "number", step: "any", min: 0, required: true, value: String(line.qtyKg), extra: 'title="ตั้งต้น = ปริมาณที่สั่ง"' }), { required: true })}</div>`;
+      const partBody = `${ui.kv([["ของซื้อ", esc(`${materialCode}${partName ? ` · ${partName}` : ""}`)], ...sofar])}
+        <div class="rf-grid rf-g2">${ui.field(`ปริมาณที่รับจริง (${esc(partUnit(line.uom))})`, ui.input("qtyKg", { type: "number", step: "any", min: 0, required: true, value: String(left), extra: `title="${esc(qtyTitle)}"` }), { required: true })}</div>`;
       return { html: ui.dialog("receivePurchase", `ตรวจสอบรับเข้า · ${po.id}`, `<form novalidate data-rf-form="receivePurchaseLine" data-rf-args='${esc(JSON.stringify({ id: po.id, materialCode }))}' data-rf-success="รับเข้า {result} แล้ว" id="rf-receive-po">${partBody}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive-po">ยืนยันรับเข้า</button>` }) };
     }
     const material = data.materials.find((row) => row.code === materialCode);
     const days = Number(material?.shelfLifeDays) || 180;
     // เลขใบสั่งซื้ออยู่ที่หัวเรื่อง · ปริมาณที่สั่งคือค่าตั้งต้นของช่องปริมาณ · คำอธิบายค่าตั้งต้นอยู่ใน title ของช่อง
-    const body = `${ui.kv([["วัตถุดิบ", esc(`${materialCode}${material?.name ? ` · ${material.name}` : ""}`)]])}
+    const body = `${ui.kv([["วัตถุดิบ", esc(`${materialCode}${material?.name ? ` · ${material.name}` : ""}`)], ...sofar])}
       <div class="rf-grid rf-g2">
-        ${ui.field("ปริมาณที่รับจริง (kg)", ui.input("qtyKg", { type: "number", step: "any", min: 0, required: true, value: String(line.qtyKg), extra: 'title="ตั้งต้น = ปริมาณที่สั่ง"' }), { required: true })}
+        ${ui.field("ปริมาณที่รับจริง (kg)", ui.input("qtyKg", { type: "number", step: "any", min: 0, required: true, value: String(left), extra: `title="${esc(qtyTitle)}"` }), { required: true })}
         ${ui.field("วันหมดอายุ", ui.input("expiry", { type: "date", required: true, value: toInputDate(now + days * DAY), extra: `title="${esc(`ตั้งต้น = วันนี้ + อายุการเก็บ ${days} วัน`)}"` }), { required: true })}
         ${ui.field("ผู้ขาย", ui.input("supplier", { extra: 'title="เว้นว่าง = ใช้เลขใบสั่งซื้อ"' }))}
       </div>`;
     const html = ui.dialog("receivePurchase", `ตรวจสอบรับเข้า · ${po.id}`, `<form novalidate data-rf-form="receivePurchaseLine" data-rf-args='${esc(JSON.stringify({ id: po.id, materialCode }))}' data-rf-success="รับเข้าล็อต {result} แล้ว" id="rf-receive-po">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive-po">ยืนยันรับเข้า</button>` });
+    return { html };
+  };
+
+  // ปิดยอดที่เหลือ (20261128020000): ผู้ขายจะไม่ส่งส่วนที่เหลือ · ส่วนนั้นเลิกนับเป็นสั่งแล้วรอรับ บรรทัดรับเข้าอีกไม่ได้ ไม่แตะสต็อก · ต้องมีเหตุผล
+  dialogs.closePurchase = (ctx, { id, materialCode } = {}) => {
+    const { data, ui, rules } = ctx;
+    const { fmtNum } = rules;
+    const po = (data.purchaseOrders ?? []).find((row) => row.id === id);
+    const line = po?.lines.find((row) => row.materialCode === materialCode);
+    if (!po || !line || po.status !== "ordered" || rules.poLineDone(line)) return null;
+    const unit = line.source === "bom" ? partUnit(line.uom) : "kg";
+    const name = poLineName(ctx, line);
+    const body = `${ui.kv([[line.source === "bom" ? "ของซื้อ" : "วัตถุดิบ", esc(`${materialCode}${name ? ` · ${name}` : ""}`)], ["สั่ง", esc(`${fmtNum(line.qtyKg, 2)} ${unit}`)], ["รับแล้ว", esc(`${fmtNum(rules.poLineReceived(line), 2)} ${unit}`)], ["ปิดยอด (ไม่รับอีก)", esc(`${fmtNum(rules.poLineOpen(line), 2)} ${unit}`)]])}
+      ${ui.callout("warn", "ส่วนที่เหลือจะไม่นับเป็นสั่งแล้วรอรับอีก และบรรทัดนี้รับเข้าอีกไม่ได้ ปิดแล้วแก้กลับไม่ได้ ถ้ายังต้องใช้ของ ระบบจะแนะนำให้สั่งซื้อใหม่")}
+      ${ui.field("เหตุผล", ui.input("reason", { required: true, placeholder: "เช่น ผู้ขายแจ้งว่าไม่มีของส่งเพิ่ม", extra: 'minlength="3" maxlength="300"' }), { required: true })}`;
+    const html = ui.dialog("closePurchase", `ปิดยอดที่เหลือ · ${po.id}`, `<form novalidate data-rf-form="closePurchaseLine" data-rf-args='${esc(JSON.stringify({ id: po.id, materialCode }))}' data-rf-success="ปิดยอดที่เหลือของ {result} แล้ว" id="rf-close-po">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-close-po">ปิดยอดที่เหลือ</button>` });
     return { html };
   };
 
@@ -625,7 +657,7 @@
   // ข้อความที่ผู้บันทึกเขียนเอง (entries) แสดงเป็นหมายเหตุรองใต้รายละเอียด ไม่ใช่ข้อมูลที่ระบบตรวจ · ทุกรายการ (ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ฯลฯ) อยู่ในฐานข้อมูลและบันทึกที่นี่เหมือนกัน
   const AUDIT_ACTION_LABEL = Object.freeze({
     saveMaterial: "บันทึกวัตถุดิบ", createRecipe: "สร้างสูตรใหม่", saveRecipe: "แก้สูตร / ออกฉบับแก้ไขใหม่", approveRecipe: "อนุมัติสูตร", createOrder: "เปิดใบสั่งผลิต", setOrderStatus: "เปลี่ยนสถานะใบสั่งผลิต",
-    receiveMaterial: "รับวัตถุดิบเข้าคลัง", createPurchaseOrder: "สั่งซื้อวัตถุดิบ", receivePurchaseLine: "ตรวจสอบรับเข้าตามใบสั่งซื้อ", cancelPurchaseOrder: "ยกเลิกใบสั่งซื้อ", setMaterialLotStatus: "กักกัน/ปลดกักกันล็อตวัตถุดิบ", createRequisition: "เบิกเคมี (จ่ายทันที)", weighLine: "ชั่งวัตถุดิบ (ใบเก่า)", issueRequisition: "จ่ายทั้งใบเบิก (ใบเก่า)", recordMixing: "บันทึกการผสม", endRest: "ข้ามเวลาบ่ม",
+    receiveMaterial: "รับวัตถุดิบเข้าคลัง", createPurchaseOrder: "สั่งซื้อวัตถุดิบ", receivePurchaseLine: "ตรวจสอบรับเข้าตามใบสั่งซื้อ", closePurchaseLine: "ปิดยอดที่เหลือของใบสั่งซื้อ", cancelPurchaseOrder: "ยกเลิกใบสั่งซื้อ", setMaterialLotStatus: "กักกัน/ปลดกักกันล็อตวัตถุดิบ", createRequisition: "เบิกเคมี (จ่ายทันที)", weighLine: "ชั่งวัตถุดิบ (ใบเก่า)", issueRequisition: "จ่ายทั้งใบเบิก (ใบเก่า)", recordMixing: "บันทึกการผสม", endRest: "ข้ามเวลาบ่ม", returnRequisition: "รับเคมีคืนเข้าล็อตเดิม",
     recordExtrusion: "บันทึกการฉีด", recordCuring: "บันทึกการอบ", recordFinishing: "บันทึกการตกแต่ง/บรรจุ", createTransfer: "ส่งมอบ WIP", receiveTransfer: "รับมอบ WIP", shipBoxes: "ส่งมอบกล่องสินค้า",
     addQcRecord: "บันทึกผล QC", createNcr: "เปิด NCR", updateNcr: "บันทึกการแก้ไข/ป้องกัน NCR", closeNcr: "ปิด NCR", cleanMold: "บันทึกล้างแม่พิมพ์", saveMold: "บันทึกแม่พิมพ์/หัวดาย",
   });

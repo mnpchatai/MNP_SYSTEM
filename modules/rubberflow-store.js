@@ -63,7 +63,8 @@
     editMaster: Object.freeze(["admin", "manager", "planner", "qc"]), // วัตถุดิบ / ร่างสูตร
     qcDecision: Object.freeze(["admin", "manager", "qc"]),
     holdMaterial: Object.freeze(["admin", "manager", "qc"]), // กักกัน/ปลดกักกันล็อตวัตถุดิบ
-    demoSkip: Object.freeze(["admin", "manager", "mixer", "qc"]),
+    skipRest: Object.freeze(["admin", "manager", "qc"]), // ข้ามเวลาบ่ม (พร้อมเหตุผล): ผู้จัดการ / QC แทนหัวหน้า RB และ QA ของโหมดฐานข้อมูล
+    returnRequisition: Object.freeze(["admin", "manager", "store"]), // รับเคมีที่เบิกไปแล้วคืนเข้าล็อตเดิม (WO ถูกยกเลิก): เจ้าหน้าที่คลัง
   });
   const DB_CAN = Object.freeze({
     approveRecipe: (user) => Boolean(user.rbHead),
@@ -73,7 +74,8 @@
     editMaster: (user) => Boolean(user.planner || user.rb),
     qcDecision: (user) => Boolean(user.planner || user.qa), // บันทึกผลตรวจ / เปิด-ปิด NCR / ตัดสินล็อต
     holdMaterial: (user) => Boolean(user.planner || user.st || user.qa),
-    demoSkip: (user) => Boolean(user.planner || user.rb), // ข้ามเวลาบ่ม: คำสั่งของพนักงาน RB ที่ฐานข้อมูลประทับเวลาเอง
+    skipRest: (user) => Boolean(user.rbHead || user.qa), // ข้ามเวลาบ่มพร้อมเหตุผล: หัวหน้า RB (รวมผู้ช่วยผู้จัดการโรงงานขึ้นไปและ admin) หรือแผนก QA (20261128010000) · ฐานข้อมูลประทับเวลาและผู้ข้ามเอง
+    returnRequisition: (user) => Boolean(user.st || user.role === "admin"), // รับเคมีที่เบิกไปแล้วคืนเข้าล็อตเดิมเมื่อ WO ถูกยกเลิก: แผนก ST (admin ไว้แก้ปัญหา)
     // ชุดที่ย้ายขึ้นฐานข้อมูลในขั้นที่ 2: โหมดสาธิตไม่จำกัดสิทธิ์ของปุ่มเหล่านี้ (ไม่อยู่ใน CAN)
     receiveMaterial: (user) => Boolean(user.st || user.role === "admin"), // รับวัตถุดิบเข้าคลัง (รวมรับเข้าตามใบสั่งซื้อ): แผนก ST เท่านั้น (admin ไว้แก้ปัญหา) ตาม 20261119010000_rf_purchase_by_st.sql
     requisition: (user) => Boolean(user.planner || user.rb), // เบิกเคมี (สร้างใบเบิกและจ่ายทันที) · จ่ายใบเก่าที่ค้างชั่ง
@@ -91,16 +93,16 @@
   // ปุ่ม/ฟอร์มของคำสั่งแต่ละตัวต้องมีสิทธิ์ข้อใด (module-rubberflow.js ซ่อนปุ่ม/ปิดฟอร์มที่ไม่ใช่สิทธิ์ของบัญชี · ฐานข้อมูลตัดสินจริงอีกครั้ง) · คำสั่งที่ไม่อยู่ในตารางนี้ไม่ถูกจำกัดที่หน้าจอ
   const ACTION_RIGHT = Object.freeze({
     receiveMaterial: "receiveMaterial", setMaterialLotStatus: "holdMaterial", createRequisition: "requisition", weighLine: "requisition", issueRequisition: "requisition",
-    recordMixing: "station", endRest: "demoSkip", recordExtrusion: "station", recordCuring: "station", recordFinishing: "station", cleanMold: "station",
+    recordMixing: "station", endRest: "skipRest", returnRequisition: "returnRequisition", recordExtrusion: "station", recordCuring: "station", recordFinishing: "station", cleanMold: "station",
     createTransfer: "sendTransfer", receiveTransfer: "receiveTransfer", shipBoxes: "shipBoxes", addQcRecord: "qcDecision", createNcr: "qcDecision", closeNcr: "qcDecision",
     updateNcr: "fillNcr", saveMold: "editMold",
-    createPurchaseOrder: "purchase", receivePurchaseLine: "receiveMaterial", cancelPurchaseOrder: "cancelPurchase",
+    createPurchaseOrder: "purchase", receivePurchaseLine: "receiveMaterial", closePurchaseLine: "receiveMaterial", cancelPurchaseOrder: "cancelPurchase",
     saveMaterial: "editMaster", createRecipe: "editMaster", saveRecipe: "editMaster", approveRecipe: "approveRecipe", createOrder: "createOrder",
   });
   // dialog ที่เปิดจากปุ่ม → คำสั่งที่ dialog นั้นส่ง
   const DIALOG_ACTION = Object.freeze({
     receiveMaterial: "receiveMaterial", createRequisition: "createRequisition", transfer: "createTransfer", receive: "receiveTransfer", qcRecord: "addQcRecord", ncr: "createNcr",
-    purchase: "createPurchaseOrder", receivePurchase: "receivePurchaseLine",
+    purchase: "createPurchaseOrder", receivePurchase: "receivePurchaseLine", closePurchase: "closePurchaseLine", skipRest: "endRest", returnRequisition: "returnRequisition",
     moldEdit: "saveMold", materialEdit: "saveMaterial", createOrder: "createOrder", recipeEdit: "saveRecipe", recipeNew: "createRecipe",
   });
   const rightForAction = (name) => ACTION_RIGHT[name] ?? null;
@@ -243,7 +245,7 @@
       RF_INVALID_QC: "ข้อมูลผลตรวจ QC ไม่ถูกต้อง",
       RF_INVALID_NCR: "ข้อมูล NCR ไม่ถูกต้อง (การปิดเคสต้องมีทั้งการแก้ไขและการป้องกัน)",
       RF_INVALID_MOLD: "ข้อมูลแม่พิมพ์ไม่ถูกต้อง",
-      RF_INVALID_PURCHASE: "ข้อมูลใบสั่งซื้อไม่ถูกต้อง (รายการต้องไม่ซ้ำและจำนวนมากกว่า 0 การรับเข้าต้องมีล็อตที่ตรงกัน)",
+      RF_INVALID_PURCHASE: "ข้อมูลใบสั่งซื้อไม่ถูกต้อง (รายการต้องไม่ซ้ำและจำนวนมากกว่า 0 การรับเข้าต้องมีล็อตที่ตรงกับยอดที่รับครั้งนี้ การปิดยอดที่เหลือต้องมีเหตุผล 3-300 ตัวอักษร)",
       RF_INVALID_MATERIAL: "ข้อมูลวัตถุดิบไม่ถูกต้อง รหัสใช้ได้เฉพาะตัวอักษรอังกฤษ ตัวเลข จุด ขีดกลาง และขีดล่าง (ไม่เกิน 40 ตัวอักษร) และต้องมีชื่อ",
       RF_REVISION_ORDER: "ฉบับแก้ไขของสูตรต้องเรียงต่อจากล่าสุดทีละ 1 ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาออกฉบับแก้ไขใหม่อีกครั้ง",
       NOT_AUTHORIZED: "ล้างข้อมูล RubberFlow ทดสอบได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ",

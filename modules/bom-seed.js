@@ -76,6 +76,13 @@
     ["DEMO-HL-24(B)-A", [["SE-HL24-YE03-400-19-30", 3], ["BG-0092", 1], ["P-STK-01", 1], ["P-BOX-01", 0.125]]],
   ];
 
+  // ใบสาธิตที่งาน RB ผูก WO ของชุดสาธิต RubberFlow: [เลข PI, จำนวนสั่ง, สถานะที่ WO เดินถึง] · WO เปิดเมื่อ WO_DAYS_AGO วันก่อน ลำดับ 01, 02 ของวันนั้น
+  // (ชุดสาธิต RubberFlow ไม่มี WO อื่นในวันนั้น เลขจึงตรงกัน · รูปเลขเดียวกับ nextId ของ modules/rubberflow-actions.js ในโหมดสาธิต)
+  const DEMO_RF_ORDERS = Object.freeze([["DEMO-26006", 60, "running"], ["DEMO-26007", 30, "issued"]]);
+  const WO_DAYS_AGO = 3;
+  const ymd = (ms) => { const day = new Date(ms); return `${day.getFullYear()}${String(day.getMonth() + 1).padStart(2, "0")}${String(day.getDate()).padStart(2, "0")}`; };
+  const demoWoId = (now, index) => `WO-${ymd(now - WO_DAYS_AGO * rules().DAY)}-${String(index + 1).padStart(2, "0")}`;
+
   function emptyState() {
     return { version: 6, counters: {}, users: USERS.map((user) => ({ ...user })), compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [], colors: [], colorSets: [], packages: [], processes: rules().DEFAULT_PROCESSES.map((entry) => ({ ...entry })), routings: [], stock: [], stockMoves: [] };
   }
@@ -148,7 +155,8 @@
     A.reportJob(d, { jobId: job("RB-DM01-01-OR01-200-0-72").id, qtyDone: 4.8 }, at(now - 9 * DAY, "rb"));
     A.reportJob(d, { jobId: job("PT-00320").id, qtyDone: 14 }, at(now - 8 * DAY, "pt"));
     A.reportJob(d, { jobId: job("SE-TP01-BK01-140-3-20").id, qtyDone: 120, qtyReject: 4, note: "ครึ่งแรก" }, at(now - 5 * DAY, "gr"));
-    A.setJobStatus(d, { jobId: job("BG-0092").id, status: "hold" }, at(now - 4 * DAY, "bg"));
+    A.setJobStatus(d, { jobId: job("BG-0092").id, status: "hold", reason: "รอผ้าตาข่ายล็อตใหม่" }, at(now - 4 * DAY, "bg"));
+
 
     // ใบร่างที่ระเบิดแล้ว รอปล่อยผลิต
     const pi2 = A.createOrder(d, {
@@ -157,10 +165,59 @@
     }, at(now - 2 * DAY, "planner"));
     A.addOrderItem(d, { orderId: pi2, fgCode: "DEMO-HL-24(B)-A", qty: 192 }, at(now - 2 * DAY + 600000, "planner"));
     A.explodeOrder(d, { orderId: pi2 }, at(now - DAY, "planner"));
+
+    // ใบที่งาน RB ผูก WO ของชุดสาธิต RubberFlow (rubberflow-seed.js เปิด WO เลขเดียวกันผ่าน demoRfLinks เมื่อโหลดคู่กัน): ลองยกเลิกใบหลังเริ่มผลิตและรับเคมีคืน
+    // DEMO-26006: WO กำลังผลิต (ผสมและฉีดแล้ว) · DEMO-26007: WO ปล่อยผลิตแล้ว เบิกเคมีแล้วรอผสม
+    DEMO_RF_ORDERS.forEach(([pi, qty], index) => {
+      const id = A.createOrder(d, {
+        pi, customer: "ลูกค้าสาธิต ระยอง", country: "Thailand", orderedAt: day(-5), whDue: day(30),
+        due: { RB: day(4), GR: day(12), BG: day(12), ST: day(12), PK: day(25) }, note: index ? "ใบสาธิต: WO เบิกเคมีแล้วรอผสม" : "ใบสาธิต: WO กำลังผลิต",
+      }, at(now - 5 * DAY + index * 60000, "planner"));
+      A.addOrderItem(d, { orderId: id, fgCode: "DEMO-HL-24(B)-A", qty }, at(now - 5 * DAY + 600000 + index * 60000, "planner"));
+      A.explodeOrder(d, { orderId: id }, at(now - 4 * DAY + index * 60000, "planner"));
+      A.releaseOrder(d, { orderId: id }, at(now - 4 * DAY + 3600000 + index * 60000, "planner"));
+      const rb = d.jobs.find((entry) => entry.orderId === id && entry.dept === "RB");
+      const item = d.items.find((entry) => entry.code === rb?.itemCode);
+      if (!rb || !item) return;
+      const kg = A.helpers.rbJobKg(rb, item, { scrapPct: 5, bom: A.helpers.approvedBomOf(d, item.code) });
+      A.linkJobToRubberFlow(d, { jobId: rb.id, woId: demoWoId(now, index), kg }, at(now - WO_DAYS_AGO * DAY, "rb"));
+    });
+    // ใบที่ผลิต รับเข้าคลัง และส่งมอบครบแล้ว (ลองย้อนด้วยผู้จัดการแผนกคลังสินค้า): DEMO-26008 ฮูล่า 20 ชุด ทุกแผนกรายงานครบ · WH รับเข้า 8 แล้ว 12 (ใบปิดเอง) · ส่งมอบ 20
+    // ย้อนรับเข้าได้หลังย้อนการส่งมอบก่อน · ย้อนรับเข้าแล้วของไม่ครบ ใบเปิดกลับเป็นกำลังผลิต · งานของซื้อของใบที่ปิดแล้วไม่เป็นงานค้าง
+    const pi8 = A.createOrder(d, {
+      pi: "DEMO-26008", customer: "ลูกค้าสาธิต ระยอง", country: "Thailand", orderedAt: day(-12), whDue: day(5),
+      due: { RB: day(-9), GR: day(-7), BG: day(-7), ST: day(-7), PK: day(-5) }, note: "ใบสาธิต: ส่งมอบครบแล้ว ลองย้อนการส่งมอบ / การรับเข้าคลัง",
+    }, at(now - 12 * DAY, "planner"));
+    A.addOrderItem(d, { orderId: pi8, fgCode: "DEMO-HL-24(B)-A", qty: 20 }, at(now - 12 * DAY + 600000, "planner"));
+    A.explodeOrder(d, { orderId: pi8 }, at(now - 11 * DAY, "planner"));
+    A.releaseOrder(d, { orderId: pi8 }, at(now - 11 * DAY + 3600000, "planner"));
+    d.jobs.filter((entry) => entry.orderId === pi8 && !(entry.dept === "ST" && entry.kind === "PURCHASED")).forEach((entry, index) => {
+      A.reportJob(d, { jobId: entry.id, qtyDone: Math.max(0, Number(entry.qtyPlanned) - Number(entry.qtyDone || 0)) }, at(now - 7 * DAY + index * 60000, "planner"));
+    });
+    A.receiveFg(d, { orderId: pi8, lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 8 }] }, at(now - 6 * DAY, "wh"));
+    A.receiveFg(d, { orderId: pi8, lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 12 }] }, at(now - 5 * DAY, "wh"));
+    A.deliverFg(d, { orderId: pi8, lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 20 }] }, at(now - 4 * DAY, "wh"));
     return d;
   }
 
-  const api = { USERS, COMPOUNDS, ITEMS, emptyState, buildSeed };
+  // งาน RB ของใบสาธิตที่ผูก WO → ข้อมูลที่ชุดสาธิต RubberFlow ใช้เปิด WO เลขเดียวกัน (สร้างชุด BOM ด้วย now เดียวกันแล้วอ่านงานที่ผูก)
+  // mode: running = เดินสายผลิตถึงขั้นฉีด (WO กำลังผลิต) · issued = เบิกเคมีแล้วรอผสม · สูตรของ WO = สูตร PHR ที่สูตรยางของเส้นยางผูกไว้ (ไม่ผูก = ข้าม)
+  function demoRfLinks(now = Date.now()) {
+    const d = buildSeed(now);
+    return DEMO_RF_ORDERS.map(([pi, , mode]) => {
+      const job = d.jobs.find((entry) => entry.orderId === pi && entry.dept === "RB" && entry.externalRef?.woId);
+      if (!job) return null;
+      const item = d.items.find((entry) => entry.code === job.itemCode);
+      const compound = COMPOUNDS.find((entry) => entry.code === item?.rubber?.compound);
+      const order = d.orders.find((entry) => entry.id === pi);
+      return {
+        orderId: pi, customer: order?.customer ?? "", jobId: job.id, woId: job.externalRef.woId, recipeId: compound?.recipeId ?? null,
+        qty: Math.max(0, Number(job.qtyPlanned) - Number(job.qtyDone || 0)), uom: job.uom, kg: Number(job.externalRef.kg) || 0, color: item?.rubber?.color || "ดำ", dueAt: job.dueAt, mode,
+      };
+    }).filter((link) => link && link.recipeId && link.qty > 0);
+  }
+
+  const api = { USERS, COMPOUNDS, ITEMS, emptyState, buildSeed, demoRfLinks, demoWoId };
   if (isNode) module.exports = api;
   else root.MNP_BOM_SEED = api;
 })(typeof window !== "undefined" ? window : globalThis);

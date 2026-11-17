@@ -181,6 +181,17 @@
     recordMixing: (p) => ({ ...p, stages: stagesOf(p) }),
     saveMaterial: (p) => ({ ...p, active: p.active !== "0" }),
     shipBoxes: (p) => ({ ids: p.ids ?? [] }),
+    // รับเคมีคืน: returnedKg[] ตามลำดับบรรทัดของใบเบิก → kgs · note = เหตุผล (จำเป็นเมื่อคืนไม่ครบ)
+    // ช่องกรอกแสดง 3 ตำแหน่ง: ค่าที่ห่างจากยอดจ่าย (issuedKg[]) ไม่ถึง 0.0005 ส่งเป็นยอดจ่ายเต็ม จึงคืนครบได้โดยไม่ต้องใส่เหตุผล
+    returnRequisition: (p) => {
+      const issued = listOf(p.issuedKg);
+      const kgs = listOf(p.returnedKg).map((raw, index) => {
+        const kg = Number(raw);
+        const full = Number(issued[index]);
+        return String(raw ?? "").trim() !== "" && Number.isFinite(kg) && Number.isFinite(full) && full > 0 && Math.abs(kg - full) < 0.0005 ? full : raw;
+      });
+      return { id: p.id, kgs, note: p.note };
+    },
     createNcr: (p) => ({ ...p, whys: p.whys ?? [] }),
     addQcRecord: (p) => ({ ...p, values: p.values ?? {}, result: p.result || undefined }),
   };

@@ -239,10 +239,11 @@
       if (requisition.status !== "weighing") continue;
       for (const line of requisition.lines ?? []) if (!remote || line.actualKg === null || line.actualKg === undefined) add(reserved, line.materialCode, Number(line.targetKg) || 0);
     }
+    // สั่งแล้วรอรับ = ยอดที่ยังค้างรับของบรรทัด (poLineOpen: รับไม่ครบยังค้างส่วนที่เหลือ จนกว่าจะรับครบหรือ ST ปิดยอดที่เหลือ · 20261128020000)
     const onOrder = new Map();
     for (const po of purchaseOrders) {
       if (po.status !== "ordered") continue;
-      for (const line of po.lines ?? []) if (line.receivedKg === null || line.receivedKg === undefined) add(onOrder, line.materialCode, Number(line.qtyKg) || 0);
+      for (const line of po.lines ?? []) { const open = poLineOpen(line); if (open > 0) add(onOrder, line.materialCode, open); }
     }
     const rows = [...need.keys()].filter((code) => up3(need.get(code)) > 0).sort().map((code) => {
       const material = materials.find((row) => row.code === code);
@@ -358,10 +359,44 @@
     return { min: ticks[0], max: ticks[ticks.length - 1], step: clean(step), ticks };
   }
 
+  // ---------- บรรทัดใบสั่งซื้อ (ตรงกับ private.rf_po_line_received / rf_po_line_done ของ 20261128020000 และ mock ของ harness) ----------
+  // receivedKg = ยอดรับสะสม · receipts = [{ kg, lotNo, expiry, at, by }] ทีละครั้ง (เซิร์ฟเวอร์สร้าง) · closedRemainder = { kg, reason, at, by } เมื่อ ST ปิดยอดที่เหลือ
+  // บรรทัดรุ่นเก่า (รับครั้งเดียวก่อน 20261128020000: มี receivedKg แต่ไม่มี receipts) ถือว่าปิดแล้ว ตัวเลขเดิมไม่กลับมาค้างรับ
+  const hasValue = (value) => value !== null && value !== undefined;
+  // ปัด 9 ตำแหน่ง (ตัดเศษทศนิยมของเลขทศนิยมฐานสอง) เทียบกับ numeric ของฐานข้อมูลได้ตรง
+  const round9 = (value) => Math.round(Number(value) * 1e9) / 1e9;
+  const poLineReceived = (line) => (Array.isArray(line?.receipts) && line.receipts.length
+    ? round9(line.receipts.reduce((sum, receipt) => sum + (Number(receipt?.kg) || 0), 0))
+    : Number(line?.receivedKg) || 0);
+  // รายการรับของบรรทัด (บรรทัดรุ่นเก่า = หนึ่งรายการจากช่องของบรรทัด) ใช้แสดงประวัติ
+  const poLineReceipts = (line) => (Array.isArray(line?.receipts) ? line.receipts
+    : hasValue(line?.receivedKg) ? [{ kg: Number(line.receivedKg) || 0, lotNo: line.lotNo ?? null, expiry: line.expiry ?? null, at: line.receivedAt ?? null, by: line.receivedBy ?? null }] : []);
+  const poLineClosed = (line) => Boolean(line?.closedRemainder && typeof line.closedRemainder === "object") || (hasValue(line?.receivedKg) && !Array.isArray(line?.receipts));
+  // ค้างรับ (สั่งแล้วรอรับ) ของบรรทัด · รับเกินยอดสั่ง = 0
+  const poLineOpen = (line) => (poLineClosed(line) ? 0 : Math.max(0, round9((Number(line?.qtyKg) || 0) - poLineReceived(line))));
+  // ครบ (ไม่ค้างรับ): ปิดแล้ว หรือรับสะสมถึงยอดสั่ง · ใบเป็น received เมื่อทุกบรรทัดครบ
+  const poLineDone = (line) => poLineClosed(line) || poLineReceived(line) >= (Number(line?.qtyKg) || 0); // เทียบตรงแบบเดียวกับ private.rf_po_line_done และ mock
+  // ใบมีการรับหรือปิดยอดแล้วอย่างน้อยหนึ่งบรรทัด (ยกเลิกใบไม่ได้แล้ว)
+  const poTouched = (po) => (po?.lines ?? []).some((line) => poLineReceived(line) > 0 || Boolean(line?.closedRemainder));
+
+  // ใบเบิกที่หักสต็อกแล้ว (issued · weighing ที่จ่ายไปบางบรรทัด) ของ WO ที่ถูกยกเลิก = งานรับเคมีคืนของแผนก ST (ตรงกับ private.rf_return_requisitions ของ 20261128010000)
+  // "pending" = รอ ST รับคืน · "returned" = รับคืนแล้ว (ครั้งเดียวต่อใบ: ทุกบรรทัดมี returnedAt) · null = ไม่เกี่ยว (WO ยังเปิด ผสมแล้ว หรือยังไม่ได้จ่ายบรรทัดไหน)
+  const issuedKgOf = (requisition) => (requisition?.lines ?? []).reduce((sum, line) => sum + (typeof line?.actualKg === "number" ? line.actualKg : 0), 0);
+  function requisitionReturnState(data, requisition) {
+    const wo = (data?.orders ?? []).find((order) => order.id === requisition?.orderId);
+    if (wo?.status !== "cancelled" || !["issued", "weighing"].includes(requisition?.status) || !(issuedKgOf(requisition) > 0)) return null;
+    return (requisition.lines ?? []).some((line) => line && Object.hasOwn(line, "returnedAt")) ? "returned" : "pending";
+  }
+  const returnableRequisitions = (data) => (data?.requisitions ?? []).filter((requisition) => requisitionReturnState(data, requisition) === "pending");
+  // ใบเบิกที่หน้าผสมยางเลือกได้: จ่ายครบแล้ว (issued) และ WO ยังไม่ถูกยกเลิก
+  const mixableRequisitions = (data) => (data?.requisitions ?? []).filter((requisition) => requisition.status === "issued" && (data?.orders ?? []).find((order) => order.id === requisition.orderId)?.status !== "cancelled");
+
   const api = {
     DAY, HOUR, STAGES, STAGE_LABEL, NEXT_STAGE, PREV_STAGE, SHIFTS, MACHINES, SPECS, WEIGH_TOL_PCT, WEIGH_TOL_MIN_KG,
     MIX_STAGES, itemStage, recipeStage, recipeLabel, orderLabel, inSpec, specText, specLimits, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, OPEN_ORDER, orderRemainingKg, MAX_REQ_BATCHES, remainingBatches, nextRequisitionBatches, suggestOrderKg, chemicalNeeds, stats, cpkVerdict,
     fmtDate, fmtDateTime, fmtNum, fmtDuration, ymd, toInputDate, fromInputDate, niceScale,
+    issuedKgOf, requisitionReturnState, returnableRequisitions, mixableRequisitions,
+    poLineReceived, poLineReceipts, poLineClosed, poLineOpen, poLineDone, poTouched,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_RUBBERFLOW_RULES = api;
