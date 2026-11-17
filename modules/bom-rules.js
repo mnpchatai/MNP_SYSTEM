@@ -969,6 +969,7 @@
     return reserved;
   }
   // กฎของบรรทัดใบสั่งซื้อเป็นของ RubberFlow (modules/rubberflow-rules.js poLine* โหลดก่อนไฟล์นี้ · ใน Node require ไฟล์ข้างกัน)
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const poRules = () => (isNode ? require("./rubberflow-rules.js") : root.MNP_RUBBERFLOW_RULES);
   // สั่งค้างรับต่อรหัส = ยอดที่ยังค้างรับ (poLineOpen) ของบรรทัดของซื้อ (source bom) ในใบสั่งซื้อสถานะ ordered
   // รับไม่ครบยังค้างส่วนที่เหลือ จนกว่าจะรับครบหรือ ST ปิดยอดที่เหลือ (20261128020000)

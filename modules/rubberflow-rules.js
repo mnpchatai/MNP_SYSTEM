@@ -375,7 +375,7 @@
   // ค้างรับ (สั่งแล้วรอรับ) ของบรรทัด · รับเกินยอดสั่ง = 0
   const poLineOpen = (line) => (poLineClosed(line) ? 0 : Math.max(0, round9((Number(line?.qtyKg) || 0) - poLineReceived(line))));
   // ครบ (ไม่ค้างรับ): ปิดแล้ว หรือรับสะสมถึงยอดสั่ง · ใบเป็น received เมื่อทุกบรรทัดครบ
-  const poLineDone = (line) => poLineClosed(line) || poLineReceived(line) + 1e-9 >= (Number(line?.qtyKg) || 0);
+  const poLineDone = (line) => poLineClosed(line) || poLineReceived(line) >= (Number(line?.qtyKg) || 0); // เทียบตรงแบบเดียวกับ private.rf_po_line_done และ mock
   // ใบมีการรับหรือปิดยอดแล้วอย่างน้อยหนึ่งบรรทัด (ยกเลิกใบไม่ได้แล้ว)
   const poTouched = (po) => (po?.lines ?? []).some((line) => poLineReceived(line) > 0 || Boolean(line?.closedRemainder));
 

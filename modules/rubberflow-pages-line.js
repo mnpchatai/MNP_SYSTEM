@@ -123,7 +123,8 @@
         parts.push(ui.callout("warn", `<div class="rf-row rf-between"><span>${esc(`WO ${selected.orderId} ถูกยกเลิก เคมีที่จ่ายไปแล้วยังไม่ได้ผสม รอคลังวัตถุดิบ (ST) รับคืนเข้าล็อตเดิม`)}</span>${ctx.can("returnRequisition") ? ui.openButton("รับคืนเคมี", "returnRequisition", { id: selected.id }, { className: "small" }) : ""}</div>`));
       }
       const returnedNote = returnState === "returned" ? selected.lines.find((line) => line.returnedAt) : null;
-      if (selected.status === "weighing") {
+      // ใบเก่าของ WO ที่ยกเลิก (รอรับคืนหรือรับคืนแล้ว) ไม่มีปุ่มเบิกทั้งใบ: เบิกต่อหลังรับคืนจะหักสต็อกที่คืนอีกไม่ได้ (ฝั่งเซิร์ฟเวอร์ยังไม่ปฏิเสธ = งานต่อ)
+      if (selected.status === "weighing" && !returnState) {
         parts.push(ui.callout("warn", `<div class="rf-row rf-between"><span>ใบเบิกเก่าที่ยังจ่ายไม่ครบ</span>${ui.button("เบิกทั้งใบ", { action: "issueRequisition", args: { id: selected.id }, className: "small", confirmText: `เบิกทั้งใบ ${selected.id}? ระบบจะหักสต็อกทุกรายการที่ยังไม่จ่ายตามสูตร`, success: `เบิก ${selected.id} แล้ว`, ariaLabel: `เบิกทั้งใบ ${selected.id}` })}</div>`));
       }
       // สถานะรายบรรทัดมีความหมายเฉพาะใบเก่าที่จ่ายไม่ครบ · ใบที่จ่ายแล้วแสดงสถานะที่ป้ายในรายการและแถบสรุปแล้ว
@@ -214,8 +215,9 @@
       const issued = typeof line.actualKg === "number" ? line.actualKg : 0;
       const state = lot ? rules.lotState(lot, now) : "";
       const control = issued > 0
-        ? ui.input("returnedKg[]", { type: "number", step: "any", min: 0, value: String(issued), extra: `max="${esc(String(issued))}" aria-label="${esc(`คืน ${line.materialCode} (kg) ไม่เกิน ${issued}`)}"` })
-        : `<input type="hidden" name="returnedKg[]" value="0"><span class="muted">—</span>`;
+        // แสดง 3 ตำแหน่ง (ยอดจ่ายจริงอาจยาวกว่านั้น) · issuedKg[] เก็บยอดเต็ม: ค่าที่ห่างจากยอดจ่ายไม่ถึง 0.0005 ส่งเป็นยอดเต็ม (คืนครบ)
+        ? `<input type="hidden" name="issuedKg[]" value="${esc(String(issued))}">${ui.input("returnedKg[]", { type: "number", step: "any", min: 0, value: String(+issued.toFixed(3)), extra: `max="${esc(String(+issued.toFixed(3)))}" aria-label="${esc(`คืน ${line.materialCode} (kg) ไม่เกิน ${fmtNum(issued, 3)}`)}"` })}`
+        : `<input type="hidden" name="issuedKg[]" value="0"><input type="hidden" name="returnedKg[]" value="0"><span class="muted">—</span>`;
       return `<tr><td class="rf-mono">${esc(line.materialCode)}</td><td class="rf-mono small">${esc(line.lotNo)}${state === "expired" || state === "hold" ? ` ${ui.badge("warn", state === "expired" ? "หมดอายุแล้ว" : "กักกัน")}` : ""}<div class="small muted">${esc(lot ? `หมดอายุ ${fmtDate(lot.expiry)}` : "ไม่พบล็อต")}</div></td><td class="right rf-mono">${esc(fmtNum(issued, 3))}</td><td class="right">${control}</td></tr>`;
     });
     const body = `${ui.callout("info", "ยอดที่คืนบวกเข้าล็อตเดิมของแต่ละบรรทัด ล็อตคงวันหมดอายุและสถานะเดิม ล็อตที่หมดอายุแล้วยังใช้เบิกไม่ได้ (ระบบจ่ายตาม FEFO ข้ามล็อตนั้น)")}

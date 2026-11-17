@@ -47,7 +47,8 @@
 --   ก่อน apply เทียบ md5(pg_get_functiondef(oid)) ของทุกฟังก์ชันที่ replace ที่ production กับนิยามในไฟล์ต้นทางข้างบน แล้ว apply "ไฟล์ที่อยู่บน branch" ตรง ๆ
 --   หลัง apply เทียบ md5 กับ local stack ที่ผ่าน db:test และตรวจ has_function_privilege (anon เรียก app_rf_save ไม่ได้, authenticated เรียกได้, private.* เรียกไม่ได้)
 --   Pilot เก่า + ฐานข้อมูลใหม่: ยกเลิกใบโดยไม่มีเหตุผล = BOM_INVALID_ORDER · พักงานโดยไม่มีเหตุผล = BOM_INVALID_JOB · รายงานงานที่ผูก WO = BOM_INVALID_JOB (ไม่เขียนอะไร)
---   Pilot ใหม่ + ฐานข้อมูลเก่า: ยกเลิกใบที่มีงานเริ่มแล้วถูกปฏิเสธเหมือนเดิม · returnRequisition = RF_INVALID_ACTION · ข้อมูลไม่เสียหาย
+--   Pilot ใหม่ + ฐานข้อมูลเก่า: ยกเลิกใบที่มีงานเริ่มแล้วถูกปฏิเสธเหมือนเดิม · พักงานไม่ได้เลย (รายการเหตุผลยอด 0 ถูก bom_parse_reports เดิมปฏิเสธ = BOM_INVALID_JOB)
+--     · returnRequisition = RF_INVALID_ACTION · ข้อมูลไม่เสียหาย
 --
 -- Rollback: create or replace ฟังก์ชันทั้งหมดกลับด้วยนิยามต้นทางที่ระบุข้างบน (รวม revoke / grant) แล้ว drop function private.rf_return_requisitions(public.employees, text, jsonb, bigint, bigint)
 --   ข้อมูลทดสอบที่เกิดหลังไฟล์นี้ใช้กับนิยามเดิมได้: งานของใบที่ยกเลิก (นิยามเดิมลบตอนยกเลิก) ค้างอยู่ได้เพราะแก้ไม่ได้อยู่แล้ว · ช่อง returned* / skipRest / kind เป็น jsonb ที่นิยามเดิมเมิน
