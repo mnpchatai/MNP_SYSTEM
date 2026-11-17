@@ -683,12 +683,17 @@ test("partNeeds: this PI's unissued ST part jobs against the part balance, minus
   ];
   const withPo = rules.partNeeds({ jobs, orders, stock, purchaseOrders }, "PI-1");
   assert.deepEqual(withPo.rows.map((row) => row.itemCode), ["P-1", "P-2"], "only this PI's unissued ST part jobs (a done job, other kinds and other departments are not needs)");
-  assert.deepEqual(withPo.rows[0], { itemCode: "P-1", name: "ชื่อ P-1", uom: "box", needQty: 30, onHandQty: 40, reservedQty: 15, onOrderQty: 25, shortage: 0, safetyQty: 8, orderQty: 0 },
+  assert.deepEqual(withPo.rows[0], { itemCode: "P-1", name: "ชื่อ P-1", uom: "box", needQty: 30, onHandQty: 40, reservedQty: 15, onOrderQty: 25, shortage: 0, ownShort: 0, safetyQty: 8, orderQty: 0 },
     "reserved = what the other released PI still has to issue (20 - 5); on order = open part lines only (not received, not chemicals, not cancelled orders)");
   assert.equal(withPo.anyShort, true, "P-2 has no stock row at all");
-  assert.deepEqual(withPo.rows[1], { itemCode: "P-2", name: "ชื่อ P-2", uom: "box", needQty: 5, onHandQty: 0, reservedQty: 0, onOrderQty: 0, shortage: 5, safetyQty: 0, orderQty: 5 }, "a missing stock row means a balance of 0");
+  assert.deepEqual(withPo.rows[1], { itemCode: "P-2", name: "ชื่อ P-2", uom: "box", needQty: 5, onHandQty: 0, reservedQty: 0, onOrderQty: 0, shortage: 5, ownShort: 5, safetyQty: 0, orderQty: 5 }, "a missing stock row means a balance of 0");
   const noPo = rules.partNeeds({ jobs, orders, stock, purchaseOrders: [] }, "PI-1");
   assert.deepEqual([noPo.rows[0].shortage, noPo.rows[0].orderQty], [5, 13], "40 - 15 = 25 free against 30 needed: short 5, suggested order = short + safety stock");
+  // ใบนี้ขาด (ownShort) ไม่หักที่ใบอื่นจองไว้: ใบนี้ต้องใช้ 30 มี 40 = ใบนี้เองไม่ขาด แต่รวมทุกใบ (shortage) ขาด 5 เพราะใบอื่นจอง 15 · ใบที่สองที่ขาดจริงในลำพัง ownShort = shortage
+  assert.deepEqual([noPo.rows[0].ownShort, noPo.rows[0].shortage], [0, 5], "this PI alone is covered by the stock (30 <= 40); the 5 comes from the other PI's reservation");
+  assert.deepEqual([withPo.rows[1].ownShort, withPo.rows[1].shortage], [5, 5], "a part nothing else reserves: both numbers are the same");
+  const ownOnly = rules.partNeeds({ jobs, orders, stock: [{ itemCode: "P-1", qty: 10 }], purchaseOrders: [{ id: "PO-9", status: "ordered", lines: [{ materialCode: "P-1", source: "bom", qtyKg: 8, receivedKg: null }] }] }, "PI-1").rows[0];
+  assert.deepEqual([ownOnly.needQty, ownOnly.ownShort, ownOnly.shortage], [30, 12, 27], "own: 30 - (10 + 8) = 12 · all PIs: 30 - (10 - 15 + 8) = 27");
   assert.deepEqual(rules.partNeeds({ jobs, orders, stock, purchaseOrders: [] }, "PI-2").rows.map((row) => [row.itemCode, row.needQty, row.reservedQty]), [["P-1", 15, 30]], "from the other PI the first one is the reservation");
   assert.deepEqual(rules.partNeeds({ jobs, orders, stock, purchaseOrders: [] }, "PI-3"), { rows: [], anyShort: false }, "a closed PI needs nothing");
   assert.deepEqual(rules.partNeeds({}, "X"), { rows: [], anyShort: false }, "empty data is tolerated");
