@@ -60,7 +60,7 @@
     } catch { return null; }
   };
   const store = storeApi.createStore({ storage, seed: () => seed.buildSeed(Date.now()), actions, remote, persona: () => storeApi.personaUser(state.employee), shouldHold: () => isEditing(), rfOrders: loadedRfOrders });
-  window.MNP_BOM = { store, PATH, url, context: (params) => makeContext(params), transforms: () => TRANSFORMS, isEditing: () => isEditing() };
+  window.MNP_BOM = { store, PATH, url, context: (params) => makeContext(params), transforms: () => TRANSFORMS, isEditing: () => isEditing(), hasUnsavedInput: () => hasUnsavedInput() };
   // โหมดฐานข้อมูล: โหลดเสร็จ/โหลดไม่สำเร็จ/บันทึกไม่สำเร็จ (ย้อนกลับแล้ว) วาดหน้าใหม่ · เริ่ม/เสร็จการบันทึกแค่เปลี่ยนข้อความสถานะ ไม่ทับฟอร์มที่ผู้ใช้กำลังกรอก
   // (บันทึกสำเร็จแต่ฐานข้อมูลตอบข้อมูลต่างจากที่แสดงอยู่ จึงวาดใหม่)
   const onBomRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
@@ -89,6 +89,31 @@
     dirty = true;
   }
   for (const type of ["input", "change", "click", "pointerdown", "keydown"]) document.addEventListener?.(type, markDirty, true);
+  // มีข้อมูลที่พิมพ์ไว้แต่ยังไม่ได้บันทึกจริงหรือไม่: ช่องในหน้า BOM และ dialog ที่เปิดอยู่ที่ค่าต่างจากค่าตั้งต้นของมัน (defaultValue / defaultChecked / defaultSelected)
+  // ไม่ใช้ dirty ตรงๆ เพราะ dirty ตั้งเมื่อกดปุ่มใดก็ได้ · ฟอร์มที่บันทึกแล้วหรือ dialog ที่ปิดแล้วถูกวาดใหม่/ลบออกจากหน้า จึงไม่ค้างเตือน · ช่องค้นหา ตัวเลือกบทบาทสาธิต และช่องที่ไม่มีชื่อ (ตัวช่วยของหน้า) ไม่นับ
+  const SKIP_INPUT_TYPES = ["hidden", "file", "button", "submit", "reset", "image"];
+  const fieldChanged = (node) => {
+    if (!node?.name || node.disabled || node.closest?.("[data-rf-search], [data-rf-user]")) return false;
+    const tag = String(node.tagName ?? "").toUpperCase();
+    if (tag === "SELECT") return [...(node.options ?? [])].some((option) => option.selected !== option.defaultSelected);
+    if (tag === "INPUT" && SKIP_INPUT_TYPES.includes(node.type)) return false;
+    if (tag === "INPUT" && (node.type === "checkbox" || node.type === "radio")) return node.checked !== node.defaultChecked;
+    return node.value !== node.defaultValue;
+  };
+  function hasUnsavedInput() {
+    try {
+      return [...(document.querySelectorAll?.(".content input, .content textarea, .content select, dialog input, dialog textarea, dialog select") ?? [])].some(fieldChanged);
+    } catch { return false; }
+  }
+  // รีเฟรช/ปิดแท็บขณะกรอกฟอร์มของ BOM: ให้เบราว์เซอร์ถามก่อน (ลงทะเบียนครั้งเดียว กันซ้ำเมื่อไฟล์นี้ถูกโหลดอีก)
+  if (!window.__mnpBomUnloadGuard) {
+    window.__mnpBomUnloadGuard = true;
+    window.addEventListener?.("beforeunload", (event) => {
+      if (!onBomRoute() || !hasUnsavedInput()) return;
+      event.preventDefault();
+      event.returnValue = "";
+    });
+  }
   const refreshForOthers = () => {
     if (isEditing()) showToast("มีผู้อื่นอัปเดตข้อมูล BOM ข้อมูลล่าสุดจะแสดงเมื่อเปิดหน้านี้ใหม่");
     else renderRoute();
@@ -438,7 +463,7 @@
   };
 
   const fgLines = (p) => listOf(p, "fgCode").map((fgCode, index) => ({ fgCode, qty: listOf(p, "qty")[index] ?? "" })).filter((line) => String(line.qty).trim() !== "" && Number(line.qty) !== 0);
-  // after = ทำต่อหลังคำสั่งนี้บันทึกสำเร็จ (โหมดในเครื่อง: ทันที · โหมดฐานข้อมูล: หลังฐานข้อมูลตอบ) ใช้ต่อคำสั่งที่ต้องเห็นผลของคำสั่งก่อนหน้า เช่น ขั้นตอนผลิตหลังแทรก WIP
+  // after(ผลของคำสั่ง) = ทำต่อหลังคำสั่งนี้บันทึกสำเร็จ (โหมดในเครื่อง: ทันที · โหมดฐานข้อมูล: หลังฐานข้อมูลตอบ) ใช้ต่อคำสั่งที่ต้องเห็นผลของคำสั่งก่อนหน้า เช่น ขั้นตอนผลิตหลังแทรก WIP
   // failNote = บอกผู้ใช้ว่าการทำต่อนี้ล้มแล้วเหลืออะไรค้าง (ใช้กับคำสั่งที่ทำต่อจากคำสั่งก่อนหน้า เช่น ขั้นตอนผลิตหลังแทรก WIP) นำหน้าข้อความผิดพลาดตามปกติ
   function runAction(name, payload, successText, after = null, failNote = "") {
     const errorText = (error) => (failNote ? `${failNote} (${friendlyError(error)})` : friendlyError(error));
@@ -453,14 +478,14 @@
     };
     if (!result.saving) {
       report();
-      after?.();
+      after?.(result.result);
       return true;
     }
     // โหมดฐานข้อมูล: หน้าแสดงผลทันที (optimistic) แล้วแจ้งผลเมื่อฐานข้อมูลตอบ · ถ้าไม่สำเร็จ store ย้อนกลับและวาดหน้าใหม่ให้เอง
     result.saving.then((outcome) => {
       if (!outcome.ok) { showToast(errorText(outcome.error), "error"); return; }
       report();
-      after?.();
+      after?.(result.result);
       const notice = actions.helpers.rubberflowNotice(name, payload, outcome.rubberflow);
       if (notice) showToast(notice.text, notice.type);
       // WO ที่ฐานข้อมูลเปิด/ยกเลิกให้ ตามทันฝั่ง RubberFlow ให้เลข WO และหน้าของ RubberFlow เป็นปัจจุบัน
@@ -511,7 +536,12 @@
         const routingPayload = routingAfterWipInsert(raw);
         if (routingPayload) runAction("saveRouting", routingPayload, `ขั้นตอนผลิตของ ${routingPayload.itemCode} อ้างชิ้นใหม่แล้ว`, null, wipFail);
       } : null;
-      if (!runAction(name, payload, form.dataset.rfSuccess, wipFollowUp, "")) return;
+      // เปิดใบใหม่แล้วไปที่หน้าของใบนั้นเลย (ไม่ค้างที่รายการ) · โหมดฐานข้อมูลไปหลังฐานข้อมูลตอบ และไปเฉพาะเมื่อผู้ใช้ยังอยู่ที่รายการใบสั่งผลิต ไม่ดึงออกจากหน้าอื่น
+      const openCreated = name === "createOrder" ? (id) => {
+        const route = currentRoute();
+        if (id && route.path === PATH && route.params.get("p") === "orders" && !route.params.get("sel")) location.hash = url("orders", { sel: id });
+      } : null;
+      if (!runAction(name, payload, form.dataset.rfSuccess, wipFollowUp ?? openCreated, "")) return;
       form.closest?.("dialog")?.close?.();
       form.querySelectorAll("button").forEach((node) => { node.disabled = true; });
       renderRoute();

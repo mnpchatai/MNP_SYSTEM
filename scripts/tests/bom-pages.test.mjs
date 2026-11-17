@@ -20,7 +20,7 @@ const XSS = "<script>alert(1)</script>";
 function load({ sandbox = true, route = "", storage = new Map() } = {}) {
   const context = vm.createContext({});
   const app = { innerHTML: "" };
-  const log = { toasts: [], renders: 0, notFound: 0, hash: `#/bom${route ? `?${route}` : ""}`, dialogs: [], confirms: [], confirmAnswer: true };
+  const log = { listeners: {}, toasts: [], renders: 0, notFound: 0, hash: `#/bom${route ? `?${route}` : ""}`, dialogs: [], confirms: [], confirmAnswer: true };
   const fakes = {};
   const node = () => ({
     handlers: {}, dataset: {}, value: "", disabled: false, textContent: "", innerHTML: "", tagName: "DIV", classList: { toggle() {}, add() {}, remove() {} }, files: [],
@@ -32,7 +32,7 @@ function load({ sandbox = true, route = "", storage = new Map() } = {}) {
   const root = node();
   const localStorage = { getItem: (key) => (storage.has(key) ? storage.get(key) : null), setItem: (key, value) => storage.set(key, String(value)), removeItem: (key) => storage.delete(key) };
   Object.assign(context, {
-    window: context, escapeHtml, showToast: (message, kind) => log.toasts.push([message, kind ?? "ok"]), friendlyError: (error) => String(error?.message ?? error),
+    window: context, addEventListener: (type, handler) => { (log.listeners[type] ??= []).push(handler); }, escapeHtml, showToast: (message, kind) => log.toasts.push([message, kind ?? "ok"]), friendlyError: (error) => String(error?.message ?? error),
     renderRoute: async () => { log.renders += 1; }, confirmDialog: async (options) => { log.confirms.push(options); return log.confirmAnswer; }, URLSearchParams, Intl, Date, structuredClone, setInterval: () => 0, setTimeout: () => 0, encodeURIComponent,
     location: { get hash() { return log.hash; }, set hash(value) { log.hash = value.startsWith("#") ? value : `#${value}`; } },
     app, state: { employee: { isSandbox: sandbox } },
@@ -423,6 +423,7 @@ test("forms go through the data-rf-* rules: a new order is created with dates co
   assert.equal(autoOrder.id, "261030-26001");
   assert.equal(new Date(autoOrder.due.PK).getDate(), 14);
   assert.deepEqual(json(autoOrder.dueDefaults), ["RB", "GR", "PT", "BG", "ST", "PK"]);
+  assert.equal(env.log.hash, `#/bom?p=orders&sel=${autoOrder.id}`, "a new order opens on its own page (U10), not the list");
   assert.match(await env.render(`p=orders&sel=${autoOrder.id}`), /title="ค่าเริ่มต้นจากระยะเวลาจัดหา \(lead time\)"><b>PK<\/b> 14 ธ\.ค\. 2569\*/);
   await env.submit("p=orders", "createOrder", { pi: "PI-TEST-1", customer: "ลูกค้าทดสอบ", country: "Belgium", orderedAt: "2026-10-01", whDue: "2026-12-01", "due.RB": "2026-10-20", "due.PK": "" });
   const order = env.store.data().orders.find((entry) => entry.id === "PI-TEST-1");
@@ -1872,7 +1873,7 @@ test("a PI opens as one page with a step bar: a draft is at step 2 with the shor
   let html = await env.render("p=orders&sel=DEMO-26002");
   clean(html);
   assert.match(html, /<li class="bom-step is-now" aria-current="step"><div><span class="bom-step-no">ขั้น 2<\/span>/);
-  assert.match(html, /ขาด [\d.,]+ /, "purchased parts short of stock are listed");
+  assert.match(html, /<strong class="bom-short-text">[\d.,]+ /, "purchased parts short of stock are listed");
   assert.doesNotMatch(html, /data-rf-action="releaseOrder"/, "no release button before step 3");
   assert.doesNotMatch(html, /bom-split/, "the PI list is not drawn beside an open PI");
   html = await env.render("p=orders&sel=DEMO-26002&step=3");
@@ -2262,7 +2263,10 @@ test("an open PI names itself in the page head, a draft shows what other drafts 
   assert.equal((html.match(/ลูกค้าสาธิต กรุงเทพ/g) ?? []).length, 1, "the customer is shown once");
   assert.equal((html.match(/DEMO-26002<\/span>/g) ?? []).length, 1);
   assert.match(await env.render("p=orders"), /<h1[^>]*>ใบสั่งผลิต \(PI\)/);
-  assert.doesNotMatch(html, /ใบร่างอื่นต้องใช้/, "no column while no other draft shares a part");
+  assert.doesNotMatch(html, /ใบร่างที่คำนวณทีหลังต้องใช้/, "no later draft shares a part yet: nothing to explain in the others column");
+  const columns = (text) => [...text.matchAll(/<th class="right"[^>]*>([^<]*)<\/th>/g)].map((match) => match[1]).slice(0, 6);
+  const fixedColumns = ["ต้องใช้", "มีในคลัง", "ใบอื่นต้องใช้", "สั่งแล้วรอรับ", "ใบนี้ขาด", "รวมทุกใบขาด"];
+  assert.deepEqual(columns(html.slice(html.indexOf("ของซื้อ"))), fixedColumns, "one fixed column set (U2): the same on every order");
   // ใบร่างอีกใบที่ใช้ของซื้อเดียวกัน
   const first = env.store.data().orders.find((order) => order.id === "DEMO-26002");
   const created = env.store.run("createOrder", { pi: "DEMO-26009", customer: "ลูกค้าทดสอบสอง", country: "Thailand", orderType: first.orderType, orderedAt: Date.now(), whDue: Date.now() + 30 * 864e5, due: {}, autoDue: true });
@@ -2282,17 +2286,19 @@ test("an open PI names itself in the page head, a draft shows what other drafts 
   const sharedCode = [...demand.keys()][0];
   assert.deepEqual(json([...draftRules.draftPartDemand(env.store.data().orders, "DEMO-26002", { relativeTo: orderOf("DEMO-26002"), side: "later" }).get(sharedCode).orders]), ["DEMO-26009"]);
   assert.equal(draftRules.draftPartDemand(env.store.data().orders, "DEMO-26002", { relativeTo: orderOf("DEMO-26002"), side: "earlier" }).size, 0, "nothing was calculated before the first draft");
-  assert.match(html, /<th class="right" title="[^"]*ใบนี้จองก่อน[^"]*">ใบร่างอื่นต้องใช้<\/th>/);
-  assert.match(html, /<th class="right" title="[^"]*ที่คำนวณของก่อนใบนี้[^"]*">ใบอื่นจองไว้<\/th>/, "the held column says it includes earlier drafts");
-  assert.match(html, /title="ใบ DEMO-26009"/);
+  assert.match(html, /<th class="right" title="[^"]*ใบนี้จองก่อน[^"]*">ใบอื่นต้องใช้<\/th>/);
+  assert.match(html, /<th class="right" title="[^"]*ที่คำนวณของก่อนใบนี้[^"]*">ใบอื่นต้องใช้<\/th>/, "the one others column says it includes earlier drafts");
+  assert.match(html, /title="[^"]*ใบร่างที่คำนวณทีหลังต้องใช้ [\d.,]+ \(ใบ DEMO-26009\)"/, "the breakdown (and the later draft) is in the cell's tooltip");
+  assert.deepEqual(columns(html.slice(html.indexOf("ของซื้อ"))), fixedColumns, "the column set does not change when another draft shares a part");
   const needsOf = (id) => draftRules.partNeeds({ jobs: env.store.data().jobs, orders: env.store.data().orders, stock: env.store.data().stock, purchaseOrders: [] }, id).rows.find((row) => row.itemCode === sharedCode);
   const earlierNeed = draftRules.draftPartDemand(env.store.data().orders, "DEMO-26009", { relativeTo: orderOf("DEMO-26009"), side: "earlier" }).get(sharedCode).qty;
   assert.ok(earlierNeed > 0);
   assert.ok(Math.abs(needsOf("DEMO-26009").reservedQty - needsOf("DEMO-26002").reservedQty - earlierNeed) < 0.0011, "the later draft holds the earlier draft's need on top of the released orders'");
   const laterHtml = await env.render("p=orders&sel=DEMO-26009");
   clean(laterHtml);
-  assert.doesNotMatch(laterHtml, /ใบร่างอื่นต้องใช้/, "no draft was calculated after the later one: its column is gone, the earlier draft is inside the held column");
-  assert.match(laterHtml, /ใบอื่นจองไว้/);
+  assert.doesNotMatch(laterHtml, /ใบร่างที่คำนวณทีหลังต้องใช้/, "no draft was calculated after the later one: nothing about later drafts, the earlier draft is inside the held figure");
+  assert.match(laterHtml, /title="จองไว้แล้ว [\d.,]+"/);
+  assert.deepEqual(columns(laterHtml.slice(laterHtml.indexOf("ของซื้อ"))), fixedColumns, "the same columns on the later draft");
   html = await env.render("p=orders&sel=DEMO-26002");
   // ใบสั่งซื้อที่สั่งจากใบนี้และยังไม่รับของ
   assert.doesNotMatch(html, /มีใบสั่งซื้อที่สั่งจากใบนี้/);
@@ -2409,11 +2415,13 @@ test("drafts reserve chemicals among themselves in calculation order like purcha
   // หน้า: ขั้น 2 ของใบหลังขาด และหัวคอลัมน์ "ใบอื่นจองไว้" บอกว่ารวมใบร่างที่คำนวณก่อน
   const html = await env.render("p=orders&sel=DEMO-26009");
   clean(html);
-  assert.match(html, /<th class="right" title="ใบเบิกที่ค้างจ่าย WO อื่นที่ยังเปิดอยู่ และใบร่างที่คำนวณของก่อนใบนี้">ใบอื่นจองไว้<\/th>/);
+  assert.match(html, /<th class="right" title="ใบเบิกที่ค้างจ่าย WO อื่นที่ยังเปิดอยู่ และใบร่างที่คำนวณของก่อนใบนี้[^"]*">ใบอื่นต้องใช้<\/th>/);
+  assert.match(html, /<th class="right"[^>]*>ใบนี้ขาด<\/th><th class="right"[^>]*>รวมทุกใบขาด<\/th>/, "the chemical table has the same columns");
+  assert.ok(rowB.ownShort <= rowB.short && rowB.ownShort === 0, "the later draft alone is covered by the stock: its shortage comes from the earlier draft's reservation");
   assert.match(html, /<tr class="bom-short">/);
   const earlierHtml = await env.render("p=orders&sel=DEMO-26002");
   clean(earlierHtml);
-  assert.match(earlierHtml, /title="ใบ DEMO-26009"/, "the earlier draft names the later one in its column");
+  assert.match(earlierHtml, /title="[^"]*\(ใบ DEMO-26009\)"/, "the earlier draft names the later one in its others column tooltip");
   // หน้าต่างสั่งซื้อที่เปิดจากใบร่าง: ขาดและจำนวนสั่งตั้งต้นเท่ากับตารางขั้น 2 เมื่อส่ง WO ชั่วคราวของใบก่อนเป็นยอดจอง · ไม่ส่ง = เท่าเดิม
   const rfCtx = { ...env.rf.context(new URLSearchParams()), can: (permission) => ["purchase"].includes(permission) };
   const shortOf = (dialog) => Number(new RegExp(`<tr data-rf-po-row data-short="([^"]*)"[^>]*><td><span class="rf-mono">${code}</span>`).exec(dialog)?.[1]);
@@ -2573,7 +2581,17 @@ test("purchasing belongs to the raw-material store: the purchase dialog is read-
   // ใบสั่งซื้อสาธิตของ RubberFlow: EPDM รับมาแล้ว 300 จาก 500 ยังค้าง 200 (รับไม่ครบยังเป็นงาน · 20261128020000) CBS ยังไม่มา
   assert.deepEqual(json(tasks.filter((task) => task.kind === "receive" && task.po.note === "สั่งเติมสต็อก (ข้อมูลสาธิต)").map((task) => task.lines.map((line) => [line.materialCode, line.open, line.received]))), [[["EPDM-55", 200, 300], ["CBS", 30, 0]]],
     "a partly received line stays on the store's card with what is still due");
-  assert.ok(tasks.some((task) => task.kind === "buy" && task.order.id === "DEMO-26002"), "a draft with short parts is a job for the store");
+  assert.ok(tasks.some((task) => task.kind === "buy" && task.orders.some((row) => row.orderId === "DEMO-26002")), "a draft with short parts is a job for the store");
+  // U2: หนึ่งการ์ดต่อวัตถุดิบ (ไม่ใช่ต่อใบ) ยอดรวม = ค่ามากสุดของขาดต่อใบ ไม่ใช่ผลบวก · การ์ดพาไปสั่งที่ใบที่ขาดมากสุด
+  const buys = tasks.filter((task) => task.kind === "buy");
+  assert.equal(new Set(buys.map((task) => task.itemCode)).size, buys.length, "one card per material");
+  const shared = buys.filter((task) => task.orders.length > 1);
+  assert.ok(shared.length > 0, "the demo orders share at least one short part");
+  for (const task of shared) {
+    assert.equal(task.total, Math.max(...task.orders.map((row) => row.short)), `${task.itemCode}: the total is the largest per-order shortage, not the sum`);
+    assert.ok(task.total < task.orders.reduce((sum, row) => sum + row.short, 0), "and the cards of the old per-order list would have double counted it");
+    assert.equal(task.orders.find((row) => row.short === task.total).orderId, task.order.id, "the card leads to the order whose purchase dialog holds the whole figure");
+  }
   assert.deepEqual(json(hub.storeTasks(stCtx([]))), [], "nothing for an account without the rights");
   const html = env.context.MNP_BOM_PAGES.work(stCtx(["purchase", "receiveMaterial"])).html;
   clean(html);
@@ -2582,7 +2600,8 @@ test("purchasing belongs to the raw-material store: the purchase dialog is read-
   const boxName = env.store.data().items.find((item) => item.code === "P-BOX-01").name;
   assert.ok(boxName, "the demo part has a name");
   assert.ok(html.includes(`<span class="rf-mono">P-BOX-01</span> <span class="small muted">${boxName}</span>`), "the receive card shows the part name next to the code (a purchase order line holds only the code)");
-  assert.match(html, /<h2>สั่งซื้อของที่ขาดของใบ DEMO-26002<\/h2>/);
+  assert.equal(count(html, /<h2>สั่งซื้อ [^<]*<\/h2>/g), buys.length, "the work page draws one purchase card per material");
+  assert.match(html, /<div class="bom-job-amount"><span>ขาดรวม [\d.,]+ [^<]*<\/span><\/div>/);
   assert.match(html, new RegExp(`>ต้องทำ ${tasks.length + 3}<`), "the tab counts the store jobs with the part cards of the three released PIs");
   // the menu number is that same count (workCount reads the same board as the page), for the store and for admin, who sees the store's cards on the all-department board
   const tabOf = (ctx) => Number(/>ต้องทำ (\d+)</.exec(env.context.MNP_BOM_PAGES.work(ctx).html)[1]);
@@ -2984,6 +3003,125 @@ test("closing short: only when PK is done and everything PK made is received; th
   html = await env.render(`p=orders&sel=${FG_PI}&step=5`);
   assert.equal(count(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/g), 1, "and once on step 5, as the closing note");
   assert.match(html, /ปิดใบโดยรับไม่ครบ:/);
+});
+
+test("closing short (U6): the warehouse gets a card and the menu count follows; everyone else reads at step 4 what the warehouse waits for, also while PK is still open", async () => {
+  const env = whLoad();
+  env.store.setUser("B09");
+  pkReport(env, { [FG_TP]: 70, [FG_HL]: 40 });
+  fgRun(env, "receiveFg", [[FG_TP, 70], [FG_HL, 40]]);
+  const hub = env.context.MNP_BOM_PAGES.hub;
+  const pos = () => env.context.MNP_BOM_RULES.fgPosition(env.store.data(), env.store.data().orders.find((order) => order.id === FG_PI));
+  const closeCards = () => hub.fgTasks(env.ctx("p=work")).filter((task) => task.kind === "fgCloseShort");
+  // PK ยังรายงานเพิ่มได้ (งาน PK ยังไม่เสร็จ): ปิดรับไม่ครบยังไม่ได้ · ฝ่ายวางแผนเห็นว่าคลังรออะไร ส่วน WH ยังไม่มีการ์ดปิดใบ
+  assert.deepEqual([pos().canCloseShort, pos().waitingShort], [false, true]);
+  assert.equal(closeCards().length, 0, "nothing to close yet");
+  env.store.setUser("B03");
+  let html = await env.render(`p=orders&sel=${FG_PI}`);
+  clean(html);
+  assert.match(html, /<strong>รับเข้าคลังครบตามที่ PK ทำแล้ว แต่ยังน้อยกว่าที่สั่ง<\/strong><div class="small muted">รอแผนก PK รายงานผลให้เสร็จ หรือฝ่ายวางแผนปิดงานที่จะไม่ทำต่อ แล้วคลังสินค้า \(WH\) ปิดใบ \(รับไม่ครบ\)<\/div>/);
+  assert.doesNotMatch(html, /รอคลังสินค้า \(WH\) ปิดใบ \(รับไม่ครบ\)/, "not told twice");
+  // งาน PK เสร็จทั้งหมด: ปิดรับไม่ครบได้
+  for (const job of env.store.data().jobs.filter((entry) => entry.orderId === FG_PI && entry.dept === "PK")) job.status = "done";
+  assert.deepEqual([pos().canCloseShort, pos().waitingShort], [true, false]);
+  html = await env.render(`p=orders&sel=${FG_PI}`);
+  assert.match(html, /<strong>PK ทำครบและรับเข้าคลังแล้ว รอคลังสินค้า \(WH\) ปิดใบ \(รับไม่ครบ\)<\/strong>/, "step 4 says what the warehouse does next");
+  assert.doesNotMatch(html, /data-rf-open="closeShort"/, "the planner has no close button");
+  assert.doesNotMatch(await env.render("p=work"), /ปิดใบ \(รับไม่ครบ\)/, "and no warehouse card");
+  assert.equal(hub.fgTasks(env.ctx("p=work")).length, 0, "fgTasks is empty for a role that is not the warehouse");
+  env.store.setUser("B04");
+  assert.equal(closeCards().length, 0, "nor does RB");
+  env.store.setUser("B09");
+  assert.equal(closeCards().length, 1);
+  const card = closeCards()[0];
+  assert.equal(card.order.id, FG_PI);
+  assert.deepEqual(json(card.lines), [{ fgCode: FG_TP, qty: 10 }]);
+  html = await env.render("p=work");
+  clean(html);
+  assert.match(html, new RegExp(`<h2>ปิดใบ ${FG_PI} \\(รับไม่ครบ\\)</h2>`));
+  assert.match(html, /<button class="btn rf-btn bom-job-main" type="button" data-rf-open="closeShort"[^>]*>ปิดใบ \(รับไม่ครบ\)<\/button>/, "the card opens the existing dialog");
+  assert.match(html, />ต้องทำ 1</, "the tab counts it");
+  assert.equal(hub.workCount(env.ctx("p=work")), 1, "and so does the menu number");
+  assert.ok(env.context.MNP_BOM_DIALOGS.closeShort(env.ctx("p=work"), { orderId: FG_PI }), "the dialog opens from the card");
+  // ปิดใบแล้วการ์ดหาย
+  await env.submit(`p=orders&sel=${FG_PI}`, "closeOrderShort", { note: "PK ผลิตได้ไม่ครบ" }, { orderId: FG_PI });
+  assert.equal(closeCards().length, 0, "closed: the card is gone");
+});
+
+test("two released orders share one short part: the store gets ONE purchase card for the material with the combined shortage, never the sum of the orders' shortages (U2)", () => {
+  const env = load();
+  const hub = env.context.MNP_BOM_PAGES.hub;
+  const stUser = env.store.data().users.find((user) => user.role === "st");
+  const part = (id, orderId, itemCode, qty) => ({ id, orderId, dept: "ST", kind: "PURCHASED", itemCode, name: `ของ ${itemCode}`, uom: "yd", qtyPlanned: qty, qtyRequired: qty, qtyDone: 0, status: "queued", dueAt: Date.now() });
+  const order = (id) => ({ id, customer: "ลูกค้า", status: "released", items: [], orderedAt: Date.now(), whDue: Date.now() });
+  const data = {
+    ...env.store.data(), orders: [order("PI-A"), order("PI-B"), order("PI-C")], stock: [], fgMoves: [],
+    jobs: [part("J1", "PI-A", "P-SH-1", 63.28), part("J2", "PI-B", "P-SH-1", 11.8), part("J3", "PI-C", "P-SH-2", 4)],
+  };
+  const ctx = { ...env.ctx("p=work"), data, user: stUser, store: { ...env.store, isRemote: () => true }, rubberflow: () => ({ ...env.rf, can: (permission) => permission === "purchase" }) };
+  const buys = hub.storeTasks(ctx).filter((task) => task.kind === "buy");
+  assert.deepEqual(json(buys.map((task) => task.itemCode)), ["P-SH-1", "P-SH-2"], "one card per material, not per order");
+  const shared = buys[0];
+  assert.equal(shared.total, 75.08, "63.28 + 11.8 once: both orders see each other's need as reserved, so each reports 75.08");
+  assert.deepEqual(json(shared.orders.map((row) => [row.orderId, row.need, row.short])), [["PI-A", 63.28, 75.08], ["PI-B", 11.8, 75.08]]);
+  assert.equal(buys[1].total, 4);
+  const html = env.context.MNP_BOM_PAGES.work(ctx).html;
+  clean(html);
+  assert.equal(count(html, /<h2>สั่งซื้อ ของ P-SH-1<\/h2>/g), 1);
+  assert.match(html, /ขาดรวม 75\.08 หลา/);
+  assert.match(html, /PI-A<\/a><\/span><span class="nowrap">ต้องใช้ 63\.28 หลา/);
+  assert.match(html, /PI-B<\/a><\/span><span class="nowrap">ต้องใช้ 11\.80 หลา/);
+  // ใบนี้ขาด ต่างจาก รวมทุกใบขาด: ใบ B ใบเดียวขาดแค่ที่ตัวเองต้องใช้
+  const rows = env.context.MNP_BOM_RULES.partNeeds({ jobs: data.jobs, orders: data.orders, stock: [], purchaseOrders: [] }, "PI-B").rows;
+  assert.deepEqual(json(rows.map((row) => [row.itemCode, row.ownShort, row.shortage])), [["P-SH-1", 11.8, 75.08]]);
+});
+
+test("a new order is the first row of the list even on the same order date as the others (U10)", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const orders = env.store.data().orders;
+  const sameDay = Math.max(...orders.map((order) => order.orderedAt));
+  assert.equal(env.store.run("createOrder", { pi: "AAA-NEW-1", customer: "ลูกค้าใหม่", country: "Thailand", orderedAt: sameDay, whDue: sameDay + 30 * 864e5 }).ok, true);
+  const ids = [...(await env.render("p=orders")).matchAll(/<tr[^>]*><td><a class="rf-mono" href="[^"]*sel=([^"&]+)[^"]*">/g)].map((match) => match[1]);
+  assert.equal(ids[0], "AAA-NEW-1", "the id sorts last alphabetically, yet the order opened last is on top");
+  const sameDayIds = ids.filter((id) => orders.find((order) => order.id === id)?.orderedAt === sameDay && id !== "AAA-NEW-1");
+  assert.deepEqual(sameDayIds, [...sameDayIds].sort().reverse(), "orders without an opening time on the same date follow the id, newest number first");
+  assert.ok(ids.indexOf("AAA-NEW-1") < ids.indexOf(orders.find((order) => order.orderedAt < sameDay).id), "and older dates stay below");
+});
+
+test("a reload while typing in a BOM form warns once; saved, closed or untouched forms never do (U11)", () => {
+  const env = load();
+  assert.equal(env.log.listeners.beforeunload?.length, 1, "one beforeunload handler");
+  vm.runInContext(fs.readFileSync("modules/module-bom.js", "utf8"), env.context, { filename: "modules/module-bom.js" });
+  assert.equal(env.log.listeners.beforeunload.length, 1, "loading the module again does not register a second one");
+  const control = (extra = {}) => ({ name: "customer", type: "text", tagName: "INPUT", value: "", defaultValue: "", disabled: false, closest: () => null, ...extra });
+  const select = (selected) => ({ name: "country", tagName: "SELECT", disabled: false, closest: () => null, options: [{ selected: true, defaultSelected: true }, { selected, defaultSelected: false }] });
+  const show = (...controls) => { env.context.document.querySelectorAll = () => controls; };
+  const unsaved = () => env.context.MNP_BOM.hasUnsavedInput();
+  show(control(), control({ name: "note", tagName: "TEXTAREA", type: "textarea" }), select(false), control({ type: "checkbox", checked: false, defaultChecked: false }));
+  assert.equal(unsaved(), false, "nothing typed");
+  show(control({ value: "ลูกค้าใหม่" }));
+  assert.equal(unsaved(), true, "a typed value");
+  show(control({ value: "10", defaultValue: "10" }));
+  assert.equal(unsaved(), false, "a value the page itself filled in");
+  show(select(true));
+  assert.equal(unsaved(), true, "a changed select");
+  show(control({ type: "checkbox", checked: true, defaultChecked: false }));
+  assert.equal(unsaved(), true, "a ticked box");
+  show(control({ name: "q", value: "คำค้น", closest: (selector) => (selector.includes("data-rf-search") ? {} : null) }), control({ name: "user", closest: (selector) => (selector.includes("data-rf-user") ? {} : null), value: "B03", defaultValue: "B01" }));
+  assert.equal(unsaved(), false, "the search box and the role chooser are not form input");
+  show(control({ name: "", value: "x" }), control({ type: "hidden", value: "x" }), control({ value: "x", disabled: true }));
+  assert.equal(unsaved(), false, "unnamed, hidden and disabled fields do not count");
+  const fire = () => { const event = { prevented: false, returnValue: undefined, preventDefault() { this.prevented = true; } }; env.log.listeners.beforeunload[0](event); return event; };
+  show(control({ value: "x" }));
+  env.log.hash = "#/bom?p=orders";
+  const warned = fire();
+  assert.deepEqual([warned.prevented, warned.returnValue], [true, ""], "on a BOM page with typed input the browser is asked");
+  env.log.hash = "#/requests";
+  assert.equal(fire().prevented, false, "other pages are not this module's business");
+  env.log.hash = "#/bom?p=orders";
+  show();
+  assert.equal(fire().prevented, false, "a page without form input (or after the form was saved and the page redrawn) does not warn");
 });
 
 test("close rules: everything received while RB and GR are open: step 5 names them, the planner closes each job with a reason, then WH gets a card and closes the order", async () => {
@@ -3573,6 +3711,18 @@ test("a job linked to a WO has no report button and says its output comes from R
   const grRow = html.split("<tr").find((entry) => entry.includes(gr.id));
   assert.match(grRow, />ทำต่อ</);
   assert.match(grRow, /in_progress/);
+  // งานที่พัก: ไม่มีปุ่มรายงานผลที่ตารางและที่การ์ดงานของฉัน · dialog ไม่เปิด · action ปฏิเสธ (ต้องกด ทำต่อ ก่อน)
+  assert.doesNotMatch(grRow, /data-rf-open="jobReport"/, "no report button on a held job");
+  html = await env.render("p=work");
+  const grCard = html.split("<article").find((entry) => entry.includes(gr.itemCode) && entry.includes("DEMO-26001"));
+  assert.ok(grCard && grCard.includes(">ทำต่อ<") && !grCard.includes('data-rf-open="jobReport"'), "the work card offers resume, not report");
+  assert.equal(env.context.MNP_BOM_DIALOGS.jobReport(env.ctx(), { jobId: gr.id }), null, "no report dialog for a held job");
+  const refused = env.store.run("reportJob", { jobId: gr.id, qtyDone: 1 });
+  assert.equal(refused.ok, false);
+  assert.match(refused.error.message, /พักอยู่ กด ทำต่อ ก่อนรายงานผล/);
+  assert.equal(env.store.run("setJobStatus", { jobId: gr.id, status: "in_progress" }).ok, true);
+  assert.match(await env.render("p=jobs&dept=GR"), /data-rf-open="jobReport"/, "after resuming the report button is back");
+  assert.equal(env.store.run("reportJob", { jobId: gr.id, qtyDone: 1 }).ok, true);
 });
 
 // ย้อนรับเข้าคลัง / ย้อนส่งมอบ (20261128020000): ใบสาธิต DEMO-26008 ส่งมอบครบแล้ว (รับ 8 + 12 ส่งมอบ 20)
@@ -3798,6 +3948,11 @@ test("the job report dialog warns when the total would pass what the previous de
   assert.equal(limit, 42, "the seed: the rod jobs behind this item have reported enough for 42, the item itself 120");
   const built = env.context.MNP_BOM_DIALOGS.jobReport(env.ctx("p=jobs"), { jobId: job.id });
   assert.match(built.html, /name="qtyDone"[^>]*data-job-qty/);
+  // U4: ช่องจำนวนดีว่าง (บอกยอดที่เหลือเป็น placeholder) กดบันทึกครั้งเดียวจึงไม่รายงานว่าเสร็จทั้งแผน
+  const qtyField = /<input[^>]*name="qtyDone"[^>]*>/.exec(built.html)[0];
+  assert.match(qtyField, /value=""/);
+  assert.match(qtyField, new RegExp(`placeholder="เหลือ ${env.context.MNP_BOM_RULES.fmtQty(job.qtyPlanned - job.qtyDone)}"`));
+  assert.equal(env.store.run("reportJob", { jobId: job.id, qtyDone: "", qtyReject: "0" }).ok, false, "an empty good quantity with no rejects reports nothing");
   assert.match(built.html, /data-job-supply hidden>/);
   const qty = fakeNode("0");
   const box = callout();

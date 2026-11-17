@@ -1151,6 +1151,8 @@
       canClose: open && allReceived && productionDone,
       // ปิดใบรับไม่ครบได้: ทุกงานผลิตเสร็จ (งาน PK อย่างน้อยหนึ่งงาน) PK ทำเท่าไรรับเข้าครบเท่านั้น และยังมีสินค้าที่ยังมีของน้อยกว่าที่สั่ง
       canCloseShort: open && hasPkJobs && pkAllDone && productionDone && products.every((product) => Math.abs(product.own - product.pkDone) <= FG_EPS) && products.some((product) => product.have + FG_EPS < product.ordered),
+      // รับเข้าคลังครบตามที่ PK ทำแล้วแต่ยังน้อยกว่าที่สั่ง และปิดใบ (รับไม่ครบ) ยังไม่ได้เพราะยังมีงานผลิตเปิด (PK ยังรายงานเพิ่มได้ หรือแผนกอื่นยังไม่ปิดงาน) · ใช้บอกฝ่ายวางแผนว่าคลังสินค้า (WH) รออะไรอยู่
+      waitingShort: open && hasPkJobs && !productionDone && products.some((product) => product.own > 0) && products.every((product) => Math.abs(product.own - product.pkDone) <= FG_EPS) && products.some((product) => product.have + FG_EPS < product.ordered),
       // ส่งมอบแล้ว (คำนวณ ไม่มีช่องเก็บ): ใบปิดแล้ว มีของอย่างน้อยหนึ่งสินค้า และลูกค้าไม่เหลือส่วนที่รอ
       fullyDelivered: order.status === "completed" && anyHave && products.every((product) => product.owed <= FG_EPS),
       waitingDelivery: order.status === "completed" && products.some((product) => product.owed > FG_EPS),
@@ -1342,8 +1344,10 @@
       const onOrderQty = partRound3(onOrder.get(code) || 0);
       // ขาดคิดจากยอดจริง (ไม่ใช่ยอดที่ปัดไว้แสดง) แล้วปัดขึ้น จำนวนสั่งตั้งต้นจึงไม่น้อยกว่าที่จะเบิกจ่าย
       const shortage = partUp3(Math.max(0, exactNeed - ((Number(row?.qty) || 0) - (reserved.get(code) || 0) + (onOrder.get(code) || 0))));
+      // ใบนี้ขาด = ใบนี้ใบเดียวเทียบของที่มี + สั่งแล้ว (ไม่หักที่ใบอื่นจองไว้) · shortage = ที่ต้องสั่งซื้อจริงรวมทุกใบ (รวมที่ใบอื่นจองไว้ก่อน) ซึ่งไม่น้อยกว่า ownShort เสมอ
+      const ownShort = partUp3(Math.max(0, exactNeed - ((Number(row?.qty) || 0) + (onOrder.get(code) || 0))));
       const safetyQty = Math.max(0, Number(row?.safetyQty) || 0);
-      return { itemCode: code, name: meta.get(code)?.name ?? "", uom: meta.get(code)?.uom ?? "", needQty, onHandQty, reservedQty, onOrderQty, shortage, safetyQty, orderQty: shortage > 0 ? ceilCountQty(partRound3(shortage + safetyQty), meta.get(code)?.uom) : 0 };
+      return { itemCode: code, name: meta.get(code)?.name ?? "", uom: meta.get(code)?.uom ?? "", needQty, onHandQty, reservedQty, onOrderQty, shortage, ownShort, safetyQty, orderQty: shortage > 0 ? ceilCountQty(partRound3(shortage + safetyQty), meta.get(code)?.uom) : 0 };
     });
     return { rows, anyShort: rows.some((row) => row.shortage > 0) };
   }

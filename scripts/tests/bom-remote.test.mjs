@@ -3230,6 +3230,12 @@ test("the PI page lists RB jobs that have no WO yet with the reason, and the rel
   await env.store.ensureLoaded();
   html = await env.render(`p=orders&sel=${id}&tab=jobs`);
   assert.match(html, /งาน RB ที่ยังไม่มี WO ใน RubberFlow/);
+  // U5: คำเตือนค้างอยู่ที่หน้าใบทุกแท็บและทุกขั้น (ไม่ใช่เฉพาะแท็บงาน) และแสดงครั้งเดียวต่อหน้า
+  assert.equal((html.match(/งาน RB ที่ยังไม่มี WO ใน RubberFlow/g) ?? []).length, 1, "once on the jobs tab");
+  for (const query of ["", "&tab=bom", "&tab=req", "&step=5"]) {
+    const other = await env.render(`p=orders&sel=${id}${query}`);
+    assert.equal((other.match(/งาน RB ที่ยังไม่มี WO ใน RubberFlow/g) ?? []).length, 1, `once on ${query || "the default view"}`);
+  }
   const callout = html.split("งาน RB ที่ยังไม่มี WO ใน RubberFlow")[1].split("</table>")[0].split("<table")[0];
   assert.match(callout, /JOB-P2[\s\S]*ยังไม่ผูกสูตร RubberFlow/);
   assert.match(callout, /JOB-P3[\s\S]*สูตร RC-DRAFT ยังไม่อนุมัติ/);

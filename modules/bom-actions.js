@@ -1186,6 +1186,7 @@
     if (isLinkedJob(job)) fail(`งานนี้ผูกกับ ${job.externalRef.woId} ของ RubberFlow ยอดมาจาก RubberFlow เมื่อล็อตตกแต่งผ่าน QC รายงานผลที่นี่ไม่ได้`);
     if (!canWorkJob(user, job)) fail(`รายงานผลได้โดยแผนก ${job.dept} หรือผู้จัดการ`);
     if (job.status === "done") fail("งานนี้เสร็จแล้ว");
+    if (job.status === "hold") fail("งานนี้พักอยู่ กด ทำต่อ ก่อนรายงานผล");
     const order = orderById(d, job.orderId);
     if (!["released", "in_progress"].includes(order.status)) fail("ใบสั่งผลิตไม่อยู่ในสถานะผลิต");
     const good = p.qtyDone === undefined || p.qtyDone === "" ? 0 : num(p.qtyDone, "จำนวนดี", { allowZero: true });

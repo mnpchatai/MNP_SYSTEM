@@ -398,7 +398,7 @@
     const body = plan.rows.map((row) => `<tr><td class="right">${esc(String(row.line))}</td><td>${ui.mono(row.code || "—")}</td><td>${row.status === "error" ? `${ui.badge("bad", "ข้าม")} <span class="small">${esc(row.error)}</span>` : `${badges[row.status]}${row.warn ? ` <span class="small muted">${esc(row.warn)}</span>` : ""}`}</td><td class="right">${esc(ctx.rules.fmtQty(row.qty))}</td><td class="nowrap">${esc(row.status === "error" ? "" : uomText(ctx, row.uom))}</td><td class="right">${esc(String(row.scrapPct || ""))}</td><td class="small">${esc(row.note)}</td></tr>`);
     return `${plan.header ? '<p class="small muted">ข้ามบรรทัดที่ 1 (ถือเป็นหัวตาราง)</p>' : ""}${plan.warning ? ui.callout("warn", plan.warning) : ""}${ui.table(["บรรทัด", "รหัส", "ผลการตรวจ", { label: "ปริมาณ", className: "right" }, "หน่วย", { label: "% เผื่อเสีย", className: "right" }, "หมายเหตุ"], body, { emptyText: "ยังไม่มีบรรทัดที่อ่านได้" })}${plan.truncated ? '<p class="small muted">อ่านเฉพาะ 500 บรรทัดแรก</p>' : ""}`;
   };
-  pages.tools = { editorRowsOf, copyPlan, pastePlan, purchaseOrdersOf: (ctx) => rfPurchaseOrdersOf(ctx), rfRecipes: (ctx) => rfRecipes(ctx), rfReady: (ctx) => rfReady(ctx), rfWake: (ctx) => rfWake(ctx) };
+  pages.tools = { rbNoWoNote, editorRowsOf, copyPlan, pastePlan, purchaseOrdersOf: (ctx) => rfPurchaseOrdersOf(ctx), rfRecipes: (ctx) => rfRecipes(ctx), rfReady: (ctx) => rfReady(ctx), rfWake: (ctx) => rfWake(ctx) };
 
   pages.build = (ctx) => {
     const { data, ui, rules, user, params } = ctx;
@@ -1605,6 +1605,15 @@
     if (!ctx.helpers.rbJobKg(job, item, { scrapPct: 5, bom: approvedBomOf(ctx, item.code) })) return "คำนวณกิโลกรัมไม่ได้";
     return "";
   }
+  // งาน RB ของใบที่ปล่อยผลิตแล้วที่ยังไม่มี WO ใน RubberFlow พร้อมเหตุผล (โหมดฐานข้อมูลเท่านั้น: ปล่อยผลิตแล้วฐานข้อมูลเปิด WO ให้งาน RB เอง) · งานที่มี WO แสดงเลข WO ในตารางงานอยู่แล้ว
+  // แสดงครั้งเดียวที่หน้าใบ (pages.orderSteps วางใต้แถบขั้นตอน เห็นทุกแท็บและทุกขั้น) ไม่ซ้ำในแท็บงาน · คืนค่าว่างเมื่อไม่มีอะไรต้องเตือน
+  function rbNoWoNote(ctx, order) {
+    const { ui } = ctx;
+    if (!order || !ctx.store?.isRemote?.() || !["released", "in_progress"].includes(order.status)) return "";
+    const noWo = ctx.data.jobs.filter((job) => job.orderId === order.id && job.dept === "RB" && job.status !== "done" && !job.externalRef).map((job) => ({ job, reason: rbJobWoReason(ctx, job) }));
+    if (!noWo.length) return "";
+    return ui.callout("warn", `<div><strong>งาน RB ที่ยังไม่มี WO ใน RubberFlow</strong></div>${noWo.map(({ job, reason }) => `<div>${ui.mono(job.id)} ${esc(job.itemCode)}${reason ? ` — ${esc(reason)}` : ""}</div>`).join("")}<div class="small muted">แก้เหตุผลแล้วสร้างเองได้ที่เมนูงานของแผนก RB (ปุ่ม “สร้าง WO ใน RubberFlow”)${ctx.canSee("jobs") ? ` ${ui.link("ไปที่งานของแผนก", ctx.url("jobs"), "btn rf-btn secondary small")}` : ""}</div>`);
+  }
   const rfRecipes = (ctx) => {
     const store = rfStore(ctx);
     if (!store) return [];
@@ -1867,7 +1876,9 @@
     const { data, ui, rules, user, params } = ctx;
     const sel = String(params.get("sel") ?? "").toUpperCase();
     const canPlan = ctx.helpers.canPlan(user);
-    const list = data.orders.filter((order) => includes(`${order.id} ${order.customer} ${order.country} ${order.items.map((item) => item.fgCode).join(" ")}`, ctx.q));
+    // ใหม่สุดก่อน: วันที่สั่งผลิตใหม่กว่าก่อน วันเดียวกันใบที่เปิดทีหลัง (createdAt ถ้ามี ไม่มีก็เลขที่ใบมากกว่า) ก่อน · ฐานข้อมูลเรียงเลขที่ใบจากน้อยไปมากในวันเดียวกัน จึงเรียงที่หน้าอีกชั้น (ใบที่เพิ่งเปิดอยู่บนสุดทั้งโหมดในเครื่องและโหมดฐานข้อมูล)
+    const newestFirst = (a, b) => (Number(b.orderedAt) || 0) - (Number(a.orderedAt) || 0) || (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
+    const list = data.orders.filter((order) => includes(`${order.id} ${order.customer} ${order.country} ${order.items.map((item) => item.fgCode).join(" ")}`, ctx.q)).sort(newestFirst);
     const rows = list.map((order) => `<tr${order.id === sel ? ' class="is-selected"' : ""}><td>${ui.link(order.id, ctx.url("orders", { sel: order.id, q: ctx.q || null }), "rf-mono")}<div class="small muted">${esc(order.customer)}</div></td><td>${status(ctx, order.orderType)}<div class="small muted">${esc(order.country)}</div></td><td>${esc(String(order.items.length))} สินค้า<div class="small muted">${esc(order.items.map((item) => `${item.fgCode} × ${rules.fmtQty(item.qty)}`).join(", ").slice(0, 60))}</div></td><td class="nowrap">${esc(rules.fmtDate(order.whDue))}</td><td class="rf-progress-cell">${orderProgress(ctx, order)}</td><td>${orderStatus(ctx, order)}</td></tr>`);
     const listCard = ui.card(`${searchForm(ctx, "ค้นหาเลข PI ลูกค้า หรือรหัสสินค้า…")}${ui.table(["เลข PI", "ประเภท", "สินค้า", "ส่งมอบคลัง", "ความคืบหน้า", "สถานะ"], rows, { emptyText: ctx.q ? "ไม่พบใบสั่งผลิต" : "ยังไม่มีใบสั่งผลิต" })}`,
       { title: "ใบสั่งผลิต", actions: canPlan ? ui.openButton("เปิดใบใหม่", "orderNew", {}, { className: "" }) : "" });
@@ -1953,11 +1964,7 @@
           reqs.map((entry) => `<tr><td>${deptBadge(ctx, entry.dept)}</td><td>${ui.mono(entry.itemCode)}</td><td>${esc(entry.name)}</td><td class="right rf-mono">${esc(rules.fmtQty(entry.required))}</td><td>${esc(uomText(ctx, entry.uom))}</td><td class="right rf-mono">${entry.stock === undefined ? '<span class="muted">—</span>' : esc(rules.fmtQty(entry.stock))}</td><td class="right rf-mono">${esc(rules.fmtQty(entry.toMake))}${entry.surplus ? `<div class="small bom-surplus">เกิน ${esc(rules.fmtQty(entry.surplus))}</div>` : ""}</td><td class="small muted">${esc(entry.fgCodes.join(", "))}</td></tr>`));
       } else {
         const jobs = data.jobs.filter((job) => job.orderId === order.id).sort((a, b) => a.dueAt - b.dueAt);
-        // โหมดฐานข้อมูล: ปล่อยผลิตแล้วฐานข้อมูลเปิด WO ใน RubberFlow ให้งาน RB เอง · งานที่ยังไม่มี WO แสดงเหตุผลตรงนี้ (งานที่มี WO แสดงเลข WO ในตารางอยู่แล้ว)
-        const noWo = ctx.store?.isRemote?.() && ["released", "in_progress"].includes(order.status)
-          ? jobs.filter((job) => job.dept === "RB" && job.status !== "done" && !job.externalRef).map((job) => ({ job, reason: rbJobWoReason(ctx, job) })) : [];
-        const woNote = noWo.length ? ui.callout("warn", `<div><strong>งาน RB ที่ยังไม่มี WO ใน RubberFlow</strong></div>${noWo.map(({ job, reason }) => `<div>${ui.mono(job.id)} ${esc(job.itemCode)}${reason ? ` — ${esc(reason)}` : ""}</div>`).join("")}<div class="small muted">แก้เหตุผลแล้วสร้างเองได้ที่เมนูงานของแผนก RB (ปุ่ม “สร้าง WO ใน RubberFlow”)${ctx.canSee("jobs") ? ` ${ui.link("ไปที่งานของแผนก", ctx.url("jobs"), "btn rf-btn secondary small")}` : ""}</div>`) : "";
-        tabBody = woNote + ui.table(["แผนก", "งาน", "ชิ้นงาน", { label: "แผน", className: "right" }, "ความคืบหน้า", "กำหนด", "สถานะ"], jobs.map((job) => `<tr${late(ctx, job) ? ' class="is-late"' : ""}><td>${deptBadge(ctx, job.dept)}</td><td>${ui.link(job.id, ctx.url("jobs", { dept: job.dept, q: job.id }), "rf-mono")}</td><td>${ui.mono(job.itemCode)}<div class="small muted">${esc(job.name)}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`)}</td><td class="rf-progress-cell">${jobProgress(ctx, job)}</td><td class="nowrap">${esc(rules.fmtDate(job.dueAt))}</td><td>${jobStatus(ctx, job)}${jobClosedLine(ctx, job)}${job.externalRef ? `<div class="small">${ui.link(job.externalRef.woId, `#/rubberflow?p=orders&q=${encodeURIComponent(job.externalRef.woId)}`)}</div>` : ""}</td></tr>`), { emptyText: "ยังไม่มีงาน (ปล่อยผลิตก่อน)" });
+        tabBody = ui.table(["แผนก", "งาน", "ชิ้นงาน", { label: "แผน", className: "right" }, "ความคืบหน้า", "กำหนด", "สถานะ"], jobs.map((job) => `<tr${late(ctx, job) ? ' class="is-late"' : ""}><td>${deptBadge(ctx, job.dept)}</td><td>${ui.link(job.id, ctx.url("jobs", { dept: job.dept, q: job.id }), "rf-mono")}</td><td>${ui.mono(job.itemCode)}<div class="small muted">${esc(job.name)}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`)}</td><td class="rf-progress-cell">${jobProgress(ctx, job)}</td><td class="nowrap">${esc(rules.fmtDate(job.dueAt))}</td><td>${jobStatus(ctx, job)}${jobClosedLine(ctx, job)}${job.externalRef ? `<div class="small">${ui.link(job.externalRef.woId, `#/rubberflow?p=orders&q=${encodeURIComponent(job.externalRef.woId)}`)}</div>` : ""}</td></tr>`), { emptyText: "ยังไม่มีงาน (ปล่อยผลิตก่อน)" });
       }
       // โครงใหม่ (มี modules/bom-hub.js): แถบขั้นตอน + แผงของขั้นอยู่บนสุด ปุ่มหลักอยู่ในแผงนั้น คำสั่งอื่นและเอกสารพับไว้ท้ายการ์ด · ไม่มี hub = ปุ่มทั้งหมดอยู่หัวการ์ดเหมือนเดิม
       const steps = pages.orderSteps ? pages.orderSteps(ctx, order, { net, buttons: named }) : null;
@@ -2582,7 +2589,8 @@
       const buttons = [];
       // ใบที่ปิดแล้วเบิกจ่ายไม่ได้ (บรรทัดที่เบิกไม่ครบคืนของเหลือได้ที่หน้าใบ) จึงไม่ชี้ไปเบิก
       if (part && job.status !== "done" && ["released", "in_progress"].includes(order?.status) && ctx.helpers.canIssueParts(user)) buttons.push(ui.link("เบิกจ่ายที่ใบ PI", ctx.url("orders", { sel: job.orderId }), "btn rf-btn secondary small"));
-      if (canWork && job.status !== "done") buttons.push(ctx.helpers.isLinkedJob?.(job) ? LINKED_NOTE : ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "small" }));
+      // งานที่พักอยู่รายงานผลไม่ได้ ต้องกด "ทำต่อ" / "คืนคิว" (ปุ่มถัดไป) ก่อน
+      if (canWork && job.status !== "done" && job.status !== "hold") buttons.push(ctx.helpers.isLinkedJob?.(job) ? LINKED_NOTE : ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "small" }));
       if (canWork && job.status !== "done") buttons.push(holdButton(ctx, job));
       // งานที่จะไม่มีใครรายงานแล้ว: ฝ่ายวางแผนปิดงานพร้อมเหตุผล (ไม่เพิ่มยอด) ใบจึงปิดได้ · ไม่มีกับงานของซื้อ (ST เบิกจ่ายที่ใบ)
       if (canWork && job.status !== "done" && ctx.helpers.canPlan(user)) buttons.push(ui.openButton("ปิดงานนี้", "jobClose", { jobId: job.id }, { className: "secondary small" }));
@@ -2597,13 +2605,14 @@
   dialogs.jobReport = (ctx, { jobId }) => {
     const { ui, rules } = ctx;
     const job = ctx.data.jobs.find((entry) => entry.id === jobId);
-    if (!job || ctx.helpers.isLinkedJob?.(job)) return null;
+    if (!job || job.status === "hold" || ctx.helpers.isLinkedJob?.(job)) return null;
     const remaining = Math.max(0, job.qtyPlanned - job.qtyDone);
+    // ช่องจำนวนดีว่างไว้ (บอกยอดที่เหลือเป็น placeholder): กดบันทึกครั้งเดียวต้องไม่รายงานว่าเสร็จทั้งแผน
     // แผนกก่อนหน้าส่งมาพอสำหรับกี่หน่วย (null = ไม่รู้) · เตือนเมื่อยอดรวมที่รายงานเกิน ไม่ห้ามบันทึก
     const supply = rules.jobSupplyLimit(ctx.data, job);
     const body = `<form novalidate id="bom-job-form" data-rf-form="reportJob" data-rf-args="${attr(JSON.stringify({ jobId }))}" data-rf-success="บันทึกผลผลิต {result}">
       <p class="muted small">${esc(`${job.itemCode} · ${job.name} · แผน ${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)} · ทำแล้ว ${rules.fmtQty(job.qtyDone)} · เหลือ ${rules.fmtQty(remaining)}`)}</p>
-      <div class="rf-grid rf-g2">${ui.field(`จำนวนดี (${uomText(ctx, job.uom)})`, ui.input("qtyDone", { type: "number", step: "any", min: 0, value: remaining ? String(Math.round(remaining * 1e4) / 1e4) : "", extra: "data-job-qty" }))}${ui.field("จำนวนเสีย", ui.input("qtyReject", { type: "number", step: "any", min: 0, value: "0" }))}</div>
+      <div class="rf-grid rf-g2">${ui.field(`จำนวนดี (${uomText(ctx, job.uom)})`, ui.input("qtyDone", { type: "number", step: "any", min: 0, value: "", placeholder: remaining ? `เหลือ ${rules.fmtQty(remaining)}` : "0", extra: "data-job-qty" }))}${ui.field("จำนวนเสีย", ui.input("qtyReject", { type: "number", step: "any", min: 0, value: "0" }))}</div>
       ${supply === null ? "" : '<div class="rf-callout is-warn" role="note" data-job-supply hidden><div class="rf-callout-body"></div></div>'}
       ${ui.field("หมายเหตุ", ui.input("note", { placeholder: "เช่น รอบรีดที่ 2" }))}
     </form>`;
