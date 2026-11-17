@@ -1108,6 +1108,7 @@ test("ceilCountQty rounds a suggested purchase up for counted units and packs on
   assert.equal(rules.ceilCountQty(1.334, "kg"), 1.334, "weight is kept");
   assert.equal(rules.ceilCountQty(2.75, "m"), 2.75, "length is kept");
   assert.equal(rules.ceilCountQty(2.75, "no-such-unit"), 2.75, "an unknown unit is kept");
+  assert.equal(rules.ceilCountQty(2.75, "other"), 2.75, "the 'other' unit (unknown on import) is kept");
   assert.equal(rules.ceilCountQty(0, "box"), 0);
   const job = (id, itemCode, uom, qtyPlanned) => ({ id, orderId: "PI-1", dept: "ST", kind: "PURCHASED", itemCode, name: itemCode, uom, qtyPlanned, qtyRequired: qtyPlanned, qtyDone: 0, status: "queued" });
   const needs = rules.partNeeds({ jobs: [job("J1", "BOX", "box", 0.75), job("J2", "BAG", "kg", 0.75)], orders: [{ id: "PI-1", status: "released" }], stock: [{ itemCode: "BOX", qty: 0.5, safetyQty: 0 }], purchaseOrders: [] }, "PI-1");
@@ -1121,6 +1122,9 @@ test("rbCutQty and rbCutDiffers compare a rod line with its cutting data within 
   assert.equal(rules.rbCutDiffers(0.1009, rod), false, "within 1%");
   assert.equal(rules.rbCutDiffers(0.1011, rod), true, "over 1%");
   assert.equal(rules.rbCutDiffers(1, rod), true, "the rod written as 1 per piece (the pilot-test case)");
+  assert.equal(rules.rbCutDiffers(1, rod, { kind: "SE" }), true, "under an SE the rule applies");
+  assert.equal(rules.rbCutQty(rod, { kind: "FG" }), 0, "rbPerSe is per 1 SE: a rod under another kind is not compared");
+  assert.equal(rules.rbCutDiffers(1, rod, { kind: "SUBPART" }), false);
   assert.equal(rules.rbCutQty({ ...rod, rubber: { pcsPerRoll: 10, sePerGr: 2 } }), 0.05, "SE per GR counts");
   assert.equal(rules.rbCutQty({ ...rod, rubber: {} }), 0);
   assert.equal(rules.rbCutDiffers(5, { ...rod, rubber: {} }), false, "no cutting data: nothing to compare");
