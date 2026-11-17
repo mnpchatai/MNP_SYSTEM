@@ -638,7 +638,10 @@ test("purchasing screens: the check opens one dialog (escaped, safety stock and 
   assert.doesNotMatch(html, /คงเหลือในคลัง|สั่งค้างรับ|>ขาด \(kg\)/);
   assert.ok(fromRequisition.html.includes(">ขาด (kg)</th>") && !fromRequisition.html.includes("รวมทุกใบขาด"), "no PI: the shortage column keeps its plain name");
   assert.doesNotMatch(html, /พร้อมใช้ \(kg\)/);
-  assert.match(html, /<th class="right" title="[^"]*\+ ใบร่างที่คำนวณวัตถุดิบก่อนใบนี้">จองแล้ว \(kg\)<\/th>/, "opened from a draft order, the chemical reserved column says it includes earlier drafts");
+  // "จองแล้ว" says it includes earlier drafts only when opened from a draft order (draftOrders given); a released PI or a requisition counts no drafts
+  assert.ok(!html.includes("ใบร่างที่คำนวณวัตถุดิบก่อนใบนี้") && !fromRequisition.html.includes("ใบร่างที่คำนวณวัตถุดิบก่อนใบนี้"), "not from a draft: no draft note on the reserved column");
+  const fromDraft = dialogs.purchase(env.ctx(), { rows: [{ materialCode: "ZNO", needKg: 10, availableKg: 6, shortageKg: 4 }], sourcePi: "DEMO-1", draftOrders: [{ id: "DEMO-1" }] });
+  assert.match(fromDraft.html, /<th class="right" title="[^"]*\+ ใบร่างที่คำนวณวัตถุดิบก่อนใบนี้">จองแล้ว \(kg\)<\/th>/, "opened from a draft order, the reserved column says it includes earlier drafts");
   // reserved by old open requisitions and by other open WOs is one column with the split in a tooltip; the signed balance (on hand − reserved + on order) stays stored for the order line
   const crowded = dialogs.purchase(env.ctx(), { rows: [{ materialCode: "ZNO", needKg: 225.598, onHandKg: 100, reservedKg: 260.787, requisitionKg: 5, otherNeedKg: 255.787, onOrderKg: 0, availableKg: -160.787, shortageKg: 386.385 }] });
   assert.ok(crowded.html.includes('<td class="right rf-mono">100.000</td>'), "on hand");
