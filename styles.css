@@ -3084,6 +3084,10 @@ table.bom-tree td.right { white-space: nowrap; }
 .bom-step-line { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--soft-line); }
 .bom-step-next { margin-top: 12px; justify-content: flex-end; }
 .bom-nobom-links { margin-top: 8px; }
+.bom-tree-table tr.is-focus > td { background: var(--warning-soft, #fef3c7); }
+.bom-tree-table tr.is-focus > td:first-child { box-shadow: inset 4px 0 0 var(--warning, #d97706); }
+.bom-tree-table tr.is-focus [data-bom-flag] { color: inherit; font-weight: 600; }
+.bom-focus-add { margin-top: 6px; }
 .bom-more { margin-top: 12px; }
 .bom-more > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--primary-ink); font-size: var(--text-ui); font-weight: 600; }
 .bom-more[open] > summary { margin-bottom: 8px; }

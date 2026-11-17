@@ -301,8 +301,8 @@
     const isRb = row.kind === "RB";
     const noBom = ctx.helpers.NO_BOM_KINDS.includes(row.kind);
     const suggestion = isRb ? rules.rbPerSe({ pcsPerRoll: r.pcsPerRoll, sePerGr: r.sePerGr, uom: row.uom, weightG: row.weightG }) : 0;
-    return `<tr class="bom-row${row.existing ? "" : " is-new"}" data-row="${attr(row.id)}" data-parent="${attr(row.parentId)}" data-level="${attr(String(row.level))}">
-      <td class="bom-cell-code">${levelCell(row.level, `${dragHandle("ย้ายแถวนี้และส่วนประกอบข้างใต้")}<input type="hidden" name="rowId[]" value="${attr(row.id)}"><input type="hidden" name="parentId[]" value="${attr(row.parentId)}">${ui.input("childCode[]", { value: row.code, list: "bom-item-list", placeholder: "รหัสชิ้นงาน", className: "bom-code", extra: 'data-bom-code autocapitalize="characters"' })}`)}<div class="small muted" data-bom-flag>${esc([row.existing ? (row.usedIn > 1 ? `ใช้ร่วมกับสินค้าอื่น ${row.usedIn - 1} รายการ (แก้แล้วมีผลทุกสินค้า)` : "") : "ชิ้นใหม่", row.inactive ? "เลิกใช้" : ""].filter(Boolean).join(" · "))}</div></td>
+    return `<tr class="bom-row${row.existing ? "" : " is-new"}${row.focus ? " is-focus" : ""}" data-row="${attr(row.id)}" data-parent="${attr(row.parentId)}" data-level="${attr(String(row.level))}">
+      <td class="bom-cell-code">${levelCell(row.level, `${dragHandle("ย้ายแถวนี้และส่วนประกอบข้างใต้")}<input type="hidden" name="rowId[]" value="${attr(row.id)}"><input type="hidden" name="parentId[]" value="${attr(row.parentId)}">${ui.input("childCode[]", { value: row.code, list: "bom-item-list", placeholder: "รหัสชิ้นงาน", className: "bom-code", extra: 'data-bom-code autocapitalize="characters"' })}`)}${row.focus ? '<button class="btn rf-btn small bom-focus-add" type="button" data-bom-focus-add>+ เพิ่มส่วนประกอบใต้ชิ้นนี้</button>' : ""}<div class="small muted" data-bom-flag>${esc([row.focus ? "ยังไม่มี BOM" : "", row.existing ? (row.usedIn > 1 ? `ใช้ร่วมกับสินค้าอื่น ${row.usedIn - 1} รายการ (แก้แล้วมีผลทุกสินค้า)` : "") : "ชิ้นใหม่", row.inactive ? "เลิกใช้" : ""].filter(Boolean).join(" · "))}</div></td>
       <td>${ui.input("name[]", { value: row.name, placeholder: "ชื่อชิ้นงาน", className: "bom-name" })}</td>
       <td>${kindSelect(ctx, "kind[]", row.kind || "PURCHASED", { className: "bom-kind", extra: 'data-bom-kind aria-label="หมวดและชนิดชิ้นงาน"' })}</td>
       <td>${ui.select("uom[]", UOM_OPTIONS(ctx), { value: row.uom || "pcs", className: "bom-uom", extra: 'data-native-select aria-label="หน่วยนับ"' })}</td>
@@ -484,6 +484,14 @@
       if (source) { rows = editorRowsOf(ctx, source.code); sourceNote = sourceNoteOf(source, code); }
     }
     // เส้นยางมีส่วนประกอบได้เฉพาะสูตรยาง: แถวแรกตั้งเป็นสูตรยาง หน่วย กก.
+    // มาจากปุ่มชิ้นที่ยังไม่มี BOM ของขั้นปล่อยผลิต (?focus=รหัสชิ้น&order=ใบ): ทำแถบสีที่แถวของชิ้นนั้น และบอกว่าชิ้นนี้อยู่ในสินค้าไหนของใบ (ตามลำดับรายการ) กดสลับได้
+    const focus = params.get("focus") ? rules.canonicalCode(params.get("focus")) : "";
+    // บันทึกแล้ว (ชิ้นนั้นมี BOM แล้ว) แถบสีหายไป เหลือลิงก์กลับไปคำนวณใหม่ที่ใบ
+    const focusDone = Boolean(focus) && Boolean(approvedBomOf(ctx, focus));
+    if (focus && !focusDone) rows.forEach((row) => { row.focus = row.code === focus; });
+    const focusOrder = focus ? data.orders.find((entry) => entry.id === params.get("order")) : null;
+    const focusFgs = focusOrder ? rules.noBomInOrder(focusOrder).find((entry) => entry.code === focus)?.fgs ?? [] : [];
+    const focusCard = focusDone && focusOrder ? ui.callout("good", `<strong class="rf-mono">${esc(focus)}</strong> มี BOM แล้ว · ${ui.link(`กลับไปคำนวณใหม่ที่ขั้น 2 ของใบ ${focusOrder.id}`, ctx.url("orders", { sel: focusOrder.id }))}`) : focus && rows.some((row) => row.focus) ? ui.callout("info",`<div><strong class="rf-mono">${esc(focus)}</strong> ยังไม่มี BOM แถวของชิ้นนี้ในตารางข้างล่างมีแถบสี กด “+ เพิ่มส่วนประกอบใต้ชิ้นนี้” ที่แถวนั้น แล้วกดบันทึก BOM</div>${focusFgs.length > 1 ? `<div class="rf-row bom-nobom-links"><span>ชิ้นนี้อยู่ในสินค้าของใบ ${esc(focusOrder.id)}:</span>${focusFgs.map((entry) => (entry.fgCode === code ? `<span class="btn rf-btn small rf-mono" aria-current="page">${esc(`${entry.itemNo}. ${entry.fgCode}`)}</span>` : ui.link(`${entry.itemNo}. ${entry.fgCode}`, ctx.url("build", { code: entry.fgCode, focus, order: focusOrder.id }), "btn rf-btn secondary small rf-mono"))).join("")}</div>` : ""}${focusOrder ? `<div class="bom-nobom-links">${ui.link(`← กลับไปใบสั่งผลิต ${focusOrder.id}`, ctx.url("orders", { sel: focusOrder.id, step: "3" }))}</div>` : ""}`) : "";
     if (!rows.length) rows = [{ id: "r1", parentId: "", level: 1, code: "", kind: rootKind === "RB" ? "CP" : "PURCHASED", name: "", uom: rootKind === "RB" ? "kg" : "pcs", qty: "", scrapPct: 0, note: "", weightG: "", rubber: {}, existing: false, usedIn: 0 }];
     const bom = item ? approvedBomOf(ctx, item.code) : null;
     const noun = isFg ? "สินค้า" : "ชิ้นงาน";
@@ -526,9 +534,13 @@
         ${ui.field("หมายเหตุของการแก้ครั้งนี้", ui.input("note", { placeholder: "เช่น เปลี่ยนความยาวตัดลูกตอปิโด" }))}`, { title: "3. ส่วนประกอบทุกชั้น" })}
       <div class="rf-row bom-actions">${canEdit ? '<button class="btn rf-btn" type="submit" form="bom-tree-form">บันทึก BOM</button>' : ui.callout("warn", "บทบาทนี้ดูได้อย่างเดียว การสร้าง/แก้ BOM ทำโดยฝ่ายวางแผนหรือผู้จัดการ")}${isFg && item && bom && canEdit ? ui.openButton("ใช้ในใบสั่งผลิต", "useInOrder", { code: item.code }) : ""}${item ? ui.link("ดูต้นไม้ที่ระเบิดแล้ว", ctx.url("items", { sel: item.code }), "btn rf-btn secondary") : ""}</div>
     </form>`;
-    const html = `${pageHead}${picker}${editor}`;
+    const html = `${pageHead}${picker}${focusCard}${editor}`;
     const bind = (rootNode) => {
       bindPick(rootNode);
+      const focused = rootNode.querySelector("tr.bom-row.is-focus");
+      if (focused) requestAnimationFrame(() => focused.scrollIntoView({ block: "center", behavior: "auto" }));
+      // ปุ่ม "+ ลูก" อยู่คอลัมน์ขวาสุดของตารางกว้าง: ปุ่มที่ช่องรหัสของแถวที่มีแถบสีกดแทนกันได้
+      rootNode.querySelectorAll("[data-bom-focus-add]").forEach((button) => button.addEventListener("click", () => button.closest("tr")?.querySelector("[data-bom-add-child]")?.click()));
       const tbody = rootNode.querySelector("[data-bom-rows]");
       const template = rootNode.querySelector("template[data-bom-row]");
       if (!tbody) return;

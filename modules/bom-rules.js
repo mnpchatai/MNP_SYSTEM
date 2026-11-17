@@ -1160,6 +1160,21 @@
       freeOrders: (free.get(entry.fgCode) ?? []).map((source) => ({ orderId: source.orderId, qty: fgRound(source.free) })).sort(byId),
     }));
   }
+  // ชิ้นที่ยังไม่มี BOM ของใบ (จากผลระเบิด BOM) พร้อมสินค้าที่ใช้ชิ้นนั้น เรียงตามลำดับรายการในใบ · ชิ้นที่เป็นสินค้าเองไม่มีสินค้าแม่ (fgs ว่าง)
+  // ใช้ทั้งปุ่มในขั้นปล่อยผลิต (เปิด BOM ของสินค้าตัวแรก) และหน้าสร้าง BOM (บอกว่าชิ้นนี้อยู่ในสินค้าไหนบ้างของใบ)
+  function noBomInOrder(order) {
+    const fgOrder = [...new Set((order?.items ?? []).map((item) => item.fgCode))];
+    const at = (fgCode) => { const index = fgOrder.indexOf(fgCode); return index < 0 ? fgOrder.length : index; };
+    const byCode = new Map();
+    for (const line of order?.explosion ?? []) {
+      if (!line.noBom) continue;
+      if (!byCode.has(line.itemCode)) byCode.set(line.itemCode, new Set());
+      if (line.fgCode && line.fgCode !== line.itemCode) byCode.get(line.itemCode).add(line.fgCode);
+    }
+    const rows = [...byCode].map(([code, fgs]) => ({ code, fgs: [...fgs].sort((a, b) => at(a) - at(b) || a.localeCompare(b)).map((fgCode) => ({ fgCode, itemNo: at(fgCode) + 1 })) }));
+    const first = (row) => (row.fgs.length ? at(row.fgs[0].fgCode) : at(row.code));
+    return rows.sort((a, b) => first(a) - first(b) || a.code.localeCompare(b.code));
+  }
   // สต็อกสินค้าสำเร็จรูปสำหรับใบร่างที่ถาม ต่อสินค้าของใบ: stock = สต็อกของรหัสนี้ทั้งระบบ · taken = ที่ใบร่างอื่นที่คำนวณของก่อนใบนี้ (draftBefore) ตั้งใช้ไว้แล้ว (ใบที่ปล่อยผลิตก่อนได้ของก่อน)
   // available = stock − taken · max = ยอดสูงสุดที่ตั้งได้ (ไม่เกินจำนวนสั่ง) · planned = ยอดที่ฝ่ายวางแผนบันทึกไว้ในใบนี้ (null = ยังไม่ได้บันทึก) · ใบร่างที่ยังไม่ได้ระเบิด BOM ไม่มีใบไหนมาก่อน
   function fgStockForDraft(data, order) {
@@ -1315,7 +1330,7 @@
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
-    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, draftBefore, draftPartDemand, draftRubberJobs, partReserved, partOnOrder, partReturned, partReturnLines, fgPosition, fgOnHand, fgFreeList, fgStockForDraft, fgStockLock, countedCodes,
+    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, draftBefore, draftPartDemand, draftRubberJobs, partReserved, partOnOrder, partReturned, partReturnLines, fgPosition, fgOnHand, fgFreeList, fgStockForDraft, fgStockLock, noBomInOrder, countedCodes,
     DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };
