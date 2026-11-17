@@ -877,7 +877,7 @@
     const sameExplosion = Boolean(order.explodedAt) && Array.isArray(order.explosion) && stableJson(order.explosion) === stableJson(lines);
     order.explosion = lines;
     if (!sameExplosion) order.explodedAt = ctx.now;
-    audit(d, ctx, "คำนวณวัตถุดิบ",`${order.id} ${lines.length} บรรทัด`);
+    audit(d, ctx, "คำนวณวัตถุดิบ", `${order.id} ${lines.length} บรรทัด`);
     return lines.length;
   }
 

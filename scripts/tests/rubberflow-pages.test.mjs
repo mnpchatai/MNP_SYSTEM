@@ -188,7 +188,10 @@ test("the dashboard, stations and quality pages show the prototype's facts from 
   doorSeal.id = "DIE-DS-01";
   assert.match(otherDie, /<small class="rf-hint" data-spec-hint hidden>มาตรฐาน 2.5/, "a die that is not a Door Seal die shows no standard");
   assert.ok(env.context.MNP_RUBBERFLOW_RULES.hasExtrusionStandard("DIE-DS-02"));
-  assert.ok(!env.context.MNP_RUBBERFLOW_RULES.hasExtrusionStandard("DIE-OR-03") && !env.context.MNP_RUBBERFLOW_RULES.hasExtrusionStandard(undefined));  const finishing = await env.render("p=finishing");
+  assert.ok(!env.context.MNP_RUBBERFLOW_RULES.hasExtrusionStandard("DIE-OR-03") && !env.context.MNP_RUBBERFLOW_RULES.hasExtrusionStandard(undefined));
+  // .rf-hint ตั้ง display:block จึงต้องมีกฎ [hidden] ของตัวเอง ไม่งั้น attribute hidden ไม่ซ่อนข้อความจริง
+  assert.match(fs.readFileSync("styles.css", "utf8"), /\.rf-hint\[hidden\]\s*\{\s*display:\s*none;?\s*\}/, "a hidden spec hint is really hidden");
+  const finishing = await env.render("p=finishing");
   assert.match(finishing, /ด่านรับมอบ/, "nothing received at finishing yet");
   assert.doesNotMatch(finishing, /data-rf-form="recordFinishing"/);
   const quality = text(await env.render("p=quality"));
@@ -635,7 +638,7 @@ test("purchasing screens: the check opens one dialog (escaped, safety stock and 
   assert.doesNotMatch(html, /คงเหลือในคลัง|สั่งค้างรับ|>ขาด \(kg\)/);
   assert.ok(fromRequisition.html.includes(">ขาด (kg)</th>") && !fromRequisition.html.includes("รวมทุกใบขาด"), "no PI: the shortage column keeps its plain name");
   assert.doesNotMatch(html, /พร้อมใช้ \(kg\)/);
-  assert.match(html, /<th class="right" title="ใบที่ปล่อยผลิตแล้วจองไว้ \(ไม่รวมใบร่าง\)[^"]*">จองแล้ว \(kg\)<\/th>/, "the header explains what is reserved in a tooltip: released orders only, no drafts");
+  assert.match(html, /<th class="right" title="[^"]*\+ ใบร่างที่คำนวณวัตถุดิบก่อนใบนี้">จองแล้ว \(kg\)<\/th>/, "opened from a draft order, the chemical reserved column says it includes earlier drafts");
   // reserved by old open requisitions and by other open WOs is one column with the split in a tooltip; the signed balance (on hand − reserved + on order) stays stored for the order line
   const crowded = dialogs.purchase(env.ctx(), { rows: [{ materialCode: "ZNO", needKg: 225.598, onHandKg: 100, reservedKg: 260.787, requisitionKg: 5, otherNeedKg: 255.787, onOrderKg: 0, availableKg: -160.787, shortageKg: 386.385 }] });
   assert.ok(crowded.html.includes('<td class="right rf-mono">100.000</td>'), "on hand");

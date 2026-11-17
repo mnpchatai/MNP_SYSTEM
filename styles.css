@@ -2510,6 +2510,7 @@ button.rf-badge:hover, a.rf-badge:hover { border-color: var(--m500, var(--primar
 .rf-whys { margin: 4px 0 0; padding-left: 20px; }
 .rf-alert-list { max-height: 330px; overflow-y: auto; }
 .rf-hint { display: block; }
+.rf-hint[hidden] { display: none; }
 .rf-field .rf-input, .rf-field .rf-select, .rf-field .rf-textarea { width: 100%; }
 .rf-textarea { min-height: 70px; }
 

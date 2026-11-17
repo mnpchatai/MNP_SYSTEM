@@ -242,7 +242,6 @@
     const bind = (rootNode) => {
       rootNode.querySelector("[data-hub-qty]")?.addEventListener("submit", (event) => {
         event.preventDefault();
-        if (!ui.validateForm(event.currentTarget)) return;
         const value = Number(new FormData(event.currentTarget).get("qty"));
         location.hash = ctx.url("find", { code: item.code, qty: value > 0 ? String(value) : null });
       });
