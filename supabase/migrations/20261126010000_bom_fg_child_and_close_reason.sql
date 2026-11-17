@@ -12,7 +12,7 @@
 --      เพิ่ม "ลูกเป็น FG" = BOM_INVALID_CHILD_KIND (บรรทัดใหม่ในเงื่อนไขเดิม · พ่อเป็นของซื้อ / สูตรยางยังได้ BOM_INVALID_PARENT_KIND เหมือนเดิม)
 --      ครอบคลุมทั้งการบันทึก BOM ที่มีลูกเป็น FG และการเปลี่ยนชนิดของชิ้นที่เป็นลูกอยู่แล้วให้เป็น FG (ชิ้นที่ถูกแก้เป็นลูกของ BOM ที่ approved)
 --   2) private.bom_save_jobs: งานเดิมที่เปลี่ยนจากไม่ done เป็น done (v_status = 'done' และ v_old.status <> 'done') โดยไม่มีรายการเหตุผลของการปิดงาน
---      (v_close_note is null) ต้องมี qty_done + 0.000000001 >= qty_planned ไม่งั้น BOM_INVALID_JOB · ใช้กับทุกผู้เรียกและทุก action
+--      (v_close_note is null) ต้องมี qty_done + 0.000000001 >= ยอดแผน (ค่าที่มากกว่าระหว่างยอดแผนเดิมกับที่ส่งมา ลดยอดแผนในคำสั่งเดียวกันจึงเลี่ยงไม่ได้) ไม่งั้น BOM_INVALID_JOB · ใช้กับทุกผู้เรียกและทุก action · ข้อที่ยังเหลือ: กลุ่มวางแผนลดยอดแผนของงานในคำสั่งหนึ่งแล้วตั้ง done ในคำสั่งถัดไปได้ (ทั้งสองคำสั่งอยู่ใน audit BOM_MASTER_SAVE)
 --      วางต่อจากด่านเดิมของรายการปิดงาน (v_close_note กับยอดต้องเท่าเดิม) และหลังสาขางานของซื้อ (ST / PURCHASED) ที่ continue ไปก่อน งานของซื้อจึงไม่ถูกกระทบ
 --      ทางที่ถูกต้องไม่ถูกกระทบ: reportJob ที่ยอดถึงแผน (done = true) · ฝ่ายวางแผนปิดงานพร้อมเหตุผล (v_close_note ไม่ว่าง) · private.rf_apply_feedback (RubberFlow ผ่านตกแต่ง)
 --      ตั้งงาน done ที่ตารางเอง ไม่ผ่านฟังก์ชันนี้ · งานที่ done อยู่แล้วไม่เข้าเงื่อนไข (ไม่ใช่การเปลี่ยนสถานะ)
@@ -202,7 +202,7 @@ begin
     if v_close_note is not null and (v_done <> v_old.qty_done or v_reject <> v_old.qty_reject) then raise exception 'BOM_INVALID_JOB'; end if;
     -- งานที่เปลี่ยนเป็น done โดยไม่มีรายการเหตุผลของการปิดงาน (20261126010000): ต้องถึงยอดแผนแล้ว (ตรงกับ reportJob: qtyDone + 1e-9 >= qtyPlanned)
     -- ไม่งั้นการเรียก RPC ตรงปิดงานที่ยังไม่ถึงแผนได้โดยไม่เพิ่มยอดและไม่มีเหตุผล · ปิดก่อนถึงแผนต้องผ่านรายการเหตุผล (v_close_note) ของฝ่ายวางแผนเท่านั้น
-    if v_status = 'done' and v_old.status <> 'done' and v_close_note is null and v_done + 0.000000001 < v_planned then
+    if v_status = 'done' and v_old.status <> 'done' and v_close_note is null and v_done + 0.000000001 < greatest(v_planned, v_old.qty_planned) then
       raise exception 'BOM_INVALID_JOB';
     end if;
     -- งานของซื้อที่เบิกไปแล้ว (แถวเดิม ST / PURCHASED ที่ qty_done > 0 ครบหรือบางส่วน หรือ done): ตัวเขียนนี้ไม่แก้อะไรของงานนี้เลย ทุก action ทุกผู้เรียก (20261124010000)

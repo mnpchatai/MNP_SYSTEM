@@ -336,6 +336,9 @@ select throws_ok($$ select cr_t.save(jsonb_build_object('jobs', jsonb_build_obje
   'a planner cannot set a job to done without the reason entry either');
 select throws_ok($$ select cr_t.report('JOB-6-RB', 0.4, 'done') $$, 'BOM_INVALID_JOB',
   'nor mark it done with a report below the planned quantity');
+select throws_ok($$ select cr_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  cr_t.job('JOB-6-RB') || '{"status":"done","qtyPlanned":0}'::jsonb))), 'reportJob') $$, 'BOM_INVALID_JOB',
+  'nor by lowering the planned quantity to zero in the same save');
 select is(cr_t.ver(), current_setting('test.v4')::bigint, 'none of the refused saves moved the version');
 select is((select jsonb_agg(cr_t.job(n) ->> 'status' order by n) from unnest(array['JOB-6-GR', 'JOB-6-RB', 'JOB-6-PK']) n), '["queued","queued","queued"]'::jsonb,
   'and the three jobs are still queued');
