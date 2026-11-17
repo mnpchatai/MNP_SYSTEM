@@ -788,7 +788,8 @@
     const siblings = siblingsOf(d, p.base);
     if (!siblings.length) fail(`ไม่มีฐานรหัส ${R.canonicalCode(p.base)} ที่มี BOM ในทะเบียนชิ้นงาน`);
     const source = (p.cloneFrom && siblings.find((item) => item.code === R.canonicalCode(p.cloneFrom))) ?? pickSibling(siblings, pkg, colorSet);
-    cloneFg(d, code, source, { pkg, colorSet, name: newName(p) }, ctx);
+    // หน้าชุดสี/แพ็กเกจไม่มีช่องตั้งชื่อ: ไม่ส่งชื่อมา = ชื่อต้นแบบต่อป้ายรุ่นแบบเดิม (ชื่อสินค้าไม่หายเหลือแค่ฐานรหัส) · หน้าใบสั่งผลิตให้ผู้ใช้ยืนยันชื่อเอง
+    cloneFg(d, code, source, { pkg, colorSet, name: newName(p) || R.suggestFgName(source, pkg, colorSet, { keepName: true }).slice(0, 160) }, ctx);
     return code;
   }
 

@@ -2647,6 +2647,7 @@ button.rf-badge:hover, a.rf-badge:hover { border-color: var(--m500, var(--primar
 .rf-pagehead-main { min-width: 0; display: flex; align-items: center; gap: 12px; }
 .rf-mod-ico { display: inline-grid; place-items: center; width: 46px; height: 46px; flex: 0 0 46px; font-size: var(--text-page); background: color-mix(in srgb, var(--rf-mod) 16%, var(--paper)); border-radius: var(--radius-md); }
 .rf-callout, body:has(.rf-page) .rf-modal .rf-callout { display: flex; align-items: flex-start; gap: 10px; }
+.rf-callout[hidden], body:has(.rf-page) .rf-modal .rf-callout[hidden] { display: none; }
 .rf-callout-ico { display: inline-grid; place-items: center; flex: 0 0 auto; font-size: var(--text-title); margin-top: 1px; }
 .rf-callout-body { min-width: 0; flex: 1; }
 .rf-page .rf-stat-value, .rf-page .rf-big, .rf-page td { font-variant-numeric: tabular-nums; }

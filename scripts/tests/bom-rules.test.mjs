@@ -1163,6 +1163,7 @@ test("suggestFgName names a new product after its own pack and colour: the sourc
   assert.equal(rules.suggestFgName(original, "K", ""), "QA-RING-01 (แพ็กเกจ K)", "the original name already describes bag and colour set A, so it is not reused");
   assert.equal(rules.suggestFgName(original, "K", "B"), "QA-RING-01 (แพ็กเกจ K ชุดสี B)");
   assert.equal(rules.suggestFgName(original, "", "B"), "QA-RING-01 (ชุดสี B)", "an unspecified part is left out");
+  assert.equal(rules.suggestFgName(original, "K", "", { keepName: true }), `${original.name} (แพ็กเกจ K)`, "keepName (no name field, e.g. the variants page) keeps the product name instead of the bare base code");
   const cloned = { code: "QA-RING-01(K)", name: "แหวนยางทดสอบ QA (แพ็กเกจ K)" };
   assert.equal(rules.suggestFgName(cloned, "B", ""), "แหวนยางทดสอบ QA (แพ็กเกจ B)", "the source's own label is stripped before the new one is added");
   assert.equal(rules.suggestFgName(cloned, "K", "C"), "แหวนยางทดสอบ QA (แพ็กเกจ K ชุดสี C)");

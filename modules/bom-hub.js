@@ -37,8 +37,8 @@
   // เส้นยางที่มีข้อมูลการตัด: ปริมาณในบรรทัดต่างจากข้อมูลการตัดเกิน 1% = ข้อความเตือน (ไม่ห้ามบันทึก) · "" = ไม่ต้องเตือน (ไม่ใช่เส้นยาง ไม่มีข้อมูลการตัด หรือตรงกัน)
   function cutNote(ctx, parent, child, qty) {
     const { rules } = ctx;
-    if (!child || !rules.rbCutDiffers(qty, child)) return "";
-    const expected = rules.rbCutQty(child);
+    if (!child || !rules.rbCutDiffers(qty, child, parent)) return "";
+    const expected = rules.rbCutQty(child, parent);
     const plain = `${rules.fmtQty(expected)} ${uomText(ctx, child.uom)}`;
     const ratio = ratioText(ctx, expected, child.uom, parent.uom);
     return `ข้อมูลการตัดของ ${child.code}: ${ratio === plain ? "" : `${ratio} = `}ใช้ ${plain} ต่อ 1 ${uomText(ctx, parent.uom)} ปริมาณที่กรอกต่างจากนี้`;
@@ -361,7 +361,7 @@
     const rows = bom.lines.map((entry) => (entry.childCode === childCode
       ? `<input type="hidden" name="childCode[]" value="${attr(entry.childCode)}"><input type="hidden" name="origQty" value="${attr(String(entry.qty))}">
         <div class="rf-grid rf-g3">${ui.field(`ใช้ต่อ 1 ${uomText(ctx, parent.uom)} (${uomText(ctx, child.uom)})`, ui.input("qty[]", { type: "number", step: "any", min: "0.000001", required: true, value: String(Math.round(entry.qty * 1e6) / 1e6), extra: "data-edit-qty" }), { required: true })}${ui.field("เผื่อเสีย (%)", ui.input("scrapPct[]", { type: "number", step: "any", min: 0, value: String(entry.scrapPct ?? 0) }))}${ui.field("เข้าที่ขั้นผลิตที่", ui.input("lineStep[]", { type: "number", step: "1", min: 1, max: 20, value: String(entry.step ?? ""), placeholder: "1", extra: `title="ขั้นผลิตของ ${attr(parent.name)} ที่ชิ้นนี้เข้า 1–20 เว้นว่าง = ขั้นแรก"` }))}</div>
-        ${rules.rbCutQty(child) > 0 ? cutCallout("data-edit-cut") : ""}
+        ${rules.rbCutQty(child, parent) > 0 ? cutCallout("data-edit-cut") : ""}
         ${ui.field("หมายเหตุของบรรทัด", ui.input("lineNote[]", { value: entry.note ?? "", extra: 'maxlength="200"' }))}`
       : hiddenOf(entry))).join("");
     const body = `<form novalidate id="bom-line-form" data-rf-form="saveBom" data-rf-args="${attr(JSON.stringify({ itemCode: parent.code, editCode: childCode }))}" data-rf-success="${attr(`บันทึก BOM ของ ${parent.code} แล้ว`)}">
@@ -433,7 +433,7 @@
         const found = code ? ctx.helpers.itemOf(ctx.store.data(), code) : null;
         const unit = found ? found.uom : !fresh.hidden ? uomSelect?.value : "";
         if (qtyLabel?.firstChild) qtyLabel.firstChild.nodeValue = `ใช้ต่อ 1 ${uomText(ctx, parent.uom)}${unit ? ` (${uomText(ctx, unit)})` : ""}`;
-        const expected = found ? rules.rbCutQty(found) : 0;
+        const expected = found ? rules.rbCutQty(found, parent) : 0;
         if (qtyInput) {
           if (expected > 0 && (qtyInput.value === "" || qtyInput.value === qtyAuto)) { qtyAuto = String(Math.round(expected * 1e6) / 1e6); qtyInput.value = qtyAuto; }
           else if (!(expected > 0) && qtyAuto && qtyInput.value === qtyAuto) { qtyInput.value = ""; qtyAuto = ""; }

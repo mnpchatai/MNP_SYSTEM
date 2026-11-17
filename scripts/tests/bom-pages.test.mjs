@@ -3726,7 +3726,7 @@ test("the data check page lists a rod line that disagrees with its cutting data 
   const html = await env.render("p=check");
   clean(html);
   assert.match(html, /ปริมาณเส้นยางขัดกับข้อมูลการตัด/);
-  assert.match(html, /RB-DM01-02-OR01-202-18-70: ใช้ 1 เส้น ต่อ 1 ชิ้น · ข้อมูลการตัดได้ 0.0323/);
+  assert.match(html, /RB-DM01-02-OR01-202-18-70: ใช้ 1 เส้น ต่อ 1 ชิ้น · ข้อมูลการตัดบอก 0.0323 เส้น/);
   assert.match(html, new RegExp(`href="[^"]*${parent.replaceAll("-", "\\-")}[^"]*"[^>]*>แก้ BOM`), "the fix link opens the parent's BOM");
 });
 

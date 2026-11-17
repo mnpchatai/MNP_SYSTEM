@@ -330,7 +330,7 @@
   const ceilCountQty = (qty, uom) => {
     const n = Number(qty);
     if (!(n > 0)) return 0;
-    return ["count", "pack"].includes(UOMS[uom]?.kind) ? Math.ceil(n - 1e-6) : n;
+    return uom !== "other" && ["count", "pack"].includes(UOMS[uom]?.kind) ? Math.ceil(n - 1e-6) : n;
   };
 
   // ---------- ปริมาณ RB ต่อ SE (สูตร O ของ BOMSHEET) ----------
@@ -341,15 +341,17 @@
     const per = Number(sePerGr) || 1;
     return pcs > 0 ? 1 / (pcs * per) : 0;
   }
-  // ปริมาณที่ข้อมูลการตัดของเส้นยางบอกต่อ 1 ชิ้นแม่ (0 = ไม่มีข้อมูลการตัดให้เทียบ) · เส้นยางที่นับเป็นกิโลกรัมใช้น้ำหนัก ไม่ใช่การตัด จึงไม่เทียบ
-  function rbCutQty(item) {
+  // ปริมาณที่ข้อมูลการตัดของเส้นยางบอกต่อ 1 ชิ้นยาง SE (0 = ไม่มีข้อมูลการตัดให้เทียบ) · เส้นยางที่นับเป็นกิโลกรัมใช้น้ำหนัก ไม่ใช่การตัด จึงไม่เทียบ
+  // ส่ง parent มา = เทียบเฉพาะเมื่อชิ้นแม่เป็น SE (สูตร rbPerSe คิดต่อ 1 SE · ใต้ชิ้นแม่ชนิดอื่นปริมาณอาจรวมหลายชิ้น จึงไม่เทียบ)
+  function rbCutQty(item, parent) {
+    if (parent && parent.kind !== "SE") return 0;
     if (item?.kind !== "RB" || item.uom === "kg" || !(Number(item.rubber?.pcsPerRoll) > 0)) return 0;
     return rbPerSe({ pcsPerRoll: item.rubber.pcsPerRoll, sePerGr: item.rubber.sePerGr, uom: item.uom, weightG: item.weightG });
   }
   // ปริมาณในบรรทัด BOM ต่างจากข้อมูลการตัดเกิน 1% = true (ไม่มีข้อมูลการตัด = false)
   const RB_CUT_TOLERANCE = 0.01;
-  const rbCutDiffers = (qty, item) => {
-    const expected = rbCutQty(item);
+  const rbCutDiffers = (qty, item, parent) => {
+    const expected = rbCutQty(item, parent);
     return expected > 0 && Math.abs((Number(qty) || 0) - expected) > expected * RB_CUT_TOLERANCE;
   };
 
@@ -531,7 +533,7 @@
       if (!parent || parent.active === false) continue;
       for (const line of bom.lines) {
         const child = byCode.get(line.childCode);
-        if (child && child.active !== false && rbCutDiffers(line.qty, child)) out.rbCut.push({ item: parent, child, qty: Number(line.qty), expected: rbCutQty(child) });
+        if (child && child.active !== false && rbCutDiffers(line.qty, child, parent)) out.rbCut.push({ item: parent, child, qty: Number(line.qty), expected: rbCutQty(child, parent) });
       }
     }
     for (const list of Object.values(out)) list.sort((a, b) => a.item.code.localeCompare(b.item.code) || (a.child?.code ?? "").localeCompare(b.child?.code ?? ""));
@@ -1372,14 +1374,15 @@
 
   // ชื่อสินค้าที่ cloneFg ตั้งให้รุ่นใหม่ (ฐาน + แพ็กเกจ + ชุดสี): ป้ายของรุ่นเดิมที่ท้ายชื่อต้นแบบ " (แพ็กเกจ K)" ถูกตัดก่อนต่อป้ายใหม่ · ชื่อต้นแบบที่ไม่มีป้ายของตัวเอง (บรรยายแพ็กและสีของมันเองอยู่แล้ว) ไม่ถูกใช้ต่อ ใช้ "ฐานรหัส (ป้าย)" แทน
   const fgLabel = (pkg, colorSet) => [pkg ? `แพ็กเกจ ${pkg}` : "", colorSet ? `ชุดสี ${colorSet}` : ""].filter(Boolean).join(" ");
-  function suggestFgName(source, pkg = "", colorSet = "") {
+  // keepName = ชื่อต้นแบบที่ไม่มีป้ายของตัวเองยังใช้ต่อ (ใช้เมื่อผู้ใช้ไม่มีช่องแก้ชื่อ เช่น หน้าชุดสี/แพ็กเกจ ชื่อสินค้าจึงไม่หายเหลือแค่ฐานรหัส)
+  function suggestFgName(source, pkg = "", colorSet = "", { keepName = false } = {}) {
     const name = String(source?.name ?? "").trim();
     const own = parseFgCode(source?.code);
     const ownTail = fgLabel(own.pkg, own.colorSet) ? ` (${fgLabel(own.pkg, own.colorSet)})` : "";
     const label = fgLabel(pkg, colorSet);
     const stripped = ownTail && name.endsWith(ownTail) ? name.slice(0, -ownTail.length).trim() : "";
     if (!label) return stripped || name;
-    return stripped ? `${stripped} (${label})` : `${own.base} (${label})`;
+    return stripped ? `${stripped} (${label})` : `${keepName && name ? name : own.base} (${label})`;
   }
 
   // ---------- CSV (เปิดใน Excel) ----------
