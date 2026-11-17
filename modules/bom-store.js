@@ -244,8 +244,8 @@
   // คืนของซื้อ (undoOrderParts / returnOrderParts): ผลทั้งหมด (งานกลับไปรอเบิกจ่าย สต็อก ประวัติ) เซิร์ฟเวอร์คำนวณเอง จึงส่งเฉพาะแถวคำขอ { orderId, mode, reason, lines? } ในส่วน partReturns (action คืนแถวนี้ใน result.request)
   // สำเนาที่ action คำนวณในเครื่อง (งาน สต็อก) ใช้แสดงจนกว่าคำตอบมาถึง และยังใช้เทียบว่าระเบียนไหนเป็นของเรา
   const RETURN_ACTIONS = Object.freeze(["undoOrderParts", "returnOrderParts"]);
-  // สินค้าสำเร็จรูป (receiveFg / deliverFg / closeOrderShort): เซิร์ฟเวอร์เขียนประวัติและปิดใบเอง จึงส่งเฉพาะแถวคำขอ { orderId, kind, lines?, note? } ในส่วน fgMoves (action คืนแถวนี้ใน result.request)
-  const FG_ACTIONS = Object.freeze(["receiveFg", "deliverFg", "closeOrderShort"]);
+  // สินค้าสำเร็จรูป (receiveFg / deliverFg / closeOrderShort / closeOrder): เซิร์ฟเวอร์เขียนประวัติและปิดใบเอง จึงส่งเฉพาะแถวคำขอ { orderId, kind, lines?, note? } ในส่วน fgMoves (action คืนแถวนี้ใน result.request)
+  const FG_ACTIONS = Object.freeze(["receiveFg", "deliverFg", "closeOrderShort", "closeOrder"]);
   function diffMaster(before, after, action = "") {
     const changes = {};
     for (const list of REMOTE_LISTS) {

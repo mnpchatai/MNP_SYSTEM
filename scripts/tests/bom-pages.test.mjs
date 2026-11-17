@@ -1696,10 +1696,18 @@ test("a PI that closes while a part line is partly issued: the PI page offers th
   clean(html);
   const stRows = html.split("<tr").filter((row) => row.includes('<span class="rf-badge">ST</span>'));
   assert.ok(stRows.length > 0 && stRows.every((row) => !row.includes('class="is-late"') && row.includes(">ใบปิดแล้ว<")), "the order's job tab shows the part lines as closed, not overdue");
-  // ภาพรวม: งานค้างไม่นับบรรทัดของซื้อของใบที่ปิดแล้ว
-  const openOnDashboard = env.store.data().jobs.filter((job) => job.status !== "done" && !(job.orderId === "DEMO-26001" && job.dept === "ST")).length;
+  // ทุกงานของใบที่ปิดแล้ว (ไม่ใช่แค่บรรทัดของซื้อ: 20261125010000) ไม่ค้างและไม่เลยกำหนด สถานะบอกว่าใบปิดแล้ว
+  for (const job of env.store.data().jobs) if (job.orderId === "DEMO-26001" && job.dept === "RB") job.dueAt = 1;
+  html = await env.render("p=jobs&dept=RB");
+  assert.equal(rowsOf(html).length, 0, "the closed PI's open RB jobs are not open work");
+  assert.match(html, />RB \(0\)</, "the RB tab counts no open job");
+  html = await env.render("p=jobs&dept=RB&st=all");
+  assert.ok(rowsOf(html).filter((row) => !row.includes(">เสร็จ<")).every((row) => !row.includes('class="is-late"') && row.includes(">ใบปิดแล้ว<") && !row.includes("data-rf-open=\"jobReport\"")),
+    "unfinished RB jobs of the closed PI are neither overdue nor reportable, and say the PI is closed");
+  // ภาพรวม: งานค้างไม่นับงานใดของใบที่ปิดแล้ว
+  const openOnDashboard = env.store.data().jobs.filter((job) => job.status !== "done" && job.orderId !== "DEMO-26001").length;
   html = await env.render("p=dashboard");
-  assert.match(html, new RegExp(`<span class="rf-stat-label">งานค้าง</span><strong class="rf-stat-value">${openOnDashboard}</strong>`), "the dashboard's open-job count leaves the closed PI's part lines out");
+  assert.match(html, new RegExp(`<span class="rf-stat-label">งานค้าง</span><strong class="rf-stat-value">${openOnDashboard}</strong>`), "the dashboard's open-job count leaves every job of the closed PI out");
 });
 
 test("import page: the group selected when pressing import is saved on new items, and a second import reuses the XP- subpart", async () => {
@@ -2672,8 +2680,11 @@ const FG_PI = "DEMO-26001";
 const whLoad = () => {
   return load(); // B09 = พนักงานคลังสินค้าของข้อมูลสาธิต
 };
-// PK รายงานตามจำนวนที่ให้ (ชิ้นย่อย XP- ของ PK ทำครบ) โดยฝ่ายวางแผน แล้วกลับมาเป็นผู้ใช้เดิม
+// งานของแผนกผลิตอื่น (RB GR PT BG) ของใบถือว่าเสร็จแล้ว (ใบปิดได้เมื่อทุกงานผลิตเสร็จ: 20261125010000) · การเบิกของซื้อ (ST) ไม่นับ จึงไม่แตะ
+const finishOtherDepts = (env, orderId = FG_PI) => { for (const job of env.store.data().jobs) if (job.orderId === orderId && !["PK", "ST"].includes(job.dept)) job.status = "done"; };
+// PK รายงานตามจำนวนที่ให้ (ชิ้นย่อย XP- ของ PK ทำครบ) โดยฝ่ายวางแผน แล้วกลับมาเป็นผู้ใช้เดิม · แผนกอื่นเสร็จแล้ว
 const pkReport = (env, made, backTo = "B09") => {
+  finishOtherDepts(env);
   env.store.setUser("B03");
   for (const job of env.store.data().jobs.filter((entry) => entry.orderId === FG_PI && entry.dept === "PK")) {
     if (job.status === "done") continue;
@@ -2849,6 +2860,96 @@ test("closing short: only when PK is done and everything PK made is received; th
   html = await env.render(`p=orders&sel=${FG_PI}&step=5`);
   assert.equal(count(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/g), 1, "and once on step 5, as the closing note");
   assert.match(html, /ปิดใบโดยรับไม่ครบ:/);
+});
+
+test("close rules: everything received while RB and GR are open: step 5 names them, the planner closes each job with a reason, then WH gets a card and closes the order", async () => {
+  const env = whLoad();
+  env.store.setUser("B09");
+  pkReport(env, { [FG_TP]: 80, [FG_HL]: 40 });
+  const jobOf = (dept) => env.store.data().jobs.find((job) => job.orderId === FG_PI && job.dept === dept);
+  const orderOf = () => env.store.data().orders.find((order) => order.id === FG_PI);
+  const rbId = jobOf("RB").id;
+  const grId = jobOf("GR").id;
+  jobOf("RB").status = "in_progress";
+  jobOf("GR").status = "queued";
+  fgRun(env, "receiveFg", [[FG_TP, 80], [FG_HL, 40]]);
+  assert.equal(orderOf().status, "in_progress", "received in full but RB and GR are open");
+  let html = await env.render(`p=orders&sel=${FG_PI}&step=5`);
+  clean(html);
+  assert.match(html, /ยังปิดใบไม่ได้: งานของแผนก รีดเส้นยาง \(RB\), ตัด\/เจาะชิ้นยาง \(GR\) ยังไม่เสร็จ · แผนกนั้นรายงานผลให้เสร็จ หรือฝ่ายวางแผนปิดงานที่จะไม่ทำต่อ แล้วคลังสินค้า \(WH\) ปิดใบ/);
+  assert.doesNotMatch(html, /data-rf-action="closeOrder"|data-rf-open="closeShort"/, "nothing to close yet");
+  assert.doesNotMatch(html, /ยังไม่มีสินค้าที่รอรับ|ดูงานที่ยังเปิด/, "no hint about PK, and WH gets no link to the planner's work");
+  html = await env.render(`p=orders&sel=${FG_PI}`);
+  assert.match(html, /<strong>รับสินค้าเข้าคลังครบแล้ว<\/strong><div class="small muted">ใบปิดได้เมื่อทุกแผนกปิดงาน<\/div>/, "step 4 says it once, the departments are in its table");
+  assert.doesNotMatch(await env.render("p=work"), /ปิดใบ DEMO-26001/, "no close card for WH yet");
+  // ฝ่ายวางแผน: ลิงก์ไปงานของใบ · ปุ่มปิดงานที่การ์ดงานและตารางงานของแผนก · dialog ต้องมีเหตุผล
+  env.store.setUser("B03");
+  html = await env.render(`p=orders&sel=${FG_PI}&step=5`);
+  assert.match(html, /<a [^>]*href="[^"]*p=work&amp;order=DEMO-26001"[^>]*>ดูงานที่ยังเปิด<\/a>/);
+  html = await env.render(`p=work&dept=RB&order=${FG_PI}`);
+  assert.match(html, new RegExp(`data-rf-open="jobClose" data-rf-args="\\{&quot;jobId&quot;:&quot;${rbId}&quot;\\}"[^>]*>ปิดงานนี้</button>`));
+  html = await env.render("p=jobs&dept=GR");
+  assert.match(html, new RegExp(`data-rf-open="jobClose" data-rf-args="\\{&quot;jobId&quot;:&quot;${grId}&quot;\\}"[^>]*>ปิดงานนี้</button>`));
+  const D = env.context.MNP_BOM_DIALOGS;
+  const built = D.jobClose(env.ctx("p=work"), { jobId: rbId });
+  clean(built.html);
+  assert.match(built.html, new RegExp(`data-rf-form="setJobStatus" data-rf-args="\\{&quot;jobId&quot;:&quot;${rbId}&quot;,&quot;status&quot;:&quot;done&quot;\\}"`));
+  assert.match(built.html, /เหตุผล <span class="field-required">\(จำเป็น\)<\/span>/);
+  assert.match(built.html, /name="reason"[^>]*required[^>]*minlength="3" maxlength="200"/);
+  const part = env.store.data().jobs.find((job) => job.orderId === FG_PI && job.dept === "ST");
+  assert.equal(D.jobClose(env.ctx("p=work"), { jobId: part.id }), null, "no close for a purchased-part line (ST issues it)");
+  // แผนกของงานเองและคลังสินค้าไม่มีปุ่มและ dialog
+  for (const id of ["B04", "B09"]) {
+    env.store.setUser(id);
+    assert.doesNotMatch(await env.render("p=work"), /ปิดงานนี้/, id);
+    assert.equal(D.jobClose(env.ctx("p=work"), { jobId: rbId }), null, id);
+  }
+  env.store.setUser("B03");
+  await env.submit("p=work&dept=RB", "setJobStatus", { reason: "ab" }, { jobId: rbId, status: "done" });
+  assert.match(env.log.toasts.at(-1)[0], /อย่างน้อย 3/);
+  await env.submit("p=work&dept=RB", "setJobStatus", { reason: XSS }, { jobId: rbId, status: "done" });
+  assert.equal(jobOf("RB").status, "done");
+  html = await env.render("p=jobs&dept=RB&st=done");
+  clean(html);
+  assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/, "the typed reason is escaped");
+  assert.match(html, /ปิดงานโดย ณัฐพล บุญมา: &lt;script&gt;alert\(1\)&lt;\/script&gt;/, "the closed job says who closed it and why");
+  html = await env.render(`p=orders&sel=${FG_PI}&step=5`);
+  assert.match(html, /ยังปิดใบไม่ได้: งานของแผนก ตัด\/เจาะชิ้นยาง \(GR\) ยังไม่เสร็จ/, "only GR is left");
+  await env.submit("p=jobs&dept=GR", "setJobStatus", { reason: "ใช้ชิ้นยางค้างไลน์แทน" }, { jobId: grId, status: "done" });
+  // ทุกงานผลิตเสร็จ (เหลือแค่เบิกของซื้อ): ผู้อื่นเห็นว่ารอ WH · WH ได้การ์ดและปุ่มปิดใบ
+  html = await env.render(`p=orders&sel=${FG_PI}&step=5`);
+  assert.match(html, /ทุกแผนกปิดงานแล้ว รอคลังสินค้า \(WH\) ปิดใบ/);
+  assert.doesNotMatch(html, /data-rf-action="closeOrder"|ยังปิดใบไม่ได้/);
+  env.store.setUser("B09");
+  html = await env.render(`p=orders&sel=${FG_PI}`);
+  assert.match(html, /<strong>ทุกแผนกปิดงานและรับสินค้าครบแล้ว รอคลังสินค้า \(WH\) ปิดใบ<\/strong><\/div><a [^>]*href="[^"]*step=5"/, "step 4 (purchased lines still open) points to step 5");
+  html = await env.render("p=work");
+  clean(html);
+  assert.match(html, /<span class="bom-job-state">รอปิดใบ<\/span>/);
+  assert.match(html, /<h2>ปิดใบ DEMO-26001<\/h2>/);
+  assert.match(html, /href="[^"]*sel=DEMO-26001&amp;step=5"[^>]*>เปิดใบเพื่อปิดใบ<\/a>/);
+  html = await env.render(`p=orders&sel=${FG_PI}&step=5`);
+  clean(html);
+  assert.match(html, /<button class="btn rf-btn " type="button" data-rf-action="closeOrder" data-rf-args="\{&quot;orderId&quot;:&quot;DEMO-26001&quot;\}" data-rf-confirm="ปิดใบ DEMO-26001\? [^"]*" data-rf-success="ปิดใบ \{result\} แล้ว">ปิดใบ<\/button>/);
+  assert.doesNotMatch(html, /data-rf-open="closeShort"/, "nothing is short");
+  // ปุ่มปิดใบ: ยืนยันครั้งเดียวแล้วส่งทันที
+  const button = { ...env.root, dataset: { rfAction: "closeOrder", rfArgs: JSON.stringify({ orderId: FG_PI }), rfConfirm: `ปิดใบ ${FG_PI}? ทุกแผนกปิดงานแล้ว`, rfSuccess: "ปิดใบ {result} แล้ว" }, textContent: "ปิดใบ", getAttribute: () => null, handlers: {} };
+  button.addEventListener = (type, handler) => { button.handlers[type] = handler; };
+  env.fakes["[data-rf-action]"] = [button];
+  await env.render(`p=orders&sel=${FG_PI}&step=5`);
+  env.log.confirmAnswer = false;
+  await button.handlers.click();
+  assert.equal(orderOf().status, "in_progress", "declined: nothing is sent");
+  env.log.confirmAnswer = true;
+  await button.handlers.click();
+  env.fakes["[data-rf-action]"] = [];
+  assert.equal(orderOf().status, "completed");
+  assert.equal(env.log.toasts.at(-1)[0], "ปิดใบ DEMO-26001 แล้ว");
+  assert.doesNotMatch(await env.render("p=work"), /ปิดใบ DEMO-26001/, "the card is gone");
+  html = await env.render(`p=orders&sel=${FG_PI}&step=6`);
+  clean(html);
+  assert.match(html, /<td>ปิดใบ \(รับครบ\)<\/td>/, "the history names the full close, without repeating the server note");
+  assert.doesNotMatch(html, /รับครบ ปิดใบโดยคลังสินค้า|ปิดใบ \(รับไม่ครบ\)|ปิดใบโดยรับไม่ครบ/);
 });
 
 test("my jobs for the warehouse: a card to receive per PI with something waiting, a card to deliver per closed PI with stock left, linked to the right step", async () => {

@@ -1014,7 +1014,7 @@
   // fgMoves = { id, orderId, fgCode, kind: receive | deliver | close | transfer | untransfer, qty, note, at, by, fromOrderId? } เพิ่มต่ออย่างเดียว (โหมดฐานข้อมูล: เซิร์ฟเวอร์เขียนเอง)
   // close = ปิดใบเมื่อรับไม่ครบ (qty 0, note = เหตุผล) · transfer / untransfer = ใบ orderId รับสินค้าจากสต็อกของใบ fromOrderId ตอนปล่อยผลิต / คืนกลับตอนยกเลิกหรือเปิดใบกลับมาแก้
   // ต่อใบ O รหัส X: own = Σ receive (รับจากงาน PK ของใบนี้) · in = Σ transfer − Σ untransfer ของใบนี้ (ได้จากสต็อก) · out = Σ transfer − Σ untransfer ที่ fromOrderId = O (ให้ใบอื่นไปแล้ว) · delivered = Σ deliver · have = own + in
-  // รับ ≤ ยอดที่ PK รายงานของสินค้านั้น (เทียบกับ own) · ส่งมอบ ≤ have − out · have ≥ ที่สั่งทุกสินค้า = ใบปิดเอง
+  // รับ ≤ ยอดที่ PK รายงานของสินค้านั้น (เทียบกับ own) · ส่งมอบ ≤ have − out · have ≥ ที่สั่งทุกสินค้าและทุกงานผลิตเสร็จ = ใบปิดเอง (งานผลิตยังเปิด = WH ปิดใบเองเมื่องานเสร็จครบ)
   // สต็อกสินค้าสำเร็จรูป (free) = max(0, have − out − max(ที่สั่ง, ส่งมอบแล้ว)) ของใบที่ปล่อยผลิตแล้ว (released / in_progress / completed): ของที่ใบนั้นยังติดค้างลูกค้าของตัวเองไม่นับ
   const fgRound = (n) => Math.round(Number(n) * 1e4) / 1e4;
   const FG_EPS = 1e-9;
@@ -1050,6 +1050,8 @@
   const fgFreeOf = (ordered, f) => Math.max(0, fgRound(f.own + f.inn - f.out - Math.max(ordered, f.delivered)));
   // รหัสที่ใบนับคงคลังไว้ที่ไม่ใช่สินค้าของใบเอง (ยอดชิ้นงานค้างในไลน์) · ยอดของตัวสินค้า (ใช้จากสต็อกสินค้าสำเร็จรูป) แยกต่างหาก
   const countedCodes = (order) => Object.keys(order?.stockCounts ?? {}).filter((code) => !(order.items ?? []).some((item) => item.fgCode === code));
+  // ลำดับแผนกตามผังงาน (แผนกที่ไม่อยู่ในผังไปท้าย)
+  const flowIndex = (dept) => { const at = FLOW_DEPTS.indexOf(dept); return at === -1 ? FLOW_DEPTS.length : at; };
   function fgPosition(data, order) {
     const { jobs = [], fgMoves = [] } = data ?? {};
     const figures = fgLedger(fgMoves);
@@ -1075,8 +1077,16 @@
     const pkAllDone = pkJobs.every((job) => job.status === "done");
     // ใบที่ไม่มีงาน PK เลย pkAllDone เป็นจริงแบบว่างเปล่า: ปิดแบบรับไม่ครบต้องมีงาน PK อย่างน้อยหนึ่งงาน (ฐานข้อมูลยอมให้ปิดได้ จึงฝั่งหน้าจอเข้มกว่า)
     const hasPkJobs = pkJobs.length > 0;
+    // งานผลิต = ทุกงานของใบยกเว้นการเบิกของซื้อ (ST / PURCHASED) · ใบปิดได้ (รับครบ ปิดใบ ปิดรับไม่ครบ) เมื่อทุกงานผลิตเสร็จเท่านั้น (20261125010000)
+    // openDepts = แผนกที่ยังมีงานผลิตไม่เสร็จ เรียงตามผังงาน · ใบที่ไม่มีงานผลิตเลยถือว่าเสร็จครบ
+    const openDepts = [...new Set(jobs.filter((job) => job.orderId === order.id && !(job.dept === "ST" && job.kind === "PURCHASED") && job.status !== "done").map((job) => job.dept))]
+      .sort((a, b) => flowIndex(a) - flowIndex(b) || (a < b ? -1 : a > b ? 1 : 0));
+    const productionDone = openDepts.length === 0;
     const anyHave = products.some((product) => product.have > 0);
+    const allReceived = products.length > 0 && products.every((product) => product.have + FG_EPS >= product.ordered);
+    // แถว close ของใบที่มีของครบ = ปิดใบเมื่อรับครบ (closeOrder ข้อความของเซิร์ฟเวอร์) · ของไม่ครบ = ปิดรับไม่ครบ (เหตุผลของ WH) · ใบที่ปิดแล้วมีของเพิ่มได้แต่ไม่ลด จึงแยกได้เสมอ
     const closeMove = moves.filter((move) => move.kind === "close").sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0)).at(-1) ?? null;
+    const closeInfo = closeMove ? { reason: closeMove.note, at: closeMove.at, by: closeMove.by } : null;
     return {
       products,
       pkAllDone,
@@ -1088,16 +1098,23 @@
       anyDeliverable: products.some((product) => product.deliverable > 0),
       anyOwed: products.some((product) => product.owed > FG_EPS),
       anyFree: products.some((product) => product.free > FG_EPS),
-      // มีของครบทุกสินค้าตามที่สั่ง (รับเอง + ได้จากสต็อก) · ใบปิดเองเมื่อรับครั้งนั้นหรือตอนปล่อยผลิต
-      allReceived: products.length > 0 && products.every((product) => product.have + FG_EPS >= product.ordered),
-      // ปิดใบรับไม่ครบได้: งาน PK เสร็จทุกงาน PK ทำเท่าไรรับเข้าครบเท่านั้น และยังมีสินค้าที่ยังมีของน้อยกว่าที่สั่ง
-      canCloseShort: open && hasPkJobs && pkAllDone && products.every((product) => Math.abs(product.own - product.pkDone) <= FG_EPS) && products.some((product) => product.have + FG_EPS < product.ordered),
+      // มีของครบทุกสินค้าตามที่สั่ง (รับเอง + ได้จากสต็อก) · ใบปิดเองเมื่อรับครั้งนั้น (ถ้าทุกงานผลิตเสร็จแล้ว) หรือตอนปล่อยผลิต
+      allReceived,
+      openDepts,
+      productionDone,
+      // รับครบแล้วแต่ยังมีงานผลิตเปิด: ใบยังไม่ปิด รอแผนกใน openDepts ปิดงาน (รายงานให้เสร็จ หรือฝ่ายวางแผนปิดงานพร้อมเหตุผล)
+      waitingProduction: open && allReceived && !productionDone,
+      // ปิดใบได้ (closeOrder โดยคลังสินค้า WH): รับครบและทุกงานผลิตเสร็จ แต่ใบยังเปิด (รับครบก่อนงานสุดท้ายเสร็จ ใบจึงไม่ได้ปิดเองตอนรับ)
+      canClose: open && allReceived && productionDone,
+      // ปิดใบรับไม่ครบได้: ทุกงานผลิตเสร็จ (งาน PK อย่างน้อยหนึ่งงาน) PK ทำเท่าไรรับเข้าครบเท่านั้น และยังมีสินค้าที่ยังมีของน้อยกว่าที่สั่ง
+      canCloseShort: open && hasPkJobs && pkAllDone && productionDone && products.every((product) => Math.abs(product.own - product.pkDone) <= FG_EPS) && products.some((product) => product.have + FG_EPS < product.ordered),
       // ส่งมอบแล้ว (คำนวณ ไม่มีช่องเก็บ): ใบปิดแล้ว มีของอย่างน้อยหนึ่งสินค้า และลูกค้าไม่เหลือส่วนที่รอ
       fullyDelivered: order.status === "completed" && anyHave && products.every((product) => product.owed <= FG_EPS),
       waitingDelivery: order.status === "completed" && products.some((product) => product.owed > FG_EPS),
       // ใบที่ได้สินค้าจากสต็อกครบทุกสินค้าจึงไม่มีงานผลิตเลย (ปล่อยผลิตแล้วปิดทันที ไปที่ส่งมอบ)
       coveredByStock: order.status === "completed" && !jobs.some((job) => job.orderId === order.id) && products.length > 0 && products.every((product) => product.fromStock + FG_EPS >= product.ordered),
-      shortClose: closeMove ? { reason: closeMove.note, at: closeMove.at, by: closeMove.by } : null,
+      shortClose: closeInfo && !allReceived ? closeInfo : null,
+      fullClose: closeInfo && allReceived ? closeInfo : null,
       // ประวัติของใบนี้: แถวของใบเอง และแถวที่ใบนี้เป็นต้นทางของสต็อก (ให้ใบอื่น / ใบอื่นคืนกลับ)
       moves: fgMoves.filter((move) => move.orderId === order.id || (move.fromOrderId && move.fromOrderId === order.id)).sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0)),
     };

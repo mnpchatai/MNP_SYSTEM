@@ -712,10 +712,13 @@ select public.app_bom_save_master(jsonb_build_object(
     current_setting('test.job')::jsonb || '{"id":"JOB-L4-PK","orderId":"251107-25004","dept":"PK","itemCode":"FG-A","kind":"FG","uom":"set"}'::jsonb))),
   (public.app_bom_master() ->> 'version')::bigint, 'releaseOrder');
 select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'jobs')), 9, 'nine jobs were created by the release');
--- PI 25004: ปิดงาน PK แล้วปิดใบ (ผูก WO ภายหลังไม่ได้)
+-- PI 25004: ปิดงาน PK แล้วปิดใบ (ผูก WO ภายหลังไม่ได้) · ใบปิดเมื่อทุกงานผลิตเสร็จ (20261125010000): ฝ่ายวางแผนปิดงาน RB พร้อมเหตุผลก่อนรับของ
 select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
   (select j || jsonb_build_object('status', 'done', 'qtyDone', 100, 'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 100, 'reject', 0, 'note', '')))
    from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L4-PK')))), (public.app_bom_master() ->> 'version')::bigint, 'reportJob');
+select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  (select j || jsonb_build_object('status', 'done', 'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 0, 'reject', 0, 'note', 'ไม่รีดเพิ่ม')))
+   from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L4-RB')))), (public.app_bom_master() ->> 'version')::bigint, 'setJobStatus');
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
 select public.app_bom_save_master('{"fgMoves":{"upsert":[{"orderId":"251107-25004","kind":"receive","lines":[{"fgCode":"FG-A","qty":10}]}]}}'::jsonb,
   (public.app_bom_master() ->> 'version')::bigint, 'receiveFg');
@@ -830,14 +833,19 @@ select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.ap
   'the job total is what was reported through BOM (closing the work order adds nothing)');
 select is((select j ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L2-RB'), 'in_progress', 'and the job stays in progress');
 
--- WO-13: ใบ PI ปิดไปก่อน → WO ยังปิดได้ แต่ไม่เขียนอะไรเข้างาน
+-- WO-13: ใบ PI ปิดไปก่อน → WO ยังปิดได้ แต่ไม่เขียนอะไรเข้างาน · ฝ่ายวางแผนปิดงาน RB (ยอด 0 พร้อมเหตุผล) ก่อนรับของ ใบจึงปิดเองตอนรับครบ (20261125010000)
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
   (select j || jsonb_build_object('status', 'done', 'qtyDone', 100, 'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 100, 'reject', 0, 'note', '')))
    from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L3-PK')))), (public.app_bom_master() ->> 'version')::bigint, 'reportJob');
+select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  (select j || jsonb_build_object('status', 'done', 'reports', (j -> 'reports') || jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 0, 'reject', 0, 'note', 'ปิดงานก่อนปิด WO')))
+   from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L3-RB')))), (public.app_bom_master() ->> 'version')::bigint, 'setJobStatus');
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
 select public.app_bom_save_master('{"fgMoves":{"upsert":[{"orderId":"251107-25003","kind":"receive","lines":[{"fgCode":"FG-A","qty":10}]}]}}'::jsonb,
   (public.app_bom_master() ->> 'version')::bigint, 'receiveFg');
+select is((select o ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251107-25003'), 'completed',
+  'PI 25003 is completed (the RB job was closed by the planner before the receipt)');
 select set_config('test.bv2', public.app_bom_master() ->> 'version', true);
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select is(public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(

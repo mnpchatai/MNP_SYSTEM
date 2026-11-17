@@ -902,6 +902,35 @@ test("draftPartDemand: side all (default) lists every other exploded draft, earl
   assert.equal(rules.draftPartDemand(undefined, null, { relativeTo: a, side: "later" }).size, 0);
 });
 
+test("fgPosition close rules: every job but purchased-part issuing must be done; open departments in flow order; waiting, closable, full and short close", () => {
+  const order = { id: "PI-1", status: "in_progress", items: [{ fgCode: "A", qty: 10 }, { fgCode: "B", qty: 4 }] };
+  const job = (dept, kind, itemCode, status, qtyDone = 0) => ({ orderId: "PI-1", dept, kind, itemCode, status, qtyDone });
+  const move = (kind, fgCode, qty, at = 1, note = "") => ({ id: `${kind}${fgCode}${at}`, orderId: "PI-1", fgCode, kind, qty, note, at, by: "x" });
+  const pk = [job("PK", "FG", "A", "done", 10), job("PK", "FG", "B", "done", 4)];
+  const received = [move("receive", "A", 10), move("receive", "B", 4)];
+  const open = { jobs: [...pk, job("GR", "SE", "SE-1", "queued"), job("RB", "RB", "RB-1", "hold"), job("RB", "RB", "RB-2", "in_progress"), job("ST", "PURCHASED", "P-1", "queued"), { ...job("RB", "RB", "RB-9", "queued"), orderId: "PI-2" }], fgMoves: received };
+  let position = rules.fgPosition(open, order);
+  assert.deepEqual(position.openDepts, ["RB", "GR"], "one entry per department, in the company flow (RB before GR); the purchased line and another order's job do not count");
+  assert.deepEqual([position.allReceived, position.productionDone, position.waitingProduction, position.canClose, position.canCloseShort], [true, false, true, false, false]);
+  const ready = { jobs: [...pk, job("GR", "SE", "SE-1", "done"), job("ST", "PURCHASED", "P-1", "queued")], fgMoves: received };
+  position = rules.fgPosition(ready, order);
+  assert.deepEqual([position.openDepts, position.productionDone, position.waitingProduction, position.canClose], [[], true, false, true], "only an unissued purchased line is left: the order can be closed");
+  assert.equal(rules.fgPosition(ready, { ...order, status: "completed" }).canClose, false, "a closed order is not closable again");
+  assert.equal(rules.fgPosition({ jobs: [], fgMoves: received }, order).canClose, true, "an order without jobs counts as finished");
+  assert.equal(rules.fgPosition({ ...ready, fgMoves: [move("receive", "A", 9), move("receive", "B", 4)] }, order).canClose, false, "not everything is received");
+  // ปิดรับไม่ครบ: PK ทำได้ 9 รับครบ 9 แต่ GR ยังเปิด = ไม่ได้ · GR เสร็จ = ได้
+  const shortPk = [job("PK", "FG", "A", "done", 9), job("PK", "FG", "B", "done", 4)];
+  const shortReceived = [move("receive", "A", 9), move("receive", "B", 4)];
+  assert.equal(rules.fgPosition({ jobs: [...shortPk, job("GR", "SE", "SE-1", "in_progress")], fgMoves: shortReceived }, order).canCloseShort, false, "GR is open");
+  assert.equal(rules.fgPosition({ jobs: [...shortPk, job("GR", "SE", "SE-1", "done"), job("ST", "PURCHASED", "P-1", "queued")], fgMoves: shortReceived }, order).canCloseShort, true);
+  // แถว close: ของครบ = ปิดใบเมื่อรับครบ · ของไม่ครบ = ปิดรับไม่ครบ
+  const closed = { ...order, status: "completed" };
+  const full = rules.fgPosition({ jobs: ready.jobs, fgMoves: [...received, move("close", "", 0, 5, "รับครบ ปิดใบโดยคลังสินค้า")] }, closed);
+  assert.deepEqual([full.fullClose, full.shortClose], [{ reason: "รับครบ ปิดใบโดยคลังสินค้า", at: 5, by: "x" }, null]);
+  const short = rules.fgPosition({ jobs: shortPk, fgMoves: [...shortReceived, move("close", "", 0, 6, "ไม่ครบ")] }, closed);
+  assert.deepEqual([short.fullClose, short.shortClose], [null, { reason: "ไม่ครบ", at: 6, by: "x" }]);
+});
+
 test("fgPosition: per product ordered, PK made, received, delivered, what can still be received and delivered, and the order-level flags", () => {
   const order = { id: "PI-1", status: "in_progress", items: [{ fgCode: "A", qty: 10 }, { fgCode: "B", qty: 4 }] };
   const job = (itemCode, qtyDone, status = "in_progress", extra = {}) => ({ orderId: "PI-1", dept: "PK", kind: "FG", itemCode, qtyDone, status, ...extra });
