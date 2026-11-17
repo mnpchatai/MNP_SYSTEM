@@ -970,7 +970,11 @@
       const byDept = rules.FLOW_DEPTS.filter((dept) => dept !== "ST").map((dept) => [dept, made.filter((entry) => entry.dept === dept).length]).filter(([, count]) => count);
       const short = order.explosion?.length ? draftPartRows(ctx, order).filter((row) => row.short > 0) : [];
       const chemShort = order.explosion?.length ? draftChemicals(ctx, order).rows.filter((row) => row.short > 0) : [];
-      const noBom = [...new Set((order.explosion ?? []).filter((line) => line.noBom).map((line) => line.itemCode))];
+      const noBomRows = rules.noBomInOrder(order);
+      const noBom = noBomRows.map((row) => row.code);
+      // ผู้แก้ BOM ได้: เปิดตารางสร้าง BOM ของสินค้าตัวแรกในใบที่ใช้ชิ้นนั้น (เห็นทุกชั้น แถวของชิ้นนั้นถูกทำแถบสีไว้ กด "+ ลูก" ที่แถวนั้น) · ไม่มีสินค้าแม่ = ตารางของชิ้นนั้นเอง
+      // คนอื่นเปิดหน้าของรายการ
+      const noBomUrl = (row) => (!canPlan ? ctx.url("find", { code: row.code }) : row.fgs.length ? ctx.url("build", { code: row.fgs[0].fgCode, focus: row.code, order: order.id }) : ctx.url("build", { code: row.code }));
       const list = `<dl class="bom-release-list">${partCount ? `<dt>${deptChip(ctx, "ST")} ${esc(deptName(ctx, "ST"))}</dt><dd>เบิกของ ${partCount} รายการ</dd>` : ""}${byDept.map(([dept, count]) => `<dt>${deptChip(ctx, dept)} ${esc(deptName(ctx, dept))}</dt><dd>${count} งาน</dd>`).join("")}</dl>`;
       const lacking = [short.length ? `ของซื้อ ${short.length} รายการ` : "", chemShort.length ? `เคมี ${chemShort.length} รายการ` : ""].filter(Boolean).join(" และ");
       // สินค้าสำเร็จรูปที่ใช้จากสต็อก: หักจริงตอนปล่อยผลิต · สต็อกไม่พอแล้ว (ใบอื่นปล่อยไปก่อน) ปล่อยผลิตไม่ได้จนกว่าจะตั้งยอดใหม่ · ได้ครบทุกสินค้า = ไม่มีงานผลิต ใบปิดทันทีแล้วไปส่งมอบลูกค้า
@@ -981,7 +985,7 @@
       const warns = [
         !order.explosion?.length ? ui.callout("warn", "ยังไม่ได้คำนวณของที่ต้องใช้ กลับไปขั้น 2 ก่อน") : "",
         fgLack.length ? ui.callout("bad", `ปล่อยผลิตไม่ได้ สต็อกสินค้าสำเร็จรูปไม่พอที่ตั้งใช้: ${fgLack.map((row) => `${esc(row.fgCode)} เหลือ ${esc(rules.fmtQty(row.stock))} ตั้งใช้ ${esc(rules.fmtQty(row.planned))}`).join(", ")} · ${ui.link("กลับไปตั้งยอดใหม่ที่ขั้น 2", stepUrl(2))}`) : "",
-        noBom.length ? ui.callout("bad", `ปล่อยผลิตไม่ได้ ชิ้นงานที่ยังไม่มี BOM: ${noBom.map((code) => ui.link(code, ctx.url("find", { code }), "rf-mono")).join(", ")}`) : "",
+        noBom.length ? ui.callout("bad", `<div>ปล่อยผลิตไม่ได้ ชิ้นงานที่ยังไม่มี BOM · ${canPlan ? "กดรหัสเพื่อเปิด BOM ของสินค้าที่ใช้ชิ้นนั้น แล้วเพิ่มส่วนประกอบที่แถวของชิ้นนั้น" : "กดรหัสเพื่อดูรายการ"}</div><div class="rf-row bom-nobom-links">${noBomRows.map((row) => ui.link(row.code, noBomUrl(row), "btn rf-btn secondary small rf-mono")).join("")}</div>`) : "",
         lacking ? ui.callout("warn", `ยังขาด${lacking} และยังไม่ได้สั่ง ปล่อยผลิตได้ แต่แผนกที่ใช้ของนั้นจะติดจนกว่าของจะเข้า${canBuyParts(ctx) ? ` · ${ui.link("กลับไปสั่งซื้อที่ขั้น 2", stepUrl(2))}` : " · คลังวัตถุดิบ (ST) เป็นผู้สั่งซื้อ"}`) : "",
       ].join("");
       panel = ui.card(`${warns}${order.explosion?.length ? `${fgAll ? "" : `<p>ปล่อยผลิตแล้วระบบสร้างงานให้แต่ละแผนกตามนี้ และล็อกฉบับ BOM ที่ใช้</p>${list}`}${fgLine}` : ""}<div class="rf-row bom-step-next">${ui.link("กลับไปขั้น 2", stepUrl(2), "btn rf-btn secondary")}${noBom.length || fgLack.length || !order.explosion?.length ? "" : buttons.release ?? ""}</div>`, { title: "ขั้น 3 · ปล่อยผลิต" });

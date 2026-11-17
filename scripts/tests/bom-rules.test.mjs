@@ -1076,3 +1076,25 @@ test("reachedFrom walks a structure of any depth with one rule: the first target
   // a loop already in the data ends instead of spinning
   assert.equal(rules.reachedFrom("A", new Set(["Z"]), (code) => ({ lines: [{ childCode: code === "A" ? "B" : "A" }] })), "");
 });
+
+test("no-BOM parts of an order list the products that use them in the order's item order", () => {
+  const order = {
+    items: [{ fgCode: "FG-B" }, { fgCode: "FG-A" }, { fgCode: "FG-C" }],
+    explosion: [
+      { fgCode: "FG-A", itemCode: "SE-1", noBom: true },
+      { fgCode: "FG-A", itemCode: "SE-2", noBom: true },
+      { fgCode: "FG-B", itemCode: "SE-1", noBom: true },
+      { fgCode: "FG-B", itemCode: "SE-1", noBom: true },
+      { fgCode: "FG-B", itemCode: "PT-1" },
+      { fgCode: "FG-C", itemCode: "FG-C", noBom: true },
+    ],
+  };
+  assert.deepEqual(rules.noBomInOrder(order), [
+    { code: "SE-1", fgs: [{ fgCode: "FG-B", itemNo: 1 }, { fgCode: "FG-A", itemNo: 2 }] },
+    { code: "SE-2", fgs: [{ fgCode: "FG-A", itemNo: 2 }] },
+    // a product without a BOM has no parent product
+    { code: "FG-C", fgs: [] },
+  ]);
+  assert.deepEqual(rules.noBomInOrder({ items: [], explosion: [] }), []);
+  assert.deepEqual(rules.noBomInOrder(null), []);
+});
