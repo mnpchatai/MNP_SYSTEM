@@ -34,6 +34,22 @@
     }
     return `${ctx.rules.fmtQty(n)} ${uomText(ctx, uom)}`;
   }
+  // เส้นยางที่มีข้อมูลการตัด: ปริมาณในบรรทัดต่างจากข้อมูลการตัดเกิน 1% = ข้อความเตือน (ไม่ห้ามบันทึก) · "" = ไม่ต้องเตือน (ไม่ใช่เส้นยาง ไม่มีข้อมูลการตัด หรือตรงกัน)
+  function cutNote(ctx, parent, child, qty) {
+    const { rules } = ctx;
+    if (!child || !rules.rbCutDiffers(qty, child)) return "";
+    const expected = rules.rbCutQty(child);
+    const plain = `${rules.fmtQty(expected)} ${uomText(ctx, child.uom)}`;
+    const ratio = ratioText(ctx, expected, child.uom, parent.uom);
+    return `ข้อมูลการตัดของ ${child.code}: ${ratio === plain ? "" : `${ratio} = `}ใช้ ${plain} ต่อ 1 ${uomText(ctx, parent.uom)} ปริมาณที่กรอกต่างจากนี้`;
+  }
+  const cutCallout = (attrName) => `<div class="rf-callout is-warn" role="note" ${attrName} hidden><div class="rf-callout-body"></div></div>`;
+  const paintCutNote = (box, text) => {
+    if (!box) return;
+    box.hidden = !text;
+    const body = box.querySelector?.(".rf-callout-body");
+    if (body) body.textContent = text;
+  };
 
   // ---------- สินค้า: ค้นหา → หน้าเดียวต่อสินค้า/ชิ้นงาน ----------
   const KIND_TABS = Object.freeze([["fg", "สินค้า"], ["wip", "ชิ้นงานผลิตเอง"], ["raw", "ของซื้อ / วัตถุดิบ"], ["all", "ทั้งหมด"]]);
@@ -344,13 +360,23 @@
     const hiddenOf = (entry) => ["childCode", "qty", "scrapPct", "lineNote", "lineStep"].map((name, at) => `<input type="hidden" name="${name}[]" value="${attr(String([entry.childCode, entry.qty, entry.scrapPct ?? 0, entry.note ?? "", entry.step ?? ""][at]))}">`).join("");
     const rows = bom.lines.map((entry) => (entry.childCode === childCode
       ? `<input type="hidden" name="childCode[]" value="${attr(entry.childCode)}"><input type="hidden" name="origQty" value="${attr(String(entry.qty))}">
-        <div class="rf-grid rf-g3">${ui.field(`ใช้ต่อ 1 ${uomText(ctx, parent.uom)} (${uomText(ctx, child.uom)})`, ui.input("qty[]", { type: "number", step: "any", min: "0.000001", required: true, value: String(Math.round(entry.qty * 1e6) / 1e6) }), { required: true })}${ui.field("เผื่อเสีย (%)", ui.input("scrapPct[]", { type: "number", step: "any", min: 0, value: String(entry.scrapPct ?? 0) }))}${ui.field("เข้าที่ขั้นผลิตที่", ui.input("lineStep[]", { type: "number", step: "1", min: 1, max: 20, value: String(entry.step ?? ""), placeholder: "1", extra: `title="ขั้นผลิตของ ${attr(parent.name)} ที่ชิ้นนี้เข้า 1–20 เว้นว่าง = ขั้นแรก"` }))}</div>
+        <div class="rf-grid rf-g3">${ui.field(`ใช้ต่อ 1 ${uomText(ctx, parent.uom)} (${uomText(ctx, child.uom)})`, ui.input("qty[]", { type: "number", step: "any", min: "0.000001", required: true, value: String(Math.round(entry.qty * 1e6) / 1e6), extra: "data-edit-qty" }), { required: true })}${ui.field("เผื่อเสีย (%)", ui.input("scrapPct[]", { type: "number", step: "any", min: 0, value: String(entry.scrapPct ?? 0) }))}${ui.field("เข้าที่ขั้นผลิตที่", ui.input("lineStep[]", { type: "number", step: "1", min: 1, max: 20, value: String(entry.step ?? ""), placeholder: "1", extra: `title="ขั้นผลิตของ ${attr(parent.name)} ที่ชิ้นนี้เข้า 1–20 เว้นว่าง = ขั้นแรก"` }))}</div>
+        ${rules.rbCutQty(child) > 0 ? cutCallout("data-edit-cut") : ""}
         ${ui.field("หมายเหตุของบรรทัด", ui.input("lineNote[]", { value: entry.note ?? "", extra: 'maxlength="200"' }))}`
       : hiddenOf(entry))).join("");
     const body = `<form novalidate id="bom-line-form" data-rf-form="saveBom" data-rf-args="${attr(JSON.stringify({ itemCode: parent.code, editCode: childCode }))}" data-rf-success="${attr(`บันทึก BOM ของ ${parent.code} แล้ว`)}">
       <p class="muted small">${esc(`${child.name} ใน ${parent.name}`)}</p>${rows}
       ${ui.field("เหตุผลของการแก้ครั้งนี้", ui.input("note", { placeholder: "เช่น ปรับตามผลผลิตจริง", extra: 'maxlength="300"' }))}</form>`;
-    return { html: ui.dialog("lineEdit", `แก้บรรทัด ${rules.canonicalCode(childCode)}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-line-form">บันทึก</button>` }) };
+    // เส้นยางที่ปริมาณต่างจากข้อมูลการตัด: เตือนใต้ช่อง (ตอนเปิดและตอนแก้) ไม่ห้ามบันทึก
+    const bind = (dialog) => {
+      const qtyInput = dialog.querySelector("[data-edit-qty]");
+      const box = dialog.querySelector("[data-edit-cut]");
+      if (!qtyInput || !box) return;
+      const paint = () => paintCutNote(box, cutNote(ctx, parent, child, qtyInput.value));
+      qtyInput.addEventListener("input", paint);
+      paint();
+    };
+    return { html: ui.dialog("lineEdit", `แก้บรรทัด ${rules.canonicalCode(childCode)}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-line-form">บันทึก</button>` }), bind };
   };
 
   // ช่องข้อมูลการตัดและน้ำหนักของเส้นยาง (ชุดเดียวกับคอลัมน์ "ข้อมูลยาง (RB)" ของตารางเดิม) · prefix = คำนำหน้าชื่อช่องของฟอร์มนั้น
@@ -375,7 +401,8 @@
     const body = `<form novalidate id="bom-add-form" data-rf-form="saveBomTree" data-rf-args="${attr(JSON.stringify({ lineAdd: true, code: parent.code }))}" data-rf-success="{result}">
       <p class="muted small">${esc(`เพิ่มใน ${parent.name}`)}</p>
       ${ui.field("รหัสส่วนประกอบ", pickerHtml(ctx, "addCode", { id: "bom-add-code", required: true, placeholder: "พิมพ์รหัสหรือชื่อเพื่อค้นหา", extra: "data-add-code" }), { required: true, id: "bom-add-code" })}
-      <div class="rf-grid rf-g2">${ui.field(`ใช้ต่อ 1 ${uomText(ctx, parent.uom)}`, ui.input("addQty", { type: "number", step: "any", min: "0.000001", required: true }), { required: true })}${ui.field("เผื่อเสีย (%)", ui.input("addScrap", { type: "number", step: "any", min: 0, value: "0" }))}</div>
+      <div class="rf-grid rf-g2">${ui.field(`ใช้ต่อ 1 ${uomText(ctx, parent.uom)}`, ui.input("addQty", { type: "number", step: "any", min: "0.000001", required: true, id: "bom-add-qty", extra: "data-add-qty" }), { required: true, id: "bom-add-qty", hint: "<span data-add-cut-hint></span>" })}${ui.field("เผื่อเสีย (%)", ui.input("addScrap", { type: "number", step: "any", min: 0, value: "0" }))}</div>
+      ${cutCallout("data-add-cut")}
       <fieldset class="bom-add-new" data-add-new hidden><legend>รหัสนี้ยังไม่มีในทะเบียน กรอกเพื่อสร้างชิ้นใหม่</legend>
         ${ui.field("ชื่อ", ui.input("newName", { extra: 'maxlength="160" data-add-name' }), { required: true })}
         <div class="rf-grid rf-g2">${ui.field("ชนิด", ui.select("newKind", kinds, { value: kinds[0]?.value ?? "", extra: "data-native-select data-add-kind" }))}${ui.field("หน่วย", ui.select("newUom", uoms, { value: "pcs", extra: "data-native-select data-add-uom" }))}</div>
@@ -394,7 +421,26 @@
       const uomSelect = dialog.querySelector("[data-add-uom]");
       const rubberBox = dialog.querySelector("[data-add-rubber]");
       const compoundInput = dialog.querySelector("[data-add-compound]");
+      const qtyInput = dialog.querySelector("[data-add-qty]");
+      const qtyLabel = dialog.querySelector('label[for="bom-add-qty"]');
+      const cutHint = dialog.querySelector("[data-add-cut-hint]");
+      const cutBox = dialog.querySelector("[data-add-cut]");
       let uomTouched = false;
+      let qtyAuto = ""; // ค่าที่ระบบเติมจากข้อมูลการตัด: ช่องว่างหรือยังเป็นค่านี้ = ผู้ใช้ยังไม่แก้ เติมใหม่ได้ตามชิ้นที่เลือก
+      // หน่วยของชิ้นลูกต่อท้ายป้ายช่องจำนวน (ชิ้นที่เลือกจากทะเบียน = หน่วยของมัน · ชิ้นใหม่ = หน่วยที่เลือกในฟอร์ม) · เส้นยางที่มีข้อมูลการตัด: เติมปริมาณให้เหมือนตารางกว้าง และเตือนเมื่อกรอกต่างเกิน 1%
+      const syncQty = () => {
+        const code = rules.canonicalCode(codeInput.value);
+        const found = code ? ctx.helpers.itemOf(ctx.store.data(), code) : null;
+        const unit = found ? found.uom : !fresh.hidden ? uomSelect?.value : "";
+        if (qtyLabel?.firstChild) qtyLabel.firstChild.nodeValue = `ใช้ต่อ 1 ${uomText(ctx, parent.uom)}${unit ? ` (${uomText(ctx, unit)})` : ""}`;
+        const expected = found ? rules.rbCutQty(found) : 0;
+        if (qtyInput) {
+          if (expected > 0 && (qtyInput.value === "" || qtyInput.value === qtyAuto)) { qtyAuto = String(Math.round(expected * 1e6) / 1e6); qtyInput.value = qtyAuto; }
+          else if (!(expected > 0) && qtyAuto && qtyInput.value === qtyAuto) { qtyInput.value = ""; qtyAuto = ""; }
+          if (cutHint) cutHint.textContent = expected > 0 && qtyAuto && qtyInput.value === qtyAuto ? `จากการตัด ${rules.fmtQty(expected)}` : "";
+        }
+        paintCutNote(cutBox, found && qtyInput ? cutNote(ctx, parent, found, qtyInput.value) : "");
+      };
       // ช่องของชิ้นใหม่ต้องกรอกเฉพาะตอนที่แสดง (ฟอร์มตรวจช่อง required ที่มองเห็น แล้วแจ้งเป็นภาษาไทยใต้ช่องเหมือนช่องอื่น)
       const sync = () => {
         const code = rules.canonicalCode(codeInput.value);
@@ -403,11 +449,13 @@
         const rod = !fresh.hidden && kindSelect?.value === "RB";
         if (rubberBox) rubberBox.hidden = !rod;
         if (compoundInput) compoundInput.required = rod;
+        syncQty();
       };
       bindPicker(codeInput.closest(".bom-pick-box"), itemOptions(ctx, choices), { onChange: sync, emptyText: "ไม่พบในทะเบียน บันทึกเป็นรหัสใหม่ได้โดยกรอกชื่อ ชนิด และหน่วยด้านล่าง" });
       bindPicker(compoundInput?.closest(".bom-pick-box"), compoundOptions(ctx), { emptyText: "ยังไม่มีสูตรยางรหัสนี้ บันทึกแล้วระบบเพิ่มในรายการสูตรยางให้" });
       codeInput.addEventListener("change", sync);
-      uomSelect?.addEventListener("change", () => { uomTouched = true; });
+      uomSelect?.addEventListener("change", () => { uomTouched = true; syncQty(); });
+      qtyInput?.addEventListener("input", syncQty);
       // เส้นยางนับเป็นเส้น สูตรยางเป็นกิโลกรัม: ตั้งหน่วยให้ตามชนิดจนกว่าผู้ใช้จะเลือกหน่วยเอง
       kindSelect?.addEventListener("change", () => {
         const preset = { RB: "rod", CP: "kg" }[kindSelect.value];
@@ -501,11 +549,18 @@
       <p class="muted small">${esc(`${parent.name} → ชิ้นใหม่ → ${child.name}`)}</p>
       ${ui.field("รหัสของชิ้นใหม่", ui.input("wipCode", { required: true, placeholder: "เช่น WIP-TP01-01", extra: 'autocapitalize="characters" maxlength="60"' }), { required: true })}
       ${ui.field("ชื่อ", ui.input("wipName", { required: true, extra: 'maxlength="160"' }), { required: true })}
-      <div class="rf-grid rf-g3">${ui.field("ชนิด", ui.select("wipKind", kinds, { value: kinds.find((entry) => entry.value === "SUBPART")?.value ?? kinds[0].value, extra: "data-native-select" }))}${ui.field("แผนกที่ทำ", ui.select("wipDept", rules.DEPTS.map((value) => ({ value, label: rules.DEPT_LABEL[value] ?? value })), { value: parent.ownerDept, extra: "data-native-select" }))}${ui.field("หน่วย", ui.select("wipUom", uoms, { value: "pcs", extra: "data-native-select" }))}</div>
+      <div class="rf-grid rf-g3">${ui.field("ชนิด", ui.select("wipKind", kinds, { value: kinds.find((entry) => entry.value === "SUBPART")?.value ?? kinds[0].value, extra: "data-native-select data-wip-kind" }))}${ui.field("แผนกที่ทำ", ui.select("wipDept", rules.DEPTS.map((value) => ({ value, label: rules.DEPT_LABEL[value] ?? value })), { value: parent.ownerDept, extra: "data-native-select data-wip-dept" }))}${ui.field("หน่วย", ui.select("wipUom", uoms, { value: "pcs", extra: "data-native-select" }))}</div>
       <div class="rf-grid rf-g2">${ui.field(`ใช้ชิ้นใหม่ต่อ 1 ${uomText(ctx, parent.uom)}`, ui.input("wipQty", { type: "number", step: "any", min: "0.000001", required: true, value: "1" }), { required: true })}${ui.field(`ใช้ ${child.code} ต่อ 1 ชิ้นใหม่ (${uomText(ctx, child.uom)})`, ui.input("childQty", { type: "number", step: "any", min: "0.000001", required: true, value: String(Math.round(line.qty * 1e6) / 1e6) }), { required: true })}</div>
       <p class="small muted">ค่าตั้งต้น: ชิ้นใหม่ 1 หน่วยต่อชิ้นแม่ และใช้บรรทัดเดิมเท่าเดิม ยอดรวมจึงไม่เปลี่ยน · เพิ่มส่วนประกอบอื่นใต้ชิ้นใหม่ได้หลังบันทึก</p>
       ${ui.field("เหตุผลของการแก้ครั้งนี้", ui.input("note", { extra: 'maxlength="300"' }))}</form>`;
-    return { html: ui.dialog("wipInsert", "แทรก WIP คั่น", body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-wip-form">แทรก</button>` }) };
+    // เปลี่ยนชนิด → แผนกที่ทำตามชนิดนั้นเหมือนฟอร์มชิ้นงาน (แผนกเริ่มต้นยังเป็นของชิ้นแม่ จนกว่าจะเปลี่ยนชนิด) · เลือกแผนกเองหลังเปลี่ยนชนิดได้
+    const bind = (dialog) => {
+      const kindSelect = dialog.querySelector("[data-wip-kind]");
+      const deptSelect = dialog.querySelector("[data-wip-dept]");
+      if (!kindSelect || !deptSelect) return;
+      kindSelect.addEventListener("change", () => { deptSelect.value = rules.ownerDeptOf(kindSelect.value); });
+    };
+    return { html: ui.dialog("wipInsert", "แทรก WIP คั่น", body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-wip-form">แทรก</button>` }), bind };
   };
 
   // dialog: ข้อมูลเส้นยาง (สูตรยาง ข้อมูลการตัด น้ำหนัก) · การเปลี่ยนสูตรยางแสดงเป็นข้อความ "จาก → เป็น" พร้อมผลกระทบ และต้องติ๊กยืนยันก่อนปุ่มบันทึกจะกดได้

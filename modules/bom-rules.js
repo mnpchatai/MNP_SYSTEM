@@ -325,6 +325,13 @@
     return result;
   }
   const uomLabel = (code) => UOMS[code]?.label ?? String(code ?? "");
+  // จำนวนที่แนะนำให้สั่งซื้อ: หน่วยนับ (ชิ้น กล่อง ม้วน แพ็ก ...) ปัดขึ้นเป็นจำนวนเต็ม เพราะสั่งเป็นเศษไม่ได้ · หน่วยน้ำหนัก/ความยาว/ที่ไม่รู้จักคงเดิม (1e-6 กันเศษทศนิยมของการคำนวณ)
+  // ใช้กับค่าตั้งต้นของจำนวนสั่งเท่านั้น ยอดต้องใช้ ยอดขาด การจอง และการเบิกจ่ายยังเป็นยอดจริง
+  const ceilCountQty = (qty, uom) => {
+    const n = Number(qty);
+    if (!(n > 0)) return 0;
+    return ["count", "pack"].includes(UOMS[uom]?.kind) ? Math.ceil(n - 1e-6) : n;
+  };
 
   // ---------- ปริมาณ RB ต่อ SE (สูตร O ของ BOMSHEET) ----------
   // นับเป็นเส้น/ม้วน: 1 / (จำนวนชิ้น GR ที่ตัดได้ต่อเส้น × จำนวน SE ที่ได้ต่อ 1 GR) · นับเป็นกิโลกรัม: น้ำหนักชิ้นงาน (กรัม) / 1000
@@ -334,6 +341,17 @@
     const per = Number(sePerGr) || 1;
     return pcs > 0 ? 1 / (pcs * per) : 0;
   }
+  // ปริมาณที่ข้อมูลการตัดของเส้นยางบอกต่อ 1 ชิ้นแม่ (0 = ไม่มีข้อมูลการตัดให้เทียบ) · เส้นยางที่นับเป็นกิโลกรัมใช้น้ำหนัก ไม่ใช่การตัด จึงไม่เทียบ
+  function rbCutQty(item) {
+    if (item?.kind !== "RB" || item.uom === "kg" || !(Number(item.rubber?.pcsPerRoll) > 0)) return 0;
+    return rbPerSe({ pcsPerRoll: item.rubber.pcsPerRoll, sePerGr: item.rubber.sePerGr, uom: item.uom, weightG: item.weightG });
+  }
+  // ปริมาณในบรรทัด BOM ต่างจากข้อมูลการตัดเกิน 1% = true (ไม่มีข้อมูลการตัด = false)
+  const RB_CUT_TOLERANCE = 0.01;
+  const rbCutDiffers = (qty, item) => {
+    const expected = rbCutQty(item);
+    return expected > 0 && Math.abs((Number(qty) || 0) - expected) > expected * RB_CUT_TOLERANCE;
+  };
 
   // ---------- อ่านตาราง TSV/CSV ที่วางมาจาก Excel ----------
   function parseDelimited(text) {
@@ -493,7 +511,7 @@
     for (const bom of boms) if (bom.status === "approved") approved.set(bom.itemCode, bom);
     const usedIn = new Map();
     for (const bom of approved.values()) for (const line of bom.lines) usedIn.set(line.childCode, [...(usedIn.get(line.childCode) ?? []), bom.itemCode]);
-    const out = { noBom: [], rbCompound: [], fgNoBom: [], uomOther: [], generated: [] };
+    const out = { noBom: [], rbCompound: [], rbCut: [], fgNoBom: [], uomOther: [], generated: [] };
     for (const item of items) {
       const bom = approved.get(item.code);
       const parents = usedIn.get(item.code) ?? [];
@@ -507,7 +525,16 @@
       if (item.uom === "other") out.uomOther.push({ item });
       if (/^XP-\d+/.test(item.code)) out.generated.push({ item });
     }
-    for (const list of Object.values(out)) list.sort((a, b) => a.item.code.localeCompare(b.item.code));
+    // ปริมาณเส้นยางในบรรทัดต่างจากข้อมูลการตัดของเส้นนั้นเกิน 1% (เช่น 1 เส้น ได้ 10 ชิ้น แต่บรรทัดใช้ 1 เส้นต่อชิ้น) · แถวคือชิ้นแม่ที่มีบรรทัดนั้น เปิด BOM ของมันเพื่อแก้
+    for (const bom of approved.values()) {
+      const parent = byCode.get(bom.itemCode);
+      if (!parent || parent.active === false) continue;
+      for (const line of bom.lines) {
+        const child = byCode.get(line.childCode);
+        if (child && child.active !== false && rbCutDiffers(line.qty, child)) out.rbCut.push({ item: parent, child, qty: Number(line.qty), expected: rbCutQty(child) });
+      }
+    }
+    for (const list of Object.values(out)) list.sort((a, b) => a.item.code.localeCompare(b.item.code) || (a.child?.code ?? "").localeCompare(b.child?.code ?? ""));
     return out;
   }
 
@@ -947,7 +974,7 @@
   // งานยังเปิดจนยอดสะสมถึงแผน (เบิกเกินได้ไม่เกินสต็อก) ทุกครั้งหักสต็อกเท่าที่เบิก
   // data = { jobs, orders, stock, purchaseOrders } (BOM: jobs orders stock · RubberFlow: purchaseOrders) · orderId = ใบ PI ที่ถามถึง
   // แต่ละรหัสที่ใบนี้ยังไม่ได้เบิกจ่าย: needQty ต้องใช้ (ส่วนที่เหลือของงาน) · onHandQty คงเหลือ · reservedQty จองแล้ว = ที่ใบ PI อื่นที่ปล่อยผลิตแล้วยังไม่ได้เบิกจ่ายต้องใช้
-  // · onOrderQty สั่งค้างรับ (บรรทัดของซื้อของใบสั่งซื้อ ordered ที่ยังไม่รับ) · shortage = max(0, needQty − (onHandQty − reservedQty + onOrderQty)) · orderQty = ค่าตั้งต้นจำนวนสั่ง (ขาด + สต็อกขั้นต่ำ ไม่ขาด = 0)
+  // · onOrderQty สั่งค้างรับ (บรรทัดของซื้อของใบสั่งซื้อ ordered ที่ยังไม่รับ) · shortage = max(0, needQty − (onHandQty − reservedQty + onOrderQty)) · orderQty = ค่าตั้งต้นจำนวนสั่ง (ขาด + สต็อกขั้นต่ำ ไม่ขาด = 0 · หน่วยนับปัดขึ้นเป็นจำนวนเต็ม ceilCountQty)
   // needQty และ shortage ปัดขึ้นที่ 3 ตำแหน่ง (partUp3) ส่วนยอดคงเหลือ/จองแล้ว/สั่งค้างรับปัดใกล้สุดไว้แสดง
   // ชื่อ/หน่วยมาจากงาน (ชื่อและหน่วยของชิ้น ณ ตอนปล่อยผลิต) · รูปเดียวกับ chemicalNeeds ของ RubberFlow: { rows, anyShort }
   const PART_OPEN_ORDER = Object.freeze(["released", "in_progress"]);
@@ -1314,9 +1341,45 @@
       // ขาดคิดจากยอดจริง (ไม่ใช่ยอดที่ปัดไว้แสดง) แล้วปัดขึ้น จำนวนสั่งตั้งต้นจึงไม่น้อยกว่าที่จะเบิกจ่าย
       const shortage = partUp3(Math.max(0, exactNeed - ((Number(row?.qty) || 0) - (reserved.get(code) || 0) + (onOrder.get(code) || 0))));
       const safetyQty = Math.max(0, Number(row?.safetyQty) || 0);
-      return { itemCode: code, name: meta.get(code)?.name ?? "", uom: meta.get(code)?.uom ?? "", needQty, onHandQty, reservedQty, onOrderQty, shortage, safetyQty, orderQty: shortage > 0 ? partRound3(shortage + safetyQty) : 0 };
+      return { itemCode: code, name: meta.get(code)?.name ?? "", uom: meta.get(code)?.uom ?? "", needQty, onHandQty, reservedQty, onOrderQty, shortage, safetyQty, orderQty: shortage > 0 ? ceilCountQty(partRound3(shortage + safetyQty), meta.get(code)?.uom) : 0 };
     });
     return { rows, anyShort: rows.some((row) => row.shortage > 0) };
+  }
+
+  // ยอดสูงสุดที่แผนกก่อนหน้าส่งมาพอสำหรับงานนี้ (ใช้เตือนตอนรายงานผล ไม่ใช่กฎห้าม) · null = ไม่รู้
+  // ต่อชิ้นลูกตรงของงาน: (ยอดนับของใบ + ยอดดีที่งานของชิ้นลูกในใบรายงานแล้ว) / ปริมาณลูกต่อ 1 ชิ้นแม่ · ยอดสูงสุด = ค่าน้อยสุดของทุกชิ้นลูก
+  // ข้ามของซื้อ (PURCHASED) และสูตรยาง (CP) · null เมื่อใบไม่มีผลระเบิด BOM (แก้ใบแล้วผลถูกล้าง) ไม่มีชิ้นลูกที่นับได้ ชิ้นลูกถูกใช้ร่วมกับชิ้นแม่หลายตัว หรือชิ้นลูกไม่มีทั้งงานและยอดนับ
+  function jobSupplyLimit(data, job) {
+    const { orders = [], jobs = [] } = data ?? {};
+    if (!job || job.kind === "PURCHASED") return null;
+    const order = orders.find((entry) => entry.id === job.orderId);
+    if (!order?.explosion?.length) return null;
+    const entries = netRequirements(order.explosion, order.stockCounts);
+    const self = entries.find((entry) => entry.itemCode === job.itemCode);
+    if (!self) return null;
+    let limit = Infinity;
+    for (const child of self.children) {
+      const entry = entries.find((candidate) => candidate.itemCode === child.code);
+      if (!entry || entry.kind === "PURCHASED" || entry.kind === "CP" || !(child.qtyPerParent > 0)) continue;
+      if (entry.parents.length > 1) return null;
+      const made = jobs.filter((other) => other.orderId === order.id && other.itemCode === child.code && other.id !== job.id);
+      if (!made.length && entry.stock === undefined) return null;
+      limit = Math.min(limit, ((entry.stock ?? 0) + made.reduce((sum, other) => sum + (Number(other.qtyDone) || 0), 0)) / child.qtyPerParent);
+    }
+    if (!Number.isFinite(limit)) return null;
+    return ["count", "pack"].includes(UOMS[job.uom]?.kind) ? Math.floor(limit + 1e-6) : Math.round(limit * 1e4) / 1e4;
+  }
+
+  // ชื่อสินค้าที่ cloneFg ตั้งให้รุ่นใหม่ (ฐาน + แพ็กเกจ + ชุดสี): ป้ายของรุ่นเดิมที่ท้ายชื่อต้นแบบ " (แพ็กเกจ K)" ถูกตัดก่อนต่อป้ายใหม่ · ชื่อต้นแบบที่ไม่มีป้ายของตัวเอง (บรรยายแพ็กและสีของมันเองอยู่แล้ว) ไม่ถูกใช้ต่อ ใช้ "ฐานรหัส (ป้าย)" แทน
+  const fgLabel = (pkg, colorSet) => [pkg ? `แพ็กเกจ ${pkg}` : "", colorSet ? `ชุดสี ${colorSet}` : ""].filter(Boolean).join(" ");
+  function suggestFgName(source, pkg = "", colorSet = "") {
+    const name = String(source?.name ?? "").trim();
+    const own = parseFgCode(source?.code);
+    const ownTail = fgLabel(own.pkg, own.colorSet) ? ` (${fgLabel(own.pkg, own.colorSet)})` : "";
+    const label = fgLabel(pkg, colorSet);
+    const stripped = ownTail && name.endsWith(ownTail) ? name.slice(0, -ownTail.length).trim() : "";
+    if (!label) return stripped || name;
+    return stripped ? `${stripped} (${label})` : `${own.base} (${label})`;
   }
 
   // ---------- CSV (เปิดใน Excel) ----------
@@ -1370,7 +1433,7 @@
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
-    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, draftBefore, draftPartDemand, draftRubberJobs, partReserved, partOnOrder, partReturned, partReturnLines, fgPosition, fgReverseBlock, fgReverseReopens, fgOnHand, fgFreeList, fgStockForDraft, fgStockLock, noBomInOrder, countedCodes,
+    normalizeUom, uomLabel, ceilCountQty, rbPerSe, rbCutQty, rbCutDiffers, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, jobSupplyLimit, fgLabel, suggestFgName, draftBefore, draftPartDemand, draftRubberJobs, partReserved, partOnOrder, partReturned, partReturnLines, fgPosition, fgReverseBlock, fgReverseReopens, fgOnHand, fgFreeList, fgStockForDraft, fgStockLock, noBomInOrder, countedCodes,
     DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };

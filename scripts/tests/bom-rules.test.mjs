@@ -1098,3 +1098,74 @@ test("no-BOM parts of an order list the products that use them in the order's it
   assert.deepEqual(rules.noBomInOrder({ items: [], explosion: [] }), []);
   assert.deepEqual(rules.noBomInOrder(null), []);
 });
+
+test("ceilCountQty rounds a suggested purchase up for counted units and packs only; weight, length and unknown units keep the exact figure, and partNeeds uses it only for the suggested order (W10)", () => {
+  assert.equal(rules.ceilCountQty(77.25, "box"), 78);
+  assert.equal(rules.ceilCountQty(0.25, "pcs"), 1);
+  assert.equal(rules.ceilCountQty(2.5, "roll"), 3, "a roll is a pack kind");
+  assert.equal(rules.ceilCountQty(5, "box"), 5, "a whole number stays");
+  assert.equal(rules.ceilCountQty(5.0000001, "box"), 5, "float noise below 1e-6 does not add a unit");
+  assert.equal(rules.ceilCountQty(1.334, "kg"), 1.334, "weight is kept");
+  assert.equal(rules.ceilCountQty(2.75, "m"), 2.75, "length is kept");
+  assert.equal(rules.ceilCountQty(2.75, "no-such-unit"), 2.75, "an unknown unit is kept");
+  assert.equal(rules.ceilCountQty(0, "box"), 0);
+  const job = (id, itemCode, uom, qtyPlanned) => ({ id, orderId: "PI-1", dept: "ST", kind: "PURCHASED", itemCode, name: itemCode, uom, qtyPlanned, qtyRequired: qtyPlanned, qtyDone: 0, status: "queued" });
+  const needs = rules.partNeeds({ jobs: [job("J1", "BOX", "box", 0.75), job("J2", "BAG", "kg", 0.75)], orders: [{ id: "PI-1", status: "released" }], stock: [{ itemCode: "BOX", qty: 0.5, safetyQty: 0 }], purchaseOrders: [] }, "PI-1");
+  assert.deepEqual(needs.rows.map((row) => [row.itemCode, row.needQty, row.shortage, row.orderQty]), [["BAG", 0.75, 0.75, 0.75], ["BOX", 0.75, 0.25, 1]], "the shortage stays 0.25 box; only the suggested order is 1 box (kg stays 0.75)");
+});
+
+test("rbCutQty and rbCutDiffers compare a rod line with its cutting data within 1%; a kg rod or a rod without pieces per rod has nothing to compare (W5)", () => {
+  const rod = { code: "RB-1", kind: "RB", uom: "rod", weightG: 0, rubber: { pcsPerRoll: 10, sePerGr: 1 } };
+  assert.equal(rules.rbCutQty(rod), 0.1);
+  assert.equal(rules.rbCutDiffers(0.1, rod), false);
+  assert.equal(rules.rbCutDiffers(0.1009, rod), false, "within 1%");
+  assert.equal(rules.rbCutDiffers(0.1011, rod), true, "over 1%");
+  assert.equal(rules.rbCutDiffers(1, rod), true, "the rod written as 1 per piece (the pilot-test case)");
+  assert.equal(rules.rbCutQty({ ...rod, rubber: { pcsPerRoll: 10, sePerGr: 2 } }), 0.05, "SE per GR counts");
+  assert.equal(rules.rbCutQty({ ...rod, rubber: {} }), 0);
+  assert.equal(rules.rbCutDiffers(5, { ...rod, rubber: {} }), false, "no cutting data: nothing to compare");
+  assert.equal(rules.rbCutQty({ ...rod, uom: "kg", weightG: 245 }), 0, "a rod counted in kg uses weight, not cutting");
+  assert.equal(rules.rbCutQty({ code: "X", kind: "SE", uom: "pcs", rubber: { pcsPerRoll: 10 } }), 0, "only rubber rods");
+  assert.equal(rules.rbCutQty(null), 0);
+});
+
+test("jobSupplyLimit: what the previous departments supply for a job = (counted stock + what the child's job reported) / quantity per parent, the smallest over the children; null when unknown (W4)", () => {
+  const items = new Map([
+    ["FG", { code: "FG", kind: "FG", name: "สินค้า", uom: "set", ownerDept: "PK" }],
+    ["WIP", { code: "WIP", kind: "SUBPART", name: "ชิ้นประกอบ", uom: "pcs", ownerDept: "PK" }],
+    ["G", { code: "G", kind: "SUBPART", name: "ชิ้นตัด", uom: "pcs", ownerDept: "GR" }],
+    ["BOX", { code: "BOX", kind: "PURCHASED", name: "กล่อง", uom: "box", ownerDept: "ST" }],
+  ]);
+  const boms = new Map([
+    ["FG", { id: "B1", revision: 1, lines: [{ childCode: "WIP", qty: 1 }, { childCode: "BOX", qty: 0.1 }] }],
+    ["WIP", { id: "B2", revision: 1, lines: [{ childCode: "G", qty: 2 }] }],
+  ]);
+  const explosion = rules.explode("FG", 100, { itemOf: (code) => items.get(code) ?? null, approvedBomOf: (code) => boms.get(code) ?? null }).lines;
+  const order = { id: "PI-1", status: "in_progress", explosion, stockCounts: { WIP: 10 } };
+  const job = (id, itemCode, dept, kind, uom, qtyPlanned, qtyDone) => ({ id, orderId: "PI-1", dept, itemCode, kind, uom, qtyPlanned, qtyDone, status: "in_progress" });
+  const jobs = [job("J-FG", "FG", "PK", "FG", "set", 100, 0), job("J-WIP", "WIP", "PK", "SUBPART", "pcs", 90, 70), job("J-G", "G", "GR", "SUBPART", "pcs", 180, 140), job("J-BOX", "BOX", "ST", "PURCHASED", "box", 10, 0)];
+  const data = { orders: [order], jobs };
+  assert.equal(rules.jobSupplyLimit(data, jobs[0]), 80, "70 made + 10 counted in the line; the purchased box is not a limit");
+  assert.equal(rules.jobSupplyLimit(data, jobs[1]), 70, "WIP: 140 pieces at 2 per WIP (no stock counted for G)");
+  assert.equal(rules.jobSupplyLimit({ orders: [{ ...order, explosion: null }], jobs }, jobs[0]), null, "an edited order lost its explosion: unknown");
+  assert.equal(rules.jobSupplyLimit(data, jobs[3]), null, "a purchased-part job has no limit");
+  assert.equal(rules.jobSupplyLimit(data, { ...jobs[0], orderId: "NOPE" }), null);
+  assert.equal(rules.jobSupplyLimit({ orders: [order], jobs: jobs.filter((entry) => entry.itemCode !== "WIP") }, jobs[0]), 10, "stock only: the WIP job is missing but counted stock is known");
+  assert.equal(rules.jobSupplyLimit({ orders: [{ ...order, stockCounts: {} }], jobs: jobs.filter((entry) => entry.itemCode !== "WIP") }, jobs[0]), null, "no job and no count for the child: unknown, never 0");
+  // ชิ้นลูกที่ใช้ร่วมกับชิ้นแม่หลายตัว: ไม่รู้ว่าส่วนไหนเป็นของงานนี้
+  const shared = { ...order, explosion: [...explosion, { ...explosion.find((line) => line.itemCode === "WIP"), parentCode: "OTHER", fgCode: "FG" }] };
+  assert.equal(rules.jobSupplyLimit({ orders: [shared], jobs }, jobs[0]), null);
+  assert.equal(rules.jobSupplyLimit(null, jobs[0]), null);
+});
+
+test("suggestFgName names a new product after its own pack and colour: the source's own trailing label is replaced, otherwise the base code is used instead of the source's description (W9)", () => {
+  const original = { code: "QA-RING-01(P)-A", name: "แหวนยางทดสอบ QA แพ็กถุง ชุดสี A" };
+  assert.equal(rules.suggestFgName(original, "K", ""), "QA-RING-01 (แพ็กเกจ K)", "the original name already describes bag and colour set A, so it is not reused");
+  assert.equal(rules.suggestFgName(original, "K", "B"), "QA-RING-01 (แพ็กเกจ K ชุดสี B)");
+  assert.equal(rules.suggestFgName(original, "", "B"), "QA-RING-01 (ชุดสี B)", "an unspecified part is left out");
+  const cloned = { code: "QA-RING-01(K)", name: "แหวนยางทดสอบ QA (แพ็กเกจ K)" };
+  assert.equal(rules.suggestFgName(cloned, "B", ""), "แหวนยางทดสอบ QA (แพ็กเกจ B)", "the source's own label is stripped before the new one is added");
+  assert.equal(rules.suggestFgName(cloned, "K", "C"), "แหวนยางทดสอบ QA (แพ็กเกจ K ชุดสี C)");
+  assert.equal(rules.suggestFgName({ code: "DEMO-HL-24", name: "ฮูลาฮูป" }, "", ""), "ฮูลาฮูป", "no pack and no colour set: the source name as before");
+  assert.equal(rules.fgLabel("", ""), "");
+});

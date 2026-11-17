@@ -3618,3 +3618,215 @@ test("reversing in step 6: only the warehouse manager sees a reverse button per 
   assert.match(html, /data-rf-confirm="ส่งมอบสินค้าตามจำนวนที่กรอก\? ถ้าบันทึกผิด ย้อนได้โดยผู้จัดการแผนกคลังสินค้า \(WH\) เท่านั้น"/);
   assert.doesNotMatch(html, /แก้ไขหรือยกเลิกไม่ได้/);
 });
+
+// ---------- ชุดที่ 3: กันตัวเลขผิดตอนสร้าง BOM และใบ (W5 U1 W9 W4 U13) ----------
+// ช่องจำลองสำหรับทดสอบ bind ของ dialog (ไม่มี DOM จริง): querySelector คืนช่องตามตัวเลือกที่ให้ไว้ ที่เหลือเป็น null
+const fakeNode = (value = "") => ({ value, innerHTML: "", textContent: "", hidden: false, disabled: false, required: false, checked: false, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; }, querySelector() { return null; }, closest() { return null; } });
+const fakeDialog = (map, lists = {}) => ({ querySelector: (selector) => map[selector] ?? null, querySelectorAll: (selector) => lists[selector] ?? [] });
+const callout = () => { const body = { textContent: "" }; return { hidden: true, body, querySelector: () => body }; };
+
+test("the add-component dialog shows the item's unit in the quantity label, fills a rod's quantity from its cutting data and warns (without blocking) when the entered quantity differs by more than 1% (U1 W5)", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const parent = "SE-HL24-YE03-400-19-30";
+  const rod = "RB-DM01-02-OR01-202-18-70";
+  const c = env.ctx();
+  const built = env.context.MNP_BOM_DIALOGS.lineAdd(c, { parentCode: parent });
+  assert.match(built.html, /<label for="bom-add-qty">ใช้ต่อ 1 ชิ้น <span class="field-required">\(จำเป็น\)<\/span><\/label>/, "before an item is picked the label names the parent's unit only");
+  assert.match(built.html, /id="bom-add-qty"[^>]*data-add-qty|data-add-qty[^>]*id="bom-add-qty"/);
+  assert.match(built.html, /data-add-cut hidden>/, "the warning is hidden until needed");
+  const nodes = { "[data-add-code]": fakeNode(), "[data-add-new]": fakeNode(), "[data-add-name]": fakeNode(), "[data-add-kind]": fakeNode("SUBPART"), "[data-add-uom]": fakeNode("pcs"), "[data-add-qty]": fakeNode(), "[data-add-cut-hint]": fakeNode(), "[data-add-cut]": callout() };
+  const label = { firstChild: { nodeValue: "" } };
+  nodes['label[for="bom-add-qty"]'] = label;
+  built.bind(fakeDialog(nodes));
+  const code = nodes["[data-add-code]"];
+  const qty = nodes["[data-add-qty]"];
+  const cut = nodes["[data-add-cut]"];
+  // ชิ้นที่มีในทะเบียน: หน่วยของมัน (P-BAG-01 เป็นกก.)
+  code.value = "P-BAG-01";
+  code.handlers.change();
+  assert.equal(label.firstChild.nodeValue, "ใช้ต่อ 1 ชิ้น (กก.)");
+  // เส้นยางที่มีข้อมูลการตัด: ปริมาณถูกเติมจากการตัด (1/31) พร้อมบอกที่มา และไม่เตือน
+  code.value = rod;
+  code.handlers.change();
+  assert.equal(label.firstChild.nodeValue, "ใช้ต่อ 1 ชิ้น (เส้น)");
+  assert.equal(qty.value, String(Math.round((1 / 31) * 1e6) / 1e6));
+  assert.equal(nodes["[data-add-cut-hint]"].textContent, "จากการตัด 0.0323");
+  assert.equal(cut.hidden, true);
+  // ผู้ใช้แก้เป็น 1: เตือนด้วยข้อมูลการตัด แต่ไม่ล้างค่าที่กรอกและไม่ห้าม
+  qty.value = "1";
+  qty.handlers.input();
+  assert.equal(cut.hidden, false);
+  assert.match(cut.body.textContent, /ข้อมูลการตัดของ RB-DM01-02-OR01-202-18-70: 1 เส้น ได้ 31 ชิ้น = ใช้ 0.0323 เส้น ต่อ 1 ชิ้น/);
+  assert.equal(nodes["[data-add-cut-hint]"].textContent, "", "the hint is only for a value the system filled");
+  code.value = "P-ZIP-05";
+  code.handlers.change();
+  assert.equal(qty.value, "1", "a value the user typed is kept when another item is picked");
+  assert.equal(cut.hidden, true, "no cutting data for a purchased part: no warning");
+  // ค่าที่ระบบเติมเองถูกล้างเมื่อเปลี่ยนไปเลือกชิ้นที่ไม่มีข้อมูลการตัด
+  qty.value = "";
+  code.value = rod;
+  code.handlers.change();
+  assert.notEqual(qty.value, "");
+  code.value = "P-ZIP-05";
+  code.handlers.change();
+  assert.equal(qty.value, "", "the auto-filled quantity goes away with the rod");
+  // ชิ้นใหม่: หน่วยตามที่เลือกในฟอร์ม (เปลี่ยนแล้วป้ายเปลี่ยนตาม)
+  code.value = "XP-T-NEW-1";
+  code.handlers.change();
+  nodes["[data-add-new]"].hidden = false;
+  nodes["[data-add-uom]"].value = "box";
+  nodes["[data-add-uom]"].handlers.change();
+  assert.equal(label.firstChild.nodeValue, "ใช้ต่อ 1 ชิ้น (กล่อง)");
+  code.value = "";
+  code.handlers.change();
+  assert.equal(label.firstChild.nodeValue, "ใช้ต่อ 1 ชิ้น");
+});
+
+test("the edit-line dialog warns about a rod quantity that disagrees with its cutting data, when it opens and while typing, and has no warning for other items (W5)", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const parent = "SE-TP01-OR01-100-18-65";
+  const rod = "RB-DM01-02-OR01-202-18-70";
+  const built = env.context.MNP_BOM_DIALOGS.lineEdit(env.ctx(), { parentCode: parent, childCode: rod });
+  assert.match(built.html, /name="qty\[\]"[^>]*data-edit-qty/);
+  assert.match(built.html, /data-edit-cut hidden>/);
+  const nodes = { "[data-edit-qty]": fakeNode(String(1 / 31)), "[data-edit-cut]": callout() };
+  built.bind(fakeDialog(nodes));
+  assert.equal(nodes["[data-edit-cut]"].hidden, true, "the stored ratio matches the cutting data");
+  nodes["[data-edit-qty]"].value = "1";
+  nodes["[data-edit-qty]"].handlers.input();
+  assert.equal(nodes["[data-edit-cut]"].hidden, false);
+  assert.match(nodes["[data-edit-cut]"].body.textContent, /1 เส้น ได้ 31 ชิ้น = ใช้ 0.0323 เส้น ต่อ 1 ชิ้น/);
+  nodes["[data-edit-qty]"].value = "0.0324";
+  nodes["[data-edit-qty]"].handlers.input();
+  assert.equal(nodes["[data-edit-cut]"].hidden, true, "within 1%");
+  const bag = env.context.MNP_BOM_DIALOGS.lineEdit(env.ctx(), { parentCode: "DEMO-TP-01(P)-Y", childCode: "P-BAG-01" });
+  assert.doesNotMatch(bag.html, /data-edit-cut/, "a purchased part has no cutting data");
+  // เปิดหน้าต่างของบรรทัดที่ขัดกับข้อมูลการตัดอยู่แล้ว: เตือนทันที
+  const lines = env.store.data().boms.find((bom) => bom.itemCode === parent && bom.status === "approved").lines.map((line) => ({ childCode: line.childCode, qty: line.childCode === rod ? 1 : line.qty }));
+  assert.equal(env.store.run("saveBom", { itemCode: parent, lines }).ok, true);
+  const open = nodes2(env.context.MNP_BOM_DIALOGS.lineEdit(env.ctx(), { parentCode: parent, childCode: rod }), "1");
+  assert.equal(open["[data-edit-cut]"].hidden, false);
+});
+function nodes2(built, value) {
+  const map = { "[data-edit-qty]": fakeNode(value), "[data-edit-cut]": callout() };
+  built.bind(fakeDialog(map));
+  return map;
+}
+
+test("the data check page lists a rod line that disagrees with its cutting data and links to the BOM that holds it (W5)", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const parent = "SE-TP01-OR01-100-18-65";
+  const rod = "RB-DM01-02-OR01-202-18-70";
+  assert.doesNotMatch(await env.render("p=check"), /ปริมาณเส้นยางขัดกับข้อมูลการตัด/, "the demo data agrees with the cutting data");
+  const lines = env.store.data().boms.find((bom) => bom.itemCode === parent && bom.status === "approved").lines.map((line) => ({ childCode: line.childCode, qty: line.childCode === rod ? 1 : line.qty }));
+  assert.equal(env.store.run("saveBom", { itemCode: parent, lines }).ok, true);
+  const html = await env.render("p=check");
+  clean(html);
+  assert.match(html, /ปริมาณเส้นยางขัดกับข้อมูลการตัด/);
+  assert.match(html, /RB-DM01-02-OR01-202-18-70: ใช้ 1 เส้น ต่อ 1 ชิ้น · ข้อมูลการตัดได้ 0.0323/);
+  assert.match(html, new RegExp(`href="[^"]*${parent.replaceAll("-", "\\-")}[^"]*"[^>]*>แก้ BOM`), "the fix link opens the parent's BOM");
+});
+
+test("adding a product to an order: the pack and colour-set choices follow the chosen base, and a code that does not exist yet needs a confirmed, editable name before it is created (W9)", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  // ฐานที่มีสินค้าแพ็ก K ซึ่งยังไม่มีนิยาม: ชุดสี A มาจากสินค้าอีกตัวของฐานนั้น
+  assert.equal(env.store.run("addOrderItem", { orderId: "DEMO-26002", base: "DEMO-HL-24", pkg: "K", colorSet: "", qty: 1 }).ok, true);
+  const c = env.ctx("p=orders");
+  const add = env.context.MNP_BOM_DIALOGS.orderItemAdd(c, { orderId: "DEMO-26002" });
+  assert.match(add.html, /data-new-fg hidden>/, "the confirm panel starts hidden");
+  assert.match(add.html, /name="name"[^>]*data-new-fg-name disabled/, "the name field is not sent until the panel shows");
+  assert.match(add.html, /data-orderadd-submit>เพิ่ม<\/button>/);
+  const base = fakeNode("");
+  const pkg = fakeNode("");
+  const set = fakeNode("");
+  const warnBox = callout();
+  const warnText = fakeNode();
+  const preview = { className: "", querySelector: () => ({ textContent: "" }) };
+  const panel = fakeNode();
+  const name = fakeNode();
+  const confirm = fakeNode();
+  const submit = fakeNode();
+  add.bind(fakeDialog({ "[data-bom-preview]": preview, "[data-new-fg]": panel, "[data-new-fg-warn]": warnBox, "[data-new-fg-warn-text]": warnText, "[data-new-fg-name]": name, "[data-new-fg-confirm]": confirm, "[data-orderadd-submit]": submit }, { "[data-bom-part]": [base, pkg, set] }), c);
+  assert.equal(panel.hidden, true);
+  const values = (node) => [...node.innerHTML.matchAll(/<option value="([^"]*)"/g)].map((match) => match[1]);
+  // เลือกฐาน DEMO-TP-01: แพ็กเกจ P B และชุดสี Y A ที่นิยามไว้ (ไม่ใช่ของฐานอื่น)
+  base.value = "DEMO-TP-01";
+  base.handlers.change();
+  assert.deepEqual([values(pkg), values(set)], [["", "B", "P"], ["", "A", "Y"]], "the blank option stays; K and the rest are gone");
+  base.value = "DEMO-HL-24";
+  base.handlers.change();
+  assert.deepEqual([values(pkg), values(set)], [["", "B", "K"], ["", "A"]], "the base's existing products supply their pack and colour set");
+  // รหัสที่ยังไม่มี: DEMO-HL-24(K)-A มาจากต้นแบบ (K) ที่ชุดสี A ไม่มีนิยาม → เตือน + ช่องชื่อพร้อมชื่อที่แนะนำ + ต้องติ๊กยืนยัน
+  pkg.value = "K";
+  set.value = "A";
+  set.handlers.change();
+  assert.equal(panel.hidden, false);
+  assert.equal(name.disabled, false);
+  assert.equal(name.required, true);
+  assert.equal(name.value, "DEMO-HL-24 (แพ็กเกจ K ชุดสี A)", "the source's own description is not copied");
+  assert.equal(warnBox.hidden, false);
+  assert.match(warnText.innerHTML, /ฐาน DEMO-HL-24 ยังไม่มีนิยามชุดสี A สีจึงเป็นของ DEMO-HL-24\(K\)/);
+  assert.equal(submit.disabled, true, "the add button waits for the confirmation");
+  confirm.checked = true;
+  confirm.handlers.change();
+  assert.equal(submit.disabled, false);
+  // ชื่อที่ผู้ใช้พิมพ์ไม่ถูกทับเมื่อเปลี่ยนเรื่องอื่น แต่เปลี่ยนรหัสแล้วแนะนำใหม่และต้องยืนยันใหม่
+  name.value = "ชื่อที่พิมพ์เอง";
+  confirm.handlers.change();
+  assert.equal(name.value, "ชื่อที่พิมพ์เอง");
+  pkg.value = "B";
+  pkg.handlers.change();
+  assert.equal(panel.hidden, true, "DEMO-HL-24(B)-A exists: nothing to confirm");
+  assert.equal(name.disabled, true, "so no name is sent");
+  assert.equal(submit.disabled, false);
+  pkg.value = "K";
+  set.value = "";
+  set.handlers.change();
+  assert.equal(panel.hidden, true, "DEMO-HL-24(K) exists too (made above)");
+});
+
+test("the job report dialog warns when the total would pass what the previous departments supplied, never blocks, and stays silent when the supply is unknown (W4)", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const data = env.store.data();
+  const job = data.jobs.find((entry) => entry.orderId === "DEMO-26001" && entry.itemCode === "SE-TP01-BK01-140-3-20");
+  const limit = env.context.MNP_BOM_RULES.jobSupplyLimit(data, job);
+  assert.equal(limit, 42, "the seed: the rod jobs behind this item have reported enough for 42, the item itself 120");
+  const built = env.context.MNP_BOM_DIALOGS.jobReport(env.ctx("p=jobs"), { jobId: job.id });
+  assert.match(built.html, /name="qtyDone"[^>]*data-job-qty/);
+  assert.match(built.html, /data-job-supply hidden>/);
+  const qty = fakeNode("0");
+  const box = callout();
+  built.bind(fakeDialog({ "[data-job-qty]": qty, "[data-job-supply]": box }));
+  assert.equal(box.hidden, true, "nothing entered: no warning even though the job is already past the supply");
+  qty.value = "5";
+  qty.handlers.input();
+  assert.equal(box.hidden, false);
+  assert.equal(box.body.textContent, `แผนกก่อนหน้าส่งมาพอสำหรับ 42 ชิ้น แต่ยอดรวมที่รายงานจะเป็น ${job.qtyDone + 5}`);
+  // ไม่รู้ยอดที่ส่งมา (ชิ้นแม่ที่ไม่มีผลระเบิด) = ไม่มีกล่องเตือน
+  const plain = env.context.MNP_BOM_DIALOGS.jobReport(env.ctx("p=jobs"), { jobId: data.jobs.find((entry) => entry.orderId === "DEMO-26001" && entry.itemCode === "XP-00001").id });
+  assert.doesNotMatch(plain.html, /data-job-supply/);
+});
+
+test("inserting a WIP: changing the kind sets the department like the item form; the starting department stays the parent's (U13)", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const parent = "DEMO-TP-01(P)-Y";
+  const built = env.context.MNP_BOM_DIALOGS.wipInsert(env.ctx(), { parentCode: parent, childCode: "SE-TP01-OR01-100-18-65" });
+  assert.match(built.html, /name="wipKind"[^>]*data-wip-kind/);
+  assert.match(built.html, /name="wipDept"[^>]*data-wip-dept/);
+  const kind = fakeNode("SUBPART");
+  const dept = fakeNode("PK");
+  built.bind(fakeDialog({ "[data-wip-kind]": kind, "[data-wip-dept]": dept }));
+  assert.equal(dept.value, "PK", "binding does not change the starting department");
+  kind.value = "BG";
+  kind.handlers.change();
+  assert.equal(dept.value, env.context.MNP_BOM_RULES.ownerDeptOf("BG"));
+  kind.value = "SE";
+  kind.handlers.change();
+  assert.equal(dept.value, "GR");
+});
