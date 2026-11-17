@@ -3083,6 +3083,7 @@ table.bom-tree td.right { white-space: nowrap; }
 .bom-ok-text { color: var(--success-ink); font-weight: 600; }
 .bom-step-line { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--soft-line); }
 .bom-step-next { margin-top: 12px; justify-content: flex-end; }
+.bom-nobom-links { margin-top: 8px; }
 .bom-more { margin-top: 12px; }
 .bom-more > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--primary-ink); font-size: var(--text-ui); font-weight: 600; }
 .bom-more[open] > summary { margin-bottom: 8px; }
