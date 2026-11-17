@@ -612,6 +612,9 @@ test("categories group the kinds (สินค้า / WIP / วัตถุด�
   assert.match(rules.childKindError("RB", "PURCHASED"), /เฉพาะสูตรยาง/);
   assert.match(rules.childKindError("CP", "PURCHASED"), /ไม่มีส่วนประกอบ/);
   assert.match(rules.childKindError("PURCHASED", "PURCHASED"), /ไม่มีส่วนประกอบ/);
+  for (const parent of ["FG", "SE", "RB", "PT", "BG", "SUBPART"]) assert.match(rules.childKindError(parent, "FG"), /สินค้าสำเร็จรูปใช้เป็นส่วนประกอบไม่ได้/, `a finished product never sits under ${parent}`);
+  assert.match(rules.childKindError("PURCHASED", "FG"), /ไม่มีส่วนประกอบ/, "the leaf rule is checked first");
+  assert.equal(rules.childKindError("FG", "SE"), "");
   const items = {
     SE1: { code: "SE1", kind: "SE", name: "ชิ้นยาง", uom: "pcs", ownerDept: "GR" },
     RB1: { code: "RB1", kind: "RB", name: "เส้นยาง", uom: "rod", ownerDept: "RB" },

@@ -286,8 +286,14 @@ select throws_ok($$ select public.app_bom_save_master('{"boms":{"upsert":[{"id":
 select throws_ok($$ select public.app_bom_save_master('{"boms":{"upsert":[{"id":"BOM-X7","itemCode":"NOPE-2","revision":1,"status":"approved","lines":[{"childCode":"P-BOX-1","qty":1}]}]}}'::jsonb, 1, 'saveBom') $$,
   'BOM_ITEM_NOT_FOUND', 'a BOM for a missing item is rejected');
 select throws_ok($$ select public.app_bom_save_master('{"boms":{"upsert":[{"id":"BOM-X8","itemCode":"SE-T1-OR01-100-18-65","revision":2,"status":"approved","lines":[{"childCode":"FG-T1","qty":1}]}]}}'::jsonb, 1, 'saveBom') $$,
-  'BOM_CYCLE', 'a cycle through existing BOMs is rejected');
-select throws_ok($$ select public.app_bom_save_master('{"boms":{"upsert":[{"id":"BOM-X9","itemCode":"FG-T1","revision":2,"status":"approved","lines":[{"childCode":"FG-T1","qty":1}]}]}}'::jsonb, 1, 'saveBom') $$,
+  'BOM_INVALID_CHILD_KIND', 'a finished product is refused as a component, also where it would have closed a cycle');
+select throws_ok($$ select public.app_bom_save_master('{"items":{"upsert":[{"code":"FG-T2","kind":"FG","name":"สินค้าอีกตัว","ownerDept":"PK","uom":"set"}]},"boms":{"upsert":[{"id":"BOM-X10","itemCode":"FG-T1","revision":2,"status":"approved","lines":[{"childCode":"FG-T2","qty":1}]}]}}'::jsonb, 1, 'saveBom') $$,
+  'BOM_INVALID_CHILD_KIND', 'a finished product cannot be a component of another finished product');
+select throws_ok($$ select public.app_bom_save_master('{"items":{"upsert":[{"code":"P-BOX-1","kind":"FG","name":"กล่อง","ownerDept":"PK","uom":"box"}]}}'::jsonb, 1, 'saveItem') $$,
+  'BOM_INVALID_CHILD_KIND', 'an item that is a component of an approved BOM cannot change kind to a finished product');
+select throws_ok($$ select public.app_bom_save_master('{"items":{"upsert":[{"code":"SE-C1","kind":"SE","name":"ชิ้น C1","ownerDept":"GR","uom":"pcs"},{"code":"SE-C2","kind":"SE","name":"ชิ้น C2","ownerDept":"GR","uom":"pcs"}]},"boms":{"upsert":[{"id":"BOM-C1","itemCode":"SE-C1","revision":1,"status":"approved","lines":[{"childCode":"SE-C2","qty":1}]},{"id":"BOM-C2","itemCode":"SE-C2","revision":1,"status":"approved","lines":[{"childCode":"SE-C1","qty":1}]}]}}'::jsonb, 1, 'saveBom') $$,
+  'BOM_CYCLE', 'a cycle between two BOMs is rejected');
+select throws_ok($$ select public.app_bom_save_master('{"boms":{"upsert":[{"id":"BOM-X9","itemCode":"SE-T1-OR01-100-18-65","revision":2,"status":"approved","lines":[{"childCode":"SE-T1-OR01-100-18-65","qty":1}]}]}}'::jsonb, 1, 'saveBom') $$,
   'BOM_CYCLE', 'an item cannot be its own child');
 select throws_ok($$ select public.app_bom_save_master('{"boms":{"upsert":[{"id":"BOM-Y1","itemCode":"FG-T1","revision":5,"status":"approved","lines":[{"childCode":"P-BOX-1","qty":1}]}]}}'::jsonb, 1, 'saveBom') $$,
   'BOM_REVISION_ORDER', 'a new revision must follow the highest one');

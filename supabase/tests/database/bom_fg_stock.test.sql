@@ -381,8 +381,12 @@ select is(fgs_t.release('251123-25006', '{"stockCounts":{"FG-A":2}}'::jsonb, jso
   -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'released', 'an order taking 2 of 5 from stock is released with a job for 3');
 select is(fgs_t.stock('FG-A'), 3::numeric, 'the stock drops to 3');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pk_staff')::uuid);
-select ok(fgs_t.report('JOB-6A', 2, 'done') is not null, 'PK finishes with 2 of the 3 planned');
+select ok(fgs_t.report('JOB-6A', 2, 'in_progress') is not null, 'PK reports 2 of the 3 planned');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+-- ปิดงานก่อนถึงยอดแผนต้องมีเหตุผลเสมอ (20261126010000): ฝ่ายวางแผนปิดงานด้วยรายการรายงานยอด 0 พร้อมเหตุผล
+select ok(fgs_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  fgs_t.job('JOB-6A') || jsonb_build_object('status', 'done', 'reports', (fgs_t.job('JOB-6A') -> 'reports') || '[{"at":1,"by":"x","good":0,"reject":0,"note":"ผลิตได้ไม่ครบ"}]'::jsonb)))), 'setJobStatus') is not null,
+  'the planner closes the PK job at 2 of the 3 planned with a reason');
 select is(fgs_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(fgs_t.job('JOB-6A') || '{"qtyDone":1}'::jsonb))), 'reportJob')
   -> 'changes' -> 'jobs' -> 'upsert' -> 0 ->> 'qtyDone', '1', 'nothing received yet: the guard compares with own (0), not with have (2)');
 select ok(fgs_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(fgs_t.job('JOB-6A') || '{"qtyDone":2}'::jsonb))), 'reportJob') is not null,

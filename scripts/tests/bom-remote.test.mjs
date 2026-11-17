@@ -1566,7 +1566,9 @@ test("the mock database enforces the contract: test mode, writer permission, per
   assert.equal((await save({ boms: { upsert: [bom("B1", "P-1", "approved", "FG-1")] } }, 3)).error.code, "BOM_INVALID_BOM_LINE", "a purchased part has no components");
   assert.equal((await save({ boms: { upsert: [bom("B1", "FG-1", "approved", "P-1", 0)] } }, 3)).error.code, "BOM_INVALID_BOM_LINE");
   assert.equal((await save({ boms: { upsert: [bom("B1", "FG-1", "draft", "P-1")] } }, 3)).error.code, "BOM_INVALID_BOM_STATUS");
-  assert.equal((await save({ boms: { upsert: [bom("B1", "FG-1", "approved", "FG-1")] } }, 3)).error.code, "BOM_CYCLE", "a BOM that contains itself is refused, as the database does");
+  assert.equal((await save({ boms: { upsert: [bom("B1", "FG-1", "approved", "FG-1")] } }, 3)).error.code, "BOM_INVALID_BOM_LINE", "a finished product is never a component, not even of itself (20261126010000)");
+  assert.equal((await save({ items: { upsert: [item("FG-9", "FG")] }, boms: { upsert: [bom("B1", "FG-1", "approved", "FG-9")] } }, 3)).error.code, "BOM_INVALID_BOM_LINE", "nor of another finished product");
+  assert.equal((await save({ items: { upsert: [item("SE-1", "SE")] }, boms: { upsert: [bom("B1", "SE-1", "approved", "SE-1")] } }, 3)).error.code, "BOM_CYCLE", "a BOM that contains itself is refused, as the database does");
   assert.equal((await client.rpc("app_bom_master")).data.version, 3, "a refused save changes nothing");
 
   assert.equal((await save({ boms: { upsert: [bom("B1", "FG-1", "approved", "P-1")] } }, 3)).error, null);
@@ -2392,12 +2394,15 @@ test("the mock database refuses what production refuses: new orders start as dra
   const reported = await cur("jobs", "J-1");
   assert.equal(await code({ jobs: { upsert: [{ ...reported, qtyDone: 1, reports: reported.reports }] } }), "BOM_INVALID_JOB", "a quantity cannot go down");
   assert.equal(await code({ jobs: { upsert: [{ ...reported, qtyDone: 3, reports: reported.reports }] } }), "BOM_INVALID_JOB", "a quantity cannot grow without a report entry");
-  assert.equal(await code({ jobs: { upsert: [{ ...reported, status: "done", qtyDone: 4, reports: [...reported.reports, entry(2)] }] } }), null);
+  assert.equal(await code({ jobs: { upsert: [{ ...reported, status: "done" }] } }), "BOM_INVALID_JOB", "department staff cannot set their own job done with no added output and no reason");
+  assert.equal(await code({ jobs: { upsert: [{ ...reported, status: "done", qtyDone: 4, reports: [...reported.reports, entry(2)] }] } }), "BOM_INVALID_JOB", "done below the planned 10 needs the reason entry of the planning group (20261126010000)");
+  assert.equal(await code({ jobs: { upsert: [{ ...reported, status: "done", qtyDone: 10, reports: [...reported.reports, entry(8)] }] } }), null, "done at the planned quantity");
   assert.equal(await code({ jobs: { upsert: [{ ...(await cur("jobs", "J-1")), status: "in_progress" }] } }), "BOM_INVALID_TRANSITION", "department staff cannot change a finished job");
 
   // กลุ่มวางแผน: ลบงานที่เริ่มแล้วตรงๆ ไม่ได้ · ปิดใบต้องให้งาน PK เสร็จ · ยกเลิกใบที่มียอดดีไม่ได้
   await as("persona-pp");
   assert.equal(await code({ jobs: { delete: [{ id: "J-1" }] } }), "BOM_INVALID_TRANSITION", "a started job cannot be deleted directly");
+  assert.equal(await code({ jobs: { upsert: [{ ...(await cur("jobs", "J-PK")), status: "done" }] } }), "BOM_INVALID_JOB", "a planner cannot set a queued job done without the reason entry either");
   assert.equal(await code({ jobs: { delete: [{ id: "J-PK" }] } }), null, "a queued one can");
   assert.equal(await code({ jobs: { upsert: [mockJob("J-PK", "PI-N", "PK")] } }), "BOM_INVALID_TRANSITION", "a deleted job is not created again outside a release");
   assert.equal(await code({ orders: { upsert: [await withOrder("PI-N", { status: "cancelled" })] } }), "BOM_INVALID_TRANSITION", "an order with reported output cannot be cancelled");
@@ -3959,8 +3964,10 @@ test("the mock database closes an order short: every PK job done, everything PK 
   assert.equal(await code(close("PK ทำได้ไม่ครบ")), "BOM_INVALID_TRANSITION", "J-F1 and the PK sub-part are not done");
   await as("persona-pp");
   assert.equal((await report("J-FS", 3)).error, null);
-  const stuck = { ...(await s.job("J-F1")), status: "done" };
-  assert.equal((await s.save({ jobs: { upsert: [stuck] } }, "reportJob")).error, null, "the PK job is marked done by the planner with 8 of 10 made");
+  const f1 = await s.job("J-F1");
+  assert.equal((await s.save({ jobs: { upsert: [{ ...f1, status: "done" }] } }, "reportJob")).error?.code, "BOM_INVALID_JOB", "done with 8 of 10 made and no reason is refused (20261126010000)");
+  const stuck = { ...f1, status: "done", reports: [...f1.reports, { at: 1, by: "x", good: 0, reject: 0, note: "PK ทำได้ไม่ครบ" }] };
+  assert.equal((await s.save({ jobs: { upsert: [stuck] } }, "setJobStatus")).error, null, "the PK job is closed by the planner with 8 of 10 made and a reason");
   await as("persona-wh");
   assert.equal(await code(close("PK ทำได้ไม่ครบ")), "BOM_INVALID_TRANSITION", "made but not received yet");
   assert.equal((await receive([{ fgCode: "FG-1", qty: 8 }])).error, null);
@@ -4060,7 +4067,8 @@ test("the mock database: an open purchased-part line never holds the order, and 
   // PI-F: PK ทำ FG-1 ได้ 8 (ปิดงาน) FG-2 ครบ ชิ้นย่อยยังเปิด → ปิดรับไม่ครบไม่ได้จนฝ่ายวางแผนปิดงานชิ้นย่อย
   await as("persona-pp");
   assert.equal((await report("J-F1", 8)).error, null);
-  assert.equal((await save({ jobs: { upsert: [{ ...(await job("J-F1")), status: "done" }] } }, "reportJob")).error, null);
+  const f1 = await job("J-F1");
+  assert.equal((await save({ jobs: { upsert: [{ ...f1, status: "done", reports: [...f1.reports, { at: 1, by: "x", good: 0, reject: 0, note: "PK ทำได้ 8" }] }] } }, "setJobStatus")).error, null);
   assert.equal((await report("J-F2", 5)).error, null);
   await as("persona-wh");
   assert.equal((await receive([{ fgCode: "FG-1", qty: 8 }, { fgCode: "FG-2", qty: 5 }])).error, null);
@@ -4140,7 +4148,9 @@ test("the mock database keeps the PK output of a product at or above what the wa
   assert.equal(await code(save({ jobs: { upsert: [{ ...row, qtyDone: 0 }] } }, "reportJob")), "BOM_INVALID_JOB", "not even by an admin");
   assert.equal(await s.version(), versionBefore, "the refused saves wrote nothing");
   await as("persona-pp");
-  assert.equal((await save({ jobs: { upsert: [{ ...row, qtyDone: 4, status: "done" }] } }, "reportJob")).error, null, "down to what was received is allowed");
+  assert.equal((await save({ jobs: { upsert: [{ ...row, qtyDone: 4 }] } }, "reportJob")).error, null, "down to what was received is allowed");
+  const lowered = await job("J-F1");
+  assert.equal((await save({ jobs: { upsert: [{ ...lowered, status: "done", reports: [...lowered.reports, { at: 1, by: "x", good: 0, reject: 0, note: "PK ทำได้ 4" }] }] } }, "setJobStatus")).error, null, "and the planner closes it there with a reason");
   assert.equal((await job("J-F1")).qtyDone, 4);
   // ใบยังปิดได้: PK ทำ FG-2 ครบ ชิ้นย่อยเสร็จ WH รับ FG-2 แล้วปิดรับไม่ครบ (FG-1 รับ 4 = ยอด PK 4)
   assert.equal((await report("J-F2", 5)).error, null);

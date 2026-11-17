@@ -513,9 +513,11 @@
     } else {
       // args.draftOrders = WO ชั่วคราวของใบ PI ที่ยังเป็นร่าง (จาก BOM ขั้นตรวจของ): คิดเหมือน WO ที่จะถูกเปิดตอนปล่อยผลิต จึงสั่งเคมีที่ขาดได้ก่อนปล่อย
       const draftOrders = Array.isArray(args.draftOrders) ? args.draftOrders : [];
+      // args.reservedDraftOrders = WO ชั่วคราวของใบร่างอื่นที่คำนวณของก่อนใบนี้: นับเป็น WO อื่นที่ยังเปิด (จองเคมีไปก่อน) ไม่ถูกถาม · ไม่ส่ง = เหมือนเดิม
+      const reservedDraftOrders = draftOrders.length && Array.isArray(args.reservedDraftOrders) ? args.reservedDraftOrders : [];
       // args.allOpen = ใบสั่งผลิตที่ยังเปิดอยู่ทุกใบ (ปุ่มในแท็บใบสั่งซื้อของหน้าคลัง): ความต้องการรวมของทุกใบเทียบสต็อก
       const woIds = args.allOpen ? data.orders.filter((order) => rules.OPEN_ORDER.includes(order.status)).map((order) => order.id) : args.woIds ?? [];
-      const result = rules.chemicalNeeds(draftOrders.length ? { ...data, orders: [...data.orders, ...draftOrders] } : data, [...woIds, ...draftOrders.map((order) => order.id)], now, { remote: ctx.store.isRemote() });
+      const result = rules.chemicalNeeds(draftOrders.length ? { ...data, orders: [...data.orders, ...reservedDraftOrders, ...draftOrders] } : data, [...woIds, ...draftOrders.map((order) => order.id)], now, { remote: ctx.store.isRemote() });
       rows = result.rows;
       skipped += result.skipped.length;
     }

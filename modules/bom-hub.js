@@ -733,16 +733,11 @@
   // เคมีของใบร่าง: งาน RB ที่ใบจะได้ตอนปล่อยผลิต (rules.draftRubberJobs) แปลงเป็น WO ชั่วคราวด้วยกฎเดียวกับที่ฐานข้อมูลเปิด WO ให้ตอนปล่อย (private.bom_open_rf_orders:
   // สูตร = สูตร RubberFlow ที่อนุมัติแล้วของสูตรยางบนเส้นยาง · กิโลกรัม = helpers.rbJobKg เผื่อ 5% เมื่อไม่มีบรรทัดสูตรยาง) แล้วคิดด้วย rules.chemicalNeeds ของ RubberFlow ตัวเดียวกับหน้าต่างสั่งซื้อหลังปล่อย
   // ตัวเลขจึงตรงกับการตรวจหลังปล่อย ตราบใดที่ BOM ยอดนับ สูตร และสต็อกไม่เปลี่ยนระหว่างนั้น · เส้นยางที่ยังเปิด WO ไม่ได้ (ไม่ผูกสูตร/สูตรยังไม่อนุมัติ) ไม่ถูกนับ และบอกเหตุผลไว้ใน skipped เหมือนหลังปล่อย
-  function draftChemicals(ctx, order) {
-    const jobs = ctx.rules.draftRubberJobs(order);
-    const rf = ctx.rubberflow();
-    const none = { jobs: jobs.length, ready: true, rows: [], skipped: [], orders: [] };
-    if (!jobs.length || !rf?.draftChemicalNeeds || !pages.tools?.rfRecipes) return none;
-    const recipes = pages.tools.rfRecipes(ctx); // RubberFlow ยังไม่ได้โหลด: สั่งโหลดให้ แล้วหน้าวาดใหม่เองเมื่อเสร็จ
-    if (!pages.tools.rfReady(ctx)) return { ...none, ready: false };
+  // WO ชั่วคราวของใบร่างหนึ่งใบ (ใช้กับใบที่ถามและใบร่างอื่น กฎเดียวกัน) · orders = WO ที่เปิดได้ · skipped = เส้นยางที่เปิดไม่ได้พร้อมเหตุผล
+  function draftTempOrders(ctx, order, recipes) {
     const orders = [];
     const skipped = [];
-    for (const job of jobs) {
+    for (const job of ctx.rules.draftRubberJobs(order)) {
       const item = itemOf(ctx, job.itemCode);
       const code = item?.rubber?.compound;
       const compound = code ? ctx.data.compounds.find((entry) => entry.code === code) : null;
@@ -752,10 +747,37 @@
       if (reason) skipped.push({ itemCode: job.itemCode, reason });
       else orders.push({ id: `DRAFT:${order.id}:${job.itemCode}`, status: "planned", recipeId: recipe.id, recipeRevision: recipe.revision, targetQty: job.qtyPlanned, targetKg: kg, uom: job.uom });
     }
-    const needs = orders.length ? rf.draftChemicalNeeds(orders) : null;
-    const rows = (needs?.rows ?? []).map((row) => ({ itemCode: row.materialCode, name: row.name, uom: "kg", required: row.needKg, onHand: row.onHandKg, held: row.reservedKg, onOrder: row.onOrderKg, short: row.shortageKg, other: 0, otherOrders: [] }))
+    return { orders, skipped };
+  }
+  // เหมือนของซื้อ (draftPartRows): ใบร่างอื่นที่คำนวณของก่อนใบนี้ (rules.draftBefore) จองเคมีไปก่อน = เข้ายอดจอง (reservedOrders = WO ชั่วคราวของใบเหล่านั้น ส่งให้ RubberFlow นับเป็น WO อื่นที่ยังเปิด)
+  // ใบที่คำนวณทีหลังเป็นข้อมูลให้ดู (other / otherOrders) ไม่เข้าสูตรขาด/พอ · ใบที่ปล่อยผลิตแล้วมี WO จริงใน RubberFlow อยู่แล้ว ใบร่างไม่ตัดหน้า
+  function draftChemicals(ctx, order) {
+    const jobs = ctx.rules.draftRubberJobs(order);
+    const rf = ctx.rubberflow();
+    const none = { jobs: jobs.length, ready: true, rows: [], skipped: [], orders: [], reservedOrders: [] };
+    if (!jobs.length || !rf?.draftChemicalNeeds || !pages.tools?.rfRecipes) return none;
+    const recipes = pages.tools.rfRecipes(ctx); // RubberFlow ยังไม่ได้โหลด: สั่งโหลดให้ แล้วหน้าวาดใหม่เองเมื่อเสร็จ
+    if (!pages.tools.rfReady(ctx)) return { ...none, ready: false };
+    const { orders, skipped } = draftTempOrders(ctx, order, recipes);
+    if (!orders.length) return { jobs: jobs.length, ready: true, rows: [], skipped, orders, reservedOrders: [] };
+    const reservedOrders = [];
+    const later = new Map(); // รหัสเคมี → { kg, orders: [เลขใบ] } ของใบร่างที่คำนวณทีหลัง
+    for (const other of ctx.data.orders) {
+      if (other.status !== "draft" || other.id === order.id || !other.explosion?.length) continue;
+      const theirs = draftTempOrders(ctx, other, recipes).orders;
+      if (!theirs.length) continue;
+      if (ctx.rules.draftBefore(other, order)) { reservedOrders.push(...theirs); continue; }
+      for (const row of rf.draftChemicalNeeds(theirs)?.rows ?? []) {
+        const entry = later.get(row.materialCode) ?? { kg: 0, orders: [] };
+        entry.kg += row.needKg;
+        entry.orders.push(other.id);
+        later.set(row.materialCode, entry);
+      }
+    }
+    const needs = orders.length ? rf.draftChemicalNeeds(orders, reservedOrders) : null;
+    const rows = (needs?.rows ?? []).map((row) => ({ itemCode: row.materialCode, name: row.name, uom: "kg", required: row.needKg, onHand: row.onHandKg, held: row.reservedKg, onOrder: row.onOrderKg, short: row.shortageKg, other: Math.round((later.get(row.materialCode)?.kg ?? 0) * 1e3) / 1e3, otherOrders: later.get(row.materialCode)?.orders ?? [] }))
       .sort((a, b) => (b.short > 0) - (a.short > 0) || a.itemCode.localeCompare(b.itemCode));
-    return { jobs: jobs.length, ready: true, rows, skipped, orders };
+    return { jobs: jobs.length, ready: true, rows, skipped, orders, reservedOrders };
   }
   // ตาราง ต้องใช้ เทียบ ของที่มี ของขั้น 2 (ใช้ทั้งของซื้อและเคมี): คอลัมน์ที่เป็นศูนย์ทุกแถวไม่แสดง · รายการที่พอพับไว้เมื่อมีรายการขาด
   function needTable(ctx, rows, firstHead, heldTitle, noun = firstHead) {
@@ -915,6 +937,7 @@
     }).join("")}</ol>`;
     let panel = "";
     let draftOrders = [];
+    let reservedDraftOrders = [];
     if (current === 0) panel = ui.callout("warn", `ใบนี้ถูกยกเลิก${order.cancelReason ? `: ${esc(order.cancelReason)}` : ""}`);
     else if (view === 1) panel = ui.card(`<p>เพิ่มสินค้าที่ลูกค้าสั่งลงในใบ แล้วระบบจะพาไปขั้นตรวจของ</p><div class="rf-row">${buttons.add ?? ""}</div>`, { title: "ขั้น 1 · รายการสินค้า" });
     else if (view === 2) {
@@ -925,10 +948,11 @@
         const chem = draftChemicals(ctx, order);
         const chemShort = chem.rows.filter((row) => row.short > 0);
         draftOrders = chem.orders;
+        reservedDraftOrders = chem.reservedOrders;
         const table = parts.length ? needTable(ctx, parts, "ของซื้อ", "ใบสั่งผลิตอื่นที่ปล่อยผลิตแล้วและยังไม่ได้เบิกจ่าย และใบร่างที่คำนวณของก่อนใบนี้") : ui.empty("ใบนี้ไม่มีของซื้อ");
         // เคมีของเส้นยาง: มีเมื่อใบนี้ต้องรีดเส้นยาง · เส้นยางที่ยังไม่ผูกสูตร RubberFlow ประเมินไม่ได้ (และจะไม่ได้ WO ตอนปล่อยผลิต) บอกเหตุผลให้ไปแก้ก่อน
         const skippedNote = chem.skipped.length ? ui.callout("warn", `เส้นยาง ${chem.skipped.length} จาก ${chem.jobs} รายการยังประเมินเคมีไม่ได้${ctx.store?.isRemote?.() ? " และจะยังไม่ได้ WO ตอนปล่อยผลิต" : ""}: ${chem.skipped.slice(0, 5).map((entry) => `<span class="rf-mono">${esc(entry.itemCode)}</span> ${esc(entry.reason)}`).join(" · ")}${chem.skipped.length > 5 ? ` และอีก ${chem.skipped.length - 5}` : ""}${ctx.canSee("compounds") ? ` · ${ui.link("ไปผูกสูตรยาง", ctx.url("compounds"))}` : ""}`) : "";
-        const chemHtml = !chem.jobs ? "" : !chem.ready ? '<p class="small muted">กำลังโหลดข้อมูลเคมีจาก RubberFlow…</p>' : `${chem.rows.length ? needTable(ctx, chem.rows, "เคมีของเส้นยาง", "ใบเบิกที่ค้างจ่าย และ WO อื่นที่ยังเปิดอยู่", "เคมี") : ""}${skippedNote}`;
+        const chemHtml = !chem.jobs ? "" : !chem.ready ? '<p class="small muted">กำลังโหลดข้อมูลเคมีจาก RubberFlow…</p>' : `${chem.rows.length ? needTable(ctx, chem.rows, "เคมีของเส้นยาง", "ใบเบิกที่ค้างจ่าย WO อื่นที่ยังเปิดอยู่ และใบร่างที่คำนวณของก่อนใบนี้", "เคมี") : ""}${skippedNote}`;
         const counted = rules.countedCodes(order).length;
         const wip = `<div class="bom-step-line"><div><strong>ชิ้นงานค้างในไลน์ที่ใช้แทนได้</strong><div class="small muted">${counted ? esc(`กรอกยอดแล้ว ${counted} รายการ ระบบหักออกจากยอดที่ต้องผลิต`) : "ยังไม่ได้กรอก ถ้าไม่กรอก ระบบสั่งผลิตเต็มจำนวน"}</div></div>${ctx.helpers.canCount(ctx.user) ? ui.link(counted ? "แก้ยอดที่กรอก" : "กรอกยอดที่มีอยู่", ctx.url("count", { order: order.id }), "btn rf-btn secondary") : ""}</div>`;
         // สั่งซื้อส่วนที่ขาด (ของซื้อและเคมี) ได้ตั้งแต่ใบยังเป็นร่าง ด้วยหน้าต่างสั่งซื้อเดียวกับหลังปล่อยผลิต (ผู้ที่สั่งซื้อได้ = ฝ่ายวางแผนหรือแผนก RB) · ใช้ได้เมื่อข้อมูลอยู่ในฐานข้อมูล (ใบสั่งซื้อเป็นของ RubberFlow)
@@ -995,7 +1019,7 @@
     // ปุ่มสั่งซื้อของใบร่าง: หน้าต่างสั่งซื้อของ RubberFlow คิดของซื้อจากใบร่าง (sourcePi) และเคมีจาก WO ชั่วคราวชุดเดียวกับที่ตารางของขั้นนี้แสดง
     const bind = (rootNode) => rootNode.querySelectorAll("[data-bom-draft-buy]").forEach((button) => button.addEventListener("click", async () => {
       button.disabled = true;
-      try { await ctx.rubberflow()?.checkMaterials?.({ woIds: [], sourcePi: order.id, draftOrders, auto: false }); } finally { button.disabled = false; }
+      try { await ctx.rubberflow()?.checkMaterials?.({ woIds: [], sourcePi: order.id, draftOrders, reservedDraftOrders, auto: false }); } finally { button.disabled = false; }
     }));
     return { html: `${bar}${panel}`, used, bind };
   };
