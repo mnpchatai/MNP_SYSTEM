@@ -244,8 +244,8 @@
   // คืนของซื้อ (undoOrderParts / returnOrderParts): ผลทั้งหมด (งานกลับไปรอเบิกจ่าย สต็อก ประวัติ) เซิร์ฟเวอร์คำนวณเอง จึงส่งเฉพาะแถวคำขอ { orderId, mode, reason, lines? } ในส่วน partReturns (action คืนแถวนี้ใน result.request)
   // สำเนาที่ action คำนวณในเครื่อง (งาน สต็อก) ใช้แสดงจนกว่าคำตอบมาถึง และยังใช้เทียบว่าระเบียนไหนเป็นของเรา
   const RETURN_ACTIONS = Object.freeze(["undoOrderParts", "returnOrderParts"]);
-  // สินค้าสำเร็จรูป (receiveFg / deliverFg / closeOrderShort / closeOrder): เซิร์ฟเวอร์เขียนประวัติและปิดใบเอง จึงส่งเฉพาะแถวคำขอ { orderId, kind, lines?, note? } ในส่วน fgMoves (action คืนแถวนี้ใน result.request)
-  const FG_ACTIONS = Object.freeze(["receiveFg", "deliverFg", "closeOrderShort", "closeOrder"]);
+  // สินค้าสำเร็จรูป (receiveFg / deliverFg / closeOrderShort / closeOrder / reverseFg): เซิร์ฟเวอร์เขียนประวัติ ปิดใบ และเปิดใบกลับเอง จึงส่งเฉพาะแถวคำขอ { orderId, kind, lines?, note?, moveId? } ในส่วน fgMoves (action คืนแถวนี้ใน result.request)
+  const FG_ACTIONS = Object.freeze(["receiveFg", "deliverFg", "closeOrderShort", "closeOrder", "reverseFg"]);
   function diffMaster(before, after, action = "") {
     const changes = {};
     for (const list of REMOTE_LISTS) {
@@ -427,7 +427,8 @@
     // dept ใช้แยกงานรายแผนก (DEPTS ของ bom-rules): ฝ่ายวางแผนทำงานบรรจุแทนในงาน PK · แผนกอื่นที่ไม่อยู่ในรายการเก็บรหัสจริงไว้ (ไม่ตรงกับงานใดๆ)
     const dept = depts.includes(deptCode) ? deptCode : role === "planner" ? "PK" : role === "admin" ? "AD" : deptCode;
     const name = `${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim() || employee.display_name || employee.employee_no || "ผู้ใช้ทดสอบ";
-    return { id: String(employee.id ?? employee.employee_no ?? name), role, dept, name };
+    // roleCode = รหัสบทบาทจริงของบัญชีทดสอบ (เช่น department_manager): สิทธิ์ที่ผูกกับตำแหน่งเฉพาะ เช่น ย้อนรับเข้าคลัง (ผู้จัดการแผนก WH เท่านั้น) ใช้ค่านี้
+    return { id: String(employee.id ?? employee.employee_no ?? name), role, dept, name, roleCode: String(employee.role?.code ?? employee.role_code ?? "") };
   }
 
   function normalizeSnapshot(value) {

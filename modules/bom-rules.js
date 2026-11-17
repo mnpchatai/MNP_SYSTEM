@@ -968,13 +968,18 @@
     for (const job of openPartJobs(jobs, orders)) if (job.orderId !== exceptOrderId) reserved.set(job.itemCode, (reserved.get(job.itemCode) || 0) + partLeft(job));
     return reserved;
   }
-  // สั่งค้างรับต่อรหัส = บรรทัดของซื้อ (source bom) ของใบสั่งซื้อสถานะ ordered ที่ยังไม่รับ
+  // กฎของบรรทัดใบสั่งซื้อเป็นของ RubberFlow (modules/rubberflow-rules.js poLine* โหลดก่อนไฟล์นี้ · ใน Node require ไฟล์ข้างกัน)
+  const poRules = () => (isNode ? require("./rubberflow-rules.js") : root.MNP_RUBBERFLOW_RULES);
+  // สั่งค้างรับต่อรหัส = ยอดที่ยังค้างรับ (poLineOpen) ของบรรทัดของซื้อ (source bom) ในใบสั่งซื้อสถานะ ordered
+  // รับไม่ครบยังค้างส่วนที่เหลือ จนกว่าจะรับครบหรือ ST ปิดยอดที่เหลือ (20261128020000)
   function partOnOrder(purchaseOrders) {
     const onOrder = new Map();
+    const { poLineOpen } = poRules();
     for (const po of purchaseOrders ?? []) {
       if (po.status !== "ordered") continue;
       for (const line of po.lines ?? []) {
-        if (line.source === "bom" && (line.receivedKg === null || line.receivedKg === undefined)) onOrder.set(line.materialCode, (onOrder.get(line.materialCode) || 0) + (Number(line.qtyKg) || 0));
+        const open = line.source === "bom" ? poLineOpen(line) : 0;
+        if (open > 0) onOrder.set(line.materialCode, (onOrder.get(line.materialCode) || 0) + open);
       }
     }
     return onOrder;
@@ -1013,9 +1018,10 @@
     });
   }
   // ---------- สินค้าสำเร็จรูป (FG) ของใบ PI: คลังสินค้า (WH) รับเข้า ส่งมอบลูกค้า และสต็อกสินค้าสำเร็จรูปที่ใบร่างอื่นใช้ได้ ----------
-  // fgMoves = { id, orderId, fgCode, kind: receive | deliver | close | transfer | untransfer, qty, note, at, by, fromOrderId? } เพิ่มต่ออย่างเดียว (โหมดฐานข้อมูล: เซิร์ฟเวอร์เขียนเอง)
+  // fgMoves = { id, orderId, fgCode, kind: receive | deliver | close | transfer | untransfer | unreceive | undeliver, qty, note, at, by, fromOrderId?, reversesId? } เพิ่มต่ออย่างเดียว (โหมดฐานข้อมูล: เซิร์ฟเวอร์เขียนเอง)
+  // unreceive / undeliver = ย้อนรับเข้า / ย้อนส่งมอบทั้งแถว (reversesId = id ของแถวเดิม note = เหตุผล) โดยผู้จัดการแผนก WH หรือ admin (20261128020000) · ยอดทุกตัวหักแถวย้อนแล้ว
   // close = ปิดใบเมื่อรับไม่ครบ (qty 0, note = เหตุผล) · transfer / untransfer = ใบ orderId รับสินค้าจากสต็อกของใบ fromOrderId ตอนปล่อยผลิต / คืนกลับตอนยกเลิกหรือเปิดใบกลับมาแก้
-  // ต่อใบ O รหัส X: own = Σ receive (รับจากงาน PK ของใบนี้) · in = Σ transfer − Σ untransfer ของใบนี้ (ได้จากสต็อก) · out = Σ transfer − Σ untransfer ที่ fromOrderId = O (ให้ใบอื่นไปแล้ว) · delivered = Σ deliver · have = own + in
+  // ต่อใบ O รหัส X: own = Σ receive − Σ unreceive (รับจากงาน PK ของใบนี้) · in = Σ transfer − Σ untransfer ของใบนี้ (ได้จากสต็อก) · out = Σ transfer − Σ untransfer ที่ fromOrderId = O (ให้ใบอื่นไปแล้ว) · delivered = Σ deliver − Σ undeliver · have = own + in
   // รับ ≤ ยอดที่ PK รายงานของสินค้านั้น (เทียบกับ own) · ส่งมอบ ≤ have − out · have ≥ ที่สั่งทุกสินค้าและทุกงานผลิตเสร็จ = ใบปิดเอง (งานผลิตยังเปิด = WH ปิดใบเองเมื่องานเสร็จครบ)
   // สต็อกสินค้าสำเร็จรูป (free) = max(0, have − out − max(ที่สั่ง, ส่งมอบแล้ว)) ของใบที่ปล่อยผลิตแล้ว (released / in_progress / completed): ของที่ใบนั้นยังติดค้างลูกค้าของตัวเองไม่นับ
   const fgRound = (n) => Math.round(Number(n) * 1e4) / 1e4;
@@ -1033,7 +1039,9 @@
     for (const move of fgMoves ?? []) {
       const qty = Number(move.qty) || 0;
       if (move.kind === "receive") row(move.orderId, move.fgCode).own += qty;
+      else if (move.kind === "unreceive") row(move.orderId, move.fgCode).own -= qty;
       else if (move.kind === "deliver") row(move.orderId, move.fgCode).delivered += qty;
+      else if (move.kind === "undeliver") row(move.orderId, move.fgCode).delivered -= qty;
       else if (move.kind === "transfer" || move.kind === "untransfer") {
         const sign = move.kind === "transfer" ? 1 : -1;
         row(move.orderId, move.fgCode).inn += sign * qty;
@@ -1089,7 +1097,8 @@
     const anyHave = products.some((product) => product.have > 0);
     const allReceived = products.length > 0 && products.every((product) => product.have + FG_EPS >= product.ordered);
     // แถว close ของใบที่มีของครบ = ปิดใบเมื่อรับครบ (closeOrder ข้อความของเซิร์ฟเวอร์) · ของไม่ครบ = ปิดรับไม่ครบ (เหตุผลของ WH) · ใบที่ปิดแล้วมีของเพิ่มได้แต่ไม่ลด จึงแยกได้เสมอ
-    const closeMove = moves.filter((move) => move.kind === "close").sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0)).at(-1) ?? null;
+    // ใบที่เปิดกลับเพราะย้อนรับเข้า (20261128020000) ยังมีแถว close เดิมในประวัติ: นับเฉพาะใบที่ปิดอยู่จริง
+    const closeMove = order.status === "completed" ? moves.filter((move) => move.kind === "close").sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0)).at(-1) ?? null : null;
     const closeInfo = closeMove ? { reason: closeMove.note, at: closeMove.at, by: closeMove.by } : null;
     return {
       products,
@@ -1121,7 +1130,34 @@
       fullClose: closeInfo && allReceived ? closeInfo : null,
       // ประวัติของใบนี้: แถวของใบเอง และแถวที่ใบนี้เป็นต้นทางของสต็อก (ให้ใบอื่น / ใบอื่นคืนกลับ)
       moves: fgMoves.filter((move) => move.orderId === order.id || (move.fromOrderId && move.fromOrderId === order.id)).sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0)),
+      // id ของแถวรับเข้า / ส่งมอบที่ถูกย้อนแล้ว (แสดงจางพร้อม "ถูกย้อน" และย้อนซ้ำไม่ได้)
+      reversedIds: moves.filter((move) => move.reversesId).map((move) => move.reversesId),
     };
+  }
+  // ย้อนรับเข้าคลัง / ย้อนส่งมอบหนึ่งแถวทั้งแถว (ตรงกับ private.bom_fg_reverse ของ 20261128020000 และ mock ของ harness): คืน null เมื่อย้อนได้ ไม่เช่นนั้นข้อความไทยที่บอกเหตุผล
+  // ย้อนได้เฉพาะแถว receive / deliver ของใบนี้ที่ยังไม่ถูกย้อน ของใบที่ปล่อยผลิตแล้ว (ใบที่ยกเลิกไม่ได้) · ย้อนรับเข้า: ที่เหลือ (have − แถวนี้ − out) ต้องไม่น้อยกว่าที่ส่งมอบแล้ว
+  // และถ้าใบอื่นหยิบสต็อกของใบนี้ไปแล้ว (out > 0) ต้องไม่น้อยกว่าจำนวนสั่ง · ย้อนส่งมอบไม่มีด่านยอด
+  function fgReverseBlock(data, order, move) {
+    if (!order || !move || move.orderId !== order.id || !["receive", "deliver"].includes(move.kind)) return "ย้อนได้เฉพาะรายการรับเข้าคลังหรือส่งมอบของใบนี้";
+    if ((data?.fgMoves ?? []).some((row) => row.reversesId && row.reversesId === move.id)) return "รายการนี้ถูกย้อนไปแล้ว";
+    if (!FG_STOCK_STATUS.includes(order.status)) return order.status === "cancelled" ? "ใบที่ยกเลิกแล้วย้อนรายการไม่ได้" : "ใบนี้ยังไม่ได้ปล่อยผลิต";
+    if (move.kind === "receive") {
+      const f = fgLedger(data?.fgMoves)(order.id, move.fgCode);
+      const ordered = orderedByCode(order).get(move.fgCode) ?? 0;
+      const left = fgRound(f.own + f.inn - f.out - (Number(move.qty) || 0));
+      if (left + FG_EPS < f.delivered) return `ส่งมอบ ${move.fgCode} ไปแล้ว ${fmtQty(f.delivered)} ย้อนรับเข้านี้แล้วจะเหลือ ${fmtQty(left)} ให้ย้อนการส่งมอบก่อน`;
+      if (f.out > FG_EPS && left + FG_EPS < ordered) return `ใบอื่นใช้สต็อก ${move.fgCode} ของใบนี้ไปแล้ว ${fmtQty(f.out)} ย้อนรับเข้านี้แล้วของไม่พอจำนวนสั่ง ให้ใบที่ใช้สต็อกยกเลิกหรือเปิดกลับมาแก้ก่อน`;
+    }
+    return null;
+  }
+  // ย้อนรับเข้าแถวนี้แล้วใบที่ปิดอยู่จะเปิดกลับเป็นกำลังผลิตหรือไม่ (มีสินค้าที่ของไม่ครบจำนวนสั่งหลังย้อน)
+  function fgReverseReopens(data, order, move) {
+    if (order?.status !== "completed" || move?.kind !== "receive") return false;
+    const figures = fgLedger(data?.fgMoves);
+    return [...orderedByCode(order)].some(([code, qty]) => {
+      const f = figures(order.id, code);
+      return fgRound(f.own + f.inn - (code === move.fgCode ? Number(move.qty) || 0 : 0)) + FG_EPS < qty;
+    });
   }
   // สต็อกสินค้าสำเร็จรูปที่ใช้ได้ต่อรหัส → Map รหัส → [{ orderId, free, releasedAt }] เรียงใบที่ปล่อยผลิตก่อนมาก่อน (releasedAt แล้วเลข PI) · ใช้ตอนปล่อยผลิตเพื่อรับของจากต้นทางเรียงลำดับนี้
   function fgFreeList(data) {
@@ -1333,7 +1369,7 @@
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
-    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, draftBefore, draftPartDemand, draftRubberJobs, partReserved, partOnOrder, partReturned, partReturnLines, fgPosition, fgOnHand, fgFreeList, fgStockForDraft, fgStockLock, noBomInOrder, countedCodes,
+    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, draftBefore, draftPartDemand, draftRubberJobs, partReserved, partOnOrder, partReturned, partReturnLines, fgPosition, fgReverseBlock, fgReverseReopens, fgOnHand, fgFreeList, fgStockForDraft, fgStockLock, noBomInOrder, countedCodes,
     DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };

@@ -157,6 +157,7 @@
     A.reportJob(d, { jobId: job("SE-TP01-BK01-140-3-20").id, qtyDone: 120, qtyReject: 4, note: "ครึ่งแรก" }, at(now - 5 * DAY, "gr"));
     A.setJobStatus(d, { jobId: job("BG-0092").id, status: "hold", reason: "รอผ้าตาข่ายล็อตใหม่" }, at(now - 4 * DAY, "bg"));
 
+
     // ใบร่างที่ระเบิดแล้ว รอปล่อยผลิต
     const pi2 = A.createOrder(d, {
       pi: "DEMO-26002", customer: "ลูกค้าสาธิต กรุงเทพ", country: "Thailand", orderedAt: day(-2), whDue: day(40),
@@ -181,6 +182,21 @@
       const kg = A.helpers.rbJobKg(rb, item, { scrapPct: 5, bom: A.helpers.approvedBomOf(d, item.code) });
       A.linkJobToRubberFlow(d, { jobId: rb.id, woId: demoWoId(now, index), kg }, at(now - WO_DAYS_AGO * DAY, "rb"));
     });
+    // ใบที่ผลิต รับเข้าคลัง และส่งมอบครบแล้ว (ลองย้อนด้วยผู้จัดการแผนกคลังสินค้า): DEMO-26008 ฮูล่า 20 ชุด ทุกแผนกรายงานครบ · WH รับเข้า 8 แล้ว 12 (ใบปิดเอง) · ส่งมอบ 20
+    // ย้อนรับเข้าได้หลังย้อนการส่งมอบก่อน · ย้อนรับเข้าแล้วของไม่ครบ ใบเปิดกลับเป็นกำลังผลิต · งานของซื้อของใบที่ปิดแล้วไม่เป็นงานค้าง
+    const pi8 = A.createOrder(d, {
+      pi: "DEMO-26008", customer: "ลูกค้าสาธิต ระยอง", country: "Thailand", orderedAt: day(-12), whDue: day(5),
+      due: { RB: day(-9), GR: day(-7), BG: day(-7), ST: day(-7), PK: day(-5) }, note: "ใบสาธิต: ส่งมอบครบแล้ว ลองย้อนการส่งมอบ / การรับเข้าคลัง",
+    }, at(now - 12 * DAY, "planner"));
+    A.addOrderItem(d, { orderId: pi8, fgCode: "DEMO-HL-24(B)-A", qty: 20 }, at(now - 12 * DAY + 600000, "planner"));
+    A.explodeOrder(d, { orderId: pi8 }, at(now - 11 * DAY, "planner"));
+    A.releaseOrder(d, { orderId: pi8 }, at(now - 11 * DAY + 3600000, "planner"));
+    d.jobs.filter((entry) => entry.orderId === pi8 && !(entry.dept === "ST" && entry.kind === "PURCHASED")).forEach((entry, index) => {
+      A.reportJob(d, { jobId: entry.id, qtyDone: Math.max(0, Number(entry.qtyPlanned) - Number(entry.qtyDone || 0)) }, at(now - 7 * DAY + index * 60000, "planner"));
+    });
+    A.receiveFg(d, { orderId: pi8, lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 8 }] }, at(now - 6 * DAY, "wh"));
+    A.receiveFg(d, { orderId: pi8, lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 12 }] }, at(now - 5 * DAY, "wh"));
+    A.deliverFg(d, { orderId: pi8, lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 20 }] }, at(now - 4 * DAY, "wh"));
     return d;
   }
 

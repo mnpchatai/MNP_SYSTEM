@@ -1552,13 +1552,22 @@ test("receiving: ST checks the line in, the lot is made in the same save and mat
   assert.equal(after.purchaseOrders[0].status, "ordered", "one line still open");
   await inSync(s, rig, "after the first receipt");
   assert.equal((await s.call("app_rf_audit", { p_limit: 1 }))[0].detail, "materialLots +1, purchaseOrders +1");
-  // รับซ้ำบรรทัดเดิม: หน้าจอปฏิเสธ · ฐานข้อมูลปฏิเสธเมื่อส่งตรง
-  assert.match(rig.store.run("receivePurchaseLine", { id: po, materialCode: "EPDM-55", qtyKg: 1, expiry: NOW + DAY }).error.message, /รับเข้าแล้ว/);
+  // รับไม่ครบ (58.5 จาก 60 · 20261128020000): ส่วนที่เหลือยังค้างรับ · ส่งยอดสะสมที่ต่ำกว่าที่เก็บ (แก้การรับ) ฐานข้อมูลปฏิเสธ
   const again = (await master()).purchaseOrders[0];
-  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ ...again, lines: [{ ...again.lines[0], receivedKg: 1 }, again.lines[1]] }] }, materialLots: { upsert: [{ ...lot, lotNo: `RM-EPDM-55-${D8}-09`, qtyKg: 1, initialKg: 1 }] } }, "receivePurchaseLine"), "RF_INVALID_TRANSITION", "a received line cannot be received again");
+  assert.deepEqual(again.lines[0].receipts.map((receipt) => [receipt.kg, receipt.lotNo]), [[58.5, lotNo]], "the server keeps the receipt");
+  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ ...again, lines: [{ ...again.lines[0], receivedKg: 1 }, again.lines[1]] }] }, materialLots: { upsert: [{ ...lot, lotNo: `RM-EPDM-55-${D8}-09`, qtyKg: 1, initialKg: 1 }] } }, "receivePurchaseLine"), "RF_INVALID_TRANSITION", "a lower cumulative quantity is a correction and is refused");
+  // ยอดของล็อตต้องเท่ายอดครั้งนี้ (สะสมใหม่ − สะสมที่เก็บ) ไม่ใช่ยอดสะสม
+  assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ ...again, lines: [{ ...again.lines[0], receivedKg: 60, lotNo: `RM-EPDM-55-${D8}-09` }, again.lines[1]] }] }, materialLots: { upsert: [{ ...lot, lotNo: `RM-EPDM-55-${D8}-09`, qtyKg: 60, initialKg: 60 }] } }, "receivePurchaseLine"), "RF_INVALID_PURCHASE", "the lot holds this receipt only");
+  // รับส่วนที่เหลือผ่านหน้า: ล็อตใหม่อีกล็อต บรรทัดครบ
+  const rest = (await saved(rig.store.run("receivePurchaseLine", { id: po, materialCode: "EPDM-55", qtyKg: 1.5, expiry: NOW + 70 * DAY }))).result;
+  assert.notEqual(rest, lotNo);
+  const twice = (await master()).purchaseOrders[0].lines[0];
+  assert.deepEqual([twice.receivedKg, twice.lotNo, twice.receipts.map((receipt) => [receipt.kg, receipt.lotNo])], [60, rest, [[58.5, lotNo], [1.5, rest]]]);
+  await inSync(s, rig, "after the second receipt");
+  assert.match(rig.store.run("receivePurchaseLine", { id: po, materialCode: "EPDM-55", qtyKg: 1, expiry: NOW + DAY }).error.message, /รับครบแล้ว/);
   // ยกเลิกไม่ได้เมื่อมีบรรทัดรับแล้ว
   await s.as("persona-1");
-  assert.match(rig.store.run("cancelPurchaseOrder", { id: po }).error.message, /รับเข้าแล้ว/);
+  assert.match(rig.store.run("cancelPurchaseOrder", { id: po }).error.message, /รับเข้าหรือปิดยอดแล้ว/);
   assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ ...again, status: "cancelled" }] } }, "cancelPurchaseOrder"), "RF_INVALID_TRANSITION", "ST may cancel, so the transition is what refuses it");
   assert.equal(await sendPo(s, "persona-pp", { purchaseOrders: { upsert: [{ ...again, status: "cancelled" }] } }, "cancelPurchaseOrder"), "RF_FORBIDDEN", "the planner group may not cancel: the right comes before the transition");
   // บรรทัดสุดท้าย : ST รับอีกครั้ง → ใบเป็น received
@@ -1774,7 +1783,15 @@ test("a purchase order can carry purchased-part lines: the unit comes from the B
   assert.deepEqual(bom().stockMoves.map((move) => [move.kind, move.qty, move.balance, move.ref]), [["receive", 10, 10, PO_NO]]);
   assert.equal(bom().version, bomVersion + 2);
   assert.equal(bom().audit.at(-1).detail, "stock +1");
-  assert.equal(rig.store.run("receivePurchaseLine", { id: PO_NO, materialCode: "P-BOX", qtyKg: 1 }).ok, false, "a line is received once");
+  // ของซื้อรับไม่ครบยังค้างรับ (20261128020000): ST ปิดยอดที่เหลือพร้อมเหตุผล ไม่แตะสต็อก แล้วบรรทัดรับอีกไม่ได้
+  const partLine = (await s.call("app_rf_master")).purchaseOrders[0].lines[1];
+  if (partLine.qtyKg > 10) {
+    await saved(rig.store.run("closePurchaseLine", { id: PO_NO, materialCode: "P-BOX", reason: "ผู้ขายไม่มีของส่งเพิ่ม" }));
+    const closedLine = (await s.call("app_rf_master")).purchaseOrders[0].lines[1];
+    assert.deepEqual([closedLine.closedRemainder.kg, closedLine.closedRemainder.reason, closedLine.closedRemainder.by], [partLine.qtyKg - 10, "ผู้ขายไม่มีของส่งเพิ่ม", "วิชัย คลังวัตถุดิบ"]);
+    assert.deepEqual(bom().stock.map((row) => [row.itemCode, row.qty]), [["P-BOX", 10]], "closing does not touch the stock");
+  }
+  assert.equal(rig.store.run("receivePurchaseLine", { id: PO_NO, materialCode: "P-BOX", qtyKg: 1 }).ok, false, "a done line is not received again");
   await saved(rig.store.run("receivePurchaseLine", { id: PO_NO, materialCode: "EPDM-55", qtyKg: 65, expiry: NOW + 90 * DAY }));
   assert.equal((await s.call("app_rf_master")).purchaseOrders[0].status, "received", "the order is received once the chemical and the part line are in");
   assert.equal(bom().stock[0].qty, 10, "the chemical receipt does not touch the part stock");

@@ -2,6 +2,7 @@
 // นำเข้าจากชีต · ใบสั่งผลิต (PI) ระเบิด/ปล่อยผลิต · งานรายแผนก · นับคงคลังตามใบ · สต็อกของซื้อ (นับ/เบิกจ่ายรายใบ) · ผูกสูตรยางกับ RubberFlow
 // ทุก action รับ (draft, payload, ctx{now,user}) ทำบนร่างและ throw เมื่อกฎไม่ผ่าน (store บันทึกเฉพาะเมื่อผ่าน)
 // รับสินค้าสำเร็จรูปเข้าคลัง / ส่งมอบลูกค้า / ปิดใบ = แผนก WH หรือผู้ดูแลระบบ (canHandleFg) · ใบปิดเองเมื่อรับครบและทุกงานผลิตเสร็จแล้ว · รับครบก่อนงานผลิตเสร็จ = WH กดปิดใบเมื่องานเสร็จครบ
+// ย้อนการรับเข้า / ส่งมอบที่บันทึกผิด (reverseFg) = ผู้จัดการแผนกคลังสินค้า (WH) หรือผู้ดูแลระบบ (canReverseFg) พร้อมเหตุผล (20261128020000)
 // งานที่จะไม่มีใครรายงานแล้ว ฝ่ายวางแผนปิดงานพร้อมเหตุผล (setJobStatus status done) · งานของใบที่ปิดแล้วไม่ค้างและไม่เลยกำหนด (helpers.isOpenJob)
 // ส่วนที่ PK ผลิตเกินจำนวนสั่งรับเข้าคลังเป็นสต็อกสินค้าสำเร็จรูปได้แม้ใบปิดแล้ว · ใบร่างที่สั่งสินค้าเดียวกันใช้สต็อกนั้นลดงานผลิต (ฝ่ายวางแผนตั้งที่ขั้นตรวจของ หักจริงตอนปล่อยผลิต: ใบที่ปล่อยก่อนได้ก่อน) · ยกเลิก/เปิดใบกลับมาแก้ = คืนสต็อก
 // สิทธิ์ (บทบาทสาธิต ไม่ใช่การควบคุมสิทธิ์ของระบบจริง): สร้าง/แก้ item และ BOM ทุกชั้น = ฝ่ายวางแผน ผู้จัดการ ผู้ดูแล · ไม่มีขั้นอนุมัติ (ตามที่ผู้ใช้ตัดสิน
@@ -1028,6 +1029,9 @@
   // ลำดับตรวจเหมือนฐานข้อมูล (app_bom_save_master): รูปคำขอ → สิทธิ์ → สถานะใบ → ยอด · โหมดฐานข้อมูลคืน request ที่ store ส่งในส่วน fgMoves (เซิร์ฟเวอร์เขียนประวัติและปิดใบเอง)
   // โหมดในเครื่อง action เขียน d.fgMoves และปิดใบเอง
   const canHandleFg = (user) => Boolean(user) && (user.role === "admin" || user.dept === "WH");
+  // ย้อนรับเข้า / ส่งมอบ (20261128020000): admin หรือผู้จัดการแผนก (department_manager) ของแผนก WH · พนักงาน WH และกลุ่มวางแผนแผนกอื่นไม่ได้ (ฐานข้อมูลตรวจซ้ำ: BOM_FORBIDDEN)
+  // โหมดฐานข้อมูลเทียบรหัสบทบาทของบัญชีทดสอบ (bom-store personaUser.roleCode) · โหมดสาธิตในเครื่องไม่มีรหัสบทบาท ใช้บทบาท manager ของแผนก WH
+  const canReverseFg = (user) => Boolean(user) && (user.role === "admin" || (user.dept === "WH" && (user.roleCode ? user.roleCode === "department_manager" : user.role === "manager")));
   const FG_MAX_LINES = 500;
   const FG_NOTE_MAX = 300;
   const FG_REASON_MIN = 3;
@@ -1136,6 +1140,34 @@
     closeOrderNow(order, ctx);
     audit(d, ctx, "ปิดใบสั่งผลิต (รับครบ)", order.id);
     return { summary: order.id, request: { orderId: order.id, kind: "close" } };
+  }
+
+  // ย้อนรับเข้าคลัง / ย้อนส่งมอบหนึ่งรายการทั้งรายการ (20261128020000 · ตรงกับ private.bom_fg_reverse): { orderId, moveId, note } · เหตุผล 3-300 ตัวอักษร
+  // ย้อนได้ตามกฎ rules.fgReverseBlock (ย้อนแล้ว / ใบยกเลิก / ส่งมอบไปแล้ว / ใบอื่นใช้สต็อกไปแล้ว = ไม่ได้) · ตัวเลขที่ถูกบันทึกใหม่ด้วยรับเข้าคลัง / ส่งมอบตามปกติ
+  // ใบที่ปิดแล้วซึ่งของไม่ครบหลังย้อนรับเข้า = เปิดกลับเป็นกำลังผลิต (แถวปิดใบเดิมอยู่ในประวัติ) · โหมดฐานข้อมูล: เซิร์ฟเวอร์เขียนแถวย้อนและเปิดใบเอง ฝั่งนี้ทำล่วงหน้าให้หน้าแสดงทันที
+  function reverseFg(d, p, ctx) {
+    const user = requireUser(ctx);
+    const R = rules();
+    const order = orderById(d, String(p?.orderId ?? "").trim().toUpperCase());
+    const note = p?.note === undefined || p?.note === null ? "" : typeof p.note === "string" ? p.note.trim() : fail("เหตุผลต้องเป็นข้อความ");
+    if (note.length < FG_REASON_MIN) fail(`กรุณาระบุเหตุผลที่ย้อน (อย่างน้อย ${FG_REASON_MIN} ตัวอักษร)`);
+    if (note.length > FG_NOTE_MAX) fail(`เหตุผลยาวเกิน ${FG_NOTE_MAX} ตัวอักษร`);
+    if (!canReverseFg(user)) fail("ย้อนการรับเข้าคลังหรือการส่งมอบได้โดยผู้จัดการแผนกคลังสินค้า (WH) หรือผู้ดูแลระบบเท่านั้น");
+    const moveId = String(p?.moveId ?? "").trim();
+    const move = (d.fgMoves ?? []).find((row) => row.id === moveId) ?? fail("ไม่พบรายการที่จะย้อน");
+    const blocked = R.fgReverseBlock(d, order, move);
+    if (blocked) fail(blocked);
+    const reopens = R.fgReverseReopens(d, order, move);
+    const kind = move.kind === "receive" ? "unreceive" : "undeliver";
+    if (!ctx.remote) {
+      d.fgMoves.push({ id: `local-${ctx.now}-${d.fgMoves.length + 1}`, orderId: order.id, fgCode: move.fgCode, kind, qty: move.qty, note, at: ctx.now, by: ctx.user?.name ?? "", reversesId: move.id });
+    }
+    if (reopens) {
+      order.status = "in_progress";
+      delete order.completedAt;
+    }
+    audit(d, ctx, kind === "unreceive" ? "ย้อนรับสินค้าเข้าคลัง" : "ย้อนการส่งมอบสินค้า", `${order.id} ${move.fgCode} × ${move.qty} — ${note}${reopens ? " · ใบเปิดกลับเป็นกำลังผลิต" : ""}`);
+    return { reopened: reopens, summary: `${move.fgCode} × ${R.fmtQty(move.qty)}`, request: { orderId: order.id, kind: "reverse", moveId: move.id, note } };
   }
 
   // ---------- งานรายแผนก ----------
@@ -1452,9 +1484,9 @@
   const api = {
     saveItem, saveBom, saveBomTree, linkCompound, importFlat,
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
-    saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, receiveFg, deliverFg, closeOrderShort, closeOrder,
+    saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, receiveFg, deliverFg, closeOrderShort, closeOrder, reverseFg,
     reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage, countPartStock, issueOrderParts, undoOrderParts, returnOrderParts,
-    helpers: { customerName, customerKey, startedJobs, isPartJob, isOpenJob, isLinkedJob, jobCloseNote, jobHoldNote, deptText, canIssueParts, canHandleFg, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canSetSafety, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
+    helpers: { customerName, customerKey, startedJobs, isPartJob, isOpenJob, isLinkedJob, jobCloseNote, jobHoldNote, deptText, canIssueParts, canHandleFg, canReverseFg, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canSetSafety, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_ACTIONS = api;

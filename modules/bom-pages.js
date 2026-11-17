@@ -2126,8 +2126,14 @@
   };
   // เลือกสินค้าแบบ 3 ช่องเหมือนชีต ;}o: ฐานรหัส + แพ็กเกจ + ชุดสี → รหัสเต็ม ถ้ารหัสเต็มยังไม่มีแต่ฐานรหัสมี ระบบสร้างจาก BOM ของตัวนั้น
   // ใบสั่งซื้อสถานะ ordered ที่สั่งจากใบนี้ · received = จำนวนบรรทัดที่รับแล้ว (ใบที่รับบางบรรทัดยังเป็น ordered แต่ฐานข้อมูลยกเลิกไม่ได้)
-  const openPurchaseOrdersOf = (ctx, orderId) => (rfPurchaseOrdersOf(ctx) ?? []).filter((po) => po.status === "ordered" && po.sourcePi === orderId).map((po) => ({ id: po.id, received: (po.lines ?? []).filter((line) => line.receivedKg != null).length, total: (po.lines ?? []).length }));
-  const openPoText = (pos) => (pos.length ? `มีใบสั่งซื้อที่สั่งจากใบนี้และยังรับของไม่ครบ: ${pos.map((po) => (po.received ? `${po.id} (รับแล้ว ${po.received}/${po.total} บรรทัด)` : po.id)).join(", ")} ระบบไม่ยกเลิกหรือแก้ใบสั่งซื้อให้ ตรวจที่หน้าใบสั่งซื้อของ RubberFlow${pos.some((po) => po.received) ? " · ใบที่รับแล้วบางบรรทัดยกเลิกไม่ได้" : ""}` : "");
+  // ใบสั่งซื้อที่ยังรับไม่ครบของใบ PI: received = บรรทัดที่ครบแล้ว (รับครบหรือปิดยอดที่เหลือ · กฎ poLineDone ของ RubberFlow 20261128020000) · touched = มีการรับหรือปิดยอดแล้ว (ยกเลิกใบสั่งซื้อไม่ได้)
+  const openPurchaseOrdersOf = (ctx, orderId) => {
+    const poRules = root.MNP_RUBBERFLOW_RULES;
+    return (rfPurchaseOrdersOf(ctx) ?? []).filter((po) => po.status === "ordered" && po.sourcePi === orderId).map((po) => ({
+      id: po.id, received: (po.lines ?? []).filter((line) => poRules?.poLineDone?.(line)).length, total: (po.lines ?? []).length, touched: Boolean(poRules?.poTouched?.(po)),
+    }));
+  };
+  const openPoText = (pos) => (pos.length ? `มีใบสั่งซื้อที่สั่งจากใบนี้และยังรับของไม่ครบ: ${pos.map((po) => (po.received ? `${po.id} (รับแล้ว ${po.received}/${po.total} บรรทัด)` : po.id)).join(", ")} ระบบไม่ยกเลิกหรือแก้ใบสั่งซื้อให้ ตรวจที่หน้าใบสั่งซื้อของ RubberFlow${pos.some((po) => po.touched) ? " · ใบที่รับเข้าหรือปิดยอดไปแล้วบางส่วนยกเลิกไม่ได้ (ปิดยอดที่เหลือได้)" : ""}` : "");
   const openPoCallout = (ctx, order) => { const text = order ? openPoText(openPurchaseOrdersOf(ctx, order.id)) : ""; return text ? ctx.ui.callout("warn", esc(text)) : ""; };
   const reopenCallout = (ctx, order) => (order && order.status !== "draft" ? ctx.ui.callout("warn", `ใบนี้ปล่อยผลิตแล้ว บันทึกแล้วใบจะกลับเป็นร่าง (REV. +1) งานรายแผนกของใบถูกลบ ต้องระเบิด BOM และปล่อยผลิตใหม่${esc(fgReturnText(ctx, ctx.rules.fgStockLock(ctx.data, order)))}`) : "");
   // dialog: แก้จำนวนสั่ง/หมายเหตุของสินค้าหนึ่งตัวในใบ
@@ -2654,7 +2660,7 @@
     saveColor: "บันทึกสี", saveColorSet: "บันทึกชุดสี", removeColorSet: "ลบชุดสี", learnColorSet: "เรียนรู้ชุดสี", savePackage: "บันทึกแพ็กเกจ", removePackage: "ลบแพ็กเกจ",
     createVariant: "สร้างรุ่นสินค้า", saveRouting: "บันทึกขั้นตอนผลิตของชิ้นงาน", saveProcess: "บันทึกขั้นตอนผลิตมาตรฐาน", setItemCost: "ตั้งต้นทุน", setItemImage: "ตั้งรูปชิ้นงาน",
     createOrder: "เปิดใบสั่งผลิต", addOrderItem: "เพิ่มสินค้าในใบ", removeOrderItem: "ลบสินค้าจากใบ", updateOrderItem: "แก้สินค้าในใบ", explodeOrder: "ระเบิด BOM",
-    releaseOrder: "ปล่อยผลิต", setStockCount: "นับคงคลัง", setStockCounts: "นับคงคลัง", cancelOrder: "ยกเลิกใบสั่งผลิต", completeOrder: "ปิดใบสั่งผลิต (เดิม)", receiveFg: "รับสินค้าเข้าคลัง", deliverFg: "ส่งมอบสินค้าให้ลูกค้า", closeOrderShort: "ปิดใบสั่งผลิต (รับไม่ครบ)", closeOrder: "ปิดใบสั่งผลิต (รับครบ)",
+    releaseOrder: "ปล่อยผลิต", setStockCount: "นับคงคลัง", setStockCounts: "นับคงคลัง", cancelOrder: "ยกเลิกใบสั่งผลิต", completeOrder: "ปิดใบสั่งผลิต (เดิม)", receiveFg: "รับสินค้าเข้าคลัง", deliverFg: "ส่งมอบสินค้าให้ลูกค้า", closeOrderShort: "ปิดใบสั่งผลิต (รับไม่ครบ)", closeOrder: "ปิดใบสั่งผลิต (รับครบ)", reverseFg: "ย้อนรับเข้าคลัง / ย้อนส่งมอบสินค้าสำเร็จรูป",
     reportJob: "รายงานผลงาน", setJobStatus: "เปลี่ยนสถานะงาน / ปิดงาน", linkJobToRubberFlow: "ผูก WO ของ RubberFlow", saveCustomer: "บันทึกลูกค้า",
     countPartStock: "นับสต็อกของซื้อ", issueOrderParts: "เบิกจ่ายของซื้อ", undoOrderParts: "ยกเลิกการเบิกจ่ายของซื้อ", returnOrderParts: "คืนของเหลือของซื้อ",
     "rubberflow:createPurchaseOrder": "สั่งซื้อ (ใบสั่งซื้อใน RubberFlow)", "rubberflow:receivePurchaseLine": "รับของซื้อเข้าคลัง (ใบสั่งซื้อใน RubberFlow)",

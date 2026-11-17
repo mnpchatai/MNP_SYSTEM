@@ -648,7 +648,7 @@ test("purchasing screens: the check opens one dialog (escaped, safety stock and 
 
   // the warehouse tab: the open order first with its receive button and cancel button, the tab counts open orders
   let page = await env.render("p=warehouse&tab=po");
-  assert.match(page, /ใบสั่งซื้อ \(1\)/);
+  assert.match(page, /ใบสั่งซื้อ \(2\)/, "the new order and the demo order that is still waiting");
   assert.ok(page.includes(po.id));
   assert.match(page, /data-rf-open="receivePurchase"/);
   assert.match(page, /data-rf-action="cancelPurchaseOrder"/);
@@ -692,13 +692,29 @@ test("purchasing screens: the check opens one dialog (escaped, safety stock and 
   await receiveForm.handlers.submit({ preventDefault() {} });
   const lot = env.store.data().materialLots.find((row) => row.supplier === po.id);
   assert.deepEqual([lot.materialCode, lot.qtyKg, lot.expiry], ["EPDM-55", 58, new Date(2027, 5, 30).getTime()]);
-  assert.equal(env.store.data().purchaseOrders[0].status, "received");
   assert.match(env.log.toasts.at(-1)[0], /^รับเข้าล็อต RM-EPDM-55-\d{8}-\d\d แล้ว$/);
   delete env.fakes["form[data-rf-form]"];
-  page = text(await env.render("p=warehouse&tab=po"));
+  // รับไม่ครบ (58 จาก 60 · 20261128020000): ใบยังรอรับ ส่วนที่เหลือค้างรับ รับเพิ่มได้ (ตั้งต้น = ยอดค้าง) หรือปิดยอดที่เหลือพร้อมเหตุผล
+  assert.equal(env.store.data().purchaseOrders[0].status, "ordered", "the 2 kg not delivered stay on order");
+  page = text(await env.render(`p=warehouse&tab=po&q=${po.id}`));
+  assert.match(page, /58\.00 kg\s*ค้างรับ 2\.00/);
+  assert.ok(page.includes(lot.lotNo));
+  const again = dialogs.receivePurchase(env.ctx(), { id: po.id, materialCode: "EPDM-55" }).html;
+  assert.match(again, /name="qtyKg"[^>]*value="2"/, "the second receipt starts at what is still due");
+  assert.match(again, /รับแล้ว[\s\S]*58\.00 จาก 60\.00 kg/);
+  const closeDialog = dialogs.closePurchase(env.ctx(), { id: po.id, materialCode: "EPDM-55" }).html;
+  assert.match(closeDialog, /data-rf-form="closePurchaseLine"/);
+  assert.match(closeDialog, /name="reason"[^>]*required[^>]*minlength="3" maxlength="300"/);
+  assert.match(closeDialog, /เหตุผล <span class="field-required">\(จำเป็น\)<\/span>/);
+  assert.doesNotMatch(closeDialog, /undefined|NaN/);
+  assert.equal(env.store.run("closePurchaseLine", { id: po.id, materialCode: "EPDM-55", reason: "ผู้ขายแจ้งว่าไม่มีของส่งเพิ่ม" }).ok, true);
+  assert.equal(env.store.data().purchaseOrders[0].status, "received");
+  assert.equal(dialogs.closePurchase(env.ctx(), { id: po.id, materialCode: "EPDM-55" }), null, "a closed line has no close dialog");
+  page = text(await env.render(`p=warehouse&tab=po&q=${po.id}`));
   assert.match(page, /รับครบแล้ว/);
   assert.ok(page.includes(lot.lotNo));
-  assert.doesNotMatch(page, /รอรับ/, "no open line is left");
+  assert.match(page, /ปิดยอดที่เหลือ 2\.00 kg: ผู้ขายแจ้งว่าไม่มีของส่งเพิ่ม/);
+  assert.doesNotMatch(page, /รอรับ|ค้างรับ/, "no open line is left");
 
   // enough stock: only a short note, no dialog
   for (const row of env.store.data().materials) env.store.run("receiveMaterial", { materialCode: row.code, qtyKg: 1e7, expiry: now + 365 * DAY });
@@ -774,7 +790,10 @@ test("purchasing with purchased parts: the dialog adds a part table after the ch
   const received = env.store.run("receivePurchaseLine", { id: po.id, materialCode: "P-BOX-01", qtyKg: 11 });
   assert.equal(received.ok, true, received.error?.message);
   assert.match(text(pages.warehouse({ ...env.ctx("p=warehouse&tab=po") }).html), /11\.00 box/);
-  assert.equal(dialogs.receivePurchase(env.ctx("p=warehouse&tab=po"), { id: po.id, materialCode: "P-BOX-01" }), null, "a received line has no receive dialog");
+  // รับไม่ครบ (11 จาก 12): ยังรับเพิ่มได้ ตั้งต้น = ยอดที่ค้าง · ปิดยอดที่เหลือแล้วไม่มีหน้าต่างรับอีก
+  assert.match(dialogs.receivePurchase(env.ctx("p=warehouse&tab=po"), { id: po.id, materialCode: "P-BOX-01" }).html, /name="qtyKg"[^>]*value="1"/);
+  assert.equal(env.store.run("closePurchaseLine", { id: po.id, materialCode: "P-BOX-01", reason: "ผู้ขายส่งไม่ครบ" }).ok, true);
+  assert.equal(dialogs.receivePurchase(env.ctx("p=warehouse&tab=po"), { id: po.id, materialCode: "P-BOX-01" }), null, "a closed line has no receive dialog");
 });
 
 test("purchase dialog: rows to order come first and together, chemicals and parts in one table, the rest keep their order; the posted fields follow the row order", async () => {
@@ -793,6 +812,7 @@ test("purchase dialog: rows to order come first and together, chemicals and part
   assert.deepEqual(codesOf(dialogs.purchase({ ...ctx, bomPartNeeds: () => ({ rows: [part("P-X", 0), part("P-Y", 0)], anyShort: false }) }, { woIds: [], sourcePi: "PI-9" }).html), ["P-X", "P-Y"], "nothing to order: the order is untouched");
   // เคมี (ใบสั่งผลิตที่เปิดอยู่ทั้งหมด) ร่วมกับของซื้อ: ตารางเดียว แถวที่ต้องสั่งของสองชนิดอยู่บนสุดด้วยกัน
   for (const lot of env.store.data().materialLots) if (["CBS", "OIL-PAR"].includes(lot.materialCode)) lot.qtyKg = 0; // two chemicals run short, in the middle of the code order
+  env.store.data().purchaseOrders.length = 0; // ใบสั่งซื้อสาธิตที่ค้างรับ CBS 30 kg จะทำให้ CBS ไม่ขาด
   const chemOnly = dialogs.purchase(env.ctx("p=orders"), { allOpen: true }).html;
   const chemCodes = codesOf(chemOnly);
   const chemNeed = needOf(chemOnly);

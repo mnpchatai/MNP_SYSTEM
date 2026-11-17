@@ -162,7 +162,10 @@ test("the persona (state.employee of the sandbox) decides the BOM role: admin, m
   assert.equal(role("technician", "PP"), "planner", "any non-manager member of PP plans");
 
   const user = storeApi.personaUser(employee("staff", "PP"));
-  assert.deepEqual(user, { id: "x", role: "planner", dept: "PK", name: "สมหมาย ใจดี" }, "the planning department takes over PK jobs, like the demo planner");
+  assert.deepEqual(user, { id: "x", role: "planner", dept: "PK", name: "สมหมาย ใจดี", roleCode: "staff" }, "the planning department takes over PK jobs, like the demo planner (the role code travels for rights bound to a position)");
+  // ย้อนรับเข้า / ส่งมอบ (20261128020000): ผู้จัดการแผนก WH หรือ admin เท่านั้น · ผู้บริหารระดับอื่นที่อยู่แผนก WH และพนักงาน WH ไม่ได้
+  const reverser = (code, dept) => A.helpers.canReverseFg(storeApi.personaUser(employee(code, dept)));
+  assert.deepEqual([reverser("department_manager", "WH"), reverser("admin", "MT"), reverser("staff", "WH"), reverser("assistant_factory_manager", "WH"), reverser("department_manager", "PK")], [true, true, false, false, false]);
   assert.equal(storeApi.personaUser(employee("staff", "RB")).dept, "RB");
   assert.equal(storeApi.personaUser(employee("admin", "MT")).dept, "AD");
   assert.equal(storeApi.personaUser(employee("staff", "QA")).dept, "QA", "a department outside the BOM departments keeps its own code and matches no job");

@@ -255,6 +255,13 @@
       else chain(id, now - 2 * HOUR, "request");
     }
 
+    // ใบสั่งซื้อเคมีที่รอรับ (ลองรับไม่ครบแล้วรับเพิ่ม หรือปิดยอดที่เหลือ): สั่ง EPDM 500 kg กับ CBS 30 kg · EPDM มาแล้ว 300 kg ค้างรับ 200 kg · CBS ยังไม่มา
+    const demoPo = A.createPurchaseOrder(d, { note: "สั่งเติมสต็อก (ข้อมูลสาธิต)", lines: [
+      { materialCode: "EPDM-55", needKg: 500, availableKg: 0, shortageKg: 500, qtyKg: 500 },
+      { materialCode: "CBS", needKg: 30, availableKg: 0, shortageKg: 30, qtyKg: 30 },
+    ] }, at(now - DAY, "store"));
+    A.receivePurchaseLine(d, { id: demoPo, materialCode: "EPDM-55", qtyKg: 300, expiry: now + 180 * DAY, supplier: "บจก. โพลีเคม ไทย" }, at(now - 4 * HOUR, "store"));
+
     // กรณีคุณภาพ
     A.createNcr(d, {
       title: "ความหนาโปรไฟล์เกินสเปก (2.68 mm)", stage: "extrusion", lotId: held.ex, severity: "major", defectQty: 120,

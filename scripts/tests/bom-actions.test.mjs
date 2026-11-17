@@ -32,7 +32,14 @@ test("the demo seed is deterministic, valid for the store and internally consist
   assert.equal(a.boms.filter((bom) => bom.status === "superseded").length, 1, "one edit left a superseded revision");
   assert.equal(approved(a, "SE-TP01-OR01-100-18-65").revision, 2);
   assert.equal(approved(a, "DEMO-BL-60(K)-Z"), null, "the ball product has no BOM yet");
-  assert.deepEqual(a.orders.map((order) => [order.id, order.status]), [["DEMO-26007", "in_progress"], ["DEMO-26006", "in_progress"], ["DEMO-26002", "draft"], ["DEMO-26001", "in_progress"]]);
+  assert.deepEqual(a.orders.map((order) => [order.id, order.status]), [["DEMO-26008", "completed"], ["DEMO-26007", "in_progress"], ["DEMO-26006", "in_progress"], ["DEMO-26002", "draft"], ["DEMO-26001", "in_progress"]]);
+  // ใบสาธิตที่ส่งมอบครบแล้ว (ลองย้อนด้วยผู้จัดการคลังสินค้า · 20261128020000): รับเข้า 8 + 12 ส่งมอบ 20 · ย้อนรับเข้าได้หลังย้อนการส่งมอบ
+  const delivered = a.orders.find((order) => order.id === "DEMO-26008");
+  assert.deepEqual(a.fgMoves.filter((move) => move.orderId === "DEMO-26008").map((move) => [move.kind, move.qty]), [["receive", 8], ["receive", 12], ["deliver", 20]]);
+  assert.equal(rules.fgPosition(a, delivered).fullyDelivered, true, "the demo order is fully delivered");
+  assert.ok(!a.jobs.some((job) => job.orderId === "DEMO-26008" && A.helpers.isOpenJob(a, job)), "its jobs are done or belong to a closed order");
+  assert.match(rules.fgReverseBlock(a, delivered, a.fgMoves.find((move) => move.orderId === "DEMO-26008" && move.qty === 12)), /ย้อนการส่งมอบก่อน/, "a receipt waits for the delivery to be reversed first");
+  assert.equal(rules.fgReverseBlock(a, delivered, a.fgMoves.find((move) => move.orderId === "DEMO-26008" && move.kind === "deliver")), null, "the delivery can be reversed");
   // ใบที่งาน RB ผูก WO ของชุดสาธิต RubberFlow (เลข WO ของวันที่ 3 วันก่อน ลำดับ 01 / 02 · rubberflow-seed.js เปิด WO เลขเดียวกันจาก demoRfLinks)
   const linkedRb = ["DEMO-26006", "DEMO-26007"].map((pi) => a.jobs.find((job) => job.orderId === pi && job.dept === "RB"));
   assert.deepEqual(linkedRb.map((job) => [job.status, job.externalRef.woId]), [["in_progress", seed.demoWoId(NOW, 0)], ["in_progress", seed.demoWoId(NOW, 1)]]);
@@ -836,7 +843,7 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   const bad = store.run("createOrder", { pi: "", customer: "x" });
   assert.equal(bad.ok, false);
   assert.match(bad.error.message, /วันที่สั่งผลิต/, "the PI number is optional (auto), dates are not");
-  assert.equal(store.data().orders.length, 4, "failed action leaves the state untouched");
+  assert.equal(store.data().orders.length, 5, "failed action leaves the state untouched");
   const ok = store.run("createOrder", { pi: "ST-1", customer: "x", country: "Thailand", orderedAt: NOW, whDue: NOW + DAY });
   assert.equal(ok.result, "ST-1");
   assert.ok(store.isPersisted());
@@ -845,7 +852,7 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   assert.equal(reloaded.user().id, "B03");
   storage.set(storeApi.STATE_KEY, "{broken");
   const repaired = storeApi.createStore({ storage: fake, seed: fresh, actions: A, now: () => NOW });
-  assert.equal(repaired.data().orders.length, 4, "corrupt storage → fresh seed");
+  assert.equal(repaired.data().orders.length, 5, "corrupt storage → fresh seed");
   const noStorage = storeApi.createStore({ storage: { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); }, removeItem() {} }, seed: fresh, actions: A, now: () => NOW });
   noStorage.setUser("B03");
   assert.equal(noStorage.run("createOrder", { pi: "M-1", customer: "x", country: "Thailand", orderedAt: NOW, whDue: NOW + DAY }).ok, true);
@@ -861,7 +868,7 @@ test("the store persists through run(), rejects unknown actions and keeps workin
   assert.equal(upgraded.data().version, storeApi.STATE_VERSION);
   assert.equal(upgraded.data().boms.filter((bom) => ["draft", "pending"].includes(bom.status)).length, 0);
   assert.equal(upgraded.data().boms.length, old.boms.length - 2);
-  assert.equal(upgraded.data().orders.length, 4, "orders survive the upgrade");
+  assert.equal(upgraded.data().orders.length, 5, "orders survive the upgrade");
   assert.equal(JSON.parse(oldStorage.get(storeApi.STATE_KEY)).version, storeApi.STATE_VERSION, "upgraded state is written back");
   // รุ่น 2 (ไม่มีตารางสี) → รุ่น 3 เพิ่มรายการว่าง → รุ่น 4 เพิ่มขั้นตอนผลิตมาตรฐาน ข้อมูลเดิมคงอยู่
   const v2 = fresh();
@@ -1822,11 +1829,13 @@ test("finished goods: only the WH department (staff or its manager) and admin ha
     rejects(() => A.deliverFg(d, { orderId, lines }, whCtx(who)), /คลังสินค้า \(WH\) หรือผู้ดูแลระบบ/);
     rejects(() => A.closeOrderShort(d, { orderId, note: "เหตุผล" }, whCtx(who)), /คลังสินค้า \(WH\) หรือผู้ดูแลระบบ/);
   }
-  assert.equal((d.fgMoves ?? []).length, 0, "nothing was written");
+  // ประวัติของใบนี้เท่านั้น (ชุดสาธิตมีประวัติของใบ DEMO-26008 อยู่แล้ว)
+  const own = () => (d.fgMoves ?? []).filter((move) => move.orderId === orderId);
+  assert.equal(own().length, 0, "nothing was written");
   rejects(() => A.receiveFg(d, { orderId, lines }, { now: NOW }), /เลือกบทบาท/, "no user at all");
   for (const who of [whStaff, whHead, user("admin")]) A.receiveFg(d, { orderId, lines }, whCtx(who));
-  assert.equal(d.fgMoves.length, 3);
-  assert.deepEqual(d.fgMoves.map((move) => move.by), ["สุดา คลังสินค้า", "ชัย หัวหน้าคลัง", user("admin").name]);
+  assert.equal(own().length, 3);
+  assert.deepEqual(own().map((move) => move.by), ["สุดา คลังสินค้า", "ชัย หัวหน้าคลัง", user("admin").name]);
 });
 
 test("finished goods: receiving is partial per product, capped by what PK reported, checked shape first then permission then status then the numbers", () => {
@@ -1837,7 +1846,8 @@ test("finished goods: receiving is partial per product, capped by what PK report
   assert.deepEqual(position().products.map((p) => [p.fgCode, p.ordered, p.pkDone, p.received, p.receivable]), [[TP, 80, 30, 0, 30], [HL, 40, 0, 0, 0]]);
   A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 20 }], note: "รอบเช้า" }, whCtx());
   assert.equal(order.status, "in_progress", "received while production is still running");
-  assert.deepEqual(d.fgMoves.map((move) => [move.orderId, move.fgCode, move.kind, move.qty, move.note, move.at, move.by]), [[orderId, TP, "receive", 20, "รอบเช้า", NOW, "สุดา คลังสินค้า"]]);
+  const own = () => d.fgMoves.filter((move) => move.orderId === orderId);
+  assert.deepEqual(own().map((move) => [move.orderId, move.fgCode, move.kind, move.qty, move.note, move.at, move.by]), [[orderId, TP, "receive", 20, "รอบเช้า", NOW, "สุดา คลังสินค้า"]]);
   assert.equal(position().products[0].receivable, 10);
   assert.equal(position().anyReceivable, true);
   // ยอดเกิน PK / สินค้าที่ PK ยังไม่ส่ง
@@ -1861,7 +1871,7 @@ test("finished goods: receiving is partial per product, capped by what PK report
   const draft = d.orders.find((entry) => entry.status === "draft");
   rejects(() => A.receiveFg(d, { orderId: draft.id, lines: [{ fgCode: draft.items[0].fgCode, qty: 1 }] }, whCtx(user("planner"))), /คลังสินค้า \(WH\)/, "permission before status");
   rejects(() => A.receiveFg(d, { orderId: draft.id, lines: [{ fgCode: draft.items[0].fgCode, qty: 1 }] }, whCtx()), /ปล่อยผลิตแล้ว/, "status before the numbers");
-  assert.equal(d.fgMoves.length, 1, "every refusal leaves the history untouched");
+  assert.equal(own().length, 1, "every refusal leaves the history untouched");
   // รับเพิ่มได้จนเท่าที่ PK รายงาน · เลข PI ตัวพิมพ์เล็กหรือมีช่องว่างหัวท้ายหาใบเดียวกันได้ (ฐานข้อมูลทำ upper + ตัดช่องว่าง) และประวัติเก็บเลขของใบ
   A.receiveFg(d, { orderId: ` ${orderId.toLowerCase()} `, lines: [{ fgCode: TP, qty: 10 }] }, whCtx());
   assert.equal(d.fgMoves.at(-1).orderId, orderId);
@@ -1971,7 +1981,8 @@ test("finished goods: delivery is capped by what was received, possible before a
 test("finished goods: on hand per code is everything received minus everything delivered over all orders, with the orders that hold it", () => {
   const d = fresh();
   const orderId = reportPk(d, { [TP]: 80, [HL]: 40 });
-  assert.deepEqual(rules.fgOnHand(d), []);
+  // ชุดสาธิต: ใบ DEMO-26008 รับฮูล่า 20 ส่งมอบ 20 แล้ว (คงคลัง 0 ไม่มีใบใดถือของ)
+  assert.deepEqual(rules.fgOnHand(d), [{ fgCode: HL, onHand: 0, free: 0, orders: [], freeOrders: [] }]);
   A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 50 }, { fgCode: HL, qty: 40 }] }, whCtx());
   A.deliverFg(d, { orderId, lines: [{ fgCode: TP, qty: 20 }, { fgCode: HL, qty: 40 }] }, whCtx());
   assert.deepEqual(rules.fgOnHand(d), [{ fgCode: HL, onHand: 0, free: 0, orders: [], freeOrders: [] }, { fgCode: TP, onHand: 30, free: 0, orders: [{ orderId, qty: 30 }], freeOrders: [] }], "what the order still owes its own customer is not free stock");
@@ -1991,7 +2002,7 @@ test("finished goods: in database mode an action only checks and returns the req
   const remote = (who = whStaff) => ({ now: NOW, user: who, remote: true });
   const receive = A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 80 }, { fgCode: HL, qty: 10 }], note: "  รอบเช้า " }, remote());
   assert.deepEqual(receive.request, { orderId, kind: "receive", lines: [{ fgCode: TP, qty: 80 }, { fgCode: HL, qty: 10 }], note: "รอบเช้า" });
-  assert.equal(d.fgMoves ?? undefined, undefined, "the server writes the history");
+  assert.equal(d.fgMoves.filter((move) => move.orderId === orderId).length, 0, "the server writes the history");
   assert.equal(d.orders.find((entry) => entry.id === orderId).status, "in_progress");
   assert.deepEqual(A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 1 }] }, remote(user("admin"))).request, { orderId, kind: "receive", lines: [{ fgCode: TP, qty: 1 }] }, "an empty note is not sent");
   const all = A.receiveFg(d, { orderId, lines: [{ fgCode: TP, qty: 80 }, { fgCode: HL, qty: 40 }] }, remote());

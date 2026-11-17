@@ -96,13 +96,13 @@
     recordMixing: "station", endRest: "skipRest", returnRequisition: "returnRequisition", recordExtrusion: "station", recordCuring: "station", recordFinishing: "station", cleanMold: "station",
     createTransfer: "sendTransfer", receiveTransfer: "receiveTransfer", shipBoxes: "shipBoxes", addQcRecord: "qcDecision", createNcr: "qcDecision", closeNcr: "qcDecision",
     updateNcr: "fillNcr", saveMold: "editMold",
-    createPurchaseOrder: "purchase", receivePurchaseLine: "receiveMaterial", cancelPurchaseOrder: "cancelPurchase",
+    createPurchaseOrder: "purchase", receivePurchaseLine: "receiveMaterial", closePurchaseLine: "receiveMaterial", cancelPurchaseOrder: "cancelPurchase",
     saveMaterial: "editMaster", createRecipe: "editMaster", saveRecipe: "editMaster", approveRecipe: "approveRecipe", createOrder: "createOrder",
   });
   // dialog ที่เปิดจากปุ่ม → คำสั่งที่ dialog นั้นส่ง
   const DIALOG_ACTION = Object.freeze({
     receiveMaterial: "receiveMaterial", createRequisition: "createRequisition", transfer: "createTransfer", receive: "receiveTransfer", qcRecord: "addQcRecord", ncr: "createNcr",
-    purchase: "createPurchaseOrder", receivePurchase: "receivePurchaseLine", skipRest: "endRest", returnRequisition: "returnRequisition",
+    purchase: "createPurchaseOrder", receivePurchase: "receivePurchaseLine", closePurchase: "closePurchaseLine", skipRest: "endRest", returnRequisition: "returnRequisition",
     moldEdit: "saveMold", materialEdit: "saveMaterial", createOrder: "createOrder", recipeEdit: "saveRecipe", recipeNew: "createRecipe",
   });
   const rightForAction = (name) => ACTION_RIGHT[name] ?? null;
@@ -245,7 +245,7 @@
       RF_INVALID_QC: "ข้อมูลผลตรวจ QC ไม่ถูกต้อง",
       RF_INVALID_NCR: "ข้อมูล NCR ไม่ถูกต้อง (การปิดเคสต้องมีทั้งการแก้ไขและการป้องกัน)",
       RF_INVALID_MOLD: "ข้อมูลแม่พิมพ์ไม่ถูกต้อง",
-      RF_INVALID_PURCHASE: "ข้อมูลใบสั่งซื้อไม่ถูกต้อง (รายการต้องไม่ซ้ำและจำนวนมากกว่า 0 การรับเข้าต้องมีล็อตที่ตรงกัน)",
+      RF_INVALID_PURCHASE: "ข้อมูลใบสั่งซื้อไม่ถูกต้อง (รายการต้องไม่ซ้ำและจำนวนมากกว่า 0 การรับเข้าต้องมีล็อตที่ตรงกับยอดที่รับครั้งนี้ การปิดยอดที่เหลือต้องมีเหตุผล 3-300 ตัวอักษร)",
       RF_INVALID_MATERIAL: "ข้อมูลวัตถุดิบไม่ถูกต้อง รหัสใช้ได้เฉพาะตัวอักษรอังกฤษ ตัวเลข จุด ขีดกลาง และขีดล่าง (ไม่เกิน 40 ตัวอักษร) และต้องมีชื่อ",
       RF_REVISION_ORDER: "ฉบับแก้ไขของสูตรต้องเรียงต่อจากล่าสุดทีละ 1 ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาออกฉบับแก้ไขใหม่อีกครั้ง",
       NOT_AUTHORIZED: "ล้างข้อมูล RubberFlow ทดสอบได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ",
