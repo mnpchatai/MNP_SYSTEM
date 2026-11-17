@@ -690,7 +690,10 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     if (!order || !["released", "in_progress"].includes(order.status)) fail("BOM_INVALID_TRANSITION");
     if (record.externalRef && prev.dept !== "RB") fail("BOM_INVALID_JOB");
     // ปิดงานโดยฝ่ายวางแผน: ยอดดี / เสียต้องเท่าเดิม (ปิดงานไม่เพิ่มหรือลดยอด)
-    if (bomJobClosing(prev, record, actor, action) && (Number(record.qtyDone) !== Number(prev.qtyDone) || Number(record.qtyReject) !== Number(prev.qtyReject))) fail("BOM_INVALID_JOB");
+    const closing = bomJobClosing(prev, record, actor, action);
+    if (closing && (Number(record.qtyDone) !== Number(prev.qtyDone) || Number(record.qtyReject) !== Number(prev.qtyReject))) fail("BOM_INVALID_JOB");
+    // งานที่เปลี่ยนเป็น done โดยไม่มีรายการเหตุผลของการปิดงาน ต้องถึงยอดแผนแล้ว ทุกผู้เรียกทุก action (ตรงกับ bom_save_jobs ของ 20261126010000: qtyDone + 1e-9 >= qtyPlanned)
+    if (record.status === "done" && prev.status !== "done" && !closing && (Number(record.qtyDone) || 0) + 1e-9 < Number(record.qtyPlanned)) fail("BOM_INVALID_JOB");
     // งานของซื้อที่เบิกไปแล้ว (qtyDone > 0 หรือ done): แก้ช่องโครงสร้าง / WO ไม่ได้ ทุก action ทุกผู้เรียก (ตรงกับ bom_save_jobs ของ 20261124010000)
     // การแก้ช่องผลงานไปทาง bomCheckRecord ("part") ก่อนถึงตรงนี้ · แถวที่เท่าเดิมไม่ถูกปฏิเสธ (SQL ข้ามแถวที่ไม่เปลี่ยน)
     if (bomIsPartJob(prev) && (Number(prev.qtyDone) > 0 || prev.status === "done") && bomJobShapeChanged(prev, record)) fail("BOM_INVALID_JOB");

@@ -60,7 +60,16 @@ test("only planners and managers create or edit items and BOMs; every save is a 
   rejects(() => A.saveBom(d, { itemCode: "DEMO-TP-01(P)-Y", lines: [{ childCode: "NOPE", qty: 1 }] }, ctx("planner")), /ไม่พบชิ้นงาน NOPE/);
   rejects(() => A.saveBom(d, { itemCode: "DEMO-TP-01(P)-Y", lines: [{ childCode: "P-STK-01", qty: 1 }, { childCode: "P-STK-01", qty: 2 }] }, ctx("planner")), /ซ้ำ/);
   rejects(() => A.saveBom(d, { itemCode: "DEMO-TP-01(P)-Y", lines: [{ childCode: "P-STK-01", qty: 0 }] }, ctx("planner")), /มากกว่า 0/);
-  rejects(() => A.saveBom(d, { itemCode: "SE-TP01-OR01-100-18-65", lines: [{ childCode: "DEMO-TP-01(P)-Y", qty: 1 }] }, ctx("planner")), /วงจร/);
+  // วงจรผ่านชิ้นที่ไม่ใช่สินค้า (สินค้าสำเร็จรูปเป็นส่วนประกอบไม่ได้อยู่แล้ว จึงวนกลับมาที่สินค้าไม่ได้)
+  A.saveItem(d, { code: "SE-CYC-A", kind: "SE", name: "ชิ้น A", uom: "pcs" }, ctx("planner"));
+  A.saveItem(d, { code: "SE-CYC-B", kind: "SE", name: "ชิ้น B", uom: "pcs" }, ctx("planner"));
+  A.saveBom(d, { itemCode: "SE-CYC-A", lines: [{ childCode: "SE-CYC-B", qty: 1 }] }, ctx("planner"));
+  rejects(() => A.saveBom(d, { itemCode: "SE-CYC-B", lines: [{ childCode: "SE-CYC-A", qty: 1 }] }, ctx("planner")), /วงจร/);
+  // สินค้าสำเร็จรูป (FG) เป็นส่วนประกอบไม่ได้ ไม่ว่าใต้ชิ้นชนิดไหน · เปลี่ยนชิ้นที่เป็นลูกอยู่แล้วให้เป็นสินค้าก็ไม่ได้
+  rejects(() => A.saveBom(d, { itemCode: "SE-TP01-OR01-100-18-65", lines: [{ childCode: "DEMO-TP-01(P)-Y", qty: 1 }] }, ctx("planner")), /สินค้าสำเร็จรูปใช้เป็นส่วนประกอบไม่ได้/);
+  rejects(() => A.saveBom(d, { itemCode: "DEMO-TP-01(P)-Y", lines: [{ childCode: "DEMO-HL-24(B)-A", qty: 1 }] }, ctx("planner")), /สินค้าสำเร็จรูปใช้เป็นส่วนประกอบไม่ได้/);
+  rejects(() => A.saveItem(d, { code: "P-STK-01", kind: "FG", name: "สติ๊กเกอร์", uom: "pcs" }, ctx("planner")), /สินค้าสำเร็จรูปใช้เป็นส่วนประกอบไม่ได้/);
+  assert.equal(d.items.find((item) => item.code === "P-STK-01").kind, "PURCHASED", "a refused kind change leaves the item as it was");
   rejects(() => A.saveBom(d, { itemCode: "RB-DM01-01-OR01-200-0-72", lines: [{ childCode: "P-PEL-BK", qty: 1 }] }, ctx("planner")), /RubberFlow/);
   rejects(() => A.saveBom(d, { itemCode: "P-PEL-BK", lines: [{ childCode: "P-STK-01", qty: 1 }] }, ctx("manager")), /ของซื้อ/);
   const before = approved(d, "DEMO-TP-01(P)-Y");
@@ -587,18 +596,19 @@ test("importing skips the BOM lines the database rejects (a purchased parent, a 
     { code: "P-BUY-1", kind: "PURCHASED", name: "สายสะพาย", uom: "pcs", ownerDept: "ST" },
     { code: "P-BUY-2", kind: "PURCHASED", name: "ผ้า", uom: "m", ownerDept: "ST" },
     { code: "RB-K-01-1-1-1", kind: "RB", name: "เส้นยาง", uom: "rod", ownerDept: "RB" },
+    { code: "FG-OTHER(P)-Y", kind: "FG", name: "สินค้าอื่น", uom: "set", ownerDept: "PK" },
   ];
   const boms = [
-    { parentCode: "FG-KIND(P)-Y", lines: [{ childCode: "RB-K-01-1-1-1", qty: 2 }, { childCode: "P-BUY-1", qty: 1 }] },
+    { parentCode: "FG-KIND(P)-Y", lines: [{ childCode: "RB-K-01-1-1-1", qty: 2 }, { childCode: "P-BUY-1", qty: 1 }, { childCode: "FG-OTHER(P)-Y", qty: 1 }] },
     { parentCode: "P-BUY-1", lines: [{ childCode: "P-BUY-2", qty: 3 }] },
     { parentCode: "RB-K-01-1-1-1", lines: [{ childCode: "P-BUY-2", qty: 1 }] },
   ];
   const { summary, ...stats } = A.importFlat(d, { items, boms, source: "kinds.xlsx" }, ctx("planner"));
-  assert.deepEqual(stats, { itemsAdded: 4, itemsMerged: 0, bomsAdded: 1, bomsSkipped: 0, linesSkipped: 2, cycleLinesSkipped: 0 });
-  assert.match(summary, /ข้าม 2 บรรทัดที่ชนิดพ่อ\/ลูกไม่เข้ากัน$/);
+  assert.deepEqual(stats, { itemsAdded: 5, itemsMerged: 0, bomsAdded: 1, bomsSkipped: 0, linesSkipped: 3, cycleLinesSkipped: 0 });
+  assert.match(summary, /ข้าม 3 บรรทัดที่ชนิดพ่อ\/ลูกไม่เข้ากัน$/);
   assert.equal(approved(d, "P-BUY-1"), null, "a purchased part gets no BOM");
   assert.equal(approved(d, "RB-K-01-1-1-1"), null, "a rod's only child may be a compound");
-  assert.deepEqual(approved(d, "FG-KIND(P)-Y").lines.map((line) => line.childCode), ["P-BUY-1", "RB-K-01-1-1-1"], "valid lines stay, sorted ST before RB");
+  assert.deepEqual(approved(d, "FG-KIND(P)-Y").lines.map((line) => line.childCode), ["P-BUY-1", "RB-K-01-1-1-1"], "valid lines stay, sorted ST before RB (a finished product as a component is skipped)");
 });
 
 test("importing skips a line that makes a BOM contain itself (directly or through its children) instead of the database refusing the whole batch with BOM_CYCLE", () => {

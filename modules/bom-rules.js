@@ -34,9 +34,10 @@
   // ชนิดที่ไม่มีส่วนประกอบ: ของซื้อ และสูตรยาง (สูตร PHR อยู่ที่ RubberFlow)
   const LEAF_KINDS = Object.freeze(["PURCHASED", "CP"]);
   // ชิ้นชนิด childKind อยู่ใต้ parentKind ได้ไหม: "" = ได้ · ข้อความ = เหตุผลที่ไม่ได้
-  // เส้นยางมีลูกได้เฉพาะสูตรยาง และสูตรยางอยู่ได้เฉพาะใต้เส้นยาง (เส้นยางหนึ่งเส้นใช้สูตรเดียว ตรวจที่ saveBom)
+  // สินค้าสำเร็จรูป (FG) เป็นส่วนประกอบของชิ้นอื่นไม่ได้ · เส้นยางมีลูกได้เฉพาะสูตรยาง และสูตรยางอยู่ได้เฉพาะใต้เส้นยาง (เส้นยางหนึ่งเส้นใช้สูตรเดียว ตรวจที่ saveBom)
   function childKindError(parentKind, childKind) {
     if (LEAF_KINDS.includes(parentKind)) return `${KINDS[parentKind]?.label ?? parentKind}ไม่มีส่วนประกอบ`;
+    if (childKind === "FG") return "สินค้าสำเร็จรูปใช้เป็นส่วนประกอบไม่ได้";
     if (parentKind === "RB" && childKind !== "CP") return "เส้นยางมีส่วนประกอบได้เฉพาะสูตรยาง (สูตร PHR อยู่ที่ RubberFlow)";
     if (childKind === "CP" && parentKind !== "RB") return "สูตรยางใส่ได้เฉพาะใต้เส้นยาง (RB)";
     return "";
@@ -1314,7 +1315,7 @@
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
-    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, draftPartDemand, draftRubberJobs, partReserved, partOnOrder, partReturned, partReturnLines, fgPosition, fgOnHand, fgFreeList, fgStockForDraft, fgStockLock, countedCodes,
+    normalizeUom, uomLabel, rbPerSe, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, draftBefore, draftPartDemand, draftRubberJobs, partReserved, partOnOrder, partReturned, partReturnLines, fgPosition, fgOnHand, fgFreeList, fgStockForDraft, fgStockLock, countedCodes,
     DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };

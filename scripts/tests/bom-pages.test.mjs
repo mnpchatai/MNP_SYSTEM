@@ -658,8 +658,12 @@ test("a product of the order that is also a component of another product gets no
   const se = "SE-HL24-YE03-400-19-30";
   // ชุดรวมที่มีห่วงฮูล่า (สินค้าของใบเดียวกัน) เป็นส่วนประกอบ
   assert.equal(env.store.run("saveItem", { code: "KIT-01", kind: "FG", name: "ชุดรวมห่วงฮูล่า", uom: "set", create: true }).ok, true);
-  const bom = env.store.run("saveBom", { itemCode: "KIT-01", lines: [{ childCode: product, qty: 1 }] });
-  assert.equal(bom.ok, true, bom.error?.message);
+  // saveBom refuses a finished product as a component now, so the kit is the data an older version stored
+  const refused = env.store.run("saveBom", { itemCode: "KIT-01", lines: [{ childCode: product, qty: 1 }] });
+  assert.equal(refused.ok, false);
+  assert.match(refused.error?.message, /สินค้าสำเร็จรูปใช้เป็นส่วนประกอบไม่ได้/);
+  const kit = env.store.data().items.find((entry) => entry.code === "KIT-01");
+  env.store.data().boms.push({ id: "BOM-KIT-01", itemCode: "KIT-01", revision: 1, status: "approved", ownerDept: kit.ownerDept, lines: [{ childCode: product, qty: 1, uom: "set", consumerDept: kit.ownerDept, producerDept: "PK", scrapPct: 0 }], createdBy: "test", createdAt: kit.createdAt, approvedBy: "test", approvedAt: kit.createdAt, note: "", changeLog: [] });
   const added = env.store.run("addOrderItem", { orderId: "DEMO-26002", fgCode: "KIT-01", qty: 2 });
   assert.equal(added.ok, true, added.error?.message);
   assert.equal(env.store.run("explodeOrder", { orderId: "DEMO-26002" }).ok, true);
@@ -1155,7 +1159,8 @@ test("paste from Excel: the preview tells known items, new items and bad lines a
   assert.deepEqual(json(deepCycle.rows.map((row) => row.status)), ["error", "known"], "only the row whose tree reaches an ancestor is skipped");
   assert.match(deepCycle.rows[0].error, /RB-DM01-02-OR01-202-18-70 อยู่ข้างใต้ จะเป็นวงจร/);
   assert.equal(deepCycle.addable, 1);
-  assert.equal(tools.pastePlan(env.ctx("p=build"), "DEMO-TP-01(P)-Y\t1", { parentKind: "FG", ancestors: ["P-ROPE-01"] }).rows[0].status, "known", "an ancestor outside the pasted tree is no cycle");
+  assert.equal(tools.pastePlan(env.ctx("p=build"), "SE-TP01-OR01-100-18-65\t1", { parentKind: "FG", ancestors: ["P-ROPE-01"] }).rows[0].status, "known", "an ancestor outside the pasted tree is no cycle");
+  assert.match(tools.pastePlan(env.ctx("p=build"), "DEMO-TP-01(P)-Y\t1", { parentKind: "FG", ancestors: ["P-ROPE-01"] }).rows[0].error, /สินค้าสำเร็จรูปใช้เป็นส่วนประกอบไม่ได้/, "a finished product is never a component");
   assert.match(tools.pastePlan(env.ctx("p=build"), "P-STK-01\t1\tkg", { parentKind: "FG" }).rows[0].warn, /ต่างจากชิ้นงาน/);
   env.store.run("saveItem", { code: "P-STK-01", kind: "PURCHASED", name: "สติ๊กเกอร์", uom: "pcs", active: false });
   assert.match(tools.pastePlan(env.ctx("p=build"), "P-STK-01\t1", { parentKind: "FG" }).rows[0].error, /เลิกใช้แล้ว/);
@@ -2312,6 +2317,80 @@ test("chemicals of a draft PI are estimated from the WOs the release would open,
   const rfCtx = env.rf.context(new URLSearchParams());
   const purchase = env.context.MNP_RUBBERFLOW_DIALOGS.purchase(rfCtx, { woIds: [], sourcePi: "DEMO-26002", draftOrders: chem.orders, parts: false });
   for (const row of chem.rows) assert.match(purchase.html, new RegExp(`name="materialCode\\[\\]" value="${row.itemCode}"`));
+});
+
+test("drafts reserve chemicals among themselves in calculation order like purchased parts: the earlier draft holds first, the later one is short, and the purchase dialog shows the same numbers", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const rules = env.context.MNP_BOM_RULES;
+  const hub = env.context.MNP_BOM_PAGES.hub;
+  const first = env.store.data().orders.find((order) => order.id === "DEMO-26002");
+  const fg = rules.parseFgCode(first.items[0].fgCode);
+  assert.equal(env.store.run("createOrder", { pi: "DEMO-26009", customer: "ลูกค้าทดสอบสอง", country: "Thailand", orderType: first.orderType, orderedAt: Date.now(), whDue: Date.now() + 30 * 864e5, due: {}, autoDue: true }).ok, true);
+  assert.equal(env.store.run("addOrderItem", { orderId: "DEMO-26009", base: fg.base, pkg: fg.pkg, colorSet: fg.colorSet, qty: 10 }).ok, true);
+  assert.equal(env.store.run("explodeOrder", { orderId: "DEMO-26009" }).ok, true);
+  const orderOf = (id) => env.store.data().orders.find((order) => order.id === id);
+  assert.equal(rules.draftBefore(orderOf("DEMO-26002"), orderOf("DEMO-26009")), true, "26002 was calculated before 26009");
+  assert.equal(rules.draftBefore(orderOf("DEMO-26009"), orderOf("DEMO-26002")), false);
+  // ไม่มี WO / ใบเบิก / ใบสั่งซื้อของ RubberFlow อื่นมาจอง: ยอดจองมาจากใบร่างอย่างเดียว
+  const rf = env.rf.store.data();
+  rf.orders = [];
+  rf.requisitions = [];
+  rf.purchaseOrders = [];
+  const free = hub.draftChemicals(env.ctx(), orderOf("DEMO-26002"));
+  const free9 = hub.draftChemicals(env.ctx(), orderOf("DEMO-26009"));
+  const code = free.rows.map((row) => row.itemCode).find((entry) => free9.rows.some((row) => row.itemCode === entry));
+  assert.ok(code, "both drafts need a chemical in common");
+  const needA = free.rows.find((row) => row.itemCode === code).required;
+  const needB = free9.rows.find((row) => row.itemCode === code).required;
+  // คงเหลือพอสำหรับใบที่ใหญ่กว่าใบเดียว (ไม่พอสองใบรวมกัน)
+  const template = rf.materialLots.find((lot) => lot.materialCode === code);
+  rf.materialLots = [...rf.materialLots.filter((lot) => lot.materialCode !== code), { ...template, qtyKg: Math.max(needA, needB) + 0.0004 }];
+  const A = hub.draftChemicals(env.ctx(), orderOf("DEMO-26002"));
+  const B = hub.draftChemicals(env.ctx(), orderOf("DEMO-26009"));
+  const rowA = A.rows.find((row) => row.itemCode === code);
+  const rowB = B.rows.find((row) => row.itemCode === code);
+  // ใบที่คำนวณก่อน: ไม่ถูกจองตัดหน้า พอ · เห็นความต้องการของใบหลังในคอลัมน์ "ใบร่างอื่นต้องใช้" (ข้อมูลให้ดู ไม่เข้าสูตร)
+  assert.equal(rowA.held, 0);
+  assert.equal(rowA.short, 0);
+  assert.equal(rowA.other, needB);
+  assert.deepEqual(json(rowA.otherOrders), ["DEMO-26009"]);
+  assert.deepEqual(json(A.reservedOrders), []);
+  // ใบที่คำนวณทีหลัง: ยอดที่ใบก่อนต้องใช้อยู่ในยอดจอง จึงขาด · ไม่มีใบร่างที่คำนวณหลังมันมาเข้าคอลัมน์ข้างๆ
+  assert.ok(Math.abs(rowB.held - needA) < 0.0011, `the earlier draft's need (${needA}) is held, got ${rowB.held}`);
+  assert.ok(rowB.short > 0, "the later draft is short");
+  assert.equal(rowB.other, 0);
+  assert.deepEqual(json(rowB.otherOrders), []);
+  assert.deepEqual(json(B.reservedOrders.map((order) => order.id)), json(A.orders.map((order) => order.id)), "the temporary WOs of the earlier draft are what the later one reserves");
+  // ผลต่างจากเดิม: ไม่นับใบร่างอื่น ตัวเลขของใบหลังคือพอ (ยืนยันว่ายอดขาดมาจากการจองของใบก่อนเท่านั้น)
+  const alone = env.ctx().rubberflow().draftChemicalNeeds(B.orders).rows.find((row) => row.materialCode === code);
+  assert.equal(alone.shortageKg, 0, "without the reserved orders nothing changes from before");
+  const together = env.ctx().rubberflow().draftChemicalNeeds(B.orders, B.reservedOrders).rows.find((row) => row.materialCode === code);
+  assert.equal(together.shortageKg, rowB.short);
+  // หน้า: ขั้น 2 ของใบหลังขาด และหัวคอลัมน์ "ใบอื่นจองไว้" บอกว่ารวมใบร่างที่คำนวณก่อน
+  const html = await env.render("p=orders&sel=DEMO-26009");
+  clean(html);
+  assert.match(html, /<th class="right" title="ใบเบิกที่ค้างจ่าย WO อื่นที่ยังเปิดอยู่ และใบร่างที่คำนวณของก่อนใบนี้">ใบอื่นจองไว้<\/th>/);
+  assert.match(html, /<tr class="bom-short">/);
+  const earlierHtml = await env.render("p=orders&sel=DEMO-26002");
+  clean(earlierHtml);
+  assert.match(earlierHtml, /title="ใบ DEMO-26009"/, "the earlier draft names the later one in its column");
+  // หน้าต่างสั่งซื้อที่เปิดจากใบร่าง: ขาดและจำนวนสั่งตั้งต้นเท่ากับตารางขั้น 2 เมื่อส่ง WO ชั่วคราวของใบก่อนเป็นยอดจอง · ไม่ส่ง = เท่าเดิม
+  const rfCtx = { ...env.rf.context(new URLSearchParams()), can: (permission) => ["purchase"].includes(permission) };
+  const shortOf = (dialog) => Number(new RegExp(`<tr data-rf-po-row data-short="([^"]*)"[^>]*><td><span class="rf-mono">${code}</span>`).exec(dialog)?.[1]);
+  const dialog = (extra) => env.context.MNP_RUBBERFLOW_DIALOGS.purchase(rfCtx, { woIds: [], sourcePi: "DEMO-26009", draftOrders: B.orders, parts: false, ...extra }).html;
+  assert.equal(shortOf(dialog({ reservedDraftOrders: B.reservedOrders })), rowB.short, "the dialog is short by the same figure as the table");
+  assert.equal(shortOf(dialog({})), 0, "without the argument the dialog is as before");
+  // ปุ่มสั่งซื้อของใบร่างเรียก checkMaterials: ตัวเลขที่ตรวจได้ตามตารางเมื่อส่งใบก่อนเป็นยอดจอง · ไม่ส่งก็เท่าเดิม
+  env.rf.store.setUser("U01");
+  const checked = await env.rf.checkMaterials({ woIds: [], sourcePi: "DEMO-26009", draftOrders: B.orders, reservedDraftOrders: B.reservedOrders, auto: false });
+  assert.equal(checked.ok, true);
+  assert.equal(checked.result.rows.find((row) => row.materialCode === code).shortageKg, rowB.short, "the check shows the figure of the table");
+  assert.equal((await env.rf.checkMaterials({ woIds: [], sourcePi: "DEMO-26009", draftOrders: B.orders, auto: false })).result.rows.find((row) => row.materialCode === code).shortageKg, 0, "without the argument the check is as before");
+  // ใบร่างที่ขั้นหลังไม่เห็นใบอื่น: เมื่อใบก่อนปล่อยผลิตไปแล้ว WO จริงของมันอยู่ใน RubberFlow และใบร่างไม่ถูกนับซ้ำ
+  assert.equal(env.store.run("releaseOrder", { orderId: "DEMO-26002" }).ok, true);
+  const afterRelease = hub.draftChemicals(env.ctx(), orderOf("DEMO-26009"));
+  assert.deepEqual(json(afterRelease.reservedOrders), [], "a released PI is no draft: its work orders are the real ones");
 });
 
 test("the wide table and a kind switch cannot change the compound of a rod that has one", async () => {

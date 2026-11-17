@@ -75,7 +75,7 @@
   });
   // context(params) ให้เทสต์เรียก dialog ด้วย ctx เดียวกับหน้า
   // bomJobOfAction / showBomFeedback: ขั้น "ตกแต่งผ่าน / QA ตัดสินผ่าน → ตามทัน BOM → แจ้งยอดที่งานได้รับ" (ให้เทสต์เรียกตรง)
-  window.MNP_RUBBERFLOW = { runAction: (name, payload, successText) => runAction(name, payload, successText), store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing(), bomJobOfAction: (name, payload) => bomJobOfAction(name, payload), showBomFeedback: (before) => showBomFeedback(before), checkMaterials: (options) => checkMaterials(options), can: (permission) => storeApi.can(store.user(), permission), openChemicalNeeds: () => openChemicalNeeds(), draftChemicalNeeds: (draftOrders) => draftChemicalNeeds(draftOrders) };
+  window.MNP_RUBBERFLOW = { runAction: (name, payload, successText) => runAction(name, payload, successText), store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing(), bomJobOfAction: (name, payload) => bomJobOfAction(name, payload), showBomFeedback: (before) => showBomFeedback(before), checkMaterials: (options) => checkMaterials(options), can: (permission) => storeApi.can(store.user(), permission), openChemicalNeeds: () => openChemicalNeeds(), draftChemicalNeeds: (draftOrders, reservedDraftOrders) => draftChemicalNeeds(draftOrders, reservedDraftOrders) };
 
   // โหมดฐานข้อมูล: โหลดเสร็จ/โหลดไม่สำเร็จ/บันทึกไม่สำเร็จ (ย้อนกลับแล้ว) วาดหน้าใหม่ · เริ่ม/เสร็จการบันทึกแค่เปลี่ยนข้อความสถานะ ไม่ทับฟอร์มที่ผู้ใช้กำลังกรอก
   const onRfRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
@@ -501,11 +501,12 @@
   // เรียกจากฝั่ง BOM (หลังปล่อยผลิต PI และปุ่ม "ตรวจวัตถุดิบ" ของ PI) · ตามทัน RubberFlow ให้เห็น WO ที่เพิ่งเปิดก่อน แล้วเทียบความต้องการเคมีของ WO เหล่านั้นกับสต็อก (rules.chemicalNeeds)
   // auto = หลังปล่อยผลิต: ขาด → เปิด dialog สั่งซื้อ · ไม่ขาด → แจ้งสั้นๆ ว่าเคมีพอ · ปุ่มเรียกเอง (auto = false) เปิด dialog เสมอ · บัญชีที่ไม่มีสิทธิ์สั่งซื้อไม่เห็นอะไร
   // เคมีที่ WO ชั่วคราวของใบ PI ที่ยังเป็นร่างต้องใช้ เทียบสต็อก (BOM ขั้นตรวจของ): rules.chemicalNeeds ตัวเดียวกับหลังปล่อยผลิต โดยนับ WO ชั่วคราวเป็น WO ที่ถาม · null = RubberFlow ยังไม่พร้อม
-  function draftChemicalNeeds(draftOrders = []) {
+  // reservedDraftOrders = WO ชั่วคราวของใบร่างอื่นที่คำนวณของก่อนใบนี้: ไม่ถูกถาม จึงนับเป็น WO อื่นที่ยังเปิดและเข้ายอดจอง (เหมือนใบที่ปล่อยผลิตไปก่อน) · ไม่ส่ง = ไม่เปลี่ยนจากเดิม
+  function draftChemicalNeeds(draftOrders = [], reservedDraftOrders = []) {
     try {
       if (store.status() !== "ready" || !draftOrders.length) return null;
       const ctx = makeContext(new URLSearchParams());
-      return rules.chemicalNeeds({ ...ctx.data, orders: [...ctx.data.orders, ...draftOrders] }, draftOrders.map((order) => order.id), ctx.now, { remote: store.isRemote() });
+      return rules.chemicalNeeds({ ...ctx.data, orders: [...ctx.data.orders, ...reservedDraftOrders, ...draftOrders] }, draftOrders.map((order) => order.id), ctx.now, { remote: store.isRemote() });
     } catch { return null; }
   }
   // เคมีที่ใบสั่งผลิตที่เปิดอยู่ทุกใบต้องใช้ เทียบสต็อก (การ์ดงานของคลังวัตถุดิบในหน้า BOM และปุ่มในแท็บใบสั่งซื้อ) · null = RubberFlow ยังไม่พร้อม
@@ -517,7 +518,7 @@
       return ids.length ? rules.chemicalNeeds(ctx.data, ids, ctx.now, { remote: store.isRemote() }) : { rows: [], skipped: [], counted: [], anyShort: false };
     } catch { return null; }
   }
-  async function checkMaterials({ woIds = [], sourcePi = "", skippedJobs = 0, auto = false, draftOrders = [] } = {}) {
+  async function checkMaterials({ woIds = [], sourcePi = "", skippedJobs = 0, auto = false, draftOrders = [], reservedDraftOrders = [] } = {}) {
     try {
       const user = store.user();
       // สั่งซื้อได้เฉพาะแผนก ST · กลุ่มวางแผนและ RB เปิดดูได้ว่าขาดอะไร (readOnly ไม่มีปุ่มสั่ง)
@@ -529,7 +530,7 @@
       if (store.isRemote() && woIds.some((id) => !store.data().orders.some((order) => order.id === id))) { try { await store.reload(); } catch { /* ใช้ข้อมูลที่มี */ } }
       if (store.status() !== "ready") return { ok: false, reason: "not-ready" };
       const ctx = makeContext(new URLSearchParams());
-      const result = rules.chemicalNeeds(draftOrders.length ? { ...ctx.data, orders: [...ctx.data.orders, ...draftOrders] } : ctx.data, [...woIds, ...draftOrders.map((order) => order.id)], ctx.now, { remote: store.isRemote() });
+      const result = rules.chemicalNeeds(draftOrders.length ? { ...ctx.data, orders: [...ctx.data.orders, ...reservedDraftOrders, ...draftOrders] } : ctx.data, [...woIds, ...draftOrders.map((order) => order.id)], ctx.now, { remote: store.isRemote() });
       const parts = ctx.bomPartNeeds(sourcePi);
       if (auto && !result.anyShort && !parts?.anyShort) {
         const enough = [result.rows.length ? "เคมี" : "", parts?.rows.length ? "ของซื้อ" : ""].filter(Boolean);
@@ -540,7 +541,7 @@
         showToast("มีของที่ยังขาดสำหรับใบนี้ คลังวัตถุดิบ (ST) เป็นผู้สั่งซื้อ ดูรายการได้ที่ปุ่ม “ตรวจวัตถุดิบ” ของใบ");
         return { ok: true, opened: false, result, parts };
       }
-      openDialog("purchase", { woIds, sourcePi, skippedJobs, draftOrders, readOnly: !mayOrder }, ctx);
+      openDialog("purchase", { woIds, sourcePi, skippedJobs, draftOrders, reservedDraftOrders, readOnly: !mayOrder }, ctx);
       return { ok: true, opened: true, result };
     } catch (error) {
       showToast(friendlyError(error), "error");

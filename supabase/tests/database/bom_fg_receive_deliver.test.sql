@@ -420,7 +420,12 @@ select is(fg_t.total('251121-25001', 'FG-A', 'deliver') || '/' || fg_t.total('25
 -- 10. ปิดใบรับไม่ครบ: PK ทำได้น้อยกว่าที่สั่ง ---------------------------------------------------------------------------
 select throws_ok($$ select fg_t.close_short('251121-25002', 'ลูกค้ารับเท่าที่ทำได้') $$, 'BOM_INVALID_TRANSITION', 'a close is refused while the PK job has not started');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pk_staff')::uuid);
-select ok(fg_t.report('JOB-2A', 3, 'done') is not null, 'PK finishes with 3 of the 5 ordered');
+select ok(fg_t.report('JOB-2A', 3, 'in_progress') is not null, 'PK reports 3 of the 5 ordered');
+-- ปิดงานก่อนถึงยอดแผนต้องมีเหตุผลเสมอ (20261126010000): ฝ่ายวางแผนปิดงานด้วยรายการรายงานยอด 0 พร้อมเหตุผล
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select ok(fg_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  fg_t.job('JOB-2A') || jsonb_build_object('status', 'done', 'reports', (fg_t.job('JOB-2A') -> 'reports') || '[{"at":1,"by":"x","good":0,"reject":0,"note":"ลูกค้ารับเท่าที่ทำได้"}]'::jsonb)))), 'setJobStatus') is not null,
+  'the planner closes the PK job at 3 of the 5 ordered with a reason');
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
 select throws_ok($$ select fg_t.close_short('251121-25002', 'ลูกค้ารับเท่าที่ทำได้') $$, 'BOM_INVALID_TRANSITION', 'a close is refused while what PK made (3) has not been received');
 select ok(fg_t.receive('251121-25002', '[{"fgCode":"FG-A","qty":2}]'::jsonb, '', 1) is not null,

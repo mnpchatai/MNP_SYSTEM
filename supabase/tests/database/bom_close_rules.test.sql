@@ -283,7 +283,9 @@ select is(cr_t.up_order(cr_t.receive('251125-25004', 1), '251125-25004') ->> 'st
 
 -- 10. ใบ 25002: ปิดรับไม่ครบต้องรอทุกงานผลิต (ไม่ใช่แค่ PK) --------------------------------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_pk_staff')::uuid);
-select ok(cr_t.report('JOB-2-PK', 3, 'done') is not null, 'PK finishes with 3 of the 4 ordered');
+select ok(cr_t.report('JOB-2-PK', 3, 'in_progress') is not null, 'PK reports 3 of the 4 ordered');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select ok(cr_t.close_job('JOB-2-PK', 'ลูกค้ารับ 3 ชุด ไม่ผลิตเพิ่ม') is not null, 'the planner closes the PK job at 3 of the 4 with a reason (20261126010000)');
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
 select ok(cr_t.receive('251125-25002', 3) is not null, 'WH receives the 3 sets');
 select throws_ok($$ select cr_t.close_short('251125-25002', 'PK ทำได้ไม่ครบ') $$, 'BOM_INVALID_TRANSITION',
@@ -307,9 +309,52 @@ select ok(cr_t.close_job('JOB-5-GR', 'ชิ้นยางมีในคลั
 select is(cr_t.up_order(cr_t.close('251125-25005'), '251125-25005') ->> 'status', 'completed', 'then the admin closes the order');
 select is(cr_t.moves('251125-25005') -> -1 ->> 'by', current_setting('test.n_sbx_admin_t'), 'the close move names the admin');
 
+-- 11b. งานที่เปลี่ยนเป็น done ต้องถึงยอดแผน หรือมีรายการเหตุผลของการปิดงาน ทุกผู้เรียก (20261126010000) ----------------------------------------
+--   ใบ 25006 (ใบร่างจนถึงตรงนี้) ปล่อยผลิตพร้อมงาน GR / RB / PK แผนละ 1 หน่วย · ไม่ปิดใบนี้ (ตารางข้างล่างนับเฉพาะใบ completed)
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select ok(cr_t.save(jsonb_build_object(
+  'orders', jsonb_build_object('upsert', jsonb_build_array(cr_t.order_row('251125-25006') || '{"status":"released"}'::jsonb)),
+  'jobs', jsonb_build_object('upsert', jsonb_build_array(
+    current_setting('test.job')::jsonb || '{"id":"JOB-6-GR","orderId":"251125-25006","dept":"GR","itemCode":"SE-A","kind":"SE","uom":"pcs","qtyPlanned":1,"qtyRequired":1}'::jsonb,
+    current_setting('test.job')::jsonb || '{"id":"JOB-6-RB","orderId":"251125-25006","dept":"RB","itemCode":"RB-A","kind":"RB","uom":"pcs","qtyPlanned":1,"qtyRequired":1}'::jsonb,
+    current_setting('test.job')::jsonb || '{"id":"JOB-6-PK","orderId":"251125-25006","qtyPlanned":1,"qtyRequired":1}'::jsonb))), 'releaseOrder') is not null,
+  'the planner releases 25006 with a GR, an RB and a PK job of one unit each');
+select set_config('test.v4', cr_t.ver()::text, true);
+-- ปฏิเสธ: เปลี่ยนเป็น done โดยไม่ถึงแผนและไม่มีเหตุผล
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_staff')::uuid);
+select throws_ok($$ select cr_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  cr_t.job('JOB-6-GR') || '{"status":"done"}'::jsonb))), 'setJobStatus') $$, 'BOM_INVALID_JOB',
+  'GR staff cannot set their own job to done with no output and no reason');
+select throws_ok($$ select cr_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  cr_t.job('JOB-6-GR') || '{"status":"done"}'::jsonb))), 'reportJob') $$, 'BOM_INVALID_JOB',
+  'nor under the report action');
+select throws_ok($$ select cr_t.report('JOB-6-GR', 0.4, 'done') $$, 'BOM_INVALID_JOB',
+  'a report that adds output but stays below the planned quantity cannot mark the job done');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select throws_ok($$ select cr_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  cr_t.job('JOB-6-RB') || '{"status":"done"}'::jsonb))), 'setJobStatus') $$, 'BOM_INVALID_JOB',
+  'a planner cannot set a job to done without the reason entry either');
+select throws_ok($$ select cr_t.report('JOB-6-RB', 0.4, 'done') $$, 'BOM_INVALID_JOB',
+  'nor mark it done with a report below the planned quantity');
+select is(cr_t.ver(), current_setting('test.v4')::bigint, 'none of the refused saves moved the version');
+select is((select jsonb_agg(cr_t.job(n) ->> 'status' order by n) from unnest(array['JOB-6-GR', 'JOB-6-RB', 'JOB-6-PK']) n), '["queued","queued","queued"]'::jsonb,
+  'and the three jobs are still queued');
+-- อนุญาต: ยอดถึงแผน (รายงานเดียวหรือหลายครั้ง) และฝ่ายวางแผนปิดพร้อมเหตุผล
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_staff')::uuid);
+select is(cr_t.job('JOB-6-GR') ->> 'status', 'queued', 'GR starts from a queued job');
+select ok(cr_t.report('JOB-6-GR', 1, 'done') is not null, 'GR staff reaching the planned quantity can still mark the job done');
+select is(cr_t.job('JOB-6-GR') ->> 'status', 'done', 'and the job is done');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pk_staff')::uuid);
+select ok(cr_t.report('JOB-6-PK', 0.4, 'in_progress') is not null, 'PK reports 0.4 of 1 and the job stays in progress');
+select ok(cr_t.report('JOB-6-PK', 0.6, 'done') is not null, 'the next report reaches the planned quantity and the job is done');
+select is((cr_t.job('JOB-6-PK') ->> 'qtyDone')::numeric, 1::numeric, 'with exactly the planned output');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select ok(cr_t.close_job('JOB-6-RB', 'ไม่ผลิตแล้ว ใช้เส้นยางคงคลัง') is not null, 'a planner still closes a job below the planned quantity with a reason');
+select is(cr_t.job('JOB-6-RB') ->> 'status', 'done', 'and the RB job is done');
+
 -- 12. ตาราง: ความสอดคล้องหลังการปิด (นับด้วยสิทธิ์เจ้าของตาราง) -------------------------------------------------------------
 reset role;
-select is((select count(*) from public.bom_orders where is_test and status = 'completed'), 5::bigint, 'five orders are completed, the draft is not');
+select is((select count(*) from public.bom_orders where is_test and status = 'completed'), 5::bigint, 'five orders are completed, the one of section 11b stays open');
 select ok(not exists (
     select 1 from public.bom_orders o
     where o.is_test and o.status = 'completed'
@@ -318,8 +363,8 @@ select ok(not exists (
 select is((select count(*) from public.bom_fg_moves m join public.bom_orders o on o.id = m.order_pk
            where m.is_test and m.kind = 'close' and m.note = 'รับครบ ปิดใบโดยคลังสินค้า'), 2::bigint, 'two orders were closed in full by WH or the admin');
 select is((select count(*) from public.bom_jobs j where j.is_test and j.status = 'done' and j.qty_done = 0
-           and (j.reports -> -1 ->> 'good')::numeric = 0 and char_length(j.reports -> -1 ->> 'note') >= 3), 3::bigint,
-  'three jobs were closed by the planning group with a reason and no output');
+           and (j.reports -> -1 ->> 'good')::numeric = 0 and char_length(j.reports -> -1 ->> 'note') >= 3), 4::bigint,
+  'four jobs were closed by the planning group with a reason and no output');
 set local role authenticated;
 
 select * from finish();
