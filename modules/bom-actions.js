@@ -813,7 +813,7 @@
     }
     if (!fg) fail("ไม่พบสินค้า");
     if (fg.kind !== "FG") fail("เลือกได้เฉพาะสินค้าสำเร็จรูป (FG)");
-    if (!approvedBomOf(d, fg.code)) fail(`${fg.code} ยังไม่มี BOM (สร้างได้ที่เมนู "สร้าง BOM")`);
+    if (!approvedBomOf(d, fg.code)) fail(`${fg.code} ยังไม่มี BOM (สร้างได้ที่หน้า “สินค้า” เปิดสินค้าแล้วเพิ่มบรรทัดในแท็บโครงสร้าง)`);
     const qty = num(p.qty, "จำนวนสั่ง");
     const existing = order.items.find((item) => item.fgCode === fg.code);
     if (fg.active === false && !existing) fail(`${fg.code} เลิกใช้แล้ว เพิ่มในใบสั่งผลิตใหม่ไม่ได้`);
@@ -859,7 +859,7 @@
   }
 
   function explodeOrder(d, { orderId }, ctx) {
-    requirePlanner(ctx, "ระเบิด BOM");
+    requirePlanner(ctx, "คำนวณวัตถุดิบ");
     const order = orderById(d, orderId);
     editable(order);
     if (!order.items.length) fail("ใบยังไม่มีสินค้า");
@@ -871,13 +871,13 @@
       result.lines.forEach((line) => lines.push({ ...line, fgQty: item.qty }));
       result.missing.forEach((code) => missing.add(code));
     }
-    if (missing.size) fail(`ระเบิดไม่ครบ ไม่พบชิ้นงาน: ${[...missing].join(", ")}`);
+    if (missing.size) fail(`คำนวณไม่ครบ ไม่พบชิ้นงาน: ${[...missing].join(", ")}`);
     // ลำดับในคิวจองของใบร่าง (rules.draftBefore ใช้ explodedAt): กด "คำนวณใหม่" แล้วได้ผลเท่าเดิม = คงลำดับเดิม · ผลต่างจากเดิม (BOM หรือจำนวนเปลี่ยน) หรือใบที่ถูกแก้ (explosion ถูกล้าง) = ไปต่อท้ายคิว
     // เหมือนฐานข้อมูล (bom_save_orders: exploded_at เปลี่ยนเมื่อผลต่างจากเดิมหรือยังว่าง) จึงตรงกับค่าที่ฐานข้อมูลตอบกลับ
     const sameExplosion = Boolean(order.explodedAt) && Array.isArray(order.explosion) && stableJson(order.explosion) === stableJson(lines);
     order.explosion = lines;
     if (!sameExplosion) order.explodedAt = ctx.now;
-    audit(d, ctx, "ระเบิด BOM", `${order.id} ${lines.length} บรรทัด`);
+    audit(d, ctx, "คำนวณวัตถุดิบ",`${order.id} ${lines.length} บรรทัด`);
     return lines.length;
   }
 
@@ -964,7 +964,7 @@
     requireDraftForCount(order);
     const code = rules().canonicalCode(itemCode);
     const line = order.explosion?.find((entry) => entry.itemCode === code);
-    if (!line) fail("ชิ้นงานนี้ไม่อยู่ในใบ (ระเบิด BOM ก่อน)");
+    if (!line) fail("ชิ้นงานนี้ไม่อยู่ในใบ (คำนวณวัตถุดิบก่อน)");
     if (line.kind === "PURCHASED") fail(`${code} เป็นของซื้อ นับที่เมนู “คลังของซื้อ” (ยอดรวมต่อรหัส) ไม่นับตามใบ`);
     // ตัวสินค้าของใบ = ยอดที่ใช้จากสต็อกสินค้าสำเร็จรูป: ฝ่ายวางแผนตั้ง ไม่เกินจำนวนสั่งและไม่เกินสต็อกที่ใช้ได้ของใบนี้ (หักจากสต็อกจริงตอนปล่อยผลิต) · ST / WH นับชิ้นอื่นของใบได้ แต่ไม่ตั้งยอดนี้
     const product = order.items.some((item) => item.fgCode === code);
@@ -978,7 +978,7 @@
     order.stockCounts[code] = value;
     order.stockCountedAt = ctx.now;
     order.stockCountedBy = user.name;
-    audit(d, ctx, "นับคงคลังตามใบ", `${order.id} ${code} = ${value}`);
+    audit(d, ctx, product ? rules().FG_STOCK_AUDIT_TEXT : "นับคงคลังตามใบ", `${order.id} ${code} = ${value}`);
     return code;
   }
 

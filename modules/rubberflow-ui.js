@@ -62,7 +62,7 @@
   // ---------- ฟอร์ม ----------
   // ช่องกรอก: ชื่อ name= เป็นคีย์ของ FormData ตอนส่ง hint = ข้อความใต้ช่อง (HTML)
   // required: ต่อท้ายชื่อด้วย "(จำเป็น)" แบบเดียวกับทั้งระบบ (ไม่ใช้ " *")
-  const field = (label, control, { hint = "", id = "", className = "", required = false } = {}) => `<div class="field rf-field${className ? ` ${className}` : ""}">${label ? `<label${id ? ` for="${attr(id)}"` : ""}>${esc(label)}${required ? ' <span class="field-required">(จำเป็น)</span>' : ""}</label>` : ""}${control}${hint ? `<small class="rf-hint">${hint}</small>` : ""}</div>`;
+  const field = (label, control, { hint = "", id = "", className = "", required = false, hintExtra = "" } = {}) => `<div class="field rf-field${className ? ` ${className}` : ""}">${label ? `<label${id ? ` for="${attr(id)}"` : ""}>${esc(label)}${required ? ' <span class="field-required">(จำเป็น)</span>' : ""}</label>` : ""}${control}${hint ? `<small class="rf-hint"${hintExtra ? ` ${hintExtra}` : ""}>${hint}</small>` : ""}</div>`;
   const input = (name, { value = "", type = "text", placeholder = "", step = "", min = "", max = "", required = false, id = "", list = "", className = "", extra = "" } = {}) =>
     `<input class="input rf-input${className ? ` ${className}` : ""}" name="${attr(name)}"${id ? ` id="${attr(id)}"` : ""} type="${attr(type)}" value="${attr(value)}"${placeholder ? ` placeholder="${attr(placeholder)}"` : ""}${step ? ` step="${attr(step)}"` : ""}${min !== "" ? ` min="${attr(min)}"` : ""}${max !== "" ? ` max="${attr(max)}"` : ""}${type === "number" ? ' inputmode="decimal"' : ""}${required ? " required" : ""}${list ? ` list="${attr(list)}"` : ""} autocomplete="off"${extra ? ` ${extra}` : ""}>`;
   const textarea = (name, { value = "", placeholder = "", rows = 3 } = {}) => `<textarea class="textarea rf-textarea" name="${attr(name)}" rows="${rows}"${placeholder ? ` placeholder="${attr(placeholder)}"` : ""}>${esc(value)}</textarea>`;
@@ -81,10 +81,12 @@
     return `<select class="select rf-select${className ? ` ${className}` : ""}" name="${attr(name)}"${id ? ` id="${attr(id)}"` : ""}${extra ? ` ${extra}` : ""}>${placeholder !== null ? `<option value="">${esc(placeholder)}</option>` : ""}${rows.map((option) => `<option value="${attr(option.value)}"${String(option.value) === String(value) ? " selected" : ""}${option.disabled ? " disabled" : ""}>${esc(option.label)}</option>`).join("")}</select>`;
   };
   // ช่องตัวเลขที่เปลี่ยนสีตามสเปกขณะพิมพ์ (module-rubberflow.js ผูก input event จาก data-spec)
-  const specInput = (name, label, spec, { value = "", step = "any" } = {}) => {
+  // required = สเปกช่องนี้ action บังคับกรอก (ต่อท้ายชื่อด้วย "(จำเป็น)") · gate = { select, open }: มาตรฐานนี้ใช้กับตัวเลือกของ <select name=…> ในฟอร์มเดียวกันบางตัวเท่านั้น
+  // (เช่น สเปกเส้น Door Seal ใช้กับหัวดาย DIE-DS-*) · open = ตัวเลือกที่เลือกอยู่ตอนวาด ปิดอยู่ = ซ่อนข้อความมาตรฐาน และ module-rubberflow.js ไม่ลงสีตามสเปกจนกว่าจะเลือกตัวที่ใช้ได้
+  const specInput = (name, label, spec, { value = "", step = "any", required = false, gate = null } = {}) => {
     const limits = rules.specLimits(spec);
-    const data = `data-spec data-lsl="${limits.lsl ?? ""}" data-usl="${limits.usl ?? ""}"`;
-    return field(`${label} (${spec.unit})`, input(name, { value, type: "number", step, extra: data }), { hint: esc(`มาตรฐาน ${rules.specText(spec)}`) });
+    const data = `data-spec data-lsl="${limits.lsl ?? ""}" data-usl="${limits.usl ?? ""}"${gate ? ` data-spec-gate="${attr(gate.select)}"` : ""}`;
+    return field(`${label} (${spec.unit})`, input(name, { value, type: "number", step, required, extra: data }), { hint: esc(`มาตรฐาน ${rules.specText(spec)}`), required, ...(gate ? { hintExtra: `data-spec-hint${gate.open ? "" : " hidden"}` } : {}) });
   };
   // ---------- ตรวจช่องก่อนส่งฟอร์ม ----------
   // ฟอร์มทุกอันเป็น novalidate (ไม่ให้เบราว์เซอร์ขึ้นกล่องภาษาอังกฤษ "Please fill out this field") แล้วตรวจที่นี่:
@@ -93,7 +95,11 @@
   const SKIP_TYPES = new Set(["hidden", "file", "checkbox", "radio", "button", "submit", "reset", "image"]);
   // ชื่อช่องในข้อความผิด: ตัวหนังสือของ label โดยไม่เอา "(จำเป็น)" และหน่วยท้ายชื่อ เช่น "จำนวนส่งมอบ (kg)" → "จำนวนส่งมอบ"
   const plainLabel = (text) => String(text ?? "").replace(/\(จำเป็น\)/g, "").replace(/\s*\([^()]*\)\s*$/, "").replace(/\s+/g, " ").trim();
-  const labelOf = (control, container) => plainLabel(container?.querySelector?.("label")?.textContent) || plainLabel(control.getAttribute?.("aria-label")) || plainLabel(control.getAttribute?.("placeholder"));
+  // label ที่มีข้อความซ่อน (.sr-only) ใช้เฉพาะข้อความนั้นเป็นชื่อช่อง ไม่ใช่ทั้ง label ที่พ่วงหน่วยข้างช่อง (เช่น "set") ต่อท้าย
+  const labelOf = (control, container) => {
+    const named = container?.querySelector?.("label");
+    return plainLabel(named?.querySelector?.(".sr-only")?.textContent ?? named?.textContent) || plainLabel(control.getAttribute?.("aria-label")) || plainLabel(control.getAttribute?.("placeholder"));
+  };
   const numberAttr = (control, name) => {
     const raw = control.getAttribute?.(name);
     const value = raw === null || raw === undefined || raw === "" ? NaN : Number(raw);
@@ -126,7 +132,9 @@
       const marked = type === "date" && Boolean(container.querySelector?.(".field-required"));
       const choose = control.tagName === "SELECT" || type === "date";
       const needs = label ? `กรุณา${choose ? "เลือก" : "ระบุ"}${label}` : `กรุณา${choose ? "เลือก" : "ระบุ"}ข้อมูลในช่องนี้`;
+      // ชื่อที่ลงท้ายด้วยรหัส/ตัวเลข (เช่น "จำนวนที่รับเข้าคลัง FG-1") ต้องเว้นวรรคก่อนคำว่า "ต้อง..." ไม่งั้นอ่านติดกัน · ชื่อภาษาไทยล้วนติดกันตามปกติ
       const subject = label || "ค่านี้";
+      const lead = /[^ก-๛]$/.test(subject) ? `${subject} ` : subject;
       values[name] = isNumber && control.validity?.badInput ? Number.NaN : control.value;
       const rule = { name, owner, required: Boolean(control.required) || marked, message: needs };
       rules.push(rule);
@@ -136,12 +144,12 @@
       const stepText = control.getAttribute?.("step");
       const step = stepText === "any" ? undefined : (numberAttr(control, "step") ?? 1);
       const number = (value) => steps.numberOf(value);
-      rules.push({ name, owner, check: (value) => Number.isFinite(number(value)), checkMessage: `${subject}ต้องเป็นตัวเลข` });
-      if (min !== undefined) rules.push({ name, owner, check: (value) => !Number.isFinite(number(value)) || number(value) >= min, checkMessage: `${subject}ต้องไม่น้อยกว่า ${fmtLimit(min)}` });
-      if (max !== undefined) rules.push({ name, owner, check: (value) => !Number.isFinite(number(value)) || number(value) <= max, checkMessage: `${subject}ต้องไม่เกิน ${fmtLimit(max)}` });
+      rules.push({ name, owner, check: (value) => Number.isFinite(number(value)), checkMessage: `${lead}ต้องเป็นตัวเลข` });
+      if (min !== undefined) rules.push({ name, owner, check: (value) => !Number.isFinite(number(value)) || number(value) >= min, checkMessage: `${lead}ต้องไม่น้อยกว่า ${fmtLimit(min)}` });
+      if (max !== undefined) rules.push({ name, owner, check: (value) => !Number.isFinite(number(value)) || number(value) <= max, checkMessage: `${lead}ต้องไม่เกิน ${fmtLimit(max)}` });
       if (step) {
         const base = min ?? 0;
-        rules.push({ name, owner, check: (value) => !Number.isFinite(number(value)) || Math.abs((number(value) - base) / step - Math.round((number(value) - base) / step)) < 1e-7, checkMessage: step === 1 && Number.isInteger(base) ? `${subject}ต้องเป็นจำนวนเต็ม` : `${subject}ต้องเป็นพหุคูณของ ${fmtLimit(step)}` });
+        rules.push({ name, owner, check: (value) => !Number.isFinite(number(value)) || Math.abs((number(value) - base) / step - Math.round((number(value) - base) / step)) < 1e-7, checkMessage: step === 1 && Number.isInteger(base) ? `${lead}ต้องเป็นจำนวนเต็ม` : `${lead}ต้องเป็นพหุคูณของ ${fmtLimit(step)}` });
       }
     });
     return { rules, values };

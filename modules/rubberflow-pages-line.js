@@ -308,6 +308,8 @@
     const lots = data.lots.filter((lot) => lot.stage === "extrusion");
     const { ready } = inbound(data, "extrusion");
     const dies = data.molds.filter((mold) => mold.kind === "die");
+    // มาตรฐานมิติเป็นของเส้น Door Seal (หัวดาย DIE-DS-*) เท่านั้น: แสดงและลงสีเมื่อหัวดายที่เลือกเป็นตัวนั้น (ตัวแรกในรายการเป็นค่าเริ่มต้นของช่องเลือก)
+    const dieGate = { select: "dieId", open: rules.hasExtrusionStandard(dies[0]?.id) };
     const avgRework = lots.length ? lots.reduce((sum, lot) => sum + (lot.params.reworkPct || 0), 0) / lots.length : 0;
     const form = ready.length ? ui.card(`<form novalidate data-rf-form="recordExtrusion" data-rf-success="บันทึก {result} แล้ว" data-rf-extrusion><div class="rf-grid rf-g4">
         ${inboundSelect(ctx, "extrusion")}
@@ -316,9 +318,9 @@
         ${ui.field("กะ", ui.select("shift", shiftOptions(rules)))}
         ${ui.field("เครื่องฉีด", ui.select("machine", MACHINES.extrusion))}
         ${ui.field("หัวดาย", ui.select("dieId", dies.map((die) => ({ value: die.id, label: `${die.id} · ${die.name}` })), { extra: "required" }), { required: true })}
-        ${ui.specInput("thickness", s.thickness.label, s.thickness)}
-        ${ui.specInput("width", s.width.label, s.width)}
-        ${ui.specInput("weightPerM", s.weightPerM.label, s.weightPerM)}
+        ${ui.specInput("thickness", s.thickness.label, s.thickness, { required: true, gate: dieGate })}
+        ${ui.specInput("width", s.width.label, s.width, { required: true, gate: dieGate })}
+        ${ui.specInput("weightPerM", s.weightPerM.label, s.weightPerM, { required: true, gate: dieGate })}
         ${ui.field("งานดี (m/pcs)", ui.input("goodQty", { type: "number", step: "any", required: true }), { required: true })}
         ${ui.field("ของเสีย (m/pcs)", ui.input("scrapQty", { type: "number", step: "any" }))}
         ${ui.field("สาเหตุของเสีย", ui.input("scrapReason"))}
@@ -370,9 +372,9 @@
         ${ui.field("ปริมาณที่นำเข้าอบ", ui.input("useQty", { type: "number", step: "any", required: true }), { hint: '<span data-rf-remaining></span>', required: true })}
         ${ui.field("แม่พิมพ์ / สายอบ", ui.select("moldId", tools.map((mold) => ({ value: mold.id, label: `${mold.id} · ${mold.name}` })), { extra: "required" }), { required: true })}
         ${ui.field("กะ", ui.select("shift", shiftOptions(rules)))}
-        ${ui.specInput("temp", s.temp.label, s.temp)}
-        ${ui.specInput("time", s.time.label, s.time)}
-        ${ui.specInput("pressure", s.pressure.label, s.pressure)}
+        ${ui.specInput("temp", s.temp.label, s.temp, { required: true })}
+        ${ui.specInput("time", s.time.label, s.time, { required: true })}
+        ${ui.specInput("pressure", s.pressure.label, s.pressure, { required: true })}
         <div></div>
         ${ui.field("งานดี", ui.input("goodQty", { type: "number", step: "any", required: true }), { required: true })}
         ${ui.field("ของเสีย", ui.input("scrapQty", { type: "number", step: "any" }))}

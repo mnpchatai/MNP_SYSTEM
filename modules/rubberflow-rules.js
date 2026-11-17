@@ -78,6 +78,9 @@
     return { lsl: spec.min, usl: spec.max };
   }
 
+  // SPECS.extrusion เป็นสเปกเส้น Door Seal 18×2.5 (หัวดาย DIE-DS-*) · หัวดายอื่นไม่มีมาตรฐานในระบบ จึงไม่แสดงข้อความมาตรฐานหรือลงสีตามสเปกที่หน้าฟอร์ม (การกัก QC ของ action ยังใช้ค่าเดิม)
+  const hasExtrusionStandard = (dieId) => String(dieId ?? "").startsWith("DIE-DS-");
+
   const weighTolerance = (targetKg) => Math.max(WEIGH_TOL_MIN_KG, (targetKg * WEIGH_TOL_PCT) / 100);
 
   // สูตรผสมสองขั้น: แต่ละบรรทัดวัตถุดิบมี stage 1|2 (ไม่ระบุ = 1) · ค่าของแต่ละขั้น { stage, mixerTemp (°C), dumpTemp (°C), mixMin (นาที) }
@@ -393,7 +396,7 @@
 
   const api = {
     DAY, HOUR, STAGES, STAGE_LABEL, NEXT_STAGE, PREV_STAGE, SHIFTS, MACHINES, SPECS, WEIGH_TOL_PCT, WEIGH_TOL_MIN_KG,
-    MIX_STAGES, itemStage, recipeStage, recipeLabel, orderLabel, inSpec, specText, specLimits, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, OPEN_ORDER, orderRemainingKg, MAX_REQ_BATCHES, remainingBatches, nextRequisitionBatches, suggestOrderKg, chemicalNeeds, stats, cpkVerdict,
+    MIX_STAGES, itemStage, recipeStage, recipeLabel, orderLabel, inSpec, specText, specLimits, hasExtrusionStandard, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, OPEN_ORDER, orderRemainingKg, MAX_REQ_BATCHES, remainingBatches, nextRequisitionBatches, suggestOrderKg, chemicalNeeds, stats, cpkVerdict,
     fmtDate, fmtDateTime, fmtNum, fmtDuration, ymd, toInputDate, fromInputDate, niceScale,
     issuedKgOf, requisitionReturnState, returnableRequisitions, mixableRequisitions,
     poLineReceived, poLineReceipts, poLineClosed, poLineOpen, poLineDone, poTouched,

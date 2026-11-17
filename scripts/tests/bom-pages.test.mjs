@@ -644,7 +644,7 @@ test("the mobile count page lists draft orders, shows SE + RB of the stock-check
   env.store.setUser("B08");
   html = await env.render("p=count&order=DEMO-26002");
   clean(html);
-  assert.match(html, /ยังไม่ระเบิด BOM/);
+  assert.match(html, /ยังไม่ได้คำนวณวัตถุดิบ/);
   assert.doesNotMatch(html, /data-rf-form="setStockCounts"/);
   clean(await env.render("p=count&order=DEMO-26002&all=1"));
   // แผนกอื่นไม่เห็นเมนู
@@ -929,6 +929,15 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   const numberedFlow = await env.render("p=structure&code=DEMO-TP-01(P)-Y");
   assert.match(numberedFlow, /<div class="bom-flow-step"[^>]*><span class="bom-flow-step-no">ขั้นที่ 1<\/span>/, "a routing step carries its number");
   delete free.step;
+  // ขั้นตอนผลิตเลือกได้เฉพาะของแผนกที่เป็นเจ้าของชิ้นงาน (ไม่มีชื่อแผนกต่อท้าย) · ขั้นของแผนกอื่นที่ลำดับเดิมใช้อยู่ยังอยู่ พร้อมชื่อแผนก
+  assert.match(dialog.html, /<option value="PK-02"[^>]*>PK-02 ใส่สินค้าในกระเป๋า \(จาก BG\)<\/option>/, "a same-department step has no department suffix");
+  assert.doesNotMatch(dialog.html, /<option value="(?:GR|PT|RB)-\d+"/, "steps of other departments are not offered");
+  const liveRouting = A.helpers.routingOf(live, "DEMO-TP-01(P)-Y");
+  liveRouting.steps.push({ processCode: "GR-01", minutesPerPc: 1, inputs: [] });
+  const withOther = D.routingEdit(env.ctx("p=structure"), { code: "DEMO-TP-01(P)-Y" });
+  assert.match(withOther.html, /<option value="GR-01"[^>]*>GR-01 [^<]*\(GR\)<\/option>/, "a step of another department already in the routing stays, labelled with its department");
+  assert.doesNotMatch(withOther.html, /<option value="GR-02"/, "other steps of that department are still not offered");
+  liveRouting.steps.pop();
   // เมนูคลิกขวา: การ์ดและแถววัตถุดิบเป็นเป้า · คำสั่งตามชิ้นที่ชี้และบทบาท · ทุกกลุ่มมีคำสั่ง
   assert.match(numberedFlow, /class="bom-flow-item is-root" data-bom-menu="DEMO-TP-01\(P\)-Y"/);
   assert.match(numberedFlow, /data-bom-menu="PT-00320" data-bom-menu-parent="DEMO-TP-01\(P\)-Y"/);
@@ -1043,7 +1052,8 @@ test("order items show edit and delete buttons in a draft and in a released orde
   assert.equal(env.store.run("updateOrderItem", { orderId: "DEMO-26002", fgCode: "DEMO-HL-24(B)-A", qty: 10 }).ok, true);
   html = await env.render("p=orders&sel=DEMO-26002");
   assert.match(html, /<dt>REV\.<\/dt><dd>1<\/dd>/, "the bumped order revision is shown in the header");
-  assert.doesNotMatch(html, /ระเบิด BOM ล่าสุด/, "a reopened order no longer claims an explosion");
+  assert.doesNotMatch(html, /คำนวณวัตถุดิบล่าสุด/, "a reopened order no longer claims a calculation");
+  assert.doesNotMatch(html, /ระเบิด BOM/, "the old name is gone from the page");
   // ใบตัวอย่างที่มีงานเริ่มแล้ว: ไม่มีปุ่มแก้
   html = await env.render("p=orders&sel=DEMO-26001");
   assert.doesNotMatch(html, /data-rf-open="orderItemEdit"|data-rf-action="removeOrderItem"|data-rf-open="orderItemAdd"/);
@@ -1768,7 +1778,10 @@ test("import page: the group selected when pressing import is saved on new items
   check.handlers.click(); // the auto-check after choosing a sheet, with the group still TOY
   assert.match(report.innerHTML, /ใหม่ 1/);
   group.value = "IND"; // the user changes the group after the check, then imports
+  assert.match(report.innerHTML, /แก้ได้ที่หน้า “สินค้า”/, "the note names the products page, not a menu that no longer exists");
+  assert.doesNotMatch(report.innerHTML, /เมนู “สร้าง BOM”/);
   importButton.handlers.click({ currentTarget: importButton });
+  assert.equal(env.log.hash, "#/bom?p=find", "after importing the user lands on the products page");
   const items = () => env.ctx("p=import").data.items;
   assert.equal(items().find((item) => item.code === "G-01(P)-Y")?.group, "IND");
   const subpart = items().filter((item) => item.kind === "SUBPART" && item.name === "แกน G");
@@ -2850,7 +2863,12 @@ test("a PI has a six-step bar: the warehouse's steps 5 and 6 replace the planner
   const css = fs.readFileSync("styles.css", "utf8");
   assert.match(css, /\.bom-steps \{[^}]*grid-template-columns: repeat\(6,/, "six columns on a wide screen");
   assert.match(css, /@media \(min-width: 761px\) and \(max-width: 1100px\) \{ \.bom-steps \{ grid-template-columns: repeat\(3,/, "three per row on a tablet");
-  assert.match(css, /@media \(max-width: 760px\) \{ \.bom-steps \{ grid-template-columns: minmax\(0, 1fr\)/, "one per row on a phone");
+  const phone = css.match(/@media \(max-width: 760px\) \{\s*\.bom-steps \{([^}]*)\}\s*\.bom-steps > \.bom-step \{([^}]*)\}/);
+  assert.ok(phone, "the phone rules target .bom-steps > .bom-step, not the input class .bom-step");
+  assert.match(phone[1], /display: flex/, "one row on a phone");
+  assert.match(phone[1], /overflow-x: auto/, "that scrolls sideways");
+  assert.match(phone[2], /flex: 0 0 auto/, "each step keeps its width");
+  assert.match(css, /\.bom-steps > \.bom-step:not\(\.is-now\) \.small \{ display: none; \}/, "only the current step shows who does it");
   const hub = env.context.MNP_BOM_PAGES.hub;
   assert.equal(hub.orderStepOf(env.ctx(), { id: "X", status: "completed", items: [] }), 7, "closed with nothing to deliver: every step is done");
   assert.equal(hub.orderStepOf(env.ctx(), { status: "cancelled", items: [] }), 0);
@@ -3038,7 +3056,7 @@ test("closing short (U6): the warehouse gets a card and the menu count follows; 
   assert.deepEqual(json(card.lines), [{ fgCode: FG_TP, qty: 10 }]);
   html = await env.render("p=work");
   clean(html);
-  assert.match(html, new RegExp(`<h2>ปิดใบ ${FG_PI} \\(รับไม่ครบ\\)</h2>`));
+  assert.match(html, new RegExp(`<span class="bom-job-state">รอปิดใบ</span>[\\s\\S]*?<h2>ใบ ${FG_PI}</h2>`), "the short-close card is a close card for the order");
   assert.match(html, /<button class="btn rf-btn bom-job-main" type="button" data-rf-open="closeShort"[^>]*>ปิดใบ \(รับไม่ครบ\)<\/button>/, "the card opens the existing dialog");
   assert.match(html, />ต้องทำ 1</, "the tab counts it");
   assert.equal(hub.workCount(env.ctx("p=work")), 1, "and so does the menu number");
@@ -3147,7 +3165,7 @@ test("close rules: everything received while RB and GR are open: step 5 names th
   assert.doesNotMatch(html, /ยังไม่มีสินค้าที่รอรับ|ดูงานที่ยังเปิด/, "no hint about PK, and WH gets no link to the planner's work");
   html = await env.render(`p=orders&sel=${FG_PI}`);
   assert.match(html, /<strong>รับสินค้าเข้าคลังครบแล้ว<\/strong><div class="small muted">ใบปิดได้เมื่อทุกแผนกปิดงาน<\/div>/, "step 4 says it once, the departments are in its table");
-  assert.doesNotMatch(await env.render("p=work"), /ปิดใบ DEMO-26001/, "no close card for WH yet");
+  assert.doesNotMatch(await env.render("p=work"), /รอปิดใบ/, "no close card for WH yet");
   // ฝ่ายวางแผน: ลิงก์ไปงานของใบ · ปุ่มปิดงานที่การ์ดงานและตารางงานของแผนก · dialog ต้องมีเหตุผล
   env.store.setUser("B03");
   html = await env.render(`p=orders&sel=${FG_PI}&step=5`);
@@ -3192,8 +3210,8 @@ test("close rules: everything received while RB and GR are open: step 5 names th
   html = await env.render("p=work");
   clean(html);
   assert.match(html, /<span class="bom-job-state">รอปิดใบ<\/span>/);
-  assert.match(html, /<h2>ปิดใบ DEMO-26001<\/h2>/);
-  assert.match(html, /href="[^"]*sel=DEMO-26001&amp;step=5"[^>]*>เปิดใบเพื่อปิดใบ<\/a>/);
+  assert.match(html, /<h2>ใบ DEMO-26001<\/h2>/);
+  assert.match(html, /href="[^"]*sel=DEMO-26001&amp;step=5"[^>]*>ไปปิดใบ<\/a>/);
   html = await env.render(`p=orders&sel=${FG_PI}&step=5`);
   clean(html);
   assert.match(html, /<button class="btn rf-btn " type="button" data-rf-action="closeOrder" data-rf-args="\{&quot;orderId&quot;:&quot;DEMO-26001&quot;\}" data-rf-confirm="ปิดใบ DEMO-26001\? [^"]*" data-rf-success="ปิดใบ \{result\} แล้ว">ปิดใบ<\/button>/);
@@ -3211,7 +3229,7 @@ test("close rules: everything received while RB and GR are open: step 5 names th
   env.fakes["[data-rf-action]"] = [];
   assert.equal(orderOf().status, "completed");
   assert.equal(env.log.toasts.at(-1)[0], "ปิดใบ DEMO-26001 แล้ว");
-  assert.doesNotMatch(await env.render("p=work"), /ปิดใบ DEMO-26001/, "the card is gone");
+  assert.doesNotMatch(await env.render("p=work"), /รอปิดใบ/, "the card is gone");
   html = await env.render(`p=orders&sel=${FG_PI}&step=6`);
   clean(html);
   assert.match(html, /<td>ปิดใบ \(รับครบ\)<\/td>/, "the history names the full close, without repeating the server note");
@@ -3988,4 +4006,46 @@ test("inserting a WIP: changing the kind sets the department like the item form;
   kind.value = "SE";
   kind.handlers.change();
   assert.equal(dept.value, "GR");
+});
+
+test("audit page: a product's use-from-stock is named as such even though the database keeps the setStockCount key; a mixed batch stays a count", () => {
+  const env = load();
+  env.store.setUser("B03");
+  const text = env.context.MNP_BOM_PAGES.audit.actionText;
+  const { rules } = env.ctx("p=audit");
+  const fg = { action: "setStockCount", entries: [{ action: "ใช้จากสต็อกสินค้าสำเร็จรูป", detail: "PI-1 FG-1 = 5" }] };
+  assert.equal(text(rules, fg, true), "ใช้จากสต็อกสินค้าสำเร็จรูป");
+  assert.equal(text(rules, { ...fg, action: "setStockCounts" }, true), "ใช้จากสต็อกสินค้าสำเร็จรูป", "a batch of only product rows");
+  assert.equal(text(rules, { action: "setStockCounts", entries: [fg.entries[0], { action: "นับคงคลังตามใบ", detail: "PI-1 P-2 = 3" }] }, true), "นับคงคลัง", "a batch that also counts another item");
+  assert.equal(text(rules, { action: "setStockCount", entries: [{ action: "นับคงคลังตามใบ", detail: "PI-1 P-2 = 3" }] }, true), "นับคงคลัง");
+  assert.equal(text(rules, { action: "setStockCount", entries: [] }, true), "นับคงคลัง", "older rows with no recorded text");
+  assert.equal(text(rules, { action: "explodeOrder", entries: [] }, true), "คำนวณวัตถุดิบ");
+  assert.equal(text(rules, { action: "unknownKey" }, true), "unknownKey");
+  assert.equal(text(rules, { action: "ใช้จากสต็อกสินค้าสำเร็จรูป" }, false), "ใช้จากสต็อกสินค้าสำเร็จรูป", "local rows carry the recorded text itself");
+});
+
+test("link-compound dialog: an existing formula shows its code once (title) and sends it hidden; adding a formula keeps the required field", () => {
+  const env = load();
+  env.store.setUser("B03");
+  const D = env.context.MNP_BOM_DIALOGS;
+  const existing = D.compoundLink(env.ctx("p=compounds"), { code: "DM03" });
+  assert.match(existing.html, /<input type="hidden" name="code" value="DM03">/);
+  assert.doesNotMatch(existing.html, /readonly|รหัสสูตรยาง/, "no read-only copy of the code in the form");
+  assert.match(existing.html, /ผูกสูตร DM03/, "the title carries the code");
+  const added = D.compoundLink(env.ctx("p=compounds"), {});
+  assert.match(added.html, /รหัสสูตรยาง <span class="field-required">\(จำเป็น\)<\/span>/);
+  assert.match(added.html, /<input class="input rf-input" name="code"[^>]* required/);
+});
+
+test("orders list: one heading (the page title), the open-new-order button sits with it, and no card title repeats the menu name", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const html = await env.render("p=orders");
+  clean(html);
+  assert.equal(count(html, /<h1>/g), 1);
+  assert.match(html, /<h1>ใบสั่งผลิต \(PI\)/);
+  assert.doesNotMatch(html, /<h2>ใบสั่งผลิต<\/h2>/, "the card carries no second 'ใบสั่งผลิต' title");
+  assert.match(html, /<header class="rf-pagehead">[\s\S]*data-rf-open="orderNew"[\s\S]*<\/header>/, "the planner's button is in the page head");
+  assert.match(html, /คำนวณวัตถุดิบ/);
+  assert.doesNotMatch(html, /ระเบิด BOM/);
 });

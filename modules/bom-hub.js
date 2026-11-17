@@ -242,6 +242,7 @@
     const bind = (rootNode) => {
       rootNode.querySelector("[data-hub-qty]")?.addEventListener("submit", (event) => {
         event.preventDefault();
+        if (!ui.validateForm(event.currentTarget)) return;
         const value = Number(new FormData(event.currentTarget).get("qty"));
         location.hash = ctx.url("find", { code: item.code, qty: value > 0 ? String(value) : null });
       });
@@ -1060,7 +1061,7 @@
         const buy = lacks && canBuyParts(ctx) ? `<div class="rf-row bom-step-next"><button class="btn rf-btn" type="button" data-bom-draft-buy>สั่งซื้อส่วนที่ขาด</button></div>`
           : lacks && canViewBuy(ctx) ? `<div class="rf-row bom-step-next"><span class="small muted">คลังวัตถุดิบ (ST) เป็นผู้สั่งซื้อ</span><button class="btn rf-btn secondary" type="button" data-bom-draft-buy>ดูรายการที่ต้องสั่ง</button></div>` : "";
         // หัวการ์ดไม่สรุปของซื้อ/เคมี: ตารางในการ์ดเดียวกันแสดงขาด/พอรายแถวอยู่แล้ว (แสดงข้อเท็จจริงครั้งเดียว)
-        panel = ui.card(`${fgStockSection(ctx, order)}${table}${chemHtml}${buy}${wip}<div class="rf-row bom-step-next">${buttons.explode ? buttons.explode.replace("ระเบิด BOM", "คำนวณใหม่") : ""}${canPlan ? ui.link("ไปขั้น 3 ปล่อยผลิต", stepUrl(3), "btn rf-btn") : ""}</div>`,
+        panel = ui.card(`${fgStockSection(ctx, order)}${table}${chemHtml}${buy}${wip}<div class="rf-row bom-step-next">${buttons.explode ? buttons.explode.replace("คำนวณวัตถุดิบ", "คำนวณใหม่") : ""}${canPlan ? ui.link("ไปขั้น 3 ปล่อยผลิต", stepUrl(3), "btn rf-btn") : ""}</div>`,
           { title: "ขั้น 2 · ตรวจของ" });
       }
     } else if (view === 3) {
@@ -1125,10 +1126,20 @@
     // used = ปุ่มที่แผงของขั้นนี้แสดงแล้ว (หรือเป็นของขั้นอื่นของใบร่าง) หน้า orders จะไม่วางซ้ำใน "คำสั่งอื่น"
     const used = ["add", "explode", "release", ...(view === 4 ? ["issue", "check"] : []), ...(current === 0 ? ["returnParts"] : [])];
     // ปุ่มสั่งซื้อของใบร่าง: หน้าต่างสั่งซื้อของ RubberFlow คิดของซื้อจากใบร่าง (sourcePi) และเคมีจาก WO ชั่วคราวชุดเดียวกับที่ตารางของขั้นนี้แสดง
-    const bind = (rootNode) => rootNode.querySelectorAll("[data-bom-draft-buy]").forEach((button) => button.addEventListener("click", async () => {
-      button.disabled = true;
-      try { await ctx.rubberflow()?.checkMaterials?.({ woIds: [], sourcePi: order.id, draftOrders, reservedDraftOrders, auto: false }); } finally { button.disabled = false; }
-    }));
+    const bind = (rootNode) => {
+      // มือถือ: แถบขั้นตอนเลื่อนข้างได้ ให้ขั้นปัจจุบันอยู่กลางแถบ (ตั้ง scrollLeft ของแถบเอง ไม่ใช้ scrollIntoView เพื่อไม่ให้ทั้งหน้าเลื่อนตาม) · จอกว้างที่แถบไม่เลื่อน ค่านี้ถูกตัดเป็น 0
+      const barNode = rootNode.querySelector?.(".bom-steps");
+      const now = barNode?.querySelector(".is-now");
+      if (barNode && now) {
+        const barBox = barNode.getBoundingClientRect();
+        const nowBox = now.getBoundingClientRect();
+        barNode.scrollLeft = nowBox.left - barBox.left + barNode.scrollLeft - (barBox.width - nowBox.width) / 2;
+      }
+      rootNode.querySelectorAll("[data-bom-draft-buy]").forEach((button) => button.addEventListener("click", async () => {
+        button.disabled = true;
+        try { await ctx.rubberflow()?.checkMaterials?.({ woIds: [], sourcePi: order.id, draftOrders, reservedDraftOrders, auto: false }); } finally { button.disabled = false; }
+      }));
+    };
     // งาน RB ที่ยังไม่มี WO ใน RubberFlow: คำเตือนค้างใต้แถบขั้นตอน เห็นทุกขั้นและทุกแท็บ (ไม่มีซ้ำในแท็บงาน)
     const woNote = pages.tools?.rbNoWoNote?.(ctx, order) ?? "";
     return { html: `${bar}${woNote}${panel}`, used, bind };
@@ -1298,12 +1309,12 @@
     const taskHtml = (task) => {
       if (task.kind === "fgClose") {
         return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">รอปิดใบ</span><span class="muted">ส่งมอบคลัง ${esc(rules.fmtDate(task.order.whDue))}</span></div>
-          <h2>${esc(`ปิดใบ ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "WH")} ` : ""}${esc(task.order.customer ?? "")} · ทุกแผนกปิดงานและรับสินค้าครบแล้ว</p>
-          ${ui.link("เปิดใบเพื่อปิดใบ", ctx.url("orders", { sel: task.order.id, step: "5" }), "btn rf-btn bom-job-main")}</article>`;
+          <h2>${esc(`ใบ ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "WH")} ` : ""}${esc(task.order.customer ?? "")} · ทุกแผนกปิดงานและรับสินค้าครบแล้ว</p>
+          ${ui.link("ไปปิดใบ", ctx.url("orders", { sel: task.order.id, step: "5" }), "btn rf-btn bom-job-main")}</article>`;
       }
       if (task.kind === "fgCloseShort") {
-        return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">รอปิดใบ (รับไม่ครบ)</span><span class="muted">ส่งมอบคลัง ${esc(rules.fmtDate(task.order.whDue))}</span></div>
-          <h2>${esc(`ปิดใบ ${task.order.id} (รับไม่ครบ)`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "WH")} ` : ""}${esc(task.order.customer ?? "")} · PK ทำครบและรับเข้าคลังแล้ว ยังน้อยกว่าที่สั่ง</p>
+        return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">รอปิดใบ</span><span class="muted">ส่งมอบคลัง ${esc(rules.fmtDate(task.order.whDue))}</span></div>
+          <h2>${esc(`ใบ ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "WH")} ` : ""}${esc(task.order.customer ?? "")} · PK ทำครบและรับเข้าคลังแล้ว ยังน้อยกว่าที่สั่ง</p>
           <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span class="rf-mono">${esc(line.fgCode)}</span><span class="nowrap">${esc(`ขาด ${rules.fmtQty(line.qty)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
           ${ui.openButton("ปิดใบ (รับไม่ครบ)", "closeShort", { orderId: task.order.id }, { className: "bom-job-main" })}</article>`;
       }
