@@ -776,9 +776,10 @@ select is((select count(*)::integer from jsonb_array_elements(public.app_rf_mast
 -- BOM ยังบันทึกงานที่ผูกแล้วได้ตามปกติ (client ส่ง externalRef กลับมาเหมือนเดิม) และประวัติ BOM มีแถวของการผูก
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select is((select j ->> 'status' from jsonb_array_elements(public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
-  (select j || '{"status":"hold"}'::jsonb from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L1-RB')))),
+  (select j || jsonb_build_object('status', 'hold', 'reports', (j -> 'reports') || '[{"at":1,"by":"x","good":0,"reject":0,"note":"รอแม่พิมพ์"}]'::jsonb)
+   from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L1-RB')))),
   (public.app_bom_master() ->> 'version')::bigint, 'setJobStatus') -> 'changes' -> 'jobs' -> 'upsert') j), 'hold',
-  'a linked job can still be held through the BOM RPC (the unchanged link is not a change)');
+  'a linked job can still be held with a reason through the BOM RPC (the unchanged link is not a change)');
 select ok(exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:createOrder' and a ->> 'detail' = 'jobs +1, orders +1'
                   and a ->> 'user' = current_setting('test.n_sbx_rb_staff')),
   'the BOM history records that RubberFlow linked a job and moved a PI');
@@ -822,10 +823,16 @@ select ok(not exists (select 1 from jsonb_array_elements(public.app_bom_audit())
 select is((select w ->> 'producedQty' from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-11'), '0',
   'the produced quantity stays with the server (nothing was counted)');
 
--- WO-12: งานถูกรายงาน 30 ผ่าน BOM ก่อน → ปิด WO แล้วยอดงานยังเป็น 30
-select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+-- WO-12: งานที่ผูก WO รายงานผ่าน BOM ไม่ได้แล้ว (20261128010000) · ยอด 30 ที่รายงานไว้ก่อนกติกานี้จำลองด้วยการแก้ตารางตรง → ปิด WO แล้วยอดงานยังเป็น 30
+select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
   (select j || jsonb_build_object('status', 'in_progress', 'qtyDone', 30, 'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 30, 'reject', 0, 'note', 'กะเช้า')))
-   from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L2-RB')))), (public.app_bom_master() ->> 'version')::bigint, 'reportJob');
+   from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L2-RB')))), (public.app_bom_master() ->> 'version')::bigint, 'reportJob') $$,
+  'BOM_INVALID_JOB', 'a job linked to a work order cannot be reported through BOM (its output comes from RubberFlow)');
+reset role;
+update public.bom_jobs set status = 'in_progress', qty_done = 30, reports = jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 30, 'reject', 0, 'note', 'กะเช้า'))
+where is_test and job_no = 'JOB-L2-RB';
+update public.bom_master_state set version = version + 1 where is_test;
+set local role authenticated;
 select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   (select w || '{"status":"completed","producedQty":70}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-12')))),
   (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus');
@@ -875,10 +882,16 @@ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upser
   current_setting('test.wo')::jsonb || '{"id":"WO-20261107-31","sourceJobId":"JOB-L5-RB"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createOrder');
 select is((select j -> 'externalRef' ->> 'woId' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L5-RB'), 'WO-20261107-31',
   'another RB job is linked to its first work order');
--- งานถูกรายงาน 30 ผ่าน BOM ทั้งที่ผูกอยู่
-select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+-- งานที่ผูก WO รายงานผ่าน BOM ไม่ได้ (20261128010000) · ยอด 30 จำลองด้วยการแก้ตารางตรง (ยอดที่ RubberFlow ป้อนกลับหรือรายงานก่อนกติกานี้)
+select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
   (select j || jsonb_build_object('qtyDone', 30, 'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 30, 'reject', 0, 'note', 'กะเช้า')))
-   from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L5-RB')))), (public.app_bom_master() ->> 'version')::bigint, 'reportJob');
+   from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L5-RB')))), (public.app_bom_master() ->> 'version')::bigint, 'reportJob') $$,
+  'BOM_INVALID_JOB', 'RB staff cannot report output on a linked job');
+reset role;
+update public.bom_jobs set qty_done = 30, reports = jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 30, 'reject', 0, 'note', 'กะเช้า'))
+where is_test and job_no = 'JOB-L5-RB';
+update public.bom_master_state set version = version + 1 where is_test;
+set local role authenticated;
 select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L5-RB'), 30::numeric, 'the linked job has 30 reported');
 
 select set_config('test.bv5', public.app_bom_master() ->> 'version', true);

@@ -358,10 +358,23 @@
     return { min: ticks[0], max: ticks[ticks.length - 1], step: clean(step), ticks };
   }
 
+  // ใบเบิกที่หักสต็อกแล้ว (issued · weighing ที่จ่ายไปบางบรรทัด) ของ WO ที่ถูกยกเลิก = งานรับเคมีคืนของแผนก ST (ตรงกับ private.rf_return_requisitions ของ 20261128010000)
+  // "pending" = รอ ST รับคืน · "returned" = รับคืนแล้ว (ครั้งเดียวต่อใบ: ทุกบรรทัดมี returnedAt) · null = ไม่เกี่ยว (WO ยังเปิด ผสมแล้ว หรือยังไม่ได้จ่ายบรรทัดไหน)
+  const issuedKgOf = (requisition) => (requisition?.lines ?? []).reduce((sum, line) => sum + (typeof line?.actualKg === "number" ? line.actualKg : 0), 0);
+  function requisitionReturnState(data, requisition) {
+    const wo = (data?.orders ?? []).find((order) => order.id === requisition?.orderId);
+    if (wo?.status !== "cancelled" || !["issued", "weighing"].includes(requisition?.status) || !(issuedKgOf(requisition) > 0)) return null;
+    return (requisition.lines ?? []).some((line) => line && Object.hasOwn(line, "returnedAt")) ? "returned" : "pending";
+  }
+  const returnableRequisitions = (data) => (data?.requisitions ?? []).filter((requisition) => requisitionReturnState(data, requisition) === "pending");
+  // ใบเบิกที่หน้าผสมยางเลือกได้: จ่ายครบแล้ว (issued) และ WO ยังไม่ถูกยกเลิก
+  const mixableRequisitions = (data) => (data?.requisitions ?? []).filter((requisition) => requisition.status === "issued" && (data?.orders ?? []).find((order) => order.id === requisition.orderId)?.status !== "cancelled");
+
   const api = {
     DAY, HOUR, STAGES, STAGE_LABEL, NEXT_STAGE, PREV_STAGE, SHIFTS, MACHINES, SPECS, WEIGH_TOL_PCT, WEIGH_TOL_MIN_KG,
     MIX_STAGES, itemStage, recipeStage, recipeLabel, orderLabel, inSpec, specText, specLimits, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, OPEN_ORDER, orderRemainingKg, MAX_REQ_BATCHES, remainingBatches, nextRequisitionBatches, suggestOrderKg, chemicalNeeds, stats, cpkVerdict,
     fmtDate, fmtDateTime, fmtNum, fmtDuration, ymd, toInputDate, fromInputDate, niceScale,
+    issuedKgOf, requisitionReturnState, returnableRequisitions, mixableRequisitions,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_RUBBERFLOW_RULES = api;

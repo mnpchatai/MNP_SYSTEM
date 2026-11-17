@@ -133,9 +133,22 @@ test("the persona decides the RubberFlow role and the planner / RB member / RB h
   assert.equal(storeApi.can(rbStaff, "editMaster") && storeApi.can(rbStaff, "createOrder") && storeApi.can(rbStaff, "workOrder"), true);
   assert.equal(storeApi.can(rbStaff, "releaseOrder"), false, "releasing is for heads and the planner group");
   assert.equal(storeApi.can(planner, "releaseOrder"), true);
-  assert.equal(storeApi.can(rbStaff, "demoSkip"), true, "the time skip is an explicit RB action on the database (the server stamps the time)");
-  assert.equal(storeApi.can(storeApi.personaUser(employee("staff", "ST")), "demoSkip"), false);
-  assert.equal(storeApi.can({ role: "mixer" }, "demoSkip"), true, "the in-browser demo keeps it");
+  // ข้ามเวลาบ่ม (20261128010000): หัวหน้า RB หรือแผนก QA พร้อมเหตุผล · พนักงาน RB ทั่วไป / ST / กลุ่มวางแผนที่ไม่ใช่หัวหน้า RB ไม่ได้
+  assert.equal(storeApi.can(rbStaff, "skipRest"), false, "RB staff no longer skip the rest time");
+  assert.equal(storeApi.can(rbHead, "skipRest"), true, "the RB head does (with a reason)");
+  assert.equal(storeApi.can(storeApi.personaUser(employee("staff", "QA")), "skipRest"), true, "and QA");
+  assert.equal(storeApi.can(storeApi.personaUser(employee("staff", "ST")), "skipRest"), false);
+  assert.equal(storeApi.can(planner, "skipRest"), false, "the planning group is not the RB head");
+  assert.equal(storeApi.can({ role: "mixer" }, "skipRest"), false, "the in-browser demo follows: a mixer does not skip");
+  assert.equal(storeApi.can({ role: "qc" }, "skipRest"), true);
+  assert.equal(storeApi.rightForAction("endRest"), "skipRest");
+  assert.equal(storeApi.rightForDialog("skipRest"), "skipRest");
+  // รับเคมีคืน: แผนก ST (หรือ admin)
+  assert.equal(storeApi.can(storeApi.personaUser(employee("staff", "ST")), "returnRequisition"), true);
+  assert.equal(storeApi.can(rbStaff, "returnRequisition"), false);
+  assert.equal(storeApi.can(planner, "returnRequisition"), false, "the planning group does not take chemicals back");
+  assert.equal(storeApi.rightForAction("returnRequisition"), "returnRequisition");
+  assert.equal(storeApi.rightForDialog("returnRequisition"), "returnRequisition");
   // สิทธิ์ของปุ่มหน้างาน (ฐานข้อมูลตัดสินจริง): ST รับวัตถุดิบ · ST/QA กักกันล็อต · RB เบิก-ชั่ง-ผลิต-ส่งมอบ · SR รับมอบ · WH ส่งกล่อง · QA ผลตรวจ/NCR · RB กรอกการแก้ไข NCR · RB แม่พิมพ์ · กลุ่มวางแผนทุกอย่าง
   const who = Object.fromEntries([["rb", "RB"], ["st", "ST"], ["sr", "SR"], ["wh", "WH"], ["qa", "QA"], ["pp", "PP"], ["mt", "MT"]].map(([key, dept]) => [key, storeApi.personaUser(employee("staff", dept))]));
   // รับวัตถุดิบ/สั่งซื้อ/ยกเลิกใบสั่งซื้อ: แผนก ST เท่านั้น (กลุ่มวางแผนและ RB ดูหน้าสั่งซื้อได้อย่างเดียว) · admin ทำได้ ดูข้อสุดท้าย
@@ -795,7 +808,7 @@ test("the whole line on the database: receive → FEFO requisition (issued at on
   await inSync(s, rig, "mixed");
   // ยังบ่มไม่ครบ: ส่งมอบไม่ได้ → ข้ามเวลาบ่ม (คำสั่งของ RB ฐานข้อมูลตั้งเวลาเอง) → ส่งมอบ
   assert.match(rig.store.run("createTransfer", { lotId: mx, qty: 48 }).error.message, /บ่มไม่ครบ/);
-  await go(s, rig, "persona-rb", "endRest", { lotId: mx });
+  await go(s, rig, "persona-rbh", "endRest", { lotId: mx, reason: "ทดสอบเร่งด่วน" });
   assert.equal((await master()).lots[0].readyAt, NOW);
   await inSync(s, rig, "rest skipped");
   const tr1 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: mx, qty: 48, note: "พาเลท A" })).result;
@@ -955,7 +968,7 @@ test("each shop-floor action is open to its own department and the planner group
   const rig = await s.make();
   const { order, lots } = await prepare(s, rig);
   const { requisition, mx } = await mixAndSend(s, rig, order);
-  await go(s, rig, "persona-rb", "endRest", { lotId: mx });
+  await go(s, rig, "persona-rbh", "endRest", { lotId: mx, reason: "ทดสอบเร่งด่วน" });
   const tr = (await go(s, rig, "persona-rb", "createTransfer", { lotId: mx, qty: 48 })).result;
   const forbidden = (persona, name, payload) => {
     const out = rig.store.run(name, payload);
@@ -1028,7 +1041,7 @@ test("the database computes the numbers itself: a client cannot set the stock, t
   const rig = await s.make();
   const { order, lots } = await prepare(s, rig);
   const { mx } = await mixAndSend(s, rig, order);
-  await go(s, rig, "persona-rb", "endRest", { lotId: mx });
+  await go(s, rig, "persona-rbh", "endRest", { lotId: mx, reason: "ทดสอบเร่งด่วน" });
   const tr = (await go(s, rig, "persona-rb", "createTransfer", { lotId: mx, qty: 48 })).result;
   await go(s, rig, "persona-sr", "receiveTransfer", { id: tr, qtyReceived: 47 });
   const master = () => s.call("app_rf_master");
@@ -1069,7 +1082,7 @@ test("mixing holds the lot per stage, the QC decision releases it and adds the p
   const held = (await s.call("app_rf_master")).lots[0];
   assert.deepEqual([held.qc, held.holdReasons], ["hold", ["Dump temp ขั้น 1 125°C นอกช่วง 110±5"]]);
   await inSync(s, rig, "mixing hold");
-  await go(s, rig, "persona-rb", "endRest", { lotId: mx });
+  await go(s, rig, "persona-rbh", "endRest", { lotId: mx, reason: "ทดสอบเร่งด่วน" });
   assert.match(rig.store.run("createTransfer", { lotId: mx, qty: 48 }).error.message, /ยังไม่ผ่าน QC/);
   // RB ตัดสินล็อตเองไม่ได้ · QA บันทึกผล pass (ค่านอกสเปกตัดสินผ่านไม่ได้) ปลดกักกัน
   await s.as("persona-rb");
@@ -1154,7 +1167,7 @@ test("the linked BOM job is fed only when pieces pass the last station (a finish
   // เส้นยาง 100 ชิ้น: ผูกแล้วงานเริ่ม แต่ยังไม่มียอด
   assert.deepEqual([(await job()).externalRef.woId, (await job()).qtyDone, (await job()).reports.length], [order, 0, 0]);
   const { mx } = await mixAndSend(s, rig, order);
-  await go(s, rig, "persona-rb", "endRest", { lotId: mx });
+  await go(s, rig, "persona-rbh", "endRest", { lotId: mx, reason: "ทดสอบเร่งด่วน" });
   const tr1 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: mx, qty: 48 })).result;
   const before = (await bom()).version;
   const untouched = async (label) => {
@@ -1202,7 +1215,7 @@ test("the linked BOM job is fed only when pieces pass the last station (a finish
   const plainRig = await plain.make();
   const prepared = await prepare(plain, plainRig);
   const sent = await mixAndSend(plain, plainRig, prepared.order);
-  await go(plain, plainRig, "persona-rb", "endRest", { lotId: sent.mx });
+  await go(plain, plainRig, "persona-rbh", "endRest", { lotId: sent.mx, reason: "ทดสอบเร่งด่วน" });
   const trPlain = (await go(plain, plainRig, "persona-rb", "createTransfer", { lotId: sent.mx, qty: 48 })).result;
   const bomVersion = (await plain.call("app_bom_master")).version;
   await go(plain, plainRig, "persona-sr", "receiveTransfer", { id: trPlain, qtyReceived: 48 });
@@ -1314,7 +1327,7 @@ test("the database builds the boxes of a finishing lot itself: boxes sent by a c
   const rig = await s.make();
   const { order } = await prepare(s, rig);
   const { mx } = await mixAndSend(s, rig, order);
-  await go(s, rig, "persona-rb", "endRest", { lotId: mx });
+  await go(s, rig, "persona-rbh", "endRest", { lotId: mx, reason: "ทดสอบเร่งด่วน" });
   const tr1 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: mx, qty: 48 })).result;
   await go(s, rig, "persona-sr", "receiveTransfer", { id: tr1, qtyReceived: 47 });
   const ex = (await go(s, rig, "persona-rb", "recordExtrusion", { transferId: tr1, useKg: 47, thickness: 2.5, width: 18, weightPerM: 160, goodQty: 100, scrapQty: 2, dieId: "DIE-1", shift: "D" })).result;

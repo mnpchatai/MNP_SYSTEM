@@ -385,17 +385,30 @@ select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('jobs',
   (public.app_bom_master() ->> 'version')::bigint, 'reportJob') $$,
   'BOM_INVALID_JOB', 'the added quantity must equal the sum of the new report entries');
 
--- ผู้ช่วยผู้จัดการแผนก GR (ทุกบทบาทของแผนกรายงานได้) เพิ่มรายงานชุดที่สอง + พักงาน
+-- ผู้ช่วยผู้จัดการแผนก GR (ทุกบทบาทของแผนกรายงานได้) เพิ่มรายงานชุดที่สอง แล้วพักงานพร้อมเหตุผล (20261128010000: พักงานต้องมีเหตุผล จึงแยกเป็นอีกคำสั่ง)
 select public.app_sandbox_enter(current_setting('test.p_sbx_gr_amgr')::uuid);
-select set_config('test.res', public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.j')::jsonb || jsonb_build_object('status', 'hold', 'qtyDone', 5, 'qtyReject', 1, 'reports',
+    (current_setting('test.j')::jsonb -> 'reports') || '[{"at":2,"by":"x","good":2,"reject":1,"note":"บ่าย"}]'::jsonb)))),
+  (public.app_bom_master() ->> 'version')::bigint, 'reportJob') $$,
+  'BOM_INVALID_JOB', 'a report cannot put the job on hold without a hold reason');
+select set_config('test.res', public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.j')::jsonb || jsonb_build_object('status', 'in_progress', 'qtyDone', 5, 'qtyReject', 1, 'reports',
     (current_setting('test.j')::jsonb -> 'reports') || '[{"at":2,"by":"x","good":2,"reject":1,"note":"บ่าย"}]'::jsonb)))),
   (public.app_bom_master() ->> 'version')::bigint, 'reportJob')::text, true);
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'upsert' -> 0 ->> 'qtyDone', '5', 'an assistant department manager of GR reports on a GR job (any role of the department)');
 select is(jsonb_array_length(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'upsert' -> 0 -> 'reports'), 2, 'the second report is appended');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'upsert' -> 0 -> 'reports' -> 0 ->> 'by', current_setting('test.n_sbx_gr_staff'), 'the first entry keeps its author');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'upsert' -> 0 -> 'reports' -> 1 ->> 'by', current_setting('test.n_sbx_gr_amgr'), 'the second entry has its own author');
-select is(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'upsert' -> 0 ->> 'status', 'hold', 'the status can be put on hold');
+select set_config('test.j', (current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'upsert' -> 0)::text, true);
+select set_config('test.res', public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.j')::jsonb || jsonb_build_object('status', 'hold', 'reports',
+    (current_setting('test.j')::jsonb -> 'reports') || '[{"at":3,"by":"x","good":0,"reject":0,"note":"รอแม่พิมพ์"}]'::jsonb)))),
+  (public.app_bom_master() ->> 'version')::bigint, 'setJobStatus')::text, true);
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'upsert' -> 0 ->> 'status', 'hold', 'the status can be put on hold with a reason');
+select is((current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'upsert' -> 0 -> 'reports' -> 2) - 'at',
+  jsonb_build_object('by', current_setting('test.n_sbx_gr_amgr'), 'good', 0, 'reject', 0, 'note', 'รอแม่พิมพ์', 'kind', 'hold'),
+  'the hold reason is a server-stamped zero entry marked as a hold');
 
 -- แผนกอื่นรายงานงานของ GR ไม่ได้
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
@@ -473,7 +486,7 @@ select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('jobs',
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.o')::jsonb || '{"status":"cancelled"}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'cancelOrder') $$,
-  'BOM_INVALID_TRANSITION', 'an order with a job that already has output cannot be cancelled (a planned linked work order alone no longer blocks it)');
+  'BOM_INVALID_ORDER', 'a cancel without a reason is refused (since 20261128010000 output no longer blocks a cancel, the reason does: bom_cancel_rf_stop.test.sql)');
 select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.o')::jsonb || '{"status":"draft","items":[{"fgCode":"FG-A","qty":1,"colorSet":"A","note":""}]}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'updateOrderItem') $$,
   'BOM_INVALID_TRANSITION', 'an order with started jobs cannot be reopened for editing');
@@ -574,7 +587,8 @@ select set_config('test.res', public.app_bom_save_master(jsonb_build_object('ord
   current_setting('test.o')::jsonb || '{"status":"cancelled","cancelReason":"ลูกค้ายกเลิก"}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'cancelOrder')::text, true);
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'cancelled', 'an order with no started job can be cancelled');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'cancelReason', 'ลูกค้ายกเลิก', 'the reason is kept');
-select is(jsonb_array_length(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'delete'), 2, 'its jobs were deleted');
+select is(coalesce(jsonb_array_length(current_setting('test.res')::jsonb -> 'changes' -> 'jobs' -> 'delete'), 0), 0, 'its jobs are kept (20261128010000: cancelling no longer deletes jobs)');
+select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'orderId' = '251106-25002'), 2, 'both jobs of the cancelled order are still listed');
 
 -- เปิดใบกลับมาแก้ไม่ได้ถ้ามีงานเริ่มแล้ว (แค่สถานะไม่ใช่ queued ก็นับ)
 select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
@@ -590,9 +604,12 @@ select public.app_bom_save_master(jsonb_build_object(
   (public.app_bom_master() ->> 'version')::bigint, 'releaseOrder');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pk_staff')::uuid);
 select set_config('test.j', (select j::text from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-3-PK'), true);
+select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.j')::jsonb || '{"status":"hold"}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'setJobStatus') $$,
+  'BOM_INVALID_JOB', 'a job cannot be put on hold without a reason (20261128010000)');
 select is(public.app_bom_save_master(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.j')::jsonb || '{"status":"hold"}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'setJobStatus')
-  -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'in_progress', 'a job put on hold also starts the order');
+  current_setting('test.j')::jsonb || '{"status":"hold","reports":[{"at":1,"by":"x","good":0,"reject":0,"note":"รอกล่อง"}]}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'setJobStatus')
+  -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'in_progress', 'a job put on hold with a reason also starts the order');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select set_config('test.o', (select o::text from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251106-25003'), true);
 select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
@@ -775,7 +792,7 @@ reset role;
 select is((select count(*) from public.bom_orders where is_test), 7::bigint, 'seven test orders exist (25001, 25002, 25003, 25009, 25010, 25011, 25012)');
 select is((select count(*) from public.bom_orders where not is_test), 1::bigint, 'the real order is untouched');
 select is((select count(*) from public.bom_jobs where not is_test), 1::bigint, 'the real job is untouched');
-select is((select count(*) from public.bom_deleted_keys where is_test and list = 'jobs'), 7::bigint, 'seven job tombstones: JOB-2-RB/PK (reopen), JOB-2B-RB/PK (cancel), JOB-3-RB (direct delete), JOB-5-GR/PK (reopen)');
+select is((select count(*) from public.bom_deleted_keys where is_test and list = 'jobs'), 5::bigint, 'five job tombstones: JOB-2-RB/PK (reopen), JOB-3-RB (direct delete), JOB-5-GR/PK (reopen) · the cancel of 25002 keeps JOB-2B-RB/PK (20261128010000)');
 select ok((select bool_and(changed_version > 0) from public.bom_orders where is_test) and (select bool_and(changed_version > 0) from public.bom_jobs where is_test),
   'every test order and job is stamped with the version that changed it');
 set local role authenticated;

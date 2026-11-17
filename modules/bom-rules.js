@@ -992,11 +992,12 @@
   }
   // รายการของซื้อที่เบิกจ่ายแล้วของใบ (งาน ST / PURCHASED ที่ done หรือเบิกไปบางส่วน รวมต่อรหัส) พร้อมยอดที่คืนไปแล้วและที่ยังคืนได้ · เรียงตามรหัส
   // partial = บรรทัดยังเบิกไม่ครบ (งานยังไม่ done) ของใบที่ยังไม่ปิด: ยกเลิกการเบิกจ่ายคืนยอดนี้ได้ แต่คืนของเหลือไม่ได้
-  // ใบที่ปิดแล้ว (completed) เบิกส่วนที่เหลือ / ยกเลิกการเบิกจ่ายไม่ได้แล้ว บรรทัดที่เบิกไม่ครบจึงไม่ใช่ partial (คืนของเหลือได้เหมือนบรรทัดที่ done) · ตรงกับ private.bom_return_parts ของ 20261123020000
+  // ใบที่ปิดแล้ว (completed) หรือยกเลิกแล้ว (cancelled) เบิกส่วนที่เหลือ / ยกเลิกการเบิกจ่ายไม่ได้แล้ว บรรทัดที่เบิกไม่ครบจึงไม่ใช่ partial (คืนของเหลือได้เหมือนบรรทัดที่ done) · ตรงกับ private.bom_return_parts ของ 20261123020000
   // ยอดเบิก (issued) = qtyDone รวมยอดที่เบิกเกินแผน · data.orders ใช้ดูสถานะใบ (ไม่ส่ง = ถือว่ายังไม่ปิด)
   function partReturnLines(data, orderId) {
     const { jobs = [], stockMoves = [], orders = [] } = data ?? {};
-    const closed = (orders ?? []).find((order) => order.id === orderId)?.status === "completed";
+    // ใบที่ยกเลิกแล้ว (20261128010000) คืนของเหลือได้เหมือนใบที่ปิดแล้ว (งานของใบยังอยู่ เบิกต่อ / ยกเลิกการเบิกจ่ายไม่ได้)
+    const closed = ["completed", "cancelled"].includes((orders ?? []).find((order) => order.id === orderId)?.status);
     const byItem = new Map();
     for (const job of jobs) {
       if (job.orderId !== orderId || job.dept !== "ST" || job.kind !== "PURCHASED" || !(job.status === "done" || Number(job.qtyDone) > 0)) continue;
@@ -1020,6 +1021,9 @@
   const fgRound = (n) => Math.round(Number(n) * 1e4) / 1e4;
   const FG_EPS = 1e-9;
   const FG_STOCK_STATUS = Object.freeze(["released", "in_progress", "completed"]);
+  // ใบที่ยกเลิกแล้ว (20261128010000): ของที่ใบรับเข้าคลังเองอยู่ในคลังต่อเป็นสต็อก นับเป็นใบที่ถือของโดยจำนวนสั่ง = 0 (ตรงกับ private.bom_fg_free) · ใบที่ยกเลิกรับเข้า / ส่งมอบเองไม่ได้
+  const fgHolds = (order) => FG_STOCK_STATUS.includes(order?.status) || order?.status === "cancelled";
+  const fgOrderedFor = (order, qty) => (order?.status === "cancelled" ? 0 : qty);
   const fgKey = (orderId, code) => `${orderId}\u0000${code}`;
   const FG_ZERO = Object.freeze({ own: 0, inn: 0, out: 0, delivered: 0 });
   // ยอดรวมของประวัติต่อ (ใบ, รหัส) → ฟังก์ชันอ่านค่า { own, inn, out, delivered }
@@ -1058,7 +1062,6 @@
     const figures = fgLedger(fgMoves);
     const moves = fgMoves.filter((move) => move.orderId === order.id);
     const pkJobs = jobs.filter((job) => job.orderId === order.id && job.dept === "PK");
-    const stockOpen = FG_STOCK_STATUS.includes(order.status);
     const products = [...orderedByCode(order)].map(([fgCode, qty]) => {
       const f = figures(order.id, fgCode);
       const pkDone = fgRound(pkJobs.filter((job) => job.kind === "FG" && job.itemCode === fgCode).reduce((sum, job) => sum + (Number(job.qtyDone) || 0), 0));
@@ -1067,7 +1070,7 @@
       return {
         fgCode, ordered: qty, pkDone,
         received: f.own, own: f.own, fromStock: f.inn, givenAway: f.out, have, delivered: f.delivered,
-        free: stockOpen ? fgFreeOf(qty, f) : 0,
+        free: fgHolds(order) ? fgFreeOf(fgOrderedFor(order, qty), f) : 0,
         receivable: Math.max(0, fgRound(pkDone - f.own)),
         deliverable,
         // ส่วนที่ลูกค้าของใบนี้ยังรอ (ส่งมอบได้และยังไม่ครบตามที่สั่ง) · ส่วนที่ส่งมอบได้เกินนี้คือสต็อกสินค้าสำเร็จรูปของใบ (ส่งให้ลูกค้าได้หรือเก็บไว้ให้ใบอื่น)
@@ -1125,9 +1128,9 @@
     const figures = fgLedger(data?.fgMoves);
     const byCode = new Map();
     for (const order of data?.orders ?? []) {
-      if (!FG_STOCK_STATUS.includes(order.status)) continue;
+      if (!fgHolds(order)) continue;
       for (const [code, qty] of orderedByCode(order)) {
-        const free = fgFreeOf(qty, figures(order.id, code));
+        const free = fgFreeOf(fgOrderedFor(order, qty), figures(order.id, code));
         if (free <= FG_EPS) continue;
         if (!byCode.has(code)) byCode.set(code, []);
         byCode.get(code).push({ orderId: order.id, free, releasedAt: Number(order.releasedAt) || 0 });

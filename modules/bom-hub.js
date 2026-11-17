@@ -938,7 +938,8 @@
     let panel = "";
     let draftOrders = [];
     let reservedDraftOrders = [];
-    if (current === 0) panel = ui.callout("warn", `ใบนี้ถูกยกเลิก${order.cancelReason ? `: ${esc(order.cancelReason)}` : ""}`);
+    // ใบที่ยกเลิก: เหตุผล และคืนของซื้อที่เบิกไปแล้ว (ปุ่มคืนของเหลือ เมื่อยังมีของที่คืนได้)
+    if (current === 0) panel = `${ui.callout("warn", `ใบนี้ถูกยกเลิก${order.cancelReason ? `: ${esc(order.cancelReason)}` : ""}`)}${buttons.returnParts ? `<div class="rf-row bom-step-next">${buttons.returnParts}</div>` : ""}`;
     else if (view === 1) panel = ui.card(`<p>เพิ่มสินค้าที่ลูกค้าสั่งลงในใบ แล้วระบบจะพาไปขั้นตรวจของ</p><div class="rf-row">${buttons.add ?? ""}</div>`, { title: "ขั้น 1 · รายการสินค้า" });
     else if (view === 2) {
       if (!order.explosion?.length) panel = ui.card(`<p>ยังไม่ได้คำนวณว่าใบนี้ต้องใช้อะไรเท่าไร</p><div class="rf-row">${buttons.explode ?? ""}</div>`, { title: "ขั้น 2 · ตรวจของ" });
@@ -1019,7 +1020,7 @@
       panel = `${surplusLine}${deliverPanel(ctx, order, pos, canFg)}`;
     }
     // used = ปุ่มที่แผงของขั้นนี้แสดงแล้ว (หรือเป็นของขั้นอื่นของใบร่าง) หน้า orders จะไม่วางซ้ำใน "คำสั่งอื่น"
-    const used = ["add", "explode", "release", ...(view === 4 ? ["issue", "check"] : [])];
+    const used = ["add", "explode", "release", ...(view === 4 ? ["issue", "check"] : []), ...(current === 0 ? ["returnParts"] : [])];
     // ปุ่มสั่งซื้อของใบร่าง: หน้าต่างสั่งซื้อของ RubberFlow คิดของซื้อจากใบร่าง (sourcePi) และเคมีจาก WO ชั่วคราวชุดเดียวกับที่ตารางของขั้นนี้แสดง
     const bind = (rootNode) => rootNode.querySelectorAll("[data-bom-draft-buy]").forEach((button) => button.addEventListener("click", async () => {
       button.disabled = true;
@@ -1034,6 +1035,20 @@
   const storeLoading = (ctx) => (rfCan(ctx, "receiveMaterial") || rfCan(ctx, "purchase")) && Boolean(pages.tools?.rfWake?.(ctx));
   function storeTasks(ctx) {
     const tasks = [];
+    // ใบที่ยกเลิกแล้วที่ยังมีของซื้อเบิกจ่ายค้างนอกคลัง (เบิก − คืน > 0): การ์ดค้างจนกว่าจะคืน (ไม่มีขั้น "ไม่มีของคืน" ในฐานข้อมูล) · ผู้ทำ = ผู้ที่เบิกจ่ายได้ (ST / ฝ่ายวางแผน)
+    if (ctx.helpers.canIssueParts?.(ctx.user)) {
+      for (const order of ctx.data.orders) {
+        if (order.status !== "cancelled") continue;
+        const lines = ctx.rules.partReturnLines(ctx.data, order.id).filter((line) => line.returnable > 0);
+        if (lines.length) tasks.push({ kind: "partReturn", order, lines });
+      }
+    }
+    // เคมีที่เบิกไปแล้วของ WO ที่ถูกยกเลิก (ยกเลิกใบ / เปิดใบกลับมาแก้ / ยกเลิก WO) และยังไม่ได้รับคืน: แผนก ST (หรือ admin) รับคืนเข้าล็อตเดิมที่หน้าใบเบิกของ RubberFlow
+    if (rfCan(ctx, "returnRequisition")) {
+      const rf = (() => { try { return ctx.rubberflow()?.store?.data?.() ?? null; } catch { return null; } })();
+      const rules = (() => { try { return root.MNP_RUBBERFLOW_RULES ?? null; } catch { return null; } })();
+      for (const req of rf && rules?.returnableRequisitions ? rules.returnableRequisitions(rf) : []) tasks.push({ kind: "chemReturn", req, wo: (rf.orders ?? []).find((row) => row.id === req.orderId) ?? null });
+    }
     // บัญชีที่ไม่มีสิทธิ์ของคลังวัตถุดิบไม่ต้องรอหรือสั่งโหลด RubberFlow (เมนูนับงานทุกหน้า)
     const purchaseOrders = rfCan(ctx, "receiveMaterial") || rfCan(ctx, "purchase") ? pages.tools?.purchaseOrdersOf?.(ctx) ?? [] : [];
     if (rfCan(ctx, "receiveMaterial")) {
@@ -1141,18 +1156,21 @@
       const canWork = ctx.helpers.canWorkJob(user, job) && ["released", "in_progress"].includes(order?.status) && job.status !== "done";
       const left = Math.max(0, job.qtyPlanned - job.qtyDone);
       const started = job.qtyDone > 0 || job.status === "in_progress";
-      const main = canWork ? ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "bom-job-main" }) : "";
+      const linkedJob = Boolean(ctx.helpers.isLinkedJob?.(job));
+      const main = canWork && !linkedJob ? ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "bom-job-main" }) : "";
       const more = [];
-      if (canWork) more.push(job.status === "hold" ? ui.button("คืนคิว", { action: "setJobStatus", args: { jobId: job.id, status: "queued" }, className: "secondary small" }) : ui.button("พักงาน", { action: "setJobStatus", args: { jobId: job.id, status: "hold" }, className: "secondary small" }));
+      const resume = (Number(job.qtyDone) || 0) > 0;
+      if (canWork) more.push(job.status === "hold" ? ui.button(resume ? "ทำต่อ" : "คืนคิว", { action: "setJobStatus", args: { jobId: job.id, status: resume ? "in_progress" : "queued" }, className: "secondary small" }) : ui.openButton("พักงาน", "jobHold", { jobId: job.id }, { className: "secondary small" }));
       // งานที่จะไม่มีใครรายงานแล้ว: ฝ่ายวางแผนปิดงานพร้อมเหตุผล (ไม่เพิ่มยอด) ใบจึงปิดได้
       if (canWork && ctx.helpers.canPlan(user)) more.push(ui.openButton("ปิดงานนี้", "jobClose", { jobId: job.id }, { className: "secondary small" }));
       const closedBy = ctx.helpers.jobCloseNote(job);
+      const heldBy = closedBy ? null : ctx.helpers.jobHoldNote?.(job);
       if (job.status !== "done" && ctx.helpers.canLinkRubberflow(user, job) && ["released", "in_progress"].includes(order?.status) && !job.externalRef) more.push(ui.openButton("สร้าง WO ใน RubberFlow", "jobRubberflow", { jobId: job.id }, { className: "secondary small" }));
       if (job.externalRef) more.push(ui.link(`WO ${job.externalRef.woId}`, `#/rubberflow?p=orders&q=${encodeURIComponent(job.externalRef.woId)}`, "btn rf-btn secondary small"));
       const amount = started ? `ได้แล้ว ${rules.fmtQty(job.qtyDone)} จาก ${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}` : `ต้องได้ ${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`;
       return `<article class="card rf-card bom-job${tone ? ` is-${tone}` : ""}"><div class="bom-job-top"><span class="bom-job-state">${esc(label)}</span>${dueText(job.dueAt, job.status === "done")}</div>
         <h2>${esc(job.name)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, job.dept)} ` : ""}<span class="rf-mono">${esc(job.itemCode)}</span> · ใบ ${ui.link(job.orderId, ctx.url("orders", { sel: job.orderId }))}</p>
-        <div class="bom-job-amount"><span>${esc(amount)}</span>${started && job.status !== "done" ? `<span class="muted">เหลือ ${esc(rules.fmtQty(left))}</span>` : ""}</div>${started ? ui.progress(job.qtyDone, job.qtyPlanned, job.status === "hold" ? "bad" : "") : ""}${job.qtyReject ? `<p class="small muted">เสีย ${esc(rules.fmtQty(job.qtyReject))}</p>` : ""}${closedBy ? `<p class="small muted">${esc(`ปิดงานโดย ${closedBy.by}: ${closedBy.reason}`)}</p>` : ""}
+        <div class="bom-job-amount"><span>${esc(amount)}</span>${started && job.status !== "done" ? `<span class="muted">เหลือ ${esc(rules.fmtQty(left))}</span>` : ""}</div>${started ? ui.progress(job.qtyDone, job.qtyPlanned, job.status === "hold" ? "bad" : "") : ""}${job.qtyReject ? `<p class="small muted">เสีย ${esc(rules.fmtQty(job.qtyReject))}</p>` : ""}${closedBy ? `<p class="small muted">${esc(`ปิดงานโดย ${closedBy.by}: ${closedBy.reason}`)}</p>` : ""}${heldBy ? `<p class="small muted">${esc(`พักโดย ${heldBy.by}: ${heldBy.reason}`)}</p>` : ""}${canWork && linkedJob ? '<p class="small muted" title="ยอดของงานนี้เพิ่มเองเมื่อล็อตตกแต่งของ WO ผ่าน QC ใน RubberFlow">ยอดมาจาก RubberFlow</p>' : ""}
         ${main}${more.length ? `<div class="rf-row bom-job-more">${more.join("")}</div>` : ""}</article>`;
     };
     const sub = dept && dept !== "ALL" ? esc(rules.DEPT_LABEL[dept] ?? dept) : "";
@@ -1181,6 +1199,18 @@
           <h2>${esc(`${task.cancelled ? "ตัดสินใบสั่งซื้อ" : "รับเข้าตามใบสั่งซื้อ"} ${task.po.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${task.po.sourcePi ? esc(`สั่งจากใบ ${task.po.sourcePi}`) : ""}${task.cancelled ? (task.partly ? " · รับเข้าไปแล้วบางรายการ ใบนี้ยกเลิกไม่ได้ รับส่วนที่เหลือเข้าเป็นสต็อกไว้ใช้กับใบอื่น" : " · ยกเลิกใบสั่งซื้อ หรือรับเข้าเป็นสต็อกไว้ใช้กับใบอื่น") : ""}</p>
           <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span><span class="rf-mono">${esc(line.materialCode)}</span>${nameOf(line) ? ` <span class="small muted">${esc(nameOf(line))}</span>` : ""}</span><span class="nowrap">${esc(`${rules.fmtQty(line.qtyKg)} ${unit(line)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
           ${ui.link(task.cancelled ? "เปิดใบสั่งซื้อ" : "ตรวจสอบรับเข้า", `#/rubberflow?p=warehouse&tab=po&q=${encodeURIComponent(task.po.id)}`, "btn rf-btn bom-job-main")}</article>`;
+      }
+      if (task.kind === "partReturn") {
+        return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">ใบสั่งผลิตถูกยกเลิกแล้ว</span></div>
+          <h2>${esc(`คืนของซื้อที่เบิกไปแล้ว ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${esc(task.order.customer ?? "")}</p>
+          <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span>${esc(line.name || line.itemCode)}</span><span class="nowrap">${esc(`${rules.fmtQty(line.returnable)} ${uomText(ctx, line.uom)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
+          ${ui.openButton("คืนของเหลือ", "returnParts", { orderId: task.order.id }, { className: "bom-job-main" })}</article>`;
+      }
+      if (task.kind === "chemReturn") {
+        const kg = task.req.lines.reduce((sum, line) => sum + (Number(line.actualKg) || 0), 0);
+        return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">WO ถูกยกเลิก · รอ ST รับคืน</span></div>
+          <h2>${esc(`รับเคมีคืนตามใบเบิก ${task.req.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${esc(`WO ${task.req.orderId}${task.wo?.customerPo ? ` · ใบ ${task.wo.customerPo}` : ""} · จ่ายไป ${rules.fmtQty(kg)} กก.`)}</p>
+          ${ui.link("เปิดใบเบิกเพื่อรับคืน", `#/rubberflow?p=requisition&sel=${encodeURIComponent(task.req.id)}`, "btn rf-btn bom-job-main")}</article>`;
       }
       if (task.kind === "chem") {
         return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">เคมีขาด ยังไม่ได้สั่ง</span></div>

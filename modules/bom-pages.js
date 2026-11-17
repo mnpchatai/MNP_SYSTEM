@@ -47,12 +47,21 @@
   const jobProgress = (ctx, job) => `${ctx.ui.progress(job.qtyDone, job.qtyPlanned, job.status === "hold" ? "bad" : "")}<div class="small muted">${esc(`${ctx.rules.fmtQty(job.qtyDone)} / ${ctx.rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}${job.qtyReject ? ` · เสีย ${ctx.rules.fmtQty(job.qtyReject)}` : ""}`)}</div>`;
   // งานที่ยังต้องทำ = helpers.isOpenJob (บรรทัดของซื้อของใบที่ปิดแล้วไม่ค้างและไม่เลยกำหนด) · สถานะของบรรทัดนั้นเป็น "ใบปิดแล้ว" แทนสถานะงานที่ดูเหมือนยังรอ
   const late = (ctx, job) => ctx.helpers.isOpenJob(ctx.data, job) && job.dueAt < ctx.now;
-  const jobStatus = (ctx, job) => (job.status !== "done" && !ctx.helpers.isOpenJob(ctx.data, job) ? ctx.ui.badge("", "ใบปิดแล้ว") : status(ctx, job.status));
-  // งานที่ฝ่ายวางแผนปิดโดยไม่รายงานยอดเพิ่ม: ผู้ปิดและเหตุผล (จากรายการรายงานยอด 0 ล่าสุดของงาน) ใต้สถานะ
+  const jobStatus = (ctx, job) => (job.status !== "done" && !ctx.helpers.isOpenJob(ctx.data, job)
+    ? ctx.ui.badge("", ctx.data.orders.find((order) => order.id === job.orderId)?.status === "cancelled" ? "ใบยกเลิกแล้ว" : "ใบปิดแล้ว") : status(ctx, job.status));
+  // งานที่ฝ่ายวางแผนปิดโดยไม่รายงานยอดเพิ่ม: ผู้ปิดและเหตุผล (จากรายการรายงานยอด 0 ล่าสุดของงาน) ใต้สถานะ · งานที่พักอยู่: ผู้พักและเหตุผล (รายการ kind = hold ล่าสุด)
   const jobClosedLine = (ctx, job) => {
     const closed = ctx.helpers.jobCloseNote?.(job);
-    return closed ? `<div class="small muted">${esc(`ปิดงานโดย ${closed.by}: ${closed.reason}`)}</div>` : "";
+    const held = closed ? null : ctx.helpers.jobHoldNote?.(job);
+    return closed ? `<div class="small muted">${esc(`ปิดงานโดย ${closed.by}: ${closed.reason}`)}</div>`
+      : held ? `<div class="small muted">${esc(`พักโดย ${held.by}: ${held.reason}`)}</div>` : "";
   };
+  // ปุ่มพัก / ทำต่อของงาน: พักต้องมีเหตุผล (dialog jobHold) · งานที่พักแล้วมียอดกลับเป็น "กำลังทำ" (ทำต่อ) ไม่มียอดกลับไปรอคิว (คืนคิว)
+  const holdButton = (ctx, job) => (job.status === "hold"
+    ? ctx.ui.button((Number(job.qtyDone) || 0) > 0 ? "ทำต่อ" : "คืนคิว", { action: "setJobStatus", args: { jobId: job.id, status: (Number(job.qtyDone) || 0) > 0 ? "in_progress" : "queued" }, className: "secondary small" })
+    : ctx.ui.openButton("พักงาน", "jobHold", { jobId: job.id }, { className: "secondary small" }));
+  // งานที่ผูก WO ของ RubberFlow: ยอดมาจาก RubberFlow (ล็อตตกแต่งที่ผ่าน QC) ไม่มีปุ่มรายงานผล · บอกครั้งเดียวในที่ของปุ่ม
+  const LINKED_NOTE = '<span class="small muted" title="ยอดของงานนี้เพิ่มเองเมื่อล็อตตกแต่งของ WO ผ่าน QC ใน RubberFlow">ยอดมาจาก RubberFlow</span>';
   const treeRows = (ctx, code, qty = 1) => ctx.rules.explode(code, qty, { itemOf: (c) => itemOf(ctx, c), approvedBomOf: (c) => approvedBomOf(ctx, c) }).lines;
   const levelCell = (level, text) => `<span class="bom-lv bom-lv-${Math.min(level, 6)}">${text}</span>`;
   const buildUrl = (ctx, code) => ctx.url("build", { code });
@@ -1852,7 +1861,7 @@
   // สินค้าสำเร็จรูปที่ใบนี้ได้จากสต็อก: ยกเลิก/เปิดใบกลับมาแก้แล้วคืนเข้าสต็อกอัตโนมัติ (ข้อความต่อท้ายหน้าต่างยืนยัน) · ไม่มี = ว่าง
   const fgReturnText = (ctx, lock) => (lock.took.length ? ` สินค้าสำเร็จรูปที่ใบนี้ใช้จากสต็อก (${lock.took.map((entry) => `${entry.fgCode} × ${ctx.rules.fmtQty(entry.qty)} จากใบ ${entry.fromOrderId}`).join(", ")}) จะคืนเข้าสต็อกให้อัตโนมัติ` : "");
   // เหตุที่ยกเลิก/เปิดกลับมาแก้ไม่ได้ (rules.fgStockLock.blocked)
-  const fgLockText = (lock) => (lock.delivered ? "ส่งมอบสินค้าให้ลูกค้าแล้ว" : `ให้สินค้าจากสต็อกแก่ใบ ${[...new Set(lock.givenAway.map((entry) => entry.orderId))].join(", ")} ไปแล้ว (ต้องให้ใบนั้นคืนสต็อกก่อน)`);
+  const fgLockText = (lock) => (lock.delivered ? "ส่งมอบสินค้าให้ลูกค้าแล้ว ให้ปิดงานที่เหลือพร้อมเหตุผล แล้วให้คลังสินค้า (WH) ปิดใบ (รับไม่ครบ) แทน" : `ให้สินค้าจากสต็อกแก่ใบ ${[...new Set(lock.givenAway.map((entry) => entry.orderId))].join(", ")} ไปแล้ว (ต้องให้ใบนั้นคืนสต็อกก่อน)`);
   pages.orders = (ctx) => {
     const { data, ui, rules, user, params } = ctx;
     const sel = String(params.get("sel") ?? "").toUpperCase();
@@ -1911,13 +1920,16 @@
       // คืนของเหลือแสดงเมื่อยังมีบรรทัดที่คืนได้ (บรรทัดที่ยังเบิกไม่ครบของใบที่ยังเปิดคืนของเหลือไม่ได้ · ใบที่ปิดแล้วคืนได้ทุกบรรทัดที่เบิกไป) · ยกเลิกการเบิกจ่ายยังแสดง เพราะพางานกลับเป็นรอเบิกได้แม้ไม่มีอะไรคืนเข้าสต็อก
       const returnLines = rules.partReturnLines(data, order.id);
       if (returnLines.length && ctx.helpers.canIssueParts(user)) {
-        if (order.status !== "cancelled" && returnLines.some((line) => !line.partial && line.returnable > 0)) buttons.push(ui.openButton("คืนของเหลือ", "returnParts", { orderId: order.id }, { className: "secondary" }));
+        if (returnLines.some((line) => !line.partial && line.returnable > 0)) {
+          const back = ui.openButton("คืนของเหลือ", "returnParts", { orderId: order.id }, { className: order.status === "cancelled" ? "" : "secondary" });
+          if (order.status === "cancelled") main("returnParts", back); else buttons.push(back);
+        }
         if (openOrder) buttons.push(ui.openButton("ยกเลิกการเบิกจ่าย", "undoParts", { orderId: order.id }, { className: "secondary" }));
       }
       if (openOrder && (checkWos.length || partsLeft) && ctx.rubberflow() && (pages.hub?.rfCan ? pages.hub.rfCan(ctx, "purchase") || pages.hub.rfCan(ctx, "viewPurchase") : ctx.helpers.canLinkRubberflow(user, { dept: "RB" }))) main("check", `<button class="btn rf-btn secondary" type="button" data-bom-rf-check data-bom-order="${attr(order.id)}" data-bom-wos="${attr(JSON.stringify(checkWos))}" title="เทียบเคมีที่ WO ของใบนี้ต้องใช้และของซื้อที่ยังไม่เบิกจ่ายกับสต็อก (สั่งซื้อโดยคลังวัตถุดิบ ST)">ตรวจวัตถุดิบ</button>`);
       if (!["completed", "cancelled"].includes(order.status) && canPlan) {
         if (fgLock.blocked) buttons.push(`<span class="small muted">ยกเลิกใบหรือแก้รายการไม่ได้: ${esc(fgLockText(fgLock))}</span>`);
-        else buttons.push(ui.button("ยกเลิกใบ", { action: "cancelOrder", args: { orderId: order.id }, className: "secondary", confirmText: `ยกเลิกใบสั่งผลิตนี้?${fgReturnText(ctx, fgLock)}${poNote ? ` ${poNote}` : ""}` }));
+        else buttons.push(ui.openButton("ยกเลิกใบ", "orderCancel", { orderId: order.id }, { className: "secondary" }));
       }
       if (order.explosion?.length) buttons.push(`<button class="btn rf-btn secondary" type="button" data-bom-csv="bomsheet" data-bom-order="${attr(order.id)}" title="ใบคำนวณวัตถุดิบรูปแบบเดียวกับ BOMSHEET เปิดใน Excel ได้">ส่งออก CSV ใบคำนวณ</button>`, `<button class="btn rf-btn secondary" type="button" data-bom-csv="req" data-bom-order="${attr(order.id)}" title="รายการที่ต้องเบิก/สั่งซื้อรวมทุกสินค้าในใบ">ส่งออก CSV รายการเบิก</button>`,
         `<span class="bom-sheet-pick">${ui.select("sheet", rules.SHEETS.map((sheet) => ({ value: sheet.id, label: `${sheet.title} · ${sheet.name}` })), { value: "RB", extra: 'data-bom-sheet aria-label="เลือกใบพิมพ์"' })}${ui.openButton("เปิดใบพิมพ์", "printSheet", { orderId: order.id, sheet: "RB" }, { className: "secondary", ariaLabel: "เปิดใบพิมพ์รายสถานี" })}</span>`);
@@ -2414,7 +2426,7 @@
   dialogs.returnParts = (ctx, { orderId }) => {
     const { ui, rules, user } = ctx;
     const order = ctx.data.orders.find((entry) => entry.id === orderId);
-    if (!order || order.status === "cancelled" || !ctx.helpers.canIssueParts(user)) return null;
+    if (!order || !ctx.helpers.canIssueParts(user)) return null;
     const lines = rules.partReturnLines(ctx.data, orderId);
     if (!lines.length) return null;
     // บรรทัดที่ยังเบิกไม่ครบของใบที่ยังเปิด (partial) คืนของเหลือไม่ได้: ช่องอ่านอย่างเดียวพร้อมเหตุผล (แถวคงลำดับ itemCode[] / qty[])
@@ -2448,6 +2460,53 @@
     return { html: ui.dialog("undoParts", `ยกเลิกการเบิกจ่ายของซื้อ · ${orderId}`, body, { wide: true, footer: `${ui.closeButton("ไม่ยกเลิก")}<button class="btn rf-btn" type="submit" form="bom-undo-parts-form">ยกเลิกการเบิกจ่าย</button>` }) };
   };
 
+  // ยกเลิกใบ (ฝ่ายวางแผน): บอกให้ครบก่อนยืนยันว่าอะไรจะเกิดกับ WO เคมี ของซื้อ สินค้าสำเร็จรูป และอะไรที่ไม่ย้อน · เหตุผลจำเป็น (เก็บที่ใบ เห็นในประวัติ)
+  // WO / ใบเบิกอ่านจาก RubberFlow ที่โหลดอยู่ (ยังไม่โหลด = บอกเลข WO อย่างเดียว) · ฐานข้อมูลตัดสินจริง (private.bom_save_orders ของ 20261128010000)
+  const WO_STATUS_TEXT = Object.freeze({ planned: "ยังไม่ปล่อยผลิต", released: "ปล่อยผลิตแล้ว", in_progress: "กำลังผลิต", on_hold: "พักอยู่", completed: "ปิดแล้ว", cancelled: "ยกเลิกแล้ว" });
+  const rfRequisitionsOf = (ctx) => {
+    const store = rfStore(ctx);
+    if (!store || !rfReady(ctx)) return null;
+    try { return store.data().requisitions ?? null; } catch { return null; }
+  };
+  dialogs.orderCancel = (ctx, { orderId }) => {
+    const { ui, rules, data, user } = ctx;
+    const order = data.orders.find((entry) => entry.id === orderId);
+    if (!order || ["completed", "cancelled"].includes(order.status) || !ctx.helpers.canPlan(user)) return null;
+    const fgLock = rules.fgStockLock(data, order);
+    if (fgLock.blocked) return null;
+    const jobs = data.jobs.filter((job) => job.orderId === order.id);
+    const rfOrders = rfOrdersOf(ctx);
+    const woOf = (job) => (Array.isArray(rfOrders) ? rfOrders.find((row) => row.id === job.externalRef.woId && row.sourceJobId === job.id) ?? null : null);
+    const linked = jobs.filter((job) => job.externalRef?.woId).map((job) => ({ id: job.externalRef.woId, wo: woOf(job) })).filter((entry) => entry.wo?.status !== "cancelled");
+    const stopped = linked.filter((entry) => !entry.wo || entry.wo.status !== "completed");
+    const done = linked.filter((entry) => entry.wo?.status === "completed");
+    const woText = (entry) => `${entry.id}${entry.wo ? ` (${WO_STATUS_TEXT[entry.wo.status] ?? entry.wo.status})` : ""}`;
+    const woIds = new Set(linked.map((entry) => entry.id));
+    const reqs = (rfRequisitionsOf(ctx) ?? []).filter((req) => woIds.has(req.orderId));
+    const issuedReqs = reqs.filter((req) => ["issued", "weighing"].includes(req.status) && req.lines.some((line) => Number(line.actualKg) > 0));
+    const mixedReqs = reqs.filter((req) => req.status === "consumed");
+    const parts = rules.partReturnLines(data, order.id).filter((line) => line.returnable > 0);
+    const received = rules.fgPosition(data, order).products.filter((product) => product.own > 0);
+    const made = jobs.some((job) => (Number(job.qtyDone) || 0) > 0);
+    const poNote = openPoText(openPurchaseOrdersOf(ctx, order.id));
+    const lines = [
+      stopped.length ? `WO ใน RubberFlow ที่จะถูกยกเลิกหรือหยุด: ${stopped.map(woText).join(", ")}` : "",
+      done.length ? `WO ที่ปิดแล้วคงเดิม: ${done.map(woText).join(", ")}` : "",
+      issuedReqs.length ? `เคมีที่เบิกไปแล้ว (${issuedReqs.map((req) => req.id).join(", ")}) คลังวัตถุดิบ (ST) จะได้งานรับคืนเข้าล็อตเดิม` : "",
+      parts.length ? `ของซื้อที่เบิกจ่ายไปแล้ว (${parts.map((line) => `${line.itemCode} × ${rules.fmtQty(line.returnable)}`).join(", ")}) คืนเข้าสต็อกด้วยปุ่ม “คืนของเหลือ” ของใบนี้หลังยกเลิก` : "",
+      received.length ? `สินค้าสำเร็จรูปที่รับเข้าคลังแล้ว (${received.map((product) => `${product.fgCode} × ${rules.fmtQty(product.own)}`).join(", ")}) อยู่ในคลังต่อเป็นสต็อกสินค้าสำเร็จรูป ใบอื่นใช้ได้` : "",
+      fgLock.took.length ? fgReturnText(ctx, fgLock).trim() : "",
+      poNote,
+    ].filter(Boolean);
+    const kept = [made ? "ยอดที่แผนกรายงานแล้ว" : "", mixedReqs.length ? "ยางที่ผสมแล้ว" : "", linked.length ? "ล็อตที่ฉีด อบ และตกแต่งแล้ว" : ""].filter(Boolean);
+    const body = `<form novalidate id="bom-order-cancel-form" data-rf-form="cancelOrder" data-rf-args="${attr(JSON.stringify({ orderId: order.id }))}" data-rf-success="ยกเลิกใบ {result} แล้ว">
+      ${lines.length ? ui.callout("warn", `<ul class="bom-cancel-list">${lines.map((text) => `<li>${esc(text)}</li>`).join("")}</ul>`) : ""}
+      <p class="small muted">${esc(`งานทุกแผนกของใบนี้หยุดและรายงานต่อไม่ได้${kept.length ? ` · ${kept.join(", ")} ยังเก็บเป็นประวัติ ไม่ถูกลบ` : ""}`)}</p>
+      ${ui.field("เหตุผลที่ยกเลิก", ui.input("reason", { required: true, placeholder: "เช่น ลูกค้ายกเลิกคำสั่งซื้อ", extra: 'minlength="3" maxlength="200"' }), { required: true })}
+    </form>`;
+    return { html: ui.dialog("orderCancel", `ยกเลิกใบสั่งผลิต ${order.id}`, body, { wide: true, footer: `${ui.closeButton("ไม่ยกเลิก")}<button class="btn rf-btn" type="submit" form="bom-order-cancel-form">ยกเลิกใบ</button>` }) };
+  };
+
   // ---------- งานของแผนก ----------
   pages.jobs = (ctx) => {
     const { data, ui, rules, user, params } = ctx;
@@ -2466,8 +2525,8 @@
       const buttons = [];
       // ใบที่ปิดแล้วเบิกจ่ายไม่ได้ (บรรทัดที่เบิกไม่ครบคืนของเหลือได้ที่หน้าใบ) จึงไม่ชี้ไปเบิก
       if (part && job.status !== "done" && ["released", "in_progress"].includes(order?.status) && ctx.helpers.canIssueParts(user)) buttons.push(ui.link("เบิกจ่ายที่ใบ PI", ctx.url("orders", { sel: job.orderId }), "btn rf-btn secondary small"));
-      if (canWork && job.status !== "done") buttons.push(ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "small" }));
-      if (canWork && job.status !== "done") buttons.push(job.status === "hold" ? ui.button("คืนคิว", { action: "setJobStatus", args: { jobId: job.id, status: "queued" }, className: "secondary small" }) : ui.button("พักงาน", { action: "setJobStatus", args: { jobId: job.id, status: "hold" }, className: "secondary small" }));
+      if (canWork && job.status !== "done") buttons.push(ctx.helpers.isLinkedJob?.(job) ? LINKED_NOTE : ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "small" }));
+      if (canWork && job.status !== "done") buttons.push(holdButton(ctx, job));
       // งานที่จะไม่มีใครรายงานแล้ว: ฝ่ายวางแผนปิดงานพร้อมเหตุผล (ไม่เพิ่มยอด) ใบจึงปิดได้ · ไม่มีกับงานของซื้อ (ST เบิกจ่ายที่ใบ)
       if (canWork && job.status !== "done" && ctx.helpers.canPlan(user)) buttons.push(ui.openButton("ปิดงานนี้", "jobClose", { jobId: job.id }, { className: "secondary small" }));
       if (job.status !== "done" && ctx.helpers.canLinkRubberflow(user, job) && ["released", "in_progress"].includes(order?.status) && !job.externalRef) buttons.push(ui.openButton("สร้าง WO ใน RubberFlow", "jobRubberflow", { jobId: job.id }, { className: "secondary small" }));
@@ -2481,7 +2540,7 @@
   dialogs.jobReport = (ctx, { jobId }) => {
     const { ui, rules } = ctx;
     const job = ctx.data.jobs.find((entry) => entry.id === jobId);
-    if (!job) return null;
+    if (!job || ctx.helpers.isLinkedJob?.(job)) return null;
     const remaining = Math.max(0, job.qtyPlanned - job.qtyDone);
     const body = `<form novalidate id="bom-job-form" data-rf-form="reportJob" data-rf-args="${attr(JSON.stringify({ jobId }))}" data-rf-success="บันทึกผลผลิต {result}">
       <p class="muted small">${esc(`${job.itemCode} · ${job.name} · แผน ${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)} · ทำแล้ว ${rules.fmtQty(job.qtyDone)} · เหลือ ${rules.fmtQty(remaining)}`)}</p>
@@ -2504,6 +2563,18 @@
       ${ui.field("เหตุผล", ui.input("reason", { required: true, placeholder: "เช่น ใช้ชิ้นงานค้างไลน์แทน ไม่ผลิตเพิ่ม", extra: 'minlength="3" maxlength="200"' }), { required: true })}
     </form>`;
     return { html: ui.dialog("jobClose", `ปิดงาน ${job.id}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-job-close-form">ปิดงาน</button>` }) };
+  };
+  // พักงานพร้อมเหตุผล (แผนกของงาน ฝ่ายวางแผน ผู้จัดการ): เหตุผลเก็บเป็นรายการของงาน (เห็นในประวัติของงานและใต้สถานะ) · ส่งทันทีเมื่อกดพักงาน
+  dialogs.jobHold = (ctx, { jobId }) => {
+    const { ui, rules, data } = ctx;
+    const job = data.jobs.find((entry) => entry.id === jobId);
+    if (!job || job.status === "done" || job.status === "hold" || ctx.helpers.isPartJob(job) || !ctx.helpers.canWorkJob(ctx.user, job)) return null;
+    if (!["released", "in_progress"].includes(data.orders.find((entry) => entry.id === job.orderId)?.status)) return null;
+    const body = `<form novalidate id="bom-job-hold-form" data-rf-form="setJobStatus" data-rf-args="${attr(JSON.stringify({ jobId, status: "hold" }))}" data-rf-success="พักงาน {result} แล้ว">
+      <p class="muted small">${esc(`${job.itemCode} · ${job.name} · ใบ ${job.orderId} · ทำแล้ว ${rules.fmtQty(job.qtyDone)} จาก ${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`)}</p>
+      ${ui.field("เหตุผลที่พัก", ui.input("reason", { required: true, placeholder: "เช่น รอแม่พิมพ์ เครื่องเสีย รอวัตถุดิบ", extra: 'minlength="3" maxlength="200"' }), { required: true })}
+    </form>`;
+    return { html: ui.dialog("jobHold", `พักงาน ${job.id}`, body, { footer: `${ui.closeButton("ไม่พัก")}<button class="btn rf-btn" type="submit" form="bom-job-hold-form">พักงาน</button>` }) };
   };
   dialogs.jobRubberflow = (ctx, { jobId }) => {
     const { ui, rules, data } = ctx;

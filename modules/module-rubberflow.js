@@ -181,6 +181,8 @@
     recordMixing: (p) => ({ ...p, stages: stagesOf(p) }),
     saveMaterial: (p) => ({ ...p, active: p.active !== "0" }),
     shipBoxes: (p) => ({ ids: p.ids ?? [] }),
+    // รับเคมีคืน: returnedKg[] ตามลำดับบรรทัดของใบเบิก → kgs · note = เหตุผล (จำเป็นเมื่อคืนไม่ครบ)
+    returnRequisition: (p) => ({ id: p.id, kgs: listOf(p.returnedKg), note: p.note }),
     createNcr: (p) => ({ ...p, whys: p.whys ?? [] }),
     addQcRecord: (p) => ({ ...p, values: p.values ?? {}, result: p.result || undefined }),
   };

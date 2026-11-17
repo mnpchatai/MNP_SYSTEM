@@ -1725,8 +1725,10 @@ test("the mock sandbox offers switchable personas (the planner group, producing 
   const { client } = createMockSupabase({ sandbox: true, now: () => NOW, storage });
   const status = (await client.rpc("app_sandbox_status")).data;
   assert.equal(status.persona.id, "persona-1", "the first persona is the simulated admin, as before");
-  assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-rbh", "persona-gr", "persona-st", "persona-sr", "persona-wh", "persona-whh", "persona-qa"]);
-  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "st", "viewer", "wh", "manager", "viewer"], "each persona maps to a BOM role (the RB head and the WH head are department managers; SR and QA are not BOM departments)");
+  assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-rbh", "persona-gr", "persona-st", "persona-sr", "persona-wh", "persona-whh", "persona-qa", "persona-pk", "persona-pt", "persona-bg"]);
+  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "st", "viewer", "wh", "manager", "viewer", "viewer", "pt", "bg"], "each persona maps to a BOM role (the RB head and the WH head are department managers; SR and QA are not BOM departments; PK staff work their jobs by department)");
+  assert.deepEqual(status.personas.slice(-3).map((row) => [row.department.code, row.role.code]), [["PK", "staff"], ["PT", "staff"], ["BG", "staff"]], "PK, PT and BG staff can be tried too");
+  assert.deepEqual(status.personas.slice(-3).map((row) => storeApi.personaUser(row).dept), ["PK", "PT", "BG"], "and work the jobs of their own department");
   assert.equal((await client.rpc("app_sandbox_enter", { p_persona_id: "persona-rb" })).error, null);
   assert.equal((await client.rpc("app_sandbox_status")).data.persona.department.code, "RB");
   assert.equal((await client.rpc("app_sandbox_enter", { p_persona_id: "nobody" })).error.code, "PERSONA_NOT_FOUND");
@@ -1813,7 +1815,9 @@ test("the mock database checks orders and jobs per section and per field for the
   assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "draft", revision: 1, explosion: [] })] }, jobs: { delete: [{ id: "JOB-RB" }, { id: "JOB-GR" }] } }), "BOM_INVALID_TRANSITION", "a job of the order has started");
   assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "released", items: [], explosion: [] })] } }), "BOM_INVALID_TRANSITION", "items change only through a reopen, not on a released order");
   assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "completed", explosion: [] })] } }), "BOM_FORBIDDEN", "an order in progress is not completed by hand either");
-  assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "cancelled", explosion: [] })] } }), "BOM_INVALID_TRANSITION", "and one with reported output is not cancelled");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "cancelled", explosion: [] })] } }), "BOM_INVALID_ORDER", "a cancel needs a reason (output no longer blocks it: 20261128010000)");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "cancelled", cancelReason: " ab ", explosion: [] })] } }), "BOM_INVALID_ORDER", "of at least three characters after trimming");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-1", { status: "cancelled", cancelReason: "ก".repeat(201), explosion: [] })] } }), "BOM_INVALID_ORDER", "and at most 200");
 
   // เปิดใบกลับมาแก้ได้เมื่อไม่มีงานเริ่ม: ลบงานทั้งหมดของใบ + revision + 1 ในคำสั่งเดียว
   assert.equal(await code({ orders: { upsert: [mockOrder("PI-4")] } }), null);
@@ -2174,7 +2178,7 @@ test("the screens show only what the persona may do: planner group everything, S
     assert.equal(buttons(list.html, "orderNew") > 0, planner, `${persona}: open a new PI`);
     const draft = await sees(persona, "p=orders&sel=PI-D");
     assert.equal(buttons((await sees(persona, "p=orders&sel=PI-D&step=3")).html, "releaseOrder") > 0, planner, `${persona}: release`);
-    assert.equal(buttons(draft.html, "cancelOrder") > 0, planner, `${persona}: cancel`);
+    assert.equal(buttons(draft.html, "orderCancel") > 0, planner, `${persona}: cancel`);
     assert.equal(buttons(draft.html, "explodeOrder") > 0, planner, `${persona}: explode`);
     assert.equal(buttons(draft.html, "orderItemAdd") > 0, planner, `${persona}: add products`);
     assert.equal(buttons(draft.html, "stockCount") > 0, count, `${persona}: count buttons on a draft`);
@@ -2465,16 +2469,18 @@ test("the mock database refuses what production refuses: new orders start as dra
   assert.equal(await code({ jobs: { upsert: [{ ...(await cur("jobs", "J-PK")), status: "done" }] } }), "BOM_INVALID_JOB", "a planner cannot set a queued job done without the reason entry either");
   assert.equal(await code({ jobs: { delete: [{ id: "J-PK" }] } }), null, "a queued one can");
   assert.equal(await code({ jobs: { upsert: [mockJob("J-PK", "PI-N", "PK")] } }), "BOM_INVALID_TRANSITION", "a deleted job is not created again outside a release");
-  assert.equal(await code({ orders: { upsert: [await withOrder("PI-N", { status: "cancelled" })] } }), "BOM_INVALID_TRANSITION", "an order with reported output cannot be cancelled");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-N", { status: "cancelled" })] } }), "BOM_INVALID_ORDER", "a cancel needs a reason (an order with reported output can be cancelled since 20261128010000)");
   assert.equal(await code({ orders: { upsert: [await withOrder("PI-N", { status: "draft", revision: 1 })] } }), "BOM_INVALID_TRANSITION", "nor reopened once a job has started");
   assert.equal(await code({ orders: { upsert: [mockOrder("PI-C", { explosion: [] })] } }), null);
   assert.equal(await code({ orders: { upsert: [await withOrder("PI-C", { status: "released" })] }, jobs: { upsert: [mockJob("C-PK", "PI-C", "PK"), mockJob("C-RB", "PI-C", "RB")] } }), null);
   assert.equal(await code({ orders: { upsert: [await withOrder("PI-C", { status: "completed" })] } }), "BOM_FORBIDDEN", "completing an order through its row is refused for the planning group too (the warehouse receiving closes it)");
   const before = (await view()).version;
-  assert.equal(await code({ orders: { upsert: [await withOrder("PI-C", { status: "cancelled" })] } }), null, "an order without output can be cancelled");
-  assert.deepEqual((await view()).jobs.filter((row) => row.orderId === "PI-C"), [], "the database deleted its jobs itself");
+  assert.equal(await code({ orders: { upsert: [await withOrder("PI-C", { status: "cancelled", cancelReason: "  ลูกค้ายกเลิก  " })] } }), null, "an order is cancelled with a reason");
+  assert.equal((await view()).orders.find((row) => row.id === "PI-C").cancelReason, "ลูกค้ายกเลิก", "the reason is stored trimmed");
+  assert.deepEqual((await view()).jobs.filter((row) => row.orderId === "PI-C").map((row) => row.id).sort(), ["C-PK", "C-RB"], "its jobs are kept (20261128010000)");
   const delta = (await client.rpc("app_bom_master_since", { p_version: before })).data;
-  assert.deepEqual(delta.changes.jobs.delete.map((row) => row.id).sort(), ["C-PK", "C-RB"], "with tombstones for the other browsers");
+  assert.deepEqual(delta.changes.jobs.delete, [], "and no tombstone is written");
+  assert.equal(await code({ jobs: { upsert: [{ ...(await cur("jobs", "C-PK")), status: "in_progress", qtyDone: 1, reports: [{ at: 1, by: "x", good: 1, reject: 0, note: "" }] }] } }), "BOM_INVALID_TRANSITION", "a job of a cancelled order cannot be reported");
   assert.equal(await code({ orders: { upsert: [await withOrder("PI-C", { note: "แก้" })] } }), "BOM_INVALID_TRANSITION", "a cancelled order is final");
 });
 
@@ -2777,8 +2783,12 @@ test("a transfer receipt does not touch the BOM job; when pieces pass finishing 
   await rf(rb).ensureLoaded();
   const req = await saved(rf(rb).run("createRequisition", { orderId: wo.id, batches: 1 }));
   const lot = await saved(rf(rb).run("recordMixing", { reqId: req.result, machine: "KN-01 Kneader 75L", shift: "D", stages: [{ stage: 1, mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 130, mixMin: 2 }], outputKg: 10.5 }));
-  await saved(rf(rb).run("endRest", { lotId: lot.result }));
-  const transfer = await saved(rf(rb).run("createTransfer", { lotId: lot.result, qty: 10.5 }));
+  // ข้ามเวลาบ่ม: หัวหน้า RB พร้อมเหตุผล (20261128010000) · พนักงาน RB ทั่วไปไม่มีสิทธิ์
+  assert.equal(rf(rb).run("endRest", { lotId: lot.result, reason: "ทดสอบเร่งด่วน" }).ok, false, "RB staff cannot skip the rest time");
+  const rbHead = await asPersona(scene, "persona-rbh", realClock);
+  await rf(rbHead).ensureLoaded();
+  await saved(rf(rbHead).run("endRest", { lotId: lot.result, reason: "ทดสอบเร่งด่วน" }));
+  const transfer = await saved(rf(rbHead).run("createTransfer", { lotId: lot.result, qty: 10.5 }));
 
   // SR รับมอบ: ไม่เขียน BOM จึงไม่มีอะไรให้ตามทัน
   const sr = await asPersona(scene, "persona-sr", realClock);
@@ -3058,10 +3068,10 @@ test("cancelling a PI or reopening it to draft cancels its planned and released 
   await saved(head.context.MNP_RUBBERFLOW.store.run("setOrderStatus", { id: opened[1].woId, status: "released" }));
   const reachedBy = await asPersona(s.scene, "persona-1");
   const order = (await rpcData(reachedBy, "app_bom_master")).orders.find((row) => row.id === id);
-  const cancelled = await reachedBy.mock.client.rpc("app_bom_save_master", { p_changes: { orders: { upsert: [{ ...order, status: "cancelled", cancelledAt: NOW }] } }, p_base_version: (await rpcData(reachedBy, "app_bom_master")).version, p_action: "cancelOrder" });
+  const cancelled = await reachedBy.mock.client.rpc("app_bom_save_master", { p_changes: { orders: { upsert: [{ ...order, status: "cancelled", cancelledAt: NOW, cancelReason: "ลูกค้ายกเลิก" }] } }, p_base_version: (await rpcData(reachedBy, "app_bom_master")).version, p_action: "cancelOrder" });
   assert.equal(cancelled.error, null, cancelled.error?.message);
   assert.deepEqual(cancelled.data.rubberflow, { opened: [], skipped: [], cancelled: opened.map((row) => row.woId) });
-  assert.equal(cancelled.data.changes.jobs.delete.length, 2, "the jobs are deleted as before");
+  assert.equal(cancelled.data.changes.jobs.delete.length, 0, "the jobs are kept (20261128010000)");
   const rfNow = await rpcData(reachedBy, "app_rf_master");
   assert.deepEqual(rfNow.orders.filter((row) => row.status === "cancelled").map((row) => row.id), opened.map((row) => row.woId));
   assert.ok(rfNow.orders.every((row) => row.cancelledAt || row.status !== "cancelled"));
@@ -3082,7 +3092,7 @@ test("cancelling a PI or reopening it to draft cancels its planned and released 
   assert.equal(again.error, null, again.error?.message);
   assert.equal(again.data.rubberflow.opened[0].woId, `${TODAY_WO}-02`, "numbers keep counting after a cancelled WO");
 
-  // WO ที่เริ่มผลิตแล้ว: ยกเลิกใบ / เปิดกลับมาแก้ไม่ได้ ไม่เขียนอะไรเลย
+  // WO ที่เริ่มผลิตแล้ว (20261128010000): เปิดกลับมาแก้ไม่ได้ ไม่เขียนอะไรเลย · ยกเลิกใบได้เมื่อมีเหตุผล WO กำลังผลิตถูกหยุด
   const third = await autoWoScene();
   const tid = await third.draft("PI-T");
   const wo = (await third.releaseWith(tid, [mockJob("JOB-T1", tid, "RB", { itemCode: "RB-W" })])).data.rubberflow.opened[0].woId;
@@ -3095,14 +3105,19 @@ test("cancelling a PI or reopening it to draft cancels its planned and released 
   const current = (await rpcData(env, "app_bom_master")).orders.find((row) => row.id === tid);
   const rfVersion = (await rpcData(env, "app_rf_master")).version;
   const bomVersion = (await rpcData(env, "app_bom_master")).version;
-  // ยกเลิกใบ: ต้องปิด/ยกเลิก WO ใน RubberFlow ก่อน (BOM_RF_ORDER_STARTED) · เปิดกลับมาแก้: งานที่ผูก WO ที่เริ่มแล้วนับเป็นงานที่เริ่มแล้ว (BOM_INVALID_TRANSITION) เหมือนกฎเดิมของงานที่เริ่ม
-  for (const [change, action, code] of [[{ ...current, status: "cancelled", cancelledAt: NOW }, "cancelOrder", /BOM_RF_ORDER_STARTED/], [toDraft(current), "addOrderItem", /BOM_INVALID_TRANSITION/]]) {
+  // ยกเลิกใบไม่มีเหตุผล (BOM_INVALID_ORDER) · เปิดกลับมาแก้: งานที่ผูก WO ที่เริ่มแล้วนับเป็นงานที่เริ่มแล้ว (BOM_INVALID_TRANSITION) เหมือนกฎเดิมของงานที่เริ่ม
+  for (const [change, action, code] of [[{ ...current, status: "cancelled", cancelledAt: NOW }, "cancelOrder", /BOM_INVALID_ORDER/], [toDraft(current), "addOrderItem", /BOM_INVALID_TRANSITION/]]) {
     const refused = await env.mock.client.rpc("app_bom_save_master", { p_changes: { orders: { upsert: [change] } }, p_base_version: bomVersion, p_action: action });
     assert.match(refused.error.message, code, action);
   }
   assert.equal((await rpcData(env, "app_bom_master")).version, bomVersion, "refused: BOM untouched");
   assert.equal((await rpcData(env, "app_rf_master")).version, rfVersion, "refused: RubberFlow untouched");
   assert.equal((await rfOrderOf(env, wo)).status, "in_progress");
+  const stopped = await env.mock.client.rpc("app_bom_save_master", { p_changes: { orders: { upsert: [{ ...current, status: "cancelled", cancelledAt: NOW, cancelReason: "ลูกค้ายกเลิกหลังเริ่มผลิต" }] } }, p_base_version: bomVersion, p_action: "cancelOrder" });
+  assert.equal(stopped.error, null, stopped.error?.message);
+  assert.deepEqual(stopped.data.rubberflow.cancelled, [wo], "with a reason the running work order is stopped");
+  assert.equal((await rfOrderOf(env, wo)).status, "cancelled");
+  assert.equal((await rpcData(env, "app_bom_master")).jobs.filter((row) => row.orderId === tid).length, 1, "and the job is kept");
 });
 
 test("through the module: release says how many WOs were opened and why jobs were skipped, RubberFlow catches up, cancel and reopen say which WOs were cancelled", async () => {
@@ -3158,7 +3173,7 @@ test("through the module: release says how many WOs were opened and why jobs wer
   // ยกเลิกใบ: ยกเลิก WO ด้วยและ RubberFlow ตามทัน
   assert.equal(ctx.runAction("cancelOrder", { orderId: id, reason: "ลูกค้ายกเลิก" }, ""), true);
   await turns();
-  assert.match(toasts.at(-1)[0], /^ยกเลิก WO WO-\d{8}-0[12], WO-\d{8}-0[12] ด้วย$/);
+  assert.match(toasts.at(-1)[0], /^ยกเลิกหรือหยุด WO WO-\d{8}-0[12], WO-\d{8}-0[12] ใน RubberFlow ด้วย$/);
   assert.deepEqual(rfStore.data().orders.filter((row) => row.status === "cancelled").length, 2);
 
   // เปิดใบกลับมาแก้ (แก้จำนวนสินค้า): WO แผนกถูกยกเลิก ปล่อยผลิตใหม่ได้ WO ชุดใหม่
@@ -3168,13 +3183,14 @@ test("through the module: release says how many WOs were opened and why jobs wer
   assert.equal(rfStore.data().orders.filter((row) => row.status === "planned").length, 2);
   assert.equal(ctx.runAction("updateOrderItem", { orderId: again, fgCode: "FG-RF", qty: 6 }, "แก้จำนวนแล้ว"), true);
   await turns();
-  assert.match(toasts.at(-1)[0], /^ยกเลิก WO WO-\d{8}-0[34], WO-\d{8}-0[34] ด้วย$/);
+  assert.match(toasts.at(-1)[0], /^ยกเลิกหรือหยุด WO WO-\d{8}-0[34], WO-\d{8}-0[34] ใน RubberFlow ด้วย$/);
   assert.equal(s.admin.store.data().orders.find((row) => row.id === again).status, "draft");
   assert.equal(rfStore.data().orders.filter((row) => row.status === "planned").length, 0);
 });
 
-test("the module refuses to cancel while a WO is already running, and the database message for BOM_RF_ORDER_STARTED is Thai", async () => {
-  assert.match(storeApi.mapRemoteError({ message: "BOM_RF_ORDER_STARTED" }).message, /ยกเลิกหรือแก้ใบไม่ได้: WO ใน RubberFlow.*เริ่มผลิตแล้ว.*ปิดหรือยกเลิก WO นั้นใน RubberFlow ก่อน/);
+test("the module cancels while a WO is already running (the database stops it), and the old database message for BOM_RF_ORDER_STARTED points to a path that exists", async () => {
+  assert.match(storeApi.mapRemoteError({ message: "BOM_RF_ORDER_STARTED" }).message, /ยกเลิกใบไม่ได้.*ฐานข้อมูลยังเป็นรุ่นเก่า.*ปิดงานที่เหลือพร้อมเหตุผล.*ปิดใบ \(รับไม่ครบ\)/);
+  assert.doesNotMatch(storeApi.mapRemoteError({ message: "BOM_RF_ORDER_STARTED" }).message, /ยกเลิก WO นั้นใน RubberFlow ก่อน/, "no more dead-end advice");
   assert.equal(storeApi.mapRemoteError({ message: "P0001: BOM_RF_ORDER_STARTED" }).code, "BOM_RF_ORDER_STARTED");
   const s = await autoWoScene();
   const id = await s.draft("PI-X");
@@ -3187,13 +3203,11 @@ test("the module refuses to cancel while a WO is already running, and the databa
   const planner = await asPersona(s.scene, "persona-1");
   await planner.context.MNP_RUBBERFLOW.store.ensureLoaded();
   await planner.store.ensureLoaded();
-  const out = planner.store.run("cancelOrder", { orderId: id, reason: "x" });
-  assert.equal(out.ok, false, "the page rule uses the loaded WO list: a running WO blocks before any call");
-  assert.match(out.error.message, new RegExp(wo));
-  // รายการ WO ยังไม่โหลด: กฎเดิม (ผูก WO = เริ่มแล้ว) ไม่เดาแทนฐานข้อมูล
-  const cold = await asPersona(s.scene, "persona-1");
-  await cold.store.ensureLoaded();
-  assert.equal(cold.store.run("cancelOrder", { orderId: id, reason: "x" }).ok, false);
+  assert.equal(planner.store.run("cancelOrder", { orderId: id, reason: "x" }).ok, false, "a reason of three characters at least");
+  const out = planner.store.run("cancelOrder", { orderId: id, reason: "ลูกค้ายกเลิก" });
+  assert.equal(out.ok, true, "a running WO no longer blocks the cancel on the page");
+  assert.equal((await out.saving).ok, true);
+  assert.equal((await rfOrderOf(planner, wo)).status, "cancelled", "the database stopped the running work order");
 });
 
 test("the PI page lists RB jobs that have no WO yet with the reason, and the release confirm mentions the WOs (database mode only)", async () => {
@@ -3641,7 +3655,8 @@ test("the mock database follows 20261123020000: issue a subset, part of a line t
   // ใบที่เบิกบางส่วนยกเลิกไม่ได้ · ยกเลิกการเบิกจ่ายคืนยอดที่ยังอยู่นอกคลังทั้งสองบรรทัด แล้วยกเลิกใบได้
   await as("persona-pp");
   const cancelled = async () => save({ orders: { upsert: [{ ...(await view()).orders.find((row) => row.id === "PI-P1"), status: "cancelled", cancelReason: "ทดสอบ" }] } }, "cancelOrder");
-  assert.equal(await code(cancelled()), "BOM_INVALID_TRANSITION");
+  const noReason = async () => save({ orders: { upsert: [{ ...(await view()).orders.find((row) => row.id === "PI-P1"), status: "cancelled" }] } }, "cancelOrder");
+  assert.equal(await code(noReason()), "BOM_INVALID_ORDER", "a partly issued PI can be cancelled since 20261128010000, but only with a reason");
   await as("persona-st");
   assert.equal((await ret({ orderId: "PI-P1", mode: "undo", reason: "ผิดใบ" }, "undoOrderParts")).error, null);
   assert.deepEqual([await qty("P-1"), await qty("P-2")], [12, 3], "10 of P-1 (12 issued, 2 returned) and the partly issued 3 of P-2 are back");
@@ -3900,10 +3915,10 @@ test("the mock database follows the SQL rules of the part return: payload shapes
   await as("persona-pp");
   const toCancel = (await view()).orders.find((row) => row.id === "PI-M2");
   assert.equal(toCancel.status, "in_progress");
-  assert.equal((await save({ orders: { upsert: [{ ...toCancel, status: "cancelled" }] } }, "cancelOrder")).error, null, "after the undo the PI has no started work and can be cancelled");
+  assert.equal((await save({ orders: { upsert: [{ ...toCancel, status: "cancelled", cancelReason: "ลูกค้ายกเลิก" }] } }, "cancelOrder")).error, null, "after the undo the PI is cancelled");
   await as("persona-st");
-  assert.equal(await code(ret({ orderId: "PI-M2", mode: "leftover", reason: "x", lines: [{ itemCode: "P-1", qty: 1 }] })), "BOM_INVALID_TRANSITION", "a cancelled PI takes no return");
-  assert.equal(await code(ret({ orderId: "PI-M2", mode: "undo", reason: "x" }, "undoOrderParts")), "BOM_INVALID_TRANSITION");
+  assert.equal(await code(ret({ orderId: "PI-M2", mode: "leftover", reason: "x", lines: [{ itemCode: "P-1", qty: 1 }] })), "BOM_INVALID_RETURN", "a cancelled PI takes a leftover return (20261128010000) but nothing is out after the undo");
+  assert.equal(await code(ret({ orderId: "PI-M2", mode: "undo", reason: "x" }, "undoOrderParts")), "BOM_INVALID_TRANSITION", "the undo stays for open orders");
 });
 
 // ---------- คลังสินค้า (WH): รับสินค้าสำเร็จรูป · ใบปิดเอง · ส่งมอบลูกค้า (สัญญา bom-wh-fg) บน Supabase จำลอง ----------
@@ -4128,7 +4143,7 @@ test("the mock database follows the close rules: receiving everything with an op
   await as("persona-pp");
   assert.equal(await code(save({ jobs: { upsert: [zero(sub, "ab")] } }, "setJobStatus")), "BOM_INVALID_JOB", "a reason of three characters at least");
   assert.equal(await code(save({ jobs: { upsert: [zero(sub, "ไม่ทำต่อ")] } }, "reportJob")), "BOM_INVALID_JOB", "only as setJobStatus");
-  assert.equal(await code(save({ jobs: { upsert: [zero(sub, "ไม่ทำต่อ", { status: "hold" })] } }, "setJobStatus")), "BOM_INVALID_JOB", "only when the job becomes done");
+  assert.equal(await code(save({ jobs: { upsert: [zero(sub, "ไม่ทำต่อ", { status: "in_progress" })] } }, "setJobStatus")), "BOM_INVALID_JOB", "only when the job becomes done (or held: the other zero entry since 20261128010000)");
   assert.equal(await code(save({ jobs: { upsert: [zero(sub, "ไม่ทำต่อ", { qtyDone: 1 })] } }, "setJobStatus")), "BOM_INVALID_JOB", "closing adds no output");
   assert.equal(await s.version(), baseline, "none of the refusals wrote anything");
   assert.equal((await save({ jobs: { upsert: [zero(sub, "ไม่ทำชิ้นย่อยเพิ่ม")] } }, "setJobStatus")).error, null);
@@ -4533,10 +4548,10 @@ test("the mock database returns what an order took when it is cancelled or reope
   const takes = async (id) => { await s.draft(id, 5, 2); const out = await s.releaseWith(id, [s.pkJob(`J-${id}`, id, "FG-1", 3, { qtyRequired: 5, stockCounted: 2 })]); assert.equal(out.error, null, out.error?.message); };
   await takes("PI-C1");
   // cancel: untransfer for the source with the net it took · the jobs go with it
-  const cancel = await s.save({ orders: { upsert: [{ ...(await s.order("PI-C1")), status: "cancelled", cancelledAt: NOW }] } }, "cancelOrder");
+  const cancel = await s.save({ orders: { upsert: [{ ...(await s.order("PI-C1")), status: "cancelled", cancelledAt: NOW, cancelReason: "ลูกค้ายกเลิก" }] } }, "cancelOrder");
   assert.equal(cancel.error, null, cancel.error?.message);
   assert.deepEqual(await s.transfers(), [["transfer", "PI-C1", "FG-1", 2, "PI-F"], ["untransfer", "PI-C1", "FG-1", 2, "PI-F"]]);
-  assert.equal((await s.view()).jobs.filter((job) => job.orderId === "PI-C1").length, 0);
+  assert.equal((await s.view()).jobs.filter((job) => job.orderId === "PI-C1").length, 1, "the job of the cancelled order is kept (20261128010000)");
   assert.equal((await s.rpc("app_bom_audit")).data[0].detail, "fgMoves +1, orders +1", "the return counts as fgMoves");
   // the 2 are free again: another order takes them, then reopens — the stock goes back and the amount is kept
   await takes("PI-C5");
@@ -4551,7 +4566,7 @@ test("the mock database returns what an order took when it is cancelled or reope
   assert.equal((await s.deliver([{ fgCode: "FG-1", qty: 1 }], {}, "PI-C6")).error, null, "it holds 2");
   await s.as("persona-pp");
   const before = await s.version();
-  assert.equal(await code(s.save({ orders: { upsert: [{ ...(await s.order("PI-C6")), status: "cancelled" }] } }, "cancelOrder")), "BOM_INVALID_TRANSITION");
+  assert.equal(await code(s.save({ orders: { upsert: [{ ...(await s.order("PI-C6")), status: "cancelled", cancelReason: "ลูกค้ายกเลิก" }] } }, "cancelOrder")), "BOM_INVALID_TRANSITION");
   assert.equal(await code(s.save({ orders: { upsert: [{ ...(await s.order("PI-C6")), status: "draft", revision: 1 }] } }, "updateOrderItem")), "BOM_INVALID_TRANSITION");
   assert.equal(await s.version(), before, "refused: nothing written");
   assert.equal((await s.order("PI-C6")).status, "released");

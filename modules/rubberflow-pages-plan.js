@@ -625,7 +625,7 @@
   // ข้อความที่ผู้บันทึกเขียนเอง (entries) แสดงเป็นหมายเหตุรองใต้รายละเอียด ไม่ใช่ข้อมูลที่ระบบตรวจ · ทุกรายการ (ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ฯลฯ) อยู่ในฐานข้อมูลและบันทึกที่นี่เหมือนกัน
   const AUDIT_ACTION_LABEL = Object.freeze({
     saveMaterial: "บันทึกวัตถุดิบ", createRecipe: "สร้างสูตรใหม่", saveRecipe: "แก้สูตร / ออกฉบับแก้ไขใหม่", approveRecipe: "อนุมัติสูตร", createOrder: "เปิดใบสั่งผลิต", setOrderStatus: "เปลี่ยนสถานะใบสั่งผลิต",
-    receiveMaterial: "รับวัตถุดิบเข้าคลัง", createPurchaseOrder: "สั่งซื้อวัตถุดิบ", receivePurchaseLine: "ตรวจสอบรับเข้าตามใบสั่งซื้อ", cancelPurchaseOrder: "ยกเลิกใบสั่งซื้อ", setMaterialLotStatus: "กักกัน/ปลดกักกันล็อตวัตถุดิบ", createRequisition: "เบิกเคมี (จ่ายทันที)", weighLine: "ชั่งวัตถุดิบ (ใบเก่า)", issueRequisition: "จ่ายทั้งใบเบิก (ใบเก่า)", recordMixing: "บันทึกการผสม", endRest: "ข้ามเวลาบ่ม",
+    receiveMaterial: "รับวัตถุดิบเข้าคลัง", createPurchaseOrder: "สั่งซื้อวัตถุดิบ", receivePurchaseLine: "ตรวจสอบรับเข้าตามใบสั่งซื้อ", cancelPurchaseOrder: "ยกเลิกใบสั่งซื้อ", setMaterialLotStatus: "กักกัน/ปลดกักกันล็อตวัตถุดิบ", createRequisition: "เบิกเคมี (จ่ายทันที)", weighLine: "ชั่งวัตถุดิบ (ใบเก่า)", issueRequisition: "จ่ายทั้งใบเบิก (ใบเก่า)", recordMixing: "บันทึกการผสม", endRest: "ข้ามเวลาบ่ม", returnRequisition: "รับเคมีคืนเข้าล็อตเดิม",
     recordExtrusion: "บันทึกการฉีด", recordCuring: "บันทึกการอบ", recordFinishing: "บันทึกการตกแต่ง/บรรจุ", createTransfer: "ส่งมอบ WIP", receiveTransfer: "รับมอบ WIP", shipBoxes: "ส่งมอบกล่องสินค้า",
     addQcRecord: "บันทึกผล QC", createNcr: "เปิด NCR", updateNcr: "บันทึกการแก้ไข/ป้องกัน NCR", closeNcr: "ปิด NCR", cleanMold: "บันทึกล้างแม่พิมพ์", saveMold: "บันทึกแม่พิมพ์/หัวดาย",
   });

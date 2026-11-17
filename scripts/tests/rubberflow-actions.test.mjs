@@ -268,7 +268,9 @@ test("mixing consumes an issued requisition, auto-holds on dump temperature and 
   assert.equal(lot.qc, "pass");
   rejects(() => A.createTransfer(d, { lotId, qty: 1 }, ctx("mixer")), /ยังบ่มไม่ครบเวลา/);
   assert.equal(A.transferableQty(lot, NOW + recipe.restHours * HOUR), +lot.goodQty.toFixed(3));
-  A.endRest(d, { lotId }, ctx("mixer"));
+  rejects(() => A.endRest(d, { lotId }, ctx("mixer")), /เหตุผลที่ข้ามเวลาบ่ม/);
+  A.endRest(d, { lotId, reason: "  ตรวจความหนืดแล้ว  " }, ctx("mixer"));
+  assert.deepEqual(lot.params.skipRest, { by: ctx("mixer").user.name, reason: "ตรวจความหนืดแล้ว", at: NOW }, "the lot keeps who skipped, why and when");
   assert.equal(A.transferableQty(lot, NOW), +lot.goodQty.toFixed(3));
   const transferId = A.createTransfer(d, { lotId, qty: +lot.goodQty.toFixed(3) }, ctx("mixer"));
   assert.equal(d.transfers[0].id, transferId);
@@ -319,7 +321,7 @@ test("extrusion caps rework at 10%, auto-holds out-of-spec dimensions and counts
   const d = fresh();
   // ยางที่ยังบ่มอยู่ → ข้ามเวลาบ่ม ส่งต่อ 10 kg และรับมอบที่สถานีฉีด
   const mixing = d.lots.find((lot) => lot.stage === "mixing" && lot.qc === "pass" && lot.transferredQty < lot.goodQty);
-  A.endRest(d, { lotId: mixing.id }, ctx("mixer"));
+  A.endRest(d, { lotId: mixing.id, reason: "ทดสอบเร่งด่วน" }, ctx("mixer"));
   const transferId = A.createTransfer(d, { lotId: mixing.id, qty: 10 }, ctx("mixer"));
   A.receiveTransfer(d, { id: transferId, qtyReceived: 10 }, ctx("extruder"));
   const transfer = d.transfers.find((row) => row.id === transferId);

@@ -63,7 +63,8 @@
     editMaster: Object.freeze(["admin", "manager", "planner", "qc"]), // วัตถุดิบ / ร่างสูตร
     qcDecision: Object.freeze(["admin", "manager", "qc"]),
     holdMaterial: Object.freeze(["admin", "manager", "qc"]), // กักกัน/ปลดกักกันล็อตวัตถุดิบ
-    demoSkip: Object.freeze(["admin", "manager", "mixer", "qc"]),
+    skipRest: Object.freeze(["admin", "manager", "qc"]), // ข้ามเวลาบ่ม (พร้อมเหตุผล): ผู้จัดการ / QC แทนหัวหน้า RB และ QA ของโหมดฐานข้อมูล
+    returnRequisition: Object.freeze(["admin", "manager", "store"]), // รับเคมีที่เบิกไปแล้วคืนเข้าล็อตเดิม (WO ถูกยกเลิก): เจ้าหน้าที่คลัง
   });
   const DB_CAN = Object.freeze({
     approveRecipe: (user) => Boolean(user.rbHead),
@@ -73,7 +74,8 @@
     editMaster: (user) => Boolean(user.planner || user.rb),
     qcDecision: (user) => Boolean(user.planner || user.qa), // บันทึกผลตรวจ / เปิด-ปิด NCR / ตัดสินล็อต
     holdMaterial: (user) => Boolean(user.planner || user.st || user.qa),
-    demoSkip: (user) => Boolean(user.planner || user.rb), // ข้ามเวลาบ่ม: คำสั่งของพนักงาน RB ที่ฐานข้อมูลประทับเวลาเอง
+    skipRest: (user) => Boolean(user.rbHead || user.qa), // ข้ามเวลาบ่มพร้อมเหตุผล: หัวหน้า RB (รวมผู้ช่วยผู้จัดการโรงงานขึ้นไปและ admin) หรือแผนก QA (20261128010000) · ฐานข้อมูลประทับเวลาและผู้ข้ามเอง
+    returnRequisition: (user) => Boolean(user.st || user.role === "admin"), // รับเคมีที่เบิกไปแล้วคืนเข้าล็อตเดิมเมื่อ WO ถูกยกเลิก: แผนก ST (admin ไว้แก้ปัญหา)
     // ชุดที่ย้ายขึ้นฐานข้อมูลในขั้นที่ 2: โหมดสาธิตไม่จำกัดสิทธิ์ของปุ่มเหล่านี้ (ไม่อยู่ใน CAN)
     receiveMaterial: (user) => Boolean(user.st || user.role === "admin"), // รับวัตถุดิบเข้าคลัง (รวมรับเข้าตามใบสั่งซื้อ): แผนก ST เท่านั้น (admin ไว้แก้ปัญหา) ตาม 20261119010000_rf_purchase_by_st.sql
     requisition: (user) => Boolean(user.planner || user.rb), // เบิกเคมี (สร้างใบเบิกและจ่ายทันที) · จ่ายใบเก่าที่ค้างชั่ง
@@ -91,7 +93,7 @@
   // ปุ่ม/ฟอร์มของคำสั่งแต่ละตัวต้องมีสิทธิ์ข้อใด (module-rubberflow.js ซ่อนปุ่ม/ปิดฟอร์มที่ไม่ใช่สิทธิ์ของบัญชี · ฐานข้อมูลตัดสินจริงอีกครั้ง) · คำสั่งที่ไม่อยู่ในตารางนี้ไม่ถูกจำกัดที่หน้าจอ
   const ACTION_RIGHT = Object.freeze({
     receiveMaterial: "receiveMaterial", setMaterialLotStatus: "holdMaterial", createRequisition: "requisition", weighLine: "requisition", issueRequisition: "requisition",
-    recordMixing: "station", endRest: "demoSkip", recordExtrusion: "station", recordCuring: "station", recordFinishing: "station", cleanMold: "station",
+    recordMixing: "station", endRest: "skipRest", returnRequisition: "returnRequisition", recordExtrusion: "station", recordCuring: "station", recordFinishing: "station", cleanMold: "station",
     createTransfer: "sendTransfer", receiveTransfer: "receiveTransfer", shipBoxes: "shipBoxes", addQcRecord: "qcDecision", createNcr: "qcDecision", closeNcr: "qcDecision",
     updateNcr: "fillNcr", saveMold: "editMold",
     createPurchaseOrder: "purchase", receivePurchaseLine: "receiveMaterial", cancelPurchaseOrder: "cancelPurchase",
@@ -100,7 +102,7 @@
   // dialog ที่เปิดจากปุ่ม → คำสั่งที่ dialog นั้นส่ง
   const DIALOG_ACTION = Object.freeze({
     receiveMaterial: "receiveMaterial", createRequisition: "createRequisition", transfer: "createTransfer", receive: "receiveTransfer", qcRecord: "addQcRecord", ncr: "createNcr",
-    purchase: "createPurchaseOrder", receivePurchase: "receivePurchaseLine",
+    purchase: "createPurchaseOrder", receivePurchase: "receivePurchaseLine", skipRest: "endRest", returnRequisition: "returnRequisition",
     moldEdit: "saveMold", materialEdit: "saveMaterial", createOrder: "createOrder", recipeEdit: "saveRecipe", recipeNew: "createRecipe",
   });
   const rightForAction = (name) => ACTION_RIGHT[name] ?? null;

@@ -492,15 +492,15 @@ select is(ps_t.issue(jsonb_build_array(ps_t.part('JOB3-ST-P7', 4))) -> 'changes'
 select is(ps_t.qty('P-7'), 0.5::numeric, 'and the stock keeps what was not issued (1.5 - 1)');
 select ok(ps_t.has_move('P-7', 'issue', -1, 0.5, '251111-25003', current_setting('test.n_sbx_pp_staff')), 'the remainder move names the planner');
 
--- 7.6.6 ใบที่มีบรรทัดของซื้อเบิกบางส่วนแล้วยกเลิกไม่ได้ (ต้องยกเลิกการเบิกจ่ายก่อน: bom_part_returns.test.sql)
+-- 7.6.6 ใบที่มีบรรทัดของซื้อเบิกบางส่วน: ยกเลิกต้องมีเหตุผล (ยกเลิกได้แล้วตั้งแต่ 20261128010000 คืนของภายหลัง: bom_cancel_rf_stop.test.sql) · เปิดกลับมาแก้ไม่ได้
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select ok(ps_t.count_stock('[{"itemCode":"P-6","qty":2}]'::jsonb) is not null, 'ST counts 2 caps for the fourth order');
 select ok(ps_t.issue(jsonb_build_array(ps_t.part('JOB4-ST-P6', 2))) is not null, 'ST issues 2 of its 5 caps');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select set_config('test.o4', (select o::text from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'id' = '251111-25004'), true);
 select throws_ok($$ select ps_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
-  current_setting('test.o4')::jsonb || '{"status":"cancelled","cancelReason":"ทดสอบ"}'::jsonb))), 'cancelOrder') $$, 'BOM_INVALID_TRANSITION',
-  'an order with a partly issued part line cannot be cancelled');
+  current_setting('test.o4')::jsonb || '{"status":"cancelled"}'::jsonb))), 'cancelOrder') $$, 'BOM_INVALID_ORDER',
+  'a cancel without a reason is refused (since 20261128010000 a partly issued line no longer blocks a cancel: the parts are returned afterwards, bom_cancel_rf_stop.test.sql)');
 select throws_ok($$ select ps_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.o4')::jsonb || '{"status":"draft","explosion":null,"explodedAt":null}'::jsonb))), 'updateOrderItem') $$, 'BOM_INVALID_TRANSITION',
   'nor reopened as a draft (the partly issued line counts as a started job)');

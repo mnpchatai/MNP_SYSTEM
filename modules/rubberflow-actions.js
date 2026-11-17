@@ -78,6 +78,8 @@
     editMold: (user) => Boolean(user.planner || user.rb), // เพิ่ม/แก้แม่พิมพ์: แผนก RB
     purchase: (user) => Boolean(user.st || user.role === "admin"), // สั่งซื้อวัตถุดิบ (สร้างใบสั่งซื้อ): แผนก ST เท่านั้น (admin ไว้แก้ปัญหา)
     cancelPurchase: (user) => Boolean(user.st || user.role === "admin"), // ยกเลิกใบสั่งซื้อ: แผนก ST
+    skipRest: (user) => Boolean(user.rbHead || user.qa), // ข้ามเวลาบ่ม: หัวหน้า RB (รวมผู้ช่วยผู้จัดการโรงงานขึ้นไปและ admin) หรือแผนก QA พร้อมเหตุผล (20261128010000)
+    returnRequisition: (user) => Boolean(user.st || user.role === "admin"), // รับเคมีที่เบิกไปแล้วคืนเข้าล็อตเดิม (WO ถูกยกเลิก): แผนก ST (admin ไว้แก้ปัญหา)
   });
   const MAY_TEXT = Object.freeze({
     master: "แก้ข้อมูลหลักของ RubberFlow ได้โดยฝ่ายวางแผน ผู้จัดการ ผู้ดูแลระบบ หรือพนักงานแผนก RB",
@@ -96,6 +98,8 @@
     editMold: "เพิ่ม/แก้แม่พิมพ์ได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
     purchase: "สั่งซื้อวัตถุดิบได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
     cancelPurchase: "ยกเลิกใบสั่งซื้อได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
+    skipRest: "ข้ามเวลาบ่มได้โดยผู้จัดการแผนก RB หรือผู้ช่วยผู้จัดการแผนก RB ผู้ช่วยผู้จัดการโรงงานขึ้นไป หรือแผนก QA เท่านั้น",
+    returnRequisition: "รับเคมีคืนเข้าคลังได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
   });
   function needRight(ctx, right) {
     if (!ctx.remote) return;
@@ -658,13 +662,65 @@
     return lot.id;
   }
 
-  // โหมดฐานข้อมูล: คำสั่งของพนักงาน RB ที่ฐานข้อมูลตั้งเวลาครบบ่มเป็นเวลาของเซิร์ฟเวอร์เอง (ไม่เชื่อเวลาของเครื่อง) และบันทึกในประวัติการใช้งาน
-  function endRest(d, { lotId }, ctx) {
-    needRight(ctx, "station");
+  // ข้ามเวลาบ่ม (ตรงกับ rf_save_lots ของ 20261128010000): หัวหน้า RB หรือแผนก QA พร้อมเหตุผล 3-300 ตัวอักษร · ล็อตเก็บ { by, reason, at } ไว้ที่ params.skipRest
+  // โหมดฐานข้อมูล: เซิร์ฟเวอร์ตั้งเวลาครบบ่มเป็นเวลาของเซิร์ฟเวอร์และประทับผู้ข้าม/เวลาเอง (ส่งได้แค่เหตุผล) · โหมดสาธิตเขียนเองในเครื่อง
+  const SKIP_REASON_MIN = 3;
+  const SKIP_REASON_MAX = 300;
+  function endRest(d, { lotId, reason }, ctx) {
+    needRight(ctx, "skipRest");
     const lot = find(d.lots, lotId, "ล็อต");
     if (ctx.remote && !(lot.readyAt > ctx.now)) fail("ล็อตนี้บ่มครบเวลาแล้ว");
+    const why = typeof reason === "string" ? reason.trim() : "";
+    if (why.length < SKIP_REASON_MIN) fail(`กรุณาระบุเหตุผลที่ข้ามเวลาบ่ม (อย่างน้อย ${SKIP_REASON_MIN} ตัวอักษร)`);
+    if (why.length > SKIP_REASON_MAX) fail(`เหตุผลยาวเกิน ${SKIP_REASON_MAX} ตัวอักษร`);
     lot.readyAt = ctx.now;
-    audit(d, ctx, ctx.remote ? "ข้ามเวลาบ่ม" : "ข้ามเวลาบ่ม (โหมดสาธิต)", lotId);
+    lot.params = { ...(lot.params ?? {}), skipRest: { by: ctx.user?.name ?? "", reason: why, at: ctx.now } };
+    audit(d, ctx, ctx.remote ? "ข้ามเวลาบ่ม" : "ข้ามเวลาบ่ม (โหมดสาธิต)", `${lotId} — ${why}`);
+  }
+
+  // รับเคมีที่เบิกไปแล้วคืนเข้าล็อตเดิม (ตรงกับ private.rf_return_requisitions ของ 20261128010000): ใบเบิกที่จ่ายแล้วและยังไม่ได้ผสมของ WO ที่ถูกยกเลิก · แผนก ST
+  // kgs = ยอดที่คืนจริงตามลำดับบรรทัด (บรรทัดที่จ่ายไปต้องกรอก ไม่มีคืนใส่ 0) 0..ที่จ่าย · คืนไม่ครบต้องมีเหตุผล 3-300 · รับคืนได้ครั้งเดียวต่อใบ
+  // ยอดคืนบวกเข้าล็อตเดิมของบรรทัด (ไม่เกินยอดรับเข้าของล็อต) ล็อตคงวันหมดอายุและสถานะเดิม (ล็อตที่หมดอายุแล้วยังหมดอายุ FEFO ข้ามเหมือนเดิม)
+  function returnRequisition(d, { id, kgs, note }, ctx) {
+    needRight(ctx, "returnRequisition");
+    const requisition = find(d.requisitions, id, "ใบเบิก");
+    const state = rules().requisitionReturnState(d, requisition);
+    if (state === "returned") fail(`ใบเบิก ${requisition.id} รับคืนแล้ว (รับคืนได้ครั้งเดียว)`);
+    if (state !== "pending") fail("รับคืนได้เฉพาะใบเบิกที่จ่ายแล้วและยังไม่ได้ผสม ของใบสั่งผลิตที่ถูกยกเลิก");
+    const list = Array.isArray(kgs) ? kgs : [];
+    let short = false;
+    const amounts = requisition.lines.map((line, index) => {
+      const issued = typeof line.actualKg === "number" ? line.actualKg : 0;
+      if (!(issued > 0)) return 0;
+      const raw = list[index];
+      if (raw === undefined || raw === null || String(raw).trim() === "") fail(`กรุณาระบุจำนวนที่คืนของ ${line.materialCode} (ล็อต ${line.lotNo}) ไม่มีของคืนใส่ 0`);
+      const kg = Number(raw);
+      if (!Number.isFinite(kg) || kg < 0) fail(`จำนวนที่คืนของ ${line.materialCode} ต้องเป็นตัวเลขไม่ติดลบ`);
+      // ไม่ปัดทศนิยม: ใบเบิกเก่าที่ชั่งเองอาจจ่ายเกิน 4 ตำแหน่ง ช่องกรอกตั้งต้นที่ยอดจ่ายจริงจึงคืนเต็มยอดได้ (ตรงกับฐานข้อมูล)
+      if (kg > issued + 1e-9) fail(`${line.materialCode} คืนได้ไม่เกินที่จ่ายไป ${issued} kg`);
+      if (kg < issued - 1e-9) short = true;
+      return kg;
+    });
+    const why = typeof note === "string" ? note.trim() : "";
+    if (short && why.length < 3) fail("คืนไม่ครบตามที่จ่ายไป กรุณาระบุเหตุผล (อย่างน้อย 3 ตัวอักษร)");
+    if (why.length > 300) fail("เหตุผลยาวเกิน 300 ตัวอักษร");
+    const after = new Map();
+    requisition.lines.forEach((line, index) => {
+      if (!(amounts[index] > 0)) return;
+      const lot = d.materialLots.find((row) => row.lotNo === line.lotNo) || fail(`ไม่พบล็อต ${line.lotNo}`);
+      const qty = (after.get(lot.lotNo) ?? Number(lot.qtyKg) ?? 0) + amounts[index];
+      if (qty > Number(lot.initialKg) + 1e-6) fail(`ล็อต ${lot.lotNo} รับคืนเกินยอดที่รับเข้าคลัง (${lot.initialKg} kg) ไม่ได้`);
+      after.set(lot.lotNo, qty);
+    });
+    for (const [lotNo, qty] of after) {
+      const lot = d.materialLots.find((row) => row.lotNo === lotNo);
+      lot.qtyKg = +qty.toFixed(6);
+    }
+    requisition.lines = requisition.lines.map((line, index) => ({ ...line, returnedKg: amounts[index], returnedAt: ctx.now, returnedBy: ctx.user?.name ?? "", returnNote: why }));
+    requisition.returnNote = why;
+    const total = amounts.reduce((sum, kg) => sum + kg, 0);
+    audit(d, ctx, "รับเคมีคืนเข้าล็อตเดิม", `${requisition.id} (${requisition.orderId}) คืน ${+total.toFixed(4)} kg${why ? ` — ${why}` : ""}`);
+    return requisition.id;
   }
 
   function recordExtrusion(d, p, ctx) {
@@ -961,7 +1017,7 @@
 
   const api = {
     ORDER_FLOW, createOrder, setOrderStatus, saveMaterial, createRecipe, saveRecipe, approveRecipe, createRequisition, weighLine, issueRequisition, receiveMaterial, createPurchaseOrder, receivePurchaseLine, cancelPurchaseOrder, setMaterialLotStatus,
-    recordMixing, endRest, recordExtrusion, recordCuring, recordFinishing, shipBoxes, transferableQty, createTransfer, receiveTransfer,
+    recordMixing, endRest, returnRequisition, recordExtrusion, recordCuring, recordFinishing, shipBoxes, transferableQty, createTransfer, receiveTransfer,
     addQcRecord, createNcr, updateNcr, closeNcr, saveMold, cleanMold,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
