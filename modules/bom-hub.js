@@ -1112,8 +1112,8 @@
         : pos.canClose ? `<div class="bom-step-line"><div><strong>ทุกแผนกปิดงานและรับสินค้าครบแล้ว รอคลังสินค้า (WH) ปิดใบ</strong></div>${ui.link("ไปขั้นรับเข้าคลัง", stepUrl(5), "btn rf-btn secondary")}</div>`
         // PK ทำครบและรับเข้าคลังหมดแล้วแต่ยังน้อยกว่าที่สั่ง: คลังสินค้า (WH) ปิดใบ (รับไม่ครบ) ได้แล้ว
         : pos.canCloseShort ? `<div class="bom-step-line"><div><strong>PK ทำครบและรับเข้าคลังแล้ว รอคลังสินค้า (WH) ปิดใบ (รับไม่ครบ)</strong></div>${ui.link("ไปขั้นรับเข้าคลัง", stepUrl(5), "btn rf-btn secondary")}</div>`
-        // รับเข้าครบตามที่ PK ทำแล้วแต่ยังน้อยกว่าที่สั่งและยังมีงานผลิตเปิด: ฝ่ายวางแผนต้องให้แผนกรายงานเพิ่ม หรือปิดงานที่จะไม่ทำต่อ คลังสินค้า (WH) จึงปิดใบได้
-        : pos.waitingShort ? `<div class="bom-step-line"><div><strong>รับเข้าคลังครบตามที่ PK ทำแล้ว แต่ยังน้อยกว่าที่สั่ง</strong><div class="small muted">${esc(`รอแผนก ${pos.openDepts.join(", ")} รายงานผลให้เสร็จ หรือฝ่ายวางแผนปิดงานที่จะไม่ทำต่อ แล้วคลังสินค้า (WH) ปิดใบ (รับไม่ครบ)`)}</div></div></div>` : "";
+        // รับเข้าครบตามที่ PK ทำแล้วแต่ยังน้อยกว่าที่สั่งและยังมีงานผลิตเปิด (อาจกำลังผลิตอยู่ตามปกติ): บอกทางออกแบบมีเงื่อนไข ไม่ชวนให้ปิดงานที่ยังทำต่อ
+        : pos.waitingShort ? `<div class="bom-step-line"><div><strong>รับเข้าคลังครบตามที่ PK ทำแล้ว แต่ยังน้อยกว่าที่สั่ง</strong><div class="small muted">${esc(`ถ้าแผนก ${pos.openDepts.join(", ")} จะไม่ทำต่อ ฝ่ายวางแผนกด “ปิดงานนี้” ที่งานนั้น แล้วคลังสินค้า (WH) ปิดใบ (รับไม่ครบ)`)}</div></div></div>` : "";
       const main = `<div class="rf-row bom-step-next">${buttons.issue ?? ""}${buttons.check ?? ""}</div>${fgLine}`;
       panel = ui.card(`${ui.table(["แผนก", "ความคืบหน้า", "", ""], rows, { emptyText: "ยังไม่มีงาน" })}${main}`, { title: "ขั้น 4 · ผลิตตามแผนก", flush: false });
     } else if (view === 5) panel = receivePanel(ctx, order, pos, canFg);

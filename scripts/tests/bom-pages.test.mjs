@@ -3019,7 +3019,7 @@ test("closing short (U6): the warehouse gets a card and the menu count follows; 
   env.store.setUser("B03");
   let html = await env.render(`p=orders&sel=${FG_PI}`);
   clean(html);
-  assert.match(html, /<strong>รับเข้าคลังครบตามที่ PK ทำแล้ว แต่ยังน้อยกว่าที่สั่ง<\/strong><div class="small muted">รอแผนก PK รายงานผลให้เสร็จ หรือฝ่ายวางแผนปิดงานที่จะไม่ทำต่อ แล้วคลังสินค้า \(WH\) ปิดใบ \(รับไม่ครบ\)<\/div>/);
+  assert.match(html, /<strong>รับเข้าคลังครบตามที่ PK ทำแล้ว แต่ยังน้อยกว่าที่สั่ง<\/strong><div class="small muted">ถ้าแผนก PK จะไม่ทำต่อ ฝ่ายวางแผนกด “ปิดงานนี้” ที่งานนั้น แล้วคลังสินค้า \(WH\) ปิดใบ \(รับไม่ครบ\)<\/div>/);
   assert.doesNotMatch(html, /รอคลังสินค้า \(WH\) ปิดใบ \(รับไม่ครบ\)/, "not told twice");
   // งาน PK เสร็จทั้งหมด: ปิดรับไม่ครบได้
   for (const job of env.store.data().jobs.filter((entry) => entry.orderId === FG_PI && entry.dept === "PK")) job.status = "done";
@@ -3095,7 +3095,7 @@ test("a reload while typing in a BOM form warns once; saved, closed or untouched
   vm.runInContext(fs.readFileSync("modules/module-bom.js", "utf8"), env.context, { filename: "modules/module-bom.js" });
   assert.equal(env.log.listeners.beforeunload.length, 1, "loading the module again does not register a second one");
   const control = (extra = {}) => ({ name: "customer", type: "text", tagName: "INPUT", value: "", defaultValue: "", disabled: false, closest: () => null, ...extra });
-  const select = (selected) => ({ name: "country", tagName: "SELECT", disabled: false, closest: () => null, options: [{ selected: true, defaultSelected: true }, { selected, defaultSelected: false }] });
+  const select = (selected, marked = true) => ({ name: "country", tagName: "SELECT", disabled: false, closest: () => null, options: [{ selected: !selected, defaultSelected: marked }, { selected, defaultSelected: false }] });
   const show = (...controls) => { env.context.document.querySelectorAll = () => controls; };
   const unsaved = () => env.context.MNP_BOM.hasUnsavedInput();
   show(control(), control({ name: "note", tagName: "TEXTAREA", type: "textarea" }), select(false), control({ type: "checkbox", checked: false, defaultChecked: false }));
@@ -3106,6 +3106,10 @@ test("a reload while typing in a BOM form warns once; saved, closed or untouched
   assert.equal(unsaved(), false, "a value the page itself filled in");
   show(select(true));
   assert.equal(unsaved(), true, "a changed select");
+  show(select(false, false));
+  assert.equal(unsaved(), false, "a select with no option marked selected shows its first option, which is not a change");
+  show(select(true, false));
+  assert.equal(unsaved(), true, "picking another option of such a select is a change");
   show(control({ type: "checkbox", checked: true, defaultChecked: false }));
   assert.equal(unsaved(), true, "a ticked box");
   show(control({ name: "q", value: "คำค้น", closest: (selector) => (selector.includes("data-rf-search") ? {} : null) }), control({ name: "user", closest: (selector) => (selector.includes("data-rf-user") ? {} : null), value: "B03", defaultValue: "B01" }));

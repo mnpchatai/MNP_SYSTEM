@@ -95,7 +95,14 @@
   const fieldChanged = (node) => {
     if (!node?.name || node.disabled || node.closest?.("[data-rf-search], [data-rf-user]")) return false;
     const tag = String(node.tagName ?? "").toUpperCase();
-    if (tag === "SELECT") return [...(node.options ?? [])].some((option) => option.selected !== option.defaultSelected);
+    // select ที่ไม่มีตัวเลือกใดติด selected: เบราว์เซอร์เลือกตัวแรกที่ไม่ disabled ให้เอง (defaultSelected ยังเป็น false) จึงถือตัวนั้นเป็นค่าตั้งต้น ไม่นับว่าเปลี่ยน
+    if (tag === "SELECT") {
+      const options = [...(node.options ?? [])];
+      if (node.multiple) return options.some((option) => option.selected !== option.defaultSelected);
+      const marked = options.findIndex((option) => option.defaultSelected);
+      const initial = marked >= 0 ? marked : options.findIndex((option) => !option.disabled);
+      return options.findIndex((option) => option.selected) !== initial;
+    }
     if (tag === "INPUT" && SKIP_INPUT_TYPES.includes(node.type)) return false;
     if (tag === "INPUT" && (node.type === "checkbox" || node.type === "radio")) return node.checked !== node.defaultChecked;
     return node.value !== node.defaultValue;
