@@ -694,6 +694,10 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     if (closing && (Number(record.qtyDone) !== Number(prev.qtyDone) || Number(record.qtyReject) !== Number(prev.qtyReject))) fail("BOM_INVALID_JOB");
     // งานที่เปลี่ยนเป็น done โดยไม่มีรายการเหตุผลของการปิดงาน ต้องถึงยอดแผนแล้ว ทุกผู้เรียกทุก action (ตรงกับ bom_save_jobs ของ 20261126010000: qtyDone + 1e-9 >= qtyPlanned)
     if (record.status === "done" && prev.status !== "done" && !closing && (Number(record.qtyDone) || 0) + 1e-9 < Math.max(Number(record.qtyPlanned) || 0, Number(prev.qtyPlanned) || 0)) fail("BOM_INVALID_JOB");
+    // ลดยอดแผนของงานที่เริ่มแล้วไม่ได้ ทุกผู้เรียกทุก action รวมกลุ่มวางแผน (ตรงกับ bom_save_jobs ของ 20261127010000): แถวเดิมเริ่มแล้ว (bomJobStarted)
+    // หรือแถวที่ส่งมาเริ่มงานในคำสั่งเดียวกัน (สถานะไม่ใช่รอคิว มียอดดี / เสีย หรือมีรายงาน) · เพิ่มยอดแผน และแก้ยอดแผนของงานที่ยังไม่เริ่มทำได้
+    const startsNow = record.status !== "queued" || Number(record.qtyDone) > 0 || Number(record.qtyReject) > 0 || reports.length > 0;
+    if (Number(record.qtyPlanned) < Number(prev.qtyPlanned) && (bomJobStarted(prev) || startsNow)) fail("BOM_INVALID_JOB");
     // งานของซื้อที่เบิกไปแล้ว (qtyDone > 0 หรือ done): แก้ช่องโครงสร้าง / WO ไม่ได้ ทุก action ทุกผู้เรียก (ตรงกับ bom_save_jobs ของ 20261124010000)
     // การแก้ช่องผลงานไปทาง bomCheckRecord ("part") ก่อนถึงตรงนี้ · แถวที่เท่าเดิมไม่ถูกปฏิเสธ (SQL ข้ามแถวที่ไม่เปลี่ยน)
     if (bomIsPartJob(prev) && (Number(prev.qtyDone) > 0 || prev.status === "done") && bomJobShapeChanged(prev, record)) fail("BOM_INVALID_JOB");

@@ -498,10 +498,20 @@
         return;
       }
       // แทรก WIP: ขั้นตอนผลิตของชิ้นแม่ที่อ้างบรรทัดเดิมเปลี่ยนไปอ้างรหัส WIP ด้วย (บันทึกต่อจาก BOM ด้วย saveRouting)
-      const routingPayload = name === "saveBomTree" && raw.wipInsert ? routingAfterWipInsert(raw) : null;
+      const wipRouting = name === "saveBomTree" && raw.wipInsert ? routingAfterWipInsert(raw) : null;
       // ถ้าบันทึกขั้นตอนผลิตต่อไม่สำเร็จ BOM มี WIP ที่แทรกแล้ว แต่ขั้นตอนผลิตของชิ้นแม่ยังอ้างชิ้นเดิม: บอกตรงๆ ว่าอะไรเสร็จแล้ว อะไรค้าง และต้องทำอะไรต่อ
-      const wipFail = routingPayload ? `แทรก WIP ${rules.canonicalCode(raw.wipCode)} ใน BOM ของ ${routingPayload.itemCode} แล้ว แต่ยังไม่ได้ปรับขั้นตอนผลิตของ ${routingPayload.itemCode} ให้อ้าง WIP นี้แทน ${rules.canonicalCode(raw.childCode)} · เปิดหน้าของ ${routingPayload.itemCode} แล้วแก้ขั้นตอนผลิตเองที่ขั้นที่ยังอ้าง ${rules.canonicalCode(raw.childCode)}` : "";
-      if (!runAction(name, payload, form.dataset.rfSuccess, routingPayload ? () => runAction("saveRouting", routingPayload, `ขั้นตอนผลิตของ ${routingPayload.itemCode} อ้างชิ้นใหม่แล้ว`, null, wipFail) : null, "")) return;
+      const wipFail = wipRouting ? `แทรก WIP ${rules.canonicalCode(raw.wipCode)} ใน BOM ของ ${wipRouting.itemCode} แล้ว แต่ยังไม่ได้ปรับขั้นตอนผลิตของ ${wipRouting.itemCode} ให้อ้าง WIP นี้แทน ${rules.canonicalCode(raw.childCode)} · เปิดหน้าของ ${wipRouting.itemCode} แล้วแก้ขั้นตอนผลิตเองที่ขั้นที่ยังอ้าง ${rules.canonicalCode(raw.childCode)}` : "";
+      // ขั้นตอนผลิตบันทึกต่อเมื่อ BOM บันทึกสำเร็จแล้วเท่านั้น (runAction เรียก after หลังฐานข้อมูลตอบและ store รวมคำตอบแล้ว) และคำนวณจากข้อมูลตอนนั้น ไม่ใช่ค่าตอนกดบันทึก:
+      // คำตอบของการบันทึก BOM อาจพาขั้นตอนผลิตที่ผู้อื่นเพิ่งแก้มาด้วย ส่งขั้นตอนที่คำนวณไว้ก่อนบนเวอร์ชันใหม่ = ทับของผู้อื่นเงียบๆ
+      // ขั้นตอนตอนนี้ไม่อ้างบรรทัดเดิมแล้ว = ไม่มีอะไรต้องปรับ · BOM ใน store ไม่มี WIP (ไม่ควรเกิด) = แจ้งว่าค้างอะไรแทนการส่ง
+      const wipFollowUp = wipRouting ? () => {
+        const wipCode = rules.canonicalCode(raw.wipCode);
+        const bom = actions.helpers.approvedBomOf(store.data(), wipRouting.itemCode);
+        if (!bom?.lines.some((line) => line.childCode === wipCode)) { showToast(wipFail, "error"); return; }
+        const routingPayload = routingAfterWipInsert(raw);
+        if (routingPayload) runAction("saveRouting", routingPayload, `ขั้นตอนผลิตของ ${routingPayload.itemCode} อ้างชิ้นใหม่แล้ว`, null, wipFail);
+      } : null;
+      if (!runAction(name, payload, form.dataset.rfSuccess, wipFollowUp, "")) return;
       form.closest?.("dialog")?.close?.();
       form.querySelectorAll("button").forEach((node) => { node.disabled = true; });
       renderRoute();

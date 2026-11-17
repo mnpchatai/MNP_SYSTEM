@@ -493,7 +493,9 @@
     if (focusRow) focusRow.focus = true;
     const focusOrder = focus ? data.orders.find((entry) => entry.id === params.get("order")) : null;
     const focusFgs = focusOrder ? rules.noBomInOrder(focusOrder).find((entry) => entry.code === focus)?.fgs ?? [] : [];
-    const focusCard = focusDone && focusOrder ? ui.callout("good", `<strong class="rf-mono">${esc(focus)}</strong> มี BOM แล้ว · ${ui.link(`กลับไปคำนวณใหม่ที่ขั้น 2 ของใบ ${focusOrder.id}`, ctx.url("orders", { sel: focusOrder.id }))}`) : focus && canEdit && !focusDone && !focusRow ? ui.callout("warn", `ไม่พบ <strong class="rf-mono">${esc(focus)}</strong> ในตารางของ ${esc(code)} (ชั้นลึกเกินที่ตารางแสดง หรือ BOM ถูกแก้หลังคำนวณ) · ${ui.link(`เปิดตารางของ ${focus}`, buildUrl(ctx, focus))}`) : focusRow ? ui.callout("info",`<div><strong class="rf-mono">${esc(focus)}</strong> ยังไม่มี BOM แถวของชิ้นนี้ในตารางข้างล่างมีแถบสี กด “+ เพิ่มส่วนประกอบใต้ชิ้นนี้” ที่แถวนั้น แล้วกดบันทึก BOM</div>${focusFgs.length > 1 ? `<div class="rf-row bom-nobom-links"><span>ชิ้นนี้อยู่ในสินค้าของใบ ${esc(focusOrder.id)}:</span>${focusFgs.map((entry) => (entry.fgCode === code ? `<span class="btn rf-btn small rf-mono" aria-current="page">${esc(`${entry.itemNo}. ${entry.fgCode}`)}</span>` : ui.link(`${entry.itemNo}. ${entry.fgCode}`, ctx.url("build", { code: entry.fgCode, focus, order: focusOrder.id }), "btn rf-btn secondary small rf-mono"))).join("")}</div>` : ""}${focusOrder ? `<div class="bom-nobom-links">${ui.link(`← กลับไปใบสั่งผลิต ${focusOrder.id}`, ctx.url("orders", { sel: focusOrder.id, step: "3" }))}</div>` : ""}`) : "";
+    // ลิงก์ของการ์ดนี้ (สลับสินค้า กลับไปใบ เปิดตารางของชิ้น) เปิดหน้าอื่น: ถ้าตารางมีการแก้ที่ยังไม่บันทึก ถามก่อน (bind ข้างล่าง)
+    const navLink = (...args) => ui.link(...args).replace("<a", "<a data-bom-build-nav");
+    const focusCard = focusDone && focusOrder ? ui.callout("good", `<strong class="rf-mono">${esc(focus)}</strong> มี BOM แล้ว · ${navLink(`กลับไปคำนวณใหม่ที่ขั้น 2 ของใบ ${focusOrder.id}`, ctx.url("orders", { sel: focusOrder.id }))}`) : focus && canEdit && !focusDone && !focusRow ? ui.callout("warn", `ไม่พบ <strong class="rf-mono">${esc(focus)}</strong> ในตารางของ ${esc(code)} (ชั้นลึกเกินที่ตารางแสดง หรือ BOM ถูกแก้หลังคำนวณ) · ${navLink(`เปิดตารางของ ${focus}`, buildUrl(ctx, focus))}`) : focusRow ? ui.callout("info",`<div><strong class="rf-mono">${esc(focus)}</strong> ยังไม่มี BOM แถวของชิ้นนี้ในตารางข้างล่างมีแถบสี กด “+ เพิ่มส่วนประกอบใต้ชิ้นนี้” ที่แถวนั้น แล้วกดบันทึก BOM</div>${focusFgs.length > 1 ? `<div class="rf-row bom-nobom-links"><span>ชิ้นนี้อยู่ในสินค้าของใบ ${esc(focusOrder.id)}:</span>${focusFgs.map((entry) => (entry.fgCode === code ? `<span class="btn rf-btn small rf-mono" aria-current="page">${esc(`${entry.itemNo}. ${entry.fgCode}`)}</span>` : navLink(`${entry.itemNo}. ${entry.fgCode}`, ctx.url("build", { code: entry.fgCode, focus, order: focusOrder.id }), "btn rf-btn secondary small rf-mono"))).join("")}</div>` : ""}${focusOrder ? `<div class="bom-nobom-links">${navLink(`← กลับไปใบสั่งผลิต ${focusOrder.id}`, ctx.url("orders", { sel: focusOrder.id, step: "3" }))}</div>` : ""}`) : "";
     if (!rows.length) rows = [{ id: "r1", parentId: "", level: 1, code: "", kind: rootKind === "RB" ? "CP" : "PURCHASED", name: "", uom: rootKind === "RB" ? "kg" : "pcs", qty: "", scrapPct: 0, note: "", weightG: "", rubber: {}, existing: false, usedIn: 0 }];
     const bom = item ? approvedBomOf(ctx, item.code) : null;
     const noun = isFg ? "สินค้า" : "ชิ้นงาน";
@@ -543,6 +545,17 @@
       if (focused) requestAnimationFrame(() => focused.scrollIntoView({ block: "center", behavior: "auto" }));
       // ปุ่ม "+ ลูก" อยู่คอลัมน์ขวาสุดของตารางกว้าง: ปุ่มที่ช่องรหัสของแถวที่มีแถบสีกดแทนกันได้
       rootNode.querySelectorAll("[data-bom-focus-add]").forEach((button) => button.addEventListener("click", () => button.closest("tr")?.querySelector("[data-bom-add-child]")?.click()));
+      // สลับไปสินค้าอื่นของใบ / กลับไปใบ: ตารางที่ต่างจากตอนเปิด (ค่า แถวที่เพิ่ม ลบ หรือย้าย) ยังไม่บันทึก = ถามก่อนทิ้ง
+      // หยุดการเปิดลิงก์ทันที (ตัดสินหลัง await ไม่ได้) แล้วไปเองเมื่อยืนยัน · ไม่ใช้ blur (กติกา iPhone)
+      const treeForm = rootNode.querySelector("#bom-tree-form");
+      const treeState = () => JSON.stringify([...(treeForm?.querySelectorAll("input[name], select[name], textarea[name]") ?? [])].map((field) => [field.name, field.type === "checkbox" ? field.checked : field.value]));
+      const openedState = treeState();
+      rootNode.querySelectorAll("[data-bom-build-nav]").forEach((link) => link.addEventListener("click", async (event) => {
+        if (treeState() === openedState) return;
+        event.preventDefault();
+        const href = link.getAttribute("href");
+        if (await confirmDialog({ title: "ทิ้งการแก้ไขที่ยังไม่บันทึก?", message: "ตาราง BOM มีการแก้ที่ยังไม่ได้บันทึก ถ้าเปิดหน้าอื่นตอนนี้การแก้จะหายไป (กด “บันทึก BOM” ก่อนถ้าต้องการเก็บไว้)", confirmLabel: "ทิ้งการแก้ไข", danger: true })) location.hash = href;
+      }));
       const tbody = rootNode.querySelector("[data-bom-rows]");
       const template = rootNode.querySelector("template[data-bom-row]");
       if (!tbody) return;

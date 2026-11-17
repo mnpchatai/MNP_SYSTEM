@@ -1439,6 +1439,66 @@ async function pageEnv({ storage = memoryStorage(), pageStorage = memoryStorage(
   return { mock, context, app, log, storage, pageStorage, render, store: context.MNP_BOM.store, ctx: (query = "") => context.MNP_BOM.context(new URLSearchParams(query)) };
 }
 
+// แทรก WIP ในโหมดฐานข้อมูล: ฟอร์ม saveBomTree (wipInsert) ส่งผ่านกติกา data-rf-form ของ module-bom.js แล้วขั้นตอนผลิตของชิ้นแม่บันทึกต่อ (saveRouting)
+// ฟอร์มจำลองไม่มีช่อง (FormData ของ pageEnv ว่าง) ค่าทั้งหมดจึงส่งทาง data-rf-args เหมือนปุ่มของหน้า
+const plain = (value) => JSON.parse(JSON.stringify(value));
+async function wipScene() {
+  const hooks = { nodes: {} };
+  const env = await pageEnv({ hooks });
+  await env.store.ensureLoaded();
+  const pk = A.helpers.processesOf(env.store.data()).filter((entry) => entry.dept === "PK").slice(0, 2).map((entry) => entry.code);
+  const part = (code) => ({ code, qty: 1, newItem: { kind: "PURCHASED", name: code, uom: "pcs" } });
+  assert.equal((await env.store.run("saveBomTree", { code: "FG-W", item: { name: "สินค้า W", uom: "set" }, nodes: [part("P-WA"), part("P-WB")] }).saving).ok, true);
+  assert.equal((await env.store.run("saveRouting", { itemCode: "FG-W", steps: [{ processCode: pk[0], minutesPerPc: 1, inputs: ["P-WB"] }, { processCode: pk[1], minutesPerPc: 2, inputs: ["P-WA"] }] }).saving).ok, true);
+  const form = { handlers: {}, dataset: { rfForm: "saveBomTree", rfSuccess: "บันทึกแล้ว", rfArgs: JSON.stringify({ wipInsert: true, code: "FG-W", childCode: "P-WA", wipCode: "WIP-W1", wipName: "ชุดประกอบ W", wipKind: "SUBPART", wipUom: "pcs", wipQty: "1", childQty: "" }) }, addEventListener(type, handler) { this.handlers[type] = handler; }, querySelectorAll: () => [], closest: () => null };
+  hooks.nodes[".content"] = { querySelector: () => null, querySelectorAll: (selector) => (selector === "form[data-rf-form]" ? [form] : []), addEventListener() {} };
+  await env.render("p=dashboard");
+  const submit = async () => {
+    await form.handlers.submit({ preventDefault() {} });
+    for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setTimeout0(resolve));
+  };
+  const routing = () => A.helpers.routingOf(env.store.data(), "FG-W");
+  const serverRouting = async () => (await env.mock.client.rpc("app_bom_master")).data.routings.find((row) => row.itemCode === "FG-W" && row.status === "approved");
+  return { env, pk, form, submit, routing, serverRouting };
+}
+
+test("inserting a WIP item in database mode saves the BOM first and only then the parent's production steps, built from the data the store holds after that save", async () => {
+  const { env, pk, submit, routing, serverRouting } = await wipScene();
+  const revision = routing().revision;
+  // ผู้อื่นแก้เวลาของขั้นตอนผลิตของชิ้นแม่ไปก่อน (หน้านี้ยังไม่ตามทัน): คำตอบของการบันทึก BOM พามันมาด้วย ขั้นตอนที่บันทึกต่อต้องคงเวลาของผู้อื่นไว้
+  const theirs = { ...(await serverRouting()) };
+  const sent = await env.mock.client.rpc("app_bom_save_master", { p_changes: { routings: { upsert: [{ ...theirs, status: "superseded" }, { ...theirs, id: "RT-THEIRS-1", revision: theirs.revision + 1, steps: theirs.steps.map((step) => ({ ...step, minutesPerPc: 7 })) }] } }, p_base_version: env.store.version(), p_action: "saveRouting" });
+  assert.equal(sent.error, null, sent.error?.message);
+  const saves = [];
+  const real = env.mock.client.rpc.bind(env.mock.client);
+  env.mock.client.rpc = async (name, args) => { if (name === "app_bom_save_master") saves.push({ action: args.p_action, base: args.p_base_version }); return real(name, args); };
+  await submit();
+  env.mock.client.rpc = real;
+  assert.deepEqual(saves.map((row) => row.action), ["saveBomTree", "saveRouting"], "two saves, one after the other");
+  assert.ok(saves[1].base > saves[0].base, "the steps are sent on the version the BOM save returned, not the base the form was drawn from");
+  const after = await serverRouting();
+  assert.equal(after.revision, revision + 2, "one new revision on top of the other user's");
+  assert.deepEqual(plain(after.steps.map((step) => [step.processCode, step.minutesPerPc, step.inputs])), [[pk[0], 7, ["P-WB"]], [pk[1], 7, ["WIP-W1"]]], "the other user's times are kept and the moved line now names the WIP item");
+  assert.deepEqual(plain(routing().steps), plain(after.steps), "the page shows what the database holds");
+  assert.equal(env.log.toasts.filter(([, kind]) => kind === "error").length, 0);
+});
+
+test("when the parent's production steps cannot follow a WIP insert in database mode the user reads what was saved and what to fix, not a generic error", async () => {
+  const { env, submit, serverRouting } = await wipScene();
+  const before = await serverRouting();
+  // ฐานข้อมูลปฏิเสธขั้นตอนผลิต (เช่น ผู้อื่นแก้พร้อมกัน): ข้อความบอกว่าแทรก WIP แล้ว แต่ขั้นตอนผลิตยังไม่ได้ปรับ
+  const real = env.mock.client.rpc.bind(env.mock.client);
+  env.mock.client.rpc = async (name, args) => (name === "app_bom_save_master" && args.p_action === "saveRouting" ? { data: null, error: { code: "P0001", message: "BOM_STALE" } } : real(name, args));
+  await submit();
+  env.mock.client.rpc = real;
+  assert.ok((await env.mock.client.rpc("app_bom_master")).data.boms.some((bom) => bom.itemCode === "FG-W" && bom.status === "approved" && bom.lines.some((line) => line.childCode === "WIP-W1")), "the BOM with the WIP item is saved");
+  assert.equal((await serverRouting()).revision, before.revision, "the steps are not");
+  const errors = env.log.toasts.filter(([, kind]) => kind === "error").map(([message]) => message);
+  assert.equal(errors.length, 1, errors.join(" | "));
+  assert.match(errors[0], /^แทรก WIP WIP-W1 ใน BOM ของ FG-W แล้ว แต่ยังไม่ได้ปรับขั้นตอนผลิตของ FG-W ให้อ้าง WIP นี้แทน P-WA/, "what was saved and what was not");
+  assert.match(errors[0], /เปิดหน้าของ FG-W แล้วแก้ขั้นตอนผลิตเอง/, "what to do");
+});
+
 test("in the browser the module talks to the (mock) database: loading state, empty database points to the import page, no demo role picker or reset", async () => {
   const env = await pageEnv();
   assert.equal(env.store.isRemote(), true);
@@ -2416,6 +2476,46 @@ test("the mock database refuses what production refuses: new orders start as dra
   const delta = (await client.rpc("app_bom_master_since", { p_version: before })).data;
   assert.deepEqual(delta.changes.jobs.delete.map((row) => row.id).sort(), ["C-PK", "C-RB"], "with tombstones for the other browsers");
   assert.equal(await code({ orders: { upsert: [await withOrder("PI-C", { note: "แก้" })] } }), "BOM_INVALID_TRANSITION", "a cancelled order is final");
+});
+
+test("the mock database refuses lowering the planned quantity of a started job, for the planning group too (20261127010000)", async () => {
+  const { client } = createMockSupabase({ sandbox: true, now: () => NOW });
+  const as = (persona) => client.rpc("app_sandbox_enter", { p_persona_id: persona });
+  let version = 0;
+  const save = async (changes, action = "setJobStatus") => {
+    const reply = await client.rpc("app_bom_save_master", { p_changes: changes, p_base_version: version, p_action: action });
+    if (!reply.error) version = reply.data.version;
+    return reply;
+  };
+  const code = async (changes, action) => (await save(changes, action)).error?.code ?? null;
+  const view = async () => (await client.rpc("app_bom_master")).data;
+  const job = async (id) => (await view()).jobs.find((row) => row.id === id);
+  const entry = (good) => ({ at: 1, by: "x", good, reject: 0, note: "" });
+
+  await as("persona-pp");
+  assert.equal(await code({ orders: { upsert: [mockOrder("PI-P", { explosion: [] })] } }, "createOrder"), null);
+  const order = (await view()).orders.find((row) => row.id === "PI-P");
+  assert.equal(await code({ orders: { upsert: [{ ...order, status: "released" }] }, jobs: { upsert: [mockJob("P-RB", "PI-P", "RB"), mockJob("P-GR", "PI-P", "GR"), mockJob("P-PK", "PI-P", "PK")] } }, "releaseOrder"), null);
+  await as("persona-rb");
+  const rb = await job("P-RB");
+  assert.equal(await code({ jobs: { upsert: [{ ...rb, status: "in_progress", qtyDone: 2, reports: [entry(2)] }] } }, "reportJob"), null, "RB reports 2 of 10");
+  assert.equal(await code({ jobs: { upsert: [{ ...(await job("P-RB")), qtyPlanned: 8 }] } }), "BOM_FORBIDDEN", "department staff still cannot touch the plan at all");
+  await as("persona-gr");
+  assert.equal(await code({ jobs: { upsert: [{ ...(await job("P-GR")), status: "in_progress" }] } }), null, "GR starts its job without output");
+
+  await as("persona-pp");
+  const before = version;
+  assert.equal(await code({ jobs: { upsert: [{ ...(await job("P-RB")), qtyPlanned: 2 }] } }), "BOM_INVALID_JOB", "a planner cannot lower a reported job");
+  assert.equal(await code({ jobs: { upsert: [{ ...(await job("P-GR")), qtyPlanned: 5 }] } }), "BOM_INVALID_JOB", "nor a job that is in progress with no output");
+  const pk = await job("P-PK");
+  assert.equal(await code({ jobs: { upsert: [{ ...pk, qtyPlanned: 3, status: "in_progress", qtyDone: 3, reports: [entry(3)] }] } }, "reportJob"), "BOM_INVALID_JOB", "nor lower a queued job and report on it in the same save");
+  assert.equal(await code({ jobs: { upsert: [{ ...pk, qtyPlanned: 3, status: "in_progress" }] } }), "BOM_INVALID_JOB", "nor lower it and start it in the same save");
+  assert.equal(version, before, "none of the refused saves moved the version");
+  assert.equal(await code({ jobs: { upsert: [{ ...(await job("P-RB")), qtyPlanned: 12 }] } }), null, "a planner can raise the plan of a started job");
+  assert.equal((await job("P-RB")).qtyPlanned, 12);
+  assert.equal(await code({ jobs: { upsert: [{ ...(await job("P-RB")), qtyPlanned: 10 }] } }), "BOM_INVALID_JOB", "and lowering it back counts from the stored plan");
+  assert.equal(await code({ jobs: { upsert: [{ ...(await job("P-PK")), qtyPlanned: 3 }] } }), null, "a queued job that has not started can still be lowered");
+  assert.equal((await job("P-PK")).qtyPlanned, 3);
 });
 
 test("the mock database judges a stale copy as stale before it looks at permissions or content", async () => {
