@@ -204,7 +204,7 @@
     // และยังไม่มีใบสั่งผลิตที่ไม่ใช่ร่างใช้ฉบับนั้น = แทนบรรทัดและหมายเหตุในฉบับเดิม ต่อท้ายประวัติหนึ่งรายการ (id และเลข revision เดิม) · อย่างอื่นออก revision ใหม่เหมือนเดิม
     if (previous && previous.approvedBy === user.name && R.bangkokDay(previous.approvedAt) === R.bangkokDay(ctx.now) && !R.bomRevisionLocked(d.orders, previous.id)) {
       previous.lines = lines;
-      previous.note = note;
+      if (note) previous.note = note; // ช่องหมายเหตุของการแก้ว่าง = หมายเหตุเดิมของฉบับคงไว้
       previous.changeLog = [...(previous.changeLog ?? []), { at: ctx.now, by: user.name, text: `${changes}${note ? ` — ${note}` : ""}`.slice(0, 1000) }];
       audit(d, ctx, "บันทึก BOM", `${parent.code} Rev.${previous.revision} (แก้ในฉบับเดิม): ${changes}`);
       return { id: previous.id, revision: previous.revision, changed: true, inPlace: true };
