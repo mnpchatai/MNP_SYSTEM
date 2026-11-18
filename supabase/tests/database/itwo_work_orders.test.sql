@@ -9,7 +9,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(312);
+select plan(368);
 
 -- 1. โครงสร้าง ----------------------------------------------------------
 reset role;
@@ -17,6 +17,10 @@ select set_config('request.jwt.claims', '', true);
 select is((select count(*)::int from pg_class c where c.relnamespace = 'public'::regnamespace and c.relname like 'itwo\_%' and c.relkind = 'r' and c.relrowsecurity), 6, 'RLS is enabled on all six itwo tables');
 select is((select count(*)::int from pg_class c where c.relnamespace = 'public'::regnamespace and c.relname like 'itwo\_%' and c.relkind = 'r'), 6, 'the module has exactly the six documented tables');
 select ok(not exists (select 1 from information_schema.role_table_grants g where g.table_schema = 'public' and g.table_name like 'itwo\_%' and g.grantee in ('anon', 'authenticated', 'PUBLIC')), 'anon, authenticated and PUBLIC have no direct grant on any itwo table');
+select ok(not exists (select 1 from pg_class c cross join unnest(array['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p(priv) where c.relnamespace = 'public'::regnamespace and c.relname like 'itwo\_%' and c.relkind = 'r' and has_table_privilege('service_role', c.oid, p.priv)), 'service_role has no privilege at all on any itwo table (the secret key cannot write the ISO records directly)');
+select ok(exists (select 1 from pg_class c where c.relnamespace = 'public'::regnamespace and c.relname like 'itwo\_%' and c.relkind = 'S') and not exists (select 1 from pg_class c cross join unnest(array['USAGE', 'SELECT', 'UPDATE']) p(priv) cross join unnest(array['service_role', 'anon', 'authenticated']) r(rolname) where c.relnamespace = 'public'::regnamespace and c.relname like 'itwo\_%' and c.relkind = 'S' and has_sequence_privilege(r.rolname, c.oid, p.priv)), 'the identity sequences of the itwo tables are closed to service_role, anon and authenticated');
+select ok(not exists (select 1 from pg_class c cross join unnest(array['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) p(priv) where c.relnamespace = 'public'::regnamespace and c.relname like 'itwo\_%' and c.relkind = 'r' and (has_table_privilege('anon', c.oid, p.priv) or has_table_privilege('authenticated', c.oid, p.priv))), 'anon and authenticated hold no table privilege either (checked per privilege, not only by grant rows)');
+select ok(position('lock table' in lower(pg_get_functiondef('public.app_sandbox_purge_itwo()'::regprocedure))) > 0, 'the test-data purge locks the module tables so it cannot race a test filing');
 select is((select count(*)::int from pg_policy p join pg_class c on c.oid = p.polrelid where c.relname like 'itwo\_%' and p.polname like '%\_no\_direct\_access'), 6, 'every itwo table has a deny-all policy');
 select is((select count(*)::int from pg_policy p join pg_class c on c.oid = p.polrelid where c.relname like 'itwo\_%' and p.polname = 'lab_only_no_access' and not p.polpermissive), 6, 'every itwo table has the restrictive lab-only policy');
 select ok((select bool_and(t = any (private.sandbox_unguarded_tables())) from unnest(array['itwo_work_orders', 'itwo_events', 'itwo_access_changes', 'itwo_doc_counters', 'itwo_admin_log']) t), 'the five test-mode aware tables are registered in private.sandbox_unguarded_tables()');
@@ -608,7 +612,7 @@ select throws_ok($$ truncate public.itwo_admin_log $$, '42501', null, 'the admin
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000008","role":"authenticated"}', true);
 select lives_ok($$ select public.app_itwo_set_staff('ITWO-APPR', false, true) $$, 'an admin right can be taken from another admin while one remains');
-select throws_ok($$ select public.app_itwo_set_staff('ITWO-ADM', false, false) $$, '23514', 'ต้องเหลือผู้ดูแลงาน IT ที่ใช้งานอยู่อย่างน้อย 1 คน', 'the last IT admin cannot be removed');
+select throws_ok($$ select public.app_itwo_set_staff('ITWO-ADM', false, false) $$, '42501', 'ไม่สามารถแก้สิทธิ์ทีม IT ของตัวเองได้ กรุณาให้ผู้ดูแลงาน IT คนอื่นเป็นผู้ตั้งให้', 'an IT admin cannot remove themselves (so the acting admin always remains; the last-admin check is a second guard)');
 select lives_ok($$ select public.app_itwo_set_staff('ITWO-APPR', true, true) $$, 'the admin right is given back');
 select lives_ok($$ select public.app_itwo_set_staff('ITWO-APPR', true, false) $$, 'an approver right can be taken away while another approver exists');
 select throws_ok($$ select public.app_itwo_set_staff('ITWO-AP2', false, false) $$, '23514', 'ต้องเหลือผู้อนุมัติขั้น IT ที่ใช้งานอยู่อย่างน้อย 1 คน', 'the last IT approver cannot be removed');
@@ -724,6 +728,162 @@ set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000017","role":"authenticated"}', true);
 select set_config('t.t3', (select id::text from public.app_itwo_create('design', null, 'no', null, 'หลังล้าง', ((now() at time zone 'Asia/Bangkok')::date + 3), false)), true);
 select is(public.app_itwo_get_detail(current_setting('t.t3')::uuid)->>'doc_no', 'TEST-IT06-' || to_char(now() at time zone 'Asia/Bangkok', 'YY') || '/001', 'after the purge the test numbering starts again at 001');
+
+
+-- 11. แยกหน้าที่ (ISO) และผู้อนุมัติที่ล็อกอินได้จริง ---------------------
+-- ออกจากโหมดทดสอบก่อน (ส่วน 10b ทิ้งแอดมินไว้ในโหมดทดสอบ)
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000017","role":"authenticated"}', true);
+select public.app_sandbox_exit();
+reset role;
+select set_config('request.jwt.claims', '', true);
+insert into public.departments (code, name_th, name_en) values
+  ('ZTH', 'แผนกทดสอบ H (มีแต่ผู้จัดการโรงงาน)', 'ZT H'), ('ZTI', 'แผนกทดสอบ I (admin ทำหน้าที่แทนผจก.)', 'ZT I'),
+  ('ZTK', 'แผนกทดสอบ K (ผจก.ยังไม่ผูกบัญชีล็อกอิน)', 'ZT K'), ('ZTL', 'แผนกทดสอบ L (ผจก.เป็นบัญชี lab-only)', 'ZT L'),
+  ('ZTJ', 'แผนกทดสอบ J (มีผจก.และผู้ช่วย)', 'ZT J');
+insert into auth.users (id, email, raw_user_meta_data)
+select ('1d700000-0000-0000-0000-0000000000' || n)::uuid, 'itwo-u' || n || '@test.local', '{}'::jsonb
+from unnest(array['19', '20', '21', '22', '24', '25', '26', '27', '28', '29', '30']) n;
+insert into public.employees (employee_no, first_name, last_name, email, department_id, role_id, auth_user_id, is_active)
+select v.no, 'ทดสอบ', v.no, lower(v.no) || '@itwo.test', d.id, r.id, v.uid::uuid, true
+from (values
+  ('ITWO-FMH', 'ZTH', 'factory_manager', '1d700000-0000-0000-0000-000000000019'),
+  ('ITWO-REQH', 'ZTH', 'staff', '1d700000-0000-0000-0000-000000000020'),
+  ('ITWO-ACT', 'ZTI', 'admin', '1d700000-0000-0000-0000-000000000021'),
+  ('ITWO-REQI', 'ZTI', 'staff', '1d700000-0000-0000-0000-000000000022'),
+  ('ITWO-MGRK-NOLOGIN', 'ZTK', 'department_manager', null),
+  ('ITWO-REQK', 'ZTK', 'staff', '1d700000-0000-0000-0000-000000000024'),
+  ('MNPLAB002', 'ZTL', 'department_manager', '1d700000-0000-0000-0000-000000000025'),
+  ('ITWO-REQL', 'ZTL', 'staff', '1d700000-0000-0000-0000-000000000026'),
+  ('ITWO-MGRJ', 'ZTJ', 'department_manager', '1d700000-0000-0000-0000-000000000027'),
+  ('ITWO-AMGRJ', 'ZTJ', 'assistant_department_manager', '1d700000-0000-0000-0000-000000000028'),
+  ('ITWO-REQJ', 'ZTJ', 'staff', '1d700000-0000-0000-0000-000000000029'),
+  ('ITWO-MGRIT', 'IT', 'department_manager', '1d700000-0000-0000-0000-000000000030')
+) as v(no, dep, role, uid)
+join public.departments d on d.code = v.dep join public.roles r on r.code = v.role;
+-- admin ที่ทำหน้าที่แทนผู้จัดการแผนก (acting_role_id) ต้องไม่ถูกนับเป็นผู้อนุมัติขั้นแผนก
+update public.employees set acting_role_id = (select id from public.roles where code = 'department_manager') where employee_no = 'ITWO-ACT';
+select ok((select acting_role_id is not null from public.employees where employee_no = 'ITWO-ACT'), 'precondition: the admin ITWO-ACT is acting as a department manager (the setting was kept)');
+select ok((select count(*) from public.employees where employee_no = 'ITWO-MGRK-NOLOGIN' and is_active and auth_user_id is null) = 1, 'precondition: the manager of department K is active but has no login');
+
+-- 11a. นับผู้อนุมัติขั้นแผนกจาก role_id ที่ล็อกอินได้จริงเท่านั้น
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000020","role":"authenticated"}', true);
+select set_config('t.s1', (select id::text from public.app_itwo_create('design', null, 'no', null, 'ทดสอบแยกหน้าที่', ((now() at time zone 'Asia/Bangkok')::date + 3), false)), true);
+select is((public.app_itwo_get_detail(current_setting('t.s1')::uuid)->>'status'), 'pending_it_mgr', 'a department with only a factory manager is treated as having no manager (one click by the IT approver)');
+select ok((public.app_itwo_get_detail(current_setting('t.s1')::uuid)->'events'->0->>'reason') like '%ไม่มีผู้จัดการ%', 'the created event explains that the department has no manager');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000019","role":"authenticated"}', true);
+select throws_ok($$ select public.app_itwo_approve(current_setting('t.s1')::uuid) $$, '42501', 'คุณไม่มีสิทธิ์พิจารณาใบสั่งงานนี้', 'a factory manager cannot approve the department step');
+select is(public.app_itwo_pending_count(), 0, 'a factory manager has nothing pending in this module');
+select is(public.app_itwo_my_role()->>'is_dept_approver', 'false', 'my_role does not report a factory manager as a department approver');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000009","role":"authenticated"}', true);
+select lives_ok($$ select public.app_itwo_approve(current_setting('t.s1')::uuid) $$, 'the IT approver approves once');
+select is((select string_agg(e->>'action', ',' order by (e->>'id')::bigint) from jsonb_array_elements(public.app_itwo_get_detail(current_setting('t.s1')::uuid)->'events') e), 'created,dept_approved,it_mgr_approved', 'one click recorded both steps for the department with only a factory manager');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000022","role":"authenticated"}', true);
+select set_config('t.s2', (select id::text from public.app_itwo_create('design', null, 'no', null, 'ทดสอบแยกหน้าที่', ((now() at time zone 'Asia/Bangkok')::date + 3), false)), true);
+select is((public.app_itwo_get_detail(current_setting('t.s2')::uuid)->>'status'), 'pending_it_mgr', 'a department whose only "manager" is an admin acting as department manager is treated as having no manager');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000021","role":"authenticated"}', true);
+select throws_ok($$ select public.app_itwo_approve(current_setting('t.s2')::uuid) $$, '42501', 'คุณไม่มีสิทธิ์พิจารณาใบสั่งงานนี้', 'an admin acting as department manager cannot approve the department step (role_id only)');
+select throws_ok($$ select public.app_itwo_reject(current_setting('t.s2')::uuid, 'x') $$, '42501', 'คุณไม่มีสิทธิ์พิจารณาใบสั่งงานนี้', 'nor reject it');
+select is(public.app_itwo_pending_count(), 0, 'the acting admin has nothing pending in this module');
+select is(public.app_itwo_my_role()->>'is_dept_approver', 'false', 'my_role does not report an acting department manager as a department approver');
+select set_config('t.s3', (select id::text from public.app_itwo_create('design', null, 'no', null, 'ทดสอบแยกหน้าที่', ((now() at time zone 'Asia/Bangkok')::date + 3), false)), true);
+select is((public.app_itwo_get_detail(current_setting('t.s3')::uuid)->>'status'), 'pending_it_mgr', 'the acting admin filing a request is not auto-approved at the department step');
+select is((select string_agg(e->>'action', ',' order by (e->>'id')::bigint) from jsonb_array_elements(public.app_itwo_get_detail(current_setting('t.s3')::uuid)->'events') e), 'created', 'no department approval is signed in the name of an acting admin');
+select throws_ok($$ select public.app_itwo_approve(current_setting('t.s3')::uuid) $$, '42501', 'ไม่สามารถอนุมัติหรือไม่อนุมัติใบสั่งงานที่ตัวเองเป็นผู้แจ้งได้', 'the acting admin cannot approve the own request');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000009","role":"authenticated"}', true);
+select lives_ok($$ select public.app_itwo_approve(current_setting('t.s2')::uuid) $$, 'the IT approver approves the request of the department with an acting admin once');
+select is((select string_agg(e->>'action', ',' order by (e->>'id')::bigint) from jsonb_array_elements(public.app_itwo_get_detail(current_setting('t.s2')::uuid)->'events') e), 'created,dept_approved,it_mgr_approved', 'both steps are recorded in the name of the IT approver');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000024","role":"authenticated"}', true);
+select set_config('t.s4', (select id::text from public.app_itwo_create('design', null, 'no', null, 'ทดสอบแยกหน้าที่', ((now() at time zone 'Asia/Bangkok')::date + 3), false)), true);
+select is((public.app_itwo_get_detail(current_setting('t.s4')::uuid)->>'status'), 'pending_it_mgr', 'a manager without a login does not count: the request is not stuck at the department step');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000026","role":"authenticated"}', true);
+select set_config('t.s5', (select id::text from public.app_itwo_create('design', null, 'no', null, 'ทดสอบแยกหน้าที่', ((now() at time zone 'Asia/Bangkok')::date + 3), false)), true);
+select is((public.app_itwo_get_detail(current_setting('t.s5')::uuid)->>'status'), 'pending_it_mgr', 'a lab-only account does not count as a department approver');
+
+-- 11b. ลำดับขั้น: ผู้ช่วยหลังผู้จัดการ, ผู้อนุมัติขั้น IT ข้ามขั้นแผนกไม่ได้, ผจก.แผนก IT
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000029","role":"authenticated"}', true);
+select set_config('t.s6', (select id::text from public.app_itwo_create('design', null, 'no', null, 'ทดสอบแยกหน้าที่', ((now() at time zone 'Asia/Bangkok')::date + 3), false)), true);
+select is((public.app_itwo_get_detail(current_setting('t.s6')::uuid)->>'status'), 'pending_dept', 'a department with a manager and an assistant waits for the department step');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000009","role":"authenticated"}', true);
+select throws_ok($$ select public.app_itwo_reject(current_setting('t.s6')::uuid, 'ไม่เห็นด้วย') $$, '23514', 'ต้องรอผู้จัดการแผนกอนุมัติก่อน', 'the IT approver cannot reject before the department step when the department has a manager');
+select throws_ok($$ select public.app_itwo_approve(current_setting('t.s6')::uuid) $$, '23514', 'ต้องรอผู้จัดการแผนกอนุมัติก่อน', 'nor approve before the department step');
+select is((public.app_itwo_get_detail(current_setting('t.s6')::uuid)->>'status'), 'pending_dept', 'the refused attempts changed nothing');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000027","role":"authenticated"}', true);
+select lives_ok($$ select public.app_itwo_approve(current_setting('t.s6')::uuid) $$, 'the department manager approves the department step');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000028","role":"authenticated"}', true);
+select throws_ok($$ select public.app_itwo_approve(current_setting('t.s6')::uuid) $$, '23514', 'ใบสั่งงานนี้ผู้จัดการแผนกพิจารณาไปแล้ว', 'the assistant cannot approve after the manager already did');
+select throws_ok($$ select public.app_itwo_reject(current_setting('t.s6')::uuid, 'x') $$, '23514', 'ใบสั่งงานนี้ผู้จัดการแผนกพิจารณาไปแล้ว', 'nor reject after the manager already approved');
+select is(public.app_itwo_pending_count(), 0, 'the assistant has nothing pending after the manager decided');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000008","role":"authenticated"}', true);
+select is((select string_agg(e->>'action', ',' order by (e->>'id')::bigint) from jsonb_array_elements(public.app_itwo_get_detail(current_setting('t.s6')::uuid)->'events') e), 'created,dept_approved', 'only one department approval is recorded');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000029","role":"authenticated"}', true);
+select set_config('t.s7', (select id::text from public.app_itwo_create('design', null, 'no', null, 'ทดสอบแยกหน้าที่', ((now() at time zone 'Asia/Bangkok')::date + 3), true)), true);
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000008","role":"authenticated"}', true);
+select lives_ok($$ select public.app_itwo_start(current_setting('t.s7')::uuid) $$, 'IT starts the urgent request before any approval');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000009","role":"authenticated"}', true);
+select throws_ok($$ select public.app_itwo_approve(current_setting('t.s7')::uuid) $$, '23514', 'ต้องรอผู้จัดการแผนกอนุมัติก่อน', 'urgent and in progress: the IT approver still cannot approve before the department step');
+select throws_ok($$ select public.app_itwo_reject(current_setting('t.s7')::uuid, 'x') $$, '23514', 'ต้องรอผู้จัดการแผนกอนุมัติก่อน', 'nor reject before the department step');
+select is((select count(*)::int from public.app_itwo_list_pending_approvals() where id = current_setting('t.s7')::uuid), 0, 'the urgent request is not in the IT approver pending list until the department step is done');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000008","role":"authenticated"}', true);
+select is((public.app_itwo_get_detail(current_setting('t.s7')::uuid)->>'status'), 'in_progress', 'the urgent request stays in progress');
+select is((select string_agg(e->>'action', ',' order by (e->>'id')::bigint) from jsonb_array_elements(public.app_itwo_get_detail(current_setting('t.s7')::uuid)->'events') e), 'created,started', 'the refused attempts left no event');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000030","role":"authenticated"}', true);
+select set_config('t.s8', (select id::text from public.app_itwo_create('design', null, 'no', null, 'ทดสอบแยกหน้าที่', ((now() at time zone 'Asia/Bangkok')::date + 3), false)), true);
+select is((public.app_itwo_get_detail(current_setting('t.s8')::uuid)->>'status'), 'pending_it_mgr', 'a real department manager of the IT department filing waits for the IT approver');
+select is((select string_agg(e->>'action', ',' order by (e->>'id')::bigint) from jsonb_array_elements(public.app_itwo_get_detail(current_setting('t.s8')::uuid)->'events') e), 'created', 'the IT department manager is not auto-approved at the department step (the IT department uses the one-click rule)');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000009","role":"authenticated"}', true);
+select lives_ok($$ select public.app_itwo_approve(current_setting('t.s8')::uuid) $$, 'the IT approver approves once');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000008","role":"authenticated"}', true);
+select is((select string_agg(e->>'action', ',' order by (e->>'id')::bigint) from jsonb_array_elements(public.app_itwo_get_detail(current_setting('t.s8')::uuid)->'events') e), 'created,dept_approved,it_mgr_approved', 'one click counts both steps for the IT department');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000007","role":"authenticated"}', true);
+select set_config('t.s9', (select id::text from public.app_itwo_create('design', null, 'no', null, 'ทดสอบแยกหน้าที่', ((now() at time zone 'Asia/Bangkok')::date + 3), false)), true);
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000030","role":"authenticated"}', true);
+select throws_ok($$ select public.app_itwo_approve(current_setting('t.s9')::uuid) $$, '42501', 'คุณไม่มีสิทธิ์พิจารณาใบสั่งงานนี้', 'the IT department manager cannot approve an IT department request (the IT department has no department step)');
+
+-- 11c. ห้ามแก้สิทธิ์ทีม IT ของตัวเอง (แยกหน้าที่)
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000008","role":"authenticated"}', true);
+select throws_ok($$ select public.app_itwo_set_staff('ITWO-ADM', true, true) $$, '42501', 'ไม่สามารถแก้สิทธิ์ทีม IT ของตัวเองได้ กรุณาให้ผู้ดูแลงาน IT คนอื่นเป็นผู้ตั้งให้', 'an IT admin cannot make themselves an IT approver');
+select throws_ok($$ select public.app_itwo_set_staff('itwo-adm', false, false) $$, '42501', 'ไม่สามารถแก้สิทธิ์ทีม IT ของตัวเองได้ กรุณาให้ผู้ดูแลงาน IT คนอื่นเป็นผู้ตั้งให้', 'an IT admin cannot remove themselves (employee number matched without case)');
+select throws_ok($$ select public.app_itwo_set_staff('ITWO-ADM', true, false) $$, '42501', 'ไม่สามารถแก้สิทธิ์ทีม IT ของตัวเองได้ กรุณาให้ผู้ดูแลงาน IT คนอื่นเป็นผู้ตั้งให้', 'even a change that would not alter anything is refused for oneself');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000009","role":"authenticated"}', true);
+select throws_ok($$ select public.app_itwo_set_staff('ITWO-APPR', true, false) $$, '42501', 'ไม่สามารถแก้สิทธิ์ทีม IT ของตัวเองได้ กรุณาให้ผู้ดูแลงาน IT คนอื่นเป็นผู้ตั้งให้', 'an IT approver cannot drop their own approver right');
+select throws_ok($$ select public.app_itwo_set_staff('ITWO-APPR', false, true) $$, '42501', 'ไม่สามารถแก้สิทธิ์ทีม IT ของตัวเองได้ กรุณาให้ผู้ดูแลงาน IT คนอื่นเป็นผู้ตั้งให้', 'nor drop their own admin right');
+reset role;
+select set_config('request.jwt.claims', '', true);
+select is((select s.is_it_admin::text || ',' || s.is_it_approver::text from public.itwo_staff s join public.employees e on e.id = s.employee_id where e.employee_no = 'ITWO-ADM'), 'true,false', 'the refused attempts did not change the rights of the admin');
+select is((select s.is_it_admin::text || ',' || s.is_it_approver::text from public.itwo_staff s join public.employees e on e.id = s.employee_id where e.employee_no = 'ITWO-APPR'), 'true,true', 'nor the rights of the approver');
+select is((select count(*)::int from public.itwo_admin_log l join public.employees e on e.id = l.target_employee_id where e.employee_no in ('ITWO-ADM') and l.action like 'staff\_%'), 0, 'refused attempts are not written to the admin log');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000008","role":"authenticated"}', true);
+select lives_ok($$ select public.app_itwo_set_staff('ITWO-APPR', true, true) $$, 'changing the rights of another person (no real change) is still allowed');
+select lives_ok($$ select public.app_itwo_set_staff('ITWO-REQ2', true, false) $$, 'giving the admin right to somebody else still works');
+select lives_ok($$ select public.app_itwo_set_staff('ITWO-REQ2', false, false) $$, 'and taking it away again');
+reset role;
+select set_config('request.jwt.claims', '', true);
 
 select * from finish();
 rollback;

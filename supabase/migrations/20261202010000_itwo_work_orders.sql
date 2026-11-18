@@ -8,12 +8,18 @@
 --
 -- แมปบทบาท
 --   ผู้แจ้ง                  = พนักงาน active ทุกคน (ผ่าน private.itwo_actor)
---   ผู้อนุมัติขั้นแผนก        = พนักงาน active ที่ role department_manager หรือ assistant_department_manager อยู่แผนกเดียวกับผู้แจ้ง
---                              (ไม่ใช่บัญชีทดสอบ ไม่ถูกลบ) ใครคนใดคนหนึ่งกดก็นับ
+--   ผู้อนุมัติขั้นแผนก        = พนักงาน active ที่ผูกบัญชีล็อกอินแล้ว (auth_user_id ไม่ว่าง) ไม่ถูกลบ ไม่ใช่บัญชีทดสอบ/บัญชี lab-only
+--                              และ "role_id" เป็น department_manager หรือ assistant_department_manager อยู่แผนกเดียวกับผู้แจ้ง ใครคนใดคนหนึ่งกดก็นับ
+--                              ดู role_id เท่านั้น: "ไม่ใช้ acting_role_id" ของ admin และไม่นับ factory_manager / general_manager
+--                              เหตุผล (แยกหน้าที่ ISO): บน production เจ้าของ IT3462 เป็น admin ที่ acting เป็น department_manager ของแผนก IT
+--                              ถ้านับ acting ผู้ดูแลงาน IT จะกลายเป็นผู้อนุมัติขั้นแผนก IT ของใบที่ตัวเองต้องทำ ขัดการแยกหน้าที่
+--                              แผนกที่มีแต่ factory_manager (เช่น FT) จึงถือว่า "ไม่มีผู้จัดการ" -> ผู้อนุมัติขั้น IT (FANG) กดครั้งเดียวนับทั้งสองขั้น (เจ้าของยืนยัน)
 --   IT ผู้ดูแลงาน (it_admin) = แถวใน itwo_staff ที่ is_it_admin: เห็นทุกใบ รับงาน/เริ่ม/บันทึกส่วนสิทธิ์ในระบบ/ปิดงาน/จัดการ itwo_staff/ตั้งเลขถัดไป
 --   ผู้อนุมัติขั้น IT         = แถวใน itwo_staff ที่ is_it_approver
 --   admin คนอื่นของ MNP_SYSTEM (role admin) "ไม่ได้" สิทธิ์ IT อัตโนมัติ ต้องมีแถวใน itwo_staff
---   seed: IT3462 (it_admin) และ FANG (it_admin + ผู้อนุมัติขั้น IT) หาจาก employees.employee_no
+--   seed: IT3462 (it_admin) และ FANG (it_admin + ผู้อนุมัติขั้น IT) หาจาก employees.employee_no · ต้องใช้งานอยู่ (is_active) และไม่ถูกลบ
+--   การแก้ itwo_staff (app_itwo_set_staff) แก้แถวของ "ตัวเอง" ไม่ได้ทุกกรณี (แยกหน้าที่: กันยกตัวเองเป็นผู้อนุมัติขั้น IT / กันล็อกตัวเองออก)
+--     และต้องเหลือผู้ดูแลงาน IT กับผู้อนุมัติขั้น IT ที่ใช้งานอยู่ (ผูกบัญชีล็อกอินแล้ว) อย่างน้อยอย่างละ 1 คนเสมอ
 --
 -- กฎการอนุมัติ (ตรวจฝั่งฐานข้อมูลทั้งหมด)
 --   - ผู้แจ้งเป็นผู้จัดการ/ผู้ช่วยผู้จัดการแผนกตัวเอง -> ข้ามขั้นแผนก: บันทึก dept_approved ในชื่อผู้แจ้งอัตโนมัติ แล้วรอขั้น IT
@@ -51,8 +57,21 @@
 --   (เพิ่มแถว persona 3 แถวใน employees แบบ migration โหมดทดสอบรุ่นก่อน ๆ เท่านั้น)
 --
 -- ลำดับ deploy: migration นี้ไม่กระทบโมดูลอื่น (ตารางและ RPC ใหม่ล้วน) ยังไม่มีหน้าเว็บเรียก apply ก่อนหรือหลัง merge ได้
---   ก่อน apply ที่ production: ต้องมีพนักงาน IT3462 และ FANG (ไม่เช่นนั้น migration ล้มโดยตั้งใจ) · เทียบ md5(pg_get_functiondef) ของ
---   private.sandbox_unguarded_tables กับนิยามใน 20261121010000 · หลัง apply ตรวจ relrowsecurity ของตาราง itwo_* และ grant ของ RPC (anon เรียกไม่ได้)
+--   ก่อน apply ที่ production: ต้องมีพนักงาน IT3462 และ FANG ที่ใช้งานอยู่ (ไม่เช่นนั้น migration ล้มโดยตั้งใจ) · เทียบ private.sandbox_unguarded_tables ก่อน apply
+--   กับนิยามใน 20261121010000 (ที่ prod ต้องเป็นฉบับนี้ ไม่ใช่ฉบับที่ใครแก้ตรงในฐานข้อมูล):
+--     md5(array_to_string(private.sandbox_unguarded_tables(), ','))               = 7190e1f82a7b097fa23ea02bf4e3f866 (49 ชื่อ)
+--     md5(pg_get_functiondef('private.sandbox_unguarded_tables()'::regprocedure)) = bce55ad8b54c42aebd956f800ffd7a6e (ขึ้นบรรทัดแบบ LF)
+--       (ค่าที่สองคำนวณบน Postgres ของ PGlite จากนิยามใน 20261121010000 ตัวอักษรต่อตัวอักษร ถ้า prod ต่างเพราะรูปแบบ pg_get_functiondef ให้ยึดค่าแรก ซึ่งไม่ขึ้นกับรูปแบบ)
+--   ฉบับที่ replace ในไฟล์นี้ = ฉบับเดิมทุกชื่อ + itwo_work_orders, itwo_events, itwo_access_changes, itwo_doc_counters, itwo_admin_log ท้ายรายการ
+--   หลัง apply ตรวจ relrowsecurity ของตาราง itwo_* และ grant ของ RPC (anon เรียกไม่ได้) และ service_role ไม่มีสิทธิ์ตรงบนตาราง/sequence itwo_*
+--
+-- ฐานข้อมูลที่ถือว่า "จริง" (ตอนรัน seed ข้อ 6) = มีพนักงานจริง (not is_test) ที่ auth_user_id ไม่ว่างอย่างน้อย 1 คน
+--   เหตุผล: production ต้องมีคนล็อกอินแล้วเสมอ ส่วน CI/local ที่เพิ่งรัน migration ครบมีแค่แถว pilot (MNP0101/0102/0201 จาก 20260917011719_github_pages_test_pilot.sql
+--   ซึ่งเป็น not is_test แต่ไม่มี auth_user_id) การนับ "มีพนักงานจริงไหม" เฉยๆ จะจับแถว pilot แล้วทำให้ CI ล้มเพราะหา IT3462/FANG ไม่เจอ
+--   (ไม่ใช้ is_master เป็นตัวตัดสิน เพราะผูกกับบัญชีเดียว THTWGOT ถ้าบัญชีนั้นถูกเปลี่ยนจะเผลอข้ามการตรวจบน production)
+--
+-- id ของ itwo_events / itwo_admin_log เป็น identity ตัวเดียวร่วมกันทั้งข้อมูลจริงและข้อมูลทดสอบ: หลัง app_sandbox_purge_itwo id ของข้อมูลจริงจะ "เว้นช่อง"
+--   ซึ่งไม่ใช่การลบประวัติจริง (ลบได้เฉพาะแถว is_test) ผู้ตรวจ ISO ให้ใช้ created_at + เลขที่เอกสารอ้างอิงลำดับ ไม่ใช้ id
 --
 -- Rollback (ตารางใหม่ ยังไม่มีข้อมูลจริง): drop function app_itwo_*, app_sandbox_purge_itwo, private.itwo_*;
 --   drop table itwo_admin_log, itwo_events, itwo_access_changes, itwo_work_orders, itwo_doc_counters, itwo_staff (ลูกก่อนแม่);
@@ -175,11 +194,25 @@ create index itwo_staff_updated_by_idx on public.itwo_staff (updated_by) where u
 do $$
 declare
   v_table text;
+  v_sequence text;
 begin
   foreach v_table in array array[
     'itwo_staff', 'itwo_doc_counters', 'itwo_work_orders', 'itwo_access_changes', 'itwo_events', 'itwo_admin_log'
   ] loop
-    execute format('revoke all on public.%I from public, anon, authenticated', v_table);
+    -- ถอน service_role ด้วย: Supabase ให้สิทธิ์ตารางใหม่แก่ service_role อัตโนมัติ (default privileges) ซึ่งเลี่ยง RLS ได้
+    -- ตารางบันทึก ISO จึงไม่ควรเปิดให้ secret key เขียนตรงโดยไม่ผ่าน RPC (RPC เป็น SECURITY DEFINER เจ้าของ postgres ไม่กระทบ)
+    execute format('revoke all on public.%I from public, anon, authenticated, service_role', v_table);
+    -- identity sequence (id ของ itwo_events / itwo_admin_log) ก็ได้สิทธิ์ตาม default privileges เช่นกัน
+    -- หา sequence ที่ผูกกับตารางจาก pg_depend (ตารางที่ไม่มี identity จะไม่มีแถว)
+    for v_sequence in
+      select format('%I.%I', n.nspname, s.relname)
+      from pg_catalog.pg_class s
+      join pg_catalog.pg_namespace n on n.oid = s.relnamespace
+      join pg_catalog.pg_depend d on d.objid = s.oid and d.deptype in ('a', 'i')
+      where s.relkind = 'S' and d.refobjid = ('public.' || v_table)::regclass
+    loop
+      execute format('revoke all on sequence %s from public, anon, authenticated, service_role', v_sequence);
+    end loop;
     execute format('alter table public.%I enable row level security', v_table);
     execute format('create policy %I on public.%I for all to authenticated using (false) with check (false)',
                    v_table || '_no_direct_access', v_table);
@@ -337,32 +370,44 @@ where e.is_test and e.employee_no in ('SBX-IT-ADMIN', 'SBX-IT-APPROVER');
 
 -- 6. สิทธิ์ IT ของจริง (seed) ---------------------------------------------------------
 -- IT3462 = it_admin · FANG = it_admin + ผู้อนุมัติขั้น IT · หาจาก employee_no
--- ถ้าฐานข้อมูลมีพนักงานจริงอยู่แล้ว (production) แต่หาสองบัญชีนี้ไม่เจอ ให้ migration ล้มชัดเจน (ไม่ปล่อยให้ไม่มีใครอนุมัติ/รับงานได้)
--- ฐานข้อมูล local/CI ที่ยังไม่มีพนักงานจริงเลยจะข้ามขั้นนี้ (แบบเดียวกับบัญชี THTWGOT ใน 20261113010000)
+-- ถ้าเป็นฐานข้อมูลจริง (production) แต่หาสองบัญชีนี้ไม่เจอ หรือบัญชีถูกปิดใช้งาน ให้ migration ล้มชัดเจน (ไม่ปล่อยให้ไม่มีใครอนุมัติ/รับงานได้)
+-- "ฐานข้อมูลจริง" = มีพนักงานจริง (not is_test) ที่ผูกบัญชีล็อกอินแล้ว (auth_user_id ไม่ว่าง) อย่างน้อย 1 คน
+--   ไม่ใช้ "มีพนักงานจริงไหม" เฉยๆ เพราะ CI/local มีแถว pilot (MNP0101/0102/0201) ที่ not is_test แต่ไม่มี auth_user_id ซึ่งจะทำให้ CI ล้ม
+--   ฐานข้อมูล CI/local ที่มีแค่แถว pilot จึงข้ามขั้นนี้ (แบบเดียวกับบัญชี THTWGOT ใน 20261113010000)
 do $$
 declare
-  v_it_admin uuid;
-  v_fang uuid;
+  v_it_admin public.employees%rowtype;
+  v_fang public.employees%rowtype;
+  v_is_live_database boolean;
 begin
-  select e.id into v_it_admin from public.employees e
+  select exists (select 1 from public.employees e where not e.is_test and e.auth_user_id is not null)
+    into v_is_live_database;
+
+  select * into v_it_admin from public.employees e
   where e.employee_no = 'IT3462' and not e.is_test and e.deleted_at is null;
-  select e.id into v_fang from public.employees e
+  select * into v_fang from public.employees e
   where e.employee_no = 'FANG' and not e.is_test and e.deleted_at is null;
 
-  if exists (select 1 from public.employees where not is_test) then
-    if v_it_admin is null then
-      raise exception 'ไม่พบพนักงานรหัส IT3462 สำหรับตั้งเป็นผู้ดูแลงาน IT (itwo_staff)';
+  if v_is_live_database then
+    if v_it_admin.id is null then
+      raise exception 'ไม่พบพนักงานรหัส IT3462 สำหรับตั้งเป็นผู้ดูแลงาน IT (itwo_staff) (ฐานข้อมูลนี้มีพนักงานที่ผูกบัญชีล็อกอินแล้ว จึงถือเป็นฐานข้อมูลจริง)';
     end if;
-    if v_fang is null then
-      raise exception 'ไม่พบพนักงานรหัส FANG สำหรับตั้งเป็นผู้อนุมัติขั้น IT (itwo_staff)';
+    if v_fang.id is null then
+      raise exception 'ไม่พบพนักงานรหัส FANG สำหรับตั้งเป็นผู้อนุมัติขั้น IT (itwo_staff) (ฐานข้อมูลนี้มีพนักงานที่ผูกบัญชีล็อกอินแล้ว จึงถือเป็นฐานข้อมูลจริง)';
+    end if;
+    if not v_it_admin.is_active then
+      raise exception 'พนักงานรหัส IT3462 ถูกปิดการใช้งาน ตั้งเป็นผู้ดูแลงาน IT ไม่ได้ กรุณาเปิดใช้งานก่อน';
+    end if;
+    if not v_fang.is_active then
+      raise exception 'พนักงานรหัส FANG ถูกปิดการใช้งาน ตั้งเป็นผู้อนุมัติขั้น IT ไม่ได้ กรุณาเปิดใช้งานก่อน';
     end if;
   end if;
 
-  if v_it_admin is not null then
-    insert into public.itwo_staff (employee_id, is_it_admin, is_it_approver) values (v_it_admin, true, false);
+  if v_it_admin.id is not null then
+    insert into public.itwo_staff (employee_id, is_it_admin, is_it_approver) values (v_it_admin.id, true, false);
   end if;
-  if v_fang is not null then
-    insert into public.itwo_staff (employee_id, is_it_admin, is_it_approver) values (v_fang, true, true);
+  if v_fang.id is not null then
+    insert into public.itwo_staff (employee_id, is_it_admin, is_it_approver) values (v_fang.id, true, true);
   end if;
 end;
 $$;
@@ -398,28 +443,11 @@ end;
 $$;
 revoke all on function private.itwo_actor() from public, anon, authenticated;
 
-create or replace function private.itwo_actor_role_code(p_actor public.employees)
-returns text
-language sql
-stable
-security definer
-set search_path = ''
-as $$
-  select r.code from public.roles r where r.id = p_actor.role_id
-$$;
-revoke all on function private.itwo_actor_role_code(public.employees) from public, anon, authenticated;
-
-create or replace function private.itwo_is_dept_role(p_role_code text)
-returns boolean
-language sql
-immutable
-set search_path = ''
-as $$
-  select p_role_code in ('department_manager', 'assistant_department_manager')
-$$;
-revoke all on function private.itwo_is_dept_role(text) from public, anon, authenticated;
-
--- ผู้อนุมัติขั้นแผนกของแผนกหนึ่งในโหมดหนึ่ง (ของจริง: active ไม่ถูกลบ ไม่ใช่ persona · โหมดทดสอบ: persona ของแผนกนั้น)
+-- ผู้อนุมัติขั้นแผนกของแผนกหนึ่งในโหมดหนึ่ง
+--   ของจริง: active + ผูกบัญชีล็อกอินแล้ว (auth_user_id ไม่ว่าง) + ไม่ถูกลบ + ไม่ใช่ persona + ไม่ใช่บัญชี lab-only
+--     (แถวที่ล็อกอินไม่ได้ เช่น แถว pilot หรือบัญชีที่ยังไม่ผูก ไม่ควรถูกนับว่า "แผนกมีผู้จัดการ" เพราะจะไม่มีใครกดอนุมัติได้จริง ใบจะค้าง)
+--   โหมดทดสอบ: persona ของแผนกนั้น (persona ล็อกอินไม่ได้ตามดีไซน์ จึงไม่ต้องมี auth_user_id)
+-- ดู role_id เท่านั้น "ไม่ใช้ acting_role_id" และไม่นับ factory_manager / general_manager (เหตุผลดูหัวไฟล์: แยกหน้าที่ ISO)
 create or replace function private.itwo_dept_approvers(p_department_id uuid, p_is_test boolean)
 returns setof uuid
 language sql
@@ -434,9 +462,26 @@ as $$
     and r.code in ('department_manager', 'assistant_department_manager')
     and e.deleted_at is null
     and e.is_test = p_is_test
-    and (p_is_test or e.is_active)
+    and (
+      p_is_test
+      or (e.is_active
+          and e.auth_user_id is not null
+          and upper(e.employee_no) <> all (private.lab_only_employee_nos()))
+    )
 $$;
 revoke all on function private.itwo_dept_approvers(uuid, boolean) from public, anon, authenticated;
+
+-- ผู้ทำรายการเป็นผู้อนุมัติขั้นแผนกของแผนก p_department_id หรือไม่ (ใช้รายการเดียวกับ private.itwo_dept_approvers จึงตัดสินตรงกันทุกที่)
+create or replace function private.itwo_is_dept_approver(p_employee_id uuid, p_department_id uuid, p_is_test boolean)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (select 1 from private.itwo_dept_approvers(p_department_id, p_is_test) a(id) where a.id = p_employee_id)
+$$;
+revoke all on function private.itwo_is_dept_approver(uuid, uuid, boolean) from public, anon, authenticated;
 
 create or replace function private.itwo_is_it_admin(p_employee_id uuid)
 returns boolean
@@ -472,6 +517,7 @@ $$;
 revoke all on function private.itwo_is_staff(uuid) from public, anon, authenticated;
 
 -- มีผู้อนุมัติขั้น IT ที่ใช้งานอยู่ในโหมดนี้หรือไม่ (กันใบค้างเพราะไม่มีใครอนุมัติได้)
+-- ของจริงนับเฉพาะคนที่ active + ผูกบัญชีล็อกอินแล้ว + ไม่ใช่บัญชี lab-only (เงื่อนไขเดียวกับผู้อนุมัติขั้นแผนก)
 create or replace function private.itwo_has_active_it_approver(p_is_test boolean)
 returns boolean
 language sql
@@ -483,7 +529,13 @@ as $$
     select 1
     from public.itwo_staff s
     join public.employees e on e.id = s.employee_id
-    where s.is_it_approver and e.is_test = p_is_test and e.deleted_at is null and (p_is_test or e.is_active)
+    where s.is_it_approver and e.is_test = p_is_test and e.deleted_at is null
+      and (
+        p_is_test
+        or (e.is_active
+            and e.auth_user_id is not null
+            and upper(e.employee_no) <> all (private.lab_only_employee_nos()))
+      )
   )
 $$;
 revoke all on function private.itwo_has_active_it_approver(boolean) from public, anon, authenticated;
@@ -710,11 +762,9 @@ set search_path = ''
 as $$
 declare
   v_actor public.employees%rowtype;
-  v_role_code text;
 begin
   perform private.lab_only_block();
   v_actor := private.itwo_actor();
-  v_role_code := private.itwo_actor_role_code(v_actor);
   return jsonb_build_object(
     'employee_id', v_actor.id,
     'employee_no', v_actor.employee_no,
@@ -723,7 +773,7 @@ begin
     'department', (select jsonb_build_object('id', d.id, 'code', d.code, 'name_th', d.name_th)
                    from public.departments d where d.id = v_actor.department_id),
     'is_it_department', private.itwo_is_it_department(v_actor.department_id),
-    'is_dept_approver', private.itwo_is_dept_role(v_role_code),
+    'is_dept_approver', private.itwo_is_dept_approver(v_actor.id, v_actor.department_id, v_actor.is_test),
     'is_it_admin', private.itwo_is_it_admin(v_actor.id),
     'is_it_approver', private.itwo_is_it_approver(v_actor.id)
   );
@@ -748,7 +798,6 @@ set search_path = ''
 as $$
 declare
   v_actor public.employees%rowtype;
-  v_role_code text;
   v_dept public.departments%rowtype;
   v_details text := private.itwo_clean(p_details);
   v_order_ref text := private.itwo_clean(p_order_ref);
@@ -809,10 +858,9 @@ begin
   end if;
 
   -- เลือกเส้นทางอนุมัติ
-  v_role_code := private.itwo_actor_role_code(v_actor);
   v_is_it_approver := private.itwo_is_it_approver(v_actor.id);
   v_dept_is_it := private.itwo_is_it_department(v_dept.id);
-  v_actor_is_dept_role := private.itwo_is_dept_role(v_role_code);
+  v_actor_is_dept_role := private.itwo_is_dept_approver(v_actor.id, v_dept.id, v_actor.is_test);
   v_has_dept_approvers := exists (
     select 1 from private.itwo_dept_approvers(v_dept.id, v_actor.is_test) a(id) where a.id <> v_actor.id);
 
@@ -1613,7 +1661,11 @@ end;
 $$;
 
 -- ตั้งสิทธิ์ IT ของพนักงานหนึ่งคน (ทั้งสองเป็น false = ถอนสิทธิ์) · บันทึกลง itwo_admin_log ที่ลบไม่ได้
--- กฎกันล็อกตัวเอง: ต้องเหลือผู้ดูแลงาน IT และผู้อนุมัติขั้น IT ที่ใช้งานอยู่อย่างน้อยอย่างละ 1 คน
+-- กฎ (ISO แยกหน้าที่):
+--   1) แก้แถว itwo_staff ของ "ตัวเอง" ไม่ได้ทุกกรณี (ทั้งเพิ่ม เปลี่ยน และถอน) กันผู้ดูแลงาน IT ยกตัวเองเป็นผู้อนุมัติขั้น IT
+--      (อนุมัติใบที่ตัวเองรับทำเอง) และกันล็อกตัวเองออก · ต้องให้ผู้ดูแลงาน IT คนอื่นเป็นผู้ตั้งให้
+--   2) ต้องเหลือผู้ดูแลงาน IT และผู้อนุมัติขั้น IT ที่ใช้งานอยู่ (ผูกบัญชีล็อกอินแล้ว ไม่ใช่ lab-only) อย่างน้อยอย่างละ 1 คน
+--      (ข้อ 1 ทำให้ผู้ตั้งซึ่งเป็น admin ที่ใช้งานอยู่ยังอยู่เสมอ ข้อ 2 จึงเป็นด่านซ้อน และกันกรณีผู้อนุมัติคนสุดท้ายถูกถอน)
 create or replace function public.app_itwo_set_staff(p_employee_no text, p_is_it_admin boolean, p_is_it_approver boolean)
 returns void
 language plpgsql
@@ -1643,6 +1695,10 @@ begin
   where e.employee_no = upper(btrim(coalesce(p_employee_no, ''))) and not e.is_test and e.deleted_at is null;
   if v_target.id is null then
     raise exception 'ไม่พบรหัสพนักงานนี้' using errcode = 'check_violation';
+  end if;
+  -- ห้ามแก้สิทธิ์ของตัวเอง (ตรวจก่อนทุกอย่าง รวมกรณีไม่มีอะไรเปลี่ยน เพื่อให้ผลเหมือนกันเสมอ)
+  if v_target.id = v_actor.id then
+    raise exception 'ไม่สามารถแก้สิทธิ์ทีม IT ของตัวเองได้ กรุณาให้ผู้ดูแลงาน IT คนอื่นเป็นผู้ตั้งให้' using errcode = 'insufficient_privilege';
   end if;
   if (v_admin or v_approver) and not v_target.is_active then
     raise exception 'พนักงานคนนี้ถูกปิดการใช้งาน ตั้งสิทธิ์ทีม IT ไม่ได้' using errcode = 'check_violation';
@@ -1675,7 +1731,8 @@ begin
 
   if not exists (
     select 1 from public.itwo_staff s join public.employees e on e.id = s.employee_id
-    where s.is_it_admin and e.is_active and e.deleted_at is null and not e.is_test) then
+    where s.is_it_admin and e.is_active and e.auth_user_id is not null and e.deleted_at is null and not e.is_test
+      and upper(e.employee_no) <> all (private.lab_only_employee_nos())) then
     raise exception 'ต้องเหลือผู้ดูแลงาน IT ที่ใช้งานอยู่อย่างน้อย 1 คน' using errcode = 'check_violation';
   end if;
   if not private.itwo_has_active_it_approver(false) then
@@ -1715,6 +1772,12 @@ begin
   if v_persona.id is null then
     raise exception 'SANDBOX_NOT_ACTIVE';
   end if;
+
+  -- ล็อกตารางเขียนของโมดูลทั้งหมดไว้จนจบ transaction (ยังอ่านได้) กันคนอื่นแจ้ง/อนุมัติใบทดสอบพร้อมกันระหว่างล้าง
+  -- จนเหลือแถวลูกกำพร้า หรือได้เลข TEST- ที่ชนกับตัวนับที่กำลังถูกลบ · ถ้าสั่งพร้อมกัน ฝั่งที่มาทีหลังจะรอแล้วทำงานหลังล้างเสร็จ
+  -- ลำดับล็อกเรียงตามลำดับที่ RPC อื่นแตะ (ตัวนับ -> ใบ -> ส่วนสิทธิ์ -> ประวัติ -> admin_log) กัน deadlock
+  lock table public.itwo_doc_counters, public.itwo_work_orders, public.itwo_access_changes,
+             public.itwo_events, public.itwo_admin_log in exclusive mode;
 
   -- ตรวจสิทธิ์ครบแล้วและลบเฉพาะ is_test: พักค่า claims ไว้แล้วเคลียร์ (transaction-local) ให้ trigger โหมดทดสอบไม่ต้องหา persona ทุกแถว
   -- ตั้ง itwo.purge = on (transaction-local) ให้ trigger ประวัติยอมให้ลบแถวทดสอบเท่านั้น
