@@ -691,9 +691,18 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
   const BOM_JOB_SHAPE = ["dept", "itemCode", "name", "kind", "uom", "qtyPlanned", "qtyRequired", "stockCounted", "dueAt", "fgCodes"];
   const bomJobExt = (ref) => (ref ? bomCanon(bomWithout(ref, ["linkedAt", "by", "auto"])) : "null");
   const bomJobShapeChanged = (prev, record) => BOM_JOB_SHAPE.some((key) => bomCanon(prev[key] ?? null) !== bomCanon(record[key] ?? null)) || bomJobExt(prev.externalRef) !== bomJobExt(record.externalRef);
+  // แก้บรรทัด / หมายเหตุของ BOM ในฉบับเดิม (ตรงกับ private.bom_save_boms ของ 20261129010000): ฉบับเดิมและที่ส่งมา approved และเป็น revision สูงสุดของชิ้น ·
+  // ผู้อนุมัติฉบับนั้นคือผู้บันทึก · อนุมัติวันเดียวกัน (Asia/Bangkok = UTC+7 ไม่มีเวลาออมแสง) · ไม่มีใบที่ไม่ใช่ร่าง (รวม cancelled) ที่ explosion อ้าง id ของฉบับนี้
+  // ผู้เรียกตรวจเพิ่มว่า changeLog ต่อท้ายอย่างน้อยหนึ่งรายการ
+  const bomBangkokDay = (ms) => Math.floor((Number(ms) + 7 * 3600000) / 86400000);
+  const bomEditInPlace = (next, old, record, actor, at) => old.status === "approved" && record.status === "approved" && old.approvedBy === actor.name
+    && bomBangkokDay(old.approvedAt) === bomBangkokDay(at)
+    && !next.boms.some((row) => row.itemCode === old.itemCode && Number(row.revision) > Number(old.revision))
+    && !next.orders.some((order) => order.status !== "draft" && Array.isArray(order.explosion) && order.explosion.some((line) => line?.bomId === old.id));
   // กฎของงาน (ตรงกับ bom_save_jobs): งานใหม่เกิดตอนปล่อยผลิตเท่านั้น (queued ว่าง) · แก้งานได้เฉพาะใบที่ released / in_progress ·
-  // รายงานต่อท้ายเท่านั้น (ทุกบทบาท) · พนักงานแผนก: งาน done แล้วแก้ไม่ได้ ยอดเพิ่มได้อย่างเดียวและเท่าผลรวมรายงานใหม่ · ผูก WO ได้เฉพาะงานแผนก RB
-  function bomJobRules(prev, record, actor, next, released, action = "") {
+  // รายงานต่อท้ายเท่านั้น (ทุกบทบาท) · ยอดดี / เสียที่เปลี่ยนเท่าผลรวมรายงานใหม่ทุกผู้เรียก · พนักงานแผนก: งาน done แล้วแก้ไม่ได้ ยอดลดไม่ได้ · ผูก WO ได้เฉพาะงานแผนก RB
+  // rfCancel =คิว WO ที่ต้องยกเลิก / หยุดหลังบันทึกสำเร็จ (bomRfFollow): ฝ่ายวางแผนปิดงานที่ผูก WO ใส่ op "closeJob" (ตรงกับ private.bom_cancel_rf_job ของ 20261129010000)
+  function bomJobRules(prev, record, actor, next, released, action = "", rfCancel = null) {
     if (!JOB_STATUSES.includes(record.status) || !JOB_DEPTS.includes(record.dept)) fail("BOM_INVALID_JOB");
     const order = next.orders.find((row) => row.id === record.orderId);
     const reports = Array.isArray(record.reports) ? record.reports : [];
@@ -737,15 +746,19 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
         if (bomFgRound(made - before + contrib) + 1e-9 < bomFgRound(received)) fail("BOM_INVALID_JOB");
       }
     }
-    if (!bomIsPlanner(actor)) {
-      const workChanged = ["status", "qtyDone", "qtyReject", "reports"].some((key) => bomCanon(prev[key] ?? null) !== bomCanon(record[key] ?? null));
-      if (workChanged) {
+    const workChanged = ["status", "qtyDone", "qtyReject", "reports"].some((key) => bomCanon(prev[key] ?? null) !== bomCanon(record[key] ?? null));
+    if (workChanged) {
+      // พนักงานแผนก: งาน done แก้ไม่ได้ ยอดลดไม่ได้
+      if (!bomIsPlanner(actor)) {
         if (prev.status === "done") fail("BOM_INVALID_TRANSITION");
-        const sum = (key) => reports.slice(oldReports.length).reduce((total, entry) => total + (Number(entry?.[key]) || 0), 0);
         if (Number(record.qtyDone) < Number(prev.qtyDone) || Number(record.qtyReject) < Number(prev.qtyReject)) fail("BOM_INVALID_JOB");
-        if (Math.abs((Number(record.qtyDone) - Number(prev.qtyDone)) - sum("good")) > 0.001 || Math.abs((Number(record.qtyReject) - Number(prev.qtyReject)) - sum("reject")) > 0.001) fail("BOM_INVALID_JOB");
       }
+      // ทุกผู้เรียกรวมกลุ่มวางแผน (20261129010000): ยอดที่เปลี่ยนต้องเท่าผลรวมของรายการรายงานใหม่ในคำสั่งเดียวกัน (ยอดจึงลดไม่ได้)
+      const sum = (key) => reports.slice(oldReports.length).reduce((total, entry) => total + (Number(entry?.[key]) || 0), 0);
+      if (Math.abs(((Number(record.qtyDone) || 0) - (Number(prev.qtyDone) || 0)) - sum("good")) > 0.001 || Math.abs(((Number(record.qtyReject) || 0) - (Number(prev.qtyReject) || 0)) - sum("reject")) > 0.001) fail("BOM_INVALID_JOB");
     }
+    // ฝ่ายวางแผนปิดงานที่ผูก WO พร้อมเหตุผล: WO planned / released ยกเลิก · in_progress / on_hold หยุด · completed / cancelled คงเดิม (bomRfCancelOp กรองสถานะเอง)
+    if (closing && rfCancel && (record.externalRef?.woId ?? prev.externalRef?.woId)) rfCancel.push(bomRfCancelOp("closeJob", [{ ...prev, externalRef: record.externalRef ?? prev.externalRef }]));
   }
   // ---- สต็อกของซื้อ (ตรงกับ private.bom_save_stock / bom_issue_parts) ----
   const bomCode = (value) => String(value ?? "").trim().replace(/\s+/g, " ").toUpperCase();
@@ -1193,7 +1206,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
         if (list === "compounds" && record.recipeId !== undefined && record.recipeId !== null && !rfLoad().recipes.some((row) => row.id === record.recipeId)) fail("BOM_INVALID_COMPOUND");
         const releasedBefore = released.length;
         if (list === "orders") bomOrderTransition(prev, record, { jobRows: changes.jobs?.upsert ?? [], jobsOf, dropJobs, released, rfCancel: rfOps.cancel, returnFgStock: (orderId) => { meta.fgStockMoves = (meta.fgStockMoves ?? 0) + bomReturnFgStock(next, orderId, nextVersion, actor, at); } });
-        if (list === "jobs") bomJobRules(prev, record, actor, next, released, action);
+        if (list === "jobs") bomJobRules(prev, record, actor, next, released, action, rfOps.cancel);
         if (index === -1) {
           if (list === "colorSets" || list === "packages" || list === "jobs") {
             // ผู้อื่นลบหลัง base = ชน · สร้างกุญแจเดิมใหม่ = ลบหลุมฝังศพ
@@ -1212,10 +1225,14 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
           if (list === "boms" || list === "routings") {
             const old = next[list][index];
             const owned = { status: 0, supersededAt: 0, createdAt: 0, createdBy: 0, approvedAt: 0, approvedBy: 0, ...(list === "boms" ? { ownerDept: 0, changeLog: 0 } : {}) }; // ฟิลด์ที่ฐานข้อมูลเป็นเจ้าของหรือเปลี่ยนได้ ไม่นับเป็นการแก้เนื้อหา
-            const same = bomCanon({ ...old, ...owned }) === bomCanon({ ...record, ...owned });
+            // บรรทัด / หมายเหตุของ BOM แก้ในฉบับเดิมได้ตามกติกาของ bomEditInPlace (20261129010000) จึงแยกตรวจข้างล่าง
+            const content = list === "boms" ? { lines: 0, note: 0 } : {};
+            const same = bomCanon({ ...old, ...owned, ...content }) === bomCanon({ ...record, ...owned, ...content });
             const logOf = (row) => (Array.isArray(row.changeLog) ? row.changeLog : []);
             const logKept = list !== "boms" || (logOf(record).length >= logOf(old).length && logOf(old).every((item, position) => bomCanon(item) === bomCanon(logOf(record)[position])));
             if (!same || !logKept || (old.status !== record.status && !(old.status === "approved" && record.status === "superseded"))) fail("BOM_REVISION_IMMUTABLE");
+            const contentChanged = list === "boms" && (bomCanon(old.lines ?? null) !== bomCanon(record.lines ?? null) || String(old.note ?? "") !== String(record.note ?? ""));
+            if (contentChanged && !(bomEditInPlace(next, old, record, actor, at) && logOf(record).length > logOf(old).length)) fail("BOM_REVISION_IMMUTABLE");
           }
           next[list][index] = bomStamp(list, record, next[list][index], actor, at);
         }
@@ -1381,8 +1398,17 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     if (Array.isArray(out.stages)) out.stages = out.stages.slice().sort((a, b) => Number(a?.stage) - Number(b?.stage));
     if (out.productCode === undefined || out.productCode === null) out.productCode = "";
     else if (typeof out.productCode === "string") out.productCode = out.productCode.trim();
+    // สเปกการฉีด (20261129010000): null / {} = ไม่มีสเปก ไม่เก็บช่องนี้ (ตรงกับ private.rf_parse_extrusion_spec ที่คืน null และ rf_records ที่ไม่ส่งช่องว่าง)
+    if (out.extrusionSpec === null || (out.extrusionSpec && typeof out.extrusionSpec === "object" && !Array.isArray(out.extrusionSpec) && !Object.keys(out.extrusionSpec).length)) delete out.extrusionSpec;
     return out;
   };
+  // รูปของสเปกการฉีด: object ที่มีเฉพาะ thickness / width / weightPerM แต่ละตัว { target > 0, tol >= 0 } ไม่เกิน 1,000,000 ไม่มีช่องอื่น (ผิด = RF_INVALID_RECIPE)
+  const RF_EXTRUSION_KEYS = ["thickness", "width", "weightPerM"];
+  const rfPlain = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  const rfExtrusionSpecValid = (spec) => rfPlain(spec) && Object.entries(spec).every(([key, row]) => RF_EXTRUSION_KEYS.includes(key) && rfPlain(row)
+    && Object.keys(row).every((name) => name === "target" || name === "tol")
+    && typeof row.target === "number" && Number.isFinite(row.target) && row.target > 0 && row.target <= 1e6
+    && typeof row.tol === "number" && Number.isFinite(row.tol) && row.tol >= 0 && row.tol <= 1e6);
   const rfStagesValid = (stages) => Array.isArray(stages) && stages.length === 2
     && stages.every((row, index) => row && typeof row === "object" && row.stage === index + 1
       && [row.mixerTemp, row.dumpTemp].every((value) => typeof value === "number" && value >= 0 && value <= 1000)
@@ -1674,7 +1700,9 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
             if (rework < 0 || pct > R.SPECS.extrusion.reworkMaxPct) fail(bad);
             const keys = ["thickness", "width", "weightPerM"];
             keys.forEach((key) => num(params[key]));
-            for (const key of keys) if (!R.inSpec(params[key], R.SPECS.extrusion[key])) reasons.push(`${R.SPECS.extrusion[key].label} ${params[key]} ${R.SPECS.extrusion[key].unit} นอกสเปก`);
+            // สเปกมิติของสูตร (revision ที่ WO ผูก) กักเฉพาะค่าที่สูตรกำหนด · สูตรไม่มีสเปก = ไม่กักตามมิติ (ตรงกับ rf_save_lots ของ 20261129010000)
+            const spec = next.recipes.find((row) => row.id === order.recipeId && row.revision === order.recipeRevision)?.extrusionSpec ?? {};
+            for (const key of keys) if (spec[key] && !R.inSpec(params[key], { target: spec[key].target, tol: spec[key].tol })) reasons.push(`${R.SPECS.extrusion[key].label} ${params[key]} ${R.SPECS.extrusion[key].unit} นอกสเปก`);
             out.params = { ...clone(params), reworkKg: rework, reworkPct: +pct.toFixed(2), useKg };
             const mi = next.molds.findIndex((row) => row.id === record.dieId);
             if (mi === -1) fail(bad);
@@ -1999,6 +2027,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
             if (material.active === false && !(before?.items ?? []).some((row) => row.materialCode === item.materialCode)) fail(bad);
           }
           if (!(Number(record.batchKg) > 0) || !(Number(record.yieldPerKg) > 0)) fail(bad);
+          if (record.extrusionSpec !== undefined && !rfExtrusionSpecValid(record.extrusionSpec)) fail(bad);
           if (!prev) {
             // ระเบียนใหม่เริ่มเป็นร่างเสมอ · revision ต้องเป็นล่าสุด + 1 (สูตรใหม่ = 1) มีผู้อื่นแก้สูตรนี้หลัง base = ถือสำเนาเก่า
             if (record.status !== "draft") fail("RF_INVALID_TRANSITION");
@@ -2222,7 +2251,10 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
         out.cancelled.push(wo.id);
         count += 1;
       }
-      if (count) audits.push({ action: `bom:${op.action}`, count });
+      // หนึ่งแถวต่อชนิดต่อคำสั่ง (ตรงกับ app_bom_save_master: ยกเลิกใบ / เปิดใบกลับ / ปิดงาน นับรวมต่อชนิด)
+      const same = audits.find((row) => row.action === `bom:${op.action}`);
+      if (count && same) same.count += count;
+      else if (count) audits.push({ action: `bom:${op.action}`, count });
     }
     const day = new Date(at);
     const key = `WO-${day.getFullYear()}${String(day.getMonth() + 1).padStart(2, "0")}${String(day.getDate()).padStart(2, "0")}`;

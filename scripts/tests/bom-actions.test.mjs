@@ -189,14 +189,20 @@ test("saveBomTree saves a whole multi-level tree in one call: new items, nested 
   assert.equal(again.summary, "ไม่มีการเปลี่ยนแปลง");
   assert.equal(again.changed, false);
   assert.equal(approved(d, "NEW-TP-02(P)-Y").revision, 1);
-  // ส่งชุดเดิมแต่สลับลำดับ = เป็นการแก้ (ฉบับใหม่ "เรียงลำดับส่วนประกอบใหม่") ลำดับที่ส่งมาคือลำดับที่เก็บ
-  const reordered = structuredClone(d);
-  const reorderedSave = A.saveBomTree(reordered, { code: "NEW-TP-02(P)-Y", nodes: [
+  // ส่งชุดเดิมแต่สลับลำดับ = เป็นการแก้ ("เรียงลำดับส่วนประกอบใหม่") ลำดับที่ส่งมาคือลำดับที่เก็บ
+  // คนเดิมวันเดียวกัน (U9 · 20261129010000) = แก้ในฉบับเดิม (Rev.1 ต่อท้ายประวัติ) · วันถัดไป = ฉบับใหม่ Rev.2
+  const reorderNodes = [
     { code: "PT-00320", qty: 0.3, children: [{ code: "P-PEL-BK", qty: 0.02 }] }, { code: "P-STK-01", qty: 1 }, { code: "RB-DM02-02-BK01-225-3-20", qty: 1 }, { code: "SE-NEW-01", qty: 2, children: [{ code: "RB-DM01-02-BK01-202-18-70", qty: 0.05 }] },
-  ] }, ctx("planner"));
-  assert.deepEqual(reorderedSave.saved, ["NEW-TP-02(P)-Y Rev.2"]);
+  ];
+  const reordered = structuredClone(d);
+  const reorderedSave = A.saveBomTree(reordered, { code: "NEW-TP-02(P)-Y", nodes: reorderNodes }, ctx("planner"));
+  assert.deepEqual(reorderedSave.saved, ["NEW-TP-02(P)-Y Rev.1"]);
   assert.deepEqual(approved(reordered, "NEW-TP-02(P)-Y").lines.map((line) => line.childCode), ["PT-00320", "P-STK-01", "RB-DM02-02-BK01-225-3-20", "SE-NEW-01"]);
-  assert.match(approved(reordered, "NEW-TP-02(P)-Y").changeLog[0].text, /เรียงลำดับส่วนประกอบใหม่/);
+  assert.equal(approved(reordered, "NEW-TP-02(P)-Y").changeLog.length, 2);
+  assert.match(approved(reordered, "NEW-TP-02(P)-Y").changeLog[1].text, /เรียงลำดับส่วนประกอบใหม่/);
+  const nextDay = structuredClone(d);
+  assert.deepEqual(A.saveBomTree(nextDay, { code: "NEW-TP-02(P)-Y", nodes: reorderNodes }, ctx("planner", NOW + DAY)).saved, ["NEW-TP-02(P)-Y Rev.2"]);
+  assert.match(approved(nextDay, "NEW-TP-02(P)-Y").changeLog[0].text, /เรียงลำดับส่วนประกอบใหม่/);
   const auditCount = d.audit.length;
   assert.ok(!d.audit.slice(0, 3).some((entry) => entry.action === "บันทึกต้นไม้ BOM" && entry.detail.includes("ไม่มีการเปลี่ยนแปลง")), "no audit row for a no-op save");
   // แก้แค่ข้อมูลการตัดของ RB (patch) โดย BOM ไม่เปลี่ยน: ผลลัพธ์บอกว่าแก้ชิ้น ไม่ใช่ "ไม่มีการเปลี่ยนแปลง"
@@ -1071,8 +1077,8 @@ test("the BOM tree can start from a WIP or a rod chosen in step 1, but not from 
   A.saveBomTree(d, { code: newRod, item: { name: "เส้นยางใหม่", uom: "rod", kind: "RB" }, nodes: [{ code: "DM07", qty: 0.25 }] }, ctx("planner"));
   assert.equal(A.helpers.itemOf(d, newRod).rubber.compound, "DM07");
   assert.equal(approved(d, newRod).lines[0].qty, 0.25);
-  const swapped = A.saveBomTree(d, { code: newRod, item: { name: "เส้นยางใหม่", uom: "rod", kind: "RB" }, nodes: [{ code: "DM08", qty: 0.25 }] }, ctx("planner"));
-  assert.deepEqual(swapped.saved, [`${newRod} Rev.2`], "an existing rod root can switch compound from the builder");
+  const swapped = A.saveBomTree(d, { code: newRod, item: { name: "เส้นยางใหม่", uom: "rod", kind: "RB" }, nodes: [{ code: "DM08", qty: 0.25 }] }, ctx("planner", NOW + DAY));
+  assert.deepEqual(swapped.saved, [`${newRod} Rev.2`], "an existing rod root can switch compound from the builder (a later day: a new revision)");
   assert.equal(A.helpers.itemOf(d, newRod).rubber.compound, "DM08", "the rod's compound field follows the new line");
   assert.equal(approved(d, newRod).lines[0].childCode, "DM08");
   rejects(() => A.saveBomTree(d, { code: "ZZ-PROTO", item: { name: "x", uom: "pcs", kind: "constructor" }, nodes: [{ code: "P-PEL-BK", qty: 1 }] }, ctx("planner")), /ชนิดชิ้นงานไม่ถูกต้อง/);
@@ -2282,7 +2288,9 @@ test("fg stock: two drafts compete — the display order is a guide, the order r
   assert.deepEqual(a.fgMoves.filter((move) => move.kind === "transfer").map((move) => [move.orderId, move.qty]), [["N-LATE", 5], [early.id, 15]]);
   // but when the stock shrinks after both were planned (WH delivers 50 of the 60 pieces: the 40 ordered and 10 of the surplus), the one released first wins and the other fails
   const b = clonedData(d);
-  A.deliverFg(b, { orderId: SRC, lines: [{ fgCode: HL, qty: 50 }] }, whCtx());
+  // ส่งเกินจำนวนที่สั่ง (N5): ต้องติ๊กยืนยันในฟอร์ม (overConfirm) ไม่งั้นไม่บันทึก
+  rejects(() => A.deliverFg(b, { orderId: SRC, lines: [{ fgCode: HL, qty: 50 }] }, whCtx()), /ส่งมอบเกินจำนวนที่สั่ง DEMO-HL-24\(B\)-A 10 ติ๊กยืนยัน/);
+  A.deliverFg(b, { orderId: SRC, lines: [{ fgCode: HL, qty: 50 }], overConfirm: true }, whCtx());
   assert.equal(rules.fgOnHand(b).find((row) => row.fgCode === HL).free, 10);
   A.releaseOrder(b, { orderId: late.id }, planner(NOW + 2000));
   rejects(() => A.releaseOrder(b, { orderId: early.id }, planner(NOW + 3000)), /ตัวเลขเปลี่ยนไปแล้ว.*ไม่พอที่ใบนี้ตั้งใช้ 15.*เหลือ 5/);
@@ -2332,7 +2340,7 @@ test("fg stock: an order whose products all come from stock is released and clos
   rejects(() => A.deliverFg(d, { orderId: SRC, lines: [{ fgCode: HL, qty: 49 }] }, whCtx()), /ส่งมอบได้อีกไม่เกิน 48 .*ให้ใบอื่นไปแล้ว 12/, "60 held − 12 given to the other order");
   A.deliverFg(d, { orderId: only.id, lines: [{ fgCode: HL, qty: 12 }] }, whCtx());
   assert.equal(rules.fgPosition(d, only).fullyDelivered, true);
-  A.deliverFg(d, { orderId: SRC, lines: [{ fgCode: HL, qty: 48 }] }, whCtx());
+  A.deliverFg(d, { orderId: SRC, lines: [{ fgCode: HL, qty: 48 }], overConfirm: true }, whCtx());
   assert.equal(hl(d, SRC).deliverable, 0);
   // a closed order can be neither cancelled nor edited
   rejects(() => A.cancelOrder(d, { orderId: only.id }, planner()), /เสร็จแล้วยกเลิกไม่ได้/);

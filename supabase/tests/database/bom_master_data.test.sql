@@ -307,12 +307,16 @@ select throws_ok($$ select public.app_bom_save_master('{"boms":{"upsert":[{"id":
   'BOM_INVALID_LINE', 'a step above 20 is rejected');
 select throws_ok($$ select public.app_bom_save_master('{"boms":{"upsert":[{"id":"BOM-Y6","itemCode":"FG-T1","revision":2,"status":"approved","lines":[]}]}}'::jsonb, 1, 'saveBom') $$,
   'BOM_INVALID_LINE', 'a BOM needs at least one line');
+-- แก้บรรทัด / หมายเหตุในฉบับเดิมได้เฉพาะผู้อนุมัติฉบับนั้นในวันเดียวกัน (20261129010000 · ฝั่งอนุญาตและเงื่อนไขอื่นอยู่ใน bom_group2_rules.test.sql)
+-- ที่นี่ผู้วางแผนอีกคน (ผู้จัดการแผนก RB) ส่ง จึงยังถูกปฏิเสธและไม่มีอะไรถูกเขียน
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_mgr')::uuid);
 select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('boms', jsonb_build_object('upsert', jsonb_build_array(
     jsonb_set(current_setting('test.old1')::jsonb, '{lines,0,qty}', '5')))), 1, 'saveBom') $$,
-  'BOM_REVISION_IMMUTABLE', 'the lines of an existing revision cannot change');
+  'BOM_REVISION_IMMUTABLE', 'the lines of an existing revision cannot be changed by another planner');
 select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('boms', jsonb_build_object('upsert', jsonb_build_array(
     jsonb_set(current_setting('test.old1')::jsonb, '{note}', '"แก้หมายเหตุ"')))), 1, 'saveBom') $$,
-  'BOM_REVISION_IMMUTABLE', 'the note of an existing revision cannot change');
+  'BOM_REVISION_IMMUTABLE', 'nor its note');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('boms', jsonb_build_object('upsert', jsonb_build_array(
     jsonb_set(current_setting('test.old1')::jsonb, '{revision}', '2')))), 1, 'saveBom') $$,
   'BOM_REVISION_IMMUTABLE', 'the revision number of an existing record cannot change');

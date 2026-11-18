@@ -32,11 +32,12 @@
   });
 
   // ช่วงกระบวนการที่ใช้ตัดสิน QC Hold อัตโนมัติ (target ± tol หรือ min/max)
+  // มิติการฉีดไม่มีค่ากลาง: target / tol มาจากสูตรยาง (recipe.extrusionSpec · extrusionSpecOf) ที่นี่เก็บเฉพาะชื่อ หน่วย และเพดานยางหมุนเวียน
   const SPECS = Object.freeze({
     extrusion: Object.freeze({
-      thickness: Object.freeze({ label: "ความหนา", unit: "mm", target: 2.5, tol: 0.12 }),
-      width: Object.freeze({ label: "ความกว้าง", unit: "mm", target: 18, tol: 0.25 }),
-      weightPerM: Object.freeze({ label: "น้ำหนักต่อเมตร", unit: "g/m", target: 160, tol: 6 }),
+      thickness: Object.freeze({ label: "ความหนา", unit: "mm" }),
+      width: Object.freeze({ label: "ความกว้าง", unit: "mm" }),
+      weightPerM: Object.freeze({ label: "น้ำหนักต่อเมตร", unit: "g/m" }),
       reworkMaxPct: 10,
     }),
     curing: Object.freeze({
@@ -78,8 +79,26 @@
     return { lsl: spec.min, usl: spec.max };
   }
 
-  // SPECS.extrusion เป็นสเปกเส้น Door Seal 18×2.5 (หัวดาย DIE-DS-*) · หัวดายอื่นไม่มีมาตรฐานในระบบ จึงไม่แสดงข้อความมาตรฐานหรือลงสีตามสเปกที่หน้าฟอร์ม (การกัก QC ของ action ยังใช้ค่าเดิม)
-  const hasExtrusionStandard = (dieId) => String(dieId ?? "").startsWith("DIE-DS-");
+  // สเปกมิติการฉีดของสูตร (20261129010000 · ตรงกับ private.rf_save_lots): recipe.extrusionSpec = { thickness?: {target, tol}, width?: ..., weightPerM?: ... }
+  // คืนเฉพาะค่าที่สูตรกำหนด พร้อมชื่อและหน่วย { key: { label, unit, target, tol } } · สูตรไม่มีสเปก = {} (ล็อตไม่ถูกกักตามมิติ ไม่มีมาตรฐานให้แสดง ไม่เข้ากราฟ SPC)
+  const EXTRUSION_KEYS = Object.freeze(["thickness", "width", "weightPerM"]);
+  function extrusionSpecOf(recipe) {
+    const raw = recipe?.extrusionSpec;
+    const out = {};
+    if (!raw || typeof raw !== "object") return out;
+    for (const key of EXTRUSION_KEYS) {
+      const row = raw[key];
+      const target = Number(row?.target);
+      const tol = Number(row?.tol);
+      if (row && typeof row === "object" && Number.isFinite(target) && target > 0 && Number.isFinite(tol) && tol >= 0) out[key] = { ...SPECS.extrusion[key], target, tol };
+    }
+    return out;
+  }
+  // สเปกที่ใช้ตัดสินล็อตฉีดของ WO = สเปกของ revision ที่ WO ผูก (ร่าง revision ใหม่ไม่มีผลกับ WO ที่เปิดไปแล้ว)
+  const orderExtrusionSpec = (recipes, order) => (order ? extrusionSpecOf(recipeOf(recipes, order.recipeId, order.recipeRevision)) : {});
+  // เหตุผลที่ล็อตฉีดถูกกัก: ค่าที่สูตรกำหนดแต่วัดได้นอกช่วง (ข้อความเดียวกับฐานข้อมูล "ความหนา 2.68 mm นอกสเปก")
+  const extrusionHoldReasons = (params, spec) => EXTRUSION_KEYS.filter((key) => spec[key] && !inSpec(params?.[key], spec[key]))
+    .map((key) => `${spec[key].label} ${params[key]} ${spec[key].unit} นอกสเปก`);
 
   const weighTolerance = (targetKg) => Math.max(WEIGH_TOL_MIN_KG, (targetKg * WEIGH_TOL_PCT) / 100);
 
@@ -403,7 +422,7 @@
 
   const api = {
     DAY, HOUR, STAGES, STAGE_LABEL, NEXT_STAGE, PREV_STAGE, SHIFTS, MACHINES, SPECS, WEIGH_TOL_PCT, WEIGH_TOL_MIN_KG,
-    MIX_STAGES, itemStage, recipeStage, recipeLabel, orderLabel, unitText, inSpec, specText, specLimits, hasExtrusionStandard, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, OPEN_ORDER, orderRemainingKg, MAX_REQ_BATCHES, remainingBatches, nextRequisitionBatches, suggestOrderKg, chemicalNeeds, stats, cpkVerdict,
+    MIX_STAGES, itemStage, recipeStage, recipeLabel, orderLabel, unitText, inSpec, specText, specLimits, EXTRUSION_KEYS, extrusionSpecOf, orderExtrusionSpec, extrusionHoldReasons, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, OPEN_ORDER, orderRemainingKg, MAX_REQ_BATCHES, remainingBatches, nextRequisitionBatches, suggestOrderKg, chemicalNeeds, stats, cpkVerdict,
     fmtDate, fmtDateTime, fmtNum, fmtDuration, ymd, toInputDate, fromInputDate, niceScale,
     issuedKgOf, requisitionReturnState, returnableRequisitions, mixableRequisitions,
     poLineReceived, poLineReceipts, poLineClosed, poLineOpen, poLineDone, poTouched,

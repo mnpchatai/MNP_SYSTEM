@@ -14,7 +14,7 @@ const NOW = Date.parse("2026-10-28T10:00:00+07:00");
 const { DAY, HOUR } = rules;
 
 test("inSpec judges target ± tol and one-sided limits, and blank values never pass", () => {
-  const spec = rules.SPECS.extrusion.thickness;
+  const spec = { label: "ความหนา", unit: "mm", target: 2.5, tol: 0.12 };
   assert.equal(rules.inSpec(2.5, spec), true);
   assert.equal(rules.inSpec(2.62, spec), true, "exactly on the edge counts (floating point tolerance)");
   assert.equal(rules.inSpec(2.63, spec), false);
@@ -27,6 +27,32 @@ test("inSpec judges target ± tol and one-sided limits, and blank values never p
   assert.equal(rules.specText(rules.SPECS.lab.tensile), "≥ 10 MPa");
   assert.deepEqual(rules.specLimits(spec), { lsl: 2.38, usl: 2.62 });
   assert.deepEqual(rules.specLimits(rules.SPECS.lab.tensile), { lsl: 10, usl: undefined });
+});
+
+test("the extrusion spec belongs to the recipe of the work order: only the dimensions it defines hold a lot (N2 · 20261129010000)", () => {
+  // ไม่มีค่ากลางของระบบอีก: SPECS.extrusion มีแค่ชื่อ หน่วย และเพดานยางหมุนเวียน
+  assert.deepEqual(rules.SPECS.extrusion.thickness, { label: "ความหนา", unit: "mm" });
+  assert.equal(rules.SPECS.extrusion.reworkMaxPct, 10);
+  assert.deepEqual(rules.EXTRUSION_KEYS, ["thickness", "width", "weightPerM"]);
+  assert.equal(rules.hasExtrusionStandard, undefined, "the die-prefix rule is gone");
+  const doorSeal = { id: "RC-DS", revision: 1, extrusionSpec: { thickness: { target: 2.5, tol: 0.12 }, width: { target: 18, tol: 0.25 } } };
+  assert.deepEqual(rules.extrusionSpecOf(doorSeal), {
+    thickness: { label: "ความหนา", unit: "mm", target: 2.5, tol: 0.12 },
+    width: { label: "ความกว้าง", unit: "mm", target: 18, tol: 0.25 },
+  }, "only the dimensions the recipe defines, with their labels");
+  assert.deepEqual(rules.extrusionSpecOf({ id: "RC-OR" }), {}, "a recipe without a spec has none");
+  assert.deepEqual(rules.extrusionSpecOf(null), {});
+  assert.deepEqual(rules.extrusionSpecOf({ extrusionSpec: { thickness: { target: 0, tol: 1 }, width: { target: 3 } } }), {}, "broken entries are ignored");
+  // ใช้ revision ที่ WO ผูก: ร่าง revision ใหม่ไม่มีผลกับ WO เดิม
+  const recipes = [doorSeal, { id: "RC-DS", revision: 2, status: "draft", extrusionSpec: { thickness: { target: 2.7, tol: 0.05 } } }];
+  assert.equal(rules.orderExtrusionSpec(recipes, { recipeId: "RC-DS", recipeRevision: 1 }).thickness.target, 2.5);
+  assert.equal(rules.orderExtrusionSpec(recipes, { recipeId: "RC-DS", recipeRevision: 2 }).thickness.target, 2.7);
+  assert.deepEqual(rules.orderExtrusionSpec(recipes, null), {});
+  const spec = rules.extrusionSpecOf(doorSeal);
+  assert.deepEqual(rules.extrusionHoldReasons({ thickness: 2.68, width: 18, weightPerM: 999 }, spec), ["ความหนา 2.68 mm นอกสเปก"],
+    "the weight per metre has no spec, so 999 g/m holds nothing");
+  assert.deepEqual(rules.extrusionHoldReasons({ thickness: 2.5, width: 18.3, weightPerM: 160 }, spec), ["ความกว้าง 18.3 mm นอกสเปก"]);
+  assert.deepEqual(rules.extrusionHoldReasons({ thickness: 3.2, width: 3.2, weightPerM: 9 }, {}), [], "a round rod recipe without a spec is never held for its dimensions");
 });
 
 test("weighing tolerance is 1.5% but never under 20 g, and recipe lines split the batch by PHR", () => {

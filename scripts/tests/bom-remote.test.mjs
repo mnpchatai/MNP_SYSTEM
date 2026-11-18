@@ -3692,7 +3692,9 @@ test("the mock database follows 20261123020000: issue a subset, part of a line t
   const leftover3 = (lines, reason = "เหลือ") => ret({ orderId: "PI-P3", mode: "leftover", reason, lines }, "returnOrderParts");
   assert.equal(await code(leftover3([{ itemCode: "P-1", qty: 1 }])), "BOM_INVALID_RETURN", "an open PI: the partly issued line takes no leftover return");
   await as("persona-pp");
-  assert.equal((await save({ jobs: { upsert: [{ ...(await job("J-PK3")), status: "done", qtyDone: 2 }] } }, "reportJob")).error, null);
+  // ยอดเปลี่ยนต้องมีรายการรายงาน ทุกผู้เรียกรวมฝ่ายวางแผน (20261129010000)
+  const pk3 = await job("J-PK3");
+  assert.equal((await save({ jobs: { upsert: [{ ...pk3, status: "done", qtyDone: 2, reports: [...pk3.reports, { at: 1, by: "x", good: 2, reject: 0, note: "" }] }] } }, "reportJob")).error, null);
   await as("persona-wh");
   assert.equal((await save({ fgMoves: { upsert: [{ orderId: "PI-P3", kind: "receive", lines: [{ fgCode: "FG-1", qty: 2 }] }] } }, "receiveFg")).error, null);
   assert.equal((await view()).orders.find((row) => row.id === "PI-P3").status, "completed", "the PI closes with the part line still partly issued");
@@ -3905,7 +3907,8 @@ test("the mock database follows the SQL rules of the part return: payload shapes
   // a completed PI still takes leftovers but is not undone; a cancelled PI takes nothing at all
   await as("persona-pp");
   const pk = (await jobsNow()).find((row) => row.id === "J-PK");
-  assert.equal((await save({ jobs: { upsert: [done(pk)] } }, "reportJob")).error, null);
+  // ยอดเปลี่ยนต้องมีรายการรายงาน ทุกผู้เรียกรวมฝ่ายวางแผน (20261129010000)
+  assert.equal((await save({ jobs: { upsert: [{ ...done(pk), reports: [...pk.reports, { at: 1, by: "x", good: pk.qtyPlanned - pk.qtyDone, reject: 0, note: "" }] }] } }, "reportJob")).error, null);
   await as("persona-wh");
   assert.equal((await save({ fgMoves: { upsert: [{ orderId: "PI-M1", kind: "receive", lines: [{ fgCode: "FG-1", qty: 2 }] }] } }, "receiveFg")).error, null);
   assert.equal((await view()).orders.find((row) => row.id === "PI-M1").status, "completed", "the warehouse receiving everything closes the PI");
@@ -4272,17 +4275,18 @@ test("the mock database keeps the PK output of a product at or above what the wa
   assert.equal(await code(save({ jobs: { upsert: [{ ...row, qtyDone: 0 }] } }, "reportJob")), "BOM_INVALID_JOB", "not even by an admin");
   assert.equal(await s.version(), versionBefore, "the refused saves wrote nothing");
   await as("persona-pp");
-  assert.equal((await save({ jobs: { upsert: [{ ...row, qtyDone: 4 }] } }, "reportJob")).error, null, "down to what was received is allowed");
-  const lowered = await job("J-F1");
-  assert.equal((await save({ jobs: { upsert: [{ ...lowered, status: "done", reports: [...lowered.reports, { at: 1, by: "x", good: 0, reject: 0, note: "PK ทำได้ 4" }] }] } }, "setJobStatus")).error, null, "and the planner closes it there with a reason");
-  assert.equal((await job("J-F1")).qtyDone, 4);
-  // ใบยังปิดได้: PK ทำ FG-2 ครบ ชิ้นย่อยเสร็จ WH รับ FG-2 แล้วปิดรับไม่ครบ (FG-1 รับ 4 = ยอด PK 4)
+  // ตั้งแต่ 20261129010000 ไม่มีใครเปลี่ยนยอดโดยไม่มีรายการรายงาน: ลดลงเท่ายอดรับก็ไม่ได้ (ผลรวมของรายการใหม่ต้องเท่าส่วนที่เปลี่ยน)
+  assert.equal(await code(save({ jobs: { upsert: [{ ...row, qtyDone: 4 }] } }, "reportJob")), "BOM_INVALID_JOB", "not even down to what was received");
+  assert.equal((await save({ jobs: { upsert: [{ ...row, status: "done", reports: [...row.reports, { at: 1, by: "x", good: 0, reject: 0, note: "PK ทำได้ 6" }] }] } }, "setJobStatus")).error, null, "the planner closes it at 6 with a reason");
+  assert.equal((await job("J-F1")).qtyDone, 6);
+  // ใบยังปิดได้: PK ทำ FG-2 ครบ ชิ้นย่อยเสร็จ WH รับ FG-1 ที่เหลือและ FG-2 แล้วปิดรับไม่ครบ (FG-1 รับ 6 = ยอด PK 6)
   assert.equal((await report("J-F2", 5)).error, null);
   assert.equal((await report("J-FS", 3)).error, null);
   await as("persona-wh");
+  assert.equal((await receive([{ fgCode: "FG-1", qty: 2 }])).error, null);
   assert.equal(await code(receive([{ fgCode: "FG-1", qty: 1 }])), "BOM_FG_EXCEEDS", "nothing more of FG-1 to receive");
   assert.equal((await receive([{ fgCode: "FG-2", qty: 5 }])).error, null);
-  assert.equal((await close("PK ทำ FG-1 ได้ 4 ชุด")).error, null, "the order closes short");
+  assert.equal((await close("PK ทำ FG-1 ได้ 6 ชุด")).error, null, "the order closes short");
   assert.equal((await order("PI-F")).status, "completed");
 });
 

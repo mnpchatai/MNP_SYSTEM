@@ -387,10 +387,10 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select ok(fgs_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
   fgs_t.job('JOB-6A') || jsonb_build_object('status', 'done', 'reports', (fgs_t.job('JOB-6A') -> 'reports') || '[{"at":1,"by":"x","good":0,"reject":0,"note":"ผลิตได้ไม่ครบ"}]'::jsonb)))), 'setJobStatus') is not null,
   'the planner closes the PK job at 2 of the 3 planned with a reason');
-select is(fgs_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(fgs_t.job('JOB-6A') || '{"qtyDone":1}'::jsonb))), 'reportJob')
-  -> 'changes' -> 'jobs' -> 'upsert' -> 0 ->> 'qtyDone', '1', 'nothing received yet: the guard compares with own (0), not with have (2)');
-select ok(fgs_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(fgs_t.job('JOB-6A') || '{"qtyDone":2}'::jsonb))), 'reportJob') is not null,
-  'the planner puts it back to 2');
+-- ตั้งแต่ 20261129010000 ไม่มีใครลดยอดได้โดยไม่มีรายงาน (ผลรวมของรายการใหม่ต้องเท่าส่วนที่เปลี่ยน) แม้ด่านยอด PK เทียบกับ own (0) จะยอมก็ตาม: bom_group2_rules.test.sql
+select throws_ok($$ select fgs_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(fgs_t.job('JOB-6A') || '{"qtyDone":1}'::jsonb))), 'reportJob') $$,
+  'BOM_INVALID_JOB', 'nothing received yet, but the planner cannot lower the output without a report entry');
+select is((fgs_t.job('JOB-6A') ->> 'qtyDone')::numeric, 2::numeric, 'the PK output stays at 2');
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
 select is(fgs_t.receive('251123-25006', 'FG-A', 2) -> 'changes' -> 'orders' -> 'upsert', '[]'::jsonb, 'have 4 of 5 (2 made + 2 from stock): the order stays open');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);

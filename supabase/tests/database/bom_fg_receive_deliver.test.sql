@@ -447,10 +447,10 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_admin_t')::uuid);
 select throws_ok($$ select fg_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(fg_t.job('JOB-2A') || '{"qtyDone":0}'::jsonb))), 'reportJob') $$,
   'BOM_INVALID_JOB', 'an admin cannot lower it below the receipts either');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
-select is(fg_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(fg_t.job('JOB-2A') || '{"qtyDone":2}'::jsonb))), 'reportJob')
-  -> 'changes' -> 'jobs' -> 'upsert' -> 0 ->> 'qtyDone', '2', 'lowering it down to what was received is allowed (3 -> 2)');
-select is(fg_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(fg_t.job('JOB-2A') || '{"qtyDone":3}'::jsonb))), 'reportJob')
-  -> 'changes' -> 'jobs' -> 'upsert' -> 0 ->> 'qtyDone', '3', 'and the planner puts it back (2 -> 3)');
+-- ตั้งแต่ 20261129010000 ไม่มีใครเปลี่ยนยอดได้โดยไม่มีรายงาน (ผลรวมของรายการใหม่ต้องเท่าส่วนที่เปลี่ยน) แม้จะไม่ต่ำกว่ายอดรับ: bom_group2_rules.test.sql
+select throws_ok($$ select fg_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(fg_t.job('JOB-2A') || '{"qtyDone":2}'::jsonb))), 'reportJob') $$,
+  'BOM_INVALID_JOB', 'lowering it without a report entry is refused even down to what was received (3 -> 2)');
+select is((fg_t.job('JOB-2A') ->> 'qtyDone')::numeric, 3::numeric, 'the PK output stays at 3');
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
 select throws_ok($$ select fg_t.close_short('251121-25002', 'ลูกค้ารับเท่าที่ทำได้') $$, 'BOM_INVALID_TRANSITION', 'received 2 of the 3 PK made: still refused');
 select throws_ok($$ select fg_t.receive('251121-25002', '[{"fgCode":"FG-A","qty":2}]'::jsonb, '', 1) $$, 'BOM_FG_EXCEEDS',

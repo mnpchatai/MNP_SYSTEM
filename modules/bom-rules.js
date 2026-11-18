@@ -334,6 +334,17 @@
     if (!(n > 0)) return 0;
     return uom !== "other" && ["count", "pack"].includes(UOMS[uom]?.kind) ? Math.ceil(n - 1e-6) : n;
   };
+  // วันตามเวลาไทย (Asia/Bangkok = UTC+7 ไม่มีเวลาออมแสง) เป็นเลขวันนับจาก epoch · ใช้เทียบ "วันเดียวกัน" ให้ตรงกับฐานข้อมูล
+  const bangkokDay = (ms) => Math.floor((Number(ms) + 7 * 3600000) / 86400000);
+  // ฉบับ BOM ที่ใบสั่งผลิตที่ไม่ใช่ร่าง (ปล่อยแล้ว กำลังผลิต ปิด หรือยกเลิก) ใช้อยู่: explosion ของใบอ้าง id ของฉบับ → แก้ในฉบับเดิมไม่ได้ (20261129010000)
+  const bomRevisionLocked = (orders, bomId) => (orders ?? []).some((order) => order.status !== "draft" && Array.isArray(order.explosion) && order.explosion.some((line) => line?.bomId === bomId));
+  // ค่าตั้งต้นของช่อง "เบิกครั้งนี้" (ผู้ใช้ตัดสิน 2026-11-18 · W10): หน่วยนับ / แพ็กปัดขึ้นเป็นจำนวนเต็ม (1.75 กล่อง → 2) แต่ไม่เกินของที่มีในสต็อก
+  // ส่วนที่ยังต้องเบิกเกินสต็อกอยู่แล้ว (ของขาด) คงค่าเดิม = ส่วนที่ยังต้องเบิก · หน่วยน้ำหนัก / ความยาวไม่ปัด · ผู้ใช้แก้ตัวเลขในช่องได้เสมอ
+  const issueDefaultQty = (remaining, onHand, uom) => {
+    const need = Math.max(0, Number(remaining) || 0);
+    const up = ceilCountQty(need, uom);
+    return up > need ? Math.max(need, Math.min(up, Number(onHand) || 0)) : need;
+  };
 
   // ---------- ปริมาณ RB ต่อ SE (สูตร O ของ BOMSHEET) ----------
   // นับเป็นเส้น/ม้วน: 1 / (จำนวนชิ้น GR ที่ตัดได้ต่อเส้น × จำนวน SE ที่ได้ต่อ 1 GR) · นับเป็นกิโลกรัม: น้ำหนักชิ้นงาน (กรัม) / 1000
@@ -1469,7 +1480,7 @@
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
-    normalizeUom, uomLabel, ceilCountQty, rbPerSe, rbCutQty, rbCutDiffers, parseDelimited, detectHeader, readFlatRows, sheetNumber, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, partShortAllOrders, jobSupplyLimit, fgLabel, suggestFgName, draftBefore, draftPartDemand, draftRubberJobs, partReserved, partOnOrder, partReturned, partReturnLines, fgPosition, fgReverseBlock, fgReverseReopens, fgOnHand, fgFreeList, fgStockForDraft, fgStockLock, noBomInOrder, countedCodes,
+    normalizeUom, uomLabel, ceilCountQty, issueDefaultQty, bangkokDay, bomRevisionLocked, rbPerSe, rbCutQty, rbCutDiffers, parseDelimited, detectHeader, readFlatRows, sheetNumber, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, partShortAllOrders, jobSupplyLimit, fgLabel, suggestFgName, draftBefore, draftPartDemand, draftRubberJobs, partReserved, partOnOrder, partReturned, partReturnLines, fgPosition, fgReverseBlock, fgReverseReopens, fgOnHand, fgFreeList, fgStockForDraft, fgStockLock, noBomInOrder, countedCodes,
     DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };

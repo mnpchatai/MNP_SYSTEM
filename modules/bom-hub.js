@@ -888,9 +888,33 @@
   const FG_HISTORY_MAX = 30;
   const fgProductCell = (ctx, product) => `<td>${ctx.ui.link(product.fgCode, ctx.url("items", { sel: product.fgCode }), "rf-mono")}<div class="small muted">${esc(itemOf(ctx, product.fgCode)?.name ?? "")}</div></td>`;
   // max = ยอดสูงสุดที่กรอกได้ · value = ค่าตั้งต้น (ส่งมอบ: ส่วนที่ลูกค้าของใบนี้รออยู่ ส่วนเกินที่สั่งไม่ถูกเติมให้) · ไม่มีของให้กรอก = ไม่มีช่อง
-  const fgQtyInput = (ctx, product, label, value, max = value) => (max > 0
-    ? `<label class="bom-count-input"><span class="sr-only">${esc(`${label} ${product.fgCode}`)}</span><input class="input rf-input" name="qty[]" type="number" inputmode="decimal" step="any" min="0" max="${attr(max)}" value="${value > 0 ? attr(value) : ""}" placeholder="0"><span class="small muted">${esc(uomText(ctx, itemOf(ctx, product.fgCode)?.uom ?? "set"))}</span></label><input type="hidden" name="fgCode[]" value="${attr(product.fgCode)}">`
+  // extra = attribute เพิ่มของช่องจำนวน (ส่งมอบ: ยอดที่ลูกค้ายังรอ ใช้เตือนส่งเกินที่สั่ง)
+  const fgQtyInput = (ctx, product, label, value, max = value, extra = "") => (max > 0
+    ? `<label class="bom-count-input"><span class="sr-only">${esc(`${label} ${product.fgCode}`)}</span><input class="input rf-input" name="qty[]" type="number" inputmode="decimal" step="any" min="0" max="${attr(max)}" value="${value > 0 ? attr(value) : ""}" placeholder="0"${extra ? ` ${extra}` : ""}><span class="small muted">${esc(uomText(ctx, itemOf(ctx, product.fgCode)?.uom ?? "set"))}</span></label><input type="hidden" name="fgCode[]" value="${attr(product.fgCode)}">`
     : '<span class="muted">—</span>');
+  // ส่งมอบเกินจำนวนที่สั่ง (ผู้ใช้ตัดสิน 2026-11-18 · N5): ส่งได้ แต่ฟอร์มขึ้นคำเตือนพร้อมช่องติ๊กยืนยัน ปุ่มส่งมอบกดได้เมื่อติ๊กแล้ว (action deliverFg ตรวจซ้ำด้วย overConfirm)
+  // การยืนยันเป็นของจำนวนที่แสดงตอนติ๊ก: แก้จำนวนจนส่วนเกินเปลี่ยน = ต้องติ๊กใหม่
+  function bindDeliverOver(ctx, form) {
+    const box = form.querySelector("[data-bom-deliver-over]");
+    const text = form.querySelector("[data-bom-deliver-over-text]");
+    const confirm = form.querySelector("[data-bom-deliver-over-confirm]");
+    const submit = form.querySelector('button[type="submit"]');
+    const inputs = [...form.querySelectorAll("input[data-bom-ordered-left]")];
+    if (!box || !confirm || !inputs.length) return;
+    let confirmedFor = "";
+    const sync = () => {
+      const over = inputs.map((input) => ({ code: input.dataset.bomCode, unit: input.dataset.bomUnit, qty: (Number(input.value) || 0) - Number(input.dataset.bomOrderedLeft) })).filter((row) => row.qty > 1e-9);
+      const summary = over.map((row) => `${over.length > 1 ? `${row.code} ` : ""}${ctx.rules.fmtQty(row.qty)} ${row.unit}`).join(", ");
+      box.hidden = !over.length;
+      if (!over.length || (confirm.checked && confirmedFor && confirmedFor !== summary)) confirm.checked = false;
+      confirmedFor = confirm.checked ? summary : "";
+      if (text) text.textContent = over.length ? `ส่งมอบเกินจำนวนที่สั่ง ${summary}` : "";
+      if (submit) submit.disabled = over.length > 0 && !confirm.checked;
+    };
+    inputs.forEach((input) => input.addEventListener("input", sync));
+    confirm.addEventListener("change", sync);
+    sync();
+  }
   const fgNum = (ctx, value) => `<td class="right rf-mono">${esc(ctx.rules.fmtQty(value))}</td>`;
   function receivePanel(ctx, order, pos, canFg) {
     const { ui, rules } = ctx;
@@ -936,11 +960,13 @@
       ...(anyGiven ? [{ label: "ให้ใบอื่นแล้ว", className: "right", title: "สินค้าที่ใบสั่งผลิตอื่นนำไปใช้จากสต็อกสินค้าสำเร็จรูปของใบนี้" }] : []),
       { label: "ส่งมอบแล้ว", className: "right" }, { label: "คงเหลือส่งมอบได้", className: "right" }, ...(acting ? [{ label: "ส่งครั้งนี้", className: "right" }] : [])];
     // ส่วนที่เกินจำนวนสั่ง (สต็อกสินค้าสำเร็จรูป) บอกใต้ยอดคงเหลือ · ช่องส่งครั้งนี้เติมเฉพาะส่วนที่ลูกค้าของใบนี้รออยู่ จึงไม่ส่งส่วนเกินโดยไม่ตั้งใจ
-    const rows = pos.products.map((product) => `<tr>${fgProductCell(ctx, product)}${fgNum(ctx, product.have)}${anyGiven ? fgNum(ctx, product.givenAway) : ""}${fgNum(ctx, product.delivered)}<td class="right rf-mono">${esc(rules.fmtQty(product.deliverable))}${product.free > 0 ? `<div class="small muted">เกินที่สั่ง ${esc(rules.fmtQty(product.free))}</div>` : ""}</td>${acting ? `<td class="right">${fgQtyInput(ctx, product, "จำนวนที่ส่งมอบ", product.owed, product.deliverable)}</td>` : ""}</tr>`);
+    const rows = pos.products.map((product) => `<tr>${fgProductCell(ctx, product)}${fgNum(ctx, product.have)}${anyGiven ? fgNum(ctx, product.givenAway) : ""}${fgNum(ctx, product.delivered)}<td class="right rf-mono">${esc(rules.fmtQty(product.deliverable))}${product.free > 0 ? `<div class="small muted">เกินที่สั่ง ${esc(rules.fmtQty(product.free))}</div>` : ""}</td>${acting ? `<td class="right">${fgQtyInput(ctx, product, "จำนวนที่ส่งมอบ", product.owed, product.deliverable, `data-bom-ordered-left="${attr(Math.max(0, product.ordered - product.delivered))}" data-bom-code="${attr(product.fgCode)}" data-bom-unit="${attr(uomText(ctx, itemOf(ctx, product.fgCode)?.uom ?? "set"))}"`)}</td>` : ""}</tr>`);
     const table = ui.table(head, rows, { emptyText: "ใบนี้ไม่มีสินค้า" });
     const submit = '<button class="btn rf-btn" type="submit" data-rf-confirm="ส่งมอบสินค้าตามจำนวนที่กรอก? ถ้าบันทึกผิด ย้อนได้โดยผู้จัดการแผนกคลังสินค้า (WH) เท่านั้น">ส่งมอบให้ลูกค้า</button>';
+    // ส่งเกินจำนวนที่สั่ง: คำเตือน + ช่องติ๊กยืนยัน (bindDeliverOver แสดงเมื่อจำนวนที่กรอกเกินยอดที่ลูกค้ายังรอ)
+    const overBox = '<div class="rf-callout is-warn bom-compound-change" role="note" data-bom-deliver-over hidden><div class="rf-callout-body"><label class="bom-confirm-line"><input type="checkbox" name="overConfirm" value="1" data-bom-deliver-over-confirm> <span data-bom-deliver-over-text></span></label></div></div>';
     const form = acting
-      ? `<form novalidate data-rf-form="deliverFg" data-rf-args="${attr(JSON.stringify({ orderId: order.id }))}" data-rf-success="ส่งมอบ {result} แล้ว">${table}<div class="rf-row bom-step-next">${submit}</div></form>`
+      ? `<form novalidate data-rf-form="deliverFg" data-rf-args="${attr(JSON.stringify({ orderId: order.id }))}" data-rf-success="ส่งมอบ {result} แล้ว">${table}${overBox}<div class="rf-row bom-step-next">${submit}</div></form>`
       : table;
     const note = !canFg ? '<p class="small muted">คลังสินค้า (WH) เป็นผู้ส่งมอบสินค้าให้ลูกค้า</p>' : !pos.anyHave ? '<p class="small muted">ยังไม่มีสินค้ารับเข้าคลัง ส่งมอบได้เมื่อรับเข้าแล้ว</p>' : "";
     const surplus = pos.anyFree ? '<p class="small muted">ส่วนที่เกินที่สั่งเป็นสต็อกสินค้าสำเร็จรูป ใบสั่งผลิตอื่นนำไปใช้ได้ ถ้าจะเก็บไว้ให้ใบอื่น ไม่ต้องกรอกในช่องส่งครั้งนี้</p>' : "";
@@ -1139,6 +1165,8 @@
         const nowBox = now.getBoundingClientRect();
         barNode.scrollLeft = nowBox.left - barBox.left + barNode.scrollLeft - (barBox.width - nowBox.width) / 2;
       }
+      const deliverForm = rootNode.querySelector?.('form[data-rf-form="deliverFg"]');
+      if (deliverForm) bindDeliverOver(ctx, deliverForm);
       rootNode.querySelectorAll("[data-bom-draft-buy]").forEach((button) => button.addEventListener("click", async () => {
         button.disabled = true;
         try { await ctx.rubberflow()?.checkMaterials?.({ woIds: [], sourcePi: order.id, draftOrders, reservedDraftOrders, auto: false }); } finally { button.disabled = false; }

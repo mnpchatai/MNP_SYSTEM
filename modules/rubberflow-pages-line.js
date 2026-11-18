@@ -310,8 +310,9 @@
     const lots = data.lots.filter((lot) => lot.stage === "extrusion");
     const { ready } = inbound(data, "extrusion");
     const dies = data.molds.filter((mold) => mold.kind === "die");
-    // มาตรฐานมิติเป็นของเส้น Door Seal (หัวดาย DIE-DS-*) เท่านั้น: แสดงและลงสีเมื่อหัวดายที่เลือกเป็นตัวนั้น (ตัวแรกในรายการเป็นค่าเริ่มต้นของช่องเลือก)
-    const dieGate = { select: "dieId", open: rules.hasExtrusionStandard(dies[0]?.id) };
+    // มาตรฐานมิติมาจากสูตรของ WO ของใบส่งมอบที่เลือก (rules.orderExtrusionSpec · 20261129010000) จึงแสดงและลงสีหลังเลือกใบส่งมอบ (bind)
+    // ค่าที่สูตรไม่กำหนดไม่มีมาตรฐาน ไม่ลงสี และไม่ทำให้ล็อตถูกกัก · ทุกค่ายังต้องกรอก (ฐานข้อมูลเก็บค่าที่วัดทุกล็อต)
+    const dimField = (key) => ui.field(`${s[key].label} (${s[key].unit})`, ui.input(key, { type: "number", step: "any", required: true, extra: `data-rf-dim="${key}"` }), { hint: `<span data-rf-dim-hint="${key}"></span>`, required: true });
     const avgRework = lots.length ? lots.reduce((sum, lot) => sum + (lot.params.reworkPct || 0), 0) / lots.length : 0;
     const form = ready.length ? ui.card(`<form novalidate data-rf-form="recordExtrusion" data-rf-success="บันทึก {result} แล้ว" data-rf-extrusion><div class="rf-grid rf-g4">
         ${inboundSelect(ctx, "extrusion")}
@@ -320,14 +321,12 @@
         ${ui.field("กะ", ui.select("shift", shiftOptions(rules)))}
         ${ui.field("เครื่องฉีด", ui.select("machine", MACHINES.extrusion))}
         ${ui.field("หัวดาย", ui.select("dieId", dies.map((die) => ({ value: die.id, label: `${die.id} · ${die.name}` })), { extra: "required" }), { required: true })}
-        ${ui.specInput("thickness", s.thickness.label, s.thickness, { required: true, gate: dieGate })}
-        ${ui.specInput("width", s.width.label, s.width, { required: true, gate: dieGate })}
-        ${ui.specInput("weightPerM", s.weightPerM.label, s.weightPerM, { required: true, gate: dieGate })}
+        ${rules.EXTRUSION_KEYS.map(dimField).join("")}
         ${ui.field("งานดี (m/pcs)", ui.input("goodQty", { type: "number", step: "any", required: true }), { required: true })}
         ${ui.field("ของเสีย (m/pcs)", ui.input("scrapQty", { type: "number", step: "any" }))}
         ${ui.field("สาเหตุของเสีย", ui.input("scrapReason"))}
-      </div><div data-rf-rework-warn></div><div class="rf-row">${ui.submitButton("บันทึกการฉีด")}</div></form>`, { title: "บันทึกการฉีด" }) : "";
-    const html = `${ui.pageHead("สถานีที่ 2 · ฉีดขึ้นรูป", "ใช้ได้เฉพาะยางที่รับมอบแล้ว คุมสัดส่วนยางหมุนเวียนไม่เกิน 10% และตรวจมิติชิ้นงานกับสเปก")}
+      </div><div data-rf-dim-warn></div><div data-rf-rework-warn></div><div class="rf-row">${ui.submitButton("บันทึกการฉีด")}</div></form>`, { title: "บันทึกการฉีด" }) : "";
+    const html = `${ui.pageHead("สถานีที่ 2 · ฉีดขึ้นรูป", "ใช้ได้เฉพาะยางที่รับมอบแล้ว คุมสัดส่วนยางหมุนเวียนไม่เกิน 10% และตรวจมิติชิ้นงานกับสเปกของสูตร")}
       ${ui.stats([
         { label: "อัตราได้ของดี การฉีด", value: stageYieldText(lots), sub: "เป้าหมาย ≥ 97.0%" },
         { label: "ผลิตแล้วสะสม", value: fmtNum(lots.reduce((sum, lot) => sum + lot.goodQty, 0)), sub: "m / pcs" },
@@ -356,6 +355,33 @@
       use.addEventListener("input", paint);
       rework.addEventListener("input", paint);
       paint();
+      // มิติ: มาตรฐานของสูตรที่ WO ของใบส่งมอบที่เลือกผูก (revision ของ WO) · ยังไม่เลือกใบส่งมอบ = ยังไม่มีมาตรฐาน · สูตรไม่มีสเปก = บอกครั้งเดียวว่าไม่กักตามมิติ
+      const source = form.querySelector("[data-rf-inbound]");
+      const dims = [...form.querySelectorAll("[data-rf-dim]")];
+      const paintDims = () => {
+        const transfer = data.transfers.find((row) => row.id === source?.value) ?? null;
+        const order = transfer ? data.orders.find((row) => row.id === transfer.orderId) ?? null : null;
+        const spec = rules.orderExtrusionSpec(data.recipes, order);
+        const out = [];
+        for (const input of dims) {
+          const key = input.dataset.rfDim;
+          const standard = spec[key];
+          const hint = form.querySelector(`[data-rf-dim-hint="${key}"]`);
+          if (hint) hint.textContent = standard ? `มาตรฐาน ${rules.specText(standard)}` : "";
+          const filled = Boolean(standard) && input.value !== "";
+          const ok = filled && rules.inSpec(input.value, standard);
+          input.classList.toggle("rf-ok", filled && ok);
+          input.classList.toggle("rf-out", filled && !ok);
+          if (filled && !ok) out.push(standard.label);
+        }
+        const warn = form.querySelector("[data-rf-dim-warn]");
+        if (!warn) return;
+        warn.innerHTML = out.length ? ui.callout("warn", esc(`${out.join(" และ")} นอกสเปกของสูตร ระบบจะกักกันล็อตนี้อัตโนมัติ`))
+          : order && !Object.keys(spec).length ? `<p class="small muted">${esc(`สูตร ${order.recipeId} ไม่กำหนดสเปกมิติ ล็อตนี้ไม่ถูกกักตามมิติ`)}</p>` : "";
+      };
+      source?.addEventListener("change", paintDims);
+      dims.forEach((input) => input.addEventListener("input", paintDims));
+      paintDims();
     };
     return { html, bind };
   };
