@@ -526,8 +526,8 @@ select is(public.app_bom_save_master('{"fgMoves":{"upsert":[{"orderId":"251121-2
 
 -- 13. snapshot / delta ----------------------------------------------------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
-select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 14::bigint, 'any persona reads fourteen lists in the snapshot');
-select is((select count(*) from jsonb_object_keys(public.app_bom_master_since(0) -> 'changes')), 14::bigint, 'and in the delta');
+select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 16::bigint, 'any persona reads sixteen lists in the snapshot (rodLots and rodMoves since 20261202010000)');
+select is((select count(*) from jsonb_object_keys(public.app_bom_master_since(0) -> 'changes')), 16::bigint, 'and in the delta');
 select is((select array_agg(k order by k) from jsonb_object_keys(public.app_bom_master() -> 'fgMoves' -> 0) k), array['at', 'by', 'fgCode', 'id', 'kind', 'note', 'orderId', 'qty'],
   'a move record has exactly the contract fields');
 select is(public.app_bom_master_since(0) -> 'changes' -> 'fgMoves', jsonb_build_object('upsert', public.app_bom_master() -> 'fgMoves', 'delete', '[]'::jsonb),

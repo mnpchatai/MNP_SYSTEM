@@ -104,7 +104,8 @@ select is((select count(*)::integer from public.employees e
            where e.employee_no in ('SBX-PP-STAFF', 'SBX-RB-MGR', 'SBX-QA-MGR', 'SBX-PK-MGR', 'SBX-FT-FM', 'SBX-FT-AFM', 'SBX-MGT-GM') and private.bom_can_edit(e)), 7,
   'the personas the tests use as planners still qualify');
 select ok((select private.bom_can_read(e) and not private.rf_can_read(e) from public.employees e where e.employee_no = 'GOLIVE-GR'), 'GR reads BOM but not RubberFlow');
-select ok((select private.rf_can_read(e) and not private.bom_can_read(e) from public.employees e where e.employee_no = 'GOLIVE-QA'), 'QA reads RubberFlow but not BOM');
+select ok((select private.rf_can_read(e) and private.bom_can_read(e) and not private.bom_can_edit(e) from public.employees e where e.employee_no = 'GOLIVE-QA'),
+  'QA reads RubberFlow and BOM (20261202010000: QA decides held rods of the SR store) but does not plan');
 select ok((select not private.bom_can_read(e) and not private.rf_can_read(e) from public.employees e where e.employee_no in ('GOLIVE-MT')), 'MT staff reads neither');
 select count(set_config('test.p_' || lower(replace(employee_no, '-', '_')), id::text, true)) from public.employees where is_test;
 select ok(current_setting('test.p_sbx_pp_staff', true) is not null, 'the PP persona of the sandbox exists');
@@ -267,8 +268,9 @@ select throws_ok('select public.app_rf_master()', 'RF_FORBIDDEN', 'a real GR sta
 select throws_ok('select public.app_rf_audit()', 'RF_FORBIDDEN', 'a real GR staff cannot read the RubberFlow audit');
 select set_config('request.jwt.claims', '{"sub":"8ea00000-0000-0000-0000-000000000010","role":"authenticated"}', true);
 select ok(public.app_rf_master() -> 'materials' @> '[{"code":"GL-MAT"}]'::jsonb, 'a real QA staff reads RubberFlow');
-select throws_ok('select public.app_bom_master()', 'BOM_FORBIDDEN', 'a real QA staff cannot read BOM');
-select throws_ok($$ select public.app_bom_save_master('{}'::jsonb, 0, 'reportJob') $$, 'BOM_FORBIDDEN', 'a real QA staff cannot call the BOM save either');
+select ok(public.app_bom_master() -> 'orders' @> '[{"id":"251130-00001"}]'::jsonb, 'a real QA staff reads BOM (20261202010000)');
+select throws_ok($$ select public.app_bom_save_master('{"items":{"upsert":[{"code":"GL-QA","kind":"FG","name":"x","ownerDept":"PK","uom":"set"}]}}'::jsonb, 0, 'importFlat') $$,
+  'BOM_FORBIDDEN', 'a real QA staff still cannot plan');
 select set_config('request.jwt.claims', '{"sub":"8ea00000-0000-0000-0000-000000000011","role":"authenticated"}', true);
 select lives_ok($$ select public.app_bom_save_master('{"items":{"upsert":[{"code":"GL-FM","kind":"FG","name":"สินค้าของผู้จัดการโรงงาน","ownerDept":"PK","uom":"set"}]}}'::jsonb,
   (public.app_bom_master() ->> 'version')::bigint, 'importFlat') $$, 'a real factory manager plans (edits the item master)');

@@ -33,6 +33,7 @@
     { id: "customers", label: "ลูกค้า", group: "ผลิต" },
     { id: "count", label: "นับคงคลังตามใบ", group: "ผลิต" },
     { id: "stock", label: "คลังของซื้อ", group: "ผลิต" },
+    { id: "rods", label: "คลังแท่งยาว (SR)", group: "ผลิต" },
     { id: "jobs", label: "งานของแผนก", group: "ผลิต" },
     { id: "audit", label: "บันทึกการใช้งาน", group: "ผลิต" },
     // หน้าโครงใหม่ (modules/bom-hub.js): เมนูหลัก 4 อัน · หน้าเดิมข้างบนยังเปิดได้จากลิงก์ในหน้าเหล่านี้ แต่ไม่อยู่ในเมนูแล้ว
@@ -45,7 +46,7 @@
   // เมนูที่แสดง (เรียงตามนี้) และหน้าที่อยู่ใต้แต่ละเมนู: หน้าที่ไม่อยู่ในเมนูทำให้เมนูแม่ของมันเป็นตัวที่เลือกอยู่
   const NAV = Object.freeze(["find", "orders", "work", "setup"]);
   const SETUP_PAGES = Object.freeze(["import", "variants", "compounds", "customers", "stock", "count", "check", "audit"]);
-  const NAV_PARENT = Object.freeze({ find: "find", dashboard: "find", build: "find", items: "find", product: "find", structure: "find", orders: "orders", count: "orders", work: "work", jobs: "work", setup: "setup", ...Object.fromEntries(SETUP_PAGES.map((id) => [id, "setup"])) });
+  const NAV_PARENT = Object.freeze({ find: "find", dashboard: "find", build: "find", items: "find", product: "find", structure: "find", orders: "orders", count: "orders", work: "work", jobs: "work", rods: "work", setup: "setup", ...Object.fromEntries(SETUP_PAGES.map((id) => [id, "setup"])) });
   const navLabel = (id) => (id === "orders" ? "ใบสั่งผลิต" : MODULES.find((entry) => entry.id === id)?.label ?? id);
   const findModule = (id) => MODULES.find((entry) => entry.id === String(id ?? "")) ?? null;
 
@@ -53,9 +54,12 @@
   const ROLES = Object.freeze({
     admin: { label: "ผู้ดูแลระบบ", modules: MODULE_IDS },
     manager: { label: "ผู้จัดการโรงงาน", modules: MODULE_IDS },
-    planner: { label: "ฝ่ายวางแผน (PP)", modules: Object.freeze(["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "orders", "customers", "count", "stock", "jobs", "check"]) },
+    planner: { label: "ฝ่ายวางแผน (PP)", modules: Object.freeze(["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "orders", "customers", "count", "stock", "rods", "jobs", "check"]) },
     rb: { label: "แผนก RB (รีดเส้นยาง)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "compounds", "jobs", "orders", "check"]) },
-    gr: { label: "แผนก GR (ตัด/เจาะ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },
+    gr: { label: "แผนก GR (ตัด/เจาะ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "rods", "orders", "check"]) },
+    // คลังแท่งยาว (SR) และตรวจคุณภาพ (QA) ขั้น 05–06 ของผังงาน: ไม่มีงานรายแผนกของตัวเอง งานอยู่ที่การ์ดของงานของฉัน (รับเข้า/จ่ายให้ GR · ตัดสินล็อตที่กัก) และหน้าคลังแท่งยาว
+    sr: { label: "คลังแท่งยาว (SR)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "rods", "orders", "check"]) },
+    qa: { label: "ตรวจคุณภาพ (QA)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "rods", "orders", "check"]) },
     pt: { label: "แผนก PT (ฉีดพลาสติก)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },
     bg: { label: "แผนก BG (กระเป๋า/เย็บ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },
     pk: { label: "แผนก PK (บรรจุ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },
@@ -191,7 +195,8 @@
   const MASTER_LISTS = Object.freeze(["items", "compounds", "colors", "colorSets", "packages", "boms", "processes", "routings"]);
   // stock = ยอดคงเหลือของซื้อ (นับด้วย countPartStock) · stockMoves = ประวัติ (เซิร์ฟเวอร์เขียนเอง client อ่านอย่างเดียว ไม่ส่งกลับ)
   // fgMoves = ประวัติรับเข้าคลัง/ส่งมอบ/ปิดใบรับไม่ครบของสินค้าสำเร็จรูป (เซิร์ฟเวอร์เขียนเอง เพิ่มต่อท้ายอย่างเดียว · client ส่งเป็นคำขอ ไม่ส่งเป็นระเบียน)
-  const WORK_LISTS = Object.freeze(["customers", "orders", "jobs", "stock", "stockMoves", "fgMoves"]);
+  // rodLots / rodMoves = คลังแท่งยาว SR (20261202010000): ล็อตแท่งจากล็อตตกแต่งของ RubberFlow และประวัติของแท่งที่ใช้ได้ · เซิร์ฟเวอร์เขียนเอง client ส่งเฉพาะแถวคำขอของคำสั่งคลังแท่ง (ROD_ACTIONS)
+  const WORK_LISTS = Object.freeze(["customers", "orders", "jobs", "stock", "stockMoves", "fgMoves", "rodLots", "rodMoves"]);
   const REMOTE_LISTS = Object.freeze([...MASTER_LISTS, ...WORK_LISTS]);
   const LOCAL_KEY = "mnp-bom-local-v1"; // รุ่นก่อนหน้าเก็บใบสั่งผลิต/งาน/บันทึกการใช้งานไว้ที่นี่ · ตอนนี้ไม่อ่านไม่เขียน (ข้อมูลทดสอบเก่าไม่ย้ายเข้าฐานข้อมูล)
   const compareKey = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -204,7 +209,7 @@
     boms: (record) => record.id, routings: (record) => record.id,
     colorSets: (record) => `${record.base}\u0000${record.code}`, packages: (record) => `${record.base}\u0000${record.code}`,
     customers: (record) => customerKey(record.name), orders: (record) => record.id, jobs: (record) => record.id,
-    stock: (record) => record.itemCode, stockMoves: (record) => record.id, fgMoves: (record) => record.id,
+    stock: (record) => record.itemCode, stockMoves: (record) => record.id, fgMoves: (record) => record.id, rodLots: (record) => record.id, rodMoves: (record) => record.id,
   });
   const MASTER_DELETABLE = Object.freeze(["colorSets", "packages", "jobs"]);
   // ลำดับของชุดตามฐานข้อมูล: ใบสั่งผลิตใหม่สุดก่อน (วันที่สั่งผลิต แล้วเลขที่) · งานเรียงตามใบ แผนก ชิ้นงาน เลขงาน · ชุดอื่นเรียงตามกุญแจ
@@ -213,6 +218,8 @@
     jobs: (a, b) => compareKey(a.orderId, b.orderId) || compareKey(a.dept, b.dept) || compareKey(a.itemCode, b.itemCode) || compareKey(a.id, b.id),
     stockMoves: (a, b) => (Number(a.at) || 0) - (Number(b.at) || 0) || compareKey(a.id, b.id),
     fgMoves: (a, b) => (Number(a.at) || 0) - (Number(b.at) || 0) || compareKey(a.id, b.id),
+    rodLots: (a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0) || compareKey(a.id, b.id),
+    rodMoves: (a, b) => (Number(a.at) || 0) - (Number(b.at) || 0) || compareKey(a.id, b.id),
   });
   // เป้าหมายการลบ: ชุดสี/แพ็กเกจ = {base, code} · งาน = {id}
   const deleteTarget = (list, record) => (list === "jobs" ? { id: record.id } : { base: record.base, code: record.code });
@@ -241,12 +248,14 @@
   }
   // ส่วนต่างของข้อมูลก่อน/หลังรัน action → p_changes ของ app_bom_save_master (ระเบียนที่เพิ่ม/เปลี่ยน ส่งทั้งระเบียน · ชุดสี/แพ็กเกจ/งานลบได้)
   // stockMoves เซิร์ฟเวอร์เขียนเองเสมอ · stock ส่งเฉพาะ action countPartStock (การเบิกจ่ายหักสต็อกที่เซิร์ฟเวอร์ ค่าที่คำนวณในเครื่องใช้แสดงจนกว่าคำตอบมาถึง)
-  const SERVER_WRITTEN = Object.freeze(["stockMoves", "fgMoves"]);
+  const SERVER_WRITTEN = Object.freeze(["stockMoves", "fgMoves", "rodLots", "rodMoves"]);
   // คืนของซื้อ (undoOrderParts / returnOrderParts): ผลทั้งหมด (งานกลับไปรอเบิกจ่าย สต็อก ประวัติ) เซิร์ฟเวอร์คำนวณเอง จึงส่งเฉพาะแถวคำขอ { orderId, mode, reason, lines? } ในส่วน partReturns (action คืนแถวนี้ใน result.request)
   // สำเนาที่ action คำนวณในเครื่อง (งาน สต็อก) ใช้แสดงจนกว่าคำตอบมาถึง และยังใช้เทียบว่าระเบียนไหนเป็นของเรา
   const RETURN_ACTIONS = Object.freeze(["undoOrderParts", "returnOrderParts"]);
   // สินค้าสำเร็จรูป (receiveFg / deliverFg / closeOrderShort / closeOrder / reverseFg): เซิร์ฟเวอร์เขียนประวัติ ปิดใบ และเปิดใบกลับเอง จึงส่งเฉพาะแถวคำขอ { orderId, kind, lines?, note?, moveId? } ในส่วน fgMoves (action คืนแถวนี้ใน result.request)
   const FG_ACTIONS = Object.freeze(["receiveFg", "deliverFg", "closeOrderShort", "closeOrder", "reverseFg"]);
+  // คลังแท่งยาว SR: action → ส่วนที่ส่งแถวคำขอ (action คืน result.request เป็นอาร์เรย์ของแถว) · ผลทั้งหมด (สถานะล็อต ประวัติแท่ง ยอดงาน RB) เซิร์ฟเวอร์คำนวณเอง
+  const ROD_ACTIONS = Object.freeze({ receiveRods: "rodLots", decideRods: "rodLots", issueRods: "rodMoves", reverseRodIssue: "rodMoves", adjustRods: "rodMoves" });
   function diffMaster(before, after, action = "") {
     const changes = {};
     for (const list of REMOTE_LISTS) {
@@ -385,6 +394,8 @@
       BOM_INVALID_RETURN: "คืนของซื้อไม่ได้: จำนวนเกินที่คืนได้ ไม่มีของที่เบิกจ่ายแล้ว หรือไม่ได้ระบุเหตุผล (อาจมีผู้อื่นคืนไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
       BOM_INVALID_FG: "รับเข้าคลัง ส่งมอบ หรือปิดใบไม่ได้: ข้อมูลไม่ถูกต้อง (จำนวนต้องมากกว่า 0 สินค้าต้องอยู่ในใบ เหตุผลที่ปิดใบอย่างน้อย 3 ตัวอักษร)",
       BOM_FG_EXCEEDS: "ตัวเลขเปลี่ยนไปแล้ว: จำนวนที่รับเข้าคลังเกินที่ PK ส่งมอบ จำนวนที่ส่งมอบเกินที่มีในใบ หรือสต็อกสินค้าสำเร็จรูปที่ใบนี้ตั้งใช้ไม่พอ (อาจมีผู้อื่นบันทึกหรือปล่อยผลิตใบอื่นไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาตรวจตัวเลขแล้วทำรายการอีกครั้ง",
+      BOM_INVALID_ROD: "ทำรายการคลังแท่งยาวไม่ได้: ข้อมูลไม่ถูกต้อง (จำนวนรับต้องมากกว่า 0 และไม่เกินที่ส่งมา ค่าที่วัดครบตามสเปกและผลตรงกับค่าที่วัด เหตุผลอย่างน้อย 3 ตัวอักษร หรือหยิบแท่งจากถังของใบอื่น)",
+      BOM_ROD_EXCEEDS: "ตัวเลขเปลี่ยนไปแล้ว: แท่งในคลังแท่งยาว (SR) ไม่พอที่จะจ่าย ปรับ หรือใช้ตอนปล่อยผลิต (อาจมีผู้อื่นจ่ายหรือปล่อยผลิตใบอื่นไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาตรวจตัวเลขแล้วทำรายการอีกครั้ง",
       BOM_INVALID_ORDER: "ใบสั่งผลิตไม่ผ่านการตรวจของฐานข้อมูล (เช่น ยกเลิกใบโดยไม่มีเหตุผล 3–200 ตัวอักษร หรือยอดที่ใช้จากสต็อกสินค้าสำเร็จรูปเกินจำนวนสั่ง) ตรวจแล้วทำรายการอีกครั้ง",
       BOM_INVALID_JOB: "บันทึกงานไม่ได้: ยอดหรือรายงานไม่ถูกต้อง (พักงานต้องมีเหตุผล 3–200 ตัวอักษร · งานที่ผูก WO ของ RubberFlow รับยอดจาก RubberFlow เท่านั้น รายงานผลที่นี่ไม่ได้)",
       BOM_RESET: "ข้อมูล BOM ทดสอบถูกล้างและเริ่มใหม่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
@@ -406,7 +417,7 @@
     return Object.assign(new Error(message), { code });
   }
   // การชน: ระเบียนที่แตะถูกผู้อื่นแก้ไปก่อน · เวอร์ชันฐานไม่ตรงฐานข้อมูล · เลขซ้ำ · สถานะใบเปลี่ยนไปแล้ว → ตามทันฐานข้อมูลก่อนให้ผู้ใช้ทำรายการใหม่
-  const CONFLICT_CODES = Object.freeze(["BOM_STALE", "BOM_INVALID_PAYLOAD", "BOM_CONFLICT", "BOM_INVALID_TRANSITION", "BOM_RESET", "BOM_INSUFFICIENT_STOCK", "BOM_INVALID_RETURN", "BOM_FG_EXCEEDS", "BOM_REVISION_IMMUTABLE"]);
+  const CONFLICT_CODES = Object.freeze(["BOM_STALE", "BOM_INVALID_PAYLOAD", "BOM_CONFLICT", "BOM_INVALID_TRANSITION", "BOM_RESET", "BOM_INSUFFICIENT_STOCK", "BOM_INVALID_RETURN", "BOM_FG_EXCEEDS", "BOM_ROD_EXCEEDS", "BOM_REVISION_IMMUTABLE"]);
 
   // พนักงานที่ล็อกอิน (state.employee ของ app.js: บัญชีทดสอบในโหมดทดสอบ หรือพนักงานจริง) → ผู้ใช้ของ BOM
   // admin → admin · ผู้ช่วยผู้จัดการโรงงานขึ้นไป และผู้จัดการแผนกในสายผลิต → manager · แผนกวางแผน PP → planner · RB/GR/PT/BG/ST/WH → บทบาทของแผนกนั้น · อื่นๆ → ดูอย่างเดียว
@@ -415,7 +426,7 @@
   const MANAGER_ROLE_CODES = Object.freeze(["assistant_factory_manager", "factory_manager", "general_manager"]);
   // แผนกในสายผลิต (private.bom_production_depts): ผู้จัดการแผนก (department_manager) ของแผนกเหล่านี้อยู่ในกลุ่มวางแผน
   const PRODUCTION_DEPTS = Object.freeze(["RB", "GR", "PT", "BG", "PK", "ST", "WH", "QA", "SR"]);
-  const DEPT_ROLES = Object.freeze({ PP: "planner", RB: "rb", GR: "gr", PT: "pt", BG: "bg", PK: "pk", ST: "st", WH: "wh" });
+  const DEPT_ROLES = Object.freeze({ PP: "planner", RB: "rb", GR: "gr", PT: "pt", BG: "bg", PK: "pk", ST: "st", WH: "wh", SR: "sr", QA: "qa" });
   function roleOfEmployee(employee) {
     if (!employee) return "viewer";
     const roleCode = employee.role?.code ?? employee.role_code ?? "";
@@ -436,9 +447,9 @@
     return { id: String(employee.id ?? employee.employee_no ?? name), role, dept, name, roleCode: String(employee.role?.code ?? employee.role_code ?? "") };
   }
   // ใครเห็นเมนูและหน้า BOM (UX ล้วน สิทธิ์จริงตัดสินที่ฐานข้อมูล 20261130010000): โหมดทดสอบ = ทุกบัญชีทดสอบเหมือนเดิม ·
-  // ใช้งานจริง = กลุ่มวางแผน (admin · ผู้ช่วยผู้จัดการโรงงานขึ้นไป · ผู้จัดการแผนกในสายผลิต · แผนก PP) และพนักงานแผนก RB GR PT BG PK ST WH
-  // (ตรงกับ private.bom_can_read ที่ RPC ของ BOM ใช้ปฏิเสธข้อมูลจริง: คนอื่นได้ BOM_FORBIDDEN)
-  const FLOW_DEPTS = Object.freeze(["PP", "RB", "GR", "PT", "BG", "PK", "ST", "WH"]);
+  // ใช้งานจริง = กลุ่มวางแผน (admin · ผู้ช่วยผู้จัดการโรงงานขึ้นไป · ผู้จัดการแผนกในสายผลิต · แผนก PP) และพนักงานแผนก RB GR PT BG PK ST WH SR QA
+  // (ตรงกับ private.bom_can_read ที่ RPC ของ BOM ใช้ปฏิเสธข้อมูลจริง: คนอื่นได้ BOM_FORBIDDEN · SR และ QA ตั้งแต่ 20261202010000 คลังแท่งยาว)
+  const FLOW_DEPTS = Object.freeze(["PP", "RB", "GR", "PT", "BG", "PK", "ST", "WH", "SR", "QA"]);
   const isPlanner = (employee) => ["admin", "manager", "planner"].includes(roleOfEmployee(employee));
   // ผู้ใช้สั่ง 2026-11-18: ใช้ได้เฉพาะในโหมดทดสอบ (sandbox) จนกว่าผู้ใช้สั่งใช้จริงสำหรับฝ่ายโรงงานทั้งหมด · นอกโหมดทดสอบไม่มีใครเห็น รวม admin (เปลี่ยน REAL_STAFF_OPEN เป็น true ที่นี่และใน rubberflow-store.js)
   const REAL_STAFF_OPEN = false;
@@ -600,7 +611,7 @@
     };
     function hasForeignRecords(delta, sent, before) {
       return REMOTE_LISTS.some((list) => {
-        if (list === "stock" || list === "stockMoves" || list === "fgMoves") return false;
+        if (list === "stock" || SERVER_WRITTEN.includes(list)) return false;
         const key = MASTER_KEY[list];
         const mine = new Set((sent[list]?.upsert ?? []).map(key));
         const removed = new Set((sent[list]?.delete ?? []).map((target) => deleteKey(list, target)));
@@ -707,7 +718,9 @@
       const previousCounters = counters; // คำสั่งที่ฐานข้อมูลไม่รับ: เลขที่นับไปแล้วย้อนกลับด้วย
       counters = draft.counters;
       const sent = RETURN_ACTIONS.includes(name) && result?.request ? { partReturns: { upsert: [clone(result.request)] } }
-        : FG_ACTIONS.includes(name) && result?.request ? { fgMoves: { upsert: [clone(result.request)] } } : canPlan(user) ? changes : shapeForActor(changes, before);
+        : FG_ACTIONS.includes(name) && result?.request ? { fgMoves: { upsert: [clone(result.request)] } }
+        : Object.hasOwn(ROD_ACTIONS, name) && Array.isArray(result?.request) ? { [ROD_ACTIONS[name]]: { upsert: clone(result.request) } }
+        : canPlan(user) ? changes : shapeForActor(changes, before);
       if (!hasChanges(sent)) return { ok: true, result: result ?? true, saving: Promise.resolve({ ok: true }) };
       // แบ่งเฉพาะการนำเข้าจาก Excel: ทำซ้ำได้ปลอดภัย (ชิ้นงานที่มีแล้วรวม BOM ที่มีแล้วข้าม) · คำสั่งอื่นที่ทำซ้ำอาจสร้าง revision ซ้ำ จึงส่งครั้งเดียวเสมอ
       const batches = name === "importFlat" ? splitForSave(sent) : [sent];
@@ -937,7 +950,7 @@
     return { load, data: getData, user: getUser, setUser, run, reset, isPersisted: () => persisted, size, now, isRemote: () => false, status: () => "ready", error: () => null, isSaving: () => false, hasNewer: () => false, version: () => null, ensureLoaded: () => Promise.resolve(), reload: () => Promise.resolve(), catchUp: () => Promise.resolve(false), audit: () => ({ status: "ready", entries: getData().audit, error: null }), loadAudit: () => Promise.resolve(), purge: () => Promise.resolve({ ok: false, error: new Error("ล้างข้อมูล BOM ทดสอบได้เฉพาะโหมดฐานข้อมูล") }), subscribe: () => () => {} };
   }
 
-  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, NAV, SETUP_PAGES, NAV_PARENT, navLabel, findModule, canSee, homeOf, isValidState, migrate, createStore, MASTER_LISTS, WORK_LISTS, REMOTE_LISTS, diffMaster, splitForSave, combineDeltas, SAVE_BATCH_RECORDS, SAVE_BATCH_BYTES, sameMaster, customerName, customerKey, mapRemoteError, roleOfEmployee, personaUser, usesBom, isPlanner, PRODUCTION_DEPTS };
+  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, NAV, SETUP_PAGES, NAV_PARENT, navLabel, findModule, canSee, homeOf, isValidState, migrate, createStore, MASTER_LISTS, WORK_LISTS, REMOTE_LISTS, diffMaster, splitForSave, combineDeltas, SAVE_BATCH_RECORDS, SAVE_BATCH_BYTES, sameMaster, customerName, customerKey, mapRemoteError, roleOfEmployee, personaUser, usesBom, isPlanner, PRODUCTION_DEPTS, ROD_ACTIONS };
   if (isNode) module.exports = api;
   else root.MNP_BOM_STORE = api;
 })(typeof window !== "undefined" ? window : globalThis);

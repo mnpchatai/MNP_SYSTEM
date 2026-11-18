@@ -609,7 +609,7 @@ test("the import page parses pasted TSV, reports before saving and the orders pa
   assert.match(env.context.MNP_BOM_PAGES.jobs(env.ctx("p=jobs&dept=PT&st=all")).html, /14 ชิ้น<div class="small muted"[^>]*>ต้องการ 24 · คลัง 10<\/div>/, "a job shows the gross need and the counted stock behind its planned quantity");
 });
 
-test("the mobile count page lists draft orders, shows SE + RB of the stock-check rule (or every part), and saves many counts in one submit", async () => {
+test("the mobile count page lists draft orders, shows SE of the stock-check rule (or every part; rods come from the SR store), and saves many counts in one submit", async () => {
   const env = load();
   env.store.setUser("B08"); // คลัง
   let html = await env.render("p=count");
@@ -620,18 +620,19 @@ test("the mobile count page lists draft orders, shows SE + RB of the stock-check
   clean(html);
   assert.match(html, /data-rf-form="setStockCounts"/);
   assert.match(html, /name="itemCode\[\]" value="SE-HL24-YE03-400-19-30"/);
-  assert.match(html, /name="itemCode\[\]" value="RB-DM02-02-YE03-204-19-34"/);
-  assert.doesNotMatch(html, /name="itemCode\[\]" value="(BG-0092|P-BOX-01|DEMO-HL-24\(B\)-A)"/, "only SE and RB by default, never the FG");
+  assert.doesNotMatch(html, /name="itemCode\[\]" value="RB-DM02-02-YE03-204-19-34"/, "rods are not counted per PI any more: the planner sets use-from-SR-store at step 2");
+  assert.doesNotMatch(html, /name="itemCode\[\]" value="(BG-0092|P-BOX-01|DEMO-HL-24\(B\)-A)"/, "only SE by default, never the FG");
   assert.match(html, /ต้องใช้ 576 ชิ้น/, "192 sets × 3 sleeves");
   assert.match(html, /inputmode="decimal"/);
-  assert.match(html, /นับแล้ว 0\/2/);
+  assert.match(html, /นับแล้ว 0\/1/);
   html = await env.render("p=count&order=DEMO-26002&all=1");
   assert.match(html, /name="itemCode\[\]" value="BG-0092"/, "every counted kind is listed with all=1");
+  assert.doesNotMatch(html, /name="itemCode\[\]" value="RB-DM02-02-YE03-204-19-34"/, "not even with all=1");
   assert.doesNotMatch(html, /name="itemCode\[\]" value="(P-BOX-01|DEMO-HL-24\(B\)-A)"/, "purchased parts are counted on the part stock page, and never the FG");
-  await env.submit("p=count&order=DEMO-26002", "setStockCounts", { "itemCode[]": ["SE-HL24-YE03-400-19-30", "RB-DM02-02-YE03-204-19-34"], "qty[]": ["100", ""] }, { orderId: "DEMO-26002" });
+  await env.submit("p=count&order=DEMO-26002", "setStockCounts", { "itemCode[]": ["SE-HL24-YE03-400-19-30", "BG-0092"], "qty[]": ["100", ""] }, { orderId: "DEMO-26002" });
   const order = env.store.data().orders.find((entry) => entry.id === "DEMO-26002");
   assert.deepEqual(json(order.stockCounts), { "SE-HL24-YE03-400-19-30": 100 }, "an empty field leaves the item uncounted");
-  assert.match(await env.render("p=count&order=DEMO-26002"), /นับแล้ว 1\/2[\s\S]*value="100"/);
+  assert.match(await env.render("p=count&order=DEMO-26002"), /นับแล้ว 1\/1[\s\S]*value="100"/);
   await env.submit("p=count&order=DEMO-26002", "setStockCounts", { "itemCode[]": ["SE-HL24-YE03-400-19-30"], "qty[]": [""] }, { orderId: "DEMO-26002" });
   assert.match(env.log.toasts.at(-1)[0], /ยังไม่ได้กรอก/);
   // บันทึกซ้ำด้วยยอดเท่าเดิมไม่เขียน audit
@@ -3720,22 +3721,22 @@ test("cancel after production started (20261128010000): the dialog lists what ha
   assert.ok(!(await env.render("p=work")).includes("คืนของซื้อที่เบิกไปแล้ว DEMO-26006"), "the card goes once everything is back");
 });
 
-test("a job linked to a WO has no report button and says its output comes from RubberFlow; holding opens a reason dialog and a held job with output resumes as in progress", async () => {
+test("a job linked to a WO has no report button and says its output comes from the SR store receipt; holding opens a reason dialog and a held job with output resumes as in progress", async () => {
   const env = load();
   const data = () => env.store.data();
-  const linked = data().jobs.find((job) => job.orderId === "DEMO-26006" && job.dept === "RB");
+  const linked = data().jobs.find((job) => job.orderId === "DEMO-26007" && job.dept === "RB");
   env.store.setUser("B04");
   let html = await env.render("p=jobs&dept=RB");
   clean(html);
   const row = html.split("<tr").find((entry) => entry.includes(linked.id));
   assert.ok(row, "the linked job is listed");
   assert.doesNotMatch(row, /data-rf-open="jobReport"/);
-  assert.match(row, /ยอดมาจาก RubberFlow/);
+  assert.match(row, /ยอดมาจากการรับเข้าคลัง SR/);
   assert.match(row, /data-rf-open="jobHold"/);
   assert.equal(env.context.MNP_BOM_DIALOGS.jobReport(env.ctx(), { jobId: linked.id }), null, "no report dialog either");
   html = await env.render("p=work");
-  const card = html.split("<article").find((entry) => entry.includes(linked.itemCode) && entry.includes("DEMO-26006"));
-  assert.ok(card && !card.includes('data-rf-open="jobReport"') && card.includes("ยอดมาจาก RubberFlow"), "the work card has no report button either");
+  const card = html.split("<article").find((entry) => entry.includes(linked.itemCode) && entry.includes("DEMO-26007"));
+  assert.ok(card && !card.includes('data-rf-open="jobReport"') && card.includes("ยอดมาจากการรับเข้าคลัง SR"), "the work card has no report button either");
   // หน้าต่างพักงาน: เหตุผล (จำเป็น) 3–200
   const hold = env.context.MNP_BOM_DIALOGS.jobHold(env.ctx(), { jobId: linked.id }).html;
   assert.match(hold, /data-rf-form="setJobStatus"/);
@@ -3990,7 +3991,7 @@ test("the job report dialog warns when the total would pass what the previous de
   const data = env.store.data();
   const job = data.jobs.find((entry) => entry.orderId === "DEMO-26001" && entry.itemCode === "SE-TP01-BK01-140-3-20");
   const limit = env.context.MNP_BOM_RULES.jobSupplyLimit(data, job);
-  assert.equal(limit, 42, "the seed: the rod jobs behind this item have reported enough for 42, the item itself 120");
+  assert.equal(limit, 0, "the seed: the rod job behind this item has reported nothing (rods are no longer counted per PI, they come from the SR store), the item itself 120");
   const built = env.context.MNP_BOM_DIALOGS.jobReport(env.ctx("p=jobs"), { jobId: job.id });
   assert.match(built.html, /name="qtyDone"[^>]*data-job-qty/);
   // U4: ช่องจำนวนดีว่าง (บอกยอดที่เหลือเป็น placeholder) กดบันทึกครั้งเดียวจึงไม่รายงานว่าเสร็จทั้งแผน
@@ -4006,7 +4007,7 @@ test("the job report dialog warns when the total would pass what the previous de
   qty.value = "5";
   qty.handlers.input();
   assert.equal(box.hidden, false);
-  assert.equal(box.body.textContent, `แผนกก่อนหน้าส่งมาพอสำหรับ 42 ชิ้น แต่ยอดรวมที่รายงานจะเป็น ${job.qtyDone + 5}`);
+  assert.equal(box.body.textContent, `แผนกก่อนหน้าส่งมาพอสำหรับ 0 ชิ้น แต่ยอดรวมที่รายงานจะเป็น ${job.qtyDone + 5}`);
   // ไม่รู้ยอดที่ส่งมา (ชิ้นแม่ที่ไม่มีผลระเบิด) = ไม่มีกล่องเตือน
   const plain = env.context.MNP_BOM_DIALOGS.jobReport(env.ctx("p=jobs"), { jobId: data.jobs.find((entry) => entry.orderId === "DEMO-26001" && entry.itemCode === "XP-00001").id });
   assert.doesNotMatch(plain.html, /data-job-supply/);

@@ -371,8 +371,8 @@ select ok(pr_t.job('JOB4-ST-P2') ->> 'status' = 'in_progress' and (pr_t.job('JOB
 select is(pr_t.order_status('251112-25004'), 'completed', 'and the PI stays completed');
 
 -- 11. snapshot / delta และตาราง --------------------------------------------------------------------
-select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 14::bigint, 'the snapshot has fourteen lists (partReturns is not one of them, fgMoves is)');
-select is((select count(*) from jsonb_object_keys(public.app_bom_master_since(0) -> 'changes')), 14::bigint, 'the delta names fourteen lists');
+select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 16::bigint, 'the snapshot has sixteen lists (partReturns is not one of them, fgMoves, rodLots and rodMoves are)');
+select is((select count(*) from jsonb_object_keys(public.app_bom_master_since(0) -> 'changes')), 16::bigint, 'the delta names sixteen lists');
 select is(public.app_bom_master_since(0) -> 'changes' -> 'stockMoves', jsonb_build_object('upsert', public.app_bom_master() -> 'stockMoves', 'delete', '[]'::jsonb),
   'the delta from version 0 equals the move snapshot, notes included');
 reset role;

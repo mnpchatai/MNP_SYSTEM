@@ -1,4 +1,4 @@
-// BOM รายแผนก (โหมดทดสอบ) — ข้อมูลสาธิตสมมติทั้งชุด: บทบาท 10 คน สูตรยาง item master BOM อนุมัติ ใบสั่งผลิต 2 ใบ และงานรายแผนก
+// BOM รายแผนก (โหมดทดสอบ) — ข้อมูลสาธิตสมมติทั้งชุด: บทบาท 12 คน สูตรยาง item master BOM อนุมัติ ใบสั่งผลิต งานรายแผนก และคลังแท่งยาว (SR)
 // รหัส/ชื่อเลียนโครงสร้างจริงของชีต DATA BOM (FG → SE → RB · FG → PT → เม็ดพลาสติก · FG → BG → ผ้า/ซิป) แต่เป็นรหัส DEMO ไม่ใช่ข้อมูลลูกค้า
 // ประวัติสร้างโดยเรียก action จริงของ modules/bom-actions.js จึงสอดคล้องกันเอง (ผลเหมือนกันทุกครั้งเมื่อ now เท่ากัน)
 // โหลดหลัง modules/bom-rules.js และ bom-actions.js (ใน Node ตั้ง globalThis.MNP_BOM_RULES/_ACTIONS ก่อน require)
@@ -18,6 +18,9 @@
     { id: "B08", role: "st", dept: "ST", name: "สมศักดิ์ แก้วใส" },
     { id: "B09", role: "wh", dept: "WH", name: "สุดา คลังสินค้า" },
     { id: "B10", role: "manager", dept: "WH", name: "ประเสริฐ ผู้จัดการคลังสินค้า" },
+    // คลังแท่งยาว (SR) รับแท่งเข้าคลังและจ่ายให้ GR · ตรวจคุณภาพ (QA) ตัดสินล็อตที่กัก
+    { id: "B11", role: "sr", dept: "SR", name: "ศิริ รับมอบ" },
+    { id: "B12", role: "qa", dept: "QA", name: "ธนา ตรวจสอบ" },
   ].map((user) => Object.freeze(user)));
 
   // สูตรยางสาธิต: DM01/DM02 ผูกกับสูตร PHR ของชุดสาธิต RubberFlow (rubberflow-seed.js) DM03 ยังไม่ผูก
@@ -84,10 +87,44 @@
   const demoWoId = (now, index) => `WO-${ymd(now - WO_DAYS_AGO * rules().DAY)}-${String(index + 1).padStart(2, "0")}`;
 
   function emptyState() {
-    return { version: 6, counters: {}, users: USERS.map((user) => ({ ...user })), compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [], colors: [], colorSets: [], packages: [], processes: rules().DEFAULT_PROCESSES.map((entry) => ({ ...entry })), routings: [], stock: [], stockMoves: [] };
+    return { version: 6, counters: {}, users: USERS.map((user) => ({ ...user })), compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [], colors: [], colorSets: [], packages: [], processes: rules().DEFAULT_PROCESSES.map((entry) => ({ ...entry })), routings: [], stock: [], stockMoves: [], rodLots: [], rodMoves: [] };
   }
 
-  function buildSeed(now = Date.now()) {
+  // คลังแท่งยาว (SR) สาธิต: แท่งของงาน RB ที่ผูก WO ของใบ DEMO-26006 (ฮูล่า 60 ชุด ต้องใช้ 36 เส้น) และสต็อกกลางจากใบ DEMO-26008 ที่ปิดแล้ว
+  // L0 = ใบ DEMO-26008 รับเข้า 6 เส้นหลังงาน RB ของใบเสร็จแล้ว (เป็นสต็อกกลางทั้งหมด) · L1 = รับเข้าผ่านแล้ว 20 เส้น (เป็นของใบ งาน RB ได้ 20/36)
+  // L2 / L3 = รอ SR รับเข้า (12 และ 8 เส้น มีสเปกขนาด): รับ L2 ผ่าน → งาน 32/36 · วัด L3 นอกสเปก → กักรอ QA → ให้ใช้ → 4 เส้นเป็นของใบ อีก 4 เป็นสต็อกกลาง งานครบ
+  // แล้ว SR จ่ายแท่งให้ GR ของใบ DEMO-26006 (ถังของใบก่อน แล้วสต็อกกลาง ล็อตเก่าก่อน) · เลขล็อตตกแต่งเป็นเลขสาธิต (-9x) ไม่มีล็อตจริงในชุดสาธิต RubberFlow
+  const ROD_SPEC = Object.freeze({ thickness: { target: 7.5, tol: 0.3 }, width: { target: 34, tol: 0.5 }, weightPerM: { target: 1200, tol: 40 } });
+  const rodId = (n) => `5e1d0000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  function addRodDemo(d, now) {
+    const { DAY } = rules();
+    const HOUR = 3600000;
+    const sr = USERS.find((user) => user.role === "sr").name;
+    const rbJob = (pi) => d.jobs.find((entry) => entry.orderId === pi && entry.dept === "RB");
+    const live = rbJob("DEMO-26006");
+    const closed = rbJob("DEMO-26008");
+    if (!live || !closed || !live.externalRef?.woId) return;
+    const lot = (n, job, woNo, fields) => ({
+      id: rodId(n), lotNo: `FN-${ymd(fields.createdAt)}-${90 + n}`, itemCode: job.itemCode, orderId: job.orderId, jobNo: job.id, woNo, recipeCode: "RC-NBR-OR02", uom: job.uom,
+      spec: JSON.parse(JSON.stringify(ROD_SPEC)), status: "pending", qtyReceived: null, qc: null, receivedBy: null, receivedAt: null, decision: null, decisionNote: null, decidedBy: null, decidedAt: null, ...fields,
+    });
+    const received = (at, qty, values) => ({ status: "stored", qtyReceived: qty, qc: { values, result: "pass", note: "" }, receivedBy: sr, receivedAt: at });
+    const move = (n, row, at) => ({ id: rodId(100 + n), reversesId: null, note: "", at, by: sr, forOrderId: null, ...row });
+    const t0 = now - 5 * DAY;
+    const l0 = lot(0, closed, `WO-${ymd(now - 10 * DAY)}-90`, { qtySent: 6, createdAt: t0 - HOUR, ...received(t0, 6, { thickness: 7.45, width: 34.2, weightPerM: 1210 }) });
+    const t1 = now - DAY;
+    const l1 = lot(1, live, live.externalRef.woId, { qtySent: 20, createdAt: t1 - HOUR, ...received(t1, 20, { thickness: 7.52, width: 34.1, weightPerM: 1195 }) });
+    d.rodLots.push(l0, l1,
+      lot(2, live, live.externalRef.woId, { qtySent: 12, createdAt: now - 3 * HOUR }),
+      lot(3, live, live.externalRef.woId, { qtySent: 8, createdAt: now - 2 * HOUR }));
+    d.rodMoves.push(
+      move(0, { lotId: l0.id, itemCode: l0.itemCode, kind: "receive", qty: 6, ownerOrderId: null }, t0),
+      move(1, { lotId: l1.id, itemCode: l1.itemCode, kind: "receive", qty: 20, ownerOrderId: live.orderId }, t1));
+    live.reports = [...(live.reports ?? []), { at: t1, by: sr, good: 20, reject: 0, note: `รับเข้าคลัง SR ผ่านตรวจ ล็อต ${l1.lotNo}` }];
+    live.qtyDone = 20;
+  }
+
+  function buildSeed(now = Date.now(), { rods = true } = {}) {
     const { DAY } = rules();
     const A = actions();
     const d = emptyState();
@@ -143,8 +180,7 @@
     A.addOrderItem(d, { orderId: pi1, fgCode: "DEMO-TP-01(P)-Y", qty: 80 }, at(now - 20 * DAY + 600000, "planner"));
     A.addOrderItem(d, { orderId: pi1, fgCode: "DEMO-HL-24(B)-A", qty: 40 }, at(now - 20 * DAY + 900000, "planner"));
     A.explodeOrder(d, { orderId: pi1 }, at(now - 19 * DAY, "planner"));
-    // คงคลังที่นับลดงาน (กฎ AK ของ BOMSHEET): เส้นรัดผมมี 3 จาก 17.14 ที่ต้องใช้ → งาน RB เหลือ 14.14 · แกน PT มี 10 จาก 24 → งาน PT เหลือ 14
-    A.setStockCount(d, { orderId: pi1, itemCode: "RB-DM02-02-BK01-225-3-20", qty: 3 }, at(now - 18 * DAY, "st"));
+    // คงคลังที่นับลดงาน (กฎ AK ของ BOMSHEET): แกน PT มี 10 จาก 24 → งาน PT เหลือ 14 · เส้นยางไม่นับตามใบแล้ว (ใช้จากคลังแท่งยาว SR ที่ขั้นตรวจของ)
     A.setStockCount(d, { orderId: pi1, itemCode: "PT-00320", qty: 10 }, at(now - 18 * DAY + 60000, "st"));
     // ของซื้อนับที่หน้า "คลังของซื้อ" (ยอดรวมต่อรหัส ไม่นับตามใบ): กล่องมี 5 ไม่พอใบนี้ (ต้องใช้ 7) ส่วนที่เหลือพอ ให้เห็นตอนเบิกจ่ายแล้วสั่งซื้อส่วนที่ขาด
     A.countPartStock(d, { counts: [{ itemCode: "P-BOX-01", qty: 5 }, { itemCode: "P-STK-01", qty: 400 }, { itemCode: "P-BAG-01", qty: 10 }, { itemCode: "P-FAB-BL", qty: 50 }, { itemCode: "P-PEL-BK", qty: 5 }, { itemCode: "P-ROPE-01", qty: 5 }, { itemCode: "P-ZIP-05", qty: 100 }] }, at(now - 18 * DAY + 120000, "st"));
@@ -197,13 +233,15 @@
     A.receiveFg(d, { orderId: pi8, lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 8 }] }, at(now - 6 * DAY, "wh"));
     A.receiveFg(d, { orderId: pi8, lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 12 }] }, at(now - 5 * DAY, "wh"));
     A.deliverFg(d, { orderId: pi8, lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 20 }] }, at(now - 4 * DAY, "wh"));
+    if (rods) addRodDemo(d, now);
     return d;
   }
 
   // งาน RB ของใบสาธิตที่ผูก WO → ข้อมูลที่ชุดสาธิต RubberFlow ใช้เปิด WO เลขเดียวกัน (สร้างชุด BOM ด้วย now เดียวกันแล้วอ่านงานที่ผูก)
   // mode: running = เดินสายผลิตถึงขั้นฉีด (WO กำลังผลิต) · issued = เบิกเคมีแล้วรอผสม · สูตรของ WO = สูตร PHR ที่สูตรยางของเส้นยางผูกไว้ (ไม่ผูก = ข้าม)
   function demoRfLinks(now = Date.now()) {
-    const d = buildSeed(now);
+    // ยอดของ WO = ส่วนที่งาน RB ยังขาดตอนเปิด WO (ก่อนแท่งสาธิตของคลังแท่งยาวเข้า)
+    const d = buildSeed(now, { rods: false });
     return DEMO_RF_ORDERS.map(([pi, , mode]) => {
       const job = d.jobs.find((entry) => entry.orderId === pi && entry.dept === "RB" && entry.externalRef?.woId);
       if (!job) return null;

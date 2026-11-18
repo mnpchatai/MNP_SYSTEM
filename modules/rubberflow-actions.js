@@ -864,7 +864,9 @@
       params: { perBox }, goodQty: passed, scrapQty: scrap, scrapReason: p.scrapReason || "",
       qc: result, holdReasons: result === "pass" ? [] : ["ผลตรวจตกแต่งไม่ผ่าน/รอตัดสิน"],
     }, ctx);
-    let left = passed;
+    // WO ที่มาจากงาน RB ของ BOM (sourceJobId): แท่งยาวไปคลังแท่งยาว (SR) ของ BOM ไม่ใช่สินค้าขาย จึงไม่สร้างกล่อง (ตรงกับ rf_save_lots ของ 20261202010000
+    // ที่สร้างล็อตแท่งรอ SR รับเมื่อล็อตผ่าน QC) · WO ที่ไม่ผูกงาน BOM (ขายเป็นสินค้า) สร้างกล่องให้คลังสินค้าส่งมอบเหมือนเดิม
+    let left = order.sourceJobId ? 0 : passed;
     let i = 0;
     while (left > 1e-9) {
       const qty = Math.min(perBox, left);
@@ -879,7 +881,7 @@
     lot.boxes = i;
     lot.countedToOrder = result === "pass";
     if (result === "pass") addProduced(d, order.id, passed, ctx);
-    audit(d, ctx, "บันทึกการตกแต่ง/บรรจุ", `${lot.id} ${passed} ${order.uom} → ${i} กล่อง`);
+    audit(d, ctx, "บันทึกการตกแต่ง/บรรจุ", `${lot.id} ${passed} ${order.uom} → ${order.sourceJobId ? `คลังแท่งยาว (SR) ของงาน ${order.sourceJobId}` : `${i} กล่อง`}`);
     return lot.id;
   }
 

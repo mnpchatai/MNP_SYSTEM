@@ -355,7 +355,9 @@
     const available = data.materialLots.filter((lot) => lotState(lot, now) === "available");
     const soon = available.filter((lot) => lot.expiry - now < 30 * DAY);
     const expired = data.materialLots.filter((lot) => lotState(lot, now) === "expired" && lot.qtyKg > 0);
-    const boxes = [...data.fgBoxes].sort((a, b) => b.createdAt - a.createdAt).filter((box) => includes(`${box.id} ${box.orderId}`, ctx.q));
+    // กล่องสินค้าขายเท่านั้น: WO ที่มาจากงาน RB ของ BOM (sourceJobId) ส่งแท่งเข้าคลังแท่งยาว (SR) ไม่ใช่สินค้าให้คลังสินค้าส่งมอบ (กล่องเก่าก่อน 20261202010000 ก็ไม่แสดง)
+    const internal = new Set(data.orders.filter((order) => order.sourceJobId).map((order) => order.id));
+    const boxes = [...data.fgBoxes].filter((box) => !internal.has(box.orderId)).sort((a, b) => b.createdAt - a.createdAt).filter((box) => includes(`${box.id} ${box.orderId}`, ctx.q));
     // ล็อตแรกที่ใช้ได้ของแต่ละวัตถุดิบ = ล็อตที่ FEFO จะจ่ายถัดไป
     const nextFefo = new Set(data.materials.map((material) => available.filter((lot) => lot.materialCode === material.code).sort((a, b) => a.expiry - b.expiry)[0]?.lotNo).filter(Boolean));
     const decide = ctx.can("holdMaterial");

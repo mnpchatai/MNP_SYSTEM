@@ -142,10 +142,10 @@ select lives_ok($$ select public.app_bom_save_master('{}'::jsonb, 0, 'saveItem')
 -- 5. อ่านได้ทุก persona แต่เขียนไม่ได้ถ้าไม่ใช่ PP / ผู้จัดการขึ้นไป ------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select is(public.app_bom_master() - 'epoch',
-  '{"version":0,"items":[],"compounds":[],"colors":[],"colorSets":[],"packages":[],"boms":[],"processes":[],"routings":[],"customers":[],"orders":[],"jobs":[],"stock":[],"stockMoves":[],"fgMoves":[]}'::jsonb,
+  '{"version":0,"items":[],"compounds":[],"colors":[],"colorSets":[],"packages":[],"boms":[],"processes":[],"routings":[],"customers":[],"orders":[],"jobs":[],"stock":[],"stockMoves":[],"fgMoves":[],"rodLots":[],"rodMoves":[]}'::jsonb,
   'a rubber-department staff persona reads an empty master and never sees the real row (the epoch is a separate field)');
-select is(public.app_bom_master_since(0) - 'epoch', '{"version":0,"changes":{"items":{"upsert":[],"delete":[]},"compounds":{"upsert":[],"delete":[]},"colors":{"upsert":[],"delete":[]},"colorSets":{"upsert":[],"delete":[]},"packages":{"upsert":[],"delete":[]},"boms":{"upsert":[],"delete":[]},"processes":{"upsert":[],"delete":[]},"routings":{"upsert":[],"delete":[]},"customers":{"upsert":[],"delete":[]},"orders":{"upsert":[],"delete":[]},"jobs":{"upsert":[],"delete":[]},"stock":{"upsert":[],"delete":[]},"stockMoves":{"upsert":[],"delete":[]},"fgMoves":{"upsert":[],"delete":[]}}}'::jsonb,
-  'a rubber-department staff persona reads the delta of an empty master: all fourteen lists, empty upsert and delete');
+select is(public.app_bom_master_since(0) - 'epoch', '{"version":0,"changes":{"items":{"upsert":[],"delete":[]},"compounds":{"upsert":[],"delete":[]},"colors":{"upsert":[],"delete":[]},"colorSets":{"upsert":[],"delete":[]},"packages":{"upsert":[],"delete":[]},"boms":{"upsert":[],"delete":[]},"processes":{"upsert":[],"delete":[]},"routings":{"upsert":[],"delete":[]},"customers":{"upsert":[],"delete":[]},"orders":{"upsert":[],"delete":[]},"jobs":{"upsert":[],"delete":[]},"stock":{"upsert":[],"delete":[]},"stockMoves":{"upsert":[],"delete":[]},"fgMoves":{"upsert":[],"delete":[]},"rodLots":{"upsert":[],"delete":[]},"rodMoves":{"upsert":[],"delete":[]}}}'::jsonb,
+  'a rubber-department staff persona reads the delta of an empty master: all sixteen lists, empty upsert and delete');
 select throws_ok($$ select public.app_bom_save_master('{"items":{"upsert":[]}}'::jsonb, 0, 'saveItem') $$, 'BOM_FORBIDDEN',
   'a rubber-department staff persona cannot save');
 select public.app_sandbox_enter(current_setting('test.p_sbx_gr_amgr')::uuid);
