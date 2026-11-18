@@ -5,6 +5,8 @@
   const pages = (root.MNP_RUBBERFLOW_PAGES ??= {});
   const dialogs = (root.MNP_RUBBERFLOW_DIALOGS ??= {});
   const esc = (value) => root.escapeHtml(value);
+  // หน่วยของ WO/ล็อต/กล่อง: ป้ายไทยของ BOM สำหรับรหัสหน่วยของ BOM (rules.unitText) · ไม่มีกฎ = รหัสเดิม
+  const unitText = (code) => root.MNP_RUBBERFLOW_RULES?.unitText?.(code) ?? String(code ?? "");
 
   // ---------- QC · NCR · CoA ----------
   pages.quality = (ctx) => {
@@ -21,7 +23,7 @@
 
     let section = "";
     if (tab === "hold") {
-      section = ui.card(ui.table(["ล็อต", "ขั้นตอน", "สาเหตุที่กักกัน", { label: "ปริมาณ", className: "right" }, { label: "", className: "right" }], held.map((lot) => `<tr><td>${ui.mono(lot.id)}<div class="small muted">${esc(lot.orderId)}</div></td><td>${esc(STAGE_LABEL[lot.stage])}</td><td class="small">${esc((lot.holdReasons || []).join(", ") || "-")}</td><td class="right">${esc(`${fmtNum(lot.goodQty, 2)} ${lot.uom}`)}</td>
+      section = ui.card(ui.table(["ล็อต", "ขั้นตอน", "สาเหตุที่กักกัน", { label: "ปริมาณ", className: "right" }, { label: "", className: "right" }], held.map((lot) => `<tr><td>${ui.mono(lot.id)}<div class="small muted">${esc(lot.orderId)}</div></td><td>${esc(STAGE_LABEL[lot.stage])}</td><td class="small">${esc((lot.holdReasons || []).join(", ") || "-")}</td><td class="right">${esc(`${fmtNum(lot.goodQty, 2)} ${unitText(lot.uom)}`)}</td>
         <td class="right">${decide ? ui.openButton("ตรวจซ้ำ / ตัดสิน", "qcRecord", { lotId: lot.id }, { className: "small" }) : '<span class="small muted">เฉพาะ QC</span>'}</td></tr>`), { emptyText: "ไม่มีล็อตที่ถูกกักกัน" }), { flush: true });
     } else if (tab === "records") {
       section = ui.card(ui.table(["เลขที่", "ล็อต", "ผลทดสอบ", "ผล", "ผู้ตรวจ"], records.map((record) => `<tr><td>${ui.mono(record.id)}<div class="small muted">${esc(fmtDateTime(record.at))}</div></td><td class="rf-mono small">${esc(record.lotId)}<div class="muted">${esc(STAGE_LABEL[record.stage])}</div></td>
@@ -31,7 +33,7 @@
     } else {
       section = ui.card(ui.table(["ล็อตสินค้าสำเร็จรูป", "ลูกค้า / สินค้า", { label: "จำนวน", className: "right" }, "QC", { label: "", className: "right" }], finLots.map((lot) => {
         const order = data.orders.find((row) => row.id === lot.orderId);
-        return `<tr><td>${ui.mono(lot.id)}<div class="small muted">${esc(fmtDate(lot.createdAt))}</div></td><td>${esc(order?.customer ?? "")}<div class="small muted">${esc(order ? rules.orderLabel(order) : "")}</div></td><td class="right">${esc(`${fmtNum(lot.goodQty)} ${lot.uom}`)}<div class="small muted">${esc(`${lot.boxes} กล่อง`)}</div></td><td>${ui.status(lot.qc)}</td><td class="right">${ui.openButton("เปิด CoA", "coa", { lotId: lot.id }, { className: "secondary small" })}</td></tr>`;
+        return `<tr><td>${ui.mono(lot.id)}<div class="small muted">${esc(fmtDate(lot.createdAt))}</div></td><td>${esc(order?.customer ?? "")}<div class="small muted">${esc(order ? rules.orderLabel(order) : "")}</div></td><td class="right">${esc(`${fmtNum(lot.goodQty)} ${unitText(lot.uom)}`)}<div class="small muted">${esc(`${lot.boxes} กล่อง`)}</div></td><td>${ui.status(lot.qc)}</td><td class="right">${ui.openButton("เปิด CoA", "coa", { lotId: lot.id }, { className: "secondary small" })}</td></tr>`;
       }), { emptyText: "ยังไม่มีล็อตสินค้าสำเร็จรูป" }), { flush: true });
     }
     const actions = decide ? `${ui.openButton("เปิด NCR", "ncr", {}, { className: "secondary" })}${ui.openButton("บันทึกผลตรวจ", "qcRecord", {}, { className: "" })}` : "";
@@ -173,8 +175,8 @@
       const it = treeNode.item;
       let sub = "";
       let statusValue = null;
-      if (treeNode.kind === "lot") { sub = `${STAGE_LABEL[it.stage]} · ${fmtNum(it.goodQty, 2)} ${it.uom} · ${fmtDateTime(it.createdAt)}`; statusValue = it.qc; }
-      if (treeNode.kind === "box") { sub = `กล่อง · ${rules.orderLabel(it)} · ${fmtNum(it.qty)} ${it.uom}`; statusValue = it.status; }
+      if (treeNode.kind === "lot") { sub = `${STAGE_LABEL[it.stage]} · ${fmtNum(it.goodQty, 2)} ${unitText(it.uom)} · ${fmtDateTime(it.createdAt)}`; statusValue = it.qc; }
+      if (treeNode.kind === "box") { sub = `กล่อง · ${rules.orderLabel(it)} · ${fmtNum(it.qty)} ${unitText(it.uom)}`; statusValue = it.status; }
       if (treeNode.kind === "requisition") sub = `ใบเบิก · ${it.batches} ชุดผสม · ${fmtNum(it.totalKg, 1)} kg`;
       if (treeNode.kind === "material") { const material = data.materials.find((row) => row.code === it?.materialCode); sub = `วัตถุดิบ · ${material?.name ?? "-"}${treeNode.kg ? ` · ใช้ ${fmtNum(treeNode.kg, 3)} kg` : ""} · ${it?.supplier ?? "-"}`; }
       return `<li><div class="rf-node${treeNode.id === hitId ? " is-hit" : ""}"><div class="rf-row"><strong class="rf-mono">${esc(treeNode.id)}</strong>${statusValue ? ui.status(statusValue) : ""}</div><div class="small muted">${esc(sub)}</div></div>${treeNode.children?.length ? `<ul class="rf-tree">${treeNode.children.map(node).join("")}</ul>` : ""}</li>`;

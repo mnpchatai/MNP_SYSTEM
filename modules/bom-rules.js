@@ -410,12 +410,6 @@
   function rowColor(row, colors = []) {
     return colors.filter(([master, shade]) => String(row[master] ?? "").trim() && String(row[shade] ?? "").trim()).map(([master, shade]) => parseColorCode(`${String(row[master] ?? "").trim()}${String(row[shade] ?? "").trim().padStart(2, "0")}`)).filter((parsed) => parsed && parsed.master !== "XX").map((parsed) => parsed.code).join("-");
   }
-  const num = (value) => {
-    const text = String(value ?? "").replace(/,/g, "").trim();
-    if (text === "" || text === "-") return 0;
-    const n = Number(text);
-    return Number.isFinite(n) ? n : 0;
-  };
   const cellText = (row, index) => (index === undefined ? "" : String(row[index] ?? "").trim());
 
   // แปลงแถวของชีต DATA เป็นออบเจ็กต์กลาง (ยังไม่ประกอบต้นไม้)
@@ -431,11 +425,12 @@
       const name = cellText(row, map.name);
       const code = cellText(row, map.code);
       if (isBlankCode(name) && isBlankCode(code)) continue; // แถวว่างหรือแถวเลขศูนย์ของชีต (ชื่อและรหัสเป็น "", "-" หรือ "0") ไม่ใช่ข้อมูล
+      const decimalComma = [map.qty, map.cutLen, map.pcsPerRoll, map.sePerGr, map.weight].some((index) => index !== undefined && sheetNumber(row[index]).decimalComma);
       out.push({
         item, code, deptKind: cellText(row, map.deptKind).toUpperCase(), pair: cellText(row, map.pair).toUpperCase(), name,
         compound: cellText(row, map.compound), c1: cellText(row, map.c1), c2: cellText(row, map.c2), c3: cellText(row, map.c3), c4: cellText(row, map.c4), c5: cellText(row, map.c5),
         qty: num(row[map.qty]), cutLen: num(row[map.cutLen]), pcsPerRoll: num(row[map.pcsPerRoll]), sePerGr: num(row[map.sePerGr]) || 1,
-        uom: cellText(row, map.uom), weightG: num(row[map.weight]), color: rowColor(row, colors),
+        uom: cellText(row, map.uom), weightG: num(row[map.weight]), color: rowColor(row, colors), decimalComma,
       });
     }
     return out;
@@ -472,6 +467,18 @@
     else return NaN;
     return Number(`${sign}${canonical}`);
   };
+  // ตัวเลขของหน้านำเข้า Excel ใช้กติกาเดียวกับ pasteNumber (จุลภาคเป็นทศนิยมได้: 0,02 · 1,5 · 1.234,5) · 0,500 (ขึ้นต้นด้วย 0, หลักพันไม่ขึ้นต้นด้วย 0) = ทศนิยม ·
+  // รูปแบบอื่นที่อ่านไม่ได้เป็นเหมือนเดิม (ตัดจุลภาคทิ้งแล้วอ่าน ไม่ได้ = 0) · decimalComma = อ่านจุลภาคเป็นจุดทศนิยม (ต่างจากการตัดจุลภาคทิ้ง) ให้หน้าตัวอย่างเตือน
+  const sheetNumber = (value) => {
+    const text = String(value ?? "").trim();
+    if (text === "" || text === "-") return { value: 0, decimalComma: false };
+    const stripped = Number(text.replace(/,/g, ""));
+    let n = pasteNumber(text);
+    if (Number.isNaN(n) && /^[+-]?0,\d+$/.test(text)) n = Number(text.replace(",", "."));
+    if (Number.isNaN(n)) return { value: Number.isFinite(stripped) ? stripped : 0, decimalComma: false };
+    return { value: n, decimalComma: Number.isFinite(stripped) && stripped !== n };
+  };
+  const num = (value) => sheetNumber(value).value;
   function parseBomPaste(text, { isKnownCode = () => false } = {}) {
     const cells = parseDelimited(text);
     let map = { code: 0, qty: 1, uom: 2, scrap: 3, note: 4 };
@@ -1179,8 +1186,10 @@
       const f = fgLedger(data?.fgMoves)(order.id, move.fgCode);
       const ordered = orderedByCode(order).get(move.fgCode) ?? 0;
       const left = fgRound(f.own + f.inn - f.out - (Number(move.qty) || 0));
-      if (left + FG_EPS < f.delivered) return `ส่งมอบ ${move.fgCode} ไปแล้ว ${fmtQty(f.delivered)} ย้อนรับเข้านี้แล้วจะเหลือ ${fmtQty(left)} ให้ย้อนการส่งมอบก่อน`;
+      // เหตุผลที่ปฏิเสธ (เงื่อนไขเท่ากับ SQL): ข้อความส่งมอบใช้เมื่อยอดส่งมอบเป็นสาเหตุจริง (ส่งมอบแล้วและที่เหลือน้อยกว่า) ไม่งั้นถ้าใบอื่นใช้สต็อกไปใช้ข้อความของใบอื่น
+      if (f.delivered > FG_EPS && left + FG_EPS < f.delivered) return `ส่งมอบ ${move.fgCode} ไปแล้ว ${fmtQty(f.delivered)} ย้อนรับเข้านี้แล้วจะเหลือ ${fmtQty(left)} ให้ย้อนการส่งมอบก่อน`;
       if (f.out > FG_EPS && left + FG_EPS < ordered) return `ใบอื่นใช้สต็อก ${move.fgCode} ของใบนี้ไปแล้ว ${fmtQty(f.out)} ย้อนรับเข้านี้แล้วของไม่พอจำนวนสั่ง ให้ใบที่ใช้สต็อกยกเลิกหรือเปิดกลับมาแก้ก่อน`;
+      if (left + FG_EPS < f.delivered) return `ย้อนรับเข้านี้แล้วจะเหลือ ${fmtQty(left)} ${move.fgCode} น้อยกว่าที่ส่งมอบแล้ว`;
     }
     return null;
   }
@@ -1353,6 +1362,16 @@
     });
     return { rows, anyShort: rows.some((row) => row.shortage > 0) };
   }
+  // ของซื้อของใบที่ขาดเมื่อรวมทุกใบ (ขั้น 3 ของใบร่างนับแบบนี้): partNeeds + ความต้องการของใบร่างอื่นที่ยังไม่อยู่ในยอดจอง (ใบนี้ร่าง = ใบร่างที่คำนวณทีหลัง · ใบนี้ปล่อยผลิตแล้ว = ใบร่างทุกใบ)
+  // ใช้บอกหลังปล่อยผลิตว่าของพอสำหรับใบนี้แต่ไม่พอเมื่อรวมใบร่างอื่น · คืนรายการที่ขาด [{ itemCode, short }]
+  function partShortAllOrders(data, orderId) {
+    const { orders = [] } = data ?? {};
+    const draft = orders.find((order) => order.id === orderId && order.status === "draft");
+    const other = draft?.explosion?.length ? draftPartDemand(orders, orderId, { relativeTo: draft, side: "later" }) : draftPartDemand(orders, orderId);
+    return partNeeds(data, orderId).rows
+      .map((row) => ({ itemCode: row.itemCode, short: partUp3(Math.max(0, row.needQty + (other.get(row.itemCode)?.qty || 0) - (row.onHandQty - row.reservedQty + row.onOrderQty))) }))
+      .filter((row) => row.short > 0);
+  }
 
   // ยอดสูงสุดที่แผนกก่อนหน้าส่งมาพอสำหรับงานนี้ (ใช้เตือนตอนรายงานผล ไม่ใช่กฎห้าม) · null = ไม่รู้
   // ต่อชิ้นลูกตรงของงาน: (ยอดนับของใบ + ยอดดีที่งานของชิ้นลูกในใบรายงานแล้ว) / ปริมาณลูกต่อ 1 ชิ้นแม่ · ยอดสูงสุด = ค่าน้อยสุดของทุกชิ้นลูก
@@ -1387,7 +1406,13 @@
     const ownTail = fgLabel(own.pkg, own.colorSet) ? ` (${fgLabel(own.pkg, own.colorSet)})` : "";
     const label = fgLabel(pkg, colorSet);
     const stripped = ownTail && name.endsWith(ownTail) ? name.slice(0, -ownTail.length).trim() : "";
-    if (!label) return stripped || name;
+    if (!label) {
+      if (stripped) return stripped;
+      // ต้นแบบมีแพ็กหรือชุดสีของตัวเองกลางชื่อ ("… แพ็กถุง ชุดสี Y (3 ชิ้น/ชุด)") แต่รหัสใหม่ไม่มี: ตัดคำบอกแพ็กและสีออก ไม่งั้นชื่อบอกแพ็ก/สีที่รหัสใหม่ไม่มี · ตัดแล้วว่างใช้ฐานรหัส
+      if (!own.pkg && !own.colorSet) return name;
+      const bare = name.replace(/\s*แพ็ก(?:เกจ\s+)?[^\s()]+/g, "").replace(/\s*ชุดสี\s+[^\s()]+/g, "").replace(/\(\s*\)/g, "").replace(/\s{2,}/g, " ").trim();
+      return bare || own.base;
+    }
     return stripped ? `${stripped} (${label})` : `${keepName && name ? name : own.base} (${label})`;
   }
 
@@ -1442,7 +1467,7 @@
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
-    normalizeUom, uomLabel, ceilCountQty, rbPerSe, rbCutQty, rbCutDiffers, parseDelimited, detectHeader, readFlatRows, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, jobSupplyLimit, fgLabel, suggestFgName, draftBefore, draftPartDemand, draftRubberJobs, partReserved, partOnOrder, partReturned, partReturnLines, fgPosition, fgReverseBlock, fgReverseReopens, fgOnHand, fgFreeList, fgStockForDraft, fgStockLock, noBomInOrder, countedCodes,
+    normalizeUom, uomLabel, ceilCountQty, rbPerSe, rbCutQty, rbCutDiffers, parseDelimited, detectHeader, readFlatRows, sheetNumber, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, partShortAllOrders, jobSupplyLimit, fgLabel, suggestFgName, draftBefore, draftPartDemand, draftRubberJobs, partReserved, partOnOrder, partReturned, partReturnLines, fgPosition, fgReverseBlock, fgReverseReopens, fgOnHand, fgFreeList, fgStockForDraft, fgStockLock, noBomInOrder, countedCodes,
     DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };

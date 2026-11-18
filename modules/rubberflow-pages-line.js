@@ -5,6 +5,8 @@
   const pages = (root.MNP_RUBBERFLOW_PAGES ??= {});
   const dialogs = (root.MNP_RUBBERFLOW_DIALOGS ??= {});
   const esc = (value) => root.escapeHtml(value);
+  // หน่วยของ WO/ล็อต/กล่อง: ป้ายไทยของ BOM สำหรับรหัสหน่วยของ BOM (rules.unitText) · ไม่มีกฎ = รหัสเดิม
+  const unitText = (code) => root.MNP_RUBBERFLOW_RULES?.unitText?.(code) ?? String(code ?? "");
   const includes = (haystack, q) => !q || String(haystack).toLowerCase().includes(q.toLowerCase());
   const searchForm = (ctx, placeholder) => `<form novalidate class="rf-search" data-rf-search data-rf-keep="tab" role="search"><label class="sr-only" for="rf-q">ค้นหา</label>${ctx.ui.input("q", { id: "rf-q", type: "search", value: ctx.q, placeholder })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>`;
 
@@ -37,7 +39,7 @@
   // ตัวเลือกใบส่งมอบที่รับแล้ว — data-rf-inbound ให้ bind เติมปริมาณคงเหลือลงช่องถัดไปอัตโนมัติ
   function inboundSelect(ctx, stage) {
     const { ready } = inbound(ctx.data, stage);
-    return ctx.ui.field("งานที่รับมอบแล้ว (ต้นทาง)", ctx.ui.select("transferId", ready.map((transfer) => ({ value: transfer.id, label: `${transfer.lotId} · คงเหลือ ${transfer.remaining} ${transfer.uom} (${transfer.orderId})` })), { placeholder: "เลือกใบส่งมอบ…", extra: "data-rf-inbound required" }), { required: true });
+    return ctx.ui.field("งานที่รับมอบแล้ว (ต้นทาง)", ctx.ui.select("transferId", ready.map((transfer) => ({ value: transfer.id, label: `${transfer.lotId} · คงเหลือ ${transfer.remaining} ${unitText(transfer.uom)} (${transfer.orderId})` })), { placeholder: "เลือกใบส่งมอบ…", extra: "data-rf-inbound required" }), { required: true });
   }
   const bindInbound = (rootNode, data, targetName) => {
     const select = rootNode.querySelector("[data-rf-inbound]");
@@ -47,7 +49,7 @@
     const pick = () => {
       const transfer = data.transfers.find((row) => row.id === select.value) ?? null;
       target.value = transfer ? String(transfer.remaining) : "";
-      if (hint) hint.textContent = transfer ? `คงเหลือ ${transfer.remaining} ${transfer.uom}` : "";
+      if (hint) hint.textContent = transfer ? `คงเหลือ ${transfer.remaining} ${unitText(transfer.uom)}` : "";
       return transfer;
     };
     select.addEventListener("change", () => { pick(); target.dispatchEvent(new Event("input")); });
@@ -70,7 +72,7 @@
       ].filter(Boolean).join(" ");
       return `<tr><td>${ui.mono(lot.id)}<div class="small muted">${esc(`${fmtDateTime(lot.createdAt)} · ${lot.operator ?? "-"}`)}</div></td><td class="rf-mono small">${esc(lot.orderId)}</td>
         ${columns.map((column) => `<td class="small">${column.render(lot)}</td>`).join("")}
-        <td class="right nowrap">${esc(fmtNum(lot.goodQty, 2))} / <span class="muted">${esc(fmtNum(lot.scrapQty, 2))}</span> ${esc(lot.uom)}</td>
+        <td class="right nowrap">${esc(fmtNum(lot.goodQty, 2))} / <span class="muted">${esc(fmtNum(lot.scrapQty, 2))}</span> ${esc(unitText(lot.uom))}</td>
         <td>${ui.status(lot.qc)}${lot.holdReasons?.length ? `<div class="small rf-warn-text">${esc(lot.holdReasons.join(", "))}</div>` : ""}${resting ? `<div class="small muted">⏱ บ่มอีก ${esc(fmtDuration(lot.readyAt - now))}</div>` : ""}${lot.params?.skipRest?.reason ? `<div class="small muted">${esc(`ข้ามเวลาบ่มโดย ${lot.params.skipRest.by || "-"}: ${lot.params.skipRest.reason}`)}</div>` : ""}</td>
         <td class="right"><div class="rf-row rf-end">${buttons}</div></td></tr>`;
     });
@@ -94,7 +96,7 @@
     if (!lot) return null;
     const available = actions.transferableQty(lot, now);
     const body = `${ui.callout("info", esc(`${rules.STAGE_LABEL[lot.stage]} → ${rules.STAGE_LABEL[rules.NEXT_STAGE[lot.stage]] ?? "-"} · ปลายทางต้องรับมอบก่อนจึงเริ่มผลิตได้`))}
-      <div class="rf-grid rf-g2">${ui.field(`จำนวนส่งมอบ (${lot.uom})`, ui.input("qty", { type: "number", step: "any", value: String(available), required: true }), { hint: esc(`ส่งได้สูงสุด ${available}`), required: true })}${ui.field("หมายเหตุ / รหัสพาเลท", ui.input("note"))}</div>`;
+      <div class="rf-grid rf-g2">${ui.field(`จำนวนส่งมอบ (${unitText(lot.uom)})`, ui.input("qty", { type: "number", step: "any", value: String(available), required: true }), { hint: esc(`ส่งได้สูงสุด ${available}`), required: true })}${ui.field("หมายเหตุ / รหัสพาเลท", ui.input("note"))}</div>`;
     const html = ui.dialog("transfer", `ส่งมอบ WIP · ${lot.id}`, `<form novalidate data-rf-form="createTransfer" data-rf-args='${esc(JSON.stringify({ lotId: lot.id }))}' data-rf-success="สร้างใบส่งมอบ {result} แล้ว" id="rf-transfer">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-transfer">สร้างใบส่งมอบ</button>` });
     return { html };
   };
@@ -143,7 +145,7 @@
       { title: `ใบเบิก ${esc(selected.id)}`, actions: ui.openButton("พิมพ์ป้าย", "tag", { kind: "requisition", id: selected.id }, { className: "secondary small" }), flush: true }));
       detail = `<div class="rf-stack">${parts.join("")}</div>`;
     }
-    const html = `${ui.pageHead("เบิกเคมี", "ระเบิดสูตรเป็นรายการเบิก จัดสรรล็อตตามหลัก FEFO บล็อกล็อตหมดอายุ และจ่ายทันทีเมื่อกดเบิก", ui.openButton("สร้างใบเบิก", "createRequisition", {}, { className: "" }))}
+    const html = `${ui.pageHead("เบิกเคมี", "แตกสูตรเป็นรายการเบิก จัดสรรล็อตตามหลัก FEFO บล็อกล็อตหมดอายุ และจ่ายทันทีเมื่อกดเบิก", ui.openButton("สร้างใบเบิก", "createRequisition", {}, { className: "" }))}
       <div class="rf-split">${ui.card(`<div class="rf-list rf-list-tall">${listHtml || ui.empty("ยังไม่มีใบเบิก")}</div>`, { title: "ใบเบิก", flush: true })}${detail}</div>`;
     return { html };
   };
@@ -162,7 +164,7 @@
         ${ui.field("จำนวนชุดผสม", ui.input("batches", { type: "number", value: "", extra: "data-rf-batches readonly" }))}
         ${ui.field("หมายเหตุ", ui.input("note"))}
       </div><div class="muted small" data-rf-recipe-line></div><div data-rf-shortage></div><div data-rf-preview></div>`;
-    const html = ui.dialog("createRequisition", "เบิกเคมี (ระเบิดสูตร)", `<form novalidate data-rf-form="createRequisition" data-rf-success="เบิก {result} แล้ว" id="rf-create-req">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-create-req" data-rf-submit title="จ่ายทันที หักสต็อกตามล็อตที่แสดง"${orders.length ? "" : " disabled"}>เบิก</button>`, wide: true });
+    const html = ui.dialog("createRequisition", "เบิกเคมีตามสูตร", `<form novalidate data-rf-form="createRequisition" data-rf-success="เบิก {result} แล้ว" id="rf-create-req">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-create-req" data-rf-submit title="จ่ายทันที หักสต็อกตามล็อตที่แสดง"${orders.length ? "" : " disabled"}>เบิก</button>`, wide: true });
     const bind = (dialog, bindCtx) => {
       const submit = dialog.querySelector("[data-rf-submit]");
       const orderSelect = dialog.querySelector("[data-rf-order]");
@@ -216,7 +218,7 @@
       const state = lot ? rules.lotState(lot, now) : "";
       const control = issued > 0
         // แสดง 3 ตำแหน่ง (ยอดจ่ายจริงอาจยาวกว่านั้น) · issuedKg[] เก็บยอดเต็ม: ค่าที่ห่างจากยอดจ่ายไม่ถึง 0.0005 ส่งเป็นยอดเต็ม (คืนครบ)
-        ? `<input type="hidden" name="issuedKg[]" value="${esc(String(issued))}">${ui.input("returnedKg[]", { type: "number", step: "any", min: 0, value: String(+issued.toFixed(3)), extra: `max="${esc(String(+issued.toFixed(3)))}" aria-label="${esc(`คืน ${line.materialCode} (kg) ไม่เกิน ${fmtNum(issued, 3)}`)}"` })}`
+        ? `<input type="hidden" name="issuedKg[]" value="${esc(String(issued))}">${ui.input("returnedKg[]", { type: "number", step: "any", min: 0, value: String(+issued.toFixed(3)), extra: `max="${esc(String(+issued.toFixed(3)))}" aria-label="${esc(`คืน ${line.materialCode} (kg)`)}"` })}`
         : `<input type="hidden" name="issuedKg[]" value="0"><input type="hidden" name="returnedKg[]" value="0"><span class="muted">—</span>`;
       return `<tr><td class="rf-mono">${esc(line.materialCode)}</td><td class="rf-mono small">${esc(line.lotNo)}${state === "expired" || state === "hold" ? ` ${ui.badge("warn", state === "expired" ? "หมดอายุแล้ว" : "กักกัน")}` : ""}<div class="small muted">${esc(lot ? `หมดอายุ ${fmtDate(lot.expiry)}` : "ไม่พบล็อต")}</div></td><td class="right rf-mono">${esc(fmtNum(issued, 3))}</td><td class="right">${control}</td></tr>`;
     });
@@ -464,11 +466,11 @@
       return `<tr><td><strong>${esc(STAGE_LABEL[stage])}</strong></td><td class="right">${esc(stage === "mixing" ? "-" : String(inTransit))}</td><td class="right">${esc(stage === "mixing" ? `${data.requisitions.filter((requisition) => requisition.status === "issued").length} ใบเบิก` : String(available))}</td><td class="right">${esc(`${sendable.filter((lot) => lot.stage === stage).length} ล็อต`)}</td></tr>`;
     });
     const flow = ui.card(ui.table(["สถานี", { label: "รอรับมอบ", className: "right" }, { label: "รับแล้วรอใช้", className: "right" }, { label: "พร้อมส่งต่อ", className: "right" }], flowRows), { flush: true });
-    const sendRows = sendable.map((lot) => `<tr><td>${ui.mono(lot.id)}<div class="small muted">${esc(lot.orderId)}</div></td><td>${esc(`${STAGE_LABEL[lot.stage]} → ${STAGE_LABEL[NEXT_STAGE[lot.stage]]}`)}</td><td class="right">${esc(`${fmtNum(actions.transferableQty(lot, now), 2)} ${lot.uom}`)}</td><td class="right">${ui.openButton("สร้างใบส่งมอบ", "transfer", { lotId: lot.id }, { className: "small" })}</td></tr>`);
+    const sendRows = sendable.map((lot) => `<tr><td>${ui.mono(lot.id)}<div class="small muted">${esc(lot.orderId)}</div></td><td>${esc(`${STAGE_LABEL[lot.stage]} → ${STAGE_LABEL[NEXT_STAGE[lot.stage]]}`)}</td><td class="right">${esc(`${fmtNum(actions.transferableQty(lot, now), 2)} ${unitText(lot.uom)}`)}</td><td class="right">${ui.openButton("สร้างใบส่งมอบ", "transfer", { lotId: lot.id }, { className: "small" })}</td></tr>`);
     const transferRows = rows.map((transfer) => {
       const diff = transfer.qtyReceived === null ? null : transfer.qtyReceived - transfer.qtySent;
       return `<tr><td>${ui.mono(transfer.id)}<div class="small muted">${esc(`${fmtDateTime(transfer.createdAt)} · ${transfer.createdBy ?? "-"}`)}</div></td><td class="rf-mono small">${esc(transfer.lotId)}<div class="muted">${esc(transfer.orderId)}</div></td>
-        <td class="small">${esc(`${STAGE_LABEL[transfer.from]} → ${STAGE_LABEL[transfer.to]}`)}</td><td class="right nowrap">${esc(`${fmtNum(transfer.qtySent, 2)} ${transfer.uom}`)}</td><td class="right">${transfer.qtyReceived === null ? "-" : esc(fmtNum(transfer.qtyReceived, 2))}</td>
+        <td class="small">${esc(`${STAGE_LABEL[transfer.from]} → ${STAGE_LABEL[transfer.to]}`)}</td><td class="right nowrap">${esc(`${fmtNum(transfer.qtySent, 2)} ${unitText(transfer.uom)}`)}</td><td class="right">${transfer.qtyReceived === null ? "-" : esc(fmtNum(transfer.qtyReceived, 2))}</td>
         <td class="right${diff < 0 ? " rf-late" : ""}">${diff === null ? "-" : esc(fmtNum(diff, 2))}</td><td>${ui.status(transfer.status)}${transfer.condition && transfer.condition !== "ok" ? `<div class="small rf-warn-text">${esc(transfer.condition)}</div>` : ""}</td>
         <td class="right"><div class="rf-row rf-end">${ui.openButton("ป้าย", "tag", { kind: "transfer", id: transfer.id }, { className: "secondary small", ariaLabel: `พิมพ์ป้าย ${transfer.id}` })}${transfer.status === "in_transit" ? ui.openButton("รับมอบ", "receive", { id: transfer.id }, { className: "small" }) : ""}</div></td></tr>`;
     });
@@ -484,15 +486,15 @@
     const { data, ui, rules } = ctx;
     const transfer = data.transfers.find((row) => row.id === id);
     if (!transfer) return null;
-    const body = `${ui.kv([["ล็อต", ui.mono(transfer.lotId)], ["เส้นทาง", esc(`${rules.STAGE_LABEL[transfer.from]} → ${rules.STAGE_LABEL[transfer.to]}`)], ["จำนวนที่ส่ง", esc(`${transfer.qtySent} ${transfer.uom}`)]])}
-      <div class="rf-grid rf-g2">${ui.field(`จำนวนที่ตรวจนับ/ชั่งได้จริง (${transfer.uom})`, ui.input("qtyReceived", { type: "number", step: "any", value: String(transfer.qtySent), required: true, extra: "data-rf-received" }), { required: true })}
+    const body = `${ui.kv([["ล็อต", ui.mono(transfer.lotId)], ["เส้นทาง", esc(`${rules.STAGE_LABEL[transfer.from]} → ${rules.STAGE_LABEL[transfer.to]}`)], ["จำนวนที่ส่ง", esc(`${transfer.qtySent} ${unitText(transfer.uom)}`)]])}
+      <div class="rf-grid rf-g2">${ui.field(`จำนวนที่ตรวจนับ/ชั่งได้จริง (${unitText(transfer.uom)})`, ui.input("qtyReceived", { type: "number", step: "any", value: String(transfer.qtySent), required: true, extra: "data-rf-received" }), { required: true })}
       ${ui.field("สภาพชิ้นงาน / ภาชนะ", ui.select("condition", [{ value: "ok", label: "สมบูรณ์" }, { value: "ภาชนะชำรุด", label: "ภาชนะชำรุด / ป้ายเลือน" }, { value: "ปริมาณขาด", label: "ปริมาณขาดเกินเกณฑ์" }]))}</div><div data-rf-diff></div>`;
     const html = ui.dialog("receive", `รับมอบงาน · ${transfer.id}`, `<form novalidate data-rf-form="receiveTransfer" data-rf-args='${esc(JSON.stringify({ id: transfer.id }))}' data-rf-success="รับมอบงานแล้ว สถานีเริ่มผลิตได้" id="rf-receive">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive">ยืนยันรับเข้า</button>` });
     const bind = (dialog) => {
       const input = dialog.querySelector("[data-rf-received]");
       const paint = () => {
         const diff = Number(input.value) - transfer.qtySent;
-        dialog.querySelector("[data-rf-diff]").innerHTML = Math.abs(diff) > 1e-9 && input.value !== "" ? ui.callout(diff < 0 ? "warn" : "info", esc(`ผลต่าง ${rules.fmtNum(diff, 2)} ${transfer.uom} จะถูกบันทึกในประวัติการส่งมอบ`)) : "";
+        dialog.querySelector("[data-rf-diff]").innerHTML = Math.abs(diff) > 1e-9 && input.value !== "" ? ui.callout(diff < 0 ? "warn" : "info", esc(`ผลต่าง ${rules.fmtNum(diff, 2)} ${unitText(transfer.uom)} จะถูกบันทึกในประวัติการส่งมอบ`)) : "";
       };
       input.addEventListener("input", paint);
     };

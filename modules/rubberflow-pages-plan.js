@@ -6,6 +6,8 @@
   const pages = (root.MNP_RUBBERFLOW_PAGES ??= {});
   const dialogs = (root.MNP_RUBBERFLOW_DIALOGS ??= {});
   const esc = (value) => root.escapeHtml(value);
+  // หน่วยของ WO/ล็อต/กล่อง: ป้ายไทยของ BOM สำหรับรหัสหน่วยของ BOM (rules.unitText) · ไม่มีกฎ = รหัสเดิม
+  const unitText = (code) => root.MNP_RUBBERFLOW_RULES?.unitText?.(code) ?? String(code ?? "");
 
   const yieldOf = (lots) => {
     const good = lots.reduce((sum, lot) => sum + lot.goodQty, 0);
@@ -60,7 +62,7 @@
     const orderRows = active.map((order) => `<tr>
         <td>${ui.link(order.id, ctx.url("orders", { q: order.id }), "rf-mono")}${order.priority === "urgent" ? ` ${ui.urgent()}` : ""}</td>
         <td>${esc(order.customer)}<div class="small muted rf-mono">${esc(rules.orderLabel(order))}</div></td>
-        <td class="rf-progress-cell">${ui.progress(order.producedQty, order.targetQty)}<div class="small muted">${esc(`${fmtNum(order.producedQty)} / ${fmtNum(order.targetQty)} ${order.uom}`)}</div></td>
+        <td class="rf-progress-cell">${ui.progress(order.producedQty, order.targetQty)}<div class="small muted">${esc(`${fmtNum(order.producedQty)} / ${fmtNum(order.targetQty)} ${unitText(order.uom)}`)}</div></td>
         <td class="nowrap">${esc(fmtDate(order.dueDate))}</td><td>${ui.status(order.status)}</td></tr>`);
     const alertList = alerts.length ? alerts.slice(0, 8).map((alert) => ui.callout(alert.tone, `<strong>${esc(alert.title)}</strong><br>${esc(alert.text)}`)).join("") : ui.empty("ไม่มีการแจ้งเตือน");
 
@@ -122,7 +124,7 @@
         <td>${ui.mono(order.id)}${order.priority === "urgent" ? ` ${ui.urgent()}` : ""}<div class="small muted">${esc(order.customerPo || "-")}${order.sourceJobId ? ` · ${esc(order.sourceJobId)}` : ""}</div></td>
         <td>${esc(order.customer)}</td>
         <td class="rf-mono">${esc(rules.orderLabel(order))}${order.recipeRevision ? `<div class="small muted">${esc(`Rev.${order.recipeRevision}`)}</div>` : ""}</td>
-        <td class="nowrap">${esc(`${fmtNum(order.targetQty)} ${order.uom}`)}<div class="small muted">${order.targetKg ? `${esc(`≈ ${fmtNum(order.targetKg, 1)} kg`)} · ` : ""}สี${esc(order.color)}</div></td>
+        <td class="nowrap">${esc(`${fmtNum(order.targetQty)} ${unitText(order.uom)}`)}<div class="small muted">${order.targetKg ? `${esc(`≈ ${fmtNum(order.targetKg, 1)} kg`)} · ` : ""}สี ${esc(order.color)}</div></td>
         <td class="rf-progress-cell">${ui.progress(order.producedQty, order.targetQty, late ? "bad" : "")}<div class="small muted">${esc(`${fmtNum(order.producedQty)} (${Math.round((order.producedQty / order.targetQty) * 100)}%)`)}</div></td>
         <td class="nowrap small">${esc(fmtDate(order.startDate))}<br><span${late ? ' class="rf-late"' : ""}>${esc(fmtDate(order.dueDate))}</span></td>
         <td>${ui.status(order.status)}</td>
@@ -320,11 +322,11 @@
     if (!order) return null;
     const linked = Boolean(order.sourceJobId);
     // โหมดฐานข้อมูล: ยอดผลิตมาจากล็อตตกแต่งที่นับแล้ว ฐานข้อมูลคำนวณเอง ไม่ต้องกรอก · ยอดดีของล็อตตกแต่งที่ผ่าน QC รายงานเข้างาน BOM ทีละล็อตไปแล้ว ปิดใบไม่ส่งยอดซ้ำ
-    const info = `<p class="muted small">${esc(`${rules.orderLabel(order)} · เป้าหมาย ${rules.fmtNum(order.targetQty)} ${order.uom}${order.producedQty < order.targetQty ? " · ยังไม่ครบจำนวน ปิดใบก่อนครบได้" : ""}`)}</p>`;
+    const info = `<p class="muted small">${esc(`${rules.orderLabel(order)} · เป้าหมาย ${rules.fmtNum(order.targetQty)} ${unitText(order.uom)}${order.producedQty < order.targetQty ? " · ยังไม่ครบจำนวน ปิดใบก่อนครบได้" : ""}`)}</p>`;
     const body = ctx.store.isRemote()
       ? `${info}${linked ? `<p class="small muted">${esc(`ยอดดีรายงานเข้างาน ${order.sourceJobId} ของ BOM ทีละล็อตแล้ว`)}</p>` : ""}`
       : `${info}
-      ${ui.field(`ปริมาณผลิตจริง (${order.uom})`, ui.input("producedQty", { type: "number", step: "any", min: linked ? 0.0001 : 0, value: order.producedQty ? String(order.producedQty) : "", required: linked }), { hint: linked ? esc(`ส่งยอดนี้กลับไปที่งาน ${order.sourceJobId} ของ BOM`) : "", required: linked })}`;
+      ${ui.field(`ปริมาณผลิตจริง (${unitText(order.uom)})`, ui.input("producedQty", { type: "number", step: "any", min: linked ? 0.0001 : 0, value: order.producedQty ? String(order.producedQty) : "", required: linked }), { hint: linked ? esc(`ส่งยอดนี้กลับไปที่งาน ${order.sourceJobId} ของ BOM`) : "", required: linked })}`;
     const html = ui.dialog("closeOrder", `ปิดงาน ${order.id}`, `<form novalidate data-rf-form="setOrderStatus" data-rf-args="${esc(JSON.stringify({ id: order.id, status: "completed" }))}" data-rf-success="ปิดงาน ${esc(order.id)} แล้ว" id="rf-close-order">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-close-order">ปิดงาน</button>` });
     return { html };
   };
@@ -365,7 +367,7 @@
     });
     const fgRows = boxes.map((box) => `<tr><td><input type="checkbox" name="ids[]" value="${esc(box.id)}"${box.status !== "in_stock" ? " disabled" : ""} aria-label="เลือก ${esc(box.id)}"></td>
         <td class="rf-mono small">${esc(box.id)}<div class="muted">${esc(fmtDate(box.createdAt))}</div></td><td class="rf-mono">${esc(rules.orderLabel(box))}</td><td class="rf-mono small">${esc(box.orderId)}</td>
-        <td class="right">${esc(`${fmtNum(box.qty)} ${box.uom}`)}</td><td>${esc(box.grade)}</td><td>${ui.status(box.status)}</td>
+        <td class="right">${esc(`${fmtNum(box.qty)} ${unitText(box.uom)}`)}</td><td>${esc(box.grade)}</td><td>${ui.status(box.status)}</td>
         <td class="right">${ui.openButton("ป้าย", "tag", { kind: "box", id: box.id }, { className: "secondary small", ariaLabel: `พิมพ์ป้าย ${box.id}` })}</td></tr>`);
     const purchaseOrders = data.purchaseOrders ?? [];
     const openOrders = purchaseOrders.filter((po) => po.status === "ordered").length;
@@ -629,12 +631,16 @@
       const pct = mold.usageSinceClean / mold.cleanEvery;
       const pmPct = mold.totalUsage / mold.pmLimit;
       const tone = pct >= 1 ? "bad" : pct >= 0.85 ? "warn" : "";
+      // อายุสะสมเทียบรอบ PM ใหญ่ใช้เกณฑ์เดียวกับรอบล้าง (85% เตือน · 100% เกิน) และเป็นส่วนหนึ่งของสถานะบนการ์ด
+      const pmTone = pmPct >= 1 ? "bad" : pmPct >= 0.85 ? "warn" : "";
+      const worst = tone === "bad" || pmTone === "bad" ? "bad" : tone === "warn" || pmTone === "warn" ? "warn" : "";
+      const statusText = tone === "bad" ? "เกินรอบล้าง" : pmTone === "bad" ? "เกินรอบ PM" : tone === "warn" ? "ใกล้ถึงรอบล้าง" : pmTone === "warn" ? "ใกล้ถึงรอบ PM" : "ปกติ";
       return ui.card(`<div class="rf-stack">
           <div><strong>${esc(mold.name)}</strong><div class="small muted">${esc(`${MOLD_KIND[mold.kind] ?? mold.kind}${mold.perCycle > 1 ? ` · ${mold.perCycle} ช่อง` : ""}`)}</div></div>
           <div><div class="rf-row rf-between small"><span>ตั้งแต่ทำความสะอาดล่าสุด</span><span>${esc(`${fmtNum(mold.usageSinceClean)} / ${fmtNum(mold.cleanEvery)} ${MOLD_UNIT[mold.unit] ?? mold.unit}`)}</span></div>${ui.progress(mold.usageSinceClean, mold.cleanEvery, tone)}</div>
-          <div><div class="rf-row rf-between small"><span>อายุสะสม (PM ใหญ่)</span><span>${esc(`${Math.round(pmPct * 100)}%`)}</span></div>${ui.progress(mold.totalUsage, mold.pmLimit, pmPct > 0.9 ? "warn" : "")}<div class="small muted">${esc(`${fmtNum(mold.totalUsage)} / ${fmtNum(mold.pmLimit)} ${MOLD_UNIT[mold.unit] ?? mold.unit}`)}</div></div>
+          <div><div class="rf-row rf-between small"><span>อายุสะสม (PM ใหญ่)</span><span>${esc(`${Math.round(pmPct * 100)}%`)}</span></div>${ui.progress(mold.totalUsage, mold.pmLimit, pmTone)}<div class="small muted">${esc(`${fmtNum(mold.totalUsage)} / ${fmtNum(mold.pmLimit)} ${MOLD_UNIT[mold.unit] ?? mold.unit}`)}</div></div>
           <div class="rf-row rf-between"><span class="small muted">${esc(`ล้างล่าสุด ${fmtDate(mold.lastCleanAt)}`)}</span><div class="rf-row">${ui.openButton("แก้ไข", "moldEdit", { id: mold.id }, { className: "secondary small", ariaLabel: `แก้ไข ${mold.id}` })}${ui.button("บันทึกล้างแล้ว", { action: "cleanMold", args: { id: mold.id }, className: "secondary small", confirmText: `ยืนยันว่าได้ทำความสะอาด ${mold.id} แล้ว?` })}</div></div>
-        </div>`, { title: ui.mono(mold.id), actions: ui.badge(tone || "good", tone === "bad" ? "เกินรอบล้าง" : tone === "warn" ? "ใกล้ถึงรอบล้าง" : "ปกติ") });
+        </div>`, { title: ui.mono(mold.id), actions: ui.badge(worst || "good", statusText) });
     }).join("");
     const html = `${ui.pageHead("แม่พิมพ์และหัวดาย", "ระบบนับรอบการใช้งานจากการบันทึกผลิตจริง แจ้งเตือนเมื่อใกล้ถึงรอบทำความสะอาด และติดตามอายุสะสมเทียบรอบซ่อมบำรุงใหญ่ (PM)", ui.openButton("เพิ่มแม่พิมพ์/หัวดาย", "moldEdit", {}, { className: "" }))}${cards ? `<div class="rf-grid rf-g3">${cards}</div>` : ui.card(ui.empty("ยังไม่มีแม่พิมพ์หรือหัวดาย เพิ่มได้จากปุ่มด้านบน"))}`;
     return { html };

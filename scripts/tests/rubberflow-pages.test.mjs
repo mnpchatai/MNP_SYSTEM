@@ -1136,3 +1136,23 @@ test("a requisition of a cancelled WO waits for the store to take the chemicals 
   assert.match(html, /รับคืน \(kg\)/);
   assert.doesNotMatch(html, /data-rf-open="returnRequisition"/);
 });
+
+test("a mold card status also follows the PM life, the return dialog names the field once, and the work-order table writes a space before the colour (7a 7d 7h)", async () => {
+  const env = load();
+  env.store.setUser("U01");
+  const molds = env.store.data().molds;
+  const mold = molds[0];
+  for (const row of molds) { row.usageSinceClean = 0; row.totalUsage = row.pmLimit * 0.5; }
+  let html = await env.render("p=molds");
+  assert.doesNotMatch(html, /ใกล้ถึงรอบ PM|เกินรอบ PM/);
+  mold.totalUsage = mold.pmLimit * 0.98;
+  html = await env.render("p=molds");
+  assert.match(html, /ใกล้ถึงรอบ PM/, "98% of the PM life is not 'ปกติ'");
+  mold.totalUsage = mold.pmLimit * 1.02;
+  html = await env.render("p=molds");
+  assert.match(html, /เกินรอบ PM/);
+  assert.doesNotMatch(await env.render("p=requisition"), /ระเบิด/, "no jargon on the requisition page");
+  assert.doesNotMatch(env.context.MNP_RUBBERFLOW_DIALOGS.createRequisition(env.ctx("p=requisition"), {}).html, /ระเบิด/);
+  const orders = await env.render("p=orders");
+  assert.doesNotMatch(orders, /สี[A-Z]{2}\d{2}/, "a space between 'สี' and the colour code");
+});

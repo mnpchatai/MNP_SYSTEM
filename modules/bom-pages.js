@@ -1844,6 +1844,7 @@
           }
           report.innerHTML = `${ui.callout(r.conflicts.length ? "warn" : "good", `<strong>อ่านได้ ${esc(rules.fmtQty(flat.length))} บรรทัด</strong> · สินค้า ${esc(String(r.fgCount))} · ชิ้นงาน ${esc(String(r.itemCount))} (มีอยู่แล้ว ${esc(String(existing))}) · BOM ${esc(String(r.bomCount))} พ่อ · รวมบรรทัดซ้ำ ${esc(String(r.merged))} · ชิ้นไม่มีรหัส → XP- ใหม่ ${esc(String(r.subparts))}${r.subpartsReused ? ` (ใช้รหัสเดิม ${esc(String(r.subpartsReused))})` : ""} · รหัสสะกดต่าง ${esc(String(r.variants))}${r.colored ? ` · ได้สีจากคอลัมน์ แม่สี/เฉดที่ ${esc(String(r.colored))} บรรทัด` : ""}`)}
             ${sheetNote ? ui.callout("warn", esc(sheetNote)) : ""}
+            ${flat.some((row) => row.decimalComma) ? ui.callout("warn", `อ่านจุลภาคเป็นจุดทศนิยม ${esc(String(flat.filter((row) => row.decimalComma).length))} บรรทัด (เช่น 0,02 = 0.02) · ตรวจปริมาณก่อนนำเข้า`) : ""}
             ${tooBig ? ui.callout("bad", `ข้อมูลชุดนี้ (${esc(rules.fmtQty(Math.round(payloadSize / 1000)))} KB) จะเกินเพดานของ localStorage นำเข้าเฉพาะสินค้าที่ต้องใช้ทดสอบ (วางทีละกลุ่ม) หรือรีเซ็ตข้อมูลก่อน`) : ""}
             ${unlinked.length ? ui.callout("warn", `สูตรยางที่ยังไม่ผูกกับ RubberFlow: ${esc(unlinked.join(", "))} (ผูกได้ภายหลังที่ “ข้อมูลตั้งต้น” หน้าสูตรยาง)`) : ""}
             ${r.unknownUom.length ? ui.callout("warn", `หน่วยที่แปลงไม่ได้ (บันทึกเป็น “หน่วยอื่น”): ${esc(r.unknownUom.slice(0, 20).join(", "))}${r.unknownUom.length > 20 ? " …" : ""}`) : ""}
@@ -1868,8 +1869,19 @@
   };
 
   // ---------- ใบสั่งผลิต (PI) ----------
+  // ป้ายแถว "บันทึกล่าสุด" ของใบ: บันทึกยอดสต็อกของสินค้าในใบ (ใช้จากสต็อกสินค้าสำเร็จรูป) กับยอดนับชิ้นงานใช้ช่องเวลาเดียวกัน ป้ายตามชนิดของยอดที่มี (ไม่มีช่องเก็บแยกว่าครั้งสุดท้ายเป็นแบบไหน)
+  const stockCountLabel = (order) => {
+    const codes = Object.keys(order.stockCounts ?? {});
+    const products = new Set((order.items ?? []).map((item) => item.fgCode));
+    const fg = codes.some((code) => products.has(code));
+    const counted = codes.some((code) => !products.has(code));
+    return fg && counted ? "บันทึกยอดคงคลัง/ใช้จากสต็อกล่าสุด" : fg ? "ตั้งใช้จากสต็อกสินค้าสำเร็จรูปล่าสุด" : "นับคงคลังล่าสุด";
+  };
   const orderProgress = (ctx, order) => {
-    const jobs = ctx.data.jobs.filter((job) => job.orderId === order.id);
+    const allJobs = ctx.data.jobs.filter((job) => job.orderId === order.id);
+    // งานของซื้อ (ST เบิกจ่าย) ไม่นับตอนปิดใบ จึงไม่นับในความคืบหน้า (ใบที่ปิดแล้วจะได้ไม่ขึ้นว่างานเสร็จไม่ครบ)
+    const jobs = allJobs.filter((job) => !ctx.helpers.isPartJob(job));
+    if (allJobs.length && !jobs.length) return '<span class="muted small">ไม่มีงานผลิต</span>';
     // ใบที่ได้สินค้าครบจากสต็อกสินค้าสำเร็จรูป: ปล่อยผลิตแล้วปิดทันที ไม่มีงานผลิต
     if (!jobs.length && order.status === "completed" && ctx.rules.fgPosition(ctx.data, order).coveredByStock) return '<span class="muted small">ใช้สต็อก ไม่มีงานผลิต</span>';
     return jobs.length ? `${ctx.ui.progress(jobs.filter((job) => job.status === "done").length, jobs.length)}<div class="small muted">${esc(`งานเสร็จ ${jobs.filter((job) => job.status === "done").length}/${jobs.length}`)}</div>` : '<span class="muted small">ยังไม่ปล่อยผลิต</span>';
@@ -1900,7 +1912,7 @@
         pages.orderSteps ? null : ["ลูกค้า", esc(order.customer)], ["ประเทศ / ประเภท", `${esc(order.country)} ${status(ctx, order.orderType)}`], ["วันที่สั่งผลิต", esc(rules.fmtDate(order.orderedAt))], ["ส่งมอบคลัง (WH)", esc(rules.fmtDate(order.whDue))],
         ["กำหนดเสร็จรายแผนก", rules.DUE_DEPTS.map((dept) => `<span class="bom-due"${(order.dueDefaults ?? []).includes(dept) ? ' title="ค่าเริ่มต้นจากระยะเวลาจัดหา (lead time)"' : ""}><b>${esc(dept)}</b> ${esc(order.due[dept] ? rules.fmtDate(order.due[dept]) : "—")}${(order.dueDefaults ?? []).includes(dept) ? "*" : ""}</span>`).join(" ")],
         order.explodedAt ? ["คำนวณวัตถุดิบล่าสุด", esc(`${rules.fmtDateTime(order.explodedAt)} · ${order.explosion?.length ?? 0} บรรทัด${order.releasedAt ? ` · ล็อกฉบับแก้ไขเมื่อปล่อยผลิต ${rules.fmtDateTime(order.releasedAt)} โดย ${order.releasedBy}` : ""}`)] : null,
-        order.stockCountedAt ? ["นับคงคลังล่าสุด", esc(`${rules.fmtDateTime(order.stockCountedAt)} โดย ${order.stockCountedBy}`)] : null,
+        order.stockCountedAt ? [stockCountLabel(order), esc(`${rules.fmtDateTime(order.stockCountedAt)} โดย ${order.stockCountedBy}`)] : null,
         order.note ? ["หมายเหตุ", esc(order.note)] : null,
         order.revision ? ["REV.", esc(String(order.revision))] : null,
         order.cancelReason ? ["เหตุผลยกเลิก", esc(order.cancelReason)] : null,
@@ -1910,7 +1922,7 @@
       const fgLock = rules.fgStockLock(data, order);
       const reopen = ["released", "in_progress"].includes(order.status) && !ctx.helpers.startedJobs(data, order, rfOrdersOf(ctx)).length && !fgLock.blocked;
       const canEditItems = canPlan && (draft || reopen);
-      const reopenNote = reopen ? ` ใบนี้ปล่อยผลิตแล้ว แก้แล้วใบจะกลับเป็นร่าง งานรายแผนกถูกลบ ต้องคำนวณวัตถุดิบและปล่อยผลิตใหม่${fgReturnText(ctx, fgLock)}` : "";
+      const reopenNote = reopen ? ` ใบนี้ปล่อยผลิตแล้ว แก้แล้วใบจะกลับเป็นร่าง งานรายแผนกถูกลบ ต้องคำนวณวัตถุดิบและปล่อยผลิตใหม่${fgReturnText(ctx, fgLock)}${reopenRfText(ctx, order)}` : "";
       const itemRows = order.items.map((item) => `<tr><td>${ui.link(item.fgCode, ctx.url("items", { sel: item.fgCode }), "rf-mono")}<div class="small muted">${esc(itemOf(ctx, item.fgCode)?.name ?? "")}${item.note ? ` · ${esc(item.note)}` : ""}</div></td><td class="right rf-mono">${esc(rules.fmtQty(item.qty))}</td><td>${esc(item.colorSet || "-")}</td><td class="nowrap">${ui.link("งานทุกแผนก", ctx.url("product", { code: item.fgCode, qty: item.qty }), "btn rf-btn secondary small")} ${canPlan ? ui.link("แก้ BOM", pages.find ? ctx.url("find", { code: item.fgCode }) : buildUrl(ctx, item.fgCode), "btn rf-btn secondary small") : ""} ${canEditItems ? `${ui.openButton("แก้จำนวน", "orderItemEdit", { orderId: order.id, fgCode: item.fgCode }, { className: "secondary small", ariaLabel: `แก้จำนวน ${item.fgCode}` })} ${ui.button("ลบ", { action: "removeOrderItem", args: { orderId: order.id, fgCode: item.fgCode }, className: "secondary small", ariaLabel: `ลบ ${item.fgCode} ออกจากใบ`, confirmText: `ลบ ${item.fgCode} ออกจากใบ ${order.id}?${reopenNote}${poNote ? ` ${poNote}` : ""}` })}` : ""}</td></tr>`);
       // ความต้องการสุทธิต่อรหัส (กฎ AK ของ BOMSHEET ไล่ชั้น): ใช้ร่วมกันทั้งแท็บใบคำนวณ แท็บรวม และ CSV
       const net = new Map(rules.netRequirements(order.explosion ?? [], order.stockCounts).map((entry) => [entry.itemCode, entry]));
@@ -2148,7 +2160,7 @@
   };
   const openPoText = (pos) => (pos.length ? `มีใบสั่งซื้อที่สั่งจากใบนี้และยังรับของไม่ครบ: ${pos.map((po) => (po.received ? `${po.id} (รับแล้ว ${po.received}/${po.total} บรรทัด)` : po.id)).join(", ")} ระบบไม่ยกเลิกหรือแก้ใบสั่งซื้อให้ ตรวจที่หน้าใบสั่งซื้อของ RubberFlow${pos.some((po) => po.touched) ? " · ใบที่รับเข้าหรือปิดยอดไปแล้วบางส่วนยกเลิกไม่ได้ (ปิดยอดที่เหลือได้)" : ""}` : "");
   const openPoCallout = (ctx, order) => { const text = order ? openPoText(openPurchaseOrdersOf(ctx, order.id)) : ""; return text ? ctx.ui.callout("warn", esc(text)) : ""; };
-  const reopenCallout = (ctx, order) => (order && order.status !== "draft" ? ctx.ui.callout("warn", `ใบนี้ปล่อยผลิตแล้ว บันทึกแล้วใบจะกลับเป็นร่าง (REV. +1) งานรายแผนกของใบถูกลบ ต้องคำนวณวัตถุดิบและปล่อยผลิตใหม่${esc(fgReturnText(ctx, ctx.rules.fgStockLock(ctx.data, order)))}`) : "");
+  const reopenCallout = (ctx, order) => (order && order.status !== "draft" ? ctx.ui.callout("warn", `ใบนี้ปล่อยผลิตแล้ว บันทึกแล้วใบจะกลับเป็นร่าง (REV. +1) งานรายแผนกของใบถูกลบ ต้องคำนวณวัตถุดิบและปล่อยผลิตใหม่${esc(fgReturnText(ctx, ctx.rules.fgStockLock(ctx.data, order)))}${esc(reopenRfText(ctx, order))}`) : "");
   // dialog: แก้จำนวนสั่ง/หมายเหตุของสินค้าหนึ่งตัวในใบ
   dialogs.orderItemEdit = (ctx, { orderId, fgCode }) => {
     const { ui, data } = ctx;
@@ -2248,10 +2260,18 @@
         paintNew({ code, source, pkg: pkg.toUpperCase(), colorSet: colorSet.toUpperCase(), warnings });
       };
       const [baseNode, pkgNode, setNode] = parts;
+      // ฐานที่มีสินค้าเดียวในทะเบียน: ตั้งแพ็กเกจ/ชุดสีเป็นของสินค้านั้น เลือกฐานแล้วได้สินค้าเดิม (ไม่เสนอสร้างรุ่นใหม่ที่ไม่มีแพ็กและสี) · เปลี่ยนเป็นไม่ระบุเองได้
+      const preselect = (base) => {
+        const only = parsed.filter((entry) => entry.base === base);
+        if (only.length !== 1) return;
+        if (pkgNode && only[0].pkg && pkgOptions(base).some((option) => option.value === only[0].pkg)) pkgNode.value = only[0].pkg;
+        if (setNode && only[0].colorSet && colorOptions(base).some((option) => option.value === only[0].colorSet)) setNode.value = only[0].colorSet;
+      };
       baseNode?.addEventListener("change", () => {
         const base = String(baseNode.value ?? "").trim();
         refill(pkgNode, pkgOptions(base));
         refill(setNode, colorOptions(base));
+        preselect(base);
         paint();
       });
       parts.slice(1).forEach((node) => node.addEventListener("change", paint));
@@ -2487,7 +2507,7 @@
     };
     const table = ui.table([{ label: "เลือก", className: "center" }, "ของซื้อ", { label: "ต้องเบิก", className: "right", title: "ส่วนที่ยังต้องเบิก (แผน − เบิกแล้ว)" },
       { label: "เบิกครั้งนี้", className: "right", title: "แก้จำนวนได้ เบิกไม่ครบส่วนที่เหลือเบิกครั้งหน้า เบิกเกินได้ไม่เกินคงเหลือ" }, { label: "คงเหลือ", className: "right" }], rows);
-    const body = `${note}<form novalidate id="bom-issue-parts-form" data-rf-form="issueOrderParts" data-rf-args="${attr(JSON.stringify({ orderId }))}" data-rf-success="เบิกจ่ายของซื้อ {result} แล้ว">${table}</form>`;
+    const body = `${note}<form novalidate id="bom-issue-parts-form" data-rf-form="issueOrderParts" data-rf-args="${attr(JSON.stringify({ orderId }))}" data-rf-success="เบิกจ่ายของซื้อ {result}แล้ว">${table}</form>`;
     return { html: ui.dialog("issueParts", `เบิกจ่ายของซื้อ · ${orderId}`, body, { wide: true, footer }), bind };
   };
 
@@ -2509,7 +2529,7 @@
         : `<input class="input rf-input" name="qty[]" type="number" readonly tabindex="-1" placeholder="—" aria-label="${attr(`${line.itemCode} คืนครบแล้ว`)}">`;
       return `<tr><td>${ui.mono(line.itemCode)}<input type="hidden" name="itemCode[]" value="${attr(line.itemCode)}"><div class="small muted">${esc(line.name)}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(line.issued)} ${unit}`)}</td><td class="right rf-mono">${esc(rules.fmtQty(line.returned))}</td><td class="right">${control}</td></tr>`;
     });
-    const body = `<form novalidate id="bom-return-parts-form" data-rf-form="returnOrderParts" data-rf-args="${attr(JSON.stringify({ orderId }))}" data-rf-success="คืนของเหลือเข้าสต็อก {result} แล้ว">${ui.table(["ของซื้อ", { label: "เบิกจ่าย", className: "right" }, { label: "คืนแล้ว", className: "right" }, { label: "คืนครั้งนี้", className: "right" }], rows)}
+    const body = `<form novalidate id="bom-return-parts-form" data-rf-form="returnOrderParts" data-rf-args="${attr(JSON.stringify({ orderId }))}" data-rf-success="คืนของเหลือเข้าสต็อก {result}แล้ว">${ui.table(["ของซื้อ", { label: "เบิกจ่าย", className: "right" }, { label: "คืนแล้ว", className: "right" }, { label: "คืนครั้งนี้", className: "right" }], rows)}
       ${ui.field("เหตุผล", ui.input("reason", { required: true, placeholder: "เช่น ใช้ไม่หมด เหลือจากการผลิต", extra: 'maxlength="200"' }), { required: true })}</form>`;
     return { html: ui.dialog("returnParts", `คืนของเหลือเข้าสต็อก · ${orderId}`, body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-return-parts-form">คืนเข้าสต็อก</button>` }) };
   };
@@ -2537,16 +2557,11 @@
     if (!store || !rfReady(ctx)) return null;
     try { return store.data().requisitions ?? null; } catch { return null; }
   };
-  dialogs.orderCancel = (ctx, { orderId }) => {
-    const { ui, rules, data, user } = ctx;
-    const order = data.orders.find((entry) => entry.id === orderId);
-    if (!order || ["completed", "cancelled"].includes(order.status) || !ctx.helpers.canPlan(user)) return null;
-    const fgLock = rules.fgStockLock(data, order);
-    if (fgLock.blocked) return null;
-    const jobs = data.jobs.filter((job) => job.orderId === order.id);
+  // WO ของ RubberFlow ที่ผูกกับงานของใบ + ใบเบิกเคมีของ WO เหล่านั้น (ใช้ทั้งกล่องยกเลิกใบและกล่องเปิดใบกลับมาแก้): stopped = WO ที่ยังไม่ปิดซึ่งจะถูกยกเลิกหรือหยุด · issuedReqs = ใบเบิกที่เบิกเคมีไปแล้วและยังไม่ผสม (ST ต้องรับคืน) · mixedReqs = ผสมแล้ว
+  const rfLinkedInfo = (ctx, order) => {
     const rfOrders = rfOrdersOf(ctx);
     const woOf = (job) => (Array.isArray(rfOrders) ? rfOrders.find((row) => row.id === job.externalRef.woId && row.sourceJobId === job.id) ?? null : null);
-    const linked = jobs.filter((job) => job.externalRef?.woId).map((job) => ({ id: job.externalRef.woId, wo: woOf(job) })).filter((entry) => entry.wo?.status !== "cancelled");
+    const linked = ctx.data.jobs.filter((job) => job.orderId === order.id && job.externalRef?.woId).map((job) => ({ id: job.externalRef.woId, wo: woOf(job) })).filter((entry) => entry.wo?.status !== "cancelled");
     const stopped = linked.filter((entry) => !entry.wo || entry.wo.status !== "completed");
     const done = linked.filter((entry) => entry.wo?.status === "completed");
     const woText = (entry) => `${entry.id}${entry.wo ? ` (${WO_STATUS_TEXT[entry.wo.status] ?? entry.wo.status})` : ""}`;
@@ -2554,6 +2569,23 @@
     const reqs = (rfRequisitionsOf(ctx) ?? []).filter((req) => woIds.has(req.orderId));
     const issuedReqs = reqs.filter((req) => ["issued", "weighing"].includes(req.status) && req.lines.some((line) => Number(line.actualKg) > 0));
     const mixedReqs = reqs.filter((req) => req.status === "consumed");
+    return { linked, stopped, done, woText, issuedReqs, mixedReqs };
+  };
+  // ข้อความต่อท้ายกล่องแก้/ลบสินค้าของใบที่ปล่อยผลิตแล้ว: WO ที่จะถูกยกเลิก และเคมีที่เบิกไปแล้ว (ว่างเมื่อไม่มีใบเบิกที่เบิกแล้ว)
+  const reopenRfText = (ctx, order) => {
+    if (!order || order.status === "draft") return "";
+    const { stopped, woText, issuedReqs } = rfLinkedInfo(ctx, order);
+    if (!stopped.length || !issuedReqs.length) return "";
+    return ` WO ใน RubberFlow ที่จะถูกยกเลิกหรือหยุด: ${stopped.map(woText).join(", ")} · เคมีที่เบิกไปแล้ว (${issuedReqs.map((req) => req.id).join(", ")}) คลังวัตถุดิบ (ST) จะได้งานรับคืนเข้าล็อตเดิม`;
+  };
+  dialogs.orderCancel = (ctx, { orderId }) => {
+    const { ui, rules, data, user } = ctx;
+    const order = data.orders.find((entry) => entry.id === orderId);
+    if (!order || ["completed", "cancelled"].includes(order.status) || !ctx.helpers.canPlan(user)) return null;
+    const fgLock = rules.fgStockLock(data, order);
+    if (fgLock.blocked) return null;
+    const jobs = data.jobs.filter((job) => job.orderId === order.id);
+    const { linked, stopped, done, woText, issuedReqs, mixedReqs } = rfLinkedInfo(ctx, order);
     const parts = rules.partReturnLines(data, order.id).filter((line) => line.returnable > 0);
     const received = rules.fgPosition(data, order).products.filter((product) => product.own > 0);
     const made = jobs.some((job) => (Number(job.qtyDone) || 0) > 0);
@@ -2570,7 +2602,7 @@
     const kept = [made ? "ยอดที่แผนกรายงานแล้ว" : "", mixedReqs.length ? "ยางที่ผสมแล้ว" : "", linked.length ? "ล็อตที่ฉีด อบ และตกแต่งแล้ว" : ""].filter(Boolean);
     const body = `<form novalidate id="bom-order-cancel-form" data-rf-form="cancelOrder" data-rf-args="${attr(JSON.stringify({ orderId: order.id }))}" data-rf-success="ยกเลิกใบ {result} แล้ว">
       ${lines.length ? ui.callout("warn", `<ul class="bom-cancel-list">${lines.map((text) => `<li>${esc(text)}</li>`).join("")}</ul>`) : ""}
-      <p class="small muted">${esc(`งานทุกแผนกของใบนี้หยุดและรายงานต่อไม่ได้${kept.length ? ` · ${kept.join(", ")} ยังเก็บเป็นประวัติ ไม่ถูกลบ` : ""}`)}</p>
+      ${jobs.length || kept.length ? `<p class="small muted">${esc(`${jobs.length ? "งานทุกแผนกของใบนี้หยุดและรายงานต่อไม่ได้" : ""}${kept.length ? `${jobs.length ? " · " : ""}${kept.join(", ")} ยังเก็บเป็นประวัติ ไม่ถูกลบ` : ""}`)}</p>` : ""}
       ${ui.field("เหตุผลที่ยกเลิก", ui.input("reason", { required: true, placeholder: "เช่น ลูกค้ายกเลิกคำสั่งซื้อ", extra: 'minlength="3" maxlength="200"' }), { required: true })}
     </form>`;
     return { html: ui.dialog("orderCancel", `ยกเลิกใบสั่งผลิต ${order.id}`, body, { wide: true, footer: `${ui.closeButton("ไม่ยกเลิก")}<button class="btn rf-btn" type="submit" form="bom-order-cancel-form">ยกเลิกใบ</button>` }) };
@@ -2690,8 +2722,8 @@
     if (remoteFlow && !jobQty) problems.push("งานนี้ไม่มียอดค้างให้ผลิต");
     if (!item?.rubber?.compound) problems.push("เส้นยางนี้ไม่มีรหัสสูตรยาง");
     else if (!compound?.recipeId) problems.push(`สูตรยาง ${item.rubber.compound} ยังไม่ผูกกับสูตร PHR ของ RubberFlow (เมนู “สูตรยาง ↔ RubberFlow”)`);
-    else if (!recipe) problems.push(`ไม่พบสูตร ${compound.recipeId} ใน RubberFlow ของเบราว์เซอร์นี้ (เปิด RubberFlow หรือรีเซ็ตข้อมูลสาธิตของ RubberFlow)`);
-    else if (recipe.status !== "approved") problems.push(`สูตร ${recipe.id} ยังไม่ได้รับอนุมัติใน RubberFlow`);
+    else if (!recipe && !(rf && remoteFlow && !rfReady(ctx))) problems.push(`ไม่พบสูตร ${compound.recipeId} ใน RubberFlow ของเบราว์เซอร์นี้ (เปิด RubberFlow หรือรีเซ็ตข้อมูลสาธิตของ RubberFlow)`);
+    else if (recipe && recipe.status !== "approved") problems.push(`สูตร ${recipe.id} ยังไม่ได้รับอนุมัติใน RubberFlow`);
     if (!kg) problems.push("คำนวณกิโลกรัมไม่ได้: เส้นยางไม่มี กก./เส้น หรือน้ำหนักต่อชิ้น");
     const body = `${ui.kv([
       ["งาน", esc(`${job.id} · ${job.orderId} · ${order?.customer ?? ""}`)], ["เส้นยาง", esc(`${job.itemCode} · ${item?.name ?? ""}`)],
