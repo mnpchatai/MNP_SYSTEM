@@ -144,14 +144,14 @@ set local role authenticated;
 select set_config('request.jwt.claims', '{"role":"authenticated"}', true);
 select throws_ok($$ select public.app_rf_save('{"purchaseOrders":{"upsert":[]}}'::jsonb, 0, 'createPurchaseOrder') $$, 'AUTH_REQUIRED', 'saving requires a session');
 select set_config('request.jwt.claims', '{"sub":"8f500000-0000-0000-0000-000000000002","role":"authenticated"}', true);
-select throws_ok($$ select public.app_rf_save('{"purchaseOrders":{"upsert":[]}}'::jsonb, 0, 'createPurchaseOrder') $$, 'RF_TEST_MODE_ONLY', 'a real PP staff account cannot save a purchase order (real mode is not open)');
+select lives_ok($$ select public.app_rf_save('{"purchaseOrders":{"upsert":[]}}'::jsonb, 0, 'createPurchaseOrder') $$, 'a real PP staff account may call save (an empty change writes nothing) (go-live 20261130010000)');
 select throws_ok('select count(*) from public.rf_purchase_orders', '42501', null, 'clients cannot read the purchase order table directly');
 select throws_ok($$ insert into public.rf_purchase_orders (po_no, lines) values ('PO-20261110-99', '[{"materialCode":"X"}]'::jsonb) $$, '42501', null, 'clients cannot write the purchase order table directly');
 select throws_ok($$ update public.rf_purchase_orders set status = 'received' $$, '42501', null, 'clients cannot update the purchase order table directly');
 select set_config('request.jwt.claims', '{"sub":"8f500000-0000-0000-0000-000000000003","role":"authenticated"}', true);
 select throws_ok($$ select public.app_rf_save('{"purchaseOrders":{"upsert":[]}}'::jsonb, 0, 'createPurchaseOrder') $$, 'LAB_ONLY_ACCOUNT', 'a lab-only account cannot save a purchase order');
 select set_config('request.jwt.claims', '{"sub":"8f500000-0000-0000-0000-000000000001","role":"authenticated"}', true);
-select throws_ok($$ select public.app_rf_save('{"purchaseOrders":{"upsert":[]}}'::jsonb, 0, 'createPurchaseOrder') $$, 'RF_TEST_MODE_ONLY', 'an admin outside test mode cannot save a purchase order');
+select lives_ok($$ select public.app_rf_save('{"purchaseOrders":{"upsert":[]}}'::jsonb, 0, 'createPurchaseOrder') $$, 'an admin outside test mode may call save (an empty change writes nothing)');
 
 -- 4. วัตถุดิบ: สต็อกสำรอง (safetyKg) และอายุเก็บ (shelfLifeDays) ------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);

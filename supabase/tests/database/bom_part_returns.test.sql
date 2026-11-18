@@ -106,11 +106,11 @@ set local role authenticated;
 select set_config('request.jwt.claims', '{"role":"authenticated"}', true);
 select throws_ok($$ select public.app_bom_save_master('{"partReturns":{"upsert":[]}}'::jsonb, 0, 'undoOrderParts') $$, 'AUTH_REQUIRED', 'returning requires a session');
 select set_config('request.jwt.claims', '{"sub":"8e200000-0000-0000-0000-000000000002","role":"authenticated"}', true);
-select throws_ok($$ select public.app_bom_save_master('{"partReturns":{"upsert":[{"orderId":"X","mode":"undo","reason":"x"}]}}'::jsonb, 0, 'undoOrderParts') $$, 'BOM_TEST_MODE_ONLY',
-  'a real PP staff account cannot return parts (real mode is not open)');
+select throws_ok($$ select public.app_bom_save_master('{"partReturns":{"upsert":[{"orderId":"X","mode":"undo","reason":"x"}]}}'::jsonb, 0, 'undoOrderParts') $$, 'BOM_INVALID_RETURN',
+  'a real PP staff account cannot return parts of an order that is not in real data (go-live 20261130010000)');
 select set_config('request.jwt.claims', '{"sub":"8e200000-0000-0000-0000-000000000001","role":"authenticated"}', true);
-select throws_ok($$ select public.app_bom_save_master('{"partReturns":{"upsert":[{"orderId":"X","mode":"undo","reason":"x"}]}}'::jsonb, 0, 'returnOrderParts') $$, 'BOM_TEST_MODE_ONLY',
-  'an admin outside test mode cannot return parts');
+select throws_ok($$ select public.app_bom_save_master('{"partReturns":{"upsert":[{"orderId":"X","mode":"undo","reason":"x"}]}}'::jsonb, 0, 'returnOrderParts') $$, 'BOM_INVALID_RETURN',
+  'an admin outside test mode cannot reach the test-mode order X');
 
 -- 4. ข้อมูลตั้งต้น: ใบที่ปล่อยผลิตพร้อมงานของซื้อสองงาน ST นับสต็อกและเบิกจ่าย -----------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);

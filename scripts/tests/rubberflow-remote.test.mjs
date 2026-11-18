@@ -554,11 +554,16 @@ test("the audit page reads app_rf_audit: the database's own line first (action a
   await failedAudit.store.loadAudit(true);
   assert.equal(failedAudit.store.audit().status, "error");
   assert.match(failedAudit.store.audit().error.message, /โหลดบันทึกการใช้งานไม่สำเร็จ/);
-  // นอกโหมดทดสอบ: ทุก RPC ปฏิเสธ
-  const outside = createMockSupabase({ now: () => NOW });
+  // นอกโหมดทดสอบ (ใช้งานจริง 20261130010000): ทุก RPC ทำงานกับข้อมูลจริงของผู้ใช้จำลองเอง · ผู้ใช้ที่ไม่ active ถูกปฏิเสธ (RF_FORBIDDEN)
+  const outside = createMockSupabase({ real: "rb", now: () => NOW });
+  assert.equal((await createMockSupabase({ now: () => NOW }).client.rpc("app_rf_master")).error.code, "RF_FORBIDDEN", "a real MT department manager cannot read RubberFlow");
   for (const name of ["app_rf_master", "app_rf_master_since", "app_rf_save", "app_rf_audit"]) {
-    assert.equal((await outside.client.rpc(name, { p_version: 0, p_changes: {}, p_base_version: 0, p_action: "saveMaterial" })).error.code, "RF_TEST_MODE_ONLY", name);
+    assert.equal((await outside.client.rpc(name, { p_version: 0, p_changes: {}, p_base_version: 0, p_action: "saveMaterial" })).error, null, name);
   }
+  assert.deepEqual((await outside.client.rpc("app_rf_audit", {})).data, [], "real mode has its own audit, without the test-mode rows");
+  outside.db.employees[0].is_active = false;
+  assert.equal((await outside.client.rpc("app_rf_master")).error.code, "RF_FORBIDDEN", "an inactive employee is refused");
+  outside.db.employees[0].is_active = true;
   assert.equal((await outside.client.rpc("app_sandbox_purge_rf")).error.message, "NOT_AUTHORIZED", "the purge asks for the real admin first, like the database");
 });
 

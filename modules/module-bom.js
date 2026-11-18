@@ -5,7 +5,9 @@
 // แต่ผูกกับ store ของ BOM เท่านั้น — ในเบราว์เซอร์จริง (มี Supabase) ข้อมูลทั้งหมด (ชิ้นงาน BOM สี แพ็กเกจ ขั้นตอนผลิต ลูกค้า ใบสั่งผลิต งาน) อยู่ในฐานข้อมูลผ่าน RPC
 // app_bom_master / app_bom_master_since / app_bom_save_master (ชนกันรายระเบียน บันทึกคืนส่วนต่าง) บันทึกการใช้งานอ่านจาก app_bom_audit และ admin ล้างข้อมูลทดสอบได้ด้วย app_sandbox_purge_bom · ไม่มีอะไรเก็บใน localStorage ผู้ใช้คือบัญชีทดสอบ (persona) ของ admin
 // และบทบาท BOM มาจากตำแหน่ง/แผนกของบัญชีนั้น (storeApi.personaUser) · ไม่มี Supabase (เทสต์ใน Node) ใช้ชุดสาธิตใน localStorage และบทบาทสาธิต 8 คนเหมือนเดิม
-// การซ่อน/แสดงเมนูและปุ่มเป็นแค่ UX สิทธิ์จริงตัดสินที่ฐานข้อมูล หน้า #/bom ปฏิเสธผู้ใช้นอกโหมดทดสอบเอง
+// ใช้งานจริง (20261130010000): พนักงานจริงใช้ได้ด้วยบัญชีของตัวเอง ข้อมูลจริงแยกจากข้อมูลทดสอบที่ฐานข้อมูล (is_test ตามโหมดของผู้เรียก) · เมนูและหน้า #/bom
+// เปิดให้กลุ่มวางแผนและพนักงานแผนกในสายผลิตตาม storeApi.usesBom (โหมดทดสอบเห็นทุกบัญชีทดสอบเหมือนเดิม) · ล้างข้อมูลทดสอบมีเฉพาะ admin ในโหมดทดสอบ
+// การซ่อน/แสดงเมนูและปุ่มเป็นแค่ UX สิทธิ์จริงตัดสินที่ฐานข้อมูล
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) เรียก helper ของ app.js (state, app, shell, bindShell, renderNotFound, escapeHtml, showToast,
 // friendlyError, confirmDialog, renderRoute, currentRoute) ได้เพราะถูกเรียกหลัง app.js โหลดเสร็จ
 (function registerBomModule() {
@@ -619,10 +621,14 @@
   const canPurge = () => store.isRemote() && Boolean(state.sandbox?.active);
   function toolbarHtml(ctx) {
     const { data, user } = ctx;
-    // โหมดฐานข้อมูล: ผู้ใช้คือบัญชีทดสอบที่ admin เลือกในระบบหลัก ไม่มีตัวเลือกบทบาทสาธิตและไม่มีรีเซ็ต (ข้อมูลหลักอยู่ในฐานข้อมูล)
+    // โหมดฐานข้อมูล: ผู้ใช้คือพนักงานที่ล็อกอิน (หรือบัญชีทดสอบที่ admin เลือกในโหมดทดสอบ) ไม่มีตัวเลือกบทบาทสาธิตและไม่มีรีเซ็ต (ข้อมูลหลักอยู่ในฐานข้อมูล)
     if (store.isRemote()) {
+      // ลิงก์ไป RubberFlow เฉพาะผู้ที่เปิดหน้า RubberFlow ได้ (แผนก GR PT BG PK ใช้งานจริงไม่เห็นเมนู RubberFlow)
+      const rfLink = (window.MNP_RUBBERFLOW_STORE?.usesRubberFlow?.(state.employee) ?? true)
+        ?`<div class="rf-row"><a class="btn rf-btn secondary" href="#/rubberflow?p=orders" title="ไปที่ใบสั่งผลิตของแผนก RB ใน RubberFlow">ใบสั่งผลิต (RubberFlow)</a></div>`
+        : "";
       return `<div class="rf-toolbar"><span class="small muted" role="status" data-bom-sync>${escapeHtml(syncText())}</span>
-        <div class="rf-row"><a class="btn rf-btn secondary" href="#/rubberflow?p=orders" title="ไปที่ใบสั่งผลิตของแผนก RB ใน RubberFlow">ใบสั่งผลิต (RubberFlow)</a></div></div>`;
+        ${rfLink}</div>`;
     }
     const options = data.users.map((row) => ({ value: row.id, label: `${storeApi.ROLES[row.role]?.label ?? row.role} · ${row.name}` }));
     const persona = `<label class="rf-persona"><span>บทบาทสาธิต</span>${ui.select("user", options, { value: user?.id ?? "", placeholder: user ? null : "เลือกบทบาทสาธิต…", extra: "data-rf-user" })}</label>`;
@@ -688,7 +694,8 @@
       canSee: (id) => storeApi.canSee(user, id),
       roleLabel: (role) => storeApi.ROLES[role]?.label ?? role,
       // RubberFlow (ถ้าโหลดอยู่): สร้าง WO จากงาน RB และอ่านสูตรที่อนุมัติ
-      rubberflow: () => window.MNP_RUBBERFLOW ?? null,
+      // ใช้งานจริง: พนักงานที่อ่าน RubberFlow ไม่ได้ (GR PT BG PK · private.rf_can_read) ไม่ได้ RubberFlow เลย = ไม่มีส่วนเคมี / WO แทน "กำลังโหลด" ค้าง
+      rubberflow: () => ((window.MNP_RUBBERFLOW_STORE?.usesRubberFlow?.(state.employee) ?? true) ? window.MNP_RUBBERFLOW ?? null : null),
       runAction,
     };
     ctx.openDialog = (name, args) => openDialog(name, args, ctx); // เปิด dialog จากโค้ดของหน้า (เช่น เมนูคลิกขวา) แทนปุ่ม data-rf-open
@@ -726,7 +733,7 @@
   }
 
   async function renderBom(params) {
-    if (!state.employee?.isSandbox) return renderNotFound();
+    if (!storeApi.usesBom(state.employee)) return renderNotFound();
     store.ensureLoaded(); // โหมดฐานข้อมูล: โหลดข้อมูลหลักครั้งแรก (วาดหน้าใหม่เองเมื่อเสร็จ) · โหมดในเครื่องไม่ทำอะไร
     const ctx = makeContext(params);
     const { user, page } = ctx;
@@ -768,12 +775,17 @@
     code: "BOM",
     enabled: true,
     standalone: true,
-    // ข้อมูลหลักอยู่ในตาราง/RPC ของ BOM ที่รับเฉพาะ admin ในโหมดทดสอบ (BOM_TEST_MODE_ONLY) ไม่แตะตารางของโมดูลอื่น
+    // ข้อมูลอยู่ในตาราง/RPC ของ BOM ที่แยกข้อมูลทดสอบ (is_test) ตามโหมดของผู้เรียก ไม่แตะตารางของโมดูลอื่น จึงเปิดในโหมดทดสอบได้
     sandbox: true,
     label: TITLE,
     palette: "bom",
-    // group: หัวกลุ่ม "ทดสอบ" ในเมนูข้าง — sandboxOnly ต้องคงไว้: เห็นเฉพาะ admin ในโหมดทดสอบ
-    nav: [{ path: PATH, label: "BOM รายแผนก", icon: NAV_ICON, sandboxOnly: true, group: "ทดสอบ", subnav: sidebarNav }],
+    // เมนูเห็นเฉพาะผู้ที่ใช้ BOM (storeApi.usesBom: ทุกบัญชีทดสอบ · ใช้งานจริง = กลุ่มวางแผนและแผนกในสายผลิต)
+    navAllowed: (employee) => storeApi.usesBom(employee),
+    // หัวกลุ่มของเมนูข้าง: "ทดสอบ" ในโหมดทดสอบ (sandboxOnly) · "การผลิต" เมื่อใช้งานจริง (realOnly) — รายการเดียวกัน แสดงทีละโหมด
+    nav: [
+      { path: PATH, label: "BOM รายแผนก", icon: NAV_ICON, sandboxOnly: true, group: "ทดสอบ", subnav: sidebarNav },
+      { path: PATH, label: "BOM รายแผนก", icon: NAV_ICON, realOnly: true, group: "การผลิต", subnav: sidebarNav },
+    ],
     pages: { [PATH]: renderBom },
   };
 })();

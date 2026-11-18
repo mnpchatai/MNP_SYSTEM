@@ -9,8 +9,9 @@
 // อยู่ในฐานข้อมูลผ่าน RPC app_rf_master / app_rf_master_since / app_rf_save (ชนกันรายระเบียน บันทึกคืนส่วนต่าง) บันทึกการใช้งานอ่านจาก app_rf_audit และ admin ล้างข้อมูลทดสอบได้ด้วย
 // app_sandbox_purge_rf · ผู้ใช้คือบัญชีทดสอบ (persona) ของ admin ซึ่งบทบาทมาจากตำแหน่ง/แผนกของบัญชีนั้น (storeApi.personaUser) · ไม่มีข้อมูลธุรกิจเหลืออยู่ในเบราว์เซอร์
 // ไม่มี Supabase (เทสต์ใน Node) ใช้ชุดสาธิตทั้งชุดใน localStorage และบทบาทสาธิต 9 คนของต้นแบบเหมือนเดิม
-// บทบาทใช้ซ่อน/แสดงเมนูและปุ่มเท่านั้น (โหมดฐานข้อมูลซ่อนปุ่มและปิดฟอร์มของคำสั่งที่บัญชีไม่มีสิทธิ์ ดู applyRights) สิทธิ์จริงทุกชุดตัดสินที่ฐานข้อมูล — หน้า #/rubberflow ปฏิเสธผู้ใช้นอกโหมดทดสอบเอง
-// (เมนูข้างโผล่เฉพาะโหมดทดสอบ nav.sandboxOnly แต่ URL พิมพ์เข้ามาได้)
+// บทบาทใช้ซ่อน/แสดงเมนูและปุ่มเท่านั้น (โหมดฐานข้อมูลซ่อนปุ่มและปิดฟอร์มของคำสั่งที่บัญชีไม่มีสิทธิ์ ดู applyRights) สิทธิ์จริงทุกชุดตัดสินที่ฐานข้อมูล
+// ใช้งานจริง (20261130010000): พนักงานจริงใช้ได้ด้วยบัญชีของตัวเอง ข้อมูลจริงแยกจากข้อมูลทดสอบที่ฐานข้อมูล · เมนูและหน้า #/rubberflow เปิดให้บทบาทของสถานี
+// ตาม storeApi.usesRubberFlow (กลุ่มวางแผน RB ST QA SR WH · โหมดทดสอบเห็นทุกบัญชีทดสอบเหมือนเดิม) · ล้างข้อมูลทดสอบมีเฉพาะ admin ในโหมดทดสอบ
 //
 // กติกา event (ทุกหน้าใช้ร่วมกัน ผูกโดย bindRoot):
 //   <form data-rf-form="<action>" data-rf-success="ข้อความ {result}" data-rf-args='{...}'>  ส่งแล้วเรียก action ของ store พร้อมค่าจากฟอร์ม
@@ -424,7 +425,7 @@
   const canPurge = () => store.isRemote() && Boolean(state.sandbox?.active);
   function toolbarHtml(ctx) {
     const { data, user, now } = ctx;
-    // โหมดฐานข้อมูล: ผู้ใช้คือบัญชีทดสอบที่ admin เลือกในระบบหลัก ไม่มีตัวเลือกบทบาทสาธิตและไม่มีรีเซ็ต (ข้อมูลหลักอยู่ในฐานข้อมูล) · ล้างข้อมูลทดสอบ = เฉพาะ admin ตัวจริงในโหมดทดสอบ (ฐานข้อมูลตรวจซ้ำ)
+    // โหมดฐานข้อมูล: ผู้ใช้คือพนักงานที่ล็อกอิน (หรือบัญชีทดสอบที่ admin เลือกในโหมดทดสอบ) ไม่มีตัวเลือกบทบาทสาธิตและไม่มีรีเซ็ต (ข้อมูลหลักอยู่ในฐานข้อมูล) · ล้างข้อมูลทดสอบ = เฉพาะ admin ตัวจริงในโหมดทดสอบ (ฐานข้อมูลตรวจซ้ำ)
     if (store.isRemote()) {
       const alerts = user && store.status() === "ready" ? derive.buildAlerts(data, now) : [];
       const bad = alerts.some((alert) => alert.tone === "bad");
@@ -611,7 +612,7 @@
   }
 
   async function renderRubberFlow(params) {
-    if (!state.employee?.isSandbox) return renderNotFound();
+    if (!storeApi.usesRubberFlow(state.employee)) return renderNotFound();
     store.ensureLoaded(); // โหมดฐานข้อมูล: โหลดข้อมูลหลักครั้งแรก (วาดหน้าใหม่เองเมื่อเสร็จ) · โหมดในเครื่องไม่ทำอะไร
     const ctx = makeContext(params);
     const { user, page } = ctx;
@@ -659,7 +660,7 @@
       return node.value !== node.defaultValue;
     });
   const idleForRefresh = () => {
-    if (document.hidden || !location.hash.startsWith(`#/${PATH}`) || !state.employee?.isSandbox) return false;
+    if (document.hidden || !location.hash.startsWith(`#/${PATH}`) || !storeApi.usesRubberFlow(state.employee)) return false;
     if (document.querySelector("dialog[open]")) return false;
     const active = document.activeElement;
     if (active && ["INPUT", "SELECT", "TEXTAREA"].includes(active.tagName)) return false;
@@ -690,12 +691,17 @@
     code: "RUBBERFLOW",
     enabled: true,
     standalone: true,
-    // ข้อมูลทั้ง 12 ชุดอยู่ในตาราง/RPC ของ RubberFlow ที่รับเฉพาะ admin ในโหมดทดสอบ (RF_TEST_MODE_ONLY)
+    // ข้อมูลทั้ง 12 ชุดอยู่ในตาราง/RPC ของ RubberFlow ที่แยกข้อมูลทดสอบ (is_test) ตามโหมดของผู้เรียก จึงเปิดในโหมดทดสอบได้
     sandbox: true,
     label: TITLE,
     palette: "rf",
-    // group: หัวกลุ่ม "ทดสอบ" ในเมนูข้าง (โมดูลต้นแบบที่ข้อมูลอยู่ในเบราว์เซอร์) — sandboxOnly ต้องคงไว้: เห็นเฉพาะ admin ในโหมดทดสอบ
-    nav: [{ path: PATH, label: "RubberFlow (แผนก RB)", icon: NAV_ICON, sandboxOnly: true, group: "ทดสอบ", subnav: sidebarNav }],
+    // เมนูเห็นเฉพาะผู้ที่ใช้ RubberFlow (storeApi.usesRubberFlow: ทุกบัญชีทดสอบ · ใช้งานจริง = บทบาทของสถานี)
+    navAllowed: (employee) => storeApi.usesRubberFlow(employee),
+    // หัวกลุ่มของเมนูข้าง: "ทดสอบ" ในโหมดทดสอบ (sandboxOnly) · "การผลิต" เมื่อใช้งานจริง (realOnly) — รายการเดียวกัน แสดงทีละโหมด
+    nav: [
+      { path: PATH, label: "RubberFlow (แผนก RB)", icon: NAV_ICON, sandboxOnly: true, group: "ทดสอบ", subnav: sidebarNav },
+      { path: PATH, label: "RubberFlow (แผนก RB)", icon: NAV_ICON, realOnly: true, group: "การผลิต", subnav: sidebarNav },
+    ],
     pages: { [PATH]: renderRubberFlow },
   };
 })();

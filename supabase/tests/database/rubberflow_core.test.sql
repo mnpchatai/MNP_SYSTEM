@@ -149,10 +149,11 @@ select throws_ok('select public.app_rf_audit()', 'AUTH_REQUIRED', 'reading the a
 select throws_ok('select public.app_sandbox_purge_rf()', 'AUTH_REQUIRED', 'the purge requires a session');
 
 select set_config('request.jwt.claims', '{"sub":"8f000000-0000-0000-0000-000000000002","role":"authenticated"}', true);
-select throws_ok('select public.app_rf_master()', 'RF_TEST_MODE_ONLY', 'a real PP staff account cannot read (real mode is not open)');
-select throws_ok('select public.app_rf_master_since(0)', 'RF_TEST_MODE_ONLY', 'a real PP staff account cannot read the delta');
-select throws_ok($$ select public.app_rf_save('{}'::jsonb, 0, 'saveMaterial') $$, 'RF_TEST_MODE_ONLY', 'a real PP staff account cannot save');
-select throws_ok('select public.app_rf_audit()', 'RF_TEST_MODE_ONLY', 'a real PP staff account cannot read the audit');
+select ok(public.app_rf_master() -> 'materials' @> '[{"code":"REAL-MAT"}]'::jsonb, 'a real PP staff account reads the real data (go-live 20261130010000)');
+select ok(public.app_rf_master() -> 'orders' @> '[{"id":"REAL-WO"}]'::jsonb, 'a real PP staff account sees the real work order');
+select lives_ok('select public.app_rf_master_since(0)', 'a real PP staff account reads the real delta');
+select lives_ok($$ select public.app_rf_save('{}'::jsonb, 0, 'saveMaterial') $$, 'a real PP staff account may save (an empty change writes nothing)');
+select is(public.app_rf_audit(), '[]'::jsonb, 'a real PP staff account reads the real audit, which has no test-mode rows');
 select throws_ok('select public.app_sandbox_purge_rf()', 'NOT_AUTHORIZED', 'a non-admin cannot purge');
 select throws_ok('select count(*) from public.rf_orders', '42501', null, 'clients cannot read the work order table directly');
 select throws_ok('select count(*) from public.rf_recipes', '42501', null, 'clients cannot read the recipe table directly');
@@ -168,8 +169,8 @@ select throws_ok('select public.app_rf_audit()', 'LAB_ONLY_ACCOUNT', 'a lab-only
 select throws_ok('select public.app_sandbox_purge_rf()', 'LAB_ONLY_ACCOUNT', 'a lab-only account cannot purge');
 
 select set_config('request.jwt.claims', '{"sub":"8f000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
-select throws_ok('select public.app_rf_master()', 'RF_TEST_MODE_ONLY', 'an admin outside test mode cannot read');
-select throws_ok($$ select public.app_rf_save('{}'::jsonb, 0, 'saveMaterial') $$, 'RF_TEST_MODE_ONLY', 'an admin outside test mode cannot save');
+select ok(public.app_rf_master() -> 'materials' @> '[{"code":"REAL-MAT"}]'::jsonb, 'an admin outside test mode reads the real data (go-live 20261130010000)');
+select lives_ok($$ select public.app_rf_save('{}'::jsonb, 0, 'saveMaterial') $$, 'an admin outside test mode may save (an empty change writes nothing)');
 select throws_ok('select public.app_sandbox_purge_rf()', 'SANDBOX_NOT_ACTIVE', 'an admin outside test mode cannot purge');
 
 -- 4. วัตถุดิบ ------------------------------------------------------------------------

@@ -311,6 +311,8 @@ function sandboxRouteAllowed(path, params) {
 }
 // เมนูข้างของโมดูลแยกไฟล์: รายการที่ประกาศ sandboxOnly โผล่เฉพาะในโหมดทดสอบ เพราะโหมดทดสอบซ่อนหน้าคำร้อง
 // ซึ่งเป็นทางเข้าปกติของโมดูล (เช่น หน้า NCR) ผู้ใช้ปกติเข้าหน้าของโมดูลจากหน้าคำร้อง ไม่มีเมนูข้างแยก
+// รายการที่ประกาศ realOnly โผล่เฉพาะนอกโหมดทดสอบ: โมดูลที่ใช้ได้ทั้งสองโหมด (BOM / RubberFlow) ประกาศสองรายการเพื่อให้หัวกลุ่มต่างกัน
+// ("ทดสอบ" ในโหมดทดสอบ · "การผลิต" เมื่อใช้งานจริง)
 // รายการเมนูประกาศ subnav(active) เพื่อวางเมนูย่อยใต้ลิงก์ของตัวเองได้ (คืน HTML หรือสตริงว่างถ้าไม่แสดง)
 // เมนูย่อยต้องใช้ลิงก์ (<a href="#/…">) ที่อยู่ใน .nav-sub เพื่อให้ปิดลิ้นชักบนมือถือและโหลดหน้าใหม่ตามกติกาของ bindShell
 // โมดูลที่จำกัดสิทธิ์ (เช่น MNP LAB) ประกาศ navAllowed(employee) — ซ่อนเมนูเมื่อคืน false
@@ -324,6 +326,7 @@ function requestModuleNavLinks(active) {
     .filter((entry) => deptModuleAllowed(entry.code))
     .flatMap((entry) => entry.nav ?? [])
     .filter((item) => !item.sandboxOnly || isSandboxMode())
+    .filter((item) => !item.realOnly || !isSandboxMode())
     .map((item) => {
       const groupLabel = item.group && item.group !== previousGroup ? `<div class="nav-label nav-group-label">${escapeHtml(item.group)}</div>` : "";
       previousGroup = item.group ?? null;

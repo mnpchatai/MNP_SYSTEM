@@ -179,11 +179,11 @@ set local role authenticated;
 select set_config('request.jwt.claims', '{"role":"authenticated"}', true);
 select throws_ok($$ select public.app_bom_save_master('{"fgMoves":{"upsert":[]}}'::jsonb, 0, 'receiveFg') $$, 'AUTH_REQUIRED', 'receiving requires a session');
 select set_config('request.jwt.claims', '{"sub":"8e300000-0000-0000-0000-000000000004","role":"authenticated"}', true);
-select throws_ok($$ select public.app_bom_save_master('{"fgMoves":{"upsert":[{"orderId":"X","kind":"receive","lines":[{"fgCode":"FG-A","qty":1}]}]}}'::jsonb, 0, 'receiveFg') $$, 'BOM_TEST_MODE_ONLY',
-  'a real WH staff account cannot receive goods (real mode is not open)');
+select throws_ok($$ select public.app_bom_save_master('{"fgMoves":{"upsert":[{"orderId":"X","kind":"receive","lines":[{"fgCode":"FG-A","qty":1}]}]}}'::jsonb, 0, 'receiveFg') $$, 'BOM_INVALID_FG',
+  'a real WH staff account reaches the writer but the test-mode order X does not exist in real data (go-live 20261130010000)');
 select set_config('request.jwt.claims', '{"sub":"8e300000-0000-0000-0000-000000000002","role":"authenticated"}', true);
-select throws_ok($$ select public.app_bom_save_master('{"fgMoves":{"upsert":[{"orderId":"X","kind":"receive","lines":[{"fgCode":"FG-A","qty":1}]}]}}'::jsonb, 0, 'receiveFg') $$, 'BOM_TEST_MODE_ONLY',
-  'a real PP staff account cannot receive goods either');
+select throws_ok($$ select public.app_bom_save_master('{"fgMoves":{"upsert":[{"orderId":"X","kind":"receive","lines":[{"fgCode":"FG-A","qty":1}]}]}}'::jsonb, 0, 'receiveFg') $$, 'BOM_FORBIDDEN',
+  'a real PP staff account cannot receive goods (WH or admin only)');
 select throws_ok('select count(*) from public.bom_fg_moves', '42501', null, 'clients cannot read the move table directly');
 select throws_ok($$ insert into public.bom_fg_moves (order_pk, fg_code, kind, qty) values ('00000000-0000-0000-0000-000000000000', 'X', 'receive', 1) $$, '42501', null,
   'clients cannot write the move table directly');
@@ -192,8 +192,8 @@ select throws_ok($$ delete from public.bom_fg_moves $$, '42501', null, 'clients 
 select set_config('request.jwt.claims', '{"sub":"8e300000-0000-0000-0000-000000000003","role":"authenticated"}', true);
 select throws_ok($$ select public.app_bom_save_master('{"fgMoves":{"upsert":[]}}'::jsonb, 0, 'receiveFg') $$, 'LAB_ONLY_ACCOUNT', 'a lab-only account cannot receive goods');
 select set_config('request.jwt.claims', '{"sub":"8e300000-0000-0000-0000-000000000001","role":"authenticated"}', true);
-select throws_ok($$ select public.app_bom_save_master('{"fgMoves":{"upsert":[{"orderId":"X","kind":"receive","lines":[{"fgCode":"FG-A","qty":1}]}]}}'::jsonb, 0, 'receiveFg') $$, 'BOM_TEST_MODE_ONLY',
-  'an admin outside test mode cannot receive goods');
+select throws_ok($$ select public.app_bom_save_master('{"fgMoves":{"upsert":[{"orderId":"X","kind":"receive","lines":[{"fgCode":"FG-A","qty":1}]}]}}'::jsonb, 0, 'receiveFg') $$, 'BOM_INVALID_FG',
+  'an admin outside test mode cannot reach the test-mode order X');
 
 -- 4. ข้อมูลตั้งต้น: สินค้า 2 รายการ ใบ PI 5 ใบ (สองใบแรกพร้อมงาน PK) ------------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
