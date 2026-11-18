@@ -176,19 +176,14 @@ test("the dashboard, stations and quality pages show the prototype's facts from 
   const extrusion = await env.render("p=extrusion");
   assert.match(extrusion, /data-rf-form="recordExtrusion"/);
   assert.match(extrusion, new RegExp(`<option value="${transferId}">`), "the received transfer is offered as the source");
-  assert.match(extrusion, /data-spec data-lsl="2.38" data-usl="2.62"/, "spec inputs carry their limits");
-  // ช่องที่ action บังคับกรอก (ความหนา ความกว้าง น้ำหนักต่อเมตร) มี (จำเป็น) · มาตรฐานเป็นของหัวดาย Door Seal เท่านั้น
+  // ช่องที่ action บังคับกรอก (ความหนา ความกว้าง น้ำหนักต่อเมตร) มี (จำเป็น) · มาตรฐานมาจากสูตรของ WO ของใบส่งมอบที่เลือก (20261129010000) จึงไม่มีค่าตายตัวในหน้า
   for (const label of ["ความหนา (mm)", "ความกว้าง (mm)", "น้ำหนักต่อเมตร (g/m)"]) assert.ok(extrusion.includes(`${label} <span class="field-required">(จำเป็น)</span>`), `${label} is marked required`);
-  assert.match(extrusion, /<small class="rf-hint" data-spec-hint>มาตรฐาน 2.5 ± 0.12 mm<\/small>/, "a Door Seal die (the default) shows the standard");
-  assert.match(extrusion, /data-spec-gate="dieId"/, "the page repaints the standard when the die changes");
-  const dies = env.store.data().molds.filter((mold) => mold.kind === "die");
-  const doorSeal = dies.find((mold) => mold.id === "DIE-DS-01");
-  doorSeal.id = "DIE-XX-01";
-  const otherDie = await env.render("p=extrusion");
-  doorSeal.id = "DIE-DS-01";
-  assert.match(otherDie, /<small class="rf-hint" data-spec-hint hidden>มาตรฐาน 2.5/, "a die that is not a Door Seal die shows no standard");
-  assert.ok(env.context.MNP_RUBBERFLOW_RULES.hasExtrusionStandard("DIE-DS-02"));
-  assert.ok(!env.context.MNP_RUBBERFLOW_RULES.hasExtrusionStandard("DIE-OR-03") && !env.context.MNP_RUBBERFLOW_RULES.hasExtrusionStandard(undefined));
+  for (const key of ["thickness", "width", "weightPerM"]) {
+    assert.match(extrusion, new RegExp(`name="${key}"[^>]*data-rf-dim="${key}"`), `${key} is painted from the recipe spec`);
+    assert.match(extrusion, new RegExp(`<span data-rf-dim-hint="${key}"></span>`), `${key} has an empty hint until a transfer is chosen`);
+  }
+  assert.doesNotMatch(extrusion, /data-spec-gate|data-spec data-lsl="2.38"|มาตรฐาน 2.5 ± 0.12/, "no fixed Door Seal standard and no die gate");
+  assert.match(extrusion, /<div data-rf-dim-warn><\/div>/, "a place for the out-of-spec warning");
   // .rf-hint ตั้ง display:block จึงต้องมีกฎ [hidden] ของตัวเอง ไม่งั้น attribute hidden ไม่ซ่อนข้อความจริง
   assert.match(fs.readFileSync("styles.css", "utf8"), /\.rf-hint\[hidden\]\s*\{\s*display:\s*none;?\s*\}/, "a hidden spec hint is really hidden");
   const finishing = await env.render("p=finishing");
@@ -705,6 +700,20 @@ test("purchasing screens: the check opens one dialog (escaped, safety stock and 
   assert.match(receive.html, /name="supplier"[^>]*title="เว้นว่าง = ใช้เลขใบสั่งซื้อ"/);
   assert.equal(dialogs.receivePurchase(env.ctx(), { id: po.id, materialCode: "ZNO" }), null, "a material that is not on the order");
   assert.equal(dialogs.receivePurchase(env.ctx(), { id: "PO-NOPE", materialCode: "ZNO" }), null);
+  // รับเกินยอดค้างรับ (N9 · ผู้ใช้ตัดสิน 2026-11-18): คำเตือนพร้อมช่องติ๊กซ่อนอยู่จนกว่าจะกรอกเกิน ปุ่มรับเข้ากดได้เมื่อติ๊กแล้ว
+  assert.match(receive.html, /class="rf-callout is-warn bom-compound-change" role="note" data-rf-over hidden>[\s\S]*name="overConfirm" value="1" data-rf-over-confirm/);
+  const overNode = () => ({ value: "", hidden: false, checked: false, disabled: false, textContent: "", handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } });
+  const overNodes = { '[name="qtyKg"]': overNode(), "[data-rf-over]": overNode(), "[data-rf-over-confirm]": overNode(), "[data-rf-over-text]": overNode(), 'button[type="submit"][form="rf-receive-po"]': overNode() };
+  overNodes['[name="qtyKg"]'].value = "60";
+  receive.bind({ querySelector: (selector) => overNodes[selector] ?? null });
+  assert.deepEqual([overNodes["[data-rf-over]"].hidden, overNodes['button[type="submit"][form="rf-receive-po"]'].disabled], [true, false], "the ordered quantity needs no tick");
+  overNodes['[name="qtyKg"]'].value = "65";
+  overNodes['[name="qtyKg"]'].handlers.input();
+  assert.deepEqual([overNodes["[data-rf-over]"].hidden, overNodes['button[type="submit"][form="rf-receive-po"]'].disabled], [false, true], "5 kg over: the warning shows and the button waits for the tick");
+  assert.equal(overNodes["[data-rf-over-text]"].textContent, "ยืนยันรับเกินยอดที่ค้างรับ 5.00 kg");
+  overNodes["[data-rf-over-confirm]"].checked = true;
+  overNodes["[data-rf-over-confirm]"].handlers.change();
+  assert.equal(overNodes['button[type="submit"][form="rf-receive-po"]'].disabled, false, "ticked: the receipt can be sent");
   const receiveForm = { ...env.root, dataset: { rfForm: "receivePurchaseLine", rfSuccess: "รับเข้าล็อต {result} แล้ว", rfArgs: JSON.stringify({ id: po.id, materialCode: "EPDM-55" }) }, handlers: {}, __values: { qtyKg: "58", expiry: "2027-06-30", supplier: "" } };
   receiveForm.addEventListener = (type, handler) => { receiveForm.handlers[type] = handler; };
   env.fakes["form[data-rf-form]"] = [receiveForm];
@@ -1155,4 +1164,47 @@ test("a mold card status also follows the PM life, the return dialog names the f
   assert.doesNotMatch(env.context.MNP_RUBBERFLOW_DIALOGS.createRequisition(env.ctx("p=requisition"), {}).html, /ระเบิด/);
   const orders = await env.render("p=orders");
   assert.doesNotMatch(orders, /สี[A-Z]{2}\d{2}/, "a space between 'สี' and the colour code");
+});
+
+test("the extrusion spec lives on the recipe: the recipe form edits it, the recipe page shows it, and SPC charts each recipe's own spec (N2)", async () => {
+  const env = load();
+  env.store.setUser("U01");
+  const dialogs = env.context.MNP_RUBBERFLOW_DIALOGS;
+  // ฟอร์มสูตร: หกช่องไม่บังคับ (ค่ามาตรฐาน + ค่าเผื่อ ต่อมิติ) · สูตร Door Seal ที่อนุมัติแล้วตั้งต้นด้วยสเปกเดิมในฉบับแก้ไขใหม่
+  const blank = dialogs.createRecipe(env.ctx(), {}).html;
+  for (const key of ["thickness", "width", "weightPerM"]) {
+    assert.match(blank, new RegExp(`name="extrusionSpec\\.${key}\\.target"[^>]*value=""`), `${key} target is optional and empty`);
+    assert.match(blank, new RegExp(`name="extrusionSpec\\.${key}\\.tol"[^>]*value=""`));
+  }
+  assert.doesNotMatch(blank, /extrusionSpec[^"]*"[^>]*required/, "no spec field is required");
+  const edit = dialogs.recipeEdit(env.ctx(), { id: "RC-EPDM-DS01" }).html;
+  assert.match(edit, /name="extrusionSpec\.thickness\.target"[^>]*value="2.5"/);
+  assert.match(edit, /name="extrusionSpec\.weightPerM\.tol"[^>]*value="6"/);
+  // หน้าสูตร: บอกสเปกครั้งเดียวในรายละเอียด · สูตรที่ไม่มีสเปกบอกว่าไม่กักตามมิติ
+  assert.match(text(await env.render("p=recipes&sel=RC-EPDM-DS01")), /สเปกมิติการฉีด ความหนา 2.5 ± 0.12 mm · ความกว้าง 18 ± 0.25 mm · น้ำหนักต่อเมตร 160 ± 6 g\/m/);
+  assert.match(text(await env.render("p=recipes&sel=RC-NBR-OR02")), /สเปกมิติการฉีด ไม่กำหนด \(ล็อตฉีดไม่ถูกกักตามมิติ\)/);
+  // ฟอร์มส่งสเปกเป็นตัวเลข · กรอกค่ามาตรฐานโดยไม่มีค่าเผื่อ = ไม่บันทึก
+  const submit = async (values) => {
+    const form = { ...env.root, dataset: { rfForm: "createRecipe", rfSuccess: "ok" }, handlers: {}, __values: {
+      productCode: "", uom: "m", batchKg: "50", yieldPerKg: "6", restHours: "4", dumpTol: "5",
+      mixerTemp1: "80", dumpTemp1: "110", mixMin1: "3", mixerTemp2: "90", dumpTemp2: "130", mixMin2: "2", "materialCode[]": ["ZNO"], "phr[]": ["5"], "stage[]": ["1"], ...values,
+    } };
+    form.addEventListener = (type, handler) => { form.handlers[type] = handler; };
+    env.fakes["form[data-rf-form]"] = [form];
+    await env.render("p=recipes");
+    await form.handlers.submit({ preventDefault() {} });
+    delete env.fakes["form[data-rf-form]"];
+  };
+  await submit({ id: "RC-SPEC-1", "extrusionSpec.thickness.target": "3.2", "extrusionSpec.thickness.tol": "0.1", "extrusionSpec.width.target": "", "extrusionSpec.width.tol": "" });
+  assert.deepEqual(JSON.parse(JSON.stringify(env.store.data().recipes.find((row) => row.id === "RC-SPEC-1").extrusionSpec)), { thickness: { target: 3.2, tol: 0.1 } });
+  await submit({ id: "RC-SPEC-2", "extrusionSpec.width.target": "18" });
+  assert.equal(env.store.data().recipes.some((row) => row.id === "RC-SPEC-2"), false);
+  assert.match(env.log.toasts.at(-1)[0], /กรอกความกว้างทั้งค่ามาตรฐานและค่าเผื่อ/);
+  await submit({ id: "RC-SPEC-3" });
+  assert.equal("extrusionSpec" in env.store.data().recipes.find((row) => row.id === "RC-SPEC-3"), false, "no spec typed = no spec");
+  // SPC: กราฟมิติแยกต่อสูตรที่มีสเปก (Door Seal) · ล็อตของสูตรโอริงที่ไม่มีสเปกไม่เข้ากราฟ
+  const spc = await env.render("p=spc");
+  assert.match(spc, /<option value="ex\.thickness\.RC-EPDM-DS01" selected>ฉีด · ความหนา · RC-EPDM-DS01<\/option>/, "the first chart is the Door Seal thickness");
+  assert.doesNotMatch(spc, /ex\.[a-zA-Z]+\.RC-NBR-OR02/, "the O-ring recipe has no spec, so no extrusion chart");
+  assert.match(spc, /สเปก 2.5 ± 0.12 mm/);
 });

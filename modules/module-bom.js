@@ -455,7 +455,8 @@
     returnOrderParts: (p) => ({ orderId: p.orderId, reason: p.reason, lines: listOf(p, "itemCode").map((itemCode, index) => ({ itemCode, qty: listOf(p, "qty")[index] ?? "" })).filter((line) => String(line.qty).trim() !== "" && Number(line.qty) !== 0) }),
     // ฟอร์มรับเข้าคลัง / ส่งมอบสินค้าสำเร็จรูป: fgCode[] + qty[] ตามลำดับแถว (มีเฉพาะแถวที่มีของให้รับ/ส่ง) → lines (เว้นว่างหรือ 0 = ไม่รับ/ส่งรายการนั้น)
     receiveFg: (p) => ({ orderId: p.orderId, lines: fgLines(p) }),
-    deliverFg: (p) => ({ orderId: p.orderId, lines: fgLines(p) }),
+    // overConfirm = ติ๊กยืนยันส่งมอบเกินจำนวนที่สั่ง (ช่องในฟอร์ม) · action deliverFg ปฏิเสธการส่งเกินที่ไม่ได้ยืนยัน
+    deliverFg: (p) => ({ orderId: p.orderId, lines: fgLines(p), overConfirm: p.overConfirm === "1" }),
     // ฟอร์มขั้นตอนผลิต: processCode[] + minutesPerPc[] → steps ตามลำดับแถว (แถวที่ไม่เลือกขั้นตอนถูกข้าม)
     // inputCode[] + inputStep[] → step.inputs (ส่วนประกอบที่เลือก "ขั้นแรก" ไม่ถูกผูก จึงแสดงที่ขั้นแรก)
     saveRouting: (p) => {

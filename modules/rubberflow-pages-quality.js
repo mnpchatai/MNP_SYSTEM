@@ -98,11 +98,40 @@
   };
 
   // ---------- SPC / Cpk ----------
+  // มิติการฉีด: สเปกเป็นของสูตร (20261129010000) จึงแยกกราฟต่อสูตรและสเปก ล็อตใช้สเปกของ revision ที่ WO ผูก ล็อตที่สูตรไม่กำหนดค่านั้นไม่นับ
+  // id = ex.<ค่า>.<รหัสสูตร> (สเปกที่สองขึ้นไปของสูตรเดียวกันต่อท้าย .2 .3 และบอกสเปกในชื่อ)
+  function extrusionChars(rules, data) {
+    const groups = new Map();
+    for (const lot of data.lots.filter((row) => row.stage === "extrusion")) {
+      const order = data.orders.find((row) => row.id === lot.orderId);
+      const spec = rules.orderExtrusionSpec(data.recipes, order);
+      for (const key of rules.EXTRUSION_KEYS) {
+        if (!spec[key]) continue;
+        const group = `${key}\u0000${order.recipeId}\u0000${spec[key].target}\u0000${spec[key].tol}`;
+        if (!groups.has(group)) groups.set(group, { key, recipeId: order.recipeId, spec: spec[key], lots: [] });
+        groups.get(group).lots.push(lot);
+      }
+    }
+    const rows = [...groups.values()].sort((a, b) => rules.EXTRUSION_KEYS.indexOf(a.key) - rules.EXTRUSION_KEYS.indexOf(b.key) || (a.recipeId < b.recipeId ? -1 : a.recipeId > b.recipeId ? 1 : 0));
+    const seen = new Map();
+    return rows.map((row) => {
+      const base = `ex.${row.key}.${row.recipeId}`;
+      const n = (seen.get(base) ?? 0) + 1;
+      seen.set(base, n);
+      const several = rows.filter((other) => other.key === row.key && other.recipeId === row.recipeId).length > 1;
+      return {
+        id: n > 1 ? `${base}.${n}` : base,
+        label: `ฉีด · ${row.spec.label} · ${row.recipeId}${several ? ` (${rules.specText(row.spec)})` : ""}`,
+        spec: row.spec,
+        source: () => row.lots.map((lot) => ({ id: lot.id, at: lot.createdAt, v: lot.params?.[row.key] })),
+      };
+    });
+  }
   // ค่าที่ติดตาม: มาจากไหนและใช้สเปกใด
-  const spcChars = (rules) => {
+  const spcChars = (rules, data) => {
     const { SPECS } = rules;
     return [
-      ...["thickness", "width", "weightPerM"].map((key) => ({ id: `ex.${key}`, label: `ฉีด · ${SPECS.extrusion[key].label}`, spec: SPECS.extrusion[key], source: (d) => d.lots.filter((lot) => lot.stage === "extrusion").map((lot) => ({ id: lot.id, at: lot.createdAt, v: lot.params[key] })) })),
+      ...extrusionChars(rules, data),
       ...["temp", "time", "pressure"].map((key) => ({ id: `cu.${key}`, label: `อบ · ${SPECS.curing[key].label}`, spec: SPECS.curing[key], source: (d) => d.lots.filter((lot) => lot.stage === "curing").map((lot) => ({ id: lot.id, at: lot.createdAt, v: lot.params[key] })) })),
       ...Object.entries(SPECS.lab).map(([key, spec]) => ({ id: `lab.${key}`, label: `แล็บ · ${spec.label}`, spec, source: (d) => d.qcRecords.flatMap((record) => record.tests.filter((test) => test.key === key).map((test) => ({ id: record.lotId, at: record.at, v: test.value }))) })),
       { id: "mx.dump", label: "ผสม · อุณหภูมิปล่อยยางขั้น 2 (สูตร EPDM)", spec: { label: "อุณหภูมิปล่อยยาง", unit: "°C", target: 140, tol: 6 }, source: (d) => d.lots.filter((lot) => lot.stage === "mixing" && lot.recipeId === "RC-EPDM-DS01").map((lot) => ({ id: lot.id, at: lot.createdAt, v: lot.params?.stages?.find((row) => Number(row.stage) === 2)?.dumpTemp })) },
@@ -112,7 +141,7 @@
   pages.spc = (ctx) => {
     const { data, ui, rules, params } = ctx;
     const { stats, cpkVerdict, specLimits, specText, fmtDate } = rules;
-    const chars = spcChars(rules);
+    const chars = spcChars(rules, data);
     const ch = chars.find((row) => row.id === params.get("ch")) ?? chars[0];
     const { lsl, usl } = specLimits(ch.spec);
     const points = ch.source(data).filter((point) => Number.isFinite(point.v)).sort((a, b) => a.at - b.at).map((point, index) => ({ ...point, n: index + 1, label: fmtDate(point.at) }));

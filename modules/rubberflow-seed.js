@@ -41,6 +41,8 @@
     {
       id: "RC-EPDM-DS01", productCode: "DS-1825",
       uom: "m", batchKg: 60, dumpTol: 6, restHours: 4, yieldPerKg: 6.1, revision: 3,
+      // สเปกมิติการฉีดของเส้น Door Seal 18×2.5 (สูตรอื่นในชุดสาธิตไม่มีสเปก ล็อตฉีดของเส้นกลม / โอริงจึงไม่ถูกกักตามมิติ)
+      extrusionSpec: { thickness: { target: 2.5, tol: 0.12 }, width: { target: 18, tol: 0.25 }, weightPerM: { target: 160, tol: 6 } },
       stages: [{ stage: 1, mixerTemp: 80, dumpTemp: 115, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 140, mixMin: 2 }],
       items: [
         { materialCode: "EPDM-55", phr: 100, stage: 1 }, { materialCode: "CB-N550", phr: 90, stage: 1 }, { materialCode: "OIL-PAR", phr: 50, stage: 1 },
@@ -126,7 +128,7 @@
 
     d.molds = MOLDS.map((mold) => ({ ...mold, usageSinceClean: Math.round(mold.cleanEvery * (0.2 + rnd() * 0.4)), lastCleanAt: now - 9 * DAY }));
     d.recipes = RECIPES.map((recipe) => ({
-      ...recipe, items: recipe.items.map((item) => ({ ...item })),
+      ...recipe, items: recipe.items.map((item) => ({ ...item })), ...(recipe.extrusionSpec ? { extrusionSpec: JSON.parse(JSON.stringify(recipe.extrusionSpec)) } : {}),
       status: recipe.id === "RC-NR-AM01" ? "draft" : "approved", createdAt: now - 120 * DAY, createdBy: user("qc").name,
       approvedBy: recipe.id === "RC-NR-AM01" ? undefined : user("manager").name, approvedAt: now - 110 * DAY,
     }));

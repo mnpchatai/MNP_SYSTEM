@@ -1544,6 +1544,12 @@ test("issuing parts from the PI page: the dialog has a tick box and an editable 
   assert.match(dialog, /name="qty\[\]"[^>]*max="5" value="7" required data-bom-issue-field aria-label="จำนวนที่เบิก P-BOX-01 \(กล่อง\)" disabled>/, "its quantity is the remainder, capped by the stock, and off until ticked");
   assert.match(dialog, /name="itemCode\[\]" value="P-BOX-01" data-bom-issue-field disabled>/);
   assert.match(dialog, /name="qty\[\]"[^>]*max="400" value="120" required data-bom-issue-field aria-label="จำนวนที่เบิก P-STK-01 \(ชิ้น\)">/, "a covered line is prefilled with the remainder and can go up to the stock");
+  // หน่วยนับที่ยังต้องเบิกเป็นเศษ (W10): ค่าตั้งต้นปัดขึ้นเป็นจำนวนเต็ม ไม่เกินสต็อก แก้ได้
+  const stkJob = env.store.data().jobs.find((job) => job.orderId === "DEMO-26001" && job.itemCode === "P-STK-01");
+  const stkPlanned = stkJob.qtyPlanned;
+  stkJob.qtyPlanned = stkPlanned - 0.75;
+  assert.match(D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html, new RegExp(`name="qty\\[\\]"[^>]*max="400" value="${stkPlanned}" required data-bom-issue-field aria-label="จำนวนที่เบิก P-STK-01`), "119.25 pieces start at 120");
+  stkJob.qtyPlanned = stkPlanned;
   assert.match(dialog, /data-rf-form="issueOrderParts" data-rf-args="\{&quot;orderId&quot;:&quot;DEMO-26001&quot;\}"/);
   assert.match(dialog, /<button class="btn rf-btn" type="submit" form="bom-issue-parts-form">เบิกจ่ายรายการที่เลือก<\/button>/, "one button issues the ticked lines even when a line is short");
   // ติ๊ก/ไม่ติ๊ก: เปิด/ปิดช่องของบรรทัดนั้น (change ไม่ใช่ blur)
@@ -2764,7 +2770,8 @@ test("lines are reordered across departments (the saved order is kept), moved un
   assert.equal(env.store.run("saveBom", crossArgs).ok, true);
   after = bomOf(root);
   assert.deepEqual(after.lines.map((line) => line.childCode), crossArgs.lines.map((line) => line.childCode), "the order the user gave is what is stored");
-  assert.equal(after.revision, before.revision + 2);
+  assert.equal(after.revision, before.revision + 1, "the same planner moving lines again on the same day edits the same revision (U9)");
+  assert.equal(after.changeLog.length, 2, "with one more change log entry");
   assert.equal(rowsOf()[2].itemCode, codes[3], "the tree reads the stored order");
   assert.deepEqual(env.context.MNP_BOM_STORE.migrate(json(env.store.data())).boms.find((bom) => bom.id === after.id).lines.map((line) => line.childCode), after.lines.map((line) => line.childCode), "a reload of the stored data keeps the order");
   assert.match(sideOf(codes[1]), /disabled title="อยู่บนสุดแล้ว">เลื่อนขึ้น</, "only the top and bottom of the list switch a direction off");
@@ -2787,7 +2794,8 @@ test("lines are reordered across departments (the saved order is kept), moved un
   await env.submit(query, "saveBomTree", { toCode: targetBefore.lines[0].childCode }, { lineMove: true, code: root, fromCode: root, childCode: target });
   assert.match(env.log.toasts.at(-1)[0], /ข้อมูลเส้นยาง/, "a rubber rod is never a target: the move is refused before anything is saved");
   assert.equal(bomOf(target).revision, targetBefore.revision);
-  assert.equal(bomOf(root).revision, before.revision + 2, "the refused move leaves the root as it was");
+  assert.equal(bomOf(root).revision, before.revision + 1, "the refused move leaves the root as it was");
+  assert.equal(bomOf(root).changeLog.length, 2, "with no new change log entry");
   await env.submit(query, "saveBomTree", { toCode: target, note: "" }, { lineMove: true, code: root, fromCode: root, childCode: moved });
   after = bomOf(root);
   const targetAfter = bomOf(target);
@@ -2961,6 +2969,9 @@ test("step 6: delivery per product with what is left prefilled, a compact histor
   assert.match(html, /max="80" value="80"/);
   assert.match(html, /max="40" value="40"/);
   assert.match(html, /data-rf-confirm="ส่งมอบสินค้าตามจำนวนที่กรอก\?[^"]*">ส่งมอบให้ลูกค้า<\/button>/);
+  // ส่งเกินจำนวนที่สั่ง (N5): ช่องจำนวนรู้ยอดที่ลูกค้ายังรอ · คำเตือนพร้อมช่องติ๊ก (overConfirm) ซ่อนอยู่จนกว่าจะกรอกเกิน
+  assert.match(html, /max="80" value="80" placeholder="0" data-bom-ordered-left="80" data-bom-code="DEMO-TP-01\(P\)-Y" data-bom-unit="ชุด">/);
+  assert.match(html, /<div class="rf-callout is-warn bom-compound-change" role="note" data-bom-deliver-over hidden>[\s\S]*<input type="checkbox" name="overConfirm" value="1" data-bom-deliver-over-confirm>/);
   assert.match(html, /<h3 class="bom-h3">ประวัติรับเข้าและส่งมอบ<\/h3>/);
   assert.equal(count(html, /<td>รับเข้าคลัง <span class="rf-mono">/g), 2, "two receipts in the history");
   assert.match(html, /<div class="small muted">รอบบ่าย<\/div>/);
@@ -3180,6 +3191,18 @@ test("close rules: everything received while RB and GR are open: step 5 names th
   assert.match(built.html, new RegExp(`data-rf-form="setJobStatus" data-rf-args="\\{&quot;jobId&quot;:&quot;${rbId}&quot;,&quot;status&quot;:&quot;done&quot;\\}"`));
   assert.match(built.html, /เหตุผล <span class="field-required">\(จำเป็น\)<\/span>/);
   assert.match(built.html, /name="reason"[^>]*required[^>]*minlength="3" maxlength="200"/);
+  // งานที่ผูก WO (N1 · 20261129010000): หน้าต่างบอกว่า WO จะเป็นอย่างไรหลังปิดงาน · โหมดสาธิตในเครื่องไม่แตะ RubberFlow · โหมดฐานข้อมูลอ่านสถานะ WO
+  jobOf("RB").externalRef = { system: "rubberflow", woId: "WO-T1", kg: 5 };
+  assert.match(D.jobClose(env.ctx("p=work"), { jobId: rbId }).html, /ใบสั่งผลิต WO-T1 ของ RubberFlow ซึ่งจะยังเปิดอยู่/, "the in-browser demo keeps the work order open");
+  const remoteClose = (wo) => D.jobClose({ ...env.ctx("p=work"), store: { ...env.store, isRemote: () => true },
+    rubberflow: () => ({ store: { isRemote: () => true, status: () => "ready", data: () => ({ orders: wo ? [{ id: "WO-T1", sourceJobId: rbId, ...wo }] : [], recipes: [] }), ensureLoaded: () => Promise.resolve() } }) }, { jobId: rbId }).html;
+  assert.match(remoteClose({ status: "planned" }), /ใบสั่งผลิต WO-T1 ของ RubberFlow ยังไม่เริ่มผลิต จะถูกยกเลิกด้วย/);
+  assert.match(remoteClose({ status: "released" }), /ยังไม่เริ่มผลิต จะถูกยกเลิกด้วย/);
+  assert.match(remoteClose({ status: "in_progress" }), /WO-T1 ของ RubberFlow กำลังผลิตอยู่ จะถูกหยุด \(ยกเลิก\) ยอดผลิตและล็อตที่ทำแล้วคงอยู่/);
+  assert.match(remoteClose({ status: "on_hold" }), /WO-T1 ของ RubberFlow พักอยู่ จะถูกหยุด/);
+  assert.match(remoteClose({ status: "completed" }), /WO-T1 ของ RubberFlow เสร็จแล้ว จึงไม่เปลี่ยน/);
+  assert.match(remoteClose(null), /WO-T1 ของ RubberFlow ไม่ได้ชี้กลับมาที่งานนี้ จึงไม่เปลี่ยน/);
+  jobOf("RB").externalRef = null;
   const part = env.store.data().jobs.find((job) => job.orderId === FG_PI && job.dept === "ST");
   assert.equal(D.jobClose(env.ctx("p=work"), { jobId: part.id }), null, "no close for a purchased-part line (ST issues it)");
   // แผนกของงานเองและคลังสินค้าไม่มีปุ่มและ dialog
@@ -3472,9 +3495,9 @@ test("draft step 2: two drafts see the stock once — the later one is offered w
   assert.match(html, /ใช้สต็อกสินค้าสำเร็จรูป <span class="rf-mono">DEMO-HL-24\(B\)-A<\/span> × 15 หักจากสต็อกเมื่อปล่อยผลิต/);
   assert.match(html, /ระบบจะหักสต็อกสินค้าสำเร็จรูป DEMO-HL-24\(B\)-A × 15/, "the confirmation says it too");
   assert.match(html, />ปล่อยผลิต<\/button>/);
-  // the stock shrinks under it (WH delivers 50 of the 60 pieces of the source order): the release is blocked on the page with the reason
+  // the stock shrinks under it (WH delivers 50 of the 60 pieces of the source order, ticking the over-delivery box): the release is blocked on the page with the reason
   env.store.setUser("B09");
-  fgRun(env, "deliverFg", [[FG_HL, 50]]);
+  fgRun(env, "deliverFg", [[FG_HL, 50]], { overConfirm: true });
   env.store.setUser("B03");
   html = await env.render(`p=orders&sel=${FG_DRAFT}&step=3`);
   assert.match(html, /ปล่อยผลิตไม่ได้ สต็อกสินค้าสำเร็จรูปไม่พอที่ตั้งใช้: DEMO-HL-24\(B\)-A เหลือ 10 ตั้งใช้ 15/);

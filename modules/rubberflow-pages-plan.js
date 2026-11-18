@@ -217,7 +217,9 @@
           <div><span class="small muted">บ่มขั้นต่ำ</span><strong>${esc(`${selected.restHours} ชม.`)}</strong></div></div>
         ${ui.table(["ขั้นผสม", { label: "เครื่องผสม (°C)", className: "right" }, { label: "อุณหภูมิปล่อยยาง (°C)", className: "right" }, { label: "เวลาผสม (นาที)", className: "right" }], stageRows)}
         ${ui.table(["รหัส", "วัตถุดิบ", "หมวด", "ขั้น", { label: "PHR", className: "right" }, { label: "kg / ชุดผสม", className: "right" }, "การจัดเก็บ"], lines)}
-        ${ui.kv([["หน่วยสินค้า", esc(selected.uom)], ["ผลผลิตโดยประมาณ", esc(`${selected.yieldPerKg} ${selected.uom} ต่อคอมปาวด์ 1 kg`)], ["ฉบับแก้ไข", esc(`Rev.${selected.revision}`)],
+        ${ui.kv([["หน่วยสินค้า", esc(selected.uom)], ["ผลผลิตโดยประมาณ", esc(`${selected.yieldPerKg} ${selected.uom} ต่อคอมปาวด์ 1 kg`)],
+          ["สเปกมิติการฉีด", esc(Object.values(rules.extrusionSpecOf(selected)).map((spec) => `${spec.label} ${rules.specText(spec)}`).join(" · ") || "ไม่กำหนด (ล็อตฉีดไม่ถูกกักตามมิติ)")],
+          ["ฉบับแก้ไข", esc(`Rev.${selected.revision}`)],
           ["ผู้สร้าง", esc(`${selected.createdBy ?? "-"} · ${fmtDate(selected.createdAt)}`)], ["ผู้อนุมัติ", esc(selected.approvedBy ? `${selected.approvedBy} · ${fmtDate(selected.approvedAt)}` : selected.status === "draft" ? "รออนุมัติ" : "-")]])}`,
       { title: esc(rules.recipeLabel(selected)), actions });
     }
@@ -243,6 +245,15 @@
         ${ui.field(`อุณหภูมิปล่อยยาง ขั้น ${stage} (°C)`, ui.input(`dumpTemp${stage}`, { type: "number", step: "any", min: 0, max: 1000, required: true, value: String(value.dumpTemp) }), { required: true })}
         ${ui.field(`เวลาผสม ขั้น ${stage} (นาที)`, ui.input(`mixMin${stage}`, { type: "number", step: "any", min: 0, required: true, value: String(value.mixMin) }), { required: true })}`;
     }).join("");
+    // สเปกมิติการฉีด (ไม่บังคับ · 20261129010000): ต่อค่ากรอกค่ามาตรฐานและค่าเผื่อคู่กัน · เว้นว่างทั้งคู่ = ล็อตฉีดของสูตรนี้ไม่ถูกกักตามค่านั้น
+    // ฉบับที่อนุมัติแล้วแก้ไม่ได้ (ฐานข้อมูลเทียบสเปกตอนอนุมัติด้วย) จึงแก้ได้ในร่างหรือฉบับแก้ไขใหม่เท่านั้น
+    const spec = rules.extrusionSpecOf(current);
+    const specFields = rules.EXTRUSION_KEYS.map((key) => {
+      const meta = rules.SPECS.extrusion[key];
+      const hint = 'title="เว้นว่างทั้งค่ามาตรฐานและค่าเผื่อ = ไม่กักล็อตฉีดตามค่านี้"';
+      return `${ui.field(`${meta.label} มาตรฐาน (${meta.unit})`, ui.input(`extrusionSpec.${key}.target`, { type: "number", step: "any", min: 0, value: spec[key] ? String(spec[key].target) : "", extra: hint }))}
+        ${ui.field(`${meta.label} ค่าเผื่อ ± (${meta.unit})`, ui.input(`extrusionSpec.${key}.tol`, { type: "number", step: "any", min: 0, value: spec[key] ? String(spec[key].tol) : "", extra: hint }))}`;
+    }).join("");
     const body = `<div class="rf-grid rf-g3">
         ${ui.field("รหัสสูตร", current ? `<input class="input rf-input" name="id" value="${esc(current.id)}" readonly>` : ui.input("id", { placeholder: "RC-EPDM-XX01", required: true }), { required: true })}
         ${ui.field("รหัสสินค้า", ui.input("productCode", { value: current?.productCode ?? "" }))}
@@ -254,6 +265,7 @@
       <div class="rf-grid rf-g3">${stageFields}
         ${ui.field("ค่าเผื่ออุณหภูมิปล่อยยางทั้งสองขั้น (±°C)", ui.input("dumpTol", { type: "number", value: String(current?.dumpTol ?? 5), step: "any", min: 0 }))}
       </div>
+      <div class="rf-stack rf-tight"><strong class="small">สเปกมิติการฉีด</strong><div class="rf-grid rf-g2">${specFields}</div></div>
       <div class="table-wrap"><table class="rf-table"><thead><tr><th>วัตถุดิบ</th><th>ขั้น</th><th class="rf-col-phr">PHR</th><th class="right">kg / ชุดผสม</th><th></th></tr></thead><tbody data-rf-items>${starting.map(([code, phr, stage]) => row(code, phr, stage)).join("")}</tbody></table></div>
       <div class="rf-row rf-between"><button class="btn rf-btn secondary small" type="button" data-rf-add>เพิ่มวัตถุดิบ</button><span class="muted small" data-rf-total></span></div>`;
     const name = current ? "recipeEdit" : "createRecipe";
@@ -494,12 +506,33 @@
     const unit = line.source === "bom" ? partUnit(line.uom) : "kg";
     const sofar = got > 0 ? [["รับแล้ว", esc(`${fmtNum(got, 2)} จาก ${fmtNum(line.qtyKg, 2)} ${unit}`)]] : [];
     const qtyTitle = got > 0 ? "ตั้งต้น = ยอดที่ยังค้างรับ ส่งมาไม่ครบใส่เท่าที่มา ส่วนที่เหลือยังค้างรับ" : "ตั้งต้น = ปริมาณที่สั่ง ส่งมาไม่ครบใส่เท่าที่มา ส่วนที่เหลือยังค้างรับ";
+    // รับเกินยอดที่ค้างรับ (ผู้ใช้ตัดสิน 2026-11-18 · N9): รับได้ แต่ขึ้นคำเตือนพร้อมช่องติ๊กยืนยัน ปุ่มรับเข้ากดได้เมื่อติ๊กแล้ว (action ตรวจซ้ำด้วย overConfirm)
+    const overBox = '<div class="rf-callout is-warn bom-compound-change" role="note" data-rf-over hidden><div class="rf-callout-body"><label class="bom-confirm-line"><input type="checkbox" name="overConfirm" value="1" data-rf-over-confirm> <span data-rf-over-text></span></label></div></div>';
+    const bind = (dialog) => {
+      const qty = dialog.querySelector('[name="qtyKg"]');
+      const box = dialog.querySelector("[data-rf-over]");
+      const confirm = dialog.querySelector("[data-rf-over-confirm]");
+      const text = dialog.querySelector("[data-rf-over-text]");
+      const submit = dialog.querySelector('button[type="submit"][form="rf-receive-po"]');
+      if (!qty || !box || !confirm) return;
+      const sync = () => {
+        const over = (Number(qty.value) || 0) - left;
+        const show = over > 1e-9;
+        box.hidden = !show;
+        if (!show) confirm.checked = false;
+        if (text) text.textContent = show ? `ยืนยันรับเกินยอดที่ค้างรับ ${fmtNum(over, 2)} ${unit}` : "";
+        if (submit) submit.disabled = show && !confirm.checked;
+      };
+      qty.addEventListener("input", sync);
+      confirm.addEventListener("change", sync);
+      sync();
+    };
     if (line.source === "bom") {
       // ของซื้อ: รับเฉพาะปริมาณจริง (ไม่มีล็อต ไม่มีวันหมดอายุ) ยอดคงเหลือของ BOM เพิ่มในคำสั่งเดียวกัน
       const partName = poLineName(ctx, line);
       const partBody = `${ui.kv([["ของซื้อ", esc(`${materialCode}${partName ? ` · ${partName}` : ""}`)], ...sofar])}
-        <div class="rf-grid rf-g2">${ui.field(`ปริมาณที่รับจริง (${esc(partUnit(line.uom))})`, ui.input("qtyKg", { type: "number", step: "any", min: 0, required: true, value: String(left), extra: `title="${esc(qtyTitle)}"` }), { required: true })}</div>`;
-      return { html: ui.dialog("receivePurchase", `ตรวจสอบรับเข้า · ${po.id}`, `<form novalidate data-rf-form="receivePurchaseLine" data-rf-args='${esc(JSON.stringify({ id: po.id, materialCode }))}' data-rf-success="รับเข้า {result} แล้ว" id="rf-receive-po">${partBody}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive-po">ยืนยันรับเข้า</button>` }) };
+        <div class="rf-grid rf-g2">${ui.field(`ปริมาณที่รับจริง (${esc(partUnit(line.uom))})`, ui.input("qtyKg", { type: "number", step: "any", min: 0, required: true, value: String(left), extra: `title="${esc(qtyTitle)}"` }), { required: true })}</div>${overBox}`;
+      return { html: ui.dialog("receivePurchase", `ตรวจสอบรับเข้า · ${po.id}`, `<form novalidate data-rf-form="receivePurchaseLine" data-rf-args='${esc(JSON.stringify({ id: po.id, materialCode }))}' data-rf-success="รับเข้า {result} แล้ว" id="rf-receive-po">${partBody}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive-po">ยืนยันรับเข้า</button>` }), bind };
     }
     const material = data.materials.find((row) => row.code === materialCode);
     const days = Number(material?.shelfLifeDays) || 180;
@@ -509,9 +542,9 @@
         ${ui.field("ปริมาณที่รับจริง (kg)", ui.input("qtyKg", { type: "number", step: "any", min: 0, required: true, value: String(left), extra: `title="${esc(qtyTitle)}"` }), { required: true })}
         ${ui.field("วันหมดอายุ", ui.input("expiry", { type: "date", required: true, value: toInputDate(now + days * DAY), extra: `title="${esc(`ตั้งต้น = วันนี้ + อายุการเก็บ ${days} วัน`)}"` }), { required: true })}
         ${ui.field("ผู้ขาย", ui.input("supplier", { extra: 'title="เว้นว่าง = ใช้เลขใบสั่งซื้อ"' }))}
-      </div>`;
+      </div>${overBox}`;
     const html = ui.dialog("receivePurchase", `ตรวจสอบรับเข้า · ${po.id}`, `<form novalidate data-rf-form="receivePurchaseLine" data-rf-args='${esc(JSON.stringify({ id: po.id, materialCode }))}' data-rf-success="รับเข้าล็อต {result} แล้ว" id="rf-receive-po">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-receive-po">ยืนยันรับเข้า</button>` });
-    return { html };
+    return { html, bind };
   };
 
   // ปิดยอดที่เหลือ (20261128020000): ผู้ขายจะไม่ส่งส่วนที่เหลือ · ส่วนนั้นเลิกนับเป็นสั่งแล้วรอรับ บรรทัดรับเข้าอีกไม่ได้ ไม่แตะสต็อก · ต้องมีเหตุผล

@@ -253,12 +253,37 @@
     return { stage, mixerTemp, dumpTemp, mixMin };
   }
 
+  // สเปกมิติการฉีดของสูตร (20261129010000 · ตรงกับ private.rf_parse_extrusion_spec): ต่อค่า (ความหนา ความกว้าง น้ำหนักต่อเมตร) ไม่กรอกทั้งคู่ = ไม่มีสเปกของค่านั้น
+  // กรอกต้องครบทั้งค่ามาตรฐาน (> 0) และค่าเผื่อ (>= 0) ไม่เกิน 1,000,000 · ไม่มีค่าใดเลย = undefined (สูตรไม่มีสเปก ล็อตฉีดไม่ถูกกักตามมิติ)
+  const SPEC_MAX = 1000000;
+  function extrusionSpecField(raw) {
+    if (raw === undefined || raw === null) return undefined;
+    if (typeof raw !== "object" || Array.isArray(raw)) fail("สเปกการฉีดไม่ถูกต้อง");
+    const { EXTRUSION_KEYS, SPECS } = rules();
+    const blank = (value) => value === undefined || value === null || String(value).trim() === "";
+    const out = {};
+    for (const key of EXTRUSION_KEYS) {
+      const row = raw[key] ?? {};
+      if (blank(row.target) && blank(row.tol)) continue;
+      const label = SPECS.extrusion[key].label;
+      if (blank(row.target) || blank(row.tol)) fail(`สเปกการฉีด: กรอก${label}ทั้งค่ามาตรฐานและค่าเผื่อ หรือเว้นว่างทั้งคู่`);
+      const target = Number(row.target);
+      const tol = Number(row.tol);
+      if (!Number.isFinite(target) || target <= 0 || target > SPEC_MAX) fail(`สเปกการฉีด: ค่ามาตรฐานของ${label}ต้องมากกว่า 0 และไม่เกิน 1,000,000`);
+      if (!Number.isFinite(tol) || tol < 0 || tol > SPEC_MAX) fail(`สเปกการฉีด: ค่าเผื่อของ${label}ต้องไม่ติดลบและไม่เกิน 1,000,000`);
+      out[key] = { target, tol };
+    }
+    return Object.keys(out).length ? out : undefined;
+  }
+
   function recipeFields(p) {
     const items = (p.items ?? []).filter((item) => item.materialCode && Number(item.phr) > 0);
     if (!items.length) fail("สูตรต้องมีวัตถุดิบอย่างน้อย 1 รายการ");
     const productCode = String(p.productCode ?? "").trim();
     if (productCode.length > 60) fail("รหัสสินค้ายาวเกิน 60 ตัวอักษร");
+    const extrusionSpec = extrusionSpecField(p.extrusionSpec);
     return {
+      ...(extrusionSpec ? { extrusionSpec } : {}),
       productCode,
       uom: p.uom || "m",
       batchKg: num(p.batchKg, "น้ำหนักต่อชุดผสม"),
@@ -298,6 +323,7 @@
     const draft = history.find((recipe) => recipe.status === "draft");
     if (draft) {
       Object.assign(draft, fields);
+      if (!fields.extrusionSpec) delete draft.extrusionSpec; // ล้างสเปกในฟอร์ม = ร่างไม่มีสเปก
       audit(d, ctx, "แก้ร่างสูตร", `${id} Rev.${draft.revision}`);
       return draft.revision;
     }
@@ -563,13 +589,20 @@
 
   // ตรวจสอบรับเข้า: รับได้หลายครั้งต่อบรรทัดจนกว่าจะครบหรือปิดยอดที่เหลือ (20261128020000 · ส่งมาไม่ครบ = รับเท่าที่มา ที่เหลือยังค้างรับ)
   // เคมี: สร้างล็อตวัตถุดิบใหม่หนึ่งล็อตต่อครั้ง (พร้อมใช้ ผู้ขาย = เลขใบสั่งซื้อถ้าไม่กรอก ที่เก็บ = ที่จัดเก็บของวัตถุดิบ) · ทุกบรรทัดครบ = ใบเป็น received · รับเกินยอดสั่งได้
-  function receivePurchaseLine(d, { id, materialCode, qtyKg, expiry, supplier }, ctx) {
+  // รับเกินยอดที่ค้างรับ (ผู้ใช้ตัดสิน 2026-11-18 · N9): รับได้แต่ต้องติ๊กยืนยัน (overConfirm) ในหน้าต่างรับเข้า · ฐานข้อมูลไม่มีเพดาน ด่านนี้อยู่ที่หน้าจอ
+  const confirmedOver = (value) => value === true || ["1", "on", "true"].includes(String(value ?? ""));
+  function receivePurchaseLine(d, { id, materialCode, qtyKg, expiry, supplier, overConfirm }, ctx) {
     needRight(ctx, "receiveMaterial");
     const R = rules();
     const order = find(d.purchaseOrders ?? [], id, "ใบสั่งซื้อ");
     if (order.status !== "ordered") fail(`ใบสั่งซื้อ ${order.id} ${order.status === "received" ? "รับครบแล้ว" : "ถูกยกเลิกแล้ว"} รับเข้าไม่ได้`);
     const line = order.lines.find((row) => row.materialCode === materialCode) || fail(`ไม่พบวัตถุดิบ${ref(materialCode)} ในใบสั่งซื้อ ${order.id}`);
     if (R.poLineDone(line)) fail(`${lineDoneText(order, line)} รับเข้าอีกไม่ได้`);
+    const over = Number(qtyKg) - R.poLineOpen(line);
+    if (Number.isFinite(over) && over > 1e-9 && !confirmedOver(overConfirm)) {
+      const unit = line.source === "bom" ? R.unitText(line.uom) : "kg";
+      fail(`จำนวนที่รับเกินยอดค้างรับ ${+over.toFixed(4)}${unit ? ` ${unit}` : ""} ติ๊กยืนยันการรับเกินก่อน`);
+    }
     // ข้อความบันทึกการใช้งานหลังรับ: ยอดสะสมและยอดที่ยังค้าง
     const total = () => `รับแล้ว ${R.poLineReceived(line)} จาก ${line.qtyKg}${R.poLineOpen(line) > 0 ? ` ค้างรับ ${R.poLineOpen(line)}` : ""}`;
     if (line.source === "bom") {
@@ -758,7 +791,7 @@
 
   function recordExtrusion(d, p, ctx) {
     needRight(ctx, "station");
-    const { SPECS, inSpec } = rules();
+    const { SPECS, orderExtrusionSpec, extrusionHoldReasons } = rules();
     const useKg = num(p.useKg, "น้ำหนักยางที่ใช้");
     const reworkKg = Number(p.reworkKg) || 0;
     const pct = (reworkKg / (useKg + reworkKg)) * 100;
@@ -772,10 +805,9 @@
       reworkKg, reworkPct: +pct.toFixed(2), useKg,
     };
     const good = num(p.goodQty, "ปริมาณงานดี");
-    const reasons = ["thickness", "width", "weightPerM"]
-      .filter((key) => !inSpec(params[key], SPECS.extrusion[key]))
-      .map((key) => `${SPECS.extrusion[key].label} ${params[key]} ${SPECS.extrusion[key].unit} นอกสเปก`);
     const order = d.orders.find((row) => row.id === transfer.orderId);
+    // สเปกมิติของสูตร (revision ที่ WO ผูก): กักเฉพาะค่าที่สูตรกำหนด · สูตรไม่มีสเปก = บันทึกค่าที่วัดโดยไม่กักตามมิติ (ตรงกับ rf_save_lots ของ 20261129010000)
+    const reasons = extrusionHoldReasons(params, orderExtrusionSpec(d.recipes, order));
     const lot = newLot(d, "extrusion", "EX", {
       orderId: transfer.orderId, uom: order?.uom || "m", machine: p.machine, shift: p.shift, dieId: die.id,
       sources: [{ type: "transfer", id: transfer.id, lotId: transfer.lotId, qty: useKg }],

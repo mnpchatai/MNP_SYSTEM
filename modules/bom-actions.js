@@ -200,6 +200,15 @@
     // เทียบตามลำดับที่เก็บไว้: สลับลำดับอย่างเดียวก็นับเป็นการแก้ (ได้ revision ใหม่ "เรียงลำดับส่วนประกอบใหม่")
     if (previous && sameLines(previous.lines, lines)) return { id: previous.id, revision: previous.revision, changed: false };
     const changes = previous ? diffText(previous.lines, lines) || (sameLinesAnyOrder(previous.lines, lines) ? "เรียงลำดับส่วนประกอบใหม่" : "แก้รายละเอียดบรรทัด (% เผื่อเสีย/หมายเหตุ/ขั้นที่)") : `สร้างใหม่ ${lines.length} บรรทัด`;
+    // แก้ในฉบับเดิม (ผู้ใช้ตัดสิน 2026-11-18 · U9 · ตรงกับ private.bom_save_boms ของ 20261129010000): คนที่อนุมัติฉบับล่าสุดแก้ซ้ำในวันเดียวกัน (เวลาไทย)
+    // และยังไม่มีใบสั่งผลิตที่ไม่ใช่ร่างใช้ฉบับนั้น = แทนบรรทัดและหมายเหตุในฉบับเดิม ต่อท้ายประวัติหนึ่งรายการ (id และเลข revision เดิม) · อย่างอื่นออก revision ใหม่เหมือนเดิม
+    if (previous && previous.approvedBy === user.name && R.bangkokDay(previous.approvedAt) === R.bangkokDay(ctx.now) && !R.bomRevisionLocked(d.orders, previous.id)) {
+      previous.lines = lines;
+      if (note) previous.note = note; // ช่องหมายเหตุของการแก้ว่าง = หมายเหตุเดิมของฉบับคงไว้
+      previous.changeLog = [...(previous.changeLog ?? []), { at: ctx.now, by: user.name, text: `${changes}${note ? ` — ${note}` : ""}`.slice(0, 1000) }];
+      audit(d, ctx, "บันทึก BOM", `${parent.code} Rev.${previous.revision} (แก้ในฉบับเดิม): ${changes}`);
+      return { id: previous.id, revision: previous.revision, changed: true, inPlace: true };
+    }
     if (previous) { previous.status = "superseded"; previous.supersededAt = ctx.now; }
     const bom = { id: masterId(d, "BOM", ctx), itemCode: parent.code, revision: (previous?.revision ?? 0) + 1, status: "approved", ownerDept: parent.ownerDept, lines, createdBy: user.name, createdAt: ctx.now, approvedBy: user.name, approvedAt: ctx.now, note, changeLog: [{ at: ctx.now, by: user.name, text: `${changes}${note ? ` — ${note}` : ""}`.slice(0, 1000) }] }; // ฐานข้อมูลรับข้อความ changeLog ไม่เกิน 1,000 ตัวอักษร
     d.boms.unshift(bom);
@@ -1111,6 +1120,14 @@
     for (const line of lines) {
       const product = position.products.find((entry) => entry.fgCode === line.fgCode);
       if (line.qty > product.deliverable + 1e-9) fail(`${line.fgCode} ส่งมอบได้อีกไม่เกิน ${rules().fmtQty(product.deliverable)} (มีของในใบ ${rules().fmtQty(product.have)}${product.givenAway > 0 ? ` ให้ใบอื่นไปแล้ว ${rules().fmtQty(product.givenAway)}` : ""} ส่งมอบไปแล้ว ${rules().fmtQty(product.delivered)})`);
+    }
+    // ส่งมอบเกินจำนวนที่สั่ง (ผู้ใช้ตัดสิน 2026-11-18 · N5): ส่งได้ (ส่วนเกินคือสต็อกสินค้าสำเร็จรูปของใบ) แต่ต้องติ๊กยืนยันในฟอร์ม (p.overConfirm) · ฐานข้อมูลไม่มีด่านนี้
+    const over = lines.map((line) => {
+      const product = position.products.find((entry) => entry.fgCode === line.fgCode);
+      return { fgCode: line.fgCode, qty: qtyRound(line.qty - Math.max(0, product.ordered - product.delivered)) };
+    }).filter((row) => row.qty > 1e-9);
+    if (over.length && p?.overConfirm !== true && !["1", "on", "true"].includes(String(p?.overConfirm ?? ""))) {
+      fail(`ส่งมอบเกินจำนวนที่สั่ง ${over.map((row) => `${row.fgCode} ${rules().fmtQty(row.qty)}`).join(", ")} ติ๊กยืนยันการส่งมอบเกินก่อน`);
     }
     if (!ctx.remote) pushFgMoves(d, ctx, order, "deliver", lines, note);
     audit(d, ctx, "ส่งมอบสินค้าให้ลูกค้า", `${order.id} ${lines.map((line) => `${line.fgCode} × ${line.qty}`).join(", ")}`);

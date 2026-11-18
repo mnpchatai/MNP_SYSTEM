@@ -83,10 +83,10 @@
   // ช่องตัวเลขที่เปลี่ยนสีตามสเปกขณะพิมพ์ (module-rubberflow.js ผูก input event จาก data-spec)
   // required = สเปกช่องนี้ action บังคับกรอก (ต่อท้ายชื่อด้วย "(จำเป็น)") · gate = { select, open }: มาตรฐานนี้ใช้กับตัวเลือกของ <select name=…> ในฟอร์มเดียวกันบางตัวเท่านั้น
   // (เช่น สเปกเส้น Door Seal ใช้กับหัวดาย DIE-DS-*) · open = ตัวเลือกที่เลือกอยู่ตอนวาด ปิดอยู่ = ซ่อนข้อความมาตรฐาน และ module-rubberflow.js ไม่ลงสีตามสเปกจนกว่าจะเลือกตัวที่ใช้ได้
-  const specInput = (name, label, spec, { value = "", step = "any", required = false, gate = null } = {}) => {
+  const specInput = (name, label, spec, { value = "", step = "any", required = false } = {}) => {
     const limits = rules.specLimits(spec);
-    const data = `data-spec data-lsl="${limits.lsl ?? ""}" data-usl="${limits.usl ?? ""}"${gate ? ` data-spec-gate="${attr(gate.select)}"` : ""}`;
-    return field(`${label} (${spec.unit})`, input(name, { value, type: "number", step, required, extra: data }), { hint: esc(`มาตรฐาน ${rules.specText(spec)}`), required, ...(gate ? { hintExtra: `data-spec-hint${gate.open ? "" : " hidden"}` } : {}) });
+    const data = `data-spec data-lsl="${limits.lsl ?? ""}" data-usl="${limits.usl ?? ""}"`;
+    return field(`${label} (${spec.unit})`, input(name, { value, type: "number", step, required, extra: data }), { hint: esc(`มาตรฐาน ${rules.specText(spec)}`), required });
   };
   // ---------- ตรวจช่องก่อนส่งฟอร์ม ----------
   // ฟอร์มทุกอันเป็น novalidate (ไม่ให้เบราว์เซอร์ขึ้นกล่องภาษาอังกฤษ "Please fill out this field") แล้วตรวจที่นี่:

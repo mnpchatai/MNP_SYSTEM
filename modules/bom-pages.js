@@ -2459,7 +2459,7 @@
     const body = `<p class="muted small">${esc(item.name)} · หน่วย ${esc(uomText(ctx, item.uom))}</p>${ui.table(["เวลา", "รายการ", { label: "เปลี่ยน", className: "right" }, { label: "คงเหลือ", className: "right" }, "ผู้ทำ"], rows, { emptyText: "ยังไม่มีประวัติ" })}`;
     return { html: ui.dialog("partHistory", `ประวัติ ${item.code}`, body, { wide: true, footer: ui.closeButton("ปิด") }) };
   };
-  // เบิกจ่ายของซื้อของใบ PI (ST / ฝ่ายวางแผน): หนึ่งบรรทัดต่องานที่ยังเบิกไม่ครบ มีช่องเลือก + จำนวนที่เบิกครั้งนี้ (ค่าเริ่ม = ส่วนที่ยังต้องเบิก แก้ได้) + คงเหลือในสต็อก
+  // เบิกจ่ายของซื้อของใบ PI (ST / ฝ่ายวางแผน): หนึ่งบรรทัดต่องานที่ยังเบิกไม่ครบ มีช่องเลือก + จำนวนที่เบิกครั้งนี้ (ค่าเริ่ม = ส่วนที่ยังต้องเบิก หน่วยนับปัดขึ้นเป็นจำนวนเต็มไม่เกินสต็อก rules.issueDefaultQty แก้ได้) + คงเหลือในสต็อก
   // บรรทัดที่สต็อกพอเลือกไว้ให้ · ไม่พอ = ไม่เลือกและมีป้ายขาด (เลือกแล้วแก้จำนวนเพื่อเบิกเท่าที่มีได้) · ไม่มีของเลย = เลือกไม่ได้
   // ปุ่มเดียวเบิกบรรทัดที่เลือก (ทั้งชุดผ่านหรือไม่ผ่าน ส่งทันที) · เบิกไม่ครบ = บรรทัดยังเปิด เบิกส่วนที่เหลือครั้งหน้า · เบิกเกินได้ไม่เกินคงเหลือ · สั่งซื้อส่วนที่ขาดได้จากปุ่มด้านล่าง
   // บรรทัดที่ไม่ได้เลือก: ช่องจำนวนและรหัสถูก disabled จึงไม่ถูกตรวจและไม่ถูกส่ง (TRANSFORMS.issueOrderParts ของ module-bom.js จับคู่ itemCode[] กับ qty[] ตามลำดับ)
@@ -2476,7 +2476,7 @@
       const picked = line.short <= 0 && line.onHand > 0;
       const off = picked ? "" : " disabled";
       const pick = `<label class="bom-issue-pick"><input type="checkbox" data-bom-issue-pick${picked ? " checked" : ""}${line.onHand > 0 ? "" : " disabled"} aria-label="${attr(`เบิก ${line.itemCode} ครั้งนี้${line.onHand > 0 ? "" : " (ไม่มีของในสต็อก)"}`)}"></label>`;
-      const qty = `<div class="bom-count-input"><input class="input rf-input" name="qty[]" type="number" inputmode="decimal" step="any" min="0" max="${attr(line.onHand)}" value="${attr(line.remaining)}" required data-bom-issue-field aria-label="${attr(`จำนวนที่เบิก ${line.itemCode} (${unit})`)}"${off}><span class="small muted">${esc(unit)}</span></div><input type="hidden" name="itemCode[]" value="${attr(line.itemCode)}" data-bom-issue-field${off}>`;
+      const qty = `<div class="bom-count-input"><input class="input rf-input" name="qty[]" type="number" inputmode="decimal" step="any" min="0" max="${attr(line.onHand)}" value="${attr(rules.issueDefaultQty(line.remaining, line.onHand, line.uom))}" required data-bom-issue-field aria-label="${attr(`จำนวนที่เบิก ${line.itemCode} (${unit})`)}"${off}><span class="small muted">${esc(unit)}</span></div><input type="hidden" name="itemCode[]" value="${attr(line.itemCode)}" data-bom-issue-field${off}>`;
       // ต้องเบิก = ส่วนที่เหลือ (ค่าเริ่มของช่องจำนวน) · ที่เบิกไปแล้วอยู่ใน title ของช่อง และข้อความสำหรับโปรแกรมอ่านหน้าจอ (ไม่ซ้ำเป็นข้อความถาวร)
       const issuedText = line.issued > 0 ? `เบิกแล้ว ${rules.fmtQty(line.issued)} จาก ${rules.fmtQty(line.planned)}` : "";
       const need = `${fmt(line.remaining)} <span class="small muted">${esc(unit)}</span>${issuedText ? `<span class="sr-only">${esc(` (${issuedText})`)}</span>` : ""}`;
@@ -2671,6 +2671,20 @@
     };
     return { html: ui.dialog("jobReport", `รายงานผล ${job.id}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-job-form">บันทึก</button>` }), bind };
   };
+  // งานที่ผูก WO: ปิดงานแล้ว WO เป็นอย่างไร (โหมดฐานข้อมูล · private.bom_save_jobs ของ 20261129010000 เรียก bom_cancel_rf_job)
+  // planned / released = ยกเลิก · in_progress / on_hold = หยุด (ยอดและล็อตคงอยู่) · completed / cancelled = ไม่เปลี่ยน · WO ยังโหลดไม่เสร็จ = บอกทั้งสองทาง
+  // โหมดสาธิตในเครื่องไม่แตะ RubberFlow WO จึงยังเปิดอยู่
+  function jobCloseWoText(ctx, job) {
+    const woId = job.externalRef.woId;
+    const after = "ผลผลิตที่ผ่านตรวจหลังปิดงานไม่ถูกนับเข้างานนี้";
+    if (!ctx.store?.isRemote?.()) return `งานนี้ผูกกับใบสั่งผลิต ${woId} ของ RubberFlow ซึ่งจะยังเปิดอยู่ ${after}`;
+    const orders = rfOrdersOf(ctx);
+    if (!orders) return `ใบสั่งผลิต ${woId} ของ RubberFlow จะถูกยกเลิกด้วยถ้ายังไม่เริ่มผลิต หรือถูกหยุดถ้ากำลังผลิตหรือพักอยู่ (ยอดผลิตและล็อตคงอยู่)`;
+    const wo = orders.find((row) => row.id === woId && row.sourceJobId === job.id);
+    if (!wo || ["completed", "cancelled"].includes(wo.status)) return `ใบสั่งผลิต ${woId} ของ RubberFlow ${!wo ? "ไม่ได้ชี้กลับมาที่งานนี้" : wo.status === "completed" ? "เสร็จแล้ว" : "ถูกยกเลิกแล้ว"} จึงไม่เปลี่ยน`;
+    if (["planned", "released"].includes(wo.status)) return `ใบสั่งผลิต ${woId} ของ RubberFlow ยังไม่เริ่มผลิต จะถูกยกเลิกด้วย`;
+    return `ใบสั่งผลิต ${woId} ของ RubberFlow ${wo.status === "on_hold" ? "พักอยู่" : "กำลังผลิตอยู่"} จะถูกหยุด (ยกเลิก) ยอดผลิตและล็อตที่ทำแล้วคงอยู่ ${after}`;
+  }
   // ปิดงานที่จะไม่มีใครรายงานแล้ว (ฝ่ายวางแผน ผู้จัดการ ผู้ดูแลระบบ): งานเป็นเสร็จโดยไม่เพิ่มยอด เหตุผลเก็บที่รายงานของงานและบันทึกการใช้งาน
   // ไม่มีกับงานของซื้อ (ST เบิกจ่ายที่ใบ) · ใบต้องอยู่ระหว่างผลิต · ส่งทันทีเมื่อกดปิดงาน (ฟอร์มใน dialog ตามแบบเดียวกับรายงานผล)
   dialogs.jobClose = (ctx, { jobId }) => {
@@ -2681,7 +2695,7 @@
     const body = `<form novalidate id="bom-job-close-form" data-rf-form="setJobStatus" data-rf-args="${attr(JSON.stringify({ jobId, status: "done" }))}" data-rf-success="ปิดงาน {result} แล้ว">
       <p class="muted small">${esc(`${job.itemCode} · ${job.name} · ใบ ${job.orderId} · ทำแล้ว ${rules.fmtQty(job.qtyDone)} จาก ${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`)}</p>
       ${ui.callout("warn", "งานจะเป็นเสร็จโดยไม่เพิ่มยอด แผนกรายงานผลงานนี้ต่อไม่ได้ ใช้กับงานที่จะไม่ทำต่อแล้ว เพื่อให้คลังสินค้า (WH) ปิดใบได้")}
-      ${job.externalRef?.woId ? ui.callout("warn", `งานนี้ผูกกับใบสั่งผลิต ${esc(job.externalRef.woId)} ของ RubberFlow ซึ่งจะยังเปิดอยู่ ผลผลิตที่ผ่านตรวจหลังปิดงานจะไม่ถูกนับเข้างานนี้อีก`) : ""}
+      ${job.externalRef?.woId ? ui.callout("warn", esc(jobCloseWoText(ctx, job))) : ""}
       ${ui.field("เหตุผล", ui.input("reason", { required: true, placeholder: "เช่น ใช้ชิ้นงานค้างไลน์แทน ไม่ผลิตเพิ่ม", extra: 'minlength="3" maxlength="200"' }), { required: true })}
     </form>`;
     return { html: ui.dialog("jobClose", `ปิดงาน ${job.id}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-job-close-form">ปิดงาน</button>` }) };
