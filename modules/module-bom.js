@@ -694,7 +694,8 @@
       canSee: (id) => storeApi.canSee(user, id),
       roleLabel: (role) => storeApi.ROLES[role]?.label ?? role,
       // RubberFlow (ถ้าโหลดอยู่): สร้าง WO จากงาน RB และอ่านสูตรที่อนุมัติ
-      rubberflow: () => window.MNP_RUBBERFLOW ?? null,
+      // ใช้งานจริง: พนักงานที่อ่าน RubberFlow ไม่ได้ (GR PT BG PK · private.rf_can_read) ไม่ได้ RubberFlow เลย = ไม่มีส่วนเคมี / WO แทน "กำลังโหลด" ค้าง
+      rubberflow: () => ((window.MNP_RUBBERFLOW_STORE?.usesRubberFlow?.(state.employee) ?? true) ? window.MNP_RUBBERFLOW ?? null : null),
       runAction,
     };
     ctx.openDialog = (name, args) => openDialog(name, args, ctx); // เปิด dialog จากโค้ดของหน้า (เช่น เมนูคลิกขวา) แทนปุ่ม data-rf-open

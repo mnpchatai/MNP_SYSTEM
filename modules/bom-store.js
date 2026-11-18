@@ -58,6 +58,7 @@
     gr: { label: "แผนก GR (ตัด/เจาะ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },
     pt: { label: "แผนก PT (ฉีดพลาสติก)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },
     bg: { label: "แผนก BG (กระเป๋า/เย็บ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },
+    pk: { label: "แผนก PK (บรรจุ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },
     st: { label: "หัวหน้าคลังวัตถุดิบ (ST)", modules: Object.freeze(["count", "stock", "dashboard", "items", "product", "structure", "variants", "orders", "jobs", "check"]) },
     wh: { label: "คลังสินค้า (WH)", modules: Object.freeze(["count", "stock", "dashboard", "items", "product", "structure", "variants", "orders", "jobs", "check"]) },
     // บัญชีทดสอบที่ไม่ใช่แผนกด้านบน (โหมดฐานข้อมูล): ดูข้อมูลได้อย่างเดียว
@@ -414,7 +415,7 @@
   const MANAGER_ROLE_CODES = Object.freeze(["assistant_factory_manager", "factory_manager", "general_manager"]);
   // แผนกในสายผลิต (private.bom_production_depts): ผู้จัดการแผนก (department_manager) ของแผนกเหล่านี้อยู่ในกลุ่มวางแผน
   const PRODUCTION_DEPTS = Object.freeze(["RB", "GR", "PT", "BG", "PK", "ST", "WH", "QA", "SR"]);
-  const DEPT_ROLES = Object.freeze({ PP: "planner", RB: "rb", GR: "gr", PT: "pt", BG: "bg", ST: "st", WH: "wh" });
+  const DEPT_ROLES = Object.freeze({ PP: "planner", RB: "rb", GR: "gr", PT: "pt", BG: "bg", PK: "pk", ST: "st", WH: "wh" });
   function roleOfEmployee(employee) {
     if (!employee) return "viewer";
     const roleCode = employee.role?.code ?? employee.role_code ?? "";

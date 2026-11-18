@@ -156,7 +156,8 @@ test("the persona (state.employee of the sandbox) decides the BOM role: admin, m
   assert.equal(role("staff", "PP"), "planner");
   assert.equal(role("staff", "pp"), "planner", "department codes compare case-insensitively");
   for (const dept of ["RB", "GR", "PT", "BG", "ST"]) assert.equal(role("staff", dept), dept.toLowerCase());
-  for (const dept of ["MT", "QA", "IT", "PK", "", undefined]) assert.equal(role("staff", dept), "viewer", `${dept || "no department"} is read-only`);
+  for (const dept of ["MT", "QA", "IT", "", undefined]) assert.equal(role("staff", dept), "viewer", `${dept || "no department"} is read-only`);
+  assert.equal(role("staff", "PK"), "pk", "PK staff report their own jobs (role pk)");
   assert.equal(storeApi.roleOfEmployee(null), "viewer");
   assert.equal(storeApi.roleOfEmployee({ role: { code: "staff" } }), "viewer");
   assert.equal(role("technician", "PP"), "planner", "any non-manager member of PP plans");
@@ -1740,7 +1741,7 @@ test("the mock sandbox offers switchable personas (the planner group, producing 
   const status = (await client.rpc("app_sandbox_status")).data;
   assert.equal(status.persona.id, "persona-1", "the first persona is the simulated admin, as before");
   assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-rbh", "persona-gr", "persona-st", "persona-sr", "persona-wh", "persona-whh", "persona-qa", "persona-pk", "persona-pt", "persona-bg"]);
-  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "st", "viewer", "wh", "manager", "viewer", "viewer", "pt", "bg"], "each persona maps to a BOM role (the RB head and the WH head are department managers; SR and QA are not BOM departments; PK staff work their jobs by department)");
+  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "st", "viewer", "wh", "manager", "viewer", "pk", "pt", "bg"], "each persona maps to a BOM role (the RB head and the WH head are department managers; SR and QA are not BOM departments; PK staff work their jobs by department)");
   assert.deepEqual(status.personas.slice(-3).map((row) => [row.department.code, row.role.code]), [["PK", "staff"], ["PT", "staff"], ["BG", "staff"]], "PK, PT and BG staff can be tried too");
   assert.deepEqual(status.personas.slice(-3).map((row) => storeApi.personaUser(row).dept), ["PK", "PT", "BG"], "and work the jobs of their own department");
   assert.equal((await client.rpc("app_sandbox_enter", { p_persona_id: "persona-rb" })).error, null);
