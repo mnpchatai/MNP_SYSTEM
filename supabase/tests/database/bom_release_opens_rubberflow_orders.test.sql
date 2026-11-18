@@ -39,7 +39,7 @@ select ok(position('pg_advisory_xact_lock' in pg_get_functiondef('public.app_bom
       and position('pg_advisory_xact_lock' in pg_get_functiondef('public.app_rf_save(jsonb,bigint,text,jsonb,text)'::regprocedure))
         > position('lab_only_block' in pg_get_functiondef('public.app_rf_save(jsonb,bigint,text,jsonb,text)'::regprocedure))
       and position('pg_advisory_xact_lock' in pg_get_functiondef('public.app_bom_save_master(jsonb,bigint,text,jsonb,text)'::regprocedure))
-        < position('bom_actor' in pg_get_functiondef('public.app_bom_save_master(jsonb,bigint,text,jsonb,text)'::regprocedure)),
+        < position('bom_reader' in pg_get_functiondef('public.app_bom_save_master(jsonb,bigint,text,jsonb,text)'::regprocedure)),
   'the advisory lock comes right after the lab-only guard and before anything else');
 select is((select count(*)::integer from private.lab_only_unguarded_functions()), 0, 'every callable public function keeps the lab-only guard');
 select ok(position('BOM_RF_ORDER_STARTED' in pg_get_functiondef('private.bom_cancel_rf_orders(uuid)'::regprocedure)) = 0,
