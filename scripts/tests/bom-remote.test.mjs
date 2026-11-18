@@ -1530,13 +1530,14 @@ test("in the browser the module talks to the (mock) database: loading state, emp
 });
 
 test("a failed load shows a retry instead of the page", async () => {
-  const env = await pageEnv({ mockOptions: { sandbox: false } });
+  // นอกโหมดทดสอบ ผู้ใช้จำลองที่ไม่ active ถูกปฏิเสธ (BOM_FORBIDDEN) เหมือน private.bom_actor ของ 20261130010000
+  const env = await pageEnv({ mockOptions: { sandbox: false }, mutate: (db) => { db.employees[0].is_active = false; } });
   await env.store.ensureLoaded();
   assert.equal(env.store.status(), "error");
   const html = await env.render();
   assert.match(html, /โหลดข้อมูล BOM ไม่สำเร็จ/);
   assert.match(html, /data-bom-retry/);
-  assert.match(html, /โหมดทดสอบ/, "the mock refuses outside the test mode like the real RPC");
+  assert.match(html, /ไม่มีสิทธิ์/, "the mock refuses an inactive employee like the real RPC");
 });
 
 test("importing a pasted BOMSHEET writes through the mock database, survives a page reload, and a different user sees it", async () => {
@@ -1675,10 +1676,13 @@ test("the mock database enforces the contract: test mode, writer permission, per
   me.department_id = "dep-pp";
   assert.equal((await write("P-W3")).error, null, "the planning department writes");
 
+  // นอกโหมดทดสอบ (ใช้งานจริง 20261130010000): ผู้ใช้จำลองเองเป็นผู้ทำรายการ ข้อมูลของตัวเองแยกจากโหมดทดสอบ
   const outside = createMockSupabase({ now: () => NOW });
-  assert.equal((await outside.client.rpc("app_bom_master")).error.code, "BOM_TEST_MODE_ONLY");
-  assert.equal((await outside.client.rpc("app_bom_master_since", { p_version: 0 })).error.code, "BOM_TEST_MODE_ONLY");
-  assert.equal((await outside.client.rpc("app_bom_save_master", { p_changes: {}, p_base_version: 0, p_action: "saveItem" })).error.code, "BOM_TEST_MODE_ONLY");
+  assert.deepEqual((await outside.client.rpc("app_bom_master")).data.items, [], "real mode reads its own (empty) data");
+  assert.equal((await outside.client.rpc("app_bom_master_since", { p_version: 0 })).error, null);
+  assert.equal((await outside.client.rpc("app_bom_save_master", { p_changes: {}, p_base_version: 0, p_action: "saveItem" })).error, null, "a real department manager (planner group) may save");
+  outside.db.employees[0].is_active = false;
+  assert.equal((await outside.client.rpc("app_bom_master")).error.code, "BOM_FORBIDDEN", "an inactive employee is refused");
 });
 
 test("the mock database follows the real revision rule: owner department and an appended change log may change, anything else is BOM_REVISION_IMMUTABLE", async () => {
@@ -1857,7 +1861,7 @@ test("the mock database stores one audit row per save (the server's own action a
   assert.equal((await save([{ action: "a", detail: "d".repeat(301) }], 2)).error.code, "BOM_INVALID_AUDIT");
   assert.equal((await save(undefined, 2)).error, null, "the 3-argument call still works");
   assert.equal((await client.rpc("app_bom_audit", {})).data.length, 3, "a refused save writes no audit (the 3-argument call wrote its own row)");
-  assert.equal((await createMockSupabase({ now: () => NOW }).client.rpc("app_bom_audit", {})).error.code, "BOM_TEST_MODE_ONLY");
+  assert.deepEqual((await createMockSupabase({ now: () => NOW }).client.rpc("app_bom_audit", {})).data, [], "real mode has its own audit, without the test-mode rows");
 });
 
 test("the mock purge empties every BOM list, keeps the counter, changes the epoch and adds an audit row; only the real admin in the test mode may call it", async () => {
@@ -1881,8 +1885,9 @@ test("the mock purge empties every BOM list, keeps the counter, changes the epoc
   assert.equal(JSON.parse(storage.getItem("mnp-harness-bom-master")).version, before.version, "the page storage keeps the counter too");
   assert.equal(JSON.parse(storage.getItem("mnp-harness-bom-master")).epoch, master.epoch);
   db.employees[0].role_id = "role-staff";
-  assert.equal((await client.rpc("app_sandbox_purge_bom")).error.code, "BOM_FORBIDDEN", "not an admin");
-  assert.equal((await createMockSupabase({ now: () => NOW }).client.rpc("app_sandbox_purge_bom")).error.code, "BOM_TEST_MODE_ONLY");
+  assert.equal((await client.rpc("app_sandbox_purge_bom")).error.code, "NOT_AUTHORIZED", "not an admin");
+  assert.equal((await createMockSupabase({ now: () => NOW }).client.rpc("app_sandbox_purge_bom")).error.code, "NOT_AUTHORIZED", "a real employee who is not an admin");
+  assert.equal((await createMockSupabase({ master: true, now: () => NOW }).client.rpc("app_sandbox_purge_bom")).error.code, "SANDBOX_NOT_ACTIVE", "an admin outside the test mode cannot purge real data");
 });
 
 test("the mock database keeps its data, record versions and tombstones in the page storage", async () => {

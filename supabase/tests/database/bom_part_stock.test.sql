@@ -179,8 +179,8 @@ set local role authenticated;
 select set_config('request.jwt.claims', '{"role":"authenticated"}', true);
 select throws_ok($$ select public.app_bom_save_master('{"stock":{"upsert":[]}}'::jsonb, 0, 'countPartStock') $$, 'AUTH_REQUIRED', 'counting requires a session');
 select set_config('request.jwt.claims', '{"sub":"8e100000-0000-0000-0000-000000000002","role":"authenticated"}', true);
-select throws_ok($$ select public.app_bom_save_master('{"stock":{"upsert":[{"itemCode":"P-1","qty":1}]}}'::jsonb, 0, 'countPartStock') $$, 'BOM_TEST_MODE_ONLY',
-  'a real PP staff account cannot count stock (real mode is not open)');
+select throws_ok($$ select public.app_bom_save_master('{"stock":{"upsert":[{"itemCode":"P-1","qty":1}]}}'::jsonb, 0, 'countPartStock') $$, 'BOM_INVALID_STOCK',
+  'a real PP staff account cannot count an item that is not a real purchased item (go-live 20261130010000)');
 select throws_ok('select count(*) from public.bom_stock', '42501', null, 'clients cannot read the stock table directly');
 select throws_ok('select count(*) from public.bom_stock_moves', '42501', null, 'clients cannot read the move table directly');
 select throws_ok($$ insert into public.bom_stock (item_code, qty) values ('P-1', 1) $$, '42501', null, 'clients cannot write the stock table directly');
@@ -189,8 +189,8 @@ select throws_ok($$ update public.bom_stock set qty = 99 $$, '42501', null, 'cli
 select set_config('request.jwt.claims', '{"sub":"8e100000-0000-0000-0000-000000000003","role":"authenticated"}', true);
 select throws_ok($$ select public.app_bom_save_master('{"stock":{"upsert":[]}}'::jsonb, 0, 'countPartStock') $$, 'LAB_ONLY_ACCOUNT', 'a lab-only account cannot count stock');
 select set_config('request.jwt.claims', '{"sub":"8e100000-0000-0000-0000-000000000001","role":"authenticated"}', true);
-select throws_ok($$ select public.app_bom_save_master('{"stock":{"upsert":[{"itemCode":"P-1","qty":1}]}}'::jsonb, 0, 'countPartStock') $$, 'BOM_TEST_MODE_ONLY',
-  'an admin outside test mode cannot count stock');
+select throws_ok($$ select public.app_bom_save_master('{"stock":{"upsert":[{"itemCode":"P-1","qty":1}]}}'::jsonb, 0, 'countPartStock') $$, 'BOM_INVALID_STOCK',
+  'an admin outside test mode cannot count a test-mode item');
 
 -- 4. ข้อมูลตั้งต้น (PP staff): ชิ้นงาน ใบสั่งผลิตที่ปล่อยแล้วพร้อมงานของซื้อ ---------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);

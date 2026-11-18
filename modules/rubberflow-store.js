@@ -256,7 +256,7 @@
   // การชน: ระเบียนที่แตะถูกผู้อื่นแก้ไปก่อน · เวอร์ชันฐานไม่ตรงฐานข้อมูล · เลขซ้ำ · สถานะเปลี่ยนไปแล้ว · งาน BOM ที่ผูกเปลี่ยนไป → ตามทันฐานข้อมูลก่อนให้ผู้ใช้ทำรายการใหม่
   const CONFLICT_CODES = Object.freeze(["RF_STALE", "RF_INVALID_PAYLOAD", "RF_CONFLICT", "RF_INVALID_TRANSITION", "RF_INVALID_SOURCE_JOB", "RF_REVISION_ORDER", "RF_RESET", "RF_INSUFFICIENT_STOCK", "RF_LOT_UNAVAILABLE"]);
 
-  // บัญชีทดสอบ (state.employee ของ app.js ในโหมดทดสอบ) → ผู้ใช้ของ RubberFlow
+  // พนักงานที่ล็อกอิน (state.employee ของ app.js: บัญชีทดสอบในโหมดทดสอบ หรือพนักงานจริง) → ผู้ใช้ของ RubberFlow
   // planner = กลุ่มวางแผน (admin · ผู้จัดการแผนกขึ้นไป · แผนก PP) ทำได้ทุกอย่างของข้อมูลหลัก · rb = สมาชิกแผนก RB ทุกตำแหน่ง · rbHead = หัวหน้า RB ขึ้นไป (อนุมัติสูตร ปล่อยผลิต)
   // role ใช้เลือกเมนูเท่านั้น: admin → admin · ผู้จัดการขึ้นไป → manager · PP → planner · RB → rb · ST → store · QA → qc · SR → gatekeeper · WH → warehouse · อื่นๆ → ดูอย่างเดียว
   // st / sr / wh / qa = สมาชิกแผนกนั้น (ทุกตำแหน่ง) ใช้ซ่อน/แสดงปุ่ม · สิทธิ์จริงอยู่ที่ฐานข้อมูล
@@ -274,6 +274,13 @@
     const role = roleCode === "admin" ? "admin" : PLANNER_ROLE_CODES.includes(roleCode) ? "manager" : DEPT_ROLES[dept] ?? "viewer";
     const name = `${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim() || employee.display_name || employee.employee_no || "ผู้ใช้ทดสอบ";
     return { id: String(employee.id ?? employee.employee_no ?? name), role, dept, name, planner, rb, rbHead, st: dept === "ST", sr: dept === "SR", wh: dept === "WH", qa: dept === "QA", db: true };
+  }
+  // ใครเห็นเมนูและหน้า RubberFlow (UX ล้วน สิทธิ์จริงตัดสินที่ฐานข้อมูล 20261130010000): โหมดทดสอบ = ทุกบัญชีทดสอบเหมือนเดิม ·
+  // ใช้งานจริง = บทบาทของสถานีตาม personaUser (กลุ่มวางแผน · RB · ST · QA · SR · WH) แผนกอื่นที่ได้ "ดูอย่างเดียว" ไม่เห็น
+  function usesRubberFlow(employee) {
+    if (!employee) return false;
+    if (employee.isSandbox === true) return true;
+    return personaUser(employee).role !== "viewer";
   }
 
   function normalizeSnapshot(value) {
@@ -626,7 +633,7 @@
     return { load, data: getData, user: getUser, setUser, run, reset, isPersisted: () => persisted, now, isRemote: () => false, status: () => "ready", error: () => null, isSaving: () => false, hasNewer: () => false, version: () => null, ensureLoaded: () => Promise.resolve(), reload: () => Promise.resolve(), catchUp: () => Promise.resolve(false), audit: () => ({ status: "ready", entries: getData().audit, error: null }), loadAudit: () => Promise.resolve(), purge: () => Promise.resolve({ ok: false, error: new Error("ล้างข้อมูล RubberFlow ทดสอบได้เฉพาะโหมดฐานข้อมูล") }), subscribe: () => () => {} };
   }
 
-  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, CAN, findModule, can, canSee, homeOf, isValidState, createStore, REMOTE_LISTS, diffMaster, mapRemoteError, personaUser, rightForAction, rightForDialog };
+  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, CAN, findModule, can, canSee, homeOf, isValidState, createStore, REMOTE_LISTS, diffMaster, mapRemoteError, personaUser, usesRubberFlow, rightForAction, rightForDialog };
   if (isNode) module.exports = api;
   else root.MNP_RUBBERFLOW_STORE = api;
 })(typeof window !== "undefined" ? window : globalThis);

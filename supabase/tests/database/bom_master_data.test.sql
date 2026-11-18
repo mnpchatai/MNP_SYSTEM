@@ -120,9 +120,10 @@ select throws_ok('select public.app_bom_master_since(0)', 'AUTH_REQUIRED', 'the 
 select throws_ok($$ select public.app_bom_save_master('{}'::jsonb, 0, 'saveItem') $$, 'AUTH_REQUIRED', 'saving requires a session');
 
 select set_config('request.jwt.claims', '{"sub":"8d000000-0000-0000-0000-000000000002","role":"authenticated"}', true);
-select throws_ok('select public.app_bom_master()', 'BOM_TEST_MODE_ONLY', 'a real PP staff account cannot read (real mode is not open)');
-select throws_ok('select public.app_bom_master_since(0)', 'BOM_TEST_MODE_ONLY', 'a real PP staff account cannot read the delta');
-select throws_ok($$ select public.app_bom_save_master('{}'::jsonb, 0, 'saveItem') $$, 'BOM_TEST_MODE_ONLY', 'a real PP staff account cannot save');
+select ok(public.app_bom_master() -> 'items' @> '[{"code":"REAL-ITEM"}]'::jsonb, 'a real PP staff account reads the real data (go-live 20261130010000)');
+select is(public.app_bom_master() ->> 'version', '99', 'a real PP staff account reads the real counter');
+select lives_ok('select public.app_bom_master_since(0)', 'a real PP staff account reads the real delta');
+select lives_ok($$ select public.app_bom_save_master('{}'::jsonb, 0, 'saveItem') $$, 'a real PP staff account may save (an empty change writes nothing)');
 select throws_ok('select count(*) from public.bom_items', '42501', null, 'clients cannot read the item table directly');
 select throws_ok('select count(*) from public.bom_boms', '42501', null, 'clients cannot read the BOM table directly');
 select throws_ok($$ insert into public.bom_items (code, kind, name, owner_dept, uom) values ('X', 'FG', 'x', 'PK', 'pcs') $$, '42501', null, 'clients cannot write the item table directly');
@@ -132,9 +133,9 @@ select throws_ok('select public.app_bom_master()', 'LAB_ONLY_ACCOUNT', 'a lab-on
 select throws_ok('select public.app_bom_master_since(0)', 'LAB_ONLY_ACCOUNT', 'a lab-only account cannot read the delta');
 
 select set_config('request.jwt.claims', '{"sub":"8d000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
-select throws_ok('select public.app_bom_master()', 'BOM_TEST_MODE_ONLY', 'an admin outside test mode cannot read');
-select throws_ok('select public.app_bom_master_since(0)', 'BOM_TEST_MODE_ONLY', 'an admin outside test mode cannot read the delta');
-select throws_ok($$ select public.app_bom_save_master('{}'::jsonb, 0, 'saveItem') $$, 'BOM_TEST_MODE_ONLY', 'an admin outside test mode cannot save');
+select ok(public.app_bom_master() -> 'items' @> '[{"code":"REAL-ITEM"}]'::jsonb, 'an admin outside test mode reads the real data (go-live 20261130010000)');
+select lives_ok('select public.app_bom_master_since(0)', 'an admin outside test mode reads the real delta');
+select lives_ok($$ select public.app_bom_save_master('{}'::jsonb, 0, 'saveItem') $$, 'an admin outside test mode may save (an empty change writes nothing)');
 
 -- 5. อ่านได้ทุก persona แต่เขียนไม่ได้ถ้าไม่ใช่ PP / ผู้จัดการขึ้นไป ------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);

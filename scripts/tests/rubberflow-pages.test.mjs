@@ -459,19 +459,41 @@ test("pages carry their module hue, and the side menu, page head and callouts us
   env.store.setUser(null);
 });
 
-test("RubberFlow and BOM stay admin test-mode only: menu, page and test mode all refuse everyone else", async () => {
-  // ผู้ใช้ต้องการให้สองโมดูลนี้เห็นเฉพาะ admin ในโหมดทดสอบ จนกว่าจะตัดสินใจเปิดใช้จริง — เทสต์นี้กันการเอาชั้นใดชั้นหนึ่งออกโดยไม่ตั้งใจ
+test("RubberFlow and BOM go live: real employees by role, every persona in test mode, test-only tools stay in test mode", async () => {
+  // ผู้ใช้เปิดใช้จริง 2026-11-18 (20261130010000): เมนูและหน้าเปิดตาม usesRubberFlow / usesBom · หัวกลุ่ม "ทดสอบ" เฉพาะโหมดทดสอบ "การผลิต" เมื่อใช้งานจริง
   const { readFileSync } = await import("node:fs");
   // ตัดบรรทัดที่เป็นคอมเมนต์ทิ้งก่อน: โค้ดที่ถูกคอมเมนต์ออกต้องไม่นับว่ายังป้องกันอยู่
   const read = (file) => readFileSync(new URL(`../../${file}`, import.meta.url), "utf8").replace(/^\s*\/\/.*$/gm, "");
   const app = read("app.js");
   assert.match(app, /\.filter\(\(item\) => !item\.sandboxOnly \|\| isSandboxMode\(\)\)/, "the side menu drops sandboxOnly items outside test mode");
+  assert.match(app, /\.filter\(\(item\) => !item\.realOnly \|\| !isSandboxMode\(\)\)/, "and realOnly items inside test mode");
   assert.match(app, /if \(state\.employee\?\.role\?\.code !== "admin" \|\| state\.employee\.labOnly\) return;/, "only an admin can enter test mode");
-  for (const file of ["modules/module-rubberflow.js", "modules/module-bom.js"]) {
+  for (const [file, gate] of [["modules/module-rubberflow.js", "usesRubberFlow"], ["modules/module-bom.js", "usesBom"]]) {
     const source = read(file);
-    assert.match(source, /if \(!state\.employee\?\.isSandbox\) return renderNotFound\(\);/, `${file} refuses a typed URL outside test mode`);
-    assert.match(source, /nav: \[\{[^\]]*sandboxOnly: true/, `${file} keeps its menu test-mode only`);
+    assert.ok(source.includes(`if (!storeApi.${gate}(state.employee)) return renderNotFound();`), `${file} refuses a typed URL from someone the module is not for`);
+    assert.ok(source.includes(`navAllowed: (employee) => storeApi.${gate}(employee),`), `${file} hides its menu from the same people`);
+    assert.doesNotMatch(source, /isSandbox\) return renderNotFound/, `${file} no longer refuses every real employee`);
+    // ล้างข้อมูลทดสอบ: ปุ่มมีเฉพาะ admin ตัวจริงที่อยู่ในโหมดทดสอบ (state.sandbox.active) ฐานข้อมูลตรวจซ้ำ
+    assert.match(source, /const canPurge = \(\) => store\.isRemote\(\) && Boolean\(state\.sandbox\?\.active\);/, `${file} keeps the purge button test-mode only`);
   }
+  const env = load();
+  assert.deepEqual(JSON.parse(JSON.stringify(env.module.nav.map((item) => [item.sandboxOnly ?? false, item.realOnly ?? false, item.group]))), [[true, false, "ทดสอบ"], [false, true, "การผลิต"]],
+    "one menu entry per mode: the test group in test mode, the production group in real use");
+  const employee = (dept, role = "staff", extra = {}) => ({ role: { code: role }, department: { code: dept }, ...extra });
+  const allowed = (person) => env.module.navAllowed(person);
+  for (const dept of ["PP", "RB", "ST", "QA", "SR", "WH"]) assert.equal(allowed(employee(dept)), true, `real ${dept} staff use RubberFlow`);
+  for (const dept of ["GR", "PT", "BG", "PK", "MT", "IT"]) assert.equal(allowed(employee(dept)), false, `real ${dept} staff do not see RubberFlow`);
+  for (const role of ["admin", "department_manager", "assistant_factory_manager", "factory_manager", "general_manager"]) assert.equal(allowed(employee("MT", role)), true, `${role} is in the planner group`);
+  assert.equal(allowed(employee("MT", "staff", { isSandbox: true })), true, "every persona keeps the module in test mode");
+  assert.equal(allowed(null), false, "nobody signed in");
+  const rbStaff = load({ sandbox: false });
+  rbStaff.context.state.employee = employee("RB");
+  await rbStaff.render();
+  assert.equal(rbStaff.log.notFound, 0, "a real RB staff opens the page");
+  const mtStaff = load({ sandbox: false });
+  mtStaff.context.state.employee = employee("MT");
+  await mtStaff.render();
+  assert.equal(mtStaff.log.notFound, 1, "a real employee outside the stations gets not found for a typed URL");
 });
 
 test("two-stage recipe: the recipe form and the mixing station have six stage inputs, the forms send stages, and no recipe or product name is shown", async () => {

@@ -10,7 +10,8 @@
 // storage = ที่เก็บข้อมูลหลัก BOM ของหน้า (localStorage) ไม่ส่ง = อยู่ในหน่วยความจำอย่างเดียว
 // ncr = สถานการณ์ NCR อย่างเดียว (?ncr=1): ไม่มีคำร้องอื่น มี NCR ครบทุกขั้น และกดขั้นของ NCR ได้จริงในฐานข้อมูลจำลอง (เก็บลง storage
 // ใบจึงเดินต่อเมื่อสลับผู้ใช้) · as = รหัสพนักงานจำลองที่ใช้เข้าระบบ (?as=e5) ใช้ได้เฉพาะสถานการณ์ NCR
-export function createMockSupabase({ empty = false, sandbox = false, ncr = false, master = false, as = null, now = () => Date.now(), warn = () => {}, objectUrl = null, storage = null } = {}) {
+// real = นอกโหมดทดสอบ ให้ผู้ใช้จำลองเป็นพนักงานจริงของแผนก/ตำแหน่งเดียวกับบัญชีทดสอบชื่อนั้น (?real=rb · pp rbh gr st sr wh whh qa pk pt bg) เพื่อลองเส้นทางใช้งานจริงของ BOM / RubberFlow
+export function createMockSupabase({ empty = false, sandbox = false, ncr = false, master = false, as = null, real = null, now = () => Date.now(), warn = () => {}, objectUrl = null, storage = null } = {}) {
   const YEAR = "2569";
   const DAY = 86400000;
   const startedAt = now();
@@ -421,12 +422,13 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
 
   // ---- ข้อมูลของ BOM (โมดูลทดสอบ #/bom): app_bom_master / app_bom_master_since / app_bom_save_master / app_bom_audit และ app_sandbox_purge_bom ----
   // อยู่ในหน่วยความจำและเก็บลง storage ของเครื่องที่เปิดหน้า (คีย์ mnp-harness-bom-master) รีเฟรชแล้วข้อมูลยังอยู่ · ไม่ได้เป็นฐานข้อมูลจริง
-  // บังคับสัญญาเดียวกับ RPC จริง: เฉพาะโหมดทดสอบ · สิทธิ์ตามหมวดและตามช่องของบัญชีทดสอบที่เลือก:
+  // บังคับสัญญาเดียวกับ RPC จริง: ผู้ทำรายการ = บัญชีทดสอบที่เลือก (โหมดทดสอบ) หรือผู้ใช้จำลองเอง (นอกโหมดทดสอบ 20261130010000) · สิทธิ์ตามหมวดและตามช่องของผู้ทำรายการ:
   //   ฝ่ายวางแผน = admin ผู้จัดการแผนกขึ้นไป หรือแผนก PP ทำได้ทุกอย่าง · ST/WH นับคงคลังของใบร่าง · พนักงานแผนกของงานรายงานผล/เปลี่ยนสถานะงานของแผนกตน (RB ผูก WO) · ที่เหลืออ่านอย่างเดียว
   // ชนรายระเบียน: ทุกระเบียนจำเลขรุ่นที่แก้ล่าสุด (versions) · บันทึกชนเมื่อระเบียนที่แตะถูกผู้อื่นแก้/ลบหลัง p_base_version (BOM_STALE) ระเบียนอื่นไม่ขวาง
   // บันทึกคืนส่วนต่าง { version, changes: { <ชุด>: { upsert, delete } } } ตั้งแต่ p_base_version · ชุดสี/แพ็กเกจ/งานที่ลบจดเป็นหลุมฝังศพ (tombstones)
   // กฎของ BOM ใช้ bom-rules.js ที่หน้าโหลดไว้ (window.MNP_BOM_RULES) ถ้ามี
-  const BOM_KEY = "mnp-harness-bom-master";
+  // ข้อมูลจริงกับข้อมูลทดสอบแยกกันเหมือน is_test ของฐานข้อมูล: นอกโหมดทดสอบใช้คีย์ -real (โหมดทดสอบไม่เห็นข้อมูลจริง และกลับกัน)
+  const BOM_KEY = sandbox ? "mnp-harness-bom-master" : "mnp-harness-bom-master-real";
   const PERSONA_KEY = "mnp-harness-persona";
   const BOM_LISTS = ["items", "compounds", "colors", "colorSets", "packages", "boms", "processes", "routings", "customers", "orders", "jobs", "stock", "stockMoves", "fgMoves"];
   const BOM_ID = {
@@ -517,8 +519,25 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     const rows = personaRows();
     return rows.find((row) => row.id === personaId) ?? rows[0];
   }
+  // ---- พนักงานจริง (นอกโหมดทดสอบ ?real=<รหัส>): ผู้ใช้จำลองได้แผนก / ตำแหน่งของบัญชีทดสอบชื่อนั้น (ชื่อเดียวกัน) แผนกที่ยังไม่มีในรายการถูกเพิ่ม ----
+  const REAL_SPEC = !sandbox && real ? PERSONA_SPECS.find(([id]) => id === `persona-${String(real).toLowerCase()}`) ?? null : null;
+  if (REAL_SPEC) {
+    const [, first_name, last_name, job_title, dept, deptName, roleCode] = REAL_SPEC;
+    let department = departments.find((row) => row.code === dept);
+    if (!department) {
+      department = { id: `dep-${dept.toLowerCase()}`, code: dept, name_th: deptName, is_active: true, is_repair_site: false };
+      departments.push(department);
+    }
+    Object.assign(ME, { first_name, last_name, job_title, department_id: department.id, role_id: roles.find((row) => row.code === (roleCode ?? "staff"))?.id ?? "role-staff" });
+  }
+  // ผู้ทำรายการของ BOM / RubberFlow (private.bom_actor / rf_actor): โหมดทดสอบ = บัญชีทดสอบที่เลือก · นอกโหมดทดสอบ = ผู้ใช้จำลองเอง
+  // นอกโหมดทดสอบผู้ใช้จำลองต้อง active ไม่เช่นนั้น code (BOM_FORBIDDEN / RF_FORBIDDEN) เหมือนฐานข้อมูล
+  const requireActor = (code) => {
+    if (!sandbox && ME.is_active === false) fail(code);
+    return bomActor();
+  };
   const bomActor = () => {
-    const persona = currentPersona();
+    const persona = sandbox ? currentPersona() : expand("employees", ME);
     return { name: `${persona.first_name ?? ""} ${persona.last_name ?? ""}`.trim(), role: persona.role?.code ?? "", dept: String(persona.department?.code ?? "").toUpperCase() };
   };
   const bomIsPlanner = (actor) => actor.role === "admin" || BOM_MANAGER_ROLES.includes(actor.role) || actor.dept === "PP";
@@ -1321,7 +1340,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
   // อนุมัติสูตรและปล่อยผลิต = หัวหน้า RB (ผู้จัดการ/ผู้ช่วยผู้จัดการแผนก RB หรือผู้ช่วยผู้จัดการโรงงานขึ้นไป) หรือกลุ่มวางแผน (ปล่อยผลิต) · ST รับวัตถุดิบเข้าคลัง · ST/QA กักกันล็อตวัตถุดิบ
   // SR รับมอบ WIP · WH ส่งมอบกล่อง · QA บันทึกผลตรวจและเปิด/ปิด NCR · ฐานข้อมูลคำนวณเอง: สต็อกล็อตหลังชั่ง คงเหลือ/ยอดส่งต่อของใบส่งมอบ ยอดผลิตของ WO สถานะกล่องตามผล QC การใช้แม่พิมพ์ (ไม่เชื่อค่าที่ client ส่ง)
   // WO ที่มี sourceJobId ผูกงาน RB ของ BOM ในคำสั่งเดียวกัน (externalRef) · ล็อตตกแต่งของ WO ที่ผูกงานผ่าน QC และนับเข้า WO (ตอนบันทึก หรือ QA ตัดสินเป็น pass) → ส่งยอดดีของล็อตเข้างานเป็นรายงานผลทีละล็อต (การรับมอบใบส่งมอบไม่เขียน BOM) ผ่านตัวนับเวอร์ชันของ BOM ด้วย
-  const RF_KEY = "mnp-harness-rf-master";
+  const RF_KEY = sandbox ? "mnp-harness-rf-master" : "mnp-harness-rf-master-real";
   const RF_LISTS = ["materials", "recipes", "orders", "materialLots", "requisitions", "lots", "transfers", "fgBoxes", "qcRecords", "ncrs", "molds", "purchaseOrders"];
   const RF_ID = { materials: (record) => record.code, recipes: (record) => `${record.id}|${record.revision}`, orders: (record) => record.id, materialLots: (record) => record.lotNo };
   for (const list of RF_LISTS) RF_ID[list] ??= (record) => record.id;
@@ -2532,19 +2551,19 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     app_lab_access: () => false,
     app_lab_only: () => false,
     ...MASTER_RPC,
+    // ใช้ได้ทั้งโหมดทดสอบและใช้งานจริง (20261130010000) ข้อมูลของแต่ละโหมดแยกกัน (BOM_KEY)
     app_bom_master() {
-      if (!sandbox) fail("BOM_TEST_MODE_ONLY");
+      requireActor("BOM_FORBIDDEN");
       return bomView(bomLoad());
     },
     app_bom_master_since({ p_version }) {
-      if (!sandbox) fail("BOM_TEST_MODE_ONLY");
+      requireActor("BOM_FORBIDDEN");
       const current = bomLoad();
       if (!Number.isInteger(p_version) || p_version < 0 || p_version > current.version) fail("BOM_INVALID_PAYLOAD");
       return bomDelta(current, p_version);
     },
     app_bom_save_master({ p_changes, p_base_version, p_action, p_audit, p_epoch }) {
-      if (!sandbox) fail("BOM_TEST_MODE_ONLY");
-      const actor = bomActor();
+      const actor = requireActor("BOM_FORBIDDEN");
       // ด่านหยาบ (ลำดับเดียวกับ app_bom_save_master): คนนอกกลุ่มวางแผน (private.bom_can_edit = bomIsPlanner) กับ action ที่ไม่ใช่ของพนักงาน = BOM_FORBIDDEN
       // แล้ว action ที่ไม่อยู่ในรายการของ client = BOM_INVALID_ACTION (กลุ่มวางแผนส่ง completeOrder จึงได้ BOM_INVALID_ACTION)
       if (!bomIsPlanner(actor) && !BOM_STAFF_ACTIONS.includes(p_action)) fail("BOM_FORBIDDEN");
@@ -2594,15 +2613,16 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     },
     // บันทึกการใช้งาน: ใหม่สุดก่อน (ตรงกับ app_bom_audit) ทุกบัญชีทดสอบอ่านได้
     app_bom_audit({ p_limit } = {}) {
-      if (!sandbox) fail("BOM_TEST_MODE_ONLY");
+      requireActor("BOM_FORBIDDEN");
       const limit = p_limit === undefined || p_limit === null ? 200 : p_limit;
       if (!Number.isInteger(limit) || limit < 1 || limit > 1000) fail("BOM_INVALID_PAYLOAD");
       return [...bomLoad().audit].reverse().slice(0, limit);
     },
     // ล้างข้อมูล BOM ทดสอบทั้งหมด: เฉพาะ admin ตัวจริง (ผู้ใช้จำลอง ไม่ใช่บัญชีทดสอบที่ทำหน้าที่อยู่) ในโหมดทดสอบ · เวอร์ชันกลับเป็น 0 และมีบันทึกการล้างหนึ่งแถว
+    // ลำดับเดียวกับ app_sandbox_purge_bom: ไม่ใช่ admin ตัวจริง = NOT_AUTHORIZED · admin ที่ไม่ได้อยู่ในโหมดทดสอบ = SANDBOX_NOT_ACTIVE (ข้อมูลจริงล้างไม่ได้)
     app_sandbox_purge_bom() {
-      if (!sandbox) fail("BOM_TEST_MODE_ONLY");
-      if (roles.find((row) => row.id === ME.role_id)?.code !== "admin") fail("BOM_FORBIDDEN");
+      if (roles.find((row) => row.id === ME.role_id)?.code !== "admin") fail("NOT_AUTHORIZED");
+      if (!sandbox) fail("SANDBOX_NOT_ACTIVE");
       const current = bomLoad();
       const deleted = BOM_LISTS.reduce((sum, list) => sum + current[list].length, 0);
       const { version, audit } = current;
@@ -2613,18 +2633,17 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       return { deleted };
     },
     app_rf_master() {
-      if (!sandbox) fail("RF_TEST_MODE_ONLY");
+      requireActor("RF_FORBIDDEN");
       return rfView(rfLoad());
     },
     app_rf_master_since({ p_version }) {
-      if (!sandbox) fail("RF_TEST_MODE_ONLY");
+      requireActor("RF_FORBIDDEN");
       const current = rfLoad();
       if (!Number.isInteger(p_version) || p_version < 0 || p_version > current.version) fail("RF_INVALID_PAYLOAD");
       return rfDelta(current, p_version);
     },
     app_rf_save({ p_changes, p_base_version, p_action, p_audit, p_epoch }) {
-      if (!sandbox) fail("RF_TEST_MODE_ONLY");
-      const actor = bomActor();
+      const actor = requireActor("RF_FORBIDDEN");
       const current = rfLoad();
       // client ถือข้อมูลของรอบก่อนล้างข้อมูลทดสอบ: ไม่เขียนอะไร (null / ไม่ส่ง = ไม่ตรวจ)
       if (p_epoch !== undefined && p_epoch !== null && p_epoch !== current.epoch) fail("RF_RESET");
@@ -2646,7 +2665,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       return rfDelta(rfMaster, p_base_version);
     },
     app_rf_audit({ p_limit } = {}) {
-      if (!sandbox) fail("RF_TEST_MODE_ONLY");
+      requireActor("RF_FORBIDDEN");
       const limit = p_limit === undefined || p_limit === null ? 200 : p_limit;
       if (!Number.isInteger(limit) || limit < 1 || limit > 1000) fail("RF_INVALID_PAYLOAD");
       return [...rfLoad().audit].reverse().slice(0, limit);
@@ -2892,6 +2911,8 @@ export function installMockSupabase(win, create, options = {}) {
     // ?master=1 = ผู้ใช้จำลองเป็นบัญชี master เห็นหน้า #/master
     master: params.has("master"),
     as: params.get("as"),
+    // ?real=rb = นอกโหมดทดสอบ ผู้ใช้จำลองเป็นพนักงานจริงของแผนก RB (รหัสเดียวกับบัญชีทดสอบ: pp rbh gr st sr wh whh qa pk pt bg)
+    real: params.get("real"),
     sandbox: Boolean(options.sandbox) || new win.URLSearchParams(win.location.search).has("sandbox"),
     storage: (() => { try { return win.localStorage; } catch { return null; } })(),
     warn: (message) => win.console.warn(message),

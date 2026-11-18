@@ -106,7 +106,7 @@ select throws_ok('select public.app_bom_audit()', 'AUTH_REQUIRED', 'reading the 
 select throws_ok('select public.app_sandbox_purge_bom()', 'AUTH_REQUIRED', 'the purge requires a session');
 
 select set_config('request.jwt.claims', '{"sub":"8e000000-0000-0000-0000-000000000002","role":"authenticated"}', true);
-select throws_ok('select public.app_bom_audit()', 'BOM_TEST_MODE_ONLY', 'a real PP staff account cannot read the audit');
+select is(public.app_bom_audit(), '[]'::jsonb, 'a real PP staff account reads the real audit, which has no test-mode rows (go-live 20261130010000)');
 select throws_ok('select public.app_sandbox_purge_bom()', 'NOT_AUTHORIZED', 'a non-admin cannot purge');
 select throws_ok('select count(*) from public.bom_orders', '42501', null, 'clients cannot read the order table directly');
 select throws_ok('select count(*) from public.bom_jobs', '42501', null, 'clients cannot read the job table directly');
@@ -118,7 +118,7 @@ select throws_ok('select public.app_bom_audit()', 'LAB_ONLY_ACCOUNT', 'a lab-onl
 select throws_ok('select public.app_sandbox_purge_bom()', 'LAB_ONLY_ACCOUNT', 'a lab-only account cannot purge');
 
 select set_config('request.jwt.claims', '{"sub":"8e000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
-select throws_ok('select public.app_bom_audit()', 'BOM_TEST_MODE_ONLY', 'an admin outside test mode cannot read the audit');
+select is(public.app_bom_audit(), '[]'::jsonb, 'an admin outside test mode reads the real audit only (go-live 20261130010000)');
 select throws_ok('select public.app_sandbox_purge_bom()', 'SANDBOX_NOT_ACTIVE', 'an admin outside test mode cannot purge');
 
 -- 4. ข้อมูลหลักตั้งต้น (PP staff) ------------------------------------------------------------
