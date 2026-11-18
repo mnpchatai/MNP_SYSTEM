@@ -6,6 +6,8 @@
 -- ประวัติมี note ใน snapshot · authenticated อ่านตาราง bom_* ตรงไม่ได้ จึงอ่านตารางด้วย reset role (สิทธิ์เจ้าของตาราง) เท่านั้น
 -- ข้อควรระวัง: ถ้าอ่านตารางตรงในนาม authenticated จะเกิด 42501 และทำให้ทั้งไฟล์ล้ม ("No plan found") ตรวจฝั่ง client ผ่าน RPC และตรวจ deny ด้วย throws_ok เท่านั้น
 begin;
+-- กฎการใช้งานจริงของไฟล์นี้ทดสอบเมื่อเปิดใช้จริงแล้ว: เปิดสวิตช์ในธุรกรรมของเทสต์ (rollback ท้ายไฟล์) · สวิตช์ปิดทดสอบใน bom_rf_sandbox_lock.test.sql
+create or replace function private.bom_real_open() returns boolean language sql stable set search_path = '' as $$ select true $$;
 create extension if not exists pgtap with schema extensions;
 select no_plan();
 
