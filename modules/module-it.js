@@ -13,6 +13,8 @@
 //   supabase/tests/database/ แล้วค่อยเพิ่ม hook ของ flow ที่นี่
 //
 // คู่กับฝั่ง Next.js: src/lib/request-modules/module-it.ts — แก้ที่หนึ่งให้แก้อีกที่ให้ตรงกัน
+// ยกเว้นเรื่องเดียวที่ต่างกันโดยตั้งใจ: การย้ายการ์ดไปอยู่ใต้เมนู "ระบบสำนักงาน › IT SUPPORT" (hideFromOverview/navPath/parentLink ด้านล่าง)
+// ทำเฉพาะ Pilot Web ฝั่ง Next.js ยังแสดงการ์ดใบแจ้งซ่อม IT ในภาพรวมคำร้องเหมือนเดิม จนกว่าเจ้าของจะสั่งให้ตาม
 (function registerItRepairModule() {
   const IT_REPAIR_FIELDS = [
     { name: "asset_code", label: "รหัสอุปกรณ์/ทรัพย์สิน IT", placeholder: "เช่น NB-0123" },

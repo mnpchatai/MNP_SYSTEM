@@ -4,10 +4,12 @@
 //
 // เป็นโมดูลแยก (standalone: true) เหมือน MNP LAB: มีเมนูของตัวเอง ไม่อยู่ในศูนย์คำร้อง และไม่รองรับโหมดทดสอบ (ไม่ประกาศ sandbox)
 // บัญชี lab-only ไม่เห็นเมนู (modules/lab-only-access.js ไม่มีรหัส OFFICE) และแผนกที่จำกัดโมดูลต้องมี OFFICE ในรายการอนุญาต (modules/department-access.js)
+// OFFICE ในรายการอนุญาตแค่เปิดเมนู/หน้า hub ให้เข้าได้ — แต่ละการ์ดกรองตามรหัสโมดูลของตัวเอง (IT_REPAIR, IT_WORK_ORDER, HR) ด้วย deptModuleAllowed
+// แผนกที่ไม่เหลือการ์ดใดเลยไม่เห็นเมนู และเข้า URL ของระบบที่ไม่มีสิทธิ์ (เช่น ?module=hr) ถูกพากลับหน้าหลักเหมือนหน้าของโมดูลอื่น
 //
 // ใบแจ้งซ่อม IT (IT_REPAIR) ยังเป็นโมดูลคำร้องกลางทุกอย่าง (รายการ ฟอร์ม แจ้งเตือน ลิงก์เก่า) การ์ดที่นี่แค่พาไปหน้ารายการเดิม #/requests?type=<id>
 // ส่วนการ์ดบนหน้าภาพรวม "คำร้อง" ถูกซ่อนด้วยแฟลก hideFromOverview ใน module-it.js
-// ไฟล์นี้โหลดก่อน app.js (ดู index.html) — เรียก helper ของ app.js (state, sb, app, shell, bindShell, loadingShell, renderNotFound,
+// ไฟล์นี้โหลดก่อน app.js (ดู index.html) — เรียก helper ของ app.js (state, sb, app, shell, bindShell, loadingShell, renderNotFound, go,
 // deptModuleAllowed, requestTypeCounts, queueModuleZoom, zoomIntoContent) เฉพาะตอนเปิดหน้า/ตอนผู้ใช้กด ไม่เรียกตอนโหลดไฟล์
 (function registerOfficeModule() {
   const sections = window.MNP_OFFICE_SECTIONS;
@@ -54,11 +56,17 @@
     const version = pageVersion;
     const section = sections.readSection(params);
     if (!section) return renderNotFound(); // ?module= ที่ไม่มีจริง = URL ที่ไม่มีอยู่
-    if (section === sections.HOME) return paint(sections.chooserPage(), TITLE, version);
+    // ระบบที่แผนกนี้ไม่มีสิทธิ์ (หรือไม่เหลือระบบใดเลย) พากลับหน้าหลักเหมือน routeAllowed ของหน้าโมดูลอื่น ก่อนเรียกข้อมูลใด ๆ
+    const visible = sections.visibleSections(deptModuleAllowed);
+    if (section === sections.HOME ? visible.length === 0 : !visible.some((item) => item.key === section)) {
+      go("dashboard");
+      return;
+    }
+    if (section === sections.HOME) return paint(sections.chooserPage({ allowed: deptModuleAllowed }), TITLE, version);
     if (section === "it-support") {
       loadingShell(PATH, TITLE);
       const repair = await loadRepairCard();
-      return paint(sections.itSupportPage({ repair }), "IT SUPPORT", version);
+      return paint(sections.itSupportPage({ repair, allowed: deptModuleAllowed }), "IT SUPPORT", version);
     }
     return paint(sections.notReadyPage(section), TITLE, version);
   }
@@ -70,8 +78,9 @@
     standalone: true,
     label: TITLE,
     palette: "st",
-    // ผู้ใช้ทุกคนที่เห็นเมนูคำร้องเห็นเมนูนี้ การซ่อนตามแผนก/บัญชี lab-only/โหมดทดสอบทำที่ requestModuleNavLinks ของ app.js
-    navAllowed: (employee) => Boolean(employee),
+    // ผู้ใช้ที่ล็อกอินแล้วเห็นเมนูนี้ เมื่อมีระบบในเมนูให้เห็นอย่างน้อย 1 ระบบตามสิทธิ์แผนก (แผนก ID เหลือ IT SUPPORT)
+    // การซ่อนตามบัญชี lab-only/โหมดทดสอบทำที่ requestModuleNavLinks ของ app.js
+    navAllowed: (employee) => Boolean(employee) && sections.hasVisibleSection(deptModuleAllowed),
     nav: [{ path: PATH, label: TITLE, icon: NAV_ICON }],
     pages: { [PATH]: renderOffice },
   };

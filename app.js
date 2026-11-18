@@ -3317,7 +3317,7 @@ function requestCenterHeader(types, params, counts, { countScope = "" } = {}) {
     const parentLink = requestModule(selected.code)?.hideFromOverview ? requestModule(selected.code).parentLink : null;
     const backHref = parentLink?.href ?? requestCenterUrl(params, { type: "all", status: null, ncrStatus: null, view: null, q: null });
     const backLabel = parentLink?.label ?? "เลือกโมดูล";
-    return `<a class="request-back-link" id="back-to-modules" href="${escapeHtml(backHref)}" aria-label="ย้อนกลับไป${escapeHtml(backLabel)}">‹ ${escapeHtml(backLabel)}</a>
+    return `<a class="request-back-link" id="back-to-modules" href="${escapeHtml(backHref)}" aria-label="ย้อนกลับไป ${escapeHtml(backLabel)}">‹ ${escapeHtml(backLabel)}</a>
       <div class="page-heading request-module-header" data-module="${requestPalette(selected.code)}">
         <div class="request-module-title">${typeCardMarkHtml(selected, { prefix: !selected.prefix || !requestTypeLabel(selected).includes(selected.prefix) })}<div><h1>${escapeHtml(requestTypeLabel(selected))}</h1></div></div>${typeCardWatermarkHtml(selected.code)}
         <div class="request-create-entry${pendingModuleZoom === moduleZoomKey(params) ? " module-create-pending" : ""}">${headerLinks}<a class="btn" id="create-request-button" href="${escapeHtml(window.MNP_REQUEST_CENTER.createUrl(params))}"><span class="plus-icon" aria-hidden="true"></span> ${escapeHtml(createLabel)}</a></div>

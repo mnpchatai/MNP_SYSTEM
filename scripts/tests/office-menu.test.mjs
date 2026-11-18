@@ -188,7 +188,7 @@ test("the office module is standalone with a menu entry, no sandbox support, and
 /* ---------- ทดลองรันโมดูลจริงใน vm: ลงทะเบียน เมนู และหน้า ---------- */
 function setup({ employee, repairType = { id: "type-it", code: "IT_REPAIR" }, countResult = 5 } = {}) {
   const queries = [];
-  const painted = { html: "", active: null, title: null, notFound: 0, loading: 0, zooms: 0, queued: [] };
+  const painted = { html: "", active: null, title: null, notFound: 0, loading: 0, zooms: 0, queued: [], went: [] };
   const window = {};
   const context = vm.createContext({
     window, console, URLSearchParams, Map, Set,
@@ -201,7 +201,7 @@ function setup({ employee, repairType = { id: "type-it", code: "IT_REPAIR" }, co
       return { data: repairType, error: null };
     } }) }) }) }) },
     shell: (html, active, title) => { painted.active = active; painted.title = title; return html; },
-    bindShell() {}, loadingShell() { painted.loading += 1; }, renderNotFound() { painted.notFound += 1; },
+    bindShell() {}, loadingShell() { painted.loading += 1; }, renderNotFound() { painted.notFound += 1; }, go(path) { painted.went.push(path); },
     zoomIntoContent() { painted.zooms += 1; }, queueModuleZoom(hash) { painted.queued.push(hash); },
     requestTypeCounts: async (types, mineOnly) => { queries.push({ counted: types.map((type) => type.id), mineOnly }); return new Map([[types[0].id, countResult]]); },
     deptModuleAllowed: (code) => departmentAccess.moduleAllowed(context.state.employee, code),
@@ -254,9 +254,10 @@ test("the repair card link equals the helper the request center itself uses", as
 
 test("a department without IT_REPAIR, or a database that turned the type off, gets no repair card", async () => {
   const restricted = setup({ employee: { department: { code: "ID" } } });
-  restricted.context.deptModuleAllowed = () => false;
+  restricted.context.deptModuleAllowed = (code) => code !== "IT_REPAIR";
   await restricted.open("module=it-support");
   assert.doesNotMatch(restricted.painted.html, /ใบแจ้งซ่อม IT/);
+  assert.match(restricted.painted.html, /ใบสั่งงาน IT/, "the other card of the page is still there");
   assert.deepEqual(restricted.queries, [], "no lookups for a card that is not shown");
 
   const off = setup({ employee: mt, repairType: null });
@@ -268,6 +269,123 @@ test("department ID, which is restricted, still gets the repair card", async () 
   const app = setup({ employee: indesign });
   await app.open("module=it-support");
   assert.match(app.painted.html, /href="#\/requests\?type=type-it"/);
+});
+
+/* ---------- แผนก ID: การ์ดในเมนูกรองตามรหัสโมดูลของแต่ละการ์ด ---------- */
+const allowedFor = (employee) => (code) => departmentAccess.moduleAllowed(employee, code);
+
+test("every card has its own module code, and the IT SUPPORT hub has none of its own", () => {
+  assert.deepEqual(sections.IT_SUPPORT_CARDS.map((card) => [card.key, card.code]), [["repair", "IT_REPAIR"], ["work-order", "IT_WORK_ORDER"]]);
+  const hr = sections.SECTIONS.find((section) => section.key === "hr");
+  assert.equal(hr.code, "HR");
+  const hub = sections.SECTIONS.find((section) => section.key === "it-support");
+  assert.equal(hub.code, undefined);
+  assert.equal(hub.cards, sections.IT_SUPPORT_CARDS);
+});
+
+test("an unrestricted department sees every system and every card, exactly as before", () => {
+  const allowed = allowedFor(mt);
+  assert.deepEqual(sections.visibleSections(allowed).map((section) => section.key), ["it-support", "hr"]);
+  assert.deepEqual(sections.visibleCards(allowed).map((card) => card.key), ["repair", "work-order"]);
+  assert.equal(sections.hasVisibleSection(allowed), true);
+  assert.equal(sections.chooserPage({ allowed }), sections.chooserPage(), "no allowed callback = the same page");
+  assert.equal(sections.itSupportPage({ repair: { href: "#/requests?type=a", count: 1 }, allowed }), sections.itSupportPage({ repair: { href: "#/requests?type=a", count: 1 } }));
+  assert.equal(count(sections.chooserPage({ allowed }), /class="type-card request-type-card lab-module-card/g), 2);
+});
+
+test("department ID sees the office menu and only IT SUPPORT, and in it only the IT repair card", () => {
+  const allowed = allowedFor(indesign);
+  assert.equal(departmentAccess.moduleAllowed(indesign, "OFFICE"), true, "OFFICE stays in the allowlist only to open the menu and hub");
+  assert.equal(departmentAccess.moduleAllowed(indesign, "HR"), false);
+  assert.equal(departmentAccess.moduleAllowed(indesign, "IT_WORK_ORDER"), false);
+  assert.equal(departmentAccess.routeAllowed(indesign, "office", "OFFICE"), true, "the hub page opens");
+  assert.equal(sections.hasVisibleSection(allowed), true, "the menu is shown");
+  assert.deepEqual(sections.visibleSections(allowed).map((section) => section.key), ["it-support"]);
+  assert.deepEqual(sections.visibleCards(allowed).map((card) => card.key), ["repair"]);
+
+  const chooser = sections.chooserPage({ allowed });
+  assert.equal(count(chooser, /class="type-card request-type-card lab-module-card/g), 1);
+  assert.match(chooser, /href="#\/office\?module=it-support"/);
+  assert.doesNotMatch(visibleText(chooser), /HR/);
+  assert.doesNotMatch(chooser, /ระบบกำลังพัฒนา/);
+
+  const hub = sections.itSupportPage({ repair: { href: "#/requests?type=abc", count: 2 }, allowed });
+  assert.match(hub, /ใบแจ้งซ่อม IT/);
+  assert.match(hub, /2 ยังไม่จบ/);
+  assert.doesNotMatch(hub, /ใบสั่งงาน IT/);
+  assert.doesNotMatch(hub, /กำลังย้ายระบบ/);
+  assert.equal(count(hub, /class="type-card request-type-card lab-module-card/g), 1);
+});
+
+test("a department left with no card at all has no office menu and no system to open", () => {
+  const allowed = () => false;
+  assert.deepEqual(sections.visibleSections(allowed), []);
+  assert.equal(sections.hasVisibleSection(allowed), false);
+  // ระบบที่มีการ์ดลูกเห็นได้เมื่อมีการ์ดลูกใบเดียวพอ แม้ระบบเองไม่มีรหัส
+  assert.equal(sections.hasVisibleSection((code) => code === "IT_WORK_ORDER"), true);
+  assert.equal(sections.hasVisibleSection((code) => code === "HR"), true);
+  assert.equal(sections.hasVisibleSection((code) => code === "OFFICE"), false, "OFFICE alone opens nothing");
+});
+
+test("department ID in the real module: menu shown, hub shows only IT SUPPORT, the repair card shows only the repair card", async () => {
+  const app = setup({ employee: indesign });
+  const office = app.window.MNP_REQUEST_MODULES.OFFICE;
+  assert.equal(office.navAllowed(indesign), true);
+
+  await app.open("");
+  assert.deepEqual(app.painted.went, []);
+  assert.match(app.painted.html, /IT SUPPORT/);
+  assert.doesNotMatch(app.painted.html, /HR/);
+
+  await app.open("module=it-support");
+  assert.deepEqual(app.painted.went, []);
+  assert.match(app.painted.html, /href="#\/requests\?type=type-it"/);
+  assert.doesNotMatch(app.painted.html, /ใบสั่งงาน IT|กำลังย้ายระบบ/);
+});
+
+test("department ID typing #/office?module=hr is sent home like any other module it may not open, with nothing painted or fetched", async () => {
+  const app = setup({ employee: indesign });
+  await app.open("module=hr");
+  assert.deepEqual(app.painted.went, ["dashboard"]);
+  assert.equal(app.painted.html, "");
+  assert.equal(app.painted.notFound, 0);
+  assert.deepEqual(app.queries, []);
+  // ระบบที่ไม่มีจริงยังเป็นหน้า "ไม่พบ" เหมือนทุกคน
+  await app.open("module=unknown");
+  assert.equal(app.painted.notFound, 1);
+  assert.deepEqual(app.painted.went, ["dashboard"]);
+});
+
+test("a department that may open nothing in the office has no menu entry and is sent home from every office URL", async () => {
+  const app = setup({ employee: indesign });
+  app.context.deptModuleAllowed = () => false;
+  assert.equal(app.window.MNP_REQUEST_MODULES.OFFICE.navAllowed(indesign), false);
+  await app.open("");
+  await app.open("module=it-support");
+  assert.deepEqual(app.painted.went, ["dashboard", "dashboard"]);
+  assert.equal(app.painted.html, "");
+  assert.deepEqual(app.queries, []);
+});
+
+test("other departments still see the whole office menu through the real module", async () => {
+  const app = setup({ employee: mt });
+  await app.open("");
+  assert.match(app.painted.html, /IT SUPPORT/);
+  assert.match(app.painted.html, /HR/);
+  assert.deepEqual(app.painted.went, []);
+  await app.open("module=hr");
+  assert.match(app.painted.html, /ระบบกำลังพัฒนา/);
+  assert.deepEqual(app.painted.went, []);
+});
+
+test("the IT SUPPORT system uses a wrench icon that already exists in the shared icon set, and the back link reads with a space", () => {
+  const hub = sections.SECTIONS.find((section) => section.key === "it-support");
+  assert.equal(hub.icon, "wrench");
+  assert.notEqual(globalThis.MNP_UI_ICONS.icon("wrench"), "");
+  assert.notEqual(globalThis.MNP_UI_ICONS.icon("wrench"), globalThis.MNP_UI_ICONS.icon("settings"));
+  assert.match(read("app.js"), /aria-label="ย้อนกลับไป \$\{escapeHtml\(backLabel\)\}"/);
+  assert.match(read("modules/office-sections.js"), /scripts\/tests\/office-menu\.test\.mjs/);
+  assert.doesNotMatch(read("modules/office-sections.js"), /office-sections\.test/);
 });
 
 test("a count that fails does not break the page, HR opens a static page, and an unknown module is not found", async () => {
