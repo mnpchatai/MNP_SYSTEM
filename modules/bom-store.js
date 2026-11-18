@@ -440,9 +440,12 @@
   // (ตรงกับ private.bom_can_read ที่ RPC ของ BOM ใช้ปฏิเสธข้อมูลจริง: คนอื่นได้ BOM_FORBIDDEN)
   const FLOW_DEPTS = Object.freeze(["PP", "RB", "GR", "PT", "BG", "PK", "ST", "WH"]);
   const isPlanner = (employee) => ["admin", "manager", "planner"].includes(roleOfEmployee(employee));
+  // ผู้ใช้สั่ง 2026-11-18: ยังไม่เปิดให้พนักงานจริง นอกโหมดทดสอบเห็นเฉพาะ admin จนกว่าผู้ใช้สั่งเปิด (เปลี่ยน REAL_STAFF_OPEN เป็น true ที่นี่และใน rubberflow-store.js)
+  const REAL_STAFF_OPEN = false;
   function usesBom(employee) {
     if (!employee) return false;
     if (employee.isSandbox === true) return true;
+    if (!REAL_STAFF_OPEN) return roleOfEmployee(employee) === "admin";
     return isPlanner(employee) || FLOW_DEPTS.includes(String(employee.department?.code ?? employee.department_code ?? "").toUpperCase());
   }
 

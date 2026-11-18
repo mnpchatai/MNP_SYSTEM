@@ -481,21 +481,20 @@ test("RubberFlow and BOM go live: real employees by role, every persona in test 
     "one menu entry per mode: the test group in test mode, the production group in real use");
   const employee = (dept, role = "staff", extra = {}) => ({ role: { code: role }, department: { code: dept }, ...extra });
   const allowed = (person) => env.module.navAllowed(person);
-  for (const dept of ["PP", "RB", "ST", "QA", "SR", "WH"]) assert.equal(allowed(employee(dept)), true, `real ${dept} staff use RubberFlow`);
-  for (const dept of ["GR", "PT", "BG", "PK", "MT", "IT"]) assert.equal(allowed(employee(dept)), false, `real ${dept} staff do not see RubberFlow`);
-  for (const role of ["admin", "assistant_factory_manager", "factory_manager", "general_manager"]) assert.equal(allowed(employee("MT", role)), true, `${role} is in the planner group`);
-  assert.equal(allowed(employee("MT", "department_manager")), false, "a department manager outside the production flow is not a planner (20261130010000)");
-  assert.equal(allowed(employee("PK", "department_manager")), true, "a PK department manager is a planner and sees RubberFlow");
+  // ผู้ใช้สั่ง 2026-11-18: ยังไม่เปิดให้พนักงานจริง นอกโหมดทดสอบเห็นเฉพาะ admin (REAL_STAFF_OPEN = false)
+  for (const dept of ["PP", "RB", "ST", "QA", "SR", "WH", "GR", "MT"]) assert.equal(allowed(employee(dept)), false, `real ${dept} staff do not see RubberFlow yet`);
+  for (const role of ["assistant_factory_manager", "factory_manager", "general_manager", "department_manager"]) assert.equal(allowed(employee("RB", role)), false, `a real ${role} does not see RubberFlow yet`);
+  assert.equal(allowed(employee("MT", "admin")), true, "the admin sees RubberFlow in real use");
   assert.equal(allowed(employee("MT", "staff", { isSandbox: true })), true, "every persona keeps the module in test mode");
   assert.equal(allowed(null), false, "nobody signed in");
+  const admin = load({ sandbox: false });
+  admin.context.state.employee = employee("MT", "admin");
+  await admin.render();
+  assert.equal(admin.log.notFound, 0, "the admin opens the page in real use");
   const rbStaff = load({ sandbox: false });
   rbStaff.context.state.employee = employee("RB");
   await rbStaff.render();
-  assert.equal(rbStaff.log.notFound, 0, "a real RB staff opens the page");
-  const mtStaff = load({ sandbox: false });
-  mtStaff.context.state.employee = employee("MT");
-  await mtStaff.render();
-  assert.equal(mtStaff.log.notFound, 1, "a real employee outside the stations gets not found for a typed URL");
+  assert.equal(rbStaff.log.notFound, 1, "a real RB staff gets not found for a typed URL until the owner opens it");
 });
 
 test("two-stage recipe: the recipe form and the mixing station have six stage inputs, the forms send stages, and no recipe or product name is shown", async () => {
