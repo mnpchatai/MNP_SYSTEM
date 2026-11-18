@@ -679,3 +679,13 @@ test("a missing recipe, material or record is named neutrally: no message prints
     message(() => A.receivePurchaseLine(d, { id: undefined }, ctx("store"))),
   ]) assert.doesNotMatch(text, /undefined|null|NaN/, text);
 });
+
+test("closing the rest of a purchase order line is refused with its own wording, not the receive wording (7g)", () => {
+  const d = fresh();
+  const close = (flags) => () => A.closePurchaseLine(d, { id: "PO-NONE", materialCode: "ZNO", reason: "ผู้ขายไม่มีของส่งเพิ่ม" }, remoteCtx(flags));
+  for (const flags of [{ planner: true, role: "planner" }, { planner: true, role: "manager" }, { rb: true }, { qa: true }, {}]) {
+    rejects(close(flags), /^บัญชีนี้ไม่มีสิทธิ์: ปิดยอดที่เหลือของใบสั่งซื้อได้โดยแผนกคลังวัตถุดิบ \(ST\) เท่านั้น$/);
+  }
+  // ST passes the rights check (and then fails on the missing order, which is a different message)
+  rejects(close({ st: true }), /ไม่พบใบสั่งซื้อ/);
+});

@@ -5,6 +5,8 @@
 (function (root) {
   const dialogs = (root.MNP_RUBBERFLOW_DIALOGS ??= {});
   const esc = (value) => root.escapeHtml(value);
+  // หน่วยของ WO/ล็อต/กล่อง: ป้ายไทยของ BOM สำหรับรหัสหน่วยของ BOM (rules.unitText) · ไม่มีกฎ = รหัสเดิม
+  const unitText = (code) => root.MNP_RUBBERFLOW_RULES?.unitText?.(code) ?? String(code ?? "");
 
   const COMPANY = Object.freeze({ name: "บริษัท รับเบอร์โฟลว์ อินดัสทรี จำกัด (ข้อมูลสาธิต)", address: "99/9 หมู่ 4 นิคมอุตสาหกรรมตัวอย่าง จ.ชลบุรี 20000" });
   const KIND_LABEL = Object.freeze({ order: "ใบสั่งผลิต", lot: "ล็อตงานระหว่างผลิต", box: "กล่องสินค้าสำเร็จรูป", material: "ล็อตวัตถุดิบ", requisition: "ใบเบิกวัตถุดิบ", transfer: "ใบส่งมอบ WIP", mold: "แม่พิมพ์/หัวดาย" });
@@ -23,10 +25,10 @@
       const material = data.materials.find((row) => row.code === it.materialCode);
       return ui.kv([["วัตถุดิบ", esc(material?.name ?? "-")], ["คงเหลือ", esc(`${fmtNum(it.qtyKg, 2)} kg`)], ["หมดอายุ", esc(fmtDate(it.expiry))], ["สถานะ", ui.status(lotState(it, now))], ["ที่เก็บ", esc(it.location)]]);
     }
-    if (hit.kind === "lot") return ui.kv([["ขั้นตอน", esc(STAGE_LABEL[it.stage])], ["ใบสั่งผลิต", ui.mono(it.orderId)], ["งานดี", esc(`${fmtNum(it.goodQty, 2)} ${it.uom}`)], ["QC", ui.status(it.qc)], ["บันทึกเมื่อ", esc(`${fmtDateTime(it.createdAt)} · ${it.operator ?? "-"}`)]]);
-    if (hit.kind === "box") return ui.kv([["สินค้า", esc(rules.orderLabel(it))], ["จำนวน", esc(`${fmtNum(it.qty)} ${it.uom}`)], ["เกรด", esc(it.grade)], ["สถานะ", ui.status(it.status)], ["ล็อตต้นทาง", ui.mono(it.lotId)]]);
-    if (hit.kind === "order") return ui.kv([["ลูกค้า", esc(it.customer)], ["สินค้า", esc(rules.orderLabel(it))], ["ความคืบหน้า", esc(`${fmtNum(it.producedQty)} / ${fmtNum(it.targetQty)} ${it.uom}`)], ["สถานะ", ui.status(it.status)]]);
-    if (hit.kind === "transfer") return ui.kv([["เส้นทาง", esc(`${STAGE_LABEL[it.from]} → ${STAGE_LABEL[it.to]}`)], ["ล็อต", ui.mono(it.lotId)], ["จำนวน", esc(`${it.qtySent} ${it.uom}`)], ["สถานะ", ui.status(it.status)]]);
+    if (hit.kind === "lot") return ui.kv([["ขั้นตอน", esc(STAGE_LABEL[it.stage])], ["ใบสั่งผลิต", ui.mono(it.orderId)], ["งานดี", esc(`${fmtNum(it.goodQty, 2)} ${unitText(it.uom)}`)], ["QC", ui.status(it.qc)], ["บันทึกเมื่อ", esc(`${fmtDateTime(it.createdAt)} · ${it.operator ?? "-"}`)]]);
+    if (hit.kind === "box") return ui.kv([["สินค้า", esc(rules.orderLabel(it))], ["จำนวน", esc(`${fmtNum(it.qty)} ${unitText(it.uom)}`)], ["เกรด", esc(it.grade)], ["สถานะ", ui.status(it.status)], ["ล็อตต้นทาง", ui.mono(it.lotId)]]);
+    if (hit.kind === "order") return ui.kv([["ลูกค้า", esc(it.customer)], ["สินค้า", esc(rules.orderLabel(it))], ["ความคืบหน้า", esc(`${fmtNum(it.producedQty)} / ${fmtNum(it.targetQty)} ${unitText(it.uom)}`)], ["สถานะ", ui.status(it.status)]]);
+    if (hit.kind === "transfer") return ui.kv([["เส้นทาง", esc(`${STAGE_LABEL[it.from]} → ${STAGE_LABEL[it.to]}`)], ["ล็อต", ui.mono(it.lotId)], ["จำนวน", esc(`${it.qtySent} ${unitText(it.uom)}`)], ["สถานะ", ui.status(it.status)]]);
     if (hit.kind === "requisition") return ui.kv([["ใบสั่งผลิต", ui.mono(it.orderId)], ["จำนวน", esc(`${it.batches} ชุดผสม · ${fmtNum(it.totalKg, 2)} kg`)], ["สถานะ", ui.status(it.status)]]);
     return ui.kv([["ชื่อ", esc(it.name)], ["รอบตั้งแต่ล้าง", esc(`${fmtNum(it.usageSinceClean)} / ${fmtNum(it.cleanEvery)}`)]]);
   }
@@ -113,12 +115,12 @@
     const it = hit.item;
     const order = data.orders.find((row) => row.id === (it.orderId || it.id));
     const rows = [];
-    if (kind === "lot") rows.push(["ขั้นตอน", STAGE_LABEL[it.stage]], ["จำนวนงานดี", `${fmtNum(it.goodQty, 2)} ${it.uom}`], ["QC", String(it.qc).toUpperCase()], ["ล็อตต้นทาง", derive.parentLotIds(data, it).join(", ") || (it.sources?.[0]?.id ?? "-")]);
-    if (kind === "box") rows.push(["สินค้า", rules.orderLabel(it)], ["จำนวน", `${fmtNum(it.qty)} ${it.uom}`], ["เกรด", it.grade], ["ล็อตตกแต่ง", it.lotId]);
+    if (kind === "lot") rows.push(["ขั้นตอน", STAGE_LABEL[it.stage]], ["จำนวนงานดี", `${fmtNum(it.goodQty, 2)} ${unitText(it.uom)}`], ["QC", String(it.qc).toUpperCase()], ["ล็อตต้นทาง", derive.parentLotIds(data, it).join(", ") || (it.sources?.[0]?.id ?? "-")]);
+    if (kind === "box") rows.push(["สินค้า", rules.orderLabel(it)], ["จำนวน", `${fmtNum(it.qty)} ${unitText(it.uom)}`], ["เกรด", it.grade], ["ล็อตตกแต่ง", it.lotId]);
     if (kind === "material") { const material = data.materials.find((row) => row.code === it.materialCode); rows.push(["วัตถุดิบ", material?.name ?? "-"], ["รับเข้า", `${fmtNum(it.initialKg, 2)} kg`], ["หมดอายุ", fmtDate(it.expiry)], ["ผู้ขาย", it.supplier]); }
     if (kind === "requisition") rows.push(["จำนวน", `${it.batches} ชุดผสม · ${fmtNum(it.totalKg, 2)} kg`], ["รายการ", `${it.lines.length} ล็อตวัตถุดิบ`]);
-    if (kind === "transfer") rows.push(["เส้นทาง", `${STAGE_LABEL[it.from]} → ${STAGE_LABEL[it.to]}`], ["ล็อต", it.lotId], ["จำนวนส่ง", `${it.qtySent} ${it.uom}`]);
-    if (kind === "order") rows.push(["ลูกค้า", it.customer], ["จำนวน", `${fmtNum(it.targetQty)} ${it.uom}`], ["กำหนดส่ง", fmtDate(it.dueDate)]);
+    if (kind === "transfer") rows.push(["เส้นทาง", `${STAGE_LABEL[it.from]} → ${STAGE_LABEL[it.to]}`], ["ล็อต", it.lotId], ["จำนวนส่ง", `${it.qtySent} ${unitText(it.uom)}`]);
+    if (kind === "order") rows.push(["ลูกค้า", it.customer], ["จำนวน", `${fmtNum(it.targetQty)} ${unitText(it.uom)}`], ["กำหนดส่ง", fmtDate(it.dueDate)]);
     const code = codeOf(hit);
     const body = `<div class="rf-tag rf-printable"><div class="rf-stack rf-tight">
         <div class="small">${esc(COMPANY.name)}</div><div class="rf-tag-code rf-mono">${esc(code)}</div>
@@ -151,7 +153,7 @@
     const body = `<div class="rf-doc rf-printable rf-stack">
         <div class="rf-row rf-between"><div><h2>CERTIFICATE OF ANALYSIS</h2><div class="small">${esc(COMPANY.name)}<br>${esc(COMPANY.address)}</div></div>${ui.barcode(lot.id, { height: 36 })}</div>
         ${ui.kv([["ลูกค้า", esc(`${order?.customer ?? "-"} (PO ${order?.customerPo || "-"})`)], ["สินค้า", esc(order?.productCode || "-")], ["สูตร", esc(`${recipe?.id ?? "-"} Rev.${recipe?.revision ?? "-"}`)], ["ล็อต", `${ui.mono(lot.id)} ${esc(`(ผลิต ${fmtDate(lot.createdAt)})`)}`],
-          ["จำนวน", esc(`${rules.fmtNum(lot.goodQty)} ${lot.uom} · ${boxes.length} กล่อง · เกรด ${lot.grade || "A"}`)], curing ? ["สภาวะอบ", esc(`${curing.params.temp}°C · ${curing.params.time} s · ${curing.params.pressure} bar (${curing.id})`)] : null])}
+          ["จำนวน", esc(`${rules.fmtNum(lot.goodQty)} ${unitText(lot.uom)} · ${boxes.length} กล่อง · เกรด ${lot.grade || "A"}`)], curing ? ["สภาวะอบ", esc(`${curing.params.temp}°C · ${curing.params.time} s · ${curing.params.pressure} bar (${curing.id})`)] : null])}
         ${ui.table(["รายการทดสอบ", "วิธีทดสอบ", "สเปก", "ผลทดสอบ", "ผล"], Object.entries(SPECS.lab).map(([key, spec]) => `<tr><td>${esc(spec.label)}</td><td>${esc(spec.method)}</td><td>${esc(specText(spec))}</td><td>${esc(latest[key] ? `${latest[key].value} ${spec.unit}` : "ไม่ได้ทดสอบ")}</td><td>${esc(latest[key] ? (latest[key].pass ? "PASS" : "FAIL") : "-")}</td></tr>`), { className: "rf-doc-table" })}
         <div><strong>${esc(`สรุปผล: ${allPass ? "ผ่านเกณฑ์ (ACCEPTED)" : "ยังไม่สามารถรับรองได้"}`)}</strong></div>
         ${allPass ? "" : ui.badge("bad", "มีรายการไม่ผ่านหรือล็อตยังถูกกักกัน")}

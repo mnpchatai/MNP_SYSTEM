@@ -66,6 +66,7 @@
     approve: (user) => Boolean(user.rbHead), // อนุมัติสูตร: หัวหน้า RB ขึ้นไป
     release: (user) => Boolean(user.planner || user.rbHead), // ปล่อยผลิต
     work: (user) => Boolean(user.planner || user.rb), // สถานะอื่นของใบสั่งผลิต
+    closePurchaseLine: (user) => Boolean(user.st || user.role === "admin"), // ปิดยอดที่เหลือของใบสั่งซื้อ: สิทธิ์เดียวกับรับเข้า (ST) ข้อความปฏิเสธของตัวเอง
     receiveMaterial: (user) => Boolean(user.st || user.role === "admin"), // รับวัตถุดิบเข้าคลัง (รวมรับเข้าตามใบสั่งซื้อ): แผนก ST เท่านั้น (admin ไว้แก้ปัญหา)
     holdMaterial: (user) => Boolean(user.planner || user.st || user.qa), // กักกัน/ปลดกักกันล็อตวัตถุดิบ: ST หรือ QA
     requisition: (user) => Boolean(user.planner || user.rb), // เบิกเคมี (สร้างใบเบิกและจ่ายทันที) / จ่ายใบเก่าที่ค้างชั่ง: แผนก RB
@@ -87,6 +88,7 @@
     release: "ปล่อยผลิตได้โดยฝ่ายวางแผน ผู้จัดการ หรือผู้จัดการแผนก RB",
     work: "เปลี่ยนสถานะใบสั่งผลิตได้โดยฝ่ายวางแผน ผู้จัดการ หรือพนักงานแผนก RB",
     receiveMaterial: "รับวัตถุดิบเข้าคลังได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
+    closePurchaseLine: "ปิดยอดที่เหลือของใบสั่งซื้อได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
     holdMaterial: "กักกัน/ปลดกักกันล็อตวัตถุดิบได้โดยแผนกคลังวัตถุดิบ (ST) หรือ QA",
     requisition: "เบิกเคมีได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
     station: "บันทึกการผลิตของสถานีได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
@@ -591,7 +593,7 @@
   const PO_REASON_MIN = 3;
   const PO_REASON_MAX = 300;
   function closePurchaseLine(d, { id, materialCode, reason }, ctx) {
-    needRight(ctx, "receiveMaterial");
+    needRight(ctx, "closePurchaseLine");
     const R = rules();
     const order = find(d.purchaseOrders ?? [], id, "ใบสั่งซื้อ");
     if (order.status !== "ordered") fail(`ใบสั่งซื้อ ${order.id} ${order.status === "received" ? "รับครบแล้ว" : "ถูกยกเลิกแล้ว"} ปิดยอดไม่ได้`);

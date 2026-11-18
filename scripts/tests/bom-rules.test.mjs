@@ -1179,3 +1179,63 @@ test("suggestFgName names a new product after its own pack and colour: the sourc
   assert.equal(rules.suggestFgName({ code: "DEMO-HL-24", name: "ฮูลาฮูป" }, "", ""), "ฮูลาฮูป", "no pack and no colour set: the source name as before");
   assert.equal(rules.fgLabel("", ""), "");
 });
+
+// ---------- รอบทดสอบซ้ำที่ 2 (N3 N4 W9 l) ----------
+test("readFlatRows reads a decimal comma like the paste dialog (N3): 0,02 and 1,5 are decimals, 1,250 and 1,234,567 stay thousands, and the row says it used a decimal comma", () => {
+  const head = ["ITEM", "CODE", "NAME", "รหัสแผนก", "แผนกผู้ผลิต", "จำนวนที่ใช้ต่อชุด", "หน่วยนับ"].join("\t");
+  const sheet = (qty) => [head, ["X-01", "X-01", "สินค้า X", "PK", "PK", "-", "ชุด"].join("\t"), ["X-01", "B01-001", "ของ 1", "ST", "PK-ST", qty, "ชิ้น"].join("\t")].join("\n");
+  const read = (text) => rules.readFlatRows(sheet(text))[1];
+  assert.equal(read("0,02").qty, 0.02, "was 2 (read as a thousands separator)");
+  assert.equal(read("1,5").qty, 1.5, "was 15");
+  assert.equal(read("12,25").qty, 12.25);
+  assert.equal(read("1,250").qty, 1250, "exactly three digits after the comma and a valid group: still thousands");
+  assert.equal(read("1,234,567").qty, 1234567);
+  assert.equal(read("12").qty, 12);
+  assert.equal(read("1.234,5").qty, 1234.5, "dot thousands with a decimal comma (the paste rule)");
+  assert.equal(read("0,500").qty, 0.5, "a thousands value never starts with 0, so 0,500 is a decimal");
+  for (const [text, value] of [["1 000", 0], ["50%", 0], ["1 5", 0]]) assert.equal(rules.sheetNumber(text).value, value, `${text}: spaces or % keep the old reading, no silent guess`);
+  assert.equal(read("-").qty, 0);
+  assert.equal(read("1,5").decimalComma, true);
+  assert.equal(read("1,250").decimalComma, false, "no note for a real thousands value");
+  assert.equal(read("12").decimalComma, false);
+  // the paste dialog and the import page share one rule
+  for (const text of ["0,02", "1,5", "1,250", "1,234,567", "12", "1.234,5"]) assert.equal(rules.sheetNumber(text).value, rules.parseBomPaste(`X\t${text}`).rows[0].qty, text);
+});
+
+test("fgReverseBlock: the delivered message only when the delivery is the real cause; stock taken by another order gets its own message (N4)", () => {
+  const A = { id: "PI-A", status: "completed", items: [{ fgCode: "FG-1", qty: 5 }] };
+  const mv = (id, orderId, kind, qty, extra = {}) => ({ id, orderId, fgCode: "FG-1", kind, qty, note: "", at: 1, by: "x", ...extra });
+  // another order took all 5 and nothing was delivered: the old message said "delivered 0 ... will leave -5"
+  const taken = { orders: [A, { id: "PI-B", status: "released", items: [{ fgCode: "FG-1", qty: 5 }] }], fgMoves: [mv("r1", "PI-A", "receive", 5), mv("t1", "PI-B", "transfer", 5, { fromOrderId: "PI-A" })] };
+  const takenMessage = rules.fgReverseBlock(taken, A, taken.fgMoves[0]);
+  assert.match(takenMessage, /ใบอื่นใช้สต็อก FG-1 ของใบนี้ไปแล้ว 5/);
+  assert.doesNotMatch(takenMessage, /ส่งมอบ FG-1 ไปแล้ว/);
+  // a real delivery that the receipt is needed for
+  const delivered = { orders: [A], fgMoves: [mv("r1", "PI-A", "receive", 5), mv("d1", "PI-A", "deliver", 4)] };
+  assert.match(rules.fgReverseBlock(delivered, A, delivered.fgMoves[0]), /ส่งมอบ FG-1 ไปแล้ว 4 ย้อนรับเข้านี้แล้วจะเหลือ 0 ให้ย้อนการส่งมอบก่อน/);
+  // the refusal itself is unchanged: with nothing delivered and nothing taken the reversal is allowed
+  const free = { orders: [A], fgMoves: [mv("r1", "PI-A", "receive", 5), mv("r2", "PI-A", "receive", 2)] };
+  assert.equal(rules.fgReverseBlock(free, A, free.fgMoves[1]), null);
+});
+
+test("suggestFgName drops the source's own pack and colour words when the new code has none (W9 leftover)", () => {
+  const source = { code: "DEMO-TP-01(P)-Y", name: "ตอปิโดยาง TP-01 แพ็กถุง ชุดสี Y (3 ชิ้น/ชุด)" };
+  assert.equal(rules.suggestFgName(source, "", ""), "ตอปิโดยาง TP-01 (3 ชิ้น/ชุด)", "no package and no colour set: the source's words about them are not copied");
+  assert.equal(rules.suggestFgName(source, "", "B"), "DEMO-TP-01 (ชุดสี B)", "an own label still replaces the description (unchanged)");
+  assert.equal(rules.suggestFgName({ code: "QA-RING-01(P)-A", name: "แพ็กถุง ชุดสี A" }, "", ""), "QA-RING-01", "nothing left after cutting: the base code");
+  assert.equal(rules.suggestFgName({ code: "DEMO-TP-01(P)-Y", name: "Torpedo toys  แพ็กถุง ชุดสี Y (3 pcs/set)" }, "", ""), "Torpedo toys (3 pcs/set)", "Latin letters (s) and spacing survive the cut");
+  assert.equal(rules.suggestFgName({ code: "DEMO-HL-24", name: "ฮูลาฮูป แพ็กเกจพิเศษ" }, "", ""), "ฮูลาฮูป แพ็กเกจพิเศษ", "a source without its own pack or colour keeps its name as written");
+});
+
+test("partShortAllOrders: stock enough for this order but short once the other drafts are counted (the release toast must not say it is enough) (l)", () => {
+  const stock = [{ itemCode: "P-1", qty: 100, safetyQty: 0 }];
+  const released = { id: "PI-R", status: "released" };
+  const jobs = [{ id: "J-R", orderId: "PI-R", dept: "ST", kind: "PURCHASED", itemCode: "P-1", name: "ของซื้อ 1", uom: "pcs", qtyPlanned: 30, qtyRequired: 30, qtyDone: 0, status: "queued" }];
+  const draftA = draftOf("PI-A", 1000, 70);
+  const draftB = draftOf("PI-B", 2000, 50);
+  const data = (orders) => ({ jobs, orders, stock, purchaseOrders: [] });
+  assert.equal(rules.partNeeds(data([released, draftA, draftB]), "PI-R").anyShort, false, "the released order alone is covered");
+  assert.deepEqual(rules.partShortAllOrders(data([released, draftA, draftB]), "PI-R"), [{ itemCode: "P-1", short: 50 }], "30 + 70 + 50 against 100");
+  assert.deepEqual(rules.partShortAllOrders(data([released]), "PI-R"), [], "no drafts, no extra shortage");
+  assert.deepEqual(rules.partShortAllOrders(data([released, draftA, draftB]), "PI-A"), [{ itemCode: "P-1", short: 50 }], "a draft counts the drafts calculated after it too: 70 + 50 against 100 - 30");
+});

@@ -98,6 +98,13 @@
 
   // สูตร/สินค้าที่แสดงบนจอ: สูตรไม่มีชื่อ ใช้รหัสสูตร (+ รหัสสินค้าถ้ามี) · ใบสั่งผลิตและกล่อง FG เก็บ recipeId + productCode ของสูตร
   const recipeLabel = (recipe) => (recipe ? (recipe.productCode ? `${recipe.id} · ${recipe.productCode}` : String(recipe.id)) : "-");
+  // หน่วยของ WO/ล็อต/กล่องที่แสดงให้ผู้ใช้: หน่วยของ RubberFlow เอง (m pcs kg) คงเดิม · รหัสหน่วยของ BOM (rod roll set ...) ใช้ป้ายไทยเดียวกับ BOM (เส้น ม้วน ชุด ...) · ไม่รู้จัก = แสดงรหัสเดิม
+  const RF_NATIVE_UOMS = new Set(["m", "pcs", "kg"]);
+  const unitText = (code) => {
+    const text = String(code ?? "");
+    if (!text || RF_NATIVE_UOMS.has(text)) return text;
+    try { const label = root.MNP_BOM_RULES?.uomLabel?.(text); return label && label !== "หน่วยอื่น" ? label : text; } catch { return text; }
+  };
   const orderLabel = (row) => (row ? (row.productCode ? `${row.recipeId} · ${row.productCode}` : String(row.recipeId ?? "-")) : "-");
 
   const totalPhr = (recipe) => recipe.items.reduce((sum, item) => sum + Number(item.phr), 0);
@@ -396,7 +403,7 @@
 
   const api = {
     DAY, HOUR, STAGES, STAGE_LABEL, NEXT_STAGE, PREV_STAGE, SHIFTS, MACHINES, SPECS, WEIGH_TOL_PCT, WEIGH_TOL_MIN_KG,
-    MIX_STAGES, itemStage, recipeStage, recipeLabel, orderLabel, inSpec, specText, specLimits, hasExtrusionStandard, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, OPEN_ORDER, orderRemainingKg, MAX_REQ_BATCHES, remainingBatches, nextRequisitionBatches, suggestOrderKg, chemicalNeeds, stats, cpkVerdict,
+    MIX_STAGES, itemStage, recipeStage, recipeLabel, orderLabel, unitText, inSpec, specText, specLimits, hasExtrusionStandard, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, OPEN_ORDER, orderRemainingKg, MAX_REQ_BATCHES, remainingBatches, nextRequisitionBatches, suggestOrderKg, chemicalNeeds, stats, cpkVerdict,
     fmtDate, fmtDateTime, fmtNum, fmtDuration, ymd, toInputDate, fromInputDate, niceScale,
     issuedKgOf, requisitionReturnState, returnableRequisitions, mixableRequisitions,
     poLineReceived, poLineReceipts, poLineClosed, poLineOpen, poLineDone, poTouched,

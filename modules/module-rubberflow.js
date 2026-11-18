@@ -507,6 +507,16 @@
           return partNeeds({ jobs: bomData.jobs, orders: bomData.orders, stock: bomData.stock ?? [], purchaseOrders: data.purchaseOrders ?? [] }, sourcePi);
         } catch { return null; }
       },
+      // ของซื้อของใบที่ขาดเมื่อรวมทุกใบ (rules.partShortAllOrders) · [] = ไม่ขาดหรือไม่มีข้อมูล
+      bomPartShortAll: (sourcePi) => {
+        try {
+          const bom = bomStore();
+          const shortAll = window.MNP_BOM_RULES?.partShortAllOrders;
+          if (!sourcePi || !bom || bom.status() !== "ready" || typeof shortAll !== "function") return [];
+          const bomData = bom.data();
+          return shortAll({ jobs: bomData.jobs, orders: bomData.orders, stock: bomData.stock ?? [], purchaseOrders: data.purchaseOrders ?? [] }, sourcePi);
+        } catch { return []; }
+      },
       bomItems: () => bomItems(),
       roleLabel: (role) => storeApi.ROLES[role]?.label ?? role,
     };
@@ -551,7 +561,10 @@
       const parts = ctx.bomPartNeeds(sourcePi);
       if (auto && !result.anyShort && !parts?.anyShort) {
         const enough = [result.rows.length ? "เคมี" : "", parts?.rows.length ? "ของซื้อ" : ""].filter(Boolean);
-        if (enough.length) showToast(enough.length === 2 ? "เคมีและของซื้อพอสำหรับใบนี้" : enough[0] === "เคมี" ? "เคมีพอสำหรับ WO ที่เปิด" : "ของซื้อพอสำหรับใบนี้");
+        // ของซื้อพอสำหรับใบนี้ แต่ขาดเมื่อรวมใบร่างอื่น (ขั้น 3 ของใบนับรวมแล้ว): บอกให้ตรงกัน ไม่บอกว่าพอ
+        const allShort = parts ? ctx.bomPartShortAll(sourcePi).length : 0;
+        if (allShort) showToast(`ของซื้อ ${allShort} รายการยังขาดเมื่อรวมทุกใบ · คลังวัตถุดิบ (ST) เป็นผู้สั่งซื้อ`);
+        else if (enough.length) showToast(enough.length === 2 ? "เคมีและของซื้อพอสำหรับใบนี้" : enough[0] === "เคมี" ? "เคมีพอสำหรับ WO ที่เปิด" : "ของซื้อพอสำหรับใบนี้");
         return { ok: true, opened: false, result, parts };
       }
       if (auto && !mayOrder) {

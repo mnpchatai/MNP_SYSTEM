@@ -4683,3 +4683,15 @@ test("through the module on the mock database: a surplus becomes stock, a draft 
   const fine = await env.mock.client.rpc("app_bom_save_master", { p_changes: { fgMoves: { upsert: [{ orderId: "PI-SRC", kind: "deliver", lines: [{ fgCode: "FG-TEST-01", qty: 5 }] }] } }, p_base_version: stored.version, p_action: "deliverFg" });
   assert.equal(fine.error, null, fine.error?.message);
 });
+
+test("the BOM 'create WO' dialog opened while RubberFlow is still loading shows only the loading line, not 'recipe not found / reset' (N10)", async () => {
+  const { scene } = await rfScene();
+  const admin = await asPersona(scene, "persona-1");
+  await saved(admin.store.run("saveItem", saveItemPayload("RB-ITEM", { kind: "RB", name: "เส้นยางทดสอบ", uom: "pcs", weightG: 500, rubber: { compound: "DM01", color: "BK" } })));
+  await saved(admin.store.run("linkCompound", { code: "DM01", recipeId: "RC-TEST-01" }));
+  const env = await asPersona(scene, "persona-rb");
+  // RubberFlow has not been loaded in this page yet: right after the page load
+  const built = env.context.MNP_BOM_DIALOGS.jobRubberflow(env.ctx("p=jobs&dept=RB"), { jobId: "JOB-RB1" });
+  assert.match(built.html, /กำลังโหลดข้อมูล RubberFlow รอสักครู่แล้วเปิดหน้าต่างนี้ใหม่/);
+  assert.doesNotMatch(built.html, /ไม่พบสูตร|รีเซ็ตข้อมูลสาธิต/, "the not-found line only appears once the data is loaded");
+});

@@ -3817,11 +3817,11 @@ test("the add-component dialog shows the item's unit in the quantity label, fill
   // ชิ้นที่มีในทะเบียน: หน่วยของมัน (P-BAG-01 เป็นกก.)
   code.value = "P-BAG-01";
   code.handlers.change();
-  assert.equal(label.firstChild.nodeValue, "ใช้ต่อ 1 ชิ้น (กก.)");
+  assert.equal(label.firstChild.nodeValue, "ใช้ต่อ 1 ชิ้น (กก.) ");
   // เส้นยางที่มีข้อมูลการตัด: ปริมาณถูกเติมจากการตัด (1/31) พร้อมบอกที่มา และไม่เตือน
   code.value = rod;
   code.handlers.change();
-  assert.equal(label.firstChild.nodeValue, "ใช้ต่อ 1 ชิ้น (เส้น)");
+  assert.equal(label.firstChild.nodeValue, "ใช้ต่อ 1 ชิ้น (เส้น) ");
   assert.equal(qty.value, String(Math.round((1 / 31) * 1e6) / 1e6));
   assert.equal(nodes["[data-add-cut-hint]"].textContent, "จากการตัด 0.0323");
   assert.equal(cut.hidden, true);
@@ -3849,10 +3849,10 @@ test("the add-component dialog shows the item's unit in the quantity label, fill
   nodes["[data-add-new]"].hidden = false;
   nodes["[data-add-uom]"].value = "box";
   nodes["[data-add-uom]"].handlers.change();
-  assert.equal(label.firstChild.nodeValue, "ใช้ต่อ 1 ชิ้น (กล่อง)");
+  assert.equal(label.firstChild.nodeValue, "ใช้ต่อ 1 ชิ้น (กล่อง) ");
   code.value = "";
   code.handlers.change();
-  assert.equal(label.firstChild.nodeValue, "ใช้ต่อ 1 ชิ้น");
+  assert.equal(label.firstChild.nodeValue, "ใช้ต่อ 1 ชิ้น ");
 });
 
 test("the edit-line dialog warns about a rod quantity that disagrees with its cutting data, when it opens and while typing, and has no warning for other items (W5)", async () => {
@@ -4048,4 +4048,127 @@ test("orders list: one heading (the page title), the open-new-order button sits 
   assert.match(html, /<header class="rf-pagehead">[\s\S]*data-rf-open="orderNew"[\s\S]*<\/header>/, "the planner's button is in the page head");
   assert.match(html, /คำนวณวัตถุดิบ/);
   assert.doesNotMatch(html, /ระเบิด BOM/);
+});
+
+// ---------- รอบทดสอบซ้ำที่ 2: ข้อความและหน้าตา (N6 N7 7b 7f 7i 7j 7k) ----------
+test("the add-component dialog says at once that a code is already a line of this parent and does not open the new-item fields (N7)", () => {
+  const env = load();
+  env.store.setUser("B03");
+  const parent = "SE-HL24-YE03-400-19-30";
+  const have = env.store.data().boms.find((bom) => bom.itemCode === parent && bom.status === "approved").lines[0].childCode;
+  const built = env.context.MNP_BOM_DIALOGS.lineAdd(env.ctx(), { parentCode: parent });
+  assert.match(built.html, /data-add-used role="status" hidden>/);
+  const nodes = { "[data-add-code]": fakeNode(), "[data-add-new]": fakeNode(), "[data-add-name]": fakeNode(), "[data-add-kind]": fakeNode("SUBPART"), "[data-add-uom]": fakeNode("pcs"), "[data-add-qty]": fakeNode(), "[data-add-cut-hint]": fakeNode(), "[data-add-cut]": callout(), "[data-add-used]": { ...fakeNode(), hidden: true } };
+  nodes['label[for="bom-add-qty"]'] = { firstChild: { nodeValue: "" } };
+  built.bind(fakeDialog(nodes));
+  nodes["[data-add-code]"].value = have;
+  nodes["[data-add-code]"].handlers.change();
+  assert.equal(nodes["[data-add-used]"].hidden, false);
+  assert.equal(nodes["[data-add-used]"].textContent, `${have} อยู่ใน BOM นี้แล้ว แก้ปริมาณที่บรรทัดนั้นแทน`);
+  assert.equal(nodes["[data-add-new]"].hidden, true, "no new-item fields for a code that is already here");
+  nodes["[data-add-code]"].value = "XP-T-NEW-2";
+  nodes["[data-add-code]"].handlers.change();
+  assert.equal(nodes["[data-add-used]"].hidden, true, "the line goes away for another code");
+  assert.equal(nodes["[data-add-new]"].hidden, false, "a code that is new still asks for the new-item fields");
+});
+
+test("editing an item of a released order that has issued chemicals tells ST will get the return job (N6), the draft cancel text has no job sentence (7k) and the order list counts only production jobs (7j)", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const dialogs = env.context.MNP_BOM_DIALOGS;
+  const rb = env.store.data().jobs.find((job) => job.orderId === "DEMO-26007" && job.dept === "RB");
+  const woId = rb.externalRef.woId;
+  const reqId = env.rf.store.data().requisitions.find((req) => req.orderId === woId).id;
+  const order = env.store.data().orders.find((entry) => entry.id === "DEMO-26007");
+  const edit = dialogs.orderItemEdit(env.ctx("p=orders&sel=DEMO-26007"), { orderId: order.id, fgCode: order.items[0].fgCode }).html;
+  clean(edit);
+  assert.ok(edit.includes(`WO ใน RubberFlow ที่จะถูกยกเลิกหรือหยุด: ${woId}`), "the work order that will be cancelled is named");
+  assert.ok(edit.includes(`เคมีที่เบิกไปแล้ว (${reqId}) คลังวัตถุดิบ (ST) จะได้งานรับคืนเข้าล็อตเดิม`), "the issued requisition is named");
+  // a linked WO with nothing issued yet is still named, without the chemicals part
+  const requisitions = env.rf.store.data().requisitions;
+  const kept = requisitions.filter((req) => req.orderId !== woId);
+  requisitions.splice(0, requisitions.length, ...kept);
+  const quietEdit = dialogs.orderItemEdit(env.ctx("p=orders&sel=DEMO-26007"), { orderId: order.id, fgCode: order.items[0].fgCode }).html;
+  assert.ok(quietEdit.includes(`WO ใน RubberFlow ที่จะถูกยกเลิกหรือหยุด: ${woId}`), "the WO that will be cancelled is named even with no chemicals issued");
+  assert.doesNotMatch(quietEdit, /เคมีที่เบิกไปแล้ว/);
+  // a draft has no jobs: no sentence about stopping them
+  const draft = env.store.data().orders.find((entry) => entry.status === "draft");
+  const draftDialog = dialogs.orderCancel(env.ctx(`p=orders&sel=${draft.id}`), { orderId: draft.id }).html;
+  assert.doesNotMatch(draftDialog, /หยุดและรายงานต่อไม่ได้/);
+  // the list: production jobs only (the buy-in issuing of ST is not counted by the closing rule)
+  const list = await env.render("p=orders");
+  const helpers = env.ctx().helpers;
+  for (const row of env.store.data().orders) {
+    const jobs = env.store.data().jobs.filter((job) => job.orderId === row.id && !helpers.isPartJob(job));
+    if (!jobs.length) continue;
+    assert.ok(list.includes(`งานเสร็จ ${jobs.filter((job) => job.status === "done").length}/${jobs.length}`), `${row.id} counts ${jobs.length} production jobs`);
+  }
+});
+
+test("the order page names the saved count by what it holds (7b) and the all-department work page has a WH chip when WH cards exist (7i)", async () => {
+  const env = load();
+  env.store.setUser("B03");
+  const data = env.store.data();
+  const draft = data.orders.find((entry) => entry.status === "draft");
+  // a count saved on a draft with only a product line (use from finished-goods stock) is not called a count
+  draft.stockCounts = { [draft.items[0].fgCode]: 1 };
+  draft.stockCountedAt = 1;
+  draft.stockCountedBy = "ทดสอบ";
+  let html = await env.render(`p=orders&sel=${draft.id}`);
+  assert.match(html, /ตั้งใช้จากสต็อกสินค้าสำเร็จรูปล่าสุด/);
+  assert.doesNotMatch(html, /นับคงคลังล่าสุด/);
+  draft.stockCounts = { "ZZ-OTHER": 2 };
+  html = await env.render(`p=orders&sel=${draft.id}`);
+  assert.match(html, /นับคงคลังล่าสุด/);
+  // WH cards: the chips (production departments + ST tasks + WH tasks) add up to the "to do" tab of all departments
+  env.store.setUser("B01"); // the administrator plans and also handles finished goods, like the warehouse head
+  const chipsOf = async () => {
+    const work = await env.render("p=work");
+    return { chips: [...work.matchAll(/>([A-Z]{2}) (\d+)</g)].map((match) => [match[1], Number(match[2])]), todo: Number(/>ต้องทำ (\d+)</.exec(work)?.[1]) };
+  };
+  const sum = ({ chips }) => chips.reduce((total, [, count]) => total + count, 0);
+  const before = await chipsOf();
+  assert.equal(sum(before), before.todo, "the chips add up to the to-do tab");
+  // PK has made a released order's products: the warehouse (WH) has them to receive, so a WH card and a WH chip appear
+  const pk = data.jobs.find((job) => job.dept === "PK" && job.kind === "FG" && ["released", "in_progress"].includes(data.orders.find((row) => row.id === job.orderId)?.status));
+  pk.qtyDone = pk.qtyPlanned;
+  pk.status = "done";
+  const after = await chipsOf();
+  assert.ok(after.chips.some(([code, count]) => code === "WH" && count > 0), `a WH chip with its cards: ${JSON.stringify(after.chips)}`);
+  assert.equal(sum(after), after.todo, "and the chips still add up to the to-do tab");
+});
+
+test("a RubberFlow work order made for a BOM job shows the unit in Thai (เส้น, not rod) next to a space-separated colour (7c)", () => {
+  const env = load();
+  env.store.setUser("B03");
+  const rfData = env.rf.store.data();
+  const wo = rfData.orders.find((order) => order.sourceJobId) ?? rfData.orders[0];
+  wo.uom = "rod";
+  wo.color = "BK01";
+  const html = env.context.MNP_RUBBERFLOW_PAGES.orders(env.context.MNP_RUBBERFLOW.context(new URLSearchParams("p=orders"))).html;
+  clean(html);
+  assert.match(html, /เส้น/);
+  assert.doesNotMatch(html, /[0-9] rod/);
+  assert.match(html, /สี BK01/);
+});
+
+test("choosing a base that has exactly one product in the registry pre-selects its package and colour set and a code with neither gets a name without the source's pack and colour words (W9)", () => {
+  const env = load();
+  env.store.setUser("B03");
+  const add = env.context.MNP_BOM_DIALOGS.orderItemAdd(env.ctx("p=orders"), { orderId: "DEMO-26002" });
+  const [base, pkg, set] = [fakeNode(""), fakeNode(""), fakeNode("")];
+  const [panel, name, confirm, submit] = [fakeNode(), fakeNode(), fakeNode(), fakeNode()];
+  const preview = { className: "", querySelector: () => ({ textContent: "" }) };
+  add.bind(fakeDialog({ "[data-bom-preview]": preview, "[data-new-fg]": panel, "[data-new-fg-warn]": callout(), "[data-new-fg-warn-text]": fakeNode(), "[data-new-fg-name]": name, "[data-new-fg-confirm]": confirm, "[data-orderadd-submit]": submit }, { "[data-bom-part]": [base, pkg, set] }));
+  assert.equal(env.store.data().items.filter((item) => item.kind === "FG" && item.code.startsWith("DEMO-TP-01")).length, 1, "the demo has one DEMO-TP-01 product");
+  base.value = "DEMO-TP-01";
+  base.handlers.change();
+  assert.deepEqual([pkg.value, set.value], ["P", "Y"], "the one existing product is the default: nothing new is proposed");
+  assert.equal(panel.hidden, true);
+  // the user can still ask for neither: the new product's name does not claim the source's pack and colour
+  pkg.value = "";
+  set.value = "";
+  set.handlers.change();
+  assert.equal(panel.hidden, false);
+  assert.equal(name.value, "ตอปิโดยาง TP-01 (3 ชิ้น/ชุด)");
 });

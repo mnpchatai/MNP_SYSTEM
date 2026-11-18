@@ -306,3 +306,16 @@ test("remainingBatches: the kilograms a WO needs (targetKg, else quantity ÷ yie
   assert.equal(rules.nextRequisitionBatches(order({ targetKg: 1000 }), recipe, [req(10), req(10)]), 0);
   assert.equal(rules.nextRequisitionBatches(order({ targetKg: 120 }), recipe, []), 3);
 });
+
+test("unitText shows the BOM's Thai label for a BOM unit code, keeps RubberFlow's own units and unknown codes as they are", () => {
+  const saved = globalThis.MNP_BOM_RULES;
+  try {
+    assert.equal(rules.unitText("rod"), "rod", "without the BOM rules the code is shown as it is");
+    globalThis.MNP_BOM_RULES = { uomLabel: (code) => ({ rod: "เส้น", roll: "ม้วน", set: "ชุด", m: "เมตร", other: "หน่วยอื่น" })[code] ?? code };
+    assert.deepEqual(["rod", "roll", "set"].map(rules.unitText), ["เส้น", "ม้วน", "ชุด"]);
+    assert.deepEqual(["m", "pcs", "kg"].map(rules.unitText), ["m", "pcs", "kg"], "RubberFlow's own units stay");
+    assert.deepEqual([rules.unitText("zzz"), rules.unitText(""), rules.unitText(undefined), rules.unitText("other")], ["zzz", "", "", "other"]);
+  } finally {
+    globalThis.MNP_BOM_RULES = saved;
+  }
+});

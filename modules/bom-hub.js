@@ -63,7 +63,7 @@
   // รายการเป็น data-popup ในกรอบเดียวกับช่อง ปิดด้วยกฎกลาง closePopup ของ app.js (แตะหรือย้ายโฟกัสออกนอกกรอบ) ไม่ปิดจาก blur จึงแตะเลือกบน iPhone ได้ · อยู่ในแนวเอกสาร (ไม่ลอยทับ) คีย์บอร์ดมือถือจึงไม่บัง
   const PICK_LIMIT = 30;
   const pickerHtml = (ctx, name, { id, value = "", placeholder = "", required = false, extra = "" }) => `<div class="bom-pick-box">${ctx.ui.input(name, { id, value, placeholder, required, extra: `role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="${attr(id)}-list" autocapitalize="characters" spellcheck="false" data-pick-input${extra ? ` ${extra}` : ""}` })}<div class="bom-pick-list" id="${attr(id)}-list" role="listbox" data-popup hidden></div></div>`;
-  // options = [{ value, label, meta? }] · onChange เรียกทุกครั้งที่ค่าในช่องเปลี่ยน (พิมพ์หรือเลือก)
+  // options = [{ value, label, meta? }] · onChange เรียกทุกครั้งที่ค่าในช่องเปลี่ยน (พิมพ์หรือเลือก) · emptyText เป็นข้อความหรือฟังก์ชัน (ค่าในช่อง) → ข้อความ เมื่อไม่มีรายการที่ตรง
   function bindPicker(box, options, { onChange = () => {}, emptyText = "ไม่พบในทะเบียน" } = {}) {
     const input = box?.querySelector?.("[data-pick-input]");
     const list = box?.querySelector?.("[data-popup]");
@@ -87,9 +87,11 @@
         found.push(option);
       }
       active = -1;
+      const emptyNote = typeof emptyText === "function" ? emptyText(input.value) : emptyText;
+      if (!found.length && !emptyNote) { list.innerHTML = ""; if (!list.hidden) close(); return; } // ไม่มีรายการและไม่มีข้อความ (ข้อความอยู่ที่อื่นในฟอร์มแล้ว) = ไม่เปิดกล่องว่าง
       list.innerHTML = found.length
         ? `${found.map((option, at) => `<button class="bom-pick-option" type="button" role="option" tabindex="-1" id="${attr(list.id)}-${at}" aria-selected="false" data-pick-value="${attr(option.value)}"><span class="rf-mono">${esc(option.value)}</span><span>${esc(option.label ?? "")}</span>${option.meta ? `<span class="small muted">${esc(option.meta)}</span>` : ""}</button>`).join("")}${more ? `<p class="small muted bom-pick-note">แสดง ${PICK_LIMIT} รายการแรก พิมพ์เพิ่มเพื่อกรอง</p>` : ""}`
-        : `<p class="small muted bom-pick-note">${esc(emptyText)}</p>`;
+        : `<p class="small muted bom-pick-note">${esc(emptyNote)}</p>`;
       list.hidden = false;
       input.setAttribute("aria-expanded", "true");
     };
@@ -401,6 +403,7 @@
     const body = `<form novalidate id="bom-add-form" data-rf-form="saveBomTree" data-rf-args="${attr(JSON.stringify({ lineAdd: true, code: parent.code }))}" data-rf-success="{result}">
       <p class="muted small">${esc(`เพิ่มใน ${parent.name}`)}</p>
       ${ui.field("รหัสส่วนประกอบ", pickerHtml(ctx, "addCode", { id: "bom-add-code", required: true, placeholder: "พิมพ์รหัสหรือชื่อเพื่อค้นหา", extra: "data-add-code" }), { required: true, id: "bom-add-code" })}
+      <p class="small bom-pick-note" data-add-used role="status" hidden></p>
       <div class="rf-grid rf-g2">${ui.field(`ใช้ต่อ 1 ${uomText(ctx, parent.uom)}`, ui.input("addQty", { type: "number", step: "any", min: "0.000001", required: true, id: "bom-add-qty", extra: "data-add-qty" }), { required: true, id: "bom-add-qty", hint: "<span data-add-cut-hint></span>" })}${ui.field("เผื่อเสีย (%)", ui.input("addScrap", { type: "number", step: "any", min: 0, value: "0" }))}</div>
       ${cutCallout("data-add-cut")}
       <fieldset class="bom-add-new" data-add-new hidden><legend>รหัสนี้ยังไม่มีในทะเบียน กรอกเพื่อสร้างชิ้นใหม่</legend>
@@ -416,6 +419,7 @@
       const codeInput = dialog.querySelector("[data-add-code]");
       const fresh = dialog.querySelector("[data-add-new]");
       if (!codeInput || !fresh) return;
+      const usedNote = dialog.querySelector("[data-add-used]");
       const nameInput = dialog.querySelector("[data-add-name]");
       const kindSelect = dialog.querySelector("[data-add-kind]");
       const uomSelect = dialog.querySelector("[data-add-uom]");
@@ -432,7 +436,7 @@
         const code = rules.canonicalCode(codeInput.value);
         const found = code ? ctx.helpers.itemOf(ctx.store.data(), code) : null;
         const unit = found ? found.uom : !fresh.hidden ? uomSelect?.value : "";
-        if (qtyLabel?.firstChild) qtyLabel.firstChild.nodeValue = `ใช้ต่อ 1 ${uomText(ctx, parent.uom)}${unit ? ` (${uomText(ctx, unit)})` : ""}`;
+        if (qtyLabel?.firstChild) qtyLabel.firstChild.nodeValue = `ใช้ต่อ 1 ${uomText(ctx, parent.uom)}${unit ? ` (${uomText(ctx, unit)})` : ""} `; // เว้นวรรคท้าย: ข้อความนี้ติดกับ "(จำเป็น)" ในโหนดเดียว
         const expected = found ? rules.rbCutQty(found, parent) : 0;
         if (qtyInput) {
           if (expected > 0 && (qtyInput.value === "" || qtyInput.value === qtyAuto)) { qtyAuto = String(Math.round(expected * 1e6) / 1e6); qtyInput.value = qtyAuto; }
@@ -444,14 +448,15 @@
       // ช่องของชิ้นใหม่ต้องกรอกเฉพาะตอนที่แสดง (ฟอร์มตรวจช่อง required ที่มองเห็น แล้วแจ้งเป็นภาษาไทยใต้ช่องเหมือนช่องอื่น)
       const sync = () => {
         const code = rules.canonicalCode(codeInput.value);
-        fresh.hidden = !code || Boolean(ctx.helpers.itemOf(ctx.store.data(), code));
+        fresh.hidden = !code || used.has(code) || Boolean(ctx.helpers.itemOf(ctx.store.data(), code));
+        if (usedNote) { usedNote.hidden = !used.has(code); usedNote.textContent = used.has(code) ? `${code} อยู่ใน BOM นี้แล้ว แก้ปริมาณที่บรรทัดนั้นแทน` : ""; }
         if (nameInput) nameInput.required = !fresh.hidden;
         const rod = !fresh.hidden && kindSelect?.value === "RB";
         if (rubberBox) rubberBox.hidden = !rod;
         if (compoundInput) compoundInput.required = rod;
         syncQty();
       };
-      bindPicker(codeInput.closest(".bom-pick-box"), itemOptions(ctx, choices), { onChange: sync, emptyText: "ไม่พบในทะเบียน บันทึกเป็นรหัสใหม่ได้โดยกรอกชื่อ ชนิด และหน่วยด้านล่าง" });
+      bindPicker(codeInput.closest(".bom-pick-box"), itemOptions(ctx, choices), { onChange: sync, emptyText: (typed) => (used.has(rules.canonicalCode(typed)) ? "" : "ไม่พบในทะเบียน บันทึกเป็นรหัสใหม่ได้โดยกรอกชื่อ ชนิด และหน่วยด้านล่าง") });
       bindPicker(compoundInput?.closest(".bom-pick-box"), compoundOptions(ctx), { emptyText: "ยังไม่มีสูตรยางรหัสนี้ บันทึกแล้วระบบเพิ่มในรายการสูตรยางให้" });
       codeInput.addEventListener("change", sync);
       uomSelect?.addEventListener("change", () => { uomTouched = true; syncQty(); });
@@ -1228,7 +1233,7 @@
     const own = rules.DEPTS.includes(user?.dept) ? user.dept : null;
     const depts = rules.FLOW_DEPTS.filter((dept) => rules.DEPTS.includes(dept));
     const handlesFg = ctx.helpers.canHandleFg(user);
-    const dept = planner ? ([...depts, "ALL"].includes(params.get("dept")) ? params.get("dept") : "ALL") : own ?? (handlesFg ? "WH" : null);
+    const dept = planner ? ([...depts, "WH", "ALL"].includes(params.get("dept")) ? params.get("dept") : "ALL") : own ?? (handlesFg ? "WH" : null);
     const show = params.get("st") === "done" ? "done" : "open";
     const orderId = String(params.get("order") ?? "").toUpperCase();
     const orderOf = (id) => data.orders.find((entry) => entry.id === id);
@@ -1254,7 +1259,10 @@
     const { data, ui, rules, user, params } = ctx;
     const { planner, depts, dept, show, orderId, orderOf, live, toDo, open, done, cardCount, tasks } = workBoard(ctx, params);
     const keep = (extra) => ctx.url("work", { dept: planner && dept !== "ALL" ? dept : null, order: orderId || null, ...extra });
-    const deptTabs = planner ? ui.tabs([{ id: "ALL", label: "ทุกแผนก" }, ...depts.map((code) => ({ id: code, label: `${code} ${cardCount(data.jobs.filter((job) => job.dept === code && toDo(job) && live(job)))}` }))], dept, (id) => ctx.url("work", { dept: id === "ALL" ? null : id, st: show === "done" ? "done" : null, order: orderId || null })) : "";
+    // ตัวเลขบนปุ่มแผนก = การ์ดที่แท็บ "ต้องทำ" ของแผนกนั้นแสดง (งานผลิต + งานของคลัง) จึงรวมกันได้เท่ากับ "ทุกแผนก" · คลังสินค้า (WH) ไม่มีงานผลิต มีปุ่มเมื่อมีการ์ดของคลังหรือเลือกอยู่
+    const whCount = planner ? fgTasks(ctx).length : 0;
+    const stTasks = planner ? storeTasks(ctx).length : 0;
+    const deptTabs = planner ? ui.tabs([{ id: "ALL", label: "ทุกแผนก" }, ...depts.map((code) => ({ id: code, label: `${code} ${cardCount(data.jobs.filter((job) => job.dept === code && toDo(job) && live(job))) + (code === "ST" ? stTasks : 0)}` })), ...(whCount || dept === "WH" ? [{ id: "WH", label: `WH ${whCount}` }] : [])], dept, (id) => ctx.url("work", { dept: id === "ALL" ? null : id, st: show === "done" ? "done" : null, order: orderId || null })) : "";
     const showTabs = ui.tabs([{ id: "open", label: `ต้องทำ ${cardCount(open) + tasks.length}` }, { id: "done", label: `เสร็จแล้ว ${cardCount(done)}` }], show, (id) => keep({ st: id === "done" ? "done" : null }));
     const rank = (job) => (job.status === "in_progress" ? 0 : job.status === "hold" ? 2 : 1);
     const list = (show === "done" ? done : open).slice().sort((a, b) => rank(a) - rank(b) || a.dueAt - b.dueAt || a.id.localeCompare(b.id));
