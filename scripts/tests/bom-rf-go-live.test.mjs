@@ -21,9 +21,17 @@ const material = (code, name) => ({ code, name, category: "โพลิเมอ
 test("BOM is for the planner group and the production departments in real use, and for every persona in test mode", () => {
   for (const dept of ["PP", "RB", "GR", "PT", "BG", "PK", "ST", "WH"]) assert.equal(bomStore.usesBom(employee(dept)), true, `real ${dept} staff use BOM`);
   for (const dept of ["QA", "SR", "MT", "IT", "ID", ""]) assert.equal(bomStore.usesBom(employee(dept)), false, `real ${dept || "no-department"} staff do not see BOM`);
-  for (const role of ["admin", "department_manager", "assistant_factory_manager", "factory_manager", "general_manager"]) {
-    assert.equal(bomStore.usesBom(employee("MT", role)), true, `${role} is in the planner group (private.bom_can_edit)`);
+  for (const role of ["admin", "assistant_factory_manager", "factory_manager", "general_manager"]) {
+    assert.equal(bomStore.usesBom(employee("MT", role)), true, `${role} is in the planner group whatever the department (private.bom_can_edit)`);
   }
+  for (const dept of ["HR", "IT", "MT", "ACC", "ID"]) {
+    assert.equal(bomStore.isPlanner(employee(dept, "department_manager")), false, `a ${dept} department manager is not a planner`);
+    assert.equal(bomStore.usesBom(employee(dept, "department_manager")), false, `a ${dept} department manager does not see BOM`);
+  }
+  for (const dept of bomStore.PRODUCTION_DEPTS) assert.equal(bomStore.isPlanner(employee(dept, "department_manager")), true, `a ${dept} department manager is a planner`);
+  assert.equal(bomStore.usesBom(employee("QA", "department_manager")), true, "a QA department manager (planner group) uses BOM");
+  assert.equal(bomStore.isPlanner(employee("RB", "assistant_department_manager")), false, "an assistant department manager is not a planner (as before)");
+  assert.equal(bomStore.personaUser(employee("MT", "department_manager")).role, "viewer", "an MT department manager gets no BOM role");
   assert.equal(bomStore.usesBom(employee("QA", "staff", { isSandbox: true })), true, "every persona keeps BOM in test mode");
   assert.equal(bomStore.usesBom(null), false);
   assert.equal(bomStore.personaUser(employee("RB")).role, "rb", "a real RB employee gets the RB role, like the persona");
@@ -33,6 +41,10 @@ test("RubberFlow is for its station roles in real use, and for every persona in 
   for (const dept of ["PP", "RB", "ST", "QA", "SR", "WH"]) assert.equal(rfStore.usesRubberFlow(employee(dept)), true, `real ${dept} staff use RubberFlow`);
   for (const dept of ["GR", "PT", "BG", "PK", "MT", ""]) assert.equal(rfStore.usesRubberFlow(employee(dept)), false, `real ${dept || "no-department"} staff do not see RubberFlow`);
   assert.equal(rfStore.usesRubberFlow(employee("MT", "factory_manager")), true, "a factory manager is in the planner group");
+  assert.equal(rfStore.usesRubberFlow(employee("HR", "department_manager")), false, "an HR department manager does not see RubberFlow");
+  assert.equal(rfStore.personaUser(employee("IT", "department_manager")).planner, false, "an IT department manager is not a RubberFlow planner");
+  assert.equal(rfStore.usesRubberFlow(employee("GR", "department_manager")), true, "a GR department manager is a planner and sees RubberFlow");
+  assert.equal(rfStore.personaUser(employee("GR", "department_manager")).planner, true);
   assert.equal(rfStore.usesRubberFlow(employee("GR", "staff", { isSandbox: true })), true, "every persona keeps RubberFlow in test mode");
   assert.equal(rfStore.usesRubberFlow(undefined), false);
   const head = rfStore.personaUser(employee("RB", "department_manager"));

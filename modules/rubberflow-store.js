@@ -257,10 +257,12 @@
   const CONFLICT_CODES = Object.freeze(["RF_STALE", "RF_INVALID_PAYLOAD", "RF_CONFLICT", "RF_INVALID_TRANSITION", "RF_INVALID_SOURCE_JOB", "RF_REVISION_ORDER", "RF_RESET", "RF_INSUFFICIENT_STOCK", "RF_LOT_UNAVAILABLE"]);
 
   // พนักงานที่ล็อกอิน (state.employee ของ app.js: บัญชีทดสอบในโหมดทดสอบ หรือพนักงานจริง) → ผู้ใช้ของ RubberFlow
-  // planner = กลุ่มวางแผน (admin · ผู้จัดการแผนกขึ้นไป · แผนก PP) ทำได้ทุกอย่างของข้อมูลหลัก · rb = สมาชิกแผนก RB ทุกตำแหน่ง · rbHead = หัวหน้า RB ขึ้นไป (อนุมัติสูตร ปล่อยผลิต)
-  // role ใช้เลือกเมนูเท่านั้น: admin → admin · ผู้จัดการขึ้นไป → manager · PP → planner · RB → rb · ST → store · QA → qc · SR → gatekeeper · WH → warehouse · อื่นๆ → ดูอย่างเดียว
+  // planner = กลุ่มวางแผน (admin · ผู้ช่วยผู้จัดการโรงงานขึ้นไป · ผู้จัดการแผนกในสายผลิต · แผนก PP ตรงกับ private.bom_can_edit) ทำได้ทุกอย่างของข้อมูลหลัก · rb = สมาชิกแผนก RB ทุกตำแหน่ง · rbHead = หัวหน้า RB ขึ้นไป (อนุมัติสูตร ปล่อยผลิต)
+  // role ใช้เลือกเมนูเท่านั้น: admin → admin · กลุ่มวางแผนตามตำแหน่ง → manager · PP → planner · RB → rb · ST → store · QA → qc · SR → gatekeeper · WH → warehouse · อื่นๆ → ดูอย่างเดียว
   // st / sr / wh / qa = สมาชิกแผนกนั้น (ทุกตำแหน่ง) ใช้ซ่อน/แสดงปุ่ม · สิทธิ์จริงอยู่ที่ฐานข้อมูล
-  const PLANNER_ROLE_CODES = Object.freeze(["department_manager", "assistant_factory_manager", "factory_manager", "general_manager"]);
+  const PLANNER_ROLE_CODES = Object.freeze(["assistant_factory_manager", "factory_manager", "general_manager"]);
+  // ผู้จัดการแผนก (department_manager) อยู่ในกลุ่มวางแผนเฉพาะแผนกในสายผลิต (private.bom_production_depts ของ 20261130010000)
+  const PRODUCTION_DEPTS = Object.freeze(["RB", "GR", "PT", "BG", "PK", "ST", "WH", "QA", "SR"]);
   const RB_HEAD_DEPT_ROLE_CODES = Object.freeze(["department_manager", "assistant_department_manager"]);
   const RB_HEAD_ANY_ROLE_CODES = Object.freeze(["assistant_factory_manager", "factory_manager", "general_manager", "admin"]);
   const DEPT_ROLES = Object.freeze({ PP: "planner", RB: "rb", ST: "store", QA: "qc", SR: "gatekeeper", WH: "warehouse" });
@@ -268,19 +270,22 @@
     if (!employee) return null;
     const roleCode = String(employee.role?.code ?? employee.role_code ?? "");
     const dept = String(employee.department?.code ?? employee.department_code ?? "").toUpperCase();
-    const planner = roleCode === "admin" || PLANNER_ROLE_CODES.includes(roleCode) || dept === "PP";
+    const plannerRole = PLANNER_ROLE_CODES.includes(roleCode) || (roleCode === "department_manager" && PRODUCTION_DEPTS.includes(dept));
+    const planner = roleCode === "admin" || plannerRole || dept === "PP";
     const rb = dept === "RB";
     const rbHead = (rb && RB_HEAD_DEPT_ROLE_CODES.includes(roleCode)) || RB_HEAD_ANY_ROLE_CODES.includes(roleCode);
-    const role = roleCode === "admin" ? "admin" : PLANNER_ROLE_CODES.includes(roleCode) ? "manager" : DEPT_ROLES[dept] ?? "viewer";
+    const role = roleCode === "admin" ? "admin" : plannerRole ? "manager" : DEPT_ROLES[dept] ?? "viewer";
     const name = `${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim() || employee.display_name || employee.employee_no || "ผู้ใช้ทดสอบ";
     return { id: String(employee.id ?? employee.employee_no ?? name), role, dept, name, planner, rb, rbHead, st: dept === "ST", sr: dept === "SR", wh: dept === "WH", qa: dept === "QA", db: true };
   }
   // ใครเห็นเมนูและหน้า RubberFlow (UX ล้วน สิทธิ์จริงตัดสินที่ฐานข้อมูล 20261130010000): โหมดทดสอบ = ทุกบัญชีทดสอบเหมือนเดิม ·
-  // ใช้งานจริง = บทบาทของสถานีตาม personaUser (กลุ่มวางแผน · RB · ST · QA · SR · WH) แผนกอื่นที่ได้ "ดูอย่างเดียว" ไม่เห็น
+  // ใช้งานจริง = กลุ่มวางแผน หรือพนักงานแผนก RB ST QA SR WH (ตรงกับ private.rf_can_read ที่ RPC ของ RubberFlow ใช้ปฏิเสธข้อมูลจริง: คนอื่นได้ RF_FORBIDDEN)
+  const STATION_DEPTS = Object.freeze(["RB", "ST", "QA", "SR", "WH"]);
   function usesRubberFlow(employee) {
     if (!employee) return false;
     if (employee.isSandbox === true) return true;
-    return personaUser(employee).role !== "viewer";
+    const user = personaUser(employee);
+    return user.planner || STATION_DEPTS.includes(user.dept);
   }
 
   function normalizeSnapshot(value) {

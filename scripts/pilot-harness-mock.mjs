@@ -451,7 +451,9 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
   // หลุมฝังศพจำเป็นข้อมูล { list, base, code, version } · งานใช้ code เป็นเลขงาน (ส่งกลับเป็น { id })
   const graveKey = (row) => (row.list === "jobs" ? row.code : `${row.base}|${row.code}`);
   const targetKey = (list, target) => (list === "jobs" ? String(target?.id ?? "") : `${target?.base}|${target?.code}`);
-  const BOM_MANAGER_ROLES = ["department_manager", "assistant_factory_manager", "factory_manager", "general_manager"];
+  // กลุ่มวางแผน (private.bom_can_edit ของ 20261130010000): ผู้ช่วยผู้จัดการโรงงานขึ้นไปทุกแผนก · ผู้จัดการแผนกเฉพาะแผนกในสายผลิต
+  const BOM_MANAGER_ROLES = ["assistant_factory_manager", "factory_manager", "general_manager"];
+  const BOM_PRODUCTION_DEPTS = ["RB", "GR", "PT", "BG", "PK", "ST", "WH", "QA", "SR"];
   const ORDER_STATUSES = ["draft", "released", "in_progress", "completed", "cancelled"];
   const JOB_STATUSES = ["queued", "in_progress", "done", "hold"];
   const JOB_DEPTS = ["PK", "GR", "RB", "PT", "BG", "ST"];
@@ -531,16 +533,22 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     Object.assign(ME, { first_name, last_name, job_title, department_id: department.id, role_id: roles.find((row) => row.code === (roleCode ?? "staff"))?.id ?? "role-staff" });
   }
   // ผู้ทำรายการของ BOM / RubberFlow (private.bom_actor / rf_actor): โหมดทดสอบ = บัญชีทดสอบที่เลือก · นอกโหมดทดสอบ = ผู้ใช้จำลองเอง
-  // นอกโหมดทดสอบผู้ใช้จำลองต้อง active ไม่เช่นนั้น code (BOM_FORBIDDEN / RF_FORBIDDEN) เหมือนฐานข้อมูล
+  // นอกโหมดทดสอบผู้ใช้จำลองต้อง active และอยู่ในกลุ่มที่ใช้ข้อมูลของโมดูลนั้นได้ ไม่เช่นนั้น code (BOM_FORBIDDEN / RF_FORBIDDEN) เหมือน private.bom_reader / rf_reader
   const requireActor = (code) => {
     if (!sandbox && ME.is_active === false) fail(code);
-    return bomActor();
+    const actor = bomActor();
+    if (!sandbox && !(code === "RF_FORBIDDEN" ? rfCanRead(actor) : bomCanRead(actor))) fail(code);
+    return actor;
   };
   const bomActor = () => {
     const persona = sandbox ? currentPersona() : expand("employees", ME);
     return { name: `${persona.first_name ?? ""} ${persona.last_name ?? ""}`.trim(), role: persona.role?.code ?? "", dept: String(persona.department?.code ?? "").toUpperCase() };
   };
-  const bomIsPlanner = (actor) => actor.role === "admin" || BOM_MANAGER_ROLES.includes(actor.role) || actor.dept === "PP";
+  const bomIsPlanner = (actor) => actor.role === "admin" || BOM_MANAGER_ROLES.includes(actor.role) || actor.dept === "PP"
+    || (actor.role === "department_manager" && BOM_PRODUCTION_DEPTS.includes(actor.dept));
+  // ใครใช้ข้อมูลจริงได้ (private.bom_can_read / rf_can_read): กลุ่มวางแผน หรือพนักงานแผนกของโมดูล · โหมดทดสอบทุก persona อ่านได้เหมือนเดิม
+  const bomCanRead = (actor) => bomIsPlanner(actor) || ["RB", "GR", "PT", "BG", "PK", "ST", "WH"].includes(actor.dept);
+  const rfCanRead = (actor) => bomIsPlanner(actor) || ["RB", "ST", "QA", "SR", "WH"].includes(actor.dept);
   const bomCanon = (value) => (Array.isArray(value) ? `[${value.map(bomCanon).join(",")}]` : value && typeof value === "object" ? `{${Object.keys(value).sort().filter((key) => value[key] !== undefined).map((key) => `${JSON.stringify(key)}:${bomCanon(value[key])}`).join(",")}}` : JSON.stringify(value) ?? "null");
   const bomWithout = (record, keys) => Object.fromEntries(Object.entries(record ?? {}).filter(([key]) => !keys.includes(key)));
   // ฟิลด์ที่ฐานข้อมูลจริงเป็นเจ้าของ (เวลาที่สร้าง/แก้/อนุมัติ/ถูกแทนที่ และชื่อผู้บันทึก): ประทับใหม่ทับค่าที่ client ส่งมา ไม่เก็บระเบียนของ client ตรงๆ

@@ -1661,7 +1661,7 @@ test("the mock database enforces the contract: test mode, writer permission, per
   assert.deepEqual((await since(7)).data.changes.colorSets.delete, [], "creating the key again drops its tombstone");
   assert.equal((await client.rpc("app_bom_master")).data.colorSets.length, 1);
 
-  // สิทธิ์: ผู้เขียนคือ admin ผู้จัดการแผนกขึ้นไป หรือแผนก PP
+  // สิทธิ์: ผู้เขียนคือกลุ่มวางแผน (admin · ผู้ช่วยผู้จัดการโรงงานขึ้นไป · ผู้จัดการแผนกในสายผลิต · แผนก PP ตาม 20261130010000)
   const me = db.employees[0];
   const version = (await client.rpc("app_bom_master")).data.version;
   me.role_id = "role-staff";
@@ -1670,17 +1670,24 @@ test("the mock database enforces the contract: test mode, writer permission, per
   assert.equal((await client.rpc("app_bom_master")).error, null, "everyone signed in reads");
   assert.equal((await since(0)).error, null, "and reads the delta");
   me.role_id = "role-dm";
-  assert.equal((await write("P-W2")).error, null, "a department manager writes");
+  assert.equal((await write("P-W2")).error.code, "BOM_FORBIDDEN", "a department manager outside the production flow (MT) is not a planner");
+  const mtDept = me.department_id;
+  me.department_id = "dep-rb";
+  assert.equal((await write("P-W2")).error, null, "a department manager of a production department (RB) writes");
+  me.department_id = mtDept;
+  me.role_id = "role-fm";
+  assert.equal((await write("P-W4")).error, null, "a factory manager writes whatever the department");
   me.role_id = "role-staff";
   db.departments.push({ id: "dep-pp", code: "PP", name_th: "วางแผน", is_active: true, is_repair_site: false });
   me.department_id = "dep-pp";
   assert.equal((await write("P-W3")).error, null, "the planning department writes");
 
   // นอกโหมดทดสอบ (ใช้งานจริง 20261130010000): ผู้ใช้จำลองเองเป็นผู้ทำรายการ ข้อมูลของตัวเองแยกจากโหมดทดสอบ
-  const outside = createMockSupabase({ now: () => NOW });
+  const outside = createMockSupabase({ real: "pp", now: () => NOW });
   assert.deepEqual((await outside.client.rpc("app_bom_master")).data.items, [], "real mode reads its own (empty) data");
   assert.equal((await outside.client.rpc("app_bom_master_since", { p_version: 0 })).error, null);
-  assert.equal((await outside.client.rpc("app_bom_save_master", { p_changes: {}, p_base_version: 0, p_action: "saveItem" })).error, null, "a real department manager (planner group) may save");
+  assert.equal((await outside.client.rpc("app_bom_save_master", { p_changes: {}, p_base_version: 0, p_action: "saveItem" })).error, null, "a real PP planner may save");
+  assert.equal((await createMockSupabase({ now: () => NOW }).client.rpc("app_bom_master")).error.code, "BOM_FORBIDDEN", "a real MT department manager cannot read BOM");
   outside.db.employees[0].is_active = false;
   assert.equal((await outside.client.rpc("app_bom_master")).error.code, "BOM_FORBIDDEN", "an inactive employee is refused");
 });
@@ -1861,7 +1868,7 @@ test("the mock database stores one audit row per save (the server's own action a
   assert.equal((await save([{ action: "a", detail: "d".repeat(301) }], 2)).error.code, "BOM_INVALID_AUDIT");
   assert.equal((await save(undefined, 2)).error, null, "the 3-argument call still works");
   assert.equal((await client.rpc("app_bom_audit", {})).data.length, 3, "a refused save writes no audit (the 3-argument call wrote its own row)");
-  assert.deepEqual((await createMockSupabase({ now: () => NOW }).client.rpc("app_bom_audit", {})).data, [], "real mode has its own audit, without the test-mode rows");
+  assert.deepEqual((await createMockSupabase({ real: "rb", now: () => NOW }).client.rpc("app_bom_audit", {})).data, [], "real mode has its own audit, without the test-mode rows");
 });
 
 test("the mock purge empties every BOM list, keeps the counter, changes the epoch and adds an audit row; only the real admin in the test mode may call it", async () => {

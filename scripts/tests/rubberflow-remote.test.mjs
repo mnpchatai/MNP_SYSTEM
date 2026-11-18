@@ -555,7 +555,8 @@ test("the audit page reads app_rf_audit: the database's own line first (action a
   assert.equal(failedAudit.store.audit().status, "error");
   assert.match(failedAudit.store.audit().error.message, /โหลดบันทึกการใช้งานไม่สำเร็จ/);
   // นอกโหมดทดสอบ (ใช้งานจริง 20261130010000): ทุก RPC ทำงานกับข้อมูลจริงของผู้ใช้จำลองเอง · ผู้ใช้ที่ไม่ active ถูกปฏิเสธ (RF_FORBIDDEN)
-  const outside = createMockSupabase({ now: () => NOW });
+  const outside = createMockSupabase({ real: "rb", now: () => NOW });
+  assert.equal((await createMockSupabase({ now: () => NOW }).client.rpc("app_rf_master")).error.code, "RF_FORBIDDEN", "a real MT department manager cannot read RubberFlow");
   for (const name of ["app_rf_master", "app_rf_master_since", "app_rf_save", "app_rf_audit"]) {
     assert.equal((await outside.client.rpc(name, { p_version: 0, p_changes: {}, p_base_version: 0, p_action: "saveMaterial" })).error, null, name);
   }

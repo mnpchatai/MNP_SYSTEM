@@ -10,8 +10,18 @@ select no_plan();
 -- 1. โครงสร้างและสิทธิ์ ------------------------------------------------------------------------------
 select ok(to_regprocedure('private.bom_test_mode()') is not null, 'the mode helper exists');
 select ok((select bool_and(p.prosecdef and p.proconfig @> array['search_path=""']) from pg_proc p
-           where p.oid in ('private.bom_test_mode()'::regprocedure, 'private.bom_actor()'::regprocedure, 'private.rf_actor()'::regprocedure)),
-  'the mode helper and both actors are security definer with an empty search_path');
+           where p.oid in ('private.bom_test_mode()'::regprocedure, 'private.bom_actor()'::regprocedure, 'private.rf_actor()'::regprocedure,
+                           'private.bom_reader()'::regprocedure, 'private.rf_reader()'::regprocedure, 'private.bom_can_edit(public.employees)'::regprocedure,
+                           'private.bom_can_read(public.employees)'::regprocedure, 'private.rf_can_read(public.employees)'::regprocedure)),
+  'the mode helper, both actors, both readers and the planner / read rules are security definer with an empty search_path');
+select ok(not exists (select 1 from pg_proc p where p.oid in ('public.app_bom_master()'::regprocedure, 'public.app_bom_master_since(bigint)'::regprocedure,
+                        'public.app_bom_audit(integer)'::regprocedure, 'public.app_bom_save_master(jsonb,bigint,text,jsonb,text)'::regprocedure)
+                      and p.prosrc not like '%private.bom_reader()%'),
+  'every public BOM RPC goes through the reader (read rule of real data)');
+select ok(not exists (select 1 from pg_proc p where p.oid in ('public.app_rf_master()'::regprocedure, 'public.app_rf_master_since(bigint)'::regprocedure,
+                        'public.app_rf_audit(integer)'::regprocedure, 'public.app_rf_save(jsonb,bigint,text,jsonb,text)'::regprocedure)
+                      and p.prosrc not like '%private.rf_reader()%'),
+  'every public RubberFlow RPC goes through the reader');
 select ok(not exists (
     select 1 from pg_proc p
     where p.pronamespace = 'private'::regnamespace and (p.proname like 'bom\_%' or p.proname like 'rf\_%')
@@ -42,7 +52,14 @@ insert into auth.users (id, email, raw_user_meta_data) values
   ('8ea00000-0000-0000-0000-000000000003', 'golive-rb@test.local', '{}'),
   ('8ea00000-0000-0000-0000-000000000004', 'golive-gr@test.local', '{}'),
   ('8ea00000-0000-0000-0000-000000000005', 'golive-inactive@test.local', '{}'),
-  ('8ea00000-0000-0000-0000-000000000006', 'golive-nobody@test.local', '{}');
+  ('8ea00000-0000-0000-0000-000000000006', 'golive-nobody@test.local', '{}'),
+  ('8ea00000-0000-0000-0000-000000000007', 'golive-hr-mgr@test.local', '{}'),
+  ('8ea00000-0000-0000-0000-000000000008', 'golive-it-mgr@test.local', '{}'),
+  ('8ea00000-0000-0000-0000-000000000009', 'golive-mt@test.local', '{}'),
+  ('8ea00000-0000-0000-0000-000000000010', 'golive-qa@test.local', '{}'),
+  ('8ea00000-0000-0000-0000-000000000011', 'golive-fm@test.local', '{}'),
+  ('8ea00000-0000-0000-0000-000000000012', 'golive-rb-amgr@test.local', '{}'),
+  ('8ea00000-0000-0000-0000-000000000013', 'golive-qa-mgr@test.local', '{}');
 insert into public.employees (id, employee_no, first_name, last_name, email, job_title, department_id, role_id, auth_user_id, is_active) values
   ('8ea00000-0000-0000-0000-000000000101', 'GOLIVE-ADMIN', 'GoLive', 'Admin', 'golive-admin@test.local', 'System Administrator',
    (select id from public.departments where code = 'MGT'), (select id from public.roles where code = 'admin'), '8ea00000-0000-0000-0000-000000000001', true),
@@ -53,7 +70,40 @@ insert into public.employees (id, employee_no, first_name, last_name, email, job
   ('8ea00000-0000-0000-0000-000000000104', 'GOLIVE-GR', 'GoLive', 'GR', 'golive-gr@test.local', 'GR',
    (select id from public.departments where code = 'GR'), (select id from public.roles where code = 'staff'), '8ea00000-0000-0000-0000-000000000004', true),
   ('8ea00000-0000-0000-0000-000000000105', 'GOLIVE-INACTIVE', 'GoLive', 'Inactive', 'golive-inactive@test.local', 'RB',
-   (select id from public.departments where code = 'RB'), (select id from public.roles where code = 'staff'), '8ea00000-0000-0000-0000-000000000005', false);
+   (select id from public.departments where code = 'RB'), (select id from public.roles where code = 'staff'), '8ea00000-0000-0000-0000-000000000005', false),
+  ('8ea00000-0000-0000-0000-000000000107', 'GOLIVE-HR-MGR', 'GoLive', 'HRMgr', 'golive-hr-mgr@test.local', 'HR manager',
+   (select id from public.departments where code = 'HR'), (select id from public.roles where code = 'department_manager'), '8ea00000-0000-0000-0000-000000000007', true),
+  ('8ea00000-0000-0000-0000-000000000108', 'GOLIVE-IT-MGR', 'GoLive', 'ITMgr', 'golive-it-mgr@test.local', 'IT manager',
+   (select id from public.departments where code = 'IT'), (select id from public.roles where code = 'department_manager'), '8ea00000-0000-0000-0000-000000000008', true),
+  ('8ea00000-0000-0000-0000-000000000109', 'GOLIVE-MT', 'GoLive', 'MT', 'golive-mt@test.local', 'MT',
+   (select id from public.departments where code = 'MT'), (select id from public.roles where code = 'staff'), '8ea00000-0000-0000-0000-000000000009', true),
+  ('8ea00000-0000-0000-0000-000000000110', 'GOLIVE-QA', 'GoLive', 'QA', 'golive-qa@test.local', 'QA',
+   (select id from public.departments where code = 'QA'), (select id from public.roles where code = 'staff'), '8ea00000-0000-0000-0000-000000000010', true),
+  ('8ea00000-0000-0000-0000-000000000111', 'GOLIVE-FM', 'GoLive', 'FM', 'golive-fm@test.local', 'Factory manager',
+   (select id from public.departments where code = 'FT'), (select id from public.roles where code = 'factory_manager'), '8ea00000-0000-0000-0000-000000000011', true),
+  ('8ea00000-0000-0000-0000-000000000112', 'GOLIVE-RB-AMGR', 'GoLive', 'RBAMgr', 'golive-rb-amgr@test.local', 'RB assistant manager',
+   (select id from public.departments where code = 'RB'), (select id from public.roles where code = 'assistant_department_manager'), '8ea00000-0000-0000-0000-000000000012', true),
+  ('8ea00000-0000-0000-0000-000000000113', 'GOLIVE-QA-MGR', 'GoLive', 'QAMgr', 'golive-qa-mgr@test.local', 'QA manager',
+   (select id from public.departments where code = 'QA'), (select id from public.roles where code = 'department_manager'), '8ea00000-0000-0000-0000-000000000013', true);
+select ok((select count(*) from public.employees e join public.departments d on d.id = e.department_id join public.roles r on r.id = e.role_id
+           where e.employee_no like 'GOLIVE-%') = 12, 'every real account below has its department and role');
+
+-- กลุ่มวางแผน (private.bom_can_edit ใช้ทั้ง BOM และ RubberFlow ทั้งสองโหมด): ผู้จัดการแผนกเฉพาะแผนกในสายผลิต
+select ok((select private.bom_can_edit(e) from public.employees e where e.employee_no = 'GOLIVE-PP'), 'PP staff is a planner');
+select ok((select private.bom_can_edit(e) from public.employees e where e.employee_no = 'GOLIVE-FM'), 'a factory manager is a planner');
+select ok((select private.bom_can_edit(e) from public.employees e where e.employee_no = 'GOLIVE-ADMIN'), 'an admin is a planner');
+select ok((select private.bom_can_edit(e) from public.employees e where e.employee_no = 'GOLIVE-QA-MGR'), 'a QA department manager (production flow) is a planner');
+select ok(not (select private.bom_can_edit(e) from public.employees e where e.employee_no = 'GOLIVE-HR-MGR'), 'an HR department manager is no longer a planner');
+select ok(not (select private.bom_can_edit(e) from public.employees e where e.employee_no = 'GOLIVE-IT-MGR'), 'an IT department manager is no longer a planner');
+select ok(not (select private.bom_can_edit(e) from public.employees e where e.employee_no = 'GOLIVE-RB-AMGR'), 'an assistant department manager is not a planner (as before)');
+select ok(not (select private.bom_can_edit(e) from public.employees e where e.employee_no = 'GOLIVE-RB'), 'RB staff is not a planner');
+select ok((select private.rf_is_rb_head(e) from public.employees e where e.employee_no = 'GOLIVE-RB-AMGR'), 'the RB head rule is unchanged (an RB assistant manager is an RB head)');
+select is((select count(*)::integer from public.employees e
+           where e.employee_no in ('SBX-PP-STAFF', 'SBX-RB-MGR', 'SBX-QA-MGR', 'SBX-PK-MGR', 'SBX-FT-FM', 'SBX-FT-AFM', 'SBX-MGT-GM') and private.bom_can_edit(e)), 7,
+  'the personas the tests use as planners still qualify');
+select ok((select private.bom_can_read(e) and not private.rf_can_read(e) from public.employees e where e.employee_no = 'GOLIVE-GR'), 'GR reads BOM but not RubberFlow');
+select ok((select private.rf_can_read(e) and not private.bom_can_read(e) from public.employees e where e.employee_no = 'GOLIVE-QA'), 'QA reads RubberFlow but not BOM');
+select ok((select not private.bom_can_read(e) and not private.rf_can_read(e) from public.employees e where e.employee_no in ('GOLIVE-MT')), 'MT staff reads neither');
 select count(set_config('test.p_' || lower(replace(employee_no, '-', '_')), id::text, true)) from public.employees where is_test;
 select ok(current_setting('test.p_sbx_pp_staff', true) is not null, 'the PP persona of the sandbox exists');
 
@@ -188,6 +238,44 @@ select ok(exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a w
 select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'saveMaterial' and a ->> 'user' = 'GoLive PP'),
   'the real RubberFlow audit lists the real save');
 
+-- 7b. ใช้งานจริง: ใครอ่านข้อมูลจริงได้ และผู้จัดการแผนกนอกสายผลิตไม่ใช่กลุ่มวางแผน --------------------------------------------------
+select set_config('request.jwt.claims', '{"sub":"8ea00000-0000-0000-0000-000000000007","role":"authenticated"}', true);
+select throws_ok('select public.app_bom_master()', 'BOM_FORBIDDEN', 'a real HR department manager cannot read BOM');
+select throws_ok('select public.app_rf_master()', 'RF_FORBIDDEN', 'a real HR department manager cannot read RubberFlow');
+select throws_ok($$ select public.app_bom_save_master('{"items":{"upsert":[{"code":"GL-HR","kind":"FG","name":"x","ownerDept":"PK","uom":"set"}]}}'::jsonb, 0, 'importFlat') $$,
+  'BOM_FORBIDDEN', 'a real HR department manager cannot plan (edit the item master)');
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('materials', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.mat')::jsonb || '{"code":"GL-HR","name":"x"}'::jsonb))), 0, 'saveMaterial') $$, 'RF_FORBIDDEN', 'a real HR department manager cannot write RubberFlow');
+select set_config('request.jwt.claims', '{"sub":"8ea00000-0000-0000-0000-000000000008","role":"authenticated"}', true);
+select throws_ok('select public.app_bom_master()', 'BOM_FORBIDDEN', 'a real IT department manager cannot read BOM');
+select throws_ok('select public.app_bom_audit()', 'BOM_FORBIDDEN', 'a real IT department manager cannot read the BOM audit');
+select throws_ok('select public.app_rf_master()', 'RF_FORBIDDEN', 'a real IT department manager cannot read RubberFlow');
+select throws_ok('select public.app_rf_audit()', 'RF_FORBIDDEN', 'a real IT department manager cannot read the RubberFlow audit');
+select set_config('request.jwt.claims', '{"sub":"8ea00000-0000-0000-0000-000000000009","role":"authenticated"}', true);
+select throws_ok('select public.app_bom_master()', 'BOM_FORBIDDEN', 'a real MT staff cannot read BOM');
+select throws_ok('select public.app_bom_master_since(0)', 'BOM_FORBIDDEN', 'a real MT staff cannot read the BOM delta');
+select throws_ok('select public.app_rf_master()', 'RF_FORBIDDEN', 'a real MT staff cannot read RubberFlow');
+select throws_ok('select public.app_rf_master_since(0)', 'RF_FORBIDDEN', 'a real MT staff cannot read the RubberFlow delta');
+select set_config('request.jwt.claims', '{"sub":"8ea00000-0000-0000-0000-000000000003","role":"authenticated"}', true);
+select ok(public.app_bom_master() -> 'orders' @> '[{"id":"251130-00001"}]'::jsonb, 'a real RB staff reads BOM');
+select ok(public.app_rf_master() -> 'materials' @> '[{"code":"GL-MAT"}]'::jsonb, 'a real RB staff reads RubberFlow');
+select set_config('request.jwt.claims', '{"sub":"8ea00000-0000-0000-0000-000000000004","role":"authenticated"}', true);
+select ok(public.app_bom_master() -> 'jobs' @> '[{"id":"GL-JOB-GR"}]'::jsonb, 'a real GR staff reads BOM');
+select throws_ok('select public.app_rf_master()', 'RF_FORBIDDEN', 'a real GR staff cannot read RubberFlow');
+select throws_ok('select public.app_rf_audit()', 'RF_FORBIDDEN', 'a real GR staff cannot read the RubberFlow audit');
+select set_config('request.jwt.claims', '{"sub":"8ea00000-0000-0000-0000-000000000010","role":"authenticated"}', true);
+select ok(public.app_rf_master() -> 'materials' @> '[{"code":"GL-MAT"}]'::jsonb, 'a real QA staff reads RubberFlow');
+select throws_ok('select public.app_bom_master()', 'BOM_FORBIDDEN', 'a real QA staff cannot read BOM');
+select throws_ok($$ select public.app_bom_save_master('{}'::jsonb, 0, 'reportJob') $$, 'BOM_FORBIDDEN', 'a real QA staff cannot call the BOM save either');
+select set_config('request.jwt.claims', '{"sub":"8ea00000-0000-0000-0000-000000000011","role":"authenticated"}', true);
+select lives_ok($$ select public.app_bom_save_master('{"items":{"upsert":[{"code":"GL-FM","kind":"FG","name":"สินค้าของผู้จัดการโรงงาน","ownerDept":"PK","uom":"set"}]}}'::jsonb,
+  (public.app_bom_master() ->> 'version')::bigint, 'importFlat') $$, 'a real factory manager plans (edits the item master)');
+select lives_ok($$ select public.app_rf_save(jsonb_build_object('materials', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.mat')::jsonb || '{"code":"GL-FM-MAT","name":"วัตถุดิบของผู้จัดการโรงงาน"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'saveMaterial') $$,
+  'a real factory manager plans in RubberFlow too');
+select set_config('request.jwt.claims', '{"sub":"8ea00000-0000-0000-0000-000000000013","role":"authenticated"}', true);
+select ok(public.app_bom_master() -> 'items' @> '[{"code":"GL-FM"}]'::jsonb, 'a real QA department manager (planner group) reads BOM');
+
 -- 8. โหมดทดสอบไม่เห็นแถวจริง และ audit ทดสอบไม่มีรายการจริง ------------------------------------------------------------------
 select set_config('request.jwt.claims', '{"sub":"8ea00000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 select ok(public.app_bom_master() -> 'orders' @> '[{"id":"251130-00001","customer":"GL-REAL"}]'::jsonb, 'an admin outside test mode reads the real order');
@@ -201,6 +289,14 @@ select is((select m ->> 'name' from jsonb_array_elements(public.app_rf_master() 
   'test mode reads its own material, not the real one');
 select ok(not exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'user' like 'GoLive%'), 'the test-mode BOM audit does not list real saves');
 select ok(not exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'user' like 'GoLive%'), 'the test-mode RubberFlow audit does not list real saves');
+-- โหมดทดสอบคงเดิม: ทุก persona อ่านข้อมูลทดสอบได้ (กฎอ่านใช้เฉพาะข้อมูลจริง) แต่กลุ่มวางแผนใช้กฎใหม่เหมือนกัน
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
+select lives_ok('select public.app_bom_master()', 'in test mode a QA persona still reads the BOM test data');
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_staff')::uuid);
+select lives_ok('select public.app_rf_master()', 'in test mode a GR persona still reads the RubberFlow test data');
+select throws_ok($$ select public.app_bom_save_master('{"items":{"upsert":[{"code":"GL-GR","kind":"FG","name":"x","ownerDept":"PK","uom":"set"}]}}'::jsonb,
+  (public.app_bom_master() ->> 'version')::bigint, 'importFlat') $$, 'BOM_FORBIDDEN', 'in test mode a GR persona still cannot plan');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 
 reset role;
 select is((select count(*) from public.bom_orders where pi_no = '251130-00001'), 2::bigint, 'the same PI number exists once per mode');

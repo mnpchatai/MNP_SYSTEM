@@ -408,16 +408,20 @@
   const CONFLICT_CODES = Object.freeze(["BOM_STALE", "BOM_INVALID_PAYLOAD", "BOM_CONFLICT", "BOM_INVALID_TRANSITION", "BOM_RESET", "BOM_INSUFFICIENT_STOCK", "BOM_INVALID_RETURN", "BOM_FG_EXCEEDS", "BOM_REVISION_IMMUTABLE"]);
 
   // พนักงานที่ล็อกอิน (state.employee ของ app.js: บัญชีทดสอบในโหมดทดสอบ หรือพนักงานจริง) → ผู้ใช้ของ BOM
-  // admin → admin · ผู้จัดการแผนกขึ้นไป → manager · แผนกวางแผน PP → planner · RB/GR/PT/BG/ST/WH → บทบาทของแผนกนั้น · อื่นๆ → ดูอย่างเดียว
+  // admin → admin · ผู้ช่วยผู้จัดการโรงงานขึ้นไป และผู้จัดการแผนกในสายผลิต → manager · แผนกวางแผน PP → planner · RB/GR/PT/BG/ST/WH → บทบาทของแผนกนั้น · อื่นๆ → ดูอย่างเดียว
+  // กลุ่มวางแผน (admin / manager / planner) ตรงกับ private.bom_can_edit ของ 20261130010000: ผู้จัดการแผนกนอกสายผลิต (HR IT MT ฯลฯ) ไม่อยู่ในกลุ่ม
   // สิทธิ์จริงตัดสินที่ฐานข้อมูล (app_bom_save_master) ตรงนี้ใช้ซ่อน/แสดงเมนูและปุ่มเท่านั้น
-  const MANAGER_ROLE_CODES = Object.freeze(["department_manager", "assistant_factory_manager", "factory_manager", "general_manager"]);
+  const MANAGER_ROLE_CODES = Object.freeze(["assistant_factory_manager", "factory_manager", "general_manager"]);
+  // แผนกในสายผลิต (private.bom_production_depts): ผู้จัดการแผนก (department_manager) ของแผนกเหล่านี้อยู่ในกลุ่มวางแผน
+  const PRODUCTION_DEPTS = Object.freeze(["RB", "GR", "PT", "BG", "PK", "ST", "WH", "QA", "SR"]);
   const DEPT_ROLES = Object.freeze({ PP: "planner", RB: "rb", GR: "gr", PT: "pt", BG: "bg", ST: "st", WH: "wh" });
   function roleOfEmployee(employee) {
     if (!employee) return "viewer";
     const roleCode = employee.role?.code ?? employee.role_code ?? "";
+    const deptCode = String(employee.department?.code ?? employee.department_code ?? "").toUpperCase();
     if (roleCode === "admin") return "admin";
-    if (MANAGER_ROLE_CODES.includes(roleCode)) return "manager";
-    return DEPT_ROLES[String(employee.department?.code ?? employee.department_code ?? "").toUpperCase()] ?? "viewer";
+    if (MANAGER_ROLE_CODES.includes(roleCode) || (roleCode === "department_manager" && PRODUCTION_DEPTS.includes(deptCode))) return "manager";
+    return DEPT_ROLES[deptCode] ?? "viewer";
   }
   function personaUser(employee) {
     if (!employee) return null;
@@ -431,12 +435,14 @@
     return { id: String(employee.id ?? employee.employee_no ?? name), role, dept, name, roleCode: String(employee.role?.code ?? employee.role_code ?? "") };
   }
   // ใครเห็นเมนูและหน้า BOM (UX ล้วน สิทธิ์จริงตัดสินที่ฐานข้อมูล 20261130010000): โหมดทดสอบ = ทุกบัญชีทดสอบเหมือนเดิม ·
-  // ใช้งานจริง = กลุ่มวางแผน (admin · ผู้จัดการแผนกขึ้นไป · แผนก PP) และพนักงานแผนกในสายผลิตของ BOM (RB GR PT BG PK ST WH)
+  // ใช้งานจริง = กลุ่มวางแผน (admin · ผู้ช่วยผู้จัดการโรงงานขึ้นไป · ผู้จัดการแผนกในสายผลิต · แผนก PP) และพนักงานแผนก RB GR PT BG PK ST WH
+  // (ตรงกับ private.bom_can_read ที่ RPC ของ BOM ใช้ปฏิเสธข้อมูลจริง: คนอื่นได้ BOM_FORBIDDEN)
   const FLOW_DEPTS = Object.freeze(["PP", "RB", "GR", "PT", "BG", "PK", "ST", "WH"]);
+  const isPlanner = (employee) => ["admin", "manager", "planner"].includes(roleOfEmployee(employee));
   function usesBom(employee) {
     if (!employee) return false;
     if (employee.isSandbox === true) return true;
-    return roleOfEmployee(employee) !== "viewer" || FLOW_DEPTS.includes(String(employee.department?.code ?? employee.department_code ?? "").toUpperCase());
+    return isPlanner(employee) || FLOW_DEPTS.includes(String(employee.department?.code ?? employee.department_code ?? "").toUpperCase());
   }
 
   function normalizeSnapshot(value) {
@@ -927,7 +933,7 @@
     return { load, data: getData, user: getUser, setUser, run, reset, isPersisted: () => persisted, size, now, isRemote: () => false, status: () => "ready", error: () => null, isSaving: () => false, hasNewer: () => false, version: () => null, ensureLoaded: () => Promise.resolve(), reload: () => Promise.resolve(), catchUp: () => Promise.resolve(false), audit: () => ({ status: "ready", entries: getData().audit, error: null }), loadAudit: () => Promise.resolve(), purge: () => Promise.resolve({ ok: false, error: new Error("ล้างข้อมูล BOM ทดสอบได้เฉพาะโหมดฐานข้อมูล") }), subscribe: () => () => {} };
   }
 
-  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, NAV, SETUP_PAGES, NAV_PARENT, navLabel, findModule, canSee, homeOf, isValidState, migrate, createStore, MASTER_LISTS, WORK_LISTS, REMOTE_LISTS, diffMaster, splitForSave, combineDeltas, SAVE_BATCH_RECORDS, SAVE_BATCH_BYTES, sameMaster, customerName, customerKey, mapRemoteError, roleOfEmployee, personaUser, usesBom };
+  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, NAV, SETUP_PAGES, NAV_PARENT, navLabel, findModule, canSee, homeOf, isValidState, migrate, createStore, MASTER_LISTS, WORK_LISTS, REMOTE_LISTS, diffMaster, splitForSave, combineDeltas, SAVE_BATCH_RECORDS, SAVE_BATCH_BYTES, sameMaster, customerName, customerKey, mapRemoteError, roleOfEmployee, personaUser, usesBom, isPlanner, PRODUCTION_DEPTS };
   if (isNode) module.exports = api;
   else root.MNP_BOM_STORE = api;
 })(typeof window !== "undefined" ? window : globalThis);

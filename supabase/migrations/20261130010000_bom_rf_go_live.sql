@@ -21,10 +21,20 @@
 --      (เทียบ is_test ของแถวเอง) · private.bom_audit_actor_id · app_sandbox_purge_bom / app_sandbox_purge_rf (ยังเป็นของ admin ในโหมดทดสอบเท่านั้น ลบเฉพาะ is_test)
 --      · unique ทุกตัวของตาราง bom_* / rf_* มี is_test อยู่แล้ว (เช่น pi_no, job_no, wo_no, lot_no, po_no) เลขเดียวกันจึงมีได้ทั้งสองโหมด ไม่ต้องแก้
 --      · สูตรยาง / ข้อมูลหลักของโหมดทดสอบไม่ถูกคัดลอกมาโหมดจริง (ผู้ใช้จะย้ายเองภายหลัง) โหมดจริงเริ่มว่าง
+--   4) กลุ่มวางแผนและสิทธิ์อ่าน (ผู้ใช้ตัดสิน 2026-11-18)
+--      - กลุ่มวางแผน (private.bom_can_edit ใช้ทั้ง BOM และ RubberFlow ทั้งสองโหมด persona ตามกฎเดียวกัน): admin · general_manager / factory_manager /
+--        assistant_factory_manager ทุกแผนก · แผนก PP ทุกบทบาท · department_manager เฉพาะแผนกในสายผลิต RB GR PT BG PK ST WH QA SR (private.bom_production_depts)
+--        ผู้จัดการแผนกอื่น (HR IT ACC MT ID ฯลฯ) ไม่อยู่ในกลุ่มแล้ว · assistant_department_manager ไม่อยู่เหมือนเดิม · หัว RB (private.rf_is_rb_head) ไม่เปลี่ยน
+--      - ใช้งานจริง: RPC ของ BOM (app_bom_master / _since / _audit / _save_master) เฉพาะ private.bom_can_read = กลุ่มวางแผน หรือแผนก RB GR PT BG PK ST WH
+--        RPC ของ RubberFlow (app_rf_master / _since / _audit / _save) เฉพาะ private.rf_can_read = กลุ่มวางแผน หรือแผนก RB ST QA SR WH ไม่ผ่าน = BOM_FORBIDDEN / RF_FORBIDDEN
+--        (ตรวจใน private.bom_reader / rf_reader ซึ่งเรียก actor แล้วตรวจต่อ) · โหมดทดสอบคงเดิม: ทุก persona อ่านข้อมูลทดสอบได้ (เลือกไม่ใช้กฎอ่านกับโหมดทดสอบ
+--        เพราะเทสต์และ harness ใช้ persona แผนกอื่นอ่านข้อมูลหลายจุด) สิทธิ์เขียนทุกข้อยังตรวจรายส่วนเหมือนเดิม
 --
 -- นิยามที่ replace (นิยามล่าสุดบน main ทุกตัว · ไม่เปลี่ยนลายเซ็น จึงคง owner / revoke / grant เดิม)
 --   มือ: private.bom_actor()  จาก 20261105010000_bom_master_data.sql · private.rf_actor()  จาก 20261107010000_rubberflow_core.sql
---   กลไก (เฉพาะการแทนสี่แบบข้างบน ไม่มีการแก้อื่น):
+--   มือ (ข้อ 4): private.bom_can_edit(public.employees)  จาก 20261105010000_bom_master_data.sql · public.app_bom_master()  จาก 20261105010000_bom_master_data.sql ·
+--         public.app_rf_master()  จาก 20261107010000_rubberflow_core.sql
+--   กลไก (เฉพาะการแทนสี่แบบข้างบน ไม่มีการแก้อื่น ยกเว้นหกตัวที่ระบุ "+" ซึ่งเรียก reader แทน actor ตามข้อ 4):
 --   - private.bom_parse_lines(text, text, jsonb)  จาก 20261105010000_bom_master_data.sql
 --   - private.bom_check_keyed(text, text, text, bigint, bigint)  จาก 20261105010000_bom_master_data.sql
 --   - private.bom_save_colors(uuid, jsonb, bigint, bigint)  จาก 20261105010000_bom_master_data.sql
@@ -33,20 +43,20 @@
 --   - private.bom_save_color_sets(uuid, jsonb, bigint, bigint)  จาก 20261105010000_bom_master_data.sql
 --   - private.bom_save_packages(uuid, jsonb, bigint, bigint)  จาก 20261105010000_bom_master_data.sql
 --   - private.bom_save_routings(uuid, jsonb, bigint, bigint)  จาก 20261105010000_bom_master_data.sql
---   - public.app_bom_master_since(bigint)  จาก 20261105010000_bom_master_data.sql
+--   - public.app_bom_master_since(bigint)  จาก 20261105010000_bom_master_data.sql  (+ bom_actor() → bom_reader() ตามข้อ 4)
 --   - private.bom_delete_order_jobs(uuid)  จาก 20261106010000_bom_orders_jobs.sql
 --   - private.bom_parse_order_items(jsonb)  จาก 20261106010000_bom_orders_jobs.sql
 --   - private.bom_save_customers(uuid, jsonb, bigint, bigint)  จาก 20261106010000_bom_orders_jobs.sql
 --   - private.bom_delete_jobs(boolean, jsonb, bigint, bigint)  จาก 20261106010000_bom_orders_jobs.sql
 --   - private.bom_snapshot()  จาก 20261106010000_bom_orders_jobs.sql
---   - public.app_bom_audit(integer)  จาก 20261106010000_bom_orders_jobs.sql
+--   - public.app_bom_audit(integer)  จาก 20261106010000_bom_orders_jobs.sql  (+ bom_actor() → bom_reader() ตามข้อ 4)
 --   - private.rf_lock_bom()  จาก 20261107010000_rubberflow_core.sql
 --   - private.rf_parse_items(jsonb, jsonb)  จาก 20261107010000_rubberflow_core.sql
 --   - private.rf_job_for_link(text)  จาก 20261107010000_rubberflow_core.sql
 --   - private.rf_unlink_job(text, public.rf_orders)  จาก 20261107010000_rubberflow_core.sql
 --   - private.rf_snapshot()  จาก 20261107010000_rubberflow_core.sql
---   - public.app_rf_master_since(bigint)  จาก 20261107010000_rubberflow_core.sql
---   - public.app_rf_audit(integer)  จาก 20261107010000_rubberflow_core.sql
+--   - public.app_rf_master_since(bigint)  จาก 20261107010000_rubberflow_core.sql  (+ rf_actor() → rf_reader() ตามข้อ 4)
+--   - public.app_rf_audit(integer)  จาก 20261107010000_rubberflow_core.sql  (+ rf_actor() → rf_reader() ตามข้อ 4)
 --   - private.bom_save_compounds(uuid, jsonb, bigint, bigint)  จาก 20261107010000_rubberflow_core.sql
 --   - private.rf_add_produced(text, numeric, boolean, bigint, bigint)  จาก 20261108010000_rubberflow_shopfloor.sql
 --   - private.rf_save_molds(uuid, boolean, text, jsonb, bigint, bigint)  จาก 20261108010000_rubberflow_shopfloor.sql
@@ -80,7 +90,7 @@
 --   - private.bom_return_parts(public.employees, text, boolean, jsonb, bigint, bigint)  จาก 20261128010000_bom_cancel_rf_stop.sql
 --   - private.rf_return_requisitions(public.employees, text, jsonb, bigint, bigint)  จาก 20261128010000_bom_cancel_rf_stop.sql
 --   - private.rf_save_purchase_orders(public.employees, text, boolean, boolean, boolean, text, jsonb, bigint, bigint)  จาก 20261128020000_bom_po_partial_fg_reverse.sql
---   - public.app_rf_save(jsonb, bigint, text, jsonb, text)  จาก 20261128020000_bom_po_partial_fg_reverse.sql
+--   - public.app_rf_save(jsonb, bigint, text, jsonb, text)  จาก 20261128020000_bom_po_partial_fg_reverse.sql  (+ rf_actor() → rf_reader() ตามข้อ 4)
 --   - private.bom_fg_total(uuid, text, text)  จาก 20261128020000_bom_po_partial_fg_reverse.sql
 --   - private.bom_fg_return_stock(uuid, uuid)  จาก 20261128020000_bom_po_partial_fg_reverse.sql
 --   - private.bom_fg_reverse(public.employees, jsonb)  จาก 20261128020000_bom_po_partial_fg_reverse.sql
@@ -92,19 +102,22 @@
 --   - private.bom_cancel_rf_orders(uuid)  จาก 20261129010000_bom_group2_rules.sql
 --   - private.bom_save_jobs(public.employees, text, boolean, text, jsonb, uuid[], bigint, bigint)  จาก 20261129010000_bom_group2_rules.sql
 --   - private.bom_save_boms(uuid, text, jsonb, bigint, bigint)  จาก 20261129010000_bom_group2_rules.sql
---   - public.app_bom_save_master(jsonb, bigint, text, jsonb, text)  จาก 20261129010000_bom_group2_rules.sql
---   ใหม่: private.bom_test_mode() (revoke all from public, anon, authenticated)
+--   - public.app_bom_save_master(jsonb, bigint, text, jsonb, text)  จาก 20261129010000_bom_group2_rules.sql  (+ bom_actor() → bom_reader() ตามข้อ 4)
+--   ใหม่: private.bom_test_mode(), private.bom_production_depts(), private.bom_can_read(public.employees), private.rf_can_read(public.employees),
+--         private.bom_reader(), private.rf_reader() (ทุกตัว revoke all from public, anon, authenticated)
 --   ตาราง: ไม่มี (ไม่แตะ RLS สิทธิ์ตาราง constraint หรือข้อมูล)
 --
 -- ก่อน apply / ลำดับ deploy: Pilot Web ใน PR เดียวกับไฟล์นี้เปิดเมนู BOM / RubberFlow ให้พนักงานจริง จึงต้อง apply ไฟล์นี้ที่ production
 --   (ด้วยการอนุมัติของผู้ใช้ ครั้งนี้เท่านั้น) ก่อน merge ตาม "Deployment order" ใน AGENTS.md
---   ก่อน apply เทียบ md5(pg_get_functiondef(oid)) ของทุกฟังก์ชันที่ replace (70 ตัวข้างบน) ที่ production กับนิยามในไฟล์ต้นทาง แล้ว apply "ไฟล์ที่อยู่บน branch" ตรง ๆ
+--   ก่อน apply เทียบ md5(pg_get_functiondef(oid)) ของทุกฟังก์ชันที่ replace (73 ตัวข้างบน) ที่ production กับนิยามในไฟล์ต้นทาง แล้ว apply "ไฟล์ที่อยู่บน branch" ตรง ๆ
 --   หลัง apply เทียบ md5 กับ local stack ที่ผ่าน db:test และตรวจ has_function_privilege (anon เรียก app_bom_* / app_rf_* ไม่ได้, private.* เรียกไม่ได้)
 --   Pilot เก่า + ฐานข้อมูลใหม่: เมนูยังเปิดเฉพาะโหมดทดสอบ (พนักงานจริงไม่เห็น ไม่เรียก) โหมดทดสอบทำงานเหมือนเดิมทุกอย่าง → apply ก่อน merge ได้ปลอดภัย
+--     ยกเว้นกลุ่มวางแผนใหม่ (ข้อ 4) มีผลทันทีในโหมดทดสอบด้วย: persona ผู้จัดการแผนกนอกสายผลิตแก้ข้อมูลหลัก / ใบสั่งผลิตไม่ได้แล้ว (BOM_FORBIDDEN / RF_FORBIDDEN)
 --   Pilot ใหม่ + ฐานข้อมูลเก่า: พนักงานจริงเห็นเมนูแต่โหลดข้อมูลไม่ได้ (BOM_TEST_MODE_ONLY / RF_TEST_MODE_ONLY แสดงเป็นข้อความ "ใช้ได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ")
 --     ไม่มีอะไรถูกเขียน · โหมดทดสอบใช้ได้เหมือนเดิม
 --
--- Rollback: create or replace ทุกฟังก์ชันกลับด้วยนิยามต้นทางที่ระบุข้างบน (ลายเซ็นเดิม สิทธิ์เดิมคงอยู่) แล้ว drop function private.bom_test_mode()
+-- Rollback: create or replace ทุกฟังก์ชันกลับด้วยนิยามต้นทางที่ระบุข้างบน (ลายเซ็นเดิม สิทธิ์เดิมคงอยู่) แล้ว drop function private.bom_reader(), private.rf_reader(),
+--   private.bom_can_read(public.employees), private.rf_can_read(public.employees), private.bom_production_depts(), private.bom_test_mode() (ตามลำดับนี้)
 --   แถวจริง (is_test = false) ที่พนักงานสร้างระหว่างนั้นยังอยู่ในตาราง แต่ RPC เดิมมองไม่เห็นและพนักงานเรียกไม่ได้ (BOM_TEST_MODE_ONLY) · ลบแถวตัวนับโหมดจริงได้ด้วย
 --   delete from public.bom_master_state where not is_test; delete from public.rf_master_state where not is_test; หลังลบแถวข้อมูลจริงที่สร้างแล้วเท่านั้น (สำรองก่อน)
 -- ============================================================================
@@ -182,6 +195,140 @@ begin
     raise exception 'RF_FORBIDDEN';
   end if;
   return v_actor;
+end;
+$$;
+
+-- 2b. กลุ่มวางแผนและสิทธิ์อ่าน (ผู้ใช้ตัดสิน 2026-11-18) ------------------------------------------------------------------------------
+-- แผนกในสายผลิต: ผู้จัดการแผนก (department_manager) ของแผนกเหล่านี้อยู่ในกลุ่มวางแผน · ผู้จัดการแผนกอื่น (HR IT ACC MT ID ฯลฯ) ไม่อยู่
+create or replace function private.bom_production_depts()
+returns text[]
+language sql
+immutable
+set search_path = ''
+as $$
+  select array['RB', 'GR', 'PT', 'BG', 'PK', 'ST', 'WH', 'QA', 'SR']
+$$;
+revoke all on function private.bom_production_depts() from public, anon, authenticated;
+
+-- private.bom_can_edit(public.employees) จาก 20261105010000_bom_master_data.sql (กลุ่มวางแผนของ BOM และ RubberFlow ทั้งโหมดทดสอบและใช้งานจริง)
+-- เดิม: แผนก PP ทุกบทบาท หรือบทบาท department_manager (ทุกแผนก) / assistant_factory_manager / factory_manager / general_manager / admin
+-- ใหม่: admin · general_manager / factory_manager / assistant_factory_manager (ทุกแผนก) · แผนก PP ทุกบทบาท ·
+--       department_manager เฉพาะแผนกในสายผลิต (private.bom_production_depts) · assistant_department_manager ไม่อยู่ในกลุ่มเหมือนเดิม
+create or replace function private.bom_can_edit(p_employee public.employees)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(exists (
+           select 1 from public.departments d where d.id = p_employee.department_id and d.code = 'PP'), false)
+      or coalesce(private.employee_role_code(p_employee.id) in
+           ('assistant_factory_manager', 'factory_manager', 'general_manager', 'admin'), false)
+      or (coalesce(private.employee_role_code(p_employee.id) = 'department_manager', false)
+          and coalesce(exists (
+                select 1 from public.departments d
+                where d.id = p_employee.department_id and d.code = any (private.bom_production_depts())), false))
+$$;
+revoke all on function private.bom_can_edit(public.employees) from public, anon, authenticated;
+
+-- ใครใช้ข้อมูล BOM ได้ (อ่านและเรียก RPC บันทึก): กลุ่มวางแผน หรือพนักงานแผนก RB GR PT BG PK ST WH (เหมือน usesBom ของ modules/bom-store.js)
+create or replace function private.bom_can_read(p_employee public.employees)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select private.bom_can_edit(p_employee)
+      or coalesce(exists (
+           select 1 from public.departments d
+           where d.id = p_employee.department_id and d.code in ('RB', 'GR', 'PT', 'BG', 'PK', 'ST', 'WH')), false)
+$$;
+revoke all on function private.bom_can_read(public.employees) from public, anon, authenticated;
+
+-- ใครใช้ข้อมูล RubberFlow ได้: กลุ่มวางแผน หรือพนักงานแผนก RB (เจ้าของงาน) และ ST QA SR WH (ขั้นของตัวเองอยู่ในนี้) (เหมือน usesRubberFlow ของ modules/rubberflow-store.js)
+create or replace function private.rf_can_read(p_employee public.employees)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select private.bom_can_edit(p_employee)
+      or coalesce(exists (
+           select 1 from public.departments d
+           where d.id = p_employee.department_id and d.code in ('RB', 'ST', 'QA', 'SR', 'WH')), false)
+$$;
+revoke all on function private.rf_can_read(public.employees) from public, anon, authenticated;
+
+-- ผู้ทำรายการที่ใช้ข้อมูลได้: ใช้งานจริงตรวจ bom_can_read / rf_can_read (ไม่ผ่าน = BOM_FORBIDDEN / RF_FORBIDDEN)
+-- โหมดทดสอบคงเดิม: ทุก persona อ่านข้อมูลทดสอบได้ (สิทธิ์เขียนยังตรวจรายส่วนเหมือนเดิม)
+create or replace function private.bom_reader()
+returns public.employees
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+begin
+  v_actor := private.bom_actor();
+  if not private.bom_test_mode() and not private.bom_can_read(v_actor) then
+    raise exception 'BOM_FORBIDDEN';
+  end if;
+  return v_actor;
+end;
+$$;
+revoke all on function private.bom_reader() from public, anon, authenticated;
+
+create or replace function private.rf_reader()
+returns public.employees
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+begin
+  v_actor := private.rf_actor();
+  if not private.bom_test_mode() and not private.rf_can_read(v_actor) then
+    raise exception 'RF_FORBIDDEN';
+  end if;
+  return v_actor;
+end;
+$$;
+revoke all on function private.rf_reader() from public, anon, authenticated;
+
+-- public.app_bom_master() จาก 20261105010000_bom_master_data.sql (เปลี่ยนเฉพาะ bom_actor → bom_reader)
+create or replace function public.app_bom_master()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+begin
+  perform private.lab_only_block();
+  perform private.bom_reader();
+  return private.bom_snapshot();
+end;
+$$;
+
+-- public.app_rf_master() จาก 20261107010000_rubberflow_core.sql (เปลี่ยนเฉพาะ rf_actor → rf_reader)
+create or replace function public.app_rf_master()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+begin
+  perform private.lab_only_block();
+  perform private.rf_reader();
+  return private.rf_snapshot();
 end;
 $$;
 
@@ -643,7 +790,7 @@ set search_path = ''
 as $$
 begin
   perform private.lab_only_block();
-  perform private.bom_actor();
+  perform private.bom_reader();
   if p_version is null or p_version < 0
      or p_version > coalesce((select s.version from public.bom_master_state s where s.is_test = (select private.bom_test_mode())), 0) then
     raise exception 'BOM_INVALID_PAYLOAD';
@@ -828,7 +975,7 @@ declare
   v_limit integer := least(greatest(coalesce(p_limit, 200), 1), 1000);
 begin
   perform private.lab_only_block();
-  perform private.bom_actor();
+  perform private.bom_reader();
   return coalesce((
     select jsonb_agg(jsonb_build_object('at', t.at, 'user', t.usr, 'action', t.action, 'detail', t.detail, 'entries', t.entries) order by t.id desc)
     from (
@@ -991,7 +1138,7 @@ set search_path = ''
 as $$
 begin
   perform private.lab_only_block();
-  perform private.rf_actor();
+  perform private.rf_reader();
   if p_version is null or p_version < 0
      or p_version > coalesce((select s.version from public.rf_master_state s where s.is_test = (select private.bom_test_mode())), 0) then
     raise exception 'RF_INVALID_PAYLOAD';
@@ -1012,7 +1159,7 @@ declare
   v_limit integer := least(greatest(coalesce(p_limit, 200), 1), 1000);
 begin
   perform private.lab_only_block();
-  perform private.rf_actor();
+  perform private.rf_reader();
   return coalesce((
     select jsonb_agg(jsonb_build_object('at', t.at, 'user', t.usr, 'action', t.action, 'detail', t.detail, 'entries', t.entries) order by t.id desc)
     from (
@@ -3429,7 +3576,7 @@ begin
   perform private.lab_only_block();
   -- ล็อกเดียวกับ app_bom_save_master (20261108020000: ปล่อยผลิตแล้วเปิด WO ล็อก BOM ก่อน RF) ธุรกรรมละหนึ่งตัว ปล่อยเมื่อจบ จึงไม่วนกัน
   perform pg_advisory_xact_lock(hashtext('mnp_bom_rf_master'));
-  v_actor := private.rf_actor();
+  v_actor := private.rf_reader();
   v_planner := private.bom_can_edit(v_actor);
   v_rb := private.rf_is_rb(v_actor);
   v_head := private.rf_is_rb_head(v_actor);
@@ -4942,7 +5089,7 @@ begin
   perform private.lab_only_block();
   -- ล็อกเดียวกับ app_rf_save (ธุรกรรมละหนึ่งตัว ปล่อยเมื่อจบ): ฟังก์ชันนี้ล็อก BOM ก่อนแล้วเปิด/ยกเลิก WO ใน RF ส่วน app_rf_save ล็อก RF ก่อนแล้ว BOM ถ้าไม่มีล็อกนี้จะวนกันได้
   perform pg_advisory_xact_lock(hashtext('mnp_bom_rf_master'));
-  v_actor := private.bom_actor();
+  v_actor := private.bom_reader();
   v_planner := private.bom_can_edit(v_actor);
   -- ด่านหยาบ: คนนอกกลุ่มวางแผนเรียกได้เฉพาะ action ของนับคงคลัง/รายงานงาน (สิทธิ์จริงตรวจรายส่วนและรายช่องข้างล่าง)
   if not v_planner and (p_action is null or not (p_action = any (private.bom_staff_actions()))) then raise exception 'BOM_FORBIDDEN'; end if;

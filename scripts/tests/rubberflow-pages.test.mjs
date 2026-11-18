@@ -483,7 +483,9 @@ test("RubberFlow and BOM go live: real employees by role, every persona in test 
   const allowed = (person) => env.module.navAllowed(person);
   for (const dept of ["PP", "RB", "ST", "QA", "SR", "WH"]) assert.equal(allowed(employee(dept)), true, `real ${dept} staff use RubberFlow`);
   for (const dept of ["GR", "PT", "BG", "PK", "MT", "IT"]) assert.equal(allowed(employee(dept)), false, `real ${dept} staff do not see RubberFlow`);
-  for (const role of ["admin", "department_manager", "assistant_factory_manager", "factory_manager", "general_manager"]) assert.equal(allowed(employee("MT", role)), true, `${role} is in the planner group`);
+  for (const role of ["admin", "assistant_factory_manager", "factory_manager", "general_manager"]) assert.equal(allowed(employee("MT", role)), true, `${role} is in the planner group`);
+  assert.equal(allowed(employee("MT", "department_manager")), false, "a department manager outside the production flow is not a planner (20261130010000)");
+  assert.equal(allowed(employee("PK", "department_manager")), true, "a PK department manager is a planner and sees RubberFlow");
   assert.equal(allowed(employee("MT", "staff", { isSandbox: true })), true, "every persona keeps the module in test mode");
   assert.equal(allowed(null), false, "nobody signed in");
   const rbStaff = load({ sandbox: false });
