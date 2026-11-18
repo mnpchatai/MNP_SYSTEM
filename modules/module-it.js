@@ -13,6 +13,8 @@
 //   supabase/tests/database/ แล้วค่อยเพิ่ม hook ของ flow ที่นี่
 //
 // คู่กับฝั่ง Next.js: src/lib/request-modules/module-it.ts — แก้ที่หนึ่งให้แก้อีกที่ให้ตรงกัน
+// ยกเว้นเรื่องเดียวที่ต่างกันโดยตั้งใจ: การย้ายการ์ดไปอยู่ใต้เมนู "ระบบสำนักงาน › IT SUPPORT" (hideFromOverview/navPath/parentLink ด้านล่าง)
+// ทำเฉพาะ Pilot Web ฝั่ง Next.js ยังแสดงการ์ดใบแจ้งซ่อม IT ในภาพรวมคำร้องเหมือนเดิม จนกว่าเจ้าของจะสั่งให้ตาม
 (function registerItRepairModule() {
   const IT_REPAIR_FIELDS = [
     { name: "asset_code", label: "รหัสอุปกรณ์/ทรัพย์สิน IT", placeholder: "เช่น NB-0123" },
@@ -27,6 +29,12 @@
     label: "ใบแจ้งซ่อม IT",
     // จานสีของโมดูล (data-module ใน styles.css)
     palette: "it",
+    // ซ่อนเฉพาะการ์ดบนหน้าภาพรวม "คำร้อง" (ทางเข้าย้ายไปที่ ระบบสำนักงาน > IT SUPPORT ดู modules/module-office.js)
+    // ไม่ใช่ standalone: โมดูลยังอยู่ในเครื่องคำร้องกลาง รายการ/ฟอร์ม/แจ้งเตือน/ลิงก์เก่าทำงานเหมือนเดิม
+    hideFromOverview: true,
+    // หน้ารายการ/ฟอร์ม/รายละเอียดของประเภทนี้ไฮไลต์เมนู navPath และลิงก์ "ย้อนกลับ" ไปที่ parentLink แทนหน้าภาพรวมคำร้อง
+    navPath: "office",
+    parentLink: { href: "#/office?module=it-support", label: "IT SUPPORT" },
     // ฟิลด์เฉพาะของ IT — ใช้ class detail-field เพื่อให้ฟังก์ชันส่งคำร้องกลางเก็บลง details เอง
     renderFields({ escapeHtml }) {
       return IT_REPAIR_FIELDS.map((field) => `<div class="field"><label for="detail-${field.name}">${escapeHtml(field.label)}</label><input class="input detail-field" id="detail-${field.name}" name="${field.name}" placeholder="${escapeHtml(field.placeholder)}" maxlength="500"></div>`).join("");
