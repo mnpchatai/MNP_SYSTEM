@@ -281,13 +281,13 @@
   // ใครเห็นเมนูและหน้า RubberFlow (UX ล้วน สิทธิ์จริงตัดสินที่ฐานข้อมูล 20261130010000): โหมดทดสอบ = ทุกบัญชีทดสอบเหมือนเดิม ·
   // ใช้งานจริง = กลุ่มวางแผน หรือพนักงานแผนก RB ST QA SR WH (ตรงกับ private.rf_can_read ที่ RPC ของ RubberFlow ใช้ปฏิเสธข้อมูลจริง: คนอื่นได้ RF_FORBIDDEN)
   const STATION_DEPTS = Object.freeze(["RB", "ST", "QA", "SR", "WH"]);
-  // ผู้ใช้สั่ง 2026-11-18: ยังไม่เปิดให้พนักงานจริง นอกโหมดทดสอบเห็นเฉพาะ admin จนกว่าผู้ใช้สั่งเปิด (เปลี่ยน REAL_STAFF_OPEN เป็น true ที่นี่และใน bom-store.js)
+  // ผู้ใช้สั่ง 2026-11-18: ใช้ได้เฉพาะในโหมดทดสอบ (sandbox) จนกว่าผู้ใช้สั่งใช้จริงสำหรับฝ่ายโรงงานทั้งหมด · นอกโหมดทดสอบไม่มีใครเห็น รวม admin (เปลี่ยน REAL_STAFF_OPEN เป็น true ที่นี่และใน bom-store.js)
   const REAL_STAFF_OPEN = false;
   function usesRubberFlow(employee) {
     if (!employee) return false;
     if (employee.isSandbox === true) return true;
     const user = personaUser(employee);
-    if (!REAL_STAFF_OPEN) return user.role === "admin";
+    if (!REAL_STAFF_OPEN) return false;
     return user.planner || STATION_DEPTS.includes(user.dept);
   }
 

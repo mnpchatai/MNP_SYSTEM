@@ -18,10 +18,10 @@ const employee = (dept, role = "staff", extra = {}) => ({ id: `e-${dept}-${role}
 const item = (code, name) => ({ code, kind: "FG", name, ownerDept: "PK", uom: "set", weightG: 0, legacyCodes: [], active: true });
 const material = (code, name) => ({ code, name, category: "โพลิเมอร์", storage: "โกดัง A-1", uom: "kg", active: true });
 
-test("until the owner opens BOM / RubberFlow to staff, real use shows them only to the admin; every persona keeps them in test mode", () => {
-  // ผู้ใช้สั่ง 2026-11-18: เห็นเฉพาะ admin (REAL_STAFF_OPEN = false ใน bom-store.js และ rubberflow-store.js)
-  assert.equal(bomStore.usesBom(employee("MT", "admin")), true, "the admin sees BOM in real use");
-  assert.equal(rfStore.usesRubberFlow(employee("MT", "admin")), true, "the admin sees RubberFlow in real use");
+test("until the owner opens BOM / RubberFlow to the whole factory, nobody sees them outside test mode (not even the admin); every persona keeps them in test mode", () => {
+  // ผู้ใช้สั่ง 2026-11-18: เฉพาะโหมดทดสอบ (REAL_STAFF_OPEN = false ใน bom-store.js และ rubberflow-store.js)
+  assert.equal(bomStore.usesBom(employee("MT", "admin")), false, "the admin does not see BOM outside test mode");
+  assert.equal(rfStore.usesRubberFlow(employee("MT", "admin")), false, "the admin does not see RubberFlow outside test mode");
   for (const dept of ["PP", "RB", "GR", "PT", "BG", "PK", "ST", "WH", "QA", "SR", "MT", ""]) {
     for (const role of ["staff", "department_manager"]) {
       assert.equal(bomStore.usesBom(employee(dept, role)), false, `real ${dept || "no-department"} ${role} does not see BOM yet`);

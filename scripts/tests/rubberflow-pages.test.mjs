@@ -481,16 +481,16 @@ test("RubberFlow and BOM go live: real employees by role, every persona in test 
     "one menu entry per mode: the test group in test mode, the production group in real use");
   const employee = (dept, role = "staff", extra = {}) => ({ role: { code: role }, department: { code: dept }, ...extra });
   const allowed = (person) => env.module.navAllowed(person);
-  // ผู้ใช้สั่ง 2026-11-18: ยังไม่เปิดให้พนักงานจริง นอกโหมดทดสอบเห็นเฉพาะ admin (REAL_STAFF_OPEN = false)
+  // ผู้ใช้สั่ง 2026-11-18: เฉพาะโหมดทดสอบ นอกโหมดทดสอบไม่มีใครเห็น รวม admin (REAL_STAFF_OPEN = false)
   for (const dept of ["PP", "RB", "ST", "QA", "SR", "WH", "GR", "MT"]) assert.equal(allowed(employee(dept)), false, `real ${dept} staff do not see RubberFlow yet`);
   for (const role of ["assistant_factory_manager", "factory_manager", "general_manager", "department_manager"]) assert.equal(allowed(employee("RB", role)), false, `a real ${role} does not see RubberFlow yet`);
-  assert.equal(allowed(employee("MT", "admin")), true, "the admin sees RubberFlow in real use");
+  assert.equal(allowed(employee("MT", "admin")), false, "the admin does not see RubberFlow outside test mode");
   assert.equal(allowed(employee("MT", "staff", { isSandbox: true })), true, "every persona keeps the module in test mode");
   assert.equal(allowed(null), false, "nobody signed in");
   const admin = load({ sandbox: false });
   admin.context.state.employee = employee("MT", "admin");
   await admin.render();
-  assert.equal(admin.log.notFound, 0, "the admin opens the page in real use");
+  assert.equal(admin.log.notFound, 1, "the admin outside test mode gets not found for a typed URL");
   const rbStaff = load({ sandbox: false });
   rbStaff.context.state.employee = employee("RB");
   await rbStaff.render();
