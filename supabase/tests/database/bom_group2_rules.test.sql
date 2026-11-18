@@ -114,7 +114,7 @@ create function g2_t.ex(p_id text, p_wo text, p_tr text, p_mx text, p_params jso
 $$;
 
 select set_config('test.ord', '{"id":"X","customer":"ACME","country":"TH","orderType":"SA","orderedAt":1762387200000,"whDue":1765065600000,"due":{"RB":1763000000000,"PK":1764000000000},"dueDefaults":[],"revision":0,"status":"draft","items":[],"explosion":null,"explodedAt":null,"stockCounts":{},"note":""}', true);
-select set_config('test.job', '{"id":"X","orderId":"251129-29001","dept":"RB","itemCode":"RB-G","name":"เส้นยาง G","kind":"RB","uom":"pcs","qtyPlanned":10,"qtyRequired":10,"stockCounted":null,"qtyDone":0,"qtyReject":0,"dueAt":1764201600000,"status":"queued","externalRef":null,"fgCodes":["FG-G"],"reports":[]}', true);
+select set_config('test.job', '{"id":"X","orderId":"251129-29001","dept":"RB","itemCode":"RB-GA","name":"เส้นยาง G","kind":"RB","uom":"pcs","qtyPlanned":10,"qtyRequired":10,"stockCounted":null,"qtyDone":0,"qtyReject":0,"dueAt":1764201600000,"status":"queued","externalRef":null,"fgCodes":["FG-G"],"reports":[]}', true);
 select set_config('test.mat', '{"code":"X","name":"x","category":"วัตถุดิบ","storage":"A-1","uom":"kg","active":true}', true);
 select set_config('test.rec', '{"id":"X","revision":1,"productCode":"","uom":"m","batchKg":60,"stages":[{"stage":1,"mixerTemp":80,"dumpTemp":115,"mixMin":3},{"stage":2,"mixerTemp":90,"dumpTemp":140,"mixMin":2}],"dumpTol":6,"restHours":4,"yieldPerKg":6.1,"items":[{"materialCode":"MAT-A","phr":100,"stage":1},{"materialCode":"MAT-B","phr":50,"stage":2}],"status":"draft"}', true);
 select set_config('test.wo', '{"id":"X","customer":"ACME","customerPo":"251129-29001","recipeId":"RC-N","recipeRevision":1,"color":"ดำ","targetQty":100,"targetKg":17.5,"producedQty":0,"startDate":1762387200000,"dueDate":1765065600000,"priority":"normal","note":"","status":"planned"}', true);
@@ -180,7 +180,12 @@ select ok(g2_t.save('{"items":{"upsert":[
   {"code":"FG-U1","kind":"FG","name":"สินค้า U1","ownerDept":"PK","uom":"set"},
   {"code":"FG-U2","kind":"FG","name":"สินค้า U2","ownerDept":"PK","uom":"set"},
   {"code":"SE-G","kind":"SE","name":"ชิ้นยาง G","ownerDept":"GR","uom":"pcs"},
-  {"code":"RB-G","kind":"RB","name":"เส้นยาง G","ownerDept":"RB","uom":"pcs"},
+  {"code":"RB-GA","kind":"RB","name":"เส้นยาง GA","ownerDept":"RB","uom":"pcs"},
+  {"code":"RB-GB","kind":"RB","name":"เส้นยาง GB","ownerDept":"RB","uom":"pcs"},
+  {"code":"RB-GC","kind":"RB","name":"เส้นยาง GC","ownerDept":"RB","uom":"pcs"},
+  {"code":"RB-GD","kind":"RB","name":"เส้นยาง GD","ownerDept":"RB","uom":"pcs"},
+  {"code":"RB-GE","kind":"RB","name":"เส้นยาง GE","ownerDept":"RB","uom":"pcs"},
+  {"code":"RB-GF","kind":"RB","name":"เส้นยาง GF","ownerDept":"RB","uom":"pcs"},
   {"code":"P-G1","kind":"PURCHASED","name":"กล่อง","ownerDept":"ST","uom":"box"},
   {"code":"P-G2","kind":"PURCHASED","name":"ถุง","ownerDept":"ST","uom":"pcs"}]}}'::jsonb, 'importFlat') is not null, 'the planner seeds the items');
 select ok(g2_t.save('{"boms":{"upsert":[
@@ -259,7 +264,8 @@ select ok(g2_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', js
   'the planner creates order 29001 from BOM-G2-1');
 select ok(g2_t.save(jsonb_build_object(
   'orders', jsonb_build_object('upsert', jsonb_build_array(g2_t.order_row('251129-29001') || '{"status":"released"}'::jsonb)),
-  'jobs', jsonb_build_object('upsert', (select jsonb_agg(current_setting('test.job')::jsonb || jsonb_build_object('id', 'JOB-G-' || x) order by x) from unnest(array['A', 'B', 'C', 'D', 'E', 'F']) x)
+  -- งานหนึ่งงานต่อแผนกต่อชิ้นต่อใบ (unique (order_pk, dept, item_code)) จึงให้งาน RB แต่ละงานเป็นเส้นยางคนละรหัส
+  'jobs', jsonb_build_object('upsert', (select jsonb_agg(current_setting('test.job')::jsonb || jsonb_build_object('id', 'JOB-G-' || x, 'itemCode', 'RB-G' || x) order by x) from unnest(array['A', 'B', 'C', 'D', 'E', 'F']) x)
     || jsonb_build_array(current_setting('test.job')::jsonb || '{"id":"JOB-G-PK","dept":"PK","itemCode":"FG-U2","name":"บรรจุ","kind":"FG","uom":"set","fgCodes":["FG-U2"]}'::jsonb,
                          current_setting('test.job')::jsonb || '{"id":"JOB-G-GR","dept":"GR","itemCode":"SE-G","name":"ชิ้นยาง","kind":"SE"}'::jsonb))),
   'releaseOrder') is not null, 'order 29001 is released with six RB jobs, a PK job and a GR job');
