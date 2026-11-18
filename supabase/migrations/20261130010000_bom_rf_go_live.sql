@@ -147,7 +147,7 @@ begin
   -- นอกโหมดทดสอบ: พนักงานจริงของ session (persona ไม่มี auth_user_id อยู่แล้ว ตรวจซ้ำให้ชัด)
   select e.* into v_actor
   from public.employees e
-  where e.auth_user_id = auth.uid() and e.is_active and not e.is_test
+  where e.auth_user_id = auth.uid() and e.is_active and e.is_test = false
   limit 1;
   if v_actor.id is null then
     raise exception 'BOM_FORBIDDEN';
@@ -176,7 +176,7 @@ begin
   end if;
   select e.* into v_actor
   from public.employees e
-  where e.auth_user_id = auth.uid() and e.is_active and not e.is_test
+  where e.auth_user_id = auth.uid() and e.is_active and e.is_test = false
   limit 1;
   if v_actor.id is null then
     raise exception 'RF_FORBIDDEN';
