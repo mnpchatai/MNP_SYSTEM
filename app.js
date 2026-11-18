@@ -343,6 +343,12 @@ function activeNavFor(active) {
   const isModulePage = Object.values(REQUEST_MODULES).some((entry) => entry.enabled && !entry.standalone && typeof entry.pages?.[active] === "function");
   return isModulePage ? "requests" : active;
 }
+// หน้าของโมดูลคำร้องที่ซ่อนการ์ดจากหน้าภาพรวม (ใบแจ้งซ่อม IT) ไฮไลต์เมนูของระบบที่เป็นทางเข้าแทนเมนู "คำร้อง"
+// (โมดูลประกาศ hideFromOverview + navPath ใน modules/module-it.js) ประเภทอื่นไฮไลต์ "คำร้อง" เหมือนเดิม
+function requestNavFor(typeCode) {
+  const entry = requestModule(typeCode);
+  return entry?.hideFromOverview && entry.navPath ? entry.navPath : "requests";
+}
 function activeRequestModuleCodes() {
   const separateModuleCodes = Object.values(REQUEST_MODULES).filter((entry) => entry.enabled && !entry.standalone).map((entry) => entry.code);
   return [...new Set([...REQUEST_MODULE_CODES, ...separateModuleCodes])].filter(deptModuleAllowed);
@@ -3307,7 +3313,11 @@ function requestCenterHeader(types, params, counts, { countScope = "" } = {}) {
     // ลิงก์เสริมของโมดูล (เช่น แดชบอร์ด NCR) วางข้างปุ่มสร้าง — โมดูลประกาศ headerLinks: [{ href, label, icon }]
     const headerLinks = (requestModule(selected.code)?.headerLinks ?? [])
       .map((link) => `<a class="btn" href="${escapeHtml(link.href)}">${link.icon ?? ""}${escapeHtml(link.label)}</a>`).join("");
-    return `<a class="request-back-link" id="back-to-modules" href="${escapeHtml(requestCenterUrl(params, { type: "all", status: null, ncrStatus: null, view: null, q: null }))}" aria-label="ย้อนกลับไปเลือกโมดูล">‹ เลือกโมดูล</a>
+    // โมดูลที่ซ่อนการ์ดจากภาพรวม (ใบแจ้งซ่อม IT) ย้อนกลับไปหน้าที่เป็นทางเข้า ไม่ใช่ภาพรวมคำร้องที่ไม่มีการ์ดของมัน
+    const parentLink = requestModule(selected.code)?.hideFromOverview ? requestModule(selected.code).parentLink : null;
+    const backHref = parentLink?.href ?? requestCenterUrl(params, { type: "all", status: null, ncrStatus: null, view: null, q: null });
+    const backLabel = parentLink?.label ?? "เลือกโมดูล";
+    return `<a class="request-back-link" id="back-to-modules" href="${escapeHtml(backHref)}" aria-label="ย้อนกลับไป${escapeHtml(backLabel)}">‹ ${escapeHtml(backLabel)}</a>
       <div class="page-heading request-module-header" data-module="${requestPalette(selected.code)}">
         <div class="request-module-title">${typeCardMarkHtml(selected, { prefix: !selected.prefix || !requestTypeLabel(selected).includes(selected.prefix) })}<div><h1>${escapeHtml(requestTypeLabel(selected))}</h1></div></div>${typeCardWatermarkHtml(selected.code)}
         <div class="request-create-entry${pendingModuleZoom === moduleZoomKey(params) ? " module-create-pending" : ""}">${headerLinks}<a class="btn" id="create-request-button" href="${escapeHtml(window.MNP_REQUEST_CENTER.createUrl(params))}"><span class="plus-icon" aria-hidden="true"></span> ${escapeHtml(createLabel)}</a></div>
@@ -3341,7 +3351,7 @@ async function renderRequestsBoard(params, types) {
     ${(data ?? []).length >= 500 ? `<p class="muted small board-note">แสดง 500 ใบล่าสุด ค้นด้วยเลขที่ใบเพื่อหาใบที่เก่ากว่า</p>` : ""}
     <section class="request-list-panel">${statusBoardRows(rows, { showType: !selected, params, filtered: status !== "all" || Boolean(search) || Boolean(department) })}</section>`;
   const content = selected ? `<div data-module="${requestPalette(selected.code)}">${boardContent}</div>` : boardContent;
-  app.innerHTML = shell(content, "requests", "คำร้อง", selected ? `ติดตามสถานะ · ${requestTypeLabel(selected)}` : "ติดตามสถานะทุกใบ");
+  app.innerHTML = shell(content, requestNavFor(selected?.code), "คำร้อง", selected ? `ติดตามสถานะ · ${requestTypeLabel(selected)}` : "ติดตามสถานะทุกใบ");
   bindShell();
   bindModuleZoom(params);
   bindRequestSearchForm(params);
@@ -3419,7 +3429,9 @@ async function renderRequests(params) {
   const mineOnly = params.get("scope") === "mine";
   // The overview is a module chooser; fetch rows only after entering a module.
   if (!selected) {
-    const counts = await requestTypeCounts(types, mineOnly);
+    // การ์ดบนภาพรวมไม่รวมประเภทที่ซ่อน (ใบแจ้งซ่อม IT) แต่ `types` ยังครบ เพื่อให้เปิดหน้ารายการของประเภทนั้นจากลิงก์/ระบบสำนักงานได้
+    const overviewTypes = window.MNP_REQUEST_CENTER.overviewTypes(types, requestModule);
+    const counts = await requestTypeCounts(overviewTypes, mineOnly);
     // Dashboard status cards count every type, so list the matching rows here instead of
     // dropping their filter.
     const statuses = knownRequestStatuses(params);
@@ -3430,7 +3442,7 @@ async function renderRequests(params) {
     const statusList = statuses.length
       ? `<div class="request-type-heading"><h2>คำร้องทุกประเภท · ${escapeHtml(filterLabels.join(", "))}</h2><a href="${escapeHtml(requestCenterUrl(params, { status: null }))}">ล้างตัวกรอง</a></div>${await requestListPanel(params, null)}`
       : "";
-    app.innerHTML = shell(`${requestCenterHeader(types, params, counts, { countScope: mineOnly ? "ที่คุณแจ้ง" : "ที่คุณมีสิทธิ์ดู" })}${statusList}`, "requests", "คำร้อง");
+    app.innerHTML = shell(`${requestCenterHeader(overviewTypes, params, counts, { countScope: mineOnly ? "ที่คุณแจ้ง" : "ที่คุณมีสิทธิ์ดู" })}${statusList}`, "requests", "คำร้อง");
     bindShell();
     bindModuleZoom(params);
     return;
@@ -3452,7 +3464,7 @@ async function renderRequests(params) {
   }
   // data-module ครอบทั้งหน้าของโมดูล: หัวตาราง แท็บ และเลขที่ใบใช้จานสีของโมดูลนั้น
   const content = `<div data-module="${requestPalette(selected.code)}">${requestCenterHeader(types, params, null)}${requestsViewTabs(params, { board: selected.code !== "NCR_CAR" })}${list}</div>`;
-  app.innerHTML = shell(content, "requests", "คำร้อง", requestTypeLabel(selected));
+  app.innerHTML = shell(content, requestNavFor(selected.code), "คำร้อง", requestTypeLabel(selected));
   bindShell();
   bindModuleZoom(params);
   bindRequestSearchForm(params);
@@ -3554,7 +3566,7 @@ async function renderNewRequest(params) {
         : genericRequestFormHtml(selected, separateModule, formContext);
     }
 
-    app.innerHTML = shell(`<a class="request-back-link" href="${escapeHtml(requestCenterUrl(params))}">‹ ${escapeHtml(selected ? requestTypeLabel(selected) : "คำร้อง")}</a>${heading}${body}`, "requests", "คำร้อง / สร้างคำร้อง");
+    app.innerHTML = shell(`<a class="request-back-link" href="${escapeHtml(requestCenterUrl(params))}">‹ ${escapeHtml(selected ? requestTypeLabel(selected) : "คำร้อง")}</a>${heading}${body}`, requestNavFor(selected?.code), "คำร้อง / สร้างคำร้อง");
     document.querySelectorAll('.form-actions a[href="#/requests"], .form-actions a[href="#/ncr"]').forEach((link) => { link.href = requestCenterUrl(params); });
     bindShell();
     bindStep(selected);
@@ -4295,7 +4307,7 @@ async function renderRequestDetail(params) {
       </aside>
     </div>`;
   // แถบบนบอกโมดูล (เลขที่ใบอยู่ที่หัวใบแล้ว ไม่ซ้ำบนจอเดียวกัน) ชื่อแท็บยังเป็นเลขที่ใบ
-  app.innerHTML = shell(content, "requests", type ? requestTypeLabel(type) : "คำร้อง", request.request_no);
+  app.innerHTML = shell(content, requestNavFor(type?.code), type ? requestTypeLabel(type) : "คำร้อง", request.request_no);
   bindShell();
 
   bindRequestDetailChrome();

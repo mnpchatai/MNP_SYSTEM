@@ -40,7 +40,13 @@
     const type = params.get("type");
     return type && type !== "all" ? url(params, { mode: "create", createType: type }) : null;
   }
-  const api = { url, hasParams, statusList, pendingStatuses, createUrl, overviewUrl };
+  // การ์ดบนหน้าภาพรวมคำร้อง: ซ่อนประเภทที่โมดูลประกาศ hideFromOverview (ใบแจ้งซ่อม IT ย้ายไปอยู่ใต้ ระบบสำนักงาน > IT SUPPORT)
+  // ซ่อนเฉพาะการ์ดบนภาพรวมเท่านั้น: หน้ารายการ ฟอร์ม แจ้งเตือน และลิงก์เก่าของประเภทนั้นยังทำงานเหมือนเดิม จึงอย่ากรอง types ตัวอื่นด้วยฟังก์ชันนี้
+  // moduleOf(code) คืนข้อมูลโมดูลที่ลงทะเบียนไว้ (หรือ null)
+  function overviewTypes(types, moduleOf) {
+    return (types ?? []).filter((type) => moduleOf(type?.code)?.hideFromOverview !== true);
+  }
+  const api = { url, hasParams, statusList, pendingStatuses, createUrl, overviewUrl, overviewTypes };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.MNP_REQUEST_CENTER = api;
 })();

@@ -49,7 +49,7 @@ test("the MT detail page says the document type and the requester once", () => {
 });
 
 test("the top bar names the module where the page heading already shows the number", () => {
-  assert.match(app, /shell\(content, "requests", type \? requestTypeLabel\(type\) : "คำร้อง", request\.request_no\)/);
+  assert.match(app, /shell\(content, requestNavFor\(type\?\.code\), type \? requestTypeLabel\(type\) : "คำร้อง", request\.request_no\)/);
   // ชื่อเดียวต่อที่: แถบบน ลิงก์กลับ และชื่อประเภทคำร้องเรียกโมดูลนี้ว่า NCR/CAR
   assert.match(read("modules/module-ncr.js"), /shell\(content, "ncr", "NCR\/CAR", ncr\.ncr_no\)/);
 });
@@ -364,7 +364,7 @@ test("round 16: the board tab stays for everyone (it searches machines and repor
   assert.match(mt, /เลื่อนกำหนดเสร็จที่การ์ดกำหนดเสร็จก่อน/);
   assert.match(mt, /title="เว้นว่างไว้ ระบบคงวันเริ่มงานเดิม"/);
   // กระดานบอกชื่อโมดูลในชื่อแท็บ · RubberFlow แถบเครื่องมือขยายเต็มแถบหัว
-  assert.match(app, /shell\(content, "requests", "คำร้อง", selected \? `ติดตามสถานะ · \$\{requestTypeLabel\(selected\)\}` : "ติดตามสถานะทุกใบ"\)/);
+  assert.match(app, /shell\(content, requestNavFor\(selected\?\.code\), "คำร้อง", selected \? `ติดตามสถานะ · \$\{requestTypeLabel\(selected\)\}` : "ติดตามสถานะทุกใบ"\)/);
   assert.match(read("styles.css"), /\.rf-page \.rf-head \.rf-toolbar \{ flex: 1 1 auto;/);
 });
 test("round 18: one due-date term, inline errors on the date and reply forms, and small consistency fixes", () => {

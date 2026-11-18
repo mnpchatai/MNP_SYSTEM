@@ -27,6 +27,12 @@
     label: "ใบแจ้งซ่อม IT",
     // จานสีของโมดูล (data-module ใน styles.css)
     palette: "it",
+    // ซ่อนเฉพาะการ์ดบนหน้าภาพรวม "คำร้อง" (ทางเข้าย้ายไปที่ ระบบสำนักงาน > IT SUPPORT ดู modules/module-office.js)
+    // ไม่ใช่ standalone: โมดูลยังอยู่ในเครื่องคำร้องกลาง รายการ/ฟอร์ม/แจ้งเตือน/ลิงก์เก่าทำงานเหมือนเดิม
+    hideFromOverview: true,
+    // หน้ารายการ/ฟอร์ม/รายละเอียดของประเภทนี้ไฮไลต์เมนู navPath และลิงก์ "ย้อนกลับ" ไปที่ parentLink แทนหน้าภาพรวมคำร้อง
+    navPath: "office",
+    parentLink: { href: "#/office?module=it-support", label: "IT SUPPORT" },
     // ฟิลด์เฉพาะของ IT — ใช้ class detail-field เพื่อให้ฟังก์ชันส่งคำร้องกลางเก็บลง details เอง
     renderFields({ escapeHtml }) {
       return IT_REPAIR_FIELDS.map((field) => `<div class="field"><label for="detail-${field.name}">${escapeHtml(field.label)}</label><input class="input detail-field" id="detail-${field.name}" name="${field.name}" placeholder="${escapeHtml(field.placeholder)}" maxlength="500"></div>`).join("");
