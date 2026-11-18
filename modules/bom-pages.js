@@ -2571,12 +2571,13 @@
     const mixedReqs = reqs.filter((req) => req.status === "consumed");
     return { linked, stopped, done, woText, issuedReqs, mixedReqs };
   };
-  // ข้อความต่อท้ายกล่องแก้/ลบสินค้าของใบที่ปล่อยผลิตแล้ว: WO ที่จะถูกยกเลิก และเคมีที่เบิกไปแล้ว (ว่างเมื่อไม่มีใบเบิกที่เบิกแล้ว)
+  // ข้อความต่อท้ายกล่องแก้/ลบสินค้าของใบที่ปล่อยผลิตแล้ว: WO ที่จะถูกยกเลิก (ถ้ามี) และเคมีที่เบิกไปแล้ว (ถ้ามี) · ไม่มี WO = ว่าง
   const reopenRfText = (ctx, order) => {
     if (!order || order.status === "draft") return "";
     const { stopped, woText, issuedReqs } = rfLinkedInfo(ctx, order);
-    if (!stopped.length || !issuedReqs.length) return "";
-    return ` WO ใน RubberFlow ที่จะถูกยกเลิกหรือหยุด: ${stopped.map(woText).join(", ")} · เคมีที่เบิกไปแล้ว (${issuedReqs.map((req) => req.id).join(", ")}) คลังวัตถุดิบ (ST) จะได้งานรับคืนเข้าล็อตเดิม`;
+    if (!stopped.length) return "";
+    const chem = issuedReqs.length ? ` · เคมีที่เบิกไปแล้ว (${issuedReqs.map((req) => req.id).join(", ")}) คลังวัตถุดิบ (ST) จะได้งานรับคืนเข้าล็อตเดิม` : "";
+    return ` WO ใน RubberFlow ที่จะถูกยกเลิกหรือหยุด: ${stopped.map(woText).join(", ")}${chem}`;
   };
   dialogs.orderCancel = (ctx, { orderId }) => {
     const { ui, rules, data, user } = ctx;

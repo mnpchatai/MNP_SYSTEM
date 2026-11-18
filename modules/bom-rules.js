@@ -473,6 +473,8 @@
     const text = String(value ?? "").trim();
     if (text === "" || text === "-") return { value: 0, decimalComma: false };
     const stripped = Number(text.replace(/,/g, ""));
+    // ช่องว่างหรือ % ในเซลล์: คงผลเดิม (ตัดจุลภาคแล้วอ่าน) ไม่เดาตัวเลขแบบหน้าต่างวาง ("1 000" "50%" ไม่กลายเป็น 1000 / 50 เงียบ ๆ)
+    if (/[\s%]/.test(text)) return { value: Number.isFinite(stripped) ? stripped : 0, decimalComma: false };
     let n = pasteNumber(text);
     if (Number.isNaN(n) && /^[+-]?0,\d+$/.test(text)) n = Number(text.replace(",", "."));
     if (Number.isNaN(n)) return { value: Number.isFinite(stripped) ? stripped : 0, decimalComma: false };

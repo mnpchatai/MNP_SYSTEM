@@ -1193,6 +1193,7 @@ test("readFlatRows reads a decimal comma like the paste dialog (N3): 0,02 and 1,
   assert.equal(read("12").qty, 12);
   assert.equal(read("1.234,5").qty, 1234.5, "dot thousands with a decimal comma (the paste rule)");
   assert.equal(read("0,500").qty, 0.5, "a thousands value never starts with 0, so 0,500 is a decimal");
+  for (const [text, value] of [["1 000", 0], ["50%", 0], ["1 5", 0]]) assert.equal(rules.sheetNumber(text).value, value, `${text}: spaces or % keep the old reading, no silent guess`);
   assert.equal(read("-").qty, 0);
   assert.equal(read("1,5").decimalComma, true);
   assert.equal(read("1,250").decimalComma, false, "no note for a real thousands value");

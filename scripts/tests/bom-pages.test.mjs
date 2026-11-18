@@ -4084,6 +4084,13 @@ test("editing an item of a released order that has issued chemicals tells ST wil
   clean(edit);
   assert.ok(edit.includes(`WO ใน RubberFlow ที่จะถูกยกเลิกหรือหยุด: ${woId}`), "the work order that will be cancelled is named");
   assert.ok(edit.includes(`เคมีที่เบิกไปแล้ว (${reqId}) คลังวัตถุดิบ (ST) จะได้งานรับคืนเข้าล็อตเดิม`), "the issued requisition is named");
+  // a linked WO with nothing issued yet is still named, without the chemicals part
+  const requisitions = env.rf.store.data().requisitions;
+  const kept = requisitions.filter((req) => req.orderId !== woId);
+  requisitions.splice(0, requisitions.length, ...kept);
+  const quietEdit = dialogs.orderItemEdit(env.ctx("p=orders&sel=DEMO-26007"), { orderId: order.id, fgCode: order.items[0].fgCode }).html;
+  assert.ok(quietEdit.includes(`WO ใน RubberFlow ที่จะถูกยกเลิกหรือหยุด: ${woId}`), "the WO that will be cancelled is named even with no chemicals issued");
+  assert.doesNotMatch(quietEdit, /เคมีที่เบิกไปแล้ว/);
   // a draft has no jobs: no sentence about stopping them
   const draft = env.store.data().orders.find((entry) => entry.status === "draft");
   const draftDialog = dialogs.orderCancel(env.ctx(`p=orders&sel=${draft.id}`), { orderId: draft.id }).html;
