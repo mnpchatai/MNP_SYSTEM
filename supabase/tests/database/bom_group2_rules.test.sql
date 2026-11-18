@@ -49,6 +49,10 @@ insert into auth.users (id, email, raw_user_meta_data) values ('8e930000-0000-00
 insert into public.employees (id, employee_no, first_name, last_name, email, job_title, department_id, role_id, auth_user_id) values
   ('8e930000-0000-0000-0000-000000000101', 'BOMG2-ADMIN', 'Bomgtwo', 'Admin', 'bomg2-admin@test.local', 'System Administrator',
    (select id from public.departments where code = 'MGT'), (select id from public.roles where code = 'admin'), '8e930000-0000-0000-0000-000000000001');
+-- persona (is_test) เพิ่ม: ผู้ดูแลระบบ (ชุดตั้งต้นไม่มี persona บทบาท admin) เหมือน bom_close_rules.test.sql
+insert into public.employees (employee_no, first_name, last_name, email, job_title, department_id, role_id, is_active, is_test) values
+  ('SBX-ADMIN-T', 'ทดสอบ', 'ผู้ดูแลระบบ', 'sbx-admin-g2-t@sandbox.local', 'ผู้ดูแลระบบ (ทดสอบ)',
+   (select id from public.departments where code = 'MGT'), (select id from public.roles where code = 'admin'), false, true);
 select count(set_config('test.p_' || lower(replace(employee_no, '-', '_')), id::text, true)) from public.employees where is_test;
 select count(set_config('test.n_' || lower(replace(employee_no, '-', '_')), first_name || ' ' || last_name, true)) from public.employees where is_test;
 
