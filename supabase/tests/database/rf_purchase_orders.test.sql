@@ -6,6 +6,8 @@
 -- รับซ้ำ สถานะ ordered -> received ยกเลิก snapshot/delta 12 ชุด audit และล้างข้อมูลทดสอบ
 -- (authenticated อ่านตาราง rf_* ตรงไม่ได้ จึงนับตารางด้วย reset role เสมอ) ส่วนที่ไม่เปลี่ยนจากรอบก่อนตรวจใน rubberflow_core.test.sql / rubberflow_shopfloor.test.sql
 begin;
+-- กฎการใช้งานจริงของไฟล์นี้ทดสอบเมื่อเปิดใช้จริงแล้ว: เปิดสวิตช์ในธุรกรรมของเทสต์ (rollback ท้ายไฟล์) · สวิตช์ปิดทดสอบใน bom_rf_sandbox_lock.test.sql
+create or replace function private.bom_real_open() returns boolean language sql stable set search_path = '' as $$ select true $$;
 create extension if not exists pgtap with schema extensions;
 select no_plan();
 

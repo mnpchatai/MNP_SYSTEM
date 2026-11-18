@@ -7,6 +7,8 @@
 -- 20261123010000_bom_fg_stock.sql: ใบ completed รับของได้ (ส่วนที่ PK ผลิตเกิน) เพดานยังเป็นยอด PK จึงได้ BOM_FG_EXCEEDS แทน BOM_INVALID_TRANSITION · สต็อกระหว่างใบตรวจใน bom_fg_stock.test.sql
 -- ข้อควรระวัง: ถ้าอ่านตารางตรงในนาม authenticated จะเกิด 42501 และทำให้ทั้งไฟล์ล้ม ("No plan found") ตรวจฝั่ง client ผ่าน RPC และตรวจ deny ด้วย throws_ok เท่านั้น
 begin;
+-- กฎการใช้งานจริงของไฟล์นี้ทดสอบเมื่อเปิดใช้จริงแล้ว: เปิดสวิตช์ในธุรกรรมของเทสต์ (rollback ท้ายไฟล์) · สวิตช์ปิดทดสอบใน bom_rf_sandbox_lock.test.sql
+create or replace function private.bom_real_open() returns boolean language sql stable set search_path = '' as $$ select true $$;
 create extension if not exists pgtap with schema extensions;
 select no_plan();
 

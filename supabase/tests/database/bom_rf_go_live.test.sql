@@ -4,6 +4,8 @@
 -- audit แยกโหมด · ล้างข้อมูลทดสอบยังเป็นของ admin ในโหมดทดสอบเท่านั้นและไม่แตะแถวจริง
 -- (authenticated อ่านตาราง bom_* / rf_* ตรงไม่ได้ จึงนับตารางด้วย reset role เสมอ)
 begin;
+-- กฎการใช้งานจริงของไฟล์นี้ทดสอบเมื่อเปิดใช้จริงแล้ว: เปิดสวิตช์ในธุรกรรมของเทสต์ (rollback ท้ายไฟล์) · สวิตช์ปิดทดสอบใน bom_rf_sandbox_lock.test.sql
+create or replace function private.bom_real_open() returns boolean language sql stable set search_path = '' as $$ select true $$;
 create extension if not exists pgtap with schema extensions;
 select no_plan();
 
@@ -42,8 +44,8 @@ select ok(not exists (
       and p.prosrc ~ '\m[a-z]\.is_test\M(?!\s*=)'),
   'no BOM or RubberFlow function filters on a constant is_test any more (every filter compares with the caller''s mode)');
 select ok(not exists (select 1 from pg_proc p where p.pronamespace = 'private'::regnamespace and p.proname in ('bom_actor', 'rf_actor')
-                      and p.prosrc like '%TEST_MODE_ONLY%'),
-  'the actors no longer refuse callers outside test mode');
+                      and p.prosrc not like '%if not private.bom_real_open() then%'),
+  'the actors refuse callers outside test mode only while the real-use switch is closed (20261201010000)');
 
 -- 2. บัญชีจริง (พนักงานที่ล็อกอินได้) และ persona ของโหมดทดสอบ --------------------------------------------------
 insert into auth.users (id, email, raw_user_meta_data) values

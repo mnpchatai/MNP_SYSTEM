@@ -5,6 +5,8 @@
 -- ยกเลิกใบ (WO planned/released ทั้งที่เปิดเองและด้วยมือถูกยกเลิก · ตั้งแต่ 20261128010000 WO in_progress / on_hold ถูกหยุดเมื่อมีเหตุผล), เปิดใบกลับเป็นร่างแล้วปล่อยใหม่
 -- (authenticated อ่านตารางตรงไม่ได้ จึงอ่าน audit_logs ด้วย reset role เสมอ)
 begin;
+-- กฎการใช้งานจริงของไฟล์นี้ทดสอบเมื่อเปิดใช้จริงแล้ว: เปิดสวิตช์ในธุรกรรมของเทสต์ (rollback ท้ายไฟล์) · สวิตช์ปิดทดสอบใน bom_rf_sandbox_lock.test.sql
+create or replace function private.bom_real_open() returns boolean language sql stable set search_path = '' as $$ select true $$;
 create extension if not exists pgtap with schema extensions;
 select no_plan();
 
