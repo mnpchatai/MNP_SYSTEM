@@ -3252,7 +3252,15 @@ table.bom-tree td.right { white-space: nowrap; }
 .itwo-sheet-files { margin: 0; padding: 0; list-style: none; columns: 2; column-gap: 14px; font-size: 9.5pt; }
 .itwo-sheet-files li { break-inside: avoid; overflow-wrap: anywhere; }
 .itwo-sheet-file-size { color: #333; }
+.itwo-sheet-reworks { table-layout: fixed; }
 .itwo-sheet-reworks th, .itwo-sheet-reworks td { font-size: 9.5pt; }
+/* ความกว้างคอลัมน์ตายตัว: ครั้งที่ · ขอเมื่อ/โดย · รายละเอียด (ยืดได้) · กำหนดเสร็จ (ไม่ตัดบรรทัด) · ไฟล์แนบ (รายชื่อคอลัมน์เดียว) */
+.itwo-sheet-reworks th:nth-child(1) { width: 11mm; }
+.itwo-sheet-reworks th:nth-child(2) { width: 30mm; }
+.itwo-sheet-reworks th:nth-child(4) { width: 25mm; }
+.itwo-sheet-reworks th:nth-child(5) { width: 42mm; }
+.itwo-sheet-reworks td:nth-child(4) { white-space: nowrap; }
+.itwo-sheet-reworks .itwo-sheet-files { columns: 1; }
 @media (max-width: 719px) {
   .itwo-access-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .itwo-access-table, .itwo-access-table tbody, .itwo-access-table tr, .itwo-access-table td { display: block; }
