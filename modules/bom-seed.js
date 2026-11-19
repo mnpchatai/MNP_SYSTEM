@@ -94,6 +94,7 @@
   // L0 = ใบ DEMO-26008 รับเข้า 6 เส้นหลังงาน RB ของใบเสร็จแล้ว (เป็นสต็อกกลางทั้งหมด) · L1 = รับเข้าผ่านแล้ว 20 เส้น (เป็นของใบ งาน RB ได้ 20/36)
   // L2 / L3 = รอ SR รับเข้า (12 และ 8 เส้น มีสเปกขนาด): รับ L2 ผ่าน → งาน 32/36 · วัด L3 นอกสเปก → กักรอ QA → ให้ใช้ → 4 เส้นเป็นของใบ อีก 4 เป็นสต็อกกลาง งานครบ
   // แล้ว SR จ่ายแท่งให้ GR ของใบ DEMO-26006 (ถังของใบก่อน แล้วสต็อกกลาง ล็อตเก่าก่อน) · เลขล็อตตกแต่งเป็นเลขสาธิต (-9x) ไม่มีล็อตจริงในชุดสาธิต RubberFlow
+  // ตำแหน่งจัดเก็บ (20261204010000): L0 = A-01 · L1 = A-02 · ล็อตรอรับยังไม่มีตำแหน่ง · L4 = รับนอกใบสั่ง (ยกยอดจากการนับ) 15 เส้นของ RB-DM02-02-BK01-225-3-20 ที่ B-01 เป็นสต็อกกลาง
   const ROD_SPEC = Object.freeze({ thickness: { target: 7.5, tol: 0.3 }, width: { target: 34, tol: 0.5 }, weightPerM: { target: 1200, tol: 40 } });
   const rodId = (n) => `5e1d0000-0000-4000-8000-${String(n).padStart(12, "0")}`;
   function addRodDemo(d, now) {
@@ -106,20 +107,29 @@
     if (!live || !closed || !live.externalRef?.woId) return;
     const lot = (n, job, woNo, fields) => ({
       id: rodId(n), lotNo: `FN-${ymd(fields.createdAt)}-${90 + n}`, itemCode: job.itemCode, orderId: job.orderId, jobNo: job.id, woNo, recipeCode: "RC-NBR-OR02", uom: job.uom,
-      spec: JSON.parse(JSON.stringify(ROD_SPEC)), status: "pending", qtyReceived: null, qc: null, receivedBy: null, receivedAt: null, decision: null, decisionNote: null, decidedBy: null, decidedAt: null, ...fields,
+      spec: JSON.parse(JSON.stringify(ROD_SPEC)), status: "pending", qtyReceived: null, qc: null, receivedBy: null, receivedAt: null, decision: null, decisionNote: null, decidedBy: null, decidedAt: null,
+      location: "", source: "order", sourceNote: null, ...fields,
     });
     const received = (at, qty, values) => ({ status: "stored", qtyReceived: qty, qc: { values, result: "pass", note: "" }, receivedBy: sr, receivedAt: at });
     const move = (n, row, at) => ({ id: rodId(100 + n), reversesId: null, note: "", at, by: sr, forOrderId: null, ...row });
     const t0 = now - 5 * DAY;
-    const l0 = lot(0, closed, `WO-${ymd(now - 10 * DAY)}-90`, { qtySent: 6, createdAt: t0 - HOUR, ...received(t0, 6, { thickness: 7.45, width: 34.2, weightPerM: 1210 }) });
+    const l0 = lot(0, closed, `WO-${ymd(now - 10 * DAY)}-90`, { qtySent: 6, createdAt: t0 - HOUR, location: "A-01", ...received(t0, 6, { thickness: 7.45, width: 34.2, weightPerM: 1210 }) });
     const t1 = now - DAY;
-    const l1 = lot(1, live, live.externalRef.woId, { qtySent: 20, createdAt: t1 - HOUR, ...received(t1, 20, { thickness: 7.52, width: 34.1, weightPerM: 1195 }) });
+    const l1 = lot(1, live, live.externalRef.woId, { qtySent: 20, createdAt: t1 - HOUR, location: "A-02", ...received(t1, 20, { thickness: 7.52, width: 34.1, weightPerM: 1195 }) });
+    // รับนอกใบสั่ง: ไม่มีใบ งาน WO สเปก หรือผลตรวจ (เหมือน receiveRodsOpening) · รหัสอื่นของ DEMO-26001 จึงไม่เปลี่ยนตัวเลขของ RB-DM02-02-YE03
+    const t4 = now - 3 * DAY;
+    const openingItem = d.items.find((item) => item.code === "RB-DM02-02-BK01-225-3-20");
+    const l4 = openingItem ? { id: rodId(4), lotNo: `OP-${ymd(t4)}-01`, itemCode: openingItem.code, orderId: null, jobNo: null, woNo: null, recipeCode: null, uom: openingItem.uom, qtySent: 15, spec: null,
+      status: "stored", qtyReceived: 15, qc: null, receivedBy: sr, receivedAt: t4, decision: null, decisionNote: null, decidedBy: null, decidedAt: null, createdAt: t4,
+      location: "B-01", source: "opening", sourceNote: "ยกยอดจากการนับคลังครั้งแรก" } : null;
     d.rodLots.push(l0, l1,
       lot(2, live, live.externalRef.woId, { qtySent: 12, createdAt: now - 3 * HOUR }),
       lot(3, live, live.externalRef.woId, { qtySent: 8, createdAt: now - 2 * HOUR }));
+    if (l4) d.rodLots.push(l4);
     d.rodMoves.push(
       move(0, { lotId: l0.id, itemCode: l0.itemCode, kind: "receive", qty: 6, ownerOrderId: null }, t0),
       move(1, { lotId: l1.id, itemCode: l1.itemCode, kind: "receive", qty: 20, ownerOrderId: live.orderId }, t1));
+    if (l4) d.rodMoves.push(move(4, { lotId: l4.id, itemCode: l4.itemCode, kind: "receive", qty: 15, ownerOrderId: null, note: l4.sourceNote }, t4));
     live.reports = [...(live.reports ?? []), { at: t1, by: sr, good: 20, reject: 0, note: `รับเข้าคลัง SR ผ่านตรวจ ล็อต ${l1.lotNo}` }];
     live.qtyDone = 20;
   }

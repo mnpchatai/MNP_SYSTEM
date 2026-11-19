@@ -1,4 +1,4 @@
-// ฐานข้อมูลจำลองของใบสั่งงาน IT (RPC app_itwo_* ของ supabase/migrations/20261203010000_itwo_work_orders.sql + 20261204010000_itwo_v2_rework_files.sql) สำหรับ /pilot-shell.html?sandbox=1&itwo=1
+// ฐานข้อมูลจำลองของใบสั่งงาน IT (RPC app_itwo_* ของ supabase/migrations/20261203010000_itwo_work_orders.sql + 20261205010000_itwo_v2_rework_files.sql) สำหรับ /pilot-shell.html?sandbox=1&itwo=1
 // ข้อมูลอยู่ในหน่วยความจำของหน้า (หายเมื่อโหลดหน้าใหม่) ใช้ลองหน้าจอ ไม่ใช่ตัวแทนฐานข้อมูลจริง: กฎเส้นทางอนุมัติ/ปุ่มที่ทำได้ตรงกับ migration
 // (ผู้แจ้งเป็นผู้จัดการแผนก / แผนก IT / แผนกไม่มีผู้จัดการ / ผู้อนุมัติขั้น IT แจ้งเอง) แต่ตรวจสิทธิ์หลวมกว่า (ไม่มี RLS/ล็อก)
 // รุ่น 2: ไม่รับประเภท system_access · เบ็ดเตล็ดต้องระบุงาน · แนบไฟล์ (app_itwo_add_attachment) · ขอแก้ไขงาน (app_itwo_request_rework) · ล้างข้อมูลทดสอบคืนรายการไฟล์

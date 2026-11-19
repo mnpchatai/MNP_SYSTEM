@@ -72,7 +72,7 @@
     requisition: (user) => Boolean(user.planner || user.rb), // เบิกเคมี (สร้างใบเบิกและจ่ายทันที) / จ่ายใบเก่าที่ค้างชั่ง: แผนก RB
     station: (user) => Boolean(user.planner || user.rb), // ผสม ฉีด อบ ตกแต่ง ข้ามเวลาบ่ม ทำความสะอาดแม่พิมพ์: แผนก RB
     sendTransfer: (user) => Boolean(user.planner || user.rb), // สร้างใบส่งมอบ WIP: แผนก RB
-    receiveTransfer: (user) => Boolean(user.planner || user.sr), // รับมอบ WIP: แผนก SR
+    receiveTransfer: (user) => Boolean(user.planner || user.rb), // รับมอบ WIP ระหว่างสถานี: แผนก RB (20261204010000 · เดิมแผนก SR)
     shipBoxes: (user) => Boolean(user.planner || user.wh), // ส่งมอบกล่องสินค้า: คลังสินค้า (WH)
     qc: (user) => Boolean(user.planner || user.qa), // ผลตรวจ เปิด/ปิด NCR: แผนก QA
     fillNcr: (user) => Boolean(user.planner || user.qa || user.rb), // กรอกการแก้ไข/ป้องกันของ NCR ที่เปิดอยู่: QA หรือ RB
@@ -93,7 +93,7 @@
     requisition: "เบิกเคมีได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
     station: "บันทึกการผลิตของสถานีได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
     sendTransfer: "สร้างใบส่งมอบ WIP ได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
-    receiveTransfer: "รับมอบ WIP ได้โดยแผนก SR หรือฝ่ายวางแผน",
+    receiveTransfer: "รับมอบ WIP ได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
     shipBoxes: "ส่งมอบกล่องสินค้าได้โดยแผนกคลังสินค้า (WH) หรือฝ่ายวางแผน",
     qc: "บันทึกผลตรวจและเปิด/ปิด NCR ได้โดยแผนก QA หรือฝ่ายวางแผน",
     fillNcr: "กรอกการแก้ไขและป้องกันของ NCR ได้โดยแผนก QA พนักงานแผนก RB หรือฝ่ายวางแผน",
@@ -882,7 +882,7 @@
     lot.boxes = i;
     lot.countedToOrder = result === "pass";
     if (result === "pass") addProduced(d, order.id, passed, ctx);
-    audit(d, ctx, "บันทึกการตกแต่ง/บรรจุ", `${lot.id} ${passed} ${order.uom} → ${order.sourceJobId ? `คลังแท่งยาว (SR) ของงาน ${order.sourceJobId}` : `${i} กล่อง`}`);
+    audit(d, ctx, "บันทึกการตกแต่ง/บรรจุ", `${lot.id} ${passed} ${order.uom} → ${order.sourceJobId ? `คลังยางเส้นยาว (SR) ของงาน ${order.sourceJobId}` : `${i} กล่อง`}`);
     return lot.id;
   }
 

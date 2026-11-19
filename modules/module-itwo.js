@@ -9,7 +9,7 @@
 //
 // รุ่น 2 (เจ้าของสั่ง 19/11/2026): ไม่มีประเภท "สิทธิ์ในระบบ" และไม่มีส่วน "สำหรับแผนก IT : สิทธิ์ในระบบ" แล้ว · เบ็ดเตล็ดต้องระบุงาน ·
 // แนบไฟล์ได้เมื่อเอกสารแนบ = "มี" (สร้างใบ → อัปโหลดขึ้น Storage → app_itwo_add_attachment ทีละไฟล์) · ผู้แจ้งขอแก้ไขงานได้หลัง IT ปิดงาน (app_itwo_request_rework)
-// ฐานข้อมูล: supabase/migrations/20261203010000_itwo_work_orders.sql + 20261204010000_itwo_v2_rework_files.sql ทุกอย่างเรียกผ่าน RPC app_itwo_* (ตรวจบทบาท ลำดับขั้น เลขที่เอกสารที่ฝั่งฐานข้อมูล)
+// ฐานข้อมูล: supabase/migrations/20261203010000_itwo_work_orders.sql + 20261205010000_itwo_v2_rework_files.sql ทุกอย่างเรียกผ่าน RPC app_itwo_* (ตรวจบทบาท ลำดับขั้น เลขที่เอกสารที่ฝั่งฐานข้อมูล)
 // หน้าเว็บแค่ซ่อน/แสดงแท็บและปุ่มตาม app_itwo_my_role กับ allowed_actions เป็น UX ล้วน สิทธิ์จริงตัดสินที่ RPC ทุกตัว
 // ข้อมูลล้วนอยู่ที่ itwo-model.js · HTML อยู่ที่ itwo-pages.js · ไฟล์นี้ดูแลเฉพาะการเรียก RPC กล่องยืนยัน และผูกเหตุการณ์ของหน้า
 // module-office.js เรียก MNP_ITWO.render(params) เมื่อเปิด ?module=work-order และ MNP_ITWO.loadCardSummary() เพื่อวาดตัวเลขบนการ์ด

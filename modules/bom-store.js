@@ -33,7 +33,6 @@
     { id: "customers", label: "ลูกค้า", group: "ผลิต" },
     { id: "count", label: "นับคงคลังตามใบ", group: "ผลิต" },
     { id: "stock", label: "คลังของซื้อ", group: "ผลิต" },
-    { id: "rods", label: "คลังยางเส้นยาว (SR)", group: "ผลิต" },
     { id: "jobs", label: "งานของแผนก", group: "ผลิต" },
     { id: "audit", label: "บันทึกการใช้งาน", group: "ผลิต" },
     // หน้าโครงใหม่ (modules/bom-hub.js): เมนูหลัก 4 อัน · หน้าเดิมข้างบนยังเปิดได้จากลิงก์ในหน้าเหล่านี้ แต่ไม่อยู่ในเมนูแล้ว
@@ -45,7 +44,7 @@
   // เมนูที่แสดง (เรียงตามนี้) และหน้าที่อยู่ใต้แต่ละเมนู: หน้าที่ไม่อยู่ในเมนูทำให้เมนูแม่ของมันเป็นตัวที่เลือกอยู่
   const NAV = Object.freeze(["find", "orders", "setup"]);
   const SETUP_PAGES = Object.freeze(["import", "variants", "compounds", "customers", "stock", "count", "check", "audit"]);
-  const NAV_PARENT = Object.freeze({ find: "find", dashboard: "find", build: "find", items: "find", product: "find", structure: "find", orders: "orders", count: "orders", jobs: "orders", rods: "orders", setup: "setup", ...Object.fromEntries(SETUP_PAGES.map((id) => [id, "setup"])) });
+  const NAV_PARENT = Object.freeze({ find: "find", dashboard: "find", build: "find", items: "find", product: "find", structure: "find", orders: "orders", count: "orders", jobs: "orders", setup: "setup", ...Object.fromEntries(SETUP_PAGES.map((id) => [id, "setup"])) });
   const navLabel = (id) => (id === "orders" ? "ใบสั่งผลิต" : MODULES.find((entry) => entry.id === id)?.label ?? id);
   const findModule = (id) => MODULES.find((entry) => entry.id === String(id ?? "")) ?? null;
 
@@ -53,12 +52,12 @@
   const ROLES = Object.freeze({
     admin: { label: "ผู้ดูแลระบบ", modules: MODULE_IDS },
     manager: { label: "ผู้จัดการโรงงาน", modules: MODULE_IDS },
-    planner: { label: "ฝ่ายวางแผน (PP)", modules: Object.freeze(["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "orders", "customers", "count", "stock", "rods", "jobs", "check"]) },
+    planner: { label: "ฝ่ายวางแผน (PP)", modules: Object.freeze(["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "orders", "customers", "count", "stock", "jobs", "check"]) },
     rb: { label: "แผนก RB (รีดเส้นยาง)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "compounds", "jobs", "orders", "check"]) },
-    gr: { label: "แผนก GR (ตัด/เจาะ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "rods", "orders", "check"]) },
+    gr: { label: "แผนก GR (ตัด/เจาะ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },
     // คลังแท่งยาว (SR) และตรวจคุณภาพ (QA) ขั้น 05–06 ของผังงาน: ไม่มีงานรายแผนกของตัวเอง งานอยู่ที่การ์ดของงานของฉัน (รับเข้า/จ่ายให้ GR · ตัดสินล็อตที่กัก) และหน้าคลังแท่งยาว
-    sr: { label: "คลังยางเส้นยาว (SR)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "rods", "orders", "check"]) },
-    qa: { label: "ตรวจคุณภาพ (QA)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "rods", "orders", "check"]) },
+    sr: { label: "คลังยางเส้นยาว (SR)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "orders", "check"]) },
+    qa: { label: "ตรวจคุณภาพ (QA)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "orders", "check"]) },
     pt: { label: "แผนก PT (ฉีดพลาสติก)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },
     bg: { label: "แผนก BG (กระเป๋า/เย็บ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },
     pk: { label: "แผนก PK (บรรจุ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },
@@ -257,7 +256,8 @@
   // สินค้าสำเร็จรูป (receiveFg / deliverFg / closeOrderShort / closeOrder / reverseFg): เซิร์ฟเวอร์เขียนประวัติ ปิดใบ และเปิดใบกลับเอง จึงส่งเฉพาะแถวคำขอ { orderId, kind, lines?, note?, moveId? } ในส่วน fgMoves (action คืนแถวนี้ใน result.request)
   const FG_ACTIONS = Object.freeze(["receiveFg", "deliverFg", "closeOrderShort", "closeOrder", "reverseFg"]);
   // คลังแท่งยาว SR: action → ส่วนที่ส่งแถวคำขอ (action คืน result.request เป็นอาร์เรย์ของแถว) · ผลทั้งหมด (สถานะล็อต ประวัติแท่ง ยอดงาน RB) เซิร์ฟเวอร์คำนวณเอง
-  const ROD_ACTIONS = Object.freeze({ receiveRods: "rodLots", decideRods: "rodLots", issueRods: "rodMoves", reverseRodIssue: "rodMoves", adjustRods: "rodMoves" });
+  // receiveRodsOpening (รับนอกใบสั่ง) / setRodLocation (ย้ายตำแหน่ง) ส่งในส่วน rodLots (20261204010000_bom_sr_store_module.sql)
+  const ROD_ACTIONS = Object.freeze({ receiveRods: "rodLots", decideRods: "rodLots", receiveRodsOpening: "rodLots", setRodLocation: "rodLots", issueRods: "rodMoves", reverseRodIssue: "rodMoves", adjustRods: "rodMoves" });
   function diffMaster(before, after, action = "") {
     const changes = {};
     for (const list of REMOTE_LISTS) {
@@ -396,7 +396,7 @@
       BOM_INVALID_RETURN: "คืนของซื้อไม่ได้: จำนวนเกินที่คืนได้ ไม่มีของที่เบิกจ่ายแล้ว หรือไม่ได้ระบุเหตุผล (อาจมีผู้อื่นคืนไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
       BOM_INVALID_FG: "รับเข้าคลัง ส่งมอบ หรือปิดใบไม่ได้: ข้อมูลไม่ถูกต้อง (จำนวนต้องมากกว่า 0 สินค้าต้องอยู่ในใบ เหตุผลที่ปิดใบอย่างน้อย 3 ตัวอักษร)",
       BOM_FG_EXCEEDS: "ตัวเลขเปลี่ยนไปแล้ว: จำนวนที่รับเข้าคลังเกินที่ PK ส่งมอบ จำนวนที่ส่งมอบเกินที่มีในใบ หรือสต็อกสินค้าสำเร็จรูปที่ใบนี้ตั้งใช้ไม่พอ (อาจมีผู้อื่นบันทึกหรือปล่อยผลิตใบอื่นไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาตรวจตัวเลขแล้วทำรายการอีกครั้ง",
-      BOM_INVALID_ROD: "ทำรายการคลังยางเส้นยาวไม่ได้: ข้อมูลไม่ถูกต้อง (จำนวนรับต้องมากกว่า 0 และไม่เกินที่ส่งมา ค่าที่วัดครบตามสเปกและผลตรงกับค่าที่วัด เหตุผลอย่างน้อย 3 ตัวอักษร หรือหยิบยางเส้นยาวจากถังของใบอื่น)",
+      BOM_INVALID_ROD: "ทำรายการคลังยางเส้นยาวไม่ได้: ข้อมูลไม่ถูกต้อง (จำนวนรับต้องมากกว่า 0 และไม่เกินที่ส่งมา ค่าที่วัดครบตามสเปกและผลตรงกับค่าที่วัด ตำแหน่งจัดเก็บ 1-40 ตัวอักษร เหตุผลอย่างน้อย 3 ตัวอักษร เลขล็อตซ้ำ รหัสที่ไม่ใช่เส้นยาง (RB) หรือหยิบยางเส้นยาวจากถังของใบอื่น)",
       BOM_ROD_EXCEEDS: "ตัวเลขเปลี่ยนไปแล้ว: ยางเส้นยาวในคลังยางเส้นยาว (SR) ไม่พอที่จะจ่าย ปรับ หรือใช้ตอนปล่อยผลิต (อาจมีผู้อื่นจ่ายหรือปล่อยผลิตใบอื่นไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาตรวจตัวเลขแล้วทำรายการอีกครั้ง",
       BOM_INVALID_ORDER: "ใบสั่งผลิตไม่ผ่านการตรวจของฐานข้อมูล (เช่น ยกเลิกใบโดยไม่มีเหตุผล 3–200 ตัวอักษร หรือยอดที่ใช้จากสต็อกสินค้าสำเร็จรูปเกินจำนวนสั่ง) ตรวจแล้วทำรายการอีกครั้ง",
       BOM_INVALID_JOB: "บันทึกงานไม่ได้: ยอดหรือรายงานไม่ถูกต้อง (พักงานต้องมีเหตุผล 3–200 ตัวอักษร · งานที่ผูก WO ของ RubberFlow รับยอดจาก RubberFlow เท่านั้น รายงานผลที่นี่ไม่ได้)",

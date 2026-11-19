@@ -1232,3 +1232,62 @@ test("the extrusion spec lives on the recipe: the recipe form edits it, the reci
   assert.doesNotMatch(spc, /ex\.[a-zA-Z]+\.RC-NBR-OR02/, "the O-ring recipe has no spec, so no extrusion chart");
   assert.match(spc, /สเปก 2.5 ± 0.12 mm/);
 });
+
+test("receiving a WIP hand-over belongs to the RB department and the planning group, not to SR; the hand-over page stays in RubberFlow and names no SR receiver", async () => {
+  const env = load();
+  const api = env.context.MNP_RUBBERFLOW_STORE;
+  const person = (dept, role = "staff") => api.personaUser({ id: `${dept}-${role}`, department: { code: dept }, role: { code: role }, first_name: dept, last_name: role });
+  for (const [dept, role, allowed] of [["RB", "staff", true], ["PP", "staff", true], ["MT", "admin", true], ["SR", "staff", false], ["QA", "staff", false], ["WH", "staff", false], ["ST", "staff", false], ["GR", "staff", false]]) {
+    assert.equal(api.can(person(dept, role), "receiveTransfer"), allowed, `${dept}/${role} receiveTransfer`);
+  }
+  // the page and its dialogs: SR is read-only here, the module page does not name it as the receiver
+  const wip = text(await env.render("p=wip"));
+  assert.doesNotMatch(wip, /SR รับ|รับมอบ[^.]{0,20}SR|ผู้รับมอบ[^.]{0,10}SR/, "the hand-over page names no SR receiver");
+  const source = ["modules/rubberflow-pages-line.js", "modules/rubberflow-actions.js", "modules/rubberflow-store.js"].map((file) => fs.readFileSync(file, "utf8")).join("\n");
+  assert.match(source, /receiveTransfer: \(user\) => Boolean\(user\.planner \|\| user\.rb\)/, "the right is planner or RB");
+  assert.match(source, /รับมอบ WIP ได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน/);
+  // wording: the rods the finishing form sends to the SR store are ยางเส้นยาว, never แท่ง, in the page text
+  const lineSource = fs.readFileSync("modules/rubberflow-pages-line.js", "utf8").split(/\r?\n/).filter((line) => !line.trimStart().startsWith("//")).join("\n");
+  assert.doesNotMatch(lineSource, /แท่ง/);
+  assert.match(lineSource, /ส่งเข้าคลังยางเส้นยาว \(SR\)/);
+});
+
+test("the finishing lots of a BOM-linked work order show where the SR store has the lot; without BOM data the old text stays", async () => {
+  const env = load();
+  env.store.setUser("U01");
+  const ctx = env.ctx("p=finishing");
+  const lot = ctx.data.lots.find((row) => row.stage === "finishing");
+  ctx.data.orders.find((row) => row.id === lot.orderId).sourceJobId = "J-LINKED";
+  lot.boxes = 0;
+  const finishing = (bomRodLot) => { ctx.bomRodLot = bomRodLot; return env.context.MNP_RUBBERFLOW_PAGES.finishing(ctx).html; };
+  const base = `ส่งคลังยางเส้นยาว (SR) · เกรด ${lot.grade}`;
+  // ไม่มีข้อมูล BOM (ยังไม่โหลด / โหมดในเครื่อง / ไม่มีล็อตของ SR): ข้อความเดิม ไม่มีป้ายสถานะ
+  for (const none of [undefined, () => null]) {
+    const html = finishing(none);
+    assert.ok(text(html).includes(base), "today's text");
+    assert.doesNotMatch(html, /data-rf-sr-state/);
+  }
+  const stateOf = (found) => { const html = finishing(() => found); assert.ok(text(html).includes(base), "the old text is kept"); return text(html.match(/<div class="small" data-rf-sr-state>[\s\S]*?<\/div>/)?.[0] ?? ""); };
+  assert.match(stateOf({ status: "pending", location: "", href: null }), /รอ SR รับเข้า/);
+  assert.match(stateOf({ status: "stored", location: "A-02", href: null }), /SR รับแล้ว · ตำแหน่ง A-02/);
+  assert.match(stateOf({ status: "stored", location: "", href: null }), /^\s*SR รับแล้ว\s*$/, "no location typed: no dangling separator");
+  assert.match(stateOf({ status: "held", location: "H-01", href: null }), /กักรอ QA/);
+  assert.match(stateOf({ status: "returned", location: "", href: null }), /QA คืนให้แก้ไข/);
+  assert.match(stateOf({ status: "scrapped", location: "", href: null }), /QA สั่งทิ้ง/);
+  assert.doesNotMatch(finishing(() => ({ status: "pending", location: "", href: null })), /href="#\/sr/, "no link without the right to open the SR module");
+  assert.match(finishing(() => ({ status: "stored", location: "A-02", href: "#/sr?lot=abc&x=1" })), /<a href="#\/sr\?lot=abc&amp;x=1" title="[^"]*"><span[^>]*>SR รับแล้ว · ตำแหน่ง A-02<\/span><\/a>/, "the badge opens the lot in SR, escaped");
+  // ล็อตที่ไม่ได้ส่งคลัง SR (มีกล่อง) ไม่มีป้าย
+  lot.boxes = 3;
+  assert.doesNotMatch(finishing(() => ({ status: "stored", location: "A-02", href: null })), /data-rf-sr-state/);
+});
+
+test("the RubberFlow context reads the SR lot of a finishing lot from the loaded BOM store only", () => {
+  const env = load();
+  env.store.setUser("U01");
+  const source = fs.readFileSync("modules/module-rubberflow.js", "utf8");
+  assert.match(source, /bomRodLot: \(lotNo\) => \{/);
+  assert.match(source, /entry\.lotNo === lotNo/, "matched on the lot number the SR lot shares with the finishing lot");
+  // BOM ไม่โหลด (ไม่มี store ระยะไกล): null ไม่ error
+  assert.equal(env.ctx("p=finishing").bomRodLot("FN-X"), null);
+  assert.equal(env.ctx("p=finishing").bomRodLot(""), null);
+});

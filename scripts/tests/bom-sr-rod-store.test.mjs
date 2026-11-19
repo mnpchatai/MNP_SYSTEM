@@ -7,6 +7,7 @@ import { createMockSupabase } from "../pilot-harness-mock.mjs";
 // และ Supabase จำลองของ harness (scripts/pilot-harness-mock.mjs) ต้องตอบรหัสเดียวกับฐานข้อมูลทุกข้อ (pgTAP คู่กัน: supabase/tests/database/bom_sr_rod_store.test.sql)
 // ข้อมูลสาธิต (modules/bom-seed.js addRodDemo): ใบ DEMO-26006 ฮูล่า 60 ชุด ต้องใช้ RB-DM02-02-YE03-204-19-34 36 เส้น · L0 = สต็อกกลาง 6 เส้น (ใบ DEMO-26008 ที่ปิดแล้ว)
 // L1 = รับแล้ว 20 เส้นเป็นของใบ (งาน 20/36) · L2 = รอรับ 12 เส้น · L3 = รอรับ 8 เส้น (มีสเปกขนาดทั้งสามล็อต)
+// L4 = รับนอกใบสั่ง 15 เส้นของ RB-DM02-02-BK01-225-3-20 ที่ B-01 (สต็อกกลาง · 20261204010000_bom_sr_store_module.sql) · ทุกการรับเข้าต้องมีตำแหน่งจัดเก็บ
 const require = createRequire(import.meta.url);
 globalThis.MNP_BOM_RULES = require("../../modules/bom-rules.js");
 globalThis.MNP_RUBBERFLOW_RULES = require("../../modules/rubberflow-rules.js");
@@ -62,7 +63,8 @@ test("rules: the dimension verdict follows the lot's spec (inclusive bounds, mis
 
 test("the demo seed has a stored lot of free stock, rods owned by DEMO-26006 and two pending lots with a spec", () => {
   const d = fresh();
-  assert.deepEqual(d.rodLots.map((row) => [row.lotNo.slice(-2), row.orderId, row.status, row.qtySent, Boolean(row.spec)]), [["90", "DEMO-26008", "stored", 6, true], ["91", "DEMO-26006", "stored", 20, true], ["92", "DEMO-26006", "pending", 12, true], ["93", "DEMO-26006", "pending", 8, true]]);
+  assert.deepEqual(d.rodLots.map((row) => [row.lotNo.slice(-2), row.orderId, row.status, row.qtySent, Boolean(row.spec)]), [["90", "DEMO-26008", "stored", 6, true], ["91", "DEMO-26006", "stored", 20, true], ["92", "DEMO-26006", "pending", 12, true], ["93", "DEMO-26006", "pending", 8, true], ["01", null, "stored", 15, false]]);
+  assert.deepEqual(d.rodLots.map((row) => [row.location, row.source, row.sourceNote]), [["A-01", "order", null], ["A-02", "order", null], ["", "order", null], ["", "order", null], ["B-01", "opening", "ยกยอดจากการนับคลังครั้งแรก"]], "stored lots have a location, pending lots get one at receipt");
   assert.equal(rules.rodFree(d, RB), 6);
   assert.equal(rules.rodOwned(d, "DEMO-26006", RB), 20);
   assert.deepEqual([job06(d).qtyDone, job06(d).qtyPlanned, job06(d).status], [20, 36, "in_progress"]);
@@ -73,31 +75,32 @@ test("the demo seed has a stored lot of free stock, rods owned by DEMO-26006 and
 
 test("SR receives a lot that passes: the RB job counts it, rods within the job's need belong to the order and the rest is free stock", () => {
   const d = fresh();
-  for (const role of ["gr", "rb", "wh", "qa", "pt"]) rejects(() => A.receiveRods(structuredClone(d), { lotId: lotId(2), qtyReceived: 12, values: PASS }, ctx(role)), /คลังยางเส้นยาว \(SR\) หรือฝ่ายวางแผน/);
-  rejects(() => A.receiveRods(structuredClone(d), { lotId: lotId(2), qtyReceived: 13, values: PASS }, ctx("sr")), /ไม่เกินที่ส่งมา 12/);
-  rejects(() => A.receiveRods(structuredClone(d), { lotId: lotId(2), qtyReceived: 0, values: PASS }, ctx("sr")), /มากกว่า 0/);
+  for (const role of ["gr", "rb", "wh", "qa", "pt"]) rejects(() => A.receiveRods(structuredClone(d), { lotId: lotId(2), qtyReceived: 12, values: PASS, location: "A-03" }, ctx(role)), /คลังยางเส้นยาว \(SR\) หรือฝ่ายวางแผน/);
+  rejects(() => A.receiveRods(structuredClone(d), { lotId: lotId(2), qtyReceived: 13, values: PASS, location: "A-03" }, ctx("sr")), /ไม่เกินที่ส่งมา 12/);
+  rejects(() => A.receiveRods(structuredClone(d), { lotId: lotId(2), qtyReceived: 0, values: PASS, location: "A-03" }, ctx("sr")), /มากกว่า 0/);
   rejects(() => A.receiveRods(structuredClone(d), { lotId: lotId(2), qtyReceived: 12, values: { thickness: 7.5 } }, ctx("sr")), /กรอกค่าที่วัดให้ครบ: ความกว้าง, น้ำหนักต่อเมตร/);
   rejects(() => A.receiveRods(structuredClone(d), { lotId: lotId(2), qtyReceived: 12, values: PASS, result: "fail" }, ctx("sr")), /ผลตรวจไม่ตรงกับค่าที่วัด/);
   rejects(() => A.receiveRods(structuredClone(d), { lotId: lotId(2), qtyReceived: 12, values: { ...PASS, thickness: -1 } }, ctx("sr")), /ความหนาต้องเป็นตัวเลขมากกว่า 0/);
-  const out = A.receiveRods(d, { lotId: lotId(2), qtyReceived: 12, values: PASS }, ctx("sr"));
+  const out = A.receiveRods(d, { lotId: lotId(2), qtyReceived: 12, values: PASS, location: "A-03" }, ctx("sr"));
   assert.equal(out.status, "stored");
-  assert.deepEqual(out.request, [{ id: lotId(2), qtyReceived: 12, qc: { values: PASS, result: "pass", note: "" } }], "the request row the store sends in rodLots");
+  assert.deepEqual(out.request, [{ id: lotId(2), qtyReceived: 12, location: "A-03", qc: { values: PASS, result: "pass", note: "" } }], "the request row the store sends in rodLots");
+  assert.equal(lot(d, 2).location, "A-03", "the lot keeps its storage location");
   assert.equal(out.section, "rodLots");
   assert.deepEqual([lot(d, 2).status, lot(d, 2).qtyReceived, lot(d, 2).receivedBy], ["stored", 12, "ศิริ รับมอบ"]);
   assert.deepEqual([job06(d).qtyDone, job06(d).status, job06(d).reports.at(-1).good, job06(d).reports.at(-1).note], [32, "in_progress", 12, `รับเข้าคลัง SR ผ่านตรวจ ล็อต ${lot(d, 2).lotNo}`]);
   assert.equal(rules.rodOwned(d, "DEMO-26006", RB), 32);
-  rejects(() => A.receiveRods(d, { lotId: lotId(2), qtyReceived: 12, values: PASS }, ctx("sr")), /แล้ว รับซ้ำไม่ได้/);
+  rejects(() => A.receiveRods(d, { lotId: lotId(2), qtyReceived: 12, values: PASS, location: "A-03" }, ctx("sr")), /แล้ว รับซ้ำไม่ได้/);
   // ไม่ผ่าน: กัก ไม่นับยอด ต้องมีหมายเหตุ
   rejects(() => A.receiveRods(structuredClone(d), { lotId: lotId(3), qtyReceived: 8, values: FAIL }, ctx("sr")), /กรุณาระบุหมายเหตุว่าไม่ผ่านเพราะอะไร/);
-  A.receiveRods(d, { lotId: lotId(3), qtyReceived: 8, values: FAIL, note: "ความหนาเกิน" }, ctx("sr"));
+  A.receiveRods(d, { lotId: lotId(3), qtyReceived: 8, values: FAIL, note: "ความหนาเกิน", location: "Q-01" }, ctx("sr"));
   assert.deepEqual([lot(d, 3).status, lot(d, 3).qc.result, job06(d).qtyDone], ["held", "fail", 32]);
   assert.equal(d.rodMoves.filter((move) => move.lotId === lotId(3)).length, 0, "held rods never get moves");
 });
 
 test("QA decides a held lot: accept stores and credits with the overflow to free stock, return and scrap store nothing; SR may not decide", () => {
   const d = fresh();
-  A.receiveRods(d, { lotId: lotId(2), qtyReceived: 12, values: PASS }, ctx("sr"));
-  A.receiveRods(d, { lotId: lotId(3), qtyReceived: 8, values: FAIL, note: "ความหนาเกิน" }, ctx("sr"));
+  A.receiveRods(d, { lotId: lotId(2), qtyReceived: 12, values: PASS, location: "A-03" }, ctx("sr"));
+  A.receiveRods(d, { lotId: lotId(3), qtyReceived: 8, values: FAIL, note: "ความหนาเกิน", location: "Q-01" }, ctx("sr"));
   rejects(() => A.decideRods(structuredClone(d), { lotId: lotId(3), decision: "accept", note: "ใช้ได้" }, ctx("sr")), /ตรวจคุณภาพ \(QA\) หรือฝ่ายวางแผน/);
   rejects(() => A.decideRods(structuredClone(d), { lotId: lotId(3), decision: "accept", note: "ok" }, ctx("qa")), /อย่างน้อย 3 ตัวอักษร/);
   rejects(() => A.decideRods(structuredClone(d), { lotId: lotId(3), decision: "keep", note: "ใช้ได้" }, ctx("qa")), /เลือกผลตัดสิน/);
@@ -115,9 +118,9 @@ test("QA decides a held lot: accept stores and credits with the overflow to free
   assert.equal(rules.rodFree(d, RB), 10, "6 + the 4 beyond the job's need");
 });
 
-test("SR issues rods to GR oldest lot first, own bucket before free stock; a reversal puts them back once; only planners adjust", () => {
+test("SR issues rods to GR oldest lot first, own bucket before free stock; a reversal puts them back once; SR and planners adjust (GR does not)", () => {
   const d = fresh();
-  A.receiveRods(d, { lotId: lotId(2), qtyReceived: 12, values: PASS }, ctx("sr"));
+  A.receiveRods(d, { lotId: lotId(2), qtyReceived: 12, values: PASS, location: "A-03" }, ctx("sr"));
   rejects(() => A.issueRods(structuredClone(d), { orderId: "DEMO-26006", itemCode: RB, qty: 39 }, ctx("sr")), /ในคลังไม่พอ: ใบนี้ถือ 32 สต็อกกลาง 6/);
   rejects(() => A.issueRods(structuredClone(d), { orderId: "DEMO-26006", itemCode: RB, qty: 5 }, ctx("gr")), /คลังยางเส้นยาว \(SR\) หรือฝ่ายวางแผน/);
   rejects(() => A.issueRods(structuredClone(d), { orderId: "DEMO-26002", itemCode: RB, qty: 5 }, ctx("sr")), /ใบที่ปล่อยผลิตแล้ว/);
@@ -132,11 +135,15 @@ test("SR issues rods to GR oldest lot first, own bucket before free stock; a rev
   assert.deepEqual(back.request.map((row) => [row.kind, row.reversesId, row.note]), [["unissue", issue.id, "จ่ายเกิน"]]);
   assert.deepEqual([rules.rodIssued(d, "DEMO-26006", RB), rules.rodFree(d, RB)], [32, 6]);
   rejects(() => A.reverseRodIssue(d, { moveId: issue.id, note: "อีกครั้ง" }, ctx("sr")), /ถูกย้อนไปแล้ว/);
-  rejects(() => A.adjustRods(structuredClone(d), { lotId: lotId(0), qty: -1, note: "แท่งชำรุด" }, ctx("sr")), /ฝ่ายวางแผนหรือผู้จัดการเท่านั้น/);
+  for (const role of ["gr", "rb", "qa"]) rejects(() => A.adjustRods(structuredClone(d), { lotId: lotId(0), qty: -1, note: "แท่งชำรุด" }, ctx(role)), /คลังยางเส้นยาว \(SR\) หรือฝ่ายวางแผนเท่านั้น/);
   rejects(() => A.adjustRods(structuredClone(d), { lotId: lotId(0), qty: -7, note: "แท่งชำรุด" }, ctx("planner")), /มีสต็อกกลาง 6 ลด 7 ไม่ได้/);
   rejects(() => A.adjustRods(structuredClone(d), { lotId: lotId(3), qty: 1, note: "นับเกิน" }, ctx("planner")), /ไม่ได้อยู่ในคลัง/);
   A.adjustRods(d, { lotId: lotId(0), qty: -1, note: "แท่งชำรุด" }, ctx("planner"));
   assert.equal(rules.rodFree(d, RB), 5);
+  rejects(() => A.adjustRods(structuredClone(d), { lotId: lotId(0), qty: -1, note: "ab" }, ctx("sr")), /อย่างน้อย 3 ตัวอักษร/);
+  const sr = A.adjustRods(d, { lotId: lotId(0), qty: -1, note: "นับจริงขาด 1" }, ctx("sr"));
+  assert.deepEqual(sr.request.map((row) => [row.kind, row.qty, row.note]), [["adjust", -1, "นับจริงขาด 1"]], "SR adjusts free stock with a reason (20261204010000)");
+  assert.equal(rules.rodFree(d, RB), 4);
 });
 
 test("a draft takes rods from the SR store at release (FIFO over free stock) and gives them back when reopened; the amount is capped by what is free", () => {
@@ -146,8 +153,9 @@ test("a draft takes rods from the SR store at release (FIFO over free stock) and
   assert.deepEqual([row().stock, row().available, row().max, Math.ceil(row().required)], [6, 6, 6, 116]);
   rejects(() => A.setStockCount(structuredClone(d), { orderId: "DEMO-26002", itemCode: RB, qty: 7 }, ctx("planner")), /สต็อกกลางที่ใช้ได้กับใบนี้ 6/);
   A.setStockCount(d, { orderId: "DEMO-26002", itemCode: RB, qty: 5 }, ctx("planner"));
-  assert.equal(d.audit[0].action, "ใช้จากคลังแท่งยาว SR");
-  assert.equal(rules.ROD_STOCK_AUDIT_TEXT, "ใช้จากคลังแท่งยาว SR", "the audit page names it by this text");
+  assert.equal(d.audit[0].action, "ใช้จากคลังยางเส้นยาว SR");
+  assert.equal(rules.ROD_STOCK_AUDIT_TEXT, "ใช้จากคลังยางเส้นยาว SR", "the audit page names it by this text");
+  assert.equal(rules.ROD_STOCK_AUDIT_TEXT_LEGACY, "ใช้จากคลังแท่งยาว SR", "rows written before the wording change keep the old text");
   const rbNet = rules.netRequirements(draft.explosion, draft.stockCounts).find((entry) => entry.itemCode === RB);
   assert.equal(rbNet.toMake, 110.2, "115.2 rods needed, 5 from the store");
   // ใบอื่นหยิบไปก่อน: ปล่อยไม่ได้ (ตัวเลขเปลี่ยน)
@@ -158,7 +166,7 @@ test("a draft takes rods from the SR store at release (FIFO over free stock) and
   assert.equal(d.jobs.find((job) => job.orderId === "DEMO-26002" && job.dept === "RB").qtyPlanned, 111);
   assert.deepEqual(d.rodMoves.filter((move) => move.kind === "transfer").map((move) => [move.qty, move.ownerOrderId, move.forOrderId]), [[-5, null, "DEMO-26002"], [5, "DEMO-26002", "DEMO-26002"]]);
   assert.deepEqual([rules.rodFree(d, RB), rules.rodOwned(d, "DEMO-26002", RB)], [1, 5]);
-  assert.match(d.audit[0].detail, /ใช้แท่งจากคลัง SR RB-DM02-02-YE03-204-19-34 × 5/);
+  assert.match(d.audit[0].detail, /ใช้ยางเส้นยาวจากคลัง SR RB-DM02-02-YE03-204-19-34 × 5/);
   // เปิดกลับมาแก้ (ยังไม่มีงานเริ่ม): คืนเข้าสต็อกกลาง ยอดที่ตั้งไว้คงอยู่
   A.updateOrderItem(d, { orderId: "DEMO-26002", fgCode: "DEMO-HL-24(B)-A", qty: 100 }, ctx("planner"));
   assert.equal(draft.status, "draft");
@@ -197,13 +205,16 @@ test("the remote store sends only the request rows of a rod action and leaves th
   const out = A.issueRods(d, { orderId: "DEMO-26006", itemCode: RB, qty: 3 }, ctx("sr", { remote: true }));
   assert.equal(d.rodMoves.length, fresh().rodMoves.length, "no local move rows in database mode");
   assert.equal(out.request.length, 1);
-  assert.deepEqual(storeApi.ROD_ACTIONS, { receiveRods: "rodLots", decideRods: "rodLots", issueRods: "rodMoves", reverseRodIssue: "rodMoves", adjustRods: "rodMoves" });
+  assert.deepEqual(storeApi.ROD_ACTIONS, { receiveRods: "rodLots", decideRods: "rodLots", receiveRodsOpening: "rodLots", setRodLocation: "rodLots", issueRods: "rodMoves", reverseRodIssue: "rodMoves", adjustRods: "rodMoves" });
   assert.deepEqual(storeApi.diffMaster(fresh(), d, "issueRods"), {}, "rod lists are never diffed as records");
   assert.ok(storeApi.REMOTE_LISTS.includes("rodLots") && storeApi.REMOTE_LISTS.includes("rodMoves"));
   for (const code of ["BOM_INVALID_ROD", "BOM_ROD_EXCEEDS"]) assert.doesNotMatch(storeApi.mapRemoteError({ code }).message, /BOM_/, `${code} has a Thai message`);
   assert.equal(storeApi.roleOfEmployee({ role: { code: "staff" }, department: { code: "SR" } }), "sr");
   assert.equal(storeApi.homeOf({ role: "qa" }), "orders");
-  assert.ok(storeApi.canSee({ role: "sr" }, "rods") && storeApi.canSee({ role: "qa" }, "rods") && !storeApi.canSee({ role: "sr" }, "jobs"));
+  // หน้า "คลังยางเส้นยาว" ของ BOM ย้ายไปโมดูล SR (#/sr): ไม่มีในเมนู รายการหน้า หรือสิทธิ์ของบทบาทใดใน BOM (#/bom?p=rods เปลี่ยนที่อยู่)
+  assert.ok(!storeApi.MODULE_IDS.includes("rods") && !("rods" in storeApi.NAV_PARENT) && !storeApi.NAV.includes("rods"));
+  for (const role of ["admin", "manager", "planner", "gr", "sr", "qa"]) assert.equal(storeApi.canSee({ role }, "rods"), false, `${role} has no BOM rods page`);
+  assert.ok(!storeApi.canSee({ role: "sr" }, "jobs"));
 });
 
 // ---------- Supabase จำลองของ harness ----------
@@ -227,7 +238,7 @@ function mockScene() {
   const master_ = () => call("app_bom_master");
   return { mock, call, as, save, master: master_ };
 }
-const receiveRow = (n, extra = {}) => ({ rodLots: { upsert: [{ id: lotId(n), qtyReceived: n === 2 ? 12 : 8, qc: { values: PASS, result: "pass", note: "" }, ...extra }] } });
+const receiveRow = (n, extra = {}) => ({ rodLots: { upsert: [{ id: lotId(n), qtyReceived: n === 2 ? 12 : 8, location: "A-03", qc: { values: PASS, result: "pass", note: "" }, ...extra }] } });
 const codeOf = async (promise) => (await promise).code ?? "ok";
 
 test("mock: SR receives and credits, other departments are refused, the shape and the spec verdict are checked like the database", async () => {
@@ -268,7 +279,7 @@ test("mock: a lot without a spec needs SR's own pass or fail", async () => {
   storage.setItem(BOM_KEY, JSON.stringify({ version: 1, epoch: "e", versions: {}, tombstones: [], audit: [], ...Object.fromEntries(lists.map((list) => [list, data[list]])) }));
   const mock = createMockSupabase({ sandbox: true, now: () => NOW, storage });
   await mock.client.rpc("app_sandbox_enter", { p_persona_id: "persona-sr" });
-  const send = (qc) => mock.client.rpc("app_bom_save_master", { p_changes: { rodLots: { upsert: [{ id: lotId(2), qtyReceived: 12, qc }] } }, p_base_version: 1, p_action: "receiveRods", p_audit: [] });
+  const send = (qc) => mock.client.rpc("app_bom_save_master", { p_changes: { rodLots: { upsert: [{ id: lotId(2), qtyReceived: 12, location: "A-03", qc }] } }, p_base_version: 1, p_action: "receiveRods", p_audit: [] });
   assert.equal((await send({ values: {}, note: "" })).error.code, "BOM_INVALID_ROD", "no result, no spec");
   assert.equal((await send({ values: { thickness: null, width: 34 }, result: "pass", note: "" })).error, null, "SR's visual judgement is enough (a null measurement is skipped)");
   const stored = (await mock.client.rpc("app_bom_master")).data.rodLots.find((row) => row.id === lotId(2));
@@ -296,7 +307,7 @@ test("mock: QA accepts, returns or scraps a held lot; SR cannot decide; the acce
   }
 });
 
-test("mock: issuing checks the bucket balance and the owner, a reversal is accepted once, only the planner group adjusts", async () => {
+test("mock: issuing checks the bucket balance and the owner, a reversal is accepted once, SR and the planner group adjust", async () => {
   const scene = mockScene();
   const issue = (id, owner, qty, extra = {}) => ({ id, kind: "issue", lotId: lotId(1), ownerOrderId: owner, forOrderId: "DEMO-26006", itemCode: RB, qty, ...extra });
   const uuid = (n) => `9a000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -320,10 +331,13 @@ test("mock: issuing checks the bucket balance and the owner, a reversal is accep
   const moves = (await scene.master()).rodMoves;
   assert.deepEqual(moves.filter((move) => move.reversesId === uuid(3)).map((move) => [move.kind, move.qty, move.ownerOrderId, move.forOrderId, move.lotId]), [["unissue", 2, null, "DEMO-26006", lotId(0)]]);
   const adjust = (qty, extra = {}) => ({ rodMoves: { upsert: [{ id: uuid(7), kind: "adjust", lotId: lotId(0), qty, note: "นับจริง", ...extra }] } });
-  assert.equal(await codeOf(scene.save("persona-sr", "adjustRods", adjust(-1))), "BOM_FORBIDDEN", "SR may not adjust");
+  for (const persona of ["persona-gr", "persona-rb", "persona-qa"]) assert.equal(await codeOf(scene.save(persona, "adjustRods", adjust(-1))), "BOM_FORBIDDEN", `${persona} may not adjust`);
   assert.equal(await codeOf(scene.save("persona-pp", "adjustRods", adjust(-7))), "BOM_ROD_EXCEEDS", "the free bucket stays >= 0");
   assert.equal(await codeOf(scene.save("persona-pp", "adjustRods", adjust(0))), "BOM_INVALID_ROD");
   assert.ok((await scene.save("persona-pp", "adjustRods", adjust(-1))).data);
+  assert.equal(await codeOf(scene.save("persona-sr", "adjustRods", adjust(-1, { id: uuid(8), note: "ab" }))), "BOM_INVALID_ROD", "SR also needs a reason");
+  assert.ok((await scene.save("persona-sr", "adjustRods", adjust(-1, { id: uuid(8), note: "นับจริงขาด" }))).data, "SR adjusts free stock (20261204010000)");
+  assert.equal((await scene.master()).rodMoves.find((move) => move.id === uuid(8)).by, "ศิริ รับมอบ");
 });
 
 test("mock: SR and QA read BOM data; the release takes free rods FIFO or refuses BOM_ROD_EXCEEDS; reopening gives them back", async () => {
@@ -462,11 +476,12 @@ test("mock: the store round trip — SR receives through the page store and the 
   };
   const store = storeApi.createStore({ actions: A, now: () => NOW, remote, persona: () => storeApi.personaUser({ ...persona, isSandbox: true }) });
   await store.ensureLoaded();
-  const run = store.run("receiveRods", { lotId: lotId(2), qtyReceived: "12", values: { thickness: "7.5", width: "34.1", weightPerM: "1205" } });
+  const run = store.run("receiveRods", { lotId: lotId(2), qtyReceived: "12", location: " A-03 ", values: { thickness: "7.5", width: "34.1", weightPerM: "1205" } });
   assert.equal(run.ok, true, run.error?.message);
   assert.equal((await run.saving).ok, true);
   assert.deepEqual(Object.keys(sent[0].changes), ["rodLots"], "only the request section is sent");
-  assert.deepEqual(sent[0].changes.rodLots.upsert, [{ id: lotId(2), qtyReceived: 12, qc: { values: PASS, result: "pass", note: "" } }]);
+  assert.deepEqual(sent[0].changes.rodLots.upsert, [{ id: lotId(2), qtyReceived: 12, location: "A-03", qc: { values: PASS, result: "pass", note: "" } }]);
+  assert.equal(store.data().rodLots.find((row) => row.id === lotId(2)).location, "A-03", "the reply brings the location back");
   const data = store.data();
   assert.equal(data.jobs.find((row) => row.orderId === "DEMO-26006" && row.dept === "RB").qtyDone, 32);
   assert.equal(data.rodMoves.filter((move) => move.lotId === lotId(2)).length, 1, "the server's move arrives once (no local copy)");
@@ -476,13 +491,15 @@ test("mock: the store round trip — SR receives through the page store and the 
   assert.equal((await issued.saving).ok, true);
   assert.deepEqual(Object.keys(sent[1].changes), ["rodMoves"]);
   assert.equal(rules.rodIssued(store.data(), "DEMO-26006", RB), 3);
-  const refused = store.run("adjustRods", { lotId: lotId(0), qty: -1, note: "แท่งชำรุด" });
-  assert.equal(refused.ok, false, "SR is refused on the page before sending");
+  const adjusted = store.run("adjustRods", { lotId: lotId(0), qty: -1, note: "แท่งชำรุด" });
+  assert.equal(adjusted.ok, true, adjusted.error?.message);
+  assert.equal((await adjusted.saving).ok, true, "SR adjusts through the page store (20261204010000)");
+  assert.deepEqual(Object.keys(sent[2].changes), ["rodMoves"]);
 });
 
 // ---------- หน้าจอ (โมดูลทั้งชุดใน context จำลองแบบเดียวกับ bom-pages.test.mjs) ----------
 const FILES = [
-  "modules/ui-icons.js",
+  "modules/ui-icons.js", "modules/department-access.js",
   "modules/rubberflow-rules.js", "modules/rubberflow-derive.js", "modules/rubberflow-actions.js", "modules/rubberflow-seed.js", "modules/rubberflow-store.js",
   "modules/rubberflow-ui.js", "modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js",
   "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/factory-kit.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js",
@@ -526,13 +543,14 @@ test("pages: SR's work board shows the pending lots and the GR issue card, QA ge
   assert.match(html, /จ่ายยางเส้นยาวให้ GR ตามใบ DEMO-26006/);
   assert.match(html, /ต้องจ่าย 36 เส้น/);
   assert.match(html, /data-rf-open="rodIssue"/);
-  assert.match(html, /href="#\/bom\?p=rods"/, "a link to the long-rod store page");
+  assert.doesNotMatch(html, /p=rods/, "the long-rod store page is the SR module now: no link to the old BOM page");
   assert.doesNotMatch(html, /บัญชีนี้ไม่ได้อยู่ในแผนกผลิต/);
-  // การ์ดจ่ายให้ GR: ทุกใบที่ปล่อยผลิตอยู่ซึ่งงาน GR ยังต้องใช้เส้นยางนี้ และคลังมีแท่งให้ (ของใบนั้นหรือสต็อกกลาง 6 เส้น) = DEMO-26001 DEMO-26006 DEMO-26007
-  assert.deepEqual([...html.matchAll(/จ่ายยางเส้นยาวให้ GR ตามใบ (DEMO-\d+)/g)].map((match) => match[1]).sort(), ["DEMO-26001", "DEMO-26006", "DEMO-26007"]);
-  assert.equal(env.context.MNP_BOM_PAGES.hub.workCount(env.ctx()), 5, "the menu counts the five SR cards (two lots to receive, three orders to supply)");
+  // การ์ดจ่ายให้ GR: ทุกใบที่ปล่อยผลิตอยู่ซึ่งงาน GR ยังต้องใช้เส้นยางนั้น และคลังมีให้ (ของใบนั้นหรือสต็อกกลาง) = DEMO-26001 DEMO-26006 DEMO-26007 ของ RB-DM02-02-YE03 (สต็อกกลาง 6 เส้น)
+  // และ DEMO-26001 ของ RB-DM02-02-BK01 (ล็อตรับนอกใบสั่ง 15 เส้น)
+  assert.deepEqual([...html.matchAll(/จ่ายยางเส้นยาวให้ GR ตามใบ (DEMO-\d+)/g)].map((match) => match[1]).sort(), ["DEMO-26001", "DEMO-26001", "DEMO-26006", "DEMO-26007"]);
+  assert.equal(env.context.MNP_BOM_PAGES.hub.workCount(env.ctx()), 6, "the menu counts the six SR cards (two lots to receive, four order lines to supply)");
   // QA: ยังไม่มีล็อตที่กัก → SR รับ L3 ไม่ผ่าน → QA เห็นการ์ดตัดสิน
-  assert.equal(env.store.run("receiveRods", { lotId: lotId(3), qtyReceived: 8, values: FAIL, note: "ความหนาเกิน" }).ok, true);
+  assert.equal(env.store.run("receiveRods", { lotId: lotId(3), qtyReceived: 8, values: FAIL, note: "ความหนาเกิน", location: "Q-01" }).ok, true);
   env.store.setUser("B12");
   html = await env.render("p=work");
   clean(html);
@@ -541,7 +559,7 @@ test("pages: SR's work board shows the pending lots and the GR issue card, QA ge
   assert.doesNotMatch(html, /data-rf-open="rodReceive"|data-rf-open="rodIssue"/, "QA only decides");
   env.store.setUser("B03");
   html = await env.render("p=work");
-  assert.match(html, /RB \d+<\/a>[\s\S]*SR 4<\/a>[\s\S]*QA 1<\/a>[\s\S]*GR \d+<\/a>/, "the planner's department tabs include SR (one lot left to receive, three orders to supply) and QA in flow order");
+  assert.match(html, /RB \d+<\/a>[\s\S]*SR 5<\/a>[\s\S]*QA 1<\/a>[\s\S]*GR \d+<\/a>/, "the planner's department tabs include SR (one lot left to receive, four order lines to supply) and QA in flow order");
   html = await env.render("p=work&dept=QA");
   assert.match(html, /data-rf-open="rodDecide"/);
   // GR: การ์ดงานบอกยางเส้นยาวที่ได้รับจาก SR
@@ -583,9 +601,25 @@ test("pages: the receive dialog shows the spec targets, computes the verdict liv
   const qty = { value: "22", handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
   const plan = { innerHTML: "" };
   issue.bind({ querySelector: (selector) => ({ "[data-rod-issue]": qty, "[data-rod-plan]": plan })[selector] ?? null });
-  assert.match(plan.innerHTML, /FN-\d{8}-91<\/span> <span class="small muted">ของใบ DEMO-26006<\/span><span class="nowrap">20 เส้น[\s\S]*FN-\d{8}-90<\/span> <span class="small muted">สต็อกกลาง<\/span><span class="nowrap">2 เส้น/);
+  assert.match(plan.innerHTML, /sr-pick-loc" title="ตำแหน่งจัดเก็บ">A-02<\/span>[\s\S]*FN-\d{8}-91<\/strong> <span class="small muted">ของใบ DEMO-26006<\/span><\/span><strong class="sr-pick-qty nowrap">20 เส้น[\s\S]*sr-pick-loc" title="ตำแหน่งจัดเก็บ">A-01<\/span>[\s\S]*FN-\d{8}-90<\/strong> <span class="small muted">สต็อกกลาง<\/span><\/span><strong class="sr-pick-qty nowrap">2 เส้น/, "the dialog lists each lot to pick with its shelf, oldest first");
+  assert.match(plan.innerHTML, /<ul class="sr-pick" data-module="sr" role="list">/, "the list carries the SR palette even though the dialog sits outside the module page");
+  assert.equal([...plan.innerHTML.matchAll(/class="sr-pick-mark">หยิบ</g)].length, 2, "each lot to pick has the หยิบ marker");
+  // live: a smaller quantity shows only the lots still needed (lots not needed are not listed), a larger one adds a lot, too much says what is short, none clears it
+  qty.value = "3";
+  qty.handlers.input();
+  assert.equal([...plan.innerHTML.matchAll(/class="sr-pick-row"/g)].length, 1, "3 rods come from the oldest lot alone");
+  assert.match(plan.innerHTML, /A-02<\/span>[\s\S]*ของใบ DEMO-26006[\s\S]*3 เส้น/);
+  assert.doesNotMatch(plan.innerHTML, /A-01/, "the second lot is not needed, so it is not shown");
+  qty.value = "30";
+  qty.handlers.input();
+  assert.equal([...plan.innerHTML.matchAll(/class="sr-pick-row"/g)].length, 2);
+  assert.match(plan.innerHTML, /A-01<\/span>[\s\S]*6 เส้น/);
+  assert.match(plan.innerHTML, /ในคลังมีไม่พอ ขาด 4 เส้น/, "26 in the store, 30 typed: 4 short, the lots that exist are still listed");
+  qty.value = "0";
+  qty.handlers.input();
+  assert.equal(plan.innerHTML, "");
   // ผลผ่านบอกว่าแท่งไปไหน (ตรงกับ bom_rod_credit): SR รับ L2 ผ่าน (งาน 32/36) แล้ว L3 8 เส้น = 4 เส้นเป็นของงาน อีก 4 เส้นเข้าสต็อกกลาง · รับ 3 เส้น = นับเข้างานทั้งหมด
-  assert.equal(env.store.run("receiveRods", { lotId: lotId(2), qtyReceived: 12, values: PASS }).ok, true);
+  assert.equal(env.store.run("receiveRods", { lotId: lotId(2), qtyReceived: 12, values: PASS, location: "A-03" }).ok, true);
   const verdictOf = (qtyValue) => {
     const later = env.dialogs.rodReceive(env.ctx("p=work"), { lotId: lotId(3) });
     const verdict = { innerHTML: "" };
@@ -604,33 +638,26 @@ test("pages: the receive dialog shows the spec targets, computes the verdict liv
   assert.match(verdictOf("8").verdict.innerHTML, /ผ่านสเปก ยางเส้นยาวเข้าคลังเป็นสต็อกกลางทั้งหมด ไม่นับเข้างาน RB \(งาน RB ของใบนี้เสร็จแล้ว\)/);
 });
 
-test("pages: the long-rod store page, the lot history with reverse, the decide dialog and the draft's use-from-SR-store field", async () => {
+test("pages: the reverse and adjust dialogs, the decide dialog and the draft's use-from-SR-store field (the store page and the lot history dialog moved to the SR module)", async () => {
   const env = await page();
   env.store.setUser("B11");
   assert.equal(env.store.run("issueRods", { orderId: "DEMO-26006", itemCode: RB, qty: 3 }).ok, true);
-  let html = await env.render("p=rods");
-  clean(html);
-  assert.match(html, /คลังยางเส้นยาว \(SR\)/);
-  assert.doesNotMatch(html, /แท่ง/, "the store page says ยางเส้นยาว");
-  assert.match(html, /ยอดต่อเส้นยาง/);
-  assert.match(html, /data-rf-open="rodLot"/);
-  assert.match(html, /ของใบ DEMO-26006 17/, "the lot row shows what is left per bucket");
-  const history = env.dialogs.rodLot(env.ctx("p=rods"), { lotId: lotId(1) });
-  clean(history.html);
-  assert.match(history.html, /จ่ายให้ GR/);
-  assert.match(history.html, /data-rf-open="rodReverse"/);
-  assert.doesNotMatch(history.html, /data-rf-open="rodAdjust"/, "SR does not adjust");
+  assert.equal(env.dialogs.rodLot, undefined, "the lot history dialog is the SR lot page now");
+  assert.equal(env.context.MNP_BOM_PAGES.rods, undefined, "and the BOM rod store page is gone");
   const move = env.store.data().rodMoves.find((row) => row.kind === "issue");
   const reverse = env.dialogs.rodReverse(env.ctx(), { moveId: move.id }).html;
   assert.match(reverse, /data-rf-form="reverseRodIssue"/);
-  assert.doesNotMatch(`${history.html}${reverse}`, /แท่ง/, "the lot history and the reverse dialog say ยางเส้นยาว");
-  env.store.setUser("B04");
-  assert.match(await env.render("p=rods"), /ไม่มีสิทธิ์เข้าถึงหน้านี้/, "RB does not open the store page");
+  assert.doesNotMatch(reverse, /แท่ง/, "the reverse dialog says ยางเส้นยาว");
+  const adjustDialog = env.dialogs.rodAdjust(env.ctx(), { lotId: lotId(0) });
+  assert.match(adjustDialog.html, /data-rf-form="adjustRods"/, "SR adjusts free stock too (20261204010000)");
+  env.store.setUser("B05");
+  assert.equal(env.dialogs.rodAdjust(env.ctx(), { lotId: lotId(0) }), null, "GR does not adjust");
+  assert.equal(env.dialogs.rodReverse(env.ctx(), { moveId: move.id }), null, "GR does not reverse");
   env.store.setUser("B03");
-  assert.match(env.dialogs.rodLot(env.ctx(), { lotId: lotId(0) }).html, /data-rf-open="rodAdjust"/, "the planner adjusts free stock");
   const adjust = env.dialogs.rodAdjust(env.ctx(), { lotId: lotId(0) }).html;
   clean(adjust);
   assert.doesNotMatch(adjust, /แท่ง/);
+  let html;
   // ขั้น 2 ของใบร่าง: ช่อง "ใช้จากคลัง SR (เส้น)" บอกยอดที่ใช้ได้ใน title ไม่ใช่ข้อความถาวร
   html = await env.render("p=orders&sel=DEMO-26002");
   clean(html);
@@ -641,7 +668,7 @@ test("pages: the long-rod store page, the lot history with reverse, the decide d
   assert.match(html, /name="qty\[\]"[^>]*max="6"/);
   // QA ตัดสิน
   env.store.setUser("B11");
-  env.store.run("receiveRods", { lotId: lotId(3), qtyReceived: 8, values: FAIL, note: "ความหนาเกิน" });
+  env.store.run("receiveRods", { lotId: lotId(3), qtyReceived: 8, values: FAIL, note: "ความหนาเกิน", location: "Q-01" });
   env.store.setUser("B12");
   const decide = env.dialogs.rodDecide(env.ctx(), { lotId: lotId(3) });
   clean(decide.html);
@@ -675,9 +702,230 @@ test("pages: the RubberFlow finishing form hides and stops requiring perBox for 
   const pickTransfer = (id) => { nodes["[data-rf-inbound]"].value = id; nodes["[data-rf-inbound]"].handlers.change(); };
   const state = () => [nodes[".rf-perbox-field"].hidden, nodes["[data-rf-perbox]"].required, nodes["[data-rf-perbox]"].value, nodes["[data-rf-linked-note]"].hidden, nodes['[name="qcResult"] option[value="pass"]'].textContent];
   pickTransfer("TR-0");
-  assert.deepEqual(state(), [true, false, "", false, "ผ่าน — ส่งเข้าคลังแท่งยาว (SR)"], "linked: perBox hidden, not required, empty; the verdict names the SR store");
+  assert.deepEqual(state(), [true, false, "", false, "ผ่าน — ส่งเข้าคลังยางเส้นยาว (SR)"], "linked: perBox hidden, not required, empty; the verdict names the SR store");
   pickTransfer("TR-2");
   assert.deepEqual(state(), [false, true, "2000", true, "ผ่าน — รับเข้าคลัง"], "a work order for sale asks for perBox again with a default");
   pickTransfer("TR-1");
   assert.deepEqual(state().slice(0, 2), [false, true], "a job that BOM no longer has counts as not linked (boxes)");
+});
+
+// ---------- โมดูลคลังยางเส้นยาว SR (โรงงาน ขั้น 1 · 20261204010000_bom_sr_store_module.sql · pgTAP คู่กัน: bom_sr_store_module.test.sql) ----------
+// ตำแหน่งจัดเก็บจำเป็นทุกการรับเข้า · รับนอกใบสั่ง (receiveRodsOpening) และย้ายตำแหน่ง (setRodLocation) โดย SR หรือฝ่ายวางแผน · SR ปรับยอดเองได้
+const BK = "RB-DM02-02-BK01-225-3-20";
+const openingRow = (extra = {}) => ({ lotNo: "op-2", itemCode: BK, qty: 10, location: "C-01", note: "คืนจากลูกค้า", ...extra });
+
+test("rules: the rubber attributes of an RB code come from the item register (missing keys from the code); the store module constants", () => {
+  const items = [
+    { code: BK, name: "ยางดำ", rubber: { compound: "DM02", color: "BK01", lengthMm: 225, holeMm: 3, odMm: 20 } },
+    { code: "RB-XX9-01-RD02-100-0-8", name: "ยางแดง", rubber: { compound: "", lengthMm: 120 } },
+  ];
+  assert.deepEqual(rules.rodAttrs(items, ` ${BK.toLowerCase()} `, [{ code: "BK01", name: "ดำสนิท" }]),
+    { code: BK, name: "ยางดำ", compound: "DM02", color: "BK01", colorName: "ดำสนิท", size: "ยาว 225 × รู 3 × วงนอก 20 มม.", text: "สูตร DM02 · สี ดำสนิท · ยาว 225 × รู 3 × วงนอก 20 มม." });
+  const fallback = rules.rodAttrs(items, "RB-XX9-01-RD02-100-0-8");
+  assert.deepEqual([fallback.compound, fallback.color, fallback.colorName, fallback.size], ["XX9", "RD02", "แดง 02", "ยาว 120 × วงนอก 8 มม."],
+    "an empty register key falls back to the code, a register value wins, a zero hole is left out");
+  assert.deepEqual(rules.rodAttrs([], "SE-X-1"), { code: "SE-X-1", name: "", compound: "", color: "", colorName: "", size: "", text: "" }, "nothing known = empty texts");
+  const demo = fresh();
+  assert.equal(rules.rodAttrs(demo.items, BK, demo.colors).text, "สูตร DM02 · สี ดำ · ยาว 225 × รู 3 × วงนอก 20 มม.", "the demo register with its colour names");
+  assert.deepEqual([rules.ROD_LOCATION_MAX, rules.ROD_LOT_NO_MAX, rules.ROD_RESERVED_LOT_PREFIX], [40, 40, "FN-"]);
+  assert.deepEqual(rules.ROD_SOURCE_LABEL, { order: "จากใบสั่งผลิต", opening: "รับนอกใบสั่ง" });
+});
+
+test("receiveRods needs a storage location of 1-40 characters and keeps it on the lot", () => {
+  const d = fresh();
+  rejects(() => A.receiveRods(structuredClone(d), { lotId: lotId(2), qtyReceived: 12, values: PASS }, ctx("sr")), /กรุณาระบุตำแหน่งจัดเก็บ \(เช่น A-01\)/);
+  rejects(() => A.receiveRods(structuredClone(d), { lotId: lotId(2), qtyReceived: 12, values: PASS, location: "   " }, ctx("sr")), /กรุณาระบุตำแหน่งจัดเก็บ/);
+  rejects(() => A.receiveRods(structuredClone(d), { lotId: lotId(2), qtyReceived: 12, values: PASS, location: "A".repeat(41) }, ctx("sr")), /ตำแหน่งจัดเก็บยาวเกิน 40 ตัวอักษร/);
+  assert.equal(lot(d, 2).status, "pending", "a refused receipt changes nothing");
+  A.receiveRods(d, { lotId: lotId(2), qtyReceived: 12, values: PASS, location: " A-07 " }, ctx("sr"));
+  assert.deepEqual([lot(d, 2).status, lot(d, 2).location], ["stored", "A-07"]);
+  A.receiveRods(d, { lotId: lotId(3), qtyReceived: 8, values: FAIL, note: "ความหนาเกิน", location: "Q-01" }, ctx("sr"));
+  assert.deepEqual([lot(d, 3).status, lot(d, 3).location], ["held", "Q-01"], "a held lot has a place too");
+});
+
+test("receiveRodsOpening: SR or a planner takes RB rods in outside an order as free stock with a location and a reason; the rest is refused", () => {
+  const d = fresh();
+  const se = d.items.find((item) => item.kind === "SE").code;
+  const existing = d.rodLots.find((row) => row.source === "opening").lotNo;
+  for (const role of ["gr", "rb", "wh", "qa", "pt"]) rejects(() => A.receiveRodsOpening(structuredClone(d), openingRow(), ctx(role)), /รับยางเส้นยาวนอกใบสั่งได้โดยคลังยางเส้นยาว \(SR\) หรือฝ่ายวางแผนเท่านั้น/);
+  for (const [extra, pattern] of [
+    [{ itemCode: se }, /ไม่ใช่เส้นยาง \(RB\)/], [{ itemCode: "RB-NOPE" }, /ไม่พบรหัส RB-NOPE/], [{ qty: 0 }, /จำนวนที่รับต้องมากกว่า 0/], [{ qty: "x" }, /จำนวนที่รับต้องเป็นตัวเลข/],
+    [{ location: "" }, /กรุณาระบุตำแหน่งจัดเก็บ/], [{ location: "B".repeat(41) }, /ยาวเกิน 40/], [{ note: "ab" }, /กรุณาระบุที่มาหรือเหตุผลที่รับเข้า \(อย่างน้อย 3 ตัวอักษร\)/],
+    [{ lotNo: " " }, /กรุณาระบุเลขล็อต/], [{ lotNo: "L".repeat(41) }, /เลขล็อตยาวเกิน 40/], [{ lotNo: "fn-777" }, /ขึ้นต้นด้วย FN- เป็นของล็อตตกแต่งใน RubberFlow/],
+    [{ lotNo: existing.toLowerCase() }, /มีอยู่แล้ว ใช้เลขล็อตอื่น/],
+  ]) rejects(() => A.receiveRodsOpening(structuredClone(d), openingRow(extra), ctx("sr")), pattern);
+  const out = A.receiveRodsOpening(d, openingRow(), ctx("sr"));
+  const made = d.rodLots.find((row) => row.id === out.id);
+  assert.match(out.id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.deepEqual(plain(made), {
+    id: out.id, lotNo: "OP-2", itemCode: BK, orderId: null, jobNo: null, woNo: null, recipeCode: null, uom: "rod", qtySent: 10, spec: null, status: "stored", qtyReceived: 10, qc: null,
+    receivedBy: "ศิริ รับมอบ", receivedAt: NOW, decision: null, decisionNote: null, decidedBy: null, decidedAt: null, createdAt: NOW, location: "C-01", source: "opening", sourceNote: "คืนจากลูกค้า",
+  }, "the lot has the same fields as a lot the server returns");
+  assert.deepEqual(d.rodMoves.filter((move) => move.lotId === out.id).map((move) => [move.kind, move.qty, move.ownerOrderId, move.note]), [["receive", 10, null, "คืนจากลูกค้า"]]);
+  assert.equal(rules.rodFree(d, BK), 25, "15 of the demo opening lot + 10");
+  assert.deepEqual([out.section, out.request], ["rodLots", [{ id: out.id, lotNo: "OP-2", itemCode: BK, qty: 10, location: "C-01", note: "คืนจากลูกค้า" }]]);
+  assert.deepEqual([d.audit[0].action, d.audit[0].detail], ["รับยางเส้นยาวนอกใบสั่ง", `ล็อต OP-2 ${BK} × 10 ที่ C-01 — คืนจากลูกค้า`]);
+  rejects(() => A.receiveRodsOpening(structuredClone(d), openingRow(), ctx("sr")), /ล็อต OP-2 มีอยู่แล้ว/);
+  A.receiveRodsOpening(d, openingRow({ lotNo: "OP-3", qty: 2 }), ctx("planner"));
+  assert.equal(rules.rodFree(d, BK), 27, "a planner takes rods in too");
+  // ล็อตนอกใบสั่งจ่ายให้ GR ได้ ล็อตที่รับก่อนออกก่อน (ล็อตสาธิตรับ 3 วันก่อน แล้ว OP-2 OP-3)
+  const issued = A.issueRods(d, { orderId: "DEMO-26001", itemCode: BK, qty: 18 }, ctx("sr"));
+  assert.deepEqual(issued.plan.map((row) => [row.lotNo, row.owner, row.qty]), [[existing, null, 15], ["OP-2", null, 3]]);
+  assert.equal(rules.rodFree(d, BK), 9);
+  // โหมดฐานข้อมูล: ล็อตแสดงทันที แถวประวัติมากับคำตอบของเซิร์ฟเวอร์
+  const remote = fresh();
+  const before = remote.rodMoves.length;
+  const sent = A.receiveRodsOpening(remote, openingRow(), ctx("sr", { remote: true }));
+  assert.deepEqual([remote.rodLots.some((row) => row.id === sent.id), remote.rodMoves.length], [true, before]);
+  assert.deepEqual(storeApi.diffMaster(fresh(), remote, "receiveRodsOpening"), {}, "the lot is never diffed as a record: the request row is what the store sends");
+});
+
+test("setRodLocation moves a stored or held lot (SR or a planner) and touches nothing else", () => {
+  const d = fresh();
+  for (const role of ["gr", "qa", "rb"]) rejects(() => A.setRodLocation(structuredClone(d), { lotId: lotId(0), location: "D-09" }, ctx(role)), /ย้ายตำแหน่งยางเส้นยาวได้โดยคลังยางเส้นยาว \(SR\) หรือฝ่ายวางแผนเท่านั้น/);
+  rejects(() => A.setRodLocation(structuredClone(d), { lotId: lotId(2), location: "D-09" }, ctx("sr")), /ไม่ได้อยู่ในคลัง \(รอรับเข้าคลัง\) ย้ายตำแหน่งไม่ได้/);
+  rejects(() => A.setRodLocation(structuredClone(d), { lotId: lotId(0), location: "" }, ctx("sr")), /กรุณาระบุตำแหน่งจัดเก็บ/);
+  rejects(() => A.setRodLocation(structuredClone(d), { lotId: "nope", location: "D-09" }, ctx("sr")), /ไม่พบล็อตยางเส้นยาวนี้/);
+  const moves = d.rodMoves.length;
+  const out = A.setRodLocation(d, { lotId: lotId(0), location: " D-09 " }, ctx("sr"));
+  assert.deepEqual([out.section, out.request], ["rodLots", [{ id: lotId(0), location: "D-09" }]]);
+  assert.deepEqual([lot(d, 0).location, lot(d, 0).status, lot(d, 0).qtyReceived, d.rodMoves.length], ["D-09", "stored", 6, moves], "only the place changes, no stock move");
+  assert.deepEqual([d.audit[0].action, d.audit[0].detail], ["ย้ายตำแหน่งยางเส้นยาว", `ล็อต ${lot(d, 0).lotNo} ${RB} A-01 → D-09`]);
+  A.receiveRods(d, { lotId: lotId(3), qtyReceived: 8, values: FAIL, note: "ความหนาเกิน", location: "Q-01" }, ctx("sr"));
+  A.setRodLocation(d, { lotId: lotId(3), location: "Q-02" }, ctx("planner"));
+  assert.equal(lot(d, 3).location, "Q-02", "a held lot can be moved while it waits for QA");
+  A.decideRods(d, { lotId: lotId(3), decision: "return", note: "ส่งคืน RB" }, ctx("qa"));
+  rejects(() => A.setRodLocation(d, { lotId: lotId(3), location: "Q-03" }, ctx("sr")), /ไม่ได้อยู่ในคลัง \(คืน RB แก้ไข\)/);
+  assert.deepEqual([A.helpers.canAdjustRods(user("sr")), A.helpers.canAdjustRods(user("planner")), A.helpers.canAdjustRods(user("gr")), A.helpers.canAdjustRods(user("qa"))], [true, true, false, false]);
+});
+
+test("mock: receiveRods needs a location; receiveRodsOpening and setRodLocation follow the database's rights, shape and errors; the opening lot is issued like any lot", async () => {
+  const scene = mockScene();
+  const lots = (rows) => ({ rodLots: { upsert: rows } });
+  // receiveRods ไม่มีตำแหน่ง = รูปคำขอผิด (ก่อนสิทธิ์)
+  assert.equal(await codeOf(scene.save("persona-sr", "receiveRods", receiveRow(2, { location: undefined }))), "BOM_INVALID_ROD", "no location");
+  assert.equal(await codeOf(scene.save("persona-gr", "receiveRods", receiveRow(2, { location: " " }))), "BOM_INVALID_ROD", "a blank location is a shape error before rights");
+  assert.equal(await codeOf(scene.save("persona-sr", "receiveRods", receiveRow(2, { location: "A".repeat(41) }))), "BOM_INVALID_ROD", "more than 40 characters");
+  assert.ok((await scene.save("persona-sr", "receiveRods", receiveRow(2, { location: " A-07 " }))).data);
+  assert.equal((await scene.master()).rodLots.find((row) => row.id === lotId(2)).location, "A-07", "the trimmed location is stored");
+  // รับนอกใบสั่ง
+  const opening = (extra = {}) => lots([{ id: "9d000000-0000-4000-8000-000000000001", lotNo: "op-2", itemCode: BK, qty: 10, location: "C-01", note: "คืนจากลูกค้า", ...extra }]);
+  const before = await scene.master();
+  const se = before.items.find((item) => item.kind === "SE").code;
+  const existing = before.rodLots.find((row) => row.source === "opening");
+  for (const persona of ["persona-gr", "persona-rb", "persona-wh", "persona-qa", "persona-st"]) assert.equal(await codeOf(scene.save(persona, "receiveRodsOpening", opening())), "BOM_FORBIDDEN", `${persona} may not take rods in`);
+  for (const [extra, why] of [[{ itemCode: se }, "not an RB item"], [{ itemCode: "RB-NOPE" }, "unknown item"], [{ qty: 0 }, "zero"], [{ qty: "10" }, "a text quantity"],
+    [{ location: "" }, "no location"], [{ note: "ab" }, "a short reason"], [{ lotNo: "FN-1" }, "a RubberFlow finishing lot number"], [{ lotNo: existing.lotNo.toLowerCase() }, "a lot number in use"],
+    [{ id: existing.id }, "a row id in use"], [{ id: "not-a-uuid" }, "not a uuid"]]) {
+    assert.equal(await codeOf(scene.save("persona-sr", "receiveRodsOpening", opening(extra))), "BOM_INVALID_ROD", why);
+  }
+  assert.equal(await codeOf(scene.save("persona-sr", "receiveRodsOpening", lots([opening().rodLots.upsert[0], { ...opening().rodLots.upsert[0], id: "9d000000-0000-4000-8000-000000000002", lotNo: "OP-9" }]))), "BOM_INVALID_ROD", "one lot per call");
+  assert.equal(await codeOf(scene.save("persona-sr", "receiveRodsOpening", { rodMoves: { upsert: [{ id: "9d000000-0000-4000-8000-000000000001" }] } })), "BOM_INVALID_ROD", "the lot section only");
+  const ok = await scene.save("persona-sr", "receiveRodsOpening", opening());
+  assert.ok(ok.data, ok.code);
+  const made = ok.data.changes.rodLots.upsert.find((row) => row.id === "9d000000-0000-4000-8000-000000000001");
+  assert.deepEqual([made.lotNo, made.status, made.source, made.sourceNote, made.location, made.qtySent, made.qtyReceived, made.uom, made.orderId, made.qc, made.spec, made.receivedBy],
+    ["OP-2", "stored", "opening", "คืนจากลูกค้า", "C-01", 10, 10, "rod", null, null, null, "ศิริ รับมอบ"]);
+  assert.deepEqual(ok.data.changes.rodMoves.upsert.map((move) => [move.kind, move.qty, move.ownerOrderId, move.note]), [["receive", 10, null, "คืนจากลูกค้า"]]);
+  const audit = (await scene.call("app_bom_audit", {}))[0];
+  assert.deepEqual([audit.action, audit.detail], ["receiveRodsOpening", "rodLots +1, rodMoves +1"]);
+  assert.ok((await scene.save("persona-pp", "receiveRodsOpening", opening({ id: "9d000000-0000-4000-8000-000000000003", lotNo: "OP-3", qty: 2 }))).data, "a planner takes rods in too");
+  // ทุกล็อตมีสามช่องใหม่ (ล็อตจากใบสั่ง: ตำแหน่ง '' จนกว่าจะรับเข้า)
+  const fields = (await scene.master()).rodLots.map((row) => [row.source, typeof row.location, row.sourceNote === null || typeof row.sourceNote === "string"]);
+  assert.ok(fields.every(([source, location, note]) => ["order", "opening"].includes(source) && location === "string" && note));
+  // ย้ายตำแหน่ง
+  const move = (id, location) => lots([{ id, location }]);
+  for (const persona of ["persona-gr", "persona-qa", "persona-rb"]) assert.equal(await codeOf(scene.save(persona, "setRodLocation", move(lotId(0), "D-09"))), "BOM_FORBIDDEN", `${persona} may not move a lot`);
+  assert.equal(await codeOf(scene.save("persona-sr", "setRodLocation", move(lotId(3), "D-09"))), "BOM_INVALID_TRANSITION", "a pending lot is not in the store yet");
+  assert.equal(await codeOf(scene.save("persona-sr", "setRodLocation", move("9d000000-0000-4000-8000-0000000000ff", "D-09"))), "BOM_INVALID_ROD", "an unknown lot");
+  assert.equal(await codeOf(scene.save("persona-sr", "setRodLocation", move(lotId(0), ""))), "BOM_INVALID_ROD", "no location");
+  const moves = (await scene.master()).rodMoves.length;
+  assert.ok((await scene.save("persona-sr", "setRodLocation", move(lotId(0), "D-09"))).data);
+  const after = await scene.master();
+  assert.deepEqual([after.rodLots.find((row) => row.id === lotId(0)).location, after.rodMoves.length], ["D-09", moves], "only the place changes");
+  assert.equal((await scene.call("app_bom_audit", {}))[0].detail, "rodLots +1");
+  await scene.save("persona-sr", "receiveRods", receiveRow(3, { qc: { values: FAIL, result: "fail", note: "ความหนาเกิน" } }));
+  assert.ok((await scene.save("persona-pp", "setRodLocation", move(lotId(3), "Q-02"))).data, "a held lot can be moved");
+  await scene.save("persona-qa", "decideRods", lots([{ id: lotId(3), decision: "scrap", decisionNote: "เสียทั้งล็อต" }]));
+  assert.equal(await codeOf(scene.save("persona-sr", "setRodLocation", move(lotId(3), "Q-03"))), "BOM_INVALID_TRANSITION", "a scrapped lot is gone");
+  // ล็อตนอกใบสั่งจ่ายให้ GR ของใบที่ผลิตอยู่ได้ (ถังสต็อกกลาง)
+  const issue = { id: "9d000000-0000-4000-8000-000000000011", kind: "issue", lotId: "9d000000-0000-4000-8000-000000000001", ownerOrderId: null, forOrderId: "DEMO-26001", itemCode: BK, qty: -4 };
+  assert.equal(await codeOf(scene.save("persona-sr", "issueRods", { rodMoves: { upsert: [{ ...issue, qty: -11 }] } })), "BOM_ROD_EXCEEDS", "no more than the lot holds");
+  assert.ok((await scene.save("persona-sr", "issueRods", { rodMoves: { upsert: [issue] } })).data, "the opening lot is issued to an order");
+  assert.equal(rules.rodBalance((await scene.master()).rodMoves, "9d000000-0000-4000-8000-000000000001", null), 6);
+});
+
+test("#/bom?p=rods changes the address: to the SR module's stock for whoever can open it, to GR's read view otherwise, else to the BOM home", async () => {
+  const env = await page();
+  const person = (dept, role = "employee", extra = {}) => ({ isSandbox: true, department: { code: dept }, role: { code: role }, ...extra });
+  const go = async (userId, employee, query = "p=rods") => {
+    env.store.setUser(userId);
+    env.context.state.employee = employee;
+    env.log.hash = `#/bom?${query}`;
+    await env.context.MNP_REQUEST_MODULES.BOM.pages.bom(new URLSearchParams(query));
+    return env.log.hash;
+  };
+  assert.equal(await go("B11", person("SR")), "#/sr?tab=stock", "SR");
+  assert.equal(await go("B03", person("PP")), "#/sr?tab=stock", "a planner");
+  assert.equal(await go("B01", person("MT", "admin")), "#/sr?tab=stock", "an admin");
+  assert.equal(await go("B05", person("GR")), "#/gr?tab=rods", "GR gets its read view");
+  assert.equal(await go("B12", person("QA")), "#/bom?p=orders", "QA has no rod page now: the BOM home");
+  assert.equal(await go("B04", person("RB")), "#/bom?p=orders", "RB too");
+  assert.equal(await go("B01", person("ID", "admin")), "#/bom?p=find", "the Indesign department opens none of the factory modules: the BOM home");
+  // outside test mode BOM refuses first (nowhere to go)
+  assert.equal(await go("B11", person("SR", "employee", { isSandbox: false })), "#/bom?p=rods");
+  // other BOM pages are not redirected
+  assert.equal(await go("B03", person("PP"), "p=orders"), "#/bom?p=orders");
+});
+
+test("pages: the opening receipt dialog offers RB codes only and the location dialog fills the place in; neither opens for GR, QA, WH or RB, or for a lot that is not in the store", async () => {
+  const env = await page();
+  env.store.setUser("B11");
+  const opening = env.dialogs.rodOpening(env.ctx());
+  clean(opening.html);
+  assert.match(opening.html, /data-rf-form="receiveRodsOpening"/);
+  assert.match(opening.html, new RegExp(`<option value="${BK}">${BK} · `));
+  assert.doesNotMatch(opening.html, /<option value="(SE|PT|CP|BG)-/, "RB items only");
+  assert.equal((opening.html.match(/<span class="field-required">\(จำเป็น\)<\/span>/g) ?? []).length, 5, "code, lot, quantity, location and reason are all required");
+  assert.match(opening.html, /maxlength="40"/);
+  assert.match(opening.html, /minlength="3" maxlength="300"/);
+  assert.doesNotMatch(opening.html, /แท่ง/);
+  const place = env.dialogs.rodLocation(env.ctx(), { lotId: lotId(1) });
+  clean(place.html);
+  assert.match(place.html, /data-rf-form="setRodLocation"/);
+  assert.match(place.html, /value="A-02"/, "the current place");
+  assert.match(place.html, /ตอนนี้ A-02/);
+  assert.equal(env.dialogs.rodLocation(env.ctx(), { lotId: lotId(2) }), null, "a lot waiting to be received has no place to move");
+  assert.equal(env.dialogs.rodLocation(env.ctx(), { lotId: "nope" }), null);
+  env.store.setUser("B03");
+  assert.ok(env.dialogs.rodOpening(env.ctx()) && env.dialogs.rodLocation(env.ctx(), { lotId: lotId(1) }), "a planner may");
+  for (const id of ["B05", "B12", "B09", "B04"]) {
+    env.store.setUser(id);
+    assert.equal(env.dialogs.rodOpening(env.ctx()), null, `${id} cannot take rods in`);
+    assert.equal(env.dialogs.rodLocation(env.ctx(), { lotId: lotId(1) }), null, `${id} cannot move a lot`);
+  }
+});
+
+test("wording: no user-visible text in the BOM, RubberFlow or factory modules calls the rods แท่ง (comments aside); the bars of charts keep their word", async () => {
+  const fs = await import("node:fs");
+  const files = ["bom-actions", "bom-pages", "bom-rules", "bom-hub", "bom-store", "bom-seed", "module-bom", "factory-kit", "module-sr", "module-gr", "module-qa", "module-st", "module-wh", "module-rubberflow", "rubberflow-actions", "rubberflow-pages-line", "rubberflow-pages-plan", "rubberflow-pages-quality", "rubberflow-store"];
+  for (const name of files) {
+    // the one place the old words stay on purpose: the legacy audit text the audit page still has to recognise
+    const code = fs.readFileSync(`modules/${name}.js`, "utf8").split(/\r?\n/).filter((line) => !line.trimStart().startsWith("//") && !line.includes("ROD_STOCK_AUDIT_TEXT_LEGACY =")).join("\n");
+    assert.doesNotMatch(code, /แท่ง/, `${name}.js`);
+  }
+  // the harness persona labels and mock messages too
+  const mock = fs.readFileSync("scripts/pilot-harness-mock.mjs", "utf8").split(/\r?\n/).filter((line) => !line.trimStart().startsWith("//")).join("\n");
+  assert.doesNotMatch(mock, /แท่ง/, "pilot-harness-mock.mjs");
+  // the old audit text is still recognised, and the stored labels the client writes now use the new words
+  const d = fresh();
+  A.setStockCount(d, { orderId: "DEMO-26002", itemCode: RB, qty: 5 }, ctx("planner"));
+  assert.equal(d.audit[0].action, rules.ROD_STOCK_AUDIT_TEXT);
+  const received = fresh();
+  A.receiveRods(received, { lotId: lotId(2), qtyReceived: 12, values: PASS, location: "A-03" }, ctx("sr"));
+  assert.equal(received.audit[0].action, "รับยางเส้นยาวเข้าคลัง SR");
+  A.issueRods(received, { orderId: "DEMO-26006", itemCode: RB, qty: 2 }, ctx("sr"));
+  assert.equal(received.audit[0].action, "จ่ายยางเส้นยาวให้ GR");
+  A.adjustRods(received, { lotId: lotId(0), qty: -1, note: "นับจริงไม่พบ" }, ctx("sr"));
+  assert.equal(received.audit[0].action, "ปรับยอดยางเส้นยาวในคลัง");
 });

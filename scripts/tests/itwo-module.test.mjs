@@ -1229,7 +1229,7 @@ test("the module never decides rights or document numbers itself, and keeps no s
   assert.ok(buckets.length >= 2 && buckets.every((name) => /model\.fileBucket\(/.test(name)), `only the itwo buckets: ${buckets.join(" | ")}`);
   const mock = createItwoMock({ stamp: () => "", now: () => NOW, persona: () => PEOPLE.emp, personas: () => [] });
   const called = [...source.matchAll(/rpc\("(app_[a-z_]+)"/g)].map((match) => match[1]);
-  const migrations = ["supabase/migrations/20261203010000_itwo_work_orders.sql", "supabase/migrations/20261204010000_itwo_v2_rework_files.sql"].map(read).join("\n");
+  const migrations = ["supabase/migrations/20261203010000_itwo_work_orders.sql", "supabase/migrations/20261205010000_itwo_v2_rework_files.sql"].map(read).join("\n");
   for (const name of new Set(called)) assert.equal(typeof mock.handlers[name], "function", `${name} exists in the mock`);
   for (const name of new Set(called)) assert.ok(migrations.includes(`function public.${name}(`), `${name} is in a migration`);
   for (const name of ["app_itwo_request_rework", "app_itwo_add_attachment", "app_sandbox_purge_itwo"]) assert.ok(called.includes(name) || source.includes(name), `${name} is used by the module`);

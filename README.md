@@ -938,7 +938,7 @@ admin คนอื่นของระบบ (role `admin`) และสมา�
 `private.sandbox_unguarded_tables()` ไม่ถูก replace ในไฟล์นี้ นิยามมาจาก `20261202010000_bom_sr_rod_store.sql` ซึ่งต่อท้าย `itwo_*` 5 ตารางแบบมีเงื่อนไข (`to_regclass`) จึงเห็นตารางของ migration นี้เองหลังสร้าง
 ถ้า apply บนฐานข้อมูลใหม่: (1) ตรวจว่ามีพนักงาน `IT3462` และ `FANG` ที่ใช้งานอยู่ (ไม่เช่นนั้น migration ล้มโดยตั้งใจ) (2) หลัง apply ตรวจ `relrowsecurity` ของตาราง `itwo_*`, anon เรียก RPC ไม่ได้, และ `service_role` ไม่มีสิทธิ์ตรงบนตาราง/sequence `itwo_*` (มี pgTAP ตรวจให้แล้ว)
 
-### ใบสั่งงาน IT รุ่น 2 — ขอแก้ไขงาน · แนบไฟล์ · งานเบ็ดเตล็ด · ถอดส่วนสิทธิ์ในระบบ (ส่วนฐานข้อมูล, migration `20261204010000_itwo_v2_rework_files.sql`)
+### ใบสั่งงาน IT รุ่น 2 — ขอแก้ไขงาน · แนบไฟล์ · งานเบ็ดเตล็ด · ถอดส่วนสิทธิ์ในระบบ (ส่วนฐานข้อมูล, migration `20261205010000_itwo_v2_rework_files.sql`)
 
 **สถานะ: เขียน + ทดสอบแล้ว ยังไม่ apply ที่ production และยังไม่มีหน้าเว็บ (ส่วนถัดไป)** หน้าเว็บรุ่นใหม่ที่เรียก RPC/คอลัมน์ใหม่ต้อง apply ไฟล์นี้ก่อน merge (ดู "Deployment order") ก่อน apply เทียบ `md5(pg_get_functiondef(oid))` ของฟังก์ชันที่ replace กับต้นทาง (รายการอยู่หัวไฟล์ migration) · ทดสอบ `supabase/tests/database/itwo_v2.test.sql` (และปรับ `itwo_work_orders.test.sql` ตามพฤติกรรมใหม่)
 

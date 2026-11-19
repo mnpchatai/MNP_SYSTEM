@@ -385,7 +385,7 @@
   }
 
   /* ---------- ไฟล์แนบ ---------- */
-  // ชนิดไฟล์ที่ฐานข้อมูล/Storage รับ (ตรงกับ private.itwo_allowed_mime_types และ private.itwo_file_path_order_id ใน migration 20261204010000)
+  // ชนิดไฟล์ที่ฐานข้อมูล/Storage รับ (ตรงกับ private.itwo_allowed_mime_types และ private.itwo_file_path_order_id ใน migration 20261205010000)
   // นามสกุล (พิมพ์เล็ก) → MIME · ใช้นามสกุลตัดสินเสมอ เพราะ file.type จากเบราว์เซอร์มักว่างหรือเป็น octet-stream กับไฟล์ Office/CSV
   const FILE_MIME_BY_EXTENSION = Object.freeze({
     jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", heic: "image/heic", heif: "image/heif", pdf: "application/pdf",

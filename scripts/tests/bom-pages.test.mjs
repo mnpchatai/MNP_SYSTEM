@@ -2290,7 +2290,7 @@ test("the My-work page is gone from the BOM: not in the menu or the page list, a
   assert.ok(!storeApi.NAV.includes("work") && !storeApi.MODULE_IDS.includes("work") && !("work" in storeApi.NAV_PARENT), "no work page in the menu, the page list or the menu parents");
   assert.ok(!storeApi.canSee({ role: "admin" }, "work") && !storeApi.canSee({ role: "gr" }, "work"));
   assert.equal(storeApi.NAV_PARENT.jobs, "orders", "the jobs table sits under the orders menu");
-  assert.equal(storeApi.NAV_PARENT.rods, "orders", "the rod store page sits under the orders menu");
+  assert.ok(!("rods" in storeApi.NAV_PARENT) && !storeApi.MODULE_IDS.includes("rods"), "the rod store page is the SR module now, not a BOM page");
   for (const role of ["rb", "gr", "pt", "bg", "pk", "st", "wh", "sr", "qa"]) assert.equal(storeApi.homeOf({ role }), "orders", `${role} lands on a page it can open`);
   assert.deepEqual({ ...storeApi.DEPT_ROUTES }, { GR: "gr", PT: "pt", BG: "bg", PK: "pk", SR: "sr", ST: "st", WH: "wh", QA: "qa", RB: "rubberflow" });
   // พนักงานที่ล็อกอินตรงกับผู้ใช้ BOM (ไปได้เฉพาะโมดูลที่พนักงานคนนั้นเปิดได้)
@@ -2335,11 +2335,10 @@ test("the My-work page is gone from the BOM: not in the menu or the page list, a
   env.store.setUser("B03");
   env.context.state.employee = asEmployee(env.store.data().users.find((user) => user.id === "B03"));
   assert.match(await env.render("p=orders"), /href="#\/bom\?p=jobs"/);
-  // the planning group sees every department's link on an order, and the rod store page sends it back to SR
+  // the planning group sees every department's link on an order
   env.store.data().users.find((user) => user.id === "B03").dept = "PK"; // the BOM persona of a planner sits in PK
   const planned = await env.render("p=orders&sel=DEMO-26006");
   for (const route of ["gr", "pk", "bg"]) assert.ok(planned.includes(`href="#/${route}"`), `planner links #/${route}`);
-  assert.match(await env.render("p=rods"), /href="#\/sr"[^>]*>กลับหน้างานของแผนก</);
 });
 
 test("an open PI names itself in the page head, a draft shows what other drafts need, and open purchase orders are named before cancelling or editing", async () => {
@@ -4115,6 +4114,16 @@ test("audit page: a product's use-from-stock is named as such even though the da
   assert.equal(text(rules, { action: "setStockCount", entries: [] }, true), "นับคงคลัง", "older rows with no recorded text");
   assert.equal(text(rules, { action: "explodeOrder", entries: [] }, true), "คำนวณวัตถุดิบ");
   assert.equal(text(rules, { action: "unknownKey" }, true), "unknownKey");
+  // use-from-SR-store: rows written with the old wording (แท่งยาว) are still named, and so are the new ones
+  for (const written of ["ใช้จากคลังแท่งยาว SR", "ใช้จากคลังยางเส้นยาว SR"]) {
+    assert.equal(text(rules, { action: "setStockCount", entries: [{ action: written, detail: "PI-1 RB-1 = 5" }] }, true), "ใช้จากคลังยางเส้นยาว SR", `${written} reads as the current text`);
+  }
+  assert.equal(text(rules, { action: "setStockCounts", entries: [{ action: "ใช้จากคลังแท่งยาว SR", detail: "a" }, { action: "ใช้จากคลังยางเส้นยาว SR", detail: "b" }] }, true), "ใช้จากคลังยางเส้นยาว SR", "a batch of old and new rows");
+  assert.equal(text(rules, { action: "setStockCounts", entries: [{ action: "ใช้จากคลังแท่งยาว SR", detail: "a" }, { action: "นับคงคลังตามใบ", detail: "b" }] }, true), "นับคงคลัง", "mixed with a plain count stays a count");
+  // the audit page labels name the rod store in the new words, whatever key the server recorded
+  const labelOf = (action) => text(rules, { action, entries: [] }, true);
+  for (const action of ["receiveRods", "decideRods", "issueRods", "reverseRodIssue", "adjustRods", "receiveRodsOpening", "setRodLocation", "rubberflow:recordFinishing", "rubberflow:addQcRecord"]) assert.doesNotMatch(labelOf(action), /แท่ง/, action);
+  assert.equal(labelOf("issueRods"), "จ่ายยางเส้นยาวให้ GR");
   assert.equal(text(rules, { action: "ใช้จากสต็อกสินค้าสำเร็จรูป" }, false), "ใช้จากสต็อกสินค้าสำเร็จรูป", "local rows carry the recorded text itself");
 });
 
