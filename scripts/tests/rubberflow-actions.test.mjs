@@ -375,7 +375,7 @@ test("finishing creates numbered boxes, counts passed quantity into the order an
   assert.equal(lot.boxes, 4, "30 + 30 + 30 + 5");
   const boxes = d.fgBoxes.filter((box) => box.lotId === lotId);
   assert.deepEqual(boxes.map((box) => box.qty).sort((a, b) => a - b), [5, 30, 30, 30]);
-  // 20261205010000: กล่องที่ผ่านรอคลังสินค้าสำเร็จรูป (WH) รับเข้า พร้อมลูกค้า / PO ของใบสั่งผลิต · ล็อตส่งมอบให้ลูกค้า
+  // 20261206010000: กล่องที่ผ่านรอคลังสินค้าสำเร็จรูป (WH) รับเข้า พร้อมลูกค้า / PO ของใบสั่งผลิต · ล็อตส่งมอบให้ลูกค้า
   assert.ok(boxes.every((box) => box.status === "pending_wh" && box.id.startsWith(lotId.replace("FN", "BOX")) && box.customer === order.customer && box.customerPo === order.customerPo && box.moves.length === 0));
   assert.deepEqual([lot.destination, lot.whCredit], ["customer", null]);
   assert.equal(order.producedQty, order.targetQty + 45);

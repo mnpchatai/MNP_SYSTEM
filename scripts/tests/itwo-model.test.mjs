@@ -62,18 +62,28 @@ test("buttons come only from allowed_actions, in a fixed order: decide, then IT 
   assert.deepEqual(labels("approve"), [], "not an array");
   assert.deepEqual(labels(["cancel", "reject", "approve"]), ["approve", "reject", "cancel"], "order does not depend on the input order");
   assert.deepEqual(labels(["receive", "complete", "start"]), ["start", "complete", "receive"]);
-  assert.deepEqual(labels(["approve", "reject", "start", "complete", "receive", "cancel"]), ["approve", "reject", "start", "complete", "receive", "cancel"]);
+  assert.deepEqual(labels(["approve", "reject", "start", "complete", "receive", "request_rework", "cancel"]), ["approve", "reject", "start", "complete", "receive", "request_rework", "cancel"]);
+  assert.deepEqual(labels(["cancel", "request_rework", "receive"]), ["receive", "request_rework", "cancel"], "'แก้ไขงาน' sits right after 'ได้รับงานเรียบร้อยแล้ว'");
 });
 
-test("an unknown action and edit_access never become buttons; edit_access only opens the IT section form", () => {
+test("an unknown action never becomes a button; edit_access (the removed IT section) is among the unknown ones", () => {
   assert.deepEqual(model.actionButtons(["edit_access", "delete", "__proto__", "constructor"]), []);
-  assert.equal(model.canEditAccess(["start", "edit_access"]), true);
-  assert.equal(model.canEditAccess(["start"]), false);
-  assert.equal(model.canEditAccess(undefined), false);
+  assert.equal(model.canEditAccess, undefined, "nothing in the model edits the IT access section any more");
+  assert.equal(model.accessPayload, undefined);
+  assert.equal(model.validateAccessChanges, undefined);
+});
+
+test("'แก้ไขงาน' opens the rework form instead of calling an RPC; it is a secondary button next to 'received'", () => {
+  const rework = model.ACTION_BUTTONS.request_rework;
+  assert.equal(rework.label, "แก้ไขงาน");
+  assert.equal(rework.opens, "rework");
+  assert.equal(rework.rpc, undefined, "the RPC is called by the form with the details, not by the button");
+  assert.equal(rework.tone, "secondary");
+  assert.deepEqual(model.actionButtons(["receive", "request_rework"]).map((button) => button.label), ["ได้รับงานเรียบร้อยแล้ว", "แก้ไขงาน"]);
 });
 
 test("every button has a Thai label, an RPC name and a confirm text; reject and cancel ask for a reason", () => {
-  for (const action of model.ACTION_ORDER) {
+  for (const action of model.ACTION_ORDER.filter((name) => name !== "request_rework")) {
     const spec = model.ACTION_BUTTONS[action];
     assert.match(spec.rpc, /^app_itwo_[a-z]+$/, action);
     assert.match(spec.label, /[฀-๿]/, action);
@@ -95,18 +105,35 @@ test("every button has a Thai label, an RPC name and a confirm text; reject and 
 /* ---------- ฟอร์มแจ้งงาน ---------- */
 const NOW = new Date("2026-11-19T05:00:00Z"); // 12:00 น. ตามเวลาไทย
 const TODAY = "2026-11-19";
-const GOOD = { request_type: "design", order_ref: "", attachment_flag: "no", attachment_note: "", details: "ออกแบบกล่อง", needed_date: "2026-11-25", is_urgent: false };
-const errorsOf = (values, flag = values.attachment_flag, today = TODAY) => validate(model.orderRules({ today: () => today, attachmentFlag: () => flag }), values);
+const GOOD = { request_type: "design", misc_detail: "", order_ref: "", attachment_flag: "no", attachment_note: "", details: "ออกแบบกล่อง", needed_date: "2026-11-25", is_urgent: false };
+const errorsOf = (values, flag = values.attachment_flag, today = TODAY) => validate(model.orderRules({ today: () => today, attachmentFlag: () => flag, requestType: () => values.request_type }), values);
 
-test("a complete form passes; the three FM06 request types and attachment options are in the form's order", () => {
+test("a complete form passes; the request types are design and misc only (no system access) and attachment options keep the form's order", () => {
   assert.deepEqual(errorsOf(GOOD), []);
   assert.deepEqual(plain(model.REQUEST_TYPES), [
     { value: "design", label: "งานออกแบบ" },
-    { value: "system_access", label: "สิทธิ์การใช้งานในระบบคอมพิวเตอร์" },
     { value: "misc", label: "เบ็ดเตล็ดอื่นๆ" },
   ]);
+  assert.ok(!model.REQUEST_TYPES.some((type) => type.value === "system_access"), "the system-access option is gone from the form");
   assert.deepEqual(model.ATTACHMENT_FLAGS.map((flag) => flag.label), ["มี", "ไม่มี", "อื่นๆ"]);
   assert.equal(model.EMPTY_ORDER_FORM.attachment_flag, "no");
+});
+
+test("an old order of the removed 'system access' type still has its Thai label, and the print form ticks it only for that order", () => {
+  assert.equal(model.requestTypeLabel("system_access"), "สิทธิ์การใช้งานในระบบคอมพิวเตอร์");
+  assert.deepEqual(model.printRequestTypes("design").map((type) => type.value), ["design", "misc"]);
+  assert.deepEqual(model.printRequestTypes("system_access").map((type) => type.value), ["design", "misc", "system_access"]);
+});
+
+test("'เบ็ดเตล็ดอื่นๆ' must say what the work is (up to 200 characters); other types do not ask", () => {
+  assert.deepEqual(errorsOf({ ...GOOD, request_type: "misc", misc_detail: "  " }).map((error) => [error.name, error.step, error.message]), [["misc_detail", 1, "กรุณาระบุว่าเป็นงานเบ็ดเตล็ดอะไร"]]);
+  assert.deepEqual(errorsOf({ ...GOOD, request_type: "misc", misc_detail: "ซ่อมเมาส์" }), []);
+  assert.deepEqual(errorsOf({ ...GOOD, request_type: "misc", misc_detail: "ก".repeat(200) }), []);
+  assert.deepEqual(errorsOf({ ...GOOD, request_type: "misc", misc_detail: "ก".repeat(201) }).map((error) => error.name), ["misc_detail"]);
+  assert.deepEqual(errorsOf({ ...GOOD, request_type: "design", misc_detail: "" }), [], "design needs no extra text");
+  assert.equal(model.requestTypeText("misc", " ซ่อมเมาส์ "), "เบ็ดเตล็ดอื่นๆ · ซ่อมเมาส์");
+  assert.equal(model.requestTypeText("design", "ignored"), "งานออกแบบ");
+  assert.equal(model.requestTypeText("misc", null), "เบ็ดเตล็ดอื่นๆ", "an old misc order has no detail");
 });
 
 test("request type, details and needed date are required, in screen order, with Thai messages", () => {
@@ -161,9 +188,11 @@ test("the attachment note is required only when 'อื่นๆ' is chosen", ()
 test("create parameters are trimmed, the note is sent only with 'other', and nothing the database decides is sent", () => {
   const params = model.createParams({ ...GOOD, order_ref: "  SO-1 ", details: "  ทำกล่อง\n", attachment_flag: "yes", attachment_note: "ซ่อนอยู่", is_urgent: true });
   assert.deepEqual(plain(params), {
-    p_request_type: "design", p_order_ref: "SO-1", p_attachment_flag: "yes", p_attachment_note: null,
+    p_request_type: "design", p_misc_detail: null, p_order_ref: "SO-1", p_attachment_flag: "yes", p_attachment_note: null,
     p_details: "ทำกล่อง", p_needed_date: "2026-11-25", p_is_urgent: true,
   });
+  assert.equal(model.createParams({ ...GOOD, request_type: "misc", misc_detail: "  ซ่อมเมาส์ " }).p_misc_detail, "ซ่อมเมาส์", "misc sends what the work is");
+  assert.equal(model.createParams({ ...GOOD, request_type: "design", misc_detail: "ค้างจากการเลือกเบ็ดเตล็ด" }).p_misc_detail, null, "a stale misc text is not sent with another type");
   assert.equal(model.createParams({ ...GOOD, attachment_flag: "other", attachment_note: " แบบ " }).p_attachment_note, "แบบ");
   assert.equal(model.createParams(GOOD).p_order_ref, null, "an empty order is null");
   assert.equal(model.createParams({ ...GOOD, is_urgent: undefined }).p_is_urgent, false);
@@ -172,7 +201,7 @@ test("create parameters are trimmed, the note is sent only with 'other', and not
 });
 
 test("the duration note is the FM06 wording", () => {
-  assert.equal(model.DURATION_NOTE, "งานออกแบบและงานสิทธิ์ 3–7 วันนับจากวันที่ได้ข้อมูลครบ งานเบ็ดเตล็ดตามตกลง");
+  assert.equal(model.DURATION_NOTE, "งานออกแบบ 3–7 วันนับจากวันที่ได้ข้อมูลครบ · งานเบ็ดเตล็ดตามตกลง");
 });
 
 /* ---------- เหตุผลไม่อนุมัติ / ยกเลิก ---------- */
@@ -238,7 +267,7 @@ const EVENTS = [
 ];
 
 test("every history action has a Thai label", () => {
-  for (const action of ["created", "dept_approved", "dept_rejected", "it_mgr_approved", "it_mgr_rejected", "cancelled", "started", "completed", "received"]) {
+  for (const action of ["created", "dept_approved", "dept_rejected", "it_mgr_approved", "it_mgr_rejected", "cancelled", "started", "completed", "received", "rework_requested"]) {
     assert.match(model.eventLabel(action), /[฀-๿]/, action);
   }
   assert.equal(model.eventLabel("future_action"), "future_action");
@@ -257,6 +286,16 @@ test("signature slots take the first event of each action, leave unsigned slots 
   // เหตุการณ์ซ้ำ: ใช้ครั้งแรก (เซ็นครั้งแรกคือลายเซ็น)
   const doubled = model.signatureSlots([...EVENTS, { ...EVENTS[1], id: 9, actor_full_name: "คนอื่น", created_at: "2026-11-20T00:00:00Z" }]);
   assert.equal(doubled[1].name, "สมหญิง ผู้จัดการ");
+  // ใบที่ถูกขอแก้ไขงานปิดงานหลายครั้ง: ช่อง IT ใช้การปิดงานครั้งล่าสุด (ครั้งที่ผู้แจ้งรับ) ส่วนผู้รับงาน (เริ่มทำ) ยังเป็นครั้งแรก
+  const reworked = model.signatureSlots([...EVENTS,
+    { id: 5, action: "completed", created_at: "2026-11-20T01:00:00Z", actor_full_name: "ไอที หนึ่ง" },
+    { id: 6, action: "rework_requested", created_at: "2026-11-20T02:00:00Z", actor_full_name: "สมชาย ใจดี" },
+    { id: 7, action: "completed", created_at: "2026-11-21T01:00:00Z", actor_full_name: "ไอที สอง" },
+    { id: 8, action: "received", created_at: "2026-11-21T02:00:00Z", actor_full_name: "สมชาย ใจดี" }]);
+  assert.equal(reworked[3].name, "ไอที สอง");
+  assert.equal(reworked[3].at, "2026-11-21T01:00:00Z");
+  assert.equal(reworked[3].note.name, "ไอที หนึ่ง");
+  assert.equal(reworked[4].name, "สมชาย ใจดี");
 });
 
 test("approval summary says approved / rejected / waiting / none for each of the two steps", () => {
@@ -329,33 +368,199 @@ test("the card badge adds up what is waiting for me and skips counts that could 
   assert.equal(model.cardSummary({ approvals: 0, itWork: 0, toConfirm: 0 }).badge, "");
 });
 
-/* ---------- ส่วนสำหรับแผนก IT ---------- */
-test("access rows: blank rows are dropped, a half-filled row says what is missing, blanks become null", () => {
-  const blank = model.blankAccessDraft("k1");
-  assert.equal(model.isBlankAccessDraft(blank), true);
-  const filled = { ...blank, system: "i_prime", action: "add", newUsername: " user1 ", oldUsername: "", note: " " };
-  assert.equal(model.isBlankAccessDraft(filled), false);
-  assert.deepEqual(plain(model.accessPayload([blank, filled])), [{ system: "i_prime", action: "add", new_username: "user1", old_username: null, note: null }]);
-  assert.deepEqual(plain(model.validateAccessChanges([blank])), { rows: {}, general: null });
-  assert.equal(model.validateAccessChanges([{ ...blank, note: "x" }]).rows[0], "กรุณาเลือกระบบ");
-  assert.equal(model.validateAccessChanges([{ ...blank, system: "email" }]).rows[0], "กรุณาเลือกการดำเนินการ (เพิ่ม / เปลี่ยน / ยกเลิก)");
-  assert.equal(model.validateAccessChanges([filled, { ...blank, system: "other", action: "cancel", newUsername: "ก".repeat(101) }]).rows[1], "ชื่อผู้ใช้ต้องไม่เกิน 100 ตัวอักษร");
-  assert.equal(model.validateAccessChanges([{ ...filled, note: "ก".repeat(501) }]).rows[0], "หมายเหตุต้องไม่เกิน 500 ตัวอักษร");
-  const many = Array.from({ length: 21 }, (_, index) => ({ ...filled, key: `r${index}` }));
-  assert.equal(model.validateAccessChanges(many).general, "บันทึกได้ไม่เกิน 20 รายการต่อใบ");
-  assert.equal(model.hasAccessErrors(model.validateAccessChanges(many)), true);
-  assert.equal(model.hasAccessErrors(model.validateAccessChanges([filled])), false);
+/* ---------- สิทธิ์ในระบบของใบเก่า (อ่านอย่างเดียว) ---------- */
+test("the IT access section is gone: no editor helpers; an old order's rows are only listed for display and print, without empty rows", () => {
+  for (const removed of ["blankAccessDraft", "draftsFromAccessChanges", "isBlankAccessDraft", "validateAccessChanges", "hasAccessErrors", "accessPayload", "canEditAccess", "MAX_ACCESS_ROWS"]) {
+    assert.equal(model[removed], undefined, `${removed} was removed with the section`);
+  }
+  assert.deepEqual(model.legacyAccessChanges({ access_changes: [{ id: "a1" }] }).map((row) => row.id), ["a1"]);
+  assert.deepEqual(model.legacyAccessChanges({}), [], "no data = no section");
+  assert.deepEqual(model.legacyAccessChanges(undefined), []);
+  const rows = model.accessPrintRows([{ id: "a1", system: "express", action: "add", new_username: "u", old_username: null, note: null }, { id: "a2", system: "express", action: "cancel", new_username: null, old_username: "o", note: "n" }]);
+  assert.deepEqual(rows.map((entry) => entry.systemLabel), ["Express System", "Express System"], "only systems that have rows");
+  assert.deepEqual(rows.map((entry) => entry.showSystemLabel), [true, false]);
+  assert.deepEqual(model.accessPrintRows(undefined), [], "nothing recorded = nothing to print");
 });
 
-test("access drafts from the database drop values that are not in the lists, and the print table has all four systems", () => {
-  const drafts = model.draftsFromAccessChanges([{ id: "a1", system: "express", action: "change", new_username: "n", old_username: null, note: null }, { id: "a2", system: "bogus", action: "x" }]);
-  assert.deepEqual(plain(drafts[0]), { key: "a1", system: "express", action: "change", newUsername: "n", oldUsername: "", note: "" });
-  assert.equal(drafts[1].system, "");
-  assert.equal(drafts[1].action, "");
-  const rows = model.accessPrintRows([{ id: "a1", system: "express", action: "add", new_username: "u", old_username: null, note: null }, { id: "a2", system: "express", action: "cancel", new_username: null, old_username: "o", note: "n" }]);
-  assert.deepEqual(rows.map((entry) => entry.systemLabel), ["I-Prime System", "Express System", "Express System", "E-Mail Address", "อื่นๆ ระบุ"]);
-  assert.deepEqual(rows.map((entry) => entry.showSystemLabel), [true, true, false, true, true]);
-  assert.deepEqual(model.accessPrintRows(undefined).map((entry) => entry.action), [null, null, null, null], "four empty rows");
+/* ---------- ไฟล์แนบ ---------- */
+const file = (name, size = 1000, type = "") => ({ name, size, type });
+
+test("the accepted file types are exactly the ones the database accepts, decided by the extension (the browser's type is often empty)", () => {
+  assert.deepEqual(Object.keys(model.FILE_MIME_BY_EXTENSION).sort(), ["csv", "doc", "docx", "heic", "heif", "jpeg", "jpg", "pdf", "png", "pptx", "txt", "webp", "xls", "xlsx"]);
+  assert.equal(model.fileMime(file("แบบ.PDF", 1, "")), "application/pdf", "case-insensitive, even when the browser sends no type");
+  assert.equal(model.fileMime(file("ราคา.xlsx", 1, "application/octet-stream")), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  assert.equal(model.fileMime(file("a.csv")), "text/csv");
+  assert.equal(model.fileMime(file("virus.exe")), null);
+  assert.equal(model.fileMime(file("noextension")), null);
+  assert.equal(model.fileExtension("a.b.JPG"), "jpg");
+  assert.match(model.FILE_ACCEPT, /image\/\*/);
+  assert.match(model.FILE_ACCEPT, /\.docx/);
+  assert.match(model.FILE_HINT, /10 ไฟล์/);
+});
+
+test("a file's storage path is <order id>/<uuid>.<ext> in lower case, the shape the database insists on", () => {
+  const orderId = "AAAAAAAA-0000-4000-8000-000000000001";
+  const path = model.filePath(orderId, "BBBBBBBB-0000-4000-8000-000000000002", file("Photo.JPEG"));
+  assert.equal(path, "aaaaaaaa-0000-4000-8000-000000000001/bbbbbbbb-0000-4000-8000-000000000002.jpeg");
+  assert.match(path, /^[0-9a-f-]{36}\/[0-9a-f-]{36}\.(jpg|jpeg|png|webp|heic|heif|pdf|docx|xlsx|pptx|doc|xls|txt|csv)$/);
+  assert.equal(model.fileBucket(false), "itwo-files");
+  assert.equal(model.fileBucket(true), "itwo-test-files");
+});
+
+test("a file set is checked before sending: at most 10 files, each a known type, not empty, at most 20 MB; the message names the file", () => {
+  assert.equal(model.validateFiles([]), null);
+  assert.equal(model.validateFiles(Array.from({ length: 10 }, (_, index) => file(`${index}.pdf`))), null);
+  assert.match(model.validateFiles(Array.from({ length: 11 }, (_, index) => file(`${index}.pdf`))), /ไม่เกิน 10 ไฟล์/);
+  assert.match(model.validateFiles([file("ok.pdf"), file("x.exe")]), /^x\.exe: ชนิดไฟล์นี้ไม่รองรับ/);
+  assert.match(model.validateFiles([file("empty.pdf", 0)]), /^empty\.pdf: ไฟล์ว่างเปล่า/);
+  assert.equal(model.validateFiles([file("exactly.pdf", 20 * 1024 * 1024)]), null);
+  assert.match(model.validateFiles([file("big.pdf", 20 * 1024 * 1024 + 1)]), /^big\.pdf: ไฟล์ต้องมีขนาดไม่เกิน 20 MB/);
+  assert.equal(model.formatFileSize(0), "—");
+  assert.equal(model.formatFileSize(512), "512 B");
+  assert.equal(model.formatFileSize(1536), "1.5 KB");
+  assert.equal(model.formatFileSize(5 * 1024 * 1024), "5.0 MB");
+  assert.equal(model.formatFileSize(150 * 1024), "150 KB");
+});
+
+test("the upload runner uploads then registers each file in order, reports progress, and a failed file does not stop the others", async () => {
+  const orderId = "00000000-0000-4000-8000-000000000001";
+  let counter = 0;
+  const entries = model.makeUploadEntries(orderId, [file("a.pdf"), file("b.png"), file("c.txt")], () => `00000000-0000-4000-8000-${String(++counter).padStart(12, "1")}`);
+  assert.equal(entries.length, 3);
+  assert.equal(new Set(entries.map((entry) => entry.path)).size, 3, "each file has its own path");
+  const log = [];
+  const failFor = new Set(["b.png"]);
+  const failed = await model.runUploads(entries, {
+    upload: async (entry) => { log.push(`upload ${entry.file.name}`); if (failFor.has(entry.file.name)) throw new Error("boom"); },
+    register: async (entry) => { log.push(`register ${entry.file.name}`); },
+    onStart: (entry) => log.push(`start ${entry.file.name}`),
+    onProgress: (done, total) => log.push(`progress ${done}/${total}`),
+  });
+  assert.deepEqual(log, ["progress 0/3", "start a.pdf", "upload a.pdf", "register a.pdf", "progress 1/3", "start b.png", "upload b.png", "progress 2/3", "start c.txt", "upload c.txt", "register c.txt", "progress 3/3"]);
+  assert.deepEqual(failed.map((entry) => entry.file.name), ["b.png"]);
+  assert.equal(failed[0].error.message, "boom");
+  assert.deepEqual(entries.map((entry) => [entry.uploaded, entry.registered]), [[true, true], [false, false], [true, true]]);
+});
+
+test("retrying only does what is left: a file already on Storage is only registered, a registered one is skipped, same path every time", async () => {
+  let counter = 0;
+  const entries = model.makeUploadEntries("00000000-0000-4000-8000-000000000001", [file("a.pdf"), file("b.pdf"), file("c.pdf")], () => `00000000-0000-4000-8000-${String(++counter).padStart(12, "2")}`);
+  const paths = entries.map((entry) => entry.path);
+  const calls = [];
+  let registerFails = true;
+  let uploadFails = true;
+  const run = () => model.runUploads(entries, {
+    upload: async (entry) => { calls.push(`upload ${entry.file.name}`); if (entry.file.name === "c.pdf" && uploadFails) throw new Error("Failed to fetch"); },
+    register: async (entry) => { calls.push(`register ${entry.file.name}`); if (entry.file.name === "b.pdf" && registerFails) throw new Error("rpc failed"); },
+  });
+  const first = await run();
+  assert.deepEqual(first.map((entry) => entry.file.name), ["b.pdf", "c.pdf"]);
+  assert.deepEqual(entries.map((entry) => [entry.uploaded, entry.registered]), [[true, true], [true, false], [false, false]], "b is on Storage but not registered; c never reached Storage");
+  calls.length = 0;
+  registerFails = false;
+  uploadFails = false;
+  const second = await run();
+  assert.deepEqual(second, []);
+  assert.deepEqual(calls, ["register b.pdf", "upload c.pdf", "register c.pdf"], "a is skipped, b is not uploaded again, c is uploaded now");
+  assert.deepEqual(entries.map((entry) => entry.path), paths, "the retry reuses the same paths: no orphan files");
+  assert.ok(entries.every((entry) => entry.error === null));
+});
+
+test("'already exists' from Storage (an earlier attempt whose reply was lost) counts as uploaded and the file is registered", async () => {
+  const entries = model.makeUploadEntries("00000000-0000-4000-8000-000000000001", [file("a.pdf")], () => "00000000-0000-4000-8000-000000000009");
+  const calls = [];
+  const failed = await model.runUploads(entries, {
+    upload: async () => { throw Object.assign(new Error("The resource already exists"), { statusCode: "409" }); },
+    register: async () => { calls.push("register"); },
+  });
+  assert.deepEqual(failed, []);
+  assert.deepEqual(calls, ["register"]);
+  assert.equal(model.isAlreadyUploaded({ message: "Duplicate" }), true);
+  assert.equal(model.isAlreadyUploaded({ message: "Failed to fetch" }), false);
+});
+
+test("an upload error is explained in Thai, and a lost connection says it is safe to try again", () => {
+  assert.match(model.describeUploadError({ statusCode: "403", message: "new row violates row-level security policy" }).message, /หมดเวลาแนบไฟล์|มีผู้อนุมัติ/);
+  assert.match(model.describeUploadError({ statusCode: "413", message: "The object exceeded the maximum allowed size" }).message, /20 MB/);
+  assert.match(model.describeUploadError({ statusCode: "415", message: "mime type text/html is not supported" }).message, /ชนิดไฟล์นี้ไม่รองรับ/);
+  const lost = model.describeUploadError(Object.assign(new Error("Failed to fetch"), { code: "" }));
+  assert.equal(lost.kind, "unknown");
+  assert.match(lost.message, /ลองอีกครั้ง/);
+  assert.doesNotMatch(lost.message, /ตรวจรายการก่อนกดซ้ำ/, "files can be retried safely: no need to check first");
+  assert.equal(model.describeUploadError({ code: "23514", message: "หมดเวลาแนบไฟล์แล้ว (แนบได้ภายใน 30 นาทีหลังแจ้งงาน)" }).message, "หมดเวลาแนบไฟล์แล้ว (แนบได้ภายใน 30 นาทีหลังแจ้งงาน)", "a Thai database message is shown as it is");
+  assert.doesNotMatch(model.describeUploadError({ statusCode: "500", message: "Internal Server Error", code: "X" }).message, /Internal/);
+});
+
+test("files are grouped by round: 'ตอนแจ้ง' first, then 'แก้ไขครั้งที่ N'; empty rounds are not listed; the gallery gets the field names app.js expects", () => {
+  const detail = { attachments: [
+    { id: "f3", rework_id: "r2", round_no: 2, file_name: "c.pdf", mime_type: "application/pdf", size_bytes: 3, storage_path: "o/3.pdf" },
+    { id: "f1", rework_id: null, round_no: 0, file_name: "a.png", mime_type: "image/png", size_bytes: 1, storage_path: "o/1.png" },
+    { id: "f2", rework_id: "r1", round_no: 1, file_name: "b.pdf", mime_type: "application/pdf", size_bytes: 2, storage_path: "o/2.pdf" },
+    { id: "f4", rework_id: null, round_no: 0, file_name: "d.txt", mime_type: "text/plain", size_bytes: 4, storage_path: "o/4.txt" },
+  ] };
+  const groups = model.attachmentGroups(detail);
+  assert.deepEqual(groups.map((group) => [group.label, group.files.map((item) => item.id)]), [["ตอนแจ้ง", ["f1", "f4"]], ["แก้ไขครั้งที่ 1", ["f2"]], ["แก้ไขครั้งที่ 2", ["f3"]]]);
+  assert.deepEqual(model.attachmentGroups({}), []);
+  assert.deepEqual(plain(model.galleryFile(detail.attachments[1])), { id: "f1", file_name: "a.png", content_type: "image/png", size_bytes: 1, storage_path: "o/1.png" });
+  assert.equal(model.roundLabel(0), "ตอนแจ้ง");
+  assert.equal(model.roundLabel(3), "แก้ไขครั้งที่ 3");
+});
+
+/* ---------- แก้ไขงาน ---------- */
+test("the rework tag says which round and the due date (Thai date), and is empty when the order was never sent back", () => {
+  assert.equal(model.reworkTag(2, "2026-12-05"), "แก้ไขครั้งที่ 2 · กำหนด 05/12/2569");
+  assert.equal(model.reworkTag(1, null), "แก้ไขครั้งที่ 1");
+  assert.equal(model.reworkTag(0, "2026-12-05"), "");
+  assert.equal(model.reworkTag(undefined, undefined), "");
+});
+
+test("rework rounds carry their own details, due date, requester and files, in round order", () => {
+  const detail = {
+    reworks: [
+      { id: "r2", round_no: 2, details: "แก้อีก", due_date: "2026-12-10", created_at: "2026-12-03T03:00:00Z", requested_by_full_name: "สมชาย ใจดี" },
+      { id: "r1", round_no: 1, details: "แก้สี", due_date: "2026-12-01", created_at: "2026-11-25T03:00:00Z", requested_by_full_name: "สมชาย ใจดี" },
+    ],
+    attachments: [{ id: "f1", rework_id: "r1" }, { id: "f2", rework_id: null }, { id: "f3", rework_id: "r1" }],
+  };
+  const rounds = model.reworkRounds(detail);
+  assert.deepEqual(rounds.map((round) => [round.roundNo, round.label, round.dueDate, round.files.map((item) => item.id)]), [[1, "แก้ไขครั้งที่ 1", "2026-12-01", ["f1", "f3"]], [2, "แก้ไขครั้งที่ 2", "2026-12-10", []]]);
+  assert.deepEqual(model.reworkRounds({}), []);
+});
+
+test("the rework form needs details (up to 2000) and a due date that is today or later by Thai time", () => {
+  const rulesFor = (today) => model.reworkRules({ today: () => today });
+  assert.deepEqual(validate(rulesFor(TODAY), { details: "แก้สีให้เข้มขึ้น", due_date: TODAY }), []);
+  assert.deepEqual(validate(rulesFor(TODAY), { details: " ", due_date: "" }).map((error) => [error.name, error.message]), [
+    ["details", "กรุณากรอกรายละเอียดที่ต้องการให้แก้ไข"], ["due_date", "กรุณาเลือกวันที่ต้องการให้แก้ไขเสร็จ"],
+  ]);
+  assert.deepEqual(validate(rulesFor(TODAY), { details: "x", due_date: "2026-11-18" }).map((error) => error.message), ["วันที่ต้องการให้แก้ไขเสร็จต้องเป็นวันนี้หรือหลังจากนี้"]);
+  assert.deepEqual(validate(rulesFor(TODAY), { details: "ก".repeat(2001), due_date: TODAY }).map((error) => error.name), ["details"]);
+  assert.deepEqual(validate(rulesFor(TODAY), { details: "ก".repeat(2000), due_date: TODAY }), []);
+  assert.deepEqual(validate(rulesFor("2026-12-25"), { details: "x", due_date: "2026-12-01" }).map((error) => error.name), ["due_date"], "today is read again at every check");
+  assert.deepEqual(plain(model.reworkParams("wo-1", { details: "  แก้สี \n", due_date: " 2026-12-01 " })), { p_work_order_id: "wo-1", p_details: "แก้สี", p_due_date: "2026-12-01" });
+});
+
+test("the message after IT closes an order says it went back to the requester; in test mode it says to switch account", () => {
+  const detail = { requester: { full_name: "สมชาย ใจดี" } };
+  assert.equal(model.completeToast(detail, false), "ส่งกลับให้ สมชาย ใจดี ตรวจและยืนยันแล้ว");
+  assert.equal(model.completeToast(detail, true), "ส่งกลับให้ สมชาย ใจดี ตรวจและยืนยันแล้ว · สลับเป็นบัญชีผู้แจ้งเพื่อยืนยันหรือขอแก้ไข");
+  assert.equal(model.completeToast({}, false), "ส่งกลับให้ ผู้แจ้ง ตรวจและยืนยันแล้ว");
+});
+
+test("an order that was sent back is ranked by the round's due date in the IT list (same as the database)", () => {
+  const rows = [
+    { id: "a", status: "in_progress", is_urgent: false, needed_date: "2026-11-20", created_at: "2026-11-01T00:00:00Z", doc_no: "A", rework_round: 1, rework_due_date: "2026-12-30" },
+    { id: "b", status: "in_progress", is_urgent: false, needed_date: "2026-12-01", created_at: "2026-11-02T00:00:00Z", doc_no: "B", rework_round: 0, rework_due_date: null },
+  ];
+  assert.deepEqual(model.groupItOrders(rows).in_progress.map((row) => row.id), ["b", "a"], "a is due 30 Dec after the rework even though it was first needed 20 Nov");
+});
+
+test("the test purge result: complete only when every listed file was removed; otherwise it says to press again", () => {
+  assert.deepEqual(plain(model.purgeSummary({ deleted: 12, total: 0, removed: 0 })), { complete: true, message: "ล้างข้อมูลทดสอบแล้ว 12 แถว" });
+  assert.deepEqual(plain(model.purgeSummary({ deleted: 12, total: 5, removed: 5 })), { complete: true, message: "ล้างข้อมูลทดสอบแล้ว 12 แถว · ลบไฟล์ 5 ไฟล์" });
+  const partial = model.purgeSummary({ deleted: 12, total: 5, removed: 3 });
+  assert.equal(partial.complete, false);
+  assert.match(partial.message, /ลบไฟล์ได้ 3 จาก 5 ไฟล์ ยังเหลือ 2 ไฟล์ กดล้างข้อมูลอีกครั้ง/);
 });
 
 /* ---------- ตั้งค่า (it_admin) ---------- */

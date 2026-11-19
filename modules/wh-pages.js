@@ -1,5 +1,5 @@
 // หน้าของโมดูลคลังสินค้าสำเร็จรูป (WH) #/wh — โหลดก่อน modules/module-wh.js (ดู index.html) · ที่เดียวที่ WH รับเข้า ส่งมอบ ปิดใบ และย้อนรายการ (ไม่มีสำเนาที่สองในหน้า BOM / RubberFlow)
-// ของในคลังมาจากสองทาง: สินค้าสำเร็จรูปจาก PK (store ของ BOM: fgMoves ตามใบสั่งผลิต) และกล่องสินค้าจาก RubberFlow (store ของ RubberFlow: fgBoxes ตามล็อต · 20261205010000)
+// ของในคลังมาจากสองทาง: สินค้าสำเร็จรูปจาก PK (store ของ BOM: fgMoves ตามใบสั่งผลิต) และกล่องสินค้าจาก RubberFlow (store ของ RubberFlow: fgBoxes ตามล็อต · 20261206010000)
 // หน้า: งานของฉัน (ค่าตั้งต้น) · ในคลัง ?tab=stock · รับเข้า ?tab=receive · ส่งมอบ ?tab=deliver · ประวัติ ?tab=history · หน้าใบ ?order=<ใบสั่งผลิต> · หน้าล็อต ?lot=<ล็อตตกแต่งของ RubberFlow>
 // คำสั่งของ PK วิ่งไป store ของ BOM (receiveFg deliverFg closeOrder closeOrderShort reverseFg) · คำสั่งของกล่องวิ่งไป store ของ RubberFlow (receiveBoxes shipBoxes reverseBoxReceipt reverseBoxShip: module-bom.js runAction ส่งต่อให้)
 // การซ่อน/แสดงปุ่มเป็นแค่ UX สิทธิ์จริงตัดสินที่ action และฐานข้อมูล: รับเข้า/ส่งมอบ = แผนก WH หรือผู้ดูแลระบบ · ย้อน = ผู้จัดการแผนก WH หรือผู้ดูแลระบบ

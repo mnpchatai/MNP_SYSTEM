@@ -74,6 +74,7 @@
     tooLarge: "รูปมีขนาดใหญ่เกินไป กรุณาลดขนาดรูปแล้วแนบใหม่",
     tooManyFiles: `แนบได้ครั้งละไม่เกิน ${MAX_BATCH_FILES} ไฟล์ กรุณาเลือกใหม่`,
     batchTooLarge: `ขนาดไฟล์รวมกันเกิน ${MAX_BATCH_BYTES / 1048576} MB กรุณาลดจำนวนไฟล์แล้วเลือกใหม่`,
+    fileTooLarge: `ไฟล์มีขนาดเกิน ${MAX_FILE_BYTES / 1048576} MB กรุณาลดขนาดไฟล์แล้วเลือกใหม่`, // ใช้เฉพาะช่องที่จำกัดต่อไฟล์ (perFile)
   };
   // ข้อความใต้ช่องแนบไฟล์ทุกหน้า
   const HINT = `แนบได้หลายไฟล์พร้อมกัน (ไม่เกิน ${MAX_BATCH_FILES} ไฟล์ ขนาดรวมไม่เกิน ${MAX_BATCH_BYTES / 1048576} MB) · ` +
@@ -170,19 +171,37 @@
   }
 
   // ตรวจจำนวนและขนาดรวมของไฟล์ชุดเดียวกัน (ส่งไฟล์ที่เตรียมแล้วมา เพราะเป็นขนาดที่ถูกอัปโหลดจริง) คืนข้อความ error หรือ null
-  function checkBatch(files) {
+  //
+  // ทางเลือก (options.perFile = true): ใช้เพดาน "ต่อไฟล์" (MAX_FILE_BYTES) แทนเพดานรวม — สำหรับช่องที่ฐานข้อมูลบังคับต่อไฟล์ (เช่นใบสั่งงาน IT)
+  // จำนวนไฟล์ยังจำกัดที่ MAX_BATCH_FILES · ถ้าไม่ส่งทางเลือก ทำงานเหมือนเดิมทุกอย่าง (โมดูลอื่นไม่เปลี่ยน)
+  // ช่องไฟล์ในหน้าเว็บเลือกโหมดนี้ด้วย data-attachment-limit="per-file" (ดู ATTACHMENT_LIMIT_PER_FILE)
+  function checkBatch(files, options = {}) {
     const list = Array.from(files ?? []);
     if (list.length > MAX_BATCH_FILES) return MESSAGES.tooManyFiles;
+    if (options.perFile) {
+      const oversize = list.find((file) => (file?.size ?? 0) > MAX_FILE_BYTES);
+      return oversize ? `${oversize.name ? `${oversize.name}: ` : ""}${MESSAGES.fileTooLarge}` : null;
+    }
     const total = list.reduce((sum, file) => sum + (file?.size ?? 0), 0);
     return total > MAX_BATCH_BYTES ? MESSAGES.batchTooLarge : null;
   }
 
   // ข้อความสรุปใต้ช่องแนบไฟล์หลายไฟล์: จำนวน ขนาดรวมเทียบเพดาน และจำนวนไฟล์ที่ระบบปรับให้
-  function describeBatch(prepared, originals) {
+  // (โหมด perFile ไม่เทียบขนาดรวมกับเพดาน เพราะเพดานเป็นของแต่ละไฟล์)
+  function describeBatch(prepared, originals, options = {}) {
     const total = prepared.reduce((sum, file) => sum + file.size, 0);
     const adjusted = prepared.filter((file, index) => file !== originals[index]).length;
-    const summary = `เลือก ${prepared.length} ไฟล์ · รวม ${(total / 1048576).toFixed(1)} จาก ${MAX_BATCH_BYTES / 1048576} MB`;
+    const sizeText = (total / 1048576).toFixed(1);
+    const summary = options.perFile
+      ? `เลือก ${prepared.length} ไฟล์ · รวม ${sizeText} MB`
+      : `เลือก ${prepared.length} ไฟล์ · รวม ${sizeText} จาก ${MAX_BATCH_BYTES / 1048576} MB`;
     return adjusted ? `${summary} · เตรียมรูปให้ระบบรับได้แล้ว ${adjusted} ไฟล์` : summary;
+  }
+
+  // ช่องไฟล์ที่ต้องการเพดานต่อไฟล์ ใส่ data-attachment-limit="per-file" บน <input type="file"> (ไม่ใส่ = เพดานรวมเหมือนเดิม)
+  const ATTACHMENT_LIMIT_PER_FILE = "per-file";
+  function limitOptionsOf(input) {
+    return { perFile: input?.dataset?.attachmentLimit === ATTACHMENT_LIMIT_PER_FILE };
   }
 
   // ---- ส่วนที่ต้องใช้เบราว์เซอร์ ----
@@ -400,7 +419,7 @@
         throw new Error(list.length > 1 ? `${file?.name || "ไฟล์ที่เลือก"}: ${message}` : message);
       }
     }
-    const batchError = checkBatch(prepared);
+    const batchError = checkBatch(prepared, options);
     if (batchError) throw new Error(batchError);
     return prepared;
   }
@@ -433,7 +452,7 @@
     files.forEach((file) => transfer.items.add(file));
     input.files = transfer.files;
     input.setCustomValidity("");
-    if (files.length && input.multiple) showStatus(input, "done", describeBatch(files, files));
+    if (files.length && input.multiple) showStatus(input, "done", describeBatch(files, files, limitOptionsOf(input)));
     else showStatus(input, "idle", "");
     // ไม่ยิง change (จะเตรียมรูปและวาดตัวอย่างใหม่ทั้งชุด) แต่บอกผู้ฟังว่าชุดไฟล์เปลี่ยน เช่น ปุ่มอัปโหลดใน app.js
     input.dispatchEvent(new Event("mnp:files-changed", { bubbles: true }));
@@ -468,7 +487,7 @@
       try {
         // ช่องไฟล์เดียวทำงานเหมือนเดิมทุกอย่าง (ไม่ตรวจขนาดรวม) ช่อง multiple เตรียมทั้งชุดและตรวจจำนวน/ขนาดรวม
         const prepared = input.multiple
-          ? await normalizeAttachments(originals, { ...options, onProgress })
+          ? await normalizeAttachments(originals, { ...options, ...limitOptionsOf(input), onProgress })
           : [await normalizeAttachment(originals[0], options)];
         if (latest.get(input) !== sequence) return;
         const changed = prepared.some((file, index) => file !== originals[index]);
@@ -477,7 +496,7 @@
           prepared.forEach((file) => transfer.items.add(file));
           input.files = transfer.files;
         }
-        if (input.multiple) showStatus(input, "done", describeBatch(prepared, originals));
+        if (input.multiple) showStatus(input, "done", describeBatch(prepared, originals, limitOptionsOf(input)));
         else if (changed) showStatus(input, "done", `เตรียมรูปเป็น JPG แล้ว (${(prepared[0].size / 1048576).toFixed(1)} MB)`);
         else showStatus(input, "idle", "");
         onSelection(input, prepared);
@@ -495,7 +514,7 @@
   }
 
   return {
-    SAFE_BYTES, COMPRESS_BYTES, MAX_EDGE, MAX_FILE_BYTES, MAX_BATCH_FILES, MAX_BATCH_BYTES, MESSAGES, HINT, HINT_SHORT,
+    SAFE_BYTES, COMPRESS_BYTES, MAX_EDGE, MAX_FILE_BYTES, MAX_BATCH_FILES, MAX_BATCH_BYTES, MESSAGES, HINT, HINT_SHORT, ATTACHMENT_LIMIT_PER_FILE,
     sniffImageType, detectImageKind, planAction, fitWithin, jpegName, withExtension,
     checkBatch, describeBatch, createThumbnail,
     THUMBNAIL_SUFFIX, THUMBNAIL_EDGE, MAX_THUMBNAIL_BYTES, thumbnailPath, dataUrlToBlob, createUploadThumbnail,

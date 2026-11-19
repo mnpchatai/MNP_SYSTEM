@@ -445,7 +445,7 @@
     return `<div class="small" data-rf-sr-state>${sr.href ? `<a href="${esc(sr.href)}" title="เปิดล็อตนี้ในคลังยางเส้นยาว (SR)">${badge}</a>` : badge}</div>`;
   }
 
-  // ผลตัดสินของล็อตตกแต่ง: ค่า = qcResult หรือ qcResult:ปลายทาง (แยกเป็น qcResult + destination ที่ TRANSFORMS ของ module-rubberflow.js) · ต้องเลือกเอง ไม่มีค่าตั้งต้น (20261205010000)
+  // ผลตัดสินของล็อตตกแต่ง: ค่า = qcResult หรือ qcResult:ปลายทาง (แยกเป็น qcResult + destination ที่ TRANSFORMS ของ module-rubberflow.js) · ต้องเลือกเอง ไม่มีค่าตั้งต้น (20261206010000)
   // WO ที่มาจากงาน RB ของ BOM (linked): ยางเส้นยาวเข้าคลังยางเส้นยาว (SR) · ส่งมอบให้ลูกค้าผ่านคลังสินค้าสำเร็จรูป (WH) · กักรอ QC · WO ที่ไม่ผูกงาน: ไม่มี SR
   const FINISH_RESULT_PLACEHOLDER = "เลือกผลตัดสิน…";
   const finishResultOptions = (linked) => [

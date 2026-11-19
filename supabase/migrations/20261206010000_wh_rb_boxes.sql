@@ -87,7 +87,7 @@ alter table public.rf_lots add constraint rf_lots_wh_credit_check check (
   (wh_credit_job_no is null) = (wh_credit_qty is null)
   and (wh_credit_qty is null or (destination = 'customer' and wh_credit_qty > 0 and wh_credit_qty <= 1000000000
                                  and wh_credit_job_no ~ '^[A-Za-z0-9._-]{1,40}$')));
-comment on column public.rf_lots.destination is 'ปลายทางของล็อตตกแต่งที่ผ่าน: sr = คลังยางเส้นยาว SR (WO ที่ผูกงาน BOM) · customer = ส่งมอบให้ลูกค้าผ่านคลังสินค้าสำเร็จรูป WH · null = กัก / ล็อตก่อน 20261205010000';
+comment on column public.rf_lots.destination is 'ปลายทางของล็อตตกแต่งที่ผ่าน: sr = คลังยางเส้นยาว SR (WO ที่ผูกงาน BOM) · customer = ส่งมอบให้ลูกค้าผ่านคลังสินค้าสำเร็จรูป WH · null = กัก / ล็อตก่อน 20261206010000';
 comment on column public.rf_lots.wh_credit_job_no is 'งาน RB ของ BOM ที่ได้ยอดจากล็อตนี้ตอน WH รับกล่องเข้าคลัง (null = ไม่ได้นับ) ใช้ถอนตอนย้อนรับเข้า';
 comment on column public.rf_lots.wh_credit_qty is 'ยอดที่นับเข้างาน RB ตอน WH รับกล่องของล็อตเข้าคลัง (มีค่าคู่กับ wh_credit_job_no)';
 
@@ -102,7 +102,7 @@ alter table public.rf_fg_boxes
 -- กล่องที่รอ WH รับเข้ายังไม่มีผู้รับ
 alter table public.rf_fg_boxes add constraint rf_fg_boxes_receipt_check check (status <> 'pending_wh' or (received_at is null and received_by is null));
 comment on table public.rf_fg_boxes is 'กล่องสินค้าสำเร็จรูป สร้างโดยเซิร์ฟเวอร์จากการบันทึกตกแต่งเท่านั้น · pending_wh (รอ WH รับ) -> in_stock (WH รับเข้า) -> shipped (ส่งมอบลูกค้า) · ย้อนโดยผู้จัดการแผนก WH / admin · QC เปลี่ยน <-> hold';
-comment on column public.rf_fg_boxes.customer is 'ลูกค้าของ WO ตอนสร้างกล่อง (ผู้รับสินค้า) · กล่องก่อน 20261205010000 เป็นค่าว่าง';
+comment on column public.rf_fg_boxes.customer is 'ลูกค้าของ WO ตอนสร้างกล่อง (ผู้รับสินค้า) · กล่องก่อน 20261206010000 เป็นค่าว่าง';
 comment on column public.rf_fg_boxes.customer_po is 'เลข PO / PI ของลูกค้าตาม WO ตอนสร้างกล่อง';
 comment on column public.rf_fg_boxes.moves is 'ประวัติของกล่อง [{kind receive | ship | unreceive | unship, at, by, note}] เซิร์ฟเวอร์ต่อท้ายเท่านั้น';
 
@@ -587,7 +587,7 @@ begin
         v_out := jsonb_build_object('temp', v_temp, 'time', v_time, 'pressure', v_press);
         v_machine := v_mold.name;
       else
-        -- ปลายทางของล็อตตกแต่ง (20261205010000): ผลผ่านไปคลังยางเส้นยาว SR (sr · เฉพาะ WO ที่ผูกงาน BOM) หรือส่งมอบให้ลูกค้าผ่านคลังสินค้าสำเร็จรูป WH (customer)
+        -- ปลายทางของล็อตตกแต่ง (20261206010000): ผลผ่านไปคลังยางเส้นยาว SR (sr · เฉพาะ WO ที่ผูกงาน BOM) หรือส่งมอบให้ลูกค้าผ่านคลังสินค้าสำเร็จรูป WH (customer)
         --   ไม่ส่งปลายทาง = WO ที่ผูกงานไป sr (เหมือน Pilot รุ่นก่อน) · WO ที่ไม่ผูกงานไป customer เสมอ (ส่ง sr มา = RF_INVALID_LOT)
         --   ผล hold / fail ไม่มีปลายทาง (ส่งมา = RF_INVALID_LOT) · QA ปล่อยภายหลังเลือกตามการผูกงาน (rf_save_qc)
         v_linked := coalesce(private.bom_rod_wo_linked(v_ord), false);
@@ -665,7 +665,7 @@ begin
         update public.rf_molds set usage_since_clean = usage_since_clean + v_shots, total_usage = total_usage + v_shots, updated_at = now() where id = v_mold.id;
       else
         -- กล่อง: ใบละไม่เกิน perBox ชิ้น (กล่องสุดท้ายเศษ) id = เลขล็อต (FN -> BOX) ต่อด้วยลำดับ 3 หลัก
-        -- 20261205010000: กล่องที่ผ่านรอ WH รับเข้า (pending_wh) แทนพร้อมส่งทันที · เก็บลูกค้าและเลข PO / PI ของ WO ไว้กับกล่อง (ส่งมอบให้ลูกค้ารายนั้น)
+        -- 20261206010000: กล่องที่ผ่านรอ WH รับเข้า (pending_wh) แทนพร้อมส่งทันที · เก็บลูกค้าและเลข PO / PI ของ WO ไว้กับกล่อง (ส่งมอบให้ลูกค้ารายนั้น)
         for v_i in 1..v_boxes loop
           insert into public.rf_fg_boxes (is_test, box_no, lot_no, order_no, recipe_code, product_code, qty, uom, grade, status, customer, customer_po)
           values ((select private.bom_test_mode()), regexp_replace(v_no, 'FN', 'BOX') || '-' || lpad(v_i::text, 3, '0'), v_no, v_order_no, v_ord.recipe_code, v_ord.product_code,
@@ -677,7 +677,7 @@ begin
           -- ชิ้นผ่านสถานีสุดท้าย (ตกแต่ง QC ผ่าน นับเข้า WO) = ป้อนผลผลิตกลับงาน BOM ที่ผูกกับ WO นี้ ณ จุดเดียวกับที่นับเข้า WO
           -- 20261202010000: WO ที่ผูกงาน BOM ไม่ป้อนยอดให้งานที่นี่แล้ว ล็อตเป็นแท่งรอรับเข้าคลัง SR (bom_rod_lots pending)
           -- งาน RB ได้ยอดเมื่อ SR รับเข้าผ่าน / QA ยอมรับ · WO ที่ไม่ผูกงานเรียก rf_apply_feedback เหมือนเดิม
-          -- 20261205010000: ปลายทาง customer ของ WO ที่ผูกงานไม่สร้างล็อตยางเส้นยาว งาน RB นับยอดเมื่อ WH รับกล่องของล็อตเข้าคลัง (private.rf_box_credit)
+          -- 20261206010000: ปลายทาง customer ของ WO ที่ผูกงานไม่สร้างล็อตยางเส้นยาว งาน RB นับยอดเมื่อ WH รับกล่องของล็อตเข้าคลัง (private.rf_box_credit)
           if v_linked then
             if v_dest = 'sr' then
               v_rods := v_rods + private.bom_rod_lot_create(v_flot, v_ord);
@@ -781,7 +781,7 @@ begin
     if v_count then
       select * into v_wo from public.rf_orders o where o.is_test = (select private.bom_test_mode()) and o.wo_no = v_lot.order_no;
       v_linked := coalesce(private.bom_rod_wo_linked(v_wo), false);
-      -- 20261205010000: ล็อตที่กักไว้ไม่มีปลายทาง QA ปล่อยครั้งแรก = WO ที่ผูกงานไปคลังยางเส้นยาว SR (เหมือนเดิม) · WO ที่ไม่ผูกงานส่งมอบให้ลูกค้าผ่าน WH
+      -- 20261206010000: ล็อตที่กักไว้ไม่มีปลายทาง QA ปล่อยครั้งแรก = WO ที่ผูกงานไปคลังยางเส้นยาว SR (เหมือนเดิม) · WO ที่ไม่ผูกงานส่งมอบให้ลูกค้าผ่าน WH
       v_dest := coalesce(v_dest, case when v_linked then 'sr' else 'customer' end);
     end if;
     update public.rf_lots set
@@ -792,7 +792,7 @@ begin
       updated_at = now()
     where id = v_lot.id
       and (qc is distinct from v_result or (v_result = 'pass' and hold_reasons <> '[]'::jsonb) or v_count);
-    -- กล่องที่ยังไม่ส่งมอบตามผล QA (20261205010000): ผ่าน = กลับที่เดิม (WH รับเข้าแล้ว received_at มีค่า = in_stock · ยังไม่รับ = pending_wh รอ WH รับ) · อื่น = hold
+    -- กล่องที่ยังไม่ส่งมอบตามผล QA (20261206010000): ผ่าน = กลับที่เดิม (WH รับเข้าแล้ว received_at มีค่า = in_stock · ยังไม่รับ = pending_wh รอ WH รับ) · อื่น = hold
     update public.rf_fg_boxes b
     set status = (case when v_result <> 'pass' then 'hold' when b.received_at is null then 'pending_wh' else 'in_stock' end), updated_at = now()
     where b.is_test = (select private.bom_test_mode()) and b.lot_no = v_lot.lot_no and b.status <> 'shipped'
@@ -1036,7 +1036,7 @@ begin
       if jsonb_typeof(v_node) <> 'array' then raise exception 'RF_INVALID_PAYLOAD'; end if;
       v_n := jsonb_array_length(v_node);
       if v_n > 5000 then raise exception 'RF_TOO_MANY'; end if;
-      -- กล่องสินค้า (20261205010000): สี่คำสั่งของกล่อง (รับเข้า ส่งมอบ ย้อนรับเข้า ย้อนส่งมอบ) ส่งได้เฉพาะชุด fgBoxes (รูปคำขอ ตรวจก่อนสิทธิ์ของชุด)
+      -- กล่องสินค้า (20261206010000): สี่คำสั่งของกล่อง (รับเข้า ส่งมอบ ย้อนรับเข้า ย้อนส่งมอบ) ส่งได้เฉพาะชุด fgBoxes (รูปคำขอ ตรวจก่อนสิทธิ์ของชุด)
       if v_n > 0 and p_action = any (v_box_actions) and v_key <> 'fgBoxes' then
         raise exception 'RF_INVALID_BOX';
       end if;
@@ -1118,7 +1118,7 @@ begin
     -- รับมอบใบส่งมอบ WIP: แผนก RB หรือกลุ่มวางแผน (20261204010000 · เดิมแผนก SR)
     perform private.rf_save_transfers(v_actor, v_planner or v_rb, v_planner or v_rb,
                                       coalesce(p_changes #> '{transfers,upsert}', '[]'::jsonb), p_base_version, v_version);
-    -- กล่องสินค้า (20261205010000): รับเข้า / ส่งมอบ = แผนก WH หรือ admin · ย้อนรับเข้า / ย้อนส่งมอบ = ผู้จัดการแผนก WH หรือ admin (ตรวจในตัวเขียน)
+    -- กล่องสินค้า (20261206010000): รับเข้า / ส่งมอบ = แผนก WH หรือ admin · ย้อนรับเข้า / ย้อนส่งมอบ = ผู้จัดการแผนก WH หรือ admin (ตรวจในตัวเขียน)
     --   รับเข้าล็อตที่ส่งมอบให้ลูกค้าของ WO ที่ผูกงาน BOM = นับยอดเข้างาน RB · ย้อนรับเข้า = ถอนยอดนั้น (เขียนฝั่ง BOM นับใน v_bom_jobs / v_bom_orders)
     v_res := private.rf_save_boxes(v_actor, v_actor_name, p_action, coalesce(p_changes #> '{fgBoxes,upsert}', '[]'::jsonb), p_base_version, v_version);
     v_bom_jobs := v_bom_jobs + (v_res ->> 'jobs')::integer;

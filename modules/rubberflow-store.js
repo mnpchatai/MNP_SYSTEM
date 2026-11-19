@@ -53,7 +53,7 @@
     viewer: { label: "ดูข้อมูลอย่างเดียว", modules: Object.freeze(["dashboard", "orders", "recipes", "wip", "trace", "warehouse"]) },
   });
 
-  // กล่องสินค้าของคลังสินค้าสำเร็จรูป (ตรงกับ private.rf_save_boxes ของ 20261205010000) รับผู้ใช้ทั้งรูปของ RubberFlow (personaUser: role / dept / roleCode / whHead)
+  // กล่องสินค้าของคลังสินค้าสำเร็จรูป (ตรงกับ private.rf_save_boxes ของ 20261206010000) รับผู้ใช้ทั้งรูปของ RubberFlow (personaUser: role / dept / roleCode / whHead)
   // และของ BOM (modules/bom-store.js personaUser: role / dept / roleCode) · admin = รหัสบทบาท admin · ฐานข้อมูลตัดสินจริงอีกครั้ง
   const isAdminUser = (user) => user?.role === "admin" || user?.roleCode === "admin";
   const isWhUser = (user) => String(user?.dept ?? "").toUpperCase() === "WH";
@@ -91,7 +91,7 @@
     station: (user) => Boolean(user.planner || user.rb), // บันทึกผสม/ฉีด/อบ/ตกแต่ง ทำความสะอาดแม่พิมพ์
     sendTransfer: (user) => Boolean(user.planner || user.rb), // สร้างใบส่งมอบ WIP
     receiveTransfer: (user) => Boolean(user.planner || user.rb), // รับมอบ WIP ระหว่างสถานี: แผนก RB (20261204010000 · เดิมแผนก SR)
-    // กล่องสินค้า (20261205010000): รับเข้าคลัง / ส่งมอบให้ลูกค้า = แผนก WH ทุกบทบาท หรือ admin (กลุ่มวางแผนดูอย่างเดียว) · ย้อน = ผู้จัดการแผนก WH หรือ admin
+    // กล่องสินค้า (20261206010000): รับเข้าคลัง / ส่งมอบให้ลูกค้า = แผนก WH ทุกบทบาท หรือ admin (กลุ่มวางแผนดูอย่างเดียว) · ย้อน = ผู้จัดการแผนก WH หรือ admin
     receiveBoxes: (user) => canReceiveBoxes(user),
     shipBoxes: (user) => canReceiveBoxes(user),
     reverseBoxes: (user) => canReverseBoxes(user),
@@ -289,7 +289,7 @@
     const rbHead = (rb && RB_HEAD_DEPT_ROLE_CODES.includes(roleCode)) || RB_HEAD_ANY_ROLE_CODES.includes(roleCode);
     const role = roleCode === "admin" ? "admin" : plannerRole ? "manager" : DEPT_ROLES[dept] ?? "viewer";
     const name = `${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim() || employee.display_name || employee.employee_no || "ผู้ใช้ทดสอบ";
-    // roleCode / whHead (20261205010000): ผู้จัดการแผนก WH ย้อนการรับเข้า / ส่งมอบกล่องได้ (canReverseBoxes)
+    // roleCode / whHead (20261206010000): ผู้จัดการแผนก WH ย้อนการรับเข้า / ส่งมอบกล่องได้ (canReverseBoxes)
     return { id: String(employee.id ?? employee.employee_no ?? name), role, roleCode, dept, name, planner, rb, rbHead, st: dept === "ST", sr: dept === "SR", wh: dept === "WH", whHead: dept === "WH" && roleCode === "department_manager", qa: dept === "QA", db: true };
   }
   // ใครเห็นเมนูและหน้า RubberFlow (UX ล้วน สิทธิ์จริงตัดสินที่ฐานข้อมูล 20261130010000): โหมดทดสอบ = ทุกบัญชีทดสอบเหมือนเดิม ·

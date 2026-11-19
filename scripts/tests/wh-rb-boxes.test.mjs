@@ -3,7 +3,7 @@ import test from "node:test";
 import { createRequire } from "node:module";
 import { createMockSupabase } from "../pilot-harness-mock.mjs";
 
-// โรงงาน ขั้น 4 ส่วนข้อมูล (20261205010000_wh_rb_boxes.sql): ปลายทางของล็อตตกแต่ง (sr / customer) · กล่องรอคลังสินค้าสำเร็จรูป (WH) รับเข้า
+// โรงงาน ขั้น 4 ส่วนข้อมูล (20261206010000_wh_rb_boxes.sql): ปลายทางของล็อตตกแต่ง (sr / customer) · กล่องรอคลังสินค้าสำเร็จรูป (WH) รับเข้า
 // คำสั่ง receiveBoxes / shipBoxes / reverseBoxReceipt / reverseBoxShip ของ modules/rubberflow-actions.js บน store แบบ remote กับ Supabase จำลองของ harness
 // (scripts/pilot-harness-mock.mjs ที่เลียนกฎของฐานข้อมูล) รวมการนับ / ถอนยอดงาน RB ของ BOM และสิทธิ์ (canReceiveBoxes / canReverseBoxes ของ modules/rubberflow-store.js)
 const require = createRequire(import.meta.url);
