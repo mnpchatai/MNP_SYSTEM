@@ -34,7 +34,8 @@
 --
 -- นิยามที่ replace (เริ่มจากนิยามล่าสุดบน main ทุกตัว · ก่อน apply ที่ production เทียบ md5(pg_get_functiondef(oid)) กับต้นทางก่อน)
 --   - private.sandbox_unguarded_tables()       จาก 20261205010000_itwo_v2_rework_files.sql (คงทุกชื่อเดิม เพิ่ม itwo_comments)
---   - private.itwo_status_message(text)        จาก 20261203010000 (เพิ่มข้อความ need_info)
+--   - private.itwo_status_message(text)        จาก 20261203010000 (เพิ่มข้อความ need_info · "ปิดงาน" -> "ส่งงาน")
+--   - public.app_itwo_complete                 จาก 20261203010000 (เปลี่ยนคำ "ปิดงาน" เป็น "ส่งงาน" ในข้อความไทยเท่านั้น ตามที่เจ้าของสั่ง · ตรรกะเดิมทุกอย่าง)
 --   - private.itwo_work_order_guard()          จาก 20261205010000
 --   - private.itwo_approval_caps(uuid, uuid)   จาก 20261203010000 (v_open รวม need_info เพื่อให้ผู้อนุมัติ "ไม่อนุมัติ" ระหว่างรอได้)
 --   - private.itwo_decide(uuid, boolean, text) จาก 20261203010000 (รับ need_info เฉพาะไม่อนุมัติ · เคลียร์ info_return_status)
@@ -217,7 +218,7 @@ as $$
     when 'rejected' then 'ใบสั่งงานนี้ไม่อนุมัติไปแล้ว'
     when 'approved' then 'ใบสั่งงานนี้อนุมัติครบแล้ว'
     when 'in_progress' then 'ใบสั่งงานนี้เริ่มดำเนินการไปแล้ว'
-    when 'it_closed' then 'ใบสั่งงานนี้ IT ปิดงานแล้ว'
+    when 'it_closed' then 'ใบสั่งงานนี้ IT ส่งงานแล้ว'
     when 'received' then 'ใบสั่งงานนี้จบงานแล้ว (ได้รับงานแล้ว)'
     when 'need_info' then 'ใบสั่งงานนี้รอผู้แจ้งตอบคำถามอยู่ ต้องรอคำตอบก่อนจึงจะทำรายการนี้ได้'
     else 'ใบสั่งงานนี้ไม่อยู่ในขั้นที่ทำรายการนี้ได้'
@@ -619,6 +620,55 @@ begin
 end;
 $$;
 
+-- 10.1 IT ส่งงาน (เดิมเรียก "ปิดงาน"): ตรรกะเหมือนนิยามใน 20261203010000 ทุกอย่าง เปลี่ยนเฉพาะคำในข้อความไทย (สถานะภายใน it_closed / event completed คงเดิม)
+--   ระหว่างรอผู้แจ้งตอบ (need_info) ส่งงานไม่ได้: สถานะไม่ใช่ in_progress จึงได้ข้อความของ need_info จาก private.itwo_status_message
+create or replace function public.app_itwo_complete(p_work_order_id uuid)
+returns void
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_wo public.itwo_work_orders%rowtype;
+  v_dept_done boolean;
+  v_it_done boolean;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itwo_actor();
+  if not private.itwo_is_it_admin(v_actor.id) then
+    raise exception 'เฉพาะผู้ดูแลงาน IT เท่านั้นที่ส่งงานได้' using errcode = 'insufficient_privilege';
+  end if;
+
+  select * into v_wo from public.itwo_work_orders w where w.id = p_work_order_id for update;
+  if v_wo.id is null or v_wo.is_test <> v_actor.is_test then
+    raise exception 'ไม่พบใบสั่งงานนี้' using errcode = 'check_violation';
+  end if;
+  if v_wo.status <> 'in_progress' then
+    raise exception '%', case
+      when v_wo.status in ('pending_dept', 'pending_it_mgr', 'approved')
+        then 'ใบสั่งงานต้องอยู่ในสถานะกำลังดำเนินการ (กดเริ่มทำก่อน) จึงจะส่งงานได้'
+      when v_wo.status = 'it_closed' then 'IT ส่งงานใบนี้ไปแล้ว'
+      else private.itwo_status_message(v_wo.status)
+    end using errcode = 'check_violation';
+  end if;
+
+  select s.dept_done, s.it_done into v_dept_done, v_it_done from private.itwo_event_state(v_wo.id) s;
+  if not v_dept_done and not v_it_done then
+    raise exception 'ส่งงานไม่ได้ ต้องรอผู้จัดการแผนกและผู้อนุมัติขั้น IT อนุมัติครบก่อน' using errcode = 'check_violation';
+  elsif not v_dept_done then
+    raise exception 'ส่งงานไม่ได้ ต้องรอผู้จัดการแผนกอนุมัติก่อน' using errcode = 'check_violation';
+  elsif not v_it_done then
+    raise exception 'ส่งงานไม่ได้ ต้องรอผู้อนุมัติขั้น IT อนุมัติก่อน' using errcode = 'check_violation';
+  end if;
+
+  update public.itwo_work_orders set status = 'it_closed' where id = v_wo.id;
+  insert into public.itwo_events (is_test, work_order_id, actor_id, action)
+  values (v_wo.is_test, v_wo.id, v_actor.id, 'completed');
+end;
+$$;
+
 -- 11. ถามกลับผู้แจ้ง / ผู้แจ้งตอบ ------------------------------------------------------------------
 -- ถาม: ล็อกแถวใบ (for update) กันถามซ้ำพร้อมกัน · ใบไป need_info พร้อมบันทึกสถานะที่ต้องกลับ + event info_requested (ลายเซ็นของผู้ถาม)
 create or replace function public.app_itwo_request_info(p_work_order_id uuid, p_body text)
@@ -645,8 +695,9 @@ begin
     raise exception 'ข้อความต้องไม่เกิน 2,000 ตัวอักษร' using errcode = 'check_violation';
   end if;
 
+  -- คนที่ไม่เห็นใบนี้ได้ข้อความเดียวกับใบที่ไม่มีอยู่ (ไม่บอกสถานะของใบที่ตัวเองไม่มีสิทธิ์ดู)
   select * into v_wo from public.itwo_work_orders w where w.id = p_work_order_id for update;
-  if v_wo.id is null or v_wo.is_test <> v_actor.is_test then
+  if v_wo.id is null or v_wo.is_test <> v_actor.is_test or not private.itwo_can_view(v_wo, v_actor) then
     raise exception 'ไม่พบใบสั่งงานนี้' using errcode = 'check_violation';
   end if;
   if v_wo.requester_id = v_actor.id then

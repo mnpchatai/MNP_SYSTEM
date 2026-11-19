@@ -21,8 +21,8 @@ select ok(not exists (select 1 from pg_class c cross join unnest(array['SELECT',
 select ok(exists (select 1 from pg_class c where c.relnamespace = 'public'::regnamespace and c.relname like 'itwo\_%' and c.relkind = 'S') and not exists (select 1 from pg_class c cross join unnest(array['USAGE', 'SELECT', 'UPDATE']) p(priv) cross join unnest(array['service_role', 'anon', 'authenticated']) r(rolname) where c.relnamespace = 'public'::regnamespace and c.relname like 'itwo\_%' and c.relkind = 'S' and has_sequence_privilege(r.rolname, c.oid, p.priv)), 'the identity sequences of the itwo tables are closed to service_role, anon and authenticated');
 select ok(not exists (select 1 from pg_class c cross join unnest(array['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) p(priv) where c.relnamespace = 'public'::regnamespace and c.relname like 'itwo\_%' and c.relkind = 'r' and (has_table_privilege('anon', c.oid, p.priv) or has_table_privilege('authenticated', c.oid, p.priv))), 'anon and authenticated hold no table privilege either (checked per privilege, not only by grant rows)');
 select ok(position('lock table' in lower(pg_get_functiondef('public.app_sandbox_purge_itwo()'::regprocedure))) > 0, 'the test-data purge locks the module tables so it cannot race a test filing');
-select is((select count(*)::int from pg_policy p join pg_class c on c.oid = p.polrelid where c.relname like 'itwo\_%' and p.polname like '%\_no\_direct\_access'), 8, 'every itwo table has a deny-all policy');
-select is((select count(*)::int from pg_policy p join pg_class c on c.oid = p.polrelid where c.relname like 'itwo\_%' and p.polname = 'lab_only_no_access' and not p.polpermissive), 8, 'every itwo table has the restrictive lab-only policy');
+select is((select count(*)::int from pg_policy p join pg_class c on c.oid = p.polrelid where c.relname like 'itwo\_%' and p.polname like '%\_no\_direct\_access'), 9, 'every itwo table has a deny-all policy');
+select is((select count(*)::int from pg_policy p join pg_class c on c.oid = p.polrelid where c.relname like 'itwo\_%' and p.polname = 'lab_only_no_access' and not p.polpermissive), 9, 'every itwo table has the restrictive lab-only policy');
 select ok((select bool_and(t = any (private.sandbox_unguarded_tables())) from unnest(array['itwo_work_orders', 'itwo_events', 'itwo_access_changes', 'itwo_doc_counters', 'itwo_admin_log']) t), 'the five test-mode aware tables are registered in private.sandbox_unguarded_tables()');
 select ok(exists (select 1 from pg_trigger t where t.tgrelid = 'public.itwo_staff'::regclass and t.tgname = 'sandbox_guard' and not t.tgisinternal) and not ('itwo_staff' = any (private.sandbox_unguarded_tables())), 'itwo_staff is blocked while an admin is in test mode (sandbox_guard)');
 select is((select count(*)::int from pg_trigger t where t.tgrelid in ('public.itwo_work_orders'::regclass, 'public.itwo_events'::regclass, 'public.itwo_access_changes'::regclass, 'public.itwo_doc_counters'::regclass, 'public.itwo_admin_log'::regclass) and t.tgname like '%\_sandbox\_scope'), 5, 'every test-mode aware table has the sandbox scope trigger');
@@ -373,7 +373,7 @@ select throws_ok($$ select public.app_itwo_receive(current_setting('t.o1')::uuid
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 select throws_ok($$ select public.app_itwo_receive(current_setting('t.o1')::uuid) $$, '23514', 'ยังยืนยันรับงานไม่ได้ เพราะ IT ยังไม่ปิดงาน', 'receipt cannot be confirmed before IT closes the work');
-select throws_ok($$ select public.app_itwo_complete(current_setting('t.o1')::uuid) $$, '42501', 'เฉพาะผู้ดูแลงาน IT เท่านั้นที่ปิดงานได้', 'a requester cannot close work');
+select throws_ok($$ select public.app_itwo_complete(current_setting('t.o1')::uuid) $$, '42501', 'เฉพาะผู้ดูแลงาน IT เท่านั้นที่ส่งงานได้', 'a requester cannot close work');
 
 -- 5c. ส่วน "สำหรับแผนก IT" (สิทธิ์ในระบบ) -------------------------------
 set local role authenticated;
@@ -422,7 +422,7 @@ select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-0000000
 select lives_ok($$ select public.app_itwo_start(current_setting('t.o15')::uuid) $$, 'IT starts an urgent request before the approvals');
 select is((public.app_itwo_get_detail(current_setting('t.o15')::uuid)->>'status'), 'in_progress', 'urgent: in progress while still waiting for approval');
 select is((select string_agg(e->>'action', ',' order by (e->>'id')::bigint) from jsonb_array_elements(public.app_itwo_get_detail(current_setting('t.o15')::uuid)->'events') e), 'created,started', 'the start is recorded');
-select throws_ok($$ select public.app_itwo_complete(current_setting('t.o15')::uuid) $$, '23514', 'ปิดงานไม่ได้ ต้องรอผู้จัดการแผนกและผู้อนุมัติขั้น IT อนุมัติครบก่อน', 'an urgent request cannot be closed before the approvals');
+select throws_ok($$ select public.app_itwo_complete(current_setting('t.o15')::uuid) $$, '23514', 'ส่งงานไม่ได้ ต้องรอผู้จัดการแผนกและผู้อนุมัติขั้น IT อนุมัติครบก่อน', 'an urgent request cannot be closed before the approvals');
 select is((public.app_itwo_get_detail(current_setting('t.o15')::uuid)->'allowed_actions'), '["request_info"]'::jsonb, 'IT can only ask the requester on an urgent started request before the approvals (it cannot close it and the IT section was removed)');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000003","role":"authenticated"}', true);
@@ -431,7 +431,7 @@ select lives_ok($$ select public.app_itwo_approve(current_setting('t.o15')::uuid
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000008","role":"authenticated"}', true);
 select is((public.app_itwo_get_detail(current_setting('t.o15')::uuid)->>'status'), 'in_progress', 'an approval does not pull an in-progress request back');
-select throws_ok($$ select public.app_itwo_complete(current_setting('t.o15')::uuid) $$, '23514', 'ปิดงานไม่ได้ ต้องรอผู้อนุมัติขั้น IT อนุมัติก่อน', 'still waiting for the IT step');
+select throws_ok($$ select public.app_itwo_complete(current_setting('t.o15')::uuid) $$, '23514', 'ส่งงานไม่ได้ ต้องรอผู้อนุมัติขั้น IT อนุมัติก่อน', 'still waiting for the IT step');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000009","role":"authenticated"}', true);
 select lives_ok($$ select public.app_itwo_approve(current_setting('t.o15')::uuid) $$, 'the IT approver approves after the start');
