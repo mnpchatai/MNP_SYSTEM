@@ -1394,8 +1394,8 @@ test("the shared job card takes a detail URL (text or function) and is a plain c
   assert.match(css, /\.bom-job\.has-link :is\(a:not\(\.bom-card-link\), button, input, select, textarea\) \{ position: relative; z-index: 1; \}/);
   assert.match(css, /\.bom-job\.has-link \{ position: relative; cursor: pointer;/);
   assert.match(css, /tr\.row-link \{ position: relative; transform: translate\(0\); cursor: pointer; \}/);
-  assert.match(css, /\.row-link-main::after \{ content: ""; position: absolute; inset: 0; \}/);
-  assert.match(css, /tr\.row-link :is\(a:not\(\.row-link-main\), button, input, select, textarea\) \{ position: relative; z-index: 1; \}/);
+  assert.match(css, /\.row-link-main::after \{ content: ""; position: absolute; inset: 0; z-index: 1; \}/, "the row cover sits above the mobile card cells (position: relative) so every cell opens the lot");
+  assert.match(css, /tr\.row-link :is\(a:not\(\.row-link-main\), button, input, select, textarea\) \{ position: relative; z-index: 2; \}/, "links and buttons in the row stay above the cover");
   assert.match(css, /\.row-link-main:focus-visible::after \{ outline:/, "a keyboard focus ring shows on the row");
   assert.match(css, /max-width: 760px\) \{\s*\.rf-page \.rf-table tr\.row-link td:has\(\.row-link-main\) \{ position: static;/, "on a phone the cell holding the link does not hide the row from the link");
 });

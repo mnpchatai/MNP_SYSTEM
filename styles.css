@@ -3309,10 +3309,10 @@ table.bom-tree td.right { white-space: nowrap; }
 }
 /* แถวตารางคลิกได้ทั้งแถว (หน้า SR): ลิงก์หลักของแถว (.row-link-main) เป็น <a> จริง ::after คลุมทั้งแถว · transform ทำให้ tr เป็นกรอบอ้างอิงของ ::after ในทุกเบราว์เซอร์ (รวม Safari บน iPhone) */
 tr.row-link { position: relative; transform: translate(0); cursor: pointer; }
-.row-link-main::after { content: ""; position: absolute; inset: 0; }
+.row-link-main::after { content: ""; position: absolute; inset: 0; z-index: 1; }
 .row-link-main:focus-visible { outline: none; }
 .row-link-main:focus-visible::after { outline: 3px solid var(--m600, var(--primary)); outline-offset: -3px; }
-tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { position: relative; z-index: 1; }
+tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { position: relative; z-index: 2; }
 @media (hover: hover) {
   [data-module] .rf-table tr.row-link:hover { background: color-mix(in srgb, var(--m500) 13%, var(--paper)); }
   tr.row-link:hover .row-link-main { text-decoration: underline; }
