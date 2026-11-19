@@ -1,6 +1,7 @@
 // ชุดชิ้นส่วนกลางของโมดูลโรงงาน (window.MNP_FACTORY) — ยกจาก BOM มาให้ทุกแผนกเรียกใช้ร่วมกัน ไม่มีสำเนาที่สองใน BOM
 // มี: ตัวผูก event ตามกติกา data-rf-* (bindRoot) · formPayload / parseArgs · การ์ดงานผลิต (jobCard) · dialog รายงานผล (jobReportDialog) · ป้ายแผนก (deptChip)
 // และกลุ่มเมนู "โรงงาน": registerDeptModule (โมดูลรายแผนกหนึ่งไฟล์ต่อแผนก) · canSeeDept (ใครเห็นโมดูลไหน) · orderNavItems (เรียงเมนูตามผังงาน) · ส่วนประกอบหน้าแรกของแผนก
+// · productionLanding (หน้าแรกของแผนกที่มีงานผลิต GR PT BG PK: การ์ดงานสั่งงานได้ผ่านคำสั่งของ BOM ชุดเดียวกับหน้า "งานของฉัน")
 // ไฟล์นี้ไม่แตะ helper ของ app.js ตอนโหลด (เรียกเฉพาะตอนใช้งาน) โหลดก่อน modules/bom-pages.js (ดู index.html)
 // การซ่อน/แสดงปุ่มเป็นแค่ UX สิทธิ์จริงตัดสินที่ฐานข้อมูลและ action ของแต่ละโมดูล
 (function registerFactoryKit(root) {
@@ -192,7 +193,7 @@
     return out;
   }
 
-  // ---- ส่วนประกอบของหน้าแรกรายแผนก (อ่านอย่างเดียว) ----
+  // ---- ส่วนประกอบของหน้าแรกรายแผนก (ส่วนใหญ่อ่านอย่างเดียว · หน้าที่คืน actions: true สั่งงานได้) ----
   const routeUrl = (route, query = {}) => {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) if (value !== null && value !== undefined && value !== "") params.set(key, String(value));
@@ -277,13 +278,8 @@
     const rubberflow = () => { const live = ctx.rubberflow(); return live && rfUser ? { ...live, can: (permission) => rfStoreApi.can(rfUser, permission) } : live; };
     return { ...ctx, user, rubberflow };
   }
-  let watching = false;
-  function watch(store) {
-    if (watching) return;
-    watching = true;
-    // ผู้อื่นบันทึกข้อมูล BOM: วาดหน้าแผนกใหม่ (หน้า BOM จัดการของตัวเองใน module-bom.js)
-    store.subscribe((event) => { if (["loaded", "load-failed", "synced", "saved"].includes(event.type)) repaint(); });
-  }
+  // การวาดหน้าแผนกใหม่เมื่อ store ของ BOM เปลี่ยน (โหลดเสร็จ/ไม่สำเร็จ ผู้อื่นบันทึก บันทึกของเราสำเร็จหรือย้อนกลับ) ทำที่ตัวรับ event ของ store ใน modules/module-bom.js
+// ที่เดียวกับหน้า BOM (ถือว่า #/gr ฯลฯ เป็นหน้าของตัวเอง ผ่าน onDeptRoute) จึงไม่ทับสิ่งที่พิมพ์ค้างใน dialog และไม่วาดซ้ำสองทาง
 
   // หน้าแรกรายแผนก: ประตูเมนู → โหลด store ของ BOM → landing(ctx) คืน { html, bind? } → วางใน shell ของระบบหลัก
   async function renderLanding(def, params, landing) {
@@ -293,27 +289,32 @@
     const bom = root.MNP_BOM;
     if (!bom?.store) return renderNotFound();
     const { store } = bom;
-    watch(store);
     store.ensureLoaded();
     const ui = root.MNP_RUBBERFLOW_UI;
     ui.module = "";
     const base = bom.context(params);
     const ctx = { ...base, factory: def, pageUrl: (extra = {}) => routeUrl(def.route, { q: base.q || null, ...extra }) };
+    // dialog เปิดด้วย ctx ของหน้านี้ (ไม่ใช่ ctx ของ BOM) · ฟอร์มใน dialog ส่งผ่านตัวผูกของ BOM
+    if (typeof bom.openDialog === "function") ctx.openDialog = (name, args) => bom.openDialog(name, args, ctx);
+    bom.clearEditing?.(); // หน้าใหม่ = ไม่มีฟอร์มที่แก้ค้างจากหน้าก่อน (เหมือน renderBom)
     let body;
     let bind = null;
+    let actions = false;
     if (store.status() === "error") body = `<section class="card rf-card" role="alert"><h1>โหลดข้อมูล BOM ไม่สำเร็จ</h1><p class="muted">${esc(store.error()?.message ?? "")}</p><div class="rf-row"><button class="btn rf-btn" type="button" data-factory-retry>ลองอีกครั้ง</button></div></section>`;
     else if (store.status() !== "ready") body = ui.card(ui.empty("กำลังโหลดข้อมูล…"));
     else {
       const built = landing(ctx);
       body = built.html;
       bind = built.bind ?? null;
+      actions = built.actions === true;
     }
     app.innerHTML = shell(`<div class="rf-page bom-page" data-module="${attr(def.palette)}" data-rf-mod="">${body}</div>`, def.route, def.label);
     bindShell();
     const node = document.querySelector(".content");
     node.querySelector("[data-factory-retry]")?.addEventListener("click", () => { store.reload(); renderRoute(); });
-    // หน้าแรกอ่านอย่างเดียว: ไม่มีฟอร์มหรือปุ่มสั่งงาน (run ปฏิเสธเสมอ) มีแค่ค้นหาและลิงก์
-    bindRoot(node, ctx, { run: () => false });
+    // ผูกครั้งเดียวต่อหน้า (ไม่ผูก data-rf-search / data-rf-go ซ้ำ) · หน้าที่ไม่ได้ขอ actions อ่านอย่างเดียว: ไม่มีฟอร์มหรือปุ่มสั่งงาน (run ปฏิเสธเสมอ) มีแค่ค้นหาและลิงก์
+    // หน้าที่ขอ actions: คำสั่งและ dialog ของ BOM ด้วยผู้ใช้จริง (ctx.user = บัญชีที่ทำหน้าที่อยู่ ไม่ใช่ deptCtx) สิทธิ์ตัดสินที่ action และฐานข้อมูลเหมือนหน้า BOM
+    bindRoot(node, ctx, actions && typeof ctx.runAction === "function" ? { run: ctx.runAction, transforms: bom.transforms?.(), openDialog: (name, args) => ctx.openDialog(name, args), ui } : { run: () => false });
     ui.labelTables(node);
     bind?.(node, ctx);
     // ผู้อื่นบันทึกข้อมูลไปแล้ว: รวมตอนนี้ (เหมือนท้าย renderBom · ยังเปิดฟอร์มค้างอยู่ store ไม่รวมให้)
@@ -321,9 +322,31 @@
     return undefined;
   }
 
+  // หน้าแรกของแผนกที่มีงานผลิต (GR PT BG PK): การ์ดงานของแผนกนั้นที่ยังเปิดอยู่ (แท็บ "เสร็จแล้ว" ดูย้อนหลัง) ใช้การ์ดกลางและ dialog รายงานผล/พัก/ปิดงานชุดเดียวกับ BOM "งานของฉัน"
+  // ปุ่มที่เห็นตามสิทธิ์ของผู้ใช้จริง (jobCard ถามตัวช่วยของ BOM) · คืน landing สำหรับ registerDeptModule
+  const LIVE_ORDER = Object.freeze(["released", "in_progress", "completed"]);
+  function productionLanding(dept) {
+    return function landing(ctx) {
+      const { ui, data } = ctx;
+      const show = ctx.params.get("st") === "done" ? "done" : "open";
+      const orderOf = (id) => data.orders.find((entry) => entry.id === id);
+      const mine = data.jobs.filter((job) => job.dept === dept && LIVE_ORDER.includes(orderOf(job.orderId)?.status));
+      const open = mine.filter((job) => ctx.helpers.isOpenJob(data, job));
+      const done = mine.filter((job) => job.status === "done");
+      // กำลังทำก่อน พักไว้ท้าย แล้วตามกำหนดส่ง (เหมือนหน้า "งานของฉัน")
+      const rank = (job) => (job.status === "in_progress" ? 0 : job.status === "hold" ? 2 : 1);
+      const list = (show === "done" ? done : open).slice().sort((a, b) => rank(a) - rank(b) || (Number(a.dueAt) || 0) - (Number(b.dueAt) || 0) || String(a.id).localeCompare(String(b.id)));
+      const tabs = ui.tabs([{ id: "open", label: `ต้องทำ ${open.length}` }, { id: "done", label: `เสร็จแล้ว ${done.length}` }], show, (id) => ctx.pageUrl({ st: id === "done" ? "done" : null }));
+      const body = list.length ? `<div class="bom-job-grid">${list.map((job) => jobCard(ctx, job, { planner: false, dept, show, orderOf })).join("")}</div>` : ui.card(ui.empty(show === "done" ? "ยังไม่มีงานที่เสร็จ" : `ไม่มีงานของ ${dept} ค้างอยู่`));
+      // ข้อความสถานะการบันทึก (module-bom.js เติมให้ระหว่างบันทึก) ว่างเมื่อไม่มีอะไรค้าง
+      const sync = `<span class="small muted" role="status" data-bom-sync>${esc(root.MNP_BOM?.syncText?.() ?? "")}</span>`;
+      return { html: `${pageHead(ctx, "งานของแผนกฉัน", `${actionLink(ctx, "ไปงานของฉัน (BOM)", ctx.url("work", { dept }))}${sync}`)}${tabs}${body}`, actions: true };
+    };
+  }
+
   // def = { code, dept, route, label, icon, palette, landing(ctx), pages? }
   // code เช่น "FACTORY_SR" (ไม่ชนโมดูลอื่น) · dept = รหัสแผนกใน rules.PROCESS_FLOW · route = path ของหน้าแรก (#/sr) · icon = ชื่อไอคอนใน MNP_UI_ICONS
-  // landing(ctx): ctx = ctx ของ BOM (data, rules, ui, helpers, url, user, q, params) + pageUrl ของหน้านี้ + factory (def) · pages = หน้าเพิ่มเติมของแผนก { path: (params) => … } ผ่านประตูเดียวกัน
+  // landing(ctx) คืน { html, bind?, actions? } (actions: true = ผูกคำสั่งและ dialog ของ BOM ให้การ์ดสั่งงานได้) · ctx = ctx ของ BOM (data, rules, ui, helpers, url, user, q, params, runAction, openDialog) + pageUrl ของหน้านี้ + factory (def) · pages = หน้าเพิ่มเติมของแผนก { path: (params) => … } ผ่านประตูเดียวกัน
   function registerDeptModule(def) {
     const { code, dept, route, label, icon, palette, landing, pages = {}, flowNo } = def;
     if (!code || !dept || !route || !label || typeof landing !== "function") throw new Error("registerDeptModule: code, dept, route, label และ landing จำเป็น");
@@ -345,7 +368,7 @@
 
   root.MNP_FACTORY = Object.freeze({
     esc, attr, formPayload, parseArgs, bindRoot, deptChip, dueText, jobCard, jobReportDialog,
-    FACTORY_GROUP, canSeeDept, canOpenDeptModule, orderNavItems, registerDeptModule,
+    FACTORY_GROUP, canSeeDept, canOpenDeptModule, orderNavItems, registerDeptModule, productionLanding,
     pageHead, searchForm, includesText, limited, taskTable, actionLink, wake, failed, rubberflowFailed, deptCtx, routeUrl, onDeptRoute: onFactoryRoute,
   });
 })(window);

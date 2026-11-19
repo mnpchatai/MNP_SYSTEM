@@ -3,18 +3,20 @@ import fs from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 
-// เมนูกลุ่ม "โรงงาน" และโมดูลรายแผนก (modules/factory-kit.js registerDeptModule · module-st / sr / qa / gr / wh.js)
-// โหลดโมดูล BOM + RubberFlow + โมดูลแผนกทั้งห้าเข้า context จำลอง แล้วตรวจ: ลำดับเมนูตามผังงานใต้หัวกลุ่มเดียว · ใครเห็นโมดูลไหน (ผ่าน/ไม่ผ่าน)
+// เมนูกลุ่ม "โรงงาน" และโมดูลรายแผนก (modules/factory-kit.js registerDeptModule · module-st / sr / qa / gr / pt / bg / pk / wh.js)
+// โหลดโมดูล BOM + RubberFlow + โมดูลแผนกทั้งแปดเข้า context จำลอง แล้วตรวจ: ลำดับเมนูตามผังงานใต้หัวกลุ่มเดียว · ใครเห็นโมดูลไหน (ผ่าน/ไม่ผ่าน)
 // · ประตูโหมดทดสอบ (ใช้ usesBom ตัวเดียวกับ BOM) · หน้าปฏิเสธนอกโหมดทดสอบ · หน้าแรกของแต่ละแผนกวาดจากข้อมูลสาธิตของ BOM และ RubberFlow
 const FILES = [
   "modules/ui-icons.js", "modules/department-access.js",
   "modules/rubberflow-rules.js", "modules/rubberflow-derive.js", "modules/rubberflow-actions.js", "modules/rubberflow-seed.js", "modules/rubberflow-store.js",
   "modules/rubberflow-ui.js", "modules/factory-kit.js", "modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js",
   "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js",
-  "modules/module-st.js", "modules/module-sr.js", "modules/module-qa.js", "modules/module-gr.js", "modules/module-wh.js",
+  "modules/module-st.js", "modules/module-sr.js", "modules/module-qa.js", "modules/module-gr.js", "modules/module-pt.js", "modules/module-bg.js", "modules/module-pk.js", "modules/module-wh.js",
 ];
-const DEPT_FILES = ["st", "sr", "qa", "gr", "wh"].map((dept) => `modules/module-${dept}.js`);
-const FIVE = ["FACTORY_ST", "FACTORY_SR", "FACTORY_QA", "FACTORY_GR", "FACTORY_WH"];
+const DEPT_FILES = ["st", "sr", "qa", "gr", "pt", "bg", "pk", "wh"].map((dept) => `modules/module-${dept}.js`);
+const ALL_DEPTS = ["FACTORY_ST", "FACTORY_SR", "FACTORY_QA", "FACTORY_GR", "FACTORY_PT", "FACTORY_BG", "FACTORY_PK", "FACTORY_WH"];
+// แผนกที่หน้าแรกสั่งงานผลิตได้ (การ์ดงานของแผนกตัวเอง) · แผนกอื่นหน้าแรกอ่านอย่างเดียว
+const PRODUCTION = ["FACTORY_GR", "FACTORY_PT", "FACTORY_BG", "FACTORY_PK"];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 const read = (file) => fs.readFileSync(file, "utf8");
 const plain = (value) => JSON.parse(JSON.stringify(value));
@@ -25,7 +27,7 @@ const emp = (dept, role = "employee", extra = {}) => ({ department: { code: dept
 function load({ employee = emp("PP"), route = "" } = {}) {
   const context = vm.createContext({});
   const app = { innerHTML: "" };
-  const log = { renders: 0, notFound: 0, hash: `#/${route}`, toasts: [] };
+  const log = { renders: 0, notFound: 0, hash: `#/${route}`, toasts: [], listeners: {} };
   const fakes = {};
   const node = () => ({
     handlers: {}, dataset: {}, value: "", disabled: false, textContent: "", innerHTML: "", tagName: "DIV", classList: { toggle() {}, add() {}, remove() {} }, files: [],
@@ -36,7 +38,7 @@ function load({ employee = emp("PP"), route = "" } = {}) {
   const root = node();
   const storage = new Map();
   Object.assign(context, {
-    window: context, addEventListener() {}, escapeHtml, showToast: (message, kind) => log.toasts.push([message, kind ?? "ok"]), friendlyError: (error) => String(error?.message ?? error),
+    window: context, addEventListener: (type, handler) => { (log.listeners[type] ??= []).push(handler); }, escapeHtml, showToast: (message, kind) => log.toasts.push([message, kind ?? "ok"]), friendlyError: (error) => String(error?.message ?? error),
     renderRoute: async () => { log.renders += 1; }, confirmDialog: async () => true, URLSearchParams, Intl, Date, structuredClone, setInterval: () => 0, setTimeout: () => 0, encodeURIComponent,
     location: { get hash() { return log.hash; }, set hash(value) { log.hash = value.startsWith("#") ? value : `#${value}`; } },
     app, state: { employee },
@@ -68,19 +70,20 @@ function load({ employee = emp("PP"), route = "" } = {}) {
 }
 
 const labelsOf = (html) => [...html.matchAll(/<a href="#\/([^"]+)">([^<]+)<\/a>/g)].map((match) => match[2]);
-const FIVE_LABELS = Object.freeze({ FACTORY_ST: "คลังวัตถุดิบ (ST)", FACTORY_SR: "คลังยางเส้นยาว (SR)", FACTORY_QA: "ตรวจคุณภาพ (QA)", FACTORY_GR: "แปรรูปยาง (GR)", FACTORY_WH: "คลังสินค้าสำเร็จรูป (WH)" });
-const seen = (env, employee) => { env.setEmployee(employee); const links = labelsOf(env.nav()); return FIVE.filter((code) => links.includes(FIVE_LABELS[code])); };
+const DEPT_LABELS = Object.freeze({ FACTORY_ST: "คลังวัตถุดิบ (ST)", FACTORY_SR: "คลังยางเส้นยาว (SR)", FACTORY_QA: "ตรวจคุณภาพ (QA)", FACTORY_GR: "แปรรูปยาง (GR)", FACTORY_PT: "ขึ้นรูปพลาสติก (PT)", FACTORY_BG: "เย็บจักร (BG)", FACTORY_PK: "ประกอบและบรรจุ (PK)", FACTORY_WH: "คลังสินค้าสำเร็จรูป (WH)" });
+const seen = (env, employee) => { env.setEmployee(employee); const links = labelsOf(env.nav()); return ALL_DEPTS.filter((code) => links.includes(DEPT_LABELS[code])); };
 
 test("registerDeptModule writes one sandbox-only standalone module per department into the factory group, numbered by the work tree", () => {
   const env = load();
   const flow = env.context.MNP_BOM_RULES.PROCESS_FLOW;
-  for (const [code, dept, route] of [["FACTORY_ST", "ST", "st"], ["FACTORY_SR", "SR", "sr"], ["FACTORY_QA", "QA", "qa"], ["FACTORY_GR", "GR", "gr"], ["FACTORY_WH", "WH", "wh"]]) {
+  for (const [code, dept, route, palette] of [["FACTORY_ST", "ST", "st"], ["FACTORY_SR", "SR", "sr"], ["FACTORY_QA", "QA", "qa"], ["FACTORY_GR", "GR", "gr"], ["FACTORY_PT", "PT", "pt"], ["FACTORY_BG", "BG", "bg"], ["FACTORY_PK", "PK", "pk"], ["FACTORY_WH", "WH", "wh"]]) {
     const entry = env.modules[code];
+    assert.equal(entry.palette, palette ?? route, `${code} uses its department palette`);
     assert.equal(entry.enabled, true);
     assert.equal(entry.standalone, true);
     assert.equal(entry.sandbox, true);
     assert.equal(entry.dept, dept);
-    assert.equal(entry.label, FIVE_LABELS[code]);
+    assert.equal(entry.label, DEPT_LABELS[code]);
     assert.equal(entry.nav.length, 1);
     assert.equal(entry.nav[0].path, route);
     assert.equal(entry.nav[0].sandboxOnly, true);
@@ -100,12 +103,12 @@ test("registerDeptModule writes one sandbox-only standalone module per departmen
   assert.throws(() => env.context.MNP_FACTORY.registerDeptModule({ code: "X" }), /จำเป็น/);
 });
 
-test("the factory group reads PP (BOM) · ST · RB (RubberFlow) · SR · QA · GR · WH under one header, whatever the script order", () => {
+test("the factory group reads PP (BOM) · ST · RB (RubberFlow) · SR · QA · GR · PT · BG · PK · WH under one header, whatever the script order", () => {
   const env = load({ employee: emp("PP") });
   const html = env.nav();
   assert.equal([...html.matchAll(/nav-group-label/g)].length, 1, "one header for the whole group");
   assert.match(html, /^<div class="nav-label nav-group-label">โรงงาน<\/div>/);
-  const expected = ["BOM รายแผนก", "คลังวัตถุดิบ (ST)", "RubberFlow (แผนก RB)", "คลังยางเส้นยาว (SR)", "ตรวจคุณภาพ (QA)", "แปรรูปยาง (GR)", "คลังสินค้าสำเร็จรูป (WH)"];
+  const expected = ["BOM รายแผนก", "คลังวัตถุดิบ (ST)", "RubberFlow (แผนก RB)", "คลังยางเส้นยาว (SR)", "ตรวจคุณภาพ (QA)", "แปรรูปยาง (GR)", "ขึ้นรูปพลาสติก (PT)", "เย็บจักร (BG)", "ประกอบและบรรจุ (PK)", "คลังสินค้าสำเร็จรูป (WH)"];
   assert.deepEqual(labelsOf(html), expected);
   // กลับลำดับการลงทะเบียน: ผลต้องเหมือนเดิม
   const modules = env.modules;
@@ -127,20 +130,20 @@ test("orderNavItems: sorts a group by flowNo (items without one last), leaves ot
   assert.deepEqual(plain(orderNavItems([])), []);
 });
 
-test("each department sees only its own module, in test mode; PP and the managers see all five; BOM and RubberFlow stay visible to everyone in test mode", () => {
+test("each department sees only its own module, in test mode; PP and the managers see all of them; BOM and RubberFlow stay visible to everyone in test mode", () => {
   const env = load();
-  const OWN = { ST: "FACTORY_ST", SR: "FACTORY_SR", QA: "FACTORY_QA", GR: "FACTORY_GR", WH: "FACTORY_WH" };
+  const OWN = { ST: "FACTORY_ST", SR: "FACTORY_SR", QA: "FACTORY_QA", GR: "FACTORY_GR", PT: "FACTORY_PT", BG: "FACTORY_BG", PK: "FACTORY_PK", WH: "FACTORY_WH" };
   for (const [dept, code] of Object.entries(OWN)) {
     assert.deepEqual(seen(env, emp(dept)), [code], `${dept} staff see only ${dept}`);
     assert.deepEqual(seen(env, emp(dept, "department_manager")), [code], `${dept} department head sees only ${dept}`);
     assert.deepEqual(seen(env, emp(dept, "assistant_department_manager")), [code], `${dept} assistant head sees only ${dept}`);
   }
-  for (const dept of ["PT", "PK", "RB", "BG", "MT", "HR", "IT", "SA"]) {
-    assert.deepEqual(seen(env, emp(dept)), [], `${dept} staff see none of the five`);
-    assert.deepEqual(seen(env, emp(dept, "department_manager")), [], `${dept} head sees none of the five`);
+  for (const dept of ["RB", "MT", "HR", "IT", "SA"]) {
+    assert.deepEqual(seen(env, emp(dept)), [], `${dept} staff see none of them`);
+    assert.deepEqual(seen(env, emp(dept, "department_manager")), [], `${dept} head sees none of them`);
   }
   for (const person of [emp("PP"), emp("PP", "department_manager"), emp("MT", "admin"), emp("MT", "general_manager"), emp("PK", "factory_manager"), emp("PK", "assistant_factory_manager")]) {
-    assert.deepEqual(seen(env, person), FIVE, `${person.department.code} ${person.role.code} sees all five`);
+    assert.deepEqual(seen(env, person), ALL_DEPTS, `${person.department.code} ${person.role.code} sees all of them`);
   }
   // BOM และ RubberFlow ไม่เปลี่ยนสิทธิ์การเห็น: ทุกบัญชีทดสอบเห็นทั้งสอง
   for (const person of [emp("SR"), emp("RB"), emp("MT", "department_manager"), emp("ID")]) {
@@ -159,7 +162,7 @@ test("the Indesign department never sees any of them, admin included (department
   assert.deepEqual(seen(env, emp("ID", "admin")), []);
   assert.deepEqual(seen(env, emp("ID", "factory_manager")), []);
   const { canSeeDept, canOpenDeptModule } = env.context.MNP_FACTORY;
-  for (const [code, dept] of [["FACTORY_ST", "ST"], ["FACTORY_SR", "SR"], ["FACTORY_QA", "QA"], ["FACTORY_GR", "GR"], ["FACTORY_WH", "WH"]]) {
+  for (const [code, dept] of [["FACTORY_ST", "ST"], ["FACTORY_SR", "SR"], ["FACTORY_QA", "QA"], ["FACTORY_GR", "GR"], ["FACTORY_PT", "PT"], ["FACTORY_BG", "BG"], ["FACTORY_PK", "PK"], ["FACTORY_WH", "WH"]]) {
     assert.equal(canSeeDept(emp("ID", "admin"), dept, code), false);
     assert.equal(canSeeDept(emp("ID", "admin"), dept), false, "without a module code a restricted department is still refused");
     assert.equal(canSeeDept(emp("MT", "admin"), dept, code), true);
@@ -169,17 +172,17 @@ test("the Indesign department never sees any of them, admin included (department
   assert.equal(canOpenDeptModule(emp("ID", "admin"), "SR", "FACTORY_SR"), false);
 });
 
-test("outside test mode nobody sees any of the five, not admin, not PP, not the managers (the same gate as BOM: usesBom)", async () => {
+test("outside test mode nobody sees any of them, not admin, not PP, not the managers (the same gate as BOM: usesBom)", async () => {
   const env = load();
   for (const person of [emp("PP", "employee", { isSandbox: false }), emp("MT", "admin", { isSandbox: false }), emp("PK", "factory_manager", { isSandbox: false }), emp("SR", "employee", { isSandbox: false }), emp("SR", "employee", { isSandbox: undefined })]) {
     assert.equal(env.context.MNP_BOM_STORE.usesBom(person), false, "BOM itself is closed there");
     assert.deepEqual(seen(env, person), [], `${person.department.code} ${person.role.code}`);
-    for (const code of FIVE) assert.equal(env.modules[code].navAllowed(person), false);
+    for (const code of ALL_DEPTS) assert.equal(env.modules[code].navAllowed(person), false);
     // เมนูของ BOM/RubberFlow ใช้งานจริงก็ยังปิด (REAL_STAFF_OPEN)
     assert.deepEqual(labelsOf(env.nav()).filter((label) => label !== "BOM รายแผนก" && label !== "RubberFlow (แผนก RB)" && label !== undefined), []);
   }
   // หน้าปฏิเสธนอกโหมดทดสอบ แม้พิมพ์ URL เอง
-  for (const code of FIVE) {
+  for (const code of ALL_DEPTS) {
     env.log.notFound = 0;
     env.setEmployee(emp("PP", "admin", { isSandbox: false }));
     await env.open(code);
@@ -187,7 +190,7 @@ test("outside test mode nobody sees any of the five, not admin, not PP, not the 
   }
   // และไม่ใช่แผนกของตัวเองในโหมดทดสอบ
   env.setEmployee(emp("SR"));
-  for (const code of FIVE.filter((entry) => entry !== "FACTORY_SR")) {
+  for (const code of ALL_DEPTS.filter((entry) => entry !== "FACTORY_SR")) {
     env.log.notFound = 0;
     await env.open(code);
     assert.equal(env.log.notFound, 1, `SR staff typing the ${code} URL gets not found`);
@@ -201,12 +204,13 @@ test("the pages for a department use no 'แท่งยาว' wording, escape 
   for (const file of DEPT_FILES) assert.doesNotMatch(read(file), /แท่งยาว/, `${file} says ยางเส้นยาว, not แท่งยาว`);
   const env = load({ employee: emp("PP") });
   const pages = {};
-  for (const code of FIVE) pages[code] = await env.open(code);
+  for (const code of ALL_DEPTS) pages[code] = await env.open(code);
   for (const [code, html] of Object.entries(pages)) {
     assert.doesNotMatch(html, /แท่งยาว|undefined|NaN|\[object Object\]|ยังไม่เปิด|เร็วๆ นี้|coming soon/i, code);
     assert.doesNotMatch(html, /<script/i, code);
-    assert.match(html, /data-module="(st|sr|qa|gr|wh)"/);
-    assert.doesNotMatch(html, /<form[^>]*data-rf-form|data-rf-action|data-rf-open/, `${code} is read-only: no forms or action buttons`);
+    assert.match(html, /data-module="(st|sr|qa|gr|pt|bg|pk|wh)"/);
+    // หน้าที่ไม่ใช่แผนกผลิตอ่านอย่างเดียว · แผนกผลิตสั่งงานได้ (ดูการทดสอบ "production departments")
+    if (!PRODUCTION.includes(code)) assert.doesNotMatch(html, /<form[^>]*data-rf-form|data-rf-action|data-rf-open/, `${code} is read-only: no forms or action buttons`);
   }
   assert.match(pages.FACTORY_SR, /href="#\/bom\?p=work&amp;dept=SR"/);
   assert.match(pages.FACTORY_ST, /href="#\/bom\?p=work&amp;dept=ST"/);
@@ -278,22 +282,153 @@ test("WH opens on the finished goods in stock per code, with the orders that hol
   assert.match(await env.open("FACTORY_WH", "q=ZZZ-NONE"), /ไม่พบสินค้าสำเร็จรูปที่ค้นหา/);
 });
 
-test("GR shows its open jobs on the shared job card, read-only (no report or hold buttons)", async () => {
-  const env = load({ employee: emp("GR") });
-  env.store.setUser("B05");
-  const data = env.store.data();
-  const open = data.jobs.filter((job) => job.dept === "GR" && ["released", "in_progress", "completed"].includes(data.orders.find((order) => order.id === job.orderId)?.status) && job.status !== "done");
-  const html = await env.open("FACTORY_GR");
-  if (open.length) {
-    assert.equal([...html.matchAll(/class="card rf-card bom-job/g)].length, open.length, "one card per open GR job");
-    for (const job of open) assert.ok(html.includes(escapeHtml(job.name)));
-    assert.doesNotMatch(html, /data-rf-open|รายงานผล<|พักงาน<|data-rf-action/, "no buttons on the card");
-  } else assert.match(html, /ไม่มีงานของ GR ค้างอยู่/);
-  // บังคับให้มีงาน GR ค้าง: ใบที่ปล่อยผลิตแล้วในข้อมูลสาธิตมีงาน GR (ถ้าไม่มี ข้อความว่างต้องเป็นบรรทัดเดียว)
+
+// ---- แผนกผลิต (GR PT BG PK): หน้าแรกสั่งงานได้เหมือน BOM "งานของฉัน" ----
+const ROUTE = { FACTORY_GR: "gr", FACTORY_PT: "pt", FACTORY_BG: "bg", FACTORY_PK: "pk" };
+const liveOrder = (data, job) => ["released", "in_progress", "completed"].includes(data.orders.find((order) => order.id === job.orderId)?.status);
+// ปุ่มต่อการ์ด (ตามลำดับการ์ด): ชื่อ dialog / action ที่การ์ดเสนอ · เทียบกับการ์ดเดียวกันที่หน้า BOM
+const buttonsByCard = (html) => html.split('<article class="card rf-card bom-job').slice(1).map((card) => [...card.matchAll(/data-rf-(?:open|action)="(\w+)"/g)].map((match) => match[1]));
+
+test("GR shows its open jobs on the shared job card with the same buttons as BOM งานของฉัน: report, hold, and close for a planner", async () => {
+  const staff = load({ employee: emp("GR") });
+  staff.store.setUser("B05");
+  const data = staff.store.data();
+  const open = data.jobs.filter((job) => job.dept === "GR" && liveOrder(data, job) && job.status !== "done");
+  assert.ok(open.length >= 1, "the demo data has an open GR job on a released order");
+  const html = await staff.open("FACTORY_GR");
+  assert.equal([...html.matchAll(/class="card rf-card bom-job/g)].length, open.length, "one card per open GR job");
+  for (const job of open) assert.ok(html.includes(escapeHtml(job.name)));
+  assert.match(html, /data-rf-open="jobReport"/);
+  assert.match(html, /data-rf-open="jobHold"/);
+  assert.doesNotMatch(html, /data-rf-open="jobClose"/, "staff cannot close a job");
   assert.doesNotMatch(html, /แท่งยาว/);
+  assert.match(html, /href="#\/bom\?p=work&amp;dept=GR"/, "the link to BOM งานของฉัน stays");
+  // เหมือนการ์ดเดียวกันที่หน้า BOM งานของฉัน ของผู้ใช้คนเดียวกัน
+  const work = await staff.context.MNP_BOM_PAGES.work(staff.context.MNP_BOM.context(new URLSearchParams("p=work")));
+  assert.deepEqual(plain(buttonsByCard(html)), plain(buttonsByCard(work.html)), "the dept page offers exactly what BOM work offers for this user");
+  // ฝ่ายวางแผนเห็นปุ่มปิดงานเพิ่ม เหมือนหน้า BOM
+  const planner = load({ employee: emp("PP") });
+  planner.store.setUser("B03");
+  const plannerHtml = await planner.open("FACTORY_GR");
+  assert.match(plannerHtml, /data-rf-open="jobClose"/);
+  const plannerWork = await planner.context.MNP_BOM_PAGES.work(planner.context.MNP_BOM.context(new URLSearchParams("p=work&dept=GR")));
+  assert.deepEqual(plain(buttonsByCard(plannerHtml)), plain(buttonsByCard(plannerWork.html)));
+  // ไม่มีงาน: บรรทัดเดียว
   const emptied = load({ employee: emp("GR") });
   emptied.store.data().jobs = [];
   assert.match(await emptied.open("FACTORY_GR"), /ไม่มีงานของ GR ค้างอยู่/);
+});
+
+test("the done tab lists finished jobs of the department; the to-do tab leaves them out", async () => {
+  const env = load({ employee: emp("GR") });
+  env.store.setUser("B05");
+  const data = env.store.data();
+  const job = data.jobs.find((entry) => entry.dept === "GR" && liveOrder(data, entry) && entry.status !== "done");
+  const doneBefore = data.jobs.filter((entry) => entry.dept === "GR" && liveOrder(data, entry) && entry.status === "done").length;
+  const openBefore = data.jobs.filter((entry) => entry.dept === "GR" && liveOrder(data, entry) && entry.status !== "done").length;
+  job.status = "done";
+  job.qtyDone = job.qtyPlanned;
+  const doneHtml = await env.open("FACTORY_GR", "st=done");
+  assert.ok(doneHtml.includes(escapeHtml(job.name)), "the finished job is on the done tab");
+  assert.doesNotMatch(doneHtml, /data-rf-open|data-rf-action/, "a finished job has no buttons");
+  assert.match(doneHtml, /href="#\/gr"[^>]*>ต้องทำ \d+</);
+  assert.ok(doneHtml.includes(`เสร็จแล้ว ${doneBefore + 1}<`), "the tab counts the finished job");
+  const openHtml = await env.open("FACTORY_GR");
+  assert.equal([...openHtml.matchAll(/class="card rf-card bom-job/g)].length, openBefore - 1, "the finished job left the to-do tab");
+  assert.match(openHtml, /href="#\/gr\?st=done"/);
+  env.store.data().jobs = [];
+  assert.match(await env.open("FACTORY_GR", "st=done"), /ยังไม่มีงานที่เสร็จ/);
+});
+
+test("production departments PT, BG and PK use the same landing: their own jobs only, with the report button", async () => {
+  for (const [code, dept, userId] of [["FACTORY_PT", "PT", "B06"], ["FACTORY_BG", "BG", "B07"], ["FACTORY_GR", "GR", "B05"]]) {
+    const env = load({ employee: emp(dept) });
+    env.store.setUser(userId);
+    const data = env.store.data();
+    const open = data.jobs.filter((job) => job.dept === dept && liveOrder(data, job) && job.status !== "done");
+    const html = await env.open(code);
+    assert.match(html, new RegExp(`<shell path="${ROUTE[code]}"`), code);
+    assert.equal([...html.matchAll(/class="card rf-card bom-job/g)].length, open.length, `${dept}: one card per open job`);
+    assert.match(html, /<span class="small muted" role="status" data-bom-sync>/);
+    if (open.length) assert.match(html, /data-rf-open="jobReport"/);
+  }
+  // PK: ผู้วางแผนเห็นงาน PK ของใบที่ปล่อยผลิต พร้อมปุ่มรายงานผล
+  const pk = load({ employee: emp("PP") });
+  pk.store.setUser("B03");
+  const data = pk.store.data();
+  const open = data.jobs.filter((job) => job.dept === "PK" && liveOrder(data, job) && job.status !== "done");
+  const html = await pk.open("FACTORY_PK");
+  assert.equal([...html.matchAll(/class="card rf-card bom-job/g)].length, open.length);
+  assert.match(html, /href="#\/bom\?p=work&amp;dept=PK"/);
+  assert.match(html, /data-module="pk"/);
+  for (const code of ["FACTORY_PT", "FACTORY_BG", "FACTORY_PK"]) assert.doesNotMatch(read(`modules/module-${code.slice(-2).toLowerCase()}.js`), /แท่งยาว/);
+});
+
+const ctxCanReport = (job) => job.status !== "hold" && !job.externalRef;
+// หน้าแรกของแผนกผูกคำสั่งจริงของ BOM: ปุ่มเปิด dialog, ปุ่มสั่งงาน (resume) ทำงานกับ store แล้ววาดหน้าใหม่ · ถูกปฏิเสธ = แจ้งผิดพลาด ไม่วาดใหม่
+test("a department page binds the real BOM actions once: report opens the dialog, resume runs the action and redraws, a refused action toasts and does not redraw", async () => {
+  const env = load({ employee: emp("GR") });
+  env.store.setUser("B05");
+  const data = env.store.data();
+  const openJobs = data.jobs.filter((entry) => entry.dept === "GR" && liveOrder(data, entry) && entry.status !== "done" && ctxCanReport(entry));
+  assert.ok(openJobs.length >= 2, "two open GR jobs: one is put on hold, the other is reported");
+  const [job, other] = openJobs;
+  assert.equal(env.store.run("reportJob", { jobId: job.id, qtyDone: 1, qtyReject: 0 }).ok, true);
+  assert.equal(env.store.run("setJobStatus", { jobId: job.id, status: "hold", reason: "รอแม่พิมพ์" }).ok, true);
+  assert.equal(env.store.data().jobs.find((entry) => entry.id === job.id).status, "hold");
+  const html = await env.open("FACTORY_GR");
+  assert.match(html, /data-rf-action="setJobStatus"/);
+  // ตัวผูกถูกเรียกครั้งเดียวต่อปุ่ม: ใส่ปุ่มปลอมตามที่หน้าวาดไว้
+  const argsOf = (text) => JSON.parse(text.replaceAll("&quot;", '"'));
+  const resumeArgs = argsOf(html.match(/data-rf-action="setJobStatus" data-rf-args="([^"]+)"/)[1]);
+  const button = (dataset) => ({ handlers: {}, dataset, disabled: false, addEventListener(type, handler) { this.handlers[type] = handler; } });
+  const resume = button({ rfAction: "setJobStatus", rfArgs: JSON.stringify(resumeArgs), rfSuccess: "" });
+  const refused = button({ rfAction: "setJobStatus", rfArgs: JSON.stringify({ jobId: "NO-SUCH-JOB", status: "queued" }) });
+  const open = button({ rfOpen: "jobReport", rfArgs: JSON.stringify({ jobId: other.id }) });
+  const searchForm = { handlers: {}, dataset: {}, __values: { q: "x" }, addEventListener(type, handler) { this.handlers[type] = handler; } };
+  env.fakes["[data-rf-action]"] = [resume, refused];
+  env.fakes["[data-rf-open]"] = [open];
+  env.fakes["form[data-rf-search]"] = [searchForm];
+  // dialog: ใส่ host จำลองที่รับ HTML แล้วคืน dialog จำลอง
+  let dialogHtml = "";
+  const dialog = { tagName: "DIALOG", handlers: {}, dataset: {}, addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], close() {}, remove() {}, showModal() { this.shown = true; }, setAttribute() {} };
+  env.root.insertAdjacentHTML = (_where, text) => { dialogHtml = text; env.root.lastElementChild = dialog; };
+  await env.open("FACTORY_GR");
+  assert.equal(Object.keys(searchForm.handlers).length, 1, "the search form is bound exactly once (no double binding)");
+  env.log.renders = 0;
+  await open.handlers.click();
+  assert.match(dialogHtml, /data-rf-form="reportJob"/, "report opens the real dialog from the dept page");
+  assert.equal(dialog.shown, true);
+  await refused.handlers.click();
+  assert.deepEqual(env.log.toasts.at(-1)[1], "error", "a refused action says why");
+  assert.equal(env.log.renders, 0, "and nothing is redrawn");
+  await resume.handlers.click();
+  assert.equal(env.store.data().jobs.find((entry) => entry.id === job.id).status, resumeArgs.status, "the action ran against the BOM store");
+  assert.equal(resume.disabled, true);
+  assert.equal(env.log.renders, 1, "the page is redrawn after the action");
+});
+
+test("typing in a department page's dialog is protected like a BOM form: the browser asks before the tab closes", async () => {
+  const env = load({ employee: emp("GR") });
+  env.store.setUser("B05");
+  const control = (extra = {}) => ({ name: "qtyDone", type: "number", tagName: "INPUT", value: "5", defaultValue: "", disabled: false, closest: () => null, ...extra });
+  env.context.document.querySelectorAll = () => [control()];
+  const fire = () => { const event = { prevented: false, returnValue: undefined, preventDefault() { this.prevented = true; } }; env.log.listeners.beforeunload[0](event); return event; };
+  env.log.hash = "#/gr";
+  assert.deepEqual([fire().prevented, fire().returnValue], [true, ""]);
+  env.log.hash = "#/requests";
+  assert.equal(fire().prevented, false);
+  env.log.hash = "#/gr";
+  env.context.document.querySelectorAll = () => [control({ value: "", defaultValue: "" })];
+  assert.equal(fire().prevented, false, "nothing typed: no warning");
+});
+
+test("the store subscription of module-bom repaints a department route and the kit no longer registers a second watcher", () => {
+  const kit = read("modules/factory-kit.js");
+  assert.doesNotMatch(kit, /store\.subscribe/, "one repaint path: module-bom.js");
+  const bom = read("modules/module-bom.js");
+  assert.match(bom, /const onOwnRoute = \(\) => onBomRoute\(\) \|\| Boolean\(window\.MNP_FACTORY\?\.onDeptRoute\?\.\(\)\);/);
+  assert.match(bom, /store\.subscribe\(\(event\) => \{\r?\n    if \(!onOwnRoute\(\)\) return;/);
 });
 
 test("QA shows the rod lots held for a decision and the RubberFlow lots held in the line, each with one link to where the decision is made", async () => {

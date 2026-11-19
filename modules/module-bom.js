@@ -62,10 +62,14 @@
     } catch { return null; }
   };
   const store = storeApi.createStore({ storage, seed: () => seed.buildSeed(Date.now()), actions, remote, persona: () => storeApi.personaUser(state.employee), shouldHold: () => isEditing(), rfOrders: loadedRfOrders });
-  window.MNP_BOM = { store, PATH, url, context: (params) => makeContext(params), transforms: () => TRANSFORMS, isEditing: () => isEditing(), hasUnsavedInput: () => hasUnsavedInput() };
+  window.MNP_BOM = { store, PATH, url, context: (params) => makeContext(params), transforms: () => TRANSFORMS, isEditing: () => isEditing(), hasUnsavedInput: () => hasUnsavedInput(),
+    // โมดูลแผนก (modules/factory-kit.js) ใช้หน้าของตัวเองแต่สั่งงานผ่านคำสั่งและ dialog ของ BOM ชุดเดียวกัน: เปิด dialog · ข้อความสถานะการบันทึก · หน้าใหม่ = ไม่มีฟอร์มที่แก้ค้าง
+    openDialog: (name, args, ctx) => openDialog(name, args, ctx), syncText: () => syncText(), clearEditing: () => { dirty = false; } };
   // โหมดฐานข้อมูล: โหลดเสร็จ/โหลดไม่สำเร็จ/บันทึกไม่สำเร็จ (ย้อนกลับแล้ว) วาดหน้าใหม่ · เริ่ม/เสร็จการบันทึกแค่เปลี่ยนข้อความสถานะ ไม่ทับฟอร์มที่ผู้ใช้กำลังกรอก
   // (บันทึกสำเร็จแต่ฐานข้อมูลตอบข้อมูลต่างจากที่แสดงอยู่ จึงวาดใหม่)
   const onBomRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
+  // หน้าแรกของโมดูลแผนก (#/gr ฯลฯ) สั่งงาน BOM ได้เหมือนหน้า BOM จึงได้การวาดใหม่หลังบันทึก/ย้อนกลับและคำเตือนก่อนปิดหน้าชุดเดียวกัน
+  const onOwnRoute = () => onBomRoute() || Boolean(window.MNP_FACTORY?.onDeptRoute?.());
   const updateSync = () => document.querySelectorAll("[data-bom-sync]").forEach((node) => { node.textContent = syncText(); });
   // ข้อมูลที่แสดงเปลี่ยนเพราะผู้อื่นบันทึก (ตามทันหรือส่วนต่างหลังบันทึก): วาดหน้าใหม่ เว้นแต่ผู้ใช้กำลังแก้ฟอร์ม/เปิด dialog อยู่ (ไม่ทับสิ่งที่พิมพ์) แจ้งแทน
   // "กำลังแก้" = dirty: ติดตามจาก event ที่เบราว์เซอร์ส่งจริง (isTrusted) ไม่ใช้ว่าช่องไหนมีโฟกัส เพราะตารางสร้าง BOM เก็บแถวไว้ใน DOM อย่างเดียว
@@ -118,7 +122,7 @@
   if (!window.__mnpBomUnloadGuard) {
     window.__mnpBomUnloadGuard = true;
     window.addEventListener?.("beforeunload", (event) => {
-      if (!onBomRoute() || !hasUnsavedInput()) return;
+      if (!onOwnRoute() || !hasUnsavedInput()) return;
       event.preventDefault();
       event.returnValue = "";
     });
@@ -128,10 +132,10 @@
     else renderRoute();
   };
   store.subscribe((event) => {
-    if (!onBomRoute()) return;
-    // บันทึกการใช้งานโหลดเสร็จ: วาดใหม่เฉพาะเมื่อผู้ใช้ยังอยู่ที่หน้านั้นและไม่ได้แก้ฟอร์มอื่นค้าง
+    if (!onOwnRoute()) return;
+    // บันทึกการใช้งานโหลดเสร็จ: วาดใหม่เฉพาะเมื่อผู้ใช้ยังอยู่ที่หน้านั้นและไม่ได้แก้ฟอร์มอื่นค้าง (หน้าของ BOM เท่านั้น)
     if (event.type === "audit") {
-      if (currentPage(currentRoute().params) === "audit" && !isEditing()) renderRoute();
+      if (onBomRoute() && currentPage(currentRoute().params) === "audit" && !isEditing()) renderRoute();
       return;
     }
     if (event.type === "purge-failed") { updateSync(); return; }
