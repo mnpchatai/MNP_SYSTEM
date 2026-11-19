@@ -571,6 +571,16 @@ test("settings: the next document number is confirmed with the number it will pr
   assert.equal(w.calls.rpc.filter((call) => call.name === "app_itwo_set_next_doc_seq").length, 1);
 });
 
+test("settings: in test mode the staff picker lists the test personas (and is switched off)", async () => {
+  const w = world();
+  w.as("itadm");
+  w.context.state.sandbox = { active: true, personas: [PEOPLE.emp, PEOPLE.itadm] };
+  await w.open("view=settings");
+  assert.match(w.html, /<select class="select" id="itwo-staff-no" name="employee_no" disabled>/);
+  assert.match(w.html, /<option value="MK1">MK1 สมชาย ใจดี · การตลาด<\/option>/);
+  assert.match(w.html, /<option value="SBX-IT-ADMIN">SBX-IT-ADMIN ไอที ผู้ดูแล · เทคโนโลยีสารสนเทศ<\/option>/);
+});
+
 test("the purge button is only on the lists, only in test mode, and asks first", async () => {
   const w = world();
   await w.open("");

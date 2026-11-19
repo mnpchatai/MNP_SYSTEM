@@ -313,6 +313,7 @@
     return `<div class="itwo-signatures">${model.signatureSlots(events).map((slot) => `<div class="itwo-signature" data-slot="${slot.key}">
         <div class="itwo-signature-label">${esc(slot.label)}</div>
         ${slot.note ? `<div class="itwo-signature-note">${esc(slot.note.label)}: ${esc(slot.note.name)} ${esc(model.formatDateTime(slot.note.at))}</div>` : ""}
+        ${slot.remark ? `<div class="itwo-signature-note itwo-signature-remark">(${esc(slot.remark)})</div>` : ""}
         <div class="itwo-signature-name">${esc(slot.name ?? "")}</div>
         <div class="itwo-signature-time">${slot.at ? esc(model.formatDateTime(slot.at)) : ""}</div>
       </div>`).join("")}</div>`;
@@ -388,10 +389,15 @@
     });
   }
 
-  function staffForm({ isTest }) {
+  // candidates = [{ value: รหัสพนักงาน, label }] จาก model.staffCandidateOptions: มีรายชื่อ = กล่องเลือกที่พิมพ์ค้นหาได้ (searchable-select เสริม <select> ให้เอง)
+  // โหลดรายชื่อไม่ได้ = ช่องกรอกรหัสพนักงานเองเหมือนเดิม
+  function staffForm({ isTest, candidates = [] }) {
+    const picker = candidates.length
+      ? `<select class="select" id="itwo-staff-no" name="employee_no"${isTest ? " disabled" : ""}><option value="">ค้นหาด้วยรหัสหรือชื่อ</option>${candidates.map((option) => `<option value="${esc(option.value)}">${esc(option.label)}</option>`).join("")}</select>`
+      : `<input class="input" id="itwo-staff-no" name="employee_no" maxlength="20" autocomplete="off"${isTest ? " disabled" : ""}>`;
     return `<form id="itwo-staff-form" novalidate>
       <div class="form-grid">
-        <div class="field" data-field="employee_no"><label for="itwo-staff-no">รหัสพนักงาน</label><input class="input" id="itwo-staff-no" name="employee_no" maxlength="20" autocomplete="off"${isTest ? " disabled" : ""}></div>
+        <div class="field" data-field="employee_no"><label for="itwo-staff-no">พนักงาน</label>${picker}</div>
         <fieldset class="field" data-field="roles"><legend>สิทธิ์</legend>
           <div class="itwo-choices" data-invalid-target>
             <label class="itwo-choice"><input type="checkbox" name="is_it_admin"${isTest ? " disabled" : ""}> <span>ผู้ดูแลงาน IT</span></label>
@@ -414,14 +420,14 @@
       </form></section>`;
   }
 
-  function settingsPage({ staff, counter, myEmployeeId, isTest }) {
+  function settingsPage({ staff, counter, myEmployeeId, isTest, candidates = [] }) {
     return `<div class="stack">
       <section class="card" aria-labelledby="itwo-staff-title"><h2 id="itwo-staff-title">ทีม IT</h2>
         ${staffTable({ staff, myEmployeeId, isTest })}
       </section>
       <section class="card" aria-labelledby="itwo-staff-form-title"><h2 id="itwo-staff-form-title">เพิ่มหรือแก้สิทธิ์</h2>
         ${isTest ? '<p class="muted small">ตั้งสิทธิ์ทีม IT ในโหมดทดสอบไม่ได้ (ใช้ได้เฉพาะระบบจริง)</p>' : ""}
-        ${staffForm({ isTest })}
+        ${staffForm({ isTest, candidates })}
       </section>
       ${docCounterCard(counter)}
     </div>`;

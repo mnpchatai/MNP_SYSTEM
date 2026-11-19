@@ -181,11 +181,26 @@
     { key: "it_operator", label: "IT ผู้ดำเนินการ (ปิดงาน)", action: "completed", startedAction: "started" },
     { key: "receiver", label: "ผู้รับงาน", action: "received" },
   ]);
+  const SINGLE_CLICK_REMARK = "อนุมัติครั้งเดียว นับเป็นทั้งสองขั้น";
+  const SELF_APPROVED_REMARK = "อนุมัติในตัวเมื่อแจ้งงาน";
+  const sameActor = (a, b) => Boolean(a && b) && (a.actor_employee_no && b.actor_employee_no ? a.actor_employee_no === b.actor_employee_no : a.actor_full_name === b.actor_full_name);
+  // หมายเหตุใต้ช่องลายเซ็นอนุมัติ: คนเดียวกดอนุมัติทั้งสองขั้น (แผนก IT / แผนกไม่มีผู้จัดการ / ผู้อนุมัติขั้น IT แจ้งเอง) ให้ชื่อเดียวกันขึ้นทั้งสองช่องพร้อมบอกเหตุ
+  // ผู้จัดการแผนกที่แจ้งเอง (อนุมัติขั้นแผนกในตัว) บอกว่าเป็นการอนุมัติในตัว ไม่ใช่การเซ็นของคนอื่น
+  function approvalRemark(slotKey, events) {
+    const dept = events.find((item) => item.action === "dept_approved");
+    const itMgr = events.find((item) => item.action === "it_mgr_approved");
+    if (!dept) return null;
+    if (itMgr && sameActor(dept, itMgr)) return SINGLE_CLICK_REMARK;
+    const created = events.find((item) => item.action === "created");
+    if (slotKey === "dept_manager" && sameActor(dept, created)) return SELF_APPROVED_REMARK;
+    return null;
+  }
   function signatureSlots(events) {
     const list = Array.isArray(events) ? events : [];
     return SIGNATURE_SLOTS.map((slot) => {
       const event = list.find((item) => item.action === slot.action);
       const started = slot.startedAction ? list.find((item) => item.action === slot.startedAction) : null;
+      const isApprovalSlot = slot.key === "dept_manager" || slot.key === "it_approver";
       return {
         key: slot.key,
         label: slot.label,
@@ -193,6 +208,7 @@
         at: event?.created_at ?? null,
         // ช่อง IT แสดงผู้รับงาน (เริ่มดำเนินการ) ไว้ด้วย เพราะฟอร์มกระดาษมีช่อง "IT รับงาน"
         note: started ? { label: "รับงาน", name: started.actor_full_name, at: started.created_at } : null,
+        remark: event && isApprovalSlot ? approvalRemark(slot.key, list) : null,
       };
     });
   }
@@ -387,8 +403,20 @@
     if (row?.employee_id && row.employee_id === myEmployeeId) return "แก้สิทธิ์ของตัวเองไม่ได้ ให้ผู้ดูแลงาน IT คนอื่นตั้งให้";
     return "";
   }
-  function validateStaffForm({ employeeNo, isAdmin, isApprover }) {
-    if (!String(employeeNo ?? "").trim()) return "กรุณากรอกรหัสพนักงาน";
+  // ตัวเลือกพนักงานสำหรับกล่องค้นหา (searchable-select ทำงานกับ <select>): "รหัส ชื่อ · แผนก" เรียงตามรหัส · ตัดคนที่ปิดใช้งานและคนที่ไม่มีรหัส
+  function staffCandidateOptions(employees) {
+    return (Array.isArray(employees) ? employees : [])
+      .filter((person) => person?.employee_no && person.is_active !== false)
+      .map((person) => ({
+        value: person.employee_no,
+        label: `${person.employee_no} ${[person.first_name, person.last_name].filter(Boolean).join(" ")}${person.department?.name_th ? ` · ${person.department.name_th}` : ""}`,
+      }))
+      .sort((a, b) => (a.value === b.value ? 0 : a.value < b.value ? -1 : 1));
+  }
+  // myEmployeeNo = รหัสของผู้ใช้เอง: ฐานข้อมูลห้ามแก้สิทธิ์ตัวเองทุกกรณี หน้าเว็บบอกก่อนส่ง (เทียบไม่สนตัวพิมพ์)
+  function validateStaffForm({ employeeNo, isAdmin, isApprover, myEmployeeNo = "" }) {
+    if (!String(employeeNo ?? "").trim()) return "กรุณาเลือกหรือกรอกรหัสพนักงาน";
+    if (myEmployeeNo && String(employeeNo).trim().toUpperCase() === String(myEmployeeNo).trim().toUpperCase()) return "แก้สิทธิ์ของตัวเองไม่ได้ ให้ผู้ดูแลงาน IT คนอื่นตั้งให้";
     if (!isAdmin && !isApprover) return "เลือกสิทธิ์อย่างน้อย 1 อย่าง (ถ้าต้องการถอนสิทธิ์ใช้ปุ่ม \"ถอนสิทธิ์\" ในรายชื่อ)";
     return null;
   }
@@ -428,7 +456,7 @@
     itGroupOf, groupItOrders, itActionableCount, awaitingMyReceiveCount, itApprovalProgress, cardSummary,
     orderRules, createParams, validateReason,
     blankAccessDraft, draftsFromAccessChanges, isBlankAccessDraft, validateAccessChanges, hasAccessErrors, accessPayload, accessPrintRows,
-    formatDocNo, validateNextSeq, staffEditBlock, validateStaffForm, staffRoleText,
+    formatDocNo, validateNextSeq, staffEditBlock, staffCandidateOptions, validateStaffForm, staffRoleText,
     describeError,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

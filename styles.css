@@ -3219,6 +3219,8 @@ table.bom-tree td.right { white-space: nowrap; }
 .itwo-access .form-actions { flex-wrap: wrap; justify-content: flex-start; margin-top: 12px; }
 .itwo-counter-no { margin: 0 0 12px; font-size: var(--text-heading); }
 .itwo-purge { margin-top: 24px; }
+#itwo-staff-title { margin-bottom: 12px; }
+.itwo-signature-remark { font-style: italic; }
 @media (max-width: 719px) {
   .itwo-access-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .itwo-access-table, .itwo-access-table tbody, .itwo-access-table tr, .itwo-access-table td { display: block; }
@@ -3235,6 +3237,7 @@ table.bom-tree td.right { white-space: nowrap; }
 .itwo-form-code { position: absolute; top: 0; right: 0; padding: 0 8px; border: 1px solid #000; font-size: 9.5pt; }
 .itwo-test-note { margin: 2px 0 0; font-weight: 700; color: #000; }
 .itwo-sheet-table { width: 100%; margin-bottom: 6px; border-collapse: collapse; }
+.itwo-sheet-table tbody tr:last-child :is(td, th) { border-bottom: 1px solid #000; } /* กฎกลาง tbody tr:last-child td ตัดเส้นล่างของตาราง ฟอร์มกระดาษต้องมีเส้นปิด */
 .itwo-sheet-table th, .itwo-sheet-table td { padding: 3px 7px; text-align: left; vertical-align: top; border: 1px solid #000; overflow-wrap: anywhere; color: #000; background: transparent; }
 .itwo-sheet-table th[scope="row"] { width: 21%; font-weight: 700; background: #f0f0f0; }
 .itwo-sheet-table thead th { text-align: center; background: #f0f0f0; }
@@ -3254,10 +3257,11 @@ table.bom-tree td.right { white-space: nowrap; }
 .itwo-sheet-note { margin: 3px 0; font-size: 9pt; color: #000; }
 /* ลายน้ำ "ทดสอบ" ใบทดสอบเท่านั้น: ตัวเอียงจางพาดกลางใบ ไม่บังข้อความ (พิมพ์ออกมาก็เห็น) */
 .itwo-watermark { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; color: rgba(0, 0, 0, .08); font-size: 96pt; font-weight: 800; letter-spacing: .1em; transform: rotate(-24deg); }
-@media (max-width: 719px) {
-  .itwo-sheet { padding: 12px; }
-  .itwo-signatures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .itwo-signature { border-bottom: 1px solid #000; }
+/* มือถือ (เฉพาะหน้าจอ ไม่ใช่ตอนพิมพ์: หน้า A4 กว้างราว 703px ถ้าไม่ใส่ screen กฎนี้จะติดตอนพิมพ์ด้วย)
+   ใบคงหน้าตาเหมือนกระดาษและเลื่อนดูแนวนอนได้ ไม่บีบคอลัมน์จนตัวอักษรแตกบรรทัดละตัว */
+@media screen and (max-width: 719px) {
+  .itwo-sheet { padding: 12px; overflow-x: auto; }
+  .itwo-sheet > :not(.itwo-watermark) { min-width: 680px; }
   .itwo-watermark { font-size: 56pt; }
 }
 @page itwo-a4 { size: A4; margin: 12mm; }

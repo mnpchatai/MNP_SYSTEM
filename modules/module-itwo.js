@@ -114,7 +114,7 @@
       mine: () => rpc("app_itwo_list_mine"),
       approvals: () => rpc("app_itwo_list_pending_approvals"),
       it: () => rpc("app_itwo_list_it"),
-      settings: () => Promise.all([rpc("app_itwo_list_staff"), rpc("app_itwo_get_doc_counter")]),
+      settings: () => Promise.all([rpc("app_itwo_list_staff"), rpc("app_itwo_get_doc_counter"), loadStaffCandidates(role)]),
     }[view];
     // ตัวเลขบนแท็บอื่นอ่านขนานไปด้วย ไม่รอและไม่ทำให้หน้าล้ม
     const [main, approvalsCount, itRows] = await Promise.all([
@@ -130,11 +130,25 @@
     if (view === "mine") body = pages.mineList(main);
     else if (view === "approvals") body = pages.approvalsList(main);
     else if (view === "it") body = pages.itList(main);
-    else body = pages.settingsPage({ staff: main[0], counter: main[1], myEmployeeId: role.employee_id, isTest: Boolean(role.is_test) });
+    else body = pages.settingsPage({ staff: main[0], counter: main[1], myEmployeeId: role.employee_id, isTest: Boolean(role.is_test), candidates: main[2] });
     const html = pages.page(`${pages.head({ actions: pages.newButton(), isTest: Boolean(role.is_test) })}${pages.tabs(role, view, counts)}${body}${isSandbox() ? pages.purgeRow() : ""}`);
     if (!paint(html, TITLE, version)) return;
     bindPurge();
     if (view === "settings") bindSettings(role, main[1]);
+  }
+
+  // รายชื่อพนักงานสำหรับกล่องค้นหาในหน้าตั้งค่า (เฉพาะที่ยังใช้งานอยู่ RLS ของ employees ซ่อนคนปิดบัญชีอยู่แล้ว) · โหมดทดสอบใช้บัญชีทดสอบ (persona) ที่ฐานข้อมูลส่งให้ admin
+  // โหลดไม่สำเร็จ = [] หน้าตั้งค่ายังใช้ได้ด้วยช่องกรอกรหัสพนักงานเอง (ไม่ทำให้ทั้งหน้าล้ม)
+  async function loadStaffCandidates(role) {
+    try {
+      if (role.is_test) return model.staffCandidateOptions(state.sandbox?.personas ?? []);
+      const { data, error } = await sb.from("employees").select("employee_no,first_name,last_name,is_active,department:departments(name_th)").eq("is_active", true);
+      if (error) throw error;
+      return model.staffCandidateOptions((data ?? []).map((person) => ({ ...person, department: Array.isArray(person.department) ? person.department[0] : person.department })));
+    } catch (error) {
+      console.error(error);
+      return [];
+    }
   }
 
   // ล้างข้อมูลใบสั่งงาน IT ทดสอบ: เฉพาะ admin ที่อยู่ในโหมดทดสอบ (ฐานข้อมูลตรวจซ้ำ) ลบเฉพาะแถวทดสอบ แล้วเริ่มนับเลข TEST- ใหม่
@@ -408,7 +422,7 @@
     staffForm?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const fields = fieldsOf(staffForm);
-      const problem = model.validateStaffForm({ employeeNo: fields.no.value, isAdmin: fields.admin.checked, isApprover: fields.approver.checked });
+      const problem = model.validateStaffForm({ employeeNo: fields.no.value, isAdmin: fields.admin.checked, isApprover: fields.approver.checked, myEmployeeNo: role.employee_no });
       if (problem) { window.MNP_FORM_STEPS.showFieldErrors(staffForm, [{ name: "employee_no", message: problem }]); fields.no.focus(); return; }
       window.MNP_FORM_STEPS.clearFieldErrors(staffForm);
       const roles = [fields.admin.checked ? "ผู้ดูแลงาน IT" : "", fields.approver.checked ? "ผู้อนุมัติขั้น IT" : ""].filter(Boolean).join(" และ ");
@@ -427,7 +441,10 @@
     // "แก้ไข" เติมค่าของแถวนั้นลงฟอร์มเดียวกัน (ไม่มีกล่องลอย)
     document.querySelectorAll("[data-staff-edit]").forEach((button) => button.addEventListener("click", () => {
       const fields = fieldsOf(staffForm);
+      // กล่องค้นหาไม่มีรหัสนี้ในรายการ (เช่นโหลดรายชื่อไม่ครบ) เพิ่มตัวเลือกให้ ไม่งั้นค่าจะว่างเงียบ ๆ
+      if (fields.no.tagName === "SELECT" && ![...fields.no.options].some((option) => option.value === button.dataset.staffEdit)) fields.no.add(new Option(button.dataset.staffEdit, button.dataset.staffEdit));
       fields.no.value = button.dataset.staffEdit;
+      fields.no.dispatchEvent(new Event("change", { bubbles: true }));
       fields.admin.checked = button.dataset.staffAdmin === "1";
       fields.approver.checked = button.dataset.staffApprover === "1";
       staffForm.scrollIntoView?.({ block: "center" });

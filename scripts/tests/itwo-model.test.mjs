@@ -414,3 +414,51 @@ test("English technical messages are never shown to the user", () => {
   assert.equal(model.describeError(new Error("ไม่ได้รับเลขที่เอกสารจากระบบ")).forwarded, true);
   assert.equal(model.describeError({ code: "", message: "ล้มเหลว: Failed to fetch" }, { write: true }).kind, "unknown");
 });
+
+/* ---------- หมายเหตุใต้ลายเซ็นอนุมัติ / ตัวเลือกพนักงานในหน้าตั้งค่า ---------- */
+test("one person approving both steps shows the same name in both signature slots with a remark", () => {
+  const events = [
+    { action: "created", actor_employee_no: "IT0001", actor_full_name: "ผู้แจ้ง IT", created_at: "2026-11-19T01:00:00Z" },
+    { action: "dept_approved", reason: "ผู้แจ้งอยู่แผนก IT", actor_employee_no: "FANG", actor_full_name: "รสริน เชน", created_at: "2026-11-19T02:00:00Z" },
+    { action: "it_mgr_approved", reason: null, actor_employee_no: "FANG", actor_full_name: "รสริน เชน", created_at: "2026-11-19T02:00:00Z" },
+  ];
+  const slots = model.signatureSlots(events);
+  assert.equal(slots[1].name, "รสริน เชน");
+  assert.equal(slots[2].name, "รสริน เชน");
+  assert.match(slots[1].remark, /ครั้งเดียว นับเป็นทั้งสองขั้น/);
+  assert.equal(slots[1].remark, slots[2].remark);
+  assert.equal(slots[0].remark, null, "the requester slot never carries an approval remark");
+});
+
+test("a department manager who files the order approves their own step, and the slot says so", () => {
+  const events = [
+    { action: "created", actor_employee_no: "RB1", actor_full_name: "หัวหน้า", created_at: "2026-11-19T01:00:00Z" },
+    { action: "dept_approved", actor_employee_no: "RB1", actor_full_name: "หัวหน้า", created_at: "2026-11-19T01:00:00Z" },
+  ];
+  const slots = model.signatureSlots(events);
+  assert.match(slots[1].remark, /อนุมัติในตัว/);
+  assert.equal(slots[2].name, null);
+  assert.equal(slots[2].remark, null, "an empty slot has no remark");
+  // อนุมัติแยกคนตามปกติ ไม่มีหมายเหตุ
+  assert.equal(model.signatureSlots(EVENTS)[1].remark, null);
+  assert.equal(model.signatureSlots(EVENTS)[2].remark, null);
+});
+
+test("staff picker options are 'code name · department', sorted by code, without inactive or code-less people", () => {
+  const options = model.staffCandidateOptions([
+    { employee_no: "RB2", first_name: "สมชาย", last_name: "ใจดี", department: { name_th: "ฝ่ายผลิต RB" }, is_active: true },
+    { employee_no: "FANG", first_name: "รสริน", last_name: "เชน", department: null },
+    { employee_no: "OLD1", first_name: "ลาออก", last_name: "แล้ว", is_active: false },
+    { first_name: "ไม่มี", last_name: "รหัส" },
+  ]);
+  assert.deepEqual(plain(options), [
+    { value: "FANG", label: "FANG รสริน เชน" },
+    { value: "RB2", label: "RB2 สมชาย ใจดี · ฝ่ายผลิต RB" },
+  ]);
+  assert.deepEqual(model.staffCandidateOptions(undefined), []);
+});
+
+test("you cannot give yourself staff rights from the form, whatever the letter case", () => {
+  assert.match(model.validateStaffForm({ employeeNo: "it3462", isAdmin: true, isApprover: false, myEmployeeNo: "IT3462" }), /แก้สิทธิ์ของตัวเองไม่ได้/);
+  assert.equal(model.validateStaffForm({ employeeNo: "FANG", isAdmin: true, isApprover: false, myEmployeeNo: "IT3462" }), null);
+});

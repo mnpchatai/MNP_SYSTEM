@@ -268,3 +268,31 @@ test("the error card shows one message and offers a retry only when asked", () =
   assert.doesNotMatch(pages.errorCard("ไม่มีสิทธิ์", { retry: false }), /itwo-retry/);
   assert.match(pages.errorCard("<b>x</b>"), /&lt;b&gt;x&lt;\/b&gt;/);
 });
+
+test("the print sheet puts the single-click remark under both approval signatures", () => {
+  const html = pages.printSheet({
+    ...DETAIL,
+    events: [
+      { action: "created", actor_employee_no: "A1", created_at: "2026-11-19T01:00:00Z", actor_full_name: "ผู้แจ้ง" },
+      { action: "dept_approved", actor_employee_no: "FANG", created_at: "2026-11-19T02:00:00Z", actor_full_name: "รสริน เชน" },
+      { action: "it_mgr_approved", actor_employee_no: "FANG", created_at: "2026-11-19T02:00:00Z", actor_full_name: "รสริน เชน" },
+    ],
+  });
+  assert.equal(count(html, /itwo-signature-remark[^>]*>\(อนุมัติครั้งเดียว นับเป็นทั้งสองขั้น\)/g), 2);
+  assert.match(html, /data-slot="dept_manager">[\s\S]*?รสริน เชน/);
+  assert.match(html, /data-slot="it_approver">[\s\S]*?รสริน เชน/);
+});
+
+test("settings: the staff form is a searchable list of employees when there is one, a plain code field when there is not, and off in test mode", () => {
+  const staff = [{ employee_id: "x", employee_no: "FANG", full_name: "รสริน", department_name: "ฝ่ายบริหาร", is_it_admin: true, is_it_approver: true, is_active: true }];
+  const counter = { year: 2026, next_seq: 7, next_doc_no: "IT06-26/007", is_test: false };
+  const candidates = [{ value: "RB2", label: "RB2 สมชาย ใจดี · ฝ่ายผลิต RB" }];
+  const withList = pages.settingsPage({ staff, counter, myEmployeeId: "me", isTest: false, candidates });
+  assert.match(withList, /<select class="select" id="itwo-staff-no" name="employee_no">/);
+  assert.match(withList, /<option value="RB2">RB2 สมชาย ใจดี · ฝ่ายผลิต RB<\/option>/);
+  const without = pages.settingsPage({ staff, counter, myEmployeeId: "me", isTest: false });
+  assert.match(without, /<input class="input" id="itwo-staff-no" name="employee_no"/);
+  const test = pages.settingsPage({ staff, counter: null, myEmployeeId: "me", isTest: true, candidates });
+  assert.match(test, /<select[^>]*id="itwo-staff-no"[^>]*disabled/);
+  assert.match(test, /name="is_it_admin" disabled/);
+});
