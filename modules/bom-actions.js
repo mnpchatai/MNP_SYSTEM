@@ -1492,7 +1492,7 @@
     const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
   }
-  const rodLotOf = (d, id) => (d.rodLots ?? []).find((lot) => lot.id === String(id ?? "").trim()) ?? fail("ไม่พบล็อตแท่งนี้ (อาจมีผู้อื่นทำรายการไปก่อน)");
+  const rodLotOf = (d, id) => (d.rodLots ?? []).find((lot) => lot.id === String(id ?? "").trim()) ?? fail("ไม่พบล็อตยางเส้นยาวนี้ (อาจมีผู้อื่นทำรายการไปก่อน)");
   const rodNote = (value, label, { required = false } = {}) => {
     const note = value === undefined || value === null ? "" : typeof value === "string" ? value.trim() : fail(`${label}ต้องเป็นข้อความ`);
     if (note.length > ROD_NOTE_MAX) fail(`${label}ยาวเกิน ${ROD_NOTE_MAX} ตัวอักษร`);
@@ -1551,7 +1551,7 @@
     const user = requireUser(ctx);
     const R = rules();
     const lot = rodLotOf(d, p?.lotId);
-    if (!canStoreRods(user)) fail("รับแท่งเข้าคลังได้โดยคลังแท่งยาว (SR) หรือฝ่ายวางแผนเท่านั้น");
+    if (!canStoreRods(user)) fail("รับยางเส้นยาวเข้าคลังได้โดยคลังยางเส้นยาว (SR) หรือฝ่ายวางแผนเท่านั้น");
     if (lot.status !== "pending") fail(`${lotText(lot)} ${R.ROD_STATUS_LABEL[lot.status] ?? lot.status}แล้ว รับซ้ำไม่ได้`);
     const qty = qtyRound(num(p?.qtyReceived, "จำนวนที่รับ"));
     if (qty <= 0) fail("จำนวนที่รับต้องมากกว่า 0");
@@ -1596,13 +1596,13 @@
     const R = rules();
     const order = orderById(d, String(p?.orderId ?? "").trim().toUpperCase());
     const code = R.canonicalCode(p?.itemCode);
-    if (!canStoreRods(user)) fail("จ่ายแท่งได้โดยคลังแท่งยาว (SR) หรือฝ่ายวางแผนเท่านั้น");
-    if (!["released", "in_progress"].includes(order.status)) fail("จ่ายแท่งได้เฉพาะใบที่ปล่อยผลิตแล้วและยังไม่ปิด");
+    if (!canStoreRods(user)) fail("จ่ายยางเส้นยาวได้โดยคลังยางเส้นยาว (SR) หรือฝ่ายวางแผนเท่านั้น");
+    if (!["released", "in_progress"].includes(order.status)) fail("จ่ายยางเส้นยาวได้เฉพาะใบที่ปล่อยผลิตแล้วและยังไม่ปิด");
     if (!R.rodCodesOf(order).has(code)) fail(`${code} ไม่ใช่เส้นยางของใบ ${order.id}`);
     const qty = qtyRound(num(p?.qty, "จำนวนที่จ่าย"));
     if (qty <= 0) fail("จำนวนที่จ่ายต้องมากกว่า 0");
     const plan = R.rodFifo(d, code, qty, { own: order.id });
-    if (plan.short > 1e-9) fail(`แท่ง ${code} ในคลังไม่พอ: ใบนี้ถือ ${R.fmtQty(R.rodOwned(d, order.id, code))} สต็อกกลาง ${R.fmtQty(R.rodFree(d, code))} จ่าย ${R.fmtQty(qty)} ไม่ได้`);
+    if (plan.short > 1e-9) fail(`ยางเส้นยาว ${code} ในคลังไม่พอ: ใบนี้ถือ ${R.fmtQty(R.rodOwned(d, order.id, code))} สต็อกกลาง ${R.fmtQty(R.rodFree(d, code))} จ่าย ${R.fmtQty(qty)} ไม่ได้`);
     if (plan.rows.length > ROD_MAX_ROWS) fail(`จ่ายครั้งเดียวได้ไม่เกิน ${ROD_MAX_ROWS} ล็อต แบ่งจ่ายหลายครั้ง`);
     const rows = plan.rows.map((row) => ({ id: newUuid(), kind: "issue", lotId: row.lotId, ownerOrderId: row.owner, forOrderId: order.id, itemCode: code, qty: -row.qty }));
     for (const row of rows) pushRodMove(d, ctx, row);

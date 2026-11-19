@@ -73,7 +73,7 @@ test("the demo seed has a stored lot of free stock, rods owned by DEMO-26006 and
 
 test("SR receives a lot that passes: the RB job counts it, rods within the job's need belong to the order and the rest is free stock", () => {
   const d = fresh();
-  for (const role of ["gr", "rb", "wh", "qa", "pt"]) rejects(() => A.receiveRods(structuredClone(d), { lotId: lotId(2), qtyReceived: 12, values: PASS }, ctx(role)), /คลังแท่งยาว \(SR\) หรือฝ่ายวางแผน/);
+  for (const role of ["gr", "rb", "wh", "qa", "pt"]) rejects(() => A.receiveRods(structuredClone(d), { lotId: lotId(2), qtyReceived: 12, values: PASS }, ctx(role)), /คลังยางเส้นยาว \(SR\) หรือฝ่ายวางแผน/);
   rejects(() => A.receiveRods(structuredClone(d), { lotId: lotId(2), qtyReceived: 13, values: PASS }, ctx("sr")), /ไม่เกินที่ส่งมา 12/);
   rejects(() => A.receiveRods(structuredClone(d), { lotId: lotId(2), qtyReceived: 0, values: PASS }, ctx("sr")), /มากกว่า 0/);
   rejects(() => A.receiveRods(structuredClone(d), { lotId: lotId(2), qtyReceived: 12, values: { thickness: 7.5 } }, ctx("sr")), /กรอกค่าที่วัดให้ครบ: ความกว้าง, น้ำหนักต่อเมตร/);
@@ -119,7 +119,7 @@ test("SR issues rods to GR oldest lot first, own bucket before free stock; a rev
   const d = fresh();
   A.receiveRods(d, { lotId: lotId(2), qtyReceived: 12, values: PASS }, ctx("sr"));
   rejects(() => A.issueRods(structuredClone(d), { orderId: "DEMO-26006", itemCode: RB, qty: 39 }, ctx("sr")), /ในคลังไม่พอ: ใบนี้ถือ 32 สต็อกกลาง 6/);
-  rejects(() => A.issueRods(structuredClone(d), { orderId: "DEMO-26006", itemCode: RB, qty: 5 }, ctx("gr")), /คลังแท่งยาว \(SR\) หรือฝ่ายวางแผน/);
+  rejects(() => A.issueRods(structuredClone(d), { orderId: "DEMO-26006", itemCode: RB, qty: 5 }, ctx("gr")), /คลังยางเส้นยาว \(SR\) หรือฝ่ายวางแผน/);
   rejects(() => A.issueRods(structuredClone(d), { orderId: "DEMO-26002", itemCode: RB, qty: 5 }, ctx("sr")), /ใบที่ปล่อยผลิตแล้ว/);
   const out = A.issueRods(d, { orderId: "DEMO-26006", itemCode: RB, qty: 34 }, ctx("sr"));
   assert.deepEqual(out.plan.map((row) => [row.lotNo.slice(-2), row.owner, row.qty]), [["91", "DEMO-26006", 20], ["92", "DEMO-26006", 12], ["90", null, 2]]);
@@ -519,23 +519,23 @@ test("pages: SR's work board shows the pending lots and the GR issue card, QA ge
   env.store.setUser("B11");
   let html = await env.render("p=work");
   clean(html);
-  assert.match(html, /รับแท่งเข้าคลัง ล็อต FN-\d{8}-92/);
-  assert.match(html, /รับแท่งเข้าคลัง ล็อต FN-\d{8}-93/);
+  assert.match(html, /รับยางเส้นยาวเข้าคลัง ล็อต FN-\d{8}-92/);
+  assert.match(html, /รับยางเส้นยาวเข้าคลัง ล็อต FN-\d{8}-93/);
   assert.equal((html.match(/data-rf-open="rodReceive"/g) ?? []).length, 2, "one card per pending lot");
-  assert.match(html, /จ่ายแท่งให้ GR ตามใบ DEMO-26006/);
+  assert.match(html, /จ่ายยางเส้นยาวให้ GR ตามใบ DEMO-26006/);
   assert.match(html, /ต้องจ่าย 36 เส้น/);
   assert.match(html, /data-rf-open="rodIssue"/);
   assert.match(html, /href="#\/bom\?p=rods"/, "a link to the long-rod store page");
   assert.doesNotMatch(html, /บัญชีนี้ไม่ได้อยู่ในแผนกผลิต/);
   // การ์ดจ่ายให้ GR: ทุกใบที่ปล่อยผลิตอยู่ซึ่งงาน GR ยังต้องใช้เส้นยางนี้ และคลังมีแท่งให้ (ของใบนั้นหรือสต็อกกลาง 6 เส้น) = DEMO-26001 DEMO-26006 DEMO-26007
-  assert.deepEqual([...html.matchAll(/จ่ายแท่งให้ GR ตามใบ (DEMO-\d+)/g)].map((match) => match[1]).sort(), ["DEMO-26001", "DEMO-26006", "DEMO-26007"]);
+  assert.deepEqual([...html.matchAll(/จ่ายยางเส้นยาวให้ GR ตามใบ (DEMO-\d+)/g)].map((match) => match[1]).sort(), ["DEMO-26001", "DEMO-26006", "DEMO-26007"]);
   assert.equal(env.context.MNP_BOM_PAGES.hub.workCount(env.ctx()), 5, "the menu counts the five SR cards (two lots to receive, three orders to supply)");
   // QA: ยังไม่มีล็อตที่กัก → SR รับ L3 ไม่ผ่าน → QA เห็นการ์ดตัดสิน
   assert.equal(env.store.run("receiveRods", { lotId: lotId(3), qtyReceived: 8, values: FAIL, note: "ความหนาเกิน" }).ok, true);
   env.store.setUser("B12");
   html = await env.render("p=work");
   clean(html);
-  assert.match(html, /ตัดสินล็อตแท่ง ล็อต FN-\d{8}-93/);
+  assert.match(html, /ตัดสินล็อตยางเส้นยาว ล็อต FN-\d{8}-93/);
   assert.match(html, /SR: ความหนาเกิน/);
   assert.doesNotMatch(html, /data-rf-open="rodReceive"|data-rf-open="rodIssue"/, "QA only decides");
   env.store.setUser("B03");
@@ -565,7 +565,7 @@ test("pages: the receive dialog shows the spec targets, computes the verdict liv
   const note = { required: false };
   const mark = { hidden: true };
   built.bind({ querySelectorAll: (selector) => (selector === "[data-rod-value]" ? inputs : []), querySelector: (selector) => ({ "[data-rod-verdict]": box, "[data-rod-note]": note, "[data-rod-note-req]": mark })[selector] ?? null });
-  assert.match(box.innerHTML, /ผ่านสเปก แท่งเข้าคลังและนับเข้างาน RB/);
+  assert.match(box.innerHTML, /ผ่านสเปก ยางเส้นยาวเข้าคลังและนับเข้างาน RB/);
   assert.deepEqual([note.required, mark.hidden], [false, true]);
   inputs[0].value = "7.9";
   inputs[0].handlers.input();
@@ -594,13 +594,13 @@ test("pages: the receive dialog shows the spec targets, computes the verdict liv
     return { verdict, qtyInput };
   };
   const live = verdictOf("8");
-  assert.match(live.verdict.innerHTML, /ผ่านสเปก แท่งเข้าคลัง: 4 เส้น เป็นของงาน RB ของใบนี้ · เกิน 4 เส้น เข้าสต็อกกลาง/);
+  assert.match(live.verdict.innerHTML, /ผ่านสเปก ยางเส้นยาวเข้าคลัง: 4 เส้น เป็นของงาน RB ของใบนี้ · เกิน 4 เส้น เข้าสต็อกกลาง/);
   live.qtyInput.value = "3";
   live.qtyInput.handlers.input();
-  assert.match(live.verdict.innerHTML, /ผ่านสเปก แท่งเข้าคลังและนับเข้างาน RB/, "the text follows the quantity typed");
+  assert.match(live.verdict.innerHTML, /ผ่านสเปก ยางเส้นยาวเข้าคลังและนับเข้างาน RB/, "the text follows the quantity typed");
   // งาน RB ของใบเสร็จแล้ว = สต็อกกลางทั้งหมด ไม่นับเข้างาน
   env.store.data().jobs.find((job) => job.orderId === "DEMO-26006" && job.dept === "RB").status = "done";
-  assert.match(verdictOf("8").verdict.innerHTML, /ผ่านสเปก แท่งเข้าคลังเป็นสต็อกกลางทั้งหมด ไม่นับเข้างาน RB \(งาน RB ของใบนี้เสร็จแล้ว\)/);
+  assert.match(verdictOf("8").verdict.innerHTML, /ผ่านสเปก ยางเส้นยาวเข้าคลังเป็นสต็อกกลางทั้งหมด ไม่นับเข้างาน RB \(งาน RB ของใบนี้เสร็จแล้ว\)/);
 });
 
 test("pages: the long-rod store page, the lot history with reverse, the decide dialog and the draft's use-from-SR-store field", async () => {

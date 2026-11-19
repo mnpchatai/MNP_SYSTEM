@@ -215,36 +215,16 @@
     const more = list.length > shown.length ? `<div class="rf-row">${ctx.ui.link(`แสดงเพิ่ม (อีก ${list.length - shown.length})`, ctx.pageUrl({ n: limit + PAGE_ROWS }), "btn rf-btn secondary small")}</div>` : "";
     return { shown, more };
   }
-  const TASK_FG_LINES = 3;
-  // งานที่รอของแผนก (ผลของ MNP_BOM_PAGES.hub: storeTasks / rodTasks / fgTasks) เป็นตารางสั้น: สถานะ · รายการ · จำนวน — ปุ่มลงมือทำอยู่ที่หน้า BOM (ลิงก์ที่หัวหน้า)
-  function taskInfo(ctx, task) {
-    const { ui, rules } = ctx;
-    const orderLink = (id) => ui.link(id, ctx.url("orders", { sel: id }), "rf-mono");
-    const qty = (value, uom) => `${rules.fmtQty(value)} ${rules.uomLabel(uom)}`;
-    const fgLines = (lines) => `${lines.slice(0, TASK_FG_LINES).map((line) => `${esc(line.fgCode)} × ${esc(rules.fmtQty(line.qty))}`).join(" · ")}${lines.length > TASK_FG_LINES ? ` · อีก ${lines.length - TASK_FG_LINES}` : ""}`;
-    switch (task.kind) {
-      case "rodReceive": return ["รอรับเข้าคลัง", `${ui.mono(task.lot.lotNo)} <span class="small muted">${esc(task.lot.itemCode)} · ใบ ${esc(task.lot.orderId)}</span>`, esc(`ส่งมา ${qty(task.lot.qtySent, task.lot.uom)}`)];
-      case "rodDecide": return ["กักรอ QA ตัดสิน", `${ui.mono(task.lot.lotNo)} <span class="small muted">${esc(task.lot.itemCode)} · ใบ ${esc(task.lot.orderId)}</span>`, esc(`รับไว้ ${qty(task.lot.qtyReceived ?? task.lot.qtySent, task.lot.uom)}`)];
-      case "rodIssue": return ["รอจ่ายให้ GR", `${orderLink(task.need.order.id)} <span class="small muted">${esc(task.need.itemCode)}</span>`, esc(`ต้องจ่าย ${qty(task.need.remaining, task.need.uom)}`)];
-      case "receive": return [task.cancelled ? "ตัดสินใบสั่งซื้อ" : "รอรับเข้าตามใบสั่งซื้อ", ui.mono(task.po.id), esc(`${task.lines.length} รายการ`)];
-      case "partReturn": return ["รอรับของคืน", orderLink(task.order.id), esc(`${task.lines.length} รายการ`)];
-      case "chemReturn": return ["รอรับเคมีคืน", ui.mono(task.req.id ?? task.req.orderId ?? ""), ""];
-      case "chem": return ["เคมีขาด ยังไม่ได้สั่ง", "สำหรับใบสั่งผลิตของแผนก RB", esc(`${task.short.length} รายการ`)];
-      case "buy": return ["ของขาด ยังไม่ได้สั่ง", `${ui.mono(task.itemCode)}${task.name ? ` <span class="small muted">${esc(task.name)}</span>` : ""}`, esc(`ขาดรวม ${qty(task.total, task.uom)}`)];
-      case "fgReceive": return [task.surplus ? "รอรับส่วนเกินเข้าคลัง" : "รอรับเข้าคลัง", orderLink(task.order.id), fgLines(task.lines)];
-      case "fgDeliver": return ["รอส่งมอบลูกค้า", orderLink(task.order.id), fgLines(task.lines)];
-      case "fgClose": return ["รอปิดใบ", orderLink(task.order.id), ""];
-      case "fgCloseShort": return ["รอปิดใบ (รับไม่ครบ)", orderLink(task.order.id), fgLines(task.lines)];
-      default: return [String(task.kind ?? ""), "", ""];
-    }
-  }
-  const TASK_ROWS = 10;
-  function taskTable(ctx, tasks, title = "งานที่รอ") {
-    const { ui } = ctx;
-    if (!tasks.length) return ui.card(ui.empty("ไม่มีงานค้าง"), { title: esc(title) });
-    const rows = tasks.slice(0, TASK_ROWS).map((task) => { const [status, what, amount] = taskInfo(ctx, task); return `<tr><td class="nowrap">${esc(status)}</td><td>${what}</td><td>${amount}</td></tr>`; });
-    const rest = tasks.length > TASK_ROWS ? `<p class="small muted">และอีก ${tasks.length - TASK_ROWS} รายการ</p>` : "";
-    return ui.card(`${ui.table(["สถานะ", "รายการ", "จำนวน"], rows)}${rest}`, { title: esc(title), flush: !rest });
+  // งานที่รอของแผนกคลัง/ตรวจคุณภาพ (SR ST WH QA): การ์ดสั่งงานชุดเดียวกับหน้า BOM "งานของฉัน" (MNP_BOM_PAGES.hub.taskCard / boardCards ไม่คัดลอก HTML)
+  // รายการงานมาจากกระดานของแผนก (workBoard ของ deptCtx: ฝ่ายวางแผน/ผู้จัดการเปิดโมดูลแล้วเห็นงานของแผนกนั้น) · ปุ่มและ dialog ตัดสินสิทธิ์ด้วยผู้ใช้จริง (ctx.user) ไม่มีสิทธิ์ = การ์ดดูอย่างเดียว
+  // ใช้กับ landing ที่คืน actions: true · waiting = ข้อความกำลังโหลดที่ใส่เหนือการ์ด · emptyText = ข้อความเมื่อไม่มีงาน
+  function deptWorkSection(ctx, { title = "งานที่รอ", emptyText = "ไม่มีงานค้าง", waiting = "", quietWhenEmpty = false } = {}) {
+    const hub = root.MNP_BOM_PAGES?.hub;
+    const board = hub.workBoard(deptCtx(ctx), new URLSearchParams());
+    const { taskCards, cards } = hub.boardCards(ctx, board);
+    const all = [...taskCards, ...cards];
+    if (!all.length && quietWhenEmpty && !waiting) return "";
+    return `<h2 class="bom-h3">${esc(title)}</h2>${waiting}${all.length ? `<div class="bom-job-grid">${all.join("")}</div>` : waiting ? "" : ctx.ui.card(ctx.ui.empty(emptyText))}`;
   }
   // ปุ่มลิงก์ไปที่ทำงานจริง (ที่เดียวต่อแหล่ง)
   const actionLink = (ctx, text, href) => ctx.ui.link(text, href, "btn rf-btn secondary");
@@ -369,6 +349,6 @@
   root.MNP_FACTORY = Object.freeze({
     esc, attr, formPayload, parseArgs, bindRoot, deptChip, dueText, jobCard, jobReportDialog,
     FACTORY_GROUP, canSeeDept, canOpenDeptModule, orderNavItems, registerDeptModule, productionLanding,
-    pageHead, searchForm, includesText, limited, taskTable, actionLink, wake, failed, rubberflowFailed, deptCtx, routeUrl, onDeptRoute: onFactoryRoute,
+    pageHead, searchForm, includesText, limited, deptWorkSection, actionLink, wake, failed, rubberflowFailed, deptCtx, routeUrl, onDeptRoute: onFactoryRoute,
   });
 })(window);

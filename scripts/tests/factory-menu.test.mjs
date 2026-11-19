@@ -15,8 +15,6 @@ const FILES = [
 ];
 const DEPT_FILES = ["st", "sr", "qa", "gr", "pt", "bg", "pk", "wh"].map((dept) => `modules/module-${dept}.js`);
 const ALL_DEPTS = ["FACTORY_ST", "FACTORY_SR", "FACTORY_QA", "FACTORY_GR", "FACTORY_PT", "FACTORY_BG", "FACTORY_PK", "FACTORY_WH"];
-// แผนกที่หน้าแรกสั่งงานผลิตได้ (การ์ดงานของแผนกตัวเอง) · แผนกอื่นหน้าแรกอ่านอย่างเดียว
-const PRODUCTION = ["FACTORY_GR", "FACTORY_PT", "FACTORY_BG", "FACTORY_PK"];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 const read = (file) => fs.readFileSync(file, "utf8");
 const plain = (value) => JSON.parse(JSON.stringify(value));
@@ -209,8 +207,8 @@ test("the pages for a department use no 'แท่งยาว' wording, escape 
     assert.doesNotMatch(html, /แท่งยาว|undefined|NaN|\[object Object\]|ยังไม่เปิด|เร็วๆ นี้|coming soon/i, code);
     assert.doesNotMatch(html, /<script/i, code);
     assert.match(html, /data-module="(st|sr|qa|gr|pt|bg|pk|wh)"/);
-    // หน้าที่ไม่ใช่แผนกผลิตอ่านอย่างเดียว · แผนกผลิตสั่งงานได้ (ดูการทดสอบ "production departments")
-    if (!PRODUCTION.includes(code)) assert.doesNotMatch(html, /<form[^>]*data-rf-form|data-rf-action|data-rf-open/, `${code} is read-only: no forms or action buttons`);
+    // ทุกแผนกสั่งงานผ่านปุ่มของการ์ดที่เปิด dialog (ดูการทดสอบ "…same cards") · ฟอร์มสั่งงานอยู่ใน dialog ไม่ได้อยู่ในหน้า
+    assert.doesNotMatch(html, /<form[^>]*data-rf-form/, `${code} has no action form on the page itself`);
   }
   assert.match(pages.FACTORY_SR, /href="#\/bom\?p=work&amp;dept=SR"/);
   assert.match(pages.FACTORY_ST, /href="#\/bom\?p=work&amp;dept=ST"/);
@@ -500,7 +498,7 @@ test("WH shows the warehouse's pending receive to whoever opens it: PP and a man
   assert.equal(seen.PP.slice(seen.PP.indexOf("งานที่รอ")), seen.WH.slice(seen.WH.indexOf("งานที่รอ")), "the task card is the same for WH and PP");
 });
 
-test("SR shows the store's pending rod receipts to a planner as well, computed for the department and read-only", async () => {
+test("SR shows the store's pending rod receipts to a planner as well, computed for the department, with the buttons a planner has in BOM", async () => {
   const env = load({ employee: emp("PP") });
   env.store.setUser("B03");
   const pending = env.store.data().rodLots.filter((lot) => lot.status === "pending");
@@ -508,7 +506,7 @@ test("SR shows the store's pending rod receipts to a planner as well, computed f
   const html = await env.open("FACTORY_SR");
   assert.doesNotMatch(html, /ไม่มีงานค้าง/);
   assert.match(html, /งานที่รอ/);
-  assert.doesNotMatch(html, /data-rf-open|data-rf-action/, "no action buttons");
+  assert.match(html, /data-rf-open="rodReceive"/, "a planner may receive rods, as in BOM");
 });
 
 test("when RubberFlow failed to load, ST and QA show one line in place of the RubberFlow part, not an empty table", async () => {
@@ -522,5 +520,166 @@ test("when RubberFlow failed to load, ST and QA show one line in place of the Ru
     assert.equal([...html.matchAll(/โหลดข้อมูล RubberFlow ไม่สำเร็จ/g)].length, 1, `${code} shows the failure once`);
     assert.doesNotMatch(html, /กำลังโหลดข้อมูล RubberFlow/);
     assert.doesNotMatch(html, code === "FACTORY_QA" ? /ไม่มีล็อตที่กักรอตัดสิน/ : /ไม่มีงานค้าง/, "no empty table in its place");
+  }
+});
+
+// ---- โมดูลคลัง / ตรวจคุณภาพ (SR ST WH QA): การ์ดสั่งงานชุดเดียวกับ BOM "งานของฉัน" ----
+const cardsOf = (html) => html.match(/<article class="card rf-card bom-job[\s\S]*?<\/article>/g) ?? [];
+const workPage = async (env, query = "p=work") => env.context.MNP_BOM_PAGES.work(env.context.MNP_BOM.context(new URLSearchParams(query)));
+const decodeArgs = (text) => JSON.parse(text.replaceAll("&quot;", '"'));
+const openButtonsOf = (html) => [...html.matchAll(/data-rf-open="(\w+)" data-rf-args="([^"]*)"/g)].map((match) => ({ name: match[1], handlers: {}, dataset: { rfOpen: match[1], rfArgs: JSON.stringify(decodeArgs(match[2])) }, disabled: false, addEventListener(type, handler) { this.handlers[type] = handler; } }));
+
+// เปิดหน้าแผนก ผูกปุ่มของการ์ดที่วาดไว้ และเตรียม dialog จำลองที่รับ HTML ของ dialog ที่เปิด แล้วส่งฟอร์มของ dialog เหมือนผู้ใช้
+async function landingWith(env, code) {
+  const buttons = openButtonsOf(await env.open(code));
+  env.fakes["[data-rf-open]"] = buttons;
+  const shown = { html: "", forms: [] };
+  const dialog = { tagName: "DIALOG", dataset: {}, addEventListener() {}, querySelector: () => null, querySelectorAll: (selector) => (selector === "form[data-rf-form]" ? shown.forms : []), close() {}, remove() {}, showModal() { this.shown = true; }, setAttribute() {} };
+  env.root.insertAdjacentHTML = (_where, text) => {
+    shown.html = text;
+    shown.forms.length = 0;
+    const match = text.match(/data-rf-form="(\w+)" data-rf-args="([^"]*)"/);
+    if (match) shown.forms.push({ handlers: {}, dataset: { rfForm: match[1], rfArgs: JSON.stringify(decodeArgs(match[2])), rfSuccess: "" }, __values: {}, addEventListener(type, handler) { this.handlers[type] = handler; }, closest: () => null, querySelectorAll: () => [] });
+    env.root.lastElementChild = dialog;
+  };
+  env.context.MNP_RUBBERFLOW_UI.validateForm = () => true; // ตรวจช่องใต้ฟอร์มเป็นของ UI กลาง (ไม่ใช่เรื่องของการทดสอบนี้)
+  const html = await env.open(code);
+  return {
+    html, buttons, shown,
+    click: async (name) => { shown.html = ""; await buttons.find((button) => button.name === name).handlers.click(); return shown.html; },
+    submit: async (values) => { const [form] = shown.forms; form.__values = values; await form.handlers.submit({ preventDefault() {}, submitter: null }); },
+  };
+}
+
+test("SR: the landing shows the same task cards as BOM งานของฉัน for the same user; a click opens the real dialog and a submit runs the action", async () => {
+  const env = load({ employee: emp("SR") });
+  env.store.setUser("B11");
+  const bom = cardsOf((await workPage(env)).html);
+  assert.ok(bom.length >= 4, "two lots wait for receiving and several orders wait for rods");
+  const page = await landingWith(env, "FACTORY_SR");
+  assert.deepEqual(plain(cardsOf(page.html)), plain(bom), "the same cards, in the same order");
+  assert.ok(page.html.indexOf("ยางเส้นยาวในคลัง") < page.html.indexOf("งานที่รอ"), "the stock stays first");
+  assert.equal([...page.html.matchAll(/รอรับเข้าคลัง/g)].length >= 2, true);
+  assert.doesNotMatch(page.html, /แท่ง/, "ยางเส้นยาว, not แท่ง, on the cards");
+  const receive = await page.click("rodReceive");
+  assert.match(receive, /data-rf-form="receiveRods"/);
+  assert.match(receive, /รับยางเส้นยาวเข้าคลัง/);
+  assert.doesNotMatch(receive, /แท่ง/);
+  const issue = await page.click("rodIssue");
+  assert.match(issue, /data-rf-form="issueRods"/);
+  assert.match(issue, /จ่ายยางเส้นยาวให้ GR/);
+  assert.doesNotMatch(issue, /แท่ง/);
+  const before = env.store.data().rodMoves.length;
+  env.log.renders = 0;
+  await page.submit({ qty: "2" });
+  assert.equal(env.store.data().rodMoves.length, before + 1, "the submit ran issueRods against the BOM store");
+  assert.ok(env.log.renders >= 1, "and the page was redrawn");
+  // ฝ่ายวางแผนเห็นการ์ดชุดเดียวกับที่ BOM ให้ฝ่ายวางแผนดูแผนก SR
+  const planner = load({ employee: emp("PP") });
+  planner.store.setUser("B03");
+  const plannerBom = cardsOf((await workPage(planner, "p=work&dept=SR")).html);
+  assert.deepEqual(plain(cardsOf(await planner.open("FACTORY_SR"))), plain(plannerBom));
+  // ผู้ที่ไม่ใช่ SR / ฝ่ายวางแผน เปิดโมดูลได้แต่การ์ดดูอย่างเดียว (ไม่มีปุ่มที่ฐานข้อมูลจะปฏิเสธ)
+  const manager = load({ employee: emp("PP", "factory_manager") });
+  manager.store.setUser("B08"); // บัญชีคลังวัตถุดิบ (ST): ไม่ใช่ SR และไม่ใช่ฝ่ายวางแผน
+  const readOnly = await manager.open("FACTORY_SR");
+  assert.match(readOnly, /รอรับเข้าคลัง/);
+  assert.doesNotMatch(readOnly, /data-rf-open="(rodReceive|rodIssue)"/);
+  assert.match(readOnly, /ดูอย่างเดียว/);
+});
+
+test("QA: held rod lots are cards with the decide button, the RubberFlow held lots keep their link, and a submit decides the lot", async () => {
+  const env = load({ employee: emp("QA") });
+  env.store.setUser("B11");
+  const pending = env.store.data().rodLots.find((lot) => lot.status === "pending");
+  assert.equal(env.store.run("receiveRods", { lotId: pending.id, qtyReceived: pending.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ขนาดเกินสเปก" }).ok, true);
+  env.store.setUser("B12");
+  const bom = cardsOf((await workPage(env)).html);
+  assert.equal(bom.length, 1, "one held lot waits for QA");
+  const page = await landingWith(env, "FACTORY_QA");
+  assert.deepEqual(plain(cardsOf(page.html)), plain(bom));
+  assert.match(page.html, /data-rf-open="rodDecide"/);
+  assert.equal([...page.html.matchAll(/href="#\/rubberflow\?p=quality"/g)].length, 1, "the RubberFlow held lots keep their one link");
+  assert.match(page.html, /ล็อตในสายผลิตที่กักรอตัดสิน/);
+  assert.doesNotMatch(page.html, /แท่ง/);
+  const dialog = await page.click("rodDecide");
+  assert.match(dialog, /data-rf-form="decideRods"/);
+  assert.doesNotMatch(dialog, /แท่ง/);
+  await page.submit({ decision: "accept", note: "ใช้ได้ตามสภาพ" });
+  assert.equal(env.store.data().rodLots.find((lot) => lot.id === pending.id).status, "stored", "the decision ran against the BOM store");
+  assert.match(await env.open("FACTORY_QA"), /ไม่มียางเส้นยาวที่กักรอตัดสิน/);
+});
+
+// ใบที่ปล่อยผลิตแล้วที่ PK ทำไม่ครบตามสั่งและรับเข้าคลังแล้ว (ปิดใบแบบรับไม่ครบได้)
+function makeShortClosable(env) {
+  const data = env.store.data();
+  const rules = env.context.MNP_BOM_RULES;
+  const order = data.orders.find((entry) => (entry.status === "released" || entry.status === "in_progress") && data.jobs.some((job) => job.orderId === entry.id && job.dept === "PK"));
+  for (const job of data.jobs.filter((entry) => entry.orderId === order.id && !(entry.dept === "ST" && entry.kind === "PURCHASED"))) { job.status = "done"; job.qtyDone = job.dept === "PK" ? 1 : job.qtyPlanned; }
+  data.fgMoves = rules.fgPosition(data, order).products.filter((product) => product.pkDone > 0).map((product, index) => ({ id: `s${index}`, orderId: order.id, fgCode: product.fgCode, kind: "receive", qty: product.pkDone, at: 1 + index, by: "x" }));
+  assert.equal(rules.fgPosition(data, order).canCloseShort, true, "the order can be closed short");
+  return order;
+}
+
+test("WH: the landing shows the same task cards as BOM งานของฉัน for the same user; close short opens its dialog and a submit closes the order; others see the card read-only", async () => {
+  const env = load({ employee: emp("WH") });
+  env.store.setUser("B09");
+  const order = makeShortClosable(env);
+  const bom = cardsOf((await workPage(env)).html);
+  assert.ok(bom.some((card) => card.includes("ปิดใบ (รับไม่ครบ)")), "BOM offers close short");
+  const page = await landingWith(env, "FACTORY_WH");
+  assert.deepEqual(plain(cardsOf(page.html)), plain(bom));
+  assert.ok(page.html.indexOf("สินค้าสำเร็จรูปในคลัง") < page.html.indexOf("งานที่รอ"));
+  const dialog = await page.click("closeShort");
+  assert.match(dialog, /data-rf-form="closeOrderShort"/);
+  await page.submit({ note: "PK ทำไม่ครบ ลูกค้าตกลงรับเท่าที่มี" });
+  assert.equal(env.store.data().orders.find((entry) => entry.id === order.id).status, "completed", "the submit ran closeOrderShort");
+  // ฝ่ายวางแผนเห็นงานของ WH เหมือนกัน แต่ปิดใบรับไม่ครบไม่ได้ (admin / WH เท่านั้น): การ์ดดูอย่างเดียว ไม่มีปุ่ม
+  const planner = load({ employee: emp("PP") });
+  planner.store.setUser("B03");
+  makeShortClosable(planner);
+  const html = await planner.open("FACTORY_WH");
+  assert.match(html, /ปิดใบ \(รับไม่ครบ\)|รอปิดใบ/);
+  assert.doesNotMatch(html, /data-rf-open="closeShort"/);
+  assert.match(html, /ดูอย่างเดียว/);
+});
+
+test("ST: the landing shows the same task cards as BOM งานของฉัน for the same user, including the parts issue card; return opens its dialog and a submit goes through the form transform", async () => {
+  const env = load({ employee: emp("ST") });
+  env.store.setUser("B08");
+  const before = cardsOf((await workPage(env)).html);
+  const issue = before.find((card) => card.includes("เบิกของตามใบ"));
+  assert.ok(issue, "a released order waits for its purchased parts");
+  assert.match(issue, /เบิกจ่ายที่ใบสั่งผลิต/);
+  assert.deepEqual(plain(cardsOf(await env.open("FACTORY_ST"))), plain(before), "the issue card and the RubberFlow tasks are the same as in BOM");
+  // ใบที่ยกเลิกแล้วที่เบิกของไปแล้ว: การ์ดคืนของเหลือ
+  const data = env.store.data();
+  const job = data.jobs.find((entry) => entry.dept === "ST" && entry.kind === "PURCHASED");
+  data.orders.find((order) => order.id === job.orderId).status = "cancelled";
+  job.status = "done";
+  job.qtyDone = job.qtyPlanned;
+  const bom = cardsOf((await workPage(env)).html);
+  assert.ok(bom.some((card) => card.includes("คืนของซื้อที่เบิกไปแล้ว")));
+  const page = await landingWith(env, "FACTORY_ST");
+  assert.deepEqual(plain(cardsOf(page.html)), plain(bom));
+  assert.ok(page.html.indexOf("ของซื้อในคลัง") < page.html.indexOf("งานที่รอ"));
+  assert.doesNotMatch(page.html, /แท่ง/);
+  const dialog = await page.click("returnParts");
+  assert.match(dialog, /data-rf-form="returnOrderParts"/);
+  const moves = (env.store.data().stockMoves ?? []).length;
+  await page.submit({ "itemCode[]": job.itemCode, "qty[]": "0.5", reason: "เหลือจากการผลิต" });
+  assert.equal((env.store.data().stockMoves ?? []).length, moves + 1, "the lines came from the form through the BOM transform and the action ran");
+});
+
+test("the task cards are drawn once (bom-hub taskCard / boardCards); the department files only place the shared section", () => {
+  const hub = read("modules/bom-hub.js");
+  assert.match(hub, /function taskCard\(ctx, task, \{ planner, dept \}\)/);
+  assert.match(hub, /const \{ taskCards, cards \} = boardCards\(ctx, board\);/, "BOM work page uses it too");
+  assert.match(read("modules/factory-kit.js"), /hub\.boardCards\(ctx, board\)/);
+  for (const dept of ["sr", "st", "wh", "qa"]) {
+    const source = read(`modules/module-${dept}.js`);
+    assert.match(source, /F\.deptWorkSection\(ctx/, `${dept} places the shared section`);
+    assert.match(source, /actions: true/, `${dept} asks for the real actions`);
+    assert.doesNotMatch(source, /bom-job|openButton|data-rf-open|taskTable/, `${dept} keeps no copy of the card HTML`);
   }
 });
