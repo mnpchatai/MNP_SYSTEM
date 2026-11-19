@@ -25,7 +25,7 @@
 --      - list_mine / list_it ส่ง rework_round + rework_due_date (+ misc_detail) · list_pending_approvals ส่ง misc_detail
 --   D2. การรับงานเป็นขั้นตอนสุดท้ายเสมอ (เจ้าของตัดสิน): ใบที่มี event completed อย่างน้อยครั้งหนึ่ง ผู้แจ้งยกเลิกไม่ได้ (ต้องขอแก้ไขงานหรือรับงาน)
 --      - app_itwo_cancel ปฏิเสธ (it_closed และ in_progress ในรอบแก้ไข) · allowed_actions ไม่ส่ง cancel · trigger ของใบกัน -> cancelled ซ้ำอีกชั้น
---   E. ผู้แจ้งคนเดียวแจ้งได้หลายใบ:ฐานข้อมูลไม่เคยกัน (ไม่มี unique บน requester_id) ไม่แก้ · มี pgTAP ยืนยัน
+--   E. ผู้แจ้งคนเดียวแจ้งได้หลายใบ: ฐานข้อมูลไม่เคยกัน (ไม่มี unique บน requester_id) ไม่แก้ · มี pgTAP ยืนยัน
 --   F. ล้างข้อมูลทดสอบ: app_sandbox_purge_itwo ลบแถว is_test ของตารางใหม่ด้วย และ "คืนรายการ path ของไฟล์ในบัคเก็ตทดสอบ" (files) ให้หน้าเว็บลบผ่าน Storage API
 --      เหตุผล: storage.objects ลบด้วย SQL ไม่ได้ (trigger ของ Storage) และถ้าลบแถวตรงไฟล์จริงจะค้างใน S3 · หลังล้างแถวทะเบียน ไฟล์ทดสอบทุกไฟล์ไม่มีใครลงทะเบียน
 --      policy ของบัคเก็ตทดสอบจึงอนุญาตให้ admin ที่อยู่ในโหมดทดสอบอ่าน/ลบได้ · ถ้าลบไม่ครบ เรียก purge ซ้ำจะได้รายการที่เหลืออีก

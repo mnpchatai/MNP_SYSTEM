@@ -9,7 +9,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(247);
+select plan(249);
 
 -- 1. โครงสร้าง ----------------------------------------------------------
 reset role;
@@ -220,6 +220,9 @@ select lives_ok($$ update public.itwo_work_orders set status = 'in_progress' whe
 select throws_ok($$ insert into public.itwo_events (is_test, work_order_id, actor_id, action) select false, current_setting('t.o2')::uuid, e.id, 'bogus' from public.employees e where e.employee_no = 'ITV-REQ1' $$, '23514', null, 'the events constraint still rejects unknown actions');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"2d700000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+-- O2 ไม่เคยมี completed (ขยับสถานะตรงๆ ด้านบน ไม่ผ่าน app_itwo_complete) จึงต้องยกเลิกผ่าน RPC ได้: ล็อกว่า trigger guard ชั้นสองไม่บล็อกกรณีที่ควรผ่าน
+select lives_ok($$ select public.app_itwo_cancel(current_setting('t.o2')::uuid, 'ไม่ต้องการแล้ว') $$, 'an in-progress request IT has never closed can still be cancelled by the requester (the status guard lets it through)');
+select is(public.app_itwo_get_detail(current_setting('t.o2')::uuid)->>'status', 'cancelled', 'and it is cancelled');
 select throws_ok($$ select count(*) from public.itwo_reworks $$, '42501', null, 'an authenticated user cannot read the rework table directly');
 select throws_ok($$ insert into public.itwo_reworks (work_order_id, round_no, details, due_date, requested_by) values (gen_random_uuid(), 1, 'x', current_date, gen_random_uuid()) $$, '42501', null, 'an authenticated user cannot write the rework table directly');
 

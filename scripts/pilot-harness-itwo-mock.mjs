@@ -5,7 +5,7 @@
 //
 // createItwoMock ต้องไม่อ้างตัวแปรนอกฟังก์ชันของตัวเอง เพราะ mockSupabaseScript() ส่งซอร์สของมัน (Function#toString) ให้เบราว์เซอร์
 // env = { fail(code|message), stamp() → ISO, now() → ms, persona() → แถว persona ปัจจุบัน, personas() → รายการ persona ทั้งหมด,
-//         hasObject?(bucket, path) → ไฟล์อยู่ใน Storage จำลองไหน (ไม่ส่ง = ไม่ตรวจ), listObjects?(bucket) → path ของไฟล์ในบัคเก็ต }
+//         hasObject?(bucket, path) → ไฟล์อยู่ใน Storage จำลองไหน (ไม่ส่ง = ไม่ตรวจ), objectMime?(bucket, path) → mimetype ที่ Storage จดไว้ (ไม่ส่ง = ใช้ p_mime_type), listObjects?(bucket) → path ของไฟล์ในบัคเก็ต }
 // persona ของโมดูลนี้ (SBX-IT-*) มี id persona-it-staff / persona-it-admin / persona-it-approver · persona อื่นเป็นผู้แจ้ง (ผู้จัดการแผนก = role.code department_manager)
 export function createItwoMock(env) {
   const { stamp, now } = env;
@@ -25,7 +25,15 @@ export function createItwoMock(env) {
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "application/msword", "application/vnd.ms-excel", "text/plain", "text/csv",
   ];
-  const PATH_PATTERN = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|jpeg|png|webp|heic|heif|pdf|docx|xlsx|pptx|doc|xls|txt|csv)$/;
+  // นามสกุล → ชนิด (ตรงกับ private.itwo_ext_matches_mime)
+  const MIME_BY_EXTENSION = {
+    jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", heic: "image/heic", heif: "image/heif", pdf: "application/pdf",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    doc: "application/msword", xls: "application/vnd.ms-excel", txt: "text/plain", csv: "text/csv",
+  };
+  const PATH_PATTERN =/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|jpeg|png|webp|heic|heif|pdf|docx|xlsx|pptx|doc|xls|txt|csv)$/;
   const orders = [];
   const events = [];
   const access = new Map(); // ข้อมูลสิทธิ์ในระบบของใบเก่า (ถอดส่วนนี้แล้ว: ไม่มีทางเขียนใหม่ มีไว้ให้ทดสอบการแสดงผลอ่านอย่างเดียวผ่าน seedAccess)
@@ -258,9 +266,13 @@ export function createItwoMock(env) {
         if (attachments.filter((item) => item.rework_id === p_rework_id).length >= MAX_FILES_PER_ROUND) reject("แนบไฟล์ได้ไม่เกิน 10 ไฟล์ต่อครั้งที่ส่ง");
       }
       if (env.hasObject && !env.hasObject(TEST_BUCKET, p_storage_path)) reject("ไม่พบไฟล์ที่อัปโหลด กรุณาอัปโหลดไฟล์ใหม่");
-      if (!ALLOWED_MIME.includes(p_mime_type)) reject("ชนิดไฟล์นี้ไม่รองรับ (รับรูปภาพ PDF Word Excel PowerPoint ข้อความ และ CSV)");
+      // ชนิดไฟล์: ฐานข้อมูลจริงใช้ mimetype ที่ Storage จดไว้ (มาจาก file.type ของไฟล์ที่ส่งขึ้น) ไม่เชื่อ p_mime_type · env.objectMime จำลองค่านั้น (ไม่ส่ง = ใช้ p_mime_type)
+      const mime = env.objectMime ? env.objectMime(TEST_BUCKET, p_storage_path) : p_mime_type;
+      if (env.objectMime && !mime) reject("ตรวจชนิดหรือขนาดของไฟล์ที่อัปโหลดไม่ได้ กรุณาอัปโหลดไฟล์ใหม่");
+      if (!ALLOWED_MIME.includes(mime)) reject("ชนิดไฟล์นี้ไม่รองรับ (รับรูปภาพ PDF Word Excel PowerPoint ข้อความ และ CSV)");
+      if (MIME_BY_EXTENSION[match[2]] !== mime) reject("นามสกุลไฟล์ไม่ตรงกับชนิดของไฟล์ กรุณาอัปโหลดไฟล์ใหม่");
       if (!(p_size_bytes > 0) || p_size_bytes > MAX_FILE_BYTES) reject("ไฟล์ต้องมีขนาดไม่เกิน 20 MB");
-      const row = { id: newId(), work_order_id: order.id, rework_id: p_rework_id ?? null, storage_path: p_storage_path, file_name: fileName, mime_type: p_mime_type, size_bytes: p_size_bytes, uploaded_by: who.id, created_at: stamp() };
+      const row = { id: newId(), work_order_id: order.id, rework_id: p_rework_id ?? null, storage_path: p_storage_path, file_name: fileName, mime_type: mime, size_bytes: p_size_bytes, uploaded_by: who.id, created_at: stamp() };
       attachments.push(row);
       return row.id;
     },

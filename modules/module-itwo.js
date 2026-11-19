@@ -228,9 +228,12 @@
     async function run() {
       release();
       const failed = await model.runUploads(entries, {
-        // upsert: false = เขียนทับไม่ได้ (ฐานข้อมูลไม่มี policy UPDATE) · contentType ตามนามสกุล ไม่เชื่อ file.type ของเบราว์เซอร์
+        // upsert: false = เขียนทับไม่ได้ (ฐานข้อมูลไม่มี policy UPDATE)
+        // ชนิดไฟล์: supabase-js ส่ง File/Blob ผ่าน FormData และไม่ใช้ options.contentType → Storage จดชนิดจาก file.type ของเบราว์เซอร์ (CSV บน Windows
+        // เป็น application/vnd.ms-excel, docx บางเครื่องว่าง) ซึ่งไม่ตรงนามสกุล ฐานข้อมูลจะปฏิเสธ · จึงห่อเป็น File ใหม่ที่ type ตามนามสกุลก่อนส่ง (ตรงกับ private.itwo_ext_matches_mime)
         upload: async (entry) => {
-          const { error } = await bucket.upload(entry.path, entry.file, { contentType: model.fileMime(entry.file), upsert: false });
+          const typed = new File([entry.file], entry.file.name, { type: model.fileMime(entry.file) });
+          const { error } = await bucket.upload(entry.path, typed, { upsert: false });
           if (error) throw error;
         },
         register: (entry) => rpc("app_itwo_add_attachment", {
@@ -370,6 +373,8 @@
       message.innerHTML = "";
       if (!stepper.check("all")) return;
       const files = chosenFiles(); // อ่านก่อน setFormBusy (ช่องที่ถูก disable จะไม่ถูกอ่านค่า)
+      // ฟอร์มเป็น novalidate: ระหว่างแปลงรูป (เช่น HEIC) attachment-image.js ตั้ง validationMessage ไว้ที่ช่องไฟล์ ส่งตอนนี้จะได้ไฟล์ที่ยังไม่แปลง
+      if (files.length && filesInput.validationMessage) { showFormError(escapeHtml(model.FILES_PREPARING_MESSAGE)); return; }
       const fileProblem = model.validateFiles(files);
       if (fileProblem) { showFormError(escapeHtml(fileProblem)); return; }
       const params = model.createParams(currentValues());
@@ -520,6 +525,7 @@
         if (errors.length) { steps.showFieldErrors(form, errors); return; }
         steps.clearFieldErrors(form);
         const files = chosenFiles(); // อ่านก่อน setFormBusy
+        if (files.length && filesInput.validationMessage) { showError(escapeHtml(model.FILES_PREPARING_MESSAGE)); return; } // ฟอร์ม novalidate: ยังแปลงรูปอยู่ (ดูฟอร์มแจ้งงาน)
         const fileProblem = model.validateFiles(files);
         if (fileProblem) { showError(escapeHtml(fileProblem)); return; }
         if (!(await confirmDialog({ title: "ส่งใบกลับให้ IT แก้ไขงาน?", message: "ใบจะกลับไปสถานะกำลังดำเนินการทันที ไม่ต้องอนุมัติใหม่ · ระบบบันทึกชื่อ วันที่ และเวลาของคุณไว้ในประวัติเอกสาร แก้ไขย้อนหลังไม่ได้", confirmLabel: "ส่งให้ IT แก้ไข" }))) return;

@@ -396,7 +396,8 @@
   });
   const FILE_ACCEPT = ["image/*", ...Object.keys(FILE_MIME_BY_EXTENSION).map((extension) => `.${extension}`)].join(",");
   const FILE_HINT = `แนบได้ไม่เกิน ${MAX_FILES} ไฟล์ ไฟล์ละไม่เกิน ${MAX_FILE_BYTES / 1048576} MB · รูปภาพ PDF Word Excel PowerPoint ข้อความ และ CSV`;
-  const UNSUPPORTED_FILE_MESSAGE = "ชนิดไฟล์นี้ไม่รองรับ (รับรูปภาพ PDF Word Excel PowerPoint ข้อความ และ CSV)";
+  const FILES_PREPARING_MESSAGE = "กำลังเตรียมไฟล์ รอสักครู่ แล้วกดส่งอีกครั้ง";
+  const UNSUPPORTED_FILE_MESSAGE ="ชนิดไฟล์นี้ไม่รองรับ (รับรูปภาพ PDF Word Excel PowerPoint ข้อความ และ CSV)";
   const fileExtension = (name) => (/\.([A-Za-z0-9]+)$/.exec(String(name ?? ""))?.[1] ?? "").toLowerCase();
   const fileMime = (file) => FILE_MIME_BY_EXTENSION[fileExtension(file?.name)] ?? null;
   const fileBucket = (isTest) => (isTest ? "itwo-test-files" : "itwo-files");
@@ -423,9 +424,15 @@
     return null;
   }
   // รายการที่ต้องอัปโหลด: แต่ละไฟล์ได้ path ของตัวเองครั้งเดียว (ลองซ้ำใช้ path เดิม ไม่เกิดไฟล์กำพร้าซ้ำ) · uploaded/registered = ทำถึงขั้นไหนแล้ว
-  const makeUploadEntries = (orderId, files, uuid) => Array.from(files ?? []).map((file) => ({ file, path: filePath(orderId, uuid(), file), uploaded: false, registered: false, error: null }));
+  // nextPath() ออก path ใหม่ให้ไฟล์เดิม ใช้เมื่อไฟล์ที่ขึ้น Storage ไปแล้วถูกฐานข้อมูลปฏิเสธเพราะตัวไฟล์ (ดู isFileRejection)
+  const makeUploadEntries = (orderId, files, uuid) => Array.from(files ?? []).map((file) => ({
+    file, path: filePath(orderId, uuid(), file), nextPath: () => filePath(orderId, uuid(), file), uploaded: false, registered: false, error: null,
+  }));
   // Storage ตอบว่าไฟล์ path นี้มีอยู่แล้ว (ครั้งก่อนอัปโหลดสำเร็จแต่คำตอบไม่กลับมา) = ถือว่าอัปโหลดแล้ว ฐานข้อมูลจะตรวจว่าไฟล์อยู่จริงและเป็นของผู้เรียกตอนลงทะเบียน
   const isAlreadyUploaded = (error) => String(error?.statusCode ?? error?.status ?? "") === "409" || /already exists|duplicate/i.test(String(error?.message ?? ""));
+  // ฐานข้อมูลปฏิเสธการลงทะเบียนเพราะ "ตัวไฟล์ที่อยู่ใน Storage" (ไม่พบไฟล์ / ตรวจชนิดหรือขนาดไม่ได้ / นามสกุลไม่ตรงชนิด / ชนิดไม่รองรับ / ใหญ่เกิน)
+  // ลงทะเบียน path เดิมซ้ำไม่มีวันผ่าน (Storage เขียนทับไม่ได้) → ครั้งถัดไปต้องอัปโหลดใหม่ด้วย path ใหม่ · ข้อความเหล่านี้มาจาก app_itwo_add_attachment (ไทย)
+  const isFileRejection = (error) => /กรุณาอัปโหลดไฟล์ใหม่|^ชนิดไฟล์นี้ไม่รองรับ|^ไฟล์ต้องมีขนาดไม่เกิน/.test(String(error?.message ?? ""));
   // อัปโหลด + ลงทะเบียนทีละไฟล์ตามลำดับ แสดงความคืบหน้าผ่าน onStart(entry) (ก่อนเริ่มไฟล์) และ onProgress(done, total, entry) (หลังจบไฟล์) · ไฟล์ที่ล้มไม่หยุดไฟล์ที่เหลือ
   // upload(entry) / register(entry) เป็นตัวต่อจริงของ Storage / RPC (โยน error เมื่อพลาด) · เรียกซ้ำกับรายการเดิมได้: ข้ามขั้นที่ทำสำเร็จแล้ว
   // คืนรายการที่ยังไม่สำเร็จ (error เก็บไว้ที่ entry.error ให้ผู้เรียกแปลเป็นข้อความ)
@@ -449,6 +456,11 @@
         entry.registered = true;
       } catch (error) {
         entry.error = error;
+        // ไฟล์ถูกปฏิเสธที่ตัวไฟล์: ลองใหม่ = อัปโหลดอีกครั้งด้วย path ใหม่ (ไม่วนลงทะเบียน path เดิม) · ไฟล์เก่าค้างใน Storage โดยไม่มีทะเบียน
+        if (entry.uploaded && !entry.registered && isFileRejection(error) && typeof entry.nextPath === "function") {
+          entry.uploaded = false;
+          entry.path = entry.nextPath();
+        }
       }
       done += 1;
       onProgress(done, pending.length, entry);
@@ -587,7 +599,7 @@
 
   const api = {
     YEAR_OFFSET, MAX_DETAILS, MAX_ORDER_REF, MAX_ATTACHMENT_NOTE, MAX_REASON, MAX_MISC_DETAIL, MAX_FILES, MAX_FILE_BYTES, DURATION_NOTE,
-    REQUEST_TYPES, LEGACY_REQUEST_TYPES, ATTACHMENT_FLAGS, ACCESS_SYSTEMS, ACCESS_ACTIONS, FILE_MIME_BY_EXTENSION, FILE_ACCEPT, FILE_HINT, EMPTY_REWORK_FORM, STATUS_LABELS, EVENT_LABELS, ACTION_BUTTONS, ACTION_ORDER, IT_GROUPS, EMPTY_ORDER_FORM, SIGNATURE_SLOTS, APPROVAL_STATE_LABELS,
+    REQUEST_TYPES, LEGACY_REQUEST_TYPES, ATTACHMENT_FLAGS, ACCESS_SYSTEMS, ACCESS_ACTIONS, FILE_MIME_BY_EXTENSION, FILE_ACCEPT, FILE_HINT, FILES_PREPARING_MESSAGE, EMPTY_REWORK_FORM, STATUS_LABELS, EVENT_LABELS, ACTION_BUTTONS, ACTION_ORDER, IT_GROUPS, EMPTY_ORDER_FORM, SIGNATURE_SLOTS, APPROVAL_STATE_LABELS,
     requestTypeLabel, printRequestTypes, requestTypeText, reworkTag, attachmentFlagLabel, accessSystemLabel, accessActionLabel, statusLabel, statusBadgeClass, myStatusLabel, isTestDoc,
     todayBangkok, formatDate, formatDateTime, isRealDate, charCount, clip,
     visibleTabs, readView, viewAllowed, workOrderUrl, isUuid,
@@ -595,7 +607,7 @@
     itGroupOf, groupItOrders, itActionableCount, awaitingMyReceiveCount, itApprovalProgress, cardSummary,
     orderRules, createParams, validateReason,
     legacyAccessChanges, accessPrintRows,
-    fileExtension, fileMime, fileBucket, filePath, formatFileSize, validateFiles, makeUploadEntries, isAlreadyUploaded, runUploads, roundLabel, attachmentGroups, galleryFile, reworkRounds, reworkRules, reworkParams,
+    fileExtension, fileMime, fileBucket, filePath, formatFileSize, validateFiles, makeUploadEntries, isAlreadyUploaded, isFileRejection, runUploads, roundLabel, attachmentGroups, galleryFile, reworkRounds, reworkRules, reworkParams,
     formatDocNo, validateNextSeq, staffEditBlock, staffCandidateOptions, validateStaffForm, staffRoleText,
     describeError, describeUploadError, purgeSummary,
   };

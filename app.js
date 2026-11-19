@@ -1240,7 +1240,7 @@ function unsavedTextCount() {
     const panel = field.closest("#decision-panel");
     if (panel && panel.dataset.state !== "compose") return false;
     return field.value.trim() !== field.defaultValue.trim();
-  }).length + (window.MNP_ITWO?.unsavedCount?.() ?? 0); // + ส่วน "สำหรับแผนก IT" ของใบสั่งงาน IT ที่แก้ค้าง (modules/module-itwo.js)
+  }).length + (window.MNP_ITWO?.unsavedCount?.() ?? 0); // + ของค้างในใบสั่งงาน IT: ฟอร์มขอแก้ไขงานที่พิมพ์หรือเลือกไฟล์ค้าง และไฟล์แนบที่อัปโหลดไม่สำเร็จ (modules/module-itwo.js)
 }
 // ออกจากหน้าเมื่อยังมีไฟล์ที่ยังไม่อัปโหลดหรือข้อความที่พิมพ์ค้าง: ถามก่อน (ไฟล์มาก่อนเพราะลบไม่ได้หลังอัปโหลด)
 function leaveWarningPending() {

@@ -518,10 +518,12 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
   // ใบสั่งงาน IT (?itwo=1): ฐานข้อมูลจำลองเก็บในหน่วยความจำ ผู้ทำรายการ = persona ที่เลือกอยู่ (currentPersona) · createItwoMock ถูกฉีดมากับสคริปต์ของเบราว์เซอร์ (mockSupabaseScript)
   // objectKeys = ไฟล์ที่ "อัปโหลดแล้ว" ใน Storage จำลอง (คีย์ "<bucket>/<path>") ให้ app_itwo_add_attachment ตรวจว่าไฟล์อยู่จริง และ app_sandbox_purge_itwo คืนรายการไฟล์ทดสอบให้ลบ
   const objectKeys = new Set();
+  const objectMimes = new Map(); // คีย์เดียวกับ objectKeys → mimetype ที่ Storage จดไว้ตอนอัปโหลด (ฐานข้อมูลจริงอ่านชนิดไฟล์จากค่านี้)
   const itwoMock = sandbox && itwo
     ? createItwoMock({
       stamp: () => stamp(), now: () => now(), persona: () => currentPersona(), personas: () => personaRows(),
       hasObject: (bucket, path) => objectKeys.has(`${bucket}/${path}`),
+      objectMime: (bucket, path) => objectMimes.get(`${bucket}/${path}`) ?? null,
       listObjects: (bucket) => [...objectKeys].filter((key) => key.startsWith(`${bucket}/`)).map((key) => key.slice(bucket.length + 1)).sort(),
     })
     : null;
@@ -3157,13 +3159,14 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       // บัคเก็ตของใบสั่งงาน IT เขียนทับไม่ได้ (upsert: false) เหมือน Storage จริง: path ซ้ำ = 409
       if (bucket.startsWith("itwo-") && objectKeys.has(`${bucket}/${path}`)) return Promise.resolve({ data: null, error: Object.assign(new Error("The resource already exists"), { statusCode: "409" }) });
       objectKeys.add(`${bucket}/${path}`);
+      objectMimes.set(`${bucket}/${path}`, file?.type || null); // Storage จริงจดชนิดจาก file.type ของไฟล์ที่ส่ง (ไม่ใช้ options.contentType เมื่อส่ง File/Blob)
       if (objectUrl && file) files.set(`${bucket}/${path}`, objectUrl(file));
       return ok({ path });
     },
     createSignedUrl: (path) => ok({ signedUrl: fileUrl(bucket, path) }),
     createSignedUrls: (paths) => ok((paths ?? []).map((path) => ({ path, signedUrl: fileUrl(bucket, path), error: fileUrl(bucket, path) ? null : "Object not found" }))),
     remove(paths) {
-      for (const path of paths ?? []) { objectKeys.delete(`${bucket}/${path}`); files.delete(`${bucket}/${path}`); }
+      for (const path of paths ?? []) { objectKeys.delete(`${bucket}/${path}`); objectMimes.delete(`${bucket}/${path}`); files.delete(`${bucket}/${path}`); }
       return ok((paths ?? []).map((path) => ({ name: path })));
     },
   });

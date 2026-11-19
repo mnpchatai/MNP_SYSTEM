@@ -50,6 +50,8 @@ function world({ as = "emp", draft = null } = {}) {
     stamp: () => new Date(NOW + (calls.clock += 60000)).toISOString(), now: () => NOW + clock.offset,
     persona: () => PEOPLE[current], personas: () => Object.values(PEOPLE),
     hasObject: (bucket, path) => objects.has(`${bucket}/${path}`),
+    // Storage จริงจด mimetype จาก file.type ของไฟล์ที่ส่งขึ้น (supabase-js ไม่ใช้ options.contentType เมื่อส่ง File/Blob) ฐานข้อมูลอ่านชนิดจากค่านี้
+    objectMime: (bucket, path) => objects.get(`${bucket}/${path}`)?.type || null,
     listObjects: (bucket) => [...objects.keys()].filter((key) => key.startsWith(`${bucket}/`)).map((key) => key.slice(bucket.length + 1)),
   });
   let current = as;
@@ -99,7 +101,7 @@ function world({ as = "emp", draft = null } = {}) {
   };
   Object.assign(context, {
     window: context, console, URLSearchParams, Intl, Date, Number, Object, Promise, Array, JSON, Math, Set, Map, String, Boolean, Event: class {}, document: documentStub,
-    escapeHtml, formatDate: (value) => `D(${value})`, location: { hash: "" }, app,
+    File, escapeHtml, formatDate: (value) => `D(${value})`, location: { hash: "" }, app,
     state: { employee: { id: "me" }, sandbox: null },
     crypto: { randomUUID: () => `aaaaaaaa-aaaa-4aaa-8aaa-${String(++uuidCounter).padStart(12, "0")}` },
     // ของ app.js ที่หน้ารายละเอียดเรียกเพื่อเติมไฟล์แนบ (ขอ signed URL แล้วเติมตัวอย่าง): ที่นี่แค่จดว่าถูกเรียกด้วยอะไร
@@ -109,9 +111,11 @@ function world({ as = "emp", draft = null } = {}) {
       storage: {
         from: (bucket) => ({
           async upload(path, file, options) {
-            calls.uploads.push({ bucket, path, name: file.name, options: plain(options) });
+            calls.uploads.push({ bucket, path, name: file.name, type: file.type, options: plain(options) });
             const error = fail.upload?.(path, file, bucket);
             if (error) return { data: null, error };
+            // บัคเก็ตจริงรับเฉพาะชนิดที่กำหนด: ชนิดว่าง/ไม่อยู่ในรายการ = 415
+            if (!Object.values(context.window.MNP_ITWO_MODEL.FILE_MIME_BY_EXTENSION).includes(file.type)) return { data: null, error: Object.assign(new Error(`mime type ${file.type} is not supported`), { statusCode: "415" }) };
             if (objects.has(`${bucket}/${path}`)) return { data: null, error: Object.assign(new Error("The resource already exists"), { statusCode: "409" }) };
             objects.set(`${bucket}/${path}`, file);
             return { data: { path }, error: null };
@@ -416,7 +420,8 @@ async function closedOrder(w, overrides = {}) {
   w.calls.rpc.length = 0;
   return order;
 }
-const noFile = (name, size = 1000) => ({ name, size, type: "" });
+// ไฟล์ที่เบราว์เซอร์ให้ช่องเลือกไฟล์: File จริง (หน้าเว็บห่อ File ใหม่ตอนอัปโหลด) · type = ชนิดที่เบราว์เซอร์เดา (ว่างได้) ไม่ตรงนามสกุลได้
+const noFile = (name, size = 1000, type = "") => new File([new Uint8Array(size)], name, { type });
 
 test("'แก้ไขงาน': the button opens the form, the rework is sent with its details and due date, the order goes back to IT, and IT closes it again before the requester receives it", async () => {
   const w = world();
@@ -512,7 +517,7 @@ test("a rework with files: the round is created first, then each file is uploade
     [round.id, "ตัวอย่างสี.pdf", "application/pdf", 2048], [round.id, "รูป.JPG", "image/jpeg", 4096],
   ]);
   for (const args of registered) assert.match(args.p_storage_path, new RegExp(`^${order.id}/[0-9a-f-]{36}\\.(pdf|jpg)$`), "<order id>/<uuid>.<ext>, lower case");
-  assert.deepEqual(w.calls.uploads.map((upload) => [upload.bucket, upload.options.upsert, upload.options.contentType]), [["itwo-test-files", false, "application/pdf"], ["itwo-test-files", false, "image/jpeg"]]);
+  assert.deepEqual(w.calls.uploads.map((upload) => [upload.bucket, upload.options.upsert, upload.type]), [["itwo-test-files", false, "application/pdf"], ["itwo-test-files", false, "image/jpeg"]]);
   assert.deepEqual(w.calls.toasts.at(-1), { message: "แนบไฟล์ครบ 2 ไฟล์", kind: "info" });
   // หน้าโหลดใหม่: ไฟล์อยู่ใต้รอบที่ 1 และส่งให้กล่องดูไฟล์ของ app.js พร้อมบัคเก็ต
   assert.match(w.html, /<article class="itwo-rework-round" data-round="1">[\s\S]*ตัวอย่างสี\.pdf[\s\S]*รูป\.JPG[\s\S]*<\/article>/);
@@ -884,6 +889,82 @@ test("when the registration step fails the file is not uploaded twice on retry; 
   assert.equal(w.context.window.MNP_ITWO.unsavedCount(), 0, "after choosing to continue there is nothing left to ask about");
 });
 
+test("the file is sent to Storage with the type of its extension, not the browser's guess: a Windows .csv (application/vnd.ms-excel), a .docx with an empty type and an octet-stream .pdf are all registered", async () => {
+  const w = world();
+  await w.open("view=new");
+  w.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2026-11-25", files: [noFile("ราคา.csv", 300, "application/vnd.ms-excel"), noFile("สเปก.docx", 400, ""), noFile("แบบ.pdf", 500, "application/octet-stream")] });
+  await w.submit();
+  await flush();
+  const wordType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  // สิ่งที่ Storage รับจริง = file.type ของไฟล์ที่ส่ง (options.contentType ถูกเมินเมื่อส่ง File)
+  assert.deepEqual(w.calls.uploads.map((upload) => upload.type), ["text/csv", wordType, "application/pdf"]);
+  assert.deepEqual(w.calls.uploads.map((upload) => upload.name), ["ราคา.csv", "สเปก.docx", "แบบ.pdf"], "the original file name is kept");
+  const registered = w.mock.handlers.app_itwo_get_detail({ p_work_order_id: w.mock.handlers.app_itwo_list_mine()[0].id }).attachments;
+  assert.deepEqual(registered.map((file) => file.mime_type), ["text/csv", wordType, "application/pdf"], "the database keeps the type Storage recorded");
+  assert.match(w.hash, /view=order/, "all files registered: the order page opens");
+});
+
+test("the form is novalidate: while attachment-image.js is still converting a picture (validationMessage set) nothing is sent; once it is done the form goes through", async () => {
+  const w = world();
+  await w.open("view=new");
+  w.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2026-11-25", files: [noFile("รูป.heic", 800)] });
+  w.form.controls["#itwo-files"].validationMessage = "กำลังเตรียมรูป กรุณารอสักครู่";
+  await w.submit();
+  assert.match(w.elements["#itwo-message"].innerHTML, /กำลังเตรียมไฟล์ รอสักครู่ แล้วกดส่งอีกครั้ง/);
+  assert.equal(w.names().includes("app_itwo_create"), false, "no order is created from a file that is not ready");
+  assert.equal(w.calls.uploads.length, 0);
+  // เลือก "ไม่มี" = ไม่ส่งไฟล์ จึงไม่ต้องรอไฟล์
+  for (const radio of w.form.radios.attachment_flag) radio.checked = radio.value === "no";
+  await w.submit();
+  await flush();
+  assert.equal(w.names().filter((name) => name === "app_itwo_create").length, 1);
+  assert.equal(w.calls.uploads.length, 0);
+
+  const ready = world();
+  await ready.open("view=new");
+  ready.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2026-11-25", files: [noFile("รูป.jpg", 800)] });
+  ready.form.controls["#itwo-files"].validationMessage = "";
+  await ready.submit();
+  await flush();
+  assert.equal(ready.calls.uploads.length, 1);
+});
+
+test("the rework form is novalidate too: it does not send while a picture is still being prepared", async () => {
+  const w = world();
+  const order = await closedOrder(w);
+  await w.open(`view=order&id=${order.id}`);
+  await w.click("request_rework");
+  w.elements["#itwo-rework-details"].value = "แก้";
+  w.elements["#itwo-rework-due"].value = "2026-12-05";
+  w.elements["#itwo-rework-files"].files = [noFile("รูป.heic", 800)];
+  w.elements["#itwo-rework-files"].validationMessage = "กำลังเตรียมรูป กรุณารอสักครู่";
+  await w.elements["#itwo-rework-form"].listeners.submit[0]({ preventDefault() {} });
+  await flush();
+  assert.match(w.elements["#itwo-rework-message"].innerHTML, /กำลังเตรียมไฟล์ รอสักครู่ แล้วกดส่งอีกครั้ง/);
+  assert.equal(w.names().includes("app_itwo_request_rework"), false);
+  assert.equal(w.calls.confirms.length, 0, "no confirmation asked before the files are ready");
+});
+
+test("a file the database refuses because of the file itself is not registered again under the same path: the retry uploads it afresh under a new path", async () => {
+  const w = world();
+  await w.open("view=new");
+  w.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2026-11-25", files: [noFile("ราคา.csv", 300, "text/csv")] });
+  w.rpcFail.set("app_itwo_add_attachment", Object.assign(new Error("นามสกุลไฟล์ไม่ตรงกับชนิดของไฟล์ กรุณาอัปโหลดไฟล์ใหม่"), { code: "23514" }));
+  await w.submit();
+  await flush();
+  assert.match(w.hosts["#itwo-form-card"], /นามสกุลไฟล์ไม่ตรงกับชนิดของไฟล์ กรุณาอัปโหลดไฟล์ใหม่/);
+  assert.equal(w.calls.uploads.length, 1);
+  await w.elements["#itwo-upload-retry"].listeners.click[0]();
+  await flush();
+  assert.equal(w.calls.uploads.length, 2, "uploaded again, not just registered again");
+  assert.notEqual(w.calls.uploads[1].path, w.calls.uploads[0].path, "a new path: Storage cannot overwrite the first object");
+  assert.match(w.calls.uploads[1].path, /^[0-9a-f-]{36}\/[0-9a-f-]{36}\.csv$/);
+  const registeredPaths = w.calls.rpc.filter((call) => call.name === "app_itwo_add_attachment").map((call) => call.args.p_storage_path);
+  assert.deepEqual(registeredPaths, [w.calls.uploads[0].path, w.calls.uploads[1].path]);
+  assert.match(w.hash, /view=order/, "registered the second time: the order page opens");
+  // ข้อความที่ไม่เกี่ยวกับตัวไฟล์ (หมดเวลาแนบ) ยังคงลงทะเบียน path เดิม ไม่อัปโหลดซ้ำ (ดูเทสต์ก่อนหน้า)
+});
+
 test("when the real database window (30 minutes) has closed, the mock refuses the registration just like the database", async () => {
   const w = world();
   await w.open("view=new");
@@ -954,7 +1035,7 @@ test("the files of an order are handed to app.js's gallery with the bucket of it
   assert.doesNotMatch(w.html, /attachment-gallery/);
   w.objects.set("itwo-test-files/x", {});
   const path = `${order.id}/aaaaaaaa-aaaa-4aaa-8aaa-000000000099.pdf`;
-  w.objects.set(`itwo-test-files/${path}`, {});
+  w.objects.set(`itwo-test-files/${path}`, { type: "application/pdf" }); // mimetype ที่ Storage จดไว้
   await w.context.sb.rpc("app_itwo_add_attachment", { p_work_order_id: order.id, p_rework_id: null, p_storage_path: path, p_file_name: "สเปค.pdf", p_mime_type: "application/pdf", p_size_bytes: 10 });
   await w.open(`view=order&id=${order.id}`);
   assert.match(w.html, /id="attachment-gallery"/);
