@@ -1281,9 +1281,9 @@ test("IT asks the requester: the button opens the form, an empty or over-long me
   // หน้าโหลดใหม่: รอผู้แจ้งตอบ ไม่มีปุ่มเริ่ม/ส่งงาน/ถามซ้ำ · ถาม-ตอบมีคำถาม · ไทม์ไลน์มีผู้ถามและข้อความย่อ
   assert.match(w.html, /<span class="badge more_info">รอผู้แจ้งตอบ<\/span>/);
   assert.deepEqual(w.buttons(), []);
-  assert.match(visibleText(w.html), /ถาม-ตอบ 1 ถาม · ทีม IT รอผู้แจ้งตอบ โดย ไอที ผู้ดูแล/);
+  assert.match(visibleText(w.html), /ถาม-ตอบ 1 ถาม · ทีม IT ยังไม่ตอบ โดย ไอที ผู้ดูแล/);
   assert.match(visibleText(w.html), /ถามผู้แจ้ง โดย ไอที ผู้ดูแล ถามผู้แจ้ง \(ทีม IT\): ขอไฟล์ต้นฉบับของโลโก้ด้วยครับ/);
-  assert.match(w.html, /ตอบแล้วใบกลับไปที่ อนุมัติครบ/);
+  assert.equal((visibleText(w.html).match(/รอผู้แจ้งตอบ/g) ?? []).length, 1, "the status is said once (header badge)");
 });
 
 test("the requester sees the question first and answers it: the answer is confirmed, sent, the toast names the stage, and the order is back where it was with both messages in the Q&A card", async () => {
@@ -1331,7 +1331,7 @@ test("an approver asks at their own stage: the order waits for the requester, th
   await flush();
   assert.deepEqual(w.buttons(), ["reject"], "while waiting for the requester an approver may only reject");
   assert.match(visibleText(w.html), /ถาม · ผู้จัดการแผนก/);
-  assert.match(visibleText(w.html), /ตอบแล้วใบกลับไปที่ รอผู้จัดการแผนก/);
+  assert.doesNotMatch(visibleText(w.html), /ตอบแล้วใบกลับไปที่/, "the return step is not repeated for the approver (the pending-steps line says it)");
   const refused = await w.context.sb.rpc("app_itwo_approve", { p_work_order_id: order.id });
   assert.match(refused.error.message, /รอผู้แจ้งตอบคำถามอยู่ ต้องรอคำตอบก่อนจึงจะอนุมัติได้/);
   // ผู้แจ้งตอบ → ผู้จัดการอนุมัติได้อีก

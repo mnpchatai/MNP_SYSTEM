@@ -313,10 +313,10 @@ const QUESTION2 = { id: 20, kind: "question", stage: "dept", body: "ใช้ก
 const pendingOf = (comment) => ({ comment_id: comment.id, stage: comment.stage, body: comment.body, asked_at: comment.created_at, asked_by_employee_no: comment.author_employee_no, asked_by_full_name: comment.author_full_name });
 const NEED_INFO = { ...DETAIL, status: "need_info", info_return_status: "in_progress", comments: [QUESTION], info_pending: pendingOf(QUESTION) };
 
-test("a need_info order shows the amber 'รอผู้แจ้งตอบ' badge and a line saying where it goes back to after the answer", () => {
+test("a need_info order shows the amber 'รอผู้แจ้งตอบ' badge once (no repeated status line)", () => {
   const html = pages.detailPage(NEED_INFO);
   assert.match(html, /<span class="badge more_info">รอผู้แจ้งตอบ<\/span>/);
-  assert.match(visibleText(html), /รอผู้แจ้งตอบ · ตอบแล้วใบกลับไปที่ กำลังดำเนินการ/);
+  assert.equal((visibleText(html).match(/รอผู้แจ้งตอบ/g) ?? []).length, 1);
   assert.doesNotMatch(pages.detailPage({ ...DETAIL }), /ตอบแล้วใบกลับไปที่/);
 });
 
@@ -358,7 +358,7 @@ test("without the right to answer the open question is in the Q&A card, marked a
   assert.doesNotMatch(html, /itwo-answer-card|itwo-answer-form/);
   const history = html.match(/<section class="card itwo-comments"[\s\S]*?<\/section>/)[0];
   assert.match(history, /ใช้กับงานไหน/);
-  assert.match(history, /<span class="badge more_info">รอผู้แจ้งตอบ<\/span>/);
+  assert.match(history, /<span class="badge more_info">ยังไม่ตอบ<\/span>/);
 });
 
 test("the Q&A card lists every message in order: ask/answer, stage, author, Thai date and time, escaped text with its line breaks kept, and its own files", () => {

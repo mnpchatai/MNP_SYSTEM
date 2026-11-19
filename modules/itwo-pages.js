@@ -277,7 +277,6 @@
         <h1>${esc(detail.doc_no)}</h1>
         <p class="request-detail-meta">${esc(meta)}</p>
         ${pending.length ? `<p class="request-detail-meta itwo-pending-steps">ยังไม่ได้อนุมัติ: ${esc(pending.join(" · "))}</p>` : ""}
-        ${detail.status === "need_info" ? `<p class="request-detail-meta itwo-pending-steps">${esc(model.statusLabel("need_info"))}${detail.info_return_status ? ` · ตอบแล้วใบกลับไปที่ ${esc(model.statusLabel(detail.info_return_status))}` : ""}</p>` : ""}
       </header>`;
   }
 
@@ -412,7 +411,7 @@
     if (!shown.length) return "";
     return `<section class="card itwo-comments" id="itwo-comments" aria-labelledby="itwo-comments-title"><h2 id="itwo-comments-title">ถาม-ตอบ <span class="detail-section-count">${shown.length}</span></h2>
       ${shown.map((row) => `<article class="itwo-comment is-${esc(row.kind)}" data-comment="${esc(row.id)}">
-        <h3><span class="itwo-comment-kind">${esc(row.kindLabel)}</span> · ${esc(row.stageLabel)}${pendingId !== null && String(row.id) === String(pendingId) ? ` <span class="badge more_info">${esc(model.statusLabel("need_info"))}</span>` : ""}</h3>
+        <h3><span class="itwo-comment-kind">${esc(row.kindLabel)}</span> · ${esc(row.stageLabel)}${pendingId !== null && String(row.id) === String(pendingId) ? ` <span class="badge more_info">ยังไม่ตอบ</span>` : ""}</h3>
         <p class="muted small">โดย ${esc(row.by)} · <time datetime="${esc(row.at)}">${esc(model.formatDateTime(row.at))}</time></p>
         <p class="itwo-text">${esc(row.body)}</p>
         ${row.files.length ? fileGrid(row.files) : ""}
