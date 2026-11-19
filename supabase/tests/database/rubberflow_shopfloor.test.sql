@@ -478,7 +478,7 @@ select set_config('test.res', (public.app_rf_save(jsonb_build_object('qcRecords'
 select is((select x ->> 'qc' from jsonb_array_elements(public.app_rf_master() -> 'lots') x where x ->> 'id' = 'MX-2'), 'pass', 'an all-pass result releases the held lot');
 select ok((select x ->> 'holdReasons' from jsonb_array_elements(public.app_rf_master() -> 'lots') x where x ->> 'id' = 'MX-2')::jsonb = '[]'::jsonb, 'and clears its hold reasons');
 
--- 10. ใบส่งมอบ: ผ่านเกณฑ์ของล็อตก่อน · SR รับมอบ · ป้อนผลผลิตกลับงาน BOM ต่อใบ ---------------------------------------
+-- 10. ใบส่งมอบ: ผ่านเกณฑ์ของล็อตก่อน · RB รับมอบ (20261204010000 · เดิม SR) · ป้อนผลผลิตกลับงาน BOM ต่อใบ ---------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('transfers', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.tr')::jsonb || '{"id":"TR-1"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createTransfer') $$, 'RF_FORBIDDEN', 'ST staff cannot create a transfer');
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
@@ -503,22 +503,22 @@ select is((select x ->> 'transferredQty' from jsonb_array_elements(public.app_rf
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('transfers', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.tr')::jsonb || '{"id":"TR-9","qtySent":1}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createTransfer') $$, 'RF_INVALID_TRANSFER', 'nothing is left to transfer from the lot');
 select set_config('test.trcopy', ((select x from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-1'))::text, true);
 select set_config('test.trbase', (public.app_rf_master() ->> 'version')::text, true);
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
-select throws_ok($$ select public.app_rf_save(jsonb_build_object('transfers', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"received","qtyReceived":58}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-1')))), (public.app_rf_master() ->> 'version')::bigint, 'receiveTransfer') $$, 'RF_FORBIDDEN', 'an RB member cannot receive a transfer');
+select public.app_sandbox_enter(current_setting('test.p_sbx_sr_staff')::uuid);
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('transfers', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"received","qtyReceived":58}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-1')))), (public.app_rf_master() ->> 'version')::bigint, 'receiveTransfer') $$, 'RF_FORBIDDEN', 'SR staff cannot receive a transfer any more (the RB department receives since 20261204010000)');
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('transfers', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"received","qtyReceived":58}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-1')))), (public.app_rf_master() ->> 'version')::bigint, 'receiveTransfer') $$, 'RF_FORBIDDEN', 'ST staff cannot receive a transfer');
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('transfers', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"received","qtyReceived":58}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-1')))), (public.app_rf_master() ->> 'version')::bigint, 'receiveTransfer') $$, 'RF_FORBIDDEN', 'WH staff cannot receive a transfer');
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('transfers', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"received","qtyReceived":58}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-1')))), (public.app_rf_master() ->> 'version')::bigint, 'receiveTransfer') $$, 'RF_FORBIDDEN', 'QA staff cannot receive a transfer');
-select public.app_sandbox_enter(current_setting('test.p_sbx_sr_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('transfers', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"received","qtyReceived":60}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-1')))), (public.app_rf_master() ->> 'version')::bigint, 'receiveTransfer') $$, 'RF_INVALID_TRANSFER', 'more than 102 percent of the sent quantity cannot be received');
 select set_config('test.bv', (public.app_bom_master() ->> 'version')::text, true);
 select set_config('test.res', (public.app_rf_save(jsonb_build_object('transfers', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"received","qtyReceived":58}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-1')))), (public.app_rf_master() ->> 'version')::bigint, 'receiveTransfer'))::text, true);
-select is(current_setting('test.res')::jsonb -> 'changes' -> 'transfers' -> 'upsert' -> 0 ->> 'status', 'received', 'SR receives the transfer');
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'transfers' -> 'upsert' -> 0 ->> 'status', 'received', 'an RB member receives the transfer');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'transfers' -> 'upsert' -> 0 ->> 'remaining', '58', 'the received quantity becomes the remaining quantity');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'transfers' -> 'upsert' -> 0 ->> 'condition', 'ok', 'the condition defaults to ok');
-select is(current_setting('test.res')::jsonb -> 'changes' -> 'transfers' -> 'upsert' -> 0 ->> 'receivedBy', current_setting('test.n_sbx_sr_staff'), 'the receiver is the persona');
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'transfers' -> 'upsert' -> 0 ->> 'receivedBy', current_setting('test.n_sbx_rb_staff'), 'the receiver is the persona');
 select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 0::numeric, 'receiving the mixing transfer feeds nothing back: the BOM job total is untouched');
 select is((select j ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 'in_progress', 'and the job keeps its status');
 select is((select jsonb_array_length(j -> 'reports') from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 0, 'no report entry is appended');
@@ -577,9 +577,9 @@ select throws_ok($$ select public.app_rf_save(jsonb_build_object('lots', jsonb_b
 -- 12. อบ (สถานีที่ 3) ----------------------------------------------------------------------------
 select set_config('test.cu', '{"id":"X","stage":"curing","orderId":"WO-S1","uom":"m","shift":"E","moldId":"MD-1","machine":"ใครก็ได้","sources":[{"type":"transfer","id":"TR-2","lotId":"EX-1","qty":280}],"params":{"temp":200,"time":150,"pressure":150},"goodQty":270,"scrapQty":10,"scrapReason":"ฟองอากาศที่ผิว"}', true);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('lots', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.cu')::jsonb || '{"id":"CU-1"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'recordCuring') $$, 'RF_INVALID_TRANSITION', 'curing needs the transfer to be received first');
-select public.app_sandbox_enter(current_setting('test.p_sbx_sr_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select set_config('test.bv', (public.app_bom_master() ->> 'version')::text, true);
-select is(public.app_rf_save(jsonb_build_object('transfers', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"received","qtyReceived":300}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-2')))), (public.app_rf_master() ->> 'version')::bigint, 'receiveTransfer') -> 'changes' -> 'transfers' -> 'upsert' -> 0 ->> 'remaining', '300', 'SR receives the second transfer');
+select is(public.app_rf_save(jsonb_build_object('transfers', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"received","qtyReceived":300}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-2')))), (public.app_rf_master() ->> 'version')::bigint, 'receiveTransfer') -> 'changes' -> 'transfers' -> 'upsert' -> 0 ->> 'remaining', '300', 'RB receives the second transfer');
 select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 0::numeric, 'receiving the extrusion transfer feeds nothing back either');
 select is((public.app_bom_master() ->> 'version')::bigint, current_setting('test.bv')::bigint, 'and the BOM counter does not move');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
@@ -598,8 +598,8 @@ select is(current_setting('test.res')::jsonb -> 'changes' -> 'lots' -> 'upsert' 
 select is((select x ->> 'usageSinceClean' from jsonb_array_elements(public.app_rf_master() -> 'molds') x where x ->> 'id' = 'MD-1'), '13', 'one more shot for the 20 pieces');
 select set_config('test.res', (public.app_rf_save(jsonb_build_object('transfers', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.tr')::jsonb || '{"id":"TR-3","lotId":"CU-1","from":"curing","to":"finishing","uom":"pcs","qtySent":270}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createTransfer'))::text, true);
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'transfers' -> 'upsert' -> 0 ->> 'to', 'finishing', 'the cured lot is transferred to finishing');
-select public.app_sandbox_enter(current_setting('test.p_sbx_sr_staff')::uuid);
-select is(public.app_rf_save(jsonb_build_object('transfers', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"received","qtyReceived":270}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-3')))), (public.app_rf_master() ->> 'version')::bigint, 'receiveTransfer') -> 'changes' -> 'transfers' -> 'upsert' -> 0 ->> 'status', 'received', 'SR receives the third transfer');
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select is(public.app_rf_save(jsonb_build_object('transfers', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"received","qtyReceived":270}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-3')))), (public.app_rf_master() ->> 'version')::bigint, 'receiveTransfer') -> 'changes' -> 'transfers' -> 'upsert' -> 0 ->> 'status', 'received', 'RB receives the third transfer');
 select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 0::numeric, 'receiving the curing transfer feeds nothing back: no piece has passed finishing yet');
 
 -- 20261202010000: WO ที่ผูกงาน BOM ไม่สร้างกล่องและไม่ป้อนยอดให้งานแล้ว (คลังแท่งยาว SR ตรวจใน bom_sr_rod_store.test.sql) ข้อ 13 ตรวจกล่องของ WO ที่ขายเป็นสินค้า
@@ -772,7 +772,7 @@ set local role authenticated;
 
 -- 16. audit และ delta ------------------------------------------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
-select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'receiveTransfer' and a ->> 'detail' = 'transfers +1' and a ->> 'user' = current_setting('test.n_sbx_sr_staff')), 'the history records a receipt by its action name and the persona');
+select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'receiveTransfer' and a ->> 'detail' = 'transfers +1' and a ->> 'user' = current_setting('test.n_sbx_rb_staff')), 'the history records a receipt by its action name and the persona');
 select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'createRequisition' and a ->> 'detail' = 'requisitions +1'), 'and a requisition');
 select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'weighLine' and a ->> 'detail' = 'requisitions +1'), 'and a weighing');
 select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'issueRequisition' and a ->> 'detail' = 'requisitions +1'), 'and an issue of a whole old requisition');

@@ -1594,6 +1594,28 @@
     return [...byCode.values()].map((entry) => ({ ...entry, free: rodRound(entry.free), owned: rodRound(entry.owned), held: rodRound(entry.held), pending: rodRound(entry.pending) }))
       .sort((a, b) => (a.itemCode < b.itemCode ? -1 : a.itemCode > b.itemCode ? 1 : 0));
   }
+  // โมดูลคลังยางเส้นยาว SR (20261204010000_bom_sr_store_module.sql): ตำแหน่งจัดเก็บที่ SR พิมพ์เอง (1-40 ตัวอักษร) · ที่มาของล็อต order = ล็อตตกแต่งของ WO ที่ผูกงาน BOM
+  // opening = SR หรือฝ่ายวางแผนรับเข้าเองนอกใบสั่ง (สต็อกกลาง ไม่มีใบ งาน WO สเปก หรือผลตรวจ) · เลขล็อตนอกใบสั่งห้ามขึ้นต้นด้วย FN- (เลขของล็อตตกแต่ง RubberFlow)
+  const ROD_LOCATION_MAX = 40;
+  const ROD_LOT_NO_MAX = 40;
+  const ROD_RESERVED_LOT_PREFIX = "FN-";
+  const ROD_SOURCE_LABEL = Object.freeze({ order: "จากใบสั่งผลิต", opening: "รับนอกใบสั่ง" });
+  // คุณสมบัติยางของรหัสเส้นยาง (RB) ที่หน้าคลังยางเส้นยาว หน้าล็อต และป้ายใช้ร่วมกัน: ชื่อ สูตรยาง สี ขนาด จากทะเบียนชิ้น (item.rubber) ช่องที่ทะเบียนไม่มีอ่านจากรหัส (parseRbCode)
+  // คืน { code, name, compound, color, colorName, size, text } · size = "ยาว 1000 × รู 5 × วงนอก 12 มม." เฉพาะมิติที่มากกว่า 0 · text = สูตร / สี / ขนาด ที่มีคั่นด้วย " · " ('' = ไม่มีข้อมูล)
+  function rodAttrs(items, itemCode, colors = []) {
+    const code = canonicalCode(itemCode);
+    const item = (items ?? []).find((entry) => entry.code === code) ?? null;
+    const rubber = item?.rubber && typeof item.rubber === "object" ? item.rubber : {};
+    const parsed = parseRbCode(code) ?? {};
+    const pick = (key) => (rubber[key] === undefined || rubber[key] === null || String(rubber[key]).trim() === "" ? parsed[key] : rubber[key]);
+    const compound = String(pick("compound") ?? "").trim().toUpperCase();
+    const color = String(pick("color") ?? "").trim().toUpperCase();
+    const dims = [["ยาว", pick("lengthMm")], ["รู", pick("holeMm")], ["วงนอก", pick("odMm")]].filter(([, value]) => Number(value) > 0);
+    const size = dims.length ? `${dims.map(([label, value]) => `${label} ${fmtNum(Number(value))}`).join(" × ")} มม.` : "";
+    const named = color ? colorName(color, colors) : "";
+    const text = [compound ? `สูตร ${compound}` : "", named ? `สี ${named}` : "", size].filter(Boolean).join(" · ");
+    return { code, name: String(item?.name ?? ""), compound, color, colorName: named, size, text };
+  }
 
   // ---------- จัดรูปแบบ ----------
   // วันที่แบบเดียวกับ formatDate ของระบบหลัก: วัน เดือนย่อ ปี พ.ศ. 4 หลัก (เช่น 6 พ.ย. 2569)
@@ -1640,6 +1662,7 @@
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
     normalizeUom, uomLabel, ceilCountQty, issueDefaultQty, bangkokDay, bomRevisionLocked, rbPerSe, rbCutQty, rbCutDiffers, parseDelimited, detectHeader, readFlatRows, sheetNumber, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, partShortAllOrders, jobSupplyLimit, fgLabel, suggestFgName, draftBefore, draftPartDemand, draftRubberJobs, partReserved, partOnOrder, partReturned, partReturnLines, fgPosition, fgReverseBlock, fgReverseReopens, fgOnHand, fgFreeList, fgStockForDraft, fgStockLock, noBomInOrder, countedCodes,
     ROD_SPEC_KEYS, ROD_SPEC_LABEL, ROD_STATUS_LABEL, ROD_DECISION_LABEL, ROD_FREE_ORDER, rodBalance, rodOwnerFree, rodBuckets, rodFree, rodOwned, rodFifo, qcVerdict, rodCodesOf, rodStockForDraft, rodTaken, rodIssued, rodReversedIds, rodIssueNeeds, rodSummary,
+    ROD_LOCATION_MAX, ROD_LOT_NO_MAX, ROD_RESERVED_LOT_PREFIX, ROD_SOURCE_LABEL, rodAttrs,
     DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };

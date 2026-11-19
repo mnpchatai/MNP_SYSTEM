@@ -2863,8 +2863,8 @@ test("a transfer receipt does not touch the BOM job; when pieces pass finishing 
   await saved(rf(rbHead).run("endRest", { lotId: lot.result, reason: "ทดสอบเร่งด่วน" }));
   const transfer = await saved(rf(rbHead).run("createTransfer", { lotId: lot.result, qty: 10.5 }));
 
-  // SR รับมอบ: ไม่เขียน BOM จึงไม่มีอะไรให้ตามทัน
-  const sr = await asPersona(scene, "persona-sr", realClock);
+  // RB รับมอบ (20261204010000 · เดิม SR): ไม่เขียน BOM จึงไม่มีอะไรให้ตามทัน
+  const sr = await asPersona(scene, "persona-rb", realClock);
   await rf(sr).ensureLoaded();
   await sr.store.ensureLoaded();
   const view = sr.context.MNP_RUBBERFLOW;
@@ -2888,12 +2888,12 @@ test("a transfer receipt does not touch the BOM job; when pieces pass finishing 
   await saved(rf(rb2).run("saveMold", { id: "MD-1", name: "แม่พิมพ์ 2 cavity", kind: "mold", unit: "shot", perCycle: 2, cleanEvery: 1000, pmLimit: 50000 }));
   const ex = await saved(rf(rb2).run("recordExtrusion", { transferId: transfer.result, useKg: 10.5, thickness: 2.5, width: 18, weightPerM: 160, goodQty: 10, dieId: "DIE-1" }));
   const tr2 = await saved(rf(rb2).run("createTransfer", { lotId: ex.result, qty: 10 }));
-  const sr2 = await fresh("persona-sr");
+  const sr2 = await fresh("persona-rb");
   await saved(rf(sr2).run("receiveTransfer", { id: tr2.result, qtyReceived: 10 }));
   const rb3 = await fresh("persona-rb");
   const cu = await saved(rf(rb3).run("recordCuring", { transferId: tr2.result, useQty: 10, moldId: "MD-1", temp: 200, time: 150, pressure: 150, goodQty: 10 }));
   const tr3 = await saved(rf(rb3).run("createTransfer", { lotId: cu.result, qty: 10 }));
-  const sr3 = await fresh("persona-sr");
+  const sr3 = await fresh("persona-rb");
   await saved(rf(sr3).run("receiveTransfer", { id: tr3.result, qtyReceived: 10 }));
   await sr3.store.catchUp();
   assert.deepEqual([jobOf(sr3).qtyDone, jobOf(sr3).reports.length], [0, 0], "no receipt of any station moved the job");

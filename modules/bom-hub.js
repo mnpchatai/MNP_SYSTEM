@@ -1306,11 +1306,13 @@
   }
   const lotFacts = (ctx, lot, extra = []) => ctx.ui.kv([
     ["เส้นยาง", `${ctx.ui.mono(lot.itemCode)}${rodItemName(ctx, lot.itemCode) ? `<div class="small muted">${esc(rodItemName(ctx, lot.itemCode))}</div>` : ""}`],
-    ["ใบสั่งผลิต", `${ctx.ui.link(lot.orderId, ctx.url("orders", { sel: lot.orderId }), "rf-mono")} <span class="small muted">${esc(`งาน ${lot.jobNo} · WO ${lot.woNo}`)}</span>`],
+    // ล็อตรับนอกใบสั่ง (20261204010000) ไม่มีใบ งาน และ WO: บอกที่มาแทน
+    lot.orderId ? ["ใบสั่งผลิต", `${ctx.ui.link(lot.orderId, ctx.url("orders", { sel: lot.orderId }), "rf-mono")} <span class="small muted">${esc(`งาน ${lot.jobNo} · WO ${lot.woNo}`)}</span>`]
+      : ["ที่มา", esc(`${ctx.rules.ROD_SOURCE_LABEL.opening}${lot.sourceNote ? ` · ${lot.sourceNote}` : ""}`)],
     ...extra,
   ]);
 
-  // SR รับแท่งเข้าคลัง: จำนวนที่รับ (ไม่เกินที่ส่งมา) + ค่าที่วัด · มีสเปก = ผลคำนวณสด (ผ่าน = เข้าคลังและนับเข้างาน RB · ไม่ผ่าน = กักรอ QA) · ไม่มีสเปก = SR เลือกผ่าน / ไม่ผ่านเอง
+  // SR รับแท่งเข้าคลัง: จำนวนที่รับ (ไม่เกินที่ส่งมา) + ตำแหน่งจัดเก็บ (จำเป็น 1-40 ตัวอักษร · 20261204010000) + ค่าที่วัด · มีสเปก = ผลคำนวณสด (ผ่าน = เข้าคลังและนับเข้างาน RB · ไม่ผ่าน = กักรอ QA) · ไม่มีสเปก = SR เลือกผ่าน / ไม่ผ่านเอง
   // หมายเหตุจำเป็นเมื่อไม่ผ่าน (3-300) · ส่งทันทีเมื่อกดบันทึก
   dialogs.rodReceive = (ctx, { lotId }) => {
     const { ui, rules, data } = ctx;
@@ -1338,7 +1340,7 @@
     };
     const body = `<form novalidate id="bom-rod-receive-form" data-rf-form="receiveRods" data-rf-args="${attr(JSON.stringify({ lotId: lot.id }))}" data-rf-success="บันทึกรับ {result} แล้ว">
       ${lotFacts(ctx, lot, [["ส่งมา", esc(`${rules.fmtQty(lot.qtySent)} ${unit}`)]])}
-      <div class="rf-grid rf-g2">${ui.field(`จำนวนที่รับ (${unit})`, ui.input("qtyReceived", { type: "number", step: "any", min: 0, max: lot.qtySent, value: lot.qtySent, required: true, id: "rod-qty", extra: "data-rod-qty" }), { id: "rod-qty", required: true })}${values}${pick}</div>
+      <div class="rf-grid rf-g2">${ui.field(`จำนวนที่รับ (${unit})`, ui.input("qtyReceived", { type: "number", step: "any", min: 0, max: lot.qtySent, value: lot.qtySent, required: true, id: "rod-qty", extra: "data-rod-qty" }), { id: "rod-qty", required: true })}${ui.field("ตำแหน่งจัดเก็บ", ui.input("location", { id: "rod-location", placeholder: "เช่น A-01", required: true, extra: `maxlength="${rules.ROD_LOCATION_MAX}" title="ชั้นหรือโซนที่วางล็อตนี้ ค้นหาและย้ายภายหลังได้"` }), { id: "rod-location", required: true })}${values}${pick}</div>
       <div data-rod-verdict role="status" aria-live="polite"></div>
       <div class="field rf-field"><label for="rod-note">หมายเหตุ <span class="field-required" data-rod-note-req hidden>(จำเป็น)</span></label>${ui.input("note", { id: "rod-note", placeholder: "เช่น ผิวเป็นคลื่น ความหนาเกิน", extra: 'maxlength="300" data-rod-note' })}</div>
     </form>`;
@@ -1493,7 +1495,7 @@
       const main = lot.status === "pending" && canStore ? ui.openButton("รับเข้าคลัง", "rodReceive", { lotId: lot.id }, { className: "small" })
         : lot.status === "held" && canDecide ? ui.openButton("ตัดสิน", "rodDecide", { lotId: lot.id }, { className: "small" }) : "";
       const amount = lot.status === "pending" ? `ส่งมา ${rodQty(ctx, lot.qtySent, lot.uom)}` : lot.status === "stored" ? (left.length ? left.join(" · ") : "จ่ายหมดแล้ว") : rodQty(ctx, lot.qtyReceived ?? lot.qtySent, lot.uom);
-      return `<tr><td><span class="rf-mono">${esc(lot.lotNo)}</span><div class="small muted">${code ? "" : `<span class="rf-mono">${esc(lot.itemCode)}</span> · `}${esc(`ใบ ${lot.orderId}`)}</div></td><td>${rodStatusBadge(ctx, lot)}</td><td class="small">${esc(amount)}</td><td class="right"><div class="rf-row rf-end">${main}${ui.openButton("ประวัติ", "rodLot", { lotId: lot.id }, { className: "secondary small", ariaLabel: `ประวัติล็อต ${lot.lotNo}` })}</div></td></tr>`;
+      return `<tr><td><span class="rf-mono">${esc(lot.lotNo)}</span><div class="small muted">${code ? "" : `<span class="rf-mono">${esc(lot.itemCode)}</span> · `}${esc(lot.orderId ? `ใบ ${lot.orderId}` : rules.ROD_SOURCE_LABEL.opening)}</div></td><td>${rodStatusBadge(ctx, lot)}</td><td class="small">${esc(amount)}</td><td class="right"><div class="rf-row rf-end">${main}${ui.openButton("ประวัติ", "rodLot", { lotId: lot.id }, { className: "secondary small", ariaLabel: `ประวัติล็อต ${lot.lotNo}` })}</div></td></tr>`;
     });
     const lotTable = ui.table(["ล็อต", "สถานะ", "คงเหลือ", ""], lotRows, { emptyText: "ไม่มีล็อต" });
     // งานของฉันอยู่ที่โมดูลของแผนก: SR / QA กลับไปโมดูลของตน ฝ่ายวางแผนไปโมดูล SR · แผนกอื่น (GR) ดูหน้านี้ได้อย่างเดียว ไม่มีลิงก์ไปโมดูลที่ไม่ใช่ของตน

@@ -374,11 +374,11 @@ insert into public.rf_transfers (is_test, transfer_no, lot_no, order_no, from_st
   (true, 'TR-GN-1', 'MX-GN-1', 'WO-GN', 'mixing', 'extrusion', 'kg', 50, 0, 'in_transit');
 update public.rf_master_state set version = version + 1 where is_test;
 set local role authenticated;
-select public.app_sandbox_enter(current_setting('test.p_sbx_sr_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select ok(g2_t.rf(jsonb_build_object('transfers', jsonb_build_object('upsert', jsonb_build_array(
   (select x || '{"status":"received","qtyReceived":50}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-GS-1'),
   (select x || '{"status":"received","qtyReceived":50}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-GN-1')))), 'receiveTransfer') is not null,
-  'SR receives both mixing transfers at extrusion');
+  'RB receives both mixing transfers at extrusion');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select is(g2_t.ex('EX-GS-1', 'WO-GS', 'TR-GS-1', 'MX-GS-1', '{"thickness":2.55,"width":18.1,"weightPerM":999}'::jsonb) -> 'changes' -> 'lots' -> 'upsert' -> 0 ->> 'qc', 'pass',
   'in spec for the dimensions the recipe defines: pass (the weight per metre has no spec, so 999 g/m does not hold the lot)');

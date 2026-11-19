@@ -503,7 +503,7 @@ test("QA shows the rod lots held for a decision and the RubberFlow lots held in 
   // SR รับล็อตที่ไม่ผ่านขนาด → กักรอ QA
   env.store.setUser("B11");
   const pending = env.store.data().rodLots.find((lot) => lot.status === "pending");
-  const outcome = env.store.run("receiveRods", { lotId: pending.id, qtyReceived: pending.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ขนาดเกินสเปก" });
+  const outcome = env.store.run("receiveRods", { lotId: pending.id, qtyReceived: pending.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ขนาดเกินสเปก", location: "Q-01" });
   assert.equal(outcome.ok, true, String(outcome.error?.message ?? ""));
   env.store.setUser("B12");
   const html = await env.open("FACTORY_QA");
@@ -659,7 +659,7 @@ test("QA: held rod lots are cards with the decide button, the RubberFlow held lo
   const env = load({ employee: emp("QA") });
   env.store.setUser("B11");
   const pending = env.store.data().rodLots.find((lot) => lot.status === "pending");
-  assert.equal(env.store.run("receiveRods", { lotId: pending.id, qtyReceived: pending.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ขนาดเกินสเปก" }).ok, true);
+  assert.equal(env.store.run("receiveRods", { lotId: pending.id, qtyReceived: pending.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ขนาดเกินสเปก", location: "Q-01" }).ok, true);
   env.store.setUser("B12");
   const bom = cardsOf((await workPage(env)).html);
   assert.equal(bom.length, 1, "one held lot waits for QA");
@@ -1107,7 +1107,7 @@ test("side menu: QA has only งานของฉัน, counted by its work ca
   const env = load({ employee: emp("QA") });
   env.store.setUser("B11");
   const pending = env.store.data().rodLots.find((lot) => lot.status === "pending");
-  assert.equal(env.store.run("receiveRods", { lotId: pending.id, qtyReceived: pending.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ขนาดเกินสเปก" }).ok, true);
+  assert.equal(env.store.run("receiveRods", { lotId: pending.id, qtyReceived: pending.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ขนาดเกินสเปก", location: "Q-01" }).ok, true);
   env.store.setUser("B12");
   const html = await env.open("FACTORY_QA");
   assert.equal(h1Of(html), "งานของฉัน");

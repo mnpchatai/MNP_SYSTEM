@@ -2767,6 +2767,7 @@
     reportJob: "รายงานผลงาน", setJobStatus: "เปลี่ยนสถานะงาน / ปิดงาน", linkJobToRubberFlow: "ผูก WO ของ RubberFlow", saveCustomer: "บันทึกลูกค้า",
     countPartStock: "นับสต็อกของซื้อ", issueOrderParts: "เบิกจ่ายของซื้อ", undoOrderParts: "ยกเลิกการเบิกจ่ายของซื้อ", returnOrderParts: "คืนของเหลือของซื้อ",
     receiveRods: "รับแท่งเข้าคลังแท่งยาว (SR)", decideRods: "ตัดสินล็อตแท่งที่กัก (QA)", issueRods: "จ่ายแท่งให้ GR", reverseRodIssue: "ย้อนการจ่ายแท่ง", adjustRods: "ปรับยอดแท่งในคลัง",
+    receiveRodsOpening: "รับยางเส้นยาวนอกใบสั่ง (SR)", setRodLocation: "ย้ายตำแหน่งยางเส้นยาว (SR)",
     "rubberflow:recordFinishing": "แท่งจากล็อตตกแต่งเข้าคิวรับของคลังแท่งยาว (RubberFlow)", "rubberflow:addQcRecord": "แท่งจากล็อตตกแต่งที่ QA ปล่อยเข้าคิวรับของคลังแท่งยาว (RubberFlow)",
     "rubberflow:createPurchaseOrder": "สั่งซื้อ (ใบสั่งซื้อใน RubberFlow)", "rubberflow:receivePurchaseLine": "รับของซื้อเข้าคลัง (ใบสั่งซื้อใน RubberFlow)",
   });
