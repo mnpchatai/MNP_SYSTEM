@@ -52,17 +52,14 @@
 --
 -- ยังไม่ทำ (งานถัดไป): แนบรูป, โหมดดูแทนผู้ใช้ (_as), การแจ้งเตือน (อีเมล/Push/กระดิ่ง), หน้าเว็บ (ช่วงที่ 3)
 --
--- นิยามที่ replace: private.sandbox_unguarded_tables จาก 20261121010000_bom_fg_receive_deliver.sql (เพิ่ม itwo_* 5 ตาราง ทุกชื่อเดิมคงไว้)
+-- รายการตารางโหมดทดสอบ: migration นี้ไม่ replace private.sandbox_unguarded_tables() (นิยามมาจาก 20261202010000_bom_sr_rod_store.sql ซึ่งรวม itwo_* 5 ตารางแบบมีเงื่อนไขไว้แล้ว)
+-- หมายเหตุ production: migration นี้ถูก apply ไปแล้วในชื่อ version 20261118093030 (ก่อนเปลี่ยนชื่อไฟล์เป็น 20261203010000) เนื้อหาเหมือนกันยกเว้นส่วน sandbox_unguarded_tables
+--   ที่ main ครอบให้แล้ว (ฟังก์ชันบน prod มาจาก bom_sr_rod_store ที่ apply ทับเป็น version 20261119015153)
 -- ตาราง/ฟังก์ชันกลางของ MNP_SYSTEM ที่ "ไม่แตะ": employees, departments, roles, requests, approval_steps, app_create_request ฯลฯ
 --   (เพิ่มแถว persona 3 แถวใน employees แบบ migration โหมดทดสอบรุ่นก่อน ๆ เท่านั้น)
 --
 -- ลำดับ deploy: migration นี้ไม่กระทบโมดูลอื่น (ตารางและ RPC ใหม่ล้วน) ยังไม่มีหน้าเว็บเรียก apply ก่อนหรือหลัง merge ได้
---   ก่อน apply ที่ production: ต้องมีพนักงาน IT3462 และ FANG ที่ใช้งานอยู่ (ไม่เช่นนั้น migration ล้มโดยตั้งใจ) · เทียบ private.sandbox_unguarded_tables ก่อน apply
---   กับนิยามใน 20261121010000 (ที่ prod ต้องเป็นฉบับนี้ ไม่ใช่ฉบับที่ใครแก้ตรงในฐานข้อมูล):
---     md5(array_to_string(private.sandbox_unguarded_tables(), ','))               = 7190e1f82a7b097fa23ea02bf4e3f866 (49 ชื่อ)
---     md5(pg_get_functiondef('private.sandbox_unguarded_tables()'::regprocedure)) = bce55ad8b54c42aebd956f800ffd7a6e (ขึ้นบรรทัดแบบ LF)
---       (ค่าที่สองคำนวณบน Postgres ของ PGlite จากนิยามใน 20261121010000 ตัวอักษรต่อตัวอักษร ถ้า prod ต่างเพราะรูปแบบ pg_get_functiondef ให้ยึดค่าแรก ซึ่งไม่ขึ้นกับรูปแบบ)
---   ฉบับที่ replace ในไฟล์นี้ = ฉบับเดิมทุกชื่อ + itwo_work_orders, itwo_events, itwo_access_changes, itwo_doc_counters, itwo_admin_log ท้ายรายการ
+--   ก่อน apply ที่ production: ต้องมีพนักงาน IT3462 และ FANG ที่ใช้งานอยู่ (ไม่เช่นนั้น migration ล้มโดยตั้งใจ) · production apply ไปแล้ว ไม่ต้อง apply ซ้ำ
 --   หลัง apply ตรวจ relrowsecurity ของตาราง itwo_* และ grant ของ RPC (anon เรียกไม่ได้) และ service_role ไม่มีสิทธิ์ตรงบนตาราง/sequence itwo_*
 --
 -- ฐานข้อมูลที่ถือว่า "จริง" (ตอนรัน seed ข้อ 6) = มีพนักงานจริง (not is_test) ที่ auth_user_id ไม่ว่างอย่างน้อย 1 คน
@@ -75,7 +72,7 @@
 --
 -- Rollback (ตารางใหม่ ยังไม่มีข้อมูลจริง): drop function app_itwo_*, app_sandbox_purge_itwo, private.itwo_*;
 --   drop table itwo_admin_log, itwo_events, itwo_access_changes, itwo_work_orders, itwo_doc_counters, itwo_staff (ลูกก่อนแม่);
---   คืน private.sandbox_unguarded_tables จาก 20261121010000; ลบ persona SBX-IT-* (employees.employee_no like 'SBX-IT-%')
+--   ลบ persona SBX-IT-* (employees.employee_no like 'SBX-IT-%')
 --   ถ้ามีข้อมูลจริงแล้ว ห้ามย้อนด้วยการ drop (เป็นบันทึก ISO) ให้แก้ไปข้างหน้าด้วย migration ใหม่
 -- ============================================================================
 
@@ -321,24 +318,9 @@ create trigger itwo_work_orders_no_truncate before truncate on public.itwo_work_
   for each statement execute function private.itwo_work_order_guard();
 
 -- 4. ตารางใหม่รู้จักโหมดทดสอบแล้ว ------------------------------------------------------
--- (นิยามจาก 20261121010000_bom_fg_receive_deliver.sql ทุกชื่อ แล้วเพิ่ม itwo_* ที่รู้จักโหมดทดสอบ 5 ตาราง)
+-- ไม่ replace private.sandbox_unguarded_tables() ที่นี่: นิยามปัจจุบันมาจาก 20261202010000_bom_sr_rod_store.sql
+-- ซึ่งต่อท้าย itwo_work_orders/itwo_events/itwo_access_changes/itwo_doc_counters/itwo_admin_log แบบมีเงื่อนไข (to_regclass) จึงเห็นตารางของ migration นี้เองหลังสร้าง
 -- itwo_staff ไม่อยู่ในรายการ: ติดด่าน sandbox_guard แทน (แก้ไม่ได้ระหว่างอยู่ในโหมดทดสอบ กันแตะสิทธิ์จริงโดยไม่ตั้งใจ)
-create or replace function private.sandbox_unguarded_tables()
-returns text[] language sql immutable set search_path = '' as $$
-  select array['ncr_reports','ncr_responsibilities','ncr_losses','ncr_status_history','ncr_attachments',
-    'ncr_defect_types','document_counters','audit_logs','sandbox_sessions','ncr_outcomes','ncr_info_requests',
-    'qc_inspection_templates','qc_inspection_template_items','qc_inspection_reports',
-    'qc_inspection_items','qc_inspection_approvals','qc_inspection_history',
-    'bom_master_state','bom_items','bom_compounds','bom_colors','bom_color_sets','bom_packages',
-    'bom_boms','bom_bom_lines','bom_processes','bom_routings','bom_deleted_keys',
-    'bom_customers','bom_orders','bom_jobs','bom_stock','bom_stock_moves','bom_fg_moves',
-    'rf_master_state','rf_materials','rf_recipes','rf_orders','rf_deleted_keys',
-    'rf_molds','rf_material_lots','rf_requisitions','rf_lots','rf_transfers','rf_fg_boxes','rf_qc_records','rf_ncrs','rf_purchase_orders',
-    'client_error_logs',
-    'itwo_work_orders','itwo_events','itwo_access_changes','itwo_doc_counters','itwo_admin_log']
-$$;
-revoke all on function private.sandbox_unguarded_tables() from public, anon, authenticated;
-
 select private.sandbox_guard_table('public.itwo_staff');
 
 -- 5. บัญชีทดสอบ (persona) ของโมดูลนี้ -----------------------------------------------

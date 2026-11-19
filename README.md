@@ -890,8 +890,8 @@ migration `20261027010000_qc_inspection_reports.sql` เพิ่มฐานข
 
 ## ใบสั่งงาน IT (IT01-FM06) — ฐานข้อมูล (`itwo_*`) · ช่วงที่ 2 ของการย้ายจาก Work-Order
 
-ย้ายใบสั่งงาน IT ที่เคยเป็นระบบแยก (repo `mnpchatai/Work-Order`) มาเป็นตารางของโมดูลนี้เอง migration `20261202010000_itwo_work_orders.sql` · ทดสอบ `supabase/tests/database/itwo_work_orders.test.sql`
-**สถานะ: มีเฉพาะฐานข้อมูล (ตาราง + RPC) ยังไม่มีหน้าเว็บ (ช่วงที่ 3) และยังไม่ได้ apply ที่ production** ไม่แก้ตาราง/ฟังก์ชันกลาง (`requests`, `approval_steps`, `app_create_request` ฯลฯ) ผู้ใช้คือ `employees` ของ MNP_SYSTEM
+ย้ายใบสั่งงาน IT ที่เคยเป็นระบบแยก (repo `mnpchatai/Work-Order`) มาเป็นตารางของโมดูลนี้เอง migration `20261203010000_itwo_work_orders.sql` (บน production apply แล้วในชื่อ version `20261118093030` ก่อนเปลี่ยนชื่อไฟล์ เนื้อหาเหมือนกันยกเว้นส่วน `sandbox_unguarded_tables` ที่ main ครอบให้แล้ว) · ทดสอบ `supabase/tests/database/itwo_work_orders.test.sql`
+**สถานะ: มีเฉพาะฐานข้อมูล (ตาราง + RPC) ยังไม่มีหน้าเว็บ (ช่วงที่ 3) และ apply ที่ production แล้ว** ไม่แก้ตาราง/ฟังก์ชันกลาง (`requests`, `approval_steps`, `app_create_request` ฯลฯ) ผู้ใช้คือ `employees` ของ MNP_SYSTEM
 
 **ตาราง** (RLS เปิด ไม่ให้สิทธิ์ตรงกับ anon/authenticated อ่าน-เขียนผ่าน RPC เท่านั้น): `itwo_work_orders` (ใบ), `itwo_events` (ประวัติ ISO), `itwo_access_changes` (ส่วน "สำหรับแผนก IT"), `itwo_doc_counters` (ตัวนับเลขที่), `itwo_staff` (สิทธิ์ฝั่ง IT), `itwo_admin_log` (ประวัติการแก้สิทธิ์ IT / ตั้งเลขถัดไป)
 
@@ -932,10 +932,9 @@ admin คนอื่นของระบบ (role `admin`) และสมา�
 **RPC** (ข้อความ error เป็นภาษาไทย ใช้ errcode `42501` = ไม่มีสิทธิ์, `23514` = ข้อมูล/สถานะไม่ถูกต้อง): `app_itwo_my_role` (บทบาทของผู้ใช้ในโมดูล สำหรับหน้าเว็บ), `app_itwo_create`, `app_itwo_approve`, `app_itwo_reject`, `app_itwo_cancel`, `app_itwo_start`, `app_itwo_complete`, `app_itwo_receive`, `app_itwo_save_access_changes`, `app_itwo_get_detail` (ใบ + ไทม์ไลน์ชื่อผู้กระทำ + ส่วนสิทธิ์ + ปุ่มที่ทำได้), `app_itwo_list_mine`, `app_itwo_list_pending_approvals`, `app_itwo_pending_count`, `app_itwo_list_it`, `app_itwo_get_doc_counter`, `app_itwo_set_next_doc_seq`, `app_itwo_list_staff`, `app_itwo_set_staff`, `app_sandbox_purge_itwo`
 
 **ยังไม่ทำ (งานถัดไป):** แนบรูป (ของเดิมซ่อนอยู่), โหมดดูแทนผู้ใช้ (`_as`), การแจ้งเตือน (อีเมล/Push/กระดิ่ง), หน้าเว็บ และการจำกัดโมดูลตามแผนก (`department-access.js` เป็น UX ล้วน ฐานข้อมูลของโมดูลนี้ไม่ได้ตรวจแผนก ID)
-ก่อน apply ที่ production:
-1. ตรวจว่ามีพนักงาน `IT3462` และ `FANG` ที่ใช้งานอยู่ (ไม่เช่นนั้น migration ล้มโดยตั้งใจ)
-2. เทียบ `private.sandbox_unguarded_tables()` บน production กับนิยามใน `20261121010000_bom_fg_receive_deliver.sql` (ฉบับล่าสุดก่อน migration นี้): `select md5(array_to_string(private.sandbox_unguarded_tables(), ','))` ต้องได้ `7190e1f82a7b097fa23ea02bf4e3f866` (49 ชื่อ) · และ `select md5(pg_get_functiondef('private.sandbox_unguarded_tables()'::regprocedure))` ต้องได้ `bce55ad8b54c42aebd956f800ffd7a6e` (คำนวณจากนิยามใน `20261121010000` ที่ขึ้นบรรทัดแบบ LF บน Postgres ของ PGlite ถ้าค่าที่สองต่างเพราะรูปแบบ/ปลายบรรทัด ให้ยึดค่าแรกซึ่งไม่ขึ้นกับรูปแบบ) ถ้าไม่ตรง แปลว่ามีใครแก้ตรงในฐานข้อมูลหรือมี migration อื่นแก้ทับ ห้าม apply จนกว่าจะรู้สาเหตุ (migration นี้ replace ฟังก์ชันนี้ทั้งตัว)
-3. หลัง apply: ตรวจ `relrowsecurity` ของตาราง `itwo_*`, anon เรียก RPC ไม่ได้, และ `service_role` ไม่มีสิทธิ์ตรงบนตาราง/sequence `itwo_*` (มี pgTAP ตรวจให้แล้ว)
+หมายเหตุ production: migration นี้ถูก apply แล้ว (version `20261118093030`) ไม่ต้อง apply ซ้ำ
+`private.sandbox_unguarded_tables()` ไม่ถูก replace ในไฟล์นี้ นิยามมาจาก `20261202010000_bom_sr_rod_store.sql` ซึ่งต่อท้าย `itwo_*` 5 ตารางแบบมีเงื่อนไข (`to_regclass`) จึงเห็นตารางของ migration นี้เองหลังสร้าง
+ถ้า apply บนฐานข้อมูลใหม่: (1) ตรวจว่ามีพนักงาน `IT3462` และ `FANG` ที่ใช้งานอยู่ (ไม่เช่นนั้น migration ล้มโดยตั้งใจ) (2) หลัง apply ตรวจ `relrowsecurity` ของตาราง `itwo_*`, anon เรียก RPC ไม่ได้, และ `service_role` ไม่มีสิทธิ์ตรงบนตาราง/sequence `itwo_*` (มี pgTAP ตรวจให้แล้ว)
 
 ## สิ่งที่มีใน Phase 1
 
