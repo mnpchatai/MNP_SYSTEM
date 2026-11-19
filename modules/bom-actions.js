@@ -575,7 +575,15 @@
     if (!["released", "in_progress"].includes(order.status)) fail("ใบที่ปิดหรือยกเลิกแล้วแก้รายการสินค้าไม่ได้");
     const started = startedJobs(d, order, ctx?.rfOrders);
     if (started.length) fail(`แก้รายการไม่ได้ มีงานที่เริ่มแล้ว (${started.map((job) => `${job.dept} ${job.itemCode}`).slice(0, 3).join(", ")}${started.length > 3 ? " …" : ""}) ให้เปิดใบใหม่สำหรับส่วนที่เพิ่ม (ใบนี้ปิดเมื่อคลังสินค้ารับเข้าครบ)`);
+    // แท่งที่คลังแท่งยาว (SR) จ่ายให้ GR ตามใบนี้แล้ว = งานเริ่มแล้ว (ตรงกับ bom_save_orders ของ 20261202010000: BOM_INVALID_TRANSITION)
+    const issuedRods = rules().rodIssued(d, order.id);
+    if (issuedRods > 1e-9) fail(`แก้รายการไม่ได้ คลังแท่งยาว (SR) จ่ายแท่งให้ GR ตามใบนี้แล้ว ${rules().fmtQty(issuedRods)} เส้น (นับว่างานเริ่มแล้ว) ให้ SR ย้อนการจ่ายก่อน หรือเปิดใบใหม่สำหรับส่วนที่เพิ่ม`);
     const returned = returnFgStock(d, ctx, order); // สินค้าที่ใบนี้ได้จากสต็อกคืนกลับให้ใบต้นทาง (ยอดที่ตั้งใช้จากสต็อกในใบคงไว้)
+    // แท่งที่ใบนี้หยิบจากคลัง SR ตอนปล่อยผลิตกลับเข้าสต็อกกลาง (ไม่เกินที่ใบยังถืออยู่) · ยอดที่ตั้งใช้ในใบคงไว้ หักใหม่ตอนปล่อยผลิตครั้งหน้า
+    for (const take of rules().rodTaken(d, order.id)) {
+      pushRodMove(d, ctx, { lotId: take.lotId, itemCode: take.itemCode, kind: "transfer", qty: -take.qty, ownerOrderId: order.id, forOrderId: order.id });
+      pushRodMove(d, ctx, { lotId: take.lotId, itemCode: take.itemCode, kind: "transfer", qty: take.qty, ownerOrderId: null, forOrderId: order.id });
+    }
     const removed = d.jobs.filter((job) => job.orderId === order.id).length;
     d.jobs = d.jobs.filter((job) => job.orderId !== order.id);
     order.status = "draft";
@@ -902,6 +910,8 @@
     // งาน PK ของตัว FG = จำนวนสั่ง − ที่ใช้จากสต็อกสินค้าสำเร็จรูป (ฝ่ายวางแผนตั้งที่ขั้นตรวจของ) · ได้ครบจากสต็อก = ไม่มีงาน PK ของสินค้านั้น
     const net = R.netRequirements(order.explosion, order.stockCounts);
     const taking = fgTaking(d, order);
+    // เส้นยางที่ตั้งใช้จากคลังแท่งยาว (SR) ที่ขั้นตรวจของ: หักจากสต็อกกลางตอนปล่อย ล็อตเก่าก่อน (ใบที่ปล่อยก่อนได้ก่อน) · งาน RB ลดตามยอดนี้แล้ว (netRequirements)
+    const rods = rodTaking(d, order);
     let covered = 0;
     for (const entry of net) {
       if (!R.MANUFACTURED.includes(entry.kind) || entry.kind === "FG") continue;
@@ -933,8 +943,15 @@
       if (rows.length) pushFgMoves(d, ctx, order, "transfer", rows, "");
       if (fromStock) closeOrderNow(order, ctx);
     }
+    for (const take of rods) {
+      for (const row of take.rows) {
+        pushRodMove(d, ctx, { lotId: row.lotId, itemCode: take.itemCode, kind: "transfer", qty: -row.qty, ownerOrderId: row.owner, forOrderId: order.id });
+        pushRodMove(d, ctx, { lotId: row.lotId, itemCode: take.itemCode, kind: "transfer", qty: row.qty, ownerOrderId: order.id, forOrderId: order.id });
+      }
+    }
     const stockText = taking.length ? ` · ใช้สต็อกสินค้าสำเร็จรูป ${taking.length} รายการ${fromStock ? " ได้ครบทุกสินค้า ไม่มีงานผลิต" : ""}` : "";
-    audit(d, ctx, "ปล่อยผลิต", `${order.id} สร้างงาน ${d.jobs.filter((job) => job.orderId === order.id).length} รายการ${covered ? ` · ${covered} ชิ้นมีคงคลังพอ ไม่สร้างงาน` : ""}${stockText}`);
+    const rodText = rods.length ? ` · ใช้แท่งจากคลัง SR ${rods.map((take) => `${take.itemCode} × ${R.fmtQty(take.n)}`).join(", ")}` : "";
+    audit(d, ctx, "ปล่อยผลิต", `${order.id} สร้างงาน ${d.jobs.filter((job) => job.orderId === order.id).length} รายการ${covered ? ` · ${covered} ชิ้นมีคงคลังพอ ไม่สร้างงาน` : ""}${stockText}${rodText}`);
     return order.id;
   }
   // สินค้าที่ใบร่างตั้งใช้จากสต็อกสินค้าสำเร็จรูป (stockCounts[รหัสสินค้า] > 0) พร้อมใบต้นทางที่จะได้ของ (ใบที่ปล่อยผลิตก่อนมาก่อน ตามที่ฐานข้อมูลหัก)
@@ -977,7 +994,15 @@
     if (line.kind === "PURCHASED") fail(`${code} เป็นของซื้อ นับที่เมนู “คลังของซื้อ” (ยอดรวมต่อรหัส) ไม่นับตามใบ`);
     // ตัวสินค้าของใบ = ยอดที่ใช้จากสต็อกสินค้าสำเร็จรูป: ฝ่ายวางแผนตั้ง ไม่เกินจำนวนสั่งและไม่เกินสต็อกที่ใช้ได้ของใบนี้ (หักจากสต็อกจริงตอนปล่อยผลิต) · ST / WH นับชิ้นอื่นของใบได้ แต่ไม่ตั้งยอดนี้
     const product = order.items.some((item) => item.fgCode === code);
-    const value = num(qty, product ? "ยอดที่ใช้จากสต็อก" : "ยอดคงคลัง", { allowZero: true });
+    // เส้นยาง (RB) = ใช้จากคลังแท่งยาว (SR): ไม่เกินแท่งที่ใบต้องใช้ (เส้นเต็ม) และสต็อกกลางที่ใช้ได้กับใบนี้ (rules.rodStockForDraft) · หักจริงตอนปล่อยผลิต
+    const rod = !product && line.kind === "RB";
+    const value = num(qty, product || rod ? "ยอดที่ใช้จากสต็อก" : "ยอดคงคลัง", { allowZero: true });
+    if (rod) {
+      // ตั้งได้เฉพาะกลุ่มวางแผน (ฐานข้อมูลปฏิเสธ ST / WH ที่ตั้งคีย์รหัส RB ด้วย BOM_FORBIDDEN เหมือนคีย์สินค้า)
+      if (!canPlan(user)) fail("ตั้งยอดที่ใช้จากคลังแท่งยาว (SR) ได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น");
+      const row = rules().rodStockForDraft(d, order).find((entry) => entry.itemCode === code);
+      if (row && value > row.max + 1e-9) fail(value > row.available + 1e-9 ? `${code} คลังแท่งยาว (SR) มีสต็อกกลางที่ใช้ได้กับใบนี้ ${rules().fmtQty(row.available)}${row.taken > 0 ? ` (ใบร่างที่คำนวณก่อนใบนี้ตั้งใช้ไว้ ${rules().fmtQty(row.taken)})` : ""} ใช้ ${rules().fmtQty(value)} ไม่ได้` : `${code} ใบนี้ต้องใช้ไม่เกิน ${rules().fmtQty(row.max)} ${rules().uomLabel(row.uom)}`);
+    }
     if (product) {
       if (!canPlan(user)) fail("ตั้งยอดที่ใช้จากสต็อกสินค้าสำเร็จรูปได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น");
       const row = rules().fgStockForDraft(d, order).find((entry) => entry.fgCode === code);
@@ -987,7 +1012,7 @@
     order.stockCounts[code] = value;
     order.stockCountedAt = ctx.now;
     order.stockCountedBy = user.name;
-    audit(d, ctx, product ? rules().FG_STOCK_AUDIT_TEXT : "นับคงคลังตามใบ", `${order.id} ${code} = ${value}`);
+    audit(d, ctx, product ? rules().FG_STOCK_AUDIT_TEXT : rod ? rules().ROD_STOCK_AUDIT_TEXT : "นับคงคลังตามใบ", `${order.id} ${code} = ${value}`);
     return code;
   }
 
@@ -1447,6 +1472,190 @@
     return { returned: plan.length, summary: `${plan.length} รายการ`, request: { orderId: order.id, mode: "leftover", reason: why, lines: plan.map(({ code, qty }) => ({ itemCode: code, qty })) } };
   }
 
+  // ---------- คลังแท่งยาว SR (ขั้น 05–06 · 20261202010000_bom_sr_rod_store.sql) ----------
+  // ล็อตแท่ง (rodLots) เกิดเมื่อล็อตตกแต่งของ WO ที่ผูกงาน RB ผ่าน QC ใน RubberFlow (เซิร์ฟเวอร์สร้าง · โหมดในเครื่องไม่มี) · ประวัติแท่ง (rodMoves) เซิร์ฟเวอร์เขียน
+  // ผู้ทำ: รับเข้า / จ่ายให้ GR / ย้อนการจ่าย = แผนก SR หรือกลุ่มวางแผน · ตัดสินล็อตที่กัก = แผนก QA หรือกลุ่มวางแผน · ปรับยอดสต็อกกลาง = กลุ่มวางแผนเท่านั้น
+  // โหมดฐานข้อมูลคืน request = แถวคำขอที่ store ส่งในส่วน rodLots / rodMoves (section) · โหมดในเครื่องเขียนผล (ล็อต ประวัติ งาน) เอง
+  const canStoreRods = (user) => canPlan(user) || user?.dept === "SR";
+  const canDecideRods = (user) => canPlan(user) || user?.dept === "QA";
+  const canAdjustRods = (user) => canPlan(user);
+  const ROD_NOTE_MAX = 300;
+  const ROD_REASON_MIN = 3;
+  const ROD_MAX_ROWS = 50;
+  // รหัสของแถวคำขอ (uuid: คอลัมน์ id ของ bom_rod_lots / bom_rod_moves) · ใช้ crypto.randomUUID ถ้ามี
+  function newUuid() {
+    try { if (typeof root.crypto?.randomUUID === "function") return root.crypto.randomUUID(); } catch { /* ใช้ทางสำรองด้านล่าง */ }
+    const bytes = new Uint8Array(16);
+    try { root.crypto.getRandomValues(bytes); } catch { for (let i = 0; i < 16; i += 1) bytes[i] = Math.floor(Math.random() * 256); }
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  const rodLotOf = (d, id) => (d.rodLots ?? []).find((lot) => lot.id === String(id ?? "").trim()) ?? fail("ไม่พบล็อตแท่งนี้ (อาจมีผู้อื่นทำรายการไปก่อน)");
+  const rodNote = (value, label, { required = false } = {}) => {
+    const note = value === undefined || value === null ? "" : typeof value === "string" ? value.trim() : fail(`${label}ต้องเป็นข้อความ`);
+    if (note.length > ROD_NOTE_MAX) fail(`${label}ยาวเกิน ${ROD_NOTE_MAX} ตัวอักษร`);
+    if (required && note.length < ROD_REASON_MIN) fail(`กรุณาระบุ${label} (อย่างน้อย ${ROD_REASON_MIN} ตัวอักษร)`);
+    return note;
+  };
+  const lotText = (lot) => `ล็อต ${lot.lotNo}`;
+  // โหมดในเครื่อง: เขียนแถวประวัติแท่ง (โหมดฐานข้อมูลเซิร์ฟเวอร์เขียน มากับคำตอบของการบันทึก)
+  function pushRodMove(d, ctx, row) {
+    d.rodMoves ??= [];
+    if (ctx.remote) return;
+    d.rodMoves.push({ id: row.id ?? newUuid(), lotId: row.lotId, itemCode: row.itemCode, kind: row.kind, qty: qtyRound(row.qty), ownerOrderId: row.ownerOrderId ?? null, forOrderId: row.forOrderId ?? null, reversesId: row.reversesId ?? null, note: row.note ?? "", at: ctx.now, by: ctx.user?.name ?? "" });
+  }
+  // รับแท่งเข้าคลังที่ผ่าน (รับผ่าน หรือ QA ให้ใช้): ถ้าใบยังผลิตอยู่และงาน RB ยังไม่เสร็จ แท่งเท่าที่งานยังขาด (แผน − ทำแล้ว) เป็นของใบ ส่วนเกินเป็นสต็อกกลาง
+  // งาน RB นับยอดทั้งหมดที่รับ (รายงานยอดดีแบบเดียวกับ rf_apply_feedback) · ใบปิด / ยกเลิก / ร่าง หรืองานเสร็จแล้ว = เข้าสต็อกกลางทั้งหมด งานไม่เปลี่ยน
+  // โหมดฐานข้อมูลเซิร์ฟเวอร์ทำเองในธุรกรรมเดียวกัน ฝั่งนี้ปรับงานและใบล่วงหน้าให้หน้าแสดงทันที (ประวัติแท่งมากับคำตอบ)
+  function creditRods(d, lot, qty, ctx) {
+    const order = d.orders.find((entry) => entry.id === lot.orderId) ?? null;
+    const job = d.jobs.find((entry) => entry.id === lot.jobNo && entry.orderId === lot.orderId) ?? null;
+    const q = qtyRound(qty);
+    if (order && ["released", "in_progress"].includes(order.status) && job && job.status !== "done") {
+      const need = Math.max(0, qtyRound(Number(job.qtyPlanned) - Number(job.qtyDone || 0)));
+      const owned = qtyRound(Math.min(q, need));
+      const extra = qtyRound(q - owned);
+      if (owned > 0) pushRodMove(d, ctx, { lotId: lot.id, itemCode: lot.itemCode, kind: "receive", qty: owned, ownerOrderId: order.id });
+      if (extra > 0) pushRodMove(d, ctx, { lotId: lot.id, itemCode: lot.itemCode, kind: "receive", qty: extra, ownerOrderId: null });
+      job.reports = [...(job.reports ?? []), { at: ctx.now, by: ctx.user?.name ?? "", good: q, reject: 0, note: `รับเข้าคลัง SR ผ่านตรวจ ${lotText(lot)}${extra > 0 ? ` · เกิน ${rules().fmtQty(extra)} เข้าสต็อกกลาง` : ""}` }];
+      job.qtyDone = qtyRound(Number(job.qtyDone || 0) + q);
+      job.status = job.qtyDone + 1e-9 >= Number(job.qtyPlanned) ? "done" : "in_progress";
+      if (job.status === "done") job.doneAt = job.doneAt ?? ctx.now;
+      if (order.status === "released") order.status = "in_progress";
+      return { owned, extra, job };
+    }
+    pushRodMove(d, ctx, { lotId: lot.id, itemCode: lot.itemCode, kind: "receive", qty: q, ownerOrderId: null });
+    return { owned: 0, extra: q, job: null };
+  }
+  // ค่าที่วัดตอนรับเข้า: ตัวเลข > 0 เฉพาะคีย์ ความหนา / ความกว้าง / น้ำหนักต่อเมตร (ช่องว่าง = ไม่ได้วัด)
+  function rodValues(raw) {
+    const out = {};
+    if (raw === undefined || raw === null) return out;
+    if (typeof raw !== "object" || Array.isArray(raw)) fail("ค่าที่วัดไม่ถูกต้อง");
+    for (const [key, value] of Object.entries(raw)) {
+      if (!rules().ROD_SPEC_KEYS.includes(key)) fail("ค่าที่วัดไม่ถูกต้อง");
+      if (value === undefined || value === null || String(value).trim() === "") continue;
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) fail(`${rules().ROD_SPEC_LABEL[key].label}ต้องเป็นตัวเลขมากกว่า 0`);
+      if (n > 1e9) fail("ตัวเลขใหญ่เกินไป");
+      out[key] = n;
+    }
+    return out;
+  }
+  // SR รับแท่งเข้าคลังและบันทึกผลตรวจขนาด: { lotId, qtyReceived, values, result?, note? } · ล็อตต้องรอรับ (pending)
+  // มีสเปก = ต้องกรอกทุกค่าของสเปก ผลคำนวณจากสเปก (ส่ง result ต่างจากที่คำนวณได้ = ปฏิเสธ) · ไม่มีสเปก = SR เลือกผ่าน / ไม่ผ่านเอง (จำเป็น)
+  // ผ่าน = เข้าคลัง (stored) แล้วนับเข้างาน RB · ไม่ผ่าน = กัก (held) ต้องมีหมายเหตุ ไม่นับยอด รอ QA ตัดสิน
+  function receiveRods(d, p, ctx) {
+    const user = requireUser(ctx);
+    const R = rules();
+    const lot = rodLotOf(d, p?.lotId);
+    if (!canStoreRods(user)) fail("รับแท่งเข้าคลังได้โดยคลังแท่งยาว (SR) หรือฝ่ายวางแผนเท่านั้น");
+    if (lot.status !== "pending") fail(`${lotText(lot)} ${R.ROD_STATUS_LABEL[lot.status] ?? lot.status}แล้ว รับซ้ำไม่ได้`);
+    const qty = qtyRound(num(p?.qtyReceived, "จำนวนที่รับ"));
+    if (qty <= 0) fail("จำนวนที่รับต้องมากกว่า 0");
+    if (qty > Number(lot.qtySent) + 1e-9) fail(`จำนวนที่รับต้องไม่เกินที่ส่งมา ${R.fmtQty(lot.qtySent)}`);
+    const values = rodValues(p?.values);
+    const verdict = R.qcVerdict(lot.spec, values);
+    let result;
+    if (verdict.rows.length) {
+      if (verdict.missing.length) fail(`กรอกค่าที่วัดให้ครบ: ${verdict.missing.map((key) => R.ROD_SPEC_LABEL[key].label).join(", ")}`);
+      result = verdict.result;
+      if (p?.result !== undefined && p?.result !== null && p.result !== "" && p.result !== result) fail(`ผลตรวจไม่ตรงกับค่าที่วัด (ตามสเปกคือ${result === "pass" ? "ผ่าน" : "ไม่ผ่าน"})`);
+    } else {
+      result = p?.result;
+      if (!["pass", "fail"].includes(result)) fail("เลือกผลตรวจ ผ่าน หรือ ไม่ผ่าน (ล็อตนี้ไม่มีสเปกขนาด)");
+    }
+    const note = rodNote(p?.note, result === "fail" ? "หมายเหตุว่าไม่ผ่านเพราะอะไร" : "หมายเหตุ", { required: result === "fail" });
+    const qc = { values, result, note };
+    Object.assign(lot, { qtyReceived: qty, qc, receivedBy: user.name, receivedAt: ctx.now, status: result === "pass" ? "stored" : "held" });
+    const credit = result === "pass" ? creditRods(d, lot, qty, ctx) : null;
+    audit(d, ctx, result === "pass" ? "รับแท่งเข้าคลัง SR" : "รับแท่งเข้าคลัง SR (ไม่ผ่าน กักรอ QA)", `${lotText(lot)} ${lot.itemCode} × ${R.fmtQty(qty)} · ใบ ${lot.orderId}${credit?.extra > 0 && credit.job ? ` · เกิน ${R.fmtQty(credit.extra)} เข้าสต็อกกลาง` : ""}${note ? ` — ${note}` : ""}`);
+    return { status: lot.status, summary: `${lotText(lot)} × ${R.fmtQty(qty)}`, section: "rodLots", request: [{ id: lot.id, qtyReceived: qty, qc: { values, result, note } }] };
+  }
+  // QA ตัดสินล็อตที่กัก: { lotId, decision: accept | return | scrap, note } เหตุผล 3-300 · ให้ใช้ = เข้าคลังและนับเข้างาน RB ด้วยยอดที่ SR รับ · คืน RB / ทิ้ง = ไม่มีแท่งเข้าคลัง
+  function decideRods(d, p, ctx) {
+    const user = requireUser(ctx);
+    const R = rules();
+    const lot = rodLotOf(d, p?.lotId);
+    if (!canDecideRods(user)) fail("ตัดสินล็อตที่กักได้โดยตรวจคุณภาพ (QA) หรือฝ่ายวางแผนเท่านั้น");
+    if (lot.status !== "held") fail(`${lotText(lot)} ไม่ได้กักรออยู่ (${R.ROD_STATUS_LABEL[lot.status] ?? lot.status})`);
+    const decision = String(p?.decision ?? "");
+    if (!Object.hasOwn(R.ROD_DECISION_LABEL, decision)) fail("เลือกผลตัดสิน: ใช้ได้ตามสภาพ คืน RB แก้ไข หรือทิ้ง");
+    const note = rodNote(p?.note, "เหตุผล", { required: true });
+    Object.assign(lot, { decision, decisionNote: note, decidedBy: user.name, decidedAt: ctx.now, status: decision === "accept" ? "stored" : decision === "return" ? "returned" : "scrapped" });
+    if (decision === "accept") creditRods(d, lot, lot.qtyReceived, ctx);
+    audit(d, ctx, "ตัดสินล็อตแท่งที่กัก", `${lotText(lot)} ${lot.itemCode} → ${R.ROD_DECISION_LABEL[decision]} — ${note}`);
+    return { status: lot.status, summary: `${lotText(lot)} ${R.ROD_DECISION_LABEL[decision]}`, section: "rodLots", request: [{ id: lot.id, decision, decisionNote: note }] };
+  }
+  // SR จ่ายแท่งให้ GR ตามใบ: { orderId, itemCode, qty } · ระบบเลือกล็อตเก่าก่อน (FIFO) จากถังของใบนี้ก่อน แล้วสต็อกกลาง (rules.rodFifo) · ใบต้องปล่อยผลิตอยู่
+  // หนึ่งแถว issue ต่อถังที่หยิบ (qty ติดลบ) ไม่เกิน 50 แถว · ทั้งชุดผ่านหรือไม่ผ่านพร้อมกัน
+  function issueRods(d, p, ctx) {
+    const user = requireUser(ctx);
+    const R = rules();
+    const order = orderById(d, String(p?.orderId ?? "").trim().toUpperCase());
+    const code = R.canonicalCode(p?.itemCode);
+    if (!canStoreRods(user)) fail("จ่ายแท่งได้โดยคลังแท่งยาว (SR) หรือฝ่ายวางแผนเท่านั้น");
+    if (!["released", "in_progress"].includes(order.status)) fail("จ่ายแท่งได้เฉพาะใบที่ปล่อยผลิตแล้วและยังไม่ปิด");
+    if (!R.rodCodesOf(order).has(code)) fail(`${code} ไม่ใช่เส้นยางของใบ ${order.id}`);
+    const qty = qtyRound(num(p?.qty, "จำนวนที่จ่าย"));
+    if (qty <= 0) fail("จำนวนที่จ่ายต้องมากกว่า 0");
+    const plan = R.rodFifo(d, code, qty, { own: order.id });
+    if (plan.short > 1e-9) fail(`แท่ง ${code} ในคลังไม่พอ: ใบนี้ถือ ${R.fmtQty(R.rodOwned(d, order.id, code))} สต็อกกลาง ${R.fmtQty(R.rodFree(d, code))} จ่าย ${R.fmtQty(qty)} ไม่ได้`);
+    if (plan.rows.length > ROD_MAX_ROWS) fail(`จ่ายครั้งเดียวได้ไม่เกิน ${ROD_MAX_ROWS} ล็อต แบ่งจ่ายหลายครั้ง`);
+    const rows = plan.rows.map((row) => ({ id: newUuid(), kind: "issue", lotId: row.lotId, ownerOrderId: row.owner, forOrderId: order.id, itemCode: code, qty: -row.qty }));
+    for (const row of rows) pushRodMove(d, ctx, row);
+    audit(d, ctx, "จ่ายแท่งให้ GR", `${order.id} ${code} × ${R.fmtQty(qty)} จาก ${plan.rows.map((row) => `ล็อต ${row.lotNo} ${R.fmtQty(row.qty)}`).join(", ")}`);
+    return { summary: `${code} × ${R.fmtQty(qty)}`, plan: plan.rows, section: "rodMoves", request: rows };
+  }
+  // ย้อนการจ่ายที่บันทึกผิดหนึ่งแถวทั้งแถว: { moveId, note } เหตุผล 3-300 · แถวต้องเป็นการจ่ายที่ยังไม่ถูกย้อน · แท่งกลับเข้าถังเดิม
+  function reverseRodIssue(d, p, ctx) {
+    const user = requireUser(ctx);
+    const R = rules();
+    if (!canStoreRods(user)) fail("ย้อนการจ่ายแท่งได้โดยคลังแท่งยาว (SR) หรือฝ่ายวางแผนเท่านั้น");
+    const note = rodNote(p?.note, "เหตุผลที่ย้อน", { required: true });
+    const move = (d.rodMoves ?? []).find((row) => row.id === String(p?.moveId ?? "").trim() && row.kind === "issue") ?? fail("ไม่พบรายการจ่ายที่จะย้อน");
+    if (R.rodReversedIds(d.rodMoves).has(move.id)) fail("รายการนี้ถูกย้อนไปแล้ว");
+    const row = { id: newUuid(), kind: "unissue", reversesId: move.id, note };
+    pushRodMove(d, ctx, { ...row, lotId: move.lotId, itemCode: move.itemCode, qty: -Number(move.qty), ownerOrderId: move.ownerOrderId, forOrderId: move.forOrderId });
+    audit(d, ctx, "ย้อนการจ่ายแท่ง", `${move.forOrderId} ${move.itemCode} × ${R.fmtQty(-Number(move.qty))} — ${note}`);
+    return { summary: `${move.itemCode} × ${R.fmtQty(-Number(move.qty))}`, section: "rodMoves", request: [row] };
+  }
+  // ปรับยอดสต็อกกลางของล็อต (นับจริงไม่ตรง แท่งชำรุด): { lotId, qty (+/−, ไม่ใช่ 0), note } กลุ่มวางแผนเท่านั้น · ยอดสต็อกกลางของล็อตต้องไม่ติดลบ
+  function adjustRods(d, p, ctx) {
+    const user = requireUser(ctx);
+    const R = rules();
+    if (!canAdjustRods(user)) fail("ปรับยอดแท่งในคลังได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น");
+    const lot = rodLotOf(d, p?.lotId);
+    if (lot.status !== "stored") fail(`${lotText(lot)} ไม่ได้อยู่ในคลัง ปรับยอดไม่ได้`);
+    const qty = qtyRound(Number(p?.qty));
+    if (!Number.isFinite(qty) || qty === 0) fail("จำนวนที่ปรับต้องเป็นตัวเลขที่ไม่ใช่ 0 (บวก = เพิ่ม ลบ = ลด)");
+    if (Math.abs(qty) > 1e9) fail("ตัวเลขใหญ่เกินไป");
+    const note = rodNote(p?.note, "เหตุผล", { required: true });
+    const free = R.rodBalance(d.rodMoves, lot.id, null);
+    if (free + qty < -1e-9) fail(`${lotText(lot)} มีสต็อกกลาง ${R.fmtQty(free)} ลด ${R.fmtQty(-qty)} ไม่ได้`);
+    const row = { id: newUuid(), kind: "adjust", lotId: lot.id, qty, note };
+    pushRodMove(d, ctx, { ...row, itemCode: lot.itemCode, ownerOrderId: null });
+    audit(d, ctx, "ปรับยอดแท่งในคลัง", `${lotText(lot)} ${lot.itemCode} ${qty > 0 ? "+" : ""}${R.fmtQty(qty)} — ${note}`);
+    return { summary: `${lotText(lot)} ${qty > 0 ? "+" : ""}${R.fmtQty(qty)}`, section: "rodMoves", request: [row] };
+  }
+  // ใช้จากคลัง SR ตอนปล่อยผลิต: ทุกรหัสเส้นยางที่ stockCounts = n > 0 หยิบ n จากสต็อกกลาง FIFO (ไม่พอ = ปล่อยไม่ได้ ตัวเลขเปลี่ยนแล้ว)
+  // คืน [{ itemCode, n, rows }] · โหมดในเครื่องเขียนแถว transfer คู่ (−k ถังต้นทาง +k ถังของใบนี้) · โหมดฐานข้อมูลเซิร์ฟเวอร์ทำเอง
+  function rodTaking(d, order) {
+    const R = rules();
+    const codes = R.rodCodesOf(order);
+    const taking = [];
+    for (const code of [...codes].sort()) {
+      const n = qtyRound(Math.max(0, Number(order.stockCounts?.[code]) || 0));
+      if (n <= 0) continue;
+      const plan = R.rodFifo(d, code, n);
+      if (plan.short > 1e-9) fail(`ตัวเลขเปลี่ยนไปแล้ว: คลังแท่งยาว (SR) มี ${code} ว่าง ${R.fmtQty(plan.taken)} ไม่พอที่ใบนี้ตั้งใช้ ${R.fmtQty(n)} (ใบอื่นอาจปล่อยผลิตไปก่อน) กลับไปตั้งยอดใหม่ที่ขั้นตรวจของ`);
+      taking.push({ itemCode: code, n, rows: plan.rows });
+    }
+    return taking;
+  }
+
   function linkJobToRubberFlow(d, { jobId, woId, kg }, ctx) {
     const user = requireUser(ctx);
     const job = jobById(d, jobId);
@@ -1505,9 +1714,9 @@
   const api = {
     saveItem, saveBom, saveBomTree, linkCompound, importFlat,
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
-    saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, receiveFg, deliverFg, closeOrderShort, closeOrder, reverseFg,
+    saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, receiveFg, deliverFg, closeOrderShort, closeOrder, reverseFg, receiveRods, decideRods, issueRods, reverseRodIssue, adjustRods,
     reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage, countPartStock, issueOrderParts, undoOrderParts, returnOrderParts,
-    helpers: { customerName, customerKey, startedJobs, isPartJob, isOpenJob, isLinkedJob, jobCloseNote, jobHoldNote, deptText, canIssueParts, canHandleFg, canReverseFg, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canSetSafety, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS },
+    helpers: { customerName, customerKey, startedJobs, isPartJob, isOpenJob, isLinkedJob, jobCloseNote, jobHoldNote, deptText, canIssueParts, canHandleFg, canReverseFg, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canSetSafety, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS, canStoreRods, canDecideRods, canAdjustRods, newUuid },
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_ACTIONS = api;

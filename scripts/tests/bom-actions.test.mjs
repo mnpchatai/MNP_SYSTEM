@@ -25,8 +25,9 @@ test("the demo seed is deterministic, valid for the store and internally consist
   const a = fresh();
   assert.deepEqual(a, fresh());
   assert.ok(storeApi.isValidState(a));
-  assert.equal(a.users.length, 10);
+  assert.equal(a.users.length, 12);
   assert.deepEqual(a.users.filter((user) => user.dept === "WH").map((user) => [user.id, user.role]), [["B09", "wh"], ["B10", "manager"]], "the warehouse has a staff user and a manager");
+  assert.deepEqual(a.users.filter((user) => ["SR", "QA"].includes(user.dept)).map((user) => [user.id, user.role]), [["B11", "sr"], ["B12", "qa"]], "the long-rod store and QA have a demo user each");
   assert.equal(a.items.length, seed.ITEMS.length);
   assert.equal(a.boms.filter((bom) => bom.status === "approved").length, 8);
   assert.equal(a.boms.filter((bom) => bom.status === "superseded").length, 1, "one edit left a superseded revision");
@@ -58,7 +59,7 @@ test("the demo seed is deterministic, valid for the store and internally consist
   const pt = jobs.find((job) => job.itemCode === "PT-00320");
   assert.equal(pt.status, "done");
   assert.deepEqual([pt.qtyRequired, pt.stockCounted, pt.qtyPlanned], [24, 10, 14], "the counted stock reduces the planned quantity (BOMSHEET column AK)");
-  assert.equal(jobs.find((job) => job.itemCode === "RB-DM02-02-BK01-225-3-20").qtyPlanned, 15, "17.14 rods needed across both products, 3 counted → 14.14, rounded up to whole rods");
+  assert.equal(jobs.find((job) => job.itemCode === "RB-DM02-02-BK01-225-3-20").qtyPlanned, 18, "17.14 rods needed, rounded up to whole rods (rods are no longer counted per PI: they come from the SR store)");
   assert.equal(jobs.find((job) => job.itemCode === "RB-DM02-02-BK01-225-3-20").qtyRequired.toFixed(2), "17.14", "the requirement of that job stays exact");
   assert.equal(jobs.find((job) => job.itemCode === "BG-0092").status, "hold");
   assert.deepEqual(A.helpers.jobHoldNote(jobs.find((job) => job.itemCode === "BG-0092")), { reason: "รอผ้าตาข่ายล็อตใหม่", by: user("bg").name, at: NOW - 4 * DAY }, "the demo hold has its reason");

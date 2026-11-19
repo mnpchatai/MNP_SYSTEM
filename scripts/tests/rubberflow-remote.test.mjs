@@ -1162,7 +1162,7 @@ async function toFinishing(s, rig, tr1, afterReceive) {
   return tr3;
 }
 
-test("the linked BOM job is fed only when pieces pass the last station (a finishing lot that passes QC and is counted to the work order), never by a received transfer", async () => {
+test("a finishing lot of a WO linked to a BOM job makes no boxes and becomes a pending rod lot of the SR store once it passes QC (once); the job counts nothing yet; an unlinked WO still makes boxes", async () => {
   const s = await session({ withBom: true });
   const rig = await s.make();
   const { order } = await prepare(s, rig, { linked: true, target: 100 });
@@ -1186,36 +1186,63 @@ test("the linked BOM job is fed only when pieces pass the last station (a finish
   const tr3 = await toFinishing(s, rig, tr1, () => untouched("receiving the extrusion and the curing transfers feeds nothing either"));
   assert.ok(!(await audit()).includes("rubberflow:receiveTransfer"), "no receipt writes a BOM history row");
 
-  // ล็อตตกแต่งที่ผ่าน QC ตอนบันทึก: ป้อนยอด good ของล็อตครั้งเดียว (หน่วยของ WO)
+  // ล็อตตกแต่งที่ผ่าน QC ตอนบันทึก (20261202010000): ไม่มีกล่อง · ล็อตแท่งรอ SR รับหนึ่งล็อต (ยอดส่ง = ยอดดี) · งาน RB ยังไม่นับ · WO นับยอดผลิตเหมือนเดิม
   const fin = (payload) => go(s, rig, "persona-rb", "recordFinishing", { transferId: tr3, scrapQty: 0, perBox: 40, grade: "A", shift: "D", ...payload });
+  const rodLots = async () => (await bom()).rodLots.sort((a, b) => a.lotNo.localeCompare(b.lotNo));
+  const boxesOf = async (lotId) => (await s.call("app_rf_master")).fgBoxes.filter((box) => box.lotId === lotId);
   const fn1 = (await fin({ useQty: 30, passedQty: 30, qcResult: "pass" })).result;
+  assert.deepEqual(await boxesOf(fn1), [], "internal rods never become ready-to-ship boxes");
+  assert.equal((await s.call("app_rf_master")).lots.find((row) => row.id === fn1).boxes, 0);
+  assert.equal(rig.store.data().fgBoxes.filter((box) => box.lotId === fn1).length, 0, "the page does not make boxes for it either");
   let now = await job();
-  assert.deepEqual([now.qtyDone, now.status, now.reports.length], [30, "in_progress", 1], "30 pieces passed finishing");
-  assert.deepEqual([now.reports[0].good, now.reports[0].reject, now.reports[0].note], [30, 0, `ผ่านตกแต่ง ${fn1} จาก WO ${order}`]);
-  assert.ok(now.reports[0].by && now.reports[0].by !== "ศิริ รับมอบ", "the report is authored by the person who recorded the lot, not by the receiver");
+  assert.deepEqual([now.qtyDone, now.status, now.reports.length], [0, "in_progress", 0], "the job counts nothing until the SR store receives the rods");
+  let lots = await rodLots();
+  assert.deepEqual(lots.map((lot) => [lot.lotNo, lot.itemCode, lot.orderId, lot.jobNo, lot.woNo, lot.recipeCode, lot.uom, lot.qtySent, lot.status, lot.qtyReceived]),
+    [[fn1, "RB-ITEM", "PI-R", "JOB-RB2", order, "RC-TEST-01", "pcs", 30, "pending", null]]);
+  assert.equal(lots[0].spec, null, "the test recipe has no extrusion spec");
   assert.equal((await bom()).version, before + 1, "the BOM counter moved once so BOM clients catch it up");
-  assert.deepEqual((await s.call("app_bom_master_since", { p_version: before })).changes.jobs.upsert.map((row) => row.id), ["JOB-RB2"]);
+  assert.deepEqual((await s.call("app_bom_master_since", { p_version: before })).changes.rodLots.upsert.map((row) => row.lotNo), [fn1]);
+  assert.deepEqual((await s.call("app_bom_master_since", { p_version: before })).changes.jobs.upsert, [], "no job row moves");
   assert.ok((await audit()).includes("rubberflow:recordFinishing"));
-  assert.equal((await bom()).orders.find((row) => row.id === "PI-R").status, "in_progress");
+  assert.equal((await s.call("app_rf_master")).orders.find((row) => row.id === order).producedQty, 30, "the WO still counts its output");
 
-  // ล็อตตกแต่งที่ hold: ไม่ป้อนจน QA ตัดสินเป็น pass แล้วป้อนครั้งเดียว ผลตรวจถัดไปไม่ป้อนซ้ำ
+  // ล็อตตกแต่งที่ hold: ไม่มีล็อตแท่งจน QA ตัดสินเป็น pass แล้วเกิดครั้งเดียว ผลตรวจถัดไปไม่สร้างซ้ำ
   const fn2 = (await fin({ useQty: 20, passedQty: 20, qcResult: "hold" })).result;
-  assert.deepEqual([(await job()).qtyDone, (await bom()).version], [30, before + 1], "a lot on hold feeds nothing");
+  assert.deepEqual([(await rodLots()).length, (await bom()).version], [1, before + 1], "a lot on hold makes no rod lot");
   await go(s, rig, "persona-qa", "addQcRecord", { lotId: fn2, values: { hardness: 66 }, result: "pass" });
-  now = await job();
-  assert.deepEqual([now.qtyDone, now.status, now.reports.length], [50, "in_progress", 2], "the QA pass feeds the lot");
-  assert.deepEqual([now.reports[1].good, now.reports[1].note, now.reports[1].by], [20, `ผ่านตกแต่ง ${fn2} จาก WO ${order}`, "ธนา ตรวจสอบ"]);
+  lots = await rodLots();
+  assert.deepEqual(lots.map((lot) => [lot.lotNo, lot.qtySent, lot.status]), [[fn1, 30, "pending"], [fn2, 20, "pending"]], "the QA pass makes the rod lot");
   assert.equal((await bom()).version, before + 2);
   assert.ok((await audit()).includes("rubberflow:addQcRecord"));
   await go(s, rig, "persona-qa", "addQcRecord", { lotId: fn2, values: { hardness: 67 }, result: "pass" });
-  assert.deepEqual([(await job()).qtyDone, (await job()).reports.length, (await bom()).version], [50, 2, before + 2], "a second QC record of a counted lot does not feed again");
+  assert.deepEqual([(await rodLots()).length, (await bom()).version], [2, before + 2], "a second QC record of a counted lot does not make it again");
+  assert.deepEqual([(await job()).qtyDone, (await job()).reports.length], [0, 0]);
 
-  // ครบแผนแล้วงาน done
-  await fin({ useQty: 50, passedQty: 50, qcResult: "pass" });
-  now = await job();
-  assert.deepEqual([now.qtyDone, now.status, now.reports.length, typeof now.doneAt], [100, "done", 3, "number"]);
+  // จำนวนต่อกล่อง (ตรงกับ rf_save_lots): WO ที่ผูกงานไม่ส่งก็ได้ (ล็อตเก็บ params ว่าง) แต่ถ้าส่งมาต้องมากกว่า 0 · ส่งตรงถึงฐานข้อมูลจำลอง (หน้าไม่ส่งค่า 0)
+  const rawFinish = async (session_, wo, transferId, id, params, qty) => {
+    await session_.as("persona-rb");
+    const master = await session_.call("app_rf_master");
+    const lot = { id, stage: "finishing", orderId: wo, uom: "pcs", shift: "D", grade: "A", sources: [{ type: "transfer", id: transferId, lotId: master.transfers.find((row) => row.id === transferId).lotId, qty }], params,
+      goodQty: qty, scrapQty: 0, qc: "pass", holdReasons: [], transferredQty: 0, createdAt: NOW, operator: "x" };
+    return session_.mock.client.rpc("app_rf_save", { p_changes: { lots: { upsert: [lot] } }, p_base_version: master.version, p_action: "recordFinishing" });
+  };
+  assert.equal((await rawFinish(s, order, tr3, `FN-${TODAY}-96`, { perBox: 0 }, 5)).error?.code, "RF_INVALID_LOT", "a perBox that is sent must be above zero");
+  const noBox = await rawFinish(s, order, tr3, `FN-${TODAY}-97`, {}, 5);
+  assert.equal(noBox.error, null, noBox.error?.message);
+  assert.deepEqual((await s.call("app_rf_master")).lots.find((row) => row.id === `FN-${TODAY}-97`).params, {}, "a linked work order may leave perBox out");
+  assert.deepEqual([(await rodLots()).length, (await boxesOf(`FN-${TODAY}-97`)).length], [3, 0]);
+  // งานที่ผูก WO อื่นอยู่ (externalRef.woId ไม่ใช่ WO นี้ ตรงกับ bom_rod_lot_create) = ไม่สร้างล็อตแท่ง · แก้ข้อมูลใน storage แล้วเปิดฐานข้อมูลจำลองใหม่ (ตัวเดิมถือสำเนาในหน่วยความจำ)
+  const bomState = JSON.parse(s.storage.getItem(BOM_KEY));
+  bomState.jobs.find((row) => row.id === "JOB-RB2").externalRef.woId = "WO-OTHER";
+  s.storage.setItem(BOM_KEY, JSON.stringify(bomState));
+  const reopened = createMockSupabase({ sandbox: true, now: () => NOW, storage: s.storage });
+  const s2 = { mock: reopened, as: async (id) => unwrap(await reopened.client.rpc("app_sandbox_enter", { p_persona_id: id })), call: async (name, args) => unwrap(await reopened.client.rpc(name, args)) };
+  const other = await rawFinish(s2, order, tr3, `FN-${TODAY}-98`, {}, 5);
+  assert.equal(other.error, null, other.error?.message);
+  assert.equal((await s2.call("app_bom_master")).rodLots.length, 3, "a job linked to another work order gets no rod lot");
+  assert.equal((await s2.call("app_rf_master")).fgBoxes.filter((box) => box.lotId === `FN-${TODAY}-98`).length, 0, "and, still pointing at a BOM job, no boxes");
 
-  // ใบสั่งผลิตที่ไม่ผูกงาน BOM: รับมอบและตกแต่งผ่านแล้ว BOM ไม่ขยับ
+  // ใบสั่งผลิตที่ไม่ผูกงาน BOM: รับมอบและตกแต่งผ่านแล้ว BOM ไม่ขยับ และยังได้กล่องเหมือนเดิม
   const plain = await session({ withBom: true });
   const plainRig = await plain.make();
   const prepared = await prepare(plain, plainRig);
@@ -1225,8 +1252,10 @@ test("the linked BOM job is fed only when pieces pass the last station (a finish
   const bomVersion = (await plain.call("app_bom_master")).version;
   await go(plain, plainRig, "persona-sr", "receiveTransfer", { id: trPlain, qtyReceived: 48 });
   const trPlain3 = await toFinishing(plain, plainRig, trPlain, async () => assert.equal((await plain.call("app_bom_master")).version, bomVersion));
-  await go(plain, plainRig, "persona-rb", "recordFinishing", { transferId: trPlain3, useQty: 50, passedQty: 50, scrapQty: 0, perBox: 40, qcResult: "pass", grade: "A", shift: "D" });
+  const fnPlain = (await go(plain, plainRig, "persona-rb", "recordFinishing", { transferId: trPlain3, useQty: 50, passedQty: 50, scrapQty: 0, perBox: 40, qcResult: "pass", grade: "A", shift: "D" })).result;
   assert.equal((await plain.call("app_bom_master")).version, bomVersion, "a work order without a linked job leaves BOM alone");
+  assert.deepEqual((await plain.call("app_rf_master")).fgBoxes.filter((box) => box.lotId === fnPlain).map((box) => [box.qty, box.status]), [[40, "in_stock"], [10, "in_stock"]], "rods sold as finished goods still get boxes for WH to ship");
+  assert.equal((await rawFinish(plain, prepared.order, trPlain3, `FN-${TODAY}-97`, {}, 5)).error?.code, "RF_INVALID_LOT", "a work order sold as finished goods still needs perBox");
 });
 
 test("shop-floor records collide per record: stale is reported before permissions, a duplicate document number catches up, and a held form keeps other users' data out", async () => {

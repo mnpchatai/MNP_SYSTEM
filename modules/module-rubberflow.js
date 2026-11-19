@@ -287,12 +287,19 @@
     }
     const jobId = data.orders.find((row) => row.id === orderId)?.sourceJobId;
     const job = jobId ? bom.data().jobs.find((row) => row.id === jobId) : null;
-    return job ? { id: job.id, qtyDone: Number(job.qtyDone) || 0 } : null;
+    // rodLots = ล็อตแท่งของงานนี้ในคลังแท่งยาว (20261202010000: ล็อตที่ผ่านกลายเป็นล็อตแท่งรอ SR รับ งานยังไม่นับยอด) · ฐานข้อมูลรุ่นก่อนนับยอดเข้างานทันที (qtyDone)
+    return job ? { id: job.id, qtyDone: Number(job.qtyDone) || 0, rodLots: (bom.data().rodLots ?? []).filter((row) => row.jobNo === job.id).length } : null;
   }
   async function showBomFeedback(before) {
     const bom = bomStore();
     if (!bom) return;
     try { await bom.catchUp(); } catch { /* ไม่ได้ตามทัน: BOM จะเห็นยอดเมื่อเปิดหน้า BOM */ }
+    const lots = (bom.data().rodLots ?? []).filter((row) => row.jobNo === before.id);
+    if (lots.length > (before.rodLots ?? 0)) {
+      const lot = lots.slice().sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))[0];
+      showToast(`แท่งของล็อต ${lot.lotNo} ${lot.qtySent} ส่งเข้าคลังแท่งยาว (SR) แล้ว รอ SR รับเข้าคลังและตรวจขนาด จึงนับเข้างาน BOM ${before.id}`);
+      return;
+    }
     const job = bom.data().jobs.find((row) => row.id === before.id);
     if (job && Number(job.qtyDone) > before.qtyDone) showToast(`งาน BOM ${job.id} รับยอดจากการผ่านตกแต่งแล้ว: ทำได้ ${job.qtyDone}/${job.qtyPlanned}${job.status === "done" ? " (งานครบแล้ว)" : ""}`);
   }
@@ -514,6 +521,16 @@
         } catch { return []; }
       },
       bomItems: () => bomItems(),
+      // WO ที่ผูกงานของ BOM (กฎเดียวกับ private.bom_rod_wo_linked): มี sourceJobId และงานนั้นมีอยู่ใน BOM ที่โหลดแล้ว
+      // BOM ยังไม่โหลด / โหมดในเครื่อง = ถือตาม sourceJobId อย่างเดียว · ใช้ซ่อนช่องจำนวนต่อกล่องและบอกว่าแท่งไปคลังแท่งยาว (SR)
+      bomLinked: (order) => {
+        if (!order?.sourceJobId) return false;
+        try {
+          const bom = bomStore();
+          if (!bom || bom.status() !== "ready") return true;
+          return (bom.data().jobs ?? []).some((job) => job.id === order.sourceJobId);
+        } catch { return true; }
+      },
       roleLabel: (role) => storeApi.ROLES[role]?.label ?? role,
     };
     ctx.openDialog = (name, args) => openDialog(name, args, ctx); // เปิด dialog จากโค้ดของหน้า (เช่น ปุ่ม "สั่งซื้อส่วนที่ขาด" ในใบเบิก)

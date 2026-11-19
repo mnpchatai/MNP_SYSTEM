@@ -430,13 +430,13 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
   // ข้อมูลจริงกับข้อมูลทดสอบแยกกันเหมือน is_test ของฐานข้อมูล: นอกโหมดทดสอบใช้คีย์ -real (โหมดทดสอบไม่เห็นข้อมูลจริง และกลับกัน)
   const BOM_KEY = sandbox ? "mnp-harness-bom-master" : "mnp-harness-bom-master-real";
   const PERSONA_KEY = "mnp-harness-persona";
-  const BOM_LISTS = ["items", "compounds", "colors", "colorSets", "packages", "boms", "processes", "routings", "customers", "orders", "jobs", "stock", "stockMoves", "fgMoves"];
+  const BOM_LISTS = ["items", "compounds", "colors", "colorSets", "packages", "boms", "processes", "routings", "customers", "orders", "jobs", "stock", "stockMoves", "fgMoves", "rodLots", "rodMoves"];
   const BOM_ID = {
     items: (record) => record.code, compounds: (record) => record.code, colors: (record) => record.code, processes: (record) => record.code,
     boms: (record) => record.id, routings: (record) => record.id,
     colorSets: (record) => `${record.base}|${record.code}`, packages: (record) => `${record.base}|${record.code}`,
     customers: (record) => String(record.name ?? "").trim().toLowerCase(), orders: (record) => record.id, jobs: (record) => record.id,
-    stock: (record) => record.itemCode, stockMoves: (record) => record.id, fgMoves: (record) => record.id,
+    stock: (record) => record.itemCode, stockMoves: (record) => record.id, fgMoves: (record) => record.id, rodLots: (record) => record.id, rodMoves: (record) => record.id,
   };
   // ลำดับของชุดที่หน้าเห็น (ตรงกับ app_bom_master): ใบสั่งผลิตใหม่สุดก่อน · งานเรียงตามใบ แผนก ชิ้นงาน เลขงาน · ชุดอื่นตามกุญแจ
   const bomCmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -445,6 +445,8 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     jobs: (a, b) => bomCmp(a.orderId, b.orderId) || bomCmp(a.dept, b.dept) || bomCmp(a.itemCode, b.itemCode) || bomCmp(a.id, b.id),
     stockMoves: (a, b) => (Number(a.at) || 0) - (Number(b.at) || 0) || bomCmp(a.id, b.id),
     fgMoves: (a, b) => (Number(a.at) || 0) - (Number(b.at) || 0) || bomCmp(a.id, b.id),
+    rodLots: (a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0) || bomCmp(a.id, b.id),
+    rodMoves: (a, b) => (Number(a.at) || 0) - (Number(b.at) || 0) || bomCmp(a.id, b.id),
   };
   const bomSorter = (list) => BOM_ORDER[list] ?? ((a, b) => bomCmp(BOM_ID[list](a), BOM_ID[list](b)));
   const BOM_DELETABLE = ["colorSets", "packages", "jobs"];
@@ -498,11 +500,13 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     ["persona-rbh", "สุรีย์", "หัวหน้ารีด", "หัวหน้าแผนก RB", "RB", "ฝ่ายผลิต RB", "department_manager"],
     ["persona-gr", "มานี", "ตัดยาง", "พนักงานแผนก GR", "GR", "ฝ่ายผลิต GR"],
     ["persona-st", "วิชัย", "คลังวัตถุดิบ", "พนักงานคลังวัตถุดิบ (ST)", "ST", "คลังวัตถุดิบ"],
-    ["persona-sr", "ศิริ", "รับมอบ", "พนักงานแผนก SR (รับมอบ WIP)", "SR", "รับมอบ WIP"],
+    // SR = รับมอบ WIP ของ RubberFlow และคลังแท่งยาวของ BOM (รับแท่งเข้าคลัง ตรวจขนาด จ่ายให้ GR · 20261202010000)
+    ["persona-sr", "ศิริ", "รับมอบ", "พนักงานแผนก SR (รับมอบ WIP / คลังแท่งยาว)", "SR", "รับมอบ WIP"],
     ["persona-wh", "สุดา", "คลังสินค้า", "พนักงานคลังสินค้า (WH)", "WH", "คลังสินค้า"],
     // หัวหน้าแผนก WH (ผู้จัดการแผนก): BOM นับเป็นบทบาท manager แต่แผนกคือ WH จึงรับเข้าคลัง/ส่งมอบสินค้าสำเร็จรูปได้เหมือนพนักงาน WH และย้อนรายการที่บันทึกผิดได้ (reverseFg · 20261128020000) ซึ่งพนักงาน WH ทำไม่ได้
     ["persona-whh", "ชัย", "หัวหน้าคลัง", "หัวหน้าแผนกคลังสินค้า (WH)", "WH", "คลังสินค้า", "department_manager"],
-    ["persona-qa", "ธนา", "ตรวจสอบ", "เจ้าหน้าที่ QA (แผนกที่ไม่ใช่ฝ่ายผลิต)", "QA", "ประกันคุณภาพ"],
+    // QA ตัดสินล็อตแท่งที่กักในคลังแท่งยาวของ BOM ด้วย (20261202010000)
+    ["persona-qa", "ธนา", "ตรวจสอบ", "เจ้าหน้าที่ QA (ตรวจคุณภาพ)", "QA", "ประกันคุณภาพ"],
     // พนักงานแผนกผลิตที่เหลือ (PK บรรจุ · PT ฉีดพลาสติก · BG เย็บกระเป๋า): ลองรายงานผล / พักงานของแผนกตัวเอง และดูว่าแผนกอื่นทำแทนไม่ได้
     ["persona-pk", "ปรีชา", "บรรจุ", "พนักงานแผนก PK (บรรจุ)", "PK", "ฝ่ายผลิต PK"],
     ["persona-pt", "พิมพ์ใจ", "ฉีดพลาสติก", "พนักงานแผนก PT (ฉีดพลาสติก)", "PT", "ฝ่ายผลิต PT"],
@@ -547,7 +551,8 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
   const bomIsPlanner = (actor) => actor.role === "admin" || BOM_MANAGER_ROLES.includes(actor.role) || actor.dept === "PP"
     || (actor.role === "department_manager" && BOM_PRODUCTION_DEPTS.includes(actor.dept));
   // ใครใช้ข้อมูลจริงได้ (private.bom_can_read / rf_can_read): กลุ่มวางแผน หรือพนักงานแผนกของโมดูล · โหมดทดสอบทุก persona อ่านได้เหมือนเดิม
-  const bomCanRead = (actor) => bomIsPlanner(actor) || ["RB", "GR", "PT", "BG", "PK", "ST", "WH"].includes(actor.dept);
+  // SR และ QA อ่าน BOM ได้ตั้งแต่ 20261202010000 (คลังแท่งยาว: SR รับเข้า / จ่ายให้ GR · QA ตัดสินล็อตที่กัก)
+  const bomCanRead = (actor) => bomIsPlanner(actor) || ["RB", "GR", "PT", "BG", "PK", "ST", "WH", "SR", "QA"].includes(actor.dept);
   const rfCanRead = (actor) => bomIsPlanner(actor) || ["RB", "ST", "QA", "SR", "WH"].includes(actor.dept);
   const bomCanon = (value) => (Array.isArray(value) ? `[${value.map(bomCanon).join(",")}]` : value && typeof value === "object" ? `{${Object.keys(value).sort().filter((key) => value[key] !== undefined).map((key) => `${JSON.stringify(key)}:${bomCanon(value[key])}`).join(",")}}` : JSON.stringify(value) ?? "null");
   const bomWithout = (record, keys) => Object.fromEntries(Object.entries(record ?? {}).filter(([key]) => !keys.includes(key)));
@@ -619,8 +624,16 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       const counted = ["stockCounts", "stockCountedAt", "stockCountedBy"];
       const ok = ["ST", "WH"].includes(actor.dept) && prev.status === "draft" && record.status === "draft" && bomCanon(bomWithout(prev, counted)) === bomCanon(bomWithout(record, counted));
       if (!ok) fail("BOM_FORBIDDEN");
-      // ยอดที่ใช้จากสต็อกสินค้าสำเร็จรูป (กุญแจ stockCounts ที่เป็นสินค้าของใบ) ตั้งได้เฉพาะกลุ่มวางแผน · ST / WH นับชิ้นอื่นของใบร่างได้ตามเดิม (ตรงกับ bom_save_orders ของ batch C)
-      if ((prev.items ?? []).some((item) => bomCanon(prev.stockCounts?.[item.fgCode] ?? null) !== bomCanon(record.stockCounts?.[item.fgCode] ?? null))) fail("BOM_FORBIDDEN");
+      // ST / WH นับได้เฉพาะชิ้นในผลระเบิดของใบ (ตรงกับ bom_save_orders ของ 20261202010000): ทุกคีย์ที่เพิ่ม / แก้ / ลบ ต้องเป็นรหัสของบรรทัดผลระเบิดที่ไม่ใช่ RB และไม่ใช่สินค้าของใบ
+      // (คีย์สินค้า = ใช้จากสต็อกสินค้าสำเร็จรูป · คีย์ RB = ใช้จากคลัง SR ตั้งได้เฉพาะกลุ่มวางแผน) · ใบที่ยังไม่มีผลระเบิด หรือรหัสนอกผลระเบิด = BOM_FORBIDDEN · คีย์จัดรูปแบบ private.bom_code
+      const countsOf = (row) => Object.fromEntries(Object.entries(row.stockCounts && typeof row.stockCounts === "object" ? row.stockCounts : {}).map(([key, value]) => [bomCode(key), value]));
+      const before = countsOf(prev);
+      const after = countsOf(record);
+      const products = new Set((prev.items ?? []).map((item) => item.fgCode));
+      const countable = new Set((Array.isArray(prev.explosion) ? prev.explosion : []).filter((line) => line?.kind !== "RB" && !products.has(line?.itemCode)).map((line) => line.itemCode));
+      for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+        if (bomCanon(before[key] ?? null) !== bomCanon(after[key] ?? null) && !countable.has(key)) fail("BOM_FORBIDDEN");
+      }
       return;
     }
     if (list === "jobs" && prev && !planner) {
@@ -690,9 +703,13 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       ctx.rfCancel.push(bomRfCancelOp("cancelOrder", jobs));
     } else if ((from === "released" || from === "in_progress") && to === "draft") {
       if (jobs.some(bomJobStarted)) fail("BOM_INVALID_TRANSITION");
+      // คลังแท่งยาว: SR จ่ายแท่งให้ GR ตามใบนี้แล้ว (จ่ายสุทธิหลังย้อนจ่าย > 0) = งานเริ่มแล้ว เปิดกลับไม่ได้ (ตรงกับ bom_save_orders ของ 20261202010000)
+      if ((ctx.rodIssued?.(prev.id) ?? 0) > 1e-9) fail("BOM_INVALID_TRANSITION");
       if (Number(record.revision) !== Number(prev.revision) + 1) fail("BOM_INVALID_TRANSITION");
       ctx.rfCancel.push(bomRfCancelOp("reopenOrder", jobs));
       ctx.returnFgStock(prev.id);
+      // แท่งที่ใบหยิบจากคลังแท่งยาวตอนปล่อยผลิตกลับเข้าสต็อกกลาง (ยกเลิกใบไม่ต้อง: ถังของใบที่ยกเลิกเป็นสต็อกกลางเอง)
+      ctx.returnRodStock?.(prev.id);
       ctx.dropJobs(prev.id);
     } else fail("BOM_INVALID_TRANSITION");
   }
@@ -788,7 +805,8 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     if (closing && rfCancel && (record.externalRef?.woId ?? prev.externalRef?.woId)) rfCancel.push(bomRfCancelOp("closeJob", [{ ...prev, externalRef: record.externalRef ?? prev.externalRef }]));
   }
   // ---- สต็อกของซื้อ (ตรงกับ private.bom_save_stock / bom_issue_parts) ----
-  const bomCode = (value) => String(value ?? "").trim().replace(/\s+/g, " ").toUpperCase();
+  // ตรงกับ private.bom_code: ตัดช่องว่างทุกตัว ยุบ "-" ที่ติดกันเหลือตัวเดียว แล้วเป็นตัวใหญ่
+  const bomCode = (value) => String(value ?? "").replace(/\s+/g, "").replace(/-{2,}/g, "-").toUpperCase();
   const bomStockNum = (value) => { if (value === undefined || value === null) return null; if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1e9) fail("BOM_INVALID_STOCK"); return value; };
   // id ขึ้นต้นด้วยลำดับการเขียน: ประวัติที่เกิดในมิลลิวินาทีเดียวกันเรียงตามลำดับที่เขียนจริง (ฐานข้อมูลเรียงตาม created_at ระดับไมโครวินาที)
   const bomMoveId = (stockMoves) => `${String(stockMoves.length + 1).padStart(8, "0")}-${newEpoch()}`;
@@ -954,10 +972,12 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     "setStockCount", "setStockCounts", "cancelOrder",
     "reportJob", "setJobStatus", "linkJobToRubberFlow", "saveCustomer",
     "countPartStock", "issueOrderParts", "undoOrderParts", "returnOrderParts",
-    "receiveFg", "deliverFg", "closeOrderShort", "closeOrder", "reverseFg"];
+    "receiveFg", "deliverFg", "closeOrderShort", "closeOrder", "reverseFg",
+    "receiveRods", "decideRods", "issueRods", "reverseRodIssue", "adjustRods"];
   // reverseFg (20261128020000) ไม่อยู่ในรายการของพนักงาน: พนักงาน WH ได้ BOM_FORBIDDEN ที่ด่านหยาบ · ผู้จัดการแผนก WH อยู่ในกลุ่มวางแผนอยู่แล้ว
+  // คลังแท่งยาว (20261202010000): adjustRods เป็นของกลุ่มวางแผนเท่านั้น จึงไม่อยู่ในรายการของพนักงาน (SR ได้ BOM_FORBIDDEN ที่ด่านหยาบ)
   const BOM_STAFF_ACTIONS = ["setStockCount", "setStockCounts", "reportJob", "setJobStatus", "linkJobToRubberFlow", "countPartStock", "issueOrderParts", "undoOrderParts", "returnOrderParts",
-    "receiveFg", "deliverFg", "closeOrderShort", "closeOrder"];
+    "receiveFg", "deliverFg", "closeOrderShort", "closeOrder", "receiveRods", "decideRods", "issueRods", "reverseRodIssue"];
   // สินค้าสำเร็จรูป (ตรงกับสัญญา bom-wh-fg และ bom-fg-stock): แถวเดียว { orderId, kind, lines?, note? } ลำดับตรวจ: รูปคำขอ (รวมใบที่ไม่รู้จัก/สินค้านอกใบ) → สิทธิ์ (แผนก WH หรือ admin) → สถานะใบ → ยอด
   // ต่อใบ O รหัส X: own = Σ receive · in = Σ transfer − Σ untransfer ของใบนี้ · out = Σ transfer − Σ untransfer ที่ fromOrderId = O · delivered = Σ deliver · have = own + in
   // งานผลิต = ทุกงานของใบยกเว้นการเบิกของซื้อ (ST / PURCHASED) · ปิดใบทุกทางต้องให้ทุกงานผลิตเสร็จก่อน (20261125010000)
@@ -1166,6 +1186,222 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     }
     return written;
   }
+  // ---- คลังแท่งยาว SR (ตรงกับ 20261202010000_bom_sr_rod_store.sql) ----
+  // rodLots: หนึ่งแถวต่อล็อตตกแต่งของ WO ที่ผูกงาน RB (RubberFlow สร้างเป็น pending: rfApplyBomOps) · rodMoves: ประวัติของแท่งที่ใช้ได้ เพิ่มต่อท้าย เซิร์ฟเวอร์เขียน
+  // ยอดของถัง (ล็อต, ใบเจ้าของ) = Σ qty ของแถวที่ lotId และ ownerOrderId ตรงกัน (null = สต็อกกลาง) ต้องไม่ติดลบ · ถังของใบ completed / cancelled = สต็อกกลาง
+  // คำสั่ง (ส่วนเดียวต่อคำสั่ง): receiveRods / decideRods ↔ rodLots · issueRods / reverseRodIssue / adjustRods ↔ rodMoves · ลำดับตรวจ: รูปคำขอ (BOM_INVALID_ROD) → สิทธิ์ (BOM_FORBIDDEN)
+  // → ล็อต / แถวที่อ้าง (ไม่พบ = BOM_INVALID_ROD) → สถานะ (BOM_INVALID_TRANSITION) → ยอด (BOM_INVALID_ROD / BOM_ROD_EXCEEDS)
+  const BOM_ROD_ACTIONS = { receiveRods: "rodLots", decideRods: "rodLots", issueRods: "rodMoves", reverseRodIssue: "rodMoves", adjustRods: "rodMoves" };
+  const BOM_ROD_SPEC_KEYS = ["thickness", "width", "weightPerM"];
+  const BOM_ROD_FREE = ["completed", "cancelled"];
+  const bomRodAction = (action) => (Object.hasOwn(BOM_ROD_ACTIONS, action) ? BOM_ROD_ACTIONS[action] : null);
+  const bomRodRound = (n) => Math.round(Number(n) * 1e9) / 1e9;
+  const bomRodOwner = (value) => (value === undefined || value === null || value === "" ? null : String(value));
+  const bomRodBalance = (next, lotId, owner) => bomRodRound(next.rodMoves.reduce((sum, move) => (move.lotId === lotId && bomRodOwner(move.ownerOrderId) === bomRodOwner(owner) ? sum + Number(move.qty) : sum), 0));
+  const bomRodFreeOwner = (next, owner) => owner === null || BOM_ROD_FREE.includes(next.orders.find((order) => order.id === owner)?.status);
+  const bomRodText = (value, min, max) => { const text = typeof value === "string" ? value.trim() : value === undefined || value === null ? "" : fail("BOM_INVALID_ROD"); if (text.length < min || text.length > max) fail("BOM_INVALID_ROD"); return text; };
+  // ตัวเลขของคำขอ (private.bom_num): ไม่มี / null = null · ไม่ใช่ตัวเลข หรือนอกช่วง [min, max] = BOM_INVALID_ROD
+  const bomRodNum = (value, min, max) => (value === undefined || value === null ? null : typeof value === "number" && Number.isFinite(value) && value >= min && value <= max ? value : fail("BOM_INVALID_ROD"));
+  // uuid ของคำขอ (bom_text 1-40 ตัวหลังตัดช่องว่าง แปลงเป็นตัวเล็ก ต้องเป็นรูป uuid) ผิด = BOM_INVALID_ROD
+  const BOM_ROD_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  const bomRodUuid = (value) => { const text = bomRodText(value, 1, 40).toLowerCase(); if (!BOM_ROD_UUID.test(text)) fail("BOM_INVALID_ROD"); return text; };
+  const bomRodLotOf = (next, id) => next.rodLots.find((entry) => String(entry.id).toLowerCase() === id) ?? fail("BOM_INVALID_ROD");
+  // แท่งที่ SR จ่ายให้ GR ตามใบนี้สุทธิ (issue + unissue ที่ forOrderId = ใบนี้ กลับเครื่องหมาย) · > 0 = เปิดใบกลับเป็นร่างไม่ได้
+  const bomRodIssued = (next, orderId) => bomRodRound(-next.rodMoves.reduce((sum, move) => ((move.kind === "issue" || move.kind === "unissue") && move.forOrderId === orderId ? sum + Number(move.qty) : sum), 0));
+  const bomRodRights = (actor, dept) => { if (!(bomIsPlanner(actor) || actor.dept === dept)) fail("BOM_FORBIDDEN"); };
+  const bomRodPush = (next, nextVersion, at, actor, row) => {
+    const id = row.id ?? newEpoch();
+    next.rodMoves.push({ id, lotId: row.lotId, itemCode: row.itemCode, kind: row.kind, qty: bomRodRound(row.qty), ownerOrderId: bomRodOwner(row.ownerOrderId), forOrderId: bomRodOwner(row.forOrderId), reversesId: row.reversesId ?? null, note: row.note ?? "", at, by: actor.name });
+    next.versions.rodMoves[id] = nextVersion;
+    return 1;
+  };
+  // รับแท่งที่ผ่านเข้าคลัง (private CREDIT): ใบ released / in_progress และงาน RB ยังไม่เสร็จ = ส่วนที่งานยังขาดเป็นของใบ ที่เกินเป็นสต็อกกลาง · งานนับยอดทั้งหมดที่รับ (เหมือน rf_apply_feedback)
+  // ใบปิด / ยกเลิก / ร่าง หรืองานเสร็จแล้ว = สต็อกกลางทั้งหมด งานไม่เปลี่ยน · คืน { moves, job }
+  function bomRodCredit(next, lot, qty, nextVersion, actor, at) {
+    const order = next.orders.find((row) => row.id === lot.orderId);
+    const job = next.jobs.find((row) => row.id === lot.jobNo && row.orderId === lot.orderId);
+    const q = bomRodRound(qty);
+    let moves = 0;
+    if (order && ["released", "in_progress"].includes(order.status) && job && job.status !== "done") {
+      const need = Math.max(bomRodRound(Number(job.qtyPlanned) - Number(job.qtyDone || 0)), 0);
+      const owned = bomRodRound(Math.min(q, need));
+      const extra = bomRodRound(q - owned);
+      if (owned > 0) moves += bomRodPush(next, nextVersion, at, actor, { lotId: lot.id, itemCode: lot.itemCode, kind: "receive", qty: owned, ownerOrderId: order.id });
+      if (extra > 0) moves += bomRodPush(next, nextVersion, at, actor, { lotId: lot.id, itemCode: lot.itemCode, kind: "receive", qty: extra, ownerOrderId: null });
+      job.reports = [...(job.reports ?? []), { at, by: actor.name, good: q, reject: 0, note: `รับเข้าคลัง SR ผ่านตรวจ ล็อต ${lot.lotNo}${extra > 0 ? ` · เกิน ${extra} เข้าสต็อกกลาง` : ""}` }];
+      job.qtyDone = Math.round((Number(job.qtyDone) + q) * 1e4) / 1e4;
+      job.status = job.qtyDone + 1e-9 >= Number(job.qtyPlanned) ? "done" : "in_progress";
+      if (job.status === "done") job.doneAt = job.doneAt ?? at; else delete job.doneAt;
+      next.versions.jobs[job.id] = nextVersion;
+      if (order.status === "released") { order.status = "in_progress"; next.versions.orders[order.id] = nextVersion; }
+      return { moves, job: true };
+    }
+    moves += bomRodPush(next, nextVersion, at, actor, { lotId: lot.id, itemCode: lot.itemCode, kind: "receive", qty: q, ownerOrderId: null });
+    return { moves, job: false };
+  }
+  // receiveRods: แถวเดียว { id, qtyReceived, qc: { values, result, note } } · decideRods: แถวเดียว { id, decision, decisionNote }
+  function bomRodLots(next, rows, nextVersion, actor, at, action) {
+    if (!Array.isArray(rows) || rows.length !== 1) fail("BOM_INVALID_ROD");
+    const row = rows[0];
+    if (!row || typeof row !== "object" || Array.isArray(row)) fail("BOM_INVALID_ROD");
+    const id = bomRodUuid(row.id);
+    if (action === "receiveRods") {
+      // รูปคำขอทั้งหมดก่อนสิทธิ์ (ลำดับเดียวกับ bom_rod_save_lots): จำนวน 0 < q <= 1e9 · qc เป็นวัตถุ · ค่าที่วัดเฉพาะสามมิติ 0 < ค่า <= 1e6 (null = ไม่ได้วัด ข้าม)
+      // ผล pass | fail บังคับเสมอ (ไม่มีสเปก = SR ตัดสินด้วยตา) · หมายเหตุ <= 300 ตัวอักษร ไม่ผ่านต้อง >= 3
+      const qty = bomRodNum(row.qtyReceived, 0, 1e9);
+      if (qty === null || qty <= 0) fail("BOM_INVALID_ROD");
+      const qc = row.qc;
+      if (!qc || typeof qc !== "object" || Array.isArray(qc)) fail("BOM_INVALID_ROD");
+      const raw = qc.values === undefined || qc.values === null ? {} : qc.values;
+      if (typeof raw !== "object" || Array.isArray(raw)) fail("BOM_INVALID_ROD");
+      const values = {};
+      for (const [key, value] of Object.entries(raw)) {
+        if (!BOM_ROD_SPEC_KEYS.includes(key)) fail("BOM_INVALID_ROD");
+        const measured = bomRodNum(value, 0, 1e6);
+        if (measured === null) continue;
+        if (measured <= 0) fail("BOM_INVALID_ROD");
+        values[key] = measured;
+      }
+      const result = bomRodText(qc.result, 0, 10);
+      if (!["pass", "fail"].includes(result)) fail("BOM_INVALID_ROD");
+      const note = bomRodText(qc.note, 0, 300);
+      if (result === "fail" && note.length < 3) fail("BOM_INVALID_ROD");
+      bomRodRights(actor, "SR");
+      const lot = bomRodLotOf(next, id);
+      if (lot.status !== "pending") fail("BOM_INVALID_TRANSITION");
+      if (qty > Number(lot.qtySent)) fail("BOM_INVALID_ROD");
+      // มีสเปก: ทุกคีย์ของสเปกต้องมีค่า และผลที่ส่งมาต้องเท่ากับผลคำนวณ (private.rf_in_spec: |ค่า - target| <= tol เผื่อ 1e-9 · ไม่มี target = ผ่าน)
+      if (lot.spec && typeof lot.spec === "object") {
+        const keys = Object.keys(lot.spec);
+        if (keys.some((key) => values[key] === undefined)) fail("BOM_INVALID_ROD");
+        const inSpec = (key) => { const target = lot.spec[key]?.target; return target === undefined || target === null || Math.abs(values[key] - Number(target)) <= Number(lot.spec[key]?.tol) + 1e-9; };
+        if (result !== (keys.every(inSpec) ? "pass" : "fail")) fail("BOM_INVALID_ROD");
+      }
+      Object.assign(lot, { qtyReceived: qty, qc: { values, result, note }, receivedBy: actor.name, receivedAt: at, status: result === "pass" ? "stored" : "held" });
+      next.versions.rodLots[lot.id] = nextVersion;
+      const credit = result === "pass" ? bomRodCredit(next, lot, qty, nextVersion, actor, at) : { moves: 0, job: false };
+      return { lots: 1, ...credit };
+    }
+    const decision = bomRodText(row.decision, 1, 10);
+    if (!["accept", "return", "scrap"].includes(decision)) fail("BOM_INVALID_ROD");
+    const note = bomRodText(row.decisionNote, 3, 300);
+    bomRodRights(actor, "QA");
+    const lot = bomRodLotOf(next, id);
+    if (lot.status !== "held") fail("BOM_INVALID_TRANSITION");
+    Object.assign(lot, { decision, decisionNote: note, decidedBy: actor.name, decidedAt: at, status: decision === "accept" ? "stored" : decision === "return" ? "returned" : "scrapped" });
+    next.versions.rodLots[lot.id] = nextVersion;
+    const credit = decision === "accept" ? bomRodCredit(next, lot, lot.qtyReceived, nextVersion, actor, at) : { moves: 0, job: false };
+    return { lots: 1, ...credit };
+  }
+  // issueRods: 1-50 แถว { id, kind: "issue", lotId, ownerOrderId, forOrderId, itemCode, qty < 0 } ทั้งชุดผ่านหรือไม่ผ่าน · reverseRodIssue: แถวเดียว { id, kind: "unissue", reversesId, note }
+  // adjustRods: แถวเดียว { id, kind: "adjust", lotId, qty ≠ 0, note } สต็อกกลางของล็อตเท่านั้น
+  function bomRodMoves(next, rows, nextVersion, actor, at, action) {
+    const bad = () => fail("BOM_INVALID_ROD");
+    const kind = { issueRods: "issue", reverseRodIssue: "unissue", adjustRods: "adjust" }[action];
+    if (!kind || !Array.isArray(rows) || rows.length < 1 || rows.length > (kind === "issue" ? 50 : 1)) bad();
+    // รูปทุกแถวก่อนสิทธิ์ (ลำดับเดียวกับ bom_rod_save_moves): id เป็น uuid ไม่ซ้ำในคำสั่งและไม่มีอยู่แล้ว · kind ตรงกับ action · หมายเหตุ จ่าย <= 300 / ย้อนจ่าย ปรับยอด 3-300
+    // ownerOrderId / forOrderId = เลข PI (ตัวใหญ่) · itemCode ตามกฎรหัส · จ่ายต้องมี forOrderId และ itemCode · ปรับยอดห้ามมี ownerOrderId / forOrderId (สต็อกกลางเท่านั้น)
+    const seen = new Set();
+    const parsed = rows.map((row) => {
+      if (!row || typeof row !== "object" || Array.isArray(row)) bad();
+      const id = bomRodUuid(row.id);
+      if (seen.has(id) || next.rodMoves.some((move) => String(move.id).toLowerCase() === id)) bad();
+      seen.add(id);
+      if (bomRodText(row.kind, 1, 10) !== kind) bad();
+      const note = bomRodText(row.note, kind === "issue" ? 0 : 3, 300);
+      if (kind === "unissue") return { id, reversesId: bomRodUuid(row.reversesId), note };
+      const lotId = bomRodUuid(row.lotId);
+      const qty = bomRodNum(row.qty, -1e9, 1e9);
+      if (qty === null || qty === 0 || (kind === "issue" && qty > 0)) bad();
+      const ownerPi = bomRodText(row.ownerOrderId, 0, 40).toUpperCase() || null;
+      const code = bomCode(bomRodText(row.itemCode, 0, 60)) || null;
+      let forPi = null;
+      if (kind === "issue") {
+        forPi = bomRodText(row.forOrderId, 1, 40).toUpperCase();
+        if (code === null) bad();
+      } else if (ownerPi !== null || bomRodText(row.forOrderId, 0, 40)) bad();
+      return { id, lotId, qty, ownerPi, forPi, code, note };
+    });
+    // สิทธิ์: จ่าย / ย้อนจ่าย = แผนก SR หรือกลุ่มวางแผน · ปรับยอด = กลุ่มวางแผนเท่านั้น
+    if (kind === "adjust") { if (!bomIsPlanner(actor)) fail("BOM_FORBIDDEN"); } else bomRodRights(actor, "SR");
+    let moves = 0;
+    for (const row of parsed) {
+      if (kind === "unissue") {
+        // ย้อนได้เฉพาะแถว issue (อื่น = BOM_INVALID_ROD) ที่ยังไม่ถูกย้อน (ย้อนซ้ำ = BOM_INVALID_TRANSITION)
+        const original = next.rodMoves.find((move) => String(move.id).toLowerCase() === row.reversesId) ?? bad();
+        if (original.kind !== "issue") bad();
+        if (next.rodMoves.some((move) => move.reversesId === original.id)) fail("BOM_INVALID_TRANSITION");
+        moves += bomRodPush(next, nextVersion, at, actor, { id: row.id, lotId: original.lotId, itemCode: original.itemCode, kind, qty: -Number(original.qty), ownerOrderId: original.ownerOrderId, forOrderId: original.forOrderId, reversesId: original.id, note: row.note });
+        continue;
+      }
+      // รายแถว: ล็อต (ไม่พบ = BOM_INVALID_ROD) → สถานะ stored (BOM_INVALID_TRANSITION) → รหัสตรงกับล็อต → ใบที่จ่ายให้ released / in_progress → ถังต้นทาง → ยอดถัง (BOM_ROD_EXCEEDS)
+      const lot = next.rodLots.find((entry) => String(entry.id).toLowerCase() === row.lotId) ?? bad();
+      if (lot.status !== "stored") fail("BOM_INVALID_TRANSITION");
+      if (row.code !== null && row.code !== lot.itemCode) bad();
+      let owner = null;
+      let forId = null;
+      if (kind === "issue") {
+        const forOrder = next.orders.find((order) => order.id === row.forPi) ?? bad();
+        if (!["released", "in_progress"].includes(forOrder.status)) fail("BOM_INVALID_TRANSITION");
+        forId = forOrder.id;
+        if (row.ownerPi !== null) {
+          const ownerOrder = next.orders.find((order) => order.id === row.ownerPi) ?? bad();
+          if (ownerOrder.id !== forOrder.id && !BOM_ROD_FREE.includes(ownerOrder.status)) bad();
+          owner = ownerOrder.id;
+        }
+      }
+      if (bomRodBalance(next, lot.id, owner) + row.qty < -1e-9) fail("BOM_ROD_EXCEEDS");
+      moves += bomRodPush(next, nextVersion, at, actor, { id: row.id, lotId: lot.id, itemCode: lot.itemCode, kind, qty: row.qty, ownerOrderId: owner, forOrderId: forId, note: row.note });
+    }
+    return { moves };
+  }
+  // ถังสต็อกกลางของรหัสเส้นยาง เรียง FIFO: ล็อตที่รับเข้าคลังก่อน (receivedAt แล้วเลขล็อต) · ในล็อตเดียวกัน ถังไม่มีเจ้าของก่อน แล้วใบที่ปิด / ยกเลิกเรียงตาม releasedAt (เลข PI)
+  function bomRodFreeBuckets(next, itemCode) {
+    const sums = new Map();
+    for (const move of next.rodMoves) {
+      if (move.itemCode !== itemCode) continue;
+      const key = `${move.lotId}\u0000${bomRodOwner(move.ownerOrderId) ?? ""}`;
+      sums.set(key, bomRodRound((sums.get(key) ?? 0) + Number(move.qty)));
+    }
+    const releasedAt = (owner) => Number(next.orders.find((order) => order.id === owner)?.releasedAt) || 0;
+    return [...sums].map(([key, qty]) => { const [lotId, ownerText] = key.split("\u0000"); return { lot: next.rodLots.find((lot) => lot.id === lotId), owner: ownerText || null, qty }; })
+      .filter((bucket) => bucket.lot && bucket.lot.status === "stored" && bucket.qty > 1e-9 && bomRodFreeOwner(next, bucket.owner))
+      .sort((a, b) => (Number(a.lot.receivedAt) || 0) - (Number(b.lot.receivedAt) || 0) || bomCmp(a.lot.lotNo, b.lot.lotNo) || (a.owner === null ? 0 : 1) - (b.owner === null ? 0 : 1) || releasedAt(a.owner) - releasedAt(b.owner) || bomCmp(a.owner ?? "", b.owner ?? ""));
+  }
+  // ปล่อยผลิต (draft → released): ทุกรหัสเส้นยางของผลระเบิด BOM ที่ stockCounts = n > 0 หยิบ n จากสต็อกกลาง FIFO แถว transfer คู่ (−k ถังต้นทาง +k ถังของใบ for = ใบนี้) · ไม่พอ = BOM_ROD_EXCEEDS
+  function bomReleaseRodStock(next, order, nextVersion, actor, at) {
+    const counts = order.stockCounts && typeof order.stockCounts === "object" && !Array.isArray(order.stockCounts) ? order.stockCounts : {};
+    const codes = [...new Set((Array.isArray(order.explosion) ? order.explosion : []).filter((line) => line?.kind === "RB").map((line) => line.itemCode))].sort(bomCmp);
+    let moves = 0;
+    for (const code of codes) {
+      const n = Number(counts[code]);
+      if (!(n > 0)) continue;
+      const buckets = bomRodFreeBuckets(next, code);
+      if (buckets.reduce((sum, bucket) => sum + bucket.qty, 0) + 1e-9 < n) fail("BOM_ROD_EXCEEDS");
+      let left = bomRodRound(n);
+      for (const bucket of buckets) {
+        if (left <= 1e-9) break;
+        const k = bomRodRound(Math.min(bucket.qty, left));
+        moves += bomRodPush(next, nextVersion, at, actor, { lotId: bucket.lot.id, itemCode: code, kind: "transfer", qty: -k, ownerOrderId: bucket.owner, forOrderId: order.id });
+        moves += bomRodPush(next, nextVersion, at, actor, { lotId: bucket.lot.id, itemCode: code, kind: "transfer", qty: k, ownerOrderId: order.id, forOrderId: order.id });
+        left = bomRodRound(left - k);
+      }
+    }
+    return moves;
+  }
+  // เปิดใบกลับมาแก้ (released / in_progress → draft): คืนแท่งที่ใบนี้หยิบตอนปล่อยผลิตต่อล็อต t = min(Σ transfer ที่เจ้าของ = ใบนี้ และ for = ใบนี้, ยอดที่ใบถืออยู่) แถว transfer คู่กลับเข้าสต็อกกลาง
+  function bomReturnRodStock(next, orderId, nextVersion, actor, at) {
+    const nets = new Map();
+    for (const move of next.rodMoves) if (move.kind === "transfer" && move.forOrderId === orderId && bomRodOwner(move.ownerOrderId) === orderId) nets.set(move.lotId, { itemCode: move.itemCode, qty: bomRodRound((nets.get(move.lotId)?.qty ?? 0) + Number(move.qty)) });
+    let moves = 0;
+    for (const [lotId, entry] of [...nets].sort((a, b) => bomCmp(a[0], b[0]))) {
+      const t = bomRodRound(Math.min(entry.qty, bomRodBalance(next, lotId, orderId)));
+      if (!(t > 1e-9)) continue;
+      moves += bomRodPush(next, nextVersion, at, actor, { lotId, itemCode: entry.itemCode, kind: "transfer", qty: -t, ownerOrderId: orderId, forOrderId: orderId });
+      moves += bomRodPush(next, nextVersion, at, actor, { lotId, itemCode: entry.itemCode, kind: "transfer", qty: t, ownerOrderId: null, forOrderId: orderId });
+    }
+    return moves;
+  }
   // รูปของ payload (ตรงกับวงตรวจรูปของ app_bom_save_master): ส่วนที่รู้จัก (stockMoves ส่งเองไม่ได้) · upsert / delete ต้องเป็นอาร์เรย์ (ไม่ใช่ = BOM_INVALID_PAYLOAD) · delete เฉพาะ colorSets / packages / jobs ·
   // ส่วนที่ส่งได้ต่อ action: fgMoves ↔ receiveFg / deliverFg / closeOrderShort (ผิด = BOM_INVALID_FG ตรวจก่อนกฎของส่วนอื่น) · partReturns ↔ undoOrderParts / returnOrderParts · stock ↔ countPartStock · issueOrderParts ส่งได้เฉพาะ jobs upsert (ผิด = BOM_INVALID_PAYLOAD)
   // สามการกระทำของสำเร็จรูปต้องมีคำขอใน fgMoves เสมอ (ไม่มีส่วนนี้ หรือ upsert ว่าง = BOM_INVALID_FG) · ทั้งหมดตรวจก่อนรอบข้อมูล (BOM_RESET) และเวอร์ชันฐานที่สูงเกิน (BOM_INVALID_PAYLOAD) เหมือนฐานข้อมูล (20261122010000)
@@ -1178,10 +1414,13 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       const count = (entry?.upsert?.length ?? 0) + (entry?.delete?.length ?? 0);
       if (entry && typeof entry === "object" && Object.hasOwn(entry, "delete") && !BOM_DELETABLE.includes(list)) fail("BOM_INVALID_PAYLOAD");
       if (count > 0 && ((list === "fgMoves" && !bomFgKind(action)) || (bomFgKind(action) && list !== "fgMoves"))) fail("BOM_INVALID_FG");
+      // คลังแท่งยาว: rodLots ↔ receiveRods / decideRods · rodMoves ↔ issueRods / reverseRodIssue / adjustRods (ผิด = BOM_INVALID_ROD เหมือนส่วนของสำเร็จรูป)
+      if (count > 0 && (((list === "rodLots" || list === "rodMoves") && bomRodAction(action) !== list) || (bomRodAction(action) && list !== bomRodAction(action)))) fail("BOM_INVALID_ROD");
       if (count > 0 && ((list === "partReturns" && !BOM_RETURN_ACTIONS.includes(action)) || (BOM_RETURN_ACTIONS.includes(action) && list !== "partReturns"))) fail("BOM_INVALID_PAYLOAD");
       if (count > 0 && ((list === "stock" && action !== "countPartStock") || (action === "countPartStock" && list !== "stock") || (action === "issueOrderParts" && !(list === "jobs" && !entry?.delete?.length)))) fail("BOM_INVALID_PAYLOAD");
     }
     if (bomFgKind(action) && !(Array.isArray(changes.fgMoves?.upsert) && changes.fgMoves.upsert.length > 0)) fail("BOM_INVALID_FG");
+    if (bomRodAction(action) && !(Array.isArray(changes[bomRodAction(action)]?.upsert) && changes[bomRodAction(action)].upsert.length > 0)) fail("BOM_INVALID_ROD");
   }
   function bomApply(current, changes, base, actor, at, rfOps = { release: [], cancel: [] }, action = "", meta = {}) {
     const next = clone(current);
@@ -1205,7 +1444,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     };
     for (const list of BOM_LISTS) {
       const entry = changes[list];
-      if (entry === undefined || list === "stock" || list === "stockMoves" || list === "fgMoves") continue; // สต็อกของซื้อเขียนโดยตัวเขียนเฉพาะด้านล่าง
+      if (entry === undefined || list === "stock" || list === "stockMoves" || list === "fgMoves" || list === "rodLots" || list === "rodMoves") continue; // สต็อกของซื้อ สำเร็จรูป และคลังแท่งยาวเขียนโดยตัวเขียนเฉพาะด้านล่าง
       if (!entry || typeof entry !== "object" || Array.isArray(entry)) fail("BOM_INVALID_CHANGES");
       const idOf = BOM_ID[list];
       for (const record of entry.upsert ?? []) {
@@ -1232,7 +1471,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
         // สูตรยางผูกกับสูตร PHR ของ RubberFlow ได้เฉพาะรหัสสูตรที่มีอยู่ในฐานข้อมูล RubberFlow (revision ใดก็ได้ · ตรงกับ bom_save_compounds)
         if (list === "compounds" && record.recipeId !== undefined && record.recipeId !== null && !rfLoad().recipes.some((row) => row.id === record.recipeId)) fail("BOM_INVALID_COMPOUND");
         const releasedBefore = released.length;
-        if (list === "orders") bomOrderTransition(prev, record, { jobRows: changes.jobs?.upsert ?? [], jobsOf, dropJobs, released, rfCancel: rfOps.cancel, returnFgStock: (orderId) => { meta.fgStockMoves = (meta.fgStockMoves ?? 0) + bomReturnFgStock(next, orderId, nextVersion, actor, at); } });
+        if (list === "orders") bomOrderTransition(prev, record, { jobRows: changes.jobs?.upsert ?? [], jobsOf, dropJobs, released, rfCancel: rfOps.cancel, returnFgStock: (orderId) => { meta.fgStockMoves = (meta.fgStockMoves ?? 0) + bomReturnFgStock(next, orderId, nextVersion, actor, at); }, returnRodStock: (orderId) => { meta.rodMoves = (meta.rodMoves ?? 0) + bomReturnRodStock(next, orderId, nextVersion, actor, at); }, rodIssued: (orderId) => bomRodIssued(next, orderId) });
         if (list === "jobs") bomJobRules(prev, record, actor, next, released, action, rfOps.cancel);
         if (index === -1) {
           if (list === "colorSets" || list === "packages" || list === "jobs") {
@@ -1270,6 +1509,9 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
         if (list === "orders" && released.length > releasedBefore) {
           const stock = bomReleaseFgStock(next, next.orders.find((row) => idOf(row) === id), nextVersion, actor, at);
           if (stock.moves) meta.fgStockMoves = (meta.fgStockMoves ?? 0) + stock.moves;
+          // เส้นยางที่ตั้งใช้จากคลังแท่งยาว (SR): หักจากสต็อกกลางในคำสั่งเดียวกัน ต่อจากสต็อกสินค้าสำเร็จรูป (20261202010000)
+          const rods = bomReleaseRodStock(next, next.orders.find((row) => idOf(row) === id), nextVersion, actor, at);
+          if (rods) meta.rodMoves = (meta.rodMoves ?? 0) + rods;
         }
       }
       for (const target of entry.delete ?? []) {
@@ -1296,6 +1538,8 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     if (action === "issueOrderParts") meta.issued = bomIssueParts(next, changes.jobs?.upsert ?? [], base, current.version, nextVersion, actor, at);
     if (bomFgKind(action)) meta.fg = action === "reverseFg" ? bomFgReverse(next, changes.fgMoves?.upsert ?? [], nextVersion, actor, at) : bomFgMoves(next, changes.fgMoves?.upsert ?? [], nextVersion, actor, at, action);
     if (BOM_RETURN_ACTIONS.includes(action)) meta.returned = bomReturnParts(next, changes.partReturns?.upsert ?? [], base, current.version, nextVersion, actor, at);
+    if (bomRodAction(action) === "rodLots") meta.rod = bomRodLots(next, changes.rodLots?.upsert ?? [], nextVersion, actor, at, action);
+    if (bomRodAction(action) === "rodMoves") meta.rod = bomRodMoves(next, changes.rodMoves?.upsert ?? [], nextVersion, actor, at, action);
     // ใบที่ปล่อยผลิตในคำสั่งนี้ (ตรงกับ app_bom_save_master ของ 20261124010000): ยังไม่ completed ต้องมีงาน (ปล่อยผลิตโดยไม่มีงานเลยไม่ได้)
     // completed (ได้ครบทุกสินค้าจากสต็อกตอนปล่อย ด้านบน) ต้องไม่มีงาน เพราะงานของใบที่ปิดแล้วทำต่อไม่ได้
     for (const orderId of released) {
@@ -1347,7 +1591,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
   // สิทธิ์: กลุ่มวางแผน (admin ผู้จัดการแผนกขึ้นไป แผนก PP) ทำได้ทุกอย่าง · สมาชิก RB แก้วัตถุดิบ/ร่างสูตร/เปิด WO เบิก-ชั่ง บันทึกผสม ฉีด อบ ตกแต่ง ส่งมอบ WIP แม่พิมพ์ และกรอกการแก้ไข/ป้องกันของ NCR
   // อนุมัติสูตรและปล่อยผลิต = หัวหน้า RB (ผู้จัดการ/ผู้ช่วยผู้จัดการแผนก RB หรือผู้ช่วยผู้จัดการโรงงานขึ้นไป) หรือกลุ่มวางแผน (ปล่อยผลิต) · ST รับวัตถุดิบเข้าคลัง · ST/QA กักกันล็อตวัตถุดิบ
   // SR รับมอบ WIP · WH ส่งมอบกล่อง · QA บันทึกผลตรวจและเปิด/ปิด NCR · ฐานข้อมูลคำนวณเอง: สต็อกล็อตหลังชั่ง คงเหลือ/ยอดส่งต่อของใบส่งมอบ ยอดผลิตของ WO สถานะกล่องตามผล QC การใช้แม่พิมพ์ (ไม่เชื่อค่าที่ client ส่ง)
-  // WO ที่มี sourceJobId ผูกงาน RB ของ BOM ในคำสั่งเดียวกัน (externalRef) · ล็อตตกแต่งของ WO ที่ผูกงานผ่าน QC และนับเข้า WO (ตอนบันทึก หรือ QA ตัดสินเป็น pass) → ส่งยอดดีของล็อตเข้างานเป็นรายงานผลทีละล็อต (การรับมอบใบส่งมอบไม่เขียน BOM) ผ่านตัวนับเวอร์ชันของ BOM ด้วย
+  // WO ที่มี sourceJobId ผูกงาน RB ของ BOM ในคำสั่งเดียวกัน (externalRef) · ล็อตตกแต่งของ WO ที่ผูกงานผ่าน QC และนับเข้า WO (ตอนบันทึก หรือ QA ตัดสินเป็น pass) → ไม่สร้างกล่อง แต่สร้างล็อตแท่ง pending ในคลังแท่งยาวของ BOM (20261202010000 · งาน RB นับยอดเมื่อ SR รับเข้าผ่าน) (การรับมอบใบส่งมอบไม่เขียน BOM) ผ่านตัวนับเวอร์ชันของ BOM ด้วย
   const RF_KEY = sandbox ? "mnp-harness-rf-master" : "mnp-harness-rf-master-real";
   const RF_LISTS = ["materials", "recipes", "orders", "materialLots", "requisitions", "lots", "transfers", "fgBoxes", "qcRecords", "ncrs", "molds", "purchaseOrders"];
   const RF_ID = { materials: (record) => record.code, recipes: (record) => `${record.id}|${record.revision}`, orders: (record) => record.id, materialLots: (record) => record.lotNo };
@@ -1444,6 +1688,8 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
 
   // บันทึกการเปลี่ยนแปลงทั้งชุดในธุรกรรมเดียว (ตรงกับ app_rf_save): คืน { next, ops, wrote } โดย ops = งานของ BOM ที่ต้องเขียนต่อเมื่อบันทึกสำเร็จ (ผูกงาน / ป้อนยอดผลิตกลับ / ล้างการผูกตอนยกเลิก)
   // wrote = จำนวนระเบียนที่เขียนจริง (0 = ทุกเรคอร์ดตรงกับที่เก็บ ไม่ต้องเพิ่มเวอร์ชัน)
+  // WO ที่ผูกงาน RB ของ BOM: sourceJobId ตรงกับเลขงานในข้อมูล BOM ของโหมดเดียวกัน (bom_jobs ที่ is_test เดียวกัน · mock แยกคีย์ตามโหมดอยู่แล้ว)
+  const rfLinkedJob = (order) => (order?.sourceJobId ? bomLoad().jobs.find((job) => job.id === order.sourceJobId) ?? null : null);
   function rfApply(current, changes, base, actor, at, action) {
     const next = clone(current);
     const nextVersion = current.version + 1;
@@ -1455,7 +1701,8 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     const head = rfIsHead(actor);
     const approvedNow = [];
     const supersededSent = [];
-    const ops = { link: [], feed: [], unlink: [], stock: [] }; // stock = สต็อกของซื้อฝั่ง BOM ที่ใบสั่งซื้อเขียน (สต็อกขั้นต่ำตอนสร้างใบ / บวกยอดตอนรับบรรทัดของซื้อ)
+    // stock = สต็อกของซื้อฝั่ง BOM ที่ใบสั่งซื้อเขียน (สต็อกขั้นต่ำตอนสร้างใบ / บวกยอดตอนรับบรรทัดของซื้อ) · rods = ล็อตตกแต่งที่ผ่าน QC ของ WO ที่ผูกงาน BOM → ล็อตแท่งรอ SR รับ (20261202010000)
+    const ops = { link: [], rods: [], unlink: [], stock: [] };
     // ใบสั่งซื้อ: ส่งชุดข้อมูลได้เฉพาะตามคำสั่ง · createPurchaseOrder = purchaseOrders + materials (ใช้แก้ safetyKg เท่านั้น) · receivePurchaseLine = purchaseOrders + materialLots · cancelPurchaseOrder = purchaseOrders · purchaseOrders ส่งได้เฉพาะสามคำสั่งนี้
     const PO_LISTS = { createPurchaseOrder: ["purchaseOrders", "materials"], receivePurchaseLine: ["purchaseOrders", "materialLots"], cancelPurchaseOrder: ["purchaseOrders"], closePurchaseLine: ["purchaseOrders"] };
     for (const list of Object.keys(changes)) {
@@ -1671,7 +1918,12 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
             if (!(qcFor.has(prev.id) || ncrFor.has(prev.id))) fail("RF_INVALID_TRANSITION");
             out.qc = record.qc;
             out.holdReasons = record.qc === "pass" ? [] : (Array.isArray(record.holdReasons) ? record.holdReasons.map((reason) => String(reason).slice(0, 200)).slice(0, 20) : []);
-            if (prev.stage === "finishing" && record.qc === "pass" && !prev.countedToOrder) { out.countedToOrder = true; touchedOrders.add(prev.orderId); ops.feed.push({ woId: prev.orderId, lotId: prev.id, qty: prev.goodQty }); }
+            // ล็อตตกแต่งที่ QA ปล่อยเป็นผ่านครั้งแรก (countedToOrder false → true ครั้งเดียว): นับเข้า WO · WO ที่ผูกงาน BOM สร้างล็อตแท่งรอ SR รับ
+            if (prev.stage === "finishing" && record.qc === "pass" && !prev.countedToOrder) {
+              out.countedToOrder = true;
+              touchedOrders.add(prev.orderId);
+              if (rfLinkedJob(next.orders.find((row) => row.id === prev.orderId))) ops.rods.push({ woId: prev.orderId, lotId: prev.id, qty: prev.goodQty });
+            }
             wrote = true;
           }
           // เวลาครบบ่มที่ต่างไปภายใต้ action อื่น หรือล็อตที่บ่มครบแล้ว: ฐานข้อมูลเมิน ไม่เขียนอะไร
@@ -1747,13 +1999,18 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
             next.molds[mi] = { ...next.molds[mi], usageSinceClean: round3(next.molds[mi].usageSinceClean + shots), totalUsage: round3(next.molds[mi].totalUsage + shots) };
             stampVersion("molds", next.molds[mi].id);
           } else {
-            const perBox = num(record.params.perBox);
-            if (!(perBox > 0) || good + scrap > use + 1e-9 || !["pass", "hold", "fail"].includes(record.qc)) fail(bad);
+            // WO ที่ผูกงาน RB ของ BOM (sourceJobId ตรงกับงานของ BOM โหมดเดียวกัน · 20261202010000): ไม่มีกล่อง แท่งไปคลังแท่งยาว (SR) เป็นล็อตแท่งรอรับเมื่อผ่าน QC (rfApplyBomOps)
+            const linked = rfLinkedJob(order);
+            // จำนวนต่อกล่อง (ตรงกับ rf_save_lots): ไม่ส่ง = ได้เฉพาะ WO ที่ผูกงาน · ส่งมาต้องเป็นตัวเลข 0 < ค่า <= 1e9 ทุก WO · ล็อตเก็บเฉพาะ perBox (ผูกงานไม่ส่ง = {})
+            const rawPerBox = record.params.perBox;
+            const perBox = rawPerBox === undefined || rawPerBox === null ? null : num(rawPerBox);
+            if ((perBox === null ? !linked : !(perBox > 0) || perBox > 1e9) || good + scrap > use + 1e-9 || !["pass", "hold", "fail"].includes(record.qc)) fail(bad);
+            out.params = perBox === null ? {} : { perBox };
             if (record.qc !== "pass") reasons.push(...(Array.isArray(record.holdReasons) && record.holdReasons.length ? record.holdReasons.map((reason) => String(reason).slice(0, 200)).slice(0, 20) : ["ผลตรวจตกแต่งไม่ผ่าน/รอตัดสิน"]));
             out.qc = record.qc;
             out.countedToOrder = record.qc === "pass";
             // กล่อง: ฐานข้อมูลสร้างเองจากล็อต (ใบละไม่เกิน perBox ชิ้น กล่องสุดท้ายเศษ) id = เลขล็อต (FN → BOX) ต่อด้วยลำดับ 3 หลัก
-            const count = good > 0 ? Math.ceil(good / perBox - 1e-9) : 0;
+            const count = good > 0 && !linked ? Math.ceil(good / perBox - 1e-9) : 0;
             if (count > 1000) fail(bad);
             out.grade = String(record.grade ?? "").trim().slice(0, 20) || "A";
             out.boxes = count;
@@ -1766,7 +2023,8 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
               next.fgBoxes.push(box);
               stampVersion("fgBoxes", box.id);
             }
-            if (out.countedToOrder) { touchedOrders.add(order.id); ops.feed.push({ woId: order.id, lotId: record.id, qty: good }); } // ชิ้นผ่านสถานีสุดท้าย = ป้อนกลับงาน BOM (ตรงกับ rf_apply_feedback)
+            // ชิ้นผ่านสถานีสุดท้าย: นับเข้า WO (rf_add_produced เหมือนเดิม) · WO ที่ผูกงาน BOM สร้างล็อตแท่งรอ SR รับ (ไม่ป้อนยอดเข้างาน BOM แล้ว: rf_apply_feedback ไม่ถูกเรียก)
+            if (out.countedToOrder) { touchedOrders.add(order.id); if (linked) ops.rods.push({ woId: order.id, lotId: record.id, qty: good }); }
           }
         }
         // บันทึกล็อตของสถานีไหนก็ได้เฉพาะใบ WO ที่ released / in_progress / on_hold
@@ -2192,11 +2450,12 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
   // งานของ BOM ที่ RubberFlow สั่ง (หลังบันทึกของ RubberFlow สำเร็จ ตรงกับ rf_link_job / rf_apply_feedback / rf_unlink_job): ผ่านตัวนับเวอร์ชันของ BOM ครั้งเดียวต่อการบันทึก
   // ให้ client ของ BOM ตามทันด้วยส่วนต่าง และเขียนบรรทัดบันทึกการใช้งานของ BOM (rubberflow:<action>) · ไม่มีอะไรเขียนจริง (ข้ามทุกอย่าง) = ตัวนับ BOM ไม่ขยับ
   function rfApplyBomOps(ops, actor, at, action) {
-    if (!ops.link.length && !ops.feed.length && !ops.unlink.length && !ops.stock.length) return;
+    if (!ops.link.length && !ops.rods.length && !ops.unlink.length && !ops.stock.length) return;
     const bom = bomLoad();
     const version = bom.version + 1;
     const jobs = new Set();
     const orders = new Set();
+    const rodLots = new Set();
     const touchJob = (job) => { bom.versions.jobs[job.id] = version; jobs.add(job.id); };
     const startOrder = (job) => {
       const order = bom.orders.find((row) => row.id === job.orderId);
@@ -2210,21 +2469,24 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       touchJob(job);
       startOrder(job);
     }
-    // ล็อตตกแต่งที่ QC ผ่านและนับเข้า WO (ตอนบันทึก หรือตอน QA ตัดสินเป็น pass ครั้งแรก): รายงาน good = ยอดดีของล็อต (หน่วยของ WO) qtyDone = เดิม + good · ทีละล็อต ไม่จำกัดครั้งต่อ WO
-    // ข้ามเมื่อ WO ไม่ได้ผูกงาน / ไม่พบงาน / งานไม่ชี้มา WO นี้ / ใบ PI ไม่ใช่ released-in_progress / งาน done แล้ว / ยอดดีเป็น 0
-    for (const item of ops.feed) {
+    // ล็อตตกแต่งที่ QC ผ่านและนับเข้า WO ของ WO ที่ผูกงาน RB (ตอนบันทึก หรือตอน QA ตัดสินเป็น pass ครั้งแรก): สร้างล็อตแท่ง pending ในคลังแท่งยาว (20261202010000)
+    // qtySent = ยอดดีของล็อต · spec = สเปกมิติของสูตร revision ที่ WO ผูก (ไม่มี = null) · เลขล็อตซ้ำ / ยอด 0 = ข้าม · งาน RB ยังไม่นับยอดจนกว่า SR รับเข้าผ่าน (หรือ QA ให้ใช้)
+    for (const item of ops.rods) {
       const wo = rfMaster.orders.find((row) => row.id === item.woId);
       const job = wo?.sourceJobId ? bom.jobs.find((row) => row.id === wo.sourceJobId) : null;
-      const order = job ? bom.orders.find((row) => row.id === job.orderId) : null;
-      if (!job || job.externalRef?.woId !== item.woId || !["released", "in_progress"].includes(order?.status) || job.status === "done") continue;
-      const good = Math.round(Number(item.qty) * 1e4) / 1e4;
-      if (!(good > 0)) continue;
-      job.reports = [...(job.reports ?? []), { at, by: actor.name, good, reject: 0, note: `ผ่านตกแต่ง ${item.lotId} จาก WO ${item.woId}` }];
-      job.qtyDone = Math.round((Number(job.qtyDone) + good) * 1e4) / 1e4;
-      job.status = job.qtyDone + 1e-9 >= Number(job.qtyPlanned) ? "done" : "in_progress";
-      if (job.status === "done") job.doneAt = job.doneAt ?? at; else delete job.doneAt;
-      touchJob(job);
-      startOrder(job);
+      const good = Math.round(Number(item.qty) * 1e9) / 1e9;
+      // งานต้องผูก WO นี้อยู่ (externalRef.woId = เลข WO ตรงกับ bom_rod_lot_create) · งานที่ผูก WO อื่น = ไม่สร้างล็อตแท่ง
+      if (!job || job.externalRef?.woId !== wo.id || !(good > 0) || bom.rodLots.some((lot) => lot.lotNo === item.lotId)) continue;
+      const recipe = rfMaster.recipes.find((row) => row.id === wo.recipeId && row.revision === wo.recipeRevision);
+      const raw = recipe?.extrusionSpec && typeof recipe.extrusionSpec === "object" ? recipe.extrusionSpec : null;
+      const spec = raw && Object.keys(raw).length ? clone(raw) : null;
+      const id = newEpoch();
+      bom.rodLots.push({
+        id, lotNo: item.lotId, itemCode: job.itemCode, orderId: job.orderId, jobNo: job.id, woNo: wo.id, recipeCode: wo.recipeId, uom: job.uom, qtySent: good, spec,
+        status: "pending", qtyReceived: null, qc: null, receivedBy: null, receivedAt: null, decision: null, decisionNote: null, decidedBy: null, decidedAt: null, createdAt: at,
+      });
+      bom.versions.rodLots[id] = version;
+      rodLots.add(id);
     }
     // ยกเลิก WO: ล้างการผูกของงาน (คงยอดและรายงานเดิม) ต่อรายงานหมายเหตุของระบบ good = 0 · ข้ามเมื่อไม่พบงานหรืองานไม่ชี้มา WO นี้
     for (const item of ops.unlink) {
@@ -2253,9 +2515,9 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       bom.versions.stock[item.code] = version;
       stocks.add(item.code);
     }
-    if (!jobs.size && !orders.size && !stocks.size) return;
+    if (!jobs.size && !orders.size && !stocks.size && !rodLots.size) return;
     bom.version = version;
-    const detail = [jobs.size ? `jobs +${jobs.size}` : "", orders.size ? `orders +${orders.size}` : "", stocks.size ? `stock +${stocks.size}` : ""].filter(Boolean).join(", ");
+    const detail = [jobs.size ? `jobs +${jobs.size}` : "", orders.size ? `orders +${orders.size}` : "", rodLots.size ? `rodLots +${rodLots.size}` : "", stocks.size ? `stock +${stocks.size}` : ""].filter(Boolean).join(", ");
     bom.audit = [...bom.audit, { at: iso(at), user: actor.name, action: `rubberflow:${action}`, detail, entries: [] }].slice(-2000);
     bomPersist();
   }
@@ -2602,7 +2864,10 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       const counted = { ...Object.fromEntries(Object.keys(p_changes).map((key) => [key, [p_changes[key]?.upsert?.length ?? 0, p_changes[key]?.delete?.length ?? 0]])), ...(meta.issued || meta.returned ? { stock: [meta.issued || meta.returned, 0] } : {}),
         ...(meta.fg ? { fgMoves: [meta.fg.moves, 0], ...(meta.fg.closed || meta.fg.reopened ? { orders: [1, 0] } : {}) } : {}),
         // โอนสต็อกสินค้าสำเร็จรูปตอนปล่อยผลิต / คืนตอนยกเลิกหรือเปิดใบกลับมาแก้: นับเป็น fgMoves upsert (ไม่เพิ่ม orders เพราะใบอยู่ในคำสั่งอยู่แล้ว)
-        ...(meta.fgStockMoves ? { fgMoves: [meta.fgStockMoves, 0] } : {}) };
+        ...(meta.fgStockMoves ? { fgMoves: [meta.fgStockMoves, 0] } : {}),
+        // คลังแท่งยาว: rodMoves = จำนวนแถวประวัติที่เขียน (รับเข้า / จ่าย / ย้อน / ปรับ / ย้ายตอนปล่อยผลิตหรือเปิดใบกลับ) · jobs +1 เมื่อรับเข้านับเข้างาน RB
+        ...(meta.rod ? { ...(meta.rod.lots ? { rodLots: [meta.rod.lots, 0] } : { rodLots: [0, 0] }), rodMoves: [meta.rod.moves, 0], ...(meta.rod.job ? { jobs: [1, 0] } : {}) } : {}),
+        ...(meta.rodMoves ? { rodMoves: [meta.rodMoves, 0] } : {}) };
       const counts = Object.keys(counted).sort().map((key) => {
         const [up, del] = counted[key];
         return up || del ? `${key}${up ? ` +${up}` : ""}${del ? ` -${del}` : ""}` : "";

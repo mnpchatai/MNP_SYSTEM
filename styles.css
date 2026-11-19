@@ -2511,6 +2511,7 @@ button.rf-badge:hover, a.rf-badge:hover { border-color: var(--m500, var(--primar
 .rf-alert-list { max-height: 330px; overflow-y: auto; }
 .rf-hint { display: block; }
 .rf-hint[hidden] { display: none; }
+.rf-field[hidden] { display: none; } /* .field ตั้ง display: grid ซึ่งชนะ [hidden] ของเบราว์เซอร์ ช่องที่ซ่อนด้วย hidden จึงยังเห็นอยู่ */
 .rf-field .rf-input, .rf-field .rf-select, .rf-field .rf-textarea { width: 100%; }
 .rf-textarea { min-height: 70px; }
 

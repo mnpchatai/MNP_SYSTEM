@@ -156,7 +156,9 @@ test("the persona (state.employee of the sandbox) decides the BOM role: admin, m
   assert.equal(role("staff", "PP"), "planner");
   assert.equal(role("staff", "pp"), "planner", "department codes compare case-insensitively");
   for (const dept of ["RB", "GR", "PT", "BG", "ST"]) assert.equal(role("staff", dept), dept.toLowerCase());
-  for (const dept of ["MT", "QA", "IT", "", undefined]) assert.equal(role("staff", dept), "viewer", `${dept || "no department"} is read-only`);
+  for (const dept of ["MT", "IT", "", undefined]) assert.equal(role("staff", dept), "viewer", `${dept || "no department"} is read-only`);
+  // คลังแท่งยาว (SR) และตรวจคุณภาพ (QA) มีบทบาทของตัวเองตั้งแต่ 20261202010000 (รับแท่งเข้าคลัง / จ่ายให้ GR · ตัดสินล็อตที่กัก)
+  assert.deepEqual([role("staff", "SR"), role("staff", "QA")], ["sr", "qa"]);
   assert.equal(role("staff", "PK"), "pk", "PK staff report their own jobs (role pk)");
   assert.equal(storeApi.roleOfEmployee(null), "viewer");
   assert.equal(storeApi.roleOfEmployee({ role: { code: "staff" } }), "viewer");
@@ -1741,7 +1743,7 @@ test("the mock sandbox offers switchable personas (the planner group, producing 
   const status = (await client.rpc("app_sandbox_status")).data;
   assert.equal(status.persona.id, "persona-1", "the first persona is the simulated admin, as before");
   assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-rbh", "persona-gr", "persona-st", "persona-sr", "persona-wh", "persona-whh", "persona-qa", "persona-pk", "persona-pt", "persona-bg"]);
-  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "st", "viewer", "wh", "manager", "viewer", "pk", "pt", "bg"], "each persona maps to a BOM role (the RB head and the WH head are department managers; SR and QA are not BOM departments; PK staff work their jobs by department)");
+  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "st", "sr", "wh", "manager", "qa", "pk", "pt", "bg"], "each persona maps to a BOM role (the RB head and the WH head are department managers; SR runs the long-rod store and QA decides held rod lots; PK staff work their jobs by department)");
   assert.deepEqual(status.personas.slice(-3).map((row) => [row.department.code, row.role.code]), [["PK", "staff"], ["PT", "staff"], ["BG", "staff"]], "PK, PT and BG staff can be tried too");
   assert.deepEqual(status.personas.slice(-3).map((row) => storeApi.personaUser(row).dept), ["PK", "PT", "BG"], "and work the jobs of their own department");
   assert.equal((await client.rpc("app_sandbox_enter", { p_persona_id: "persona-rb" })).error, null);
@@ -1771,7 +1773,7 @@ test("the mock database checks orders and jobs per section and per field for the
   const withOrder = async (id, extra) => ({ ...(await cur("orders", id)), ...extra });
 
   // ฝ่ายวางแผน (admin): ลูกค้า ใบ งาน
-  assert.equal(await code({ customers: { upsert: [{ name: "Acme", country: "USA", orderType: "EX", note: "" }] }, orders: { upsert: [mockOrder("PI-1"), mockOrder("PI-2")] } }), null);
+  assert.equal(await code({ customers: { upsert: [{ name: "Acme", country: "USA", orderType: "EX", note: "" }] }, orders: { upsert: [mockOrder("PI-1"), mockOrder("PI-2", { explosion: [{ itemCode: "FG-1", kind: "FG", level: 0, fgQty: 5, required: 5 }, { itemCode: "P-1", kind: "SE", level: 1, fgQty: 5, required: 10 }] })] } }), null);
   assert.equal(await code({ jobs: { upsert: [mockJob("JOB-RB", "PI-1", "RB"), mockJob("JOB-GR", "PI-1", "GR")] }, orders: { upsert: [mockOrder("PI-1", { status: "released", explosion: [] })] } }), null);
   assert.deepEqual((await view()).orders.map((row) => row.id), ["PI-1", "PI-2"], "orders newest first, then by id");
   assert.deepEqual((await view()).jobs.map((row) => row.id), ["JOB-GR", "JOB-RB"], "jobs by order, department, item, id");
@@ -2771,7 +2773,7 @@ test("the BOM 'create WO' dialog creates the WO through the RubberFlow store wit
 });
 
 // ชิ้นงานผ่านตกแต่ง (ล็อตตกแต่งที่ QC ผ่าน) → ฐานข้อมูลรายงานยอดเข้างาน BOM → หน้า RubberFlow ตามทัน BOM แล้วแจ้งผล · การรับมอบใบส่งมอบไม่แตะงาน BOM (ใช้โมดูลจริงในหน้าจำลอง)
-test("a transfer receipt does not touch the BOM job; when pieces pass finishing the module catches BOM up and says what the job received", async () => {
+test("a transfer receipt does not touch the BOM job; when pieces pass finishing the module catches BOM up and says the rods went to the SR store", async () => {
   const { scene, rf } = await rfScene();
   const admin = await asPersona(scene, "persona-1");
   await saved(admin.store.run("saveItem", saveItemPayload("RB-ITEM", { kind: "RB", name: "เส้นยางทดสอบ", uom: "pcs", weightG: 500, rubber: { compound: "DM01", color: "BK" } })));
@@ -2841,41 +2843,42 @@ test("a transfer receipt does not touch the BOM job; when pieces pass finishing 
   await sr3.store.catchUp();
   assert.deepEqual([jobOf(sr3).qtyDone, jobOf(sr3).reports.length], [0, 0], "no receipt of any station moved the job");
 
-  // ตกแต่ง: ล็อตที่ผ่านตอนบันทึก (6 ชิ้น) ป้อนทันที · โมดูลของหน้าตามทัน BOM แล้วแจ้งยอด
+  // ตกแต่ง (20261202010000): ล็อตที่ผ่านตอนบันทึก (6 ชิ้น) เป็นล็อตแท่งรอคลังแท่งยาว (SR) รับ · งาน RB ยังไม่นับ · โมดูลของหน้าตามทัน BOM แล้วบอกว่าแท่งไปไหน
   const rb4 = await fresh("persona-rb");
   const rbView = rb4.context.MNP_RUBBERFLOW;
   const finishing = (passedQty, qcResult) => ({ transferId: tr3.result, useQty: passedQty, passedQty, scrapQty: 0, perBox: 10, qcResult, grade: "A", shift: "D" });
   const first = finishing(6, "pass");
   const beforeFirst = rbView.bomJobOfAction("recordFinishing", first);
-  assert.deepEqual(JSON.parse(JSON.stringify(beforeFirst)), { id: "JOB-RB1", qtyDone: 0 }, "the module finds the BOM job that follows the finishing lot's WO");
+  assert.deepEqual(JSON.parse(JSON.stringify(beforeFirst)), { id: "JOB-RB1", qtyDone: 0, rodLots: 0 }, "the module finds the BOM job that follows the finishing lot's WO");
   const lot1 = rf(rb4).run("recordFinishing", first);
   assert.equal(lot1.ok, true, lot1.error?.message);
   assert.equal(rb4.store.data().jobs.find((row) => row.id === "JOB-RB1").qtyDone, 0, "the page does not touch the BOM job itself");
   assert.equal((await lot1.saving).ok, true);
   await rbView.showBomFeedback(beforeFirst);
-  assert.deepEqual([jobOf(rb4).qtyDone, jobOf(rb4).status, jobOf(rb4).reports.length], [6, "in_progress", 1], "6 pieces passed finishing");
-  assert.match(jobOf(rb4).reports[0].note, new RegExp("^ผ่านตกแต่ง " + lot1.result + " จาก WO " + wo.id + "$"));
-  assert.match(rb4.log.toasts.at(-1)[0], /งาน BOM JOB-RB1 รับยอดจากการผ่านตกแต่งแล้ว: ทำได้ 6\/10/);
+  assert.deepEqual([jobOf(rb4).qtyDone, jobOf(rb4).reports.length], [0, 0], "the job waits for the SR store to receive the rods");
+  assert.deepEqual(JSON.parse(JSON.stringify(rb4.store.data().rodLots.map((lot) => [lot.lotNo, lot.qtySent, lot.status, lot.jobNo]))), [[lot1.result, 6, "pending", "JOB-RB1"]]);
+  assert.match(rb4.log.toasts.at(-1)[0], new RegExp(`แท่งของล็อต ${lot1.result} 6 ส่งเข้าคลังแท่งยาว \\(SR\\) แล้ว รอ SR รับเข้าคลังและตรวจขนาด จึงนับเข้างาน BOM JOB-RB1`));
 
-  // ล็อตที่ hold ไม่ป้อน (โมดูลไม่ตามทัน) จน QA ตัดสินเป็น pass
+  // ล็อตที่ hold ไม่มีล็อตแท่ง (โมดูลไม่ตามทัน) จน QA ตัดสินเป็น pass
   const held = finishing(4, "hold");
   assert.equal(rbView.bomJobOfAction("recordFinishing", held), null, "a lot on hold waits for QA: nothing to follow");
   const lot2 = await saved(rf(rb4).run("recordFinishing", held));
   await rb4.store.catchUp();
-  assert.equal(jobOf(rb4).qtyDone, 6);
+  assert.equal(rb4.store.data().rodLots.length, 1);
   const qa = await asPersona(scene, "persona-qa", realClock);
   await rf(qa).ensureLoaded();
   await qa.store.ensureLoaded();
   const qaView = qa.context.MNP_RUBBERFLOW;
   const decide = { lotId: lot2.result, values: { hardness: 65, tensile: 12 }, result: "pass" };
   const beforeQa = qaView.bomJobOfAction("addQcRecord", decide);
-  assert.deepEqual(JSON.parse(JSON.stringify(beforeQa)), { id: "JOB-RB1", qtyDone: 6 });
+  assert.deepEqual(JSON.parse(JSON.stringify(beforeQa)), { id: "JOB-RB1", qtyDone: 0, rodLots: 1 });
   const decided = rf(qa).run("addQcRecord", decide);
   assert.equal(decided.ok, true, decided.error?.message);
   assert.equal((await decided.saving).ok, true);
   await qaView.showBomFeedback(beforeQa);
-  assert.deepEqual([jobOf(qa).qtyDone, jobOf(qa).status, jobOf(qa).reports.length], [10, "done", 2], "the QA pass feeds the lot: 6 + 4 = the 10 planned");
-  assert.match(qa.log.toasts.at(-1)[0], /งาน BOM JOB-RB1 รับยอดจากการผ่านตกแต่งแล้ว: ทำได้ 10\/10 \(งานครบแล้ว\)/);
+  assert.deepEqual(JSON.parse(JSON.stringify(qa.store.data().rodLots.map((lot) => [lot.qtySent, lot.status]).sort())), [[4, "pending"], [6, "pending"]], "the QA pass makes the second rod lot");
+  assert.equal(jobOf(qa).qtyDone, 0);
+  assert.match(qa.log.toasts.at(-1)[0], new RegExp(`แท่งของล็อต ${lot2.result} 4 ส่งเข้าคลังแท่งยาว`));
   // ไม่ใช่ล็อตตกแต่ง / ไม่ใช่คำสั่งที่ป้อน: ไม่มีงานให้ตามทัน
   assert.equal(qaView.bomJobOfAction("addQcRecord", { lotId: "MX-NOPE" }), null);
   assert.equal(qaView.bomJobOfAction("createTransfer", { lotId: lot2.result }), null);
@@ -2917,7 +2920,7 @@ test("cancelling the WO in RubberFlow clears the job's link in BOM and the job o
   const again = env.context.MNP_BOM_DIALOGS.jobRubberflow(env.ctx("p=jobs&dept=RB"), { jobId: "JOB-RB1" });
   assert.match(again.html, /data-bom-rf-create/);
   assert.doesNotMatch(again.html, /ไว้แล้ว/);
-  assert.match(again.html, /ล็อตตกแต่งของ WO นั้นผ่าน QC และนับเข้าใบสั่งผลิต/, "the dialog says each finishing lot that passes adds its quantity to the job");
+  assert.match(again.html, /ล็อตตกแต่งของ WO นั้นผ่าน QC แท่งของล็อตส่งเข้าคลังแท่งยาว \(SR\) และเมื่อ SR รับเข้าคลังและผ่านตรวจขนาด/, "the dialog says the rods of each finishing lot that passes go to the SR store and count once received");
   assert.doesNotMatch(again.html, /รับมอบใบส่งมอบของ WO นั้น/, "and no longer says a receipt does");
 });
 
@@ -4605,7 +4608,7 @@ test("the mock database returns what an order took when it is cancelled or reope
 test("the mock database lets only the planning group set the amount a draft takes from stock; ST and WH still count the other items", async () => {
   const s = await stockMock();
   const { code, save } = s;
-  await s.draft("PI-P1", 5, 1);
+  await s.draft("PI-P1", 5, 1, { explosion: [{ itemCode: "FG-1", kind: "FG", level: 0, fgQty: 5, required: 5 }, { itemCode: "SE-X", kind: "SE", level: 1, fgQty: 5, required: 10 }] }); // ST / WH นับได้เฉพาะบรรทัดผลระเบิด (20261202010000)
   const row = async () => s.order("PI-P1");
   for (const persona of ["persona-st", "persona-wh"]) {
     await s.as(persona);
