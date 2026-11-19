@@ -678,7 +678,7 @@ test("pages: the reverse and adjust dialogs, the decide dialog and the draft's u
   assert.match(decide.html, /เหตุผล <span class="field-required">\(จำเป็น\)<\/span>/);
 });
 
-test("pages: the RubberFlow finishing form hides and stops requiring perBox for a work order linked to a BOM job, and names the SR store in the pass verdict", async () => {
+test("pages: the RubberFlow finishing result is a required choice with no default: a work order linked to a BOM job has three ways (SR, customer through WH, hold), an unlinked one two (customer through WH, hold); perBox follows whether boxes are made", async () => {
   const env = await page();
   const base = env.context.MNP_RUBBERFLOW.context(new URLSearchParams("p=finishing"));
   // ไม่มี BOM ฐานข้อมูล: ผูกงาน = มี sourceJobId (กฎสำรอง) · ไม่มี = ไม่ผูก
@@ -690,23 +690,53 @@ test("pages: the RubberFlow finishing form hides and stops requiring perBox for 
   // งานของ WO-G ไม่มีใน BOM แล้ว (กฎเดียวกับฐานข้อมูล: ไม่ผูก = มีกล่อง)
   const ctx = { ...base, data, bomLinked: (order) => order.sourceJobId === "JOB-X" };
   const built = env.context.MNP_RUBBERFLOW_PAGES.finishing(ctx);
-  assert.match(built.html, /<option value="pass"[^>]*>ผ่าน — รับเข้าคลัง<\/option>/);
-  const el = (extra = {}) => ({ value: "", hidden: false, required: false, textContent: "", dataset: {}, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; }, ...extra });
+  // before a transfer is picked: the two ways of an unlinked order, a placeholder first, nothing selected, required
+  const select = built.html.match(/<select[^>]*name="qcResult"[^>]*>[\s\S]*?<\/select>/)[0];
+  assert.match(select, /required data-rf-result/);
+  assert.deepEqual([...select.matchAll(/<option value="([^"]*)"( selected)?>([^<]*)<\/option>/g)].map((match) => [match[1], Boolean(match[2]), match[3]]),
+    [["", false, "เลือกผลตัดสิน…"], ["pass:customer", false, "ผ่าน — ส่งมอบให้ลูกค้า ผ่านคลังสินค้าสำเร็จรูป (WH)"], ["hold", false, "กักรอ QC"]]);
+  assert.match(built.html, /ผลตัดสินของล็อต <span class="field-required">\(จำเป็น\)<\/span>/);
+  assert.doesNotMatch(built.html, /ผ่าน — รับเข้าคลัง|>รับเข้าคลัง</, "no bare 'รับเข้าคลัง'");
+  const options = env.context.MNP_RUBBERFLOW_LINE.finishResultOptions;
+  assert.deepEqual(plain(options(true)), [{ value: "pass:sr", label: "ผ่าน — ส่งเข้าคลังยางเส้นยาว (SR)" }, { value: "pass:customer", label: "ผ่าน — ส่งมอบให้ลูกค้า ผ่านคลังสินค้าสำเร็จรูป (WH)" }, { value: "hold", label: "กักรอ QC" }]);
+  assert.deepEqual(plain(options(false)).map((option) => option.value), ["pass:customer", "hold"]);
+  const el = (extra = {}) => ({ value: "", hidden: false, required: false, textContent: "", innerHTML: "", dataset: {}, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; }, ...extra });
   const nodes = {
     "[data-rf-inbound]": el(), '[name="useQty"]': el(), "[data-rf-remaining]": el(), "[data-rf-passed]": el(), "[data-rf-perbox]": el({ required: true }),
-    ".rf-perbox-field": el(), "[data-rf-linked-note]": el({ hidden: true }), '[name="qcResult"] option[value="pass"]': el({ textContent: "ผ่าน — รับเข้าคลัง" }),
+    ".rf-perbox-field": el(), "[data-rf-linked-note]": el({ hidden: true }), "[data-rf-result]": el(),
     'button[type="submit"]': el({ textContent: "บันทึกและพิมพ์ป้ายกล่อง" }), "[data-rf-boxes]": el(),
   };
   const form = { dataset: { rfSuccess: "บันทึก {result} และสร้างป้ายกล่องแล้ว" }, querySelector: (selector) => nodes[selector] ?? null };
   built.bind({ querySelector: (selector) => (selector === "[data-rf-finishing]" ? form : null) });
   const pickTransfer = (id) => { nodes["[data-rf-inbound]"].value = id; nodes["[data-rf-inbound]"].handlers.change(); };
-  const state = () => [nodes[".rf-perbox-field"].hidden, nodes["[data-rf-perbox]"].required, nodes["[data-rf-perbox]"].value, nodes["[data-rf-linked-note]"].hidden, nodes['[name="qcResult"] option[value="pass"]'].textContent];
+  const choose = (value) => { nodes["[data-rf-result]"].value = value; nodes["[data-rf-result]"].handlers.change(); };
+  const state = () => [nodes[".rf-perbox-field"].hidden, nodes["[data-rf-perbox]"].required, nodes["[data-rf-perbox]"].value, nodes["[data-rf-linked-note]"].hidden, form.dataset.rfSuccess, nodes['button[type="submit"]'].textContent];
+  const offered = () => [...nodes["[data-rf-result]"].innerHTML.matchAll(/<option value="([^"]*)"/g)].map((match) => match[1]);
+  // linked: three ways; nothing chosen yet = perBox still asked? no: boxes only when the customer way is chosen
   pickTransfer("TR-0");
-  assert.deepEqual(state(), [true, false, "", false, "ผ่าน — ส่งเข้าคลังยางเส้นยาว (SR)"], "linked: perBox hidden, not required, empty; the verdict names the SR store");
+  assert.deepEqual(offered(), ["", "pass:sr", "pass:customer", "hold"], "linked: SR, customer through WH, hold");
+  assert.deepEqual(state().slice(0, 4), [true, false, "", false], "linked and undecided: no boxes, perBox hidden and not required");
+  choose("pass:sr");
+  assert.deepEqual(state(), [true, false, "", false, "บันทึก {result} แล้ว ยางเส้นยาวส่งเข้าคลังยางเส้นยาว (SR)", "บันทึกการตกแต่ง"], "SR: no boxes");
+  choose("pass:customer");
+  assert.deepEqual(state(), [false, true, "2000", false, "บันทึก {result} และสร้างป้ายกล่องแล้ว กล่องรอคลังสินค้าสำเร็จรูป (WH) รับเข้า", "บันทึกและพิมพ์ป้ายกล่อง"], "customer through WH: boxes, perBox asked with a default");
+  choose("hold");
+  assert.deepEqual(state().slice(0, 3), [true, false, ""], "linked and held: no boxes");
+  assert.equal(state()[4], "บันทึก {result} แล้ว กักรอ QC");
+  // unlinked: two ways, always boxes
   pickTransfer("TR-2");
-  assert.deepEqual(state(), [false, true, "2000", true, "ผ่าน — รับเข้าคลัง"], "a work order for sale asks for perBox again with a default");
+  assert.deepEqual(offered(), ["", "pass:customer", "hold"], "unlinked: customer through WH, hold");
+  assert.deepEqual(state().slice(0, 4), [false, true, "2000", true], "an order for sale asks for perBox with a default");
+  // a job that BOM no longer has counts as not linked (boxes)
   pickTransfer("TR-1");
-  assert.deepEqual(state().slice(0, 2), [false, true], "a job that BOM no longer has counts as not linked (boxes)");
+  assert.deepEqual(offered(), ["", "pass:customer", "hold"]);
+  assert.deepEqual(state().slice(0, 2), [false, true]);
+  // the form values become qcResult + destination before the action runs
+  const transform = env.context.MNP_RUBBERFLOW.transforms.recordFinishing;
+  {
+    assert.deepEqual(plain(transform({ transferId: "TR-0", qcResult: "pass:customer" })), { transferId: "TR-0", qcResult: "pass", destination: "customer" });
+    assert.deepEqual(plain(transform({ transferId: "TR-0", qcResult: "hold" })), { transferId: "TR-0", qcResult: "hold" });
+  }
 });
 
 // ---------- โมดูลคลังยางเส้นยาว SR (โรงงาน ขั้น 1 · 20261204010000_bom_sr_store_module.sql · pgTAP คู่กัน: bom_sr_store_module.test.sql) ----------
@@ -908,7 +938,7 @@ test("pages: the opening receipt dialog offers RB codes only and the location di
 
 test("wording: no user-visible text in the BOM, RubberFlow or factory modules calls the rods แท่ง (comments aside); the bars of charts keep their word", async () => {
   const fs = await import("node:fs");
-  const files = ["bom-actions", "bom-pages", "bom-rules", "bom-hub", "bom-store", "bom-seed", "module-bom", "factory-kit", "module-sr", "module-gr", "module-qa", "module-st", "module-wh", "module-rubberflow", "rubberflow-actions", "rubberflow-pages-line", "rubberflow-pages-plan", "rubberflow-pages-quality", "rubberflow-store"];
+  const files = ["bom-actions", "bom-pages", "bom-rules", "bom-hub", "bom-store", "bom-seed", "module-bom", "factory-kit", "module-sr", "module-gr", "module-qa", "module-st", "module-wh", "wh-pages", "module-rubberflow", "rubberflow-actions", "rubberflow-pages-line", "rubberflow-pages-plan", "rubberflow-pages-quality", "rubberflow-store"];
   for (const name of files) {
     // the one place the old words stay on purpose: the legacy audit text the audit page still has to recognise
     const code = fs.readFileSync(`modules/${name}.js`, "utf8").split(/\r?\n/).filter((line) => !line.trimStart().startsWith("//") && !line.includes("ROD_STOCK_AUDIT_TEXT_LEGACY =")).join("\n");

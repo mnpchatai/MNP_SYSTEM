@@ -1409,6 +1409,7 @@ const FILES = [
   "modules/rubberflow-rules.js", "modules/rubberflow-derive.js", "modules/rubberflow-actions.js", "modules/rubberflow-seed.js", "modules/rubberflow-store.js",
   "modules/rubberflow-ui.js", "modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js",
   "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/factory-kit.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js",
+  "modules/wh-pages.js", "modules/module-wh.js",
 ];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 async function pageEnv({ storage = memoryStorage(), pageStorage = memoryStorage(), mockOptions = {}, mutate = () => {}, hooks = {}, persona = null, sandboxAdmin = false } = {}) {
@@ -1444,7 +1445,15 @@ async function pageEnv({ storage = memoryStorage(), pageStorage = memoryStorage(
     else await registered.pages.bom(new URLSearchParams(query));
     return app.innerHTML;
   };
-  return { mock, context, app, log, storage, pageStorage, render, store: context.MNP_BOM.store, ctx: (query = "") => context.MNP_BOM.context(new URLSearchParams(query)) };
+  // โมดูล WH (#/wh): รับเข้า ส่งมอบ ปิดใบ ย้อน · เปิดได้เฉพาะคนที่ประตูของโมดูลให้ผ่าน (แผนก WH · PP · ผู้จัดการ) คนอื่นได้หน้า "ไม่พบ"
+  const renderWh = async (query = "") => {
+    await context.MNP_BOM.store.ensureLoaded();
+    log.hash = `#/wh${query ? `?${query}` : ""}`;
+    app.innerHTML = "";
+    await context.MNP_REQUEST_MODULES.FACTORY_WH.pages.wh(new URLSearchParams(query));
+    return app.innerHTML;
+  };
+  return { mock, context, app, log, storage, pageStorage, render, renderWh, store: context.MNP_BOM.store, ctx: (query = "") => context.MNP_BOM.context(new URLSearchParams(query)) };
 }
 
 // แทรก WIP ในโหมดฐานข้อมูล: ฟอร์ม saveBomTree (wipInsert) ส่งผ่านกติกา data-rf-form ของ module-bom.js แล้วขั้นตอนผลิตของชิ้นแม่บันทึกต่อ (saveRouting)
@@ -4459,16 +4468,28 @@ test("on the screens the warehouse acts and everybody else reads: WH staff, the 
   const html = async (persona, query) => (await asPersona(scene, persona)).render(query);
   const form = (page, name) => (page.match(new RegExp(`data-rf-form="${name}"`, "g")) ?? []).length;
   // forms on the screen
-  for (const [persona, acts] of [["persona-wh", true], ["persona-whh", true], ["persona-1", true], ["persona-pp", false], ["persona-st", false], ["persona-rb", false], ["persona-qa", false]]) {
+  const whHtml = async (persona, query) => (await asPersona(scene, persona)).renderWh(query);
+  // the order page of BOM is read-only progress for everyone
+  for (const persona of ["persona-wh", "persona-whh", "persona-1", "persona-pp", "persona-st", "persona-rb", "persona-qa"]) {
     const page = await html(persona, "p=orders&sel=PI-W&step=5");
+    assert.match(page, /<th class="right">PK ส่งมอบแล้ว<\/th>/, `${persona} sees the table`);
+    assert.equal(form(page, "receiveFg"), 0, `${persona}: no receive form on the order page`);
+  }
+  // the warehouse module: the forms are for the warehouse and admin; the planning group reads; other departments cannot open it at all
+  for (const [persona, acts] of [["persona-wh", true], ["persona-whh", true], ["persona-1", true], ["persona-pp", false]]) {
+    const page = await whHtml(persona, "order=PI-W");
     assert.match(page, /<th class="right">PK ส่งมอบแล้ว<\/th>/, `${persona} sees the table`);
     assert.equal(form(page, "receiveFg"), acts ? 1 : 0, `${persona}: receive form`);
     assert.equal(/คลังสินค้า \(WH\) เป็นผู้รับสินค้าเข้าคลัง/.test(page), !acts, `${persona}: told who acts`);
     assert.doesNotMatch(page, /data-rf-action="completeOrder"/, `${persona}: no close button`);
   }
+  for (const persona of ["persona-st", "persona-rb", "persona-qa"]) {
+    const peer = await asPersona(scene, persona);
+    assert.match(await peer.renderWh("order=PI-W"), /<notfound><\/notfound>/, `${persona} cannot open the warehouse module`);
+  }
   // the work card is the warehouse's only (and admin's)
   for (const [persona, card] of [["persona-wh", true], ["persona-whh", true], ["persona-1", true], ["persona-pp", false], ["persona-st", false], ["persona-gr", false]]) {
-    assert.equal(/รับสินค้าเข้าคลังตามใบ PI-W/.test(await html(persona, "p=work")), card, `${persona}: work card`);
+    assert.equal(/รับสินค้าเข้า WH ตามใบ PI-W/.test(await html(persona, "p=work")), card, `${persona}: work card`);
   }
   // the mock database says the same
   for (const persona of ["persona-pp", "persona-st", "persona-rb", "persona-rbh", "persona-qa"]) {
@@ -4486,13 +4507,13 @@ test("on the screens the warehouse acts and everybody else reads: WH staff, the 
   }
   const database = JSON.parse(env.pageStorage.getItem("mnp-harness-bom-master"));
   assert.deepEqual(database.fgMoves.map((move) => [move.fgCode, move.kind, move.qty, move.by]), [["FG-TEST-01", "receive", 1, "สุดา คลังสินค้า"], ["FG-TEST-01", "receive", 1, "ชัย หัวหน้าคลัง"], ["FG-TEST-01", "receive", 1, "ปกรณ์ ศรีวัฒนา"]]);
-  assert.equal(form(await html("persona-wh", "p=orders&sel=PI-W&step=5"), "receiveFg"), 0, "all 3 reported are received: nothing left to receive");
+  assert.equal(form(await whHtml("persona-wh", "order=PI-W"), "receiveFg"), 0, "all 3 reported are received: nothing left to receive");
   // received + still producing: step 6 is reachable and delivery is the warehouse's
-  const six = await html("persona-wh", "p=orders&sel=PI-W&step=6");
+  const six = await whHtml("persona-wh", "order=PI-W");
   assert.equal(form(six, "deliverFg"), 1);
   assert.match(six, /max="3" value="3"/);
-  assert.match(await html("persona-pp", "p=orders&sel=PI-W&step=6"), /คลังสินค้า \(WH\) เป็นผู้ส่งมอบสินค้าให้ลูกค้า/);
-  assert.match(await html("persona-wh", "p=stock"), /คงคลังสินค้าสำเร็จรูป[\s\S]*FG-TEST-01/, "the stock page lists the goods on hand");
+  assert.match(await whHtml("persona-pp", "order=PI-W"), /คลังสินค้า \(WH\) เป็นผู้ส่งมอบสินค้าให้ลูกค้า/);
+  assert.match(await whHtml("persona-wh", "tab=stock"), /FG-TEST-01/, "the stock page lists the goods on hand");
 });
 
 // ---------- สต็อกสินค้าสำเร็จรูป (batch C): ฐานข้อมูลจำลองทำตามสัญญา bom-fg-stock ----------

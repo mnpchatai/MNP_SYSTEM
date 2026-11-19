@@ -86,7 +86,7 @@
     if (slot) bomJobsShown = window.MNP_FACTORY.mountDeptJobs(slot, "RB");
   };
   const bomJobsSlot = () => (window.MNP_FACTORY?.mountDeptJobs && state.employee?.isSandbox === true ? '<div data-bom-jobs></div>' : "");
-  window.MNP_RUBBERFLOW = { showsBomJobs: () => bomJobsShown && onRfRoute(), remountBomJobs: () => remountBomJobs(), runAction: (name, payload, successText) => runAction(name, payload, successText), store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing(), bomJobOfAction: (name, payload) => bomJobOfAction(name, payload), showBomFeedback: (before) => showBomFeedback(before), checkMaterials: (options) => checkMaterials(options), can: (permission) => storeApi.can(store.user(), permission), openChemicalNeeds: () => openChemicalNeeds(), draftChemicalNeeds: (draftOrders, reservedDraftOrders) => draftChemicalNeeds(draftOrders, reservedDraftOrders) };
+  window.MNP_RUBBERFLOW = { get transforms() { return TRANSFORMS; }, showsBomJobs: () => bomJobsShown && onRfRoute(), remountBomJobs: () => remountBomJobs(), runAction: (name, payload, successText) => runAction(name, payload, successText), store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing(), bomJobOfAction: (name, payload) => bomJobOfAction(name, payload), showBomFeedback: (before) => showBomFeedback(before), checkMaterials: (options) => checkMaterials(options), can: (permission) => storeApi.can(store.user(), permission), openChemicalNeeds: () => openChemicalNeeds(), draftChemicalNeeds: (draftOrders, reservedDraftOrders) => draftChemicalNeeds(draftOrders, reservedDraftOrders) };
 
   // โหมดฐานข้อมูล: โหลดเสร็จ/โหลดไม่สำเร็จ/บันทึกไม่สำเร็จ (ย้อนกลับแล้ว) วาดหน้าใหม่ · เริ่ม/เสร็จการบันทึกแค่เปลี่ยนข้อความสถานะ ไม่ทับฟอร์มที่ผู้ใช้กำลังกรอก
   const onRfRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
@@ -115,8 +115,14 @@
     if (isEditing()) showToast("มีผู้อื่นอัปเดตข้อมูล RubberFlow ข้อมูลล่าสุดจะแสดงเมื่อเปิดหน้านี้ใหม่");
     else renderRoute();
   };
+  // หน้าโมดูล WH (#/wh) วาดกล่องสินค้าจาก store นี้ด้วย: บันทึกสำเร็จ ผู้อื่นบันทึก หรือย้อนกลับ = วาดหน้านั้นใหม่ (ไม่ทับ dialog ที่เปิดอยู่)
+  const onWhRoute = () => { try { return currentRoute().path === "wh"; } catch { return false; } };
+  const WH_REPAINT = Object.freeze(["saved", "synced", "reverted"]);
   store.subscribe((event) => {
-    if (!onRfRoute()) return;
+    if (!onRfRoute()) {
+      if (onWhRoute() && WH_REPAINT.includes(event.type) && !document.querySelectorAll("dialog[data-rf-dialog][open]").length) renderRoute();
+      return;
+    }
     // บันทึกการใช้งานโหลดเสร็จ: วาดใหม่เฉพาะเมื่อผู้ใช้ยังอยู่ที่หน้านั้นและไม่ได้แก้ฟอร์มอื่นค้าง
     if (event.type === "audit") {
       if (currentPage(currentRoute().params) === "audit" && !isEditing()) renderRoute();
@@ -190,6 +196,8 @@
     createRecipe: (p) => ({ ...p, items: itemsOf(p), stages: stagesOf(p) }),
     saveRecipe: (p) => ({ ...p, items: itemsOf(p), stages: stagesOf(p) }),
     recordMixing: (p) => ({ ...p, stages: stagesOf(p) }),
+    // ผลตัดสินของล็อตตกแต่ง: ค่าของช่องเลือก = qcResult หรือ qcResult:ปลายทาง (pass:sr / pass:customer / hold) แยกเป็น qcResult + destination (modules/rubberflow-pages-line.js finishResultOptions)
+    recordFinishing: (p) => { const [qcResult, destination] = String(p.qcResult ?? "").split(":"); return destination ? { ...p, qcResult, destination } : { ...p, qcResult }; },
     saveMaterial: (p) => ({ ...p, active: p.active !== "0" }),
     shipBoxes: (p) => ({ ids: p.ids ?? [] }),
     // รับเคมีคืน: returnedKg[] ตามลำดับบรรทัดของใบเบิก → kgs · note = เหตุผล (จำเป็นเมื่อคืนไม่ครบ)
@@ -227,6 +235,7 @@
       if (outcome.ok) {
         report();
         if (sentJob) showBomFeedback(sentJob);
+        if (name === "receiveBoxes" || name === "reverseBoxReceipt") { try { bomStore()?.catchUp?.(); } catch { /* BOM ตามทันเองตอนเปิดหน้า */ } }
         // ใบสั่งซื้อที่มีบรรทัดของซื้อแก้สต็อกขั้นต่ำ/ยอดคงเหลือฝั่ง BOM ในคำสั่งเดียวกัน: ตามทัน BOM ให้หน้าคลังของซื้อและหน้าต่างสั่งซื้อเห็นค่าล่าสุด
         if (name === "createPurchaseOrder" || name === "receivePurchaseLine") { try { bomStore()?.catchUp?.(); } catch { /* BOM ตามทันเองตอนเปิดหน้า */ } }
         if (name === "createPurchaseOrder") saveUnorderedPartSafety(payload);
@@ -288,11 +297,12 @@
     // บันทึกตกแต่ง: เฉพาะผลผ่าน (hold / fail รอ QA) · ผลตรวจ QC: เฉพาะล็อตตกแต่ง (เซิร์ฟเวอร์ป้อนเมื่อ QA ตัดสินเป็น pass ครั้งแรก ที่เหลือยอดไม่เพิ่มจึงไม่แจ้ง)
     let orderId = null;
     if (name === "recordFinishing") {
-      if ((payload?.qcResult || "pass") !== "pass") return null;
+      // ผ่านแล้วส่งมอบให้ลูกค้า (destination customer): ยังไม่นับยอดเข้างาน BOM จนกว่า WH จะรับกล่องเข้า จึงไม่มียอดให้แจ้งที่นี่
+      if ((payload?.qcResult || "pass") !== "pass" || payload?.destination === "customer") return null;
       orderId = data.transfers.find((row) => row.id === payload?.transferId)?.orderId;
     } else {
       const lot = data.lots.find((row) => row.id === payload?.lotId);
-      if (lot?.stage !== "finishing") return null;
+      if (lot?.stage !== "finishing" || lot.destination === "customer") return null;
       orderId = lot.orderId;
     }
     const jobId = data.orders.find((row) => row.id === orderId)?.sourceJobId;

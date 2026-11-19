@@ -11,7 +11,7 @@ const FILES = [
   "modules/rubberflow-rules.js", "modules/rubberflow-derive.js", "modules/rubberflow-actions.js", "modules/rubberflow-seed.js", "modules/rubberflow-store.js",
   "modules/rubberflow-ui.js", "modules/factory-kit.js", "modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js",
   "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js",
-  "modules/module-st.js", "modules/module-sr.js", "modules/module-qa.js", "modules/module-gr.js", "modules/module-pt.js", "modules/module-bg.js", "modules/module-pk.js", "modules/module-wh.js",
+  "modules/module-st.js", "modules/module-sr.js", "modules/module-qa.js", "modules/module-gr.js", "modules/module-pt.js", "modules/module-bg.js", "modules/module-pk.js", "modules/wh-pages.js", "modules/module-wh.js",
 ];
 const DEPT_FILES = ["st", "sr", "qa", "gr", "pt", "bg", "pk", "wh"].map((dept) => `modules/module-${dept}.js`);
 const ALL_DEPTS = ["FACTORY_ST", "FACTORY_SR", "FACTORY_QA", "FACTORY_GR", "FACTORY_PT", "FACTORY_BG", "FACTORY_PK", "FACTORY_WH"];
@@ -335,10 +335,12 @@ test("WH: the store view lists the finished goods per code with the orders that 
   assert.equal(h1Of(html), "ในคลัง");
   assert.ok(html.includes(escapeHtml(fgCode)));
   assert.match(html, /10/);
-  assert.ok(html.includes(`>${escapeHtml(order.id)}</a>`), "the order that holds the goods is linked");
-  assert.match(await env.open("FACTORY_WH", "tab=stock&q=ZZZ-NONE"), /ไม่พบสินค้าสำเร็จรูปที่ค้นหา/);
+  assert.ok(html.includes(`href="#/wh?order=${escapeHtml(order.id)}"`), "the whole row links to the order page of the warehouse");
+  assert.ok(html.includes(`ใบ ${escapeHtml(order.id)}`), "and says whose it is");
+  assert.match(await env.open("FACTORY_WH", "tab=stock&q=ZZZ-NONE"), /ไม่พบสินค้าที่ค้นหา/);
   // ไม่มีงานของ WH = ยังเปิดที่งานของฉัน (ข้อความว่าง ไม่ใช่หน้าว่าง และไม่เด้งไปที่ของในคลัง)
   for (const entry of data.orders) entry.status = "draft";
+  env.rf.store.data().fgBoxes.length = 0; // and no box from RubberFlow waits for the warehouse
   const idle = await env.open("FACTORY_WH");
   assert.equal(h1Of(idle), "งานของฉัน");
   assert.match(idle, /ไม่มีงานค้าง/);
@@ -559,12 +561,14 @@ test("WH shows the warehouse's pending receive to whoever opens it: PP and a man
     const order = makeReceivable(env);
     const html = await env.open("FACTORY_WH");
     seen[label] = html;
-    assert.match(html, /รอรับเข้าคลัง/, `${label} sees the pending receive`);
+    assert.match(html, /รอรับเข้า WH/, `${label} sees the pending receive`);
     assert.ok(html.includes(escapeHtml(order.id)), `${label} sees the order ${order.id}`);
     assert.doesNotMatch(html, /ไม่มีงานค้าง/);
   }
-  const grid = (html) => html.slice(html.indexOf('<div class="bom-job-grid">'));
+  // the PK cards (the boxes RubberFlow finished for WH are extra cards of the module, with their own buttons)
+  const grid = (html) => cardsOf(html).filter((card) => !card.includes("จาก RubberFlow")).join("");
   assert.ok(grid(seen.WH).length > 30 && grid(seen.PP) === grid(seen.WH), "the task card is the same for WH and PP");
+  assert.equal(grid(seen.manager), grid(seen.WH), "and for the manager");
 });
 
 test("SR shows the store's pending rod receipts to a planner as well, computed for the department, with the buttons a planner has in BOM", async () => {
@@ -695,7 +699,9 @@ test("WH: the landing shows the same task cards as BOM งานของฉั�
   const bom = cardsOf((await workPage(env)).html);
   assert.ok(bom.some((card) => card.includes("ปิดใบ (รับไม่ครบ)")), "BOM offers close short");
   const page = await landingWith(env, "FACTORY_WH");
-  assert.deepEqual(plain(cardsOf(page.html)), plain(bom));
+  // the cards of PK goods are the BOM ones; the boxes RubberFlow finished for WH are extra cards of the module (they are not BOM tasks)
+  const own = (html) => cardsOf(html).filter((card) => !card.includes("จาก RubberFlow"));
+  assert.deepEqual(plain(own(page.html)), plain(bom));
   assert.doesNotMatch(page.html, /สินค้าสำเร็จรูปในคลัง/, "the store table is on ในคลัง, not on งานของฉัน");
   const dialog = await page.click("closeShort");
   assert.match(dialog, /data-rf-form="closeOrderShort"/);
@@ -744,11 +750,11 @@ test("the task cards are drawn once (bom-hub taskCard / boardCards); the departm
   assert.match(hub, /const \{ taskCards, cards \} = boardCards\(ctx, board\);/, "BOM work page uses it too");
   assert.match(read("modules/factory-kit.js"), /hub\.boardCards\(ctx, board\)/);
   for (const dept of ["sr", "st", "wh", "qa"]) {
-    const source = read(`modules/module-${dept}.js`);
-    assert.match(source, dept === "qa" ? /F\.deptWorkSection\(ctx/ : dept === "sr" ? /F\.deptWork\(ctx/ : /F\.storeLanding\(ctx/, `${dept} places the shared section`);
+    const source = read(dept === "wh" ? "modules/wh-pages.js" : `modules/module-${dept}.js`);
+    assert.match(source, dept === "qa" ? /F\.deptWorkSection\(ctx/ : dept === "sr" || dept === "wh" ? /F\.deptWork\(ctx/ : /F\.storeLanding\(ctx/, `${dept} places the shared section`);
     assert.match(source, /actions: true/, `${dept} asks for the real actions`);
-    // SR draws its own tables (stock, receipts, issues, ledger) with the shared dialog buttons, but never the card markup
-    assert.doesNotMatch(source, dept === "sr" ? /bom-job|taskTable/ : /bom-job|openButton|data-rf-open|taskTable/, `${dept} keeps no copy of the card HTML`);
+    // SR draws its own tables (stock, receipts, issues, ledger) with the shared dialog buttons, but never the card markup · WH draws the cards of RubberFlow boxes (not BOM tasks) and never a BOM task card
+    assert.doesNotMatch(source, dept === "sr" ? /bom-job|taskTable/ : dept === "wh" ? /taskTable|task\.kind|fgReceive|fgDeliver|fgCloseShort/ : /bom-job|openButton|data-rf-open|taskTable/, `${dept} keeps no copy of the card HTML`);
   }
 });
 
@@ -1069,12 +1075,19 @@ test("side menu: SR (a store) has งานของฉัน with the card coun
   assert.deepEqual(plain(navOf(env, "FACTORY_SR").items.map((item) => [item.label, item.count])), [["งานของฉัน", 0], ["ในคลัง", 0], ["รับเข้า", 0], ["จ่ายให้ GR", 0], ["ประวัติเข้าออก", 0]], "BOM not ready: no count");
 });
 
-test("side menu: ST and WH have the same two items under their own route", async () => {
-  for (const [code, route, userId, dept] of [["FACTORY_ST", "st", "B08", "ST"], ["FACTORY_WH", "wh", "B09", "WH"]]) {
-    const env = load({ employee: emp(dept) });
-    env.store.setUser(userId);
-    await env.open(code);
-    assert.deepEqual(plain(navOf(env, code).items.map((item) => [item.label, item.href, item.active])), [["งานของฉัน", `#/${route}`, true], ["ในคลัง", `#/${route}?tab=stock`, false]], code);
+test("side menu: ST has งานของฉัน and ในคลัง; WH has งานของฉัน, ในคลัง, รับเข้า, ส่งมอบ and ประวัติ, with the lot and order pages under ในคลัง", async () => {
+  const env = load({ employee: emp("ST") });
+  env.store.setUser("B08");
+  await env.open("FACTORY_ST");
+  assert.deepEqual(plain(navOf(env, "FACTORY_ST").items.map((item) => [item.label, item.href, item.active])), [["งานของฉัน", "#/st", true], ["ในคลัง", "#/st?tab=stock", false]]);
+  const wh = load({ employee: emp("WH") });
+  wh.store.setUser("B09");
+  await wh.open("FACTORY_WH");
+  const items = () => plain(navOf(wh, "FACTORY_WH").items.map((item) => [item.label, item.href, item.active]));
+  assert.deepEqual(items(), [["งานของฉัน", "#/wh", true], ["ในคลัง", "#/wh?tab=stock", false], ["รับเข้า", "#/wh?tab=receive", false], ["ส่งมอบ", "#/wh?tab=deliver", false], ["ประวัติ", "#/wh?tab=history", false]]);
+  for (const [query, active] of [["tab=receive", "รับเข้า"], ["tab=deliver", "ส่งมอบ"], ["tab=history", "ประวัติ"], ["tab=stock", "ในคลัง"], ["order=DEMO-26001", "ในคลัง"], ["lot=FN-X", "ในคลัง"]]) {
+    await wh.open("FACTORY_WH", query);
+    assert.deepEqual(items().filter((item) => item[2]).map((item) => item[0]), [active], query);
   }
 });
 
