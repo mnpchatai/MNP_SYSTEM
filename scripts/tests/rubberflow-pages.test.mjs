@@ -83,7 +83,8 @@ test("the module registers a sandbox-only standalone page, refuses users outside
   assert.equal((html.match(/<option value="[^"]+"/g) ?? []).length, 9, "nine demo roles besides the empty placeholder");
   assert.doesNotMatch(html, /data-rf-user-pick|rf-role-grid/, "no full-page role grid");
   assert.doesNotMatch(html, /data-rf-scan|data-rf-reset/, "scan, alerts and reset wait for a persona");
-  assert.equal(env.module.nav[0].group, "ทดสอบ", "listed under the test group in the side menu");
+  assert.equal(env.module.nav[0].group, "โรงงาน", "listed under the factory group in the side menu (test mode)");
+  assert.equal(env.module.nav[0].flowNo, 4, "RB is step 4 of the work tree");
   const outside = load({ sandbox: false });
   await outside.render();
   assert.equal(outside.log.notFound, 1);
@@ -460,7 +461,7 @@ test("pages carry their module hue, and the side menu, page head and callouts us
 });
 
 test("RubberFlow and BOM go live: real employees by role, every persona in test mode, test-only tools stay in test mode", async () => {
-  // ผู้ใช้เปิดใช้จริง 2026-11-18 (20261130010000): เมนูและหน้าเปิดตาม usesRubberFlow / usesBom · หัวกลุ่ม "ทดสอบ" เฉพาะโหมดทดสอบ "การผลิต" เมื่อใช้งานจริง
+  // ผู้ใช้เปิดใช้จริง 2026-11-18 (20261130010000): เมนูและหน้าเปิดตาม usesRubberFlow / usesBom · หัวกลุ่ม "โรงงาน" เฉพาะโหมดทดสอบ "การผลิต" เมื่อใช้งานจริง
   const { readFileSync } = await import("node:fs");
   // ตัดบรรทัดที่เป็นคอมเมนต์ทิ้งก่อน: โค้ดที่ถูกคอมเมนต์ออกต้องไม่นับว่ายังป้องกันอยู่
   const read = (file) => readFileSync(new URL(`../../${file}`, import.meta.url), "utf8").replace(/^\s*\/\/.*$/gm, "");
@@ -477,8 +478,8 @@ test("RubberFlow and BOM go live: real employees by role, every persona in test 
     assert.match(source, /const canPurge = \(\) => store\.isRemote\(\) && Boolean\(state\.sandbox\?\.active\);/, `${file} keeps the purge button test-mode only`);
   }
   const env = load();
-  assert.deepEqual(JSON.parse(JSON.stringify(env.module.nav.map((item) => [item.sandboxOnly ?? false, item.realOnly ?? false, item.group]))), [[true, false, "ทดสอบ"], [false, true, "การผลิต"]],
-    "one menu entry per mode: the test group in test mode, the production group in real use");
+  assert.deepEqual(JSON.parse(JSON.stringify(env.module.nav.map((item) => [item.sandboxOnly ?? false, item.realOnly ?? false, item.group]))), [[true, false, "โรงงาน"], [false, true, "การผลิต"]],
+    "one menu entry per mode: the factory group in test mode, the production group in real use");
   const employee = (dept, role = "staff", extra = {}) => ({ role: { code: role }, department: { code: dept }, ...extra });
   const allowed = (person) => env.module.navAllowed(person);
   // ผู้ใช้สั่ง 2026-11-18: เฉพาะโหมดทดสอบ นอกโหมดทดสอบไม่มีใครเห็น รวม admin (REAL_STAFF_OPEN = false)
@@ -940,7 +941,7 @@ const withSteps = () => {
 };
 
 test("every form of RubberFlow and BOM is novalidate, so the browser never shows its English bubble", () => {
-  const files = ["modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js"];
+  const files = ["modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js", "modules/factory-kit.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js"];
   let count = 0;
   for (const file of files) {
     for (const line of fs.readFileSync(file, "utf8").split("\n")) {

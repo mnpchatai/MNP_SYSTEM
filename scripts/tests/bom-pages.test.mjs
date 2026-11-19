@@ -10,7 +10,7 @@ const FILES = [
   "modules/ui-icons.js",
   "modules/rubberflow-rules.js", "modules/rubberflow-derive.js", "modules/rubberflow-actions.js", "modules/rubberflow-seed.js", "modules/rubberflow-store.js",
   "modules/rubberflow-ui.js", "modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js",
-  "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js",
+  "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/factory-kit.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js",
 ];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 const PAGES = ["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "check", "orders", "customers", "count", "stock", "jobs", "audit"];
@@ -78,7 +78,8 @@ test("the module registers a sandbox-only standalone page, refuses users outside
   const html = await env.render();
   assert.match(html, /<select[^>]*data-rf-user/, "the role is picked from the toolbar select");
   assert.doesNotMatch(html, /data-rf-user-pick|rf-role-grid|data-rf-reset/, "no full-page role grid, and no reset before a role");
-  assert.equal(env.module.nav[0].group, "ทดสอบ", "listed under the test group in the side menu");
+  assert.equal(env.module.nav[0].group, "โรงงาน", "listed under the factory group in the side menu (test mode)");
+  assert.equal(env.module.nav[0].flowNo, 2, "after the sales step: PP is step 2 of the work tree");
   assert.equal(env.module.nav[0].subnav("bom"), "", "no sub-menu before a role is chosen");
   const outside = load({ sandbox: false });
   await outside.render();

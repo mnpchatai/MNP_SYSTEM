@@ -89,10 +89,16 @@ async function harnessPage() {
       const [path, query = ""] = raw.split("?");
       return { path, params: new URLSearchParams(query) };
     };
-    const navItems = () => Object.values(window.MNP_REQUEST_MODULES).flatMap((entry) => entry.nav || []);
+    // เมนูเหมือน requestModuleNavLinks ของ app.js: ซ่อนตาม navAllowed ของบัญชีที่ทำหน้าที่อยู่ และเรียงรายการของกลุ่ม "โรงงาน" ตามผังงาน (MNP_FACTORY.orderNavItems)
+    const navItems = () => window.MNP_FACTORY.orderNavItems(Object.values(window.MNP_REQUEST_MODULES).filter((entry) => { try { return !entry.navAllowed || entry.navAllowed(state.employee); } catch { return false; } }).flatMap((entry) => entry.nav || []));
     const shell = (content, path, title) => {
       document.title = title;
-      const nav = navItems().map((item) => "<div><a href=\\"#/" + item.path + "\\">" + escapeHtml(item.label) + "</a>" + ((item.subnav && item.subnav(path)) || "") + "</div>").join("");
+      let group = null;
+      const nav = navItems().map((item) => {
+        const heading = item.group && item.group !== group ? "<div class=\\"h-note\\">" + escapeHtml(item.group) + "</div>" : "";
+        group = item.group || null;
+        return heading + "<div><a href=\\"#/" + item.path + "\\">" + escapeHtml(item.label) + "</a>" + ((item.subnav && item.subnav(path)) || "") + "</div>";
+      }).join("");
       const picker = personas.length ? "<div><label class=\\"h-note\\" for=\\"h-persona\\">ทำหน้าที่เป็น</label><select id=\\"h-persona\\" style=\\"width:100%\\">" + personas.map((persona) => "<option value=\\"" + escapeHtml(persona.id) + "\\"" + (persona.id === state.employee.id ? " selected" : "") + ">" + escapeHtml((persona.job_title || persona.first_name) + " · " + ((persona.department && persona.department.code) || "")) + "</option>").join("") + "</select></div>" : "";
       return "<div class=\\"h-shell\\"><aside class=\\"h-side\\"><strong>Pilot harness</strong><div class=\\"h-note\\">โหมดทดสอบจำลอง ไม่มี Supabase</div>" + picker + nav + "</aside><main class=\\"content\\">" + content + "</main></div>";
     };

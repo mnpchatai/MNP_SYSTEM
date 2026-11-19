@@ -317,16 +317,17 @@ function sandboxRouteAllowed(path, params) {
 // เมนูย่อยต้องใช้ลิงก์ (<a href="#/…">) ที่อยู่ใน .nav-sub เพื่อให้ปิดลิ้นชักบนมือถือและโหลดหน้าใหม่ตามกติกาของ bindShell
 // โมดูลที่จำกัดสิทธิ์ (เช่น MNP LAB) ประกาศ navAllowed(employee) — ซ่อนเมนูเมื่อคืน false
 // การซ่อนเมนูเป็นแค่ UX สิทธิ์จริงตัดสินที่ฐานข้อมูล (RPC ของโมดูลปฏิเสธเองด้วย NOT_AUTHORIZED)
-// รายการที่ประกาศ group (เช่น "ทดสอบ" ของ RubberFlow/BOM) ได้หัวกลุ่มก่อนรายการแรกของกลุ่มนั้น
+// รายการที่ประกาศ group (เช่น "โรงงาน" ของ BOM/RubberFlow/โมดูลรายแผนก) ได้หัวกลุ่มก่อนรายการแรกของกลุ่มนั้น · รายการที่ประกาศ flowNo เรียงตามลำดับผังงานในกลุ่ม (MNP_FACTORY.orderNavItems)
 function requestModuleNavLinks(active) {
   let previousGroup = null;
-  return Object.values(REQUEST_MODULES)
+  const items = Object.values(REQUEST_MODULES)
     .filter((entry) => entry.enabled && sandboxSupports(entry) && (entry.navAllowed?.(state.employee) ?? true))
     .filter((entry) => !isLabOnly() || window.MNP_LAB_ONLY.moduleAllowed(entry.code))
     .filter((entry) => deptModuleAllowed(entry.code))
     .flatMap((entry) => entry.nav ?? [])
     .filter((item) => !item.sandboxOnly || isSandboxMode())
-    .filter((item) => !item.realOnly || !isSandboxMode())
+    .filter((item) => !item.realOnly || !isSandboxMode());
+  return window.MNP_FACTORY.orderNavItems(items)
     .map((item) => {
       const groupLabel = item.group && item.group !== previousGroup ? `<div class="nav-label nav-group-label">${escapeHtml(item.group)}</div>` : "";
       previousGroup = item.group ?? null;
@@ -1239,7 +1240,7 @@ function unsavedTextCount() {
     const panel = field.closest("#decision-panel");
     if (panel && panel.dataset.state !== "compose") return false;
     return field.value.trim() !== field.defaultValue.trim();
-  }).length;
+  }).length + (window.MNP_ITWO?.unsavedCount?.() ?? 0); // + ส่วน "สำหรับแผนก IT" ของใบสั่งงาน IT ที่แก้ค้าง (modules/module-itwo.js)
 }
 // ออกจากหน้าเมื่อยังมีไฟล์ที่ยังไม่อัปโหลดหรือข้อความที่พิมพ์ค้าง: ถามก่อน (ไฟล์มาก่อนเพราะลบไม่ได้หลังอัปโหลด)
 function leaveWarningPending() {
@@ -2209,10 +2210,10 @@ function sandboxBannerHtml() {
   if (!isSandboxMode()) return "";
   const personas = state.sandbox?.personas ?? [];
   const current = state.employee.id;
-  // RubberFlow/BOM รีเซ็ตข้อมูลด้วยเครื่องมือของตัวเอง ปุ่มล้างข้อมูล NCR ทดสอบจึงไม่ขึ้นที่นั่น (มือถือเหลือแถบสั้น)
-  const showPurge = !["rubberflow", "bom"].includes(currentRoute().path);
+  // RubberFlow/BOM/ใบสั่งงาน IT (path office) รีเซ็ตข้อมูลด้วยเครื่องมือของตัวเอง ปุ่มล้างข้อมูล NCR ทดสอบจึงไม่ขึ้นที่นั่น (มือถือเหลือแถบสั้น)
+  const showPurge = !["rubberflow", "bom", "office"].includes(currentRoute().path);
   return `<div class="sandbox-banner" role="status">
-    <div class="sandbox-banner-copy"><strong>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · ทดลอง NCR (แนบไฟล์ได้) และใบตรวจ QC ได้</span></div>
+    <div class="sandbox-banner-copy"><strong>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · ทดลอง NCR (แนบไฟล์ได้) ใบตรวจ QC และใบสั่งงาน IT ได้</span></div>
     <div class="sandbox-banner-actions">
       <label for="sandbox-persona">ทำหน้าที่เป็น</label>
       <select class="input" id="sandbox-persona">${personas.map((persona) => `<option value="${escapeHtml(persona.id)}"${persona.id === current ? " selected" : ""}>${escapeHtml(persona.job_title ?? `${persona.first_name} ${persona.last_name}`)} · ${escapeHtml(persona.department?.code ?? "")}</option>`).join("")}</select>

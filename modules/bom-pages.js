@@ -2642,37 +2642,8 @@
       ${ui.card(`${searchForm(ctx, "ค้นหาเลขงาน เลข PI หรือรหัสชิ้นงาน…")}${ui.table(headCells, rows, { emptyText: ctx.q ? "ไม่พบงาน" : show === "open" ? "ไม่มีงานค้าง" : "ยังไม่มีงาน" })}`)}`;
     return { html };
   };
-  dialogs.jobReport = (ctx, { jobId }) => {
-    const { ui, rules } = ctx;
-    const job = ctx.data.jobs.find((entry) => entry.id === jobId);
-    if (!job || job.status === "hold" || ctx.helpers.isLinkedJob?.(job)) return null;
-    const remaining = Math.max(0, job.qtyPlanned - job.qtyDone);
-    // ช่องจำนวนดีว่างไว้ (บอกยอดที่เหลือเป็น placeholder): กดบันทึกครั้งเดียวต้องไม่รายงานว่าเสร็จทั้งแผน
-    // แผนกก่อนหน้าส่งมาพอสำหรับกี่หน่วย (null = ไม่รู้) · เตือนเมื่อยอดรวมที่รายงานเกิน ไม่ห้ามบันทึก
-    const supply = rules.jobSupplyLimit(ctx.data, job);
-    const body = `<form novalidate id="bom-job-form" data-rf-form="reportJob" data-rf-args="${attr(JSON.stringify({ jobId }))}" data-rf-success="บันทึกผลผลิต {result}">
-      <p class="muted small">${esc(`${job.itemCode} · ${job.name} · แผน ${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)} · ทำแล้ว ${rules.fmtQty(job.qtyDone)} · เหลือ ${rules.fmtQty(remaining)}`)}</p>
-      <div class="rf-grid rf-g2">${ui.field(`จำนวนดี (${uomText(ctx, job.uom)})`, ui.input("qtyDone", { type: "number", step: "any", min: 0, value: "", placeholder: remaining ? `เหลือ ${rules.fmtQty(remaining)}` : "0", extra: "data-job-qty" }))}${ui.field("จำนวนเสีย", ui.input("qtyReject", { type: "number", step: "any", min: 0, value: "0" }))}</div>
-      ${supply === null ? "" : '<div class="rf-callout is-warn" role="note" data-job-supply hidden><div class="rf-callout-body"></div></div>'}
-      ${ui.field("หมายเหตุ", ui.input("note", { placeholder: "เช่น รอบรีดที่ 2" }))}
-    </form>`;
-    const bind = (dialog) => {
-      const qtyInput = dialog.querySelector("[data-job-qty]");
-      const box = dialog.querySelector("[data-job-supply]");
-      if (!qtyInput || !box || supply === null) return;
-      const paint = () => {
-        const entered = Number(qtyInput.value) || 0;
-        const total = Number(job.qtyDone) + entered;
-        const over = entered > 0 && total > supply + 1e-6;
-        box.hidden = !over;
-        const bodyNode = box.querySelector(".rf-callout-body");
-        if (bodyNode) bodyNode.textContent = over ? `แผนกก่อนหน้าส่งมาพอสำหรับ ${rules.fmtQty(supply)} ${uomText(ctx, job.uom)} แต่ยอดรวมที่รายงานจะเป็น ${rules.fmtQty(total)}` : "";
-      };
-      qtyInput.addEventListener("input", paint);
-      paint();
-    };
-    return { html: ui.dialog("jobReport", `รายงานผล ${job.id}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-job-form">บันทึก</button>` }), bind };
-  };
+  // dialog รายงานผล: ชิ้นส่วนกลางของโมดูลโรงงาน (modules/factory-kit.js)
+  dialogs.jobReport = (ctx, args) => root.MNP_FACTORY.jobReportDialog(ctx, args);
   // งานที่ผูก WO: ปิดงานแล้ว WO เป็นอย่างไร (โหมดฐานข้อมูล · private.bom_save_jobs ของ 20261129010000 เรียก bom_cancel_rf_job)
   // planned / released = ยกเลิก · in_progress / on_hold = หยุด (ยอดและล็อตคงอยู่) · completed / cancelled = ไม่เปลี่ยน · WO ยังโหลดไม่เสร็จ = บอกทั้งสองทาง
   // โหมดสาธิตในเครื่องไม่แตะ RubberFlow WO จึงยังเปิดอยู่
