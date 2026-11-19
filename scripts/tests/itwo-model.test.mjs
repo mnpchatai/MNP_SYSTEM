@@ -462,3 +462,20 @@ test("you cannot give yourself staff rights from the form, whatever the letter c
   assert.match(model.validateStaffForm({ employeeNo: "it3462", isAdmin: true, isApprover: false, myEmployeeNo: "IT3462" }), /แก้สิทธิ์ของตัวเองไม่ได้/);
   assert.equal(model.validateStaffForm({ employeeNo: "FANG", isAdmin: true, isApprover: false, myEmployeeNo: "IT3462" }), null);
 });
+
+/* ---------- ข้อความกล่องยืนยันอนุมัติ ---------- */
+test("approving as the IT-step approver while the department step is still open says it counts as both steps; everything else keeps the standard message", () => {
+  const itApprover = { is_it_approver: true };
+  const open = { approvals: { dept: null, it_mgr: null } };
+  const standard = model.ACTION_BUTTONS.approve.confirmMessage;
+  assert.equal(model.confirmMessageFor("approve", open, itApprover), `${model.BOTH_STEPS_NOTE} · ${standard}`);
+  assert.match(model.BOTH_STEPS_NOTE, /ทั้งขั้นแผนกและขั้น IT/);
+  // ขั้นแผนกผ่านแล้ว / ไม่ใช่ผู้อนุมัติขั้น IT / ข้อมูลไม่ครบ = ข้อความมาตรฐาน (ไม่บอกเกินจริง)
+  assert.equal(model.confirmMessageFor("approve", { approvals: { dept: { by: "x" }, it_mgr: null } }, itApprover), standard);
+  assert.equal(model.confirmMessageFor("approve", open, { is_dept_approver: true }), standard);
+  assert.equal(model.confirmMessageFor("approve", {}, itApprover), standard);
+  assert.equal(model.confirmMessageFor("approve", null, null), standard);
+  // ปุ่มอื่นไม่ได้รับข้อความนี้
+  assert.equal(model.confirmMessageFor("start", open, itApprover), model.ACTION_BUTTONS.start.confirmMessage);
+  assert.equal(model.confirmMessageFor("unknown", open, itApprover), "");
+});

@@ -154,6 +154,17 @@
     const set = new Set(Array.isArray(allowed) ? allowed : []);
     return ACTION_ORDER.filter((action) => set.has(action)).map((action) => ({ action, ...ACTION_BUTTONS[action] }));
   }
+  // ข้อความในกล่องยืนยันของปุ่ม · "อนุมัติ" ของผู้อนุมัติขั้น IT ที่ขั้นแผนกยังไม่ผ่าน (แผนก IT / แผนกไม่มีผู้จัดการ / ผู้จัดการแผนกที่เป็นผู้อนุมัติขั้น IT ด้วย)
+  // ฐานข้อมูลบันทึกทั้งสองขั้นในชื่อเขาในครั้งเดียว จึงบอกก่อนกด · role = ผลของ app_itwo_my_role, detail = app_itwo_get_detail (approvals.dept ว่าง = ขั้นแผนกยังไม่ผ่าน)
+  // หน้าเว็บตัดสินได้แค่นี้ (ข้อมูลไม่ครบก็ใช้ข้อความมาตรฐาน) ตัวตัดสินจริงคือฐานข้อมูล
+  const BOTH_STEPS_NOTE = "ใบนี้จะนับเป็นการอนุมัติทั้งขั้นแผนกและขั้น IT";
+  function countsAsBothSteps(detail, role) {
+    return Boolean(role?.is_it_approver) && Boolean(detail?.approvals) && !detail.approvals.dept && !detail.approvals.it_mgr;
+  }
+  function confirmMessageFor(action, detail, role) {
+    const base = ACTION_BUTTONS[action]?.confirmMessage ?? "";
+    return action === "approve" && countsAsBothSteps(detail, role) ? `${BOTH_STEPS_NOTE} · ${base}` : base;
+  }
   const canEditAccess = (allowed) => Array.isArray(allowed) && allowed.includes("edit_access");
 
   const PENDING_STEP_LABELS = Object.freeze({ dept: "รอคุณอนุมัติขั้นผู้จัดการแผนก", it_mgr: "รอคุณอนุมัติขั้น IT" });
@@ -452,7 +463,7 @@
     requestTypeLabel, attachmentFlagLabel, accessSystemLabel, accessActionLabel, statusLabel, statusBadgeClass, myStatusLabel, isTestDoc,
     todayBangkok, formatDate, formatDateTime, isRealDate, charCount, clip,
     visibleTabs, readView, viewAllowed, workOrderUrl, isUuid,
-    actionButtons, canEditAccess, pendingStepLabel, eventLabel, signatureSlots, approvalSummary,
+    actionButtons, countsAsBothSteps, confirmMessageFor, BOTH_STEPS_NOTE, canEditAccess, pendingStepLabel, eventLabel, signatureSlots, approvalSummary,
     itGroupOf, groupItOrders, itActionableCount, awaitingMyReceiveCount, itApprovalProgress, cardSummary,
     orderRules, createParams, validateReason,
     blankAccessDraft, draftsFromAccessChanges, isBlankAccessDraft, validateAccessChanges, hasAccessErrors, accessPayload, accessPrintRows,

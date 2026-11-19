@@ -594,6 +594,112 @@ test("the purge button is only on the lists, only in test mode, and asks first",
   assert.ok(w.names().includes("app_sandbox_purge_itwo"));
 });
 
+/* ---------- ผลตรวจรอบ auditor ---------- */
+test("a slow page does not repaint when the user has already gone to another page (IT SUPPORT / outside the module)", async () => {
+  const w = world({ as: "itadm" });
+  const real = w.context.sb.rpc;
+  for (const target of ["#/office?module=it-support", "#/dashboard"]) {
+    let release;
+    w.context.sb.rpc = (name, args) => (name === "app_itwo_list_it" && !release ? new Promise((resolve) => { release = () => resolve(real(name, args)); }) : real(name, args));
+    w.context.location.hash = "#/office?module=work-order&view=it";
+    const before = w.html;
+    const slow = w.open("view=it");
+    await flush();
+    w.context.location.hash = target; // กด "‹ IT SUPPORT" หรือไปหน้าอื่นก่อนแท็บโหลดเสร็จ
+    release();
+    await slow;
+    await flush();
+    assert.equal(w.html, before, `${target}: the late tab must not be painted over the other page`);
+  }
+  w.context.sb.rpc = real;
+  // ไม่ออกจากหน้า = วาดตามปกติ
+  w.context.location.hash = "#/office?module=work-order&view=it";
+  await w.open("view=it");
+  assert.match(w.html, /งาน IT/);
+
+  // หน้าแสดงข้อผิดพลาดก็ไม่วาดทับเช่นกัน
+  const order = await w.create();
+  w.as("itadm");
+  let fail;
+  w.context.sb.rpc = (name, args) => (name === "app_itwo_get_detail" ? new Promise((resolve) => { fail = () => resolve({ data: null, error: Object.assign(new Error("Failed to fetch"), { code: "" }) }); }) : real(name, args));
+  const before = w.html;
+  const slow = w.open(`view=order&id=${order.id}`);
+  await flush();
+  w.context.location.hash = "#/office?module=it-support";
+  fail();
+  await slow;
+  await flush();
+  assert.equal(w.html, before, "the error page is not painted over the other page either");
+});
+
+test("settings: the staff picker (real mode) lists only active, non-test, non-deleted employees", async () => {
+  const w = world();
+  w.as("itadm");
+  const real = w.context.sb.rpc;
+  // ตัวตนจำลองเป็นโหมดทดสอบเสมอ ที่นี่ต้องการโหมดปกติ
+  w.context.sb.rpc = async (name, args) => {
+    const result = await real(name, args);
+    return name === "app_itwo_my_role" ? { ...result, data: { ...result.data, is_test: false } } : result;
+  };
+  const calls = [];
+  const builder = {
+    select(columns) { calls.push(["select", columns]); return builder; },
+    eq(column, value) { calls.push(["eq", column, value]); return builder; },
+    is(column, value) { calls.push(["is", column, value]); return builder; },
+    then(resolve) { resolve({ data: [{ employee_no: "MK1", first_name: "สมชาย", last_name: "ใจดี", is_active: true, department: { name_th: "การตลาด" } }], error: null }); },
+  };
+  w.context.sb.from = (table) => { calls.push(["from", table]); return builder; };
+  await w.open("view=settings");
+  assert.deepEqual(calls.filter((call) => call[0] !== "select"), [["from", "employees"], ["eq", "is_active", true], ["eq", "is_test", false], ["is", "deleted_at", null]]);
+  assert.match(w.html, /<option value="MK1">MK1 สมชาย ใจดี · การตลาด<\/option>/);
+});
+
+test("approve: the IT-step approver is told when one click counts as both steps (department without a manager); a plain department-step approval is not", async () => {
+  const w = world();
+  w.as("other"); // แผนกที่ไม่มีผู้จัดการ: ผู้อนุมัติขั้น IT กดครั้งเดียวนับทั้งสองขั้น
+  const created = await w.context.sb.rpc("app_itwo_create", { p_request_type: "design", p_order_ref: null, p_attachment_flag: "no", p_attachment_note: null, p_details: "ใบทดสอบ", p_needed_date: "2026-11-25", p_is_urgent: false });
+  const orderId = created.data[0].id;
+  w.as("itapp");
+  await w.open(`view=order&id=${orderId}`);
+  await w.click("approve");
+  assert.match(w.calls.confirms.at(-1).message, /ใบนี้จะนับเป็นการอนุมัติทั้งขั้นแผนกและขั้น IT/);
+
+  const second = await w.create(); // แผนก MK มีผู้จัดการ: ผู้จัดการแผนกอนุมัติขั้นแผนก
+  w.as("mgr");
+  await w.open(`view=order&id=${second.id}`);
+  await w.click("approve");
+  assert.doesNotMatch(w.calls.confirms.at(-1).message, /ทั้งขั้นแผนกและขั้น IT/);
+  w.as("itapp"); // ขั้นแผนกผ่านแล้ว: ขั้น IT ขั้นเดียว
+  await w.open(`view=order&id=${second.id}`);
+  await w.click("approve");
+  assert.doesNotMatch(w.calls.confirms.at(-1).message, /ทั้งขั้นแผนกและขั้น IT/);
+});
+
+test("the IT section warns about unsaved edits only while the edit form is open and different from when it was opened", async () => {
+  const w = world();
+  const order = await w.create({ is_urgent: true });
+  w.as("itadm");
+  const probe = () => w.context.window.MNP_ITWO.unsavedCount();
+  assert.equal(probe(), 0, "nothing on screen yet");
+  await w.open(`view=order&id=${order.id}`);
+  assert.equal(probe(), 0, "reading the order is not an unsaved edit");
+  const rowFields = { system: "", action: "", newUsername: "", oldUsername: "", note: "" };
+  w.context.document.querySelectorAll = ((original) => (selector) => (selector === "[data-access-row]" ? [el({ querySelector: (inner) => ({ value: rowFields[/data-access-field="(\w+)"/.exec(inner)[1]] }) })] : original(selector)))(w.context.document.querySelectorAll);
+  w.elements["#itwo-access-edit"].listeners.click[0]();
+  assert.match(w.html, /id="itwo-access-form"/);
+  assert.equal(probe(), 0, "the form just opened: unchanged");
+  rowFields.newUsername = "user1";
+  assert.equal(probe(), 1, "typed something");
+  rowFields.newUsername = "";
+  assert.equal(probe(), 0, "typed back to the original: nothing to lose");
+  rowFields.note = "x";
+  assert.equal(probe(), 1);
+  // ออกไปหน้าอื่น (หน้าใหม่ของโมดูลวาดแล้ว) = ไม่มีของค้าง
+  await w.open("view=new");
+  assert.equal(probe(), 0);
+  assert.match(read("app.js"), /\}\)\.length \+ \(window\.MNP_ITWO\?\.unsavedCount\?\.\(\) \?\? 0\);/, "app.js asks the module before leaving a page");
+});
+
 /* ---------- ความเรียบร้อยของไฟล์ ---------- */
 test("the module never decides rights or document numbers itself, and keeps no secret", () => {
   const source = read("modules/module-itwo.js");

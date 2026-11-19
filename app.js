@@ -1240,7 +1240,7 @@ function unsavedTextCount() {
     const panel = field.closest("#decision-panel");
     if (panel && panel.dataset.state !== "compose") return false;
     return field.value.trim() !== field.defaultValue.trim();
-  }).length;
+  }).length + (window.MNP_ITWO?.unsavedCount?.() ?? 0); // + ส่วน "สำหรับแผนก IT" ของใบสั่งงาน IT ที่แก้ค้าง (modules/module-itwo.js)
 }
 // ออกจากหน้าเมื่อยังมีไฟล์ที่ยังไม่อัปโหลดหรือข้อความที่พิมพ์ค้าง: ถามก่อน (ไฟล์มาก่อนเพราะลบไม่ได้หลังอัปโหลด)
 function leaveWarningPending() {
@@ -2213,7 +2213,7 @@ function sandboxBannerHtml() {
   // RubberFlow/BOM/ใบสั่งงาน IT (path office) รีเซ็ตข้อมูลด้วยเครื่องมือของตัวเอง ปุ่มล้างข้อมูล NCR ทดสอบจึงไม่ขึ้นที่นั่น (มือถือเหลือแถบสั้น)
   const showPurge = !["rubberflow", "bom", "office"].includes(currentRoute().path);
   return `<div class="sandbox-banner" role="status">
-    <div class="sandbox-banner-copy"><strong>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · ทดลอง NCR (แนบไฟล์ได้) และใบตรวจ QC ได้</span></div>
+    <div class="sandbox-banner-copy"><strong>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · ทดลอง NCR (แนบไฟล์ได้) ใบตรวจ QC และใบสั่งงาน IT ได้</span></div>
     <div class="sandbox-banner-actions">
       <label for="sandbox-persona">ทำหน้าที่เป็น</label>
       <select class="input" id="sandbox-persona">${personas.map((persona) => `<option value="${escapeHtml(persona.id)}"${persona.id === current ? " selected" : ""}>${escapeHtml(persona.job_title ?? `${persona.first_name} ${persona.last_name}`)} · ${escapeHtml(persona.department?.code ?? "")}</option>`).join("")}</select>

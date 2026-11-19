@@ -454,7 +454,7 @@ test("?module=work-order hands the page to the work-order module; department ID 
   assert.deepEqual(restricted.queries, []);
 });
 
-test("in test mode only the work-order pages are open: the chooser and repair/HR pages send the admin back", async () => {
+test("in test mode the work-order pages open normally and an HR page sends the admin back to the chooser without any lookup", async () => {
   const sandbox = setup({ employee: mt, sandbox: true });
   await sandbox.open("module=work-order");
   assert.equal(sandbox.painted.itwoRendered.length, 1);
@@ -463,4 +463,20 @@ test("in test mode only the work-order pages are open: the chooser and repair/HR
   await sandbox.open("module=hr");
   assert.deepEqual(sandbox.painted.went, ["office"]);
   assert.deepEqual(sandbox.queries, [], "the repair type is never looked up in test mode");
+});
+
+test("in test mode IT SUPPORT shows only the work-order card and the chooser only IT SUPPORT (no repair card, no HR), without looking up the repair type", async () => {
+  const sandbox = setup({ employee: mt, sandbox: true });
+  await sandbox.open("module=it-support");
+  assert.doesNotMatch(sandbox.painted.html, /ใบแจ้งซ่อม IT/);
+  assert.doesNotMatch(sandbox.painted.html, /href="#\/requests/);
+  assert.match(sandbox.painted.html, /href="#\/office\?module=work-order"/);
+  assert.deepEqual(sandbox.painted.went, []);
+  assert.deepEqual(sandbox.queries, [], "IT_REPAIR in request_types is never queried in test mode");
+
+  await sandbox.open("");
+  assert.match(visibleText(sandbox.painted.html), /IT SUPPORT/);
+  assert.doesNotMatch(visibleText(sandbox.painted.html), /HR/);
+  assert.equal(count(sandbox.painted.html, /class="type-card request-type-card lab-module-card/g), 1);
+  assert.deepEqual(sandbox.queries, []);
 });

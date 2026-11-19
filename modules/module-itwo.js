@@ -24,6 +24,8 @@
   const TITLE = "ใบสั่งงาน IT";
   const PURGE_TEXT = "ล้างข้อมูลใบสั่งงาน IT ทดสอบ";
   let pageVersion = 0; // หน้าเก่าที่โหลดช้ากว่าหน้าใหม่ต้องไม่วาดทับ
+  let pageHash = ""; // location.hash ตอนเริ่มวาดหน้าล่าสุด: ผู้ใช้ออกไปหน้าอื่น (เช่น IT SUPPORT) ระหว่างรอข้อมูล หน้านี้ต้องไม่วาดทับหน้านั้น
+  let unsavedProbe = null; // นับสิ่งที่แก้ค้างยังไม่บันทึกของหน้าที่วาดอยู่ (app.js เรียกผ่าน MNP_ITWO.unsavedCount ก่อนออกจากหน้า)
 
   async function rpc(name, args) {
     const { data, error } = await sb.rpc(name, args);
@@ -42,7 +44,8 @@
   }
 
   function paint(html, title, version, tabTitle = title) {
-    if (version !== pageVersion) return false;
+    // เทียบทั้งรุ่นของหน้า (มีหน้าของโมดูลนี้ใหม่กว่า) และ hash ปัจจุบัน (ผู้ใช้ไปหน้าอื่นนอกโมดูลนี้ ซึ่งไม่ทำให้รุ่นเปลี่ยน)
+    if (version !== pageVersion || location.hash !== pageHash) return false;
     app.innerHTML = shell(html, PATH, title, tabTitle);
     bindShell();
     return true;
@@ -53,7 +56,7 @@
   function errorPage(error, version) {
     console.error(error);
     const info = failure(error);
-    paint(pages.page(`${pages.head({ title: TITLE })}${pages.errorCard(info.message, { retry: info.kind === "unknown" })}`), TITLE, version);
+    if (!paint(pages.page(`${pages.head({ title: TITLE })}${pages.errorCard(info.message, { retry: info.kind === "unknown" })}`), TITLE, version)) return;
     document.querySelector("#itwo-retry")?.addEventListener("click", () => renderRoute());
   }
 
@@ -82,6 +85,8 @@
   async function render(params) {
     pageVersion += 1;
     const version = pageVersion;
+    pageHash = location.hash;
+    unsavedProbe = null; // หน้าใหม่ = ของค้างของหน้าเก่าไม่เกี่ยวแล้ว (หน้ารายละเอียดตั้งใหม่เองเมื่อวาด)
     const view = model.readView(params);
     if (!view) return renderNotFound();
     loadingShell(PATH, TITLE);
@@ -137,12 +142,12 @@
     if (view === "settings") bindSettings(role, main[1]);
   }
 
-  // รายชื่อพนักงานสำหรับกล่องค้นหาในหน้าตั้งค่า (เฉพาะที่ยังใช้งานอยู่ RLS ของ employees ซ่อนคนปิดบัญชีอยู่แล้ว) · โหมดทดสอบใช้บัญชีทดสอบ (persona) ที่ฐานข้อมูลส่งให้ admin
+  // รายชื่อพนักงานสำหรับกล่องค้นหาในหน้าตั้งค่า (เฉพาะที่ยังใช้งานอยู่ ไม่ใช่บัญชีทดสอบ และไม่ถูกลบ) · โหมดทดสอบใช้บัญชีทดสอบ (persona) ที่ฐานข้อมูลส่งให้ admin
   // โหลดไม่สำเร็จ = [] หน้าตั้งค่ายังใช้ได้ด้วยช่องกรอกรหัสพนักงานเอง (ไม่ทำให้ทั้งหน้าล้ม)
   async function loadStaffCandidates(role) {
     try {
       if (role.is_test) return model.staffCandidateOptions(state.sandbox?.personas ?? []);
-      const { data, error } = await sb.from("employees").select("employee_no,first_name,last_name,is_active,department:departments(name_th)").eq("is_active", true);
+      const { data, error } = await sb.from("employees").select("employee_no,first_name,last_name,is_active,department:departments(name_th)").eq("is_active", true).eq("is_test", false).is("deleted_at", null);
       if (error) throw error;
       return model.staffCandidateOptions((data ?? []).map((person) => ({ ...person, department: Array.isArray(person.department) ? person.department[0] : person.department })));
     } catch (error) {
@@ -308,6 +313,7 @@
     }
     const back = backTarget();
     let access = null; // กำลังแก้ส่วน "สำหรับแผนก IT": { drafts, validation }
+    let accessBaseline = ""; // ลายนิ้วมือของแถวตอนเปิดฟอร์มแก้ ใช้เทียบว่ามีที่แก้ยังไม่บันทึกไหม
     let nextKey = 0;
     const draw = () => {
       const html = pages.detailPage(detail, { access, back });
@@ -326,7 +332,7 @@
         const reason = await textPromptDialog({ title: spec.reason.title, label: spec.reason.label, hint: spec.reason.hint, minLength: 1, maxLength: model.MAX_REASON, confirmLabel: spec.reason.confirmLabel, danger: true });
         if (reason === null) return;
         args.p_reason = reason;
-      } else if (!(await confirmDialog({ title: spec.confirmTitle, message: spec.confirmMessage, confirmLabel: spec.label, danger: spec.tone === "danger" }))) {
+      } else if (!(await confirmDialog({ title: spec.confirmTitle, message: model.confirmMessageFor(button.dataset.itwoAction, detail, role), confirmLabel: spec.label, danger: spec.tone === "danger" }))) {
         return;
       }
       const buttons = [...document.querySelectorAll("[data-itwo-action]")];
@@ -353,6 +359,10 @@
         return { key: access.drafts[index]?.key ?? `new-${++nextKey}`, system: value("system"), action: value("action"), newUsername: value("newUsername"), oldUsername: value("oldUsername"), note: value("note") };
       });
     }
+    const accessSignature = (rows) => JSON.stringify(rows.map((row) => [row.system, row.action, row.newUsername, row.oldUsername, row.note]));
+    // ฟอร์มแก้เปิดอยู่และต่างจากตอนเปิด (เพิ่ม/ลบ/แก้แถว) = มีของค้าง · ฟอร์มไม่อยู่ในหน้า (ปิด/บันทึก/ไปหน้าอื่น) = ไม่มี
+    // (หน้าเก่าที่โหลดช้ากว่าหน้าใหม่ไม่ตั้งตัวตรวจทับของหน้าใหม่)
+    if (version === pageVersion) unsavedProbe = () => (access && document.querySelector("#itwo-access-form") && accessSignature(readDrafts()) !== accessBaseline ? 1 : 0);
     function redrawAccess() {
       accessRoot().outerHTML = pages.accessSection({ changes: detail.access_changes ?? [], canEdit: model.canEditAccess(detail.allowed_actions), drafts: access?.drafts ?? null, validation: access?.validation });
       bindAccess();
@@ -361,6 +371,7 @@
       document.querySelector("#itwo-access-edit")?.addEventListener("click", () => {
         const existing = model.draftsFromAccessChanges(detail.access_changes);
         access = { drafts: existing.length ? existing : [model.blankAccessDraft(`new-${++nextKey}`)], validation: { rows: {}, general: null } };
+        accessBaseline = accessSignature(access.drafts);
         redrawAccess();
       });
       const form = document.querySelector("#itwo-access-form");
@@ -369,7 +380,7 @@
         access = { drafts: [...readDrafts(), model.blankAccessDraft(`new-${++nextKey}`)], validation: { rows: {}, general: null } };
         redrawAccess();
       });
-      form.querySelector("[data-access-cancel]")?.addEventListener("click", () => { access = null; redrawAccess(); });
+      form.querySelector("[data-access-cancel]")?.addEventListener("click", () => { access = null; accessBaseline = ""; redrawAccess(); });
       form.querySelectorAll("[data-access-remove]").forEach((button) => button.addEventListener("click", () => {
         const drafts = readDrafts();
         drafts.splice(Number(button.dataset.accessRemove), 1);
@@ -487,5 +498,6 @@
     });
   }
 
-  window.MNP_ITWO = Object.freeze({ render, loadCardSummary });
+  const unsavedCount = () => (unsavedProbe ? unsavedProbe() : 0);
+  window.MNP_ITWO = Object.freeze({ render, loadCardSummary, unsavedCount });
 })();
