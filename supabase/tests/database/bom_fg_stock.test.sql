@@ -299,22 +299,23 @@ select is(fgs_t.audit(), 'fgMoves +1, orders +1', 'the closing receipt is audite
 
 -- 10. คีย์สินค้าใน stockCounts: กลุ่มวางแผนเท่านั้น · ST / WH นับชิ้นอื่นได้ (ใบ 25004 สั่ง A 9) -----------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
-select is(fgs_t.counts('251123-25004', '{"SE-A":5}'::jsonb) -> 'changes' -> 'orders' -> 'upsert' -> 0 -> 'stockCounts', '{"SE-A":5}'::jsonb,
-  'ST staff counts another item of a draft');
+-- 20261202010000: ST / WH นับได้เฉพาะบรรทัดในผลคำนวณที่ไม่ใช่สินค้าของใบและไม่ใช่เส้นยาง RB · ใบ 25004 มีแค่ FG-A จึงนับอะไรไม่ได้
+select throws_ok($$ select fgs_t.counts('251123-25004', '{"SE-A":5}'::jsonb) $$, 'BOM_FORBIDDEN',
+  'ST staff cannot count an item that is not a line of the draft''s explosion');
 select throws_ok($$ select fgs_t.counts('251123-25004', '{"SE-A":5,"FG-A":1}'::jsonb) $$, 'BOM_FORBIDDEN', 'ST staff cannot set the amount of a product taken from stock');
-select is(fgs_t.counts('251123-25004', '{"SE-A":5,"FG-B":1}'::jsonb) -> 'changes' -> 'orders' -> 'upsert' -> 0 -> 'stockCounts', '{"FG-B":1,"SE-A":5}'::jsonb,
-  'a finished good that is not a product of this order is just another counted item');
+select throws_ok($$ select fgs_t.counts('251123-25004', '{"FG-B":1}'::jsonb) $$, 'BOM_FORBIDDEN',
+  'nor a finished good that is not in this order''s explosion');
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
 select throws_ok($$ select fgs_t.counts('251123-25004', '{"SE-A":6,"FG-B":1,"FG-A":1}'::jsonb) $$, 'BOM_FORBIDDEN', 'WH staff cannot set it either');
-select is(fgs_t.counts('251123-25004', '{"SE-A":6,"FG-B":1}'::jsonb) -> 'changes' -> 'orders' -> 'upsert' -> 0 -> 'stockCounts', '{"FG-B":1,"SE-A":6}'::jsonb,
-  'WH staff still count the other items');
+select throws_ok($$ select fgs_t.counts('251123-25004', '{"SE-A":6}'::jsonb) $$, 'BOM_FORBIDDEN',
+  'WH staff cannot count items outside the explosion either');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select is(fgs_t.counts('251123-25004', '{"SE-A":6,"FG-B":1,"FG-A":2}'::jsonb) -> 'changes' -> 'orders' -> 'upsert' -> 0 -> 'stockCounts' -> 'FG-A', '2'::jsonb,
   'the planner sets the amount of A to take from stock');
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select fgs_t.counts('251123-25004', '{"SE-A":7,"FG-B":1}'::jsonb) $$, 'BOM_FORBIDDEN', 'ST staff cannot clear the amount the planner set');
-select is(fgs_t.counts('251123-25004', '{"SE-A":7,"FG-B":1,"FG-A":2}'::jsonb) -> 'changes' -> 'orders' -> 'upsert' -> 0 -> 'stockCounts', '{"FG-A":2,"FG-B":1,"SE-A":7}'::jsonb,
-  'ST staff may recount other items while the product amount stays as it is');
+select throws_ok($$ select fgs_t.counts('251123-25004', '{"SE-A":7,"FG-B":1,"FG-A":2}'::jsonb) $$, 'BOM_FORBIDDEN',
+  'ST staff cannot recount the planner''s keys that are outside the explosion');
 
 -- 11. ปล่อยผลิต: เกินจำนวนสั่ง / สต็อกไม่พอ / หยิบบางส่วนยังต้องมีงาน (ทุกกรณีไม่เขียนอะไร) ---------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
