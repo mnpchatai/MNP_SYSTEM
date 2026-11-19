@@ -180,7 +180,7 @@
   const deptLink = (employee, dept) => {
     const route = root.MNP_BOM_STORE?.deptRoute?.(dept) ?? null;
     if (!route) return null;
-    if (dept === "RB") return bomGate(employee) ? route : null;
+    if (dept === "RB") return (root.MNP_RUBBERFLOW_STORE?.usesRubberFlow?.(employee) ?? bomGate(employee)) ? route : null;
     return canOpenDeptModule(employee, dept, `FACTORY_${dept}`) ? route : null;
   };
 

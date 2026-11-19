@@ -1497,7 +1497,7 @@
     });
     const lotTable = ui.table(["ล็อต", "สถานะ", "คงเหลือ", ""], lotRows, { emptyText: "ไม่มีล็อต" });
     // งานของฉันอยู่ที่โมดูลของแผนก: SR / QA กลับไปโมดูลของตน ฝ่ายวางแผนไปโมดูล SR · แผนกอื่น (GR) ดูหน้านี้ได้อย่างเดียว ไม่มีลิงก์ไปโมดูลที่ไม่ใช่ของตน
-    const backRoute = deptHref(ctx.user?.dept) ?? (ctx.helpers.canPlan(ctx.user) ? deptHref("SR") : null);
+    const backRoute = ROD_DEPTS.includes(ctx.user?.dept) ? deptHref(ctx.user.dept) : ctx.helpers.canPlan(ctx.user) ? deptHref("SR") : deptHref(ctx.user?.dept);
     const back = backRoute ? ui.link("กลับหน้างานของแผนก", backRoute, "btn rf-btn secondary") : "";
     return { html: `${pageHead(ctx, "คลังยางเส้นยาว (SR)", "", back)}${ui.card(sumTable, { title: "ยอดต่อเส้นยาง" })}${ui.card(lotTable, { title: code ? `ล็อตของ ${code}` : "ล็อต", actions: code ? ui.link("ดูทุกเส้นยาง", ctx.url("rods"), "btn rf-btn secondary small") : "" })}` };
   };

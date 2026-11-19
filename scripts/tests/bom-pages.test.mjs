@@ -2329,12 +2329,16 @@ test("the My-work page is gone from the BOM: not in the menu or the page list, a
   assert.equal(env.log.hash, "#/gr");
   // the per-department "ดูงาน" on an order only links to modules the viewer can open
   const order = await env.render("p=orders&sel=DEMO-26006");
-  assert.ok(order.includes('href="#/gr"') || !order.includes("ดูงาน"), "GR's own module may be linked");
+  assert.ok(order.includes('href="#/gr"'), "GR's own module is linked");
   for (const route of ["qa", "sr", "pk", "bg", "pt", "st", "wh"]) assert.ok(!order.includes(`href="#/${route}"`), `the GR head gets no link to #/${route}`);
   // the all-departments job table is reachable from the orders page for the planning group
   env.store.setUser("B03");
   env.context.state.employee = asEmployee(env.store.data().users.find((user) => user.id === "B03"));
   assert.match(await env.render("p=orders"), /href="#\/bom\?p=jobs"/);
+  // the planning group sees every department's link on an order, and the rod store page sends it back to SR
+  const planned = await env.render("p=orders&sel=DEMO-26006");
+  for (const route of ["gr", "pk", "bg"]) assert.ok(planned.includes(`href="#/${route}"`), `planner links #/${route}`);
+  assert.match(await env.render("p=rods"), /href="#\/sr"[^>]*>กลับหน้างานของแผนก</);
 });
 
 test("an open PI names itself in the page head, a draft shows what other drafts need, and open purchase orders are named before cancelling or editing", async () => {
