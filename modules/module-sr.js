@@ -19,8 +19,10 @@
     const rows = shown.map((bucket) => `<tr><td>${ui.mono(bucket.itemCode)}<div class="small muted">${F.esc(nameOf(bucket.itemCode))}</div></td><td class="right rf-mono">${F.esc(`${rules.fmtQty(bucket.qty)} ${rules.uomLabel(bucket.lot.uom)}`)}</td><td><span class="rf-mono">${F.esc(bucket.lot.lotNo)}</span><div class="small muted">${F.esc(bucket.lot.receivedAt ? rules.fmtDate(bucket.lot.receivedAt) : "—")}</div></td><td>${ownerText(ctx, bucket)}</td></tr>`);
     const stock = ui.card(`${ui.table(["เส้นยาง", { label: "จำนวน", className: "right" }, "ล็อต", "ของ"], rows, { emptyText: q ? "ไม่พบเส้นยางที่ค้นหา" : "ยังไม่มียางเส้นยาวในคลัง" })}${more}`, { flush: true });
     const count = q ? rules.rodBuckets(data).filter((bucket) => bucket.lot.status === "stored").length : buckets.length;
-    return { html: F.storeLanding(ctx, { dept: "SR", stock: { count, html: `${F.searchForm(ctx, "ค้นหารหัส ชื่อ หรือเลขล็อต")}${stock}` } }), actions: true };
+    // ประวัติเข้าออกต่อล็อต ย้อนการจ่าย และปรับยอด ยังอยู่หน้าคลังเดิมใน BOM จนกว่าขั้น 1 (โมดูล SR) จะย้ายเข้ามา: ทางเข้าเดียวจากหน้านี้
+    const lotsLink = ctx.canSee?.("rods") ? F.actionLink(ctx, "ประวัติล็อตและปรับยอด", ctx.url("rods")) : "";
+    return { html: F.storeLanding(ctx, { dept: "SR", stock: { count, html: `<div class="rf-row">${F.searchForm(ctx, "ค้นหารหัส ชื่อ หรือเลขล็อต")}${lotsLink}</div>${stock}` } }), actions: true };
   }
 
-  F.registerDeptModule({ code: "FACTORY_SR", dept: "SR", route: "sr", label: "คลังยางเส้นยาว (SR)", icon: "ruler", palette: "sr", landing });
+  F.registerDeptModule({ code: "FACTORY_SR", dept: "SR", route: "sr", label: "คลังยางเส้นยาว (SR)", icon: "ruler", palette: "sr", menu: F.STORE_MENU, landing });
 })();

@@ -37,5 +37,5 @@
     return { html: F.storeLanding(ctx, { dept: "ST", stock: { count: inStore.length, html: stockHtml }, work: { waiting } }), actions: true };
   }
 
-  F.registerDeptModule({ code: "FACTORY_ST", dept: "ST", route: "st", label: "คลังวัตถุดิบ (ST)", icon: "box", palette: "st", landing });
+  F.registerDeptModule({ code: "FACTORY_ST", dept: "ST", route: "st", label: "คลังวัตถุดิบ (ST)", icon: "box", palette: "st", menu: F.STORE_MENU, landing });
 })();

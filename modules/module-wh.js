@@ -20,5 +20,5 @@
     return { html: F.storeLanding(ctx, { dept: "WH", stock: { count: onHand.length, html: `${F.searchForm(ctx, "ค้นหารหัสหรือชื่อสินค้า")}${stock}` } }), actions: true };
   }
 
-  F.registerDeptModule({ code: "FACTORY_WH", dept: "WH", route: "wh", label: "คลังสินค้าสำเร็จรูป (WH)", icon: "warehouse", palette: "wh", landing });
+  F.registerDeptModule({ code: "FACTORY_WH", dept: "WH", route: "wh", label: "คลังสินค้าสำเร็จรูป (WH)", icon: "warehouse", palette: "wh", menu: F.STORE_MENU, landing });
 })();

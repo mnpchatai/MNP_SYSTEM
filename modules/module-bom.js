@@ -185,7 +185,13 @@
     const text = query.toString();
     return `#/${PATH}${text ? `?${text}` : ""}`;
   }
-  // เข้า #/bom เฉยๆ (ไม่มี p): หน้าแรกของบทบาท (สินค้า หรือ งานของฉัน) · หน้าภาพรวมเดิมไม่อยู่ในเมนูแล้ว แต่ยังเปิดได้ด้วย p=dashboard
+  // เข้า #/bom เฉยๆ (ไม่มี p): หน้าแรกของบทบาท (สินค้า หรือ ใบสั่งผลิต) · หน้าภาพรวมเดิมไม่อยู่ในเมนูแล้ว แต่ยังเปิดได้ด้วย p=dashboard
+  // ลิงก์เก่า #/bom?p=work (งานของฉัน) ไปโมดูลของแผนก: ฝ่ายวางแผน/ผู้ดูแลตาม ?dept= ก่อน คนอื่นตามแผนกของตน · ไม่มีโมดูลของแผนกนั้น = หน้าแรกของ BOM
+  const workRedirect = (user, params) => {
+    const planner = actions.helpers.canPlan(user);
+    const asked = planner ? storeApi.deptRoute(params.get("dept")) : null;
+    return asked ?? storeApi.deptRoute(user?.dept) ?? url(storeApi.homeOf(user));
+  };
   const defaultPage = () => { const home = storeApi.homeOf(store.user()); return pages[home] ? home : "dashboard"; };
   const currentPage = (params) => storeApi.findModule(params.get("p") ?? defaultPage())?.id ?? null;
 
@@ -572,17 +578,13 @@
     const user = store.user();
     if (!user) return "";
     const page = currentPage(currentRoute().params);
-    // ตัวเลขเมนูงานของฉัน = การ์ดชุดเดียวกับแท็บ "ต้องทำ" ของหน้า (pages.hub.workCount ใช้ workBoard ตัวเดียวกับหน้า) นับไม่ได้ = ไม่แสดงตัวเลข
-    const counts = { work: 0 };
-    try { counts.work = pages.hub?.workCount ? pages.hub.workCount(makeContext(currentRoute().params)) : 0; } catch { /* นับไม่ได้ */ }
-    // เมนูหลัก 4 อัน (storeApi.NAV): หน้าที่ไม่อยู่ในเมนู (สร้าง BOM นับคงคลัง ฯลฯ) ทำให้เมนูแม่ของมันเป็นตัวที่เลือกอยู่
+    // เมนูหลัก 3 อัน (storeApi.NAV): หน้าที่ไม่อยู่ในเมนู (สร้าง BOM นับคงคลัง ฯลฯ) ทำให้เมนูแม่ของมันเป็นตัวที่เลือกอยู่
     const parent = storeApi.NAV_PARENT[page] ?? page;
-    const items = navItems(user).map((id) => `<li><a class="rf-nav-item${id === parent ? " is-active" : ""}" data-rf-mod="bom-${escapeHtml(id)}" href="${escapeHtml(url(id))}"${id === page ? ' aria-current="page"' : ""}><span class="rf-nav-ico" aria-hidden="true">${pages.icon(id)}</span><span class="rf-nav-text">${escapeHtml(storeApi.navLabel(id))}</span>${counts[id] ? `<span class="rf-nav-count" title="${escapeHtml(countTitle(id))}">${counts[id]}</span>` : ""}</a></li>`).join("");
+    const items = navItems(user).map((id) => `<li><a class="rf-nav-item${id === parent ? " is-active" : ""}" data-rf-mod="bom-${escapeHtml(id)}" href="${escapeHtml(url(id))}"${id === page ? ' aria-current="page"' : ""}><span class="rf-nav-ico" aria-hidden="true">${pages.icon(id)}</span><span class="rf-nav-text">${escapeHtml(storeApi.navLabel(id))}</span></a></li>`).join("");
     // เมนูข้างอยู่ใน <aside> ของ shell (ไม่ใช่ลูกของ .rf-page) จึงใส่จานสี BOM ที่ตัวเมนูเอง
     return `<div class="nav-sub rf-nav" data-module="bom"><ul class="rf-nav-list">${items}</ul></div>`;
   };
   const navItems = (user) => storeApi.NAV.filter((id) => storeApi.canSee(user, id));
-  const countTitle = (id) => ({ work: "งานที่ต้องทำ" })[id] ?? "";
 
   // สถานะการติดต่อฐานข้อมูล (โหมดฐานข้อมูล): ว่างเมื่อไม่มีอะไรค้าง · อัปเดตที่ [data-bom-sync] โดยไม่วาดหน้าใหม่
   // คำสั่งใหญ่ (นำเข้าชีตทั้งไฟล์) ส่งหลายครั้ง: บอกว่าถึงส่วนไหนแล้ว
@@ -708,6 +710,13 @@
 
   async function renderBom(params) {
     if (!storeApi.usesBom(state.employee)) return renderNotFound();
+    if (params.get("p") === "work" && store.user()) {
+      // งานของฉันย้ายไปอยู่ที่โมดูลของแต่ละแผนกแล้ว: เปลี่ยนที่อยู่แทนรายการเดิม (กดย้อนกลับไม่วนกลับมาหน้านี้)
+      const target = workRedirect(store.user(), params);
+      if (typeof location.replace === "function") location.replace(target);
+      else location.hash = target;
+      return undefined;
+    }
     store.ensureLoaded(); // โหมดฐานข้อมูล: โหลดข้อมูลหลักครั้งแรก (วาดหน้าใหม่เองเมื่อเสร็จ) · โหมดในเครื่องไม่ทำอะไร
     const ctx = makeContext(params);
     const { user, page } = ctx;

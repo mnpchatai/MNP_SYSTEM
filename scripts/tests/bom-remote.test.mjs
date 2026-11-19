@@ -1436,10 +1436,12 @@ async function pageEnv({ storage = memoryStorage(), pageStorage = memoryStorage(
   context.window.MNP_REQUEST_MODULES = context.MNP_REQUEST_MODULES;
   for (const file of FILES) vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file });
   const registered = context.MNP_REQUEST_MODULES.BOM;
+  // ตารางงานเดิม (#/bom?p=work) ถูกถอดออกจาก BOM แล้ว (งานอยู่ที่โมดูลของแต่ละแผนก และ #/bom?p=work เปลี่ยนที่อยู่ไปที่นั่น) แต่ตัววาดยังอยู่ให้เทสต์ใช้เป็นตัวอย่างของ workBoard / boardCards จึงวาดตรงๆ ที่นี่
   const render = async (query = "") => {
     log.hash = `#/bom${query ? `?${query}` : ""}`;
     app.innerHTML = "";
-    await registered.pages.bom(new URLSearchParams(query));
+    if (/(^|&)p=work(&|$)/.test(query)) app.innerHTML = context.MNP_BOM_PAGES.work(context.MNP_BOM.context(new URLSearchParams(query))).html;
+    else await registered.pages.bom(new URLSearchParams(query));
     return app.innerHTML;
   };
   return { mock, context, app, log, storage, pageStorage, render, store: context.MNP_BOM.store, ctx: (query = "") => context.MNP_BOM.context(new URLSearchParams(query)) };

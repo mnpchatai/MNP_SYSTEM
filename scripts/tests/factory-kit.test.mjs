@@ -29,7 +29,7 @@ const stubUi = { validateForm: () => true, confirmOptions: (node) => ({ title: n
 
 test("MNP_FACTORY exports the shared pieces and is frozen", () => {
   const { kit } = loadKit();
-  assert.deepEqual(Object.keys(kit).sort(), ["FACTORY_GROUP", "actionLink", "attr", "bindRoot", "canOpenDeptModule", "canSeeDept", "deptChip", "deptCtx", "deptWork", "deptWorkSection", "dueText", "esc", "failed", "formPayload", "includesText", "jobCard", "jobReportDialog", "limited", "mountDeptJobs", "onDeptRoute", "orderNavItems", "pageHead", "parseArgs", "productionLanding", "registerDeptModule", "routeUrl", "rubberflowFailed", "searchForm", "storeLanding", "wake"]);
+  assert.deepEqual(Object.keys(kit).sort(), ["FACTORY_GROUP", "STORE_MENU", "actionLink", "attr", "bindRoot", "canOpenDeptModule", "canSeeDept", "deptChip", "deptCtx", "deptWork", "deptWorkSection", "dueText", "esc", "failed", "formPayload", "includesText", "jobCard", "jobReportDialog", "limited", "mountDeptJobs", "onDeptRoute", "orderNavItems", "pageHead", "parseArgs", "productionLanding", "registerDeptModule", "routeUrl", "rubberflowFailed", "searchForm", "storeLanding", "viewHead", "wake"]);
   assert.ok(Object.isFrozen(kit));
   assert.equal(kit.esc("<b>"), "&lt;b&gt;");
   assert.equal(kit.attr(null), "");
@@ -199,14 +199,17 @@ test("BOM uses the shared pieces and keeps no second copy", () => {
   assert.doesNotMatch(pages, /id="bom-job-form"/);
 });
 
-test("the work page still renders the shared job card for the department", async () => {
+test("the work board still renders the shared job card for the department", () => {
   const env = loadBom();
   const job = releasedRbJob(env);
   const rbUser = env.store.data().users.find((row) => row.role === "rb");
   env.store.setUser(rbUser.id);
-  const built = await env.context.MNP_BOM_PAGES.work(env.ctx("p=work"));
-  assert.match(built.html, /<article class="card rf-card bom-job/);
-  assert.ok(built.html.includes(escapeHtml(job.name)) || /bom-job/.test(built.html));
+  const hub = env.context.MNP_BOM_PAGES.hub;
+  const c = env.ctx("p=work");
+  const { taskCards, cards } = hub.boardCards(c, hub.workBoard(c, new URLSearchParams("p=work")));
+  const html = [...taskCards, ...cards].join("");
+  assert.match(html, /<article class="card rf-card bom-job/);
+  assert.ok(html.includes(escapeHtml(job.name)) || /bom-job/.test(html));
 });
 
 test("index.html loads factory-kit.js before bom-pages.js and every ?v= is the same", () => {

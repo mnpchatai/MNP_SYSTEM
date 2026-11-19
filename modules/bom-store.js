@@ -38,15 +38,14 @@
     { id: "audit", label: "บันทึกการใช้งาน", group: "ผลิต" },
     // หน้าโครงใหม่ (modules/bom-hub.js): เมนูหลัก 4 อัน · หน้าเดิมข้างบนยังเปิดได้จากลิงก์ในหน้าเหล่านี้ แต่ไม่อยู่ในเมนูแล้ว
     { id: "find", label: "สินค้า", group: "งานหลัก" },
-    { id: "work", label: "งานของฉัน", group: "งานหลัก" },
     { id: "setup", label: "ข้อมูลตั้งต้น", group: "งานหลัก" },
   ].map((entry) => Object.freeze(entry)));
   const MODULE_IDS = Object.freeze(MODULES.map((entry) => entry.id));
   const GROUPS = Object.freeze([...new Set(MODULES.map((entry) => entry.group))]);
   // เมนูที่แสดง (เรียงตามนี้) และหน้าที่อยู่ใต้แต่ละเมนู: หน้าที่ไม่อยู่ในเมนูทำให้เมนูแม่ของมันเป็นตัวที่เลือกอยู่
-  const NAV = Object.freeze(["find", "orders", "work", "setup"]);
+  const NAV = Object.freeze(["find", "orders", "setup"]);
   const SETUP_PAGES = Object.freeze(["import", "variants", "compounds", "customers", "stock", "count", "check", "audit"]);
-  const NAV_PARENT = Object.freeze({ find: "find", dashboard: "find", build: "find", items: "find", product: "find", structure: "find", orders: "orders", count: "orders", work: "work", jobs: "work", rods: "work", setup: "setup", ...Object.fromEntries(SETUP_PAGES.map((id) => [id, "setup"])) });
+  const NAV_PARENT = Object.freeze({ find: "find", dashboard: "find", build: "find", items: "find", product: "find", structure: "find", orders: "orders", count: "orders", jobs: "orders", rods: "orders", setup: "setup", ...Object.fromEntries(SETUP_PAGES.map((id) => [id, "setup"])) });
   const navLabel = (id) => (id === "orders" ? "ใบสั่งผลิต" : MODULES.find((entry) => entry.id === id)?.label ?? id);
   const findModule = (id) => MODULES.find((entry) => entry.id === String(id ?? "")) ?? null;
 
@@ -68,11 +67,14 @@
     // บัญชีทดสอบที่ไม่ใช่แผนกด้านบน (โหมดฐานข้อมูล): ดูข้อมูลได้อย่างเดียว
     viewer: { label: "ดูข้อมูลอย่างเดียว", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "orders", "jobs", "check"]) },
   });
-  // หน้าโครงใหม่ทั้งสาม (สินค้า งานของฉัน ข้อมูลตั้งต้น) เปิดได้ทุกบทบาท: แต่ละหน้าแสดงเฉพาะสิ่งที่บทบาทนั้นเห็นได้อยู่แล้ว
-  const HUB_PAGES = Object.freeze(["find", "work", "setup"]);
+  // หน้าโครงใหม่ทั้งสอง (สินค้า ข้อมูลตั้งต้น) เปิดได้ทุกบทบาท: แต่ละหน้าแสดงเฉพาะสิ่งที่บทบาทนั้นเห็นได้อยู่แล้ว
+  const HUB_PAGES = Object.freeze(["find", "setup"]);
   const canSee = (user, moduleId) => Boolean(user) && Boolean(ROLES[user.role]) && (HUB_PAGES.includes(moduleId) || ROLES[user.role].modules.includes(moduleId));
-  // หน้าแรก: ผู้ที่ดูแลข้อมูล (ผู้ดูแล ผู้จัดการ ฝ่ายวางแผน ผู้ดูอย่างเดียว) เริ่มที่สินค้า · แผนกผลิตและคลังวัตถุดิบเริ่มที่งานของฉัน · คลังสินค้า (ไม่มีงานผลิตของตัวเอง) เริ่มที่ใบสั่งผลิต
-  const homeOf = (user) => (user && ROLES[user.role] ? (["admin", "manager", "planner", "viewer"].includes(user.role) ? "find" : user.role === "wh" ? "orders" : "work") : "dashboard");
+  // หน้าแรก: ผู้ที่ดูแลข้อมูล (ผู้ดูแล ผู้จัดการ ฝ่ายวางแผน ผู้ดูอย่างเดียว) เริ่มที่สินค้า · แผนกอื่นเริ่มที่ใบสั่งผลิต (งานของแต่ละแผนกอยู่ที่โมดูลของแผนกนั้น ไม่อยู่ใน BOM แล้ว)
+  const homeOf = (user) => (user && ROLES[user.role] ? (["admin", "manager", "planner", "viewer"].includes(user.role) ? "find" : "orders") : "dashboard");
+  // งานของแต่ละแผนกอยู่ที่โมดูลของแผนกนั้น (โมดูลรายแผนกของกลุ่มโรงงาน · RB = RubberFlow) · แผนกที่ไม่มีโมดูล (เช่น MT PP) = null
+  const DEPT_ROUTES = Object.freeze({ GR: "gr", PT: "pt", BG: "bg", PK: "pk", SR: "sr", ST: "st", WH: "wh", QA: "qa", RB: "rubberflow" });
+  const deptRoute = (dept) => (Object.hasOwn(DEPT_ROUTES, dept) ? `#/${DEPT_ROUTES[dept]}` : null);
 
   const BASE_LISTS = ["users", "compounds", "items", "boms", "orders", "jobs", "audit"];
   const V3_LISTS = ["colors", "colorSets", "packages"];
@@ -950,7 +952,7 @@
     return { load, data: getData, user: getUser, setUser, run, reset, isPersisted: () => persisted, size, now, isRemote: () => false, status: () => "ready", error: () => null, isSaving: () => false, hasNewer: () => false, version: () => null, ensureLoaded: () => Promise.resolve(), reload: () => Promise.resolve(), catchUp: () => Promise.resolve(false), audit: () => ({ status: "ready", entries: getData().audit, error: null }), loadAudit: () => Promise.resolve(), purge: () => Promise.resolve({ ok: false, error: new Error("ล้างข้อมูล BOM ทดสอบได้เฉพาะโหมดฐานข้อมูล") }), subscribe: () => () => {} };
   }
 
-  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, NAV, SETUP_PAGES, NAV_PARENT, navLabel, findModule, canSee, homeOf, isValidState, migrate, createStore, MASTER_LISTS, WORK_LISTS, REMOTE_LISTS, diffMaster, splitForSave, combineDeltas, SAVE_BATCH_RECORDS, SAVE_BATCH_BYTES, sameMaster, customerName, customerKey, mapRemoteError, roleOfEmployee, personaUser, usesBom, isPlanner, PRODUCTION_DEPTS, ROD_ACTIONS };
+  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, NAV, SETUP_PAGES, NAV_PARENT, navLabel, findModule, canSee, homeOf, DEPT_ROUTES, deptRoute, isValidState, migrate, createStore, MASTER_LISTS, WORK_LISTS, REMOTE_LISTS, diffMaster, splitForSave, combineDeltas, SAVE_BATCH_RECORDS, SAVE_BATCH_BYTES, sameMaster, customerName, customerKey, mapRemoteError, roleOfEmployee, personaUser, usesBom, isPlanner, PRODUCTION_DEPTS, ROD_ACTIONS };
   if (isNode) module.exports = api;
   else root.MNP_BOM_STORE = api;
 })(typeof window !== "undefined" ? window : globalThis);

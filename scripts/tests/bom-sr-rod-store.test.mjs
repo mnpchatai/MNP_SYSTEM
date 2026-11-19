@@ -202,7 +202,7 @@ test("the remote store sends only the request rows of a rod action and leaves th
   assert.ok(storeApi.REMOTE_LISTS.includes("rodLots") && storeApi.REMOTE_LISTS.includes("rodMoves"));
   for (const code of ["BOM_INVALID_ROD", "BOM_ROD_EXCEEDS"]) assert.doesNotMatch(storeApi.mapRemoteError({ code }).message, /BOM_/, `${code} has a Thai message`);
   assert.equal(storeApi.roleOfEmployee({ role: { code: "staff" }, department: { code: "SR" } }), "sr");
-  assert.equal(storeApi.homeOf({ role: "qa" }), "work");
+  assert.equal(storeApi.homeOf({ role: "qa" }), "orders");
   assert.ok(storeApi.canSee({ role: "sr" }, "rods") && storeApi.canSee({ role: "qa" }, "rods") && !storeApi.canSee({ role: "sr" }, "jobs"));
 });
 
@@ -508,7 +508,8 @@ async function page() {
   });
   context.window.MNP_REQUEST_MODULES = context.MNP_REQUEST_MODULES;
   for (const file of FILES) vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file });
-  const render = async (query) => { log.hash = `#/bom?${query}`; app.innerHTML = ""; await context.MNP_REQUEST_MODULES.BOM.pages.bom(new URLSearchParams(query)); return app.innerHTML; };
+  // ตารางงานเดิม (#/bom?p=work) ถูกถอดออกจาก BOM แล้ว (งานอยู่ที่โมดูลของแต่ละแผนก และ #/bom?p=work เปลี่ยนที่อยู่ไปที่นั่น) แต่ตัววาดยังอยู่ให้เทสต์ใช้เป็นตัวอย่างของ workBoard / boardCards จึงวาดตรงๆ ที่นี่
+  const render = async (query) => { log.hash = `#/bom?${query}`; app.innerHTML = ""; if (/(^|&)p=work(&|$)/.test(query)) app.innerHTML = context.MNP_BOM_PAGES.work(context.MNP_BOM.context(new URLSearchParams(query))).html; else await context.MNP_REQUEST_MODULES.BOM.pages.bom(new URLSearchParams(query)); return app.innerHTML; };
   return { context, log, render, store: context.MNP_BOM.store, ctx: (query = "") => context.MNP_BOM.context(new URLSearchParams(query)), dialogs: context.MNP_BOM_DIALOGS };
 }
 const clean = (html) => assert.doesNotMatch(html, /undefined|NaN|\[object Object\]/);
