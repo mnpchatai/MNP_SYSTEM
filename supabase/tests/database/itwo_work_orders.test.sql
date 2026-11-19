@@ -14,8 +14,8 @@ select plan(365);
 -- 1. โครงสร้าง ----------------------------------------------------------
 reset role;
 select set_config('request.jwt.claims', '', true);
-select is((select count(*)::int from pg_class c where c.relnamespace = 'public'::regnamespace and c.relname like 'itwo\_%' and c.relkind = 'r' and c.relrowsecurity), 8, 'RLS is enabled on all eight itwo tables');
-select is((select count(*)::int from pg_class c where c.relnamespace = 'public'::regnamespace and c.relname like 'itwo\_%' and c.relkind = 'r'), 8, 'the module has exactly the eight documented tables');
+select is((select count(*)::int from pg_class c where c.relnamespace = 'public'::regnamespace and c.relname like 'itwo\_%' and c.relkind = 'r' and c.relrowsecurity), 9, 'RLS is enabled on all nine itwo tables');
+select is((select count(*)::int from pg_class c where c.relnamespace = 'public'::regnamespace and c.relname like 'itwo\_%' and c.relkind = 'r'), 9, 'the module has exactly the nine documented tables');
 select ok(not exists (select 1 from information_schema.role_table_grants g where g.table_schema = 'public' and g.table_name like 'itwo\_%' and g.grantee in ('anon', 'authenticated', 'PUBLIC')), 'anon, authenticated and PUBLIC have no direct grant on any itwo table');
 select ok(not exists (select 1 from pg_class c cross join unnest(array['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p(priv) where c.relnamespace = 'public'::regnamespace and c.relname like 'itwo\_%' and c.relkind = 'r' and has_table_privilege('service_role', c.oid, p.priv)), 'service_role has no privilege at all on any itwo table (the secret key cannot write the ISO records directly)');
 select ok(exists (select 1 from pg_class c where c.relnamespace = 'public'::regnamespace and c.relname like 'itwo\_%' and c.relkind = 'S') and not exists (select 1 from pg_class c cross join unnest(array['USAGE', 'SELECT', 'UPDATE']) p(priv) cross join unnest(array['service_role', 'anon', 'authenticated']) r(rolname) where c.relnamespace = 'public'::regnamespace and c.relname like 'itwo\_%' and c.relkind = 'S' and has_sequence_privilege(r.rolname, c.oid, p.priv)), 'the identity sequences of the itwo tables are closed to service_role, anon and authenticated');
@@ -26,7 +26,7 @@ select is((select count(*)::int from pg_policy p join pg_class c on c.oid = p.po
 select ok((select bool_and(t = any (private.sandbox_unguarded_tables())) from unnest(array['itwo_work_orders', 'itwo_events', 'itwo_access_changes', 'itwo_doc_counters', 'itwo_admin_log']) t), 'the five test-mode aware tables are registered in private.sandbox_unguarded_tables()');
 select ok(exists (select 1 from pg_trigger t where t.tgrelid = 'public.itwo_staff'::regclass and t.tgname = 'sandbox_guard' and not t.tgisinternal) and not ('itwo_staff' = any (private.sandbox_unguarded_tables())), 'itwo_staff is blocked while an admin is in test mode (sandbox_guard)');
 select is((select count(*)::int from pg_trigger t where t.tgrelid in ('public.itwo_work_orders'::regclass, 'public.itwo_events'::regclass, 'public.itwo_access_changes'::regclass, 'public.itwo_doc_counters'::regclass, 'public.itwo_admin_log'::regclass) and t.tgname like '%\_sandbox\_scope'), 5, 'every test-mode aware table has the sandbox scope trigger');
-select ok((select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace and (p.proname like 'app\_itwo\_%' or p.proname = 'app_sandbox_purge_itwo')) = 21, 'the module exposes 20 app_itwo RPCs and the sandbox purge');
+select ok((select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace and (p.proname like 'app\_itwo\_%' or p.proname = 'app_sandbox_purge_itwo')) = 24, 'the module exposes 23 app_itwo RPCs (incl. the v3 ask-back RPCs) and the sandbox purge');
 select ok((select bool_and(p.prosecdef and p.proconfig @> array['search_path=""']) from pg_proc p where p.pronamespace = 'public'::regnamespace and (p.proname like 'app\_itwo\_%' or p.proname = 'app_sandbox_purge_itwo')), 'every public itwo function is SECURITY DEFINER with an empty search_path');
 select ok((select bool_and(prosecdef and proconfig @> array['search_path=""']) from pg_proc where pronamespace = 'private'::regnamespace and proname like 'itwo\_%' and prokind = 'f' and prorettype <> 'trigger'::regtype and proname not in ('itwo_purge_allowed', 'itwo_is_dept_role', 'itwo_format_doc_no', 'itwo_clean', 'itwo_status_message')), 'every private itwo helper that reads data is SECURITY DEFINER with an empty search_path');
 select ok(not exists (select 1 from pg_proc p where p.pronamespace = 'public'::regnamespace and (p.proname like 'app\_itwo\_%' or p.proname = 'app_sandbox_purge_itwo') and (has_function_privilege('anon', p.oid, 'execute') or not has_function_privilege('authenticated', p.oid, 'execute'))), 'anon cannot execute any itwo RPC and authenticated can');
@@ -365,7 +365,7 @@ select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-0000000
 select throws_ok($$ select public.app_itwo_start(current_setting('t.o1')::uuid) $$, '42501', 'เฉพาะผู้ดูแลงาน IT เท่านั้นที่เริ่มดำเนินการใบสั่งงานได้', 'a system admin without IT rights cannot start work');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000008","role":"authenticated"}', true);
-select is((public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_actions'), '["start"]'::jsonb, 'IT admin sees only start on an approved request (the IT access section was removed)');
+select is((public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_actions'), '["start", "request_info"]'::jsonb, 'IT admin sees start and ask-the-requester on an approved request (the IT access section was removed)');
 select lives_ok($$ select public.app_itwo_start(current_setting('t.o1')::uuid) $$, 'IT starts an approved request');
 select is((public.app_itwo_get_detail(current_setting('t.o1')::uuid)->>'status'), 'in_progress', 'the request is in progress');
 select throws_ok($$ select public.app_itwo_start(current_setting('t.o1')::uuid) $$, '23514', 'ใบสั่งงานนี้เริ่มดำเนินการไปแล้ว', 'a request cannot be started twice');
@@ -423,10 +423,10 @@ select lives_ok($$ select public.app_itwo_start(current_setting('t.o15')::uuid) 
 select is((public.app_itwo_get_detail(current_setting('t.o15')::uuid)->>'status'), 'in_progress', 'urgent: in progress while still waiting for approval');
 select is((select string_agg(e->>'action', ',' order by (e->>'id')::bigint) from jsonb_array_elements(public.app_itwo_get_detail(current_setting('t.o15')::uuid)->'events') e), 'created,started', 'the start is recorded');
 select throws_ok($$ select public.app_itwo_complete(current_setting('t.o15')::uuid) $$, '23514', 'ปิดงานไม่ได้ ต้องรอผู้จัดการแผนกและผู้อนุมัติขั้น IT อนุมัติครบก่อน', 'an urgent request cannot be closed before the approvals');
-select is((public.app_itwo_get_detail(current_setting('t.o15')::uuid)->'allowed_actions'), '[]'::jsonb, 'IT has no action left on an urgent request before the approvals (it cannot close it and the IT section was removed)');
+select is((public.app_itwo_get_detail(current_setting('t.o15')::uuid)->'allowed_actions'), '["request_info"]'::jsonb, 'IT can only ask the requester on an urgent started request before the approvals (it cannot close it and the IT section was removed)');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000003","role":"authenticated"}', true);
-select is((public.app_itwo_get_detail(current_setting('t.o15')::uuid)->'allowed_actions'), '["approve", "reject"]'::jsonb, 'the department manager can still approve after the work started');
+select is((public.app_itwo_get_detail(current_setting('t.o15')::uuid)->'allowed_actions'), '["approve", "reject", "request_info"]'::jsonb, 'the department manager can still approve (or ask the requester) after the work started');
 select lives_ok($$ select public.app_itwo_approve(current_setting('t.o15')::uuid) $$, 'the department manager approves after the start');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000008","role":"authenticated"}', true);
@@ -463,7 +463,7 @@ select is((public.app_itwo_get_detail(current_setting('t.o17')::uuid)->>'doc_no'
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000003","role":"authenticated"}', true);
 select is(public.app_itwo_get_detail(current_setting('t.o17')::uuid)->>'status', 'pending_dept', 'the department manager can open a request of the department');
-select is((public.app_itwo_get_detail(current_setting('t.o17')::uuid)->'allowed_actions'), '["approve", "reject"]'::jsonb, 'the department manager gets approve and reject');
+select is((public.app_itwo_get_detail(current_setting('t.o17')::uuid)->'allowed_actions'), '["approve", "reject", "request_info"]'::jsonb, 'the department manager gets approve, reject and ask-the-requester');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 select is((public.app_itwo_get_detail(current_setting('t.o17')::uuid)->'allowed_actions'), '["cancel"]'::jsonb, 'the requester can only cancel a request that waits for approval');
