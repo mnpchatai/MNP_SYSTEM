@@ -3274,11 +3274,11 @@ table.bom-tree td.right { white-space: nowrap; }
 .itwo-sheet-comments { table-layout: fixed; }
 .itwo-sheet-comments th, .itwo-sheet-comments td { font-size: 9.5pt; }
 .itwo-sheet-comments th:nth-child(1) { width: 11mm; }
-.itwo-sheet-comments th:nth-child(2) { width: 14mm; }
+.itwo-sheet-comments th:nth-child(2) { width: 17mm; }
 .itwo-sheet-comments th:nth-child(3) { width: 24mm; }
 .itwo-sheet-comments th:nth-child(4) { width: 26mm; }
 .itwo-sheet-comments th:nth-child(5) { width: 27mm; }
-.itwo-sheet-comments th:nth-child(7) { width: 14mm; }
+.itwo-sheet-comments th:nth-child(7) { width: 12mm; }
 .itwo-sheet-text { white-space: pre-wrap; }
 @media (max-width: 719px) {
   .itwo-access-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

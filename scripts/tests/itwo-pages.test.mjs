@@ -404,7 +404,7 @@ test("the print sheet adds a Q&A table only when there are messages: number, ask
   const html = pages.printSheet({ ...DETAIL, status: "need_info", info_return_status: "in_progress", comments: [ANSWER, QUESTION, QUESTION2] });
   assert.match(html, /<h2 class="itwo-sheet-section">ประวัติถาม-ตอบ<\/h2>/);
   const table = html.match(/<table class="itwo-sheet-table itwo-sheet-comments">[\s\S]*?<\/table>/)[0];
-  assert.deepEqual([...table.matchAll(/<th>([^<]+)<\/th>/g)].map((match) => match[1]), ["ลำดับ", "ถาม/ตอบ", "ขั้น", "โดย", "วันเวลา", "ข้อความ", "จำนวนไฟล์"]);
+  assert.deepEqual([...table.matchAll(/<th[^>]*>([^<]+)<\/th>/g)].map((match) => match[1]), ["ลำดับ", "ถาม/ตอบ", "ขั้น", "โดย", "วันเวลา", "ข้อความ", "ไฟล์"]);
   const rows = table.match(/<tr>[\s\S]*?<\/tr>/g);
   assert.equal(rows.length, 4, "a header row and one row per message, in the order written");
   assert.match(visibleText(rows[1]), /^ 1 ถาม ทีม IT ไอที &lt;b&gt;หนึ่ง&lt;\/b&gt; 19\/11\/2569 10:00 ขอไฟล์ต้นฉบับ\s*บรรทัดสอง &lt;script&gt;alert\(1\)&lt;\/script&gt; 1 $/);

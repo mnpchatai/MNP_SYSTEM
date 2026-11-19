@@ -497,7 +497,7 @@
   function printComments(rows) {
     if (!rows.length) return "";
     return `<h2 class="itwo-sheet-section">ประวัติถาม-ตอบ</h2>
-        <table class="itwo-sheet-table itwo-sheet-comments"><thead><tr><th>ลำดับ</th><th>ถาม/ตอบ</th><th>ขั้น</th><th>โดย</th><th>วันเวลา</th><th>ข้อความ</th><th>จำนวนไฟล์</th></tr></thead><tbody>${rows.map((row) => `<tr>
+        <table class="itwo-sheet-table itwo-sheet-comments"><thead><tr><th>ลำดับ</th><th>ถาม/ตอบ</th><th>ขั้น</th><th>โดย</th><th>วันเวลา</th><th>ข้อความ</th><th title="จำนวนไฟล์แนบ">ไฟล์</th></tr></thead><tbody>${rows.map((row) => `<tr>
           <td class="itwo-center">${row.no}</td>
           <td>${esc(row.kindLabel)}</td>
           <td>${esc(row.stageLabel)}</td>
