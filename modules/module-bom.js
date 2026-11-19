@@ -69,7 +69,8 @@
   // (บันทึกสำเร็จแต่ฐานข้อมูลตอบข้อมูลต่างจากที่แสดงอยู่ จึงวาดใหม่)
   const onBomRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
   // หน้าแรกของโมดูลแผนก (#/gr ฯลฯ) สั่งงาน BOM ได้เหมือนหน้า BOM จึงได้การวาดใหม่หลังบันทึก/ย้อนกลับและคำเตือนก่อนปิดหน้าชุดเดียวกัน
-  const onOwnRoute = () => onBomRoute() || Boolean(window.MNP_FACTORY?.onDeptRoute?.());
+  // หน้า RubberFlow ก็นับเมื่อกำลังแสดงการ์ดงาน RB จาก BOM (หน้าภาพรวม) · หน้า RubberFlow อื่นไม่นับ
+  const onOwnRoute = () => onBomRoute() || Boolean(window.MNP_FACTORY?.onDeptRoute?.()) || Boolean(window.MNP_RUBBERFLOW?.showsBomJobs?.());
   const updateSync = () => document.querySelectorAll("[data-bom-sync]").forEach((node) => { node.textContent = syncText(); });
   // ข้อมูลที่แสดงเปลี่ยนเพราะผู้อื่นบันทึก (ตามทันหรือส่วนต่างหลังบันทึก): วาดหน้าใหม่ เว้นแต่ผู้ใช้กำลังแก้ฟอร์ม/เปิด dialog อยู่ (ไม่ทับสิ่งที่พิมพ์) แจ้งแทน
   // "กำลังแก้" = dirty: ติดตามจาก event ที่เบราว์เซอร์ส่งจริง (isTrusted) ไม่ใช้ว่าช่องไหนมีโฟกัส เพราะตารางสร้าง BOM เก็บแถวไว้ใน DOM อย่างเดียว
@@ -154,7 +155,7 @@
   });
   // หน้ากลับมาโฟกัสขณะอยู่ที่หน้า BOM: ตามทันการบันทึกของผู้อื่น (store.catchUp วาดหน้าใหม่ผ่าน event synced เฉพาะเมื่อมีอะไรเปลี่ยน · มีฟอร์มค้างไม่รวม แค่แจ้ง)
   const catchUpOnFocus = () => {
-    if (store.isRemote() && (onBomRoute() || window.MNP_FACTORY?.onDeptRoute?.()) && !document.hidden) store.catchUp();
+    if (store.isRemote() && onOwnRoute() && !document.hidden) store.catchUp();
   };
   window.addEventListener?.("focus", catchUpOnFocus);
   document.addEventListener?.("visibilitychange", catchUpOnFocus);

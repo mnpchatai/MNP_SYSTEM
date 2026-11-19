@@ -324,6 +324,35 @@
     };
   }
 
+  // การ์ดงานผลิตของแผนกวางในหน้าของโมดูลอื่นที่ไม่ได้ลงทะเบียนผ่านตัวนี้ (RubberFlow = แผนก RB): การ์ดชุดเดียวกับ BOM "งานของฉัน" (workBoard + boardCards ไม่คัดลอก HTML)
+  // slot = ช่องว่างที่หน้านั้นวางไว้ (ต้องไม่อยู่ในส่วนที่ตัวผูก data-rf-* ของหน้านั้นผูกไปแล้ว: เรียกหลังหน้านั้นผูกเสร็จ ปุ่มของการ์ดจึงผูกครั้งเดียวด้วยคำสั่งและ dialog ของ BOM)
+  // รายการและปุ่มตามผู้ใช้ BOM คนเดียวกับหน้า BOM (ฝ่ายวางแผนเห็นงานของแผนกนั้นพร้อมปิดงาน · แผนก dept ลงมือได้ · แผนกอื่นไม่มีการ์ด) · นอกโหมดทดสอบหรือ BOM ไม่พร้อม = ไม่แสดงอะไร
+  // คืน true = หน้านั้นแสดงข้อมูลของ BOM (กำลังโหลด หรือมีรายการ หรือว่าง): module-bom.js จึงวาดหน้านั้นใหม่เมื่อ store ของ BOM เปลี่ยน (บันทึกสำเร็จ ย้อนกลับ โหลดเสร็จ) · false = ไม่เกี่ยวกับ BOM
+  function mountDeptJobs(slot, dept, { title = "งานจากใบสั่งผลิต (BOM)" } = {}) {
+    const employee = state.employee;
+    const bom = root.MNP_BOM;
+    const hub = root.MNP_BOM_PAGES?.hub;
+    if (!slot || employee?.isSandbox !== true || !bomGate(employee) || !bom?.store || !hub?.workBoard || !hub?.boardCards) return false;
+    const { store } = bom;
+    store.ensureLoaded();
+    const status = store.status();
+    if (status !== "ready") {
+      if (status === "error") { slot.remove?.(); return false; }
+      slot.innerHTML = '<p class="small muted" role="status">กำลังโหลดงานจากใบสั่งผลิต (BOM)…</p>';
+      return true;
+    }
+    const ui = root.MNP_RUBBERFLOW_UI;
+    const ctx = bom.context(new URLSearchParams());
+    const board = hub.workBoard(ctx, new URLSearchParams({ dept }));
+    if (board.dept !== dept) { slot.remove?.(); return false; }
+    const { cards } = hub.boardCards(ctx, board);
+    if (!cards.length) { slot.remove?.(); return true; }
+    bom.clearEditing?.(); // หน้าใหม่ = ไม่มีฟอร์มที่แก้ค้างจากหน้า BOM ก่อนหน้า
+    slot.innerHTML = `<div class="rf-row"><h2 class="bom-h3">${esc(title)}</h2>${ui.link("ไปงานของฉัน (BOM)", ctx.url("work", { dept }), "btn rf-btn secondary small")}<span class="small muted" role="status" data-bom-sync>${esc(bom.syncText?.() ?? "")}</span></div><div class="bom-job-grid">${cards.join("")}</div>`;
+    bindRoot(slot, ctx, { run: ctx.runAction, transforms: bom.transforms?.(), openDialog: (name, args) => bom.openDialog(name, args, ctx), ui });
+    return true;
+  }
+
   // def = { code, dept, route, label, icon, palette, landing(ctx), pages? }
   // code เช่น "FACTORY_SR" (ไม่ชนโมดูลอื่น) · dept = รหัสแผนกใน rules.PROCESS_FLOW · route = path ของหน้าแรก (#/sr) · icon = ชื่อไอคอนใน MNP_UI_ICONS
   // landing(ctx) คืน { html, bind?, actions? } (actions: true = ผูกคำสั่งและ dialog ของ BOM ให้การ์ดสั่งงานได้) · ctx = ctx ของ BOM (data, rules, ui, helpers, url, user, q, params, runAction, openDialog) + pageUrl ของหน้านี้ + factory (def) · pages = หน้าเพิ่มเติมของแผนก { path: (params) => … } ผ่านประตูเดียวกัน
@@ -348,7 +377,7 @@
 
   root.MNP_FACTORY = Object.freeze({
     esc, attr, formPayload, parseArgs, bindRoot, deptChip, dueText, jobCard, jobReportDialog,
-    FACTORY_GROUP, canSeeDept, canOpenDeptModule, orderNavItems, registerDeptModule, productionLanding,
+    FACTORY_GROUP, canSeeDept, canOpenDeptModule, orderNavItems, registerDeptModule, productionLanding, mountDeptJobs,
     pageHead, searchForm, includesText, limited, deptWorkSection, actionLink, wake, failed, rubberflowFailed, deptCtx, routeUrl, onDeptRoute: onFactoryRoute,
   });
 })(window);

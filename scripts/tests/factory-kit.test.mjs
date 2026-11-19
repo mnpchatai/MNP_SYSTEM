@@ -29,7 +29,7 @@ const stubUi = { validateForm: () => true, confirmOptions: (node) => ({ title: n
 
 test("MNP_FACTORY exports the shared pieces and is frozen", () => {
   const { kit } = loadKit();
-  assert.deepEqual(Object.keys(kit).sort(), ["FACTORY_GROUP", "actionLink", "attr", "bindRoot", "canOpenDeptModule", "canSeeDept", "deptChip", "deptCtx", "deptWorkSection", "dueText", "esc", "failed", "formPayload", "includesText", "jobCard", "jobReportDialog", "limited", "onDeptRoute", "orderNavItems", "pageHead", "parseArgs", "productionLanding", "registerDeptModule", "routeUrl", "rubberflowFailed", "searchForm", "wake"]);
+  assert.deepEqual(Object.keys(kit).sort(), ["FACTORY_GROUP", "actionLink", "attr", "bindRoot", "canOpenDeptModule", "canSeeDept", "deptChip", "deptCtx", "deptWorkSection", "dueText", "esc", "failed", "formPayload", "includesText", "jobCard", "jobReportDialog", "limited", "mountDeptJobs", "onDeptRoute", "orderNavItems", "pageHead", "parseArgs", "productionLanding", "registerDeptModule", "routeUrl", "rubberflowFailed", "searchForm", "wake"]);
   assert.ok(Object.isFrozen(kit));
   assert.equal(kit.esc("<b>"), "&lt;b&gt;");
   assert.equal(kit.attr(null), "");

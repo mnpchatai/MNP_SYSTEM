@@ -425,7 +425,7 @@ test("the store subscription of module-bom repaints a department route and the k
   const kit = read("modules/factory-kit.js");
   assert.doesNotMatch(kit, /store\.subscribe/, "one repaint path: module-bom.js");
   const bom = read("modules/module-bom.js");
-  assert.match(bom, /const onOwnRoute = \(\) => onBomRoute\(\) \|\| Boolean\(window\.MNP_FACTORY\?\.onDeptRoute\?\.\(\)\);/);
+  assert.match(bom, /const onOwnRoute = \(\) => onBomRoute\(\) \|\| Boolean\(window\.MNP_FACTORY\?\.onDeptRoute\?\.\(\)\)/);
   assert.match(bom, /store\.subscribe\(\(event\) => \{\r?\n    if \(!onOwnRoute\(\)\) return;/);
 });
 
@@ -682,4 +682,149 @@ test("the task cards are drawn once (bom-hub taskCard / boardCards); the departm
     assert.match(source, /actions: true/, `${dept} asks for the real actions`);
     assert.doesNotMatch(source, /bom-job|openButton|data-rf-open|taskTable/, `${dept} keeps no copy of the card HTML`);
   }
+});
+
+// ---- RubberFlow (แผนก RB): การ์ดงาน RB จาก BOM "งานของฉัน" บนหน้าภาพรวม ----
+// ช่องว่างจำลอง: ปุ่มถูกอ่านจาก HTML ที่ใส่เข้าช่องตอนที่ตัวผูกเรียก (ราก RubberFlow ไม่เห็นปุ่มของช่องเลย เหมือนใน DOM จริงที่ช่องยังว่างตอนที่ตัวผูกของหน้า RubberFlow ทำงาน)
+function bomSlot() {
+  const cache = {};
+  const slot = {
+    innerHTML: "", removed: false, added: 0,
+    remove() { this.removed = true; },
+    buttons(kind) {
+      if (cache[kind]) return cache[kind];
+      const pattern = kind === "open" ? /data-rf-open="(\w+)" data-rf-args="([^"]*)"/g : /data-rf-action="(\w+)" data-rf-args="([^"]*)"/g;
+      cache[kind] = [...this.innerHTML.matchAll(pattern)].map((match) => ({ name: match[1], handlers: {}, dataset: kind === "open" ? { rfOpen: match[1], rfArgs: JSON.stringify(decodeArgs(match[2])) } : { rfAction: match[1], rfArgs: JSON.stringify(decodeArgs(match[2])), rfSuccess: "" }, disabled: false, addEventListener(type, handler) { slot.added += 1; this.handlers[type] = handler; } }));
+      return cache[kind];
+    },
+    querySelectorAll(selector) { return selector === "[data-rf-open]" ? this.buttons("open") : selector === "[data-rf-action]" ? this.buttons("action") : []; },
+  };
+  return slot;
+}
+// เปิดหน้าภาพรวมของ RubberFlow ในฐานะ persona หนึ่ง · คืนช่องที่ BOM เติมการ์ดให้
+async function rubberflowDashboard({ employee, rfUser = "U01", bomUser }) {
+  const env = load({ employee, route: "rubberflow" });
+  env.rf.store.setUser(rfUser);
+  env.store.setUser(bomUser);
+  const slot = bomSlot();
+  env.fakes["[data-bom-jobs]"] = [slot];
+  const shown = { html: "" };
+  const dialog = { tagName: "DIALOG", dataset: {}, addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], close() {}, remove() {}, showModal() { this.shown = true; }, setAttribute() {} };
+  env.root.insertAdjacentHTML = (_where, text) => { shown.html = text; env.root.lastElementChild = dialog; };
+  env.context.MNP_RUBBERFLOW_UI.validateForm = () => true;
+  const html = await env.open("RUBBERFLOW");
+  return { env, slot, html, shown, dialog };
+}
+
+test("RubberFlow: RB staff see the RB job cards of BOM งานของฉัน on the overview, with exactly the same buttons, bound once", async () => {
+  const { env, slot, html } = await rubberflowDashboard({ employee: emp("RB"), bomUser: "B04" });
+  const work = await workPage(env);
+  const expected = cardsOf(work.html);
+  assert.ok(expected.length >= 1, "the demo data has an open RB job");
+  assert.match(html, /<div data-bom-jobs><\/div>/, "the page only holds an empty slot; the section is placed after RubberFlow bound its own buttons");
+  assert.equal(slot.removed, false);
+  assert.equal(env.rf.showsBomJobs(), true, "the page tells module-bom it shows BOM data (repaint path)");
+  assert.deepEqual(plain(cardsOf(slot.innerHTML)), plain(expected), "string-identical to the BOM page for the same user");
+  assert.match(slot.innerHTML, /งานจากใบสั่งผลิต \(BOM\)/);
+  assert.match(slot.innerHTML, /href="#\/bom\?p=work&amp;dept=RB"/, "and the link to BOM งานของฉัน");
+  assert.match(slot.innerHTML, /data-rf-open="jobRubberflow"/, "create the RubberFlow WO");
+  assert.match(slot.innerHTML, /data-rf-open="jobHold"/);
+  assert.doesNotMatch(slot.innerHTML, /data-rf-open="jobClose"/, "staff cannot close a job");
+  const buttonCount = [...slot.innerHTML.matchAll(/data-rf-(?:open|action)="/g)].length;
+  assert.ok(buttonCount >= 2);
+  assert.equal(slot.added, buttonCount, "one listener per button: the kit binder bound the slot exactly once");
+  // ราก RubberFlow ไม่เห็นปุ่มของช่อง (ไม่มีคำสั่ง data-rf-action ของ BOM ไปถึง action ของ RubberFlow)
+  assert.deepEqual(plain(env.root.querySelectorAll("[data-rf-open]")), []);
+  assert.deepEqual(plain(env.root.querySelectorAll("[data-rf-action]")), []);
+});
+
+test("RubberFlow: a click on a BOM card opens the real BOM dialog; resume runs the BOM action and redraws; a refused action toasts and does not redraw", async () => {
+  const { env, slot, shown } = await rubberflowDashboard({ employee: emp("RB"), bomUser: "B04" });
+  const hold = slot.buttons("open").find((button) => button.name === "jobHold");
+  assert.ok(hold, "a hold button is offered");
+  await hold.handlers.click();
+  assert.match(shown.html, /<dialog[^>]*data-rf-dialog/, "the BOM hold dialog opens on the RubberFlow route");
+  assert.match(shown.html, /data-rf-form="\w+"/);
+  shown.html = "";
+  const create = slot.buttons("open").find((button) => button.name === "jobRubberflow");
+  assert.ok(create, "creating the RubberFlow WO is offered");
+  await create.handlers.click();
+  assert.match(shown.html, /<dialog[^>]*data-rf-dialog/, "the create-WO dialog of BOM opens");
+  // งานที่พักอยู่: ปุ่มคืนคิว/ทำต่อสั่งงานผ่าน store ของ BOM แล้ววาดหน้า RubberFlow ใหม่
+  const job = env.store.data().jobs.find((entry) => entry.dept === "RB" && liveOrder(env.store.data(), entry) && entry.status !== "done" && !entry.externalRef);
+  assert.ok(job);
+  assert.equal(env.store.run("setJobStatus", { jobId: job.id, status: "hold", reason: "รอวัตถุดิบ" }).ok, true);
+  const second = bomSlot();
+  env.fakes["[data-bom-jobs]"] = [second];
+  await env.open("RUBBERFLOW");
+  const resume = second.buttons("action").find((button) => button.name === "setJobStatus");
+  assert.ok(resume, "the held job offers resume / back to queue");
+  env.log.renders = 0;
+  await resume.handlers.click();
+  assert.notEqual(env.store.data().jobs.find((entry) => entry.id === job.id).status, "hold", "the action ran against the BOM store");
+  assert.equal(resume.disabled, true);
+  assert.equal(env.log.renders, 1, "RubberFlow is redrawn after the action");
+  // คำสั่งที่ถูกปฏิเสธ: แจ้งผิดพลาด ไม่วาดใหม่ ข้อมูลไม่เปลี่ยน
+  const third = bomSlot();
+  env.fakes["[data-bom-jobs]"] = [third];
+  await env.open("RUBBERFLOW");
+  const refused = third.buttons("action")[0] ?? third.buttons("open")[0];
+  assert.ok(refused);
+  const before = JSON.stringify(env.store.data().jobs);
+  env.log.renders = 0;
+  const failure = env.store.run("setJobStatus", { jobId: "NO-SUCH-JOB", status: "queued" });
+  assert.equal(failure.ok, false, "BOM refuses it");
+  assert.equal(JSON.stringify(env.store.data().jobs), before);
+  assert.equal(env.log.renders, 0);
+});
+
+test("RubberFlow: a planner sees the RB cards with the close button, same as BOM งานของฉัน for RB; other departments see no section", async () => {
+  const planner = await rubberflowDashboard({ employee: emp("PP"), rfUser: "U03", bomUser: "B03" });
+  const work = await workPage(planner.env, "p=work&dept=RB");
+  assert.deepEqual(plain(cardsOf(planner.slot.innerHTML)), plain(cardsOf(work.html)));
+  assert.match(planner.slot.innerHTML, /data-rf-open="jobClose"/);
+  assert.deepEqual(plain(buttonsByCard(planner.slot.innerHTML)), plain(buttonsByCard(work.html)));
+  for (const [dept, userId] of [["GR", "B05"], ["ST", "B08"]]) {
+    const other = await rubberflowDashboard({ employee: emp(dept), bomUser: userId });
+    assert.equal(other.slot.removed, true, `${dept} has no RB cards in BOM, so none here`);
+    assert.equal(other.env.rf.showsBomJobs(), false, `${dept}: the page does not claim BOM data`);
+  }
+});
+
+test("RubberFlow: outside test mode no section and no placeholder; a loading BOM shows one line; a failed or missing BOM is skipped quietly", async () => {
+  const real = load({ employee: emp("RB", "employee", { isSandbox: false }), route: "rubberflow" });
+  real.rf.store.setUser("U01");
+  real.store.setUser("B04");
+  const slot = bomSlot();
+  real.fakes["[data-bom-jobs]"] = [slot];
+  const html = await real.open("RUBBERFLOW");
+  assert.doesNotMatch(html, /data-bom-jobs/, "no placeholder outside test mode");
+  assert.equal(slot.innerHTML, "");
+  assert.equal(real.rf.showsBomJobs(), false);
+  assert.equal(real.context.MNP_FACTORY.mountDeptJobs(bomSlot(), "RB"), false, "the kit refuses outside test mode too");
+  const { env } = await rubberflowDashboard({ employee: emp("RB"), bomUser: "B04" });
+  const kit = env.context.MNP_FACTORY;
+  const bom = env.context.MNP_BOM;
+  bom.store.status = () => "loading";
+  const waiting = bomSlot();
+  assert.equal(kit.mountDeptJobs(waiting, "RB"), true, "loading: the page shows BOM data later, repaint when it arrives");
+  assert.match(waiting.innerHTML, /กำลังโหลดงานจากใบสั่งผลิต \(BOM\)/);
+  assert.doesNotMatch(waiting.innerHTML, /data-rf-open/);
+  bom.store.status = () => "error";
+  const failed = bomSlot();
+  assert.equal(kit.mountDeptJobs(failed, "RB"), false);
+  assert.equal(failed.removed, true);
+  assert.equal(kit.mountDeptJobs(null, "RB"), false);
+});
+
+test("RubberFlow: module-bom repaints the RubberFlow overview only while it shows BOM data, and no other RubberFlow page; no copy of the card in RubberFlow", () => {
+  const bom = read("modules/module-bom.js");
+  assert.match(bom, /const onOwnRoute = \(\) => onBomRoute\(\) \|\| Boolean\(window\.MNP_FACTORY\?\.onDeptRoute\?\.\(\)\) \|\| Boolean\(window\.MNP_RUBBERFLOW\?\.showsBomJobs\?\.\(\)\);/);
+  const rf = read("modules/module-rubberflow.js");
+  assert.match(rf, /showsBomJobs: \(\) => bomJobsShown && onRfRoute\(\)/);
+  assert.match(rf, /bomJobsShown = false;\r?\n    app\.innerHTML = shell/, "reset on every render, so another RubberFlow page never counts");
+  assert.match(rf, /mountDeptJobs\(bomJobs, "RB"\)/);
+  assert.match(rf, /bindPage\(root, ctx\);\r?\n    const bomJobs = root\.querySelector\("\[data-bom-jobs\]"\);/, "the slot is filled after RubberFlow's own binder ran");
+  assert.match(read("modules/rubberflow-pages-plan.js"), /ctx\.bomJobsSlot\?\.\(\)/);
+  assert.doesNotMatch(rf, /bom-job-|rf-card bom-job|jobCard/);
 });
