@@ -2336,6 +2336,7 @@ test("the My-work page is gone from the BOM: not in the menu or the page list, a
   env.context.state.employee = asEmployee(env.store.data().users.find((user) => user.id === "B03"));
   assert.match(await env.render("p=orders"), /href="#\/bom\?p=jobs"/);
   // the planning group sees every department's link on an order, and the rod store page sends it back to SR
+  env.store.data().users.find((user) => user.id === "B03").dept = "PK"; // the BOM persona of a planner sits in PK
   const planned = await env.render("p=orders&sel=DEMO-26006");
   for (const route of ["gr", "pk", "bg"]) assert.ok(planned.includes(`href="#/${route}"`), `planner links #/${route}`);
   assert.match(await env.render("p=rods"), /href="#\/sr"[^>]*>กลับหน้างานของแผนก</);
