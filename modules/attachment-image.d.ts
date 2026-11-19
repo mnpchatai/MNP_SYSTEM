@@ -12,6 +12,8 @@ export type HeicDecoder = {
 };
 
 export type NormalizeOptions = {
+  /** ใช้เพดานต่อไฟล์แทนเพดานรวมตอนตรวจชุดไฟล์ (ช่องที่ใส่ data-attachment-limit="per-file" ตั้งให้เอง) */
+  perFile?: boolean;
   /** ตัวโหลด libheif-js — Pilot Web ไม่ต้องส่ง (ใช้ไฟล์ใน vendor/ ให้เอง) Next.js ส่ง dynamic import เข้ามา */
   loadHeicDecoder?: () => Promise<HeicDecoder>;
   /** ด้านยาวสูงสุดของรูปที่แปลง (พิกเซล) ค่าเริ่มต้น 1920 */
@@ -36,6 +38,8 @@ export const MESSAGES: {
   tooLarge: string;
   tooManyFiles: string;
   batchTooLarge: string;
+  /** ใช้เฉพาะช่องที่จำกัดต่อไฟล์ (perFile) */
+  fileTooLarge: string;
 };
 /** ข้อความใต้ช่องแนบไฟล์ (จำกัดจำนวน/ขนาด และชนิดไฟล์ที่รับ) */
 export const HINT: string;
@@ -44,9 +48,15 @@ export function normalizeAttachment(file: File, options?: NormalizeOptions): Pro
 /** เตรียมหลายไฟล์ทีละไฟล์ แล้วตรวจจำนวนและขนาดรวม — โยน Error ข้อความไทยถ้าไฟล์ใดแปลงไม่ได้หรือเกินเพดาน */
 export function normalizeAttachments(files: Iterable<File> | ArrayLike<File>, options?: NormalizeOptions): Promise<File[]>;
 /** ตรวจจำนวนและขนาดรวมของไฟล์ที่เตรียมแล้ว คืนข้อความ error หรือ null */
-export function checkBatch(files: Iterable<{ size: number }> | ArrayLike<{ size: number }>): string | null;
+/** options.perFile = true ใช้เพดานต่อไฟล์ (MAX_FILE_BYTES) แทนเพดานรวม — ไม่ส่ง = เหมือนเดิม */
+export function checkBatch(
+  files: Iterable<{ size: number; name?: string }> | ArrayLike<{ size: number; name?: string }>,
+  options?: { perFile?: boolean },
+): string | null;
 /** ข้อความสรุปใต้ช่องแนบหลายไฟล์ (จำนวน ขนาดรวม และจำนวนไฟล์ที่ระบบปรับให้) */
-export function describeBatch(prepared: File[], originals: File[]): string;
+export function describeBatch(prepared: File[], originals: File[], options?: { perFile?: boolean }): string;
+/** ค่าของ data-attachment-limit บน <input type="file"> ที่ขอเพดานต่อไฟล์แทนเพดานรวม */
+export const ATTACHMENT_LIMIT_PER_FILE: "per-file";
 export function bindFileInputs(
   options?: NormalizeOptions & {
     notify?: (message: string, type?: string) => void;

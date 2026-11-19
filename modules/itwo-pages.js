@@ -163,12 +163,13 @@
     </fieldset>`;
   }
 
-  // ช่องเลือกไฟล์: ปุ่มเดียวกับฟอร์มอื่นของ Pilot · modules/attachment-image.js ดักช่องไฟล์ทุกช่องทั้งหน้า (แปลงรูป HEIC/รูปใหญ่เป็น JPG ตรวจจำนวนและขนาดรวม)
+  // ช่องเลือกไฟล์: ปุ่มเดียวกับฟอร์มอื่นของ Pilot · modules/attachment-image.js ดักช่องไฟล์ทุกช่องทั้งหน้า (แปลงรูป HEIC/รูปใหญ่เป็น JPG ตรวจจำนวนและขนาด)
+  // ช่องนี้ใส่ data-attachment-limit="per-file" = เพดานไฟล์ละ 20 MB (ไม่รวมกัน) ตรงกับ bucket/RPC ของใบสั่งงาน IT ส่วนโมดูลอื่นยังใช้เพดานรวม 20 MB เหมือนเดิม
   // และ attachment-preview.js วาดรายการไฟล์ที่เลือกใต้ช่อง (มีปุ่ม × ลบออกจากรายการได้) จึงไม่ต้องเขียนรายการเองที่นี่
   const fileField = ({ id, field, label = "ไฟล์แนบ", hidden = false }) => `<div class="field itwo-file-field" data-field="${esc(field)}" id="${esc(id)}-field"${hidden ? " hidden" : ""}>
         <span class="field-label">${esc(label)}</span>
         <label class="btn secondary file-pick" for="${esc(id)}" title="${esc(model.FILE_HINT)}">${iconOf("camera")} ถ่ายรูป / เลือกไฟล์</label>
-        <input class="file-pick-input" id="${esc(id)}" name="${esc(id)}" type="file" multiple accept="${esc(model.FILE_ACCEPT)}">
+        <input class="file-pick-input" id="${esc(id)}" name="${esc(id)}" type="file" multiple data-attachment-limit="per-file" accept="${esc(model.FILE_ACCEPT)}">
         <small>${esc(model.FILE_HINT)}</small>
       </div>`;
 

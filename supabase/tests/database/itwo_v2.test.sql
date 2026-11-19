@@ -9,7 +9,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(240);
+select plan(247);
 
 -- 1. โครงสร้าง ----------------------------------------------------------
 reset role;
@@ -140,6 +140,7 @@ select throws_ok($$ select * from public.app_itwo_request_rework(current_setting
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"2d700000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 select throws_ok($$ select * from public.app_itwo_request_rework(current_setting('t.o2')::uuid, 'ยังไม่ปิด', ((now() at time zone 'Asia/Bangkok')::date + 5)) $$, '23514', 'ขอแก้ไขงานได้เมื่อ IT ปิดงานแล้วเท่านั้น', 'a rework cannot be requested while the request is in progress');
+select is(public.app_itwo_get_detail(current_setting('t.o2')::uuid)->'allowed_actions', '["cancel"]'::jsonb, 'before IT has ever closed it, an in-progress request can still be cancelled by the requester');
 select throws_ok($$ select * from public.app_itwo_request_rework(current_setting('t.design')::uuid, 'ยกเลิกแล้ว', ((now() at time zone 'Asia/Bangkok')::date + 5)) $$, '23514', 'ใบสั่งงานนี้ถูกยกเลิกแล้ว', 'a cancelled request cannot be reworked');
 select throws_ok($$ select * from public.app_itwo_request_rework('00000000-0000-0000-0000-000000000000', 'x', ((now() at time zone 'Asia/Bangkok')::date + 5)) $$, '23514', 'ไม่พบใบสั่งงานนี้', 'an unknown request is refused');
 select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_actions', '["receive", "request_rework"]'::jsonb, 'the requester may receive the work or request a rework');
@@ -162,7 +163,14 @@ select is((public.app_itwo_get_detail(current_setting('t.o1')::uuid)->>'latest_d
 select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'reworks'->0->>'details', 'ขอแก้สีโลโก้ให้เข้มขึ้น', 'get_detail lists the rework details');
 select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'reworks'->0->>'requested_by_employee_no', 'ITV-REQ1', 'get_detail names who requested the rework');
 select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->>'needed_date', ((now() at time zone 'Asia/Bangkok')::date + 3)::text, 'the original needed date is kept');
-select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_actions', '["cancel"]'::jsonb, 'the requester can only cancel while the rework is in progress');
+-- การรับงานเป็นขั้นสุดท้ายเสมอ: ใบที่ IT เคยปิดงานแล้ว (มี completed) ผู้แจ้งยกเลิกไม่ได้อีก แม้กลับมา in_progress เพราะขอแก้ไขงาน
+select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_actions', '[]'::jsonb, 'the requester has no action while the rework is in progress (cancel is gone once IT has closed the request)');
+select throws_ok($$ select public.app_itwo_cancel(current_setting('t.o1')::uuid, 'ไม่เอาแล้ว') $$, '23514', 'ใบนี้ IT ส่งงานแล้ว ถ้างานยังไม่เรียบร้อยให้กด แก้ไขงาน', 'a request IT has already closed once cannot be cancelled during a rework');
+reset role;
+select set_config('request.jwt.claims', '', true);
+select throws_ok($$ update public.itwo_work_orders set status = 'cancelled' where id = current_setting('t.o1')::uuid $$, '23514', 'ใบนี้ IT ส่งงานแล้ว ถ้างานยังไม่เรียบร้อยให้กด แก้ไขงาน', 'the status guard also refuses to cancel a request that has a completed event');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"2d700000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 select is((select rework_round from public.app_itwo_list_mine() where id = current_setting('t.o1')::uuid), 1, 'list_mine shows rework round 1');
 select is((select rework_due_date from public.app_itwo_list_mine() where id = current_setting('t.o1')::uuid), ((now() at time zone 'Asia/Bangkok')::date), 'list_mine shows the rework due date');
 set local role authenticated;
@@ -296,6 +304,11 @@ insert into storage.objects (bucket_id, name, owner_id, metadata) values
   ('itwo-files', current_setting('t.oa') || '/aaaaaaaa-0000-0000-0000-000000000025.pdf', '2d700000-0000-0000-0000-000000000001', '{"size": 20971520, "mimetype": "application/pdf"}'),
   ('itwo-files', current_setting('t.oa') || '/aaaaaaaa-0000-0000-0000-000000000026.pdf', '2d700000-0000-0000-0000-000000000009', '{"size": 100, "mimetype": "application/pdf"}'),
   ('itwo-files', current_setting('t.og') || '/aaaaaaaa-0000-0000-0000-000000000027.pdf', '2d700000-0000-0000-0000-000000000001', '{"size": 100, "mimetype": "application/pdf"}');
+-- วัตถุที่ metadata ไม่สมบูรณ์ หรือนามสกุลไม่ตรงชนิด (ต้องถูกปฏิเสธ แม้ผู้เรียกส่งชนิด/ขนาดที่ดูถูกต้องมา)
+insert into storage.objects (bucket_id, name, owner_id, metadata) values
+  ('itwo-files', current_setting('t.oa') || '/aaaaaaaa-0000-0000-0000-000000000031.jpg', '2d700000-0000-0000-0000-000000000001', '{"size": 100, "mimetype": "application/pdf"}'),
+  ('itwo-files', current_setting('t.oa') || '/aaaaaaaa-0000-0000-0000-000000000032.pdf', '2d700000-0000-0000-0000-000000000001', '{"size": 100}'),
+  ('itwo-files', current_setting('t.oa') || '/aaaaaaaa-0000-0000-0000-000000000033.pdf', '2d700000-0000-0000-0000-000000000001', '{"mimetype": "application/pdf"}');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"2d700000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 select set_config('t.att1', public.app_itwo_add_attachment(current_setting('t.oa')::uuid, null, current_setting('t.oa') || '/aaaaaaaa-0000-0000-0000-000000000001.pdf', '  รายงาน.pdf  ', 'application/pdf', 1)::text, true);
@@ -312,11 +325,29 @@ select throws_ok($$ select public.app_itwo_add_attachment(current_setting('t.oa'
 select throws_ok($$ select public.app_itwo_add_attachment(current_setting('t.oa')::uuid, null, current_setting('t.oa') || '/aaaaaaaa-0000-0000-0000-000000000023.pdf', 'x.zip', 'application/zip', 100) $$, '23514', 'ชนิดไฟล์นี้ไม่รองรับ (รับรูปภาพ PDF Word Excel PowerPoint ข้อความ และ CSV)', 'a file type outside the list is refused');
 select throws_ok($$ select public.app_itwo_add_attachment(current_setting('t.oa')::uuid, null, current_setting('t.oa') || '/aaaaaaaa-0000-0000-0000-000000000024.pdf', 'big.pdf', 'application/pdf', 100) $$, '23514', 'ไฟล์ต้องมีขนาดไม่เกิน 20 MB', 'a file above 20 MB is refused (the size comes from Storage, not from the caller)');
 select lives_ok($$ select public.app_itwo_add_attachment(current_setting('t.oa')::uuid, null, current_setting('t.oa') || '/aaaaaaaa-0000-0000-0000-000000000025.pdf', 'exactly20.pdf', 'application/pdf', 1) $$, 'a file of exactly 20 MB is accepted');
+select throws_ok($$ select public.app_itwo_add_attachment(current_setting('t.oa')::uuid, null, current_setting('t.oa') || '/aaaaaaaa-0000-0000-0000-000000000031.jpg', 'x.jpg', 'image/jpeg', 100) $$, '23514', 'นามสกุลไฟล์ไม่ตรงกับชนิดของไฟล์ กรุณาอัปโหลดไฟล์ใหม่', 'the extension in the path must match the Storage mimetype (.jpg stored as application/pdf is refused even if the caller says image/jpeg)');
+select throws_ok($$ select public.app_itwo_add_attachment(current_setting('t.oa')::uuid, null, current_setting('t.oa') || '/aaaaaaaa-0000-0000-0000-000000000032.pdf', 'x.pdf', 'application/pdf', 100) $$, '23514', 'ตรวจชนิดหรือขนาดของไฟล์ที่อัปโหลดไม่ได้ กรุณาอัปโหลดไฟล์ใหม่', 'a Storage object without a mimetype is refused (the caller value is not a fallback)');
+select throws_ok($$ select public.app_itwo_add_attachment(current_setting('t.oa')::uuid, null, current_setting('t.oa') || '/aaaaaaaa-0000-0000-0000-000000000033.pdf', 'x.pdf', 'application/pdf', 100) $$, '23514', 'ตรวจชนิดหรือขนาดของไฟล์ที่อัปโหลดไม่ได้ กรุณาอัปโหลดไฟล์ใหม่', 'a Storage object without a size is refused (the caller value is not a fallback)');
 select throws_ok($$ select public.app_itwo_add_attachment(current_setting('t.oa')::uuid, null, current_setting('t.oa') || '/aaaaaaaa-0000-0000-0000-000000000001.pdf', '   ', 'application/pdf', 1) $$, '23514', 'กรุณาระบุชื่อไฟล์', 'a blank file name is refused (even for a registered path the name is checked first)');
 select throws_ok($$ select public.app_itwo_add_attachment(current_setting('t.og')::uuid, null, current_setting('t.og') || '/aaaaaaaa-0000-0000-0000-000000000027.pdf', 'x.pdf', 'application/pdf', 100) $$, '23514', 'ใบสั่งงานนี้สิ้นสุดแล้ว แนบไฟล์ไม่ได้', 'a cancelled order cannot get files');
 select throws_ok($$ select public.app_itwo_add_attachment(current_setting('t.oa')::uuid, gen_random_uuid(), current_setting('t.oa') || '/aaaaaaaa-0000-0000-0000-000000000023.pdf', 'x.pdf', 'application/pdf', 100) $$, '23514', 'ไม่พบรอบขอแก้ไขงานนี้', 'an unknown rework id is refused');
 reset role;
 select set_config('request.jwt.claims', '', true);
+select ok(
+  (select bool_and(private.itwo_ext_matches_mime('x/y.' || m.ext, m.mime) = m.expected)
+   from (values
+     ('jpg', 'image/jpeg', true), ('jpeg', 'image/jpeg', true), ('png', 'image/png', true), ('webp', 'image/webp', true),
+     ('heic', 'image/heic', true), ('heif', 'image/heif', true), ('pdf', 'application/pdf', true),
+     ('docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', true),
+     ('xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', true),
+     ('pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', true),
+     ('doc', 'application/msword', true), ('xls', 'application/vnd.ms-excel', true), ('txt', 'text/plain', true), ('csv', 'text/csv', true),
+     ('pdf', 'image/jpeg', false), ('jpg', 'image/png', false), ('heic', 'image/heif', false), ('docx', 'application/msword', false),
+     ('doc', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', false), ('txt', 'text/csv', false),
+     ('csv', 'application/vnd.ms-excel', false), ('ppt', 'application/vnd.ms-powerpoint', false), ('exe', 'application/pdf', false)
+   ) as m(ext, mime, expected))
+  and not private.itwo_ext_matches_mime('noextension', 'application/pdf') and not private.itwo_ext_matches_mime(null, 'application/pdf'),
+  'the extension-to-mimetype table matches every allowed type, rejects crossed pairs, .ppt and unknown or missing extensions');
 select is((select mime_type || '|' || size_bytes || '|' || file_name from public.itwo_attachments where id = current_setting('t.att1')::uuid), 'application/pdf|2048|รายงาน.pdf', 'size and type come from Storage (2048), the file name is trimmed, the caller values were ignored');
 select is((select uploaded_by from public.itwo_attachments where id = current_setting('t.att1')::uuid), (select id from public.employees where employee_no = 'ITV-REQ1'), 'the uploader is the requester');
 select is((select count(*)::int from public.itwo_attachments where work_order_id = current_setting('t.oa')::uuid), 2, 'two files are registered on OA so far (the 20 MB one and the first)');

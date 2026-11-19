@@ -23,7 +23,9 @@
 --      - guard การเปลี่ยนสถานะ: it_closed -> in_progress เพิ่ม · CHECK ของ itwo_events.action เพิ่ม 'rework_requested'
 --      - allowed_actions เพิ่ม request_rework (ผู้แจ้ง, it_closed) · get_detail ส่ง reworks[] + latest_due_date + rework_round + attachments[]
 --      - list_mine / list_it ส่ง rework_round + rework_due_date (+ misc_detail) · list_pending_approvals ส่ง misc_detail
---   E. ผู้แจ้งคนเดียวแจ้งได้หลายใบ: ฐานข้อมูลไม่เคยกัน (ไม่มี unique บน requester_id) ไม่แก้ · มี pgTAP ยืนยัน
+--   D2. การรับงานเป็นขั้นตอนสุดท้ายเสมอ (เจ้าของตัดสิน): ใบที่มี event completed อย่างน้อยครั้งหนึ่ง ผู้แจ้งยกเลิกไม่ได้ (ต้องขอแก้ไขงานหรือรับงาน)
+--      - app_itwo_cancel ปฏิเสธ (it_closed และ in_progress ในรอบแก้ไข) · allowed_actions ไม่ส่ง cancel · trigger ของใบกัน -> cancelled ซ้ำอีกชั้น
+--   E. ผู้แจ้งคนเดียวแจ้งได้หลายใบ:ฐานข้อมูลไม่เคยกัน (ไม่มี unique บน requester_id) ไม่แก้ · มี pgTAP ยืนยัน
 --   F. ล้างข้อมูลทดสอบ: app_sandbox_purge_itwo ลบแถว is_test ของตารางใหม่ด้วย และ "คืนรายการ path ของไฟล์ในบัคเก็ตทดสอบ" (files) ให้หน้าเว็บลบผ่าน Storage API
 --      เหตุผล: storage.objects ลบด้วย SQL ไม่ได้ (trigger ของ Storage) และถ้าลบแถวตรงไฟล์จริงจะค้างใน S3 · หลังล้างแถวทะเบียน ไฟล์ทดสอบทุกไฟล์ไม่มีใครลงทะเบียน
 --      policy ของบัคเก็ตทดสอบจึงอนุญาตให้ admin ที่อยู่ในโหมดทดสอบอ่าน/ลบได้ · ถ้าลบไม่ครบ เรียก purge ซ้ำจะได้รายการที่เหลืออีก
@@ -37,7 +39,8 @@
 --   - private.itwo_allowed_actions(...)       จาก 20261203010000_itwo_work_orders.sql
 --   - public.app_itwo_create                  จาก 20261203010000 (ลายเซ็นใหม่: เพิ่ม p_misc_detail default null · drop ลายเซ็น 7 ตัวแปรเดิม)
 --   - public.app_itwo_save_access_changes     จาก 20261203010000 (ปฏิเสธทุกครั้ง)
---   - public.app_itwo_get_detail              จาก 20261203010000
+--   - public.app_itwo_cancel                  จาก 20261203010000 (ใบที่ IT เคยปิดงานแล้วยกเลิกไม่ได้ · การรับงานเป็นขั้นสุดท้ายเสมอ)
+--   - public.app_itwo_get_detail             จาก 20261203010000
 --   - public.app_itwo_list_mine / list_pending_approvals / list_it  จาก 20261203010000 (คอลัมน์ผลลัพธ์เพิ่ม จึง drop แล้วสร้างใหม่)
 --   - public.app_sandbox_purge_itwo           จาก 20261203010000 (คืน files)
 --
@@ -121,6 +124,12 @@ begin
     or (old.status = 'it_closed' and new.status in ('received', 'in_progress'))
   ) then
     raise exception 'เปลี่ยนสถานะใบสั่งงานจาก % เป็น % ไม่ได้', old.status, new.status using errcode = 'check_violation';
+  end if;
+
+  -- การรับงานเป็นขั้นสุดท้ายเสมอ: ใบที่ IT เคยปิดงานแล้ว (มี completed) ยกเลิกไม่ได้ (ต้องขอแก้ไขงานหรือรับงานเท่านั้น)
+  if new.status = 'cancelled' and old.status is distinct from 'cancelled' and exists (
+       select 1 from public.itwo_events e where e.work_order_id = old.id and e.action = 'completed') then
+    raise exception 'ใบนี้ IT ส่งงานแล้ว ถ้างานยังไม่เรียบร้อยให้กด แก้ไขงาน' using errcode = 'check_violation';
   end if;
   return new;
 end;
@@ -262,6 +271,34 @@ as $$
   end
 $$;
 revoke all on function private.itwo_file_path_order_id(text) from public, anon, authenticated;
+
+-- นามสกุลท้าย path ต้องตรงกับ mimetype (ตารางจับคู่เดียว: รูป/PDF/Office ใหม่-เก่า/txt/csv · ไม่มี .ppt)
+create or replace function private.itwo_ext_matches_mime(p_name text, p_mime text)
+returns boolean
+language sql
+immutable
+security definer
+set search_path = ''
+as $$
+  select coalesce(case lower(substring(coalesce(p_name, '') from '\.([A-Za-z0-9]+)$'))
+    when 'jpg' then p_mime = 'image/jpeg'
+    when 'jpeg' then p_mime = 'image/jpeg'
+    when 'png' then p_mime = 'image/png'
+    when 'webp' then p_mime = 'image/webp'
+    when 'heic' then p_mime = 'image/heic'
+    when 'heif' then p_mime = 'image/heif'
+    when 'pdf' then p_mime = 'application/pdf'
+    when 'docx' then p_mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    when 'xlsx' then p_mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    when 'pptx' then p_mime = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    when 'doc' then p_mime = 'application/msword'
+    when 'xls' then p_mime = 'application/vnd.ms-excel'
+    when 'txt' then p_mime = 'text/plain'
+    when 'csv' then p_mime = 'text/csv'
+    else false
+  end, false)
+$$;
+revoke all on function private.itwo_ext_matches_mime(text, text) from public, anon, authenticated;
 
 -- ผู้ทำรายการแบบไม่ raise (ให้ policy ของ Storage ตอบ "ไม่ได้" แทน error) · id ว่าง = ไม่มี
 create or replace function private.itwo_actor_quiet()
@@ -469,7 +506,9 @@ begin
   end if;
   v_is_admin := private.itwo_is_it_admin(p_actor.id);
 
-  if p_wo.requester_id = p_actor.id and p_wo.status in ('pending_dept', 'pending_it_mgr', 'approved', 'in_progress') then
+  -- ยกเลิกได้ก่อน IT ปิดงานครั้งแรกเท่านั้น: ใบที่เคยมี completed (แม้อยู่ในรอบแก้ไข) ไม่ส่ง cancel (การรับงานเป็นขั้นสุดท้าย)
+  if p_wo.requester_id = p_actor.id and p_wo.status in ('pending_dept', 'pending_it_mgr', 'approved', 'in_progress')
+     and not exists (select 1 from public.itwo_events e where e.work_order_id = p_wo.id and e.action = 'completed') then
     v_actions := array_append(v_actions, 'cancel');
   end if;
 
@@ -498,6 +537,54 @@ begin
 end;
 $$;
 revoke all on function private.itwo_allowed_actions(public.itwo_work_orders, public.employees) from public, anon, authenticated;
+
+-- 8.1 RPC: ยกเลิก (ผู้แจ้ง) — เพิ่มกติกา: ใบที่ IT เคยปิดงานแล้วอย่างน้อยครั้งหนึ่งยกเลิกไม่ได้ (เจ้าของตัดสิน: การรับงานเป็นขั้นตอนสุดท้ายเสมอ)
+--   ต่างจากเดิมเฉพาะข้อความตอน it_closed และการตรวจ completed ของสถานะ in_progress (ใบที่อยู่ในรอบขอแก้ไขงาน) · ส่วนอื่นเหมือนเดิมทุกอย่าง
+create or replace function public.app_itwo_cancel(p_work_order_id uuid, p_reason text)
+returns void
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_reason text := private.itwo_clean(p_reason);
+  v_wo public.itwo_work_orders%rowtype;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itwo_actor();
+
+  select * into v_wo from public.itwo_work_orders w where w.id = p_work_order_id for update;
+  if v_wo.id is null or v_wo.is_test <> v_actor.is_test then
+    raise exception 'ไม่พบใบสั่งงานนี้' using errcode = 'check_violation';
+  end if;
+  if v_wo.requester_id <> v_actor.id then
+    raise exception 'เฉพาะผู้แจ้งเท่านั้นที่ยกเลิกใบสั่งงานได้' using errcode = 'insufficient_privilege';
+  end if;
+  if v_wo.status not in ('pending_dept', 'pending_it_mgr', 'approved', 'in_progress') then
+    raise exception '%', case v_wo.status
+      when 'it_closed' then 'ใบนี้ IT ส่งงานแล้ว ถ้างานยังไม่เรียบร้อยให้กด แก้ไขงาน'
+      when 'received' then 'ใบสั่งงานนี้จบงานแล้ว (ได้รับงานแล้ว) ไม่สามารถยกเลิกได้'
+      else private.itwo_status_message(v_wo.status)
+    end using errcode = 'check_violation';
+  end if;
+  -- อยู่ in_progress เพราะขอแก้ไขงานหลัง IT ปิดงานแล้ว: ยกเลิกไม่ได้เช่นกัน (ตรวจก่อนเหตุผล เพื่อให้ได้ข้อความนี้เสมอ)
+  if exists (select 1 from public.itwo_events e where e.work_order_id = v_wo.id and e.action = 'completed') then
+    raise exception 'ใบนี้ IT ส่งงานแล้ว ถ้างานยังไม่เรียบร้อยให้กด แก้ไขงาน' using errcode = 'check_violation';
+  end if;
+  if v_reason is null then
+    raise exception 'กรุณาระบุเหตุผลที่ยกเลิก' using errcode = 'check_violation';
+  end if;
+  if char_length(v_reason) > 500 then
+    raise exception 'เหตุผลต้องไม่เกิน 500 ตัวอักษร' using errcode = 'check_violation';
+  end if;
+
+  update public.itwo_work_orders set status = 'cancelled' where id = v_wo.id;
+  insert into public.itwo_events (is_test, work_order_id, actor_id, action, reason)
+  values (v_wo.is_test, v_wo.id, v_actor.id, 'cancelled', v_reason);
+end;
+$$;
 
 -- 9. RPC: แจ้งงานใหม่ (เพิ่ม p_misc_detail · ไม่รับ system_access) -----------------------------
 drop function public.app_itwo_create(text, text, text, text, text, date, boolean);
@@ -853,12 +940,21 @@ begin
   if v_object.id is null then
     raise exception 'ไม่พบไฟล์ที่อัปโหลด กรุณาอัปโหลดไฟล์ใหม่' using errcode = 'check_violation';
   end if;
-  v_mime := coalesce(nullif(v_object.metadata ->> 'mimetype', ''), nullif(btrim(coalesce(p_mime_type, '')), ''));
-  v_size := coalesce((v_object.metadata ->> 'size')::bigint, p_size_bytes);
-  if v_mime is null or v_mime <> all (private.itwo_allowed_mime_types()) then
+  -- ชนิดและขนาดใช้ค่าจาก metadata ของ Storage เท่านั้น (ค่า p_mime_type / p_size_bytes ที่ผู้เรียกส่งมาไม่ถูกเชื่อ และไม่ใช้เป็นค่าสำรอง)
+  -- ถ้า metadata ว่าง = ปฏิเสธ (ให้อัปโหลดใหม่) · เก็บลงทะเบียนด้วยค่าจาก Storage เสมอ
+  v_mime := nullif(v_object.metadata ->> 'mimetype', '');
+  v_size := nullif(v_object.metadata ->> 'size', '')::bigint;
+  if v_mime is null or v_size is null then
+    raise exception 'ตรวจชนิดหรือขนาดของไฟล์ที่อัปโหลดไม่ได้ กรุณาอัปโหลดไฟล์ใหม่' using errcode = 'check_violation';
+  end if;
+  if v_mime <> all (private.itwo_allowed_mime_types()) then
     raise exception 'ชนิดไฟล์นี้ไม่รองรับ (รับรูปภาพ PDF Word Excel PowerPoint ข้อความ และ CSV)' using errcode = 'check_violation';
   end if;
-  if v_size is null or v_size <= 0 or v_size > 20971520 then
+  -- นามสกุลใน path ต้องตรงกับชนิดไฟล์ (กันตั้งนามสกุลหลอก เช่น .pdf แต่ชนิดเป็นรูป)
+  if not private.itwo_ext_matches_mime(p_storage_path, v_mime) then
+    raise exception 'นามสกุลไฟล์ไม่ตรงกับชนิดของไฟล์ กรุณาอัปโหลดไฟล์ใหม่' using errcode = 'check_violation';
+  end if;
+  if v_size <= 0 or v_size > 20971520 then
     raise exception 'ไฟล์ต้องมีขนาดไม่เกิน 20 MB' using errcode = 'check_violation';
   end if;
 

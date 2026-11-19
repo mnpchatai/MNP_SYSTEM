@@ -404,7 +404,7 @@ select throws_ok($$ select public.app_itwo_save_access_changes(current_setting('
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 select is((public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_actions'), '["receive", "request_rework"]'::jsonb, 'the requester sees receive and request_rework once IT has closed the work');
-select throws_ok($$ select public.app_itwo_cancel(current_setting('t.o1')::uuid, 'x') $$, '23514', 'IT ปิดงานแล้ว ไม่สามารถยกเลิกได้', 'a closed request cannot be cancelled');
+select throws_ok($$ select public.app_itwo_cancel(current_setting('t.o1')::uuid, 'x') $$, '23514', 'ใบนี้ IT ส่งงานแล้ว ถ้างานยังไม่เรียบร้อยให้กด แก้ไขงาน', 'a closed request cannot be cancelled');
 select lives_ok($$ select public.app_itwo_receive(current_setting('t.o1')::uuid) $$, 'the requester confirms receipt');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-000000000008","role":"authenticated"}', true);

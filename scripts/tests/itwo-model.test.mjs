@@ -201,7 +201,7 @@ test("create parameters are trimmed, the note is sent only with 'other', and not
 });
 
 test("the duration note is the FM06 wording", () => {
-  assert.equal(model.DURATION_NOTE, "งานออกแบบและงานสิทธิ์ 3–7 วันนับจากวันที่ได้ข้อมูลครบ งานเบ็ดเตล็ดตามตกลง");
+  assert.equal(model.DURATION_NOTE, "งานออกแบบ 3–7 วันนับจากวันที่ได้ข้อมูลครบ · งานเบ็ดเตล็ดตามตกลง");
 });
 
 /* ---------- เหตุผลไม่อนุมัติ / ยกเลิก ---------- */

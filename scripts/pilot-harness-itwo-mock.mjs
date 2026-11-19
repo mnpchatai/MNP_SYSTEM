@@ -59,6 +59,7 @@ export function createItwoMock(env) {
     const list = eventsOf(order);
     return { deptDone: list.some((e) => e.action === "dept_approved"), itDone: list.some((e) => e.action === "it_mgr_approved"), rejected: list.some((e) => ["dept_rejected", "it_mgr_rejected"].includes(e.action)) };
   };
+  const hasCompleted = (order) => eventsOf(order).some((e) => e.action === "completed");
   const addEvent = (order, who, action, reason = null) => events.push({ id: ++eventId, work_order_id: order.id, actor_id: who.id, action, reason, created_at: stamp() });
   const todayTh = () => new Date(now() + 7 * 3600000).toISOString().slice(0, 10);
   // ใบนี้มีการอนุมัติจริงจากผู้อื่นแล้วไหม (ตรงกับ private.itwo_has_real_approval)
@@ -84,7 +85,8 @@ export function createItwoMock(env) {
     const admin = isItAdmin(who);
     const pending = ["pending_dept", "pending_it_mgr"].includes(order.status);
     const { deptDone, itDone } = stateOf(order);
-    if (order.requester_id === who.id && ["pending_dept", "pending_it_mgr", "approved", "in_progress"].includes(order.status)) list.push("cancel");
+    // การรับงานเป็นขั้นสุดท้ายเสมอ: ใบที่ IT เคยปิดงานแล้ว (มี completed) ไม่ส่ง cancel แม้กลับมา in_progress เพราะขอแก้ไขงาน
+    if (order.requester_id === who.id && ["pending_dept", "pending_it_mgr", "approved", "in_progress"].includes(order.status) && !hasCompleted(order)) list.push("cancel");
     const c = caps(order, who);
     if (c.canDept || c.canIt) list.push("approve", "reject");
     if (admin && (order.status === "approved" || (order.is_urgent && pending))) list.push("start");
@@ -179,6 +181,7 @@ export function createItwoMock(env) {
       const who = actor();
       const order = find(p_work_order_id);
       if (order.requester_id !== who.id) reject("เฉพาะผู้แจ้งเท่านั้นที่ยกเลิกใบสั่งงานได้", "42501");
+      if (order.status === "it_closed" || (order.status === "in_progress" && hasCompleted(order))) reject("ใบนี้ IT ส่งงานแล้ว ถ้างานยังไม่เรียบร้อยให้กด แก้ไขงาน");
       if (!["pending_dept", "pending_it_mgr", "approved", "in_progress"].includes(order.status)) reject("ใบสั่งงานนี้ไม่อยู่ในขั้นที่ทำรายการนี้ได้");
       if (!clean(p_reason)) reject("กรุณาระบุเหตุผลที่ยกเลิก");
       order.status = "cancelled";

@@ -204,6 +204,83 @@ test("describeBatch summarises count, total size against the limit and adjusted 
   assert.equal(describeBatch([a, converted], [a, b]), "เลือก 2 ไฟล์ · รวม 4.0 จาก 20 MB · เตรียมรูปให้ระบบรับได้แล้ว 1 ไฟล์");
 });
 
+/* ---------- โหมดเพดานต่อไฟล์ (perFile) สำหรับช่องที่ฐานข้อมูลบังคับต่อไฟล์ เช่นใบสั่งงาน IT · ค่าเริ่มต้นต้องไม่เปลี่ยน ---------- */
+test("checkBatch with perFile limits each file to 20 MB (not the total) and still limits the count", () => {
+  assert.equal(checkBatch([{ size: 15 * MB }, { size: 15 * MB }], { perFile: true }), null, "30 MB in total is fine when every file is below 20 MB");
+  assert.equal(checkBatch([{ size: 20 * MB }, { size: 20 * MB }], { perFile: true }), null, "exactly 20 MB per file is accepted");
+  assert.equal(checkBatch([{ size: 1 }, { size: 20 * MB + 1, name: "big.pdf" }], { perFile: true }), `big.pdf: ${MESSAGES.fileTooLarge}`, "one oversized file is named");
+  assert.equal(checkBatch([{ size: 20 * MB + 1 }], { perFile: true }), MESSAGES.fileTooLarge, "no name: only the message");
+  assert.match(MESSAGES.fileTooLarge, /20 MB/);
+  const files = (count) => Array.from({ length: count }, () => ({ size: 1 }));
+  assert.equal(checkBatch(files(MAX_BATCH_FILES), { perFile: true }), null);
+  assert.equal(checkBatch(files(MAX_BATCH_FILES + 1), { perFile: true }), MESSAGES.tooManyFiles, "ten files at most per submission");
+});
+
+test("the default mode (no options, perFile false) is unchanged: the combined 20 MB limit still applies", () => {
+  assert.equal(checkBatch([{ size: 15 * MB }, { size: 15 * MB }]), MESSAGES.batchTooLarge);
+  assert.equal(checkBatch([{ size: 15 * MB }, { size: 15 * MB }], {}), MESSAGES.batchTooLarge);
+  assert.equal(checkBatch([{ size: 15 * MB }, { size: 15 * MB }], { perFile: false }), MESSAGES.batchTooLarge);
+});
+
+test("normalizeAttachments and describeBatch honour perFile and keep the old behaviour without it", async () => {
+  const files = [pdfFile("a.pdf", 15 * MB), pdfFile("b.pdf", 15 * MB)];
+  await assert.rejects(normalizeAttachments(files), { message: MESSAGES.batchTooLarge });
+  assert.deepEqual(await normalizeAttachments(files, { perFile: true }), files);
+  await assert.rejects(normalizeAttachments([pdfFile("huge.pdf", 20 * MB + 1)], { perFile: true }), { message: `huge.pdf: ${MESSAGES.fileTooLarge}` });
+  assert.equal(describeBatch(files, files, { perFile: true }), "เลือก 2 ไฟล์ · รวม 30.0 MB", "no 'of 20 MB' because the limit is per file");
+  assert.equal(describeBatch(files, files), "เลือก 2 ไฟล์ · รวม 30.0 จาก 20 MB", "default text unchanged");
+});
+
+test("a file input marked data-attachment-limit=\"per-file\" gets the per-file limit; any other input keeps the combined limit", async () => {
+  assert.equal(attachmentImage.ATTACHMENT_LIMIT_PER_FILE, "per-file");
+  class FakeInput {
+    constructor(files, dataset) {
+      this.type = "file";
+      this.multiple = true;
+      this.files = files;
+      this.dataset = dataset;
+      this.nextElementSibling = null;
+      this.validity = "";
+    }
+    setCustomValidity(text) { this.validity = text; }
+    dispatchEvent() {}
+    insertAdjacentElement(_where, node) { this.nextElementSibling = node; }
+  }
+  let changeHandler = null;
+  const saved = { document: globalThis.document, HTMLInputElement: globalThis.HTMLInputElement };
+  globalThis.HTMLInputElement = FakeInput;
+  globalThis.document = {
+    addEventListener(type, handler) { if (type === "change") changeHandler = handler; },
+    createElement: () => ({ classList: { contains: () => false, toggle() {} }, setAttribute() {}, className: "", textContent: "", hidden: false }),
+  };
+  try {
+    const notices = [];
+    attachmentImage.bindFileInputs({ notify: (message) => notices.push(message) });
+    assert.equal(typeof changeHandler, "function");
+    const pick = async (dataset, files) => {
+      const input = new FakeInput(files, dataset);
+      await changeHandler({ target: input });
+      return { status: input.nextElementSibling?.textContent, notices: notices.splice(0) };
+    };
+
+    const perFile = await pick({ attachmentLimit: "per-file" }, [pdfFile("a.pdf", 15 * MB), pdfFile("b.pdf", 15 * MB)]);
+    assert.equal(perFile.status, "เลือก 2 ไฟล์ · รวม 30.0 MB");
+    assert.deepEqual(perFile.notices, []);
+
+    const tooBig = await pick({ attachmentLimit: "per-file" }, [pdfFile("a.pdf", 1 * MB), pdfFile("huge.pdf", 20 * MB + 1)]);
+    assert.equal(tooBig.status, `huge.pdf: ${MESSAGES.fileTooLarge}`);
+    assert.deepEqual(tooBig.notices, [`huge.pdf: ${MESSAGES.fileTooLarge}`]);
+
+    const plain = await pick({}, [pdfFile("a.pdf", 15 * MB), pdfFile("b.pdf", 15 * MB)]);
+    assert.equal(plain.status, MESSAGES.batchTooLarge, "an input without the attribute keeps the combined 20 MB limit");
+    assert.deepEqual(plain.notices, [MESSAGES.batchTooLarge]);
+  } finally {
+    globalThis.document = saved.document;
+    globalThis.HTMLInputElement = saved.HTMLInputElement;
+    delete globalThis.__mnpAttachmentImageBound;
+  }
+});
+
 test("thumbnailPath keeps the thumbnail beside the original in the same folder", () => {
   const { thumbnailPath, THUMBNAIL_SUFFIX } = attachmentImage;
   assert.equal(THUMBNAIL_SUFFIX, ".thumb.jpg");

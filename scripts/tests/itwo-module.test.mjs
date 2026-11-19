@@ -458,7 +458,7 @@ test("'แก้ไขงาน': the button opens the form, the rework is sent 
   assert.match(w.html, /<span class="badge itwo-rework-tag">แก้ไขครั้งที่ 1 · กำหนด 05\/12\/2569<\/span>/);
   assert.match(visibleText(w.html), /ประวัติการแก้ไขงาน 1 แก้ไขครั้งที่ 1 · กำหนดเสร็จ 05\/12\/2569 สีโลโก้ไม่ตรง/);
   assert.match(w.html, /ผู้แจ้งขอแก้ไขงาน/);
-  assert.deepEqual(w.buttons(), ["cancel"], "the requester can cancel again while IT works, but cannot receive yet");
+  assert.deepEqual(w.buttons(), [], "once IT has closed the request the requester can no longer cancel it (receipt is always the last step), and cannot receive yet");
 
   // IT เห็นป้ายในงาน IT แล้วปิดงานอีกครั้ง (อนุมัติไม่ต้องทำใหม่)
   w.as("itadm");

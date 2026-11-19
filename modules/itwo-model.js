@@ -14,7 +14,7 @@
   const MAX_MISC_DETAIL = 200;
   const MAX_FILES = 10; // ต่อหนึ่งครั้งที่ส่ง (ตอนแจ้ง หรือแต่ละรอบแก้ไข) ตรงกับ app_itwo_add_attachment
   const MAX_FILE_BYTES = 20 * 1024 * 1024; // ต่อไฟล์ ตรงกับ bucket และตาราง itwo_attachments
-  const DURATION_NOTE = "งานออกแบบและงานสิทธิ์ 3–7 วันนับจากวันที่ได้ข้อมูลครบ งานเบ็ดเตล็ดตามตกลง";
+  const DURATION_NOTE = "งานออกแบบ 3–7 วันนับจากวันที่ได้ข้อมูลครบ · งานเบ็ดเตล็ดตามตกลง";
 
   // ตัวเลือกบนฟอร์มแจ้งงาน: ไม่มี "สิทธิ์ในระบบ" แล้ว (เจ้าของสั่ง 19/11/2026 จะแยกเป็นโมดูลขอสิทธิ์) · ใบเก่าที่เป็น system_access ยังแสดงชื่อได้ที่ LEGACY_REQUEST_TYPES
   const REQUEST_TYPES = Object.freeze([

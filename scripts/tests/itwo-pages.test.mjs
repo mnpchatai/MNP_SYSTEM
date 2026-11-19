@@ -108,13 +108,13 @@ test("the order form has the FM06 fields in order: two request types (no system 
   assert.match(html, /<label for="itwo-misc-detail">ระบุว่างานอะไร <span class="field-required">\(จำเป็น\)<\/span><\/label><input class="input" id="itwo-misc-detail" name="misc_detail" maxlength="200"/);
   // ช่องไฟล์: ซ่อนไว้จนเลือกเอกสารแนบ = "มี" · หลายไฟล์ · ชนิดที่ฐานข้อมูลรับ · ใช้ปุ่ม/ตัวอย่างไฟล์ที่เลือกของ Pilot (attachment-image/preview)
   assert.match(html, /id="itwo-files-field" hidden/);
-  assert.match(html, /<input class="file-pick-input" id="itwo-files" name="itwo-files" type="file" multiple accept="image\/\*,\.jpg,[^"]*\.docx[^"]*"/);
+  assert.match(html, /<input class="file-pick-input" id="itwo-files" name="itwo-files" type="file" multiple data-attachment-limit="per-file" accept="image\/\*,\.jpg,[^"]*\.docx[^"]*"/);
   assert.match(html, /for="itwo-files" title="[^"]*10 ไฟล์[^"]*">[\s\S]*ถ่ายรูป \/ เลือกไฟล์/);
   assert.match(html, /ออเดอร์ \(ไม่บังคับ\)/);
   assert.match(html, /maxlength="2000"/);
   assert.match(html, /type="date"/);
   assert.match(html, /งานด่วน/);
-  assert.match(html, /หมายเหตุ: ระยะเวลาทำงาน งานออกแบบและงานสิทธิ์ 3–7 วันนับจากวันที่ได้ข้อมูลครบ งานเบ็ดเตล็ดตามตกลง/);
+  assert.match(html, /หมายเหตุ: ระยะเวลาทำงาน งานออกแบบ 3–7 วันนับจากวันที่ได้ข้อมูลครบ · งานเบ็ดเตล็ดตามตกลง/);
   assert.match(html, /ผู้แจ้ง สมชาย ใจดี · การตลาด · ระบบบันทึกวันและเวลาที่แจ้งให้เอง/, "the system fills in name, department and time");
   assert.equal(count(html, /id="itwo-form"/g), 1);
   assert.equal(count(html, /data-step="[123]"/g), 3);
@@ -202,7 +202,7 @@ test("a requester whose order IT closed gets 'ได้รับงานเร�
   assert.match(html, /<button type="button" class="btn secondary" data-itwo-action="request_rework">แก้ไขงาน<\/button>/);
   assert.match(html, /<section class="card itwo-rework-card" id="itwo-rework-card"[^>]* hidden>/, "the form is in the page but hidden until the button is pressed");
   assert.match(html, /id="itwo-rework-due" name="due_date" type="date"/);
-  assert.match(html, /id="itwo-rework-files" name="itwo-rework-files" type="file" multiple/, "files are optional");
+  assert.match(html, /id="itwo-rework-files" name="itwo-rework-files" type="file" multiple data-attachment-limit="per-file"/, "files are optional and capped per file (20 MB each)");
   assert.equal(count(html.slice(html.indexOf('id="itwo-rework-card"')), /field-required/g), 2, "details and the due date are required, files are not");
   assert.match(html, /ส่งให้ IT แก้ไข/);
   // ไม่มีสิทธิ์ขอแก้ไข (ไม่ใช่ผู้แจ้ง/ไม่ใช่สถานะ it_closed) = ไม่มีฟอร์มในหน้าเลย
