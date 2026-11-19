@@ -90,7 +90,7 @@ async function harnessPage() {
       return { path, params: new URLSearchParams(query) };
     };
     // เมนูเหมือน requestModuleNavLinks ของ app.js: ซ่อนตาม navAllowed ของบัญชีที่ทำหน้าที่อยู่ และเรียงรายการของกลุ่ม "โรงงาน" ตามผังงาน (MNP_FACTORY.orderNavItems)
-    const navItems = () => window.MNP_FACTORY.orderNavItems(Object.values(window.MNP_REQUEST_MODULES).filter((entry) => !entry.navAllowed || entry.navAllowed(state.employee)).flatMap((entry) => entry.nav || []));
+    const navItems = () => window.MNP_FACTORY.orderNavItems(Object.values(window.MNP_REQUEST_MODULES).filter((entry) => { try { return !entry.navAllowed || entry.navAllowed(state.employee); } catch { return false; } }).flatMap((entry) => entry.nav || []));
     const shell = (content, path, title) => {
       document.title = title;
       let group = null;

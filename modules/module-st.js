@@ -21,10 +21,11 @@
     });
     const stock = ui.card(`${ui.table(["ของซื้อ", { label: "คงเหลือ", className: "right" }, { label: "สต็อกขั้นต่ำ", className: "right" }], rows, { emptyText: q ? "ไม่พบของซื้อที่ค้นหา" : "ยังไม่มีของซื้อในทะเบียน" })}${more}`, { flush: true });
     // ใบสั่งซื้อและเคมีอยู่ใน RubberFlow: ยังไม่โหลด = สั่งโหลดและวาดหน้าใหม่เมื่อเสร็จ
-    const loading = F.wake(ctx.rubberflow()?.store);
-    const tasks = window.MNP_BOM_PAGES?.hub?.storeTasks?.(ctx) ?? [];
+    const rfStore = ctx.rubberflow()?.store;
+    const loading = F.wake(rfStore);
+    const tasks = window.MNP_BOM_PAGES?.hub?.storeTasks?.(F.deptCtx(ctx)) ?? [];
     const waiting = loading ? '<p class="small muted" role="status">กำลังโหลดข้อมูลใบสั่งซื้อและเคมี…</p>' : "";
-    return { html: `${F.pageHead(ctx, "ของซื้อในคลัง", F.actionLink(ctx, "ไปงานของฉัน (BOM)", ctx.url("work", { dept: "ST" })))}${F.searchForm(ctx, "ค้นหารหัสหรือชื่อของซื้อ")}${stock}${waiting}${F.taskTable(ctx, tasks)}` };
+    return { html: `${F.pageHead(ctx, "ของซื้อในคลัง", F.actionLink(ctx, "ไปงานของฉัน (BOM)", ctx.url("work", { dept: "ST" })))}${F.searchForm(ctx, "ค้นหารหัสหรือชื่อของซื้อ")}${stock}${waiting}${F.failed(rfStore) ? F.rubberflowFailed(ctx, "งานที่รอ") : F.taskTable(ctx, tasks)}` };
   }
 
   F.registerDeptModule({ code: "FACTORY_ST", dept: "ST", route: "st", label: "คลังวัตถุดิบ (ST)", icon: "box", palette: "st", landing });

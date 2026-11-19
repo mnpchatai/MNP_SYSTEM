@@ -18,7 +18,7 @@
     const { shown, more } = F.limited(ctx, buckets);
     const rows = shown.map((bucket) => `<tr><td>${ui.mono(bucket.itemCode)}<div class="small muted">${F.esc(nameOf(bucket.itemCode))}</div></td><td class="right rf-mono">${F.esc(`${rules.fmtQty(bucket.qty)} ${rules.uomLabel(bucket.lot.uom)}`)}</td><td><span class="rf-mono">${F.esc(bucket.lot.lotNo)}</span><div class="small muted">${F.esc(bucket.lot.receivedAt ? rules.fmtDate(bucket.lot.receivedAt) : "—")}</div></td><td>${ownerText(ctx, bucket)}</td></tr>`);
     const stock = ui.card(`${ui.table(["เส้นยาง", { label: "จำนวน", className: "right" }, "ล็อต", "ของ"], rows, { emptyText: q ? "ไม่พบเส้นยางที่ค้นหา" : "ยังไม่มียางเส้นยาวในคลัง" })}${more}`, { flush: true });
-    const tasks = window.MNP_BOM_PAGES?.hub?.rodTasks?.(ctx, "SR") ?? [];
+    const tasks = window.MNP_BOM_PAGES?.hub?.rodTasks?.(F.deptCtx(ctx), "SR") ?? [];
     return { html: `${F.pageHead(ctx, "ยางเส้นยาวในคลัง", F.actionLink(ctx, "ไปงานของฉัน (BOM)", ctx.url("work", { dept: "SR" })))}${F.searchForm(ctx, "ค้นหารหัส ชื่อ หรือเลขล็อต")}${stock}${F.taskTable(ctx, tasks)}` };
   }
 

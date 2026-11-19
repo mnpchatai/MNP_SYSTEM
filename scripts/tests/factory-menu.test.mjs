@@ -340,3 +340,52 @@ test("the new scripts load before app.js with the one ?v= of every entry, and th
   }
   assert.match(read("scripts/pilot-harness.mjs"), /\.matchAll\(\/<script defer src=/, "the harness takes its script list from index.html");
 });
+
+// ---- งานที่รอของแผนกไม่ขึ้นกับผู้เปิดหน้า · RubberFlow โหลดไม่สำเร็จ ----
+// ทำให้ใบที่ปล่อยผลิตแล้วมีสินค้ารอ WH รับเข้า: งาน PK ทุกงานเสร็จ ทำครบตามจำนวนแผน
+function makeReceivable(env) {
+  const data = env.store.data();
+  const order = data.orders.find((entry) => entry.status === "released" || entry.status === "in_progress");
+  for (const job of data.jobs.filter((entry) => entry.orderId === order.id && entry.dept === "PK")) { job.qtyDone = job.qtyPlanned; job.status = "done"; }
+  return order;
+}
+
+test("WH shows the warehouse's pending receive to whoever opens it: PP and a manager see the same task as the WH staff", async () => {
+  const seen = {};
+  for (const [label, employee, bomUser] of [["WH", emp("WH"), "B09"], ["PP", emp("PP"), "B03"], ["manager", emp("PP", "factory_manager"), "B10"]]) {
+    const env = load({ employee });
+    env.store.setUser(bomUser);
+    const order = makeReceivable(env);
+    const html = await env.open("FACTORY_WH");
+    seen[label] = html;
+    assert.match(html, /รอรับเข้าคลัง/, `${label} sees the pending receive`);
+    assert.ok(html.includes(escapeHtml(order.id)), `${label} sees the order ${order.id}`);
+    assert.doesNotMatch(html, /ไม่มีงานค้าง/);
+  }
+  assert.equal(seen.PP.slice(seen.PP.indexOf("งานที่รอ")), seen.WH.slice(seen.WH.indexOf("งานที่รอ")), "the task card is the same for WH and PP");
+});
+
+test("SR shows the store's pending rod receipts to a planner as well, computed for the department and read-only", async () => {
+  const env = load({ employee: emp("PP") });
+  env.store.setUser("B03");
+  const pending = env.store.data().rodLots.filter((lot) => lot.status === "pending");
+  assert.ok(pending.length >= 1);
+  const html = await env.open("FACTORY_SR");
+  assert.doesNotMatch(html, /ไม่มีงานค้าง/);
+  assert.match(html, /งานที่รอ/);
+  assert.doesNotMatch(html, /data-rf-open|data-rf-action/, "no action buttons");
+});
+
+test("when RubberFlow failed to load, ST and QA show one line in place of the RubberFlow part, not an empty table", async () => {
+  for (const [code, dept] of [["FACTORY_ST", "ST"], ["FACTORY_QA", "QA"]]) {
+    const env = load({ employee: emp(dept) });
+    const rf = env.rf.store;
+    rf.isRemote = () => true;
+    rf.status = () => "error";
+    rf.error = () => ({ message: "เชื่อมต่อไม่ได้" });
+    const html = await env.open(code);
+    assert.equal([...html.matchAll(/โหลดข้อมูล RubberFlow ไม่สำเร็จ/g)].length, 1, `${code} shows the failure once`);
+    assert.doesNotMatch(html, /กำลังโหลดข้อมูล RubberFlow/);
+    assert.doesNotMatch(html, code === "FACTORY_QA" ? /ไม่มีล็อตที่กักรอตัดสิน/ : /ไม่มีงานค้าง/, "no empty table in its place");
+  }
+});

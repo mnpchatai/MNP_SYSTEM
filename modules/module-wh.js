@@ -16,7 +16,7 @@
       return `<tr><td>${ui.mono(row.fgCode)}<div class="small muted">${F.esc(nameOf(row.fgCode))}</div></td><td class="right rf-mono">${F.esc(rules.fmtQty(row.onHand))} <span class="small muted">${unitOf(row.fgCode)}</span></td><td class="right rf-mono">${row.free > 0 ? `${F.esc(rules.fmtQty(row.free))} <span class="small muted">${unitOf(row.fgCode)}</span>` : '<span class="muted">—</span>'}</td><td>${holders.length ? holders.join("<br>") : '<span class="muted">สต็อกกลาง</span>'}</td></tr>`;
     });
     const stock = ui.card(`${ui.table(["สินค้า", { label: "อยู่ในคลัง", className: "right" }, { label: "สต็อกกลาง", className: "right", title: "ส่วนที่เกินจากที่ใบนั้นสั่ง ใบสั่งผลิตอื่นที่ยังเป็นร่างนำไปใช้ลดงานผลิตได้" }, "ของใบ"], rows, { emptyText: q ? "ไม่พบสินค้าสำเร็จรูปที่ค้นหา" : "ยังไม่มีสินค้าสำเร็จรูปในคลัง" })}${more}`, { flush: true });
-    const tasks = window.MNP_BOM_PAGES?.hub?.fgTasks?.(ctx) ?? [];
+    const tasks = window.MNP_BOM_PAGES?.hub?.fgTasks?.(F.deptCtx(ctx)) ?? [];
     return { html: `${F.pageHead(ctx, "สินค้าสำเร็จรูปในคลัง", F.actionLink(ctx, "ไปงานของฉัน (BOM)", ctx.url("work", { dept: "WH" })))}${F.searchForm(ctx, "ค้นหารหัสหรือชื่อสินค้า")}${stock}${F.taskTable(ctx, tasks)}` };
   }
 

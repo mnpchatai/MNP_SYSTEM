@@ -150,7 +150,7 @@
   });
   // หน้ากลับมาโฟกัสขณะอยู่ที่หน้า BOM: ตามทันการบันทึกของผู้อื่น (store.catchUp วาดหน้าใหม่ผ่าน event synced เฉพาะเมื่อมีอะไรเปลี่ยน · มีฟอร์มค้างไม่รวม แค่แจ้ง)
   const catchUpOnFocus = () => {
-    if (store.isRemote() && onBomRoute() && !document.hidden) store.catchUp();
+    if (store.isRemote() && (onBomRoute() || window.MNP_FACTORY?.onDeptRoute?.()) && !document.hidden) store.catchUp();
   };
   window.addEventListener?.("focus", catchUpOnFocus);
   document.addEventListener?.("visibilitychange", catchUpOnFocus);

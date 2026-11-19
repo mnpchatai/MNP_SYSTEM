@@ -263,6 +263,20 @@
     }
     return true;
   }
+  // RubberFlow โหลดไม่สำเร็จ: หน้าแผนกแสดงบรรทัดเดียวแทนตารางที่ว่างเปล่า (ปุ่มลองใหม่อยู่ที่หน้า RubberFlow)
+  const failed = (store) => Boolean(store?.isRemote?.()) && store.status() === "error";
+  const rubberflowFailed = (ctx, title, actions = "") => ctx.ui.card('<p class="small muted" role="alert">โหลดข้อมูล RubberFlow ไม่สำเร็จ</p>', { title: esc(title), actions });
+  // งานที่รอของแผนก ไม่ใช่ของผู้เปิดหน้า: ฝ่ายวางแผนและผู้จัดการเห็นงานชุดเดียวกับแผนกนั้น (สิทธิ์ลงมือยังตัดสินที่หน้า BOM และฐานข้อมูล · หน้านี้อ่านอย่างเดียว)
+  function deptCtx(ctx) {
+    const dept = ctx.factory?.dept;
+    const employee = { id: `dept-${dept}`, department: { code: dept }, role: { code: "employee" } };
+    const user = root.MNP_BOM_STORE?.personaUser?.(employee);
+    if (!dept || !user) return ctx;
+    const rfStoreApi = root.MNP_RUBBERFLOW_STORE;
+    const rfUser = rfStoreApi?.personaUser?.(employee);
+    const rubberflow = () => { const live = ctx.rubberflow(); return live && rfUser ? { ...live, can: (permission) => rfStoreApi.can(rfUser, permission) } : live; };
+    return { ...ctx, user, rubberflow };
+  }
   let watching = false;
   function watch(store) {
     if (watching) return;
@@ -302,6 +316,8 @@
     bindRoot(node, ctx, { run: () => false });
     ui.labelTables(node);
     bind?.(node, ctx);
+    // ผู้อื่นบันทึกข้อมูลไปแล้ว: รวมตอนนี้ (เหมือนท้าย renderBom · ยังเปิดฟอร์มค้างอยู่ store ไม่รวมให้)
+    if (store.hasNewer?.()) store.catchUp();
     return undefined;
   }
 
@@ -330,6 +346,6 @@
   root.MNP_FACTORY = Object.freeze({
     esc, attr, formPayload, parseArgs, bindRoot, deptChip, dueText, jobCard, jobReportDialog,
     FACTORY_GROUP, canSeeDept, canOpenDeptModule, orderNavItems, registerDeptModule,
-    pageHead, searchForm, includesText, limited, taskTable, actionLink, wake, routeUrl,
+    pageHead, searchForm, includesText, limited, taskTable, actionLink, wake, failed, rubberflowFailed, deptCtx, routeUrl, onDeptRoute: onFactoryRoute,
   });
 })(window);

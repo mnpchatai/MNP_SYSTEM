@@ -17,6 +17,7 @@
     const store = ctx.rubberflow()?.store;
     if (!store) return "";
     const link = F.actionLink(ctx, "ไปตัดสินที่ RubberFlow", "#/rubberflow?p=quality");
+    if (F.failed(store)) return F.rubberflowFailed(ctx, "ล็อตในสายผลิตที่กักรอตัดสิน", link);
     if (F.wake(store)) return ui.card('<p class="small muted" role="status">กำลังโหลดข้อมูล RubberFlow…</p>', { title: "ล็อตในสายผลิตที่กักรอตัดสิน", actions: link });
     const rf = window.MNP_RUBBERFLOW_RULES;
     const lots = (store.data().lots ?? []).filter((lot) => lot.qc === "hold").sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
