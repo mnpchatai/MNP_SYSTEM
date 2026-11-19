@@ -543,10 +543,10 @@ test("pages: SR's work board shows the pending lots and the GR issue card, QA ge
   assert.match(html, /RB \d+<\/a>[\s\S]*SR 4<\/a>[\s\S]*QA 1<\/a>[\s\S]*GR \d+<\/a>/, "the planner's department tabs include SR (one lot left to receive, three orders to supply) and QA in flow order");
   html = await env.render("p=work&dept=QA");
   assert.match(html, /data-rf-open="rodDecide"/);
-  // GR: การ์ดงานบอกแท่งที่ได้รับจาก SR
+  // GR: การ์ดงานบอกยางเส้นยาวที่ได้รับจาก SR
   env.store.setUser("B05");
   html = await env.render("p=work");
-  assert.match(html, /แท่งจาก SR 0\/36 เส้น/);
+  assert.match(html, /ยางเส้นยาวจาก SR 0\/36 เส้น/);
 });
 
 test("pages: the receive dialog shows the spec targets, computes the verdict live and asks a note only for a failure; the issue dialog proposes the oldest lots", async () => {

@@ -732,9 +732,9 @@
     palette: "bom",
     // เมนูเห็นเฉพาะผู้ที่ใช้ BOM (storeApi.usesBom: ทุกบัญชีทดสอบ · ใช้งานจริง = กลุ่มวางแผนและแผนกในสายผลิต)
     navAllowed: (employee) => storeApi.usesBom(employee),
-    // หัวกลุ่มของเมนูข้าง: "ทดสอบ" ในโหมดทดสอบ (sandboxOnly) · "การผลิต" เมื่อใช้งานจริง (realOnly) — รายการเดียวกัน แสดงทีละโหมด
+    // หัวกลุ่มของเมนูข้าง: "โรงงาน" ในโหมดทดสอบ (sandboxOnly · เรียงตามลำดับในผังงาน flowNo 2 = PP ร่วมกับโมดูลรายแผนก ดู factory-kit.js) · "การผลิต" เมื่อใช้งานจริง (realOnly) — รายการเดียวกัน แสดงทีละโหมด
     nav: [
-      { path: PATH, label: "BOM รายแผนก", icon: NAV_ICON, sandboxOnly: true, group: "ทดสอบ", subnav: sidebarNav },
+      { path: PATH, label: "BOM รายแผนก", icon: NAV_ICON, sandboxOnly: true, group: "โรงงาน", flowNo: 2, subnav: sidebarNav },
       { path: PATH, label: "BOM รายแผนก", icon: NAV_ICON, realOnly: true, group: "การผลิต", subnav: sidebarNav },
     ],
     pages: { [PATH]: renderBom },

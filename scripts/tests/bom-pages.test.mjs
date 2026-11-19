@@ -78,7 +78,8 @@ test("the module registers a sandbox-only standalone page, refuses users outside
   const html = await env.render();
   assert.match(html, /<select[^>]*data-rf-user/, "the role is picked from the toolbar select");
   assert.doesNotMatch(html, /data-rf-user-pick|rf-role-grid|data-rf-reset/, "no full-page role grid, and no reset before a role");
-  assert.equal(env.module.nav[0].group, "ทดสอบ", "listed under the test group in the side menu");
+  assert.equal(env.module.nav[0].group, "โรงงาน", "listed under the factory group in the side menu (test mode)");
+  assert.equal(env.module.nav[0].flowNo, 2, "after the sales step: PP is step 2 of the work tree");
   assert.equal(env.module.nav[0].subnav("bom"), "", "no sub-menu before a role is chosen");
   const outside = load({ sandbox: false });
   await outside.render();
