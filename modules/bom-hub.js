@@ -12,7 +12,8 @@
   const uomText = (ctx, code) => ctx.rules.uomLabel(code);
   const deptName = (ctx, dept) => String(ctx.rules.DEPT_LABEL[dept] ?? dept).replace(/^\w+ · /, "");
   // ป้ายแผนก: ตัวย่อ + สีประจำแผนก (สีเป็นตัวช่วย ตัวย่อเป็นตัวบอก) ชื่อเต็มอยู่ใน title
-  const deptChip = (ctx, dept) => `<span class="bom-dept" data-dept="${attr(dept)}" title="${attr(ctx.rules.DEPT_LABEL[dept] ?? dept)}">${esc(dept)}</span>`;
+  // (ใช้ชิ้นส่วนกลาง modules/factory-kit.js)
+  const deptChip = (ctx, dept) => root.MNP_FACTORY.deptChip(dept, ctx.rules.DEPT_LABEL);
   const pageHead = (ctx, title, sub = "", actionsHtml = "") => `<header class="rf-pagehead"><div class="rf-pagehead-main"><span class="rf-mod-ico" aria-hidden="true">${pages.icon(ctx.page)}</span><div><h1>${esc(title)}</h1>${sub ? `<p class="bom-hero-sub">${sub}</p>` : ""}</div></div>${actionsHtml ? `<div class="rf-row">${actionsHtml}</div>` : ""}</header>`;
 
   // ลิงก์ของหน้าเดิมที่ถูกวางเป็นแท็บ: ชิ้นงาน/สินค้า/โครงสร้าง กลับมาที่หน้าสินค้า (แท็บที่ตรงกัน) หน้าอื่นไปตามเดิม
@@ -1514,7 +1515,6 @@
   }
 
   // ---------- งานของฉัน: การ์ดงานของแผนกตัวเอง ปุ่มหลักปุ่มเดียวต่องาน ----------
-  const JOB_TONE = Object.freeze({ in_progress: ["now", "กำลังทำ"], queued: ["", "รอคิว"], hold: ["hold", "พักงาน"], done: ["done", "เสร็จ"] });
   // งานที่ต้องทำของหน้างานของฉันตามพารามิเตอร์ (params ว่าง = ค่าตั้งต้นของหน้า) · ใช้ทั้งหน้าและตัวเลขที่เมนู (workCount) จึงนับชุดเดียวกันเสมอ
   // ฝ่ายวางแผน/ผู้จัดการเลือกดูทุกแผนกได้ · แผนกอื่นเห็นเฉพาะงานของแผนกตัวเอง · คลังสินค้า (WH) ไม่มีงานผลิตของตัวเอง (ไม่อยู่ในแผนกผลิต) แต่มีการ์ดรับเข้า/ส่งมอบ
   function workBoard(ctx, params) {
@@ -1571,7 +1571,7 @@
         partGroups.get(job.orderId).push(job);
       } else cards.push({ job });
     }
-    const dueText = (dueAt, finished) => (finished ? "" : dueAt < ctx.now ? `<span class="bom-job-late">เลยกำหนด ${esc(rules.fmtDate(dueAt))}</span>` : `<span class="muted">ส่งภายใน ${esc(rules.fmtDate(dueAt))}</span>`);
+    const dueText = (dueAt, finished) => root.MNP_FACTORY.dueText(ctx, dueAt, finished);
     const cardHtml = (entry) => {
       if (entry.parts) {
         const jobs = partGroups.get(entry.parts);
@@ -1582,32 +1582,8 @@
           <h2>${esc(`เบิกของตามใบ ${entry.parts}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${esc(order?.customer ?? "")}</p>
           <ul class="bom-job-parts">${jobs.slice(0, 6).map((job) => `<li><span>${esc(job.name)}</span><span class="nowrap">${esc(`${rules.fmtQty(finished ? job.qtyDone : Math.max(0, job.qtyPlanned - (Number(job.qtyDone) || 0)))} ${uomText(ctx, job.uom)}`)}</span></li>`).join("")}</ul>${jobs.length > 6 ? `<p class="small muted">และอีก ${jobs.length - 6} รายการ</p>` : ""}${button}</article>`;
       }
-      const job = entry.job;
-      const order = orderOf(job.orderId);
-      const [tone, label] = JOB_TONE[job.status] ?? ["", job.status];
-      const canWork = ctx.helpers.canWorkJob(user, job) && ["released", "in_progress"].includes(order?.status) && job.status !== "done";
-      const left = Math.max(0, job.qtyPlanned - job.qtyDone);
-      const started = job.qtyDone > 0 || job.status === "in_progress";
-      const linkedJob = Boolean(ctx.helpers.isLinkedJob?.(job));
-      // งานที่พักอยู่รายงานผลไม่ได้ ต้องกด "ทำต่อ" / "คืนคิว" ก่อน
-      const main = canWork && !linkedJob && job.status !== "hold" ? ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "bom-job-main" }) : "";
-      const more = [];
-      const resume = (Number(job.qtyDone) || 0) > 0;
-      if (canWork) more.push(job.status === "hold" ? ui.button(resume ? "ทำต่อ" : "คืนคิว", { action: "setJobStatus", args: { jobId: job.id, status: resume ? "in_progress" : "queued" }, className: "secondary small" }) : ui.openButton("พักงาน", "jobHold", { jobId: job.id }, { className: "secondary small" }));
-      // งานที่จะไม่มีใครรายงานแล้ว: ฝ่ายวางแผนปิดงานพร้อมเหตุผล (ไม่เพิ่มยอด) ใบจึงปิดได้
-      if (canWork && ctx.helpers.canPlan(user)) more.push(ui.openButton("ปิดงานนี้", "jobClose", { jobId: job.id }, { className: "secondary small" }));
-      const closedBy = ctx.helpers.jobCloseNote(job);
-      const heldBy = closedBy ? null : ctx.helpers.jobHoldNote?.(job);
-      if (job.status !== "done" && ctx.helpers.canLinkRubberflow(user, job) && ["released", "in_progress"].includes(order?.status) && !job.externalRef) more.push(ui.openButton("สร้าง WO ใน RubberFlow", "jobRubberflow", { jobId: job.id }, { className: "secondary small" }));
-      if (job.externalRef) more.push(ui.link(`WO ${job.externalRef.woId}`, `#/rubberflow?p=orders&q=${encodeURIComponent(job.externalRef.woId)}`, "btn rf-btn secondary small"));
-      const amount = started ? `ได้แล้ว ${rules.fmtQty(job.qtyDone)} จาก ${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}` : `ต้องได้ ${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`;
-      // งาน GR: แท่งที่คลังแท่งยาว (SR) จ่ายให้ใบนี้แล้ว ต่อเส้นยางที่ชิ้นงานนี้ใช้ (rules.rodIssueNeeds)
-      const rodLine = job.dept === "GR" && job.status !== "done" ? rules.rodIssueNeeds(data, job.orderId).filter((need) => need.grJobs.some((entry) => entry.id === job.id))
-        .map((need) => `<p class="small muted" title="${attr(`${need.itemCode} · GR ต้องใช้ ${rules.fmtQty(need.need)} ${uomText(ctx, need.uom)}`)}">${esc(`แท่งจาก SR ${rules.fmtQty(need.issued)}/${rules.fmtQty(need.need)} ${uomText(ctx, need.uom)}`)}</p>`).join("") : "";
-      return `<article class="card rf-card bom-job${tone ? ` is-${tone}` : ""}"><div class="bom-job-top"><span class="bom-job-state">${esc(label)}</span>${dueText(job.dueAt, job.status === "done")}</div>
-        <h2>${esc(job.name)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, job.dept)} ` : ""}<span class="rf-mono">${esc(job.itemCode)}</span> · ใบ ${ui.link(job.orderId, ctx.url("orders", { sel: job.orderId }))}</p>
-        <div class="bom-job-amount"><span>${esc(amount)}</span>${started && job.status !== "done" ? `<span class="muted">เหลือ ${esc(rules.fmtQty(left))}</span>` : ""}</div>${started ? ui.progress(job.qtyDone, job.qtyPlanned, job.status === "hold" ? "bad" : "") : ""}${job.qtyReject ? `<p class="small muted">เสีย ${esc(rules.fmtQty(job.qtyReject))}</p>` : ""}${closedBy ? `<p class="small muted">${esc(`ปิดงานโดย ${closedBy.by}: ${closedBy.reason}`)}</p>` : ""}${heldBy ? `<p class="small muted">${esc(`พักโดย ${heldBy.by}: ${heldBy.reason}`)}</p>` : ""}${rodLine}${canWork && linkedJob ? '<p class="small muted" title="ยอดของงานนี้เพิ่มเองเมื่อคลังแท่งยาว (SR) รับแท่งจากล็อตตกแต่งของ WO เข้าคลังและผ่านตรวจขนาด">ยอดมาจากการรับเข้าคลัง SR</p>' : ""}
-        ${main}${more.length ? `<div class="rf-row bom-job-more">${more.join("")}</div>` : ""}</article>`;
+      // การ์ดงานผลิตเป็นชิ้นส่วนกลาง (modules/factory-kit.js) ใช้ร่วมกับโมดูลแผนกอื่น
+      return root.MNP_FACTORY.jobCard(ctx, entry.job, { planner, dept, show, orderOf });
     };
     const sub = dept && dept !== "ALL" ? esc(rules.DEPT_LABEL[dept] ?? dept) : "";
     const filterNote = orderId ? `<p class="bom-back">เฉพาะใบ ${esc(orderId)} · ${ui.link("ดูทุกใบ", ctx.url("work", { dept: planner && dept !== "ALL" ? dept : null }))}</p>` : "";

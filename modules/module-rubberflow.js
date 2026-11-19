@@ -714,9 +714,9 @@
     palette: "rf",
     // เมนูเห็นเฉพาะผู้ที่ใช้ RubberFlow (storeApi.usesRubberFlow: ทุกบัญชีทดสอบ · ใช้งานจริง = บทบาทของสถานี)
     navAllowed: (employee) => storeApi.usesRubberFlow(employee),
-    // หัวกลุ่มของเมนูข้าง: "ทดสอบ" ในโหมดทดสอบ (sandboxOnly) · "การผลิต" เมื่อใช้งานจริง (realOnly) — รายการเดียวกัน แสดงทีละโหมด
+    // หัวกลุ่มของเมนูข้าง: "โรงงาน" ในโหมดทดสอบ (sandboxOnly · เรียงตามลำดับในผังงาน flowNo 4 = RB ร่วมกับโมดูลรายแผนก ดู factory-kit.js) · "การผลิต" เมื่อใช้งานจริง (realOnly) — รายการเดียวกัน แสดงทีละโหมด
     nav: [
-      { path: PATH, label: "RubberFlow (แผนก RB)", icon: NAV_ICON, sandboxOnly: true, group: "ทดสอบ", subnav: sidebarNav },
+      { path: PATH, label: "RubberFlow (แผนก RB)", icon: NAV_ICON, sandboxOnly: true, group: "โรงงาน", flowNo: 4, subnav: sidebarNav },
       { path: PATH, label: "RubberFlow (แผนก RB)", icon: NAV_ICON, realOnly: true, group: "การผลิต", subnav: sidebarNav },
     ],
     pages: { [PATH]: renderRubberFlow },
