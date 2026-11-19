@@ -10,8 +10,11 @@
 // storage = ที่เก็บข้อมูลหลัก BOM ของหน้า (localStorage) ไม่ส่ง = อยู่ในหน่วยความจำอย่างเดียว
 // ncr = สถานการณ์ NCR อย่างเดียว (?ncr=1): ไม่มีคำร้องอื่น มี NCR ครบทุกขั้น และกดขั้นของ NCR ได้จริงในฐานข้อมูลจำลอง (เก็บลง storage
 // ใบจึงเดินต่อเมื่อสลับผู้ใช้) · as = รหัสพนักงานจำลองที่ใช้เข้าระบบ (?as=e5) ใช้ได้เฉพาะสถานการณ์ NCR
+// itwo = (ร่วมกับ sandbox) เพิ่ม persona SBX-IT-STAFF / ADMIN / APPROVER และฐานข้อมูลจำลองของใบสั่งงาน IT (scripts/pilot-harness-itwo-mock.mjs) → ?sandbox=1&itwo=1
 // real = นอกโหมดทดสอบ ให้ผู้ใช้จำลองเป็นพนักงานจริงของแผนก/ตำแหน่งเดียวกับบัญชีทดสอบชื่อนั้น (?real=rb · pp rbh gr st sr wh whh qa pk pt bg) เพื่อลองเส้นทางใช้งานจริงของ BOM / RubberFlow
-export function createMockSupabase({ empty = false, sandbox = false, ncr = false, master = false, as = null, real = null, now = () => Date.now(), warn = () => {}, objectUrl = null, storage = null } = {}) {
+import { createItwoMock } from "./pilot-harness-itwo-mock.mjs";
+
+export function createMockSupabase({ empty = false, sandbox = false, itwo = false, ncr = false, master = false, as = null, real = null, now = () => Date.now(), warn = () => {}, objectUrl = null, storage = null } = {}) {
   const YEAR = "2569";
   const DAY = 86400000;
   const startedAt = now();
@@ -512,8 +515,13 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     ["persona-pt", "พิมพ์ใจ", "ฉีดพลาสติก", "พนักงานแผนก PT (ฉีดพลาสติก)", "PT", "ฝ่ายผลิต PT"],
     ["persona-bg", "บุญมา", "เย็บกระเป๋า", "พนักงานแผนก BG (เย็บกระเป๋า)", "BG", "ฝ่ายผลิต BG"],
   ];
+  // ใบสั่งงาน IT (?itwo=1): ฐานข้อมูลจำลองเก็บในหน่วยความจำ ผู้ทำรายการ = persona ที่เลือกอยู่ (currentPersona) · createItwoMock ถูกฉีดมากับสคริปต์ของเบราว์เซอร์ (mockSupabaseScript)
+  const itwoMock = sandbox && itwo
+    ? createItwoMock({ stamp: () => stamp(), now: () => now(), persona: () => currentPersona(), personas: () => personaRows() })
+    : null;
   const personaRows = () => [
     { ...expand("employees", ME), id: "persona-1", job_title: "บัญชีทดสอบ ผู้จัดการแผนก" },
+    ...(itwoMock ? itwoMock.personaRows(expand("employees", ME)) : []),
     ...PERSONA_SPECS.map(([id, first_name, last_name, job_title, dept, deptName, roleCode]) => ({
       ...expand("employees", ME), id, employee_no: `T-${dept}${roleCode ? "H" : ""}`, first_name, last_name, job_title,
       role: roleCode ? { code: roleCode, name_th: "ผู้จัดการแผนก" } : { code: "staff", name_th: "พนักงาน" }, department: { code: dept, name_th: deptName },
@@ -2816,6 +2824,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
   };
 
   const RPC = {
+    ...(itwoMock ? itwoMock.handlers : {}),
     ...NCR_RPC,
     app_my_approval_modules: () => request_types.map(({ code }) => ({ code })),
     app_lab_access: () => false,
@@ -3187,6 +3196,8 @@ export function installMockSupabase(win, create, options = {}) {
     // ?real=rb = นอกโหมดทดสอบ ผู้ใช้จำลองเป็นพนักงานจริงของแผนก RB (รหัสเดียวกับบัญชีทดสอบ: pp rbh gr st sr wh whh qa pk pt bg)
     real: params.get("real"),
     sandbox: Boolean(options.sandbox) || new win.URLSearchParams(win.location.search).has("sandbox"),
+    // ?itwo=1 (ใช้คู่กับ ?sandbox=1) = ฐานข้อมูลจำลองของใบสั่งงาน IT + persona SBX-IT-*
+    itwo: params.has("itwo") || Boolean(options.itwo),
     storage: (() => { try { return win.localStorage; } catch { return null; } })(),
     warn: (message) => win.console.warn(message),
     objectUrl: (file) => win.URL.createObjectURL(file),
@@ -3194,6 +3205,7 @@ export function installMockSupabase(win, create, options = {}) {
   win.supabase = { createClient: () => client };
 }
 
-export function mockSupabaseScript({ sandbox = false } = {}) {
-  return `(() => {\n${createMockSupabase.toString()}\n(${installMockSupabase.toString()})(window, createMockSupabase, ${JSON.stringify({ sandbox })});\n})();\n`;
+export function mockSupabaseScript({ sandbox = false, itwo = false } = {}) {
+  // createItwoMock ฉีดเป็นซอร์สก่อน createMockSupabase (ในเบราว์เซอร์ไม่มี import) · Node ใช้ตัวที่ import ไว้ด้านบน
+  return `(() => {\n${createItwoMock.toString()}\n${createMockSupabase.toString()}\n(${installMockSupabase.toString()})(window, createMockSupabase, ${JSON.stringify({ sandbox, itwo })});\n})();\n`;
 }

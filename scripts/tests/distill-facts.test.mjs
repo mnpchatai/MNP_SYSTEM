@@ -440,6 +440,6 @@ test("batch 19: one search across list fields, NCR responders read the problem i
   // ชื่อช่องโปรไฟล์บอกว่าแสดงที่ไหน · "อื่น ๆ" · โหมดทดสอบไม่มีปุ่มล้าง NCR บน RubberFlow/BOM · ปุ่มใน BOM บอกปลายทาง
   assert.match(app, /ตำแหน่งที่แสดงใต้ชื่อ \(ถ้ามี\)<\/label>/);
   assert.doesNotMatch(ncr, /อื่นๆ/);
-  assert.match(app, /const showPurge = !\["rubberflow", "bom"\]\.includes\(currentRoute\(\)\.path\);/);
+  assert.match(app, /const showPurge = !\["rubberflow", "bom", "office"\]\.includes\(currentRoute\(\)\.path\);/);
   assert.match(read("modules/module-bom.js"), />ใบสั่งผลิต \(RubberFlow\)<\/a>/);
 });

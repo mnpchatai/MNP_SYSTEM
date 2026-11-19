@@ -3181,3 +3181,91 @@ table.bom-tree td.right { white-space: nowrap; }
   .bom-tree-split:hover::before, .bom-tree-split:focus-visible::before, .bom-tree-split.is-dragging::before { left: 4px; width: 4px; background: var(--primary); }
   .bom-tree-split:focus-visible { outline: 2px solid var(--primary); outline-offset: 0; }
 }
+
+/* ---------- ใบสั่งงาน IT (IT01-FM06) · modules/itwo-pages.js ---------- */
+/* ตัวเลขบนแท็บ (รออนุมัติ / งาน IT) */
+.itwo-tab-count { margin-left: 6px; min-width: 20px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; color: var(--primary-ink); background: var(--primary-soft); border-radius: 999px; font-size: var(--text-caption); font-weight: 700; line-height: 20px; }
+.view-tab.active .itwo-tab-count { color: inherit; background: color-mix(in srgb, currentColor 16%, transparent); }
+/* ป้ายใบทดสอบ: ขอบประเด่นกว่าป้ายสถานะ เห็นทุกหน้า (หัวหน้า แถวในรายการ ใบพิมพ์) */
+.badge.itwo-test-tag { color: var(--warning-ink); background: var(--warning-soft); border: 1px solid var(--warning); }
+.itwo-head .itwo-test-tag { margin-left: 10px; align-self: center; }
+/* ตัวเลือกแบบกดเลือก (ประเภทคำขอ เอกสารแนบ งานด่วน สิทธิ์ทีม IT): ปุ่มสูง 44px แตะง่ายบนมือถือ */
+.itwo-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.itwo-choice { min-height: 44px; padding: 0 14px; display: inline-flex; align-items: center; gap: 8px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); font-size: var(--text-ui); font-weight: 600; cursor: pointer; }
+.itwo-choice input { width: 18px; height: 18px; margin: 0; flex: none; }
+.itwo-choice:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); }
+.itwo-choice:has(input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 2px; }
+[data-field]:has(> .field-error) .itwo-choice { border-color: var(--danger); }
+.itwo-urgent { justify-self: start; }
+.itwo-requester, .itwo-duration { margin: 0 0 14px; }
+/* ช่องที่ซ่อน (หมายเหตุเอกสารแนบ) ต้องซ่อนจริง: .field เป็น grid จึงทับ [hidden] ของเบราว์เซอร์ */
+.itwo-page [hidden] { display: none !important; }
+/* ขั้นอนุมัติของแถวในหน้างาน IT */
+.itwo-step { display: block; color: var(--muted); font-size: var(--text-caption); white-space: nowrap; }
+.itwo-step.is-done { color: var(--success-ink); font-weight: 700; }
+.itwo-group + .itwo-group { margin-top: 0; }
+.itwo-group > h2 { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.itwo-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.itwo-facts .definition.wide { grid-column: 1 / -1; }
+@media (min-width: 800px) { .itwo-actions .action-panel-buttons .btn { flex: 0 0 auto; } }
+.itwo-pending-steps { margin-top: 4px; color: var(--warning-ink); }
+/* ส่วน "สำหรับแผนก IT" */
+.itwo-access-table { width: 100%; border-collapse: collapse; font-size: var(--text-meta); }
+.itwo-access-table th, .itwo-access-table td { padding: 8px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--soft-line); overflow-wrap: anywhere; }
+.itwo-access-table th { color: var(--muted); font-size: var(--text-caption); }
+.itwo-access-row { min-width: 0; margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-md); }
+.itwo-access-row legend { padding: 0 6px; font-size: var(--text-meta); font-weight: 700; }
+.itwo-access-row .field-error { margin: 0 0 8px; }
+.itwo-access .form-actions { flex-wrap: wrap; justify-content: flex-start; margin-top: 12px; }
+.itwo-counter-no { margin: 0 0 12px; font-size: var(--text-heading); }
+.itwo-purge { margin-top: 24px; }
+@media (max-width: 719px) {
+  .itwo-access-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .itwo-access-table, .itwo-access-table tbody, .itwo-access-table tr, .itwo-access-table td { display: block; }
+  .itwo-access-table tr { margin-bottom: 8px; padding: 6px 0; border: 1px solid var(--line); border-radius: var(--radius-md); }
+  .itwo-access-table td { padding: 4px 12px; border: 0; }
+  .itwo-access-table td::before { content: attr(data-label) ": "; color: var(--muted); font-weight: 700; }
+}
+
+/* หน้าพิมพ์ A4 (#/office?module=work-order&view=print) เลย์เอาต์ตามฟอร์ม IT01-FM06 · พื้นขาวตัวดำเสมอ ไม่ตามธีมมืด */
+.itwo-print-toolbar { margin-bottom: 14px; display: flex; flex-wrap: wrap; gap: 10px; }
+.itwo-sheet { position: relative; max-width: 210mm; margin: 0 auto; padding: 12mm; overflow: hidden; color: #000; background: #fff; border: 1px solid var(--line); font-size: 10.5pt; line-height: 1.4; page: itwo-a4; }
+.itwo-sheet-title { position: relative; margin-bottom: 8px; text-align: center; }
+.itwo-sheet-title h1 { margin: 0; font-size: 17pt; line-height: 1.3; letter-spacing: 0; color: #000; }
+.itwo-form-code { position: absolute; top: 0; right: 0; padding: 0 8px; border: 1px solid #000; font-size: 9.5pt; }
+.itwo-test-note { margin: 2px 0 0; font-weight: 700; color: #000; }
+.itwo-sheet-table { width: 100%; margin-bottom: 6px; border-collapse: collapse; }
+.itwo-sheet-table th, .itwo-sheet-table td { padding: 3px 7px; text-align: left; vertical-align: top; border: 1px solid #000; overflow-wrap: anywhere; color: #000; background: transparent; }
+.itwo-sheet-table th[scope="row"] { width: 21%; font-weight: 700; background: #f0f0f0; }
+.itwo-sheet-table thead th { text-align: center; background: #f0f0f0; }
+.itwo-sheet-access th[scope="row"] { width: auto; }
+.itwo-sheet-details { min-height: 22mm; white-space: pre-wrap; }
+.itwo-center { width: 14mm; text-align: center !important; }
+.itwo-choice-print { display: inline-block; margin-right: 14px; white-space: nowrap; }
+.itwo-urgent-mark { color: #000; }
+.itwo-sheet-section { margin: 10px 0 4px; font-size: 11.5pt; color: #000; }
+.itwo-signatures { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid #000; margin-bottom: 6px; }
+.itwo-signature { min-height: 30mm; padding: 4px 6px; display: flex; flex-direction: column; border-right: 1px solid #000; text-align: center; font-size: 9.5pt; }
+.itwo-signature:last-child { border-right: 0; }
+.itwo-signature-label { padding-bottom: 3px; border-bottom: 1px dotted #000; font-weight: 700; }
+.itwo-signature-note { margin-top: 3px; font-size: 8.5pt; overflow-wrap: anywhere; }
+.itwo-signature-name { margin-top: auto; font-weight: 700; overflow-wrap: anywhere; }
+.itwo-signature-time { min-height: 1.4em; font-size: 8.5pt; }
+.itwo-sheet-note { margin: 3px 0; font-size: 9pt; color: #000; }
+/* ลายน้ำ "ทดสอบ" ใบทดสอบเท่านั้น: ตัวเอียงจางพาดกลางใบ ไม่บังข้อความ (พิมพ์ออกมาก็เห็น) */
+.itwo-watermark { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; color: rgba(0, 0, 0, .08); font-size: 96pt; font-weight: 800; letter-spacing: .1em; transform: rotate(-24deg); }
+@media (max-width: 719px) {
+  .itwo-sheet { padding: 12px; }
+  .itwo-signatures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .itwo-signature { border-bottom: 1px solid #000; }
+  .itwo-watermark { font-size: 56pt; }
+}
+@page itwo-a4 { size: A4; margin: 12mm; }
+@media print {
+  body:has(.itwo-sheet) :is(.sidebar, .topbar, .mobile-nav-toggle, .nav-backdrop, .sandbox-banner, .skip-link, .offline-banner, .update-banner, .toast, .install-banner, .no-print) { display: none !important; }
+  body:has(.itwo-sheet), body:has(.itwo-sheet) .app-shell, body:has(.itwo-sheet) .main, body:has(.itwo-sheet) .content { display: block; margin: 0; padding: 0; background: #fff; max-width: none; }
+  .itwo-sheet { max-width: none; margin: 0; padding: 0; border: 0; overflow: visible; }
+  .itwo-signatures { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .itwo-signature { border-bottom: 0; }
+  .itwo-sheet-table, .itwo-signatures { break-inside: avoid; }
+}
