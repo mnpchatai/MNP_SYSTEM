@@ -1401,6 +1401,14 @@ test("SR lot page: identity once, source, location, QC result, buckets and move 
   const read = await viewer.open("FACTORY_SR", `lot=${l1.id}`);
   assert.doesNotMatch(read, /data-rf-open="rod/);
   assert.match(read, /พิมพ์ป้าย/);
+  // แต่ละข้อมูลแสดงครั้งเดียว: ล็อตที่มีแถวรับเข้าในประวัติไม่มีแถว "รับเข้า" ซ้ำในรายการข้อมูล · ล็อตรับนอกใบสั่งไม่ซ้ำหมายเหตุที่มาในแถวรับเข้า
+  assert.doesNotMatch(html, /<dt[^>]*>รับเข้า<\/dt>/, "the receive facts are in the history");
+  assert.equal([...opening.matchAll(new RegExp(escapeHtml(l4.sourceNote), "g"))].length, 1, "the source note once, in the source row");
+  // ล็อตที่รับแล้วแต่ยังรอ QA ไม่มีแถวรับเข้าในประวัติ: รายการข้อมูลยังบอกจำนวน ผู้รับ เวลา
+  const lot3 = env.store.data().rodLots.find((lot) => lot.id === rodLotOf(env, 3).id);
+  Object.assign(lot3, { status: "held", qtyReceived: 8, receivedBy: "SR-ผู้ทดสอบ", receivedAt: lot3.createdAt });
+  assert.match(await env.open("FACTORY_SR", `lot=${lot3.id}`), /<dt[^>]*>รับเข้า<\/dt>[\s\S]*SR-ผู้ทดสอบ/);
+  lot3.status = "pending";
   // ปรับยอดต้องเป็นล็อตที่อยู่ในคลัง · ล็อตที่รอรับไม่มีปุ่มย้ายตำแหน่ง/ปรับยอด
   const pending = await env.open("FACTORY_SR", `lot=${rodLotOf(env, 2).id}`);
   assert.doesNotMatch(pending, /data-rf-open="rod(Location|Adjust)"/);
@@ -1408,6 +1416,38 @@ test("SR lot page: identity once, source, location, QC result, buckets and move 
   // ไม่พบล็อต
   assert.match(await env.open("FACTORY_SR", "lot=no-such-lot"), /ไม่พบล็อตนี้/);
   assert.match(await env.open("FACTORY_SR", "lot=no-such-lot&print=1"), /ไม่พบล็อตนี้/);
+});
+
+test("SR label: printable only for a lot that is held or in the store; other statuses get no button and a short message; owner and quantity are the current balance", async () => {
+  const env = srEnv();
+  const rules = env.context.MNP_BOM_RULES;
+  const l1 = rodLotOf(env, 1);
+  const buttonOf = (html, lot) => html.includes(`lot=${lot.id}&amp;print=1`);
+  for (const status of ["pending", "returned", "scrapped"]) {
+    const lot = rodLotOf(env, 2);
+    lot.status = status;
+    assert.ok(!buttonOf(await env.open("FACTORY_SR", `lot=${lot.id}`), lot), `${status}: no print button`);
+    const view = await env.open("FACTORY_SR", `lot=${lot.id}&print=1`);
+    assert.doesNotMatch(view, /<article class="sr-label"|data-sr-print/, `${status}: no label`);
+    assert.match(view, /พิมพ์ป้ายได้เฉพาะล็อตที่รอ QA ตัดสินหรืออยู่ในคลัง/);
+  }
+  for (const status of ["held", "stored"]) {
+    const lot = rodLotOf(env, 2);
+    lot.status = status;
+    assert.ok(buttonOf(await env.open("FACTORY_SR", `lot=${lot.id}`), lot), `${status}: print button`);
+    assert.match(await env.open("FACTORY_SR", `lot=${lot.id}&print=1`), /<article class="sr-label"/, `${status}: label`);
+  }
+  rodLotOf(env, 2).status = "pending";
+  // เหลือในคลัง: ป้ายบอกยอดคงเหลือ ไม่ใช่ยอดที่รับ · ล็อตเดียวหลายเจ้าของ = ยอดของแต่ละเจ้าของ
+  assert.equal(env.store.run("adjustRods", { lotId: rodLotOf(env, 0).id, qty: -2, note: "นับจริงไม่พบ" }).ok, true);
+  const adjusted = await env.open("FACTORY_SR", `lot=${rodLotOf(env, 0).id}&print=1`);
+  assert.match(adjusted, /<dt>คงเหลือ<\/dt><dd>4 /, "the balance, not the 6 received");
+  assert.doesNotMatch(adjusted, /จำนวนรับ/);
+  env.store.data().rodMoves.push({ id: "5e1d0000-0000-4000-8000-000000000999", lotId: l1.id, itemCode: l1.itemCode, kind: "adjust", qty: 5, ownerOrderId: null, forOrderId: null, reversesId: null, note: "", at: Date.now(), by: "SR" });
+  const unit = rules.uomLabel(l1.uom);
+  const shared = await env.open("FACTORY_SR", `lot=${l1.id}&print=1`);
+  assert.ok(shared.includes(`<dt>ของ</dt><dd>ของใบ DEMO-26006 20 ${unit} · สต็อกกลาง 5 ${unit}</dd>`), "every owner with stock");
+  assert.match(shared, new RegExp(`<dt>คงเหลือ</dt><dd>25 ${unit}</dd>`));
 });
 
 test("SR label: one printable label per lot with code, name, compound, colour, size, lot, quantity, date, location, owner and a QR of the absolute lot URL; print shows only the label", async () => {

@@ -95,7 +95,7 @@
 
   // ---------- จ่ายให้ GR ----------
   // แถวประวัติของยาง (หน้าจ่าย หน้าล็อต หน้าประวัติเข้าออก): showLot = มีคอลัมน์ล็อต/เส้นยาง
-  function moveRow(ctx, move, { showLot = true, reversed }) {
+  function moveRow(ctx, move, { showLot = true, reversed, hideNote = false }) {
     const { ui, rules } = ctx;
     const lot = lotOf(ctx, move.lotId);
     const kinds = rod().ROD_KIND_LABEL;
@@ -104,7 +104,7 @@
     const undone = reversed.has(move.id);
     const undo = move.kind === "issue" && !undone && canStore(ctx) ? ui.openButton("ย้อน", "rodReverse", { moveId: move.id }, { className: "secondary small", ariaLabel: `ย้อนการจ่าย ${rules.fmtQty(-num(move.qty))} ของใบ ${move.forOrderId}` }) : "";
     const lotCell = showLot ? `<td>${itemCell(ctx, move.itemCode)}${lot ? `<div>${ui.link(`ล็อต ${lot.lotNo}`, lotHref(lot), "rf-mono small")}</div>` : ""}</td>` : "";
-    return `<tr${undone ? ' class="muted"' : ""}><td class="nowrap small">${F.esc(rules.fmtDateTime(move.at))}</td>${lotCell}<td>${F.esc(kinds[move.kind] ?? move.kind)}${undone ? ` ${ui.badge("", "ถูกย้อน")}` : ""}<div class="small muted">${F.esc(where)}</div>${move.note ? `<div class="small muted">${F.esc(move.note)}</div>` : ""}</td><td class="right rf-mono">${F.esc(`${num(move.qty) > 0 ? "+" : ""}${rules.fmtQty(move.qty)}`)}</td><td class="small">${F.esc(move.by ?? "")}</td><td class="right">${undo}</td></tr>`;
+    return `<tr${undone ? ' class="muted"' : ""}><td class="nowrap small">${F.esc(rules.fmtDateTime(move.at))}</td>${lotCell}<td>${F.esc(kinds[move.kind] ?? move.kind)}${undone ? ` ${ui.badge("", "ถูกย้อน")}` : ""}<div class="small muted">${F.esc(where)}</div>${move.note && !hideNote ? `<div class="small muted">${F.esc(move.note)}</div>` : ""}</td><td class="right rf-mono">${F.esc(`${num(move.qty) > 0 ? "+" : ""}${rules.fmtQty(move.qty)}`)}</td><td class="small">${F.esc(move.by ?? "")}</td><td class="right">${undo}</td></tr>`;
   }
   const moveHead = (showLot) => ["เวลา", ...(showLot ? ["เส้นยาง"] : []), "รายการ", { label: "เปลี่ยน", className: "right" }, "ผู้ทำ", ""];
 
@@ -145,12 +145,17 @@
   function lotMissing(ctx, kind) {
     return { html: `${backLink(F.routeUrl(ROUTE, { tab: "stock" }), "‹ ในคลัง")}${F.pageHead(ctx, kind === "print" ? "พิมพ์ป้ายล็อต" : "ล็อตยางเส้นยาว")}${ctx.ui.card(ctx.ui.empty("ไม่พบล็อตนี้ (อาจถูกลบหรือยังโหลดไม่เสร็จ)"))}` };
   }
+  // ป้ายพิมพ์ได้เฉพาะล็อตที่อยู่กับคลัง (รอ QA ตัดสิน หรืออยู่ในคลัง)
+  const labelPrintable = (lot) => ["held", "stored"].includes(lot.status);
   function lotView(ctx, lot) {
     const { ui, rules, data } = ctx;
     const attrs = attrsOf(ctx, lot.itemCode);
     const unit = rules.uomLabel(lot.uom);
     const buckets = rules.rodBuckets(data).filter((bucket) => bucket.lotId === lot.id).map((bucket) => `${rod().bucketText(ctx, bucket.owner)} ${rules.fmtQty(bucket.qty)} ${unit}`);
     const colour = [attrs.color, attrs.colorName].filter(Boolean).join(" · ");
+    const moves = (data.rodMoves ?? []).filter((move) => move.lotId === lot.id).sort(byNewest);
+    // รับเข้า (จำนวน ผู้รับ เวลา) อยู่ในประวัติของล็อตแล้วเมื่อมีแถวรับเข้า · ล็อตที่ยังไม่มีแถวรับเข้า (รอ QA ตัดสิน) แสดงในรายการข้อมูลแทน
+    const received = moves.some((move) => move.kind === "receive");
     const facts = ui.kv([
       ["เส้นยาง", `${ui.mono(lot.itemCode)}${attrs.name ? `<div class="small muted">${F.esc(attrs.name)}</div>` : ""}`],
       ...(attrs.compound ? [["สูตรยาง", F.esc(attrs.compound)]] : []),
@@ -160,16 +165,15 @@
       ["ที่มา", lot.orderId ? `${ui.link(`ใบ ${lot.orderId}`, ctx.url("orders", { sel: lot.orderId }), "rf-mono")} <span class="small muted">${F.esc(`${rules.ROD_SOURCE_LABEL.order} · งาน ${lot.jobNo} · WO ${lot.woNo}`)}</span>` : F.esc(`${rules.ROD_SOURCE_LABEL.opening}${lot.sourceNote ? ` · ${lot.sourceNote}` : ""}`)],
       ["ตำแหน่ง", locationText(lot)],
       ...(lot.orderId ? [["ส่งมา", F.esc(`${rules.fmtQty(lot.qtySent)} ${unit} · ${rules.fmtDateTime(lot.createdAt)}`)]] : []),
-      ...(lot.qtyReceived !== null && lot.qtyReceived !== undefined ? [["รับเข้า", F.esc(`${rules.fmtQty(lot.qtyReceived)} ${unit} · ${lot.receivedBy ?? ""} ${rules.fmtDateTime(lot.receivedAt)}`)]] : []),
+      ...(!received && lot.qtyReceived !== null && lot.qtyReceived !== undefined ? [["รับเข้า", F.esc(`${rules.fmtQty(lot.qtyReceived)} ${unit} · ${lot.receivedBy ?? ""} ${rules.fmtDateTime(lot.receivedAt)}`)]] : []),
       ...(lot.decision ? [["ผลตัดสิน QA", F.esc(`${rules.ROD_DECISION_LABEL[lot.decision] ?? lot.decision} · ${lot.decidedBy ?? ""} ${rules.fmtDateTime(lot.decidedAt)} · ${lot.decisionNote ?? ""}`)]] : []),
       ...(buckets.length ? [["คงเหลือ", F.esc(buckets.join(" · "))]] : []),
     ]);
     const qc = lot.qc ? ui.card(`${rod().qcRowsHtml(ctx, lot)}${lot.qc.note ? `<p class="small muted">${F.esc(`หมายเหตุของ SR: ${lot.qc.note}`)}</p>` : ""}`, { title: F.esc("ผลตรวจขนาดตอนรับเข้า") }) : "";
     const reversed = rules.rodReversedIds(data.rodMoves);
-    const moves = (data.rodMoves ?? []).filter((move) => move.lotId === lot.id).sort(byNewest);
-    const history = ui.card(ui.table(moveHead(false), moves.map((move) => moveRow(ctx, move, { showLot: false, reversed })), { emptyText: "ยังไม่มียางเส้นยาวเข้าคลังจากล็อตนี้" }), { title: F.esc("ประวัติเข้าออกของล็อต"), flush: true });
+    const history = ui.card(ui.table(moveHead(false), moves.map((move) => moveRow(ctx, move, { showLot: false, reversed, hideNote: !lot.orderId && move.kind === "receive" })), { emptyText: "ยังไม่มียางเส้นยาวเข้าคลังจากล็อตนี้" }), { title: F.esc("ประวัติเข้าออกของล็อต"), flush: true });
     const buttons = [
-      ui.link("พิมพ์ป้าย", lotHref(lot, { print: 1 }), "btn rf-btn secondary"),
+      labelPrintable(lot) ? ui.link("พิมพ์ป้าย", lotHref(lot, { print: 1 }), "btn rf-btn secondary") : "",
       ["held", "stored"].includes(lot.status) && canStore(ctx) ? ui.openButton("ย้ายตำแหน่ง", "rodLocation", { lotId: lot.id }, { className: "secondary" }) : "",
       lot.status === "stored" && canAdjust(ctx) ? ui.openButton("ปรับยอดสต็อกกลาง", "rodAdjust", { lotId: lot.id }, { className: "secondary" }) : "",
     ].join("");
@@ -194,15 +198,20 @@
   }
   function labelView(ctx, lot) {
     const { ui, rules } = ctx;
+    if (!labelPrintable(lot)) return { html: `${backLink(lotHref(lot), `‹ ล็อต ${lot.lotNo}`)}${F.pageHead(ctx, `ป้ายล็อต ${lot.lotNo}`)}${ui.card(ui.empty("พิมพ์ป้ายได้เฉพาะล็อตที่รอ QA ตัดสินหรืออยู่ในคลัง"))}` };
     const attrs = attrsOf(ctx, lot.itemCode);
     const url = lotAbsoluteUrl(lot);
     const qr = qrSvg(url);
-    const qty = lot.qtyReceived ?? lot.qtySent;
-    const colour = [attrs.color, attrs.colorName].filter(Boolean).join(" ");
     const line = (label, value) => (value ? `<div class="sr-label-line"><dt>${F.esc(label)}</dt><dd>${F.esc(value)}</dd></div>` : "");
+    // ของในคลังตอนนี้ (ถังที่ยังมียอด) · ล็อตที่ยังรอ QA ไม่มีถัง ใช้จำนวนที่รับ
+    const unit = rules.uomLabel(lot.uom);
+    const buckets = rules.rodBuckets(ctx.data).filter((bucket) => bucket.lotId === lot.id && bucket.qty > 0);
+    const owner = buckets.length > 1 ? buckets.map((bucket) => `${rod().bucketText(ctx, bucket.owner)} ${rules.fmtQty(bucket.qty)} ${unit}`).join(" · ") : buckets.length ? rod().bucketText(ctx, buckets[0].owner) : lotOwnerText(ctx, lot);
+    const qtyLine = buckets.length ? line("คงเหลือ", `${rules.fmtQty(buckets.reduce((sum, bucket) => sum + bucket.qty, 0))} ${unit}`) : line("จำนวนรับ", `${rules.fmtQty(lot.qtyReceived ?? lot.qtySent)} ${unit}`);
+    const colour = [attrs.color, attrs.colorName].filter(Boolean).join(" ");
     const label = `<article class="sr-label" aria-label="${F.attr(`ป้ายล็อต ${lot.lotNo}`)}">
       <div class="sr-label-top"><strong class="sr-label-code rf-mono">${F.esc(lot.itemCode)}</strong>${attrs.name ? `<span class="sr-label-name">${F.esc(attrs.name)}</span>` : ""}</div>
-      <div class="sr-label-body"><dl class="sr-label-facts">${line("สูตรยาง", attrs.compound)}${line("สี", colour)}${line("ขนาด", attrs.size)}${line("ล็อต", lot.lotNo)}${line("จำนวนรับ", `${rules.fmtQty(qty)} ${rules.uomLabel(lot.uom)}`)}${line("วันที่รับ", lot.receivedAt ? rules.fmtDate(lot.receivedAt) : "")}${line("ตำแหน่ง", lot.location)}${line("ของ", lotOwnerText(ctx, lot))}</dl>
+      <div class="sr-label-body"><dl class="sr-label-facts">${line("สูตรยาง", attrs.compound)}${line("สี", colour)}${line("ขนาด", attrs.size)}${line("ล็อต", lot.lotNo)}${qtyLine}${line("วันที่รับ", lot.receivedAt ? rules.fmtDate(lot.receivedAt) : "")}${line("ตำแหน่ง", lot.location)}${line("ของ", owner)}</dl>
       <div class="sr-label-qr">${qr || `<span class="small">${F.esc(url)}</span>`}</div></div></article>`;
     const actions = `<div class="rf-row no-print"><button class="btn rf-btn" type="button" data-sr-print>พิมพ์ป้าย</button>${ui.link("ดูล็อต", lotHref(lot), "btn rf-btn secondary")}</div>`;
     return { html: `${backLink(lotHref(lot), `‹ ล็อต ${lot.lotNo}`)}${F.pageHead(ctx, `ป้ายล็อต ${lot.lotNo}`)}<div class="sr-label-wrap">${actions}${label}</div>` };
