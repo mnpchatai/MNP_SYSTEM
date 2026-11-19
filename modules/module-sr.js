@@ -1,5 +1,5 @@
 // โมดูลแผนก SR — คลังยางเส้นยาว (ลำดับ 05 ของผังงาน) #/sr · เมนูกลุ่ม "โรงงาน" ในโหมดทดสอบ (ลงทะเบียนผ่าน MNP_FACTORY.registerDeptModule ใน modules/factory-kit.js)
-// หน้าแรก = ยางเส้นยาวที่อยู่ในคลังตอนนี้ (อ่านจาก store ของ BOM: ล็อตที่รับเข้าแล้ว × ถังเจ้าของ) ค้นหาได้ แล้วตามด้วยการ์ดงานของ SR ที่รออยู่
+// หน้าแรก = แท็บ "งานที่รอ" กับ "ในคลัง" (MNP_FACTORY.storeLanding) · ในคลัง = ยางเส้นยาวที่อยู่ในคลังตอนนี้ (store ของ BOM: ล็อตที่รับเข้าแล้ว × ถังเจ้าของ) ค้นหาได้
 // การ์ดงาน (รับยางเส้นยาวเข้าคลังพร้อมตรวจขนาด · จ่ายให้ GR) ใช้การ์ดและ dialog ชุดเดียวกับ BOM "งานของฉัน" (MNP_FACTORY.deptWorkSection) สั่งงานได้ที่นี่
 (function registerSrModule() {
   const F = window.MNP_FACTORY;
@@ -18,7 +18,8 @@
     const { shown, more } = F.limited(ctx, buckets);
     const rows = shown.map((bucket) => `<tr><td>${ui.mono(bucket.itemCode)}<div class="small muted">${F.esc(nameOf(bucket.itemCode))}</div></td><td class="right rf-mono">${F.esc(`${rules.fmtQty(bucket.qty)} ${rules.uomLabel(bucket.lot.uom)}`)}</td><td><span class="rf-mono">${F.esc(bucket.lot.lotNo)}</span><div class="small muted">${F.esc(bucket.lot.receivedAt ? rules.fmtDate(bucket.lot.receivedAt) : "—")}</div></td><td>${ownerText(ctx, bucket)}</td></tr>`);
     const stock = ui.card(`${ui.table(["เส้นยาง", { label: "จำนวน", className: "right" }, "ล็อต", "ของ"], rows, { emptyText: q ? "ไม่พบเส้นยางที่ค้นหา" : "ยังไม่มียางเส้นยาวในคลัง" })}${more}`, { flush: true });
-    return { html: `${F.pageHead(ctx, "ยางเส้นยาวในคลัง", F.actionLink(ctx, "ไปงานของฉัน (BOM)", ctx.url("work", { dept: "SR" })))}${F.searchForm(ctx, "ค้นหารหัส ชื่อ หรือเลขล็อต")}${stock}${F.deptWorkSection(ctx)}`, actions: true };
+    const count = q ? rules.rodBuckets(data).filter((bucket) => bucket.lot.status === "stored").length : buckets.length;
+    return { html: F.storeLanding(ctx, { dept: "SR", stock: { count, html: `${F.searchForm(ctx, "ค้นหารหัส ชื่อ หรือเลขล็อต")}${stock}` } }), actions: true };
   }
 
   F.registerDeptModule({ code: "FACTORY_SR", dept: "SR", route: "sr", label: "คลังยางเส้นยาว (SR)", icon: "ruler", palette: "sr", landing });

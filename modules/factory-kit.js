@@ -218,13 +218,31 @@
   // งานที่รอของแผนกคลัง/ตรวจคุณภาพ (SR ST WH QA): การ์ดสั่งงานชุดเดียวกับหน้า BOM "งานของฉัน" (MNP_BOM_PAGES.hub.taskCard / boardCards ไม่คัดลอก HTML)
   // รายการงานมาจากกระดานของแผนก (workBoard ของ deptCtx: ฝ่ายวางแผน/ผู้จัดการเปิดโมดูลแล้วเห็นงานของแผนกนั้น) · ปุ่มและ dialog ตัดสินสิทธิ์ด้วยผู้ใช้จริง (ctx.user) ไม่มีสิทธิ์ = การ์ดดูอย่างเดียว
   // ใช้กับ landing ที่คืน actions: true · waiting = ข้อความกำลังโหลดที่ใส่เหนือการ์ด · emptyText = ข้อความเมื่อไม่มีงาน
-  function deptWorkSection(ctx, { title = "งานที่รอ", emptyText = "ไม่มีงานค้าง", waiting = "", quietWhenEmpty = false } = {}) {
+  // คืน { count, html } · title = null ไม่ใส่หัวข้อ (ใช้ใต้แท็บ "งานที่รอ" ที่บอกอยู่แล้ว)
+  function deptWork(ctx, { title = "งานที่รอ", emptyText = "ไม่มีงานค้าง", waiting = "", quietWhenEmpty = false } = {}) {
     const hub = root.MNP_BOM_PAGES?.hub;
     const board = hub.workBoard(deptCtx(ctx), new URLSearchParams());
     const { taskCards, cards } = hub.boardCards(ctx, board);
     const all = [...taskCards, ...cards];
-    if (!all.length && quietWhenEmpty && !waiting) return "";
-    return `<h2 class="bom-h3">${esc(title)}</h2>${waiting}${all.length ? `<div class="bom-job-grid">${all.join("")}</div>` : waiting ? "" : ctx.ui.card(ctx.ui.empty(emptyText))}`;
+    if (!all.length && quietWhenEmpty && !waiting) return { count: 0, html: "" };
+    const head = title ? `<h2 class="bom-h3">${esc(title)}</h2>` : "";
+    return { count: all.length, html: `${head}${waiting}${all.length ? `<div class="bom-job-grid">${all.join("")}</div>` : waiting ? "" : ctx.ui.card(ctx.ui.empty(emptyText))}` };
+  }
+  const deptWorkSection = (ctx, options) => deptWork(ctx, options).html;
+
+  // หน้าแรกของแผนกคลัง (SR ST WH): แท็บ "งานที่รอ N" กับ "ในคลัง N รายการ" อยู่บนสุด ไม่ต้องเลื่อนผ่านรายการของเพื่อหางาน
+  // เปิดมาที่ "งานที่รอ" เมื่อมีงาน (หรือกำลังโหลดงาน) ไม่มีงาน = เปิดที่ "ในคลัง" · ค้นหา แสดงเพิ่ม หรือดูทั้งทะเบียน = อยู่แท็บ "ในคลัง"
+  // stock = { count, html } ที่โมดูลสร้าง (ช่องค้นหา + ตารางของที่มีอยู่จริง) · work = ตัวเลือกของ deptWork
+  function storeLanding(ctx, { dept, stock, work = {} }) {
+    const { ui } = ctx;
+    const job = deptWork(ctx, { ...work, title: null });
+    const asked = ctx.params.get("tab");
+    const browsing = Boolean(ctx.q || ctx.params.get("all") || ctx.params.get("n"));
+    const tab = asked === "work" || asked === "stock" ? asked : browsing ? "stock" : job.count > 0 || work.waiting ? "work" : "stock";
+    const tabs = ui.tabs([{ id: "work", label: `งานที่รอ ${job.count}` }, { id: "stock", label: `ในคลัง ${stock.count} รายการ` }], tab, (id) => (id === "work" ? ctx.pageUrl({ tab: "work", q: null }) : ctx.pageUrl({ tab: "stock" })));
+    const sync = `<span class="small muted" role="status" data-bom-sync>${esc(root.MNP_BOM?.syncText?.() ?? "")}</span>`;
+    const body = tab === "work" ? (job.html || ui.card(ui.empty(work.emptyText ?? "ไม่มีงานค้าง"))) : stock.html;
+    return `${pageHead(ctx, "งานของแผนกฉัน", `${actionLink(ctx, "ไปงานของฉัน (BOM)", ctx.url("work", { dept }))}${sync}`)}${tabs}${body}`;
   }
   // ปุ่มลิงก์ไปที่ทำงานจริง (ที่เดียวต่อแหล่ง)
   const actionLink = (ctx, text, href) => ctx.ui.link(text, href, "btn rf-btn secondary");
@@ -381,6 +399,6 @@
   root.MNP_FACTORY = Object.freeze({
     esc, attr, formPayload, parseArgs, bindRoot, deptChip, dueText, jobCard, jobReportDialog,
     FACTORY_GROUP, canSeeDept, canOpenDeptModule, orderNavItems, registerDeptModule, productionLanding, mountDeptJobs,
-    pageHead, searchForm, includesText, limited, deptWorkSection, actionLink, wake, failed, rubberflowFailed, deptCtx, routeUrl, onDeptRoute: onFactoryRoute,
+    pageHead, searchForm, includesText, limited, deptWork, deptWorkSection, storeLanding, actionLink, wake, failed, rubberflowFailed, deptCtx, routeUrl, onDeptRoute: onFactoryRoute,
   });
 })(window);
