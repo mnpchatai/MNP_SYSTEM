@@ -575,6 +575,9 @@
     if (!["released", "in_progress"].includes(order.status)) fail("ใบที่ปิดหรือยกเลิกแล้วแก้รายการสินค้าไม่ได้");
     const started = startedJobs(d, order, ctx?.rfOrders);
     if (started.length) fail(`แก้รายการไม่ได้ มีงานที่เริ่มแล้ว (${started.map((job) => `${job.dept} ${job.itemCode}`).slice(0, 3).join(", ")}${started.length > 3 ? " …" : ""}) ให้เปิดใบใหม่สำหรับส่วนที่เพิ่ม (ใบนี้ปิดเมื่อคลังสินค้ารับเข้าครบ)`);
+    // แท่งที่คลังแท่งยาว (SR) จ่ายให้ GR ตามใบนี้แล้ว = งานเริ่มแล้ว (ตรงกับ bom_save_orders ของ 20261202010000: BOM_INVALID_TRANSITION)
+    const issuedRods = rules().rodIssued(d, order.id);
+    if (issuedRods > 1e-9) fail(`แก้รายการไม่ได้ คลังแท่งยาว (SR) จ่ายแท่งให้ GR ตามใบนี้แล้ว ${rules().fmtQty(issuedRods)} เส้น (นับว่างานเริ่มแล้ว) ให้ SR ย้อนการจ่ายก่อน หรือเปิดใบใหม่สำหรับส่วนที่เพิ่ม`);
     const returned = returnFgStock(d, ctx, order); // สินค้าที่ใบนี้ได้จากสต็อกคืนกลับให้ใบต้นทาง (ยอดที่ตั้งใช้จากสต็อกในใบคงไว้)
     // แท่งที่ใบนี้หยิบจากคลัง SR ตอนปล่อยผลิตกลับเข้าสต็อกกลาง (ไม่เกินที่ใบยังถืออยู่) · ยอดที่ตั้งใช้ในใบคงไว้ หักใหม่ตอนปล่อยผลิตครั้งหน้า
     for (const take of rules().rodTaken(d, order.id)) {
@@ -995,6 +998,8 @@
     const rod = !product && line.kind === "RB";
     const value = num(qty, product || rod ? "ยอดที่ใช้จากสต็อก" : "ยอดคงคลัง", { allowZero: true });
     if (rod) {
+      // ตั้งได้เฉพาะกลุ่มวางแผน (ฐานข้อมูลปฏิเสธ ST / WH ที่ตั้งคีย์รหัส RB ด้วย BOM_FORBIDDEN เหมือนคีย์สินค้า)
+      if (!canPlan(user)) fail("ตั้งยอดที่ใช้จากคลังแท่งยาว (SR) ได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น");
       const row = rules().rodStockForDraft(d, order).find((entry) => entry.itemCode === code);
       if (row && value > row.max + 1e-9) fail(value > row.available + 1e-9 ? `${code} คลังแท่งยาว (SR) มีสต็อกกลางที่ใช้ได้กับใบนี้ ${rules().fmtQty(row.available)}${row.taken > 0 ? ` (ใบร่างที่คำนวณก่อนใบนี้ตั้งใช้ไว้ ${rules().fmtQty(row.taken)})` : ""} ใช้ ${rules().fmtQty(value)} ไม่ได้` : `${code} ใบนี้ต้องใช้ไม่เกิน ${rules().fmtQty(row.max)} ${rules().uomLabel(row.uom)}`);
     }

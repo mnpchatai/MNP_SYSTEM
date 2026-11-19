@@ -1218,6 +1218,30 @@ test("a finishing lot of a WO linked to a BOM job makes no boxes and becomes a p
   assert.deepEqual([(await rodLots()).length, (await bom()).version], [2, before + 2], "a second QC record of a counted lot does not make it again");
   assert.deepEqual([(await job()).qtyDone, (await job()).reports.length], [0, 0]);
 
+  // จำนวนต่อกล่อง (ตรงกับ rf_save_lots): WO ที่ผูกงานไม่ส่งก็ได้ (ล็อตเก็บ params ว่าง) แต่ถ้าส่งมาต้องมากกว่า 0 · ส่งตรงถึงฐานข้อมูลจำลอง (หน้าไม่ส่งค่า 0)
+  const rawFinish = async (session_, wo, transferId, id, params, qty) => {
+    await session_.as("persona-rb");
+    const master = await session_.call("app_rf_master");
+    const lot = { id, stage: "finishing", orderId: wo, uom: "pcs", shift: "D", grade: "A", sources: [{ type: "transfer", id: transferId, lotId: master.transfers.find((row) => row.id === transferId).lotId, qty }], params,
+      goodQty: qty, scrapQty: 0, qc: "pass", holdReasons: [], transferredQty: 0, createdAt: NOW, operator: "x" };
+    return session_.mock.client.rpc("app_rf_save", { p_changes: { lots: { upsert: [lot] } }, p_base_version: master.version, p_action: "recordFinishing" });
+  };
+  assert.equal((await rawFinish(s, order, tr3, `FN-${TODAY}-96`, { perBox: 0 }, 5)).error?.code, "RF_INVALID_LOT", "a perBox that is sent must be above zero");
+  const noBox = await rawFinish(s, order, tr3, `FN-${TODAY}-97`, {}, 5);
+  assert.equal(noBox.error, null, noBox.error?.message);
+  assert.deepEqual((await s.call("app_rf_master")).lots.find((row) => row.id === `FN-${TODAY}-97`).params, {}, "a linked work order may leave perBox out");
+  assert.deepEqual([(await rodLots()).length, (await boxesOf(`FN-${TODAY}-97`)).length], [3, 0]);
+  // งานที่ผูก WO อื่นอยู่ (externalRef.woId ไม่ใช่ WO นี้ ตรงกับ bom_rod_lot_create) = ไม่สร้างล็อตแท่ง · แก้ข้อมูลใน storage แล้วเปิดฐานข้อมูลจำลองใหม่ (ตัวเดิมถือสำเนาในหน่วยความจำ)
+  const bomState = JSON.parse(s.storage.getItem(BOM_KEY));
+  bomState.jobs.find((row) => row.id === "JOB-RB2").externalRef.woId = "WO-OTHER";
+  s.storage.setItem(BOM_KEY, JSON.stringify(bomState));
+  const reopened = createMockSupabase({ sandbox: true, now: () => NOW, storage: s.storage });
+  const s2 = { mock: reopened, as: async (id) => unwrap(await reopened.client.rpc("app_sandbox_enter", { p_persona_id: id })), call: async (name, args) => unwrap(await reopened.client.rpc(name, args)) };
+  const other = await rawFinish(s2, order, tr3, `FN-${TODAY}-98`, {}, 5);
+  assert.equal(other.error, null, other.error?.message);
+  assert.equal((await s2.call("app_bom_master")).rodLots.length, 3, "a job linked to another work order gets no rod lot");
+  assert.equal((await s2.call("app_rf_master")).fgBoxes.filter((box) => box.lotId === `FN-${TODAY}-98`).length, 0, "and, still pointing at a BOM job, no boxes");
+
   // ใบสั่งผลิตที่ไม่ผูกงาน BOM: รับมอบและตกแต่งผ่านแล้ว BOM ไม่ขยับ และยังได้กล่องเหมือนเดิม
   const plain = await session({ withBom: true });
   const plainRig = await plain.make();
@@ -1231,6 +1255,7 @@ test("a finishing lot of a WO linked to a BOM job makes no boxes and becomes a p
   const fnPlain = (await go(plain, plainRig, "persona-rb", "recordFinishing", { transferId: trPlain3, useQty: 50, passedQty: 50, scrapQty: 0, perBox: 40, qcResult: "pass", grade: "A", shift: "D" })).result;
   assert.equal((await plain.call("app_bom_master")).version, bomVersion, "a work order without a linked job leaves BOM alone");
   assert.deepEqual((await plain.call("app_rf_master")).fgBoxes.filter((box) => box.lotId === fnPlain).map((box) => [box.qty, box.status]), [[40, "in_stock"], [10, "in_stock"]], "rods sold as finished goods still get boxes for WH to ship");
+  assert.equal((await rawFinish(plain, prepared.order, trPlain3, `FN-${TODAY}-97`, {}, 5)).error?.code, "RF_INVALID_LOT", "a work order sold as finished goods still needs perBox");
 });
 
 test("shop-floor records collide per record: stale is reported before permissions, a duplicate document number catches up, and a held form keeps other users' data out", async () => {

@@ -467,20 +467,25 @@
       const currentTransfer = bindInbound(form, data, "useQty");
       const passed = form.querySelector("[data-rf-passed]");
       const perBox = form.querySelector("[data-rf-perbox]");
-      // WO ที่มาจากงาน RB ของ BOM: ไม่มีกล่อง ช่องจำนวนต่อกล่องซ่อน (ส่งค่า 1 ที่ฐานข้อมูลยังตรวจรูป) และบอกว่าแท่งไปคลังแท่งยาว (SR)
+      // WO ที่มาจากงาน RB ของ BOM: ไม่มีกล่อง ช่องจำนวนต่อกล่องซ่อนและไม่บังคับ (ไม่ส่งค่า ฐานข้อมูลไม่บังคับ perBox ของ WO ที่ผูกงาน) และบอกว่าแท่งไปคลังแท่งยาว (SR)
+      // ผูกงาน = กฎเดียวกับฐานข้อมูล (ctx.bomLinked: sourceJobId และงานนั้นมีอยู่ใน BOM ถ้าโหลดแล้ว)
       const perBoxField = form.querySelector(".rf-perbox-field");
       const linkedNote = form.querySelector("[data-rf-linked-note]");
+      const passOption = form.querySelector('[name="qcResult"] option[value="pass"]');
       const submit = form.querySelector('button[type="submit"]');
       const baseSuccess = form.dataset?.rfSuccess;
-      const linkedOrder = () => { const transfer = currentTransfer(); return transfer ? data.orders.find((row) => row.id === transfer.orderId && row.sourceJobId) ?? null : null; };
+      const isLinked = (order) => (typeof ctx.bomLinked === "function" ? ctx.bomLinked(order) : Boolean(order?.sourceJobId));
+      const linkedOrder = () => { const transfer = currentTransfer(); const order = transfer ? data.orders.find((row) => row.id === transfer.orderId) : null; return order && isLinked(order) ? order : null; };
       form.querySelector("[data-rf-inbound]").addEventListener("change", () => {
         const transfer = currentTransfer();
         const linked = linkedOrder();
         if (perBoxField) perBoxField.hidden = Boolean(linked);
         if (linkedNote) linkedNote.hidden = !linked;
-        if (linked) perBox.value = "1";
+        perBox.required = !linked;
+        if (linked) perBox.value = "";
         else if (transfer && (!perBox.value || perBox.dataset?.rfLinkedValue)) perBox.value = transfer.uom === "m" ? "100" : "2000";
         if (perBox.dataset) { if (linked) perBox.dataset.rfLinkedValue = "1"; else delete perBox.dataset.rfLinkedValue; }
+        if (passOption) passOption.textContent = linked ? "ผ่าน — ส่งเข้าคลังแท่งยาว (SR)" : "ผ่าน — รับเข้าคลัง";
         if (form.dataset) form.dataset.rfSuccess = linked ? "บันทึก {result} แล้ว แท่งส่งเข้าคลังแท่งยาว (SR)" : baseSuccess;
         if (submit) submit.textContent = linked ? "บันทึกการตกแต่ง" : "บันทึกและพิมพ์ป้ายกล่อง";
         paint();

@@ -21,7 +21,7 @@
 --
 -- RubberFlow: ล็อตตกแต่งของ WO ที่ source_job_no ตรงกับ bom_jobs (โหมดเดียวกัน) ไม่สร้างกล่อง (boxes = 0, perBox ไม่บังคับ) และไม่เรียก rf_apply_feedback
 --   เมื่อ qc เป็น pass (ตอนบันทึก หรือ QA ตัดสิน pass ครั้งแรก = counted_to_order false -> true เหมือนเดิม) สร้าง bom_rod_lots สถานะ pending
---   qty_sent = good_qty spec = extrusion_spec ของ revision สูตรของ WO · rf_add_produced (ความคืบหน้า WO) เหมือนเดิม · WO ที่ไม่ผูกงาน (ขายเป็นสินค้า) เหมือนเดิมทุกอย่าง
+--   (เฉพาะเมื่องานยังผูก WO นี้: external_ref.woId = เลข WO เหมือน rf_apply_feedback เดิม) qty_sent = good_qty spec = extrusion_spec ของ revision สูตรของ WO · rf_add_produced (ความคืบหน้า WO) เหมือนเดิม · WO ที่ไม่ผูกงาน (ขายเป็นสินค้า) เหมือนเดิมทุกอย่าง
 --   app_rf_save นับล็อตที่สร้างเป็น rodLots ของ BOM (เพิ่มตัวนับ BOM หนึ่งครั้ง และ audit BOM_MASTER_SAVE 'rubberflow:<action>' counts.rodLots)
 --
 -- action ใหม่ของ app_bom_save_master (ส่วน rodLots / rodMoves upsert เท่านั้น · ส่วนกับ action ต้องคู่กัน ผิด / ว่าง = BOM_INVALID_ROD)
@@ -36,7 +36,9 @@
 --   adjustRods (กลุ่มวางแผนเท่านั้น) rodMoves [{id, kind:'adjust', lotId, qty (มีเครื่องหมาย <> 0), note 3-300}] เฉพาะสต็อกกลาง
 --   ปล่อยผลิต: stockCounts[รหัสของบรรทัดผลระเบิดชนิด RB ของใบ] = n > 0 หยิบ n จากสต็อกกลางล็อตเก่าก่อน (ถัง owner null ก่อน แล้วใบที่ปิดตาม released_at)
 --     ต่อถังต้นทางสองแถว transfer (-k ถังต้นทาง, +k ถังของใบ) for_order_pk = ใบ · ไม่พอ = BOM_ROD_EXCEEDS ทั้งคำสั่งไม่เขียน
+--     คีย์รหัส RB นี้ตั้ง / แก้ได้เฉพาะกลุ่มวางแผน (ST / WH ที่นับใบร่างได้ ตั้งคีย์นี้ = BOM_FORBIDDEN เหมือนคีย์สินค้า)
 --   เปิดกลับเป็นร่าง: คืน min(transfer สุทธิที่ใบนี้หยิบ, ยอดถังของใบ) ต่อล็อตกลับสต็อกกลาง · ยกเลิกไม่ต้องทำอะไร (ถังของใบที่ยกเลิกเป็นสต็อกกลางเอง)
+--     SR จ่ายแท่งตามใบนี้แล้ว (issue + unissue สุทธิ for_order = ใบนี้ ยังค้าง) = นับว่างานเริ่มแล้ว เปิดกลับไม่ได้ (BOM_INVALID_TRANSITION)
 --   รหัสข้อผิดพลาดใหม่: BOM_INVALID_ROD, BOM_ROD_EXCEEDS (ใช้ BOM_FORBIDDEN / BOM_INVALID_TRANSITION / BOM_CONFLICT เดิมด้วย)
 --   สิทธิ์อ่าน: แผนก QA และ SR อ่าน BOM ได้ (private.bom_can_read) · สิทธิ์อ่าน RubberFlow ไม่เปลี่ยน
 --
@@ -333,7 +335,8 @@ begin
   -- ล็อกตัวนับ BOM ก่อนเขียน (เหมือน rf_apply_feedback) แถวใหม่ถูกประทับเวอร์ชันถัดไปที่ app_rf_save เพิ่มให้
   perform private.rf_lock_bom();
   select * into v_job from public.bom_jobs j where j.is_test = (select private.bom_test_mode()) and j.job_no = p_wo.source_job_no;
-  if not found then return 0; end if;
+  -- งานต้องผูก WO นี้อยู่ (external_ref.woId = เลข WO) เหมือน rf_apply_feedback เดิม · งานที่ผูก WO อื่น = ไม่สร้างล็อตแท่ง
+  if not found or (v_job.external_ref ->> 'woId') is distinct from p_wo.wo_no then return 0; end if;
   select r.extrusion_spec into v_spec from public.rf_recipes r
   where r.is_test = (select private.bom_test_mode()) and r.recipe_code = p_wo.recipe_code and r.revision = p_wo.recipe_revision;
   insert into public.bom_rod_lots (is_test, lot_no, item_code, order_pk, job_no, wo_no, recipe_code, uom, qty_sent, spec)
@@ -1524,6 +1527,13 @@ begin
            where (v_old.stock_counts -> (it ->> 'fgCode')) is distinct from (v_counts -> (it ->> 'fgCode'))) then
         raise exception 'BOM_FORBIDDEN';
       end if;
+      -- คลังแท่งยาว SR (20261202010000): คีย์ที่เป็นรหัส RB ของผลระเบิดของใบ (จำนวนที่หยิบจากคลัง SR ตอนปล่อยผลิต) ตั้งได้เฉพาะกลุ่มวางแผนเหมือนคีย์สินค้า
+      if v_counts_changed and exists (
+           select 1 from jsonb_array_elements(coalesce(v_old.explosion, '[]'::jsonb)) e
+           where e ->> 'kind' = 'RB'
+             and (v_old.stock_counts -> (e ->> 'itemCode')) is distinct from (v_counts -> (e ->> 'itemCode'))) then
+        raise exception 'BOM_FORBIDDEN';
+      end if;
     end if;
 
     -- นับคงคลังได้เฉพาะใบ draft · ใบที่ไม่ใช่ draft แก้เนื้อหาไม่ได้ (เว้นแต่เปิดกลับเป็น draft)
@@ -1551,6 +1561,11 @@ begin
       elsif v_old.status in ('released', 'in_progress') and v_status = 'draft' then
         -- เปิดใบกลับมาแก้ได้เมื่อไม่มีงานใดเริ่ม (ตรวจจากสถานะในฐานข้อมูล) งานทั้งหมดถูกลบ revision + 1 ยอดนับคงคลังคงอยู่
         if private.bom_started_jobs(v_old.id) then raise exception 'BOM_INVALID_TRANSITION'; end if;
+        -- คลังแท่งยาว SR (20261202010000): SR จ่ายแท่งให้ GR ตามใบนี้แล้ว (จ่ายสุทธิหลังย้อนจ่าย > 0) = งานเริ่มแล้ว เปิดกลับไม่ได้
+        if coalesce((select sum(m.qty) from public.bom_rod_moves m
+                     where m.is_test = (select private.bom_test_mode()) and m.kind in ('issue', 'unissue') and m.for_order_pk = v_old.id), 0) < 0 then
+          raise exception 'BOM_INVALID_TRANSITION';
+        end if;
         -- สต็อกสินค้าสำเร็จรูป: เหมือนยกเลิก (stockCounts คงอยู่ ปล่อยผลิตใหม่ก็หยิบใหม่)
         v_moves := v_moves + private.bom_fg_return_stock(v_old.id, p_actor.id);
         -- คลังแท่งยาว SR (20261202010000): คืนแท่งที่ใบนี้หยิบจากสต็อกกลางตอนปล่อยผลิต (เท่าที่ยังอยู่ในถังของใบ) · ยกเลิกไม่ต้องคืน (ถังของใบที่ยกเลิกเป็นสต็อกกลาง)

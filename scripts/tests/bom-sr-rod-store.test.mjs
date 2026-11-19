@@ -166,6 +166,22 @@ test("a draft takes rods from the SR store at release (FIFO over free stock) and
   assert.deepEqual(rules.rodTaken(d, "DEMO-26002"), [], "nothing left to give back");
 });
 
+test("only the planner group sets the use-from-SR-store amount; rods already issued to GR keep the order from going back to draft until SR reverses them", () => {
+  const d = fresh();
+  for (const role of ["st", "wh"]) rejects(() => A.setStockCount(structuredClone(d), { orderId: "DEMO-26002", itemCode: RB, qty: 1 }, ctx(role)), /ตั้งยอดที่ใช้จากคลังแท่งยาว \(SR\) ได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น/);
+  rejects(() => A.setStockCounts(structuredClone(d), { orderId: "DEMO-26002", counts: [{ itemCode: RB, qty: "1" }] }, ctx("st")), /ฝ่ายวางแผนหรือผู้จัดการเท่านั้น/);
+  A.setStockCount(d, { orderId: "DEMO-26002", itemCode: RB, qty: 5 }, ctx("planner"));
+  A.releaseOrder(d, { orderId: "DEMO-26002" }, ctx("planner"));
+  A.issueRods(d, { orderId: "DEMO-26002", itemCode: RB, qty: 2 }, ctx("sr"));
+  const edit = { orderId: "DEMO-26002", fgCode: "DEMO-HL-24(B)-A", qty: 100 };
+  rejects(() => A.updateOrderItem(structuredClone(d), edit, ctx("planner")), /คลังแท่งยาว \(SR\) จ่ายแท่งให้ GR ตามใบนี้แล้ว 2 เส้น \(นับว่างานเริ่มแล้ว\)/);
+  const issue = d.rodMoves.find((move) => move.kind === "issue" && move.forOrderId === "DEMO-26002");
+  A.reverseRodIssue(d, { moveId: issue.id, note: "จ่ายก่อนแก้ใบ" }, ctx("sr"));
+  A.updateOrderItem(d, edit, ctx("planner"));
+  assert.equal(d.orders.find((row) => row.id === "DEMO-26002").status, "draft", "with nothing issued the planner reopens the order");
+  assert.deepEqual([rules.rodFree(d, RB), rules.rodOwned(d, "DEMO-26002", RB)], [6, 0]);
+});
+
 test("the job supply limit counts a child job only up to its plan (rods beyond the need went to free stock)", () => {
   const d = fresh();
   const gr = d.jobs.find((job) => job.orderId === "DEMO-26006" && job.dept === "GR");
@@ -254,7 +270,9 @@ test("mock: a lot without a spec needs SR's own pass or fail", async () => {
   await mock.client.rpc("app_sandbox_enter", { p_persona_id: "persona-sr" });
   const send = (qc) => mock.client.rpc("app_bom_save_master", { p_changes: { rodLots: { upsert: [{ id: lotId(2), qtyReceived: 12, qc }] } }, p_base_version: 1, p_action: "receiveRods", p_audit: [] });
   assert.equal((await send({ values: {}, note: "" })).error.code, "BOM_INVALID_ROD", "no result, no spec");
-  assert.equal((await send({ values: {}, result: "pass", note: "" })).error, null, "SR's visual judgement is enough");
+  assert.equal((await send({ values: { thickness: null, width: 34 }, result: "pass", note: "" })).error, null, "SR's visual judgement is enough (a null measurement is skipped)");
+  const stored = (await mock.client.rpc("app_bom_master")).data.rodLots.find((row) => row.id === lotId(2));
+  assert.deepEqual(stored.qc.values, { width: 34 });
 });
 
 test("mock: QA accepts, returns or scraps a held lot; SR cannot decide; the accept credits with the overflow as free stock", async () => {
@@ -346,6 +364,64 @@ test("mock: SR and QA read BOM data; the release takes free rods FIFO or refuses
   master = await scene.master();
   assert.deepEqual([rules.rodFree(master, RB), rules.rodOwned(master, "DEMO-26002", RB)], [6, 0], "the taken rods are free again");
   assert.equal(master.rodMoves.filter((move) => move.kind === "transfer").length, 4);
+});
+
+test("mock: ST and WH cannot set the use-from-SR-store amount (planners can); rods issued to GR keep the order from going back to draft until reversed", async () => {
+  const scene = mockScene();
+  await scene.as("persona-pp");
+  const before = await scene.master();
+  const draft = before.orders.find((row) => row.id === "DEMO-26002");
+  const se = draft.explosion.find((line) => line.kind === "SE").itemCode;
+  const counts = (extra) => ({ orders: { upsert: [{ ...draft, stockCounts: { ...draft.stockCounts, ...extra } }] } });
+  for (const persona of ["persona-st", "persona-wh"]) {
+    assert.equal(await codeOf(scene.save(persona, "setStockCounts", counts({ [RB]: 2 }))), "BOM_FORBIDDEN", `${persona} may not set the RB amount`);
+  }
+  assert.equal(await codeOf(scene.save("persona-st", "setStockCounts", counts({ [se]: 3 }))), "ok", "ST still counts another part of the draft");
+  const counted = (await scene.master()).orders.find((row) => row.id === "DEMO-26002");
+  assert.ok((await scene.save("persona-pp", "setStockCounts", { orders: { upsert: [{ ...counted, stockCounts: { ...counted.stockCounts, [RB]: 5 } }] } })).data, "a planner sets it");
+  // ปล่อยผลิตแบบที่ store ส่ง (หยิบ 5 เส้นจาก L0) แล้ว SR จ่าย 2 เส้นให้ GR ตามใบนี้
+  const planner = { now: NOW, user: { id: "p", role: "planner", dept: "PK", name: "สมศรี วางแผน" }, remote: true, idSuffix: () => "abc123" };
+  const d = plain({ ...(await scene.master()), counters: {}, audit: [], users: [] });
+  A.releaseOrder(d, { orderId: "DEMO-26002" }, planner);
+  const released = await scene.save("persona-pp", "releaseOrder", { orders: { upsert: d.orders.filter((row) => row.id === "DEMO-26002") }, jobs: { upsert: d.jobs.filter((row) => row.orderId === "DEMO-26002") } });
+  assert.ok(released.data, released.code);
+  const uuid = (n) => `9b000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const issued = await scene.save("persona-sr", "issueRods", { rodMoves: { upsert: [{ id: uuid(1), kind: "issue", lotId: lotId(0), ownerOrderId: "DEMO-26002", forOrderId: "DEMO-26002", itemCode: RB, qty: -2, note: "จ่ายด่วน" }] } });
+  assert.ok(issued.data, issued.code);
+  assert.equal((await scene.master()).rodMoves.find((move) => move.id === uuid(1)).note, "จ่ายด่วน", "the issue keeps its note like the database");
+  const reopen = async () => {
+    const order = (await scene.master()).orders.find((row) => row.id === "DEMO-26002");
+    return scene.save("persona-pp", "updateOrderItem", { orders: { upsert: [{ ...order, status: "draft", revision: Number(order.revision) + 1, explodedAt: null }] } });
+  };
+  assert.equal(await codeOf(reopen()), "BOM_INVALID_TRANSITION", "rods handed to GR count as work started");
+  assert.ok((await scene.save("persona-sr", "reverseRodIssue", { rodMoves: { upsert: [{ id: uuid(2), kind: "unissue", reversesId: uuid(1), note: "จ่ายก่อนแก้ใบ" }] } })).data);
+  const ok = await reopen();
+  assert.ok(ok.data, ok.code);
+  const master = await scene.master();
+  assert.deepEqual([master.orders.find((row) => row.id === "DEMO-26002").status, rules.rodFree(master, RB), rules.rodOwned(master, "DEMO-26002", RB)], ["draft", 6, 0]);
+});
+
+test("mock: rod requests are checked in the database's order — the whole shape before rights, null measurements skipped, values up to 1e6; adjust keeps to free stock of the lot's own code", async () => {
+  const scene = mockScene();
+  // รูปคำขอผิดได้ BOM_INVALID_ROD ก่อนสิทธิ์ (GR ไม่มีสิทธิ์แต่ไม่ได้ BOM_FORBIDDEN)
+  assert.equal(await codeOf(scene.save("persona-gr", "receiveRods", receiveRow(2, { qtyReceived: 0 }))), "BOM_INVALID_ROD");
+  assert.equal(await codeOf(scene.save("persona-gr", "receiveRods", receiveRow(2, { id: "lot-2" }))), "BOM_INVALID_ROD", "the id must be a uuid");
+  assert.equal(await codeOf(scene.save("persona-gr", "receiveRods", receiveRow(2, { qc: { values: PASS, note: "" } }))), "BOM_INVALID_ROD", "the result is part of the shape");
+  assert.equal(await codeOf(scene.save("persona-gr", "receiveRods", receiveRow(2, { qc: { values: { ...PASS, width: 1e6 + 1 }, result: "fail", note: "กว้างเกิน" } }))), "BOM_INVALID_ROD", "a measurement above 1e6");
+  assert.equal(await codeOf(scene.save("persona-gr", "decideRods", { rodLots: { upsert: [{ id: lotId(3), decision: "keep", decisionNote: "ตัดสินแล้ว" }] } })), "BOM_INVALID_ROD");
+  assert.equal(await codeOf(scene.save("persona-gr", "issueRods", { rodMoves: { upsert: [{ id: "x", kind: "issue" }] } })), "BOM_INVALID_ROD");
+  assert.equal(await codeOf(scene.save("persona-gr", "receiveRods", receiveRow(2))), "BOM_FORBIDDEN", "a well-formed request reaches the rights check");
+  // ค่าที่วัดเป็น null = ไม่ได้วัด: ล็อตที่มีสเปกจึงขาดค่า
+  assert.equal(await codeOf(scene.save("persona-sr", "receiveRods", receiveRow(2, { qc: { values: { ...PASS, width: null }, result: "pass", note: "" } }))), "BOM_INVALID_ROD", "a null measurement counts as not measured");
+  const ok = await scene.save("persona-sr", "receiveRods", receiveRow(2, { id: lotId(2).toUpperCase() }));
+  assert.ok(ok.data, ok.code);
+  // ปรับยอด: เฉพาะสต็อกกลาง (ไม่มี ownerOrderId / forOrderId) รหัสต้องตรงกับล็อต
+  const uuid = (n) => `9c000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const adjust = (extra) => ({ rodMoves: { upsert: [{ id: uuid(1), kind: "adjust", lotId: lotId(0), qty: -1, note: "นับจริง", ...extra }] } });
+  assert.equal(await codeOf(scene.save("persona-pp", "adjustRods", adjust({ ownerOrderId: "DEMO-26008" }))), "BOM_INVALID_ROD", "not an order's bucket");
+  assert.equal(await codeOf(scene.save("persona-pp", "adjustRods", adjust({ forOrderId: "DEMO-26006" }))), "BOM_INVALID_ROD", "not for an order");
+  assert.equal(await codeOf(scene.save("persona-pp", "adjustRods", adjust({ itemCode: "RB-OTHER" }))), "BOM_INVALID_ROD", "not another code");
+  assert.ok((await scene.save("persona-pp", "adjustRods", adjust({ itemCode: RB }))).data, "the lot's own code is fine");
 });
 
 test("mock: the store round trip — SR receives through the page store and the reply brings the credited job", async () => {
@@ -482,6 +558,24 @@ test("pages: the receive dialog shows the spec targets, computes the verdict liv
   const plan = { innerHTML: "" };
   issue.bind({ querySelector: (selector) => ({ "[data-rod-issue]": qty, "[data-rod-plan]": plan })[selector] ?? null });
   assert.match(plan.innerHTML, /FN-\d{8}-91<\/span> <span class="small muted">ของใบ DEMO-26006<\/span><span class="nowrap">20 เส้น[\s\S]*FN-\d{8}-90<\/span> <span class="small muted">สต็อกกลาง<\/span><span class="nowrap">2 เส้น/);
+  // ผลผ่านบอกว่าแท่งไปไหน (ตรงกับ bom_rod_credit): SR รับ L2 ผ่าน (งาน 32/36) แล้ว L3 8 เส้น = 4 เส้นเป็นของงาน อีก 4 เส้นเข้าสต็อกกลาง · รับ 3 เส้น = นับเข้างานทั้งหมด
+  assert.equal(env.store.run("receiveRods", { lotId: lotId(2), qtyReceived: 12, values: PASS }).ok, true);
+  const verdictOf = (qtyValue) => {
+    const later = env.dialogs.rodReceive(env.ctx("p=work"), { lotId: lotId(3) });
+    const verdict = { innerHTML: "" };
+    const qtyInput = { value: qtyValue, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
+    const values = [fakeInput("thickness", "7.5"), fakeInput("width", "34"), fakeInput("weightPerM", "1200")];
+    later.bind({ querySelectorAll: (selector) => (selector === "[data-rod-value]" ? values : []), querySelector: (selector) => ({ "[data-rod-verdict]": verdict, "[data-rod-qty]": qtyInput })[selector] ?? null });
+    return { verdict, qtyInput };
+  };
+  const live = verdictOf("8");
+  assert.match(live.verdict.innerHTML, /ผ่านสเปก แท่งเข้าคลัง: 4 เส้น เป็นของงาน RB ของใบนี้ · เกิน 4 เส้น เข้าสต็อกกลาง/);
+  live.qtyInput.value = "3";
+  live.qtyInput.handlers.input();
+  assert.match(live.verdict.innerHTML, /ผ่านสเปก แท่งเข้าคลังและนับเข้างาน RB/, "the text follows the quantity typed");
+  // งาน RB ของใบเสร็จแล้ว = สต็อกกลางทั้งหมด ไม่นับเข้างาน
+  env.store.data().jobs.find((job) => job.orderId === "DEMO-26006" && job.dept === "RB").status = "done";
+  assert.match(verdictOf("8").verdict.innerHTML, /ผ่านสเปก แท่งเข้าคลังเป็นสต็อกกลางทั้งหมด ไม่นับเข้างาน RB \(งาน RB ของใบนี้เสร็จแล้ว\)/);
 });
 
 test("pages: the long-rod store page, the lot history with reverse, the decide dialog and the draft's use-from-SR-store field", async () => {
@@ -523,4 +617,35 @@ test("pages: the long-rod store page, the lot history with reverse, the decide d
   assert.match(decide.html, /นอกสเปก/);
   assert.match(decide.html, /ผลตัดสิน <span class="field-required">\(จำเป็น\)<\/span>/);
   assert.match(decide.html, /เหตุผล <span class="field-required">\(จำเป็น\)<\/span>/);
+});
+
+test("pages: the RubberFlow finishing form hides and stops requiring perBox for a work order linked to a BOM job, and names the SR store in the pass verdict", async () => {
+  const env = await page();
+  const base = env.context.MNP_RUBBERFLOW.context(new URLSearchParams("p=finishing"));
+  // ไม่มี BOM ฐานข้อมูล: ผูกงาน = มี sourceJobId (กฎสำรอง) · ไม่มี = ไม่ผูก
+  assert.deepEqual([base.bomLinked({ id: "WO-L", sourceJobId: "JOB-X" }), base.bomLinked({ id: "WO-U" })], [true, false]);
+  const data = {
+    lots: [], fgBoxes: [], orders: [{ id: "WO-L", sourceJobId: "JOB-X", uom: "pcs" }, { id: "WO-G", sourceJobId: "JOB-GONE", uom: "pcs" }, { id: "WO-U", uom: "m" }],
+    transfers: ["WO-L", "WO-G", "WO-U"].map((orderId, n) => ({ id: `TR-${n}`, lotId: `CU-${n}`, orderId, to: "finishing", status: "received", remaining: 10, qtySent: 10, uom: "pcs" })),
+  };
+  // งานของ WO-G ไม่มีใน BOM แล้ว (กฎเดียวกับฐานข้อมูล: ไม่ผูก = มีกล่อง)
+  const ctx = { ...base, data, bomLinked: (order) => order.sourceJobId === "JOB-X" };
+  const built = env.context.MNP_RUBBERFLOW_PAGES.finishing(ctx);
+  assert.match(built.html, /<option value="pass"[^>]*>ผ่าน — รับเข้าคลัง<\/option>/);
+  const el = (extra = {}) => ({ value: "", hidden: false, required: false, textContent: "", dataset: {}, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; }, ...extra });
+  const nodes = {
+    "[data-rf-inbound]": el(), '[name="useQty"]': el(), "[data-rf-remaining]": el(), "[data-rf-passed]": el(), "[data-rf-perbox]": el({ required: true }),
+    ".rf-perbox-field": el(), "[data-rf-linked-note]": el({ hidden: true }), '[name="qcResult"] option[value="pass"]': el({ textContent: "ผ่าน — รับเข้าคลัง" }),
+    'button[type="submit"]': el({ textContent: "บันทึกและพิมพ์ป้ายกล่อง" }), "[data-rf-boxes]": el(),
+  };
+  const form = { dataset: { rfSuccess: "บันทึก {result} และสร้างป้ายกล่องแล้ว" }, querySelector: (selector) => nodes[selector] ?? null };
+  built.bind({ querySelector: (selector) => (selector === "[data-rf-finishing]" ? form : null) });
+  const pickTransfer = (id) => { nodes["[data-rf-inbound]"].value = id; nodes["[data-rf-inbound]"].handlers.change(); };
+  const state = () => [nodes[".rf-perbox-field"].hidden, nodes["[data-rf-perbox]"].required, nodes["[data-rf-perbox]"].value, nodes["[data-rf-linked-note]"].hidden, nodes['[name="qcResult"] option[value="pass"]'].textContent];
+  pickTransfer("TR-0");
+  assert.deepEqual(state(), [true, false, "", false, "ผ่าน — ส่งเข้าคลังแท่งยาว (SR)"], "linked: perBox hidden, not required, empty; the verdict names the SR store");
+  pickTransfer("TR-2");
+  assert.deepEqual(state(), [false, true, "2000", true, "ผ่าน — รับเข้าคลัง"], "a work order for sale asks for perBox again with a default");
+  pickTransfer("TR-1");
+  assert.deepEqual(state().slice(0, 2), [false, true], "a job that BOM no longer has counts as not linked (boxes)");
 });

@@ -1316,9 +1316,22 @@
       ? specRows.map((row) => ui.field(`${row.label} (${row.unit})`, valueInput(row.key, true), { id: `rod-value-${row.key}`, required: true, hint: esc(`สเปก ${rules.fmtNum(row.target, 4)} ± ${rules.fmtNum(row.tol, 4)}`) })).join("")
       : rules.ROD_SPEC_KEYS.map((key) => ui.field(`${rules.ROD_SPEC_LABEL[key].label} (${rules.ROD_SPEC_LABEL[key].unit})`, valueInput(key, false), { id: `rod-value-${key}` })).join("");
     const pick = specRows.length ? "" : ui.field("ผลตรวจ", ui.select("result", [{ value: "pass", label: "ผ่าน · เข้าคลัง" }, { value: "fail", label: "ไม่ผ่าน · กักรอ QA ตัดสิน" }], { placeholder: "เลือกผลตรวจ…", id: "rod-result", extra: 'required data-rod-result title="ล็อตนี้ไม่มีสเปกขนาด ตัดสินจากการตรวจด้วยตา"' }), { id: "rod-result", required: true });
+    // แท่งที่ผ่านไปไหน (ตรงกับ private.bom_rod_credit): ใบ released / in_progress และงาน RB ยังไม่เสร็จ = ส่วนที่งานยังขาดเป็นของใบ ส่วนเกินเป็นสต็อกกลาง
+    // ไม่เช่นนั้น (งานเสร็จแล้ว ใบไม่ได้กำลังผลิต ไม่พบงาน) = สต็อกกลางทั้งหมด ไม่นับเข้างาน
+    const order = data.orders.find((entry) => entry.id === lot.orderId);
+    const job = data.jobs.find((entry) => entry.id === lot.jobNo && entry.orderId === lot.orderId);
+    const open = Boolean(order && ["released", "in_progress"].includes(order.status) && job && job.status !== "done");
+    const need = open ? Math.max(Math.round((Number(job.qtyPlanned) - (Number(job.qtyDone) || 0)) * 1e4) / 1e4, 0) : 0;
+    const passText = (qty) => {
+      const head = specRows.length ? "ผ่านสเปก" : "ผ่าน";
+      if (!open) return `${head} แท่งเข้าคลังเป็นสต็อกกลางทั้งหมด ไม่นับเข้างาน RB (${!job ? "ไม่พบงาน RB ของล็อตนี้" : job.status === "done" ? "งาน RB ของใบนี้เสร็จแล้ว" : "ใบนี้ไม่ได้อยู่ระหว่างผลิต"})`;
+      if (need <= 1e-9) return `${head} แท่งเข้าคลังเป็นสต็อกกลางทั้งหมด (งาน RB ของใบนี้ได้ครบแผนแล้ว)`;
+      if (!(qty > need + 1e-9)) return `${head} แท่งเข้าคลังและนับเข้างาน RB`;
+      return `${head} แท่งเข้าคลัง: ${rules.fmtQty(need)} ${unit} เป็นของงาน RB ของใบนี้ · เกิน ${rules.fmtQty(Math.round((qty - need) * 1e4) / 1e4)} ${unit} เข้าสต็อกกลาง`;
+    };
     const body = `<form novalidate id="bom-rod-receive-form" data-rf-form="receiveRods" data-rf-args="${attr(JSON.stringify({ lotId: lot.id }))}" data-rf-success="บันทึกรับ {result} แล้ว">
       ${lotFacts(ctx, lot, [["ส่งมา", esc(`${rules.fmtQty(lot.qtySent)} ${unit}`)]])}
-      <div class="rf-grid rf-g2">${ui.field(`จำนวนที่รับ (${unit})`, ui.input("qtyReceived", { type: "number", step: "any", min: 0, max: lot.qtySent, value: lot.qtySent, required: true, id: "rod-qty" }), { id: "rod-qty", required: true })}${values}${pick}</div>
+      <div class="rf-grid rf-g2">${ui.field(`จำนวนที่รับ (${unit})`, ui.input("qtyReceived", { type: "number", step: "any", min: 0, max: lot.qtySent, value: lot.qtySent, required: true, id: "rod-qty", extra: "data-rod-qty" }), { id: "rod-qty", required: true })}${values}${pick}</div>
       <div data-rod-verdict role="status" aria-live="polite"></div>
       <div class="field rf-field"><label for="rod-note">หมายเหตุ <span class="field-required" data-rod-note-req hidden>(จำเป็น)</span></label>${ui.input("note", { id: "rod-note", placeholder: "เช่น ผิวเป็นคลื่น ความหนาเกิน", extra: 'maxlength="300" data-rod-note' })}</div>
     </form>`;
@@ -1328,16 +1341,20 @@
       const box = dialog.querySelector("[data-rod-verdict]");
       const note = dialog.querySelector("[data-rod-note]");
       const mark = dialog.querySelector("[data-rod-note-req]");
+      const qtyInput = dialog.querySelector("[data-rod-qty]");
       const paint = () => {
         const verdict = rules.qcVerdict(lot.spec, Object.fromEntries(inputs.map((input) => [input.dataset.rodValue, input.value])));
         const outcome = specRows.length ? verdict.result : result?.value || null;
         const out = verdict.rows.filter((row) => row.value !== null && !row.pass).map((row) => `${row.label} ${rules.fmtNum(row.value, 4)} นอก ${rules.fmtNum(row.target, 4)} ± ${rules.fmtNum(row.tol, 4)}`);
-        if (box) box.innerHTML = outcome === "pass" ? ui.callout("good", specRows.length ? "ผ่านสเปก แท่งเข้าคลังและนับเข้างาน RB" : "ผ่าน แท่งเข้าคลังและนับเข้างาน RB")
+        const typed = Number(qtyInput?.value);
+        const qty = Number.isFinite(typed) && typed > 0 ? typed : Number(lot.qtySent) || 0;
+        if (box) box.innerHTML = outcome === "pass" ? ui.callout("good", esc(passText(qty)))
           : outcome === "fail" ? ui.callout("warn", esc(`${out.length ? `ไม่ผ่าน: ${out.join(", ")} · ` : "ไม่ผ่าน · "}ล็อตจะถูกกักรอตรวจคุณภาพ (QA) ตัดสิน ไม่นับเข้างาน RB`)) : "";
         if (note) note.required = outcome === "fail";
         if (mark) mark.hidden = outcome !== "fail";
       };
       inputs.forEach((input) => input.addEventListener("input", paint));
+      qtyInput?.addEventListener("input", paint);
       result?.addEventListener("change", paint);
       paint();
     };

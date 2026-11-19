@@ -397,6 +397,19 @@ test("finishing creates numbered boxes, counts passed quantity into the order an
   rejects(() => A.shipBoxes(d2, { ids: inStock }, ctx("store")), /ไม่พร้อมส่ง/);
 });
 
+test("finishing of a work order linked to a BOM job may leave perBox out (no boxes, like rf_save_lots); a perBox that is sent must be above zero and a work order for sale still needs it", () => {
+  const d = fresh();
+  const transfer = d.transfers.find((row) => row.status === "in_transit" && row.to === "finishing");
+  A.receiveTransfer(d, { id: transfer.id, qtyReceived: transfer.qtySent }, ctx("finisher"));
+  rejects(() => A.recordFinishing(structuredClone(d), { transferId: transfer.id, useQty: 10, passedQty: 10, perBox: "" }, ctx("finisher")), /จำนวนต่อกล่อง/);
+  const order = d.orders.find((row) => row.id === transfer.orderId);
+  order.sourceJobId = "JOB-X";
+  rejects(() => A.recordFinishing(structuredClone(d), { transferId: transfer.id, useQty: 10, passedQty: 10, perBox: 0 }, ctx("finisher")), /ต่อกล่องต้องมากกว่า 0/);
+  const lotId = A.recordFinishing(d, { transferId: transfer.id, useQty: 10, passedQty: 10, perBox: "", qcResult: "pass" }, ctx("finisher"));
+  const lot = d.lots.find((row) => row.id === lotId);
+  assert.deepEqual([lot.params, lot.boxes, d.fgBoxes.filter((box) => box.lotId === lotId).length], [{}, 0, 0]);
+});
+
 test("QC records judge from the measured values, cannot pass with a value out of spec, and NCRs hold lots until closed with a corrective action", () => {
   const d = fresh();
   const held = d.lots.find((lot) => lot.qc === "hold");

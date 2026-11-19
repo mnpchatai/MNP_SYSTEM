@@ -626,6 +626,8 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       if (!ok) fail("BOM_FORBIDDEN");
       // ยอดที่ใช้จากสต็อกสินค้าสำเร็จรูป (กุญแจ stockCounts ที่เป็นสินค้าของใบ) ตั้งได้เฉพาะกลุ่มวางแผน · ST / WH นับชิ้นอื่นของใบร่างได้ตามเดิม (ตรงกับ bom_save_orders ของ batch C)
       if ((prev.items ?? []).some((item) => bomCanon(prev.stockCounts?.[item.fgCode] ?? null) !== bomCanon(record.stockCounts?.[item.fgCode] ?? null))) fail("BOM_FORBIDDEN");
+      // คลังแท่งยาว (20261202010000): คีย์รหัส RB ของผลระเบิดของใบ (ใช้จากคลัง SR ตอนปล่อยผลิต) ตั้งได้เฉพาะกลุ่มวางแผนเหมือนคีย์สินค้า
+      if ((Array.isArray(prev.explosion) ? prev.explosion : []).some((line) => line?.kind === "RB" && bomCanon(prev.stockCounts?.[line.itemCode] ?? null) !== bomCanon(record.stockCounts?.[line.itemCode] ?? null))) fail("BOM_FORBIDDEN");
       return;
     }
     if (list === "jobs" && prev && !planner) {
@@ -695,6 +697,8 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       ctx.rfCancel.push(bomRfCancelOp("cancelOrder", jobs));
     } else if ((from === "released" || from === "in_progress") && to === "draft") {
       if (jobs.some(bomJobStarted)) fail("BOM_INVALID_TRANSITION");
+      // คลังแท่งยาว: SR จ่ายแท่งให้ GR ตามใบนี้แล้ว (จ่ายสุทธิหลังย้อนจ่าย > 0) = งานเริ่มแล้ว เปิดกลับไม่ได้ (ตรงกับ bom_save_orders ของ 20261202010000)
+      if ((ctx.rodIssued?.(prev.id) ?? 0) > 1e-9) fail("BOM_INVALID_TRANSITION");
       if (Number(record.revision) !== Number(prev.revision) + 1) fail("BOM_INVALID_TRANSITION");
       ctx.rfCancel.push(bomRfCancelOp("reopenOrder", jobs));
       ctx.returnFgStock(prev.id);
@@ -1189,7 +1193,14 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
   const bomRodBalance = (next, lotId, owner) => bomRodRound(next.rodMoves.reduce((sum, move) => (move.lotId === lotId && bomRodOwner(move.ownerOrderId) === bomRodOwner(owner) ? sum + Number(move.qty) : sum), 0));
   const bomRodFreeOwner = (next, owner) => owner === null || BOM_ROD_FREE.includes(next.orders.find((order) => order.id === owner)?.status);
   const bomRodText = (value, min, max) => { const text = typeof value === "string" ? value.trim() : value === undefined || value === null ? "" : fail("BOM_INVALID_ROD"); if (text.length < min || text.length > max) fail("BOM_INVALID_ROD"); return text; };
-  const bomRodNum = (value) => (typeof value === "number" && Number.isFinite(value) && Math.abs(value) <= 1e9 ? value : fail("BOM_INVALID_ROD"));
+  // ตัวเลขของคำขอ (private.bom_num): ไม่มี / null = null · ไม่ใช่ตัวเลข หรือนอกช่วง [min, max] = BOM_INVALID_ROD
+  const bomRodNum = (value, min, max) => (value === undefined || value === null ? null : typeof value === "number" && Number.isFinite(value) && value >= min && value <= max ? value : fail("BOM_INVALID_ROD"));
+  // uuid ของคำขอ (bom_text 1-40 ตัวหลังตัดช่องว่าง แปลงเป็นตัวเล็ก ต้องเป็นรูป uuid) ผิด = BOM_INVALID_ROD
+  const BOM_ROD_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  const bomRodUuid = (value) => { const text = bomRodText(value, 1, 40).toLowerCase(); if (!BOM_ROD_UUID.test(text)) fail("BOM_INVALID_ROD"); return text; };
+  const bomRodLotOf = (next, id) => next.rodLots.find((entry) => String(entry.id).toLowerCase() === id) ?? fail("BOM_INVALID_ROD");
+  // แท่งที่ SR จ่ายให้ GR ตามใบนี้สุทธิ (issue + unissue ที่ forOrderId = ใบนี้ กลับเครื่องหมาย) · > 0 = เปิดใบกลับเป็นร่างไม่ได้
+  const bomRodIssued = (next, orderId) => bomRodRound(-next.rodMoves.reduce((sum, move) => ((move.kind === "issue" || move.kind === "unissue") && move.forOrderId === orderId ? sum + Number(move.qty) : sum), 0));
   const bomRodRights = (actor, dept) => { if (!(bomIsPlanner(actor) || actor.dept === dept)) fail("BOM_FORBIDDEN"); };
   const bomRodPush = (next, nextVersion, at, actor, row) => {
     const id = row.id ?? newEpoch();
@@ -1225,42 +1236,50 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
   function bomRodLots(next, rows, nextVersion, actor, at, action) {
     if (!Array.isArray(rows) || rows.length !== 1) fail("BOM_INVALID_ROD");
     const row = rows[0];
-    if (!row || typeof row !== "object" || Array.isArray(row) || typeof row.id !== "string" || !row.id.trim()) fail("BOM_INVALID_ROD");
+    if (!row || typeof row !== "object" || Array.isArray(row)) fail("BOM_INVALID_ROD");
+    const id = bomRodUuid(row.id);
     if (action === "receiveRods") {
-      const qty = bomRodNum(row.qtyReceived);
+      // รูปคำขอทั้งหมดก่อนสิทธิ์ (ลำดับเดียวกับ bom_rod_save_lots): จำนวน 0 < q <= 1e9 · qc เป็นวัตถุ · ค่าที่วัดเฉพาะสามมิติ 0 < ค่า <= 1e6 (null = ไม่ได้วัด ข้าม)
+      // ผล pass | fail บังคับเสมอ (ไม่มีสเปก = SR ตัดสินด้วยตา) · หมายเหตุ <= 300 ตัวอักษร ไม่ผ่านต้อง >= 3
+      const qty = bomRodNum(row.qtyReceived, 0, 1e9);
+      if (qty === null || qty <= 0) fail("BOM_INVALID_ROD");
       const qc = row.qc;
       if (!qc || typeof qc !== "object" || Array.isArray(qc)) fail("BOM_INVALID_ROD");
       const raw = qc.values === undefined || qc.values === null ? {} : qc.values;
       if (typeof raw !== "object" || Array.isArray(raw)) fail("BOM_INVALID_ROD");
       const values = {};
       for (const [key, value] of Object.entries(raw)) {
-        if (!BOM_ROD_SPEC_KEYS.includes(key) || typeof value !== "number" || !Number.isFinite(value) || value <= 0 || value > 1e9) fail("BOM_INVALID_ROD");
-        values[key] = value;
+        if (!BOM_ROD_SPEC_KEYS.includes(key)) fail("BOM_INVALID_ROD");
+        const measured = bomRodNum(value, 0, 1e6);
+        if (measured === null) continue;
+        if (measured <= 0) fail("BOM_INVALID_ROD");
+        values[key] = measured;
       }
-      if (qc.result !== undefined && qc.result !== null && !["pass", "fail"].includes(qc.result)) fail("BOM_INVALID_ROD");
+      const result = bomRodText(qc.result, 0, 10);
+      if (!["pass", "fail"].includes(result)) fail("BOM_INVALID_ROD");
       const note = bomRodText(qc.note, 0, 300);
-      bomRodRights(actor, "SR");
-      const lot = next.rodLots.find((entry) => entry.id === row.id.trim()) ?? fail("BOM_INVALID_ROD");
-      if (lot.status !== "pending") fail("BOM_INVALID_TRANSITION");
-      if (!(qty > 0) || qty > Number(lot.qtySent) + 1e-9) fail("BOM_INVALID_ROD");
-      const spec = lot.spec && typeof lot.spec === "object" ? Object.entries(lot.spec).filter(([key]) => BOM_ROD_SPEC_KEYS.includes(key)) : [];
-      let result = qc.result ?? null;
-      if (spec.length) {
-        if (spec.some(([key]) => values[key] === undefined)) fail("BOM_INVALID_ROD");
-        const computed = spec.every(([key, target]) => Math.abs(values[key] - Number(target.target)) <= Number(target.tol) + 1e-9) ? "pass" : "fail";
-        if (result !== computed) fail("BOM_INVALID_ROD");
-      } else if (!result) fail("BOM_INVALID_ROD");
       if (result === "fail" && note.length < 3) fail("BOM_INVALID_ROD");
+      bomRodRights(actor, "SR");
+      const lot = bomRodLotOf(next, id);
+      if (lot.status !== "pending") fail("BOM_INVALID_TRANSITION");
+      if (qty > Number(lot.qtySent)) fail("BOM_INVALID_ROD");
+      // มีสเปก: ทุกคีย์ของสเปกต้องมีค่า และผลที่ส่งมาต้องเท่ากับผลคำนวณ (private.rf_in_spec: |ค่า - target| <= tol เผื่อ 1e-9 · ไม่มี target = ผ่าน)
+      if (lot.spec && typeof lot.spec === "object") {
+        const keys = Object.keys(lot.spec);
+        if (keys.some((key) => values[key] === undefined)) fail("BOM_INVALID_ROD");
+        const inSpec = (key) => { const target = lot.spec[key]?.target; return target === undefined || target === null || Math.abs(values[key] - Number(target)) <= Number(lot.spec[key]?.tol) + 1e-9; };
+        if (result !== (keys.every(inSpec) ? "pass" : "fail")) fail("BOM_INVALID_ROD");
+      }
       Object.assign(lot, { qtyReceived: qty, qc: { values, result, note }, receivedBy: actor.name, receivedAt: at, status: result === "pass" ? "stored" : "held" });
       next.versions.rodLots[lot.id] = nextVersion;
       const credit = result === "pass" ? bomRodCredit(next, lot, qty, nextVersion, actor, at) : { moves: 0, job: false };
       return { lots: 1, ...credit };
     }
-    const decision = row.decision;
+    const decision = bomRodText(row.decision, 1, 10);
     if (!["accept", "return", "scrap"].includes(decision)) fail("BOM_INVALID_ROD");
     const note = bomRodText(row.decisionNote, 3, 300);
     bomRodRights(actor, "QA");
-    const lot = next.rodLots.find((entry) => entry.id === row.id.trim()) ?? fail("BOM_INVALID_ROD");
+    const lot = bomRodLotOf(next, id);
     if (lot.status !== "held") fail("BOM_INVALID_TRANSITION");
     Object.assign(lot, { decision, decisionNote: note, decidedBy: actor.name, decidedAt: at, status: decision === "accept" ? "stored" : decision === "return" ? "returned" : "scrapped" });
     next.versions.rodLots[lot.id] = nextVersion;
@@ -1272,48 +1291,62 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
   function bomRodMoves(next, rows, nextVersion, actor, at, action) {
     const bad = () => fail("BOM_INVALID_ROD");
     const kind = { issueRods: "issue", reverseRodIssue: "unissue", adjustRods: "adjust" }[action];
-    if (!Array.isArray(rows) || rows.length < 1 || rows.length > (kind === "issue" ? 50 : 1)) bad();
-    const ids = new Set();
-    for (const row of rows) {
-      if (!row || typeof row !== "object" || Array.isArray(row) || row.kind !== kind || typeof row.id !== "string" || !row.id.trim() || ids.has(row.id) || next.rodMoves.some((move) => move.id === row.id)) bad();
-      ids.add(row.id);
-    }
-    if (kind === "issue") {
-      for (const row of rows) {
-        if (typeof row.lotId !== "string" || typeof row.forOrderId !== "string" || typeof row.itemCode !== "string" || !(bomRodNum(row.qty) < 0)) bad();
-        if (row.ownerOrderId !== undefined && row.ownerOrderId !== null && typeof row.ownerOrderId !== "string") bad();
+    if (!kind || !Array.isArray(rows) || rows.length < 1 || rows.length > (kind === "issue" ? 50 : 1)) bad();
+    // รูปทุกแถวก่อนสิทธิ์ (ลำดับเดียวกับ bom_rod_save_moves): id เป็น uuid ไม่ซ้ำในคำสั่งและไม่มีอยู่แล้ว · kind ตรงกับ action · หมายเหตุ จ่าย <= 300 / ย้อนจ่าย ปรับยอด 3-300
+    // ownerOrderId / forOrderId = เลข PI (ตัวใหญ่) · itemCode ตามกฎรหัส · จ่ายต้องมี forOrderId และ itemCode · ปรับยอดห้ามมี ownerOrderId / forOrderId (สต็อกกลางเท่านั้น)
+    const seen = new Set();
+    const parsed = rows.map((row) => {
+      if (!row || typeof row !== "object" || Array.isArray(row)) bad();
+      const id = bomRodUuid(row.id);
+      if (seen.has(id) || next.rodMoves.some((move) => String(move.id).toLowerCase() === id)) bad();
+      seen.add(id);
+      if (bomRodText(row.kind, 1, 10) !== kind) bad();
+      const note = bomRodText(row.note, kind === "issue" ? 0 : 3, 300);
+      if (kind === "unissue") return { id, reversesId: bomRodUuid(row.reversesId), note };
+      const lotId = bomRodUuid(row.lotId);
+      const qty = bomRodNum(row.qty, -1e9, 1e9);
+      if (qty === null || qty === 0 || (kind === "issue" && qty > 0)) bad();
+      const ownerPi = bomRodText(row.ownerOrderId, 0, 40).toUpperCase() || null;
+      const code = bomCode(bomRodText(row.itemCode, 0, 60)) || null;
+      let forPi = null;
+      if (kind === "issue") {
+        forPi = bomRodText(row.forOrderId, 1, 40).toUpperCase();
+        if (code === null) bad();
+      } else if (ownerPi !== null || bomRodText(row.forOrderId, 0, 40)) bad();
+      return { id, lotId, qty, ownerPi, forPi, code, note };
+    });
+    // สิทธิ์: จ่าย / ย้อนจ่าย = แผนก SR หรือกลุ่มวางแผน · ปรับยอด = กลุ่มวางแผนเท่านั้น
+    if (kind === "adjust") { if (!bomIsPlanner(actor)) fail("BOM_FORBIDDEN"); } else bomRodRights(actor, "SR");
+    let moves = 0;
+    for (const row of parsed) {
+      if (kind === "unissue") {
+        // ย้อนได้เฉพาะแถว issue (อื่น = BOM_INVALID_ROD) ที่ยังไม่ถูกย้อน (ย้อนซ้ำ = BOM_INVALID_TRANSITION)
+        const original = next.rodMoves.find((move) => String(move.id).toLowerCase() === row.reversesId) ?? bad();
+        if (original.kind !== "issue") bad();
+        if (next.rodMoves.some((move) => move.reversesId === original.id)) fail("BOM_INVALID_TRANSITION");
+        moves += bomRodPush(next, nextVersion, at, actor, { id: row.id, lotId: original.lotId, itemCode: original.itemCode, kind, qty: -Number(original.qty), ownerOrderId: original.ownerOrderId, forOrderId: original.forOrderId, reversesId: original.id, note: row.note });
+        continue;
       }
-      bomRodRights(actor, "SR");
-      let moves = 0;
-      for (const row of rows) {
-        const lot = next.rodLots.find((entry) => entry.id === row.lotId) ?? bad();
-        const forOrder = next.orders.find((order) => order.id === row.forOrderId.trim().toUpperCase()) ?? bad();
-        const owner = bomRodOwner(row.ownerOrderId) === null ? null : (next.orders.find((order) => order.id === row.ownerOrderId.trim().toUpperCase()) ?? bad()).id;
-        if (lot.status !== "stored") fail("BOM_INVALID_TRANSITION");
-        if (bomCode(row.itemCode) !== lot.itemCode) bad();
+      // รายแถว: ล็อต (ไม่พบ = BOM_INVALID_ROD) → สถานะ stored (BOM_INVALID_TRANSITION) → รหัสตรงกับล็อต → ใบที่จ่ายให้ released / in_progress → ถังต้นทาง → ยอดถัง (BOM_ROD_EXCEEDS)
+      const lot = next.rodLots.find((entry) => String(entry.id).toLowerCase() === row.lotId) ?? bad();
+      if (lot.status !== "stored") fail("BOM_INVALID_TRANSITION");
+      if (row.code !== null && row.code !== lot.itemCode) bad();
+      let owner = null;
+      let forId = null;
+      if (kind === "issue") {
+        const forOrder = next.orders.find((order) => order.id === row.forPi) ?? bad();
         if (!["released", "in_progress"].includes(forOrder.status)) fail("BOM_INVALID_TRANSITION");
-        if (owner !== forOrder.id && !bomRodFreeOwner(next, owner)) bad();
-        if (bomRodBalance(next, lot.id, owner) + row.qty < -1e-9) fail("BOM_ROD_EXCEEDS");
-        moves += bomRodPush(next, nextVersion, at, actor, { id: row.id, lotId: lot.id, itemCode: lot.itemCode, kind, qty: row.qty, ownerOrderId: owner, forOrderId: forOrder.id });
+        forId = forOrder.id;
+        if (row.ownerPi !== null) {
+          const ownerOrder = next.orders.find((order) => order.id === row.ownerPi) ?? bad();
+          if (ownerOrder.id !== forOrder.id && !BOM_ROD_FREE.includes(ownerOrder.status)) bad();
+          owner = ownerOrder.id;
+        }
       }
-      return { moves };
+      if (bomRodBalance(next, lot.id, owner) + row.qty < -1e-9) fail("BOM_ROD_EXCEEDS");
+      moves += bomRodPush(next, nextVersion, at, actor, { id: row.id, lotId: lot.id, itemCode: lot.itemCode, kind, qty: row.qty, ownerOrderId: owner, forOrderId: forId, note: row.note });
     }
-    const row = rows[0];
-    const note = bomRodText(row.note, 3, 300);
-    if (kind === "unissue") {
-      if (typeof row.reversesId !== "string") bad();
-      bomRodRights(actor, "SR");
-      const original = next.rodMoves.find((move) => move.id === row.reversesId);
-      if (!original || original.kind !== "issue") bad();
-      if (next.rodMoves.some((move) => move.reversesId === original.id)) fail("BOM_INVALID_TRANSITION");
-      return { moves: bomRodPush(next, nextVersion, at, actor, { id: row.id, lotId: original.lotId, itemCode: original.itemCode, kind, qty: -Number(original.qty), ownerOrderId: original.ownerOrderId, forOrderId: original.forOrderId, reversesId: original.id, note }) };
-    }
-    if (typeof row.lotId !== "string" || bomRodNum(row.qty) === 0) bad();
-    if (!bomIsPlanner(actor)) fail("BOM_FORBIDDEN");
-    const lot = next.rodLots.find((entry) => entry.id === row.lotId) ?? bad();
-    if (lot.status !== "stored") fail("BOM_INVALID_TRANSITION");
-    if (bomRodBalance(next, lot.id, null) + row.qty < -1e-9) fail("BOM_ROD_EXCEEDS");
-    return { moves: bomRodPush(next, nextVersion, at, actor, { id: row.id, lotId: lot.id, itemCode: lot.itemCode, kind, qty: row.qty, ownerOrderId: null, note }) };
+    return { moves };
   }
   // ถังสต็อกกลางของรหัสเส้นยาง เรียง FIFO: ล็อตที่รับเข้าคลังก่อน (receivedAt แล้วเลขล็อต) · ในล็อตเดียวกัน ถังไม่มีเจ้าของก่อน แล้วใบที่ปิด / ยกเลิกเรียงตาม releasedAt (เลข PI)
   function bomRodFreeBuckets(next, itemCode) {
@@ -1431,7 +1464,7 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
         // สูตรยางผูกกับสูตร PHR ของ RubberFlow ได้เฉพาะรหัสสูตรที่มีอยู่ในฐานข้อมูล RubberFlow (revision ใดก็ได้ · ตรงกับ bom_save_compounds)
         if (list === "compounds" && record.recipeId !== undefined && record.recipeId !== null && !rfLoad().recipes.some((row) => row.id === record.recipeId)) fail("BOM_INVALID_COMPOUND");
         const releasedBefore = released.length;
-        if (list === "orders") bomOrderTransition(prev, record, { jobRows: changes.jobs?.upsert ?? [], jobsOf, dropJobs, released, rfCancel: rfOps.cancel, returnFgStock: (orderId) => { meta.fgStockMoves = (meta.fgStockMoves ?? 0) + bomReturnFgStock(next, orderId, nextVersion, actor, at); }, returnRodStock: (orderId) => { meta.rodMoves = (meta.rodMoves ?? 0) + bomReturnRodStock(next, orderId, nextVersion, actor, at); } });
+        if (list === "orders") bomOrderTransition(prev, record, { jobRows: changes.jobs?.upsert ?? [], jobsOf, dropJobs, released, rfCancel: rfOps.cancel, returnFgStock: (orderId) => { meta.fgStockMoves = (meta.fgStockMoves ?? 0) + bomReturnFgStock(next, orderId, nextVersion, actor, at); }, returnRodStock: (orderId) => { meta.rodMoves = (meta.rodMoves ?? 0) + bomReturnRodStock(next, orderId, nextVersion, actor, at); }, rodIssued: (orderId) => bomRodIssued(next, orderId) });
         if (list === "jobs") bomJobRules(prev, record, actor, next, released, action, rfOps.cancel);
         if (index === -1) {
           if (list === "colorSets" || list === "packages" || list === "jobs") {
@@ -1959,13 +1992,16 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
             next.molds[mi] = { ...next.molds[mi], usageSinceClean: round3(next.molds[mi].usageSinceClean + shots), totalUsage: round3(next.molds[mi].totalUsage + shots) };
             stampVersion("molds", next.molds[mi].id);
           } else {
-            const perBox = num(record.params.perBox);
-            if (!(perBox > 0) || good + scrap > use + 1e-9 || !["pass", "hold", "fail"].includes(record.qc)) fail(bad);
+            // WO ที่ผูกงาน RB ของ BOM (sourceJobId ตรงกับงานของ BOM โหมดเดียวกัน · 20261202010000): ไม่มีกล่อง แท่งไปคลังแท่งยาว (SR) เป็นล็อตแท่งรอรับเมื่อผ่าน QC (rfApplyBomOps)
+            const linked = rfLinkedJob(order);
+            // จำนวนต่อกล่อง (ตรงกับ rf_save_lots): ไม่ส่ง = ได้เฉพาะ WO ที่ผูกงาน · ส่งมาต้องเป็นตัวเลข 0 < ค่า <= 1e9 ทุก WO · ล็อตเก็บเฉพาะ perBox (ผูกงานไม่ส่ง = {})
+            const rawPerBox = record.params.perBox;
+            const perBox = rawPerBox === undefined || rawPerBox === null ? null : num(rawPerBox);
+            if ((perBox === null ? !linked : !(perBox > 0) || perBox > 1e9) || good + scrap > use + 1e-9 || !["pass", "hold", "fail"].includes(record.qc)) fail(bad);
+            out.params = perBox === null ? {} : { perBox };
             if (record.qc !== "pass") reasons.push(...(Array.isArray(record.holdReasons) && record.holdReasons.length ? record.holdReasons.map((reason) => String(reason).slice(0, 200)).slice(0, 20) : ["ผลตรวจตกแต่งไม่ผ่าน/รอตัดสิน"]));
             out.qc = record.qc;
             out.countedToOrder = record.qc === "pass";
-            // WO ที่ผูกงาน RB ของ BOM (sourceJobId ตรงกับงานของ BOM โหมดเดียวกัน · 20261202010000): ไม่มีกล่อง แท่งไปคลังแท่งยาว (SR) เป็นล็อตแท่งรอรับเมื่อผ่าน QC (rfApplyBomOps)
-            const linked = rfLinkedJob(order);
             // กล่อง: ฐานข้อมูลสร้างเองจากล็อต (ใบละไม่เกิน perBox ชิ้น กล่องสุดท้ายเศษ) id = เลขล็อต (FN → BOX) ต่อด้วยลำดับ 3 หลัก
             const count = good > 0 && !linked ? Math.ceil(good / perBox - 1e-9) : 0;
             if (count > 1000) fail(bad);
@@ -2432,7 +2468,8 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       const wo = rfMaster.orders.find((row) => row.id === item.woId);
       const job = wo?.sourceJobId ? bom.jobs.find((row) => row.id === wo.sourceJobId) : null;
       const good = Math.round(Number(item.qty) * 1e9) / 1e9;
-      if (!job || !(good > 0) || bom.rodLots.some((lot) => lot.lotNo === item.lotId)) continue;
+      // งานต้องผูก WO นี้อยู่ (externalRef.woId = เลข WO ตรงกับ bom_rod_lot_create) · งานที่ผูก WO อื่น = ไม่สร้างล็อตแท่ง
+      if (!job || job.externalRef?.woId !== wo.id || !(good > 0) || bom.rodLots.some((lot) => lot.lotNo === item.lotId)) continue;
       const recipe = rfMaster.recipes.find((row) => row.id === wo.recipeId && row.revision === wo.recipeRevision);
       const raw = recipe?.extrusionSpec && typeof recipe.extrusionSpec === "object" ? recipe.extrusionSpec : null;
       const spec = raw && Object.keys(raw).length ? clone(raw) : null;

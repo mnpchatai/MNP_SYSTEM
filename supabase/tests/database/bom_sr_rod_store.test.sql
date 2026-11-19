@@ -329,6 +329,33 @@ select sr_t.rf(jsonb_build_object('lots', jsonb_build_object('upsert', jsonb_bui
   'recordFinishing');
 select is(sr_t.lot('FN-N1') ->> 'status', 'pending', 'a linked work order without perBox records its finishing lot');
 select is(sr_t.lot('FN-N1') -> 'spec', 'null'::jsonb, 'a recipe without a dimension spec gives a rod lot without spec');
+-- งานที่ผูก WO อื่นอยู่ (external_ref.woId ไม่ใช่ WO นี้) = ไม่สร้างล็อตแท่ง (เหมือน rf_apply_feedback เดิม) · ตั้งตรงชั่วคราวแล้วคืนค่า
+reset role;
+update public.bom_jobs set external_ref = external_ref || '{"woId":"WO-OTHER"}'::jsonb where is_test and job_no = 'JOB-2-RB';
+update public.bom_master_state set version = version + 1 where is_test;
+insert into public.rf_lots (is_test, lot_no, stage, order_no, uom, good_qty, qc, transferred_qty) values (true, 'CU-N2', 'curing', 'WO-N1', 'pcs', 10, 'pass', 10);
+insert into public.rf_transfers (is_test, transfer_no, lot_no, order_no, from_stage, to_stage, uom, qty_sent, remaining, status) values
+  (true, 'TR-N2', 'CU-N2', 'WO-N1', 'curing', 'finishing', 'pcs', 10, 0, 'in_transit');
+update public.rf_master_state set version = version + 1 where is_test;
+set local role authenticated;
+select public.app_sandbox_enter(current_setting('test.p_sbx_sr_staff')::uuid);
+select sr_t.rf(jsonb_build_object('transfers', jsonb_build_object('upsert',
+  (select jsonb_agg(x || jsonb_build_object('status', 'received', 'qtyReceived', (x ->> 'qtySent')::numeric))
+   from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-N2'))), 'receiveTransfer');
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select set_config('test.bv4', sr_t.ver()::text, true);
+select lives_ok($$ select sr_t.rf(jsonb_build_object('lots', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.fn')::jsonb || '{"id":"FN-N2","orderId":"WO-N1","goodQty":10,"sources":[{"type":"transfer","id":"TR-N2","lotId":"CU-N2","qty":10}]}'::jsonb))),
+  'recordFinishing') $$, 'a finishing lot of a work order whose job now points at another work order is recorded');
+select ok(sr_t.lot('FN-N2') is null, 'a job linked to another WO gets no rod lot');
+select is((select count(*)::integer from jsonb_array_elements(public.app_rf_master() -> 'fgBoxes') b where b ->> 'lotId' = 'FN-N2'), 0,
+  'the work order still points at a BOM job, so the lot makes no boxes either');
+select is(sr_t.ver(), current_setting('test.bv4')::bigint, 'and the BOM counter does not move');
+reset role;
+update public.bom_jobs set external_ref = external_ref || '{"woId":"WO-N1"}'::jsonb where is_test and job_no = 'JOB-2-RB';
+update public.bom_master_state set version = version + 1 where is_test;
+set local role authenticated;
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select sr_t.rf(jsonb_build_object('lots', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.fn')::jsonb || '{"id":"FN-U0","orderId":"WO-U","goodQty":40,"sources":[{"type":"transfer","id":"TR-U1","lotId":"CU-U1","qty":40}]}'::jsonb))),
   'recordFinishing') $$, 'RF_INVALID_LOT', 'a work order for sale still needs perBox');
@@ -576,6 +603,51 @@ select is(sr_t.bal('FN-S1', '251202-25003') || '/' || sr_t.bal('FN-S2', '251202-
 select is(sr_t.bal('FN-S1', null) || '/' || sr_t.bal('FN-S2', null), '20/20', 'to the free buckets of the same lots');
 select is(sr_t.free('RB-A'), 47::numeric, 'free central stock is whole again');
 select ok(sr_t.audit() like '%rodMoves +4%', 'the history of the reopening counts the return rows');
+
+-- 13b. ยอดใช้จากคลัง SR (stockCounts ของรหัส RB) ตั้งได้เฉพาะกลุ่มวางแผน · ST / WH ยังนับชิ้นอื่นของใบร่างได้ ---------------------------------------------
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select throws_ok($$ select sr_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  sr_t.order_row('251202-25003') || '{"stockCounts":{"RB-A":5}}'::jsonb))), 'setStockCounts') $$,
+  'BOM_FORBIDDEN', 'ST staff cannot set how many rods a draft takes from the SR store');
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select throws_ok($$ select sr_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  sr_t.order_row('251202-25003') || '{"stockCounts":{"RB-A":0}}'::jsonb))), 'setStockCounts') $$,
+  'BOM_FORBIDDEN', 'nor can WH staff (not even to zero)');
+select throws_ok($$ select sr_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  sr_t.order_row('251202-25003') || '{"stockCounts":{}}'::jsonb))), 'setStockCounts') $$,
+  'BOM_FORBIDDEN', 'nor remove it');
+select lives_ok($$ select sr_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  sr_t.order_row('251202-25003') || '{"stockCounts":{"RB-A":30,"SE-A":4}}'::jsonb))), 'setStockCounts') $$,
+  'WH staff still count another part of the draft when the RB amount stays the same');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select lives_ok($$ select sr_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  sr_t.order_row('251202-25003') || '{"stockCounts":{"RB-A":10,"SE-A":4}}'::jsonb))), 'setStockCounts') $$,
+  'a planner sets the amount taken from the SR store');
+select is(sr_t.order_row('251202-25003') -> 'stockCounts', '{"RB-A":10,"SE-A":4}'::jsonb, 'the draft keeps the counts of WH and the planner');
+
+-- 13c. SR จ่ายแท่งตามใบแล้ว = งานเริ่มแล้ว เปิดกลับเป็นร่างไม่ได้จนกว่าจะย้อนการจ่าย ------------------------------------------------------------------
+select set_config('test.jobs3b', jsonb_build_array(
+  current_setting('test.job')::jsonb || '{"id":"JOB-3B-RB","orderId":"251202-25003","qtyPlanned":30,"qtyRequired":40}'::jsonb,
+  current_setting('test.job')::jsonb || '{"id":"JOB-3B-GR","orderId":"251202-25003","dept":"GR","itemCode":"SE-A","kind":"SE"}'::jsonb,
+  current_setting('test.job')::jsonb || '{"id":"JOB-3B-PK","orderId":"251202-25003","dept":"PK","itemCode":"FG-A","kind":"FG","uom":"set"}'::jsonb)::text, true);
+select lives_ok($$ select sr_t.release('251202-25003', '{}'::jsonb, current_setting('test.jobs3b')::jsonb) $$, 'the planner releases the draft again (10 rods from the store)');
+select is(sr_t.bal('FN-S1', '251202-25003'), 10::numeric, 'the order holds 10 rods of the oldest lot');
+select public.app_sandbox_enter(current_setting('test.p_sbx_sr_staff')::uuid);
+select lives_ok($$ select sr_t.moves(jsonb_build_array(sr_t.issue_row('00000000-0000-4000-8000-000000000041', 'FN-S1', '251202-25003', '251202-25003', -4)), 'issueRods') $$,
+  'SR issues 4 rods to GR for the order');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select throws_ok($$ select sr_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  sr_t.order_row('251202-25003') || '{"status":"draft"}'::jsonb))), 'updateOrderItem') $$,
+  'BOM_INVALID_TRANSITION', 'rods already handed to GR count as work started: the order cannot go back to draft');
+select is(sr_t.order_row('251202-25003') ->> 'status', 'released', 'and the order stays released');
+select public.app_sandbox_enter(current_setting('test.p_sbx_sr_staff')::uuid);
+select lives_ok($$ select sr_t.moves('[{"id":"00000000-0000-4000-8000-000000000042","kind":"unissue","reversesId":"00000000-0000-4000-8000-000000000041","note":"จ่ายก่อนแก้ใบ"}]'::jsonb, 'reverseRodIssue') $$,
+  'SR reverses the issue');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select lives_ok($$ select sr_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  sr_t.order_row('251202-25003') || '{"status":"draft"}'::jsonb))), 'updateOrderItem') $$,
+  'with nothing issued any more the planner reopens the order');
+select is(sr_t.bal('FN-S1', '251202-25003') || '/' || sr_t.bal('FN-S1', null), '0/20', 'and the 10 rods go back to free central stock');
 
 -- 14. ใบที่ปิดแล้ว: ถังของใบเป็นสต็อกกลาง (ไม่ต้องมีแถว) ------------------------------------------------------------------------------------------
 reset role;

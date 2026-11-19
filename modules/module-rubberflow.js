@@ -521,6 +521,16 @@
         } catch { return []; }
       },
       bomItems: () => bomItems(),
+      // WO ที่ผูกงานของ BOM (กฎเดียวกับ private.bom_rod_wo_linked): มี sourceJobId และงานนั้นมีอยู่ใน BOM ที่โหลดแล้ว
+      // BOM ยังไม่โหลด / โหมดในเครื่อง = ถือตาม sourceJobId อย่างเดียว · ใช้ซ่อนช่องจำนวนต่อกล่องและบอกว่าแท่งไปคลังแท่งยาว (SR)
+      bomLinked: (order) => {
+        if (!order?.sourceJobId) return false;
+        try {
+          const bom = bomStore();
+          if (!bom || bom.status() !== "ready") return true;
+          return (bom.data().jobs ?? []).some((job) => job.id === order.sourceJobId);
+        } catch { return true; }
+      },
       roleLabel: (role) => storeApi.ROLES[role]?.label ?? role,
     };
     ctx.openDialog = (name, args) => openDialog(name, args, ctx); // เปิด dialog จากโค้ดของหน้า (เช่น ปุ่ม "สั่งซื้อส่วนที่ขาด" ในใบเบิก)
