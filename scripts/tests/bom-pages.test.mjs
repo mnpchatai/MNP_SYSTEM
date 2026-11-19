@@ -48,11 +48,20 @@ function load({ sandbox = true, route = "", storage = new Map() } = {}) {
   context.window.MNP_REQUEST_MODULES = context.MNP_REQUEST_MODULES;
   for (const file of FILES) vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file });
   const registered = context.MNP_REQUEST_MODULES.BOM;
-  const render = async (query = route) => {
+  const renderRaw = async (query = route) => {
     log.hash = `#/bom${query ? `?${query}` : ""}`;
     app.innerHTML = "";
     await registered.pages.bom(new URLSearchParams(query));
     return app.innerHTML;
+  };
+  // ตารางงานเดิม (#/bom?p=work) ถูกถอดออกจาก BOM แล้ว (งานอยู่ที่โมดูลของแต่ละแผนก และ #/bom?p=work เปลี่ยนที่อยู่ไปที่นั่น) แต่ตัววาดยังอยู่ให้เทสต์ใช้เป็นตัวอย่างของ workBoard / boardCards จึงวาดตรงๆ ที่นี่
+  const render = async (query = route) => {
+    if (/(^|&)p=work(&|$)/.test(query)) {
+      log.hash = `#/bom?${query}`;
+      app.innerHTML = context.MNP_BOM_PAGES.work(context.MNP_BOM.context(new URLSearchParams(query))).html;
+      return app.innerHTML;
+    }
+    return renderRaw(query);
   };
   const ctx = (query = "") => context.MNP_BOM.context(new URLSearchParams(query));
   const submit = async (query, action, values, args = {}, event = {}) => {
@@ -63,7 +72,7 @@ function load({ sandbox = true, route = "", storage = new Map() } = {}) {
     await form.handlers.submit({ preventDefault() {}, ...event });
     return form;
   };
-  return { context, app, log, fakes, root, storage, module: registered, store: context.MNP_BOM.store, rf: context.MNP_RUBBERFLOW, render, ctx, submit };
+  return { context, app, log, fakes, root, storage, module: registered, store: context.MNP_BOM.store, rf: context.MNP_RUBBERFLOW, render, renderRaw, ctx, submit };
 }
 const clean = (html) => { assert.doesNotMatch(html, /undefined|NaN|\[object Object\]/); };
 const json = (value) => JSON.parse(JSON.stringify(value));
@@ -98,11 +107,11 @@ test("every page renders for every role without undefined/NaN, menus follow the 
       else assert.match(html, /ไม่มีสิทธิ์เข้าถึงหน้านี้/, `${role} is denied ${page}`);
     }
     const sub = env.module.nav[0].subnav("bom");
-    // เมนูข้างมีแค่เมนูหลัก 4 อัน (storeApi.NAV) ที่บทบาทนั้นเห็นได้ · หน้าอื่นเปิดจากลิงก์ในหน้าเหล่านั้น
+    // เมนูข้างมีแค่เมนูหลัก 3 อัน (storeApi.NAV) ที่บทบาทนั้นเห็นได้ · หน้าอื่นเปิดจากลิงก์ในหน้าเหล่านั้น
     const NAV = env.context.MNP_BOM_STORE.NAV;
     for (const page of [...PAGES, ...NAV]) assert.equal(sub.includes(`p=${page}"`), NAV.includes(page) && env.context.MNP_BOM_STORE.canSee(user, page), `${role} menu ${page}`);
     await env.render("p=nothing");
-    assert.equal(env.log.hash, ["admin", "manager", "planner"].includes(role) ? "#/bom?p=find" : role === "wh" ? "#/bom?p=orders" : "#/bom?p=work", "unknown page → home of the role (planners land on products, the warehouse on orders, departments on their own jobs)");
+    assert.equal(env.log.hash, ["admin", "manager", "planner"].includes(role) ? "#/bom?p=find" : "#/bom?p=orders", "unknown page → home of the role (planners land on products, departments on the orders; their own jobs live in their department module)");
   }
 });
 
@@ -846,18 +855,18 @@ test("the per-department view explodes one product × quantity into cards from R
   assert.match(html, /p=product&amp;code=DEMO-TP-01%28P%29-Y">งานทุกแผนก/);
 });
 
-test("the sidebar sub-menu counts open jobs of the user's department; reset rebuilds the demo", async () => {
+test("the sidebar sub-menu has no job count; reset rebuilds the demo", async () => {
   const env = load();
   env.store.setUser("B05");
   await env.render("p=jobs");
   const sub = env.module.nav[0].subnav("bom");
-  assert.match(sub, /งานที่ต้องทำ">\d+</);
+  assert.doesNotMatch(sub, /rf-nav-count/, "no job count in the BOM menu: a department's work lives in its own module");
   assert.doesNotMatch(sub, /รออนุมัติ/);
   env.store.setUser("B01");
   await env.render("p=jobs");
   const bossTab = Number(/>ต้องทำ (\d+)</.exec(await env.render("p=work"))?.[1]);
   assert.ok(bossTab > 0, "a boss has open cards across the departments");
-  assert.match(env.module.nav[0].subnav("bom"), new RegExp(`งานที่ต้องทำ">${bossTab}<`), "and the menu number is the card count of the open tab, not zero");
+  assert.equal(env.context.MNP_BOM_PAGES.hub.workCount(env.ctx("")), bossTab, "and the count the department modules show is the card count of the open tab, not zero");
   env.store.run("createOrder", { pi: "TMP", customer: "x", country: "Thailand", orderedAt: Date.now(), whDue: Date.now() + 1 });
   env.store.reset();
   assert.ok(!env.store.data().orders.some((order) => order.id === "TMP"));
@@ -1837,14 +1846,15 @@ test("the Thai date picker drops required from the hidden native date input, so 
 });
 
 // ---------- โครงใหม่ 4 เมนู (modules/bom-hub.js) ----------
-test("the menu has four entries and a bare #/bom opens the role's home: products for planners, own jobs for departments", async () => {
+test("the menu has three entries and a bare #/bom opens the role's home: products for planners, orders for departments", async () => {
   const env = load();
   env.store.setUser("B03");
   const sub = env.module.nav[0].subnav("bom");
-  assert.deepEqual([...sub.matchAll(/href="#\/bom\?p=(\w+)"/g)].map((match) => match[1]), ["find", "orders", "work", "setup"]);
+  assert.deepEqual([...sub.matchAll(/href="#\/bom\?p=(\w+)"/g)].map((match) => match[1]), ["find", "orders", "setup"]);
   assert.match(await env.render(""), /<h1>สินค้า<\/h1>/, "planner home is the product search");
   env.store.setUser("B04");
-  assert.match(await env.render(""), /<h1>งานของฉัน<\/h1>/, "a department lands on its own jobs");
+  assert.match(await env.render(""), /<h1>ใบสั่งผลิต/, "a department lands on the orders (its own jobs are in its department module)");
+  assert.doesNotMatch(await env.render(""), /งานของฉัน/, "no My-work page in the BOM");
   clean(await env.render("p=setup"));
 });
 
@@ -1922,7 +1932,7 @@ test("my jobs shows only the department's own jobs as cards, and the warehouse g
   assert.equal((html.match(/<article class="card rf-card bom-job/g) ?? []).length, 3, "the part jobs of each PI are one card");
   assert.match(html, /เบิกของตามใบ DEMO-26001/);
   assert.match(html, />ต้องทำ 3</, "the tab counts cards, not the part jobs");
-  assert.match(env.module.nav[0].subnav("bom"), /rf-nav-count"[^>]*>3</, "and so does the menu badge");
+  assert.equal(env.context.MNP_BOM_PAGES.hub.workCount(env.ctx("")), 3, "and so does the count the department module shows");
   env.store.setUser("B04");
   html = await env.render("p=orders&sel=DEMO-26001");
   assert.equal((html.match(/>ดูงาน</g) ?? []).length, 1, "a department gets the jobs link on its own row only");
@@ -2272,6 +2282,64 @@ test("my jobs for the warehouse and for a read-only account: no job cards of oth
   }
   assert.equal(env.context.MNP_BOM_STORE.homeOf({ role: "wh" }), "orders");
   assert.equal(env.context.MNP_BOM_STORE.homeOf({ role: "viewer" }), "find");
+});
+
+test("the My-work page is gone from the BOM: not in the menu or the page list, and #/bom?p=work goes to the department module", async () => {
+  const env = load();
+  const storeApi = env.context.MNP_BOM_STORE;
+  assert.ok(!storeApi.NAV.includes("work") && !storeApi.MODULE_IDS.includes("work") && !("work" in storeApi.NAV_PARENT), "no work page in the menu, the page list or the menu parents");
+  assert.ok(!storeApi.canSee({ role: "admin" }, "work") && !storeApi.canSee({ role: "gr" }, "work"));
+  assert.equal(storeApi.NAV_PARENT.jobs, "orders", "the jobs table sits under the orders menu");
+  assert.equal(storeApi.NAV_PARENT.rods, "orders", "the rod store page sits under the orders menu");
+  for (const role of ["rb", "gr", "pt", "bg", "pk", "st", "wh", "sr", "qa"]) assert.equal(storeApi.homeOf({ role }), "orders", `${role} lands on a page it can open`);
+  assert.deepEqual({ ...storeApi.DEPT_ROUTES }, { GR: "gr", PT: "pt", BG: "bg", PK: "pk", SR: "sr", ST: "st", WH: "wh", QA: "qa", RB: "rubberflow" });
+  // พนักงานที่ล็อกอินตรงกับผู้ใช้ BOM (ไปได้เฉพาะโมดูลที่พนักงานคนนั้นเปิดได้)
+  const asEmployee = (user) => ({ isSandbox: true, department: { code: user.dept }, role: { code: user.role === "admin" ? "admin" : user.role === "manager" ? "general_manager" : "employee" } });
+  const go = async (userId, query) => {
+    env.store.setUser(userId);
+    env.context.state.employee = asEmployee(env.store.data().users.find((user) => user.id === userId));
+    env.log.hash = "";
+    await env.renderRaw(query);
+    return env.log.hash;
+  };
+  // a department user goes to its own module (the dept parameter is ignored, as the old page did)
+  assert.equal(await go("B04", "p=work"), "#/rubberflow", "RB → RubberFlow");
+  assert.equal(await go("B05", "p=work&dept=ST"), "#/gr", "GR → GR");
+  assert.equal(await go("B08", "p=work"), "#/st", "ST → ST");
+  assert.equal(await go("B09", "p=work"), "#/wh", "WH → WH");
+  assert.equal(await go("B11", "p=work"), "#/sr", "SR → SR");
+  assert.equal(await go("B12", "p=work"), "#/qa", "QA → QA");
+  // the planning group follows ?dept=, without one (or with a department that has no module) it goes to the BOM home
+  // (the demo planner sits in PK; the real planning department is PP, which has no module)
+  env.store.data().users.find((user) => user.id === "B03").dept = "PP";
+  assert.equal(await go("B03", "p=work&dept=PT"), "#/pt");
+  assert.equal(await go("B01", "p=work&dept=RB&order=DEMO-26001"), "#/rubberflow");
+  assert.equal(await go("B03", "p=work"), "#/bom?p=find", "a planner with no department → BOM home");
+  assert.equal(await go("B01", "p=work&dept=ALL"), "#/bom?p=find", "ALL is not a department → BOM home");
+  assert.equal(await go("B02", "p=work&dept=MT"), "#/bom?p=find", "a department with no module → BOM home");
+  assert.equal(await go("B03", "p=work&dept=constructor"), "#/bom?p=find", "an inherited property name is not a department");
+  // an ordinary page is not redirected
+  assert.equal(await go("B05", "p=orders"), "#/bom?p=orders");
+  // a department head of GR (BOM planner rights, but only the GR module in the menu) asking for another department goes to GR, never to a page it cannot open
+  env.store.setUser("B05");
+  env.context.state.employee = { isSandbox: true, department: { code: "GR" }, role: { code: "department_manager" } };
+  env.store.data().users.find((user) => user.id === "B05").role = "manager";
+  env.log.hash = "";
+  await env.renderRaw("p=work&dept=QA");
+  assert.equal(env.log.hash, "#/gr");
+  // the per-department "ดูงาน" on an order only links to modules the viewer can open
+  const order = await env.render("p=orders&sel=DEMO-26006");
+  assert.ok(order.includes('href="#/gr"'), "GR's own module is linked");
+  for (const route of ["qa", "sr", "pk", "bg", "pt", "st", "wh"]) assert.ok(!order.includes(`href="#/${route}"`), `the GR head gets no link to #/${route}`);
+  // the all-departments job table is reachable from the orders page for the planning group
+  env.store.setUser("B03");
+  env.context.state.employee = asEmployee(env.store.data().users.find((user) => user.id === "B03"));
+  assert.match(await env.render("p=orders"), /href="#\/bom\?p=jobs"/);
+  // the planning group sees every department's link on an order, and the rod store page sends it back to SR
+  env.store.data().users.find((user) => user.id === "B03").dept = "PK"; // the BOM persona of a planner sits in PK
+  const planned = await env.render("p=orders&sel=DEMO-26006");
+  for (const route of ["gr", "pk", "bg"]) assert.ok(planned.includes(`href="#/${route}"`), `planner links #/${route}`);
+  assert.match(await env.render("p=rods"), /href="#\/sr"[^>]*>กลับหน้างานของแผนก</);
 });
 
 test("an open PI names itself in the page head, a draft shows what other drafts need, and open purchase orders are named before cancelling or editing", async () => {
@@ -3182,7 +3250,8 @@ test("close rules: everything received while RB and GR are open: step 5 names th
   // ฝ่ายวางแผน: ลิงก์ไปงานของใบ · ปุ่มปิดงานที่การ์ดงานและตารางงานของแผนก · dialog ต้องมีเหตุผล
   env.store.setUser("B03");
   html = await env.render(`p=orders&sel=${FG_PI}&step=5`);
-  assert.match(html, /<a [^>]*href="[^"]*p=work&amp;order=DEMO-26001"[^>]*>ดูงานที่ยังเปิด<\/a>/);
+  assert.doesNotMatch(html, /p=work/, "no link to the retired My-work page");
+  assert.doesNotMatch(html, /ดูงานที่ยังเปิด/);
   html = await env.render(`p=work&dept=RB&order=${FG_PI}`);
   assert.match(html, new RegExp(`data-rf-open="jobClose" data-rf-args="\\{&quot;jobId&quot;:&quot;${rbId}&quot;\\}"[^>]*>ปิดงานนี้</button>`));
   html = await env.render("p=jobs&dept=GR");
@@ -3214,9 +3283,9 @@ test("close rules: everything received while RB and GR are open: step 5 names th
     assert.equal(D.jobClose(env.ctx("p=work"), { jobId: rbId }), null, id);
   }
   env.store.setUser("B03");
-  await env.submit("p=work&dept=RB", "setJobStatus", { reason: "ab" }, { jobId: rbId, status: "done" });
+  await env.submit("p=jobs&dept=RB", "setJobStatus", { reason: "ab" }, { jobId: rbId, status: "done" });
   assert.match(env.log.toasts.at(-1)[0], /อย่างน้อย 3/);
-  await env.submit("p=work&dept=RB", "setJobStatus", { reason: XSS }, { jobId: rbId, status: "done" });
+  await env.submit("p=jobs&dept=RB", "setJobStatus", { reason: XSS }, { jobId: rbId, status: "done" });
   assert.equal(jobOf("RB").status, "done");
   html = await env.render("p=jobs&dept=RB&st=done");
   clean(html);
@@ -3276,7 +3345,7 @@ test("my jobs for the warehouse: a card to receive per PI with something waiting
   assert.match(html, /href="[^"]*sel=DEMO-26001&amp;step=5"[^>]*>เปิดใบเพื่อรับเข้าคลัง<\/a>/);
   assert.match(html, /<span class="rf-mono">DEMO-TP-01\(P\)-Y<\/span><span class="nowrap">30<\/span>/);
   assert.match(html, />ต้องทำ 1</);
-  assert.match(env.module.nav[0].subnav("bom"), /rf-nav-count"[^>]*>1</, "the menu badge counts the card");
+  assert.equal(env.context.MNP_BOM_PAGES.hub.workCount(env.ctx("p=work")), 1, "the count the department module shows counts the card");
   // the others do not get it: planning group and ST (admin may act, so admin sees it)
   for (const [id, shown] of [["B03", false], ["B08", false], ["B04", false], ["B01", true]]) {
     env.store.setUser(id);
@@ -3293,18 +3362,18 @@ test("my jobs for the warehouse: a card to receive per PI with something waiting
   assert.doesNotMatch(await env.render("p=work"), /ตามใบ DEMO-26001/);
 });
 
-test("the My-work menu number is the open tab's card count for every role: admin, planner, both kinds of manager, the warehouse and each department", async () => {
+test("the work count used by the department modules is the open tab's card count for every role: admin, planner, both kinds of manager, the warehouse and each department", async () => {
   const env = whLoad();
   pkReport(env, { [FG_TP]: 30 }, "B01"); // a card to receive for the warehouse
   const tab = (html) => Number(/>ต้องทำ (\d+)</.exec(html)?.[1] ?? 0);
-  const badge = (sub) => Number(/rf-nav-count"[^>]*>(\d+)</.exec(sub)?.[1] ?? 0);
   const seen = {};
   for (const user of env.store.data().users) {
     env.store.setUser(user.id);
     const html = await env.render("p=work");
     clean(html);
     seen[user.id] = tab(html);
-    assert.equal(badge(env.module.nav[0].subnav("bom")), tab(html), `${user.id} (${user.role} ${user.dept}): the menu number equals the cards on the page`);
+    assert.doesNotMatch(env.module.nav[0].subnav("bom"), /rf-nav-count/, `${user.id}: no count in the BOM menu`);
+    assert.equal(env.context.MNP_BOM_PAGES.hub.workCount(env.ctx("p=work")), tab(html), `${user.id} (${user.role} ${user.dept}): the number the department modules show equals the cards on the board`);
   }
   assert.ok(seen.B01 > 0 && seen.B02 > 0 && seen.B03 > 0, "admin, manager and planner see every department's cards");
   assert.equal(seen.B09, 1, "WH staff: the one card to receive");

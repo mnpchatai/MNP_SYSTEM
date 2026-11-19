@@ -5,6 +5,12 @@
   const pages = (root.MNP_BOM_PAGES ??= {});
   const dialogs = (root.MNP_BOM_DIALOGS ??= {});
   const esc = (value) => root.escapeHtml(value);
+  // ลิงก์ไปโมดูลของแผนก (งานของฉันอยู่ที่นั่น) เฉพาะโมดูลที่ผู้ใช้เปิดได้ · ไม่รู้ว่าใครเปิดอยู่ (ไม่มี state) = ใช้เส้นทางของแผนกตรงๆ
+  const deptHref = (dept) => {
+    const employee = typeof state === "undefined" ? undefined : state?.employee;
+    if (employee === undefined || !root.MNP_FACTORY?.deptLink) return root.MNP_BOM_STORE?.deptRoute?.(dept) ?? null;
+    return root.MNP_FACTORY.deptLink(employee, dept);
+  };
   const attr = (value) => esc(value ?? "");
   const includes = (haystack, q) => !q || String(haystack).toLowerCase().includes(q.toLowerCase());
   const itemOf = (ctx, code) => ctx.helpers.itemOf(ctx.data, code);
@@ -938,7 +944,7 @@
       : '<button class="btn rf-btn" type="submit" data-rf-confirm="รับสินค้าเข้าคลังตามจำนวนที่กรอก? ถ้าบันทึกผิด ย้อนได้โดยผู้จัดการแผนกคลังสินค้า (WH) เท่านั้น">รับเข้าคลัง</button>';
     // รับครบแต่งานผลิตยังเปิด: บอกแผนกที่ยังเปิดและใครทำอะไรต่อ (ฝ่ายวางแผนมีลิงก์ไปงานของใบนี้ที่ปิดงานได้) · ตัวเลขรับเข้าอยู่ในตารางแล้ว ไม่บอกซ้ำ
     const waiting = pos.waitingProduction
-      ? ui.callout("info", `ยังปิดใบไม่ได้: งานของแผนก ${esc(pos.openDepts.map((dept) => `${deptName(ctx, dept)} (${dept})`).join(", "))} ยังไม่เสร็จ · แผนกนั้นรายงานผลให้เสร็จ หรือฝ่ายวางแผนปิดงานที่จะไม่ทำต่อ แล้วคลังสินค้า (WH) ปิดใบ${ctx.helpers.canPlan(ctx.user) && ctx.canSee("work") ? ` · ${ui.link("ดูงานที่ยังเปิด", ctx.url("work", { order: order.id }))}` : ""}`)
+      ? ui.callout("info", `ยังปิดใบไม่ได้: งานของแผนก ${esc(pos.openDepts.map((dept) => `${deptName(ctx, dept)} (${dept})`).join(", "))} ยังไม่เสร็จ · แผนกนั้นรายงานผลให้เสร็จ หรือฝ่ายวางแผนปิดงานที่จะไม่ทำต่อ แล้วคลังสินค้า (WH) ปิดใบ`)
       : "";
     const note = pos.canClose && !canFg ? '<p class="small muted">ทุกแผนกปิดงานแล้ว รอคลังสินค้า (WH) ปิดใบ</p>'
       : !canFg ? '<p class="small muted">คลังสินค้า (WH) เป็นผู้รับสินค้าเข้าคลัง</p>'
@@ -1142,7 +1148,7 @@
         const closedParts = parts && done < mine.length && !mine.some((job) => ctx.helpers.isOpenJob(data, job));
         const issued = done + partly;
         const text = parts ? (done === mine.length ? `เบิกของครบ ${mine.length} รายการ` : closedParts ? `เบิกไป ${issued} จาก ${mine.length} รายการ` : `รอเบิกของ ${mine.length - done} จาก ${mine.length} รายการ${partly ? ` (เบิกไปบางส่วน ${partly} รายการ)` : ""}`) : `เสร็จ ${done} จาก ${mine.length} งาน`;
-        return `<tr><td>${deptChip(ctx, dept)} ${esc(deptName(ctx, dept))}</td><td class="rf-progress-cell">${ui.progress(closedParts ? issued : done, mine.length)}<div class="small muted">${esc(text)}</div></td><td>${late ? ui.badge("bad", `เลยกำหนด ${late} งาน`) : ""}</td><td class="right">${ctx.canSee("work") && (canPlan || ctx.user?.dept === dept) ? ui.link("ดูงาน", ctx.url("work", { dept, order: order.id }), "btn rf-btn secondary small") : ""}</td></tr>`;
+        return `<tr><td>${deptChip(ctx, dept)} ${esc(deptName(ctx, dept))}</td><td class="rf-progress-cell">${ui.progress(closedParts ? issued : done, mine.length)}<div class="small muted">${esc(text)}</div></td><td>${late ? ui.badge("bad", `เลยกำหนด ${late} งาน`) : ""}</td><td class="right">${(canPlan || ctx.user?.dept === dept) && deptHref(dept) ? ui.link("ดูงาน", deptHref(dept), "btn rf-btn secondary small") : ""}</td></tr>`;
       }).filter(Boolean);
       // มีสินค้าที่ PK ส่งมอบแล้วรอรับเข้าคลัง: บอกเฉพาะว่ามี (ตัวเลขอยู่ในขั้น 5) · คลังสินค้ารับเข้าได้ก่อนผลิตครบทั้งใบ
       // รับครบแล้วแต่ยังมีแผนกที่งานไม่เสร็จ (แผนกอยู่ในตารางข้างบน): ใบปิดเมื่อทุกแผนกปิดงาน · ทุกแผนกปิดงานแล้ว (เหลือแค่เบิกของซื้อ) = รอคลังสินค้า (WH) ปิดใบที่ขั้น 5
@@ -1490,7 +1496,9 @@
       return `<tr><td><span class="rf-mono">${esc(lot.lotNo)}</span><div class="small muted">${code ? "" : `<span class="rf-mono">${esc(lot.itemCode)}</span> · `}${esc(`ใบ ${lot.orderId}`)}</div></td><td>${rodStatusBadge(ctx, lot)}</td><td class="small">${esc(amount)}</td><td class="right"><div class="rf-row rf-end">${main}${ui.openButton("ประวัติ", "rodLot", { lotId: lot.id }, { className: "secondary small", ariaLabel: `ประวัติล็อต ${lot.lotNo}` })}</div></td></tr>`;
     });
     const lotTable = ui.table(["ล็อต", "สถานะ", "คงเหลือ", ""], lotRows, { emptyText: "ไม่มีล็อต" });
-    const back = ctx.canSee("work") ? ui.link("งานของฉัน", ctx.url("work"), "btn rf-btn secondary") : "";
+    // งานของฉันอยู่ที่โมดูลของแผนก: SR / QA กลับไปโมดูลของตน ฝ่ายวางแผนไปโมดูล SR · แผนกอื่น (GR) ดูหน้านี้ได้อย่างเดียว ไม่มีลิงก์ไปโมดูลที่ไม่ใช่ของตน
+    const backRoute = ROD_DEPTS.includes(ctx.user?.dept) ? deptHref(ctx.user.dept) : ctx.helpers.canPlan(ctx.user) ? deptHref("SR") : deptHref(ctx.user?.dept);
+    const back = backRoute ? ui.link("กลับหน้างานของแผนก", backRoute, "btn rf-btn secondary") : "";
     return { html: `${pageHead(ctx, "คลังยางเส้นยาว (SR)", "", back)}${ui.card(sumTable, { title: "ยอดต่อเส้นยาง" })}${ui.card(lotTable, { title: code ? `ล็อตของ ${code}` : "ล็อต", actions: code ? ui.link("ดูทุกเส้นยาง", ctx.url("rods"), "btn rf-btn secondary small") : "" })}` };
   };
   // ใช้จากคลังแท่งยาว (ขั้น 2 ของใบร่าง): เส้นยางของใบที่สต็อกกลางมีให้ใช้ · ช่อง "ใช้จากคลัง SR (เส้น)" ไม่เกินที่ใช้ได้ (บอกใน title ของช่อง) · ฝ่ายวางแผนตั้ง บันทึกเมื่อกดบันทึก
