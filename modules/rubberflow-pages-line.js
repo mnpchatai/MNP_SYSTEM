@@ -434,6 +434,17 @@
   };
 
   // ---------- สถานีที่ 4 ตกแต่งและบรรจุ ----------
+  // ล็อตตกแต่งที่ส่งคลังยางเส้นยาว (SR) อยู่ที่ไหนแล้ว: ป้ายสถานะใต้ข้อความ "ส่งคลังยางเส้นยาว (SR)" จากข้อมูล BOM ที่โหลดอยู่ (ctx.bomRodLot) · ไม่มีข้อมูล = ไม่แสดงอะไร (ข้อความเดิม)
+  // ป้ายเป็นลิงก์ไปหน้าล็อตของ SR เมื่อผู้ใช้เปิดโมดูล SR ได้
+  const SR_STATE = Object.freeze({ pending: ["warn", () => "รอ SR รับเข้า"], stored: ["good", (sr) => `SR รับแล้ว${sr.location ? ` · ตำแหน่ง ${sr.location}` : ""}`], held: ["bad", () => "กักรอ QA"], returned: ["", () => "QA คืนให้แก้ไข"], scrapped: ["", () => "QA สั่งทิ้ง"] });
+  function srStateHtml(ctx, lot) {
+    const sr = ctx.bomRodLot?.(lot.id);
+    const entry = sr ? SR_STATE[sr.status] : null;
+    if (!entry) return "";
+    const badge = ctx.ui.badge(entry[0], entry[1](sr));
+    return `<div class="small" data-rf-sr-state>${sr.href ? `<a href="${esc(sr.href)}" title="เปิดล็อตนี้ในคลังยางเส้นยาว (SR)">${badge}</a>` : badge}</div>`;
+  }
+
   pages.finishing = (ctx) => {
     const { data, ui, rules } = ctx;
     const { fmtNum } = rules;
@@ -458,7 +469,11 @@
       ])}
       ${gateNotice(ctx, "finishing")}${form}
       ${stageLots(ctx, "finishing", [
-        { label: "บรรจุ", render: (lot) => esc(data.orders.find((row) => row.id === lot.orderId)?.sourceJobId && !(Number(lot.boxes) > 0) ? `ส่งคลังยางเส้นยาว (SR) · เกรด ${lot.grade}` : `${lot.boxes} กล่อง × ${fmtNum(lot.params.perBox)} · เกรด ${lot.grade}`) },
+        { label: "บรรจุ", render: (lot) => {
+          const toSr = data.orders.find((row) => row.id === lot.orderId)?.sourceJobId && !(Number(lot.boxes) > 0);
+          if (!toSr) return esc(`${lot.boxes} กล่อง × ${fmtNum(lot.params.perBox)} · เกรด ${lot.grade}`);
+          return `${esc(`ส่งคลังยางเส้นยาว (SR) · เกรด ${lot.grade}`)}${srStateHtml(ctx, lot)}`;
+        } },
         { label: "CoA", render: (lot) => ui.openButton("ดู CoA", "coa", { lotId: lot.id }, { className: "secondary small" }) },
       ])}`;
     const bind = (rootNode) => {

@@ -1,5 +1,6 @@
 // โมดูลแผนก SR — คลังยางเส้นยาว (ลำดับ 05 ของผังงาน) #/sr · เมนูกลุ่ม "โรงงาน" ในโหมดทดสอบ (ลงทะเบียนผ่าน MNP_FACTORY.registerDeptModule ใน modules/factory-kit.js)
 // เมนูข้าง (ค่าตั้งต้น = งานของฉัน): งานของฉัน · ในคลัง (?tab=stock) · รับเข้า (?tab=receive) · จ่ายให้ GR (?tab=issue) · ประวัติเข้าออก (?tab=history) · หน้าล็อต ?lot=<id> (อยู่ใต้ "ในคลัง") · ป้ายล็อต ?lot=<id>&print=1
+// หน้ารายละเอียดการจ่าย ?issue=<ใบ>&code=<รหัสเส้นยาง> (อยู่ใต้ "จ่ายให้ GR") · การ์ดงานและแถวตารางคลิกได้ทั้งใบ/แถวไปหน้ารายละเอียดของรายการนั้น (stretched link: ลิงก์หลักเป็น <a> จริง)
 // ข้อมูลมาจาก store ของ BOM (rodLots / rodMoves · 20261202010000 และ 20261204010000): การ์ดงานและ dialog (รับเข้า จ่ายให้ GR ย้อนการจ่าย ปรับยอด ย้ายตำแหน่ง รับนอกใบสั่ง) เป็นชุดเดียวกับที่ BOM ใช้ (modules/bom-hub.js)
 // ปุ่มที่ซ่อนเป็นแค่ UX สิทธิ์จริงตัดสินที่ action และฐานข้อมูล (SR หรือฝ่ายวางแผนทำได้ · QA ตัดสินล็อตที่กัก)
 // ตารางยางเส้นยาวในคลังใช้ซ้ำในโมดูล GR แบบอ่านอย่างเดียว (window.MNP_SR.stockView) · ป้ายใช้ QR ของ vendor/qrcode-generator (MIT)
@@ -21,10 +22,16 @@
   const byNewest = (a, b) => num(b.at) - num(a.at) || String(b.id ?? "").localeCompare(String(a.id ?? ""));
 
   // เส้นยาง: รหัส + ชื่อ + สูตร/สี/ขนาด (rodAttrs ชุดเดียวกับหน้าล็อตและป้าย)
-  function itemCell(ctx, code) {
+  // href = รหัสเป็นลิงก์หลักของแถวคลิกได้ (rowAttr / row-link-main)
+  function itemCell(ctx, code, href = null) {
     const attrs = attrsOf(ctx, code);
-    return `${ctx.ui.mono(code)}${attrs.name ? `<div class="small muted">${F.esc(attrs.name)}</div>` : ""}${attrs.text ? `<div class="small muted">${F.esc(attrs.text)}</div>` : ""}`;
+    return `${href ? ctx.ui.link(code, href, "rf-mono row-link-main") : ctx.ui.mono(code)}${attrs.name ? `<div class="small muted">${F.esc(attrs.name)}</div>` : ""}${attrs.text ? `<div class="small muted">${F.esc(attrs.text)}</div>` : ""}`;
   }
+  // แถวตารางคลิกได้ทั้งแถว (stretched link): ลิงก์หลักของแถวเป็น <a> จริง (class row-link-main) ที่โฟกัสด้วยคีย์บอร์ดได้ ขยายพื้นที่คลิกคลุมแถวด้วย CSS (tr.row-link ใน styles.css)
+  // ลิงก์และปุ่มอื่นในแถว (ใบสั่งผลิต ปุ่มรับเข้า) ยังกดได้ตามปกติ · ไม่มี href = แถวธรรมดา
+  const rowAttr = (href) => (href ? ' class="row-link"' : "");
+  const mainLink = (ctx, text, href, cls = "rf-mono") => ctx.ui.link(text, href, [cls, "row-link-main"].filter(Boolean).join(" "));
+  const issueHref = (orderId, code) => F.routeUrl(ROUTE, { issue: orderId, code });
   const emptyHint = (text) => `<span class="muted">${F.esc(text)}</span>`;
   const locationText = (lot) => (lot.location ? F.esc(lot.location) : emptyHint("—"));
   // ถังของยาง: สต็อกกลาง · ของใบ X (ลิงก์ไปใบ)
@@ -62,8 +69,8 @@
     const { shown, more } = F.limited(ctx, list);
     const rows = shown.map((bucket) => {
       const { lot } = bucket;
-      const lotText = readOnly ? ui.mono(lot.lotNo) : ui.link(lot.lotNo, lotHref(lot), "rf-mono");
-      return `<tr><td>${itemCell(ctx, bucket.itemCode)}</td><td class="right rf-mono">${F.esc(`${rules.fmtQty(bucket.qty)} ${rules.uomLabel(lot.uom)}`)}</td><td>${lotText}<div class="small muted">${F.esc(when(ctx, lot.receivedAt))}</div></td><td>${locationText(lot)}</td><td>${ownerCell(ctx, bucket)}</td></tr>`;
+      const lotText = readOnly ? ui.mono(lot.lotNo) : mainLink(ctx, lot.lotNo, lotHref(lot));
+      return `<tr${readOnly ? "" : rowAttr(true)}><td>${itemCell(ctx, bucket.itemCode)}</td><td class="right rf-mono">${F.esc(`${rules.fmtQty(bucket.qty)} ${rules.uomLabel(lot.uom)}`)}</td><td>${lotText}<div class="small muted">${F.esc(when(ctx, lot.receivedAt))}</div></td><td>${locationText(lot)}</td><td>${ownerCell(ctx, bucket)}</td></tr>`;
     });
     const filtered = Boolean(q || owner || loc);
     const locationOptions = [...locations.map((value) => ({ value, label: value })), ...(all.some((bucket) => !bucket.lot.location) ? [{ value: NO_LOCATION, label: "ยังไม่ระบุตำแหน่ง" }] : [])];
@@ -80,12 +87,12 @@
     const store = canStore(ctx);
     const pending = lots.filter((lot) => lot.status === "pending").sort((a, b) => num(a.createdAt) - num(b.createdAt));
     const held = lots.filter((lot) => lot.status === "held").sort((a, b) => num(a.receivedAt) - num(b.receivedAt));
-    const pendingRows = pending.map((lot) => `<tr><td>${ui.link(lot.lotNo, lotHref(lot), "rf-mono")}<div class="small muted">${F.esc(when(ctx, lot.createdAt))}</div></td><td>${itemCell(ctx, lot.itemCode)}</td><td class="right rf-mono">${F.esc(rod().rodQty(ctx, lot.qtySent, lot.uom))}</td><td>${lot.orderId ? ui.link(`ใบ ${lot.orderId}`, ctx.url("orders", { sel: lot.orderId }), "rf-mono") : ""}</td><td class="right">${store ? ui.openButton("รับเข้าคลัง", "rodReceive", { lotId: lot.id }, { className: "small", ariaLabel: `รับเข้าคลัง ล็อต ${lot.lotNo}` }) : ""}</td></tr>`);
-    const heldRows = held.map((lot) => `<tr><td>${ui.link(lot.lotNo, lotHref(lot), "rf-mono")}<div class="small muted">${F.esc(when(ctx, lot.receivedAt))}</div></td><td>${itemCell(ctx, lot.itemCode)}</td><td class="right rf-mono">${F.esc(rod().rodQty(ctx, lot.qtyReceived, lot.uom))}</td><td>${locationText(lot)}</td><td class="small">${F.esc(lot.qc?.note ?? "")}</td></tr>`);
+    const pendingRows = pending.map((lot) => `<tr${rowAttr(true)}><td>${mainLink(ctx, lot.lotNo, lotHref(lot))}<div class="small muted">${F.esc(when(ctx, lot.createdAt))}</div></td><td>${itemCell(ctx, lot.itemCode)}</td><td class="right rf-mono">${F.esc(rod().rodQty(ctx, lot.qtySent, lot.uom))}</td><td>${lot.orderId ? ui.link(`ใบ ${lot.orderId}`, ctx.url("orders", { sel: lot.orderId }), "rf-mono") : ""}</td><td class="right">${store ? ui.openButton("รับเข้าคลัง", "rodReceive", { lotId: lot.id }, { className: "small", ariaLabel: `รับเข้าคลัง ล็อต ${lot.lotNo}` }) : ""}</td></tr>`);
+    const heldRows = held.map((lot) => `<tr${rowAttr(true)}><td>${mainLink(ctx, lot.lotNo, lotHref(lot))}<div class="small muted">${F.esc(when(ctx, lot.receivedAt))}</div></td><td>${itemCell(ctx, lot.itemCode)}</td><td class="right rf-mono">${F.esc(rod().rodQty(ctx, lot.qtyReceived, lot.uom))}</td><td>${locationText(lot)}</td><td class="small">${F.esc(lot.qc?.note ?? "")}</td></tr>`);
     const receipts = (data.rodMoves ?? []).filter((move) => move.kind === "receive").sort(byNewest);
     const receiptRows = receipts.slice(0, RECENT_ROWS).map((move) => {
       const lot = lotOf(ctx, move.lotId);
-      return `<tr><td class="nowrap small">${F.esc(rules.fmtDateTime(move.at))}</td><td>${itemCell(ctx, move.itemCode)}</td><td>${lot ? ui.link(lot.lotNo, lotHref(lot), "rf-mono") : ""}<div class="small muted">${F.esc(lot ? `${lot.orderId ? `ใบ ${lot.orderId}` : rules.ROD_SOURCE_LABEL.opening}${lot.location ? ` · ${lot.location}` : ""}` : "")}</div></td><td class="right rf-mono">${F.esc(`+${rules.fmtQty(move.qty)}`)}</td><td class="small">${F.esc(move.by ?? "")}</td></tr>`;
+      return `<tr${rowAttr(lot)}><td class="nowrap small">${F.esc(rules.fmtDateTime(move.at))}</td><td>${itemCell(ctx, move.itemCode)}</td><td>${lot ? mainLink(ctx, lot.lotNo, lotHref(lot)) : ""}<div class="small muted">${F.esc(lot ? `${lot.orderId ? `ใบ ${lot.orderId}` : rules.ROD_SOURCE_LABEL.opening}${lot.location ? ` · ${lot.location}` : ""}` : "")}</div></td><td class="right rf-mono">${F.esc(`+${rules.fmtQty(move.qty)}`)}</td><td class="small">${F.esc(move.by ?? "")}</td></tr>`;
     });
     const more = receipts.length > RECENT_ROWS ? `<div class="rf-row">${ui.link("ดูทั้งหมดที่ประวัติเข้าออก", F.routeUrl(ROUTE, { tab: "history", kind: "receive" }), "btn rf-btn secondary small")}</div>` : "";
     return `${ui.card(ui.table(["ล็อต", "เส้นยาง", { label: "ส่งมา", className: "right" }, "ใบสั่งผลิต", ""], pendingRows, { emptyText: "ไม่มีล็อตที่รอรับเข้าคลัง" }), { title: F.esc("รอรับเข้าคลัง (ส่งมาจาก RB)"), flush: true })}`
@@ -94,19 +101,22 @@
   }
 
   // ---------- จ่ายให้ GR ----------
-  // แถวประวัติของยาง (หน้าจ่าย หน้าล็อต หน้าประวัติเข้าออก): showLot = มีคอลัมน์ล็อต/เส้นยาง
-  function moveRow(ctx, move, { showLot = true, reversed, hideNote = false }) {
+  // แถวประวัติของยาง (หน้าจ่าย หน้าล็อต หน้าประวัติเข้าออก หน้ารายละเอียดการจ่าย): showLot = มีคอลัมน์ล็อต/เส้นยาง · showItem = false ไม่ซ้ำรหัสเส้นยาง (หน้าที่บอกรหัสอยู่แล้ว)
+  // hideFor = ไม่ซ้ำใบที่จ่ายให้ (หน้าของใบนั้น) · rowHref = แถวคลิกได้ทั้งแถวไปหน้านั้น (ข้อความชนิดรายการเป็นลิงก์หลัก)
+  function moveRow(ctx, move, { showLot = true, showItem = true, hideFor = false, rowHref = null, reversed, hideNote = false }) {
     const { ui, rules } = ctx;
     const lot = lotOf(ctx, move.lotId);
     const kinds = rod().ROD_KIND_LABEL;
     const isIssue = move.kind === "issue" || move.kind === "unissue";
-    const where = isIssue ? `ใบ ${move.forOrderId} · ${rod().bucketText(ctx, move.ownerOrderId)}` : rod().bucketText(ctx, move.ownerOrderId);
+    const where = isIssue && !hideFor ? `ใบ ${move.forOrderId} · ${rod().bucketText(ctx, move.ownerOrderId)}` : rod().bucketText(ctx, move.ownerOrderId);
     const undone = reversed.has(move.id);
     const undo = move.kind === "issue" && !undone && canStore(ctx) ? ui.openButton("ย้อน", "rodReverse", { moveId: move.id }, { className: "secondary small", ariaLabel: `ย้อนการจ่าย ${rules.fmtQty(-num(move.qty))} ของใบ ${move.forOrderId}` }) : "";
-    const lotCell = showLot ? `<td>${itemCell(ctx, move.itemCode)}${lot ? `<div>${ui.link(`ล็อต ${lot.lotNo}`, lotHref(lot), "rf-mono small")}</div>` : ""}</td>` : "";
-    return `<tr${undone ? ' class="muted"' : ""}><td class="nowrap small">${F.esc(rules.fmtDateTime(move.at))}</td>${lotCell}<td>${F.esc(kinds[move.kind] ?? move.kind)}${undone ? ` ${ui.badge("", "ถูกย้อน")}` : ""}<div class="small muted">${F.esc(where)}</div>${move.note && !hideNote ? `<div class="small muted">${F.esc(move.note)}</div>` : ""}</td><td class="right rf-mono">${F.esc(`${num(move.qty) > 0 ? "+" : ""}${rules.fmtQty(move.qty)}`)}</td><td class="small">${F.esc(move.by ?? "")}</td><td class="right">${undo}</td></tr>`;
+    const lotCell = showLot ? `<td>${showItem ? itemCell(ctx, move.itemCode) : ""}${lot ? `<div>${ui.link(`ล็อต ${lot.lotNo}`, lotHref(lot), "rf-mono small")}</div>` : ""}</td>` : "";
+    const kindText = kinds[move.kind] ?? move.kind;
+    const rowClasses = [undone ? "muted" : "", rowHref ? "row-link" : ""].filter(Boolean).join(" ");
+    return `<tr${rowClasses ? ` class="${rowClasses}"` : ""}><td class="nowrap small">${F.esc(rules.fmtDateTime(move.at))}</td>${lotCell}<td>${rowHref ? mainLink(ctx, kindText, rowHref, "") : F.esc(kindText)}${undone ? ` ${ui.badge("", "ถูกย้อน")}` : ""}<div class="small muted">${F.esc(where)}</div>${move.note && !hideNote ? `<div class="small muted">${F.esc(move.note)}</div>` : ""}</td><td class="right rf-mono">${F.esc(`${num(move.qty) > 0 ? "+" : ""}${rules.fmtQty(move.qty)}`)}</td><td class="small">${F.esc(move.by ?? "")}</td><td class="right">${undo}</td></tr>`;
   }
-  const moveHead = (showLot) => ["เวลา", ...(showLot ? ["เส้นยาง"] : []), "รายการ", { label: "เปลี่ยน", className: "right" }, "ผู้ทำ", ""];
+  const moveHead = (showLot, lotHeading = "เส้นยาง") => ["เวลา", ...(showLot ? [lotHeading] : []), "รายการ", { label: "เปลี่ยน", className: "right" }, "ผู้ทำ", ""];
 
   function issueView(ctx) {
     const { ui, rules, data } = ctx;
@@ -115,14 +125,46 @@
     const needRows = needs.map((need) => {
       const stock = Math.round((need.owned + need.free) * 1e4) / 1e4;
       const action = !store ? "" : stock > 0 ? ui.openButton("จ่ายยางเส้นยาว", "rodIssue", { orderId: need.order.id, itemCode: need.itemCode }, { className: "small", ariaLabel: `จ่ายยางเส้นยาว ${need.itemCode} ให้ใบ ${need.order.id}` }) : emptyHint("ไม่มีในคลัง");
-      return `<tr><td>${ui.link(need.order.id, ctx.url("orders", { sel: need.order.id }), "rf-mono")}<div class="small muted">${F.esc(need.order.customer ?? "")}</div></td><td>${itemCell(ctx, need.itemCode)}</td><td class="right rf-mono">${F.esc(rod().rodQty(ctx, need.remaining, need.uom))}</td><td class="right rf-mono" title="${F.attr(`ของใบนี้ ${rules.fmtQty(need.owned)} · สต็อกกลาง ${rules.fmtQty(need.free)}`)}">${F.esc(rules.fmtQty(stock))}</td><td class="right">${action}</td></tr>`;
+      return `<tr${rowAttr(true)}><td>${ui.link(need.order.id, ctx.url("orders", { sel: need.order.id }), "rf-mono")}<div class="small muted">${F.esc(need.order.customer ?? "")}</div></td><td>${itemCell(ctx, need.itemCode, issueHref(need.order.id, need.itemCode))}</td><td class="right rf-mono">${F.esc(rod().rodQty(ctx, need.remaining, need.uom))}</td><td class="right rf-mono" title="${F.attr(`ของใบนี้ ${rules.fmtQty(need.owned)} · สต็อกกลาง ${rules.fmtQty(need.free)}`)}">${F.esc(rules.fmtQty(stock))}</td><td class="right">${action}</td></tr>`;
     });
     const reversed = rules.rodReversedIds(data.rodMoves);
     const issues = (data.rodMoves ?? []).filter((move) => move.kind === "issue").sort(byNewest);
-    const issueRows = issues.slice(0, RECENT_ROWS).map((move) => moveRow(ctx, move, { reversed }));
+    const issueRows = issues.slice(0, RECENT_ROWS).map((move) => moveRow(ctx, move, { reversed, rowHref: issueHref(move.forOrderId, move.itemCode) }));
     const more = issues.length > RECENT_ROWS ? `<div class="rf-row">${ui.link("ดูทั้งหมดที่ประวัติเข้าออก", F.routeUrl(ROUTE, { tab: "history", kind: "issue" }), "btn rf-btn secondary small")}</div>` : "";
     return `${ui.card(ui.table(["ใบสั่งผลิต", "เส้นยาง", { label: "ต้องจ่าย", className: "right", title: "ที่งาน GR ของใบนี้ยังต้องใช้ หักที่จ่ายแล้ว" }, { label: "ในคลัง", className: "right", title: "ของใบนี้และสต็อกกลางที่จ่ายได้" }, ""], needRows, { emptyText: "ไม่มีใบที่รอยางเส้นยาว" }), { title: F.esc("ใบที่รอให้จ่ายให้ GR"), flush: true })}`
       + `${ui.card(`${ui.table(moveHead(true), issueRows, { emptyText: "ยังไม่เคยจ่ายให้ GR" })}${more}`, { title: F.esc("จ่ายล่าสุด"), flush: true })}`;
+  }
+
+  // ---------- หน้ารายละเอียดการจ่าย: ใบ × เส้นยาง (?issue=<ใบ>&code=<รหัสเส้นยาง>) ----------
+  // การ์ดงาน "จ่ายยางเส้นยาวให้ GR" และแถวในหน้า จ่ายให้ GR เปิดหน้านี้ · ใบ ลูกค้า กำหนด ยอดที่ GR ต้องใช้ จ่ายแล้ว ที่ยังต้องจ่าย
+  // ล็อตที่ต้องหยิบตามแผน FIFO (ล็อตเก่าก่อน พร้อมตำแหน่ง · ชิ้นส่วนเดียวกับ dialog จ่าย) ประวัติการจ่ายของใบนี้ (ย้อนได้) และปุ่มเปิด dialog จ่าย
+  function issueDetail(ctx, orderId, code) {
+    const { ui, rules, data } = ctx;
+    const back = backLink(F.routeUrl(ROUTE, { tab: "issue" }), "‹ จ่ายให้ GR");
+    const order = data.orders.find((entry) => entry.id === orderId);
+    if (!order || !code) return { html: `${back}${F.pageHead(ctx, "จ่ายยางเส้นยาวให้ GR")}${ui.card(ui.empty("ไม่พบใบสั่งผลิตหรือเส้นยางนี้ (อาจถูกลบหรือยังโหลดไม่เสร็จ)"))}` };
+    const need = rules.rodIssueNeeds(data, order.id).find((row) => row.itemCode === code) ?? null;
+    const uom = need?.uom ?? data.items.find((item) => item.code === rules.rodAttrs(data.items, code).code)?.uom ?? "";
+    const unit = rules.uomLabel(uom);
+    const qty = (value) => F.esc(`${rules.fmtQty(value)} ${unit}`);
+    const stock = need ? Math.round((need.owned + need.free) * 1e4) / 1e4 : 0;
+    const due = need ? Math.min(...need.grJobs.map((job) => Number(job.dueAt) || Infinity)) : Infinity;
+    const open = Boolean(need && need.remaining > 1e-9);
+    const facts = ui.kv([
+      ["ใบสั่งผลิต", ui.link(order.id, ctx.url("orders", { sel: order.id }), "rf-mono")],
+      ...(order.customer ? [["ลูกค้า", F.esc(order.customer)]] : []),
+      ...(Number.isFinite(due) ? [["กำหนด", F.dueText(ctx, due, false)]] : []),
+      ["เส้นยาง", itemCell(ctx, code)],
+      ...(need ? [["GR ต้องใช้", qty(need.need)], ["จ่ายแล้ว", qty(need.issued)], ["ยังต้องจ่าย", `<strong>${qty(need.remaining)}</strong>`]] : []),
+    ]);
+    // ไม่มีงานจ่ายค้าง: บอกเหตุผลสั้นๆ ประวัติการจ่ายยังดูได้
+    const plan = open ? rod().pickPlanHtml(ctx, rules.rodFifo(data, code, need.remaining, { own: order.id }), uom) : "";
+    const pick = ui.card(open ? plan : need ? ui.callout("good", F.esc("จ่ายครบตามที่ GR ต้องใช้แล้ว")) : ui.callout("info", F.esc("ใบนี้ไม่มีงานจ่ายยางเส้นยาวค้างอยู่ (ยังไม่ปล่อยผลิต ปิดใบแล้ว หรืองาน GR เสร็จแล้ว)")), { title: F.esc("ที่ต้องหยิบ"), className: "sr-pick-card" });
+    const reversed = rules.rodReversedIds(data.rodMoves);
+    const issues = (data.rodMoves ?? []).filter((move) => move.kind === "issue" && move.forOrderId === order.id && move.itemCode === code).sort(byNewest);
+    const history = ui.card(ui.table(moveHead(true, "ล็อต"), issues.map((move) => moveRow(ctx, move, { showItem: false, hideFor: true, reversed })), { emptyText: "ยังไม่เคยจ่ายให้ใบนี้" }), { title: F.esc("จ่ายไปแล้ว"), flush: true });
+    const button = open && canStore(ctx) && stock > 0 ? ui.openButton("จ่ายยางเส้นยาว", "rodIssue", { orderId: order.id, itemCode: code }, { className: "", ariaLabel: `จ่ายยางเส้นยาว ${code} ให้ใบ ${order.id}` }) : "";
+    return { html: `${back}${F.pageHead(ctx, "จ่ายยางเส้นยาวให้ GR", `${button}<span class="small muted" role="status" data-bom-sync>${F.esc(window.MNP_BOM?.syncText?.() ?? "")}</span>`)}<div class="sr-lot">${ui.card(facts, { className: "sr-lot-facts" })}${pick}</div>${history}` };
   }
 
   // ---------- ประวัติเข้าออก ----------
@@ -162,7 +204,7 @@
       ...(colour ? [["สี", F.esc(colour)]] : []),
       ...(attrs.size ? [["ขนาด", F.esc(attrs.size)]] : []),
       ["สถานะ", rod().rodStatusBadge(ctx, lot)],
-      ["ที่มา", lot.orderId ? `${ui.link(`ใบ ${lot.orderId}`, ctx.url("orders", { sel: lot.orderId }), "rf-mono")} <span class="small muted">${F.esc(`${rules.ROD_SOURCE_LABEL.order} · งาน ${lot.jobNo} · WO ${lot.woNo}`)}</span>` : F.esc(`${rules.ROD_SOURCE_LABEL.opening}${lot.sourceNote ? ` · ${lot.sourceNote}` : ""}`)],
+      ["ที่มา", lot.orderId ? `${ui.link(`ใบ ${lot.orderId}`, ctx.url("orders", { sel: lot.orderId }), "rf-mono")} <span class="small muted">${F.esc(`ส่งมาจาก RB · งาน ${lot.jobNo} · WO ${lot.woNo}`)}</span>` : F.esc(`${rules.ROD_SOURCE_LABEL.opening}${lot.sourceNote ? ` · ${lot.sourceNote}` : ""}`)],
       ["ตำแหน่ง", locationText(lot)],
       ...(lot.orderId ? [["ส่งมา", F.esc(`${rules.fmtQty(lot.qtySent)} ${unit} · ${rules.fmtDateTime(lot.createdAt)}`)]] : []),
       ...(!received && lot.qtyReceived !== null && lot.qtyReceived !== undefined ? [["รับเข้า", F.esc(`${rules.fmtQty(lot.qtyReceived)} ${unit} · ${lot.receivedBy ?? ""} ${rules.fmtDateTime(lot.receivedAt)}`)]] : []),
@@ -173,11 +215,15 @@
     const reversed = rules.rodReversedIds(data.rodMoves);
     const history = ui.card(ui.table(moveHead(false), moves.map((move) => moveRow(ctx, move, { showLot: false, reversed, hideNote: !lot.orderId && move.kind === "receive" })), { emptyText: "ยังไม่มียางเส้นยาวเข้าคลังจากล็อตนี้" }), { title: F.esc("ประวัติเข้าออกของล็อต"), flush: true });
     const buttons = [
+      // ล็อตที่ SR ยังไม่ได้รับ: ปุ่มรับเข้าคลัง (dialog เดียวกับการ์ดงานและตารางรับเข้า)
+      lot.status === "pending" && canStore(ctx) ? ui.openButton("รับเข้าคลัง", "rodReceive", { lotId: lot.id }, { className: "", ariaLabel: `รับเข้าคลัง ล็อต ${lot.lotNo}` }) : "",
       labelPrintable(lot) ? ui.link("พิมพ์ป้าย", lotHref(lot, { print: 1 }), "btn rf-btn secondary") : "",
       ["held", "stored"].includes(lot.status) && canStore(ctx) ? ui.openButton("ย้ายตำแหน่ง", "rodLocation", { lotId: lot.id }, { className: "secondary" }) : "",
       lot.status === "stored" && canAdjust(ctx) ? ui.openButton("ปรับยอดสต็อกกลาง", "rodAdjust", { lotId: lot.id }, { className: "secondary" }) : "",
     ].join("");
-    return { html: `${backLink(F.routeUrl(ROUTE, { tab: "stock" }), "‹ ในคลัง")}${F.pageHead(ctx, `ล็อต ${lot.lotNo}`, `${buttons}<span class="small muted" role="status" data-bom-sync>${F.esc(window.MNP_BOM?.syncText?.() ?? "")}</span>`)}<div class="sr-lot">${ui.card(facts, { className: "sr-lot-facts" })}${qc}</div>${history}` };
+    // ล็อตที่ยังรอรับเข้ากลับไปที่รายการรับเข้า (ที่การ์ดงานและตารางรับเข้าเปิดมา) ล็อตอื่นกลับไปในคลัง
+    const back = lot.status === "pending" ? backLink(F.routeUrl(ROUTE, { tab: "receive" }), "‹ รับเข้า") : backLink(F.routeUrl(ROUTE, { tab: "stock" }), "‹ ในคลัง");
+    return { html: `${back}${F.pageHead(ctx, `ล็อต ${lot.lotNo}`, `${buttons}<span class="small muted" role="status" data-bom-sync>${F.esc(window.MNP_BOM?.syncText?.() ?? "")}</span>`)}<div class="sr-lot">${ui.card(facts, { className: "sr-lot-facts" })}${qc}</div>${history}` };
   }
 
   // ---------- ป้ายล็อต (พิมพ์): ป้ายเดียวต่อล็อต + QR ที่เปิดล็อตนี้ในระบบ ----------
@@ -232,6 +278,9 @@
       const built = !lot ? lotMissing(ctx, printing ? "print" : "lot") : printing ? labelView(ctx, lot) : lotView(ctx, lot);
       return { ...built, bind: bindPage, actions: true };
     }
+    // หน้ารายละเอียดการจ่ายของใบ × เส้นยาง (การ์ดงานและแถวในจ่ายให้ GR เปิดหน้านี้)
+    const issueOrder = ctx.params.get("issue");
+    if (issueOrder) return { ...issueDetail(ctx, issueOrder, ctx.params.get("code") ?? ""), bind: bindPage, actions: true };
     const id = ctx.view?.id;
     const head = (extra = "") => F.viewHead(ctx, extra);
     if (id === "stock") { const stock = stockView(ctx); return { html: `${head(openingButton(ctx))}${stock.html}`, bind: bindPage, actions: true }; }
@@ -247,7 +296,7 @@
     F.workItem(F.deptWorkCount),
     { id: "stock", label: "ในคลัง", icon: "warehouse", params: { tab: "stock" }, owns: ["lot"] },
     { id: "receive", label: "รับเข้า", icon: "download", params: { tab: "receive" } },
-    { id: "issue", label: "จ่ายให้ GR", icon: "box", params: { tab: "issue" } },
+    { id: "issue", label: "จ่ายให้ GR", icon: "box", params: { tab: "issue" }, owns: ["issue"] },
     { id: "history", label: "ประวัติเข้าออก", icon: "history", params: { tab: "history" } },
   ]);
 

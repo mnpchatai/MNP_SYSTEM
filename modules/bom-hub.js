@@ -1292,6 +1292,20 @@
     const status = ctx.data.orders.find((order) => order.id === owner)?.status;
     return ctx.rules.ROD_FREE_ORDER.includes(status) ? `สต็อกกลาง (ใบ ${owner} ${status === "cancelled" ? "ยกเลิกแล้ว" : "ปิดแล้ว"})` : `ของใบ ${owner}`;
   };
+  // รายการที่ SR ต้องหยิบตามแผน FIFO (ล็อตเก่าก่อน · rules.rodFifo): แถวละล็อตเด่นด้วยสีโมดูล SR มีป้าย "หยิบ" ตำแหน่งจัดเก็บตัวใหญ่ (เดินไปที่ชั้น) เลขล็อต และจำนวนที่ต้องหยิบ
+  // ล็อตที่ไม่ต้องหยิบไม่แสดง · ของไม่พอ = แถวของที่มีอยู่ แล้วบรรทัดเตือนว่าขาดเท่าไร · ไม่มีอะไรต้องหยิบ = "" · dialog จ่ายให้ GR (แสดงสดตามจำนวนที่กรอก) และหน้ารายละเอียดการจ่ายของโมดูล SR ใช้ร่วมกัน
+  // data-module="sr" ให้สีโมดูลใช้ได้แม้ dialog อยู่นอกหน้าของโมดูล
+  function pickPlanHtml(ctx, plan, uom) {
+    const { ui, rules, data } = ctx;
+    const lots = new Map((data.rodLots ?? []).map((lot) => [lot.id, lot]));
+    const rows = plan.rows.map((row) => {
+      const where = lots.get(row.lotId)?.location;
+      return `<li class="sr-pick-row"><span class="sr-pick-mark">หยิบ</span><span class="sr-pick-loc" title="ตำแหน่งจัดเก็บ">${where ? esc(where) : '<span class="muted">ไม่ระบุตำแหน่ง</span>'}</span><span class="sr-pick-lot"><strong class="rf-mono">${esc(`ล็อต ${row.lotNo}`)}</strong> <span class="small muted">${esc(bucketText(ctx, row.owner))}</span></span><strong class="sr-pick-qty nowrap">${esc(rodQty(ctx, row.qty, uom))}</strong></li>`;
+    }).join("");
+    const list = rows ? `<p class="small"><strong>หยิบจากล็อตเก่าก่อน</strong></p><ul class="sr-pick" data-module="sr" role="list">${rows}</ul>` : "";
+    const short = plan.short > 1e-9 ? ui.callout("bad", esc(`ในคลังมีไม่พอ ขาด ${rules.fmtQty(plan.short)} ${uomText(ctx, uom)}`)) : "";
+    return `${list}${short}`;
+  }
   const ROD_STATUS_TONE = Object.freeze({ pending: "warn", held: "bad", stored: "good", returned: "", scrapped: "" });
   const rodStatusBadge = (ctx, lot) => ctx.ui.badge(ROD_STATUS_TONE[lot.status] ?? "", ctx.rules.ROD_STATUS_LABEL[lot.status] ?? lot.status);
   // ค่าที่วัดเทียบสเปก (หน้าต่างตัดสินและประวัติล็อต): หนึ่งแถวต่อค่า · ไม่มีสเปก = ค่าที่วัดอย่างเดียว
@@ -1442,9 +1456,8 @@
         const qty = Number(input?.value);
         if (!(qty > 0)) { box.innerHTML = ""; return; }
         const plan = rules.rodFifo(data, itemCode, qty, { own: order.id });
-        const rows = plan.rows.map((row) => `<li><span class="rf-mono">${esc(`ล็อต ${row.lotNo}`)}</span> <span class="small muted">${esc(bucketText(ctx, row.owner))}</span><span class="nowrap">${esc(rodQty(ctx, row.qty, need.uom))}</span></li>`).join("");
         const over = qty > need.remaining + 1e-9 ? `<p class="small muted">${esc(`เกินที่ GR ยังต้องใช้ ${rules.fmtQty(qty - need.remaining)} ${unit}`)}</p>` : "";
-        box.innerHTML = plan.short > 1e-9 ? ui.callout("bad", esc(`ในคลังมีไม่พอ ขาด ${rules.fmtQty(plan.short)} ${unit}`)) : `<p class="small"><strong>หยิบจากล็อตเก่าก่อน</strong></p><ul class="bom-job-parts">${rows}</ul>${over}`;
+        box.innerHTML = `${pickPlanHtml(ctx, plan, need.uom)}${plan.short > 1e-9 ? "" : over}`;
       };
       input?.addEventListener("input", paint);
       paint();
@@ -1537,21 +1550,27 @@
     const dueText = (dueAt, finished) => root.MNP_FACTORY.dueText(ctx, dueAt, finished);
     const readOnlyNote = '<p class="small muted">ดูอย่างเดียว บัญชีนี้ไม่มีสิทธิ์ดำเนินการ</p>';
     const gated = (helper, html) => (ctx.helpers[helper]?.(ctx.user) ? html : readOnlyNote);
+    // หน้ารายละเอียดของการ์ดคลังยางเส้นยาว (โมดูล SR · #/sr): ให้เฉพาะผู้ที่เปิดโมดูลนั้นได้ (ไม่พาไปหน้า "ไม่พบ") · ไม่ให้ = การ์ดไม่เป็นลิงก์
+    const srHref = (query) => (typeof state !== "undefined" && root.MNP_FACTORY.canOpenDeptModule(state.employee, "SR", "FACTORY_SR") ? root.MNP_FACTORY.routeUrl("sr", query) : null);
+    const { cardTitle, cardClass } = root.MNP_FACTORY;
     // คลังแท่งยาว (SR): รับแท่งเข้าคลัง · จ่ายแท่งให้ GR · ตรวจคุณภาพ (QA): ตัดสินล็อตที่กัก
     if (task.kind === "rodReceive" || task.kind === "rodDecide") {
       const { lot } = task;
       const receive = task.kind === "rodReceive";
       const chip = planner && dept === "ALL" ? `${deptChip(ctx, receive ? "SR" : "QA")} ` : "";
-      return `<article class="card rf-card bom-job ${receive ? "is-now" : "is-hold"}"><div class="bom-job-top"><span class="bom-job-state">${receive ? "รอรับเข้าคลัง" : "กักรอ QA ตัดสิน"}</span><span class="muted">${esc(`${receive ? "ส่งมา" : "รับเมื่อ"} ${rules.fmtDateTime(receive ? lot.createdAt : lot.receivedAt)}`)}</span></div>
-        <h2>${esc(`${receive ? "รับยางเส้นยาวเข้าคลัง" : "ตัดสินล็อตยางเส้นยาว"} ล็อต ${lot.lotNo}`)}</h2><p class="small muted">${chip}<span class="rf-mono">${esc(lot.itemCode)}</span> · ใบ ${ui.link(lot.orderId, ctx.url("orders", { sel: lot.orderId }))}</p>
-        <div class="bom-job-amount"><span>${esc(`${receive ? "ส่งมา" : "รับไว้"} ${rodQty(ctx, receive ? lot.qtySent : lot.qtyReceived, lot.uom)}`)}</span></div>${!receive && lot.qc?.note ? `<p class="small muted">${esc(`SR: ${lot.qc.note}`)}</p>` : ""}
+      // การ์ดรับเข้าเปิดหน้าล็อต (ที่มีปุ่มรับเข้าคลัง) · การ์ดตัดสินของ QA ไม่มีหน้ารายละเอียดของ SR ให้ QA จึงไม่เป็นลิงก์
+      const href = receive ? srHref({ lot: lot.id }) : null;
+      return `<article class="card rf-card bom-job ${receive ? "is-now" : "is-hold"}${cardClass(href)}"><div class="bom-job-top"><span class="bom-job-state">${receive ? "รอรับเข้าคลัง" : "กักรอ QA ตัดสิน"}</span><span class="muted">${esc(`${receive ? "ส่งมาจาก RB" : "รับเมื่อ"} ${rules.fmtDateTime(receive ? lot.createdAt : lot.receivedAt)}`)}</span></div>
+        <h2>${cardTitle(`${receive ? "รับยางเส้นยาวเข้าคลัง" : "ตัดสินล็อตยางเส้นยาว"} ล็อต ${lot.lotNo}`, href)}</h2><p class="small muted">${chip}<span class="rf-mono">${esc(lot.itemCode)}</span> · ใบ ${ui.link(lot.orderId, ctx.url("orders", { sel: lot.orderId }))}</p>
+        <div class="bom-job-amount"><span>${esc(`${receive ? "จำนวน" : "รับไว้"} ${rodQty(ctx, receive ? lot.qtySent : lot.qtyReceived, lot.uom)}`)}</span></div>${!receive && lot.qc?.note ? `<p class="small muted">${esc(`SR: ${lot.qc.note}`)}</p>` : ""}
         ${gated(receive ? "canStoreRods" : "canDecideRods", ui.openButton(receive ? "รับเข้าคลัง" : "ตัดสิน", receive ? "rodReceive" : "rodDecide", { lotId: lot.id }, { className: "bom-job-main" }))}</article>`;
     }
     if (task.kind === "rodIssue") {
       const { need } = task;
       const due = Math.min(...need.grJobs.map((job) => Number(job.dueAt) || Infinity));
-      return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">รอจ่ายให้ GR</span>${Number.isFinite(due) ? dueText(due, false) : ""}</div>
-        <h2>${esc(`จ่ายยางเส้นยาวให้ GR ตามใบ ${need.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "SR")} ` : ""}<span class="rf-mono">${esc(need.itemCode)}</span> · ${esc(need.order.customer ?? "")}</p>
+      const href = srHref({ issue: need.order.id, code: need.itemCode });
+      return `<article class="card rf-card bom-job is-now${cardClass(href)}"><div class="bom-job-top"><span class="bom-job-state">รอจ่ายให้ GR</span>${Number.isFinite(due) ? dueText(due, false) : ""}</div>
+        <h2>${cardTitle(`จ่ายยางเส้นยาวให้ GR ตามใบ ${need.order.id}`, href)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "SR")} ` : ""}<span class="rf-mono">${esc(need.itemCode)}</span> · ${esc(need.order.customer ?? "")}</p>
         <div class="bom-job-amount"><span title="${attr(`GR ต้องใช้ ${rules.fmtQty(need.need)} จ่ายแล้ว ${rules.fmtQty(need.issued)}`)}">${esc(`ต้องจ่าย ${rodQty(ctx, need.remaining, need.uom)}`)}</span></div>
         ${gated("canStoreRods", ui.openButton("จ่ายยางเส้นยาว", "rodIssue", { orderId: need.order.id, itemCode: need.itemCode }, { className: "bom-job-main" }))}</article>`;
     }
@@ -1682,6 +1701,6 @@
   };
 
   // ชิ้นส่วนของยางเส้นยาวที่โมดูล SR (modules/module-sr.js) ใช้วาดหน้าล็อตและตาราง ไม่คัดลอก
-  const rod = Object.freeze({ bucketText, rodStatusBadge, qcRowsHtml, rodQty, rodItemName, ROD_KIND_LABEL });
+  const rod = Object.freeze({ bucketText, rodStatusBadge, qcRowsHtml, rodQty, rodItemName, ROD_KIND_LABEL, pickPlanHtml });
   pages.hub = { rod, ratioText, orderStepOf, hubUrl, treeTab, pastePreview, copyPreview, draftChemicals, rfCan, storeTasks, fgTasks, rodTasks, workBoard, workCount, taskCard, boardCards };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -601,7 +601,23 @@ test("pages: the receive dialog shows the spec targets, computes the verdict liv
   const qty = { value: "22", handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
   const plan = { innerHTML: "" };
   issue.bind({ querySelector: (selector) => ({ "[data-rod-issue]": qty, "[data-rod-plan]": plan })[selector] ?? null });
-  assert.match(plan.innerHTML, /FN-\d{8}-91<\/span> <span class="small muted">ของใบ DEMO-26006<\/span><span class="nowrap">20 เส้น[\s\S]*FN-\d{8}-90<\/span> <span class="small muted">สต็อกกลาง<\/span><span class="nowrap">2 เส้น/);
+  assert.match(plan.innerHTML, /sr-pick-loc" title="ตำแหน่งจัดเก็บ">A-02<\/span>[\s\S]*FN-\d{8}-91<\/strong> <span class="small muted">ของใบ DEMO-26006<\/span><\/span><strong class="sr-pick-qty nowrap">20 เส้น[\s\S]*sr-pick-loc" title="ตำแหน่งจัดเก็บ">A-01<\/span>[\s\S]*FN-\d{8}-90<\/strong> <span class="small muted">สต็อกกลาง<\/span><\/span><strong class="sr-pick-qty nowrap">2 เส้น/, "the dialog lists each lot to pick with its shelf, oldest first");
+  assert.match(plan.innerHTML, /<ul class="sr-pick" data-module="sr" role="list">/, "the list carries the SR palette even though the dialog sits outside the module page");
+  assert.equal([...plan.innerHTML.matchAll(/class="sr-pick-mark">หยิบ</g)].length, 2, "each lot to pick has the หยิบ marker");
+  // live: a smaller quantity shows only the lots still needed (lots not needed are not listed), a larger one adds a lot, too much says what is short, none clears it
+  qty.value = "3";
+  qty.handlers.input();
+  assert.equal([...plan.innerHTML.matchAll(/class="sr-pick-row"/g)].length, 1, "3 rods come from the oldest lot alone");
+  assert.match(plan.innerHTML, /A-02<\/span>[\s\S]*ของใบ DEMO-26006[\s\S]*3 เส้น/);
+  assert.doesNotMatch(plan.innerHTML, /A-01/, "the second lot is not needed, so it is not shown");
+  qty.value = "30";
+  qty.handlers.input();
+  assert.equal([...plan.innerHTML.matchAll(/class="sr-pick-row"/g)].length, 2);
+  assert.match(plan.innerHTML, /A-01<\/span>[\s\S]*6 เส้น/);
+  assert.match(plan.innerHTML, /ในคลังมีไม่พอ ขาด 4 เส้น/, "26 in the store, 30 typed: 4 short, the lots that exist are still listed");
+  qty.value = "0";
+  qty.handlers.input();
+  assert.equal(plan.innerHTML, "");
   // ผลผ่านบอกว่าแท่งไปไหน (ตรงกับ bom_rod_credit): SR รับ L2 ผ่าน (งาน 32/36) แล้ว L3 8 เส้น = 4 เส้นเป็นของงาน อีก 4 เส้นเข้าสต็อกกลาง · รับ 3 เส้น = นับเข้างานทั้งหมด
   assert.equal(env.store.run("receiveRods", { lotId: lotId(2), qtyReceived: 12, values: PASS, location: "A-03" }).ok, true);
   const verdictOf = (qtyValue) => {

@@ -87,11 +87,18 @@
 
   const JOB_TONE = Object.freeze({ in_progress: ["now", "กำลังทำ"], queued: ["", "รอคิว"], hold: ["hold", "พักงาน"], done: ["done", "เสร็จ"] });
 
-  // การ์ดงานผลิต (หนึ่งงานต่อแผนก × ชิ้นงาน) · opts = { planner, dept, show, orderOf, actions = true }
+  // การ์ดคลิกได้ทั้งใบ (stretched link): ชื่อการ์ดเป็นลิงก์จริง (โฟกัสด้วยคีย์บอร์ดได้) ขยายพื้นที่คลิกคลุมการ์ดด้วย CSS (.bom-card-link::after ใน styles.css)
+  // ปุ่มและลิงก์อื่นในการ์ดอยู่เหนือชั้นนั้น จึงกดได้ตามปกติโดยไม่เปิดหน้ารายละเอียดซ้อน · ไม่มี href = ข้อความธรรมดา การ์ดเดิมไม่เปลี่ยน
+  const cardTitle = (title, href) => (href ? `<a class="bom-card-link" href="${attr(href)}">${esc(title)}</a>` : esc(title));
+  const cardClass = (href) => (href ? " has-link" : "");
+
+  // การ์ดงานผลิต (หนึ่งงานต่อแผนก × ชิ้นงาน) · opts = { planner, dept, show, orderOf, actions = true, href }
   // planner && dept === "ALL" = แสดงป้ายแผนกหน้ารหัสชิ้นงาน · actions: false = การ์ดเดียวกันแบบอ่านอย่างเดียว (ไม่มีปุ่ม)
+  // href = หน้ารายละเอียดของงาน (ข้อความ หรือฟังก์ชัน job → ข้อความ): คลิกที่ไหนของการ์ดก็เปิดหน้านั้น · ไม่ให้ = การ์ดไม่เป็นลิงก์
   function jobCard(ctx, job, opts = {}) {
     const { rules, ui, data, user } = ctx;
     const { planner = false, dept = null, actions = true } = opts;
+    const href = typeof opts.href === "function" ? opts.href(job) : opts.href ?? null;
     const orderOf = opts.orderOf ?? ((id) => data.orders.find((entry) => entry.id === id));
     const order = orderOf(job.orderId);
     const [tone, label] = JOB_TONE[job.status] ?? ["", job.status];
@@ -114,8 +121,8 @@
     // งาน GR: ยางเส้นยาวที่คลังยางเส้นยาว (SR) จ่ายให้ใบนี้แล้ว ต่อเส้นยางที่ชิ้นงานนี้ใช้ (rules.rodIssueNeeds)
     const rodLine = job.dept === "GR" && job.status !== "done" ? rules.rodIssueNeeds(data, job.orderId).filter((need) => need.grJobs.some((entry) => entry.id === job.id))
       .map((need) => `<p class="small muted" title="${attr(`${need.itemCode} · GR ต้องใช้ ${rules.fmtQty(need.need)} ${uomText(ctx, need.uom)}`)}">${esc(`ยางเส้นยาวจาก SR ${rules.fmtQty(need.issued)}/${rules.fmtQty(need.need)} ${uomText(ctx, need.uom)}`)}</p>`).join("") : "";
-    return `<article class="card rf-card bom-job${tone ? ` is-${tone}` : ""}"><div class="bom-job-top"><span class="bom-job-state">${esc(label)}</span>${dueText(ctx, job.dueAt, job.status === "done")}</div>
-        <h2>${esc(job.name)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(job.dept, rules.DEPT_LABEL)} ` : ""}<span class="rf-mono">${esc(job.itemCode)}</span> · ใบ ${ui.link(job.orderId, ctx.url("orders", { sel: job.orderId }))}</p>
+    return `<article class="card rf-card bom-job${tone ? ` is-${tone}` : ""}${cardClass(href)}"><div class="bom-job-top"><span class="bom-job-state">${esc(label)}</span>${dueText(ctx, job.dueAt, job.status === "done")}</div>
+        <h2>${cardTitle(job.name, href)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(job.dept, rules.DEPT_LABEL)} ` : ""}<span class="rf-mono">${esc(job.itemCode)}</span> · ใบ ${ui.link(job.orderId, ctx.url("orders", { sel: job.orderId }))}</p>
         <div class="bom-job-amount"><span>${esc(amount)}</span>${started && job.status !== "done" ? `<span class="muted">เหลือ ${esc(rules.fmtQty(left))}</span>` : ""}</div>${started ? ui.progress(job.qtyDone, job.qtyPlanned, job.status === "hold" ? "bad" : "") : ""}${job.qtyReject ? `<p class="small muted">เสีย ${esc(rules.fmtQty(job.qtyReject))}</p>` : ""}${closedBy ? `<p class="small muted">${esc(`ปิดงานโดย ${closedBy.by}: ${closedBy.reason}`)}</p>` : ""}${heldBy ? `<p class="small muted">${esc(`พักโดย ${heldBy.by}: ${heldBy.reason}`)}</p>` : ""}${rodLine}${canWork && linkedJob ? '<p class="small muted" title="ยอดของงานนี้เพิ่มเองเมื่อคลังยางเส้นยาว (SR) รับยางเส้นยาวจากล็อตตกแต่งของ WO เข้าคลังและผ่านตรวจขนาด">ยอดมาจากการรับเข้าคลัง SR</p>' : ""}
         ${main}${more.length ? `<div class="rf-row bom-job-more">${more.join("")}</div>` : ""}</article>`;
   }
@@ -455,7 +462,7 @@
   }
 
   root.MNP_FACTORY = Object.freeze({
-    esc, attr, formPayload, parseArgs, bindRoot, deptChip, dueText, jobCard, jobReportDialog,
+    esc, attr, formPayload, parseArgs, bindRoot, deptChip, dueText, jobCard, jobReportDialog, cardTitle, cardClass,
     FACTORY_GROUP, canSeeDept, canOpenDeptModule, deptLink, orderNavItems, registerDeptModule, productionLanding, mountDeptJobs,
     pageHead, searchForm, includesText, limited, deptWork, deptWorkSection, storeLanding, STORE_MENU, workItem, deptWorkCount, viewHead, actionLink, wake, failed, rubberflowFailed, deptCtx, routeUrl, onDeptRoute: onFactoryRoute,
   });

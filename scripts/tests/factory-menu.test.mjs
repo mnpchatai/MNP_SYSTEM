@@ -1335,6 +1335,187 @@ test("SR จ่ายให้ GR: orders waiting for rods with the issue dialog
   assert.doesNotMatch(await viewer.open("FACTORY_SR", "tab=issue"), /data-rf-open="rod/, "no buttons without the right");
 });
 
+// ---- SR: คลิกที่ไหนของการ์ด/แถวก็เปิดหน้ารายละเอียดของรายการนั้น (เจ้าของโรงงานสั่ง 2026-11-19) ----
+const RB_DEMO = "RB-DM02-02-YE03-204-19-34";
+const cardOf = (cards, name) => cards.filter((card) => card.includes(`data-rf-open="${name}"`));
+
+test("SR cards open the item's detail page from anywhere on the card; the button keeps its own action; cards without a detail page stay plain", async () => {
+  const env = srEnv();
+  const cards = cardsOf((await workPage(env)).html);
+  const receive = cardOf(cards, "rodReceive");
+  const issue = cardOf(cards, "rodIssue");
+  assert.equal(receive.length, 2, "two lots wait for receiving");
+  for (const card of receive) {
+    const lotId = decodeArgs(card.match(/data-rf-args="([^"]*)"/)[1]).lotId;
+    assert.match(card, /^<article class="card rf-card bom-job is-now has-link">/, "the card is marked clickable");
+    assert.ok(card.includes(`<h2><a class="bom-card-link" href="#/sr?lot=${lotId}">รับยางเส้นยาวเข้าคลัง ล็อต `), "the title is the one real link, to the lot page");
+    assert.equal([...card.matchAll(/class="bom-card-link"/g)].length, 1, "one link per card");
+    assert.ok(card.includes('data-rf-open="rodReceive"'), "the card's own button is still there");
+    assert.doesNotMatch(card, /<a class="bom-card-link"[^>]*>[^<]*<button/, "the button is not inside the card link");
+    assert.match(card, /ส่งมาจาก RB/, "it says the lot came from RB");
+    assert.equal([...card.matchAll(/ส่งมา/g)].length, 1, "and says so once");
+  }
+  assert.ok(issue.length >= 1);
+  const forOrder = issue.find((card) => card.includes("ตามใบ DEMO-26006"));
+  assert.ok(forOrder.includes(`href="#/sr?issue=DEMO-26006&amp;code=${RB_DEMO}"`), "an issue card opens the issue detail page of its order and rod");
+  assert.match(forOrder, /<h2><a class="bom-card-link" href="[^"]*">จ่ายยางเส้นยาวให้ GR ตามใบ DEMO-26006<\/a><\/h2>/);
+  assert.ok(forOrder.includes('data-rf-open="rodIssue"'));
+  // การ์ดที่ไม่มีหน้ารายละเอียด (ตัดสินของ QA) ไม่เป็นลิงก์ · ผู้ที่เปิดโมดูล SR ไม่ได้ก็ไม่ได้ลิงก์
+  const qa = load({ employee: emp("QA") });
+  qa.store.setUser("B11");
+  const pending = qa.store.data().rodLots.find((lot) => lot.status === "pending");
+  assert.equal(qa.store.run("receiveRods", { lotId: pending.id, qtyReceived: pending.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ขนาดเกินสเปก", location: "Q-01" }).ok, true);
+  qa.store.setUser("B12");
+  const held = cardsOf((await workPage(qa)).html);
+  assert.equal(held.length, 1);
+  assert.doesNotMatch(held[0], /bom-card-link|has-link/);
+  env.setEmployee(emp("GR"));
+  const noAccess = cardsOf((await workPage(env)).html).filter((card) => card.includes('data-rf-open="rod'));
+  assert.ok(noAccess.length >= 4);
+  for (const card of noAccess) assert.doesNotMatch(card, /bom-card-link|has-link/, "no link to a page the user cannot open");
+});
+
+test("the shared job card takes a detail URL (text or function) and is a plain card without one", async () => {
+  const env = srEnv();
+  const kit = env.context.MNP_FACTORY;
+  const ctx = env.context.MNP_BOM.context(new URLSearchParams());
+  const job = env.store.data().jobs.find((entry) => entry.dept === "GR");
+  const plainCard = kit.jobCard(ctx, job, { planner: false, dept: "GR" });
+  assert.doesNotMatch(plainCard, /bom-card-link|has-link/, "other modules' cards are unchanged");
+  const linked = kit.jobCard(ctx, job, { planner: false, dept: "GR", href: (entry) => `#/gr?job=${entry.id}` });
+  assert.match(linked, /^<article class="card rf-card bom-job[^"]* has-link">/);
+  assert.ok(linked.includes(`<h2><a class="bom-card-link" href="#/gr?job=${job.id}">${escapeHtml(job.name)}</a></h2>`));
+  assert.match(kit.jobCard(ctx, job, { planner: false, dept: "GR", href: "#/x?a=1&b=2" }), /href="#\/x\?a=1&amp;b=2"/, "the URL is escaped");
+  assert.equal(kit.cardTitle("a<b", null), "a&lt;b");
+  assert.equal(kit.cardClass(null), "");
+  // ลิงก์คลุมการ์ดด้วย CSS ส่วนปุ่มและลิงก์อื่นในการ์ดอยู่เหนือชั้น (กดปุ่มไม่เปิดหน้ารายละเอียดซ้อน) · แถวตารางทำแบบเดียวกันและมือถือไม่บังกรอบอ้างอิง
+  const css = fs.readFileSync("styles.css", "utf8");
+  assert.match(css, /\.bom-card-link::after \{ content: ""; position: absolute; inset: 0;/);
+  assert.match(css, /\.bom-job\.has-link :is\(a:not\(\.bom-card-link\), button, input, select, textarea\) \{ position: relative; z-index: 1; \}/);
+  assert.match(css, /\.bom-job\.has-link \{ position: relative; cursor: pointer;/);
+  assert.match(css, /tr\.row-link \{ position: relative; transform: translate\(0\); cursor: pointer; \}/);
+  assert.match(css, /\.row-link-main::after \{ content: ""; position: absolute; inset: 0; \}/);
+  assert.match(css, /tr\.row-link :is\(a:not\(\.row-link-main\), button, input, select, textarea\) \{ position: relative; z-index: 1; \}/);
+  assert.match(css, /\.row-link-main:focus-visible::after \{ outline:/, "a keyboard focus ring shows on the row");
+  assert.match(css, /max-width: 760px\) \{\s*\.rf-page \.rf-table tr\.row-link td:has\(\.row-link-main\) \{ position: static;/, "on a phone the cell holding the link does not hide the row from the link");
+});
+
+test("SR lot page of a pending lot: it says RB sent it and has the receive button that opens the same dialog; a viewer has no button", async () => {
+  const env = srEnv();
+  const l2 = rodLotOf(env, 2);
+  assert.equal(l2.status, "pending");
+  const html = await env.open("FACTORY_SR", `lot=${l2.id}`);
+  assert.equal(h1Of(html), `ล็อต ${l2.lotNo}`);
+  assert.match(html, /data-rf-open="rodReceive" data-rf-args="[^"]*"[^>]*>รับเข้าคลัง</);
+  assert.match(html, /ส่งมาจาก RB · งาน /);
+  assert.match(html, /<a class="request-back-link" href="#\/sr\?tab=receive">‹ รับเข้า<\/a>/, "back to the list the lot came from");
+  assert.doesNotMatch(html, /data-rf-open="rod(Location|Adjust)"/);
+  const page = await landingWith(env, "FACTORY_SR", `lot=${l2.id}`);
+  const dialog = await page.click("rodReceive");
+  assert.match(dialog, /data-rf-form="receiveRods"/);
+  assert.match(dialog, new RegExp(`รับยางเส้นยาวเข้าคลัง · ล็อต ${l2.lotNo}`));
+  // รับแล้ว: หน้าเดิมไม่มีปุ่มรับอีก
+  assert.equal(env.store.run("receiveRods", { lotId: l2.id, qtyReceived: l2.qtySent, values: { thickness: 7.5, width: 34.1, weightPerM: 1205 }, location: "A-03" }).ok, true);
+  assert.doesNotMatch(await env.open("FACTORY_SR", `lot=${l2.id}`), /data-rf-open="rodReceive"/);
+  const viewer = srEnv(emp("PP", "factory_manager"), "B08");
+  assert.doesNotMatch(await viewer.open("FACTORY_SR", `lot=${rodLotOf(viewer, 3).id}`), /data-rf-open="rodReceive"/);
+});
+
+test("SR issue detail page: order link, customer, due, rubber, need / issued / still to issue, lots to pick oldest first with their shelf, past issues with reverse", async () => {
+  const env = srEnv();
+  const rules = env.context.MNP_BOM_RULES;
+  const data = env.store.data();
+  const order = data.orders.find((entry) => entry.id === "DEMO-26006");
+  const attrs = rules.rodAttrs(data.items, RB_DEMO, data.colors);
+  const query = `issue=DEMO-26006&code=${RB_DEMO}`;
+  let html = await env.open("FACTORY_SR", query);
+  assert.equal(h1Of(html), "จ่ายยางเส้นยาวให้ GR");
+  assert.match(html, /<a class="request-back-link" href="#\/sr\?tab=issue">‹ จ่ายให้ GR<\/a>/);
+  assert.deepEqual(plain(navOf(env, "FACTORY_SR").items.filter((item) => item.active).map((item) => item.label)), ["จ่ายให้ GR"], "the page sits under จ่ายให้ GR");
+  assert.match(html, /<a class="rf-mono" href="#\/bom\?p=orders&amp;sel=DEMO-26006">DEMO-26006<\/a>/, "the order is a link");
+  for (const text of [order.customer, RB_DEMO, attrs.name, attrs.compound, attrs.size]) assert.ok(html.includes(escapeHtml(text)), `shows ${text}`);
+  assert.match(html, /กำหนด<\/dt><dd><span/, "the due date");
+  assert.match(html, /GR ต้องใช้<\/dt><dd>36 เส้น<\/dd>/);
+  assert.match(html, /จ่ายแล้ว<\/dt><dd>0 เส้น<\/dd>/);
+  assert.match(html, /ยังต้องจ่าย<\/dt><dd><strong>36 เส้น<\/strong><\/dd>/);
+  // ที่ต้องหยิบ: ของใบนี้ก่อน (ล็อต A-02 20 เส้น) แล้วสต็อกกลาง (A-01 6 เส้น) ขาด 10 · ตำแหน่งทุกแถว
+  const picks = html.match(/<li class="sr-pick-row">[\s\S]*?<\/li>/g) ?? [];
+  assert.equal(picks.length, 2, "only the lots that are needed");
+  assert.match(picks[0], /sr-pick-mark">หยิบ<[\s\S]*sr-pick-loc" title="ตำแหน่งจัดเก็บ">A-02<[\s\S]*ของใบ DEMO-26006[\s\S]*sr-pick-qty nowrap">20 เส้น/);
+  assert.match(picks[1], /sr-pick-loc" title="ตำแหน่งจัดเก็บ">A-01<[\s\S]*สต็อกกลาง[\s\S]*sr-pick-qty nowrap">6 เส้น/);
+  assert.match(html, /ในคลังมีไม่พอ ขาด 10 เส้น/);
+  assert.ok(!html.includes(escapeHtml(rodLotOf(env, 4).lotNo)), "a lot of another rod is not listed");
+  assert.match(html, /ยังไม่เคยจ่ายให้ใบนี้/);
+  assert.match(html, new RegExp(`data-rf-open="rodIssue" data-rf-args="[^"]*DEMO-26006[^"]*${RB_DEMO}`), "the button opens the issue dialog");
+  const page = await landingWith(env, "FACTORY_SR", query);
+  assert.match(await page.click("rodIssue"), /data-rf-form="issueRods"/);
+  // จ่ายแล้ว 2 เส้น: ตัวเลขและรายการหยิบเปลี่ยน ประวัติมีแถวจ่าย ย้อนได้ครั้งเดียว
+  assert.equal(env.store.run("issueRods", { orderId: "DEMO-26006", itemCode: RB_DEMO, qty: 2 }).ok, true);
+  html = await env.open("FACTORY_SR", query);
+  assert.match(html, /จ่ายแล้ว<\/dt><dd>2 เส้น<\/dd>/);
+  assert.match(html, /ยังต้องจ่าย<\/dt><dd><strong>34 เส้น<\/strong>/);
+  assert.match(html.match(/<li class="sr-pick-row">[\s\S]*?<\/li>/)[0], /A-02[\s\S]*18 เส้น/, "the oldest lot now has 18 left");
+  const reverse = [...html.matchAll(/data-rf-open="rodReverse" data-rf-args="([^"]*)"/g)];
+  assert.equal(reverse.length, 1);
+  assert.match(html, /จ่ายให้ GR/);
+  assert.doesNotMatch(html.slice(html.indexOf("จ่ายไปแล้ว")), /ใบ DEMO-26006 ·/, "the order is not repeated on each row of its own page");
+  assert.equal(env.store.run("reverseRodIssue", { moveId: decodeArgs(reverse[0][1]).moveId, note: "จ่ายผิดใบ" }).ok, true);
+  html = await env.open("FACTORY_SR", query);
+  assert.doesNotMatch(html, /data-rf-open="rodReverse"/);
+  assert.match(html, /ถูกย้อน/);
+  // ไม่พบใบ / ไม่มีสิทธิ์จ่าย
+  assert.match(await env.open("FACTORY_SR", `issue=NOPE&code=${RB_DEMO}`), /ไม่พบใบสั่งผลิตหรือเส้นยางนี้/);
+  const viewer = srEnv(emp("PP", "factory_manager"), "B08");
+  const seen = await viewer.open("FACTORY_SR", query);
+  assert.match(seen, /ยังต้องจ่าย/);
+  assert.doesNotMatch(seen, /data-rf-open="rod/);
+  // ใบที่ไม่มีงานจ่ายค้าง (ใบที่ปิดแล้ว): บอกเหตุผล ประวัติยังดูได้
+  assert.match(await env.open("FACTORY_SR", `issue=DEMO-26008&code=${RB_DEMO}`), /ไม่มีงานจ่ายยางเส้นยาวค้างอยู่/);
+});
+
+test("SR tables: a row is one stretched link to its detail page, other links and buttons in the row stay; GR's read view has no row links", async () => {
+  const env = srEnv();
+  const rowsOf = (html) => html.match(/<tr class="row-link[^"]*">[\s\S]*?<\/tr>/g) ?? [];
+  // ในคลัง: แถวละล็อตเปิดหน้าล็อต · ลิงก์ใบสั่งผลิตในแถวยังเป็นลิงก์ของมันเอง
+  const stock = await env.open("FACTORY_SR", "tab=stock");
+  const rows = rowsOf(stock);
+  assert.equal(rows.length, storedBuckets(env).length);
+  for (const row of rows) {
+    assert.equal([...row.matchAll(/row-link-main/g)].length, 1, "one main link per row");
+    assert.match(row, /<a class="rf-mono row-link-main" href="#\/sr\?lot=[^"]+">/);
+  }
+  const owned = rows.find((row) => row.includes("sel=DEMO-26006"));
+  assert.match(owned, /<a class="rf-mono" href="#\/bom\?p=orders&amp;sel=DEMO-26006">/, "the order link is not the row link");
+  assert.equal(lotLinks(stock).length, rows.length, "no lot link outside a row");
+  // รับเข้า: ล็อตที่รอรับ ล็อตที่กัก รับเข้าล่าสุด · ปุ่มรับเข้าในแถวยังกดได้
+  const l3 = rodLotOf(env, 3);
+  assert.equal(env.store.run("receiveRods", { lotId: l3.id, qtyReceived: l3.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ผิวเป็นคลื่น", location: "H-02" }).ok, true);
+  const receive = rowsOf(await env.open("FACTORY_SR", "tab=receive"));
+  assert.equal(receive.filter((row) => row.includes('data-rf-open="rodReceive"')).length, 1);
+  assert.ok(receive.length >= 3, "waiting, held and the receipts");
+  for (const row of receive) assert.match(row, new RegExp(`<a class="rf-mono row-link-main" href="#/sr\\?lot=[^"]+">`));
+  // จ่ายให้ GR: ใบที่รอ = หน้ารายละเอียดการจ่าย (รหัสเส้นยางเป็นลิงก์หลัก) · จ่ายล่าสุด = หน้าเดียวกัน
+  const issueHref = `href="#/sr?issue=DEMO-26006&amp;code=${RB_DEMO}"`;
+  let issue = rowsOf(await env.open("FACTORY_SR", "tab=issue"));
+  const need = issue.find((row) => row.includes(issueHref));
+  assert.ok(need.includes(`<a class="rf-mono row-link-main" ${issueHref}>`));
+  assert.match(need, /<a class="rf-mono" href="#\/bom\?p=orders&amp;sel=DEMO-26006">/, "the order link in the row still goes to the order");
+  assert.ok(need.includes('data-rf-open="rodIssue"'));
+  assert.equal(env.store.run("issueRods", { orderId: "DEMO-26006", itemCode: RB_DEMO, qty: 2 }).ok, true);
+  issue = rowsOf(await env.open("FACTORY_SR", "tab=issue"));
+  const recent = issue.find((row) => row.includes('data-rf-open="rodReverse"'));
+  assert.ok(recent.includes(`<a class="row-link-main" ${issueHref}>จ่ายให้ GR</a>`), "a past issue opens the issue page of its order");
+  // ประวัติเข้าออกและหน้ารายละเอียดเองไม่เป็นแถวลิงก์
+  assert.equal(rowsOf(await env.open("FACTORY_SR", "tab=history")).length, 0);
+  assert.equal(rowsOf(await env.open("FACTORY_SR", `issue=DEMO-26006&code=${RB_DEMO}`)).length, 0);
+  // GR อ่านอย่างเดียว: ไม่มีลิงก์ (GR เปิด #/sr ไม่ได้) และไม่มีแถวคลิกได้
+  const gr = load({ employee: emp("GR") });
+  gr.store.setUser("B05");
+  const readOnly = await gr.open("FACTORY_GR", "tab=rods");
+  assert.ok(readOnly.includes("rf-table"));
+  assert.doesNotMatch(readOnly, /row-link|#\/sr\?/);
+});
+
 test("SR ประวัติเข้าออก: the ledger newest first, search by code, lot and order, a kind filter, reverse only on unreversed issues", async () => {
   const env = srEnv();
   const rules = env.context.MNP_BOM_RULES;
@@ -1372,7 +1553,7 @@ test("SR lot page: identity once, source, location, QC result, buckets and move 
   const html = await env.open("FACTORY_SR", `lot=${l1.id}`);
   assert.equal(h1Of(html), `ล็อต ${l1.lotNo}`);
   assert.match(html, /<a class="request-back-link" href="#\/sr\?tab=stock">‹ ในคลัง<\/a>/, "a back link, lifted into the top bar by the shell");
-  for (const text of [l1.itemCode, attrs.name, attrs.compound, attrs.color, attrs.colorName, attrs.size, "อยู่ในคลัง", "A-02", l1.orderId, "จากใบสั่งผลิต"]) assert.ok(html.includes(escapeHtml(text)), `shows ${text}`);
+  for (const text of [l1.itemCode, attrs.name, attrs.compound, attrs.color, attrs.colorName, attrs.size, "อยู่ในคลัง", "A-02", l1.orderId, "ส่งมาจาก RB"]) assert.ok(html.includes(escapeHtml(text)), `shows ${text}`);
   assert.equal([...html.matchAll(new RegExp(escapeHtml(l1.lotNo), "g"))].length, 1, "the lot number appears once, in the heading");
   assert.match(html, /ผลตรวจขนาดตอนรับเข้า/);
   assert.match(html, /ความหนา/);
