@@ -1118,12 +1118,12 @@
       // เส้นยางที่ใช้จากคลังแท่งยาว (SR): หักจากสต็อกกลางจริงตอนปล่อยผลิต · สต็อกกลางไม่พอแล้ว (ใบอื่นปล่อยไปก่อน) ปล่อยผลิตไม่ได้จนกว่าจะตั้งยอดใหม่
       const rodRows = order.explosion?.length ? rules.rodStockForDraft(data, order).filter((row) => (row.planned ?? 0) > 0) : [];
       const rodLack = rodRows.filter((row) => row.planned > row.stock + 1e-9);
-      const rodLine = rodRows.length ? `<p>ใช้แท่งจากคลังแท่งยาว (SR) ${rodRows.map((row) => `<span class="rf-mono">${esc(row.itemCode)}</span> × ${esc(rules.fmtQty(row.planned))}`).join(", ")} หักจากคลังเมื่อปล่อยผลิต ล็อตเก่าก่อน</p>` : "";
+      const rodLine = rodRows.length ? `<p>ใช้ยางเส้นยาวจากคลังยางเส้นยาว (SR) ${rodRows.map((row) => `<span class="rf-mono">${esc(row.itemCode)}</span> × ${esc(rules.fmtQty(row.planned))}`).join(", ")} หักจากคลังเมื่อปล่อยผลิต ล็อตเก่าก่อน</p>` : "";
       const fgLine = fgRows.length ? `<p>ใช้สต็อกสินค้าสำเร็จรูป ${fgRows.map((row) => `<span class="rf-mono">${esc(row.fgCode)}</span> × ${esc(rules.fmtQty(row.planned))}`).join(", ")} หักจากสต็อกเมื่อปล่อยผลิต (ใบที่ปล่อยผลิตก่อนได้ของก่อน)${fgAll ? " · ได้ครบทุกสินค้า ไม่มีงานผลิต ปล่อยแล้วใบปิดทันทีและไปที่ขั้นส่งมอบลูกค้า" : ""}</p>` : "";
       const warns = [
         !order.explosion?.length ? ui.callout("warn", "ยังไม่ได้คำนวณของที่ต้องใช้ กลับไปขั้น 2 ก่อน") : "",
         fgLack.length ? ui.callout("bad", `ปล่อยผลิตไม่ได้ สต็อกสินค้าสำเร็จรูปไม่พอที่ตั้งใช้: ${fgLack.map((row) => `${esc(row.fgCode)} เหลือ ${esc(rules.fmtQty(row.stock))} ตั้งใช้ ${esc(rules.fmtQty(row.planned))}`).join(", ")} · ${ui.link("กลับไปตั้งยอดใหม่ที่ขั้น 2", stepUrl(2))}`) : "",
-        rodLack.length ? ui.callout("bad", `ปล่อยผลิตไม่ได้ คลังแท่งยาว (SR) มีสต็อกกลางไม่พอที่ตั้งใช้: ${rodLack.map((row) => `${esc(row.itemCode)} เหลือ ${esc(rules.fmtQty(row.stock))} ตั้งใช้ ${esc(rules.fmtQty(row.planned))}`).join(", ")} · ${ui.link("กลับไปตั้งยอดใหม่ที่ขั้น 2", stepUrl(2))}`) : "",
+        rodLack.length ? ui.callout("bad", `ปล่อยผลิตไม่ได้ คลังยางเส้นยาว (SR) มีสต็อกกลางไม่พอที่ตั้งใช้: ${rodLack.map((row) => `${esc(row.itemCode)} เหลือ ${esc(rules.fmtQty(row.stock))} ตั้งใช้ ${esc(rules.fmtQty(row.planned))}`).join(", ")} · ${ui.link("กลับไปตั้งยอดใหม่ที่ขั้น 2", stepUrl(2))}`) : "",
         noBom.length ? ui.callout("bad", `<div>ปล่อยผลิตไม่ได้ ชิ้นงานที่ยังไม่มี BOM · ${canPlan ? "กดรหัสเพื่อเปิด BOM ของสินค้าที่ใช้ชิ้นนั้น แล้วเพิ่มส่วนประกอบที่แถวของชิ้นนั้น" : "กดรหัสเพื่อดูรายการ"}</div><div class="rf-row bom-nobom-links">${noBomRows.map((row) => ui.link(row.code, noBomUrl(row), "btn rf-btn secondary small rf-mono")).join("")}</div>`) : "",
         lacking ? ui.callout("warn", `ยังขาด${lacking} และยังไม่ได้สั่ง ปล่อยผลิตได้ แต่แผนกที่ใช้ของนั้นจะติดจนกว่าของจะเข้า${canBuyParts(ctx) ? ` · ${ui.link("กลับไปสั่งซื้อที่ขั้น 2", stepUrl(2))}` : " · คลังวัตถุดิบ (ST) เป็นผู้สั่งซื้อ"}`) : "",
       ].join("");
@@ -1325,10 +1325,10 @@
     const need = open ? Math.max(Math.round((Number(job.qtyPlanned) - (Number(job.qtyDone) || 0)) * 1e4) / 1e4, 0) : 0;
     const passText = (qty) => {
       const head = specRows.length ? "ผ่านสเปก" : "ผ่าน";
-      if (!open) return `${head} แท่งเข้าคลังเป็นสต็อกกลางทั้งหมด ไม่นับเข้างาน RB (${!job ? "ไม่พบงาน RB ของล็อตนี้" : job.status === "done" ? "งาน RB ของใบนี้เสร็จแล้ว" : "ใบนี้ไม่ได้อยู่ระหว่างผลิต"})`;
-      if (need <= 1e-9) return `${head} แท่งเข้าคลังเป็นสต็อกกลางทั้งหมด (งาน RB ของใบนี้ได้ครบแผนแล้ว)`;
-      if (!(qty > need + 1e-9)) return `${head} แท่งเข้าคลังและนับเข้างาน RB`;
-      return `${head} แท่งเข้าคลัง: ${rules.fmtQty(need)} ${unit} เป็นของงาน RB ของใบนี้ · เกิน ${rules.fmtQty(Math.round((qty - need) * 1e4) / 1e4)} ${unit} เข้าสต็อกกลาง`;
+      if (!open) return `${head} ยางเส้นยาวเข้าคลังเป็นสต็อกกลางทั้งหมด ไม่นับเข้างาน RB (${!job ? "ไม่พบงาน RB ของล็อตนี้" : job.status === "done" ? "งาน RB ของใบนี้เสร็จแล้ว" : "ใบนี้ไม่ได้อยู่ระหว่างผลิต"})`;
+      if (need <= 1e-9) return `${head} ยางเส้นยาวเข้าคลังเป็นสต็อกกลางทั้งหมด (งาน RB ของใบนี้ได้ครบแผนแล้ว)`;
+      if (!(qty > need + 1e-9)) return `${head} ยางเส้นยาวเข้าคลังและนับเข้างาน RB`;
+      return `${head} ยางเส้นยาวเข้าคลัง: ${rules.fmtQty(need)} ${unit} เป็นของงาน RB ของใบนี้ · เกิน ${rules.fmtQty(Math.round((qty - need) * 1e4) / 1e4)} ${unit} เข้าสต็อกกลาง`;
     };
     const body = `<form novalidate id="bom-rod-receive-form" data-rf-form="receiveRods" data-rf-args="${attr(JSON.stringify({ lotId: lot.id }))}" data-rf-success="บันทึกรับ {result} แล้ว">
       ${lotFacts(ctx, lot, [["ส่งมา", esc(`${rules.fmtQty(lot.qtySent)} ${unit}`)]])}
@@ -1359,7 +1359,7 @@
       result?.addEventListener("change", paint);
       paint();
     };
-    return { html: ui.dialog("rodReceive", `รับแท่งเข้าคลัง · ล็อต ${lot.lotNo}`, body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-rod-receive-form">บันทึกรับเข้า</button>` }), bind };
+    return { html: ui.dialog("rodReceive", `รับยางเส้นยาวเข้าคลัง · ล็อต ${lot.lotNo}`, body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-rod-receive-form">บันทึกรับเข้า</button>` }), bind };
   };
   // QA ตัดสินล็อตที่กัก: ใช้ได้ตามสภาพ (เข้าคลังและนับเข้างาน RB ด้วยยอดที่ SR รับ) · คืน RB แก้ไข · ทิ้ง · เหตุผลจำเป็น 3-300
   dialogs.rodDecide = (ctx, { lotId }) => {
@@ -1391,7 +1391,7 @@
     const stock = Math.round((need.owned + need.free) * 1e4) / 1e4;
     if (!(stock > 0)) return null;
     const start = String(Math.round(Math.min(need.remaining > 0 ? need.remaining : stock, stock) * 1e4) / 1e4);
-    const body = `<form novalidate id="bom-rod-issue-form" data-rf-form="issueRods" data-rf-args="${attr(JSON.stringify({ orderId: order.id, itemCode }))}" data-rf-success="จ่ายแท่ง {result} ให้ GR แล้ว">
+    const body = `<form novalidate id="bom-rod-issue-form" data-rf-form="issueRods" data-rf-args="${attr(JSON.stringify({ orderId: order.id, itemCode }))}" data-rf-success="จ่ายยางเส้นยาว {result} ให้ GR แล้ว">
       ${ui.kv([
         ["เส้นยาง", `${ui.mono(itemCode)}${need.name ? `<div class="small muted">${esc(need.name)}</div>` : ""}`],
         ["ใบสั่งผลิต", `${ui.link(order.id, ctx.url("orders", { sel: order.id }), "rf-mono")} <span class="small muted">${esc(order.customer ?? "")}</span>`],
@@ -1416,7 +1416,7 @@
       input?.addEventListener("input", paint);
       paint();
     };
-    return { html: ui.dialog("rodIssue", `จ่ายแท่งให้ GR · ${order.id}`, body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-rod-issue-form">จ่ายให้ GR</button>` }), bind };
+    return { html: ui.dialog("rodIssue", `จ่ายยางเส้นยาวให้ GR · ${order.id}`, body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-rod-issue-form">จ่ายให้ GR</button>` }), bind };
   };
   // ประวัติล็อต: ผลรับเข้า ผลตัดสิน ยอดคงเหลือต่อถัง และทุกแถวของประวัติ · การจ่ายที่ยังไม่ถูกย้อนมีปุ่มย้อน (SR / ฝ่ายวางแผน) · ฝ่ายวางแผนปรับยอดสต็อกกลางได้
   const ROD_KIND_LABEL = Object.freeze({ receive: "รับเข้าคลัง", transfer: "ย้ายถัง (ปล่อยผลิต / เปิดใบกลับ)", issue: "จ่ายให้ GR", unissue: "ย้อนการจ่าย", adjust: "ปรับยอด" });
@@ -1442,7 +1442,7 @@
       ...(buckets.length ? [["คงเหลือ", esc(buckets.join(" · "))]] : []),
     ]);
     const adjust = lot.status === "stored" && ctx.helpers.canAdjustRods?.(ctx.user) ? ui.openButton("ปรับยอดสต็อกกลาง", "rodAdjust", { lotId: lot.id }, { className: "secondary" }) : "";
-    const body = `${facts}${lot.qc ? qcRowsHtml(ctx, lot) : ""}${ui.table(["เวลา", "รายการ", { label: "เปลี่ยน", className: "right" }, "ผู้ทำ", ""], rows, { emptyText: "ยังไม่มีแท่งเข้าคลังจากล็อตนี้" })}`;
+    const body = `${facts}${lot.qc ? qcRowsHtml(ctx, lot) : ""}${ui.table(["เวลา", "รายการ", { label: "เปลี่ยน", className: "right" }, "ผู้ทำ", ""], rows, { emptyText: "ยังไม่มียางเส้นยาวเข้าคลังจากล็อตนี้" })}`;
     return { html: ui.dialog("rodLot", `ล็อต ${lot.lotNo}`, body, { wide: true, footer: `${adjust}${ui.closeButton("ปิด")}` }) };
   };
   dialogs.rodReverse = (ctx, { moveId }) => {
@@ -1451,10 +1451,10 @@
     if (!move || rules.rodReversedIds(data.rodMoves).has(move.id) || !ctx.helpers.canStoreRods?.(ctx.user)) return null;
     const lot = (data.rodLots ?? []).find((entry) => entry.id === move.lotId);
     const body = `<form novalidate id="bom-rod-reverse-form" data-rf-form="reverseRodIssue" data-rf-args="${attr(JSON.stringify({ moveId: move.id }))}" data-rf-success="ย้อนการจ่าย {result} แล้ว">
-      ${ui.callout("warn", esc(`แท่ง ${rules.fmtQty(-Number(move.qty))} ${uomText(ctx, lot?.uom)} ของล็อต ${lot?.lotNo ?? ""} กลับเข้าคลัง (${bucketText(ctx, move.ownerOrderId)}) ใบ ${move.forOrderId} นับว่ายังไม่ได้รับ`))}
+      ${ui.callout("warn", esc(`ยางเส้นยาว ${rules.fmtQty(-Number(move.qty))} ${uomText(ctx, lot?.uom)} ของล็อต ${lot?.lotNo ?? ""} กลับเข้าคลัง (${bucketText(ctx, move.ownerOrderId)}) ใบ ${move.forOrderId} นับว่ายังไม่ได้รับ`))}
       ${ui.field("เหตุผลที่ย้อน", ui.input("note", { id: "rod-reverse-note", required: true, placeholder: "เช่น จ่ายผิดใบ จ่ายเกิน", extra: 'minlength="3" maxlength="300"' }), { id: "rod-reverse-note", required: true })}
     </form>`;
-    return { html: ui.dialog("rodReverse", `ย้อนการจ่ายแท่ง · ${move.forOrderId}`, body, { footer: `${ui.closeButton("ไม่ย้อน")}<button class="btn rf-btn" type="submit" form="bom-rod-reverse-form">ย้อนการจ่าย</button>` }) };
+    return { html: ui.dialog("rodReverse", `ย้อนการจ่ายยางเส้นยาว · ${move.forOrderId}`, body, { footer: `${ui.closeButton("ไม่ย้อน")}<button class="btn rf-btn" type="submit" form="bom-rod-reverse-form">ย้อนการจ่าย</button>` }) };
   };
   dialogs.rodAdjust = (ctx, { lotId }) => {
     const { ui, rules, data } = ctx;
@@ -1464,7 +1464,7 @@
     const unit = uomText(ctx, lot.uom);
     const body = `<form novalidate id="bom-rod-adjust-form" data-rf-form="adjustRods" data-rf-args="${attr(JSON.stringify({ lotId: lot.id }))}" data-rf-success="ปรับยอด {result} แล้ว">
       <div class="rf-grid rf-g2">${ui.field(`จำนวนที่ปรับ (${unit})`, ui.input("qty", { type: "number", step: "any", min: -free, required: true, id: "rod-adjust-qty", placeholder: "+2 หรือ -1", extra: `title="${attr(`บวก = เพิ่ม ลบ = ลด สต็อกกลางของล็อตนี้มี ${rules.fmtQty(free)} ${unit}`)}"` }), { id: "rod-adjust-qty", required: true })}
-      ${ui.field("เหตุผล", ui.input("note", { id: "rod-adjust-note", required: true, placeholder: "เช่น นับจริงได้น้อยกว่า แท่งชำรุด", extra: 'minlength="3" maxlength="300"' }), { id: "rod-adjust-note", required: true })}</div>
+      ${ui.field("เหตุผล", ui.input("note", { id: "rod-adjust-note", required: true, placeholder: "เช่น นับจริงได้น้อยกว่า ยางเส้นยาวชำรุด", extra: 'minlength="3" maxlength="300"' }), { id: "rod-adjust-note", required: true })}</div>
     </form>`;
     return { html: ui.dialog("rodAdjust", `ปรับยอดสต็อกกลาง · ล็อต ${lot.lotNo}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-rod-adjust-form">บันทึก</button>` }) };
   };
@@ -1476,7 +1476,7 @@
     const summary = rules.rodSummary(data);
     const num = (value, uom) => (value > 0 ? `${esc(rules.fmtQty(value))} <span class="small muted">${esc(uomText(ctx, uom))}</span>` : '<span class="muted">—</span>');
     const sumRows = summary.map((row) => `<tr${row.itemCode === code ? ' class="is-selected"' : ""}><td>${ui.link(row.itemCode, ctx.url("rods", { code: row.itemCode === code ? null : row.itemCode }), "rf-mono")}<div class="small muted">${esc(rodItemName(ctx, row.itemCode))}</div></td><td class="right rf-mono">${num(row.free, row.uom)}</td><td class="right rf-mono">${num(row.owned, row.uom)}</td><td class="right rf-mono">${num(row.held, row.uom)}</td><td class="right rf-mono">${num(row.pending, row.uom)}</td></tr>`);
-    const sumTable = ui.table(["เส้นยาง", { label: "สต็อกกลาง", className: "right", title: "ใช้ได้กับทุกใบ: แท่งที่เกินความต้องการของใบ และแท่งของใบที่ปิดหรือยกเลิกแล้ว · ฝ่ายวางแผนตั้งใช้ที่ขั้นตรวจของของใบร่าง" }, { label: "ของใบที่ผลิตอยู่", className: "right", title: "แท่งที่รับเข้ามาให้ใบที่ปล่อยผลิตแล้ว รอจ่ายให้ GR ของใบนั้น" }, { label: "กักรอ QA", className: "right" }, { label: "รอรับเข้า", className: "right" }], sumRows, { emptyText: "ยังไม่มีแท่งในคลัง (แท่งมาจากล็อตตกแต่งของ WO ที่ผูกงาน RB ซึ่งผ่าน QC ใน RubberFlow)" });
+    const sumTable = ui.table(["เส้นยาง", { label: "สต็อกกลาง", className: "right", title: "ใช้ได้กับทุกใบ: ยางเส้นยาวที่เกินความต้องการของใบ และยางเส้นยาวของใบที่ปิดหรือยกเลิกแล้ว · ฝ่ายวางแผนตั้งใช้ที่ขั้นตรวจของของใบร่าง" }, { label: "ของใบที่ผลิตอยู่", className: "right", title: "ยางเส้นยาวที่รับเข้ามาให้ใบที่ปล่อยผลิตแล้ว รอจ่ายให้ GR ของใบนั้น" }, { label: "กักรอ QA", className: "right" }, { label: "รอรับเข้า", className: "right" }], sumRows, { emptyText: "ยังไม่มียางเส้นยาวในคลัง (ยางเส้นยาวมาจากล็อตตกแต่งของ WO ที่ผูกงาน RB ซึ่งผ่าน QC ใน RubberFlow)" });
     const canStore = ctx.helpers.canStoreRods?.(ctx.user);
     const canDecide = ctx.helpers.canDecideRods?.(ctx.user);
     const buckets = rules.rodBuckets(data);
@@ -1491,7 +1491,7 @@
     });
     const lotTable = ui.table(["ล็อต", "สถานะ", "คงเหลือ", ""], lotRows, { emptyText: "ไม่มีล็อต" });
     const back = ctx.canSee("work") ? ui.link("งานของฉัน", ctx.url("work"), "btn rf-btn secondary") : "";
-    return { html: `${pageHead(ctx, "คลังแท่งยาว (SR)", "", back)}${ui.card(sumTable, { title: "ยอดต่อเส้นยาง" })}${ui.card(lotTable, { title: code ? `ล็อตของ ${code}` : "ล็อต", actions: code ? ui.link("ดูทุกเส้นยาง", ctx.url("rods"), "btn rf-btn secondary small") : "" })}` };
+    return { html: `${pageHead(ctx, "คลังยางเส้นยาว (SR)", "", back)}${ui.card(sumTable, { title: "ยอดต่อเส้นยาง" })}${ui.card(lotTable, { title: code ? `ล็อตของ ${code}` : "ล็อต", actions: code ? ui.link("ดูทุกเส้นยาง", ctx.url("rods"), "btn rf-btn secondary small") : "" })}` };
   };
   // ใช้จากคลังแท่งยาว (ขั้น 2 ของใบร่าง): เส้นยางของใบที่สต็อกกลางมีให้ใช้ · ช่อง "ใช้จากคลัง SR (เส้น)" ไม่เกินที่ใช้ได้ (บอกใน title ของช่อง) · ฝ่ายวางแผนตั้ง บันทึกเมื่อกดบันทึก
   // ยอดนี้ลดงาน RB (rules.netRequirements) และหักจริงตอนปล่อยผลิต ล็อตเก่าก่อน ใบที่ปล่อยก่อนได้ก่อน (rules.rodStockForDraft: available = สต็อกกลาง − ที่ใบร่างที่คำนวณก่อนตั้งใช้ไว้)
@@ -1507,11 +1507,11 @@
       return `<input type="hidden" name="itemCode[]" value="${attr(row.itemCode)}"><label class="bom-count-input" title="${attr(hint(row))}"><span class="sr-only">${esc(`ใช้จากคลัง SR ${row.itemCode} · ${hint(row)}`)}</span><input class="input rf-input" name="qty[]" type="number" inputmode="decimal" step="any" min="0" max="${attr(row.max)}" value="${attr(row.planned ?? "")}" placeholder="${attr(`ไม่เกิน ${rules.fmtQty(row.max)}`)}"><span class="small muted">${esc(uomText(ctx, row.uom))}</span></label>`;
     };
     const body = rows.map((row) => `<tr><td>${ui.link(row.itemCode, ctx.url("items", { sel: row.itemCode }), "rf-mono")}<div class="small muted">${esc(row.name ?? "")}</div></td><td class="right">${cell(row)}${row.planned !== null && row.planned > row.available + 1e-9 ? '<div class="small bom-short-text">เกินสต็อกที่เหลือ กรอกใหม่</div>' : ""}</td></tr>`);
-    const table = ui.table(["เส้นยาง", { label: "ใช้จากคลัง SR (เส้น)", className: "right", title: "ลดงานรีดของแผนก RB ลงตามจำนวนนี้ แท่งถูกหักจากคลังแท่งยาวเมื่อปล่อยผลิต ล็อตเก่าก่อน ใบที่ปล่อยผลิตก่อนได้ก่อน" }], body);
+    const table = ui.table(["เส้นยาง", { label: "ใช้จากคลัง SR (เส้น)", className: "right", title: "ลดงานรีดของแผนก RB ลงตามจำนวนนี้ ยางเส้นยาวถูกหักจากคลังยางเส้นยาวเมื่อปล่อยผลิต ล็อตเก่าก่อน ใบที่ปล่อยผลิตก่อนได้ก่อน" }], body);
     const form = canSet && rows.some(editable)
-      ? `<form novalidate data-rf-form="setStockCounts" data-rf-args="${attr(JSON.stringify({ orderId: order.id }))}" data-rf-success="บันทึกยอดที่ใช้จากคลังแท่งยาว {result}">${table}<div class="rf-row bom-step-next"><button class="btn rf-btn secondary" type="submit">บันทึกยอดที่ใช้จากคลัง SR</button></div></form>`
+      ? `<form novalidate data-rf-form="setStockCounts" data-rf-args="${attr(JSON.stringify({ orderId: order.id }))}" data-rf-success="บันทึกยอดที่ใช้จากคลังยางเส้นยาว {result}">${table}<div class="rf-row bom-step-next"><button class="btn rf-btn secondary" type="submit">บันทึกยอดที่ใช้จากคลัง SR</button></div></form>`
       : table;
-    return `<h3 class="bom-h3">คลังแท่งยาว (SR)</h3>${form}`;
+    return `<h3 class="bom-h3">คลังยางเส้นยาว (SR)</h3>${form}`;
   }
 
   // ---------- งานของฉัน: การ์ดงานของแผนกตัวเอง ปุ่มหลักปุ่มเดียวต่องาน ----------
@@ -1547,18 +1547,92 @@
     const board = workBoard(ctx, new URLSearchParams());
     return board.dept ? board.cardCount(board.open) + board.tasks.length : 0;
   }
-  pages.work = (ctx) => {
-    const { data, ui, rules, user, params } = ctx;
-    const { planner, depts, dept, show, orderId, orderOf, live, toDo, open, done, cardCount, tasks } = workBoard(ctx, params);
-    const keep = (extra) => ctx.url("work", { dept: planner && dept !== "ALL" ? dept : null, order: orderId || null, ...extra });
-    // ตัวเลขบนปุ่มแผนก = การ์ดที่แท็บ "ต้องทำ" ของแผนกนั้นแสดง (งานผลิต + งานของคลัง) จึงรวมกันได้เท่ากับ "ทุกแผนก" · คลังสินค้า (WH) ไม่มีงานผลิต มีปุ่มเมื่อมีการ์ดของคลังหรือเลือกอยู่
-    const whCount = planner ? fgTasks(ctx).length : 0;
-    const stTasks = planner ? storeTasks(ctx).length : 0;
-    // ปุ่มแผนกเรียงตามผังงาน (ST → RB → SR → QA → GR → …) · SR / QA นับการ์ดของคลังแท่งยาว
-    const tabCodes = rules.FLOW_DEPTS.filter((code) => depts.includes(code) || ROD_DEPTS.includes(code));
-    const tabCount = (code) => (ROD_DEPTS.includes(code) ? rodTasks(ctx, code).length : cardCount(data.jobs.filter((job) => job.dept === code && toDo(job) && live(job))) + (code === "ST" ? stTasks : 0));
-    const deptTabs = planner ? ui.tabs([{ id: "ALL", label: "ทุกแผนก" }, ...tabCodes.map((code) => ({ id: code, label: `${code} ${tabCount(code)}` })), ...(whCount || dept === "WH" ? [{ id: "WH", label: `WH ${whCount}` }] : [])], dept, (id) => ctx.url("work", { dept: id === "ALL" ? null : id, st: show === "done" ? "done" : null, order: orderId || null })) : "";
-    const showTabs = ui.tabs([{ id: "open", label: `ต้องทำ ${cardCount(open) + tasks.length}` }, { id: "done", label: `เสร็จแล้ว ${cardCount(done)}` }], show, (id) => keep({ st: id === "done" ? "done" : null }));
+  // การ์ดของงานที่ไม่ใช่งานผลิต (คลังยางเส้นยาว SR · ตรวจคุณภาพ QA · คลังวัตถุดิบ ST · คลังสินค้า WH) เป็นชิ้นส่วนกลาง: หน้า "งานของฉัน" และโมดูลแผนกวาดชุดเดียวกัน
+  // ctx = ผู้ใช้จริง (ปุ่มลงมือทำเปิดได้เมื่อมีสิทธิ์จริง ไม่เช่นนั้นเป็นข้อความดูอย่างเดียว · หน้างานของฉันได้การ์ดตามสิทธิ์อยู่แล้ว จึงเห็นปุ่มเสมอ) · view = { planner, dept } ของกระดานที่วาด (ป้ายแผนกขึ้นเฉพาะมุมมองทุกแผนกของฝ่ายวางแผน)
+  function taskCard(ctx, task, { planner, dept }) {
+    const { ui, rules } = ctx;
+    const dueText = (dueAt, finished) => root.MNP_FACTORY.dueText(ctx, dueAt, finished);
+    const readOnlyNote = '<p class="small muted">ดูอย่างเดียว บัญชีนี้ไม่มีสิทธิ์ดำเนินการ</p>';
+    const gated = (helper, html) => (ctx.helpers[helper]?.(ctx.user) ? html : readOnlyNote);
+    // คลังแท่งยาว (SR): รับแท่งเข้าคลัง · จ่ายแท่งให้ GR · ตรวจคุณภาพ (QA): ตัดสินล็อตที่กัก
+    if (task.kind === "rodReceive" || task.kind === "rodDecide") {
+      const { lot } = task;
+      const receive = task.kind === "rodReceive";
+      const chip = planner && dept === "ALL" ? `${deptChip(ctx, receive ? "SR" : "QA")} ` : "";
+      return `<article class="card rf-card bom-job ${receive ? "is-now" : "is-hold"}"><div class="bom-job-top"><span class="bom-job-state">${receive ? "รอรับเข้าคลัง" : "กักรอ QA ตัดสิน"}</span><span class="muted">${esc(`${receive ? "ส่งมา" : "รับเมื่อ"} ${rules.fmtDateTime(receive ? lot.createdAt : lot.receivedAt)}`)}</span></div>
+        <h2>${esc(`${receive ? "รับยางเส้นยาวเข้าคลัง" : "ตัดสินล็อตยางเส้นยาว"} ล็อต ${lot.lotNo}`)}</h2><p class="small muted">${chip}<span class="rf-mono">${esc(lot.itemCode)}</span> · ใบ ${ui.link(lot.orderId, ctx.url("orders", { sel: lot.orderId }))}</p>
+        <div class="bom-job-amount"><span>${esc(`${receive ? "ส่งมา" : "รับไว้"} ${rodQty(ctx, receive ? lot.qtySent : lot.qtyReceived, lot.uom)}`)}</span></div>${!receive && lot.qc?.note ? `<p class="small muted">${esc(`SR: ${lot.qc.note}`)}</p>` : ""}
+        ${gated(receive ? "canStoreRods" : "canDecideRods", ui.openButton(receive ? "รับเข้าคลัง" : "ตัดสิน", receive ? "rodReceive" : "rodDecide", { lotId: lot.id }, { className: "bom-job-main" }))}</article>`;
+    }
+    if (task.kind === "rodIssue") {
+      const { need } = task;
+      const due = Math.min(...need.grJobs.map((job) => Number(job.dueAt) || Infinity));
+      return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">รอจ่ายให้ GR</span>${Number.isFinite(due) ? dueText(due, false) : ""}</div>
+        <h2>${esc(`จ่ายยางเส้นยาวให้ GR ตามใบ ${need.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "SR")} ` : ""}<span class="rf-mono">${esc(need.itemCode)}</span> · ${esc(need.order.customer ?? "")}</p>
+        <div class="bom-job-amount"><span title="${attr(`GR ต้องใช้ ${rules.fmtQty(need.need)} จ่ายแล้ว ${rules.fmtQty(need.issued)}`)}">${esc(`ต้องจ่าย ${rodQty(ctx, need.remaining, need.uom)}`)}</span></div>
+        ${gated("canStoreRods", ui.openButton("จ่ายยางเส้นยาว", "rodIssue", { orderId: need.order.id, itemCode: need.itemCode }, { className: "bom-job-main" }))}</article>`;
+    }
+    if (task.kind === "fgClose") {
+      return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">รอปิดใบ</span><span class="muted">ส่งมอบคลัง ${esc(rules.fmtDate(task.order.whDue))}</span></div>
+        <h2>${esc(`ใบ ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "WH")} ` : ""}${esc(task.order.customer ?? "")} · ทุกแผนกปิดงานและรับสินค้าครบแล้ว</p>
+        ${ui.link("ไปปิดใบ", ctx.url("orders", { sel: task.order.id, step: "5" }), "btn rf-btn bom-job-main")}</article>`;
+    }
+    if (task.kind === "fgCloseShort") {
+      return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">รอปิดใบ</span><span class="muted">ส่งมอบคลัง ${esc(rules.fmtDate(task.order.whDue))}</span></div>
+        <h2>${esc(`ใบ ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "WH")} ` : ""}${esc(task.order.customer ?? "")} · PK ทำครบและรับเข้าคลังแล้ว ยังน้อยกว่าที่สั่ง</p>
+        <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span class="rf-mono">${esc(line.fgCode)}</span><span class="nowrap">${esc(`ขาด ${rules.fmtQty(line.qty)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
+        ${gated("canHandleFg", ui.openButton("ปิดใบ (รับไม่ครบ)", "closeShort", { orderId: task.order.id }, { className: "bom-job-main" }))}</article>`;
+    }
+    if (task.kind === "fgReceive" || task.kind === "fgDeliver") {
+      const receive = task.kind === "fgReceive";
+      // ใบที่ปิดแล้วที่ PK ผลิตเกิน: การ์ดรับส่วนเกินเข้าเป็นสต็อกสินค้าสำเร็จรูป (ไม่ใช่ของที่ลูกค้ารอ)
+      const surplus = receive && task.surplus;
+      return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">${receive ? (surplus ? "รอรับส่วนเกินเข้าคลัง" : "รอรับเข้าคลัง") : "รอส่งมอบ"}</span><span class="muted">ส่งมอบคลัง ${esc(rules.fmtDate(task.order.whDue))}</span></div>
+        <h2>${esc(`${receive ? (surplus ? "รับส่วนเกินเข้าคลังตามใบ" : "รับสินค้าเข้าคลังตามใบ") : "ส่งมอบให้ลูกค้าตามใบ"} ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "WH")} ` : ""}${esc(task.order.customer ?? "")}${surplus ? " · ใบปิดแล้ว ส่วนเกินเป็นสต็อกสินค้าสำเร็จรูป" : ""}</p>
+        <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span class="rf-mono">${esc(line.fgCode)}</span><span class="nowrap">${esc(rules.fmtQty(line.qty))}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
+        ${ui.link(receive ? "เปิดใบเพื่อรับเข้าคลัง" : "เปิดใบเพื่อส่งมอบ", ctx.url("orders", { sel: task.order.id, step: receive ? "5" : "6" }), "btn rf-btn bom-job-main")}</article>`;
+    }
+    if (task.kind === "receive") {
+      const unit = (line) => (line.source === "bom" ? uomText(ctx, line.uom) : "กก.");
+      // ใบสั่งซื้อเก็บแต่รหัส: ของซื้อหาชื่อจากทะเบียนชิ้นงานของ BOM ส่วนเคมีจากทะเบียนวัตถุดิบของ RubberFlow · ไม่พบแสดงรหัสอย่างเดียว
+      const materials = (() => { try { return ctx.rubberflow()?.store?.data?.().materials ?? []; } catch { return []; } })();
+      const nameOf = (line) => (line.source === "bom" ? itemOf(ctx, line.materialCode)?.name : null) || materials.find((row) => row.code === line.materialCode)?.name || "";
+      return `<article class="card rf-card bom-job ${task.cancelled ? "is-hold" : "is-now"}"><div class="bom-job-top"><span class="bom-job-state">${task.cancelled ? "ใบสั่งผลิตถูกยกเลิกแล้ว" : "รอรับเข้า"}</span><span class="muted">สั่งเมื่อ ${esc(rules.fmtDate(task.po.createdAt))}</span></div>
+        <h2>${esc(`${task.cancelled ? "ตัดสินใบสั่งซื้อ" : "รับเข้าตามใบสั่งซื้อ"} ${task.po.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${task.po.sourcePi ? esc(`สั่งจากใบ ${task.po.sourcePi}`) : ""}${task.cancelled ? (task.partly ? " · รับเข้าไปแล้วบางส่วน ใบนี้ยกเลิกไม่ได้ รับส่วนที่เหลือเข้าเป็นสต็อกไว้ใช้กับใบอื่น หรือปิดยอดที่เหลือ" : " · ยกเลิกใบสั่งซื้อ หรือรับเข้าเป็นสต็อกไว้ใช้กับใบอื่น") : ""}</p>
+        <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span><span class="rf-mono">${esc(line.materialCode)}</span>${nameOf(line) ? ` <span class="small muted">${esc(nameOf(line))}</span>` : ""}</span><span class="nowrap"${line.received > 0 ? ` title="${attr(`สั่ง ${rules.fmtQty(line.qtyKg)} รับแล้ว ${rules.fmtQty(line.received)}`)}"` : ""}>${esc(`${line.received > 0 ? "ค้างรับ " : ""}${rules.fmtQty(line.open)} ${unit(line)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
+        ${ui.link(task.cancelled ? "เปิดใบสั่งซื้อ" : "ตรวจสอบรับเข้า", `#/rubberflow?p=warehouse&tab=po&q=${encodeURIComponent(task.po.id)}`, "btn rf-btn bom-job-main")}</article>`;
+    }
+    if (task.kind === "partReturn") {
+      return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">ใบสั่งผลิตถูกยกเลิกแล้ว</span></div>
+        <h2>${esc(`คืนของซื้อที่เบิกไปแล้ว ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${esc(task.order.customer ?? "")}</p>
+        <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span>${esc(line.name || line.itemCode)}</span><span class="nowrap">${esc(`${rules.fmtQty(line.returnable)} ${uomText(ctx, line.uom)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
+        ${gated("canIssueParts", ui.openButton("คืนของเหลือ", "returnParts", { orderId: task.order.id }, { className: "bom-job-main" }))}</article>`;
+    }
+    if (task.kind === "chemReturn") {
+      const kg = task.req.lines.reduce((sum, line) => sum + (Number(line.actualKg) || 0), 0);
+      return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">WO ถูกยกเลิก · รอ ST รับคืน</span></div>
+        <h2>${esc(`รับเคมีคืนตามใบเบิก ${task.req.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${esc(`WO ${task.req.orderId}${task.wo?.customerPo ? ` · ใบ ${task.wo.customerPo}` : ""} · จ่ายไป ${rules.fmtQty(kg)} กก.`)}</p>
+        ${ui.link("เปิดใบเบิกเพื่อรับคืน", `#/rubberflow?p=requisition&sel=${encodeURIComponent(task.req.id)}`, "btn rf-btn bom-job-main")}</article>`;
+    }
+    if (task.kind === "chem") {
+      return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">เคมีขาด ยังไม่ได้สั่ง</span></div>
+        <h2>${esc(`สั่งซื้อเคมีที่ขาด ${task.short.length} รายการ`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}สำหรับใบสั่งผลิตของแผนก RB ที่เปิดอยู่</p>
+        <ul class="bom-job-parts">${task.short.slice(0, 6).map((row) => `<li><span>${esc(row.name || row.materialCode)}</span><span class="nowrap">${esc(`ขาด ${rules.fmtQty(row.shortageKg)} กก.`)}</span></li>`).join("")}</ul>${task.short.length > 6 ? `<p class="small muted">และอีก ${task.short.length - 6} รายการ</p>` : ""}
+        ${ui.link("เปิดหน้าใบสั่งซื้อ", "#/rubberflow?p=warehouse&tab=po", "btn rf-btn bom-job-main")}</article>`;
+    }
+    // การ์ดต่อวัตถุดิบ: หัวบอกยอดที่ต้องสั่งรวมทุกใบ รายการข้างล่างบอกใบที่ต้องใช้พร้อมจำนวนของใบนั้น · ปุ่มพาไปสั่งซื้อที่ใบที่ขาดมากสุด (task.order)
+    return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">ของขาด ยังไม่ได้สั่ง</span></div>
+      <h2>${esc(`สั่งซื้อ ${task.name || task.itemCode}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${task.name ? `<span class="rf-mono">${esc(task.itemCode)}</span> · ` : ""}${esc(`${task.orders.length} ใบสั่งผลิตต้องใช้`)}</p>
+      <div class="bom-job-amount"><span>${esc(`ขาดรวม ${rules.fmtQty(task.total)} ${uomText(ctx, task.uom)}`)}</span></div>
+      <ul class="bom-job-parts">${task.orders.slice(0, 6).map((row) => `<li><span>${ui.link(row.orderId, ctx.url("orders", { sel: row.orderId }), "rf-mono")}</span><span class="nowrap">${esc(`ต้องใช้ ${rules.fmtQty(row.need)} ${uomText(ctx, task.uom)}`)}</span></li>`).join("")}</ul>${task.orders.length > 6 ? `<p class="small muted">และอีก ${task.orders.length - 6} ใบ</p>` : ""}
+      ${ui.link("เปิดใบเพื่อสั่งซื้อ", ctx.url("orders", { sel: task.order.id }), "btn rf-btn bom-job-main")}</article>`;
+  }
+
+  // การ์ดทั้งหมดของกระดาน workBoard: การ์ดงานของคลัง/ตรวจคุณภาพ (taskCards) แล้วตามด้วยการ์ดงานผลิตและการ์ดเบิกของซื้อ (cards) · คืนข้อความ HTML ต่อการ์ด
+  // ctx = ผู้ใช้จริงที่ใช้วาดปุ่ม · board = workBoard ของ ctx เดียวกัน (หน้างานของฉัน) หรือของแผนก (โมดูลแผนก: workBoard ของ MNP_FACTORY.deptCtx) ให้ฝ่ายวางแผน/ผู้จัดการเห็นงานของแผนกนั้น
+  function boardCards(ctx, board) {
+    const { planner, dept, show, orderOf, open, done, tasks } = board;
+    const { ui, rules, user } = ctx;
     const rank = (job) => (job.status === "in_progress" ? 0 : job.status === "hold" ? 2 : 1);
     const list = (show === "done" ? done : open).slice().sort((a, b) => rank(a) - rank(b) || a.dueAt - b.dueAt || a.id.localeCompare(b.id));
     // ของซื้อ (งานของคลังวัตถุดิบ): รวมเป็นการ์ดเดียวต่อใบ เพราะเบิกจ่ายที่หน้าใบสั่งผลิต (เลือกบรรทัดและจำนวนได้ หลายครั้งจนครบ)
@@ -1585,89 +1659,31 @@
       // การ์ดงานผลิตเป็นชิ้นส่วนกลาง (modules/factory-kit.js) ใช้ร่วมกับโมดูลแผนกอื่น
       return root.MNP_FACTORY.jobCard(ctx, entry.job, { planner, dept, show, orderOf });
     };
+    return { taskCards: show === "open" ? tasks.map((task) => taskCard(ctx, task, { planner, dept })) : [], cards: cards.map(cardHtml) };
+  }
+
+  pages.work = (ctx) => {
+    const { data, ui, rules, params } = ctx;
+    const board = workBoard(ctx, params);
+    const { planner, depts, dept, show, orderId, live, toDo, open, done, cardCount, tasks } = board;
+    const keep = (extra) => ctx.url("work", { dept: planner && dept !== "ALL" ? dept : null, order: orderId || null, ...extra });
+    // ตัวเลขบนปุ่มแผนก = การ์ดที่แท็บ "ต้องทำ" ของแผนกนั้นแสดง (งานผลิต + งานของคลัง) จึงรวมกันได้เท่ากับ "ทุกแผนก" · คลังสินค้า (WH) ไม่มีงานผลิต มีปุ่มเมื่อมีการ์ดของคลังหรือเลือกอยู่
+    const whCount = planner ? fgTasks(ctx).length : 0;
+    const stTasks = planner ? storeTasks(ctx).length : 0;
+    // ปุ่มแผนกเรียงตามผังงาน (ST → RB → SR → QA → GR → …) · SR / QA นับการ์ดของคลังแท่งยาว
+    const tabCodes = rules.FLOW_DEPTS.filter((code) => depts.includes(code) || ROD_DEPTS.includes(code));
+    const tabCount = (code) => (ROD_DEPTS.includes(code) ? rodTasks(ctx, code).length : cardCount(data.jobs.filter((job) => job.dept === code && toDo(job) && live(job))) + (code === "ST" ? stTasks : 0));
+    const deptTabs = planner ? ui.tabs([{ id: "ALL", label: "ทุกแผนก" }, ...tabCodes.map((code) => ({ id: code, label: `${code} ${tabCount(code)}` })), ...(whCount || dept === "WH" ? [{ id: "WH", label: `WH ${whCount}` }] : [])], dept, (id) => ctx.url("work", { dept: id === "ALL" ? null : id, st: show === "done" ? "done" : null, order: orderId || null })) : "";
+    const showTabs = ui.tabs([{ id: "open", label: `ต้องทำ ${cardCount(open) + tasks.length}` }, { id: "done", label: `เสร็จแล้ว ${cardCount(done)}` }], show, (id) => keep({ st: id === "done" ? "done" : null }));
+    const { taskCards, cards } = boardCards(ctx, board);
     const sub = dept && dept !== "ALL" ? esc(rules.DEPT_LABEL[dept] ?? dept) : "";
     const filterNote = orderId ? `<p class="bom-back">เฉพาะใบ ${esc(orderId)} · ${ui.link("ดูทุกใบ", ctx.url("work", { dept: planner && dept !== "ALL" ? dept : null }))}</p>` : "";
-    const taskHtml = (task) => {
-      // คลังแท่งยาว (SR): รับแท่งเข้าคลัง · จ่ายแท่งให้ GR · ตรวจคุณภาพ (QA): ตัดสินล็อตที่กัก
-      if (task.kind === "rodReceive" || task.kind === "rodDecide") {
-        const { lot } = task;
-        const receive = task.kind === "rodReceive";
-        const chip = planner && dept === "ALL" ? `${deptChip(ctx, receive ? "SR" : "QA")} ` : "";
-        return `<article class="card rf-card bom-job ${receive ? "is-now" : "is-hold"}"><div class="bom-job-top"><span class="bom-job-state">${receive ? "รอรับเข้าคลัง" : "กักรอ QA ตัดสิน"}</span><span class="muted">${esc(`${receive ? "ส่งมา" : "รับเมื่อ"} ${rules.fmtDateTime(receive ? lot.createdAt : lot.receivedAt)}`)}</span></div>
-          <h2>${esc(`${receive ? "รับแท่งเข้าคลัง" : "ตัดสินล็อตแท่ง"} ล็อต ${lot.lotNo}`)}</h2><p class="small muted">${chip}<span class="rf-mono">${esc(lot.itemCode)}</span> · ใบ ${ui.link(lot.orderId, ctx.url("orders", { sel: lot.orderId }))}</p>
-          <div class="bom-job-amount"><span>${esc(`${receive ? "ส่งมา" : "รับไว้"} ${rodQty(ctx, receive ? lot.qtySent : lot.qtyReceived, lot.uom)}`)}</span></div>${!receive && lot.qc?.note ? `<p class="small muted">${esc(`SR: ${lot.qc.note}`)}</p>` : ""}
-          ${ui.openButton(receive ? "รับเข้าคลัง" : "ตัดสิน", receive ? "rodReceive" : "rodDecide", { lotId: lot.id }, { className: "bom-job-main" })}</article>`;
-      }
-      if (task.kind === "rodIssue") {
-        const { need } = task;
-        const due = Math.min(...need.grJobs.map((job) => Number(job.dueAt) || Infinity));
-        return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">รอจ่ายให้ GR</span>${Number.isFinite(due) ? dueText(due, false) : ""}</div>
-          <h2>${esc(`จ่ายแท่งให้ GR ตามใบ ${need.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "SR")} ` : ""}<span class="rf-mono">${esc(need.itemCode)}</span> · ${esc(need.order.customer ?? "")}</p>
-          <div class="bom-job-amount"><span title="${attr(`GR ต้องใช้ ${rules.fmtQty(need.need)} จ่ายแล้ว ${rules.fmtQty(need.issued)}`)}">${esc(`ต้องจ่าย ${rodQty(ctx, need.remaining, need.uom)}`)}</span></div>
-          ${ui.openButton("จ่ายแท่ง", "rodIssue", { orderId: need.order.id, itemCode: need.itemCode }, { className: "bom-job-main" })}</article>`;
-      }
-      if (task.kind === "fgClose") {
-        return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">รอปิดใบ</span><span class="muted">ส่งมอบคลัง ${esc(rules.fmtDate(task.order.whDue))}</span></div>
-          <h2>${esc(`ใบ ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "WH")} ` : ""}${esc(task.order.customer ?? "")} · ทุกแผนกปิดงานและรับสินค้าครบแล้ว</p>
-          ${ui.link("ไปปิดใบ", ctx.url("orders", { sel: task.order.id, step: "5" }), "btn rf-btn bom-job-main")}</article>`;
-      }
-      if (task.kind === "fgCloseShort") {
-        return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">รอปิดใบ</span><span class="muted">ส่งมอบคลัง ${esc(rules.fmtDate(task.order.whDue))}</span></div>
-          <h2>${esc(`ใบ ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "WH")} ` : ""}${esc(task.order.customer ?? "")} · PK ทำครบและรับเข้าคลังแล้ว ยังน้อยกว่าที่สั่ง</p>
-          <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span class="rf-mono">${esc(line.fgCode)}</span><span class="nowrap">${esc(`ขาด ${rules.fmtQty(line.qty)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
-          ${ui.openButton("ปิดใบ (รับไม่ครบ)", "closeShort", { orderId: task.order.id }, { className: "bom-job-main" })}</article>`;
-      }
-      if (task.kind === "fgReceive" || task.kind === "fgDeliver") {
-        const receive = task.kind === "fgReceive";
-        // ใบที่ปิดแล้วที่ PK ผลิตเกิน: การ์ดรับส่วนเกินเข้าเป็นสต็อกสินค้าสำเร็จรูป (ไม่ใช่ของที่ลูกค้ารอ)
-        const surplus = receive && task.surplus;
-        return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">${receive ? (surplus ? "รอรับส่วนเกินเข้าคลัง" : "รอรับเข้าคลัง") : "รอส่งมอบ"}</span><span class="muted">ส่งมอบคลัง ${esc(rules.fmtDate(task.order.whDue))}</span></div>
-          <h2>${esc(`${receive ? (surplus ? "รับส่วนเกินเข้าคลังตามใบ" : "รับสินค้าเข้าคลังตามใบ") : "ส่งมอบให้ลูกค้าตามใบ"} ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "WH")} ` : ""}${esc(task.order.customer ?? "")}${surplus ? " · ใบปิดแล้ว ส่วนเกินเป็นสต็อกสินค้าสำเร็จรูป" : ""}</p>
-          <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span class="rf-mono">${esc(line.fgCode)}</span><span class="nowrap">${esc(rules.fmtQty(line.qty))}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
-          ${ui.link(receive ? "เปิดใบเพื่อรับเข้าคลัง" : "เปิดใบเพื่อส่งมอบ", ctx.url("orders", { sel: task.order.id, step: receive ? "5" : "6" }), "btn rf-btn bom-job-main")}</article>`;
-      }
-      if (task.kind === "receive") {
-        const unit = (line) => (line.source === "bom" ? uomText(ctx, line.uom) : "กก.");
-        // ใบสั่งซื้อเก็บแต่รหัส: ของซื้อหาชื่อจากทะเบียนชิ้นงานของ BOM ส่วนเคมีจากทะเบียนวัตถุดิบของ RubberFlow · ไม่พบแสดงรหัสอย่างเดียว
-        const materials = (() => { try { return ctx.rubberflow()?.store?.data?.().materials ?? []; } catch { return []; } })();
-        const nameOf = (line) => (line.source === "bom" ? itemOf(ctx, line.materialCode)?.name : null) || materials.find((row) => row.code === line.materialCode)?.name || "";
-        return `<article class="card rf-card bom-job ${task.cancelled ? "is-hold" : "is-now"}"><div class="bom-job-top"><span class="bom-job-state">${task.cancelled ? "ใบสั่งผลิตถูกยกเลิกแล้ว" : "รอรับเข้า"}</span><span class="muted">สั่งเมื่อ ${esc(rules.fmtDate(task.po.createdAt))}</span></div>
-          <h2>${esc(`${task.cancelled ? "ตัดสินใบสั่งซื้อ" : "รับเข้าตามใบสั่งซื้อ"} ${task.po.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${task.po.sourcePi ? esc(`สั่งจากใบ ${task.po.sourcePi}`) : ""}${task.cancelled ? (task.partly ? " · รับเข้าไปแล้วบางส่วน ใบนี้ยกเลิกไม่ได้ รับส่วนที่เหลือเข้าเป็นสต็อกไว้ใช้กับใบอื่น หรือปิดยอดที่เหลือ" : " · ยกเลิกใบสั่งซื้อ หรือรับเข้าเป็นสต็อกไว้ใช้กับใบอื่น") : ""}</p>
-          <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span><span class="rf-mono">${esc(line.materialCode)}</span>${nameOf(line) ? ` <span class="small muted">${esc(nameOf(line))}</span>` : ""}</span><span class="nowrap"${line.received > 0 ? ` title="${attr(`สั่ง ${rules.fmtQty(line.qtyKg)} รับแล้ว ${rules.fmtQty(line.received)}`)}"` : ""}>${esc(`${line.received > 0 ? "ค้างรับ " : ""}${rules.fmtQty(line.open)} ${unit(line)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
-          ${ui.link(task.cancelled ? "เปิดใบสั่งซื้อ" : "ตรวจสอบรับเข้า", `#/rubberflow?p=warehouse&tab=po&q=${encodeURIComponent(task.po.id)}`, "btn rf-btn bom-job-main")}</article>`;
-      }
-      if (task.kind === "partReturn") {
-        return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">ใบสั่งผลิตถูกยกเลิกแล้ว</span></div>
-          <h2>${esc(`คืนของซื้อที่เบิกไปแล้ว ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${esc(task.order.customer ?? "")}</p>
-          <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span>${esc(line.name || line.itemCode)}</span><span class="nowrap">${esc(`${rules.fmtQty(line.returnable)} ${uomText(ctx, line.uom)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
-          ${ui.openButton("คืนของเหลือ", "returnParts", { orderId: task.order.id }, { className: "bom-job-main" })}</article>`;
-      }
-      if (task.kind === "chemReturn") {
-        const kg = task.req.lines.reduce((sum, line) => sum + (Number(line.actualKg) || 0), 0);
-        return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">WO ถูกยกเลิก · รอ ST รับคืน</span></div>
-          <h2>${esc(`รับเคมีคืนตามใบเบิก ${task.req.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${esc(`WO ${task.req.orderId}${task.wo?.customerPo ? ` · ใบ ${task.wo.customerPo}` : ""} · จ่ายไป ${rules.fmtQty(kg)} กก.`)}</p>
-          ${ui.link("เปิดใบเบิกเพื่อรับคืน", `#/rubberflow?p=requisition&sel=${encodeURIComponent(task.req.id)}`, "btn rf-btn bom-job-main")}</article>`;
-      }
-      if (task.kind === "chem") {
-        return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">เคมีขาด ยังไม่ได้สั่ง</span></div>
-          <h2>${esc(`สั่งซื้อเคมีที่ขาด ${task.short.length} รายการ`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}สำหรับใบสั่งผลิตของแผนก RB ที่เปิดอยู่</p>
-          <ul class="bom-job-parts">${task.short.slice(0, 6).map((row) => `<li><span>${esc(row.name || row.materialCode)}</span><span class="nowrap">${esc(`ขาด ${rules.fmtQty(row.shortageKg)} กก.`)}</span></li>`).join("")}</ul>${task.short.length > 6 ? `<p class="small muted">และอีก ${task.short.length - 6} รายการ</p>` : ""}
-          ${ui.link("เปิดหน้าใบสั่งซื้อ", "#/rubberflow?p=warehouse&tab=po", "btn rf-btn bom-job-main")}</article>`;
-      }
-      // การ์ดต่อวัตถุดิบ: หัวบอกยอดที่ต้องสั่งรวมทุกใบ รายการข้างล่างบอกใบที่ต้องใช้พร้อมจำนวนของใบนั้น · ปุ่มพาไปสั่งซื้อที่ใบที่ขาดมากสุด (task.order)
-      return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">ของขาด ยังไม่ได้สั่ง</span></div>
-        <h2>${esc(`สั่งซื้อ ${task.name || task.itemCode}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${task.name ? `<span class="rf-mono">${esc(task.itemCode)}</span> · ` : ""}${esc(`${task.orders.length} ใบสั่งผลิตต้องใช้`)}</p>
-        <div class="bom-job-amount"><span>${esc(`ขาดรวม ${rules.fmtQty(task.total)} ${uomText(ctx, task.uom)}`)}</span></div>
-        <ul class="bom-job-parts">${task.orders.slice(0, 6).map((row) => `<li><span>${ui.link(row.orderId, ctx.url("orders", { sel: row.orderId }), "rf-mono")}</span><span class="nowrap">${esc(`ต้องใช้ ${rules.fmtQty(row.need)} ${uomText(ctx, task.uom)}`)}</span></li>`).join("")}</ul>${task.orders.length > 6 ? `<p class="small muted">และอีก ${task.orders.length - 6} ใบ</p>` : ""}
-        ${ui.link("เปิดใบเพื่อสั่งซื้อ", ctx.url("orders", { sel: task.order.id }), "btn rf-btn bom-job-main")}</article>`;
-    };
-    const taskCards = show === "open" ? tasks.map(taskHtml) : [];
     // ข้อมูลเคมียังโหลดอยู่: บอกแทนการเงียบ (ไม่แสดงเมื่อโหลดเสร็จแล้ว) · ถ้ายังไม่มีการ์ดเลยก็ไม่บอกว่า "ไม่มีงานค้าง"
     const waiting = show === "open" && (dept === "ST" || dept === "ALL") && !orderId && storeLoading(ctx) ? '<p class="small muted" role="status">กำลังโหลดข้อมูลเคมี…</p>' : "";
-    const body = !dept ? ui.card(ui.empty("บัญชีนี้ไม่ได้อยู่ในแผนกผลิต จึงไม่มีงานของตัวเอง")) : cards.length || taskCards.length ? `${waiting}<div class="bom-job-grid">${taskCards.join("")}${cards.map(cardHtml).join("")}</div>` : waiting ? ui.card(waiting) : ui.card(ui.empty(show === "done" ? "ยังไม่มีงานที่เสร็จ" : "ไม่มีงานค้าง"));
+    const body = !dept ? ui.card(ui.empty("บัญชีนี้ไม่ได้อยู่ในแผนกผลิต จึงไม่มีงานของตัวเอง")) : cards.length || taskCards.length ? `${waiting}<div class="bom-job-grid">${taskCards.join("")}${cards.join("")}</div>` : waiting ? ui.card(waiting) : ui.card(ui.empty(show === "done" ? "ยังไม่มีงานที่เสร็จ" : "ไม่มีงานค้าง"));
     const tableLink = planner && ctx.canSee("jobs") ? ui.link("ดูเป็นตาราง", ctx.url("jobs"), "btn rf-btn secondary") : "";
     // หน้าคลังแท่งยาว: ยอดต่อเส้นยาง ล็อต ประวัติ และย้อนการจ่าย (คลังแท่งยาว ตรวจคุณภาพ GR และฝ่ายวางแผน)
-    const rodsLink = ctx.canSee("rods") && [...ROD_DEPTS, "GR", "ALL"].includes(dept) ? ui.link("คลังแท่งยาว (SR)", ctx.url("rods"), "btn rf-btn secondary") : "";
+    const rodsLink = ctx.canSee("rods") && [...ROD_DEPTS, "GR", "ALL"].includes(dept) ? ui.link("คลังยางเส้นยาว (SR)", ctx.url("rods"), "btn rf-btn secondary") : "";
     return { html: `${pageHead(ctx, "งานของฉัน", sub, `${rodsLink}${tableLink}`)}${deptTabs}${filterNote}${dept ? showTabs : ""}${body}` };
   };
 
@@ -1684,5 +1700,5 @@
     return { html: `${pageHead(ctx, "ข้อมูลตั้งต้น")}${ids.length ? `<div class="bom-setup-grid">${cards}</div>` : ctx.ui.card(ctx.ui.empty("บัญชีนี้ไม่มีหน้าข้อมูลตั้งต้นที่เปิดได้"))}` };
   };
 
-  pages.hub = { ratioText, orderStepOf, hubUrl, treeTab, pastePreview, copyPreview, draftChemicals, rfCan, storeTasks, fgTasks, rodTasks, workBoard, workCount };
+  pages.hub = { ratioText, orderStepOf, hubUrl, treeTab, pastePreview, copyPreview, draftChemicals, rfCan, storeTasks, fgTasks, rodTasks, workBoard, workCount, taskCard, boardCards };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -1,6 +1,7 @@
 // ชุดชิ้นส่วนกลางของโมดูลโรงงาน (window.MNP_FACTORY) — ยกจาก BOM มาให้ทุกแผนกเรียกใช้ร่วมกัน ไม่มีสำเนาที่สองใน BOM
 // มี: ตัวผูก event ตามกติกา data-rf-* (bindRoot) · formPayload / parseArgs · การ์ดงานผลิต (jobCard) · dialog รายงานผล (jobReportDialog) · ป้ายแผนก (deptChip)
 // และกลุ่มเมนู "โรงงาน": registerDeptModule (โมดูลรายแผนกหนึ่งไฟล์ต่อแผนก) · canSeeDept (ใครเห็นโมดูลไหน) · orderNavItems (เรียงเมนูตามผังงาน) · ส่วนประกอบหน้าแรกของแผนก
+// · productionLanding (หน้าแรกของแผนกที่มีงานผลิต GR PT BG PK: การ์ดงานสั่งงานได้ผ่านคำสั่งของ BOM ชุดเดียวกับหน้า "งานของฉัน")
 // ไฟล์นี้ไม่แตะ helper ของ app.js ตอนโหลด (เรียกเฉพาะตอนใช้งาน) โหลดก่อน modules/bom-pages.js (ดู index.html)
 // การซ่อน/แสดงปุ่มเป็นแค่ UX สิทธิ์จริงตัดสินที่ฐานข้อมูลและ action ของแต่ละโมดูล
 (function registerFactoryKit(root) {
@@ -115,7 +116,7 @@
       .map((need) => `<p class="small muted" title="${attr(`${need.itemCode} · GR ต้องใช้ ${rules.fmtQty(need.need)} ${uomText(ctx, need.uom)}`)}">${esc(`ยางเส้นยาวจาก SR ${rules.fmtQty(need.issued)}/${rules.fmtQty(need.need)} ${uomText(ctx, need.uom)}`)}</p>`).join("") : "";
     return `<article class="card rf-card bom-job${tone ? ` is-${tone}` : ""}"><div class="bom-job-top"><span class="bom-job-state">${esc(label)}</span>${dueText(ctx, job.dueAt, job.status === "done")}</div>
         <h2>${esc(job.name)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(job.dept, rules.DEPT_LABEL)} ` : ""}<span class="rf-mono">${esc(job.itemCode)}</span> · ใบ ${ui.link(job.orderId, ctx.url("orders", { sel: job.orderId }))}</p>
-        <div class="bom-job-amount"><span>${esc(amount)}</span>${started && job.status !== "done" ? `<span class="muted">เหลือ ${esc(rules.fmtQty(left))}</span>` : ""}</div>${started ? ui.progress(job.qtyDone, job.qtyPlanned, job.status === "hold" ? "bad" : "") : ""}${job.qtyReject ? `<p class="small muted">เสีย ${esc(rules.fmtQty(job.qtyReject))}</p>` : ""}${closedBy ? `<p class="small muted">${esc(`ปิดงานโดย ${closedBy.by}: ${closedBy.reason}`)}</p>` : ""}${heldBy ? `<p class="small muted">${esc(`พักโดย ${heldBy.by}: ${heldBy.reason}`)}</p>` : ""}${rodLine}${canWork && linkedJob ? '<p class="small muted" title="ยอดของงานนี้เพิ่มเองเมื่อคลังแท่งยาว (SR) รับแท่งจากล็อตตกแต่งของ WO เข้าคลังและผ่านตรวจขนาด">ยอดมาจากการรับเข้าคลัง SR</p>' : ""}
+        <div class="bom-job-amount"><span>${esc(amount)}</span>${started && job.status !== "done" ? `<span class="muted">เหลือ ${esc(rules.fmtQty(left))}</span>` : ""}</div>${started ? ui.progress(job.qtyDone, job.qtyPlanned, job.status === "hold" ? "bad" : "") : ""}${job.qtyReject ? `<p class="small muted">เสีย ${esc(rules.fmtQty(job.qtyReject))}</p>` : ""}${closedBy ? `<p class="small muted">${esc(`ปิดงานโดย ${closedBy.by}: ${closedBy.reason}`)}</p>` : ""}${heldBy ? `<p class="small muted">${esc(`พักโดย ${heldBy.by}: ${heldBy.reason}`)}</p>` : ""}${rodLine}${canWork && linkedJob ? '<p class="small muted" title="ยอดของงานนี้เพิ่มเองเมื่อคลังยางเส้นยาว (SR) รับยางเส้นยาวจากล็อตตกแต่งของ WO เข้าคลังและผ่านตรวจขนาด">ยอดมาจากการรับเข้าคลัง SR</p>' : ""}
         ${main}${more.length ? `<div class="rf-row bom-job-more">${more.join("")}</div>` : ""}</article>`;
   }
 
@@ -192,7 +193,7 @@
     return out;
   }
 
-  // ---- ส่วนประกอบของหน้าแรกรายแผนก (อ่านอย่างเดียว) ----
+  // ---- ส่วนประกอบของหน้าแรกรายแผนก (ส่วนใหญ่อ่านอย่างเดียว · หน้าที่คืน actions: true สั่งงานได้) ----
   const routeUrl = (route, query = {}) => {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) if (value !== null && value !== undefined && value !== "") params.set(key, String(value));
@@ -214,36 +215,16 @@
     const more = list.length > shown.length ? `<div class="rf-row">${ctx.ui.link(`แสดงเพิ่ม (อีก ${list.length - shown.length})`, ctx.pageUrl({ n: limit + PAGE_ROWS }), "btn rf-btn secondary small")}</div>` : "";
     return { shown, more };
   }
-  const TASK_FG_LINES = 3;
-  // งานที่รอของแผนก (ผลของ MNP_BOM_PAGES.hub: storeTasks / rodTasks / fgTasks) เป็นตารางสั้น: สถานะ · รายการ · จำนวน — ปุ่มลงมือทำอยู่ที่หน้า BOM (ลิงก์ที่หัวหน้า)
-  function taskInfo(ctx, task) {
-    const { ui, rules } = ctx;
-    const orderLink = (id) => ui.link(id, ctx.url("orders", { sel: id }), "rf-mono");
-    const qty = (value, uom) => `${rules.fmtQty(value)} ${rules.uomLabel(uom)}`;
-    const fgLines = (lines) => `${lines.slice(0, TASK_FG_LINES).map((line) => `${esc(line.fgCode)} × ${esc(rules.fmtQty(line.qty))}`).join(" · ")}${lines.length > TASK_FG_LINES ? ` · อีก ${lines.length - TASK_FG_LINES}` : ""}`;
-    switch (task.kind) {
-      case "rodReceive": return ["รอรับเข้าคลัง", `${ui.mono(task.lot.lotNo)} <span class="small muted">${esc(task.lot.itemCode)} · ใบ ${esc(task.lot.orderId)}</span>`, esc(`ส่งมา ${qty(task.lot.qtySent, task.lot.uom)}`)];
-      case "rodDecide": return ["กักรอ QA ตัดสิน", `${ui.mono(task.lot.lotNo)} <span class="small muted">${esc(task.lot.itemCode)} · ใบ ${esc(task.lot.orderId)}</span>`, esc(`รับไว้ ${qty(task.lot.qtyReceived ?? task.lot.qtySent, task.lot.uom)}`)];
-      case "rodIssue": return ["รอจ่ายให้ GR", `${orderLink(task.need.order.id)} <span class="small muted">${esc(task.need.itemCode)}</span>`, esc(`ต้องจ่าย ${qty(task.need.remaining, task.need.uom)}`)];
-      case "receive": return [task.cancelled ? "ตัดสินใบสั่งซื้อ" : "รอรับเข้าตามใบสั่งซื้อ", ui.mono(task.po.id), esc(`${task.lines.length} รายการ`)];
-      case "partReturn": return ["รอรับของคืน", orderLink(task.order.id), esc(`${task.lines.length} รายการ`)];
-      case "chemReturn": return ["รอรับเคมีคืน", ui.mono(task.req.id ?? task.req.orderId ?? ""), ""];
-      case "chem": return ["เคมีขาด ยังไม่ได้สั่ง", "สำหรับใบสั่งผลิตของแผนก RB", esc(`${task.short.length} รายการ`)];
-      case "buy": return ["ของขาด ยังไม่ได้สั่ง", `${ui.mono(task.itemCode)}${task.name ? ` <span class="small muted">${esc(task.name)}</span>` : ""}`, esc(`ขาดรวม ${qty(task.total, task.uom)}`)];
-      case "fgReceive": return [task.surplus ? "รอรับส่วนเกินเข้าคลัง" : "รอรับเข้าคลัง", orderLink(task.order.id), fgLines(task.lines)];
-      case "fgDeliver": return ["รอส่งมอบลูกค้า", orderLink(task.order.id), fgLines(task.lines)];
-      case "fgClose": return ["รอปิดใบ", orderLink(task.order.id), ""];
-      case "fgCloseShort": return ["รอปิดใบ (รับไม่ครบ)", orderLink(task.order.id), fgLines(task.lines)];
-      default: return [String(task.kind ?? ""), "", ""];
-    }
-  }
-  const TASK_ROWS = 10;
-  function taskTable(ctx, tasks, title = "งานที่รอ") {
-    const { ui } = ctx;
-    if (!tasks.length) return ui.card(ui.empty("ไม่มีงานค้าง"), { title: esc(title) });
-    const rows = tasks.slice(0, TASK_ROWS).map((task) => { const [status, what, amount] = taskInfo(ctx, task); return `<tr><td class="nowrap">${esc(status)}</td><td>${what}</td><td>${amount}</td></tr>`; });
-    const rest = tasks.length > TASK_ROWS ? `<p class="small muted">และอีก ${tasks.length - TASK_ROWS} รายการ</p>` : "";
-    return ui.card(`${ui.table(["สถานะ", "รายการ", "จำนวน"], rows)}${rest}`, { title: esc(title), flush: !rest });
+  // งานที่รอของแผนกคลัง/ตรวจคุณภาพ (SR ST WH QA): การ์ดสั่งงานชุดเดียวกับหน้า BOM "งานของฉัน" (MNP_BOM_PAGES.hub.taskCard / boardCards ไม่คัดลอก HTML)
+  // รายการงานมาจากกระดานของแผนก (workBoard ของ deptCtx: ฝ่ายวางแผน/ผู้จัดการเปิดโมดูลแล้วเห็นงานของแผนกนั้น) · ปุ่มและ dialog ตัดสินสิทธิ์ด้วยผู้ใช้จริง (ctx.user) ไม่มีสิทธิ์ = การ์ดดูอย่างเดียว
+  // ใช้กับ landing ที่คืน actions: true · waiting = ข้อความกำลังโหลดที่ใส่เหนือการ์ด · emptyText = ข้อความเมื่อไม่มีงาน
+  function deptWorkSection(ctx, { title = "งานที่รอ", emptyText = "ไม่มีงานค้าง", waiting = "", quietWhenEmpty = false } = {}) {
+    const hub = root.MNP_BOM_PAGES?.hub;
+    const board = hub.workBoard(deptCtx(ctx), new URLSearchParams());
+    const { taskCards, cards } = hub.boardCards(ctx, board);
+    const all = [...taskCards, ...cards];
+    if (!all.length && quietWhenEmpty && !waiting) return "";
+    return `<h2 class="bom-h3">${esc(title)}</h2>${waiting}${all.length ? `<div class="bom-job-grid">${all.join("")}</div>` : waiting ? "" : ctx.ui.card(ctx.ui.empty(emptyText))}`;
   }
   // ปุ่มลิงก์ไปที่ทำงานจริง (ที่เดียวต่อแหล่ง)
   const actionLink = (ctx, text, href) => ctx.ui.link(text, href, "btn rf-btn secondary");
@@ -277,13 +258,8 @@
     const rubberflow = () => { const live = ctx.rubberflow(); return live && rfUser ? { ...live, can: (permission) => rfStoreApi.can(rfUser, permission) } : live; };
     return { ...ctx, user, rubberflow };
   }
-  let watching = false;
-  function watch(store) {
-    if (watching) return;
-    watching = true;
-    // ผู้อื่นบันทึกข้อมูล BOM: วาดหน้าแผนกใหม่ (หน้า BOM จัดการของตัวเองใน module-bom.js)
-    store.subscribe((event) => { if (["loaded", "load-failed", "synced", "saved"].includes(event.type)) repaint(); });
-  }
+  // การวาดหน้าแผนกใหม่เมื่อ store ของ BOM เปลี่ยน (โหลดเสร็จ/ไม่สำเร็จ ผู้อื่นบันทึก บันทึกของเราสำเร็จหรือย้อนกลับ) ทำที่ตัวรับ event ของ store ใน modules/module-bom.js
+// ที่เดียวกับหน้า BOM (ถือว่า #/gr ฯลฯ เป็นหน้าของตัวเอง ผ่าน onDeptRoute) จึงไม่ทับสิ่งที่พิมพ์ค้างใน dialog และไม่วาดซ้ำสองทาง
 
   // หน้าแรกรายแผนก: ประตูเมนู → โหลด store ของ BOM → landing(ctx) คืน { html, bind? } → วางใน shell ของระบบหลัก
   async function renderLanding(def, params, landing) {
@@ -293,27 +269,32 @@
     const bom = root.MNP_BOM;
     if (!bom?.store) return renderNotFound();
     const { store } = bom;
-    watch(store);
     store.ensureLoaded();
     const ui = root.MNP_RUBBERFLOW_UI;
     ui.module = "";
     const base = bom.context(params);
     const ctx = { ...base, factory: def, pageUrl: (extra = {}) => routeUrl(def.route, { q: base.q || null, ...extra }) };
+    // dialog เปิดด้วย ctx ของหน้านี้ (ไม่ใช่ ctx ของ BOM) · ฟอร์มใน dialog ส่งผ่านตัวผูกของ BOM
+    if (typeof bom.openDialog === "function") ctx.openDialog = (name, args) => bom.openDialog(name, args, ctx);
+    bom.clearEditing?.(); // หน้าใหม่ = ไม่มีฟอร์มที่แก้ค้างจากหน้าก่อน (เหมือน renderBom)
     let body;
     let bind = null;
+    let actions = false;
     if (store.status() === "error") body = `<section class="card rf-card" role="alert"><h1>โหลดข้อมูล BOM ไม่สำเร็จ</h1><p class="muted">${esc(store.error()?.message ?? "")}</p><div class="rf-row"><button class="btn rf-btn" type="button" data-factory-retry>ลองอีกครั้ง</button></div></section>`;
     else if (store.status() !== "ready") body = ui.card(ui.empty("กำลังโหลดข้อมูล…"));
     else {
       const built = landing(ctx);
       body = built.html;
       bind = built.bind ?? null;
+      actions = built.actions === true;
     }
     app.innerHTML = shell(`<div class="rf-page bom-page" data-module="${attr(def.palette)}" data-rf-mod="">${body}</div>`, def.route, def.label);
     bindShell();
     const node = document.querySelector(".content");
     node.querySelector("[data-factory-retry]")?.addEventListener("click", () => { store.reload(); renderRoute(); });
-    // หน้าแรกอ่านอย่างเดียว: ไม่มีฟอร์มหรือปุ่มสั่งงาน (run ปฏิเสธเสมอ) มีแค่ค้นหาและลิงก์
-    bindRoot(node, ctx, { run: () => false });
+    // ผูกครั้งเดียวต่อหน้า (ไม่ผูก data-rf-search / data-rf-go ซ้ำ) · หน้าที่ไม่ได้ขอ actions อ่านอย่างเดียว: ไม่มีฟอร์มหรือปุ่มสั่งงาน (run ปฏิเสธเสมอ) มีแค่ค้นหาและลิงก์
+    // หน้าที่ขอ actions: คำสั่งและ dialog ของ BOM ด้วยผู้ใช้จริง (ctx.user = บัญชีที่ทำหน้าที่อยู่ ไม่ใช่ deptCtx) สิทธิ์ตัดสินที่ action และฐานข้อมูลเหมือนหน้า BOM
+    bindRoot(node, ctx, actions && typeof ctx.runAction === "function" ? { run: ctx.runAction, transforms: bom.transforms?.(), openDialog: (name, args) => ctx.openDialog(name, args), ui } : { run: () => false });
     ui.labelTables(node);
     bind?.(node, ctx);
     // ผู้อื่นบันทึกข้อมูลไปแล้ว: รวมตอนนี้ (เหมือนท้าย renderBom · ยังเปิดฟอร์มค้างอยู่ store ไม่รวมให้)
@@ -321,9 +302,63 @@
     return undefined;
   }
 
+  // หน้าแรกของแผนกที่มีงานผลิต (GR PT BG PK): การ์ดงานของแผนกนั้นที่ยังเปิดอยู่ (แท็บ "เสร็จแล้ว" ดูย้อนหลัง) ใช้การ์ดกลางและ dialog รายงานผล/พัก/ปิดงานชุดเดียวกับ BOM "งานของฉัน"
+  // ปุ่มที่เห็นตามสิทธิ์ของผู้ใช้จริง (jobCard ถามตัวช่วยของ BOM) · คืน landing สำหรับ registerDeptModule
+  const LIVE_ORDER = Object.freeze(["released", "in_progress", "completed"]);
+  function productionLanding(dept) {
+    return function landing(ctx) {
+      const { ui, data } = ctx;
+      const show = ctx.params.get("st") === "done" ? "done" : "open";
+      const orderOf = (id) => data.orders.find((entry) => entry.id === id);
+      const mine = data.jobs.filter((job) => job.dept === dept && LIVE_ORDER.includes(orderOf(job.orderId)?.status));
+      const open = mine.filter((job) => ctx.helpers.isOpenJob(data, job));
+      const done = mine.filter((job) => job.status === "done");
+      // กำลังทำก่อน พักไว้ท้าย แล้วตามกำหนดส่ง (เหมือนหน้า "งานของฉัน")
+      const rank = (job) => (job.status === "in_progress" ? 0 : job.status === "hold" ? 2 : 1);
+      const list = (show === "done" ? done : open).slice().sort((a, b) => rank(a) - rank(b) || (Number(a.dueAt) || 0) - (Number(b.dueAt) || 0) || String(a.id).localeCompare(String(b.id)));
+      const tabs = ui.tabs([{ id: "open", label: `ต้องทำ ${open.length}` }, { id: "done", label: `เสร็จแล้ว ${done.length}` }], show, (id) => ctx.pageUrl({ st: id === "done" ? "done" : null }));
+      const body = list.length ? `<div class="bom-job-grid">${list.map((job) => jobCard(ctx, job, { planner: false, dept, show, orderOf })).join("")}</div>` : ui.card(ui.empty(show === "done" ? "ยังไม่มีงานที่เสร็จ" : `ไม่มีงานของ ${dept} ค้างอยู่`));
+      // ข้อความสถานะการบันทึก (module-bom.js เติมให้ระหว่างบันทึก) ว่างเมื่อไม่มีอะไรค้าง
+      const sync = `<span class="small muted" role="status" data-bom-sync>${esc(root.MNP_BOM?.syncText?.() ?? "")}</span>`;
+      return { html: `${pageHead(ctx, "งานของแผนกฉัน", `${actionLink(ctx, "ไปงานของฉัน (BOM)", ctx.url("work", { dept }))}${sync}`)}${tabs}${body}`, actions: true };
+    };
+  }
+
+  // การ์ดงานผลิตของแผนกวางในหน้าของโมดูลอื่นที่ไม่ได้ลงทะเบียนผ่านตัวนี้ (RubberFlow = แผนก RB): การ์ดชุดเดียวกับ BOM "งานของฉัน" (workBoard + boardCards ไม่คัดลอก HTML)
+  // slot = ช่องว่างที่หน้านั้นวางไว้ (ต้องไม่อยู่ในส่วนที่ตัวผูก data-rf-* ของหน้านั้นผูกไปแล้ว: เรียกหลังหน้านั้นผูกเสร็จ ปุ่มของการ์ดจึงผูกครั้งเดียวด้วยคำสั่งและ dialog ของ BOM)
+  // รายการและปุ่มตามผู้ใช้ BOM คนเดียวกับหน้า BOM (ฝ่ายวางแผนเห็นงานของแผนกนั้นพร้อมปิดงาน · แผนก dept ลงมือได้ · แผนกอื่นไม่มีการ์ด) · นอกโหมดทดสอบหรือ BOM ไม่พร้อม = ไม่แสดงอะไร
+  // คืน true = หน้านั้นแสดงข้อมูลของ BOM (กำลังโหลด หรือมีรายการ หรือว่าง): module-bom.js จึงวาดหน้านั้นใหม่เมื่อ store ของ BOM เปลี่ยน (บันทึกสำเร็จ ย้อนกลับ โหลดเสร็จ) · false = ไม่เกี่ยวกับ BOM
+  function mountDeptJobs(slot, dept, { title = "งานจากใบสั่งผลิต (BOM)" } = {}) {
+    const employee = state.employee;
+    const bom = root.MNP_BOM;
+    const hub = root.MNP_BOM_PAGES?.hub;
+    if (!slot || employee?.isSandbox !== true || !bomGate(employee) || !bom?.store || !hub?.workBoard || !hub?.boardCards) return false;
+    const { store } = bom;
+    // ตัดสินจากผู้ใช้ BOM ก่อนโหลด (กติกาเดียวกับ workBoard: ฝ่ายวางแผน/ผู้จัดการ หรือพนักงานแผนก dept): คนอื่นไม่มีการ์ดจึงไม่สั่งโหลด BOM และไม่ให้ module-bom วาดหน้าใหม่ให้
+    const who = store.user?.();
+    if (!who || !(["admin", "manager", "planner"].includes(who.role) || who.dept === dept)) { slot.remove?.(); return false; }
+    store.ensureLoaded();
+    const status = store.status();
+    if (status !== "ready") {
+      if (status === "error") { slot.remove?.(); return false; }
+      slot.innerHTML = '<p class="small muted" role="status">กำลังโหลดงานจากใบสั่งผลิต (BOM)…</p>';
+      return true;
+    }
+    const ui = root.MNP_RUBBERFLOW_UI;
+    const ctx = bom.context(new URLSearchParams());
+    const board = hub.workBoard(ctx, new URLSearchParams({ dept }));
+    if (board.dept !== dept) { slot.remove?.(); return false; }
+    const { cards } = hub.boardCards(ctx, board);
+    if (!cards.length) { slot.remove?.(); return true; }
+    bom.clearEditing?.(); // หน้าใหม่ = ไม่มีฟอร์มที่แก้ค้างจากหน้า BOM ก่อนหน้า
+    slot.innerHTML = `<div class="rf-row"><h2 class="bom-h3">${esc(title)}</h2>${ui.link("ไปงานของฉัน (BOM)", ctx.url("work", { dept }), "btn rf-btn secondary small")}<span class="small muted" role="status" data-bom-sync>${esc(bom.syncText?.() ?? "")}</span></div><div class="bom-job-grid">${cards.join("")}</div>`;
+    bindRoot(slot, ctx, { run: ctx.runAction, transforms: bom.transforms?.(), openDialog: (name, args) => bom.openDialog(name, args, ctx), ui });
+    return true;
+  }
+
   // def = { code, dept, route, label, icon, palette, landing(ctx), pages? }
   // code เช่น "FACTORY_SR" (ไม่ชนโมดูลอื่น) · dept = รหัสแผนกใน rules.PROCESS_FLOW · route = path ของหน้าแรก (#/sr) · icon = ชื่อไอคอนใน MNP_UI_ICONS
-  // landing(ctx): ctx = ctx ของ BOM (data, rules, ui, helpers, url, user, q, params) + pageUrl ของหน้านี้ + factory (def) · pages = หน้าเพิ่มเติมของแผนก { path: (params) => … } ผ่านประตูเดียวกัน
+  // landing(ctx) คืน { html, bind?, actions? } (actions: true = ผูกคำสั่งและ dialog ของ BOM ให้การ์ดสั่งงานได้) · ctx = ctx ของ BOM (data, rules, ui, helpers, url, user, q, params, runAction, openDialog) + pageUrl ของหน้านี้ + factory (def) · pages = หน้าเพิ่มเติมของแผนก { path: (params) => … } ผ่านประตูเดียวกัน
   function registerDeptModule(def) {
     const { code, dept, route, label, icon, palette, landing, pages = {}, flowNo } = def;
     if (!code || !dept || !route || !label || typeof landing !== "function") throw new Error("registerDeptModule: code, dept, route, label และ landing จำเป็น");
@@ -345,7 +380,7 @@
 
   root.MNP_FACTORY = Object.freeze({
     esc, attr, formPayload, parseArgs, bindRoot, deptChip, dueText, jobCard, jobReportDialog,
-    FACTORY_GROUP, canSeeDept, canOpenDeptModule, orderNavItems, registerDeptModule,
-    pageHead, searchForm, includesText, limited, taskTable, actionLink, wake, failed, rubberflowFailed, deptCtx, routeUrl, onDeptRoute: onFactoryRoute,
+    FACTORY_GROUP, canSeeDept, canOpenDeptModule, orderNavItems, registerDeptModule, productionLanding, mountDeptJobs,
+    pageHead, searchForm, includesText, limited, deptWorkSection, actionLink, wake, failed, rubberflowFailed, deptCtx, routeUrl, onDeptRoute: onFactoryRoute,
   });
 })(window);

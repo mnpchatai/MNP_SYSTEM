@@ -1,6 +1,6 @@
 // โมดูลแผนก ST — คลังวัตถุดิบ (ลำดับ 03 ของผังงาน) #/st · เมนูกลุ่ม "โรงงาน" ในโหมดทดสอบ (ลงทะเบียนผ่าน MNP_FACTORY.registerDeptModule ใน modules/factory-kit.js)
-// หน้าแรก = ของซื้อที่อยู่ในคลังตอนนี้ (ยอดคงเหลือและสต็อกขั้นต่ำ จาก store ของ BOM) ค้นหาได้ แล้วตามด้วยงานของ ST ที่รออยู่ (รับเข้าตามใบสั่งซื้อ สั่งซื้อที่ขาด คืนของ)
-// อ่านอย่างเดียว: เบิกจ่าย นับ รับเข้า ยังทำที่หน้า BOM / RubberFlow (ลิงก์ที่หัวหน้า)
+// หน้าแรก = ของซื้อที่อยู่ในคลังตอนนี้ (ยอดคงเหลือและสต็อกขั้นต่ำ จาก store ของ BOM) ค้นหาได้ แล้วตามด้วยการ์ดงานของ ST ที่รออยู่ (เบิกของซื้อ รับเข้าตามใบสั่งซื้อ สั่งซื้อที่ขาด คืนของ)
+// การ์ดงานใช้ชุดเดียวกับ BOM "งานของฉัน" (MNP_FACTORY.deptWorkSection): คืนของเหลือสั่งที่นี่ได้ ส่วนเบิกของซื้อ รับเข้า และสั่งซื้อเป็นลิงก์ไปหน้าใบสั่งผลิต / RubberFlow เหมือนใน BOM
 (function registerStModule() {
   const F = window.MNP_FACTORY;
 
@@ -23,9 +23,9 @@
     // ใบสั่งซื้อและเคมีอยู่ใน RubberFlow: ยังไม่โหลด = สั่งโหลดและวาดหน้าใหม่เมื่อเสร็จ
     const rfStore = ctx.rubberflow()?.store;
     const loading = F.wake(rfStore);
-    const tasks = window.MNP_BOM_PAGES?.hub?.storeTasks?.(F.deptCtx(ctx)) ?? [];
+    const failed = F.failed(rfStore);
     const waiting = loading ? '<p class="small muted" role="status">กำลังโหลดข้อมูลใบสั่งซื้อและเคมี…</p>' : "";
-    return { html: `${F.pageHead(ctx, "ของซื้อในคลัง", F.actionLink(ctx, "ไปงานของฉัน (BOM)", ctx.url("work", { dept: "ST" })))}${F.searchForm(ctx, "ค้นหารหัสหรือชื่อของซื้อ")}${stock}${waiting}${F.failed(rfStore) ? F.rubberflowFailed(ctx, "งานที่รอ") : F.taskTable(ctx, tasks)}` };
+    return { html: `${F.pageHead(ctx, "ของซื้อในคลัง", F.actionLink(ctx, "ไปงานของฉัน (BOM)", ctx.url("work", { dept: "ST" })))}${F.searchForm(ctx, "ค้นหารหัสหรือชื่อของซื้อ")}${stock}${failed ? F.rubberflowFailed(ctx, "เคมีและใบสั่งซื้อ") : ""}${F.deptWorkSection(ctx, { waiting, quietWhenEmpty: failed })}`, actions: true };
   }
 
   F.registerDeptModule({ code: "FACTORY_ST", dept: "ST", route: "st", label: "คลังวัตถุดิบ (ST)", icon: "box", palette: "st", landing });

@@ -74,6 +74,7 @@
       : !rules.approvedRecipes(data.recipes).length ? (ctx.canSee("recipes") ? ui.link("สร้างสูตรยาง", ctx.url("recipes"), "btn rf-btn") : "")
       : ctx.can("createOrder") ? ui.openButton("เปิดใบสั่งผลิต", "createOrder", {}, { className: "" }) : "";
     const html = `${ui.pageHead("ภาพรวมโรงงาน", `ข้อมูล ณ ${rules.fmtDateTime(now)}`, start)}
+      ${ctx.bomJobsSlot?.() ?? ""}
       ${ui.stats([
         { label: "อัตราได้ของดีรวม 4 ขั้นตอน", value: hasProduction ? `${overall.toFixed(1)}%` : "—", sub: "เป้าหมาย ≥ 95.0%", tone: overall >= 95 ? "good" : "warn" },
         { label: "ใบสั่งผลิตที่เปิดอยู่", value: String(active.length), sub: `ด่วน ${active.filter((order) => order.priority === "urgent").length} รายการ` },
