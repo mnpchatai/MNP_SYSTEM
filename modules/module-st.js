@@ -25,7 +25,7 @@
       return `<tr><td>${ui.mono(item.code)}<div class="small muted">${F.esc(item.name)}</div></td><td class="right rf-mono">${F.esc(rules.fmtQty(qty))} <span class="small muted">${unit}</span>${isLow(item.code) ? ` ${ui.badge("warn", "ต่ำกว่าขั้นต่ำ")}` : ""}</td><td class="right rf-mono">${safety > 0 ? `${F.esc(rules.fmtQty(safety))} <span class="small muted">${unit}</span>` : '<span class="muted">—</span>'}</td></tr>`;
     });
     const scope = all || q
-      ? ui.link("เฉพาะที่มีของ", ctx.pageUrl({ tab: "stock", q: null }), "btn rf-btn secondary small")
+      ? ui.link("เฉพาะที่มีของ", ctx.pageUrl({ tab: "stock", q: null, all: null }), "btn rf-btn secondary small")
       : ui.link(`ดูทั้งทะเบียน (${register.length})`, ctx.pageUrl({ tab: "stock", all: 1 }), "btn rf-btn secondary small");
     const empty = q ? "ไม่พบของซื้อที่ค้นหา" : all ? "ยังไม่มีของซื้อในทะเบียน" : "ยังไม่มีของซื้อในคลัง";
     const stockHtml = `<div class="rf-row">${F.searchForm(ctx, "ค้นหารหัสหรือชื่อของซื้อ (ทั้งทะเบียน)")}${scope}</div>${ui.card(`${ui.table(["ของซื้อ", { label: "คงเหลือ", className: "right" }, { label: "สต็อกขั้นต่ำ", className: "right" }], rows, { emptyText: empty })}${more}`, { flush: true })}`;

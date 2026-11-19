@@ -266,7 +266,7 @@ test("SR: the tabs sit on top; with work waiting it opens on the work, the store
   env.fakes["form[data-rf-search]"] = [form];
   await env.open("FACTORY_SR", "tab=stock");
   form.handlers.submit({ preventDefault() {} });
-  assert.equal(env.log.hash, "#/sr?q=FN-26");
+  assert.equal(env.log.hash, "#/sr?q=FN-26&tab=stock", "the search keeps the user on the store tab");
 });
 
 test("ST: the store tab lists only parts that are in stock or under their safety stock (low first), not the whole register; search and 'all' reach the rest", async () => {
@@ -296,6 +296,19 @@ test("ST: the store tab lists only parts that are in stock or under their safety
   const found = await env.open("FACTORY_ST", `q=${encodeURIComponent(empty.code)}`);
   assert.ok(found.includes(cell(empty.code)) && !found.includes(cell(high.code)));
   assert.match(await env.open("FACTORY_ST", "q=ZZZ-NONE"), /ไม่พบของซื้อที่ค้นหา/);
+  // ทะเบียนยาว: "แสดงเพิ่ม" ในมุมมองทั้งทะเบียนยังอยู่ในทั้งทะเบียน
+  for (let i = 0; i < 150; i += 1) data.items.push({ code: `B03-${2000 + i}`, kind: "PURCHASED", name: `กล่อง ${i}`, uom: "box", active: true });
+  const page1 = await env.open("FACTORY_ST", "all=1");
+  assert.match(page1, /href="#\/st\?all=1&amp;n=200"/, "show more keeps the full-register view");
+  const page2 = await env.open("FACTORY_ST", "all=1&n=200");
+  assert.match(activeTab(page2), /^ในคลัง/);
+  assert.ok(page2.includes(cell("B03-2149")), "the rows past the first hundred are reachable");
+  // ล้างคำค้นในแท็บในคลัง = ยังอยู่แท็บในคลัง
+  const form = { handlers: {}, dataset: {}, __values: { q: "" }, addEventListener(type, handler) { this.handlers[type] = handler; } };
+  env.fakes["form[data-rf-search]"] = [form];
+  await env.open("FACTORY_ST", "tab=stock&q=B03");
+  form.handlers.submit({ preventDefault() {} });
+  assert.equal(env.log.hash, "#/st?tab=stock");
 });
 
 test("WH: the store tab lists the finished goods per code with the orders that hold them; with no work the page opens on the store", async () => {

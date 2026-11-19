@@ -239,7 +239,7 @@
     const asked = ctx.params.get("tab");
     const browsing = Boolean(ctx.q || ctx.params.get("all") || ctx.params.get("n"));
     const tab = asked === "work" || asked === "stock" ? asked : browsing ? "stock" : job.count > 0 || work.waiting ? "work" : "stock";
-    const tabs = ui.tabs([{ id: "work", label: `งานที่รอ ${job.count}` }, { id: "stock", label: `ในคลัง ${stock.count} รายการ` }], tab, (id) => (id === "work" ? ctx.pageUrl({ tab: "work", q: null }) : ctx.pageUrl({ tab: "stock" })));
+    const tabs = ui.tabs([{ id: "work", label: `งานที่รอ ${job.count}` }, { id: "stock", label: `ในคลัง ${stock.count} รายการ` }], tab, (id) => (id === "work" ? ctx.pageUrl({ tab: "work", q: null, all: null }) : ctx.pageUrl({ tab: "stock" })));
     const sync = `<span class="small muted" role="status" data-bom-sync>${esc(root.MNP_BOM?.syncText?.() ?? "")}</span>`;
     const body = tab === "work" ? (job.html || ui.card(ui.empty(work.emptyText ?? "ไม่มีงานค้าง"))) : stock.html;
     return `${pageHead(ctx, "งานของแผนกฉัน", `${actionLink(ctx, "ไปงานของฉัน (BOM)", ctx.url("work", { dept }))}${sync}`)}${tabs}${body}`;
@@ -291,7 +291,8 @@
     const ui = root.MNP_RUBBERFLOW_UI;
     ui.module = "";
     const base = bom.context(params);
-    const ctx = { ...base, factory: def, pageUrl: (extra = {}) => routeUrl(def.route, { q: base.q || null, ...extra }) };
+    // ลิงก์ในหน้า (ค้นหา แสดงเพิ่ม) พาแท็บและมุมมองทั้งทะเบียนที่เลือกอยู่ไปด้วย ผู้ใช้จึงไม่หลุดจากที่ที่ดูอยู่
+    const ctx = { ...base, factory: def, pageUrl: (extra = {}) => routeUrl(def.route, { q: base.q || null, tab: params.get("tab") || null, all: params.get("all") || null, ...extra }) };
     // dialog เปิดด้วย ctx ของหน้านี้ (ไม่ใช่ ctx ของ BOM) · ฟอร์มใน dialog ส่งผ่านตัวผูกของ BOM
     if (typeof bom.openDialog === "function") ctx.openDialog = (name, args) => bom.openDialog(name, args, ctx);
     bom.clearEditing?.(); // หน้าใหม่ = ไม่มีฟอร์มที่แก้ค้างจากหน้าก่อน (เหมือน renderBom)
