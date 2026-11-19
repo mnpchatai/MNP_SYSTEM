@@ -7,7 +7,7 @@
 //   view=order&id=<uuid>       รายละเอียดใบ + ไทม์ไลน์ + ปุ่มตาม allowed_actions + ส่วน "สำหรับแผนก IT"
 //   view=print&id=<uuid>       หน้าพิมพ์ A4 เหมือนฟอร์ม IT01-FM06
 //
-// ฐานข้อมูล: supabase/migrations/20261202010000_itwo_work_orders.sql ทุกอย่างเรียกผ่าน RPC app_itwo_* (ตรวจบทบาท ลำดับขั้น เลขที่เอกสารที่ฝั่งฐานข้อมูล)
+// ฐานข้อมูล: supabase/migrations/20261203010000_itwo_work_orders.sql ทุกอย่างเรียกผ่าน RPC app_itwo_* (ตรวจบทบาท ลำดับขั้น เลขที่เอกสารที่ฝั่งฐานข้อมูล)
 // หน้าเว็บแค่ซ่อน/แสดงแท็บและปุ่มตาม app_itwo_my_role กับ allowed_actions เป็น UX ล้วน สิทธิ์จริงตัดสินที่ RPC ทุกตัว
 // ข้อมูลล้วนอยู่ที่ itwo-model.js · HTML อยู่ที่ itwo-pages.js · ไฟล์นี้ดูแลเฉพาะการเรียก RPC กล่องยืนยัน และผูกเหตุการณ์ของหน้า
 // module-office.js เรียก MNP_ITWO.render(params) เมื่อเปิด ?module=work-order และ MNP_ITWO.loadCardSummary() เพื่อวาดตัวเลขบนการ์ด

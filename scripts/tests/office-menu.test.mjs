@@ -60,7 +60,7 @@ test("the HR page opened by URL is a static not-ready page", () => {
 });
 
 /* ---------- IT SUPPORT (ชั้นที่ 2) ---------- */
-test("IT SUPPORT shows the IT repair card as a link to the existing repair list and the IT work-order card as moving", () => {
+test("IT SUPPORT shows the IT repair card and the IT work-order card, both as links", () => {
   const page = sections.itSupportPage({ repair: { href: "#/requests?type=abc", count: 3 } });
   assert.match(page, /<h1>IT SUPPORT<\/h1>/);
   assert.match(page, /<a class="request-back-link" href="#\/office">‹ เลือกระบบ<\/a>/);
@@ -68,10 +68,11 @@ test("IT SUPPORT shows the IT repair card as a link to the existing repair list 
   assert.match(page, /<a class="type-card request-type-card lab-module-card" href="#\/requests\?type=abc" data-module="it"/);
   assert.match(page, /ใบแจ้งซ่อม IT/);
   assert.match(page, /3 ยังไม่จบ/);
-  assert.match(page, /lab-module-card is-off" data-module="it"/);
-  assert.equal(count(visibleText(page), /กำลังย้ายระบบ/g), 1);
+  assert.doesNotMatch(page, /is-off/, "both cards are open now");
+  assert.doesNotMatch(visibleText(page), /กำลังย้ายระบบ/);
   assert.equal(count(visibleText(page), /ใบสั่งงาน IT/g), 1);
-  assert.equal(count(page, /<a class="type-card/g), 1, "only the repair card is a link");
+  assert.equal(count(page, /<a class="type-card/g), 2, "both cards are links");
+  assert.match(page, /<a class="type-card request-type-card lab-module-card" href="#\/office\?module=work-order" data-module="it"/);
   assert.doesNotMatch(page, /style="/);
 });
 
@@ -80,7 +81,8 @@ test("the repair card falls back to a plain status label when the count is unkno
   assert.match(sections.itSupportPage({ repair: { href: "#/requests?type=abc", count: 0 } }), /0 ยังไม่จบ/);
   const hidden = sections.itSupportPage({ repair: null });
   assert.doesNotMatch(hidden, /ใบแจ้งซ่อม IT/);
-  assert.equal(count(hidden, /<a class="type-card/g), 0);
+  assert.equal(count(hidden, /<a class="type-card/g), 1, "only the work-order card is left, and it is a link");
+  assert.match(hidden, /href="#\/office\?module=work-order"/);
   assert.match(hidden, /ใบสั่งงาน IT/);
   assert.equal(sections.itSupportPage(), hidden);
 });
@@ -168,7 +170,7 @@ test("other departments see the office menu; lab-only accounts do not", () => {
   assert.equal(labOnly.routeAllowed("office"), false, "typing #/office sends a lab-only account back to LAB");
 });
 
-test("the office module is standalone with a menu entry, no sandbox support, and loads right after MNP LAB and before app.js", () => {
+test("the office module is standalone with a menu entry, sandbox for the work-order pages only, and loads right after MNP LAB and before app.js", () => {
   const html = read("index.html");
   const scripts = [...html.matchAll(/<script defer src="\.\/([^"?]+)/g)].map((match) => match[1]);
   const at = (file) => scripts.indexOf(file);
@@ -182,16 +184,21 @@ test("the office module is standalone with a menu entry, no sandbox support, and
   assert.match(source, /standalone: true,/);
   assert.match(source, /nav: \[\{ path: PATH, label: TITLE, icon: NAV_ICON \}\]/);
   assert.match(source, /const TITLE = "ระบบสำนักงาน";/);
-  assert.doesNotMatch(source, /sandbox: true/, "hidden in test mode, like MNP LAB");
+  assert.match(source, /sandbox: true,/, "test mode keeps the menu for the work-order pages (modeAllowed hides the rest)");
+  assert.match(source, /const modeAllowed = \(code\) => deptModuleAllowed\(code\) && \(!inSandbox\(\) \|\| code === sections\.WORK_ORDER_CODE\);/);
+  // ไฟล์ของใบสั่งงาน IT โหลดหลัง module-office.js และก่อน app.js ตามลำดับ model → pages → module
+  assert.ok(at("modules/itwo-model.js") < at("modules/itwo-pages.js") && at("modules/itwo-pages.js") < at("modules/module-itwo.js"));
+  assert.ok(at("modules/module-office.js") < at("modules/module-itwo.js") && at("modules/module-itwo.js") < at("app.js"));
 });
 
 /* ---------- ทดลองรันโมดูลจริงใน vm: ลงทะเบียน เมนู และหน้า ---------- */
-function setup({ employee, repairType = { id: "type-it", code: "IT_REPAIR" }, countResult = 5 } = {}) {
+function setup({ employee, repairType = { id: "type-it", code: "IT_REPAIR" }, countResult = 5, itwoSummary = null, sandbox = false } = {}) {
   const queries = [];
-  const painted = { html: "", active: null, title: null, notFound: 0, loading: 0, zooms: 0, queued: [], went: [] };
-  const window = {};
+  const painted = { itwoRendered: [], html: "", active: null, title: null, notFound: 0, loading: 0, zooms: 0, queued: [], went: [] };
+  // หน้าใบสั่งงาน IT จริงอยู่ที่ module-itwo.js (ทดสอบที่ itwo-module.test.mjs) ที่นี่ใช้ตัวแทนที่บันทึกการเรียกและคืนตัวเลขบนการ์ด
+  const window = { MNP_ITWO: { render: async (query) => { painted.itwoRendered.push(String(query)); }, loadCardSummary: async () => (itwoSummary instanceof Error ? Promise.reject(itwoSummary) : itwoSummary) } };
   const context = vm.createContext({
-    window, console, URLSearchParams, Map, Set,
+    window, console, URLSearchParams, Map, Set, isSandboxMode: () => sandbox,
     location: { hash: "#/office?module=it-support" },
     document: { querySelectorAll: () => [] },
     state: { employee },
@@ -216,7 +223,7 @@ test("module-office registers a standalone menu entry visible to any signed-in u
   assert.equal(office.code, "OFFICE");
   assert.equal(office.enabled, true);
   assert.equal(office.standalone, true);
-  assert.equal(office.sandbox, undefined);
+  assert.equal(office.sandbox, true);
   assert.deepEqual(JSON.parse(JSON.stringify(office.nav.map((item) => [item.path, item.label]))), [["office", "ระบบสำนักงาน"]]);
   assert.match(office.nav[0].icon, /<svg/);
   assert.equal(office.navAllowed(mt), true);
@@ -241,7 +248,8 @@ test("opening IT SUPPORT looks up the active IT_REPAIR type and links to the ori
   assert.deepEqual(JSON.parse(JSON.stringify(app.queries[1])), { counted: ["type-it"], mineOnly: false });
   assert.match(app.painted.html, /href="#\/requests\?type=type-it"/, "the exact list URL that the old overview card opened");
   assert.match(app.painted.html, /5 ยังไม่จบ/);
-  assert.match(app.painted.html, /กำลังย้ายระบบ/);
+  assert.match(app.painted.html, /href="#\/office\?module=work-order"/);
+  assert.doesNotMatch(app.painted.html, /กำลังย้ายระบบ/);
   assert.equal(app.painted.active, "office");
   assert.equal(app.painted.title, "IT SUPPORT");
 });
@@ -414,4 +422,45 @@ test("a slow IT SUPPORT page does not repaint over a page opened after it", asyn
   release({ data: { id: "late", code: "IT_REPAIR" }, error: null });
   await slow;
   assert.equal(app.painted.html, chooser);
+});
+
+/* ---------- ใบสั่งงาน IT: การ์ด เส้นทาง และสิทธิ์แผนก/โหมดทดสอบ ---------- */
+test("the work-order card shows the count of work waiting for me, and a failing count leaves the card open", async () => {
+  const withCount = setup({ employee: mt, itwoSummary: { badge: "3 รอคุณ", title: "รออนุมัติ 2 · งาน IT ค้าง 1" } });
+  await withCount.open("module=it-support");
+  assert.match(withCount.painted.html, /href="#\/office\?module=work-order"[^>]*title="รออนุมัติ 2 · งาน IT ค้าง 1"/);
+  assert.match(withCount.painted.html, /3 รอคุณ/);
+
+  for (const itwoSummary of [new Error("boom"), null]) {
+    const app = setup({ employee: mt, itwoSummary });
+    await app.open("module=it-support");
+    assert.match(app.painted.html, /href="#\/office\?module=work-order"/, "still a link");
+    assert.doesNotMatch(app.painted.html, /รอคุณ/);
+    assert.match(app.painted.html, /5 ยังไม่จบ/, "the repair card is not affected");
+  }
+});
+
+test("?module=work-order hands the page to the work-order module; department ID is sent home before anything is read", async () => {
+  const app = setup({ employee: mt });
+  await app.open("module=work-order&view=new");
+  assert.deepEqual(app.painted.itwoRendered, ["module=work-order&view=new"]);
+  assert.equal(app.painted.html, "", "the office module paints nothing itself");
+  assert.deepEqual(app.painted.went, []);
+
+  const restricted = setup({ employee: indesign });
+  await restricted.open("module=work-order");
+  assert.deepEqual(restricted.painted.went, ["dashboard"]);
+  assert.deepEqual(restricted.painted.itwoRendered, []);
+  assert.deepEqual(restricted.queries, []);
+});
+
+test("in test mode only the work-order pages are open: the chooser and repair/HR pages send the admin back", async () => {
+  const sandbox = setup({ employee: mt, sandbox: true });
+  await sandbox.open("module=work-order");
+  assert.equal(sandbox.painted.itwoRendered.length, 1);
+  assert.deepEqual(sandbox.painted.went, []);
+  // หน้าเลือกระบบ/IT SUPPORT/HR ในโหมดทดสอบไม่มีอะไรให้เปิดนอกจากใบสั่งงาน IT → พากลับหน้าเลือกระบบ (office) ไม่ใช่ dashboard
+  await sandbox.open("module=hr");
+  assert.deepEqual(sandbox.painted.went, ["office"]);
+  assert.deepEqual(sandbox.queries, [], "the repair type is never looked up in test mode");
 });

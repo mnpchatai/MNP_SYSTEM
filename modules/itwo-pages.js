@@ -154,7 +154,7 @@
   }
 
   // requester = { name, department } จาก my_role · ระบบเติมชื่อ/แผนก/วันเวลาให้เอง จึงบอกไว้ครั้งเดียวที่ขั้นแรก
-  function orderForm({ requester = null, isTest = false } = {}) {
+  function orderForm({ requester = null } = {}) {
     const steps = root.MNP_FORM_STEPS;
     const who = requester ? `${esc(requester.name)}${requester.department ? ` · ${esc(requester.department)}` : ""}` : "";
     return `<section class="card form-card" id="itwo-form-card"><div id="itwo-message" role="status"></div>

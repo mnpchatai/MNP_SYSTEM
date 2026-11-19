@@ -1,4 +1,4 @@
-// ฐานข้อมูลจำลองของใบสั่งงาน IT (RPC app_itwo_* ของ supabase/migrations/20261202010000_itwo_work_orders.sql) สำหรับ /pilot-shell.html?sandbox=1&itwo=1
+// ฐานข้อมูลจำลองของใบสั่งงาน IT (RPC app_itwo_* ของ supabase/migrations/20261203010000_itwo_work_orders.sql) สำหรับ /pilot-shell.html?sandbox=1&itwo=1
 // ข้อมูลอยู่ในหน่วยความจำของหน้า (หายเมื่อโหลดหน้าใหม่) ใช้ลองหน้าจอ ไม่ใช่ตัวแทนฐานข้อมูลจริง: กฎเส้นทางอนุมัติ/ปุ่มที่ทำได้ตรงกับ migration
 // (ผู้แจ้งเป็นผู้จัดการแผนก / แผนก IT / แผนกไม่มีผู้จัดการ / ผู้อนุมัติขั้น IT แจ้งเอง) แต่ตรวจสิทธิ์หลวมกว่า (ไม่มี RLS/ล็อก)
 //
@@ -7,7 +7,6 @@
 // persona ของโมดูลนี้ (SBX-IT-*) มี id persona-it-staff / persona-it-admin / persona-it-approver · persona อื่นเป็นผู้แจ้ง (ผู้จัดการแผนก = role.code department_manager)
 export function createItwoMock(env) {
   const { stamp, now } = env;
-  const clone = (value) => (value === undefined ? null : JSON.parse(JSON.stringify(value)));
   // ข้อความไทยของฐานข้อมูลโยนเป็น Error ที่มี code เหมือน raise exception ... using errcode
   const reject = (message, code = "23514") => { throw Object.assign(new Error(message), { code }); };
   const IT_ADMIN_IDS = new Set(["persona-it-admin"]);
