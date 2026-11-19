@@ -25,7 +25,7 @@ const emp = (dept, role = "employee", extra = {}) => ({ department: { code: dept
 function load({ employee = emp("PP"), route = "", capture = null } = {}) {
   const context = vm.createContext({});
   const app = { innerHTML: "" };
-  const log = { renders: 0, notFound: 0, hash: `#/${route}`, toasts: [], listeners: {} };
+  const log = { renders: 0, notFound: 0, hash: `#/${route}`, toasts: [], listeners: {}, docListeners: {} };
   const fakes = {};
   const node = () => ({
     handlers: {}, dataset: {}, value: "", disabled: false, textContent: "", innerHTML: "", tagName: "DIV", classList: { toggle() {}, add() {}, remove() {} }, files: [],
@@ -43,7 +43,7 @@ function load({ employee = emp("PP"), route = "", capture = null } = {}) {
     shell: (content, path, title) => `<shell path="${path}" title="${escapeHtml(title)}">${content}</shell>`,
     bindShell() {}, loadingShell() {}, renderNotFound: () => { log.notFound += 1; app.innerHTML = "<notfound></notfound>"; },
     currentRoute: () => { const raw = log.hash.replace(/^#\/?/, ""); const [path, query = ""] = raw.split("?"); return { path, params: new URLSearchParams(query) }; },
-    document: { querySelector: () => root, querySelectorAll: () => [], body: root, activeElement: null, createElement: () => generic() },
+    document: { querySelector: () => root, querySelectorAll: () => [], body: root, activeElement: null, createElement: () => generic(), addEventListener: (type, handler) => { (log.docListeners[type] ??= []).push(handler); } },
     localStorage: { getItem: (key) => (storage.has(key) ? storage.get(key) : null), setItem: (key, value) => storage.set(key, String(value)), removeItem: (key) => storage.delete(key) },
     FormData: class { constructor(form) { this.values = form?.__values ?? {}; } entries() { return Object.entries(this.values); } get(key) { return this.values[key] ?? null; } },
     MNP_REQUEST_MODULES: {}, TextDecoder, Uint8Array, DataView,
@@ -695,11 +695,13 @@ test("the task cards are drawn once (bom-hub taskCard / boardCards); the departm
 // ---- RubberFlow (แผนก RB): การ์ดงาน RB จาก BOM "งานของฉัน" บนหน้าภาพรวม ----
 // ช่องว่างจำลอง: ปุ่มถูกอ่านจาก HTML ที่ใส่เข้าช่องตอนที่ตัวผูกเรียก (ราก RubberFlow ไม่เห็นปุ่มของช่องเลย เหมือนใน DOM จริงที่ช่องยังว่างตอนที่ตัวผูกของหน้า RubberFlow ทำงาน)
 function bomSlot() {
-  const cache = {};
+  let cache = {};
+  let cachedHtml = "";
   const slot = {
     innerHTML: "", removed: false, added: 0,
     remove() { this.removed = true; },
     buttons(kind) {
+      if (cachedHtml !== this.innerHTML) { cache = {}; cachedHtml = this.innerHTML; }
       if (cache[kind]) return cache[kind];
       const pattern = kind === "open" ? /data-rf-open="(\w+)" data-rf-args="([^"]*)"/g : /data-rf-action="(\w+)" data-rf-args="([^"]*)"/g;
       cache[kind] = [...this.innerHTML.matchAll(pattern)].map((match) => ({ name: match[1], handlers: {}, dataset: kind === "open" ? { rfOpen: match[1], rfArgs: JSON.stringify(decodeArgs(match[2])) } : { rfAction: match[1], rfArgs: JSON.stringify(decodeArgs(match[2])), rfSuccess: "" }, disabled: false, addEventListener(type, handler) { slot.added += 1; this.handlers[type] = handler; } }));
@@ -842,37 +844,121 @@ test("RubberFlow: a user who is not RB or a planner never makes the BOM store lo
   }
 });
 
-test("module-bom: loaded / load-failed repaint a department or RubberFlow page only when nothing is open there; the BOM route repaints as before", async () => {
+// BOM โหลดอยู่ตอนเปิดหน้า RubberFlow ภาพรวม (ช่องแสดงบรรทัดกำลังโหลด) แล้วผู้ใช้เปิด dialog หรือพิมพ์ค้างระหว่างรอ · store ส่ง loaded / load-failed ครั้งเดียว
+async function rubberflowLoading({ editing }) {
+  const listeners = [];
+  const env = load({ employee: emp("RB"), route: "rubberflow", capture: listeners });
+  env.rf.store.setUser("U01");
+  env.store.setUser("B04");
+  const slot = bomSlot();
+  env.fakes["[data-bom-jobs]"] = [slot];
+  const ready = env.store.status;
+  env.store.status = () => "loading";
+  const html = await env.open("RUBBERFLOW");
+  assert.match(slot.innerHTML, /กำลังโหลดงานจากใบสั่งผลิต \(BOM\)/, "the slot waits for BOM");
+  assert.equal(env.rf.showsBomJobs(), true);
+  const before = env.app.innerHTML;
+  const document = env.context.document;
+  // "กำลังแก้" ของ RubberFlow: dialog ของ RubberFlow เปิดอยู่ หรือฟอร์มที่แก้ค้าง (dirty ผ่าน isEditing ของโมดูล)
+  if (editing === "dialog") document.querySelectorAll = (selector) => (selector === "dialog[data-rf-dialog][open]" ? [{}] : []);
+  else env.rf.isEditing = () => true;
+  env.store.status = ready;
+  env.log.renders = 0;
+  return { env, slot, listener: listeners[0], before, html };
+}
+
+for (const editing of ["dialog", "dirty"]) {
+  test(`RubberFlow overview (${editing}): BOM loaded once while RubberFlow is being edited fills only the BOM slot; the page, the dialog and the input stay; buttons bound once`, async () => {
+    const { env, slot, listener, before } = await rubberflowLoading({ editing });
+    assert.equal(typeof listener, "function", "module-bom subscribed to the BOM store");
+    assert.equal(slot.added, 0, "the placeholder has no buttons");
+    listener({ type: "loaded" });
+    assert.equal(env.log.renders, 0, "the page is not redrawn over the open dialog or the typed input");
+    assert.equal(env.app.innerHTML, before, "the RubberFlow page, its dialog and its fields are untouched");
+    const work = await workPage(env);
+    assert.deepEqual(plain(cardsOf(slot.innerHTML)), plain(cardsOf(work.html)), "the slot now shows the same cards as BOM งานของฉัน");
+    assert.match(slot.innerHTML, /งานจากใบสั่งผลิต \(BOM\)/);
+    assert.doesNotMatch(slot.innerHTML, /กำลังโหลดงานจากใบสั่งผลิต/);
+    const buttonCount = [...slot.innerHTML.matchAll(/data-rf-(?:open|action)="/g)].length;
+    assert.ok(buttonCount >= 2);
+    assert.equal(slot.added, buttonCount, "one listener per button: bound exactly once");
+    assert.equal(slot.removed, false);
+    assert.equal(env.rf.showsBomJobs(), true);
+    const hold = slot.buttons("open").find((button) => button.name === "jobHold");
+    assert.ok(hold, "the card works");
+  });
+
+  test(`RubberFlow overview (${editing}): BOM load-failed while RubberFlow is being edited removes the placeholder and leaves the page alone`, async () => {
+    const { env, slot, listener, before } = await rubberflowLoading({ editing });
+    env.store.status = () => "error";
+    listener({ type: "load-failed" });
+    assert.equal(slot.removed, true, "the waiting line is gone");
+    assert.equal(env.log.renders, 0);
+    assert.equal(env.app.innerHTML, before);
+    assert.equal(env.rf.showsBomJobs(), false, "the page no longer claims BOM data");
+  });
+}
+
+test("RubberFlow overview: BOM loaded with nothing being edited still repaints the page, as before; and a BOM page repaints even with a dialog open", async () => {
   const listeners = [];
   const { env } = await rubberflowDashboard({ employee: emp("RB"), bomUser: "B04", capture: listeners });
   const listener = listeners[0];
-  assert.equal(typeof listener, "function", "module-bom subscribed to the BOM store");
-  const dialogs = (selector) => (selector ? [{}] : []);
+  env.log.renders = 0;
+  listener({ type: "loaded" });
+  assert.equal(env.log.renders, 1);
+  env.log.hash = "#/bom?p=work";
+  env.context.document.querySelectorAll = (selector) => (selector === "dialog[open]" ? [{}] : []);
+  env.log.renders = 0;
+  listener({ type: "load-failed" });
+  assert.equal(env.log.renders, 1, "the BOM route repaints as before");
+});
+
+test("department page (#/gr): BOM loaded while a dialog is open does not repaint, and the page repaints when the dialog closes", async () => {
+  const listeners = [];
+  const env = load({ employee: emp("GR"), route: "gr", capture: listeners });
+  env.store.setUser("B05");
+  await env.open("FACTORY_GR");
   const document = env.context.document;
   const querySelectorAll = document.querySelectorAll;
-  const fire = (type) => { env.log.renders = 0; listener({ type }); return env.log.renders; };
-  for (const type of ["loaded", "load-failed"]) {
-    assert.equal(fire(type), 1, `${type}: RubberFlow overview with nothing open repaints`);
-    document.querySelectorAll = (selector) => (selector === "dialog[open]" ? dialogs(selector) : []);
-    assert.equal(fire(type), 0, `${type}: a dialog is open on the RubberFlow overview, the page stays`);
-    document.querySelectorAll = (selector) => (selector === "dialog[data-rf-dialog][open]" ? dialogs(selector) : []);
-    assert.equal(fire(type), 0, `${type}: a RubberFlow dialog counts too`);
-    document.querySelectorAll = querySelectorAll;
-    assert.equal(fire(type), 1, `${type}: the dialog was closed, the next event repaints`);
-    // หน้า BOM เอง: เหมือนเดิม (วาดใหม่ทุกครั้ง)
-    env.log.hash = "#/bom?p=work";
-    document.querySelectorAll = (selector) => (selector === "dialog[open]" ? dialogs(selector) : []);
-    assert.equal(fire(type), 1, `${type}: the BOM route is unchanged`);
-    document.querySelectorAll = querySelectorAll;
-    env.log.hash = "#/rubberflow";
-  }
-  // หน้าแผนก (#/gr ...) ใช้กติกาเดียวกัน
-  env.log.hash = "#/gr";
-  document.querySelectorAll = (selector) => (selector === "dialog[open]" ? dialogs(selector) : []);
-  assert.equal(fire("loaded"), 0, "a department page with a dialog open stays");
+  const close = () => (env.log.docListeners.close ?? []).forEach((handler) => handler({ type: "close" }));
+  assert.equal(env.log.docListeners.close?.length, 1, "one close watcher, registered once");
+  // dialog เปิดอยู่: ไม่วาดทับ
+  document.querySelectorAll = (selector) => (selector === "dialog[open]" ? [{}] : []);
+  env.log.renders = 0;
+  listeners[0]({ type: "loaded" });
+  assert.equal(env.log.renders, 0, "no repaint over the open dialog");
+  close();
+  assert.equal(env.log.renders, 0, "another dialog is still open: keep waiting");
+  // dialog ปิดแล้ว: วาดครั้งเดียว
   document.querySelectorAll = querySelectorAll;
-  assert.equal(fire("loaded"), 1);
-  assert.match(read("modules/module-bom.js"), /\(event\.type === "loaded" \|\| event\.type === "load-failed"\) && !onBomRoute\(\) && isEditing\(\)/);
+  close();
+  assert.equal(env.log.renders, 1, "repainted when the dialog closed");
+  close();
+  assert.equal(env.log.renders, 1, "only once");
+  // load-failed ก็เหมือนกัน
+  document.querySelectorAll = (selector) => (selector === "dialog[open]" ? [{}] : []);
+  listeners[0]({ type: "load-failed" });
+  document.querySelectorAll = querySelectorAll;
+  close();
+  assert.equal(env.log.renders, 2);
+  // ไม่มีอะไรค้าง = ปิด dialog เฉยๆ ไม่วาดใหม่
+  close();
+  assert.equal(env.log.renders, 2);
+  // หน้าถูกวาดใหม่เองก่อน dialog ปิด: ไม่วาดซ้ำ
+  document.querySelectorAll = (selector) => (selector === "dialog[open]" ? [{}] : []);
+  listeners[0]({ type: "loaded" });
+  await env.open("FACTORY_GR");
+  document.querySelectorAll = querySelectorAll;
+  env.log.renders = 0;
+  close();
+  assert.equal(env.log.renders, 0, "a fresh render of the page cleared the pending repaint");
+  // นอกหน้าแผนก: ปิด dialog ไม่วาดอะไร
+  document.querySelectorAll = (selector) => (selector === "dialog[open]" ? [{}] : []);
+  listeners[0]({ type: "loaded" });
+  env.log.hash = "#/requests";
+  document.querySelectorAll = querySelectorAll;
+  close();
+  assert.equal(env.log.renders, 0);
 });
 
 test("RubberFlow: module-bom repaints the RubberFlow overview only while it shows BOM data, and no other RubberFlow page; no copy of the card in RubberFlow", () => {
