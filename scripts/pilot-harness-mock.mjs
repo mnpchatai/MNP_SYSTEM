@@ -1702,6 +1702,12 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       for (const list of RF_LISTS) if (!Array.isArray(rfMaster[list])) rfMaster[list] = [];
       rfMaster.versions = Object.fromEntries(RF_LISTS.map((list) => [list, rfMaster.versions?.[list] ?? {}]));
       if (!Array.isArray(rfMaster.audit)) rfMaster.audit = [];
+      // กล่องรุ่นก่อน 20261206010000 ที่อยู่ในคลัง / ส่งมอบแล้ว: รับเข้าเมื่อสร้าง (ตรงกับการเติม received_at ของ migration) แล้วเลื่อนตัวนับหนึ่งขั้น
+      const legacy = rfMaster.fgBoxes.filter((box) => ["in_stock", "shipped"].includes(box?.status) && (box.receivedAt === undefined || box.receivedAt === null));
+      if (legacy.length) {
+        rfMaster.version += 1;
+        for (const box of legacy) { box.receivedAt = box.createdAt; rfMaster.versions.fgBoxes[box.id] = rfMaster.version; }
+      }
     }
     return rfMaster;
   }
@@ -2193,7 +2199,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
           return { key: test.key, value: num(test.value), pass: R.inSpec(test.value, spec) };
         });
         if (record.result === "pass" && !tests.every((test) => test.pass)) fail(bad);
-        qcNew.push({ lotId: lot.id, result: record.result });
+        qcNew.push({ id: record.id, lotId: lot.id, result: record.result });
         put({ ...clone(record), orderId: lot.orderId, stage: lot.stage, tests, inspector: actor.name, at });
         return null;
       }
@@ -2510,6 +2516,17 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     for (const row of next.recipes) if (row.status === "approved" && next.recipes.some((other) => other !== row && other.id === row.id && other.status === "approved")) fail("RF_INVALID_RECIPE");
     // ---- กล่องทั้งล็อต (ตรงกับ rf_save_boxes ของ 20261206010000): รับเข้า = ไม่มีกล่อง pending_wh ของล็อตเหลือ แล้วนับยอดเข้างาน RB ----
     // ย้อนรับเข้า = ไม่มีกล่องที่ส่งมอบแล้ว / กัก (RF_INVALID_TRANSITION) และไม่มีกล่องที่ยังอยู่ในคลัง (RF_INVALID_BOX) แล้วถอนยอด · ใบ completed ถอนไม่ได้
+    // ถอนยอดที่ล็อตนับเข้างาน RB ไว้ (ตรงกับ private.rf_box_uncredit): ใบ completed = RF_INVALID_TRANSITION · ใบ released / in_progress = ถอนยอดจากงาน · อื่น / ไม่พบงาน = ล้างค่าที่จำไว้อย่างเดียว
+    const uncredit = (li, note) => {
+      const lot = next.lots[li];
+      if (!lot.whCredit) return;
+      const job = bomLoad().jobs.find((row) => row.id === lot.whCredit.jobNo);
+      const bomOrder = job ? bomLoad().orders.find((row) => row.id === job.orderId) : null;
+      if (bomOrder?.status === "completed") fail("RF_INVALID_TRANSITION");
+      if (job && ["released", "in_progress"].includes(bomOrder?.status)) ops.credit.push({ kind: "uncredit", job: job.id, qty: lot.whCredit.qty, lotId: lot.id, note });
+      next.lots[li] = { ...lot, whCredit: null };
+      stampVersion("lots", lot.id);
+    };
     for (const [lotId, note] of boxLots) {
       if (action !== "receiveBoxes" && action !== "reverseBoxReceipt") continue;
       const boxes = next.fgBoxes.filter((box) => box.lotId === lotId);
@@ -2530,13 +2547,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       } else {
         if (boxes.some((box) => box.status === "shipped" || box.status === "hold")) fail("RF_INVALID_TRANSITION");
         if (boxes.some((box) => box.status === "in_stock")) fail("RF_INVALID_BOX");
-        if (!lot.whCredit) continue;
-        const job = bomLoad().jobs.find((row) => row.id === lot.whCredit.jobNo);
-        const bomOrder = job ? bomLoad().orders.find((row) => row.id === job.orderId) : null;
-        if (bomOrder?.status === "completed") fail("RF_INVALID_TRANSITION");
-        if (job && ["released", "in_progress"].includes(bomOrder?.status)) ops.credit.push({ kind: "uncredit", job: job.id, qty: lot.whCredit.qty, lotId, note });
-        next.lots[li] = { ...lot, whCredit: null };
-        stampVersion("lots", lotId);
+        uncredit(li, note);
       }
     }
     // ---- ตรวจความครบของคำสั่ง และคำนวณตัวเลขที่ฐานข้อมูลคำนวณเอง ----
@@ -2555,10 +2566,13 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       const lot = next.lots.find((row) => row.id === item.lotId);
       if (!lot || lot.qc !== item.result) fail("RF_INVALID_QC");
       next.fgBoxes.forEach((box, i) => {
-        // ผ่าน = กลับที่เดิม (WH รับแล้ว = in_stock · ยังไม่รับ = pending_wh) · อื่น = hold (ตรงกับ rf_save_qc ของ 20261206010000)
+        // ผ่าน = เฉพาะกล่องที่กักไว้กลับที่เดิม (WH รับแล้ว = in_stock · ยังไม่รับ = pending_wh) · อื่น = กล่องที่ยังไม่ส่งมอบและยังไม่กักเป็น hold (ตรงกับ rf_save_qc ของ 20261206010000)
+        const moves = lot.qc === "pass" ? box.status === "hold" : box.status !== "shipped" && box.status !== "hold";
         const status = lot.qc !== "pass" ? "hold" : box.receivedAt ? "in_stock" : "pending_wh";
-        if (box.lotId === lot.id && box.status !== "shipped" && box.status !== status) { next.fgBoxes[i] = { ...box, status }; stampVersion("fgBoxes", box.id); }
+        if (box.lotId === lot.id && moves) { next.fgBoxes[i] = { ...box, status }; stampVersion("fgBoxes", box.id); }
       });
+      // fail ของล็อตที่ WH รับเข้าและนับยอดเข้างาน RB แล้ว: ถอนยอดในคำสั่งเดียวกัน (เหตุผล = เลขผลตรวจ)
+      if (item.result === "fail") uncredit(next.lots.findIndex((row) => row.id === lot.id), `QA ตัดสินไม่ผ่าน ${item.id}`);
     }
     // ยอดส่งต่อของล็อต = ผลรวมที่ส่งมอบไปแล้วทุกใบ
     next.lots.forEach((lot, i) => {
@@ -3324,7 +3338,8 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     removeChannel() {},
   };
   // rf.edit: ใช้ในเทสต์เท่านั้น แก้ข้อมูล RubberFlow ของฐานข้อมูลจำลองตรงๆ (ใช้สร้างข้อมูลเก่า เช่นใบเบิกที่ค้าง weighing ซึ่งคำสั่งปัจจุบันสร้างไม่ได้แล้ว) · ผู้แก้ต้องประทับเวอร์ชันเอง
-  return { client, db, rf: { edit: (change) => { change(rfLoad()); rfPersist(); } } };
+  // bom.edit: แบบเดียวกันกับข้อมูล BOM (เช่นตั้งใบเป็น completed ตรงๆ เหมือน pgTAP)
+  return { client, db, rf: { edit: (change) => { change(rfLoad()); rfPersist(); } }, bom: { edit: (change) => { change(bomLoad()); bomPersist(); } } };
 }
 
 // ติดตั้งในหน้า: ไม่ลงทะเบียน service worker, fetch ข้าม origin ทุกตัว (Supabase Edge Function, Google Apps Script ที่เขียนชีตสำรอง ฯลฯ)

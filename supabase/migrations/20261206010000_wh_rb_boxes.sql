@@ -17,7 +17,8 @@
 --   public.rf_fg_boxes
 --     status เพิ่ม 'pending_wh' (รอ WH รับเข้า) · ทาง: pending_wh -> in_stock -> shipped · ย้อน in_stock -> pending_wh, shipped -> in_stock · QA: <-> hold
 --     + customer text, customer_po text (สำเนาลูกค้า / เลข PO หรือ PI ของ WO ตอนสร้างกล่อง · กล่องก่อนไฟล์นี้เป็น '')
---     + received_at timestamptz, received_by uuid (WH รับเข้า · ย้อนรับเข้าล้างค่า · กล่อง in_stock ก่อนไฟล์นี้เป็น null)
+--     + received_at timestamptz, received_by uuid (WH รับเข้า · ย้อนรับเข้าล้างค่า · กล่อง in_stock / shipped ก่อนไฟล์นี้: received_at = created_at
+--       เพราะเดิมกล่องเข้าคลังตอนสร้าง (received_by เป็น null) แล้วเลื่อนตัวนับ rf_master_state ของโหมดนั้นหนึ่งขั้นให้ client ได้ส่วนต่าง)
 --     + moves jsonb [{kind receive | ship | unreceive | unship, at (ms), by (ชื่อ), note}] ประวัติต่อท้ายที่เซิร์ฟเวอร์เขียน (ค่าของ client เมิน)
 --
 -- RubberFlow app_rf_save
@@ -25,8 +26,10 @@
 --     sr ของ WO ที่ไม่ผูกงาน / ปลายทางของผล hold หรือ fail / ค่าอื่น = RF_INVALID_LOT
 --     customer = สร้างกล่อง (perBox บังคับ > 0) สถานะ pending_wh พร้อมลูกค้า / PO ของ WO · ไม่สร้างล็อตยางเส้นยาว · rf_apply_feedback เรียกเฉพาะ WO ที่ไม่ผูกงานเหมือนเดิม
 --     sr = เหมือน 20261202010000 ทุกอย่าง (ไม่มีกล่อง ล็อตยางเส้นยาวรอ SR รับ) · hold = เหมือนเดิม (กล่อง hold เฉพาะ WO ที่ไม่ผูกงาน)
---   addQcRecord: QA ปล่อยล็อตตกแต่งครั้งแรก ตั้งปลายทางที่ยังว่างตามการผูกงาน (sr | customer) · กล่องที่ยังไม่ส่งมอบ: ผ่าน = in_stock ถ้า WH รับแล้ว
---     (received_at มีค่า) ไม่เช่นนั้น pending_wh · อื่น = hold
+--   addQcRecord: QA ปล่อยล็อตตกแต่งครั้งแรก ตั้งปลายทางที่ยังว่างตามการผูกงาน (sr | customer) · ผ่าน = เฉพาะกล่อง hold กลับเป็น in_stock ถ้า WH รับแล้ว
+--     (received_at มีค่า) ไม่เช่นนั้น pending_wh (กล่อง pending_wh / in_stock / shipped ไม่ถูกแตะ) · อื่น = กล่องที่ยังไม่ส่งมอบเป็น hold
+--     fail ของล็อตที่นับยอดเข้างาน RB ไว้แล้ว (wh_credit_*) = ถอนยอดนั้นด้วย private.rf_box_uncredit ในธุรกรรมเดียวกัน (รายงาน good 0 ของงาน · ล้าง wh_credit_*)
+--       ใบ completed = RF_INVALID_TRANSITION (กติกาเดียวกับย้อนรับเข้า)
 --   คำสั่งของกล่อง (ส่งได้เฉพาะชุด fgBoxes · ชุดอื่น = RF_INVALID_BOX) แถว = เรคอร์ดกล่องเต็มที่เปลี่ยน status (ช่องอื่นเมิน)
 --     receiveBoxes (ใหม่ · แผนก WH หรือ admin): pending_wh -> in_stock ทุกกล่อง pending_wh ของล็อตต้องมาในคำสั่งเดียว (ขาด = RF_INVALID_BOX)
 --       ล็อต customer ของ WO ที่ผูกงาน (งานยังผูก WO นี้ ใบ released / in_progress งานยังไม่ done) = งาน RB ได้ยอด good_qty ของล็อต + รายงาน
@@ -67,7 +70,7 @@
 --   1) create or replace ห้าฟังก์ชันกลับด้วยนิยามต้นทางที่ระบุข้างบน · drop function private.rf_save_boxes(public.employees, text, text, jsonb, bigint, bigint),
 --      private.rf_box_credit(text, public.rf_lots), private.rf_box_uncredit(text, public.rf_lots, text) แล้วสร้าง
 --      private.rf_save_boxes(uuid, boolean, jsonb, bigint, bigint) ตาม 20261130010000_bom_rf_go_live.sql (+ revoke all from public, anon, authenticated)
---   2) ยอดที่นับเข้างาน RB ตอน WH รับเข้าคงอยู่ในงาน (ไม่ถอนอัตโนมัติ)
+--   2) ยอดที่นับเข้างาน RB ตอน WH รับเข้าคงอยู่ในงาน (ไม่ถอนอัตโนมัติ) · received_at ที่เติมให้กล่องเดิมหายไปพร้อมคอลัมน์ในข้อ 4
 --   3) update public.rf_fg_boxes set status = 'in_stock' where status = 'pending_wh' (ทุกโหมด · ก่อนคืน check เดิม)
 --   4) alter table public.rf_fg_boxes drop constraint rf_fg_boxes_status_check, drop constraint rf_fg_boxes_receipt_check, drop column customer,
 --      drop column customer_po, drop column received_at, drop column received_by, drop column moves
@@ -105,6 +108,19 @@ comment on table public.rf_fg_boxes is 'กล่องสินค้าสำ�
 comment on column public.rf_fg_boxes.customer is 'ลูกค้าของ WO ตอนสร้างกล่อง (ผู้รับสินค้า) · กล่องก่อน 20261206010000 เป็นค่าว่าง';
 comment on column public.rf_fg_boxes.customer_po is 'เลข PO / PI ของลูกค้าตาม WO ตอนสร้างกล่อง';
 comment on column public.rf_fg_boxes.moves is 'ประวัติของกล่อง [{kind receive | ship | unreceive | unship, at, by, note}] เซิร์ฟเวอร์ต่อท้ายเท่านั้น';
+-- กล่องก่อนไฟล์นี้ที่อยู่ในคลัง / ส่งมอบแล้ว: เดิมเข้าคลังตอนสร้าง จึงรับเข้าเมื่อ created_at (ไม่รู้ผู้รับ received_by เป็น null)
+-- QA ปล่อยกล่องกักภายหลังจึงคืนกล่องเหล่านี้เป็น in_stock ไม่ใช่ pending_wh · trigger rf_stamp_version ประทับ (ตัวนับ + 1) แล้วเลื่อนตัวนับของโหมดนั้นให้ตรง
+do $$
+declare
+  v_mode boolean;
+begin
+  for v_mode in select distinct b.is_test from public.rf_fg_boxes b where b.status in ('in_stock', 'shipped') and b.received_at is null loop
+    update public.rf_fg_boxes set received_at = created_at
+    where is_test = v_mode and status in ('in_stock', 'shipped') and received_at is null;
+    update public.rf_master_state set version = version + 1, updated_at = now() where is_test = v_mode;
+  end loop;
+end;
+$$;
 
 -- 2. รายการ action ----------------------------------------------------------------------------------------------------------------
 -- private.rf_client_actions() จาก 20261128020000_bom_po_partial_fg_reverse.sql (+ receiveBoxes, reverseBoxReceipt, reverseBoxShip)
@@ -697,7 +713,7 @@ $$;
 revoke all on function private.rf_save_lots(public.employees, text, boolean, boolean, text, jsonb, bigint, bigint) from public, anon, authenticated;
 
 -- private.rf_save_qc(public.employees, boolean, boolean, jsonb, bigint, bigint) จาก 20261202010000_bom_sr_rod_store.sql
---   (+ ปลายทางของล็อตที่ QA ปล่อยครั้งแรก · กล่องที่ผ่านกลับไป pending_wh / in_stock ตามการรับของ WH)
+--   (+ ปลายทางของล็อตที่ QA ปล่อยครั้งแรก · กล่องที่กักไว้และผ่านกลับไป pending_wh / in_stock ตามการรับของ WH · fail ถอนยอดที่ WH นับเข้างาน RB)
 create or replace function private.rf_save_qc(p_actor public.employees, p_may boolean, p_may_close boolean, p_rows jsonb, p_base bigint, p_cur bigint)
 returns jsonb
 language plpgsql
@@ -792,11 +808,18 @@ begin
       updated_at = now()
     where id = v_lot.id
       and (qc is distinct from v_result or (v_result = 'pass' and hold_reasons <> '[]'::jsonb) or v_count);
-    -- กล่องที่ยังไม่ส่งมอบตามผล QA (20261206010000): ผ่าน = กลับที่เดิม (WH รับเข้าแล้ว received_at มีค่า = in_stock · ยังไม่รับ = pending_wh รอ WH รับ) · อื่น = hold
+    -- กล่องตามผล QA (20261206010000): ผ่าน = เฉพาะกล่องที่กักไว้ (hold) กลับที่เดิม (WH รับเข้าแล้ว received_at มีค่า = in_stock · ยังไม่รับ = pending_wh รอ WH รับ)
+    --   กล่องที่รอ WH / อยู่ในคลัง / ส่งมอบแล้วไม่ถูกแตะ (QA ผ่านซ้ำไม่ส่งกล่องในคลังกลับไปรอ WH) · อื่น = กล่องที่ยังไม่ส่งมอบและยังไม่กักเป็น hold
     update public.rf_fg_boxes b
     set status = (case when v_result <> 'pass' then 'hold' when b.received_at is null then 'pending_wh' else 'in_stock' end), updated_at = now()
-    where b.is_test = (select private.bom_test_mode()) and b.lot_no = v_lot.lot_no and b.status <> 'shipped'
-      and b.status <> (case when v_result <> 'pass' then 'hold' when b.received_at is null then 'pending_wh' else 'in_stock' end);
+    where b.is_test = (select private.bom_test_mode()) and b.lot_no = v_lot.lot_no
+      and (case when v_result = 'pass' then b.status = 'hold' else b.status not in ('shipped', 'hold') end);
+    -- QA ตัดสินไม่ผ่าน (fail · สถานะสุดท้าย) ล็อตที่นับยอดเข้างาน RB ไว้ตอน WH รับเข้า: ถอนยอดนั้นในธุรกรรมเดียวกัน (รายงาน good 0 ของงานบอกล็อต ยอด และเลขผลตรวจ · ล้าง wh_credit_*)
+    --   กติกาเดียวกับย้อนรับเข้า: ใบ completed = RF_INVALID_TRANSITION · ใบที่ยกเลิก / ไม่พบงาน = ล้างค่าที่จำไว้โดยไม่แตะงาน
+    if v_result = 'fail' and v_lot.wh_credit_qty is not null then
+      v_res := private.rf_box_uncredit(p_actor.first_name || ' ' || p_actor.last_name, v_lot, 'QA ตัดสินไม่ผ่าน ' || v_no);
+      v_jobs := v_jobs + (v_res ->> 'jobs')::integer;
+    end if;
     if v_count then
       perform private.rf_add_produced(v_lot.order_no, v_lot.good_qty, p_may_close, p_base, p_cur);
       -- QA ตัดสินล็อตตกแต่งเป็น pass ครั้งแรก = ชิ้นผ่านสถานีสุดท้าย ป้อนผลผลิตกลับงาน BOM ณ จุดเดียวกับที่นับเข้า WO

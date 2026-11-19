@@ -227,13 +227,14 @@
     const { ui, rules } = ctx;
     const { group } = event;
     const undone = event.reversed;
-    const detail = [group.code, group.customer ? whoseText(group) : "", showLot ? `ล็อต ${group.id}` : ""].filter(Boolean).join(" · ");
+    // หน้าล็อต (showLot = false): สินค้าและลูกค้าเป็นของล็อตที่หัวหน้าและข้อมูลล็อตบอกแล้ว จึงไม่ซ้ำในทุกแถว
+    const detail = showLot ? [group.code, group.customer ? whoseText(group) : "", `ล็อต ${group.id}`].filter(Boolean).join(" · ") : "";
     const button = event.reversible && canReverseBox(ctx)
       ? ui.openButton("ย้อน", "boxReverse", event.kind === "receive" ? { kind: "receipt", lotId: group.id } : { kind: "ship", lotId: group.id, ids: event.boxes.map(({ box }) => box.id) }, { className: "secondary small", ariaLabel: `ย้อน${BOX_KIND[event.kind]} ล็อต ${group.id}` }) : "";
     const label = `${BOX_KIND[event.kind] ?? event.kind} · ${boxCount(event.boxes)}`;
     const labelHtml = showLot ? mainLink(ctx, label, lotHref(group.id), "") : esc(label);
     const sign = event.kind === "unreceive" || event.kind === "unship" ? "−" : "";
-    return `<tr${showLot ? rowAttr(lotHref(group.id), undone ? "muted" : "") : undone ? ' class="muted"' : ""}><td class="nowrap small">${esc(rules.fmtDateTime(event.at))}</td><td>${labelHtml}${undone ? ` ${ui.badge("", "ถูกย้อน")}` : ""}<div class="small muted">${esc(detail)}</div>${event.note ? `<div class="small muted">${esc(event.note)}</div>` : ""}</td><td class="right rf-mono">${esc(`${sign}${rules.fmtQty(event.qty)} ${rfUnit(group.uom)}`)}</td><td class="small">${esc(event.by)}</td><td class="right">${button}</td></tr>`;
+    return `<tr${showLot ? rowAttr(lotHref(group.id), undone ? "muted" : "") : undone ? ' class="muted"' : ""}><td class="nowrap small">${esc(rules.fmtDateTime(event.at))}</td><td>${labelHtml}${undone ? ` ${ui.badge("", "ถูกย้อน")}` : ""}${detail ? `<div class="small muted">${esc(detail)}</div>` : ""}${event.note ? `<div class="small muted">${esc(event.note)}</div>` : ""}</td><td class="right rf-mono">${esc(`${sign}${rules.fmtQty(event.qty)} ${rfUnit(group.uom)}`)}</td><td class="small">${esc(event.by)}</td><td class="right">${button}</td></tr>`;
   }
   const HISTORY_HEAD = ["เวลา", "รายการ", { label: "จำนวน", className: "right" }, "ผู้ทำ", ""];
 
@@ -344,6 +345,7 @@
     if (!canBox(ctx)) return `<div class="wh-boxes">${group.inStock.map((box) => `<span class="rf-badge">${esc(String(box.id).split("-").pop())}</span>`).join("")}</div><p class="small muted">คลังสินค้า (WH) เป็นผู้ส่งมอบสินค้าให้ลูกค้า</p>`;
     return `<form novalidate data-rf-form="shipBoxes" data-rf-success="ส่งมอบกล่องให้ลูกค้าแล้ว"><fieldset class="wh-fieldset"><legend class="sr-only">${esc(`กล่องของล็อต ${group.id}`)}</legend><div class="wh-boxes">${boxes}</div></fieldset><div class="rf-row bom-step-next"><button class="btn rf-btn" type="submit" data-rf-confirm="${attr(shipConfirm(group))}">ส่งมอบให้ลูกค้า</button></div></form>`;
   }
+  // การ์ดของล็อตในหน้าส่งมอบ (ที่เดียวที่บอกล็อต สินค้า ลูกค้า และจำนวน) · หน้าล็อตใช้ shipForm ใต้หัวข้อสั้นแทน
   function lotShipCard(ctx, group) {
     const { ui } = ctx;
     const title = `${ui.link(`ล็อต ${group.id}`, lotHref(group.id), "rf-mono")} <span class="small muted">${esc([group.code, whoseText(group), `${lotQty(ctx, group, group.stockQty)} · ${boxCount(group.inStock)}`].filter(Boolean).join(" · "))}</span>`;
@@ -433,9 +435,13 @@
       group.pending.length && canBox(ctx) ? receiveButton(ctx, group, "") : "",
       group.inStock.length && canReverseBox(ctx) && !group.shipped.length && !group.hold.length ? ui.openButton("ย้อนการรับเข้า", "boxReverse", { kind: "receipt", lotId: group.id }, { className: "secondary" }) : "",
     ].join("");
-    const boxRows = group.boxes.map((box) => { const [tone, label] = BOX_STATUS[box.status] ?? ["", box.status]; return `<tr><td>${ui.mono(box.id)}</td><td class="right rf-mono">${esc(`${rules.fmtQty(box.qty)} ${rfUnit(box.uom)}`)}</td><td>${ui.badge(tone, label)}</td><td class="nowrap small">${box.receivedAt ? esc(rules.fmtDate(box.receivedAt)) : dash}</td><td class="nowrap small">${box.shippedAt ? esc(rules.fmtDate(box.shippedAt)) : dash}</td></tr>`; });
-    const boxes = ui.card(ui.table(["กล่อง", { label: "จำนวน", className: "right" }, "สถานะ", "รับเข้า", "ส่งมอบ"], boxRows), { title: esc("กล่องในล็อต"), flush: true });
-    const ship = group.inStock.length ? lotShipCard(ctx, group) : "";
+    // พิมพ์ป้ายกล่องซ้ำ (ป้ายติดตามงานของ RubberFlow ตัวเดิม: dialog boxTag) · แผนก WH และผู้ดูแลระบบ
+    const printable = canBox(ctx);
+    const tagButton = (box) => ui.openButton("ป้าย", "boxTag", { id: box.id }, { className: "secondary small", ariaLabel: `พิมพ์ป้าย ${box.id}` });
+    const boxRows = group.boxes.map((box) => { const [tone, text] = BOX_STATUS[box.status] ?? ["", box.status]; return `<tr><td>${ui.mono(box.id)}</td><td class="right rf-mono">${esc(`${rules.fmtQty(box.qty)} ${rfUnit(box.uom)}`)}</td><td>${ui.badge(tone, text)}</td><td class="nowrap small">${box.receivedAt ? esc(rules.fmtDate(box.receivedAt)) : dash}</td><td class="nowrap small">${box.shippedAt ? esc(rules.fmtDate(box.shippedAt)) : dash}</td>${printable ? `<td class="right">${tagButton(box)}</td>` : ""}</tr>`; });
+    const boxes = ui.card(ui.table(["กล่อง", { label: "จำนวน", className: "right" }, "สถานะ", "รับเข้า", "ส่งมอบ", ...(printable ? [{ label: "", className: "right" }] : [])], boxRows), { title: esc("กล่องในล็อต"), flush: true });
+    // ฟอร์มส่งมอบของหน้านี้: ล็อต สินค้า ลูกค้า และจำนวนอยู่ที่หัวหน้าและข้อมูลล็อตแล้ว การ์ดจึงมีแค่หัวข้อ · ไม่มีสิทธิ์ = ไม่มีการ์ด (กล่องอยู่ในตารางแล้ว)
+    const ship = group.inStock.length && canBox(ctx) ? ui.card(shipForm(ctx, group), { title: esc("ส่งมอบให้ลูกค้า") }) : "";
     const events = boxEvents([group]).sort((a, b) => b.at - a.at || String(b.key).localeCompare(String(a.key)));
     const history = ui.card(ui.table(HISTORY_HEAD, events.map((event) => boxEventRow(ctx, event, { showLot: false })), { emptyText: "ยังไม่มีรับเข้าหรือส่งมอบของล็อตนี้" }), { title: esc("ประวัติของล็อต"), flush: true });
     return { html: `${back}${F.pageHead(ctx, `ล็อต ${group.id}`, `${buttons}<span class="small muted" role="status" data-bom-sync>${esc(root.MNP_BOM?.syncText?.() ?? "")}</span>`)}<div class="sr-lot">${ui.card(facts, { className: "sr-lot-facts" })}${ship}</div>${boxes}${history}` };
@@ -503,6 +509,15 @@
       ${ui.field("เหตุผล", ui.input("note", { required: true, placeholder: receipt ? "เช่น รับผิดล็อต" : "เช่น ส่งผิดลูกค้า", extra: 'minlength="3" maxlength="300"' }), { required: true })}</form>`;
     return { html: ui.dialog("boxReverse", title, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="wh-box-reverse-form">${label}</button>` }) };
   };
+  // พิมพ์ป้ายกล่องซ้ำ: ใช้ dialog "tag" ของ RubberFlow ตัวเดิม (modules/rubberflow-documents.js · ป้ายติดตามงาน บาร์โค้ด ปุ่มพิมพ์) กับ context ของ RubberFlow ไม่สร้างป้ายชุดที่สอง
+  // แผนก WH และผู้ดูแลระบบ (canBox) · RubberFlow ยังไม่พร้อม / ไม่พบกล่อง = ไม่เปิด
+  dialogs.boxTag = (ctx, { id }) => {
+    if (!canBox(ctx) || rbState(ctx).status !== "ready") return null;
+    const rf = ctx.rubberflow?.();
+    const tag = root.MNP_RUBBERFLOW_DIALOGS?.tag;
+    if (!rf?.context || !tag) return null;
+    return tag(rf.context(new URLSearchParams()), { kind: "box", id });
+  };
 
   // ---------- หน้าแรกของโมดูล ----------
   // ตัวกรอง (select) เปลี่ยนแล้วไปที่หน้าเดิมพร้อมตัวกรองใหม่ · ช่องจำนวนส่งมอบเกินที่สั่ง (ฟอร์มส่งมอบของ PK)
@@ -520,8 +535,9 @@
     const id = ctx.view?.id;
     const head = (extra = "") => F.viewHead(ctx, extra);
     if (id === "stock") {
+      // งานที่รอ: ตัวเลขอยู่ที่เมนูข้าง "งานของฉัน" แล้ว · ลิงก์นี้แสดงเฉพาะจอที่ไม่เห็นเมนูข้าง (มือถือ / แท็บเล็ต · styles.css .wh-work-link) ให้ถึงงานได้โดยไม่ต้องเปิดเมนู
       const pending = workCount(ctx);
-      const work = pending ? ui.link(`งานที่รอ ${pending}`, whUrl({}), "btn rf-btn secondary small") : "";
+      const work = pending ? ui.link(`งานของฉัน ${pending}`, whUrl({}), "btn rf-btn secondary small wh-work-link") : "";
       return { html: `${head(work)}${stockView(ctx, rb)}`, bind: bindPage, actions: true };
     }
     if (id === "receive") return { html: `${head()}${receiveView(ctx, rb)}`, bind: bindPage, actions: true };

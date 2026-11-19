@@ -216,8 +216,10 @@ test("WH: the pending work is on the menu and on งานของฉัน —
   assert.match(cards[0], /data-rf-action="receiveBoxes" data-rf-args="\{&quot;lotId&quot;:&quot;FN-B&quot;\}" data-rf-confirm="รับกล่องของล็อต FN-B เข้า WH ทั้ง 2 กล่อง\?/);
   const menu = navOf(env, "FACTORY_WH").items;
   assert.equal(menu.find((item) => item.label === "งานของฉัน").count, 1, "the menu number counts the lot card");
-  // stock page: the work shows at the top without scrolling
-  assert.match(await wh(env, "tab=stock"), /<a class="btn rf-btn secondary small" href="#\/wh">งานที่รอ 1<\/a>/);
+  // stock page: the menu already shows the count, so the head link is only for screens without the side menu (hidden from 1041 px by styles.css)
+  assert.match(await wh(env, "tab=stock"), /<a class="btn rf-btn secondary small wh-work-link" href="#\/wh">งานของฉัน 1<\/a>/);
+  assert.doesNotMatch(await wh(env, "tab=stock"), /งานที่รอ/);
+  assert.match(fs.readFileSync("styles.css", "utf8"), /@media \(min-width: 1041px\) \{\s*\.wh-work-link \{ display: none; \}/, "wide screens hide it (the side menu is visible there)");
 });
 
 test("WH รับเข้า: PK goods per order with the receive form, close and close-short buttons, and one press per RubberFlow lot; the buttons are for the warehouse and admin only", async () => {
@@ -357,6 +359,14 @@ test("WH: the lot page shows the facts, every box with its state, the ship form 
   assert.equal(count(html, /<td><span class="rf-mono">BOX-A-00\d<\/span><\/td>/g), 3);
   assert.match(html, /data-rf-form="shipBoxes"/, "WH staff can ship from the lot page");
   assert.ok(!/data-rf-open="boxReverse"/.test(html), "and cannot reverse");
+  // show once: the ship card on the lot page has a short title; lot, product, customer and quantity are in the head and the facts already
+  const shipCard = html.slice(html.lastIndexOf("<section", html.indexOf('data-rf-form="shipBoxes"')), html.indexOf("</form>", html.indexOf('data-rf-form="shipBoxes"')));
+  assert.match(shipCard, /<h2>ส่งมอบให้ลูกค้า<\/h2>/);
+  assert.doesNotMatch(shipCard, /P-ALFA|PO-A|30 pcs|3 กล่อง/, "no second copy of the facts");
+  assert.equal(count(html, /ใบ PO-A · ALFA/g), 1, "the customer shows once on the lot page");
+  assert.match(await wh(env, "tab=deliver"), /ล็อต FN-A<\/a> <span class="small muted">P-ALFA · ใบ PO-A · ALFA · 30 pcs · 3 กล่อง<\/span>/, "the deliver list keeps them: it is the only place there");
+  // reprint a box label: one button per box for WH and admin, opening the RubberFlow tag dialog
+  assert.equal(count(html, /data-rf-open="boxTag" data-rf-args="\{&quot;id&quot;:&quot;BOX-A-00\d&quot;\}"[^>]*aria-label="พิมพ์ป้าย BOX-A-00\d"[^>]*>ป้าย<\/button>/g), 3);
   const pending = await wh(env, "lot=FN-B");
   assert.match(pending, /data-rf-action="receiveBoxes"/, "a lot waiting for WH has the receive button");
   assert.match(pending, /รอ WH รับเข้า 2/);
@@ -370,6 +380,31 @@ test("WH: the lot page shows the facts, every box with its state, the ship form 
   assert.match(orderPage, /<h2>ส่งมอบให้ลูกค้า<\/h2>/);
   assert.match(await wh(env, "order=NOPE-1"), /ไม่พบใบสั่งผลิตนี้/);
   assert.match(await wh(env, "order=DEMO-DRAFT-NONE"), /ไม่พบใบสั่งผลิตนี้/);
+});
+
+test("WH: a box label is reprinted from the lot page with the RubberFlow tag dialog, by WH and admin only; others see no ship card and no label button", async () => {
+  for (const who of ["staff", "head", "admin"]) {
+    const env = whEnv(who);
+    const ctx = env.context.MNP_BOM.context(new URLSearchParams("lot=FN-A"));
+    const built = env.context.MNP_BOM_DIALOGS.boxTag(ctx, { id: "BOX-A-002" });
+    assert.ok(built?.html, `${who}: the dialog opens`);
+    const rfBuilt = env.context.MNP_RUBBERFLOW_DIALOGS.tag(env.rf.context(new URLSearchParams()), { kind: "box", id: "BOX-A-002" });
+    // the same dialog as RubberFlow (only the print time may differ)
+    const strip = (text) => text.replace(/พิมพ์เมื่อ [^<]*/, "");
+    assert.equal(strip(built.html), strip(rfBuilt.html), `${who}: no second copy of the label`);
+    assert.match(built.html, /ป้ายติดตามงาน \(Traveler Tag\)/);
+    assert.match(built.html, /<div class="rf-tag-code rf-mono">BOX-A-002<\/div>/);
+    assert.match(built.html, /data-rf-print/);
+    assert.equal(typeof built.bind, "function", `${who}: the print button is wired`);
+    assert.equal(env.context.MNP_BOM_DIALOGS.boxTag(ctx, { id: "BOX-NONE" }), null, "an unknown box gives no dialog");
+  }
+  for (const who of ["planner", "manager"]) {
+    const env = whEnv(who);
+    const html = await wh(env, "lot=FN-A");
+    assert.doesNotMatch(html, /data-rf-open="boxTag"/, `${who}: no label button`);
+    assert.doesNotMatch(html, /data-rf-form="shipBoxes"|คลังสินค้า \(WH\) เป็นผู้ส่งมอบ/, `${who}: no ship card (the boxes are in the table)`);
+    assert.equal(env.context.MNP_BOM_DIALOGS.boxTag(env.context.MNP_BOM.context(new URLSearchParams("lot=FN-A")), { id: "BOX-A-002" }), null, `${who}: the dialog refuses`);
+  }
 });
 
 test("the old places keep no second copy: the order page in BOM has no receive, delivery, close or reverse controls; the RubberFlow finished-goods tab is one link; BOM's purchased-parts store page has no finished-goods table", async () => {

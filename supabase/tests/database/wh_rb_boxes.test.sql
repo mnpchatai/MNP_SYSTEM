@@ -2,7 +2,8 @@
 -- ตรวจทั้งฝั่งอนุญาตและปฏิเสธ: โครงสร้าง (คอลัมน์ / check / ฟังก์ชัน / สิทธิ์) · ปลายทางของล็อตตกแต่ง (sr / customer / กัก · WO ที่ผูกงานและไม่ผูก)
 -- · receiveBoxes (แผนก WH ทุกบทบาท / admin · กลุ่มวางแผน RB QA SR ไม่ได้ · ทั้งล็อต · นับยอดเข้างาน RB ครั้งเดียว · ส่งซ้ำไม่เขียน)
 -- · shipBoxes (แผนก WH / admin · กลุ่มวางแผนไม่ได้แล้ว) · reverseBoxShip / reverseBoxReceipt (ผู้จัดการแผนก WH / admin · เหตุผล · ถอนยอด · กล่องส่งมอบแล้ว / กัก / ใบปิด)
--- · QA กัก / ปล่อยหลัง WH รับ · ผู้ใช้จริงนอกโหมดทดสอบ (RF_TEST_MODE_ONLY) · ชุดเรคอร์ด
+-- · QA กัก / ปล่อยหลัง WH รับ (ผ่านซ้ำย้ายเฉพาะกล่องที่กัก) · QA fail ถอนยอดที่นับเข้างาน RB (ใบปิดแล้วถอนไม่ได้) · กล่องเดิมได้วันที่รับ
+-- · ผู้ใช้จริงนอกโหมดทดสอบ (RF_TEST_MODE_ONLY) · ชุดเรคอร์ด
 -- (authenticated อ่านตาราง rf_* / bom_* ตรงไม่ได้ จึงอ่านตารางและแก้ข้อมูลตั้งต้นด้วย reset role เสมอ)
 begin;
 create extension if not exists pgtap with schema extensions;
@@ -41,6 +42,9 @@ select ok(not has_function_privilege('anon', 'public.app_rf_save(jsonb,bigint,te
 select is((select count(*)::integer from private.lab_only_unguarded_functions()), 0, 'every callable public function keeps the lab-only guard');
 select ok(array['receiveBoxes', 'reverseBoxReceipt', 'reverseBoxShip', 'shipBoxes', 'recordFinishing', 'closePurchaseLine'] <@ private.rf_client_actions(),
   'the three box actions are on the RubberFlow whitelist and the earlier actions stay');
+-- กล่องก่อนไฟล์นี้ที่อยู่ในคลัง / ส่งมอบแล้วได้วันที่รับเข้า (= วันที่สร้าง) จาก migration จึงไม่มีกล่องที่อยู่ในคลังโดยไม่มีวันที่รับ
+select is((select count(*)::integer from public.rf_fg_boxes where status in ('in_stock', 'shipped') and received_at is null), 0,
+  'boxes in stock or shipped before this change carry a receipt time (backfilled from created_at)');
 
 -- 2. บัญชีทดสอบ บัญชีจริง และตัวช่วย ----------------------------------------------------------------------------------------------
 insert into auth.users (id, email, raw_user_meta_data) values
@@ -409,6 +413,48 @@ select wb_t.rf(jsonb_build_object('qcRecords', jsonb_build_object('upsert', json
 select is(wb_t.states('FN-C1') || '/' || (wb_t.job('JOB-W-RB') ->> 'qtyDone'), 'in_stock,in_stock,in_stock/60',
   'QA releases it: the received boxes are back in stock and the credit is unchanged');
 select is(wb_t.states('FN-U1'), 'pending_wh,pending_wh', 'a lot that WH has not received stays waiting');
+
+-- QA ผ่านซ้ำย้ายเฉพาะกล่องที่กัก: กล่องในคลังที่ไม่มีวันที่รับ (เหมือนกล่องก่อนไฟล์นี้) ไม่ถูกส่งกลับไปรอ WH
+reset role;
+update public.rf_fg_boxes set received_at = null, received_by = null where is_test and box_no = 'BOX-C1-001';
+update public.rf_master_state set version = version + 1 where is_test;
+set local role authenticated;
+select wb_t.rf(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(
+  '{"id":"QC-W4","lotId":"FN-C1","orderId":"WO-L","stage":"finishing","tests":[{"key":"hardness","value":65,"pass":true}],"result":"pass","note":"","inspector":"x","at":1}'::jsonb))), 'addQcRecord');
+select is(wb_t.states('FN-C1'), 'in_stock,in_stock,in_stock', 'a second pass leaves boxes in stock where they are, even one without a receipt time');
+select wb_t.rf(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(
+  '{"id":"QC-W5","lotId":"FN-U1","orderId":"WO-U","stage":"finishing","tests":[{"key":"hardness","value":65,"pass":true}],"result":"pass","note":"","inspector":"x","at":1}'::jsonb))), 'addQcRecord');
+select is(wb_t.states('FN-U1'), 'pending_wh,pending_wh', 'and boxes waiting for WH keep waiting');
+
+-- QA ตัดสินไม่ผ่าน (fail) ล็อตที่นับยอดเข้างาน RB แล้ว: ถอนยอดในธุรกรรมเดียวกัน · ใบที่ปิดแล้วถอนไม่ได้ (ทั้งคำสั่งถูกปฏิเสธ)
+select set_config('test.fail', '{"id":"QC-W6","lotId":"FN-C1","orderId":"WO-L","stage":"finishing","tests":[{"key":"hardness","value":80,"pass":false}],"result":"fail","note":"แข็งเกิน","inspector":"x","at":1}', true);
+reset role;
+update public.bom_orders set status = 'completed' where is_test and pi_no = '251205-27001';
+update public.bom_master_state set version = version + 1 where is_test;
+set local role authenticated;
+select throws_ok($$ select wb_t.rf(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.fail')::jsonb))), 'addQcRecord') $$,
+  'RF_INVALID_TRANSITION', 'a fail cannot take back a credit from a closed order');
+select is(wb_t.lot('FN-C1') ->> 'qc' || '/' || wb_t.states('FN-C1') || '/' || (wb_t.job('JOB-W-RB') ->> 'qtyDone') || '/' || (wb_t.lot('FN-C1') -> 'whCredit' ->> 'qty'),
+  'pass/in_stock,in_stock,in_stock/60/60', 'the refused fail changed nothing');
+reset role;
+update public.bom_orders set status = 'in_progress' where is_test and pi_no = '251205-27001';
+update public.bom_master_state set version = version + 1 where is_test;
+set local role authenticated;
+select set_config('test.bv', wb_t.bver()::text, true);
+select set_config('test.ba', wb_t.bom_audit('rubberflow:addQcRecord')::text, true);
+select lives_ok($$ select wb_t.rf(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.fail')::jsonb))), 'addQcRecord') $$,
+  'QA fails a lot that WH received and credited');
+select is(wb_t.lot('FN-C1') ->> 'qc' || '/' || wb_t.states('FN-C1'), 'fail/hold,hold,hold', 'the lot fails and its boxes are held');
+select ok(wb_t.lot('FN-C1') -> 'whCredit' = 'null'::jsonb, 'the lot forgets its credit');
+select is((wb_t.job('JOB-W-RB') ->> 'qtyDone')::numeric || '/' || (wb_t.job('JOB-W-RB') ->> 'status'), '0/in_progress', 'the credit is taken back from the RB job');
+select is((wb_t.job('JOB-W-RB') -> 'reports' -> -1 ->> 'good')::numeric || '/' || (wb_t.job('JOB-W-RB') -> 'reports' -> -1 ->> 'note') || '/' || (wb_t.job('JOB-W-RB') -> 'reports' -> -1 ->> 'by'),
+  '0/ย้อนรับเข้าคลังสินค้าสำเร็จรูป (WH) ล็อต FN-C1 ถอน 60 · QA ตัดสินไม่ผ่าน QC-W6/' || current_setting('test.n_sbx_qa_staff'),
+  'with a report entry of zero that names the lot, the quantity, the QC record and the inspector');
+select is(wb_t.bver(), current_setting('test.bv')::bigint + 1, 'one BOM counter step');
+select is(wb_t.bom_audit('rubberflow:addQcRecord'), current_setting('test.ba')::integer + 1, 'the BOM history records the fail');
+select wb_t.rf(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.fail')::jsonb || '{"id":"QC-W7"}'::jsonb))), 'addQcRecord');
+select is((wb_t.job('JOB-W-RB') ->> 'qtyDone')::numeric, 0::numeric, 'a second fail takes nothing back twice');
+select is((select count(*)::integer from jsonb_array_elements(wb_t.job('JOB-W-RB') -> 'reports') r where r ->> 'note' like '%QA ตัดสินไม่ผ่าน%'), 1, 'and adds no second report');
 
 -- 12. นอกโหมดทดสอบ: ผู้ใช้จริงถูกปฏิเสธ (สวิตช์ใช้งานจริงปิดอยู่) --------------------------------------------------------------------------------
 select set_config('test.real_rows', wb_t.lot_rows('FN-U1', 'pending_wh', 'in_stock', null, null, 1000)::text, true);

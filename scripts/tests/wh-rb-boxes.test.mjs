@@ -28,6 +28,12 @@ const saved = async (out) => {
   assert.equal(outcome.ok, true, outcome.error?.message);
   return out;
 };
+const denied = async (out, code) => {
+  assert.equal(out.ok, true, out.error?.message);
+  const outcome = await out.saving;
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error.code, code, outcome.error.message);
+};
 
 const RF_LISTS = ["materials", "recipes", "orders", "materialLots", "requisitions", "lots", "transfers", "fgBoxes", "qcRecords", "ncrs", "molds", "purchaseOrders"];
 const BOM_LISTS = ["items", "compounds", "colors", "colorSets", "packages", "boms", "processes", "routings", "customers", "orders", "jobs"];
@@ -43,7 +49,8 @@ const transfer = (id, orderId) => ({ id, lotId: "CU-0", orderId, from: "curing",
   status: "received", createdAt: NOW - DAY, createdBy: "พนักงาน RB", sentAt: NOW - DAY, sentBy: "พนักงาน RB", receivedAt: NOW - DAY, receivedBy: "พนักงาน RB" });
 
 // ฐานข้อมูลตั้งต้น: ใบ PI-W ปล่อยผลิตแล้ว งาน RB 100 ชิ้นผูก WO-L · WO-U ขายเป็นสินค้า · ล็อต customer สองล็อตรอ WH รับ · ใบส่งมอบถึงสถานีตกแต่งของทั้งสอง WO
-function seedData(storage) {
+// legacy = เพิ่มล็อต FN-O1 รุ่นก่อน 20261206010000: กล่องในคลังสองกล่องและส่งมอบแล้วหนึ่งกล่อง ไม่มีวันที่รับเข้า
+function seedData(storage, { legacy = false } = {}) {
   const bom = { version: 4, epoch: "bom-e1", ...Object.fromEntries(BOM_LISTS.map((list) => [list, []])), versions: Object.fromEntries(BOM_LISTS.map((list) => [list, {}])), tombstones: [], audit: [] };
   bom.orders = [{ id: "PI-W", status: "released", customer: "ลูกค้าเชื่อม", orderedAt: NOW, items: [], revision: 1 }];
   bom.jobs = [{ id: "JOB-W", orderId: "PI-W", dept: "RB", itemCode: "RB-ITEM", name: "เส้นยางทดสอบ", kind: "RB", uom: "pcs", qtyPlanned: 100, qtyRequired: 100, stockCounted: null,
@@ -58,14 +65,19 @@ function seedData(storage) {
   rf.lots = [{ id: "CU-0", stage: "curing", orderId: "WO-L", uom: "pcs", machine: "", shift: "D", sources: [], params: {}, goodQty: 400, scrapQty: 0, scrapReason: "", qc: "pass",
     holdReasons: [], transferredQty: 200, createdAt: NOW - DAY, operator: "พนักงาน RB", moldId: "MD-1" }, lotL, lotU];
   rf.fgBoxes = [...boxesOf(lotL, "WO-L", "ลูกค้าเชื่อม", "PI-W"), ...boxesOf(lotU, "WO-U", "BETA", "PO-U")];
+  if (legacy) {
+    const old = finishing("FN-O1", "WO-U", 30, 10, { destination: null, whCredit: undefined });
+    rf.lots.push(old);
+    rf.fgBoxes.push(...boxesOf(old, "WO-U", "", "", "in_stock").map((box, i) => (i === 2 ? { ...box, status: "shipped", shippedAt: NOW - 3600000, shippedBy: "ผู้วางแผน" } : box)));
+  }
   rf.transfers = [transfer("TR-L", "WO-L"), transfer("TR-U", "WO-U")];
   for (const list of ["orders", "lots", "fgBoxes", "transfers"]) for (const row of rf[list]) rf.versions[list][row.id] = 3;
   storage.setItem(RF_KEY, JSON.stringify(rf));
 }
 
-async function session() {
+async function session(options = {}) {
   const storage = memoryStorage();
-  seedData(storage);
+  seedData(storage, options);
   const mock = createMockSupabase({ sandbox: true, now: () => NOW, storage });
   const status = unwrap(await mock.client.rpc("app_sandbox_status"));
   const rows = Object.fromEntries(status.personas.map((row) => [row.id, row]));
@@ -90,7 +102,7 @@ async function session() {
     const reply = await mock.client.rpc("app_rf_save", { p_changes: { fgBoxes: { upsert: rows_ } }, p_base_version: master.version, p_action: action });
     return reply.error?.code ?? null;
   };
-  return { store, as, rf, job, states, raw, call, rows };
+  return { store, as, rf, job, states, raw, call, rows, mock };
 }
 const boxRows = async (s, lotId, from, to, kind, note) => (await s.rf()).fgBoxes.filter((box) => box.lotId === lotId && box.status === from)
   .map((box) => ({ ...box, status: to, ...(kind ? { moves: [...(box.moves ?? []), { kind, note }] } : {}) }));
@@ -222,6 +234,69 @@ test("shipping and reversals: WH ships, only the WH head or admin reverses with 
   await saved(s.store.run("reverseBoxShip", { ids: ["BOX-L1-003"], note: "ลูกค้าคืนของ" }));
   await saved(s.store.run("reverseBoxReceipt", { lotId: "FN-L1", note: "นับไม่ครบ" }));
   assert.deepEqual([await s.states("FN-L1"), (await s.job()).qtyDone], ["pending_wh,pending_wh,pending_wh", 0]);
+});
+
+test("boxes from before this change that are in stock or shipped get their creation time as the receipt time, and the counter moves once", async () => {
+  const s = await session({ legacy: true });
+  const master = await s.rf();
+  const old = master.fgBoxes.filter((box) => box.lotId === "FN-O1");
+  assert.deepEqual(old.map((box) => [box.status, box.receivedAt, box.receivedBy]), [["in_stock", NOW - DAY, undefined], ["in_stock", NOW - DAY, undefined], ["shipped", NOW - DAY, undefined]]);
+  assert.ok(master.fgBoxes.filter((box) => box.status === "pending_wh").every((box) => box.receivedAt === undefined), "a waiting box stays without a receipt");
+  assert.equal(master.version, 4, "one counter step over the seeded version 3");
+  assert.deepEqual(s.store.data().fgBoxes.filter((box) => box.lotId === "FN-O1").map((box) => box.receivedAt), [NOW - DAY, NOW - DAY, NOW - DAY], "the page sees the receipt time");
+  // QA กักแล้วปล่อย: กล่องเก่ากลับเข้าคลัง (ไม่ไปรอ WH) กล่องที่ส่งมอบแล้วไม่ถูกแตะ
+  await s.as("persona-qa");
+  await saved(s.store.run("addQcRecord", { lotId: "FN-O1", values: { hardness: 65 }, result: "hold" }));
+  assert.equal(await s.states("FN-O1"), "hold,hold,shipped");
+  await saved(s.store.run("addQcRecord", { lotId: "FN-O1", values: { hardness: 65 }, result: "pass" }));
+  assert.equal(await s.states("FN-O1"), "in_stock,in_stock,shipped", "QA releases the old boxes back into stock");
+});
+
+test("a QA pass moves only held boxes: a box in stock is never sent back to wait for WH, a waiting box keeps waiting", async () => {
+  const s = await session();
+  await s.as("persona-wh");
+  await saved(s.store.run("receiveBoxes", { lotId: "FN-U1" }));
+  // กล่องในคลังที่ไม่มีวันที่รับ (เหมือนกล่องเก่าที่ไม่ได้เติม): ผ่านซ้ำต้องไม่ย้ายไปรอ WH
+  s.mock.rf.edit((m) => {
+    m.version += 1;
+    const box = m.fgBoxes.find((row) => row.id === "BOX-U1-001");
+    delete box.receivedAt;
+    delete box.receivedBy;
+    m.versions.fgBoxes[box.id] = m.version;
+  });
+  await s.as("persona-qa");
+  await saved(s.store.run("addQcRecord", { lotId: "FN-U1", values: { hardness: 65 }, result: "pass" }));
+  assert.equal(await s.states("FN-U1"), "in_stock,in_stock", "the database keeps both boxes in stock");
+  assert.deepEqual(s.store.data().fgBoxes.filter((box) => box.lotId === "FN-U1").map((box) => box.status), ["in_stock", "in_stock"], "and so does the page");
+  await saved(s.store.run("addQcRecord", { lotId: "FN-L1", values: { hardness: 65 }, result: "pass" }));
+  assert.equal(await s.states("FN-L1"), "pending_wh,pending_wh,pending_wh", "the waiting boxes keep waiting");
+});
+
+test("a QA fail of a lot WH received takes its credit back from the RB job in the same save; a closed order refuses the fail", async () => {
+  const s = await session();
+  await s.as("persona-wh");
+  await saved(s.store.run("receiveBoxes", { lotId: "FN-L1" }));
+  assert.equal((await s.job()).qtyDone, 60);
+  await s.as("persona-qa");
+  await saved(s.store.run("addQcRecord", { lotId: "FN-L1", values: { hardness: 80 }, result: "hold" }));
+  assert.deepEqual([await s.states("FN-L1"), (await s.job()).qtyDone], ["hold,hold,hold", 60], "a hold keeps the credit");
+  s.mock.bom.edit((b) => { b.orders.find((row) => row.id === "PI-W").status = "completed"; });
+  await denied(s.store.run("addQcRecord", { lotId: "FN-L1", values: { hardness: 80 }, result: "fail" }), "RF_INVALID_TRANSITION");
+  assert.deepEqual([(await s.rf()).lots.find((row) => row.id === "FN-L1").qc, (await s.job()).qtyDone], ["hold", 60], "the refused fail changed nothing");
+  s.mock.bom.edit((b) => { b.orders.find((row) => row.id === "PI-W").status = "in_progress"; });
+  await s.store.catchUp();
+  const bomBefore = (await s.call("app_bom_master")).version;
+  const id = (await saved(s.store.run("addQcRecord", { lotId: "FN-L1", values: { hardness: 80 }, result: "fail" }))).result;
+  const lot = (await s.rf()).lots.find((row) => row.id === "FN-L1");
+  assert.deepEqual([lot.qc, lot.whCredit, await s.states("FN-L1")], ["fail", null, "hold,hold,hold"]);
+  const job = await s.job();
+  assert.deepEqual([job.qtyDone, job.status, job.reports.at(-1).good, job.reports.at(-1).note, job.reports.at(-1).by],
+    [0, "in_progress", 0, `ย้อนรับเข้าคลังสินค้าสำเร็จรูป (WH) ล็อต FN-L1 ถอน 60 · QA ตัดสินไม่ผ่าน ${id}`, "ธนา ตรวจสอบ"]);
+  assert.equal((await s.call("app_bom_master")).version, bomBefore + 1, "one BOM counter step");
+  assert.equal(s.store.data().lots.find((row) => row.id === "FN-L1").whCredit, null, "the page equals the database");
+  await saved(s.store.run("addQcRecord", { lotId: "FN-U1", values: { hardness: 80 }, result: "hold" }));
+  await saved(s.store.run("addQcRecord", { lotId: "FN-U1", values: { hardness: 80 }, result: "fail" }));
+  assert.equal((await s.call("app_bom_master")).version, bomBefore + 1, "a fail without a credit does not touch the BOM");
 });
 
 test("the demo seed gives the WH screens boxes in every state (waiting linked and for sale, in stock, shipped)", () => {

@@ -1071,10 +1071,12 @@
     d.qcRecords.unshift({ id, lotId: lot.id, orderId: lot.orderId, stage: lot.stage, tests, result, note: p.note || "", inspector: ctx.user?.name, at: ctx.now });
     lot.qc = result;
     if (result === "pass") lot.holdReasons = [];
-    // กล่องที่ยังไม่ส่งมอบ (ตรงกับ rf_save_qc ของ 20261206010000): ผ่าน = กลับที่เดิม (WH รับเข้าแล้ว = in_stock · ยังไม่รับ = pending_wh) · อื่น = hold
-    d.fgBoxes.filter((box) => box.lotId === lot.id && box.status !== "shipped").forEach((box) => {
+    // กล่อง (ตรงกับ rf_save_qc ของ 20261206010000): ผ่าน = เฉพาะกล่องที่กักไว้กลับที่เดิม (WH รับเข้าแล้ว = in_stock · ยังไม่รับ = pending_wh) · อื่น = กล่องที่ยังไม่ส่งมอบเป็น hold
+    // ล็อต fail ที่นับยอดเข้างาน RB ไว้: ฐานข้อมูลถอนยอดนั้นและล้าง whCredit (งาน BOM มาเองทางส่วนต่างของ BOM)
+    d.fgBoxes.filter((box) => box.lotId === lot.id && (result === "pass" ? box.status === "hold" : box.status !== "shipped")).forEach((box) => {
       box.status = result !== "pass" ? "hold" : box.receivedAt ? "in_stock" : "pending_wh";
     });
+    if (result === "fail" && lot.whCredit) lot.whCredit = null;
     if (lot.stage === "finishing" && result === "pass" && !lot.countedToOrder) {
       // ล็อตตกแต่งที่เคยถูกกักกันนับเข้าใบสั่งผลิตเมื่อผ่านเท่านั้น · ปลายทางที่ยังว่าง: WO ที่ผูกงาน BOM ไปคลังยางเส้นยาว (SR) · ที่ไม่ผูกงานส่งมอบให้ลูกค้าผ่าน WH
       lot.countedToOrder = true;
