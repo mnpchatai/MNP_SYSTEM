@@ -196,7 +196,7 @@ end $$;
 select private.lab_only_guard_table('public.bom_rod_lots');
 select private.lab_only_guard_table('public.bom_rod_moves');
 
--- ตารางใหม่รู้จักโหมดทดสอบแล้ว (นิยามจาก 20261121010000_bom_fg_receive_deliver.sql ทุกชื่อ แล้วเพิ่ม bom_rod_lots, bom_rod_moves)
+-- ตารางใหม่รู้จักโหมดทดสอบแล้ว (นิยามจาก 20261121010000_bom_fg_receive_deliver.sql ทุกชื่อ แล้วเพิ่ม bom_rod_lots, bom_rod_moves · คงชื่อ itwo_* ที่ migration itwo_work_orders ของ repo งานซ่อม IT เพิ่มไว้บน production 20261118093030 ชื่อที่ไม่มีตารางไม่มีผล)
 create or replace function private.sandbox_unguarded_tables()
 returns text[] language sql immutable set search_path = '' as $$
   select array['ncr_reports','ncr_responsibilities','ncr_losses','ncr_status_history','ncr_attachments',
@@ -208,7 +208,7 @@ returns text[] language sql immutable set search_path = '' as $$
     'bom_customers','bom_orders','bom_jobs','bom_stock','bom_stock_moves','bom_fg_moves','bom_rod_lots','bom_rod_moves',
     'rf_master_state','rf_materials','rf_recipes','rf_orders','rf_deleted_keys',
     'rf_molds','rf_material_lots','rf_requisitions','rf_lots','rf_transfers','rf_fg_boxes','rf_qc_records','rf_ncrs','rf_purchase_orders',
-    'client_error_logs']
+    'client_error_logs', 'itwo_work_orders','itwo_events','itwo_access_changes','itwo_doc_counters','itwo_admin_log']
 $$;
 revoke all on function private.sandbox_unguarded_tables() from public, anon, authenticated;
 
