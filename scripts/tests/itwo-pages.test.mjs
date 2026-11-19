@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 
@@ -48,11 +49,23 @@ test("the 'ใบของฉัน' tab shows how many orders came back for my 
   assert.equal(pages.tabs({}, "mine", {}), "");
 });
 
+test("the 'ใบของฉัน' tab says what waits: confirm, answer, or both with their numbers", () => {
+  const tab = (counts) => pages.tabs({ is_it_admin: true }, "it", counts).match(/<span class="itwo-tab-count" aria-label="([^"]*)" title="([^"]*)">(\d+)<\/span>/);
+  const both = tab({ mine: 3, mineParts: { confirm: 2, answer: 1 } });
+  assert.equal(both[1], "3 รายการ (รอคุณยืนยัน 2 · รอคุณตอบ 1)");
+  assert.equal(both[2], both[1], "title and aria say the same");
+  assert.equal(both[3], "3");
+  assert.equal(tab({ mine: 1, mineParts: { confirm: 0, answer: 1 } })[1], "1 รายการ ที่รอคุณตอบ");
+  assert.equal(tab({ mine: 2, mineParts: { confirm: 2, answer: 0 } })[1], "2 รายการ ที่รอคุณยืนยัน");
+  assert.match(pages.tabs({}, "mine", { mine: 1, mineParts: { confirm: 0, answer: 1 } }), /view-tabs/, "an employee with an unanswered question sees the bar");
+});
+
 /* ---------- รายการ ---------- */
 test("'ใบของฉัน' lists the number as a link, the status the requester understands, an urgent flag and Thai dates", () => {
   const html = pages.mineList(MINE);
   assert.match(html, /href="#\/office\?module=work-order&amp;view=order&amp;id=00000000-0000-4000-8000-000000000001"[^>]*>IT06-26\/001</);
-  assert.match(html, /IT ปิดงานแล้ว รอคุณยืนยัน/);
+  assert.match(html, /IT ส่งงานแล้ว รอคุณยืนยัน/);
+  assert.doesNotMatch(html, /ปิดงาน/);
   assert.match(html, /รอผู้จัดการแผนก/);
   assert.equal(count(html, /badge urgent-flag/g), 1);
   assert.match(html, /25\/11\/2569/);
@@ -61,6 +74,12 @@ test("'ใบของฉัน' lists the number as a link, the status the requ
   assert.match(html, /เบ็ดเตล็ดอื่นๆ/, "an order without details falls back to the request type");
   assert.doesNotMatch(html, /<b>/, "user text is escaped");
   assert.match(html, /&lt;b&gt;ใหม่&lt;\/b&gt;/);
+});
+
+test("'ใบของฉัน' shows a question waiting for the requester as 'รอคุณตอบ', amber, with who asked and where it returns in the badge title", () => {
+  const html = pages.mineList([{ ...MINE[1], status: "need_info", info_stage: "it_mgr", info_return_status: "pending_it_mgr" }]);
+  assert.match(html, /<span class="badge more_info" title="ผู้อนุมัติขั้น IT ถามคุณ · ตอบแล้วใบกลับไปที่ รอผู้อนุมัติขั้น IT">รอคุณตอบ<\/span>/);
+  assert.doesNotMatch(html, /รอผู้แจ้งตอบ/, "the requester is told it is theirs to answer, not 'waiting for the requester'");
 });
 
 test("an empty list says so and points at the new-order button", () => {
@@ -74,6 +93,37 @@ test("approvals show whose step is waiting for me, who asked and which departmen
   assert.match(html, /รอคุณอนุมัติขั้น IT/);
   assert.match(html, /รอคุณอนุมัติขั้นผู้จัดการแผนก/);
   assert.match(html, /สมชาย ใจดี · การตลาด/);
+});
+
+test("approvals: orders already asked (need_info) are a separate 'รอผู้แจ้งตอบ' group with its own count; the first table keeps only what waits for me", () => {
+  const waiting = { ...MINE[1], status: "pending_dept", pending_step: "dept", requester_name: "ก", department_name: "ข" };
+  const asked = { ...MINE[0], id: "u9", doc_no: "IT06-26/009", status: "need_info", pending_step: "dept", requester_name: "สมชาย <i>ใจดี", department_name: "การตลาด", info_stage: "dept", info_return_status: "pending_dept" };
+  const html = pages.approvalsList([asked, waiting]);
+  const groups = [...html.matchAll(/data-group="([a-z_]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(groups, ["awaiting_info"]);
+  const [first, second] = html.split('data-group="awaiting_info"');
+  assert.match(first, /TEST-IT06-26\/001/);
+  assert.doesNotMatch(first, /IT06-26\/009/, "an asked order is not in the 'waiting for you' table");
+  assert.match(first, /รอคุณอนุมัติขั้นผู้จัดการแผนก/);
+  assert.match(second, /IT06-26\/009/);
+  assert.match(second, /<span class="badge more_info" title="ถามโดย ผู้จัดการแผนก · ตอบแล้วใบกลับไปที่ รอผู้จัดการแผนก">รอผู้แจ้งตอบ<\/span>/);
+  assert.match(visibleText(second), /รอผู้แจ้งตอบ 1/);
+  assert.doesNotMatch(second, /รอคุณอนุมัติ/, "nothing to approve on it");
+  assert.doesNotMatch(html, /<i>ใจดี/, "the requester name is escaped");
+  // ไม่มีใบ need_info = ผลเดิม (ตารางเดียว ไม่มีกลุ่ม) · มีแต่ need_info = บอกว่าไม่มีใบรอคุณอนุมัติ
+  assert.doesNotMatch(pages.approvalsList([waiting]), /awaiting_info|itwo-group/);
+  assert.match(visibleText(pages.approvalsList([asked])), /ไม่มีใบสั่งงานที่รออนุมัติจากคุณ/);
+});
+
+test("the IT list puts orders waiting for the requester in their own group, not under work to start", () => {
+  const base = { requester_full_name: "ก", department_name: "ข", has_dept_approved: true, has_it_mgr_approved: true };
+  const html = pages.itList([{ ...MINE[0], ...base, status: "need_info", is_urgent: true, info_stage: "it", info_return_status: "in_progress" }, { ...MINE[1], ...base, id: "x2", doc_no: "IT06-26/077", status: "approved", is_urgent: false }]);
+  assert.deepEqual([...html.matchAll(/data-group="([a-z_]+)"/g)].map((match) => match[1]), ["to_start", "awaiting_info"]);
+  const asked = html.slice(html.indexOf('data-group="awaiting_info"'));
+  assert.match(asked, /IT06-26\/001/);
+  assert.match(asked, /<span class="badge more_info" title="ถามโดย ทีม IT · ตอบแล้วใบกลับไปที่ กำลังดำเนินการ">รอผู้แจ้งตอบ<\/span>/);
+  assert.doesNotMatch(html.slice(0, html.indexOf('data-group="awaiting_info"')), /IT06-26\/001/);
+  assert.match(html.slice(0, html.indexOf('data-group="awaiting_info"')), /IT06-26\/077/);
 });
 
 test("the IT list is grouped by status; urgent work is on top; empty groups and finished work are not in the way", () => {
@@ -253,6 +303,131 @@ test("an order with no files and no rework has no gallery and no rework card; an
   const filesOnly = pages.detailPage({ ...DETAIL, attachments: [FILE("f1", "a.pdf")] });
   assert.match(filesOnly, /id="attachment-gallery"/);
   assert.doesNotMatch(filesOnly, /ประวัติการแก้ไขงาน/);
+});
+
+/* ---------- ถาม-ตอบ ---------- */
+const CFILE = (id, name) => ({ id, storage_path: `o/${id}.pdf`, bucket: "itwo-files", file_name: name, mime_type: "application/pdf", size_bytes: 1536, created_at: "2026-11-19T03:05:00Z" });
+const QUESTION = { id: 7, kind: "question", stage: "it", body: "ขอไฟล์ต้นฉบับ\nบรรทัดสอง <script>alert(1)</script>", reply_to: null, created_at: "2026-11-19T03:00:00Z", author_employee_no: "IT1", author_full_name: "ไอที <b>หนึ่ง</b>", attachments: [CFILE("c1", "ถาม <img src=x onerror=1>.pdf")] };
+const ANSWER = { id: 12, kind: "answer", stage: "it", body: "แนบมาให้แล้ว", reply_to: 7, created_at: "2026-11-19T04:00:00Z", author_employee_no: "MK1", author_full_name: "สมชาย ใจดี", attachments: [CFILE("c2", "ต้นฉบับ.pdf")] };
+const QUESTION2 = { id: 20, kind: "question", stage: "dept", body: "ใช้กับงานไหน", reply_to: null, created_at: "2026-11-19T05:00:00Z", author_employee_no: "MK0", author_full_name: "สมหญิง ผู้จัดการ", attachments: [] };
+const pendingOf = (comment) => ({ comment_id: comment.id, stage: comment.stage, body: comment.body, asked_at: comment.created_at, asked_by_employee_no: comment.author_employee_no, asked_by_full_name: comment.author_full_name });
+const NEED_INFO = { ...DETAIL, status: "need_info", info_return_status: "in_progress", comments: [QUESTION], info_pending: pendingOf(QUESTION) };
+
+test("a need_info order shows the amber 'รอผู้แจ้งตอบ' badge and a line saying where it goes back to after the answer", () => {
+  const html = pages.detailPage(NEED_INFO);
+  assert.match(html, /<span class="badge more_info">รอผู้แจ้งตอบ<\/span>/);
+  assert.match(visibleText(html), /รอผู้แจ้งตอบ · ตอบแล้วใบกลับไปที่ กำลังดำเนินการ/);
+  assert.doesNotMatch(pages.detailPage({ ...DETAIL }), /ตอบแล้วใบกลับไปที่/);
+});
+
+test("'ถามผู้แจ้ง' is a secondary button with a hidden ask form (message required up to 2000, optional files); no right to ask = no form", () => {
+  const html = pages.detailPage({ ...DETAIL, allowed_actions: ["approve", "reject", "request_info"] });
+  assert.deepEqual([...html.matchAll(/data-itwo-action="([a-z_]+)"/g)].map((match) => match[1]), ["approve", "reject", "request_info"]);
+  assert.match(html, /<button type="button" class="btn secondary" data-itwo-action="request_info">ถามผู้แจ้ง<\/button>/);
+  assert.match(html, /<section class="card itwo-ask-card" id="itwo-ask-card"[^>]* hidden>/);
+  assert.match(html, /<textarea class="textarea" id="itwo-ask-body" name="body" rows="4" maxlength="2000">/);
+  assert.match(html, /id="itwo-ask-files" name="itwo-ask-files" type="file" multiple data-attachment-limit="per-file"/);
+  assert.equal(count(html.slice(html.indexOf('id="itwo-ask-card"')), /field-required/g), 1, "the message is required, the files are not");
+  assert.match(html, /id="itwo-ask-form"/);
+  assert.match(html, /id="itwo-ask-cancel"/);
+  assert.match(html, /ส่งคำถาม/);
+  assert.doesNotMatch(pages.detailPage({ ...DETAIL, allowed_actions: ["approve"] }), /itwo-ask-card|itwo-ask-form/);
+});
+
+test("the requester sees the open question first (who, which stage, when, text, files) with an open answer form; no button for it and no copy in the Q&A card", () => {
+  const html = pages.detailPage({ ...NEED_INFO, comments: [QUESTION, ANSWER, QUESTION2], info_pending: pendingOf(QUESTION2), allowed_actions: ["provide_info", "cancel"] });
+  const card = html.match(/<section class="card itwo-answer-card"[\s\S]*?<\/section>/)[0];
+  assert.match(card, /<h2 id="itwo-answer-title">ผู้จัดการแผนก ถามคุณ<\/h2>/);
+  assert.match(visibleText(card), /โดย สมหญิง ผู้จัดการ · 19\/11\/2569 12:00/);
+  assert.match(card, /ใช้กับงานไหน/);
+  assert.match(card, /<textarea class="textarea" id="itwo-answer-body" name="body" rows="4" maxlength="2000">/);
+  assert.match(card, /ตอบแล้วใบจะกลับไปที่ กำลังดำเนินการ/);
+  assert.match(card, /id="itwo-answer-files" name="itwo-answer-files" type="file" multiple/);
+  assert.match(card, /ส่งคำตอบ/);
+  assert.doesNotMatch(card, / hidden>/, "the answer form is open");
+  assert.deepEqual([...html.matchAll(/data-itwo-action="([a-z_]+)"/g)].map((match) => match[1]), ["cancel"], "answering is the form, not a button; cancelling stays");
+  assert.ok(html.indexOf("itwo-answer-card") < html.indexOf("itwo-actions-title"), "the question comes before the buttons");
+  // ถาม-ตอบ แสดงประวัติก่อนหน้า ไม่ซ้ำคำถามที่อยู่ในการ์ดตอบ
+  const history = html.match(/<section class="card itwo-comments"[\s\S]*?<\/section>/)[0];
+  assert.deepEqual([...history.matchAll(/data-comment="(\d+)"/g)].map((match) => match[1]), ["7", "12"]);
+  assert.doesNotMatch(history, /ใช้กับงานไหน/);
+});
+
+test("without the right to answer the open question is in the Q&A card, marked as waiting for the requester, and there is no answer form", () => {
+  const html = pages.detailPage({ ...NEED_INFO, comments: [QUESTION2], info_pending: pendingOf(QUESTION2), allowed_actions: ["reject"] });
+  assert.doesNotMatch(html, /itwo-answer-card|itwo-answer-form/);
+  const history = html.match(/<section class="card itwo-comments"[\s\S]*?<\/section>/)[0];
+  assert.match(history, /ใช้กับงานไหน/);
+  assert.match(history, /<span class="badge more_info">รอผู้แจ้งตอบ<\/span>/);
+});
+
+test("the Q&A card lists every message in order: ask/answer, stage, author, Thai date and time, escaped text with its line breaks kept, and its own files", () => {
+  const html = pages.detailPage({ ...DETAIL, status: "in_progress", comments: [QUESTION, ANSWER] });
+  const card = html.match(/<section class="card itwo-comments"[\s\S]*?<\/section>/)[0];
+  assert.match(visibleText(card), /ถาม-ตอบ 2/);
+  const items = [...card.matchAll(/<article class="itwo-comment is-(\w+)" data-comment="(\d+)">([\s\S]*?)<\/article>/g)];
+  assert.deepEqual(items.map((item) => [item[1], item[2]]), [["question", "7"], ["answer", "12"]]);
+  assert.match(visibleText(items[0][3]), /ถาม · ทีม IT โดย ไอที &lt;b&gt;หนึ่ง&lt;\/b&gt; · 19\/11\/2569 10:00/);
+  assert.match(visibleText(items[1][3]), /ตอบ · ทีม IT โดย สมชาย ใจดี · 19\/11\/2569 11:00/);
+  assert.match(items[0][3], /<p class="itwo-text">ขอไฟล์ต้นฉบับ\nบรรทัดสอง &lt;script&gt;alert\(1\)&lt;\/script&gt;<\/p>/, "line breaks stay (pre-wrap) and the markup is inert");
+  assert.doesNotMatch(html, /<script>|<b>หนึ่ง|<img src=x/, "nothing from a comment, an author or a file name is live markup");
+  assert.match(items[0][3], /data-attachment="c1"/);
+  assert.match(items[0][3], /ถาม &lt;img src=x onerror=1&gt;\.pdf/);
+  assert.doesNotMatch(items[0][3], /data-attachment="c2"/, "a message shows only its own files");
+  assert.match(items[1][3], /data-attachment="c2"/);
+  // ไม่มีข้อความ = ไม่มีการ์ด
+  assert.doesNotMatch(pages.detailPage({ ...DETAIL, comments: [] }), /itwo-comments|ถาม-ตอบ/);
+  assert.doesNotMatch(pages.detailPage(DETAIL), /itwo-comments/);
+});
+
+test("files of the Q&A messages are inside the one #attachment-gallery together with the order's own files; with no file anywhere there is no gallery", () => {
+  const html = pages.detailPage({ ...DETAIL, attachment_flag: "yes", attachments: [FILE("f1", "แบบ.pdf")], comments: [QUESTION, ANSWER], status: "in_progress" });
+  assert.equal(count(html, /id="attachment-gallery"/g), 1);
+  const gallery = html.slice(html.indexOf('id="attachment-gallery"'));
+  for (const id of ["f1", "c1", "c2"]) assert.equal(count(gallery, new RegExp(`<figure class="attachment-tile" data-attachment="${id}">`, "g")), 1, `${id} once, inside the gallery`);
+  assert.equal(count(html, /<figure class="attachment-tile"/g), 3, "no tile is drawn twice (the gallery fills each tile by id)");
+  // ไฟล์มีแต่ในข้อความ ก็ต้องมี gallery
+  const commentOnly = pages.detailPage({ ...DETAIL, comments: [ANSWER], status: "in_progress" });
+  assert.equal(count(commentOnly, /id="attachment-gallery"/g), 1);
+  assert.ok(commentOnly.indexOf('id="attachment-gallery"') < commentOnly.indexOf('id="itwo-comments"'));
+  // ข้อความที่ไม่มีไฟล์ = ไม่มี gallery
+  assert.doesNotMatch(pages.detailPage({ ...DETAIL, comments: [QUESTION2], status: "in_progress" }), /attachment-gallery/);
+  // ไฟล์ของคำถามที่ค้างอยู่ขึ้นที่การ์ดตอบ (ครั้งเดียว) ไม่ซ้ำในถาม-ตอบ
+  const answering = pages.detailPage({ ...NEED_INFO, allowed_actions: ["provide_info"] });
+  assert.equal(count(answering, /<figure class="attachment-tile" data-attachment="c1">/g), 1);
+  assert.equal(count(answering, /id="attachment-gallery"/g), 1);
+  assert.ok(answering.indexOf('id="attachment-gallery"') < answering.indexOf("itwo-answer-card"), "the gallery wraps the answer card too");
+});
+
+test("the print sheet adds a Q&A table only when there are messages: number, ask/answer, stage, by, Thai date and time, text, file count; rows may not split across pages", () => {
+  assert.doesNotMatch(pages.printSheet(DETAIL), /ประวัติถาม-ตอบ|itwo-sheet-comments/);
+  const html = pages.printSheet({ ...DETAIL, status: "need_info", info_return_status: "in_progress", comments: [ANSWER, QUESTION, QUESTION2] });
+  assert.match(html, /<h2 class="itwo-sheet-section">ประวัติถาม-ตอบ<\/h2>/);
+  const table = html.match(/<table class="itwo-sheet-table itwo-sheet-comments">[\s\S]*?<\/table>/)[0];
+  assert.deepEqual([...table.matchAll(/<th>([^<]+)<\/th>/g)].map((match) => match[1]), ["ลำดับ", "ถาม/ตอบ", "ขั้น", "โดย", "วันเวลา", "ข้อความ", "จำนวนไฟล์"]);
+  const rows = table.match(/<tr>[\s\S]*?<\/tr>/g);
+  assert.equal(rows.length, 4, "a header row and one row per message, in the order written");
+  assert.match(visibleText(rows[1]), /^ 1 ถาม ทีม IT ไอที &lt;b&gt;หนึ่ง&lt;\/b&gt; 19\/11\/2569 10:00 ขอไฟล์ต้นฉบับ\s*บรรทัดสอง &lt;script&gt;alert\(1\)&lt;\/script&gt; 1 $/);
+  assert.match(visibleText(rows[2]), /^ 2 ตอบ ทีม IT สมชาย ใจดี 19\/11\/2569 11:00 แนบมาให้แล้ว 1 $/);
+  assert.match(visibleText(rows[3]), /^ 3 ถาม ผู้จัดการแผนก สมหญิง ผู้จัดการ 19\/11\/2569 12:00 ใช้กับงานไหน 0 $/, "a message without files counts 0");
+  assert.doesNotMatch(html, /<script>|<b>หนึ่ง/);
+  assert.doesNotMatch(html, /<img|data-attachment|attachment-tile/, "no pictures on paper; only the count");
+  assert.ok(html.indexOf("ประวัติถาม-ตอบ") < html.indexOf("ลายเซ็น"), "the Q&A history comes before the signatures");
+  assert.match(html, /สถานะใบสั่งงาน ณ ที่พิมพ์: รอผู้แจ้งตอบ/);
+});
+
+test("print: the IT signature slot is 'ส่งงาน', and a Q&A history sits after the rework history", () => {
+  const html = pages.printSheet({ ...DETAIL, status: "in_progress", reworks: [ROUND(1, "แก้สี", "2026-12-01")], comments: [QUESTION2] });
+  assert.match(html, /IT ผู้ดำเนินการ \(ส่งงาน\)/);
+  assert.doesNotMatch(html, /ปิดงาน/);
+  assert.ok(html.indexOf("ประวัติการแก้ไขงาน") < html.indexOf("ประวัติถาม-ตอบ"));
+});
+
+test("the stylesheet keeps the Q&A print table's rows whole and repeats its header like the rework table", () => {
+  const css = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
+  assert.match(css, /\.itwo-sheet-reworks, \.itwo-sheet-comments \{ break-inside: auto; \}/);
+  assert.match(css, /\.itwo-sheet-reworks thead, \.itwo-sheet-comments thead \{ display: table-header-group; \}/);
+  assert.match(css, /\.itwo-sheet-reworks tr, \.itwo-sheet-comments tr \{ break-inside: avoid; \}/);
 });
 
 test("the upload panel shows each file's state, a summary, and offers a retry only for failed files once idle", () => {

@@ -64,6 +64,8 @@ function world({ as = "emp", draft = null } = {}) {
   const makers = { // ตัวควบคุมที่ต้องมีค่าเริ่มต้นไม่ใช่ el() เปล่า
     "#itwo-form-card": () => host("#itwo-form-card"),
     "#itwo-rework-card": () => host("#itwo-rework-card", { hidden: true }),
+    "#itwo-ask-card": () => host("#itwo-ask-card", { hidden: true }),
+    "#itwo-answer-card": () => host("#itwo-answer-card"),
   };
   function host(selector, props = {}) {
     return el({ ...props, get innerHTML() { return hosts[selector] ?? ""; }, set innerHTML(html) { hosts[selector] = html; } });
@@ -264,7 +266,7 @@ test("the 'ใบของฉัน' tab carries the number of orders waiting fo
   const order = await closedOrder(w);
   await w.open("");
   assert.match(w.html, /view-tabs[\s\S]*ใบของฉัน <span class="itwo-tab-count" aria-label="1 รายการ ที่รอคุณยืนยัน"/);
-  assert.match(w.html, /IT ปิดงานแล้ว รอคุณยืนยัน/);
+  assert.match(w.html, /IT ส่งงานแล้ว รอคุณยืนยัน/);
   // ผู้ใช้ที่มีหลายแท็บเห็นเลขเดียวกันจากแท็บอื่น (นับเฉพาะใบของตัวเอง)
   w.as("mgr");
   await w.open("");
@@ -363,7 +365,7 @@ test("a whole order walks from filing to 'received' through the buttons the deta
   // ผู้จัดการแผนก: อนุมัติ / ไม่อนุมัติ
   w.as("mgr");
   await w.open(detailQuery);
-  assert.deepEqual(w.buttons(), ["approve", "reject"]);
+  assert.deepEqual(w.buttons(), ["approve", "reject", "request_info"], "the approver may also ask the requester");
   await w.click("approve");
   assert.equal(w.calls.confirms.length, 1, "approving asks for confirmation");
   assert.match(w.calls.confirms[0].title, /อนุมัติใบสั่งงานนี้/);
@@ -376,17 +378,21 @@ test("a whole order walks from filing to 'received' through the buttons the deta
   // ผู้อนุมัติขั้น IT
   w.as("itapp");
   await w.open(detailQuery);
-  assert.deepEqual(w.buttons(), ["approve", "reject"]);
+  assert.deepEqual(w.buttons(), ["approve", "reject", "request_info"]);
   await w.click("approve");
 
-  // IT ผู้ดูแลงาน: เริ่ม → ปิดงาน (ไม่มีส่วนสิทธิ์ให้แก้แล้ว)
+  // IT ผู้ดูแลงาน: เริ่ม → ส่งงาน (ไม่มีส่วนสิทธิ์ให้แก้แล้ว)
   w.as("itadm");
   await w.open(detailQuery);
-  assert.deepEqual(w.buttons(), ["start"]);
+  assert.deepEqual(w.buttons(), ["request_info", "start"]);
   assert.doesNotMatch(w.html, /itwo-access-edit/);
   await w.click("start");
-  assert.deepEqual(w.buttons(), ["complete"]);
+  assert.deepEqual(w.buttons(), ["request_info", "complete"]);
+  assert.match(w.html, /data-itwo-action="complete">ส่งงาน<\/button>/, "IT's button says 'ส่งงาน'");
+  assert.doesNotMatch(w.html, /ปิดงาน/);
   await w.click("complete");
+  assert.match(w.calls.confirms.at(-1).title, /ส่งงานใบสั่งงานนี้/);
+  assert.match(w.calls.confirms.at(-1).confirmLabel, /ส่งงาน/);
   assert.match(w.calls.confirms.at(-1).message, /ส่งกลับให้ผู้แจ้งตรวจ/);
   // งานกลับไปหาผู้แจ้ง: บอกชื่อผู้แจ้ง และในโหมดทดสอบ (ผู้แจ้งเป็นบัญชีทดสอบอีกคน) บอกให้สลับบัญชีไปยืนยัน/ขอแก้ไข
   assert.deepEqual(w.calls.toasts.at(-1), { message: "ส่งกลับให้ สมชาย ใจดี ตรวจและยืนยันแล้ว · สลับเป็นบัญชีผู้แจ้งเพื่อยืนยันหรือขอแก้ไข", kind: "info" });
@@ -401,7 +407,7 @@ test("a whole order walks from filing to 'received' through the buttons the deta
   const timeline = [...w.html.matchAll(/<strong>([^<]+)<\/strong><p class="timeline-item-detail">โดย ([^<]+)<\/p>/g)].map((match) => `${match[1]} / ${match[2]}`);
   assert.deepEqual(timeline, [
     "แจ้งงาน / สมชาย ใจดี", "ผู้จัดการแผนกอนุมัติ / สมหญิง ผู้จัดการ", "ผู้อนุมัติขั้น IT อนุมัติ / รสริน เชน",
-    "IT เริ่มดำเนินการ / ไอที ผู้ดูแล", "IT ปิดงาน / ไอที ผู้ดูแล", "ผู้แจ้งยืนยันรับงาน / สมชาย ใจดี",
+    "IT เริ่มดำเนินการ / ไอที ผู้ดูแล", "IT ส่งงาน / ไอที ผู้ดูแล", "ผู้แจ้งยืนยันรับงาน / สมชาย ใจดี",
   ]);
   assert.match(w.html, /\d{2}\/\d{2}\/2569 \d{2}:\d{2}/, "Thai dates and Bangkok time");
 });
@@ -471,7 +477,7 @@ test("'แก้ไขงาน': the button opens the form, the rework is sent 
   assert.match(w.html, /แก้ไขครั้งที่ 1 · กำหนด 05\/12\/2569/);
   assert.equal(w.html.includes('data-group="in_progress"'), true);
   await w.open(query);
-  assert.deepEqual(w.buttons(), ["complete"]);
+  assert.deepEqual(w.buttons(), ["request_info", "complete"]);
   await w.click("complete");
   w.as("emp");
   await w.open(query);
@@ -1217,6 +1223,400 @@ test("approve: the IT-step approver is told when one click counts as both steps 
   assert.doesNotMatch(w.calls.confirms.at(-1).message, /ทั้งขั้นแผนกและขั้น IT/);
 });
 
+/* ---------- ถามผู้แจ้ง / ตอบคำถาม (รุ่น 3) ---------- */
+// ใบที่อนุมัติครบแล้ว (ผู้แจ้งเป็น emp) รอ IT เริ่มงาน
+async function approvedOrder(w, overrides = {}) {
+  const order = await w.create(overrides);
+  w.as("mgr");
+  await w.context.sb.rpc("app_itwo_approve", { p_work_order_id: order.id });
+  w.as("itapp");
+  await w.context.sb.rpc("app_itwo_approve", { p_work_order_id: order.id });
+  w.as("emp");
+  w.calls.rpc.length = 0;
+  return order;
+}
+const askAs = async (w, who, orderId, body, extra = {}) => {
+  w.as(who);
+  const asked = await w.context.sb.rpc("app_itwo_request_info", { p_work_order_id: orderId, p_body: body });
+  assert.equal(asked.error, null, extra.note ?? "the question was accepted");
+  w.as("emp");
+  w.calls.rpc.length = 0;
+  return asked.data.comment_id;
+};
+const submitForm = (w, selector) => w.elements[selector].listeners.submit[0]({ preventDefault() {} });
+
+test("IT asks the requester: the button opens the form, an empty or over-long message is stopped, the confirm asks first, then the order is 'รอผู้แจ้งตอบ' and IT has no start/complete", async () => {
+  const w = world();
+  const order = await approvedOrder(w);
+  const query = `view=order&id=${order.id}`;
+  w.as("itadm");
+  await w.open(query);
+  assert.deepEqual(w.buttons(), ["request_info", "start"]);
+  const card = w.elements["#itwo-ask-card"];
+  assert.equal(card.hidden, true, "the ask form starts hidden");
+  await w.click("request_info");
+  assert.equal(card.hidden, false, "the button opens the form");
+  assert.equal(w.names().includes("app_itwo_request_info"), false, "pressing the button sends nothing");
+  assert.equal(w.calls.confirms.length, 0);
+
+  await submitForm(w, "#itwo-ask-form");
+  assert.deepEqual(w.calls.fieldErrors.map((error) => error.message), ["กรุณาพิมพ์ข้อความที่ต้องการถามผู้แจ้ง"]);
+  w.elements["#itwo-ask-body"].value = "ก".repeat(2001);
+  await submitForm(w, "#itwo-ask-form");
+  assert.match(w.calls.fieldErrors[0].message, /ไม่เกิน 2,000 ตัวอักษร/);
+  assert.equal(w.names().includes("app_itwo_request_info"), false);
+
+  w.elements["#itwo-ask-body"].value = "  ขอไฟล์ต้นฉบับของโลโก้ด้วยครับ  ";
+  w.answers.confirm = false;
+  await submitForm(w, "#itwo-ask-form");
+  assert.equal(w.calls.confirms.at(-1).title, "ส่งคำถามถึงผู้แจ้ง?");
+  assert.equal(w.names().includes("app_itwo_request_info"), false, "dismissing the confirm sends nothing");
+  w.answers.confirm = true;
+  await submitForm(w, "#itwo-ask-form");
+  await flush();
+  assert.deepEqual(w.calls.rpc.find((call) => call.name === "app_itwo_request_info").args, { p_work_order_id: order.id, p_body: "ขอไฟล์ต้นฉบับของโลโก้ด้วยครับ" }, "the text is trimmed");
+  assert.deepEqual(w.calls.toasts.at(-1), { message: "ส่งคำถามถึงผู้แจ้งแล้ว", kind: "info" });
+  assert.equal(w.calls.uploads.length, 0, "no files chosen: nothing uploaded");
+
+  // หน้าโหลดใหม่: รอผู้แจ้งตอบ ไม่มีปุ่มเริ่ม/ส่งงาน/ถามซ้ำ · ถาม-ตอบมีคำถาม · ไทม์ไลน์มีผู้ถามและข้อความย่อ
+  assert.match(w.html, /<span class="badge more_info">รอผู้แจ้งตอบ<\/span>/);
+  assert.deepEqual(w.buttons(), []);
+  assert.match(visibleText(w.html), /ถาม-ตอบ 1 ถาม · ทีม IT รอผู้แจ้งตอบ โดย ไอที ผู้ดูแล/);
+  assert.match(visibleText(w.html), /ถามผู้แจ้ง โดย ไอที ผู้ดูแล ถามผู้แจ้ง \(ทีม IT\): ขอไฟล์ต้นฉบับของโลโก้ด้วยครับ/);
+  assert.match(w.html, /ตอบแล้วใบกลับไปที่ อนุมัติครบ/);
+});
+
+test("the requester sees the question first and answers it: the answer is confirmed, sent, the toast names the stage, and the order is back where it was with both messages in the Q&A card", async () => {
+  const w = world();
+  const order = await approvedOrder(w);
+  await askAs(w, "itadm", order.id, "ขอไฟล์ต้นฉบับ\nด้วยครับ <b>ด่วน</b>");
+  await w.open(`view=order&id=${order.id}`);
+  assert.deepEqual(w.buttons(), ["cancel"], "answering is the open form, not a button");
+  const card = w.html.match(/<section class="card itwo-answer-card"[\s\S]*?<\/section>/)[0];
+  assert.match(visibleText(card), /ทีม IT ถามคุณ โดย ไอที ผู้ดูแล · \d{2}\/\d{2}\/2569 \d{2}:\d{2} ขอไฟล์ต้นฉบับ ด้วยครับ &lt;b&gt;ด่วน&lt;\/b&gt;/);
+  assert.doesNotMatch(w.html, /<b>ด่วน/);
+  assert.equal(w.html.includes("itwo-comments"), false, "the only message is the open question: shown once, in the answer card");
+
+  await submitForm(w, "#itwo-answer-form");
+  assert.deepEqual(w.calls.fieldErrors.map((error) => error.message), ["กรุณาพิมพ์คำตอบ"]);
+  assert.equal(w.names().includes("app_itwo_provide_info"), false);
+  w.elements["#itwo-answer-body"].value = "  แนบให้ในข้อความนี้แล้วครับ  ";
+  w.answers.confirm = false;
+  await submitForm(w, "#itwo-answer-form");
+  assert.equal(w.calls.confirms.at(-1).title, "ส่งคำตอบ?");
+  assert.equal(w.names().includes("app_itwo_provide_info"), false);
+  w.answers.confirm = true;
+  await submitForm(w, "#itwo-answer-form");
+  await flush();
+  assert.deepEqual(w.calls.rpc.find((call) => call.name === "app_itwo_provide_info").args, { p_work_order_id: order.id, p_body: "แนบให้ในข้อความนี้แล้วครับ" });
+  assert.deepEqual(w.calls.toasts.at(-1), { message: "ส่งคำตอบแล้ว ใบกลับไปที่ทีม IT", kind: "info" });
+  // กลับสถานะเดิม (อนุมัติครบ) IT เริ่มงานได้อีก · ถาม-ตอบมีคำถามและคำตอบตามลำดับ
+  assert.doesNotMatch(w.html, /itwo-answer-card/);
+  assert.match(w.html, /<span class="badge approved">อนุมัติครบ<\/span>/);
+  assert.deepEqual([...w.html.matchAll(/<article class="itwo-comment is-(\w+)"/g)].map((match) => match[1]), ["question", "answer"]);
+  assert.match(visibleText(w.html), /ผู้แจ้งตอบคำถาม โดย สมชาย ใจดี ผู้แจ้งตอบคำถาม: แนบให้ในข้อความนี้แล้วครับ/);
+  w.as("itadm");
+  await w.open(`view=order&id=${order.id}`);
+  assert.deepEqual(w.buttons(), ["request_info", "start"]);
+});
+
+test("an approver asks at their own stage: the order waits for the requester, the approver can only reject, and the approve RPC is refused", async () => {
+  const w = world();
+  const order = await w.create();
+  w.as("mgr");
+  await w.open(`view=order&id=${order.id}`);
+  await w.click("request_info");
+  w.elements["#itwo-ask-body"].value = "ใช้กับสินค้าตัวไหนครับ";
+  await submitForm(w, "#itwo-ask-form");
+  await flush();
+  assert.deepEqual(w.buttons(), ["reject"], "while waiting for the requester an approver may only reject");
+  assert.match(visibleText(w.html), /ถาม · ผู้จัดการแผนก/);
+  assert.match(visibleText(w.html), /ตอบแล้วใบกลับไปที่ รอผู้จัดการแผนก/);
+  const refused = await w.context.sb.rpc("app_itwo_approve", { p_work_order_id: order.id });
+  assert.match(refused.error.message, /รอผู้แจ้งตอบคำถามอยู่ ต้องรอคำตอบก่อนจึงจะอนุมัติได้/);
+  // ผู้แจ้งตอบ → ผู้จัดการอนุมัติได้อีก
+  w.as("emp");
+  await w.open(`view=order&id=${order.id}`);
+  assert.match(w.calls.toasts.at(-1).message, /ส่งคำถามถึงผู้แจ้งแล้ว/);
+  w.elements["#itwo-answer-body"].value = "สินค้ารุ่น A";
+  await submitForm(w, "#itwo-answer-form");
+  await flush();
+  assert.deepEqual(w.calls.toasts.at(-1), { message: "ส่งคำตอบแล้ว ใบกลับไปที่ผู้จัดการแผนก", kind: "info" });
+  w.as("mgr");
+  await w.open(`view=order&id=${order.id}`);
+  assert.deepEqual(w.buttons(), ["approve", "reject", "request_info"], "answered: the manager decides again");
+});
+
+test("a question with files: the message is saved first, then every file is uploaded and registered against that comment (not as the order's own file), and the page shows them in the Q&A card and the gallery", async () => {
+  const w = world();
+  const order = await approvedOrder(w);
+  w.as("itadm");
+  await w.open(`view=order&id=${order.id}`);
+  await w.click("request_info");
+  w.elements["#itwo-ask-body"].value = "ใช้ตัวอย่างนี้ได้ไหม";
+  w.elements["#itwo-ask-files"].files = [noFile("ตัวอย่าง.pdf", 2048), noFile("รูป <b>.JPG", 4096)];
+  await submitForm(w, "#itwo-ask-form");
+  await flush();
+  assert.deepEqual(w.names().filter((name) => ["app_itwo_request_info", "app_itwo_add_attachment", "app_itwo_add_comment_attachment"].includes(name)), ["app_itwo_request_info", "app_itwo_add_comment_attachment", "app_itwo_add_comment_attachment"]);
+  const detail = w.mock.handlers.app_itwo_get_detail({ p_work_order_id: order.id });
+  const commentId = detail.comments[0].id;
+  const registered = w.calls.rpc.filter((call) => call.name === "app_itwo_add_comment_attachment").map((call) => call.args);
+  assert.deepEqual(registered.map((args) => [args.p_work_order_id, args.p_comment_id, args.p_file_name, args.p_mime_type, args.p_size_bytes]), [
+    [order.id, commentId, "ตัวอย่าง.pdf", "application/pdf", 2048], [order.id, commentId, "รูป <b>.JPG", "image/jpeg", 4096],
+  ]);
+  for (const args of registered) assert.match(args.p_storage_path, new RegExp(`^${order.id}/[0-9a-f-]{36}\\.(pdf|jpg)$`));
+  assert.deepEqual(w.calls.uploads.map((upload) => [upload.bucket, upload.options.upsert, upload.type]), [["itwo-test-files", false, "application/pdf"], ["itwo-test-files", false, "image/jpeg"]]);
+  assert.equal(w.calls.rpc.some((call) => call.name === "app_itwo_add_attachment"), false, "comment files never go through the order's own file RPC");
+  assert.deepEqual(detail.attachments, [], "the order's own file list does not carry comment files");
+  assert.equal(detail.comments[0].attachments.length, 2);
+  // เสร็จ: ไปที่ใบ (โหลดใหม่) ไฟล์อยู่ในถาม-ตอบ และถูกส่งเข้า gallery พร้อม bucket ของโหมด
+  assert.match(w.calls.toasts.at(-1).message, /แนบไฟล์ครบ 2 ไฟล์/);
+  assert.match(w.html, /id="attachment-gallery"/);
+  assert.equal([...w.html.matchAll(/<figure class="attachment-tile"/g)].length, 2);
+  assert.match(w.html, /รูป &lt;b&gt;\.JPG/);
+  assert.doesNotMatch(w.html, /รูป <b>/);
+  assert.deepEqual(w.calls.hydrated.at(-1).files.map((file) => file.file_name), ["ตัวอย่าง.pdf", "รูป <b>.JPG"]);
+  assert.equal(w.calls.hydrated.at(-1).bucket, "itwo-test-files");
+  const click = w.elements["#attachment-gallery"].listeners.click[0];
+  click({ target: { closest: () => ({ dataset: { attachmentOpen: detail.comments[0].attachments[0].id } }) } });
+  assert.deepEqual(w.calls.lightbox, [detail.comments[0].attachments[0].id], "the lightbox opens a comment file");
+});
+
+test("an answer with files is registered against the answer, and the requester's own order files stay separate", async () => {
+  const w = world();
+  const order = await approvedOrder(w);
+  await askAs(w, "itadm", order.id, "ขอรูป");
+  await w.open(`view=order&id=${order.id}`);
+  w.elements["#itwo-answer-body"].value = "นี่ครับ";
+  w.elements["#itwo-answer-files"].files = [noFile("รูปโลโก้.png", 3000)];
+  await submitForm(w, "#itwo-answer-form");
+  await flush();
+  const detail = w.mock.handlers.app_itwo_get_detail({ p_work_order_id: order.id });
+  const answer = detail.comments.find((comment) => comment.kind === "answer");
+  assert.deepEqual(w.calls.rpc.filter((call) => call.name === "app_itwo_add_comment_attachment").map((call) => [call.args.p_comment_id, call.args.p_file_name]), [[answer.id, "รูปโลโก้.png"]]);
+  assert.equal(detail.status, "approved", "the answer already returned the order; files are an extra");
+  assert.match(w.calls.toasts.find((toast) => toast.message.startsWith("ส่งคำตอบแล้ว")).message, /ใบกลับไปที่ทีม IT/);
+  assert.deepEqual(answer.attachments.map((file) => file.file_name), ["รูปโลโก้.png"]);
+});
+
+test("a file that cannot be registered after the message was saved (window over) keeps the message, shows the Thai reason with a retry, and asks before leaving the page", async () => {
+  const w = world();
+  const order = await approvedOrder(w);
+  w.as("itadm");
+  await w.open(`view=order&id=${order.id}`);
+  await w.click("request_info");
+  w.elements["#itwo-ask-body"].value = "ขอไฟล์";
+  w.elements["#itwo-ask-files"].files = [noFile("ก.pdf", 2048)];
+  w.fail.upload = () => { w.clock.offset = 5 * 3600000; return null; }; // ผ่านไป 5 ชั่วโมงก่อนลงทะเบียน
+  await submitForm(w, "#itwo-ask-form");
+  await flush();
+  assert.equal(w.mock.handlers.app_itwo_get_detail({ p_work_order_id: order.id }).comments.length, 1, "the question is saved");
+  assert.match(visibleText(w.screen), /แนบไม่สำเร็จ 1 จาก 1 ไฟล์/);
+  assert.match(w.screen, /หมดเวลาแนบไฟล์แล้ว \(แนบได้ภายใน 30 นาทีหลังส่งข้อความ\)/);
+  assert.match(w.screen, /id="itwo-upload-retry"/);
+  assert.equal(w.context.window.MNP_ITWO.unsavedCount(), 1, "the unattached file would be lost: app.js asks before leaving");
+});
+
+test("typed but unsent text in the ask or answer form counts as unsaved; a closed form does not", async () => {
+  const w = world();
+  const order = await approvedOrder(w);
+  w.as("itadm");
+  await w.open(`view=order&id=${order.id}`);
+  assert.equal(w.context.window.MNP_ITWO.unsavedCount(), 0, "the ask form is closed");
+  await w.click("request_info");
+  assert.equal(w.context.window.MNP_ITWO.unsavedCount(), 0, "open but empty");
+  w.elements["#itwo-ask-body"].value = "พิมพ์ค้าง";
+  assert.equal(w.context.window.MNP_ITWO.unsavedCount(), 1);
+  w.elements["#itwo-ask-cancel"].listeners.click[0]();
+  assert.equal(w.context.window.MNP_ITWO.unsavedCount(), 0, "cancelling closes the form");
+  await askAs(w, "itadm", order.id, "คำถาม");
+  await w.open(`view=order&id=${order.id}`);
+  assert.equal(w.context.window.MNP_ITWO.unsavedCount(), 0);
+  w.elements["#itwo-answer-body"].value = "ตอบค้าง";
+  assert.equal(w.context.window.MNP_ITWO.unsavedCount(), 1);
+});
+
+test("a refused question or answer keeps the form and the text, shows the Thai message, and can be sent again", async () => {
+  const w = world();
+  const order = await approvedOrder(w);
+  w.as("itadm");
+  await w.open(`view=order&id=${order.id}`);
+  await w.click("request_info");
+  w.elements["#itwo-ask-body"].value = "คำถาม";
+  w.rpcFail.set("app_itwo_request_info", Object.assign(new Error("ใบสั่งงานนี้มีคำถามที่รอผู้แจ้งตอบอยู่แล้ว ถามเพิ่มได้หลังผู้แจ้งตอบ"), { code: "23514" }));
+  await submitForm(w, "#itwo-ask-form");
+  assert.match(w.elements["#itwo-ask-message"].innerHTML, /มีคำถามที่รอผู้แจ้งตอบอยู่แล้ว/);
+  assert.equal(w.elements["#itwo-ask-body"].value, "คำถาม");
+  assert.deepEqual(w.calls.busy.slice(-1), [false]);
+  await submitForm(w, "#itwo-ask-form");
+  await flush();
+  assert.equal(w.calls.rpc.filter((call) => call.name === "app_itwo_request_info").length, 2);
+  assert.deepEqual(w.calls.toasts.at(-1), { message: "ส่งคำถามถึงผู้แจ้งแล้ว", kind: "info" });
+});
+
+test("while waiting for the answer the requester can still cancel (allowed_actions decides); the order ends cancelled", async () => {
+  const w = world();
+  const order = await approvedOrder(w);
+  await askAs(w, "itadm", order.id, "ขอข้อมูลเพิ่ม");
+  await w.open(`view=order&id=${order.id}`);
+  assert.deepEqual(w.buttons(), ["cancel"]);
+  await w.click("cancel");
+  assert.equal(w.calls.prompts.at(-1).title, "ยกเลิกใบสั่งงานนี้?");
+  assert.deepEqual(w.calls.rpc.find((call) => call.name === "app_itwo_cancel").args, { p_work_order_id: order.id, p_reason: "เหตุผลทดสอบ" });
+  assert.match(w.html, /<span class="badge cancelled">ยกเลิก<\/span>/);
+  assert.deepEqual(w.buttons(), []);
+});
+
+test("the requester's list and counts: 'ใบของฉัน' says 'รอคุณตอบ', the tab and the card count it with the confirmations and say which", async () => {
+  const w = world();
+  const asked = await approvedOrder(w);
+  await askAs(w, "itadm", asked.id, "ขอข้อมูล");
+  await w.open("");
+  assert.match(w.html, /view-tabs[\s\S]*ใบของฉัน <span class="itwo-tab-count" aria-label="1 รายการ ที่รอคุณตอบ"/);
+  assert.match(w.html, /<span class="badge more_info" title="ทีม IT ถามคุณ · ตอบแล้วใบกลับไปที่ อนุมัติครบ">รอคุณตอบ<\/span>/);
+  let summary = await w.context.window.MNP_ITWO.loadCardSummary();
+  assert.equal(summary.badge, "1 รอคุณ");
+  assert.equal(summary.title, "รอคุณตอบ 1");
+  // อีกใบที่ IT ส่งงานแล้ว: นับรวม และบอกทั้งสองอย่าง
+  const closed = await closedOrder(w);
+  await w.open("");
+  assert.match(w.html, /aria-label="2 รายการ \(รอคุณยืนยัน 1 · รอคุณตอบ 1\)"/);
+  summary = await w.context.window.MNP_ITWO.loadCardSummary();
+  assert.equal(summary.badge, "2 รอคุณ");
+  assert.equal(summary.title, "รอคุณยืนยันรับงาน 1 · รอคุณตอบ 1");
+  assert.ok(closed.id);
+  // ตอบแล้ว: ตัวเลขลดลง
+  await w.context.sb.rpc("app_itwo_provide_info", { p_work_order_id: asked.id, p_body: "นี่ครับ" });
+  await w.open("");
+  assert.match(w.html, /aria-label="1 รายการ ที่รอคุณยืนยัน"/);
+});
+
+test("approvals: an asked order is listed as 'รอผู้แจ้งตอบ' but the tab count (here and from other tabs) and the card do not count it as waiting for me", async () => {
+  const w = world();
+  const waiting = await w.create({ details: "ใบที่รอตัดสิน" });
+  const asked = await w.create({ details: "ใบที่ถามไปแล้ว" });
+  await askAs(w, "mgr", asked.id, "ขอข้อมูล");
+  w.as("mgr");
+  await w.open("view=approvals");
+  assert.match(w.html, /data-group="awaiting_info"/);
+  assert.match(visibleText(w.html.slice(w.html.indexOf('data-group="awaiting_info"'))), /รอผู้แจ้งตอบ 1 .*ใบที่ถามไปแล้ว/);
+  assert.match(w.html, /รอคุณอนุมัติขั้นผู้จัดการแผนก/);
+  assert.match(w.html, /รออนุมัติ <span class="itwo-tab-count" aria-label="1 รายการ ที่รออนุมัติ"[^>]*>1<\/span>/, "only the order that really waits for the manager is counted");
+  await w.open("");
+  assert.match(w.html, /รออนุมัติ <span class="itwo-tab-count" aria-label="1 รายการ ที่รออนุมัติ"/, "same number from another tab (app_itwo_pending_count)");
+  assert.equal((await w.context.window.MNP_ITWO.loadCardSummary()).title, "รออนุมัติ 1");
+  assert.ok(waiting.id);
+  // ใบที่เหลือแต่ใบที่ถามไป: ไม่มีตัวเลขบนแท็บ แต่ยังเห็นรายการ
+  await w.context.sb.rpc("app_itwo_approve", { p_work_order_id: waiting.id });
+  await w.open("view=approvals");
+  assert.doesNotMatch(w.html, /itwo-tab-count/);
+  assert.match(visibleText(w.html), /ไม่มีใบสั่งงานที่รออนุมัติจากคุณ/);
+  assert.match(w.html, /data-group="awaiting_info"/);
+  assert.equal((await w.context.window.MNP_ITWO.loadCardSummary()).badge, "");
+});
+
+test("the IT list shows an asked order under 'รอผู้แจ้งตอบ', not as work to do, and the IT count leaves it out", async () => {
+  const w = world();
+  const todo = await approvedOrder(w, { details: "งานที่รอเริ่ม" });
+  const asked = await approvedOrder(w, { details: "งานที่ถามไป" });
+  await askAs(w, "itadm", asked.id, "ขอข้อมูล");
+  w.as("itadm");
+  await w.open("view=it");
+  assert.deepEqual([...w.html.matchAll(/data-group="([a-z_]+)"/g)].map((match) => match[1]), ["to_start", "awaiting_info"]);
+  assert.match(w.html.slice(w.html.indexOf('data-group="to_start"'), w.html.indexOf('data-group="awaiting_info"')), /งานที่รอเริ่ม/);
+  assert.match(w.html.slice(w.html.indexOf('data-group="awaiting_info"')), /งานที่ถามไป/);
+  assert.match(w.html, /งาน IT <span class="itwo-tab-count" aria-label="1 รายการ ที่ต้องดำเนินการ"[^>]*>1<\/span>/);
+  assert.ok(todo.id);
+  await w.open("");
+  assert.match(w.html, /งาน IT <span class="itwo-tab-count" aria-label="1 รายการ ที่ต้องดำเนินการ"/, "same from another tab");
+});
+
+test("nothing a user typed in a question, an answer or a file name reaches the page as markup", async () => {
+  const w = world();
+  const order = await approvedOrder(w);
+  await askAs(w, "itadm", order.id, `<img src=x onerror="alert(1)"> & <script>alert(2)</script>`);
+  await w.open(`view=order&id=${order.id}`);
+  w.elements["#itwo-answer-body"].value = `"><svg onload=alert(3)>`;
+  w.elements["#itwo-answer-files"].files = [noFile(`a"><img src=x onerror=alert(4)>.pdf`, 100)];
+  await submitForm(w, "#itwo-answer-form");
+  await flush();
+  const all = `${w.html}${w.screen}${w.context.window.MNP_ITWO_PAGES.printSheet(w.mock.handlers.app_itwo_get_detail({ p_work_order_id: order.id }))}`;
+  assert.doesNotMatch(all, /<img src=x|<script>|<svg|onerror="alert|"><img/);
+  assert.match(all, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt; &amp; &lt;script&gt;alert\(2\)&lt;\/script&gt;/);
+  assert.match(all, /&quot;&gt;&lt;svg onload=alert\(3\)&gt;/);
+});
+
+test("the mock follows the database for questions: who may ask or answer, one open question at a time, comment files only by their author within the window and up to 10, list fields, purge", async () => {
+  const w = world();
+  const order = await approvedOrder(w);
+  const call = (name, args) => { try { return { data: w.mock.handlers[name](args) }; } catch (error) { return { error }; } };
+  w.as("emp");
+  assert.match(call("app_itwo_request_info", { p_work_order_id: order.id, p_body: "x" }).error.message, /ผู้แจ้งถามกลับใบสั่งงานของตัวเองไม่ได้/, "the requester cannot ask on their own order");
+  w.as("other");
+  assert.match(call("app_itwo_request_info", { p_work_order_id: order.id, p_body: "x" }).error.message, /ไม่มีสิทธิ์ถามผู้แจ้ง/, "someone with no part in the order cannot ask");
+  w.as("mgr");
+  assert.match(call("app_itwo_request_info", { p_work_order_id: order.id, p_body: "x" }).error.message, /ไม่มีสิทธิ์ถามผู้แจ้ง/, "the department manager is past their step once the order is approved");
+  w.as("itadm");
+  assert.match(call("app_itwo_request_info", { p_work_order_id: order.id, p_body: "   " }).error.message, /กรุณาพิมพ์ข้อความที่ต้องการถามผู้แจ้ง/);
+  assert.match(call("app_itwo_request_info", { p_work_order_id: order.id, p_body: "ก".repeat(2001) }).error.message, /ไม่เกิน 2,000/);
+  const ask = call("app_itwo_request_info", { p_work_order_id: order.id, p_body: "ขอข้อมูล" });
+  assert.deepEqual(ask.data, { comment_id: 1 });
+  assert.match(call("app_itwo_request_info", { p_work_order_id: order.id, p_body: "อีกข้อ" }).error.message, /มีคำถามที่รอผู้แจ้งตอบอยู่แล้ว/);
+  const detail = w.mock.handlers.app_itwo_get_detail({ p_work_order_id: order.id });
+  assert.equal(detail.status, "need_info");
+  assert.equal(detail.info_return_status, "approved");
+  assert.deepEqual(detail.allowed_actions, [], "IT may not start or complete while the requester is asked");
+  assert.deepEqual({ ...detail.info_pending, asked_at: undefined }, { comment_id: 1, stage: "it", body: "ขอข้อมูล", asked_at: undefined, asked_by_employee_no: "SBX-IT-ADMIN", asked_by_full_name: "ไอที ผู้ดูแล" });
+  assert.match(detail.events.at(-1).reason, /^ถามผู้แจ้ง \(ทีม IT\): ขอข้อมูล$/);
+  assert.equal(detail.events.at(-1).action, "info_requested");
+  // รายการมี info_return_status / info_stage ; pending_count ไม่นับ need_info
+  assert.deepEqual(w.mock.handlers.app_itwo_list_it().map((row) => [row.status, row.info_return_status, row.info_stage]), [["need_info", "approved", "it"]]);
+  w.as("itapp");
+  assert.deepEqual(w.mock.handlers.app_itwo_get_detail({ p_work_order_id: order.id }).allowed_actions, [], "the IT-step approver has already approved");
+  w.as("emp");
+  assert.deepEqual(w.mock.handlers.app_itwo_list_mine().map((row) => [row.status, row.info_return_status, row.info_stage]), [["need_info", "approved", "it"]]);
+  assert.deepEqual(w.mock.handlers.app_itwo_get_detail({ p_work_order_id: order.id }).allowed_actions, ["cancel", "provide_info"]);
+  assert.match(call("app_itwo_provide_info", { p_work_order_id: order.id, p_body: "" }).error.message, /กรุณาพิมพ์คำตอบ/);
+  w.as("itadm");
+  assert.match(call("app_itwo_provide_info", { p_work_order_id: order.id, p_body: "ฉันตอบเอง" }).error.message, /เฉพาะผู้แจ้งเท่านั้นที่ตอบคำถามได้/);
+
+  // ไฟล์ของข้อความ: เฉพาะผู้เขียน · ≤ 10 ไฟล์ · ภายในหน้าต่าง 30 นาที
+  const put = (name) => {
+    const path = `${order.id}/aaaaaaaa-aaaa-4aaa-8aaa-${String(900 + w.objects.size).padStart(12, "0")}.pdf`;
+    w.objects.set(`itwo-test-files/${path}`, { type: "application/pdf" });
+    return { p_work_order_id: order.id, p_comment_id: 1, p_storage_path: path, p_file_name: name, p_mime_type: "application/pdf", p_size_bytes: 10 };
+  };
+  w.as("emp");
+  assert.match(call("app_itwo_add_comment_attachment", put("ก.pdf")).error.message, /เฉพาะผู้เขียนข้อความเท่านั้น/, "the requester did not write the question");
+  w.as("itadm");
+  const first = put("ข.pdf");
+  const id = call("app_itwo_add_comment_attachment", first).data;
+  assert.equal(call("app_itwo_add_comment_attachment", first).data, id, "the same path again returns the same registration");
+  assert.match(call("app_itwo_add_comment_attachment", { ...put("ค.pdf"), p_comment_id: 99 }).error.message, /ไม่พบข้อความนี้ในใบสั่งงาน/);
+  for (let index = 0; index < 9; index += 1) assert.ok(call("app_itwo_add_comment_attachment", put(`f${index}.pdf`)).data);
+  assert.match(call("app_itwo_add_comment_attachment", put("เกิน.pdf")).error.message, /ไม่เกิน 10 ไฟล์ต่อข้อความ/);
+  w.clock.offset = 31 * 60000 + 600000;
+  assert.match(call("app_itwo_add_comment_attachment", put("ช้า.pdf")).error.message, /หมดเวลาแนบไฟล์แล้ว/);
+  w.clock.offset = 0;
+  assert.deepEqual(w.mock.handlers.app_itwo_get_detail({ p_work_order_id: order.id }).attachments, [], "comment files are not in the order's list");
+  assert.equal(w.mock.handlers.app_itwo_get_detail({ p_work_order_id: order.id }).comments[0].attachments.length, 10);
+  // เหมือนเดิมกับ add_attachment ของรุ่น 2: ไม่รับ path ของไฟล์ข้อความ
+  w.as("emp");
+  assert.match(call("app_itwo_add_attachment", { p_work_order_id: order.id, p_rework_id: null, p_storage_path: first.p_storage_path, p_file_name: "x.pdf", p_mime_type: "application/pdf", p_size_bytes: 10 }).error.message, /ไฟล์นี้ถูกลงทะเบียนไว้แล้ว/);
+
+  // ตอบแล้วกลับสถานะเดิม · ล้างข้อมูลทดสอบลบข้อความและไฟล์ของข้อความ
+  assert.deepEqual(call("app_itwo_provide_info", { p_work_order_id: order.id, p_body: "ตอบ" }).data, { comment_id: 2 });
+  const answered = w.mock.handlers.app_itwo_get_detail({ p_work_order_id: order.id });
+  assert.equal(answered.status, "approved");
+  assert.equal(answered.info_return_status, null);
+  assert.equal(answered.info_pending, null);
+  assert.deepEqual(answered.comments.map((comment) => [comment.id, comment.kind, comment.reply_to]), [[1, "question", null], [2, "answer", 1]]);
+  assert.equal(answered.events.at(-1).action, "info_provided");
+  const purged = w.mock.handlers.app_sandbox_purge_itwo();
+  assert.equal(purged.deleted, 1 + answered.events.length + 2 + 10, "the order, its events, its 2 comments and the 10 comment files are all counted");
+  assert.equal(call("app_itwo_get_detail", { p_work_order_id: order.id }).error.code, "42501");
+});
+
 /* ---------- ความเรียบร้อยของไฟล์ ---------- */
 test("the module never decides rights or document numbers itself, and keeps no secret", () => {
   const source = read("modules/module-itwo.js");
@@ -1229,8 +1629,8 @@ test("the module never decides rights or document numbers itself, and keeps no s
   assert.ok(buckets.length >= 2 && buckets.every((name) => /model\.fileBucket\(/.test(name)), `only the itwo buckets: ${buckets.join(" | ")}`);
   const mock = createItwoMock({ stamp: () => "", now: () => NOW, persona: () => PEOPLE.emp, personas: () => [] });
   const called = [...source.matchAll(/rpc\("(app_[a-z_]+)"/g)].map((match) => match[1]);
-  const migrations = ["supabase/migrations/20261203010000_itwo_work_orders.sql", "supabase/migrations/20261205010000_itwo_v2_rework_files.sql"].map(read).join("\n");
+  const migrations = ["supabase/migrations/20261203010000_itwo_work_orders.sql", "supabase/migrations/20261205010000_itwo_v2_rework_files.sql", "supabase/migrations/20261206010000_itwo_v3_request_info.sql"].map(read).join("\n");
   for (const name of new Set(called)) assert.equal(typeof mock.handlers[name], "function", `${name} exists in the mock`);
   for (const name of new Set(called)) assert.ok(migrations.includes(`function public.${name}(`), `${name} is in a migration`);
-  for (const name of ["app_itwo_request_rework", "app_itwo_add_attachment", "app_sandbox_purge_itwo"]) assert.ok(called.includes(name) || source.includes(name), `${name} is used by the module`);
+  for (const name of ["app_itwo_request_rework", "app_itwo_add_attachment", "app_itwo_request_info", "app_itwo_provide_info", "app_itwo_add_comment_attachment", "app_sandbox_purge_itwo"]) assert.ok(called.includes(name) || source.includes(name), `${name} is used by the module`);
 });

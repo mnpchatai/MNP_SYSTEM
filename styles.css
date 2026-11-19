@@ -3235,8 +3235,17 @@ table.bom-tree td.right { white-space: nowrap; }
 .itwo-rework-round h3 { margin: 0 0 6px; font-size: var(--text-ui); }
 .itwo-rework-round p { margin: 0 0 6px; }
 .itwo-rework-round .attachment-grid { margin: 8px 0 0; }
-.itwo-rework-card { border-color: var(--primary); }
-.itwo-rework-card .form-actions { flex-wrap: wrap; justify-content: flex-start; }
+.itwo-rework-card, .itwo-ask-card, .itwo-answer-card { border-color: var(--primary); }
+.itwo-rework-card .form-actions, .itwo-ask-card .form-actions, .itwo-answer-card .form-actions { flex-wrap: wrap; justify-content: flex-start; }
+.itwo-comment { padding: 12px 0; border-top: 1px solid var(--soft-line); }
+.itwo-comment:first-of-type { border-top: 0; padding-top: 0; }
+.itwo-comment h3 { margin: 0 0 4px; font-size: var(--text-ui); }
+.itwo-comment p { margin: 0 0 6px; }
+.itwo-comment .attachment-grid, .itwo-question .attachment-grid { margin: 8px 0 0; }
+.itwo-comment-kind { font-weight: 700; }
+.itwo-comment.is-answer { padding-left: 12px; border-left: 3px solid var(--soft-line); }
+.itwo-question { margin: 0 0 14px; padding: 12px 14px; background: var(--primary-soft); border-radius: var(--radius-md); }
+.itwo-question p { margin: 0 0 6px; }
 .itwo-upload h2 { margin-bottom: 6px; }
 .itwo-upload-summary { margin: 8px 0; font-weight: 700; }
 .itwo-upload-list { margin: 0 0 14px; padding: 0; list-style: none; display: grid; gap: 6px; }
@@ -3261,6 +3270,16 @@ table.bom-tree td.right { white-space: nowrap; }
 .itwo-sheet-reworks th:nth-child(5) { width: 42mm; }
 .itwo-sheet-reworks td:nth-child(4) { white-space: nowrap; }
 .itwo-sheet-reworks .itwo-sheet-files { columns: 1; }
+/* ประวัติถาม-ตอบ: ลำดับ · ถาม/ตอบ · ขั้น · โดย · วันเวลา · ข้อความ (ยืดได้) · จำนวนไฟล์ */
+.itwo-sheet-comments { table-layout: fixed; }
+.itwo-sheet-comments th, .itwo-sheet-comments td { font-size: 9.5pt; }
+.itwo-sheet-comments th:nth-child(1) { width: 11mm; }
+.itwo-sheet-comments th:nth-child(2) { width: 14mm; }
+.itwo-sheet-comments th:nth-child(3) { width: 24mm; }
+.itwo-sheet-comments th:nth-child(4) { width: 26mm; }
+.itwo-sheet-comments th:nth-child(5) { width: 27mm; }
+.itwo-sheet-comments th:nth-child(7) { width: 14mm; }
+.itwo-sheet-text { white-space: pre-wrap; }
 @media (max-width: 719px) {
   .itwo-access-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .itwo-access-table, .itwo-access-table tbody, .itwo-access-table tr, .itwo-access-table td { display: block; }
@@ -3313,9 +3332,9 @@ table.bom-tree td.right { white-space: nowrap; }
   .itwo-signature { border-bottom: 0; }
   .itwo-sheet-table, .itwo-signatures { break-inside: avoid; }
   /* ประวัติการแก้ไขงานยาวได้หลายรอบ: ตารางตัดข้ามหน้าได้แต่ไม่ตัดกลางแถว หัวตารางซ้ำทุกหน้า · ลายเซ็นย้ายทั้งก้อนไปหน้าถัดไปแทนการถูกตัดครึ่ง */
-  .itwo-sheet-reworks { break-inside: auto; }
-  .itwo-sheet-reworks thead { display: table-header-group; }
-  .itwo-sheet-reworks tr { break-inside: avoid; }
+  .itwo-sheet-reworks, .itwo-sheet-comments { break-inside: auto; }
+  .itwo-sheet-reworks thead, .itwo-sheet-comments thead { display: table-header-group; }
+  .itwo-sheet-reworks tr, .itwo-sheet-comments tr { break-inside: avoid; }
   .itwo-sheet-section { break-after: avoid; }
 }
 
