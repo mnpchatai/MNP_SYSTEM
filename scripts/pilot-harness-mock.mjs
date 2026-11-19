@@ -1491,7 +1491,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     };
     for (const list of BOM_LISTS) {
       const entry = changes[list];
-      if (entry === undefined || list === "stock" || list === "stockMoves" || list === "fgMoves" || list === "rodLots" || list === "rodMoves") continue; // สต็อกของซื้อ สำเร็จรูป และคลังแท่งยาวเขียนโดยตัวเขียนเฉพาะด้านล่าง
+      if (entry === undefined || list === "stock" || list === "stockMoves" || list === "fgMoves" || list === "rodLots" || list === "rodMoves") continue; // สต็อกของซื้อ สำเร็จรูป และคลังยางเส้นยาวเขียนโดยตัวเขียนเฉพาะด้านล่าง
       if (!entry || typeof entry !== "object" || Array.isArray(entry)) fail("BOM_INVALID_CHANGES");
       const idOf = BOM_ID[list];
       for (const record of entry.upsert ?? []) {

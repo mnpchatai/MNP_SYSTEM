@@ -307,7 +307,7 @@
     const lots = (bom.data().rodLots ?? []).filter((row) => row.jobNo === before.id);
     if (lots.length > (before.rodLots ?? 0)) {
       const lot = lots.slice().sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))[0];
-      showToast(`แท่งของล็อต ${lot.lotNo} ${lot.qtySent} ส่งเข้าคลังแท่งยาว (SR) แล้ว รอ SR รับเข้าคลังและตรวจขนาด จึงนับเข้างาน BOM ${before.id}`);
+      showToast(`ยางเส้นยาวของล็อต ${lot.lotNo} ${lot.qtySent} ส่งเข้าคลังยางเส้นยาว (SR) แล้ว รอ SR รับเข้าคลังและตรวจขนาด จึงนับเข้างาน BOM ${before.id}`);
       return;
     }
     const job = bom.data().jobs.find((row) => row.id === before.id);

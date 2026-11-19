@@ -63,7 +63,9 @@
   // ข้อความที่บันทึกการใช้งานเขียนเมื่อฝ่ายวางแผนตั้งยอดสินค้าสำเร็จรูปที่ใช้จากสต็อก (action เดิม setStockCount) · หน้าบันทึกการใช้งานใช้ข้อความนี้แยกจากการนับคงคลังของชิ้นอื่น
   const FG_STOCK_AUDIT_TEXT = "ใช้จากสต็อกสินค้าสำเร็จรูป";
   // ข้อความเดียวกันสำหรับเส้นยางที่ฝ่ายวางแผนตั้งใช้จากคลังแท่งยาว (SR) ที่ขั้นตรวจของ (action เดิม setStockCount)
-  const ROD_STOCK_AUDIT_TEXT = "ใช้จากคลังแท่งยาว SR";
+  const ROD_STOCK_AUDIT_TEXT = "ใช้จากคลังยางเส้นยาว SR";
+  // ข้อความเดิมก่อนเปลี่ยนคำเรียก (แถวบันทึกการใช้งานที่เขียนไว้แล้วในฐานข้อมูลยังเป็นข้อความนี้ ไม่แก้แถวเก่า): หน้าบันทึกการใช้งานต้องรู้จักทั้งสองข้อความ
+  const ROD_STOCK_AUDIT_TEXT_LEGACY = "ใช้จากคลังแท่งยาว SR";
   // ผังงานของบริษัท 11 ลำดับ (ใบสั่งผลิต → BOM/ใบสั่งงาน → วัตถุดิบ → ผลิต → คลัง) "ลำดับ" ของทุกหน้าโครงสร้างคือเลขนี้:
   // ชิ้นงานได้ลำดับตามแผนกเจ้าของ เลขน้อยทำก่อน เลขเดียวกันคือแผนกเดียวกัน (ลำดับภายในแผนกดูจากรายการ "ใช้")
   const PROCESS_FLOW = Object.freeze([
@@ -1656,7 +1658,7 @@
   const orderTypeOf = (country) => (/^(thailand|ไทย|th)$/i.test(String(country ?? "").trim()) ? "SA" : "EX");
 
   const api = {
-    DAY, KINDS, MANUFACTURED, NEEDS_BOM_KINDS, CATEGORIES, categoryOf, LEAF_KINDS, childKindError, reachedFrom, DEPTS, DEPT_LABEL, DUE_DEPTS, FG_STOCK_AUDIT_TEXT, ROD_STOCK_AUDIT_TEXT, PROCESS_FLOW, flowStepOf, sortLinesByFlow, FLOW_DEPTS, UOMS, PACKAGES, COLOR_SETS, COLOR_MASTERS,
+    DAY, KINDS, MANUFACTURED, NEEDS_BOM_KINDS, CATEGORIES, categoryOf, LEAF_KINDS, childKindError, reachedFrom, DEPTS, DEPT_LABEL, DUE_DEPTS, FG_STOCK_AUDIT_TEXT, ROD_STOCK_AUDIT_TEXT, ROD_STOCK_AUDIT_TEXT_LEGACY, PROCESS_FLOW, flowStepOf, sortLinesByFlow, FLOW_DEPTS, UOMS, PACKAGES, COLOR_SETS, COLOR_MASTERS,
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,

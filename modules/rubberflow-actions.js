@@ -882,7 +882,7 @@
     lot.boxes = i;
     lot.countedToOrder = result === "pass";
     if (result === "pass") addProduced(d, order.id, passed, ctx);
-    audit(d, ctx, "บันทึกการตกแต่ง/บรรจุ", `${lot.id} ${passed} ${order.uom} → ${order.sourceJobId ? `คลังแท่งยาว (SR) ของงาน ${order.sourceJobId}` : `${i} กล่อง`}`);
+    audit(d, ctx, "บันทึกการตกแต่ง/บรรจุ", `${lot.id} ${passed} ${order.uom} → ${order.sourceJobId ? `คลังยางเส้นยาว (SR) ของงาน ${order.sourceJobId}` : `${i} กล่อง`}`);
     return lot.id;
   }
 

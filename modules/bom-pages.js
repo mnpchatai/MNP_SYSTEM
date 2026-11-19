@@ -9,7 +9,7 @@
   const includes = (haystack, q) => !q || String(haystack).toLowerCase().includes(q.toLowerCase());
 
   // ไอคอนของแต่ละหน้า = ชื่อไอคอนใน MNP_UI_ICONS.PATHS (modules/ui-icons.js ชุดเดียวกับระบบหลัก อ้างตอนวาด)
-  const ICONS = Object.freeze({ dashboard: "dashboard", build: "layers", items: "search", product: "factory", structure: "tree", variants: "palette", compounds: "flask", import: "download", check: "check", orders: "clipboard", customers: "building", count: "hash", stock: "warehouse", rods: "layers", jobs: "wrench", audit: "history", find: "box", work: "wrench", setup: "settings" });
+  const ICONS = Object.freeze({ dashboard: "dashboard", build: "layers", items: "search", product: "factory", structure: "tree", variants: "palette", compounds: "flask", import: "download", check: "check", orders: "clipboard", customers: "building", count: "hash", stock: "warehouse", jobs: "wrench", audit: "history", find: "box", work: "wrench", setup: "settings" });
   pages.icon = (id) => (ICONS[id] ? `<span class="rf-ico" aria-hidden="true">${root.MNP_UI_ICONS.icon(ICONS[id])}</span>` : "");
   // ต้นทุนไม่ครบ (มีชิ้นข้างใต้ไม่มีราคา): ไอคอนเตือนหน้าราคา คำอธิบายอยู่ที่ title/aria-label
   const costWarn = () => `<span class="bom-cost-warn" role="img" title="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา" aria-label="ต้นทุนไม่ครบ: มีชิ้นข้างใต้ที่ไม่มีราคา">${root.MNP_UI_ICONS.icon("warning")}</span>`;
@@ -2340,7 +2340,7 @@
     const drafts = data.orders.filter((order) => order.status === "draft");
     const sel = String(params.get("order") ?? "").toUpperCase();
     const order = drafts.find((entry) => entry.id === sel && entry.explosion?.length) ?? null; // ใบที่ถูกแก้จนยังไม่ระเบิดใหม่ กลับไปหน้าเลือกใบ
-    const pageHead = head(ctx, "นับคงคลังตามใบ", "กรอกยอดที่นับได้ของชิ้นในใบสั่งผลิตที่ยังเป็นร่าง · ของซื้อนับที่เมนูคลังของซื้อ · เส้นยางใช้จากคลังแท่งยาว (SR) ที่ขั้นตรวจของของใบ");
+    const pageHead = head(ctx, "นับคงคลังตามใบ", "กรอกยอดที่นับได้ของชิ้นในใบสั่งผลิตที่ยังเป็นร่าง · ของซื้อนับที่เมนูคลังของซื้อ · เส้นยางใช้จากคลังยางเส้นยาว (SR) ที่ขั้นตรวจของของใบ");
     if (!order) {
       const rows = drafts.map((entry) => entry.explosion?.length
         ? `<a class="bom-count-order" href="${attr(ctx.url("count", { order: entry.id }))}"><strong class="rf-mono">${esc(entry.id)}</strong><span>${esc(entry.customer)}</span><span class="small muted">${esc(`${rules.countedCodes(entry).length ? `นับแล้ว ${rules.countedCodes(entry).length} รายการ · ` : ""}ส่งมอบ ${rules.fmtDate(entry.whDue)}`)}</span></a>`
@@ -2720,7 +2720,7 @@
       [kgFromBom ? "คอมปาวด์ที่ต้องใช้ (ตามบรรทัดสูตรยางใน BOM)" : "คอมปาวด์ที่ต้องใช้ (เผื่อ 5%)", esc(`${rules.fmtQty(kg, 2)} kg${recipe ? ` ≈ ${Math.ceil(kg / Number(recipe.batchKg || 1))} batch` : ""}`)],
       recipe ? ["จำนวนเป้าหมายใน WO", esc(remoteFlow ? `${rules.fmtQty(targetQty)} ${uomText(ctx, job.uom)} (นับในหน่วยของงาน)` : `${rules.fmtQty(targetQty)} ${recipe.uom} (RubberFlow นับผลผลิตในหน่วยของสูตร)`)] : null,
       ["กำหนดส่ง", esc(rules.fmtDate(job.dueAt))],
-    ])}${problems.length ? ui.callout("warn", problems.map((text) => `<div>${esc(text)}</div>`).join("")) : noteLine("การนับยอดของ WO", esc(remoteFlow ? "สร้างแล้วฐานข้อมูลผูกเลข WO กับงานนี้ให้ และใบสั่งผลิตใน RubberFlow ระบุเลข PI เป็น PO ลูกค้า · ทุกครั้งที่ล็อตตกแต่งของ WO นั้นผ่าน QC แท่งของล็อตส่งเข้าคลังแท่งยาว (SR) และเมื่อ SR รับเข้าคลังและผ่านตรวจขนาด (หรือ QA ให้ใช้) ยอดจึงถูกบวกเข้างานนี้เป็นรายงานผลทีละล็อต การรับมอบ WIP ระหว่างสถานีไม่นับ · ถ้ายกเลิก WO ก่อนผลิต การผูกกับงานนี้ถูกล้างและสร้าง WO ใหม่ได้" : "สร้างแล้วเลข WO จะถูกบันทึกที่งานนี้ และใบสั่งผลิตใน RubberFlow ระบุเลข PI เป็น PO ลูกค้า"))}`;
+    ])}${problems.length ? ui.callout("warn", problems.map((text) => `<div>${esc(text)}</div>`).join("")) : noteLine("การนับยอดของ WO", esc(remoteFlow ? "สร้างแล้วฐานข้อมูลผูกเลข WO กับงานนี้ให้ และใบสั่งผลิตใน RubberFlow ระบุเลข PI เป็น PO ลูกค้า · ทุกครั้งที่ล็อตตกแต่งของ WO นั้นผ่าน QC ยางเส้นยาวของล็อตส่งเข้าคลังยางเส้นยาว (SR) และเมื่อ SR รับเข้าคลังและผ่านตรวจขนาด (หรือ QA ให้ใช้) ยอดจึงถูกบวกเข้างานนี้เป็นรายงานผลทีละล็อต การรับมอบ WIP ระหว่างสถานีไม่นับ · ถ้ายกเลิก WO ก่อนผลิต การผูกกับงานนี้ถูกล้างและสร้าง WO ใหม่ได้" : "สร้างแล้วเลข WO จะถูกบันทึกที่งานนี้ และใบสั่งผลิตใน RubberFlow ระบุเลข PI เป็น PO ลูกค้า"))}`;
     const bind = (dialog) => {
       dialog.querySelector("[data-bom-rf-create]")?.addEventListener("click", async (event) => {
         const button = event.currentTarget;
@@ -2766,15 +2766,15 @@
     releaseOrder: "ปล่อยผลิต", setStockCount: "นับคงคลัง", setStockCounts: "นับคงคลัง", cancelOrder: "ยกเลิกใบสั่งผลิต", completeOrder: "ปิดใบสั่งผลิต (เดิม)", receiveFg: "รับสินค้าเข้าคลัง", deliverFg: "ส่งมอบสินค้าให้ลูกค้า", closeOrderShort: "ปิดใบสั่งผลิต (รับไม่ครบ)", closeOrder: "ปิดใบสั่งผลิต (รับครบ)", reverseFg: "ย้อนรับเข้าคลัง / ย้อนส่งมอบสินค้าสำเร็จรูป",
     reportJob: "รายงานผลงาน", setJobStatus: "เปลี่ยนสถานะงาน / ปิดงาน", linkJobToRubberFlow: "ผูก WO ของ RubberFlow", saveCustomer: "บันทึกลูกค้า",
     countPartStock: "นับสต็อกของซื้อ", issueOrderParts: "เบิกจ่ายของซื้อ", undoOrderParts: "ยกเลิกการเบิกจ่ายของซื้อ", returnOrderParts: "คืนของเหลือของซื้อ",
-    receiveRods: "รับแท่งเข้าคลังแท่งยาว (SR)", decideRods: "ตัดสินล็อตแท่งที่กัก (QA)", issueRods: "จ่ายแท่งให้ GR", reverseRodIssue: "ย้อนการจ่ายแท่ง", adjustRods: "ปรับยอดแท่งในคลัง",
+    receiveRods: "รับยางเส้นยาวเข้าคลัง (SR)", decideRods: "ตัดสินล็อตยางเส้นยาวที่กัก (QA)", issueRods: "จ่ายยางเส้นยาวให้ GR", reverseRodIssue: "ย้อนการจ่ายยางเส้นยาว", adjustRods: "ปรับยอดยางเส้นยาวในคลัง",
     receiveRodsOpening: "รับยางเส้นยาวนอกใบสั่ง (SR)", setRodLocation: "ย้ายตำแหน่งยางเส้นยาว (SR)",
-    "rubberflow:recordFinishing": "แท่งจากล็อตตกแต่งเข้าคิวรับของคลังแท่งยาว (RubberFlow)", "rubberflow:addQcRecord": "แท่งจากล็อตตกแต่งที่ QA ปล่อยเข้าคิวรับของคลังแท่งยาว (RubberFlow)",
+    "rubberflow:recordFinishing": "ยางเส้นยาวจากล็อตตกแต่งเข้าคิวรับของคลังยางเส้นยาว (RubberFlow)", "rubberflow:addQcRecord": "ยางเส้นยาวจากล็อตตกแต่งที่ QA ปล่อยเข้าคิวรับของคลังยางเส้นยาว (RubberFlow)",
     "rubberflow:createPurchaseOrder": "สั่งซื้อ (ใบสั่งซื้อใน RubberFlow)", "rubberflow:receivePurchaseLine": "รับของซื้อเข้าคลัง (ใบสั่งซื้อใน RubberFlow)",
   });
   const AUDIT_SECTION_LABEL = Object.freeze({
     items: "ชิ้นงาน", compounds: "สูตรยาง", colors: "สี", colorSets: "ชุดสี", packages: "แพ็กเกจ", boms: "BOM", processes: "ขั้นตอนผลิต", routings: "ขั้นตอนผลิตของชิ้นงาน",
     customers: "ลูกค้า", orders: "ใบสั่งผลิต", jobs: "งาน", stock: "สต็อกของซื้อ", partReturns: "คืนของซื้อ", fgMoves: "รับ/ส่งมอบสินค้าสำเร็จรูป",
-    rodLots: "ล็อตแท่ง", rodMoves: "ประวัติแท่ง",
+    rodLots: "ล็อตยางเส้นยาว", rodMoves: "ประวัติยางเส้นยาว",
   });
   // "jobs +3 -1, orders +1" (เซิร์ฟเวอร์เขียน) → "งาน +3 -1, ใบสั่งผลิต +1"
   const auditCounts = (detail) => String(detail ?? "").split(", ").map((part) => part.replace(/^[A-Za-z]+/, (key) => AUDIT_SECTION_LABEL[key] ?? key)).join(", ");
@@ -2783,7 +2783,7 @@
     if (!remote) return entry.action;
     const notes = entry.entries ?? [];
     if (["setStockCount", "setStockCounts"].includes(entry.action) && notes.length && notes.every((note) => note.action === rules.FG_STOCK_AUDIT_TEXT)) return rules.FG_STOCK_AUDIT_TEXT;
-    if (["setStockCount", "setStockCounts"].includes(entry.action) && notes.length && notes.every((note) => note.action === rules.ROD_STOCK_AUDIT_TEXT)) return rules.ROD_STOCK_AUDIT_TEXT;
+    if (["setStockCount", "setStockCounts"].includes(entry.action) && notes.length && notes.every((note) => note.action === rules.ROD_STOCK_AUDIT_TEXT || note.action === rules.ROD_STOCK_AUDIT_TEXT_LEGACY)) return rules.ROD_STOCK_AUDIT_TEXT;
     return AUDIT_ACTION_LABEL[entry.action] ?? entry.action;
   };
   pages.audit = (ctx) => {

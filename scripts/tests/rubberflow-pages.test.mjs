@@ -1232,3 +1232,22 @@ test("the extrusion spec lives on the recipe: the recipe form edits it, the reci
   assert.doesNotMatch(spc, /ex\.[a-zA-Z]+\.RC-NBR-OR02/, "the O-ring recipe has no spec, so no extrusion chart");
   assert.match(spc, /สเปก 2.5 ± 0.12 mm/);
 });
+
+test("receiving a WIP hand-over belongs to the RB department and the planning group, not to SR; the hand-over page stays in RubberFlow and names no SR receiver", async () => {
+  const env = load();
+  const api = env.context.MNP_RUBBERFLOW_STORE;
+  const person = (dept, role = "staff") => api.personaUser({ id: `${dept}-${role}`, department: { code: dept }, role: { code: role }, first_name: dept, last_name: role });
+  for (const [dept, role, allowed] of [["RB", "staff", true], ["PP", "staff", true], ["MT", "admin", true], ["SR", "staff", false], ["QA", "staff", false], ["WH", "staff", false], ["ST", "staff", false], ["GR", "staff", false]]) {
+    assert.equal(api.can(person(dept, role), "receiveTransfer"), allowed, `${dept}/${role} receiveTransfer`);
+  }
+  // the page and its dialogs: SR is read-only here, the module page does not name it as the receiver
+  const wip = text(await env.render("p=wip"));
+  assert.doesNotMatch(wip, /SR รับ|รับมอบ[^.]{0,20}SR|ผู้รับมอบ[^.]{0,10}SR/, "the hand-over page names no SR receiver");
+  const source = ["modules/rubberflow-pages-line.js", "modules/rubberflow-actions.js", "modules/rubberflow-store.js"].map((file) => fs.readFileSync(file, "utf8")).join("\n");
+  assert.match(source, /receiveTransfer: \(user\) => Boolean\(user\.planner \|\| user\.rb\)/, "the right is planner or RB");
+  assert.match(source, /รับมอบ WIP ได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน/);
+  // wording: the rods the finishing form sends to the SR store are ยางเส้นยาว, never แท่ง, in the page text
+  const lineSource = fs.readFileSync("modules/rubberflow-pages-line.js", "utf8").split(/\r?\n/).filter((line) => !line.trimStart().startsWith("//")).join("\n");
+  assert.doesNotMatch(lineSource, /แท่ง/);
+  assert.match(lineSource, /ส่งเข้าคลังยางเส้นยาว \(SR\)/);
+});

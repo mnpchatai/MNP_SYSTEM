@@ -33,7 +33,6 @@
     { id: "customers", label: "ลูกค้า", group: "ผลิต" },
     { id: "count", label: "นับคงคลังตามใบ", group: "ผลิต" },
     { id: "stock", label: "คลังของซื้อ", group: "ผลิต" },
-    { id: "rods", label: "คลังยางเส้นยาว (SR)", group: "ผลิต" },
     { id: "jobs", label: "งานของแผนก", group: "ผลิต" },
     { id: "audit", label: "บันทึกการใช้งาน", group: "ผลิต" },
     // หน้าโครงใหม่ (modules/bom-hub.js): เมนูหลัก 4 อัน · หน้าเดิมข้างบนยังเปิดได้จากลิงก์ในหน้าเหล่านี้ แต่ไม่อยู่ในเมนูแล้ว
@@ -45,7 +44,7 @@
   // เมนูที่แสดง (เรียงตามนี้) และหน้าที่อยู่ใต้แต่ละเมนู: หน้าที่ไม่อยู่ในเมนูทำให้เมนูแม่ของมันเป็นตัวที่เลือกอยู่
   const NAV = Object.freeze(["find", "orders", "setup"]);
   const SETUP_PAGES = Object.freeze(["import", "variants", "compounds", "customers", "stock", "count", "check", "audit"]);
-  const NAV_PARENT = Object.freeze({ find: "find", dashboard: "find", build: "find", items: "find", product: "find", structure: "find", orders: "orders", count: "orders", jobs: "orders", rods: "orders", setup: "setup", ...Object.fromEntries(SETUP_PAGES.map((id) => [id, "setup"])) });
+  const NAV_PARENT = Object.freeze({ find: "find", dashboard: "find", build: "find", items: "find", product: "find", structure: "find", orders: "orders", count: "orders", jobs: "orders", setup: "setup", ...Object.fromEntries(SETUP_PAGES.map((id) => [id, "setup"])) });
   const navLabel = (id) => (id === "orders" ? "ใบสั่งผลิต" : MODULES.find((entry) => entry.id === id)?.label ?? id);
   const findModule = (id) => MODULES.find((entry) => entry.id === String(id ?? "")) ?? null;
 
@@ -53,12 +52,12 @@
   const ROLES = Object.freeze({
     admin: { label: "ผู้ดูแลระบบ", modules: MODULE_IDS },
     manager: { label: "ผู้จัดการโรงงาน", modules: MODULE_IDS },
-    planner: { label: "ฝ่ายวางแผน (PP)", modules: Object.freeze(["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "orders", "customers", "count", "stock", "rods", "jobs", "check"]) },
+    planner: { label: "ฝ่ายวางแผน (PP)", modules: Object.freeze(["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "orders", "customers", "count", "stock", "jobs", "check"]) },
     rb: { label: "แผนก RB (รีดเส้นยาง)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "compounds", "jobs", "orders", "check"]) },
-    gr: { label: "แผนก GR (ตัด/เจาะ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "rods", "orders", "check"]) },
+    gr: { label: "แผนก GR (ตัด/เจาะ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },
     // คลังแท่งยาว (SR) และตรวจคุณภาพ (QA) ขั้น 05–06 ของผังงาน: ไม่มีงานรายแผนกของตัวเอง งานอยู่ที่การ์ดของงานของฉัน (รับเข้า/จ่ายให้ GR · ตัดสินล็อตที่กัก) และหน้าคลังแท่งยาว
-    sr: { label: "คลังยางเส้นยาว (SR)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "rods", "orders", "check"]) },
-    qa: { label: "ตรวจคุณภาพ (QA)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "rods", "orders", "check"]) },
+    sr: { label: "คลังยางเส้นยาว (SR)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "orders", "check"]) },
+    qa: { label: "ตรวจคุณภาพ (QA)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "orders", "check"]) },
     pt: { label: "แผนก PT (ฉีดพลาสติก)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },
     bg: { label: "แผนก BG (กระเป๋า/เย็บ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },
     pk: { label: "แผนก PK (บรรจุ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },

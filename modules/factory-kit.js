@@ -238,13 +238,16 @@
   const deptWorkSection = (ctx, options) => deptWork(ctx, options).html;
 
   // ---- เมนูข้างของโมดูลแผนก (เหมือนเมนูข้างของ BOM / RubberFlow): "งานของฉัน" เป็นอันแรกเสมอ แล้วจึงหน้าอื่นของแผนก ----
-  // รายการ = { id, label, icon, params, count?(ctx) } · params = พารามิเตอร์ของหน้านั้นใน URL ({} = หน้าแรก) · count = ตัวเลขบนเมนู (0 = ไม่แสดง)
+  // รายการ = { id, label, icon, params, owns?, count?(ctx) } · params = พารามิเตอร์ของหน้านั้นใน URL ({} = หน้าแรก) · count = ตัวเลขบนเมนู (0 = ไม่แสดง)
+  // owns = ชื่อพารามิเตอร์อื่นที่ทำให้หน้านั้นเป็นของรายการนี้ (เช่น หน้าล็อต ?lot= อยู่ใต้ "ในคลัง": เมนูข้างและหัวหน้าตามรายการนั้น)
   const workItem = (count) => ({ id: "work", label: "งานของฉัน", icon: "inbox", params: {}, count });
   const deptWorkCount = (ctx) => deptWork(ctx).count;
   const STORE_MENU = Object.freeze([workItem(deptWorkCount), { id: "stock", label: "ในคลัง", icon: "warehouse", params: { tab: "stock" } }]);
   const WORK_MENU = Object.freeze([workItem(deptWorkCount)]);
   // หน้าที่เปิดอยู่ = รายการที่พารามิเตอร์ตรงกับ URL มากที่สุด (ไม่ตรงเลย = หน้าแรก)
   function viewOf(menu, params) {
+    const owner = menu.find((item) => (item.owns ?? []).some((key) => params.get(key)));
+    if (owner) return owner;
     let best = menu[0];
     for (const item of menu) {
       const keys = Object.keys(item.params ?? {});
@@ -254,20 +257,16 @@
   }
   const syncLine = () => `<span class="small muted" role="status" data-bom-sync>${esc(root.MNP_BOM?.syncText?.() ?? "")}</span>`;
   // "งานของฉัน" อยู่ในโมดูลของแผนกเท่านั้น (เจ้าของสั่ง 2026-11-19: เอาออกจาก BOM) จึงไม่มีลิงก์กลับไป BOM
-  // GR (รับยางเส้นยาวจาก SR) และ QA (ตัดสินล็อตที่กัก) ดูยอดและประวัติล็อตที่หน้าคลังยางเส้นยาวใน BOM ได้: ทางเข้าจากโมดูลของตน (SR อยู่ที่หน้าในคลัง)
-  const viewHead = (ctx) => {
-    const dept = ctx.factory?.dept;
-    const rods = (dept === "GR" || dept === "QA") && ctx.canSee?.("rods") ? actionLink(ctx, "คลังยางเส้นยาว", ctx.url("rods")) : "";
-    return pageHead(ctx, ctx.view?.label ?? "งานของฉัน", `${rods}${syncLine()}`);
-  };
+  // หัวหน้าหน้า: h1 = ชื่อรายการเมนูที่เปิดอยู่ · actionsHtml = ปุ่มของหน้านั้น (เช่น "รับยางนอกใบสั่ง") ก่อนข้อความสถานะการบันทึก
+  const viewHead = (ctx, actionsHtml = "") => pageHead(ctx, ctx.view?.label ?? "งานของฉัน", `${typeof actionsHtml === "string" ? actionsHtml : ""}${syncLine()}`);
 
   // หน้าของแผนกคลัง (SR ST WH): เมนูข้าง "งานของฉัน" (การ์ดงานที่รอ) กับ "ในคลัง" (ของที่มีอยู่จริง ค้นหาได้)
   // stock = { count, html } ที่โมดูลสร้าง (ช่องค้นหา + ตาราง) · work = ตัวเลือกของ deptWork
-  function storeLanding(ctx, { dept, stock, work = {} }) {
+  function storeLanding(ctx, { stock, work = {} }) {
     const { ui } = ctx;
-    if (ctx.view?.id === "stock") return `${viewHead(ctx, dept)}${stock.html}`;
+    if (ctx.view?.id === "stock") return `${viewHead(ctx)}${stock.html}`;
     const job = deptWork(ctx, { ...work, title: null });
-    return `${viewHead(ctx, dept)}${job.html || ui.card(ui.empty(work.emptyText ?? "ไม่มีงานค้าง"))}`;
+    return `${viewHead(ctx)}${job.html || ui.card(ui.empty(work.emptyText ?? "ไม่มีงานค้าง"))}`;
   }
   // ปุ่มลิงก์ไปที่ทำงานจริง (ที่เดียวต่อแหล่ง)
   const actionLink = (ctx, text, href) => ctx.ui.link(text, href, "btn rf-btn secondary");
@@ -309,7 +308,9 @@
   function deptPageCtx(def, params) {
     const base = root.MNP_BOM.context(params);
     const view = viewOf(def.menu, params);
-    return { ...base, factory: def, view, pageUrl: (extra = {}) => routeUrl(def.route, { ...view.params, q: base.q || null, all: params.get("all") || null, ...extra }) };
+    // def.keep = พารามิเตอร์ของหน้านั้นที่ลิงก์ในหน้าพาไปด้วย (ตัวกรอง) เหมือน q และ all
+    const kept = Object.fromEntries((def.keep ?? []).map((key) => [key, params.get(key) || null]));
+    return { ...base, factory: def, view, pageUrl: (extra = {}) => routeUrl(def.route, { ...view.params, q: base.q || null, all: params.get("all") || null, ...kept, ...extra }) };
   }
   // เมนูข้างใต้ลิงก์ของโมดูล (app.js วางเมื่อโมดูลนี้เปิดอยู่) · ตัวเลขนับจากข้อมูลชุดเดียวกับหน้า นับไม่ได้ = ไม่แสดงตัวเลข
   function deptSubnav(def, active) {
@@ -389,7 +390,7 @@
       const list = (show === "done" ? done : open).slice().sort((a, b) => rank(a) - rank(b) || (Number(a.dueAt) || 0) - (Number(b.dueAt) || 0) || String(a.id).localeCompare(String(b.id)));
       const body = list.length ? `<div class="bom-job-grid">${list.map((job) => jobCard(ctx, job, { planner: false, dept, show, orderOf })).join("")}</div>` : ui.card(ui.empty(show === "done" ? "ยังไม่มีงานที่เสร็จ" : `ไม่มีงานของ ${dept} ค้างอยู่`));
       // หัวหน้า = ชื่อหน้าในเมนูข้าง (งานของฉัน / เสร็จแล้ว) · ข้อความสถานะการบันทึก (module-bom.js เติมให้ระหว่างบันทึก)
-      return { html: `${viewHead(ctx, dept)}${body}`, actions: true };
+      return { html: `${viewHead(ctx)}${body}`, actions: true };
     };
     // เมนูข้าง: งานของฉัน (ตัวเลข = งานที่เปิดอยู่) · เสร็จแล้ว
     landing.menu = Object.freeze([workItem((ctx) => productionJobs(ctx, dept).open.length), { id: "done", label: "เสร็จแล้ว", icon: "check", params: { st: "done" } }]);
@@ -430,16 +431,17 @@
 
   // def = { code, dept, route, label, icon, palette, landing(ctx), pages? }
   // code เช่น "FACTORY_SR" (ไม่ชนโมดูลอื่น) · dept = รหัสแผนกใน rules.PROCESS_FLOW · route = path ของหน้าแรก (#/sr) · icon = ชื่อไอคอนใน MNP_UI_ICONS
+  // keep = ชื่อพารามิเตอร์ตัวกรองของโมดูลที่ ctx.pageUrl พาไปด้วย · menu[].owns = พารามิเตอร์ที่ทำให้หน้าเป็นของรายการเมนูนั้น
   // landing(ctx) คืน { html, bind?, actions? } (actions: true = ผูกคำสั่งและ dialog ของ BOM ให้การ์ดสั่งงานได้) · ctx = ctx ของ BOM (data, rules, ui, helpers, url, user, q, params, runAction, openDialog) + pageUrl ของหน้านี้ + factory (def) · pages = หน้าเพิ่มเติมของแผนก { path: (params) => … } ผ่านประตูเดียวกัน
   function registerDeptModule(def) {
-    const { code, dept, route, label, icon, palette, landing, pages = {}, flowNo } = def;
+    const { code, dept, route, label, icon, palette, landing, pages = {}, flowNo, keep = [] } = def;
     // เมนูข้างของโมดูล: def.menu หรือของ landing (productionLanding) ไม่มี = "งานของฉัน" อันเดียว
     const menu = Object.freeze([...(def.menu ?? landing?.menu ?? WORK_MENU)]);
     if (!code || !dept || !route || !label || typeof landing !== "function") throw new Error("registerDeptModule: code, dept, route, label และ landing จำเป็น");
     const modules = (root.MNP_REQUEST_MODULES ??= {});
     if (modules[code]) throw new Error(`registerDeptModule: โมดูล ${code} ลงทะเบียนแล้ว`);
     const flow = flowNo ?? root.MNP_BOM_RULES?.PROCESS_FLOW?.find((entry) => entry.dept === dept)?.no;
-    const factory = Object.freeze({ code, dept, route, label, icon, palette, menu });
+    const factory = Object.freeze({ code, dept, route, label, icon, palette, menu, keep: Object.freeze([...keep]) });
     const guarded = (page) => (params) => (state.employee?.isSandbox !== true || !canOpenDeptModule(state.employee, dept, code) ? renderNotFound() : page(params));
     ROUTES.add(route);
     const extra = Object.fromEntries(Object.entries(pages).map(([path, page]) => { ROUTES.add(path); return [path, guarded(page)]; }));
@@ -455,6 +457,6 @@
   root.MNP_FACTORY = Object.freeze({
     esc, attr, formPayload, parseArgs, bindRoot, deptChip, dueText, jobCard, jobReportDialog,
     FACTORY_GROUP, canSeeDept, canOpenDeptModule, deptLink, orderNavItems, registerDeptModule, productionLanding, mountDeptJobs,
-    pageHead, searchForm, includesText, limited, deptWork, deptWorkSection, storeLanding, STORE_MENU, viewHead, actionLink, wake, failed, rubberflowFailed, deptCtx, routeUrl, onDeptRoute: onFactoryRoute,
+    pageHead, searchForm, includesText, limited, deptWork, deptWorkSection, storeLanding, STORE_MENU, workItem, deptWorkCount, viewHead, actionLink, wake, failed, rubberflowFailed, deptCtx, routeUrl, onDeptRoute: onFactoryRoute,
   });
 })(window);

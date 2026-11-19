@@ -446,9 +446,9 @@
         ${ui.field("ของเสียจากการตกแต่ง", ui.input("scrapQty", { type: "number", step: "any" }))}
         ${ui.field("จำนวนต่อกล่อง", ui.input("perBox", { type: "number", step: "any", required: true, extra: "data-rf-perbox" }), { hint: '<span data-rf-boxes></span>', required: true, className: "rf-perbox-field" })}
         ${ui.field("เกรด", ui.select("grade", ["A", "B"]))}
-        ${ui.field("ผลตัดสินของล็อต", ui.select("qcResult", [{ value: "pass", label: "ผ่าน — รับเข้าคลัง" }, { value: "hold", label: "กักกันรอ QC" }], { extra: 'title="เมื่อบันทึกเป็น “ผ่าน” กล่องเข้าคลังสินค้าสำเร็จรูปทันทีและนับยอดเข้าใบสั่งผลิต · WO ที่มาจากงาน RB ของ BOM: แท่งส่งเข้าคลังแท่งยาว (SR) รอ SR รับเข้าและตรวจขนาด"' }))}
+        ${ui.field("ผลตัดสินของล็อต", ui.select("qcResult", [{ value: "pass", label: "ผ่าน — รับเข้าคลัง" }, { value: "hold", label: "กักกันรอ QC" }], { extra: 'title="เมื่อบันทึกเป็น “ผ่าน” กล่องเข้าคลังสินค้าสำเร็จรูปทันทีและนับยอดเข้าใบสั่งผลิต · WO ที่มาจากงาน RB ของ BOM: ยางเส้นยาวส่งเข้าคลังยางเส้นยาว (SR) รอ SR รับเข้าและตรวจขนาด"' }))}
         ${ui.field("กะ", ui.select("shift", shiftOptions(rules)))}
-      </div><div data-rf-linked-note hidden>${ui.callout("info", "WO นี้มาจากงาน RB ของใบสั่งผลิต (BOM): แท่งที่ผ่านส่งเข้าคลังแท่งยาว (SR) ไม่สร้างกล่องสินค้า · SR รับเข้าและตรวจขนาด แล้วงาน RB ของใบจึงนับยอด")}</div><div class="rf-row">${ui.submitButton("บันทึกและพิมพ์ป้ายกล่อง")}</div></form>`, { title: "บันทึกการตกแต่งและบรรจุ" }) : "";
+      </div><div data-rf-linked-note hidden>${ui.callout("info", "WO นี้มาจากงาน RB ของใบสั่งผลิต (BOM): ยางเส้นยาวที่ผ่านส่งเข้าคลังยางเส้นยาว (SR) ไม่สร้างกล่องสินค้า · SR รับเข้าและตรวจขนาด แล้วงาน RB ของใบจึงนับยอด")}</div><div class="rf-row">${ui.submitButton("บันทึกและพิมพ์ป้ายกล่อง")}</div></form>`, { title: "บันทึกการตกแต่งและบรรจุ" }) : "";
     const html = `${ui.pageHead("สถานีที่ 4 · ตกแต่งและบรรจุ", "ตัดแต่งครีบ ตรวจ 100% แล้วบรรจุกล่อง ระบบสร้างเลขกล่องและรับเข้าคลังสินค้าสำเร็จรูปให้อัตโนมัติ")}
       ${ui.stats([
         { label: "อัตราได้ของดี ตกแต่ง", value: stageYieldText(lots), sub: "เป้าหมาย ≥ 99.0%" },
@@ -458,7 +458,7 @@
       ])}
       ${gateNotice(ctx, "finishing")}${form}
       ${stageLots(ctx, "finishing", [
-        { label: "บรรจุ", render: (lot) => esc(data.orders.find((row) => row.id === lot.orderId)?.sourceJobId && !(Number(lot.boxes) > 0) ? `ส่งคลังแท่งยาว (SR) · เกรด ${lot.grade}` : `${lot.boxes} กล่อง × ${fmtNum(lot.params.perBox)} · เกรด ${lot.grade}`) },
+        { label: "บรรจุ", render: (lot) => esc(data.orders.find((row) => row.id === lot.orderId)?.sourceJobId && !(Number(lot.boxes) > 0) ? `ส่งคลังยางเส้นยาว (SR) · เกรด ${lot.grade}` : `${lot.boxes} กล่อง × ${fmtNum(lot.params.perBox)} · เกรด ${lot.grade}`) },
         { label: "CoA", render: (lot) => ui.openButton("ดู CoA", "coa", { lotId: lot.id }, { className: "secondary small" }) },
       ])}`;
     const bind = (rootNode) => {
@@ -485,8 +485,8 @@
         if (linked) perBox.value = "";
         else if (transfer && (!perBox.value || perBox.dataset?.rfLinkedValue)) perBox.value = transfer.uom === "m" ? "100" : "2000";
         if (perBox.dataset) { if (linked) perBox.dataset.rfLinkedValue = "1"; else delete perBox.dataset.rfLinkedValue; }
-        if (passOption) passOption.textContent = linked ? "ผ่าน — ส่งเข้าคลังแท่งยาว (SR)" : "ผ่าน — รับเข้าคลัง";
-        if (form.dataset) form.dataset.rfSuccess = linked ? "บันทึก {result} แล้ว แท่งส่งเข้าคลังแท่งยาว (SR)" : baseSuccess;
+        if (passOption) passOption.textContent = linked ? "ผ่าน — ส่งเข้าคลังยางเส้นยาว (SR)" : "ผ่าน — รับเข้าคลัง";
+        if (form.dataset) form.dataset.rfSuccess = linked ? "บันทึก {result} แล้ว ยางเส้นยาวส่งเข้าคลังยางเส้นยาว (SR)" : baseSuccess;
         if (submit) submit.textContent = linked ? "บันทึกการตกแต่ง" : "บันทึกและพิมพ์ป้ายกล่อง";
         paint();
       });

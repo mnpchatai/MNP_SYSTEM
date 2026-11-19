@@ -3279,3 +3279,31 @@ table.bom-tree td.right { white-space: nowrap; }
   .itwo-signature { border-bottom: 0; }
   .itwo-sheet-table, .itwo-signatures { break-inside: avoid; }
 }
+
+/* โมดูล SR (คลังยางเส้นยาว): แถบตัวกรองของหน้าในคลัง/ประวัติ · หน้าล็อต · ป้ายล็อต (พิมพ์) */
+.sr-toolbar { align-items: flex-end; }
+.sr-filter { flex: 0 1 200px; min-width: 150px; margin: 0; }
+.sr-lot { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); align-items: start; }
+.sr-label-wrap { display: grid; gap: 14px; justify-items: start; }
+.sr-label { width: min(100%, 460px); overflow: hidden; border: 2px solid var(--m700); border-radius: var(--radius-lg); background: #fff; color: #111; box-shadow: 0 6px 18px -8px rgba(16, 32, 59, .3); }
+.sr-label-top { display: grid; gap: 2px; padding: 10px 14px; color: #fff; background: linear-gradient(135deg, var(--m700), var(--m500)); }
+.sr-label-code { font-size: 1.25rem; line-height: 1.25; overflow-wrap: anywhere; }
+.sr-label-name { font-size: var(--text-meta); opacity: .95; }
+.sr-label-body { display: grid; grid-template-columns: minmax(0, 1fr) 132px; gap: 12px; align-items: start; padding: 12px 14px; }
+.sr-label-facts { margin: 0; display: grid; gap: 4px; font-size: .9rem; }
+.sr-label-line { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: 8px; }
+.sr-label-line dt { color: #444; }
+.sr-label-line dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.sr-label-qr { width: 132px; }
+.sr-label-qr svg { display: block; width: 100%; height: auto; }
+@media (max-width: 420px) {
+  .sr-label-body { grid-template-columns: minmax(0, 1fr); }
+  .sr-label-qr { justify-self: center; }
+}
+@media print {
+  body:has(.sr-label) :is(.sidebar, .topbar, .mobile-nav-toggle, .nav-backdrop, .sandbox-banner, .skip-link, .offline-banner, .update-banner, .toast, .install-banner, .no-print, .rf-pagehead, .request-back-link) { display: none !important; }
+  body:has(.sr-label), body:has(.sr-label) .app-shell, body:has(.sr-label) .main, body:has(.sr-label) .content { display: block; margin: 0; padding: 0; background: #fff; max-width: none; }
+  .sr-label { width: 100mm; box-shadow: none; break-inside: avoid; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .sr-label-body { grid-template-columns: minmax(0, 1fr) 30mm; }
+  .sr-label-qr { width: 30mm; }
+}

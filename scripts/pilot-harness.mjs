@@ -4,7 +4,7 @@
 //                                    → http://localhost:5181/pilot-shell.html   (หน้าหลักจริงของ app.js ด้วย Supabase จำลองใน scripts/pilot-harness-mock.mjs; ?empty=1 = ไม่มีงาน, ?sandbox=1 = admin ในโหมดทดสอบ เห็น RubberFlow/BOM; ?ncr=1&as=e5 = สถานการณ์ NCR อย่างเดียว เข้าระบบเป็นพนักงานจำลองคนนั้น)
 //
 // ฟังเฉพาะ loopback (127.0.0.1 และ ::1) เครื่องอื่นใน LAN ต่อไม่ได้ และเสิร์ฟเฉพาะไฟล์ชุดเดียวกับที่ scripts/build-pilot.mjs เผยแพร่
-// (/styles.css, /modules/*.js …) ไฟล์อื่นของ repo (.git, package.json, .env*) ได้ 404 แล้วสร้างหน้า /harness/ ที่โหลดสไตล์ + สคริปต์โมดูลทุกตัวตามลำดับใน
+// (/styles.css, /modules/*.js …) ไฟล์อื่นของ repo (.git, package.json, .env*) ได้ 404 แล้วสร้างหน้า /harness/ ที่โหลดสไตล์ + สคริปต์โมดูลและไลบรารี vendor ทุกตัวตามลำดับใน
 // index.html (ยกเว้น app.js) แล้วแทน app.js ด้วย stub ของ helper ที่โมดูลเรียก (state, app, shell, bindShell, renderNotFound,
 // escapeHtml, showToast, friendlyError, confirmDialog, renderRoute, currentRoute) โดยถือว่าอยู่ในโหมดทดสอบเสมอ ข้อมูลของโมดูลอยู่ใน localStorage
 // ของเบราว์เซอร์เหมือนของจริง ใช้เพื่อดู/ลองกดเท่านั้น ไม่ใช่ทางเข้าของผู้ใช้จริง และสคริปต์นี้ไม่ถูกเผยแพร่ (ดู scripts/build-pilot.mjs)
@@ -34,7 +34,7 @@ function servable(relative) {
 
 async function moduleScripts() {
   const html = await readFile(join(root, "index.html"), "utf8");
-  return [...html.matchAll(/<script defer src="\.\/(modules\/[^"?]+)(?:\?v=[^"]*)?"><\/script>/g)].map((match) => match[1]);
+  return [...html.matchAll(/<script defer src="\.\/((?:modules|vendor)\/[^"?]+)(?:\?v=[^"]*)?"><\/script>/g)].map((match) => match[1]);
 }
 
 async function harnessPage() {

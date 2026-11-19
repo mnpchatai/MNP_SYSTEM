@@ -20,7 +20,7 @@
   }
 
   function landing(ctx) {
-    return { html: `${F.viewHead(ctx, "QA")}${rodSection(ctx)}${rubberflowSection(ctx)}`, actions: true };
+    return { html: `${F.viewHead(ctx)}${rodSection(ctx)}${rubberflowSection(ctx)}`, actions: true };
   }
 
   F.registerDeptModule({ code: "FACTORY_QA", dept: "QA", route: "qa", label: "ตรวจคุณภาพ (QA)", icon: "clipboard-check", palette: "qa", landing });
