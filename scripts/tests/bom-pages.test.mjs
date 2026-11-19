@@ -3920,7 +3920,7 @@ test("reversing in step 6: only the warehouse manager sees a reverse button per 
   // ข้อความยืนยันการรับเข้า / ส่งมอบบอกว่าใครย้อนได้ (แทน "แก้ไขหรือยกเลิกไม่ได้")
   env.store.setUser("B09");
   html = await env.whRender(`order=${PI}`);
-  assert.match(html, /data-rf-confirm="ส่งมอบสินค้าตามจำนวนที่กรอก\? ถ้าบันทึกผิด ย้อนได้โดยผู้จัดการแผนกคลังสินค้า \(WH\) เท่านั้น"/);
+  assert.match(html, /data-rf-confirm="ส่งมอบสินค้าตามจำนวนที่กรอก\? ถ้าบันทึกผิด ผู้จัดการแผนกคลังสินค้า \(WH\) หรือผู้ดูแลระบบย้อนได้"/);
   assert.doesNotMatch(html, /แก้ไขหรือยกเลิกไม่ได้/);
 });
 

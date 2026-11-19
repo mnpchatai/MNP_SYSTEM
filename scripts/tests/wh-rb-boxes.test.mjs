@@ -272,7 +272,7 @@ test("a QA pass moves only held boxes: a box in stock is never sent back to wait
   assert.equal(await s.states("FN-L1"), "pending_wh,pending_wh,pending_wh", "the waiting boxes keep waiting");
 });
 
-test("a QA fail of a lot WH received takes its credit back from the RB job in the same save; a closed order refuses the fail", async () => {
+test("a QA fail of a lot WH received takes its credit back from the RB job in the same save, written as the QA decision", async () => {
   const s = await session();
   await s.as("persona-wh");
   await saved(s.store.run("receiveBoxes", { lotId: "FN-L1" }));
@@ -280,23 +280,39 @@ test("a QA fail of a lot WH received takes its credit back from the RB job in th
   await s.as("persona-qa");
   await saved(s.store.run("addQcRecord", { lotId: "FN-L1", values: { hardness: 80 }, result: "hold" }));
   assert.deepEqual([await s.states("FN-L1"), (await s.job()).qtyDone], ["hold,hold,hold", 60], "a hold keeps the credit");
-  s.mock.bom.edit((b) => { b.orders.find((row) => row.id === "PI-W").status = "completed"; });
-  await denied(s.store.run("addQcRecord", { lotId: "FN-L1", values: { hardness: 80 }, result: "fail" }), "RF_INVALID_TRANSITION");
-  assert.deepEqual([(await s.rf()).lots.find((row) => row.id === "FN-L1").qc, (await s.job()).qtyDone], ["hold", 60], "the refused fail changed nothing");
-  s.mock.bom.edit((b) => { b.orders.find((row) => row.id === "PI-W").status = "in_progress"; });
-  await s.store.catchUp();
   const bomBefore = (await s.call("app_bom_master")).version;
   const id = (await saved(s.store.run("addQcRecord", { lotId: "FN-L1", values: { hardness: 80 }, result: "fail" }))).result;
   const lot = (await s.rf()).lots.find((row) => row.id === "FN-L1");
   assert.deepEqual([lot.qc, lot.whCredit, await s.states("FN-L1")], ["fail", null, "hold,hold,hold"]);
   const job = await s.job();
   assert.deepEqual([job.qtyDone, job.status, job.reports.at(-1).good, job.reports.at(-1).note, job.reports.at(-1).by],
-    [0, "in_progress", 0, `ย้อนรับเข้าคลังสินค้าสำเร็จรูป (WH) ล็อต FN-L1 ถอน 60 · QA ตัดสินไม่ผ่าน ${id}`, "ธนา ตรวจสอบ"]);
+    [0, "in_progress", 0, `QA ตัดสินไม่ผ่าน ล็อต FN-L1 ถอนยอด 60 (${id})`, "ธนา ตรวจสอบ"]);
+  assert.ok(!job.reports.some((report) => report.note.includes("ย้อนรับเข้า")), "the fail is not written as a receipt reversal");
   assert.equal((await s.call("app_bom_master")).version, bomBefore + 1, "one BOM counter step");
   assert.equal(s.store.data().lots.find((row) => row.id === "FN-L1").whCredit, null, "the page equals the database");
   await saved(s.store.run("addQcRecord", { lotId: "FN-U1", values: { hardness: 80 }, result: "hold" }));
   await saved(s.store.run("addQcRecord", { lotId: "FN-U1", values: { hardness: 80 }, result: "fail" }));
   assert.equal((await s.call("app_bom_master")).version, bomBefore + 1, "a fail without a credit does not touch the BOM");
+});
+
+test("QA is never blocked from a fail: a lot credited to a closed order fails without taking the credit back, while the WH receipt reversal stays refused", async () => {
+  const s = await session();
+  await s.as("persona-wh");
+  await saved(s.store.run("receiveBoxes", { lotId: "FN-L1" }));
+  s.mock.bom.edit((b) => { b.orders.find((row) => row.id === "PI-W").status = "completed"; });
+  await s.as("persona-whh");
+  await denied(s.store.run("reverseBoxReceipt", { lotId: "FN-L1", note: "รับผิดล็อต" }), "RF_INVALID_TRANSITION");
+  await s.store.catchUp();
+  await s.as("persona-qa");
+  await saved(s.store.run("addQcRecord", { lotId: "FN-L1", values: { hardness: 80 }, result: "hold" }));
+  const bomBefore = await s.call("app_bom_master");
+  await saved(s.store.run("addQcRecord", { lotId: "FN-L1", values: { hardness: 80 }, result: "fail" }));
+  const lot = (await s.rf()).lots.find((row) => row.id === "FN-L1");
+  assert.deepEqual([lot.qc, lot.whCredit, await s.states("FN-L1")], ["fail", { jobNo: "JOB-W", qty: 60 }, "hold,hold,hold"], "the fail is recorded and the credit is kept");
+  const job = await s.job();
+  assert.deepEqual([job.qtyDone, job.reports.length], [60, bomBefore.jobs.find((row) => row.id === "JOB-W").reports.length], "the job of the closed order is not touched");
+  assert.equal((await s.call("app_bom_master")).version, bomBefore.version, "nor is the BOM counter");
+  assert.deepEqual(s.store.data().lots.find((row) => row.id === "FN-L1").whCredit, { jobNo: "JOB-W", qty: 60 }, "the page equals the database");
 });
 
 test("the demo seed gives the WH screens boxes in every state (waiting linked and for sale, in stock, shipped)", () => {

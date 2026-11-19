@@ -2,7 +2,7 @@
 -- ตรวจทั้งฝั่งอนุญาตและปฏิเสธ: โครงสร้าง (คอลัมน์ / check / ฟังก์ชัน / สิทธิ์) · ปลายทางของล็อตตกแต่ง (sr / customer / กัก · WO ที่ผูกงานและไม่ผูก)
 -- · receiveBoxes (แผนก WH ทุกบทบาท / admin · กลุ่มวางแผน RB QA SR ไม่ได้ · ทั้งล็อต · นับยอดเข้างาน RB ครั้งเดียว · ส่งซ้ำไม่เขียน)
 -- · shipBoxes (แผนก WH / admin · กลุ่มวางแผนไม่ได้แล้ว) · reverseBoxShip / reverseBoxReceipt (ผู้จัดการแผนก WH / admin · เหตุผล · ถอนยอด · กล่องส่งมอบแล้ว / กัก / ใบปิด)
--- · QA กัก / ปล่อยหลัง WH รับ (ผ่านซ้ำย้ายเฉพาะกล่องที่กัก) · QA fail ถอนยอดที่นับเข้างาน RB (ใบปิดแล้วถอนไม่ได้) · กล่องเดิมได้วันที่รับ
+-- · QA กัก / ปล่อยหลัง WH รับ (ผ่านซ้ำย้ายเฉพาะกล่องที่กัก) · QA fail ถอนยอดที่นับเข้างาน RB (ใบปิดแล้ว = บันทึก fail ได้ ไม่ถอนยอด) · กล่องเดิมได้วันที่รับ
 -- · ผู้ใช้จริงนอกโหมดทดสอบ (RF_TEST_MODE_ONLY) · ชุดเรคอร์ด
 -- (authenticated อ่านตาราง rf_* / bom_* ตรงไม่ได้ จึงอ่านตารางและแก้ข้อมูลตั้งต้นด้วย reset role เสมอ)
 begin;
@@ -26,14 +26,14 @@ select ok(exists (select 1 from pg_constraint c where c.conrelid = 'public.rf_fg
 select ok(to_regprocedure('private.rf_save_boxes(uuid,boolean,jsonb,bigint,bigint)') is null, 'the old box writer signature is gone');
 select ok((select bool_and(p.prosecdef and p.proconfig @> array['search_path=""']) from pg_proc p
            where p.oid in ('private.rf_save_boxes(public.employees,text,text,jsonb,bigint,bigint)'::regprocedure,
-                           'private.rf_box_credit(text,public.rf_lots)'::regprocedure, 'private.rf_box_uncredit(text,public.rf_lots,text)'::regprocedure,
+                           'private.rf_box_credit(text,public.rf_lots)'::regprocedure, 'private.rf_box_uncredit(text,public.rf_lots,text,text)'::regprocedure,
                            'private.rf_save_lots(public.employees,text,boolean,boolean,text,jsonb,bigint,bigint)'::regprocedure,
                            'private.rf_save_qc(public.employees,boolean,boolean,jsonb,bigint,bigint)'::regprocedure,
                            'private.rf_records(bigint)'::regprocedure, 'public.app_rf_save(jsonb,bigint,text,jsonb,text)'::regprocedure)),
   'the new and replaced writers are security definer with an empty search_path');
 select ok(not exists (
     select 1 from unnest(array['private.rf_save_boxes(public.employees,text,text,jsonb,bigint,bigint)', 'private.rf_box_credit(text,public.rf_lots)',
-                               'private.rf_box_uncredit(text,public.rf_lots,text)', 'private.rf_client_actions()', 'private.rf_records(bigint)']) f(sig)
+                               'private.rf_box_uncredit(text,public.rf_lots,text,text)', 'private.rf_client_actions()', 'private.rf_records(bigint)']) f(sig)
     where has_function_privilege('anon', f.sig::regprocedure, 'execute') or has_function_privilege('authenticated', f.sig::regprocedure, 'execute')),
   'clients cannot call the private helpers');
 select ok(not has_function_privilege('anon', 'public.app_rf_save(jsonb,bigint,text,jsonb,text)', 'execute')
@@ -426,20 +426,8 @@ select wb_t.rf(jsonb_build_object('qcRecords', jsonb_build_object('upsert', json
   '{"id":"QC-W5","lotId":"FN-U1","orderId":"WO-U","stage":"finishing","tests":[{"key":"hardness","value":65,"pass":true}],"result":"pass","note":"","inspector":"x","at":1}'::jsonb))), 'addQcRecord');
 select is(wb_t.states('FN-U1'), 'pending_wh,pending_wh', 'and boxes waiting for WH keep waiting');
 
--- QA ตัดสินไม่ผ่าน (fail) ล็อตที่นับยอดเข้างาน RB แล้ว: ถอนยอดในธุรกรรมเดียวกัน · ใบที่ปิดแล้วถอนไม่ได้ (ทั้งคำสั่งถูกปฏิเสธ)
+-- QA ตัดสินไม่ผ่าน (fail) ล็อตที่นับยอดเข้างาน RB แล้ว: ถอนยอดในธุรกรรมเดียวกัน (รายงานบอกว่า QA ตัดสิน ไม่ใช่ย้อนรับเข้า)
 select set_config('test.fail', '{"id":"QC-W6","lotId":"FN-C1","orderId":"WO-L","stage":"finishing","tests":[{"key":"hardness","value":80,"pass":false}],"result":"fail","note":"แข็งเกิน","inspector":"x","at":1}', true);
-reset role;
-update public.bom_orders set status = 'completed' where is_test and pi_no = '251205-27001';
-update public.bom_master_state set version = version + 1 where is_test;
-set local role authenticated;
-select throws_ok($$ select wb_t.rf(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.fail')::jsonb))), 'addQcRecord') $$,
-  'RF_INVALID_TRANSITION', 'a fail cannot take back a credit from a closed order');
-select is(wb_t.lot('FN-C1') ->> 'qc' || '/' || wb_t.states('FN-C1') || '/' || (wb_t.job('JOB-W-RB') ->> 'qtyDone') || '/' || (wb_t.lot('FN-C1') -> 'whCredit' ->> 'qty'),
-  'pass/in_stock,in_stock,in_stock/60/60', 'the refused fail changed nothing');
-reset role;
-update public.bom_orders set status = 'in_progress' where is_test and pi_no = '251205-27001';
-update public.bom_master_state set version = version + 1 where is_test;
-set local role authenticated;
 select set_config('test.bv', wb_t.bver()::text, true);
 select set_config('test.ba', wb_t.bom_audit('rubberflow:addQcRecord')::text, true);
 select lives_ok($$ select wb_t.rf(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.fail')::jsonb))), 'addQcRecord') $$,
@@ -448,13 +436,38 @@ select is(wb_t.lot('FN-C1') ->> 'qc' || '/' || wb_t.states('FN-C1'), 'fail/hold,
 select ok(wb_t.lot('FN-C1') -> 'whCredit' = 'null'::jsonb, 'the lot forgets its credit');
 select is((wb_t.job('JOB-W-RB') ->> 'qtyDone')::numeric || '/' || (wb_t.job('JOB-W-RB') ->> 'status'), '0/in_progress', 'the credit is taken back from the RB job');
 select is((wb_t.job('JOB-W-RB') -> 'reports' -> -1 ->> 'good')::numeric || '/' || (wb_t.job('JOB-W-RB') -> 'reports' -> -1 ->> 'note') || '/' || (wb_t.job('JOB-W-RB') -> 'reports' -> -1 ->> 'by'),
-  '0/ย้อนรับเข้าคลังสินค้าสำเร็จรูป (WH) ล็อต FN-C1 ถอน 60 · QA ตัดสินไม่ผ่าน QC-W6/' || current_setting('test.n_sbx_qa_staff'),
-  'with a report entry of zero that names the lot, the quantity, the QC record and the inspector');
+  '0/QA ตัดสินไม่ผ่าน ล็อต FN-C1 ถอนยอด 60 (QC-W6)/' || current_setting('test.n_sbx_qa_staff'),
+  'with a report entry of zero that names the QA decision, the lot, the quantity, the QC record and the inspector');
+select is((select count(*)::integer from jsonb_array_elements(wb_t.job('JOB-W-RB') -> 'reports') r where r ->> 'note' like '%ย้อนรับเข้า%QC-W6%'), 0,
+  'the fail is not written as a receipt reversal');
 select is(wb_t.bver(), current_setting('test.bv')::bigint + 1, 'one BOM counter step');
 select is(wb_t.bom_audit('rubberflow:addQcRecord'), current_setting('test.ba')::integer + 1, 'the BOM history records the fail');
 select wb_t.rf(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.fail')::jsonb || '{"id":"QC-W7"}'::jsonb))), 'addQcRecord');
 select is((wb_t.job('JOB-W-RB') ->> 'qtyDone')::numeric, 0::numeric, 'a second fail takes nothing back twice');
 select is((select count(*)::integer from jsonb_array_elements(wb_t.job('JOB-W-RB') -> 'reports') r where r ->> 'note' like '%QA ตัดสินไม่ผ่าน%'), 1, 'and adds no second report');
+
+-- QA ต้องบันทึกไม่ผ่านได้เสมอ: ใบที่ปิดแล้ว (completed) = บันทึก fail ได้ ไม่ถอนยอดและคงยอดที่นับไว้ (ย้อนรับเข้าของ WH ยังถูกปฏิเสธตามข้อ 10)
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select lives_ok($$ select wb_t.receive('FN-C2') $$, 'WH receives the second lot again');
+select is((wb_t.job('JOB-W-RB') ->> 'qtyDone') || '/' || (wb_t.lot('FN-C2') -> 'whCredit' ->> 'qty'), '50/50', 'and the RB job is credited with it');
+reset role;
+update public.bom_orders set status = 'completed' where is_test and pi_no = '251205-27001';
+update public.bom_master_state set version = version + 1 where is_test;
+set local role authenticated;
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
+select set_config('test.bv', wb_t.bver()::text, true);
+select set_config('test.nr', jsonb_array_length(wb_t.job('JOB-W-RB') -> 'reports')::text, true);
+select lives_ok($$ select wb_t.rf(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(
+  '{"id":"QC-W8","lotId":"FN-C2","orderId":"WO-L","stage":"finishing","tests":[{"key":"hardness","value":80,"pass":false}],"result":"fail","note":"แข็งเกิน","inspector":"x","at":1}'::jsonb))), 'addQcRecord') $$,
+  'QA records a fail on a lot credited to a closed order');
+select is(wb_t.lot('FN-C2') ->> 'qc' || '/' || wb_t.states('FN-C2') || '/' || (wb_t.job('JOB-W-RB') ->> 'qtyDone') || '/' || (wb_t.lot('FN-C2') -> 'whCredit' ->> 'qty'),
+  'fail/hold/50/50', 'the fail is recorded and the boxes are held, the job and the lot keep the credit');
+select is(wb_t.bver() || '/' || jsonb_array_length(wb_t.job('JOB-W-RB') -> 'reports'), current_setting('test.bv') || '/' || current_setting('test.nr'),
+  'the closed order is not touched (no BOM counter step, no report)');
+reset role;
+update public.bom_orders set status = 'in_progress' where is_test and pi_no = '251205-27001';
+update public.bom_master_state set version = version + 1 where is_test;
+set local role authenticated;
 
 -- 12. นอกโหมดทดสอบ: ผู้ใช้จริงถูกปฏิเสธ (สวิตช์ใช้งานจริงปิดอยู่) --------------------------------------------------------------------------------
 select set_config('test.real_rows', wb_t.lot_rows('FN-U1', 'pending_wh', 'in_stock', null, null, 1000)::text, true);

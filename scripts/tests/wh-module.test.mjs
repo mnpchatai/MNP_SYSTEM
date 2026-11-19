@@ -346,6 +346,62 @@ test("WH: the reverse dialogs are for the WH head and admin: a receipt is revers
     assert.doesNotMatch(blocked, /data-rf-form=/);
   }
   assert.equal(open(whEnv("head"), { kind: "receipt", lotId: "FN-NONE" }), null, "an unknown lot gives no dialog");
+  // toasts and confirmations: a space before แล้ว after "WH", and who may reverse (the WH manager or the admin)
+  const head = whEnv("head");
+  assert.match(open(head, { kind: "receipt", lotId: "FN-A" }).html, /data-rf-success="ย้อนการรับเข้า WH แล้ว"/);
+  assert.match(open(head, { kind: "ship", lotId: "FN-C", ids: ["BOX-C-001"] }).html, /data-rf-success="ย้อนการส่งมอบแล้ว"/);
+  makeReceivable(head);
+  const pages = [await wh(head), await wh(head, "tab=receive"), await wh(head, "tab=deliver")].join("");
+  assert.match(pages, /ถ้าบันทึกผิด ผู้จัดการแผนกคลังสินค้า \(WH\) หรือผู้ดูแลระบบย้อนได้/);
+  assert.doesNotMatch(pages, /WHแล้ว|ย้อนได้โดยผู้จัดการแผนกคลังสินค้า \(WH\) เท่านั้น/);
+});
+
+test("WH งานของฉัน: receipts first (PK, then RubberFlow lots waiting for WH), then delivery; a card lists at most 5 lines plus how many more", async () => {
+  const env = whEnv("staff");
+  const receivable = makeReceivable(env);
+  const data = env.store.data();
+  // a closed order with goods in the warehouse that the customer still waits for = a delivery card
+  const closed = data.orders.find((entry) => entry.id !== receivable.id && ["released", "in_progress"].includes(entry.status));
+  const products = env.context.MNP_BOM_RULES.fgPosition(data, closed).products;
+  for (const job of data.jobs.filter((entry) => entry.orderId === closed.id)) { job.qtyDone = job.qtyPlanned; job.status = "done"; }
+  data.fgMoves = products.map((product, i) => ({ id: `d${i}`, orderId: closed.id, fgCode: product.fgCode, kind: "receive", qty: product.ordered, at: 1000, by: "x" }));
+  closed.status = "completed";
+  const cards = cardsOf(await wh(env));
+  const at = (pattern) => cards.findIndex((card) => pattern.test(card));
+  const pk = at(new RegExp(`รับสินค้าเข้า WH ตามใบ ${receivable.id}`));
+  const rb = at(/รับกล่องเข้า WH ล็อต FN-B/);
+  const deliver = at(new RegExp(`ส่งมอบให้ลูกค้าตามใบ ${closed.id}`));
+  assert.ok(pk >= 0 && rb >= 0 && deliver >= 0, JSON.stringify({ pk, rb, deliver }));
+  assert.ok(pk < rb && rb < deliver, "PK receipt, then the RubberFlow lot, then the delivery");
+  // the same order on the BOM side: receipts before deliveries
+  const kinds = env.context.MNP_BOM_PAGES.hub.fgTasks(env.context.MNP_BOM.context(new URLSearchParams())).map((task) => task.kind);
+  assert.ok(kinds.indexOf("fgReceive") < kinds.indexOf("fgDeliver"), kinds.join());
+  // 40 codes on one order: 5 lines and "อีก 35 รายการ" (the card opens the order page with every line)
+  const hub = env.context.MNP_BOM_PAGES.hub;
+  const lines = Array.from({ length: 40 }, (_, i) => ({ fgCode: `FG-${String(i).padStart(2, "0")}`, qty: 1 }));
+  const card = hub.taskCard(env.context.MNP_BOM.context(new URLSearchParams()), { kind: "fgReceive", order: receivable, lines }, { planner: false, dept: "WH" });
+  assert.equal(count(card, /<li>/g), 5);
+  assert.match(card, /<p class="small muted">อีก 35 รายการ<\/p>/);
+  assert.ok(!card.includes("FG-05"), "the sixth code is not drawn");
+  const five = hub.taskCard(env.context.MNP_BOM.context(new URLSearchParams()), { kind: "fgDeliver", order: closed, lines: lines.slice(0, 5) }, { planner: false, dept: "WH" });
+  assert.equal(count(five, /<li>/g), 5);
+  assert.doesNotMatch(five, /อีก \d+ รายการ/, "five lines need no remainder");
+});
+
+test("WH รับเข้า: jump buttons to the PK and RB sections only when both have something waiting; the sections are focusable targets", async () => {
+  const env = whEnv("staff");
+  makeReceivable(env);
+  const html = await wh(env, "tab=receive");
+  const pk = count(html, /data-rf-form="receiveFg"/g);
+  assert.match(html, /<nav class="rf-row wh-jump" aria-label="ไปยังส่วน">/);
+  assert.match(html, new RegExp(`<button type="button" class="btn rf-btn secondary small" data-wh-jump="wh-receive-pk">จาก PK ${pk} ใบ</button>`));
+  assert.match(html, /<button type="button" class="btn rf-btn secondary small" data-wh-jump="wh-receive-rb">จาก RB 1 ล็อต<\/button>/);
+  assert.ok(html.indexOf("wh-jump") < html.indexOf('id="wh-receive-pk"') && html.indexOf('id="wh-receive-pk"') < html.indexOf('id="wh-receive-rb"'));
+  assert.match(html, /<div id="wh-receive-rb" class="wh-jump-target" tabindex="-1">[\s\S]*?<h2>จาก RubberFlow \(กล่องรอรับเข้า\)<\/h2>/, "the RB heading itself carries no count");
+  // nothing waiting from RB: no jump buttons
+  env.rf.store.data().fgBoxes.filter((box) => box.status === "pending_wh").forEach((box) => { box.status = "in_stock"; });
+  assert.doesNotMatch(await wh(env, "tab=receive"), /data-wh-jump/);
+  assert.match(fs.readFileSync("styles.css", "utf8"), /\.wh-jump-target \{ scroll-margin-top: 80px; \}/, "the target clears the sticky top bar");
 });
 
 test("WH: the lot page shows the facts, every box with its state, the ship form and the history; the order page shows the PK receive and delivery panels and its own history; unknown ones say so", async () => {

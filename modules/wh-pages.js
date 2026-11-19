@@ -162,8 +162,8 @@
     const fullClose = pos.canClose && fg ? ui.button("ปิดใบ", { action: "closeOrder", args: { orderId: order.id }, className: "", confirmText: `ปิดใบ ${order.id}? ทุกแผนกปิดงานและรับสินค้าเข้า WH ครบแล้ว ปิดแล้วเปิดกลับไม่ได้ สินค้าที่รับเข้าแล้วยังส่งมอบให้ลูกค้าได้`, success: "ปิดใบ {result} แล้ว" }) : "";
     // บันทึกผิดย้อนได้โดยผู้จัดการแผนกคลังสินค้า (WH) หรือผู้ดูแลระบบเท่านั้น (20261128020000) · ยืนยันแล้วส่งทันที
     const submit = closedOrder
-      ? '<button class="btn rf-btn" type="submit" data-rf-confirm="รับส่วนที่ PK ผลิตเกินเข้า WH เป็นสต็อกสินค้าสำเร็จรูปตามจำนวนที่กรอก? ถ้าบันทึกผิด ย้อนได้โดยผู้จัดการแผนกคลังสินค้า (WH) เท่านั้น">รับส่วนเกินเข้า WH</button>'
-      : '<button class="btn rf-btn" type="submit" data-rf-confirm="รับสินค้าเข้า WH ตามจำนวนที่กรอก? ถ้าบันทึกผิด ย้อนได้โดยผู้จัดการแผนกคลังสินค้า (WH) เท่านั้น">รับเข้า WH</button>';
+      ? '<button class="btn rf-btn" type="submit" data-rf-confirm="รับส่วนที่ PK ผลิตเกินเข้า WH เป็นสต็อกสินค้าสำเร็จรูปตามจำนวนที่กรอก? ถ้าบันทึกผิด ผู้จัดการแผนกคลังสินค้า (WH) หรือผู้ดูแลระบบย้อนได้">รับส่วนเกินเข้า WH</button>'
+      : '<button class="btn rf-btn" type="submit" data-rf-confirm="รับสินค้าเข้า WH ตามจำนวนที่กรอก? ถ้าบันทึกผิด ผู้จัดการแผนกคลังสินค้า (WH) หรือผู้ดูแลระบบย้อนได้">รับเข้า WH</button>';
     const waiting = pos.waitingProduction
       ? ui.callout("info", `ยังปิดใบไม่ได้: งานของแผนก ${esc(pos.openDepts.map((dept) => `${deptName(ctx, dept)} (${dept})`).join(", "))} ยังไม่เสร็จ · แผนกนั้นรายงานผลให้เสร็จ หรือฝ่ายวางแผนปิดงานที่จะไม่ทำต่อ แล้ว WH ปิดใบ`)
       : "";
@@ -193,7 +193,7 @@
     // ส่วนที่เกินจำนวนสั่ง (สต็อกสินค้าสำเร็จรูป) บอกใต้ยอดคงเหลือ · ช่องส่งครั้งนี้เติมเฉพาะส่วนที่ลูกค้าของใบนี้รออยู่ จึงไม่ส่งส่วนเกินโดยไม่ตั้งใจ
     const rows = pos.products.map((product) => `<tr>${fgProductCell(ctx, product)}${fgNum(ctx, product.have)}${anyGiven ? fgNum(ctx, product.givenAway) : ""}${fgNum(ctx, product.delivered)}<td class="right rf-mono">${esc(rules.fmtQty(product.deliverable))}${product.free > 0 ? `<div class="small muted">เกินที่สั่ง ${esc(rules.fmtQty(product.free))}</div>` : ""}</td>${acting ? `<td class="right">${fgQtyInput(ctx, product, "จำนวนที่ส่งมอบ", product.owed, product.deliverable, `data-bom-ordered-left="${attr(Math.max(0, product.ordered - product.delivered))}" data-bom-code="${attr(product.fgCode)}" data-bom-unit="${attr(uomText(ctx, itemOf(ctx, product.fgCode)?.uom ?? "set"))}"`)}</td>` : ""}</tr>`);
     const table = ui.table(head, rows, { emptyText: "ใบนี้ไม่มีสินค้า" });
-    const submit = '<button class="btn rf-btn" type="submit" data-rf-confirm="ส่งมอบสินค้าตามจำนวนที่กรอก? ถ้าบันทึกผิด ย้อนได้โดยผู้จัดการแผนกคลังสินค้า (WH) เท่านั้น">ส่งมอบให้ลูกค้า</button>';
+    const submit = '<button class="btn rf-btn" type="submit" data-rf-confirm="ส่งมอบสินค้าตามจำนวนที่กรอก? ถ้าบันทึกผิด ผู้จัดการแผนกคลังสินค้า (WH) หรือผู้ดูแลระบบย้อนได้">ส่งมอบให้ลูกค้า</button>';
     const overBox = '<div class="rf-callout is-warn bom-compound-change" role="note" data-bom-deliver-over hidden><div class="rf-callout-body"><label class="bom-confirm-line"><input type="checkbox" name="overConfirm" value="1" data-bom-deliver-over-confirm> <span data-bom-deliver-over-text></span></label></div></div>';
     const form = acting
       ? `<form novalidate data-rf-form="deliverFg" data-rf-args="${attr(JSON.stringify({ orderId: order.id }))}" data-rf-success="ส่งมอบ {result} แล้ว">${table}${overBox}<div class="rf-row bom-step-next">${submit}</div></form>`
@@ -296,7 +296,7 @@
   }
 
   // ---------- งานของฉัน ----------
-  const receiveConfirm = (group) => `รับกล่องของล็อต ${group.id} เข้า WH ทั้ง ${group.pending.length} กล่อง? ถ้าบันทึกผิด ย้อนได้โดยผู้จัดการแผนกคลังสินค้า (WH) เท่านั้น`;
+  const receiveConfirm = (group) => `รับกล่องของล็อต ${group.id} เข้า WH ทั้ง ${group.pending.length} กล่อง? ถ้าบันทึกผิด ผู้จัดการแผนกคลังสินค้า (WH) หรือผู้ดูแลระบบย้อนได้`;
   const receiveButton = (ctx, group, className = "") => ctx.ui.button("รับเข้า WH", { action: "receiveBoxes", args: { lotId: group.id }, className, confirmText: receiveConfirm(group), success: "รับเข้า WH ล็อต {result} แล้ว", ariaLabel: `รับเข้า WH ล็อต ${group.id}` });
   function rbCard(ctx, group) {
     const { rules } = ctx;
@@ -313,11 +313,11 @@
     try { rbCount = pendingLots(rbState(ctx)).length; } catch { rbCount = 0; }
     return F.deptWork(ctx).count + rbCount;
   }
+  // การ์ดชุดเดียว: งานรับเข้าก่อน (ของจาก PK แล้วล็อตของ RubberFlow ที่รอ WH) แล้วจึงปิดใบและส่งมอบ
   function workView(ctx, rb) {
     const { ui } = ctx;
-    const job = F.deptWork(ctx, { title: null });
-    const cards = pendingLots(rb).map((group) => rbCard(ctx, group));
-    const parts = [job.count ? job.html : "", cards.length ? `<div class="bom-job-grid">${cards.join("")}</div>` : "", rbNote(ctx, rb)].filter(Boolean);
+    const job = F.deptWork(ctx, { title: null, afterReceipts: pendingLots(rb).map((group) => rbCard(ctx, group)) });
+    const parts = [job.count ? job.html : "", rbNote(ctx, rb)].filter(Boolean);
     return parts.length ? parts.join("") : ui.card(ui.empty("ไม่มีงานค้าง"));
   }
 
@@ -334,11 +334,16 @@
     const rows = lots.map((group) => `<tr${rowAttr(lotHref(group.id))}><td>${mainLink(ctx, group.id, lotHref(group.id))}<div class="small muted">${esc(ctx.rules.fmtDate(group.createdAt))}</div></td><td>${ui.mono(group.code)}<div class="small muted">${esc(itemOf(ctx, group.code)?.name ?? "")}</div></td><td class="right rf-mono">${esc(lotQty(ctx, group, group.pendingQty))}<div class="small muted">${esc(boxCount(group.pending))}</div></td><td>${esc(whoseText(group))}</td><td class="right">${box ? receiveButton(ctx, group, "small") : ""}</td></tr>`);
     const rbPart = lots.length || rb.status === "ready" ? ui.card(ui.table(["ล็อต", "สินค้า", { label: "จำนวน", className: "right" }, "ของ", ""], rows, { emptyText: "ไม่มีล็อตที่รอรับเข้า" }), { title: esc("จาก RubberFlow (กล่องรอรับเข้า)"), flush: true }) : "";
     const pkPart = pkCards || ui.card(ui.empty("ไม่มีสินค้าจาก PK ที่รอรับเข้า"));
-    return `${rbNote(ctx, rb)}${pkPart}${rbPart}`;
+    // ล็อตของ RB อยู่ใต้การ์ดของ PK ที่ยาวได้หลายสิบใบ: ปุ่มเลื่อนไปแต่ละส่วนเมื่อมีของรอทั้งสองทาง (หัวข้อของส่วนไม่บอกจำนวน จำนวนจึงอยู่ที่ปุ่มที่เดียว)
+    const jump = pk.length && lots.length
+      ? `<nav class="rf-row wh-jump" aria-label="ไปยังส่วน">${[["wh-receive-pk", `จาก PK ${pk.length} ใบ`], ["wh-receive-rb", `จาก RB ${lots.length} ล็อต`]].map(([id, text]) => `<button type="button" class="btn rf-btn secondary small" data-wh-jump="${attr(id)}">${esc(text)}</button>`).join("")}</nav>`
+      : "";
+    const section = (id, html) => (html ? `<div id="${attr(id)}" class="wh-jump-target" tabindex="-1">${html}</div>` : "");
+    return `${rbNote(ctx, rb)}${jump}${section("wh-receive-pk", pkPart)}${section("wh-receive-rb", rbPart)}`;
   }
 
   // ---------- ส่งมอบ ----------
-  const shipConfirm = (group) => `ส่งมอบกล่องที่เลือกของล็อต ${group.id} ให้ลูกค้า${group.customer ? ` ${group.customer}` : ""}? ถ้าบันทึกผิด ย้อนได้โดยผู้จัดการแผนกคลังสินค้า (WH) เท่านั้น`;
+  const shipConfirm = (group) => `ส่งมอบกล่องที่เลือกของล็อต ${group.id} ให้ลูกค้า${group.customer ? ` ${group.customer}` : ""}? ถ้าบันทึกผิด ผู้จัดการแผนกคลังสินค้า (WH) หรือผู้ดูแลระบบย้อนได้`;
   // ฟอร์มส่งมอบกล่องของล็อตเดียว: ติ๊กกล่อง (ค่าตั้งต้น = ทุกกล่อง) · ไม่มีสิทธิ์ = รายการกล่องอย่างเดียว
   function shipForm(ctx, group) {
     const boxes = group.inStock.map((box) => `<label class="wh-box"><input type="checkbox" name="ids[]" value="${attr(box.id)}" checked><span class="rf-mono">${esc(String(box.id).split("-").pop())}</span><span class="small muted">${esc(`${ctx.rules.fmtQty(box.qty)} ${rfUnit(box.uom)}`)}</span></label>`).join("");
@@ -503,7 +508,7 @@
     const effect = receipt ? `กล่องทั้ง ${targets.length} กล่องของล็อตกลับไปรอ WH รับเข้าใหม่ (ถ้าล็อตนี้นับยอดเข้างาน BOM แล้ว ยอดที่นับถูกถอนคืน)` : `กล่อง ${targets.length} กล่องที่เลือกกลับเข้าคลัง ส่งมอบใหม่ได้`;
     const args = receipt ? { lotId: group.id } : { ids: targets.map((box) => box.id) };
     const action = receipt ? "reverseBoxReceipt" : "reverseBoxShip";
-    const body = `<form novalidate id="wh-box-reverse-form" data-rf-form="${action}" data-rf-args="${attr(JSON.stringify(args))}" data-rf-success="${label}แล้ว">
+    const body = `<form novalidate id="wh-box-reverse-form" data-rf-form="${action}" data-rf-args="${attr(JSON.stringify(args))}" data-rf-success="${receipt ? "ย้อนการรับเข้า WH แล้ว" : "ย้อนการส่งมอบแล้ว"}">
       ${facts}
       ${ui.callout("warn", `${esc(effect)} · รายการเดิมยังอยู่ในประวัติ ย้อนแล้วแก้กลับไม่ได้`)}
       ${ui.field("เหตุผล", ui.input("note", { required: true, placeholder: receipt ? "เช่น รับผิดล็อต" : "เช่น ส่งผิดลูกค้า", extra: 'minlength="3" maxlength="300"' }), { required: true })}</form>`;
@@ -524,6 +529,13 @@
   function bindPage(node, pageCtx) {
     node.querySelectorAll("[data-wh-filter]").forEach((select) => select.addEventListener("change", () => { location.hash = pageCtx.pageUrl({ [select.name]: select.value || null, n: null }); }));
     node.querySelectorAll('form[data-rf-form="deliverFg"]').forEach((form) => bindDeliverOver(pageCtx, form));
+    // ปุ่มเลื่อนไปส่วนของหน้า รับเข้า: เลื่อนในหน้า (ไม่ใช้ลิงก์ # ที่จะเปลี่ยนเส้นทางของหน้า) แล้วย้ายโฟกัสไปส่วนนั้น
+    node.querySelectorAll("[data-wh-jump]").forEach((button) => button.addEventListener("click", () => {
+      const target = node.querySelector(`#${button.dataset.whJump}`);
+      if (!target) return;
+      target.scrollIntoView({ block: "start", behavior: root.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      target.focus({ preventScroll: true });
+    }));
   }
   function landing(ctx) {
     const { ui } = ctx;

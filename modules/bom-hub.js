@@ -1137,7 +1137,9 @@
       if (pos.canCloseShort) tasks.push({ kind: "fgCloseShort", order, lines: pos.products.filter((product) => product.have + 1e-9 < product.ordered).map((product) => ({ fgCode: product.fgCode, qty: product.ordered - product.have })) });
       if (order.status === "completed" && pos.anyOwed) tasks.push({ kind: "fgDeliver", order, lines: pos.products.filter((product) => product.owed > 0).map((product) => ({ fgCode: product.fgCode, qty: product.owed })) });
     }
-    return tasks.sort((a, b) => (Number(a.order.whDue) || 0) - (Number(b.order.whDue) || 0) || (a.order.id < b.order.id ? -1 : 1));
+    // รับเข้าก่อน (ของที่ PK ส่งมาแล้วรอ WH) แล้วปิดใบ แล้วส่งมอบ · ในกลุ่มเดียวกันเรียงตามวันส่งมอบคลัง
+    const rank = { fgReceive: 0, fgClose: 1, fgCloseShort: 1, fgDeliver: 2 };
+    return tasks.sort((a, b) => rank[a.kind] - rank[b.kind] || (Number(a.order.whDue) || 0) - (Number(b.order.whDue) || 0) || (a.order.id < b.order.id ? -1 : 1));
   }
 
   // ---------- คลังแท่งยาว SR (ขั้น 05–06 ของผังงาน · 20261202010000) ----------
@@ -1418,6 +1420,12 @@
     const board = workBoard(ctx, new URLSearchParams());
     return board.dept ? board.cardCount(board.open) + board.tasks.length : 0;
   }
+  // การ์ดรับของเข้าคลังจากแผนกก่อนหน้า (WH รับจาก PK · SR รับยางเส้นยาว ซึ่งอยู่หน้าสุดของแผนกนั้นอยู่แล้ว): โมดูลแผนกวางการ์ดรับเข้าของตัวเองต่อจากชุดนี้ (MNP_FACTORY.deptWork afterReceipts)
+  // ใบสั่งซื้อของ ST ไม่นับ (การ์ดของ ST คงลำดับเดิม)
+  const isReceiptTask = (task) => task?.kind === "fgReceive" || task?.kind === "rodReceive";
+  // รายการในการ์ดงาน (ทุกชนิด รวมการ์ดเบิกของซื้อ): ไม่เกิน CARD_LINES บรรทัด ที่เหลือบอกจำนวน · การ์ดพาไปหน้ารายละเอียดที่มีครบทุกบรรทัด (ใบที่มี 40 รหัสไม่ยืดการ์ดจนเต็มจอ)
+  const CARD_LINES = 5;
+  const cardLines = (list, render, noun = "รายการ") => `<ul class="bom-job-parts">${list.slice(0, CARD_LINES).map(render).join("")}</ul>${list.length > CARD_LINES ? `<p class="small muted">${esc(`อีก ${list.length - CARD_LINES} ${noun}`)}</p>` : ""}`;
   // การ์ดของงานที่ไม่ใช่งานผลิต (คลังยางเส้นยาว SR · ตรวจคุณภาพ QA · คลังวัตถุดิบ ST · คลังสินค้า WH) เป็นชิ้นส่วนกลาง: หน้า "งานของฉัน" และโมดูลแผนกวาดชุดเดียวกัน
   // ctx = ผู้ใช้จริง (ปุ่มลงมือทำเปิดได้เมื่อมีสิทธิ์จริง ไม่เช่นนั้นเป็นข้อความดูอย่างเดียว · หน้างานของฉันได้การ์ดตามสิทธิ์อยู่แล้ว จึงเห็นปุ่มเสมอ) · view = { planner, dept } ของกระดานที่วาด (ป้ายแผนกขึ้นเฉพาะมุมมองทุกแผนกของฝ่ายวางแผน)
   function taskCard(ctx, task, { planner, dept }) {
@@ -1459,7 +1467,7 @@
     if (task.kind === "fgCloseShort") {
       return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">รอปิดใบ</span><span class="muted">ส่งมอบคลัง ${esc(rules.fmtDate(task.order.whDue))}</span></div>
         <h2>${esc(`ใบ ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "WH")} ` : ""}${esc(task.order.customer ?? "")} · PK ทำครบและรับเข้า WH แล้ว ยังน้อยกว่าที่สั่ง</p>
-        <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span class="rf-mono">${esc(line.fgCode)}</span><span class="nowrap">${esc(`ขาด ${rules.fmtQty(line.qty)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
+        ${cardLines(task.lines, (line) => `<li><span class="rf-mono">${esc(line.fgCode)}</span><span class="nowrap">${esc(`ขาด ${rules.fmtQty(line.qty)}`)}</span></li>`)}
         ${gated("canHandleFg", ui.openButton("ปิดใบ (รับไม่ครบ)", "closeShort", { orderId: task.order.id }, { className: "bom-job-main" }))}</article>`;
     }
     if (task.kind === "fgReceive" || task.kind === "fgDeliver") {
@@ -1468,7 +1476,7 @@
       const surplus = receive && task.surplus;
       return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">${receive ? (surplus ? "รอรับส่วนเกินเข้า WH" : "รอรับเข้า WH") : "รอส่งมอบ"}</span><span class="muted">ส่งมอบคลัง ${esc(rules.fmtDate(task.order.whDue))}</span></div>
         <h2>${esc(`${receive ? (surplus ? "รับส่วนเกินเข้า WH ตามใบ" : "รับสินค้าเข้า WH ตามใบ") : "ส่งมอบให้ลูกค้าตามใบ"} ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "WH")} ` : ""}${esc(task.order.customer ?? "")}${surplus ? " · ใบปิดแล้ว ส่วนเกินเป็นสต็อกสินค้าสำเร็จรูป" : ""}</p>
-        <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span class="rf-mono">${esc(line.fgCode)}</span><span class="nowrap">${esc(rules.fmtQty(line.qty))}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
+        ${cardLines(task.lines, (line) => `<li><span class="rf-mono">${esc(line.fgCode)}</span><span class="nowrap">${esc(rules.fmtQty(line.qty))}</span></li>`)}
         ${ui.link(receive ? "เปิดใบเพื่อรับเข้า WH" : "เปิดใบเพื่อส่งมอบ", whOrderUrl(task.order.id), "btn rf-btn bom-job-main")}</article>`;
     }
     if (task.kind === "receive") {
@@ -1478,13 +1486,13 @@
       const nameOf = (line) => (line.source === "bom" ? itemOf(ctx, line.materialCode)?.name : null) || materials.find((row) => row.code === line.materialCode)?.name || "";
       return `<article class="card rf-card bom-job ${task.cancelled ? "is-hold" : "is-now"}"><div class="bom-job-top"><span class="bom-job-state">${task.cancelled ? "ใบสั่งผลิตถูกยกเลิกแล้ว" : "รอรับเข้า"}</span><span class="muted">สั่งเมื่อ ${esc(rules.fmtDate(task.po.createdAt))}</span></div>
         <h2>${esc(`${task.cancelled ? "ตัดสินใบสั่งซื้อ" : "รับเข้าตามใบสั่งซื้อ"} ${task.po.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${task.po.sourcePi ? esc(`สั่งจากใบ ${task.po.sourcePi}`) : ""}${task.cancelled ? (task.partly ? " · รับเข้าไปแล้วบางส่วน ใบนี้ยกเลิกไม่ได้ รับส่วนที่เหลือเข้าเป็นสต็อกไว้ใช้กับใบอื่น หรือปิดยอดที่เหลือ" : " · ยกเลิกใบสั่งซื้อ หรือรับเข้าเป็นสต็อกไว้ใช้กับใบอื่น") : ""}</p>
-        <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span><span class="rf-mono">${esc(line.materialCode)}</span>${nameOf(line) ? ` <span class="small muted">${esc(nameOf(line))}</span>` : ""}</span><span class="nowrap"${line.received > 0 ? ` title="${attr(`สั่ง ${rules.fmtQty(line.qtyKg)} รับแล้ว ${rules.fmtQty(line.received)}`)}"` : ""}>${esc(`${line.received > 0 ? "ค้างรับ " : ""}${rules.fmtQty(line.open)} ${unit(line)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
+        ${cardLines(task.lines, (line) => `<li><span><span class="rf-mono">${esc(line.materialCode)}</span>${nameOf(line) ? ` <span class="small muted">${esc(nameOf(line))}</span>` : ""}</span><span class="nowrap"${line.received > 0 ? ` title="${attr(`สั่ง ${rules.fmtQty(line.qtyKg)} รับแล้ว ${rules.fmtQty(line.received)}`)}"` : ""}>${esc(`${line.received > 0 ? "ค้างรับ " : ""}${rules.fmtQty(line.open)} ${unit(line)}`)}</span></li>`)}
         ${ui.link(task.cancelled ? "เปิดใบสั่งซื้อ" : "ตรวจสอบรับเข้า", `#/rubberflow?p=warehouse&tab=po&q=${encodeURIComponent(task.po.id)}`, "btn rf-btn bom-job-main")}</article>`;
     }
     if (task.kind === "partReturn") {
       return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">ใบสั่งผลิตถูกยกเลิกแล้ว</span></div>
         <h2>${esc(`คืนของซื้อที่เบิกไปแล้ว ${task.order.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${esc(task.order.customer ?? "")}</p>
-        <ul class="bom-job-parts">${task.lines.slice(0, 6).map((line) => `<li><span>${esc(line.name || line.itemCode)}</span><span class="nowrap">${esc(`${rules.fmtQty(line.returnable)} ${uomText(ctx, line.uom)}`)}</span></li>`).join("")}</ul>${task.lines.length > 6 ? `<p class="small muted">และอีก ${task.lines.length - 6} รายการ</p>` : ""}
+        ${cardLines(task.lines, (line) => `<li><span>${esc(line.name || line.itemCode)}</span><span class="nowrap">${esc(`${rules.fmtQty(line.returnable)} ${uomText(ctx, line.uom)}`)}</span></li>`)}
         ${gated("canIssueParts", ui.openButton("คืนของเหลือ", "returnParts", { orderId: task.order.id }, { className: "bom-job-main" }))}</article>`;
     }
     if (task.kind === "chemReturn") {
@@ -1496,14 +1504,14 @@
     if (task.kind === "chem") {
       return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">เคมีขาด ยังไม่ได้สั่ง</span></div>
         <h2>${esc(`สั่งซื้อเคมีที่ขาด ${task.short.length} รายการ`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}สำหรับใบสั่งผลิตของแผนก RB ที่เปิดอยู่</p>
-        <ul class="bom-job-parts">${task.short.slice(0, 6).map((row) => `<li><span>${esc(row.name || row.materialCode)}</span><span class="nowrap">${esc(`ขาด ${rules.fmtQty(row.shortageKg)} กก.`)}</span></li>`).join("")}</ul>${task.short.length > 6 ? `<p class="small muted">และอีก ${task.short.length - 6} รายการ</p>` : ""}
+        ${cardLines(task.short, (row) => `<li><span>${esc(row.name || row.materialCode)}</span><span class="nowrap">${esc(`ขาด ${rules.fmtQty(row.shortageKg)} กก.`)}</span></li>`)}
         ${ui.link("เปิดหน้าใบสั่งซื้อ", "#/rubberflow?p=warehouse&tab=po", "btn rf-btn bom-job-main")}</article>`;
     }
     // การ์ดต่อวัตถุดิบ: หัวบอกยอดที่ต้องสั่งรวมทุกใบ รายการข้างล่างบอกใบที่ต้องใช้พร้อมจำนวนของใบนั้น · ปุ่มพาไปสั่งซื้อที่ใบที่ขาดมากสุด (task.order)
     return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">ของขาด ยังไม่ได้สั่ง</span></div>
       <h2>${esc(`สั่งซื้อ ${task.name || task.itemCode}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${task.name ? `<span class="rf-mono">${esc(task.itemCode)}</span> · ` : ""}${esc(`${task.orders.length} ใบสั่งผลิตต้องใช้`)}</p>
       <div class="bom-job-amount"><span>${esc(`ขาดรวม ${rules.fmtQty(task.total)} ${uomText(ctx, task.uom)}`)}</span></div>
-      <ul class="bom-job-parts">${task.orders.slice(0, 6).map((row) => `<li><span>${ui.link(row.orderId, ctx.url("orders", { sel: row.orderId }), "rf-mono")}</span><span class="nowrap">${esc(`ต้องใช้ ${rules.fmtQty(row.need)} ${uomText(ctx, task.uom)}`)}</span></li>`).join("")}</ul>${task.orders.length > 6 ? `<p class="small muted">และอีก ${task.orders.length - 6} ใบ</p>` : ""}
+      ${cardLines(task.orders, (row) => `<li><span>${ui.link(row.orderId, ctx.url("orders", { sel: row.orderId }), "rf-mono")}</span><span class="nowrap">${esc(`ต้องใช้ ${rules.fmtQty(row.need)} ${uomText(ctx, task.uom)}`)}</span></li>`, "ใบ")}
       ${ui.link("เปิดใบเพื่อสั่งซื้อ", ctx.url("orders", { sel: task.order.id }), "btn rf-btn bom-job-main")}</article>`;
   }
 
@@ -1533,7 +1541,7 @@
         const button = !finished && ctx.helpers.canIssueParts(user) ? ui.link("เบิกจ่ายที่ใบสั่งผลิต", ctx.url("orders", { sel: entry.parts }), "btn rf-btn bom-job-main") : ui.link("เปิดใบสั่งผลิต", ctx.url("orders", { sel: entry.parts }), "btn rf-btn secondary bom-job-main");
         return `<article class="card rf-card bom-job"><div class="bom-job-top"><span class="bom-job-state">${finished ? "เบิกแล้ว" : "รอเบิก"}</span>${dueText(Math.min(...jobs.map((job) => job.dueAt)), finished)}</div>
           <h2>${esc(`เบิกของตามใบ ${entry.parts}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${esc(order?.customer ?? "")}</p>
-          <ul class="bom-job-parts">${jobs.slice(0, 6).map((job) => `<li><span>${esc(job.name)}</span><span class="nowrap">${esc(`${rules.fmtQty(finished ? job.qtyDone : Math.max(0, job.qtyPlanned - (Number(job.qtyDone) || 0)))} ${uomText(ctx, job.uom)}`)}</span></li>`).join("")}</ul>${jobs.length > 6 ? `<p class="small muted">และอีก ${jobs.length - 6} รายการ</p>` : ""}${button}</article>`;
+          ${cardLines(jobs, (job) => `<li><span>${esc(job.name)}</span><span class="nowrap">${esc(`${rules.fmtQty(finished ? job.qtyDone : Math.max(0, job.qtyPlanned - (Number(job.qtyDone) || 0)))} ${uomText(ctx, job.uom)}`)}</span></li>`)}${button}</article>`;
       }
       // การ์ดงานผลิตเป็นชิ้นส่วนกลาง (modules/factory-kit.js) ใช้ร่วมกับโมดูลแผนกอื่น
       return root.MNP_FACTORY.jobCard(ctx, entry.job, { planner, dept, show, orderOf });
@@ -1579,5 +1587,5 @@
 
   // ชิ้นส่วนของยางเส้นยาวที่โมดูล SR (modules/module-sr.js) ใช้วาดหน้าล็อตและตาราง ไม่คัดลอก
   const rod = Object.freeze({ bucketText, rodStatusBadge, qcRowsHtml, rodQty, rodItemName, ROD_KIND_LABEL, pickPlanHtml });
-  pages.hub = { rod, ratioText, orderStepOf, hubUrl, treeTab, pastePreview, copyPreview, draftChemicals, rfCan, storeTasks, fgTasks, rodTasks, workBoard, workCount, taskCard, boardCards };
+  pages.hub = { rod, ratioText, orderStepOf, hubUrl, treeTab, pastePreview, copyPreview, draftChemicals, rfCan, storeTasks, fgTasks, rodTasks, workBoard, workCount, taskCard, boardCards, isReceiptTask };
 })(typeof window !== "undefined" ? window : globalThis);

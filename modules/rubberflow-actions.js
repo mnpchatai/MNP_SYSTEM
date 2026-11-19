@@ -1072,7 +1072,8 @@
     lot.qc = result;
     if (result === "pass") lot.holdReasons = [];
     // กล่อง (ตรงกับ rf_save_qc ของ 20261206010000): ผ่าน = เฉพาะกล่องที่กักไว้กลับที่เดิม (WH รับเข้าแล้ว = in_stock · ยังไม่รับ = pending_wh) · อื่น = กล่องที่ยังไม่ส่งมอบเป็น hold
-    // ล็อต fail ที่นับยอดเข้างาน RB ไว้: ฐานข้อมูลถอนยอดนั้นและล้าง whCredit (งาน BOM มาเองทางส่วนต่างของ BOM)
+    // ล็อต fail ที่นับยอดเข้างาน RB ไว้: ฐานข้อมูลถอนยอดนั้นและล้าง whCredit (งาน BOM มาเองทางส่วนต่างของ BOM) · QA บันทึก fail ได้เสมอ
+    // ใบ BOM ที่ปิดแล้ว (หน้านี้ไม่รู้สถานะใบ) ฐานข้อมูลไม่ถอนและคง whCredit ไว้ แถวล็อตจากส่วนต่างหลังบันทึกแทนค่านี้
     d.fgBoxes.filter((box) => box.lotId === lot.id && (result === "pass" ? box.status === "hold" : box.status !== "shipped")).forEach((box) => {
       box.status = result !== "pass" ? "hold" : box.receivedAt ? "in_stock" : "pending_wh";
     });

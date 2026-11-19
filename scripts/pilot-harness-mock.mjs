@@ -2516,14 +2516,18 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     for (const row of next.recipes) if (row.status === "approved" && next.recipes.some((other) => other !== row && other.id === row.id && other.status === "approved")) fail("RF_INVALID_RECIPE");
     // ---- กล่องทั้งล็อต (ตรงกับ rf_save_boxes ของ 20261206010000): รับเข้า = ไม่มีกล่อง pending_wh ของล็อตเหลือ แล้วนับยอดเข้างาน RB ----
     // ย้อนรับเข้า = ไม่มีกล่องที่ส่งมอบแล้ว / กัก (RF_INVALID_TRANSITION) และไม่มีกล่องที่ยังอยู่ในคลัง (RF_INVALID_BOX) แล้วถอนยอด · ใบ completed ถอนไม่ได้
-    // ถอนยอดที่ล็อตนับเข้างาน RB ไว้ (ตรงกับ private.rf_box_uncredit): ใบ completed = RF_INVALID_TRANSITION · ใบ released / in_progress = ถอนยอดจากงาน · อื่น / ไม่พบงาน = ล้างค่าที่จำไว้อย่างเดียว
-    const uncredit = (li, note) => {
+    // ถอนยอดที่ล็อตนับเข้างาน RB ไว้ (ตรงกับ private.rf_box_uncredit): ใบ released / in_progress = ถอนยอดจากงาน
+    // kind unreceive (WH ย้อนรับเข้า): ใบ completed = RF_INVALID_TRANSITION · อื่น / ไม่พบงาน = ล้างค่าที่จำไว้อย่างเดียว
+    // kind qa_fail (QA ตัดสินไม่ผ่าน · บันทึกได้เสมอ): ใบที่ไม่ใช่ released / in_progress หรือไม่พบงาน = ไม่ถอนและคงค่าที่จำไว้
+    const uncredit = (li, kind, note) => {
       const lot = next.lots[li];
       if (!lot.whCredit) return;
       const job = bomLoad().jobs.find((row) => row.id === lot.whCredit.jobNo);
       const bomOrder = job ? bomLoad().orders.find((row) => row.id === job.orderId) : null;
-      if (bomOrder?.status === "completed") fail("RF_INVALID_TRANSITION");
-      if (job && ["released", "in_progress"].includes(bomOrder?.status)) ops.credit.push({ kind: "uncredit", job: job.id, qty: lot.whCredit.qty, lotId: lot.id, note });
+      const open = Boolean(job) && ["released", "in_progress"].includes(bomOrder?.status);
+      if (kind === "qa_fail" && !open) return;
+      if (kind === "unreceive" && bomOrder?.status === "completed") fail("RF_INVALID_TRANSITION");
+      if (open) ops.credit.push({ kind, job: job.id, qty: lot.whCredit.qty, lotId: lot.id, note });
       next.lots[li] = { ...lot, whCredit: null };
       stampVersion("lots", lot.id);
     };
@@ -2547,7 +2551,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       } else {
         if (boxes.some((box) => box.status === "shipped" || box.status === "hold")) fail("RF_INVALID_TRANSITION");
         if (boxes.some((box) => box.status === "in_stock")) fail("RF_INVALID_BOX");
-        uncredit(li, note);
+        uncredit(li, "unreceive", note);
       }
     }
     // ---- ตรวจความครบของคำสั่ง และคำนวณตัวเลขที่ฐานข้อมูลคำนวณเอง ----
@@ -2571,8 +2575,8 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         const status = lot.qc !== "pass" ? "hold" : box.receivedAt ? "in_stock" : "pending_wh";
         if (box.lotId === lot.id && moves) { next.fgBoxes[i] = { ...box, status }; stampVersion("fgBoxes", box.id); }
       });
-      // fail ของล็อตที่ WH รับเข้าและนับยอดเข้างาน RB แล้ว: ถอนยอดในคำสั่งเดียวกัน (เหตุผล = เลขผลตรวจ)
-      if (item.result === "fail") uncredit(next.lots.findIndex((row) => row.id === lot.id), `QA ตัดสินไม่ผ่าน ${item.id}`);
+      // fail ของล็อตที่ WH รับเข้าและนับยอดเข้างาน RB แล้ว: ถอนยอดในคำสั่งเดียวกัน (อ้างเลขผลตรวจ) · ใบปิดแล้ว = บันทึก fail ได้ ไม่ถอน
+      if (item.result === "fail") uncredit(next.lots.findIndex((row) => row.id === lot.id), "qa_fail", item.id);
     }
     // ยอดส่งต่อของล็อต = ผลรวมที่ส่งมอบไปแล้วทุกใบ
     next.lots.forEach((lot, i) => {
@@ -2637,7 +2641,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       rodLots.add(id);
     }
     // WH รับล็อตที่ส่งมอบให้ลูกค้าของ WO ที่ผูกงาน (ตรงกับ private.rf_box_credit ของ 20261206010000): งานได้ยอดเต็ม + รายงาน · ใบ released → in_progress
-    // ย้อนรับเข้า (private.rf_box_uncredit): ถอนยอด (ไม่ต่ำกว่า 0) · done → in_progress เมื่อต่ำกว่าแผน · รายงาน good 0 พร้อมเหตุผล
+    // ย้อนรับเข้า / QA ตัดสินไม่ผ่าน (private.rf_box_uncredit): ถอนยอด (ไม่ต่ำกว่า 0) · done → in_progress เมื่อต่ำกว่าแผน · รายงาน good 0 ตามที่มา
     for (const item of ops.credit ?? []) {
       const job = bom.jobs.find((row) => row.id === item.job);
       if (!job) continue;
@@ -2650,7 +2654,9 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         startOrder(job);
       } else {
         job.qtyDone = Math.max(Math.round((Number(job.qtyDone || 0) - item.qty) * 1e4) / 1e4, 0);
-        job.reports = [...(job.reports ?? []), { at, by: actor.name, good: 0, reject: 0, note: `ย้อนรับเข้าคลังสินค้าสำเร็จรูป (WH) ล็อต ${item.lotId} ถอน ${item.qty} · ${item.note ?? ""}`.slice(0, 200) }];
+        const note = item.kind === "qa_fail" ? `QA ตัดสินไม่ผ่าน ล็อต ${item.lotId} ถอนยอด ${item.qty} (${item.note ?? ""})`
+          : `ย้อนรับเข้าคลังสินค้าสำเร็จรูป (WH) ล็อต ${item.lotId} ถอน ${item.qty} · ${item.note ?? ""}`;
+        job.reports = [...(job.reports ?? []), { at, by: actor.name, good: 0, reject: 0, note: note.slice(0, 200) }];
         if (job.status === "done" && job.qtyDone < Number(job.qtyPlanned)) job.status = "in_progress";
         if (job.status !== "done") delete job.doneAt;
         touchJob(job);

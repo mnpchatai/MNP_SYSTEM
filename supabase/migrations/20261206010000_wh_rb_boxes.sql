@@ -28,8 +28,8 @@
 --     sr = เหมือน 20261202010000 ทุกอย่าง (ไม่มีกล่อง ล็อตยางเส้นยาวรอ SR รับ) · hold = เหมือนเดิม (กล่อง hold เฉพาะ WO ที่ไม่ผูกงาน)
 --   addQcRecord: QA ปล่อยล็อตตกแต่งครั้งแรก ตั้งปลายทางที่ยังว่างตามการผูกงาน (sr | customer) · ผ่าน = เฉพาะกล่อง hold กลับเป็น in_stock ถ้า WH รับแล้ว
 --     (received_at มีค่า) ไม่เช่นนั้น pending_wh (กล่อง pending_wh / in_stock / shipped ไม่ถูกแตะ) · อื่น = กล่องที่ยังไม่ส่งมอบเป็น hold
---     fail ของล็อตที่นับยอดเข้างาน RB ไว้แล้ว (wh_credit_*) = ถอนยอดนั้นด้วย private.rf_box_uncredit ในธุรกรรมเดียวกัน (รายงาน good 0 ของงาน · ล้าง wh_credit_*)
---       ใบ completed = RF_INVALID_TRANSITION (กติกาเดียวกับย้อนรับเข้า)
+--     fail ของล็อตที่นับยอดเข้างาน RB ไว้แล้ว (wh_credit_*) = ถอนยอดนั้นด้วย private.rf_box_uncredit ในธุรกรรมเดียวกัน (รายงาน good 0 ของงาน
+--       "QA ตัดสินไม่ผ่าน ล็อต X ถอนยอด N (QC-…)" · ล้าง wh_credit_*) · ใบไม่ใช่ released / in_progress หรือไม่พบงาน = บันทึก fail ได้ ไม่ถอน คง wh_credit_*
 --   คำสั่งของกล่อง (ส่งได้เฉพาะชุด fgBoxes · ชุดอื่น = RF_INVALID_BOX) แถว = เรคอร์ดกล่องเต็มที่เปลี่ยน status (ช่องอื่นเมิน)
 --     receiveBoxes (ใหม่ · แผนก WH หรือ admin): pending_wh -> in_stock ทุกกล่อง pending_wh ของล็อตต้องมาในคำสั่งเดียว (ขาด = RF_INVALID_BOX)
 --       ล็อต customer ของ WO ที่ผูกงาน (งานยังผูก WO นี้ ใบ released / in_progress งานยังไม่ done) = งาน RB ได้ยอด good_qty ของล็อต + รายงาน
@@ -55,7 +55,7 @@
 --   แทนที่ด้วยลายเซ็นใหม่: private.rf_save_boxes(uuid, boolean, jsonb, bigint, bigint) จาก 20261130010000_bom_rf_go_live.sql ถูก drop
 --     แล้วสร้าง private.rf_save_boxes(public.employees, text, text, jsonb, bigint, bigint) (ผู้เรียกเดียวคือ app_rf_save)
 --   ใหม่ (security definer · search_path = '' · revoke all from public, anon, authenticated): private.rf_box_credit(text, public.rf_lots),
---     private.rf_box_uncredit(text, public.rf_lots, text)
+--     private.rf_box_uncredit(text, public.rf_lots, text, text)
 --   ไม่แตะ: private.rf_delta (เรียก rf_records) · private.bom_rod_credit / bom_rod_lot_create / bom_rod_wo_linked · private.rf_apply_feedback
 --     · ฝั่ง BOM (app_bom_save_master, bom_fg_move, bom_fg_reverse) · private.bom_real_open(), bom_actor(), rf_actor()
 --
@@ -68,7 +68,7 @@
 --
 -- Rollback (ข้อมูลทดสอบเท่านั้น) ลำดับสำคัญ:
 --   1) create or replace ห้าฟังก์ชันกลับด้วยนิยามต้นทางที่ระบุข้างบน · drop function private.rf_save_boxes(public.employees, text, text, jsonb, bigint, bigint),
---      private.rf_box_credit(text, public.rf_lots), private.rf_box_uncredit(text, public.rf_lots, text) แล้วสร้าง
+--      private.rf_box_credit(text, public.rf_lots), private.rf_box_uncredit(text, public.rf_lots, text, text) แล้วสร้าง
 --      private.rf_save_boxes(uuid, boolean, jsonb, bigint, bigint) ตาม 20261130010000_bom_rf_go_live.sql (+ revoke all from public, anon, authenticated)
 --   2) ยอดที่นับเข้างาน RB ตอน WH รับเข้าคงอยู่ในงาน (ไม่ถอนอัตโนมัติ) · received_at ที่เติมให้กล่องเดิมหายไปพร้อมคอลัมน์ในข้อ 4
 --   3) update public.rf_fg_boxes set status = 'in_stock' where status = 'pending_wh' (ทุกโหมด · ก่อนคืน check เดิม)
@@ -196,10 +196,13 @@ end;
 $$;
 revoke all on function private.rf_box_credit(text, public.rf_lots) from public, anon, authenticated;
 
--- ย้อนรับเข้าของล็อตที่นับยอดไว้: ถอนยอด wh_credit_qty ออกจากงาน (qty_done ไม่ต่ำกว่า 0 · done -> in_progress เมื่อต่ำกว่าแผน)
--- + รายงาน good 0 พร้อมเหตุผล (bom_parse_reports รับรายการเดิมที่เป็น 0 ได้ · ห้ามติดลบ) · ใบ completed (ทุกงานผลิตเสร็จแล้ว) = RF_INVALID_TRANSITION
--- ใบที่ยกเลิก / ไม่พบงาน = ล้างค่าที่จำไว้โดยไม่แตะงาน · คืน { jobs, orders }
-create or replace function private.rf_box_uncredit(p_actor_name text, p_lot public.rf_lots, p_note text)
+-- ถอนยอด wh_credit_qty ของล็อตออกจากงาน (qty_done ไม่ต่ำกว่า 0 · done -> in_progress เมื่อต่ำกว่าแผน) + รายงาน good 0
+-- (bom_parse_reports รับรายการเดิมที่เป็น 0 ได้ · ห้ามติดลบ) · p_kind บอกที่มา (ข้อความรายงานและกติกาต่างกัน) · คืน { jobs, orders }
+--   unreceive = WH ย้อนรับเข้า (p_note = เหตุผล): "ย้อนรับเข้าคลังสินค้าสำเร็จรูป (WH) ล็อต X ถอน N · เหตุผล"
+--     ใบ completed (ทุกงานผลิตเสร็จแล้ว) = RF_INVALID_TRANSITION · ใบที่ยกเลิก / ไม่พบงาน = ล้างค่าที่จำไว้โดยไม่แตะงาน
+--   qa_fail = QA ตัดสินไม่ผ่าน (p_note = เลขผลตรวจ): "QA ตัดสินไม่ผ่าน ล็อต X ถอนยอด N (QC-…)"
+--     QA ต้องบันทึกไม่ผ่านได้เสมอ: ใบที่ไม่ใช่ released / in_progress (completed / ยกเลิก) หรือไม่พบงาน = ไม่ถอน ไม่แตะงาน และคง wh_credit_* ไว้
+create or replace function private.rf_box_uncredit(p_actor_name text, p_lot public.rf_lots, p_kind text, p_note text)
 returns jsonb
 language plpgsql
 security definer
@@ -208,11 +211,15 @@ as $$
 declare
   v_job public.bom_jobs%rowtype;
   v_ord public.bom_orders%rowtype;
-  v_ord_found boolean;
+  v_ord_found boolean := false;
+  v_open boolean := false;
   v_done numeric;
   v_status text;
   v_jobs integer := 0;
 begin
+  if p_kind is null or p_kind not in ('unreceive', 'qa_fail') then
+    raise exception 'RF_INVALID_ACTION';
+  end if;
   if p_lot.wh_credit_qty is null then
     return jsonb_build_object('jobs', 0, 'orders', 0);
   end if;
@@ -221,33 +228,41 @@ begin
   if found then
     select * into v_ord from public.bom_orders o where o.is_test = (select private.bom_test_mode()) and o.id = v_job.order_pk for update;
     v_ord_found := found;
-    if v_ord_found and v_ord.status = 'completed' then
-      raise exception 'RF_INVALID_TRANSITION';
+    v_open := v_ord_found and v_ord.status in ('released', 'in_progress');
+  end if;
+  if p_kind = 'qa_fail' and not v_open then
+    return jsonb_build_object('jobs', 0, 'orders', 0);
+  end if;
+  if p_kind = 'unreceive' and v_ord_found and v_ord.status = 'completed' then
+    raise exception 'RF_INVALID_TRANSITION';
+  end if;
+  if v_open then
+    v_done := greatest(v_job.qty_done - p_lot.wh_credit_qty, 0);
+    v_status := v_job.status;
+    if v_status = 'done' and v_done < v_job.qty_planned then
+      v_status := 'in_progress';
     end if;
-    if v_ord_found and v_ord.status in ('released', 'in_progress') then
-      v_done := greatest(v_job.qty_done - p_lot.wh_credit_qty, 0);
-      v_status := v_job.status;
-      if v_status = 'done' and v_done < v_job.qty_planned then
-        v_status := 'in_progress';
-      end if;
-      update public.bom_jobs set
-        qty_done = v_done,
-        reports = v_job.reports || jsonb_build_array(jsonb_build_object(
-          'at', private.bom_ms(now()), 'by', p_actor_name, 'good', 0, 'reject', 0,
-          'note', left('ย้อนรับเข้าคลังสินค้าสำเร็จรูป (WH) ล็อต ' || p_lot.lot_no || ' ถอน ' || trim_scale(p_lot.wh_credit_qty)::text
-                       || ' · ' || coalesce(p_note, ''), 200))),
-        status = v_status,
-        done_at = case when v_status = 'done' then v_job.done_at else null end,
-        updated_at = now()
-      where id = v_job.id;
-      v_jobs := 1;
-    end if;
+    update public.bom_jobs set
+      qty_done = v_done,
+      reports = v_job.reports || jsonb_build_array(jsonb_build_object(
+        'at', private.bom_ms(now()), 'by', p_actor_name, 'good', 0, 'reject', 0,
+        'note', left(case p_kind
+                       when 'qa_fail' then 'QA ตัดสินไม่ผ่าน ล็อต ' || p_lot.lot_no || ' ถอนยอด ' || trim_scale(p_lot.wh_credit_qty)::text
+                                           || ' (' || coalesce(p_note, '') || ')'
+                       else 'ย้อนรับเข้าคลังสินค้าสำเร็จรูป (WH) ล็อต ' || p_lot.lot_no || ' ถอน ' || trim_scale(p_lot.wh_credit_qty)::text
+                            || ' · ' || coalesce(p_note, '')
+                     end, 200))),
+      status = v_status,
+      done_at = case when v_status = 'done' then v_job.done_at else null end,
+      updated_at = now()
+    where id = v_job.id;
+    v_jobs := 1;
   end if;
   update public.rf_lots set wh_credit_job_no = null, wh_credit_qty = null, updated_at = now() where id = p_lot.id;
   return jsonb_build_object('jobs', v_jobs, 'orders', 0);
 end;
 $$;
-revoke all on function private.rf_box_uncredit(text, public.rf_lots, text) from public, anon, authenticated;
+revoke all on function private.rf_box_uncredit(text, public.rf_lots, text, text) from public, anon, authenticated;
 
 -- 4. ตัวเขียนกล่อง: รับเข้า / ส่งมอบ / ย้อน ---------------------------------------------------------------------------------------
 -- private.rf_save_boxes(uuid, boolean, jsonb, bigint, bigint) จาก 20261130010000_bom_rf_go_live.sql ถูกแทนด้วยลายเซ็นใหม่ (สิทธิ์และคำสั่งตัดสินในตัวเขียน)
@@ -357,7 +372,7 @@ begin
       if exists (select 1 from public.rf_fg_boxes b where b.is_test = (select private.bom_test_mode()) and b.lot_no = v_lot and b.status = 'in_stock') then
         raise exception 'RF_INVALID_BOX';
       end if;
-      v_res := private.rf_box_uncredit(p_actor_name, v_flot, v_notes ->> v_lot);
+      v_res := private.rf_box_uncredit(p_actor_name, v_flot, 'unreceive', v_notes ->> v_lot);
     end if;
     v_jobs := v_jobs + (v_res ->> 'jobs')::integer;
     v_orders := v_orders + (v_res ->> 'orders')::integer;
@@ -815,9 +830,9 @@ begin
     where b.is_test = (select private.bom_test_mode()) and b.lot_no = v_lot.lot_no
       and (case when v_result = 'pass' then b.status = 'hold' else b.status not in ('shipped', 'hold') end);
     -- QA ตัดสินไม่ผ่าน (fail · สถานะสุดท้าย) ล็อตที่นับยอดเข้างาน RB ไว้ตอน WH รับเข้า: ถอนยอดนั้นในธุรกรรมเดียวกัน (รายงาน good 0 ของงานบอกล็อต ยอด และเลขผลตรวจ · ล้าง wh_credit_*)
-    --   กติกาเดียวกับย้อนรับเข้า: ใบ completed = RF_INVALID_TRANSITION · ใบที่ยกเลิก / ไม่พบงาน = ล้างค่าที่จำไว้โดยไม่แตะงาน
+    --   QA ต้องบันทึกไม่ผ่านได้เสมอ: ใบที่ไม่ใช่ released / in_progress (completed / ยกเลิก) หรือไม่พบงาน = บันทึกผล fail โดยไม่ถอนยอดและคง wh_credit_* ไว้
     if v_result = 'fail' and v_lot.wh_credit_qty is not null then
-      v_res := private.rf_box_uncredit(p_actor.first_name || ' ' || p_actor.last_name, v_lot, 'QA ตัดสินไม่ผ่าน ' || v_no);
+      v_res := private.rf_box_uncredit(p_actor.first_name || ' ' || p_actor.last_name, v_lot, 'qa_fail', v_no);
       v_jobs := v_jobs + (v_res ->> 'jobs')::integer;
     end if;
     if v_count then
