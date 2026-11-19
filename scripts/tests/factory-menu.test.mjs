@@ -22,7 +22,7 @@ const plain = (value) => JSON.parse(JSON.stringify(value));
 // พนักงาน/บัญชีทดสอบ: แผนก + ตำแหน่ง (employee = พนักงานทั่วไป)
 const emp = (dept, role = "employee", extra = {}) => ({ department: { code: dept }, role: { code: role }, isSandbox: true, ...extra });
 
-function load({ employee = emp("PP"), route = "" } = {}) {
+function load({ employee = emp("PP"), route = "", capture = null } = {}) {
   const context = vm.createContext({});
   const app = { innerHTML: "" };
   const log = { renders: 0, notFound: 0, hash: `#/${route}`, toasts: [], listeners: {} };
@@ -48,7 +48,15 @@ function load({ employee = emp("PP"), route = "" } = {}) {
     FormData: class { constructor(form) { this.values = form?.__values ?? {}; } entries() { return Object.entries(this.values); } get(key) { return this.values[key] ?? null; } },
     MNP_REQUEST_MODULES: {}, TextDecoder, Uint8Array, DataView,
   });
-  for (const file of FILES) vm.runInContext(read(file), context, { filename: file });
+  for (const file of FILES) {
+    vm.runInContext(read(file), context, { filename: file });
+    // เก็บตัวฟัง event ของ store BOM ที่ module-bom.js ลงทะเบียน (store ในเครื่องไม่ส่ง event เอง)
+    if (capture && file === "modules/bom-store.js") {
+      const api = context.MNP_BOM_STORE;
+      const create = api.createStore;
+      api.createStore = (...args) => { const made = create(...args); const subscribe = made.subscribe; made.subscribe = (listener) => { capture.push(listener); return subscribe(listener); }; return made; };
+    }
+  }
   const modules = context.MNP_REQUEST_MODULES;
   const setEmployee = (next) => { context.state.employee = next; };
   const open = async (code, query = "") => {
@@ -702,8 +710,8 @@ function bomSlot() {
   return slot;
 }
 // เปิดหน้าภาพรวมของ RubberFlow ในฐานะ persona หนึ่ง · คืนช่องที่ BOM เติมการ์ดให้
-async function rubberflowDashboard({ employee, rfUser = "U01", bomUser }) {
-  const env = load({ employee, route: "rubberflow" });
+async function rubberflowDashboard({ employee, rfUser = "U01", bomUser, capture = null }) {
+  const env = load({ employee, route: "rubberflow", capture });
   env.rf.store.setUser(rfUser);
   env.store.setUser(bomUser);
   const slot = bomSlot();
@@ -815,6 +823,56 @@ test("RubberFlow: outside test mode no section and no placeholder; a loading BOM
   assert.equal(kit.mountDeptJobs(failed, "RB"), false);
   assert.equal(failed.removed, true);
   assert.equal(kit.mountDeptJobs(null, "RB"), false);
+});
+
+test("RubberFlow: a user who is not RB or a planner never makes the BOM store load or repaint the page (decided by role before ensureLoaded)", async () => {
+  for (const [dept, userId, loads] of [["ST", "B08", 0], ["GR", "B05", 0], ["RB", "B04", 1], ["PP", "B03", 1]]) {
+    const env = load({ employee: emp(dept), route: "rubberflow" });
+    env.rf.store.setUser(dept === "PP" ? "U03" : "U01");
+    env.store.setUser(userId);
+    let calls = 0;
+    const ensure = env.store.ensureLoaded;
+    env.store.ensureLoaded = (...args) => { calls += 1; return ensure(...args); };
+    const slot = bomSlot();
+    env.fakes["[data-bom-jobs]"] = [slot];
+    await env.open("RUBBERFLOW");
+    assert.equal(calls, loads, `${dept}: ensureLoaded calls`);
+    assert.equal(slot.removed, loads === 0, `${dept}: the empty slot is removed when there are no cards`);
+    assert.equal(env.rf.showsBomJobs(), loads === 1, `${dept}: only a page with BOM data asks to be repainted`);
+  }
+});
+
+test("module-bom: loaded / load-failed repaint a department or RubberFlow page only when nothing is open there; the BOM route repaints as before", async () => {
+  const listeners = [];
+  const { env } = await rubberflowDashboard({ employee: emp("RB"), bomUser: "B04", capture: listeners });
+  const listener = listeners[0];
+  assert.equal(typeof listener, "function", "module-bom subscribed to the BOM store");
+  const dialogs = (selector) => (selector ? [{}] : []);
+  const document = env.context.document;
+  const querySelectorAll = document.querySelectorAll;
+  const fire = (type) => { env.log.renders = 0; listener({ type }); return env.log.renders; };
+  for (const type of ["loaded", "load-failed"]) {
+    assert.equal(fire(type), 1, `${type}: RubberFlow overview with nothing open repaints`);
+    document.querySelectorAll = (selector) => (selector === "dialog[open]" ? dialogs(selector) : []);
+    assert.equal(fire(type), 0, `${type}: a dialog is open on the RubberFlow overview, the page stays`);
+    document.querySelectorAll = (selector) => (selector === "dialog[data-rf-dialog][open]" ? dialogs(selector) : []);
+    assert.equal(fire(type), 0, `${type}: a RubberFlow dialog counts too`);
+    document.querySelectorAll = querySelectorAll;
+    assert.equal(fire(type), 1, `${type}: the dialog was closed, the next event repaints`);
+    // หน้า BOM เอง: เหมือนเดิม (วาดใหม่ทุกครั้ง)
+    env.log.hash = "#/bom?p=work";
+    document.querySelectorAll = (selector) => (selector === "dialog[open]" ? dialogs(selector) : []);
+    assert.equal(fire(type), 1, `${type}: the BOM route is unchanged`);
+    document.querySelectorAll = querySelectorAll;
+    env.log.hash = "#/rubberflow";
+  }
+  // หน้าแผนก (#/gr ...) ใช้กติกาเดียวกัน
+  env.log.hash = "#/gr";
+  document.querySelectorAll = (selector) => (selector === "dialog[open]" ? dialogs(selector) : []);
+  assert.equal(fire("loaded"), 0, "a department page with a dialog open stays");
+  document.querySelectorAll = querySelectorAll;
+  assert.equal(fire("loaded"), 1);
+  assert.match(read("modules/module-bom.js"), /\(event\.type === "loaded" \|\| event\.type === "load-failed"\) && !onBomRoute\(\) && isEditing\(\)/);
 });
 
 test("RubberFlow: module-bom repaints the RubberFlow overview only while it shows BOM data, and no other RubberFlow page; no copy of the card in RubberFlow", () => {

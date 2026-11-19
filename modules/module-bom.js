@@ -77,7 +77,7 @@
   // ลบ/ลากแถวหรือแตะปุ่มแล้วโฟกัสหลุดไป body (บน iPhone ปุ่มที่แตะไม่ได้โฟกัสเลย) ฟอร์มก็ยังไม่ได้บันทึก · ล้าง dirty เมื่อวาดหน้าใหม่ (บันทึกสำเร็จ โหลดใหม่ เปลี่ยนหน้า)
   // ระหว่าง dirty/มี dialog store ไม่รวมข้อมูลของผู้อื่นเข้า data และไม่ขยับเวอร์ชันฐาน (store รู้จาก shouldHold ทั้งตอน catchUp และตอนคำตอบของการบันทึกมาถึง) การบันทึกจึงตรวจชนจากเวอร์ชันที่ฟอร์มวาดมา
   let dirty = false;
-  const isEditing = () => dirty || Boolean(document.querySelectorAll("dialog[open]").length);
+  const isEditing = () => dirty || Boolean(document.querySelectorAll("dialog[open]").length) || Boolean(window.MNP_RUBBERFLOW?.isEditing?.()); // หน้า RubberFlow ที่แสดงการ์ดงาน BOM: ฟอร์มที่แก้ค้างของ RubberFlow เองก็นับ (isEditing ของ RubberFlow นับเฉพาะเมื่ออยู่ที่หน้านั้น)
   const MOVE_KEYS = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
   // ช่องค้นหา/ตัวเลือกบทบาทสาธิตไม่นับเป็นการแก้ · ปุ่มที่เปิดหน้า/dialog หรือสั่ง action เองไม่ได้แก้ฟอร์ม (dialog นับจากการเปิดอยู่)
   const NOT_EDITING = "[data-rf-search], [data-rf-user], [data-rf-open], [data-rf-go], [data-rf-action], [data-rf-close], [data-bom-retry], [data-rf-reset], [data-bom-purge], [data-bom-audit-reload], [data-bom-rf-create], [data-bom-rf-check], [data-bom-parts-buy], [data-tree-toggle], [data-tree-pick], [data-tree-all], [data-hub-qty], [data-bom-draft-buy], [data-tree-split]";
@@ -151,6 +151,8 @@
     } else if (event.type === "pending") showToast("มีผู้อื่นบันทึกข้อมูล BOM ไปแล้ว ระบบจะรวมข้อมูลล่าสุดให้เมื่อบันทึกหรือเปิดหน้านี้ใหม่");
     else if (event.type === "synced") refreshForOthers();
     else if (event.type === "reverted" && isEditing()) updateSync(); // ข้อมูลย้อนกลับแล้ว และ runAction แจ้งข้อความไทยของข้อผิดพลาดให้แล้ว · ไม่วาดหน้าใหม่ทับสิ่งที่พิมพ์ค้างในฟอร์มอื่น
+    // โหลดเสร็จ/โหลดไม่สำเร็จ: นอกหน้า BOM (หน้าแผนก/RubberFlow ที่เปิด dialog หรือกรอกฟอร์มค้างระหว่างรอ BOM) ไม่วาดทับ · หน้า BOM วาดเหมือนเดิม · ข้อมูลล่าสุดจะแสดงเมื่อเปิดหน้านั้นใหม่
+    else if ((event.type === "loaded" || event.type === "load-failed") && !onBomRoute() && isEditing()) updateSync();
     else if (event.type !== "status") renderRoute();
   });
   // หน้ากลับมาโฟกัสขณะอยู่ที่หน้า BOM: ตามทันการบันทึกของผู้อื่น (store.catchUp วาดหน้าใหม่ผ่าน event synced เฉพาะเมื่อมีอะไรเปลี่ยน · มีฟอร์มค้างไม่รวม แค่แจ้ง)

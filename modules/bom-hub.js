@@ -1118,12 +1118,12 @@
       // เส้นยางที่ใช้จากคลังแท่งยาว (SR): หักจากสต็อกกลางจริงตอนปล่อยผลิต · สต็อกกลางไม่พอแล้ว (ใบอื่นปล่อยไปก่อน) ปล่อยผลิตไม่ได้จนกว่าจะตั้งยอดใหม่
       const rodRows = order.explosion?.length ? rules.rodStockForDraft(data, order).filter((row) => (row.planned ?? 0) > 0) : [];
       const rodLack = rodRows.filter((row) => row.planned > row.stock + 1e-9);
-      const rodLine = rodRows.length ? `<p>ใช้แท่งจากคลังแท่งยาว (SR) ${rodRows.map((row) => `<span class="rf-mono">${esc(row.itemCode)}</span> × ${esc(rules.fmtQty(row.planned))}`).join(", ")} หักจากคลังเมื่อปล่อยผลิต ล็อตเก่าก่อน</p>` : "";
+      const rodLine = rodRows.length ? `<p>ใช้ยางเส้นยาวจากคลังยางเส้นยาว (SR) ${rodRows.map((row) => `<span class="rf-mono">${esc(row.itemCode)}</span> × ${esc(rules.fmtQty(row.planned))}`).join(", ")} หักจากคลังเมื่อปล่อยผลิต ล็อตเก่าก่อน</p>` : "";
       const fgLine = fgRows.length ? `<p>ใช้สต็อกสินค้าสำเร็จรูป ${fgRows.map((row) => `<span class="rf-mono">${esc(row.fgCode)}</span> × ${esc(rules.fmtQty(row.planned))}`).join(", ")} หักจากสต็อกเมื่อปล่อยผลิต (ใบที่ปล่อยผลิตก่อนได้ของก่อน)${fgAll ? " · ได้ครบทุกสินค้า ไม่มีงานผลิต ปล่อยแล้วใบปิดทันทีและไปที่ขั้นส่งมอบลูกค้า" : ""}</p>` : "";
       const warns = [
         !order.explosion?.length ? ui.callout("warn", "ยังไม่ได้คำนวณของที่ต้องใช้ กลับไปขั้น 2 ก่อน") : "",
         fgLack.length ? ui.callout("bad", `ปล่อยผลิตไม่ได้ สต็อกสินค้าสำเร็จรูปไม่พอที่ตั้งใช้: ${fgLack.map((row) => `${esc(row.fgCode)} เหลือ ${esc(rules.fmtQty(row.stock))} ตั้งใช้ ${esc(rules.fmtQty(row.planned))}`).join(", ")} · ${ui.link("กลับไปตั้งยอดใหม่ที่ขั้น 2", stepUrl(2))}`) : "",
-        rodLack.length ? ui.callout("bad", `ปล่อยผลิตไม่ได้ คลังแท่งยาว (SR) มีสต็อกกลางไม่พอที่ตั้งใช้: ${rodLack.map((row) => `${esc(row.itemCode)} เหลือ ${esc(rules.fmtQty(row.stock))} ตั้งใช้ ${esc(rules.fmtQty(row.planned))}`).join(", ")} · ${ui.link("กลับไปตั้งยอดใหม่ที่ขั้น 2", stepUrl(2))}`) : "",
+        rodLack.length ? ui.callout("bad", `ปล่อยผลิตไม่ได้ คลังยางเส้นยาว (SR) มีสต็อกกลางไม่พอที่ตั้งใช้: ${rodLack.map((row) => `${esc(row.itemCode)} เหลือ ${esc(rules.fmtQty(row.stock))} ตั้งใช้ ${esc(rules.fmtQty(row.planned))}`).join(", ")} · ${ui.link("กลับไปตั้งยอดใหม่ที่ขั้น 2", stepUrl(2))}`) : "",
         noBom.length ? ui.callout("bad", `<div>ปล่อยผลิตไม่ได้ ชิ้นงานที่ยังไม่มี BOM · ${canPlan ? "กดรหัสเพื่อเปิด BOM ของสินค้าที่ใช้ชิ้นนั้น แล้วเพิ่มส่วนประกอบที่แถวของชิ้นนั้น" : "กดรหัสเพื่อดูรายการ"}</div><div class="rf-row bom-nobom-links">${noBomRows.map((row) => ui.link(row.code, noBomUrl(row), "btn rf-btn secondary small rf-mono")).join("")}</div>`) : "",
         lacking ? ui.callout("warn", `ยังขาด${lacking} และยังไม่ได้สั่ง ปล่อยผลิตได้ แต่แผนกที่ใช้ของนั้นจะติดจนกว่าของจะเข้า${canBuyParts(ctx) ? ` · ${ui.link("กลับไปสั่งซื้อที่ขั้น 2", stepUrl(2))}` : " · คลังวัตถุดิบ (ST) เป็นผู้สั่งซื้อ"}`) : "",
       ].join("");
@@ -1442,7 +1442,7 @@
       ...(buckets.length ? [["คงเหลือ", esc(buckets.join(" · "))]] : []),
     ]);
     const adjust = lot.status === "stored" && ctx.helpers.canAdjustRods?.(ctx.user) ? ui.openButton("ปรับยอดสต็อกกลาง", "rodAdjust", { lotId: lot.id }, { className: "secondary" }) : "";
-    const body = `${facts}${lot.qc ? qcRowsHtml(ctx, lot) : ""}${ui.table(["เวลา", "รายการ", { label: "เปลี่ยน", className: "right" }, "ผู้ทำ", ""], rows, { emptyText: "ยังไม่มีแท่งเข้าคลังจากล็อตนี้" })}`;
+    const body = `${facts}${lot.qc ? qcRowsHtml(ctx, lot) : ""}${ui.table(["เวลา", "รายการ", { label: "เปลี่ยน", className: "right" }, "ผู้ทำ", ""], rows, { emptyText: "ยังไม่มียางเส้นยาวเข้าคลังจากล็อตนี้" })}`;
     return { html: ui.dialog("rodLot", `ล็อต ${lot.lotNo}`, body, { wide: true, footer: `${adjust}${ui.closeButton("ปิด")}` }) };
   };
   dialogs.rodReverse = (ctx, { moveId }) => {
@@ -1451,10 +1451,10 @@
     if (!move || rules.rodReversedIds(data.rodMoves).has(move.id) || !ctx.helpers.canStoreRods?.(ctx.user)) return null;
     const lot = (data.rodLots ?? []).find((entry) => entry.id === move.lotId);
     const body = `<form novalidate id="bom-rod-reverse-form" data-rf-form="reverseRodIssue" data-rf-args="${attr(JSON.stringify({ moveId: move.id }))}" data-rf-success="ย้อนการจ่าย {result} แล้ว">
-      ${ui.callout("warn", esc(`แท่ง ${rules.fmtQty(-Number(move.qty))} ${uomText(ctx, lot?.uom)} ของล็อต ${lot?.lotNo ?? ""} กลับเข้าคลัง (${bucketText(ctx, move.ownerOrderId)}) ใบ ${move.forOrderId} นับว่ายังไม่ได้รับ`))}
+      ${ui.callout("warn", esc(`ยางเส้นยาว ${rules.fmtQty(-Number(move.qty))} ${uomText(ctx, lot?.uom)} ของล็อต ${lot?.lotNo ?? ""} กลับเข้าคลัง (${bucketText(ctx, move.ownerOrderId)}) ใบ ${move.forOrderId} นับว่ายังไม่ได้รับ`))}
       ${ui.field("เหตุผลที่ย้อน", ui.input("note", { id: "rod-reverse-note", required: true, placeholder: "เช่น จ่ายผิดใบ จ่ายเกิน", extra: 'minlength="3" maxlength="300"' }), { id: "rod-reverse-note", required: true })}
     </form>`;
-    return { html: ui.dialog("rodReverse", `ย้อนการจ่ายแท่ง · ${move.forOrderId}`, body, { footer: `${ui.closeButton("ไม่ย้อน")}<button class="btn rf-btn" type="submit" form="bom-rod-reverse-form">ย้อนการจ่าย</button>` }) };
+    return { html: ui.dialog("rodReverse", `ย้อนการจ่ายยางเส้นยาว · ${move.forOrderId}`, body, { footer: `${ui.closeButton("ไม่ย้อน")}<button class="btn rf-btn" type="submit" form="bom-rod-reverse-form">ย้อนการจ่าย</button>` }) };
   };
   dialogs.rodAdjust = (ctx, { lotId }) => {
     const { ui, rules, data } = ctx;
@@ -1464,7 +1464,7 @@
     const unit = uomText(ctx, lot.uom);
     const body = `<form novalidate id="bom-rod-adjust-form" data-rf-form="adjustRods" data-rf-args="${attr(JSON.stringify({ lotId: lot.id }))}" data-rf-success="ปรับยอด {result} แล้ว">
       <div class="rf-grid rf-g2">${ui.field(`จำนวนที่ปรับ (${unit})`, ui.input("qty", { type: "number", step: "any", min: -free, required: true, id: "rod-adjust-qty", placeholder: "+2 หรือ -1", extra: `title="${attr(`บวก = เพิ่ม ลบ = ลด สต็อกกลางของล็อตนี้มี ${rules.fmtQty(free)} ${unit}`)}"` }), { id: "rod-adjust-qty", required: true })}
-      ${ui.field("เหตุผล", ui.input("note", { id: "rod-adjust-note", required: true, placeholder: "เช่น นับจริงได้น้อยกว่า แท่งชำรุด", extra: 'minlength="3" maxlength="300"' }), { id: "rod-adjust-note", required: true })}</div>
+      ${ui.field("เหตุผล", ui.input("note", { id: "rod-adjust-note", required: true, placeholder: "เช่น นับจริงได้น้อยกว่า ยางเส้นยาวชำรุด", extra: 'minlength="3" maxlength="300"' }), { id: "rod-adjust-note", required: true })}</div>
     </form>`;
     return { html: ui.dialog("rodAdjust", `ปรับยอดสต็อกกลาง · ล็อต ${lot.lotNo}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-rod-adjust-form">บันทึก</button>` }) };
   };
@@ -1476,7 +1476,7 @@
     const summary = rules.rodSummary(data);
     const num = (value, uom) => (value > 0 ? `${esc(rules.fmtQty(value))} <span class="small muted">${esc(uomText(ctx, uom))}</span>` : '<span class="muted">—</span>');
     const sumRows = summary.map((row) => `<tr${row.itemCode === code ? ' class="is-selected"' : ""}><td>${ui.link(row.itemCode, ctx.url("rods", { code: row.itemCode === code ? null : row.itemCode }), "rf-mono")}<div class="small muted">${esc(rodItemName(ctx, row.itemCode))}</div></td><td class="right rf-mono">${num(row.free, row.uom)}</td><td class="right rf-mono">${num(row.owned, row.uom)}</td><td class="right rf-mono">${num(row.held, row.uom)}</td><td class="right rf-mono">${num(row.pending, row.uom)}</td></tr>`);
-    const sumTable = ui.table(["เส้นยาง", { label: "สต็อกกลาง", className: "right", title: "ใช้ได้กับทุกใบ: แท่งที่เกินความต้องการของใบ และแท่งของใบที่ปิดหรือยกเลิกแล้ว · ฝ่ายวางแผนตั้งใช้ที่ขั้นตรวจของของใบร่าง" }, { label: "ของใบที่ผลิตอยู่", className: "right", title: "แท่งที่รับเข้ามาให้ใบที่ปล่อยผลิตแล้ว รอจ่ายให้ GR ของใบนั้น" }, { label: "กักรอ QA", className: "right" }, { label: "รอรับเข้า", className: "right" }], sumRows, { emptyText: "ยังไม่มีแท่งในคลัง (แท่งมาจากล็อตตกแต่งของ WO ที่ผูกงาน RB ซึ่งผ่าน QC ใน RubberFlow)" });
+    const sumTable = ui.table(["เส้นยาง", { label: "สต็อกกลาง", className: "right", title: "ใช้ได้กับทุกใบ: ยางเส้นยาวที่เกินความต้องการของใบ และยางเส้นยาวของใบที่ปิดหรือยกเลิกแล้ว · ฝ่ายวางแผนตั้งใช้ที่ขั้นตรวจของของใบร่าง" }, { label: "ของใบที่ผลิตอยู่", className: "right", title: "ยางเส้นยาวที่รับเข้ามาให้ใบที่ปล่อยผลิตแล้ว รอจ่ายให้ GR ของใบนั้น" }, { label: "กักรอ QA", className: "right" }, { label: "รอรับเข้า", className: "right" }], sumRows, { emptyText: "ยังไม่มียางเส้นยาวในคลัง (ยางเส้นยาวมาจากล็อตตกแต่งของ WO ที่ผูกงาน RB ซึ่งผ่าน QC ใน RubberFlow)" });
     const canStore = ctx.helpers.canStoreRods?.(ctx.user);
     const canDecide = ctx.helpers.canDecideRods?.(ctx.user);
     const buckets = rules.rodBuckets(data);
@@ -1491,7 +1491,7 @@
     });
     const lotTable = ui.table(["ล็อต", "สถานะ", "คงเหลือ", ""], lotRows, { emptyText: "ไม่มีล็อต" });
     const back = ctx.canSee("work") ? ui.link("งานของฉัน", ctx.url("work"), "btn rf-btn secondary") : "";
-    return { html: `${pageHead(ctx, "คลังแท่งยาว (SR)", "", back)}${ui.card(sumTable, { title: "ยอดต่อเส้นยาง" })}${ui.card(lotTable, { title: code ? `ล็อตของ ${code}` : "ล็อต", actions: code ? ui.link("ดูทุกเส้นยาง", ctx.url("rods"), "btn rf-btn secondary small") : "" })}` };
+    return { html: `${pageHead(ctx, "คลังยางเส้นยาว (SR)", "", back)}${ui.card(sumTable, { title: "ยอดต่อเส้นยาง" })}${ui.card(lotTable, { title: code ? `ล็อตของ ${code}` : "ล็อต", actions: code ? ui.link("ดูทุกเส้นยาง", ctx.url("rods"), "btn rf-btn secondary small") : "" })}` };
   };
   // ใช้จากคลังแท่งยาว (ขั้น 2 ของใบร่าง): เส้นยางของใบที่สต็อกกลางมีให้ใช้ · ช่อง "ใช้จากคลัง SR (เส้น)" ไม่เกินที่ใช้ได้ (บอกใน title ของช่อง) · ฝ่ายวางแผนตั้ง บันทึกเมื่อกดบันทึก
   // ยอดนี้ลดงาน RB (rules.netRequirements) และหักจริงตอนปล่อยผลิต ล็อตเก่าก่อน ใบที่ปล่อยก่อนได้ก่อน (rules.rodStockForDraft: available = สต็อกกลาง − ที่ใบร่างที่คำนวณก่อนตั้งใช้ไว้)
@@ -1507,11 +1507,11 @@
       return `<input type="hidden" name="itemCode[]" value="${attr(row.itemCode)}"><label class="bom-count-input" title="${attr(hint(row))}"><span class="sr-only">${esc(`ใช้จากคลัง SR ${row.itemCode} · ${hint(row)}`)}</span><input class="input rf-input" name="qty[]" type="number" inputmode="decimal" step="any" min="0" max="${attr(row.max)}" value="${attr(row.planned ?? "")}" placeholder="${attr(`ไม่เกิน ${rules.fmtQty(row.max)}`)}"><span class="small muted">${esc(uomText(ctx, row.uom))}</span></label>`;
     };
     const body = rows.map((row) => `<tr><td>${ui.link(row.itemCode, ctx.url("items", { sel: row.itemCode }), "rf-mono")}<div class="small muted">${esc(row.name ?? "")}</div></td><td class="right">${cell(row)}${row.planned !== null && row.planned > row.available + 1e-9 ? '<div class="small bom-short-text">เกินสต็อกที่เหลือ กรอกใหม่</div>' : ""}</td></tr>`);
-    const table = ui.table(["เส้นยาง", { label: "ใช้จากคลัง SR (เส้น)", className: "right", title: "ลดงานรีดของแผนก RB ลงตามจำนวนนี้ แท่งถูกหักจากคลังแท่งยาวเมื่อปล่อยผลิต ล็อตเก่าก่อน ใบที่ปล่อยผลิตก่อนได้ก่อน" }], body);
+    const table = ui.table(["เส้นยาง", { label: "ใช้จากคลัง SR (เส้น)", className: "right", title: "ลดงานรีดของแผนก RB ลงตามจำนวนนี้ ยางเส้นยาวถูกหักจากคลังยางเส้นยาวเมื่อปล่อยผลิต ล็อตเก่าก่อน ใบที่ปล่อยผลิตก่อนได้ก่อน" }], body);
     const form = canSet && rows.some(editable)
-      ? `<form novalidate data-rf-form="setStockCounts" data-rf-args="${attr(JSON.stringify({ orderId: order.id }))}" data-rf-success="บันทึกยอดที่ใช้จากคลังแท่งยาว {result}">${table}<div class="rf-row bom-step-next"><button class="btn rf-btn secondary" type="submit">บันทึกยอดที่ใช้จากคลัง SR</button></div></form>`
+      ? `<form novalidate data-rf-form="setStockCounts" data-rf-args="${attr(JSON.stringify({ orderId: order.id }))}" data-rf-success="บันทึกยอดที่ใช้จากคลังยางเส้นยาว {result}">${table}<div class="rf-row bom-step-next"><button class="btn rf-btn secondary" type="submit">บันทึกยอดที่ใช้จากคลัง SR</button></div></form>`
       : table;
-    return `<h3 class="bom-h3">คลังแท่งยาว (SR)</h3>${form}`;
+    return `<h3 class="bom-h3">คลังยางเส้นยาว (SR)</h3>${form}`;
   }
 
   // ---------- งานของฉัน: การ์ดงานของแผนกตัวเอง ปุ่มหลักปุ่มเดียวต่องาน ----------
@@ -1683,7 +1683,7 @@
     const body = !dept ? ui.card(ui.empty("บัญชีนี้ไม่ได้อยู่ในแผนกผลิต จึงไม่มีงานของตัวเอง")) : cards.length || taskCards.length ? `${waiting}<div class="bom-job-grid">${taskCards.join("")}${cards.join("")}</div>` : waiting ? ui.card(waiting) : ui.card(ui.empty(show === "done" ? "ยังไม่มีงานที่เสร็จ" : "ไม่มีงานค้าง"));
     const tableLink = planner && ctx.canSee("jobs") ? ui.link("ดูเป็นตาราง", ctx.url("jobs"), "btn rf-btn secondary") : "";
     // หน้าคลังแท่งยาว: ยอดต่อเส้นยาง ล็อต ประวัติ และย้อนการจ่าย (คลังแท่งยาว ตรวจคุณภาพ GR และฝ่ายวางแผน)
-    const rodsLink = ctx.canSee("rods") && [...ROD_DEPTS, "GR", "ALL"].includes(dept) ? ui.link("คลังแท่งยาว (SR)", ctx.url("rods"), "btn rf-btn secondary") : "";
+    const rodsLink = ctx.canSee("rods") && [...ROD_DEPTS, "GR", "ALL"].includes(dept) ? ui.link("คลังยางเส้นยาว (SR)", ctx.url("rods"), "btn rf-btn secondary") : "";
     return { html: `${pageHead(ctx, "งานของฉัน", sub, `${rodsLink}${tableLink}`)}${deptTabs}${filterNote}${dept ? showTabs : ""}${body}` };
   };
 

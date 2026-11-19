@@ -577,7 +577,7 @@
     if (started.length) fail(`แก้รายการไม่ได้ มีงานที่เริ่มแล้ว (${started.map((job) => `${job.dept} ${job.itemCode}`).slice(0, 3).join(", ")}${started.length > 3 ? " …" : ""}) ให้เปิดใบใหม่สำหรับส่วนที่เพิ่ม (ใบนี้ปิดเมื่อคลังสินค้ารับเข้าครบ)`);
     // แท่งที่คลังแท่งยาว (SR) จ่ายให้ GR ตามใบนี้แล้ว = งานเริ่มแล้ว (ตรงกับ bom_save_orders ของ 20261202010000: BOM_INVALID_TRANSITION)
     const issuedRods = rules().rodIssued(d, order.id);
-    if (issuedRods > 1e-9) fail(`แก้รายการไม่ได้ คลังแท่งยาว (SR) จ่ายแท่งให้ GR ตามใบนี้แล้ว ${rules().fmtQty(issuedRods)} เส้น (นับว่างานเริ่มแล้ว) ให้ SR ย้อนการจ่ายก่อน หรือเปิดใบใหม่สำหรับส่วนที่เพิ่ม`);
+    if (issuedRods > 1e-9) fail(`แก้รายการไม่ได้ คลังยางเส้นยาว (SR) จ่ายยางเส้นยาวให้ GR ตามใบนี้แล้ว ${rules().fmtQty(issuedRods)} เส้น (นับว่างานเริ่มแล้ว) ให้ SR ย้อนการจ่ายก่อน หรือเปิดใบใหม่สำหรับส่วนที่เพิ่ม`);
     const returned = returnFgStock(d, ctx, order); // สินค้าที่ใบนี้ได้จากสต็อกคืนกลับให้ใบต้นทาง (ยอดที่ตั้งใช้จากสต็อกในใบคงไว้)
     // แท่งที่ใบนี้หยิบจากคลัง SR ตอนปล่อยผลิตกลับเข้าสต็อกกลาง (ไม่เกินที่ใบยังถืออยู่) · ยอดที่ตั้งใช้ในใบคงไว้ หักใหม่ตอนปล่อยผลิตครั้งหน้า
     for (const take of rules().rodTaken(d, order.id)) {
@@ -999,9 +999,9 @@
     const value = num(qty, product || rod ? "ยอดที่ใช้จากสต็อก" : "ยอดคงคลัง", { allowZero: true });
     if (rod) {
       // ตั้งได้เฉพาะกลุ่มวางแผน (ฐานข้อมูลปฏิเสธ ST / WH ที่ตั้งคีย์รหัส RB ด้วย BOM_FORBIDDEN เหมือนคีย์สินค้า)
-      if (!canPlan(user)) fail("ตั้งยอดที่ใช้จากคลังแท่งยาว (SR) ได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น");
+      if (!canPlan(user)) fail("ตั้งยอดที่ใช้จากคลังยางเส้นยาว (SR) ได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น");
       const row = rules().rodStockForDraft(d, order).find((entry) => entry.itemCode === code);
-      if (row && value > row.max + 1e-9) fail(value > row.available + 1e-9 ? `${code} คลังแท่งยาว (SR) มีสต็อกกลางที่ใช้ได้กับใบนี้ ${rules().fmtQty(row.available)}${row.taken > 0 ? ` (ใบร่างที่คำนวณก่อนใบนี้ตั้งใช้ไว้ ${rules().fmtQty(row.taken)})` : ""} ใช้ ${rules().fmtQty(value)} ไม่ได้` : `${code} ใบนี้ต้องใช้ไม่เกิน ${rules().fmtQty(row.max)} ${rules().uomLabel(row.uom)}`);
+      if (row && value > row.max + 1e-9) fail(value > row.available + 1e-9 ? `${code} คลังยางเส้นยาว (SR) มีสต็อกกลางที่ใช้ได้กับใบนี้ ${rules().fmtQty(row.available)}${row.taken > 0 ? ` (ใบร่างที่คำนวณก่อนใบนี้ตั้งใช้ไว้ ${rules().fmtQty(row.taken)})` : ""} ใช้ ${rules().fmtQty(value)} ไม่ได้` : `${code} ใบนี้ต้องใช้ไม่เกิน ${rules().fmtQty(row.max)} ${rules().uomLabel(row.uom)}`);
     }
     if (product) {
       if (!canPlan(user)) fail("ตั้งยอดที่ใช้จากสต็อกสินค้าสำเร็จรูปได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น");
@@ -1613,7 +1613,7 @@
   function reverseRodIssue(d, p, ctx) {
     const user = requireUser(ctx);
     const R = rules();
-    if (!canStoreRods(user)) fail("ย้อนการจ่ายแท่งได้โดยคลังแท่งยาว (SR) หรือฝ่ายวางแผนเท่านั้น");
+    if (!canStoreRods(user)) fail("ย้อนการจ่ายยางเส้นยาวได้โดยคลังยางเส้นยาว (SR) หรือฝ่ายวางแผนเท่านั้น");
     const note = rodNote(p?.note, "เหตุผลที่ย้อน", { required: true });
     const move = (d.rodMoves ?? []).find((row) => row.id === String(p?.moveId ?? "").trim() && row.kind === "issue") ?? fail("ไม่พบรายการจ่ายที่จะย้อน");
     if (R.rodReversedIds(d.rodMoves).has(move.id)) fail("รายการนี้ถูกย้อนไปแล้ว");
@@ -1626,7 +1626,7 @@
   function adjustRods(d, p, ctx) {
     const user = requireUser(ctx);
     const R = rules();
-    if (!canAdjustRods(user)) fail("ปรับยอดแท่งในคลังได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น");
+    if (!canAdjustRods(user)) fail("ปรับยอดยางเส้นยาวในคลังได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น");
     const lot = rodLotOf(d, p?.lotId);
     if (lot.status !== "stored") fail(`${lotText(lot)} ไม่ได้อยู่ในคลัง ปรับยอดไม่ได้`);
     const qty = qtyRound(Number(p?.qty));
@@ -1650,7 +1650,7 @@
       const n = qtyRound(Math.max(0, Number(order.stockCounts?.[code]) || 0));
       if (n <= 0) continue;
       const plan = R.rodFifo(d, code, n);
-      if (plan.short > 1e-9) fail(`ตัวเลขเปลี่ยนไปแล้ว: คลังแท่งยาว (SR) มี ${code} ว่าง ${R.fmtQty(plan.taken)} ไม่พอที่ใบนี้ตั้งใช้ ${R.fmtQty(n)} (ใบอื่นอาจปล่อยผลิตไปก่อน) กลับไปตั้งยอดใหม่ที่ขั้นตรวจของ`);
+      if (plan.short > 1e-9) fail(`ตัวเลขเปลี่ยนไปแล้ว: คลังยางเส้นยาว (SR) มี ${code} ว่าง ${R.fmtQty(plan.taken)} ไม่พอที่ใบนี้ตั้งใช้ ${R.fmtQty(n)} (ใบอื่นอาจปล่อยผลิตไปก่อน) กลับไปตั้งยอดใหม่ที่ขั้นตรวจของ`);
       taking.push({ itemCode: code, n, rows: plan.rows });
     }
     return taking;

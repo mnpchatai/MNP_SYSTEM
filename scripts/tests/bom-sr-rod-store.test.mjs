@@ -153,7 +153,7 @@ test("a draft takes rods from the SR store at release (FIFO over free stock) and
   // ใบอื่นหยิบไปก่อน: ปล่อยไม่ได้ (ตัวเลขเปลี่ยน)
   const short = structuredClone(d);
   A.adjustRods(short, { lotId: lotId(0), qty: -2, note: "แท่งชำรุด" }, ctx("planner"));
-  rejects(() => A.releaseOrder(short, { orderId: "DEMO-26002" }, ctx("planner")), /ตัวเลขเปลี่ยนไปแล้ว: คลังแท่งยาว \(SR\) มี RB-DM02-02-YE03-204-19-34 ว่าง 4/);
+  rejects(() => A.releaseOrder(short, { orderId: "DEMO-26002" }, ctx("planner")), /ตัวเลขเปลี่ยนไปแล้ว: คลังยางเส้นยาว \(SR\) มี RB-DM02-02-YE03-204-19-34 ว่าง 4/);
   A.releaseOrder(d, { orderId: "DEMO-26002" }, ctx("planner"));
   assert.equal(d.jobs.find((job) => job.orderId === "DEMO-26002" && job.dept === "RB").qtyPlanned, 111);
   assert.deepEqual(d.rodMoves.filter((move) => move.kind === "transfer").map((move) => [move.qty, move.ownerOrderId, move.forOrderId]), [[-5, null, "DEMO-26002"], [5, "DEMO-26002", "DEMO-26002"]]);
@@ -168,13 +168,13 @@ test("a draft takes rods from the SR store at release (FIFO over free stock) and
 
 test("only the planner group sets the use-from-SR-store amount; rods already issued to GR keep the order from going back to draft until SR reverses them", () => {
   const d = fresh();
-  for (const role of ["st", "wh"]) rejects(() => A.setStockCount(structuredClone(d), { orderId: "DEMO-26002", itemCode: RB, qty: 1 }, ctx(role)), /ตั้งยอดที่ใช้จากคลังแท่งยาว \(SR\) ได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น/);
+  for (const role of ["st", "wh"]) rejects(() => A.setStockCount(structuredClone(d), { orderId: "DEMO-26002", itemCode: RB, qty: 1 }, ctx(role)), /ตั้งยอดที่ใช้จากคลังยางเส้นยาว \(SR\) ได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น/);
   rejects(() => A.setStockCounts(structuredClone(d), { orderId: "DEMO-26002", counts: [{ itemCode: RB, qty: "1" }] }, ctx("st")), /ฝ่ายวางแผนหรือผู้จัดการเท่านั้น/);
   A.setStockCount(d, { orderId: "DEMO-26002", itemCode: RB, qty: 5 }, ctx("planner"));
   A.releaseOrder(d, { orderId: "DEMO-26002" }, ctx("planner"));
   A.issueRods(d, { orderId: "DEMO-26002", itemCode: RB, qty: 2 }, ctx("sr"));
   const edit = { orderId: "DEMO-26002", fgCode: "DEMO-HL-24(B)-A", qty: 100 };
-  rejects(() => A.updateOrderItem(structuredClone(d), edit, ctx("planner")), /คลังแท่งยาว \(SR\) จ่ายแท่งให้ GR ตามใบนี้แล้ว 2 เส้น \(นับว่างานเริ่มแล้ว\)/);
+  rejects(() => A.updateOrderItem(structuredClone(d), edit, ctx("planner")), /คลังยางเส้นยาว \(SR\) จ่ายยางเส้นยาวให้ GR ตามใบนี้แล้ว 2 เส้น \(นับว่างานเริ่มแล้ว\)/);
   const issue = d.rodMoves.find((move) => move.kind === "issue" && move.forOrderId === "DEMO-26002");
   A.reverseRodIssue(d, { moveId: issue.id, note: "จ่ายก่อนแก้ใบ" }, ctx("sr"));
   A.updateOrderItem(d, edit, ctx("planner"));
@@ -609,7 +609,8 @@ test("pages: the long-rod store page, the lot history with reverse, the decide d
   assert.equal(env.store.run("issueRods", { orderId: "DEMO-26006", itemCode: RB, qty: 3 }).ok, true);
   let html = await env.render("p=rods");
   clean(html);
-  assert.match(html, /คลังแท่งยาว \(SR\)/);
+  assert.match(html, /คลังยางเส้นยาว \(SR\)/);
+  assert.doesNotMatch(html, /แท่ง/, "the store page says ยางเส้นยาว");
   assert.match(html, /ยอดต่อเส้นยาง/);
   assert.match(html, /data-rf-open="rodLot"/);
   assert.match(html, /ของใบ DEMO-26006 17/, "the lot row shows what is left per bucket");
@@ -619,16 +620,21 @@ test("pages: the long-rod store page, the lot history with reverse, the decide d
   assert.match(history.html, /data-rf-open="rodReverse"/);
   assert.doesNotMatch(history.html, /data-rf-open="rodAdjust"/, "SR does not adjust");
   const move = env.store.data().rodMoves.find((row) => row.kind === "issue");
-  assert.match(env.dialogs.rodReverse(env.ctx(), { moveId: move.id }).html, /data-rf-form="reverseRodIssue"/);
+  const reverse = env.dialogs.rodReverse(env.ctx(), { moveId: move.id }).html;
+  assert.match(reverse, /data-rf-form="reverseRodIssue"/);
+  assert.doesNotMatch(`${history.html}${reverse}`, /แท่ง/, "the lot history and the reverse dialog say ยางเส้นยาว");
   env.store.setUser("B04");
   assert.match(await env.render("p=rods"), /ไม่มีสิทธิ์เข้าถึงหน้านี้/, "RB does not open the store page");
   env.store.setUser("B03");
   assert.match(env.dialogs.rodLot(env.ctx(), { lotId: lotId(0) }).html, /data-rf-open="rodAdjust"/, "the planner adjusts free stock");
-  clean(env.dialogs.rodAdjust(env.ctx(), { lotId: lotId(0) }).html);
+  const adjust = env.dialogs.rodAdjust(env.ctx(), { lotId: lotId(0) }).html;
+  clean(adjust);
+  assert.doesNotMatch(adjust, /แท่ง/);
   // ขั้น 2 ของใบร่าง: ช่อง "ใช้จากคลัง SR (เส้น)" บอกยอดที่ใช้ได้ใน title ไม่ใช่ข้อความถาวร
   html = await env.render("p=orders&sel=DEMO-26002");
   clean(html);
-  assert.match(html, /<h3 class="bom-h3">คลังแท่งยาว \(SR\)<\/h3>/);
+  assert.match(html, /<h3 class="bom-h3">คลังยางเส้นยาว \(SR\)<\/h3>/);
+  assert.doesNotMatch(html, /แท่ง/);
   assert.match(html, /ใช้จากคลัง SR \(เส้น\)/);
   assert.match(html, /title="คลัง SR มีสต็อกกลางที่ใช้ได้กับใบนี้ 6 เส้น · ใบนี้ต้องใช้ 115\.2"/);
   assert.match(html, /name="qty\[\]"[^>]*max="6"/);
