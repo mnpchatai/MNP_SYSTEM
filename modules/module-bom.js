@@ -189,8 +189,10 @@
   // ลิงก์เก่า #/bom?p=work (งานของฉัน) ไปโมดูลของแผนก: ฝ่ายวางแผน/ผู้ดูแลตาม ?dept= ก่อน คนอื่นตามแผนกของตน · ไม่มีโมดูลของแผนกนั้น = หน้าแรกของ BOM
   const workRedirect = (user, params) => {
     const planner = actions.helpers.canPlan(user);
-    const asked = planner ? storeApi.deptRoute(params.get("dept")) : null;
-    return asked ?? storeApi.deptRoute(user?.dept) ?? url(storeApi.homeOf(user));
+    // ไปเฉพาะโมดูลที่ผู้ใช้เปิดได้ (หัวหน้าแผนกเห็นแค่โมดูลของแผนกตัวเอง) ไม่งั้นไปโมดูลของแผนกตัวเอง หรือหน้าแรกของ BOM
+    const reach = (dept) => (window.MNP_FACTORY?.deptLink ? window.MNP_FACTORY.deptLink(state.employee, dept) : storeApi.deptRoute(dept));
+    const asked = planner ? reach(params.get("dept")) : null;
+    return asked ?? reach(user?.dept) ?? url(storeApi.homeOf(user));
   };
   const defaultPage = () => { const home = storeApi.homeOf(store.user()); return pages[home] ? home : "dashboard"; };
   const currentPage = (params) => storeApi.findModule(params.get("p") ?? defaultPage())?.id ?? null;

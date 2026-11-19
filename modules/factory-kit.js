@@ -176,6 +176,13 @@
   // เปิดโมดูลแผนกได้หรือไม่: ประตูเดียวกับ BOM (ไม่มี store = ปิด) แล้วจึงตามกติกาแผนก
   const bomGate = (employee) => Boolean(root.MNP_BOM_STORE?.usesBom?.(employee));
   const canOpenDeptModule = (employee, dept, moduleCode = null) => bomGate(employee) && canSeeDept(employee, dept, moduleCode);
+  // ลิงก์ไปโมดูลของแผนก เฉพาะเมื่อผู้ใช้เปิดโมดูลนั้นได้ (ไม่พาไปหน้า "ไม่พบ") · RB = RubberFlow (เปิดได้ทุกคนที่ใช้ BOM ได้) · คืน null = ไม่มีลิงก์
+  const deptLink = (employee, dept) => {
+    const route = root.MNP_BOM_STORE?.deptRoute?.(dept) ?? null;
+    if (!route) return null;
+    if (dept === "RB") return bomGate(employee) ? route : null;
+    return canOpenDeptModule(employee, dept, `FACTORY_${dept}`) ? route : null;
+  };
 
   // เรียงรายการเมนูของกลุ่มเดียวกันตาม flowNo (ลำดับในผังงาน rules.PROCESS_FLOW) ให้อยู่ใต้หัวกลุ่มเดียว ไม่ว่าลำดับโหลดสคริปต์เป็นอย่างไร
   // กลุ่มที่ไม่มีรายการใดมี flowNo คงลำดับเดิม · รายการไม่มี group คงตำแหน่งเดิม · กลุ่มอยู่ที่ตำแหน่งของรายการแรกของกลุ่ม
@@ -247,7 +254,12 @@
   }
   const syncLine = () => `<span class="small muted" role="status" data-bom-sync>${esc(root.MNP_BOM?.syncText?.() ?? "")}</span>`;
   // "งานของฉัน" อยู่ในโมดูลของแผนกเท่านั้น (เจ้าของสั่ง 2026-11-19: เอาออกจาก BOM) จึงไม่มีลิงก์กลับไป BOM
-  const viewHead = (ctx) => pageHead(ctx, ctx.view?.label ?? "งานของฉัน", syncLine());
+  // GR (รับยางเส้นยาวจาก SR) และ QA (ตัดสินล็อตที่กัก) ดูยอดและประวัติล็อตที่หน้าคลังยางเส้นยาวใน BOM ได้: ทางเข้าจากโมดูลของตน (SR อยู่ที่หน้าในคลัง)
+  const viewHead = (ctx) => {
+    const dept = ctx.factory?.dept;
+    const rods = (dept === "GR" || dept === "QA") && ctx.canSee?.("rods") ? actionLink(ctx, "คลังยางเส้นยาว", ctx.url("rods")) : "";
+    return pageHead(ctx, ctx.view?.label ?? "งานของฉัน", `${rods}${syncLine()}`);
+  };
 
   // หน้าของแผนกคลัง (SR ST WH): เมนูข้าง "งานของฉัน" (การ์ดงานที่รอ) กับ "ในคลัง" (ของที่มีอยู่จริง ค้นหาได้)
   // stock = { count, html } ที่โมดูลสร้าง (ช่องค้นหา + ตาราง) · work = ตัวเลือกของ deptWork
@@ -442,7 +454,7 @@
 
   root.MNP_FACTORY = Object.freeze({
     esc, attr, formPayload, parseArgs, bindRoot, deptChip, dueText, jobCard, jobReportDialog,
-    FACTORY_GROUP, canSeeDept, canOpenDeptModule, orderNavItems, registerDeptModule, productionLanding, mountDeptJobs,
+    FACTORY_GROUP, canSeeDept, canOpenDeptModule, deptLink, orderNavItems, registerDeptModule, productionLanding, mountDeptJobs,
     pageHead, searchForm, includesText, limited, deptWork, deptWorkSection, storeLanding, STORE_MENU, viewHead, actionLink, wake, failed, rubberflowFailed, deptCtx, routeUrl, onDeptRoute: onFactoryRoute,
   });
 })(window);

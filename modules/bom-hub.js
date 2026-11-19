@@ -5,6 +5,12 @@
   const pages = (root.MNP_BOM_PAGES ??= {});
   const dialogs = (root.MNP_BOM_DIALOGS ??= {});
   const esc = (value) => root.escapeHtml(value);
+  // ลิงก์ไปโมดูลของแผนก (งานของฉันอยู่ที่นั่น) เฉพาะโมดูลที่ผู้ใช้เปิดได้ · ไม่รู้ว่าใครเปิดอยู่ (ไม่มี state) = ใช้เส้นทางของแผนกตรงๆ
+  const deptHref = (dept) => {
+    const employee = typeof state === "undefined" ? undefined : state?.employee;
+    if (employee === undefined || !root.MNP_FACTORY?.deptLink) return root.MNP_BOM_STORE?.deptRoute?.(dept) ?? null;
+    return root.MNP_FACTORY.deptLink(employee, dept);
+  };
   const attr = (value) => esc(value ?? "");
   const includes = (haystack, q) => !q || String(haystack).toLowerCase().includes(q.toLowerCase());
   const itemOf = (ctx, code) => ctx.helpers.itemOf(ctx.data, code);
@@ -1142,7 +1148,7 @@
         const closedParts = parts && done < mine.length && !mine.some((job) => ctx.helpers.isOpenJob(data, job));
         const issued = done + partly;
         const text = parts ? (done === mine.length ? `เบิกของครบ ${mine.length} รายการ` : closedParts ? `เบิกไป ${issued} จาก ${mine.length} รายการ` : `รอเบิกของ ${mine.length - done} จาก ${mine.length} รายการ${partly ? ` (เบิกไปบางส่วน ${partly} รายการ)` : ""}`) : `เสร็จ ${done} จาก ${mine.length} งาน`;
-        return `<tr><td>${deptChip(ctx, dept)} ${esc(deptName(ctx, dept))}</td><td class="rf-progress-cell">${ui.progress(closedParts ? issued : done, mine.length)}<div class="small muted">${esc(text)}</div></td><td>${late ? ui.badge("bad", `เลยกำหนด ${late} งาน`) : ""}</td><td class="right">${(canPlan || ctx.user?.dept === dept) && root.MNP_BOM_STORE?.deptRoute(dept) ? ui.link("ดูงาน", root.MNP_BOM_STORE.deptRoute(dept), "btn rf-btn secondary small") : ""}</td></tr>`;
+        return `<tr><td>${deptChip(ctx, dept)} ${esc(deptName(ctx, dept))}</td><td class="rf-progress-cell">${ui.progress(closedParts ? issued : done, mine.length)}<div class="small muted">${esc(text)}</div></td><td>${late ? ui.badge("bad", `เลยกำหนด ${late} งาน`) : ""}</td><td class="right">${(canPlan || ctx.user?.dept === dept) && deptHref(dept) ? ui.link("ดูงาน", deptHref(dept), "btn rf-btn secondary small") : ""}</td></tr>`;
       }).filter(Boolean);
       // มีสินค้าที่ PK ส่งมอบแล้วรอรับเข้าคลัง: บอกเฉพาะว่ามี (ตัวเลขอยู่ในขั้น 5) · คลังสินค้ารับเข้าได้ก่อนผลิตครบทั้งใบ
       // รับครบแล้วแต่ยังมีแผนกที่งานไม่เสร็จ (แผนกอยู่ในตารางข้างบน): ใบปิดเมื่อทุกแผนกปิดงาน · ทุกแผนกปิดงานแล้ว (เหลือแค่เบิกของซื้อ) = รอคลังสินค้า (WH) ปิดใบที่ขั้น 5
@@ -1491,7 +1497,7 @@
     });
     const lotTable = ui.table(["ล็อต", "สถานะ", "คงเหลือ", ""], lotRows, { emptyText: "ไม่มีล็อต" });
     // งานของฉันอยู่ที่โมดูลของแผนก: SR / QA กลับไปโมดูลของตน ฝ่ายวางแผนไปโมดูล SR · แผนกอื่น (GR) ดูหน้านี้ได้อย่างเดียว ไม่มีลิงก์ไปโมดูลที่ไม่ใช่ของตน
-    const backRoute = root.MNP_BOM_STORE?.deptRoute(ROD_DEPTS.includes(ctx.user?.dept) ? ctx.user.dept : ctx.helpers.canPlan(ctx.user) ? "SR" : "");
+    const backRoute = deptHref(ctx.user?.dept) ?? (ctx.helpers.canPlan(ctx.user) ? deptHref("SR") : null);
     const back = backRoute ? ui.link("กลับหน้างานของแผนก", backRoute, "btn rf-btn secondary") : "";
     return { html: `${pageHead(ctx, "คลังยางเส้นยาว (SR)", "", back)}${ui.card(sumTable, { title: "ยอดต่อเส้นยาง" })}${ui.card(lotTable, { title: code ? `ล็อตของ ${code}` : "ล็อต", actions: code ? ui.link("ดูทุกเส้นยาง", ctx.url("rods"), "btn rf-btn secondary small") : "" })}` };
   };

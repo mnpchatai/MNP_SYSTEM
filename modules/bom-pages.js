@@ -1997,7 +1997,7 @@
     const orderHead = (target) => `<header class="rf-pagehead"><div class="rf-pagehead-main"><span class="rf-mod-ico" aria-hidden="true">${pages.icon("orders")}</span><div><h1>ใบสั่งผลิต <span class="rf-mono">${esc(target.id)}</span></h1><p class="bom-hero-sub">${esc(target.customer)} ${orderStatus(ctx, target)}</p></div></div></header>`;
     const html = pages.orderSteps && order
       ? `<p class="bom-back">${ui.link("← ใบสั่งผลิตทั้งหมด", ctx.url("orders", { q: ctx.q || null }))}</p>${orderHead(order)}${detail}`
-      : `${head(ctx, "ใบสั่งผลิต (PI)", "เปิดใบ → เพิ่มสินค้า (3 ช่องเหมือนชีต ;}o) → คำนวณวัตถุดิบ (ร่างคำนวณซ้ำได้) → นับคงคลัง → ปล่อยผลิต (ล็อกฉบับแก้ไขแล้วแตกเป็นงานรายแผนก)", canPlan ? ui.openButton("เปิดใบใหม่", "orderNew", {}, { className: "" }) : "")}<div class="bom-split bom-split-wide">${listCard}${detail}</div>`;
+      : `${head(ctx, "ใบสั่งผลิต (PI)", "เปิดใบ → เพิ่มสินค้า (3 ช่องเหมือนชีต ;}o) → คำนวณวัตถุดิบ (ร่างคำนวณซ้ำได้) → นับคงคลัง → ปล่อยผลิต (ล็อกฉบับแก้ไขแล้วแตกเป็นงานรายแผนก)", canPlan ? `${ctx.canSee("jobs") ? ui.link("ตารางงานทุกแผนก", ctx.url("jobs"), "btn rf-btn secondary") : ""}${ui.openButton("เปิดใบใหม่", "orderNew", {}, { className: "" })}` : "")}<div class="bom-split bom-split-wide">${listCard}${detail}</div>`;
     const bind = (rootNode) => {
       stepsBind?.(rootNode);
       rootNode.querySelectorAll("[data-bom-csv]").forEach((button) => button.addEventListener("click", () => {

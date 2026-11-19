@@ -2293,8 +2293,11 @@ test("the My-work page is gone from the BOM: not in the menu or the page list, a
   assert.equal(storeApi.NAV_PARENT.rods, "orders", "the rod store page sits under the orders menu");
   for (const role of ["rb", "gr", "pt", "bg", "pk", "st", "wh", "sr", "qa"]) assert.equal(storeApi.homeOf({ role }), "orders", `${role} lands on a page it can open`);
   assert.deepEqual({ ...storeApi.DEPT_ROUTES }, { GR: "gr", PT: "pt", BG: "bg", PK: "pk", SR: "sr", ST: "st", WH: "wh", QA: "qa", RB: "rubberflow" });
+  // พนักงานที่ล็อกอินตรงกับผู้ใช้ BOM (ไปได้เฉพาะโมดูลที่พนักงานคนนั้นเปิดได้)
+  const asEmployee = (user) => ({ isSandbox: true, department: { code: user.dept }, role: { code: user.role === "admin" ? "admin" : user.role === "manager" ? "general_manager" : "employee" } });
   const go = async (userId, query) => {
     env.store.setUser(userId);
+    env.context.state.employee = asEmployee(env.store.data().users.find((user) => user.id === userId));
     env.log.hash = "";
     await env.renderRaw(query);
     return env.log.hash;
@@ -2317,6 +2320,21 @@ test("the My-work page is gone from the BOM: not in the menu or the page list, a
   assert.equal(await go("B03", "p=work&dept=constructor"), "#/bom?p=find", "an inherited property name is not a department");
   // an ordinary page is not redirected
   assert.equal(await go("B05", "p=orders"), "#/bom?p=orders");
+  // a department head of GR (BOM planner rights, but only the GR module in the menu) asking for another department goes to GR, never to a page it cannot open
+  env.store.setUser("B05");
+  env.context.state.employee = { isSandbox: true, department: { code: "GR" }, role: { code: "department_manager" } };
+  env.store.data().users.find((user) => user.id === "B05").role = "manager";
+  env.log.hash = "";
+  await env.renderRaw("p=work&dept=QA");
+  assert.equal(env.log.hash, "#/gr");
+  // the per-department "ดูงาน" on an order only links to modules the viewer can open
+  const order = await env.render("p=orders&sel=DEMO-26006");
+  assert.ok(order.includes('href="#/gr"') || !order.includes("ดูงาน"), "GR's own module may be linked");
+  for (const route of ["qa", "sr", "pk", "bg", "pt", "st", "wh"]) assert.ok(!order.includes(`href="#/${route}"`), `the GR head gets no link to #/${route}`);
+  // the all-departments job table is reachable from the orders page for the planning group
+  env.store.setUser("B03");
+  env.context.state.employee = asEmployee(env.store.data().users.find((user) => user.id === "B03"));
+  assert.match(await env.render("p=orders"), /href="#\/bom\?p=jobs"/);
 });
 
 test("an open PI names itself in the page head, a draft shows what other drafts need, and open purchase orders are named before cancelling or editing", async () => {

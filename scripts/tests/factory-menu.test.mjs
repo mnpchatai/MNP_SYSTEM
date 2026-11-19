@@ -1129,3 +1129,14 @@ test("side menu: viewOf and the menu definitions; nothing outside test mode", ()
   const env = load({ employee: emp("SR", "employee", { isSandbox: false }) });
   assert.equal(env.modules.FACTORY_SR.navAllowed(env.context.state.employee), false);
 });
+
+test("GR and QA reach the rod store page (stock and lot history) from their own module; other departments get no such link", async () => {
+  for (const [dept, userId, code] of [["GR", "B05", "FACTORY_GR"], ["QA", "B12", "FACTORY_QA"]]) {
+    const env = load({ employee: emp(dept) });
+    env.store.setUser(userId);
+    assert.match(await env.open(code), /href="#\/bom\?p=rods"[^>]*>คลังยางเส้นยาว</, `${dept} has the link`);
+  }
+  const st = load({ employee: emp("ST") });
+  st.store.setUser("B08");
+  assert.doesNotMatch(await st.open("FACTORY_ST"), /p=rods/);
+});
