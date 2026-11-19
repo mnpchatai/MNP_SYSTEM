@@ -940,7 +940,7 @@ const withSteps = () => {
 };
 
 test("every form of RubberFlow and BOM is novalidate, so the browser never shows its English bubble", () => {
-  const files = ["modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js"];
+  const files = ["modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js", "modules/factory-kit.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js"];
   let count = 0;
   for (const file of files) {
     for (const line of fs.readFileSync(file, "utf8").split("\n")) {

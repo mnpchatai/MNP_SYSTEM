@@ -3042,6 +3042,11 @@ tr.is-dragging .bom-drag { cursor: grabbing; color: var(--primary); }
 .bom-dept[data-dept="PT"] { --dc: #7c3aed; }
 .bom-dept[data-dept="BG"] { --dc: #c0276a; }
 .bom-dept[data-dept="PK"] { --dc: #1769e0; }
+.bom-dept[data-dept="SR"] { --dc: #0d9488; }
+.bom-dept[data-dept="QA"] { --dc: #a16207; }
+.bom-dept[data-dept="WH"] { --dc: #7a5230; }
+.bom-dept[data-dept="PP"] { --dc: #4f46e5; }
+.bom-dept[data-dept="SA"] { --dc: #6b7f1a; }
 .bom-back { margin: 0; font-size: var(--text-ui); }
 .bom-hero-code { margin: 0; font-size: var(--text-meta); }
 .bom-hero-sub { margin: 2px 0 0; font-size: var(--text-meta); }

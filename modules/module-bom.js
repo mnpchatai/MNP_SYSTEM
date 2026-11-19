@@ -166,21 +166,6 @@
   const defaultPage = () => { const home = storeApi.homeOf(store.user()); return pages[home] ? home : "dashboard"; };
   const currentPage = (params) => storeApi.findModule(params.get("p") ?? defaultPage())?.id ?? null;
 
-  // name → ค่า · name[] → อาร์เรย์ · a.b → ออบเจ็กต์ซ้อน (ค่าเป็นสตริง action แปลงเลขเอง)
-  function formPayload(form) {
-    const payload = {};
-    for (const [rawKey, value] of new FormData(form).entries()) {
-      const isList = rawKey.endsWith("[]");
-      const key = isList ? rawKey.slice(0, -2) : rawKey;
-      const path = key.split(".");
-      let target = payload;
-      for (const part of path.slice(0, -1)) target = (target[part] ??= {});
-      const last = path.at(-1);
-      if (isList) (target[last] ??= []).push(value);
-      else target[last] = value;
-    }
-    return payload;
-  }
   const dueFrom = (due) => Object.fromEntries(Object.entries(due ?? {}).filter(([, value]) => value).map(([dept, value]) => [dept, rules.fromInputDate(value)]));
   // ตารางสร้าง BOM: แถว (rowId[]/parentId[] + ช่องต่อแถว) → ต้นไม้ { code, item, note, nodes[] } ของ action saveBomTree
   // ชิ้นที่ยังไม่มีใน item master ส่ง newItem (ชนิด ชื่อ หน่วย น้ำหนัก ข้อมูลยาง) · ชิ้น RB ที่มีอยู่ส่ง patch เฉพาะเมื่อข้อมูลการตัด/น้ำหนัก/ชื่อเปลี่ยน
@@ -509,66 +494,32 @@
     });
     return true;
   }
-  function parseArgs(node) {
-    try { return node.dataset.rfArgs ? JSON.parse(node.dataset.rfArgs) : {}; } catch { return {}; }
+  // ตัวผูก event data-rf-* ใช้ร่วมกับทุกโมดูลโรงงาน (modules/factory-kit.js) · ที่นี่เหลือแค่ตะขอของ BOM ก่อนส่งคำสั่ง:
+  // แทรก WIP (บันทึกขั้นตอนผลิตต่อ) และเปิดใบใหม่แล้วไปที่หน้าของใบนั้น
+  function beforeSubmit(name, raw) {
+    // แทรก WIP: ขั้นตอนผลิตของชิ้นแม่ที่อ้างบรรทัดเดิมเปลี่ยนไปอ้างรหัส WIP ด้วย (บันทึกต่อจาก BOM ด้วย saveRouting)
+    const wipRouting = name === "saveBomTree" && raw.wipInsert ? routingAfterWipInsert(raw) : null;
+    // ถ้าบันทึกขั้นตอนผลิตต่อไม่สำเร็จ BOM มี WIP ที่แทรกแล้ว แต่ขั้นตอนผลิตของชิ้นแม่ยังอ้างชิ้นเดิม: บอกตรงๆ ว่าอะไรเสร็จแล้ว อะไรค้าง และต้องทำอะไรต่อ
+    const wipFail = wipRouting ? `แทรก WIP ${rules.canonicalCode(raw.wipCode)} ใน BOM ของ ${wipRouting.itemCode} แล้ว แต่ยังไม่ได้ปรับขั้นตอนผลิตของ ${wipRouting.itemCode} ให้อ้าง WIP นี้แทน ${rules.canonicalCode(raw.childCode)} · เปิดหน้าของ ${wipRouting.itemCode} แล้วแก้ขั้นตอนผลิตเองที่ขั้นที่ยังอ้าง ${rules.canonicalCode(raw.childCode)}` : "";
+    // ขั้นตอนผลิตบันทึกต่อเมื่อ BOM บันทึกสำเร็จแล้วเท่านั้น (runAction เรียก after หลังฐานข้อมูลตอบและ store รวมคำตอบแล้ว) และคำนวณจากข้อมูลตอนนั้น ไม่ใช่ค่าตอนกดบันทึก:
+    // คำตอบของการบันทึก BOM อาจพาขั้นตอนผลิตที่ผู้อื่นเพิ่งแก้มาด้วย ส่งขั้นตอนที่คำนวณไว้ก่อนบนเวอร์ชันใหม่ = ทับของผู้อื่นเงียบๆ
+    // ขั้นตอนตอนนี้ไม่อ้างบรรทัดเดิมแล้ว = ไม่มีอะไรต้องปรับ · BOM ใน store ไม่มี WIP (ไม่ควรเกิด) = แจ้งว่าค้างอะไรแทนการส่ง
+    const wipFollowUp = wipRouting ? () => {
+      const wipCode = rules.canonicalCode(raw.wipCode);
+      const bom = actions.helpers.approvedBomOf(store.data(), wipRouting.itemCode);
+      if (!bom?.lines.some((line) => line.childCode === wipCode)) { showToast(wipFail, "error"); return; }
+      const routingPayload = routingAfterWipInsert(raw);
+      if (routingPayload) runAction("saveRouting", routingPayload, `ขั้นตอนผลิตของ ${routingPayload.itemCode} อ้างชิ้นใหม่แล้ว`, null, wipFail);
+    } : null;
+    // เปิดใบใหม่แล้วไปที่หน้าของใบนั้นเลย (ไม่ค้างที่รายการ) · โหมดฐานข้อมูลไปหลังฐานข้อมูลตอบ และไปเฉพาะเมื่อผู้ใช้ยังอยู่ที่รายการใบสั่งผลิต ไม่ดึงออกจากหน้าอื่น
+    const openCreated = name === "createOrder" ? (id) => {
+      const route = currentRoute();
+      if (id && route.path === PATH && route.params.get("p") === "orders" && !route.params.get("sel")) location.hash = url("orders", { sel: id });
+    } : null;
+    return { after: wipFollowUp ?? openCreated };
   }
-
   function bindRoot(root, ctx) {
-    root.querySelectorAll("form[data-rf-form]").forEach((form) => form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      // ตรวจช่องเป็นภาษาไทยใต้ช่องก่อน (ฟอร์มเป็น novalidate) · action ยังตรวจกติกาของตัวเองซ้ำ
-      if (!ui.validateForm(form)) return;
-      // ปุ่มส่งที่มี data-rf-confirm (รับเข้าคลัง / ส่งมอบ): ถามยืนยันครั้งเดียวแล้วส่งทันที (ไม่มีนับถอยหลัง)
-      const confirmer = event.submitter?.dataset?.rfConfirm ? event.submitter : null;
-      if (confirmer && !(await confirmDialog(ui.confirmOptions(confirmer)))) return;
-      const name = form.dataset.rfForm;
-      const transform = TRANSFORMS[name] ?? ((payload) => payload);
-      let payload;
-      let raw;
-      try {
-        raw = { ...formPayload(form), ...parseArgs(form) };
-        payload = transform(raw);
-      } catch (error) {
-        showToast(friendlyError(error), "error");
-        return;
-      }
-      // แทรก WIP: ขั้นตอนผลิตของชิ้นแม่ที่อ้างบรรทัดเดิมเปลี่ยนไปอ้างรหัส WIP ด้วย (บันทึกต่อจาก BOM ด้วย saveRouting)
-      const wipRouting = name === "saveBomTree" && raw.wipInsert ? routingAfterWipInsert(raw) : null;
-      // ถ้าบันทึกขั้นตอนผลิตต่อไม่สำเร็จ BOM มี WIP ที่แทรกแล้ว แต่ขั้นตอนผลิตของชิ้นแม่ยังอ้างชิ้นเดิม: บอกตรงๆ ว่าอะไรเสร็จแล้ว อะไรค้าง และต้องทำอะไรต่อ
-      const wipFail = wipRouting ? `แทรก WIP ${rules.canonicalCode(raw.wipCode)} ใน BOM ของ ${wipRouting.itemCode} แล้ว แต่ยังไม่ได้ปรับขั้นตอนผลิตของ ${wipRouting.itemCode} ให้อ้าง WIP นี้แทน ${rules.canonicalCode(raw.childCode)} · เปิดหน้าของ ${wipRouting.itemCode} แล้วแก้ขั้นตอนผลิตเองที่ขั้นที่ยังอ้าง ${rules.canonicalCode(raw.childCode)}` : "";
-      // ขั้นตอนผลิตบันทึกต่อเมื่อ BOM บันทึกสำเร็จแล้วเท่านั้น (runAction เรียก after หลังฐานข้อมูลตอบและ store รวมคำตอบแล้ว) และคำนวณจากข้อมูลตอนนั้น ไม่ใช่ค่าตอนกดบันทึก:
-      // คำตอบของการบันทึก BOM อาจพาขั้นตอนผลิตที่ผู้อื่นเพิ่งแก้มาด้วย ส่งขั้นตอนที่คำนวณไว้ก่อนบนเวอร์ชันใหม่ = ทับของผู้อื่นเงียบๆ
-      // ขั้นตอนตอนนี้ไม่อ้างบรรทัดเดิมแล้ว = ไม่มีอะไรต้องปรับ · BOM ใน store ไม่มี WIP (ไม่ควรเกิด) = แจ้งว่าค้างอะไรแทนการส่ง
-      const wipFollowUp = wipRouting ? () => {
-        const wipCode = rules.canonicalCode(raw.wipCode);
-        const bom = actions.helpers.approvedBomOf(store.data(), wipRouting.itemCode);
-        if (!bom?.lines.some((line) => line.childCode === wipCode)) { showToast(wipFail, "error"); return; }
-        const routingPayload = routingAfterWipInsert(raw);
-        if (routingPayload) runAction("saveRouting", routingPayload, `ขั้นตอนผลิตของ ${routingPayload.itemCode} อ้างชิ้นใหม่แล้ว`, null, wipFail);
-      } : null;
-      // เปิดใบใหม่แล้วไปที่หน้าของใบนั้นเลย (ไม่ค้างที่รายการ) · โหมดฐานข้อมูลไปหลังฐานข้อมูลตอบ และไปเฉพาะเมื่อผู้ใช้ยังอยู่ที่รายการใบสั่งผลิต ไม่ดึงออกจากหน้าอื่น
-      const openCreated = name === "createOrder" ? (id) => {
-        const route = currentRoute();
-        if (id && route.path === PATH && route.params.get("p") === "orders" && !route.params.get("sel")) location.hash = url("orders", { sel: id });
-      } : null;
-      if (!runAction(name, payload, form.dataset.rfSuccess, wipFollowUp ?? openCreated, "")) return;
-      form.closest?.("dialog")?.close?.();
-      form.querySelectorAll("button").forEach((node) => { node.disabled = true; });
-      renderRoute();
-    }));
-    root.querySelectorAll("[data-rf-action]").forEach((button) => button.addEventListener("click", async () => {
-      if (button.dataset.rfConfirm && !(await confirmDialog(ui.confirmOptions(button)))) return;
-      if (!runAction(button.dataset.rfAction, parseArgs(button), button.dataset.rfSuccess)) return;
-      button.disabled = true;
-      renderRoute();
-    }));
-    root.querySelectorAll("[data-rf-open]").forEach((button) => button.addEventListener("click", () => openDialog(button.dataset.rfOpen, parseArgs(button), ctx)));
-    root.querySelectorAll("[data-rf-go]").forEach((button) => button.addEventListener("click", () => { location.hash = button.dataset.rfGo; }));
-    root.querySelectorAll("form[data-rf-search]").forEach((form) => form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const q = String(new FormData(form).get("q") ?? "").trim().slice(0, 100);
-      location.hash = ctx.pageUrl({ q: q || null });
-    }));
+    window.MNP_FACTORY.bindRoot(root, ctx, { run: runAction, transforms: TRANSFORMS, beforeSubmit, openDialog, ui });
   }
 
   function openDialog(name, args, ctx) {
