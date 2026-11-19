@@ -1,16 +1,10 @@
 // โมดูลแผนก QA — ตรวจคุณภาพ (ลำดับ 06 ของผังงาน) #/qa · เมนูกลุ่ม "โรงงาน" ในโหมดทดสอบ (ลงทะเบียนผ่าน MNP_FACTORY.registerDeptModule ใน modules/factory-kit.js)
 // หน้าแรก = งานรอตัดสินของ QA จากสองแหล่ง: ยางเส้นยาวที่ถูกกักตอนรับเข้าคลัง SR (store ของ BOM) และล็อตที่ถูกกักในสายผลิตของ RubberFlow (store ของ RubberFlow)
-// อ่านอย่างเดียว: ตัดสินและบันทึกผลตรวจยังทำที่หน้า BOM / RubberFlow (ลิงก์ที่หัวตารางของแต่ละแหล่ง)
+// ยางเส้นยาวที่กักเป็นการ์ดสั่งงานชุดเดียวกับ BOM "งานของฉัน" (ตัดสินที่นี่ได้ MNP_FACTORY.deptWorkSection) · ล็อตของ RubberFlow ยังเป็นตารางพร้อมลิงก์ไปตัดสินที่หน้า RubberFlow
 (function registerQaModule() {
   const F = window.MNP_FACTORY;
 
-  function rodSection(ctx) {
-    const { ui, rules, data } = ctx;
-    const nameOf = (code) => ctx.helpers.itemOf(data, code)?.name ?? "";
-    const lots = (data.rodLots ?? []).filter((lot) => lot.status === "held").sort((a, b) => (Number(a.receivedAt) || 0) - (Number(b.receivedAt) || 0) || String(a.lotNo).localeCompare(String(b.lotNo)));
-    const rows = lots.map((lot) => `<tr><td><span class="rf-mono">${F.esc(lot.lotNo)}</span><div class="small muted">${F.esc(`ใบ ${lot.orderId}`)}</div></td><td>${ui.mono(lot.itemCode)}<div class="small muted">${F.esc(nameOf(lot.itemCode))}</div></td><td class="right rf-mono">${F.esc(`${rules.fmtQty(lot.qtyReceived ?? lot.qtySent)} ${rules.uomLabel(lot.uom)}`)}</td><td class="small">${F.esc(lot.qc?.note ?? "")}</td></tr>`);
-    return ui.card(ui.table(["ล็อต", "เส้นยาง", { label: "รับไว้", className: "right" }, "หมายเหตุจาก SR"], rows, { emptyText: "ไม่มียางเส้นยาวที่กักรอตัดสิน" }), { title: "ยางเส้นยาวที่กักรอตัดสิน", actions: F.actionLink(ctx, "ไปตัดสินที่ BOM", ctx.url("work", { dept: "QA" })), flush: true });
-  }
+  const rodSection = (ctx) => F.deptWorkSection(ctx, { title: "ยางเส้นยาวที่กักรอตัดสิน", emptyText: "ไม่มียางเส้นยาวที่กักรอตัดสิน" });
 
   function rubberflowSection(ctx) {
     const { ui } = ctx;
@@ -26,7 +20,7 @@
   }
 
   function landing(ctx) {
-    return { html: `${F.pageHead(ctx, "งานของแผนกฉัน")}${rodSection(ctx)}${rubberflowSection(ctx)}` };
+    return { html: `${F.pageHead(ctx, "งานของแผนกฉัน", F.actionLink(ctx, "ไปงานของฉัน (BOM)", ctx.url("work", { dept: "QA" })))}${rodSection(ctx)}${rubberflowSection(ctx)}`, actions: true };
   }
 
   F.registerDeptModule({ code: "FACTORY_QA", dept: "QA", route: "qa", label: "ตรวจคุณภาพ (QA)", icon: "clipboard-check", palette: "qa", landing });

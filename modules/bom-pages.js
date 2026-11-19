@@ -61,7 +61,7 @@
     ? ctx.ui.button((Number(job.qtyDone) || 0) > 0 ? "ทำต่อ" : "คืนคิว", { action: "setJobStatus", args: { jobId: job.id, status: (Number(job.qtyDone) || 0) > 0 ? "in_progress" : "queued" }, className: "secondary small" })
     : ctx.ui.openButton("พักงาน", "jobHold", { jobId: job.id }, { className: "secondary small" }));
   // งานที่ผูก WO ของ RubberFlow: ยอดมาจากแท่งที่คลังแท่งยาว (SR) รับเข้าคลังและผ่านตรวจขนาด (20261202010000 · เดิม = ล็อตตกแต่งที่ผ่าน QC) ไม่มีปุ่มรายงานผล · บอกครั้งเดียวในที่ของปุ่ม
-  const LINKED_NOTE = '<span class="small muted" title="ยอดของงานนี้เพิ่มเองเมื่อคลังแท่งยาว (SR) รับแท่งจากล็อตตกแต่งของ WO เข้าคลังและผ่านตรวจขนาด">ยอดมาจากการรับเข้าคลัง SR</span>';
+  const LINKED_NOTE = '<span class="small muted" title="ยอดของงานนี้เพิ่มเองเมื่อคลังยางเส้นยาว (SR) รับยางเส้นยาวจากล็อตตกแต่งของ WO เข้าคลังและผ่านตรวจขนาด">ยอดมาจากการรับเข้าคลัง SR</span>';
   const treeRows = (ctx, code, qty = 1) => ctx.rules.explode(code, qty, { itemOf: (c) => itemOf(ctx, c), approvedBomOf: (c) => approvedBomOf(ctx, c) }).lines;
   const levelCell = (level, text) => `<span class="bom-lv bom-lv-${Math.min(level, 6)}">${text}</span>`;
   const buildUrl = (ctx, code) => ctx.url("build", { code });

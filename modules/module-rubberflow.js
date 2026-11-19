@@ -76,7 +76,17 @@
   });
   // context(params) ให้เทสต์เรียก dialog ด้วย ctx เดียวกับหน้า
   // bomJobOfAction / showBomFeedback: ขั้น "ตกแต่งผ่าน / QA ตัดสินผ่าน → ตามทัน BOM → แจ้งยอดที่งานได้รับ" (ให้เทสต์เรียกตรง)
-  window.MNP_RUBBERFLOW = { runAction: (name, payload, successText) => runAction(name, payload, successText), store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing(), bomJobOfAction: (name, payload) => bomJobOfAction(name, payload), showBomFeedback: (before) => showBomFeedback(before), checkMaterials: (options) => checkMaterials(options), can: (permission) => storeApi.can(store.user(), permission), openChemicalNeeds: () => openChemicalNeeds(), draftChemicalNeeds: (draftOrders, reservedDraftOrders) => draftChemicalNeeds(draftOrders, reservedDraftOrders) };
+  // งานจากใบสั่งผลิต (BOM) บนหน้าภาพรวม: ช่องว่างที่หน้าวางไว้ (bomJobsSlot) เติมหลังหน้าผูก event เสร็จ (modules/factory-kit.js mountDeptJobs) ไม่ให้ตัวผูกของหน้านี้ผูกปุ่มของ BOM ซ้ำ
+  // bomJobsShown = หน้าที่วาดอยู่แสดงข้อมูลของ BOM: module-bom.js วาดหน้านี้ใหม่เมื่อ store ของ BOM เปลี่ยน (ไม่วาดหน้า RubberFlow อื่นที่ไม่เกี่ยว ซึ่งอาจมีฟอร์มที่กรอกค้าง)
+  let bomJobsShown = false;
+  // BOM โหลดเสร็จ/ไม่สำเร็จขณะ RubberFlow มี dialog หรือฟอร์มที่แก้ค้าง: เติมเฉพาะช่องการ์ด BOM (ช่องอยู่นอก dialog) ไม่วาดทั้งหน้าใหม่ · mountDeptJobs ผูกปุ่มของช่องครั้งเดียวต่อการเติม และลบช่องเองเมื่อไม่มีการ์ด
+  const remountBomJobs = () => {
+    if (!bomJobsShown || !onRfRoute()) return;
+    const slot = document.querySelector(".content")?.querySelector("[data-bom-jobs]");
+    if (slot) bomJobsShown = window.MNP_FACTORY.mountDeptJobs(slot, "RB");
+  };
+  const bomJobsSlot = () => (window.MNP_FACTORY?.mountDeptJobs && state.employee?.isSandbox === true ? '<div data-bom-jobs></div>' : "");
+  window.MNP_RUBBERFLOW = { showsBomJobs: () => bomJobsShown && onRfRoute(), remountBomJobs: () => remountBomJobs(), runAction: (name, payload, successText) => runAction(name, payload, successText), store, PATH, url, context: (params) => makeContext(params), isEditing: () => isEditing(), bomJobOfAction: (name, payload) => bomJobOfAction(name, payload), showBomFeedback: (before) => showBomFeedback(before), checkMaterials: (options) => checkMaterials(options), can: (permission) => storeApi.can(store.user(), permission), openChemicalNeeds: () => openChemicalNeeds(), draftChemicalNeeds: (draftOrders, reservedDraftOrders) => draftChemicalNeeds(draftOrders, reservedDraftOrders) };
 
   // โหมดฐานข้อมูล: โหลดเสร็จ/โหลดไม่สำเร็จ/บันทึกไม่สำเร็จ (ย้อนกลับแล้ว) วาดหน้าใหม่ · เริ่ม/เสร็จการบันทึกแค่เปลี่ยนข้อความสถานะ ไม่ทับฟอร์มที่ผู้ใช้กำลังกรอก
   const onRfRoute = () => { try { return currentRoute().path === PATH; } catch { return false; } };
@@ -533,6 +543,7 @@
       },
       roleLabel: (role) => storeApi.ROLES[role]?.label ?? role,
     };
+    ctx.bomJobsSlot = bomJobsSlot;
     ctx.openDialog = (name, args) => openDialog(name, args, ctx); // เปิด dialog จากโค้ดของหน้า (เช่น ปุ่ม "สั่งซื้อส่วนที่ขาด" ในใบเบิก)
     return ctx;
   }
@@ -654,10 +665,13 @@
     // ชื่อโมดูลอยู่ในเมนูข้างของระบบหลักแล้ว แถบนี้จึงมีแค่เครื่องมือ (บทบาทสาธิต สแกน แจ้งเตือน รีเซ็ต)
     const head = `<header class="rf-head">${toolbarHtml(ctx)}</header>`;
     dirty = false; // หน้าใหม่ = ไม่มีฟอร์มที่แก้ค้างแล้ว (บันทึกสำเร็จ โหลดใหม่ เปลี่ยนหน้า)
+    bomJobsShown = false;
     app.innerHTML = shell(`<div class="rf-page" data-module="rf" data-rf-mod="${escapeHtml(entry && user ? page : "")}">${head}${body}${testDataHtml(ctx)}</div>`, PATH, title);
     bindShell();
     const root = document.querySelector(".content");
     bindPage(root, ctx);
+    const bomJobs = root.querySelector("[data-bom-jobs]");
+    if (bomJobs) bomJobsShown = window.MNP_FACTORY.mountDeptJobs(bomJobs, "RB");
     ui.enhanceDates(root);
     ui.labelTables(root);
     bind?.(root, ctx);

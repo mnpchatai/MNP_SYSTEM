@@ -2076,6 +2076,59 @@ test("drawing a fresh page clears the dirty state and merges what was held", asy
   assert.equal(env.log.renders, renders + 1, "and drawn once");
 });
 
+// หน้าแรกของโมดูลแผนก (#/gr): store ของ BOM วาดหน้านั้นใหม่เหมือนหน้า BOM (ผู้อื่นบันทึก · บันทึกของเราถูกปฏิเสธและย้อนกลับ) และไม่วาดทับ dialog ที่เปิดอยู่
+async function deptEnv(hooks = {}) {
+  const env = await dirtyEnv(hooks);
+  vm.runInContext(fs.readFileSync("modules/module-gr.js", "utf8"), env.context, { filename: "modules/module-gr.js" });
+  env.log.hash = "#/gr";
+  const real = env.mock.client.rpc.bind(env.mock.client);
+  env.denySaves = (on) => { env.mock.client.rpc = on ? async (name, args) => (name === "app_bom_save_master" ? { data: null, error: { code: "P0001", message: "BOM_FORBIDDEN" } } : real(name, args)) : real; };
+  return env;
+}
+
+test("on a department route a rejected save is rolled back, shown as the old state with an error toast, and the page is redrawn; an open dialog is not drawn over", async () => {
+  const dialog = { open: false };
+  const env = await deptEnv({ dialogOpen: () => dialog.open });
+  env.denySaves(true);
+  const renders = env.log.renders;
+  assert.equal(env.ctx("").runAction("saveItem", saveItemPayload("P-DEPT-1"), "บันทึกแล้ว"), true, "the page shows the result at once");
+  assert.equal(env.store.data().items.some((item) => item.code === "P-DEPT-1"), true, "optimistic");
+  await new Promise((resolve) => setTimeout0(resolve));
+  await new Promise((resolve) => setTimeout0(resolve));
+  assert.equal(env.store.data().items.some((item) => item.code === "P-DEPT-1"), false, "rolled back to the old state");
+  assert.ok(env.log.toasts.some(([, kind]) => kind === "error"), "the failure is told in a toast");
+  assert.ok(env.log.renders > renders, "the department page is redrawn with the old state");
+  // dialog เปิดอยู่ (กำลังพิมพ์รายงานผล): ย้อนกลับแล้วไม่วาดทับ
+  dialog.open = true;
+  const before = env.log.renders;
+  assert.equal(env.ctx("").runAction("saveItem", saveItemPayload("P-DEPT-2")), true);
+  await new Promise((resolve) => setTimeout0(resolve));
+  await new Promise((resolve) => setTimeout0(resolve));
+  assert.equal(env.log.renders, before, "nothing is redrawn over an open dialog");
+  assert.equal(env.store.data().items.some((item) => item.code === "P-DEPT-2"), false);
+});
+
+test("on a department route another user's save is merged and drawn on focus, and held (one notice) while a dialog is open; other pages do not trigger it", async () => {
+  const dialog = { open: false };
+  const env = await deptEnv({ dialogOpen: () => dialog.open });
+  dialog.open = true;
+  await env.othersSave("P-D1");
+  await env.fire("focus");
+  assert.equal(env.store.hasNewer(), true, "held under the open dialog");
+  dialog.open = false;
+  const renders = env.log.renders;
+  await env.fire("focus");
+  assert.deepEqual(Array.from(env.store.data().items, (item) => item.code), ["P-D1"]);
+  assert.equal(env.log.renders, renders + 1, "drawn once on the department route (the kit has no second watcher)");
+  // หน้าอื่นที่ไม่ใช่ BOM หรือหน้าแผนก: ไม่วาด
+  env.log.hash = "#/requests";
+  await env.othersSave("P-D2");
+  const other = env.log.renders;
+  env.store.catchUp();
+  await new Promise((resolve) => setTimeout0(resolve));
+  assert.equal(env.log.renders, other, "not this module's page");
+});
+
 test("the server re-stamps a saved record: the user's own save is not reported as someone else's update and draws silently", async () => {
   const env = await dirtyEnv();
   const outcomes = [];
