@@ -121,7 +121,7 @@ test("the persona decides the RubberFlow role and the planner / RB member / RB h
   assert.deepEqual(flags("general_manager", "MT"), ["manager", true, false, true]);
   assert.deepEqual(flags("staff", "ST"), ["store", false, false, false]);
   assert.deepEqual(flags("staff", "QA"), ["qc", false, false, false]);
-  assert.deepEqual(flags("staff", "SR"), ["gatekeeper", false, false, false]);
+  assert.deepEqual(flags("staff", "SR"), ["sr", false, false, false], "SR reads RubberFlow only (WIP is received by RB since 20261204010000)");
   assert.deepEqual(flags("staff", "MT"), ["viewer", false, false, false]);
   assert.equal(storeApi.personaUser(null), null);
   const rbHead = storeApi.personaUser(employee("department_manager", "RB"));
@@ -152,7 +152,7 @@ test("the persona decides the RubberFlow role and the planner / RB member / RB h
   // สิทธิ์ของปุ่มหน้างาน (ฐานข้อมูลตัดสินจริง): ST รับวัตถุดิบ · ST/QA กักกันล็อต · RB เบิก-ชั่ง-ผลิต-ส่งมอบ · SR รับมอบ · WH ส่งกล่อง · QA ผลตรวจ/NCR · RB กรอกการแก้ไข NCR · RB แม่พิมพ์ · กลุ่มวางแผนทุกอย่าง
   const who = Object.fromEntries([["rb", "RB"], ["st", "ST"], ["sr", "SR"], ["wh", "WH"], ["qa", "QA"], ["pp", "PP"], ["mt", "MT"]].map(([key, dept]) => [key, storeApi.personaUser(employee("staff", dept))]));
   // รับวัตถุดิบ/สั่งซื้อ/ยกเลิกใบสั่งซื้อ: แผนก ST เท่านั้น (กลุ่มวางแผนและ RB ดูหน้าสั่งซื้อได้อย่างเดียว) · admin ทำได้ ดูข้อสุดท้าย
-  const matrix = { receiveMaterial: ["st"], purchase: ["st"], cancelPurchase: ["st"], viewPurchase: ["st", "pp", "rb"], holdMaterial: ["st", "qa", "pp"], requisition: ["rb", "pp"], station: ["rb", "pp"], sendTransfer: ["rb", "pp"], receiveTransfer: ["sr", "pp"], shipBoxes: ["wh", "pp"], qcDecision: ["qa", "pp"], fillNcr: ["qa", "rb", "pp"], editMold: ["rb", "pp"] };
+  const matrix = { receiveMaterial: ["st"], purchase: ["st"], cancelPurchase: ["st"], viewPurchase: ["st", "pp", "rb"], holdMaterial: ["st", "qa", "pp"], requisition: ["rb", "pp"], station: ["rb", "pp"], sendTransfer: ["rb", "pp"], receiveTransfer: ["rb", "pp"], shipBoxes: ["wh", "pp"], qcDecision: ["qa", "pp"], fillNcr: ["qa", "rb", "pp"], editMold: ["rb", "pp"] };
   for (const [permission, allowed] of Object.entries(matrix)) {
     for (const key of Object.keys(who)) assert.equal(storeApi.can(who[key], permission), allowed.includes(key), `${permission} for ${key}`);
   }
@@ -173,7 +173,8 @@ test("the persona decides the RubberFlow role and the planner / RB member / RB h
   assert.equal(storeApi.personaUser(employee("staff", "WH")).role, "warehouse");
   assert.ok(storeApi.canSee(who.wh, "warehouse") && !storeApi.canSee(who.wh, "mixing"));
   assert.ok(storeApi.canSee(who.rb, "quality"), "RB reads the NCR page to fill corrective / preventive");
-  for (const role of ["rb", "gatekeeper", "viewer"]) assert.ok(storeApi.ROLES[role], role);
+  for (const role of ["rb", "sr", "viewer"]) assert.ok(storeApi.ROLES[role], role);
+  assert.equal(storeApi.ROLES.gatekeeper, undefined, "no role receives WIP for SR any more");
   assert.ok(storeApi.canSee(rbStaff, "recipes") && storeApi.canSee(rbStaff, "mixing"));
   assert.ok(storeApi.canSee(rbStaff, "audit") && storeApi.canSee(rbHead, "audit"), "every database account reads the audit trail");
   assert.equal(storeApi.canSee({ role: "planner" }, "audit"), false, "the demo roles keep their own menus");
@@ -820,11 +821,11 @@ test("the whole line on the database: receive → FEFO requisition (issued at on
   assert.equal(tr1, `TR-${TODAY}-01`);
   assert.equal((await master()).lots[0].transferredQty, 48, "the database sums what was sent");
   await inSync(s, rig, "transfer sent");
-  // สถานีฉีดเริ่มไม่ได้จนกว่า SR จะรับมอบ
+  // สถานีฉีดเริ่มไม่ได้จนกว่าจะรับมอบ (แผนก RB รับมอบเอง · 20261204010000 เดิม SR)
   assert.match(rig.store.run("recordExtrusion", { transferId: tr1, useKg: 47, thickness: 2.5, width: 18, weightPerM: 160, goodQty: 100, dieId: "DIE-1" }).error.message, /รับมอบ/);
-  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr1, qtyReceived: "47" });
+  await go(s, rig, "persona-rb", "receiveTransfer", { id: tr1, qtyReceived: "47" });
   const received = (await master()).transfers[0];
-  assert.deepEqual([received.status, received.qtyReceived, received.remaining, received.receivedBy], ["received", 47, 47, "ศิริ รับมอบ"]);
+  assert.deepEqual([received.status, received.qtyReceived, received.remaining, received.receivedBy], ["received", 47, 47, "ประยุทธ รีดยาง"]);
   await inSync(s, rig, "received");
 
   // ฉีด: ใช้ใบส่งมอบ 47 kg → คงเหลือ 0 · หัวดายนับ 100 m
@@ -835,13 +836,13 @@ test("the whole line on the database: receive → FEFO requisition (issued at on
   assert.equal(afterEx.lots.find((row) => row.id === ex).qc, "pass");
   await inSync(s, rig, "extruded");
   const tr2 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: ex, qty: 100 })).result;
-  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr2, qtyReceived: 100 });
+  await go(s, rig, "persona-rb", "receiveTransfer", { id: tr2, qtyReceived: 100 });
   // อบ: แม่พิมพ์ 2 cavity นับรอบ ceil((98 + 2) / 2) = 50
   const cu = (await go(s, rig, "persona-rb", "recordCuring", { transferId: tr2, useQty: 100, moldId: "MD-1", temp: 200, time: 150, pressure: 150, goodQty: 98, scrapQty: 2, shift: "D" })).result;
   assert.equal((await master()).molds.find((row) => row.id === "MD-1").usageSinceClean, 50);
   await inSync(s, rig, "cured");
   const tr3 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: cu, qty: 98 })).result;
-  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr3, qtyReceived: 98 });
+  await go(s, rig, "persona-rb", "receiveTransfer", { id: tr3, qtyReceived: 98 });
   // ตกแต่ง: 98 ชิ้น กล่องละ 40 → 3 กล่อง · ยอดผลิตของใบ 98 ≥ เป้า 90 → ใบปิดเอง
   const fn = (await go(s, rig, "persona-rb", "recordFinishing", { transferId: tr3, useQty: 98, passedQty: 98, scrapQty: 0, perBox: 40, qcResult: "pass", grade: "A", shift: "D" })).result;
   const finished = await master();
@@ -984,7 +985,6 @@ test("each shop-floor action is open to its own department and the planner group
   await s.as("persona-rb");
   forbidden("rb", "receiveMaterial", { materialCode: "EPDM-55", qtyKg: 1, expiry: NOW + DAY });
   forbidden("rb", "setMaterialLotStatus", { lotNo: lots[0], status: "hold" });
-  forbidden("rb", "receiveTransfer", { id: tr, qtyReceived: 48 });
   forbidden("rb", "shipBoxes", { ids: ["x"] });
   forbidden("rb", "addQcRecord", { lotId: mx, values: { hardness: 65 } });
   forbidden("rb", "createNcr", { title: "x", lotId: mx });
@@ -992,6 +992,7 @@ test("each shop-floor action is open to its own department and the planner group
   for (const [name, payload] of [["createRequisition", { orderId: order, batches: 1 }], ["weighLine", { reqId: requisition, index: 0, actualKg: 1 }], ["issueRequisition", { id: requisition }], ["recordMixing", { reqId: requisition }], ["endRest", { lotId: mx }], ["createTransfer", { lotId: mx, qty: 1 }], ["cleanMold", { id: "DIE-1" }], ["saveMold", { id: "X", name: "x" }], ["receiveTransfer", { id: tr, qtyReceived: 1 }]]) forbidden("st", name, payload);
   await s.as("persona-sr");
   forbidden("sr", "createTransfer", { lotId: mx, qty: 1 });
+  forbidden("sr", "receiveTransfer", { id: tr, qtyReceived: 48 });
   forbidden("sr", "receiveMaterial", { materialCode: "EPDM-55", qtyKg: 1, expiry: NOW + DAY });
   await s.as("persona-wh");
   forbidden("wh", "receiveTransfer", { id: tr, qtyReceived: 1 });
@@ -1018,7 +1019,7 @@ test("each shop-floor action is open to its own department and the planner group
   const mxRow = snap.lots[0];
   assert.equal(await sendAs("persona-rb", { materialLots: { upsert: [{ ...lotRow, status: "hold" }] } }, "setMaterialLotStatus"), "RF_FORBIDDEN", "RB cannot hold material");
   assert.equal(await sendAs("persona-rb", { materialLots: { upsert: [{ ...lotRow, lotNo: "RM-NEW-1", qtyKg: 5, initialKg: 5, expiry: NOW + DAY }] } }, "receiveMaterial"), "RF_FORBIDDEN", "RB cannot receive material");
-  assert.equal(await sendAs("persona-rb", { transfers: { upsert: [{ ...trRow, status: "received", qtyReceived: 48 }] } }, "receiveTransfer"), "RF_FORBIDDEN", "RB cannot receive a transfer");
+  assert.equal(await sendAs("persona-sr", { transfers: { upsert: [{ ...trRow, status: "received", qtyReceived: 48 }] } }, "receiveTransfer"), "RF_FORBIDDEN", "SR no longer receives a transfer (RB does since 20261204010000)");
   assert.equal(await sendAs("persona-wh", { transfers: { upsert: [{ ...trRow, status: "received", qtyReceived: 48 }] } }, "receiveTransfer"), "RF_FORBIDDEN");
   assert.equal(await sendAs("persona-st", { requisitions: { upsert: [{ ...snap.requisitions[0], note: "แก้" }] } }, "weighLine"), "RF_FORBIDDEN", "ST cannot touch requisitions");
   assert.equal(await sendAs("persona-qa", { lots: { upsert: [{ ...mxRow, id: "MX-X-01", goodQty: 5 }] } }, "recordMixing"), "RF_FORBIDDEN", "QA cannot add a lot");
@@ -1026,11 +1027,11 @@ test("each shop-floor action is open to its own department and the planner group
   assert.equal(await sendAs("persona-gr", { molds: { upsert: [{ id: "NEW-M", name: "x", kind: "die", unit: "m", perCycle: 1, cleanEvery: 1, pmLimit: 1 }] } }, "saveMold"), "RF_FORBIDDEN");
   assert.equal(await sendAs("persona-rb", { qcRecords: { upsert: [{ id: "QC-X-01", lotId: mx, tests: [{ key: "hardness", value: 65, pass: true }], result: "pass" }] } }, "addQcRecord"), "RF_FORBIDDEN", "RB cannot write a QC record");
   assert.equal(await sendAs("persona-rb", { ncrs: { upsert: [{ id: "NCR-X-01", lotId: mx, title: "x", whys: [], status: "open" }] } }, "createNcr"), "RF_FORBIDDEN", "RB cannot open an NCR");
-  // สิทธิ์ถูก แต่ผิดสถานะ: SR รับซ้ำ = ข้อมูลเท่าเดิม ไม่มีอะไรเปลี่ยน · แก้ผลตรวจเดิมไม่ได้
-  assert.equal(await sendAs("persona-sr", { transfers: { upsert: [{ ...trRow, status: "in_transit", qtyReceived: null }] } }, "receiveTransfer"), undefined, "an identical transfer is a no-op");
-  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr, qtyReceived: 48 });
+  // สิทธิ์ถูก แต่ผิดสถานะ: RB รับซ้ำ = ข้อมูลเท่าเดิม ไม่มีอะไรเปลี่ยน · แก้ผลตรวจเดิมไม่ได้
+  assert.equal(await sendAs("persona-rb", { transfers: { upsert: [{ ...trRow, status: "in_transit", qtyReceived: null }] } }, "receiveTransfer"), undefined, "an identical transfer is a no-op");
+  await go(s, rig, "persona-rb", "receiveTransfer", { id: tr, qtyReceived: 48 });
   const done = (await master()).transfers[0];
-  assert.equal(await sendAs("persona-sr", { transfers: { upsert: [{ ...done, status: "in_transit" }] } }, "receiveTransfer"), "RF_INVALID_TRANSITION", "a received transfer cannot go back");
+  assert.equal(await sendAs("persona-rb", { transfers: { upsert: [{ ...done, status: "in_transit" }] } }, "receiveTransfer"), "RF_INVALID_TRANSITION", "a received transfer cannot go back");
   // ผู้วางแผนทำได้ทุกอย่าง
   const statusOf = async () => (await master()).materialLots.find((row) => row.lotNo === lots[0]).status;
   assert.equal((await go(s, rig, "persona-pp", "setMaterialLotStatus", { lotNo: lots[0], status: "hold" })).ok, true);
@@ -1048,7 +1049,7 @@ test("the database computes the numbers itself: a client cannot set the stock, t
   const { mx } = await mixAndSend(s, rig, order);
   await go(s, rig, "persona-rbh", "endRest", { lotId: mx, reason: "ทดสอบเร่งด่วน" });
   const tr = (await go(s, rig, "persona-rb", "createTransfer", { lotId: mx, qty: 48 })).result;
-  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr, qtyReceived: 47 });
+  await go(s, rig, "persona-rb", "receiveTransfer", { id: tr, qtyReceived: 47 });
   const master = () => s.call("app_rf_master");
   const save = async (changes, action) => {
     const snapshot = await master();
@@ -1105,13 +1106,13 @@ test("mixing holds the lot per stage, the QC decision releases it and adds the p
 
   // ตกแต่งที่ผลตรวจยังไม่ผ่าน: กล่องกักกัน ยอดผลิตยังไม่นับ → QA ผ่านแล้ว กล่องพร้อมส่งและยอดเข้าใบ แต่ QA ปิดใบเองไม่ได้ (ปิดเป็นของฝั่ง RB)
   const tr1 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: mx, qty: 48 })).result;
-  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr1, qtyReceived: 47 });
+  await go(s, rig, "persona-rb", "receiveTransfer", { id: tr1, qtyReceived: 47 });
   const ex = (await go(s, rig, "persona-rb", "recordExtrusion", { transferId: tr1, useKg: 47, thickness: 2.5, width: 18, weightPerM: 160, goodQty: 20, dieId: "DIE-1" })).result;
   const tr2 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: ex, qty: 20 })).result;
-  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr2, qtyReceived: 20 });
+  await go(s, rig, "persona-rb", "receiveTransfer", { id: tr2, qtyReceived: 20 });
   const cu = (await go(s, rig, "persona-rb", "recordCuring", { transferId: tr2, useQty: 20, moldId: "MD-1", temp: 200, time: 150, pressure: 150, goodQty: 20 })).result;
   const tr3 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: cu, qty: 20 })).result;
-  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr3, qtyReceived: 20 });
+  await go(s, rig, "persona-rb", "receiveTransfer", { id: tr3, qtyReceived: 20 });
   const fn = (await go(s, rig, "persona-rb", "recordFinishing", { transferId: tr3, useQty: 20, passedQty: 20, perBox: 20, qcResult: "hold" })).result;
   let snapshot = await s.call("app_rf_master");
   assert.deepEqual([snapshot.orders[0].producedQty, snapshot.fgBoxes[0].status, snapshot.lots.find((row) => row.id === fn).countedToOrder], [0, "hold", false]);
@@ -1153,11 +1154,11 @@ test("mixing holds the lot per stage, the QC decision releases it and adds the p
 async function toFinishing(s, rig, tr1, afterReceive) {
   const ex = (await go(s, rig, "persona-rb", "recordExtrusion", { transferId: tr1, useKg: 47, thickness: 2.5, width: 18, weightPerM: 160, goodQty: 100, dieId: "DIE-1" })).result;
   const tr2 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: ex, qty: 100 })).result;
-  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr2, qtyReceived: 100 });
+  await go(s, rig, "persona-rb", "receiveTransfer", { id: tr2, qtyReceived: 100 });
   await afterReceive();
   const cu = (await go(s, rig, "persona-rb", "recordCuring", { transferId: tr2, useQty: 100, moldId: "MD-1", temp: 200, time: 150, pressure: 150, goodQty: 100 })).result;
   const tr3 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: cu, qty: 100 })).result;
-  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr3, qtyReceived: 100 });
+  await go(s, rig, "persona-rb", "receiveTransfer", { id: tr3, qtyReceived: 100 });
   await afterReceive();
   return tr3;
 }
@@ -1181,7 +1182,7 @@ test("a finishing lot of a WO linked to a BOM job makes no boxes and becomes a p
   };
   await untouched("sending reports nothing");
   // รับมอบทุกสถานี (ผสม kg / ฉีด / อบ) ไม่เขียน BOM
-  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr1, qtyReceived: 47 });
+  await go(s, rig, "persona-rb", "receiveTransfer", { id: tr1, qtyReceived: 47 });
   await untouched("receiving the mixing transfer (kilograms of compound) feeds nothing");
   const tr3 = await toFinishing(s, rig, tr1, () => untouched("receiving the extrusion and the curing transfers feeds nothing either"));
   assert.ok(!(await audit()).includes("rubberflow:receiveTransfer"), "no receipt writes a BOM history row");
@@ -1250,7 +1251,7 @@ test("a finishing lot of a WO linked to a BOM job makes no boxes and becomes a p
   await go(plain, plainRig, "persona-rbh", "endRest", { lotId: sent.mx, reason: "ทดสอบเร่งด่วน" });
   const trPlain = (await go(plain, plainRig, "persona-rb", "createTransfer", { lotId: sent.mx, qty: 48 })).result;
   const bomVersion = (await plain.call("app_bom_master")).version;
-  await go(plain, plainRig, "persona-sr", "receiveTransfer", { id: trPlain, qtyReceived: 48 });
+  await go(plain, plainRig, "persona-rb", "receiveTransfer", { id: trPlain, qtyReceived: 48 });
   const trPlain3 = await toFinishing(plain, plainRig, trPlain, async () => assert.equal((await plain.call("app_bom_master")).version, bomVersion));
   const fnPlain = (await go(plain, plainRig, "persona-rb", "recordFinishing", { transferId: trPlain3, useQty: 50, passedQty: 50, scrapQty: 0, perBox: 40, qcResult: "pass", grade: "A", shift: "D" })).result;
   assert.equal((await plain.call("app_bom_master")).version, bomVersion, "a work order without a linked job leaves BOM alone");
@@ -1363,13 +1364,13 @@ test("the database builds the boxes of a finishing lot itself: boxes sent by a c
   const { mx } = await mixAndSend(s, rig, order);
   await go(s, rig, "persona-rbh", "endRest", { lotId: mx, reason: "ทดสอบเร่งด่วน" });
   const tr1 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: mx, qty: 48 })).result;
-  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr1, qtyReceived: 47 });
+  await go(s, rig, "persona-rb", "receiveTransfer", { id: tr1, qtyReceived: 47 });
   const ex = (await go(s, rig, "persona-rb", "recordExtrusion", { transferId: tr1, useKg: 47, thickness: 2.5, width: 18, weightPerM: 160, goodQty: 100, scrapQty: 2, dieId: "DIE-1", shift: "D" })).result;
   const tr2 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: ex, qty: 100 })).result;
-  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr2, qtyReceived: 100 });
+  await go(s, rig, "persona-rb", "receiveTransfer", { id: tr2, qtyReceived: 100 });
   const cu = (await go(s, rig, "persona-rb", "recordCuring", { transferId: tr2, useQty: 100, moldId: "MD-1", temp: 200, time: 150, pressure: 150, goodQty: 98, scrapQty: 2, shift: "D" })).result;
   const tr3 = (await go(s, rig, "persona-rb", "createTransfer", { lotId: cu, qty: 98 })).result;
-  await go(s, rig, "persona-sr", "receiveTransfer", { id: tr3, qtyReceived: 98 });
+  await go(s, rig, "persona-rb", "receiveTransfer", { id: tr3, qtyReceived: 98 });
   await s.as("persona-rb");
   const snapshot = await s.call("app_rf_master");
   const fn = `FN-${TODAY}-99`;

@@ -307,7 +307,7 @@
     const lots = (bom.data().rodLots ?? []).filter((row) => row.jobNo === before.id);
     if (lots.length > (before.rodLots ?? 0)) {
       const lot = lots.slice().sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))[0];
-      showToast(`แท่งของล็อต ${lot.lotNo} ${lot.qtySent} ส่งเข้าคลังแท่งยาว (SR) แล้ว รอ SR รับเข้าคลังและตรวจขนาด จึงนับเข้างาน BOM ${before.id}`);
+      showToast(`ยางเส้นยาวของล็อต ${lot.lotNo} ${lot.qtySent} ส่งเข้าคลังยางเส้นยาว (SR) แล้ว รอ SR รับเข้าคลังและตรวจขนาด จึงนับเข้างาน BOM ${before.id}`);
       return;
     }
     const job = bom.data().jobs.find((row) => row.id === before.id);
@@ -540,6 +540,19 @@
           if (!bom || bom.status() !== "ready") return true;
           return (bom.data().jobs ?? []).some((job) => job.id === order.sourceJobId);
         } catch { return true; }
+      },
+      // สถานะในคลังยางเส้นยาว (SR) ของล็อตตกแต่ง (ล็อตของ SR ใช้เลขล็อตเดียวกับล็อตตกแต่ง): { status, location, href } · href = หน้าล็อตในโมดูล SR เมื่อผู้ใช้เปิดโมดูลนั้นได้
+      // ใช้ข้อมูลของ BOM ที่โหลดอยู่แล้วเท่านั้น (ไม่สั่งโหลดตอนวาดหน้า) · BOM ยังไม่โหลด / โหมดในเครื่อง / ไม่มีล็อตของ SR = null และหน้าแสดงข้อความเดิม
+      bomRodLot: (lotNo) => {
+        try {
+          const bom = bomStore();
+          if (!lotNo || !bom || bom.status() !== "ready") return null;
+          const found = (bom.data().rodLots ?? []).find((entry) => entry.lotNo === lotNo);
+          if (!found) return null;
+          const factory = window.MNP_FACTORY;
+          const open = typeof factory?.canOpenDeptModule === "function" && factory.canOpenDeptModule(state.employee, "SR", "FACTORY_SR");
+          return { status: found.status, location: found.location ?? "", href: open ? factory.routeUrl("sr", { lot: found.id }) : null };
+        } catch { return null; }
       },
       roleLabel: (role) => storeApi.ROLES[role]?.label ?? role,
     };

@@ -503,8 +503,9 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     ["persona-rbh", "สุรีย์", "หัวหน้ารีด", "หัวหน้าแผนก RB", "RB", "ฝ่ายผลิต RB", "department_manager"],
     ["persona-gr", "มานี", "ตัดยาง", "พนักงานแผนก GR", "GR", "ฝ่ายผลิต GR"],
     ["persona-st", "วิชัย", "คลังวัตถุดิบ", "พนักงานคลังวัตถุดิบ (ST)", "ST", "คลังวัตถุดิบ"],
-    // SR = รับมอบ WIP ของ RubberFlow และคลังแท่งยาวของ BOM (รับแท่งเข้าคลัง ตรวจขนาด จ่ายให้ GR · 20261202010000)
-    ["persona-sr", "ศิริ", "รับมอบ", "พนักงานแผนก SR (รับมอบ WIP / คลังแท่งยาว)", "SR", "รับมอบ WIP"],
+    // SR = คลังยางเส้นยาวของ BOM (รับเข้าคลัง ตรวจขนาด รับนอกใบสั่ง ย้ายตำแหน่ง ปรับยอด จ่ายให้ GR · 20261202010000 / 20261204010000)
+    // ใบส่งมอบ WIP ของ RubberFlow รับมอบโดยแผนก RB แล้ว (SR ดู RubberFlow ได้อย่างเดียว)
+    ["persona-sr", "ศิริ", "รับมอบ", "พนักงานแผนก SR (คลังยางเส้นยาว)", "SR", "คลังยางเส้นยาว"],
     ["persona-wh", "สุดา", "คลังสินค้า", "พนักงานคลังสินค้า (WH)", "WH", "คลังสินค้า"],
     // หัวหน้าแผนก WH (ผู้จัดการแผนก): BOM นับเป็นบทบาท manager แต่แผนกคือ WH จึงรับเข้าคลัง/ส่งมอบสินค้าสำเร็จรูปได้เหมือนพนักงาน WH และย้อนรายการที่บันทึกผิดได้ (reverseFg · 20261128020000) ซึ่งพนักงาน WH ทำไม่ได้
     ["persona-whh", "ชัย", "หัวหน้าคลัง", "หัวหน้าแผนกคลังสินค้า (WH)", "WH", "คลังสินค้า", "department_manager"],
@@ -981,11 +982,11 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     "reportJob", "setJobStatus", "linkJobToRubberFlow", "saveCustomer",
     "countPartStock", "issueOrderParts", "undoOrderParts", "returnOrderParts",
     "receiveFg", "deliverFg", "closeOrderShort", "closeOrder", "reverseFg",
-    "receiveRods", "decideRods", "issueRods", "reverseRodIssue", "adjustRods"];
+    "receiveRods", "decideRods", "issueRods", "reverseRodIssue", "adjustRods", "receiveRodsOpening", "setRodLocation"];
   // reverseFg (20261128020000) ไม่อยู่ในรายการของพนักงาน: พนักงาน WH ได้ BOM_FORBIDDEN ที่ด่านหยาบ · ผู้จัดการแผนก WH อยู่ในกลุ่มวางแผนอยู่แล้ว
-  // คลังแท่งยาว (20261202010000): adjustRods เป็นของกลุ่มวางแผนเท่านั้น จึงไม่อยู่ในรายการของพนักงาน (SR ได้ BOM_FORBIDDEN ที่ด่านหยาบ)
+  // คลังยางเส้นยาว (20261202010000 · 20261204010000): adjustRods อยู่ในรายการของพนักงานแล้ว (SR ปรับยอดเองได้ สิทธิ์จริงตรวจในตัวเขียน) · receiveRodsOpening / setRodLocation ของ SR
   const BOM_STAFF_ACTIONS = ["setStockCount", "setStockCounts", "reportJob", "setJobStatus", "linkJobToRubberFlow", "countPartStock", "issueOrderParts", "undoOrderParts", "returnOrderParts",
-    "receiveFg", "deliverFg", "closeOrderShort", "closeOrder", "receiveRods", "decideRods", "issueRods", "reverseRodIssue"];
+    "receiveFg", "deliverFg", "closeOrderShort", "closeOrder", "receiveRods", "decideRods", "issueRods", "reverseRodIssue", "adjustRods", "receiveRodsOpening", "setRodLocation"];
   // สินค้าสำเร็จรูป (ตรงกับสัญญา bom-wh-fg และ bom-fg-stock): แถวเดียว { orderId, kind, lines?, note? } ลำดับตรวจ: รูปคำขอ (รวมใบที่ไม่รู้จัก/สินค้านอกใบ) → สิทธิ์ (แผนก WH หรือ admin) → สถานะใบ → ยอด
   // ต่อใบ O รหัส X: own = Σ receive · in = Σ transfer − Σ untransfer ของใบนี้ · out = Σ transfer − Σ untransfer ที่ fromOrderId = O · delivered = Σ deliver · have = own + in
   // งานผลิต = ทุกงานของใบยกเว้นการเบิกของซื้อ (ST / PURCHASED) · ปิดใบทุกทางต้องให้ทุกงานผลิตเสร็จก่อน (20261125010000)
@@ -1197,9 +1198,9 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
   // ---- คลังแท่งยาว SR (ตรงกับ 20261202010000_bom_sr_rod_store.sql) ----
   // rodLots: หนึ่งแถวต่อล็อตตกแต่งของ WO ที่ผูกงาน RB (RubberFlow สร้างเป็น pending: rfApplyBomOps) · rodMoves: ประวัติของแท่งที่ใช้ได้ เพิ่มต่อท้าย เซิร์ฟเวอร์เขียน
   // ยอดของถัง (ล็อต, ใบเจ้าของ) = Σ qty ของแถวที่ lotId และ ownerOrderId ตรงกัน (null = สต็อกกลาง) ต้องไม่ติดลบ · ถังของใบ completed / cancelled = สต็อกกลาง
-  // คำสั่ง (ส่วนเดียวต่อคำสั่ง): receiveRods / decideRods ↔ rodLots · issueRods / reverseRodIssue / adjustRods ↔ rodMoves · ลำดับตรวจ: รูปคำขอ (BOM_INVALID_ROD) → สิทธิ์ (BOM_FORBIDDEN)
+  // คำสั่ง (ส่วนเดียวต่อคำสั่ง): receiveRods / decideRods / receiveRodsOpening / setRodLocation ↔ rodLots · issueRods / reverseRodIssue / adjustRods ↔ rodMoves · ลำดับตรวจ: รูปคำขอ (BOM_INVALID_ROD) → สิทธิ์ (BOM_FORBIDDEN)
   // → ล็อต / แถวที่อ้าง (ไม่พบ = BOM_INVALID_ROD) → สถานะ (BOM_INVALID_TRANSITION) → ยอด (BOM_INVALID_ROD / BOM_ROD_EXCEEDS)
-  const BOM_ROD_ACTIONS = { receiveRods: "rodLots", decideRods: "rodLots", issueRods: "rodMoves", reverseRodIssue: "rodMoves", adjustRods: "rodMoves" };
+  const BOM_ROD_ACTIONS = { receiveRods: "rodLots", decideRods: "rodLots", receiveRodsOpening: "rodLots", setRodLocation: "rodLots", issueRods: "rodMoves", reverseRodIssue: "rodMoves", adjustRods: "rodMoves" };
   const BOM_ROD_SPEC_KEYS = ["thickness", "width", "weightPerM"];
   const BOM_ROD_FREE = ["completed", "cancelled"];
   const bomRodAction = (action) => (Object.hasOwn(BOM_ROD_ACTIONS, action) ? BOM_ROD_ACTIONS[action] : null);
@@ -1247,12 +1248,48 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     moves += bomRodPush(next, nextVersion, at, actor, { lotId: lot.id, itemCode: lot.itemCode, kind: "receive", qty: q, ownerOrderId: null });
     return { moves, job: false };
   }
-  // receiveRods: แถวเดียว { id, qtyReceived, qc: { values, result, note } } · decideRods: แถวเดียว { id, decision, decisionNote }
+  // receiveRods: แถวเดียว { id, qtyReceived, location, qc: { values, result, note } } · decideRods: แถวเดียว { id, decision, decisionNote }
+  // receiveRodsOpening: แถวเดียว { id (ใหม่), lotNo, itemCode, qty, location, note } · setRodLocation: แถวเดียว { id, location } (ตรงกับ bom_rod_save_lots ของ 20261204010000)
   function bomRodLots(next, rows, nextVersion, actor, at, action) {
     if (!Array.isArray(rows) || rows.length !== 1) fail("BOM_INVALID_ROD");
     const row = rows[0];
     if (!row || typeof row !== "object" || Array.isArray(row)) fail("BOM_INVALID_ROD");
     const id = bomRodUuid(row.id);
+    if (action === "receiveRodsOpening") {
+      // รูปคำขอก่อนสิทธิ์: เลขล็อต 1-40 (ตัวพิมพ์ใหญ่ ห้ามขึ้นต้น FN- ของล็อตตกแต่ง RubberFlow) · รหัสตามกฎรหัส · 0 < qty <= 1e9 · ตำแหน่ง 1-40 · ที่มา 3-300
+      const lotNo = bomRodText(row.lotNo, 1, 40).toUpperCase();
+      if (lotNo.startsWith("FN-")) fail("BOM_INVALID_ROD");
+      const code = bomCode(bomRodText(row.itemCode, 1, 60));
+      if (!code) fail("BOM_INVALID_ROD");
+      const qty = bomRodNum(row.qty, 0, 1e9);
+      if (qty === null || qty <= 0) fail("BOM_INVALID_ROD");
+      const location = bomRodText(row.location, 1, 40);
+      const note = bomRodText(row.note, 3, 300);
+      bomRodRights(actor, "SR");
+      // ชิ้นต้องเป็นเส้นยาง (RB) ในทะเบียน · id และเลขล็อตต้องใหม่ (ผิด = BOM_INVALID_ROD)
+      const item = next.items.find((entry) => entry.code === code);
+      if (!item || item.kind !== "RB") fail("BOM_INVALID_ROD");
+      if (next.rodLots.some((lot) => String(lot.id).toLowerCase() === id) || next.rodLots.some((lot) => lot.lotNo === lotNo)) fail("BOM_INVALID_ROD");
+      const q = bomRodRound(qty);
+      next.rodLots.push({
+        id, lotNo, itemCode: item.code, orderId: null, jobNo: null, woNo: null, recipeCode: null, uom: item.uom, qtySent: q, spec: null,
+        status: "stored", qtyReceived: q, qc: null, receivedBy: actor.name, receivedAt: at, decision: null, decisionNote: null, decidedBy: null, decidedAt: null, createdAt: at,
+        location, source: "opening", sourceNote: note,
+      });
+      next.versions.rodLots[id] = nextVersion;
+      const moves = bomRodPush(next, nextVersion, at, actor, { lotId: id, itemCode: item.code, kind: "receive", qty: q, ownerOrderId: null, note });
+      return { lots: 1, moves, job: false };
+    }
+    if (action === "setRodLocation") {
+      const location = bomRodText(row.location, 1, 40);
+      bomRodRights(actor, "SR");
+      const lot = bomRodLotOf(next, id);
+      // ล็อตที่อยู่ในคลัง (stored) หรือกักรอ QA (held) เท่านั้น
+      if (!["held", "stored"].includes(lot.status)) fail("BOM_INVALID_TRANSITION");
+      lot.location = location;
+      next.versions.rodLots[lot.id] = nextVersion;
+      return { lots: 1, moves: 0, job: false };
+    }
     if (action === "receiveRods") {
       // รูปคำขอทั้งหมดก่อนสิทธิ์ (ลำดับเดียวกับ bom_rod_save_lots): จำนวน 0 < q <= 1e9 · qc เป็นวัตถุ · ค่าที่วัดเฉพาะสามมิติ 0 < ค่า <= 1e6 (null = ไม่ได้วัด ข้าม)
       // ผล pass | fail บังคับเสมอ (ไม่มีสเปก = SR ตัดสินด้วยตา) · หมายเหตุ <= 300 ตัวอักษร ไม่ผ่านต้อง >= 3
@@ -1274,6 +1311,8 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       if (!["pass", "fail"].includes(result)) fail("BOM_INVALID_ROD");
       const note = bomRodText(qc.note, 0, 300);
       if (result === "fail" && note.length < 3) fail("BOM_INVALID_ROD");
+      // ตำแหน่งจัดเก็บ (จำเป็น 1-40 หลังตัดช่องว่าง · 20261204010000)
+      const location = bomRodText(row.location, 1, 40);
       bomRodRights(actor, "SR");
       const lot = bomRodLotOf(next, id);
       if (lot.status !== "pending") fail("BOM_INVALID_TRANSITION");
@@ -1285,7 +1324,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         const inSpec = (key) => { const target = lot.spec[key]?.target; return target === undefined || target === null || Math.abs(values[key] - Number(target)) <= Number(lot.spec[key]?.tol) + 1e-9; };
         if (result !== (keys.every(inSpec) ? "pass" : "fail")) fail("BOM_INVALID_ROD");
       }
-      Object.assign(lot, { qtyReceived: qty, qc: { values, result, note }, receivedBy: actor.name, receivedAt: at, status: result === "pass" ? "stored" : "held" });
+      Object.assign(lot, { qtyReceived: qty, qc: { values, result, note }, receivedBy: actor.name, receivedAt: at, location, status: result === "pass" ? "stored" : "held" });
       next.versions.rodLots[lot.id] = nextVersion;
       const credit = result === "pass" ? bomRodCredit(next, lot, qty, nextVersion, actor, at) : { moves: 0, job: false };
       return { lots: 1, ...credit };
@@ -1330,8 +1369,8 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       } else if (ownerPi !== null || bomRodText(row.forOrderId, 0, 40)) bad();
       return { id, lotId, qty, ownerPi, forPi, code, note };
     });
-    // สิทธิ์: จ่าย / ย้อนจ่าย = แผนก SR หรือกลุ่มวางแผน · ปรับยอด = กลุ่มวางแผนเท่านั้น
-    if (kind === "adjust") { if (!bomIsPlanner(actor)) fail("BOM_FORBIDDEN"); } else bomRodRights(actor, "SR");
+    // สิทธิ์: จ่าย / ย้อนจ่าย / ปรับยอด = แผนก SR หรือกลุ่มวางแผน (ปรับยอดของ SR ตั้งแต่ 20261204010000)
+    bomRodRights(actor, "SR");
     let moves = 0;
     for (const row of parsed) {
       if (kind === "unissue") {
@@ -1452,7 +1491,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     };
     for (const list of BOM_LISTS) {
       const entry = changes[list];
-      if (entry === undefined || list === "stock" || list === "stockMoves" || list === "fgMoves" || list === "rodLots" || list === "rodMoves") continue; // สต็อกของซื้อ สำเร็จรูป และคลังแท่งยาวเขียนโดยตัวเขียนเฉพาะด้านล่าง
+      if (entry === undefined || list === "stock" || list === "stockMoves" || list === "fgMoves" || list === "rodLots" || list === "rodMoves") continue; // สต็อกของซื้อ สำเร็จรูป และคลังยางเส้นยาวเขียนโดยตัวเขียนเฉพาะด้านล่าง
       if (!entry || typeof entry !== "object" || Array.isArray(entry)) fail("BOM_INVALID_CHANGES");
       const idOf = BOM_ID[list];
       for (const record of entry.upsert ?? []) {
@@ -1598,7 +1637,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
   // 11 ชุด: materials (code) · recipes (รหัสสูตร + revision ทุก revision) · orders (WO) · materialLots (lotNo) · requisitions · lots (MX/EX/CU/FN) · transfers · fgBoxes · qcRecords · ncrs · molds · ไม่มีการลบ
   // สิทธิ์: กลุ่มวางแผน (admin ผู้จัดการแผนกขึ้นไป แผนก PP) ทำได้ทุกอย่าง · สมาชิก RB แก้วัตถุดิบ/ร่างสูตร/เปิด WO เบิก-ชั่ง บันทึกผสม ฉีด อบ ตกแต่ง ส่งมอบ WIP แม่พิมพ์ และกรอกการแก้ไข/ป้องกันของ NCR
   // อนุมัติสูตรและปล่อยผลิต = หัวหน้า RB (ผู้จัดการ/ผู้ช่วยผู้จัดการแผนก RB หรือผู้ช่วยผู้จัดการโรงงานขึ้นไป) หรือกลุ่มวางแผน (ปล่อยผลิต) · ST รับวัตถุดิบเข้าคลัง · ST/QA กักกันล็อตวัตถุดิบ
-  // SR รับมอบ WIP · WH ส่งมอบกล่อง · QA บันทึกผลตรวจและเปิด/ปิด NCR · ฐานข้อมูลคำนวณเอง: สต็อกล็อตหลังชั่ง คงเหลือ/ยอดส่งต่อของใบส่งมอบ ยอดผลิตของ WO สถานะกล่องตามผล QC การใช้แม่พิมพ์ (ไม่เชื่อค่าที่ client ส่ง)
+  // สมาชิก RB รับมอบ WIP ด้วย (20261204010000 · เดิม SR) · WH ส่งมอบกล่อง · QA บันทึกผลตรวจและเปิด/ปิด NCR · ฐานข้อมูลคำนวณเอง: สต็อกล็อตหลังชั่ง คงเหลือ/ยอดส่งต่อของใบส่งมอบ ยอดผลิตของ WO สถานะกล่องตามผล QC การใช้แม่พิมพ์ (ไม่เชื่อค่าที่ client ส่ง)
   // WO ที่มี sourceJobId ผูกงาน RB ของ BOM ในคำสั่งเดียวกัน (externalRef) · ล็อตตกแต่งของ WO ที่ผูกงานผ่าน QC และนับเข้า WO (ตอนบันทึก หรือ QA ตัดสินเป็น pass) → ไม่สร้างกล่อง แต่สร้างล็อตแท่ง pending ในคลังแท่งยาวของ BOM (20261202010000 · งาน RB นับยอดเมื่อ SR รับเข้าผ่าน) (การรับมอบใบส่งมอบไม่เขียน BOM) ผ่านตัวนับเวอร์ชันของ BOM ด้วย
   const RF_KEY = sandbox ? "mnp-harness-rf-master" : "mnp-harness-rf-master-real";
   const RF_LISTS = ["materials", "recipes", "orders", "materialLots", "requisitions", "lots", "transfers", "fgBoxes", "qcRecords", "ncrs", "molds", "purchaseOrders"];
@@ -1727,6 +1766,8 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       if (entry.upsert.length > 5000) fail("RF_TOO_MANY");
       // ผู้ที่ไม่ใช่กลุ่มวางแผน/สมาชิก RB: วัตถุดิบและสูตรแก้ไม่ได้เลย · ใบสั่งผลิตมาได้เฉพาะระเบียนที่ต่างจากของเดิมแค่ยอดผลิต (ฐานข้อมูลคำนวณเอง เช่นสำเนาของ QA/ SR ที่แก้ยอดตามผล) ที่เหลือ = ไม่มีสิทธิ์ ตัดสินก่อนตรวจชน
       if (entry.upsert.length && !master) {
+        // ใบส่งมอบ WIP ระหว่างสถานีของ RB: ส่งและรับมอบโดยแผนก RB หรือกลุ่มวางแผน (ตรงกับด่านหยาบของ app_rf_save 20261204010000 · เดิมแผนก SR รับมอบ)
+        if (list === "transfers") fail("RF_FORBIDDEN");
         // แผนก ST ส่งชุดวัตถุดิบได้เฉพาะพ่วงมากับใบสั่งซื้อ (แก้ได้ช่อง safetyKg ช่องเดียว ตรวจข้างล่าง) ตรงกับประตูของ app_rf_save ใน 20261120010000
         if (list === "recipes" || (list === "materials" && !(actor.dept === "ST" && action === "createPurchaseOrder"))) fail("RF_FORBIDDEN");
         if (list === "orders" && entry.upsert.some((row) => { const old = current.orders.find((order) => order.id === row?.id); return !old || !rfSame(old, row, RF_NOOP.orders); })) fail("RF_FORBIDDEN");
@@ -2063,7 +2104,8 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
           put({ ...clone(record), uom: lot.uom, qtyReceived: null, remaining: 0, status: "in_transit", createdAt: at, createdBy: actor.name });
           return null;
         }
-        if (!inDept("SR")) fail("RF_FORBIDDEN");
+        // รับมอบ: แผนก RB หรือกลุ่มวางแผน (20261204010000 · เดิมแผนก SR)
+        if (!master) fail("RF_FORBIDDEN");
         if (prev.status !== "in_transit" || record.status !== "received") fail("RF_INVALID_TRANSITION");
         if (!rfSame(prev, record, ["status", "qtyReceived", "condition", ...RF_NOOP.transfers])) fail(bad);
         const received = num(record.qtyReceived);
@@ -2492,6 +2534,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       bom.rodLots.push({
         id, lotNo: item.lotId, itemCode: job.itemCode, orderId: job.orderId, jobNo: job.id, woNo: wo.id, recipeCode: wo.recipeId, uom: job.uom, qtySent: good, spec,
         status: "pending", qtyReceived: null, qc: null, receivedBy: null, receivedAt: null, decision: null, decisionNote: null, decidedBy: null, decidedAt: null, createdAt: at,
+        location: "", source: "order", sourceNote: null,
       });
       bom.versions.rodLots[id] = version;
       rodLots.add(id);

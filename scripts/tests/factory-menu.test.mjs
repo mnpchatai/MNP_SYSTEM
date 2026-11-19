@@ -7,7 +7,7 @@ import vm from "node:vm";
 // โหลดโมดูล BOM + RubberFlow + โมดูลแผนกทั้งแปดเข้า context จำลอง แล้วตรวจ: ลำดับเมนูตามผังงานใต้หัวกลุ่มเดียว · ใครเห็นโมดูลไหน (ผ่าน/ไม่ผ่าน)
 // · ประตูโหมดทดสอบ (ใช้ usesBom ตัวเดียวกับ BOM) · หน้าปฏิเสธนอกโหมดทดสอบ · หน้าแรกของแต่ละแผนกวาดจากข้อมูลสาธิตของ BOM และ RubberFlow
 const FILES = [
-  "modules/ui-icons.js", "modules/department-access.js",
+  "vendor/qrcode-generator/qrcode.js", "modules/ui-icons.js", "modules/department-access.js",
   "modules/rubberflow-rules.js", "modules/rubberflow-derive.js", "modules/rubberflow-actions.js", "modules/rubberflow-seed.js", "modules/rubberflow-store.js",
   "modules/rubberflow-ui.js", "modules/factory-kit.js", "modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js",
   "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js",
@@ -503,7 +503,7 @@ test("QA shows the rod lots held for a decision and the RubberFlow lots held in 
   // SR รับล็อตที่ไม่ผ่านขนาด → กักรอ QA
   env.store.setUser("B11");
   const pending = env.store.data().rodLots.find((lot) => lot.status === "pending");
-  const outcome = env.store.run("receiveRods", { lotId: pending.id, qtyReceived: pending.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ขนาดเกินสเปก" });
+  const outcome = env.store.run("receiveRods", { lotId: pending.id, qtyReceived: pending.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ขนาดเกินสเปก", location: "Q-01" });
   assert.equal(outcome.ok, true, String(outcome.error?.message ?? ""));
   env.store.setUser("B12");
   const html = await env.open("FACTORY_QA");
@@ -594,23 +594,23 @@ test("when RubberFlow failed to load, ST and QA show one line in place of the Ru
 
 // ---- โมดูลคลัง / ตรวจคุณภาพ (SR ST WH QA): การ์ดสั่งงานชุดเดียวกับ BOM "งานของฉัน" ----
 const decodeArgs = (text) => JSON.parse(text.replaceAll("&quot;", '"'));
-const openButtonsOf = (html) => [...html.matchAll(/data-rf-open="(\w+)" data-rf-args="([^"]*)"/g)].map((match) => ({ name: match[1], handlers: {}, dataset: { rfOpen: match[1], rfArgs: JSON.stringify(decodeArgs(match[2])) }, disabled: false, addEventListener(type, handler) { this.handlers[type] = handler; } }));
+const openButtonsOf = (html) => [...html.matchAll(/data-rf-open="(\w+)"(?: data-rf-args="([^"]*)")?/g)].map((match) => ({ name: match[1], handlers: {}, dataset: { rfOpen: match[1], rfArgs: JSON.stringify(decodeArgs(match[2] ?? "{}")) }, disabled: false, addEventListener(type, handler) { this.handlers[type] = handler; } }));
 
 // เปิดหน้าแผนก ผูกปุ่มของการ์ดที่วาดไว้ และเตรียม dialog จำลองที่รับ HTML ของ dialog ที่เปิด แล้วส่งฟอร์มของ dialog เหมือนผู้ใช้
-async function landingWith(env, code) {
-  const buttons = openButtonsOf(await env.open(code));
+async function landingWith(env, code, query = "") {
+  const buttons = openButtonsOf(await env.open(code, query));
   env.fakes["[data-rf-open]"] = buttons;
   const shown = { html: "", forms: [] };
   const dialog = { tagName: "DIALOG", dataset: {}, addEventListener() {}, querySelector: () => null, querySelectorAll: (selector) => (selector === "form[data-rf-form]" ? shown.forms : []), close() {}, remove() {}, showModal() { this.shown = true; }, setAttribute() {} };
   env.root.insertAdjacentHTML = (_where, text) => {
     shown.html = text;
     shown.forms.length = 0;
-    const match = text.match(/data-rf-form="(\w+)" data-rf-args="([^"]*)"/);
-    if (match) shown.forms.push({ handlers: {}, dataset: { rfForm: match[1], rfArgs: JSON.stringify(decodeArgs(match[2])), rfSuccess: "" }, __values: {}, addEventListener(type, handler) { this.handlers[type] = handler; }, closest: () => null, querySelectorAll: () => [] });
+    const match = text.match(/data-rf-form="(\w+)"(?: data-rf-args="([^"]*)")?/);
+    if (match) shown.forms.push({ handlers: {}, dataset: { rfForm: match[1], rfArgs: JSON.stringify(decodeArgs(match[2] ?? "{}")), rfSuccess: "" }, __values: {}, addEventListener(type, handler) { this.handlers[type] = handler; }, closest: () => null, querySelectorAll: () => [] });
     env.root.lastElementChild = dialog;
   };
   env.context.MNP_RUBBERFLOW_UI.validateForm = () => true; // ตรวจช่องใต้ฟอร์มเป็นของ UI กลาง (ไม่ใช่เรื่องของการทดสอบนี้)
-  const html = await env.open(code);
+  const html = await env.open(code, query);
   return {
     html, buttons, shown,
     click: async (name) => { shown.html = ""; await buttons.find((button) => button.name === name).handlers.click(); return shown.html; },
@@ -659,7 +659,7 @@ test("QA: held rod lots are cards with the decide button, the RubberFlow held lo
   const env = load({ employee: emp("QA") });
   env.store.setUser("B11");
   const pending = env.store.data().rodLots.find((lot) => lot.status === "pending");
-  assert.equal(env.store.run("receiveRods", { lotId: pending.id, qtyReceived: pending.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ขนาดเกินสเปก" }).ok, true);
+  assert.equal(env.store.run("receiveRods", { lotId: pending.id, qtyReceived: pending.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ขนาดเกินสเปก", location: "Q-01" }).ok, true);
   env.store.setUser("B12");
   const bom = cardsOf((await workPage(env)).html);
   assert.equal(bom.length, 1, "one held lot waits for QA");
@@ -745,9 +745,10 @@ test("the task cards are drawn once (bom-hub taskCard / boardCards); the departm
   assert.match(read("modules/factory-kit.js"), /hub\.boardCards\(ctx, board\)/);
   for (const dept of ["sr", "st", "wh", "qa"]) {
     const source = read(`modules/module-${dept}.js`);
-    assert.match(source, dept === "qa" ? /F\.deptWorkSection\(ctx/ : /F\.storeLanding\(ctx/, `${dept} places the shared section`);
+    assert.match(source, dept === "qa" ? /F\.deptWorkSection\(ctx/ : dept === "sr" ? /F\.deptWork\(ctx/ : /F\.storeLanding\(ctx/, `${dept} places the shared section`);
     assert.match(source, /actions: true/, `${dept} asks for the real actions`);
-    assert.doesNotMatch(source, /bom-job|openButton|data-rf-open|taskTable/, `${dept} keeps no copy of the card HTML`);
+    // SR draws its own tables (stock, receipts, issues, ledger) with the shared dialog buttons, but never the card markup
+    assert.doesNotMatch(source, dept === "sr" ? /bom-job|taskTable/ : /bom-job|openButton|data-rf-open|taskTable/, `${dept} keeps no copy of the card HTML`);
   }
 });
 
@@ -1042,9 +1043,9 @@ test("side menu: SR (a store) has งานของฉัน with the card coun
   const entry = env.modules.FACTORY_SR;
   const sub = entry.nav[0].subnav("sr");
   assert.match(sub, /^<div class="nav-sub rf-nav" data-module="sr"><ul class="rf-nav-list">/);
-  assert.equal([...sub.matchAll(/class="rf-nav-item/g)].length, 2);
+  assert.equal([...sub.matchAll(/class="rf-nav-item/g)].length, 5, "งานของฉัน, ในคลัง, รับเข้า, จ่ายให้ GR, ประวัติเข้าออก");
   const { items } = navOf(env, "FACTORY_SR");
-  assert.deepEqual(plain(items), [
+  assert.deepEqual(plain(items.slice(0, 2)), [
     { label: "งานของฉัน", href: "#/sr", active: true, current: true, count: cards },
     { label: "ในคลัง", href: "#/sr?tab=stock", active: false, current: false, count: 0 },
   ]);
@@ -1052,7 +1053,7 @@ test("side menu: SR (a store) has งานของฉัน with the card coun
   assert.match(sub, new RegExp(`<span class="rf-nav-count" title="งานที่ต้องทำ">${cards}</span>`));
   // เปิดในคลัง: รายการนั้นเป็นหน้าที่เปิดอยู่ (ค้นหาและแสดงเพิ่มก็ยังเป็นในคลัง) ตัวเลขของงานยังอยู่
   await env.open("FACTORY_SR", "tab=stock&q=FN");
-  assert.deepEqual(plain(navOf(env, "FACTORY_SR").items.map((item) => [item.label, item.active, item.count])), [["งานของฉัน", false, cards], ["ในคลัง", true, 0]]);
+  assert.deepEqual(plain(navOf(env, "FACTORY_SR").items.map((item) => [item.label, item.active, item.count])), [["งานของฉัน", false, cards], ["ในคลัง", true, 0], ["รับเข้า", false, 0], ["จ่ายให้ GR", false, 0], ["ประวัติเข้าออก", false, 0]]);
   // หน้าอื่น: ไม่วางเมนู
   assert.equal(entry.nav[0].subnav(""), "");
   assert.equal(entry.nav[0].subnav("requests"), "");
@@ -1065,7 +1066,7 @@ test("side menu: SR (a store) has งานของฉัน with the card coun
   // ไม่มีงานค้าง = ไม่มีตัวเลข · BOM ยังไม่พร้อม หรือไม่ใช่โหมดทดสอบ = ไม่มีตัวเลขแต่ยังมีรายการ
   env.store.status = () => "loading";
   await env.open("FACTORY_SR");
-  assert.deepEqual(plain(navOf(env, "FACTORY_SR").items.map((item) => [item.label, item.count])), [["งานของฉัน", 0], ["ในคลัง", 0]], "BOM not ready: no count");
+  assert.deepEqual(plain(navOf(env, "FACTORY_SR").items.map((item) => [item.label, item.count])), [["งานของฉัน", 0], ["ในคลัง", 0], ["รับเข้า", 0], ["จ่ายให้ GR", 0], ["ประวัติเข้าออก", 0]], "BOM not ready: no count");
 });
 
 test("side menu: ST and WH have the same two items under their own route", async () => {
@@ -1077,7 +1078,7 @@ test("side menu: ST and WH have the same two items under their own route", async
   }
 });
 
-test("side menu: GR (production) has งานของฉัน with the open-job count and เสร็จแล้ว; PT, BG and PK have the same two items", async () => {
+test("side menu: GR (production) has งานของฉัน with the open-job count, เสร็จแล้ว and the read-only rod stock; PT, BG and PK have the first two", async () => {
   const env = load({ employee: emp("GR") });
   env.store.setUser("B05");
   const data = env.store.data();
@@ -1087,9 +1088,10 @@ test("side menu: GR (production) has งานของฉัน with the open-j
   assert.deepEqual(plain(navOf(env, "FACTORY_GR").items), [
     { label: "งานของฉัน", href: "#/gr", active: true, current: true, count: open },
     { label: "เสร็จแล้ว", href: "#/gr?st=done", active: false, current: false, count: 0 },
+    { label: "ยางเส้นยาวในคลัง SR", href: "#/gr?tab=rods", active: false, current: false, count: 0 },
   ]);
   await env.open("FACTORY_GR", "st=done");
-  assert.deepEqual(plain(navOf(env, "FACTORY_GR").items.map((item) => [item.label, item.active, item.count])), [["งานของฉัน", false, open], ["เสร็จแล้ว", true, 0]], "done view: the open-job count stays on งานของฉัน");
+  assert.deepEqual(plain(navOf(env, "FACTORY_GR").items.map((item) => [item.label, item.active, item.count])), [["งานของฉัน", false, open], ["เสร็จแล้ว", true, 0], ["ยางเส้นยาวในคลัง SR", false, 0]], "done view: the open-job count stays on งานของฉัน");
   assert.equal(env.modules.FACTORY_GR.nav[0].subnav("bom"), "");
   for (const [code, route, userId, dept] of [["FACTORY_PT", "pt", "B06", "PT"], ["FACTORY_BG", "bg", "B07", "BG"], ["FACTORY_PK", "pk", "B03", "PP"]]) {
     const other = load({ employee: emp(dept) });
@@ -1107,7 +1109,7 @@ test("side menu: QA has only งานของฉัน, counted by its work ca
   const env = load({ employee: emp("QA") });
   env.store.setUser("B11");
   const pending = env.store.data().rodLots.find((lot) => lot.status === "pending");
-  assert.equal(env.store.run("receiveRods", { lotId: pending.id, qtyReceived: pending.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ขนาดเกินสเปก" }).ok, true);
+  assert.equal(env.store.run("receiveRods", { lotId: pending.id, qtyReceived: pending.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ขนาดเกินสเปก", location: "Q-01" }).ok, true);
   env.store.setUser("B12");
   const html = await env.open("FACTORY_QA");
   assert.equal(h1Of(html), "งานของฉัน");
@@ -1130,13 +1132,622 @@ test("side menu: viewOf and the menu definitions; nothing outside test mode", ()
   assert.equal(env.modules.FACTORY_SR.navAllowed(env.context.state.employee), false);
 });
 
-test("GR and QA reach the rod store page (stock and lot history) from their own module; other departments get no such link", async () => {
-  for (const [dept, userId, code] of [["GR", "B05", "FACTORY_GR"], ["QA", "B12", "FACTORY_QA"]]) {
-    const env = load({ employee: emp(dept) });
-    env.store.setUser(userId);
-    assert.match(await env.open(code), /href="#\/bom\?p=rods"[^>]*>คลังยางเส้นยาว</, `${dept} has the link`);
+// ---- โมดูล SR (ขั้น 1 ของโรงงาน): เมนูข้าง 5 รายการ · ในคลัง · รับเข้า · จ่ายให้ GR · ประวัติเข้าออก · หน้าล็อต · ป้ายพร้อม QR ----
+// ล็อตสาธิต (modules/bom-seed.js addRodDemo): L0 สต็อกกลาง 6 เส้นที่ A-01 · L1 ของใบ DEMO-26006 20 เส้นที่ A-02 · L4 รับนอกใบสั่ง 15 เส้นที่ B-01 · L2 L3 รอรับ
+const srEnv = (employee = emp("SR"), userId = "B11") => { const env = load({ employee }); env.store.setUser(userId); return env; };
+const rodLotOf = (env, no) => env.store.data().rodLots.find((lot) => lot.id === `5e1d0000-0000-4000-8000-${String(no).padStart(12, "0")}`);
+const lotLinks = (html) => [...html.matchAll(/href="#\/sr\?lot=([^"&]+)"/g)].map((match) => match[1]);
+const storedBuckets = (env) => env.context.MNP_BOM_RULES.rodBuckets(env.store.data()).filter((bucket) => bucket.lot.status === "stored");
+const SR_TABS = [["stock", "ในคลัง"], ["receive", "รับเข้า"], ["issue", "จ่ายให้ GR"], ["history", "ประวัติเข้าออก"]];
+
+test("SR: the side menu has five items in order, งานของฉัน stays the default, and a lot or its label belongs to ในคลัง", async () => {
+  const env = srEnv();
+  const html = await env.open("FACTORY_SR");
+  assert.equal(h1Of(html), "งานของฉัน", "the default view is the work cards");
+  const { items } = navOf(env, "FACTORY_SR");
+  assert.deepEqual(plain(items.map((item) => [item.label, item.href, item.active])), [
+    ["งานของฉัน", "#/sr", true], ["ในคลัง", "#/sr?tab=stock", false], ["รับเข้า", "#/sr?tab=receive", false], ["จ่ายให้ GR", "#/sr?tab=issue", false], ["ประวัติเข้าออก", "#/sr?tab=history", false],
+  ]);
+  assert.ok(items[0].count >= 4, "the count stays on งานของฉัน only");
+  assert.deepEqual(plain(items.slice(1).map((item) => item.count)), [0, 0, 0, 0]);
+  for (const [tab, label] of SR_TABS) {
+    assert.equal(h1Of(await env.open("FACTORY_SR", `tab=${tab}`)), label, `${tab} is titled ${label}`);
+    assert.deepEqual(plain(navOf(env, "FACTORY_SR").items.filter((item) => item.active).map((item) => item.label)), [label]);
   }
-  const st = load({ employee: emp("ST") });
-  st.store.setUser("B08");
-  assert.doesNotMatch(await st.open("FACTORY_ST"), /p=rods/);
+  const lot = rodLotOf(env, 1);
+  await env.open("FACTORY_SR", `lot=${lot.id}`);
+  assert.deepEqual(plain(navOf(env, "FACTORY_SR").items.filter((item) => item.active).map((item) => item.label)), ["ในคลัง"], "a lot page sits under ในคลัง");
+  await env.open("FACTORY_SR", `lot=${lot.id}&print=1`);
+  assert.deepEqual(plain(navOf(env, "FACTORY_SR").items.filter((item) => item.active).map((item) => item.label)), ["ในคลัง"], "so does its label");
+  assert.equal(h1Of(await env.open("FACTORY_SR", "tab=nothing")), "งานของฉัน", "an unknown tab falls back to the work cards");
+  // ไม่มีงานค้างก็ยังเปิดที่ งานของฉัน และไม่มีปุ่มรับนอกใบสั่งบนหน้านั้น (ปุ่มอยู่ที่ ในคลัง และ รับเข้า)
+  assert.doesNotMatch(html, /data-rf-open="rodOpening"/);
+});
+
+test("SR ในคลัง: only lots in the store with stock left, with code, name, compound, colour, size, quantity, lot, received date, location and owner", async () => {
+  const env = srEnv();
+  const rules = env.context.MNP_BOM_RULES;
+  const stock = await env.open("FACTORY_SR", "tab=stock");
+  for (const heading of ["เส้นยาง", "จำนวน", "ล็อต", "ตำแหน่ง", "ของ"]) assert.match(stock, new RegExp(`>${heading}</th>`), `column ${heading}`);
+  const data = env.store.data();
+  const buckets = storedBuckets(env);
+  assert.equal(new Set(buckets.map((bucket) => bucket.lot.lotNo)).size, 3, "L0, L1 and the opening lot are in the store");
+  for (const bucket of buckets) {
+    const { lot } = bucket;
+    const attrs = rules.rodAttrs(data.items, bucket.itemCode, data.colors);
+    assert.ok(attrs.text, "the demo codes carry compound, colour and size");
+    for (const text of [lot.lotNo, lot.location, bucket.itemCode, attrs.name, attrs.text, rules.fmtDate(lot.receivedAt)]) assert.ok(stock.includes(escapeHtml(text)), `${lot.lotNo} shows ${text}`);
+    assert.ok(stock.includes(`href="#/sr?lot=${lot.id}"`), `${lot.lotNo} opens its lot page`);
+  }
+  assert.match(stock, /สต็อกกลาง/);
+  assert.match(stock, /href="#\/bom\?p=orders&amp;sel=DEMO-26006"/, "an order's rods link to the order");
+  // ล็อตที่รอรับ และล็อตที่กัก ไม่ใช่ของในคลัง
+  for (const no of [2, 3]) assert.ok(!stock.includes(escapeHtml(rodLotOf(env, no).lotNo)), "a pending lot is not stock");
+  // ล็อตที่ยอดเหลือ 0 ไม่แสดง (ไม่แสดงทั้งทะเบียน): ปรับยอดสต็อกกลางของ L0 ลงเป็นศูนย์
+  assert.equal(env.store.run("adjustRods", { lotId: rodLotOf(env, 0).id, qty: -6, note: "นับจริงไม่พบ" }).ok, true, "SR adjusts");
+  const after = await env.open("FACTORY_SR", "tab=stock");
+  assert.ok(!after.includes(escapeHtml(rodLotOf(env, 0).lotNo)), "a lot with no stock left drops off the list");
+  assert.ok(after.includes(escapeHtml(rodLotOf(env, 1).lotNo)));
+  // ล็อตที่กักรอ QA ก็ไม่ใช่ของในคลัง
+  const l2 = rodLotOf(env, 2);
+  assert.equal(env.store.run("receiveRods", { lotId: l2.id, qtyReceived: l2.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ขนาดเกินสเปก", location: "H-01" }).ok, true);
+  assert.equal(rodLotOf(env, 2).status, "held");
+  assert.ok(!(await env.open("FACTORY_SR", "tab=stock")).includes(escapeHtml(l2.lotNo)), "a held lot is not stock");
+});
+
+test("SR ในคลัง: search covers code, name, lot, location, compound and colour; the owner and location filters narrow it; filters stay on search and paging", async () => {
+  const env = srEnv();
+  const data = env.store.data();
+  const rules = env.context.MNP_BOM_RULES;
+  const [l0, l1, l4] = [0, 1, 4].map((no) => rodLotOf(env, no));
+  const shows = async (query) => lotLinks(await env.open("FACTORY_SR", `tab=stock&${query}`)).sort();
+  const only = (...lots) => lots.map((lot) => lot.id).sort();
+  const attrs1 = rules.rodAttrs(data.items, l1.itemCode, data.colors);
+  assert.deepEqual(await shows(`q=${encodeURIComponent(l1.lotNo)}`), only(l1), "lot number");
+  assert.deepEqual(await shows("q=B-01"), only(l4), "location");
+  assert.deepEqual(await shows("q=a-02"), only(l1), "location, any case");
+  assert.deepEqual(await shows(`q=${encodeURIComponent(l4.itemCode)}`).then((ids) => ids.includes(l4.id)), true, "code");
+  assert.ok((await shows(`q=${encodeURIComponent(attrs1.name)}`)).includes(l1.id), "name");
+  assert.ok((await shows(`q=${encodeURIComponent(attrs1.compound)}`)).includes(l1.id), "compound");
+  assert.ok((await shows(`q=${encodeURIComponent(attrs1.colorName)}`)).includes(l1.id), "colour name");
+  assert.ok((await shows(`q=${encodeURIComponent(attrs1.color)}`)).includes(l1.id), "colour code");
+  assert.match(await env.open("FACTORY_SR", "tab=stock&q=ZZZ-NONE"), /ไม่พบเส้นยางที่ค้นหา/);
+  // ตัวกรองเจ้าของ: สต็อกกลาง / ของใบสั่ง
+  assert.deepEqual(await shows("own=free"), only(l0, l4), "free stock");
+  assert.deepEqual(await shows("own=order"), only(l1), "rods held for an order");
+  // ตัวกรองตำแหน่ง
+  assert.deepEqual(await shows("loc=A-01"), only(l0));
+  assert.deepEqual(await shows("own=free&loc=B-01"), only(l4), "filters combine");
+  assert.deepEqual(await shows("own=order&loc=B-01"), [], "and can leave nothing");
+  assert.deepEqual(await shows("loc=-"), [], "no stored lot lacks a location in the demo");
+  const page = await env.open("FACTORY_SR", "tab=stock");
+  for (const place of ["A-01", "A-02", "B-01"]) assert.match(page, new RegExp(`<option value="${place}"`), `the location list offers ${place}`);
+  assert.match(page, /<option value="free">สต็อกกลาง<\/option>/);
+  assert.match(page, /<option value="order">ของใบสั่ง<\/option>/);
+  assert.match(await env.open("FACTORY_SR", "tab=stock&loc=A-02"), /<option value="A-02" selected>/, "the chosen location stays selected");
+  assert.match(await env.open("FACTORY_SR", "tab=stock&own=free"), /ล้างตัวกรอง/);
+  assert.doesNotMatch(page, /ล้างตัวกรอง/, "nothing to clear with no filter");
+  // ตัวกรองไปกับการค้นหา และการเปลี่ยนตัวกรองพา tab / ค้นหาที่ตั้งไว้ไปด้วย
+  const form = { handlers: {}, dataset: {}, __values: { q: " A-0 " }, addEventListener(type, handler) { this.handlers[type] = handler; } };
+  const select = { handlers: {}, dataset: {}, name: "loc", value: "A-02", addEventListener(type, handler) { this.handlers[type] = handler; } };
+  env.fakes["form[data-rf-search]"] = [form];
+  env.fakes["[data-sr-filter]"] = [select];
+  await env.open("FACTORY_SR", "tab=stock&own=free");
+  form.handlers.submit({ preventDefault() {} });
+  assert.equal(env.log.hash, "#/sr?tab=stock&q=A-0&own=free", "search keeps the owner filter");
+  select.handlers.change();
+  assert.equal(env.log.hash, "#/sr?tab=stock&own=free&loc=A-02", "a changed filter keeps the others");
+  select.value = "";
+  select.handlers.change();
+  assert.equal(env.log.hash, "#/sr?tab=stock&own=free", "clearing a filter drops it");
+  // ทะเบียนใหญ่: แสดงทีละ 100 แถวพร้อมแสดงเพิ่มที่ยังอยู่ในตัวกรองเดิม
+  const rows = env.store.data();
+  for (let n = 0; n < 130; n += 1) {
+    const id = `7a000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    rows.rodLots.push({ ...l4, id, lotNo: `BULK-${String(n).padStart(3, "0")}` });
+    rows.rodMoves.push({ id: `7b000000-0000-4000-8000-${String(n).padStart(12, "0")}`, lotId: id, itemCode: l4.itemCode, kind: "receive", qty: 1, ownerOrderId: null, at: 1, by: "x", note: "", reversesId: null, forOrderId: null });
+  }
+  const big = await env.open("FACTORY_SR", "tab=stock&own=free");
+  assert.equal(lotLinks(big).length, 100, "100 rows at a time");
+  assert.match(big, /แสดงเพิ่ม \(อีก 32\)/);
+  assert.match(big, /href="#\/sr\?tab=stock&amp;own=free&amp;n=200"/, "more keeps the filter");
+  assert.equal(lotLinks(await env.open("FACTORY_SR", "tab=stock&own=free&n=200")).length, 132);
+});
+
+test("SR: the opening receipt button is on ในคลัง and รับเข้า for SR and a planner, never for others; its dialog takes the rods in as free stock", async () => {
+  for (const [employee, userId, shown] of [[emp("SR"), "B11", true], [emp("PP"), "B03", true], [emp("PP", "factory_manager"), "B08", false]]) {
+    const env = srEnv(employee, userId);
+    for (const tab of ["stock", "receive"]) assert.equal(/data-rf-open="rodOpening"/.test(await env.open("FACTORY_SR", `tab=${tab}`)), shown, `${employee.department.code} on ${tab}`);
+    for (const tab of ["issue", "history"]) assert.doesNotMatch(await env.open("FACTORY_SR", `tab=${tab}`), /rodOpening/, `not on ${tab}`);
+  }
+  const env = srEnv();
+  const page = await landingWith(env, "FACTORY_SR", "tab=stock");
+  const dialog = await page.click("rodOpening");
+  assert.match(dialog, /data-rf-form="receiveRodsOpening"/);
+  assert.match(dialog, /รับยางเส้นยาวนอกใบสั่ง/);
+  for (const field of ["itemCode", "lotNo", "qty", "location", "note"]) assert.match(dialog, new RegExp(`name="${field}"`), field);
+  assert.match(dialog, /RB-DM02-02-BK01-225-3-20 · /, "the code list is the RB items");
+  assert.doesNotMatch(dialog, /value="(SE|PT|CP)-/, "only rods (RB) are offered");
+  assert.equal((dialog.match(/field-required/g) ?? []).length >= 5, true, "every field is marked required");
+  const before = env.store.data().rodLots.length;
+  await page.submit({ itemCode: "RB-DM02-02-BK01-225-3-20", lotNo: "op-ui-1", qty: "4", location: "C-03", note: "ซื้อเข้ามาเพิ่ม" });
+  const lots = env.store.data().rodLots;
+  assert.equal(lots.length, before + 1);
+  const made = lots.find((lot) => lot.lotNo === "OP-UI-1");
+  assert.deepEqual(plain([made.source, made.status, made.location, made.sourceNote, made.orderId]), ["opening", "stored", "C-03", "ซื้อเข้ามาเพิ่ม", null]);
+  const stock = await env.open("FACTORY_SR", "tab=stock");
+  assert.ok(stock.includes("OP-UI-1") && stock.includes("C-03"), "the new lot is on the stock list at once");
+  // ข้อมูลไม่ถูกต้อง = ปฏิเสธ (ไม่มีตำแหน่ง · เลขล็อตซ้ำ · ไม่ใช่เส้นยาง)
+  for (const bad of [{ location: "" }, { lotNo: "OP-UI-1" }, { itemCode: "PT-00320" }]) {
+    const result = env.store.run("receiveRodsOpening", { itemCode: "RB-DM02-02-BK01-225-3-20", lotNo: "OP-UI-2", qty: 1, location: "C-04", note: "ทดสอบ", ...bad });
+    assert.equal(result.ok, false, JSON.stringify(bad));
+  }
+});
+
+test("SR รับเข้า: lots waiting from RB with the receive dialog, lots held for QA read-only, recent receipts with where they came from", async () => {
+  const env = srEnv();
+  const [l2, l3] = [2, 3].map((no) => rodLotOf(env, no));
+  let html = await env.open("FACTORY_SR", "tab=receive");
+  assert.equal([...html.matchAll(/data-rf-open="rodReceive"/g)].length, 2, "one receive button per pending lot");
+  for (const lot of [l2, l3]) assert.ok(html.includes(escapeHtml(lot.lotNo)));
+  assert.match(html, /รอรับเข้าคลัง/);
+  assert.match(html, /รับเข้าล่าสุด/);
+  assert.match(html, /รับนอกใบสั่ง · B-01/, "a recent receipt says where it came from and where it was put");
+  assert.match(html, /\+15/, "the opening receipt of 15 rods");
+  // รับ L3 แล้วไม่ผ่าน: กักรอ QA อ่านอย่างเดียว ไม่มีปุ่มรับ
+  assert.equal(env.store.run("receiveRods", { lotId: l3.id, qtyReceived: l3.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ผิวเป็นคลื่น", location: "H-02" }).ok, true);
+  html = await env.open("FACTORY_SR", "tab=receive");
+  assert.equal([...html.matchAll(/data-rf-open="rodReceive"/g)].length, 1);
+  assert.match(html, /กักรอ QA ตัดสิน/);
+  assert.ok(html.includes("ผิวเป็นคลื่น") && html.includes("H-02"), "the held lot shows the SR's note and its location");
+  assert.doesNotMatch(html.slice(html.indexOf("กักรอ QA ตัดสิน")), /data-rf-open="rodDecide"/, "deciding is QA's, not here");
+  // ผู้ที่ไม่ใช่ SR / ฝ่ายวางแผน: ดูได้แต่ไม่มีปุ่มรับ
+  const viewer = srEnv(emp("PP", "factory_manager"), "B08");
+  assert.doesNotMatch(await viewer.open("FACTORY_SR", "tab=receive"), /data-rf-open="rod/);
+  // dialog รับเข้าเป็นของเดิม (วัดขนาด + ตำแหน่ง): เปิดจากปุ่มในตาราง
+  const page = await landingWith(srEnv(), "FACTORY_SR", "tab=receive");
+  const dialog = await page.click("rodReceive");
+  assert.match(dialog, /data-rf-form="receiveRods"/);
+  assert.match(dialog, /name="location"/);
+});
+
+test("SR จ่ายให้ GR: orders waiting for rods with the issue dialog, recent issues with reverse; a reversed issue shows no second reverse", async () => {
+  const env = srEnv();
+  const rules = env.context.MNP_BOM_RULES;
+  const need = rules.rodIssueNeeds(env.store.data()).find((row) => row.order.id === "DEMO-26006");
+  let html = await env.open("FACTORY_SR", "tab=issue");
+  assert.ok(html.includes("DEMO-26006"));
+  assert.match(html, new RegExp(`data-rf-open="rodIssue" data-rf-args="[^"]*${need.itemCode}`), "the issue button carries the order and the rod code");
+  assert.match(html, /ยังไม่เคยจ่ายให้ GR/);
+  const page = await landingWith(env, "FACTORY_SR", "tab=issue");
+  assert.match(await page.click("rodIssue"), /data-rf-form="issueRods"/);
+  assert.equal(env.store.run("issueRods", { orderId: "DEMO-26006", itemCode: need.itemCode, qty: 2 }).ok, true);
+  html = await env.open("FACTORY_SR", "tab=issue");
+  const reverse = [...html.matchAll(/data-rf-open="rodReverse" data-rf-args="([^"]*)"/g)];
+  assert.equal(reverse.length, 1, "the issue can be reversed");
+  assert.match(html, /จ่ายให้ GR/);
+  const moveId = decodeArgs(reverse[0][1]).moveId;
+  assert.equal(env.store.run("reverseRodIssue", { moveId, note: "จ่ายผิดใบ" }).ok, true);
+  html = await env.open("FACTORY_SR", "tab=issue");
+  assert.doesNotMatch(html, /data-rf-open="rodReverse"/, "reversed once, no second button");
+  assert.match(html, /ถูกย้อน/);
+  const viewer = srEnv(emp("PP", "factory_manager"), "B08");
+  assert.doesNotMatch(await viewer.open("FACTORY_SR", "tab=issue"), /data-rf-open="rod/, "no buttons without the right");
+});
+
+// ---- SR: คลิกที่ไหนของการ์ด/แถวก็เปิดหน้ารายละเอียดของรายการนั้น (เจ้าของโรงงานสั่ง 2026-11-19) ----
+const RB_DEMO = "RB-DM02-02-YE03-204-19-34";
+const cardOf = (cards, name) => cards.filter((card) => card.includes(`data-rf-open="${name}"`));
+
+test("SR cards open the item's detail page from anywhere on the card; the button keeps its own action; cards without a detail page stay plain", async () => {
+  const env = srEnv();
+  const cards = cardsOf((await workPage(env)).html);
+  const receive = cardOf(cards, "rodReceive");
+  const issue = cardOf(cards, "rodIssue");
+  assert.equal(receive.length, 2, "two lots wait for receiving");
+  for (const card of receive) {
+    const lotId = decodeArgs(card.match(/data-rf-args="([^"]*)"/)[1]).lotId;
+    assert.match(card, /^<article class="card rf-card bom-job is-now has-link">/, "the card is marked clickable");
+    assert.ok(card.includes(`<h2><a class="bom-card-link" href="#/sr?lot=${lotId}">รับยางเส้นยาวเข้าคลัง ล็อต `), "the title is the one real link, to the lot page");
+    assert.equal([...card.matchAll(/class="bom-card-link"/g)].length, 1, "one link per card");
+    assert.ok(card.includes('data-rf-open="rodReceive"'), "the card's own button is still there");
+    assert.doesNotMatch(card, /<a class="bom-card-link"[^>]*>[^<]*<button/, "the button is not inside the card link");
+    assert.match(card, /ส่งมาจาก RB/, "it says the lot came from RB");
+    assert.equal([...card.matchAll(/ส่งมา/g)].length, 1, "and says so once");
+  }
+  assert.ok(issue.length >= 1);
+  const forOrder = issue.find((card) => card.includes("ตามใบ DEMO-26006"));
+  assert.ok(forOrder.includes(`href="#/sr?issue=DEMO-26006&amp;code=${RB_DEMO}"`), "an issue card opens the issue detail page of its order and rod");
+  assert.match(forOrder, /<h2><a class="bom-card-link" href="[^"]*">จ่ายยางเส้นยาวให้ GR ตามใบ DEMO-26006<\/a><\/h2>/);
+  assert.ok(forOrder.includes('data-rf-open="rodIssue"'));
+  // การ์ดที่ไม่มีหน้ารายละเอียด (ตัดสินของ QA) ไม่เป็นลิงก์ · ผู้ที่เปิดโมดูล SR ไม่ได้ก็ไม่ได้ลิงก์
+  const qa = load({ employee: emp("QA") });
+  qa.store.setUser("B11");
+  const pending = qa.store.data().rodLots.find((lot) => lot.status === "pending");
+  assert.equal(qa.store.run("receiveRods", { lotId: pending.id, qtyReceived: pending.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ขนาดเกินสเปก", location: "Q-01" }).ok, true);
+  qa.store.setUser("B12");
+  const held = cardsOf((await workPage(qa)).html);
+  assert.equal(held.length, 1);
+  assert.doesNotMatch(held[0], /bom-card-link|has-link/);
+  env.setEmployee(emp("GR"));
+  const noAccess = cardsOf((await workPage(env)).html).filter((card) => card.includes('data-rf-open="rod'));
+  assert.ok(noAccess.length >= 4);
+  for (const card of noAccess) assert.doesNotMatch(card, /bom-card-link|has-link/, "no link to a page the user cannot open");
+});
+
+test("the shared job card takes a detail URL (text or function) and is a plain card without one", async () => {
+  const env = srEnv();
+  const kit = env.context.MNP_FACTORY;
+  const ctx = env.context.MNP_BOM.context(new URLSearchParams());
+  const job = env.store.data().jobs.find((entry) => entry.dept === "GR");
+  const plainCard = kit.jobCard(ctx, job, { planner: false, dept: "GR" });
+  assert.doesNotMatch(plainCard, /bom-card-link|has-link/, "other modules' cards are unchanged");
+  const linked = kit.jobCard(ctx, job, { planner: false, dept: "GR", href: (entry) => `#/gr?job=${entry.id}` });
+  assert.match(linked, /^<article class="card rf-card bom-job[^"]* has-link">/);
+  assert.ok(linked.includes(`<h2><a class="bom-card-link" href="#/gr?job=${job.id}">${escapeHtml(job.name)}</a></h2>`));
+  assert.match(kit.jobCard(ctx, job, { planner: false, dept: "GR", href: "#/x?a=1&b=2" }), /href="#\/x\?a=1&amp;b=2"/, "the URL is escaped");
+  assert.equal(kit.cardTitle("a<b", null), "a&lt;b");
+  assert.equal(kit.cardClass(null), "");
+  // ลิงก์คลุมการ์ดด้วย CSS ส่วนปุ่มและลิงก์อื่นในการ์ดอยู่เหนือชั้น (กดปุ่มไม่เปิดหน้ารายละเอียดซ้อน) · แถวตารางทำแบบเดียวกันและมือถือไม่บังกรอบอ้างอิง
+  const css = fs.readFileSync("styles.css", "utf8");
+  assert.match(css, /\.bom-card-link::after \{ content: ""; position: absolute; inset: 0;/);
+  assert.match(css, /\.bom-job\.has-link :is\(a:not\(\.bom-card-link\), button, input, select, textarea\) \{ position: relative; z-index: 1; \}/);
+  assert.match(css, /\.bom-job\.has-link \{ position: relative; cursor: pointer;/);
+  assert.match(css, /tr\.row-link \{ position: relative; transform: translate\(0\); cursor: pointer; \}/);
+  assert.match(css, /\.row-link-main::after \{ content: ""; position: absolute; inset: 0; z-index: 1; \}/, "the row cover sits above the mobile card cells (position: relative) so every cell opens the lot");
+  assert.match(css, /tr\.row-link :is\(a:not\(\.row-link-main\), button, input, select, textarea\) \{ position: relative; z-index: 2; \}/, "links and buttons in the row stay above the cover");
+  assert.match(css, /\.row-link-main:focus-visible::after \{ outline:/, "a keyboard focus ring shows on the row");
+  assert.match(css, /max-width: 760px\) \{\s*\.rf-page \.rf-table tr\.row-link td:has\(\.row-link-main\) \{ position: static;/, "on a phone the cell holding the link does not hide the row from the link");
+});
+
+test("SR lot page of a pending lot: it says RB sent it and has the receive button that opens the same dialog; a viewer has no button", async () => {
+  const env = srEnv();
+  const l2 = rodLotOf(env, 2);
+  assert.equal(l2.status, "pending");
+  const html = await env.open("FACTORY_SR", `lot=${l2.id}`);
+  assert.equal(h1Of(html), `ล็อต ${l2.lotNo}`);
+  assert.match(html, /data-rf-open="rodReceive" data-rf-args="[^"]*"[^>]*>รับเข้าคลัง</);
+  assert.match(html, /ส่งมาจาก RB · งาน /);
+  assert.match(html, /<a class="request-back-link" href="#\/sr\?tab=receive">‹ รับเข้า<\/a>/, "back to the list the lot came from");
+  assert.doesNotMatch(html, /data-rf-open="rod(Location|Adjust)"/);
+  const page = await landingWith(env, "FACTORY_SR", `lot=${l2.id}`);
+  const dialog = await page.click("rodReceive");
+  assert.match(dialog, /data-rf-form="receiveRods"/);
+  assert.match(dialog, new RegExp(`รับยางเส้นยาวเข้าคลัง · ล็อต ${l2.lotNo}`));
+  // รับแล้ว: หน้าเดิมไม่มีปุ่มรับอีก
+  assert.equal(env.store.run("receiveRods", { lotId: l2.id, qtyReceived: l2.qtySent, values: { thickness: 7.5, width: 34.1, weightPerM: 1205 }, location: "A-03" }).ok, true);
+  assert.doesNotMatch(await env.open("FACTORY_SR", `lot=${l2.id}`), /data-rf-open="rodReceive"/);
+  const viewer = srEnv(emp("PP", "factory_manager"), "B08");
+  assert.doesNotMatch(await viewer.open("FACTORY_SR", `lot=${rodLotOf(viewer, 3).id}`), /data-rf-open="rodReceive"/);
+});
+
+test("SR issue detail page: order link, customer, due, rubber, need / issued / still to issue, lots to pick oldest first with their shelf, past issues with reverse", async () => {
+  const env = srEnv();
+  const rules = env.context.MNP_BOM_RULES;
+  const data = env.store.data();
+  const order = data.orders.find((entry) => entry.id === "DEMO-26006");
+  const attrs = rules.rodAttrs(data.items, RB_DEMO, data.colors);
+  const query = `issue=DEMO-26006&code=${RB_DEMO}`;
+  let html = await env.open("FACTORY_SR", query);
+  assert.equal(h1Of(html), "จ่ายยางเส้นยาวให้ GR");
+  assert.match(html, /<a class="request-back-link" href="#\/sr\?tab=issue">‹ จ่ายให้ GR<\/a>/);
+  assert.deepEqual(plain(navOf(env, "FACTORY_SR").items.filter((item) => item.active).map((item) => item.label)), ["จ่ายให้ GR"], "the page sits under จ่ายให้ GR");
+  assert.match(html, /<a class="rf-mono" href="#\/bom\?p=orders&amp;sel=DEMO-26006">DEMO-26006<\/a>/, "the order is a link");
+  for (const text of [order.customer, RB_DEMO, attrs.name, attrs.compound, attrs.size]) assert.ok(html.includes(escapeHtml(text)), `shows ${text}`);
+  assert.match(html, /กำหนด<\/dt><dd><span/, "the due date");
+  assert.match(html, /GR ต้องใช้<\/dt><dd>36 เส้น<\/dd>/);
+  assert.match(html, /จ่ายแล้ว<\/dt><dd>0 เส้น<\/dd>/);
+  assert.match(html, /ยังต้องจ่าย<\/dt><dd><strong>36 เส้น<\/strong><\/dd>/);
+  // ที่ต้องหยิบ: ของใบนี้ก่อน (ล็อต A-02 20 เส้น) แล้วสต็อกกลาง (A-01 6 เส้น) ขาด 10 · ตำแหน่งทุกแถว
+  const picks = html.match(/<li class="sr-pick-row">[\s\S]*?<\/li>/g) ?? [];
+  assert.equal(picks.length, 2, "only the lots that are needed");
+  assert.match(picks[0], /sr-pick-mark">หยิบ<[\s\S]*sr-pick-loc" title="ตำแหน่งจัดเก็บ">A-02<[\s\S]*ของใบ DEMO-26006[\s\S]*sr-pick-qty nowrap">20 เส้น/);
+  assert.match(picks[1], /sr-pick-loc" title="ตำแหน่งจัดเก็บ">A-01<[\s\S]*สต็อกกลาง[\s\S]*sr-pick-qty nowrap">6 เส้น/);
+  assert.match(html, /ในคลังมีไม่พอ ขาด 10 เส้น/);
+  assert.ok(!html.includes(escapeHtml(rodLotOf(env, 4).lotNo)), "a lot of another rod is not listed");
+  assert.match(html, /ยังไม่เคยจ่ายให้ใบนี้/);
+  assert.match(html, new RegExp(`data-rf-open="rodIssue" data-rf-args="[^"]*DEMO-26006[^"]*${RB_DEMO}`), "the button opens the issue dialog");
+  const page = await landingWith(env, "FACTORY_SR", query);
+  assert.match(await page.click("rodIssue"), /data-rf-form="issueRods"/);
+  // จ่ายแล้ว 2 เส้น: ตัวเลขและรายการหยิบเปลี่ยน ประวัติมีแถวจ่าย ย้อนได้ครั้งเดียว
+  assert.equal(env.store.run("issueRods", { orderId: "DEMO-26006", itemCode: RB_DEMO, qty: 2 }).ok, true);
+  html = await env.open("FACTORY_SR", query);
+  assert.match(html, /จ่ายแล้ว<\/dt><dd>2 เส้น<\/dd>/);
+  assert.match(html, /ยังต้องจ่าย<\/dt><dd><strong>34 เส้น<\/strong>/);
+  assert.match(html.match(/<li class="sr-pick-row">[\s\S]*?<\/li>/)[0], /A-02[\s\S]*18 เส้น/, "the oldest lot now has 18 left");
+  const reverse = [...html.matchAll(/data-rf-open="rodReverse" data-rf-args="([^"]*)"/g)];
+  assert.equal(reverse.length, 1);
+  assert.match(html, /จ่ายให้ GR/);
+  assert.doesNotMatch(html.slice(html.indexOf("จ่ายไปแล้ว")), /ใบ DEMO-26006 ·/, "the order is not repeated on each row of its own page");
+  assert.equal(env.store.run("reverseRodIssue", { moveId: decodeArgs(reverse[0][1]).moveId, note: "จ่ายผิดใบ" }).ok, true);
+  html = await env.open("FACTORY_SR", query);
+  assert.doesNotMatch(html, /data-rf-open="rodReverse"/);
+  assert.match(html, /ถูกย้อน/);
+  // ไม่พบใบ / ไม่มีสิทธิ์จ่าย
+  assert.match(await env.open("FACTORY_SR", `issue=NOPE&code=${RB_DEMO}`), /ไม่พบใบสั่งผลิตหรือเส้นยางนี้/);
+  const viewer = srEnv(emp("PP", "factory_manager"), "B08");
+  const seen = await viewer.open("FACTORY_SR", query);
+  assert.match(seen, /ยังต้องจ่าย/);
+  assert.doesNotMatch(seen, /data-rf-open="rod/);
+  // ใบที่ไม่มีงานจ่ายค้าง (ใบที่ปิดแล้ว): บอกเหตุผล ประวัติยังดูได้
+  assert.match(await env.open("FACTORY_SR", `issue=DEMO-26008&code=${RB_DEMO}`), /ไม่มีงานจ่ายยางเส้นยาวค้างอยู่/);
+});
+
+test("SR tables: a row is one stretched link to its detail page, other links and buttons in the row stay; GR's read view has no row links", async () => {
+  const env = srEnv();
+  const rowsOf = (html) => html.match(/<tr class="row-link[^"]*">[\s\S]*?<\/tr>/g) ?? [];
+  // ในคลัง: แถวละล็อตเปิดหน้าล็อต · ลิงก์ใบสั่งผลิตในแถวยังเป็นลิงก์ของมันเอง
+  const stock = await env.open("FACTORY_SR", "tab=stock");
+  const rows = rowsOf(stock);
+  assert.equal(rows.length, storedBuckets(env).length);
+  for (const row of rows) {
+    assert.equal([...row.matchAll(/row-link-main/g)].length, 1, "one main link per row");
+    assert.match(row, /<a class="rf-mono row-link-main" href="#\/sr\?lot=[^"]+">/);
+  }
+  const owned = rows.find((row) => row.includes("sel=DEMO-26006"));
+  assert.match(owned, /<a class="rf-mono" href="#\/bom\?p=orders&amp;sel=DEMO-26006">/, "the order link is not the row link");
+  assert.equal(lotLinks(stock).length, rows.length, "no lot link outside a row");
+  // รับเข้า: ล็อตที่รอรับ ล็อตที่กัก รับเข้าล่าสุด · ปุ่มรับเข้าในแถวยังกดได้
+  const l3 = rodLotOf(env, 3);
+  assert.equal(env.store.run("receiveRods", { lotId: l3.id, qtyReceived: l3.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ผิวเป็นคลื่น", location: "H-02" }).ok, true);
+  const receive = rowsOf(await env.open("FACTORY_SR", "tab=receive"));
+  assert.equal(receive.filter((row) => row.includes('data-rf-open="rodReceive"')).length, 1);
+  assert.ok(receive.length >= 3, "waiting, held and the receipts");
+  for (const row of receive) assert.match(row, new RegExp(`<a class="rf-mono row-link-main" href="#/sr\\?lot=[^"]+">`));
+  // จ่ายให้ GR: ใบที่รอ = หน้ารายละเอียดการจ่าย (รหัสเส้นยางเป็นลิงก์หลัก) · จ่ายล่าสุด = หน้าเดียวกัน
+  const issueHref = `href="#/sr?issue=DEMO-26006&amp;code=${RB_DEMO}"`;
+  let issue = rowsOf(await env.open("FACTORY_SR", "tab=issue"));
+  const need = issue.find((row) => row.includes(issueHref));
+  assert.ok(need.includes(`<a class="rf-mono row-link-main" ${issueHref}>`));
+  assert.match(need, /<a class="rf-mono" href="#\/bom\?p=orders&amp;sel=DEMO-26006">/, "the order link in the row still goes to the order");
+  assert.ok(need.includes('data-rf-open="rodIssue"'));
+  assert.equal(env.store.run("issueRods", { orderId: "DEMO-26006", itemCode: RB_DEMO, qty: 2 }).ok, true);
+  issue = rowsOf(await env.open("FACTORY_SR", "tab=issue"));
+  const recent = issue.find((row) => row.includes('data-rf-open="rodReverse"'));
+  assert.ok(recent.includes(`<a class="row-link-main" ${issueHref}>จ่ายให้ GR</a>`), "a past issue opens the issue page of its order");
+  // ประวัติเข้าออกและหน้ารายละเอียดเองไม่เป็นแถวลิงก์
+  assert.equal(rowsOf(await env.open("FACTORY_SR", "tab=history")).length, 0);
+  assert.equal(rowsOf(await env.open("FACTORY_SR", `issue=DEMO-26006&code=${RB_DEMO}`)).length, 0);
+  // GR อ่านอย่างเดียว: ไม่มีลิงก์ (GR เปิด #/sr ไม่ได้) และไม่มีแถวคลิกได้
+  const gr = load({ employee: emp("GR") });
+  gr.store.setUser("B05");
+  const readOnly = await gr.open("FACTORY_GR", "tab=rods");
+  assert.ok(readOnly.includes("rf-table"));
+  assert.doesNotMatch(readOnly, /row-link|#\/sr\?/);
+});
+
+test("SR ประวัติเข้าออก: the ledger newest first, search by code, lot and order, a kind filter, reverse only on unreversed issues", async () => {
+  const env = srEnv();
+  const rules = env.context.MNP_BOM_RULES;
+  const need = rules.rodIssueNeeds(env.store.data()).find((row) => row.order.id === "DEMO-26006");
+  assert.equal(env.store.run("issueRods", { orderId: "DEMO-26006", itemCode: need.itemCode, qty: 3 }).ok, true);
+  assert.equal(env.store.run("adjustRods", { lotId: rodLotOf(env, 4).id, qty: -1, note: "ชำรุด" }).ok, true);
+  const html = await env.open("FACTORY_SR", "tab=history");
+  const times = [...html.matchAll(/<td class="nowrap small">([^<]*)<\/td>/g)].map((match) => match[1]);
+  const moves = env.store.data().rodMoves.slice().sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0) || String(b.id).localeCompare(String(a.id)));
+  assert.deepEqual(times, moves.map((move) => rules.fmtDateTime(move.at)), "newest first");
+  for (const label of ["รับเข้าคลัง", "จ่ายให้ GR", "ปรับยอด"]) assert.ok(html.includes(label), label);
+  assert.equal([...html.matchAll(/data-rf-open="rodReverse"/g)].length, 1, "one unreversed issue");
+  assert.equal([...(await env.open("FACTORY_SR", "tab=history&kind=issue")).matchAll(/<td class="nowrap small">/g)].length, 1, "kind filter");
+  assert.equal([...(await env.open("FACTORY_SR", "tab=history&kind=receive")).matchAll(/<td class="nowrap small">/g)].length, 3, "three receipts in the demo");
+  assert.match(await env.open("FACTORY_SR", "tab=history&kind=issue"), /<option value="issue" selected>/);
+  assert.equal([...(await env.open("FACTORY_SR", "tab=history&q=DEMO-26006")).matchAll(/<td class="nowrap small">/g)].length >= 2, true, "by order");
+  assert.equal([...(await env.open("FACTORY_SR", `tab=history&q=${encodeURIComponent(rodLotOf(env, 4).lotNo)}`)).matchAll(/<td class="nowrap small">/g)].length, 2, "by lot (receipt and adjustment)");
+  assert.equal([...(await env.open("FACTORY_SR", `tab=history&q=${encodeURIComponent(need.itemCode)}`)).matchAll(/<td class="nowrap small">/g)].length >= 2, true, "by code");
+  assert.match(await env.open("FACTORY_SR", "tab=history&q=ZZZ-NONE"), /ไม่พบรายการที่ค้นหา/);
+  assert.match(await env.open("FACTORY_SR", "tab=history&kind=issue&q=ZZZ"), /ล้างตัวกรอง/);
+  // ตัวกรองชนิดพาไปกับการค้นหา
+  const form = { handlers: {}, dataset: {}, __values: { q: "DEMO" }, addEventListener(type, handler) { this.handlers[type] = handler; } };
+  env.fakes["form[data-rf-search]"] = [form];
+  await env.open("FACTORY_SR", "tab=history&kind=issue");
+  form.handlers.submit({ preventDefault() {} });
+  assert.equal(env.log.hash, "#/sr?tab=history&q=DEMO&kind=issue");
+});
+
+test("SR lot page: identity once, source, location, QC result, buckets and move history; actions follow the right; an opening lot says where it came from", async () => {
+  const env = srEnv();
+  const rules = env.context.MNP_BOM_RULES;
+  const data = env.store.data();
+  const l1 = rodLotOf(env, 1);
+  const attrs = rules.rodAttrs(data.items, l1.itemCode, data.colors);
+  const html = await env.open("FACTORY_SR", `lot=${l1.id}`);
+  assert.equal(h1Of(html), `ล็อต ${l1.lotNo}`);
+  assert.match(html, /<a class="request-back-link" href="#\/sr\?tab=stock">‹ ในคลัง<\/a>/, "a back link, lifted into the top bar by the shell");
+  for (const text of [l1.itemCode, attrs.name, attrs.compound, attrs.color, attrs.colorName, attrs.size, "อยู่ในคลัง", "A-02", l1.orderId, "ส่งมาจาก RB"]) assert.ok(html.includes(escapeHtml(text)), `shows ${text}`);
+  assert.equal([...html.matchAll(new RegExp(escapeHtml(l1.lotNo), "g"))].length, 1, "the lot number appears once, in the heading");
+  assert.match(html, /ผลตรวจขนาดตอนรับเข้า/);
+  assert.match(html, /ความหนา/);
+  assert.match(html, /ผ่าน/);
+  assert.match(html, /ของใบ DEMO-26006 20/, "the bucket left");
+  assert.match(html, /ประวัติเข้าออกของล็อต/);
+  assert.match(html, /\+20/);
+  for (const name of ["rodLocation", "rodAdjust"]) assert.match(html, new RegExp(`data-rf-open="${name}" data-rf-args="[^"]*${l1.id}`), name);
+  assert.match(html, new RegExp(`href="#/sr\\?lot=${l1.id}&amp;print=1"[^>]*>พิมพ์ป้าย`));
+  // ย้ายตำแหน่ง: dialog แล้วส่งฟอร์ม
+  const page = await landingWith(env, "FACTORY_SR", `lot=${l1.id}`);
+  const dialog = await page.click("rodLocation");
+  assert.match(dialog, /data-rf-form="setRodLocation"/);
+  assert.match(dialog, /value="A-02"/, "the current location is filled in");
+  await page.submit({ location: "Z-09" });
+  assert.equal(rodLotOf(env, 1).location, "Z-09");
+  assert.match(await env.open("FACTORY_SR", `lot=${l1.id}`), /Z-09/);
+  // ล็อตที่รับนอกใบสั่ง: ที่มา + หมายเหตุ ไม่มีลิงก์ใบสั่ง ไม่มีส่วนผลตรวจ
+  const l4 = rodLotOf(env, 4);
+  const opening = await env.open("FACTORY_SR", `lot=${l4.id}`);
+  assert.ok(opening.includes(escapeHtml(`${rules.ROD_SOURCE_LABEL.opening} · ${l4.sourceNote}`)));
+  assert.doesNotMatch(opening, /ผลตรวจขนาดตอนรับเข้า|ใบสั่งผลิต<\/dt>/);
+  assert.doesNotMatch(opening, /sel=DEMO/, "no order behind it");
+  // ไม่มีสิทธิ์: ดูได้และพิมพ์ป้ายได้ แต่ไม่มีปุ่มย้ายตำแหน่ง / ปรับยอด
+  const viewer = srEnv(emp("PP", "factory_manager"), "B08");
+  const read = await viewer.open("FACTORY_SR", `lot=${l1.id}`);
+  assert.doesNotMatch(read, /data-rf-open="rod/);
+  assert.match(read, /พิมพ์ป้าย/);
+  // แต่ละข้อมูลแสดงครั้งเดียว: ล็อตที่มีแถวรับเข้าในประวัติไม่มีแถว "รับเข้า" ซ้ำในรายการข้อมูล · ล็อตรับนอกใบสั่งไม่ซ้ำหมายเหตุที่มาในแถวรับเข้า
+  assert.doesNotMatch(html, /<dt[^>]*>รับเข้า<\/dt>/, "the receive facts are in the history");
+  assert.equal([...opening.matchAll(new RegExp(escapeHtml(l4.sourceNote), "g"))].length, 1, "the source note once, in the source row");
+  // ล็อตที่รับแล้วแต่ยังรอ QA ไม่มีแถวรับเข้าในประวัติ: รายการข้อมูลยังบอกจำนวน ผู้รับ เวลา
+  const lot3 = env.store.data().rodLots.find((lot) => lot.id === rodLotOf(env, 3).id);
+  Object.assign(lot3, { status: "held", qtyReceived: 8, receivedBy: "SR-ผู้ทดสอบ", receivedAt: lot3.createdAt });
+  assert.match(await env.open("FACTORY_SR", `lot=${lot3.id}`), /<dt[^>]*>รับเข้า<\/dt>[\s\S]*SR-ผู้ทดสอบ/);
+  lot3.status = "pending";
+  // ปรับยอดต้องเป็นล็อตที่อยู่ในคลัง · ล็อตที่รอรับไม่มีปุ่มย้ายตำแหน่ง/ปรับยอด
+  const pending = await env.open("FACTORY_SR", `lot=${rodLotOf(env, 2).id}`);
+  assert.doesNotMatch(pending, /data-rf-open="rod(Location|Adjust)"/);
+  assert.match(pending, /รอรับเข้าคลัง/);
+  // ไม่พบล็อต
+  assert.match(await env.open("FACTORY_SR", "lot=no-such-lot"), /ไม่พบล็อตนี้/);
+  assert.match(await env.open("FACTORY_SR", "lot=no-such-lot&print=1"), /ไม่พบล็อตนี้/);
+});
+
+test("SR label: printable only for a lot that is held or in the store; other statuses get no button and a short message; owner and quantity are the current balance", async () => {
+  const env = srEnv();
+  const rules = env.context.MNP_BOM_RULES;
+  const l1 = rodLotOf(env, 1);
+  const buttonOf = (html, lot) => html.includes(`lot=${lot.id}&amp;print=1`);
+  for (const status of ["pending", "returned", "scrapped"]) {
+    const lot = rodLotOf(env, 2);
+    lot.status = status;
+    assert.ok(!buttonOf(await env.open("FACTORY_SR", `lot=${lot.id}`), lot), `${status}: no print button`);
+    const view = await env.open("FACTORY_SR", `lot=${lot.id}&print=1`);
+    assert.doesNotMatch(view, /<article class="sr-label"|data-sr-print/, `${status}: no label`);
+    assert.match(view, /พิมพ์ป้ายได้เฉพาะล็อตที่รอ QA ตัดสินหรืออยู่ในคลัง/);
+  }
+  for (const status of ["held", "stored"]) {
+    const lot = rodLotOf(env, 2);
+    lot.status = status;
+    assert.ok(buttonOf(await env.open("FACTORY_SR", `lot=${lot.id}`), lot), `${status}: print button`);
+    assert.match(await env.open("FACTORY_SR", `lot=${lot.id}&print=1`), /<article class="sr-label"/, `${status}: label`);
+  }
+  rodLotOf(env, 2).status = "pending";
+  // เหลือในคลัง: ป้ายบอกยอดคงเหลือ ไม่ใช่ยอดที่รับ · ล็อตเดียวหลายเจ้าของ = ยอดของแต่ละเจ้าของ
+  assert.equal(env.store.run("adjustRods", { lotId: rodLotOf(env, 0).id, qty: -2, note: "นับจริงไม่พบ" }).ok, true);
+  const adjusted = await env.open("FACTORY_SR", `lot=${rodLotOf(env, 0).id}&print=1`);
+  assert.match(adjusted, /<dt>คงเหลือ<\/dt><dd>4 /, "the balance, not the 6 received");
+  assert.doesNotMatch(adjusted, /จำนวนรับ/);
+  env.store.data().rodMoves.push({ id: "5e1d0000-0000-4000-8000-000000000999", lotId: l1.id, itemCode: l1.itemCode, kind: "adjust", qty: 5, ownerOrderId: null, forOrderId: null, reversesId: null, note: "", at: Date.now(), by: "SR" });
+  const unit = rules.uomLabel(l1.uom);
+  const shared = await env.open("FACTORY_SR", `lot=${l1.id}&print=1`);
+  assert.ok(shared.includes(`<dt>ของ</dt><dd>ของใบ DEMO-26006 20 ${unit} · สต็อกกลาง 5 ${unit}</dd>`), "every owner with stock");
+  assert.match(shared, new RegExp(`<dt>คงเหลือ</dt><dd>25 ${unit}</dd>`));
+});
+
+test("SR label: one printable label per lot with code, name, compound, colour, size, lot, quantity, date, location, owner and a QR of the absolute lot URL; print shows only the label", async () => {
+  const env = srEnv();
+  const rules = env.context.MNP_BOM_RULES;
+  const data = env.store.data();
+  Object.defineProperty(env.context.location, "origin", { value: "https://mnp.example", configurable: true });
+  Object.defineProperty(env.context.location, "pathname", { value: "/pilot/", configurable: true });
+  const encoded = [];
+  const real = env.context.qrcode;
+  assert.equal(typeof real, "function", "the vendored encoder is loaded");
+  env.context.qrcode = (type, level) => { const qr = real(type, level); const add = qr.addData; qr.addData = (text) => { encoded.push(text); return add(text); }; return qr; };
+  for (const [no, owner] of [[0, "สต็อกกลาง"], [1, "ใบ DEMO-26006"], [4, "สต็อกกลาง"]]) {
+    const lot = rodLotOf(env, no);
+    const attrs = rules.rodAttrs(data.items, lot.itemCode, data.colors);
+    encoded.length = 0;
+    const html = await env.open("FACTORY_SR", `lot=${lot.id}&print=1`);
+    assert.equal(h1Of(html), `ป้ายล็อต ${lot.lotNo}`);
+    assert.match(html, /<article class="sr-label"/);
+    for (const text of [lot.itemCode, attrs.name, attrs.compound, attrs.color, attrs.colorName, attrs.size, lot.lotNo, `${rules.fmtQty(lot.qtyReceived)} ${rules.uomLabel(lot.uom)}`, rules.fmtDate(lot.receivedAt), lot.location, owner]) assert.ok(html.includes(escapeHtml(text)), `label shows ${text}`);
+    assert.deepEqual(plain(encoded), [`https://mnp.example/pilot/#/sr?lot=${lot.id}`], "the QR encodes the absolute URL of the lot page");
+    assert.match(html, /<div class="sr-label-qr"><svg [^>]*viewBox=/, "the QR is drawn as inline SVG");
+    assert.match(html, /<button class="btn rf-btn" type="button" data-sr-print>พิมพ์ป้าย<\/button>/);
+    assert.match(html, /<div class="rf-row no-print">/, "the buttons are hidden when printing");
+    assert.match(html, new RegExp(`<a class="request-back-link" href="#/sr\\?lot=${lot.id}">‹ ล็อต `));
+  }
+  // ปุ่มพิมพ์เรียกพิมพ์ของเบราว์เซอร์
+  let printed = 0;
+  env.context.print = () => { printed += 1; };
+  const button = { handlers: {}, dataset: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
+  env.fakes["[data-sr-print]"] = [button];
+  await env.open("FACTORY_SR", `lot=${rodLotOf(env, 0).id}&print=1`);
+  button.handlers.click();
+  assert.equal(printed, 1);
+  // ไม่มีตัวเข้ารหัส QR: ป้ายยังพิมพ์ได้ และมีที่อยู่เป็นข้อความแทน
+  env.context.qrcode = undefined;
+  assert.match(await env.open("FACTORY_SR", `lot=${rodLotOf(env, 0).id}&print=1`), /<div class="sr-label-qr"><span class="small">https:\/\/mnp\.example\/pilot\/#\/sr\?lot=/);
+  // ป้ายของผู้ที่ไม่มีสิทธิ์ทำรายการก็พิมพ์ได้ (ไม่เปลี่ยนข้อมูล)
+  assert.match(await srEnv(emp("PP", "factory_manager"), "B08").open("FACTORY_SR", `lot=${rodLotOf(env, 0).id}&print=1`), /<article class="sr-label"/);
+  // CSS: พิมพ์แล้วเห็นแต่ป้าย (แถบข้าง แถบบน ปุ่ม ซ่อน)
+  const css = read("styles.css");
+  assert.match(css, /@media print \{\s*body:has\(\.sr-label\) :is\(\.sidebar, \.topbar[^)]*\.no-print[^)]*\) \{ display: none !important; \}/);
+  assert.match(css, /\.sr-label \{ width: 100mm; box-shadow: none; break-inside: avoid;/);
+  assert.match(read("vendor/qrcode-generator/qrcode.js"), /Licensed under the MIT license/);
+  assert.match(read("vendor/qrcode-generator/LICENSE"), /MIT License/);
+});
+
+test("SR: who can open the module, its lots and labels: SR staff and planners in test mode; GR, ID, office, other departments and anyone outside test mode get not found", async () => {
+  const allowed = [[emp("SR"), "B11"], [emp("PP"), "B03"], [emp("PP", "admin"), "B03"], [emp("MT", "factory_manager"), "B03"]];
+  for (const [employee, userId] of allowed) {
+    const env = srEnv(employee, userId);
+    const lot = rodLotOf(env, 1);
+    for (const query of ["", "tab=stock", "tab=receive", "tab=issue", "tab=history", `lot=${lot.id}`, `lot=${lot.id}&print=1`]) {
+      env.log.notFound = 0;
+      assert.match(await env.open("FACTORY_SR", query), /<shell path="sr"/, `${employee.department.code}/${employee.role.code} opens ${query || "home"}`);
+      assert.equal(env.log.notFound, 0);
+    }
+  }
+  const denied = [emp("GR"), emp("QA"), emp("ST"), emp("WH"), emp("RB"), emp("ID"), emp("ID", "admin"), emp("HR"), emp("OF"), emp("MT", "department_manager"), emp("SR", "employee", { isSandbox: false }), emp("PP", "admin", { isSandbox: false })];
+  for (const employee of denied) {
+    const env = srEnv(emp("SR"), "B11");
+    const lot = rodLotOf(env, 1);
+    env.setEmployee(employee);
+    for (const query of ["", "tab=stock", "tab=history", `lot=${lot.id}`, `lot=${lot.id}&print=1`]) {
+      env.log.notFound = 0;
+      await env.open("FACTORY_SR", query);
+      assert.equal(env.log.notFound, 1, `${employee.department.code}/${employee.role.code}${employee.isSandbox === false ? " outside test mode" : ""} gets not found on ${query || "home"}`);
+    }
+  }
+  // และการสั่งงานตัดสินที่ฐานข้อมูล/action: GR ปรับยอดหรือรับนอกใบสั่งไม่ได้
+  const gr = srEnv(emp("GR"), "B05");
+  assert.equal(gr.store.run("receiveRodsOpening", { itemCode: "RB-DM02-02-BK01-225-3-20", lotNo: "OP-GR", qty: 1, location: "X-1", note: "ทดสอบ" }).ok, false);
+  assert.equal(gr.store.run("adjustRods", { lotId: rodLotOf(gr, 4).id, qty: -1, note: "ทดสอบ" }).ok, false);
+  assert.equal(gr.store.run("setRodLocation", { lotId: rodLotOf(gr, 4).id, location: "X-2" }).ok, false);
+});
+
+test("GR ยางเส้นยาวในคลัง SR: the same stock table read-only inside #/gr, with the filters; no lot links, no actions, no way into the SR module", async () => {
+  const env = srEnv(emp("GR"), "B05");
+  const html = await env.open("FACTORY_GR", "tab=rods");
+  assert.equal(h1Of(html), "ยางเส้นยาวในคลัง SR");
+  assert.deepEqual(plain(navOf(env, "FACTORY_GR").items.map((item) => [item.label, item.href, item.active])), [["งานของฉัน", "#/gr", false], ["เสร็จแล้ว", "#/gr?st=done", false], ["ยางเส้นยาวในคลัง SR", "#/gr?tab=rods", true]]);
+  for (const bucket of storedBuckets(env)) for (const text of [bucket.lot.lotNo, bucket.lot.location, bucket.itemCode]) assert.ok(html.includes(escapeHtml(text)), `shows ${text}`);
+  for (const heading of ["เส้นยาง", "จำนวน", "ล็อต", "ตำแหน่ง", "ของ"]) assert.match(html, new RegExp(`>${heading}</th>`));
+  assert.doesNotMatch(html, /data-rf-open|data-rf-action|<form[^>]*data-rf-form|href="#\/sr|รับยางนอกใบสั่ง|rodLocation/, "read-only");
+  assert.doesNotMatch(html, /แท่ง/);
+  assert.equal(lotLinks(html).length, 0, "no lot page for GR");
+  // ตัวกรองและค้นหาทำงานภายใน GR
+  const owned = await env.open("FACTORY_GR", "tab=rods&own=order");
+  const lotNo = (no) => escapeHtml(rodLotOf(env, no).lotNo);
+  assert.ok(owned.includes(lotNo(1)) && !owned.includes(lotNo(0)) && !owned.includes(lotNo(4)), "the owner filter works inside GR");
+  assert.match(await env.open("FACTORY_GR", "tab=rods&q=ZZZ-NONE"), /ไม่พบเส้นยางที่ค้นหา/);
+  const form = { handlers: {}, dataset: {}, __values: { q: "A-0" }, addEventListener(type, handler) { this.handlers[type] = handler; } };
+  const select = { handlers: {}, dataset: {}, name: "own", value: "free", addEventListener(type, handler) { this.handlers[type] = handler; } };
+  env.fakes["form[data-rf-search]"] = [form];
+  env.fakes["[data-sr-filter]"] = [select];
+  await env.open("FACTORY_GR", "tab=rods&loc=A-01");
+  form.handlers.submit({ preventDefault() {} });
+  assert.equal(env.log.hash, "#/gr?tab=rods&q=A-0&loc=A-01", "search stays in GR");
+  select.handlers.change();
+  assert.equal(env.log.hash, "#/gr?tab=rods&own=free&loc=A-01", "a filter stays in GR");
+  // งานของฉัน ของ GR ไม่เปลี่ยน
+  assert.equal(h1Of(await env.open("FACTORY_GR")), "งานของฉัน");
+  // QA ไม่มีลิงก์ไปหน้าคลังแล้ว
+  const qa = srEnv(emp("QA"), "B12");
+  assert.doesNotMatch(await qa.open("FACTORY_QA"), /p=rods|#\/sr/);
+  // GR ที่เปิดมุมมองนี้ผ่านลิงก์เก่าก็ไม่เจอหน้าว่าง · ฝ่ายอื่นไม่เห็น
+  const st = srEnv(emp("ST"), "B08");
+  assert.doesNotMatch(await st.open("FACTORY_ST"), /p=rods|ยางเส้นยาวในคลัง SR/);
+});
+
+test("the SR and GR files keep to ยางเส้นยาว wording, keep no copy of the card HTML and load the QR encoder before the module", () => {
+  for (const file of ["modules/module-sr.js", "modules/module-gr.js"]) {
+    const source = read(file);
+    assert.doesNotMatch(source, /แท่ง/, `${file} says ยางเส้นยาว`);
+    assert.doesNotMatch(source, /bom-job/, `${file} keeps no card markup`);
+  }
+  const html = read("index.html");
+  const order = [...html.matchAll(/<script defer src="\.\/([^"?]+)/g)].map((match) => match[1]);
+  assert.ok(order.indexOf("vendor/qrcode-generator/qrcode.js") >= 0 && order.indexOf("vendor/qrcode-generator/qrcode.js") < order.indexOf("modules/module-sr.js"));
+  assert.match(html, /script-src 'self'/, "the encoder is same-origin: the CSP allows it");
+  assert.match(read("scripts/pilot-harness.mjs"), /\(\?:modules\|vendor\)/, "the harness page loads the vendored script too");
 });

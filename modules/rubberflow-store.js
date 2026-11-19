@@ -46,9 +46,9 @@
     curer: { label: "พนักงานอบยาง", modules: Object.freeze(["dashboard", "curing", "wip", "molds"]) },
     finisher: { label: "พนักงานตกแต่ง/บรรจุ", modules: Object.freeze(["dashboard", "finishing", "wip", "warehouse"]) },
     qc: { label: "วิศวกรควบคุมคุณภาพ", modules: Object.freeze(["dashboard", "recipes", "quality", "spc", "trace", "warehouse", "molds", "wip"]) },
-    // บัญชีทดสอบของโหมดฐานข้อมูล (personaUser): พนักงานแผนก RB ทำงานสายผลิตทั้งสาย · แผนก SR รับมอบ WIP · แผนกอื่นดูได้อย่างเดียว
+    // บัญชีทดสอบของโหมดฐานข้อมูล (personaUser): พนักงานแผนก RB ทำงานสายผลิตทั้งสาย รวมรับมอบ WIP ระหว่างสถานี (20261204010000) · แผนก SR (คลังยางเส้นยาว) และแผนกอื่นดูได้อย่างเดียว
     rb: { label: "พนักงานแผนก RB", modules: Object.freeze(["dashboard", "orders", "recipes", "requisition", "mixing", "extrusion", "curing", "finishing", "wip", "quality", "trace", "warehouse", "molds"]) },
-    gatekeeper: { label: "ผู้รับมอบ WIP (SR)", modules: Object.freeze(["dashboard", "wip", "trace", "warehouse"]) },
+    sr: { label: "คลังยางเส้นยาว (SR) ดูอย่างเดียว", modules: Object.freeze(["dashboard", "wip", "trace", "warehouse"]) },
     warehouse: { label: "พนักงานคลังสินค้า (WH)", modules: Object.freeze(["dashboard", "warehouse", "wip", "trace"]) },
     viewer: { label: "ดูข้อมูลอย่างเดียว", modules: Object.freeze(["dashboard", "orders", "recipes", "wip", "trace", "warehouse"]) },
   });
@@ -81,7 +81,7 @@
     requisition: (user) => Boolean(user.planner || user.rb), // เบิกเคมี (สร้างใบเบิกและจ่ายทันที) · จ่ายใบเก่าที่ค้างชั่ง
     station: (user) => Boolean(user.planner || user.rb), // บันทึกผสม/ฉีด/อบ/ตกแต่ง ทำความสะอาดแม่พิมพ์
     sendTransfer: (user) => Boolean(user.planner || user.rb), // สร้างใบส่งมอบ WIP
-    receiveTransfer: (user) => Boolean(user.planner || user.sr), // รับมอบ WIP
+    receiveTransfer: (user) => Boolean(user.planner || user.rb), // รับมอบ WIP ระหว่างสถานี: แผนก RB (20261204010000 · เดิมแผนก SR)
     shipBoxes: (user) => Boolean(user.planner || user.wh), // ส่งมอบกล่องสินค้า
     fillNcr: (user) => Boolean(user.planner || user.qa || user.rb), // กรอกการแก้ไข/ป้องกันของ NCR ที่เปิดอยู่
     editMold: (user) => Boolean(user.planner || user.rb),
@@ -225,7 +225,7 @@
     const code = /RF_[A-Z0-9_]+/.exec(haystack)?.[0] ?? (/BOM_[A-Z0-9_]+/.exec(haystack)?.[0]) ?? (/NOT_AUTHORIZED|SANDBOX_NOT_ACTIVE/.exec(haystack)?.[0]) ?? (/PGRST202|42883/.test(haystack) ? "RF_NOT_DEPLOYED" : "RF_REMOTE_FAILED");
     const message = {
       RF_TEST_MODE_ONLY: "ข้อมูล RubberFlow ใช้ได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ",
-      RF_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้ใน RubberFlow (สั่งซื้อ รับวัตถุดิบ ตรวจสอบรับเข้าและยกเลิกใบสั่งซื้อ: คลังวัตถุดิบ (ST) เท่านั้น · เบิกเคมี ผลิต ส่งมอบ: แผนก RB · รับมอบ WIP: SR · ส่งมอบกล่อง: คลังสินค้า · ผลตรวจและ NCR: QA · อนุมัติสูตรและปล่อยผลิต: ผู้จัดการแผนก RB ขึ้นไป · งานอื่นฝ่ายวางแผนและผู้จัดการทำได้)",
+      RF_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้ใน RubberFlow (สั่งซื้อ รับวัตถุดิบ ตรวจสอบรับเข้าและยกเลิกใบสั่งซื้อ: คลังวัตถุดิบ (ST) เท่านั้น · เบิกเคมี ผลิต ส่งมอบและรับมอบ WIP: แผนก RB · ส่งมอบกล่อง: คลังสินค้า · ผลตรวจและ NCR: QA · อนุมัติสูตรและปล่อยผลิต: ผู้จัดการแผนก RB ขึ้นไป · งานอื่นฝ่ายวางแผนและผู้จัดการทำได้)",
       RF_STALE: "มีผู้อื่นบันทึกข้อมูล RubberFlow ไปก่อน (หรือเลขที่ซ้ำ) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_CONFLICT: "รายการนี้ซ้ำกับที่มีอยู่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_INVALID_TRANSITION: "รายการอยู่ในสถานะที่ทำรายการนี้ไม่ได้ (อาจมีผู้อื่นเปลี่ยนสถานะไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
@@ -258,14 +258,14 @@
 
   // พนักงานที่ล็อกอิน (state.employee ของ app.js: บัญชีทดสอบในโหมดทดสอบ หรือพนักงานจริง) → ผู้ใช้ของ RubberFlow
   // planner = กลุ่มวางแผน (admin · ผู้ช่วยผู้จัดการโรงงานขึ้นไป · ผู้จัดการแผนกในสายผลิต · แผนก PP ตรงกับ private.bom_can_edit) ทำได้ทุกอย่างของข้อมูลหลัก · rb = สมาชิกแผนก RB ทุกตำแหน่ง · rbHead = หัวหน้า RB ขึ้นไป (อนุมัติสูตร ปล่อยผลิต)
-  // role ใช้เลือกเมนูเท่านั้น: admin → admin · กลุ่มวางแผนตามตำแหน่ง → manager · PP → planner · RB → rb · ST → store · QA → qc · SR → gatekeeper · WH → warehouse · อื่นๆ → ดูอย่างเดียว
+  // role ใช้เลือกเมนูเท่านั้น: admin → admin · กลุ่มวางแผนตามตำแหน่ง → manager · PP → planner · RB → rb · ST → store · QA → qc · SR → sr (ดูอย่างเดียว) · WH → warehouse · อื่นๆ → ดูอย่างเดียว
   // st / sr / wh / qa = สมาชิกแผนกนั้น (ทุกตำแหน่ง) ใช้ซ่อน/แสดงปุ่ม · สิทธิ์จริงอยู่ที่ฐานข้อมูล
   const PLANNER_ROLE_CODES = Object.freeze(["assistant_factory_manager", "factory_manager", "general_manager"]);
   // ผู้จัดการแผนก (department_manager) อยู่ในกลุ่มวางแผนเฉพาะแผนกในสายผลิต (private.bom_production_depts ของ 20261130010000)
   const PRODUCTION_DEPTS = Object.freeze(["RB", "GR", "PT", "BG", "PK", "ST", "WH", "QA", "SR"]);
   const RB_HEAD_DEPT_ROLE_CODES = Object.freeze(["department_manager", "assistant_department_manager"]);
   const RB_HEAD_ANY_ROLE_CODES = Object.freeze(["assistant_factory_manager", "factory_manager", "general_manager", "admin"]);
-  const DEPT_ROLES = Object.freeze({ PP: "planner", RB: "rb", ST: "store", QA: "qc", SR: "gatekeeper", WH: "warehouse" });
+  const DEPT_ROLES = Object.freeze({ PP: "planner", RB: "rb", ST: "store", QA: "qc", SR: "sr", WH: "warehouse" });
   function personaUser(employee) {
     if (!employee) return null;
     const roleCode = String(employee.role?.code ?? employee.role_code ?? "");

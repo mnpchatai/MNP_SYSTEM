@@ -434,6 +434,17 @@
   };
 
   // ---------- สถานีที่ 4 ตกแต่งและบรรจุ ----------
+  // ล็อตตกแต่งที่ส่งคลังยางเส้นยาว (SR) อยู่ที่ไหนแล้ว: ป้ายสถานะใต้ข้อความ "ส่งคลังยางเส้นยาว (SR)" จากข้อมูล BOM ที่โหลดอยู่ (ctx.bomRodLot) · ไม่มีข้อมูล = ไม่แสดงอะไร (ข้อความเดิม)
+  // ป้ายเป็นลิงก์ไปหน้าล็อตของ SR เมื่อผู้ใช้เปิดโมดูล SR ได้
+  const SR_STATE = Object.freeze({ pending: ["warn", () => "รอ SR รับเข้า"], stored: ["good", (sr) => `SR รับแล้ว${sr.location ? ` · ตำแหน่ง ${sr.location}` : ""}`], held: ["bad", () => "กักรอ QA"], returned: ["", () => "QA คืนให้แก้ไข"], scrapped: ["", () => "QA สั่งทิ้ง"] });
+  function srStateHtml(ctx, lot) {
+    const sr = ctx.bomRodLot?.(lot.id);
+    const entry = sr ? SR_STATE[sr.status] : null;
+    if (!entry) return "";
+    const badge = ctx.ui.badge(entry[0], entry[1](sr));
+    return `<div class="small" data-rf-sr-state>${sr.href ? `<a href="${esc(sr.href)}" title="เปิดล็อตนี้ในคลังยางเส้นยาว (SR)">${badge}</a>` : badge}</div>`;
+  }
+
   pages.finishing = (ctx) => {
     const { data, ui, rules } = ctx;
     const { fmtNum } = rules;
@@ -446,9 +457,9 @@
         ${ui.field("ของเสียจากการตกแต่ง", ui.input("scrapQty", { type: "number", step: "any" }))}
         ${ui.field("จำนวนต่อกล่อง", ui.input("perBox", { type: "number", step: "any", required: true, extra: "data-rf-perbox" }), { hint: '<span data-rf-boxes></span>', required: true, className: "rf-perbox-field" })}
         ${ui.field("เกรด", ui.select("grade", ["A", "B"]))}
-        ${ui.field("ผลตัดสินของล็อต", ui.select("qcResult", [{ value: "pass", label: "ผ่าน — รับเข้าคลัง" }, { value: "hold", label: "กักกันรอ QC" }], { extra: 'title="เมื่อบันทึกเป็น “ผ่าน” กล่องเข้าคลังสินค้าสำเร็จรูปทันทีและนับยอดเข้าใบสั่งผลิต · WO ที่มาจากงาน RB ของ BOM: แท่งส่งเข้าคลังแท่งยาว (SR) รอ SR รับเข้าและตรวจขนาด"' }))}
+        ${ui.field("ผลตัดสินของล็อต", ui.select("qcResult", [{ value: "pass", label: "ผ่าน — รับเข้าคลัง" }, { value: "hold", label: "กักกันรอ QC" }], { extra: 'title="เมื่อบันทึกเป็น “ผ่าน” กล่องเข้าคลังสินค้าสำเร็จรูปทันทีและนับยอดเข้าใบสั่งผลิต · WO ที่มาจากงาน RB ของ BOM: ยางเส้นยาวส่งเข้าคลังยางเส้นยาว (SR) รอ SR รับเข้าและตรวจขนาด"' }))}
         ${ui.field("กะ", ui.select("shift", shiftOptions(rules)))}
-      </div><div data-rf-linked-note hidden>${ui.callout("info", "WO นี้มาจากงาน RB ของใบสั่งผลิต (BOM): แท่งที่ผ่านส่งเข้าคลังแท่งยาว (SR) ไม่สร้างกล่องสินค้า · SR รับเข้าและตรวจขนาด แล้วงาน RB ของใบจึงนับยอด")}</div><div class="rf-row">${ui.submitButton("บันทึกและพิมพ์ป้ายกล่อง")}</div></form>`, { title: "บันทึกการตกแต่งและบรรจุ" }) : "";
+      </div><div data-rf-linked-note hidden>${ui.callout("info", "WO นี้มาจากงาน RB ของใบสั่งผลิต (BOM): ยางเส้นยาวที่ผ่านส่งเข้าคลังยางเส้นยาว (SR) ไม่สร้างกล่องสินค้า · SR รับเข้าและตรวจขนาด แล้วงาน RB ของใบจึงนับยอด")}</div><div class="rf-row">${ui.submitButton("บันทึกและพิมพ์ป้ายกล่อง")}</div></form>`, { title: "บันทึกการตกแต่งและบรรจุ" }) : "";
     const html = `${ui.pageHead("สถานีที่ 4 · ตกแต่งและบรรจุ", "ตัดแต่งครีบ ตรวจ 100% แล้วบรรจุกล่อง ระบบสร้างเลขกล่องและรับเข้าคลังสินค้าสำเร็จรูปให้อัตโนมัติ")}
       ${ui.stats([
         { label: "อัตราได้ของดี ตกแต่ง", value: stageYieldText(lots), sub: "เป้าหมาย ≥ 99.0%" },
@@ -458,7 +469,11 @@
       ])}
       ${gateNotice(ctx, "finishing")}${form}
       ${stageLots(ctx, "finishing", [
-        { label: "บรรจุ", render: (lot) => esc(data.orders.find((row) => row.id === lot.orderId)?.sourceJobId && !(Number(lot.boxes) > 0) ? `ส่งคลังแท่งยาว (SR) · เกรด ${lot.grade}` : `${lot.boxes} กล่อง × ${fmtNum(lot.params.perBox)} · เกรด ${lot.grade}`) },
+        { label: "บรรจุ", render: (lot) => {
+          const toSr = data.orders.find((row) => row.id === lot.orderId)?.sourceJobId && !(Number(lot.boxes) > 0);
+          if (!toSr) return esc(`${lot.boxes} กล่อง × ${fmtNum(lot.params.perBox)} · เกรด ${lot.grade}`);
+          return `${esc(`ส่งคลังยางเส้นยาว (SR) · เกรด ${lot.grade}`)}${srStateHtml(ctx, lot)}`;
+        } },
         { label: "CoA", render: (lot) => ui.openButton("ดู CoA", "coa", { lotId: lot.id }, { className: "secondary small" }) },
       ])}`;
     const bind = (rootNode) => {
@@ -485,8 +500,8 @@
         if (linked) perBox.value = "";
         else if (transfer && (!perBox.value || perBox.dataset?.rfLinkedValue)) perBox.value = transfer.uom === "m" ? "100" : "2000";
         if (perBox.dataset) { if (linked) perBox.dataset.rfLinkedValue = "1"; else delete perBox.dataset.rfLinkedValue; }
-        if (passOption) passOption.textContent = linked ? "ผ่าน — ส่งเข้าคลังแท่งยาว (SR)" : "ผ่าน — รับเข้าคลัง";
-        if (form.dataset) form.dataset.rfSuccess = linked ? "บันทึก {result} แล้ว แท่งส่งเข้าคลังแท่งยาว (SR)" : baseSuccess;
+        if (passOption) passOption.textContent = linked ? "ผ่าน — ส่งเข้าคลังยางเส้นยาว (SR)" : "ผ่าน — รับเข้าคลัง";
+        if (form.dataset) form.dataset.rfSuccess = linked ? "บันทึก {result} แล้ว ยางเส้นยาวส่งเข้าคลังยางเส้นยาว (SR)" : baseSuccess;
         if (submit) submit.textContent = linked ? "บันทึกการตกแต่ง" : "บันทึกและพิมพ์ป้ายกล่อง";
         paint();
       });

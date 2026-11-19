@@ -194,6 +194,15 @@
     const asked = planner ? reach(params.get("dept")) : null;
     return asked ?? reach(user?.dept) ?? url(storeApi.homeOf(user));
   };
+  // ลิงก์เก่า #/bom?p=rods (หน้าคลังยางเส้นยาวเดิมของ BOM) ไปที่โมดูล SR หน้า "ในคลัง" ถ้าผู้ใช้เปิดโมดูล SR ได้ · ไม่ได้ก็ไปมุมมองอ่านอย่างเดียวในโมดูล GR · ไม่มีทั้งสอง = หน้าแรกของ BOM
+  const rodsRedirect = (user) => {
+    const factory = window.MNP_FACTORY;
+    const reach = (dept) => (factory?.canOpenDeptModule?.(state.employee, dept, `FACTORY_${dept}`) ? storeApi.deptRoute(dept) : null);
+    const sr = reach("SR");
+    if (sr) return `${sr}?tab=stock`;
+    const gr = reach("GR");
+    return gr ? `${gr}?tab=rods` : url(storeApi.homeOf(user));
+  };
   const defaultPage = () => { const home = storeApi.homeOf(store.user()); return pages[home] ? home : "dashboard"; };
   const currentPage = (params) => storeApi.findModule(params.get("p") ?? defaultPage())?.id ?? null;
 
@@ -712,9 +721,9 @@
 
   async function renderBom(params) {
     if (!storeApi.usesBom(state.employee)) return renderNotFound();
-    if (params.get("p") === "work" && store.user()) {
-      // งานของฉันย้ายไปอยู่ที่โมดูลของแต่ละแผนกแล้ว: เปลี่ยนที่อยู่แทนรายการเดิม (กดย้อนกลับไม่วนกลับมาหน้านี้)
-      const target = workRedirect(store.user(), params);
+    if (["work", "rods"].includes(params.get("p")) && store.user()) {
+      // งานของฉัน และคลังยางเส้นยาว ย้ายไปอยู่ที่โมดูลของแผนกแล้ว: เปลี่ยนที่อยู่แทนรายการเดิม (กดย้อนกลับไม่วนกลับมาหน้านี้)
+      const target = params.get("p") === "rods" ? rodsRedirect(store.user()) : workRedirect(store.user(), params);
       if (typeof location.replace === "function") location.replace(target);
       else location.hash = target;
       return undefined;

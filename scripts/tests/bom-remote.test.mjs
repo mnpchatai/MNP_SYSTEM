@@ -2863,8 +2863,8 @@ test("a transfer receipt does not touch the BOM job; when pieces pass finishing 
   await saved(rf(rbHead).run("endRest", { lotId: lot.result, reason: "ทดสอบเร่งด่วน" }));
   const transfer = await saved(rf(rbHead).run("createTransfer", { lotId: lot.result, qty: 10.5 }));
 
-  // SR รับมอบ: ไม่เขียน BOM จึงไม่มีอะไรให้ตามทัน
-  const sr = await asPersona(scene, "persona-sr", realClock);
+  // RB รับมอบ (20261204010000 · เดิม SR): ไม่เขียน BOM จึงไม่มีอะไรให้ตามทัน
+  const sr = await asPersona(scene, "persona-rb", realClock);
   await rf(sr).ensureLoaded();
   await sr.store.ensureLoaded();
   const view = sr.context.MNP_RUBBERFLOW;
@@ -2888,12 +2888,12 @@ test("a transfer receipt does not touch the BOM job; when pieces pass finishing 
   await saved(rf(rb2).run("saveMold", { id: "MD-1", name: "แม่พิมพ์ 2 cavity", kind: "mold", unit: "shot", perCycle: 2, cleanEvery: 1000, pmLimit: 50000 }));
   const ex = await saved(rf(rb2).run("recordExtrusion", { transferId: transfer.result, useKg: 10.5, thickness: 2.5, width: 18, weightPerM: 160, goodQty: 10, dieId: "DIE-1" }));
   const tr2 = await saved(rf(rb2).run("createTransfer", { lotId: ex.result, qty: 10 }));
-  const sr2 = await fresh("persona-sr");
+  const sr2 = await fresh("persona-rb");
   await saved(rf(sr2).run("receiveTransfer", { id: tr2.result, qtyReceived: 10 }));
   const rb3 = await fresh("persona-rb");
   const cu = await saved(rf(rb3).run("recordCuring", { transferId: tr2.result, useQty: 10, moldId: "MD-1", temp: 200, time: 150, pressure: 150, goodQty: 10 }));
   const tr3 = await saved(rf(rb3).run("createTransfer", { lotId: cu.result, qty: 10 }));
-  const sr3 = await fresh("persona-sr");
+  const sr3 = await fresh("persona-rb");
   await saved(rf(sr3).run("receiveTransfer", { id: tr3.result, qtyReceived: 10 }));
   await sr3.store.catchUp();
   assert.deepEqual([jobOf(sr3).qtyDone, jobOf(sr3).reports.length], [0, 0], "no receipt of any station moved the job");
@@ -2912,7 +2912,7 @@ test("a transfer receipt does not touch the BOM job; when pieces pass finishing 
   await rbView.showBomFeedback(beforeFirst);
   assert.deepEqual([jobOf(rb4).qtyDone, jobOf(rb4).reports.length], [0, 0], "the job waits for the SR store to receive the rods");
   assert.deepEqual(JSON.parse(JSON.stringify(rb4.store.data().rodLots.map((lot) => [lot.lotNo, lot.qtySent, lot.status, lot.jobNo]))), [[lot1.result, 6, "pending", "JOB-RB1"]]);
-  assert.match(rb4.log.toasts.at(-1)[0], new RegExp(`แท่งของล็อต ${lot1.result} 6 ส่งเข้าคลังแท่งยาว \\(SR\\) แล้ว รอ SR รับเข้าคลังและตรวจขนาด จึงนับเข้างาน BOM JOB-RB1`));
+  assert.match(rb4.log.toasts.at(-1)[0], new RegExp(`ยางเส้นยาวของล็อต ${lot1.result} 6 ส่งเข้าคลังยางเส้นยาว \\(SR\\) แล้ว รอ SR รับเข้าคลังและตรวจขนาด จึงนับเข้างาน BOM JOB-RB1`));
 
   // ล็อตที่ hold ไม่มีล็อตแท่ง (โมดูลไม่ตามทัน) จน QA ตัดสินเป็น pass
   const held = finishing(4, "hold");
@@ -2933,7 +2933,7 @@ test("a transfer receipt does not touch the BOM job; when pieces pass finishing 
   await qaView.showBomFeedback(beforeQa);
   assert.deepEqual(JSON.parse(JSON.stringify(qa.store.data().rodLots.map((lot) => [lot.qtySent, lot.status]).sort())), [[4, "pending"], [6, "pending"]], "the QA pass makes the second rod lot");
   assert.equal(jobOf(qa).qtyDone, 0);
-  assert.match(qa.log.toasts.at(-1)[0], new RegExp(`แท่งของล็อต ${lot2.result} 4 ส่งเข้าคลังแท่งยาว`));
+  assert.match(qa.log.toasts.at(-1)[0], new RegExp(`ยางเส้นยาวของล็อต ${lot2.result} 4 ส่งเข้าคลังยางเส้นยาว`));
   // ไม่ใช่ล็อตตกแต่ง / ไม่ใช่คำสั่งที่ป้อน: ไม่มีงานให้ตามทัน
   assert.equal(qaView.bomJobOfAction("addQcRecord", { lotId: "MX-NOPE" }), null);
   assert.equal(qaView.bomJobOfAction("createTransfer", { lotId: lot2.result }), null);
@@ -2975,7 +2975,7 @@ test("cancelling the WO in RubberFlow clears the job's link in BOM and the job o
   const again = env.context.MNP_BOM_DIALOGS.jobRubberflow(env.ctx("p=jobs&dept=RB"), { jobId: "JOB-RB1" });
   assert.match(again.html, /data-bom-rf-create/);
   assert.doesNotMatch(again.html, /ไว้แล้ว/);
-  assert.match(again.html, /ล็อตตกแต่งของ WO นั้นผ่าน QC แท่งของล็อตส่งเข้าคลังแท่งยาว \(SR\) และเมื่อ SR รับเข้าคลังและผ่านตรวจขนาด/, "the dialog says the rods of each finishing lot that passes go to the SR store and count once received");
+  assert.match(again.html, /ล็อตตกแต่งของ WO นั้นผ่าน QC ยางเส้นยาวของล็อตส่งเข้าคลังยางเส้นยาว \(SR\) และเมื่อ SR รับเข้าคลังและผ่านตรวจขนาด/, "the dialog says the rods of each finishing lot that passes go to the SR store and count once received");
   assert.doesNotMatch(again.html, /รับมอบใบส่งมอบของ WO นั้น/, "and no longer says a receipt does");
 });
 

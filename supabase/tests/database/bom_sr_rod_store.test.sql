@@ -2,7 +2,7 @@
 -- ตรวจทั้งฝั่งอนุญาตและปฏิเสธ: โครงสร้าง / สิทธิ์ของ bom_rod_lots และ bom_rod_moves, รายการ action, ล็อตตกแต่งของ WO ที่ผูกงาน BOM เป็นแท่งรอรับ (ไม่มีกล่อง
 -- ไม่ป้อนยอดให้งานตอนตกแต่ง) WO ที่ไม่ผูกงานยังมีกล่อง ล็อตที่ hold เกิดแท่งรอรับเมื่อ QA ตัดสิน pass (ครั้งเดียว) · receiveRods (SR / กลุ่มวางแผน ผ่าน = เครดิตงานและแยกส่วนเกิน
 -- เข้าสต็อกกลาง ไม่ผ่าน = กัก) สเปกต้องตรงผลคำนวณ ล็อตไม่มีสเปกต้องมีผลของ SR · decideRods (QA / กลุ่มวางแผน) · issueRods (ยอดถัง ถังของใบอื่น ทั้งหมดหรือไม่เลย)
--- · reverseRodIssue (ย้อนครั้งเดียว) · adjustRods (กลุ่มวางแผนเท่านั้น) · ปล่อยผลิตหยิบสต็อกกลางล็อตเก่าก่อน (BOM_ROD_EXCEEDS) · เปิดกลับเป็นร่างคืน · ใบที่ปิดคืนถังเป็นสต็อกกลาง
+-- · reverseRodIssue (ย้อนครั้งเดียว) · adjustRods (SR / กลุ่มวางแผน ตั้งแต่ 20261204010000 · GR ไม่ได้) · ปล่อยผลิตหยิบสต็อกกลางล็อตเก่าก่อน (BOM_ROD_EXCEEDS) · เปิดกลับเป็นร่างคืน · ใบที่ปิดคืนถังเป็นสต็อกกลาง
 -- · ชุด rodLots / rodMoves ใน snapshot / delta · audit · ล้างข้อมูลทดสอบ
 -- ข้อควรระวัง: ถ้าอ่านตารางตรงในนาม authenticated จะเกิด 42501 และทำให้ทั้งไฟล์ล้ม ("No plan found") อ่านตารางด้วย reset role เท่านั้น
 begin;
@@ -45,9 +45,8 @@ select ok(exists (select 1 from pg_constraint c where c.conrelid = 'public.bom_r
 select ok(exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'bom_rod_moves_reverses_idx' and indexdef like 'CREATE UNIQUE INDEX%'),
   'a move can be reversed only once (unique index on reverses_id)');
 select ok(array['receiveRods', 'decideRods', 'issueRods', 'reverseRodIssue', 'adjustRods'] <@ private.bom_client_actions()
-          and array['receiveRods', 'decideRods', 'issueRods', 'reverseRodIssue'] <@ private.bom_staff_actions()
-          and not ('adjustRods' = any (private.bom_staff_actions())),
-  'the five store actions are on the client list and all but adjustRods on the staff list');
+          and array['receiveRods', 'decideRods', 'issueRods', 'reverseRodIssue', 'adjustRods'] <@ private.bom_staff_actions(),
+  'the five store actions are on the client and the staff lists (SR adjusts since 20261204010000)');
 select ok(array['receiveFg', 'deliverFg', 'closeOrderShort', 'closeOrder', 'reverseFg', 'releaseOrder', 'reportJob', 'issueOrderParts'] <@ private.bom_client_actions()
           and array['receiveFg', 'deliverFg', 'closeOrderShort', 'closeOrder', 'reportJob', 'issueOrderParts'] <@ private.bom_staff_actions()
           and not ('reverseFg' = any (private.bom_staff_actions())),
@@ -169,7 +168,7 @@ create function sr_t.nmoves() returns integer language sql stable as $$ select j
 create function sr_t.audit() returns text language sql stable as $$ select public.app_bom_audit(1) -> 0 ->> 'detail' $$;
 create function sr_t.receive(p_no text, p_qty numeric, p_values jsonb, p_result text, p_note text) returns jsonb language sql volatile as $$
   select sr_t.save(jsonb_build_object('rodLots', jsonb_build_object('upsert', jsonb_build_array(jsonb_build_object(
-    'id', sr_t.lot_id(p_no), 'qtyReceived', p_qty, 'qc', jsonb_build_object('values', p_values, 'result', p_result, 'note', p_note))))), 'receiveRods')
+    'id', sr_t.lot_id(p_no), 'qtyReceived', p_qty, 'location', 'A-01', 'qc', jsonb_build_object('values', p_values, 'result', p_result, 'note', p_note))))), 'receiveRods')
 $$;
 create function sr_t.decide(p_no text, p_decision text, p_note text) returns jsonb language sql volatile as $$
   select sr_t.save(jsonb_build_object('rodLots', jsonb_build_object('upsert', jsonb_build_array(jsonb_build_object(
@@ -265,7 +264,7 @@ insert into public.rf_transfers (is_test, transfer_no, lot_no, order_no, from_st
   (true, 'TR-U1', 'CU-U1', 'WO-U', 'curing', 'finishing', 'pcs', 40, 0, 'in_transit');
 update public.rf_master_state set version = version + 1 where is_test;
 set local role authenticated;
-select public.app_sandbox_enter(current_setting('test.p_sbx_sr_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select sr_t.rf(jsonb_build_object('transfers', jsonb_build_object('upsert',
   (select jsonb_agg(x || jsonb_build_object('status', 'received', 'qtyReceived', (x ->> 'qtySent')::numeric))
    from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' in ('TR-S1', 'TR-N1', 'TR-U1')))), 'receiveTransfer');
@@ -338,7 +337,7 @@ insert into public.rf_transfers (is_test, transfer_no, lot_no, order_no, from_st
   (true, 'TR-N2', 'CU-N2', 'WO-N1', 'curing', 'finishing', 'pcs', 10, 0, 'in_transit');
 update public.rf_master_state set version = version + 1 where is_test;
 set local role authenticated;
-select public.app_sandbox_enter(current_setting('test.p_sbx_sr_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select sr_t.rf(jsonb_build_object('transfers', jsonb_build_object('upsert',
   (select jsonb_agg(x || jsonb_build_object('status', 'received', 'qtyReceived', (x ->> 'qtySent')::numeric))
    from jsonb_array_elements(public.app_rf_master() -> 'transfers') x where x ->> 'id' = 'TR-N2'))), 'receiveTransfer');
@@ -401,11 +400,11 @@ select throws_ok($$ select sr_t.receive('FN-S1', 120, '{"thickness":-2.5,"width"
 select throws_ok($$ select sr_t.receive('FN-S1', 120, current_setting('test.pass')::jsonb, 'maybe', '') $$, 'BOM_INVALID_ROD', 'an unknown result is refused');
 select throws_ok($$ select sr_t.receive('FN-S1', 120, current_setting('test.thick')::jsonb, 'fail', 'ab') $$, 'BOM_INVALID_ROD', 'a failed receipt needs a note of three characters');
 select throws_ok($$ select sr_t.save(jsonb_build_object('rodLots', jsonb_build_object('upsert', jsonb_build_array(jsonb_build_object(
-  'id', '00000000-0000-4000-8000-0000000000ff', 'qtyReceived', 1, 'qc', '{"values":{},"result":"pass","note":""}'::jsonb)))), 'receiveRods') $$,
+  'id', '00000000-0000-4000-8000-0000000000ff', 'qtyReceived', 1, 'location', 'A-01', 'qc', '{"values":{},"result":"pass","note":""}'::jsonb)))), 'receiveRods') $$,
   'BOM_INVALID_ROD', 'an unknown lot is refused');
 select throws_ok($$ select sr_t.save(jsonb_build_object('rodLots', jsonb_build_object('upsert', jsonb_build_array(
-  jsonb_build_object('id', sr_t.lot_id('FN-S1'), 'qtyReceived', 1, 'qc', '{"values":{},"result":"pass","note":""}'::jsonb),
-  jsonb_build_object('id', sr_t.lot_id('FN-N1'), 'qtyReceived', 1, 'qc', '{"values":{},"result":"pass","note":""}'::jsonb)))), 'receiveRods') $$,
+  jsonb_build_object('id', sr_t.lot_id('FN-S1'), 'qtyReceived', 1, 'location', 'A-01', 'qc', '{"values":{},"result":"pass","note":""}'::jsonb),
+  jsonb_build_object('id', sr_t.lot_id('FN-N1'), 'qtyReceived', 1, 'location', 'A-01', 'qc', '{"values":{},"result":"pass","note":""}'::jsonb)))), 'receiveRods') $$,
   'BOM_INVALID_ROD', 'one lot per receipt');
 select throws_ok($$ select sr_t.save('{"rodLots":{"upsert":[]}}'::jsonb, 'receiveRods') $$, 'BOM_INVALID_ROD', 'an empty request list is refused');
 select throws_ok($$ select sr_t.save(jsonb_build_object('rodLots', jsonb_build_object('upsert', jsonb_build_array(jsonb_build_object('id', sr_t.lot_id('FN-S1'))))), 'issueRods') $$,
@@ -561,9 +560,10 @@ select is((select jsonb_build_object('qty', (m ->> 'qty')::numeric, 'owner', m -
 select throws_ok($$ select sr_t.moves('[{"id":"00000000-0000-4000-8000-000000000013","kind":"unissue","reversesId":"00000000-0000-4000-8000-000000000001","note":"ซ้ำ"}]'::jsonb, 'reverseRodIssue') $$,
   'BOM_INVALID_TRANSITION', 'an issue is reversed only once');
 
--- 12. adjustRods: กลุ่มวางแผนเท่านั้น เฉพาะสต็อกกลาง ------------------------------------------------------------------------------------------
+-- 12. adjustRods: SR หรือกลุ่มวางแผน (SR ตั้งแต่ 20261204010000 ดู bom_sr_store_module.test.sql) เฉพาะสต็อกกลาง ------------------------------------------------------------------------------------------
 select set_config('test.adj', jsonb_build_object('id', '00000000-0000-4000-8000-000000000021', 'kind', 'adjust', 'lotId', sr_t.lot_id('FN-S3'), 'qty', -4, 'note', 'นับจริงขาด 4')::text, true);
-select throws_ok($$ select sr_t.moves(jsonb_build_array(current_setting('test.adj')::jsonb), 'adjustRods') $$, 'BOM_FORBIDDEN', 'SR cannot adjust the stock (planners only)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_staff')::uuid);
+select throws_ok($$ select sr_t.moves(jsonb_build_array(current_setting('test.adj')::jsonb), 'adjustRods') $$, 'BOM_FORBIDDEN', 'GR staff cannot adjust the stock (SR and planners do)');
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
 select throws_ok($$ select sr_t.moves(jsonb_build_array(current_setting('test.adj')::jsonb), 'adjustRods') $$, 'BOM_FORBIDDEN', 'nor can QA staff');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
@@ -682,9 +682,9 @@ select is(sr_t.bal('FN-N1', '251202-25002'), 35::numeric, 'from that bucket');
 
 -- 15. ชุดเรคอร์ด snapshot / delta และสิทธิ์อ่าน ------------------------------------------------------------------------------------------------
 select is((select array_agg(k order by k collate "C") from jsonb_object_keys(sr_t.lot('FN-S1')) k),
-  array['createdAt', 'decidedAt', 'decidedBy', 'decision', 'decisionNote', 'id', 'itemCode', 'jobNo', 'lotNo', 'orderId', 'qc', 'qtyReceived', 'qtySent',
-        'receivedAt', 'receivedBy', 'recipeCode', 'spec', 'status', 'uom', 'woNo'],
-  'the rod lot record has its twenty fields');
+  array['createdAt', 'decidedAt', 'decidedBy', 'decision', 'decisionNote', 'id', 'itemCode', 'jobNo', 'location', 'lotNo', 'orderId', 'qc', 'qtyReceived', 'qtySent',
+        'receivedAt', 'receivedBy', 'recipeCode', 'source', 'sourceNote', 'spec', 'status', 'uom', 'woNo'],
+  'the rod lot record has its twenty-three fields (location, source, sourceNote since 20261204010000)');
 select is((select array_agg(k order by k collate "C") from jsonb_object_keys((select m from jsonb_array_elements(public.app_bom_master() -> 'rodMoves') m limit 1)) k),
   array['at', 'by', 'forOrderId', 'id', 'itemCode', 'kind', 'lotId', 'note', 'ownerOrderId', 'qty', 'reversesId'],
   'the rod move record has its eleven fields (by / at like fgMoves)');
