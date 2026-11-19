@@ -362,8 +362,8 @@ select set_config('test.bv2', sr_t.ver()::text, true);
 select sr_t.rf(jsonb_build_object('lots', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.fn')::jsonb || '{"id":"FN-U1","orderId":"WO-U","goodQty":40,"params":{"perBox":20},"sources":[{"type":"transfer","id":"TR-U1","lotId":"CU-U1","qty":40}]}'::jsonb))),
   'recordFinishing');
-select is((select count(*)::integer from jsonb_array_elements(public.app_rf_master() -> 'fgBoxes') b where b ->> 'lotId' = 'FN-U1' and b ->> 'status' = 'in_stock'), 2,
-  'a work order sold as finished goods keeps its boxes (WH ships them)');
+select is((select count(*)::integer from jsonb_array_elements(public.app_rf_master() -> 'fgBoxes') b where b ->> 'lotId' = 'FN-U1' and b ->> 'status' = 'pending_wh'), 2,
+  'a work order sold as finished goods keeps its boxes (waiting for the WH receipt since 20261205010000)');
 select ok(sr_t.lot('FN-U1') is null, 'and makes no rod lot');
 select is(sr_t.ver(), current_setting('test.bv2')::bigint, 'nor moves the BOM counter');
 select sr_t.rf(jsonb_build_object('lots', jsonb_build_object('upsert', jsonb_build_array(

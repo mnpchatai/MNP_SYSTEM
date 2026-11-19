@@ -152,7 +152,7 @@ test("the persona decides the RubberFlow role and the planner / RB member / RB h
   // สิทธิ์ของปุ่มหน้างาน (ฐานข้อมูลตัดสินจริง): ST รับวัตถุดิบ · ST/QA กักกันล็อต · RB เบิก-ชั่ง-ผลิต-ส่งมอบ · SR รับมอบ · WH ส่งกล่อง · QA ผลตรวจ/NCR · RB กรอกการแก้ไข NCR · RB แม่พิมพ์ · กลุ่มวางแผนทุกอย่าง
   const who = Object.fromEntries([["rb", "RB"], ["st", "ST"], ["sr", "SR"], ["wh", "WH"], ["qa", "QA"], ["pp", "PP"], ["mt", "MT"]].map(([key, dept]) => [key, storeApi.personaUser(employee("staff", dept))]));
   // รับวัตถุดิบ/สั่งซื้อ/ยกเลิกใบสั่งซื้อ: แผนก ST เท่านั้น (กลุ่มวางแผนและ RB ดูหน้าสั่งซื้อได้อย่างเดียว) · admin ทำได้ ดูข้อสุดท้าย
-  const matrix = { receiveMaterial: ["st"], purchase: ["st"], cancelPurchase: ["st"], viewPurchase: ["st", "pp", "rb"], holdMaterial: ["st", "qa", "pp"], requisition: ["rb", "pp"], station: ["rb", "pp"], sendTransfer: ["rb", "pp"], receiveTransfer: ["rb", "pp"], shipBoxes: ["wh", "pp"], qcDecision: ["qa", "pp"], fillNcr: ["qa", "rb", "pp"], editMold: ["rb", "pp"] };
+  const matrix = { receiveMaterial: ["st"], purchase: ["st"], cancelPurchase: ["st"], viewPurchase: ["st", "pp", "rb"], holdMaterial: ["st", "qa", "pp"], requisition: ["rb", "pp"], station: ["rb", "pp"], sendTransfer: ["rb", "pp"], receiveTransfer: ["rb", "pp"], shipBoxes: ["wh"], receiveBoxes: ["wh"], reverseBoxes: [], qcDecision: ["qa", "pp"], fillNcr: ["qa", "rb", "pp"], editMold: ["rb", "pp"] };
   for (const [permission, allowed] of Object.entries(matrix)) {
     for (const key of Object.keys(who)) assert.equal(storeApi.can(who[key], permission), allowed.includes(key), `${permission} for ${key}`);
   }
@@ -846,7 +846,7 @@ test("the whole line on the database: receive → FEFO requisition (issued at on
   // ตกแต่ง: 98 ชิ้น กล่องละ 40 → 3 กล่อง · ยอดผลิตของใบ 98 ≥ เป้า 90 → ใบปิดเอง
   const fn = (await go(s, rig, "persona-rb", "recordFinishing", { transferId: tr3, useQty: 98, passedQty: 98, scrapQty: 0, perBox: 40, qcResult: "pass", grade: "A", shift: "D" })).result;
   const finished = await master();
-  assert.deepEqual(finished.fgBoxes.map((box) => [box.id, box.qty, box.status]), [[`BOX-${TODAY}-01-001`, 40, "in_stock"], [`BOX-${TODAY}-01-002`, 40, "in_stock"], [`BOX-${TODAY}-01-003`, 18, "in_stock"]]);
+  assert.deepEqual(finished.fgBoxes.map((box) => [box.id, box.qty, box.status]), [[`BOX-${TODAY}-01-001`, 40, "pending_wh"], [`BOX-${TODAY}-01-002`, 40, "pending_wh"], [`BOX-${TODAY}-01-003`, 18, "pending_wh"]]);
   assert.deepEqual([finished.orders[0].producedQty, finished.orders[0].status], [98, "completed"]);
   assert.equal(finished.lots.find((row) => row.id === fn).countedToOrder, true);
   await inSync(s, rig, "finished");
@@ -857,6 +857,12 @@ test("the whole line on the database: receive → FEFO requisition (issued at on
   const record = (await master()).qcRecords[0];
   assert.deepEqual([record.result, record.inspector, record.tests.map((test) => test.pass)], ["pass", "ธนา ตรวจสอบ", [true, true]]);
   await inSync(s, rig, "qc");
+  // 20261205010000: กล่องรอคลังสินค้าสำเร็จรูป (WH) รับเข้าก่อน (ส่งมอบก่อนรับไม่ได้) · WH รับทั้งล็อตทีเดียว
+  await s.as("persona-wh");
+  assert.match(rig.store.run("shipBoxes", { ids: [`BOX-${TODAY}-01-001`] }).error.message, /ไม่พร้อมส่ง/, "a box waiting for the WH receipt cannot ship");
+  await go(s, rig, "persona-wh", "receiveBoxes", { lotId: fn });
+  assert.deepEqual((await master()).fgBoxes.map((box) => [box.status, box.receivedBy]), [["in_stock", "สุดา คลังสินค้า"], ["in_stock", "สุดา คลังสินค้า"], ["in_stock", "สุดา คลังสินค้า"]]);
+  await inSync(s, rig, "received");
   await go(s, rig, "persona-wh", "shipBoxes", { ids: [`BOX-${TODAY}-01-001`, `BOX-${TODAY}-01-002`] });
   const shipped = (await master()).fgBoxes;
   assert.deepEqual(shipped.map((box) => [box.status, box.shippedBy]), [["shipped", "สุดา คลังสินค้า"], ["shipped", "สุดา คลังสินค้า"], ["in_stock", undefined]]);
@@ -866,7 +872,7 @@ test("the whole line on the database: receive → FEFO requisition (issued at on
   // ประวัติการใช้งานของฐานข้อมูลบอกการกระทำทุกขั้น
   await rig.store.loadAudit(true);
   const actions = rig.store.audit().entries.map((entry) => entry.action);
-  for (const name of ["receiveMaterial", "createRequisition", "recordMixing", "endRest", "createTransfer", "receiveTransfer", "recordExtrusion", "recordCuring", "recordFinishing", "addQcRecord", "shipBoxes", "saveMold"]) assert.ok(actions.includes(name), name);
+  for (const name of ["receiveMaterial", "createRequisition", "recordMixing", "endRest", "createTransfer", "receiveTransfer", "recordExtrusion", "recordCuring", "recordFinishing", "addQcRecord", "receiveBoxes", "shipBoxes", "saveMold"]) assert.ok(actions.includes(name), name);
   // ล้างแม่พิมพ์: ตัวนับกลับเป็น 0 (แม่พิมพ์ที่ไม่มีการใช้งานไม่มีอะไรให้ล้าง)
   await go(s, rig, "persona-rb", "cleanMold", { id: "DIE-1" });
   assert.equal((await master()).molds.find((row) => row.id === "DIE-1").usageSinceClean, 0);
@@ -1119,7 +1125,7 @@ test("mixing holds the lot per stage, the QC decision releases it and adds the p
   await inSync(s, rig, "finishing on hold");
   await go(s, rig, "persona-qa", "addQcRecord", { lotId: fn, values: { hardness: 66 }, result: "pass" });
   snapshot = await s.call("app_rf_master");
-  assert.deepEqual([snapshot.orders[0].producedQty, snapshot.fgBoxes[0].status, snapshot.lots.find((row) => row.id === fn).countedToOrder, snapshot.orders[0].status], [20, "in_stock", true, "in_progress"]);
+  assert.deepEqual([snapshot.orders[0].producedQty, snapshot.fgBoxes[0].status, snapshot.lots.find((row) => row.id === fn).countedToOrder, snapshot.orders[0].status], [20, "pending_wh", true, "in_progress"]);
   await inSync(s, rig, "finishing released by QA");
 
   // NCR: QA เปิด (ล็อตที่ผ่านถูกกักกัน) · RB กรอกการแก้ไข/ป้องกันได้แต่ปิดไม่ได้ · QA ปิดได้เมื่อมีครบทั้งสอง
@@ -1255,7 +1261,7 @@ test("a finishing lot of a WO linked to a BOM job makes no boxes and becomes a p
   const trPlain3 = await toFinishing(plain, plainRig, trPlain, async () => assert.equal((await plain.call("app_bom_master")).version, bomVersion));
   const fnPlain = (await go(plain, plainRig, "persona-rb", "recordFinishing", { transferId: trPlain3, useQty: 50, passedQty: 50, scrapQty: 0, perBox: 40, qcResult: "pass", grade: "A", shift: "D" })).result;
   assert.equal((await plain.call("app_bom_master")).version, bomVersion, "a work order without a linked job leaves BOM alone");
-  assert.deepEqual((await plain.call("app_rf_master")).fgBoxes.filter((box) => box.lotId === fnPlain).map((box) => [box.qty, box.status]), [[40, "in_stock"], [10, "in_stock"]], "rods sold as finished goods still get boxes for WH to ship");
+  assert.deepEqual((await plain.call("app_rf_master")).fgBoxes.filter((box) => box.lotId === fnPlain).map((box) => [box.qty, box.status]), [[40, "pending_wh"], [10, "pending_wh"]], "rods sold as finished goods still get boxes, waiting for the WH receipt");
   assert.equal((await rawFinish(plain, prepared.order, trPlain3, `FN-${TODAY}-97`, {}, 5)).error?.code, "RF_INVALID_LOT", "a work order sold as finished goods still needs perBox");
 });
 
@@ -1383,7 +1389,7 @@ test("the database builds the boxes of a finishing lot itself: boxes sent by a c
   const reply = await s.mock.client.rpc("app_rf_save", { p_changes: { lots: { upsert: [lot] }, fgBoxes: { upsert: boxes } }, p_base_version: snapshot.version, p_action: "recordFinishing" });
   assert.equal(reply.error, null, reply.error?.message);
   const after = await s.call("app_rf_master");
-  assert.deepEqual(after.fgBoxes.map((box) => [box.id, box.qty, box.status]), [[`BOX-${TODAY}-99-001`, 40, "in_stock"], [`BOX-${TODAY}-99-002`, 40, "in_stock"], [`BOX-${TODAY}-99-003`, 18, "in_stock"]]);
+  assert.deepEqual(after.fgBoxes.map((box) => [box.id, box.qty, box.status]), [[`BOX-${TODAY}-99-001`, 40, "pending_wh"], [`BOX-${TODAY}-99-002`, 40, "pending_wh"], [`BOX-${TODAY}-99-003`, 18, "pending_wh"]]);
 
   // แม่พิมพ์ใหม่: ยอดใช้งานจาก client เมิน เวลาล้างล่าสุดเป็นเวลาเซิร์ฟเวอร์ · ชื่อยาวเกิน 120 ตัวอักษรไม่รับ
   const mold = { id: "DIE-NEW", name: "หัวดายใหม่", kind: "die", unit: "m", perCycle: 1, cleanEvery: 5000, pmLimit: 100000, totalUsage: 999, usageSinceClean: 50, lastCleanAt: 1 };

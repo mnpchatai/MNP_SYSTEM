@@ -73,7 +73,10 @@
     station: (user) => Boolean(user.planner || user.rb), // ผสม ฉีด อบ ตกแต่ง ข้ามเวลาบ่ม ทำความสะอาดแม่พิมพ์: แผนก RB
     sendTransfer: (user) => Boolean(user.planner || user.rb), // สร้างใบส่งมอบ WIP: แผนก RB
     receiveTransfer: (user) => Boolean(user.planner || user.rb), // รับมอบ WIP ระหว่างสถานี: แผนก RB (20261204010000 · เดิมแผนก SR)
-    shipBoxes: (user) => Boolean(user.planner || user.wh), // ส่งมอบกล่องสินค้า: คลังสินค้า (WH)
+    // กล่องสินค้า (20261205010000): รับเข้าคลัง / ส่งมอบให้ลูกค้า = แผนก WH ทุกบทบาท หรือ admin (กลุ่มวางแผนดูอย่างเดียว) · ย้อน = ผู้จัดการแผนก WH หรือ admin
+    receiveBoxes: (user) => Boolean(user.wh || user.role === "admin"),
+    shipBoxes: (user) => Boolean(user.wh || user.role === "admin"),
+    reverseBoxes: (user) => Boolean(user.whHead || user.role === "admin"),
     qc: (user) => Boolean(user.planner || user.qa), // ผลตรวจ เปิด/ปิด NCR: แผนก QA
     fillNcr: (user) => Boolean(user.planner || user.qa || user.rb), // กรอกการแก้ไข/ป้องกันของ NCR ที่เปิดอยู่: QA หรือ RB
     editMold: (user) => Boolean(user.planner || user.rb), // เพิ่ม/แก้แม่พิมพ์: แผนก RB
@@ -94,7 +97,9 @@
     station: "บันทึกการผลิตของสถานีได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
     sendTransfer: "สร้างใบส่งมอบ WIP ได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
     receiveTransfer: "รับมอบ WIP ได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
-    shipBoxes: "ส่งมอบกล่องสินค้าได้โดยแผนกคลังสินค้า (WH) หรือฝ่ายวางแผน",
+    receiveBoxes: "รับกล่องเข้าคลังได้โดยแผนกคลังสินค้าสำเร็จรูป (WH) หรือผู้ดูแลระบบเท่านั้น",
+    shipBoxes: "ส่งมอบกล่องสินค้าได้โดยแผนกคลังสินค้าสำเร็จรูป (WH) หรือผู้ดูแลระบบเท่านั้น",
+    reverseBoxes: "ย้อนการรับเข้าหรือการส่งมอบกล่องได้โดยผู้จัดการแผนกคลังสินค้าสำเร็จรูป (WH) หรือผู้ดูแลระบบเท่านั้น",
     qc: "บันทึกผลตรวจและเปิด/ปิด NCR ได้โดยแผนก QA หรือฝ่ายวางแผน",
     fillNcr: "กรอกการแก้ไขและป้องกันของ NCR ได้โดยแผนก QA พนักงานแผนก RB หรือฝ่ายวางแผน",
     editMold: "เพิ่ม/แก้แม่พิมพ์ได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
@@ -847,6 +852,9 @@
     return lot.id;
   }
 
+  // ปลายทางของล็อตตกแต่งที่ผ่าน (rf_lots.destination ของ 20261205010000)
+  const FINISH_DESTINATIONS = Object.freeze(["sr", "customer"]);
+
   function recordFinishing(d, p, ctx) {
     needRight(ctx, "station");
     const useQty = num(p.useQty, "ปริมาณที่รับเข้าตกแต่ง");
@@ -854,20 +862,31 @@
     const passed = num(p.passedQty, "จำนวนผ่าน QC");
     const scrap = Number(p.scrapQty) || 0;
     const order = find(d.orders, transfer.orderId, "ใบสั่งผลิต");
-    // WO ที่มาจากงาน RB ของ BOM ไม่มีกล่อง: จำนวนต่อกล่องไม่บังคับ (ตรงกับ rf_save_lots ของ 20261202010000) · ส่งมาต้องมากกว่า 0 ทุก WO
-    const perBox = order.sourceJobId && String(p.perBox ?? "").trim() === "" ? null : num(p.perBox, "จำนวนต่อกล่อง");
+    const result = p.qcResult || "pass";
+    // ปลายทางของงานที่ผ่าน (ตรงกับ rf_save_lots ของ 20261205010000): sr = คลังยางเส้นยาว (เฉพาะ WO ที่มาจากงาน RB ของ BOM) · customer = ส่งมอบให้ลูกค้าผ่านคลังสินค้าสำเร็จรูป (WH)
+    // ไม่ระบุ = WO ที่ผูกงานไป sr · WO ที่ไม่ผูกงานไป customer เสมอ (หน้าฟอร์มให้ WO ที่ผูกงานเลือกเอง) · งานที่กักรอ QC ยังไม่มีปลายทาง
+    const linked = Boolean(order.sourceJobId);
+    let destination = String(p.destination ?? "").trim() || null;
+    if (result === "pass") {
+      destination = destination ?? (linked ? "sr" : "customer");
+      if (!FINISH_DESTINATIONS.includes(destination)) fail("ปลายทางของงานที่ผ่านไม่ถูกต้อง");
+      if (destination === "sr" && !linked) fail("ใบสั่งผลิตนี้ไม่ได้มาจากงาน BOM ส่งเข้าคลังยางเส้นยาว (SR) ไม่ได้ ให้ส่งมอบให้ลูกค้าผ่านคลังสินค้าสำเร็จรูป (WH)");
+    } else if (destination) {
+      fail("งานที่กักรอ QC ยังไม่มีปลายทาง");
+    }
+    // กล่องเกิดเมื่อของไปหาลูกค้า (WO ที่ไม่ผูกงานทุกผล หรือ WO ที่ผูกงานที่เลือกส่งมอบให้ลูกค้า): จำนวนต่อกล่องบังคับ · ยางเส้นยาวที่ไป SR และล็อตกักของ WO ที่ผูกงานไม่มีกล่อง
+    const boxed = !linked || destination === "customer";
+    const perBox = !boxed && String(p.perBox ?? "").trim() === "" ? null : num(p.perBox, "จำนวนต่อกล่อง");
     if (perBox !== null && perBox <= 0) fail("จำนวนต่อกล่องต้องมากกว่า 0");
     if (passed + scrap > useQty + 1e-9) fail("งานผ่าน + ของเสีย ต้องไม่เกินปริมาณที่รับเข้า");
-    const result = p.qcResult || "pass";
     const lot = newLot(d, "finishing", "FN", {
       orderId: transfer.orderId, uom: order.uom, shift: p.shift, grade: p.grade || "A",
       sources: [{ type: "transfer", id: transfer.id, lotId: transfer.lotId, qty: useQty }],
       params: perBox === null ? {} : { perBox }, goodQty: passed, scrapQty: scrap, scrapReason: p.scrapReason || "",
-      qc: result, holdReasons: result === "pass" ? [] : ["ผลตรวจตกแต่งไม่ผ่าน/รอตัดสิน"],
+      qc: result, holdReasons: result === "pass" ? [] : ["ผลตรวจตกแต่งไม่ผ่าน/รอตัดสิน"], destination, whCredit: null,
     }, ctx);
-    // WO ที่มาจากงาน RB ของ BOM (sourceJobId): แท่งยาวไปคลังแท่งยาว (SR) ของ BOM ไม่ใช่สินค้าขาย จึงไม่สร้างกล่อง (ตรงกับ rf_save_lots ของ 20261202010000
-    // ที่สร้างล็อตแท่งรอ SR รับเมื่อล็อตผ่าน QC) · WO ที่ไม่ผูกงาน BOM (ขายเป็นสินค้า) สร้างกล่องให้คลังสินค้าส่งมอบเหมือนเดิม
-    let left = order.sourceJobId ? 0 : passed;
+    // กล่อง: ผ่าน = รอคลังสินค้าสำเร็จรูป (WH) รับเข้า (pending_wh) · กัก = hold · ติดลูกค้าและเลข PO / PI ของใบสั่งผลิตไว้กับกล่อง (WH ส่งมอบให้ลูกค้ารายนั้น)
+    let left = boxed ? passed : 0;
     let i = 0;
     while (left > 1e-9) {
       const qty = Math.min(perBox, left);
@@ -875,14 +894,16 @@
       d.fgBoxes.unshift({
         id: `${lot.id.replace("FN", "BOX")}-${String(i).padStart(3, "0")}`, lotId: lot.id, orderId: order.id,
         recipeId: order.recipeId, productCode: order.productCode, qty: +qty.toFixed(3), uom: order.uom, grade: lot.grade,
-        status: result === "pass" ? "in_stock" : "hold", createdAt: ctx.now,
+        status: result === "pass" ? "pending_wh" : "hold", createdAt: ctx.now, customer: order.customer ?? "", customerPo: order.customerPo ?? "", moves: [],
       });
       left -= qty;
     }
     lot.boxes = i;
     lot.countedToOrder = result === "pass";
     if (result === "pass") addProduced(d, order.id, passed, ctx);
-    audit(d, ctx, "บันทึกการตกแต่ง/บรรจุ", `${lot.id} ${passed} ${order.uom} → ${order.sourceJobId ? `คลังยางเส้นยาว (SR) ของงาน ${order.sourceJobId}` : `${i} กล่อง`}`);
+    const where = destination === "sr" ? `คลังยางเส้นยาว (SR) ของงาน ${order.sourceJobId}`
+      : destination === "customer" ? `${i} กล่อง รอคลังสินค้าสำเร็จรูป (WH) รับเข้า` : `${i} กล่อง กักรอ QC`;
+    audit(d, ctx, "บันทึกการตกแต่ง/บรรจุ", `${lot.id} ${passed} ${order.uom} → ${where}`);
     return lot.id;
   }
 
@@ -903,17 +924,85 @@
     }
   }
 
+  // ---------- กล่องสินค้า: คลังสินค้าสำเร็จรูป (WH) รับเข้า ส่งมอบให้ลูกค้า และย้อน (20261205010000) ----------
+  // ทาง: pending_wh (รอ WH รับ) → in_stock (รับเข้า ทั้งล็อต) → shipped (ส่งมอบ รายกล่อง) · ย้อนรับเข้า in_stock → pending_wh (ทั้งล็อต ไม่มีกล่องที่ส่งแล้ว / กัก)
+  // ย้อนส่งมอบ shipped → in_stock (รายกล่อง) · ย้อนต้องมีเหตุผล 3-300 ตัวอักษร (ฐานข้อมูลอ่านจากรายการท้ายของ moves ที่ส่งไป) · ทุกการเปลี่ยนต่อท้าย moves
+  // ฐานข้อมูลนับยอดเข้างาน RB ของใบเมื่อรับล็อต customer ของ WO ที่ผูกงาน และถอนยอดเมื่อย้อนรับเข้า (หน้าจอไม่แตะงาน BOM: ส่วนต่างของ BOM มาเอง)
+  const BOX_REASON_MIN = 3;
+  const BOX_REASON_MAX = 300;
+  const boxMove = (kind, note, ctx) => ({ kind, at: ctx.now, by: ctx.user?.name ?? "", note });
+  function boxReason(value) {
+    const note = String(value ?? "").trim();
+    if (note.length < BOX_REASON_MIN) fail(`กรุณาระบุเหตุผลอย่างน้อย ${BOX_REASON_MIN} ตัวอักษร`);
+    if (note.length > BOX_REASON_MAX) fail(`เหตุผลยาวได้ไม่เกิน ${BOX_REASON_MAX} ตัวอักษร`);
+    return note;
+  }
+
+  // รับกล่องของล็อตเข้าคลังสินค้าสำเร็จรูปทีเดียวทั้งล็อต (ทุกกล่องที่รอ WH รับ) ไม่มีตำแหน่งจัดเก็บ
+  function receiveBoxes(d, { lotId }, ctx) {
+    needRight(ctx, "receiveBoxes");
+    const lot = find(d.lots, lotId, "ล็อต");
+    const boxes = d.fgBoxes.filter((box) => box.lotId === lot.id && box.status === "pending_wh");
+    if (!boxes.length) fail(`ล็อต ${lot.id} ไม่มีกล่องที่รอคลังสินค้าสำเร็จรูป (WH) รับเข้า`);
+    boxes.forEach((box) => {
+      box.status = "in_stock";
+      box.receivedAt = ctx.now;
+      box.receivedBy = ctx.user?.name ?? "";
+      box.moves = [...(box.moves ?? []), boxMove("receive", "", ctx)];
+    });
+    audit(d, ctx, "รับกล่องเข้าคลังสินค้าสำเร็จรูป (WH)", `${lot.id} ${boxes.length} กล่อง`);
+    return lot.id;
+  }
+
   function shipBoxes(d, { ids }, ctx) {
     needRight(ctx, "shipBoxes");
     if (!Array.isArray(ids) || !ids.length) fail("กรุณาเลือกกล่องที่จะส่งมอบ");
     ids.forEach((id) => {
       const box = find(d.fgBoxes, id, "กล่อง");
-      if (box.status !== "in_stock") fail(`กล่อง ${id} ไม่พร้อมส่ง`);
+      if (box.status !== "in_stock") fail(`กล่อง ${id} ไม่พร้อมส่ง${box.status === "pending_wh" ? " (รอคลังสินค้าสำเร็จรูปรับเข้าก่อน)" : ""}`);
       box.status = "shipped";
       box.shippedAt = ctx.now;
       box.shippedBy = ctx.user?.name;
+      box.moves = [...(box.moves ?? []), boxMove("ship", "", ctx)];
     });
     audit(d, ctx, "ส่งมอบสินค้า", `${ids.length} กล่อง`);
+  }
+
+  // ย้อนการรับเข้าทั้งล็อต (รับผิดล็อต): กล่องกลับไปรอ WH รับ · ล็อตที่มีกล่องส่งมอบแล้วหรือถูกกักย้อนไม่ได้ (ย้อนส่งมอบ / รอ QA ก่อน)
+  function reverseBoxReceipt(d, { lotId, note }, ctx) {
+    needRight(ctx, "reverseBoxes");
+    const reason = boxReason(note);
+    const lot = find(d.lots, lotId, "ล็อต");
+    const boxes = d.fgBoxes.filter((box) => box.lotId === lot.id);
+    if (boxes.some((box) => box.status === "shipped" || box.status === "hold")) {
+      fail(`ล็อต ${lot.id} มีกล่องที่ส่งมอบแล้วหรือถูกกักรอ QC ย้อนการรับเข้าไม่ได้ (ย้อนการส่งมอบกล่องนั้นก่อน)`);
+    }
+    const inStock = boxes.filter((box) => box.status === "in_stock");
+    if (!inStock.length) fail(`ล็อต ${lot.id} ไม่มีกล่องที่รับเข้าคลังแล้ว`);
+    inStock.forEach((box) => {
+      box.status = "pending_wh";
+      delete box.receivedAt;
+      delete box.receivedBy;
+      box.moves = [...(box.moves ?? []), boxMove("unreceive", reason, ctx)];
+    });
+    audit(d, ctx, "ย้อนการรับกล่องเข้าคลังสินค้าสำเร็จรูป (WH)", `${lot.id} ${inStock.length} กล่อง: ${reason}`);
+    return lot.id;
+  }
+
+  // ย้อนการส่งมอบรายกล่อง (ส่งผิด / ลูกค้าคืน): กล่องกลับเข้าคลัง
+  function reverseBoxShip(d, { ids, note }, ctx) {
+    needRight(ctx, "reverseBoxes");
+    const reason = boxReason(note);
+    if (!Array.isArray(ids) || !ids.length) fail("กรุณาเลือกกล่องที่จะย้อนการส่งมอบ");
+    ids.forEach((id) => {
+      const box = find(d.fgBoxes, id, "กล่อง");
+      if (box.status !== "shipped") fail(`กล่อง ${id} ยังไม่ได้ส่งมอบ`);
+      box.status = "in_stock";
+      delete box.shippedAt;
+      delete box.shippedBy;
+      box.moves = [...(box.moves ?? []), boxMove("unship", reason, ctx)];
+    });
+    audit(d, ctx, "ย้อนการส่งมอบสินค้า", `${ids.length} กล่อง: ${reason}`);
   }
 
   // ---------- ส่งมอบ WIP (Gatekeeper) ----------
@@ -982,12 +1071,14 @@
     d.qcRecords.unshift({ id, lotId: lot.id, orderId: lot.orderId, stage: lot.stage, tests, result, note: p.note || "", inspector: ctx.user?.name, at: ctx.now });
     lot.qc = result;
     if (result === "pass") lot.holdReasons = [];
+    // กล่องที่ยังไม่ส่งมอบ (ตรงกับ rf_save_qc ของ 20261205010000): ผ่าน = กลับที่เดิม (WH รับเข้าแล้ว = in_stock · ยังไม่รับ = pending_wh) · อื่น = hold
     d.fgBoxes.filter((box) => box.lotId === lot.id && box.status !== "shipped").forEach((box) => {
-      box.status = result === "pass" ? "in_stock" : "hold";
+      box.status = result !== "pass" ? "hold" : box.receivedAt ? "in_stock" : "pending_wh";
     });
     if (lot.stage === "finishing" && result === "pass" && !lot.countedToOrder) {
-      // ล็อตตกแต่งที่เคยถูกกักกันนับเข้าใบสั่งผลิตเมื่อผ่านเท่านั้น
+      // ล็อตตกแต่งที่เคยถูกกักกันนับเข้าใบสั่งผลิตเมื่อผ่านเท่านั้น · ปลายทางที่ยังว่าง: WO ที่ผูกงาน BOM ไปคลังยางเส้นยาว (SR) · ที่ไม่ผูกงานส่งมอบให้ลูกค้าผ่าน WH
       lot.countedToOrder = true;
+      if (!lot.destination) lot.destination = d.orders.find((row) => row.id === lot.orderId)?.sourceJobId ? "sr" : "customer";
       addProduced(d, lot.orderId, lot.goodQty, ctx);
     }
     audit(d, ctx, "บันทึกผล QC", `${id} ${lot.id} → ${result}`);
@@ -1086,6 +1177,7 @@
   const api = {
     ORDER_FLOW, createOrder, setOrderStatus, saveMaterial, createRecipe, saveRecipe, approveRecipe, createRequisition, weighLine, issueRequisition, receiveMaterial, createPurchaseOrder, receivePurchaseLine, closePurchaseLine, cancelPurchaseOrder, setMaterialLotStatus,
     recordMixing, endRest, returnRequisition, recordExtrusion, recordCuring, recordFinishing, shipBoxes, transferableQty, createTransfer, receiveTransfer,
+    receiveBoxes, reverseBoxReceipt, reverseBoxShip, FINISH_DESTINATIONS,
     addQcRecord, createNcr, updateNcr, closeNcr, saveMold, cleanMold,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

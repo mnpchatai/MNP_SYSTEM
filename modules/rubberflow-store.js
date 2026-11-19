@@ -53,6 +53,15 @@
     viewer: { label: "ดูข้อมูลอย่างเดียว", modules: Object.freeze(["dashboard", "orders", "recipes", "wip", "trace", "warehouse"]) },
   });
 
+  // กล่องสินค้าของคลังสินค้าสำเร็จรูป (ตรงกับ private.rf_save_boxes ของ 20261205010000) รับผู้ใช้ทั้งรูปของ RubberFlow (personaUser: role / dept / roleCode / whHead)
+  // และของ BOM (modules/bom-store.js personaUser: role / dept / roleCode) · admin = รหัสบทบาท admin · ฐานข้อมูลตัดสินจริงอีกครั้ง
+  const isAdminUser = (user) => user?.role === "admin" || user?.roleCode === "admin";
+  const isWhUser = (user) => String(user?.dept ?? "").toUpperCase() === "WH";
+  // รับกล่องเข้าคลัง / ส่งมอบให้ลูกค้า: แผนก WH ทุกบทบาท หรือ admin
+  const canReceiveBoxes = (user) => Boolean(user) && (isAdminUser(user) || isWhUser(user));
+  // ย้อนการรับเข้า (ทั้งล็อต) / ย้อนการส่งมอบ (รายกล่อง) พร้อมเหตุผล: ผู้จัดการแผนก (department_manager) ของแผนก WH หรือ admin
+  const canReverseBoxes = (user) => Boolean(user) && (isAdminUser(user) || (isWhUser(user) && (user.whHead === true || user.roleCode === "department_manager")));
+
   // สิทธิ์ย่อยของปุ่มในหน้า (ซ่อน/แสดงเท่านั้น) · โหมดสาธิตตามบทบาท · ผู้ใช้โหมดฐานข้อมูล (db) ตามตัวกำกับ planner / rb / rbHead ที่ตรงกับกฎของฐานข้อมูล
   const PLAN_ROLES = Object.freeze(["admin", "manager", "planner"]);
   const CAN = Object.freeze({
@@ -82,7 +91,10 @@
     station: (user) => Boolean(user.planner || user.rb), // บันทึกผสม/ฉีด/อบ/ตกแต่ง ทำความสะอาดแม่พิมพ์
     sendTransfer: (user) => Boolean(user.planner || user.rb), // สร้างใบส่งมอบ WIP
     receiveTransfer: (user) => Boolean(user.planner || user.rb), // รับมอบ WIP ระหว่างสถานี: แผนก RB (20261204010000 · เดิมแผนก SR)
-    shipBoxes: (user) => Boolean(user.planner || user.wh), // ส่งมอบกล่องสินค้า
+    // กล่องสินค้า (20261205010000): รับเข้าคลัง / ส่งมอบให้ลูกค้า = แผนก WH ทุกบทบาท หรือ admin (กลุ่มวางแผนดูอย่างเดียว) · ย้อน = ผู้จัดการแผนก WH หรือ admin
+    receiveBoxes: (user) => canReceiveBoxes(user),
+    shipBoxes: (user) => canReceiveBoxes(user),
+    reverseBoxes: (user) => canReverseBoxes(user),
     fillNcr: (user) => Boolean(user.planner || user.qa || user.rb), // กรอกการแก้ไข/ป้องกันของ NCR ที่เปิดอยู่
     editMold: (user) => Boolean(user.planner || user.rb),
     purchase: (user) => Boolean(user.st || user.role === "admin"), // สั่งซื้อวัตถุดิบ (สร้างใบสั่งซื้อ): แผนก ST เท่านั้น (admin ไว้แก้ปัญหา)
@@ -95,6 +107,7 @@
     receiveMaterial: "receiveMaterial", setMaterialLotStatus: "holdMaterial", createRequisition: "requisition", weighLine: "requisition", issueRequisition: "requisition",
     recordMixing: "station", endRest: "skipRest", returnRequisition: "returnRequisition", recordExtrusion: "station", recordCuring: "station", recordFinishing: "station", cleanMold: "station",
     createTransfer: "sendTransfer", receiveTransfer: "receiveTransfer", shipBoxes: "shipBoxes", addQcRecord: "qcDecision", createNcr: "qcDecision", closeNcr: "qcDecision",
+    receiveBoxes: "receiveBoxes", reverseBoxReceipt: "reverseBoxes", reverseBoxShip: "reverseBoxes",
     updateNcr: "fillNcr", saveMold: "editMold",
     createPurchaseOrder: "purchase", receivePurchaseLine: "receiveMaterial", closePurchaseLine: "receiveMaterial", cancelPurchaseOrder: "cancelPurchase",
     saveMaterial: "editMaster", createRecipe: "editMaster", saveRecipe: "editMaster", approveRecipe: "approveRecipe", createOrder: "createOrder",
@@ -225,7 +238,7 @@
     const code = /RF_[A-Z0-9_]+/.exec(haystack)?.[0] ?? (/BOM_[A-Z0-9_]+/.exec(haystack)?.[0]) ?? (/NOT_AUTHORIZED|SANDBOX_NOT_ACTIVE/.exec(haystack)?.[0]) ?? (/PGRST202|42883/.test(haystack) ? "RF_NOT_DEPLOYED" : "RF_REMOTE_FAILED");
     const message = {
       RF_TEST_MODE_ONLY: "ข้อมูล RubberFlow ใช้ได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ",
-      RF_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้ใน RubberFlow (สั่งซื้อ รับวัตถุดิบ ตรวจสอบรับเข้าและยกเลิกใบสั่งซื้อ: คลังวัตถุดิบ (ST) เท่านั้น · เบิกเคมี ผลิต ส่งมอบและรับมอบ WIP: แผนก RB · ส่งมอบกล่อง: คลังสินค้า · ผลตรวจและ NCR: QA · อนุมัติสูตรและปล่อยผลิต: ผู้จัดการแผนก RB ขึ้นไป · งานอื่นฝ่ายวางแผนและผู้จัดการทำได้)",
+      RF_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้ใน RubberFlow (สั่งซื้อ รับวัตถุดิบ ตรวจสอบรับเข้าและยกเลิกใบสั่งซื้อ: คลังวัตถุดิบ (ST) เท่านั้น · เบิกเคมี ผลิต ส่งมอบและรับมอบ WIP: แผนก RB · รับกล่องเข้าคลังและส่งมอบให้ลูกค้า: คลังสินค้าสำเร็จรูป (WH) หรือผู้ดูแลระบบ · ย้อนการรับเข้าหรือการส่งมอบกล่อง: ผู้จัดการแผนก WH หรือผู้ดูแลระบบ · ผลตรวจและ NCR: QA · อนุมัติสูตรและปล่อยผลิต: ผู้จัดการแผนก RB ขึ้นไป · งานอื่นฝ่ายวางแผนและผู้จัดการทำได้)",
       RF_STALE: "มีผู้อื่นบันทึกข้อมูล RubberFlow ไปก่อน (หรือเลขที่ซ้ำ) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_CONFLICT: "รายการนี้ซ้ำกับที่มีอยู่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_INVALID_TRANSITION: "รายการอยู่ในสถานะที่ทำรายการนี้ไม่ได้ (อาจมีผู้อื่นเปลี่ยนสถานะไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
@@ -240,7 +253,7 @@
       RF_INVALID_REQUISITION: "ข้อมูลใบเบิกไม่ถูกต้อง",
       RF_INVALID_LOT: "ข้อมูลล็อตผลิตไม่ถูกต้อง",
       RF_INVALID_TRANSFER: "ข้อมูลใบส่งมอบไม่ถูกต้อง (ล็อตต้องผ่าน QC ครบเวลาบ่ม และปริมาณไม่เกินที่ส่งต่อได้)",
-      RF_INVALID_BOX: "ข้อมูลกล่องสินค้าไม่ถูกต้อง",
+      RF_INVALID_BOX: "ข้อมูลกล่องสินค้าไม่ถูกต้อง (รับเข้าและย้อนรับเข้าต้องครบทุกกล่องของล็อต การย้อนต้องมีเหตุผล 3-300 ตัวอักษร)",
       RF_INVALID_ORDER: "ข้อมูลใบสั่งผลิตไม่ถูกต้อง หรือใบสั่งผลิตอยู่ในสถานะที่รับยอดผลิตไม่ได้",
       RF_INVALID_QC: "ข้อมูลผลตรวจ QC ไม่ถูกต้อง",
       RF_INVALID_NCR: "ข้อมูล NCR ไม่ถูกต้อง (การปิดเคสต้องมีทั้งการแก้ไขและการป้องกัน)",
@@ -276,7 +289,8 @@
     const rbHead = (rb && RB_HEAD_DEPT_ROLE_CODES.includes(roleCode)) || RB_HEAD_ANY_ROLE_CODES.includes(roleCode);
     const role = roleCode === "admin" ? "admin" : plannerRole ? "manager" : DEPT_ROLES[dept] ?? "viewer";
     const name = `${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim() || employee.display_name || employee.employee_no || "ผู้ใช้ทดสอบ";
-    return { id: String(employee.id ?? employee.employee_no ?? name), role, dept, name, planner, rb, rbHead, st: dept === "ST", sr: dept === "SR", wh: dept === "WH", qa: dept === "QA", db: true };
+    // roleCode / whHead (20261205010000): ผู้จัดการแผนก WH ย้อนการรับเข้า / ส่งมอบกล่องได้ (canReverseBoxes)
+    return { id: String(employee.id ?? employee.employee_no ?? name), role, roleCode, dept, name, planner, rb, rbHead, st: dept === "ST", sr: dept === "SR", wh: dept === "WH", whHead: dept === "WH" && roleCode === "department_manager", qa: dept === "QA", db: true };
   }
   // ใครเห็นเมนูและหน้า RubberFlow (UX ล้วน สิทธิ์จริงตัดสินที่ฐานข้อมูล 20261130010000): โหมดทดสอบ = ทุกบัญชีทดสอบเหมือนเดิม ·
   // ใช้งานจริง = กลุ่มวางแผน หรือพนักงานแผนก RB ST QA SR WH (ตรงกับ private.rf_can_read ที่ RPC ของ RubberFlow ใช้ปฏิเสธข้อมูลจริง: คนอื่นได้ RF_FORBIDDEN)
@@ -641,7 +655,7 @@
     return { load, data: getData, user: getUser, setUser, run, reset, isPersisted: () => persisted, now, isRemote: () => false, status: () => "ready", error: () => null, isSaving: () => false, hasNewer: () => false, version: () => null, ensureLoaded: () => Promise.resolve(), reload: () => Promise.resolve(), catchUp: () => Promise.resolve(false), audit: () => ({ status: "ready", entries: getData().audit, error: null }), loadAudit: () => Promise.resolve(), purge: () => Promise.resolve({ ok: false, error: new Error("ล้างข้อมูล RubberFlow ทดสอบได้เฉพาะโหมดฐานข้อมูล") }), subscribe: () => () => {} };
   }
 
-  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, CAN, findModule, can, canSee, homeOf, isValidState, createStore, REMOTE_LISTS, diffMaster, mapRemoteError, personaUser, usesRubberFlow, rightForAction, rightForDialog };
+  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, CAN, findModule, can, canSee, homeOf, isValidState, createStore, REMOTE_LISTS, diffMaster, mapRemoteError, personaUser, usesRubberFlow, rightForAction, rightForDialog, canReceiveBoxes, canReverseBoxes };
   if (isNode) module.exports = api;
   else root.MNP_RUBBERFLOW_STORE = api;
 })(typeof window !== "undefined" ? window : globalThis);

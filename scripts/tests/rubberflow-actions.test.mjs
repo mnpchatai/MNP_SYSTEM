@@ -375,7 +375,9 @@ test("finishing creates numbered boxes, counts passed quantity into the order an
   assert.equal(lot.boxes, 4, "30 + 30 + 30 + 5");
   const boxes = d.fgBoxes.filter((box) => box.lotId === lotId);
   assert.deepEqual(boxes.map((box) => box.qty).sort((a, b) => a - b), [5, 30, 30, 30]);
-  assert.ok(boxes.every((box) => box.status === "in_stock" && box.id.startsWith(lotId.replace("FN", "BOX"))));
+  // 20261205010000: กล่องที่ผ่านรอคลังสินค้าสำเร็จรูป (WH) รับเข้า พร้อมลูกค้า / PO ของใบสั่งผลิต · ล็อตส่งมอบให้ลูกค้า
+  assert.ok(boxes.every((box) => box.status === "pending_wh" && box.id.startsWith(lotId.replace("FN", "BOX")) && box.customer === order.customer && box.customerPo === order.customerPo && box.moves.length === 0));
+  assert.deepEqual([lot.destination, lot.whCredit], ["customer", null]);
   assert.equal(order.producedQty, order.targetQty + 45);
   assert.equal(order.status, "completed", "reaching the target completes the order");
   // ล็อตที่กักกันไว้นับเข้าใบสั่งผลิตเมื่อ QC ผ่านเท่านั้น
@@ -387,8 +389,12 @@ test("finishing creates numbered boxes, counts passed quantity into the order an
   const held = A.recordFinishing(d2, { transferId: t2.id, useQty: 20, passedQty: 20, perBox: 20, qcResult: "hold" }, ctx("finisher"));
   assert.equal(o2.producedQty, produced);
   assert.equal(d2.fgBoxes.find((box) => box.lotId === held).status, "hold");
+  assert.equal(d2.lots.find((row) => row.id === held).destination, null, "a held lot has no destination yet");
   A.addQcRecord(d2, { lotId: held, values: { hardness: 65 }, result: "pass" }, ctx("qc"));
   assert.equal(o2.producedQty, produced + 20, "counted once it passes");
+  assert.equal(d2.fgBoxes.find((box) => box.lotId === held).status, "pending_wh", "released by QA, the box waits for the WH receipt");
+  assert.equal(d2.lots.find((row) => row.id === held).destination, "customer", "a lot for sale goes to the customer through WH");
+  A.receiveBoxes(d2, { lotId: held }, ctx("store"));
   assert.equal(d2.fgBoxes.find((box) => box.lotId === held).status, "in_stock");
   rejects(() => A.shipBoxes(d2, { ids: [] }, ctx("store")), /เลือกกล่อง/);
   const inStock = d2.fgBoxes.filter((box) => box.status === "in_stock").slice(0, 2).map((box) => box.id);
@@ -407,7 +413,7 @@ test("finishing of a work order linked to a BOM job may leave perBox out (no box
   rejects(() => A.recordFinishing(structuredClone(d), { transferId: transfer.id, useQty: 10, passedQty: 10, perBox: 0 }, ctx("finisher")), /ต่อกล่องต้องมากกว่า 0/);
   const lotId = A.recordFinishing(d, { transferId: transfer.id, useQty: 10, passedQty: 10, perBox: "", qcResult: "pass" }, ctx("finisher"));
   const lot = d.lots.find((row) => row.id === lotId);
-  assert.deepEqual([lot.params, lot.boxes, d.fgBoxes.filter((box) => box.lotId === lotId).length], [{}, 0, 0]);
+  assert.deepEqual([lot.params, lot.boxes, d.fgBoxes.filter((box) => box.lotId === lotId).length, lot.destination], [{}, 0, 0, "sr"]);
 });
 
 test("QC records judge from the measured values, cannot pass with a value out of spec, and NCRs hold lots until closed with a corrective action", () => {

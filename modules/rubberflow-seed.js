@@ -211,13 +211,37 @@
       return { fn };
     };
 
+    // ล็อตเล็กของ WO ที่ผูกงาน BOM เลือก "ส่งมอบให้ลูกค้า ผ่านคลังสินค้าสำเร็จรูป (WH)" (20261205010000): ฉีด → อบ → ตกแต่ง 6 ชิ้น กล่องละ 3 รอ WH รับเข้า
+    const toCustomer = (exId, start) => {
+      const exLot = d.lots.find((lot) => lot.id === exId);
+      const qty = Math.min(6, Math.floor(exLot?.goodQty ?? 0));
+      if (!(qty > 0) || exLot.qc !== "pass") return null;
+      const isM = d.orders.find((row) => row.id === exLot.orderId)?.uom === "m";
+      const t1 = A.createTransfer(d, { lotId: exId, qty }, at(start, "extruder"));
+      A.receiveTransfer(d, { id: t1, qtyReceived: qty, condition: "ok" }, at(start + 0.3 * HOUR, "curer"));
+      const cu = A.recordCuring(d, { transferId: t1, useQty: qty, moldId: isM ? "CL-UHF-01" : "MD-OR-24", shift: "D", temp: 200, time: 150, pressure: 150, goodQty: qty, scrapQty: 0 }, at(start + HOUR, "curer"));
+      const t2 = A.createTransfer(d, { lotId: cu, qty }, at(start + 2 * HOUR, "curer"));
+      A.receiveTransfer(d, { id: t2, qtyReceived: qty, condition: "ok" }, at(start + 2.3 * HOUR, "finisher"));
+      return A.recordFinishing(d, { transferId: t2, useQty: qty, passedQty: qty, scrapQty: 0, perBox: 3, grade: "A", qcResult: "pass", destination: "customer", shift: "D" }, at(start + 3 * HOUR, "finisher"));
+    };
+
     const mkOrder = (p, t) => A.createOrder(d, p, at(t, "planner"));
     const release = (id, t) => A.setOrderStatus(d, { id, status: "released" }, at(t, "planner"));
 
     // ใบสั่งผลิต 1: เสร็จไปเมื่อสองสัปดาห์ก่อน
     const o1 = mkOrder({ customer: "บจก. ไทยออโต้พาร์ท", customerPo: "TAP-PO-55102", recipeId: "RC-EPDM-DS01", targetQty: 1600, color: "ดำ", startDate: now - 15 * DAY, dueDate: now - 6 * DAY, note: "ตัดยาวม้วนละ 100 m" }, now - 16 * DAY);
     release(o1, now - 15.5 * DAY);
-    for (let i = 0; i < 5; i += 1) chain(o1, now - (15 - i * 1.6) * DAY);
+    const o1Lots = [];
+    for (let i = 0; i < 5; i += 1) o1Lots.push(chain(o1, now - (15 - i * 1.6) * DAY).fn);
+    // คลังสินค้าสำเร็จรูป (WH) สาธิต (20261205010000): กล่องของล็อตที่ผ่านรอ WH รับเข้า (pending_wh) · ใบที่ 1 WH รับเข้าครบทุกล็อต
+    // สองล็อตแรกส่งมอบลูกค้าครบ ล็อตที่สามส่งมอบไปสองกล่อง (ที่เหลืออยู่ในคลัง) · ใบที่ 2 / 3 และ WO ของงาน BOM ยังรอ WH รับเข้า
+    o1Lots.forEach((lotId, i) => {
+      const t = now - (14 - i * 1.6) * DAY;
+      A.receiveBoxes(d, { lotId }, at(t, "store"));
+      const boxes = d.fgBoxes.filter((box) => box.lotId === lotId).map((box) => box.id).sort();
+      const ship = i < 2 ? boxes : i === 2 ? boxes.slice(0, 2) : [];
+      if (ship.length) A.shipBoxes(d, { ids: ship }, at(t + 2 * HOUR, "store"));
+    });
 
     // ใบสั่งผลิต 2: กำลังเดินอยู่ มี WIP ทุกสถานี
     const o2 = mkOrder({ customer: "Siam Motor Components", customerPo: "SMC-24-0871", recipeId: "RC-EPDM-DS01", targetQty: 2400, color: "ดำ", startDate: now - 6 * DAY, dueDate: now + 2 * DAY, priority: "urgent", note: "ลูกค้าขอ CoA ทุกล็อต" }, now - 7 * DAY);
@@ -253,7 +277,7 @@
       }, opened);
       if (id !== link.woId) continue;
       release(id, opened + HOUR);
-      if (link.mode === "running") chain(id, now - 2 * DAY, "extrusion");
+      if (link.mode === "running") toCustomer(chain(id, now - 2 * DAY, "extrusion").ex, now - DAY);
       else chain(id, now - 2 * HOUR, "request");
     }
 

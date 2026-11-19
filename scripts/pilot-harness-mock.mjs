@@ -1644,7 +1644,11 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
   const RF_ID = { materials: (record) => record.code, recipes: (record) => `${record.id}|${record.revision}`, orders: (record) => record.id, materialLots: (record) => record.lotNo };
   for (const list of RF_LISTS) RF_ID[list] ??= (record) => record.id;
   const rfSorter = (list) => (list === "recipes" ? (a, b) => bomCmp(a.id, b.id) || a.revision - b.revision : (a, b) => bomCmp(RF_ID[list](a), RF_ID[list](b)));
-  const RF_ACTIONS = ["saveMaterial", "createRecipe", "saveRecipe", "approveRecipe", "createOrder", "setOrderStatus", "receiveMaterial", "setMaterialLotStatus", "createRequisition", "weighLine", "recordMixing", "endRest", "recordExtrusion", "recordCuring", "recordFinishing", "createTransfer", "receiveTransfer", "shipBoxes", "addQcRecord", "createNcr", "updateNcr", "closeNcr", "cleanMold", "saveMold", "createPurchaseOrder", "receivePurchaseLine", "cancelPurchaseOrder", "issueRequisition", "returnRequisition", "closePurchaseLine"];
+  const RF_ACTIONS = ["saveMaterial", "createRecipe", "saveRecipe", "approveRecipe", "createOrder", "setOrderStatus", "receiveMaterial", "setMaterialLotStatus", "createRequisition", "weighLine", "recordMixing", "endRest", "recordExtrusion", "recordCuring", "recordFinishing", "createTransfer", "receiveTransfer", "shipBoxes", "addQcRecord", "createNcr", "updateNcr", "closeNcr", "cleanMold", "saveMold", "createPurchaseOrder", "receivePurchaseLine", "cancelPurchaseOrder", "issueRequisition", "returnRequisition", "closePurchaseLine",
+    // กล่องสินค้าของคลังสินค้าสำเร็จรูป (20261205010000)
+    "receiveBoxes", "reverseBoxReceipt", "reverseBoxShip"];
+  // คำสั่งของกล่อง: ทาง [จาก, ไป, ชนิดประวัติ] (ตรงกับ private.rf_save_boxes ของ 20261205010000) · ส่งได้เฉพาะชุด fgBoxes
+  const RF_BOX_STEPS = { receiveBoxes: ["pending_wh", "in_stock", "receive"], shipBoxes: ["in_stock", "shipped", "ship"], reverseBoxReceipt: ["in_stock", "pending_wh", "unreceive"], reverseBoxShip: ["shipped", "in_stock", "unship"] };
   const RF_FLOW = { planned: ["released", "cancelled"], released: ["in_progress", "on_hold", "cancelled"], in_progress: ["on_hold", "completed"], on_hold: ["in_progress"] };
   const RF_ORDER_STATUSES = ["planned", "released", "in_progress", "on_hold", "completed", "cancelled"];
   // ฟิลด์ที่เซิร์ฟเวอร์เป็นเจ้าของ (ตราผู้บันทึก/เวลา): ไม่นับเป็นการแก้เนื้อหา · RECIPE_OWNED / ORDER_OWNED รวมสถานะ (และยอดผลิต) ที่เปลี่ยนตามกฎของตัวเอง
@@ -1663,8 +1667,8 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
   const RF_NOOP = {
     materials: RF_MATERIAL_STAMPS, recipes: RF_RECIPE_STAMPS, orders: [...RF_ORDER_STAMPS, "producedQty"],
     materialLots: ["qtyKg", "receivedAt", "receivedBy"], requisitions: ["requestedBy", "createdAt", "issuedAt", "issuedBy"],
-    lots: ["operator", "createdAt", "transferredQty", "countedToOrder"], transfers: ["remaining", "createdAt", "createdBy", "receivedAt", "receivedBy"],
-    fgBoxes: ["createdAt", "shippedAt", "shippedBy"], qcRecords: ["inspector", "at"], ncrs: ["createdAt", "createdBy", "closedAt", "closedBy"], molds: ["totalUsage"],
+    lots: ["operator", "createdAt", "transferredQty", "countedToOrder", "destination", "whCredit"], transfers: ["remaining", "createdAt", "createdBy", "receivedAt", "receivedBy"],
+    fgBoxes: ["createdAt", "shippedAt", "shippedBy", "receivedAt", "receivedBy", "moves", "customer", "customerPo"], qcRecords: ["inspector", "at"], ncrs: ["createdAt", "createdBy", "closedAt", "closedBy"], molds: ["totalUsage"],
     purchaseOrders: ["createdAt", "createdBy", "cancelledAt"],
   };
   // ใบเบิก: เวลา/ผู้ชั่งของแต่ละรายการเป็นตราของฐานข้อมูล · ใบสั่งซื้อ: เวลา/ผู้รับของแต่ละบรรทัดเป็นตราของฐานข้อมูล · วัตถุดิบที่ไม่ส่งสต็อกขั้นต่ำ/อายุการเก็บ = ค่าตั้งต้น (0 และ 180)
@@ -1749,12 +1753,14 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     const approvedNow = [];
     const supersededSent = [];
     // stock = สต็อกของซื้อฝั่ง BOM ที่ใบสั่งซื้อเขียน (สต็อกขั้นต่ำตอนสร้างใบ / บวกยอดตอนรับบรรทัดของซื้อ) · rods = ล็อตตกแต่งที่ผ่าน QC ของ WO ที่ผูกงาน BOM → ล็อตแท่งรอ SR รับ (20261202010000)
-    const ops = { link: [], rods: [], unlink: [], stock: [] };
+    // credit = นับ / ถอนยอดงาน RB ตอน WH รับ / ย้อนรับล็อตที่ส่งมอบให้ลูกค้าของ WO ที่ผูกงาน (20261205010000)
+    const ops = { link: [], rods: [], unlink: [], stock: [], credit: [] };
     // ใบสั่งซื้อ: ส่งชุดข้อมูลได้เฉพาะตามคำสั่ง · createPurchaseOrder = purchaseOrders + materials (ใช้แก้ safetyKg เท่านั้น) · receivePurchaseLine = purchaseOrders + materialLots · cancelPurchaseOrder = purchaseOrders · purchaseOrders ส่งได้เฉพาะสามคำสั่งนี้
     const PO_LISTS = { createPurchaseOrder: ["purchaseOrders", "materials"], receivePurchaseLine: ["purchaseOrders", "materialLots"], cancelPurchaseOrder: ["purchaseOrders"], closePurchaseLine: ["purchaseOrders"] };
     for (const list of Object.keys(changes)) {
       const sent = Array.isArray(changes[list]?.upsert) && changes[list].upsert.length > 0;
       if (sent && (PO_LISTS[action] ? !PO_LISTS[action].includes(list) : list === "purchaseOrders")) fail("RF_INVALID_PURCHASE");
+      if (sent && RF_BOX_STEPS[action] && list !== "fgBoxes") fail("RF_INVALID_BOX");
     }
     // รูปของ payload และสิทธิ์ระดับส่วน (ก่อนตรวจรายระเบียน)
     for (const list of Object.keys(changes)) {
@@ -1791,6 +1797,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     const receipts = [];
     const partReceipts = []; // รับบรรทัดของซื้อ (ไม่มีล็อต)
     const finishingNew = new Set(); // ล็อตตกแต่งที่เพิ่มในคำสั่งนี้ (ฐานข้อมูลสร้างกล่องให้เอง กล่องที่ client ส่งมาเมิน)
+    const boxLots = new Map(); // ล็อตที่กล่องเปลี่ยนสถานะในคำสั่งของกล่องนี้ → เหตุผลของการย้อน (ตรวจทั้งล็อต / นับยอดหลังวนรายกล่อง)
     const qcFor = new Set((changes.qcRecords?.upsert ?? []).map((row) => row?.lotId));
     const ncrFor = new Set((changes.ncrs?.upsert ?? []).map((row) => row?.lotId));
     const qcNew = [];
@@ -1971,7 +1978,10 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
             if (prev.stage === "finishing" && record.qc === "pass" && !prev.countedToOrder) {
               out.countedToOrder = true;
               touchedOrders.add(prev.orderId);
-              if (rfLinkedJob(next.orders.find((row) => row.id === prev.orderId))) ops.rods.push({ woId: prev.orderId, lotId: prev.id, qty: prev.goodQty });
+              const linkedNow = Boolean(rfLinkedJob(next.orders.find((row) => row.id === prev.orderId)));
+              // ปลายทางที่ยังว่าง (ล็อตที่กักไว้ · 20261205010000): WO ที่ผูกงานไปคลังยางเส้นยาว SR · ที่ไม่ผูกงานส่งมอบให้ลูกค้าผ่าน WH
+              if (!out.destination) out.destination = linkedNow ? "sr" : "customer";
+              if (linkedNow && out.destination === "sr") ops.rods.push({ woId: prev.orderId, lotId: prev.id, qty: prev.goodQty });
             }
             wrote = true;
           }
@@ -1988,6 +1998,9 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         if (good < 0 || scrap < 0 || !Array.isArray(record.sources) || record.sources.length !== 1 || !record.params || typeof record.params !== "object") fail(bad);
         const source = record.sources[0];
         const out = { ...clone(record), operator: actor.name, createdAt: at, transferredQty: 0, countedToOrder: false };
+        // ปลายทาง / ยอดที่นับเข้างาน RB เป็นของเซิร์ฟเวอร์ (ล็อตตกแต่งตั้งข้างล่าง · สถานีอื่นไม่มีสองช่องนี้)
+        delete out.destination;
+        delete out.whCredit;
         const reasons = [];
         if (record.stage === "mixing") {
           if (source?.type !== "requisition") fail(bad);
@@ -2050,16 +2063,27 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
           } else {
             // WO ที่ผูกงาน RB ของ BOM (sourceJobId ตรงกับงานของ BOM โหมดเดียวกัน · 20261202010000): ไม่มีกล่อง แท่งไปคลังแท่งยาว (SR) เป็นล็อตแท่งรอรับเมื่อผ่าน QC (rfApplyBomOps)
             const linked = rfLinkedJob(order);
-            // จำนวนต่อกล่อง (ตรงกับ rf_save_lots): ไม่ส่ง = ได้เฉพาะ WO ที่ผูกงาน · ส่งมาต้องเป็นตัวเลข 0 < ค่า <= 1e9 ทุก WO · ล็อตเก็บเฉพาะ perBox (ผูกงานไม่ส่ง = {})
+            if (!["pass", "hold", "fail"].includes(record.qc)) fail(bad);
+            // ปลายทาง (ตรงกับ rf_save_lots ของ 20261205010000): ผ่าน + ไม่ส่ง = WO ที่ผูกงานไป sr · ที่ไม่ผูกงานไป customer · sr ของ WO ที่ไม่ผูกงาน / ปลายทางของผลกัก = ผิด
+            const rawDestination = record.destination === undefined || record.destination === null ? "" : typeof record.destination === "string" ? record.destination.trim() : fail(bad);
+            let destination = rawDestination || null;
+            if (record.qc === "pass") {
+              destination = destination ?? (linked ? "sr" : "customer");
+              if (!["sr", "customer"].includes(destination) || (destination === "sr" && !linked)) fail(bad);
+            } else if (destination) fail(bad);
+            // กล่องเกิดเมื่อของไปหาลูกค้า (WO ที่ไม่ผูกงานทุกผล หรือ WO ที่ผูกงานที่เลือก customer) · จำนวนต่อกล่อง: ไม่ส่ง = ได้เฉพาะล็อตที่ไม่มีกล่อง · ส่งมาต้องเป็นตัวเลข 0 < ค่า <= 1e9
+            const boxed = !linked || destination === "customer";
             const rawPerBox = record.params.perBox;
             const perBox = rawPerBox === undefined || rawPerBox === null ? null : num(rawPerBox);
-            if ((perBox === null ? !linked : !(perBox > 0) || perBox > 1e9) || good + scrap > use + 1e-9 || !["pass", "hold", "fail"].includes(record.qc)) fail(bad);
+            if ((perBox === null ? boxed : !(perBox > 0) || perBox > 1e9) || good + scrap > use + 1e-9) fail(bad);
             out.params = perBox === null ? {} : { perBox };
+            out.destination = destination;
+            out.whCredit = null;
             if (record.qc !== "pass") reasons.push(...(Array.isArray(record.holdReasons) && record.holdReasons.length ? record.holdReasons.map((reason) => String(reason).slice(0, 200)).slice(0, 20) : ["ผลตรวจตกแต่งไม่ผ่าน/รอตัดสิน"]));
             out.qc = record.qc;
             out.countedToOrder = record.qc === "pass";
             // กล่อง: ฐานข้อมูลสร้างเองจากล็อต (ใบละไม่เกิน perBox ชิ้น กล่องสุดท้ายเศษ) id = เลขล็อต (FN → BOX) ต่อด้วยลำดับ 3 หลัก
-            const count = good > 0 && !linked ? Math.ceil(good / perBox - 1e-9) : 0;
+            const count = good > 0 && boxed ? Math.ceil(good / perBox - 1e-9) : 0;
             if (count > 1000) fail(bad);
             out.grade = String(record.grade ?? "").trim().slice(0, 20) || "A";
             out.boxes = count;
@@ -2067,13 +2091,14 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
             for (let n = 1; n <= count; n += 1) {
               const box = {
                 id: `${record.id.replace("FN", "BOX")}-${String(n).padStart(3, "0")}`, lotId: record.id, orderId: order.id, recipeId: order.recipeId, productCode: order.productCode ?? "",
-                qty: round3(Math.min(perBox, good - (n - 1) * perBox)), uom: order.uom, grade: out.grade, status: record.qc === "pass" ? "in_stock" : "hold", createdAt: at,
+                qty: round3(Math.min(perBox, good - (n - 1) * perBox)), uom: order.uom, grade: out.grade, status: record.qc === "pass" ? "pending_wh" : "hold", createdAt: at,
+                customer: order.customer ?? "", customerPo: order.customerPo ?? "", moves: [],
               };
               next.fgBoxes.push(box);
               stampVersion("fgBoxes", box.id);
             }
             // ชิ้นผ่านสถานีสุดท้าย: นับเข้า WO (rf_add_produced เหมือนเดิม) · WO ที่ผูกงาน BOM สร้างล็อตแท่งรอ SR รับ (ไม่ป้อนยอดเข้างาน BOM แล้ว: rf_apply_feedback ไม่ถูกเรียก)
-            if (out.countedToOrder) { touchedOrders.add(order.id); if (linked) ops.rods.push({ woId: order.id, lotId: record.id, qty: good }); }
+            if (out.countedToOrder) { touchedOrders.add(order.id); if (linked && destination === "sr") ops.rods.push({ woId: order.id, lotId: record.id, qty: good }); }
           }
         }
         // บันทึกล็อตของสถานีไหนก็ได้เฉพาะใบ WO ที่ released / in_progress / on_hold
@@ -2121,12 +2146,30 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
           if (finishingNew.has(record.lotId)) return "skip";
           fail(bad);
         }
-        // in_stock ↔ hold ตามผล QC ของล็อต ฐานข้อมูลตั้งเอง ไม่รับจาก client
-        if (["in_stock", "hold"].includes(prev.status) && ["in_stock", "hold"].includes(record.status)) return "skip"; // ช่องอื่นของกล่องเป็นของฐานข้อมูล client ส่งมาเมิน
-        if (prev.status !== "in_stock" || record.status !== "shipped") fail("RF_INVALID_TRANSITION");
-        if (!inDept("WH")) fail("RF_FORBIDDEN");
-        if (!rfSame(prev, record, ["status", ...RF_NOOP.fgBoxes])) fail(bad);
-        put({ ...prev, status: "shipped", shippedAt: at, shippedBy: actor.name });
+        // ทางเดียวของคำสั่ง (ตรงกับ rf_save_boxes ของ 20261205010000): สถานะอื่นที่ส่งมา (สำเนาผล QA ที่ client เปลี่ยนเอง) เมิน · ถึงปลายทางแล้ว = ส่งซ้ำ ไม่เขียน
+        if (!["pending_wh", "in_stock", "hold", "shipped"].includes(record.status)) fail(bad);
+        const step = RF_BOX_STEPS[action];
+        if (!step || record.status !== step[1] || prev.status === step[1]) return "skip";
+        // สิทธิ์: รับเข้า / ส่งมอบ = แผนก WH ทุกบทบาท หรือ admin · ย้อน = ผู้จัดการแผนก WH หรือ admin (กลุ่มวางแผนดูอย่างเดียว)
+        const reversal = step[2] === "unreceive" || step[2] === "unship";
+        const may = actor.role === "admin" || (actor.dept === "WH" && (!reversal || actor.role === "department_manager"));
+        if (!may) fail("RF_FORBIDDEN");
+        if (prev.status !== step[0]) fail("RF_INVALID_TRANSITION");
+        // เหตุผลของการย้อน: รายการท้ายของ moves ที่ส่งมา (ชนิดตรงกับคำสั่ง) 3-300 ตัวอักษร
+        let note = "";
+        if (reversal) {
+          const last = Array.isArray(record.moves) ? record.moves[record.moves.length - 1] : null;
+          if (!last || typeof last !== "object" || last.kind !== step[2]) fail(bad);
+          note = last.note === undefined || last.note === null ? "" : typeof last.note === "string" ? last.note.trim() : fail(bad);
+          if (note.length < 3 || note.length > 300) fail(bad);
+        }
+        const out = { ...prev, status: step[1], moves: [...(prev.moves ?? []), { kind: step[2], at, by: actor.name, note }] };
+        if (step[2] === "receive") { out.receivedAt = at; out.receivedBy = actor.name; }
+        if (step[2] === "unreceive") { delete out.receivedAt; delete out.receivedBy; }
+        if (step[2] === "ship") { out.shippedAt = at; out.shippedBy = actor.name; }
+        if (step[2] === "unship") { delete out.shippedAt; delete out.shippedBy; }
+        put(out);
+        boxLots.set(prev.lotId, note);
         return null;
       }
       if (list === "qcRecords") {
@@ -2457,6 +2500,37 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     }
     for (const recipe of supersededSent) if (!approvedNow.some((row) => row.id === recipe.id)) fail("RF_INVALID_TRANSITION"); // แทนที่ได้เฉพาะพร้อมการอนุมัติ revision ใหม่ของรหัสเดียวกัน
     for (const row of next.recipes) if (row.status === "approved" && next.recipes.some((other) => other !== row && other.id === row.id && other.status === "approved")) fail("RF_INVALID_RECIPE");
+    // ---- กล่องทั้งล็อต (ตรงกับ rf_save_boxes ของ 20261205010000): รับเข้า = ไม่มีกล่อง pending_wh ของล็อตเหลือ แล้วนับยอดเข้างาน RB ----
+    // ย้อนรับเข้า = ไม่มีกล่องที่ส่งมอบแล้ว / กัก (RF_INVALID_TRANSITION) และไม่มีกล่องที่ยังอยู่ในคลัง (RF_INVALID_BOX) แล้วถอนยอด · ใบ completed ถอนไม่ได้
+    for (const [lotId, note] of boxLots) {
+      if (action !== "receiveBoxes" && action !== "reverseBoxReceipt") continue;
+      const boxes = next.fgBoxes.filter((box) => box.lotId === lotId);
+      const li = next.lots.findIndex((row) => row.id === lotId);
+      if (li === -1) fail("RF_INVALID_BOX");
+      const lot = next.lots[li];
+      if (action === "receiveBoxes") {
+        if (boxes.some((box) => box.status === "pending_wh")) fail("RF_INVALID_BOX");
+        const qty = Math.round(Number(lot.goodQty) * 1e9) / 1e9;
+        if (lot.destination !== "customer" || lot.whCredit || !(qty > 0)) continue;
+        const wo = next.orders.find((row) => row.id === lot.orderId);
+        const job = rfLinkedJob(wo);
+        const bomOrder = job ? bomLoad().orders.find((row) => row.id === job.orderId) : null;
+        if (!job || job.externalRef?.woId !== wo.id || job.status === "done" || !["released", "in_progress"].includes(bomOrder?.status)) continue;
+        next.lots[li] = { ...lot, whCredit: { jobNo: job.id, qty } };
+        stampVersion("lots", lotId);
+        ops.credit.push({ kind: "credit", job: job.id, qty, lotId });
+      } else {
+        if (boxes.some((box) => box.status === "shipped" || box.status === "hold")) fail("RF_INVALID_TRANSITION");
+        if (boxes.some((box) => box.status === "in_stock")) fail("RF_INVALID_BOX");
+        if (!lot.whCredit) continue;
+        const job = bomLoad().jobs.find((row) => row.id === lot.whCredit.jobNo);
+        const bomOrder = job ? bomLoad().orders.find((row) => row.id === job.orderId) : null;
+        if (bomOrder?.status === "completed") fail("RF_INVALID_TRANSITION");
+        if (job && ["released", "in_progress"].includes(bomOrder?.status)) ops.credit.push({ kind: "uncredit", job: job.id, qty: lot.whCredit.qty, lotId, note });
+        next.lots[li] = { ...lot, whCredit: null };
+        stampVersion("lots", lotId);
+      }
+    }
     // ---- ตรวจความครบของคำสั่ง และคำนวณตัวเลขที่ฐานข้อมูลคำนวณเอง ----
     // ใบเบิกที่ถูกใช้ผสม (issued → consumed) กับล็อตผสมที่เพิ่ม ต้องมาคู่กัน
     for (const claim of claims) if (!mixingNew.some((row) => row.lot === claim.lot && row.req === claim.req)) fail("RF_INVALID_TRANSITION");
@@ -2473,7 +2547,8 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       const lot = next.lots.find((row) => row.id === item.lotId);
       if (!lot || lot.qc !== item.result) fail("RF_INVALID_QC");
       next.fgBoxes.forEach((box, i) => {
-        const status = lot.qc === "pass" ? "in_stock" : "hold";
+        // ผ่าน = กลับที่เดิม (WH รับแล้ว = in_stock · ยังไม่รับ = pending_wh) · อื่น = hold (ตรงกับ rf_save_qc ของ 20261205010000)
+        const status = lot.qc !== "pass" ? "hold" : box.receivedAt ? "in_stock" : "pending_wh";
         if (box.lotId === lot.id && box.status !== "shipped" && box.status !== status) { next.fgBoxes[i] = { ...box, status }; stampVersion("fgBoxes", box.id); }
       });
     }
@@ -2500,7 +2575,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
   // งานของ BOM ที่ RubberFlow สั่ง (หลังบันทึกของ RubberFlow สำเร็จ ตรงกับ rf_link_job / rf_apply_feedback / rf_unlink_job): ผ่านตัวนับเวอร์ชันของ BOM ครั้งเดียวต่อการบันทึก
   // ให้ client ของ BOM ตามทันด้วยส่วนต่าง และเขียนบรรทัดบันทึกการใช้งานของ BOM (rubberflow:<action>) · ไม่มีอะไรเขียนจริง (ข้ามทุกอย่าง) = ตัวนับ BOM ไม่ขยับ
   function rfApplyBomOps(ops, actor, at, action) {
-    if (!ops.link.length && !ops.rods.length && !ops.unlink.length && !ops.stock.length) return;
+    if (!ops.link.length && !ops.rods.length && !ops.unlink.length && !ops.stock.length && !(ops.credit ?? []).length) return;
     const bom = bomLoad();
     const version = bom.version + 1;
     const jobs = new Set();
@@ -2538,6 +2613,26 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       });
       bom.versions.rodLots[id] = version;
       rodLots.add(id);
+    }
+    // WH รับล็อตที่ส่งมอบให้ลูกค้าของ WO ที่ผูกงาน (ตรงกับ private.rf_box_credit ของ 20261205010000): งานได้ยอดเต็ม + รายงาน · ใบ released → in_progress
+    // ย้อนรับเข้า (private.rf_box_uncredit): ถอนยอด (ไม่ต่ำกว่า 0) · done → in_progress เมื่อต่ำกว่าแผน · รายงาน good 0 พร้อมเหตุผล
+    for (const item of ops.credit ?? []) {
+      const job = bom.jobs.find((row) => row.id === item.job);
+      if (!job) continue;
+      if (item.kind === "credit") {
+        job.qtyDone = Math.round((Number(job.qtyDone || 0) + item.qty) * 1e4) / 1e4;
+        job.reports = [...(job.reports ?? []), { at, by: actor.name, good: item.qty, reject: 0, note: `คลังสินค้าสำเร็จรูป (WH) รับเข้า ล็อต ${item.lotId} ส่งมอบให้ลูกค้า`.slice(0, 200) }];
+        job.status = job.qtyDone >= Number(job.qtyPlanned) ? "done" : "in_progress";
+        if (job.status === "done") job.doneAt = job.doneAt ?? at; else delete job.doneAt;
+        touchJob(job);
+        startOrder(job);
+      } else {
+        job.qtyDone = Math.max(Math.round((Number(job.qtyDone || 0) - item.qty) * 1e4) / 1e4, 0);
+        job.reports = [...(job.reports ?? []), { at, by: actor.name, good: 0, reject: 0, note: `ย้อนรับเข้าคลังสินค้าสำเร็จรูป (WH) ล็อต ${item.lotId} ถอน ${item.qty} · ${item.note ?? ""}`.slice(0, 200) }];
+        if (job.status === "done" && job.qtyDone < Number(job.qtyPlanned)) job.status = "in_progress";
+        if (job.status !== "done") delete job.doneAt;
+        touchJob(job);
+      }
     }
     // ยกเลิก WO: ล้างการผูกของงาน (คงยอดและรายงานเดิม) ต่อรายงานหมายเหตุของระบบ good = 0 · ข้ามเมื่อไม่พบงานหรืองานไม่ชี้มา WO นี้
     for (const item of ops.unlink) {
