@@ -624,10 +624,16 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
       const counted = ["stockCounts", "stockCountedAt", "stockCountedBy"];
       const ok = ["ST", "WH"].includes(actor.dept) && prev.status === "draft" && record.status === "draft" && bomCanon(bomWithout(prev, counted)) === bomCanon(bomWithout(record, counted));
       if (!ok) fail("BOM_FORBIDDEN");
-      // ยอดที่ใช้จากสต็อกสินค้าสำเร็จรูป (กุญแจ stockCounts ที่เป็นสินค้าของใบ) ตั้งได้เฉพาะกลุ่มวางแผน · ST / WH นับชิ้นอื่นของใบร่างได้ตามเดิม (ตรงกับ bom_save_orders ของ batch C)
-      if ((prev.items ?? []).some((item) => bomCanon(prev.stockCounts?.[item.fgCode] ?? null) !== bomCanon(record.stockCounts?.[item.fgCode] ?? null))) fail("BOM_FORBIDDEN");
-      // คลังแท่งยาว (20261202010000): คีย์รหัส RB ของผลระเบิดของใบ (ใช้จากคลัง SR ตอนปล่อยผลิต) ตั้งได้เฉพาะกลุ่มวางแผนเหมือนคีย์สินค้า
-      if ((Array.isArray(prev.explosion) ? prev.explosion : []).some((line) => line?.kind === "RB" && bomCanon(prev.stockCounts?.[line.itemCode] ?? null) !== bomCanon(record.stockCounts?.[line.itemCode] ?? null))) fail("BOM_FORBIDDEN");
+      // ST / WH นับได้เฉพาะชิ้นในผลระเบิดของใบ (ตรงกับ bom_save_orders ของ 20261202010000): ทุกคีย์ที่เพิ่ม / แก้ / ลบ ต้องเป็นรหัสของบรรทัดผลระเบิดที่ไม่ใช่ RB และไม่ใช่สินค้าของใบ
+      // (คีย์สินค้า = ใช้จากสต็อกสินค้าสำเร็จรูป · คีย์ RB = ใช้จากคลัง SR ตั้งได้เฉพาะกลุ่มวางแผน) · ใบที่ยังไม่มีผลระเบิด หรือรหัสนอกผลระเบิด = BOM_FORBIDDEN · คีย์จัดรูปแบบ private.bom_code
+      const countsOf = (row) => Object.fromEntries(Object.entries(row.stockCounts && typeof row.stockCounts === "object" ? row.stockCounts : {}).map(([key, value]) => [bomCode(key), value]));
+      const before = countsOf(prev);
+      const after = countsOf(record);
+      const products = new Set((prev.items ?? []).map((item) => item.fgCode));
+      const countable = new Set((Array.isArray(prev.explosion) ? prev.explosion : []).filter((line) => line?.kind !== "RB" && !products.has(line?.itemCode)).map((line) => line.itemCode));
+      for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+        if (bomCanon(before[key] ?? null) !== bomCanon(after[key] ?? null) && !countable.has(key)) fail("BOM_FORBIDDEN");
+      }
       return;
     }
     if (list === "jobs" && prev && !planner) {
@@ -799,7 +805,8 @@ export function createMockSupabase({ empty = false, sandbox = false, ncr = false
     if (closing && rfCancel && (record.externalRef?.woId ?? prev.externalRef?.woId)) rfCancel.push(bomRfCancelOp("closeJob", [{ ...prev, externalRef: record.externalRef ?? prev.externalRef }]));
   }
   // ---- สต็อกของซื้อ (ตรงกับ private.bom_save_stock / bom_issue_parts) ----
-  const bomCode = (value) => String(value ?? "").trim().replace(/\s+/g, " ").toUpperCase();
+  // ตรงกับ private.bom_code: ตัดช่องว่างทุกตัว ยุบ "-" ที่ติดกันเหลือตัวเดียว แล้วเป็นตัวใหญ่
+  const bomCode = (value) => String(value ?? "").replace(/\s+/g, "").replace(/-{2,}/g, "-").toUpperCase();
   const bomStockNum = (value) => { if (value === undefined || value === null) return null; if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1e9) fail("BOM_INVALID_STOCK"); return value; };
   // id ขึ้นต้นด้วยลำดับการเขียน: ประวัติที่เกิดในมิลลิวินาทีเดียวกันเรียงตามลำดับที่เขียนจริง (ฐานข้อมูลเรียงตาม created_at ระดับไมโครวินาที)
   const bomMoveId = (stockMoves) => `${String(stockMoves.length + 1).padStart(8, "0")}-${newEpoch()}`;

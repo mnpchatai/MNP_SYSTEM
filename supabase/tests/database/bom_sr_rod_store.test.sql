@@ -624,6 +624,27 @@ select lives_ok($$ select sr_t.save(jsonb_build_object('orders', jsonb_build_obj
   sr_t.order_row('251202-25003') || '{"stockCounts":{"RB-A":10,"SE-A":4}}'::jsonb))), 'setStockCounts') $$,
   'a planner sets the amount taken from the SR store');
 select is(sr_t.order_row('251202-25003') -> 'stockCounts', '{"RB-A":10,"SE-A":4}'::jsonb, 'the draft keeps the counts of WH and the planner');
+-- ST / WH นับได้เฉพาะบรรทัดผลระเบิดที่ไม่ใช่ RB และไม่ใช่สินค้าของใบ: ใบที่ยังไม่มีผลระเบิด หรือรหัสนอกผลระเบิด ตั้งไม่ได้ (คีย์คงอยู่หลังคำนวณใหม่)
+select lives_ok($$ select sr_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  current_setting('test.ord')::jsonb || '{"id":"251202-25004","explosion":null}'::jsonb))), 'createOrder') $$, 'the planner opens a draft that is not exploded yet');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select throws_ok($$ select sr_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  sr_t.order_row('251202-25004') || '{"stockCounts":{"RB-A":5}}'::jsonb))), 'setStockCounts') $$,
+  'BOM_FORBIDDEN', 'ST cannot pre-set an RB key on a draft without an explosion');
+select throws_ok($$ select sr_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  sr_t.order_row('251202-25004') || '{"stockCounts":{"SE-A":5}}'::jsonb))), 'setStockCounts') $$,
+  'BOM_FORBIDDEN', 'nor any count before the explosion exists');
+select throws_ok($$ select sr_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  sr_t.order_row('251202-25003') || '{"stockCounts":{"RB-A":10,"SE-A":4,"XX-1":2}}'::jsonb))), 'setStockCounts') $$,
+  'BOM_FORBIDDEN', 'nor a code that is not a line of the explosion');
+select throws_ok($$ select sr_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  sr_t.order_row('251202-25003') || '{"stockCounts":{"RB-A":10,"SE-A":4,"FG-A":1}}'::jsonb))), 'setStockCounts') $$,
+  'BOM_FORBIDDEN', 'nor a product of the order (use from finished-goods stock)');
+select lives_ok($$ select sr_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  sr_t.order_row('251202-25003') || '{"stockCounts":{"RB-A":10,"SE-A":6}}'::jsonb))), 'setStockCounts') $$,
+  'ST still counts a normal line of an exploded draft');
+select is(sr_t.order_row('251202-25004') -> 'stockCounts', '{}'::jsonb, 'the draft without an explosion has no count');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 
 -- 13c. SR จ่ายแท่งตามใบแล้ว = งานเริ่มแล้ว เปิดกลับเป็นร่างไม่ได้จนกว่าจะย้อนการจ่าย ------------------------------------------------------------------
 select set_config('test.jobs3b', jsonb_build_array(

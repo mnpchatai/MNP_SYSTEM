@@ -401,6 +401,31 @@ test("mock: ST and WH cannot set the use-from-SR-store amount (planners can); ro
   assert.deepEqual([master.orders.find((row) => row.id === "DEMO-26002").status, rules.rodFree(master, RB), rules.rodOwned(master, "DEMO-26002", RB)], ["draft", 6, 0]);
 });
 
+test("ST and WH count only non-RB, non-product lines of the draft's explosion: a draft without an explosion or a code outside it is refused (page and mock)", async () => {
+  // หน้า: ใบที่ยังไม่มีผลระเบิด (แก้สินค้าแล้ว) นับไม่ได้ · ฐานข้อมูลจำลองปฏิเสธเหมือน bom_save_orders
+  const d = fresh();
+  const draft = d.orders.find((row) => row.id === "DEMO-26002");
+  draft.explosion = null;
+  for (const role of ["st", "wh"]) rejects(() => A.setStockCount(structuredClone(d), { orderId: "DEMO-26002", itemCode: RB, qty: 5 }, ctx(role)), /ไม่อยู่ในใบ/);
+  const scene = mockScene();
+  await scene.as("persona-pp");
+  const exploded = (await scene.master()).orders.find((row) => row.id === "DEMO-26002");
+  const se = exploded.explosion.find((line) => line.kind === "SE").itemCode;
+  const purchased = exploded.explosion.find((line) => line.kind === "PURCHASED")?.itemCode;
+  assert.ok((await scene.save("persona-pp", "updateOrderItem", { orders: { upsert: [{ ...exploded, explosion: null, explodedAt: null }] } })).data, "the planner edits the draft (explosion cleared)");
+  const cleared = (await scene.master()).orders.find((row) => row.id === "DEMO-26002");
+  for (const key of [RB, ` ${RB.toLowerCase()} `, se]) {
+    assert.equal(await codeOf(scene.save("persona-st", "setStockCounts", { orders: { upsert: [{ ...cleared, stockCounts: { ...cleared.stockCounts, [key]: 5 } }] } })), "BOM_FORBIDDEN", `no count of ${key} before the explosion exists`);
+  }
+  assert.ok((await scene.save("persona-pp", "explodeOrder", { orders: { upsert: [{ ...cleared, explosion: exploded.explosion, explodedAt: NOW }] } })).data);
+  const again = (await scene.master()).orders.find((row) => row.id === "DEMO-26002");
+  assert.deepEqual(again.stockCounts, cleared.stockCounts, "nothing slipped in before the recalculation");
+  const set = (extra) => scene.save("persona-st", "setStockCounts", { orders: { upsert: [{ ...again, stockCounts: { ...again.stockCounts, ...extra } }] } });
+  assert.equal(await codeOf(set({ "XX-NOT-IN-ORDER": 1 })), "BOM_FORBIDDEN", "a code outside the explosion");
+  assert.equal(await codeOf(set({ [again.items[0].fgCode]: 1 })), "BOM_FORBIDDEN", "a product of the order");
+  assert.equal(await codeOf(set({ [se]: 2, ...(purchased ? { [purchased]: 1 } : {}) })), "ok", "ST counts SE and purchased lines of an exploded draft");
+});
+
 test("mock: rod requests are checked in the database's order — the whole shape before rights, null measurements skipped, values up to 1e6; adjust keeps to free stock of the lot's own code", async () => {
   const scene = mockScene();
   // รูปคำขอผิดได้ BOM_INVALID_ROD ก่อนสิทธิ์ (GR ไม่มีสิทธิ์แต่ไม่ได้ BOM_FORBIDDEN)

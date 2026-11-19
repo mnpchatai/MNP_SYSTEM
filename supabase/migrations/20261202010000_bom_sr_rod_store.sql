@@ -36,7 +36,8 @@
 --   adjustRods (กลุ่มวางแผนเท่านั้น) rodMoves [{id, kind:'adjust', lotId, qty (มีเครื่องหมาย <> 0), note 3-300}] เฉพาะสต็อกกลาง
 --   ปล่อยผลิต: stockCounts[รหัสของบรรทัดผลระเบิดชนิด RB ของใบ] = n > 0 หยิบ n จากสต็อกกลางล็อตเก่าก่อน (ถัง owner null ก่อน แล้วใบที่ปิดตาม released_at)
 --     ต่อถังต้นทางสองแถว transfer (-k ถังต้นทาง, +k ถังของใบ) for_order_pk = ใบ · ไม่พอ = BOM_ROD_EXCEEDS ทั้งคำสั่งไม่เขียน
---     คีย์รหัส RB นี้ตั้ง / แก้ได้เฉพาะกลุ่มวางแผน (ST / WH ที่นับใบร่างได้ ตั้งคีย์นี้ = BOM_FORBIDDEN เหมือนคีย์สินค้า)
+--     คีย์รหัส RB นี้ตั้ง / แก้ได้เฉพาะกลุ่มวางแผน: ST / WH ที่นับใบร่างได้ แก้ได้เฉพาะคีย์ที่เป็นบรรทัดผลระเบิดของใบที่ไม่ใช่ RB และไม่ใช่สินค้าของใบ
+--     (ใบที่ยังไม่มีผลระเบิด หรือรหัสนอกผลระเบิด = BOM_FORBIDDEN)
 --   เปิดกลับเป็นร่าง: คืน min(transfer สุทธิที่ใบนี้หยิบ, ยอดถังของใบ) ต่อล็อตกลับสต็อกกลาง · ยกเลิกไม่ต้องทำอะไร (ถังของใบที่ยกเลิกเป็นสต็อกกลางเอง)
 --     SR จ่ายแท่งตามใบนี้แล้ว (issue + unissue สุทธิ for_order = ใบนี้ ยังค้าง) = นับว่างานเริ่มแล้ว เปิดกลับไม่ได้ (BOM_INVALID_TRANSITION)
 --   รหัสข้อผิดพลาดใหม่: BOM_INVALID_ROD, BOM_ROD_EXCEEDS (ใช้ BOM_FORBIDDEN / BOM_INVALID_TRANSITION / BOM_CONFLICT เดิมด้วย)
@@ -1521,17 +1522,19 @@ begin
     -- สิทธิ์: กลุ่มวางแผนแก้ได้ทุกอย่าง · ST/WH แก้ได้เฉพาะ stockCounts ของใบ draft · คนอื่นแก้ไม่ได้
     if not p_planner then
       if v_content or v_status_changed or v_dept is null or v_dept not in ('ST', 'WH') then raise exception 'BOM_FORBIDDEN'; end if;
-      -- คีย์ที่เป็นรหัสสินค้าของใบ (จำนวนที่หยิบจากสต็อกสินค้าสำเร็จรูป) ตั้งได้เฉพาะกลุ่มวางแผน · ST / WH นับชิ้นอื่นของใบได้เหมือนเดิม
+      -- ST / WH นับได้เฉพาะชิ้นที่อยู่ในผลระเบิดของใบ (20261202010000): ทุกคีย์ที่เพิ่ม / แก้ / ลบ ต้องเป็นรหัสของบรรทัดผลระเบิดที่ไม่ใช่ชนิด RB
+      -- และไม่ใช่สินค้าของใบ · คีย์สินค้า (ใช้จากสต็อกสินค้าสำเร็จรูป) และคีย์รหัส RB (ใช้จากคลัง SR ตอนปล่อยผลิต) ตั้งได้เฉพาะกลุ่มวางแผน
+      -- ใบที่ยังไม่มีผลระเบิด (ใบใหม่ หรือหลังแก้สินค้า) หรือรหัสที่ไม่อยู่ในผลระเบิด = BOM_FORBIDDEN (คำนวณใหม่แล้วคีย์คงอยู่ จึงห้ามตั้งไว้ก่อน)
       if v_counts_changed and exists (
-           select 1 from jsonb_array_elements(v_old.items) it
-           where (v_old.stock_counts -> (it ->> 'fgCode')) is distinct from (v_counts -> (it ->> 'fgCode'))) then
-        raise exception 'BOM_FORBIDDEN';
-      end if;
-      -- คลังแท่งยาว SR (20261202010000): คีย์ที่เป็นรหัส RB ของผลระเบิดของใบ (จำนวนที่หยิบจากคลัง SR ตอนปล่อยผลิต) ตั้งได้เฉพาะกลุ่มวางแผนเหมือนคีย์สินค้า
-      if v_counts_changed and exists (
-           select 1 from jsonb_array_elements(coalesce(v_old.explosion, '[]'::jsonb)) e
-           where e ->> 'kind' = 'RB'
-             and (v_old.stock_counts -> (e ->> 'itemCode')) is distinct from (v_counts -> (e ->> 'itemCode'))) then
+           select 1
+           from (select t.k from jsonb_object_keys(coalesce(v_old.stock_counts, '{}'::jsonb)) as t(k)
+                 union
+                 select t.k from jsonb_object_keys(v_counts) as t(k)) as c
+           where (v_old.stock_counts -> c.k) is distinct from (v_counts -> c.k)
+             and not exists (
+               select 1 from jsonb_array_elements(coalesce(v_old.explosion, '[]'::jsonb)) as e(line)
+               where e.line ->> 'itemCode' = c.k and (e.line ->> 'kind') is distinct from 'RB'
+                 and not exists (select 1 from jsonb_array_elements(v_old.items) as it(item) where it.item ->> 'fgCode' = c.k))) then
         raise exception 'BOM_FORBIDDEN';
       end if;
     end if;

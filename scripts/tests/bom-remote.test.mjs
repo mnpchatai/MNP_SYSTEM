@@ -1773,7 +1773,7 @@ test("the mock database checks orders and jobs per section and per field for the
   const withOrder = async (id, extra) => ({ ...(await cur("orders", id)), ...extra });
 
   // ฝ่ายวางแผน (admin): ลูกค้า ใบ งาน
-  assert.equal(await code({ customers: { upsert: [{ name: "Acme", country: "USA", orderType: "EX", note: "" }] }, orders: { upsert: [mockOrder("PI-1"), mockOrder("PI-2")] } }), null);
+  assert.equal(await code({ customers: { upsert: [{ name: "Acme", country: "USA", orderType: "EX", note: "" }] }, orders: { upsert: [mockOrder("PI-1"), mockOrder("PI-2", { explosion: [{ itemCode: "FG-1", kind: "FG", level: 0, fgQty: 5, required: 5 }, { itemCode: "P-1", kind: "SE", level: 1, fgQty: 5, required: 10 }] })] } }), null);
   assert.equal(await code({ jobs: { upsert: [mockJob("JOB-RB", "PI-1", "RB"), mockJob("JOB-GR", "PI-1", "GR")] }, orders: { upsert: [mockOrder("PI-1", { status: "released", explosion: [] })] } }), null);
   assert.deepEqual((await view()).orders.map((row) => row.id), ["PI-1", "PI-2"], "orders newest first, then by id");
   assert.deepEqual((await view()).jobs.map((row) => row.id), ["JOB-GR", "JOB-RB"], "jobs by order, department, item, id");
@@ -4608,7 +4608,7 @@ test("the mock database returns what an order took when it is cancelled or reope
 test("the mock database lets only the planning group set the amount a draft takes from stock; ST and WH still count the other items", async () => {
   const s = await stockMock();
   const { code, save } = s;
-  await s.draft("PI-P1", 5, 1);
+  await s.draft("PI-P1", 5, 1, { explosion: [{ itemCode: "FG-1", kind: "FG", level: 0, fgQty: 5, required: 5 }, { itemCode: "SE-X", kind: "SE", level: 1, fgQty: 5, required: 10 }] }); // ST / WH นับได้เฉพาะบรรทัดผลระเบิด (20261202010000)
   const row = async () => s.order("PI-P1");
   for (const persona of ["persona-st", "persona-wh"]) {
     await s.as(persona);
