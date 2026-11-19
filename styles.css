@@ -3227,6 +3227,32 @@ table.bom-tree td.right { white-space: nowrap; }
 .itwo-purge { margin-top: 24px; }
 #itwo-staff-title { margin-bottom: 12px; }
 .itwo-signature-remark { font-style: italic; }
+/* รุ่น 2: ป้ายงานแก้ไข · ไฟล์แนบ · ฟอร์มขอแก้ไขงาน · ความคืบหน้าอัปโหลด */
+.badge.itwo-rework-tag { color: var(--warning-ink); background: var(--warning-soft); border: 1px solid var(--warning); }
+.itwo-file-field .file-pick { justify-self: start; }
+.itwo-rework-round { padding: 12px 0; border-top: 1px solid var(--soft-line); }
+.itwo-rework-round:first-of-type { border-top: 0; padding-top: 0; }
+.itwo-rework-round h3 { margin: 0 0 6px; font-size: var(--text-ui); }
+.itwo-rework-round p { margin: 0 0 6px; }
+.itwo-rework-round .attachment-grid { margin: 8px 0 0; }
+.itwo-rework-card { border-color: var(--primary); }
+.itwo-rework-card .form-actions { flex-wrap: wrap; justify-content: flex-start; }
+.itwo-upload h2 { margin-bottom: 6px; }
+.itwo-upload-summary { margin: 8px 0; font-weight: 700; }
+.itwo-upload-list { margin: 0 0 14px; padding: 0; list-style: none; display: grid; gap: 6px; }
+.itwo-upload-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper); }
+.itwo-upload-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.itwo-upload-state { font-size: var(--text-caption); font-weight: 700; color: var(--muted); }
+.itwo-upload-row.is-done .itwo-upload-state { color: var(--success-ink); }
+.itwo-upload-row.is-failed { border-color: var(--danger); }
+.itwo-upload-row.is-failed .itwo-upload-state, .itwo-upload-message { color: var(--danger); }
+.itwo-upload-message { grid-column: 1 / -1; font-size: var(--text-meta); overflow-wrap: anywhere; }
+.itwo-upload .form-actions { flex-wrap: wrap; justify-content: flex-start; }
+/* รายชื่อไฟล์แนบบนกระดาษ: ชื่อไฟล์ล้วน ไม่มีรูป · แบ่งสองคอลัมน์ให้พอดีหน้า */
+.itwo-sheet-files { margin: 0; padding: 0; list-style: none; columns: 2; column-gap: 14px; font-size: 9.5pt; }
+.itwo-sheet-files li { break-inside: avoid; overflow-wrap: anywhere; }
+.itwo-sheet-file-size { color: #333; }
+.itwo-sheet-reworks th, .itwo-sheet-reworks td { font-size: 9.5pt; }
 @media (max-width: 719px) {
   .itwo-access-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .itwo-access-table, .itwo-access-table tbody, .itwo-access-table tr, .itwo-access-table td { display: block; }
@@ -3278,4 +3304,9 @@ table.bom-tree td.right { white-space: nowrap; }
   .itwo-signatures { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .itwo-signature { border-bottom: 0; }
   .itwo-sheet-table, .itwo-signatures { break-inside: avoid; }
+  /* ประวัติการแก้ไขงานยาวได้หลายรอบ: ตารางตัดข้ามหน้าได้แต่ไม่ตัดกลางแถว หัวตารางซ้ำทุกหน้า · ลายเซ็นย้ายทั้งก้อนไปหน้าถัดไปแทนการถูกตัดครึ่ง */
+  .itwo-sheet-reworks { break-inside: auto; }
+  .itwo-sheet-reworks thead { display: table-header-group; }
+  .itwo-sheet-reworks tr { break-inside: avoid; }
+  .itwo-sheet-section { break-after: avoid; }
 }
