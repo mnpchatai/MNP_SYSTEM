@@ -19,7 +19,7 @@ select is((select string_agg(a.attname || ':' || format_type(a.atttypid, a.attty
 select is((select string_agg(a.attname, ', ' order by a.attname) from pg_attribute a
            where a.attrelid = 'public.bom_rod_lots'::regclass and a.attname in ('order_pk', 'job_no', 'wo_no', 'recipe_code') and not a.attnotnull and not a.attisdropped),
   'job_no, order_pk, recipe_code, wo_no', 'the order, job, work order and recipe of a lot may be empty (a lot taken in outside an order)');
-select ok(exists (select 1 from pg_constraint c where c.conrelid = 'public.bom_rod_lots'::regclass and c.conname = 'bom_rod_lots_source_check')
+select ok(exists (select 1 from pg_constraint c where c.conrelid = 'public.bom_rod_lots'::regclass and c.conname = 'bom_rod_lots_source_fields_check')
       and exists (select 1 from pg_constraint c where c.conrelid = 'public.bom_rod_lots'::regclass and c.conname = 'bom_rod_lots_state_check'),
   'the lot table checks the source and the state');
 select ok(exists (select 1 from pg_constraint c where c.conrelid = 'public.bom_rod_lots'::regclass and c.contype = 'f'

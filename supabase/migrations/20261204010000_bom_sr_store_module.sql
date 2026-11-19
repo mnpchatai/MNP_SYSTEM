@@ -50,7 +50,7 @@
 --   1) create or replace เจ็ดฟังก์ชันกลับด้วยนิยามใน 20261202010000_bom_sr_rod_store.sql (ลายเซ็นเดิม สิทธิ์เดิมคงอยู่)
 --   2) delete from public.bom_rod_moves where lot_id in (select id from public.bom_rod_lots where source = 'opening') แล้ว delete from public.bom_rod_lots where source = 'opening'
 --      (ล็อตนอกใบสั่งที่รับไว้หายไป)
---   3) alter table public.bom_rod_lots drop constraint bom_rod_lots_source_check, drop constraint bom_rod_lots_state_check แล้วสร้าง bom_rod_lots_state_check
+--   3) alter table public.bom_rod_lots drop constraint bom_rod_lots_source_fields_check, drop constraint bom_rod_lots_state_check แล้วสร้าง bom_rod_lots_state_check
 --      ตามนิยามเดิมใน 20261202010000 · alter column order_pk / job_no / wo_no / recipe_code set not null · drop column location, source, source_note
 -- ============================================================================
 
@@ -65,7 +65,7 @@ alter table public.bom_rod_lots
   alter column wo_no drop not null,
   alter column recipe_code drop not null;
 -- ล็อตจากใบสั่ง (ล็อตตกแต่งของ WO ที่ผูกงาน) มีใบ / งาน / WO / สูตรครบ · ล็อตนอกใบสั่งไม่มีใบ งาน และ WO
-alter table public.bom_rod_lots add constraint bom_rod_lots_source_check check (
+alter table public.bom_rod_lots add constraint bom_rod_lots_source_fields_check check (
   (source = 'opening' or (order_pk is not null and job_no is not null and wo_no is not null and recipe_code is not null))
   and (source <> 'opening' or (order_pk is null and job_no is null and wo_no is null)));
 -- สถานะ (นิยามเดิมของ 20261202010000) · ล็อต stored ที่รับนอกใบสั่งไม่มีผลตรวจขนาด (qc null)
