@@ -6,11 +6,14 @@
 --      ไม่แจ้ง: เริ่มงาน (รวมงานด่วนก่อนอนุมัติ) และรับงาน · ไม่ส่งถึงคนที่กดเอง · ไม่ซ้ำผู้รับเดียวกันในเหตุการณ์เดียว
 --      ผู้รับที่ inactive / ไม่มีบัญชีล็อกอินไม่ได้รับ · ข้อความ/ลิงก์ถูกต้อง
 --   D) ใบทดสอบ (โหมดทดสอบ) ไม่ insert เลย และการกระทำไม่ล้ม · แจ้งเตือนล้มเหลวแล้วการอนุมัติไม่ล้มตาม
+--      (ปิด sandbox_guard ชั่วคราวเพื่อพิสูจน์ว่าบรรทัดเช็กโหมดทดสอบใน office_notify ทำงานจริง และปิด FK ชั่วคราวเพื่อแยกพิสูจน์ is_test ของ event / ของใบ)
+--   E) ไม่อนุมัติโดยผู้อนุมัติขั้น IT · ผู้แจ้งแผนก IT กดครั้งเดียวนับสองขั้น
+--      งานด่วน: ผู้ดูแลงาน IT ได้แจ้งทันทีตอนแจ้ง · ป้าย "🚨 [ด่วน] " ครั้งเดียวทุกข้อความของใบด่วน · อนุมัติครบหลัง IT เริ่มงานแล้วไม่พูดว่ารอรับงาน
 -- ผู้ใช้ทดสอบเป็นบัญชีจริงใหม่ (NT-*) ในแผนกทดสอบ ZNA/ZNB · persona SBX-IT-* มาจาก migration ของใบสั่งงาน IT
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(132);
+select plan(173);
 
 -- ตัวช่วย: รหัสพนักงานของผู้รับแจ้งเตือนของใบ (เรียงตามรหัส) ที่หัวข้อตรงรูปแบบ
 create function pg_temp.who(p_order text, p_title_like text default '%') returns text language sql as $$
@@ -318,7 +321,7 @@ select set_config('request.jwt.claims', '{"sub":"4e800000-0000-0000-0000-0000000
 select lives_ok($$ select public.app_itwo_start(current_setting('t.oh4')::uuid) $$, 'IT starts an urgent order before any approval');
 reset role;
 select set_config('request.jwt.claims', '', true);
-select is(pg_temp.total(current_setting('t.oh4')), 2, 'starting it added no notification (only the two department approvers asked at filing)');
+select is(pg_temp.total(current_setting('t.oh4')), 4, 'starting it added no notification (only the two department approvers and the two IT admins told at filing)');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"4e800000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 select lives_ok($$ select public.app_itwo_cancel(current_setting('t.oh4')::uuid, 'ไม่เร่งแล้ว') $$, 'the requester cancels the urgent order that IT has started');
@@ -390,13 +393,117 @@ select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_i
 -- ฟังก์ชัน private เรียกได้เฉพาะเจ้าของ: กลับเป็น postgres แต่คงตัวตนของ admin (auth.uid) ไว้
 reset role;
 select is(private.office_notify(current_setting('test.p_nt_req')::uuid, 'ในโหมดทดสอบ', 'x', '/office/work-order/helper-5'), false, 'office_notify itself refuses to write while the session is in the test mode');
+-- พิสูจน์ว่าเป็นบรรทัดเช็กโหมดทดสอบของ office_notify ไม่ใช่ sandbox_guard ที่ exception block จับไว้เงียบ ๆ: ปิด guard ชั่วคราว (เปิดคืนท้ายส่วนนี้) แล้วต้องยังไม่เขียน
+alter table public.notifications disable trigger sandbox_guard;
+select is(private.office_notify(current_setting('test.p_nt_req')::uuid, 'ในโหมดทดสอบ (ปิด guard)', 'x', '/office/work-order/helper-6'), false, 'with sandbox_guard switched off, office_notify still refuses in the test mode (its own check, not the guard)');
+select is(pg_temp.total('helper-6'), 0, 'and wrote nothing');
 set local role authenticated;
 select lives_ok($$ select public.app_sandbox_exit() $$, 'the admin leaves the test mode');
 reset role;
+-- ตัวควบคุม: นอกโหมดทดสอบ ด้วย guard ที่ยังปิดอยู่ คำเรียกเดียวกันเขียนได้ (แปลว่าผลข้างบนมาจากการเช็กโหมดทดสอบจริง)
+select is(private.office_notify(current_setting('test.p_nt_req')::uuid, 'นอกโหมดทดสอบ', 'x', '/office/work-order/helper-6'), true, 'control: the same call outside the test mode does write (so the refusal above came from the test mode check)');
+alter table public.notifications enable trigger sandbox_guard;
+select is((select t.tgenabled::text from pg_trigger t where t.tgrelid = 'public.notifications'::regclass and t.tgname = 'sandbox_guard'), 'O', 'sandbox_guard is switched back on');
 select set_config('request.jwt.claims', '', true);
 select is(pg_temp.total('helper-5'), 0, 'nothing was written');
 -- ใบทดสอบที่แทรกตรง ๆ (เหมือน persona) ก็ไม่แจ้ง และไม่ล้ม
 select lives_ok($$ insert into public.itwo_events (is_test, work_order_id, actor_id, action) values (true, current_setting('t.t1')::uuid, (select id from public.employees where employee_no = 'SBX-IT-ADMIN'), 'completed') $$, 'an event on a test order inserted directly (as postgres) does not fail');
+
+-- แยกพิสูจน์ is_test ของ event กับ is_test ของใบ: ปกติ FK (work_order_id, is_test) บังคับให้เท่ากันเสมอ จึงปิด FK ชั่วคราว (ย้อนด้วย rollback ของธุรกรรม)
+-- ผู้รับที่ใช้ (ผู้ดูแลงาน IT NT-ADM/NT-ADM2 และผู้แจ้ง NT-REQ) เป็นบัญชีจริง ชั้นอื่น (office_notify) จึงไม่บัง
+alter table public.itwo_events drop constraint itwo_events_work_order_id_is_test_fkey;
+select set_config('t.n_is_test', (select count(*)::text from public.notifications), true);
+select lives_ok($$ insert into public.itwo_events (is_test, work_order_id, actor_id, action) values (true, current_setting('t.oa')::uuid, current_setting('test.p_nt_appr')::uuid, 'it_mgr_approved') $$, 'an event flagged is_test on a real order is inserted');
+select is((select count(*)::text from public.notifications), current_setting('t.n_is_test'), 'and the trigger skips it on the event flag alone (real recipients, nothing written)');
+select lives_ok($$ insert into public.itwo_events (is_test, work_order_id, actor_id, action) values (false, current_setting('t.t1')::uuid, current_setting('test.p_nt_appr')::uuid, 'it_mgr_approved') $$, 'an unflagged event on a test order is inserted');
+select is((select count(*)::text from public.notifications), current_setting('t.n_is_test'), 'and the trigger skips it on the order flag alone (real IT admins, nothing written)');
+select lives_ok($$ insert into public.itwo_events (is_test, work_order_id, actor_id, action) values (false, current_setting('t.oa')::uuid, current_setting('test.p_nt_appr')::uuid, 'it_mgr_approved') $$, 'control: the same event with both flags false is inserted');
+select ok((select count(*) from public.notifications) > current_setting('t.n_is_test')::bigint, 'and that one does notify (so the two skips above came from the is_test checks)');
+
+-- 15. ไม่อนุมัติโดยผู้อนุมัติขั้น IT ----------------------------------------------
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"4e800000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+select set_config('t.oj', (select id::text from public.app_itwo_create('design', null, 'no', null, 'ถูกปฏิเสธขั้น IT', ((now() at time zone 'Asia/Bangkok')::date + 3), false)), true);
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"4e800000-0000-0000-0000-000000000002","role":"authenticated"}', true);
+select lives_ok($$ select public.app_itwo_approve(current_setting('t.oj')::uuid) $$, 'the department manager approves');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"4e800000-0000-0000-0000-000000000006","role":"authenticated"}', true);
+select lives_ok($$ select public.app_itwo_reject(current_setting('t.oj')::uuid, 'งบไม่พอ') $$, 'the IT approver rejects at the IT step');
+reset role;
+select set_config('request.jwt.claims', '', true);
+select is(pg_temp.who(current_setting('t.oj'), '% ไม่ได้รับอนุมัติ'), 'NT-REQ', 'IT step rejected: only the requester is told');
+select is((select n.body from public.notifications n where n.action_url = '/office/work-order/' || current_setting('t.oj') and n.title like '% ไม่ได้รับอนุมัติ'), 'เหตุผล: งบไม่พอ · โดย ทดสอบ NT-APPR', 'with the reason and who rejected');
+select is(pg_temp.who(current_setting('t.oj'), '% อนุมัติครบ%'), '', 'and nobody is told it was approved in full');
+select is(pg_temp.total(current_setting('t.oj')), 5, 'two department approvers asked at filing, two IT approvers asked after the department, and the requester (nothing for IT admins)');
+
+-- 16. ผู้แจ้งอยู่แผนก IT: ไม่มีขั้นแผนก ผู้อนุมัติขั้น IT กดครั้งเดียวนับสองขั้น -------------------
+insert into auth.users (id, email, raw_user_meta_data) values ('4e800000-0000-0000-0000-000000000015', 'itn-u15@test.local', '{}'::jsonb);
+insert into public.employees (employee_no, first_name, last_name, email, department_id, role_id, auth_user_id, is_active)
+select 'NT-ITREQ', 'ทดสอบ', 'NT-ITREQ', 'nt-itreq@itn.test', d.id, r.id, '4e800000-0000-0000-0000-000000000015'::uuid, true
+from public.departments d, public.roles r where d.code = 'IT' and r.code = 'staff';
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"4e800000-0000-0000-0000-000000000015","role":"authenticated"}', true);
+select set_config('t.ok', (select id::text from public.app_itwo_create('design', null, 'no', null, 'ผู้แจ้งแผนก IT', ((now() at time zone 'Asia/Bangkok')::date + 3), false)), true);
+reset role;
+select set_config('request.jwt.claims', '', true);
+select is(pg_temp.who(current_setting('t.ok')), 'NT-APPR,NT-APPR2', 'a requester in the IT department: the IT approvers are asked at once (there is no department step)');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"4e800000-0000-0000-0000-000000000006","role":"authenticated"}', true);
+select lives_ok($$ select public.app_itwo_approve(current_setting('t.ok')::uuid) $$, 'one click by the IT approver counts both steps');
+reset role;
+select set_config('request.jwt.claims', '', true);
+select is(pg_temp.who(current_setting('t.ok'), '% อนุมัติครบแล้ว'), 'NT-ITREQ', 'the requester is told once');
+select is(pg_temp.who(current_setting('t.ok'), '% พร้อมให้ IT รับงาน'), 'NT-ADM,NT-ADM2', 'and the IT admins');
+select is(pg_temp.total(current_setting('t.ok')), 5, 'two asked + requester + two IT admins: the department approval of the same click asked nobody again');
+
+-- 17. งานด่วน: แจ้ง IT ทันที + ป้ายด่วน + อนุมัติครบหลัง IT เริ่มงานแล้ว --------------------------
+select is((select count(*)::int from public.notifications n where n.action_url = '/office/work-order/' || current_setting('t.oa') and n.title like '%ด่วน%'), 0, 'a normal order never carries the urgent mark (checked on the very first order of this file)');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"4e800000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+select set_config('t.ou', (select id::text from public.app_itwo_create('design', null, 'no', null, 'งานด่วนเต็มรูปแบบ', ((now() at time zone 'Asia/Bangkok')::date + 1), true)), true);
+reset role;
+select set_config('request.jwt.claims', '', true);
+select set_config('t.ou_no', (select doc_no from public.itwo_work_orders where id = current_setting('t.ou')::uuid), true);
+select is(pg_temp.who(current_setting('t.ou')), 'NT-ADM,NT-ADM2,NT-AMGR,NT-MGR', 'urgent filing: the department approvers AND every IT admin are told at once');
+select is(pg_temp.who(current_setting('t.ou'), '% แจ้งงานด่วน เริ่มทำได้ก่อนอนุมัติครบ'), 'NT-ADM,NT-ADM2', 'the admins get the "may start before approval" message');
+select is((select n.title from public.notifications n where n.action_url = '/office/work-order/' || current_setting('t.ou') and n.recipient_id = current_setting('test.p_nt_adm')::uuid), '🚨 [ด่วน] ใบสั่งงาน ' || current_setting('t.ou_no') || ' แจ้งงานด่วน เริ่มทำได้ก่อนอนุมัติครบ', 'the admin title is exactly the urgent mark + document number + message');
+select is((select count(*)::int from public.notifications n where n.action_url = '/office/work-order/' || current_setting('t.ou') and n.title not like '🚨 [ด่วน] %'), 0, 'every message of an urgent order starts with the urgent mark');
+select is((select count(*)::int from public.notifications n where n.action_url = '/office/work-order/' || current_setting('t.ou') and n.title like '%[ด่วน]%[ด่วน]%'), 0, 'and the mark is there only once');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"4e800000-0000-0000-0000-000000000004","role":"authenticated"}', true);
+select lives_ok($$ select public.app_itwo_start(current_setting('t.ou')::uuid) $$, 'IT starts the urgent order before any approval');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"4e800000-0000-0000-0000-000000000002","role":"authenticated"}', true);
+select lives_ok($$ select public.app_itwo_approve(current_setting('t.ou')::uuid) $$, 'the department manager approves the order that is already in progress');
+reset role;
+select set_config('request.jwt.claims', '', true);
+select is((select w.status from public.itwo_work_orders w where w.id = current_setting('t.ou')::uuid), 'in_progress', 'the order stays in progress after the department approval');
+select is(pg_temp.who(current_setting('t.ou'), '% รอคุณอนุมัติ'), 'NT-AMGR,NT-APPR,NT-APPR2,NT-MGR', 'department approval on an urgent order in progress: the IT approvers are asked');
+select is((select count(*)::int from public.notifications n where n.action_url = '/office/work-order/' || current_setting('t.ou') and n.title like '% รอคุณอนุมัติ' and n.title like '🚨 [ด่วน] %'), 4, 'and those messages carry the urgent mark too');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"4e800000-0000-0000-0000-000000000006","role":"authenticated"}', true);
+select lives_ok($$ select public.app_itwo_approve(current_setting('t.ou')::uuid) $$, 'the IT approver approves: fully approved while IT is already working');
+reset role;
+select set_config('request.jwt.claims', '', true);
+select is(pg_temp.who(current_setting('t.ou'), '% อนุมัติครบแล้ว ส่งงานได้'), 'NT-ADM,NT-ADM2', 'fully approved after IT started: the admins are told they may deliver');
+select is(pg_temp.who(current_setting('t.ou'), '% พร้อมให้ IT รับงาน'), '', 'and nobody is told it is "ready for IT to take"');
+select is((select n.body from public.notifications n where n.action_url = '/office/work-order/' || current_setting('t.ou') and n.title like '% อนุมัติครบแล้ว' and n.recipient_id = current_setting('test.p_nt_req')::uuid), 'IT กำลังดำเนินการ · งานออกแบบ · ต้องการ ' || private.office_format_date((now() at time zone 'Asia/Bangkok')::date + 1), 'the requester is told IT is working on it (not that it waits for IT)');
+select is((select count(*)::int from public.notifications n where n.action_url = '/office/work-order/' || current_setting('t.ou') and n.body like '%รอ IT ดำเนินการ%'), 0, 'no message of that order says it waits for IT');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"4e800000-0000-0000-0000-000000000004","role":"authenticated"}', true);
+select lives_ok($$ select public.app_itwo_complete(current_setting('t.ou')::uuid) $$, 'IT delivers the urgent order');
+reset role;
+select set_config('request.jwt.claims', '', true);
+select is((select n.title from public.notifications n where n.action_url = '/office/work-order/' || current_setting('t.ou') and n.title like '%ส่งงาน%แล้ว กรุณาตรวจรับ'), '🚨 [ด่วน] IT ส่งงานใบสั่งงาน ' || current_setting('t.ou_no') || ' แล้ว กรุณาตรวจรับ', 'the delivered message carries the urgent mark once');
+-- ผู้อนุมัติขั้น IT แจ้งงานด่วนเอง (อนุมัติครบตั้งแต่แจ้ง): ผู้ดูแลงานได้ข้อความเดียวต่อคน ไม่ซ้ำกับ "แจ้งงานด่วน"
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"4e800000-0000-0000-0000-000000000006","role":"authenticated"}', true);
+select set_config('t.ov', (select id::text from public.app_itwo_create('design', null, 'no', null, 'ผู้อนุมัติ IT แจ้งงานด่วน', ((now() at time zone 'Asia/Bangkok')::date + 1), true)), true);
+reset role;
+select set_config('request.jwt.claims', '', true);
+select is(pg_temp.who(current_setting('t.ov')), 'NT-ADM,NT-ADM2', 'an IT approver filing an urgent order (approved at once): each admin gets one message, not two');
+select is((select count(*)::int from public.notifications n where n.action_url = '/office/work-order/' || current_setting('t.ov') and n.title like '🚨 [ด่วน] % อนุมัติครบ พร้อมให้ IT รับงาน'), 2, 'and it is the "approved in full, ready for IT" one, with the urgent mark');
 
 select * from finish();
 rollback;

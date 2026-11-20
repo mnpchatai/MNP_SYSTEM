@@ -15,6 +15,9 @@
 --     (แจ้งเตือนเป็นเรื่องรอง ห้ามขวางบันทึก ISO) · ล้มรายคน (office_notify) ไม่ทำให้คนอื่นในเหตุการณ์เดียวกันอด
 --
 -- ตารางแจ้งเตือน (kind = 'event' ทุกข้อ · ไม่ส่งถึงคนที่กดเอง · ไม่ซ้ำผู้รับเดียวกันในเหตุการณ์เดียว):
+--   งานด่วน (is_urgent): ทุกข้อความของใบด่วนขึ้นหัวด้วย "🚨 [ด่วน] " (รูปแบบเดียวกับ private.notify_title ของระบบคำร้อง และ URGENT_PREFIX ของ notify-email
+--        ซึ่งเห็นคำนำหน้าในหัวข้อความแล้วตัดออกเองก่อนใส่ซ้ำที่หัวอีเมล จึงขึ้นครั้งเดียว · notify-email ไม่เติมคำนำหน้าให้แถวที่ไม่มี request_id)
+--        และตอนแจ้งงานด่วนแจ้ง "ผู้ดูแลงาน IT ทุกคน" ทันทีด้วย (นอกจากผู้อนุมัติ) เพราะ IT เริ่มทำได้ก่อนอนุมัติครบ
 --   created (ไปรอขั้นแผนก)             -> ผู้อนุมัติขั้นแผนกทุกคนของแผนกผู้แจ้ง (ไม่รวมผู้แจ้ง)       "รอคุณอนุมัติ"
 --   created (ไปรอขั้น IT ทันที)         -> ผู้อนุมัติขั้น IT (itwo_staff.is_it_approver)                 "รอคุณอนุมัติ"
 --        (แผนกไม่มีผจก. / แผนก IT / ผจก.แจ้งเอง) · ผู้อนุมัติขั้น IT แจ้งเอง (อนุมัติครบทันที) ไม่แจ้งตอน created แต่แจ้งตอน it_mgr_approved
@@ -22,6 +25,8 @@
 --        ข้ามเมื่อ: ผู้กดคือผู้แจ้งเอง (ผจก.แจ้งเอง = อนุมัติในตัว ใบ created แจ้ง IT ไปแล้ว) หรือผู้กดเป็นผู้อนุมัติขั้น IT
 --        (กดครั้งเดียวนับสองขั้น itwo_decide เขียน dept_approved ตามด้วย it_mgr_approved เสมอ จึงแจ้งตอน it_mgr_approved ครั้งเดียว)
 --   it_mgr_approved (= อนุมัติครบ)      -> ผู้แจ้ง "อนุมัติครบแล้ว" + ผู้ดูแลงาน IT (itwo_staff.is_it_admin) ทุกคน "อนุมัติครบ พร้อมให้ IT รับงาน"
+--        ถ้าใบนั้น IT เริ่มงานไปแล้ว (งานด่วนที่ทำก่อนอนุมัติครบ): ผู้ดูแลงาน IT ได้ "อนุมัติครบแล้ว ส่งงานได้" และผู้แจ้งได้ "IT กำลังดำเนินการ"
+--        (ไม่พูดว่ารอ IT ดำเนินการ/รับงาน เพราะเริ่มไปแล้ว)
 --   dept_rejected / it_mgr_rejected    -> ผู้แจ้ง "ไม่ได้รับอนุมัติ" พร้อมเหตุผลย่อ
 --   info_requested (ถามผู้แจ้ง)          -> ผู้แจ้ง · info_provided (ผู้แจ้งตอบ) -> คนที่ถามคำถามที่ถูกตอบ
 --   completed (IT ส่งงาน)               -> ผู้แจ้ง
@@ -32,7 +37,8 @@
 --
 -- ผู้รับต้อง: active, ไม่ถูกลบ, ไม่ใช่บัญชีทดสอบ, ผูกบัญชีล็อกอินแล้ว (auth_user_id), ไม่ใช่บัญชี lab-only (private.office_notify ตรวจ)
 -- ใบทดสอบ (is_test) "ไม่ insert เลย": ตาราง notifications ติด sandbox_guard (SANDBOX_MODULE_UNSUPPORTED) ถ้าเขียนขณะ admin อยู่ในโหมดทดสอบ
---   ทั้งธุรกรรมจะล้ม · ตรวจสองชั้น: trigger ข้าม is_test + office_notify ข้ามเมื่อ session อยู่ในโหมดทดสอบ
+--   guard จะ raise exception แต่ insert ใน office_notify ครอบด้วย exception block จึงถูกจับไว้เป็น warning (การกระทำของใบไม่ล้ม แต่ไม่มีแถวแจ้งเตือน
+--   และมี warning ใน Postgres log ทุกครั้ง) · เลยตรวจก่อนเขียนสองชั้น: trigger ข้าม is_test + office_notify ข้ามเมื่อ session อยู่ในโหมดทดสอบ
 --
 -- ปลายทางเมื่อกด: action_url = '/office/work-order/<uuid ใบ>' (รูปแบบใหม่ ไม่ชนของเดิม) แล้ว 3 จุดฝั่งโค้ดแปลงเป็น
 --   #/office?module=work-order&view=order&id=<uuid> : app.js notificationHref, supabase/functions/notify-email linkFor,
@@ -70,11 +76,12 @@ $$;
 revoke all on function private.office_clip(text, integer) from public, anon, authenticated;
 
 -- วันที่ในข้อความแจ้งเตือน: วว/ดด/ปปปป แบบ พ.ศ. ตรงกับหน้าจอของโมดูล (YEAR_OFFSET ใน modules/itwo-model.js)
--- ถ้าเจ้าของเปลี่ยนเป็น ค.ศ. ให้เปลี่ยน c_year_offset เป็น 0 ใน migration ใหม่
+-- ถ้าเจ้าของเปลี่ยนเป็น ค.ศ. ให้ออก migration ใหม่ replace ฟังก์ชันนี้ โดยเอา "+ 543" ออก (ปีเป็น ค.ศ. ตรง ๆ) และแก้ test ที่เทียบ '20/11/2569'
+-- stable (ไม่ใช่ immutable): ผูกกับกติกาปีของหน้าจอที่เปลี่ยนได้ ไม่ใช่ค่าคงที่ตลอดกาล
 create or replace function private.office_format_date(p_date date)
 returns text
 language sql
-immutable
+stable
 set search_path = ''
 as $$
   select coalesce(to_char(p_date, 'DD/MM/') || (extract(year from p_date)::integer + 543)::text, '—')
@@ -105,7 +112,8 @@ begin
   if nullif(btrim(coalesce(p_title, '')), '') is null then
     return false;
   end if;
-  -- ตาราง notifications ติด sandbox_guard: เขียนขณะอยู่ในโหมดทดสอบ = SANDBOX_MODULE_UNSUPPORTED ทั้งธุรกรรมล้ม (ห้ามส่ง)
+  -- ตาราง notifications ติด sandbox_guard: เขียนขณะอยู่ในโหมดทดสอบจะ raise SANDBOX_MODULE_UNSUPPORTED (ด้านล่างจับไว้เป็น warning)
+  -- ห้ามส่งอยู่แล้ว จึงตรวจก่อนเขียน เพื่อไม่ให้มี warning เกลื่อน log และไม่พึ่ง guard ชั้นเดียว
   if auth.uid() is not null and (private.sandbox_persona()).id is not null then
     return false;
   end if;
@@ -276,6 +284,8 @@ declare
   v_type_text text;
   v_summary text;
   v_title text;
+  v_prefix text;
+  v_started boolean;
   v_url text;
   v_done uuid[] := '{}';
   v_ids uuid[];
@@ -303,7 +313,9 @@ begin
     -- "<ชื่อผู้แจ้ง> · <แผนก> · <ประเภท> · ต้องการ <วว/ดด/ปปปป>"
     v_summary := concat_ws(' · ', v_requester_name, v_dept_name, v_type_text,
                            'ต้องการ ' || private.office_format_date(v_wo.needed_date));
-    v_title := 'ใบสั่งงาน ' || v_wo.doc_no;
+    -- ใบด่วนขึ้นหัวทุกข้อความด้วย "🚨 [ด่วน] " (ครั้งเดียว: notify-email เห็นแล้วตัดออกก่อนใส่ซ้ำที่หัวอีเมล)
+    v_prefix := case when v_wo.is_urgent then '🚨 [ด่วน] ' else '' end;
+    v_title := v_prefix || 'ใบสั่งงาน ' || v_wo.doc_no;
     v_url := '/office/work-order/' || v_wo.id::text;
 
     if new.action = 'created' then
@@ -316,6 +328,12 @@ begin
         v_ids := '{}';
       end if;
       v_done := private.itwo_notify_each(v_ids, v_done, new.actor_id, v_title || ' รอคุณอนุมัติ', v_summary, v_url);
+      -- งานด่วน: IT เริ่มทำได้ก่อนอนุมัติครบ จึงแจ้งผู้ดูแลงาน IT ทุกคนทันที (ผู้ดูแลที่เป็นผู้อนุมัติด้วยได้ข้อความรออนุมัติด้านบนแล้ว ไม่ซ้ำ)
+      -- ใบที่อนุมัติครบตั้งแต่แจ้ง (ผู้อนุมัติขั้น IT แจ้งเอง) ไม่แจ้งตรงนี้ เพราะ it_mgr_approved ในธุรกรรมเดียวกันแจ้งผู้ดูแลงานอยู่แล้ว
+      if v_wo.is_urgent and v_wo.status in ('pending_dept', 'pending_it_mgr') then
+        v_done := private.itwo_notify_each(private.itwo_notify_it_admin_ids(), v_done, new.actor_id,
+                                           v_title || ' แจ้งงานด่วน เริ่มทำได้ก่อนอนุมัติครบ', v_summary, v_url);
+      end if;
 
     elsif new.action = 'dept_approved' then
       -- ข้ามเมื่ออนุมัติในตัว (ผู้แจ้งเอง) หรือผู้กดเป็นผู้อนุมัติขั้น IT (it_mgr_approved ตามมาในธุรกรรมเดียวกันเสมอ)
@@ -326,12 +344,23 @@ begin
 
     elsif new.action = 'it_mgr_approved' then
       -- อนุมัติครบ: ผู้แจ้งก่อน (ถ้าผู้แจ้งเป็นผู้ดูแลงาน IT ด้วยก็ได้ข้อความนี้ข้อความเดียว) แล้วผู้ดูแลงาน IT
-      v_done := private.itwo_notify_each(array[v_wo.requester_id], v_done, new.actor_id,
-                                         v_title || ' อนุมัติครบแล้ว',
-                                         'รอ IT ดำเนินการ · ' || v_type_text || ' · ต้องการ ' || private.office_format_date(v_wo.needed_date),
-                                         v_url);
-      v_done := private.itwo_notify_each(private.itwo_notify_it_admin_ids(), v_done, new.actor_id,
-                                         v_title || ' อนุมัติครบ พร้อมให้ IT รับงาน', v_summary, v_url);
+      -- ใบที่ IT เริ่มงานไปแล้ว (งานด่วนที่ทำก่อนอนุมัติครบ) ข้อความต้องไม่บอกว่า "รอ IT ดำเนินการ/รับงาน"
+      select exists (select 1 from public.itwo_events e where e.work_order_id = v_wo.id and e.action = 'started') into v_started;
+      if v_started then
+        v_done := private.itwo_notify_each(array[v_wo.requester_id], v_done, new.actor_id,
+                                           v_title || ' อนุมัติครบแล้ว',
+                                           'IT กำลังดำเนินการ · ' || v_type_text || ' · ต้องการ ' || private.office_format_date(v_wo.needed_date),
+                                           v_url);
+        v_done := private.itwo_notify_each(private.itwo_notify_it_admin_ids(), v_done, new.actor_id,
+                                           v_title || ' อนุมัติครบแล้ว ส่งงานได้', v_summary, v_url);
+      else
+        v_done := private.itwo_notify_each(array[v_wo.requester_id], v_done, new.actor_id,
+                                           v_title || ' อนุมัติครบแล้ว',
+                                           'รอ IT ดำเนินการ · ' || v_type_text || ' · ต้องการ ' || private.office_format_date(v_wo.needed_date),
+                                           v_url);
+        v_done := private.itwo_notify_each(private.itwo_notify_it_admin_ids(), v_done, new.actor_id,
+                                           v_title || ' อนุมัติครบ พร้อมให้ IT รับงาน', v_summary, v_url);
+      end if;
 
     elsif new.action in ('dept_rejected', 'it_mgr_rejected') then
       v_done := private.itwo_notify_each(array[v_wo.requester_id], v_done, new.actor_id,
@@ -362,7 +391,7 @@ begin
 
     elsif new.action = 'completed' then
       v_done := private.itwo_notify_each(array[v_wo.requester_id], v_done, new.actor_id,
-                                         'IT ส่งงานใบสั่งงาน ' || v_wo.doc_no || ' แล้ว กรุณาตรวจรับ',
+                                         v_prefix || 'IT ส่งงานใบสั่งงาน ' || v_wo.doc_no || ' แล้ว กรุณาตรวจรับ',
                                          'กดรับงาน หรือขอแก้ไขงานได้ที่หน้าใบสั่งงาน · ' || v_type_text,
                                          v_url);
 
