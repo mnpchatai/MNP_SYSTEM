@@ -482,7 +482,9 @@
       if (spec.opens === "ask") { openAsk(); return; }
       const args = { p_work_order_id: detail.id };
       if (spec.reason) {
-        const reason = await textPromptDialog({ title: spec.reason.title, label: spec.reason.label, hint: spec.reason.hint, minLength: 1, maxLength: model.MAX_REASON, confirmLabel: spec.reason.confirmLabel, danger: true });
+        // ยกเลิก: IT ยกเลิกแทนผู้แจ้ง (ใบรอผู้แจ้งตอบ) ใช้ข้อความ/ความยาวของตัวเอง · ปุ่มอื่นใช้ค่าเดิม
+        const reasonSpec = action === "cancel" ? model.cancelReasonSpec(detail, role) : { ...spec.reason, maxLength: model.MAX_REASON };
+        const reason = await textPromptDialog({ title: reasonSpec.title, label: reasonSpec.label, hint: reasonSpec.hint, minLength: 1, maxLength: reasonSpec.maxLength, confirmLabel: reasonSpec.confirmLabel, danger: true });
         if (reason === null) return;
         args.p_reason = reason;
       } else if (!(await confirmDialog({ title: spec.confirmTitle, message: model.confirmMessageFor(action, detail, role), confirmLabel: spec.label, danger: spec.tone === "danger" }))) {

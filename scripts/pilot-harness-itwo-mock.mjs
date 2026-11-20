@@ -120,7 +120,8 @@ export function createItwoMock(env) {
     const pending = ["pending_dept", "pending_it_mgr"].includes(order.status);
     const { deptDone, itDone } = stateOf(order);
     // การรับงานเป็นขั้นสุดท้ายเสมอ: ใบที่ IT เคยปิดงานแล้ว (มี completed) ไม่ส่ง cancel แม้กลับมา in_progress เพราะขอแก้ไขงาน
-    if (order.requester_id === who.id && ["pending_dept", "pending_it_mgr", "approved", "in_progress", "need_info"].includes(order.status) && !hasCompleted(order)) list.push("cancel");
+    // รุ่น 1.02: ผู้ดูแลงาน IT ยกเลิกแทนผู้แจ้งได้เฉพาะใบ need_info (ที่ไม่เคยมี completed)
+    if (((order.requester_id === who.id && ["pending_dept", "pending_it_mgr", "approved", "in_progress", "need_info"].includes(order.status)) || (admin && order.status === "need_info")) && !hasCompleted(order)) list.push("cancel");
     const c = caps(order, who);
     // รุ่น 1.02: ระหว่างรอผู้แจ้งตอบ (need_info) ผู้อนุมัติทั้งอนุมัติและไม่อนุมัติไม่ได้ (ต้องรอคำตอบก่อน)
     if ((c.canDept || c.canIt) && order.status !== "need_info") list.push("approve", "reject");
@@ -232,13 +233,18 @@ export function createItwoMock(env) {
     app_itwo_cancel({ p_work_order_id, p_reason }) {
       const who = actor();
       const order = find(p_work_order_id);
-      if (order.requester_id !== who.id) reject("เฉพาะผู้แจ้งเท่านั้นที่ยกเลิกใบสั่งงานได้", "42501");
+      // IT (ผู้ดูแลงาน) ยกเลิกแทนผู้แจ้งได้เฉพาะใบที่รอผู้แจ้งตอบ (need_info) · เหตุผลในประวัติขึ้นต้นด้วยคำนำหน้า เหมือนฐานข้อมูลจริง
+      const onBehalf = order.requester_id !== who.id;
+      if (onBehalf) {
+        if (!isItAdmin(who)) reject("เฉพาะผู้แจ้งเท่านั้นที่ยกเลิกใบสั่งงานได้", "42501");
+        if (["pending_dept", "pending_it_mgr", "approved", "in_progress", "it_closed"].includes(order.status)) reject("ผู้ดูแลงาน IT ยกเลิกแทนผู้แจ้งได้เฉพาะใบที่รอผู้แจ้งตอบ", "42501");
+      }
       if (order.status === "it_closed" || (["in_progress", "need_info"].includes(order.status) && hasCompleted(order))) reject("ใบนี้ IT ส่งงานแล้ว ถ้างานยังไม่เรียบร้อยให้กด แก้ไขงาน");
       if (!["pending_dept", "pending_it_mgr", "approved", "in_progress", "need_info"].includes(order.status)) reject("ใบสั่งงานนี้ไม่อยู่ในขั้นที่ทำรายการนี้ได้");
       if (!clean(p_reason)) reject("กรุณาระบุเหตุผลที่ยกเลิก");
       order.status = "cancelled";
       order.info_return_status = null;
-      addEvent(order, who, "cancelled", clean(p_reason));
+      addEvent(order, who, "cancelled", onBehalf ? `IT ยกเลิกแทนผู้แจ้ง: ${clean(p_reason)}` : clean(p_reason));
       return null;
     },
     app_itwo_start({ p_work_order_id }) {

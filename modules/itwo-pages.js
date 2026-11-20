@@ -421,8 +421,8 @@
     </section>`;
   }
 
-  function historyCard(events) {
-    const items = events.map((event) => `<div class="timeline-item"><strong>${esc(model.eventLabel(event.action))}</strong><p class="timeline-item-detail">โดย ${esc(event.actor_full_name)}</p>${event.reason ? `<p class="timeline-item-message">${esc(event.reason)}</p>` : ""}<time class="timeline-item-time" datetime="${esc(event.created_at)}">${esc(model.formatDateTime(event.created_at))}</time></div>`).join("");
+  function historyCard(events, requester) {
+    const items = events.map((event) => `<div class="timeline-item"><strong>${esc(model.eventLabelFor(event, requester))}</strong><p class="timeline-item-detail">โดย ${esc(event.actor_full_name)}</p>${event.reason ? `<p class="timeline-item-message">${esc(event.reason)}</p>` : ""}<time class="timeline-item-time" datetime="${esc(event.created_at)}">${esc(model.formatDateTime(event.created_at))}</time></div>`).join("");
     return `<section class="card detail-history" aria-labelledby="detail-history-title"><h2 id="detail-history-title">ประวัติเอกสาร</h2><div class="timeline">${items || '<div class="muted small">ยังไม่มีประวัติ</div>'}</div></section>`;
   }
 
@@ -460,7 +460,7 @@
         </div>
         <aside class="stack">
           <section class="card itwo-print-card"><h2>เอกสาร</h2><div class="action-panel-buttons"><a class="btn secondary" id="itwo-print" href="${esc(model.workOrderUrl("print", { id: detail.id }))}">พิมพ์ใบสั่งงาน (A4)</a></div></section>
-          ${historyCard(detail.events ?? [])}
+          ${historyCard(detail.events ?? [], detail.requester)}
         </aside>
       </div>`);
   }

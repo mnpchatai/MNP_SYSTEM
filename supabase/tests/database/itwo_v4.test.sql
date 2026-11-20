@@ -2,12 +2,13 @@
 --   A) หัวหน้า IT (ผู้อนุมัติขั้น IT ที่ไม่ใช่ it_admin) อนุมัติ/ไม่อนุมัติ/ถามตอนรออนุมัติ + ดูได้ แต่ start / complete / ถามหลังอนุมัติ / ตั้งค่าทีม IT ไม่ได้
 --      persona ทดสอบ SBX-IT-APPROVER ถูกถอดสิทธิ์ผู้ดูแลงาน IT (บัญชีจริง เจ้าของแก้เองในแท็บตั้งค่า migration ไม่แตะ)
 --   B) ระหว่างรอผู้แจ้งตอบ (need_info) ผู้ถาม/ผู้อนุมัติขั้นนั้น "อนุมัติ" และ "ไม่อนุมัติ" ไม่ได้ (ข้อความไทย) · ผู้แจ้งยังยกเลิกได้ · ตอบแล้วค่อยตัดสินได้
+--   B2) IT (it_admin) ยกเลิกใบ need_info แทนผู้แจ้งได้ (เหตุผลบังคับ) · ใบสถานะอื่น/ใบที่เคยส่งงานยกเลิกไม่ได้ · ผู้อนุมัติที่ไม่ใช่ it_admin ยกเลิกไม่ได้
 --   C) ข้อความสถานะ received ที่ฐานข้อมูลส่งออก + โครงสร้างของฟังก์ชันที่ replace
 -- ผู้ใช้ทดสอบเป็นบัญชีจริงใหม่ (V4-*) ในแผนกทดสอบ ZV* ที่สร้างในไฟล์นี้ · persona SBX-IT-* มาจาก migration
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(74);
+select plan(105);
 
 -- 1. persona + โครงสร้าง -----------------------------------------------------
 reset role;
@@ -16,7 +17,7 @@ select is((select s.is_it_admin::text || ',' || s.is_it_approver::text from publ
 select is((select s.is_it_admin::text || ',' || s.is_it_approver::text from public.itwo_staff s join public.employees e on e.id = s.employee_id where e.employee_no = 'SBX-IT-ADMIN'), 'true,false', 'the IT admin test persona is an admin only');
 select is((select count(*)::int from public.itwo_admin_log l join public.employees a on a.id = l.actor_id join public.employees t on t.id = l.target_employee_id where l.is_test and l.action = 'staff_changed' and a.employee_no = 'SBX-IT-ADMIN' and t.employee_no = 'SBX-IT-APPROVER' and l.detail->'new' = '{"is_it_admin": false, "is_it_approver": true}'::jsonb and l.detail->'old' = '{"is_it_admin": true, "is_it_approver": true}'::jsonb), 1, 'the migration logged the persona change as a test row with the IT admin persona as the actor');
 select ok(not exists (select 1 from public.itwo_admin_log l where not l.is_test and l.detail->>'employee_no' = 'SBX-IT-APPROVER'), 'and no real (ISO) log row was written for it');
-select is(cardinality(private.sandbox_unguarded_tables()), 59, 'sandbox_unguarded_tables is untouched (59 names)');
+select ok(array['itwo_work_orders', 'itwo_events', 'itwo_access_changes', 'itwo_doc_counters', 'itwo_admin_log', 'itwo_reworks', 'itwo_attachments', 'itwo_comments'] <@ private.sandbox_unguarded_tables(), 'every itwo table is still registered in sandbox_unguarded_tables (this migration does not touch it; no count check)');
 select ok(private.itwo_status_message('received') like '%จบงานแล้ว%' and private.itwo_status_message('received') not like '%ไม่%', 'the status message of a received order says it is finished (จบงานแล้ว)');
 select ok((select bool_and(p.prosecdef and p.proconfig @> array['search_path=""']) from pg_proc p where p.pronamespace = 'private'::regnamespace and p.proname in ('itwo_approval_caps', 'itwo_decide', 'itwo_allowed_actions')), 'the replaced private functions are SECURITY DEFINER with an empty search_path');
 select ok(not exists (select 1 from pg_proc p where p.pronamespace = 'private'::regnamespace and p.proname in ('itwo_approval_caps', 'itwo_decide', 'itwo_allowed_actions', 'itwo_work_order_guard') and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute'))), 'the replaced private functions are closed to anon and authenticated');
@@ -85,7 +86,7 @@ set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"4d700000-0000-0000-0000-000000000004","role":"authenticated"}', true);
 select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_actions', '[]'::jsonb, 'while IT works the IT approver still has no action');
 select throws_ok($$ select public.app_itwo_complete(current_setting('t.o1')::uuid) $$, '42501', 'เฉพาะผู้ดูแลงาน IT เท่านั้นที่ส่งงานได้', 'the IT approver cannot deliver the work');
-select throws_ok($$ select public.app_itwo_save_access_changes(current_setting('t.o1')::uuid, '[]'::jsonb) $$, null, null, 'nor edit the IT section (the removed access section stays unavailable)');
+select throws_ok($$ select public.app_itwo_set_next_doc_seq(900) $$, '42501', 'เฉพาะผู้ดูแลงาน IT เท่านั้นที่ตั้งเลขที่เอกสารถัดไปได้', 'nor set the next document number (an IT admin only action)');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"4d700000-0000-0000-0000-000000000003","role":"authenticated"}', true);
 select lives_ok($$ select public.app_itwo_complete(current_setting('t.o1')::uuid) $$, 'the IT admin delivers');
@@ -147,6 +148,60 @@ select is(public.app_itwo_get_detail(current_setting('t.o4')::uuid)->'allowed_ac
 select lives_ok($$ select public.app_itwo_reject(current_setting('t.o4')::uuid, 'ราคาสูงเกิน') $$, 'and rejects with a reason');
 select is(public.app_itwo_get_detail(current_setting('t.o4')::uuid)->>'status', 'rejected', 'the order ends as rejected');
 select is((select string_agg(e->>'action', ',' order by (e->>'id')::bigint) from jsonb_array_elements(public.app_itwo_get_detail(current_setting('t.o4')::uuid)->'events') e), 'created,info_requested,info_provided,it_mgr_rejected', 'the ISO history shows the question, the answer and then the rejection in order');
+
+-- 5.1 IT ยกเลิกใบที่รอผู้แจ้งตอบแทนผู้แจ้ง (รุ่น 1.02) -----------------------------------------------
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"4d700000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+select set_config('t.c1', (select id::text from public.app_itwo_create('design', null, 'no', null, 'ผู้แจ้งไม่ตอบ ใบที่ 1', ((now() at time zone 'Asia/Bangkok')::date + 3), false)), true);
+select set_config('t.c2', (select id::text from public.app_itwo_create('design', null, 'no', null, 'ผู้แจ้งลาออก ใบที่ 2', ((now() at time zone 'Asia/Bangkok')::date + 3), false)), true);
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"4d700000-0000-0000-0000-000000000002","role":"authenticated"}', true);
+select lives_ok($$ select public.app_itwo_request_info(current_setting('t.c1')::uuid, 'ขอรายละเอียด 1') $$, 'the department manager asks on the first order');
+select lives_ok($$ select public.app_itwo_request_info(current_setting('t.c2')::uuid, 'ขอรายละเอียด 2') $$, 'and on the second order');
+select throws_ok($$ select public.app_itwo_cancel(current_setting('t.c1')::uuid, 'ผู้จัดการยกเลิก') $$, '42501', 'เฉพาะผู้แจ้งเท่านั้นที่ยกเลิกใบสั่งงานได้', 'the asking manager (not an IT admin) cannot cancel a waiting order');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"4d700000-0000-0000-0000-000000000004","role":"authenticated"}', true);
+select throws_ok($$ select public.app_itwo_cancel(current_setting('t.c1')::uuid, 'หัวหน้า IT ยกเลิก') $$, '42501', 'เฉพาะผู้แจ้งเท่านั้นที่ยกเลิกใบสั่งงานได้', 'the IT approver who is not an IT admin cannot cancel either');
+select is(public.app_itwo_get_detail(current_setting('t.c1')::uuid)->'allowed_actions', '[]'::jsonb, 'and is not offered the cancel button');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"4d700000-0000-0000-0000-000000000003","role":"authenticated"}', true);
+select is(public.app_itwo_get_detail(current_setting('t.c1')::uuid)->'allowed_actions', '["cancel"]'::jsonb, 'the IT admin is offered only the cancel button on a waiting order');
+select throws_ok($$ select public.app_itwo_cancel(current_setting('t.c1')::uuid, '') $$, '23514', 'กรุณาระบุเหตุผลที่ยกเลิก', 'the IT admin must give a reason (blank refused)');
+select throws_ok($$ select public.app_itwo_cancel(current_setting('t.c1')::uuid, null) $$, '23514', 'กรุณาระบุเหตุผลที่ยกเลิก', 'a missing reason is refused too');
+select throws_ok($$ select public.app_itwo_cancel(current_setting('t.c1')::uuid, repeat('ก', 480)) $$, '23514', 'เหตุผลต้องไม่เกิน 479 ตัวอักษร', 'the reason limit leaves room for the on-behalf prefix (479)');
+select is(public.app_itwo_get_detail(current_setting('t.c1')::uuid)->>'status', 'need_info', 'the refused attempts changed nothing');
+select lives_ok($$ select public.app_itwo_cancel(current_setting('t.c1')::uuid, repeat('ก', 479)) $$, 'a 479 character reason is accepted (the stored text is exactly 500)');
+select is((select char_length(e->>'reason') from jsonb_array_elements(public.app_itwo_get_detail(current_setting('t.c1')::uuid)->'events') e where e->>'action' = 'cancelled'), 500, 'the stored reason is the prefix plus the reason (500 characters, the table limit)');
+select lives_ok($$ select public.app_itwo_cancel(current_setting('t.c2')::uuid, 'ผู้แจ้งลาออกแล้ว') $$, 'the IT admin cancels the second waiting order on behalf of the requester');
+select is(public.app_itwo_get_detail(current_setting('t.c2')::uuid)->>'status', 'cancelled', 'it is cancelled');
+select is((select e->>'actor_employee_no' || '|' || (e->>'reason') from jsonb_array_elements(public.app_itwo_get_detail(current_setting('t.c2')::uuid)->'events') e where e->>'action' = 'cancelled'), 'V4-ADM|IT ยกเลิกแทนผู้แจ้ง: ผู้แจ้งลาออกแล้ว', 'the history names the IT admin as the actor and says it was on behalf of the requester');
+select is((select string_agg(e->>'action', ',' order by (e->>'id')::bigint) from jsonb_array_elements(public.app_itwo_get_detail(current_setting('t.c2')::uuid)->'events') e), 'created,info_requested,cancelled', 'the ISO history is created, question, cancel (append only)');
+select is(public.app_itwo_get_detail(current_setting('t.c2')::uuid)->'allowed_actions', '[]'::jsonb, 'a cancelled order offers no action');
+select throws_ok($$ select public.app_itwo_cancel(current_setting('t.c2')::uuid, 'อีกครั้ง') $$, '23514', 'ใบสั่งงานนี้ถูกยกเลิกแล้ว', 'and cannot be cancelled twice');
+-- IT ยกเลิกแทนได้เฉพาะ need_info: ใบที่รอผู้จัดการ / กำลังดำเนินการ / ส่งงานแล้ว ยกเลิกไม่ได้ (ต้องเป็นผู้แจ้ง)
+select throws_ok($$ select public.app_itwo_cancel(current_setting('t.o2')::uuid, 'IT ยกเลิกใบรออนุมัติ') $$, '42501', 'ผู้ดูแลงาน IT ยกเลิกแทนผู้แจ้งได้เฉพาะใบที่รอผู้แจ้งตอบ', 'the IT admin cannot cancel an order that waits for approval');
+select is(public.app_itwo_get_detail(current_setting('t.o2')::uuid)->'allowed_actions', '["start"]'::jsonb, 'and is not offered cancel there (urgent order: start only)');
+select lives_ok($$ select public.app_itwo_start(current_setting('t.o2')::uuid) $$, 'the IT admin starts the urgent order');
+select throws_ok($$ select public.app_itwo_cancel(current_setting('t.o2')::uuid, 'IT ยกเลิกใบที่กำลังทำ') $$, '42501', 'ผู้ดูแลงาน IT ยกเลิกแทนผู้แจ้งได้เฉพาะใบที่รอผู้แจ้งตอบ', 'nor an order that is in progress');
+select ok(not (public.app_itwo_get_detail(current_setting('t.o2')::uuid)->'allowed_actions' @> '"cancel"'::jsonb), 'cancel is not offered on an in-progress order either');
+select throws_ok($$ select public.app_itwo_cancel(current_setting('t.o1')::uuid, 'IT ยกเลิกใบที่ส่งงานแล้ว') $$, '42501', 'ผู้ดูแลงาน IT ยกเลิกแทนผู้แจ้งได้เฉพาะใบที่รอผู้แจ้งตอบ', 'nor an order IT has delivered (waiting for the requester to confirm)');
+-- ใบที่เคยส่งงาน (completed) แล้วอยู่ need_info ในรอบแก้ไข: ทั้งผู้แจ้งและ IT ยกเลิกไม่ได้
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"4d700000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+select lives_ok($$ select * from public.app_itwo_request_rework(current_setting('t.o1')::uuid, 'ขอแก้ไขงานรอบแรก', ((now() at time zone 'Asia/Bangkok')::date + 2)) $$, 'the requester asks for a rework of the delivered order');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"4d700000-0000-0000-0000-000000000003","role":"authenticated"}', true);
+select lives_ok($$ select public.app_itwo_request_info(current_setting('t.o1')::uuid, 'ขอรายละเอียดการแก้') $$, 'the IT admin asks in the rework round');
+select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->>'status', 'need_info', 'the delivered order now waits for the requester (need_info)');
+select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_actions', '[]'::jsonb, 'the IT admin is not offered cancel on it (it was delivered once)');
+select throws_ok($$ select public.app_itwo_cancel(current_setting('t.o1')::uuid, 'IT ยกเลิกใบที่เคยส่งงาน') $$, '23514', 'ใบนี้ IT ส่งงานแล้ว ถ้างานยังไม่เรียบร้อยให้กด แก้ไขงาน', 'the IT admin cannot cancel an order that has a completed event');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"4d700000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+select throws_ok($$ select public.app_itwo_cancel(current_setting('t.o1')::uuid, 'ผู้แจ้งยกเลิก') $$, '23514', 'ใบนี้ IT ส่งงานแล้ว ถ้างานยังไม่เรียบร้อยให้กด แก้ไขงาน', 'and neither can the requester (unchanged rule)');
+-- ด่านตารางยังกันยกเลิกใบที่เคยส่งงานแม้เขียนตรง
+reset role;
+select set_config('request.jwt.claims', '', true);
+select throws_ok($$ update public.itwo_work_orders set status = 'cancelled', info_return_status = null where id = current_setting('t.o1')::uuid $$, '23514', 'ใบนี้ IT ส่งงานแล้ว ถ้างานยังไม่เรียบร้อยให้กด แก้ไขงาน', 'the table guard also refuses to cancel an order with a completed event');
 
 -- 6. โหมดทดสอบ: persona ผู้อนุมัติขั้น IT ไม่ใช่ผู้ดูแลงาน IT -------------------------------
 set local role authenticated;

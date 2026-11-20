@@ -1,6 +1,6 @@
 -- ใบสั่งงาน IT รุ่น 1.02 (กติกาผู้อนุมัติ) · เจ้าของสั่ง 20/11/2026
 --
--- ใครอ่านต่อ: เปลี่ยนจาก 20261206010000_itwo_v3_request_info.sql (ที่ apply บน prod แล้ว ห้ามแก้) 3 เรื่อง
+-- ใครอ่านต่อ: เปลี่ยนจาก 20261206010000_itwo_v3_request_info.sql (ที่ apply บน prod แล้ว ห้ามแก้) 3 เรื่อง (A, B, C)
 --
 --   A. ระหว่างรอผู้แจ้งตอบ (status = need_info) ผู้ถาม/ผู้อนุมัติขั้นนั้น "ไม่อนุมัติ" ไม่ได้
 --      รุ่น 3 อนุญาตไว้ (ไม่อนุมัติ = จบ) เจ้าของเปลี่ยนใจ: ต้องรอคำตอบก่อน แล้วค่อยอนุมัติ/ไม่อนุมัติ/ถามต่อ
@@ -8,9 +8,10 @@
 --                                     (อนุมัติ: ข้อความเดิมของรุ่น 3 · ไม่อนุมัติ: "ใบนี้กำลังรอผู้แจ้งตอบคำถาม กรุณารอคำตอบก่อน")
 --        - private.itwo_allowed_actions  ใบ need_info ไม่ส่ง reject (และไม่ส่ง approve อยู่แล้ว) ให้ผู้อนุมัติเลย
 --        - private.itwo_work_order_guard ตัดเส้นทาง need_info -> rejected ออกจากตารางเปลี่ยนสถานะ (ด่านซ้อนที่ระดับฐานข้อมูล)
---        - private.itwo_approval_caps ตรรกะเดิมทุกอย่าง (ยังรวม need_info ใน v_open เพื่อให้ใบที่รอผู้แจ้งตอบยังโผล่ในรายการ
---                                     "รออนุมัติ" ของขั้นนั้นแบบอ่านอย่างเดียว) แก้เฉพาะคอมเมนต์ให้ตรงกติกาใหม่
---      ผู้แจ้งยังยกเลิกใบที่ need_info ได้ตามกติกาเดิม (app_itwo_cancel ไม่ถูกแตะ)
+--        - private.itwo_approval_caps ไม่แตะ (ยังรวม need_info ใน v_open เพื่อให้ใบที่รอผู้แจ้งตอบยังโผล่ในรายการ
+--                                     "รออนุมัติ" ของขั้นนั้นแบบอ่านอย่างเดียว · คอมเมนต์ในนิยามเดิมของรุ่น 3 ยังพูดถึง "ไม่อนุมัติ" ได้
+--                                     แต่การกันอยู่ที่ itwo_decide / allowed_actions / guard ตามข้อบน จึงไม่ replace เพื่อลดจำนวนฟังก์ชันที่ต้องเทียบ)
+--      ผู้แจ้งยังยกเลิกใบที่ need_info ได้ตามกติกาเดิม
 --
 --   B. หัวหน้า IT (ผู้อนุมัติขั้น IT) ไม่ทำงาน IT: เจ้าของตัดสินให้ถอดสิทธิ์ผู้ดูแลงาน IT (itwo_staff.is_it_admin) ออกจาก FANG
 --      บัญชีจริง "เจ้าของแก้เองในแท็บตั้งค่า" (app_itwo_set_staff) migration นี้ไม่แตะแถวของบัญชีจริง
@@ -28,10 +29,18 @@
 --   ข้อความสถานะไทยที่ฐานข้อมูลส่ง (itwo_status_message) ของ received คือ "ใบสั่งงานนี้จบงานแล้ว (ได้รับงานแล้ว)" อยู่แล้ว
 --   สอดคล้องกับป้ายใหม่ "จบงานแล้ว" ของหน้าเว็บ จึงไม่แก้
 --
+--   C. กันใบค้างถาวรเมื่อผู้แจ้งไม่ตอบ/ลาออก (เจ้าของตัดสิน): ผู้ดูแลงาน IT (itwo_staff.is_it_admin) ยกเลิกใบที่สถานะ need_info
+--      "แทนผู้แจ้ง" ได้ ต้องใส่เหตุผล (บังคับ) · ใบสถานะอื่นที่ไม่ใช่ของตัวเอง IT ยกเลิกไม่ได้ (เฉพาะผู้แจ้งเหมือนเดิม)
+--        - public.app_itwo_cancel     ผู้แจ้ง: เหมือนเดิมทุกอย่าง · it_admin ที่ไม่ใช่ผู้แจ้ง: เฉพาะ need_info
+--                                     บันทึก event cancelled ในชื่อ IT โดย reason ขึ้นต้นด้วย "IT ยกเลิกแทนผู้แจ้ง: " (ไทม์ไลน์/ISO อ่านออก)
+--                                     ใบที่เคยมี completed ยกเลิกไม่ได้ทั้งผู้แจ้งและ IT (ข้อความเดิม)
+--        - private.itwo_allowed_actions ส่ง cancel ให้ it_admin (ที่ไม่ใช่ผู้แจ้ง) เมื่อใบเป็น need_info และไม่เคยมี completed
+--        - private.itwo_work_order_guard ไม่ต้องแก้เพิ่ม (need_info -> cancelled ยอมอยู่แล้ว และกัน completed ไว้ชั้นตาราง)
+--
 -- ย้อน (ถ้าจำเป็น): create or replace ฟังก์ชัน 4 ตัวด้านล่างกลับเป็นนิยามใน 20261206010000 · ส่วนบัญชีทดสอบตั้ง is_it_admin = true คืนได้เอง
 --
--- ก่อน apply บน prod ต้องเทียบ md5(pg_get_functiondef) ของฟังก์ชันที่ replace (itwo_work_order_guard / itwo_approval_caps /
--- itwo_decide / itwo_allowed_actions) ว่ายังเป็นนิยามจาก 20261206010000 (AGENTS.md)
+-- ก่อน apply บน prod ต้องเทียบ md5(pg_get_functiondef) ของฟังก์ชันที่ replace (itwo_work_order_guard / itwo_decide /
+-- itwo_allowed_actions / app_itwo_cancel) ว่ายังเป็นนิยามจาก 20261206010000 (AGENTS.md)
 
 -- 1. guard ใบสั่งงาน: need_info -> rejected ไม่ได้อีก (นิยามเดิมของรุ่น 3 แก้เฉพาะ 2 จุด) ------------------------
 create or replace function private.itwo_work_order_guard()
@@ -96,63 +105,7 @@ end;
 $$;
 revoke all on function private.itwo_work_order_guard() from public, anon, authenticated;
 
--- 2. สิทธิ์อนุมัติ: ตรรกะเดิมของรุ่น 3 ทุกอย่าง (แก้เฉพาะคอมเมนต์) --------------------------------------------
-create or replace function private.itwo_approval_caps(
-  p_work_order_id uuid,
-  p_actor_id uuid,
-  out can_dept boolean,
-  out can_it boolean,
-  out dept_done boolean,
-  out it_done boolean,
-  out rejected boolean,
-  out dept_is_it boolean,
-  out has_dept_approvers boolean,
-  out actor_is_dept_role boolean
-)
-language plpgsql
-stable
-security definer
-set search_path = ''
-as $$
-declare
-  v_wo public.itwo_work_orders%rowtype;
-  v_actor public.employees%rowtype;
-  v_is_it_approver boolean;
-  v_open boolean;
-begin
-  can_dept := false;
-  can_it := false;
-  select * into v_wo from public.itwo_work_orders w where w.id = p_work_order_id;
-  select * into v_actor from public.employees e where e.id = p_actor_id;
-  if v_wo.id is null or v_actor.id is null or v_wo.is_test <> v_actor.is_test then
-    return;
-  end if;
-
-  select s.dept_done, s.it_done, s.rejected into dept_done, it_done, rejected
-  from private.itwo_event_state(v_wo.id) s;
-  dept_is_it := private.itwo_is_it_department(v_wo.department_id);
-  -- ไม่นับผู้แจ้งเอง: ผู้แจ้งอนุมัติใบตัวเองไม่ได้ (ถ้าเป็นผู้จัดการแผนก ขั้นแผนกผ่านอัตโนมัติตอนแจ้งอยู่แล้ว)
-  has_dept_approvers := exists (
-    select 1 from private.itwo_dept_approvers(v_wo.department_id, v_wo.is_test) a(id) where a.id <> v_wo.requester_id);
-  actor_is_dept_role := exists (
-    select 1 from private.itwo_dept_approvers(v_wo.department_id, v_wo.is_test) a(id) where a.id = p_actor_id);
-  v_is_it_approver := private.itwo_is_it_approver(p_actor_id);
-
-  -- in_progress อยู่ในรายการเพราะงานด่วนเริ่มทำก่อน แต่ผู้จัดการยังต้องอนุมัติตามหลัง
-  -- need_info (รอผู้แจ้งตอบ) อยู่ในรายการเพื่อให้ใบยังโผล่ในรายการ "รออนุมัติ" ของขั้นที่ถาม (แบบอ่านอย่างเดียว)
-  -- ส่วนการกด "อนุมัติ" และ "ไม่อนุมัติ" ถูกกันที่ private.itwo_decide และไม่ส่งใน allowed_actions ให้รอคำตอบก่อน (รุ่น 1.02)
-  v_open := v_wo.requester_id <> p_actor_id
-    and v_wo.status in ('pending_dept', 'pending_it_mgr', 'in_progress', 'need_info')
-    and not rejected;
-
-  can_dept := v_open and not dept_is_it and actor_is_dept_role and not dept_done;
-  can_it := v_open and v_is_it_approver and not it_done
-    and (dept_done or dept_is_it or not has_dept_approvers or actor_is_dept_role);
-end;
-$$;
-revoke all on function private.itwo_approval_caps(uuid, uuid) from public, anon, authenticated;
-
--- 3. อนุมัติ / ไม่อนุมัติ: ระหว่าง need_info ทำทั้งสองอย่างไม่ได้ ------------------------------------------
+-- 2. อนุมัติ / ไม่อนุมัติ: ระหว่าง need_info ทำทั้งสองอย่างไม่ได้ ------------------------------------------
 create or replace function private.itwo_decide(p_work_order_id uuid, p_approve boolean, p_reason text)
 returns void
 language plpgsql
@@ -270,7 +223,7 @@ end;
 $$;
 revoke all on function private.itwo_decide(uuid, boolean, text) from public, anon, authenticated;
 
--- 4. สิทธิ์การกระทำที่ทำได้กับใบ: ใบ need_info ไม่ส่ง approve / reject ให้ผู้อนุมัติ --------------------------
+-- 3. สิทธิ์การกระทำที่ทำได้กับใบ: ใบ need_info ไม่ส่ง approve / reject ให้ผู้อนุมัติ --------------------------
 create or replace function private.itwo_allowed_actions(p_wo public.itwo_work_orders, p_actor public.employees)
 returns text[]
 language plpgsql
@@ -290,8 +243,10 @@ begin
   v_is_admin := private.itwo_is_it_admin(p_actor.id);
 
   -- ยกเลิกได้ก่อน IT ปิดงานครั้งแรกเท่านั้น: ใบที่เคยมี completed (แม้อยู่ในรอบแก้ไข) ไม่ส่ง cancel (การรับงานเป็นขั้นสุดท้าย)
-  -- ระหว่างรอผู้แจ้งตอบ (need_info) ยกเลิกได้ตามเดิม
-  if p_wo.requester_id = p_actor.id and p_wo.status in ('pending_dept', 'pending_it_mgr', 'approved', 'in_progress', 'need_info')
+  -- ระหว่างรอผู้แจ้งตอบ (need_info) ยกเลิกได้ตามเดิม · รุ่น 1.02: ผู้ดูแลงาน IT (it_admin) ยกเลิก "แทนผู้แจ้ง" ได้เฉพาะใบ need_info
+  -- (กันใบค้างถาวรเมื่อผู้แจ้งไม่ตอบ) · ผู้แจ้งที่เป็น it_admin เองใช้สิทธิ์ผู้แจ้งตามปกติ
+  if ((p_wo.requester_id = p_actor.id and p_wo.status in ('pending_dept', 'pending_it_mgr', 'approved', 'in_progress', 'need_info'))
+      or (v_is_admin and p_wo.status = 'need_info'))
      and not exists (select 1 from public.itwo_events e where e.work_order_id = p_wo.id and e.action = 'completed') then
     v_actions := array_append(v_actions, 'cancel');
   end if;
@@ -331,6 +286,69 @@ begin
 end;
 $$;
 revoke all on function private.itwo_allowed_actions(public.itwo_work_orders, public.employees) from public, anon, authenticated;
+
+-- 4. ยกเลิก: ผู้แจ้งเหมือนเดิม + ผู้ดูแลงาน IT ยกเลิกใบที่รอผู้แจ้งตอบ (need_info) แทนผู้แจ้งได้ ------------------------
+-- ส่วนของผู้แจ้งเหมือนนิยามใน 20261206010000 ทุกอย่าง (สถานะที่ยกเลิกได้ / ข้อความ / ตรวจ completed ก่อนเหตุผล)
+create or replace function public.app_itwo_cancel(p_work_order_id uuid, p_reason text)
+returns void
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_reason text := private.itwo_clean(p_reason);
+  v_wo public.itwo_work_orders%rowtype;
+  -- IT ยกเลิกแทนผู้แจ้ง: ขึ้นต้นเหตุผลในประวัติด้วยข้อความนี้ ให้ไทม์ไลน์/ผู้ตรวจ ISO เห็นว่าไม่ใช่ผู้แจ้งยกเลิกเอง
+  c_it_prefix constant text := 'IT ยกเลิกแทนผู้แจ้ง: ';
+  v_on_behalf boolean := false;
+  v_max_reason integer := 500;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itwo_actor();
+
+  select * into v_wo from public.itwo_work_orders w where w.id = p_work_order_id for update;
+  if v_wo.id is null or v_wo.is_test <> v_actor.is_test then
+    raise exception 'ไม่พบใบสั่งงานนี้' using errcode = 'check_violation';
+  end if;
+  if v_wo.requester_id <> v_actor.id then
+    -- ไม่ใช่ผู้แจ้ง: เฉพาะผู้ดูแลงาน IT กับใบที่รอผู้แจ้งตอบเท่านั้น
+    if not private.itwo_is_it_admin(v_actor.id) then
+      raise exception 'เฉพาะผู้แจ้งเท่านั้นที่ยกเลิกใบสั่งงานได้' using errcode = 'insufficient_privilege';
+    end if;
+    -- ใบที่จบไปแล้ว (ไม่อนุมัติ/ยกเลิก/รับงานแล้ว) ปล่อยให้ตรวจสถานะด้านล่างตอบข้อความสถานะตามเดิม
+    if v_wo.status in ('pending_dept', 'pending_it_mgr', 'approved', 'in_progress', 'it_closed') then
+      raise exception 'ผู้ดูแลงาน IT ยกเลิกแทนผู้แจ้งได้เฉพาะใบที่รอผู้แจ้งตอบ' using errcode = 'insufficient_privilege';
+    end if;
+    v_on_behalf := v_wo.status = 'need_info';
+    v_max_reason := 500 - char_length(c_it_prefix);
+  end if;
+  if v_wo.status not in ('pending_dept', 'pending_it_mgr', 'approved', 'in_progress', 'need_info') then
+    raise exception '%', case v_wo.status
+      when 'it_closed' then 'ใบนี้ IT ส่งงานแล้ว ถ้างานยังไม่เรียบร้อยให้กด แก้ไขงาน'
+      when 'received' then 'ใบสั่งงานนี้จบงานแล้ว (ได้รับงานแล้ว) ไม่สามารถยกเลิกได้'
+      else private.itwo_status_message(v_wo.status)
+    end using errcode = 'check_violation';
+  end if;
+  -- ใบที่เคยมี completed (แม้อยู่ในรอบแก้ไข) ยกเลิกไม่ได้ ทั้งผู้แจ้งและ IT (การรับงานเป็นขั้นสุดท้าย) · ตรวจก่อนเหตุผล เพื่อให้ได้ข้อความนี้เสมอ
+  if exists (select 1 from public.itwo_events e where e.work_order_id = v_wo.id and e.action = 'completed') then
+    raise exception 'ใบนี้ IT ส่งงานแล้ว ถ้างานยังไม่เรียบร้อยให้กด แก้ไขงาน' using errcode = 'check_violation';
+  end if;
+  if v_reason is null then
+    raise exception 'กรุณาระบุเหตุผลที่ยกเลิก' using errcode = 'check_violation';
+  end if;
+  if char_length(v_reason) > v_max_reason then
+    raise exception 'เหตุผลต้องไม่เกิน % ตัวอักษร', v_max_reason using errcode = 'check_violation';
+  end if;
+
+  -- info_return_status ต้องเคลียร์คู่กับการออกจาก need_info (CHECK + guard บังคับ)
+  update public.itwo_work_orders set status = 'cancelled', info_return_status = null where id = v_wo.id;
+  insert into public.itwo_events (is_test, work_order_id, actor_id, action, reason)
+  values (v_wo.is_test, v_wo.id, v_actor.id, 'cancelled',
+          case when v_on_behalf then c_it_prefix || v_reason else v_reason end);
+end;
+$$;
 
 -- 5. บัญชีทดสอบ SBX-IT-APPROVER: ถอนสิทธิ์ผู้ดูแลงาน IT (คงสิทธิ์ผู้อนุมัติขั้น IT) -----------------------------
 -- ทำเฉพาะแถวที่ยังเป็น is_it_admin อยู่ (รันซ้ำไม่เปลี่ยนอะไร ไม่เขียน log ซ้ำ) · บัญชีจริง (FANG ฯลฯ) ไม่แตะ

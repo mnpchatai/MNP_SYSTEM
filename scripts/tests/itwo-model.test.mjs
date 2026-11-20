@@ -303,6 +303,29 @@ const EVENTS = [
   { id: 4, action: "started", reason: null, created_at: "2026-11-19T04:00:00Z", actor_full_name: "ไอที หนึ่ง" },
 ];
 
+test("a cancel by someone other than the requester is labelled as IT cancelling on behalf; the requester's own cancel keeps the original label", () => {
+  const requester = { employee_no: "MK1", full_name: "สมชาย ใจดี" };
+  assert.equal(model.eventLabelFor({ action: "cancelled", actor_employee_no: "SBX-IT-ADMIN" }, requester), "IT ยกเลิกแทนผู้แจ้ง");
+  assert.equal(model.eventLabelFor({ action: "cancelled", actor_employee_no: "MK1" }, requester), "ผู้แจ้งยกเลิก");
+  assert.equal(model.eventLabelFor({ action: "cancelled" }, requester), "ผู้แจ้งยกเลิก", "unknown actor keeps the plain label");
+  assert.equal(model.eventLabelFor({ action: "cancelled", actor_employee_no: "X" }, null), "ผู้แจ้งยกเลิก", "unknown requester keeps the plain label");
+  assert.equal(model.eventLabelFor({ action: "started", actor_employee_no: "SBX-IT-ADMIN" }, requester), "IT เริ่มดำเนินการ", "other actions are unchanged");
+});
+
+test("cancel reason dialog: the requester gets the original, IT cancelling for the requester gets the on-behalf wording and a shorter limit", () => {
+  const detail = { requester: { employee_no: "MK1" } };
+  const own = model.cancelReasonSpec(detail, { employee_no: "MK1" });
+  assert.equal(own.title, "ยกเลิกใบสั่งงานนี้?");
+  assert.equal(own.maxLength, model.MAX_REASON);
+  const onBehalf = model.cancelReasonSpec(detail, { employee_no: "SBX-IT-ADMIN" });
+  assert.equal(onBehalf.title, "ยกเลิกใบสั่งงานแทนผู้แจ้ง?");
+  assert.match(onBehalf.hint, /ยกเลิกแทนผู้แจ้ง/);
+  assert.equal(onBehalf.maxLength, model.MAX_REASON_ON_BEHALF);
+  // ฐานข้อมูลเติมคำนำหน้า 21 ตัวอักษร ต้องไม่เกิน 500 รวมกัน
+  assert.ok(model.MAX_REASON_ON_BEHALF + [..."IT ยกเลิกแทนผู้แจ้ง: "].length <= model.MAX_REASON);
+  assert.equal(model.cancelReasonSpec({}, {}).title, "ยกเลิกใบสั่งงานนี้?", "unknown people fall back to the requester wording");
+});
+
 test("every history action has a Thai label", () => {
   for (const action of ["created", "dept_approved", "dept_rejected", "it_mgr_approved", "it_mgr_rejected", "cancelled", "started", "completed", "received", "rework_requested", "info_requested", "info_provided"]) {
     assert.match(model.eventLabel(action), /[฀-๿]/, action);

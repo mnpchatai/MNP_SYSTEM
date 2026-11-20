@@ -1280,7 +1280,7 @@ test("IT asks the requester: the button opens the form, an empty or over-long me
 
   // หน้าโหลดใหม่: รอผู้แจ้งตอบ ไม่มีปุ่มเริ่ม/ส่งงาน/ถามซ้ำ · ถาม-ตอบมีคำถาม · ไทม์ไลน์มีผู้ถามและข้อความย่อ
   assert.match(w.html, /<span class="badge more_info">รอผู้แจ้งตอบ<\/span>/);
-  assert.deepEqual(w.buttons(), []);
+  assert.deepEqual(w.buttons(), ["cancel"], "IT can only cancel on behalf of the requester (v1.02) - no start or complete");
   assert.match(visibleText(w.html), /ถาม-ตอบ 1 ถาม · ทีม IT ยังไม่ตอบ โดย ไอที ผู้ดูแล/);
   assert.match(visibleText(w.html), /ถามผู้แจ้ง โดย ไอที ผู้ดูแล ถามผู้แจ้ง \(ทีม IT\): ขอไฟล์ต้นฉบับของโลโก้ด้วยครับ/);
   assert.equal((visibleText(w.html).match(/รอผู้แจ้งตอบ/g) ?? []).length, 1, "the status is said once (header badge)");
@@ -1470,6 +1470,59 @@ test("while waiting for the answer the requester can still cancel (allowed_actio
   assert.deepEqual(w.buttons(), []);
 });
 
+test("IT admin cancels a waiting order on behalf of the requester: on-behalf dialog, event labelled 'IT ยกเลิกแทนผู้แจ้ง', approver and other states have no cancel", async () => {
+  const w = world();
+  const order = await approvedOrder(w);
+  await askAs(w, "itadm", order.id, "ขอข้อมูลเพิ่ม");
+  // ผู้อนุมัติขั้น IT ที่ไม่ใช่ผู้ดูแลงาน (itapp) ไม่มีปุ่มยกเลิก
+  w.as("itapp");
+  await w.open(`view=order&id=${order.id}`);
+  assert.deepEqual(w.buttons(), [], "the IT approver (not an IT admin) has no cancel button on a waiting order");
+  w.as("itadm");
+  await w.open(`view=order&id=${order.id}`);
+  assert.deepEqual(w.buttons(), ["cancel"], "the IT admin gets only the cancel button while the requester has not answered");
+  w.answers.prompt = null; // ปิดกล่องเหตุผล = ไม่เรียก RPC
+  await w.click("cancel");
+  assert.equal(w.calls.prompts.at(-1).title, "ยกเลิกใบสั่งงานแทนผู้แจ้ง?");
+  assert.equal(w.calls.prompts.at(-1).maxLength, 470, "the limit leaves room for the on-behalf prefix the database adds");
+  assert.equal(w.calls.prompts.at(-1).confirmLabel, "ยกเลิกแทนผู้แจ้ง");
+  assert.match(w.calls.prompts.at(-1).hint, /ยกเลิกแทนผู้แจ้ง/);
+  assert.ok(!w.names().includes("app_itwo_cancel"), "no call when the dialog is dismissed");
+  w.answers.prompt = "ผู้แจ้งลาออกแล้ว";
+  await w.click("cancel");
+  assert.deepEqual(w.calls.rpc.find((call) => call.name === "app_itwo_cancel").args, { p_work_order_id: order.id, p_reason: "ผู้แจ้งลาออกแล้ว" });
+  assert.match(w.html, /<span class="badge cancelled">ยกเลิก<\/span>/);
+  // ไทม์ไลน์: ป้าย "IT ยกเลิกแทนผู้แจ้ง" + ชื่อ IT ที่บรรทัด "โดย" + เหตุผลมีคำนำหน้า
+  assert.match(w.html, /<strong>IT ยกเลิกแทนผู้แจ้ง<\/strong><p class="timeline-item-detail">โดย ไอที ผู้ดูแล<\/p><p class="timeline-item-message">IT ยกเลิกแทนผู้แจ้ง: ผู้แจ้งลาออกแล้ว<\/p>/);
+  assert.doesNotMatch(w.html, /<strong>ผู้แจ้งยกเลิก<\/strong>/);
+  assert.deepEqual(w.buttons(), []);
+});
+
+test("the IT admin has no cancel on orders that are not waiting for the requester (the database refuses it too)", async () => {
+  const w = world();
+  const order = await approvedOrder(w);
+  w.as("itadm");
+  await w.open(`view=order&id=${order.id}`);
+  assert.ok(!w.buttons().includes("cancel"), "approved order: no cancel for IT");
+  const refused = await w.context.sb.rpc("app_itwo_cancel", { p_work_order_id: order.id, p_reason: "IT ยกเลิกเอง" });
+  assert.equal(refused.error?.code, "42501");
+  assert.match(refused.error.message, /ยกเลิกแทนผู้แจ้งได้เฉพาะใบที่รอผู้แจ้งตอบ/);
+  w.as("itapp");
+  const approverTry = await w.context.sb.rpc("app_itwo_cancel", { p_work_order_id: order.id, p_reason: "x" });
+  assert.match(approverTry.error.message, /เฉพาะผู้แจ้งเท่านั้นที่ยกเลิก/);
+});
+
+test("the requester's own cancel dialog keeps the original wording (not the on-behalf one)", async () => {
+  const w = world();
+  const order = await approvedOrder(w);
+  await askAs(w, "itadm", order.id, "ขอข้อมูลเพิ่ม");
+  await w.open(`view=order&id=${order.id}`);
+  await w.click("cancel");
+  assert.equal(w.calls.prompts.at(-1).title, "ยกเลิกใบสั่งงานนี้?");
+  assert.equal(w.calls.prompts.at(-1).maxLength, 500);
+  assert.match(w.html, /<strong>ผู้แจ้งยกเลิก<\/strong>/);
+});
+
 test("the requester's list and counts: 'ใบของฉัน' says 'รอคุณตอบ', the tab and the card count it with the confirmations and say which", async () => {
   const w = world();
   const asked = await approvedOrder(w);
@@ -1568,7 +1621,7 @@ test("the mock follows the database for questions: who may ask or answer, one op
   const detail = w.mock.handlers.app_itwo_get_detail({ p_work_order_id: order.id });
   assert.equal(detail.status, "need_info");
   assert.equal(detail.info_return_status, "approved");
-  assert.deepEqual(detail.allowed_actions, [], "IT may not start or complete while the requester is asked");
+  assert.deepEqual(detail.allowed_actions, ["cancel"], "IT may not start or complete while the requester is asked (only the v1.02 cancel on behalf)");
   assert.deepEqual({ ...detail.info_pending, asked_at: undefined }, { comment_id: 1, stage: "it", body: "ขอข้อมูล", asked_at: undefined, asked_by_employee_no: "SBX-IT-ADMIN", asked_by_full_name: "ไอที ผู้ดูแล" });
   assert.match(detail.events.at(-1).reason, /^ถามผู้แจ้ง \(ทีม IT\): ขอข้อมูล$/);
   assert.equal(detail.events.at(-1).action, "info_requested");
