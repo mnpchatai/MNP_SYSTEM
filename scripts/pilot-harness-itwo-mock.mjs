@@ -2,6 +2,8 @@
 // ข้อมูลอยู่ในหน่วยความจำของหน้า (หายเมื่อโหลดหน้าใหม่) ใช้ลองหน้าจอ ไม่ใช่ตัวแทนฐานข้อมูลจริง: กฎเส้นทางอนุมัติ/ปุ่มที่ทำได้ตรงกับ migration
 // (ผู้แจ้งเป็นผู้จัดการแผนก / แผนก IT / แผนกไม่มีผู้จัดการ / ผู้อนุมัติขั้น IT แจ้งเอง) แต่ตรวจสิทธิ์หลวมกว่า (ไม่มี RLS/ล็อก)
 // รุ่น 2: ไม่รับประเภท system_access · เบ็ดเตล็ดต้องระบุงาน · แนบไฟล์ (app_itwo_add_attachment) · ขอแก้ไขงาน (app_itwo_request_rework) · ล้างข้อมูลทดสอบคืนรายการไฟล์
+// รุ่น 3 (20261206010000_itwo_v3_request_info.sql): ถามผู้แจ้ง (app_itwo_request_info → need_info) · ผู้แจ้งตอบ (app_itwo_provide_info) · ไฟล์ของข้อความ (app_itwo_add_comment_attachment)
+// · get_detail มี comments / info_pending / info_return_status · รายการมี info_return_status + info_stage · pending_count ไม่นับ need_info
 //
 // createItwoMock ต้องไม่อ้างตัวแปรนอกฟังก์ชันของตัวเอง เพราะ mockSupabaseScript() ส่งซอร์สของมัน (Function#toString) ให้เบราว์เซอร์
 // env = { fail(code|message), stamp() → ISO, now() → ms, persona() → แถว persona ปัจจุบัน, personas() → รายการ persona ทั้งหมด,
@@ -39,7 +41,9 @@ export function createItwoMock(env) {
   const access = new Map(); // ข้อมูลสิทธิ์ในระบบของใบเก่า (ถอดส่วนนี้แล้ว: ไม่มีทางเขียนใหม่ มีไว้ให้ทดสอบการแสดงผลอ่านอย่างเดียวผ่าน seedAccess)
   const reworks = [];
   const attachments = [];
+  const comments = []; // ข้อความถาม/ตอบ (itwo_comments): ไฟล์ของข้อความอยู่ใน attachments ที่มี comment_id
   let eventId = 0;
+  let commentSeq = 0;
   let uuidSeq = 0;
   const counter = { year: new Date(now() + 7 * 3600000).getUTCFullYear(), last: 0 };
   // ทีม IT ที่ seed ไว้ (SBX-IT-ADMIN, SBX-IT-APPROVER) · ค่าเริ่มต้นของโหมดทดสอบ
@@ -63,6 +67,15 @@ export function createItwoMock(env) {
 
   const eventsOf = (order) => events.filter((event) => event.work_order_id === order.id);
   const reworksOf = (order) => reworks.filter((round) => round.work_order_id === order.id);
+  const commentsOf = (order) => comments.filter((item) => item.work_order_id === order.id).sort((a, b) => a.id - b.id);
+  // คำถามที่ยังไม่มีคำตอบ (private.itwo_pending_question)
+  const pendingQuestion = (order) => commentsOf(order).filter((item) => item.kind === "question" && !comments.some((other) => other.reply_to === item.id)).at(-1) ?? null;
+  const STATUS_MESSAGES = {
+    cancelled: "ใบสั่งงานนี้ถูกยกเลิกแล้ว", rejected: "ใบสั่งงานนี้ไม่อนุมัติไปแล้ว", approved: "ใบสั่งงานนี้อนุมัติครบแล้ว", in_progress: "ใบสั่งงานนี้เริ่มดำเนินการไปแล้ว",
+    it_closed: "ใบสั่งงานนี้ IT ส่งงานแล้ว", received: "ใบสั่งงานนี้จบงานแล้ว (ได้รับงานแล้ว)",
+    need_info: "ใบสั่งงานนี้รอผู้แจ้งตอบคำถามอยู่ ต้องรอคำตอบก่อนจึงจะทำรายการนี้ได้",
+  };
+  const statusMessage = (status) => STATUS_MESSAGES[status] ?? "ใบสั่งงานนี้ไม่อยู่ในขั้นที่ทำรายการนี้ได้";
   const stateOf = (order) => {
     const list = eventsOf(order);
     return { deptDone: list.some((e) => e.action === "dept_approved"), itDone: list.some((e) => e.action === "it_mgr_approved"), rejected: list.some((e) => ["dept_rejected", "it_mgr_rejected"].includes(e.action)) };
@@ -81,25 +94,39 @@ export function createItwoMock(env) {
     const approvers = deptApprovers(order.department_code);
     const hasDeptApprovers = approvers.some((id) => id !== order.requester_id);
     const actorIsDeptRole = approvers.includes(who.id);
-    const open = order.requester_id !== who.id && ["pending_dept", "pending_it_mgr", "in_progress"].includes(order.status) && !rejected;
+    // need_info อยู่ในกลุ่มนี้ด้วย: ระหว่างรอผู้แจ้งตอบ ผู้อนุมัติยัง "ไม่อนุมัติ" ได้ (อนุมัติไม่ได้ ดู allowed / decide)
+    const open = order.requester_id !== who.id && ["pending_dept", "pending_it_mgr", "in_progress", "need_info"].includes(order.status) && !rejected;
     return {
       canDept: open && !deptIsIt && actorIsDeptRole && !deptDone,
       canIt: open && isItApprover(who) && !itDone && (deptDone || deptIsIt || !hasDeptApprovers || actorIsDeptRole),
     };
   }
-  // ตรงกับ private.itwo_allowed_actions (รุ่น 2: ไม่มี edit_access · it_closed ผู้แจ้งรับงานหรือขอแก้ไขได้)
+  // ขั้นที่ผู้ทำรายการ "ถามผู้แจ้ง" ได้ตอนนี้ (null = ถามไม่ได้) ตรงกับ private.itwo_info_stage · ผู้แจ้งถามใบตัวเองไม่ได้ · need_info ถามซ้ำไม่ได้
+  function infoStage(order, who) {
+    if (order.requester_id === who.id) return null;
+    if (["pending_dept", "pending_it_mgr", "in_progress"].includes(order.status)) {
+      const c = caps(order, who);
+      if (c.canIt) return "it_mgr";
+      if (c.canDept) return "dept";
+    }
+    if (["approved", "in_progress"].includes(order.status) && isItAdmin(who)) return "it";
+    return null;
+  }
+  // ตรงกับ private.itwo_allowed_actions (รุ่น 3: request_info / provide_info · need_info ผู้อนุมัติเหลือแค่ reject · ผู้แจ้งยกเลิกได้)
   function allowed(order, who) {
     const list = [];
     const admin = isItAdmin(who);
     const pending = ["pending_dept", "pending_it_mgr"].includes(order.status);
     const { deptDone, itDone } = stateOf(order);
     // การรับงานเป็นขั้นสุดท้ายเสมอ: ใบที่ IT เคยปิดงานแล้ว (มี completed) ไม่ส่ง cancel แม้กลับมา in_progress เพราะขอแก้ไขงาน
-    if (order.requester_id === who.id && ["pending_dept", "pending_it_mgr", "approved", "in_progress"].includes(order.status) && !hasCompleted(order)) list.push("cancel");
+    if (order.requester_id === who.id && ["pending_dept", "pending_it_mgr", "approved", "in_progress", "need_info"].includes(order.status) && !hasCompleted(order)) list.push("cancel");
     const c = caps(order, who);
-    if (c.canDept || c.canIt) list.push("approve", "reject");
+    if (c.canDept || c.canIt) list.push(...(order.status === "need_info" ? ["reject"] : ["approve", "reject"]));
     if (admin && (order.status === "approved" || (order.is_urgent && pending))) list.push("start");
     if (admin && order.status === "in_progress" && deptDone && itDone) list.push("complete");
     if (order.requester_id === who.id && order.status === "it_closed") list.push("receive", "request_rework");
+    if (infoStage(order, who)) list.push("request_info");
+    if (order.requester_id === who.id && order.status === "need_info") list.push("provide_info");
     return list;
   }
   function canView(order, who) {
@@ -110,6 +137,18 @@ export function createItwoMock(env) {
   const latestRework = (order) => reworksOf(order).reduce((best, round) => (!best || round.round_no > best.round_no ? round : best), null);
   const personName = (id) => { const person = byId(id); return person ? nameOf(person) : ""; };
 
+  // ไฟล์ต้องอยู่ใน Storage จริงและชนิด/ขนาดถูกต้อง (private.itwo_read_stored_file + ตรวจนามสกุล) · คืนชนิดไฟล์ที่ Storage จดไว้
+  function checkStoredFile(storagePath, match, mimeType, sizeBytes) {
+    if (env.hasObject && !env.hasObject(TEST_BUCKET, storagePath)) reject("ไม่พบไฟล์ที่อัปโหลด กรุณาอัปโหลดไฟล์ใหม่");
+    // ชนิดไฟล์: ฐานข้อมูลจริงใช้ mimetype ที่ Storage จดไว้ (มาจาก file.type ของไฟล์ที่ส่งขึ้น) ไม่เชื่อ p_mime_type · env.objectMime จำลองค่านั้น (ไม่ส่ง = ใช้ p_mime_type)
+    const mime = env.objectMime ? env.objectMime(TEST_BUCKET, storagePath) : mimeType;
+    if (env.objectMime && !mime) reject("ตรวจชนิดหรือขนาดของไฟล์ที่อัปโหลดไม่ได้ กรุณาอัปโหลดไฟล์ใหม่");
+    if (!ALLOWED_MIME.includes(mime)) reject("ชนิดไฟล์นี้ไม่รองรับ (รับรูปภาพ PDF Word Excel PowerPoint ข้อความ และ CSV)");
+    if (MIME_BY_EXTENSION[match[2]] !== mime) reject("นามสกุลไฟล์ไม่ตรงกับชนิดของไฟล์ กรุณาอัปโหลดไฟล์ใหม่");
+    if (!(sizeBytes > 0) || sizeBytes > MAX_FILE_BYTES) reject("ไฟล์ต้องมีขนาดไม่เกิน 20 MB");
+    return mime;
+  }
+
   function decide(id, approve, reasonText) {
     const who = actor();
     const order = find(id);
@@ -117,6 +156,7 @@ export function createItwoMock(env) {
     if (!approve && !reason) reject("กรุณาระบุเหตุผลที่ไม่อนุมัติ");
     const c = caps(order, who);
     if (!c.canDept && !c.canIt) reject("คุณไม่มีสิทธิ์อนุมัติใบสั่งงานนี้ในขั้นนี้ หรือใบนี้ไม่ได้อยู่ในขั้นที่รออนุมัติ", "42501");
+    if (approve && order.status === "need_info") reject("ใบสั่งงานนี้รอผู้แจ้งตอบคำถามอยู่ ต้องรอคำตอบก่อนจึงจะอนุมัติได้");
     const { deptDone } = stateOf(order);
     if (approve) {
       if (c.canDept) addEvent(order, who, "dept_approved");
@@ -128,12 +168,14 @@ export function createItwoMock(env) {
     } else {
       addEvent(order, who, c.canIt && !c.canDept ? "it_mgr_rejected" : "dept_rejected", reason);
       order.status = "rejected";
+      order.info_return_status = null;
     }
   }
 
+  const infoFields = (order) => ({ info_return_status: order.info_return_status ?? null, info_stage: order.status === "need_info" ? pendingQuestion(order)?.stage ?? null : null });
   const listFields = (order) => {
     const round = latestRework(order);
-    return { misc_detail: order.misc_detail, rework_round: round ? round.round_no : 0, rework_due_date: round ? round.due_date : null };
+    return { misc_detail: order.misc_detail, rework_round: round ? round.round_no : 0, rework_due_date: round ? round.due_date : null, ...infoFields(order) };
   };
 
   const handlers = {
@@ -189,10 +231,11 @@ export function createItwoMock(env) {
       const who = actor();
       const order = find(p_work_order_id);
       if (order.requester_id !== who.id) reject("เฉพาะผู้แจ้งเท่านั้นที่ยกเลิกใบสั่งงานได้", "42501");
-      if (order.status === "it_closed" || (order.status === "in_progress" && hasCompleted(order))) reject("ใบนี้ IT ส่งงานแล้ว ถ้างานยังไม่เรียบร้อยให้กด แก้ไขงาน");
-      if (!["pending_dept", "pending_it_mgr", "approved", "in_progress"].includes(order.status)) reject("ใบสั่งงานนี้ไม่อยู่ในขั้นที่ทำรายการนี้ได้");
+      if (order.status === "it_closed" || (["in_progress", "need_info"].includes(order.status) && hasCompleted(order))) reject("ใบนี้ IT ส่งงานแล้ว ถ้างานยังไม่เรียบร้อยให้กด แก้ไขงาน");
+      if (!["pending_dept", "pending_it_mgr", "approved", "in_progress", "need_info"].includes(order.status)) reject("ใบสั่งงานนี้ไม่อยู่ในขั้นที่ทำรายการนี้ได้");
       if (!clean(p_reason)) reject("กรุณาระบุเหตุผลที่ยกเลิก");
       order.status = "cancelled";
+      order.info_return_status = null;
       addEvent(order, who, "cancelled", clean(p_reason));
       return null;
     },
@@ -207,7 +250,7 @@ export function createItwoMock(env) {
     app_itwo_complete({ p_work_order_id }) {
       const who = actor();
       const order = find(p_work_order_id);
-      if (!allowed(order, who).includes("complete")) reject("ปิดงานไม่ได้ ต้องรอผู้จัดการแผนกและผู้อนุมัติขั้น IT อนุมัติครบก่อน");
+      if (!allowed(order, who).includes("complete")) reject("ส่งงานไม่ได้ ต้องรอผู้จัดการแผนกและผู้อนุมัติขั้น IT อนุมัติครบก่อน");
       order.status = "it_closed";
       addEvent(order, who, "completed");
       return null;
@@ -249,7 +292,7 @@ export function createItwoMock(env) {
       if ([...fileName].length > 200) reject("ชื่อไฟล์ต้องไม่เกิน 200 ตัวอักษร");
       const existing = attachments.find((item) => item.storage_path === p_storage_path);
       if (existing) {
-        if (existing.work_order_id === order.id && (existing.rework_id ?? null) === (p_rework_id ?? null)) return existing.id;
+        if (existing.work_order_id === order.id && !existing.comment_id && (existing.rework_id ?? null) === (p_rework_id ?? null)) return existing.id;
         reject("ไฟล์นี้ถูกลงทะเบียนไว้แล้ว");
       }
       if (!p_rework_id) {
@@ -265,14 +308,69 @@ export function createItwoMock(env) {
         if (!withinWindow(round.created_at)) reject("หมดเวลาแนบไฟล์แล้ว (แนบได้ภายใน 30 นาทีหลังขอแก้ไขงาน)");
         if (attachments.filter((item) => item.rework_id === p_rework_id).length >= MAX_FILES_PER_ROUND) reject("แนบไฟล์ได้ไม่เกิน 10 ไฟล์ต่อครั้งที่ส่ง");
       }
-      if (env.hasObject && !env.hasObject(TEST_BUCKET, p_storage_path)) reject("ไม่พบไฟล์ที่อัปโหลด กรุณาอัปโหลดไฟล์ใหม่");
-      // ชนิดไฟล์: ฐานข้อมูลจริงใช้ mimetype ที่ Storage จดไว้ (มาจาก file.type ของไฟล์ที่ส่งขึ้น) ไม่เชื่อ p_mime_type · env.objectMime จำลองค่านั้น (ไม่ส่ง = ใช้ p_mime_type)
-      const mime = env.objectMime ? env.objectMime(TEST_BUCKET, p_storage_path) : p_mime_type;
-      if (env.objectMime && !mime) reject("ตรวจชนิดหรือขนาดของไฟล์ที่อัปโหลดไม่ได้ กรุณาอัปโหลดไฟล์ใหม่");
-      if (!ALLOWED_MIME.includes(mime)) reject("ชนิดไฟล์นี้ไม่รองรับ (รับรูปภาพ PDF Word Excel PowerPoint ข้อความ และ CSV)");
-      if (MIME_BY_EXTENSION[match[2]] !== mime) reject("นามสกุลไฟล์ไม่ตรงกับชนิดของไฟล์ กรุณาอัปโหลดไฟล์ใหม่");
-      if (!(p_size_bytes > 0) || p_size_bytes > MAX_FILE_BYTES) reject("ไฟล์ต้องมีขนาดไม่เกิน 20 MB");
-      const row = { id: newId(), work_order_id: order.id, rework_id: p_rework_id ?? null, storage_path: p_storage_path, file_name: fileName, mime_type: mime, size_bytes: p_size_bytes, uploaded_by: who.id, created_at: stamp() };
+      const mime = checkStoredFile(p_storage_path, match, p_mime_type, p_size_bytes);
+      const row = { id: newId(), work_order_id: order.id, rework_id: p_rework_id ?? null, comment_id: null, storage_path: p_storage_path, file_name: fileName, mime_type: mime, size_bytes: p_size_bytes, uploaded_by: who.id, created_at: stamp() };
+      attachments.push(row);
+      return row.id;
+    },
+    // ถามผู้แจ้ง: ผู้อนุมัติของขั้นที่ใบรออยู่ / ผู้ดูแลงาน IT หลังอนุมัติ · ใบไป need_info พร้อมจดสถานะที่ต้องกลับ + event info_requested · ตรงกับ public.app_itwo_request_info
+    app_itwo_request_info({ p_work_order_id, p_body }) {
+      const who = actor();
+      const body = clean(p_body);
+      if (!body) reject("กรุณาพิมพ์ข้อความที่ต้องการถามผู้แจ้ง");
+      if ([...body].length > 2000) reject("ข้อความต้องไม่เกิน 2,000 ตัวอักษร");
+      const order = find(p_work_order_id);
+      if (order.requester_id === who.id) reject("ผู้แจ้งถามกลับใบสั่งงานของตัวเองไม่ได้", "42501");
+      if (order.status === "need_info") reject("ใบสั่งงานนี้มีคำถามที่รอผู้แจ้งตอบอยู่แล้ว ถามเพิ่มได้หลังผู้แจ้งตอบ");
+      if (!["pending_dept", "pending_it_mgr", "approved", "in_progress"].includes(order.status)) reject(statusMessage(order.status));
+      const stage = infoStage(order, who);
+      if (!stage) reject("คุณไม่มีสิทธิ์ถามผู้แจ้งในใบสั่งงานนี้ในขั้นตอนนี้", "42501");
+      const comment = { id: ++commentSeq, work_order_id: order.id, kind: "question", stage, author_id: who.id, body, reply_to: null, created_at: stamp() };
+      comments.push(comment);
+      order.info_return_status = order.status;
+      order.status = "need_info";
+      addEvent(order, who, "info_requested", `ถามผู้แจ้ง (${{ dept: "ผู้จัดการแผนก", it_mgr: "ผู้อนุมัติขั้น IT", it: "ทีม IT" }[stage]}): ${[...body].slice(0, 300).join("")}`);
+      return { comment_id: comment.id };
+    },
+    // ผู้แจ้งตอบ: เฉพาะผู้แจ้ง เมื่อใบ need_info · ใบกลับสถานะที่จดไว้ + event info_provided · ตรงกับ public.app_itwo_provide_info
+    app_itwo_provide_info({ p_work_order_id, p_body }) {
+      const who = actor();
+      const body = clean(p_body);
+      if (!body) reject("กรุณาพิมพ์คำตอบ");
+      if ([...body].length > 2000) reject("ข้อความต้องไม่เกิน 2,000 ตัวอักษร");
+      const order = find(p_work_order_id);
+      if (order.requester_id !== who.id) reject("เฉพาะผู้แจ้งเท่านั้นที่ตอบคำถามได้", "42501");
+      if (order.status !== "need_info") reject("ใบสั่งงานนี้ไม่มีคำถามที่รอตอบ");
+      const question = pendingQuestion(order) ?? reject("ไม่พบคำถามที่รอตอบของใบสั่งงานนี้");
+      const comment = { id: ++commentSeq, work_order_id: order.id, kind: "answer", stage: question.stage, author_id: who.id, body, reply_to: question.id, created_at: stamp() };
+      comments.push(comment);
+      order.status = order.info_return_status;
+      order.info_return_status = null;
+      addEvent(order, who, "info_provided", `ผู้แจ้งตอบคำถาม: ${[...body].slice(0, 300).join("")}`);
+      return { comment_id: comment.id };
+    },
+    // ลงทะเบียนไฟล์ของข้อความถาม/ตอบ: เฉพาะผู้เขียนข้อความนั้น ภายใน 30 นาทีหลังเขียน ≤ 10 ไฟล์ต่อข้อความ · เรียกซ้ำ path เดิมของข้อความเดียวกัน = คืนทะเบียนเดิม · ตรงกับ public.app_itwo_add_comment_attachment
+    app_itwo_add_comment_attachment({ p_work_order_id, p_comment_id, p_storage_path, p_file_name, p_mime_type, p_size_bytes }) {
+      const who = actor();
+      const order = orders.find((item) => item.id === p_work_order_id);
+      if (!order || !canView(order, who)) reject("ไม่พบใบสั่งงานนี้");
+      const comment = comments.find((item) => item.id === p_comment_id && item.work_order_id === order.id) ?? reject("ไม่พบข้อความนี้ในใบสั่งงาน");
+      if (comment.author_id !== who.id) reject("เฉพาะผู้เขียนข้อความเท่านั้นที่แนบไฟล์ให้ข้อความนั้นได้", "42501");
+      const match = PATH_PATTERN.exec(String(p_storage_path ?? ""));
+      if (!match || match[1] !== order.id) reject("ที่อยู่ไฟล์ไม่ถูกต้อง หรือไม่ใช่ไฟล์ของใบสั่งงานนี้");
+      const fileName = clean(p_file_name);
+      if (!fileName) reject("กรุณาระบุชื่อไฟล์");
+      if ([...fileName].length > 200) reject("ชื่อไฟล์ต้องไม่เกิน 200 ตัวอักษร");
+      const existing = attachments.find((item) => item.storage_path === p_storage_path);
+      if (existing) {
+        if (existing.work_order_id === order.id && existing.comment_id === comment.id) return existing.id;
+        reject("ไฟล์นี้ถูกลงทะเบียนไว้แล้ว");
+      }
+      if (["rejected", "cancelled", "received"].includes(order.status)) reject("ใบสั่งงานนี้สิ้นสุดแล้ว แนบไฟล์ไม่ได้");
+      if (!withinWindow(comment.created_at)) reject("หมดเวลาแนบไฟล์แล้ว (แนบได้ภายใน 30 นาทีหลังส่งข้อความ)");
+      if (attachments.filter((item) => item.comment_id === comment.id).length >= MAX_FILES_PER_ROUND) reject("แนบไฟล์ได้ไม่เกิน 10 ไฟล์ต่อข้อความ");
+      const mime = checkStoredFile(p_storage_path, match, p_mime_type, p_size_bytes);
+      const row = { id: newId(), work_order_id: order.id, rework_id: null, comment_id: comment.id, storage_path: p_storage_path, file_name: fileName, mime_type: mime, size_bytes: p_size_bytes, uploaded_by: who.id, created_at: stamp() };
       attachments.push(row);
       return row.id;
     },
@@ -294,14 +392,24 @@ export function createItwoMock(env) {
       return {
         id: order.id, is_test: true, doc_no: order.doc_no, doc_year: order.doc_year, doc_seq: order.doc_seq, requester_id: order.requester_id, department_id: order.department_code,
         request_type: order.request_type, misc_detail: order.misc_detail, order_ref: order.order_ref, attachment_flag: order.attachment_flag, attachment_note: order.attachment_note, details: order.details,
-        needed_date: order.needed_date, is_urgent: order.is_urgent, status: order.status, created_at: order.created_at,
+        needed_date: order.needed_date, is_urgent: order.is_urgent, status: order.status, info_return_status: order.info_return_status ?? null, created_at: order.created_at,
         rework_round: latest ? latest.round_no : 0, latest_due_date: latest ? latest.due_date : order.needed_date,
         requester: { employee_no: requester.employee_no, full_name: nameOf(requester) }, department: { code: order.department_code, name_th: order.department_name },
         events: list, access_changes: access.get(order.id) ?? [],
         reworks: rounds.map((round) => ({ id: round.id, round_no: round.round_no, details: round.details, due_date: round.due_date, created_at: round.created_at, requested_by_employee_no: byId(round.requested_by)?.employee_no, requested_by_full_name: personName(round.requested_by) })),
-        attachments: attachments.filter((item) => item.work_order_id === order.id)
+        // ไฟล์ของข้อความถาม/ตอบอยู่ใน comments[].attachments ไม่ปนในรายการนี้
+        attachments: attachments.filter((item) => item.work_order_id === order.id && !item.comment_id)
           .sort((a, b) => roundNoOf(a.rework_id) - roundNoOf(b.rework_id) || a.created_at.localeCompare(b.created_at))
           .map((item) => ({ id: item.id, rework_id: item.rework_id, round_no: roundNoOf(item.rework_id), storage_path: item.storage_path, bucket: TEST_BUCKET, file_name: item.file_name, mime_type: item.mime_type, size_bytes: item.size_bytes, created_at: item.created_at, uploaded_by_full_name: personName(item.uploaded_by) })),
+        comments: commentsOf(order).map((item) => ({
+          id: item.id, kind: item.kind, stage: item.stage, body: item.body, reply_to: item.reply_to, created_at: item.created_at,
+          author_employee_no: byId(item.author_id)?.employee_no, author_full_name: personName(item.author_id),
+          attachments: attachments.filter((file) => file.comment_id === item.id).sort((a, b) => a.created_at.localeCompare(b.created_at))
+            .map((file) => ({ id: file.id, storage_path: file.storage_path, bucket: TEST_BUCKET, file_name: file.file_name, mime_type: file.mime_type, size_bytes: file.size_bytes, created_at: file.created_at })),
+        })),
+        info_pending: order.status === "need_info" && pendingQuestion(order)
+          ? { comment_id: pendingQuestion(order).id, stage: pendingQuestion(order).stage, body: pendingQuestion(order).body, asked_at: pendingQuestion(order).created_at, asked_by_employee_no: byId(pendingQuestion(order).author_id)?.employee_no, asked_by_full_name: personName(pendingQuestion(order).author_id) }
+          : null,
         approvals: { dept: firstOf("dept_approved"), it_mgr: firstOf("it_mgr_approved") }, allowed_actions: allowed(order, who),
       };
     },
@@ -311,11 +419,12 @@ export function createItwoMock(env) {
     },
     app_itwo_list_pending_approvals() {
       const who = actor();
-      return orders.filter((order) => order.requester_id !== who.id && ["pending_dept", "pending_it_mgr", "in_progress"].includes(order.status) && (caps(order, who).canDept || caps(order, who).canIt))
+      // ใบที่ need_info (รอผู้แจ้งตอบ) ของขั้นผู้เรียกแสดงด้วย แต่ไม่ใช่ "รอฉัน" (app_itwo_pending_count ไม่นับ)
+      return orders.filter((order) => order.requester_id !== who.id && ["pending_dept", "pending_it_mgr", "in_progress", "need_info"].includes(order.status) && (caps(order, who).canDept || caps(order, who).canIt))
         .sort((a, b) => Number(b.is_urgent) - Number(a.is_urgent) || a.needed_date.localeCompare(b.needed_date) || a.created_at.localeCompare(b.created_at))
-        .map((order) => ({ id: order.id, doc_no: order.doc_no, request_type: order.request_type, details: order.details, needed_date: order.needed_date, is_urgent: order.is_urgent, status: order.status, created_at: order.created_at, requester_name: nameOf(byId(order.requester_id)), department_name: order.department_name, pending_step: caps(order, who).canIt ? "it_mgr" : "dept", misc_detail: order.misc_detail }));
+        .map((order) => ({ id: order.id, doc_no: order.doc_no, request_type: order.request_type, details: order.details, needed_date: order.needed_date, is_urgent: order.is_urgent, status: order.status, created_at: order.created_at, requester_name: nameOf(byId(order.requester_id)), department_name: order.department_name, pending_step: caps(order, who).canIt ? "it_mgr" : "dept", misc_detail: order.misc_detail, ...infoFields(order) }));
     },
-    app_itwo_pending_count() { return handlers.app_itwo_list_pending_approvals().length; },
+    app_itwo_pending_count() { return handlers.app_itwo_list_pending_approvals().filter((row) => row.status !== "need_info").length; },
     app_itwo_list_it() {
       const who = actor();
       if (!isStaff(who)) reject("เฉพาะทีม IT เท่านั้นที่ดูรายการงานทั้งหมดได้", "42501");
@@ -341,8 +450,8 @@ export function createItwoMock(env) {
     app_itwo_set_staff() { reject("ตั้งสิทธิ์ทีม IT ในโหมดทดสอบไม่ได้"); },
     // ล้างข้อมูลทดสอบ: ลบแถวทั้งหมด และคืน path ของ "ทุกไฟล์" ในบัคเก็ตทดสอบให้หน้าเว็บลบผ่าน Storage API ต่อ (ลบด้วย SQL ไม่ได้) · เรียกซ้ำได้รายการที่เหลือ
     app_sandbox_purge_itwo() {
-      const deleted = orders.length + events.length + access.size + reworks.length + attachments.length;
-      orders.length = 0; events.length = 0; access.clear(); reworks.length = 0; attachments.length = 0; counter.last = 0;
+      const deleted = orders.length + events.length + access.size + reworks.length + attachments.length + comments.length;
+      orders.length = 0; events.length = 0; access.clear(); reworks.length = 0; attachments.length = 0; comments.length = 0; counter.last = 0;
       return { deleted, files: env.listObjects ? env.listObjects(TEST_BUCKET) : [] };
     },
   };

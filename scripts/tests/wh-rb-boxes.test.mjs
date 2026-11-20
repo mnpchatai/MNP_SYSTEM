@@ -3,7 +3,7 @@ import test from "node:test";
 import { createRequire } from "node:module";
 import { createMockSupabase } from "../pilot-harness-mock.mjs";
 
-// โรงงาน ขั้น 4 ส่วนข้อมูล (20261206010000_wh_rb_boxes.sql): ปลายทางของล็อตตกแต่ง (sr / customer) · กล่องรอคลังสินค้าสำเร็จรูป (WH) รับเข้า
+// โรงงาน ขั้น 4 ส่วนข้อมูล (20261207010000_wh_rb_boxes.sql): ปลายทางของล็อตตกแต่ง (sr / customer) · กล่องรอคลังสินค้าสำเร็จรูป (WH) รับเข้า
 // คำสั่ง receiveBoxes / shipBoxes / reverseBoxReceipt / reverseBoxShip ของ modules/rubberflow-actions.js บน store แบบ remote กับ Supabase จำลองของ harness
 // (scripts/pilot-harness-mock.mjs ที่เลียนกฎของฐานข้อมูล) รวมการนับ / ถอนยอดงาน RB ของ BOM และสิทธิ์ (canReceiveBoxes / canReverseBoxes ของ modules/rubberflow-store.js)
 const require = createRequire(import.meta.url);
@@ -49,7 +49,7 @@ const transfer = (id, orderId) => ({ id, lotId: "CU-0", orderId, from: "curing",
   status: "received", createdAt: NOW - DAY, createdBy: "พนักงาน RB", sentAt: NOW - DAY, sentBy: "พนักงาน RB", receivedAt: NOW - DAY, receivedBy: "พนักงาน RB" });
 
 // ฐานข้อมูลตั้งต้น: ใบ PI-W ปล่อยผลิตแล้ว งาน RB 100 ชิ้นผูก WO-L · WO-U ขายเป็นสินค้า · ล็อต customer สองล็อตรอ WH รับ · ใบส่งมอบถึงสถานีตกแต่งของทั้งสอง WO
-// legacy = เพิ่มล็อต FN-O1 รุ่นก่อน 20261206010000: กล่องในคลังสองกล่องและส่งมอบแล้วหนึ่งกล่อง ไม่มีวันที่รับเข้า
+// legacy = เพิ่มล็อต FN-O1 รุ่นก่อน 20261207010000: กล่องในคลังสองกล่องและส่งมอบแล้วหนึ่งกล่อง ไม่มีวันที่รับเข้า
 function seedData(storage, { legacy = false } = {}) {
   const bom = { version: 4, epoch: "bom-e1", ...Object.fromEntries(BOM_LISTS.map((list) => [list, []])), versions: Object.fromEntries(BOM_LISTS.map((list) => [list, {}])), tombstones: [], audit: [] };
   bom.orders = [{ id: "PI-W", status: "released", customer: "ลูกค้าเชื่อม", orderedAt: NOW, items: [], revision: 1 }];

@@ -63,6 +63,8 @@ test("buttons come only from allowed_actions, in a fixed order: decide, then IT 
   assert.deepEqual(labels(["cancel", "reject", "approve"]), ["approve", "reject", "cancel"], "order does not depend on the input order");
   assert.deepEqual(labels(["receive", "complete", "start"]), ["start", "complete", "receive"]);
   assert.deepEqual(labels(["approve", "reject", "start", "complete", "receive", "request_rework", "cancel"]), ["approve", "reject", "start", "complete", "receive", "request_rework", "cancel"]);
+  // รุ่น 3: ถามผู้แจ้งอยู่ท้ายปุ่มตัดสินใจ · ตอบคำถามอยู่ก่อนยกเลิก
+  assert.deepEqual(labels(["cancel", "provide_info", "request_info", "reject", "approve"]), ["approve", "reject", "request_info", "provide_info", "cancel"]);
   assert.deepEqual(labels(["cancel", "request_rework", "receive"]), ["receive", "request_rework", "cancel"], "'แก้ไขงาน' sits right after 'ได้รับงานเรียบร้อยแล้ว'");
 });
 
@@ -82,10 +84,42 @@ test("'แก้ไขงาน' opens the rework form instead of calling an RPC
   assert.deepEqual(model.actionButtons(["receive", "request_rework"]).map((button) => button.label), ["ได้รับงานเรียบร้อยแล้ว", "แก้ไขงาน"]);
 });
 
+test("'ส่งงาน' replaces 'ปิดงาน' everywhere IT sees it: button, confirm, toast, timeline, signature slot (status and action keys are unchanged)", () => {
+  const complete = model.ACTION_BUTTONS.complete;
+  assert.equal(complete.label, "ส่งงาน");
+  assert.equal(complete.rpc, "app_itwo_complete", "the RPC and the action key keep their names");
+  assert.equal(complete.confirmTitle, "ส่งงานใบสั่งงานนี้?");
+  assert.equal(complete.done, "ส่งงานแล้ว รอผู้แจ้งยืนยันรับงาน");
+  assert.match(complete.confirmMessage, /เมื่อส่งงานแล้ว/);
+  assert.equal(model.eventLabel("completed"), "IT ส่งงาน");
+  assert.equal(model.signatureSlots([]).find((slot) => slot.key === "it_operator").label, "IT ผู้ดำเนินการ (ส่งงาน)");
+  assert.equal(model.statusLabel("it_closed"), "IT ส่งงาน (รอผู้แจ้งยืนยัน)");
+  assert.equal(model.myStatusLabel("it_closed"), "IT ส่งงานแล้ว รอคุณยืนยัน");
+  const texts = [...Object.values(model.ACTION_BUTTONS).flatMap((spec) => [spec.label, spec.done, spec.confirmTitle, spec.confirmMessage]), ...Object.values(model.STATUS_LABELS), ...Object.values(model.EVENT_LABELS), model.completeToast({ requester: { full_name: "ก" } }, false), model.completeToast({}, true)];
+  assert.ok(texts.filter(Boolean).every((text) => !text.includes("ปิดงาน")), "no 'ปิดงาน' is left in labels, dialogs, toasts or timeline");
+});
+
+test("'ถามผู้แจ้ง' opens the ask form (no RPC from the button); 'ตอบคำถาม' belongs to the always-open answer form, so it is inline", () => {
+  const ask = model.ACTION_BUTTONS.request_info;
+  assert.equal(ask.label, "ถามผู้แจ้ง");
+  assert.equal(ask.opens, "ask");
+  assert.equal(ask.rpc, "app_itwo_request_info", "the form calls it with the message");
+  assert.ok(ask.confirmTitle && ask.confirmMessage && ask.confirmLabel && ask.done);
+  assert.equal(ask.done, "ส่งคำถามถึงผู้แจ้งแล้ว");
+  const answer = model.ACTION_BUTTONS.provide_info;
+  assert.equal(answer.opens, "answer");
+  assert.equal(answer.inline, true);
+  assert.equal(answer.rpc, "app_itwo_provide_info");
+  assert.deepEqual(model.actionButtons(["provide_info", "cancel"]).map((button) => button.action), ["provide_info", "cancel"]);
+  assert.equal(model.answerToast("it"), "ส่งคำตอบแล้ว ใบกลับไปที่ทีม IT");
+  assert.equal(model.answerToast("dept"), "ส่งคำตอบแล้ว ใบกลับไปที่ผู้จัดการแผนก");
+  assert.equal(model.answerToast("it_mgr"), "ส่งคำตอบแล้ว ใบกลับไปที่ผู้อนุมัติขั้น IT");
+});
+
 test("every button has a Thai label, an RPC name and a confirm text; reject and cancel ask for a reason", () => {
   for (const action of model.ACTION_ORDER.filter((name) => name !== "request_rework")) {
     const spec = model.ACTION_BUTTONS[action];
-    assert.match(spec.rpc, /^app_itwo_[a-z]+$/, action);
+    assert.match(spec.rpc, /^app_itwo_[a-z_]+$/, action);
     assert.match(spec.label, /[฀-๿]/, action);
     assert.match(spec.done, /[฀-๿]/, action);
     if (action === "reject" || action === "cancel") {
@@ -234,7 +268,7 @@ test("a timestamp shows as dd/mm/yyyy hh:mm in Bangkok time", () => {
 });
 
 test("every status has a Thai label and a badge class that the stylesheet already colours", () => {
-  const statuses = ["pending_dept", "pending_it_mgr", "approved", "in_progress", "it_closed", "received", "rejected", "cancelled"];
+  const statuses = ["pending_dept", "pending_it_mgr", "approved", "in_progress", "it_closed", "need_info", "received", "rejected", "cancelled"];
   assert.deepEqual(Object.keys(model.STATUS_LABELS), statuses);
   for (const status of statuses) {
     assert.match(model.statusLabel(status), /[฀-๿]/, status);
@@ -244,7 +278,10 @@ test("every status has a Thai label and a badge class that the stylesheet alread
   assert.equal(model.statusLabel("received"), "ได้รับงานแล้ว");
   assert.equal(model.statusLabel("unknown_status"), "unknown_status", "an unknown status is shown as-is, never hidden");
   assert.equal(model.statusLabel(null), "");
-  assert.equal(model.myStatusLabel("it_closed"), "IT ปิดงานแล้ว รอคุณยืนยัน", "the requester sees whose turn it is");
+  assert.equal(model.myStatusLabel("it_closed"), "IT ส่งงานแล้ว รอคุณยืนยัน", "the requester sees whose turn it is");
+  assert.equal(model.statusLabel("need_info"), "รอผู้แจ้งตอบ");
+  assert.equal(model.myStatusLabel("need_info"), "รอคุณตอบ", "the requester sees that the question is theirs to answer");
+  assert.equal(model.statusBadgeClass("need_info"), "more_info", "the amber '?' badge the stylesheet already has");
   assert.equal(model.myStatusLabel("approved"), model.statusLabel("approved"));
 });
 
@@ -267,7 +304,7 @@ const EVENTS = [
 ];
 
 test("every history action has a Thai label", () => {
-  for (const action of ["created", "dept_approved", "dept_rejected", "it_mgr_approved", "it_mgr_rejected", "cancelled", "started", "completed", "received", "rework_requested"]) {
+  for (const action of ["created", "dept_approved", "dept_rejected", "it_mgr_approved", "it_mgr_rejected", "cancelled", "started", "completed", "received", "rework_requested", "info_requested", "info_provided"]) {
     assert.match(model.eventLabel(action), /[฀-๿]/, action);
   }
   assert.equal(model.eventLabel("future_action"), "future_action");
@@ -322,6 +359,9 @@ test("IT groups: urgent work that is still waiting for approval can already be s
   assert.equal(model.itGroupOf(row(1, "pending_it_mgr", { is_urgent: true })), "to_start");
   assert.equal(model.itGroupOf(row(1, "in_progress")), "in_progress");
   assert.equal(model.itGroupOf(row(1, "it_closed")), "awaiting_receive");
+  assert.equal(model.itGroupOf(row(1, "need_info")), "awaiting_info", "waiting for the requester's answer is its own group");
+  assert.equal(model.itGroupOf(row(1, "need_info", { is_urgent: true })), "awaiting_info", "urgent does not make it work to start");
+  assert.equal(model.IT_GROUPS.find((group) => group.key === "awaiting_info").label, "รอผู้แจ้งตอบ");
   for (const status of ["received", "rejected", "cancelled"]) assert.equal(model.itGroupOf(row(1, status)), "closed", status);
 });
 
@@ -340,6 +380,7 @@ test("finished work is listed newest first and every group exists even when empt
   const groups = model.groupItOrders([row(1, "received"), row(2, "cancelled"), row(3, "rejected")]);
   assert.deepEqual(groups.closed.map((item) => item.id), [3, 2, 1]);
   assert.deepEqual(Object.keys(groups), model.IT_GROUPS.map((group) => group.key));
+  assert.deepEqual(model.IT_GROUPS.map((group) => group.key), ["to_start", "in_progress", "awaiting_info", "awaiting_receive", "awaiting_approval", "closed"]);
   assert.deepEqual(groups.to_start, []);
   assert.deepEqual(Object.values(model.groupItOrders(undefined)).flat(), []);
 });
@@ -350,11 +391,34 @@ test("the IT count is work to do (to start + in progress), and the requester cou
   assert.equal(model.awaitingMyReceiveCount(rows), 1);
   assert.equal(model.itActionableCount(undefined), 0);
   assert.equal(model.awaitingMyReceiveCount(null), 0);
+  assert.equal(model.itActionableCount([...rows, row(7, "need_info"), row(8, "need_info", { is_urgent: true })]), 3, "orders waiting for the requester are not IT's work to do");
   assert.deepEqual(plain(model.itApprovalProgress({ has_dept_approved: true, has_it_mgr_approved: false })), [{ label: "ผู้จัดการแผนก", done: true }, { label: "ผู้อนุมัติขั้น IT", done: false }]);
   assert.deepEqual(model.itApprovalProgress(undefined).map((step) => step.done), [false, false]);
 });
 
+test("the requester's count is confirm (IT sent the work) plus answer (someone asked), the approvals count leaves out orders waiting for the requester", () => {
+  const rows = [row(1, "it_closed"), row(2, "it_closed"), row(3, "need_info"), row(4, "pending_dept"), row(5, "received")];
+  assert.deepEqual(plain(model.mineWaiting(rows)), { confirm: 2, answer: 1, total: 3 });
+  assert.equal(model.awaitingMyAnswerCount(rows), 1);
+  assert.deepEqual(plain(model.mineWaiting(null)), { confirm: 0, answer: 0, total: 0 });
+  assert.equal(model.mineWaitingNote({ confirm: 2, answer: 0 }), " ที่รอคุณยืนยัน");
+  assert.equal(model.mineWaitingNote({ confirm: 0, answer: 1 }), " ที่รอคุณตอบ");
+  assert.equal(model.mineWaitingNote({ confirm: 2, answer: 1 }), " (รอคุณยืนยัน 2 · รอคุณตอบ 1)");
+  assert.equal(model.mineWaitingNote(undefined), " ที่รอคุณยืนยัน", "no breakdown: the old wording");
+  const approvals = [row(1, "pending_dept"), row(2, "pending_it_mgr"), row(3, "need_info"), row(4, "need_info"), row(5, "in_progress")];
+  assert.equal(model.waitingForMeCount(approvals), 3, "need_info rows are listed but are not 'waiting for me'");
+  assert.equal(model.waitingForMeCount(undefined), 0);
+});
+
 /* ---------- ตัวเลขบนการ์ด ---------- */
+test("the card badge counts orders waiting for my answer next to the ones waiting for my confirmation", () => {
+  const summary = model.cardSummary({ approvals: 1, toConfirm: 2, toAnswer: 3 });
+  assert.equal(summary.total, 6);
+  assert.deepEqual(summary.parts.map((part) => [part.key, part.label, part.count]), [["approvals", "รออนุมัติ", 1], ["confirm", "รอคุณยืนยันรับงาน", 2], ["answer", "รอคุณตอบ", 3]]);
+  assert.equal(summary.title, "รออนุมัติ 1 · รอคุณยืนยันรับงาน 2 · รอคุณตอบ 3");
+  assert.equal(model.cardSummary({ toAnswer: 0 }).badge, "");
+});
+
 test("the card badge adds up what is waiting for me and skips counts that could not be read", () => {
   assert.deepEqual(plain(model.cardSummary({ approvals: 2, itWork: 1, toConfirm: 1 })), {
     total: 4, parts: [{ key: "approvals", label: "รออนุมัติ", count: 2 }, { key: "it", label: "งาน IT ค้าง", count: 1 }, { key: "confirm", label: "รอคุณยืนยันรับงาน", count: 1 }],
@@ -366,6 +430,75 @@ test("the card badge adds up what is waiting for me and skips counts that could 
   const none = model.cardSummary();
   assert.deepEqual(plain(none), { total: 0, parts: [], badge: "", title: "" }, "no badge at all when nothing waits or nothing could be read");
   assert.equal(model.cardSummary({ approvals: 0, itWork: 0, toConfirm: 0 }).badge, "");
+});
+
+/* ---------- ถาม-ตอบ ---------- */
+const COMMENTS = [
+  { id: 12, kind: "answer", stage: "it", body: "ตอบแล้ว", reply_to: 7, created_at: "2026-11-19T04:00:00Z", author_employee_no: "MK1", author_full_name: "สมชาย ใจดี", attachments: [] },
+  { id: 7, kind: "question", stage: "it", body: "ขอไฟล์ต้นฉบับ", reply_to: null, created_at: "2026-11-19T03:00:00Z", author_employee_no: "IT1", author_full_name: "ไอที หนึ่ง", attachments: [{ id: "c1", file_name: "ถาม.pdf" }] },
+];
+
+test("stage labels name who asked, and unknown stages are shown as they are", () => {
+  assert.deepEqual(plain(model.INFO_STAGE_LABELS), { dept: "ผู้จัดการแผนก", it_mgr: "ผู้อนุมัติขั้น IT", it: "ทีม IT" });
+  assert.equal(model.infoStageLabel("it"), "ทีม IT");
+  assert.equal(model.infoStageLabel("future"), "future");
+  assert.equal(model.infoStageLabel(null), "");
+  assert.equal(model.commentKindLabel("question"), "ถาม");
+  assert.equal(model.commentKindLabel("answer"), "ตอบ");
+});
+
+test("comments are listed in the order they were written (by id) with Thai kind and stage labels and their own files", () => {
+  const rows = model.commentRows({ comments: COMMENTS });
+  assert.deepEqual(rows.map((row) => [row.no, row.id, row.kindLabel, row.stageLabel, row.by]), [[1, 7, "ถาม", "ทีม IT", "ไอที หนึ่ง"], [2, 12, "ตอบ", "ทีม IT", "สมชาย ใจดี"]]);
+  assert.deepEqual(rows[0].files.map((file) => file.id), ["c1"]);
+  assert.deepEqual(rows[1].files, []);
+  assert.deepEqual(model.commentRows({}), []);
+  assert.deepEqual(model.commentRows(undefined), []);
+  // ไฟล์ของข้อความเข้า gallery รวมกับไฟล์ของใบ
+  assert.deepEqual(model.allFiles({ attachments: [{ id: "f1" }], comments: COMMENTS }).map((file) => file.id), ["f1", "c1"]);
+  assert.deepEqual(model.allFiles({}), []);
+});
+
+test("the pending question carries its asker, stage, files and where the order returns to", () => {
+  const detail = { status: "need_info", info_return_status: "in_progress", comments: COMMENTS.slice(1), info_pending: { comment_id: 7, stage: "it", body: "ขอไฟล์ต้นฉบับ", asked_at: "2026-11-19T03:00:00Z", asked_by_employee_no: "IT1", asked_by_full_name: "ไอที หนึ่ง" } };
+  const pending = model.pendingQuestion(detail);
+  assert.equal(pending.stageLabel, "ทีม IT");
+  assert.equal(pending.askedBy, "ไอที หนึ่ง");
+  assert.equal(pending.returnLabel, "กำลังดำเนินการ");
+  assert.deepEqual(pending.files.map((file) => file.id), ["c1"]);
+  assert.equal(model.pendingQuestion({ ...detail, info_pending: null }), null);
+  assert.equal(model.pendingQuestion(undefined), null);
+});
+
+test("the 'รอผู้แจ้งตอบ' badge explains who asked and where the order goes back to (only for need_info)", () => {
+  const row = { status: "need_info", info_stage: "dept", info_return_status: "pending_dept" };
+  assert.equal(model.infoBadgeTitle(row), "ถามโดย ผู้จัดการแผนก · ตอบแล้วใบกลับไปที่ รอผู้จัดการแผนก");
+  assert.equal(model.infoBadgeTitle(row, true), "ผู้จัดการแผนก ถามคุณ · ตอบแล้วใบกลับไปที่ รอผู้จัดการแผนก");
+  assert.equal(model.infoBadgeTitle({ status: "approved" }), "");
+  assert.equal(model.infoBadgeTitle({ status: "need_info" }), "");
+});
+
+test("the ask / answer message is required, at most 2000 characters counted as characters, and trimmed before it is sent", () => {
+  for (const kind of ["ask", "answer"]) {
+    const rules = model.infoRules(kind);
+    assert.deepEqual(validate(rules, { body: "ใช่" }), []);
+    assert.deepEqual(validate(rules, { body: "   " }).map((error) => error.name), ["body"]);
+    assert.deepEqual(validate(rules, { body: "ก".repeat(2000) }), []);
+    assert.match(validate(rules, { body: "ก".repeat(2001) })[0].message, /ไม่เกิน 2,000 ตัวอักษร/);
+    assert.deepEqual(validate(rules, { body: "😀".repeat(2000) }), [], "an emoji is one character");
+  }
+  assert.equal(validate(model.infoRules("ask"), { body: "" })[0].message, "กรุณาพิมพ์ข้อความที่ต้องการถามผู้แจ้ง");
+  assert.equal(validate(model.infoRules("answer"), { body: "" })[0].message, "กรุณาพิมพ์คำตอบ");
+  assert.deepEqual(plain(model.infoParams("w1", { body: "  ข้อความ \n" })), { p_work_order_id: "w1", p_body: "ข้อความ" });
+  assert.equal(model.MAX_INFO_BODY, 2000);
+});
+
+test("a comment file that Storage turns away gets the comment-specific wording, not the approval one", () => {
+  const forbidden = { statusCode: "403", message: "new row violates row-level security policy" };
+  assert.match(model.describeUploadError(forbidden).message, /มีผู้อนุมัติใบนี้แล้ว/);
+  const comment = model.describeUploadError(forbidden, { comment: true });
+  assert.match(comment.message, /30 นาทีหลังส่งข้อความ/);
+  assert.doesNotMatch(comment.message, /ผู้อนุมัติ/);
 });
 
 /* ---------- สิทธิ์ในระบบของใบเก่า (อ่านอย่างเดียว) ---------- */
@@ -683,4 +816,9 @@ test("approving as the IT-step approver while the department step is still open 
   // ปุ่มอื่นไม่ได้รับข้อความนี้
   assert.equal(model.confirmMessageFor("start", open, itApprover), model.ACTION_BUTTONS.start.confirmMessage);
   assert.equal(model.confirmMessageFor("unknown", open, itApprover), "");
+});
+
+test("the module version is <major>.<two-digit minor> with a real release date (owner's rule 20/11/2026)", () => {
+  assert.match(model.MODULE_VERSION, /^[1-9]\d*\.\d{2}$/);
+  assert.ok(model.isRealDate(model.VERSION_DATE));
 });

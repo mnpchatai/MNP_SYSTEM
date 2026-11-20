@@ -857,7 +857,7 @@ test("the whole line on the database: receive → FEFO requisition (issued at on
   const record = (await master()).qcRecords[0];
   assert.deepEqual([record.result, record.inspector, record.tests.map((test) => test.pass)], ["pass", "ธนา ตรวจสอบ", [true, true]]);
   await inSync(s, rig, "qc");
-  // 20261206010000: กล่องรอคลังสินค้าสำเร็จรูป (WH) รับเข้าก่อน (ส่งมอบก่อนรับไม่ได้) · WH รับทั้งล็อตทีเดียว
+  // 20261207010000: กล่องรอคลังสินค้าสำเร็จรูป (WH) รับเข้าก่อน (ส่งมอบก่อนรับไม่ได้) · WH รับทั้งล็อตทีเดียว
   await s.as("persona-wh");
   assert.match(rig.store.run("shipBoxes", { ids: [`BOX-${TODAY}-01-001`] }).error.message, /ไม่พร้อมส่ง/, "a box waiting for the WH receipt cannot ship");
   await go(s, rig, "persona-wh", "receiveBoxes", { lotId: fn });

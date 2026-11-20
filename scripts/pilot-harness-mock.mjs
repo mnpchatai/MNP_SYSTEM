@@ -1653,9 +1653,9 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
   for (const list of RF_LISTS) RF_ID[list] ??= (record) => record.id;
   const rfSorter = (list) => (list === "recipes" ? (a, b) => bomCmp(a.id, b.id) || a.revision - b.revision : (a, b) => bomCmp(RF_ID[list](a), RF_ID[list](b)));
   const RF_ACTIONS = ["saveMaterial", "createRecipe", "saveRecipe", "approveRecipe", "createOrder", "setOrderStatus", "receiveMaterial", "setMaterialLotStatus", "createRequisition", "weighLine", "recordMixing", "endRest", "recordExtrusion", "recordCuring", "recordFinishing", "createTransfer", "receiveTransfer", "shipBoxes", "addQcRecord", "createNcr", "updateNcr", "closeNcr", "cleanMold", "saveMold", "createPurchaseOrder", "receivePurchaseLine", "cancelPurchaseOrder", "issueRequisition", "returnRequisition", "closePurchaseLine",
-    // กล่องสินค้าของคลังสินค้าสำเร็จรูป (20261206010000)
+    // กล่องสินค้าของคลังสินค้าสำเร็จรูป (20261207010000)
     "receiveBoxes", "reverseBoxReceipt", "reverseBoxShip"];
-  // คำสั่งของกล่อง: ทาง [จาก, ไป, ชนิดประวัติ] (ตรงกับ private.rf_save_boxes ของ 20261206010000) · ส่งได้เฉพาะชุด fgBoxes
+  // คำสั่งของกล่อง: ทาง [จาก, ไป, ชนิดประวัติ] (ตรงกับ private.rf_save_boxes ของ 20261207010000) · ส่งได้เฉพาะชุด fgBoxes
   const RF_BOX_STEPS = { receiveBoxes: ["pending_wh", "in_stock", "receive"], shipBoxes: ["in_stock", "shipped", "ship"], reverseBoxReceipt: ["in_stock", "pending_wh", "unreceive"], reverseBoxShip: ["shipped", "in_stock", "unship"] };
   const RF_FLOW = { planned: ["released", "cancelled"], released: ["in_progress", "on_hold", "cancelled"], in_progress: ["on_hold", "completed"], on_hold: ["in_progress"] };
   const RF_ORDER_STATUSES = ["planned", "released", "in_progress", "on_hold", "completed", "cancelled"];
@@ -1702,7 +1702,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       for (const list of RF_LISTS) if (!Array.isArray(rfMaster[list])) rfMaster[list] = [];
       rfMaster.versions = Object.fromEntries(RF_LISTS.map((list) => [list, rfMaster.versions?.[list] ?? {}]));
       if (!Array.isArray(rfMaster.audit)) rfMaster.audit = [];
-      // กล่องรุ่นก่อน 20261206010000 ที่อยู่ในคลัง / ส่งมอบแล้ว: รับเข้าเมื่อสร้าง (ตรงกับการเติม received_at ของ migration) แล้วเลื่อนตัวนับหนึ่งขั้น
+      // กล่องรุ่นก่อน 20261207010000 ที่อยู่ในคลัง / ส่งมอบแล้ว: รับเข้าเมื่อสร้าง (ตรงกับการเติม received_at ของ migration) แล้วเลื่อนตัวนับหนึ่งขั้น
       const legacy = rfMaster.fgBoxes.filter((box) => ["in_stock", "shipped"].includes(box?.status) && (box.receivedAt === undefined || box.receivedAt === null));
       if (legacy.length) {
         rfMaster.version += 1;
@@ -1767,7 +1767,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     const approvedNow = [];
     const supersededSent = [];
     // stock = สต็อกของซื้อฝั่ง BOM ที่ใบสั่งซื้อเขียน (สต็อกขั้นต่ำตอนสร้างใบ / บวกยอดตอนรับบรรทัดของซื้อ) · rods = ล็อตตกแต่งที่ผ่าน QC ของ WO ที่ผูกงาน BOM → ล็อตแท่งรอ SR รับ (20261202010000)
-    // credit = นับ / ถอนยอดงาน RB ตอน WH รับ / ย้อนรับล็อตที่ส่งมอบให้ลูกค้าของ WO ที่ผูกงาน (20261206010000)
+    // credit = นับ / ถอนยอดงาน RB ตอน WH รับ / ย้อนรับล็อตที่ส่งมอบให้ลูกค้าของ WO ที่ผูกงาน (20261207010000)
     const ops = { link: [], rods: [], unlink: [], stock: [], credit: [] };
     // ใบสั่งซื้อ: ส่งชุดข้อมูลได้เฉพาะตามคำสั่ง · createPurchaseOrder = purchaseOrders + materials (ใช้แก้ safetyKg เท่านั้น) · receivePurchaseLine = purchaseOrders + materialLots · cancelPurchaseOrder = purchaseOrders · purchaseOrders ส่งได้เฉพาะสามคำสั่งนี้
     const PO_LISTS = { createPurchaseOrder: ["purchaseOrders", "materials"], receivePurchaseLine: ["purchaseOrders", "materialLots"], cancelPurchaseOrder: ["purchaseOrders"], closePurchaseLine: ["purchaseOrders"] };
@@ -1993,7 +1993,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
               out.countedToOrder = true;
               touchedOrders.add(prev.orderId);
               const linkedNow = Boolean(rfLinkedJob(next.orders.find((row) => row.id === prev.orderId)));
-              // ปลายทางที่ยังว่าง (ล็อตที่กักไว้ · 20261206010000): WO ที่ผูกงานไปคลังยางเส้นยาว SR · ที่ไม่ผูกงานส่งมอบให้ลูกค้าผ่าน WH
+              // ปลายทางที่ยังว่าง (ล็อตที่กักไว้ · 20261207010000): WO ที่ผูกงานไปคลังยางเส้นยาว SR · ที่ไม่ผูกงานส่งมอบให้ลูกค้าผ่าน WH
               if (!out.destination) out.destination = linkedNow ? "sr" : "customer";
               if (linkedNow && out.destination === "sr") ops.rods.push({ woId: prev.orderId, lotId: prev.id, qty: prev.goodQty });
             }
@@ -2078,7 +2078,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
             // WO ที่ผูกงาน RB ของ BOM (sourceJobId ตรงกับงานของ BOM โหมดเดียวกัน · 20261202010000): ไม่มีกล่อง แท่งไปคลังแท่งยาว (SR) เป็นล็อตแท่งรอรับเมื่อผ่าน QC (rfApplyBomOps)
             const linked = rfLinkedJob(order);
             if (!["pass", "hold", "fail"].includes(record.qc)) fail(bad);
-            // ปลายทาง (ตรงกับ rf_save_lots ของ 20261206010000): ผ่าน + ไม่ส่ง = WO ที่ผูกงานไป sr · ที่ไม่ผูกงานไป customer · sr ของ WO ที่ไม่ผูกงาน / ปลายทางของผลกัก = ผิด
+            // ปลายทาง (ตรงกับ rf_save_lots ของ 20261207010000): ผ่าน + ไม่ส่ง = WO ที่ผูกงานไป sr · ที่ไม่ผูกงานไป customer · sr ของ WO ที่ไม่ผูกงาน / ปลายทางของผลกัก = ผิด
             const rawDestination = record.destination === undefined || record.destination === null ? "" : typeof record.destination === "string" ? record.destination.trim() : fail(bad);
             let destination = rawDestination || null;
             if (record.qc === "pass") {
@@ -2160,7 +2160,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
           if (finishingNew.has(record.lotId)) return "skip";
           fail(bad);
         }
-        // ทางเดียวของคำสั่ง (ตรงกับ rf_save_boxes ของ 20261206010000): สถานะอื่นที่ส่งมา (สำเนาผล QA ที่ client เปลี่ยนเอง) เมิน · ถึงปลายทางแล้ว = ส่งซ้ำ ไม่เขียน
+        // ทางเดียวของคำสั่ง (ตรงกับ rf_save_boxes ของ 20261207010000): สถานะอื่นที่ส่งมา (สำเนาผล QA ที่ client เปลี่ยนเอง) เมิน · ถึงปลายทางแล้ว = ส่งซ้ำ ไม่เขียน
         if (!["pending_wh", "in_stock", "hold", "shipped"].includes(record.status)) fail(bad);
         const step = RF_BOX_STEPS[action];
         if (!step || record.status !== step[1] || prev.status === step[1]) return "skip";
@@ -2514,7 +2514,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     }
     for (const recipe of supersededSent) if (!approvedNow.some((row) => row.id === recipe.id)) fail("RF_INVALID_TRANSITION"); // แทนที่ได้เฉพาะพร้อมการอนุมัติ revision ใหม่ของรหัสเดียวกัน
     for (const row of next.recipes) if (row.status === "approved" && next.recipes.some((other) => other !== row && other.id === row.id && other.status === "approved")) fail("RF_INVALID_RECIPE");
-    // ---- กล่องทั้งล็อต (ตรงกับ rf_save_boxes ของ 20261206010000): รับเข้า = ไม่มีกล่อง pending_wh ของล็อตเหลือ แล้วนับยอดเข้างาน RB ----
+    // ---- กล่องทั้งล็อต (ตรงกับ rf_save_boxes ของ 20261207010000): รับเข้า = ไม่มีกล่อง pending_wh ของล็อตเหลือ แล้วนับยอดเข้างาน RB ----
     // ย้อนรับเข้า = ไม่มีกล่องที่ส่งมอบแล้ว / กัก (RF_INVALID_TRANSITION) และไม่มีกล่องที่ยังอยู่ในคลัง (RF_INVALID_BOX) แล้วถอนยอด · ใบ completed ถอนไม่ได้
     // ถอนยอดที่ล็อตนับเข้างาน RB ไว้ (ตรงกับ private.rf_box_uncredit): ใบ released / in_progress = ถอนยอดจากงาน
     // kind unreceive (WH ย้อนรับเข้า): ใบ completed = RF_INVALID_TRANSITION · อื่น / ไม่พบงาน = ล้างค่าที่จำไว้อย่างเดียว
@@ -2570,7 +2570,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       const lot = next.lots.find((row) => row.id === item.lotId);
       if (!lot || lot.qc !== item.result) fail("RF_INVALID_QC");
       next.fgBoxes.forEach((box, i) => {
-        // ผ่าน = เฉพาะกล่องที่กักไว้กลับที่เดิม (WH รับแล้ว = in_stock · ยังไม่รับ = pending_wh) · อื่น = กล่องที่ยังไม่ส่งมอบและยังไม่กักเป็น hold (ตรงกับ rf_save_qc ของ 20261206010000)
+        // ผ่าน = เฉพาะกล่องที่กักไว้กลับที่เดิม (WH รับแล้ว = in_stock · ยังไม่รับ = pending_wh) · อื่น = กล่องที่ยังไม่ส่งมอบและยังไม่กักเป็น hold (ตรงกับ rf_save_qc ของ 20261207010000)
         const moves = lot.qc === "pass" ? box.status === "hold" : box.status !== "shipped" && box.status !== "hold";
         const status = lot.qc !== "pass" ? "hold" : box.receivedAt ? "in_stock" : "pending_wh";
         if (box.lotId === lot.id && moves) { next.fgBoxes[i] = { ...box, status }; stampVersion("fgBoxes", box.id); }
@@ -2640,7 +2640,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       bom.versions.rodLots[id] = version;
       rodLots.add(id);
     }
-    // WH รับล็อตที่ส่งมอบให้ลูกค้าของ WO ที่ผูกงาน (ตรงกับ private.rf_box_credit ของ 20261206010000): งานได้ยอดเต็ม + รายงาน · ใบ released → in_progress
+    // WH รับล็อตที่ส่งมอบให้ลูกค้าของ WO ที่ผูกงาน (ตรงกับ private.rf_box_credit ของ 20261207010000): งานได้ยอดเต็ม + รายงาน · ใบ released → in_progress
     // ย้อนรับเข้า / QA ตัดสินไม่ผ่าน (private.rf_box_uncredit): ถอนยอด (ไม่ต่ำกว่า 0) · done → in_progress เมื่อต่ำกว่าแผน · รายงาน good 0 ตามที่มา
     for (const item of ops.credit ?? []) {
       const job = bom.jobs.find((row) => row.id === item.job);

@@ -29,7 +29,11 @@
   const subjectCell = (main, href, secondary) => `<a class="register-title" href="${esc(href)}">${esc(main)}</a>${secondary ? subText(secondary) : ""}`;
   const testTag = (isTest) => (isTest ? '<span class="badge itwo-test-tag" title="ข้อมูลทดสอบ แยกจากระบบจริง">ทดสอบ</span>' : "");
   const urgentTag = (urgent) => (urgent ? '<span class="badge urgent-flag">ด่วน</span>' : "");
-  const statusBadge = (status, mine = false) => `<span class="badge ${esc(model.statusBadgeClass(status))}">${esc(mine ? model.myStatusLabel(status) : model.statusLabel(status))}</span>`;
+  // row = แถวของรายการ (ใช้ใส่ title ของป้าย "รอผู้แจ้งตอบ": ใครถาม ตอบแล้วใบกลับไปที่ไหน)
+  const statusBadge = (status, mine = false, row = null) => {
+    const title = row ? model.infoBadgeTitle({ ...row, status }, mine) : "";
+    return `<span class="badge ${esc(model.statusBadgeClass(status))}"${title ? ` title="${esc(title)}"` : ""}>${esc(mine ? model.myStatusLabel(status) : model.statusLabel(status))}</span>`;
+  };
   const subjectOf = (row) => model.clip(row.details, 90) || model.requestTypeText(row.request_type, row.misc_detail);
   // ป้ายงานแก้ไข "แก้ไขครั้งที่ N · กำหนด วว/ดด/ปปปป" (ไม่เคยขอแก้ไข = ไม่มีป้าย)
   const reworkBadge = (roundNo, dueDate) => {
@@ -52,20 +56,23 @@
   const newButton = () => `<a class="btn" id="itwo-new" href="${esc(model.workOrderUrl("new"))}"><span class="plus-icon" aria-hidden="true"></span> แจ้งงานใหม่</a>`;
 
   // แท็บตามสิทธิ์ · counts = { mine, approvals, it } ตัวเลขบนแท็บ (ไม่ระบุ/นับไม่ได้ = ไม่แสดง)
-  // mine = ใบที่ IT ปิดงานแล้วรอผู้แจ้ง (คุณ) ยืนยัน/ขอแก้ไข · ตัวเลขบนแท็บบอกว่ามีงานกลับมาหาคุณ
+  // mine = ใบที่ IT ส่งงานแล้วรอผู้แจ้ง (คุณ) ยืนยัน/ขอแก้ไข + ใบที่มีคนถามมารอคุณตอบ · counts.mineParts = { confirm, answer } บอกว่ารออะไร (ไม่ส่ง = รอยืนยัน)
   const COUNT_NOTES = Object.freeze({ mine: " ที่รอคุณยืนยัน", approvals: " ที่รออนุมัติ", it: " ที่ต้องดำเนินการ" });
   function tabs(role, active, counts = {}) {
     const items = model.visibleTabs(role).map((tab) => {
       const count = counts[tab.key];
-      const badge = Number.isFinite(count) && count > 0 ? ` <span class="itwo-tab-count" aria-label="${count} รายการ${COUNT_NOTES[tab.key] ?? ""}" title="${count} รายการ${COUNT_NOTES[tab.key] ?? ""}">${count > 99 ? "99+" : count}</span>` : "";
+      const note = tab.key === "mine" && counts.mineParts ? model.mineWaitingNote(counts.mineParts) : COUNT_NOTES[tab.key] ?? "";
+      const badge = Number.isFinite(count) && count > 0 ? ` <span class="itwo-tab-count" aria-label="${count} รายการ${esc(note)}" title="${count} รายการ${esc(note)}">${count > 99 ? "99+" : count}</span>` : "";
       return `<a class="view-tab${tab.key === active ? " active" : ""}"${tab.key === active ? ' aria-current="page"' : ""} href="${esc(model.workOrderUrl(tab.key))}">${esc(tab.label)}${badge}</a>`;
     });
-    // ผู้ใช้ที่มีแท็บเดียว (พนักงานทั่วไป) ไม่มีแถบแท็บ ยกเว้นมีใบรอคุณยืนยัน: ต้องเห็นตัวเลขว่างานกลับมาหาตัวเอง
+    // ผู้ใช้ที่มีแท็บเดียว (พนักงานทั่วไป) ไม่มีแถบแท็บ ยกเว้นมีใบรอคุณยืนยัน/รอคุณตอบ: ต้องเห็นตัวเลขว่างานกลับมาหาตัวเอง
     return items.length > 1 || counts.mine > 0 ? `<nav class="view-tabs" aria-label="หมวดใบสั่งงาน IT">${items.join("")}</nav>` : "";
   }
 
   // ครอบทั้งหน้าด้วยจานสีของโมดูล + ข้อความข้อผิดพลาดของหน้า (ข้อความเดียว อยู่เหนือเนื้อหา)
-  const page = (inner) => `<div class="itwo-page" data-module="${PALETTE}">${inner}</div>`;
+  // เลขเวอร์ชันของโมดูลท้ายหน้า ชิดขวา (ไม่พิมพ์ลงใบ A4) · วันที่ปล่อยอยู่ใน title ไม่เป็นข้อความถาวร
+  const versionTag = () => `<p class="itwo-version no-print" title="ใบสั่งงาน IT เวอร์ชัน ${esc(model.MODULE_VERSION)} · อัปเดต ${esc(model.formatDate(model.VERSION_DATE))}">V${esc(model.MODULE_VERSION)}</p>`;
+  const page = (inner) => `<div class="itwo-page" data-module="${PALETTE}">${inner}${versionTag()}</div>`;
   const errorCard = (message, { retry = true } = {}) => `<section class="card"><div class="form-message error" role="alert">${esc(message)}</div>${retry ? '<button class="btn secondary" type="button" id="itwo-retry">ลองอีกครั้ง</button>' : ""}</section>`;
 
   /* ---------- รายการ: ใบของฉัน / รออนุมัติ / งาน IT ---------- */
@@ -88,24 +95,27 @@
           subject: subjectCell(subjectOf(row), orderHref(row.id), model.requestTypeText(row.request_type, row.misc_detail)),
           needed: esc(model.formatDate(row.needed_date)),
           created: esc(model.formatDateTime(row.created_at)),
-          status: `<span class="register-badges">${statusBadge(row.status, true)}${urgentTag(row.is_urgent)}${reworkBadge(row.rework_round, row.rework_due_date)}</span>`,
+          status: `<span class="register-badges">${statusBadge(row.status, true, row)}${urgentTag(row.is_urgent)}${reworkBadge(row.rework_round, row.rework_due_date)}</span>`,
         },
       })),
     });
   }
 
+  // รออนุมัติ: ใบที่ "รอคุณ" เป็นตารางหลัก · ใบที่ถามผู้แจ้งไปแล้วและรอผู้แจ้งตอบ (need_info) แยกเป็นกลุ่มของตัวเอง (ไม่ใช่งานที่ต้องกดอนุมัติ ไม่นับบนแท็บ)
   function approvalsList(rows) {
     if (!rows.length) return `<section class="card">${emptyBlock("ไม่มีใบสั่งงานที่รออนุมัติจากคุณ")}</section>`;
-    return table({
-      label: "ใบสั่งงานที่รอคุณอนุมัติ",
+    const waiting = rows.filter((row) => row.status !== "need_info");
+    const asked = rows.filter((row) => row.status === "need_info");
+    const build = (label, statusHeading, items) => table({
+      label,
       columns: [
         { key: "no", label: "เลขที่", role: "no" },
         { key: "subject", label: "เรื่อง", role: "subject" },
         { key: "needed", label: "ต้องการงาน" },
         { key: "created", label: "แจ้งเมื่อ", sorted: "descending" },
-        { key: "status", label: "รอคุณ", role: "status" },
+        { key: "status", label: statusHeading, role: "status" },
       ],
-      rows: rows.map((row) => ({
+      rows: items.map((row) => ({
         className: `status-${row.status}`,
         sort: { created: row.created_at ?? "", needed: row.needed_date ?? "" },
         cells: {
@@ -113,10 +123,17 @@
           subject: subjectCell(subjectOf(row), orderHref(row.id), [miscNote(row), row.requester_name, row.department_name].filter(Boolean).join(" · ")),
           needed: esc(model.formatDate(row.needed_date)),
           created: esc(model.formatDateTime(row.created_at)),
-          status: `<span class="register-badges"><span class="badge pending_approval">${esc(model.pendingStepLabel(row.pending_step))}</span>${urgentTag(row.is_urgent)}</span>`,
+          status: `<span class="register-badges">${row.status === "need_info" ? statusBadge(row.status, false, row) : `<span class="badge pending_approval">${esc(model.pendingStepLabel(row.pending_step))}</span>`}${urgentTag(row.is_urgent)}</span>`,
         },
       })),
     });
+    const waitingTable = waiting.length ? build("ใบสั่งงานที่รอคุณอนุมัติ", "รอคุณ", waiting) : "";
+    if (!asked.length) return waitingTable;
+    const askedLabel = model.statusLabel("need_info");
+    return `<div class="stack">
+      ${waitingTable || `<section class="card">${emptyBlock("ไม่มีใบสั่งงานที่รออนุมัติจากคุณ")}</section>`}
+      <section class="card detail-section itwo-group" data-group="awaiting_info" aria-labelledby="itwo-g-awaiting-info"><h2 id="itwo-g-awaiting-info">${esc(askedLabel)} <span class="detail-section-count">${asked.length}</span></h2>${build(askedLabel, "สถานะ", asked)}</section>
+    </div>`;
   }
 
   // งาน IT แยกตามสถานะ งานด่วนอยู่บนสุดของแต่ละกลุ่ม · กลุ่ม "จบแล้ว" พับไว้ (ไม่ใช่งานที่ต้องลงมือ)
@@ -143,7 +160,7 @@
             subject: subjectCell(subjectOf(row), orderHref(row.id), [miscNote(row), row.requester_full_name, row.department_name].filter(Boolean).join(" · ")),
             needed: esc(model.formatDate(row.needed_date)),
             approval: model.itApprovalProgress(row).map((step) => `<span class="itwo-step${step.done ? " is-done" : ""}">${step.done ? "✓" : "○"} ${esc(step.label)}</span>`).join(""),
-            status: `<span class="register-badges">${statusBadge(row.status)}${urgentTag(row.is_urgent)}${reworkBadge(row.rework_round, row.rework_due_date)}</span>`,
+            status: `<span class="register-badges">${statusBadge(row.status, false, row)}${urgentTag(row.is_urgent)}${reworkBadge(row.rework_round, row.rework_due_date)}</span>`,
           },
         })),
       });
@@ -195,7 +212,7 @@
         <fieldset class="form-step" data-step="2">
           <legend class="form-step-title">ต้องการเมื่อไร</legend>
           <div class="field" data-field="needed_date"><label for="itwo-needed-date">วันที่ต้องการงาน ${REQUIRED}</label><input class="input" id="itwo-needed-date" name="needed_date" type="date"></div>
-          <div class="field"><label class="itwo-choice itwo-urgent"><input type="checkbox" id="itwo-urgent" name="is_urgent"> <span>งานด่วน</span></label><small>IT เริ่มทำได้ก่อนอนุมัติครบ แต่ผู้จัดการยังต้องอนุมัติตามหลัง และใบจะปิดได้เมื่ออนุมัติครบแล้วเท่านั้น</small></div>
+          <div class="field"><label class="itwo-choice itwo-urgent"><input type="checkbox" id="itwo-urgent" name="is_urgent"> <span>งานด่วน</span></label><small>IT เริ่มทำได้ก่อนอนุมัติครบ แต่ผู้จัดการยังต้องอนุมัติตามหลัง และใบจะส่งงานได้เมื่ออนุมัติครบแล้วเท่านั้น</small></div>
           <p class="muted small itwo-duration">หมายเหตุ: ระยะเวลาทำงาน ${esc(model.DURATION_NOTE)}</p>
         </fieldset>
         <fieldset class="form-step form-step-review" data-step="3">
@@ -266,7 +283,9 @@
   }
 
   // ปุ่มการกระทำตาม allowed_actions (ทุกปุ่มมีกล่องยืนยันที่ module-itwo.js · "แก้ไขงาน" เปิดฟอร์มขอแก้ไขแทนกล่องยืนยัน) · ไม่มีปุ่มก็ไม่แสดงการ์ด
-  function actionsCard(buttons) {
+  // inline = ปุ่มที่ฟอร์มของมันวาดเปิดไว้ในหน้าอยู่แล้ว (ตอบคำถาม) ไม่ซ้ำเป็นปุ่ม
+  function actionsCard(allButtons) {
+    const buttons = allButtons.filter((button) => !button.inline);
     if (!buttons.length) return "";
     return `<section class="card detail-actions itwo-actions" aria-labelledby="itwo-actions-title">
       <h2 id="itwo-actions-title">สิ่งที่คุณทำได้กับใบนี้</h2>
@@ -329,18 +348,19 @@
     </section>`;
   }
 
-  // บล็อกไฟล์ + รอบแก้ไข ห่อด้วย #attachment-gallery ตัวเดียว: app.js (hydrateAttachmentGallery / กล่องดูไฟล์) หา id นี้ ไม่มีไฟล์และไม่มีรอบแก้ไข = ไม่วาดอะไร
+  // บล็อกไฟล์ + รอบแก้ไข · ไม่มีไฟล์และไม่มีรอบแก้ไข = ไม่วาดอะไร
+  // #attachment-gallery (app.js: hydrateAttachmentGallery / กล่องดูไฟล์ หา id นี้) อยู่ที่คอลัมน์หลักของ detailPage ตัวเดียว ครอบทั้งไฟล์ตอนแจ้ง รอบแก้ไข และไฟล์ของข้อความถาม-ตอบ
   function filesAndReworks(detail) {
     const initial = (detail.attachments ?? []).filter((file) => !file.rework_id);
     const rounds = model.reworkRounds(detail);
     if (!initial.length && !rounds.length) return "";
-    return `<div class="stack" id="attachment-gallery">
+    return `<div class="stack">
       ${initial.length ? `<section class="card itwo-files" aria-labelledby="itwo-files-title"><h2 id="itwo-files-title">ไฟล์แนบ <span class="detail-section-count">${initial.length}</span></h2>${fileGrid(initial)}</section>` : ""}
       ${rounds.length ? reworkRoundsCard(rounds) : ""}
     </div>`;
   }
 
-  // ฟอร์มขอแก้ไขงาน (ผู้แจ้ง ตอน IT ปิดงานแล้ว) ซ่อนไว้จนกดปุ่ม "แก้ไขงาน" · กรอก 3 อย่าง: รายละเอียด วันที่กำหนดเสร็จ ไฟล์ (ไม่บังคับ)
+  // ฟอร์มขอแก้ไขงาน (ผู้แจ้ง ตอน IT ส่งงานแล้ว) ซ่อนไว้จนกดปุ่ม "แก้ไขงาน" · กรอก 3 อย่าง: รายละเอียด วันที่กำหนดเสร็จ ไฟล์ (ไม่บังคับ)
   function reworkFormCard() {
     return `<section class="card itwo-rework-card" id="itwo-rework-card" aria-labelledby="itwo-rework-title" hidden>
       <h2 id="itwo-rework-title">แก้ไขงาน</h2>
@@ -355,6 +375,52 @@
     </section>`;
   }
 
+  // ฟอร์มถามผู้แจ้ง (ผู้อนุมัติของขั้นที่ใบรออยู่ / IT) ซ่อนไว้จนกดปุ่ม "ถามผู้แจ้ง" · ข้อความ (บังคับ) + ไฟล์ (ไม่บังคับ)
+  function askFormCard() {
+    return `<section class="card itwo-ask-card" id="itwo-ask-card" aria-labelledby="itwo-ask-title" hidden>
+      <h2 id="itwo-ask-title">ถามผู้แจ้ง</h2>
+      <p class="muted small">ใบจะเปลี่ยนเป็น รอผู้แจ้งตอบ จนกว่าผู้แจ้งจะตอบ ผู้แจ้งเห็นคำถามนี้และแนบไฟล์ตอบได้</p>
+      <div id="itwo-ask-message" role="status"></div>
+      <form id="itwo-ask-form" novalidate>
+        <div class="field" data-field="body"><label for="itwo-ask-body">ข้อความที่ต้องการถาม ${REQUIRED}</label><textarea class="textarea" id="itwo-ask-body" name="body" rows="4" maxlength="${model.MAX_INFO_BODY}"></textarea></div>
+        ${fileField({ id: "itwo-ask-files", field: "ask_files", label: "แนบไฟล์ (ถ้ามี)" })}
+        <div class="form-actions"><button type="button" class="btn secondary" id="itwo-ask-cancel">ยกเลิก</button><button type="submit" class="btn is-primary">ส่งคำถาม</button></div>
+      </form>
+    </section>`;
+  }
+
+  // คำถามที่รอผู้แจ้งตอบ (เห็นเด่นที่ผู้แจ้ง) + ฟอร์มตอบที่เปิดไว้ · ตอบแล้วใบกลับไปสถานะเดิมก่อนถาม · pending = model.pendingQuestion(detail)
+  function answerCard(pending) {
+    return `<section class="card itwo-answer-card" id="itwo-answer-card" aria-labelledby="itwo-answer-title">
+      <h2 id="itwo-answer-title">${esc(pending.stageLabel)} ถามคุณ</h2>
+      <article class="itwo-question" data-comment="${esc(pending.commentId)}">
+        <p class="muted small">โดย ${esc(pending.askedBy)} · ${esc(model.formatDateTime(pending.askedAt))}</p>
+        <p class="itwo-text">${esc(pending.body)}</p>
+        ${pending.files.length ? fileGrid(pending.files) : ""}
+      </article>
+      <div id="itwo-answer-message" role="status"></div>
+      <form id="itwo-answer-form" novalidate>
+        <div class="field" data-field="body"><label for="itwo-answer-body">คำตอบของคุณ ${REQUIRED}</label><textarea class="textarea" id="itwo-answer-body" name="body" rows="4" maxlength="${model.MAX_INFO_BODY}"></textarea>${pending.returnLabel ? `<small>ตอบแล้วใบจะกลับไปที่ ${esc(pending.returnLabel)}</small>` : ""}</div>
+        ${fileField({ id: "itwo-answer-files", field: "answer_files", label: "แนบไฟล์ (ถ้ามี)" })}
+        <div class="form-actions"><button type="submit" class="btn is-primary">ส่งคำตอบ</button></div>
+      </form>
+    </section>`;
+  }
+
+  // ถาม-ตอบทุกข้อความตามลำดับ (ถาม/ตอบ ขั้น ผู้เขียน วันเวลา ข้อความ ไฟล์ของข้อความนั้น) · hideId = ข้อความที่แสดงที่ฟอร์มตอบอยู่แล้ว (ไม่ซ้ำ) · ไม่มีข้อความ = ไม่วาด
+  function commentsCard(rows, { pendingId = null, hideId = null } = {}) {
+    const shown = rows.filter((row) => hideId === null || String(row.id) !== String(hideId));
+    if (!shown.length) return "";
+    return `<section class="card itwo-comments" id="itwo-comments" aria-labelledby="itwo-comments-title"><h2 id="itwo-comments-title">ถาม-ตอบ <span class="detail-section-count">${shown.length}</span></h2>
+      ${shown.map((row) => `<article class="itwo-comment is-${esc(row.kind)}" data-comment="${esc(row.id)}">
+        <h3><span class="itwo-comment-kind">${esc(row.kindLabel)}</span> · ${esc(row.stageLabel)}${pendingId !== null && String(row.id) === String(pendingId) ? ` <span class="badge more_info">ยังไม่ตอบ</span>` : ""}</h3>
+        <p class="muted small">โดย ${esc(row.by)} · <time datetime="${esc(row.at)}">${esc(model.formatDateTime(row.at))}</time></p>
+        <p class="itwo-text">${esc(row.body)}</p>
+        ${row.files.length ? fileGrid(row.files) : ""}
+      </article>`).join("")}
+    </section>`;
+  }
+
   function historyCard(events) {
     const items = events.map((event) => `<div class="timeline-item"><strong>${esc(model.eventLabel(event.action))}</strong><p class="timeline-item-detail">โดย ${esc(event.actor_full_name)}</p>${event.reason ? `<p class="timeline-item-message">${esc(event.reason)}</p>` : ""}<time class="timeline-item-time" datetime="${esc(event.created_at)}">${esc(model.formatDateTime(event.created_at))}</time></div>`).join("");
     return `<section class="card detail-history" aria-labelledby="detail-history-title"><h2 id="detail-history-title">ประวัติเอกสาร</h2><div class="timeline">${items || '<div class="muted small">ยังไม่มีประวัติ</div>'}</div></section>`;
@@ -364,14 +430,20 @@
   function detailPage(detail, { back } = {}) {
     const buttons = model.actionButtons(detail.allowed_actions);
     const canRework = buttons.some((button) => button.action === "request_rework");
+    const canAsk = buttons.some((button) => button.action === "request_info");
+    const pending = buttons.some((button) => button.action === "provide_info") ? model.pendingQuestion(detail) : null;
+    const comments = model.commentRows(detail);
+    const hasFiles = model.allFiles(detail).length > 0;
     const attachment = detail.attachment_flag === "other" && detail.attachment_note
       ? `${model.attachmentFlagLabel("other")} (${esc(detail.attachment_note)})`
       : esc(model.attachmentFlagLabel(detail.attachment_flag));
     return page(`${detailHead(detail, back)}
       <div class="detail-grid">
-        <div class="stack">
+        <div class="stack"${hasFiles ? ' id="attachment-gallery"' : ""}>
+          ${pending ? answerCard(pending) : ""}
           ${actionsCard(buttons)}
           ${canRework ? reworkFormCard() : ""}
+          ${canAsk ? askFormCard() : ""}
           <section class="card itwo-facts" aria-labelledby="itwo-facts-title"><h2 id="itwo-facts-title">ข้อมูลใบสั่งงาน</h2>
             <dl class="definition-grid">
               ${fact("ประเภทคำขอ", esc(model.requestTypeText(detail.request_type, detail.misc_detail)))}
@@ -382,6 +454,7 @@
             </dl>
             <p class="muted small itwo-duration">หมายเหตุ: ระยะเวลาทำงาน ${esc(model.DURATION_NOTE)}</p>
           </section>
+          ${commentsCard(comments, { pendingId: detail.info_pending?.comment_id ?? null, hideId: pending ? pending.commentId : null })}
           ${filesAndReworks(detail)}
           ${legacyAccessSection(model.legacyAccessChanges(detail))}
         </div>
@@ -420,6 +493,21 @@
           <td>${round.files.length ? printFileList(round.files) : "—"}</td></tr>`).join("")}</tbody></table>`;
   }
 
+  // ประวัติถาม-ตอบบนกระดาษ: ตารางทุกข้อความ (ลำดับ · ถาม/ตอบ · ขั้น · โดย · วันเวลา · ข้อความ · จำนวนไฟล์) ไม่มีข้อความ = ไม่มีส่วนนี้
+  // แถวไม่ถูกตัดกลางหน้า และหัวตารางซ้ำเมื่อขึ้นหน้าใหม่ (CSS ที่ styles.css ใช้กติกาเดียวกับตารางประวัติการแก้ไขงาน)
+  function printComments(rows) {
+    if (!rows.length) return "";
+    return `<h2 class="itwo-sheet-section">ประวัติถาม-ตอบ</h2>
+        <table class="itwo-sheet-table itwo-sheet-comments"><thead><tr><th>ลำดับ</th><th>ถาม/ตอบ</th><th>ขั้น</th><th>โดย</th><th>วันเวลา</th><th>ข้อความ</th><th title="จำนวนไฟล์แนบ">ไฟล์</th></tr></thead><tbody>${rows.map((row) => `<tr>
+          <td class="itwo-center">${row.no}</td>
+          <td>${esc(row.kindLabel)}</td>
+          <td>${esc(row.stageLabel)}</td>
+          <td>${esc(row.by)}</td>
+          <td>${esc(model.formatDateTime(row.at))}</td>
+          <td class="itwo-sheet-text">${esc(row.body)}</td>
+          <td class="itwo-center">${row.files.length}</td></tr>`).join("")}</tbody></table>`;
+  }
+
   // ฟอร์มพิมพ์ตาม FM06: ประเภทคำขอมีแค่ งานออกแบบ / เบ็ดเตล็ดอื่นๆ (ใบเก่าที่เป็นสิทธิ์ในระบบแสดงตัวเลือกนั้นเพิ่มให้ติ๊กตรงกับใบ) · ส่วนสิทธิ์ในระบบพิมพ์เฉพาะใบเก่าที่มีข้อมูล
   function printSheet(detail) {
     const isTest = Boolean(detail.is_test) || model.isTestDoc(detail.doc_no);
@@ -454,6 +542,7 @@
         </tbody></table>
         ${accessSection}
         ${printReworks(model.reworkRounds(detail))}
+        ${printComments(model.commentRows(detail))}
         <h2 class="itwo-sheet-section">ลายเซ็น</h2>
         ${signatureGrid(detail.events ?? [])}
         <p class="itwo-sheet-note">ลงนามอิเล็กทรอนิกส์ผ่านระบบ (ชื่อและวันเวลาตามที่กดในระบบ)</p>
@@ -543,7 +632,7 @@
   // ล้างข้อมูลใบสั่งงาน IT ทดสอบ: เฉพาะ admin ตัวจริงที่อยู่ในโหมดทดสอบ (state.sandbox ตั้งโดย app.js)
   const purgeRow = () => `<div class="itwo-purge"><button type="button" class="btn danger small" id="itwo-purge">ล้างข้อมูลใบสั่งงาน IT ทดสอบ</button></div>`;
 
-  const api = { head, newButton, tabs, page, errorCard, mineList, approvalsList, itList, orderForm, orderReview, uploadPanel, detailPage, detailHead, reworkFormCard, reworkRoundsCard, filesAndReworks, legacyAccessSection, historyCard, actionsCard, printSheet, printPage, signatureGrid, settingsPage, staffTable, docCounterCard, purgeRow, testTag };
+  const api = { head, newButton, tabs, page, errorCard, mineList, approvalsList, itList, orderForm, orderReview, uploadPanel, detailPage, detailHead, reworkFormCard, askFormCard, answerCard, commentsCard, printComments, reworkRoundsCard, filesAndReworks, legacyAccessSection, historyCard, actionsCard, printSheet, printPage, signatureGrid, settingsPage, staffTable, docCounterCard, purgeRow, testTag };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_ITWO_PAGES = Object.freeze(api);
 })(typeof window !== "undefined" ? window : globalThis);

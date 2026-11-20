@@ -73,7 +73,7 @@
     station: (user) => Boolean(user.planner || user.rb), // ผสม ฉีด อบ ตกแต่ง ข้ามเวลาบ่ม ทำความสะอาดแม่พิมพ์: แผนก RB
     sendTransfer: (user) => Boolean(user.planner || user.rb), // สร้างใบส่งมอบ WIP: แผนก RB
     receiveTransfer: (user) => Boolean(user.planner || user.rb), // รับมอบ WIP ระหว่างสถานี: แผนก RB (20261204010000 · เดิมแผนก SR)
-    // กล่องสินค้า (20261206010000): รับเข้าคลัง / ส่งมอบให้ลูกค้า = แผนก WH ทุกบทบาท หรือ admin (กลุ่มวางแผนดูอย่างเดียว) · ย้อน = ผู้จัดการแผนก WH หรือ admin
+    // กล่องสินค้า (20261207010000): รับเข้าคลัง / ส่งมอบให้ลูกค้า = แผนก WH ทุกบทบาท หรือ admin (กลุ่มวางแผนดูอย่างเดียว) · ย้อน = ผู้จัดการแผนก WH หรือ admin
     receiveBoxes: (user) => Boolean(user.wh || user.role === "admin"),
     shipBoxes: (user) => Boolean(user.wh || user.role === "admin"),
     reverseBoxes: (user) => Boolean(user.whHead || user.role === "admin"),
@@ -852,7 +852,7 @@
     return lot.id;
   }
 
-  // ปลายทางของล็อตตกแต่งที่ผ่าน (rf_lots.destination ของ 20261206010000)
+  // ปลายทางของล็อตตกแต่งที่ผ่าน (rf_lots.destination ของ 20261207010000)
   const FINISH_DESTINATIONS = Object.freeze(["sr", "customer"]);
 
   function recordFinishing(d, p, ctx) {
@@ -863,7 +863,7 @@
     const scrap = Number(p.scrapQty) || 0;
     const order = find(d.orders, transfer.orderId, "ใบสั่งผลิต");
     const result = p.qcResult || "pass";
-    // ปลายทางของงานที่ผ่าน (ตรงกับ rf_save_lots ของ 20261206010000): sr = คลังยางเส้นยาว (เฉพาะ WO ที่มาจากงาน RB ของ BOM) · customer = ส่งมอบให้ลูกค้าผ่านคลังสินค้าสำเร็จรูป (WH)
+    // ปลายทางของงานที่ผ่าน (ตรงกับ rf_save_lots ของ 20261207010000): sr = คลังยางเส้นยาว (เฉพาะ WO ที่มาจากงาน RB ของ BOM) · customer = ส่งมอบให้ลูกค้าผ่านคลังสินค้าสำเร็จรูป (WH)
     // ไม่ระบุ = WO ที่ผูกงานไป sr · WO ที่ไม่ผูกงานไป customer เสมอ (หน้าฟอร์มให้ WO ที่ผูกงานเลือกเอง) · งานที่กักรอ QC ยังไม่มีปลายทาง
     const linked = Boolean(order.sourceJobId);
     let destination = String(p.destination ?? "").trim() || null;
@@ -924,7 +924,7 @@
     }
   }
 
-  // ---------- กล่องสินค้า: คลังสินค้าสำเร็จรูป (WH) รับเข้า ส่งมอบให้ลูกค้า และย้อน (20261206010000) ----------
+  // ---------- กล่องสินค้า: คลังสินค้าสำเร็จรูป (WH) รับเข้า ส่งมอบให้ลูกค้า และย้อน (20261207010000) ----------
   // ทาง: pending_wh (รอ WH รับ) → in_stock (รับเข้า ทั้งล็อต) → shipped (ส่งมอบ รายกล่อง) · ย้อนรับเข้า in_stock → pending_wh (ทั้งล็อต ไม่มีกล่องที่ส่งแล้ว / กัก)
   // ย้อนส่งมอบ shipped → in_stock (รายกล่อง) · ย้อนต้องมีเหตุผล 3-300 ตัวอักษร (ฐานข้อมูลอ่านจากรายการท้ายของ moves ที่ส่งไป) · ทุกการเปลี่ยนต่อท้าย moves
   // ฐานข้อมูลนับยอดเข้างาน RB ของใบเมื่อรับล็อต customer ของ WO ที่ผูกงาน และถอนยอดเมื่อย้อนรับเข้า (หน้าจอไม่แตะงาน BOM: ส่วนต่างของ BOM มาเอง)
@@ -1071,7 +1071,7 @@
     d.qcRecords.unshift({ id, lotId: lot.id, orderId: lot.orderId, stage: lot.stage, tests, result, note: p.note || "", inspector: ctx.user?.name, at: ctx.now });
     lot.qc = result;
     if (result === "pass") lot.holdReasons = [];
-    // กล่อง (ตรงกับ rf_save_qc ของ 20261206010000): ผ่าน = เฉพาะกล่องที่กักไว้กลับที่เดิม (WH รับเข้าแล้ว = in_stock · ยังไม่รับ = pending_wh) · อื่น = กล่องที่ยังไม่ส่งมอบเป็น hold
+    // กล่อง (ตรงกับ rf_save_qc ของ 20261207010000): ผ่าน = เฉพาะกล่องที่กักไว้กลับที่เดิม (WH รับเข้าแล้ว = in_stock · ยังไม่รับ = pending_wh) · อื่น = กล่องที่ยังไม่ส่งมอบเป็น hold
     // ล็อต fail ที่นับยอดเข้างาน RB ไว้: ฐานข้อมูลถอนยอดนั้นและล้าง whCredit (งาน BOM มาเองทางส่วนต่างของ BOM) · QA บันทึก fail ได้เสมอ
     // ใบ BOM ที่ปิดแล้ว (หน้านี้ไม่รู้สถานะใบ) ฐานข้อมูลไม่ถอนและคง whCredit ไว้ แถวล็อตจากส่วนต่างหลังบันทึกแทนค่านี้
     d.fgBoxes.filter((box) => box.lotId === lot.id && (result === "pass" ? box.status === "hold" : box.status !== "shipped")).forEach((box) => {
