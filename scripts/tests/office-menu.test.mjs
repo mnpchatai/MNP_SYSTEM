@@ -192,11 +192,13 @@ test("the office module is standalone with a menu entry, sandbox for the work-or
 });
 
 /* ---------- ทดลองรันโมดูลจริงใน vm: ลงทะเบียน เมนู และหน้า ---------- */
-function setup({ employee, repairType = { id: "type-it", code: "IT_REPAIR" }, countResult = 5, itwoSummary = null, itwoVersion, sandbox = false } = {}) {
+function setup({ employee, repairType = { id: "type-it", code: "IT_REPAIR" }, countResult = 5, itwoSummary = null, itwoVersion, declare = true, sandbox = false } = {}) {
   const queries = [];
   const painted = { itwoRendered: [], html: "", active: null, title: null, notFound: 0, loading: 0, zooms: 0, queued: [], went: [] };
   // หน้าใบสั่งงาน IT จริงอยู่ที่ module-itwo.js (ทดสอบที่ itwo-module.test.mjs) ที่นี่ใช้ตัวแทนที่บันทึกการเรียกและคืนตัวเลขบนการ์ด
-  const window = { MNP_ITWO: { render: async (query) => { painted.itwoRendered.push(String(query)); }, loadCardSummary: async () => (itwoSummary instanceof Error ? Promise.reject(itwoSummary) : itwoSummary), version: itwoVersion } };
+  const itwo = { render: async (query) => { painted.itwoRendered.push(String(query)); }, loadCardSummary: async () => (itwoSummary instanceof Error ? Promise.reject(itwoSummary) : itwoSummary), version: itwoVersion };
+  // โมดูลประกาศตัวเองให้การ์ด (window.MNP_OFFICE_CARDS[รหัสโมดูล]) · declare: false = โมดูลที่ไม่ประกาศ
+  const window = { MNP_ITWO: itwo, MNP_OFFICE_CARDS: declare ? { IT_WORK_ORDER: { version: itwoVersion, loadCardSummary: itwo.loadCardSummary } } : {} };
   const context = vm.createContext({
     window, console, URLSearchParams, Map, Set, isSandboxMode: () => sandbox,
     location: { hash: "#/office?module=it-support" },
@@ -481,44 +483,117 @@ test("in test mode IT SUPPORT shows only the work-order card and the chooser onl
   assert.deepEqual(sandbox.queries, []);
 });
 
-/* ---------- เลขเวอร์ชันบนการ์ด (รุ่น 1.02): มุมบนขวา เฉพาะโมดูลที่ประกาศเลขไว้ ---------- */
-test("a card shows the module version at its top right when the module declares one, above the count badge", () => {
-  const page = sections.itSupportPage({ repair: { href: "#/requests?type=abc", count: 3 }, workOrder: { badge: "2 รอคุณ" }, versions: { IT_WORK_ORDER: "1.02" } });
-  const card = page.slice(page.indexOf('href="#/office?module=work-order"'));
-  assert.match(card, /<span class="request-type-side"><span class="request-type-version" title="เวอร์ชัน 1\.02">V1\.02<\/span><span class="request-type-count">2 รอคุณ<\/span><\/span>/);
+/* ---------- ป้ายบนการ์ด (รุ่น 1.03): เลขเวอร์ชัน · ยังไม่จบ · รอคุณ — กลไกกลางของโมดูลที่ประกาศตัวเอง ---------- */
+const workOrderCard = (page) => page.slice(page.indexOf('href="#/office?module=work-order"'));
+const repairInput = { href: "#/requests?type=abc", count: 3 };
+
+test("a card shows, top to bottom at its right: the open count, the waiting badge and the module version, for a module that declares them", () => {
+  const page = sections.itSupportPage({ repair: repairInput, modules: { IT_WORK_ORDER: { version: "1.03", openCount: 4, waiting: "2 รอคุณ", title: "รออนุมัติ 2" } } });
+  const card = workOrderCard(page);
+  assert.match(card, /<span class="request-type-side"><span class="request-type-count">4 ยังไม่จบ<\/span><span class="request-type-count request-type-count-2">2 รอคุณ<\/span><span class="request-type-version" title="เวอร์ชัน 1\.03">V1\.03<\/span><\/span>/);
+  assert.match(page, /href="#\/office\?module=work-order"[^>]*title="รออนุมัติ 2"/);
   assert.equal(count(page, /request-type-version/g), 1, "one version on the page");
-  assert.equal(count(visibleText(page), /V1\.02/g), 1);
+  assert.equal(count(visibleText(page), /V1\.03/g), 1);
 });
 
-test("a card whose module does not declare a version shows none, and the markup is unchanged for it", () => {
-  const page = sections.itSupportPage({ repair: { href: "#/requests?type=abc", count: 3 }, versions: { IT_WORK_ORDER: "1.02" } });
+test("the open-count badge sits where the repair card's badge sits: same element, same place, same wording", () => {
+  const page = sections.itSupportPage({ repair: repairInput, modules: { IT_WORK_ORDER: { version: "1.03", openCount: 0 } } });
+  const repair = page.slice(0, page.indexOf('href="#/office?module=work-order"'));
+  assert.match(repair, /<span class="request-type-top"><span class="type-card-badge">[\s\S]*?<\/span><span class="request-type-count">3 ยังไม่จบ<\/span><\/span>/);
+  assert.match(workOrderCard(page), /<span class="request-type-top"><span class="type-card-badge">[\s\S]*?<\/span><span class="request-type-side"><span class="request-type-count">0 ยังไม่จบ<\/span><span class="request-type-version"/, "a real zero is shown as 0, first in the column");
+});
+
+test("an open count that could not be read shows 'ดูสถานะ' (like the repair card), and a module without a count shows no main badge", () => {
+  const unreadable = workOrderCard(sections.itSupportPage({ modules: { IT_WORK_ORDER: { version: "1.03", openCount: null, waiting: "", title: "" } } }));
+  assert.match(unreadable, /<span class="request-type-count">ดูสถานะ<\/span>/);
+  assert.doesNotMatch(unreadable, /ยังไม่จบ/);
+  const versionOnly = workOrderCard(sections.itSupportPage({ modules: { IT_WORK_ORDER: { version: "1.03" } } }));
+  assert.doesNotMatch(versionOnly, /request-type-count/, "the module declares no count: no badge to make up");
+  assert.match(versionOnly, /request-type-version/);
+  const repair = sections.itSupportPage({ repair: { href: "#/requests?type=abc", count: null } });
+  assert.match(repair, /<span class="request-type-count">ดูสถานะ<\/span>/);
+});
+
+test("a module that does not declare anything shows no version and no badge, and the markup is unchanged for it", () => {
+  const page = sections.itSupportPage({ repair: repairInput, modules: { IT_WORK_ORDER: { version: "1.03", openCount: 1 } } });
   const repair = page.slice(0, page.indexOf('href="#/office?module=work-order"'));
   assert.doesNotMatch(repair, /request-type-version|request-type-side/, "the repair card declares no version");
-  assert.match(repair, /<span class="request-type-top"><span class="type-card-badge">[\s\S]*?<\/span><span class="request-type-count">3 ยังไม่จบ<\/span><\/span>/);
-  const none = sections.itSupportPage({ repair: { href: "#/requests?type=abc", count: 3 } });
-  assert.doesNotMatch(none, /request-type-version/);
-  assert.equal(sections.itSupportPage({ versions: {} }), sections.itSupportPage());
-  assert.match(sections.itSupportPage({ versions: { IT_WORK_ORDER: "1.02" } }), /request-type-version/, "version alone (no badge) still shows");
+  const none = sections.itSupportPage({ repair: repairInput });
+  assert.doesNotMatch(none, /request-type-version|request-type-side/);
+  assert.equal(sections.itSupportPage({ modules: {} }), sections.itSupportPage());
+  assert.equal(count(workOrderCard(none), /request-type-count/g), 0, "not declared: no badge");
+  // ตัวประกาศของโมดูลอื่น (รหัสไม่ตรงกับการ์ดใด) ไม่ทำให้การ์ดใดแสดงอะไร
+  assert.equal(sections.itSupportPage({ modules: { SOME_FUTURE_MODULE: { version: "9.99", openCount: 9 } } }), sections.itSupportPage());
 });
 
-test("an unsafe version string is escaped", () => {
-  const page = sections.itSupportPage({ versions: { IT_WORK_ORDER: "<img src=x onerror=1>" } });
-  assert.doesNotMatch(page, /<img/);
+test("an unsafe version, count text or title is escaped", () => {
+  const page = sections.itSupportPage({ modules: { IT_WORK_ORDER: { version: "<img src=x onerror=1>", openCount: 1, waiting: "<b>x</b>", title: '"><script>alert(1)</script>' } } });
+  assert.doesNotMatch(page, /<img|<b>|<script/);
 });
 
-test("module-office passes the work-order module version to the card; no declared version means no number", async () => {
-  const withVersion = setup({ employee: mt, itwoVersion: "1.02" });
+test("module-office reads every declared module's version and open count and passes them to the card", async () => {
+  const withVersion = setup({ employee: mt, itwoVersion: "1.03", itwoSummary: { openCount: 5, badge: "2 รอคุณ", title: "รออนุมัติ 2" } });
   await withVersion.open("module=it-support");
-  assert.match(withVersion.painted.html, />V1\.02<\/span>/);
+  const card = workOrderCard(withVersion.painted.html);
+  assert.match(card, />5 ยังไม่จบ<\/span>/);
+  assert.match(card, />2 รอคุณ<\/span>/);
+  assert.match(card, />V1\.03<\/span>/);
   assert.equal(count(withVersion.painted.html, /request-type-version/g), 1, "the repair card shows none");
-  const without = setup({ employee: mt });
+  assert.match(withVersion.painted.html, /5 ยังไม่จบ/, "the repair card keeps its own count");
+  const without = setup({ employee: mt, declare: false });
   await without.open("module=it-support");
   assert.doesNotMatch(without.painted.html, /request-type-version/);
+  assert.doesNotMatch(workOrderCard(without.painted.html), /request-type-count/, "a module that does not declare has no badge");
+  assert.match(without.painted.html, /5 ยังไม่จบ/, "the repair card is unchanged");
 });
 
-test("the stylesheet places the version column at the top right of the card", () => {
+test("module-office: a summary that is null, throws or has no number leaves the card open with 'ดูสถานะ'; a count of 0 shows 0", async () => {
+  for (const itwoSummary of [null, new Error("boom"), { badge: "", title: "" }, { openCount: "7" }]) {
+    const app = setup({ employee: mt, itwoVersion: "1.03", itwoSummary });
+    await app.open("module=it-support");
+    const card = workOrderCard(app.painted.html);
+    assert.match(card, /<span class="request-type-count">ดูสถานะ<\/span>/);
+    assert.match(card, /V1\.03/, "the version still shows");
+    assert.match(app.painted.html, /5 ยังไม่จบ/, "the repair card is not affected");
+  }
+  const zero = setup({ employee: mt, itwoVersion: "1.03", itwoSummary: { openCount: 0, badge: "", title: "" } });
+  await zero.open("module=it-support");
+  assert.match(workOrderCard(zero.painted.html), />0 ยังไม่จบ<\/span>/);
+  assert.doesNotMatch(workOrderCard(zero.painted.html), /รอคุณ/);
+});
+
+test("module-office: a declared module is read only for a card the user may see (department list and test mode)", async () => {
+  // แผนกที่จำกัด (ID) ไม่เห็นการ์ดใบสั่งงาน IT จึงไม่เรียกตัวประกาศของมันเลย
+  let calls = 0;
+  const restricted = setup({ employee: { ...mt, department: { code: "ID" } }, itwoVersion: "1.03", itwoSummary: { openCount: 1, badge: "", title: "" } });
+  restricted.context.window.MNP_OFFICE_CARDS.IT_WORK_ORDER.loadCardSummary = async () => { calls += 1; return { openCount: 1 }; };
+  await restricted.open("module=it-support");
+  assert.doesNotMatch(restricted.painted.html, /ใบสั่งงาน IT/);
+  assert.doesNotMatch(restricted.painted.html, /request-type-version/);
+  assert.equal(calls, 0);
+  // โหมดทดสอบ: การ์ดนี้ยังเห็น และนับจากตัวประกาศเดียวกัน (ฐานข้อมูลแยกข้อมูลทดสอบ) ส่วนใบแจ้งซ่อม IT ไม่ถูกนับ
+  const sandbox = setup({ employee: mt, sandbox: true, itwoVersion: "1.03", itwoSummary: { openCount: 2, badge: "", title: "" } });
+  await sandbox.open("module=it-support");
+  assert.match(workOrderCard(sandbox.painted.html), />2 ยังไม่จบ<\/span>/);
+  assert.deepEqual(sandbox.queries, [], "the repair card is not counted in test mode");
+});
+
+test("the stylesheet places the badge column at the top right of the card and styles the version as a solid, bordered badge", () => {
   const css = read("styles.css");
   assert.match(css, /\.request-type-side \{[^}]*flex-direction: column;[^}]*align-items: flex-end;/);
-  assert.match(css, /\.request-type-version \{/);
   assert.match(css, /\.request-type-top:has\(\.request-type-side\) \{ align-items: flex-start; \}/);
+  const version = css.match(/\.request-type-version \{([^}]*)\}/)[1];
+  assert.match(version, /color: var\(--mod-btn-ink\)/);
+  assert.match(version, /background: var\(--mod-btn\)/);
+  assert.match(version, /border: 1px solid var\(--mod-btn-edge\)/);
+  assert.doesNotMatch(version, /opacity/, "no fading: it must be readable");
+  assert.match(version, /font-size: var\(--text-meta\)/, "13px or larger on a phone");
+});
+
+test("the way for a new module to declare its card is written at the top of office-sections.js and in the README", () => {
+  const source = read("modules/office-sections.js");
+  assert.match(source, /MNP_OFFICE_CARDS/);
+  assert.match(source, /openCount/);
+  assert.match(read("README.md"), /MNP_OFFICE_CARDS/);
+  assert.match(read("modules/module-itwo.js"), /MNP_OFFICE_CARDS \?\?= \{\}\)\.IT_WORK_ORDER/);
 });

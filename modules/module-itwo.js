@@ -68,7 +68,9 @@
   }
 
   /* ---------- ตัวเลขบนการ์ด (IT SUPPORT) ---------- */
-  // นับงานที่รอ "ฉัน": รออนุมัติ + งาน IT ที่ต้องลงมือ + ใบที่รอฉันยืนยันรับ + ใบที่รอฉันตอบคำถาม · อ่านไม่ได้ = ไม่มีตัวเลข การ์ดยังกดเข้าได้
+  // ป้ายหลัก openCount = ใบที่ผู้ใช้เห็นและยังไม่จบ (รวมใบของฉัน + รออนุมัติ + งาน IT ตามสิทธิ์ แบบไม่นับซ้ำ) · อ่านแหล่งใดแหล่งหนึ่งไม่ได้ = null (การ์ดแสดง "ดูสถานะ" ไม่แสดงเลขที่นับขาด)
+  // ป้ายรอง (badge "N รอคุณ") นับงานที่รอ "ฉัน": รออนุมัติ + งาน IT ที่ต้องลงมือ + ใบที่รอฉันยืนยันรับ + ใบที่รอฉันตอบคำถาม · อ่านส่วนไหนไม่ได้ส่วนนั้นไม่นับ
+  // โหมดทดสอบ: RPC ทุกตัวแยกข้อมูลทดสอบให้ที่ฐานข้อมูลอยู่แล้ว จึงนับเฉพาะใบทดสอบเอง · role อ่านไม่ได้ = null ทั้งก้อน การ์ดยังกดเข้าได้
   async function loadCardSummary() {
     let role;
     try {
@@ -76,12 +78,18 @@
     } catch {
       return null;
     }
-    const [approvals, itRows, mine] = await Promise.all([
-      role?.is_dept_approver || role?.is_it_approver ? attempt(rpc("app_itwo_pending_count")) : null,
-      role?.is_it_admin || role?.is_it_approver ? attempt(rpc("app_itwo_list_it")) : null,
+    const hasApprovals = Boolean(role?.is_dept_approver || role?.is_it_approver);
+    const hasIt = Boolean(role?.is_it_admin || role?.is_it_approver);
+    const [approvals, approvalRows, itRows, mine] = await Promise.all([
+      hasApprovals ? attempt(rpc("app_itwo_pending_count")) : null,
+      hasApprovals ? attempt(rpc("app_itwo_list_pending_approvals")) : null,
+      hasIt ? attempt(rpc("app_itwo_list_it")) : null,
       attempt(rpc("app_itwo_list_mine")),
     ]);
+    // แหล่งที่ผู้ใช้มีสิทธิ์ดูต้องอ่านได้ครบจึงจะนับ (ไม่งั้นเลขขาดและทำให้เข้าใจผิด)
+    const countable = Boolean(mine && (!hasApprovals || approvalRows) && (!hasIt || itRows));
     return model.cardSummary({
+      openCount: countable ? model.openOrderCount(mine.value, hasApprovals ? approvalRows.value : [], hasIt ? itRows.value : []) : null,
       approvals: approvals ? approvals.value : null,
       // ตัวเลข "งาน IT ค้าง" นับให้เฉพาะผู้ดูแลงาน IT (ผู้ลงมือทำ) · ผู้อนุมัติขั้น IT ที่ไม่ใช่ผู้ดูแลงานเห็นรายการได้แต่ไม่มีงานให้ลงมือ (รุ่น 1.02)
       itWork: itRows && role?.is_it_admin ? model.itActionableCount(itRows.value) : null,
@@ -744,6 +752,9 @@
   }
 
   const unsavedCount = () => (unsavedProbe ? unsavedProbe() : 0);
-  // version = เลขเวอร์ชันของโมดูล: module-office.js ใช้แสดงมุมบนขวาของการ์ดใน IT SUPPORT (โมดูลที่ไม่ประกาศ version ไม่แสดงเลข)
-  window.MNP_ITWO = Object.freeze({ render, loadCardSummary, unsavedCount, version: model.MODULE_VERSION });
+  const api = Object.freeze({ render, loadCardSummary, unsavedCount, version: model.MODULE_VERSION });
+  window.MNP_ITWO = api;
+  // ประกาศตัวเองให้การ์ดในเมนู "ระบบสำนักงาน" (วิธีเพิ่มโมดูลใหม่ดูที่หัวไฟล์ modules/office-sections.js) key = รหัสโมดูลของการ์ด
+  // version = เลขเวอร์ชัน (ป้าย V…) · loadCardSummary() คืน { openCount, badge, title } หรือ null ถ้าอ่านไม่ได้ (การ์ดแสดง "ดูสถานะ")
+  (window.MNP_OFFICE_CARDS ??= {}).IT_WORK_ORDER = api;
 })();

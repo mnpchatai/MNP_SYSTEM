@@ -341,3 +341,26 @@ test("every badge class the code renders is one of the styled statuses (or the n
   assert.ok(used.size >= 10, `found ${used.size} badge classes`);
   for (const name of used) assert.ok(STATUS_BADGES.includes(name), `badge class "${name}" has a colour and a glyph`);
 });
+
+// ป้ายเลขเวอร์ชันบนการ์ดระบบสำนักงาน (เจ้าของสั่ง 20/11/2026: ของเดิมตัวอักษรจางบนพื้นน้ำเงินมองแทบไม่เห็น)
+// ใช้ชุดสีของปุ่มรองบนก้อนสี (--mod-btn: ธีมสว่างดำโปร่ง 18% ธีมมืดพื้นกระดาษโปร่ง 75%) ตัวหนังสือสว่าง มีขอบ ไม่ใช้ opacity
+for (const theme of ["light", "dark"]) {
+  test(`the module-card version badge is readable (4.5:1) on every palette's card surface (${theme})`, () => {
+    assert.equal(declared(".request-type-version", "color"), "var(--mod-btn-ink)");
+    assert.equal(declared(".request-type-version", "background"), "var(--mod-btn)");
+    assert.equal(declared(".request-type-version", "border"), "1px solid var(--mod-btn-edge)");
+    assert.equal(declared(".request-type-version", "opacity"), undefined, "no fading");
+    assert.equal(declared(".request-type-version", "font-size"), "var(--text-meta)");
+    // ค่าของโทเคนต้องเป็นอย่างที่การคำนวณด้านล่างสมมติ (ถ้าเปลี่ยนค่าต้องแก้การคำนวณตาม)
+    const scope = theme === "dark" ? DARK_SCOPE : SCOPE;
+    const btn = ruleBySelector(scope).map((rule) => rule.declarations.get("--mod-btn")).filter(Boolean).at(-1);
+    assert.equal(btn, theme === "dark" ? "color-mix(in srgb, var(--paper) 75%, transparent)" : "rgba(0, 0, 0, .18)");
+    for (const [key, ramp] of RAMPS) {
+      const t = tokensOf(ramp, theme);
+      const surfaces = theme === "dark"
+        ? ["color-mix(in srgb, var(--m500) 16%, #0a1322)", "color-mix(in srgb, var(--m500) 32%, color-mix(in srgb, var(--m500) 16%, #0a1322))", "color-mix(in srgb, var(--p) 10%, #0a1322)"].map((surface) => `color-mix(in srgb, var(--paper) 75%, ${surface})`)
+        : ["--m700", "--m900"].map((end) => `color-mix(in srgb, #000 18%, var(${end}))`);
+      for (const background of surfaces) assertReadable(`${key} version badge (${theme})`, t, "var(--mod-btn-ink)", background);
+    }
+  });
+}

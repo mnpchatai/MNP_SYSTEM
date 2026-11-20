@@ -11,6 +11,15 @@
 // ระบบที่มีการ์ดลูก (IT SUPPORT) แสดงเมื่อมีการ์ดลูกอย่างน้อย 1 ใบที่ผู้ใช้เห็น · ไม่มีระบบเหลือเลย = ไม่แสดงเมนู "ระบบสำนักงาน"
 // เป็น UX ล้วน สิทธิ์จริงยังตัดสินที่ฐานข้อมูล
 //
+// โมดูลใหม่ในระบบสำนักงาน "ประกาศ" ตัวเองเพื่อให้การ์ดแสดงเลขเวอร์ชันและจำนวนงานค้างเหมือนกันทุกโมดูล (ไม่ประกาศ = การ์ดไม่แสดงป้ายเหล่านี้):
+//   1) เพิ่มการ์ดใน IT_SUPPORT_CARDS ด้วยรหัสโมดูล (code) ของตัวเอง
+//   2) ในไฟล์โมดูล: (window.MNP_OFFICE_CARDS ??= {})[<code>] = { version: "1.03", loadCardSummary }
+//        version = เลขเวอร์ชันของโมดูล แสดงเป็นป้าย V1.03 มุมบนขวาของการ์ด
+//        loadCardSummary() = async คืน { openCount, badge, title } หรือ null/ throw ถ้าอ่านไม่ได้ (ไม่ต้องมีก็ได้)
+//          openCount = จำนวนเอกสารที่ผู้ใช้เห็นและยังไม่จบ (number) · null = นับไม่ได้ การ์ดแสดง "ดูสถานะ" แทน ไม่ทำให้หน้าล้ม
+//          badge = ป้ายรอง เช่น "2 รอคุณ" (ว่างได้) · title = คำอธิบายตัวเลข (tooltip)
+//   module-office.js อ่านตัวประกาศนี้แล้วส่งให้ itSupportPage({ modules }) ใบแจ้งซ่อม IT ใช้เครื่องคำร้องกลาง จึงไม่ประกาศและไม่แสดงเลขเวอร์ชัน
+//
 // หน้าตาใช้คอมโพเนนต์เดียวกับหน้าเลือกโมดูลของ MNP LAB (modules/lab-sections.js): การ์ดสี .type-card + .lab-module-card
 // และหัวโมดูล .request-module-header จึงไม่ต้องเพิ่ม CSS · การ์ดที่ยังไม่เปิดลดความอิ่มสี (.is-off) และไม่เป็นลิงก์
 (function (root) {
@@ -67,15 +76,17 @@
   }
 
   // การ์ดที่เปิดแล้วเป็นลิงก์ ส่วนที่ยังไม่เปิดเป็นการ์ดเฉย ๆ บอกสถานะครั้งเดียวที่มุมขวาบน (ไม่ใส่ aria-disabled เพราะไม่ใช่ตัวควบคุม)
-  // badge ของการ์ดที่เปิดแล้ว (เช่น "2 ยังไม่จบ") อยู่ช่องเดียวกัน
-  // version = เลขเวอร์ชันของโมดูลที่การ์ดพาไป (เช่น "1.02") แสดงเป็น "V1.02" ที่มุมบนขวาของการ์ด เหนือป้าย badge · ไม่ระบุ = ไม่แสดง (โมดูลที่ไม่ประกาศเลขของตัวเอง)
-  function cardHtml({ href, label, palette, icon, action, badge, version = "", title = "" }) {
+  // badge ของการ์ดที่เปิดแล้ว (เช่น "2 ยังไม่จบ") อยู่ช่องเดียวกัน · badge2 = ป้ายรอง (เช่น "1 รอคุณ") ต่อใต้ป้ายหลัก
+  // version = เลขเวอร์ชันของโมดูลที่การ์ดพาไป (เช่น "1.03") แสดงเป็นป้าย "V1.03" ที่มุมขวาของการ์ด ใต้ป้ายตัวเลข (ป้ายตัวเลขอยู่ตำแหน่งเดียวกันทุกการ์ด) · ไม่ระบุ = ไม่แสดง (โมดูลที่ไม่ประกาศเลขของตัวเอง)
+  // ป้ายทุกใบเป็นพื้นทึบ/กึ่งทึบตัวอ่านออก (ใช้ --mod-pill / --mod-btn ที่ตรวจ contrast ทุกจานสีทั้งสองธีมใน color-system.test.mjs)
+  function cardHtml({ href, label, palette, icon, action, badge, badge2 = "", version = "", title = "" }) {
     const mark = `<span class="type-card-badge">${iconOf(icon)}</span>`;
     const watermark = `<span class="type-card-wm" aria-hidden="true">${iconOf(icon)}</span>`;
     const badgeHtml = badge ? `<span class="request-type-count">${esc(badge)}</span>` : "";
+    const badge2Html = badge2 ? `<span class="request-type-count request-type-count-2">${esc(badge2)}</span>` : "";
     const versionHtml = version ? `<span class="request-type-version" title="เวอร์ชัน ${esc(version)}">V${esc(version)}</span>` : "";
-    // มีเลขเวอร์ชัน: ห่อเลขกับป้ายเป็นคอลัมน์ชิดขวา (เลขอยู่บนสุด) · ไม่มี: โครงเดิมทุกประการ
-    const side = versionHtml ? `<span class="request-type-side">${versionHtml}${badgeHtml}</span>` : badgeHtml;
+    // มีป้ายรองหรือเลขเวอร์ชัน: ห่อป้ายเป็นคอลัมน์ชิดขวา (ป้ายหลัก ป้ายรอง เลขเวอร์ชัน) · ไม่มี: โครงเดิมทุกประการ
+    const side = badge2Html || versionHtml ? `<span class="request-type-side">${badgeHtml}${badge2Html}${versionHtml}</span>` : badgeHtml;
     if (!href) {
       return `<div class="type-card request-type-card lab-module-card is-off" data-module="${palette}">
         <span class="request-type-top">${mark}${side}</span>
@@ -111,20 +122,28 @@
       </div>`;
   }
 
+  // ป้ายหลักของการ์ด: จำนวนเอกสารที่ยังไม่จบ · นับไม่ได้ = "ดูสถานะ" (ไม่แสดงเลขที่ไม่แน่ใจ)
+  const openBadge = (openCount) => (Number.isFinite(openCount) ? `${openCount} ยังไม่จบ` : "ดูสถานะ");
+
   // หน้าของ IT SUPPORT · repair = { href, count } ถ้าผู้ใช้เปิดใบแจ้งซ่อม IT ได้ · null = ไม่แสดงการ์ดนั้น
   // (แผนกที่ไม่มีสิทธิ์ IT_REPAIR หรือฐานข้อมูลปิดประเภทนี้) count = จำนวนใบที่ยังไม่จบ หรือ null ถ้านับไม่ได้
-  // workOrder = { badge, title } ตัวเลขงานที่รอผู้ใช้บนการ์ดใบสั่งงาน IT (badge ว่าง/ไม่ระบุ = ไม่มีป้าย) · การ์ดเป็นลิงก์เสมอเมื่อแผนกมีสิทธิ์
-  // versions = { <รหัสโมดูลของการ์ด>: "1.02" } เลขเวอร์ชันของโมดูลที่ประกาศไว้ (แต่ละโมดูลนับแยกกัน) · การ์ดที่ไม่มีเลขใน versions ไม่แสดงเลข
-  function itSupportPage({ repair = null, workOrder = null, versions = {}, allowed = ALLOW_ALL } = {}) {
+  // modules = { <รหัสโมดูลของการ์ด>: { version, openCount, waiting, title } } ข้อมูลจากโมดูลที่ประกาศตัวเองไว้ (แต่ละโมดูลนับแยกกัน) · การ์ดที่ไม่มีรายการใน modules ไม่แสดงป้ายใด ๆ
+  //   version = เลขเวอร์ชัน (ป้าย V…) · openCount: number = "N ยังไม่จบ" · null = นับไม่ได้ ("ดูสถานะ") · undefined = โมดูลไม่นับ (ไม่แสดงป้ายหลัก)
+  //   waiting = ป้ายรอง เช่น "1 รอคุณ" (ว่าง = ไม่มี) · title = คำอธิบายตัวเลขเมื่อชี้การ์ด · การ์ดเป็นลิงก์เสมอเมื่อแผนกมีสิทธิ์
+  function itSupportPage({ repair = null, modules = {}, allowed = ALLOW_ALL } = {}) {
     const cards = visibleCards(allowed).filter((card) => card.code !== "IT_REPAIR" || repair).map((card) => (card.code === "IT_REPAIR"
       ? cardHtml({
         href: repair.href, label: card.label, palette: card.palette, icon: card.icon, action: card.action,
-        badge: Number.isFinite(repair.count) ? `${repair.count} ยังไม่จบ` : "ดูสถานะ", version: versions?.[card.code],
+        badge: openBadge(repair.count),
       })
-      : cardHtml({
-        href: card.open ? sectionUrl(WORK_ORDER) : "", label: card.label, palette: card.palette, icon: card.icon, action: card.action,
-        badge: workOrder?.badge || card.badge, version: versions?.[card.code], title: workOrder?.title ?? "",
-      })));
+      : (() => {
+        const declared = modules?.[card.code];
+        return cardHtml({
+          href: card.open ? sectionUrl(WORK_ORDER) : "", label: card.label, palette: card.palette, icon: card.icon, action: card.action,
+          badge: declared && declared.openCount !== undefined ? openBadge(declared.openCount) : card.badge,
+          badge2: declared?.waiting || "", version: declared?.version, title: declared?.title ?? "",
+        });
+      })()));
     return `<div class="lab-page">
       ${moduleHead("it-support")}
       <nav class="type-grid request-type-grid lab-module-grid" aria-label="เมนู IT SUPPORT">${cards.join("")}</nav>

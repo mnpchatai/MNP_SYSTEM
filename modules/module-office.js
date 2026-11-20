@@ -43,6 +43,25 @@
     return { href: window.MNP_REQUEST_CENTER.url(new URLSearchParams(), { type: data.id }), count };
   }
 
+  // การ์ดของโมดูลที่ประกาศตัวเองใน window.MNP_OFFICE_CARDS[<รหัสโมดูล>] = { version, loadCardSummary } (วิธีเพิ่มโมดูลใหม่ดูหัวไฟล์ office-sections.js)
+  // คืน { <รหัสโมดูล>: { version, openCount, waiting, title } } เฉพาะการ์ดที่ผู้ใช้เห็น (สิทธิ์แผนก/โหมดทดสอบ) · ไม่ประกาศ = ไม่มีรายการ การ์ดไม่แสดงป้าย
+  // loadCardSummary ล้ม/คืน null = openCount เป็น null (การ์ดแสดง "ดูสถานะ") · โมดูลที่ไม่มี loadCardSummary = ไม่มีป้ายตัวเลข
+  async function loadDeclaredCards() {
+    const declared = window.MNP_OFFICE_CARDS ?? {};
+    const entries = await Promise.all(sections.visibleCards(modeAllowed).filter((card) => card.code !== "IT_REPAIR" && declared[card.code]).map(async (card) => {
+      const provider = declared[card.code];
+      const info = { version: provider.version || undefined };
+      if (typeof provider.loadCardSummary === "function") {
+        const summary = await Promise.resolve().then(() => provider.loadCardSummary()).catch(() => null);
+        info.openCount = Number.isFinite(summary?.openCount) ? summary.openCount : null;
+        info.waiting = summary?.badge || "";
+        info.title = summary?.title || "";
+      }
+      return [card.code, info];
+    }));
+    return Object.fromEntries(entries);
+  }
+
   function paint(html, title, version) {
     if (version !== pageVersion) return;
     const zoom = zoomTo !== null && zoomTo === location.hash;
@@ -76,14 +95,10 @@
     if (section === sections.HOME) return paint(sections.chooserPage({ allowed: modeAllowed }), TITLE, version);
     if (section === "it-support") {
       loadingShell(PATH, TITLE);
-      // ตัวเลขงานที่รอฉันบนการ์ดใบสั่งงาน IT อ่านขนานกับการ์ดใบแจ้งซ่อม ถ้าอ่านไม่ได้การ์ดยังกดเข้าได้ ไม่ทำให้หน้าล้ม
-      const [repair, workOrder] = await Promise.all([
-        loadRepairCard(),
-        sections.workOrderVisible(modeAllowed) ? window.MNP_ITWO.loadCardSummary().catch(() => null) : null,
-      ]);
-      // เลขเวอร์ชันบนการ์ด: โมดูลที่ประกาศ version ไว้ (ตอนนี้มีใบสั่งงาน IT) แสดงที่มุมบนขวา · ใบแจ้งซ่อม IT ไม่ประกาศจึงไม่แสดง
-      const versions = window.MNP_ITWO?.version ? { [sections.WORK_ORDER_CODE]: window.MNP_ITWO.version } : {};
-      return paint(sections.itSupportPage({ repair, workOrder, versions, allowed: modeAllowed }), "IT SUPPORT", version);
+      // ข้อมูลบนการ์ดของโมดูลที่ประกาศตัวเองไว้ (เลขเวอร์ชัน จำนวนที่ยังไม่จบ ป้ายรอง) อ่านขนานกับการ์ดใบแจ้งซ่อม
+      // ถ้าอ่านไม่ได้การ์ดยังกดเข้าได้ ไม่ทำให้หน้าล้ม · ใบแจ้งซ่อม IT ไม่ประกาศจึงไม่แสดงเลขเวอร์ชัน
+      const [repair, modules] = await Promise.all([loadRepairCard(), loadDeclaredCards()]);
+      return paint(sections.itSupportPage({ repair, modules, allowed: modeAllowed }), "IT SUPPORT", version);
     }
     return paint(sections.notReadyPage(section), TITLE, version);
   }
