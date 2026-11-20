@@ -18,6 +18,8 @@ export function pushUrlFor(row: PushRow): string {
   if (action === "/admin") return "#/admin";
   if (action === "/profile") return "#/profile";
   if (action.startsWith("/ncr/")) return `#/ncr?id=${encodeURIComponent(action.slice(5))}`;
+  // ใบสั่งงาน IT (ระบบสำนักงาน) เปิดหน้ารายละเอียดของใบนั้นตรง ๆ
+  if (action.startsWith("/office/work-order/")) return `#/office?module=work-order&view=order&id=${encodeURIComponent(action.slice("/office/work-order/".length))}`;
   if (action === "/") {
     // สรุปงานค้าง (reminder) ที่มีงานเดียวพาไปที่งานนั้นเลย (สำเนาถึงหัวหน้า kind=escalation ไปหน้าหลักเสมอ เพราะอาจไม่มีสิทธิ์เปิดเอกสาร)
     const items = Array.isArray(row.digest) ? row.digest : [];

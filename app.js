@@ -4948,6 +4948,8 @@ function notificationHref(item) {
   if (item.action_url === "/admin") return "#/admin";
   if (item.action_url === "/profile") return "#/profile";
   if (item.action_url?.startsWith("/ncr/")) return `#/ncr?id=${encodeURIComponent(item.action_url.slice(5))}`;
+  // ใบสั่งงาน IT (ระบบสำนักงาน) เปิดหน้ารายละเอียดของใบนั้นตรง ๆ · notify-email linkFor และ notify-push pushUrlFor ต้องตรงกัน
+  if (item.action_url?.startsWith("/office/work-order/")) return `#/office?module=work-order&view=order&id=${encodeURIComponent(item.action_url.slice("/office/work-order/".length))}`;
   // อีเมลสรุปงานค้าง (kind reminder/escalation): มีงานเดียวพาไปที่งานนั้นเลย (เฉพาะ reminder ซึ่งผู้รับคือผู้ถือลูก
   // และเปิดงานได้แน่นอน — สำเนาถึงหัวหน้าอาจไม่มีสิทธิ์อ่านเอกสาร) ถ้าหลายงานพาไปหน้าหลักที่มีการ์ด "งานที่ต้องจัดการ"
   if (item.action_url === "/") {
@@ -4966,7 +4968,8 @@ const NOTIFICATION_TYPE_BY_PREFIX = Object.freeze({ MT: "MT_REPAIR", MG: "MANAGE
 function notificationItemHtml(item) {
   const href = notificationHref(item);
   const tag = href ? "a" : "div";
-  const typeCode = href?.startsWith("#/ncr") ? "NCR_CAR" : NOTIFICATION_TYPE_BY_PREFIX[`${item.title ?? ""} ${item.body ?? ""}`.match(/(?:^|[^A-Z])(MT|MG|IT)-\d{4}-/)?.[1]] ?? null;
+  // ใบสั่งงาน IT ใช้ไอคอน/สีของ IT (เลขที่ IT06-26/012 ไม่ตรงรูปแบบ IT-ปปปป- ของใบแจ้งซ่อม)
+  const typeCode = href?.startsWith("#/ncr") ? "NCR_CAR" : href?.startsWith("#/office?module=work-order") ? "IT_REPAIR" : NOTIFICATION_TYPE_BY_PREFIX[`${item.title ?? ""} ${item.body ?? ""}`.match(/(?:^|[^A-Z])(MT|MG|IT)-\d{4}-/)?.[1]] ?? null;
   const reminder = ["reminder", "escalation"].includes(item.kind);
   const iconHtml = reminder || !typeCode ? uiIcon(reminder ? "clock" : "bell") : requestTypeIcon(typeCode);
   const palette = !reminder && typeCode ? ` data-module="${escapeHtml(requestPalette(typeCode))}"` : "";
