@@ -2,6 +2,7 @@
 // ข้อมูลอยู่ในหน่วยความจำของหน้า (หายเมื่อโหลดหน้าใหม่) ใช้ลองหน้าจอ ไม่ใช่ตัวแทนฐานข้อมูลจริง: กฎเส้นทางอนุมัติ/ปุ่มที่ทำได้ตรงกับ migration
 // (ผู้แจ้งเป็นผู้จัดการแผนก / แผนก IT / แผนกไม่มีผู้จัดการ / ผู้อนุมัติขั้น IT แจ้งเอง) แต่ตรวจสิทธิ์หลวมกว่า (ไม่มี RLS/ล็อก)
 // รุ่น 2: ไม่รับประเภท system_access · เบ็ดเตล็ดต้องระบุงาน · แนบไฟล์ (app_itwo_add_attachment) · ขอแก้ไขงาน (app_itwo_request_rework) · ล้างข้อมูลทดสอบคืนรายการไฟล์
+// รุ่น 1.02 (20261208010000_itwo_v4_approver_rules.sql): persona SBX-IT-APPROVER เป็นผู้อนุมัติขั้น IT อย่างเดียว (ไม่ใช่ผู้ดูแลงาน IT) · ระหว่าง need_info ไม่อนุมัติไม่ได้
 // รุ่น 3 (20261206010000_itwo_v3_request_info.sql): ถามผู้แจ้ง (app_itwo_request_info → need_info) · ผู้แจ้งตอบ (app_itwo_provide_info) · ไฟล์ของข้อความ (app_itwo_add_comment_attachment)
 // · get_detail มี comments / info_pending / info_return_status · รายการมี info_return_status + info_stage · pending_count ไม่นับ need_info
 //
@@ -49,7 +50,7 @@ export function createItwoMock(env) {
   // ทีม IT ที่ seed ไว้ (SBX-IT-ADMIN, SBX-IT-APPROVER) · ค่าเริ่มต้นของโหมดทดสอบ
   const staff = [
     { employee_id: "persona-it-admin", employee_no: "SBX-IT-ADMIN", full_name: "ทดสอบ IT ผู้ดูแลงาน", department_name: "เทคโนโลยีสารสนเทศ", is_it_admin: true, is_it_approver: false, is_active: false },
-    { employee_id: "persona-it-approver", employee_no: "SBX-IT-APPROVER", full_name: "ทดสอบ ผู้อนุมัติขั้น IT", department_name: "ฝ่ายบริหาร", is_it_admin: true, is_it_approver: true, is_active: false },
+    { employee_id: "persona-it-approver", employee_no: "SBX-IT-APPROVER", full_name: "ทดสอบ ผู้อนุมัติขั้น IT", department_name: "ฝ่ายบริหาร", is_it_admin: false, is_it_approver: true, is_active: false },
   ];
 
   const nameOf = (persona) => `${persona.first_name} ${persona.last_name}`;
@@ -94,7 +95,7 @@ export function createItwoMock(env) {
     const approvers = deptApprovers(order.department_code);
     const hasDeptApprovers = approvers.some((id) => id !== order.requester_id);
     const actorIsDeptRole = approvers.includes(who.id);
-    // need_info อยู่ในกลุ่มนี้ด้วย: ระหว่างรอผู้แจ้งตอบ ผู้อนุมัติยัง "ไม่อนุมัติ" ได้ (อนุมัติไม่ได้ ดู allowed / decide)
+    // need_info อยู่ในกลุ่มนี้ด้วย: ใบยังโผล่ในรายการของขั้นที่ถาม แต่ระหว่างรอผู้แจ้งตอบ ทั้งอนุมัติและไม่อนุมัติไม่ได้ (รุ่น 1.02 ดู allowed / decide)
     const open = order.requester_id !== who.id && ["pending_dept", "pending_it_mgr", "in_progress", "need_info"].includes(order.status) && !rejected;
     return {
       canDept: open && !deptIsIt && actorIsDeptRole && !deptDone,
@@ -112,16 +113,18 @@ export function createItwoMock(env) {
     if (["approved", "in_progress"].includes(order.status) && isItAdmin(who)) return "it";
     return null;
   }
-  // ตรงกับ private.itwo_allowed_actions (รุ่น 3: request_info / provide_info · need_info ผู้อนุมัติเหลือแค่ reject · ผู้แจ้งยกเลิกได้)
+  // ตรงกับ private.itwo_allowed_actions (รุ่น 3: request_info / provide_info · รุ่น 1.02: need_info ผู้อนุมัติไม่มี approve/reject · ผู้แจ้งยกเลิกได้)
   function allowed(order, who) {
     const list = [];
     const admin = isItAdmin(who);
     const pending = ["pending_dept", "pending_it_mgr"].includes(order.status);
     const { deptDone, itDone } = stateOf(order);
     // การรับงานเป็นขั้นสุดท้ายเสมอ: ใบที่ IT เคยปิดงานแล้ว (มี completed) ไม่ส่ง cancel แม้กลับมา in_progress เพราะขอแก้ไขงาน
-    if (order.requester_id === who.id && ["pending_dept", "pending_it_mgr", "approved", "in_progress", "need_info"].includes(order.status) && !hasCompleted(order)) list.push("cancel");
+    // รุ่น 1.02: ผู้ดูแลงาน IT ยกเลิกแทนผู้แจ้งได้เฉพาะใบ need_info (ที่ไม่เคยมี completed)
+    if (((order.requester_id === who.id && ["pending_dept", "pending_it_mgr", "approved", "in_progress", "need_info"].includes(order.status)) || (admin && order.status === "need_info")) && !hasCompleted(order)) list.push("cancel");
     const c = caps(order, who);
-    if (c.canDept || c.canIt) list.push(...(order.status === "need_info" ? ["reject"] : ["approve", "reject"]));
+    // รุ่น 1.02: ระหว่างรอผู้แจ้งตอบ (need_info) ผู้อนุมัติทั้งอนุมัติและไม่อนุมัติไม่ได้ (ต้องรอคำตอบก่อน)
+    if ((c.canDept || c.canIt) && order.status !== "need_info") list.push("approve", "reject");
     if (admin && (order.status === "approved" || (order.is_urgent && pending))) list.push("start");
     if (admin && order.status === "in_progress" && deptDone && itDone) list.push("complete");
     if (order.requester_id === who.id && order.status === "it_closed") list.push("receive", "request_rework");
@@ -156,7 +159,7 @@ export function createItwoMock(env) {
     if (!approve && !reason) reject("กรุณาระบุเหตุผลที่ไม่อนุมัติ");
     const c = caps(order, who);
     if (!c.canDept && !c.canIt) reject("คุณไม่มีสิทธิ์อนุมัติใบสั่งงานนี้ในขั้นนี้ หรือใบนี้ไม่ได้อยู่ในขั้นที่รออนุมัติ", "42501");
-    if (approve && order.status === "need_info") reject("ใบสั่งงานนี้รอผู้แจ้งตอบคำถามอยู่ ต้องรอคำตอบก่อนจึงจะอนุมัติได้");
+    if (order.status === "need_info") reject(approve ? "ใบสั่งงานนี้รอผู้แจ้งตอบคำถามอยู่ ต้องรอคำตอบก่อนจึงจะอนุมัติได้" : "ใบนี้กำลังรอผู้แจ้งตอบคำถาม กรุณารอคำตอบก่อน");
     const { deptDone } = stateOf(order);
     if (approve) {
       if (c.canDept) addEvent(order, who, "dept_approved");
@@ -230,13 +233,18 @@ export function createItwoMock(env) {
     app_itwo_cancel({ p_work_order_id, p_reason }) {
       const who = actor();
       const order = find(p_work_order_id);
-      if (order.requester_id !== who.id) reject("เฉพาะผู้แจ้งเท่านั้นที่ยกเลิกใบสั่งงานได้", "42501");
+      // IT (ผู้ดูแลงาน) ยกเลิกแทนผู้แจ้งได้เฉพาะใบที่รอผู้แจ้งตอบ (need_info) · เหตุผลในประวัติขึ้นต้นด้วยคำนำหน้า เหมือนฐานข้อมูลจริง
+      const onBehalf = order.requester_id !== who.id;
+      if (onBehalf) {
+        if (!isItAdmin(who)) reject("เฉพาะผู้แจ้งเท่านั้นที่ยกเลิกใบสั่งงานได้", "42501");
+        if (["pending_dept", "pending_it_mgr", "approved", "in_progress", "it_closed"].includes(order.status)) reject("ผู้ดูแลงาน IT ยกเลิกแทนผู้แจ้งได้เฉพาะใบที่รอผู้แจ้งตอบ", "42501");
+      }
       if (order.status === "it_closed" || (["in_progress", "need_info"].includes(order.status) && hasCompleted(order))) reject("ใบนี้ IT ส่งงานแล้ว ถ้างานยังไม่เรียบร้อยให้กด แก้ไขงาน");
       if (!["pending_dept", "pending_it_mgr", "approved", "in_progress", "need_info"].includes(order.status)) reject("ใบสั่งงานนี้ไม่อยู่ในขั้นที่ทำรายการนี้ได้");
       if (!clean(p_reason)) reject("กรุณาระบุเหตุผลที่ยกเลิก");
       order.status = "cancelled";
       order.info_return_status = null;
-      addEvent(order, who, "cancelled", clean(p_reason));
+      addEvent(order, who, "cancelled", onBehalf ? `IT ยกเลิกแทนผู้แจ้ง: ${clean(p_reason)}` : clean(p_reason));
       return null;
     },
     app_itwo_start({ p_work_order_id }) {

@@ -830,6 +830,10 @@ a.register-title:hover { color: var(--primary); }
 .request-type-grid .type-card-body strong { font-size: var(--text-body); }
 .request-type-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .request-type-count { position: relative; z-index: 1; padding: 3px 9px; color: var(--mod-pill-ink); background: var(--mod-pill); border: 1px solid var(--mod-pill-edge); border-radius: var(--radius-pill); font-size: var(--text-caption); font-weight: 700; white-space: nowrap; }
+/* เลขเวอร์ชันของโมดูลบนการ์ด (ระบบสำนักงาน): มุมบนขวา เหนือป้ายตัวเลข · เฉพาะการ์ดที่โมดูลประกาศเลขไว้ */
+.request-type-top:has(.request-type-side) { align-items: flex-start; }
+.request-type-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.request-type-version { position: relative; z-index: 1; color: var(--mod-pill-ink); font-size: var(--text-caption); font-weight: 700; line-height: 1; opacity: .8; white-space: nowrap; }
 .request-type-card.selected { outline: 3px solid var(--m500); outline-offset: 4px; }
 .request-type-card:focus-visible { outline: 3px solid var(--primary); outline-offset: 4px; }
 /* ลิงก์ย้อนกลับเป็นตัวรอง: ไม่แย่งน้ำหนักกับปุ่มหลักของหน้า (เดิมทึบสีแบรนด์มีเงาเท่าปุ่มหลัก) */

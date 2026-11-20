@@ -18,7 +18,7 @@
   // เลขเวอร์ชันของโมดูล (แสดงมุมขวาล่างทุกหน้า) รูปแบบ <ใหญ่>.<ย่อย 2 หลัก> · เจ้าของตัดสิน 20/11/2026
   // อัปเดตย่อย (แก้คำ หน้าตา บั๊ก ช่องเล็ก ๆ) = +0.01 · อัปเดตใหญ่ (เปลี่ยนขั้นตอนงาน/สถานะ/ฟีเจอร์ใหม่ที่ผู้ใช้ต้องเรียนรู้) = ขึ้นหลักหน่วย .00
   // ถามเจ้าของทุกครั้งว่าเป็นอัปเดตย่อยหรือใหญ่ แล้วแก้ทั้งสองค่านี้ใน PR เดียวกับการเปลี่ยนแปลง (VERSION_DATE = วันที่ปล่อย YYYY-MM-DD)
-  const MODULE_VERSION = "1.01";
+  const MODULE_VERSION = "1.02";
   const VERSION_DATE = "2026-11-20";
   const DURATION_NOTE = "งานออกแบบ 3–7 วันนับจากวันที่ได้ข้อมูลครบ · งานเบ็ดเตล็ดตามตกลง";
 
@@ -65,7 +65,7 @@
     in_progress: "กำลังดำเนินการ",
     it_closed: "IT ส่งงาน (รอผู้แจ้งยืนยัน)",
     need_info: "รอผู้แจ้งตอบ",
-    received: "ได้รับงานแล้ว",
+    received: "จบงานแล้ว",
     rejected: "ไม่อนุมัติ",
     cancelled: "ยกเลิก",
   });
@@ -210,7 +210,7 @@
     reject: { label: "ไม่อนุมัติ", tone: "danger", rpc: "app_itwo_reject", done: "บันทึกการไม่อนุมัติแล้ว", reason: { title: "ไม่อนุมัติใบสั่งงานนี้?", label: "เหตุผลที่ไม่อนุมัติ", hint: "ใบนี้จะจบทันทีและเปิดใหม่ไม่ได้ ผู้แจ้งต้องแจ้งเป็นใบใหม่", confirmLabel: "ไม่อนุมัติ" } },
     start: { label: "เริ่มดำเนินการ", tone: "primary", rpc: "app_itwo_start", done: "เริ่มดำเนินการแล้ว", confirmTitle: "เริ่มดำเนินการใบสั่งงานนี้?", confirmMessage: "ระบบบันทึกว่าคุณเป็นผู้รับงานนี้ พร้อมวันและเวลา" },
     // "ถามผู้แจ้ง" / "ตอบคำถาม" ไม่ยิง RPC ทันที: เปิดฟอร์มข้อความ + ไฟล์ที่ module-itwo.js · inline = ฟอร์มตอบวาดเปิดไว้ในหน้าอยู่แล้ว ไม่มีปุ่มในแผงปุ่ม
-    request_info: { label: "ถามผู้แจ้ง", tone: "secondary", opens: "ask", rpc: "app_itwo_request_info", confirmTitle: "ส่งคำถามถึงผู้แจ้ง?", confirmMessage: "ใบจะเปลี่ยนเป็น รอผู้แจ้งตอบ และกลับมาดำเนินการต่อได้เมื่อผู้แจ้งตอบ ระหว่างนี้อนุมัติ เริ่มงาน หรือส่งงานไม่ได้ (ไม่อนุมัติได้) · ระบบบันทึกชื่อ วันที่ และเวลาของคุณไว้ในประวัติเอกสาร", confirmLabel: "ส่งคำถาม", done: "ส่งคำถามถึงผู้แจ้งแล้ว" },
+    request_info: { label: "ถามผู้แจ้ง", tone: "secondary", opens: "ask", rpc: "app_itwo_request_info", confirmTitle: "ส่งคำถามถึงผู้แจ้ง?", confirmMessage: "ใบจะเปลี่ยนเป็น รอผู้แจ้งตอบ และกลับมาดำเนินการต่อได้เมื่อผู้แจ้งตอบ ระหว่างนี้อนุมัติ ไม่อนุมัติ เริ่มงาน หรือส่งงานไม่ได้ ต้องรอคำตอบก่อน · ระบบบันทึกชื่อ วันที่ และเวลาของคุณไว้ในประวัติเอกสาร", confirmLabel: "ส่งคำถาม", done: "ส่งคำถามถึงผู้แจ้งแล้ว" },
     provide_info: { label: "ตอบคำถาม", tone: "primary", opens: "answer", inline: true, rpc: "app_itwo_provide_info", confirmTitle: "ส่งคำตอบ?", confirmMessage: "ใบจะกลับไปดำเนินการต่อทันที · ระบบบันทึกชื่อ วันที่ และเวลาของคุณไว้ในประวัติเอกสาร แก้ไขย้อนหลังไม่ได้", confirmLabel: "ส่งคำตอบ", done: "ส่งคำตอบแล้ว" },
     complete: { label: "ส่งงาน", tone: "success", rpc: "app_itwo_complete", done: "ส่งงานแล้ว รอผู้แจ้งยืนยันรับงาน", confirmTitle: "ส่งงานใบสั่งงานนี้?", confirmMessage: "เมื่อส่งงานแล้วใบจะส่งกลับให้ผู้แจ้งตรวจ ผู้แจ้งจะยืนยันรับงานหรือขอแก้ไขงานได้ และยกเลิกใบไม่ได้" },
     receive: { label: "ได้รับงานเรียบร้อยแล้ว", tone: "success", rpc: "app_itwo_receive", done: "ยืนยันรับงานแล้ว", confirmTitle: "ยืนยันว่าได้รับงานเรียบร้อยแล้ว?", confirmMessage: "ใบสั่งงานจะจบทันที ทำซ้ำหรือขอแก้ไขอีกไม่ได้" },
@@ -218,6 +218,16 @@
     request_rework: { label: "แก้ไขงาน", tone: "secondary", opens: "rework" },
     cancel: { label: "ยกเลิกใบสั่งงาน", tone: "danger", rpc: "app_itwo_cancel", done: "ยกเลิกใบสั่งงานแล้ว", reason: { title: "ยกเลิกใบสั่งงานนี้?", label: "เหตุผลที่ยกเลิก", hint: "ใบที่ยกเลิกแล้วเปิดใหม่ไม่ได้ ต้องแจ้งเป็นใบใหม่และได้เลขใหม่", confirmLabel: "ยกเลิกใบสั่งงาน" } },
   });
+  // IT (ผู้ดูแลงาน) ยกเลิกใบที่รอผู้แจ้งตอบ "แทนผู้แจ้ง" (รุ่น 1.02): ใช้ปุ่ม cancel เดิม RPC เดิม แต่ข้อความกล่องเหตุผลบอกว่าเป็นการยกเลิกแทน
+  // ฐานข้อมูลใส่คำนำหน้า "IT ยกเลิกแทนผู้แจ้ง: " (21 ตัวอักษร) ลงในเหตุผลของประวัติ จึงจำกัดเหตุผลฝั่งนี้ที่ 470 ตัว (ฐานข้อมูลรับได้ถึง 479)
+  const MAX_REASON_ON_BEHALF = 470;
+  const CANCEL_ON_BEHALF = Object.freeze({ title: "ยกเลิกใบสั่งงานแทนผู้แจ้ง?", label: "เหตุผลที่ยกเลิกแทนผู้แจ้ง", hint: "ใบนี้กำลังรอผู้แจ้งตอบ ระบบบันทึกชื่อคุณว่าเป็นผู้ยกเลิกแทนผู้แจ้งพร้อมเหตุผลนี้ ใบที่ยกเลิกแล้วเปิดใหม่ไม่ได้ ผู้แจ้งต้องแจ้งเป็นใบใหม่", confirmLabel: "ยกเลิกแทนผู้แจ้ง", maxLength: MAX_REASON_ON_BEHALF });
+  // ผู้ที่ไม่ใช่ผู้แจ้งแต่ได้ปุ่ม cancel = IT ยกเลิกแทน (ฐานข้อมูลเป็นตัวตัดสินสิทธิ์จริง) · role = app_itwo_my_role, detail = app_itwo_get_detail
+  const isCancelOnBehalf = (detail, role) => Boolean(role?.employee_no) && Boolean(detail?.requester?.employee_no) && role.employee_no !== detail.requester.employee_no;
+  // ค่ากล่องเหตุผลของปุ่ม cancel: ผู้แจ้งใช้ของเดิม · IT ยกเลิกแทนใช้ข้อความเฉพาะ
+  function cancelReasonSpec(detail, role) {
+    return isCancelOnBehalf(detail, role) ? CANCEL_ON_BEHALF : { ...ACTION_BUTTONS.cancel.reason, maxLength: MAX_REASON };
+  }
   const ACTION_ORDER = Object.freeze(["approve", "reject", "request_info", "start", "complete", "receive", "request_rework", "provide_info", "cancel"]);
   // allowed = allowed_actions จาก app_itwo_get_detail · action ที่ไม่รู้จัก (เช่น edit_access ของรุ่นเก่า ซึ่งถอดออกแล้ว) ไม่ขึ้นเป็นปุ่ม
   function actionButtons(allowed) {
@@ -263,6 +273,12 @@
     info_provided: "ผู้แจ้งตอบคำถาม",
   });
   const eventLabel = (action) => EVENT_LABELS[action] ?? action ?? "";
+  // ป้ายในไทม์ไลน์: ยกเลิกโดยคนที่ไม่ใช่ผู้แจ้ง = IT ยกเลิกแทน (ชื่อผู้ทำแสดงตามจริงอยู่แล้วที่บรรทัด "โดย")
+  const CANCELLED_ON_BEHALF_LABEL = "IT ยกเลิกแทนผู้แจ้ง";
+  function eventLabelFor(event, requester) {
+    if (event?.action === "cancelled" && requester?.employee_no && event.actor_employee_no && event.actor_employee_no !== requester.employee_no) return CANCELLED_ON_BEHALF_LABEL;
+    return eventLabel(event?.action);
+  }
 
   // ช่องลายเซ็นบนฟอร์ม (ตามลำดับบนกระดาษ) ใช้ event แรกของแต่ละการกระทำ ยังไม่มี = เว้นช่อง
   const SIGNATURE_SLOTS = Object.freeze([
@@ -692,12 +708,12 @@
   }
 
   const api = {
-    MODULE_VERSION, VERSION_DATE, YEAR_OFFSET, MAX_INFO_BODY, MAX_DETAILS, MAX_ORDER_REF, MAX_ATTACHMENT_NOTE, MAX_REASON, MAX_MISC_DETAIL, MAX_FILES, MAX_FILE_BYTES, DURATION_NOTE,
+    MODULE_VERSION, VERSION_DATE, YEAR_OFFSET, MAX_INFO_BODY, MAX_DETAILS, MAX_ORDER_REF, MAX_ATTACHMENT_NOTE, MAX_REASON, MAX_REASON_ON_BEHALF, CANCEL_ON_BEHALF, isCancelOnBehalf, cancelReasonSpec, MAX_MISC_DETAIL, MAX_FILES, MAX_FILE_BYTES, DURATION_NOTE,
     REQUEST_TYPES, LEGACY_REQUEST_TYPES, ATTACHMENT_FLAGS, ACCESS_SYSTEMS, ACCESS_ACTIONS, FILE_MIME_BY_EXTENSION, FILE_ACCEPT, FILE_HINT, FILES_PREPARING_MESSAGE, EMPTY_REWORK_FORM, STATUS_LABELS, EVENT_LABELS, ACTION_BUTTONS, ACTION_ORDER, IT_GROUPS, EMPTY_ORDER_FORM, SIGNATURE_SLOTS, APPROVAL_STATE_LABELS,
     requestTypeLabel, printRequestTypes, requestTypeText, reworkTag, attachmentFlagLabel, accessSystemLabel, accessActionLabel, statusLabel, statusBadgeClass, myStatusLabel, isTestDoc, INFO_STAGE_LABELS, infoStageLabel, commentKindLabel, commentRows, allFiles, pendingQuestion, infoBadgeTitle,
     todayBangkok, formatDate, formatDateTime, isRealDate, charCount, clip,
     visibleTabs, readView, viewAllowed, workOrderUrl, isUuid,
-    actionButtons, countsAsBothSteps, confirmMessageFor, BOTH_STEPS_NOTE, completeToast, answerToast, pendingStepLabel, eventLabel, signatureSlots, approvalSummary,
+    actionButtons, countsAsBothSteps, confirmMessageFor, BOTH_STEPS_NOTE, completeToast, answerToast, pendingStepLabel, eventLabel, eventLabelFor, CANCELLED_ON_BEHALF_LABEL, signatureSlots, approvalSummary,
     itGroupOf, groupItOrders, itActionableCount, awaitingMyReceiveCount, awaitingMyAnswerCount, mineWaiting, mineWaitingNote, waitingForMeCount, itApprovalProgress, cardSummary,
     orderRules, createParams, validateReason, infoRules, infoParams,
     legacyAccessChanges, accessPrintRows,

@@ -10,7 +10,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(216);
+select plan(223);
 
 -- 1. โครงสร้าง ----------------------------------------------------------
 reset role;
@@ -34,7 +34,7 @@ select ok(array['ncr_reports','ncr_responsibilities','ncr_losses','ncr_status_hi
     'rf_molds','rf_material_lots','rf_requisitions','rf_lots','rf_transfers','rf_fg_boxes','rf_qc_records','rf_ncrs','rf_purchase_orders',
     'client_error_logs','itwo_work_orders','itwo_events','itwo_access_changes','itwo_doc_counters','itwo_admin_log',
     'itwo_reworks','itwo_attachments','itwo_comments'] <@ private.sandbox_unguarded_tables(), 'sandbox_unguarded_tables keeps every earlier name and adds itwo_comments');
-select is(cardinality(private.sandbox_unguarded_tables()), 59, 'sandbox_unguarded_tables has exactly the earlier 58 names plus itwo_comments');
+select ok(array['itwo_work_orders', 'itwo_events', 'itwo_access_changes', 'itwo_doc_counters', 'itwo_admin_log', 'itwo_reworks', 'itwo_attachments', 'itwo_comments'] <@ private.sandbox_unguarded_tables(), 'every itwo table is registered in sandbox_unguarded_tables (no count check, so other modules can add tables)');
 select ok((select bool_and(p.prosecdef and p.proconfig @> array['search_path=""']) from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname in ('app_itwo_request_info', 'app_itwo_provide_info', 'app_itwo_add_comment_attachment')), 'the three new RPCs are SECURITY DEFINER with an empty search_path');
 select ok(not exists (select 1 from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname in ('app_itwo_request_info', 'app_itwo_provide_info', 'app_itwo_add_comment_attachment') and (has_function_privilege('anon', p.oid, 'execute') or not has_function_privilege('authenticated', p.oid, 'execute'))), 'anon cannot execute the new RPCs and authenticated can');
 select ok(not exists (select 1 from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname like 'app\_itwo\_%' and (has_function_privilege('anon', p.oid, 'execute') or not has_function_privilege('authenticated', p.oid, 'execute'))), 'after the drop/create of the list RPCs no itwo RPC is executable by anon');
@@ -117,8 +117,9 @@ select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'info_pendi
 select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'comments'->0->>'body', repeat('ข', 1980) || ' <b>ขอไฟล์</b>', 'the question body is stored as typed (the page escapes it)');
 select is((select e->>'reason' from jsonb_array_elements(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'events') e where e->>'action' = 'info_requested'), 'ถามผู้แจ้ง (ผู้จัดการแผนก): ' || repeat('ข', 300), 'the event info_requested names the step and keeps the first 300 characters');
 select throws_ok($$ select public.app_itwo_request_info(current_setting('t.o1')::uuid, 'ถามซ้ำ') $$, '23514', 'ใบสั่งงานนี้มีคำถามที่รอผู้แจ้งตอบอยู่แล้ว ถามเพิ่มได้หลังผู้แจ้งตอบ', 'only one open question at a time');
-select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_actions', '["reject"]'::jsonb, 'while waiting for the answer the manager can only reject');
+select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_actions', '[]'::jsonb, 'while waiting for the answer the manager can neither approve nor reject (v4: must wait for the answer)');
 select throws_ok($$ select public.app_itwo_approve(current_setting('t.o1')::uuid) $$, '23514', 'ใบสั่งงานนี้รอผู้แจ้งตอบคำถามอยู่ ต้องรอคำตอบก่อนจึงจะอนุมัติได้', 'approving is refused while the question is open');
+select throws_ok($$ select public.app_itwo_reject(current_setting('t.o1')::uuid, 'ไม่อนุมัติระหว่างรอ') $$, '23514', 'ใบนี้กำลังรอผู้แจ้งตอบคำถาม กรุณารอคำตอบก่อน', 'rejecting is refused while the question is open (v4)');
 select is(public.app_itwo_pending_count(), 0, 'pending_count does not count an order that waits for the requester');
 select is((select status || '/' || info_stage || '/' || info_return_status || '/' || pending_step from public.app_itwo_list_pending_approvals() where id = current_setting('t.o1')::uuid), 'need_info/dept/pending_dept/dept', 'the approvals list still shows it (status need_info, stage dept)');
 set local role authenticated;
@@ -238,8 +239,9 @@ select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_ac
 select lives_ok($$ select public.app_itwo_request_info(current_setting('t.o1')::uuid, 'ขั้น IT ขอรายละเอียดเพิ่ม') $$, 'the IT approver asks');
 select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'info_pending'->>'stage', 'it_mgr', 'the question belongs to the IT approval step');
 select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->>'info_return_status', 'pending_it_mgr', 'and the order returns to pending_it_mgr');
-select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_actions', '["reject"]'::jsonb, 'the IT approver can only reject while waiting');
+select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_actions', '["cancel"]'::jsonb, 'the IT approver (who is also an IT admin here) can neither approve nor reject while waiting; only the v4.1 cancel on behalf of the requester is left');
 select throws_ok($$ select public.app_itwo_approve(current_setting('t.o1')::uuid) $$, '23514', 'ใบสั่งงานนี้รอผู้แจ้งตอบคำถามอยู่ ต้องรอคำตอบก่อนจึงจะอนุมัติได้', 'the IT approver cannot approve while waiting');
+select throws_ok($$ select public.app_itwo_reject(current_setting('t.o1')::uuid, 'ไม่อนุมัติระหว่างรอ') $$, '23514', 'ใบนี้กำลังรอผู้แจ้งตอบคำถาม กรุณารอคำตอบก่อน', 'the IT approver cannot reject while the question is open either (v4)');
 select is((select pending_step || '/' || info_stage from public.app_itwo_list_pending_approvals() where id = current_setting('t.o1')::uuid), 'it_mgr/it_mgr', 'the approvals list of the IT approver shows the waiting order of their step');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"3d700000-0000-0000-0000-000000000003","role":"authenticated"}', true);
@@ -259,11 +261,11 @@ select set_config('request.jwt.claims', '{"sub":"3d700000-0000-0000-0000-0000000
 select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_actions', '["start", "request_info"]'::jsonb, 'IT admin can start or ask on an approved order');
 select lives_ok($$ select public.app_itwo_request_info(current_setting('t.o1')::uuid, 'IT ขอข้อมูลก่อนเริ่ม') $$, 'IT admin asks before starting');
 select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'info_pending'->>'stage', 'it', 'the question belongs to the IT team');
-select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_actions', '[]'::jsonb, 'IT has no action while waiting');
+select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_actions', '["cancel"]'::jsonb, 'IT has no action while waiting except the v4.1 cancel on behalf of the requester');
 select throws_ok($$ select public.app_itwo_start(current_setting('t.o1')::uuid) $$, '23514', 'ใบสั่งงานนี้รอผู้แจ้งตอบคำถามอยู่ ต้องรอคำตอบก่อนจึงจะทำรายการนี้ได้', 'IT cannot start while waiting');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"3d700000-0000-0000-0000-000000000005","role":"authenticated"}', true);
-select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_actions', '[]'::jsonb, 'the approvers have nothing to decide on an approved order that waits for an answer');
+select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_actions', '["cancel"]'::jsonb, 'the approvers have nothing to decide on an approved order that waits for an answer (an IT admin may only cancel on behalf, v4.1)');
 select throws_ok($$ select public.app_itwo_reject(current_setting('t.o1')::uuid, 'ไม่อนุมัติทีหลัง') $$, '23514', 'ใบสั่งงานนี้ผู้อนุมัติขั้น IT พิจารณาไปแล้ว', 'an approved order cannot be rejected through the IT question');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"3d700000-0000-0000-0000-000000000001","role":"authenticated"}', true);
@@ -319,7 +321,20 @@ select set_config('request.jwt.claims', '{"sub":"3d700000-0000-0000-0000-0000000
 select lives_ok($$ select public.app_itwo_request_info(current_setting('t.o2')::uuid, 'ขอเหตุผลที่ต้องทำ') $$, 'the manager asks on the second order');
 select lives_ok($$ select public.app_itwo_request_info(current_setting('t.o3')::uuid, 'ขอเหตุผลที่ต้องทำ') $$, 'the manager asks on the third order');
 select throws_ok($$ select public.app_itwo_reject(current_setting('t.o2')::uuid, ' ') $$, '23514', 'กรุณาระบุเหตุผลที่ไม่อนุมัติ', 'rejecting while waiting still needs a reason');
-select lives_ok($$ select public.app_itwo_reject(current_setting('t.o2')::uuid, 'ไม่จำเป็น') $$, 'the manager rejects while waiting for the answer');
+select throws_ok($$ select public.app_itwo_reject(current_setting('t.o2')::uuid, 'ไม่จำเป็น') $$, '23514', 'ใบนี้กำลังรอผู้แจ้งตอบคำถาม กรุณารอคำตอบก่อน', 'the manager cannot reject while waiting for the answer (v4)');
+select is(public.app_itwo_get_detail(current_setting('t.o2')::uuid)->>'status', 'need_info', 'the refused rejection left the order waiting for the answer');
+select is(public.app_itwo_get_detail(current_setting('t.o2')::uuid)->>'info_return_status', 'pending_dept', 'and the return status is kept');
+-- ด่านซ้อนที่ระดับตาราง: need_info -> rejected ถูก guard ปฏิเสธ แม้เขียนตรง (รุ่น 3 อนุญาต รุ่น 1.02 ไม่)
+reset role;
+select set_config('request.jwt.claims', '', true);
+select throws_ok($$ update public.itwo_work_orders set status = 'rejected', info_return_status = null where id = current_setting('t.o2')::uuid $$, '23514', 'เปลี่ยนสถานะใบสั่งงานจาก need_info เป็น rejected ไม่ได้', 'the table guard no longer allows need_info -> rejected (v4)');
+-- ผู้แจ้งตอบแล้วผู้จัดการจึงไม่อนุมัติได้
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"3d700000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+select lives_ok($$ select public.app_itwo_provide_info(current_setting('t.o2')::uuid, 'เพราะลูกค้าสั่ง') $$, 'the requester answers the second order');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"3d700000-0000-0000-0000-000000000003","role":"authenticated"}', true);
+select lives_ok($$ select public.app_itwo_reject(current_setting('t.o2')::uuid, 'ไม่จำเป็น') $$, 'after the answer the manager rejects');
 select is(public.app_itwo_get_detail(current_setting('t.o2')::uuid)->>'status', 'rejected', 'the order is rejected (ends)');
 select is(public.app_itwo_get_detail(current_setting('t.o2')::uuid)->'info_return_status', 'null'::jsonb, 'the return status is cleared on reject');
 set local role authenticated;
@@ -373,7 +388,7 @@ select is(public.app_itwo_get_detail(current_setting('t.o5')::uuid)->'allowed_ac
 select lives_ok($$ select public.app_itwo_request_info(current_setting('t.o5')::uuid, 'IT ถามงานด่วน') $$, 'IT asks on the started urgent order');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"3d700000-0000-0000-0000-000000000003","role":"authenticated"}', true);
-select is(public.app_itwo_get_detail(current_setting('t.o5')::uuid)->'allowed_actions', '["reject"]'::jsonb, 'while IT waits for the answer the manager can only reject');
+select is(public.app_itwo_get_detail(current_setting('t.o5')::uuid)->'allowed_actions', '[]'::jsonb, 'while IT waits for the answer the manager can neither approve nor reject (v4)');
 select is(public.app_itwo_pending_count(), 0, 'and it is not counted as waiting for the manager');
 
 -- 13. ลายเซ็นเดิมของ app_itwo_add_attachment ยังใช้ได้ (ใบรอผู้แจ้งตอบ ภายใน 30 นาที) --------

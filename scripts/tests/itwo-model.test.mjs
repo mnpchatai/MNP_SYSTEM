@@ -275,7 +275,7 @@ test("every status has a Thai label and a badge class that the stylesheet alread
     assert.ok(model.statusBadgeClass(status), status);
   }
   assert.equal(model.statusLabel("pending_dept"), "รอผู้จัดการแผนก");
-  assert.equal(model.statusLabel("received"), "ได้รับงานแล้ว");
+  assert.equal(model.statusLabel("received"), "จบงานแล้ว");
   assert.equal(model.statusLabel("unknown_status"), "unknown_status", "an unknown status is shown as-is, never hidden");
   assert.equal(model.statusLabel(null), "");
   assert.equal(model.myStatusLabel("it_closed"), "IT ส่งงานแล้ว รอคุณยืนยัน", "the requester sees whose turn it is");
@@ -302,6 +302,29 @@ const EVENTS = [
   { id: 3, action: "it_mgr_approved", reason: null, created_at: "2026-11-19T03:00:00Z", actor_full_name: "รสริน เชน" },
   { id: 4, action: "started", reason: null, created_at: "2026-11-19T04:00:00Z", actor_full_name: "ไอที หนึ่ง" },
 ];
+
+test("a cancel by someone other than the requester is labelled as IT cancelling on behalf; the requester's own cancel keeps the original label", () => {
+  const requester = { employee_no: "MK1", full_name: "สมชาย ใจดี" };
+  assert.equal(model.eventLabelFor({ action: "cancelled", actor_employee_no: "SBX-IT-ADMIN" }, requester), "IT ยกเลิกแทนผู้แจ้ง");
+  assert.equal(model.eventLabelFor({ action: "cancelled", actor_employee_no: "MK1" }, requester), "ผู้แจ้งยกเลิก");
+  assert.equal(model.eventLabelFor({ action: "cancelled" }, requester), "ผู้แจ้งยกเลิก", "unknown actor keeps the plain label");
+  assert.equal(model.eventLabelFor({ action: "cancelled", actor_employee_no: "X" }, null), "ผู้แจ้งยกเลิก", "unknown requester keeps the plain label");
+  assert.equal(model.eventLabelFor({ action: "started", actor_employee_no: "SBX-IT-ADMIN" }, requester), "IT เริ่มดำเนินการ", "other actions are unchanged");
+});
+
+test("cancel reason dialog: the requester gets the original, IT cancelling for the requester gets the on-behalf wording and a shorter limit", () => {
+  const detail = { requester: { employee_no: "MK1" } };
+  const own = model.cancelReasonSpec(detail, { employee_no: "MK1" });
+  assert.equal(own.title, "ยกเลิกใบสั่งงานนี้?");
+  assert.equal(own.maxLength, model.MAX_REASON);
+  const onBehalf = model.cancelReasonSpec(detail, { employee_no: "SBX-IT-ADMIN" });
+  assert.equal(onBehalf.title, "ยกเลิกใบสั่งงานแทนผู้แจ้ง?");
+  assert.match(onBehalf.hint, /ยกเลิกแทนผู้แจ้ง/);
+  assert.equal(onBehalf.maxLength, model.MAX_REASON_ON_BEHALF);
+  // ฐานข้อมูลเติมคำนำหน้า 21 ตัวอักษร ต้องไม่เกิน 500 รวมกัน
+  assert.ok(model.MAX_REASON_ON_BEHALF + [..."IT ยกเลิกแทนผู้แจ้ง: "].length <= model.MAX_REASON);
+  assert.equal(model.cancelReasonSpec({}, {}).title, "ยกเลิกใบสั่งงานนี้?", "unknown people fall back to the requester wording");
+});
 
 test("every history action has a Thai label", () => {
   for (const action of ["created", "dept_approved", "dept_rejected", "it_mgr_approved", "it_mgr_rejected", "cancelled", "started", "completed", "received", "rework_requested", "info_requested", "info_provided"]) {
@@ -821,4 +844,22 @@ test("approving as the IT-step approver while the department step is still open 
 test("the module version is <major>.<two-digit minor> with a real release date (owner's rule 20/11/2026)", () => {
   assert.match(model.MODULE_VERSION, /^[1-9]\d*\.\d{2}$/);
   assert.ok(model.isRealDate(model.VERSION_DATE));
+});
+
+/* ---------- รุ่น 1.02 (20/11/2026) ---------- */
+test("v1.02: the module version is 1.02, 'received' is labelled 'จบงานแล้ว' with its own badge, and the event wording is unchanged", () => {
+  assert.equal(model.MODULE_VERSION, "1.02");
+  assert.equal(model.statusLabel("received"), "จบงานแล้ว");
+  assert.equal(model.myStatusLabel("received"), "จบงานแล้ว");
+  assert.equal(model.statusBadgeClass("received"), "completed");
+  assert.equal(model.eventLabel("received"), "ผู้แจ้งยืนยันรับงาน", "the timeline keeps the event wording");
+  assert.equal(model.ACTION_BUTTONS.receive.label, "ได้รับงานเรียบร้อยแล้ว", "the button keeps its label");
+  assert.ok(!Object.values(model.STATUS_LABELS).includes("ได้รับงานแล้ว"), "the old label is gone");
+});
+
+test("v1.02: the ask confirmation no longer tells the approver they can reject while waiting, and a waiting order offers no decision button", () => {
+  assert.doesNotMatch(model.ACTION_BUTTONS.request_info.confirmMessage, /ไม่อนุมัติได้/);
+  assert.match(model.ACTION_BUTTONS.request_info.confirmMessage, /อนุมัติ ไม่อนุมัติ เริ่มงาน หรือส่งงานไม่ได้ ต้องรอคำตอบก่อน/);
+  // allowed_actions ของใบ need_info (ผู้อนุมัติ) มาจากฐานข้อมูลเป็น [] · ปุ่มมาจาก allowed_actions เท่านั้น
+  assert.deepEqual(model.actionButtons([]), []);
 });

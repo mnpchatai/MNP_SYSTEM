@@ -34,7 +34,7 @@ select ok(not exists (select 1 from pg_proc p where p.pronamespace = 'private'::
 select ok(not exists (select 1 from private.lab_only_unguarded_functions() f where f like '%itwo%'), 'every itwo RPC has the lab-only guard');
 select ok(position('Asia/Bangkok' in pg_get_functiondef('private.itwo_next_doc_no(boolean, timestamptz)'::regprocedure)) > 0, 'the document year is computed in Asia/Bangkok time');
 select is((select count(*)::int from public.employees where is_test and employee_no in ('SBX-IT-STAFF', 'SBX-IT-ADMIN', 'SBX-IT-APPROVER') and not is_active and auth_user_id is null), 3, 'the three IT test personas exist and cannot log in');
-select is((select count(*)::int from public.itwo_staff s join public.employees e on e.id = s.employee_id where e.employee_no in ('SBX-IT-ADMIN', 'SBX-IT-APPROVER') and s.is_it_admin and (s.is_it_approver = (e.employee_no = 'SBX-IT-APPROVER'))), 2, 'the IT test personas have the matching IT rights (admin, admin + approver)');
+select is((select count(*)::int from public.itwo_staff s join public.employees e on e.id = s.employee_id where e.employee_no in ('SBX-IT-ADMIN', 'SBX-IT-APPROVER') and (s.is_it_admin = (e.employee_no = 'SBX-IT-ADMIN')) and (s.is_it_approver = (e.employee_no = 'SBX-IT-APPROVER'))), 2, 'the IT test personas have the matching IT rights (admin only / approver only: the IT approver does not do the IT work, v4)');
 select is((select d.code from public.employees e join public.departments d on d.id = e.department_id where e.employee_no = 'SBX-IT-STAFF'), 'IT', 'SBX-IT-STAFF is in the IT department');
 
 -- 2. ข้อมูลทดสอบ (ผู้ใช้จริง ไม่ใช่ persona) — แผนกใหม่ 6 แผนก ----------
@@ -605,7 +605,7 @@ select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-0000000
 select throws_ok($$ select count(*) from public.app_itwo_list_it() $$, '42501', 'เฉพาะทีม IT เท่านั้นที่ดูรายการงานทั้งหมดได้', 'a removed member loses access');
 reset role;
 select set_config('request.jwt.claims', '', true);
-select is((select string_agg(action, ',' order by id) from public.itwo_admin_log where action like 'staff\_%'), 'staff_added,staff_changed,staff_removed', 'each change is logged');
+select is((select string_agg(action, ',' order by id) from public.itwo_admin_log where action like 'staff\_%' and not is_test), 'staff_added,staff_changed,staff_removed', 'each change is logged (the v4 migration also logged one test-persona change as a test row)');
 select is((select detail->>'employee_no' from public.itwo_admin_log where action = 'staff_added'), 'ITWO-REQ2', 'the log names the employee');
 select is((select a.employee_no from public.itwo_admin_log l join public.employees a on a.id = l.actor_id where l.action = 'staff_added'), 'ITWO-ADM', 'the log names who made the change');
 select throws_ok($$ update public.itwo_admin_log set action = 'doc_seq_set' $$, '42501', 'ประวัติการดำเนินการแก้ไขย้อนหลังไม่ได้ (บันทึกสำหรับ ISO)', 'the admin log cannot be updated');
@@ -716,7 +716,7 @@ select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-0000000
 select lives_ok($$ select public.app_sandbox_exit() $$, 'the admin leaves the test mode');
 select throws_ok($$ select public.app_sandbox_purge_itwo() $$, null, 'SANDBOX_NOT_ACTIVE', 'the purge only works from inside the test mode');
 select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_zt_staff')::uuid) $$, 'the admin re-enters the test mode');
-select is((public.app_sandbox_purge_itwo()->>'deleted')::int, 14, 'the purge deletes every test row (requests, history, access rows, log, counters)');
+select is((public.app_sandbox_purge_itwo()->>'deleted')::int, 15, 'the purge deletes every test row (requests, history, access rows, log including the row written by the v4 migration, counters)');
 reset role;
 select set_config('request.jwt.claims', '', true);
 select is((select count(*)::int from public.itwo_work_orders where is_test) + (select count(*)::int from public.itwo_events where is_test) + (select count(*)::int from public.itwo_access_changes where is_test) + (select count(*)::int from public.itwo_admin_log where is_test) + (select count(*)::int from public.itwo_doc_counters where is_test), 0, 'no test row is left');
