@@ -817,3 +817,8 @@ test("approving as the IT-step approver while the department step is still open 
   assert.equal(model.confirmMessageFor("start", open, itApprover), model.ACTION_BUTTONS.start.confirmMessage);
   assert.equal(model.confirmMessageFor("unknown", open, itApprover), "");
 });
+
+test("the module version is <major>.<two-digit minor> with a real release date (owner's rule 20/11/2026)", () => {
+  assert.match(model.MODULE_VERSION, /^[1-9]\d*\.\d{2}$/);
+  assert.ok(model.isRealDate(model.VERSION_DATE));
+});

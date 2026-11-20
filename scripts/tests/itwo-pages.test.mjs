@@ -579,3 +579,12 @@ test("settings: the staff form is a searchable list of employees when there is o
   assert.match(test, /<select[^>]*id="itwo-staff-no"[^>]*disabled/);
   assert.match(test, /name="is_it_admin" disabled/);
 });
+
+test("every page of the module ends with the version tag at the bottom right, not printed on the A4 sheet", () => {
+  const model = globalThis.MNP_ITWO_MODEL;
+  const html = pages.page("<p>เนื้อหา</p>");
+  assert.match(html, new RegExp(`<p>เนื้อหา</p><p class="itwo-version no-print" title="ใบสั่งงาน IT เวอร์ชัน ${model.MODULE_VERSION.replace(".", "\\.")} · อัปเดต ${model.formatDate(model.VERSION_DATE)}">V${model.MODULE_VERSION.replace(".", "\\.")}</p></div>$`));
+  assert.equal((html.match(/itwo-version/g) ?? []).length, 1);
+  const css = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
+  assert.match(css, /\.itwo-version \{[^}]*text-align: right/);
+});

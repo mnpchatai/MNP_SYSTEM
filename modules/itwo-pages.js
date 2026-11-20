@@ -70,7 +70,9 @@
   }
 
   // ครอบทั้งหน้าด้วยจานสีของโมดูล + ข้อความข้อผิดพลาดของหน้า (ข้อความเดียว อยู่เหนือเนื้อหา)
-  const page = (inner) => `<div class="itwo-page" data-module="${PALETTE}">${inner}</div>`;
+  // เลขเวอร์ชันของโมดูลท้ายหน้า ชิดขวา (ไม่พิมพ์ลงใบ A4) · วันที่ปล่อยอยู่ใน title ไม่เป็นข้อความถาวร
+  const versionTag = () => `<p class="itwo-version no-print" title="ใบสั่งงาน IT เวอร์ชัน ${esc(model.MODULE_VERSION)} · อัปเดต ${esc(model.formatDate(model.VERSION_DATE))}">V${esc(model.MODULE_VERSION)}</p>`;
+  const page = (inner) => `<div class="itwo-page" data-module="${PALETTE}">${inner}${versionTag()}</div>`;
   const errorCard = (message, { retry = true } = {}) => `<section class="card"><div class="form-message error" role="alert">${esc(message)}</div>${retry ? '<button class="btn secondary" type="button" id="itwo-retry">ลองอีกครั้ง</button>' : ""}</section>`;
 
   /* ---------- รายการ: ใบของฉัน / รออนุมัติ / งาน IT ---------- */
