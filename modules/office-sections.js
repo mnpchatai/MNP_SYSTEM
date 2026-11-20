@@ -68,19 +68,23 @@
 
   // การ์ดที่เปิดแล้วเป็นลิงก์ ส่วนที่ยังไม่เปิดเป็นการ์ดเฉย ๆ บอกสถานะครั้งเดียวที่มุมขวาบน (ไม่ใส่ aria-disabled เพราะไม่ใช่ตัวควบคุม)
   // badge ของการ์ดที่เปิดแล้ว (เช่น "2 ยังไม่จบ") อยู่ช่องเดียวกัน
-  function cardHtml({ href, label, palette, icon, action, badge, title = "" }) {
+  // version = เลขเวอร์ชันของโมดูลที่การ์ดพาไป (เช่น "1.02") แสดงเป็น "V1.02" ที่มุมบนขวาของการ์ด เหนือป้าย badge · ไม่ระบุ = ไม่แสดง (โมดูลที่ไม่ประกาศเลขของตัวเอง)
+  function cardHtml({ href, label, palette, icon, action, badge, version = "", title = "" }) {
     const mark = `<span class="type-card-badge">${iconOf(icon)}</span>`;
     const watermark = `<span class="type-card-wm" aria-hidden="true">${iconOf(icon)}</span>`;
     const badgeHtml = badge ? `<span class="request-type-count">${esc(badge)}</span>` : "";
+    const versionHtml = version ? `<span class="request-type-version" title="เวอร์ชัน ${esc(version)}">V${esc(version)}</span>` : "";
+    // มีเลขเวอร์ชัน: ห่อเลขกับป้ายเป็นคอลัมน์ชิดขวา (เลขอยู่บนสุด) · ไม่มี: โครงเดิมทุกประการ
+    const side = versionHtml ? `<span class="request-type-side">${versionHtml}${badgeHtml}</span>` : badgeHtml;
     if (!href) {
       return `<div class="type-card request-type-card lab-module-card is-off" data-module="${palette}">
-        <span class="request-type-top">${mark}${badgeHtml}</span>
+        <span class="request-type-top">${mark}${side}</span>
         <span class="type-card-body"><strong>${esc(label)}</strong></span>
         ${watermark}
       </div>`;
     }
     return `<a class="type-card request-type-card lab-module-card" href="${esc(href)}" data-module="${palette}"${title ? ` title="${esc(title)}"` : ""}>
-        <span class="request-type-top">${mark}${badgeHtml}</span>
+        <span class="request-type-top">${mark}${side}</span>
         <span class="type-card-body"><strong>${esc(label)}</strong><small>${esc(action ?? "เปิด →")}</small></span>
         ${watermark}
       </a>`;
@@ -110,15 +114,16 @@
   // หน้าของ IT SUPPORT · repair = { href, count } ถ้าผู้ใช้เปิดใบแจ้งซ่อม IT ได้ · null = ไม่แสดงการ์ดนั้น
   // (แผนกที่ไม่มีสิทธิ์ IT_REPAIR หรือฐานข้อมูลปิดประเภทนี้) count = จำนวนใบที่ยังไม่จบ หรือ null ถ้านับไม่ได้
   // workOrder = { badge, title } ตัวเลขงานที่รอผู้ใช้บนการ์ดใบสั่งงาน IT (badge ว่าง/ไม่ระบุ = ไม่มีป้าย) · การ์ดเป็นลิงก์เสมอเมื่อแผนกมีสิทธิ์
-  function itSupportPage({ repair = null, workOrder = null, allowed = ALLOW_ALL } = {}) {
+  // versions = { <รหัสโมดูลของการ์ด>: "1.02" } เลขเวอร์ชันของโมดูลที่ประกาศไว้ (แต่ละโมดูลนับแยกกัน) · การ์ดที่ไม่มีเลขใน versions ไม่แสดงเลข
+  function itSupportPage({ repair = null, workOrder = null, versions = {}, allowed = ALLOW_ALL } = {}) {
     const cards = visibleCards(allowed).filter((card) => card.code !== "IT_REPAIR" || repair).map((card) => (card.code === "IT_REPAIR"
       ? cardHtml({
         href: repair.href, label: card.label, palette: card.palette, icon: card.icon, action: card.action,
-        badge: Number.isFinite(repair.count) ? `${repair.count} ยังไม่จบ` : "ดูสถานะ",
+        badge: Number.isFinite(repair.count) ? `${repair.count} ยังไม่จบ` : "ดูสถานะ", version: versions?.[card.code],
       })
       : cardHtml({
         href: card.open ? sectionUrl(WORK_ORDER) : "", label: card.label, palette: card.palette, icon: card.icon, action: card.action,
-        badge: workOrder?.badge || card.badge, title: workOrder?.title ?? "",
+        badge: workOrder?.badge || card.badge, version: versions?.[card.code], title: workOrder?.title ?? "",
       })));
     return `<div class="lab-page">
       ${moduleHead("it-support")}

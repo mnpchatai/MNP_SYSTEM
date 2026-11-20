@@ -192,11 +192,11 @@ test("the office module is standalone with a menu entry, sandbox for the work-or
 });
 
 /* ---------- ทดลองรันโมดูลจริงใน vm: ลงทะเบียน เมนู และหน้า ---------- */
-function setup({ employee, repairType = { id: "type-it", code: "IT_REPAIR" }, countResult = 5, itwoSummary = null, sandbox = false } = {}) {
+function setup({ employee, repairType = { id: "type-it", code: "IT_REPAIR" }, countResult = 5, itwoSummary = null, itwoVersion, sandbox = false } = {}) {
   const queries = [];
   const painted = { itwoRendered: [], html: "", active: null, title: null, notFound: 0, loading: 0, zooms: 0, queued: [], went: [] };
   // หน้าใบสั่งงาน IT จริงอยู่ที่ module-itwo.js (ทดสอบที่ itwo-module.test.mjs) ที่นี่ใช้ตัวแทนที่บันทึกการเรียกและคืนตัวเลขบนการ์ด
-  const window = { MNP_ITWO: { render: async (query) => { painted.itwoRendered.push(String(query)); }, loadCardSummary: async () => (itwoSummary instanceof Error ? Promise.reject(itwoSummary) : itwoSummary) } };
+  const window = { MNP_ITWO: { render: async (query) => { painted.itwoRendered.push(String(query)); }, loadCardSummary: async () => (itwoSummary instanceof Error ? Promise.reject(itwoSummary) : itwoSummary), version: itwoVersion } };
   const context = vm.createContext({
     window, console, URLSearchParams, Map, Set, isSandboxMode: () => sandbox,
     location: { hash: "#/office?module=it-support" },
@@ -479,4 +479,46 @@ test("in test mode IT SUPPORT shows only the work-order card and the chooser onl
   assert.doesNotMatch(visibleText(sandbox.painted.html), /HR/);
   assert.equal(count(sandbox.painted.html, /class="type-card request-type-card lab-module-card/g), 1);
   assert.deepEqual(sandbox.queries, []);
+});
+
+/* ---------- เลขเวอร์ชันบนการ์ด (รุ่น 1.02): มุมบนขวา เฉพาะโมดูลที่ประกาศเลขไว้ ---------- */
+test("a card shows the module version at its top right when the module declares one, above the count badge", () => {
+  const page = sections.itSupportPage({ repair: { href: "#/requests?type=abc", count: 3 }, workOrder: { badge: "2 รอคุณ" }, versions: { IT_WORK_ORDER: "1.02" } });
+  const card = page.slice(page.indexOf('href="#/office?module=work-order"'));
+  assert.match(card, /<span class="request-type-side"><span class="request-type-version" title="เวอร์ชัน 1\.02">V1\.02<\/span><span class="request-type-count">2 รอคุณ<\/span><\/span>/);
+  assert.equal(count(page, /request-type-version/g), 1, "one version on the page");
+  assert.equal(count(visibleText(page), /V1\.02/g), 1);
+});
+
+test("a card whose module does not declare a version shows none, and the markup is unchanged for it", () => {
+  const page = sections.itSupportPage({ repair: { href: "#/requests?type=abc", count: 3 }, versions: { IT_WORK_ORDER: "1.02" } });
+  const repair = page.slice(0, page.indexOf('href="#/office?module=work-order"'));
+  assert.doesNotMatch(repair, /request-type-version|request-type-side/, "the repair card declares no version");
+  assert.match(repair, /<span class="request-type-top"><span class="type-card-badge">[\s\S]*?<\/span><span class="request-type-count">3 ยังไม่จบ<\/span><\/span>/);
+  const none = sections.itSupportPage({ repair: { href: "#/requests?type=abc", count: 3 } });
+  assert.doesNotMatch(none, /request-type-version/);
+  assert.equal(sections.itSupportPage({ versions: {} }), sections.itSupportPage());
+  assert.match(sections.itSupportPage({ versions: { IT_WORK_ORDER: "1.02" } }), /request-type-version/, "version alone (no badge) still shows");
+});
+
+test("an unsafe version string is escaped", () => {
+  const page = sections.itSupportPage({ versions: { IT_WORK_ORDER: "<img src=x onerror=1>" } });
+  assert.doesNotMatch(page, /<img/);
+});
+
+test("module-office passes the work-order module version to the card; no declared version means no number", async () => {
+  const withVersion = setup({ employee: mt, itwoVersion: "1.02" });
+  await withVersion.open("module=it-support");
+  assert.match(withVersion.painted.html, />V1\.02<\/span>/);
+  assert.equal(count(withVersion.painted.html, /request-type-version/g), 1, "the repair card shows none");
+  const without = setup({ employee: mt });
+  await without.open("module=it-support");
+  assert.doesNotMatch(without.painted.html, /request-type-version/);
+});
+
+test("the stylesheet places the version column at the top right of the card", () => {
+  const css = read("styles.css");
+  assert.match(css, /\.request-type-side \{[^}]*flex-direction: column;[^}]*align-items: flex-end;/);
+  assert.match(css, /\.request-type-version \{/);
+  assert.match(css, /\.request-type-top:has\(\.request-type-side\) \{ align-items: flex-start; \}/);
 });

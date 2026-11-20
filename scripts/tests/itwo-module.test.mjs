@@ -403,7 +403,7 @@ test("a whole order walks from filing to 'received' through the buttons the deta
   assert.deepEqual(w.buttons(), ["receive", "request_rework"]);
   await w.click("receive");
   assert.deepEqual(w.buttons(), []);
-  assert.match(w.html, /ได้รับงานแล้ว/);
+  assert.match(w.html, /จบงานแล้ว/);
   const timeline = [...w.html.matchAll(/<strong>([^<]+)<\/strong><p class="timeline-item-detail">โดย ([^<]+)<\/p>/g)].map((match) => `${match[1]} / ${match[2]}`);
   assert.deepEqual(timeline, [
     "แจ้งงาน / สมชาย ใจดี", "ผู้จัดการแผนกอนุมัติ / สมหญิง ผู้จัดการ", "ผู้อนุมัติขั้น IT อนุมัติ / รสริน เชน",
@@ -483,7 +483,7 @@ test("'แก้ไขงาน': the button opens the form, the rework is sent 
   await w.open(query);
   assert.deepEqual(w.buttons(), ["receive", "request_rework"], "after the second close the requester can receive or ask again");
   await w.click("receive");
-  assert.match(w.html, /ได้รับงานแล้ว/);
+  assert.match(w.html, /จบงานแล้ว/);
   assert.deepEqual(w.buttons(), []);
 });
 
@@ -1320,7 +1320,7 @@ test("the requester sees the question first and answers it: the answer is confir
   assert.deepEqual(w.buttons(), ["request_info", "start"]);
 });
 
-test("an approver asks at their own stage: the order waits for the requester, the approver can only reject, and the approve RPC is refused", async () => {
+test("an approver asks at their own stage: the order waits for the requester, the approver has no approve or reject button, and both RPCs are refused (v1.02)", async () => {
   const w = world();
   const order = await w.create();
   w.as("mgr");
@@ -1329,11 +1329,14 @@ test("an approver asks at their own stage: the order waits for the requester, th
   w.elements["#itwo-ask-body"].value = "ใช้กับสินค้าตัวไหนครับ";
   await submitForm(w, "#itwo-ask-form");
   await flush();
-  assert.deepEqual(w.buttons(), ["reject"], "while waiting for the requester an approver may only reject");
+  assert.deepEqual(w.buttons(), [], "while waiting for the requester an approver can neither approve nor reject (v1.02: wait for the answer)");
   assert.match(visibleText(w.html), /ถาม · ผู้จัดการแผนก/);
   assert.doesNotMatch(visibleText(w.html), /ตอบแล้วใบกลับไปที่/, "the return step is not repeated for the approver (the pending-steps line says it)");
   const refused = await w.context.sb.rpc("app_itwo_approve", { p_work_order_id: order.id });
   assert.match(refused.error.message, /รอผู้แจ้งตอบคำถามอยู่ ต้องรอคำตอบก่อนจึงจะอนุมัติได้/);
+  const refusedReject = await w.context.sb.rpc("app_itwo_reject", { p_work_order_id: order.id, p_reason: "ไม่อนุมัติระหว่างรอ" });
+  assert.match(refusedReject.error.message, /ใบนี้กำลังรอผู้แจ้งตอบคำถาม กรุณารอคำตอบก่อน/);
+  assert.equal(w.mock.handlers.app_itwo_get_detail({ p_work_order_id: order.id }).status, "need_info", "the refused rejection changed nothing");
   // ผู้แจ้งตอบ → ผู้จัดการอนุมัติได้อีก
   w.as("emp");
   await w.open(`view=order&id=${order.id}`);
@@ -1633,4 +1636,75 @@ test("the module never decides rights or document numbers itself, and keeps no s
   for (const name of new Set(called)) assert.equal(typeof mock.handlers[name], "function", `${name} exists in the mock`);
   for (const name of new Set(called)) assert.ok(migrations.includes(`function public.${name}(`), `${name} is in a migration`);
   for (const name of ["app_itwo_request_rework", "app_itwo_add_attachment", "app_itwo_request_info", "app_itwo_provide_info", "app_itwo_add_comment_attachment", "app_sandbox_purge_itwo"]) assert.ok(called.includes(name) || source.includes(name), `${name} is used by the module`);
+});
+
+// ---------- รุ่น 1.02 (20/11/2026): ผู้อนุมัติขั้น IT ที่ไม่ใช่ผู้ดูแลงาน IT · ป้ายจบงานแล้ว · เวอร์ชัน ----------
+const tabLabels = (html) => [...html.matchAll(/class="view-tab[^"]*"[^>]*>([^<]+)</g)].map((match) => match[1].trim());
+
+test("v1.02: the IT approver (not an IT admin) gets approvals and a read-only 'งาน IT' list with no work count, no settings tab, and the card does not count IT work for them", async () => {
+  const w = world();
+  await approvedOrder(w); // อนุมัติครบ รอ IT เริ่มทำ
+  w.as("itapp");
+  await w.open("view=it");
+  assert.deepEqual(tabLabels(w.html), ["ใบของฉัน", "รออนุมัติ", "งาน IT"], "no settings tab (that is for the IT admin)");
+  assert.match(w.html, /data-group="to_start"/, "the approver still sees the whole IT list");
+  assert.doesNotMatch(w.html, /itwo-tab-count/, "no IT work count: there is nothing for the approver to do there");
+  assert.equal((await w.context.window.MNP_ITWO.loadCardSummary()).badge, "", "the card does not count IT work for the approver");
+  w.calls.rpc.length = 0;
+  w.context.location.hash = "";
+  await w.open("view=settings");
+  assert.equal(w.hash, "#/office?module=work-order", "typing the settings URL sends the approver back to 'ใบของฉัน'");
+  assert.deepEqual(w.names(), ["app_itwo_my_role"]);
+  // เทียบกับผู้ดูแลงาน IT: เห็นตัวเลขงานค้างบนแท็บและการ์ด
+  w.as("itadm");
+  await w.open("view=it");
+  assert.deepEqual(tabLabels(w.html), ["ใบของฉัน", "งาน IT", "ตั้งค่า"]);
+  assert.match(w.html, /งาน IT <span class="itwo-tab-count"[^>]*>1<\/span>/);
+  assert.equal((await w.context.window.MNP_ITWO.loadCardSummary()).badge, "1 รอคุณ");
+});
+
+test("v1.02: the IT approver's buttons are approve / reject / ask at the IT step only; after the approval and while IT works only the IT admin has buttons", async () => {
+  const w = world();
+  const order = await w.create();
+  w.as("mgr");
+  await w.context.sb.rpc("app_itwo_approve", { p_work_order_id: order.id });
+  w.as("itapp");
+  await w.open(`view=order&id=${order.id}`);
+  assert.deepEqual(w.buttons(), ["approve", "reject", "request_info"], "at the IT step");
+  await w.context.sb.rpc("app_itwo_approve", { p_work_order_id: order.id });
+  await w.open(`view=order&id=${order.id}`);
+  assert.deepEqual(w.buttons(), [], "approved: the approver cannot start or ask (that is the IT work)");
+  w.as("itadm");
+  await w.open(`view=order&id=${order.id}`);
+  assert.deepEqual(w.buttons(), ["request_info", "start"]);
+  await w.context.sb.rpc("app_itwo_start", { p_work_order_id: order.id });
+  w.as("itapp");
+  await w.open(`view=order&id=${order.id}`);
+  assert.deepEqual(w.buttons(), [], "in progress: nothing for the approver");
+  const refused = await w.context.sb.rpc("app_itwo_complete", { p_work_order_id: order.id });
+  assert.match(refused.error.message, /ผู้ดูแลงาน IT|ส่งงานไม่ได้/, "the RPC refuses a non-admin delivering the work too");
+});
+
+test("v1.02: the status 'received' is labelled 'จบงานแล้ว' on the list, the detail, the timeline keeps 'ผู้แจ้งยืนยันรับงาน', the button keeps its label, and the print sheet says จบงานแล้ว", async () => {
+  const w = world();
+  const order = await closedOrder(w);
+  await w.open(`view=order&id=${order.id}`);
+  assert.deepEqual(w.buttons(), ["receive", "request_rework"]);
+  assert.match(w.html, /ได้รับงานเรียบร้อยแล้ว/, "the confirm button keeps its label");
+  await w.click("receive");
+  assert.match(visibleText(w.html), /จบงานแล้ว/);
+  assert.match(visibleText(w.html), /ผู้แจ้งยืนยันรับงาน/, "the timeline event keeps its wording");
+  assert.doesNotMatch(visibleText(w.html), /ได้รับงานแล้ว/, "the old status label is gone");
+  await w.open("");
+  assert.match(visibleText(w.html), /จบงานแล้ว/, "the list shows the new label");
+  const sheet = w.context.window.MNP_ITWO_PAGES.printSheet(w.mock.handlers.app_itwo_get_detail({ p_work_order_id: order.id }));
+  assert.match(visibleText(sheet), /สถานะใบสั่งงาน ณ ที่พิมพ์: จบงานแล้ว/);
+});
+
+test("v1.02: the module announces its version for the card (the same value shown at the bottom of every page)", async () => {
+  const w = world();
+  assert.equal(w.context.window.MNP_ITWO.version, w.context.window.MNP_ITWO_MODEL.MODULE_VERSION);
+  assert.equal(w.context.window.MNP_ITWO.version, "1.02");
+  await w.open("");
+  assert.match(w.html, />V1\.02</);
 });

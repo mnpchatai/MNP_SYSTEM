@@ -9,6 +9,8 @@
 //
 // รุ่น 2 (เจ้าของสั่ง 19/11/2026): ไม่มีประเภท "สิทธิ์ในระบบ" และไม่มีส่วน "สำหรับแผนก IT : สิทธิ์ในระบบ" แล้ว · เบ็ดเตล็ดต้องระบุงาน ·
 // แนบไฟล์ได้เมื่อเอกสารแนบ = "มี" (สร้างใบ → อัปโหลดขึ้น Storage → app_itwo_add_attachment ทีละไฟล์) · ผู้แจ้งขอแก้ไขงานได้หลัง IT ปิดงาน (app_itwo_request_rework)
+// รุ่น 1.02 (เจ้าของสั่ง 20/11/2026): ผู้อนุมัติขั้น IT ที่ไม่ใช่ผู้ดูแลงาน IT (เช่น FANG หลังเจ้าของถอดสิทธิ์) ทำได้แค่อนุมัติ/ไม่อนุมัติ/ถามตอนรออนุมัติและดูข้อมูล (แท็บ "งาน IT" เป็นแบบดูอย่างเดียว ไม่เห็นแท็บตั้งค่า)
+// ระหว่าง "รอผู้แจ้งตอบ" ผู้อนุมัติไม่อนุมัติไม่ได้ (ต้องรอคำตอบ) · ป้ายสถานะ received = "จบงานแล้ว" · เลขเวอร์ชันแสดงที่มุมบนขวาของการ์ดบนหน้า IT SUPPORT
 // รุ่น 3 (เจ้าของสั่ง 19/11/2026): "ปิดงาน" ของ IT เปลี่ยนชื่อเป็น "ส่งงาน" (สถานะ it_closed / action complete เดิม) · ผู้อนุมัติ/IT ถามผู้แจ้งได้ (app_itwo_request_info → สถานะ need_info "รอผู้แจ้งตอบ")
 // ผู้แจ้งตอบ (app_itwo_provide_info → ใบกลับสถานะเดิม) ทั้งถามและตอบแนบไฟล์ได้ (app_itwo_add_comment_attachment ภายใน 30 นาทีหลังส่งข้อความ)
 // ฐานข้อมูล: supabase/migrations/20261203010000_itwo_work_orders.sql + 20261205010000_itwo_v2_rework_files.sql + 20261206010000_itwo_v3_request_info.sql ทุกอย่างเรียกผ่าน RPC app_itwo_* (ตรวจบทบาท ลำดับขั้น เลขที่เอกสารที่ฝั่งฐานข้อมูล)
@@ -81,7 +83,8 @@
     ]);
     return model.cardSummary({
       approvals: approvals ? approvals.value : null,
-      itWork: itRows ? model.itActionableCount(itRows.value) : null,
+      // ตัวเลข "งาน IT ค้าง" นับให้เฉพาะผู้ดูแลงาน IT (ผู้ลงมือทำ) · ผู้อนุมัติขั้น IT ที่ไม่ใช่ผู้ดูแลงานเห็นรายการได้แต่ไม่มีงานให้ลงมือ (รุ่น 1.02)
+      itWork: itRows && role?.is_it_admin ? model.itActionableCount(itRows.value) : null,
       toConfirm: mine ? model.awaitingMyReceiveCount(mine.value) : null,
       toAnswer: mine ? model.awaitingMyAnswerCount(mine.value) : null,
     });
@@ -141,7 +144,8 @@
       mineParts: mineParts ?? undefined,
       // แท็บรออนุมัติ: ใบที่ถามผู้แจ้งไปแล้ว (need_info) แสดงในรายการแต่ไม่ใช่ "รอคุณ" จึงไม่นับ (app_itwo_pending_count ก็ไม่นับ)
       approvals: view === "approvals" ? model.waitingForMeCount(main) : approvalsCount?.value,
-      it: view === "it" ? model.itActionableCount(main) : itRows ? model.itActionableCount(itRows.value) : undefined,
+      // แท็บ "งาน IT" ของผู้อนุมัติขั้น IT ที่ไม่ใช่ผู้ดูแลงานเป็นแบบดูอย่างเดียว (ปุ่มลงมือมาจาก allowed_actions ซึ่งฐานข้อมูลไม่ให้) จึงไม่แสดงตัวเลขงานค้าง
+      it: !role.is_it_admin ? undefined : view === "it" ? model.itActionableCount(main) : itRows ? model.itActionableCount(itRows.value) : undefined,
     };
     let body;
     if (view === "mine") body = pages.mineList(main);
@@ -738,5 +742,6 @@
   }
 
   const unsavedCount = () => (unsavedProbe ? unsavedProbe() : 0);
-  window.MNP_ITWO = Object.freeze({ render, loadCardSummary, unsavedCount });
+  // version = เลขเวอร์ชันของโมดูล: module-office.js ใช้แสดงมุมบนขวาของการ์ดใน IT SUPPORT (โมดูลที่ไม่ประกาศ version ไม่แสดงเลข)
+  window.MNP_ITWO = Object.freeze({ render, loadCardSummary, unsavedCount, version: model.MODULE_VERSION });
 })();

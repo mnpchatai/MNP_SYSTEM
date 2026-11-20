@@ -483,7 +483,7 @@ test("the print sheet follows FM06: two request types ticked with the misc work,
   assert.match(html, /รับงาน: ไอที หนึ่ง 19\/11\/2569 11:00/);
   assert.match(html, /data-slot="receiver">\s*<div class="itwo-signature-label">ผู้รับงาน<\/div>\s*<div class="itwo-signature-name"><\/div>/, "not received yet: the box is left blank");
   assert.doesNotMatch(html, /itwo-watermark/);
-  assert.match(html, /สถานะใบสั่งงาน ณ ที่พิมพ์: รอผู้อนุมัติขั้น IT|สถานะใบสั่งงาน ณ ที่พิมพ์: ได้รับงานแล้ว/);
+  assert.match(html, /สถานะใบสั่งงาน ณ ที่พิมพ์: รอผู้อนุมัติขั้น IT|สถานะใบสั่งงาน ณ ที่พิมพ์: จบงานแล้ว/);
 });
 
 test("an old system-access order prints with its own type ticked and its recorded access rows (only systems that have rows)", () => {

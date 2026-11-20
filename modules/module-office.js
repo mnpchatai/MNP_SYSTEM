@@ -81,7 +81,9 @@
         loadRepairCard(),
         sections.workOrderVisible(modeAllowed) ? window.MNP_ITWO.loadCardSummary().catch(() => null) : null,
       ]);
-      return paint(sections.itSupportPage({ repair, workOrder, allowed: modeAllowed }), "IT SUPPORT", version);
+      // เลขเวอร์ชันบนการ์ด: โมดูลที่ประกาศ version ไว้ (ตอนนี้มีใบสั่งงาน IT) แสดงที่มุมบนขวา · ใบแจ้งซ่อม IT ไม่ประกาศจึงไม่แสดง
+      const versions = window.MNP_ITWO?.version ? { [sections.WORK_ORDER_CODE]: window.MNP_ITWO.version } : {};
+      return paint(sections.itSupportPage({ repair, workOrder, versions, allowed: modeAllowed }), "IT SUPPORT", version);
     }
     return paint(sections.notReadyPage(section), TITLE, version);
   }
