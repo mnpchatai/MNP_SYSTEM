@@ -3404,3 +3404,18 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
   .sr-label-body { grid-template-columns: minmax(0, 1fr) 30mm; }
   .sr-label-qr { width: 30mm; }
 }
+
+/* โมดูล WH (คลังสินค้าสำเร็จรูป): ติ๊กกล่องที่จะส่งมอบของล็อตเดียว (ค่าตั้งต้น = ทุกกล่อง) · ปุ่มติ๊กสูง 44px แตะได้บน iPhone */
+.wh-fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.wh-boxes { display: flex; flex-wrap: wrap; gap: 8px; }
+.wh-box { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper); cursor: pointer; }
+.wh-box input { width: 20px; height: 20px; flex: none; }
+.wh-box:has(input:checked) { border-color: var(--m500); background: color-mix(in srgb, var(--m500) 12%, var(--paper)); }
+/* หน้า รับเข้า: ปุ่มเลื่อนไปส่วนของ PK / RB (ส่วนปลายทางเว้นที่ให้แถบบนที่ติดอยู่ 64px) */
+.wh-jump { margin-bottom: 12px; }
+.wh-jump-target { scroll-margin-top: 80px; }
+.wh-jump-target:focus { outline: none; }
+/* ลิงก์ "งานของฉัน" บนหัวหน้า ในคลัง: จอกว้างมีเมนูข้างพร้อมตัวเลขอยู่แล้ว (แสดงครั้งเดียว) · จอ 1040px ลงไปเมนูข้างของโมดูลซ่อน / อยู่ในลิ้นชัก จึงเหลือลิงก์นี้ */
+@media (min-width: 1041px) {
+  .wh-work-link { display: none; }
+}

@@ -232,12 +232,14 @@
   // งานที่รอของแผนกคลัง/ตรวจคุณภาพ (SR ST WH QA): การ์ดสั่งงานชุดเดียวกับหน้า BOM "งานของฉัน" (MNP_BOM_PAGES.hub.taskCard / boardCards ไม่คัดลอก HTML)
   // รายการงานมาจากกระดานของแผนก (workBoard ของ deptCtx: ฝ่ายวางแผน/ผู้จัดการเปิดโมดูลแล้วเห็นงานของแผนกนั้น) · ปุ่มและ dialog ตัดสินสิทธิ์ด้วยผู้ใช้จริง (ctx.user) ไม่มีสิทธิ์ = การ์ดดูอย่างเดียว
   // ใช้กับ landing ที่คืน actions: true · waiting = ข้อความกำลังโหลดที่ใส่เหนือการ์ด · emptyText = ข้อความเมื่อไม่มีงาน
+  // afterReceipts = การ์ด HTML ของโมดูลเอง (เช่นล็อตของ RubberFlow ที่รอ WH รับ) วางต่อจากการ์ดงานรับเข้า (hub.isReceiptTask) ก่อนการ์ดงานอื่น · นับรวมใน count
   // คืน { count, html } · title = null ไม่ใส่หัวข้อ (ใช้ใต้แท็บ "งานที่รอ" ที่บอกอยู่แล้ว)
-  function deptWork(ctx, { title = "งานที่รอ", emptyText = "ไม่มีงานค้าง", waiting = "", quietWhenEmpty = false } = {}) {
+  function deptWork(ctx, { title = "งานที่รอ", emptyText = "ไม่มีงานค้าง", waiting = "", quietWhenEmpty = false, afterReceipts = [] } = {}) {
     const hub = root.MNP_BOM_PAGES?.hub;
     const board = hub.workBoard(deptCtx(ctx), new URLSearchParams());
     const { taskCards, cards } = hub.boardCards(ctx, board);
-    const all = [...taskCards, ...cards];
+    const receipt = (_, i) => hub.isReceiptTask(board.tasks[i]);
+    const all = [...taskCards.filter(receipt), ...afterReceipts, ...taskCards.filter((card, i) => !receipt(card, i)), ...cards];
     if (!all.length && quietWhenEmpty && !waiting) return { count: 0, html: "" };
     const head = title ? `<h2 class="bom-h3">${esc(title)}</h2>` : "";
     return { count: all.length, html: `${head}${waiting}${all.length ? `<div class="bom-job-grid">${all.join("")}</div>` : waiting ? "" : ctx.ui.card(ctx.ui.empty(emptyText))}` };

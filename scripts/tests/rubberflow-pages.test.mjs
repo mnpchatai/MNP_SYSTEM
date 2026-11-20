@@ -208,8 +208,10 @@ test("the dashboard, stations and quality pages show the prototype's facts from 
   assert.match(wip, /ผสมยาง[\s\S]*ตกแต่งและบรรจุ/, "the stations are the rows of one table");
   assert.equal((wip.match(/รับแล้วรอใช้/g) ?? []).length, 1, "each column name is printed once, not on every station card");
   const warehouse = await env.render("p=warehouse&tab=fg");
-  assert.match(warehouse, /data-rf-form="shipBoxes"/);
-  assert.match(warehouse, /name="ids\[\]"/);
+  // the finished-goods tab is one pointer to the warehouse module: no boxes, no shipping form here (WH is the only place); the raw-material tabs stay
+  assert.doesNotMatch(warehouse, /data-rf-form="shipBoxes"|name="ids\[\]"|data-rf-ship|rf-ship/);
+  assert.match(warehouse, /สินค้าสำเร็จรูปอยู่ที่คลังสินค้าสำเร็จรูป \(WH\)/);
+  assert.doesNotMatch(warehouse, /สินค้าพร้อมส่ง/, "the boxes ready to ship are counted at the warehouse, not repeated here");
   const requisition = await env.render("p=requisition");
   assert.match(requisition, /<th class="right">จ่าย \(kg\)<\/th>/, "the detail lists the kilos that were issued");
   assert.match(requisition, /จ่ายครบ รอผสม/, "the status badge says it once; no extra callout repeats it");
@@ -1098,8 +1100,8 @@ test("list empty states: nothing yet says so and offers the first step, a search
   const warehouse = (query, data = {}) => { const ctx = env.ctx(query); return pages.warehouse({ ...ctx, data: { ...ctx.data, ...data } }).html; };
   assert.match(warehouse("p=warehouse&tab=raw", { materialLots: [] }), /ยังไม่มีล็อตวัตถุดิบ/);
   assert.match(warehouse("p=warehouse&tab=raw&q=zzzz-no-match"), /ไม่พบล็อตวัตถุดิบ/);
-  assert.match(warehouse("p=warehouse&tab=fg", { fgBoxes: [] }), /ยังไม่มีกล่องสินค้า/);
-  assert.match(warehouse("p=warehouse&tab=fg&q=zzzz-no-match"), /ไม่พบกล่องสินค้า/);
+  assert.match(warehouse("p=warehouse&tab=fg", { fgBoxes: [] }), /สินค้าสำเร็จรูปอยู่ที่คลังสินค้าสำเร็จรูป \(WH\)/, "the finished-goods tab has no list to be empty: it points to the warehouse module");
+  assert.doesNotMatch(warehouse("p=warehouse&tab=fg"), /rf-search/, "and has nothing to search");
 });
 
 test("skipping the rest opens a reason dialog for the manager and QC only (the rubber head or QA in the database), and the lot row says who skipped it and why (20261128010000)", async () => {

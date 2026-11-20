@@ -482,6 +482,8 @@
     returnOrderParts: (p) => ({ orderId: p.orderId, reason: p.reason, lines: listOf(p, "itemCode").map((itemCode, index) => ({ itemCode, qty: listOf(p, "qty")[index] ?? "" })).filter((line) => String(line.qty).trim() !== "" && Number(line.qty) !== 0) }),
     // ฟอร์มรับเข้าคลัง / ส่งมอบสินค้าสำเร็จรูป: fgCode[] + qty[] ตามลำดับแถว (มีเฉพาะแถวที่มีของให้รับ/ส่ง) → lines (เว้นว่างหรือ 0 = ไม่รับ/ส่งรายการนั้น)
     receiveFg: (p) => ({ orderId: p.orderId, lines: fgLines(p) }),
+    // ส่งมอบกล่องสินค้าของ RubberFlow: กล่องที่ติ๊ก (ids[])
+    shipBoxes: (p) => ({ ids: p.ids ?? [] }),
     // overConfirm = ติ๊กยืนยันส่งมอบเกินจำนวนที่สั่ง (ช่องในฟอร์ม) · action deliverFg ปฏิเสธการส่งเกินที่ไม่ได้ยืนยัน
     deliverFg: (p) => ({ orderId: p.orderId, lines: fgLines(p), overConfirm: p.overConfirm === "1" }),
     // ฟอร์มขั้นตอนผลิต: processCode[] + minutesPerPc[] → steps ตามลำดับแถว (แถวที่ไม่เลือกขั้นตอนถูกข้าม)
@@ -497,10 +499,17 @@
     savePackage: (p) => ({ ...p, lines: listOf(p, "childCode").map((childCode, index) => ({ childCode, qty: listOf(p, "qty")[index] ?? "" })).filter((line) => String(line.childCode ?? "").trim()) }),
   };
 
+  // กล่องสินค้าของ RubberFlow ที่โมดูล WH สั่ง (รับเข้า ส่งมอบ ย้อน · modules/wh-pages.js): คำสั่งอยู่ใน store ของ RubberFlow ไม่ใช่ของ BOM จึงส่งต่อให้ runAction ของ RubberFlow (แจ้งผลและกันเสียงซ้ำเอง)
+  const RF_BOX_ACTIONS = Object.freeze(["receiveBoxes", "shipBoxes", "reverseBoxReceipt", "reverseBoxShip"]);
   const fgLines = (p) => listOf(p, "fgCode").map((fgCode, index) => ({ fgCode, qty: listOf(p, "qty")[index] ?? "" })).filter((line) => String(line.qty).trim() !== "" && Number(line.qty) !== 0);
   // after(ผลของคำสั่ง) = ทำต่อหลังคำสั่งนี้บันทึกสำเร็จ (โหมดในเครื่อง: ทันที · โหมดฐานข้อมูล: หลังฐานข้อมูลตอบ) ใช้ต่อคำสั่งที่ต้องเห็นผลของคำสั่งก่อนหน้า เช่น ขั้นตอนผลิตหลังแทรก WIP
   // failNote = บอกผู้ใช้ว่าการทำต่อนี้ล้มแล้วเหลืออะไรค้าง (ใช้กับคำสั่งที่ทำต่อจากคำสั่งก่อนหน้า เช่น ขั้นตอนผลิตหลังแทรก WIP) นำหน้าข้อความผิดพลาดตามปกติ
   function runAction(name, payload, successText, after = null, failNote = "") {
+    if (RF_BOX_ACTIONS.includes(name)) {
+      const rubberflow = window.MNP_RUBBERFLOW;
+      if (!rubberflow?.runAction) { showToast("ไม่มีข้อมูล RubberFlow ทำรายการนี้ไม่ได้", "error"); return false; }
+      return rubberflow.runAction(name, payload, successText);
+    }
     const errorText = (error) => (failNote ? `${failNote} (${friendlyError(error)})` : friendlyError(error));
     const result = store.run(name, payload);
     if (!result.ok) {

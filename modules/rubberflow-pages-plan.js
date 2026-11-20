@@ -79,7 +79,7 @@
         { label: "อัตราได้ของดีรวม 4 ขั้นตอน", value: hasProduction ? `${overall.toFixed(1)}%` : "—", sub: "เป้าหมาย ≥ 95.0%", tone: overall >= 95 ? "good" : "warn" },
         { label: "ใบสั่งผลิตที่เปิดอยู่", value: String(active.length), sub: `ด่วน ${active.filter((order) => order.priority === "urgent").length} รายการ` },
         { label: "ของเสียห้องผสม (สะสม)", value: `${fmtNum(mixingScrapKg, 1)} kg`, },
-        { label: "สินค้าพร้อมส่งในคลัง", value: `${fgBoxes.length} กล่อง`, sub: `${data.fgBoxes.filter((box) => box.status === "hold").length} กล่องถูกกักกัน` },
+        { label: "สินค้าพร้อมส่งในคลัง", value: `${fgBoxes.length} กล่อง`, sub: `รอ WH รับเข้า ${data.fgBoxes.filter((box) => box.status === "pending_wh").length} · กักกัน ${data.fgBoxes.filter((box) => box.status === "hold").length}` },
       ])}
       ${flow}
       <div class="rf-grid rf-g2">
@@ -345,6 +345,15 @@
   };
 
   // ---------- คลังวัตถุดิบและสินค้าสำเร็จรูป ----------
+  // แท็บ "สินค้าสำเร็จรูป": กล่องสินค้า การรับเข้า และการส่งมอบอยู่ที่โมดูลคลังสินค้าสำเร็จรูป (WH) ที่เดียว (20261207010000) ที่นี่เหลือลิงก์เดียว · ไม่มีสิทธิ์เปิดโมดูล WH = ข้อความอย่างเดียว
+  function fgHome(ctx) {
+    const { ui } = ctx;
+    const factory = root.MNP_FACTORY;
+    const open = typeof state !== "undefined" && Boolean(factory?.canOpenDeptModule?.(state.employee, "WH", "FACTORY_WH"));
+    const link = open ? `<div class="rf-row">${ui.link("ไปที่คลังสินค้าสำเร็จรูป (WH)", factory.routeUrl("wh", { tab: "stock" }), "btn rf-btn")}</div>` : "";
+    return ui.empty("สินค้าสำเร็จรูปอยู่ที่คลังสินค้าสำเร็จรูป (WH) รับเข้า ส่งมอบ และดูของในคลังได้ที่นั่น", link);
+  }
+
   pages.warehouse = (ctx) => {
     const { data, now, ui, rules, params } = ctx;
     const { DAY, lotState, fmtDate, fmtNum } = rules;
@@ -356,9 +365,6 @@
     const available = data.materialLots.filter((lot) => lotState(lot, now) === "available");
     const soon = available.filter((lot) => lot.expiry - now < 30 * DAY);
     const expired = data.materialLots.filter((lot) => lotState(lot, now) === "expired" && lot.qtyKg > 0);
-    // กล่องสินค้าขายเท่านั้น: WO ที่มาจากงาน RB ของ BOM (sourceJobId) ส่งแท่งเข้าคลังแท่งยาว (SR) ไม่ใช่สินค้าให้คลังสินค้าส่งมอบ (กล่องเก่าก่อน 20261202010000 ก็ไม่แสดง)
-    const internal = new Set(data.orders.filter((order) => order.sourceJobId).map((order) => order.id));
-    const boxes = [...data.fgBoxes].filter((box) => !internal.has(box.orderId)).sort((a, b) => b.createdAt - a.createdAt).filter((box) => includes(`${box.id} ${box.orderId}`, ctx.q));
     // ล็อตแรกที่ใช้ได้ของแต่ละวัตถุดิบ = ล็อตที่ FEFO จะจ่ายถัดไป
     const nextFefo = new Set(data.materials.map((material) => available.filter((lot) => lot.materialCode === material.code).sort((a, b) => a.expiry - b.expiry)[0]?.lotNo).filter(Boolean));
     const decide = ctx.can("holdMaterial");
@@ -380,10 +386,6 @@
         <td class="right">${esc(`${fmtNum(lot.qtyKg, 2)} kg`)}<div class="small muted">${esc(`จาก ${fmtNum(lot.initialKg, 0)}`)}</div></td>
         <td>${ui.status(state)}</td><td class="right"><div class="rf-row rf-end">${buttons}</div></td></tr>`;
     });
-    const fgRows = boxes.map((box) => `<tr><td><input type="checkbox" name="ids[]" value="${esc(box.id)}"${box.status !== "in_stock" ? " disabled" : ""} aria-label="เลือก ${esc(box.id)}"></td>
-        <td class="rf-mono small">${esc(box.id)}<div class="muted">${esc(fmtDate(box.createdAt))}</div></td><td class="rf-mono">${esc(rules.orderLabel(box))}</td><td class="rf-mono small">${esc(box.orderId)}</td>
-        <td class="right">${esc(`${fmtNum(box.qty)} ${unitText(box.uom)}`)}</td><td>${esc(box.grade)}</td><td>${ui.status(box.status)}</td>
-        <td class="right">${ui.openButton("ป้าย", "tag", { kind: "box", id: box.id }, { className: "secondary small", ariaLabel: `พิมพ์ป้าย ${box.id}` })}</td></tr>`);
     const purchaseOrders = data.purchaseOrders ?? [];
     const openOrders = purchaseOrders.filter((po) => po.status === "ordered").length;
     const tabs = ui.tabs([{ id: "raw", label: "ล็อตวัตถุดิบ" }, { id: "po", label: `ใบสั่งซื้อ${openOrders ? ` (${openOrders})` : ""}` }, { id: "materials", label: "รายการวัตถุดิบ" }, { id: "fg", label: "สินค้าสำเร็จรูป" }], tab, (id) => ctx.pageUrl({ tab: id === "raw" ? null : id, q: null }));
@@ -432,35 +434,22 @@
     const chemShort = tab === "po" && ctx.can("purchase") && openWoIds.length ? rules.chemicalNeeds(data, openWoIds, now, { remote: ctx.store.isRemote() }).rows.filter((row) => row.shortageKg > 0).length : 0;
     // ปุ่มสั่งซื้อเคมี (ทั้งแบบขาดและแบบตรวจ) เฉพาะบัญชีที่สั่งซื้อได้ · ตัดตั้งแต่ตอนวาด ไม่รอ applyRights ลบหลังวาด
     const chemButton = tab === "po" && openWoIds.length && ctx.can("purchase") ? ui.openButton(chemShort ? `สั่งซื้อเคมีที่ขาด ${chemShort} รายการ` : "ตรวจเคมีของใบสั่งผลิตที่เปิดอยู่", "purchase", { allOpen: true, parts: false }, { className: chemShort ? "small" : "secondary small" }) : "";
-    const listbar = `<div class="rf-listbar">${tabs}<div class="rf-row">${chemButton}${tab === "materials" && mayEditMaterial ? ui.openButton("เพิ่มวัตถุดิบ", "materialEdit", {}, { className: "small" }) : ""}${tab === "fg" ? `<button class="btn rf-btn small" type="submit" form="rf-ship" data-rf-ship disabled>ส่งมอบกล่องที่เลือก</button>` : ""}${searchForm(ctx, "ค้นหารหัส…", { tab: true })}</div></div>`;
+    const listbar = `<div class="rf-listbar">${tabs}<div class="rf-row">${chemButton}${tab === "materials" && mayEditMaterial ? ui.openButton("เพิ่มวัตถุดิบ", "materialEdit", {}, { className: "small" }) : ""}${tab === "fg" ? "" : searchForm(ctx, "ค้นหารหัส…", { tab: true })}</div></div>`;
     const tableHtml = tab === "materials"
       ? ui.table(["รหัส", "ชื่อวัตถุดิบ", "หมวด", "ที่จัดเก็บ", "หน่วย", { label: "สต็อกขั้นต่ำ (kg)", className: "right" }, { label: "อายุการเก็บ (วัน)", className: "right" }, "สถานะ", { label: "", className: "right" }], materialRows, { emptyText: ctx.q ? "ไม่พบวัตถุดิบ" : "ยังไม่มีวัตถุดิบ" })
       : tab === "po"
       ? ui.table(["วัตถุดิบ", { label: "สั่ง", className: "right" }, "รับเข้า", { label: "", className: "right" }], poRows, { emptyText: ctx.q ? "ไม่พบใบสั่งซื้อ" : "ยังไม่มีใบสั่งซื้อ" })
       : tab === "raw"
       ? ui.table(["ล็อต", "วัตถุดิบ", "ที่เก็บ / ผู้ขาย", "หมดอายุ", { label: "คงเหลือ", className: "right" }, "สถานะ", { label: "", className: "right" }], rawRows, { emptyText: ctx.q ? "ไม่พบล็อตวัตถุดิบ" : "ยังไม่มีล็อตวัตถุดิบ" })
-      : `<form novalidate id="rf-ship" data-rf-form="shipBoxes" data-rf-success="ส่งมอบกล่องแล้ว">${ui.table(["", "กล่อง", "สินค้า", "ใบสั่งผลิต", { label: "จำนวน", className: "right" }, "เกรด", "สถานะ", { label: "", className: "right" }], fgRows, { emptyText: ctx.q ? "ไม่พบกล่องสินค้า" : "ยังไม่มีกล่องสินค้า" })}</form>`;
-    const html = `${ui.pageHead("คลังวัตถุดิบและสินค้าสำเร็จรูป", "ควบคุมสต็อกตามหลัก FEFO บล็อกล็อตหมดอายุหรือถูกกักกัน ตรวจสอบรับเข้าตามใบสั่งซื้อ และจัดการกล่องสินค้าพร้อมส่ง", ui.openButton("รับวัตถุดิบเข้าคลัง", "receiveMaterial", {}, { className: "" }))}
+      : fgHome(ctx);
+    const html = `${ui.pageHead("คลังวัตถุดิบและสินค้าสำเร็จรูป", "ควบคุมสต็อกตามหลัก FEFO บล็อกล็อตหมดอายุหรือถูกกักกัน และตรวจสอบรับเข้าตามใบสั่งซื้อ", ui.openButton("รับวัตถุดิบเข้าคลัง", "receiveMaterial", {}, { className: "" }))}
       ${ui.stats([
         { label: "สต็อกวัตถุดิบพร้อมใช้", value: `${fmtNum(available.reduce((sum, lot) => sum + lot.qtyKg, 0))} kg`, sub: `${available.length} ล็อต` },
         { label: "ใกล้หมดอายุ (30 วัน)", value: String(soon.length), sub: "จะถูกจ่ายก่อนตาม FEFO", tone: soon.length ? "warn" : "" },
         { label: "หมดอายุ / ถูกบล็อก", value: String(expired.length + data.materialLots.filter((lot) => lot.status === "hold").length), tone: "bad" },
-        { label: "สินค้าพร้อมส่ง", value: `${data.fgBoxes.filter((box) => box.status === "in_stock").length} กล่อง` },
       ])}
       ${ui.card(`${listbar}${tableHtml}`, { flush: true })}`;
-    const bind = (rootNode) => {
-      const form = rootNode.querySelector("#rf-ship");
-      const button = rootNode.querySelector("[data-rf-ship]");
-      if (!form || !button) return;
-      const paint = () => {
-        const count = form.querySelectorAll('input[name="ids[]"]:checked').length;
-        button.disabled = !count;
-        button.textContent = count ? `ส่งมอบ ${count} กล่อง` : "ส่งมอบกล่องที่เลือก";
-      };
-      form.addEventListener("change", paint);
-      paint();
-    };
-    return { html, bind };
+    return { html };
   };
 
   // หน่วยของบรรทัดของซื้อ (รหัสหน่วยของ BOM → ป้ายไทย ถ้ากฎของ BOM โหลดอยู่ ไม่เช่นนั้นแสดงรหัส)
@@ -705,7 +694,7 @@
   const AUDIT_ACTION_LABEL = Object.freeze({
     saveMaterial: "บันทึกวัตถุดิบ", createRecipe: "สร้างสูตรใหม่", saveRecipe: "แก้สูตร / ออกฉบับแก้ไขใหม่", approveRecipe: "อนุมัติสูตร", createOrder: "เปิดใบสั่งผลิต", setOrderStatus: "เปลี่ยนสถานะใบสั่งผลิต",
     receiveMaterial: "รับวัตถุดิบเข้าคลัง", createPurchaseOrder: "สั่งซื้อวัตถุดิบ", receivePurchaseLine: "ตรวจสอบรับเข้าตามใบสั่งซื้อ", closePurchaseLine: "ปิดยอดที่เหลือของใบสั่งซื้อ", cancelPurchaseOrder: "ยกเลิกใบสั่งซื้อ", setMaterialLotStatus: "กักกัน/ปลดกักกันล็อตวัตถุดิบ", createRequisition: "เบิกเคมี (จ่ายทันที)", weighLine: "ชั่งวัตถุดิบ (ใบเก่า)", issueRequisition: "จ่ายทั้งใบเบิก (ใบเก่า)", recordMixing: "บันทึกการผสม", endRest: "ข้ามเวลาบ่ม", returnRequisition: "รับเคมีคืนเข้าล็อตเดิม",
-    recordExtrusion: "บันทึกการฉีด", recordCuring: "บันทึกการอบ", recordFinishing: "บันทึกการตกแต่ง/บรรจุ", createTransfer: "ส่งมอบ WIP", receiveTransfer: "รับมอบ WIP", shipBoxes: "ส่งมอบกล่องสินค้า",
+    recordExtrusion: "บันทึกการฉีด", recordCuring: "บันทึกการอบ", recordFinishing: "บันทึกการตกแต่ง/บรรจุ", createTransfer: "ส่งมอบ WIP", receiveTransfer: "รับมอบ WIP", receiveBoxes: "รับกล่องสินค้าเข้าคลังสินค้าสำเร็จรูป (WH)", shipBoxes: "ส่งมอบกล่องสินค้าให้ลูกค้า", reverseBoxReceipt: "ย้อนการรับกล่องเข้าคลังสินค้าสำเร็จรูป (WH)", reverseBoxShip: "ย้อนการส่งมอบกล่องสินค้า",
     addQcRecord: "บันทึกผล QC", createNcr: "เปิด NCR", updateNcr: "บันทึกการแก้ไข/ป้องกัน NCR", closeNcr: "ปิด NCR", cleanMold: "บันทึกล้างแม่พิมพ์", saveMold: "บันทึกแม่พิมพ์/หัวดาย",
   });
   const AUDIT_SECTION_LABEL = Object.freeze({

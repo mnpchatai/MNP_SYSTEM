@@ -17,7 +17,7 @@
     in_transit: ["warn", "รอรับมอบ"], received: ["good", "รับมอบแล้ว"],
     open: ["info", "เปิดอยู่"], closed: ["good", "ปิดแล้ว"],
     available: ["good", "พร้อมใช้"], expired: ["bad", "หมดอายุ (บล็อก)"], empty: ["", "หมด"],
-    in_stock: ["good", "ในคลัง"], shipped: ["info", "ส่งมอบแล้ว"],
+    pending_wh: ["warn", "รอ WH รับเข้า"], in_stock: ["good", "ในคลัง"], shipped: ["info", "ส่งมอบแล้ว"],
     draft: ["warn", "รออนุมัติ"], approved: ["good", "อนุมัติแล้ว"], superseded: ["", "ถูกแทนที่"],
     critical: ["bad", "วิกฤต"], major: ["warn", "ร้ายแรง"], minor: ["", "เล็กน้อย"],
   });

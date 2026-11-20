@@ -445,6 +445,31 @@
     return `<div class="small" data-rf-sr-state>${sr.href ? `<a href="${esc(sr.href)}" title="เปิดล็อตนี้ในคลังยางเส้นยาว (SR)">${badge}</a>` : badge}</div>`;
   }
 
+  // ผลตัดสินของล็อตตกแต่ง: ค่า = qcResult หรือ qcResult:ปลายทาง (แยกเป็น qcResult + destination ที่ TRANSFORMS ของ module-rubberflow.js) · ต้องเลือกเอง ไม่มีค่าตั้งต้น (20261207010000)
+  // WO ที่มาจากงาน RB ของ BOM (linked): ยางเส้นยาวเข้าคลังยางเส้นยาว (SR) · ส่งมอบให้ลูกค้าผ่านคลังสินค้าสำเร็จรูป (WH) · กักรอ QC · WO ที่ไม่ผูกงาน: ไม่มี SR
+  const FINISH_RESULT_PLACEHOLDER = "เลือกผลตัดสิน…";
+  const finishResultOptions = (linked) => [
+    ...(linked ? [{ value: "pass:sr", label: "ผ่าน — ส่งเข้าคลังยางเส้นยาว (SR)" }] : []),
+    { value: "pass:customer", label: "ผ่าน — ส่งมอบให้ลูกค้า ผ่านคลังสินค้าสำเร็จรูป (WH)" },
+    { value: "hold", label: "กักรอ QC" },
+  ];
+  // ข้อความแจ้งผลหลังบันทึก ตามทางที่เลือก
+  const finishSuccessText = (linked, choice, base = "บันทึก {result} และสร้างป้ายกล่องแล้ว") => (choice === "pass:sr" ? "บันทึก {result} แล้ว ยางเส้นยาวส่งเข้าคลังยางเส้นยาว (SR)"
+    : choice === "pass:customer" ? "บันทึก {result} และสร้างป้ายกล่องแล้ว กล่องรอคลังสินค้าสำเร็จรูป (WH) รับเข้า"
+    : linked && choice === "hold" ? "บันทึก {result} แล้ว กักรอ QC" : base);
+  // ล็อตที่ส่งมอบให้ลูกค้าผ่าน WH อยู่ที่ไหนแล้ว (จากกล่องของล็อต): รอ WH รับเข้า / WH รับแล้ว / ส่งมอบแล้ว · ป้ายเป็นลิงก์ไปหน้าล็อตของ WH เมื่อผู้ใช้เปิดโมดูล WH ได้
+  function whStateHtml(ctx, lot) {
+    const boxes = (ctx.data.fgBoxes ?? []).filter((box) => box.lotId === lot.id);
+    if (!boxes.length || lot.qc !== "pass") return "";
+    const count = (status) => boxes.filter((box) => box.status === status).length;
+    const shipped = count("shipped");
+    const [tone, text] = count("pending_wh") ? ["warn", "รอ WH รับเข้า"] : shipped === boxes.length ? ["", "ส่งมอบแล้ว"] : ["good", shipped ? `WH รับแล้ว · ส่งมอบแล้ว ${shipped}/${boxes.length}` : "WH รับแล้ว"];
+    const badge = ctx.ui.badge(tone, text);
+    const factory = root.MNP_FACTORY;
+    const open = typeof state !== "undefined" && Boolean(factory?.canOpenDeptModule?.(state.employee, "WH", "FACTORY_WH"));
+    return `<div class="small" data-rf-wh-state>${open ? `<a href="${esc(factory.routeUrl("wh", { lot: lot.id }))}" title="เปิดล็อตนี้ในคลังสินค้าสำเร็จรูป (WH)">${badge}</a>` : badge}</div>`;
+  }
+
   pages.finishing = (ctx) => {
     const { data, ui, rules } = ctx;
     const { fmtNum } = rules;
@@ -457,21 +482,21 @@
         ${ui.field("ของเสียจากการตกแต่ง", ui.input("scrapQty", { type: "number", step: "any" }))}
         ${ui.field("จำนวนต่อกล่อง", ui.input("perBox", { type: "number", step: "any", required: true, extra: "data-rf-perbox" }), { hint: '<span data-rf-boxes></span>', required: true, className: "rf-perbox-field" })}
         ${ui.field("เกรด", ui.select("grade", ["A", "B"]))}
-        ${ui.field("ผลตัดสินของล็อต", ui.select("qcResult", [{ value: "pass", label: "ผ่าน — รับเข้าคลัง" }, { value: "hold", label: "กักกันรอ QC" }], { extra: 'title="เมื่อบันทึกเป็น “ผ่าน” กล่องเข้าคลังสินค้าสำเร็จรูปทันทีและนับยอดเข้าใบสั่งผลิต · WO ที่มาจากงาน RB ของ BOM: ยางเส้นยาวส่งเข้าคลังยางเส้นยาว (SR) รอ SR รับเข้าและตรวจขนาด"' }))}
+        ${ui.field("ผลตัดสินของล็อต", ui.select("qcResult", finishResultOptions(false), { placeholder: FINISH_RESULT_PLACEHOLDER, extra: 'required data-rf-result title="ผ่าน = นับยอดเข้าใบสั่งผลิต · WO ที่มาจากงาน RB ของ BOM เลือกได้ว่าส่งเข้าคลังยางเส้นยาว (SR) หรือส่งมอบให้ลูกค้าผ่านคลังสินค้าสำเร็จรูป (WH) · WO ที่ไม่ผูกงานส่งมอบให้ลูกค้าผ่าน WH · กักรอ QC = รอ QA ตัดสิน"' }), { required: true })}
         ${ui.field("กะ", ui.select("shift", shiftOptions(rules)))}
-      </div><div data-rf-linked-note hidden>${ui.callout("info", "WO นี้มาจากงาน RB ของใบสั่งผลิต (BOM): ยางเส้นยาวที่ผ่านส่งเข้าคลังยางเส้นยาว (SR) ไม่สร้างกล่องสินค้า · SR รับเข้าและตรวจขนาด แล้วงาน RB ของใบจึงนับยอด")}</div><div class="rf-row">${ui.submitButton("บันทึกและพิมพ์ป้ายกล่อง")}</div></form>`, { title: "บันทึกการตกแต่งและบรรจุ" }) : "";
-    const html = `${ui.pageHead("สถานีที่ 4 · ตกแต่งและบรรจุ", "ตัดแต่งครีบ ตรวจ 100% แล้วบรรจุกล่อง ระบบสร้างเลขกล่องและรับเข้าคลังสินค้าสำเร็จรูปให้อัตโนมัติ")}
+      </div><div data-rf-linked-note hidden>${ui.callout("info", "WO นี้มาจากงาน RB ของใบสั่งผลิต (BOM): ถ้าส่งเข้าคลังยางเส้นยาว (SR) ไม่สร้างกล่องสินค้า · SR รับเข้าและตรวจขนาด แล้วงาน RB ของใบจึงนับยอด · ถ้าส่งมอบให้ลูกค้าผ่านคลังสินค้าสำเร็จรูป (WH) สร้างกล่อง · WH รับเข้าแล้วงาน RB ของใบจึงนับยอด")}</div><div class="rf-row">${ui.submitButton("บันทึกและพิมพ์ป้ายกล่อง")}</div></form>`, { title: "บันทึกการตกแต่งและบรรจุ" }) : "";
+    const html = `${ui.pageHead("สถานีที่ 4 · ตกแต่งและบรรจุ", "ตัดแต่งครีบ ตรวจ 100% แล้วบรรจุกล่อง ระบบสร้างเลขกล่องให้อัตโนมัติ แล้วคลังสินค้าสำเร็จรูป (WH) รับเข้า")}
       ${ui.stats([
         { label: "อัตราได้ของดี ตกแต่ง", value: stageYieldText(lots), sub: "เป้าหมาย ≥ 99.0%" },
         { label: "ผ่าน QC สะสม", value: fmtNum(lots.reduce((sum, lot) => sum + lot.goodQty, 0)), sub: "m / pcs" },
-        { label: "กล่องในคลัง", value: String(data.fgBoxes.filter((box) => box.status === "in_stock").length) },
+        { label: "กล่องรอ WH รับเข้า", value: String(data.fgBoxes.filter((box) => box.status === "pending_wh").length) },
         { label: "ล็อตพร้อมออก CoA", value: String(lots.filter((lot) => lot.qc === "pass").length) },
       ])}
       ${gateNotice(ctx, "finishing")}${form}
       ${stageLots(ctx, "finishing", [
         { label: "บรรจุ", render: (lot) => {
           const toSr = data.orders.find((row) => row.id === lot.orderId)?.sourceJobId && !(Number(lot.boxes) > 0);
-          if (!toSr) return esc(`${lot.boxes} กล่อง × ${fmtNum(lot.params.perBox)} · เกรด ${lot.grade}`);
+          if (!toSr) return `${esc(`${lot.boxes} กล่อง × ${fmtNum(lot.params.perBox)} · เกรด ${lot.grade}`)}${whStateHtml(ctx, lot)}`;
           return `${esc(`ส่งคลังยางเส้นยาว (SR) · เกรด ${lot.grade}`)}${srStateHtml(ctx, lot)}`;
         } },
         { label: "CoA", render: (lot) => ui.openButton("ดู CoA", "coa", { lotId: lot.id }, { className: "secondary small" }) },
@@ -482,33 +507,41 @@
       const currentTransfer = bindInbound(form, data, "useQty");
       const passed = form.querySelector("[data-rf-passed]");
       const perBox = form.querySelector("[data-rf-perbox]");
-      // WO ที่มาจากงาน RB ของ BOM: ไม่มีกล่อง ช่องจำนวนต่อกล่องซ่อนและไม่บังคับ (ไม่ส่งค่า ฐานข้อมูลไม่บังคับ perBox ของ WO ที่ผูกงาน) และบอกว่าแท่งไปคลังแท่งยาว (SR)
+      // ผลตัดสิน: WO ที่มาจากงาน RB ของ BOM มี 3 ทาง (ยางเส้นยาวเข้า SR / ส่งมอบให้ลูกค้าผ่าน WH / กักรอ QC) WO ที่ไม่ผูกงานมี 2 ทาง · ต้องเลือกเอง ไม่มีค่าตั้งต้น
+      // กล่องเกิดเมื่อของไปหาลูกค้า (WO ที่ไม่ผูกงานทุกผล หรือ WO ที่ผูกงานที่เลือกส่งมอบให้ลูกค้า): ช่องจำนวนต่อกล่องแสดงและบังคับเฉพาะกรณีนั้น (ไม่ส่งค่า = ฐานข้อมูลไม่บังคับ perBox ของ WO ที่ผูกงานที่ไม่สร้างกล่อง)
       // ผูกงาน = กฎเดียวกับฐานข้อมูล (ctx.bomLinked: sourceJobId และงานนั้นมีอยู่ใน BOM ถ้าโหลดแล้ว)
+      const result = form.querySelector("[data-rf-result]");
       const perBoxField = form.querySelector(".rf-perbox-field");
       const linkedNote = form.querySelector("[data-rf-linked-note]");
-      const passOption = form.querySelector('[name="qcResult"] option[value="pass"]');
       const submit = form.querySelector('button[type="submit"]');
       const baseSuccess = form.dataset?.rfSuccess;
       const isLinked = (order) => (typeof ctx.bomLinked === "function" ? ctx.bomLinked(order) : Boolean(order?.sourceJobId));
       const linkedOrder = () => { const transfer = currentTransfer(); const order = transfer ? data.orders.find((row) => row.id === transfer.orderId) : null; return order && isLinked(order) ? order : null; };
-      form.querySelector("[data-rf-inbound]").addEventListener("change", () => {
-        const transfer = currentTransfer();
-        const linked = linkedOrder();
-        if (perBoxField) perBoxField.hidden = Boolean(linked);
-        if (linkedNote) linkedNote.hidden = !linked;
-        perBox.required = !linked;
-        if (linked) perBox.value = "";
-        else if (transfer && (!perBox.value || perBox.dataset?.rfLinkedValue)) perBox.value = transfer.uom === "m" ? "100" : "2000";
-        if (perBox.dataset) { if (linked) perBox.dataset.rfLinkedValue = "1"; else delete perBox.dataset.rfLinkedValue; }
-        if (passOption) passOption.textContent = linked ? "ผ่าน — ส่งเข้าคลังยางเส้นยาว (SR)" : "ผ่าน — รับเข้าคลัง";
-        if (form.dataset) form.dataset.rfSuccess = linked ? "บันทึก {result} แล้ว ยางเส้นยาวส่งเข้าคลังยางเส้นยาว (SR)" : baseSuccess;
-        if (submit) submit.textContent = linked ? "บันทึกการตกแต่ง" : "บันทึกและพิมพ์ป้ายกล่อง";
-        paint();
-      });
+      const resultOptions = (linked, keep) => [`<option value="">${esc(FINISH_RESULT_PLACEHOLDER)}</option>`, ...finishResultOptions(linked).map((option) => `<option value="${esc(option.value)}"${option.value === keep ? " selected" : ""}>${esc(option.label)}</option>`)].join("");
       const paint = () => {
-        const boxes = !linkedOrder() && Number(perBox.value) > 0 && Number(passed.value) > 0 ? Math.ceil(Number(passed.value) / Number(perBox.value)) : 0;
+        const boxed = !linkedOrder() || result.value === "pass:customer";
+        const boxes = boxed && Number(perBox.value) > 0 && Number(passed.value) > 0 ? Math.ceil(Number(passed.value) / Number(perBox.value)) : 0;
         form.querySelector("[data-rf-boxes]").textContent = boxes ? `จะได้ ${boxes} กล่อง` : "";
       };
+      const sync = () => {
+        const transfer = currentTransfer();
+        const linked = linkedOrder();
+        const choice = result.value;
+        const boxed = !linked || choice === "pass:customer";
+        if (perBoxField) perBoxField.hidden = !boxed;
+        if (linkedNote) linkedNote.hidden = !linked;
+        perBox.required = boxed;
+        if (!boxed) perBox.value = "";
+        else if (transfer && !perBox.value) perBox.value = transfer.uom === "m" ? "100" : "2000";
+        if (form.dataset) form.dataset.rfSuccess = finishSuccessText(linked, choice, baseSuccess);
+        if (submit) submit.textContent = boxed ? "บันทึกและพิมพ์ป้ายกล่อง" : "บันทึกการตกแต่ง";
+        paint();
+      };
+      form.querySelector("[data-rf-inbound]").addEventListener("change", () => {
+        result.innerHTML = resultOptions(Boolean(linkedOrder()), result.value);
+        sync();
+      });
+      result.addEventListener("change", sync);
       passed.addEventListener("input", paint);
       perBox.addEventListener("input", paint);
     };
@@ -564,5 +597,5 @@
     return { html, bind };
   };
 
-  root.MNP_RUBBERFLOW_LINE = { stageYield, inbound };
+  root.MNP_RUBBERFLOW_LINE = { stageYield, inbound, finishResultOptions, finishSuccessText };
 })(typeof window !== "undefined" ? window : globalThis);

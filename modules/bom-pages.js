@@ -2434,22 +2434,9 @@
       ? `<form novalidate data-rf-form="countPartStock" data-rf-success="บันทึกยอดที่นับ {result}" class="bom-count-form">${table}<div class="bom-count-save"><button class="btn rf-btn" type="submit">บันทึกยอดที่นับ</button></div></form>`
       : table;
     const html = `${head(ctx, "คลังของซื้อ", "ยอดคงเหลือของชิ้นส่วนที่ซื้อ (กล่อง ถุง สติ๊กเกอร์ ฯลฯ) ST/WH นับได้ที่นี่ · ยอดลดเมื่อ ST เบิกจ่ายของใบสั่งผลิต และเพิ่มเมื่อรับเข้าตามใบสั่งซื้อ", searchForm(ctx, "ค้นหารหัสหรือชื่อของซื้อ…"))}
-      ${ui.card(`${body}${more}`, { flush: true })}
-      ${fgStockCard(ctx)}`;
+      ${ui.card(`${body}${more}`, { flush: true })}`;
     return { html };
   };
-  // สินค้าสำเร็จรูปคงคลัง (ดูอย่างเดียว): ในคลัง = Σ รับเข้า − Σ ส่งมอบ ของทุกใบ · สต็อกสินค้าสำเร็จรูป = ส่วนที่เกินที่ใบนั้นสั่ง (หรือที่ลูกค้าของใบนั้นรอ) ใบสั่งผลิตอื่นที่ยังเป็นร่างนำไปใช้ลดงานผลิตได้
-  // อยู่ในใบ = ใบที่ถือของอยู่ (ของที่ใบนั้นรับมาเองหรือได้จากสต็อก ลบที่ให้ใบอื่นไปแล้วและส่งมอบแล้ว) · ใบที่มีส่วนว่างบอกจำนวนว่างไว้ท้ายแถว
-  function fgStockCard(ctx) {
-    const { ui, rules, data } = ctx;
-    const unit = (code) => esc(uomText(ctx, itemOf(ctx, code)?.uom ?? "set"));
-    const rows = rules.fgOnHand(data).filter((row) => (row.onHand > 0 || row.free > 0) && includes(`${row.fgCode} ${itemOf(ctx, row.fgCode)?.name ?? ""}`, ctx.q)).map((row) => {
-      const freeOf = new Map(row.freeOrders.map((entry) => [entry.orderId, entry.qty]));
-      const holders = row.orders.filter((entry) => entry.qty > 0).map((entry) => `${ui.link(entry.orderId, ctx.url("orders", { sel: entry.orderId, step: "6" }), "rf-mono")} <span class="small muted">× ${esc(rules.fmtQty(entry.qty))}${freeOf.has(entry.orderId) ? ` (ว่าง ${esc(rules.fmtQty(freeOf.get(entry.orderId)))})` : ""}</span>`);
-      return `<tr><td>${ui.link(row.fgCode, ctx.url("items", { sel: row.fgCode }), "rf-mono")}<div class="small muted">${esc(itemOf(ctx, row.fgCode)?.name ?? "")}</div></td><td class="right rf-mono">${esc(rules.fmtQty(row.onHand))} <span class="small muted">${unit(row.fgCode)}</span></td><td class="right rf-mono">${row.free > 0 ? `${esc(rules.fmtQty(row.free))} <span class="small muted">${unit(row.fgCode)}</span>` : '<span class="muted">—</span>'}</td><td>${holders.join(" · ")}</td></tr>`;
-    });
-    return ui.card(ui.table(["สินค้า", { label: "อยู่ในคลัง", className: "right" }, { label: "สต็อกสินค้าสำเร็จรูป", className: "right", title: "ส่วนที่เกินจากที่ใบนั้นสั่ง ใบสั่งผลิตอื่นที่ยังเป็นร่างนำไปใช้ลดงานผลิตได้ (ของที่ยังต้องส่งให้ลูกค้าของใบนั้นไม่นับ)" }, "อยู่ในใบ"], rows, { emptyText: ctx.q ? "ไม่พบสินค้าสำเร็จรูปที่ค้นหา" : "ยังไม่มีสินค้าสำเร็จรูปในคลัง" }), { title: "คงคลังสินค้าสำเร็จรูป" });
-  }
   dialogs.partHistory = (ctx, { code }) => {
     const { ui, rules } = ctx;
     const item = itemOf(ctx, code);
@@ -2769,6 +2756,7 @@
     receiveRods: "รับยางเส้นยาวเข้าคลัง (SR)", decideRods: "ตัดสินล็อตยางเส้นยาวที่กัก (QA)", issueRods: "จ่ายยางเส้นยาวให้ GR", reverseRodIssue: "ย้อนการจ่ายยางเส้นยาว", adjustRods: "ปรับยอดยางเส้นยาวในคลัง",
     receiveRodsOpening: "รับยางเส้นยาวนอกใบสั่ง (SR)", setRodLocation: "ย้ายตำแหน่งยางเส้นยาว (SR)",
     "rubberflow:recordFinishing": "ยางเส้นยาวจากล็อตตกแต่งเข้าคิวรับของคลังยางเส้นยาว (RubberFlow)", "rubberflow:addQcRecord": "ยางเส้นยาวจากล็อตตกแต่งที่ QA ปล่อยเข้าคิวรับของคลังยางเส้นยาว (RubberFlow)",
+    "rubberflow:receiveBoxes": "WH รับกล่องจากล็อตตกแต่งเข้าคลัง นับยอดเข้างาน RB ของใบ (RubberFlow)", "rubberflow:reverseBoxReceipt": "ย้อนการรับกล่องเข้าคลังสินค้าสำเร็จรูป (WH) ถอนยอดที่นับเข้างาน RB (RubberFlow)", "rubberflow:shipBoxes": "ส่งมอบกล่องสินค้าให้ลูกค้า (RubberFlow)", "rubberflow:reverseBoxShip": "ย้อนการส่งมอบกล่องสินค้า (RubberFlow)",
     "rubberflow:createPurchaseOrder": "สั่งซื้อ (ใบสั่งซื้อใน RubberFlow)", "rubberflow:receivePurchaseLine": "รับของซื้อเข้าคลัง (ใบสั่งซื้อใน RubberFlow)",
   });
   const AUDIT_SECTION_LABEL = Object.freeze({
