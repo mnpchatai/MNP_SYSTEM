@@ -868,8 +868,8 @@ test("the module version is <major>.<two-digit minor> with a real release date (
 });
 
 /* ---------- รุ่น 1.02 (20/11/2026) ---------- */
-test("v1.02/v1.03: the module version is 1.03 (the 1.02 statuses and labels are unchanged), 'received' is labelled 'จบงานแล้ว' with its own badge, and the event wording is unchanged", () => {
-  assert.equal(model.MODULE_VERSION, "1.03");
+test("v1.02/v1.04: the module version is 1.04 (the 1.02 statuses and labels are unchanged), 'received' is labelled 'จบงานแล้ว' with its own badge, and the event wording is unchanged", () => {
+  assert.equal(model.MODULE_VERSION, "1.04");
   assert.equal(model.statusLabel("received"), "จบงานแล้ว");
   assert.equal(model.myStatusLabel("received"), "จบงานแล้ว");
   assert.equal(model.statusBadgeClass("received"), "completed");

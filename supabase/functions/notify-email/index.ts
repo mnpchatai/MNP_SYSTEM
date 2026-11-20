@@ -156,6 +156,8 @@ function linkFor(row: PendingNotification) {
   if (row.action_url === "/admin") return `${base}/#/admin`;
   if (row.action_url === "/profile") return `${base}/#/profile`;
   if (row.action_url?.startsWith("/ncr/")) return `${base}/#/ncr?id=${encodeURIComponent(row.action_url.slice(5))}`;
+  // ใบสั่งงาน IT (ระบบสำนักงาน) เปิดหน้ารายละเอียดของใบนั้นตรง ๆ
+  if (row.action_url?.startsWith("/office/work-order/")) return `${base}/#/office?module=work-order&view=order&id=${encodeURIComponent(row.action_url.slice("/office/work-order/".length))}`;
   if (row.action_url === "/") return `${base}/#/dashboard`;
   return `${base}/#/notifications`;
 }
