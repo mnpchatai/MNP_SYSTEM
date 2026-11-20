@@ -445,14 +445,35 @@ test("the card badge counts orders waiting for my answer next to the ones waitin
 test("the card badge adds up what is waiting for me and skips counts that could not be read", () => {
   assert.deepEqual(plain(model.cardSummary({ approvals: 2, itWork: 1, toConfirm: 1 })), {
     total: 4, parts: [{ key: "approvals", label: "รออนุมัติ", count: 2 }, { key: "it", label: "งาน IT ค้าง", count: 1 }, { key: "confirm", label: "รอคุณยืนยันรับงาน", count: 1 }],
-    badge: "4 รอคุณ", title: "รออนุมัติ 2 · งาน IT ค้าง 1 · รอคุณยืนยันรับงาน 1",
+    openCount: null, badge: "4 รอคุณ", title: "รออนุมัติ 2 · งาน IT ค้าง 1 · รอคุณยืนยันรับงาน 1",
   });
   const unreadable = model.cardSummary({ approvals: null, itWork: 3, toConfirm: null });
   assert.equal(unreadable.badge, "3 รอคุณ");
   assert.equal(unreadable.parts.length, 1);
   const none = model.cardSummary();
-  assert.deepEqual(plain(none), { total: 0, parts: [], badge: "", title: "" }, "no badge at all when nothing waits or nothing could be read");
+  assert.deepEqual(plain(none), { total: 0, parts: [], openCount: null, badge: "", title: "" }, "no badge at all when nothing waits or nothing could be read");
   assert.equal(model.cardSummary({ approvals: 0, itWork: 0, toConfirm: 0 }).badge, "");
+});
+
+test("v1.03: the card summary carries the open count as a number only (0 is a real count, anything else is null)", () => {
+  assert.equal(model.cardSummary({ openCount: 0 }).openCount, 0);
+  assert.equal(model.cardSummary({ openCount: 4 }).openCount, 4);
+  for (const bad of [null, undefined, NaN, "3"]) assert.equal(model.cardSummary({ openCount: bad }).openCount, null);
+});
+
+test("v1.03: openOrderCount counts distinct unfinished orders over every list I can see, and never counts received/rejected/cancelled", () => {
+  const row = (id, status) => ({ id, status });
+  assert.deepEqual([...model.CLOSED_STATUSES], ["received", "rejected", "cancelled"]);
+  assert.equal(model.openOrderCount([]), 0);
+  assert.equal(model.openOrderCount(), 0);
+  // ไม่นับสถานะจบ ทุกสถานะที่เหลือนับ
+  const all = ["pending_dept", "pending_it_mgr", "approved", "in_progress", "it_closed", "need_info"].map((status, i) => row(`o${i}`, status));
+  assert.equal(model.openOrderCount(all), 6);
+  assert.equal(model.openOrderCount([row("a", "received"), row("b", "rejected"), row("c", "cancelled")]), 0);
+  // รวมหลายแหล่งโดยไม่นับซ้ำ (ใบเดียวอยู่ทั้งใบของฉันและงาน IT)
+  assert.equal(model.openOrderCount([row("a", "approved"), row("b", "pending_dept")], [row("b", "pending_dept"), row("c", "need_info")], [row("a", "approved"), row("d", "in_progress"), row("e", "received")]), 4);
+  // id เป็นตัวเลข/สตริงเดียวกันไม่นับซ้ำ · แถวไม่มี id หรือไม่ใช่อาร์เรย์ข้าม ไม่ล้ม
+  assert.equal(model.openOrderCount([row(1, "approved")], [row("1", "approved")], null, undefined, [{ status: "approved" }, null]), 1);
 });
 
 /* ---------- ถาม-ตอบ ---------- */
@@ -847,8 +868,8 @@ test("the module version is <major>.<two-digit minor> with a real release date (
 });
 
 /* ---------- รุ่น 1.02 (20/11/2026) ---------- */
-test("v1.02: the module version is 1.02, 'received' is labelled 'จบงานแล้ว' with its own badge, and the event wording is unchanged", () => {
-  assert.equal(model.MODULE_VERSION, "1.02");
+test("v1.02/v1.03: the module version is 1.03 (the 1.02 statuses and labels are unchanged), 'received' is labelled 'จบงานแล้ว' with its own badge, and the event wording is unchanged", () => {
+  assert.equal(model.MODULE_VERSION, "1.03");
   assert.equal(model.statusLabel("received"), "จบงานแล้ว");
   assert.equal(model.myStatusLabel("received"), "จบงานแล้ว");
   assert.equal(model.statusBadgeClass("received"), "completed");

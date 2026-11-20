@@ -258,6 +258,79 @@ test("the requester's card counts work waiting for their confirmation; when my_r
   assert.equal(await w.context.window.MNP_ITWO.loadCardSummary(), null);
 });
 
+/* ---------- ตัวเลข "ยังไม่จบ" บนการ์ด (รุ่น 1.03) ---------- */
+const FINISHED = ["received", "rejected", "cancelled"];
+test("v1.03: the card's open count is the orders I can see that are not finished, by my role, counted once", async () => {
+  const w = world();
+  const open = () => w.context.window.MNP_ITWO.loadCardSummary().then((summary) => summary.openCount);
+  assert.equal(await open(), 0, "nothing yet: a real zero, not 'unknown'");
+  const first = await w.create({ details: "ใบที่หนึ่ง" });
+  const second = await w.create({ details: "ใบที่สอง" });
+  assert.equal(await open(), 2, "an employee counts own orders");
+  // ผู้แจ้งยกเลิกแล้ว ไม่นับ
+  await w.context.sb.rpc("app_itwo_cancel", { p_work_order_id: second.id, p_reason: "ไม่ใช้แล้ว" });
+  assert.equal(await open(), 1);
+  // คนอื่นไม่เห็นใบของ emp
+  w.as("other");
+  assert.equal(await open(), 0, "someone with no stake sees none");
+  // ผู้จัดการแผนก: ใบของลูกน้องที่รอตัวเอง นับจากรายการรออนุมัติ
+  w.as("mgr");
+  w.calls.rpc.length = 0;
+  const forManager = await w.context.window.MNP_ITWO.loadCardSummary();
+  assert.equal(forManager.openCount, 1);
+  assert.equal(forManager.badge, "1 รอคุณ", "the secondary badge is still there");
+  assert.ok(w.names().includes("app_itwo_list_pending_approvals"));
+  // ผู้อนุมัติขั้น IT: เห็นทุกใบในรายการงาน IT (นับจากรายการนั้น)
+  w.as("itapp");
+  const itList = (await w.context.sb.rpc("app_itwo_list_it")).data.filter((row) => !FINISHED.includes(row.status));
+  assert.equal(await open(), new Set(itList.map((row) => row.id)).size);
+  // ผู้ดูแลงาน IT: แจ้งใบของตัวเอง (อยู่ทั้งใบของฉันและงาน IT) นับครั้งเดียว
+  w.as("itadm");
+  const own = (await w.context.sb.rpc("app_itwo_create", { p_request_type: "design", p_order_ref: null, p_attachment_flag: "no", p_attachment_note: null, p_details: "ใบของ IT", p_needed_date: "2026-11-25", p_is_urgent: false })).data[0];
+  const ids = new Set([...(await w.context.sb.rpc("app_itwo_list_mine")).data, ...(await w.context.sb.rpc("app_itwo_list_it")).data].filter((row) => !FINISHED.includes(row.status)).map((row) => row.id));
+  assert.equal(await open(), ids.size);
+  assert.ok(ids.has(own.id) && ids.has(first.id));
+  // งานจบแล้ว (ผู้แจ้งยืนยันรับ) ไม่นับ
+  const done = await closedOrder(w, { details: "ใบที่จะจบ" });
+  w.as("itadm");
+  const beforeReceive = await open();
+  w.as("emp");
+  await w.context.sb.rpc("app_itwo_receive", { p_work_order_id: done.id });
+  w.as("itadm");
+  assert.equal(await open(), beforeReceive - 1);
+});
+
+test("v1.03: when a list I am allowed to see cannot be read, the card has no open count (null: 'ดูสถานะ'), never a wrong number; the other badge still works", async () => {
+  const w = world();
+  await w.create({ details: "ใบของ IT" });
+  w.as("itadm");
+  for (const name of ["app_itwo_list_mine", "app_itwo_list_it"]) {
+    w.rpcFail.set(name, Object.assign(new Error("Failed to fetch"), { code: "" }));
+    const summary = await w.context.window.MNP_ITWO.loadCardSummary();
+    assert.equal(summary.openCount, null, `${name} failed`);
+    assert.equal(typeof summary.badge, "string");
+  }
+  w.as("mgr");
+  w.rpcFail.set("app_itwo_list_pending_approvals", Object.assign(new Error("Failed to fetch"), { code: "" }));
+  assert.equal((await w.context.window.MNP_ITWO.loadCardSummary()).openCount, null);
+  // ไม่มีสิทธิ์ดูรายการนั้น: ไม่เรียก และไม่เป็นเหตุให้นับไม่ได้
+  const plain = world();
+  await plain.create();
+  plain.calls.rpc.length = 0;
+  assert.equal((await plain.context.window.MNP_ITWO.loadCardSummary()).openCount, 1);
+  assert.ok(!plain.names().includes("app_itwo_list_it") && !plain.names().includes("app_itwo_list_pending_approvals"));
+});
+
+test("v1.03: test mode counts with the same app_itwo_* RPCs (the database scopes them to test orders), so only test orders are counted", async () => {
+  const w = world();
+  w.context.state.sandbox = { active: true };
+  await w.create({ details: "ใบทดสอบ" });
+  w.calls.rpc.length = 0;
+  const summary = await w.context.window.MNP_ITWO.loadCardSummary();
+  assert.equal(summary.openCount, 1);
+  assert.ok(w.names().length > 0 && w.names().every((name) => /^app_itwo_/.test(name)), "only app_itwo_* RPCs: the is_test separation is enforced in the database");
+});
+
 /* ---------- แท็บตามบทบาท ---------- */
 test("the 'ใบของฉัน' tab carries the number of orders waiting for my confirmation, on every tab, and an employee with only that tab sees the bar once something waits", async () => {
   const w = world();
@@ -1757,7 +1830,9 @@ test("v1.02: the status 'received' is labelled 'จบงานแล้ว' on 
 test("v1.02: the module announces its version for the card (the same value shown at the bottom of every page)", async () => {
   const w = world();
   assert.equal(w.context.window.MNP_ITWO.version, w.context.window.MNP_ITWO_MODEL.MODULE_VERSION);
-  assert.equal(w.context.window.MNP_ITWO.version, "1.02");
+  assert.equal(w.context.window.MNP_ITWO.version, "1.03");
+  assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_WORK_ORDER.version, "1.03", "announced to the office menu cards (central mechanism)");
+  assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_WORK_ORDER.loadCardSummary, w.context.window.MNP_ITWO.loadCardSummary);
   await w.open("");
-  assert.match(w.html, />V1\.02</);
+  assert.match(w.html, />V1\.03</);
 });

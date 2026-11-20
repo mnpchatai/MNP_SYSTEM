@@ -18,7 +18,7 @@
   // เลขเวอร์ชันของโมดูล (แสดงมุมขวาล่างทุกหน้า) รูปแบบ <ใหญ่>.<ย่อย 2 หลัก> · เจ้าของตัดสิน 20/11/2026
   // อัปเดตย่อย (แก้คำ หน้าตา บั๊ก ช่องเล็ก ๆ) = +0.01 · อัปเดตใหญ่ (เปลี่ยนขั้นตอนงาน/สถานะ/ฟีเจอร์ใหม่ที่ผู้ใช้ต้องเรียนรู้) = ขึ้นหลักหน่วย .00
   // ถามเจ้าของทุกครั้งว่าเป็นอัปเดตย่อยหรือใหญ่ แล้วแก้ทั้งสองค่านี้ใน PR เดียวกับการเปลี่ยนแปลง (VERSION_DATE = วันที่ปล่อย YYYY-MM-DD)
-  const MODULE_VERSION = "1.02";
+  const MODULE_VERSION = "1.03";
   const VERSION_DATE = "2026-11-20";
   const DURATION_NOTE = "งานออกแบบ 3–7 วันนับจากวันที่ได้ข้อมูลครบ · งานเบ็ดเตล็ดตามตกลง";
 
@@ -398,8 +398,24 @@
   ];
 
   /* ---------- ตัวเลขบนการ์ด ---------- */
+  // สถานะที่จบแล้ว (ไม่ใช่งานค้าง): จบงานแล้ว · ไม่อนุมัติ · ยกเลิก
+  const CLOSED_STATUSES = Object.freeze(["received", "rejected", "cancelled"]);
+  // จำนวนใบที่ "ยังไม่จบ" ที่ผู้ใช้มองเห็น (ตัวเลข "N ยังไม่จบ" บนการ์ด): รวมรายการจากทุกที่ที่ผู้ใช้เห็นใบ (ใบของฉัน · รออนุมัติ · งาน IT)
+  // แล้วนับแบบไม่ซ้ำด้วย id (ใบเดียวอาจอยู่ทั้งใบของฉันและงาน IT) ตัดสถานะที่จบแล้วออก · แต่ละแหล่งเป็นอาร์เรย์ ผู้ใช้ที่ไม่มีสิทธิ์ดูแหล่งนั้นส่ง []
+  // แหล่งที่ควรอ่านแต่อ่านไม่ได้ ผู้เรียกต้องไม่เรียกฟังก์ชันนี้ (ใช้ null) เพราะนับขาดจะแสดงเลขผิด
+  function openOrderCount(...sources) {
+    const ids = new Set();
+    for (const rows of sources) {
+      for (const row of Array.isArray(rows) ? rows : []) {
+        if (row?.id === null || row?.id === undefined || CLOSED_STATUSES.includes(row.status)) continue;
+        ids.add(String(row.id));
+      }
+    }
+    return ids.size;
+  }
   // รวมงานที่รอ "คุณ": อนุมัติ + งาน IT ที่ต้องลงมือ + ใบที่รอคุณยืนยันรับ + ใบที่รอคุณตอบคำถาม · ค่าที่นับไม่ได้ (null) ข้ามไป ไม่ทำให้ทั้งการ์ดล้ม
-  function cardSummary({ approvals = null, itWork = null, toConfirm = null, toAnswer = null } = {}) {
+  // openCount = จำนวนใบที่ยังไม่จบ (openOrderCount) หรือ null ถ้านับไม่ได้ · การ์ดแสดงเป็นป้ายหลัก "N ยังไม่จบ" ส่วน badge "N รอคุณ" เป็นป้ายรอง
+  function cardSummary({ approvals = null, itWork = null, toConfirm = null, toAnswer = null, openCount = null } = {}) {
     const parts = [
       { key: "approvals", label: "รออนุมัติ", count: approvals },
       { key: "it", label: "งาน IT ค้าง", count: itWork },
@@ -410,6 +426,7 @@
     return {
       total,
       parts,
+      openCount: Number.isFinite(openCount) ? openCount : null,
       badge: total > 0 ? `${total} รอคุณ` : "",
       title: parts.map((part) => `${part.label} ${part.count}`).join(" · "),
     };
@@ -714,7 +731,7 @@
     todayBangkok, formatDate, formatDateTime, isRealDate, charCount, clip,
     visibleTabs, readView, viewAllowed, workOrderUrl, isUuid,
     actionButtons, countsAsBothSteps, confirmMessageFor, BOTH_STEPS_NOTE, completeToast, answerToast, pendingStepLabel, eventLabel, eventLabelFor, CANCELLED_ON_BEHALF_LABEL, signatureSlots, approvalSummary,
-    itGroupOf, groupItOrders, itActionableCount, awaitingMyReceiveCount, awaitingMyAnswerCount, mineWaiting, mineWaitingNote, waitingForMeCount, itApprovalProgress, cardSummary,
+    itGroupOf, groupItOrders, itActionableCount, awaitingMyReceiveCount, awaitingMyAnswerCount, mineWaiting, mineWaitingNote, waitingForMeCount, itApprovalProgress, CLOSED_STATUSES, openOrderCount, cardSummary,
     orderRules, createParams, validateReason, infoRules, infoParams,
     legacyAccessChanges, accessPrintRows,
     fileExtension, fileMime, fileBucket, filePath, formatFileSize, validateFiles, makeUploadEntries, isAlreadyUploaded, isFileRejection, runUploads, roundLabel, attachmentGroups, galleryFile, reworkRounds, reworkRules, reworkParams,
