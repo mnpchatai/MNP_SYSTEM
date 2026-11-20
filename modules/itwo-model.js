@@ -12,8 +12,14 @@
   const MAX_ATTACHMENT_NOTE = 200;
   const MAX_REASON = 500;
   const MAX_MISC_DETAIL = 200;
-  const MAX_FILES = 10; // ต่อหนึ่งครั้งที่ส่ง (ตอนแจ้ง หรือแต่ละรอบแก้ไข) ตรงกับ app_itwo_add_attachment
+  const MAX_INFO_BODY = 2000; // ข้อความถาม/ตอบ ตรงกับ app_itwo_request_info / app_itwo_provide_info
+  const MAX_FILES = 10; // ต่อหนึ่งครั้งที่ส่ง (ตอนแจ้ง แต่ละรอบแก้ไข หรือแต่ละข้อความถาม/ตอบ) ตรงกับ app_itwo_add_attachment / app_itwo_add_comment_attachment
   const MAX_FILE_BYTES = 20 * 1024 * 1024; // ต่อไฟล์ ตรงกับ bucket และตาราง itwo_attachments
+  // เลขเวอร์ชันของโมดูล (แสดงมุมขวาล่างทุกหน้า) รูปแบบ <ใหญ่>.<ย่อย 2 หลัก> · เจ้าของตัดสิน 20/11/2026
+  // อัปเดตย่อย (แก้คำ หน้าตา บั๊ก ช่องเล็ก ๆ) = +0.01 · อัปเดตใหญ่ (เปลี่ยนขั้นตอนงาน/สถานะ/ฟีเจอร์ใหม่ที่ผู้ใช้ต้องเรียนรู้) = ขึ้นหลักหน่วย .00
+  // ถามเจ้าของทุกครั้งว่าเป็นอัปเดตย่อยหรือใหญ่ แล้วแก้ทั้งสองค่านี้ใน PR เดียวกับการเปลี่ยนแปลง (VERSION_DATE = วันที่ปล่อย YYYY-MM-DD)
+  const MODULE_VERSION = "1.01";
+  const VERSION_DATE = "2026-11-20";
   const DURATION_NOTE = "งานออกแบบ 3–7 วันนับจากวันที่ได้ข้อมูลครบ · งานเบ็ดเตล็ดตามตกลง";
 
   // ตัวเลือกบนฟอร์มแจ้งงาน: ไม่มี "สิทธิ์ในระบบ" แล้ว (เจ้าของสั่ง 19/11/2026 จะแยกเป็นโมดูลขอสิทธิ์) · ใบเก่าที่เป็น system_access ยังแสดงชื่อได้ที่ LEGACY_REQUEST_TYPES
@@ -57,7 +63,8 @@
     pending_it_mgr: "รอผู้อนุมัติขั้น IT",
     approved: "อนุมัติครบ",
     in_progress: "กำลังดำเนินการ",
-    it_closed: "IT ปิดงาน (รอผู้แจ้งยืนยัน)",
+    it_closed: "IT ส่งงาน (รอผู้แจ้งยืนยัน)",
+    need_info: "รอผู้แจ้งตอบ",
     received: "ได้รับงานแล้ว",
     rejected: "ไม่อนุมัติ",
     cancelled: "ยกเลิก",
@@ -69,6 +76,7 @@
     approved: "approved",
     in_progress: "in_progress",
     it_closed: "pending_verify",
+    need_info: "more_info", // ป้ายสีอำพันเครื่องหมาย ? ของระบบ (ขอข้อมูลเพิ่ม)
     received: "completed",
     rejected: "rejected",
     cancelled: "cancelled",
@@ -76,7 +84,55 @@
   const statusLabel = (status) => STATUS_LABELS[status] ?? status ?? "";
   const statusBadgeClass = (status) => STATUS_BADGE_CLASS[status] ?? "";
   // ผู้แจ้งเห็นคำที่บอกว่าถึงคิวของตัวเอง (หน้า "ใบของฉัน")
-  const myStatusLabel = (status) => (status === "it_closed" ? "IT ปิดงานแล้ว รอคุณยืนยัน" : statusLabel(status));
+  const MY_STATUS_LABELS = Object.freeze({ it_closed: "IT ส่งงานแล้ว รอคุณยืนยัน", need_info: "รอคุณตอบ" });
+  const myStatusLabel = (status) => MY_STATUS_LABELS[status] ?? statusLabel(status);
+
+  /* ---------- ถาม-ตอบ ---------- */
+  // ขั้นของผู้ถาม (itwo_comments.stage): dept = ผู้จัดการแผนก · it_mgr = ผู้อนุมัติขั้น IT · it = ทีม IT (หลังอนุมัติ / ระหว่างทำงาน)
+  const INFO_STAGE_LABELS = Object.freeze({ dept: "ผู้จัดการแผนก", it_mgr: "ผู้อนุมัติขั้น IT", it: "ทีม IT" });
+  const infoStageLabel = (stage) => INFO_STAGE_LABELS[stage] ?? stage ?? "";
+  const COMMENT_KIND_LABELS = Object.freeze({ question: "ถาม", answer: "ตอบ" });
+  const commentKindLabel = (kind) => COMMENT_KIND_LABELS[kind] ?? kind ?? "";
+  // ข้อความถาม/ตอบทุกข้อความเรียงตามลำดับจริง (id) พร้อมไฟล์ของข้อความนั้น · ไม่มี = []
+  function commentRows(detail) {
+    return (Array.isArray(detail?.comments) ? detail.comments : []).slice().sort((a, b) => Number(a.id) - Number(b.id)).map((comment, index) => ({
+      id: comment.id,
+      no: index + 1,
+      kind: comment.kind,
+      kindLabel: commentKindLabel(comment.kind),
+      stage: comment.stage,
+      stageLabel: infoStageLabel(comment.stage),
+      body: comment.body,
+      by: comment.author_full_name,
+      at: comment.created_at,
+      files: Array.isArray(comment.attachments) ? comment.attachments : [],
+    }));
+  }
+  // ไฟล์ทุกไฟล์ของใบ: ตอนแจ้ง + รอบแก้ไข + ข้อความถาม/ตอบ (เข้า gallery ตัวเดียวของหน้ารายละเอียด)
+  const allFiles = (detail) => [...(Array.isArray(detail?.attachments) ? detail.attachments : []), ...commentRows(detail).flatMap((comment) => comment.files)];
+  // คำถามที่ค้างอยู่ + ไฟล์ของคำถามนั้น (ผู้แจ้งเห็นเด่น ๆ พร้อมฟอร์มตอบ) · ไม่มี = null
+  function pendingQuestion(detail) {
+    const pending = detail?.info_pending;
+    if (!pending) return null;
+    const comment = commentRows(detail).find((row) => String(row.id) === String(pending.comment_id));
+    return {
+      commentId: pending.comment_id,
+      stage: pending.stage,
+      stageLabel: infoStageLabel(pending.stage),
+      body: pending.body,
+      askedAt: pending.asked_at,
+      askedBy: pending.asked_by_full_name,
+      files: comment?.files ?? [],
+      returnLabel: statusLabel(detail.info_return_status),
+    };
+  }
+  // คำอธิบายป้าย "รอผู้แจ้งตอบ" ในรายการ (title ของป้าย): ใครถาม และตอบแล้วใบกลับไปที่ไหน · mine = มุมมองผู้แจ้ง
+  function infoBadgeTitle(row, mine = false) {
+    if (row?.status !== "need_info") return "";
+    const asker = row.info_stage ? (mine ? `${infoStageLabel(row.info_stage)} ถามคุณ` : `ถามโดย ${infoStageLabel(row.info_stage)}`) : "";
+    const back = row.info_return_status ? `ตอบแล้วใบกลับไปที่ ${statusLabel(row.info_return_status)}` : "";
+    return [asker, back].filter(Boolean).join(" · ");
+  }
   const isTestDoc = (docNo) => String(docNo ?? "").startsWith("TEST-");
   // ป้ายงานแก้ไข "แก้ไขครั้งที่ N · กำหนด วว/ดด/ปปปป" (rework_round 0 = ไม่เคยขอแก้ไข ไม่มีป้าย) · ใช้ในใบของฉัน / งาน IT / หน้ารายละเอียด
   const reworkTag = (roundNo, dueDate) => (Number(roundNo) > 0 ? `แก้ไขครั้งที่ ${Number(roundNo)}${dueDate ? ` · กำหนด ${formatDate(dueDate)}` : ""}` : "");
@@ -153,13 +209,16 @@
     approve: { label: "อนุมัติ", tone: "success", rpc: "app_itwo_approve", done: "อนุมัติแล้ว", confirmTitle: "อนุมัติใบสั่งงานนี้?", confirmMessage: "การกดอนุมัติบันทึกชื่อ วันที่ และเวลาของคุณเป็นลายเซ็นอิเล็กทรอนิกส์ แก้ไขย้อนหลังไม่ได้" },
     reject: { label: "ไม่อนุมัติ", tone: "danger", rpc: "app_itwo_reject", done: "บันทึกการไม่อนุมัติแล้ว", reason: { title: "ไม่อนุมัติใบสั่งงานนี้?", label: "เหตุผลที่ไม่อนุมัติ", hint: "ใบนี้จะจบทันทีและเปิดใหม่ไม่ได้ ผู้แจ้งต้องแจ้งเป็นใบใหม่", confirmLabel: "ไม่อนุมัติ" } },
     start: { label: "เริ่มดำเนินการ", tone: "primary", rpc: "app_itwo_start", done: "เริ่มดำเนินการแล้ว", confirmTitle: "เริ่มดำเนินการใบสั่งงานนี้?", confirmMessage: "ระบบบันทึกว่าคุณเป็นผู้รับงานนี้ พร้อมวันและเวลา" },
-    complete: { label: "ปิดงาน", tone: "success", rpc: "app_itwo_complete", done: "ปิดงานแล้ว รอผู้แจ้งยืนยันรับงาน", confirmTitle: "ปิดงานใบสั่งงานนี้?", confirmMessage: "เมื่อปิดงานแล้วใบจะส่งกลับให้ผู้แจ้งตรวจ ผู้แจ้งจะยืนยันรับงานหรือขอแก้ไขงานได้ และยกเลิกใบไม่ได้" },
+    // "ถามผู้แจ้ง" / "ตอบคำถาม" ไม่ยิง RPC ทันที: เปิดฟอร์มข้อความ + ไฟล์ที่ module-itwo.js · inline = ฟอร์มตอบวาดเปิดไว้ในหน้าอยู่แล้ว ไม่มีปุ่มในแผงปุ่ม
+    request_info: { label: "ถามผู้แจ้ง", tone: "secondary", opens: "ask", rpc: "app_itwo_request_info", confirmTitle: "ส่งคำถามถึงผู้แจ้ง?", confirmMessage: "ใบจะเปลี่ยนเป็น รอผู้แจ้งตอบ และกลับมาดำเนินการต่อได้เมื่อผู้แจ้งตอบ ระหว่างนี้อนุมัติ เริ่มงาน หรือส่งงานไม่ได้ (ไม่อนุมัติได้) · ระบบบันทึกชื่อ วันที่ และเวลาของคุณไว้ในประวัติเอกสาร", confirmLabel: "ส่งคำถาม", done: "ส่งคำถามถึงผู้แจ้งแล้ว" },
+    provide_info: { label: "ตอบคำถาม", tone: "primary", opens: "answer", inline: true, rpc: "app_itwo_provide_info", confirmTitle: "ส่งคำตอบ?", confirmMessage: "ใบจะกลับไปดำเนินการต่อทันที · ระบบบันทึกชื่อ วันที่ และเวลาของคุณไว้ในประวัติเอกสาร แก้ไขย้อนหลังไม่ได้", confirmLabel: "ส่งคำตอบ", done: "ส่งคำตอบแล้ว" },
+    complete: { label: "ส่งงาน", tone: "success", rpc: "app_itwo_complete", done: "ส่งงานแล้ว รอผู้แจ้งยืนยันรับงาน", confirmTitle: "ส่งงานใบสั่งงานนี้?", confirmMessage: "เมื่อส่งงานแล้วใบจะส่งกลับให้ผู้แจ้งตรวจ ผู้แจ้งจะยืนยันรับงานหรือขอแก้ไขงานได้ และยกเลิกใบไม่ได้" },
     receive: { label: "ได้รับงานเรียบร้อยแล้ว", tone: "success", rpc: "app_itwo_receive", done: "ยืนยันรับงานแล้ว", confirmTitle: "ยืนยันว่าได้รับงานเรียบร้อยแล้ว?", confirmMessage: "ใบสั่งงานจะจบทันที ทำซ้ำหรือขอแก้ไขอีกไม่ได้" },
     // "แก้ไขงาน" ไม่ยิง RPC ทันที: เปิดฟอร์ม (รายละเอียด + วันที่กำหนดเสร็จ + ไฟล์) ที่ module-itwo.js · opens = ชื่อฟอร์มที่เปิด
     request_rework: { label: "แก้ไขงาน", tone: "secondary", opens: "rework" },
     cancel: { label: "ยกเลิกใบสั่งงาน", tone: "danger", rpc: "app_itwo_cancel", done: "ยกเลิกใบสั่งงานแล้ว", reason: { title: "ยกเลิกใบสั่งงานนี้?", label: "เหตุผลที่ยกเลิก", hint: "ใบที่ยกเลิกแล้วเปิดใหม่ไม่ได้ ต้องแจ้งเป็นใบใหม่และได้เลขใหม่", confirmLabel: "ยกเลิกใบสั่งงาน" } },
   });
-  const ACTION_ORDER = Object.freeze(["approve", "reject", "start", "complete", "receive", "request_rework", "cancel"]);
+  const ACTION_ORDER = Object.freeze(["approve", "reject", "request_info", "start", "complete", "receive", "request_rework", "provide_info", "cancel"]);
   // allowed = allowed_actions จาก app_itwo_get_detail · action ที่ไม่รู้จัก (เช่น edit_access ของรุ่นเก่า ซึ่งถอดออกแล้ว) ไม่ขึ้นเป็นปุ่ม
   function actionButtons(allowed) {
     const set = new Set(Array.isArray(allowed) ? allowed : []);
@@ -176,7 +235,9 @@
     const base = ACTION_BUTTONS[action]?.confirmMessage ?? "";
     return action === "approve" && countsAsBothSteps(detail, role) ? `${BOTH_STEPS_NOTE} · ${base}` : base;
   }
-  // ข้อความแจ้งหลัง IT กดปิดงาน: บอกว่างานกลับไปหาผู้แจ้งแล้ว · โหมดทดสอบ (ผู้แจ้งเป็นบัญชีทดสอบอีกคน) บอกให้สลับบัญชีไปยืนยัน/ขอแก้ไข
+  // ข้อความแจ้งหลังตอบคำถาม: ใบกลับไปที่ขั้นที่ถาม (stage = ขั้นของคำถามที่ตอบ)
+  const answerToast = (stage) => `ส่งคำตอบแล้ว ใบกลับไปที่${infoStageLabel(stage) || "ผู้ถาม"}`;
+  // ข้อความแจ้งหลัง IT กดส่งงาน: บอกว่างานกลับไปหาผู้แจ้งแล้ว · โหมดทดสอบ (ผู้แจ้งเป็นบัญชีทดสอบอีกคน) บอกให้สลับบัญชีไปยืนยัน/ขอแก้ไข
   function completeToast(detail, isTest) {
     const name = detail?.requester?.full_name ?? "ผู้แจ้ง";
     const base = `ส่งกลับให้ ${name} ตรวจและยืนยันแล้ว`;
@@ -195,9 +256,11 @@
     it_mgr_rejected: "ผู้อนุมัติขั้น IT ไม่อนุมัติ",
     cancelled: "ผู้แจ้งยกเลิก",
     started: "IT เริ่มดำเนินการ",
-    completed: "IT ปิดงาน",
+    completed: "IT ส่งงาน",
     received: "ผู้แจ้งยืนยันรับงาน",
     rework_requested: "ผู้แจ้งขอแก้ไขงาน",
+    info_requested: "ถามผู้แจ้ง",
+    info_provided: "ผู้แจ้งตอบคำถาม",
   });
   const eventLabel = (action) => EVENT_LABELS[action] ?? action ?? "";
 
@@ -206,8 +269,8 @@
     { key: "requester", label: "ผู้แจ้ง", action: "created" },
     { key: "dept_manager", label: "ผู้จัดการแผนก", action: "dept_approved" },
     { key: "it_approver", label: "ผู้อนุมัติขั้น IT", action: "it_mgr_approved" },
-    // ใบที่ถูกขอแก้ไขงานมี completed หลายครั้ง: ช่องนี้ใช้การปิดงานครั้งล่าสุด (ครั้งที่ผู้แจ้งยืนยันรับ) ส่วนรอบก่อนหน้าอยู่ในตาราง "ประวัติการแก้ไขงาน" ของฟอร์ม
-    { key: "it_operator", label: "IT ผู้ดำเนินการ (ปิดงาน)", action: "completed", startedAction: "started", pick: "last" },
+    // ใบที่ถูกขอแก้ไขงานมี completed หลายครั้ง: ช่องนี้ใช้การส่งงานครั้งล่าสุด (ครั้งที่ผู้แจ้งยืนยันรับ) ส่วนรอบก่อนหน้าอยู่ในตาราง "ประวัติการแก้ไขงาน" ของฟอร์ม
+    { key: "it_operator", label: "IT ผู้ดำเนินการ (ส่งงาน)", action: "completed", startedAction: "started", pick: "last" },
     { key: "receiver", label: "ผู้รับงาน", action: "received" },
   ]);
   const SINGLE_CLICK_REMARK = "อนุมัติครั้งเดียว นับเป็นทั้งสองขั้น";
@@ -263,6 +326,7 @@
   const IT_GROUPS = Object.freeze([
     { key: "to_start", label: "รอเริ่มงาน" },
     { key: "in_progress", label: "กำลังดำเนินการ" },
+    { key: "awaiting_info", label: "รอผู้แจ้งตอบ" },
     { key: "awaiting_receive", label: "รอผู้แจ้งยืนยัน" },
     { key: "awaiting_approval", label: "รออนุมัติ" },
     { key: "closed", label: "จบแล้ว / ไม่อนุมัติ / ยกเลิก" },
@@ -275,6 +339,7 @@
       case "pending_it_mgr": return row.is_urgent ? "to_start" : "awaiting_approval";
       case "in_progress": return "in_progress";
       case "it_closed": return "awaiting_receive";
+      case "need_info": return "awaiting_info"; // รอผู้แจ้งตอบ: ไม่ใช่งานที่ IT ต้องลงมือ (ไม่นับบนแท็บ/การ์ด)
       default: return "closed";
     }
   }
@@ -294,20 +359,36 @@
   }
   // งาน IT ที่ต้องลงมือ (ตัวเลขบนแท็บ/การ์ด): รอเริ่มงาน + กำลังดำเนินการ
   const itActionableCount = (rows) => (Array.isArray(rows) ? rows : []).filter((row) => ["to_start", "in_progress"].includes(itGroupOf(row))).length;
-  // รายการที่รอผู้แจ้งยืนยัน (ตัวเลขบนการ์ดของผู้แจ้ง)
+  // รายการที่รอผู้แจ้งยืนยัน (IT ส่งงานแล้ว) / รอผู้แจ้งตอบ (มีคนถามมา) · ตัวเลขบนแท็บ "ใบของฉัน" และการ์ดของผู้แจ้งนับสองอย่างรวมกัน
   const awaitingMyReceiveCount = (rows) => (Array.isArray(rows) ? rows : []).filter((row) => row.status === "it_closed").length;
+  const awaitingMyAnswerCount = (rows) => (Array.isArray(rows) ? rows : []).filter((row) => row.status === "need_info").length;
+  const mineWaiting = (rows) => {
+    const confirm = awaitingMyReceiveCount(rows);
+    const answer = awaitingMyAnswerCount(rows);
+    return { confirm, answer, total: confirm + answer };
+  };
+  // คำอธิบายตัวเลขบนแท็บ "ใบของฉัน" (aria/title): บอกว่ารออะไร · ไม่มีรายละเอียด = รอยืนยันอย่างเดิม
+  function mineWaitingNote(parts) {
+    const confirm = Number(parts?.confirm) || 0;
+    const answer = Number(parts?.answer) || 0;
+    if (confirm && answer) return ` (รอคุณยืนยัน ${confirm} · รอคุณตอบ ${answer})`;
+    return answer ? " ที่รอคุณตอบ" : " ที่รอคุณยืนยัน";
+  }
+  // รออนุมัติที่ "รอฉัน" จริง: ตัดใบที่รอผู้แจ้งตอบ (need_info) ออก (list_pending_approvals ส่งมาแสดง แต่ไม่ใช่งานที่ต้องกดอนุมัติ)
+  const waitingForMeCount = (rows) => (Array.isArray(rows) ? rows : []).filter((row) => row.status !== "need_info").length;
   const itApprovalProgress = (row) => [
     { label: "ผู้จัดการแผนก", done: Boolean(row?.has_dept_approved) },
     { label: "ผู้อนุมัติขั้น IT", done: Boolean(row?.has_it_mgr_approved) },
   ];
 
   /* ---------- ตัวเลขบนการ์ด ---------- */
-  // รวมงานที่รอ "คุณ": อนุมัติ + งาน IT ที่ต้องลงมือ + ใบที่รอคุณยืนยันรับ · ค่าที่นับไม่ได้ (null) ข้ามไป ไม่ทำให้ทั้งการ์ดล้ม
-  function cardSummary({ approvals = null, itWork = null, toConfirm = null } = {}) {
+  // รวมงานที่รอ "คุณ": อนุมัติ + งาน IT ที่ต้องลงมือ + ใบที่รอคุณยืนยันรับ + ใบที่รอคุณตอบคำถาม · ค่าที่นับไม่ได้ (null) ข้ามไป ไม่ทำให้ทั้งการ์ดล้ม
+  function cardSummary({ approvals = null, itWork = null, toConfirm = null, toAnswer = null } = {}) {
     const parts = [
       { key: "approvals", label: "รออนุมัติ", count: approvals },
       { key: "it", label: "งาน IT ค้าง", count: itWork },
       { key: "confirm", label: "รอคุณยืนยันรับงาน", count: toConfirm },
+      { key: "answer", label: "รอคุณตอบ", count: toAnswer },
     ].filter((part) => Number.isFinite(part.count) && part.count > 0);
     const total = parts.reduce((sum, part) => sum + part.count, 0);
     return {
@@ -366,6 +447,16 @@
     if (charCount(text) > MAX_REASON) return `เหตุผลต้องไม่เกิน ${MAX_REASON} ตัวอักษร`;
     return null;
   }
+
+  /* ---------- ฟอร์มถามผู้แจ้ง / ตอบคำถาม ---------- */
+  // ข้อความบังคับ ≤ 2,000 ตัวอักษร (ฐานข้อมูลตรวจซ้ำ) · ไฟล์ไม่บังคับ ตรวจที่ validateFiles
+  const infoRules = (kind) => [{
+    name: "body", required: true,
+    message: kind === "answer" ? "กรุณาพิมพ์คำตอบ" : "กรุณาพิมพ์ข้อความที่ต้องการถามผู้แจ้ง",
+    check: (value) => charCount(value) <= MAX_INFO_BODY, checkMessage: `ข้อความต้องไม่เกิน ${MAX_INFO_BODY.toLocaleString("en-US")} ตัวอักษร`,
+  }];
+  // พารามิเตอร์ของ app_itwo_request_info / app_itwo_provide_info
+  const infoParams = (workOrderId, values) => ({ p_work_order_id: workOrderId, p_body: String(values.body ?? "").trim() });
 
   /* ---------- ข้อมูลสิทธิ์ในระบบของใบเก่า (อ่านอย่างเดียว) ---------- */
   // ส่วน "สำหรับแผนก IT : สิทธิ์ในระบบ" ถูกถอดออกจากใบสั่งงานแล้ว (เจ้าของสั่ง 19/11/2026) แต่ใบเก่าที่ IT เคยบันทึกไว้ยังมีข้อมูล (ISO ห้ามลบ)
@@ -505,7 +596,7 @@
   }
 
   /* ---------- ฟอร์มขอแก้ไขงาน ---------- */
-  // ผู้แจ้งกด "แก้ไขงาน" ตอน IT ปิดงานแล้ว: รายละเอียดที่ต้องแก้ (บังคับ) + วันที่กำหนดแก้เสร็จ (บังคับ ไม่ย้อนหลังตามเวลาไทย) + ไฟล์ (ไม่บังคับ)
+  // ผู้แจ้งกด "แก้ไขงาน" ตอน IT ส่งงานแล้ว: รายละเอียดที่ต้องแก้ (บังคับ) + วันที่กำหนดแก้เสร็จ (บังคับ ไม่ย้อนหลังตามเวลาไทย) + ไฟล์ (ไม่บังคับ)
   const EMPTY_REWORK_FORM = Object.freeze({ details: "", due_date: "" });
   function reworkRules({ today = () => todayBangkok() } = {}) {
     return [
@@ -586,10 +677,13 @@
 
   // error ของการอัปโหลดไฟล์ขึ้น Storage (ข้อความอังกฤษของ Storage ไม่แสดงตรง ๆ) · ส่วน error ของ RPC ลงทะเบียนไฟล์ใช้ describeError ตามปกติ
   // 403 = policy ปฏิเสธ (หมดหน้าต่างแนบ 30 นาที / ไม่ใช่ผู้แจ้ง / มีผู้อนุมัติแล้ว) · 413 = ไฟล์ใหญ่เกิน · 415 = ชนิดไฟล์ไม่รับ
-  function describeUploadError(error) {
+  // comment = ไฟล์ของข้อความถาม/ตอบ (หน้าต่าง 30 นาทีนับจากส่งข้อความ ไม่เกี่ยวกับการอนุมัติ)
+  function describeUploadError(error, { comment = false } = {}) {
     const status = String(error?.statusCode ?? error?.status ?? "");
     const message = String(error?.message ?? "");
-    if (status === "403" || /row-level security|not authorized|unauthorized/i.test(message)) return { kind: "rejected", message: "อัปโหลดไฟล์ไม่ได้ อาจหมดเวลาแนบไฟล์แล้ว (แนบได้ภายใน 30 นาที) หรือมีผู้อนุมัติใบนี้แล้ว" };
+    if (status === "403" || /row-level security|not authorized|unauthorized/i.test(message)) {
+      return { kind: "rejected", message: comment ? "อัปโหลดไฟล์ไม่ได้ อาจหมดเวลาแนบไฟล์แล้ว (แนบได้ภายใน 30 นาทีหลังส่งข้อความ) หรือใบนี้สิ้นสุดแล้ว" : "อัปโหลดไฟล์ไม่ได้ อาจหมดเวลาแนบไฟล์แล้ว (แนบได้ภายใน 30 นาที) หรือมีผู้อนุมัติใบนี้แล้ว" };
+    }
     if (status === "413" || /too large|exceeded the maximum/i.test(message)) return { kind: "rejected", message: `ไฟล์ต้องมีขนาดไม่เกิน ${MAX_FILE_BYTES / 1048576} MB` };
     if (status === "415" || /mime type/i.test(message)) return { kind: "rejected", message: UNSUPPORTED_FILE_MESSAGE };
     const info = describeError(error, { write: true });
@@ -598,14 +692,14 @@
   }
 
   const api = {
-    YEAR_OFFSET, MAX_DETAILS, MAX_ORDER_REF, MAX_ATTACHMENT_NOTE, MAX_REASON, MAX_MISC_DETAIL, MAX_FILES, MAX_FILE_BYTES, DURATION_NOTE,
+    MODULE_VERSION, VERSION_DATE, YEAR_OFFSET, MAX_INFO_BODY, MAX_DETAILS, MAX_ORDER_REF, MAX_ATTACHMENT_NOTE, MAX_REASON, MAX_MISC_DETAIL, MAX_FILES, MAX_FILE_BYTES, DURATION_NOTE,
     REQUEST_TYPES, LEGACY_REQUEST_TYPES, ATTACHMENT_FLAGS, ACCESS_SYSTEMS, ACCESS_ACTIONS, FILE_MIME_BY_EXTENSION, FILE_ACCEPT, FILE_HINT, FILES_PREPARING_MESSAGE, EMPTY_REWORK_FORM, STATUS_LABELS, EVENT_LABELS, ACTION_BUTTONS, ACTION_ORDER, IT_GROUPS, EMPTY_ORDER_FORM, SIGNATURE_SLOTS, APPROVAL_STATE_LABELS,
-    requestTypeLabel, printRequestTypes, requestTypeText, reworkTag, attachmentFlagLabel, accessSystemLabel, accessActionLabel, statusLabel, statusBadgeClass, myStatusLabel, isTestDoc,
+    requestTypeLabel, printRequestTypes, requestTypeText, reworkTag, attachmentFlagLabel, accessSystemLabel, accessActionLabel, statusLabel, statusBadgeClass, myStatusLabel, isTestDoc, INFO_STAGE_LABELS, infoStageLabel, commentKindLabel, commentRows, allFiles, pendingQuestion, infoBadgeTitle,
     todayBangkok, formatDate, formatDateTime, isRealDate, charCount, clip,
     visibleTabs, readView, viewAllowed, workOrderUrl, isUuid,
-    actionButtons, countsAsBothSteps, confirmMessageFor, BOTH_STEPS_NOTE, completeToast, pendingStepLabel, eventLabel, signatureSlots, approvalSummary,
-    itGroupOf, groupItOrders, itActionableCount, awaitingMyReceiveCount, itApprovalProgress, cardSummary,
-    orderRules, createParams, validateReason,
+    actionButtons, countsAsBothSteps, confirmMessageFor, BOTH_STEPS_NOTE, completeToast, answerToast, pendingStepLabel, eventLabel, signatureSlots, approvalSummary,
+    itGroupOf, groupItOrders, itActionableCount, awaitingMyReceiveCount, awaitingMyAnswerCount, mineWaiting, mineWaitingNote, waitingForMeCount, itApprovalProgress, cardSummary,
+    orderRules, createParams, validateReason, infoRules, infoParams,
     legacyAccessChanges, accessPrintRows,
     fileExtension, fileMime, fileBucket, filePath, formatFileSize, validateFiles, makeUploadEntries, isAlreadyUploaded, isFileRejection, runUploads, roundLabel, attachmentGroups, galleryFile, reworkRounds, reworkRules, reworkParams,
     formatDocNo, validateNextSeq, staffEditBlock, staffCandidateOptions, validateStaffForm, staffRoleText,

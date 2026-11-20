@@ -4,12 +4,14 @@
 //   view=approvals             รออนุมัติ (ผู้อนุมัติขั้นแผนก / ขั้น IT)         view=it        งาน IT แยกตามสถานะ (ทีม IT)
 //   view=settings              ตั้งค่า (it_admin): รายชื่อทีม IT + เลขที่เอกสารถัดไป
 //   view=new                   ฟอร์มแจ้งงานใหม่ (ตามฟอร์ม FM06)
-//   view=order&id=<uuid>       รายละเอียดใบ + ไทม์ไลน์ + ไฟล์แนบแยกตามรอบ + ปุ่มตาม allowed_actions (รวม "แก้ไขงาน" ของผู้แจ้งตอน IT ปิดงานแล้ว)
+//   view=order&id=<uuid>       รายละเอียดใบ + ไทม์ไลน์ + ไฟล์แนบแยกตามรอบ + ปุ่มตาม allowed_actions (รวม "แก้ไขงาน" ของผู้แจ้งตอน IT ส่งงานแล้ว · "ถามผู้แจ้ง" ของผู้อนุมัติ/IT · ฟอร์มตอบของผู้แจ้งเมื่อใบรอผู้แจ้งตอบ) + การ์ดถาม-ตอบ
 //   view=print&id=<uuid>       หน้าพิมพ์ A4 เหมือนฟอร์ม IT01-FM06
 //
 // รุ่น 2 (เจ้าของสั่ง 19/11/2026): ไม่มีประเภท "สิทธิ์ในระบบ" และไม่มีส่วน "สำหรับแผนก IT : สิทธิ์ในระบบ" แล้ว · เบ็ดเตล็ดต้องระบุงาน ·
 // แนบไฟล์ได้เมื่อเอกสารแนบ = "มี" (สร้างใบ → อัปโหลดขึ้น Storage → app_itwo_add_attachment ทีละไฟล์) · ผู้แจ้งขอแก้ไขงานได้หลัง IT ปิดงาน (app_itwo_request_rework)
-// ฐานข้อมูล: supabase/migrations/20261203010000_itwo_work_orders.sql + 20261205010000_itwo_v2_rework_files.sql ทุกอย่างเรียกผ่าน RPC app_itwo_* (ตรวจบทบาท ลำดับขั้น เลขที่เอกสารที่ฝั่งฐานข้อมูล)
+// รุ่น 3 (เจ้าของสั่ง 19/11/2026): "ปิดงาน" ของ IT เปลี่ยนชื่อเป็น "ส่งงาน" (สถานะ it_closed / action complete เดิม) · ผู้อนุมัติ/IT ถามผู้แจ้งได้ (app_itwo_request_info → สถานะ need_info "รอผู้แจ้งตอบ")
+// ผู้แจ้งตอบ (app_itwo_provide_info → ใบกลับสถานะเดิม) ทั้งถามและตอบแนบไฟล์ได้ (app_itwo_add_comment_attachment ภายใน 30 นาทีหลังส่งข้อความ)
+// ฐานข้อมูล: supabase/migrations/20261203010000_itwo_work_orders.sql + 20261205010000_itwo_v2_rework_files.sql + 20261206010000_itwo_v3_request_info.sql ทุกอย่างเรียกผ่าน RPC app_itwo_* (ตรวจบทบาท ลำดับขั้น เลขที่เอกสารที่ฝั่งฐานข้อมูล)
 // หน้าเว็บแค่ซ่อน/แสดงแท็บและปุ่มตาม app_itwo_my_role กับ allowed_actions เป็น UX ล้วน สิทธิ์จริงตัดสินที่ RPC ทุกตัว
 // ข้อมูลล้วนอยู่ที่ itwo-model.js · HTML อยู่ที่ itwo-pages.js · ไฟล์นี้ดูแลเฉพาะการเรียก RPC กล่องยืนยัน และผูกเหตุการณ์ของหน้า
 // module-office.js เรียก MNP_ITWO.render(params) เมื่อเปิด ?module=work-order และ MNP_ITWO.loadCardSummary() เพื่อวาดตัวเลขบนการ์ด
@@ -27,7 +29,7 @@
   const PURGE_TEXT = "ล้างข้อมูลใบสั่งงาน IT ทดสอบ";
   let pageVersion = 0; // หน้าเก่าที่โหลดช้ากว่าหน้าใหม่ต้องไม่วาดทับ
   let pageHash = ""; // location.hash ตอนเริ่มวาดหน้าล่าสุด: ผู้ใช้ออกไปหน้าอื่น (เช่น IT SUPPORT) ระหว่างรอข้อมูล หน้านี้ต้องไม่วาดทับหน้านั้น
-  let unsavedProbe = null; // นับสิ่งที่กรอกค้างยังไม่ส่งของหน้าที่วาดอยู่ (app.js เรียกผ่าน MNP_ITWO.unsavedCount ก่อนออกจากหน้า) · ตอนนี้ใช้กับฟอร์มขอแก้ไขงาน และไฟล์ที่อัปโหลดไม่สำเร็จ
+  let unsavedProbe = null; // นับสิ่งที่กรอกค้างยังไม่ส่งของหน้าที่วาดอยู่ (app.js เรียกผ่าน MNP_ITWO.unsavedCount ก่อนออกจากหน้า) · ตอนนี้ใช้กับฟอร์มขอแก้ไขงาน ฟอร์มถาม/ตอบ และไฟล์ที่อัปโหลดไม่สำเร็จ
   const REMOVE_CHUNK = 100; // ลบไฟล์ทดสอบใน Storage ครั้งละกี่ไฟล์
 
   async function rpc(name, args) {
@@ -64,7 +66,7 @@
   }
 
   /* ---------- ตัวเลขบนการ์ด (IT SUPPORT) ---------- */
-  // นับงานที่รอ "ฉัน": รออนุมัติ + งาน IT ที่ต้องลงมือ + ใบที่รอฉันยืนยันรับ · อ่านไม่ได้ = ไม่มีตัวเลข การ์ดยังกดเข้าได้
+  // นับงานที่รอ "ฉัน": รออนุมัติ + งาน IT ที่ต้องลงมือ + ใบที่รอฉันยืนยันรับ + ใบที่รอฉันตอบคำถาม · อ่านไม่ได้ = ไม่มีตัวเลข การ์ดยังกดเข้าได้
   async function loadCardSummary() {
     let role;
     try {
@@ -81,6 +83,7 @@
       approvals: approvals ? approvals.value : null,
       itWork: itRows ? model.itActionableCount(itRows.value) : null,
       toConfirm: mine ? model.awaitingMyReceiveCount(mine.value) : null,
+      toAnswer: mine ? model.awaitingMyAnswerCount(mine.value) : null,
     });
   }
 
@@ -131,10 +134,13 @@
       hasIt && view !== "it" ? attempt(rpc("app_itwo_list_it")) : null,
       view !== "mine" ? attempt(rpc("app_itwo_list_mine")) : null,
     ]);
+    // ใบที่รอ "ฉัน" ยืนยันรับงาน/ขอแก้ไข (IT ส่งงานแล้ว) + ใบที่รอฉันตอบคำถาม (งานกลับมาหาผู้แจ้ง) · แสดงบนแท็บ "ใบของฉัน" ทุกหน้า
+    const mineParts = view === "mine" ? model.mineWaiting(main) : mineRows ? model.mineWaiting(mineRows.value) : null;
     const counts = {
-      // ใบที่ IT ปิดงานแล้วรอ "ฉัน" ยืนยันรับงานหรือขอแก้ไข (งานกลับมาหาผู้แจ้ง) · แสดงบนแท็บ "ใบของฉัน" ทุกหน้า
-      mine: view === "mine" ? model.awaitingMyReceiveCount(main) : mineRows ? model.awaitingMyReceiveCount(mineRows.value) : undefined,
-      approvals: view === "approvals" ? main.length : approvalsCount?.value,
+      mine: mineParts ? mineParts.total : undefined,
+      mineParts: mineParts ?? undefined,
+      // แท็บรออนุมัติ: ใบที่ถามผู้แจ้งไปแล้ว (need_info) แสดงในรายการแต่ไม่ใช่ "รอคุณ" จึงไม่นับ (app_itwo_pending_count ก็ไม่นับ)
+      approvals: view === "approvals" ? model.waitingForMeCount(main) : approvalsCount?.value,
       it: view === "it" ? model.itActionableCount(main) : itRows ? model.itActionableCount(itRows.value) : undefined,
     };
     let body;
@@ -201,11 +207,12 @@
   }
 
   /* ---------- อัปโหลดไฟล์แนบ (ใช้ทั้งตอนแจ้งงานและตอนขอแก้ไขงาน) ---------- */
-  // ลำดับ: ใบ/รอบแก้ไขถูกสร้างก่อน → อัปโหลดขึ้น Storage ทีละไฟล์ → app_itwo_add_attachment ลงทะเบียนทีละไฟล์
+  // ลำดับ: ใบ/รอบแก้ไข/ข้อความถาม-ตอบถูกสร้างก่อน → อัปโหลดขึ้น Storage ทีละไฟล์ → app_itwo_add_attachment (ไฟล์ของข้อความถาม-ตอบ: app_itwo_add_comment_attachment) ลงทะเบียนทีละไฟล์
   // ใบถูกบันทึกแล้ว ไฟล์เป็นส่วนเสริม: ไฟล์ที่ล้มไม่ทำให้ใบหาย ลองซ้ำได้จากแผงความคืบหน้า (ตัวไฟล์อยู่ในหน่วยความจำของหน้านี้ จึงลองซ้ำได้จนกว่าจะออกจากหน้า
   // และต้องอยู่ในหน้าต่างแนบ 30 นาทีที่ฐานข้อมูลกำหนด) · ลองซ้ำใช้ path เดิม ไม่เกิดไฟล์ซ้ำ และข้ามขั้นที่สำเร็จแล้ว
   // host = element ที่แผงวาดทับ · version = รุ่นหน้า: ผู้ใช้ออกไปหน้าอื่นระหว่างอัปโหลด งานเดินต่อเงียบ ๆ แต่ไม่วาดทับหน้าอื่น
-  async function attachFiles({ host, version, workOrderId, reworkId = null, files, isTest, heading, intro, continueLabel = "ไปที่ใบสั่งงาน", onContinue }) {
+  // commentId = id ข้อความถาม/ตอบ (ได้จาก request_info / provide_info) · ไม่ส่ง = ไฟล์ของใบ/รอบแก้ไข
+  async function attachFiles({ host, version, workOrderId, reworkId = null, commentId = null, files, isTest, heading, intro, continueLabel = "ไปที่ใบสั่งงาน", onContinue }) {
     const bucket = sb.storage.from(model.fileBucket(isTest));
     const entries = model.makeUploadEntries(workOrderId, files, () => window.crypto.randomUUID());
     const stillHere = () => version === pageVersion && location.hash === pageHash;
@@ -215,7 +222,7 @@
       name: entry.file.name,
       size: entry.file.size,
       state: entry.registered ? "done" : entry === current ? "working" : entry.error ? "failed" : "waiting",
-      message: entry.error ? model.describeUploadError(entry.error).message : "",
+      message: entry.error ? model.describeUploadError(entry.error, { comment: commentId !== null }).message : "",
     }));
     const draw = (busy) => {
       if (!stillHere() || host.isConnected === false) return false;
@@ -236,10 +243,15 @@
           const { error } = await bucket.upload(entry.path, typed, { upsert: false });
           if (error) throw error;
         },
-        register: (entry) => rpc("app_itwo_add_attachment", {
-          p_work_order_id: workOrderId, p_rework_id: reworkId, p_storage_path: entry.path,
-          p_file_name: entry.file.name.slice(-200), p_mime_type: model.fileMime(entry.file), p_size_bytes: entry.file.size,
-        }),
+        register: (entry) => (commentId !== null
+          ? rpc("app_itwo_add_comment_attachment", {
+            p_work_order_id: workOrderId, p_comment_id: commentId, p_storage_path: entry.path,
+            p_file_name: entry.file.name.slice(-200), p_mime_type: model.fileMime(entry.file), p_size_bytes: entry.file.size,
+          })
+          : rpc("app_itwo_add_attachment", {
+            p_work_order_id: workOrderId, p_rework_id: reworkId, p_storage_path: entry.path,
+            p_file_name: entry.file.name.slice(-200), p_mime_type: model.fileMime(entry.file), p_size_bytes: entry.file.size,
+          })),
         onStart: (entry) => { current = entry; draw(true); },
         onProgress: () => { current = null; },
       });
@@ -424,10 +436,10 @@
     return rpc("app_itwo_get_detail", { p_work_order_id: id });
   }
 
-  // ไฟล์แนบของใบ (ทุกรอบ) ในกล่องดูไฟล์เดิมของ app.js: ขอ signed URL แล้วเติมตัวอย่าง/ลิงก์ดาวน์โหลด (hydrateAttachmentGallery · ใบสั่งงานไม่มีภาพย่อ)
+  // ไฟล์แนบของใบ (ตอนแจ้ง ทุกรอบแก้ไข และไฟล์ของข้อความถาม-ตอบ) ในกล่องดูไฟล์เดิมของ app.js: ขอ signed URL แล้วเติมตัวอย่าง/ลิงก์ดาวน์โหลด (hydrateAttachmentGallery · ใบสั่งงานไม่มีภาพย่อ)
   // บัคเก็ตตามโหมดของใบ (ฐานข้อมูลส่งชื่อมากับแต่ละไฟล์)
   function hydrateFiles(detail) {
-    const files = detail.attachments ?? [];
+    const files = model.allFiles(detail);
     if (!files.length || typeof hydrateAttachmentGallery !== "function") return;
     document.querySelector("#attachment-gallery")?.addEventListener("click", (event) => {
       const trigger = event.target.closest("[data-attachment-open]");
@@ -451,6 +463,8 @@
       if (!paint(html, TITLE, version, detail.doc_no)) return false;
       bindActions();
       bindRework();
+      bindInfoForm("ask");
+      bindInfoForm("answer");
       hydrateFiles(detail);
       return true;
     };
@@ -461,6 +475,7 @@
       const spec = model.ACTION_BUTTONS[action];
       if (!spec) return;
       if (spec.opens === "rework") { openRework(); return; }
+      if (spec.opens === "ask") { openAsk(); return; }
       const args = { p_work_order_id: detail.id };
       if (spec.reason) {
         const reason = await textPromptDialog({ title: spec.reason.title, label: spec.reason.label, hint: spec.reason.hint, minLength: 1, maxLength: model.MAX_REASON, confirmLabel: spec.reason.confirmLabel, danger: true });
@@ -474,7 +489,7 @@
       setButtonBusy(button, true);
       try {
         await rpc(spec.rpc, args);
-        // IT ปิดงาน = งานกลับไปหาผู้แจ้ง: บอกชื่อผู้แจ้ง (โหมดทดสอบบอกให้สลับบัญชีไปยืนยัน/ขอแก้ไข)
+        // IT ส่งงาน = งานกลับไปหาผู้แจ้ง: บอกชื่อผู้แจ้ง (โหมดทดสอบบอกให้สลับบัญชีไปยืนยัน/ขอแก้ไข)
         showToast(action === "complete" ? model.completeToast(detail, Boolean(detail.is_test || role.is_test)) : spec.done);
       } catch (error) {
         showToast(failure(error, { write: true }).message, "error");
@@ -486,7 +501,15 @@
       document.querySelectorAll("[data-itwo-action]").forEach((button) => button.addEventListener("click", () => runAction(button)));
     }
 
-    // ---- ฟอร์มขอแก้ไขงาน (ผู้แจ้ง ตอน IT ปิดงานแล้ว): ซ่อนไว้จนกดปุ่ม "แก้ไขงาน" ----
+    // ของค้างที่ยังไม่ส่งของหน้ารายละเอียดนี้ (ฟอร์มขอแก้ไข / ถาม / ตอบ รวมกัน) ให้ app.js ถามก่อนออกจากหน้า
+    const unsavedProbes = [];
+    function watchUnsaved(probe) {
+      if (version !== pageVersion) return;
+      unsavedProbes.push(probe);
+      unsavedProbe = () => (unsavedProbes.some((item) => item()) ? 1 : 0);
+    }
+
+    // ---- ฟอร์มขอแก้ไขงาน (ผู้แจ้ง ตอน IT ส่งงานแล้ว): ซ่อนไว้จนกดปุ่ม "แก้ไขงาน" ----
     function openRework() {
       const card = document.querySelector("#itwo-rework-card");
       if (!card) return;
@@ -513,7 +536,7 @@
       dueInput.min = model.todayBangkok();
       window.MNP_DATE_PICKER?.enhance(dueInput);
       // ฟอร์มเปิดอยู่และพิมพ์ค้าง (หรือเลือกไฟล์ไว้) = มีของค้างที่ยังไม่ส่ง · ระหว่างส่งแผงจัดการเอง (ไม่นับ)
-      if (version === pageVersion) unsavedProbe = () => (!card.hidden && !busy && (detailsInput.value.trim() !== "" || chosenFiles().length > 0) ? 1 : 0);
+      watchUnsaved(() => (!card.hidden && !busy && (detailsInput.value.trim() !== "" || chosenFiles().length > 0) ? 1 : 0));
 
       document.querySelector("#itwo-rework-cancel")?.addEventListener("click", () => { card.hidden = true; message.innerHTML = ""; });
       form.addEventListener("submit", async (event) => {
@@ -549,6 +572,72 @@
           host: card, version, workOrderId: detail.id, reworkId: created.id, files, isTest: Boolean(detail.is_test || role.is_test),
           heading: `ส่งใบกลับให้ IT แก้ไขแล้ว · แก้ไขครั้งที่ ${created.round_no}`,
           intro: "คำขอแก้ไขถูกบันทึกแล้ว ระบบกำลังแนบไฟล์ให้ ถ้าไฟล์ไหนแนบไม่สำเร็จลองใหม่ได้ภายใน 30 นาทีหลังขอแก้ไข",
+          continueLabel: "กลับไปที่ใบสั่งงาน",
+          onContinue: () => renderRoute(),
+        });
+      });
+    }
+    // ---- ฟอร์มถามผู้แจ้ง (ผู้อนุมัติ/IT: ซ่อนไว้จนกดปุ่ม "ถามผู้แจ้ง") และฟอร์มตอบ (ผู้แจ้ง: เปิดไว้ในการ์ดคำถาม) ----
+    // ลำดับ: บันทึกข้อความ (ได้ comment_id) → อัปโหลดไฟล์ → app_itwo_add_comment_attachment ทีละไฟล์ (ข้อความถูกบันทึกแล้ว ไฟล์ที่ล้มลองซ้ำได้ภายใน 30 นาที)
+    function openAsk() {
+      const card = document.querySelector("#itwo-ask-card");
+      if (!card) return;
+      card.hidden = false;
+      card.scrollIntoView?.({ block: "start", behavior: "smooth" });
+      document.querySelector("#itwo-ask-body")?.focus({ preventScroll: true });
+    }
+    function bindInfoForm(kind) {
+      const card = document.querySelector(`#itwo-${kind}-card`);
+      const form = document.querySelector(`#itwo-${kind}-form`);
+      if (!card || !form) return;
+      const message = document.querySelector(`#itwo-${kind}-message`);
+      const bodyInput = document.querySelector(`#itwo-${kind}-body`);
+      const filesInput = document.querySelector(`#itwo-${kind}-files`);
+      const spec = model.ACTION_BUTTONS[kind === "ask" ? "request_info" : "provide_info"];
+      const pending = kind === "answer" ? model.pendingQuestion(detail) : null;
+      let busy = false;
+      const values = () => ({ body: bodyInput.value });
+      const chosenFiles = () => Array.from(filesInput.files ?? []);
+      const showError = (html) => {
+        message.innerHTML = `<div class="form-message error" role="alert">${html}</div>`;
+        message.scrollIntoView?.({ block: "nearest" });
+      };
+      watchUnsaved(() => (!card.hidden && !busy && (bodyInput.value.trim() !== "" || chosenFiles().length > 0) ? 1 : 0));
+
+      if (kind === "ask") document.querySelector("#itwo-ask-cancel")?.addEventListener("click", () => { card.hidden = true; message.innerHTML = ""; });
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (busy) return;
+        message.innerHTML = "";
+        const steps = window.MNP_FORM_STEPS;
+        const errors = steps.validate(model.infoRules(kind), values());
+        if (errors.length) { steps.showFieldErrors(form, errors); return; }
+        steps.clearFieldErrors(form);
+        const files = chosenFiles(); // อ่านก่อน setFormBusy
+        if (files.length && filesInput.validationMessage) { showError(escapeHtml(model.FILES_PREPARING_MESSAGE)); return; } // ฟอร์ม novalidate: ยังแปลงรูปอยู่ (ดูฟอร์มแจ้งงาน)
+        const fileProblem = model.validateFiles(files);
+        if (fileProblem) { showError(escapeHtml(fileProblem)); return; }
+        if (!(await confirmDialog({ title: spec.confirmTitle, message: spec.confirmMessage, confirmLabel: spec.confirmLabel }))) return;
+        busy = true;
+        setFormBusy(form, true);
+        let commentId;
+        try {
+          const data = await rpc(spec.rpc, model.infoParams(detail.id, values()));
+          commentId = (Array.isArray(data) ? data[0] : data)?.comment_id;
+          if (commentId === undefined || commentId === null) throw Object.assign(new Error("ไม่ได้รับเลขข้อความจากระบบ"), { code: "" });
+        } catch (error) {
+          showError(escapeHtml(failure(error, { write: true }).message));
+          busy = false;
+          setFormBusy(form, false);
+          return;
+        }
+        showToast(kind === "answer" ? model.answerToast(pending?.stage) : spec.done);
+        if (!files.length) { await renderRoute(); return; }
+        const heading = kind === "answer" ? "ส่งคำตอบแล้ว" : "ส่งคำถามถึงผู้แจ้งแล้ว";
+        await attachFiles({
+          host: card, version, workOrderId: detail.id, commentId, files, isTest: Boolean(detail.is_test || role.is_test),
+          heading,
+          intro: `${kind === "answer" ? "คำตอบ" : "คำถาม"}ถูกบันทึกแล้ว ระบบกำลังแนบไฟล์ให้ ถ้าไฟล์ไหนแนบไม่สำเร็จลองใหม่ได้ภายใน 30 นาทีหลังส่งข้อความ`,
           continueLabel: "กลับไปที่ใบสั่งงาน",
           onContinue: () => renderRoute(),
         });

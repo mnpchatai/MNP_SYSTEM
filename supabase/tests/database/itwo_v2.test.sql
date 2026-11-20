@@ -175,7 +175,7 @@ select is((select rework_round from public.app_itwo_list_mine() where id = curre
 select is((select rework_due_date from public.app_itwo_list_mine() where id = current_setting('t.o1')::uuid), ((now() at time zone 'Asia/Bangkok')::date), 'list_mine shows the rework due date');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"2d700000-0000-0000-0000-000000000004","role":"authenticated"}', true);
-select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_actions', '["complete"]'::jsonb, 'IT can close the reworked request again');
+select is(public.app_itwo_get_detail(current_setting('t.o1')::uuid)->'allowed_actions', '["complete", "request_info"]'::jsonb, 'IT can close the reworked request again (or ask the requester)');
 select is((select rework_round from public.app_itwo_list_it() where id = current_setting('t.o1')::uuid), 1, 'list_it shows that this is rework round 1');
 select is((select rework_due_date from public.app_itwo_list_it() where id = current_setting('t.o1')::uuid), ((now() at time zone 'Asia/Bangkok')::date), 'list_it shows the due date of the rework');
 select is((select id from public.app_itwo_list_it() where status = 'in_progress' order by is_urgent desc, coalesce(rework_due_date, needed_date) limit 1), current_setting('t.o1')::uuid, 'list_it sorts a reworked request by the rework due date (earlier than the other in-progress request)');
