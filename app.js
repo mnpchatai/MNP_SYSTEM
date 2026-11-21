@@ -2117,7 +2117,7 @@ async function loadUnread({ announce = true } = {}) {
       state.unread = (await departmentVisibleNotifications(data ?? [])).length;
       observe(state.unread);
     } catch {
-      state.unread = 0;
+      // ถามไม่สำเร็จ (เน็ตสะดุด/token หมดชั่วขณะ) คงตัวเลขเดิมไว้ ไม่งั้นป้ายกระดิ่งหายทุกครั้งที่รอบถามทุก 60 วินาทีพลาด
     }
     return state.unread;
   }
@@ -2126,9 +2126,11 @@ async function loadUnread({ announce = true } = {}) {
     .select("id", { count: "exact", head: true })
     .eq("recipient_id", state.employee.id)
     .is("read_at", null);
-  state.unread = count ?? 0;
-  // ถามไม่สำเร็จ (เน็ตสะดุด) ไม่ใช่ "ไม่มีแจ้งเตือน" — ไม่เอาไปเทียบ ไม่งั้นรอบถัดไปจะเห็นว่าเพิ่มจาก 0 แล้วเล่นเสียงผิด ๆ
-  if (!error) observe(count);
+  // ถามไม่สำเร็จ (เน็ตสะดุด) ไม่ใช่ "ไม่มีแจ้งเตือน" — คงตัวเลขเดิมไว้ ไม่เอาไปเทียบ ไม่งั้นรอบถัดไปจะเห็นว่าเพิ่มจาก 0 แล้วเล่นเสียงผิด ๆ
+  if (!error) {
+    state.unread = count ?? 0;
+    observe(count);
+  }
   return state.unread;
 }
 
@@ -5239,17 +5241,22 @@ async function onNotificationPushMessage(message, replyPort) {
   }
   if (!state.employee) return;
   // ตัวเลขใหม่ต้องมาก่อนเล่นเสียง เพื่อแท็บอื่นได้ค่าอ้างอิงที่ถูกต้อง (ไม่ดังซ้ำ) · ไม่ให้ช้าเกิน 1.5 วินาที
-  await withTimeout(loadUnread({ announce: false }), 1500, "UNREAD_REFRESH_TIMEOUT").catch(() => {});
+  const refresh = loadUnread({ announce: false });
+  await withTimeout(refresh, 1500, "UNREAD_REFRESH_TIMEOUT").catch(() => {});
   updateUnreadBadges();
+  // หมดเวลารอแล้วแต่ query กลับมาทีหลัง: วาดป้ายอีกครั้ง ไม่ให้ค้างค่าเก่า
+  refresh.then(updateUnreadBadges, () => {});
   if (!replyPort || !canPlay) return;
-  // รับปากแล้วว่าจะเล่นเสียง แต่เบราว์เซอร์ไม่ยอมเล่น → แจ้งเตือนบนหน้าจอเป็น silent ไปแล้ว จึงแจ้งซ้ำแบบมีเสียงของระบบ ไม่ให้เงียบหาย
-  if ((await notifySound.play()) === "failed") await showSoundFallbackNotification(message);
+  // รับปากแล้วว่าจะเล่นเสียง (แจ้งเตือนบนหน้าจอเป็น silent ไปแล้ว) ต้องจบด้วยเสียงของเราดัง/เพิ่งดังไป ("played"/"covered")
+  // ไม่งั้น ("fallback": ปิดสวิตช์ระหว่างรอ ไฟล์ไม่พร้อม เบราว์เซอร์ไม่ยอมเล่น) แจ้งซ้ำแบบมีเสียงของระบบ ไม่ให้เงียบหาย
+  if ((await notifySound.playForPush()) === "fallback") await showSoundFallbackNotification(message);
 }
 
 async function showSoundFallbackNotification({ title, url, tag }) {
   try {
     const registration = await serviceWorkerReady();
     const icon = "./icons/icon-192.png";
+    // tag เดียวกับใบ silent ที่ sw.js แสดงไว้ (sw.js ส่งมาให้เสมอ) เพื่อทับใบเดิม ไม่ให้ขึ้น 2 ใบ
     await registration.showNotification(title, { icon, lang: "th", tag: tag || "mnp-sound-fallback", renotify: true, data: { url } });
   } catch (error) {
     console.warn("แจ้งเตือนสำรองไม่สำเร็จ", error);
@@ -5362,7 +5369,10 @@ function bindNotificationReadOnClick() {
     const plainClick = event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey;
     if (!href || !plainClick) return void markNotificationItemRead(item);
     event.preventDefault();
+    const hashAtClick = location.hash;
     await withTimeout(markNotificationItemRead(item), 1500, "NOTIFICATION_READ_TIMEOUT").catch(() => {});
+    // ระหว่างรอผู้ใช้ไปหน้าอื่นแล้ว (กดเมนู/ปุ่มย้อนกลับ) ห้ามเด้งกลับไปลิงก์ของรายการ
+    if (location.hash !== hashAtClick) return;
     location.hash = href;
   });
   // คลิกกลางที่ลิงก์ (เปิดแท็บใหม่) ไม่ส่ง click จึงฟังแยก

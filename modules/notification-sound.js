@@ -110,23 +110,44 @@
 
     // คืน "played" | "skipped" (ไม่ถึงเวลา/ปิดเสียง/ไฟล์ไม่พร้อม) | "failed" (เบราว์เซอร์ไม่ยอมเล่น)
     // preview = ปุ่ม "ลองฟังเสียง": เล่นเสมอแม้ปิดเสียงอยู่ · audio.play() ต้องถูกเรียกก่อน await ใด ๆ เพื่อให้ยังนับเป็นจังหวะที่ผู้ใช้กด (iOS)
-    async function play({ preview = false } = {}) {
-      if (!ready || !audio) return "skipped";
-      if (!preview && !canPlayNow(gate())) return "skipped";
+    // inflight = การเล่นที่เริ่มแล้วแต่ยังไม่รู้ผล (ให้ playForPush รอดูว่าสำเร็จจริงไหมก่อนถือว่า "มีเสียงแล้ว")
+    let inflight = null;
+    function play({ preview = false } = {}) {
+      if (!ready || !audio) return Promise.resolve("skipped");
+      if (!preview && !canPlayNow(gate())) return Promise.resolve("skipped");
       const previousPlayedAt = lastPlayedAt;
       lastPlayedAt = now(); // จองก่อนเล่น กันสองทางเรียกพร้อมกันแล้วดังซ้อน
-      try {
-        audio.muted = false;
-        audio.currentTime = 0;
-        const started = audio.play();
-        await started;
-        unlocked = true;
-        if (!preview) channel?.postMessage({ type: "played", at: lastPlayedAt, owner: baseline.owner, count: baseline.count });
-        return "played";
-      } catch {
-        lastPlayedAt = previousPlayedAt;
-        return "failed";
+      // ส่วนนี้รันต่อเนื่องจนถึง audio.play() โดยไม่มี await คั่น (ต้องเรียกในจังหวะที่ผู้ใช้กดบน iOS)
+      const run = (async () => {
+        try {
+          audio.muted = false;
+          audio.currentTime = 0;
+          const started = audio.play();
+          await started;
+          unlocked = true;
+          if (!preview) channel?.postMessage({ type: "played", at: lastPlayedAt, owner: baseline.owner, count: baseline.count });
+          return "played";
+        } catch {
+          lastPlayedAt = previousPlayedAt;
+          return "failed";
+        }
+      })();
+      if (!preview) {
+        inflight = run;
+        run.finally(() => { if (inflight === run) inflight = null; });
       }
+      return run;
+    }
+
+    // เล่นเสียงให้ push ที่หน้านี้รับปากกับ service worker ไว้แล้วว่าจะเล่นเอง (แจ้งเตือนบนหน้าจอเป็น silent ไปแล้ว)
+    // คืน "played" = เสียงของเราดังแล้ว · "covered" = เพิ่งมีเสียงของเราดังไปภายในช่วงกันซ้ำ (ผู้ใช้ได้ยินแล้ว) ·
+    // "fallback" = ไม่มีเสียงของเราและจะไม่มีด้วย (ปิดสวิตช์ระหว่างรอ/ไฟล์ไม่พร้อม/ยังไม่ปลดล็อก/เบราว์เซอร์ไม่ยอมเล่น) → ผู้เรียกต้องแสดงแจ้งเตือนสำรองที่มีเสียงระบบ
+    async function playForPush() {
+      // มีการเล่นอยู่ก่อนแล้ว: รอผลจริง — ถ้าสำเร็จถือว่าครอบคลุม ถ้าล้มก็ลองเองอีกครั้ง (ไม่ปล่อยให้เงียบเพราะเชื่อว่าอีกใบดังแล้ว)
+      if (inflight && (await inflight) === "played") return "covered";
+      const current = gate();
+      if (canHandleSound(current) && current.now - current.lastPlayedAt < current.minGapMs) return "covered";
+      return (await play()) === "played" ? "played" : "fallback";
     }
 
     // รับค่าตัวเลขยังไม่อ่านล่าสุดของบัญชี owner · announce=false จำค่าอย่างเดียว ไม่เล่นเสียง · คืน true ถ้าสั่งเล่นเสียงแล้ว
@@ -158,6 +179,7 @@
       probe,
       unlock,
       play,
+      playForPush,
       observeUnread,
       setBaseline,
       isEnabled,

@@ -195,6 +195,73 @@ test("the switch is stored per device, defaults to on, and survives broken stora
   assert.equal(fallback.isEnabled(), false);
 });
 
+// ---------- เล่นเสียงให้ push ที่รับปากไว้: ต้องจบด้วย เสียงดัง / เพิ่งดัง / แจ้งเตือนสำรอง เสมอ ----------
+test("playForPush plays the sound when nothing else just played", async () => {
+  const { sound, log } = await ready();
+  assert.equal(await sound.playForPush(), "played");
+  assert.equal(log.plays, 1);
+});
+
+test("two pushes inside the gap: the second is covered by the first sound, never silent-without-sound", async () => {
+  const { sound, log, advance } = await ready();
+  assert.equal(await sound.playForPush(), "played");
+  advance(1000);
+  assert.equal(await sound.playForPush(), "covered");
+  assert.equal(log.plays, 1);
+  advance(SOUND_MIN_GAP_MS);
+  assert.equal(await sound.playForPush(), "played");
+  assert.equal(log.plays, 2);
+});
+
+test("two pushes at the same moment: one sound, the other covered", async () => {
+  const { sound, log } = await ready();
+  const results = await Promise.all([sound.playForPush(), sound.playForPush()]);
+  assert.deepEqual(results.sort(), ["covered", "played"]);
+  assert.equal(log.plays, 1);
+});
+
+test("playForPush asks for the fallback notification when the switch is turned off while waiting", async () => {
+  const { sound, log } = await ready();
+  assert.equal(sound.canHandle(), true); // ตอนตอบ service worker ว่ารับปาก
+  sound.setEnabled(false);
+  assert.equal(await sound.playForPush(), "fallback");
+  assert.equal(log.plays, 0);
+  // เปิดกลับแล้ว ใบต่อไปเล่นได้ตามปกติ
+  sound.setEnabled(true);
+  assert.equal(await sound.playForPush(), "played");
+});
+
+test("playForPush asks for the fallback when the sound is not ready or not unlocked", async () => {
+  const missing = fakeEnvironment({ file: { ok: false, type: "text/html" } });
+  await missing.sound.probe();
+  assert.equal(await missing.sound.playForPush(), "fallback");
+  const locked = fakeEnvironment();
+  await locked.sound.probe(); // ยังไม่ unlock
+  assert.equal(await locked.sound.playForPush(), "fallback");
+  assert.equal(locked.log.plays, 0);
+});
+
+test("playForPush asks for the fallback when the browser refuses to play, and a failed play does not start the gap", async () => {
+  const environment = await ready();
+  environment.audio.play = () => Promise.reject(new Error("NotAllowedError"));
+  assert.equal(await environment.sound.playForPush(), "fallback");
+  environment.audio.play = () => Promise.resolve();
+  assert.equal(await environment.sound.playForPush(), "played");
+});
+
+test("two pushes at once while the browser refuses: neither is treated as covered", async () => {
+  const environment = await ready();
+  environment.audio.play = () => Promise.reject(new Error("NotAllowedError"));
+  assert.deepEqual(await Promise.all([environment.sound.playForPush(), environment.sound.playForPush()]), ["fallback", "fallback"]);
+});
+
+test("a sound another tab just played also covers a push", async () => {
+  const { sound, channel, log } = await ready();
+  channel.onmessage({ data: { type: "played", at: 1, owner: "emp-1", count: 2 } });
+  assert.equal(await sound.playForPush(), "covered");
+  assert.equal(log.plays, 0);
+});
+
 test("a switched-off device is not active and cannot take over the sound from the operating system", async () => {
   const { sound } = await ready();
   assert.equal(sound.isActive(), true);
@@ -405,7 +472,29 @@ test("a push without a readable payload still shows the default notification", a
   assert.equal(worker.shown.length, 1);
   assert.equal(worker.shown[0].title, "มีการแจ้งเตือนใหม่");
   assert.deepEqual(plain(worker.shown[0].options.data), { url: "#/notifications" });
-  assert.equal("tag" in worker.shown[0].options, false);
+});
+
+test("a push without a tag gets a generated tag that the page is told about, so a fallback can replace the silent one", async () => {
+  for (const payload of [{ title: "ไม่มี tag", url: "#/notifications" }, { title: "tag ว่าง", url: "#/notifications", tag: "" }, { title: "tag ไม่ใช่ข้อความ", url: "#/notifications", tag: 5 }]) {
+    const worker = loadServiceWorker({ windows: [{ reply: true }] });
+    await worker.push(payload);
+    const shownTag = worker.shown[0].options.tag;
+    assert.match(shownTag, /^mnp-push-/);
+    assert.equal(worker.clients[0].received[0].tag, shownTag);
+    assert.equal(worker.shown[0].options.silent, true);
+  }
+  // สองใบที่ไม่มี tag ไม่ทับกัน
+  const worker = loadServiceWorker();
+  await worker.push({ title: "ก" });
+  await worker.push({ title: "ข" });
+  assert.notEqual(worker.shown[0].options.tag, worker.shown[1].options.tag);
+});
+
+test("a payload tag is passed to the page unchanged", async () => {
+  const worker = loadServiceWorker({ windows: [{ reply: true }] });
+  await worker.push(PAYLOAD);
+  assert.equal(worker.clients[0].received[0].tag, "n-1");
+  assert.equal(worker.shown[0].options.tag, "n-1");
 });
 
 // ---------- app.js: ต้องต่อเข้ากับตัวจัดการเสียงจริง ----------
@@ -419,11 +508,35 @@ test("the notifications page carries the sound row and wires its refresh", () =>
 test("a push-driven reload never announces by itself, and a failed count is not compared", () => {
   const load = appSource.slice(appSource.indexOf("async function loadUnread("), appSource.indexOf("const NAV_ICONS"));
   assert.match(load, /announce && !isSandboxMode\(\)/);
-  assert.match(load, /if \(!error\) observe\(count\);/);
+  assert.match(load, /if \(!error\) \{\n {4}state\.unread = count \?\? 0;\n {4}observe\(count\);/);
   const push = appSource.slice(appSource.indexOf("async function onNotificationPushMessage("), appSource.indexOf("async function showSoundFallbackNotification("));
   assert.match(push, /loadUnread\(\{ announce: false \}\)/);
   // ไม่รับปากเล่นเสียงในโหมดทดสอบ/lab-only
   assert.match(push, /!isLabOnly\(\) && !isSandboxMode\(\) && notifySound\.canHandle\(\)/);
+});
+
+test("a failed count keeps the old unread number in both branches so the bell badge does not vanish", () => {
+  const load = appSource.slice(appSource.indexOf("async function loadUnread("), appSource.indexOf("const NAV_ICONS"));
+  assert.doesNotMatch(load, /state\.unread = 0/);
+});
+
+test("a push that times out waiting for the unread count redraws the badge when the count arrives late", () => {
+  const push = appSource.slice(appSource.indexOf("async function onNotificationPushMessage("), appSource.indexOf("async function showSoundFallbackNotification("));
+  assert.match(push, /const refresh = loadUnread\(\{ announce: false \}\);/);
+  assert.match(push, /withTimeout\(refresh, 1500/);
+  assert.match(push, /refresh\.then\(updateUnreadBadges/);
+});
+
+test("a promised push sound ends in a sound or the fallback notification", () => {
+  const push = appSource.slice(appSource.indexOf("async function onNotificationPushMessage("), appSource.indexOf("async function showSoundFallbackNotification("));
+  assert.match(push, /\(await notifySound\.playForPush\(\)\) === "fallback"\) await showSoundFallbackNotification\(message\)/);
+  assert.doesNotMatch(push, /notifySound\.play\(/);
+});
+
+test("clicking a notification does not navigate if the user already went elsewhere while waiting", () => {
+  const click = appSource.slice(appSource.indexOf("function bindNotificationReadOnClick("), appSource.indexOf("// ---------- แถบชวนเปิดแจ้งเตือนบนเครื่อง"));
+  assert.match(click, /const hashAtClick = location\.hash;/);
+  assert.match(click, /if \(location\.hash !== hashAtClick\) return;\n\s*location\.hash = href;/);
 });
 
 test("the index loads the sound module before app.js", () => {

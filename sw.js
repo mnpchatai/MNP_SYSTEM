@@ -87,7 +87,9 @@ self.addEventListener("push", (event) => {
   }
   const title = typeof data.title === "string" && data.title ? data.title : "มีการแจ้งเตือนใหม่";
   const url = typeof data.url === "string" && data.url.startsWith("#/") ? data.url : "#/notifications";
-  const tag = typeof data.tag === "string" && data.tag ? data.tag : "";
+  // ทุกแจ้งเตือนต้องมี tag ที่หน้าเว็บรู้ด้วย: ถ้าหน้ารับปากเล่นเสียงแล้วเล่นไม่ได้ จะแสดงแจ้งเตือนสำรองด้วย tag เดิมเพื่อทับใบ silent (ไม่ขึ้น 2 ใบ)
+  // payload ไม่มี tag → สร้างให้ไม่ซ้ำกัน (เหมือนเดิมที่แจ้งเตือนไม่มี tag จะแยกเป็นคนละใบ)
+  const tag = typeof data.tag === "string" && data.tag ? data.tag : `mnp-push-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   event.waitUntil((async () => {
     let silent = false;
     try {
@@ -98,7 +100,7 @@ self.addEventListener("push", (event) => {
     await self.registration.showNotification(title, {
       icon: "./icons/icon-192.png",
       lang: "th",
-      ...(tag ? { tag } : {}),
+      tag,
       ...(silent ? { silent: true } : {}),
       data: { url },
     });
