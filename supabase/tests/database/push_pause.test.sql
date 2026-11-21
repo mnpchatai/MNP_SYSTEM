@@ -1,7 +1,7 @@
--- ทดสอบพักแจ้งเตือน Web Push ถึง 07:00 ไทยวันถัดไป (20261210010000_push_pause.sql)
+-- ทดสอบพักแจ้งเตือน Web Push ถึง 07:00 ไทยรอบถัดไป (20261210010000_push_pause.sql + 20261211010000_push_pause_next_7am.sql)
 --   1) โครงสร้าง: ตาราง push_pauses เปิด RLS ไม่มีสิทธิ์ตรงของ anon/authenticated (service_role อ่าน/ลบได้เท่านั้น), RPC 3 ตัวเรียกได้เฉพาะ authenticated,
 --      ฟังก์ชันจองสรุปเรียกได้เฉพาะ service_role, drain/dispatch/ตัวช่วยเรียกจากผู้ใช้ไม่ได้, งาน cron ลงทะเบียน, ติด sandbox_guard + lab-only
---   2) เวลาสิ้นสุด: 07:00 น. ของวันปฏิทินไทยถัดไปเสมอ (รวมกดหลังเที่ยงคืน ขอบเขต UTC และสิ้นปี)
+--   2) เวลาสิ้นสุด: 07:00 น. ไทยรอบถัดไปที่ยังไม่ถึงเสมอ (กด 00:30 → เช้าวันเดียวกัน, กด 07:00:00 พอดี/หลังจากนั้น → วันถัดไป; รวมขอบเขต UTC สิ้นเดือน สิ้นปี)
 --   3) RPC: anon / บัญชีที่ไม่ผูกพนักงาน / พนักงานปิดใช้งาน / LAB-only ถูกปฏิเสธ · พัก/ถาม/ยกเลิก · กดซ้ำคืนเวลาเดิม · คนอื่นเห็นหรือยกเลิกของกันไม่ได้
 --      แถวเดิมหมดเวลาแล้วกดพักใหม่ = เริ่มรอบใหม่ (ล้างสถานะจอง คง paused_at เดิม) · แถวหมดเวลาแล้วถือว่าไม่ได้พัก
 --   4) ส่งสรุปหลังครบเวลา: จองเฉพาะคนที่มีแจ้งเตือนที่ถูกข้าม (PAUSED) และยังไม่อ่าน นับถูก (ไม่นับที่อ่านแล้ว/ก่อนพัก/เหตุผลอื่น) ·
@@ -11,7 +11,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(76);
+select plan(89);
 
 -- 1. โครงสร้าง ------------------------------------------------------------------------------
 select has_table('public', 'push_pauses', 'push_pauses exists');
@@ -70,14 +70,37 @@ select ok(
   'push_pauses has the lab-only restrictive policy'
 );
 
--- 2. เวลาสิ้นสุดการพัก = 07:00 ไทยของวันปฏิทินไทยถัดไป ------------------------------------------------
-select is(private.push_pause_end('2026-11-22 14:00:00+07'), '2026-11-23 07:00:00+07'::timestamptz, 'afternoon press pauses until 07:00 the next Thai day');
-select is(private.push_pause_end('2026-11-22 06:59:00+07'), '2026-11-23 07:00:00+07'::timestamptz, 'a press just before 07:00 still pauses until 07:00 the next Thai day');
-select is(private.push_pause_end('2026-11-22 07:00:00+07'), '2026-11-23 07:00:00+07'::timestamptz, 'a press exactly at 07:00 pauses until 07:00 the next Thai day');
-select is(private.push_pause_end('2026-11-22 23:59:00+07'), '2026-11-23 07:00:00+07'::timestamptz, 'a press just before Thai midnight pauses until 07:00 the next Thai day');
-select is(private.push_pause_end('2026-11-23 00:30:00+07'), '2026-11-24 07:00:00+07'::timestamptz, 'a press after Thai midnight pauses until 07:00 of the NEXT Thai calendar day (not the same morning)');
-select is(private.push_pause_end('2026-11-22 17:30:00+00'), '2026-11-24 00:00:00+00'::timestamptz, 'the Thai day is used, not the UTC day (17:30 UTC is already the next Thai day)');
+-- 2. เวลาสิ้นสุดการพัก = 07:00 ไทย "รอบถัดไปที่ยังไม่ถึง" (ผลต้องมากกว่าเวลากดเสมอ) ----------------------------
+select is(private.push_pause_end('2026-11-22 14:00:00+07'), '2026-11-23 07:00:00+07'::timestamptz, 'afternoon press pauses until 07:00 the next morning');
+select is(private.push_pause_end('2026-11-22 20:00:00+07'), '2026-11-23 07:00:00+07'::timestamptz, 'an evening press pauses until 07:00 the next morning');
+select is(private.push_pause_end('2026-11-23 00:30:00+07'), '2026-11-23 07:00:00+07'::timestamptz, 'a press after Thai midnight pauses until 07:00 the SAME morning');
+select is(private.push_pause_end('2026-11-23 00:00:00+07'), '2026-11-23 07:00:00+07'::timestamptz, 'a press exactly at Thai midnight pauses until 07:00 the same morning');
+select is(private.push_pause_end('2026-11-22 06:59:00+07'), '2026-11-22 07:00:00+07'::timestamptz, 'a press at 06:59 pauses until 07:00 the same morning');
+select is(private.push_pause_end('2026-11-22 06:59:59+07'), '2026-11-22 07:00:00+07'::timestamptz, 'a press at 06:59:59 pauses until 07:00 the same morning');
+select is(private.push_pause_end('2026-11-22 06:59:59.999999+07'), '2026-11-22 07:00:00+07'::timestamptz, 'a press one microsecond before 07:00 pauses until 07:00 the same morning');
+select is(private.push_pause_end('2026-11-22 07:00:00+07'), '2026-11-23 07:00:00+07'::timestamptz, 'a press exactly at 07:00:00 pauses until 07:00 the next day (result is always in the future)');
+select is(private.push_pause_end('2026-11-22 07:00:00.000001+07'), '2026-11-23 07:00:00+07'::timestamptz, 'a press one microsecond after 07:00 pauses until 07:00 the next day');
+select is(private.push_pause_end('2026-11-22 07:00:01+07'), '2026-11-23 07:00:00+07'::timestamptz, 'a press at 07:00:01 pauses until 07:00 the next day');
+select is(private.push_pause_end('2026-11-22 23:59:59+07'), '2026-11-23 07:00:00+07'::timestamptz, 'a press just before Thai midnight pauses until 07:00 the next morning');
+-- ขอบเขต UTC: ใช้วันไทย ไม่ใช่วัน UTC
+select is(private.push_pause_end('2026-11-22 16:59:59+00'), '2026-11-23 00:00:00+00'::timestamptz, 'UTC 16:59:59 is 23:59:59 Thai: pauses until 07:00 Thai (00:00 UTC) next morning');
+select is(private.push_pause_end('2026-11-22 17:00:00+00'), '2026-11-23 00:00:00+00'::timestamptz, 'UTC 17:00:00 is 00:00 Thai on the next date: pauses until 07:00 Thai the same Thai morning');
+select is(private.push_pause_end('2026-11-22 17:30:00+00'), '2026-11-23 00:00:00+00'::timestamptz, 'UTC 17:30 is 00:30 Thai: pauses until 07:00 Thai the same Thai morning');
+-- สิ้นเดือน / สิ้นปี
+select is(private.push_pause_end('2026-11-30 20:00:00+07'), '2026-12-01 07:00:00+07'::timestamptz, 'the end of the month rolls over');
+select is(private.push_pause_end('2026-12-01 00:30:00+07'), '2026-12-01 07:00:00+07'::timestamptz, 'a press after midnight on the 1st pauses until 07:00 the same morning');
 select is(private.push_pause_end('2026-12-31 20:00:00+07'), '2027-01-01 07:00:00+07'::timestamptz, 'the end of the year rolls over');
+select is(private.push_pause_end('2026-12-31 07:00:00+07'), '2027-01-01 07:00:00+07'::timestamptz, 'a press exactly at 07:00 on 31 December pauses until 07:00 on 1 January');
+select is(private.push_pause_end('2027-01-01 00:30:00+07'), '2027-01-01 07:00:00+07'::timestamptz, 'a press after midnight on 1 January pauses until 07:00 the same morning');
+-- สมบัติรวม: ทุกนาที-กึ่งชั่วโมงตลอด 2 วัน ผลอยู่ในอนาคต ไม่เกิน 24 ชั่วโมง และเป็น 07:00 ไทยเสมอ
+select ok(
+  (select bool_and(
+            private.push_pause_end(t) > t
+            and private.push_pause_end(t) - t <= interval '24 hours'
+            and (private.push_pause_end(t) at time zone 'Asia/Bangkok')::time = time '07:00')
+   from generate_series('2026-11-21 00:00:00+07'::timestamptz, '2026-11-23 00:00:00+07'::timestamptz, interval '17 minutes') as t),
+  'for any press time the end is a future 07:00 Thai within 24 hours'
+);
 
 -- ผู้ใช้ทดสอบ: A, B, E ใช้งานอยู่; C ปิดใช้งาน; D เป็นบัญชี LAB-only; 99 เป็นบัญชี auth ที่ไม่ผูกพนักงาน -----------
 insert into auth.users (id, email, raw_user_meta_data) values
@@ -128,13 +151,13 @@ select set_config('test.a_until', public.app_push_pause()::text, true);
 reset role;
 select is(
   current_setting('test.a_until')::timestamptz, private.push_pause_end(now()),
-  'pausing returns 07:00 of the next Thai day computed from now()'
+  'pausing returns the next 07:00 Thai computed from now()'
 );
 select ok(
   (current_setting('test.a_until')::timestamptz at time zone 'Asia/Bangkok')::time = time '07:00'
-  and current_setting('test.a_until')::timestamptz > now() + interval '6 hours'
-  and current_setting('test.a_until')::timestamptz <= now() + interval '31 hours',
-  'the pause always ends at 07:00 Thai time, between 6 and 31 hours from now'
+  and current_setting('test.a_until')::timestamptz > now()
+  and current_setting('test.a_until')::timestamptz <= now() + interval '24 hours',
+  'the pause always ends at 07:00 Thai time, in the future and within 24 hours from now'
 );
 select is(
   (select count(*)::integer from public.push_pauses where employee_id = '92000000-0000-0000-0000-000000000001'),
