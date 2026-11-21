@@ -3,7 +3,8 @@
 //
 // โครง 2 ชั้นใต้ #/office (path เดียว เหมือน MNP LAB ใต้ #/lab):
 //   #/office                    = หน้าเลือกระบบ: IT SUPPORT · HR (HR ยังไม่เปิด การ์ดไม่เป็นลิงก์)
-//   #/office?module=it-support  = IT SUPPORT: ใบแจ้งซ่อม IT (พาไปหน้ารายการคำร้องของ IT_REPAIR เดิม) · ใบสั่งงาน IT (ลิงก์ไปหน้าของโมดูล)
+//   #/office?module=it-support  = IT SUPPORT: ใบแจ้งซ่อม IT (โมดูล itrp) · ใบสั่งงาน IT (ลิงก์ไปหน้าของโมดูล)
+//   #/office?module=repair      = ใบแจ้งซ่อม IT (ใบแจ้งซ่อมคอมพิวเตอร์) หน้าจริงอยู่ที่ modules/module-itrp.js · ที่นี่รู้แค่ว่าเป็นหน้าย่อยของ IT SUPPORT และสิทธิ์แผนก (IT_COMPUTER_REPAIR)
 //   #/office?module=work-order  = ใบสั่งงาน IT (IT01-FM06) หน้าจริงอยู่ที่ modules/module-itwo.js · ที่นี่รู้แค่ว่าเป็นหน้าย่อยของ IT SUPPORT และสิทธิ์แผนก (IT_WORK_ORDER)
 //   #/office?module=hr          = หน้า "ระบบกำลังพัฒนา" (เปิดได้จาก URL ตรง ๆ เท่านั้น)
 //
@@ -18,7 +19,8 @@
 //        loadCardSummary() = async คืน { openCount, badge, title } หรือ null/ throw ถ้าอ่านไม่ได้ (ไม่ต้องมีก็ได้)
 //          openCount = จำนวนเอกสารที่ผู้ใช้เห็นและยังไม่จบ (number) · null = นับไม่ได้ การ์ดแสดง "ดูสถานะ" แทน ไม่ทำให้หน้าล้ม
 //          badge = ป้ายรอง เช่น "2 รอคุณ" (ว่างได้) · title = คำอธิบายตัวเลข (tooltip)
-//   module-office.js อ่านตัวประกาศนี้แล้วส่งให้ itSupportPage({ modules }) ใบแจ้งซ่อม IT ใช้เครื่องคำร้องกลาง จึงไม่ประกาศและไม่แสดงเลขเวอร์ชัน
+//   module-office.js อ่านตัวประกาศนี้แล้วส่งให้ itSupportPage({ modules }) · ใบแจ้งซ่อม IT (IT_COMPUTER_REPAIR) และใบสั่งงาน IT (IT_WORK_ORDER) ประกาศตัวเองแล้วทั้งคู่
+//   (โมดูล IT_REPAIR เดิมของคำร้องกลางยังอยู่ แต่ไม่มีการ์ดชี้ไปแล้ว)
 //
 // หน้าตาใช้คอมโพเนนต์เดียวกับหน้าเลือกโมดูลของ MNP LAB (modules/lab-sections.js): การ์ดสี .type-card + .lab-module-card
 // และหัวโมดูล .request-module-header จึงไม่ต้องเพิ่ม CSS · การ์ดที่ยังไม่เปิดลดความอิ่มสี (.is-off) และไม่เป็นลิงก์
@@ -32,13 +34,17 @@
   // หน้าย่อยของ IT SUPPORT (ไม่อยู่ใน SECTIONS เพราะไม่ใช่การ์ดในหน้าเลือกระบบ) · สิทธิ์ดูจากรหัสโมดูล IT_WORK_ORDER
   const WORK_ORDER = "work-order";
   const WORK_ORDER_CODE = "IT_WORK_ORDER";
+  // ใบแจ้งซ่อม IT (ใบแจ้งซ่อมคอมพิวเตอร์ itrp) เป็นหน้าย่อยของ IT SUPPORT เช่นกัน · สิทธิ์ดูจากรหัสโมดูล IT_COMPUTER_REPAIR (แผนก ID เห็นการ์ดนี้ ดู department-access.js)
+  const REPAIR = "repair";
+  const REPAIR_CODE = "IT_COMPUTER_REPAIR";
   const ALLOW_ALL = () => true;
   // code = รหัสโมดูลที่ใช้ตัดสินสิทธิ์แผนก · ระบบที่มี cards ไม่มี code ของตัวเอง ดูจากการ์ดลูก
   // palette = ชื่อจานสี (data-module ใน styles.css) ใช้จานสีที่มีอยู่แล้วทั้งหมด: IT = "it" เหมือนใบแจ้งซ่อม IT · HR = "pk" (ชุดเดียวกับคำร้อง HR)
-  // การ์ดภายใน IT SUPPORT · IT_REPAIR คือรหัสโมดูลคำร้องที่การ์ดพาไป (ใช้หาประเภทคำร้องในฐานข้อมูลด้วย)
+  // การ์ดภายใน IT SUPPORT · key ของการ์ดตรงกับค่า ?module= ของหน้าย่อย (repair / work-order)
+  // IT_COMPUTER_REPAIR = ใบแจ้งซ่อม IT (ใบแจ้งซ่อมคอมพิวเตอร์ แทนการพาไปหน้าคำร้อง IT_REPAIR เดิม) อยู่ในรายการอนุญาตของแผนก ID
   // IT_WORK_ORDER = ใบสั่งงาน IT (ย้ายมาจากระบบ Work-Order เดิม) ยังไม่อยู่ในรายการอนุญาตของแผนกที่จำกัดโมดูลใด ๆ (แผนก ID จึงไม่เห็นการ์ดนี้)
   const IT_SUPPORT_CARDS = Object.freeze([
-    { key: "repair", label: "ใบแจ้งซ่อม IT", palette: "it", icon: "monitor", open: true, code: "IT_REPAIR", action: "ดูรายการและแจ้งซ่อม →" },
+    { key: "repair", label: "ใบแจ้งซ่อม IT", palette: "it", icon: "monitor", open: true, code: "IT_COMPUTER_REPAIR", action: "แจ้งซ่อมและติดตามใบแจ้งซ่อม →" },
     { key: "work-order", label: "ใบสั่งงาน IT", palette: "it", icon: "clipboard-check", open: true, code: "IT_WORK_ORDER", action: "แจ้งงานและติดตามใบสั่งงาน →" },
   ].map((card) => Object.freeze({ ...card })));
   const SECTIONS = Object.freeze([
@@ -64,13 +70,14 @@
   function readSection(params) {
     const key = params?.get?.("module");
     if (key === null || key === undefined || key === "") return HOME;
-    if (key === WORK_ORDER) return WORK_ORDER;
+    if (key === WORK_ORDER || key === REPAIR) return key;
     return find(key)?.key ?? null;
   }
   const workOrderVisible = (allowed = ALLOW_ALL) => Boolean(allowed(WORK_ORDER_CODE));
+  const repairVisible = (allowed = ALLOW_ALL) => Boolean(allowed(REPAIR_CODE));
 
   function sectionUrl(key) {
-    if (key === WORK_ORDER) return `#/office?module=${WORK_ORDER}`;
+    if (key === WORK_ORDER || key === REPAIR) return `#/office?module=${key}`;
     const section = find(key);
     return section ? `#/office?module=${encodeURIComponent(section.key)}` : "#/office";
   }
@@ -125,25 +132,19 @@
   // ป้ายหลักของการ์ด: จำนวนเอกสารที่ยังไม่จบ · นับไม่ได้ = "ดูสถานะ" (ไม่แสดงเลขที่ไม่แน่ใจ)
   const openBadge = (openCount) => (Number.isFinite(openCount) ? `${openCount} ยังไม่จบ` : "ดูสถานะ");
 
-  // หน้าของ IT SUPPORT · repair = { href, count } ถ้าผู้ใช้เปิดใบแจ้งซ่อม IT ได้ · null = ไม่แสดงการ์ดนั้น
-  // (แผนกที่ไม่มีสิทธิ์ IT_REPAIR หรือฐานข้อมูลปิดประเภทนี้) count = จำนวนใบที่ยังไม่จบ หรือ null ถ้านับไม่ได้
+  // หน้าของ IT SUPPORT · การ์ดที่แผนกไม่มีสิทธิ์ไม่แสดง (กรองด้วย allowed)
   // modules = { <รหัสโมดูลของการ์ด>: { version, openCount, waiting, title } } ข้อมูลจากโมดูลที่ประกาศตัวเองไว้ (แต่ละโมดูลนับแยกกัน) · การ์ดที่ไม่มีรายการใน modules ไม่แสดงป้ายใด ๆ
   //   version = เลขเวอร์ชัน (ป้าย V…) · openCount: number = "N ยังไม่จบ" · null = นับไม่ได้ ("ดูสถานะ") · undefined = โมดูลไม่นับ (ไม่แสดงป้ายหลัก)
   //   waiting = ป้ายรอง เช่น "1 รอคุณ" (ว่าง = ไม่มี) · title = คำอธิบายตัวเลขเมื่อชี้การ์ด · การ์ดเป็นลิงก์เสมอเมื่อแผนกมีสิทธิ์
-  function itSupportPage({ repair = null, modules = {}, allowed = ALLOW_ALL } = {}) {
-    const cards = visibleCards(allowed).filter((card) => card.code !== "IT_REPAIR" || repair).map((card) => (card.code === "IT_REPAIR"
-      ? cardHtml({
-        href: repair.href, label: card.label, palette: card.palette, icon: card.icon, action: card.action,
-        badge: openBadge(repair.count),
-      })
-      : (() => {
-        const declared = modules?.[card.code];
-        return cardHtml({
-          href: card.open ? sectionUrl(WORK_ORDER) : "", label: card.label, palette: card.palette, icon: card.icon, action: card.action,
-          badge: declared && declared.openCount !== undefined ? openBadge(declared.openCount) : card.badge,
-          badge2: declared?.waiting || "", version: declared?.version, title: declared?.title ?? "",
-        });
-      })()));
+  function itSupportPage({ modules = {}, allowed = ALLOW_ALL } = {}) {
+    const cards = visibleCards(allowed).map((card) => {
+      const declared = modules?.[card.code];
+      return cardHtml({
+        href: card.open ? sectionUrl(card.key) : "", label: card.label, palette: card.palette, icon: card.icon, action: card.action,
+        badge: declared && declared.openCount !== undefined ? openBadge(declared.openCount) : card.badge,
+        badge2: declared?.waiting || "", version: declared?.version, title: declared?.title ?? "",
+      });
+    });
     return `<div class="lab-page">
       ${moduleHead("it-support")}
       <nav class="type-grid request-type-grid lab-module-grid" aria-label="เมนู IT SUPPORT">${cards.join("")}</nav>
@@ -158,7 +159,7 @@
     </div>`;
   }
 
-  const api = { SECTIONS, IT_SUPPORT_CARDS, HOME, WORK_ORDER, WORK_ORDER_CODE, workOrderVisible, visibleCards, sectionVisible, visibleSections, hasVisibleSection, readSection, sectionUrl, chooserPage, moduleHead, itSupportPage, notReadyPage };
+  const api = { SECTIONS, IT_SUPPORT_CARDS, HOME, WORK_ORDER, WORK_ORDER_CODE, workOrderVisible, REPAIR, REPAIR_CODE, repairVisible, visibleCards, sectionVisible, visibleSections, hasVisibleSection, readSection, sectionUrl, chooserPage, moduleHead, itSupportPage, notReadyPage };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_OFFICE_SECTIONS = api;
 })(typeof window !== "undefined" ? window : globalThis);
