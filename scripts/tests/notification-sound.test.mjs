@@ -61,7 +61,7 @@ test("an increase stays silent when sound is off, the file is missing, locked, o
 });
 
 // ---------- ตัวจัดการเสียง (ใส่ของปลอมแทนเบราว์เซอร์) ----------
-function fakeEnvironment({ file = { ok: true, type: "audio/mpeg" }, playResult = "ok", storage } = {}) {
+function fakeEnvironment({ file = { ok: true, type: "audio/mpeg" }, playResult = "ok", storage, pushWaitMs = 20 } = {}) {
   let clock = 1_000_000;
   const log = { fetched: [], plays: 0, mutedPlays: 0 };
   const audio = {
@@ -83,7 +83,7 @@ function fakeEnvironment({ file = { ok: true, type: "audio/mpeg" }, playResult =
     return { ok: file.ok, headers: { get: () => file.type }, arrayBuffer: async () => new ArrayBuffer(8) };
   };
   const sound = createNotificationSound({
-    url: "./sounds/notify.mp3?v=t", fetchFile, createAudio: () => audio, storage, channel, now: () => clock,
+    url: "./sounds/notify.mp3?v=t", fetchFile, createAudio: () => audio, storage, channel, now: () => clock, pushWaitMs,
   });
   return { sound, audio, log, posted, channel, advance: (ms) => { clock += ms; } };
 }
@@ -253,6 +253,73 @@ test("two pushes at once while the browser refuses: neither is treated as covere
   const environment = await ready();
   environment.audio.play = () => Promise.reject(new Error("NotAllowedError"));
   assert.deepEqual(await Promise.all([environment.sound.playForPush(), environment.sound.playForPush()]), ["fallback", "fallback"]);
+});
+
+test("playForPush falls back when audio.play() never settles, and stops the stuck playback", async () => {
+  const environment = await ready();
+  let paused = 0;
+  environment.audio.pause = () => { paused += 1; };
+  environment.audio.play = () => new Promise(() => {}); // ไฟล์โหลดค้าง ไม่ resolve ไม่ reject
+  assert.equal(await environment.sound.playForPush(), "fallback");
+  assert.equal(paused, 1);
+});
+
+test("a push waiting on a stuck earlier play falls back instead of waiting forever or playing twice", async () => {
+  const environment = await ready();
+  let plays = 0;
+  environment.audio.play = () => { plays += 1; return new Promise(() => {}); };
+  const first = environment.sound.play(); // เริ่มแล้วค้าง (inflight)
+  assert.equal(await environment.sound.playForPush(), "fallback");
+  assert.equal(plays, 1); // ไม่เล่นซ้อน
+  void first;
+});
+
+test("after a stuck play times out, the gap is released so the next push can still play", async () => {
+  const environment = await ready();
+  environment.audio.pause = () => {};
+  let rejectStuck;
+  environment.audio.play = () => new Promise((_, reject) => { rejectStuck = reject; });
+  assert.equal(await environment.sound.playForPush(), "fallback");
+  rejectStuck(new Error("AbortError")); // pause() ยกเลิก play ที่ค้าง
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  environment.audio.play = () => Promise.resolve();
+  assert.equal(await environment.sound.playForPush(), "played");
+});
+
+test("a broken channel after the sound really played still counts as played, with no fallback and no retry", async () => {
+  const environment = await ready();
+  environment.channel.postMessage = () => { throw new Error("channel closed"); };
+  assert.equal(await environment.sound.play(), "played");
+  assert.equal(environment.log.plays, 1);
+  // ช่วงกันซ้ำยังอยู่ → push ถัดมาถือว่าเสียงครอบคลุมแล้ว ไม่ใช่ fallback
+  assert.equal(await environment.sound.playForPush(), "covered");
+  assert.equal(environment.log.plays, 1);
+});
+
+test("the preview button does not cover a push while it is still pending or after it fails", async () => {
+  const environment = await ready();
+  let rejectPreview;
+  environment.audio.play = () => new Promise((_, reject) => { rejectPreview = reject; });
+  const preview = environment.sound.play({ preview: true });
+  // push เข้าระหว่างที่ preview ยังไม่รู้ผล: ต้องไม่ถูกนับว่า "covered" จาก preview
+  environment.audio.play = () => Promise.resolve();
+  assert.equal(await environment.sound.playForPush(), "played");
+  rejectPreview(new Error("NotAllowedError"));
+  assert.equal(await preview, "failed");
+
+  // preview ล้มอย่างเดียว ไม่มี push ตามมา: ช่วงกันซ้ำต้องไม่ค้าง
+  const failed = await ready();
+  failed.audio.play = () => Promise.reject(new Error("NotAllowedError"));
+  assert.equal(await failed.sound.play({ preview: true }), "failed");
+  failed.audio.play = () => Promise.resolve();
+  assert.equal(await failed.sound.playForPush(), "played");
+});
+
+test("a preview that succeeds covers a push right after it (the user just heard the sound)", async () => {
+  const { sound, log } = await ready();
+  assert.equal(await sound.play({ preview: true }), "played");
+  assert.equal(await sound.playForPush(), "covered");
+  assert.equal(log.plays, 1);
 });
 
 test("a sound another tab just played also covers a push", async () => {
@@ -524,7 +591,9 @@ test("a push that times out waiting for the unread count redraws the badge when 
   const push = appSource.slice(appSource.indexOf("async function onNotificationPushMessage("), appSource.indexOf("async function showSoundFallbackNotification("));
   assert.match(push, /const refresh = loadUnread\(\{ announce: false \}\);/);
   assert.match(push, /withTimeout\(refresh, 1500/);
-  assert.match(push, /refresh\.then\(updateUnreadBadges/);
+  assert.match(push, /refresh\.then\(redrawBadges/);
+  // วาดป้ายพังต้องไม่ขวางเส้นทางเสียง/แจ้งเตือนสำรอง
+  assert.match(push, /try \{\n\s*updateUnreadBadges\(\);\n\s*\} catch/);
 });
 
 test("a promised push sound ends in a sound or the fallback notification", () => {

@@ -5243,9 +5243,17 @@ async function onNotificationPushMessage(message, replyPort) {
   // ตัวเลขใหม่ต้องมาก่อนเล่นเสียง เพื่อแท็บอื่นได้ค่าอ้างอิงที่ถูกต้อง (ไม่ดังซ้ำ) · ไม่ให้ช้าเกิน 1.5 วินาที
   const refresh = loadUnread({ announce: false });
   await withTimeout(refresh, 1500, "UNREAD_REFRESH_TIMEOUT").catch(() => {});
-  updateUnreadBadges();
+  // วาดป้ายพังต้องไม่ขวางเสียง/แจ้งเตือนสำรองที่รับปากไว้แล้ว
+  const redrawBadges = () => {
+    try {
+      updateUnreadBadges();
+    } catch (error) {
+      console.warn("อัปเดตป้ายแจ้งเตือนไม่สำเร็จ", error);
+    }
+  };
+  redrawBadges();
   // หมดเวลารอแล้วแต่ query กลับมาทีหลัง: วาดป้ายอีกครั้ง ไม่ให้ค้างค่าเก่า
-  refresh.then(updateUnreadBadges, () => {});
+  refresh.then(redrawBadges, () => {});
   if (!replyPort || !canPlay) return;
   // รับปากแล้วว่าจะเล่นเสียง (แจ้งเตือนบนหน้าจอเป็น silent ไปแล้ว) ต้องจบด้วยเสียงของเราดัง/เพิ่งดังไป ("played"/"covered")
   // ไม่งั้น ("fallback": ปิดสวิตช์ระหว่างรอ ไฟล์ไม่พร้อม เบราว์เซอร์ไม่ยอมเล่น) แจ้งซ้ำแบบมีเสียงของระบบ ไม่ให้เงียบหาย

@@ -10,6 +10,8 @@
   // กันเสียงซ้ำ: เหตุการณ์เดียวกันที่รู้ได้ทั้งจาก push และจากการถามฐานข้อมูล ต้องดังครั้งเดียว
   const SOUND_MIN_GAP_MS = 3000;
   const SOUND_POLL_MS = 60 * 1000;
+  // push ที่รับปากไว้ รอเสียงนานสุดเท่านี้ ไม่ดังก็ถือว่า "ยังไม่มีเสียง" แล้วใช้แจ้งเตือนสำรอง (กัน audio.play() ค้างแล้วเงียบตลอด)
+  const SOUND_PUSH_WAIT_MS = 3000;
 
   // ค่าเริ่มต้น = เปิด · ปิดก็ต่อเมื่อผู้ใช้เลือกปิดเอง ("off") ค่าเสีย/ว่างถือว่าเปิด
   function parseSoundEnabled(stored) {
@@ -38,7 +40,7 @@
   // ตัวจัดการเสียงของหน้านี้ — ส่ง dependency เข้ามาเพื่อทดสอบได้โดยไม่ต้องมีเบราว์เซอร์
   //   fetchFile(url) → Promise<Response> ใช้ตรวจว่ามีไฟล์จริง · createAudio(url) → Audio · storage = localStorage (อาจ throw/เป็น null)
   //   channel = BroadcastChannel (หรือ null) ใช้บอกแท็บอื่นว่าเพิ่งดังไปแล้ว จะได้ไม่ดังซ้ำ
-  function createNotificationSound({ url = SOUND_PATH, fetchFile, createAudio, storage = null, channel = null, now = Date.now, minGapMs = SOUND_MIN_GAP_MS } = {}) {
+  function createNotificationSound({ url = SOUND_PATH, fetchFile, createAudio, storage = null, channel = null, now = Date.now, minGapMs = SOUND_MIN_GAP_MS, pushWaitMs = SOUND_PUSH_WAIT_MS } = {}) {
     let audio = null;
     let ready = false;
     let unlocked = false;
@@ -116,7 +118,9 @@
       if (!ready || !audio) return Promise.resolve("skipped");
       if (!preview && !canPlayNow(gate())) return Promise.resolve("skipped");
       const previousPlayedAt = lastPlayedAt;
-      lastPlayedAt = now(); // จองก่อนเล่น กันสองทางเรียกพร้อมกันแล้วดังซ้อน
+      // ปุ่มลองฟังไม่จองล่วงหน้า (ล้มแล้วจะได้ไม่ไปบัง push จริง) · จำเวลาหลังเล่นสำเร็จเท่านั้น
+      if (!preview) lastPlayedAt = now(); // จองก่อนเล่น กันสองทางเรียกพร้อมกันแล้วดังซ้อน
+      const reservedAt = lastPlayedAt;
       // ส่วนนี้รันต่อเนื่องจนถึง audio.play() โดยไม่มี await คั่น (ต้องเรียกในจังหวะที่ผู้ใช้กดบน iOS)
       const run = (async () => {
         try {
@@ -124,13 +128,22 @@
           audio.currentTime = 0;
           const started = audio.play();
           await started;
-          unlocked = true;
-          if (!preview) channel?.postMessage({ type: "played", at: lastPlayedAt, owner: baseline.owner, count: baseline.count });
-          return "played";
         } catch {
-          lastPlayedAt = previousPlayedAt;
+          if (!preview) lastPlayedAt = previousPlayedAt;
           return "failed";
         }
+        unlocked = true;
+        if (preview) {
+          lastPlayedAt = Math.max(lastPlayedAt, now());
+        } else {
+          // บอกแท็บอื่นไม่สำเร็จก็ไม่เป็นไร เสียงดังไปแล้ว ห้ามถือเป็น "failed" (จะถอยช่วงกันซ้ำแล้วแจ้งซ้ำ)
+          try {
+            channel?.postMessage({ type: "played", at: reservedAt, owner: baseline.owner, count: baseline.count });
+          } catch {
+            // ช่องสื่อสารระหว่างแท็บพัง
+          }
+        }
+        return "played";
       })();
       if (!preview) {
         inflight = run;
@@ -142,12 +155,29 @@
     // เล่นเสียงให้ push ที่หน้านี้รับปากกับ service worker ไว้แล้วว่าจะเล่นเอง (แจ้งเตือนบนหน้าจอเป็น silent ไปแล้ว)
     // คืน "played" = เสียงของเราดังแล้ว · "covered" = เพิ่งมีเสียงของเราดังไปภายในช่วงกันซ้ำ (ผู้ใช้ได้ยินแล้ว) ·
     // "fallback" = ไม่มีเสียงของเราและจะไม่มีด้วย (ปิดสวิตช์ระหว่างรอ/ไฟล์ไม่พร้อม/ยังไม่ปลดล็อก/เบราว์เซอร์ไม่ยอมเล่น) → ผู้เรียกต้องแสดงแจ้งเตือนสำรองที่มีเสียงระบบ
+    // รอผลการเล่นไม่เกิน pushWaitMs · คืน "timeout" ถ้าเกินเวลา, "failed" ถ้า promise reject
+    const waitForOutcome = (promise) => new Promise((resolve) => {
+      const timer = setTimeout(() => resolve("timeout"), pushWaitMs);
+      promise.then((value) => { clearTimeout(timer); resolve(value); }, () => { clearTimeout(timer); resolve("failed"); });
+    });
+
     async function playForPush() {
       // มีการเล่นอยู่ก่อนแล้ว: รอผลจริง — ถ้าสำเร็จถือว่าครอบคลุม ถ้าล้มก็ลองเองอีกครั้ง (ไม่ปล่อยให้เงียบเพราะเชื่อว่าอีกใบดังแล้ว)
-      if (inflight && (await inflight) === "played") return "covered";
+      // รอจนหมดเวลา (ไฟล์โหลดค้าง) = ยังไม่มีเสียง → แจ้งเตือนสำรองเลย ไม่เล่นซ้อน เพราะใบนั้นอาจดังตามมาทีหลังจนดังสองรอบ
+      if (inflight) {
+        const earlier = await waitForOutcome(inflight);
+        if (earlier === "played") return "covered";
+        if (earlier === "timeout") return "fallback";
+      }
       const current = gate();
       if (canHandleSound(current) && current.now - current.lastPlayedAt < current.minGapMs) return "covered";
-      return (await play()) === "played" ? "played" : "fallback";
+      const outcome = await waitForOutcome(play());
+      if (outcome === "played") return "played";
+      if (outcome === "timeout") {
+        // เล่นค้าง: สั่งหยุด (pause ยกเลิก play() ที่ค้าง) กันเสียงดังตามมาทีหลังซ้อนกับแจ้งเตือนสำรอง
+        try { audio?.pause(); } catch { /* ไม่กระทบผล */ }
+      }
+      return "fallback";
     }
 
     // รับค่าตัวเลขยังไม่อ่านล่าสุดของบัญชี owner · announce=false จำค่าอย่างเดียว ไม่เล่นเสียง · คืน true ถ้าสั่งเล่นเสียงแล้ว
@@ -193,7 +223,7 @@
     };
   }
 
-  const api = { SOUND_PATH, SOUND_SETTING_KEY, SOUND_CHANNEL_NAME, SOUND_MIN_GAP_MS, SOUND_POLL_MS, parseSoundEnabled, canHandleSound, canPlayNow, unreadChangeDecision, createNotificationSound };
+  const api = { SOUND_PATH, SOUND_SETTING_KEY, SOUND_CHANNEL_NAME, SOUND_MIN_GAP_MS, SOUND_POLL_MS, SOUND_PUSH_WAIT_MS, parseSoundEnabled, canHandleSound, canPlayNow, unreadChangeDecision, createNotificationSound };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.MNP_NOTIFY_SOUND = api;
 })();
