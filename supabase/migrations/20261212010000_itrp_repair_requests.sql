@@ -887,7 +887,7 @@ begin
   end if;
   v_is_admin := private.itrp_is_it_admin(p_actor.id);
 
-  -- ยกเลิกได้ก่อน IT ปิดงานครั้งแรกเท่านั้น: ใบที่เคยมี completed (แม้อยู่ในรอบแก้ไข) ไม่ส่ง cancel (การรับงานเป็นขั้นสุดท้าย)
+  -- ยกเลิกได้ก่อน IT ส่งงานครั้งแรกเท่านั้น: ใบที่เคยมี completed (แม้อยู่ในรอบแก้ไข) ไม่ส่ง cancel (การรับงานเป็นขั้นสุดท้าย)
   -- ระหว่างรอผู้แจ้งตอบ (need_info) ยกเลิกได้ตามเดิม · รุ่น 1.02: ผู้ดูแลงาน IT (it_admin) ยกเลิก "แทนผู้แจ้ง" ได้เฉพาะใบ need_info
   -- (กันใบค้างถาวรเมื่อผู้แจ้งไม่ตอบ) · ผู้แจ้งที่เป็น it_admin เองใช้สิทธิ์ผู้แจ้งตามปกติ
   if ((p_req.requester_id = p_actor.id and p_req.status in ('pending_dept', 'pending_it_mgr', 'approved', 'in_progress', 'need_info'))
@@ -908,13 +908,13 @@ begin
   end if;
 
   if v_is_admin and p_req.status = 'in_progress' then
-    -- ปิดงานได้เมื่ออนุมัติครบทั้งสองขั้นแล้วเท่านั้น (งานด่วนและงานที่ขอแก้ไขก็เช่นกัน)
+    -- ส่งงานได้เมื่ออนุมัติครบทั้งสองขั้นแล้วเท่านั้น (งานด่วนและงานที่ขอแก้ไขก็เช่นกัน)
     if (select s.dept_done and s.it_done from private.itrp_event_state(p_req.id) s) then
       v_actions := array_append(v_actions, 'complete');
     end if;
   end if;
 
-  -- IT ปิดงานแล้ว: ผู้แจ้งเลือกได้ว่ารับงาน หรือขอแก้ไขงาน (ไม่จำกัดจำนวนรอบ)
+  -- IT ส่งงานแล้ว: ผู้แจ้งเลือกได้ว่ารับงาน หรือขอแก้ไขงาน (ไม่จำกัดจำนวนรอบ)
   if p_req.requester_id = p_actor.id and p_req.status = 'it_closed' then
     v_actions := array_append(v_actions, 'receive');
     v_actions := array_append(v_actions, 'request_rework');
@@ -1291,7 +1291,7 @@ begin
     raise exception 'อาการเสียต้องไม่เกิน 2,000 ตัวอักษร' using errcode = 'check_violation';
   end if;
 
-  -- เลือกเส้นทางอนุมัติ (กติกาเดียวกับใบสั่งงาน IT)
+  -- เลือกเส้นทางอนุมัติ (กติกาเดียวกับ itwo)
   v_is_it_approver := private.itrp_is_it_approver(v_actor.id);
   v_dept_is_it := private.itrp_is_it_department(v_dept.id);
   v_actor_is_dept_role := private.itrp_is_dept_approver(v_actor.id, v_dept.id, v_actor.is_test);
@@ -1796,7 +1796,7 @@ begin
     raise exception '%', case
       when v_req.status = 'received' then 'ใบแจ้งซ่อมนี้ยืนยันรับงานไปแล้ว'
       when v_req.status in ('cancelled', 'rejected') then private.itrp_status_message(v_req.status)
-      else 'ยังยืนยันรับงานไม่ได้ เพราะ IT ยังไม่ปิดงาน'
+      else 'ยังยืนยันรับงานไม่ได้ เพราะ IT ยังไม่ส่งงาน'
     end using errcode = 'check_violation';
   end if;
 
@@ -1835,7 +1835,7 @@ begin
       when 'received' then 'ใบแจ้งซ่อมนี้จบงานแล้ว (ได้รับงานแล้ว) ขอแก้ไขไม่ได้'
       when 'cancelled' then private.itrp_status_message(v_req.status)
       when 'rejected' then private.itrp_status_message(v_req.status)
-      else 'ขอแก้ไขงานได้เมื่อ IT ปิดงานแล้วเท่านั้น'
+      else 'ขอแก้ไขงานได้เมื่อ IT ส่งงานแล้วเท่านั้น'
     end using errcode = 'check_violation';
   end if;
 
@@ -2795,7 +2795,7 @@ declare
   v_answer public.itrp_comments%rowtype;
   v_rework public.itrp_reworks%rowtype;
 begin
-  -- ใบทดสอบ ไม่ insert เลย · started / received ไม่แจ้ง (เหมือนใบสั่งงาน IT)
+  -- ใบทดสอบ ไม่ insert เลย · started / received ไม่แจ้ง (เหมือน itwo)
   if new.is_test or new.action in ('started', 'received') then
     return new;
   end if;
