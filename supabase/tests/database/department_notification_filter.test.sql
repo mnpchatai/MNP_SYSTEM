@@ -1,14 +1,15 @@
 -- ทดสอบกติกาแผนกกับอีเมล/Web Push (20261117010000_department_notification_filter.sql)
 --   1) โครงสร้าง: ตารางรายการที่อนุญาตปิดจาก anon/authenticated, ฟังก์ชันเรียกจากผู้ใช้ไม่ได้, trigger ลงทะเบียน,
---      รายการของแผนก ID = MT_REPAIR + IT_REPAIR พอดี
+--      รายการของแผนก ID = MT_REPAIR + IT_REPAIR + IT_COMPUTER_REPAIR พอดี
 --   2) allow: พนักงานแผนก ID ได้อีเมล/push ของแจ้งซ่อม MT/IT, เรื่อง /profile และสรุปงานค้างที่มีแต่ใบ MT/IT
 --   3) deny: แผนก ID (รวม admin) ไม่ได้ของคำร้องฝ่ายบริหาร NCR /admin ไม่มีลิงก์ สรุปงานค้างที่มีงานอื่นปน/ว่าง/รูปแบบผิด
 --      แถวในแอปยังถูกบันทึก, ตั้งกลับเป็น pending ไม่ได้, คิว push ไม่จองแถวที่ถูกข้าม
---   4) แผนกอื่นไม่เปลี่ยน และย้ายออกจากแผนก ID แล้วได้รับตามปกติ
+--   4) ใบแจ้งซ่อมคอมพิวเตอร์ (/office/repair/<uuid>, 20261213010000): แผนก ID ได้ · ใบสั่งงาน IT (/office/work-order/) ยังไม่ได้
+--   5) แผนกอื่นไม่เปลี่ยน และย้ายออกจากแผนก ID แล้วได้รับตามปกติ
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(33);
+select plan(39);
 
 -- 1. โครงสร้าง ------------------------------------------------------------------------------
 select has_table('private', 'department_notification_modules', 'the department allowlist table exists');
@@ -38,8 +39,8 @@ select ok(
 );
 select is(
   (select array_agg(module_code order by module_code)::text from private.department_notification_modules where department_code = 'ID'),
-  '{IT_REPAIR,MT_REPAIR}',
-  'department ID is allowed exactly MT_REPAIR and IT_REPAIR'
+  '{IT_COMPUTER_REPAIR,IT_REPAIR,MT_REPAIR}',
+  'department ID is allowed exactly MT_REPAIR, IT_REPAIR and IT_COMPUTER_REPAIR'
 );
 
 -- ข้อมูลทดสอบ: S = พนักงานแผนก ID, A = admin แผนก ID, O = พนักงานแผนก MT ---------------------------
@@ -217,7 +218,41 @@ select is(
 );
 reset role;
 
--- 4. แถวใหม่ตัดสินจากแผนกปัจจุบันของผู้รับ: ย้ายออกจากแผนก ID แล้วได้รับตามปกติ ------------------------------
+-- 4. ใบแจ้งซ่อมคอมพิวเตอร์ (itrp): ลิงก์ /office/repair/<uuid> ไม่ผูก request_id ----------------------------
+-- อยู่หลังการเช็กคิวอีเมล/push ด้านบน เพราะแถวพวกนี้เพิ่มแถว pending ใหม่ที่จะทำให้รายการที่คาดไว้เปลี่ยน
+insert into public.notifications (id, recipient_id, request_id, title, body, action_url) values
+  ('93100000-0000-0000-0000-0000000000e1', '93100000-0000-0000-0000-000000000001', null, 'repair', 'b', '/office/repair/93100000-0000-0000-0000-0000000000f1'),
+  ('93100000-0000-0000-0000-0000000000e2', '93100000-0000-0000-0000-000000000002', null, 'admin repair', 'b', '/office/repair/93100000-0000-0000-0000-0000000000f1'),
+  ('93100000-0000-0000-0000-0000000000e3', '93100000-0000-0000-0000-000000000001', null, 'work order', 'b', '/office/work-order/93100000-0000-0000-0000-0000000000f2'),
+  ('93100000-0000-0000-0000-0000000000e4', '93100000-0000-0000-0000-000000000002', null, 'admin work order', 'b', '/office/work-order/93100000-0000-0000-0000-0000000000f2'),
+  ('93100000-0000-0000-0000-0000000000e5', '93100000-0000-0000-0000-000000000001', null, 'lookalike', 'b', '/office/repairs/93100000-0000-0000-0000-0000000000f1'),
+  ('93100000-0000-0000-0000-0000000000e6', '93100000-0000-0000-0000-000000000003', null, 'other dept repair', 'b', '/office/repair/93100000-0000-0000-0000-0000000000f1');
+select is(
+  (select email_status || '/' || push_status from public.notifications where id = '93100000-0000-0000-0000-0000000000e1'),
+  'pending/pending', 'ID staff: a computer repair (itrp) notification stays queued for email and push'
+);
+select is(
+  (select email_status || '/' || push_status from public.notifications where id = '93100000-0000-0000-0000-0000000000e2'),
+  'pending/pending', 'ID admin: a computer repair (itrp) notification stays queued'
+);
+select is(
+  (select concat_ws('/', email_status, email_error, push_status, push_error) from public.notifications where id = '93100000-0000-0000-0000-0000000000e3'),
+  'skipped/DEPARTMENT_FILTERED/skipped/DEPARTMENT_FILTERED', 'ID staff: an office work order (itwo) notification is still not emailed or pushed'
+);
+select is(
+  (select concat_ws('/', email_status, email_error, push_status, push_error) from public.notifications where id = '93100000-0000-0000-0000-0000000000e4'),
+  'skipped/DEPARTMENT_FILTERED/skipped/DEPARTMENT_FILTERED', 'ID admin: an office work order (itwo) notification is still not emailed or pushed'
+);
+select is(
+  (select concat_ws('/', email_status, email_error, push_status, push_error) from public.notifications where id = '93100000-0000-0000-0000-0000000000e5'),
+  'skipped/DEPARTMENT_FILTERED/skipped/DEPARTMENT_FILTERED', 'ID staff: a look-alike path (/office/repairs/...) is not allowed (only /office/repair/ matches)'
+);
+select is(
+  (select email_status || '/' || push_status from public.notifications where id = '93100000-0000-0000-0000-0000000000e6'),
+  'pending/pending', 'another department: a computer repair notification is still queued'
+);
+
+-- 5. แถวใหม่ตัดสินจากแผนกปัจจุบันของผู้รับ: ย้ายออกจากแผนก ID แล้วได้รับตามปกติ ------------------------------
 update public.employees set department_id = '10000000-0000-0000-0000-000000000002' where id = '93100000-0000-0000-0000-000000000001';
 insert into public.notifications (id, recipient_id, request_id, title, body, action_url)
 values ('93100000-0000-0000-0000-0000000000c3', '93100000-0000-0000-0000-000000000001', null, 'moved ncr', 'b', '/ncr/93100000-0000-0000-0000-000000000099');

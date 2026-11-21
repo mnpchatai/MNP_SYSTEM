@@ -47,7 +47,12 @@ test("?module= selects the system: none is the chooser, unknown values are not f
   assert.equal(sections.readSection(null), sections.HOME);
   assert.equal(sections.readSection(params("module=it-support")), "it-support");
   assert.equal(sections.readSection(params("module=hr")), "hr");
-  for (const key of ["IT-SUPPORT", "it", "repair", "constructor", "__proto__"]) assert.equal(sections.readSection(params(`module=${key}`)), null);
+  for (const key of ["IT-SUPPORT", "it", "REPAIR", "constructor", "__proto__"]) assert.equal(sections.readSection(params(`module=${key}`)), null);
+  // หน้าย่อยของ IT SUPPORT: ใบแจ้งซ่อม IT (itrp) กับใบสั่งงาน IT (itwo)
+  assert.equal(sections.readSection(params("module=repair")), "repair");
+  assert.equal(sections.readSection(params("module=work-order")), "work-order");
+  assert.equal(sections.sectionUrl("repair"), "#/office?module=repair");
+  assert.equal(sections.sectionUrl("work-order"), "#/office?module=work-order");
   assert.equal(sections.sectionUrl("it-support"), "#/office?module=it-support");
   assert.equal(sections.sectionUrl("nope"), "#/office");
 });
@@ -60,36 +65,32 @@ test("the HR page opened by URL is a static not-ready page", () => {
 });
 
 /* ---------- IT SUPPORT (ชั้นที่ 2) ---------- */
-test("IT SUPPORT shows the IT repair card and the IT work-order card, both as links", () => {
-  const page = sections.itSupportPage({ repair: { href: "#/requests?type=abc", count: 3 } });
+test("IT SUPPORT shows the IT repair card and the IT work-order card, both as links to their own pages", () => {
+  const page = sections.itSupportPage();
   assert.match(page, /<h1>IT SUPPORT<\/h1>/);
   assert.match(page, /<a class="request-back-link" href="#\/office">‹ เลือกระบบ<\/a>/);
   assert.equal(count(page, /class="type-card request-type-card lab-module-card/g), 2);
-  assert.match(page, /<a class="type-card request-type-card lab-module-card" href="#\/requests\?type=abc" data-module="it"/);
-  assert.match(page, /ใบแจ้งซ่อม IT/);
-  assert.match(page, /3 ยังไม่จบ/);
-  assert.doesNotMatch(page, /is-off/, "both cards are open now");
-  assert.doesNotMatch(visibleText(page), /กำลังย้ายระบบ/);
-  assert.equal(count(visibleText(page), /ใบสั่งงาน IT/g), 1);
-  assert.equal(count(page, /<a class="type-card/g), 2, "both cards are links");
+  assert.match(page, /<a class="type-card request-type-card lab-module-card" href="#\/office\?module=repair" data-module="it"/);
   assert.match(page, /<a class="type-card request-type-card lab-module-card" href="#\/office\?module=work-order" data-module="it"/);
+  assert.ok(page.indexOf("module=repair") < page.indexOf("module=work-order"), "the repair card comes first");
+  assert.equal(count(visibleText(page), /ใบแจ้งซ่อม IT/g), 1);
+  assert.equal(count(visibleText(page), /ใบสั่งงาน IT/g), 1);
+  assert.doesNotMatch(page, /is-off/, "both cards are open");
+  assert.doesNotMatch(page, /#\/requests/, "the repair card no longer opens the shared request list");
+  assert.doesNotMatch(visibleText(page), /กำลังย้ายระบบ/);
+  assert.equal(count(page, /<a class="type-card/g), 2, "both cards are links");
   assert.doesNotMatch(page, /style="/);
 });
-
-test("the repair card falls back to a plain status label when the count is unknown, and is hidden when not allowed", () => {
-  assert.match(sections.itSupportPage({ repair: { href: "#/requests?type=abc", count: null } }), /ดูสถานะ/);
-  assert.match(sections.itSupportPage({ repair: { href: "#/requests?type=abc", count: 0 } }), /0 ยังไม่จบ/);
-  const hidden = sections.itSupportPage({ repair: null });
-  assert.doesNotMatch(hidden, /ใบแจ้งซ่อม IT/);
-  assert.equal(count(hidden, /<a class="type-card/g), 1, "only the work-order card is left, and it is a link");
-  assert.match(hidden, /href="#\/office\?module=work-order"/);
-  assert.match(hidden, /ใบสั่งงาน IT/);
-  assert.equal(sections.itSupportPage(), hidden);
-});
-
-test("an unsafe label or href is escaped", () => {
-  const page = sections.itSupportPage({ repair: { href: `#/requests?type="><script>`, count: 1 } });
-  assert.doesNotMatch(page, /<script>/);
+test("a card the department may not open is left out, and a card that declares nothing shows no badge", () => {
+  const noRepair = sections.itSupportPage({ allowed: (code) => code !== "IT_COMPUTER_REPAIR" });
+  assert.doesNotMatch(noRepair, /ใบแจ้งซ่อม IT/);
+  assert.equal(count(noRepair, /<a class="type-card/g), 1, "only the work-order card is left, and it is a link");
+  assert.match(noRepair, /href="#\/office\?module=work-order"/);
+  const noWork = sections.itSupportPage({ allowed: (code) => code !== "IT_WORK_ORDER" });
+  assert.doesNotMatch(noWork, /ใบสั่งงาน IT/);
+  assert.match(noWork, /href="#\/office\?module=repair"/);
+  assert.doesNotMatch(sections.itSupportPage(), /request-type-count|request-type-version/, "nothing declared = no badge and no version");
+  assert.equal(sections.itSupportPage({}), sections.itSupportPage());
 });
 
 /* ---------- ซ่อนการ์ดใบแจ้งซ่อม IT จากภาพรวมคำร้อง ---------- */
@@ -170,7 +171,7 @@ test("other departments see the office menu; lab-only accounts do not", () => {
   assert.equal(labOnly.routeAllowed("office"), false, "typing #/office sends a lab-only account back to LAB");
 });
 
-test("the office module is standalone with a menu entry, sandbox for the work-order pages only, and loads right after MNP LAB and before app.js", () => {
+test("the office module is standalone with a menu entry, sandbox for the repair and work-order pages only, and loads right after MNP LAB and before app.js", () => {
   const html = read("index.html");
   const scripts = [...html.matchAll(/<script defer src="\.\/([^"?]+)/g)].map((match) => match[1]);
   const at = (file) => scripts.indexOf(file);
@@ -185,40 +186,44 @@ test("the office module is standalone with a menu entry, sandbox for the work-or
   assert.match(source, /nav: \[\{ path: PATH, label: TITLE, icon: NAV_ICON \}\]/);
   assert.match(source, /const TITLE = "ระบบสำนักงาน";/);
   assert.match(source, /sandbox: true,/, "test mode keeps the menu for the work-order pages (modeAllowed hides the rest)");
-  assert.match(source, /const modeAllowed = \(code\) => deptModuleAllowed\(code\) && \(!inSandbox\(\) \|\| code === sections\.WORK_ORDER_CODE\);/);
+  assert.match(source, /const modeAllowed = \(code\) => deptModuleAllowed\(code\) && \(!inSandbox\(\) \|\| code === sections\.WORK_ORDER_CODE \|\| code === sections\.REPAIR_CODE\);/);
+  // ไฟล์ของใบแจ้งซ่อม IT (itrp) โหลดหลัง module-office.js และก่อน app.js ตามลำดับ model → pages → module เช่นกัน
+  assert.ok(at("modules/itrp-model.js") < at("modules/itrp-pages.js") && at("modules/itrp-pages.js") < at("modules/module-itrp.js"));
+  assert.ok(at("modules/module-office.js") < at("modules/module-itrp.js") && at("modules/module-itrp.js") < at("app.js"));
   // ไฟล์ของใบสั่งงาน IT โหลดหลัง module-office.js และก่อน app.js ตามลำดับ model → pages → module
   assert.ok(at("modules/itwo-model.js") < at("modules/itwo-pages.js") && at("modules/itwo-pages.js") < at("modules/module-itwo.js"));
   assert.ok(at("modules/module-office.js") < at("modules/module-itwo.js") && at("modules/module-itwo.js") < at("app.js"));
 });
 
 /* ---------- ทดลองรันโมดูลจริงใน vm: ลงทะเบียน เมนู และหน้า ---------- */
-function setup({ employee, repairType = { id: "type-it", code: "IT_REPAIR" }, countResult = 5, itwoSummary = null, itwoVersion, declare = true, sandbox = false } = {}) {
+function setup({ employee, repairSummary = { openCount: 5, badge: "", title: "" }, repairVersion = "1.00", itwoSummary = null, itwoVersion, declare = true, sandbox = false, repairInDevelopment = false } = {}) {
   const queries = [];
-  const painted = { itwoRendered: [], html: "", active: null, title: null, notFound: 0, loading: 0, zooms: 0, queued: [], went: [] };
-  // หน้าใบสั่งงาน IT จริงอยู่ที่ module-itwo.js (ทดสอบที่ itwo-module.test.mjs) ที่นี่ใช้ตัวแทนที่บันทึกการเรียกและคืนตัวเลขบนการ์ด
+  const painted = { itwoRendered: [], itrpRendered: [], html: "", active: null, title: null, notFound: 0, loading: 0, zooms: 0, queued: [], went: [] };
+  // หน้าจริงของใบสั่งงาน IT / ใบแจ้งซ่อม IT อยู่ที่ module-itwo.js / module-itrp.js (ทดสอบที่ itwo-module.test.mjs / itrp-module.test.mjs) ที่นี่ใช้ตัวแทนที่บันทึกการเรียกและคืนตัวเลขบนการ์ด
   const itwo = { render: async (query) => { painted.itwoRendered.push(String(query)); }, loadCardSummary: async () => (itwoSummary instanceof Error ? Promise.reject(itwoSummary) : itwoSummary), version: itwoVersion };
+  const itrp = { render: async (query) => { painted.itrpRendered.push(String(query)); }, loadCardSummary: async () => (repairSummary instanceof Error ? Promise.reject(repairSummary) : repairSummary), version: repairVersion };
   // โมดูลประกาศตัวเองให้การ์ด (window.MNP_OFFICE_CARDS[รหัสโมดูล]) · declare: false = โมดูลที่ไม่ประกาศ
-  const window = { MNP_ITWO: itwo, MNP_OFFICE_CARDS: declare ? { IT_WORK_ORDER: { version: itwoVersion, loadCardSummary: itwo.loadCardSummary } } : {} };
+  const window = {
+    MNP_ITWO: itwo, MNP_ITRP: itrp,
+    MNP_OFFICE_CARDS: declare ? { IT_WORK_ORDER: { version: itwoVersion, loadCardSummary: itwo.loadCardSummary }, IT_COMPUTER_REPAIR: { version: repairVersion, inDevelopment: repairInDevelopment, loadCardSummary: itrp.loadCardSummary } } : {},
+  };
   const context = vm.createContext({
     window, console, URLSearchParams, Map, Set, isSandboxMode: () => sandbox,
     location: { hash: "#/office?module=it-support" },
     document: { querySelectorAll: () => [] },
     state: { employee },
     app: { set innerHTML(value) { painted.html = value; }, get innerHTML() { return painted.html; } },
-    sb: { from: (table) => ({ select: () => ({ eq: (column, value) => ({ eq: (column2, value2) => ({ maybeSingle: async () => {
-      queries.push({ table, [column]: value, [column2]: value2 });
-      return { data: repairType, error: null };
-    } }) }) }) }) },
+    // หน้าระบบสำนักงานไม่ต้องอ่านฐานข้อมูลเองแล้ว (ตัวเลขบนการ์ดมาจากตัวประกาศของโมดูล) ถ้ามีใครเรียก sb / requestTypeCounts จะถูกบันทึกลง queries
+    sb: { from: (table) => { queries.push({ table }); throw new Error("the office page must not query the database"); } },
     shell: (html, active, title) => { painted.active = active; painted.title = title; return html; },
     bindShell() {}, loadingShell() { painted.loading += 1; }, renderNotFound() { painted.notFound += 1; }, go(path) { painted.went.push(path); },
     zoomIntoContent() { painted.zooms += 1; }, queueModuleZoom(hash) { painted.queued.push(hash); },
-    requestTypeCounts: async (types, mineOnly) => { queries.push({ counted: types.map((type) => type.id), mineOnly }); return new Map([[types[0].id, countResult]]); },
+    requestTypeCounts: async () => { queries.push({ counted: true }); return new Map(); },
     deptModuleAllowed: (code) => departmentAccess.moduleAllowed(context.state.employee, code),
   });
   for (const file of ["ui-icons.js", "request-center.js", "module-it.js", "office-sections.js", "module-office.js"]) vm.runInContext(read(`modules/${file}`), context);
   return { context, window, queries, painted, open: (query = "") => window.MNP_REQUEST_MODULES.OFFICE.pages.office(params(query)) };
 }
-
 test("module-office registers a standalone menu entry visible to any signed-in user", () => {
   const { window } = setup({ employee: mt });
   const office = window.MNP_REQUEST_MODULES.OFFICE;
@@ -243,49 +248,92 @@ test("opening #/office paints the chooser without touching the database", async 
   assert.deepEqual(app.queries, []);
 });
 
-test("opening IT SUPPORT looks up the active IT_REPAIR type and links to the original repair list with the pending count", async () => {
+test("opening IT SUPPORT paints the two cards with their own links, the repair card's count and version, and makes no database lookup", async () => {
   const app = setup({ employee: mt });
   await app.open("module=it-support");
-  assert.deepEqual(app.queries[0], { table: "request_types", code: "IT_REPAIR", is_active: true });
-  assert.deepEqual(JSON.parse(JSON.stringify(app.queries[1])), { counted: ["type-it"], mineOnly: false });
-  assert.match(app.painted.html, /href="#\/requests\?type=type-it"/, "the exact list URL that the old overview card opened");
-  assert.match(app.painted.html, /5 ยังไม่จบ/);
+  assert.deepEqual(app.queries, [], "the card numbers come from the modules' own summaries");
+  assert.match(app.painted.html, /href="#\/office\?module=repair"/);
+  assert.match(app.painted.html, />5 ยังไม่จบ<\/span>/);
+  assert.match(app.painted.html, />V1\.00<\/span>/);
   assert.match(app.painted.html, /href="#\/office\?module=work-order"/);
-  assert.doesNotMatch(app.painted.html, /กำลังย้ายระบบ/);
+  assert.doesNotMatch(app.painted.html, /#\/requests|กำลังย้ายระบบ/);
   assert.equal(app.painted.active, "office");
   assert.equal(app.painted.title, "IT SUPPORT");
 });
 
-test("the repair card link equals the helper the request center itself uses", async () => {
-  const app = setup({ employee: mt });
-  await app.open("module=it-support");
-  assert.equal(requestCenter.url(params(""), { type: "type-it" }), "#/requests?type=type-it");
+test("a card whose module is in development shows the 'กำลังพัฒนา' tag next to the count and version, and is still a link", () => {
+  const modules = { IT_COMPUTER_REPAIR: { version: "1.00", openCount: 2, waiting: "1 รอคุณ", inDevelopment: true }, IT_WORK_ORDER: { version: "1.04", openCount: 3 } };
+  const page = sections.itSupportPage({ modules });
+  const repair = page.split("<a ").find((card) => card.includes("module=repair"));
+  const work = page.split("<a ").find((card) => card.includes("module=work-order"));
+  assert.match(repair, /<span class="request-type-count request-type-dev">กำลังพัฒนา<\/span>/);
+  assert.equal(count(page, /request-type-dev/g), 1, "only the card whose module declares it");
+  assert.doesNotMatch(work, /กำลังพัฒนา/);
+  assert.match(repair, /^class="type-card request-type-card lab-module-card" href="#\/office\?module=repair"/, "still an open link, not a disabled card");
+  assert.doesNotMatch(page, /is-off/);
+  // ป้ายอยู่ในคอลัมน์ป้ายเดียวกับตัวเลขและเลขเวอร์ชัน เรียงก่อนกัน ไม่ซ้อนทับ
+  const order = [">กำลังพัฒนา<", ">2 ยังไม่จบ<", ">1 รอคุณ<", ">V1.00<"].map((text) => repair.indexOf(text));
+  assert.ok(order.every((index) => index > 0) && order.every((index, position) => position === 0 || index > order[position - 1]), "tag, count, waiting, version in order");
+  // ถอดธง = ป้ายหาย
+  const off = sections.itSupportPage({ modules: { IT_COMPUTER_REPAIR: { version: "1.00", openCount: 2, inDevelopment: false } } });
+  assert.doesNotMatch(off, /กำลังพัฒนา|request-type-dev/);
+  // ไม่มีป้ายตัวเลข/เวอร์ชันเลยก็ยังขึ้นป้ายได้
+  assert.match(sections.itSupportPage({ modules: { IT_COMPUTER_REPAIR: { inDevelopment: true } } }), /request-type-side"><span class="request-type-count request-type-dev">กำลังพัฒนา<\/span><\/span>/);
 });
 
-test("a department without IT_REPAIR, or a database that turned the type off, gets no repair card", async () => {
+test("the real office module passes the module's development flag to the card", async () => {
+  const on = setup({ employee: mt, repairInDevelopment: true });
+  await on.open("module=it-support");
+  assert.equal(count(on.painted.html, /request-type-dev">กำลังพัฒนา</g), 1);
+  assert.match(on.painted.html, /href="#\/office\?module=repair"/);
+  const off = setup({ employee: mt });
+  await off.open("module=it-support");
+  assert.doesNotMatch(off.painted.html, /กำลังพัฒนา/);
+});
+
+test("?module=repair hands the page to the repair module; the old request-center IT_REPAIR module is still registered but has no card", async () => {
+  const app = setup({ employee: mt });
+  await app.open("module=repair&view=new");
+  assert.deepEqual(app.painted.itrpRendered, ["module=repair&view=new"]);
+  assert.deepEqual(app.painted.itwoRendered, []);
+  assert.equal(app.painted.html, "", "the office module paints nothing itself");
+  assert.deepEqual(app.painted.went, []);
+  assert.ok(app.window.MNP_REQUEST_MODULES.IT_REPAIR, "the central IT_REPAIR module is not removed");
+  assert.equal(sections.IT_SUPPORT_CARDS.some((card) => card.code === "IT_REPAIR"), false, "but no card points at it");
+});
+test("a department without IT_COMPUTER_REPAIR gets no repair card and nothing is asked for it", async () => {
+  let asked = 0;
   const restricted = setup({ employee: { department: { code: "ID" } } });
-  restricted.context.deptModuleAllowed = (code) => code !== "IT_REPAIR";
+  restricted.context.deptModuleAllowed = (code) => code !== "IT_COMPUTER_REPAIR";
+  restricted.window.MNP_OFFICE_CARDS.IT_COMPUTER_REPAIR.loadCardSummary = async () => { asked += 1; return { openCount: 1 }; };
   await restricted.open("module=it-support");
   assert.doesNotMatch(restricted.painted.html, /ใบแจ้งซ่อม IT/);
   assert.match(restricted.painted.html, /ใบสั่งงาน IT/, "the other card of the page is still there");
-  assert.deepEqual(restricted.queries, [], "no lookups for a card that is not shown");
-
-  const off = setup({ employee: mt, repairType: null });
-  await off.open("module=it-support");
-  assert.doesNotMatch(off.painted.html, /ใบแจ้งซ่อม IT/);
+  assert.equal(asked, 0, "no summary is read for a card that is not shown");
+  assert.deepEqual(restricted.queries, []);
+  await restricted.open("module=repair");
+  assert.deepEqual(restricted.painted.went, ["dashboard"], "typing the URL is turned back before anything is rendered");
+  assert.deepEqual(restricted.painted.itrpRendered, []);
 });
-
-test("department ID, which is restricted, still gets the repair card", async () => {
+test("department ID, which is restricted, still gets the repair card and can open the repair module (but not the work-order module)", async () => {
   const app = setup({ employee: indesign });
   await app.open("module=it-support");
-  assert.match(app.painted.html, /href="#\/requests\?type=type-it"/);
+  assert.match(app.painted.html, /href="#\/office\?module=repair"/);
+  assert.doesNotMatch(app.painted.html, /module=work-order/);
+  await app.open("module=repair");
+  assert.equal(app.painted.itrpRendered.length, 1);
+  assert.deepEqual(app.painted.went, []);
+  await app.open("module=work-order");
+  assert.deepEqual(app.painted.went, ["dashboard"]);
+  assert.deepEqual(app.painted.itwoRendered, []);
+  assert.equal(departmentAccess.moduleAllowed(indesign, "IT_COMPUTER_REPAIR"), true);
+  assert.equal(departmentAccess.moduleAllowed(indesign, "IT_WORK_ORDER"), false);
 });
-
 /* ---------- แผนก ID: การ์ดในเมนูกรองตามรหัสโมดูลของแต่ละการ์ด ---------- */
 const allowedFor = (employee) => (code) => departmentAccess.moduleAllowed(employee, code);
 
 test("every card has its own module code, and the IT SUPPORT hub has none of its own", () => {
-  assert.deepEqual(sections.IT_SUPPORT_CARDS.map((card) => [card.key, card.code]), [["repair", "IT_REPAIR"], ["work-order", "IT_WORK_ORDER"]]);
+  assert.deepEqual(sections.IT_SUPPORT_CARDS.map((card) => [card.key, card.code]), [["repair", "IT_COMPUTER_REPAIR"], ["work-order", "IT_WORK_ORDER"]]);
   const hr = sections.SECTIONS.find((section) => section.key === "hr");
   assert.equal(hr.code, "HR");
   const hub = sections.SECTIONS.find((section) => section.key === "it-support");
@@ -299,7 +347,7 @@ test("an unrestricted department sees every system and every card, exactly as be
   assert.deepEqual(sections.visibleCards(allowed).map((card) => card.key), ["repair", "work-order"]);
   assert.equal(sections.hasVisibleSection(allowed), true);
   assert.equal(sections.chooserPage({ allowed }), sections.chooserPage(), "no allowed callback = the same page");
-  assert.equal(sections.itSupportPage({ repair: { href: "#/requests?type=a", count: 1 }, allowed }), sections.itSupportPage({ repair: { href: "#/requests?type=a", count: 1 } }));
+  assert.equal(sections.itSupportPage({ allowed }), sections.itSupportPage());
   assert.equal(count(sections.chooserPage({ allowed }), /class="type-card request-type-card lab-module-card/g), 2);
 });
 
@@ -319,7 +367,7 @@ test("department ID sees the office menu and only IT SUPPORT, and in it only the
   assert.doesNotMatch(visibleText(chooser), /HR/);
   assert.doesNotMatch(chooser, /ระบบกำลังพัฒนา/);
 
-  const hub = sections.itSupportPage({ repair: { href: "#/requests?type=abc", count: 2 }, allowed });
+  const hub = sections.itSupportPage({ modules: { IT_COMPUTER_REPAIR: { version: "1.00", openCount: 2 } }, allowed });
   assert.match(hub, /ใบแจ้งซ่อม IT/);
   assert.match(hub, /2 ยังไม่จบ/);
   assert.doesNotMatch(hub, /ใบสั่งงาน IT/);
@@ -349,7 +397,7 @@ test("department ID in the real module: menu shown, hub shows only IT SUPPORT, t
 
   await app.open("module=it-support");
   assert.deepEqual(app.painted.went, []);
-  assert.match(app.painted.html, /href="#\/requests\?type=type-it"/);
+  assert.match(app.painted.html, /href="#\/office\?module=repair"/);
   assert.doesNotMatch(app.painted.html, /ใบสั่งงาน IT|กำลังย้ายระบบ/);
 });
 
@@ -398,12 +446,11 @@ test("the IT SUPPORT system uses a wrench icon that already exists in the shared
   assert.doesNotMatch(read("modules/office-sections.js"), /office-sections\.test/);
 });
 
-test("a count that fails does not break the page, HR opens a static page, and an unknown module is not found", async () => {
-  const app = setup({ employee: mt });
-  app.context.requestTypeCounts = async () => { throw new Error("boom"); };
+test("a card summary that fails does not break the page, HR opens a static page, and an unknown module is not found", async () => {
+  const app = setup({ employee: mt, repairSummary: new Error("boom") });
   await app.open("module=it-support");
   assert.match(app.painted.html, /ดูสถานะ/);
-  assert.match(app.painted.html, /href="#\/requests\?type=type-it"/);
+  assert.match(app.painted.html, /href="#\/office\?module=repair"/);
 
   const other = setup({ employee: mt });
   await other.open("module=hr");
@@ -412,20 +459,18 @@ test("a count that fails does not break the page, HR opens a static page, and an
   await other.open("module=unknown");
   assert.equal(other.painted.notFound, 1);
 });
-
 test("a slow IT SUPPORT page does not repaint over a page opened after it", async () => {
   const app = setup({ employee: mt });
   let release;
-  app.context.sb.from = () => ({ select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => new Promise((resolve) => { release = resolve; }) }) }) }) });
+  app.window.MNP_OFFICE_CARDS.IT_COMPUTER_REPAIR.loadCardSummary = () => new Promise((resolve) => { release = resolve; });
   const slow = app.open("module=it-support");
   await flush();
   await app.open("");
   const chooser = app.painted.html;
-  release({ data: { id: "late", code: "IT_REPAIR" }, error: null });
+  release({ openCount: 99 });
   await slow;
   assert.equal(app.painted.html, chooser);
 });
-
 /* ---------- ใบสั่งงาน IT: การ์ด เส้นทาง และสิทธิ์แผนก/โหมดทดสอบ ---------- */
 test("the work-order card shows the count of work waiting for me, and a failing count leaves the card open", async () => {
   const withCount = setup({ employee: mt, itwoSummary: { badge: "3 รอคุณ", title: "รออนุมัติ 2 · งาน IT ค้าง 1" } });
@@ -467,14 +512,17 @@ test("in test mode the work-order pages open normally and an HR page sends the a
   assert.deepEqual(sandbox.queries, [], "the repair type is never looked up in test mode");
 });
 
-test("in test mode IT SUPPORT shows only the work-order card and the chooser only IT SUPPORT (no repair card, no HR), without looking up the repair type", async () => {
+test("in test mode the repair and work-order pages open normally, and IT SUPPORT shows both cards with no HR and no database lookup", async () => {
   const sandbox = setup({ employee: mt, sandbox: true });
-  await sandbox.open("module=it-support");
-  assert.doesNotMatch(sandbox.painted.html, /ใบแจ้งซ่อม IT/);
-  assert.doesNotMatch(sandbox.painted.html, /href="#\/requests/);
-  assert.match(sandbox.painted.html, /href="#\/office\?module=work-order"/);
+  await sandbox.open("module=repair");
+  assert.equal(sandbox.painted.itrpRendered.length, 1);
   assert.deepEqual(sandbox.painted.went, []);
-  assert.deepEqual(sandbox.queries, [], "IT_REPAIR in request_types is never queried in test mode");
+  await sandbox.open("module=it-support");
+  assert.match(sandbox.painted.html, /href="#\/office\?module=repair"/);
+  assert.match(sandbox.painted.html, /href="#\/office\?module=work-order"/);
+  assert.doesNotMatch(sandbox.painted.html, /href="#\/requests/);
+  assert.deepEqual(sandbox.painted.went, []);
+  assert.deepEqual(sandbox.queries, []);
 
   await sandbox.open("");
   assert.match(visibleText(sandbox.painted.html), /IT SUPPORT/);
@@ -482,13 +530,12 @@ test("in test mode IT SUPPORT shows only the work-order card and the chooser onl
   assert.equal(count(sandbox.painted.html, /class="type-card request-type-card lab-module-card/g), 1);
   assert.deepEqual(sandbox.queries, []);
 });
-
 /* ---------- ป้ายบนการ์ด (รุ่น 1.03): เลขเวอร์ชัน · ยังไม่จบ · รอคุณ — กลไกกลางของโมดูลที่ประกาศตัวเอง ---------- */
 const workOrderCard = (page) => page.slice(page.indexOf('href="#/office?module=work-order"'));
-const repairInput = { href: "#/requests?type=abc", count: 3 };
+const repairCard = (page) => page.slice(page.indexOf('href="#/office?module=repair"'), page.indexOf('href="#/office?module=work-order"'));
 
 test("a card shows, top to bottom at its right: the open count, the waiting badge and the module version, for a module that declares them", () => {
-  const page = sections.itSupportPage({ repair: repairInput, modules: { IT_WORK_ORDER: { version: "1.03", openCount: 4, waiting: "2 รอคุณ", title: "รออนุมัติ 2" } } });
+  const page = sections.itSupportPage({ modules: { IT_WORK_ORDER: { version: "1.03", openCount: 4, waiting: "2 รอคุณ", title: "รออนุมัติ 2" } } });
   const card = workOrderCard(page);
   assert.match(card, /<span class="request-type-side"><span class="request-type-count">4 ยังไม่จบ<\/span><span class="request-type-count request-type-count-2">2 รอคุณ<\/span><span class="request-type-version" title="เวอร์ชัน 1\.03">V1\.03<\/span><\/span>/);
   assert.match(page, /href="#\/office\?module=work-order"[^>]*title="รออนุมัติ 2"/);
@@ -496,13 +543,11 @@ test("a card shows, top to bottom at its right: the open count, the waiting badg
   assert.equal(count(visibleText(page), /V1\.03/g), 1);
 });
 
-test("the open-count badge sits where the repair card's badge sits: same element, same place, same wording", () => {
-  const page = sections.itSupportPage({ repair: repairInput, modules: { IT_WORK_ORDER: { version: "1.03", openCount: 0 } } });
-  const repair = page.slice(0, page.indexOf('href="#/office?module=work-order"'));
-  assert.match(repair, /<span class="request-type-top"><span class="type-card-badge">[\s\S]*?<\/span><span class="request-type-count">3 ยังไม่จบ<\/span><\/span>/);
+test("the open-count badge sits in the same element, place and wording on the repair card and the work-order card", () => {
+  const page = sections.itSupportPage({ modules: { IT_COMPUTER_REPAIR: { version: "1.00", openCount: 3 }, IT_WORK_ORDER: { version: "1.03", openCount: 0 } } });
+  assert.match(repairCard(page), /<span class="request-type-top"><span class="type-card-badge">[\s\S]*?<\/span><span class="request-type-side"><span class="request-type-count">3 ยังไม่จบ<\/span><span class="request-type-version"/);
   assert.match(workOrderCard(page), /<span class="request-type-top"><span class="type-card-badge">[\s\S]*?<\/span><span class="request-type-side"><span class="request-type-count">0 ยังไม่จบ<\/span><span class="request-type-version"/, "a real zero is shown as 0, first in the column");
 });
-
 test("an open count that could not be read shows 'ดูสถานะ' (like the repair card), and a module without a count shows no main badge", () => {
   const unreadable = workOrderCard(sections.itSupportPage({ modules: { IT_WORK_ORDER: { version: "1.03", openCount: null, waiting: "", title: "" } } }));
   assert.match(unreadable, /<span class="request-type-count">ดูสถานะ<\/span>/);
@@ -510,22 +555,20 @@ test("an open count that could not be read shows 'ดูสถานะ' (like t
   const versionOnly = workOrderCard(sections.itSupportPage({ modules: { IT_WORK_ORDER: { version: "1.03" } } }));
   assert.doesNotMatch(versionOnly, /request-type-count/, "the module declares no count: no badge to make up");
   assert.match(versionOnly, /request-type-version/);
-  const repair = sections.itSupportPage({ repair: { href: "#/requests?type=abc", count: null } });
-  assert.match(repair, /<span class="request-type-count">ดูสถานะ<\/span>/);
+  const repair = sections.itSupportPage({ modules: { IT_COMPUTER_REPAIR: { version: "1.00", openCount: null } } });
+  assert.match(repairCard(repair), /<span class="request-type-count">ดูสถานะ<\/span>/);
 });
 
 test("a module that does not declare anything shows no version and no badge, and the markup is unchanged for it", () => {
-  const page = sections.itSupportPage({ repair: repairInput, modules: { IT_WORK_ORDER: { version: "1.03", openCount: 1 } } });
-  const repair = page.slice(0, page.indexOf('href="#/office?module=work-order"'));
-  assert.doesNotMatch(repair, /request-type-version|request-type-side/, "the repair card declares no version");
-  const none = sections.itSupportPage({ repair: repairInput });
+  const page = sections.itSupportPage({ modules: { IT_WORK_ORDER: { version: "1.03", openCount: 1 } } });
+  assert.doesNotMatch(repairCard(page), /request-type-version|request-type-side|request-type-count/, "the repair card declares nothing here");
+  const none = sections.itSupportPage();
   assert.doesNotMatch(none, /request-type-version|request-type-side/);
   assert.equal(sections.itSupportPage({ modules: {} }), sections.itSupportPage());
   assert.equal(count(workOrderCard(none), /request-type-count/g), 0, "not declared: no badge");
   // ตัวประกาศของโมดูลอื่น (รหัสไม่ตรงกับการ์ดใด) ไม่ทำให้การ์ดใดแสดงอะไร
   assert.equal(sections.itSupportPage({ modules: { SOME_FUTURE_MODULE: { version: "9.99", openCount: 9 } } }), sections.itSupportPage());
 });
-
 test("an unsafe version, count text or title is escaped", () => {
   const page = sections.itSupportPage({ modules: { IT_WORK_ORDER: { version: "<img src=x onerror=1>", openCount: 1, waiting: "<b>x</b>", title: '"><script>alert(1)</script>' } } });
   assert.doesNotMatch(page, /<img|<b>|<script/);
@@ -538,13 +581,13 @@ test("module-office reads every declared module's version and open count and pas
   assert.match(card, />5 ยังไม่จบ<\/span>/);
   assert.match(card, />2 รอคุณ<\/span>/);
   assert.match(card, />V1\.03<\/span>/);
-  assert.equal(count(withVersion.painted.html, /request-type-version/g), 1, "the repair card shows none");
-  assert.match(withVersion.painted.html, /5 ยังไม่จบ/, "the repair card keeps its own count");
+  assert.equal(count(withVersion.painted.html, /request-type-version/g), 2, "each declaring card shows its own version");
+  assert.match(repairCard(withVersion.painted.html), />V1\.00<\/span>/);
+  assert.match(repairCard(withVersion.painted.html), />5 ยังไม่จบ<\/span>/, "the repair card keeps its own count");
   const without = setup({ employee: mt, declare: false });
   await without.open("module=it-support");
   assert.doesNotMatch(without.painted.html, /request-type-version/);
-  assert.doesNotMatch(workOrderCard(without.painted.html), /request-type-count/, "a module that does not declare has no badge");
-  assert.match(without.painted.html, /5 ยังไม่จบ/, "the repair card is unchanged");
+  assert.doesNotMatch(without.painted.html, /request-type-count/, "a module that does not declare has no badge");
 });
 
 test("module-office: a summary that is null, throws or has no number leaves the card open with 'ดูสถานะ'; a count of 0 shows 0", async () => {
@@ -554,7 +597,7 @@ test("module-office: a summary that is null, throws or has no number leaves the 
     const card = workOrderCard(app.painted.html);
     assert.match(card, /<span class="request-type-count">ดูสถานะ<\/span>/);
     assert.match(card, /V1\.03/, "the version still shows");
-    assert.match(app.painted.html, /5 ยังไม่จบ/, "the repair card is not affected");
+    assert.match(repairCard(app.painted.html), /5 ยังไม่จบ/, "the repair card is not affected");
   }
   const zero = setup({ employee: mt, itwoVersion: "1.03", itwoSummary: { openCount: 0, badge: "", title: "" } });
   await zero.open("module=it-support");
@@ -569,13 +612,14 @@ test("module-office: a declared module is read only for a card the user may see 
   restricted.context.window.MNP_OFFICE_CARDS.IT_WORK_ORDER.loadCardSummary = async () => { calls += 1; return { openCount: 1 }; };
   await restricted.open("module=it-support");
   assert.doesNotMatch(restricted.painted.html, /ใบสั่งงาน IT/);
-  assert.doesNotMatch(restricted.painted.html, /request-type-version/);
+  assert.equal(count(restricted.painted.html, /request-type-version/g), 1, "only the repair card (which department ID may open) shows a version");
   assert.equal(calls, 0);
-  // โหมดทดสอบ: การ์ดนี้ยังเห็น และนับจากตัวประกาศเดียวกัน (ฐานข้อมูลแยกข้อมูลทดสอบ) ส่วนใบแจ้งซ่อม IT ไม่ถูกนับ
+  // โหมดทดสอบ: ทั้งสองการ์ดยังเห็น และนับจากตัวประกาศของตัวเอง (ฐานข้อมูลแยกข้อมูลทดสอบ)
   const sandbox = setup({ employee: mt, sandbox: true, itwoVersion: "1.03", itwoSummary: { openCount: 2, badge: "", title: "" } });
   await sandbox.open("module=it-support");
   assert.match(workOrderCard(sandbox.painted.html), />2 ยังไม่จบ<\/span>/);
-  assert.deepEqual(sandbox.queries, [], "the repair card is not counted in test mode");
+  assert.match(repairCard(sandbox.painted.html), />5 ยังไม่จบ<\/span>/);
+  assert.deepEqual(sandbox.queries, []);
 });
 
 test("the stylesheet places the badge column at the top right of the card and styles the version as a solid, bordered badge", () => {
@@ -596,4 +640,5 @@ test("the way for a new module to declare its card is written at the top of offi
   assert.match(source, /openCount/);
   assert.match(read("README.md"), /MNP_OFFICE_CARDS/);
   assert.match(read("modules/module-itwo.js"), /MNP_OFFICE_CARDS \?\?= \{\}\)\.IT_WORK_ORDER/);
+  assert.match(read("modules/module-itrp.js"), /MNP_OFFICE_CARDS \?\?= \{\}\)\.IT_COMPUTER_REPAIR/);
 });

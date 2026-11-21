@@ -20,6 +20,8 @@ export function pushUrlFor(row: PushRow): string {
   if (action.startsWith("/ncr/")) return `#/ncr?id=${encodeURIComponent(action.slice(5))}`;
   // ใบสั่งงาน IT (ระบบสำนักงาน) เปิดหน้ารายละเอียดของใบนั้นตรง ๆ
   if (action.startsWith("/office/work-order/")) return `#/office?module=work-order&view=order&id=${encodeURIComponent(action.slice("/office/work-order/".length))}`;
+  // ใบแจ้งซ่อม IT (โมดูล itrp) เปิดหน้ารายละเอียดของใบนั้นตรง ๆ เช่นกัน
+  if (action.startsWith("/office/repair/")) return `#/office?module=repair&view=order&id=${encodeURIComponent(action.slice("/office/repair/".length))}`;
   if (action === "/") {
     // สรุปงานค้าง (reminder) ที่มีงานเดียวพาไปที่งานนั้นเลย (สำเนาถึงหัวหน้า kind=escalation ไปหน้าหลักเสมอ เพราะอาจไม่มีสิทธิ์เปิดเอกสาร)
     const items = Array.isArray(row.digest) ? row.digest : [];

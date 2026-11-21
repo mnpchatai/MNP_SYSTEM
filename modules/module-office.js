@@ -1,17 +1,17 @@
 // โมดูล "ระบบสำนักงาน" ของ Pilot Web (#/office) — เมนูซ้ายต่อจาก MNP LAB
-// เปิดแล้วเจอการ์ด IT SUPPORT กับ HR · IT SUPPORT มีใบแจ้งซ่อม IT กับใบสั่งงาน IT (หน้าจริงอยู่ที่ modules/module-itwo.js) · HR ยังไม่เปิด
-// รายการ ลำดับ และ HTML ของหน้าอยู่ที่ office-sections.js ไฟล์นี้ดูแลเฉพาะการเชื่อมต่อ: ลงทะเบียนเมนู สิทธิ์ และหาประเภทคำร้องของใบแจ้งซ่อม IT
+// เปิดแล้วเจอการ์ด IT SUPPORT กับ HR · IT SUPPORT มีใบแจ้งซ่อม IT (หน้าจริงอยู่ที่ modules/module-itrp.js) กับใบสั่งงาน IT (modules/module-itwo.js) · HR ยังไม่เปิด
+// รายการ ลำดับ และ HTML ของหน้าอยู่ที่ office-sections.js ไฟล์นี้ดูแลเฉพาะการเชื่อมต่อ: ลงทะเบียนเมนู สิทธิ์ และข้อมูลบนการ์ด
 //
 // เป็นโมดูลแยก (standalone: true) เหมือน MNP LAB: มีเมนูของตัวเอง ไม่อยู่ในศูนย์คำร้อง
-// โหมดทดสอบ (sandbox: true): เปิดเฉพาะเส้นทาง ระบบสำนักงาน › IT SUPPORT › ใบสั่งงาน IT เท่านั้น (modeAllowed ด้านล่างซ่อนใบแจ้งซ่อม IT และ HR ในโหมดนี้ตามเดิม)
+// โหมดทดสอบ (sandbox: true): เปิดเฉพาะเส้นทาง ระบบสำนักงาน › IT SUPPORT › ใบแจ้งซ่อม IT / ใบสั่งงาน IT เท่านั้น (modeAllowed ด้านล่างซ่อน HR ในโหมดนี้ตามเดิม)
 // บัญชี lab-only ไม่เห็นเมนู (modules/lab-only-access.js ไม่มีรหัส OFFICE) และแผนกที่จำกัดโมดูลต้องมี OFFICE ในรายการอนุญาต (modules/department-access.js)
-// OFFICE ในรายการอนุญาตแค่เปิดเมนู/หน้า hub ให้เข้าได้ — แต่ละการ์ดกรองตามรหัสโมดูลของตัวเอง (IT_REPAIR, IT_WORK_ORDER, HR) ด้วย deptModuleAllowed
+// OFFICE ในรายการอนุญาตแค่เปิดเมนู/หน้า hub ให้เข้าได้ — แต่ละการ์ดกรองตามรหัสโมดูลของตัวเอง (IT_COMPUTER_REPAIR, IT_WORK_ORDER, HR) ด้วย deptModuleAllowed
 // แผนกที่ไม่เหลือการ์ดใดเลยไม่เห็นเมนู และเข้า URL ของระบบที่ไม่มีสิทธิ์ (เช่น ?module=hr) ถูกพากลับหน้าหลักเหมือนหน้าของโมดูลอื่น
 //
-// ใบแจ้งซ่อม IT (IT_REPAIR) ยังเป็นโมดูลคำร้องกลางทุกอย่าง (รายการ ฟอร์ม แจ้งเตือน ลิงก์เก่า) การ์ดที่นี่แค่พาไปหน้ารายการเดิม #/requests?type=<id>
-// ส่วนการ์ดบนหน้าภาพรวม "คำร้อง" ถูกซ่อนด้วยแฟลก hideFromOverview ใน module-it.js
+// ใบแจ้งซ่อม IT บนการ์ดตอนนี้คือโมดูล itrp (ใบแจ้งซ่อมคอมพิวเตอร์ ตารางและ RPC ของตัวเอง) ไม่ใช่โมดูลคำร้องกลาง IT_REPAIR อีกต่อไป
+// โมดูล IT_REPAIR เดิมยังอยู่ครบ (ลิงก์เก่า แจ้งเตือนเก่า) เพียงไม่มีการ์ดชี้ไป และการ์ดบนหน้าภาพรวม "คำร้อง" ยังซ่อนด้วยแฟลก hideFromOverview ใน module-it.js
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) — เรียก helper ของ app.js (state, sb, app, shell, bindShell, loadingShell, renderNotFound, go,
-// deptModuleAllowed, requestTypeCounts, queueModuleZoom, zoomIntoContent) เฉพาะตอนเปิดหน้า/ตอนผู้ใช้กด ไม่เรียกตอนโหลดไฟล์
+// deptModuleAllowed, zoomIntoContent) เฉพาะตอนเปิดหน้า/ตอนผู้ใช้กด ไม่เรียกตอนโหลดไฟล์
 (function registerOfficeModule() {
   const sections = window.MNP_OFFICE_SECTIONS;
   if (!sections) return;
@@ -23,34 +23,19 @@
   let pageVersion = 0; // หน้าเก่าที่โหลดช้ากว่าหน้าใหม่ต้องไม่วาดทับ
   let zoomTo = null;
 
-  // โหมดทดสอบของ admin: เหลือเฉพาะใบสั่งงาน IT (ฐานข้อมูลแยกข้อมูลทดสอบให้แล้ว) ใบแจ้งซ่อม IT และ HR ยังซ่อนเหมือนเดิม
+  // โหมดทดสอบของ admin: เหลือเฉพาะใบแจ้งซ่อม IT กับใบสั่งงาน IT (ฐานข้อมูลแยกข้อมูลทดสอบให้แล้ว) HR ยังซ่อนเหมือนเดิม
   // isSandboxMode เป็นของ app.js (อ้างตอนเรียกใช้เท่านั้น)
   const inSandbox = () => typeof isSandboxMode === "function" && isSandboxMode();
-  const modeAllowed = (code) => deptModuleAllowed(code) && (!inSandbox() || code === sections.WORK_ORDER_CODE);
-
-  // การ์ดใบแจ้งซ่อม IT: แสดงเมื่อแผนกมีสิทธิ์ IT_REPAIR และฐานข้อมูลเปิดประเภทคำร้องนี้อยู่ (RPC สร้างคำร้องตรวจซ้ำเองอีกชั้น)
-  // นับใบที่ยังไม่จบแบบเดียวกับการ์ดเดิมบนหน้าคำร้อง ถ้านับไม่ได้แสดงแค่ "ดูสถานะ" ไม่ให้หน้าล้มเพราะตัวเลข
-  async function loadRepairCard() {
-    const entry = window.MNP_REQUEST_MODULES?.IT_REPAIR;
-    if (!entry?.enabled || !modeAllowed("IT_REPAIR")) return null;
-    const { data, error } = await sb.from("request_types").select("id,code").eq("code", "IT_REPAIR").eq("is_active", true).maybeSingle();
-    if (error) throw error;
-    if (!data) return null;
-    let count = null;
-    try {
-      count = (await requestTypeCounts([data], false)).get(data.id) ?? null;
-    } catch { /* นับไม่ได้ก็ยังเปิดรายการได้ */ }
-    return { href: window.MNP_REQUEST_CENTER.url(new URLSearchParams(), { type: data.id }), count };
-  }
+  const modeAllowed = (code) => deptModuleAllowed(code) && (!inSandbox() || code === sections.WORK_ORDER_CODE || code === sections.REPAIR_CODE);
 
   // การ์ดของโมดูลที่ประกาศตัวเองใน window.MNP_OFFICE_CARDS[<รหัสโมดูล>] = { version, loadCardSummary } (วิธีเพิ่มโมดูลใหม่ดูหัวไฟล์ office-sections.js)
-  // คืน { <รหัสโมดูล>: { version, openCount, waiting, title } } เฉพาะการ์ดที่ผู้ใช้เห็น (สิทธิ์แผนก/โหมดทดสอบ) · ไม่ประกาศ = ไม่มีรายการ การ์ดไม่แสดงป้าย
+  // คืน { <รหัสโมดูล>: { version, inDevelopment, openCount, waiting, title } } (inDevelopment = ป้าย "กำลังพัฒนา" การ์ดยังกดเข้าได้) เฉพาะการ์ดที่ผู้ใช้เห็น (สิทธิ์แผนก/โหมดทดสอบ) · ไม่ประกาศ = ไม่มีรายการ การ์ดไม่แสดงป้าย
   // loadCardSummary ล้ม/คืน null = openCount เป็น null (การ์ดแสดง "ดูสถานะ") · โมดูลที่ไม่มี loadCardSummary = ไม่มีป้ายตัวเลข
   async function loadDeclaredCards() {
     const declared = window.MNP_OFFICE_CARDS ?? {};
-    const entries = await Promise.all(sections.visibleCards(modeAllowed).filter((card) => card.code !== "IT_REPAIR" && declared[card.code]).map(async (card) => {
+    const entries = await Promise.all(sections.visibleCards(modeAllowed).filter((card) => declared[card.code]).map(async (card) => {
       const provider = declared[card.code];
-      const info = { version: provider.version || undefined };
+      const info = { version: provider.version || undefined, inDevelopment: Boolean(provider.inDevelopment) };
       if (typeof provider.loadCardSummary === "function") {
         const summary = await Promise.resolve().then(() => provider.loadCardSummary()).catch(() => null);
         info.openCount = Number.isFinite(summary?.openCount) ? summary.openCount : null;
@@ -70,8 +55,7 @@
     bindShell();
     document.querySelectorAll(".lab-module-card[href]").forEach((card) => card.addEventListener("click", (event) => {
       if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-      if (card.hash.startsWith("#/requests")) queueModuleZoom(card.hash); // หน้ารายการเล่นเอฟเฟกต์เข้าโมดูลเอง
-      else zoomTo = card.hash;
+      zoomTo = card.hash; // การ์ดทุกใบในเมนูนี้ชี้ไปหน้า #/office?... ของตัวเอง (ไม่มีการ์ดไปหน้ารายการคำร้องแล้ว)
     }));
     if (zoom) zoomIntoContent();
   }
@@ -82,23 +66,24 @@
     const section = sections.readSection(params);
     if (!section) return renderNotFound(); // ?module= ที่ไม่มีจริง = URL ที่ไม่มีอยู่
     // ระบบที่แผนกนี้ไม่มีสิทธิ์ (หรือไม่เหลือระบบใดเลย) พากลับหน้าหลักเหมือน routeAllowed ของหน้าโมดูลอื่น ก่อนเรียกข้อมูลใด ๆ
-    // หน้าใบสั่งงาน IT (ย่อยของ IT SUPPORT) ดูจากรหัสโมดูล IT_WORK_ORDER ของมันเอง · โหมดทดสอบพากลับหน้าเลือกระบบ (หน้าหลักไม่อยู่ในโหมดนี้)
+    // หน้าใบแจ้งซ่อม IT / ใบสั่งงาน IT (ย่อยของ IT SUPPORT) ดูจากรหัสโมดูล IT_COMPUTER_REPAIR / IT_WORK_ORDER ของมันเอง · โหมดทดสอบพากลับหน้าเลือกระบบ (หน้าหลักไม่อยู่ในโหมดนี้)
     const visible = sections.visibleSections(modeAllowed);
     const hidden = section === sections.HOME ? visible.length === 0
       : section === sections.WORK_ORDER ? !sections.workOrderVisible(modeAllowed)
-        : !visible.some((item) => item.key === section);
+        : section === sections.REPAIR ? !sections.repairVisible(modeAllowed)
+          : !visible.some((item) => item.key === section);
     if (hidden) {
       go(inSandbox() && visible.length ? "office" : "dashboard");
       return;
     }
     if (section === sections.WORK_ORDER) return window.MNP_ITWO.render(params);
+    if (section === sections.REPAIR) return window.MNP_ITRP.render(params);
     if (section === sections.HOME) return paint(sections.chooserPage({ allowed: modeAllowed }), TITLE, version);
     if (section === "it-support") {
       loadingShell(PATH, TITLE);
-      // ข้อมูลบนการ์ดของโมดูลที่ประกาศตัวเองไว้ (เลขเวอร์ชัน จำนวนที่ยังไม่จบ ป้ายรอง) อ่านขนานกับการ์ดใบแจ้งซ่อม
-      // ถ้าอ่านไม่ได้การ์ดยังกดเข้าได้ ไม่ทำให้หน้าล้ม · ใบแจ้งซ่อม IT ไม่ประกาศจึงไม่แสดงเลขเวอร์ชัน
-      const [repair, modules] = await Promise.all([loadRepairCard(), loadDeclaredCards()]);
-      return paint(sections.itSupportPage({ repair, modules, allowed: modeAllowed }), "IT SUPPORT", version);
+      // ข้อมูลบนการ์ดของโมดูลที่ประกาศตัวเองไว้ (เลขเวอร์ชัน จำนวนที่ยังไม่จบ ป้ายรอง) ถ้าอ่านไม่ได้การ์ดยังกดเข้าได้ ไม่ทำให้หน้าล้ม
+      const modules = await loadDeclaredCards();
+      return paint(sections.itSupportPage({ modules, allowed: modeAllowed }), "IT SUPPORT", version);
     }
     return paint(sections.notReadyPage(section), TITLE, version);
   }

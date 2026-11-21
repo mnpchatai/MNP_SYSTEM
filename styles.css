@@ -3352,6 +3352,163 @@ table.bom-tree td.right { white-space: nowrap; }
   .itwo-sheet-section { break-after: avoid; }
 }
 
+/* ---------- ใบแจ้งซ่อมคอมพิวเตอร์ (itrp) · modules/itrp-pages.js · โครงเดียวกับใบสั่งงาน IT (.itwo-*) ---------- */
+/* ตัวเลขบนแท็บ (รออนุมัติ / งาน IT) */
+.itrp-tab-count { margin-left: 6px; min-width: 20px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; color: var(--primary-ink); background: var(--primary-soft); border-radius: 999px; font-size: var(--text-caption); font-weight: 700; line-height: 20px; }
+.view-tab.active .itrp-tab-count { color: inherit; background: color-mix(in srgb, currentColor 16%, transparent); }
+/* ป้ายใบทดสอบ: ขอบประเด่นกว่าป้ายสถานะ เห็นทุกหน้า (หัวหน้า แถวในรายการ ใบพิมพ์) */
+.badge.itrp-test-tag { color: var(--warning-ink); background: var(--warning-soft); border: 1px solid var(--warning); }
+.itrp-head .itrp-test-tag { margin-left: 10px; align-self: center; }
+/* ตัวเลือกแบบกดเลือก (ประเภทคำขอ ประเภทงานซ่อม สาเหตุ การตรวจซ่อม งานด่วน): ปุ่มสูง 44px แตะง่ายบนมือถือ */
+.itrp-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.itrp-choice { min-height: 44px; padding: 0 14px; display: inline-flex; align-items: center; gap: 8px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); font-size: var(--text-ui); font-weight: 600; cursor: pointer; }
+.itrp-choice input { width: 18px; height: 18px; margin: 0; flex: none; }
+.itrp-choice:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); }
+.itrp-choice:has(input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 2px; }
+[data-field]:has(> .field-error) .itrp-choice { border-color: var(--danger); }
+.itrp-urgent { justify-self: start; }
+.itrp-requester { margin: 0 0 14px; }
+/* ช่องที่ซ่อน (ข้อความระบุ "อื่นๆ" ช่องผู้ซ่อม การ์ดฟอร์ม) ต้องซ่อนจริง: .field เป็น grid จึงทับ [hidden] ของเบราว์เซอร์ */
+.itrp-page [hidden] { display: none !important; }
+/* ขั้นอนุมัติของแถวในหน้างาน IT */
+.itrp-step { display: block; color: var(--muted); font-size: var(--text-caption); white-space: nowrap; }
+.itrp-step.is-done { color: var(--success-ink); font-weight: 700; }
+.itrp-group + .itrp-group { margin-top: 0; }
+.itrp-group > h2 { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.itrp-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.itrp-facts .definition.wide, .itrp-report .definition.wide, .itrp-report-earlier .definition.wide { grid-column: 1 / -1; }
+@media (min-width: 800px) { .itrp-actions .action-panel-buttons .btn { flex: 0 0 auto; } }
+.itrp-pending-steps { margin-top: 4px; color: var(--warning-ink); }
+.itrp-counter-no { margin: 0 0 12px; font-size: var(--text-heading); }
+.itrp-purge { margin-top: 24px; }
+#itrp-staff-title { margin-bottom: 12px; }
+/* ป้ายงานแก้ไข · ไฟล์แนบ · ฟอร์มขอแก้ไข/ถาม/ตอบ/ส่งงาน · ความคืบหน้าอัปโหลด */
+.badge.itrp-rework-tag { color: var(--warning-ink); background: var(--warning-soft); border: 1px solid var(--warning); }
+.itrp-file-field .file-pick { justify-self: start; }
+.itrp-rework-round { padding: 12px 0; border-top: 1px solid var(--soft-line); }
+.itrp-rework-round:first-of-type { border-top: 0; padding-top: 0; }
+.itrp-rework-round h3 { margin: 0 0 6px; font-size: var(--text-ui); }
+.itrp-rework-round p { margin: 0 0 6px; }
+.itrp-rework-round .attachment-grid { margin: 8px 0 0; }
+.itrp-rework-card, .itrp-ask-card, .itrp-answer-card, .itrp-complete-card { border-color: var(--primary); }
+.itrp-rework-card .form-actions, .itrp-ask-card .form-actions, .itrp-answer-card .form-actions, .itrp-complete-card .form-actions { flex-wrap: wrap; justify-content: flex-start; }
+.itrp-comment { padding: 12px 0; border-top: 1px solid var(--soft-line); }
+.itrp-comment:first-of-type { border-top: 0; padding-top: 0; }
+.itrp-comment h3 { margin: 0 0 4px; font-size: var(--text-ui); }
+.itrp-comment p { margin: 0 0 6px; }
+.itrp-comment .attachment-grid, .itrp-question .attachment-grid { margin: 8px 0 0; }
+.itrp-comment-kind { font-weight: 700; }
+.itrp-comment.is-answer { padding-left: 12px; border-left: 3px solid var(--soft-line); }
+.itrp-question { margin: 0 0 14px; padding: 12px 14px; background: var(--primary-soft); border-radius: var(--radius-md); }
+.itrp-question p { margin: 0 0 6px; }
+.itrp-upload h2 { margin-bottom: 6px; }
+.itrp-upload-summary { margin: 8px 0; font-weight: 700; }
+.itrp-upload-list { margin: 0 0 14px; padding: 0; list-style: none; display: grid; gap: 6px; }
+.itrp-upload-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper); }
+.itrp-upload-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.itrp-upload-state { font-size: var(--text-caption); font-weight: 700; color: var(--muted); }
+.itrp-upload-row.is-done .itrp-upload-state { color: var(--success-ink); }
+.itrp-upload-row.is-failed { border-color: var(--danger); }
+.itrp-upload-row.is-failed .itrp-upload-state, .itrp-upload-message { color: var(--danger); }
+.itrp-upload-message { grid-column: 1 / -1; font-size: var(--text-meta); overflow-wrap: anywhere; }
+.itrp-upload .form-actions { flex-wrap: wrap; justify-content: flex-start; }
+/* แถบ "กำลังพัฒนา" บนสุดของทุกหน้าโมดูล (ใช้สีของ .rf-callout.is-warn) · ป้ายบนการ์ดเมนูใช้ .request-type-count ชุดเดียวกับป้ายตัวเลข */
+.itrp-dev-notice { margin: 0 0 14px; font-weight: 600; }
+.request-type-dev { font-weight: 700; }
+.itrp-version { margin: 24px 0 0; text-align: right; font-size: 12px; color: var(--muted, #6b7280); }
+/* ตารางอะไหล่ (บันทึกการซ่อม) · แบบอ่านอย่างเดียวบนหน้ารายละเอียด และแบบกรอกในฟอร์มส่งงาน */
+.itrp-parts-table, .itrp-parts-edit { width: 100%; border-collapse: collapse; font-size: var(--text-meta); }
+.itrp-parts-table th, .itrp-parts-table td, .itrp-parts-edit th, .itrp-parts-edit td { padding: 8px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--soft-line); overflow-wrap: anywhere; }
+.itrp-parts-table th, .itrp-parts-edit th { color: var(--muted); font-size: var(--text-caption); }
+.itrp-parts-edit td { padding: 6px 6px; }
+.itrp-parts-edit .input { min-width: 0; width: 100%; }
+.itrp-part-no { width: 3.5em; color: var(--muted); }
+.itrp-parts-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }
+.itrp-report-earlier { padding: 12px 0; border-top: 1px solid var(--soft-line); }
+.itrp-report-earlier h3 { margin: 0 0 8px; font-size: var(--text-ui); }
+.itrp-report-history > summary { cursor: pointer; }
+.itrp-report-history > summary h2 { display: inline-flex; align-items: center; gap: 8px; }
+@media (max-width: 719px) {
+  .itrp-parts-table thead, .itrp-parts-edit thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .itrp-parts-table, .itrp-parts-table tbody, .itrp-parts-table tr, .itrp-parts-table td, .itrp-parts-edit, .itrp-parts-edit tbody, .itrp-parts-edit tr, .itrp-parts-edit td { display: block; }
+  .itrp-parts-table tr, .itrp-parts-edit tr { margin-bottom: 8px; padding: 6px 0; border: 1px solid var(--line); border-radius: var(--radius-md); }
+  .itrp-parts-table td, .itrp-parts-edit td { padding: 4px 12px; border: 0; }
+  .itrp-parts-table td::before, .itrp-parts-edit td[data-label]::before { content: attr(data-label) ": "; color: var(--muted); font-weight: 700; }
+}
+
+/* หน้าพิมพ์ A4 (#/office?module=repair&view=print) เลย์เอาต์ตามฟอร์มกระดาษ "ใบแจ้งซ่อมคอมพิวเตอร์" 1 หน้า · พื้นขาวตัวดำเสมอ ไม่ตามธีมมืด */
+.itrp-print-toolbar { margin-bottom: 14px; display: flex; flex-wrap: wrap; gap: 10px; }
+.itrp-sheet { position: relative; max-width: 210mm; margin: 0 auto; padding: 12mm; overflow: hidden; color: #000; background: #fff; border: 1px solid var(--line); font-size: 10pt; line-height: 1.35; page: itrp-a4; }
+.itrp-sheet-title { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.itrp-sheet-logo { width: 14mm; height: 14mm; flex: none; object-fit: contain; }
+.itrp-sheet-title h1 { flex: 1; margin: 0; font-size: 16pt; line-height: 1.3; letter-spacing: 0; color: #000; }
+.itrp-urgent-mark { font-size: 11pt; color: #000; }
+.itrp-docbox { flex: none; display: grid; gap: 1px; padding: 3px 10px; border: 1px solid #000; text-align: center; font-size: 9.5pt; }
+.itrp-docbox strong { font-size: 12pt; }
+.itrp-test-note { margin: 0 0 6px; font-weight: 700; color: #000; text-align: center; }
+.itrp-sheet-table { width: 100%; margin-bottom: 6px; border-collapse: collapse; }
+.itrp-sheet-table tbody tr:last-child :is(td, th) { border-bottom: 1px solid #000; } /* กฎกลาง tbody tr:last-child td ตัดเส้นล่างของตาราง ฟอร์มกระดาษต้องมีเส้นปิด */
+.itrp-sheet-table th, .itrp-sheet-table td { padding: 3px 7px; text-align: left; vertical-align: top; border: 1px solid #000; overflow-wrap: anywhere; color: #000; background: transparent; }
+.itrp-sheet-table th[scope="row"] { width: 22%; font-weight: 700; background: #f0f0f0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.itrp-sheet-table thead th { text-align: center; background: #f0f0f0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.itrp-sheet-text { white-space: pre-wrap; }
+.itrp-center { text-align: center !important; }
+.itrp-right { text-align: right !important; }
+.itrp-radio, .itrp-box { display: inline-block; min-width: 1.1em; text-align: center; }
+.itrp-choice-print { display: inline-block; margin-right: 12px; overflow-wrap: anywhere; }
+.itrp-underline { display: inline-block; min-width: 40mm; padding: 0 4px; border-bottom: 1px solid #000; }
+.itrp-blank-line { display: inline-block; min-width: 28mm; border-bottom: 1px dotted #000; }
+.itrp-symptom-row { display: grid; grid-template-columns: minmax(0, 1fr) 58mm; margin-bottom: 6px; border: 1px solid #000; }
+.itrp-symptom { min-height: 30mm; padding: 4px 7px; }
+.itrp-sheet-label { font-weight: 700; }
+.itrp-symptom-text { overflow-wrap: anywhere; }
+.itrp-sign { padding: 4px 6px; display: flex; flex-direction: column; text-align: center; font-size: 9.5pt; border-left: 1px solid #000; }
+.itrp-sign-label { padding-bottom: 3px; border-bottom: 1px dotted #000; font-weight: 700; }
+.itrp-sign-name { margin-top: auto; padding-top: 10mm; font-weight: 700; overflow-wrap: anywhere; }
+.itrp-sign-remark { font-size: 8.5pt; font-style: italic; overflow-wrap: anywhere; }
+.itrp-sign-time { min-height: 1.4em; font-size: 8.5pt; }
+.itrp-band { margin: 4px 0; padding: 2px 8px; border: 1px solid #000; background: #e6e6e6; font-weight: 700; text-align: center; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.itrp-sheet-parts th:nth-child(1) { width: 14mm; }
+.itrp-sheet-parts th:nth-child(3) { width: 22mm; }
+.itrp-sheet-parts th:nth-child(4) { width: 26mm; }
+.itrp-sheet-parts th:nth-child(5) { width: 40mm; }
+.itrp-part-blank td { height: 6.5mm; }
+.itrp-outcome { margin: 4px 0 6px; }
+.itrp-outcome-item { margin-left: 14px; white-space: nowrap; }
+.itrp-signs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 6px; border: 1px solid #000; }
+.itrp-signs .itrp-sign { min-height: 26mm; border-left: 0; border-right: 1px solid #000; }
+.itrp-signs .itrp-sign:last-child { border-right: 0; }
+.itrp-sheet-section { margin: 10px 0 4px; font-size: 11.5pt; color: #000; }
+.itrp-sheet-reworks, .itrp-sheet-comments { table-layout: fixed; }
+.itrp-sheet-reworks th, .itrp-sheet-reworks td, .itrp-sheet-comments th, .itrp-sheet-comments td { font-size: 9.5pt; }
+.itrp-sheet-reworks th:nth-child(1), .itrp-sheet-comments th:nth-child(1) { width: 11mm; }
+.itrp-sheet-reworks th:nth-child(2) { width: 30mm; }
+.itrp-sheet-reworks th:nth-child(4) { width: 25mm; }
+.itrp-sheet-comments th:nth-child(2) { width: 17mm; }
+.itrp-sheet-comments th:nth-child(3) { width: 24mm; }
+.itrp-sheet-comments th:nth-child(4) { width: 26mm; }
+.itrp-sheet-comments th:nth-child(5) { width: 27mm; }
+.itrp-sheet-note { margin: 3px 0; font-size: 9pt; color: #000; }
+/* ลายน้ำ "ทดสอบ" ใบทดสอบเท่านั้น: ตัวเอียงจางพาดกลางใบ ไม่บังข้อความ (พิมพ์ออกมาก็เห็น) */
+.itrp-watermark { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; color: rgba(0, 0, 0, .08); font-size: 96pt; font-weight: 800; letter-spacing: .1em; transform: rotate(-24deg); }
+/* มือถือ (เฉพาะหน้าจอ ไม่ใช่ตอนพิมพ์: หน้า A4 กว้างราว 703px ถ้าไม่ใส่ screen กฎนี้จะติดตอนพิมพ์ด้วย)
+   ใบคงหน้าตาเหมือนกระดาษและเลื่อนดูแนวนอนได้ ไม่บีบคอลัมน์จนตัวอักษรแตกบรรทัดละตัว */
+@media screen and (max-width: 719px) {
+  .itrp-sheet { padding: 12px; overflow-x: auto; }
+  .itrp-sheet > :not(.itrp-watermark) { min-width: 680px; }
+  .itrp-watermark { font-size: 56pt; }
+}
+@page itrp-a4 { size: A4; margin: 12mm; }
+@media print {
+  body:has(.itrp-sheet) :is(.sidebar, .topbar, .mobile-nav-toggle, .nav-backdrop, .sandbox-banner, .push-prompt, .skip-link, .offline-banner, .update-banner, .toast, .install-banner, .no-print) { display: none !important; }
+  body:has(.itrp-sheet), body:has(.itrp-sheet) .app-shell, body:has(.itrp-sheet) .main, body:has(.itrp-sheet) .content { display: block; margin: 0; padding: 0; background: #fff; max-width: none; }
+  .itrp-sheet { max-width: none; margin: 0; padding: 0; border: 0; overflow: visible; }
+  /* ใบปกติพอดี 1 หน้า: กล่องลายเซ็นและแถวของตารางไม่ถูกตัดกลาง · ข้อความยาวล้นไปหน้าถัดไปได้ (แถวต่อแถว) · ตารางประวัติหัวตารางซ้ำทุกหน้า */
+  .itrp-signs, .itrp-symptom-row, .itrp-sheet-title, .itrp-sheet-table tr { break-inside: avoid; }
+  .itrp-sheet-reworks thead, .itrp-sheet-comments thead { display: table-header-group; }
+  .itrp-sheet-section { break-after: avoid; }
+}
+
 /* โมดูล SR (คลังยางเส้นยาว): แถบตัวกรองของหน้าในคลัง/ประวัติ · หน้าล็อต · ป้ายล็อต (พิมพ์) */
 .sr-toolbar { align-items: flex-end; }
 .sr-filter { flex: 0 1 200px; min-width: 150px; margin: 0; }

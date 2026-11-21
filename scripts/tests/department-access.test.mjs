@@ -74,3 +74,13 @@ test("the request ids to look up come from request_id and request items in the d
   ]), ["a", "b"]);
   assert.deepEqual(notificationRequestIds(undefined), []);
 });
+
+test("Indesign sees the IT repair request module (IT_COMPUTER_REPAIR) and its notification links, but not the work order module", () => {
+  assert.equal(moduleAllowed(indesign, "IT_COMPUTER_REPAIR"), true);
+  assert.equal(moduleAllowed(indesign, "IT_WORK_ORDER"), false);
+  const typeOf = () => null;
+  assert.equal(notificationAllowed(indesign, { action_url: "/office/repair/abc" }, typeOf), true);
+  assert.equal(notificationAllowed(indesign, { action_url: "/office/work-order/abc" }, typeOf), false);
+  assert.equal(notificationAllowed(indesign, { action_url: "/office/other" }, typeOf), false);
+  assert.equal(notificationAllowed(mt, { action_url: "/office/repair/abc" }, typeOf), true, "an unrestricted department sees everything");
+});
