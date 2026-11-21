@@ -200,6 +200,12 @@ test("the complete form has the IT section fields, a parts table of up to 10 row
   assert.match(row, /itrp-part-no" data-label="ลำดับ">3</);
   assert.doesNotMatch(row, /<img/);
   assert.match(row, /data-part-remove aria-label="ลบแถวที่ 3"/);
+  // เลขสูงสุดที่ model รับ (8 หลัก + ทศนิยม 2 ตำแหน่ง ใส่จุลภาคคั่นหลัก = 13 ตัวอักษร) ต้องพิมพ์ลงช่องได้ครบ
+  const longest = "99,999,999.99".length;
+  for (const field of ["part_quantity", "part_price"]) {
+    const limit = Number(row.match(new RegExp(`name="${field}"[^>]*maxlength="([0-9]+)"`))?.[1]);
+    assert.ok(limit >= longest, `${field} accepts the largest number the form allows (${limit} >= ${longest})`);
+  }
   assert.match(pages.vendorLabel(model.vendorField("sent_out")), /สถานที่ส่งซ่อม.*จำเป็น/);
   assert.doesNotMatch(pages.vendorLabel(model.vendorField("external_onsite")), /จำเป็น/);
 });

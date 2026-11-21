@@ -11,7 +11,7 @@
 // ใบแจ้งซ่อม IT บนการ์ดตอนนี้คือโมดูล itrp (ใบแจ้งซ่อมคอมพิวเตอร์ ตารางและ RPC ของตัวเอง) ไม่ใช่โมดูลคำร้องกลาง IT_REPAIR อีกต่อไป
 // โมดูล IT_REPAIR เดิมยังอยู่ครบ (ลิงก์เก่า แจ้งเตือนเก่า) เพียงไม่มีการ์ดชี้ไป และการ์ดบนหน้าภาพรวม "คำร้อง" ยังซ่อนด้วยแฟลก hideFromOverview ใน module-it.js
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) — เรียก helper ของ app.js (state, sb, app, shell, bindShell, loadingShell, renderNotFound, go,
-// deptModuleAllowed, queueModuleZoom, zoomIntoContent) เฉพาะตอนเปิดหน้า/ตอนผู้ใช้กด ไม่เรียกตอนโหลดไฟล์
+// deptModuleAllowed, zoomIntoContent) เฉพาะตอนเปิดหน้า/ตอนผู้ใช้กด ไม่เรียกตอนโหลดไฟล์
 (function registerOfficeModule() {
   const sections = window.MNP_OFFICE_SECTIONS;
   if (!sections) return;
@@ -55,8 +55,7 @@
     bindShell();
     document.querySelectorAll(".lab-module-card[href]").forEach((card) => card.addEventListener("click", (event) => {
       if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-      if (card.hash.startsWith("#/requests")) queueModuleZoom(card.hash); // หน้ารายการเล่นเอฟเฟกต์เข้าโมดูลเอง
-      else zoomTo = card.hash;
+      zoomTo = card.hash; // การ์ดทุกใบในเมนูนี้ชี้ไปหน้า #/office?... ของตัวเอง (ไม่มีการ์ดไปหน้ารายการคำร้องแล้ว)
     }));
     if (zoom) zoomIntoContent();
   }

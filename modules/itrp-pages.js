@@ -383,14 +383,15 @@
   // ป้ายช่องชื่อผู้ซ่อม/สถานที่ส่งซ่อม (spec = model.vendorField) · เปลี่ยนตามการตรวจซ่อมที่เลือก
   const vendorLabel = (spec) => `${esc(spec.label)}${spec.required ? ` ${REQUIRED}` : ""}`;
 
+  // จำนวน/ราคา: maxlength 14 พอสำหรับเลขสูงสุดที่รับ (8 หลัก + จุลภาคคั่นหลัก + ทศนิยม 2 ตำแหน่ง = 13 ตัวอักษร) ต้องไม่ต่ำกว่านี้ไม่งั้นพิมพ์ไม่ครบ
   // แถวอะไหล่ในฟอร์มส่งงาน · index เริ่ม 0 (ลำดับที่แสดง = index + 1) · row = { item_name, quantity, price, note } ค่าที่กรอก
   function partRow(index, row = {}) {
     const no = index + 1;
     return `<tr class="itrp-part-row" data-part-row>
         <td class="itrp-part-no" data-label="ลำดับ">${no}</td>
         <td data-label="รายการ"><input class="input" name="part_item" maxlength="${model.MAX_NOTE}" autocomplete="off" aria-label="รายการอะไหล่ แถวที่ ${no}" value="${esc(row.item_name)}"></td>
-        <td data-label="จำนวน"><input class="input" name="part_quantity" inputmode="decimal" maxlength="12" autocomplete="off" aria-label="จำนวน แถวที่ ${no}" value="${esc(row.quantity)}"></td>
-        <td data-label="ราคาต่อหน่วย (บาท)"><input class="input" name="part_price" inputmode="decimal" maxlength="12" autocomplete="off" aria-label="ราคาต่อหน่วย (บาท) แถวที่ ${no}" value="${esc(row.price)}"></td>
+        <td data-label="จำนวน"><input class="input" name="part_quantity" inputmode="decimal" maxlength="14" autocomplete="off" aria-label="จำนวน แถวที่ ${no}" value="${esc(row.quantity)}"></td>
+        <td data-label="ราคาต่อหน่วย (บาท)"><input class="input" name="part_price" inputmode="decimal" maxlength="14" autocomplete="off" aria-label="ราคาต่อหน่วย (บาท) แถวที่ ${no}" value="${esc(row.price)}"></td>
         <td data-label="หมายเหตุ"><input class="input" name="part_note" maxlength="${model.MAX_NOTE}" autocomplete="off" aria-label="หมายเหตุ แถวที่ ${no}" value="${esc(row.note)}"></td>
         <td class="itrp-part-act"><button type="button" class="btn secondary small" data-part-remove aria-label="ลบแถวที่ ${no}">ลบ</button></td>
       </tr>`;
