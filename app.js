@@ -5024,10 +5024,13 @@ async function currentPushSubscription() {
 // เครื่องนี้ลงทะเบียนรับแจ้งเตือนของบัญชีนี้แล้วหรือไม่ (ฐานข้อมูลรู้จัก endpoint นี้) · true/false · null = ตรวจไม่สำเร็จ (ไม่รู้)
 // จำผลที่รู้แล้วไว้ต่อบัญชี ให้แถบชวนเปิดแจ้งเตือนวาดพร้อมหน้าได้โดยไม่ต้องถามฐานข้อมูลทุกครั้ง
 let pushSubscribedCache = { owner: null, value: null };
-function setPushSubscribed(value) {
-  pushSubscribedCache = { owner: state.employee?.id ?? null, value };
+// owner = บัญชีที่เป็นเจ้าของผลตอนเริ่มตรวจ (จับก่อน await) · ถ้าระหว่างรอมีการสลับบัญชี ผลของบัญชีเดิมต้องทิ้ง ไม่จดเป็นของบัญชีใหม่
+function setPushSubscribed(value, owner = state.employee?.id ?? null) {
+  if (owner !== (state.employee?.id ?? null)) return;
+  pushSubscribedCache = { owner, value };
 }
 async function checkPushSubscribed() {
+  const owner = state.employee?.id ?? null;
   try {
     const subscription = await currentPushSubscription();
     let value = false;
@@ -5036,7 +5039,9 @@ async function checkPushSubscribed() {
       if (error) throw error;
       value = data === true;
     }
-    setPushSubscribed(value);
+    // สลับบัญชีระหว่างรอ = ผลนี้ไม่ใช่ของบัญชีปัจจุบัน คืน null (ไม่รู้) ให้ตรวจใหม่ตอนวาดหน้าถัดไป
+    if (owner !== (state.employee?.id ?? null)) return null;
+    setPushSubscribed(value, owner);
     return value;
   } catch (error) {
     console.warn("ตรวจสถานะการแจ้งเตือนบนเครื่องนี้ไม่สำเร็จ", error);
@@ -5077,21 +5082,23 @@ async function savePushSubscription(subscription) {
 // คืน permission ที่ได้ ("granted" = เปิดสำเร็จ) — ต้องเรียกจากการกดปุ่มและขออนุญาตเป็นขั้นแรก เพราะ iOS/Safari
 // ให้ขอสิทธิ์ได้เฉพาะในจังหวะที่ผู้ใช้กดเอง (await อื่นมาก่อนแล้วจะถือว่าไม่ใช่การกด)
 async function enablePush() {
+  const owner = state.employee?.id ?? null;
   const permission = await Notification.requestPermission();
   if (permission !== "granted") return permission;
   const registration = await serviceWorkerReady();
   await savePushSubscription(await ensurePushSubscription(registration));
-  setPushSubscribed(true);
+  setPushSubscribed(true, owner);
   return permission;
 }
 
 async function disablePush() {
+  const owner = state.employee?.id ?? null;
   const subscription = await currentPushSubscription();
   if (!subscription) return;
   const { error } = await sb.rpc("app_delete_push_subscription", { p_endpoint: subscription.endpoint });
   if (error) throw error;
   await subscription.unsubscribe();
-  setPushSubscribed(false);
+  setPushSubscribed(false, owner);
 }
 
 // เปิดแอปทุกครั้ง (หนึ่งครั้งต่อบัญชีต่อการโหลดหน้า): ต่ออายุเครื่องที่ "เป็นของบัญชีนี้อยู่แล้ว" เท่านั้น
@@ -5102,6 +5109,7 @@ let pushResyncedFor = null;
 async function resyncPushSubscription() {
   const environment = pushEnvironment();
   if (!environment.keyConfigured || !environment.hasServiceWorker || !environment.hasPushManager || environment.permission !== "granted" || isSandboxMode()) return;
+  const owner = state.employee?.id ?? null;
   try {
     const registration = await serviceWorkerReady();
     const existing = await registration.pushManager.getSubscription();
@@ -5109,15 +5117,17 @@ async function resyncPushSubscription() {
     const { data: ownedByMe, error } = await sb.rpc("app_is_push_subscribed", { p_endpoint: existing.endpoint });
     // ถามไม่สำเร็จ (เน็ต/ระบบ) = ไม่รู้ว่าเป็นของใคร ปล่อยไว้ก่อน ไม่แตะอะไร
     if (error) return;
+    // สลับบัญชีระหว่างรอ: คำตอบนี้เป็นของบัญชีเดิม ห้ามยกเลิก/จดผลให้บัญชีใหม่ (บัญชีใหม่มีรอบ resync ของตัวเอง)
+    if (owner !== (state.employee?.id ?? null)) return;
     if (ownedByMe !== true) {
       await existing.unsubscribe();
-      setPushSubscribed(false);
+      setPushSubscribed(false, owner);
       refreshPushPrompt();
       return;
     }
     const refreshed = await ensurePushSubscription(registration);
     await savePushSubscription(refreshed);
-    setPushSubscribed(true);
+    setPushSubscribed(true, owner);
     // สมัครใหม่เพราะกุญแจเปลี่ยน: แถวของ endpoint เดิมไม่มีประโยชน์แล้ว
     if (refreshed.endpoint !== existing.endpoint) await sb.rpc("app_delete_push_subscription", { p_endpoint: existing.endpoint });
   } catch (error) {
@@ -5450,6 +5460,7 @@ document.addEventListener("click", async (event) => {
   if (!enable || enable.disabled) return;
   enable.disabled = true;
   enable.textContent = "กำลังเปิด…";
+  const owner = state.employee?.id ?? null;
   try {
     // enablePush ขอสิทธิ์เป็นขั้นแรก จึงยังอยู่ในจังหวะที่ผู้ใช้กดเอง (iOS/Safari ต้องการ)
     const permission = await enablePush();
@@ -5458,6 +5469,8 @@ document.addEventListener("click", async (event) => {
   } catch (error) {
     console.error(error);
     showToast(pushErrorMessage(error), "error");
+    // อนุญาตแล้วแต่ลงทะเบียนไม่สำเร็จ (ออฟไลน์/RPC ล้ม) = ยังไม่ได้เปิดจริง · จดว่า "ยังไม่ลงทะเบียน" ไม่งั้นแถบจะเข้าสถานะ pending แล้วหายไปเลย
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") setPushSubscribed(false, owner);
   }
   // วาดแถบตามสถานะจริง: สำเร็จ = หายไป · เลือกบล็อก = เปลี่ยนเป็นข้อความวิธีแก้ · ยังไม่ตอบ/ล้มเหลว = ปุ่มกลับมาให้กดใหม่
   refreshPushPrompt();

@@ -203,3 +203,62 @@ test("an allowed device waits for the registration check, then shows the prompt 
   assert.match(missing.html, /data-push-prompt-enable/);
   assert.deepEqual(missing.checks, []);
 });
+
+// ---------- สถานะลงทะเบียนต่อบัญชี: ผลที่กลับมาหลังสลับบัญชีต้องทิ้ง ----------
+test("a registration check answered after switching accounts is dropped, not recorded for the new account", async () => {
+  const state = { employee: { id: "a" } };
+  let release;
+  const context = vm.createContext({
+    state, console: { warn() {} }, pushSubscribedCache: { owner: null, value: null },
+    currentPushSubscription: async () => ({ endpoint: "https://push/e" }),
+    sb: { rpc: () => new Promise((resolve) => { release = () => resolve({ data: true, error: null }); }) },
+  });
+  vm.runInContext(extractFunction("function setPushSubscribed("), context);
+  vm.runInContext(extractFunction("async function checkPushSubscribed("), context);
+  const pending = vm.runInContext("checkPushSubscribed", context)();
+  await new Promise((resolve) => setImmediate(resolve));
+  state.employee = { id: "b" };
+  release();
+  assert.equal(await pending, null);
+  assert.deepEqual({ ...vm.runInContext("pushSubscribedCache", context) }, { owner: null, value: null });
+  // บัญชีเดิมตอบทันทีก็จดได้ตามปกติ
+  vm.runInContext("setPushSubscribed(true)", context);
+  assert.deepEqual({ ...vm.runInContext("pushSubscribedCache", context) }, { owner: "b", value: true });
+  // owner ที่จับไว้ตอนเริ่มไม่ตรงกับบัญชีปัจจุบัน = ไม่จด
+  vm.runInContext('setPushSubscribed(false, "a")', context);
+  assert.equal(vm.runInContext("pushSubscribedCache.value", context), true);
+});
+
+// ---------- ปุ่มบนแถบ: อนุญาตแล้วแต่ลงทะเบียนล้ม ต้องให้ปุ่มกลับมา ----------
+function runPromptClick({ permission, enable }) {
+  let handler;
+  const log = { cache: null, refreshed: 0, toasts: [] };
+  const button = { disabled: false, textContent: "เปิดแจ้งเตือน" };
+  const context = vm.createContext({
+    document: { addEventListener: (type, fn) => { if (type === "click") handler = fn; } },
+    state: { employee: { id: "e" } }, console: { error() {} },
+    Notification: { permission },
+    enablePush: enable, showToast: (message, kind) => log.toasts.push([message, kind]),
+    pushErrorMessage: () => "ผิดพลาด", refreshPushPrompt: () => { log.refreshed += 1; },
+    setPushSubscribed: (value, owner) => { log.cache = { value, owner }; },
+  });
+  const start = appSource.indexOf('document.addEventListener("click", async (event) => {\n  const enable = event.target.closest?.("#push-prompt');
+  assert.ok(start >= 0, "prompt click handler not found");
+  vm.runInContext(appSource.slice(start, appSource.indexOf("\n});\n", start) + 4), context);
+  return handler({ target: { closest: () => button } }).then(() => ({ log, button }));
+}
+
+test("when permission is granted but registering fails, the prompt is redrawn as a retry button", async () => {
+  const failed = await runPromptClick({ permission: "granted", enable: async () => { throw new Error("offline"); } });
+  assert.deepEqual(failed.log.cache, { value: false, owner: "e" });
+  assert.equal(failed.log.refreshed, 1);
+  // ผู้ใช้ยังไม่ตอบ/บล็อก: ไม่จดสถานะลงทะเบียนให้เพี้ยน
+  const denied = await runPromptClick({ permission: "denied", enable: async () => "denied" });
+  assert.equal(denied.log.cache, null);
+  const dismissed = await runPromptClick({ permission: "default", enable: async () => "default" });
+  assert.equal(dismissed.log.cache, null);
+  // สำเร็จ: enablePush จดเองแล้ว handler ไม่จดซ้ำ
+  const ok = await runPromptClick({ permission: "granted", enable: async () => "granted" });
+  assert.equal(ok.log.cache, null);
+  assert.equal(ok.log.refreshed, 1);
+});
