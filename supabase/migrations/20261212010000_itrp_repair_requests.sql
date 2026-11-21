@@ -315,6 +315,7 @@ set search_path = ''
 as $$
   select p_is_test and coalesce(current_setting('itrp.purge', true), '') = 'on'
 $$;
+
 -- กันแก้/ลบประวัติ (events, admin_log, reworks, comments, attachments, repair_reports, repair_parts)
 create or replace function private.itrp_append_only_guard()
 returns trigger
@@ -333,6 +334,7 @@ begin
   raise exception 'ประวัติการดำเนินการล้างทั้งตารางไม่ได้ (บันทึกสำหรับ ISO)' using errcode = 'insufficient_privilege';
 end;
 $$;
+
 -- ใบแจ้งซ่อม: ลบไม่ได้ · แก้ได้เฉพาะ status (+ info_return_status คู่กับ need_info) ตามตารางการเปลี่ยนสถานะ (ปลายทางคือ rejected / cancelled / received เปิดใหม่ไม่ได้)
 create or replace function private.itrp_request_guard()
 returns trigger
@@ -433,6 +435,7 @@ begin
   return new;
 end;
 $$;
+
 -- บันทึกการซ่อมต้องผูกกับ event completed ของใบเดียวกัน ที่ผู้ส่งงานคนเดียวกันเป็นผู้กด (ชั้นซ้อนของ RPC)
 create or replace function private.itrp_repair_report_guard()
 returns trigger
@@ -519,6 +522,7 @@ as $$
     || 'IT01-' || lpad((p_year % 100)::text, 2, '0') || '/'
     || case when p_seq < 1000 then lpad(p_seq::text, 3, '0') else p_seq::text end
 $$;
+
 -- ออกเลขที่เอกสาร (ฝั่งฐานข้อมูลเท่านั้น): ON CONFLICT DO UPDATE ล็อกแถวตัวนับของปีนั้น คนกดพร้อมกันจึงได้เลขไม่ซ้ำ
 -- ปีคิดตามเวลาไทย (Asia/Bangkok) ไม่ใช่ UTC · ใบทดสอบใช้ตัวนับแยก · p_now ไว้ให้เทสต์จำลองช่วงข้ามปี (การเรียกจริงใช้ now())
 create or replace function private.itrp_next_doc_no(p_is_test boolean, p_now timestamp with time zone default now(), out year_ce integer, out seq_no integer, out doc_no text)
@@ -536,10 +540,11 @@ begin
   doc_no := private.itrp_format_doc_no(p_is_test, year_ce, seq_no);
 end;
 $$;
+
 -- 7. ตัวช่วยภายใน (private) ----------------------------------------------------------
 -- ผู้ทำรายการของโมดูล: persona (ถ้า admin อยู่ในโหมดทดสอบ) ไม่เช่นนั้นพนักงานจริงที่ใช้งานอยู่ของ session นี้
 create or replace function private.itrp_actor()
-returns employees
+returns public.employees
 language plpgsql
 stable
 security definer
@@ -565,9 +570,10 @@ begin
   return v_actor;
 end;
 $$;
+
 -- เหมือน itrp_actor แต่ไม่ raise (คืนแถวว่าง) ให้ policy ของ Storage ใช้
 create or replace function private.itrp_actor_quiet()
-returns employees
+returns public.employees
 language plpgsql
 stable
 security definer
@@ -590,6 +596,7 @@ begin
   return v_actor;
 end;
 $$;
+
 -- ผู้อนุมัติขั้นแผนกของแผนกหนึ่งในโหมดหนึ่ง
 --   ของจริง: active + ผูกบัญชีล็อกอินแล้ว (auth_user_id ไม่ว่าง) + ไม่ถูกลบ + ไม่ใช่ persona + ไม่ใช่บัญชี lab-only
 --     (แถวที่ล็อกอินไม่ได้ เช่น แถว pilot หรือบัญชีที่ยังไม่ผูก ไม่ควรถูกนับว่า "แผนกมีผู้จัดการ" เพราะจะไม่มีใครกดอนุมัติได้จริง ใบจะค้าง)
@@ -616,6 +623,7 @@ as $$
           and upper(e.employee_no) <> all (private.lab_only_employee_nos()))
     )
 $$;
+
 -- ผู้ทำรายการเป็นผู้อนุมัติขั้นแผนกของแผนก p_department_id หรือไม่ (ใช้รายการเดียวกับ private.itrp_dept_approvers จึงตัดสินตรงกันทุกที่)
 create or replace function private.itrp_is_dept_approver(p_employee_id uuid, p_department_id uuid, p_is_test boolean)
 returns boolean
@@ -626,6 +634,7 @@ set search_path = ''
 as $$
   select exists (select 1 from private.itrp_dept_approvers(p_department_id, p_is_test) a(id) where a.id = p_employee_id)
 $$;
+
 -- สิทธิ์ทีม IT: "อ่านอย่างเดียว" จาก public.itwo_staff (ชุดเดียวกับใบสั่งงาน IT) · แก้สิทธิ์ที่ใบสั่งงาน IT เท่านั้น
 create or replace function private.itrp_is_it_admin(p_employee_id uuid)
 returns boolean
@@ -636,6 +645,7 @@ set search_path = ''
 as $$
   select exists (select 1 from public.itwo_staff s where s.employee_id = p_employee_id and s.is_it_admin)
 $$;
+
 create or replace function private.itrp_is_it_approver(p_employee_id uuid)
 returns boolean
 language sql
@@ -645,6 +655,7 @@ set search_path = ''
 as $$
   select exists (select 1 from public.itwo_staff s where s.employee_id = p_employee_id and s.is_it_approver)
 $$;
+
 create or replace function private.itrp_is_staff(p_employee_id uuid)
 returns boolean
 language sql
@@ -654,6 +665,7 @@ set search_path = ''
 as $$
   select exists (select 1 from public.itwo_staff s where s.employee_id = p_employee_id)
 $$;
+
 -- มีผู้อนุมัติขั้น IT ที่ใช้งานอยู่ในโหมดนี้หรือไม่ (กันใบค้างเพราะไม่มีใครอนุมัติได้)
 -- ของจริงนับเฉพาะคนที่ active + ผูกบัญชีล็อกอินแล้ว + ไม่ใช่บัญชี lab-only (เงื่อนไขเดียวกับผู้อนุมัติขั้นแผนก)
 create or replace function private.itrp_has_active_it_approver(p_is_test boolean)
@@ -676,6 +688,7 @@ as $$
       )
   )
 $$;
+
 -- แผนก IT ของโมดูลนี้ = departments.code 'IT'
 create or replace function private.itrp_is_it_department(p_department_id uuid)
 returns boolean
@@ -686,8 +699,9 @@ set search_path = ''
 as $$
   select exists (select 1 from public.departments d where d.id = p_department_id and d.code = 'IT')
 $$;
+
 -- ผู้ทำรายการเห็นใบนี้ได้ไหม: ผู้แจ้ง / ทีม IT ใน itwo_staff (ทุกคน รวมหัวหน้า IT) / ผู้อนุมัติขั้นแผนกของแผนกนั้น · ใบต้องอยู่โหมดเดียวกับผู้ทำรายการ
-create or replace function private.itrp_can_view(p_req itrp_requests, p_actor employees)
+create or replace function private.itrp_can_view(p_req public.itrp_requests, p_actor public.employees)
 returns boolean
 language sql
 stable
@@ -702,6 +716,7 @@ as $$
       or exists (select 1 from private.itrp_dept_approvers(p_req.department_id, p_req.is_test) a(id) where a.id = p_actor.id)
     )
 $$;
+
 -- สถานะการอนุมัติของใบ (จาก events)
 create or replace function private.itrp_event_state(p_request_id uuid, out dept_done boolean, out it_done boolean, out rejected boolean)
 returns record
@@ -716,6 +731,7 @@ as $$
   from public.itrp_events e
   where e.request_id = p_request_id
 $$;
+
 -- สิทธิ์อนุมัติ/ไม่อนุมัติของผู้ทำรายการกับใบหนึ่ง (จุดตัดสินเดียว ใช้ทั้ง RPC อนุมัติ รายการรออนุมัติ และปุ่มในหน้ารายละเอียด)
 --   can_dept = อนุมัติขั้นแผนกได้ · can_it = อนุมัติขั้น IT ได้ (ถ้า dept ยังไม่ผ่าน กดครั้งเดียวนับทั้งสองขั้น)
 create or replace function private.itrp_approval_caps(p_request_id uuid, p_actor_id uuid, out can_dept boolean, out can_it boolean, out dept_done boolean, out it_done boolean, out rejected boolean, out dept_is_it boolean, out has_dept_approvers boolean, out actor_is_dept_role boolean)
@@ -760,9 +776,10 @@ begin
     and (dept_done or dept_is_it or not has_dept_approvers or actor_is_dept_role);
 end;
 $$;
+
 -- คำถามที่ค้างอยู่ของใบ (ยังไม่มีคำตอบ) ไม่มี = แถวว่าง
 create or replace function private.itrp_pending_question(p_request_id uuid)
-returns itrp_comments
+returns public.itrp_comments
 language sql
 stable
 security definer
@@ -774,8 +791,9 @@ as $$
   order by q.id desc
   limit 1
 $$;
+
 -- ขั้นที่ผู้ทำรายการถามผู้แจ้งได้ตอนนี้ (null = ถามไม่ได้)
-create or replace function private.itrp_info_stage(p_req itrp_requests, p_actor employees)
+create or replace function private.itrp_info_stage(p_req public.itrp_requests, p_actor public.employees)
 returns text
 language plpgsql
 stable
@@ -802,6 +820,7 @@ begin
   return null;
 end;
 $$;
+
 -- ตัวช่วยทั่วไป
 create or replace function private.itrp_clean(p_text text)
 returns text
@@ -811,6 +830,7 @@ set search_path = ''
 as $$
   select nullif(btrim(coalesce(p_text, ''), E' \t\r\n'), '')
 $$;
+
 create or replace function private.itrp_status_message(p_status text)
 returns text
 language sql
@@ -828,6 +848,7 @@ as $$
     else 'ใบแจ้งซ่อมนี้ไม่อยู่ในขั้นที่ทำรายการนี้ได้'
   end
 $$;
+
 -- ประเภทคำขอเป็นข้อความไทย (ใช้ในแจ้งเตือน)
 create or replace function private.itrp_request_kind_text(p_request_kind text, p_request_kind_note text)
 returns text
@@ -860,6 +881,7 @@ as $$
       and e.actor_id <> p_requester_id
   )
 $$;
+
 -- หน้าต่างเวลาแนบไฟล์หลังสร้างใบ/รอบแก้ไข/ข้อความ (ที่เดียว ใช้ทั้ง policy ของ Storage และ RPC) · stable ไม่ใช่ immutable เพื่อให้ pgTAP แทนค่าได้
 create or replace function private.itrp_attach_window()
 returns interval
@@ -868,8 +890,9 @@ stable
 security definer
 set search_path = ''
 as $$ select interval '30 minutes' $$;
+
 -- การกระทำที่ผู้ทำรายการทำได้กับใบนี้ตอนนี้ (ให้หน้ารายละเอียดแสดงปุ่ม · ตรรกะเดียวกับ RPC แต่ละตัว)
-create or replace function private.itrp_allowed_actions(p_req itrp_requests, p_actor employees)
+create or replace function private.itrp_allowed_actions(p_req public.itrp_requests, p_actor public.employees)
 returns text[]
 language plpgsql
 stable
@@ -930,6 +953,7 @@ begin
   return v_actions;
 end;
 $$;
+
 -- 8. ไฟล์แนบ: ตัวช่วย + Storage -----------------------------------------------------------
 -- ชนิดไฟล์ที่รับ (ที่เดียว ใช้ทั้งตั้งค่าบัคเก็ตและตรวจใน RPC)
 create or replace function private.itrp_allowed_mime_types()
@@ -945,6 +969,7 @@ as $$
     'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     'application/msword', 'application/vnd.ms-excel', 'text/plain', 'text/csv']
 $$;
+
 -- นามสกุลใน path ต้องตรงกับชนิดไฟล์ (กันตั้งนามสกุลหลอก)
 create or replace function private.itrp_ext_matches_mime(p_name text, p_mime text)
 returns boolean
@@ -971,6 +996,7 @@ as $$
     else false
   end, false)
 $$;
+
 -- path ต้องเป็น <id ใบ>/<uuid>.<นามสกุลพิมพ์เล็ก> คืน id ใบ (ผิดรูปแบบ = null)
 create or replace function private.itrp_file_path_order_id(p_name text)
 returns uuid
@@ -984,6 +1010,7 @@ as $$
     then split_part(p_name, '/', 1)::uuid
   end
 $$;
+
 -- ไฟล์ตอนแจ้งแนบได้เมื่อ: ใบยังไม่สิ้นสุด ภายในหน้าต่างเวลา และยังไม่มีผู้อื่นอนุมัติจริง
 -- (ใบแจ้งซ่อมไม่มีตัวเลือก "เอกสารแนบ มี/ไม่มี" แนบไฟล์ได้เสมอ)
 create or replace function private.itrp_initial_attach_open(p_req public.itrp_requests)
@@ -1000,7 +1027,7 @@ as $$
 $$;
 
 -- แนบตอนขอแก้ไขงาน: รอบล่าสุดของใบที่ผู้แจ้งเพิ่งสร้าง ภายในหน้าต่างเวลา
-create or replace function private.itrp_rework_attach_open(p_req itrp_requests, p_rework_id uuid)
+create or replace function private.itrp_rework_attach_open(p_req public.itrp_requests, p_rework_id uuid)
 returns boolean
 language sql
 stable
@@ -1018,8 +1045,9 @@ as $$
         and now() - r.created_at <= private.itrp_attach_window()
     )
 $$;
+
 -- แนบไฟล์กับข้อความถาม/ตอบ: ผู้เขียนข้อความเอง ภายในหน้าต่างเวลา ใบยังไม่สิ้นสุด
-create or replace function private.itrp_comment_attach_open(p_req itrp_requests, p_comment_id bigint, p_actor employees)
+create or replace function private.itrp_comment_attach_open(p_req public.itrp_requests, p_comment_id bigint, p_actor public.employees)
 returns boolean
 language sql
 stable
@@ -1038,6 +1066,7 @@ as $$
         and now() - c.created_at <= private.itrp_attach_window()
     )
 $$;
+
 -- ตรวจไฟล์ใน Storage จริง (ชนิด/ขนาดใช้ค่าจาก Storage เท่านั้น ไม่เชื่อค่าที่ผู้เรียกส่งมา)
 create or replace function private.itrp_read_stored_file(p_is_test boolean, p_path text, out mime_type text, out size_bytes bigint)
 returns record
@@ -1072,6 +1101,7 @@ begin
   end if;
 end;
 $$;
+
 -- 8b. Storage: บัคเก็ต + policy ------------------------------------------------------------
 -- on conflict do update: ถ้ามีคนสร้างไว้เองใน Dashboard ให้ตั้งค่ากลับเป็นตามที่กำหนดเสมอ (private เสมอ)
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
@@ -1106,6 +1136,7 @@ begin
   return v_req.id is not null and v_req.is_test = p_is_test and private.itrp_can_view(v_req, v_actor);
 end;
 $$;
+
 -- อัปโหลดได้: ผู้แจ้งในหน้าต่างแนบตอนแจ้ง/รอบแก้ไข หรือผู้เขียนข้อความในหน้าต่างแนบของข้อความ · จำกัดจำนวนไฟล์ต่อใบ
 create or replace function private.itrp_storage_can_upload(p_name text, p_is_test boolean)
 returns boolean
@@ -1146,6 +1177,7 @@ begin
             + (select count(*) from public.itrp_comments c where c.request_id = v_id));
 end;
 $$;
+
 -- บัคเก็ตทดสอบ: ลบได้เฉพาะไฟล์ที่ไม่มีใครลงทะเบียน โดย admin ที่อยู่ในโหมดทดสอบ (ไว้ล้างหลัง purge)
 create or replace function private.itrp_storage_test_file_removable(p_name text)
 returns boolean
@@ -1157,6 +1189,7 @@ as $$
   select (private.sandbox_persona()).id is not null
     and not exists (select 1 from public.itrp_attachments a where a.storage_path = p_name)
 $$;
+
 create policy itrp_files_read on storage.objects for select to authenticated
 using (bucket_id = 'itrp-files' and private.itrp_storage_can_read(name, false));
 create policy itrp_files_upload on storage.objects for insert to authenticated
@@ -1203,6 +1236,7 @@ begin
   );
 end;
 $$;
+
 -- แจ้งซ่อม: ตรวจข้อมูลที่กรอก เลือกเส้นทางอนุมัติ ออกเลขที่เอกสาร และบันทึกประวัติในธุรกรรมเดียว
 -- ตารางใบกับเลขที่ ออกเลขฝั่งฐานข้อมูลเท่านั้น (หน้าเว็บไม่ส่งเลขมา)
 create or replace function public.app_itrp_create(
@@ -1472,6 +1506,7 @@ begin
   end if;
 end;
 $$;
+
 create or replace function public.app_itrp_approve(p_request_id uuid)
 returns void
 language plpgsql
@@ -1483,6 +1518,7 @@ begin
   perform private.itrp_decide(p_request_id, true, null);
 end;
 $$;
+
 create or replace function public.app_itrp_reject(p_request_id uuid, p_reason text)
 returns void
 language plpgsql
@@ -1494,6 +1530,7 @@ begin
   perform private.itrp_decide(p_request_id, false, p_reason);
 end;
 $$;
+
 -- ยกเลิก: ผู้แจ้งก่อน IT เคยส่งงาน · IT ยกเลิกแทนผู้แจ้งได้เฉพาะใบที่ค้าง "รอผู้แจ้งตอบ" (เหตุผลบังคับ ประวัติขึ้นต้น "IT ยกเลิกแทนผู้แจ้ง: ")
 create or replace function public.app_itrp_cancel(p_request_id uuid, p_reason text)
 returns void
@@ -1554,6 +1591,7 @@ begin
           case when v_on_behalf then c_it_prefix || v_reason else v_reason end);
 end;
 $$;
+
 -- IT เริ่มดำเนินการ (งานด่วนเริ่มได้ก่อนอนุมัติครบ)
 create or replace function public.app_itrp_start(p_request_id uuid)
 returns void
@@ -1588,6 +1626,7 @@ begin
   values (v_req.is_test, v_req.id, v_actor.id, 'started');
 end;
 $$;
+
 -- IT ส่งงาน: บันทึกส่วน "สำหรับแผนก IT" (บันทึกการซ่อม + รายการอะไหล่) พร้อมเปลี่ยนสถานะและ event completed ในธุรกรรมเดียว
 --   ส่งงานได้เมื่อ in_progress และอนุมัติครบทั้งสองขั้นแล้วเท่านั้น (งานด่วนและงานที่ขอแก้ไขก็เช่นกัน) · เฉพาะผู้ดูแลงาน IT (it_admin ใน itwo_staff)
 --   p_parts = jsonb array ≤10 แถว แต่ละแถว {"item_name": ข้อความ ≤200, "quantity": ตัวเลข >0 ทศนิยม ≤2 ตำแหน่ง, "price": ตัวเลข ≥0 ทศนิยม ≤2 ตำแหน่ง หรือ null, "note": ข้อความ ≤200 หรือ null}
@@ -1805,6 +1844,7 @@ begin
   values (v_req.is_test, v_req.id, v_actor.id, 'received');
 end;
 $$;
+
 -- ผู้แจ้งตรวจแล้วไม่ผ่าน: ขอแก้ไขงาน (รายละเอียด + วันที่กำหนดเสร็จ บังคับ) กลับสถานะ in_progress ทันทีไม่ต้องอนุมัติใหม่ ไม่จำกัดรอบ
 create or replace function public.app_itrp_request_rework(p_request_id uuid, p_details text, p_due_date date)
 returns table(id uuid, round_no integer)
@@ -1869,6 +1909,7 @@ begin
   return next;
 end;
 $$;
+
 -- 10. ถามผู้แจ้ง / ตอบ + ไฟล์แนบ ------------------------------------------------------------
 create or replace function public.app_itrp_request_info(p_request_id uuid, p_body text)
 returns jsonb
@@ -1926,6 +1967,7 @@ begin
   return jsonb_build_object('comment_id', v_comment_id);
 end;
 $$;
+
 create or replace function public.app_itrp_provide_info(p_request_id uuid, p_body text)
 returns jsonb
 language plpgsql
@@ -1976,6 +2018,7 @@ begin
   return jsonb_build_object('comment_id', v_comment_id);
 end;
 $$;
+
 -- ลงทะเบียนไฟล์ที่อัปโหลดแล้ว (ตอนแจ้ง หรือรอบขอแก้ไข) · ผู้แจ้งเท่านั้น
 create or replace function public.app_itrp_add_attachment(p_request_id uuid, p_rework_id uuid, p_storage_path text, p_file_name text, p_mime_type text, p_size_bytes bigint)
 returns uuid
@@ -2093,6 +2136,7 @@ begin
   return v_id;
 end;
 $$;
+
 -- ลงทะเบียนไฟล์ของข้อความถาม/ตอบ · ผู้เขียนข้อความเท่านั้น
 create or replace function public.app_itrp_add_comment_attachment(p_request_id uuid, p_comment_id bigint, p_storage_path text, p_file_name text, p_mime_type text, p_size_bytes bigint)
 returns uuid
@@ -2163,6 +2207,7 @@ begin
   return v_id;
 end;
 $$;
+
 -- 11. อ่านข้อมูล ----------------------------------------------------------------------
 -- บันทึกการซ่อมหนึ่งชุดเป็น jsonb พร้อมรายการอะไหล่ (ใช้ใน get_detail)
 create or replace function private.itrp_report_json(p_report_id uuid)
@@ -2472,6 +2517,7 @@ begin
   return v_count;
 end;
 $$;
+
 -- งาน IT: ทุกใบในโหมดของผู้ทำรายการ (ทีม IT ใน itwo_staff เท่านั้น) งานด่วนอยู่บนสุด แล้วใบที่มีรอบขอแก้ไขตามวันกำหนดเสร็จ แล้วตามเวลาแจ้ง
 create or replace function public.app_itrp_list_it()
 returns table(
@@ -2539,6 +2585,7 @@ begin
     'is_test', v_actor.is_test);
 end;
 $$;
+
 -- ตั้งเลขที่เอกสารถัดไป (เดินหน้าอย่างเดียว ห้ามถอยหรือชนเลขที่ใช้แล้ว · ตั้งตามโหมดของผู้ทำรายการ) พร้อมบันทึกลง itrp_admin_log
 create or replace function public.app_itrp_set_next_doc_seq(p_next integer, p_year integer default null)
 returns jsonb
@@ -2595,6 +2642,7 @@ begin
     'next_doc_no', private.itrp_format_doc_no(v_actor.is_test, v_year, p_next), 'is_test', v_actor.is_test);
 end;
 $$;
+
 -- รายชื่อทีม IT (อ่านอย่างเดียว จาก itwo_staff) ให้แท็บตั้งค่าแสดง · แก้สิทธิ์ที่ใบสั่งงาน IT (app_itwo_set_staff) ที่เดียว ใบแจ้งซ่อมไม่มี RPC แก้สิทธิ์
 create or replace function public.app_itrp_list_staff()
 returns table(employee_id uuid, employee_no text, full_name text, department_name text, is_it_admin boolean, is_it_approver boolean, is_active boolean)
@@ -2620,6 +2668,7 @@ begin
   order by e.employee_no;
 end;
 $$;
+
 -- 13. ล้างข้อมูลทดสอบ -----------------------------------------------------------------
 -- ลบเฉพาะแถว is_test ของตารางโมดูลนี้ (ประวัติ ISO ของจริงไม่ถูกแตะ) แล้วเริ่มนับเลข TEST-… ใหม่ · คืนรายการไฟล์ในบัคเก็ตทดสอบให้หน้าเว็บลบผ่าน Storage API
 -- (storage.objects ลบด้วย SQL ไม่ได้ ต้องลบผ่าน Storage API) · เฉพาะ admin ที่อยู่ในโหมดทดสอบ (private.sandbox_persona)
@@ -2689,7 +2738,7 @@ $$;
 -- ลิงก์เปิดใบตรง = /office/repair/<uuid> (ต้องรองรับใน app.js notificationHref, notify-email, notify-push ฝั่งหน้าเว็บ/Edge Function)
 
 -- ผู้อนุมัติขั้นแผนกที่ควรได้แจ้ง (ไม่นับผู้แจ้งเอง)
-create or replace function private.itrp_notify_dept_approver_ids(p_req itrp_requests)
+create or replace function private.itrp_notify_dept_approver_ids(p_req public.itrp_requests)
 returns uuid[]
 language sql
 stable
@@ -2702,6 +2751,7 @@ as $$
     where a.id <> p_req.requester_id
     order by a.id)
 $$;
+
 -- ผู้ดูแลงาน IT / ผู้อนุมัติขั้น IT ทุกคนใน itwo_staff (อ่านอย่างเดียว)
 create or replace function private.itrp_notify_it_admin_ids()
 returns uuid[]
@@ -2712,6 +2762,7 @@ set search_path = ''
 as $$
   select array(select s.employee_id from public.itwo_staff s where s.is_it_admin order by s.employee_id)
 $$;
+
 create or replace function private.itrp_notify_it_approver_ids()
 returns uuid[]
 language sql
@@ -2721,8 +2772,9 @@ set search_path = ''
 as $$
   select array(select s.employee_id from public.itwo_staff s where s.is_it_approver order by s.employee_id)
 $$;
+
 -- ผู้อนุมัติของขั้นที่ใบรออยู่ตอนนี้ (ใช้ตอนผู้แจ้งยกเลิกเอง)
-create or replace function private.itrp_notify_stage_approver_ids(p_req itrp_requests)
+create or replace function private.itrp_notify_stage_approver_ids(p_req public.itrp_requests)
 returns uuid[]
 language plpgsql
 stable
@@ -2747,6 +2799,7 @@ begin
   return private.itrp_notify_it_approver_ids();
 end;
 $$;
+
 -- ส่งถึงหลายคนโดยไม่ซ้ำคน (คืนรายชื่อที่ส่งแล้วสะสม)
 create or replace function private.itrp_notify_each(p_recipients uuid[], p_already uuid[], p_actor_id uuid, p_title text, p_body text, p_action_url text)
 returns uuid[]
@@ -2770,6 +2823,7 @@ begin
   return v_done;
 end;
 $$;
+
 create or replace function private.itrp_notify_on_event()
 returns trigger
 language plpgsql
