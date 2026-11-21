@@ -351,7 +351,7 @@ test("when permission is granted but registering fails, the prompt is redrawn as
 
 // ---------- เปิดรับแจ้งเตือนอัตโนมัติหลังล็อกอิน (resyncPushSubscription) ----------
 // ตัดฟังก์ชันจริงมารันกับของปลอม: คืน log ของสิ่งที่ถูกเรียก และตัวควบคุมให้แต่ละขั้นค้าง/ล้มได้
-function buildResync({ environment = {}, sandbox = false, labOnly = false, existing = null, ensure, save } = {}) {
+function buildResync({ environment = {}, sandbox = false, labOnly = false, existing = null, ensure, save, timeoutMs = 30000 } = {}) {
   const log = { ensured: 0, saved: [], deleted: [], cache: [], refreshed: 0, warned: 0, permissionRequests: 0 };
   const state = { employee: { id: "e" } };
   const subscription = { endpoint: "https://push/new" };
@@ -366,8 +366,10 @@ function buildResync({ environment = {}, sandbox = false, labOnly = false, exist
     sb: { rpc: async (name, args) => { log.deleted.push([name, args.p_endpoint]); return { error: null }; } },
     console: { warn: () => { log.warned += 1; } },
     Notification: { requestPermission: () => { log.permissionRequests += 1; } },
+    setTimeout, clearTimeout, Promise, Error, PUSH_RESYNC_TIMEOUT_MS: timeoutMs,
   });
   vm.runInContext("var pushResyncedFor = null; var pushAutoSubscribingFor = null;", context);
+  vm.runInContext(extractFunction("function withTimeout("), context);
   vm.runInContext(extractFunction("async function resyncPushSubscription("), context);
   return { log, state, context, run: () => vm.runInContext("resyncPushSubscription", context)(), inFlight: () => vm.runInContext("pushAutoSubscribingFor", context) };
 }
@@ -449,6 +451,41 @@ test("while registering silently the prompt stays hidden, then the prompt is red
   assert.equal(vm.runInContext("pushPromptHtml()", context), "");
   vm.runInContext("pushAutoSubscribingFor = null;", context);
   assert.match(vm.runInContext("pushPromptHtml()", context), /data-push-prompt-enable/);
+});
+
+test("a silent registration that hangs is given up after the time limit, the flag is cleared and the prompt comes back", async () => {
+  // ขั้นใดขั้นหนึ่งไม่ตอบเลย (getSubscription / subscribe / RPC) = จบแบบล้ม ไม่ค้างธงจนโหลดหน้าใหม่
+  const hung = buildResync({ timeoutMs: 20, ensure: () => new Promise(() => {}) });
+  await hung.run();
+  assert.equal(hung.inFlight(), null);
+  assert.deepEqual(hung.log.cache, [[null, "e"]]);
+  assert.equal(hung.log.warned, 1);
+  assert.equal(hung.log.refreshed, 1);
+  assert.deepEqual(hung.log.saved, []);
+  const savingHung = buildResync({ timeoutMs: 20, save: () => new Promise(() => {}) });
+  await savingHung.run();
+  assert.equal(savingHung.inFlight(), null);
+  assert.deepEqual(savingHung.log.cache, [[null, "e"]]);
+  // ผลที่กลับมาทีหลังเกินเวลา: จดสถานะจริงของบัญชีเดิม + วาดแถบใหม่ ไม่ทำให้ธงหรือสถานะเพี้ยน
+  let release;
+  const late = buildResync({ timeoutMs: 20, ensure: () => new Promise((resolve) => { release = () => resolve({ endpoint: "https://push/late" }); }) });
+  await late.run();
+  release();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(late.log.saved, ["https://push/late"]);
+  assert.deepEqual(late.log.cache, [[null, "e"], [true, "e"]]);
+  assert.equal(late.log.refreshed, 2);
+  assert.equal(late.inFlight(), null);
+  // ผลที่มาช้าหลังสลับบัญชี: ห้ามผูกเครื่องให้บัญชีใหม่ และไม่วาดแถบของบัญชีใหม่ซ้ำ
+  const switched = buildResync({ timeoutMs: 20, ensure: () => new Promise((resolve) => { release = () => resolve({ endpoint: "https://push/late" }); }) });
+  await switched.run();
+  switched.state.employee = { id: "other" };
+  release();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(switched.log.saved, []);
+  assert.deepEqual(switched.log.cache, [[null, "e"]]);
+  assert.equal(switched.log.refreshed, 1);
+  assert.match(appSource, /const PUSH_RESYNC_TIMEOUT_MS = 30000;/);
 });
 
 test("switching accounts while registering does not bind the device to the new account with the old result", async () => {
@@ -684,6 +721,46 @@ test("coming back to the page asks again only after 15 minutes, and redraws the 
   assert.equal(world.log.rpc.length, 2);
 });
 
+test("the 60-second sound poll notices a pause made on another device, still at most every 15 minutes", async () => {
+  const until = "2026-11-22T00:00:00.000Z";
+  let answer = null;
+  const world = buildPauseWorld({ rpc: async (name) => (name === "app_push_pause_status" ? { data: answer, error: null } : { data: null, error: null }) });
+  world.context.navigator = { onLine: true };
+  world.context.notifySound.isReady = () => true;
+  world.context.loadUnread = async () => { world.log.polled = (world.log.polled ?? 0) + 1; };
+  world.context.withTimeout = (promise) => promise;
+  vm.runInContext(extractFunction("async function pollUnreadForSound("), world.context);
+  await world.call("syncPushPause()"); // หลังล็อกอิน: ไม่พัก
+  assert.equal(world.log.rpc.length, 1);
+  // poll ทุก 60 วินาทีหลายรอบในช่วง 15 นาที ไม่ถามฐานข้อมูล
+  for (let minute = 1; minute <= 14; minute += 1) {
+    world.clock.now += 60_000;
+    await world.call("pollUnreadForSound()");
+  }
+  assert.equal(world.log.rpc.length, 1);
+  assert.equal(world.call("isPushPaused()"), false);
+  // เจ้าของกดพักจากมือถือ → รอบ poll แรกที่เลย 15 นาทีรู้เองโดยไม่ต้องมี visibilitychange และไม่ต้องเปิดหน้าใหม่
+  answer = until;
+  world.clock.now += 2 * 60_000;
+  await world.call("pollUnreadForSound()");
+  assert.equal(world.log.rpc.length, 2);
+  assert.equal(world.call("isPushPaused()"), true);
+  assert.equal(world.log.refreshedPrompt, 1);
+  assert.equal(world.log.polled, 15);
+  // ฐานข้อมูลที่ยังไม่มีฟังก์ชันพัก: ไม่ถามอีกเลย แม้ผ่านไปนาน
+  const missing = buildPauseWorld({ rpc: async () => ({ data: null, error: { code: "PGRST202" } }) });
+  missing.context.navigator = { onLine: true };
+  missing.context.notifySound.isReady = () => true;
+  missing.context.loadUnread = async () => {};
+  missing.context.withTimeout = (promise) => promise;
+  vm.runInContext(extractFunction("async function pollUnreadForSound("), missing.context);
+  await missing.call("syncPushPause()");
+  assert.equal(missing.log.rpc.length, 1);
+  missing.clock.now += hours(3);
+  await missing.call("pollUnreadForSound()");
+  assert.equal(missing.log.rpc.length, 1);
+});
+
 test("the test mode, lab-only accounts and a missing VAPID key never ask about pausing", async () => {
   for (const options of [{ labOnly: true }, { key: "" }]) {
     const world = buildPauseWorld(options);
@@ -787,9 +864,10 @@ test("the old per-device off switch is gone and the pause is wired into login, v
   assert.match(appSource, /resyncPushSubscription\(\);\n {4}syncPushPause\(\);/);
   assert.match(appSource, /document\.addEventListener\("visibilitychange", syncPushPauseIfStale\);/);
   assert.match(appSource, /hidden: pushPromptHiddenNow\(\), paused: isPushPaused\(\)/);
-  // ไม่ถามสถานะพักตามรอบ 60 วินาทีของเสียง
+  // รอบ poll เสียงเรียกได้เฉพาะตัวที่จำกัด 15 นาที ไม่ถามฐานข้อมูลตรงๆ ทุก 60 วินาที
   const poll = appSource.slice(appSource.indexOf("async function pollUnreadForSound("), appSource.indexOf("// ข้อความจาก sw.js"));
-  assert.doesNotMatch(poll, /Pause|app_push_pause/);
+  assert.match(poll, /syncPushPauseIfStale\(\)/);
+  assert.doesNotMatch(poll, /app_push_pause|loadPushPause|syncPushPause\(/);
   // เสียงของ release ตอนออกจากระบบยังอยู่
   assert.match(appSource, /releasePushOnThisDevice\(\{ server: true \}\)/);
 });

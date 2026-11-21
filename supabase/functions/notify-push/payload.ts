@@ -96,16 +96,23 @@ export const PAUSED_ERROR = "PAUSED";
 
 // Push สรุปตอนครบเวลาพัก: ส่งตรงจาก Edge Function ไม่มีแถวใน notifications (ไม่ซ้ำกับอีเมล และไม่เพิ่มตัวเลขกระดิ่งที่ยังไม่อ่าน)
 // body เป็นข้อความตัวเลขล้วน ไม่มีรายละเอียดของเอกสาร · url พาไปหน้าการแจ้งเตือน (hash route สัมพัทธ์เหมือน pushUrlFor)
-// tag ผูกกับพนักงาน: ถ้าถูกส่งซ้ำ (รอบก่อนล้มหลังส่ง) ขึ้นบนหน้าจอทับอันเดิม ไม่เป็นสองอัน
+// tag = พนักงาน + วันที่ (เวลาไทย): ส่งซ้ำภายในวันเดียวกัน (รอบก่อนล้มหลังส่ง) ขึ้นทับอันเดิม ไม่เป็นสองอัน
+// แต่คนละวันต้องเป็นคนละ tag — sw.js ไม่ใส่ renotify ถ้า tag ซ้ำกับสรุปเมื่อวานที่ยังค้างในถาด สรุปวันนี้จะทับแบบเงียบ (ไม่มีเสียง/ไม่เด้ง)
+// หน้าเว็บเช็กแค่ prefix "pause-digest-" ต่อท้ายเปลี่ยนได้
 export type PauseDigestPayload = { title: string; body: string; url: string; tag: string };
 
-export function pauseDigestPayload(employeeId: string, missedCount: number): PauseDigestPayload {
+// วันที่ตามเวลาไทย (UTC+7 ไม่มีเวลาออมแสง) รูปแบบ YYYYMMDD
+export function thaiDateStamp(now: Date): string {
+  return new Date(now.getTime() + 7 * 60 * 60 * 1000).toISOString().slice(0, 10).replace(/-/g, "");
+}
+
+export function pauseDigestPayload(employeeId: string, missedCount: number, now: Date = new Date()): PauseDigestPayload {
   const count = Number.isFinite(missedCount) ? Math.max(0, Math.trunc(missedCount)) : 0;
   return {
     title: "แจ้งเตือนที่คุณพลาดระหว่างพัก",
     body: `คุณมี ${count} แจ้งเตือนที่ยังไม่ได้อ่าน`,
     url: "#/notifications",
-    tag: `pause-digest-${employeeId}`,
+    tag: `pause-digest-${employeeId}-${thaiDateStamp(now)}`,
   };
 }
 
@@ -116,7 +123,30 @@ export function isPausedAt(pausedUntil: string | null | undefined, nowMs: number
   return Number.isFinite(until) && until > nowMs;
 }
 
-export type RowSettlement = { status: "sent" | "skipped" | "pending" | "failed"; error: string | null };
+// ผู้รับที่กำลังพักแจ้งเตือน ณ ตอนนี้ (เซตของ employee_id) จากผล query push_pauses
+// fail-open: ตารางยังไม่มี หรือ query ล้มด้วยเหตุอื่น = ถือว่ารอบนี้ไม่มีใครพัก ส่งตามปกติ + เตือน (warn) หนึ่งครั้งต่อรอบ
+// เหตุผล: ถ้า throw หลังจองแถวแล้ว ทุกแถวจะเสียโควตา attempt และ Push ของทุกคนกลายเป็น failed ถาวรเมื่ออาการค้างนาน
+// ราคาที่ยอมรับ: คนที่พักอยู่อาจได้ Push หลุดในรอบที่ lookup ล้ม · ไม่ใส่รายละเอียด error ใน log
+export function pausedEmployeeSet(
+  result: { data: unknown; error: { code?: string } | null },
+  nowMs: number,
+  warn: (message: string) => void,
+): Set<string> {
+  if (result.error) {
+    const missingTable = result.error.code === "PGRST205" || result.error.code === "42P01";
+    warn(missingTable
+      ? "notify-push: push_pauses table not found, treating nobody as paused"
+      : "notify-push: push_pauses lookup failed, treating nobody as paused for this round");
+    return new Set();
+  }
+  return new Set(
+    ((result.data ?? []) as { employee_id: string; paused_until: string }[])
+      .filter((item) => isPausedAt(item.paused_until, nowMs))
+      .map((item) => item.employee_id),
+  );
+}
+
+export type RowSettlement ={ status: "sent" | "skipped" | "pending" | "failed"; error: string | null };
 
 // สรุปผลของแถวแจ้งเตือนหนึ่งแถวจากผลของทุกเครื่องของผู้รับ
 //   - สำเร็จที่เครื่องใดเครื่องหนึ่ง = sent

@@ -5,9 +5,9 @@ import webpush from "npm:web-push@3.6.7";
 import {
   classifySendError,
   isAllowedPushEndpoint,
-  isPausedAt,
   PAUSED_ERROR,
   pauseDigestPayload,
+  pausedEmployeeSet,
   pushTitle,
   pushUrlFor,
   settleRow,
@@ -143,25 +143,6 @@ async function runLimited<T>(items: T[], worker: (item: T) => Promise<void>) {
   }));
 }
 
-// ผู้รับที่กำลังพักแจ้งเตือน ณ ตอนนี้ (เซตของ employee_id)
-// ตาราง push_pauses ยังไม่มี (deploy ฟังก์ชันก่อน apply migration) = ไม่มีใครพัก ไม่ให้ push ทั้งระบบหยุดเพราะเรื่องนี้
-// ส่วนข้อผิดพลาดอื่นต้อง throw: ถ้าส่งต่อทั้งที่ไม่รู้ว่าใครพัก จะส่ง push หาคนที่ขอพักไว้
-function pausedEmployeeSet(result: { data: unknown; error: { code?: string } | null }): Set<string> {
-  if (result.error) {
-    if (result.error.code === "PGRST205" || result.error.code === "42P01") {
-      console.warn("notify-push: push_pauses table not found, treating nobody as paused");
-      return new Set();
-    }
-    throw new Error("LOOKUP_FAILED");
-  }
-  const nowMs = Date.now();
-  return new Set(
-    ((result.data ?? []) as { employee_id: string; paused_until: string }[])
-      .filter((item) => isPausedAt(item.paused_until, nowMs))
-      .map((item) => item.employee_id),
-  );
-}
-
 async function loadRequestNumbers(admin: Admin, rows: ClaimedRow[]) {
   const ids = [...new Set(rows.map((row) => row.request_id).filter((id): id is string => Boolean(id)))];
   const numbers = new Map<string, string>();
@@ -194,7 +175,9 @@ async function drainQueue(admin: Admin) {
     admin.from("push_pauses").select("employee_id, paused_until").in("employee_id", recipientIds).gt("paused_until", new Date().toISOString()),
   ]);
   if (employeesResult.error || subscriptionsResult.error) throw new Error("LOOKUP_FAILED");
-  const pausedEmployees = pausedEmployeeSet(pausesResult);
+  // lookup การพักล้ม = ถือว่าไม่มีใครพักรอบนี้ (fail-open, log เตือนครั้งเดียว) ไม่ throw — ดูเหตุผลใน payload.ts
+  // lookup ของ employees/push_subscriptions ด้านบนยังเป็น throw ตามเดิม
+  const pausedEmployees = pausedEmployeeSet(pausesResult, Date.now(), (message) => console.warn(message));
 
   const activeEmployees = new Set(
     ((employeesResult.data ?? []) as { id: string; is_active: boolean }[]).filter((item) => item.is_active).map((item) => item.id),

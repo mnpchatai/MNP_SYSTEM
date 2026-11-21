@@ -5104,7 +5104,8 @@ async function enablePush() {
 // (app_push_pause / app_push_resume / app_push_pause_status) หน้านี้แค่จำผลไว้ต่อบัญชีเพื่อ 3 อย่าง: แสดงปุ่มในหน้าการแจ้งเตือน,
 // ซ่อนแถบชวนเปิดแจ้งเตือน, และ "ไม่เล่นเสียงของบริษัท" ระหว่างพัก (ตัวเลขกระดิ่งยังอัปเดตตามปกติ อีเมล/รายการในหน้าไม่ถูกพัก)
 // ความถี่ที่ถามฐานข้อมูล: 1 ครั้งหลังล็อกอิน/โหลดหน้า + ทุกครั้งที่เปิดหน้าการแจ้งเตือน + ไม่เกินทุก 15 นาทีเมื่อกลับมาเห็นหน้า
-// (เผื่อพัก/เปิดต่อจากเครื่องอื่น) ไม่ถามตามรอบ 60 วินาทีของเสียง · cache หมดอายุเองเมื่อเลยเวลาสิ้นสุด ไม่ต้องรอถามใหม่
+// หรือถึงรอบ poll เสียง 60 วินาที (เผื่อพัก/เปิดต่อจากเครื่องอื่นขณะหน้าเปิดค้าง) — รอบ poll แค่ "เช็กว่าเลย 15 นาทีหรือยัง" ไม่ได้ถามทุก 60 วินาที
+// cache หมดอายุเองเมื่อเลยเวลาสิ้นสุด ไม่ต้องรอถามใหม่
 // ฐานข้อมูลที่ยังไม่มีฟังก์ชันเหล่านี้ (หน้าเว็บขึ้นก่อน migration) = ซ่อนปุ่ม ถือว่าไม่ได้พัก ไม่ error
 const PUSH_PAUSE_RELOAD_MS = 15 * 60 * 1000;
 // until = เวลาสิ้นสุด (ms) หรือ null = ไม่ได้พัก · seq นับการจดค่า ให้คำตอบที่ค้างอยู่รู้ว่ามีค่าใหม่กว่าแล้ว (เช่นเพิ่งกดพัก/เปิดต่อ)
@@ -5152,10 +5153,12 @@ async function syncPushPause() {
   if (before !== isPushPaused()) refreshPushPrompt();
 }
 
-// กลับมาเห็นหน้า: ถามใหม่ก็ต่อเมื่อครั้งล่าสุดนานเกิน 15 นาที (หลับเครื่อง/พักจากเครื่องอื่น)
+// กลับมาเห็นหน้า หรือถึงรอบ poll เสียง (หน้าที่เปิดค้างและมองเห็นตลอดจะไม่มี visibilitychange): ถามใหม่ก็ต่อเมื่อครั้งล่าสุดนานเกิน 15 นาที
+// (หลับเครื่อง/พัก-เปิดต่อจากเครื่องอื่น) · ฐานข้อมูลไม่มีฟังก์ชัน (pushPauseSupported = false) = ไม่ถามเลย · คืน promise เมื่อมีการถาม
 function syncPushPauseIfStale() {
-  if (document.visibilityState !== "visible" || !state.employee || pushPauseTried.owner !== state.employee.id) return;
-  if (Date.now() - pushPauseTried.at >= PUSH_PAUSE_RELOAD_MS) syncPushPause();
+  if (!pushPauseSupported || document.visibilityState !== "visible" || !state.employee || pushPauseTried.owner !== state.employee.id) return undefined;
+  if (Date.now() - pushPauseTried.at >= PUSH_PAUSE_RELOAD_MS) return syncPushPause();
+  return undefined;
 }
 
 async function pausePush() {
@@ -5191,12 +5194,16 @@ async function resumePush() {
 let pushResyncedFor = null;
 // บัญชีที่กำลังผูกเครื่องอยู่ (ไม่มี = null): ระหว่างนั้นไม่วาดแถบชวนเปิด กันแถบวูบแล้วหายทันทีที่สมัครสำเร็จ
 let pushAutoSubscribingFor = null;
+// เพดานเวลาของการผูกเครื่องอัตโนมัติทั้งเส้นทาง (getSubscription / subscribe / RPC บันทึกอาจค้างโดยไม่ตอบ) — เกินแล้วนับเป็น "ล้ม"
+// ธง pushAutoSubscribingFor จะได้ถูกล้าง แถบชวนเปิดแจ้งเตือนกลับมาแสดงได้ ไม่ต้องโหลดหน้าใหม่
+const PUSH_RESYNC_TIMEOUT_MS = 30000;
 async function resyncPushSubscription() {
   const environment = pushEnvironment();
   if (!environment.keyConfigured || !environment.hasServiceWorker || !environment.hasPushManager || environment.permission !== "granted" || isSandboxMode() || isLabOnly()) return;
   const owner = state.employee?.id ?? null;
   pushAutoSubscribingFor = owner;
-  try {
+  let timedOut = false;
+  const bindDevice = async () => {
     const registration = await serviceWorkerReady();
     const existing = await registration.pushManager.getSubscription();
     const subscription = await ensurePushSubscription(registration);
@@ -5206,7 +5213,14 @@ async function resyncPushSubscription() {
     setPushSubscribed(true, owner);
     // สมัครใหม่เพราะกุญแจเปลี่ยน: แถวของ endpoint เดิมไม่มีประโยชน์แล้ว
     if (existing && subscription.endpoint !== existing.endpoint) await sb.rpc("app_delete_push_subscription", { p_endpoint: existing.endpoint });
+    // เกินเวลาไปแล้วแต่ผลกลับมาทีหลังว่าสำเร็จ: จดสถานะจริงไว้แล้วด้านบน (เฉพาะของบัญชีเดิม) วาดแถบใหม่ให้ตรง
+    if (timedOut && owner === (state.employee?.id ?? null)) refreshPushPrompt();
+  };
+  try {
+    // งานที่ค้างเกินเวลายังวิ่งต่อเบื้องหลังได้ แต่ทุกการจดผลมี guard เจ้าของบัญชี/ตัวนับเดิม (setPushSubscribed) ผลที่มาช้าจึงไม่ทำให้สถานะเพี้ยน
+    await withTimeout(bindDevice(), PUSH_RESYNC_TIMEOUT_MS, "PUSH_RESYNC_TIMEOUT");
   } catch (error) {
+    if (error?.message === "PUSH_RESYNC_TIMEOUT") timedOut = true;
     console.warn("ผูกการแจ้งเตือนบนเครื่องนี้กับบัญชีไม่สำเร็จ", error);
     // ไม่รู้สถานะจริง (อาจสมัครแล้วแต่บันทึกไม่สำเร็จ หรือเดิมเป็นของบัญชีนี้อยู่แล้ว) → ให้แถบถามฐานข้อมูลเองว่าเครื่องนี้ลงทะเบียนหรือยัง
     setPushSubscribed(null, owner);
@@ -5338,6 +5352,8 @@ function armSoundUnlock() {
 async function pollUnreadForSound() {
   if (document.visibilityState !== "visible" || navigator.onLine === false) return;
   if (!state.employee || isLabOnly() || isSandboxMode()) return;
+  // เจ้าของอาจกดพักแจ้งเตือนจากมือถือ: ให้รู้ก่อนตัดสินเรื่องเสียงของรอบนี้ (ถามจริงไม่ถี่กว่าทุก 15 นาที) · รอไม่เกิน 3 วินาที ไม่ให้ขวางรอบ poll
+  await withTimeout(Promise.resolve(syncPushPauseIfStale()), 3000, "PUSH_PAUSE_SYNC_TIMEOUT").catch(() => {});
   // ไฟล์เสียงยังไม่พร้อม (เช่น เน็ตหลุดตอนเปิดหน้า): ลองตรวจใหม่รอบละครั้ง ยังไม่ถามฐานข้อมูล
   if (!notifySound.isReady()) {
     await notifySound.probe();
