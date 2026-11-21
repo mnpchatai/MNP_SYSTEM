@@ -2102,8 +2102,12 @@ async function departmentVisibleNotifications(rows) {
   return rows.filter((row) => access.notificationAllowed(deptAccessSubject(), row, (id) => typeById.get(id) ?? null));
 }
 
-async function loadUnread() {
+// announce: false = โหลดตัวเลขเฉยๆ ไม่เล่นเสียงแม้ตัวเลขเพิ่ม (ใช้ตอน push บอกว่ามีของใหม่ เพราะเสียงตอนนั้นตัดสินที่ onNotificationPushMessage)
+async function loadUnread({ announce = true } = {}) {
   if (!state.employee || isLabOnly()) return 0;
+  const owner = state.employee.id;
+  // เล่นเสียงเมื่อตัวเลขเพิ่มจากครั้งก่อนของบัญชีเดียวกันเท่านั้น (ครั้งแรก/ตัวเลขลด/โหลดไม่สำเร็จไม่เล่น) — โหมดทดสอบไม่เล่น
+  const observe = (count) => notifySound.observeUnread(owner, count, { announce: announce && !isSandboxMode() });
   if (isDeptRestricted()) {
     // นับหลังกรอง ตัวเลขบนเมนูจึงตรงกับรายการที่หน้าการแจ้งเตือนแสดง
     try {
@@ -2111,17 +2115,20 @@ async function loadUnread() {
         .eq("recipient_id", state.employee.id).is("read_at", null).limit(200);
       if (error) throw error;
       state.unread = (await departmentVisibleNotifications(data ?? [])).length;
+      observe(state.unread);
     } catch {
       state.unread = 0;
     }
     return state.unread;
   }
-  const { count } = await sb
+  const { count, error } = await sb
     .from("notifications")
     .select("id", { count: "exact", head: true })
     .eq("recipient_id", state.employee.id)
     .is("read_at", null);
   state.unread = count ?? 0;
+  // ถามไม่สำเร็จ (เน็ตสะดุด) ไม่ใช่ "ไม่มีแจ้งเตือน" — ไม่เอาไปเทียบ ไม่งั้นรอบถัดไปจะเห็นว่าเพิ่มจาก 0 แล้วเล่นเสียงผิด ๆ
+  if (!error) observe(count);
   return state.unread;
 }
 
@@ -5166,6 +5173,121 @@ async function refreshPushPanel() {
   panel.querySelector("[data-push-disable]")?.addEventListener("click", (event) => run(event.currentTarget, "กำลังปิด…", disablePush));
 }
 
+// ---------- เสียงแจ้งเตือนของบริษัทตอนเปิดแอปอยู่ ----------
+// กติกา/ตัวจัดการเสียงอยู่ใน modules/notification-sound.js (ทดสอบแล้ว) ที่นี่เป็นส่วนต่อกับหน้าเว็บ:
+//   1) push ทันที: sw.js ส่งข้อความ "mnp-notification" มาที่หน้า → รีเฟรชตัวเลขกระดิ่ง และถ้าหน้านี้โฟกัสอยู่จะถูกถามว่าเล่นเสียงเองไหม
+//   2) ถามฐานข้อมูลเป็นระยะ (สำรองสำหรับเครื่องที่ไม่ได้เปิด Push): เฉพาะตอนหน้าเห็นอยู่ ทุก ~60 วินาที และตอนกลับมาเห็นหน้า
+// ไฟล์ sounds/notify.mp3 ยังไม่มี = ทุกอย่างเงียบ ไม่ซ่อนแถวตั้งค่า และ sw.js ไม่ทำแจ้งเตือนเป็น silent
+function createNotifySound() {
+  const sound = window.MNP_NOTIFY_SOUND;
+  let storage = null;
+  let channel = null;
+  try {
+    storage = window.localStorage;
+  } catch {
+    // เปิดที่เก็บของเบราว์เซอร์ไม่ได้ (โหมดส่วนตัวบางแบบ) ตั้งค่าเปิด/ปิดจะอยู่แค่ในหน้านี้
+  }
+  try {
+    if ("BroadcastChannel" in window) channel = new BroadcastChannel(sound.SOUND_CHANNEL_NAME);
+  } catch {
+    // ไม่มี channel = แท็บอื่นไม่รู้ว่าดังไปแล้ว (อาจดังหลายแท็บ) ไม่กระทบอย่างอื่น
+  }
+  return sound.createNotificationSound({
+    // ?v= ตามรุ่นของแอป: เปลี่ยนไฟล์เสียงแล้วเลื่อนรุ่น เครื่องจะได้ไฟล์ใหม่
+    url: `${sound.SOUND_PATH}?v=${APP_VERSION}`,
+    fetchFile: (url) => fetch(url),
+    createAudio: (url) => new Audio(url),
+    storage,
+    channel,
+  });
+}
+const notifySound = createNotifySound();
+let soundProbedFor = null;
+
+// เบราว์เซอร์ไม่ให้เล่นเสียงจนกว่าผู้ใช้จะกดหน้าจอ: ลองปลดล็อกทุกครั้งที่กด/กดแป้นจนกว่าจะสำเร็จ
+// (ไฟล์ยังไม่พร้อมก็ข้ามไปก่อน ไม่ยิงคำขอซ้ำ)
+function armSoundUnlock() {
+  const events = ["pointerdown", "keydown"];
+  const tryUnlock = async () => {
+    if (!notifySound.isReady()) return;
+    if (await notifySound.unlock()) events.forEach((name) => document.removeEventListener(name, tryUnlock, true));
+  };
+  events.forEach((name) => document.addEventListener(name, tryUnlock, true));
+}
+
+// รอบถามฐานข้อมูล: loadUnread เทียบกับครั้งก่อนเอง ถ้าเพิ่ม = มีของใหม่ → เล่นเสียง
+async function pollUnreadForSound() {
+  if (document.visibilityState !== "visible" || navigator.onLine === false) return;
+  if (!state.employee || isLabOnly() || isSandboxMode() || !notifySound.isActive()) return;
+  try {
+    await loadUnread();
+    updateUnreadBadges();
+  } catch (error) {
+    console.warn("ตรวจการแจ้งเตือนใหม่ไม่สำเร็จ", error);
+  }
+}
+
+// ข้อความจาก sw.js ตอนมี push เข้า · replyPort มีเฉพาะเมื่อหน้านี้มองเห็น+โฟกัสอยู่ (sw.js กำลังรอคำตอบว่าจะเล่นเสียงเองไหม)
+async function onNotificationPushMessage(message, replyPort) {
+  const canPlay = Boolean(state.employee) && !isLabOnly() && !isSandboxMode() && notifySound.canHandle();
+  // ตอบก่อนอย่างอื่น: sw.js รอไม่เกิน 1 วินาทีก่อนแสดงแจ้งเตือน · ตอบ true = แจ้งเตือนบนหน้าจอจะไม่มีเสียงของระบบ เราต้องเล่นเสียงให้
+  try {
+    replyPort?.postMessage({ willPlaySound: canPlay });
+    replyPort?.close();
+  } catch {
+    // ช่องตอบกลับพัง sw.js จะถือว่าไม่รับปาก (แจ้งเตือนมีเสียงของระบบตามปกติ)
+  }
+  if (!state.employee) return;
+  // ตัวเลขใหม่ต้องมาก่อนเล่นเสียง เพื่อแท็บอื่นได้ค่าอ้างอิงที่ถูกต้อง (ไม่ดังซ้ำ) · ไม่ให้ช้าเกิน 1.5 วินาที
+  await withTimeout(loadUnread({ announce: false }), 1500, "UNREAD_REFRESH_TIMEOUT").catch(() => {});
+  updateUnreadBadges();
+  if (!replyPort || !canPlay) return;
+  // รับปากแล้วว่าจะเล่นเสียง แต่เบราว์เซอร์ไม่ยอมเล่น → แจ้งเตือนบนหน้าจอเป็น silent ไปแล้ว จึงแจ้งซ้ำแบบมีเสียงของระบบ ไม่ให้เงียบหาย
+  if ((await notifySound.play()) === "failed") await showSoundFallbackNotification(message);
+}
+
+async function showSoundFallbackNotification({ title, url, tag }) {
+  try {
+    const registration = await serviceWorkerReady();
+    const icon = "./icons/icon-192.png";
+    await registration.showNotification(title, { icon, lang: "th", tag: tag || "mnp-sound-fallback", renotify: true, data: { url } });
+  } catch (error) {
+    console.warn("แจ้งเตือนสำรองไม่สำเร็จ", error);
+  }
+}
+
+function startNotificationSound() {
+  armSoundUnlock();
+  setInterval(pollUnreadForSound, window.MNP_NOTIFY_SOUND.SOUND_POLL_MS);
+  document.addEventListener("visibilitychange", pollUnreadForSound);
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      if (event.data?.type === "mnp-notification") onNotificationPushMessage(event.data, event.ports?.[0]);
+    });
+    navigator.serviceWorker.startMessages?.();
+  }
+}
+
+// แถวตั้งค่าบนหน้าการแจ้งเตือน: เปิด/ปิดเสียง + ลองฟัง · ไฟล์เสียงไม่มี/โหลดไม่ได้ = ไม่แสดงแถวนี้เลย
+async function refreshSoundPanel() {
+  const panel = document.querySelector("#sound-panel");
+  if (!panel || !(await notifySound.probe()) || !panel.isConnected) return;
+  const enabled = notifySound.isEnabled();
+  panel.innerHTML = `<div class="push-panel-text"><strong>เสียงแจ้งเตือนขณะเปิดแอป <span class="badge">${enabled ? "เปิดอยู่" : "ปิดอยู่"}</span></strong><span>เล่นเสียงเมื่อมีแจ้งเตือนใหม่ตอนที่คุณเปิดแอปนี้อยู่ ตั้งค่าเฉพาะเครื่องนี้ · ตอนปิดแอปหรือพับหน้าจอ เสียงเป็นของระบบเครื่อง</span></div>
+    <div class="sound-panel-actions"><button class="btn secondary" type="button" data-sound-test>ลองฟังเสียง</button><button class="btn secondary" type="button" data-sound-toggle>${enabled ? "ปิดเสียง" : "เปิดเสียง"}</button></div>`;
+  panel.hidden = false;
+  // play() เริ่มเล่นทันทีในจังหวะที่ผู้ใช้กด (ปลดล็อกเสียงของเบราว์เซอร์ไปในตัว) แม้ตั้งปิดเสียงอยู่ก็ให้ลองฟังได้
+  panel.querySelector("[data-sound-test]")?.addEventListener("click", async () => {
+    if ((await notifySound.play({ preview: true })) === "failed") showToast("เล่นเสียงไม่ได้ ตรวจดูว่าเครื่องไม่ได้ปิดเสียงอยู่", "error");
+  });
+  panel.querySelector("[data-sound-toggle]")?.addEventListener("click", async () => {
+    notifySound.setEnabled(!enabled);
+    // เปิดกลับมา: จำตัวเลขปัจจุบันไว้ก่อน จะได้ไม่เล่นเสียงเพราะแจ้งเตือนเก่าที่เข้ามาระหว่างปิดอยู่
+    if (!enabled) await loadUnread({ announce: false }).catch(() => {});
+    refreshSoundPanel();
+  });
+}
+
 // ตั้ง read_at เฉพาะแถวนี้ (RLS ให้ผู้รับแก้ read_at ของตัวเองได้) คืน true เมื่อสำเร็จ · ล้ม (เน็ตหลุด) คืน false ไม่โยน error
 // เพื่อไม่ให้ขวางการนำทางของผู้ใช้
 async function markNotificationRead(id) {
@@ -5198,6 +5320,14 @@ function updateUnreadBadges() {
     }
   }
   if (!count) document.querySelector(".nav-toggle-dot")?.remove();
+  // จุดบนปุ่มเมนูมือถือ: ตัวเลขเพิ่มขึ้นขณะเปิดหน้าค้างไว้ (push/ถามเป็นระยะ) ต้องขึ้นจุดด้วย · เฉพาะหน้าที่มีเมนูการแจ้งเตือน
+  const toggle = document.querySelector(".mobile-nav-toggle");
+  if (count && wrap && toggle && !toggle.querySelector(".nav-toggle-dot")) {
+    const dot = document.createElement("span");
+    dot.className = "nav-toggle-dot";
+    dot.setAttribute("aria-hidden", "true");
+    toggle.append(dot);
+  }
 }
 
 // ทำให้รายการหนึ่งเป็น "อ่านแล้ว" ทั้งในฐานข้อมูลและบนหน้าจอ (ล้มก็ปล่อยไว้เป็นยังไม่อ่าน)
@@ -5214,6 +5344,7 @@ async function markNotificationItemRead(item) {
   item.removeAttribute("role");
   item.removeAttribute("tabindex");
   state.unread = Math.max(0, state.unread - 1);
+  notifySound.setBaseline(state.employee.id, state.unread);
   updateUnreadBadges();
   if (!document.querySelector("#notification-list .unread")) document.querySelector("#mark-read")?.remove();
 }
@@ -5310,16 +5441,19 @@ async function renderNotifications() {
   const content = `
     <div class="page-heading notifications-heading"><div><h1>การแจ้งเตือน</h1></div>${(data ?? []).some((item) => !item.read_at) ? `<button class="btn secondary" id="mark-read">ทำเครื่องหมายว่าอ่านแล้วทั้งหมด</button>` : ""}</div>
     ${PUSH_PUBLIC_KEY ? `<section class="card push-panel" id="push-panel" hidden></section>` : ""}
+    <section class="card push-panel" id="sound-panel" hidden></section>
     <div class="stack" id="notification-list">${(data ?? []).map(notificationItemHtml).join("") || emptyState("ยังไม่มีการแจ้งเตือน", { hint: "เมื่อคำร้องของคุณมีความเคลื่อนไหวจะแจ้งที่นี่" })}</div>`;
   app.innerHTML = shell(content, "notifications", "การแจ้งเตือน");
   bindShell();
   refreshPushPanel();
+  refreshSoundPanel();
   bindNotificationReadOnClick();
   document.querySelector("#mark-read")?.addEventListener("click", async (event) => {
     event.currentTarget.disabled = true;
     const { error: updateError } = await sb.from("notifications").update({ read_at: new Date().toISOString() }).eq("recipient_id", state.employee.id).is("read_at", null);
     if (updateError) return showToast(friendlyError(updateError), "error");
     state.unread = 0;
+    notifySound.setBaseline(state.employee.id, 0);
     showToast("ทำเครื่องหมายว่าอ่านแล้ว");
     await renderNotifications();
   });
@@ -6215,6 +6349,11 @@ async function renderRoute() {
     pushResyncedFor = state.employee.id;
     resyncPushSubscription();
   }
+  // ตรวจไฟล์เสียงแจ้งเตือนหนึ่งครั้งต่อบัญชีต่อการโหลดหน้า (ไม่มีไฟล์ = เงียบ) · โหมดทดสอบ/lab-only ไม่มีแจ้งเตือนจึงไม่ตรวจ
+  if (soundProbedFor !== state.employee.id) {
+    soundProbedFor = state.employee.id;
+    if (!isLabOnly() && !isSandboxMode()) notifySound.probe();
+  }
   await loadUnread();
   try {
     if (path === "dashboard") return await renderDashboard(params);
@@ -6358,6 +6497,7 @@ async function init() {
     navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" }).catch((error) => console.warn("ลงทะเบียน service worker ไม่สำเร็จ", error));
   }
   window.addEventListener("hashchange", navigateRoute);
+  startNotificationSound();
   // บัญชีถูกลบ/รหัสผ่านถูกเปลี่ยนระหว่างเปิดแอปค้างไว้ ต่ออายุ token ไม่ได้ → Supabase ส่ง SIGNED_OUT
   sb.auth.onAuthStateChange((event, session) => {
     syncSignedUrlOwner(event === "SIGNED_OUT" ? null : session?.user?.id);

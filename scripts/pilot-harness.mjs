@@ -19,11 +19,11 @@ const port = Number(process.env.PORT) || 5181;
 const TYPES = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
   ".json": "application/json", ".webmanifest": "application/manifest+json", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon",
-  ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".txt": "text/plain; charset=utf-8",
+  ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".txt": "text/plain; charset=utf-8", ".mp3": "audio/mpeg",
 };
 // allowlist เดียวกับ scripts/build-pilot.mjs: ไฟล์ที่ราก + โฟลเดอร์ที่หน้าเว็บโหลดจริง
 const STATIC_FILES = new Set(["index.html", "app.js", "styles.css", "favicon.ico", "manifest.webmanifest", "sw.js"]);
-const STATIC_DIRS = new Set(["modules", "fonts", "vendor", "icons"]);
+const STATIC_DIRS = new Set(["modules", "fonts", "vendor", "icons", "sounds"]);
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 function servable(relative) {
