@@ -5024,13 +5024,17 @@ async function currentPushSubscription() {
 // เครื่องนี้ลงทะเบียนรับแจ้งเตือนของบัญชีนี้แล้วหรือไม่ (ฐานข้อมูลรู้จัก endpoint นี้) · true/false · null = ตรวจไม่สำเร็จ (ไม่รู้)
 // จำผลที่รู้แล้วไว้ต่อบัญชี ให้แถบชวนเปิดแจ้งเตือนวาดพร้อมหน้าได้โดยไม่ต้องถามฐานข้อมูลทุกครั้ง
 let pushSubscribedCache = { owner: null, value: null };
+// นับจำนวนครั้งที่จดสถานะ ให้การตรวจที่ถามฐานข้อมูลค้างอยู่รู้ว่ามีคนจดค่าใหม่กว่าระหว่างรอ (เช่นสมัครเครื่องนี้สำเร็จ) แล้วไม่เอาผลเก่าไปทับ
+let pushSubscribedWrites = 0;
 // owner = บัญชีที่เป็นเจ้าของผลตอนเริ่มตรวจ (จับก่อน await) · ถ้าระหว่างรอมีการสลับบัญชี ผลของบัญชีเดิมต้องทิ้ง ไม่จดเป็นของบัญชีใหม่
 function setPushSubscribed(value, owner = state.employee?.id ?? null) {
   if (owner !== (state.employee?.id ?? null)) return;
   pushSubscribedCache = { owner, value };
+  pushSubscribedWrites += 1;
 }
 async function checkPushSubscribed() {
   const owner = state.employee?.id ?? null;
+  const writesAtStart = pushSubscribedWrites;
   try {
     const subscription = await currentPushSubscription();
     let value = false;
@@ -5041,6 +5045,7 @@ async function checkPushSubscribed() {
     }
     // สลับบัญชีระหว่างรอ = ผลนี้ไม่ใช่ของบัญชีปัจจุบัน คืน null (ไม่รู้) ให้ตรวจใหม่ตอนวาดหน้าถัดไป
     if (owner !== (state.employee?.id ?? null)) return null;
+    if (pushSubscribedWrites !== writesAtStart) return pushSubscribedCache.owner === owner ? pushSubscribedCache.value : null;
     setPushSubscribed(value, owner);
     return value;
   } catch (error) {
@@ -5101,37 +5106,39 @@ async function disablePush() {
   setPushSubscribed(false, owner);
 }
 
-// เปิดแอปทุกครั้ง (หนึ่งครั้งต่อบัญชีต่อการโหลดหน้า): ต่ออายุเครื่องที่ "เป็นของบัญชีนี้อยู่แล้ว" เท่านั้น
-// (endpoint ของเบราว์เซอร์เปลี่ยนได้เอง หรือกุญแจ VAPID ในแอปเปลี่ยน) ห้ามย้ายเครื่องมาเป็นของบัญชีนี้โดยผู้ใช้ไม่ได้กดเอง —
-// ไม่งั้นคนที่ล็อกอินต่อจากเจ้าของเดิมบนเครื่องเดียวกันจะได้รับแจ้งเตือนของตัวเองโดยไม่รู้ตัว (หรือกลับกัน)
-// การย้ายข้ามบัญชีเกิดได้จากปุ่ม "เปิดการแจ้งเตือนบนเครื่องนี้" เท่านั้น เครื่องที่ไม่ใช่ของบัญชีนี้จึงถูกยกเลิกการสมัครในเครื่อง
+// เปิดแอปทุกครั้ง (หนึ่งครั้งต่อบัญชีต่อการโหลดหน้า/การล็อกอิน): ถ้าเบราว์เซอร์อนุญาตการแจ้งเตือนของเว็บนี้อยู่แล้ว
+// ผูกเครื่องนี้กับบัญชีที่ล็อกอินให้เงียบ ๆ — สมัครใหม่ถ้ายังไม่มี, ต่ออายุถ้ามี (endpoint เปลี่ยนเองหรือกุญแจ VAPID เปลี่ยน),
+// และย้ายมาเป็นของบัญชีนี้ถ้าเดิมเป็นของคนอื่น (บันทึกซ้อน endpoint เดิมในฐานข้อมูลได้เลย)
+// หมายเหตุ: เดิมห้ามผูกเครื่องโดยผู้ใช้ไม่ได้กดเอง กันคนล็อกอินต่อจากเจ้าของเดิมได้รับแจ้งเตือนของตัวเองโดยไม่รู้ตัว
+// เจ้าของระบบสำนักงานตัดสินเมื่อ 21/11/2026 ให้เปลี่ยนเป็นผูกอัตโนมัติ (ไม่ให้ลืมเปิดแล้วพลาดงาน) · ออกจากระบบยังปล่อยเครื่องเหมือนเดิม
+// (releasePushOnThisDevice) จึงเป็น "ใครล็อกอินล่าสุดบนเครื่องนี้ได้รับแจ้งเตือนของตัวเอง"
+// ไม่เรียก Notification.requestPermission ในเส้นทางนี้เด็ดขาด (ขอสิทธิ์ได้เฉพาะตอนผู้ใช้กดปุ่มเอง) · ยังไม่อนุญาตหรือสมัครไม่สำเร็จ
+// (เช่น iOS ไม่ยอมให้สมัครโดยไม่มีการกด) = ไม่ error แถบชวนเปิดแจ้งเตือนขึ้นเป็นปุ่มให้กดเองตามเดิม · ล้มแล้วไม่วนซ้ำจนกว่าจะโหลดหน้า/ล็อกอินใหม่
 let pushResyncedFor = null;
+// บัญชีที่กำลังผูกเครื่องอยู่ (ไม่มี = null): ระหว่างนั้นไม่วาดแถบชวนเปิด กันแถบวูบแล้วหายทันทีที่สมัครสำเร็จ
+let pushAutoSubscribingFor = null;
 async function resyncPushSubscription() {
   const environment = pushEnvironment();
-  if (!environment.keyConfigured || !environment.hasServiceWorker || !environment.hasPushManager || environment.permission !== "granted" || isSandboxMode()) return;
+  if (!environment.keyConfigured || !environment.hasServiceWorker || !environment.hasPushManager || environment.permission !== "granted" || isSandboxMode() || isLabOnly()) return;
   const owner = state.employee?.id ?? null;
+  pushAutoSubscribingFor = owner;
   try {
     const registration = await serviceWorkerReady();
     const existing = await registration.pushManager.getSubscription();
-    if (!existing) return;
-    const { data: ownedByMe, error } = await sb.rpc("app_is_push_subscribed", { p_endpoint: existing.endpoint });
-    // ถามไม่สำเร็จ (เน็ต/ระบบ) = ไม่รู้ว่าเป็นของใคร ปล่อยไว้ก่อน ไม่แตะอะไร
-    if (error) return;
-    // สลับบัญชีระหว่างรอ: คำตอบนี้เป็นของบัญชีเดิม ห้ามยกเลิก/จดผลให้บัญชีใหม่ (บัญชีใหม่มีรอบ resync ของตัวเอง)
+    const subscription = await ensurePushSubscription(registration);
+    // สลับบัญชีระหว่างรอ: ห้ามผูกเครื่องให้บัญชีใหม่ด้วยผลของรอบนี้ (บัญชีใหม่มีรอบของตัวเอง)
     if (owner !== (state.employee?.id ?? null)) return;
-    if (ownedByMe !== true) {
-      await existing.unsubscribe();
-      setPushSubscribed(false, owner);
-      refreshPushPrompt();
-      return;
-    }
-    const refreshed = await ensurePushSubscription(registration);
-    await savePushSubscription(refreshed);
+    await savePushSubscription(subscription);
     setPushSubscribed(true, owner);
     // สมัครใหม่เพราะกุญแจเปลี่ยน: แถวของ endpoint เดิมไม่มีประโยชน์แล้ว
-    if (refreshed.endpoint !== existing.endpoint) await sb.rpc("app_delete_push_subscription", { p_endpoint: existing.endpoint });
+    if (existing && subscription.endpoint !== existing.endpoint) await sb.rpc("app_delete_push_subscription", { p_endpoint: existing.endpoint });
   } catch (error) {
-    console.warn("ต่ออายุการแจ้งเตือนบนเครื่องนี้ไม่สำเร็จ", error);
+    console.warn("ผูกการแจ้งเตือนบนเครื่องนี้กับบัญชีไม่สำเร็จ", error);
+    // ไม่รู้สถานะจริง (อาจสมัครแล้วแต่บันทึกไม่สำเร็จ หรือเดิมเป็นของบัญชีนี้อยู่แล้ว) → ให้แถบถามฐานข้อมูลเองว่าเครื่องนี้ลงทะเบียนหรือยัง
+    setPushSubscribed(null, owner);
+  } finally {
+    if (pushAutoSubscribingFor === owner) pushAutoSubscribingFor = null;
+    refreshPushPrompt();
   }
 }
 
@@ -5139,6 +5146,8 @@ async function resyncPushSubscription() {
 // server: true ลบแถวในฐานข้อมูลก่อน (ต้องยังมี session) — ทำไม่ได้ก็ยังยกเลิกการสมัครในเครื่อง ส่วนแถวค้างจะถูกลบเองเมื่อ push service ตอบว่าเครื่องนั้นหายไป
 async function releasePushOnThisDevice({ server }) {
   if (!PUSH_PUBLIC_KEY || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
+  // คนที่ล็อกอินต่อ (รวมบัญชีเดิมกลับเข้ามาโดยไม่โหลดหน้าใหม่) ต้องได้รอบผูกเครื่องอัตโนมัติของตัวเอง
+  pushResyncedFor = null;
   try {
     const subscription = await currentPushSubscription();
     if (!subscription) return;
@@ -5436,6 +5445,8 @@ function hidePushPromptUntilTomorrow() {
 function pushPromptHtml() {
   // หน้าการแจ้งเตือนมีแผงเดียวกันอยู่แล้ว · โหมดทดสอบและบัญชี lab-only ไม่มีหน้าการแจ้งเตือนให้ใช้
   if (!state.employee || isSandboxMode() || isLabOnly() || currentRoute().path === "notifications") return "";
+  // กำลังผูกเครื่องนี้ให้อัตโนมัติ (resyncPushSubscription): ยังไม่แสดง ไม่ตรวจซ้ำ จบแล้วมันวาดแถบใหม่เอง
+  if (pushAutoSubscribingFor === state.employee.id) return "";
   const environment = pushEnvironment();
   const subscribed = pushSubscribedCache.owner === state.employee.id ? pushSubscribedCache.value : null;
   const kind = window.MNP_PUSH.pushPromptKind({ ...environment, subscribed, hidden: pushPromptHiddenNow() });

@@ -154,7 +154,7 @@ function buildPrompt({ sandbox = false, labOnly = false, path = "dashboard", env
     pushEnvironment: () => ({ ...ready, permission: "default", ios: false, standalone: false, ...environment }),
     pushSubscribedCache: cache, verifyPushPrompt: () => checks.push("check"), window: { MNP_PUSH: require("../../modules/push-notifications.js") },
     localStorage: { getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, String(value)) },
-    Date: { now: () => now }, String,
+    Date: { now: () => now }, String, pushAutoSubscribingFor: null,
   });
   vm.runInContext(extractFunction("function pushNotice("), context);
   vm.runInContext(appSource.slice(appSource.indexOf("const PUSH_PROMPT_HIDDEN_KEY"), appSource.indexOf("function pushPromptHtml(")), context);
@@ -298,6 +298,7 @@ test("a registration check answered after switching accounts is dropped, not rec
     currentPushSubscription: async () => ({ endpoint: "https://push/e" }),
     sb: { rpc: () => new Promise((resolve) => { release = () => resolve({ data: true, error: null }); }) },
   });
+  vm.runInContext("var pushSubscribedWrites = 0;", context);
   vm.runInContext(extractFunction("function setPushSubscribed("), context);
   vm.runInContext(extractFunction("async function checkPushSubscribed("), context);
   const pending = vm.runInContext("checkPushSubscribed", context)();
@@ -346,4 +347,157 @@ test("when permission is granted but registering fails, the prompt is redrawn as
   const ok = await runPromptClick({ permission: "granted", enable: async () => "granted" });
   assert.equal(ok.log.cache, null);
   assert.equal(ok.log.refreshed, 1);
+});
+
+// ---------- เปิดรับแจ้งเตือนอัตโนมัติหลังล็อกอิน (resyncPushSubscription) ----------
+// ตัดฟังก์ชันจริงมารันกับของปลอม: คืน log ของสิ่งที่ถูกเรียก และตัวควบคุมให้แต่ละขั้นค้าง/ล้มได้
+function buildResync({ environment = {}, sandbox = false, labOnly = false, existing = null, ensure, save } = {}) {
+  const log = { ensured: 0, saved: [], deleted: [], cache: [], refreshed: 0, warned: 0, permissionRequests: 0 };
+  const state = { employee: { id: "e" } };
+  const subscription = { endpoint: "https://push/new" };
+  const context = vm.createContext({
+    state, isSandboxMode: () => sandbox, isLabOnly: () => labOnly,
+    pushEnvironment: () => ({ ...ready, permission: "granted", ios: false, standalone: false, ...environment }),
+    serviceWorkerReady: async () => ({ pushManager: { getSubscription: async () => existing } }),
+    ensurePushSubscription: async () => { log.ensured += 1; return ensure ? ensure() : subscription; },
+    savePushSubscription: async (value) => { if (save) await save(value); log.saved.push(value.endpoint); },
+    setPushSubscribed: (value, owner) => { log.cache.push([value, owner]); },
+    refreshPushPrompt: () => { log.refreshed += 1; },
+    sb: { rpc: async (name, args) => { log.deleted.push([name, args.p_endpoint]); return { error: null }; } },
+    console: { warn: () => { log.warned += 1; } },
+    Notification: { requestPermission: () => { log.permissionRequests += 1; } },
+  });
+  vm.runInContext("var pushResyncedFor = null; var pushAutoSubscribingFor = null;", context);
+  vm.runInContext(extractFunction("async function resyncPushSubscription("), context);
+  return { log, state, context, run: () => vm.runInContext("resyncPushSubscription", context)(), inFlight: () => vm.runInContext("pushAutoSubscribingFor", context) };
+}
+
+test("a signed-in device that is already allowed is registered silently and never asks for permission", async () => {
+  const fresh = buildResync();
+  await fresh.run();
+  assert.deepEqual(fresh.log.saved, ["https://push/new"]);
+  assert.deepEqual(fresh.log.cache, [[true, "e"]]);
+  assert.equal(fresh.log.permissionRequests, 0);
+  assert.equal(fresh.log.warned, 0);
+  assert.equal(fresh.inFlight(), null);
+  assert.equal(fresh.log.refreshed, 1);
+  // เดิมเป็นของบัญชีอื่น/ต่ออายุ: บันทึกทับ endpoint เดิมเลย ไม่ยกเลิกการสมัครทิ้ง
+  const existing = { endpoint: "https://push/old", unsubscribe: async () => { throw new Error("must not unsubscribe"); } };
+  const moved = buildResync({ existing, ensure: () => existing });
+  await moved.run();
+  assert.deepEqual(moved.log.saved, ["https://push/old"]);
+  assert.deepEqual(moved.log.deleted, []);
+  // กุญแจเปลี่ยน → ได้ endpoint ใหม่ ลบแถวของ endpoint เดิม
+  const rekeyed = buildResync({ existing });
+  await rekeyed.run();
+  assert.deepEqual(rekeyed.log.deleted, [["app_delete_push_subscription", "https://push/old"]]);
+});
+
+test("nothing is registered unless the browser already allowed notifications, and never in test mode, lab-only or without a key", async () => {
+  for (const permission of ["default", "denied"]) {
+    const run = buildResync({ environment: { permission } });
+    await run.run();
+    assert.equal(run.log.ensured, 0, permission);
+    assert.deepEqual(run.log.cache, []);
+    assert.equal(run.inFlight(), null);
+  }
+  for (const options of [{ sandbox: true }, { labOnly: true }, { environment: { keyConfigured: false } }, { environment: { hasPushManager: false } }, { environment: { hasServiceWorker: false } }]) {
+    const run = buildResync(options);
+    await run.run();
+    assert.equal(run.log.ensured, 0, JSON.stringify(options));
+    assert.equal(run.log.permissionRequests, 0);
+  }
+});
+
+test("a failed silent registration is tried once, leaves the status unknown for the prompt to check, and does not throw", async () => {
+  const failed = buildResync({ ensure: () => { throw new Error("NotAllowedError"); } });
+  await failed.run();
+  assert.equal(failed.log.ensured, 1);
+  assert.deepEqual(failed.log.cache, [[null, "e"]]);
+  assert.equal(failed.log.warned, 1);
+  assert.equal(failed.inFlight(), null);
+  assert.equal(failed.log.refreshed, 1);
+  // บันทึกล้ม (ออฟไลน์/RPC ล้ม) ก็เหมือนกัน
+  const unsaved = buildResync({ save: async () => { throw new Error("offline"); } });
+  await unsaved.run();
+  assert.deepEqual(unsaved.log.cache, [[null, "e"]]);
+  assert.deepEqual(unsaved.log.saved, []);
+});
+
+test("while registering silently the prompt stays hidden, then the prompt is redrawn once", async () => {
+  let release;
+  const slow = buildResync({ save: () => new Promise((resolve) => { release = resolve; }) });
+  const pending = slow.run();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(slow.inFlight(), "e");
+  assert.equal(slow.log.refreshed, 0);
+  release();
+  await pending;
+  assert.equal(slow.inFlight(), null);
+  assert.equal(slow.log.refreshed, 1);
+  // แถบไม่แสดงและไม่ยิงตรวจสถานะระหว่างที่ผูกอัตโนมัติอยู่
+  const context = vm.createContext({
+    state: { employee: { id: "e" } }, isSandboxMode: () => false, isLabOnly: () => false, currentRoute: () => ({ path: "dashboard" }),
+    pushEnvironment: () => ({ ...ready, permission: "granted", ios: false, standalone: false }), pushSubscribedCache: { owner: "e", value: false },
+    verifyPushPrompt: () => { throw new Error("must not check"); }, window: { MNP_PUSH: require("../../modules/push-notifications.js") },
+    localStorage: { getItem: () => null }, Date, String,
+  });
+  vm.runInContext("var pushAutoSubscribingFor = 'e';", context);
+  vm.runInContext(appSource.slice(appSource.indexOf("const PUSH_PROMPT_HIDDEN_KEY"), appSource.indexOf("function pushPromptHtml(")), context);
+  vm.runInContext(extractFunction("function pushNotice("), context);
+  vm.runInContext(extractFunction("function pushPromptHtml("), context);
+  assert.equal(vm.runInContext("pushPromptHtml()", context), "");
+  vm.runInContext("pushAutoSubscribingFor = null;", context);
+  assert.match(vm.runInContext("pushPromptHtml()", context), /data-push-prompt-enable/);
+});
+
+test("switching accounts while registering does not bind the device to the new account with the old result", async () => {
+  let release;
+  const run = buildResync({ ensure: () => new Promise((resolve) => { release = () => resolve({ endpoint: "https://push/new" }); }) });
+  const pending = run.run();
+  await new Promise((resolve) => setImmediate(resolve));
+  run.state.employee = { id: "other" };
+  release();
+  await pending;
+  assert.deepEqual(run.log.saved, []);
+  assert.deepEqual(run.log.cache, []);
+  // ธงของบัญชีใหม่ที่เริ่มรอบของตัวเองแล้วต้องไม่ถูกรอบเก่าล้าง
+  const raced = buildResync({ ensure: () => new Promise((resolve) => { release = () => resolve({ endpoint: "https://push/new" }); }) });
+  const first = raced.run();
+  await new Promise((resolve) => setImmediate(resolve));
+  raced.state.employee = { id: "other" };
+  vm.runInContext("pushAutoSubscribingFor = 'other'", raced.context);
+  release();
+  await first;
+  assert.equal(raced.inFlight(), "other");
+});
+
+test("the silent registration path never asks for permission and the sign-out release re-arms it", () => {
+  const body = appSource.slice(appSource.indexOf("async function resyncPushSubscription("), appSource.indexOf("// ออกจากระบบ: เอาเครื่องนี้ออก"));
+  assert.doesNotMatch(body, /requestPermission|\.unsubscribe\(/);
+  assert.match(body, /environment\.permission !== "granted"/);
+  assert.match(appSource, /if \(pushResyncedFor !== state\.employee\.id\) \{\n {4}pushResyncedFor = state\.employee\.id;\n {4}resyncPushSubscription\(\);/);
+  const release = appSource.slice(appSource.indexOf("async function releasePushOnThisDevice("), appSource.indexOf("// รอไม่เกิน 4 วินาที"));
+  assert.match(release, /pushResyncedFor = null;/);
+  // เหตุผลของการเปลี่ยนกติกาเดิมต้องจดไว้ที่ฟังก์ชัน
+  assert.match(appSource, /เจ้าของระบบสำนักงานตัดสินเมื่อ 21\/11\/2026/);
+});
+
+test("a registration check that was overtaken by a newer status write returns the newer value", async () => {
+  const state = { employee: { id: "a" } };
+  let release;
+  const context = vm.createContext({
+    state, console: { warn() {} }, pushSubscribedCache: { owner: null, value: null },
+    currentPushSubscription: async () => ({ endpoint: "https://push/e" }),
+    sb: { rpc: () => new Promise((resolve) => { release = () => resolve({ data: false, error: null }); }) },
+  });
+  vm.runInContext("var pushSubscribedWrites = 0;", context);
+  vm.runInContext(extractFunction("function setPushSubscribed("), context);
+  vm.runInContext(extractFunction("async function checkPushSubscribed("), context);
+  const pending = vm.runInContext("checkPushSubscribed", context)();
+  await new Promise((resolve) => setImmediate(resolve));
+  vm.runInContext("setPushSubscribed(true)", context); // สมัครเครื่องนี้สำเร็จระหว่างรอคำตอบเก่า
+  release();
+  assert.equal(await pending, true);
+  assert.equal(vm.runInContext("pushSubscribedCache.value", context), true);
 });
