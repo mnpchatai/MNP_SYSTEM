@@ -5,32 +5,22 @@ import vm from "node:vm";
 import test from "node:test";
 
 const require = createRequire(import.meta.url);
-const { parseSoundEnabled, canHandleSound, canPlayNow, unreadChangeDecision, createNotificationSound, SOUND_MIN_GAP_MS, SOUND_PATH } = require("../../modules/notification-sound.js");
+const { canHandleSound, canPlayNow, unreadChangeDecision, createNotificationSound, SOUND_MIN_GAP_MS, SOUND_PATH } = require("../../modules/notification-sound.js");
 
-const GATE = { enabled: true, ready: true, unlocked: true, lastPlayedAt: 0, now: 100000 };
+const GATE = { ready: true, unlocked: true, lastPlayedAt: 0, now: 100000 };
 
 // ---------- กติกาตัดสินใจ ----------
-test("sound is on by default and off only when the user chose off", () => {
-  assert.equal(parseSoundEnabled(null), true);
-  assert.equal(parseSoundEnabled(undefined), true);
-  assert.equal(parseSoundEnabled(""), true);
-  assert.equal(parseSoundEnabled("garbage"), true);
-  assert.equal(parseSoundEnabled("on"), true);
-  assert.equal(parseSoundEnabled("off"), false);
-});
-
-test("a device can handle the sound only when enabled, the file is ready and the browser allows playback", () => {
-  assert.equal(canHandleSound({ enabled: true, ready: true, unlocked: true }), true);
-  assert.equal(canHandleSound({ enabled: false, ready: true, unlocked: true }), false);
-  assert.equal(canHandleSound({ enabled: true, ready: false, unlocked: true }), false);
-  assert.equal(canHandleSound({ enabled: true, ready: true, unlocked: false }), false);
+test("a device can handle the sound only when the file is ready and the browser allows playback", () => {
+  assert.equal(canHandleSound({ ready: true, unlocked: true }), true);
+  assert.equal(canHandleSound({ ready: false, unlocked: true }), false);
+  assert.equal(canHandleSound({ ready: true, unlocked: false }), false);
   assert.equal(canHandleSound(), false);
 });
 
 test("two sounds closer than the minimum gap are not played", () => {
   assert.equal(canPlayNow({ ...GATE, lastPlayedAt: GATE.now - SOUND_MIN_GAP_MS }), true);
   assert.equal(canPlayNow({ ...GATE, lastPlayedAt: GATE.now - SOUND_MIN_GAP_MS + 1 }), false);
-  assert.equal(canPlayNow({ ...GATE, enabled: false }), false);
+  assert.equal(canPlayNow({ ...GATE, unlocked: false }), false);
 });
 
 test("the sound plays only when the unread number goes up", () => {
@@ -51,17 +41,16 @@ test("a failed reading keeps the previous reference and never plays", () => {
   assert.deepEqual(unreadChangeDecision({ previous: null, next: null, ...GATE }), { play: false, baseline: null });
 });
 
-test("an increase stays silent when sound is off, the file is missing, locked, or just played", () => {
-  assert.equal(unreadChangeDecision({ previous: 1, next: 2, ...GATE, enabled: false }).play, false);
+test("an increase stays silent when the file is missing, locked, or just played", () => {
   assert.equal(unreadChangeDecision({ previous: 1, next: 2, ...GATE, ready: false }).play, false);
   assert.equal(unreadChangeDecision({ previous: 1, next: 2, ...GATE, unlocked: false }).play, false);
   assert.equal(unreadChangeDecision({ previous: 1, next: 2, ...GATE, lastPlayedAt: GATE.now - 1000 }).play, false);
   // ถึงจะไม่เล่น ก็ยังจำตัวเลขใหม่ไว้ (เล่นภายหลังด้วยส่วนต่างเก่าไม่ได้)
-  assert.equal(unreadChangeDecision({ previous: 1, next: 2, ...GATE, enabled: false }).baseline, 2);
+  assert.equal(unreadChangeDecision({ previous: 1, next: 2, ...GATE, ready: false }).baseline, 2);
 });
 
 // ---------- ตัวจัดการเสียง (ใส่ของปลอมแทนเบราว์เซอร์) ----------
-function fakeEnvironment({ file = { ok: true, type: "audio/mpeg" }, playResult = "ok", storage, pushWaitMs = 20 } = {}) {
+function fakeEnvironment({ file = { ok: true, type: "audio/mpeg" }, playResult = "ok", pushWaitMs = 20 } = {}) {
   let clock = 1_000_000;
   const log = { fetched: [], plays: 0, mutedPlays: 0 };
   const audio = {
@@ -83,7 +72,7 @@ function fakeEnvironment({ file = { ok: true, type: "audio/mpeg" }, playResult =
     return { ok: file.ok, headers: { get: () => file.type }, arrayBuffer: async () => new ArrayBuffer(8) };
   };
   const sound = createNotificationSound({
-    url: "./sounds/notify.mp3?v=t", fetchFile, createAudio: () => audio, storage, channel, now: () => clock, pushWaitMs,
+    url: "./sounds/notify.mp3?v=t", fetchFile, createAudio: () => audio, channel, now: () => clock, pushWaitMs,
   });
   return { sound, audio, log, posted, channel, advance: (ms) => { clock += ms; } };
 }
@@ -101,7 +90,6 @@ test("a missing sound file (404 or an HTML fallback page) means not ready and no
     assert.equal(await sound.probe(), false);
     assert.equal(sound.isReady(), false);
     assert.equal(sound.canHandle(), false);
-    assert.equal(sound.isActive(), false);
     assert.equal(await sound.unlock(), false);
     assert.equal(await sound.play(), "skipped");
     assert.equal(sound.observeUnread("a", 1), false);
@@ -144,6 +132,43 @@ test("unlocking plays a muted sample and then unmutes; a blocked browser stays l
   assert.equal(blocked.audio.muted, false);
 });
 
+test("unlock starts the muted play synchronously when the file is ready, so it still counts as the user's tap", async () => {
+  const { sound, log } = fakeEnvironment();
+  await sound.probe();
+  const pending = sound.unlock();
+  assert.equal(log.mutedPlays, 1); // ก่อน await ใด ๆ
+  assert.equal(await pending, true);
+});
+
+test("every gesture retries the unlock until it works, and nothing can play or be promised before that", async () => {
+  const environment = fakeEnvironment();
+  await environment.sound.probe();
+  environment.audio.play = () => Promise.reject(new Error("NotAllowedError"));
+  assert.equal(await environment.sound.unlock(), false);
+  assert.equal(await environment.sound.unlock(), false);
+  assert.equal(environment.sound.canHandle(), false); // sw.js จะได้คำตอบว่าไม่เล่น → เสียงระบบ
+  assert.equal(await environment.sound.play(), "skipped");
+  environment.audio.play = () => Promise.resolve();
+  assert.equal(await environment.sound.unlock(), true);
+  assert.equal(environment.sound.canHandle(), true);
+  assert.equal(await environment.sound.play(), "played");
+});
+
+test("a real play the browser blocks relocks the sound so the next tap unlocks it again", async () => {
+  const environment = await ready();
+  environment.audio.play = () => Promise.reject(Object.assign(new Error("blocked"), { name: "NotAllowedError" }));
+  assert.equal(await environment.sound.playForPush(), "fallback");
+  assert.equal(environment.sound.canHandle(), false);
+  environment.audio.play = () => Promise.resolve();
+  assert.equal(await environment.sound.unlock(), true);
+  assert.equal(await environment.sound.playForPush(), "played");
+  // ความล้มแบบอื่น (ไม่ใช่ถูกบล็อก) ไม่ทำให้กลับไปล็อก
+  environment.advance(SOUND_MIN_GAP_MS);
+  environment.audio.play = () => Promise.reject(new Error("decode"));
+  assert.equal(await environment.sound.play(), "failed");
+  assert.equal(environment.sound.canHandle(), true);
+});
+
 test("play restarts the file, tells other tabs, and refuses a second sound inside the gap", async () => {
   const { sound, audio, log, posted, advance } = await ready();
   audio.currentTime = 2;
@@ -166,33 +191,6 @@ test("a browser that refuses to play reports failed and does not start the gap",
   assert.equal(await environment.sound.play(), "failed");
   environment.audio.play = () => Promise.resolve();
   assert.equal(await environment.sound.play(), "played");
-});
-
-test("the preview button plays even when sound is switched off, and does not tell other tabs", async () => {
-  const { sound, log, posted } = await ready();
-  sound.setEnabled(false);
-  assert.equal(await sound.play(), "skipped");
-  assert.equal(await sound.play({ preview: true }), "played");
-  assert.equal(log.plays, 1);
-  assert.equal(posted.length, 0);
-});
-
-test("the switch is stored per device, defaults to on, and survives broken storage", async () => {
-  const items = new Map();
-  const storage = { getItem: (key) => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
-  const { sound } = fakeEnvironment({ storage });
-  assert.equal(sound.isEnabled(), true);
-  sound.setEnabled(false);
-  assert.equal(items.get("mnp-notify-sound"), "off");
-  assert.equal(sound.isEnabled(), false);
-  sound.setEnabled(true);
-  assert.equal(sound.isEnabled(), true);
-
-  const broken = { getItem: () => { throw new Error("SecurityError"); }, setItem: () => { throw new Error("SecurityError"); } };
-  const { sound: fallback } = fakeEnvironment({ storage: broken });
-  assert.equal(fallback.isEnabled(), true);
-  fallback.setEnabled(false);
-  assert.equal(fallback.isEnabled(), false);
 });
 
 // ---------- เล่นเสียงให้ push ที่รับปากไว้: ต้องจบด้วย เสียงดัง / เพิ่งดัง / แจ้งเตือนสำรอง เสมอ ----------
@@ -218,17 +216,6 @@ test("two pushes at the same moment: one sound, the other covered", async () => 
   const results = await Promise.all([sound.playForPush(), sound.playForPush()]);
   assert.deepEqual(results.sort(), ["covered", "played"]);
   assert.equal(log.plays, 1);
-});
-
-test("playForPush asks for the fallback notification when the switch is turned off while waiting", async () => {
-  const { sound, log } = await ready();
-  assert.equal(sound.canHandle(), true); // ตอนตอบ service worker ว่ารับปาก
-  sound.setEnabled(false);
-  assert.equal(await sound.playForPush(), "fallback");
-  assert.equal(log.plays, 0);
-  // เปิดกลับแล้ว ใบต่อไปเล่นได้ตามปกติ
-  sound.setEnabled(true);
-  assert.equal(await sound.playForPush(), "played");
 });
 
 test("playForPush asks for the fallback when the sound is not ready or not unlocked", async () => {
@@ -296,46 +283,11 @@ test("a broken channel after the sound really played still counts as played, wit
   assert.equal(environment.log.plays, 1);
 });
 
-test("the preview button does not cover a push while it is still pending or after it fails", async () => {
-  const environment = await ready();
-  let rejectPreview;
-  environment.audio.play = () => new Promise((_, reject) => { rejectPreview = reject; });
-  const preview = environment.sound.play({ preview: true });
-  // push เข้าระหว่างที่ preview ยังไม่รู้ผล: ต้องไม่ถูกนับว่า "covered" จาก preview
-  environment.audio.play = () => Promise.resolve();
-  assert.equal(await environment.sound.playForPush(), "played");
-  rejectPreview(new Error("NotAllowedError"));
-  assert.equal(await preview, "failed");
-
-  // preview ล้มอย่างเดียว ไม่มี push ตามมา: ช่วงกันซ้ำต้องไม่ค้าง
-  const failed = await ready();
-  failed.audio.play = () => Promise.reject(new Error("NotAllowedError"));
-  assert.equal(await failed.sound.play({ preview: true }), "failed");
-  failed.audio.play = () => Promise.resolve();
-  assert.equal(await failed.sound.playForPush(), "played");
-});
-
-test("a preview that succeeds covers a push right after it (the user just heard the sound)", async () => {
-  const { sound, log } = await ready();
-  assert.equal(await sound.play({ preview: true }), "played");
-  assert.equal(await sound.playForPush(), "covered");
-  assert.equal(log.plays, 1);
-});
-
 test("a sound another tab just played also covers a push", async () => {
   const { sound, channel, log } = await ready();
   channel.onmessage({ data: { type: "played", at: 1, owner: "emp-1", count: 2 } });
   assert.equal(await sound.playForPush(), "covered");
   assert.equal(log.plays, 0);
-});
-
-test("a switched-off device is not active and cannot take over the sound from the operating system", async () => {
-  const { sound } = await ready();
-  assert.equal(sound.isActive(), true);
-  assert.equal(sound.canHandle(), true);
-  sound.setEnabled(false);
-  assert.equal(sound.isActive(), false);
-  assert.equal(sound.canHandle(), false);
 });
 
 test("observeUnread: first reading is silent, an increase plays once, a decrease and repeats are silent", async () => {
@@ -567,9 +519,17 @@ test("a payload tag is passed to the page unchanged", async () => {
 // ---------- app.js: ต้องต่อเข้ากับตัวจัดการเสียงจริง ----------
 const appSource = readFileSync(new URL("../../app.js", import.meta.url), "utf8").replaceAll("\r\n", "\n");
 
-test("the notifications page carries the sound row and wires its refresh", () => {
-  assert.match(appSource, /id="sound-panel"/);
-  assert.match(appSource, /refreshSoundPanel\(\);\n {2}bindNotificationReadOnClick\(\);/);
+test("the sound has no user interface at all: no panel, no switch, no preview, no saved setting", () => {
+  assert.doesNotMatch(appSource, /sound-panel|refreshSoundPanel|data-sound-|notifySound\.(setEnabled|isEnabled|isActive|play\(\{)|mnp-notify-sound/);
+  assert.doesNotMatch(readFileSync(new URL("../../styles.css", import.meta.url), "utf8"), /sound-panel/);
+  assert.doesNotMatch(readFileSync(new URL("../../modules/notification-sound.js", import.meta.url), "utf8"), /localStorage|setEnabled|preview/);
+});
+
+test("the unlock listeners stay armed so a browser that blocks again can be unlocked by the next tap", () => {
+  const arm = appSource.slice(appSource.indexOf("function armSoundUnlock("), appSource.indexOf("// รอบถามฐานข้อมูล"));
+  assert.match(arm, /if \(notifySound\.isReady\(\)\) notifySound\.unlock\(\);/);
+  assert.match(arm, /\["pointerdown", "keydown"\]\.forEach/);
+  assert.doesNotMatch(arm, /removeEventListener/);
 });
 
 test("a push-driven reload never announces by itself, and a failed count is not compared", () => {

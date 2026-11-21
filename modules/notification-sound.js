@@ -5,7 +5,6 @@
 // เสียงตอนปิดแอป/พับจอเป็นของระบบปฏิบัติการ เปลี่ยนไม่ได้ ที่นี่ดูแลเฉพาะตอนเปิดหน้าเว็บไว้
 (function () {
   const SOUND_PATH = "./sounds/notify.mp3";
-  const SOUND_SETTING_KEY = "mnp-notify-sound";
   const SOUND_CHANNEL_NAME = "mnp-notify-sound";
   // กันเสียงซ้ำ: เหตุการณ์เดียวกันที่รู้ได้ทั้งจาก push และจากการถามฐานข้อมูล ต้องดังครั้งเดียว
   const SOUND_MIN_GAP_MS = 3000;
@@ -13,19 +12,14 @@
   // push ที่รับปากไว้ รอเสียงนานสุดเท่านี้ ไม่ดังก็ถือว่า "ยังไม่มีเสียง" แล้วใช้แจ้งเตือนสำรอง (กัน audio.play() ค้างแล้วเงียบตลอด)
   const SOUND_PUSH_WAIT_MS = 3000;
 
-  // ค่าเริ่มต้น = เปิด · ปิดก็ต่อเมื่อผู้ใช้เลือกปิดเอง ("off") ค่าเสีย/ว่างถือว่าเปิด
-  function parseSoundEnabled(stored) {
-    return stored !== "off";
-  }
-
-  // เครื่องนี้ "รับเสียงได้" เมื่อ: ผู้ใช้ไม่ได้ปิด + ไฟล์เสียงโหลดได้จริง + เบราว์เซอร์อนุญาตให้เล่นแล้ว (เคยมีการกดหน้าจอ)
-  function canHandleSound({ enabled = true, ready = false, unlocked = false } = {}) {
-    return Boolean(enabled && ready && unlocked);
+  // เครื่องนี้ "รับเสียงได้" เมื่อ: ไฟล์เสียงโหลดได้จริง + เบราว์เซอร์อนุญาตให้เล่นแล้ว (เคยมีการกดหน้าจอ) · ไม่มีสวิตช์ปิดเสียง เปิดเสมอ
+  function canHandleSound({ ready = false, unlocked = false } = {}) {
+    return Boolean(ready && unlocked);
   }
 
   // เล่นได้ทันทีหรือไม่: รับเสียงได้ และไม่เพิ่งดังไปไม่ถึง minGapMs ที่แล้ว
-  function canPlayNow({ enabled, ready, unlocked, lastPlayedAt = 0, now = Date.now(), minGapMs = SOUND_MIN_GAP_MS } = {}) {
-    return canHandleSound({ enabled, ready, unlocked }) && now - lastPlayedAt >= minGapMs;
+  function canPlayNow({ ready, unlocked, lastPlayedAt = 0, now = Date.now(), minGapMs = SOUND_MIN_GAP_MS } = {}) {
+    return canHandleSound({ ready, unlocked }) && now - lastPlayedAt >= minGapMs;
   }
 
   // ตัวเลขยังไม่อ่านเปลี่ยน → ต้องเล่นเสียงไหม และค่าอ้างอิงใหม่ที่ต้องจำ
@@ -38,36 +32,18 @@
   }
 
   // ตัวจัดการเสียงของหน้านี้ — ส่ง dependency เข้ามาเพื่อทดสอบได้โดยไม่ต้องมีเบราว์เซอร์
-  //   fetchFile(url) → Promise<Response> ใช้ตรวจว่ามีไฟล์จริง · createAudio(url) → Audio · storage = localStorage (อาจ throw/เป็น null)
+  //   fetchFile(url) → Promise<Response> ใช้ตรวจว่ามีไฟล์จริง · createAudio(url) → Audio
   //   channel = BroadcastChannel (หรือ null) ใช้บอกแท็บอื่นว่าเพิ่งดังไปแล้ว จะได้ไม่ดังซ้ำ
-  function createNotificationSound({ url = SOUND_PATH, fetchFile, createAudio, storage = null, channel = null, now = Date.now, minGapMs = SOUND_MIN_GAP_MS, pushWaitMs = SOUND_PUSH_WAIT_MS } = {}) {
+  function createNotificationSound({ url = SOUND_PATH, fetchFile, createAudio, channel = null, now = Date.now, minGapMs = SOUND_MIN_GAP_MS, pushWaitMs = SOUND_PUSH_WAIT_MS } = {}) {
     let audio = null;
     let ready = false;
     let unlocked = false;
     let lastPlayedAt = 0;
     let probing = null;
-    let memoryEnabled = true;
     // ค่าอ้างอิงตัวเลขยังไม่อ่าน แยกตามบัญชี (owner) เพื่อให้สลับบัญชีแล้วนับใหม่ ไม่เล่นเสียงจากส่วนต่างของคนละคน
     let baseline = { owner: null, count: null };
 
-    const isEnabled = () => {
-      try {
-        const stored = storage?.getItem(SOUND_SETTING_KEY);
-        if (stored !== undefined) return parseSoundEnabled(stored);
-      } catch {
-        // อ่านไม่ได้ (โหมดส่วนตัว) → ใช้ค่าที่จำไว้ในหน้านี้
-      }
-      return memoryEnabled;
-    };
-    const setEnabled = (value) => {
-      memoryEnabled = Boolean(value);
-      try {
-        storage?.setItem(SOUND_SETTING_KEY, memoryEnabled ? "on" : "off");
-      } catch {
-        // เก็บไม่ได้ก็ใช้ได้ตลอดการเปิดหน้านี้
-      }
-    };
-    const gate = () => ({ enabled: isEnabled(), ready, unlocked, lastPlayedAt, now: now(), minGapMs });
+    const gate = () => ({ ready, unlocked, lastPlayedAt, now: now(), minGapMs });
 
     // ตรวจว่ามีไฟล์เสียงจริง (404 หรือเว็บตอบเป็นหน้า HTML แทน = ไม่มี) ผ่านแล้วถึงถือว่า "พร้อม" · ล้มไม่จำผล เรียกใหม่ได้
     const probe = () => {
@@ -93,9 +69,10 @@
     };
 
     // เบราว์เซอร์บล็อกเสียงจนกว่าผู้ใช้จะกดหน้าจอ: ลองเล่นแบบปิดเสียงเพื่อดูว่าปลดล็อกแล้วหรือยัง ล้มก็ลองใหม่ตอนกดครั้งถัดไป
+    // ไฟล์พร้อมแล้วต้องไม่มี await ก่อน audio.play() เพื่อให้ยังนับเป็นจังหวะที่ผู้ใช้กด (iOS)
     async function unlock() {
       if (unlocked) return true;
-      if (!(await probe())) return false;
+      if (!ready && !(await probe())) return false;
       try {
         audio.muted = true;
         await audio.play();
@@ -110,51 +87,43 @@
       return unlocked;
     }
 
-    // คืน "played" | "skipped" (ไม่ถึงเวลา/ปิดเสียง/ไฟล์ไม่พร้อม) | "failed" (เบราว์เซอร์ไม่ยอมเล่น)
-    // preview = ปุ่ม "ลองฟังเสียง": เล่นเสมอแม้ปิดเสียงอยู่ · audio.play() ต้องถูกเรียกก่อน await ใด ๆ เพื่อให้ยังนับเป็นจังหวะที่ผู้ใช้กด (iOS)
+    // คืน "played" | "skipped" (ไม่ถึงเวลา/ไฟล์ไม่พร้อม/ยังไม่ปลดล็อก) | "failed" (เบราว์เซอร์ไม่ยอมเล่น)
     // inflight = การเล่นที่เริ่มแล้วแต่ยังไม่รู้ผล (ให้ playForPush รอดูว่าสำเร็จจริงไหมก่อนถือว่า "มีเสียงแล้ว")
     let inflight = null;
-    function play({ preview = false } = {}) {
-      if (!ready || !audio) return Promise.resolve("skipped");
-      if (!preview && !canPlayNow(gate())) return Promise.resolve("skipped");
+    function play() {
+      if (!canPlayNow(gate())) return Promise.resolve("skipped");
       const previousPlayedAt = lastPlayedAt;
-      // ปุ่มลองฟังไม่จองล่วงหน้า (ล้มแล้วจะได้ไม่ไปบัง push จริง) · จำเวลาหลังเล่นสำเร็จเท่านั้น
-      if (!preview) lastPlayedAt = now(); // จองก่อนเล่น กันสองทางเรียกพร้อมกันแล้วดังซ้อน
+      lastPlayedAt = now(); // จองก่อนเล่น กันสองทางเรียกพร้อมกันแล้วดังซ้อน
       const reservedAt = lastPlayedAt;
-      // ส่วนนี้รันต่อเนื่องจนถึง audio.play() โดยไม่มี await คั่น (ต้องเรียกในจังหวะที่ผู้ใช้กดบน iOS)
       const run = (async () => {
         try {
           audio.muted = false;
           audio.currentTime = 0;
-          const started = audio.play();
-          await started;
-        } catch {
-          if (!preview) lastPlayedAt = previousPlayedAt;
+          await audio.play();
+        } catch (error) {
+          lastPlayedAt = previousPlayedAt;
+          // เบราว์เซอร์บล็อกเสียงจริง (ปลดล็อกเทียม เช่น iOS ยอมให้เล่นแบบปิดเสียง) → กลับเป็นยังไม่ปลดล็อก
+          // หน้าจะตอบ service worker ว่าไม่เล่น (ได้เสียงระบบ) และปลดล็อกใหม่ตอนผู้ใช้กดครั้งถัดไป
+          if (error?.name === "NotAllowedError") unlocked = false;
           return "failed";
         }
         unlocked = true;
-        if (preview) {
-          lastPlayedAt = Math.max(lastPlayedAt, now());
-        } else {
-          // บอกแท็บอื่นไม่สำเร็จก็ไม่เป็นไร เสียงดังไปแล้ว ห้ามถือเป็น "failed" (จะถอยช่วงกันซ้ำแล้วแจ้งซ้ำ)
-          try {
-            channel?.postMessage({ type: "played", at: reservedAt, owner: baseline.owner, count: baseline.count });
-          } catch {
-            // ช่องสื่อสารระหว่างแท็บพัง
-          }
+        // บอกแท็บอื่นไม่สำเร็จก็ไม่เป็นไร เสียงดังไปแล้ว ห้ามถือเป็น "failed" (จะถอยช่วงกันซ้ำแล้วแจ้งซ้ำ)
+        try {
+          channel?.postMessage({ type: "played", at: reservedAt, owner: baseline.owner, count: baseline.count });
+        } catch {
+          // ช่องสื่อสารระหว่างแท็บพัง
         }
         return "played";
       })();
-      if (!preview) {
-        inflight = run;
-        run.finally(() => { if (inflight === run) inflight = null; });
-      }
+      inflight = run;
+      run.finally(() => { if (inflight === run) inflight = null; });
       return run;
     }
 
     // เล่นเสียงให้ push ที่หน้านี้รับปากกับ service worker ไว้แล้วว่าจะเล่นเอง (แจ้งเตือนบนหน้าจอเป็น silent ไปแล้ว)
     // คืน "played" = เสียงของเราดังแล้ว · "covered" = เพิ่งมีเสียงของเราดังไปภายในช่วงกันซ้ำ (ผู้ใช้ได้ยินแล้ว) ·
-    // "fallback" = ไม่มีเสียงของเราและจะไม่มีด้วย (ปิดสวิตช์ระหว่างรอ/ไฟล์ไม่พร้อม/ยังไม่ปลดล็อก/เบราว์เซอร์ไม่ยอมเล่น) → ผู้เรียกต้องแสดงแจ้งเตือนสำรองที่มีเสียงระบบ
+    // "fallback" = ไม่มีเสียงของเราและจะไม่มีด้วย (ไฟล์ไม่พร้อม/ยังไม่ปลดล็อก/เบราว์เซอร์ไม่ยอมเล่น) → ผู้เรียกต้องแสดงแจ้งเตือนสำรองที่มีเสียงระบบ
     // รอผลการเล่นไม่เกิน pushWaitMs · คืน "timeout" ถ้าเกินเวลา, "failed" ถ้า promise reject
     const waitForOutcome = (promise) => new Promise((resolve) => {
       const timer = setTimeout(() => resolve("timeout"), pushWaitMs);
@@ -212,18 +181,13 @@
       playForPush,
       observeUnread,
       setBaseline,
-      isEnabled,
-      setEnabled,
       isReady: () => ready,
-      isUnlocked: () => unlocked,
       // รับเสียงได้จริงตอนนี้ (ใช้ตอบ service worker ว่า "เดี๋ยวฉันเล่นเสียงเอง ไม่ต้องให้ระบบเล่นซ้อน")
       canHandle: () => canHandleSound(gate()),
-      // เปิดไว้และไฟล์พร้อม (ยังไม่จำเป็นต้องปลดล็อก) — ใช้ตัดสินว่าควรถามฐานข้อมูลเป็นระยะหรือไม่
-      isActive: () => ready && isEnabled(),
     };
   }
 
-  const api = { SOUND_PATH, SOUND_SETTING_KEY, SOUND_CHANNEL_NAME, SOUND_MIN_GAP_MS, SOUND_POLL_MS, SOUND_PUSH_WAIT_MS, parseSoundEnabled, canHandleSound, canPlayNow, unreadChangeDecision, createNotificationSound };
+  const api = { SOUND_PATH, SOUND_CHANNEL_NAME, SOUND_MIN_GAP_MS, SOUND_POLL_MS, SOUND_PUSH_WAIT_MS, canHandleSound, canPlayNow, unreadChangeDecision, createNotificationSound };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.MNP_NOTIFY_SOUND = api;
 })();

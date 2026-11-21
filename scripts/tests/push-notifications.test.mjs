@@ -5,7 +5,7 @@ import vm from "node:vm";
 import test from "node:test";
 
 const require = createRequire(import.meta.url);
-const { pushPanelState, urlBase64ToUint8Array, subscriptionRecord, sameApplicationServerKey, shouldShowPushPrompt, parseSnoozedUntil, PUSH_PROMPT_SNOOZE_MS } = require("../../modules/push-notifications.js");
+const { pushPanelState, urlBase64ToUint8Array, subscriptionRecord, sameApplicationServerKey, pushPromptKind } = require("../../modules/push-notifications.js");
 const { isIos } = require("../../modules/install-app.js");
 
 const ready = { keyConfigured: true, hasServiceWorker: true, hasPushManager: true, hasNotification: true };
@@ -69,34 +69,31 @@ test("install-app exposes the shared iOS detection", () => {
   assert.equal(isIos({ userAgent: "Mozilla/5.0 (Linux; Android 14)" }), false);
 });
 
-// ---------- แถบชวนเปิดแจ้งเตือน (shouldShowPushPrompt) ----------
-test("the prompt shows only for a capable device that has never answered the permission request", () => {
-  assert.equal(shouldShowPushPrompt({ ...ready, permission: "default" }), true);
-  assert.equal(shouldShowPushPrompt({ ...ready, permission: "granted", subscribed: true }), false);
-  assert.equal(shouldShowPushPrompt({ ...ready, permission: "granted", subscribed: false }), false);
-  assert.equal(shouldShowPushPrompt({ ...ready, permission: "denied" }), false);
-  assert.equal(shouldShowPushPrompt({ ...ready, permission: "default", hasPushManager: false }), false);
-  assert.equal(shouldShowPushPrompt({ ...ready, keyConfigured: false, permission: "default" }), false);
-  assert.equal(shouldShowPushPrompt({ ...ready, permission: "default", ios: true, standalone: false }), false);
-  assert.equal(shouldShowPushPrompt({ ...ready, permission: "default", ios: true, standalone: true }), true);
-  assert.equal(shouldShowPushPrompt({ ...ready, permission: "default", hasPushManager: false, ios: true, standalone: true }), false);
+// ---------- แถบบังคับเปิดแจ้งเตือน (pushPromptKind) ----------
+test("the prompt asks to enable until the device is allowed and registered", () => {
+  assert.equal(pushPromptKind({ ...ready, permission: "default" }), "enable");
+  assert.equal(pushPromptKind({ ...ready, permission: "default", subscribed: null }), "enable");
+  assert.equal(pushPromptKind({ ...ready, permission: "granted", subscribed: false }), "enable");
+  assert.equal(pushPromptKind({ ...ready, permission: "granted", subscribed: true }), null);
+  // อนุญาตแล้วแต่ยังไม่รู้ว่าฐานข้อมูลรู้จักเครื่องนี้ไหม: รอตรวจ ไม่แสดงแถบวูบ
+  assert.equal(pushPromptKind({ ...ready, permission: "granted" }), "pending");
+  assert.equal(pushPromptKind({ ...ready, permission: "granted", subscribed: null }), "pending");
+  assert.equal(pushPromptKind({ ...ready, permission: "default", ios: true, standalone: true }), "enable");
 });
 
-test("snoozing hides the prompt for 7 days and then it returns", () => {
-  const environment = { ...ready, permission: "default" };
-  const now = Date.UTC(2026, 10, 21);
-  assert.equal(PUSH_PROMPT_SNOOZE_MS, 7 * 24 * 60 * 60 * 1000);
-  assert.equal(shouldShowPushPrompt(environment, { snoozedUntil: now + PUSH_PROMPT_SNOOZE_MS, now }), false);
-  assert.equal(shouldShowPushPrompt(environment, { snoozedUntil: now + PUSH_PROMPT_SNOOZE_MS, now: now + PUSH_PROMPT_SNOOZE_MS - 1 }), false);
-  assert.equal(shouldShowPushPrompt(environment, { snoozedUntil: now + PUSH_PROMPT_SNOOZE_MS, now: now + PUSH_PROMPT_SNOOZE_MS }), true);
+test("a blocked browser and an iPhone that is not installed get a message-only prompt", () => {
+  assert.equal(pushPromptKind({ ...ready, permission: "denied" }), "denied");
+  assert.equal(pushPromptKind({ ...ready, permission: "denied", subscribed: true }), "denied");
+  assert.equal(pushPromptKind({ ...ready, permission: "default", ios: true, standalone: false }), "ios-install");
+  assert.equal(pushPromptKind({ ...ready, hasPushManager: false, hasNotification: false, ios: true, standalone: false }), "ios-install");
 });
 
-test("a missing or corrupt snooze value counts as not snoozed", () => {
-  assert.equal(parseSnoozedUntil(null), 0);
-  assert.equal(parseSnoozedUntil(""), 0);
-  assert.equal(parseSnoozedUntil("abc"), 0);
-  assert.equal(parseSnoozedUntil("-5"), 0);
-  assert.equal(parseSnoozedUntil("1790000000000"), 1790000000000);
+test("no prompt when the device cannot be fixed by the user", () => {
+  assert.equal(pushPromptKind({ ...ready, keyConfigured: false, permission: "default" }), null);
+  assert.equal(pushPromptKind(), null);
+  assert.equal(pushPromptKind({ ...ready, permission: "default", hasPushManager: false }), null);
+  assert.equal(pushPromptKind({ ...ready, permission: "default", hasServiceWorker: false }), null);
+  assert.equal(pushPromptKind({ ...ready, permission: "default", hasPushManager: false, ios: true, standalone: true }), null);
 });
 
 // ---------- ส่วนที่อยู่ใน app.js: ตัดฟังก์ชันออกมารันแยก ----------
@@ -147,21 +144,62 @@ test("only unread notifications carry the id that the click handler uses", () =>
   assert.doesNotMatch(html({ id: "n3", read_at: "2026-11-21T00:00:00Z" }), /data-notification-id/);
 });
 
-test("the prompt markup is skipped in test mode, lab-only accounts and on the notifications page", () => {
-  const build = ({ sandbox = false, labOnly = false, path = "dashboard", show = true } = {}) => {
-    const context = vm.createContext({
-      state: { employee: { id: "e" } }, isSandboxMode: () => sandbox, isLabOnly: () => labOnly, currentRoute: () => ({ path }), pushEnvironment: () => ({}),
-      localStorage: { getItem: () => null }, PUSH_PROMPT_SNOOZE_KEY: "k", window: { MNP_PUSH: { parseSnoozedUntil: () => 0, shouldShowPushPrompt: () => show } },
-    });
-    vm.runInContext(extractFunction("function pushPromptHtml("), context);
-    return vm.runInContext("pushPromptHtml", context)();
-  };
-  const shown = build();
-  assert.match(shown, /id="push-prompt"/);
-  assert.match(shown, /data-push-prompt-enable/);
-  assert.match(shown, /data-push-prompt-later/);
-  assert.equal(build({ sandbox: true }), "");
-  assert.equal(build({ labOnly: true }), "");
-  assert.equal(build({ path: "notifications" }), "");
-  assert.equal(build({ show: false }), "");
+// แถบในหน้าจริง: ใช้ MNP_PUSH ตัวจริง ส่วน app.js ตัดฟังก์ชันมารันแยก
+function buildPrompt({ sandbox = false, labOnly = false, path = "dashboard", environment = {}, cache = { owner: null, value: null } } = {}) {
+  const checks = [];
+  const context = vm.createContext({
+    state: { employee: { id: "e" } }, isSandboxMode: () => sandbox, isLabOnly: () => labOnly, currentRoute: () => ({ path }),
+    pushEnvironment: () => ({ ...ready, permission: "default", ios: false, standalone: false, ...environment }),
+    pushSubscribedCache: cache, verifyPushPrompt: () => checks.push("check"), window: { MNP_PUSH: require("../../modules/push-notifications.js") },
+  });
+  vm.runInContext(extractFunction("function pushNotice("), context);
+  vm.runInContext(extractFunction("function pushPromptHtml("), context);
+  return { html: vm.runInContext("pushPromptHtml", context)(), checks };
+}
+
+test("the prompt has the enable button only and no way to dismiss it", () => {
+  const { html } = buildPrompt();
+  assert.match(html, /id="push-prompt"/);
+  assert.match(html, /กรุณาเปิดแจ้งเตือนบนเครื่องนี้/);
+  assert.match(html, /เพื่อรับแจ้งงานที่รอคุณ/);
+  assert.equal(html.match(/<button/g).length, 1);
+  assert.match(html, /data-push-prompt-enable/);
+  assert.doesNotMatch(html, /ไว้ทีหลัง|data-push-prompt-later/);
+  assert.doesNotMatch(appSource, /PUSH_PROMPT_SNOOZE|mnp-push-prompt-snooze|parseSnoozedUntil|data-push-prompt-later/);
+});
+
+test("the prompt is skipped in test mode, lab-only accounts and on the notifications page", () => {
+  assert.equal(buildPrompt({ sandbox: true }).html, "");
+  assert.equal(buildPrompt({ labOnly: true }).html, "");
+  assert.equal(buildPrompt({ path: "notifications" }).html, "");
+});
+
+test("a blocked browser and an uninstalled iPhone get a message with no button, using the panel wording", () => {
+  const denied = buildPrompt({ environment: { permission: "denied" } }).html;
+  assert.match(denied, /เบราว์เซอร์บล็อกการแจ้งเตือนของเว็บนี้ไว้/);
+  assert.doesNotMatch(denied, /<button/);
+  const deniedIos = buildPrompt({ environment: { permission: "denied", ios: true, standalone: true } }).html;
+  assert.match(deniedIos, /ตั้งค่า › แจ้งเตือน › MNP/);
+  const install = buildPrompt({ environment: { ios: true, standalone: false } }).html;
+  assert.match(install, /เพิ่ม MNP ลงหน้าจอโฮมจาก Safari ก่อน/);
+  assert.doesNotMatch(install, /<button/);
+});
+
+test("devices that cannot use push at all show nothing", () => {
+  assert.equal(buildPrompt({ environment: { hasPushManager: false } }).html, "");
+  assert.equal(buildPrompt({ environment: { keyConfigured: false } }).html, "");
+  assert.equal(buildPrompt({ environment: { ios: true, standalone: true, hasPushManager: false } }).html, "");
+});
+
+test("an allowed device waits for the registration check, then shows the prompt only if not registered", () => {
+  const allowed = { permission: "granted" };
+  const unknown = buildPrompt({ environment: allowed });
+  assert.equal(unknown.html, "");
+  assert.deepEqual(unknown.checks, ["check"]);
+  // ผลตรวจของบัญชีอื่นไม่ใช้กับบัญชีนี้
+  assert.deepEqual(buildPrompt({ environment: allowed, cache: { owner: "other", value: true } }).checks, ["check"]);
+  assert.equal(buildPrompt({ environment: allowed, cache: { owner: "e", value: true } }).html, "");
+  const missing = buildPrompt({ environment: allowed, cache: { owner: "e", value: false } });
+  assert.match(missing.html, /data-push-prompt-enable/);
+  assert.deepEqual(missing.checks, []);
 });

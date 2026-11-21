@@ -311,7 +311,6 @@ body.has-install-banner .update-banner, body.has-install-banner .toast { bottom:
 .push-panel[hidden] { display: none; }
 .push-panel-text { min-width: 0; flex: 1 1 260px; display: grid; gap: 2px; font-size: var(--text-meta); line-height: 1.55; color: var(--muted); }
 .push-panel-text strong { color: var(--ink); font-size: var(--text-ui); display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.sound-panel-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .push-prompt { margin-bottom: 14px; padding: 10px 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; color: var(--ink); background: var(--primary-soft); border: 1px solid var(--primary); border-radius: var(--radius-md); font-size: var(--text-meta); }
 .push-prompt-text { flex: 1 1 240px; min-width: 0; display: grid; gap: 2px; line-height: 1.5; color: var(--muted); }
 .push-prompt-text strong { color: var(--ink); font-size: var(--text-ui); }

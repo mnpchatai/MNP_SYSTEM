@@ -42,24 +42,21 @@
     return actual.length === expectedBytes.length && actual.every((byte, index) => byte === expectedBytes[index]);
   }
 
-  // แถบชวนเปิดแจ้งเตือนที่ด้านบนของหน้า: แสดงเมื่อเครื่องนี้ใช้ Push ได้และผู้ใช้ยังไม่เคยตอบคำขอสิทธิ์เท่านั้น
-  //   - pushPanelState ต้องเป็น "off" (ตัด hidden/ios-install/ios-old/unsupported/denied/on ออกให้แล้ว)
-  //   - permission ต้องเป็น "default" (ยังไม่เคยตอบ ซึ่งในทางปฏิบัติคือยังไม่มี subscription) — "granted" ที่แค่ยังไม่ลงทะเบียนให้แผงในหน้าการแจ้งเตือนจัดการ
-  //   - snoozedUntil คือเวลา (ms) ที่ผู้ใช้กด "ไว้ทีหลัง" ไว้ ยังไม่ถึงเวลาก็ไม่แสดง
-  const PUSH_PROMPT_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
-  function shouldShowPushPrompt(environment, { snoozedUntil = 0, now = Date.now() } = {}) {
-    if (pushPanelState(environment) !== "off") return false;
-    if (environment?.permission !== "default") return false;
-    return !(Number(snoozedUntil) > now);
+  // แถบบังคับด้านบนของหน้า: แสดงจนกว่าเครื่องนี้จะเปิดแจ้งเตือนสำเร็จ (อนุญาตแล้ว + ลงทะเบียนแล้ว) ปิดเองไม่ได้ คืนชนิดของแถบ หรือ null = ไม่แสดง
+  //   enable       ใช้ Push ได้แต่ยังไม่เปิด (ยังไม่เคยตอบ หรืออนุญาตแล้วแต่ยังไม่ลงทะเบียน) → ข้อความ + ปุ่มเปิด
+  //   denied       เครื่องบล็อกไว้ เว็บขอซ้ำไม่ได้ → ข้อความบอกวิธีแก้ ไม่มีปุ่ม
+  //   ios-install  iPhone/iPad ที่ยังไม่ได้เพิ่มลงหน้าจอโฮม → ข้อความแนะนำ ไม่มีปุ่ม
+  //   pending      อนุญาตแล้วแต่ยังไม่รู้ว่าฐานข้อมูลรู้จักเครื่องนี้ไหม (environment.subscribed เป็น null/ไม่มีค่า) → ยังไม่แสดง รอตรวจก่อน
+  //   hidden/ios-old/unsupported (แก้ไม่ได้) และ on → null
+  function pushPromptKind(environment) {
+    const panel = pushPanelState(environment);
+    if (panel === "denied" || panel === "ios-install") return panel;
+    if (panel !== "off") return null;
+    if (environment?.permission === "granted" && environment.subscribed == null) return "pending";
+    return "enable";
   }
 
-  // ค่าที่เก็บใน localStorage → เวลา ms (ค่าเสีย/ว่างถือว่าไม่ได้ซ่อนไว้)
-  function parseSnoozedUntil(stored) {
-    const value = Number(stored);
-    return Number.isFinite(value) && value > 0 ? value : 0;
-  }
-
-  const api = { pushPanelState, urlBase64ToUint8Array, subscriptionRecord, sameApplicationServerKey, shouldShowPushPrompt, parseSnoozedUntil, PUSH_PROMPT_SNOOZE_MS };
+  const api = { pushPanelState, urlBase64ToUint8Array, subscriptionRecord, sameApplicationServerKey, pushPromptKind };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.MNP_PUSH = api;
 })();

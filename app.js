@@ -5021,6 +5021,29 @@ async function currentPushSubscription() {
   return (await registration?.pushManager.getSubscription()) ?? null;
 }
 
+// เครื่องนี้ลงทะเบียนรับแจ้งเตือนของบัญชีนี้แล้วหรือไม่ (ฐานข้อมูลรู้จัก endpoint นี้) · true/false · null = ตรวจไม่สำเร็จ (ไม่รู้)
+// จำผลที่รู้แล้วไว้ต่อบัญชี ให้แถบชวนเปิดแจ้งเตือนวาดพร้อมหน้าได้โดยไม่ต้องถามฐานข้อมูลทุกครั้ง
+let pushSubscribedCache = { owner: null, value: null };
+function setPushSubscribed(value) {
+  pushSubscribedCache = { owner: state.employee?.id ?? null, value };
+}
+async function checkPushSubscribed() {
+  try {
+    const subscription = await currentPushSubscription();
+    let value = false;
+    if (subscription) {
+      const { data, error } = await sb.rpc("app_is_push_subscribed", { p_endpoint: subscription.endpoint });
+      if (error) throw error;
+      value = data === true;
+    }
+    setPushSubscribed(value);
+    return value;
+  } catch (error) {
+    console.warn("ตรวจสถานะการแจ้งเตือนบนเครื่องนี้ไม่สำเร็จ", error);
+    return null;
+  }
+}
+
 // สถานะที่แผงต้องแสดง: "on" ต้องมีทั้งการสมัครในเครื่องและแถวในฐานข้อมูลที่เป็นของบัญชีนี้
 async function loadPushState() {
   const environment = pushEnvironment();
@@ -5028,16 +5051,7 @@ async function loadPushState() {
   if (environment.keyConfigured && isSandboxMode()) return "sandbox";
   const basic = window.MNP_PUSH.pushPanelState(environment);
   if (basic !== "off" || environment.permission !== "granted") return basic;
-  try {
-    const subscription = await currentPushSubscription();
-    if (subscription) {
-      const { data, error } = await sb.rpc("app_is_push_subscribed", { p_endpoint: subscription.endpoint });
-      if (!error && data === true) return window.MNP_PUSH.pushPanelState({ ...environment, subscribed: true });
-    }
-  } catch (error) {
-    console.warn("ตรวจสถานะการแจ้งเตือนบนเครื่องนี้ไม่สำเร็จ", error);
-  }
-  return basic;
+  return (await checkPushSubscribed()) === true ? window.MNP_PUSH.pushPanelState({ ...environment, subscribed: true }) : basic;
 }
 
 // subscription เดิมผูกกับกุญแจ VAPID ตัวที่ใช้ตอนสมัคร ถ้ากุญแจในแอปเปลี่ยน ต้องยกเลิกแล้วสมัครใหม่ (ทำได้เงียบ ๆ เมื่ออนุญาตแล้ว)
@@ -5067,6 +5081,7 @@ async function enablePush() {
   if (permission !== "granted") return permission;
   const registration = await serviceWorkerReady();
   await savePushSubscription(await ensurePushSubscription(registration));
+  setPushSubscribed(true);
   return permission;
 }
 
@@ -5076,6 +5091,7 @@ async function disablePush() {
   const { error } = await sb.rpc("app_delete_push_subscription", { p_endpoint: subscription.endpoint });
   if (error) throw error;
   await subscription.unsubscribe();
+  setPushSubscribed(false);
 }
 
 // เปิดแอปทุกครั้ง (หนึ่งครั้งต่อบัญชีต่อการโหลดหน้า): ต่ออายุเครื่องที่ "เป็นของบัญชีนี้อยู่แล้ว" เท่านั้น
@@ -5095,10 +5111,13 @@ async function resyncPushSubscription() {
     if (error) return;
     if (ownedByMe !== true) {
       await existing.unsubscribe();
+      setPushSubscribed(false);
+      refreshPushPrompt();
       return;
     }
     const refreshed = await ensurePushSubscription(registration);
     await savePushSubscription(refreshed);
+    setPushSubscribed(true);
     // สมัครใหม่เพราะกุญแจเปลี่ยน: แถวของ endpoint เดิมไม่มีประโยชน์แล้ว
     if (refreshed.endpoint !== existing.endpoint) await sb.rpc("app_delete_push_subscription", { p_endpoint: existing.endpoint });
   } catch (error) {
@@ -5115,6 +5134,7 @@ async function releasePushOnThisDevice({ server }) {
     if (!subscription) return;
     if (server) await sb.rpc("app_delete_push_subscription", { p_endpoint: subscription.endpoint });
     await subscription.unsubscribe();
+    pushSubscribedCache = { owner: null, value: null };
   } catch (error) {
     console.warn("ยกเลิกการแจ้งเตือนบนเครื่องนี้ตอนออกจากระบบไม่สำเร็จ", error);
   }
@@ -5125,8 +5145,9 @@ function releasePushBeforeSignOut() {
   return Promise.race([releasePushOnThisDevice({ server: true }), new Promise((resolve) => setTimeout(resolve, 4000))]);
 }
 
-function pushPanelBodyHtml(pushState, ios) {
-  const notice = {
+// ข้อความอธิบายสถานะที่เปิดแจ้งเตือนไม่ได้ ใช้ทั้งในแผงหน้าการแจ้งเตือนและแถบบังคับ
+function pushNotice(pushState, ios) {
+  return {
     "ios-install": "บน iPhone/iPad เปิดการแจ้งเตือนได้เมื่อเปิดแอปจากไอคอนบนหน้าจอโฮมเท่านั้น (ต้องใช้ iOS 16.4 ขึ้นไป) — เพิ่ม MNP ลงหน้าจอโฮมจาก Safari ก่อน แล้วเปิดหน้านี้จากไอคอนนั้น",
     "ios-old": "iOS รุ่นนี้ยังไม่รองรับการแจ้งเตือนจากเว็บ (ต้องใช้ iOS 16.4 ขึ้นไป)",
     unsupported: "เบราว์เซอร์นี้ไม่รองรับการแจ้งเตือนบนเครื่อง",
@@ -5135,6 +5156,10 @@ function pushPanelBodyHtml(pushState, ios) {
       ? "การแจ้งเตือนของ MNP ถูกปิดไว้ในเครื่อง — เปิดได้ที่ ตั้งค่า › แจ้งเตือน › MNP แล้วกลับมาโหลดหน้านี้ใหม่"
       : "เบราว์เซอร์บล็อกการแจ้งเตือนของเว็บนี้ไว้ — เปิดอนุญาตได้ที่ไอคอนข้างช่องที่อยู่เว็บ (สิทธิ์ของไซต์) แล้วโหลดหน้านี้ใหม่",
   }[pushState];
+}
+
+function pushPanelBodyHtml(pushState, ios) {
+  const notice = pushNotice(pushState, ios);
   // หัวข้อไม่ซ้ำกับข้อความบนปุ่ม ("เปิดการแจ้งเตือนบนเครื่องนี้" / "ปิดบนเครื่องนี้") สถานะบอกด้วยป้าย
   const badge = pushState === "on" ? ` <span class="badge">เปิดอยู่</span>` : pushState === "off" ? ` <span class="badge">ปิดอยู่</span>` : "";
   const text = `<div class="push-panel-text"><strong>แจ้งเตือนบนหน้าจอ${badge}</strong>${notice ? `<span>${notice}</span>` : ""}</div>`;
@@ -5179,16 +5204,10 @@ async function refreshPushPanel() {
 // กติกา/ตัวจัดการเสียงอยู่ใน modules/notification-sound.js (ทดสอบแล้ว) ที่นี่เป็นส่วนต่อกับหน้าเว็บ:
 //   1) push ทันที: sw.js ส่งข้อความ "mnp-notification" มาที่หน้า → รีเฟรชตัวเลขกระดิ่ง และถ้าหน้านี้โฟกัสอยู่จะถูกถามว่าเล่นเสียงเองไหม
 //   2) ถามฐานข้อมูลเป็นระยะ (สำรองสำหรับเครื่องที่ไม่ได้เปิด Push): เฉพาะตอนหน้าเห็นอยู่ ทุก ~60 วินาที และตอนกลับมาเห็นหน้า
-// ไฟล์ sounds/notify.mp3 ยังไม่มี = ทุกอย่างเงียบ ไม่ซ่อนแถวตั้งค่า และ sw.js ไม่ทำแจ้งเตือนเป็น silent
+// เสียงเปิดเสมอ ไม่มีสวิตช์ให้ผู้ใช้ · ไฟล์ sounds/notify.mp3 ยังไม่มี = ทุกอย่างเงียบ และ sw.js ไม่ทำแจ้งเตือนเป็น silent
 function createNotifySound() {
   const sound = window.MNP_NOTIFY_SOUND;
-  let storage = null;
   let channel = null;
-  try {
-    storage = window.localStorage;
-  } catch {
-    // เปิดที่เก็บของเบราว์เซอร์ไม่ได้ (โหมดส่วนตัวบางแบบ) ตั้งค่าเปิด/ปิดจะอยู่แค่ในหน้านี้
-  }
   try {
     if ("BroadcastChannel" in window) channel = new BroadcastChannel(sound.SOUND_CHANNEL_NAME);
   } catch {
@@ -5199,7 +5218,6 @@ function createNotifySound() {
     url: `${sound.SOUND_PATH}?v=${APP_VERSION}`,
     fetchFile: (url) => fetch(url),
     createAudio: (url) => new Audio(url),
-    storage,
     channel,
   });
 }
@@ -5207,20 +5225,24 @@ const notifySound = createNotifySound();
 let soundProbedFor = null;
 
 // เบราว์เซอร์ไม่ให้เล่นเสียงจนกว่าผู้ใช้จะกดหน้าจอ: ลองปลดล็อกทุกครั้งที่กด/กดแป้นจนกว่าจะสำเร็จ
-// (ไฟล์ยังไม่พร้อมก็ข้ามไปก่อน ไม่ยิงคำขอซ้ำ)
+// (ไฟล์ยังไม่พร้อมก็ข้ามไปก่อน ไม่ยิงคำขอซ้ำ) · ไม่ถอด listener เพราะเบราว์เซอร์อาจกลับไปบล็อก
+// (เล่นจริงแล้วถูกปฏิเสธ → ตัวจัดการเสียงกลับเป็นยังไม่ปลดล็อก) ปลดล็อกอยู่แล้วคืนค่าทันทีไม่มีค่าใช้จ่าย
 function armSoundUnlock() {
-  const events = ["pointerdown", "keydown"];
-  const tryUnlock = async () => {
-    if (!notifySound.isReady()) return;
-    if (await notifySound.unlock()) events.forEach((name) => document.removeEventListener(name, tryUnlock, true));
+  const tryUnlock = () => {
+    if (notifySound.isReady()) notifySound.unlock();
   };
-  events.forEach((name) => document.addEventListener(name, tryUnlock, true));
+  ["pointerdown", "keydown"].forEach((name) => document.addEventListener(name, tryUnlock, true));
 }
 
 // รอบถามฐานข้อมูล: loadUnread เทียบกับครั้งก่อนเอง ถ้าเพิ่ม = มีของใหม่ → เล่นเสียง
 async function pollUnreadForSound() {
   if (document.visibilityState !== "visible" || navigator.onLine === false) return;
-  if (!state.employee || isLabOnly() || isSandboxMode() || !notifySound.isActive()) return;
+  if (!state.employee || isLabOnly() || isSandboxMode()) return;
+  // ไฟล์เสียงยังไม่พร้อม (เช่น เน็ตหลุดตอนเปิดหน้า): ลองตรวจใหม่รอบละครั้ง ยังไม่ถามฐานข้อมูล
+  if (!notifySound.isReady()) {
+    await notifySound.probe();
+    return;
+  }
   try {
     await loadUnread();
     updateUnreadBadges();
@@ -5281,26 +5303,6 @@ function startNotificationSound() {
     });
     navigator.serviceWorker.startMessages?.();
   }
-}
-
-// แถวตั้งค่าบนหน้าการแจ้งเตือน: เปิด/ปิดเสียง + ลองฟัง · ไฟล์เสียงไม่มี/โหลดไม่ได้ = ไม่แสดงแถวนี้เลย
-async function refreshSoundPanel() {
-  const panel = document.querySelector("#sound-panel");
-  if (!panel || !(await notifySound.probe()) || !panel.isConnected) return;
-  const enabled = notifySound.isEnabled();
-  panel.innerHTML = `<div class="push-panel-text"><strong>เสียงแจ้งเตือนขณะเปิดแอป <span class="badge">${enabled ? "เปิดอยู่" : "ปิดอยู่"}</span></strong><span>เล่นเสียงเมื่อมีแจ้งเตือนใหม่ตอนที่คุณเปิดแอปนี้อยู่ ตั้งค่าเฉพาะเครื่องนี้ · ตอนปิดแอปหรือพับหน้าจอ เสียงเป็นของระบบเครื่อง</span></div>
-    <div class="sound-panel-actions"><button class="btn secondary" type="button" data-sound-test>ลองฟังเสียง</button><button class="btn secondary" type="button" data-sound-toggle>${enabled ? "ปิดเสียง" : "เปิดเสียง"}</button></div>`;
-  panel.hidden = false;
-  // play() เริ่มเล่นทันทีในจังหวะที่ผู้ใช้กด (ปลดล็อกเสียงของเบราว์เซอร์ไปในตัว) แม้ตั้งปิดเสียงอยู่ก็ให้ลองฟังได้
-  panel.querySelector("[data-sound-test]")?.addEventListener("click", async () => {
-    if ((await notifySound.play({ preview: true })) === "failed") showToast("เล่นเสียงไม่ได้ ตรวจดูว่าเครื่องไม่ได้ปิดเสียงอยู่", "error");
-  });
-  panel.querySelector("[data-sound-toggle]")?.addEventListener("click", async () => {
-    notifySound.setEnabled(!enabled);
-    // เปิดกลับมา: จำตัวเลขปัจจุบันไว้ก่อน จะได้ไม่เล่นเสียงเพราะแจ้งเตือนเก่าที่เข้ามาระหว่างปิดอยู่
-    if (!enabled) await loadUnread({ announce: false }).catch(() => {});
-    refreshSoundPanel();
-  });
 }
 
 // ตั้ง read_at เฉพาะแถวนี้ (RLS ให้ผู้รับแก้ read_at ของตัวเองได้) คืน true เมื่อสำเร็จ · ล้ม (เน็ตหลุด) คืน false ไม่โยน error
@@ -5398,39 +5400,53 @@ function bindNotificationReadOnClick() {
   });
 }
 
-// ---------- แถบชวนเปิดแจ้งเตือนบนเครื่อง ----------
-// เบราว์เซอร์ให้ขอสิทธิ์ได้เฉพาะตอนผู้ใช้กดเอง จึงทำได้แค่ชวนด้านบนของหน้า แล้วใช้ enablePush เดิมเมื่อกด
-// เงื่อนไขแสดงอยู่ใน MNP_PUSH.shouldShowPushPrompt (ทดสอบแล้ว) · "ไว้ทีหลัง" ซ่อน 7 วันต่อเครื่อง (localStorage)
-const PUSH_PROMPT_SNOOZE_KEY = "mnp-push-prompt-snooze-until";
+// ---------- แถบบังคับให้เปิดแจ้งเตือนบนเครื่อง ----------
+// แสดงด้านบนของทุกหน้า จนกว่าเครื่องนี้จะเปิดแจ้งเตือนสำเร็จ (อนุญาต + ลงทะเบียนแล้ว) ปิดเองไม่ได้ แต่ไม่ล็อกการใช้งานหน้าเว็บ
+// เบราว์เซอร์ให้ขอสิทธิ์ได้เฉพาะตอนผู้ใช้กดเอง จึงเป็นแถบ + ปุ่มที่เรียก enablePush · ชนิดของแถบตัดสินใน MNP_PUSH.pushPromptKind (ทดสอบแล้ว)
+// เครื่องที่อนุญาตแล้วต้องถามฐานข้อมูลก่อนว่าลงทะเบียนครบไหม (ผลจำไว้ใน pushSubscribedCache) ระหว่างนั้นยังไม่แสดง กันแถบวูบ
+let pushPromptChecking = false;
 function pushPromptHtml() {
-  // หน้าการแจ้งเตือนมีการ์ดตั้งค่าอยู่แล้ว · โหมดทดสอบและบัญชี lab-only ไม่มีหน้าการแจ้งเตือนให้ใช้
+  // หน้าการแจ้งเตือนมีแผงเดียวกันอยู่แล้ว · โหมดทดสอบและบัญชี lab-only ไม่มีหน้าการแจ้งเตือนให้ใช้
   if (!state.employee || isSandboxMode() || isLabOnly() || currentRoute().path === "notifications") return "";
-  let snoozedUntil = 0;
-  try {
-    snoozedUntil = window.MNP_PUSH.parseSnoozedUntil(localStorage.getItem(PUSH_PROMPT_SNOOZE_KEY));
-  } catch {
-    // อ่านไม่ได้ (โหมดส่วนตัว) ถือว่าไม่ได้ซ่อนไว้
+  const environment = pushEnvironment();
+  const subscribed = pushSubscribedCache.owner === state.employee.id ? pushSubscribedCache.value : null;
+  const kind = window.MNP_PUSH.pushPromptKind({ ...environment, subscribed });
+  if (kind === "pending") {
+    verifyPushPrompt();
+    return "";
   }
-  if (!window.MNP_PUSH.shouldShowPushPrompt(pushEnvironment(), { snoozedUntil })) return "";
-  return `<section class="push-prompt" id="push-prompt" aria-label="ชวนเปิดการแจ้งเตือนบนเครื่อง">
-    <div class="push-prompt-text"><strong>เปิดแจ้งเตือนบนเครื่องนี้</strong><span>เพื่อไม่พลาดงานที่รอคุณ</span></div>
-    <div class="push-prompt-actions"><button class="btn small" type="button" data-push-prompt-enable>เปิดแจ้งเตือน</button><button class="btn secondary small" type="button" data-push-prompt-later>ไว้ทีหลัง</button></div>
+  if (!kind) return "";
+  const detail = kind === "enable" ? "เพื่อรับแจ้งงานที่รอคุณ" : pushNotice(kind, environment.ios);
+  const button = kind === "enable" ? `<div class="push-prompt-actions"><button class="btn small" type="button" data-push-prompt-enable>เปิดแจ้งเตือน</button></div>` : "";
+  return `<section class="push-prompt" id="push-prompt" aria-label="ต้องเปิดการแจ้งเตือนบนเครื่องนี้">
+    <div class="push-prompt-text"><strong>กรุณาเปิดแจ้งเตือนบนเครื่องนี้</strong><span>${detail}</span></div>${button}
   </section>`;
 }
 
+// ตรวจว่าฐานข้อมูลรู้จักเครื่องนี้ไหม แล้ววาดแถบใหม่ · ตรวจไม่สำเร็จก็ไม่วาด (กันวนซ้ำ) จะลองใหม่ตอนวาดหน้าถัดไป
+async function verifyPushPrompt() {
+  if (pushPromptChecking) return;
+  pushPromptChecking = true;
+  const subscribed = await checkPushSubscribed();
+  pushPromptChecking = false;
+  if (subscribed !== null) refreshPushPrompt();
+}
+
+// วาดแถบใหม่ตามสถานะปัจจุบันโดยไม่วาดทั้งหน้า (ใช้หลังกดปุ่ม/ตรวจสถานะเสร็จ)
+function refreshPushPrompt() {
+  const content = document.querySelector("#main-content");
+  if (!content) return;
+  const template = document.createElement("template");
+  template.innerHTML = pushPromptHtml().trim();
+  const next = template.content.firstElementChild;
+  const current = content.querySelector(":scope > #push-prompt");
+  if (current && next) current.replaceWith(next);
+  else if (current) current.remove();
+  else if (next) content.prepend(next);
+}
+
 document.addEventListener("click", async (event) => {
-  const prompt = event.target.closest?.("#push-prompt");
-  if (!prompt) return;
-  if (event.target.closest("[data-push-prompt-later]")) {
-    try {
-      localStorage.setItem(PUSH_PROMPT_SNOOZE_KEY, String(Date.now() + window.MNP_PUSH.PUSH_PROMPT_SNOOZE_MS));
-    } catch {
-      // เก็บไม่ได้ก็ซ่อนไว้จนกว่าจะเปิดหน้าใหม่
-    }
-    prompt.remove();
-    return;
-  }
-  const enable = event.target.closest("[data-push-prompt-enable]");
+  const enable = event.target.closest?.("#push-prompt [data-push-prompt-enable]");
   if (!enable || enable.disabled) return;
   enable.disabled = true;
   enable.textContent = "กำลังเปิด…";
@@ -5443,12 +5459,8 @@ document.addEventListener("click", async (event) => {
     console.error(error);
     showToast(pushErrorMessage(error), "error");
   }
-  // ตอบแล้ว (อนุญาตหรือบล็อก) = เลิกชวน · ปิดหน้าต่างขอสิทธิ์โดยไม่ตอบ (ยัง default) = คงแถบไว้ให้กดใหม่ได้
-  if (!prompt.isConnected) return;
-  if ("Notification" in window && Notification.permission === "default") {
-    enable.disabled = false;
-    enable.textContent = "เปิดแจ้งเตือน";
-  } else prompt.remove();
+  // วาดแถบตามสถานะจริง: สำเร็จ = หายไป · เลือกบล็อก = เปลี่ยนเป็นข้อความวิธีแก้ · ยังไม่ตอบ/ล้มเหลว = ปุ่มกลับมาให้กดใหม่
+  refreshPushPrompt();
 });
 
 async function renderNotifications() {
@@ -5459,12 +5471,10 @@ async function renderNotifications() {
   const content = `
     <div class="page-heading notifications-heading"><div><h1>การแจ้งเตือน</h1></div>${(data ?? []).some((item) => !item.read_at) ? `<button class="btn secondary" id="mark-read">ทำเครื่องหมายว่าอ่านแล้วทั้งหมด</button>` : ""}</div>
     ${PUSH_PUBLIC_KEY ? `<section class="card push-panel" id="push-panel" hidden></section>` : ""}
-    <section class="card push-panel" id="sound-panel" hidden></section>
     <div class="stack" id="notification-list">${(data ?? []).map(notificationItemHtml).join("") || emptyState("ยังไม่มีการแจ้งเตือน", { hint: "เมื่อคำร้องของคุณมีความเคลื่อนไหวจะแจ้งที่นี่" })}</div>`;
   app.innerHTML = shell(content, "notifications", "การแจ้งเตือน");
   bindShell();
   refreshPushPanel();
-  refreshSoundPanel();
   bindNotificationReadOnClick();
   document.querySelector("#mark-read")?.addEventListener("click", async (event) => {
     event.currentTarget.disabled = true;
