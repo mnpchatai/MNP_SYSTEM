@@ -5,6 +5,9 @@ import webpush from "npm:web-push@3.6.7";
 import {
   classifySendError,
   isAllowedPushEndpoint,
+  isPausedAt,
+  PAUSED_ERROR,
+  pauseDigestPayload,
   pushTitle,
   pushUrlFor,
   settleRow,
@@ -22,6 +25,12 @@ import {
 //
 // สิทธิ์: service role key เท่านั้น (ไม่มีผู้ใช้เรียกเอง จึงไม่มี CORS) ตอบเฉพาะตัวเลขสรุป
 // ไม่คืนเนื้อหาแจ้งเตือน endpoint หรือรายชื่อผู้รับกลับไป และไม่ log ค่าเหล่านั้น
+//
+// พักแจ้งเตือน (public.push_pauses, migration 20261210010000_push_pause.sql)
+//   - ผู้รับที่กำลังพัก: ไม่ส่ง ปิดแถวเป็น skipped / PAUSED (อีเมลและกระดิ่งไม่เกี่ยว ทำงานตามปกติ)
+//   - โหมด {"mode":"pause-digest"} (pg_cron เรียกเมื่อมีแถวพักที่หมดเวลา): จองแถวพักที่หมดเวลาแล้วส่ง Push สรุป 1 ครั้ง
+//     ("แจ้งเตือนที่คุณพลาดระหว่างพัก") ถ้ายังมีแจ้งเตือนที่ถูกข้ามและยังไม่อ่าน แล้วลบแถวพัก — ส่งตรงจากที่นี่ ไม่สร้างแถว notifications
+//     (ไม่ซ้ำกับอีเมล ไม่ทำให้ตัวเลขกระดิ่งเพี้ยน) · body ว่าง/mode อื่น = ไล่คิวปกติเหมือนเดิม
 //
 // Secrets: VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY (base64url จาก `npx web-push generate-vapid-keys`), VAPID_SUBJECT (mailto:… หรือ https://…)
 // ยังตั้งไม่ครบ = ตอบ configured=false โดยไม่แตะคิว
@@ -101,6 +110,58 @@ async function sendToSubscription(subscription: Subscription, payload: string): 
   }
 }
 
+// ส่งไปทุกเครื่องของผู้รับพร้อมกัน (สูงสุด 10 เครื่อง) แล้วอัปเดตสถานะเครื่อง: หมดอายุ (404/410) ลบทิ้ง, สำเร็จล้างตัวนับล้ม, ล้มชั่วคราวนับเพิ่ม
+// ใช้ทั้งการไล่คิวปกติและ Push สรุปหลังพัก
+async function deliverToSubscriptions(
+  admin: Admin,
+  subscriptions: Subscription[],
+  payload: string,
+  onRemoved: () => void,
+): Promise<SendOutcome[]> {
+  return await Promise.all(subscriptions.map(async (subscription) => {
+    const result = await sendToSubscription(subscription, payload);
+    if (result.outcome === "gone") {
+      await admin.from("push_subscriptions").delete().eq("id", subscription.id);
+      onRemoved();
+    } else {
+      await admin.from("push_subscriptions").update(
+        result.outcome === "sent"
+          ? { last_success_at: new Date().toISOString(), failure_count: 0 }
+          // นับครั้งที่ล้มเพื่อวินิจฉัย (ไม่ลบเครื่องเพียงเพราะล้มชั่วคราว)
+          : { failure_count: subscription.failure_count + 1 },
+      ).eq("id", subscription.id);
+    }
+    return result;
+  }));
+}
+
+// ส่งหลายรายการพร้อมกันแต่จำกัดจำนวน — ผู้รับต่างคนไม่ต้องรอกัน แต่ไม่ยิง push service ถล่ม
+async function runLimited<T>(items: T[], worker: (item: T) => Promise<void>) {
+  const queue = [...items];
+  await Promise.all(Array.from({ length: Math.min(ROW_CONCURRENCY, queue.length) }, async () => {
+    for (let item = queue.shift(); item; item = queue.shift()) await worker(item);
+  }));
+}
+
+// ผู้รับที่กำลังพักแจ้งเตือน ณ ตอนนี้ (เซตของ employee_id)
+// ตาราง push_pauses ยังไม่มี (deploy ฟังก์ชันก่อน apply migration) = ไม่มีใครพัก ไม่ให้ push ทั้งระบบหยุดเพราะเรื่องนี้
+// ส่วนข้อผิดพลาดอื่นต้อง throw: ถ้าส่งต่อทั้งที่ไม่รู้ว่าใครพัก จะส่ง push หาคนที่ขอพักไว้
+function pausedEmployeeSet(result: { data: unknown; error: { code?: string } | null }): Set<string> {
+  if (result.error) {
+    if (result.error.code === "PGRST205" || result.error.code === "42P01") {
+      console.warn("notify-push: push_pauses table not found, treating nobody as paused");
+      return new Set();
+    }
+    throw new Error("LOOKUP_FAILED");
+  }
+  const nowMs = Date.now();
+  return new Set(
+    ((result.data ?? []) as { employee_id: string; paused_until: string }[])
+      .filter((item) => isPausedAt(item.paused_until, nowMs))
+      .map((item) => item.employee_id),
+  );
+}
+
 async function loadRequestNumbers(admin: Admin, rows: ClaimedRow[]) {
   const ids = [...new Set(rows.map((row) => row.request_id).filter((id): id is string => Boolean(id)))];
   const numbers = new Map<string, string>();
@@ -125,12 +186,15 @@ async function drainQueue(admin: Admin) {
   if (!rows.length) return summary;
 
   const recipientIds = [...new Set(rows.map((row) => row.recipient_id))];
-  const [requestNumbers, employeesResult, subscriptionsResult] = await Promise.all([
+  const [requestNumbers, employeesResult, subscriptionsResult, pausesResult] = await Promise.all([
     loadRequestNumbers(admin, rows),
     admin.from("employees").select("id, is_active").in("id", recipientIds),
     admin.from("push_subscriptions").select("id, employee_id, endpoint, p256dh, auth, failure_count").in("employee_id", recipientIds),
+    // คิวรีเดียวต่อรอบ (ไม่ใช่ต่อแถว) · ใช้ดัชนี primary key ของ employee_id
+    admin.from("push_pauses").select("employee_id, paused_until").in("employee_id", recipientIds).gt("paused_until", new Date().toISOString()),
   ]);
   if (employeesResult.error || subscriptionsResult.error) throw new Error("LOOKUP_FAILED");
+  const pausedEmployees = pausedEmployeeSet(pausesResult);
 
   const activeEmployees = new Set(
     ((employeesResult.data ?? []) as { id: string; is_active: boolean }[]).filter((item) => item.is_active).map((item) => item.id),
@@ -166,6 +230,9 @@ async function drainQueue(admin: Admin) {
       if (!activeEmployees.has(row.recipient_id)) return await settle(row, "skipped", "RECIPIENT_INACTIVE");
       const subscriptions = subscriptionsByEmployee.get(row.recipient_id) ?? [];
       if (!subscriptions.length) return await settle(row, "skipped", "NO_SUBSCRIPTION");
+      // พักแจ้งเตือนอยู่ = ไม่ส่งทุกเครื่อง · ตรวจหลัง NO_SUBSCRIPTION: คนที่ไม่มีเครื่องรับอยู่แล้วไม่นับเป็น "แจ้งเตือนที่พลาด"
+      // (ไม่ลองซ้ำ ไม่กลับเป็น pending — ตอนครบเวลาฐานข้อมูลนับแถว PAUSED ที่ยังไม่อ่านไปส่ง Push สรุปให้แทน)
+      if (pausedEmployees.has(row.recipient_id)) return await settle(row, "skipped", PAUSED_ERROR);
 
       const payload = JSON.stringify({
         title: pushTitle(row.title, row.request_id ? requestNumbers.get(row.request_id) : null),
@@ -174,22 +241,8 @@ async function drainQueue(admin: Admin) {
         tag: `n-${row.id}`,
       });
 
-      // ส่งทุกเครื่องของผู้รับพร้อมกัน (สูงสุด 10 เครื่อง) เพื่อให้เวลาต่อแถวไม่เกินเวลา timeout ของการส่งหนึ่งครั้ง
-      const results: SendOutcome[] = await Promise.all(subscriptions.map(async (subscription) => {
-        const result = await sendToSubscription(subscription, payload);
-        if (result.outcome === "gone") {
-          await admin.from("push_subscriptions").delete().eq("id", subscription.id);
-          summary.removedSubscriptions++;
-        } else {
-          await admin.from("push_subscriptions").update(
-            result.outcome === "sent"
-              ? { last_success_at: new Date().toISOString(), failure_count: 0 }
-              // นับครั้งที่ล้มเพื่อวินิจฉัย (ไม่ลบเครื่องเพียงเพราะล้มชั่วคราว)
-              : { failure_count: subscription.failure_count + 1 },
-          ).eq("id", subscription.id);
-        }
-        return result;
-      }));
+      // ส่งทุกเครื่องของผู้รับพร้อมกัน เพื่อให้เวลาต่อแถวไม่เกินเวลา timeout ของการส่งหนึ่งครั้ง
+      const results = await deliverToSubscriptions(admin, subscriptions, payload, () => summary.removedSubscriptions++);
       const settlement = settleRow(results, row.push_attempts, MAX_ATTEMPTS);
       await settle(row, settlement.status, settlement.error);
     } catch {
@@ -199,11 +252,60 @@ async function drainQueue(admin: Admin) {
     }
   };
 
-  // ส่งหลายแถวพร้อมกันแต่จำกัดจำนวน — ผู้รับต่างคนไม่ต้องรอกัน แต่ไม่ยิง push service ถล่ม
-  const queue = [...rows];
-  await Promise.all(Array.from({ length: Math.min(ROW_CONCURRENCY, queue.length) }, async () => {
-    for (let row = queue.shift(); row; row = queue.shift()) await handle(row);
-  }));
+  await runLimited(rows, handle);
+  return summary;
+}
+
+type DigestRow = { employee_id: string; missed_count: number; digest_attempts: number; digest_claim_id: string };
+
+// Push สรุปหลังครบเวลาพัก: ฐานข้อมูลจองเฉพาะแถวพักที่หมดเวลาและยังมีแจ้งเตือนที่ถูกข้ามและยังไม่อ่าน (missed_count > 0)
+//   สำเร็จเครื่องใดเครื่องหนึ่ง / ไม่มีเครื่องรับ / เครื่องหมดอายุหมด = ลบแถวพัก (จบ)
+//   ล้มชั่วคราว = คงแถวไว้ ฐานข้อมูลจองซ้ำได้หลังหมดเวลาเช่า 10 นาที จนครบ 3 ครั้งแล้วเลิก (ลบแถว)
+// ลบเฉพาะเมื่อ digest_claim_id ยังตรงกับการจองครั้งนี้ — ถ้าพนักงานกดพักใหม่ระหว่างส่ง แถวใหม่ต้องไม่ถูกลบ
+async function drainPauseDigests(admin: Admin) {
+  const { data, error } = await admin.rpc("app_claim_push_pause_digests", { p_limit: BATCH_LIMIT });
+  if (error) throw new Error("DIGEST_CLAIM_FAILED");
+  const rows = (data ?? []) as DigestRow[];
+  const summary = { claimed: rows.length, sent: 0, skipped: 0, retry: 0, failed: 0, removedSubscriptions: 0 };
+  if (!rows.length) return summary;
+
+  const subscriptionsResult = await admin.from("push_subscriptions")
+    .select("id, employee_id, endpoint, p256dh, auth, failure_count")
+    .in("employee_id", rows.map((row) => row.employee_id));
+  if (subscriptionsResult.error) throw new Error("LOOKUP_FAILED");
+  const subscriptionsByEmployee = new Map<string, Subscription[]>();
+  for (const item of (subscriptionsResult.data ?? []) as Subscription[]) {
+    const list = subscriptionsByEmployee.get(item.employee_id) ?? [];
+    list.push(item);
+    subscriptionsByEmployee.set(item.employee_id, list);
+  }
+
+  const handle = async (row: DigestRow) => {
+    try {
+      const subscriptions = subscriptionsByEmployee.get(row.employee_id) ?? [];
+      const payload = JSON.stringify(pauseDigestPayload(row.employee_id, row.missed_count));
+      const results = subscriptions.length
+        ? await deliverToSubscriptions(admin, subscriptions, payload, () => summary.removedSubscriptions++)
+        : [];
+      // ไม่มีเครื่องรับเลย = skipped (ผล "ไม่มีที่ให้ส่ง") ลบแถวพักได้เลย
+      const settlement = settleRow(results, row.digest_attempts, MAX_ATTEMPTS);
+      if (settlement.status === "pending") {
+        summary.retry++;
+        return;
+      }
+      const { error: deleteError } = await admin.from("push_pauses").delete()
+        .eq("employee_id", row.employee_id).eq("digest_claim_id", row.digest_claim_id);
+      // ลบไม่สำเร็จ = แถวค้างและถูกจองซ้ำหลังหมดเวลาเช่า (อาจส่งสรุปซ้ำหนึ่งครั้ง ดีกว่าไม่ส่ง; tag เดิมทับกันบนหน้าจอ)
+      if (deleteError) console.error("notify-push: pause digest cleanup failed");
+      summary[settlement.status]++;
+    } catch {
+      // ข้อผิดพลาดที่ไม่คาดคิด: คงแถวไว้ให้จองซ้ำ ไม่ log เนื้อหา
+      console.error("notify-push: pause digest unexpected error");
+      summary.retry++;
+    }
+  };
+
+  await runLimited(rows, handle);
   return summary;
 }
 
@@ -220,8 +322,14 @@ Deno.serve(async (request) => {
   // ยังไม่ตั้งกุญแจ VAPID = ไม่ใช่ความผิดของแถวไหน ไม่จองและไม่แตะคิว
   if (!configureVapid()) return reply({ ok: true, configured: false });
 
+  // pg_cron ส่ง {} (ไล่คิวปกติ) หรือ {"mode":"pause-digest"} (ส่ง Push สรุปหลังครบเวลาพัก) · body อ่านไม่ได้ = ไล่คิวปกติ
+  const body = await request.json().catch(() => ({})) as { mode?: unknown } | null;
+  const mode = body && typeof body === "object" ? body.mode : undefined;
+  if (mode !== undefined && mode !== "pause-digest") return reply({ error: "UNKNOWN_MODE" }, 400);
+
   try {
-    const result = await drainQueue(createClient(supabaseUrl, serviceKey));
+    const admin = createClient(supabaseUrl, serviceKey);
+    const result = mode === "pause-digest" ? await drainPauseDigests(admin) : await drainQueue(admin);
     return reply({ ok: true, configured: true, ...result });
   } catch (processError) {
     console.error("notify-push: failed", { reason: processError instanceof Error ? processError.message : "UNKNOWN" });

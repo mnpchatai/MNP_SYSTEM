@@ -87,3 +87,43 @@ test("a notification is sent when any device accepts it, retried on transient fa
   assert.deepEqual(settleRow([gone, transient], 3, 3), { status: "failed", error: "HTTP_503" });
   assert.deepEqual(settleRow([gone, gone], 1, 3), { status: "skipped", error: "SUBSCRIPTIONS_EXPIRED" });
 });
+
+test("pause digest push: fixed Thai wording, count only, goes to the notifications page, one tag per employee", () => {
+  const payload = plain(exports.pauseDigestPayload("emp-1", 3));
+  assert.deepEqual(payload, {
+    title: "แจ้งเตือนที่คุณพลาดระหว่างพัก",
+    body: "คุณมี 3 แจ้งเตือนที่ยังไม่ได้อ่าน",
+    url: "#/notifications",
+    tag: "pause-digest-emp-1",
+  });
+  assert.ok(payload.url.startsWith("#/"), "relative hash route like every other push");
+  assert.equal(plain(exports.pauseDigestPayload("emp-1", 12.9)).body, "คุณมี 12 แจ้งเตือนที่ยังไม่ได้อ่าน");
+  assert.equal(plain(exports.pauseDigestPayload("emp-1", Number.NaN)).body, "คุณมี 0 แจ้งเตือนที่ยังไม่ได้อ่าน");
+  assert.equal(plain(exports.pauseDigestPayload("emp-1", -4)).body, "คุณมี 0 แจ้งเตือนที่ยังไม่ได้อ่าน");
+  assert.notEqual(exports.pauseDigestPayload("emp-1", 1).tag, exports.pauseDigestPayload("emp-2", 1).tag);
+});
+
+test("a recipient counts as paused only while paused_until is in the future", () => {
+  const now = Date.parse("2026-11-22T10:00:00Z");
+  assert.equal(exports.isPausedAt("2026-11-23T00:00:00+00:00", now), true);
+  assert.equal(exports.isPausedAt("2026-11-22T10:00:00Z", now), false, "ends exactly now: not paused");
+  assert.equal(exports.isPausedAt("2026-11-22T09:59:59Z", now), false);
+  assert.equal(exports.isPausedAt(null, now), false);
+  assert.equal(exports.isPausedAt(undefined, now), false);
+  assert.equal(exports.isPausedAt("not a date", now), false);
+  assert.equal(exports.PAUSED_ERROR, "PAUSED");
+});
+
+// ผูกโค้ดของ Edge Function กับ SQL: รหัส PAUSED เดียวกับที่ฐานข้อมูลใช้นับ "แจ้งเตือนที่พลาด" และลำดับการตรวจในตัวส่ง
+test("notify-push wiring: PAUSED code matches the migration, checked after NO_SUBSCRIPTION, digest mode is opt-in", () => {
+  const index = readFileSync(new URL("../../supabase/functions/notify-push/index.ts", import.meta.url), "utf8");
+  const migration = readFileSync(new URL("../../supabase/migrations/20261210010000_push_pause.sql", import.meta.url), "utf8");
+  assert.match(migration, /n\.push_error = 'PAUSED'/);
+  const noSubscription = index.indexOf('"NO_SUBSCRIPTION"');
+  const paused = index.indexOf("settle(row, \"skipped\", PAUSED_ERROR)");
+  const send = index.indexOf("deliverToSubscriptions(admin, subscriptions, payload");
+  assert.ok(noSubscription > 0 && paused > noSubscription && send > paused, "paused recipients are skipped before any device is called");
+  assert.match(index, /mode === "pause-digest" \? await drainPauseDigests\(admin\) : await drainQueue\(admin\)/);
+  assert.match(index, /app_claim_push_pause_digests/);
+  assert.match(migration, /body := '\{"mode":"pause-digest"\}'/);
+});

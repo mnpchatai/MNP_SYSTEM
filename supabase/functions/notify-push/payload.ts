@@ -89,6 +89,33 @@ export function classifySendError(error: unknown): SendOutcome {
   return { outcome: "transient", code: "SEND_ERROR" };
 }
 
+// ---------- พักแจ้งเตือน (migration 20261210010000_push_pause.sql) ----------
+// ผู้รับที่กดพักไว้ (public.push_pauses) ไม่ได้ Web Push: แถวถูกปิดเป็น skipped ด้วยรหัสนี้ เพื่อให้ฐานข้อมูลนับ "แจ้งเตือนที่พลาด"
+// ได้ตอนครบเวลา (private.push_pause_missed_count ใช้ค่าเดียวกัน — แก้ที่หนึ่งต้องแก้อีกที่)
+export const PAUSED_ERROR = "PAUSED";
+
+// Push สรุปตอนครบเวลาพัก: ส่งตรงจาก Edge Function ไม่มีแถวใน notifications (ไม่ซ้ำกับอีเมล และไม่เพิ่มตัวเลขกระดิ่งที่ยังไม่อ่าน)
+// body เป็นข้อความตัวเลขล้วน ไม่มีรายละเอียดของเอกสาร · url พาไปหน้าการแจ้งเตือน (hash route สัมพัทธ์เหมือน pushUrlFor)
+// tag ผูกกับพนักงาน: ถ้าถูกส่งซ้ำ (รอบก่อนล้มหลังส่ง) ขึ้นบนหน้าจอทับอันเดิม ไม่เป็นสองอัน
+export type PauseDigestPayload = { title: string; body: string; url: string; tag: string };
+
+export function pauseDigestPayload(employeeId: string, missedCount: number): PauseDigestPayload {
+  const count = Number.isFinite(missedCount) ? Math.max(0, Math.trunc(missedCount)) : 0;
+  return {
+    title: "แจ้งเตือนที่คุณพลาดระหว่างพัก",
+    body: `คุณมี ${count} แจ้งเตือนที่ยังไม่ได้อ่าน`,
+    url: "#/notifications",
+    tag: `pause-digest-${employeeId}`,
+  };
+}
+
+// ผู้รับที่ยังพักอยู่ ณ ตอนส่ง? (pausedUntil มาจาก push_pauses.paused_until เป็น ISO) ไม่มีแถว/อ่านค่าไม่ได้ = ไม่ได้พัก
+export function isPausedAt(pausedUntil: string | null | undefined, nowMs: number): boolean {
+  if (!pausedUntil) return false;
+  const until = Date.parse(pausedUntil);
+  return Number.isFinite(until) && until > nowMs;
+}
+
 export type RowSettlement = { status: "sent" | "skipped" | "pending" | "failed"; error: string | null };
 
 // สรุปผลของแถวแจ้งเตือนหนึ่งแถวจากผลของทุกเครื่องของผู้รับ
