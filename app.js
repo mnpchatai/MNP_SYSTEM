@@ -2107,7 +2107,8 @@ async function loadUnread({ announce = true } = {}) {
   if (!state.employee || isLabOnly()) return 0;
   const owner = state.employee.id;
   // เล่นเสียงเมื่อตัวเลขเพิ่มจากครั้งก่อนของบัญชีเดียวกันเท่านั้น (ครั้งแรก/ตัวเลขลด/โหลดไม่สำเร็จไม่เล่น) — โหมดทดสอบไม่เล่น
-  const observe = (count) => notifySound.observeUnread(owner, count, { announce: announce && !isSandboxMode() });
+  // ระหว่างพักแจ้งเตือนไม่เล่นเสียง (ตัวเลขกระดิ่งยังอัปเดตและจำเป็นค่าอ้างอิงตามปกติ ครบเวลาพักแล้วของใหม่จึงดังเมื่อเพิ่มจากค่านี้)
+  const observe = (count) => notifySound.observeUnread(owner, count, { announce: announce && !isSandboxMode() && !isPushPaused() });
   if (isDeptRestricted()) {
     // นับหลังกรอง ตัวเลขบนเมนูจึงตรงกับรายการที่หน้าการแจ้งเตือนแสดง
     try {
@@ -4989,7 +4990,9 @@ function notificationItemHtml(item) {
 }
 
 // ---------- แจ้งเตือนบนเครื่อง (Web Push) ----------
-// ผู้ใช้เปิดเองต่อเครื่องจากแผงบนหน้าการแจ้งเตือน เครื่องที่เปิดไว้ถูกบันทึกในฐานข้อมูลผ่าน RPC (ตาราง push_subscriptions
+// เปิดต่อเครื่อง: ขอสิทธิ์ได้เฉพาะตอนผู้ใช้กดปุ่มเอง (แผงบนหน้าการแจ้งเตือนหรือแถบชวนเปิด) แต่เครื่องที่อนุญาตแล้วจะถูกผูกกับบัญชีที่
+// ล็อกอินให้อัตโนมัติ (resyncPushSubscription) · ผู้ใช้ปิดรายเครื่องเองไม่ได้ มีแต่ "พักแจ้งเตือน" ทั้งคนถึง 07:00 น. ของวันถัดไป
+// เครื่องที่เปิดไว้ถูกบันทึกในฐานข้อมูลผ่าน RPC (ตาราง push_subscriptions
 // ไม่เปิดให้หน้าเว็บอ่านตรง) แล้ว Edge Function notify-push ส่งทุกแถวที่เข้าระฆังไปยังเครื่องเหล่านั้น
 // กติกาตัดสินสถานะของแผงอยู่ใน modules/push-notifications.js (ทดสอบแล้ว) ที่นี่เป็นส่วนที่แตะเบราว์เซอร์/Supabase
 function pushEnvironment() {
@@ -5096,14 +5099,85 @@ async function enablePush() {
   return permission;
 }
 
-async function disablePush() {
+// ---------- พักแจ้งเตือน ----------
+// พัก Web Push ของ "พนักงานทั้งคน" (ทุกเครื่อง) ถึง 07:00 น. เวลาไทยของวันถัดไป — ฐานข้อมูลเป็นเจ้าของสถานะและเวลาสิ้นสุด
+// (app_push_pause / app_push_resume / app_push_pause_status) หน้านี้แค่จำผลไว้ต่อบัญชีเพื่อ 3 อย่าง: แสดงปุ่มในหน้าการแจ้งเตือน,
+// ซ่อนแถบชวนเปิดแจ้งเตือน, และ "ไม่เล่นเสียงของบริษัท" ระหว่างพัก (ตัวเลขกระดิ่งยังอัปเดตตามปกติ อีเมล/รายการในหน้าไม่ถูกพัก)
+// ความถี่ที่ถามฐานข้อมูล: 1 ครั้งหลังล็อกอิน/โหลดหน้า + ทุกครั้งที่เปิดหน้าการแจ้งเตือน + ไม่เกินทุก 15 นาทีเมื่อกลับมาเห็นหน้า
+// (เผื่อพัก/เปิดต่อจากเครื่องอื่น) ไม่ถามตามรอบ 60 วินาทีของเสียง · cache หมดอายุเองเมื่อเลยเวลาสิ้นสุด ไม่ต้องรอถามใหม่
+// ฐานข้อมูลที่ยังไม่มีฟังก์ชันเหล่านี้ (หน้าเว็บขึ้นก่อน migration) = ซ่อนปุ่ม ถือว่าไม่ได้พัก ไม่ error
+const PUSH_PAUSE_RELOAD_MS = 15 * 60 * 1000;
+// until = เวลาสิ้นสุด (ms) หรือ null = ไม่ได้พัก · seq นับการจดค่า ให้คำตอบที่ค้างอยู่รู้ว่ามีค่าใหม่กว่าแล้ว (เช่นเพิ่งกดพัก/เปิดต่อ)
+let pushPauseCache = { owner: null, until: null, seq: 0 };
+let pushPauseSupported = true;
+let pushPauseTried = { owner: null, at: 0 };
+
+// เวลาสิ้นสุดการพักถ้ายังพักอยู่ตอนนี้ ไม่งั้น null (หมดเวลาแล้ว/ของบัญชีอื่น/ไม่เคยพัก)
+function activePushPauseUntil(now = Date.now()) {
+  const { owner, until } = pushPauseCache;
+  return owner === (state.employee?.id ?? null) && typeof until === "number" && until > now ? until : null;
+}
+const isPushPaused = () => activePushPauseUntil() !== null;
+
+// owner = บัญชีที่เป็นเจ้าของผล (จับก่อน await) · สลับบัญชีระหว่างรอ = ทิ้งผล เหมือน setPushSubscribed
+function setPushPause(until, owner = state.employee?.id ?? null) {
+  if (owner !== (state.employee?.id ?? null)) return;
+  pushPauseCache = { owner, until, seq: pushPauseCache.seq + 1 };
+}
+
+// ถามสถานะพักจากฐานข้อมูล แล้วจำไว้ · คืนเวลาสิ้นสุด (ms) หรือ null · ไม่โยน error (ล้มก็ถือว่าไม่รู้ ใช้ค่าที่จำไว้)
+async function loadPushPause() {
+  if (!state.employee || !PUSH_PUBLIC_KEY || !pushPauseSupported || isLabOnly()) return activePushPauseUntil();
+  const owner = state.employee.id;
+  const seqAtStart = pushPauseCache.seq;
+  pushPauseTried = { owner, at: Date.now() };
+  try {
+    const { data, error } = await sb.rpc("app_push_pause_status");
+    if (error) throw error;
+    // สลับบัญชี หรือมีการกดพัก/เปิดต่อระหว่างรอ = คำตอบนี้เก่าแล้ว ไม่ทับ
+    if (owner !== (state.employee?.id ?? null) || pushPauseCache.seq !== seqAtStart) return activePushPauseUntil();
+    const until = typeof data === "string" ? Date.parse(data) : Number.NaN;
+    setPushPause(Number.isFinite(until) ? until : null, owner);
+  } catch (error) {
+    if (window.MNP_PUSH.isMissingFunctionError(error)) pushPauseSupported = false;
+    else console.warn("ตรวจสถานะพักแจ้งเตือนไม่สำเร็จ", error);
+  }
+  return activePushPauseUntil();
+}
+
+// โหลดสถานะพักแบบไม่รอ (หลังล็อกอิน/กลับมาเห็นหน้า) แล้ววาดแถบชวนเปิดใหม่เฉพาะเมื่อสถานะเปลี่ยน
+async function syncPushPause() {
+  const before = isPushPaused();
+  await loadPushPause();
+  if (before !== isPushPaused()) refreshPushPrompt();
+}
+
+// กลับมาเห็นหน้า: ถามใหม่ก็ต่อเมื่อครั้งล่าสุดนานเกิน 15 นาที (หลับเครื่อง/พักจากเครื่องอื่น)
+function syncPushPauseIfStale() {
+  if (document.visibilityState !== "visible" || !state.employee || pushPauseTried.owner !== state.employee.id) return;
+  if (Date.now() - pushPauseTried.at >= PUSH_PAUSE_RELOAD_MS) syncPushPause();
+}
+
+async function pausePush() {
   const owner = state.employee?.id ?? null;
-  const subscription = await currentPushSubscription();
-  if (!subscription) return;
-  const { error } = await sb.rpc("app_delete_push_subscription", { p_endpoint: subscription.endpoint });
-  if (error) throw error;
-  await subscription.unsubscribe();
-  setPushSubscribed(false, owner);
+  const { data, error } = await sb.rpc("app_push_pause");
+  if (error) {
+    if (window.MNP_PUSH.isMissingFunctionError(error)) pushPauseSupported = false; // ฐานข้อมูลยังไม่มีฟังก์ชัน → ปุ่มหาย
+    throw error;
+  }
+  const until = typeof data === "string" ? Date.parse(data) : Number.NaN;
+  if (!Number.isFinite(until)) throw new Error("PUSH_PAUSE_INVALID_RESPONSE");
+  setPushPause(until, owner);
+}
+
+async function resumePush() {
+  const owner = state.employee?.id ?? null;
+  const { error } = await sb.rpc("app_push_resume");
+  if (error) {
+    if (window.MNP_PUSH.isMissingFunctionError(error)) pushPauseSupported = false; // ฐานข้อมูลยังไม่มีฟังก์ชัน → ปุ่มหาย
+    throw error;
+  }
+  setPushPause(null, owner);
 }
 
 // เปิดแอปทุกครั้ง (หนึ่งครั้งต่อบัญชีต่อการโหลดหน้า/การล็อกอิน): ถ้าเบราว์เซอร์อนุญาตการแจ้งเตือนของเว็บนี้อยู่แล้ว
@@ -5177,46 +5251,53 @@ function pushNotice(pushState, ios) {
   }[pushState];
 }
 
-function pushPanelBodyHtml(pushState, ios) {
+// pausedUntil = เวลาสิ้นสุดการพัก (ms) ถ้ากำลังพักอยู่ · canPause = ฐานข้อมูลมีฟังก์ชันพักแล้ว (ยังไม่มี = ไม่แสดงปุ่ม)
+// การพักเป็นของทั้งคน จึงแสดงสถานะ/ปุ่ม "เปิดแจ้งเตือนต่อ" ได้แม้เครื่องนี้ยังไม่ได้เปิดรับแจ้งเตือน (ยกเว้นโหมดทดสอบที่พักไม่ได้)
+function pushPanelBodyHtml(pushState, ios, { pausedUntil = null, canPause = false } = {}) {
+  if (pausedUntil !== null && pushState !== "sandbox") {
+    return `<div class="push-panel-text"><strong>แจ้งเตือนบนหน้าจอ <span class="badge">พักอยู่ถึง ${escapeHtml(formatDate(pausedUntil, true))} น.</span></strong><span>ระหว่างพักจะไม่มีแจ้งเตือนเด้งบนทุกเครื่องของคุณ อีเมลและรายการในหน้านี้ยังมาตามปกติ ระบบจะเปิดให้เองเวลา 07:00 น.</span></div><button class="btn" type="button" data-push-resume>เปิดแจ้งเตือนต่อ</button>`;
+  }
   const notice = pushNotice(pushState, ios);
-  // หัวข้อไม่ซ้ำกับข้อความบนปุ่ม ("เปิดการแจ้งเตือนบนเครื่องนี้" / "ปิดบนเครื่องนี้") สถานะบอกด้วยป้าย
+  // หัวข้อไม่ซ้ำกับข้อความบนปุ่ม ("เปิดการแจ้งเตือนบนเครื่องนี้") สถานะบอกด้วยป้าย
   const badge = pushState === "on" ? ` <span class="badge">เปิดอยู่</span>` : pushState === "off" ? ` <span class="badge">ปิดอยู่</span>` : "";
   const text = `<div class="push-panel-text"><strong>แจ้งเตือนบนหน้าจอ${badge}</strong>${notice ? `<span>${notice}</span>` : ""}</div>`;
   if (pushState === "off") return `${text}<button class="btn" type="button" data-push-enable title="รับแจ้งเตือนที่หน้าจอเครื่องนี้ แม้ไม่ได้เปิดแอป">เปิดการแจ้งเตือนบนเครื่องนี้</button>`;
-  if (pushState === "on") return `${text}<button class="btn secondary" type="button" data-push-disable>ปิดบนเครื่องนี้</button>`;
+  if (pushState === "on" && canPause) return `${text}<button class="btn secondary" type="button" data-push-pause title="ไม่มีแจ้งเตือนเด้งบนทุกเครื่องของคุณจนถึง 07:00 น. ของพรุ่งนี้ (อีเมลและรายการในหน้านี้ยังมาตามปกติ)">พักแจ้งเตือนถึง 07:00 น. พรุ่งนี้</button>`;
   return text;
 }
 
-function pushErrorMessage(error) {
+function pushErrorMessage(error, fallback = "เปิดการแจ้งเตือนบนเครื่องนี้ไม่สำเร็จ กรุณาลองอีกครั้ง") {
   // ข้อผิดพลาดจากฐานข้อมูล (มีรหัสเป็นข้อความ) แปลงด้วยตารางกลาง ส่วนข้อผิดพลาดของเบราว์เซอร์/push service ใช้ข้อความรวม
   if (/SANDBOX_MODULE_UNSUPPORTED/.test(String(error?.message))) return "ตั้งค่าการแจ้งเตือนบนเครื่องไม่ได้ขณะอยู่ในโหมดทดสอบ";
   if (error?.message === "SERVICE_WORKER_NOT_READY") return "ระบบแจ้งเตือนของเครื่องนี้ยังไม่พร้อม กรุณาโหลดหน้านี้ใหม่แล้วลองอีกครั้ง";
-  return typeof error?.code === "string" ? friendlyError(error) : "เปิดการแจ้งเตือนบนเครื่องนี้ไม่สำเร็จ กรุณาลองอีกครั้ง";
+  return typeof error?.code === "string" ? friendlyError(error) : fallback;
 }
 
-async function refreshPushPanel() {
+// reloadPause: false = ไม่ถามสถานะพักซ้ำ (หลังกดปุ่มเรารู้ค่าใหม่จากผลของ RPC แล้ว)
+async function refreshPushPanel({ reloadPause = true } = {}) {
   const panel = document.querySelector("#push-panel");
   if (!panel) return;
-  const pushState = await loadPushState();
+  const [pushState] = await Promise.all([loadPushState(), reloadPause ? loadPushPause() : null]);
   if (!panel.isConnected || pushState === "hidden") return;
-  panel.innerHTML = pushPanelBodyHtml(pushState, pushEnvironment().ios);
+  panel.innerHTML = pushPanelBodyHtml(pushState, pushEnvironment().ios, { pausedUntil: activePushPauseUntil(), canPause: pushPauseSupported });
   panel.hidden = false;
-  const run = async (button, busyLabel, action) => {
+  const run = async (button, busyLabel, action, failure) => {
     button.disabled = true;
     button.textContent = busyLabel;
     try {
       await action();
     } catch (error) {
       console.error(error);
-      showToast(pushErrorMessage(error), "error");
+      showToast(pushErrorMessage(error, failure), "error");
     }
-    await refreshPushPanel();
+    await refreshPushPanel({ reloadPause: false });
   };
   panel.querySelector("[data-push-enable]")?.addEventListener("click", (event) => run(event.currentTarget, "กำลังเปิด…", async () => {
     // กดแล้วไม่อนุญาต/ปิดหน้าต่างขอสิทธิ์ ไม่ใช่ข้อผิดพลาด แผงจะกลับไปสถานะเดิม (หรือ "ถูกบล็อก" ถ้าเลือกไม่อนุญาต)
     if ((await enablePush()) === "default") showToast("ยังไม่ได้อนุญาตการแจ้งเตือน", "error");
   }));
-  panel.querySelector("[data-push-disable]")?.addEventListener("click", (event) => run(event.currentTarget, "กำลังปิด…", disablePush));
+  panel.querySelector("[data-push-pause]")?.addEventListener("click", (event) => run(event.currentTarget, "กำลังพัก…", pausePush, "พักแจ้งเตือนไม่สำเร็จ กรุณาลองอีกครั้ง"));
+  panel.querySelector("[data-push-resume]")?.addEventListener("click", (event) => run(event.currentTarget, "กำลังเปิด…", resumePush, "เปิดแจ้งเตือนต่อไม่สำเร็จ กรุณาลองอีกครั้ง"));
 }
 
 // ---------- เสียงแจ้งเตือนของบริษัทตอนเปิดแอปอยู่ ----------
@@ -5272,7 +5353,11 @@ async function pollUnreadForSound() {
 
 // ข้อความจาก sw.js ตอนมี push เข้า · replyPort มีเฉพาะเมื่อหน้านี้มองเห็น+โฟกัสอยู่ (sw.js กำลังรอคำตอบว่าจะเล่นเสียงเองไหม)
 async function onNotificationPushMessage(message, replyPort) {
-  const canPlay = Boolean(state.employee) && !isLabOnly() && !isSandboxMode() && notifySound.canHandle();
+  // Push สรุปหลังครบเวลาพัก (tag pause-digest-…): เซิร์ฟเวอร์ถือว่าหมดพักแล้วเสมอ แม้นาฬิกาเครื่องนี้ช้ากว่าเล็กน้อยจน cache ยังเห็นว่าพักอยู่
+  // ต้องล้างก่อนตัดสินเรื่องเสียง ไม่งั้นสรุปที่มาตอน 07:00 พอดีจะเงียบ · ส่วนที่เหลือเดินตามกติกาปกติ (ตัวเลขใหม่ + เสียงของบริษัท)
+  if (typeof message?.tag === "string" && message.tag.startsWith("pause-digest-")) setPushPause(null);
+  // กำลังพัก: ตอบ sw.js ว่าไม่เล่นเสียง (แจ้งเตือนที่หลุดมาจะไม่ถูกทำเป็น silent) และไม่เล่นเสียงของบริษัท
+  const canPlay = Boolean(state.employee) && !isLabOnly() && !isSandboxMode() && notifySound.canHandle() && !isPushPaused();
   // ตอบก่อนอย่างอื่น: sw.js รอไม่เกิน 1 วินาทีก่อนแสดงแจ้งเตือน · ตอบ true = แจ้งเตือนบนหน้าจอจะไม่มีเสียงของระบบ เราต้องเล่นเสียงให้
   try {
     replyPort?.postMessage({ willPlaySound: canPlay });
@@ -5316,6 +5401,7 @@ function startNotificationSound() {
   armSoundUnlock();
   setInterval(pollUnreadForSound, window.MNP_NOTIFY_SOUND.SOUND_POLL_MS);
   document.addEventListener("visibilitychange", pollUnreadForSound);
+  document.addEventListener("visibilitychange", syncPushPauseIfStale);
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.addEventListener("message", (event) => {
       if (event.data?.type === "mnp-notification") onNotificationPushMessage(event.data, event.ports?.[0]);
@@ -5449,7 +5535,7 @@ function pushPromptHtml() {
   if (pushAutoSubscribingFor === state.employee.id) return "";
   const environment = pushEnvironment();
   const subscribed = pushSubscribedCache.owner === state.employee.id ? pushSubscribedCache.value : null;
-  const kind = window.MNP_PUSH.pushPromptKind({ ...environment, subscribed, hidden: pushPromptHiddenNow() });
+  const kind = window.MNP_PUSH.pushPromptKind({ ...environment, subscribed, hidden: pushPromptHiddenNow(), paused: isPushPaused() });
   if (kind === "pending") {
     verifyPushPrompt();
     return "";
@@ -6425,6 +6511,7 @@ async function renderRoute() {
   if (pushResyncedFor !== state.employee.id) {
     pushResyncedFor = state.employee.id;
     resyncPushSubscription();
+    syncPushPause(); // ไม่รอ: ถามสถานะพักหนึ่งครั้งต่อการล็อกอิน/โหลดหน้า
   }
   // ตรวจไฟล์เสียงแจ้งเตือนหนึ่งครั้งต่อบัญชีต่อการโหลดหน้า (ไม่มีไฟล์ = เงียบ) · โหมดทดสอบ/lab-only ไม่มีแจ้งเตือนจึงไม่ตรวจ
   if (soundProbedFor !== state.employee.id) {

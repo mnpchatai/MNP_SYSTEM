@@ -146,7 +146,7 @@ test("only unread notifications carry the id that the click handler uses", () =>
 });
 
 // แถบในหน้าจริง: ใช้ MNP_PUSH ตัวจริง ส่วน app.js ตัดฟังก์ชันมารันแยก
-function buildPrompt({ sandbox = false, labOnly = false, path = "dashboard", environment = {}, cache = { owner: null, value: null }, storage = null, now = Date.parse("2026-11-21T08:00:00Z") } = {}) {
+function buildPrompt({ sandbox = false, labOnly = false, path = "dashboard", environment = {}, cache = { owner: null, value: null }, storage = null, now = Date.parse("2026-11-21T08:00:00Z"), paused = false } = {}) {
   const checks = [];
   const store = storage ?? new Map();
   const context = vm.createContext({
@@ -154,7 +154,7 @@ function buildPrompt({ sandbox = false, labOnly = false, path = "dashboard", env
     pushEnvironment: () => ({ ...ready, permission: "default", ios: false, standalone: false, ...environment }),
     pushSubscribedCache: cache, verifyPushPrompt: () => checks.push("check"), window: { MNP_PUSH: require("../../modules/push-notifications.js") },
     localStorage: { getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, String(value)) },
-    Date: { now: () => now }, String, pushAutoSubscribingFor: null,
+    Date: { now: () => now }, String, pushAutoSubscribingFor: null, isPushPaused: () => paused,
   });
   vm.runInContext(extractFunction("function pushNotice("), context);
   vm.runInContext(appSource.slice(appSource.indexOf("const PUSH_PROMPT_HIDDEN_KEY"), appSource.indexOf("function pushPromptHtml(")), context);
@@ -440,7 +440,7 @@ test("while registering silently the prompt stays hidden, then the prompt is red
     state: { employee: { id: "e" } }, isSandboxMode: () => false, isLabOnly: () => false, currentRoute: () => ({ path: "dashboard" }),
     pushEnvironment: () => ({ ...ready, permission: "granted", ios: false, standalone: false }), pushSubscribedCache: { owner: "e", value: false },
     verifyPushPrompt: () => { throw new Error("must not check"); }, window: { MNP_PUSH: require("../../modules/push-notifications.js") },
-    localStorage: { getItem: () => null }, Date, String,
+    localStorage: { getItem: () => null }, Date, String, isPushPaused: () => false,
   });
   vm.runInContext("var pushAutoSubscribingFor = 'e';", context);
   vm.runInContext(appSource.slice(appSource.indexOf("const PUSH_PROMPT_HIDDEN_KEY"), appSource.indexOf("function pushPromptHtml(")), context);
@@ -500,4 +500,302 @@ test("a registration check that was overtaken by a newer status write returns th
   release();
   assert.equal(await pending, true);
   assert.equal(vm.runInContext("pushSubscribedCache.value", context), true);
+});
+
+// ---------- พักแจ้งเตือน ----------
+const { isMissingFunctionError } = require("../../modules/push-notifications.js");
+
+test("a database without the pause functions is recognised, other errors are not", () => {
+  assert.equal(isMissingFunctionError({ code: "PGRST202", message: "x" }), true);
+  assert.equal(isMissingFunctionError({ code: "42883" }), true);
+  assert.equal(isMissingFunctionError({ status: 404 }), true);
+  assert.equal(isMissingFunctionError({ message: "Could not find the function public.app_push_pause_status without parameters in the schema cache" }), true);
+  for (const other of [null, undefined, {}, { code: "AUTH_REQUIRED" }, { code: "42501", message: "LAB_ONLY_ACCOUNT" }, { message: "Failed to fetch" }, { status: 500 }]) {
+    assert.equal(isMissingFunctionError(other), false, JSON.stringify(other));
+  }
+});
+
+// โลกจำลองของส่วนพักแจ้งเตือนใน app.js: ใช้โค้ดจริงของฟังก์ชัน ส่วนฐานข้อมูล/เสียง/นาฬิกาเป็นของปลอมที่ควบคุมได้
+function buildPauseWorld({ rpc = async () => ({ data: null, error: null }), labOnly = false, sandbox = false, key = "key" } = {}) {
+  const clock = { now: Date.parse("2026-11-21T08:00:00Z") };
+  class FakeDate extends Date { static now() { return clock.now; } }
+  const log = { rpc: [], warned: 0, toasts: [], refreshedPrompt: 0, played: 0, counted: [], replies: [], unreadAnnounce: [] };
+  const state = { employee: { id: "e" } };
+  const document = { visibilityState: "visible", querySelector: () => null };
+  const panel = {
+    isConnected: true, hidden: true, innerHTML: "", handlers: {}, buttons: {},
+    querySelector(selector) {
+      const attribute = selector.slice(1, -1);
+      if (!this.innerHTML.includes(attribute)) return null;
+      return this.buttons[attribute] ??= { disabled: false, textContent: "", addEventListener: (type, handler) => { this.handlers[attribute] = handler; } };
+    },
+  };
+  document.querySelector = (selector) => (selector === "#push-panel" ? panel : null);
+  const pushWorld = { pushState: "on" };
+  const context = vm.createContext({
+    state, document, Date: FakeDate, Intl, String, Number, Promise, console: { warn: () => { log.warned += 1; }, error() {} },
+    PUSH_PUBLIC_KEY: key, isLabOnly: () => labOnly, isSandboxMode: () => sandbox,
+    sb: { rpc: async (name, args) => { log.rpc.push(name); return rpc(name, args); } },
+    window: { MNP_PUSH: require("../../modules/push-notifications.js") },
+    refreshPushPrompt: () => { log.refreshedPrompt += 1; },
+    showToast: (message, kind) => log.toasts.push([message, kind]),
+    friendlyError: () => "ข้อความจากตารางกลาง",
+    loadPushState: async () => pushWorld.pushState, pushEnvironment: () => ({ ios: false }),
+    enablePush: async () => "granted",
+    notifySound: {
+      canHandle: () => true, playForPush: async () => { log.played += 1; return "played"; },
+      observeUnread: (owner, count, options) => { log.unreadAnnounce.push(options.announce); return false; }, setBaseline() {},
+    },
+    withTimeout: (promise) => promise, updateUnreadBadges() {}, showSoundFallbackNotification: async () => {},
+  });
+  // loadUnread ต้องเดินเส้นทาง "นับแล้วบอกตัวจัดการเสียง" ด้วยของจริง (ไม่ใช่กลุ่มจำกัดแผนก)
+  context.isDeptRestricted = () => false;
+  context.sb.from = () => ({ select: () => ({ eq: () => ({ is: async () => ({ count: 3, error: null }) }) }) });
+  vm.runInContext(appSource.slice(appSource.indexOf("const PUSH_PAUSE_RELOAD_MS"), appSource.indexOf("\n}\n", appSource.indexOf("async function resumePush(")) + 3), context);
+  for (const signature of ["function formatDate(", "function escapeHtml(", "function pushNotice(", "function pushPanelBodyHtml(", "function pushErrorMessage(", "async function refreshPushPanel(", "async function loadUnread(", "async function onNotificationPushMessage("]) {
+    vm.runInContext(extractFunction(signature), context);
+  }
+  const call = (code) => vm.runInContext(code, context);
+  return { clock, log, state, context, call, panel, pushWorld, document };
+}
+const hours = (count) => count * 3600 * 1000;
+
+test("the pause status is read once, kept per account, and expires on its own without another query", async () => {
+  const until = new Date("2026-11-22T00:00:00.000Z").toISOString();
+  const world = buildPauseWorld({ rpc: async () => ({ data: until, error: null }) });
+  assert.equal(await world.call("loadPushPause()"), Date.parse(until));
+  assert.equal(world.call("isPushPaused()"), true);
+  assert.equal(world.log.rpc.length, 1);
+  world.clock.now = Date.parse("2026-11-21T23:59:59Z");
+  assert.equal(world.call("isPushPaused()"), true);
+  world.clock.now = Date.parse("2026-11-22T00:00:00Z"); // ถึง 07:00 ไทยพอดี = หมดพัก
+  assert.equal(world.call("isPushPaused()"), false);
+  assert.equal(world.log.rpc.length, 1);
+  // อีกบัญชีบนเครื่องเดียวกันไม่ถูกนับว่าพักตาม
+  world.clock.now = Date.parse("2026-11-21T08:00:00Z");
+  world.state.employee = { id: "other" };
+  assert.equal(world.call("isPushPaused()"), false);
+  // ไม่ได้พัก/ค่าไม่ใช่เวลา = ไม่พัก
+  for (const data of [null, "not a date", 5]) {
+    const none = buildPauseWorld({ rpc: async () => ({ data, error: null }) });
+    assert.equal(await none.call("loadPushPause()"), null, String(data));
+    assert.equal(none.call("isPushPaused()"), false);
+  }
+});
+
+test("a database without the pause functions hides the feature quietly and is asked only once", async () => {
+  const world = buildPauseWorld({ rpc: async () => ({ data: null, error: { code: "PGRST202", message: "Could not find the function" } }) });
+  assert.equal(await world.call("loadPushPause()"), null);
+  assert.equal(world.call("pushPauseSupported"), false);
+  assert.equal(world.log.warned, 0);
+  await world.call("loadPushPause()");
+  await world.call("syncPushPause()");
+  assert.equal(world.log.rpc.length, 1);
+  assert.equal(world.log.refreshedPrompt, 0);
+  // หน้าการแจ้งเตือนไม่แสดงปุ่มพัก (แต่ยังแสดงสถานะเปิดอยู่ตามปกติ) และไม่มี error
+  world.panel.innerHTML = "";
+  await world.call("refreshPushPanel()");
+  assert.match(world.panel.innerHTML, /เปิดอยู่/);
+  assert.doesNotMatch(world.panel.innerHTML, /data-push-pause/);
+  assert.equal(world.log.toasts.length, 0);
+});
+
+test("a temporary failure is logged once per try, keeps the old value and is retried later", async () => {
+  let fail = true;
+  const until = "2026-11-22T00:00:00.000Z";
+  const world = buildPauseWorld({ rpc: async () => (fail ? { data: null, error: { message: "Failed to fetch" } } : { data: until, error: null }) });
+  assert.equal(await world.call("loadPushPause()"), null);
+  assert.equal(world.log.warned, 1);
+  assert.equal(world.call("pushPauseSupported"), true);
+  fail = false;
+  assert.equal(await world.call("loadPushPause()"), Date.parse(until));
+  fail = true; // ล้มอีกครั้ง: ค่าที่จำไว้ยังอยู่
+  assert.equal(await world.call("loadPushPause()"), Date.parse(until));
+});
+
+test("a status answer that arrives after switching accounts or after pressing pause is dropped", async () => {
+  let release;
+  const later = new Date("2026-11-22T00:00:00.000Z").toISOString();
+  const world = buildPauseWorld({ rpc: (name) => (name === "app_push_pause_status" ? new Promise((resolve) => { release = () => resolve({ data: null, error: null }); }) : Promise.resolve({ data: later, error: null })) });
+  const pending = world.call("loadPushPause()");
+  await new Promise((resolve) => setImmediate(resolve));
+  world.state.employee = { id: "other" };
+  release();
+  await pending;
+  assert.equal(world.call("pushPauseCache.owner"), null);
+  // กดพักระหว่างรอคำตอบ "ไม่ได้พัก" ที่เก่ากว่า: ค่าที่เพิ่งกดต้องไม่ถูกทับ
+  const racing = buildPauseWorld({ rpc: (name) => (name === "app_push_pause_status" ? new Promise((resolve) => { release = () => resolve({ data: null, error: null }); }) : Promise.resolve({ data: later, error: null })) });
+  const load = racing.call("loadPushPause()");
+  await new Promise((resolve) => setImmediate(resolve));
+  await racing.call("pausePush()");
+  release();
+  await load;
+  assert.equal(racing.call("isPushPaused()"), true);
+});
+
+test("pausing stores the time the database returns and resuming clears it; failures keep the old state", async () => {
+  const until = "2026-11-22T00:00:00.000Z";
+  let pauseError = null;
+  const world = buildPauseWorld({ rpc: async (name) => (pauseError ? { data: null, error: pauseError } : { data: name === "app_push_pause" ? until : null, error: null }) });
+  await world.call("pausePush()");
+  assert.equal(world.call("activePushPauseUntil()"), Date.parse(until));
+  pauseError = { code: "P0001", message: "AUTH_REQUIRED" };
+  await assert.rejects(() => world.call("resumePush()"));
+  assert.equal(world.call("isPushPaused()"), true);
+  pauseError = null;
+  await world.call("resumePush()");
+  assert.equal(world.call("isPushPaused()"), false);
+  assert.deepEqual(world.log.rpc, ["app_push_pause", "app_push_resume", "app_push_resume"]);
+  // ตอบกลับที่อ่านเวลาไม่ได้ = ไม่จดว่าพัก
+  const odd = buildPauseWorld({ rpc: async () => ({ data: "oops", error: null }) });
+  await assert.rejects(() => odd.call("pausePush()"));
+  assert.equal(odd.call("isPushPaused()"), false);
+  // ไม่มีฟังก์ชันตอนกด = ปุ่มหายหลังวาดใหม่
+  const missing = buildPauseWorld({ rpc: async () => ({ data: null, error: { code: "PGRST202" } }) });
+  await assert.rejects(() => missing.call("pausePush()"));
+  assert.equal(missing.call("pushPauseSupported"), false);
+});
+
+test("coming back to the page asks again only after 15 minutes, and redraws the prompt only when the state changed", async () => {
+  const until = "2026-11-22T00:00:00.000Z";
+  let answer = null;
+  const world = buildPauseWorld({ rpc: async () => ({ data: answer, error: null }) });
+  await world.call("syncPushPause()"); // หลังล็อกอิน
+  assert.equal(world.log.rpc.length, 1);
+  assert.equal(world.log.refreshedPrompt, 0);
+  world.clock.now += hours(0.2);
+  world.call("syncPushPauseIfStale()");
+  assert.equal(world.log.rpc.length, 1);
+  world.clock.now += hours(0.1); // รวมเกิน 15 นาทีแล้ว
+  answer = until;
+  world.call("syncPushPauseIfStale()");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(world.log.rpc.length, 2);
+  assert.equal(world.log.refreshedPrompt, 1); // ไม่พัก → พัก (จากเครื่องอื่น)
+  // หน้าถูกซ่อนอยู่ ไม่ถาม
+  world.clock.now += hours(1);
+  world.document.visibilityState = "hidden";
+  world.call("syncPushPauseIfStale()");
+  assert.equal(world.log.rpc.length, 2);
+  // ไม่เคยล็อกอินในหน้านี้ (ยังไม่เคยถามของบัญชีนี้) ไม่ถาม
+  world.document.visibilityState = "visible";
+  world.state.employee = { id: "other" };
+  world.call("syncPushPauseIfStale()");
+  assert.equal(world.log.rpc.length, 2);
+});
+
+test("the test mode, lab-only accounts and a missing VAPID key never ask about pausing", async () => {
+  for (const options of [{ labOnly: true }, { key: "" }]) {
+    const world = buildPauseWorld(options);
+    await world.call("loadPushPause()");
+    assert.equal(world.log.rpc.length, 0, JSON.stringify(options));
+  }
+});
+
+test("no company sound while paused: the page tells the service worker it will not play, and nothing plays", async () => {
+  const until = "2026-11-22T00:00:00.000Z";
+  const reply = () => { const log = []; return { log, port: { postMessage: (value) => log.push(value), close() {} } }; };
+  const open = buildPauseWorld({ rpc: async () => ({ data: null, error: null }) });
+  const normal = reply();
+  open.context.__port = normal.port;
+  await open.call("onNotificationPushMessage({ tag: 'n-1', title: 't', url: '#/x' }, __port)");
+  assert.deepEqual(JSON.parse(JSON.stringify(normal.log)), [{ willPlaySound: true }]);
+  assert.equal(open.log.played, 1);
+  // กำลังพัก
+  const paused = buildPauseWorld({ rpc: async () => ({ data: until, error: null }) });
+  await paused.call("loadPushPause()");
+  const silent = reply();
+  paused.context.__port = silent.port;
+  await paused.call("onNotificationPushMessage({ tag: 'n-1', title: 't', url: '#/x' }, __port)");
+  assert.deepEqual(JSON.parse(JSON.stringify(silent.log)), [{ willPlaySound: false }]);
+  assert.equal(paused.log.played, 0);
+  // Push สรุปหลังครบเวลาพัก: ล้างสถานะพักที่ค้าง (นาฬิกาเครื่องช้ากว่า) แล้วเล่นตามปกติ
+  const digest = reply();
+  paused.context.__port = digest.port;
+  await paused.call("onNotificationPushMessage({ tag: 'pause-digest-emp1', title: 'สรุป', url: '#/notifications' }, __port)");
+  assert.deepEqual(JSON.parse(JSON.stringify(digest.log)), [{ willPlaySound: true }]);
+  assert.equal(paused.log.played, 1);
+  assert.equal(paused.call("isPushPaused()"), false);
+});
+
+test("the unread number is still counted while paused, but it never announces", async () => {
+  const until = "2026-11-22T00:00:00.000Z";
+  const free = buildPauseWorld();
+  await free.call("loadUnread()");
+  const paused = buildPauseWorld({ rpc: async () => ({ data: until, error: null }) });
+  await paused.call("loadPushPause()");
+  await paused.call("loadUnread()");
+  assert.deepEqual(free.log.unreadAnnounce, [true]);
+  assert.deepEqual(paused.log.unreadAnnounce, [false]);
+  // ครบเวลาแล้วกลับมาประกาศตามปกติโดยไม่ต้องถามฐานข้อมูลใหม่
+  paused.clock.now = Date.parse("2026-11-22T00:00:01Z");
+  await paused.call("loadUnread()");
+  assert.deepEqual(paused.log.unreadAnnounce, [false, true]);
+  assert.equal(paused.log.rpc.length, 1);
+});
+
+test("the pause panel shows the status, the description and the resume button in Thai", () => {
+  const world = buildPauseWorld();
+  const html = (state, options) => world.context.pushPanelBodyHtml(state, false, options);
+  const until = Date.parse("2026-11-22T00:00:00Z");
+  const on = html("on", { canPause: true });
+  assert.match(on, /<span class="badge">เปิดอยู่<\/span>/);
+  assert.match(on, /data-push-pause[^>]*>พักแจ้งเตือนถึง 07:00 น\. พรุ่งนี้<\/button>/);
+  assert.doesNotMatch(on, /ปิดบนเครื่องนี้|data-push-disable|data-push-resume/);
+  assert.doesNotMatch(html("on", { canPause: false }), /<button/);
+  for (const state of ["on", "off", "denied", "ios-install"]) {
+    const paused = html(state, { pausedUntil: until, canPause: true });
+    assert.match(paused, /<span class="badge">พักอยู่ถึง 22 พ\.ย\. 2569 07:00 น\.<\/span>/, state);
+    assert.match(paused, /ระหว่างพักจะไม่มีแจ้งเตือนเด้งบนทุกเครื่องของคุณ อีเมลและรายการในหน้านี้ยังมาตามปกติ ระบบจะเปิดให้เองเวลา 07:00 น\./, state);
+    assert.match(paused, /data-push-resume[^>]*>เปิดแจ้งเตือนต่อ<\/button>/, state);
+    assert.doesNotMatch(paused, /data-push-pause|data-push-enable/, state);
+  }
+  // โหมดทดสอบพักไม่ได้ ไม่แสดงปุ่มพัก/เปิดต่อ
+  assert.doesNotMatch(html("sandbox", { pausedUntil: until, canPause: true }), /data-push-resume|data-push-pause/);
+  assert.match(html("off", {}), /data-push-enable/);
+});
+
+test("pressing pause and resume on the panel calls the database once and redraws without asking again", async () => {
+  const until = "2026-11-22T00:00:00.000Z";
+  const world = buildPauseWorld({ rpc: async (name) => ({ data: name === "app_push_pause" ? until : null, error: null }) });
+  await world.call("refreshPushPanel()");
+  assert.deepEqual(world.log.rpc, ["app_push_pause_status"]);
+  assert.match(world.panel.innerHTML, /data-push-pause/);
+  const pauseButton = world.panel.buttons["data-push-pause"];
+  await world.panel.handlers["data-push-pause"]({ currentTarget: pauseButton });
+  assert.equal(pauseButton.textContent, "กำลังพัก…");
+  assert.deepEqual(world.log.rpc, ["app_push_pause_status", "app_push_pause"]);
+  assert.match(world.panel.innerHTML, /พักอยู่ถึง/);
+  assert.match(world.panel.innerHTML, /data-push-resume/);
+  await world.panel.handlers["data-push-resume"]({ currentTarget: world.panel.buttons["data-push-resume"] });
+  assert.deepEqual(world.log.rpc, ["app_push_pause_status", "app_push_pause", "app_push_resume"]);
+  assert.match(world.panel.innerHTML, /data-push-pause/);
+  assert.equal(world.log.toasts.length, 0);
+});
+
+test("a failed pause shows a Thai message and leaves the panel unchanged", async () => {
+  const world = buildPauseWorld({ rpc: async (name) => (name === "app_push_pause" ? { data: null, error: { message: "Failed to fetch" } } : { data: null, error: null }) });
+  await world.call("refreshPushPanel()");
+  await world.panel.handlers["data-push-pause"]({ currentTarget: world.panel.buttons["data-push-pause"] });
+  assert.deepEqual(world.log.toasts, [["พักแจ้งเตือนไม่สำเร็จ กรุณาลองอีกครั้ง", "error"]]);
+  assert.match(world.panel.innerHTML, /data-push-pause/);
+  assert.doesNotMatch(world.panel.innerHTML, /พักอยู่ถึง/);
+});
+
+test("the old per-device off switch is gone and the pause is wired into login, visibility and the prompt", () => {
+  assert.doesNotMatch(appSource, /disablePush|data-push-disable|ปิดบนเครื่องนี้/);
+  assert.match(appSource, /resyncPushSubscription\(\);\n {4}syncPushPause\(\);/);
+  assert.match(appSource, /document\.addEventListener\("visibilitychange", syncPushPauseIfStale\);/);
+  assert.match(appSource, /hidden: pushPromptHiddenNow\(\), paused: isPushPaused\(\)/);
+  // ไม่ถามสถานะพักตามรอบ 60 วินาทีของเสียง
+  const poll = appSource.slice(appSource.indexOf("async function pollUnreadForSound("), appSource.indexOf("// ข้อความจาก sw.js"));
+  assert.doesNotMatch(poll, /Pause|app_push_pause/);
+  // เสียงของ release ตอนออกจากระบบยังอยู่
+  assert.match(appSource, /releasePushOnThisDevice\(\{ server: true \}\)/);
+});
+
+test("the prompt is not shown while the person is paused", () => {
+  assert.match(buildPrompt().html, /id="push-prompt"/);
+  assert.equal(buildPrompt({ paused: true }).html, "");
+  assert.equal(buildPrompt({ paused: true, environment: { permission: "denied" } }).html, "");
 });

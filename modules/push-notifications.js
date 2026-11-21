@@ -60,6 +60,16 @@
     return until > nowMs && until <= nowMs + 2 * DAY_MS ? until : null;
   }
 
+  // ฐานข้อมูลยังไม่ได้ apply migration ที่มีฟังก์ชันนี้ (หน้าเว็บขึ้นก่อนฐานข้อมูล) → PostgREST ตอบ PGRST202 / 42883 / 404
+  // หน้าเว็บใช้แยก "ยังไม่มีฟังก์ชัน" (ซ่อนปุ่ม ถือว่าไม่ได้พัก เงียบ) ออกจากข้อผิดพลาดอื่น (เน็ตหลุด/ไม่มีสิทธิ์)
+  function isMissingFunctionError(error) {
+    if (!error) return false;
+    const code = String(error.code ?? "");
+    if (code === "PGRST202" || code === "42883") return true;
+    if (error.status === 404 || error.statusCode === 404) return true;
+    return /could not find the function/i.test(String(error.message ?? ""));
+  }
+
   // แถบบังคับด้านบนของหน้า: แสดงจนกว่าเครื่องนี้จะเปิดแจ้งเตือนสำเร็จ (อนุญาตแล้ว + ลงทะเบียนแล้ว) คืนชนิดของแถบ หรือ null = ไม่แสดง
   // ผู้ใช้กด "ปิดชั่วคราววันนี้" ได้ (environment.hidden = true) → ไม่แสดงจนถึง 07:00 น. วันถัดไป · กำลังพักแจ้งเตือน (environment.paused = true) ก็ไม่แสดง
   //   enable       ใช้ Push ได้แต่ยังไม่เปิด (ยังไม่เคยตอบ หรืออนุญาตแล้วแต่ยังไม่ลงทะเบียน) → ข้อความ + ปุ่มเปิด
@@ -76,7 +86,7 @@
     return "enable";
   }
 
-  const api = { pushPanelState, urlBase64ToUint8Array, subscriptionRecord, sameApplicationServerKey, pushPromptKind, nextBangkokSevenAm, activeHiddenUntil };
+  const api = { pushPanelState, urlBase64ToUint8Array, subscriptionRecord, sameApplicationServerKey, pushPromptKind, nextBangkokSevenAm, activeHiddenUntil, isMissingFunctionError };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.MNP_PUSH = api;
 })();
