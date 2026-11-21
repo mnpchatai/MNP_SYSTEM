@@ -5411,25 +5411,44 @@ function bindNotificationReadOnClick() {
 }
 
 // ---------- แถบบังคับให้เปิดแจ้งเตือนบนเครื่อง ----------
-// แสดงด้านบนของทุกหน้า จนกว่าเครื่องนี้จะเปิดแจ้งเตือนสำเร็จ (อนุญาต + ลงทะเบียนแล้ว) ปิดเองไม่ได้ แต่ไม่ล็อกการใช้งานหน้าเว็บ
+// แสดงด้านบนของทุกหน้า จนกว่าเครื่องนี้จะเปิดแจ้งเตือนสำเร็จ (อนุญาต + ลงทะเบียนแล้ว) แต่ไม่ล็อกการใช้งานหน้าเว็บ
+// ผู้ใช้กด "ปิดชั่วคราววันนี้" ได้ทุกกรณีของแถบ (เครื่องที่เปิดไม่ได้จริงจะได้ไม่มีแถบค้างถาวร): ซ่อนเฉพาะ "แถบบนเครื่องนี้"
+// ถึง 07:00 น. เวลาไทยของวันถัดไป แล้วกลับมาเอง ไม่ได้พักแจ้งเตือนจริง (การพักจริงอยู่ที่หน้าการแจ้งเตือน)
 // เบราว์เซอร์ให้ขอสิทธิ์ได้เฉพาะตอนผู้ใช้กดเอง จึงเป็นแถบ + ปุ่มที่เรียก enablePush · ชนิดของแถบตัดสินใน MNP_PUSH.pushPromptKind (ทดสอบแล้ว)
 // เครื่องที่อนุญาตแล้วต้องถามฐานข้อมูลก่อนว่าลงทะเบียนครบไหม (ผลจำไว้ใน pushSubscribedCache) ระหว่างนั้นยังไม่แสดง กันแถบวูบ
 let pushPromptChecking = false;
+const PUSH_PROMPT_HIDDEN_KEY = "mnp-push-prompt-hidden-until";
+// เก็บแยกตามบัญชี (คนละคนบนเครื่องเดียวกันไม่ซ่อนแทนกัน) · localStorage ใช้ไม่ได้ (โหมดส่วนตัว/เต็ม) = ไม่ซ่อน แถบแสดงตามปกติ
+function pushPromptHiddenNow() {
+  try {
+    return window.MNP_PUSH.activeHiddenUntil(localStorage.getItem(`${PUSH_PROMPT_HIDDEN_KEY}:${state.employee.id}`), Date.now()) !== null;
+  } catch {
+    return false;
+  }
+}
+function hidePushPromptUntilTomorrow() {
+  try {
+    localStorage.setItem(`${PUSH_PROMPT_HIDDEN_KEY}:${state.employee.id}`, String(window.MNP_PUSH.nextBangkokSevenAm(Date.now())));
+  } catch {
+    // เก็บไม่ได้ = ซ่อนไม่ได้ แถบยังอยู่ตามเดิม ไม่เป็นข้อผิดพลาด
+  }
+}
 function pushPromptHtml() {
   // หน้าการแจ้งเตือนมีแผงเดียวกันอยู่แล้ว · โหมดทดสอบและบัญชี lab-only ไม่มีหน้าการแจ้งเตือนให้ใช้
   if (!state.employee || isSandboxMode() || isLabOnly() || currentRoute().path === "notifications") return "";
   const environment = pushEnvironment();
   const subscribed = pushSubscribedCache.owner === state.employee.id ? pushSubscribedCache.value : null;
-  const kind = window.MNP_PUSH.pushPromptKind({ ...environment, subscribed });
+  const kind = window.MNP_PUSH.pushPromptKind({ ...environment, subscribed, hidden: pushPromptHiddenNow() });
   if (kind === "pending") {
     verifyPushPrompt();
     return "";
   }
   if (!kind) return "";
   const detail = kind === "enable" ? "เพื่อรับแจ้งงานที่รอคุณ" : pushNotice(kind, environment.ios);
-  const button = kind === "enable" ? `<div class="push-prompt-actions"><button class="btn small" type="button" data-push-prompt-enable>เปิดแจ้งเตือน</button></div>` : "";
+  const enableButton = kind === "enable" ? `<button class="btn small" type="button" data-push-prompt-enable>เปิดแจ้งเตือน</button>` : "";
   return `<section class="push-prompt" id="push-prompt" aria-label="ต้องเปิดการแจ้งเตือนบนเครื่องนี้">
-    <div class="push-prompt-text"><strong>กรุณาเปิดแจ้งเตือนบนเครื่องนี้</strong><span>${detail}</span></div>${button}
+    <div class="push-prompt-text"><strong>กรุณาเปิดแจ้งเตือนบนเครื่องนี้</strong><span>${detail}</span></div>
+    <div class="push-prompt-actions">${enableButton}<button class="btn secondary small" type="button" data-push-prompt-today title="ซ่อนแถบนี้บนเครื่องนี้ถึง 07:00 น. ของพรุ่งนี้">ปิดชั่วคราววันนี้</button></div>
   </section>`;
 }
 
@@ -5454,6 +5473,12 @@ function refreshPushPrompt() {
   else if (current) current.remove();
   else if (next) content.prepend(next);
 }
+
+document.addEventListener("click", (event) => {
+  if (!event.target.closest?.("#push-prompt [data-push-prompt-today]")) return;
+  hidePushPromptUntilTomorrow();
+  refreshPushPrompt();
+});
 
 document.addEventListener("click", async (event) => {
   const enable = event.target.closest?.("#push-prompt [data-push-prompt-enable]");

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { spawnSync } from "node:child_process";
 import vm from "node:vm";
 import test from "node:test";
 
@@ -145,27 +146,111 @@ test("only unread notifications carry the id that the click handler uses", () =>
 });
 
 // แถบในหน้าจริง: ใช้ MNP_PUSH ตัวจริง ส่วน app.js ตัดฟังก์ชันมารันแยก
-function buildPrompt({ sandbox = false, labOnly = false, path = "dashboard", environment = {}, cache = { owner: null, value: null } } = {}) {
+function buildPrompt({ sandbox = false, labOnly = false, path = "dashboard", environment = {}, cache = { owner: null, value: null }, storage = null, now = Date.parse("2026-11-21T08:00:00Z") } = {}) {
   const checks = [];
+  const store = storage ?? new Map();
   const context = vm.createContext({
     state: { employee: { id: "e" } }, isSandboxMode: () => sandbox, isLabOnly: () => labOnly, currentRoute: () => ({ path }),
     pushEnvironment: () => ({ ...ready, permission: "default", ios: false, standalone: false, ...environment }),
     pushSubscribedCache: cache, verifyPushPrompt: () => checks.push("check"), window: { MNP_PUSH: require("../../modules/push-notifications.js") },
+    localStorage: { getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, String(value)) },
+    Date: { now: () => now }, String,
   });
   vm.runInContext(extractFunction("function pushNotice("), context);
+  vm.runInContext(appSource.slice(appSource.indexOf("const PUSH_PROMPT_HIDDEN_KEY"), appSource.indexOf("function pushPromptHtml(")), context);
   vm.runInContext(extractFunction("function pushPromptHtml("), context);
-  return { html: vm.runInContext("pushPromptHtml", context)(), checks };
+  return {
+    html: vm.runInContext("pushPromptHtml", context)(), checks, store,
+    hide: () => vm.runInContext("hidePushPromptUntilTomorrow", context)(),
+    render: (at) => { context.Date = { now: () => at }; return vm.runInContext("pushPromptHtml", context)(); },
+  };
 }
 
-test("the prompt has the enable button only and no way to dismiss it", () => {
+test("the prompt offers the enable button and a temporary hide-for-today button", () => {
   const { html } = buildPrompt();
   assert.match(html, /id="push-prompt"/);
   assert.match(html, /กรุณาเปิดแจ้งเตือนบนเครื่องนี้/);
   assert.match(html, /เพื่อรับแจ้งงานที่รอคุณ/);
-  assert.equal(html.match(/<button/g).length, 1);
+  assert.equal(html.match(/<button/g).length, 2);
   assert.match(html, /data-push-prompt-enable/);
-  assert.doesNotMatch(html, /ไว้ทีหลัง|data-push-prompt-later/);
-  assert.doesNotMatch(appSource, /PUSH_PROMPT_SNOOZE|mnp-push-prompt-snooze|parseSnoozedUntil|data-push-prompt-later/);
+  assert.match(html, /data-push-prompt-today[^>]*>ปิดชั่วคราววันนี้</);
+  // การซ่อนเป็นเรื่องของแถบเท่านั้น ไม่ผูกกับการพักแจ้งเตือนจริง (ไม่เรียก RPC)
+  const hider = appSource.slice(appSource.indexOf("function hidePushPromptUntilTomorrow("), appSource.indexOf("function pushPromptHtml("));
+  assert.doesNotMatch(hider, /sb\.rpc|app_push_pause/);
+  assert.doesNotMatch(appSource, /data-push-prompt-later|ไว้ทีหลัง/);
+});
+
+test("the hide button is on every kind of prompt, so a device that cannot enable does not keep a permanent bar", () => {
+  for (const environment of [{ permission: "denied" }, { permission: "denied", ios: true, standalone: true }, { ios: true, standalone: false }]) {
+    const html = buildPrompt({ environment }).html;
+    assert.match(html, /data-push-prompt-today/);
+    assert.doesNotMatch(html, /data-push-prompt-enable/);
+  }
+});
+
+test("hiding the prompt keeps it away until 07:00 Bangkok of the next day, then it returns by itself", () => {
+  // 21/11/2026 15:00 เวลาไทย (08:00Z) → ซ่อนถึง 22/11/2026 07:00 เวลาไทย (00:00Z)
+  const prompt = buildPrompt();
+  prompt.hide();
+  assert.equal(prompt.store.get("mnp-push-prompt-hidden-until:e"), String(Date.parse("2026-11-22T00:00:00Z")));
+  assert.equal(prompt.render(Date.parse("2026-11-21T08:00:00Z")), "");
+  assert.equal(prompt.render(Date.parse("2026-11-21T23:59:59Z")), "");
+  assert.match(prompt.render(Date.parse("2026-11-22T00:00:00Z")), /id="push-prompt"/);
+  assert.match(prompt.render(Date.parse("2026-11-22T03:00:00Z")), /id="push-prompt"/);
+  // บัญชีอื่นบนเครื่องเดียวกันไม่ถูกซ่อนตาม: คีย์แยกตามบัญชี
+  assert.match(buildPrompt({ storage: new Map([["mnp-push-prompt-hidden-until:other", String(Date.parse("2026-11-22T00:00:00Z"))]]) }).html, /id="push-prompt"/);
+});
+
+test("a hidden prompt does not start the registration check, and storage failures never throw", () => {
+  const hidden = buildPrompt({ environment: { permission: "granted" }, storage: new Map([["mnp-push-prompt-hidden-until:e", String(Date.parse("2026-11-22T00:00:00Z"))]]) });
+  assert.equal(hidden.html, "");
+  assert.deepEqual(hidden.checks, []);
+  // localStorage ใช้ไม่ได้: แถบแสดงตามปกติ ปุ่มซ่อนไม่ทำให้พัง
+  const broken = vm.createContext({ state: { employee: { id: "e" } }, window: { MNP_PUSH: require("../../modules/push-notifications.js") }, Date, String, localStorage: { getItem() { throw new Error("denied"); }, setItem() { throw new Error("full"); } } });
+  vm.runInContext(appSource.slice(appSource.indexOf("const PUSH_PROMPT_HIDDEN_KEY"), appSource.indexOf("function pushPromptHtml(")), broken);
+  assert.equal(vm.runInContext("pushPromptHiddenNow()", broken), false);
+  assert.doesNotThrow(() => vm.runInContext("hidePushPromptUntilTomorrow()", broken));
+});
+
+test("the hide button redraws the prompt after storing the time", () => {
+  assert.match(appSource, /\[data-push-prompt-today\]"\)\) return;\n {2}hidePushPromptUntilTomorrow\(\);\n {2}refreshPushPrompt\(\);/);
+});
+
+test("nextBangkokSevenAm is 07:00 Bangkok of the next Bangkok calendar day, whatever the machine time zone", () => {
+  const next = (iso) => new Date(require("../../modules/push-notifications.js").nextBangkokSevenAm(Date.parse(iso))).toISOString();
+  assert.equal(next("2026-11-21T08:00:00Z"), "2026-11-22T00:00:00.000Z"); // 15:00 ไทย → 07:00 วันถัดไป
+  assert.equal(next("2026-11-21T00:00:00Z"), "2026-11-22T00:00:00.000Z"); // 07:00 ไทยพอดี → 07:00 วันถัดไป
+  assert.equal(next("2026-11-21T16:59:59Z"), "2026-11-22T00:00:00.000Z"); // 23:59:59 ไทย
+  // หลังเที่ยงคืนไทย (ยังเป็นวันที่ 21 ตาม UTC) = วันปฏิทินไทยที่ 22 → ถึง 07:00 ของวันที่ 23 ไม่ใช่เช้าวันเดียวกัน
+  assert.equal(next("2026-11-21T17:00:00Z"), "2026-11-23T00:00:00.000Z"); // 00:00 ไทย
+  assert.equal(next("2026-11-21T17:30:00Z"), "2026-11-23T00:00:00.000Z"); // 00:30 ไทย
+  assert.equal(next("2026-12-31T20:00:00Z"), "2027-01-02T00:00:00.000Z"); // ข้ามปี: 03:00 ไทยวันที่ 1 ม.ค. → 2 ม.ค.
+});
+
+test("nextBangkokSevenAm does not depend on the process time zone", () => {
+  for (const zone of ["America/Los_Angeles", "Pacific/Kiritimati", "UTC"]) {
+    const run = spawnSync(process.execPath, ["-e", `console.log(new Date(require("./modules/push-notifications.js").nextBangkokSevenAm(Date.parse("2026-11-21T17:30:00Z"))).toISOString())`], { env: { ...process.env, TZ: zone }, cwd: new URL("../..", import.meta.url), encoding: "utf8" });
+    assert.equal(run.stdout.trim(), "2026-11-23T00:00:00.000Z", zone);
+  }
+});
+
+test("activeHiddenUntil trusts only a future time that this app could have stored", () => {
+  const { activeHiddenUntil } = require("../../modules/push-notifications.js");
+  const now = Date.parse("2026-11-21T08:00:00Z");
+  assert.equal(activeHiddenUntil(String(now + 1000), now), now + 1000);
+  assert.equal(activeHiddenUntil(String(now), now), null);
+  assert.equal(activeHiddenUntil(String(now - 1), now), null);
+  assert.equal(activeHiddenUntil(String(now + 3 * 24 * 3600 * 1000), now), null);
+  for (const bad of [null, undefined, "", "abc", "NaN", "Infinity"]) assert.equal(activeHiddenUntil(bad, now), null, String(bad));
+});
+
+test("pushPromptKind returns nothing while the prompt is hidden or the person is paused", () => {
+  assert.equal(pushPromptKind({ ...ready, permission: "default", hidden: true }), null);
+  assert.equal(pushPromptKind({ ...ready, permission: "denied", hidden: true }), null);
+  assert.equal(pushPromptKind({ ...ready, permission: "granted", hidden: true }), null);
+  assert.equal(pushPromptKind({ ...ready, permission: "default", paused: true }), null);
+  assert.equal(pushPromptKind({ ...ready, permission: "default", ios: true, standalone: false, paused: true }), null);
+  assert.equal(pushPromptKind({ ...ready, permission: "default", hidden: false, paused: false }), "enable");
 });
 
 test("the prompt is skipped in test mode, lab-only accounts and on the notifications page", () => {
@@ -174,15 +259,15 @@ test("the prompt is skipped in test mode, lab-only accounts and on the notificat
   assert.equal(buildPrompt({ path: "notifications" }).html, "");
 });
 
-test("a blocked browser and an uninstalled iPhone get a message with no button, using the panel wording", () => {
+test("a blocked browser and an uninstalled iPhone get a message with no enable button, using the panel wording", () => {
   const denied = buildPrompt({ environment: { permission: "denied" } }).html;
   assert.match(denied, /เบราว์เซอร์บล็อกการแจ้งเตือนของเว็บนี้ไว้/);
-  assert.doesNotMatch(denied, /<button/);
+  assert.doesNotMatch(denied, /data-push-prompt-enable/);
   const deniedIos = buildPrompt({ environment: { permission: "denied", ios: true, standalone: true } }).html;
   assert.match(deniedIos, /ตั้งค่า › แจ้งเตือน › MNP/);
   const install = buildPrompt({ environment: { ios: true, standalone: false } }).html;
   assert.match(install, /เพิ่ม MNP ลงหน้าจอโฮมจาก Safari ก่อน/);
-  assert.doesNotMatch(install, /<button/);
+  assert.doesNotMatch(install, /data-push-prompt-enable/);
 });
 
 test("devices that cannot use push at all show nothing", () => {
