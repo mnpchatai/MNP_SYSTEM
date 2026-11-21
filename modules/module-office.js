@@ -29,13 +29,13 @@
   const modeAllowed = (code) => deptModuleAllowed(code) && (!inSandbox() || code === sections.WORK_ORDER_CODE || code === sections.REPAIR_CODE);
 
   // การ์ดของโมดูลที่ประกาศตัวเองใน window.MNP_OFFICE_CARDS[<รหัสโมดูล>] = { version, loadCardSummary } (วิธีเพิ่มโมดูลใหม่ดูหัวไฟล์ office-sections.js)
-  // คืน { <รหัสโมดูล>: { version, openCount, waiting, title } } เฉพาะการ์ดที่ผู้ใช้เห็น (สิทธิ์แผนก/โหมดทดสอบ) · ไม่ประกาศ = ไม่มีรายการ การ์ดไม่แสดงป้าย
+  // คืน { <รหัสโมดูล>: { version, inDevelopment, openCount, waiting, title } } (inDevelopment = ป้าย "กำลังพัฒนา" การ์ดยังกดเข้าได้) เฉพาะการ์ดที่ผู้ใช้เห็น (สิทธิ์แผนก/โหมดทดสอบ) · ไม่ประกาศ = ไม่มีรายการ การ์ดไม่แสดงป้าย
   // loadCardSummary ล้ม/คืน null = openCount เป็น null (การ์ดแสดง "ดูสถานะ") · โมดูลที่ไม่มี loadCardSummary = ไม่มีป้ายตัวเลข
   async function loadDeclaredCards() {
     const declared = window.MNP_OFFICE_CARDS ?? {};
     const entries = await Promise.all(sections.visibleCards(modeAllowed).filter((card) => declared[card.code]).map(async (card) => {
       const provider = declared[card.code];
-      const info = { version: provider.version || undefined };
+      const info = { version: provider.version || undefined, inDevelopment: Boolean(provider.inDevelopment) };
       if (typeof provider.loadCardSummary === "function") {
         const summary = await Promise.resolve().then(() => provider.loadCardSummary()).catch(() => null);
         info.openCount = Number.isFinite(summary?.openCount) ? summary.openCount : null;

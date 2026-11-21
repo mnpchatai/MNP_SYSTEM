@@ -23,6 +23,9 @@
   // ถามเจ้าของทุกครั้งว่าเป็นอัปเดตย่อยหรือใหญ่ แล้วแก้ทั้งสองค่านี้ใน PR เดียวกับการเปลี่ยนแปลง (VERSION_DATE = วันที่ปล่อย YYYY-MM-DD)
   const MODULE_VERSION = "1.00";
   const VERSION_DATE = "2026-11-21";
+  // ธง "กำลังพัฒนา" (จุดเดียว): true = การ์ดใบแจ้งซ่อม IT ในเมนูมีป้าย "กำลังพัฒนา" และทุกหน้าของโมดูลมีแถบข้อความว่ายังไม่เปิดใช้งานจริง
+  // ป้ายกับแถบเป็นข้อความอย่างเดียว ไม่ปิดกั้นการกดเข้าหรือการใช้งาน · ถอดป้ายเมื่อเจ้าของสั่งเปิดใช้งานจริง: เปลี่ยนเป็น false ที่นี่ที่เดียว
+  const IN_DEVELOPMENT = true;
 
   /* ---------- ตัวเลือกของฟอร์ม ---------- */
   // ประเภทคำขอ (ผู้แจ้งเลือก 1) · other ต้องระบุ
@@ -796,7 +799,7 @@
   }
 
   const api = {
-    MODULE_VERSION, VERSION_DATE, YEAR_OFFSET, MAX_SYMPTOM, MAX_LONG_TEXT, MAX_ASSET_CODE, MAX_DEVICE_NAME, MAX_NOTE, MAX_PR_PO, MAX_PARTS, MAX_INFO_BODY, MAX_REASON, MAX_REASON_ON_BEHALF, CANCEL_ON_BEHALF, isCancelOnBehalf, cancelReasonSpec, MAX_FILES, MAX_FILE_BYTES,
+    MODULE_VERSION, VERSION_DATE, IN_DEVELOPMENT, YEAR_OFFSET, MAX_SYMPTOM, MAX_LONG_TEXT, MAX_ASSET_CODE, MAX_DEVICE_NAME, MAX_NOTE, MAX_PR_PO, MAX_PARTS, MAX_INFO_BODY, MAX_REASON, MAX_REASON_ON_BEHALF, CANCEL_ON_BEHALF, isCancelOnBehalf, cancelReasonSpec, MAX_FILES, MAX_FILE_BYTES,
     REQUEST_KINDS, REPAIR_TARGETS, CAUSE_KINDS, REPAIR_METHODS, FILE_MIME_BY_EXTENSION, FILE_ACCEPT, FILE_HINT, FILES_PREPARING_MESSAGE, EMPTY_REPAIR_FORM, EMPTY_COMPLETE_FORM, EMPTY_PART_ROW, EMPTY_REWORK_FORM, STATUS_LABELS, EVENT_LABELS, ACTION_BUTTONS, ACTION_ORDER, IT_GROUPS, APPROVAL_STATE_LABELS,
     requestKindLabel, repairTargetLabel, causeKindLabel, repairMethodLabel, requestKindText, repairTargetText, causeKindText, repairMethodText, deviceText,
     reworkTag, statusLabel, statusBadgeClass, myStatusLabel, isTestDoc, INFO_STAGE_LABELS, infoStageLabel, commentKindLabel, commentRows, allFiles, pendingQuestion, infoBadgeTitle,

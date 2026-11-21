@@ -196,7 +196,7 @@ test("the office module is standalone with a menu entry, sandbox for the repair 
 });
 
 /* ---------- ทดลองรันโมดูลจริงใน vm: ลงทะเบียน เมนู และหน้า ---------- */
-function setup({ employee, repairSummary = { openCount: 5, badge: "", title: "" }, repairVersion = "1.00", itwoSummary = null, itwoVersion, declare = true, sandbox = false } = {}) {
+function setup({ employee, repairSummary = { openCount: 5, badge: "", title: "" }, repairVersion = "1.00", itwoSummary = null, itwoVersion, declare = true, sandbox = false, repairInDevelopment = false } = {}) {
   const queries = [];
   const painted = { itwoRendered: [], itrpRendered: [], html: "", active: null, title: null, notFound: 0, loading: 0, zooms: 0, queued: [], went: [] };
   // หน้าจริงของใบสั่งงาน IT / ใบแจ้งซ่อม IT อยู่ที่ module-itwo.js / module-itrp.js (ทดสอบที่ itwo-module.test.mjs / itrp-module.test.mjs) ที่นี่ใช้ตัวแทนที่บันทึกการเรียกและคืนตัวเลขบนการ์ด
@@ -205,7 +205,7 @@ function setup({ employee, repairSummary = { openCount: 5, badge: "", title: "" 
   // โมดูลประกาศตัวเองให้การ์ด (window.MNP_OFFICE_CARDS[รหัสโมดูล]) · declare: false = โมดูลที่ไม่ประกาศ
   const window = {
     MNP_ITWO: itwo, MNP_ITRP: itrp,
-    MNP_OFFICE_CARDS: declare ? { IT_WORK_ORDER: { version: itwoVersion, loadCardSummary: itwo.loadCardSummary }, IT_COMPUTER_REPAIR: { version: repairVersion, loadCardSummary: itrp.loadCardSummary } } : {},
+    MNP_OFFICE_CARDS: declare ? { IT_WORK_ORDER: { version: itwoVersion, loadCardSummary: itwo.loadCardSummary }, IT_COMPUTER_REPAIR: { version: repairVersion, inDevelopment: repairInDevelopment, loadCardSummary: itrp.loadCardSummary } } : {},
   };
   const context = vm.createContext({
     window, console, URLSearchParams, Map, Set, isSandboxMode: () => sandbox,
@@ -259,6 +259,36 @@ test("opening IT SUPPORT paints the two cards with their own links, the repair c
   assert.doesNotMatch(app.painted.html, /#\/requests|กำลังย้ายระบบ/);
   assert.equal(app.painted.active, "office");
   assert.equal(app.painted.title, "IT SUPPORT");
+});
+
+test("a card whose module is in development shows the 'กำลังพัฒนา' tag next to the count and version, and is still a link", () => {
+  const modules = { IT_COMPUTER_REPAIR: { version: "1.00", openCount: 2, waiting: "1 รอคุณ", inDevelopment: true }, IT_WORK_ORDER: { version: "1.04", openCount: 3 } };
+  const page = sections.itSupportPage({ modules });
+  const repair = page.split("<a ").find((card) => card.includes("module=repair"));
+  const work = page.split("<a ").find((card) => card.includes("module=work-order"));
+  assert.match(repair, /<span class="request-type-count request-type-dev">กำลังพัฒนา<\/span>/);
+  assert.equal(count(page, /request-type-dev/g), 1, "only the card whose module declares it");
+  assert.doesNotMatch(work, /กำลังพัฒนา/);
+  assert.match(repair, /^class="type-card request-type-card lab-module-card" href="#\/office\?module=repair"/, "still an open link, not a disabled card");
+  assert.doesNotMatch(page, /is-off/);
+  // ป้ายอยู่ในคอลัมน์ป้ายเดียวกับตัวเลขและเลขเวอร์ชัน เรียงก่อนกัน ไม่ซ้อนทับ
+  const order = [">กำลังพัฒนา<", ">2 ยังไม่จบ<", ">1 รอคุณ<", ">V1.00<"].map((text) => repair.indexOf(text));
+  assert.ok(order.every((index) => index > 0) && order.every((index, position) => position === 0 || index > order[position - 1]), "tag, count, waiting, version in order");
+  // ถอดธง = ป้ายหาย
+  const off = sections.itSupportPage({ modules: { IT_COMPUTER_REPAIR: { version: "1.00", openCount: 2, inDevelopment: false } } });
+  assert.doesNotMatch(off, /กำลังพัฒนา|request-type-dev/);
+  // ไม่มีป้ายตัวเลข/เวอร์ชันเลยก็ยังขึ้นป้ายได้
+  assert.match(sections.itSupportPage({ modules: { IT_COMPUTER_REPAIR: { inDevelopment: true } } }), /request-type-side"><span class="request-type-count request-type-dev">กำลังพัฒนา<\/span><\/span>/);
+});
+
+test("the real office module passes the module's development flag to the card", async () => {
+  const on = setup({ employee: mt, repairInDevelopment: true });
+  await on.open("module=it-support");
+  assert.equal(count(on.painted.html, /request-type-dev">กำลังพัฒนา</g), 1);
+  assert.match(on.painted.html, /href="#\/office\?module=repair"/);
+  const off = setup({ employee: mt });
+  await off.open("module=it-support");
+  assert.doesNotMatch(off.painted.html, /กำลังพัฒนา/);
 });
 
 test("?module=repair hands the page to the repair module; the old request-center IT_REPAIR module is still registered but has no card", async () => {

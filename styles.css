@@ -3412,6 +3412,9 @@ table.bom-tree td.right { white-space: nowrap; }
 .itrp-upload-row.is-failed .itrp-upload-state, .itrp-upload-message { color: var(--danger); }
 .itrp-upload-message { grid-column: 1 / -1; font-size: var(--text-meta); overflow-wrap: anywhere; }
 .itrp-upload .form-actions { flex-wrap: wrap; justify-content: flex-start; }
+/* แถบ "กำลังพัฒนา" บนสุดของทุกหน้าโมดูล (ใช้สีของ .rf-callout.is-warn) · ป้ายบนการ์ดเมนูใช้ .request-type-count ชุดเดียวกับป้ายตัวเลข */
+.itrp-dev-notice { margin: 0 0 14px; font-weight: 600; }
+.request-type-dev { font-weight: 700; }
 .itrp-version { margin: 24px 0 0; text-align: right; font-size: 12px; color: var(--muted, #6b7280); }
 /* ตารางอะไหล่ (บันทึกการซ่อม) · แบบอ่านอย่างเดียวบนหน้ารายละเอียด และแบบกรอกในฟอร์มส่งงาน */
 .itrp-parts-table, .itrp-parts-edit { width: 100%; border-collapse: collapse; font-size: var(--text-meta); }

@@ -789,7 +789,8 @@
     }
     return unsavedProbe();
   };
-  const api = Object.freeze({ render, loadCardSummary, unsavedCount, version: model.MODULE_VERSION });
+  // inDevelopment = ธง "กำลังพัฒนา" จาก itrp-model.js (การ์ดอ่านค่านี้ไปแสดงป้าย)
+  const api = Object.freeze({ render, loadCardSummary, unsavedCount, version: model.MODULE_VERSION, inDevelopment: model.IN_DEVELOPMENT });
   window.MNP_ITRP = api;
   // ประกาศตัวเองให้การ์ดในเมนู "ระบบสำนักงาน" (วิธีเพิ่มโมดูลใหม่ดูที่หัวไฟล์ modules/office-sections.js) key = รหัสโมดูลของการ์ด
   // version = เลขเวอร์ชัน (ป้าย V…) · loadCardSummary() คืน { openCount, badge, title } หรือ null ถ้าอ่านไม่ได้ (การ์ดแสดง "ดูสถานะ")

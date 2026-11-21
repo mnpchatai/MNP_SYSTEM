@@ -38,6 +38,7 @@
   const REPAIR = "repair";
   const REPAIR_CODE = "IT_COMPUTER_REPAIR";
   const ALLOW_ALL = () => true;
+  const DEV_LABEL = "กำลังพัฒนา";
   // code = รหัสโมดูลที่ใช้ตัดสินสิทธิ์แผนก · ระบบที่มี cards ไม่มี code ของตัวเอง ดูจากการ์ดลูก
   // palette = ชื่อจานสี (data-module ใน styles.css) ใช้จานสีที่มีอยู่แล้วทั้งหมด: IT = "it" เหมือนใบแจ้งซ่อม IT · HR = "pk" (ชุดเดียวกับคำร้อง HR)
   // การ์ดภายใน IT SUPPORT · key ของการ์ดตรงกับค่า ?module= ของหน้าย่อย (repair / work-order)
@@ -86,14 +87,16 @@
   // badge ของการ์ดที่เปิดแล้ว (เช่น "2 ยังไม่จบ") อยู่ช่องเดียวกัน · badge2 = ป้ายรอง (เช่น "1 รอคุณ") ต่อใต้ป้ายหลัก
   // version = เลขเวอร์ชันของโมดูลที่การ์ดพาไป (เช่น "1.03") แสดงเป็นป้าย "V1.03" ที่มุมขวาของการ์ด ใต้ป้ายตัวเลข (ป้ายตัวเลขอยู่ตำแหน่งเดียวกันทุกการ์ด) · ไม่ระบุ = ไม่แสดง (โมดูลที่ไม่ประกาศเลขของตัวเอง)
   // ป้ายทุกใบเป็นพื้นทึบ/กึ่งทึบตัวอ่านออก (ใช้ --mod-pill / --mod-btn ที่ตรวจ contrast ทุกจานสีทั้งสองธีมใน color-system.test.mjs)
-  function cardHtml({ href, label, palette, icon, action, badge, badge2 = "", version = "", title = "" }) {
+  // inDevelopment = ป้าย "กำลังพัฒนา" บนบนสุดของคอลัมน์ป้าย (เหนือเลขงานค้างและเลขเวอร์ชัน ไม่ทับกัน) · เป็นข้อความอย่างเดียว การ์ดยังเป็นลิงก์กดได้ตามปกติ
+  function cardHtml({ href, label, palette, icon, action, badge, badge2 = "", version = "", title = "", inDevelopment = false }) {
     const mark = `<span class="type-card-badge">${iconOf(icon)}</span>`;
     const watermark = `<span class="type-card-wm" aria-hidden="true">${iconOf(icon)}</span>`;
     const badgeHtml = badge ? `<span class="request-type-count">${esc(badge)}</span>` : "";
     const badge2Html = badge2 ? `<span class="request-type-count request-type-count-2">${esc(badge2)}</span>` : "";
     const versionHtml = version ? `<span class="request-type-version" title="เวอร์ชัน ${esc(version)}">V${esc(version)}</span>` : "";
     // มีป้ายรองหรือเลขเวอร์ชัน: ห่อป้ายเป็นคอลัมน์ชิดขวา (ป้ายหลัก ป้ายรอง เลขเวอร์ชัน) · ไม่มี: โครงเดิมทุกประการ
-    const side = badge2Html || versionHtml ? `<span class="request-type-side">${badgeHtml}${badge2Html}${versionHtml}</span>` : badgeHtml;
+    const devHtml = inDevelopment ? `<span class="request-type-count request-type-dev">${DEV_LABEL}</span>` : "";
+    const side = devHtml || badge2Html || versionHtml ? `<span class="request-type-side">${devHtml}${badgeHtml}${badge2Html}${versionHtml}</span>` : badgeHtml;
     if (!href) {
       return `<div class="type-card request-type-card lab-module-card is-off" data-module="${palette}">
         <span class="request-type-top">${mark}${side}</span>
@@ -134,7 +137,7 @@
 
   // หน้าของ IT SUPPORT · การ์ดที่แผนกไม่มีสิทธิ์ไม่แสดง (กรองด้วย allowed)
   // modules = { <รหัสโมดูลของการ์ด>: { version, openCount, waiting, title } } ข้อมูลจากโมดูลที่ประกาศตัวเองไว้ (แต่ละโมดูลนับแยกกัน) · การ์ดที่ไม่มีรายการใน modules ไม่แสดงป้ายใด ๆ
-  //   version = เลขเวอร์ชัน (ป้าย V…) · openCount: number = "N ยังไม่จบ" · null = นับไม่ได้ ("ดูสถานะ") · undefined = โมดูลไม่นับ (ไม่แสดงป้ายหลัก)
+  //   inDevelopment = true แสดงป้าย "กำลังพัฒนา" บนการ์ด (ยังกดเข้าได้) · version = เลขเวอร์ชัน (ป้าย V…) · openCount: number = "N ยังไม่จบ" · null = นับไม่ได้ ("ดูสถานะ") · undefined = โมดูลไม่นับ (ไม่แสดงป้ายหลัก)
   //   waiting = ป้ายรอง เช่น "1 รอคุณ" (ว่าง = ไม่มี) · title = คำอธิบายตัวเลขเมื่อชี้การ์ด · การ์ดเป็นลิงก์เสมอเมื่อแผนกมีสิทธิ์
   function itSupportPage({ modules = {}, allowed = ALLOW_ALL } = {}) {
     const cards = visibleCards(allowed).map((card) => {
@@ -142,7 +145,7 @@
       return cardHtml({
         href: card.open ? sectionUrl(card.key) : "", label: card.label, palette: card.palette, icon: card.icon, action: card.action,
         badge: declared && declared.openCount !== undefined ? openBadge(declared.openCount) : card.badge,
-        badge2: declared?.waiting || "", version: declared?.version, title: declared?.title ?? "",
+        badge2: declared?.waiting || "", version: declared?.version, title: declared?.title ?? "", inDevelopment: Boolean(declared?.inDevelopment),
       });
     });
     return `<div class="lab-page">

@@ -75,7 +75,11 @@
   // ครอบทั้งหน้าด้วยจานสีของโมดูล + ข้อความข้อผิดพลาดของหน้า (ข้อความเดียว อยู่เหนือเนื้อหา)
   // เลขเวอร์ชันของโมดูลท้ายหน้า ชิดขวา (ไม่พิมพ์ลงใบ A4) · วันที่ปล่อยอยู่ใน title ไม่เป็นข้อความถาวร
   const versionTag = () => `<p class="itrp-version no-print" title="${FORM_TITLE} เวอร์ชัน ${esc(model.MODULE_VERSION)} · อัปเดต ${esc(model.formatDate(model.VERSION_DATE))}">V${esc(model.MODULE_VERSION)}</p>`;
-  const page = (inner) => `<div class="itrp-page" data-module="${PALETTE}">${inner}${versionTag()}</div>`;
+  // แถบ "กำลังพัฒนา" บนสุดของทุกหน้า (ผูกกับธง IN_DEVELOPMENT ใน itrp-model.js) · ใช้ .rf-callout.is-warn เดิมของแอป · ไม่ขวางการใช้งาน และไม่พิมพ์ลงกระดาษ
+  const DEV_NOTICE = "ระบบใบแจ้งซ่อมคอมพิวเตอร์กำลังพัฒนาและทดสอบ ยังไม่เปิดใช้งานจริง";
+  const devNotice = () => (model.IN_DEVELOPMENT ? `<p class="rf-callout is-warn itrp-dev-notice no-print" role="status">${DEV_NOTICE}</p>` : "");
+  // showDevNotice: false = หน้าพิมพ์ (ใบ A4 ไม่มีแถบนี้)
+  const page = (inner, { showDevNotice = true } = {}) => `<div class="itrp-page" data-module="${PALETTE}">${showDevNotice ? devNotice() : ""}${inner}${versionTag()}</div>`;
   const errorCard = (message, { retry = true } = {}) => `<section class="card"><div class="form-message error" role="alert">${esc(message)}</div>${retry ? '<button class="btn secondary" type="button" id="itrp-retry">ลองอีกครั้ง</button>' : ""}</section>`;
 
   /* ---------- รายการ: ใบของฉัน / รออนุมัติ / งาน IT ---------- */
@@ -642,7 +646,7 @@
         <a class="btn secondary" href="${esc(orderHref(detail.id))}">‹ กลับไปรายละเอียด</a>
         <button type="button" class="btn is-primary" id="itrp-print-button">พิมพ์</button>
       </div>
-      ${printSheet(detail)}`);
+      ${printSheet(detail)}`, { showDevNotice: false });
   }
 
   /* ---------- ตั้งค่า (it_admin) ---------- */

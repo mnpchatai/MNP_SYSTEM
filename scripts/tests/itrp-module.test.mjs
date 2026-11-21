@@ -31,7 +31,7 @@ function el(props = {}) {
   return Object.defineProperties(node, Object.getOwnPropertyDescriptors(props));
 }
 
-function world({ role = ROLE_EMP, handlers = {}, draft = null, sandbox = false } = {}) {
+function world({ role = ROLE_EMP, handlers = {}, draft = null, sandbox = false, inDevelopment = true } = {}) {
   const calls = { rpc: [], toasts: [], confirms: [], prompts: [], notFound: 0, busy: [], renderRoutes: 0, uploads: [], removes: [], fieldErrors: null, draftCleared: 0, hydrated: [] };
   const objects = new Map();
   const hosts = {};
@@ -179,7 +179,11 @@ function world({ role = ROLE_EMP, handlers = {}, draft = null, sandbox = false }
     createDraftStore: () => ({ load: () => draft, clear: () => { calls.draftCleared += 1; } }),
     createAutosave: () => ({ schedule() {}, start() {}, stop() {} }), offerDraft() {},
   };
-  for (const file of ["modules/itrp-model.js", "modules/itrp-pages.js", "modules/module-itrp.js"]) vm.runInContext(read(file), context);
+  // inDevelopment: false = จำลองการถอดธง "กำลังพัฒนา" (แก้ค่าธงเดียวใน itrp-model.js ตามที่ผู้ดูแลจะทำจริง)
+  for (const file of ["modules/itrp-model.js", "modules/itrp-pages.js", "modules/module-itrp.js"]) {
+    const source = read(file);
+    vm.runInContext(inDevelopment || file !== "modules/itrp-model.js" ? source : source.replace("const IN_DEVELOPMENT = true;", "const IN_DEVELOPMENT = false;"), context);
+  }
 
   return {
     calls, context, createForm, completeForm, answers, rpcFail, fail, objects, elements, table,
@@ -636,6 +640,33 @@ test("asking the requester and answering use their RPCs with the comment id for 
   await answer.submit("#itrp-answer-form");
   assert.deepEqual(answer.last("app_itrp_provide_info").args, { p_request_id: ID, p_body: "รุ่น X" });
   assert.ok(answer.calls.toasts.some((toast) => toast.message === "ส่งคำตอบแล้ว ใบกลับไปที่ผู้จัดการแผนก"));
+});
+
+/* ---------- ป้าย/แถบ "กำลังพัฒนา" ---------- */
+const DEV_BAR = "ระบบใบแจ้งซ่อมคอมพิวเตอร์กำลังพัฒนาและทดสอบ ยังไม่เปิดใช้งานจริง";
+test("while the module is in development every screen shows the notice bar, the print page does not, and use is not blocked", async () => {
+  const w = world({ role: ROLE_IT, handlers: { app_itrp_get_detail: () => DETAIL() } });
+  assert.equal(w.context.window.MNP_ITRP.inDevelopment, true, "the card reads the flag from the module announcement");
+  for (const query of ["", "view=new", "view=settings", `view=order&id=${ID}`]) {
+    await w.open(query);
+    assert.equal(w.html.split(DEV_BAR).length - 1, 1, `one notice bar on ${query || "the list"}`);
+    assert.match(w.html, /<p class="rf-callout is-warn itrp-dev-notice no-print" role="status">/);
+  }
+  await w.open("view=new");
+  assert.match(w.screen, /id="itrp-form-card"|แจ้งซ่อมใหม่/, "the form is still usable");
+  await w.open(`view=print&id=${ID}`);
+  assert.match(w.html, /class="itrp-sheet"/);
+  assert.doesNotMatch(w.html, /itrp-dev-notice/);
+  assert.doesNotMatch(w.html, /กำลังพัฒนา/);
+});
+
+test("turning the flag off removes the notice bar from every screen and the card announcement", async () => {
+  const w = world({ role: ROLE_IT, inDevelopment: false, handlers: { app_itrp_get_detail: () => DETAIL() } });
+  assert.equal(w.context.window.MNP_ITRP.inDevelopment, false);
+  for (const query of ["", "view=new", "view=settings", `view=order&id=${ID}`, `view=print&id=${ID}`]) {
+    await w.open(query);
+    assert.doesNotMatch(w.html, /itrp-dev-notice|กำลังพัฒนา/, `no notice on ${query || "the list"}`);
+  }
 });
 
 /* ---------- หน้าพิมพ์ / ตั้งค่า / ล้างข้อมูลทดสอบ ---------- */
