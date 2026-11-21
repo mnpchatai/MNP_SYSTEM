@@ -2200,7 +2200,7 @@ function shell(content, active, title, tabTitle = title) {
             ${helpButton()}${themeButton()}
           </div>
         </header>
-        <div class="content" id="main-content" tabindex="-1">${sandboxBannerHtml()}${content}</div>
+        <div class="content" id="main-content" tabindex="-1">${sandboxBannerHtml()}${pushPromptHtml()}${content}</div>
       </main>
     </div>`;
 }
@@ -4973,7 +4973,10 @@ function notificationItemHtml(item) {
   const reminder = ["reminder", "escalation"].includes(item.kind);
   const iconHtml = reminder || !typeCode ? uiIcon(reminder ? "clock" : "bell") : requestTypeIcon(typeCode);
   const palette = !reminder && typeCode ? ` data-module="${escapeHtml(requestPalette(typeCode))}"` : "";
-  return `<${tag} class="notification-item${item.read_at ? "" : " unread"}"${href ? ` href="${href}"` : ""}><span class="queue-item-icon notification-icon"${palette} aria-hidden="true">${iconHtml}</span><span class="notification-text"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body ?? "")} · ${formatDate(item.created_at, true)}</span></span></${tag}>`;
+  // รายการที่ยังไม่อ่านมี data-notification-id ให้หน้าการแจ้งเตือนตั้ง read_at เมื่อผู้ใช้กดรายการนั้น
+  // (รายการที่ไม่มีลิงก์เป็น div จึงให้โฟกัสด้วยคีย์บอร์ดและกดเป็นปุ่มได้)
+  const markable = !item.read_at && item.id ? ` data-notification-id="${escapeHtml(item.id)}"${href ? "" : ` role="button" tabindex="0"`}` : "";
+  return `<${tag} class="notification-item${item.read_at ? "" : " unread"}"${markable}${href ? ` href="${href}"` : ""}><span class="queue-item-icon notification-icon"${palette} aria-hidden="true">${iconHtml}</span><span class="notification-text"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body ?? "")} · ${formatDate(item.created_at, true)}</span></span></${tag}>`;
 }
 
 // ---------- แจ้งเตือนบนเครื่อง (Web Push) ----------
@@ -5163,6 +5166,142 @@ async function refreshPushPanel() {
   panel.querySelector("[data-push-disable]")?.addEventListener("click", (event) => run(event.currentTarget, "กำลังปิด…", disablePush));
 }
 
+// ตั้ง read_at เฉพาะแถวนี้ (RLS ให้ผู้รับแก้ read_at ของตัวเองได้) คืน true เมื่อสำเร็จ · ล้ม (เน็ตหลุด) คืน false ไม่โยน error
+// เพื่อไม่ให้ขวางการนำทางของผู้ใช้
+async function markNotificationRead(id) {
+  try {
+    const { error } = await sb.from("notifications").update({ read_at: new Date().toISOString() }).eq("id", id).eq("recipient_id", state.employee.id).is("read_at", null);
+    return !error;
+  } catch (error) {
+    console.warn("ทำเครื่องหมายว่าอ่านแล้วไม่สำเร็จ", error);
+    return false;
+  }
+}
+
+// ตัวเลขยังไม่อ่านบนเมนู (กระดิ่ง) ตาม state.unread โดยไม่ต้องวาดหน้าใหม่
+function updateUnreadBadges() {
+  const count = state.unread;
+  const wrap = document.querySelector('.sidebar .nav-link[href="#/notifications"] .nav-icon-wrap');
+  if (wrap) {
+    wrap.classList.toggle("has-unread", count > 0);
+    const text = count > 99 ? "99+" : String(count);
+    let badge = wrap.querySelector(".nav-count");
+    if (!count) badge?.remove();
+    else {
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "nav-count";
+        wrap.append(badge);
+      }
+      badge.textContent = text;
+      badge.setAttribute("aria-label", `${text} รายการใหม่`);
+    }
+  }
+  if (!count) document.querySelector(".nav-toggle-dot")?.remove();
+}
+
+// ทำให้รายการหนึ่งเป็น "อ่านแล้ว" ทั้งในฐานข้อมูลและบนหน้าจอ (ล้มก็ปล่อยไว้เป็นยังไม่อ่าน)
+async function markNotificationItemRead(item) {
+  const id = item.dataset.notificationId;
+  if (!id || item.dataset.notificationBusy) return;
+  item.dataset.notificationBusy = "1";
+  const ok = await markNotificationRead(id);
+  delete item.dataset.notificationBusy;
+  // ผู้ใช้ไปหน้าอื่นก่อนที่ผลจะมา: หน้าใหม่นับตัวเลขเองจากฐานข้อมูลแล้ว ไม่ลดซ้ำ
+  if (!ok || !item.isConnected) return;
+  delete item.dataset.notificationId;
+  item.classList.remove("unread");
+  item.removeAttribute("role");
+  item.removeAttribute("tabindex");
+  state.unread = Math.max(0, state.unread - 1);
+  updateUnreadBadges();
+  if (!document.querySelector("#notification-list .unread")) document.querySelector("#mark-read")?.remove();
+}
+
+// กดรายการที่ยังไม่อ่าน = อ่านแล้ว · รายการที่มีลิงก์: รอผลสั้น ๆ (ไม่เกิน 1.5 วินาที) แล้วจึงไปตามลิงก์เดิม ล้ม/ช้าก็ยังไป
+function bindNotificationReadOnClick() {
+  const list = document.querySelector("#notification-list");
+  if (!list) return;
+  const itemOf = (event) => event.target.closest?.(".notification-item[data-notification-id]");
+  list.addEventListener("click", async (event) => {
+    const item = itemOf(event);
+    if (!item) return;
+    const href = item.getAttribute("href");
+    // เปิดแท็บใหม่ (Ctrl/⌘/Shift คลิก) ปล่อยให้เบราว์เซอร์จัดการลิงก์เอง แล้วทำเครื่องหมายอ่านเงียบ ๆ
+    const plainClick = event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey;
+    if (!href || !plainClick) return void markNotificationItemRead(item);
+    event.preventDefault();
+    await withTimeout(markNotificationItemRead(item), 1500, "NOTIFICATION_READ_TIMEOUT").catch(() => {});
+    location.hash = href;
+  });
+  // คลิกกลางที่ลิงก์ (เปิดแท็บใหม่) ไม่ส่ง click จึงฟังแยก
+  list.addEventListener("auxclick", (event) => {
+    const item = event.button === 1 ? itemOf(event) : null;
+    if (item) markNotificationItemRead(item);
+  });
+  // รายการที่ไม่มีลิงก์เป็น div ที่โฟกัสได้ ให้ Enter/Space ทำงานเหมือนการกด
+  list.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const item = itemOf(event);
+    if (!item || item.tagName === "A" || event.target !== item) return;
+    event.preventDefault();
+    markNotificationItemRead(item);
+  });
+}
+
+// ---------- แถบชวนเปิดแจ้งเตือนบนเครื่อง ----------
+// เบราว์เซอร์ให้ขอสิทธิ์ได้เฉพาะตอนผู้ใช้กดเอง จึงทำได้แค่ชวนด้านบนของหน้า แล้วใช้ enablePush เดิมเมื่อกด
+// เงื่อนไขแสดงอยู่ใน MNP_PUSH.shouldShowPushPrompt (ทดสอบแล้ว) · "ไว้ทีหลัง" ซ่อน 7 วันต่อเครื่อง (localStorage)
+const PUSH_PROMPT_SNOOZE_KEY = "mnp-push-prompt-snooze-until";
+function pushPromptHtml() {
+  // หน้าการแจ้งเตือนมีการ์ดตั้งค่าอยู่แล้ว · โหมดทดสอบและบัญชี lab-only ไม่มีหน้าการแจ้งเตือนให้ใช้
+  if (!state.employee || isSandboxMode() || isLabOnly() || currentRoute().path === "notifications") return "";
+  let snoozedUntil = 0;
+  try {
+    snoozedUntil = window.MNP_PUSH.parseSnoozedUntil(localStorage.getItem(PUSH_PROMPT_SNOOZE_KEY));
+  } catch {
+    // อ่านไม่ได้ (โหมดส่วนตัว) ถือว่าไม่ได้ซ่อนไว้
+  }
+  if (!window.MNP_PUSH.shouldShowPushPrompt(pushEnvironment(), { snoozedUntil })) return "";
+  return `<section class="push-prompt" id="push-prompt" aria-label="ชวนเปิดการแจ้งเตือนบนเครื่อง">
+    <div class="push-prompt-text"><strong>เปิดแจ้งเตือนบนเครื่องนี้</strong><span>เพื่อไม่พลาดงานที่รอคุณ</span></div>
+    <div class="push-prompt-actions"><button class="btn small" type="button" data-push-prompt-enable>เปิดแจ้งเตือน</button><button class="btn secondary small" type="button" data-push-prompt-later>ไว้ทีหลัง</button></div>
+  </section>`;
+}
+
+document.addEventListener("click", async (event) => {
+  const prompt = event.target.closest?.("#push-prompt");
+  if (!prompt) return;
+  if (event.target.closest("[data-push-prompt-later]")) {
+    try {
+      localStorage.setItem(PUSH_PROMPT_SNOOZE_KEY, String(Date.now() + window.MNP_PUSH.PUSH_PROMPT_SNOOZE_MS));
+    } catch {
+      // เก็บไม่ได้ก็ซ่อนไว้จนกว่าจะเปิดหน้าใหม่
+    }
+    prompt.remove();
+    return;
+  }
+  const enable = event.target.closest("[data-push-prompt-enable]");
+  if (!enable || enable.disabled) return;
+  enable.disabled = true;
+  enable.textContent = "กำลังเปิด…";
+  try {
+    // enablePush ขอสิทธิ์เป็นขั้นแรก จึงยังอยู่ในจังหวะที่ผู้ใช้กดเอง (iOS/Safari ต้องการ)
+    const permission = await enablePush();
+    if (permission === "granted") showToast("เปิดการแจ้งเตือนบนเครื่องนี้แล้ว");
+    else if (permission === "default") showToast("ยังไม่ได้อนุญาตการแจ้งเตือน", "error");
+  } catch (error) {
+    console.error(error);
+    showToast(pushErrorMessage(error), "error");
+  }
+  // ตอบแล้ว (อนุญาตหรือบล็อก) = เลิกชวน · ปิดหน้าต่างขอสิทธิ์โดยไม่ตอบ (ยัง default) = คงแถบไว้ให้กดใหม่ได้
+  if (!prompt.isConnected) return;
+  if ("Notification" in window && Notification.permission === "default") {
+    enable.disabled = false;
+    enable.textContent = "เปิดแจ้งเตือน";
+  } else prompt.remove();
+});
+
 async function renderNotifications() {
   loadingShell("notifications", "การแจ้งเตือน");
   const { data: rows, error } = await sb.from("notifications").select("*").eq("recipient_id", state.employee.id).order("created_at", { ascending: false }).limit(100);
@@ -5171,10 +5310,11 @@ async function renderNotifications() {
   const content = `
     <div class="page-heading notifications-heading"><div><h1>การแจ้งเตือน</h1></div>${(data ?? []).some((item) => !item.read_at) ? `<button class="btn secondary" id="mark-read">ทำเครื่องหมายว่าอ่านแล้วทั้งหมด</button>` : ""}</div>
     ${PUSH_PUBLIC_KEY ? `<section class="card push-panel" id="push-panel" hidden></section>` : ""}
-    <div class="stack">${(data ?? []).map(notificationItemHtml).join("") || emptyState("ยังไม่มีการแจ้งเตือน", { hint: "เมื่อคำร้องของคุณมีความเคลื่อนไหวจะแจ้งที่นี่" })}</div>`;
+    <div class="stack" id="notification-list">${(data ?? []).map(notificationItemHtml).join("") || emptyState("ยังไม่มีการแจ้งเตือน", { hint: "เมื่อคำร้องของคุณมีความเคลื่อนไหวจะแจ้งที่นี่" })}</div>`;
   app.innerHTML = shell(content, "notifications", "การแจ้งเตือน");
   bindShell();
   refreshPushPanel();
+  bindNotificationReadOnClick();
   document.querySelector("#mark-read")?.addEventListener("click", async (event) => {
     event.currentTarget.disabled = true;
     const { error: updateError } = await sb.from("notifications").update({ read_at: new Date().toISOString() }).eq("recipient_id", state.employee.id).is("read_at", null);

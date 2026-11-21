@@ -42,7 +42,24 @@
     return actual.length === expectedBytes.length && actual.every((byte, index) => byte === expectedBytes[index]);
   }
 
-  const api = { pushPanelState, urlBase64ToUint8Array, subscriptionRecord, sameApplicationServerKey };
+  // แถบชวนเปิดแจ้งเตือนที่ด้านบนของหน้า: แสดงเมื่อเครื่องนี้ใช้ Push ได้และผู้ใช้ยังไม่เคยตอบคำขอสิทธิ์เท่านั้น
+  //   - pushPanelState ต้องเป็น "off" (ตัด hidden/ios-install/ios-old/unsupported/denied/on ออกให้แล้ว)
+  //   - permission ต้องเป็น "default" (ยังไม่เคยตอบ ซึ่งในทางปฏิบัติคือยังไม่มี subscription) — "granted" ที่แค่ยังไม่ลงทะเบียนให้แผงในหน้าการแจ้งเตือนจัดการ
+  //   - snoozedUntil คือเวลา (ms) ที่ผู้ใช้กด "ไว้ทีหลัง" ไว้ ยังไม่ถึงเวลาก็ไม่แสดง
+  const PUSH_PROMPT_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
+  function shouldShowPushPrompt(environment, { snoozedUntil = 0, now = Date.now() } = {}) {
+    if (pushPanelState(environment) !== "off") return false;
+    if (environment?.permission !== "default") return false;
+    return !(Number(snoozedUntil) > now);
+  }
+
+  // ค่าที่เก็บใน localStorage → เวลา ms (ค่าเสีย/ว่างถือว่าไม่ได้ซ่อนไว้)
+  function parseSnoozedUntil(stored) {
+    const value = Number(stored);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  }
+
+  const api = { pushPanelState, urlBase64ToUint8Array, subscriptionRecord, sameApplicationServerKey, shouldShowPushPrompt, parseSnoozedUntil, PUSH_PROMPT_SNOOZE_MS };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.MNP_PUSH = api;
 })();
