@@ -5292,12 +5292,12 @@ async function onNotificationPushMessage(message, replyPort) {
   if ((await notifySound.playForPush()) === "fallback") await showSoundFallbackNotification(message);
 }
 
-async function showSoundFallbackNotification({ title, url, tag }) {
+async function showSoundFallbackNotification({ title, body, url, tag }) {
   try {
     const registration = await serviceWorkerReady();
     const icon = "./icons/icon-192.png";
-    // tag เดียวกับใบ silent ที่ sw.js แสดงไว้ (sw.js ส่งมาให้เสมอ) เพื่อทับใบเดิม ไม่ให้ขึ้น 2 ใบ
-    await registration.showNotification(title, { icon, lang: "th", tag: tag || "mnp-sound-fallback", renotify: true, data: { url } });
+    // tag เดียวกับใบ silent ที่ sw.js แสดงไว้ (sw.js ส่งมาให้เสมอ) เพื่อทับใบเดิม ไม่ให้ขึ้น 2 ใบ · body (ถ้ามี) ต้องตรงกับใบที่ทับ
+    await registration.showNotification(title, { icon, lang: "th", ...(body ? { body } : {}), tag: tag || "mnp-sound-fallback", renotify: true, data: { url } });
   } catch (error) {
     console.warn("แจ้งเตือนสำรองไม่สำเร็จ", error);
   }

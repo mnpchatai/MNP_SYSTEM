@@ -516,8 +516,43 @@ test("a payload tag is passed to the page unchanged", async () => {
   assert.equal(worker.shown[0].options.tag, "n-1");
 });
 
+test("a push with a body shows it and tells the page; a push without one adds no body at all", async () => {
+  const digest = { title: "แจ้งเตือนที่คุณพลาดระหว่างพัก", body: "คุณมี 3 แจ้งเตือนที่ยังไม่ได้อ่าน", url: "#/notifications", tag: "pause-digest-e1" };
+  const worker = loadServiceWorker({ windows: [{ reply: false }] });
+  await worker.push(digest);
+  assert.equal(worker.shown[0].options.body, digest.body);
+  assert.deepEqual(plain(worker.clients[0].received[0]), { type: "mnp-notification", ...digest });
+  // payload ปกติของ notify-push ไม่มี body → ไม่มีคีย์ body ทั้งใน showNotification และข้อความหาหน้า
+  const plainPush = loadServiceWorker({ windows: [{ reply: false }] });
+  await plainPush.push(PAYLOAD);
+  assert.equal("body" in plainPush.shown[0].options, false);
+  assert.equal("body" in plainPush.clients[0].received[0], false);
+  // body ว่างหรือไม่ใช่ข้อความ = ไม่แสดง
+  for (const body of ["", 7, null]) {
+    const worker2 = loadServiceWorker();
+    await worker2.push({ ...PAYLOAD, body });
+    assert.equal("body" in worker2.shown[0].options, false);
+  }
+});
+
 // ---------- app.js: ต้องต่อเข้ากับตัวจัดการเสียงจริง ----------
 const appSource = readFileSync(new URL("../../app.js", import.meta.url), "utf8").replaceAll("\r\n", "\n");
+
+test("the page fallback notification carries the same body as the silent one it replaces", async () => {
+  const shown = [];
+  const context = vm.createContext({
+    serviceWorkerReady: async () => ({ showNotification: async (title, options) => { shown.push({ title, options }); } }),
+    console,
+  });
+  const start = appSource.indexOf("async function showSoundFallbackNotification(");
+  vm.runInContext(appSource.slice(start, appSource.indexOf("\n}\n", start) + 3), context);
+  const fallback = vm.runInContext("showSoundFallbackNotification", context);
+  await fallback({ title: "หัวเรื่อง", body: "เนื้อความ", url: "#/notifications", tag: "pause-digest-e1" });
+  await fallback({ title: "ปกติ", url: "#/notifications", tag: "n-1" });
+  assert.equal(shown[0].options.body, "เนื้อความ");
+  assert.equal(shown[0].options.tag, "pause-digest-e1");
+  assert.equal("body" in shown[1].options, false);
+});
 
 test("the sound has no user interface at all: no panel, no switch, no preview, no saved setting", () => {
   assert.doesNotMatch(appSource, /sound-panel|refreshSoundPanel|data-sound-|notifySound\.(setEnabled|isEnabled|isActive|play\(\{)|mnp-notify-sound/);

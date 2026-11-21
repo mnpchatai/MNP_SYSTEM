@@ -30,6 +30,7 @@ self.addEventListener("fetch", (event) => {
 
 // ---------- Web Push ----------
 // payload จาก Edge Function notify-push: { title, url, tag } — title คือหัวเรื่องแจ้งเตือน + เลขที่เอกสาร ไม่มีรายละเอียดอื่น
+// Push สรุปหลังครบเวลาพักมี body เพิ่ม ({ title, body, url, tag }) — แสดง body เมื่อมีเท่านั้น แจ้งเตือนปกติจึงไม่เปลี่ยน
 // url เป็น hash route สัมพัทธ์ (เช่น "#/request?id=...") แปลงเป็น URL เต็มด้วย scope ของ service worker เสมอ
 // เพราะ Pilot เปิดได้ทั้งจาก /MNP_SYSTEM/ (GitHub Pages) และ / (Cloudflare Workers)
 // ทุก push ต้องจบด้วย showNotification (iOS ยกเลิกการสมัครของเว็บที่รับ push แล้วไม่แสดงอะไร)
@@ -87,19 +88,21 @@ self.addEventListener("push", (event) => {
   }
   const title = typeof data.title === "string" && data.title ? data.title : "มีการแจ้งเตือนใหม่";
   const url = typeof data.url === "string" && data.url.startsWith("#/") ? data.url : "#/notifications";
+  const body = typeof data.body === "string" ? data.body : "";
   // ทุกแจ้งเตือนต้องมี tag ที่หน้าเว็บรู้ด้วย: ถ้าหน้ารับปากเล่นเสียงแล้วเล่นไม่ได้ จะแสดงแจ้งเตือนสำรองด้วย tag เดิมเพื่อทับใบ silent (ไม่ขึ้น 2 ใบ)
   // payload ไม่มี tag → สร้างให้ไม่ซ้ำกัน (เหมือนเดิมที่แจ้งเตือนไม่มี tag จะแยกเป็นคนละใบ)
   const tag = typeof data.tag === "string" && data.tag ? data.tag : `mnp-push-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   event.waitUntil((async () => {
     let silent = false;
     try {
-      silent = await announceToOpenPages({ title, url, tag });
+      silent = await announceToOpenPages({ title, ...(body ? { body } : {}), url, tag });
     } catch {
       silent = false;
     }
     await self.registration.showNotification(title, {
       icon: "./icons/icon-192.png",
       lang: "th",
+      ...(body ? { body } : {}),
       tag,
       ...(silent ? { silent: true } : {}),
       data: { url },
