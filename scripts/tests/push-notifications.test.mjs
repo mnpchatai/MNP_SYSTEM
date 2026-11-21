@@ -174,6 +174,8 @@ test("the prompt offers the enable button and a temporary hide-for-today button"
   assert.equal(html.match(/<button/g).length, 2);
   assert.match(html, /data-push-prompt-enable/);
   assert.match(html, /data-push-prompt-today[^>]*>ปิดชั่วคราววันนี้</);
+  assert.match(html, /title="ซ่อนแถบนี้บนเครื่องนี้ถึง 07:00 น\. รอบถัดไป"/);
+  assert.doesNotMatch(html, /พรุ่งนี้/);
   // การซ่อนเป็นเรื่องของแถบเท่านั้น ไม่ผูกกับการพักแจ้งเตือนจริง (ไม่เรียก RPC)
   const hider = appSource.slice(appSource.indexOf("function hidePushPromptUntilTomorrow("), appSource.indexOf("function pushPromptHtml("));
   assert.doesNotMatch(hider, /sb\.rpc|app_push_pause/);
@@ -186,6 +188,15 @@ test("the hide button is on every kind of prompt, so a device that cannot enable
     assert.match(html, /data-push-prompt-today/);
     assert.doesNotMatch(html, /data-push-prompt-enable/);
   }
+});
+
+test("hiding the prompt after Thai midnight keeps it away only until 07:00 the same morning", () => {
+  // 22/11/2026 00:30 เวลาไทย (21/11 17:30Z) → ซ่อนถึง 22/11/2026 07:00 เวลาไทย (00:00Z) ไม่ใช่วันถัดไป
+  const prompt = buildPrompt({ now: Date.parse("2026-11-21T17:30:00Z") });
+  prompt.hide();
+  assert.equal(prompt.store.get("mnp-push-prompt-hidden-until:e"), String(Date.parse("2026-11-22T00:00:00Z")));
+  assert.equal(prompt.render(Date.parse("2026-11-21T23:59:59Z")), "");
+  assert.match(prompt.render(Date.parse("2026-11-22T00:00:00Z")), /id="push-prompt"/);
 });
 
 test("hiding the prompt keeps it away until 07:00 Bangkok of the next day, then it returns by itself", () => {
@@ -216,21 +227,36 @@ test("the hide button redraws the prompt after storing the time", () => {
   assert.match(appSource, /\[data-push-prompt-today\]"\)\) return;\n {2}hidePushPromptUntilTomorrow\(\);\n {2}refreshPushPrompt\(\);/);
 });
 
-test("nextBangkokSevenAm is 07:00 Bangkok of the next Bangkok calendar day, whatever the machine time zone", () => {
+test("nextBangkokSevenAm is the next 07:00 Bangkok that is still ahead, whatever the machine time zone", () => {
   const next = (iso) => new Date(require("../../modules/push-notifications.js").nextBangkokSevenAm(Date.parse(iso))).toISOString();
-  assert.equal(next("2026-11-21T08:00:00Z"), "2026-11-22T00:00:00.000Z"); // 15:00 ไทย → 07:00 วันถัดไป
-  assert.equal(next("2026-11-21T00:00:00Z"), "2026-11-22T00:00:00.000Z"); // 07:00 ไทยพอดี → 07:00 วันถัดไป
-  assert.equal(next("2026-11-21T16:59:59Z"), "2026-11-22T00:00:00.000Z"); // 23:59:59 ไทย
-  // หลังเที่ยงคืนไทย (ยังเป็นวันที่ 21 ตาม UTC) = วันปฏิทินไทยที่ 22 → ถึง 07:00 ของวันที่ 23 ไม่ใช่เช้าวันเดียวกัน
-  assert.equal(next("2026-11-21T17:00:00Z"), "2026-11-23T00:00:00.000Z"); // 00:00 ไทย
-  assert.equal(next("2026-11-21T17:30:00Z"), "2026-11-23T00:00:00.000Z"); // 00:30 ไทย
-  assert.equal(next("2026-12-31T20:00:00Z"), "2027-01-02T00:00:00.000Z"); // ข้ามปี: 03:00 ไทยวันที่ 1 ม.ค. → 2 ม.ค.
+  assert.equal(next("2026-11-21T13:00:00Z"), "2026-11-22T00:00:00.000Z"); // 20:00 ไทย → 07:00 วันรุ่งขึ้น
+  assert.equal(next("2026-11-21T08:00:00Z"), "2026-11-22T00:00:00.000Z"); // 15:00 ไทย → 07:00 วันรุ่งขึ้น
+  assert.equal(next("2026-11-21T16:59:59Z"), "2026-11-22T00:00:00.000Z"); // 23:59:59 ไทย → 07:00 วันรุ่งขึ้น
+  // หลังเที่ยงคืนไทยก่อน 07:00 → 07:00 เช้าวันเดียวกัน (ปฏิทินไทย)
+  assert.equal(next("2026-11-21T17:00:00Z"), "2026-11-22T00:00:00.000Z"); // 00:00:00 ไทย (22/11)
+  assert.equal(next("2026-11-21T17:30:00Z"), "2026-11-22T00:00:00.000Z"); // 00:30 ไทย
+  assert.equal(next("2026-11-21T23:59:59Z"), "2026-11-22T00:00:00.000Z"); // 06:59:59 ไทย
+  // 07:00:00 พอดีหรือหลังจากนั้น → 07:00 ของวันถัดไป (ผลต้องอยู่ในอนาคตเสมอ)
+  assert.equal(next("2026-11-22T00:00:00Z"), "2026-11-23T00:00:00.000Z"); // 07:00:00 ไทย
+  assert.equal(next("2026-11-22T00:00:01Z"), "2026-11-23T00:00:00.000Z"); // 07:00:01 ไทย
+  // ขอบเขต UTC: 16:59:59Z และ 17:00:00Z คือก่อน/หลังเที่ยงคืนไทย (ครอบด้วยข้างบนแล้ว) · สิ้นปี/สิ้นเดือน
+  assert.equal(next("2026-12-31T20:00:00Z"), "2027-01-01T00:00:00.000Z"); // 03:00 ไทย 1 ม.ค. → 07:00 เช้าวันเดียวกัน
+  assert.equal(next("2026-12-31T13:00:00Z"), "2027-01-01T00:00:00.000Z"); // 20:00 ไทย 31 ธ.ค. → 07:00 1 ม.ค.
+  assert.equal(next("2026-12-31T00:00:00Z"), "2027-01-01T00:00:00.000Z"); // 07:00 ไทย 31 ธ.ค. → 07:00 1 ม.ค.
+  assert.equal(next("2026-11-30T13:00:00Z"), "2026-12-01T00:00:00.000Z"); // 20:00 ไทย 30 พ.ย. → 07:00 1 ธ.ค.
+  // ผลต้องมากกว่าเวลากดเสมอ และไม่เกิน 24 ชั่วโมง
+  for (let offsetSeconds = 0; offsetSeconds < 2 * 24 * 3600; offsetSeconds += 1801) {
+    const now = Date.parse("2026-11-21T00:00:00Z") + offsetSeconds * 1000;
+    const result = require("../../modules/push-notifications.js").nextBangkokSevenAm(now);
+    assert.ok(result > now && result - now <= 24 * 3600 * 1000, String(now));
+    assert.equal(new Date(result).getUTCHours(), 0);
+  }
 });
 
 test("nextBangkokSevenAm does not depend on the process time zone", () => {
   for (const zone of ["America/Los_Angeles", "Pacific/Kiritimati", "UTC"]) {
-    const run = spawnSync(process.execPath, ["-e", `console.log(new Date(require("./modules/push-notifications.js").nextBangkokSevenAm(Date.parse("2026-11-21T17:30:00Z"))).toISOString())`], { env: { ...process.env, TZ: zone }, cwd: new URL("../..", import.meta.url), encoding: "utf8" });
-    assert.equal(run.stdout.trim(), "2026-11-23T00:00:00.000Z", zone);
+    const run = spawnSync(process.execPath, ["-e", `const next = (iso) => new Date(require("./modules/push-notifications.js").nextBangkokSevenAm(Date.parse(iso))).toISOString(); console.log(next("2026-11-21T17:30:00Z"), next("2026-11-21T13:00:00Z"), next("2026-11-22T00:00:00Z"))`], { env: { ...process.env, TZ: zone }, cwd: new URL("../..", import.meta.url), encoding: "utf8" });
+    assert.equal(run.stdout.trim(), "2026-11-22T00:00:00.000Z 2026-11-22T00:00:00.000Z 2026-11-23T00:00:00.000Z", zone);
   }
 });
 
@@ -817,7 +843,9 @@ test("the pause panel shows the status, the description and the resume button in
   const until = Date.parse("2026-11-22T00:00:00Z");
   const on = html("on", { canPause: true });
   assert.match(on, /<span class="badge">เปิดอยู่<\/span>/);
-  assert.match(on, /data-push-pause[^>]*>พักแจ้งเตือนถึง 07:00 น\. พรุ่งนี้<\/button>/);
+  assert.match(on, /data-push-pause[^>]*>พักแจ้งเตือนถึง 07:00 น\.<\/button>/);
+  assert.match(on, /data-push-pause title="ไม่มีแจ้งเตือนเด้งบนทุกเครื่องของคุณจนถึง 07:00 น\. รอบถัดไป \(อีเมลและรายการในหน้านี้ยังมาตามปกติ\)"/);
+  assert.doesNotMatch(on, /พรุ่งนี้/);
   assert.doesNotMatch(on, /ปิดบนเครื่องนี้|data-push-disable|data-push-resume/);
   assert.doesNotMatch(html("on", { canPause: false }), /<button/);
   for (const state of ["on", "off", "denied", "ios-install"]) {

@@ -4991,7 +4991,7 @@ function notificationItemHtml(item) {
 
 // ---------- แจ้งเตือนบนเครื่อง (Web Push) ----------
 // เปิดต่อเครื่อง: ขอสิทธิ์ได้เฉพาะตอนผู้ใช้กดปุ่มเอง (แผงบนหน้าการแจ้งเตือนหรือแถบชวนเปิด) แต่เครื่องที่อนุญาตแล้วจะถูกผูกกับบัญชีที่
-// ล็อกอินให้อัตโนมัติ (resyncPushSubscription) · ผู้ใช้ปิดรายเครื่องเองไม่ได้ มีแต่ "พักแจ้งเตือน" ทั้งคนถึง 07:00 น. ของวันถัดไป
+// ล็อกอินให้อัตโนมัติ (resyncPushSubscription) · ผู้ใช้ปิดรายเครื่องเองไม่ได้ มีแต่ "พักแจ้งเตือน" ทั้งคนถึง 07:00 น. รอบถัดไป
 // เครื่องที่เปิดไว้ถูกบันทึกในฐานข้อมูลผ่าน RPC (ตาราง push_subscriptions
 // ไม่เปิดให้หน้าเว็บอ่านตรง) แล้ว Edge Function notify-push ส่งทุกแถวที่เข้าระฆังไปยังเครื่องเหล่านั้น
 // กติกาตัดสินสถานะของแผงอยู่ใน modules/push-notifications.js (ทดสอบแล้ว) ที่นี่เป็นส่วนที่แตะเบราว์เซอร์/Supabase
@@ -5100,7 +5100,7 @@ async function enablePush() {
 }
 
 // ---------- พักแจ้งเตือน ----------
-// พัก Web Push ของ "พนักงานทั้งคน" (ทุกเครื่อง) ถึง 07:00 น. เวลาไทยของวันถัดไป — ฐานข้อมูลเป็นเจ้าของสถานะและเวลาสิ้นสุด
+// พัก Web Push ของ "พนักงานทั้งคน" (ทุกเครื่อง) ถึง 07:00 น. เวลาไทยรอบถัดไป — ฐานข้อมูลเป็นเจ้าของสถานะและเวลาสิ้นสุด
 // (app_push_pause / app_push_resume / app_push_pause_status) หน้านี้แค่จำผลไว้ต่อบัญชีเพื่อ 3 อย่าง: แสดงปุ่มในหน้าการแจ้งเตือน,
 // ซ่อนแถบชวนเปิดแจ้งเตือน, และ "ไม่เล่นเสียงของบริษัท" ระหว่างพัก (ตัวเลขกระดิ่งยังอัปเดตตามปกติ อีเมล/รายการในหน้าไม่ถูกพัก)
 // ความถี่ที่ถามฐานข้อมูล: 1 ครั้งหลังล็อกอิน/โหลดหน้า + ทุกครั้งที่เปิดหน้าการแจ้งเตือน + ไม่เกินทุก 15 นาทีเมื่อกลับมาเห็นหน้า
@@ -5276,7 +5276,7 @@ function pushPanelBodyHtml(pushState, ios, { pausedUntil = null, canPause = fals
   const badge = pushState === "on" ? ` <span class="badge">เปิดอยู่</span>` : pushState === "off" ? ` <span class="badge">ปิดอยู่</span>` : "";
   const text = `<div class="push-panel-text"><strong>แจ้งเตือนบนหน้าจอ${badge}</strong>${notice ? `<span>${notice}</span>` : ""}</div>`;
   if (pushState === "off") return `${text}<button class="btn" type="button" data-push-enable title="รับแจ้งเตือนที่หน้าจอเครื่องนี้ แม้ไม่ได้เปิดแอป">เปิดการแจ้งเตือนบนเครื่องนี้</button>`;
-  if (pushState === "on" && canPause) return `${text}<button class="btn secondary" type="button" data-push-pause title="ไม่มีแจ้งเตือนเด้งบนทุกเครื่องของคุณจนถึง 07:00 น. ของพรุ่งนี้ (อีเมลและรายการในหน้านี้ยังมาตามปกติ)">พักแจ้งเตือนถึง 07:00 น. พรุ่งนี้</button>`;
+  if (pushState === "on" && canPause) return `${text}<button class="btn secondary" type="button" data-push-pause title="ไม่มีแจ้งเตือนเด้งบนทุกเครื่องของคุณจนถึง 07:00 น. รอบถัดไป (อีเมลและรายการในหน้านี้ยังมาตามปกติ)">พักแจ้งเตือนถึง 07:00 น.</button>`;
   return text;
 }
 
@@ -5524,7 +5524,7 @@ function bindNotificationReadOnClick() {
 // ---------- แถบบังคับให้เปิดแจ้งเตือนบนเครื่อง ----------
 // แสดงด้านบนของทุกหน้า จนกว่าเครื่องนี้จะเปิดแจ้งเตือนสำเร็จ (อนุญาต + ลงทะเบียนแล้ว) แต่ไม่ล็อกการใช้งานหน้าเว็บ
 // ผู้ใช้กด "ปิดชั่วคราววันนี้" ได้ทุกกรณีของแถบ (เครื่องที่เปิดไม่ได้จริงจะได้ไม่มีแถบค้างถาวร): ซ่อนเฉพาะ "แถบบนเครื่องนี้"
-// ถึง 07:00 น. เวลาไทยของวันถัดไป แล้วกลับมาเอง ไม่ได้พักแจ้งเตือนจริง (การพักจริงอยู่ที่หน้าการแจ้งเตือน)
+// ถึง 07:00 น. เวลาไทยรอบถัดไป แล้วกลับมาเอง ไม่ได้พักแจ้งเตือนจริง (การพักจริงอยู่ที่หน้าการแจ้งเตือน)
 // เบราว์เซอร์ให้ขอสิทธิ์ได้เฉพาะตอนผู้ใช้กดเอง จึงเป็นแถบ + ปุ่มที่เรียก enablePush · ชนิดของแถบตัดสินใน MNP_PUSH.pushPromptKind (ทดสอบแล้ว)
 // เครื่องที่อนุญาตแล้วต้องถามฐานข้อมูลก่อนว่าลงทะเบียนครบไหม (ผลจำไว้ใน pushSubscribedCache) ระหว่างนั้นยังไม่แสดง กันแถบวูบ
 let pushPromptChecking = false;
@@ -5561,7 +5561,7 @@ function pushPromptHtml() {
   const enableButton = kind === "enable" ? `<button class="btn small" type="button" data-push-prompt-enable>เปิดแจ้งเตือน</button>` : "";
   return `<section class="push-prompt" id="push-prompt" aria-label="ต้องเปิดการแจ้งเตือนบนเครื่องนี้">
     <div class="push-prompt-text"><strong>กรุณาเปิดแจ้งเตือนบนเครื่องนี้</strong><span>${detail}</span></div>
-    <div class="push-prompt-actions">${enableButton}<button class="btn secondary small" type="button" data-push-prompt-today title="ซ่อนแถบนี้บนเครื่องนี้ถึง 07:00 น. ของพรุ่งนี้">ปิดชั่วคราววันนี้</button></div>
+    <div class="push-prompt-actions">${enableButton}<button class="btn secondary small" type="button" data-push-prompt-today title="ซ่อนแถบนี้บนเครื่องนี้ถึง 07:00 น. รอบถัดไป">ปิดชั่วคราววันนี้</button></div>
   </section>`;
 }
 
