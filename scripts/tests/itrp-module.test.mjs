@@ -23,7 +23,7 @@ const ROLE_APPROVER = { ...ROLE_EMP, employee_id: "e3", employee_no: "FANG", ful
 function el(props = {}) {
   const listeners = {};
   const node = {
-    dataset: {}, style: {}, hidden: false, disabled: false, value: "", checked: false, innerHTML: "", min: "", listeners,
+    dataset: {}, style: {}, hidden: false, disabled: false, isConnected: true, value: "", checked: false, innerHTML: "", min: "", listeners,
     classList: { add() {}, remove() {}, toggle() {} },
     addEventListener(type, handler) { (listeners[type] ??= []).push(handler); },
     focus() {}, scrollIntoView() {}, dispatchEvent() {}, closest: () => null, querySelector: () => null, querySelectorAll: () => [],
@@ -566,6 +566,30 @@ test("the vendor field follows the repair method and the unsaved probe sees type
   w.context.document.querySelector("#itrp-complete-card").hidden = false;
   w.completeForm.controls["#itrp-cause"].value = "พิมพ์ค้าง";
   assert.equal(w.context.window.MNP_ITRP.unsavedCount(), 1);
+});
+
+test("typed IT data stops counting once the user has left the module page (no leave prompt anywhere else in the app)", async () => {
+  const w = world({ role: ROLE_IT, handlers: { app_itrp_get_detail: IT_DETAIL } });
+  await w.open(`view=order&id=${ID}`);
+  w.context.document.querySelector("#itrp-complete-card").hidden = false;
+  w.completeForm.controls["#itrp-cause"].value = "พิมพ์ค้าง";
+  assert.equal(w.context.window.MNP_ITRP.unsavedCount(), 1, "typed on the order page = something to lose");
+  // ยืนยัน "ออกโดยไม่ส่ง" ไปหน้านอกโมดูล: หน้าเปลี่ยน แต่ฟอร์มเดิมยังค้างอยู่ในอ็อบเจ็กต์ที่ตัวตรวจถืออยู่
+  w.context.location.hash = "#/dashboard";
+  assert.equal(w.context.window.MNP_ITRP.unsavedCount(), 0, "outside the module nothing is counted");
+  w.context.location.hash = "";
+  assert.equal(w.context.window.MNP_ITRP.unsavedCount(), 0, "the probe was dropped, so coming back to the old hash does not revive it");
+});
+
+test("a form that was removed from the page is not counted even if it still holds typed text", async () => {
+  const w = world({ role: ROLE_IT, handlers: { app_itrp_get_detail: IT_DETAIL } });
+  await w.open(`view=order&id=${ID}`);
+  const card = w.context.document.querySelector("#itrp-complete-card");
+  card.hidden = false;
+  w.completeForm.controls["#itrp-cause"].value = "พิมพ์ค้าง";
+  assert.equal(w.context.window.MNP_ITRP.unsavedCount(), 1);
+  card.isConnected = false;
+  assert.equal(w.context.window.MNP_ITRP.unsavedCount(), 0);
 });
 
 /* ---------- ขอแก้ไข / ถาม / ตอบ ---------- */
