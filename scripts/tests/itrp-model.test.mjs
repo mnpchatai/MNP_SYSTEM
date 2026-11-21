@@ -93,8 +93,8 @@ test("the module version starts at 1.00 and no text of this module says 'ใบ�
   assert.equal(model.MODULE_VERSION, "1.00");
   assert.match(model.VERSION_DATE, /^\d{4}-\d{2}-\d{2}$/);
   for (const file of ["modules/itrp-model.js", "modules/itrp-pages.js", "modules/module-itrp.js"]) {
-    // คอมเมนต์อ้างถึงใบสั่งงาน IT (โมดูลต้นแบบ) ได้ แต่ข้อความที่ผู้ใช้เห็นต้องเป็น "ใบแจ้งซ่อม"
-    const code = read(file).split("\n").filter((line) => !/^\s*\/\//.test(line)).join("\n").replace(/\/\/[^\n]*$/gm, "");
+    // คอมเมนต์อ้างถึงใบสั่งงาน IT (โมดูลต้นแบบ) ได้ และหน้าตั้งค่ามีข้อความ 1 บรรทัดบอกว่าทีม IT แก้ที่ใบสั่งงาน IT · นอกนั้นข้อความที่ผู้ใช้เห็นต้องเป็น "ใบแจ้งซ่อม"
+    const code = read(file).split("\n").filter((line) => !/^\s*\/\//.test(line) && !line.includes("รายชื่อเดียวกับใบสั่งงาน IT")).join("\n").replace(/\/\/[^\n]*$/gm, "");
     assert.doesNotMatch(code, /ใบสั่งงาน/, `${file} must say ใบแจ้งซ่อม everywhere`);
   }
 });
@@ -228,7 +228,7 @@ test("parts: blank rows are skipped, a filled row needs an item and a quantity a
 test("parts numbers follow the database pattern: up to 8 digits and 2 decimals, quantity above zero, price not negative", () => {
   const row = (quantity, price = "") => [{ item_name: "x", quantity, price, note: "" }];
   const qtyMessage = "แถวที่ 1: จำนวนต้องเป็นตัวเลขมากกว่า 0 (ทศนิยมไม่เกิน 2 ตำแหน่ง)";
-  const priceMessage = "แถวที่ 1: ราคาต้องเป็นตัวเลขไม่ติดลบ (ทศนิยมไม่เกิน 2 ตำแหน่ง)";
+  const priceMessage = "แถวที่ 1: ราคาต่อหน่วยต้องเป็นตัวเลขไม่ติดลบ (ทศนิยมไม่เกิน 2 ตำแหน่ง)";
   for (const ok of ["1", "0.5", "0.01", "12345678", "1.25", "1,000"]) assert.deepEqual(model.normalizeParts(row(ok)).errors, [], `quantity ${ok}`);
   for (const bad of ["0", "0.00", "-1", "abc", "1.234", "123456789", ".5", "1e3", "1 2"]) assert.deepEqual(model.normalizeParts(row(bad)).errors, [qtyMessage], `quantity ${bad}`);
   for (const ok of ["0", "0.00", "99999999.99", "1,250.5"]) assert.deepEqual(model.normalizeParts(row("1", ok)).errors, [], `price ${ok}`);
