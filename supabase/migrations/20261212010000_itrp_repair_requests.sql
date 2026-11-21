@@ -2031,7 +2031,7 @@ begin
       raise exception 'ใบแจ้งซ่อมนี้สิ้นสุดแล้ว แนบไฟล์ไม่ได้' using errcode = 'check_violation';
     end if;
     if now() - v_req.created_at > private.itrp_attach_window() then
-      raise exception 'หมดเวลาแนบไฟล์แล้ว (แนบได้ภายใน 30 นาทีหลังแจ้งงาน)' using errcode = 'check_violation';
+      raise exception 'หมดเวลาแนบไฟล์แล้ว (แนบได้ภายใน 30 นาทีหลังแจ้งซ่อม)' using errcode = 'check_violation';
     end if;
     if private.itrp_has_real_approval(v_req.id, v_req.requester_id) then
       raise exception 'มีผู้อนุมัติใบแจ้งซ่อมนี้แล้ว แนบไฟล์เพิ่มไม่ได้' using errcode = 'check_violation';
