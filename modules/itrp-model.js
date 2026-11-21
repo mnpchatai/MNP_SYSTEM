@@ -532,7 +532,7 @@
       else if (charCount(item) > MAX_NOTE) errors.push(`${at}: ชื่อรายการต้องไม่เกิน ${MAX_NOTE} ตัวอักษร`);
       if (!quantity) errors.push(`${at}: กรุณาระบุจำนวน`);
       else if (!DECIMAL.test(quantity) || Number(quantity) <= 0) errors.push(`${at}: จำนวนต้องเป็นตัวเลขมากกว่า 0 (ทศนิยมไม่เกิน 2 ตำแหน่ง)`);
-      if (price && !DECIMAL.test(price)) errors.push(`${at}: ราคาต้องเป็นตัวเลขไม่ติดลบ (ทศนิยมไม่เกิน 2 ตำแหน่ง)`);
+      if (price && !DECIMAL.test(price)) errors.push(`${at}: ราคาต่อหน่วยต้องเป็นตัวเลขไม่ติดลบ (ทศนิยมไม่เกิน 2 ตำแหน่ง)`);
       if (note && charCount(note) > MAX_NOTE) errors.push(`${at}: หมายเหตุต้องไม่เกิน ${MAX_NOTE} ตัวอักษร`);
       return { item_name: item, quantity, price: price || null, note };
     });
@@ -557,6 +557,12 @@
       { name: "repair_action", required: true, message: "กรุณาระบุการซ่อม-แก้ไขที่เกิดขึ้น", check: (value) => charCount(value) <= MAX_LONG_TEXT, checkMessage: `การซ่อม-แก้ไขที่เกิดขึ้นต้องไม่เกิน ${MAX_LONG_TEXT.toLocaleString("en-US")} ตัวอักษร` },
       { name: "pr_po_no", check: (value) => charCount(value) <= MAX_PR_PO, checkMessage: `เลขที่ PR./PO. ต้องไม่เกิน ${MAX_PR_PO} ตัวอักษร` },
     ];
+  }
+  // ช่องชื่อผู้ซ่อม/สถานที่ส่งซ่อมตามการตรวจซ่อมที่เลือก: ซ่อมภายในไม่มีช่อง · เรียกผู้ซ่อมภายนอกไม่บังคับ · ส่งซ่อมที่บังคับระบุสถานที่ (ตรงกับ app_itrp_complete)
+  function vendorField(method) {
+    if (method === "sent_out") return { visible: true, required: true, label: "สถานที่ส่งซ่อม" };
+    if (method === "external_onsite") return { visible: true, required: false, label: "ชื่อผู้ซ่อม (ไม่บังคับ)" };
+    return { visible: false, required: false, label: "" };
   }
   // พารามิเตอร์ของ app_itrp_complete · parts = ผลของ normalizeParts(...).rows · ข้อความระบุที่ไม่เกี่ยวกับตัวเลือกที่เลือกไม่ส่ง (ซ่อมภายในไม่มีผู้ซ่อมภายนอก)
   function completeParams(requestId, values, parts) {
@@ -799,7 +805,7 @@
     actionButtons, countsAsBothSteps, confirmMessageFor, BOTH_STEPS_NOTE, completeToast, answerToast, pendingStepLabel, eventLabel, eventLabelFor, CANCELLED_ON_BEHALF_LABEL, printSignoffs, printOutcome, approvalSummary,
     itGroupOf, groupItOrders, itActionableCount, awaitingMyReceiveCount, awaitingMyAnswerCount, mineWaiting, mineWaitingNote, waitingForMeCount, itApprovalProgress, CLOSED_STATUSES, openOrderCount, cardSummary,
     repairRules, createParams, validateReason, infoRules, infoParams,
-    normalizeParts, completeRules, completeParams, repairReports, reportView,
+    normalizeParts, completeRules, completeParams, vendorField, repairReports, reportView,
     fileExtension, fileMime, fileBucket, filePath, formatFileSize, validateFiles, makeUploadEntries, isAlreadyUploaded, isFileRejection, runUploads, roundLabel, attachmentGroups, galleryFile, reworkRounds, reworkRules, reworkParams,
     formatDocNo, validateNextSeq, staffRoleText,
     describeError, describeUploadError, purgeSummary,
