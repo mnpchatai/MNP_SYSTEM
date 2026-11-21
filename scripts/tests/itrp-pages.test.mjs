@@ -231,7 +231,6 @@ test("the timeline lists each event with who and when, and labels a cancellation
 
 /* ---------- ใบพิมพ์ A4 ---------- */
 const sheet = (overrides) => pages.printSheet(detail(overrides));
-const slot = (html, key) => html.match(new RegExp(`<div class="itrp-sign" data-slot="${key}">([\\s\\S]*?)</div>\\s*</div>|<div class="itrp-sign" data-slot="${key}">([\\s\\S]*?)<div class="itrp-sign-time">([^<]*)</div>`))?.[0] ?? "";
 const selected = (html, group) => [...html.matchAll(/data-option="(\w+)" data-selected="1"/g)].map((match) => match[1]).filter((value) => group.includes(value));
 
 test("the sheet has the paper form's blocks in order with the right title and number box", () => {
