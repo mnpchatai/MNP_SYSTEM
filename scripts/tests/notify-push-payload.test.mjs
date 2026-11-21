@@ -87,3 +87,79 @@ test("a notification is sent when any device accepts it, retried on transient fa
   assert.deepEqual(settleRow([gone, transient], 3, 3), { status: "failed", error: "HTTP_503" });
   assert.deepEqual(settleRow([gone, gone], 1, 3), { status: "skipped", error: "SUBSCRIPTIONS_EXPIRED" });
 });
+
+test("pause digest push: fixed Thai wording, count only, goes to the notifications page, one tag per employee per Thai day", () => {
+  const morning = new Date("2026-11-22T00:00:30Z"); // 07:00:30 น. ของ 22/11 เวลาไทย
+  const payload = plain(exports.pauseDigestPayload("emp-1", 3, morning));
+  assert.deepEqual(payload, {
+    title: "แจ้งเตือนที่คุณพลาดระหว่างพัก",
+    body: "คุณมี 3 แจ้งเตือนที่ยังไม่ได้อ่าน",
+    url: "#/notifications",
+    tag: "pause-digest-emp-1-20261122",
+  });
+  // ส่งซ้ำวันเดียวกัน = tag เดิม (ทับกัน) · วันถัดไป = tag ใหม่ (ไม่ทับสรุปเมื่อวานที่ยังค้างในถาด จึงเด้งพร้อมเสียง)
+  assert.equal(exports.pauseDigestPayload("emp-1", 3, new Date("2026-11-22T03:00:00Z")).tag, payload.tag);
+  assert.notEqual(exports.pauseDigestPayload("emp-1", 3, new Date("2026-11-23T00:00:30Z")).tag, payload.tag);
+  // วันที่ใช้เวลาไทย: 22/11 17:00 UTC = 23/11 00:00 น. ไทย
+  assert.equal(exports.pauseDigestPayload("emp-1", 3, new Date("2026-11-22T17:00:00Z")).tag, "pause-digest-emp-1-20261123");
+  assert.equal(exports.pauseDigestPayload("emp-1", 3, new Date("2026-11-22T16:59:59Z")).tag, "pause-digest-emp-1-20261122");
+  assert.ok(payload.tag.startsWith("pause-digest-"), "the page recognises the digest by this prefix");
+  assert.ok(payload.url.startsWith("#/"), "relative hash route like every other push");
+  assert.equal(plain(exports.pauseDigestPayload("emp-1", 12.9)).body, "คุณมี 12 แจ้งเตือนที่ยังไม่ได้อ่าน");
+  assert.equal(plain(exports.pauseDigestPayload("emp-1", Number.NaN)).body, "คุณมี 0 แจ้งเตือนที่ยังไม่ได้อ่าน");
+  assert.equal(plain(exports.pauseDigestPayload("emp-1", -4)).body, "คุณมี 0 แจ้งเตือนที่ยังไม่ได้อ่าน");
+  assert.notEqual(exports.pauseDigestPayload("emp-1", 1).tag, exports.pauseDigestPayload("emp-2", 1).tag);
+});
+
+test("pause lookup is fail-open: a failed query means nobody is paused this round, with one warning", () => {
+  const now = Date.parse("2026-11-22T10:00:00Z");
+  const run = (result) => {
+    const warnings = [];
+    const paused = [...exports.pausedEmployeeSet(result, now, (message) => warnings.push(message))];
+    return { paused, warnings };
+  };
+  const ok = run({ data: [
+    { employee_id: "a", paused_until: "2026-11-23T00:00:00Z" },
+    { employee_id: "b", paused_until: "2026-11-22T09:00:00Z" },
+  ], error: null });
+  assert.deepEqual(ok.paused, ["a"]);
+  assert.equal(ok.warnings.length, 0);
+  assert.deepEqual(run({ data: null, error: null }).paused, []);
+  for (const code of ["PGRST205", "42P01", "57014", "PGRST301", undefined]) {
+    const failed = run({ data: null, error: { code } });
+    assert.deepEqual(failed.paused, [], String(code));
+    assert.equal(failed.warnings.length, 1, "one warning per round");
+    assert.ok(!failed.warnings[0].includes("employee"), "no personal data in the log");
+  }
+  assert.match(run({ data: null, error: { code: "PGRST205" } }).warnings[0], /not found/);
+  assert.match(run({ data: null, error: { code: "57014" } }).warnings[0], /lookup failed/);
+});
+
+test("a recipient counts as paused only while paused_until is in the future", () => {
+  const now = Date.parse("2026-11-22T10:00:00Z");
+  assert.equal(exports.isPausedAt("2026-11-23T00:00:00+00:00", now), true);
+  assert.equal(exports.isPausedAt("2026-11-22T10:00:00Z", now), false, "ends exactly now: not paused");
+  assert.equal(exports.isPausedAt("2026-11-22T09:59:59Z", now), false);
+  assert.equal(exports.isPausedAt(null, now), false);
+  assert.equal(exports.isPausedAt(undefined, now), false);
+  assert.equal(exports.isPausedAt("not a date", now), false);
+  assert.equal(exports.PAUSED_ERROR, "PAUSED");
+});
+
+// ผูกโค้ดของ Edge Function กับ SQL: รหัส PAUSED เดียวกับที่ฐานข้อมูลใช้นับ "แจ้งเตือนที่พลาด" และลำดับการตรวจในตัวส่ง
+test("notify-push wiring: PAUSED code matches the migration, checked after NO_SUBSCRIPTION, digest mode is opt-in", () => {
+  const index = readFileSync(new URL("../../supabase/functions/notify-push/index.ts", import.meta.url), "utf8");
+  const migration = readFileSync(new URL("../../supabase/migrations/20261210010000_push_pause.sql", import.meta.url), "utf8");
+  assert.match(migration, /n\.push_error = 'PAUSED'/);
+  const noSubscription = index.indexOf('"NO_SUBSCRIPTION"');
+  const paused = index.indexOf("settle(row, \"skipped\", PAUSED_ERROR)");
+  const send = index.indexOf("deliverToSubscriptions(admin, subscriptions, payload");
+  assert.ok(noSubscription > 0 && paused > noSubscription && send > paused, "paused recipients are skipped before any device is called");
+  assert.match(index, /mode === "pause-digest" \? await drainPauseDigests\(admin\) : await drainQueue\(admin\)/);
+  assert.match(index, /app_claim_push_pause_digests/);
+  // lookup การพักล้มต้องไม่ throw (fail-open) · lookup ของ employees/push_subscriptions ยัง throw ตามเดิม
+  assert.match(index, /pausedEmployeeSet\(pausesResult, Date\.now\(\), \(message\) => console\.warn\(message\)\)/);
+  assert.match(index, /if \(employeesResult\.error \|\| subscriptionsResult\.error\) throw new Error\("LOOKUP_FAILED"\)/);
+  assert.ok(!/pausesResult\.error/.test(index), "a failed pause lookup never aborts the round");
+  assert.match(migration, /body := '\{"mode":"pause-digest"\}'/);
+});

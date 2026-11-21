@@ -2102,8 +2102,13 @@ async function departmentVisibleNotifications(rows) {
   return rows.filter((row) => access.notificationAllowed(deptAccessSubject(), row, (id) => typeById.get(id) ?? null));
 }
 
-async function loadUnread() {
+// announce: false = โหลดตัวเลขเฉยๆ ไม่เล่นเสียงแม้ตัวเลขเพิ่ม (ใช้ตอน push บอกว่ามีของใหม่ เพราะเสียงตอนนั้นตัดสินที่ onNotificationPushMessage)
+async function loadUnread({ announce = true } = {}) {
   if (!state.employee || isLabOnly()) return 0;
+  const owner = state.employee.id;
+  // เล่นเสียงเมื่อตัวเลขเพิ่มจากครั้งก่อนของบัญชีเดียวกันเท่านั้น (ครั้งแรก/ตัวเลขลด/โหลดไม่สำเร็จไม่เล่น) — โหมดทดสอบไม่เล่น
+  // ระหว่างพักแจ้งเตือนไม่เล่นเสียง (ตัวเลขกระดิ่งยังอัปเดตและจำเป็นค่าอ้างอิงตามปกติ ครบเวลาพักแล้วของใหม่จึงดังเมื่อเพิ่มจากค่านี้)
+  const observe = (count) => notifySound.observeUnread(owner, count, { announce: announce && !isSandboxMode() && !isPushPaused() });
   if (isDeptRestricted()) {
     // นับหลังกรอง ตัวเลขบนเมนูจึงตรงกับรายการที่หน้าการแจ้งเตือนแสดง
     try {
@@ -2111,17 +2116,22 @@ async function loadUnread() {
         .eq("recipient_id", state.employee.id).is("read_at", null).limit(200);
       if (error) throw error;
       state.unread = (await departmentVisibleNotifications(data ?? [])).length;
+      observe(state.unread);
     } catch {
-      state.unread = 0;
+      // ถามไม่สำเร็จ (เน็ตสะดุด/token หมดชั่วขณะ) คงตัวเลขเดิมไว้ ไม่งั้นป้ายกระดิ่งหายทุกครั้งที่รอบถามทุก 60 วินาทีพลาด
     }
     return state.unread;
   }
-  const { count } = await sb
+  const { count, error } = await sb
     .from("notifications")
     .select("id", { count: "exact", head: true })
     .eq("recipient_id", state.employee.id)
     .is("read_at", null);
-  state.unread = count ?? 0;
+  // ถามไม่สำเร็จ (เน็ตสะดุด) ไม่ใช่ "ไม่มีแจ้งเตือน" — คงตัวเลขเดิมไว้ ไม่เอาไปเทียบ ไม่งั้นรอบถัดไปจะเห็นว่าเพิ่มจาก 0 แล้วเล่นเสียงผิด ๆ
+  if (!error) {
+    state.unread = count ?? 0;
+    observe(count);
+  }
   return state.unread;
 }
 
@@ -2200,7 +2210,7 @@ function shell(content, active, title, tabTitle = title) {
             ${helpButton()}${themeButton()}
           </div>
         </header>
-        <div class="content" id="main-content" tabindex="-1">${sandboxBannerHtml()}${content}</div>
+        <div class="content" id="main-content" tabindex="-1">${sandboxBannerHtml()}${pushPromptHtml()}${content}</div>
       </main>
     </div>`;
 }
@@ -4973,11 +4983,16 @@ function notificationItemHtml(item) {
   const reminder = ["reminder", "escalation"].includes(item.kind);
   const iconHtml = reminder || !typeCode ? uiIcon(reminder ? "clock" : "bell") : requestTypeIcon(typeCode);
   const palette = !reminder && typeCode ? ` data-module="${escapeHtml(requestPalette(typeCode))}"` : "";
-  return `<${tag} class="notification-item${item.read_at ? "" : " unread"}"${href ? ` href="${href}"` : ""}><span class="queue-item-icon notification-icon"${palette} aria-hidden="true">${iconHtml}</span><span class="notification-text"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body ?? "")} · ${formatDate(item.created_at, true)}</span></span></${tag}>`;
+  // รายการที่ยังไม่อ่านมี data-notification-id ให้หน้าการแจ้งเตือนตั้ง read_at เมื่อผู้ใช้กดรายการนั้น
+  // (รายการที่ไม่มีลิงก์เป็น div จึงให้โฟกัสด้วยคีย์บอร์ดและกดเป็นปุ่มได้)
+  const markable = !item.read_at && item.id ? ` data-notification-id="${escapeHtml(item.id)}"${href ? "" : ` role="button" tabindex="0"`}` : "";
+  return `<${tag} class="notification-item${item.read_at ? "" : " unread"}"${markable}${href ? ` href="${href}"` : ""}><span class="queue-item-icon notification-icon"${palette} aria-hidden="true">${iconHtml}</span><span class="notification-text"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body ?? "")} · ${formatDate(item.created_at, true)}</span></span></${tag}>`;
 }
 
 // ---------- แจ้งเตือนบนเครื่อง (Web Push) ----------
-// ผู้ใช้เปิดเองต่อเครื่องจากแผงบนหน้าการแจ้งเตือน เครื่องที่เปิดไว้ถูกบันทึกในฐานข้อมูลผ่าน RPC (ตาราง push_subscriptions
+// เปิดต่อเครื่อง: ขอสิทธิ์ได้เฉพาะตอนผู้ใช้กดปุ่มเอง (แผงบนหน้าการแจ้งเตือนหรือแถบชวนเปิด) แต่เครื่องที่อนุญาตแล้วจะถูกผูกกับบัญชีที่
+// ล็อกอินให้อัตโนมัติ (resyncPushSubscription) · ผู้ใช้ปิดรายเครื่องเองไม่ได้ มีแต่ "พักแจ้งเตือน" ทั้งคนถึง 07:00 น. ของวันถัดไป
+// เครื่องที่เปิดไว้ถูกบันทึกในฐานข้อมูลผ่าน RPC (ตาราง push_subscriptions
 // ไม่เปิดให้หน้าเว็บอ่านตรง) แล้ว Edge Function notify-push ส่งทุกแถวที่เข้าระฆังไปยังเครื่องเหล่านั้น
 // กติกาตัดสินสถานะของแผงอยู่ใน modules/push-notifications.js (ทดสอบแล้ว) ที่นี่เป็นส่วนที่แตะเบราว์เซอร์/Supabase
 function pushEnvironment() {
@@ -5009,6 +5024,39 @@ async function currentPushSubscription() {
   return (await registration?.pushManager.getSubscription()) ?? null;
 }
 
+// เครื่องนี้ลงทะเบียนรับแจ้งเตือนของบัญชีนี้แล้วหรือไม่ (ฐานข้อมูลรู้จัก endpoint นี้) · true/false · null = ตรวจไม่สำเร็จ (ไม่รู้)
+// จำผลที่รู้แล้วไว้ต่อบัญชี ให้แถบชวนเปิดแจ้งเตือนวาดพร้อมหน้าได้โดยไม่ต้องถามฐานข้อมูลทุกครั้ง
+let pushSubscribedCache = { owner: null, value: null };
+// นับจำนวนครั้งที่จดสถานะ ให้การตรวจที่ถามฐานข้อมูลค้างอยู่รู้ว่ามีคนจดค่าใหม่กว่าระหว่างรอ (เช่นสมัครเครื่องนี้สำเร็จ) แล้วไม่เอาผลเก่าไปทับ
+let pushSubscribedWrites = 0;
+// owner = บัญชีที่เป็นเจ้าของผลตอนเริ่มตรวจ (จับก่อน await) · ถ้าระหว่างรอมีการสลับบัญชี ผลของบัญชีเดิมต้องทิ้ง ไม่จดเป็นของบัญชีใหม่
+function setPushSubscribed(value, owner = state.employee?.id ?? null) {
+  if (owner !== (state.employee?.id ?? null)) return;
+  pushSubscribedCache = { owner, value };
+  pushSubscribedWrites += 1;
+}
+async function checkPushSubscribed() {
+  const owner = state.employee?.id ?? null;
+  const writesAtStart = pushSubscribedWrites;
+  try {
+    const subscription = await currentPushSubscription();
+    let value = false;
+    if (subscription) {
+      const { data, error } = await sb.rpc("app_is_push_subscribed", { p_endpoint: subscription.endpoint });
+      if (error) throw error;
+      value = data === true;
+    }
+    // สลับบัญชีระหว่างรอ = ผลนี้ไม่ใช่ของบัญชีปัจจุบัน คืน null (ไม่รู้) ให้ตรวจใหม่ตอนวาดหน้าถัดไป
+    if (owner !== (state.employee?.id ?? null)) return null;
+    if (pushSubscribedWrites !== writesAtStart) return pushSubscribedCache.owner === owner ? pushSubscribedCache.value : null;
+    setPushSubscribed(value, owner);
+    return value;
+  } catch (error) {
+    console.warn("ตรวจสถานะการแจ้งเตือนบนเครื่องนี้ไม่สำเร็จ", error);
+    return null;
+  }
+}
+
 // สถานะที่แผงต้องแสดง: "on" ต้องมีทั้งการสมัครในเครื่องและแถวในฐานข้อมูลที่เป็นของบัญชีนี้
 async function loadPushState() {
   const environment = pushEnvironment();
@@ -5016,16 +5064,7 @@ async function loadPushState() {
   if (environment.keyConfigured && isSandboxMode()) return "sandbox";
   const basic = window.MNP_PUSH.pushPanelState(environment);
   if (basic !== "off" || environment.permission !== "granted") return basic;
-  try {
-    const subscription = await currentPushSubscription();
-    if (subscription) {
-      const { data, error } = await sb.rpc("app_is_push_subscribed", { p_endpoint: subscription.endpoint });
-      if (!error && data === true) return window.MNP_PUSH.pushPanelState({ ...environment, subscribed: true });
-    }
-  } catch (error) {
-    console.warn("ตรวจสถานะการแจ้งเตือนบนเครื่องนี้ไม่สำเร็จ", error);
-  }
-  return basic;
+  return (await checkPushSubscribed()) === true ? window.MNP_PUSH.pushPanelState({ ...environment, subscribed: true }) : basic;
 }
 
 // subscription เดิมผูกกับกุญแจ VAPID ตัวที่ใช้ตอนสมัคร ถ้ากุญแจในแอปเปลี่ยน ต้องยกเลิกแล้วสมัครใหม่ (ทำได้เงียบ ๆ เมื่ออนุญาตแล้ว)
@@ -5051,46 +5090,143 @@ async function savePushSubscription(subscription) {
 // คืน permission ที่ได้ ("granted" = เปิดสำเร็จ) — ต้องเรียกจากการกดปุ่มและขออนุญาตเป็นขั้นแรก เพราะ iOS/Safari
 // ให้ขอสิทธิ์ได้เฉพาะในจังหวะที่ผู้ใช้กดเอง (await อื่นมาก่อนแล้วจะถือว่าไม่ใช่การกด)
 async function enablePush() {
+  const owner = state.employee?.id ?? null;
   const permission = await Notification.requestPermission();
   if (permission !== "granted") return permission;
   const registration = await serviceWorkerReady();
   await savePushSubscription(await ensurePushSubscription(registration));
+  setPushSubscribed(true, owner);
   return permission;
 }
 
-async function disablePush() {
-  const subscription = await currentPushSubscription();
-  if (!subscription) return;
-  const { error } = await sb.rpc("app_delete_push_subscription", { p_endpoint: subscription.endpoint });
-  if (error) throw error;
-  await subscription.unsubscribe();
+// ---------- พักแจ้งเตือน ----------
+// พัก Web Push ของ "พนักงานทั้งคน" (ทุกเครื่อง) ถึง 07:00 น. เวลาไทยของวันถัดไป — ฐานข้อมูลเป็นเจ้าของสถานะและเวลาสิ้นสุด
+// (app_push_pause / app_push_resume / app_push_pause_status) หน้านี้แค่จำผลไว้ต่อบัญชีเพื่อ 3 อย่าง: แสดงปุ่มในหน้าการแจ้งเตือน,
+// ซ่อนแถบชวนเปิดแจ้งเตือน, และ "ไม่เล่นเสียงของบริษัท" ระหว่างพัก (ตัวเลขกระดิ่งยังอัปเดตตามปกติ อีเมล/รายการในหน้าไม่ถูกพัก)
+// ความถี่ที่ถามฐานข้อมูล: 1 ครั้งหลังล็อกอิน/โหลดหน้า + ทุกครั้งที่เปิดหน้าการแจ้งเตือน + ไม่เกินทุก 15 นาทีเมื่อกลับมาเห็นหน้า
+// หรือถึงรอบ poll เสียง 60 วินาที (เผื่อพัก/เปิดต่อจากเครื่องอื่นขณะหน้าเปิดค้าง) — รอบ poll แค่ "เช็กว่าเลย 15 นาทีหรือยัง" ไม่ได้ถามทุก 60 วินาที
+// cache หมดอายุเองเมื่อเลยเวลาสิ้นสุด ไม่ต้องรอถามใหม่
+// ฐานข้อมูลที่ยังไม่มีฟังก์ชันเหล่านี้ (หน้าเว็บขึ้นก่อน migration) = ซ่อนปุ่ม ถือว่าไม่ได้พัก ไม่ error
+const PUSH_PAUSE_RELOAD_MS = 15 * 60 * 1000;
+// until = เวลาสิ้นสุด (ms) หรือ null = ไม่ได้พัก · seq นับการจดค่า ให้คำตอบที่ค้างอยู่รู้ว่ามีค่าใหม่กว่าแล้ว (เช่นเพิ่งกดพัก/เปิดต่อ)
+let pushPauseCache = { owner: null, until: null, seq: 0 };
+let pushPauseSupported = true;
+let pushPauseTried = { owner: null, at: 0 };
+
+// เวลาสิ้นสุดการพักถ้ายังพักอยู่ตอนนี้ ไม่งั้น null (หมดเวลาแล้ว/ของบัญชีอื่น/ไม่เคยพัก)
+function activePushPauseUntil(now = Date.now()) {
+  const { owner, until } = pushPauseCache;
+  return owner === (state.employee?.id ?? null) && typeof until === "number" && until > now ? until : null;
+}
+const isPushPaused = () => activePushPauseUntil() !== null;
+
+// owner = บัญชีที่เป็นเจ้าของผล (จับก่อน await) · สลับบัญชีระหว่างรอ = ทิ้งผล เหมือน setPushSubscribed
+function setPushPause(until, owner = state.employee?.id ?? null) {
+  if (owner !== (state.employee?.id ?? null)) return;
+  pushPauseCache = { owner, until, seq: pushPauseCache.seq + 1 };
 }
 
-// เปิดแอปทุกครั้ง (หนึ่งครั้งต่อบัญชีต่อการโหลดหน้า): ต่ออายุเครื่องที่ "เป็นของบัญชีนี้อยู่แล้ว" เท่านั้น
-// (endpoint ของเบราว์เซอร์เปลี่ยนได้เอง หรือกุญแจ VAPID ในแอปเปลี่ยน) ห้ามย้ายเครื่องมาเป็นของบัญชีนี้โดยผู้ใช้ไม่ได้กดเอง —
-// ไม่งั้นคนที่ล็อกอินต่อจากเจ้าของเดิมบนเครื่องเดียวกันจะได้รับแจ้งเตือนของตัวเองโดยไม่รู้ตัว (หรือกลับกัน)
-// การย้ายข้ามบัญชีเกิดได้จากปุ่ม "เปิดการแจ้งเตือนบนเครื่องนี้" เท่านั้น เครื่องที่ไม่ใช่ของบัญชีนี้จึงถูกยกเลิกการสมัครในเครื่อง
+// ถามสถานะพักจากฐานข้อมูล แล้วจำไว้ · คืนเวลาสิ้นสุด (ms) หรือ null · ไม่โยน error (ล้มก็ถือว่าไม่รู้ ใช้ค่าที่จำไว้)
+async function loadPushPause() {
+  if (!state.employee || !PUSH_PUBLIC_KEY || !pushPauseSupported || isLabOnly()) return activePushPauseUntil();
+  const owner = state.employee.id;
+  const seqAtStart = pushPauseCache.seq;
+  pushPauseTried = { owner, at: Date.now() };
+  try {
+    const { data, error } = await sb.rpc("app_push_pause_status");
+    if (error) throw error;
+    // สลับบัญชี หรือมีการกดพัก/เปิดต่อระหว่างรอ = คำตอบนี้เก่าแล้ว ไม่ทับ
+    if (owner !== (state.employee?.id ?? null) || pushPauseCache.seq !== seqAtStart) return activePushPauseUntil();
+    const until = typeof data === "string" ? Date.parse(data) : Number.NaN;
+    setPushPause(Number.isFinite(until) ? until : null, owner);
+  } catch (error) {
+    if (window.MNP_PUSH.isMissingFunctionError(error)) pushPauseSupported = false;
+    else console.warn("ตรวจสถานะพักแจ้งเตือนไม่สำเร็จ", error);
+  }
+  return activePushPauseUntil();
+}
+
+// โหลดสถานะพักแบบไม่รอ (หลังล็อกอิน/กลับมาเห็นหน้า) แล้ววาดแถบชวนเปิดใหม่เฉพาะเมื่อสถานะเปลี่ยน
+async function syncPushPause() {
+  const before = isPushPaused();
+  await loadPushPause();
+  if (before !== isPushPaused()) refreshPushPrompt();
+}
+
+// กลับมาเห็นหน้า หรือถึงรอบ poll เสียง (หน้าที่เปิดค้างและมองเห็นตลอดจะไม่มี visibilitychange): ถามใหม่ก็ต่อเมื่อครั้งล่าสุดนานเกิน 15 นาที
+// (หลับเครื่อง/พัก-เปิดต่อจากเครื่องอื่น) · ฐานข้อมูลไม่มีฟังก์ชัน (pushPauseSupported = false) = ไม่ถามเลย · คืน promise เมื่อมีการถาม
+function syncPushPauseIfStale() {
+  if (!pushPauseSupported || document.visibilityState !== "visible" || !state.employee || pushPauseTried.owner !== state.employee.id) return undefined;
+  if (Date.now() - pushPauseTried.at >= PUSH_PAUSE_RELOAD_MS) return syncPushPause();
+  return undefined;
+}
+
+async function pausePush() {
+  const owner = state.employee?.id ?? null;
+  const { data, error } = await sb.rpc("app_push_pause");
+  if (error) {
+    if (window.MNP_PUSH.isMissingFunctionError(error)) pushPauseSupported = false; // ฐานข้อมูลยังไม่มีฟังก์ชัน → ปุ่มหาย
+    throw error;
+  }
+  const until = typeof data === "string" ? Date.parse(data) : Number.NaN;
+  if (!Number.isFinite(until)) throw new Error("PUSH_PAUSE_INVALID_RESPONSE");
+  setPushPause(until, owner);
+}
+
+async function resumePush() {
+  const owner = state.employee?.id ?? null;
+  const { error } = await sb.rpc("app_push_resume");
+  if (error) {
+    if (window.MNP_PUSH.isMissingFunctionError(error)) pushPauseSupported = false; // ฐานข้อมูลยังไม่มีฟังก์ชัน → ปุ่มหาย
+    throw error;
+  }
+  setPushPause(null, owner);
+}
+
+// เปิดแอปทุกครั้ง (หนึ่งครั้งต่อบัญชีต่อการโหลดหน้า/การล็อกอิน): ถ้าเบราว์เซอร์อนุญาตการแจ้งเตือนของเว็บนี้อยู่แล้ว
+// ผูกเครื่องนี้กับบัญชีที่ล็อกอินให้เงียบ ๆ — สมัครใหม่ถ้ายังไม่มี, ต่ออายุถ้ามี (endpoint เปลี่ยนเองหรือกุญแจ VAPID เปลี่ยน),
+// และย้ายมาเป็นของบัญชีนี้ถ้าเดิมเป็นของคนอื่น (บันทึกซ้อน endpoint เดิมในฐานข้อมูลได้เลย)
+// หมายเหตุ: เดิมห้ามผูกเครื่องโดยผู้ใช้ไม่ได้กดเอง กันคนล็อกอินต่อจากเจ้าของเดิมได้รับแจ้งเตือนของตัวเองโดยไม่รู้ตัว
+// เจ้าของระบบสำนักงานตัดสินเมื่อ 21/11/2026 ให้เปลี่ยนเป็นผูกอัตโนมัติ (ไม่ให้ลืมเปิดแล้วพลาดงาน) · ออกจากระบบยังปล่อยเครื่องเหมือนเดิม
+// (releasePushOnThisDevice) จึงเป็น "ใครล็อกอินล่าสุดบนเครื่องนี้ได้รับแจ้งเตือนของตัวเอง"
+// ไม่เรียก Notification.requestPermission ในเส้นทางนี้เด็ดขาด (ขอสิทธิ์ได้เฉพาะตอนผู้ใช้กดปุ่มเอง) · ยังไม่อนุญาตหรือสมัครไม่สำเร็จ
+// (เช่น iOS ไม่ยอมให้สมัครโดยไม่มีการกด) = ไม่ error แถบชวนเปิดแจ้งเตือนขึ้นเป็นปุ่มให้กดเองตามเดิม · ล้มแล้วไม่วนซ้ำจนกว่าจะโหลดหน้า/ล็อกอินใหม่
 let pushResyncedFor = null;
+// บัญชีที่กำลังผูกเครื่องอยู่ (ไม่มี = null): ระหว่างนั้นไม่วาดแถบชวนเปิด กันแถบวูบแล้วหายทันทีที่สมัครสำเร็จ
+let pushAutoSubscribingFor = null;
+// เพดานเวลาของการผูกเครื่องอัตโนมัติทั้งเส้นทาง (getSubscription / subscribe / RPC บันทึกอาจค้างโดยไม่ตอบ) — เกินแล้วนับเป็น "ล้ม"
+// ธง pushAutoSubscribingFor จะได้ถูกล้าง แถบชวนเปิดแจ้งเตือนกลับมาแสดงได้ ไม่ต้องโหลดหน้าใหม่
+const PUSH_RESYNC_TIMEOUT_MS = 30000;
 async function resyncPushSubscription() {
   const environment = pushEnvironment();
-  if (!environment.keyConfigured || !environment.hasServiceWorker || !environment.hasPushManager || environment.permission !== "granted" || isSandboxMode()) return;
-  try {
+  if (!environment.keyConfigured || !environment.hasServiceWorker || !environment.hasPushManager || environment.permission !== "granted" || isSandboxMode() || isLabOnly()) return;
+  const owner = state.employee?.id ?? null;
+  pushAutoSubscribingFor = owner;
+  let timedOut = false;
+  const bindDevice = async () => {
     const registration = await serviceWorkerReady();
     const existing = await registration.pushManager.getSubscription();
-    if (!existing) return;
-    const { data: ownedByMe, error } = await sb.rpc("app_is_push_subscribed", { p_endpoint: existing.endpoint });
-    // ถามไม่สำเร็จ (เน็ต/ระบบ) = ไม่รู้ว่าเป็นของใคร ปล่อยไว้ก่อน ไม่แตะอะไร
-    if (error) return;
-    if (ownedByMe !== true) {
-      await existing.unsubscribe();
-      return;
-    }
-    const refreshed = await ensurePushSubscription(registration);
-    await savePushSubscription(refreshed);
+    const subscription = await ensurePushSubscription(registration);
+    // สลับบัญชีระหว่างรอ: ห้ามผูกเครื่องให้บัญชีใหม่ด้วยผลของรอบนี้ (บัญชีใหม่มีรอบของตัวเอง)
+    if (owner !== (state.employee?.id ?? null)) return;
+    await savePushSubscription(subscription);
+    setPushSubscribed(true, owner);
     // สมัครใหม่เพราะกุญแจเปลี่ยน: แถวของ endpoint เดิมไม่มีประโยชน์แล้ว
-    if (refreshed.endpoint !== existing.endpoint) await sb.rpc("app_delete_push_subscription", { p_endpoint: existing.endpoint });
+    if (existing && subscription.endpoint !== existing.endpoint) await sb.rpc("app_delete_push_subscription", { p_endpoint: existing.endpoint });
+    // เกินเวลาไปแล้วแต่ผลกลับมาทีหลังว่าสำเร็จ: จดสถานะจริงไว้แล้วด้านบน (เฉพาะของบัญชีเดิม) วาดแถบใหม่ให้ตรง
+    if (timedOut && owner === (state.employee?.id ?? null)) refreshPushPrompt();
+  };
+  try {
+    // งานที่ค้างเกินเวลายังวิ่งต่อเบื้องหลังได้ แต่ทุกการจดผลมี guard เจ้าของบัญชี/ตัวนับเดิม (setPushSubscribed) ผลที่มาช้าจึงไม่ทำให้สถานะเพี้ยน
+    await withTimeout(bindDevice(), PUSH_RESYNC_TIMEOUT_MS, "PUSH_RESYNC_TIMEOUT");
   } catch (error) {
-    console.warn("ต่ออายุการแจ้งเตือนบนเครื่องนี้ไม่สำเร็จ", error);
+    if (error?.message === "PUSH_RESYNC_TIMEOUT") timedOut = true;
+    console.warn("ผูกการแจ้งเตือนบนเครื่องนี้กับบัญชีไม่สำเร็จ", error);
+    // ไม่รู้สถานะจริง (อาจสมัครแล้วแต่บันทึกไม่สำเร็จ หรือเดิมเป็นของบัญชีนี้อยู่แล้ว) → ให้แถบถามฐานข้อมูลเองว่าเครื่องนี้ลงทะเบียนหรือยัง
+    setPushSubscribed(null, owner);
+  } finally {
+    if (pushAutoSubscribingFor === owner) pushAutoSubscribingFor = null;
+    refreshPushPrompt();
   }
 }
 
@@ -5098,11 +5234,14 @@ async function resyncPushSubscription() {
 // server: true ลบแถวในฐานข้อมูลก่อน (ต้องยังมี session) — ทำไม่ได้ก็ยังยกเลิกการสมัครในเครื่อง ส่วนแถวค้างจะถูกลบเองเมื่อ push service ตอบว่าเครื่องนั้นหายไป
 async function releasePushOnThisDevice({ server }) {
   if (!PUSH_PUBLIC_KEY || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
+  // คนที่ล็อกอินต่อ (รวมบัญชีเดิมกลับเข้ามาโดยไม่โหลดหน้าใหม่) ต้องได้รอบผูกเครื่องอัตโนมัติของตัวเอง
+  pushResyncedFor = null;
   try {
     const subscription = await currentPushSubscription();
     if (!subscription) return;
     if (server) await sb.rpc("app_delete_push_subscription", { p_endpoint: subscription.endpoint });
     await subscription.unsubscribe();
+    pushSubscribedCache = { owner: null, value: null };
   } catch (error) {
     console.warn("ยกเลิกการแจ้งเตือนบนเครื่องนี้ตอนออกจากระบบไม่สำเร็จ", error);
   }
@@ -5113,8 +5252,9 @@ function releasePushBeforeSignOut() {
   return Promise.race([releasePushOnThisDevice({ server: true }), new Promise((resolve) => setTimeout(resolve, 4000))]);
 }
 
-function pushPanelBodyHtml(pushState, ios) {
-  const notice = {
+// ข้อความอธิบายสถานะที่เปิดแจ้งเตือนไม่ได้ ใช้ทั้งในแผงหน้าการแจ้งเตือนและแถบบังคับ
+function pushNotice(pushState, ios) {
+  return {
     "ios-install": "บน iPhone/iPad เปิดการแจ้งเตือนได้เมื่อเปิดแอปจากไอคอนบนหน้าจอโฮมเท่านั้น (ต้องใช้ iOS 16.4 ขึ้นไป) — เพิ่ม MNP ลงหน้าจอโฮมจาก Safari ก่อน แล้วเปิดหน้านี้จากไอคอนนั้น",
     "ios-old": "iOS รุ่นนี้ยังไม่รองรับการแจ้งเตือนจากเว็บ (ต้องใช้ iOS 16.4 ขึ้นไป)",
     unsupported: "เบราว์เซอร์นี้ไม่รองรับการแจ้งเตือนบนเครื่อง",
@@ -5123,45 +5263,356 @@ function pushPanelBodyHtml(pushState, ios) {
       ? "การแจ้งเตือนของ MNP ถูกปิดไว้ในเครื่อง — เปิดได้ที่ ตั้งค่า › แจ้งเตือน › MNP แล้วกลับมาโหลดหน้านี้ใหม่"
       : "เบราว์เซอร์บล็อกการแจ้งเตือนของเว็บนี้ไว้ — เปิดอนุญาตได้ที่ไอคอนข้างช่องที่อยู่เว็บ (สิทธิ์ของไซต์) แล้วโหลดหน้านี้ใหม่",
   }[pushState];
-  // หัวข้อไม่ซ้ำกับข้อความบนปุ่ม ("เปิดการแจ้งเตือนบนเครื่องนี้" / "ปิดบนเครื่องนี้") สถานะบอกด้วยป้าย
+}
+
+// pausedUntil = เวลาสิ้นสุดการพัก (ms) ถ้ากำลังพักอยู่ · canPause = ฐานข้อมูลมีฟังก์ชันพักแล้ว (ยังไม่มี = ไม่แสดงปุ่ม)
+// การพักเป็นของทั้งคน จึงแสดงสถานะ/ปุ่ม "เปิดแจ้งเตือนต่อ" ได้แม้เครื่องนี้ยังไม่ได้เปิดรับแจ้งเตือน (ยกเว้นโหมดทดสอบที่พักไม่ได้)
+function pushPanelBodyHtml(pushState, ios, { pausedUntil = null, canPause = false } = {}) {
+  if (pausedUntil !== null && pushState !== "sandbox") {
+    return `<div class="push-panel-text"><strong>แจ้งเตือนบนหน้าจอ <span class="badge">พักอยู่ถึง ${escapeHtml(formatDate(pausedUntil, true))} น.</span></strong><span>ระหว่างพักจะไม่มีแจ้งเตือนเด้งบนทุกเครื่องของคุณ อีเมลและรายการในหน้านี้ยังมาตามปกติ ระบบจะเปิดให้เองเวลา 07:00 น.</span></div><button class="btn" type="button" data-push-resume>เปิดแจ้งเตือนต่อ</button>`;
+  }
+  const notice = pushNotice(pushState, ios);
+  // หัวข้อไม่ซ้ำกับข้อความบนปุ่ม ("เปิดการแจ้งเตือนบนเครื่องนี้") สถานะบอกด้วยป้าย
   const badge = pushState === "on" ? ` <span class="badge">เปิดอยู่</span>` : pushState === "off" ? ` <span class="badge">ปิดอยู่</span>` : "";
   const text = `<div class="push-panel-text"><strong>แจ้งเตือนบนหน้าจอ${badge}</strong>${notice ? `<span>${notice}</span>` : ""}</div>`;
   if (pushState === "off") return `${text}<button class="btn" type="button" data-push-enable title="รับแจ้งเตือนที่หน้าจอเครื่องนี้ แม้ไม่ได้เปิดแอป">เปิดการแจ้งเตือนบนเครื่องนี้</button>`;
-  if (pushState === "on") return `${text}<button class="btn secondary" type="button" data-push-disable>ปิดบนเครื่องนี้</button>`;
+  if (pushState === "on" && canPause) return `${text}<button class="btn secondary" type="button" data-push-pause title="ไม่มีแจ้งเตือนเด้งบนทุกเครื่องของคุณจนถึง 07:00 น. ของพรุ่งนี้ (อีเมลและรายการในหน้านี้ยังมาตามปกติ)">พักแจ้งเตือนถึง 07:00 น. พรุ่งนี้</button>`;
   return text;
 }
 
-function pushErrorMessage(error) {
+function pushErrorMessage(error, fallback = "เปิดการแจ้งเตือนบนเครื่องนี้ไม่สำเร็จ กรุณาลองอีกครั้ง") {
   // ข้อผิดพลาดจากฐานข้อมูล (มีรหัสเป็นข้อความ) แปลงด้วยตารางกลาง ส่วนข้อผิดพลาดของเบราว์เซอร์/push service ใช้ข้อความรวม
   if (/SANDBOX_MODULE_UNSUPPORTED/.test(String(error?.message))) return "ตั้งค่าการแจ้งเตือนบนเครื่องไม่ได้ขณะอยู่ในโหมดทดสอบ";
   if (error?.message === "SERVICE_WORKER_NOT_READY") return "ระบบแจ้งเตือนของเครื่องนี้ยังไม่พร้อม กรุณาโหลดหน้านี้ใหม่แล้วลองอีกครั้ง";
-  return typeof error?.code === "string" ? friendlyError(error) : "เปิดการแจ้งเตือนบนเครื่องนี้ไม่สำเร็จ กรุณาลองอีกครั้ง";
+  return typeof error?.code === "string" ? friendlyError(error) : fallback;
 }
 
-async function refreshPushPanel() {
+// reloadPause: false = ไม่ถามสถานะพักซ้ำ (หลังกดปุ่มเรารู้ค่าใหม่จากผลของ RPC แล้ว)
+async function refreshPushPanel({ reloadPause = true } = {}) {
   const panel = document.querySelector("#push-panel");
   if (!panel) return;
-  const pushState = await loadPushState();
+  const [pushState] = await Promise.all([loadPushState(), reloadPause ? loadPushPause() : null]);
   if (!panel.isConnected || pushState === "hidden") return;
-  panel.innerHTML = pushPanelBodyHtml(pushState, pushEnvironment().ios);
+  panel.innerHTML = pushPanelBodyHtml(pushState, pushEnvironment().ios, { pausedUntil: activePushPauseUntil(), canPause: pushPauseSupported });
   panel.hidden = false;
-  const run = async (button, busyLabel, action) => {
+  const run = async (button, busyLabel, action, failure) => {
     button.disabled = true;
     button.textContent = busyLabel;
     try {
       await action();
     } catch (error) {
       console.error(error);
-      showToast(pushErrorMessage(error), "error");
+      showToast(pushErrorMessage(error, failure), "error");
     }
-    await refreshPushPanel();
+    await refreshPushPanel({ reloadPause: false });
   };
   panel.querySelector("[data-push-enable]")?.addEventListener("click", (event) => run(event.currentTarget, "กำลังเปิด…", async () => {
     // กดแล้วไม่อนุญาต/ปิดหน้าต่างขอสิทธิ์ ไม่ใช่ข้อผิดพลาด แผงจะกลับไปสถานะเดิม (หรือ "ถูกบล็อก" ถ้าเลือกไม่อนุญาต)
     if ((await enablePush()) === "default") showToast("ยังไม่ได้อนุญาตการแจ้งเตือน", "error");
   }));
-  panel.querySelector("[data-push-disable]")?.addEventListener("click", (event) => run(event.currentTarget, "กำลังปิด…", disablePush));
+  panel.querySelector("[data-push-pause]")?.addEventListener("click", (event) => run(event.currentTarget, "กำลังพัก…", pausePush, "พักแจ้งเตือนไม่สำเร็จ กรุณาลองอีกครั้ง"));
+  panel.querySelector("[data-push-resume]")?.addEventListener("click", (event) => run(event.currentTarget, "กำลังเปิด…", resumePush, "เปิดแจ้งเตือนต่อไม่สำเร็จ กรุณาลองอีกครั้ง"));
 }
+
+// ---------- เสียงแจ้งเตือนของบริษัทตอนเปิดแอปอยู่ ----------
+// กติกา/ตัวจัดการเสียงอยู่ใน modules/notification-sound.js (ทดสอบแล้ว) ที่นี่เป็นส่วนต่อกับหน้าเว็บ:
+//   1) push ทันที: sw.js ส่งข้อความ "mnp-notification" มาที่หน้า → รีเฟรชตัวเลขกระดิ่ง และถ้าหน้านี้โฟกัสอยู่จะถูกถามว่าเล่นเสียงเองไหม
+//   2) ถามฐานข้อมูลเป็นระยะ (สำรองสำหรับเครื่องที่ไม่ได้เปิด Push): เฉพาะตอนหน้าเห็นอยู่ ทุก ~60 วินาที และตอนกลับมาเห็นหน้า
+// เสียงเปิดเสมอ ไม่มีสวิตช์ให้ผู้ใช้ · ไฟล์ sounds/notify.mp3 ยังไม่มี = ทุกอย่างเงียบ และ sw.js ไม่ทำแจ้งเตือนเป็น silent
+function createNotifySound() {
+  const sound = window.MNP_NOTIFY_SOUND;
+  let channel = null;
+  try {
+    if ("BroadcastChannel" in window) channel = new BroadcastChannel(sound.SOUND_CHANNEL_NAME);
+  } catch {
+    // ไม่มี channel = แท็บอื่นไม่รู้ว่าดังไปแล้ว (อาจดังหลายแท็บ) ไม่กระทบอย่างอื่น
+  }
+  return sound.createNotificationSound({
+    // ?v= ตามรุ่นของแอป: เปลี่ยนไฟล์เสียงแล้วเลื่อนรุ่น เครื่องจะได้ไฟล์ใหม่
+    url: `${sound.SOUND_PATH}?v=${APP_VERSION}`,
+    fetchFile: (url) => fetch(url),
+    createAudio: (url) => new Audio(url),
+    channel,
+  });
+}
+const notifySound = createNotifySound();
+let soundProbedFor = null;
+
+// เบราว์เซอร์ไม่ให้เล่นเสียงจนกว่าผู้ใช้จะกดหน้าจอ: ลองปลดล็อกทุกครั้งที่กด/กดแป้นจนกว่าจะสำเร็จ
+// (ไฟล์ยังไม่พร้อมก็ข้ามไปก่อน ไม่ยิงคำขอซ้ำ) · ไม่ถอด listener เพราะเบราว์เซอร์อาจกลับไปบล็อก
+// (เล่นจริงแล้วถูกปฏิเสธ → ตัวจัดการเสียงกลับเป็นยังไม่ปลดล็อก) ปลดล็อกอยู่แล้วคืนค่าทันทีไม่มีค่าใช้จ่าย
+function armSoundUnlock() {
+  const tryUnlock = () => {
+    if (notifySound.isReady()) notifySound.unlock();
+  };
+  ["pointerdown", "keydown"].forEach((name) => document.addEventListener(name, tryUnlock, true));
+}
+
+// รอบถามฐานข้อมูล: loadUnread เทียบกับครั้งก่อนเอง ถ้าเพิ่ม = มีของใหม่ → เล่นเสียง
+async function pollUnreadForSound() {
+  if (document.visibilityState !== "visible" || navigator.onLine === false) return;
+  if (!state.employee || isLabOnly() || isSandboxMode()) return;
+  // เจ้าของอาจกดพักแจ้งเตือนจากมือถือ: ให้รู้ก่อนตัดสินเรื่องเสียงของรอบนี้ (ถามจริงไม่ถี่กว่าทุก 15 นาที) · รอไม่เกิน 3 วินาที ไม่ให้ขวางรอบ poll
+  await withTimeout(Promise.resolve(syncPushPauseIfStale()), 3000, "PUSH_PAUSE_SYNC_TIMEOUT").catch(() => {});
+  // ไฟล์เสียงยังไม่พร้อม (เช่น เน็ตหลุดตอนเปิดหน้า): ลองตรวจใหม่รอบละครั้ง ยังไม่ถามฐานข้อมูล
+  if (!notifySound.isReady()) {
+    await notifySound.probe();
+    return;
+  }
+  try {
+    await loadUnread();
+    updateUnreadBadges();
+  } catch (error) {
+    console.warn("ตรวจการแจ้งเตือนใหม่ไม่สำเร็จ", error);
+  }
+}
+
+// ข้อความจาก sw.js ตอนมี push เข้า · replyPort มีเฉพาะเมื่อหน้านี้มองเห็น+โฟกัสอยู่ (sw.js กำลังรอคำตอบว่าจะเล่นเสียงเองไหม)
+async function onNotificationPushMessage(message, replyPort) {
+  // Push สรุปหลังครบเวลาพัก (tag pause-digest-…): เซิร์ฟเวอร์ถือว่าหมดพักแล้วเสมอ แม้นาฬิกาเครื่องนี้ช้ากว่าเล็กน้อยจน cache ยังเห็นว่าพักอยู่
+  // ต้องล้างก่อนตัดสินเรื่องเสียง ไม่งั้นสรุปที่มาตอน 07:00 พอดีจะเงียบ · ส่วนที่เหลือเดินตามกติกาปกติ (ตัวเลขใหม่ + เสียงของบริษัท)
+  if (typeof message?.tag === "string" && message.tag.startsWith("pause-digest-")) setPushPause(null);
+  // กำลังพัก: ตอบ sw.js ว่าไม่เล่นเสียง (แจ้งเตือนที่หลุดมาจะไม่ถูกทำเป็น silent) และไม่เล่นเสียงของบริษัท
+  const canPlay = Boolean(state.employee) && !isLabOnly() && !isSandboxMode() && notifySound.canHandle() && !isPushPaused();
+  // ตอบก่อนอย่างอื่น: sw.js รอไม่เกิน 1 วินาทีก่อนแสดงแจ้งเตือน · ตอบ true = แจ้งเตือนบนหน้าจอจะไม่มีเสียงของระบบ เราต้องเล่นเสียงให้
+  try {
+    replyPort?.postMessage({ willPlaySound: canPlay });
+    replyPort?.close();
+  } catch {
+    // ช่องตอบกลับพัง sw.js จะถือว่าไม่รับปาก (แจ้งเตือนมีเสียงของระบบตามปกติ)
+  }
+  if (!state.employee) return;
+  // ตัวเลขใหม่ต้องมาก่อนเล่นเสียง เพื่อแท็บอื่นได้ค่าอ้างอิงที่ถูกต้อง (ไม่ดังซ้ำ) · ไม่ให้ช้าเกิน 1.5 วินาที
+  const refresh = loadUnread({ announce: false });
+  await withTimeout(refresh, 1500, "UNREAD_REFRESH_TIMEOUT").catch(() => {});
+  // วาดป้ายพังต้องไม่ขวางเสียง/แจ้งเตือนสำรองที่รับปากไว้แล้ว
+  const redrawBadges = () => {
+    try {
+      updateUnreadBadges();
+    } catch (error) {
+      console.warn("อัปเดตป้ายแจ้งเตือนไม่สำเร็จ", error);
+    }
+  };
+  redrawBadges();
+  // หมดเวลารอแล้วแต่ query กลับมาทีหลัง: วาดป้ายอีกครั้ง ไม่ให้ค้างค่าเก่า
+  refresh.then(redrawBadges, () => {});
+  if (!replyPort || !canPlay) return;
+  // รับปากแล้วว่าจะเล่นเสียง (แจ้งเตือนบนหน้าจอเป็น silent ไปแล้ว) ต้องจบด้วยเสียงของเราดัง/เพิ่งดังไป ("played"/"covered")
+  // ไม่งั้น ("fallback": ปิดสวิตช์ระหว่างรอ ไฟล์ไม่พร้อม เบราว์เซอร์ไม่ยอมเล่น) แจ้งซ้ำแบบมีเสียงของระบบ ไม่ให้เงียบหาย
+  if ((await notifySound.playForPush()) === "fallback") await showSoundFallbackNotification(message);
+}
+
+async function showSoundFallbackNotification({ title, body, url, tag }) {
+  try {
+    const registration = await serviceWorkerReady();
+    const icon = "./icons/icon-192.png";
+    // tag เดียวกับใบ silent ที่ sw.js แสดงไว้ (sw.js ส่งมาให้เสมอ) เพื่อทับใบเดิม ไม่ให้ขึ้น 2 ใบ · body (ถ้ามี) ต้องตรงกับใบที่ทับ
+    await registration.showNotification(title, { icon, lang: "th", ...(body ? { body } : {}), tag: tag || "mnp-sound-fallback", renotify: true, data: { url } });
+  } catch (error) {
+    console.warn("แจ้งเตือนสำรองไม่สำเร็จ", error);
+  }
+}
+
+function startNotificationSound() {
+  armSoundUnlock();
+  setInterval(pollUnreadForSound, window.MNP_NOTIFY_SOUND.SOUND_POLL_MS);
+  document.addEventListener("visibilitychange", pollUnreadForSound);
+  document.addEventListener("visibilitychange", syncPushPauseIfStale);
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      if (event.data?.type === "mnp-notification") onNotificationPushMessage(event.data, event.ports?.[0]);
+    });
+    navigator.serviceWorker.startMessages?.();
+  }
+}
+
+// ตั้ง read_at เฉพาะแถวนี้ (RLS ให้ผู้รับแก้ read_at ของตัวเองได้) คืน true เมื่อสำเร็จ · ล้ม (เน็ตหลุด) คืน false ไม่โยน error
+// เพื่อไม่ให้ขวางการนำทางของผู้ใช้
+async function markNotificationRead(id) {
+  try {
+    const { error } = await sb.from("notifications").update({ read_at: new Date().toISOString() }).eq("id", id).eq("recipient_id", state.employee.id).is("read_at", null);
+    return !error;
+  } catch (error) {
+    console.warn("ทำเครื่องหมายว่าอ่านแล้วไม่สำเร็จ", error);
+    return false;
+  }
+}
+
+// ตัวเลขยังไม่อ่านบนเมนู (กระดิ่ง) ตาม state.unread โดยไม่ต้องวาดหน้าใหม่
+function updateUnreadBadges() {
+  const count = state.unread;
+  const wrap = document.querySelector('.sidebar .nav-link[href="#/notifications"] .nav-icon-wrap');
+  if (wrap) {
+    wrap.classList.toggle("has-unread", count > 0);
+    const text = count > 99 ? "99+" : String(count);
+    let badge = wrap.querySelector(".nav-count");
+    if (!count) badge?.remove();
+    else {
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "nav-count";
+        wrap.append(badge);
+      }
+      badge.textContent = text;
+      badge.setAttribute("aria-label", `${text} รายการใหม่`);
+    }
+  }
+  if (!count) document.querySelector(".nav-toggle-dot")?.remove();
+  // จุดบนปุ่มเมนูมือถือ: ตัวเลขเพิ่มขึ้นขณะเปิดหน้าค้างไว้ (push/ถามเป็นระยะ) ต้องขึ้นจุดด้วย · เฉพาะหน้าที่มีเมนูการแจ้งเตือน
+  const toggle = document.querySelector(".mobile-nav-toggle");
+  if (count && wrap && toggle && !toggle.querySelector(".nav-toggle-dot")) {
+    const dot = document.createElement("span");
+    dot.className = "nav-toggle-dot";
+    dot.setAttribute("aria-hidden", "true");
+    toggle.append(dot);
+  }
+}
+
+// ทำให้รายการหนึ่งเป็น "อ่านแล้ว" ทั้งในฐานข้อมูลและบนหน้าจอ (ล้มก็ปล่อยไว้เป็นยังไม่อ่าน)
+async function markNotificationItemRead(item) {
+  const id = item.dataset.notificationId;
+  if (!id || item.dataset.notificationBusy) return;
+  item.dataset.notificationBusy = "1";
+  const ok = await markNotificationRead(id);
+  delete item.dataset.notificationBusy;
+  // ผู้ใช้ไปหน้าอื่นก่อนที่ผลจะมา: หน้าใหม่นับตัวเลขเองจากฐานข้อมูลแล้ว ไม่ลดซ้ำ
+  if (!ok || !item.isConnected) return;
+  delete item.dataset.notificationId;
+  item.classList.remove("unread");
+  item.removeAttribute("role");
+  item.removeAttribute("tabindex");
+  state.unread = Math.max(0, state.unread - 1);
+  notifySound.setBaseline(state.employee.id, state.unread);
+  updateUnreadBadges();
+  if (!document.querySelector("#notification-list .unread")) document.querySelector("#mark-read")?.remove();
+}
+
+// กดรายการที่ยังไม่อ่าน = อ่านแล้ว · รายการที่มีลิงก์: รอผลสั้น ๆ (ไม่เกิน 1.5 วินาที) แล้วจึงไปตามลิงก์เดิม ล้ม/ช้าก็ยังไป
+function bindNotificationReadOnClick() {
+  const list = document.querySelector("#notification-list");
+  if (!list) return;
+  const itemOf = (event) => event.target.closest?.(".notification-item[data-notification-id]");
+  list.addEventListener("click", async (event) => {
+    const item = itemOf(event);
+    if (!item) return;
+    const href = item.getAttribute("href");
+    // เปิดแท็บใหม่ (Ctrl/⌘/Shift คลิก) ปล่อยให้เบราว์เซอร์จัดการลิงก์เอง แล้วทำเครื่องหมายอ่านเงียบ ๆ
+    const plainClick = event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey;
+    if (!href || !plainClick) return void markNotificationItemRead(item);
+    event.preventDefault();
+    const hashAtClick = location.hash;
+    await withTimeout(markNotificationItemRead(item), 1500, "NOTIFICATION_READ_TIMEOUT").catch(() => {});
+    // ระหว่างรอผู้ใช้ไปหน้าอื่นแล้ว (กดเมนู/ปุ่มย้อนกลับ) ห้ามเด้งกลับไปลิงก์ของรายการ
+    if (location.hash !== hashAtClick) return;
+    location.hash = href;
+  });
+  // คลิกกลางที่ลิงก์ (เปิดแท็บใหม่) ไม่ส่ง click จึงฟังแยก
+  list.addEventListener("auxclick", (event) => {
+    const item = event.button === 1 ? itemOf(event) : null;
+    if (item) markNotificationItemRead(item);
+  });
+  // รายการที่ไม่มีลิงก์เป็น div ที่โฟกัสได้ ให้ Enter/Space ทำงานเหมือนการกด
+  list.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const item = itemOf(event);
+    if (!item || item.tagName === "A" || event.target !== item) return;
+    event.preventDefault();
+    markNotificationItemRead(item);
+  });
+}
+
+// ---------- แถบบังคับให้เปิดแจ้งเตือนบนเครื่อง ----------
+// แสดงด้านบนของทุกหน้า จนกว่าเครื่องนี้จะเปิดแจ้งเตือนสำเร็จ (อนุญาต + ลงทะเบียนแล้ว) แต่ไม่ล็อกการใช้งานหน้าเว็บ
+// ผู้ใช้กด "ปิดชั่วคราววันนี้" ได้ทุกกรณีของแถบ (เครื่องที่เปิดไม่ได้จริงจะได้ไม่มีแถบค้างถาวร): ซ่อนเฉพาะ "แถบบนเครื่องนี้"
+// ถึง 07:00 น. เวลาไทยของวันถัดไป แล้วกลับมาเอง ไม่ได้พักแจ้งเตือนจริง (การพักจริงอยู่ที่หน้าการแจ้งเตือน)
+// เบราว์เซอร์ให้ขอสิทธิ์ได้เฉพาะตอนผู้ใช้กดเอง จึงเป็นแถบ + ปุ่มที่เรียก enablePush · ชนิดของแถบตัดสินใน MNP_PUSH.pushPromptKind (ทดสอบแล้ว)
+// เครื่องที่อนุญาตแล้วต้องถามฐานข้อมูลก่อนว่าลงทะเบียนครบไหม (ผลจำไว้ใน pushSubscribedCache) ระหว่างนั้นยังไม่แสดง กันแถบวูบ
+let pushPromptChecking = false;
+const PUSH_PROMPT_HIDDEN_KEY = "mnp-push-prompt-hidden-until";
+// เก็บแยกตามบัญชี (คนละคนบนเครื่องเดียวกันไม่ซ่อนแทนกัน) · localStorage ใช้ไม่ได้ (โหมดส่วนตัว/เต็ม) = ไม่ซ่อน แถบแสดงตามปกติ
+function pushPromptHiddenNow() {
+  try {
+    return window.MNP_PUSH.activeHiddenUntil(localStorage.getItem(`${PUSH_PROMPT_HIDDEN_KEY}:${state.employee.id}`), Date.now()) !== null;
+  } catch {
+    return false;
+  }
+}
+function hidePushPromptUntilTomorrow() {
+  try {
+    localStorage.setItem(`${PUSH_PROMPT_HIDDEN_KEY}:${state.employee.id}`, String(window.MNP_PUSH.nextBangkokSevenAm(Date.now())));
+  } catch {
+    // เก็บไม่ได้ = ซ่อนไม่ได้ แถบยังอยู่ตามเดิม ไม่เป็นข้อผิดพลาด
+  }
+}
+function pushPromptHtml() {
+  // หน้าการแจ้งเตือนมีแผงเดียวกันอยู่แล้ว · โหมดทดสอบและบัญชี lab-only ไม่มีหน้าการแจ้งเตือนให้ใช้
+  if (!state.employee || isSandboxMode() || isLabOnly() || currentRoute().path === "notifications") return "";
+  // กำลังผูกเครื่องนี้ให้อัตโนมัติ (resyncPushSubscription): ยังไม่แสดง ไม่ตรวจซ้ำ จบแล้วมันวาดแถบใหม่เอง
+  if (pushAutoSubscribingFor === state.employee.id) return "";
+  const environment = pushEnvironment();
+  const subscribed = pushSubscribedCache.owner === state.employee.id ? pushSubscribedCache.value : null;
+  const kind = window.MNP_PUSH.pushPromptKind({ ...environment, subscribed, hidden: pushPromptHiddenNow(), paused: isPushPaused() });
+  if (kind === "pending") {
+    verifyPushPrompt();
+    return "";
+  }
+  if (!kind) return "";
+  const detail = kind === "enable" ? "เพื่อรับแจ้งงานที่รอคุณ" : pushNotice(kind, environment.ios);
+  const enableButton = kind === "enable" ? `<button class="btn small" type="button" data-push-prompt-enable>เปิดแจ้งเตือน</button>` : "";
+  return `<section class="push-prompt" id="push-prompt" aria-label="ต้องเปิดการแจ้งเตือนบนเครื่องนี้">
+    <div class="push-prompt-text"><strong>กรุณาเปิดแจ้งเตือนบนเครื่องนี้</strong><span>${detail}</span></div>
+    <div class="push-prompt-actions">${enableButton}<button class="btn secondary small" type="button" data-push-prompt-today title="ซ่อนแถบนี้บนเครื่องนี้ถึง 07:00 น. ของพรุ่งนี้">ปิดชั่วคราววันนี้</button></div>
+  </section>`;
+}
+
+// ตรวจว่าฐานข้อมูลรู้จักเครื่องนี้ไหม แล้ววาดแถบใหม่ · ตรวจไม่สำเร็จก็ไม่วาด (กันวนซ้ำ) จะลองใหม่ตอนวาดหน้าถัดไป
+async function verifyPushPrompt() {
+  if (pushPromptChecking) return;
+  pushPromptChecking = true;
+  const subscribed = await checkPushSubscribed();
+  pushPromptChecking = false;
+  if (subscribed !== null) refreshPushPrompt();
+}
+
+// วาดแถบใหม่ตามสถานะปัจจุบันโดยไม่วาดทั้งหน้า (ใช้หลังกดปุ่ม/ตรวจสถานะเสร็จ)
+function refreshPushPrompt() {
+  const content = document.querySelector("#main-content");
+  if (!content) return;
+  const template = document.createElement("template");
+  template.innerHTML = pushPromptHtml().trim();
+  const next = template.content.firstElementChild;
+  const current = content.querySelector(":scope > #push-prompt");
+  if (current && next) current.replaceWith(next);
+  else if (current) current.remove();
+  else if (next) content.prepend(next);
+}
+
+document.addEventListener("click", (event) => {
+  if (!event.target.closest?.("#push-prompt [data-push-prompt-today]")) return;
+  hidePushPromptUntilTomorrow();
+  refreshPushPrompt();
+});
+
+document.addEventListener("click", async (event) => {
+  const enable = event.target.closest?.("#push-prompt [data-push-prompt-enable]");
+  if (!enable || enable.disabled) return;
+  enable.disabled = true;
+  enable.textContent = "กำลังเปิด…";
+  const owner = state.employee?.id ?? null;
+  try {
+    // enablePush ขอสิทธิ์เป็นขั้นแรก จึงยังอยู่ในจังหวะที่ผู้ใช้กดเอง (iOS/Safari ต้องการ)
+    const permission = await enablePush();
+    if (permission === "granted") showToast("เปิดการแจ้งเตือนบนเครื่องนี้แล้ว");
+    else if (permission === "default") showToast("ยังไม่ได้อนุญาตการแจ้งเตือน", "error");
+  } catch (error) {
+    console.error(error);
+    showToast(pushErrorMessage(error), "error");
+    // อนุญาตแล้วแต่ลงทะเบียนไม่สำเร็จ (ออฟไลน์/RPC ล้ม) = ยังไม่ได้เปิดจริง · จดว่า "ยังไม่ลงทะเบียน" ไม่งั้นแถบจะเข้าสถานะ pending แล้วหายไปเลย
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") setPushSubscribed(false, owner);
+  }
+  // วาดแถบตามสถานะจริง: สำเร็จ = หายไป · เลือกบล็อก = เปลี่ยนเป็นข้อความวิธีแก้ · ยังไม่ตอบ/ล้มเหลว = ปุ่มกลับมาให้กดใหม่
+  refreshPushPrompt();
+});
 
 async function renderNotifications() {
   loadingShell("notifications", "การแจ้งเตือน");
@@ -5171,15 +5622,17 @@ async function renderNotifications() {
   const content = `
     <div class="page-heading notifications-heading"><div><h1>การแจ้งเตือน</h1></div>${(data ?? []).some((item) => !item.read_at) ? `<button class="btn secondary" id="mark-read">ทำเครื่องหมายว่าอ่านแล้วทั้งหมด</button>` : ""}</div>
     ${PUSH_PUBLIC_KEY ? `<section class="card push-panel" id="push-panel" hidden></section>` : ""}
-    <div class="stack">${(data ?? []).map(notificationItemHtml).join("") || emptyState("ยังไม่มีการแจ้งเตือน", { hint: "เมื่อคำร้องของคุณมีความเคลื่อนไหวจะแจ้งที่นี่" })}</div>`;
+    <div class="stack" id="notification-list">${(data ?? []).map(notificationItemHtml).join("") || emptyState("ยังไม่มีการแจ้งเตือน", { hint: "เมื่อคำร้องของคุณมีความเคลื่อนไหวจะแจ้งที่นี่" })}</div>`;
   app.innerHTML = shell(content, "notifications", "การแจ้งเตือน");
   bindShell();
   refreshPushPanel();
+  bindNotificationReadOnClick();
   document.querySelector("#mark-read")?.addEventListener("click", async (event) => {
     event.currentTarget.disabled = true;
     const { error: updateError } = await sb.from("notifications").update({ read_at: new Date().toISOString() }).eq("recipient_id", state.employee.id).is("read_at", null);
     if (updateError) return showToast(friendlyError(updateError), "error");
     state.unread = 0;
+    notifySound.setBaseline(state.employee.id, 0);
     showToast("ทำเครื่องหมายว่าอ่านแล้ว");
     await renderNotifications();
   });
@@ -6074,6 +6527,12 @@ async function renderRoute() {
   if (pushResyncedFor !== state.employee.id) {
     pushResyncedFor = state.employee.id;
     resyncPushSubscription();
+    syncPushPause(); // ไม่รอ: ถามสถานะพักหนึ่งครั้งต่อการล็อกอิน/โหลดหน้า
+  }
+  // ตรวจไฟล์เสียงแจ้งเตือนหนึ่งครั้งต่อบัญชีต่อการโหลดหน้า (ไม่มีไฟล์ = เงียบ) · โหมดทดสอบ/lab-only ไม่มีแจ้งเตือนจึงไม่ตรวจ
+  if (soundProbedFor !== state.employee.id) {
+    soundProbedFor = state.employee.id;
+    if (!isLabOnly() && !isSandboxMode()) notifySound.probe();
   }
   await loadUnread();
   try {
@@ -6218,6 +6677,7 @@ async function init() {
     navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" }).catch((error) => console.warn("ลงทะเบียน service worker ไม่สำเร็จ", error));
   }
   window.addEventListener("hashchange", navigateRoute);
+  startNotificationSound();
   // บัญชีถูกลบ/รหัสผ่านถูกเปลี่ยนระหว่างเปิดแอปค้างไว้ ต่ออายุ token ไม่ได้ → Supabase ส่ง SIGNED_OUT
   sb.auth.onAuthStateChange((event, session) => {
     syncSignedUrlOwner(event === "SIGNED_OUT" ? null : session?.user?.id);

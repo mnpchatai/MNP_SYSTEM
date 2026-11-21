@@ -42,7 +42,51 @@
     return actual.length === expectedBytes.length && actual.every((byte, index) => byte === expectedBytes[index]);
   }
 
-  const api = { pushPanelState, urlBase64ToUint8Array, subscriptionRecord, sameApplicationServerKey };
+  // เวลาใน "แถบบนเครื่องนี้" และการพักแจ้งเตือนใช้ขอบเวลาเดียวกับฐานข้อมูล (public.push_pause_end): 07:00 น. เวลาไทยของวันปฏิทินไทยถัดไป
+  // ไทยคือ UTC+7 ไม่มี DST จึงคำนวณจากมิลลิวินาทีได้ตรง ๆ โดยไม่ขึ้นกับเขตเวลาของเครื่อง
+  //   กด 14:00 วันที่ 21 → 07:00 วันที่ 22 · กด 00:30 วันที่ 22 (ตามเวลาไทย) → 07:00 วันที่ 23 ไม่ใช่เช้าวันเดียวกัน
+  const BANGKOK_OFFSET_MS = 7 * 60 * 60 * 1000;
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  function nextBangkokSevenAm(nowMs) {
+    const bangkokDayStart = Math.floor((nowMs + BANGKOK_OFFSET_MS) / DAY_MS) * DAY_MS;
+    return bangkokDayStart + DAY_MS + 7 * 60 * 60 * 1000 - BANGKOK_OFFSET_MS;
+  }
+
+  // ค่าที่เก็บไว้ว่า "ซ่อนแถบถึงเมื่อไร" (มิลลิวินาที เป็นข้อความ) → เวลาสิ้นสุดที่ยังไม่ถึง หรือ null เมื่อไม่มี/เลยเวลาแล้ว/ค่าเพี้ยน
+  // ค่าที่ไกลเกินกว่าที่เราตั้งได้ (เกิน 2 วัน เช่น ถูกแก้ในเครื่อง) ไม่เชื่อ ไม่งั้นแถบอาจหายถาวร
+  function activeHiddenUntil(stored, nowMs) {
+    const until = Number(stored);
+    if (stored == null || stored === "" || !Number.isFinite(until)) return null;
+    return until > nowMs && until <= nowMs + 2 * DAY_MS ? until : null;
+  }
+
+  // ฐานข้อมูลยังไม่ได้ apply migration ที่มีฟังก์ชันนี้ (หน้าเว็บขึ้นก่อนฐานข้อมูล) → PostgREST ตอบ PGRST202 / 42883 / 404
+  // หน้าเว็บใช้แยก "ยังไม่มีฟังก์ชัน" (ซ่อนปุ่ม ถือว่าไม่ได้พัก เงียบ) ออกจากข้อผิดพลาดอื่น (เน็ตหลุด/ไม่มีสิทธิ์)
+  function isMissingFunctionError(error) {
+    if (!error) return false;
+    const code = String(error.code ?? "");
+    if (code === "PGRST202" || code === "42883") return true;
+    if (error.status === 404 || error.statusCode === 404) return true;
+    return /could not find the function/i.test(String(error.message ?? ""));
+  }
+
+  // แถบบังคับด้านบนของหน้า: แสดงจนกว่าเครื่องนี้จะเปิดแจ้งเตือนสำเร็จ (อนุญาตแล้ว + ลงทะเบียนแล้ว) คืนชนิดของแถบ หรือ null = ไม่แสดง
+  // ผู้ใช้กด "ปิดชั่วคราววันนี้" ได้ (environment.hidden = true) → ไม่แสดงจนถึง 07:00 น. วันถัดไป · กำลังพักแจ้งเตือน (environment.paused = true) ก็ไม่แสดง
+  //   enable       ใช้ Push ได้แต่ยังไม่เปิด (ยังไม่เคยตอบ หรืออนุญาตแล้วแต่ยังไม่ลงทะเบียน) → ข้อความ + ปุ่มเปิด
+  //   denied       เครื่องบล็อกไว้ เว็บขอซ้ำไม่ได้ → ข้อความบอกวิธีแก้ ไม่มีปุ่มเปิด
+  //   ios-install  iPhone/iPad ที่ยังไม่ได้เพิ่มลงหน้าจอโฮม → ข้อความแนะนำ ไม่มีปุ่มเปิด
+  //   pending      อนุญาตแล้วแต่ยังไม่รู้ว่าฐานข้อมูลรู้จักเครื่องนี้ไหม (environment.subscribed เป็น null/ไม่มีค่า) → ยังไม่แสดง รอตรวจก่อน
+  //   hidden/ios-old/unsupported (แก้ไม่ได้) และ on → null
+  function pushPromptKind(environment) {
+    if (environment?.hidden || environment?.paused) return null;
+    const panel = pushPanelState(environment);
+    if (panel === "denied" || panel === "ios-install") return panel;
+    if (panel !== "off") return null;
+    if (environment?.permission === "granted" && environment.subscribed == null) return "pending";
+    return "enable";
+  }
+
+  const api = { pushPanelState, urlBase64ToUint8Array, subscriptionRecord, sameApplicationServerKey, pushPromptKind, nextBangkokSevenAm, activeHiddenUntil, isMissingFunctionError };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.MNP_PUSH = api;
 })();

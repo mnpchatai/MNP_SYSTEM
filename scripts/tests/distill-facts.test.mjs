@@ -294,7 +294,7 @@ test("round 15: the shell moves a leading back link into the topbar and leaves o
     state: { employee: { first_name: "ก", last_name: "ข", role: { code: "staff" } }, unread: 0 }, document: {},
     activeNavFor: (value) => value, isSandboxMode: () => false, isLabOnly: () => false, navLink: () => "", requestModuleNavLinks: () => "",
     homePath: () => "dashboard", NAV_ICONS: {}, window: { MNP_REQUEST_CENTER: { overviewUrl: () => "#/requests" } }, escapeHtml: (value) => String(value),
-    initials: () => "กข", uiIcon: () => "", appNavButtons: () => "", helpButton: () => "", themeButton: () => "", sandboxBannerHtml: () => "",
+    initials: () => "กข", uiIcon: () => "", appNavButtons: () => "", helpButton: () => "", themeButton: () => "", sandboxBannerHtml: () => "", pushPromptHtml: () => "",
   });
   vm.runInContext(source, context);
   const detail = context.shell('\n    <a class="request-back-link" href="#/ncr">‹ NCR/CAR</a><h1>เรื่อง</h1>', "ncr", "NCR");
