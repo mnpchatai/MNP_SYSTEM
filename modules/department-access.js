@@ -5,8 +5,11 @@
 //   OFFICE ไม่ได้เปิดสิทธิ์ให้การ์ดอื่นในเมนู: แต่ละการ์ดมีรหัสโมดูลของตัวเอง (IT_COMPUTER_REPAIR, IT_WORK_ORDER, HR) และกรองด้วย moduleAllowed อีกชั้น
 //   แผนก ID จึงเห็นแค่ IT SUPPORT › ใบแจ้งซ่อม IT ไม่เห็น HR และใบสั่งงาน IT (modules/office-sections.js) · แผนกที่ไม่เหลือการ์ดใดเลยไม่เห็นเมนู
 //   IT_REPAIR (โมดูลคำร้องกลางเดิม) ยังอยู่ในรายการ: ใบเก่าและลิงก์เก่ายังเปิดได้ เพียงไม่มีการ์ดชี้ไปแล้ว
-// เป็น UX ล้วน (ซ่อนเมนู การ์ดโมดูล การแจ้งเตือนในหน้าเว็บ และพาออกจากหน้าของโมดูลอื่น) — สิทธิ์จริงยังตัดสินที่ฐานข้อมูล (RLS/RPC)
-// ตามเดิม และการแจ้งเตือนทางอีเมล/บนเครื่อง (Web Push) ที่ฐานข้อมูลส่งเองยังไม่ถูกกรอง
+// ฝั่งหน้าเว็บเป็น UX ล้วน (ซ่อนเมนู การ์ดโมดูล การแจ้งเตือนในหน้าเว็บ และพาออกจากหน้าของโมดูลอื่น) — สิทธิ์จริงยังตัดสินที่ฐานข้อมูล (RLS/RPC)
+// อีเมลและ Web Push กรองที่ฐานข้อมูลแล้ว: trigger notifications_department_filter + private.department_notification_allowed
+// (migration 20261117010000, เพิ่ม IT_COMPUTER_REPAIR ใน 20261213010000) ใช้รายการ private.department_notification_modules
+// แผนก ID ได้อีเมล/Push ของ MT_REPAIR, IT_REPAIR, IT_COMPUTER_REPAIR (ใบแจ้งซ่อมคอมพิวเตอร์) · ใบสั่งงาน IT (IT_WORK_ORDER) ไม่ได้ · "OFFICE" ไม่ใช่โมดูลแจ้งเตือน
+// POLICIES ด้านล่างกับรายการในฐานข้อมูลต้องตรงกัน — แก้ที่หนึ่งต้องแก้อีกที่
 (function () {
   const POLICIES = {
     ID: ["MT_REPAIR", "IT_REPAIR", "IT_COMPUTER_REPAIR", "OFFICE"],
