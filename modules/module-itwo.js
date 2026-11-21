@@ -550,7 +550,7 @@
       dueInput.min = model.todayBangkok();
       window.MNP_DATE_PICKER?.enhance(dueInput);
       // ฟอร์มเปิดอยู่และพิมพ์ค้าง (หรือเลือกไฟล์ไว้) = มีของค้างที่ยังไม่ส่ง · ระหว่างส่งแผงจัดการเอง (ไม่นับ)
-      watchUnsaved(() => (!card.hidden && !busy && (detailsInput.value.trim() !== "" || chosenFiles().length > 0) ? 1 : 0));
+      watchUnsaved(() => (card.isConnected && !card.hidden && !busy && (detailsInput.value.trim() !== "" || chosenFiles().length > 0) ? 1 : 0));
 
       document.querySelector("#itwo-rework-cancel")?.addEventListener("click", () => { card.hidden = true; message.innerHTML = ""; });
       form.addEventListener("submit", async (event) => {
@@ -616,7 +616,7 @@
         message.innerHTML = `<div class="form-message error" role="alert">${html}</div>`;
         message.scrollIntoView?.({ block: "nearest" });
       };
-      watchUnsaved(() => (!card.hidden && !busy && (bodyInput.value.trim() !== "" || chosenFiles().length > 0) ? 1 : 0));
+      watchUnsaved(() => (card.isConnected && !card.hidden && !busy && (bodyInput.value.trim() !== "" || chosenFiles().length > 0) ? 1 : 0));
 
       if (kind === "ask") document.querySelector("#itwo-ask-cancel")?.addEventListener("click", () => { card.hidden = true; message.innerHTML = ""; });
       form.addEventListener("submit", async (event) => {
@@ -751,7 +751,16 @@
     });
   }
 
-  const unsavedCount = () => (unsavedProbe ? unsavedProbe() : 0);
+  // ผู้ใช้ยืนยัน "ออกโดยไม่ส่ง" ไปหน้านอกโมดูลนี้แล้ว หน้านี้ไม่ได้อยู่ในจอ (hash ไม่ตรงหน้าที่วาดล่าสุด) → ตัวตรวจต้องเลิกนับและถูกล้างทิ้ง
+  // ไม่อย่างนั้นยังอ่านค่าจากฟอร์มที่ถูกถอดออกจากหน้า และ app.js ถามก่อนออกซ้ำทั้งแอปจนกว่าจะรีโหลด (หน้าอื่นในโมดูลวาดใหม่ผ่าน render() ซึ่งล้างตัวตรวจเอง)
+  const unsavedCount = () => {
+    if (!unsavedProbe) return 0;
+    if (location.hash !== pageHash) {
+      unsavedProbe = null;
+      return 0;
+    }
+    return unsavedProbe();
+  };
   const api = Object.freeze({ render, loadCardSummary, unsavedCount, version: model.MODULE_VERSION });
   window.MNP_ITWO = api;
   // ประกาศตัวเองให้การ์ดในเมนู "ระบบสำนักงาน" (วิธีเพิ่มโมดูลใหม่ดูที่หัวไฟล์ modules/office-sections.js) key = รหัสโมดูลของการ์ด

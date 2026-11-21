@@ -32,7 +32,7 @@ const PEOPLE = {
 function el(props = {}) {
   const listeners = {};
   const node = {
-    dataset: {}, style: {}, hidden: false, disabled: false, value: "", checked: false, innerHTML: "", min: "", listeners,
+    dataset: {}, style: {}, hidden: false, disabled: false, isConnected: true, value: "", checked: false, innerHTML: "", min: "", listeners,
     classList: { add() {}, remove() {}, toggle() {} },
     addEventListener(type, handler) { (listeners[type] ??= []).push(handler); },
     focus() {}, scrollIntoView() {}, dispatchEvent() {}, querySelector: () => null, querySelectorAll: () => [],
@@ -1510,6 +1510,45 @@ test("typed but unsent text in the ask or answer form counts as unsaved; a close
   assert.equal(w.context.window.MNP_ITWO.unsavedCount(), 0);
   w.elements["#itwo-answer-body"].value = "ตอบค้าง";
   assert.equal(w.context.window.MNP_ITWO.unsavedCount(), 1);
+});
+
+test("typed text stops counting once the user has left the module page (no leave prompt anywhere else in the app)", async () => {
+  const w = world();
+  const order = await closedOrder(w);
+  const probe = () => w.context.window.MNP_ITWO.unsavedCount();
+  await w.open(`view=order&id=${order.id}`);
+  await w.click("request_rework");
+  w.elements["#itwo-rework-details"].value = "พิมพ์ค้าง";
+  assert.equal(probe(), 1, "typed on the order page = something to lose");
+  // ยืนยัน "ออกโดยไม่ส่ง" ไปหน้านอกโมดูล: hash เปลี่ยน แต่ฟอร์มเดิมยังค้างอยู่ในอ็อบเจ็กต์ที่ตัวตรวจถืออยู่
+  w.context.location.hash = "#/dashboard";
+  assert.equal(probe(), 0, "outside the module nothing is counted");
+  w.context.location.hash = "";
+  assert.equal(probe(), 0, "the probe was dropped, so coming back to the old hash does not revive it");
+});
+
+test("a form removed from the page is not counted even if it still holds typed text", async () => {
+  const w = world();
+  const order = await closedOrder(w);
+  const probe = () => w.context.window.MNP_ITWO.unsavedCount();
+  await w.open(`view=order&id=${order.id}`);
+  await w.click("request_rework");
+  w.elements["#itwo-rework-details"].value = "พิมพ์ค้าง";
+  assert.equal(probe(), 1);
+  w.elements["#itwo-rework-card"].isConnected = false;
+  assert.equal(probe(), 0);
+});
+
+test("typed ask text stops counting after leaving the module page, but counts while the user is still on it", async () => {
+  const w = world();
+  const order = await approvedOrder(w);
+  w.as("itadm");
+  await w.open(`view=order&id=${order.id}`);
+  await w.click("request_info");
+  w.elements["#itwo-ask-body"].value = "คำถาม";
+  assert.equal(w.context.window.MNP_ITWO.unsavedCount(), 1, "still on the same page: the prompt must keep working");
+  w.context.location.hash = "#/dashboard";
+  assert.equal(w.context.window.MNP_ITWO.unsavedCount(), 0);
 });
 
 test("a refused question or answer keeps the form and the text, shows the Thai message, and can be sent again", async () => {
