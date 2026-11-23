@@ -1,6 +1,6 @@
 # สัญญาฐานข้อมูลของโมดูล "ใบแจ้งซ่อมคอมพิวเตอร์" (`itrp_*`)
 
-migration: `supabase/migrations/20261212010000_itrp_repair_requests.sql` · ทดสอบ: `supabase/tests/database/itrp_repair_requests.test.sql`, `itrp_files.test.sql`, `itrp_notify.test.sql`
+migration: `supabase/migrations/20261212010000_itrp_repair_requests.sql` + `20261218010000_itrp_repair_history.sql` (ประวัติการซ่อมเครื่อง FM02 ดูหัวข้อท้ายเอกสาร) · ทดสอบ: `supabase/tests/database/itrp_repair_requests.test.sql`, `itrp_files.test.sql`, `itrp_notify.test.sql`, `itrp_repair_history.test.sql`
 คัดโครงจากใบสั่งงาน IT (`itwo_*`) รุ่นล่าสุด (v1–v4 + แจ้งเตือน) · สเปกต้นทาง: `Work-Order/docs/itrp-spec.md` · เอกสารนี้ไว้ให้คนทำหน้าเว็บ (Pilot) ใช้เป็นสัญญา
 
 ทุก RPC เรียกผ่าน `sb.rpc('app_itrp_…', { p_… })` ด้วย session ของผู้ใช้ (SECURITY DEFINER, anon เรียกไม่ได้) · ข้อความ error เป็นภาษาไทยแสดงให้ผู้ใช้เห็นตรง ๆ (`error.message`)
@@ -19,7 +19,7 @@ migration: `supabase/migrations/20261212010000_itrp_repair_requests.sql` · ท�
 ## เลขที่เอกสาร
 `IT01-YY/NNN` (เช่น `IT01-26/050`) · ปีตามเวลาไทย · ใบทดสอบ `TEST-IT01-YY/NNN` ตัวนับแยก · ออกฝั่งฐานข้อมูลเท่านั้น (หน้าเว็บไม่ส่งเลข)
 
-## ตาราง (9)
+## ตาราง (9 ของใบแจ้งซ่อม + อีก 5 ของประวัติการซ่อมเครื่อง ดูหัวข้อท้ายเอกสาร)
 | ตาราง | หน้าที่ | เพิ่มได้อย่างเดียว |
 |---|---|---|
 | `itrp_requests` | ใบแจ้งซ่อม (id, is_test, doc_no, doc_year, doc_seq, requester_id, department_id, asset_code, device_name, request_kind, request_kind_note, repair_target, repair_target_note, symptom, is_urgent, status, info_return_status, created_at) | ลบไม่ได้ · เปลี่ยนได้แค่ status |
@@ -59,7 +59,7 @@ migration: `supabase/migrations/20261212010000_itrp_repair_requests.sql` · ท�
 | `app_itrp_reject(p_request_id, p_reason)` | uuid, text บังคับ ≤500 | void · ไม่อนุมัติ = จบทันที · ระหว่าง `need_info` ใช้ไม่ได้ |
 | `app_itrp_cancel(p_request_id, p_reason)` | uuid, text บังคับ | void · ผู้แจ้งก่อน IT เคยส่งงาน · IT (it_admin) ยกเลิกแทนได้เฉพาะใบ `need_info` (ประวัติขึ้นต้น "IT ยกเลิกแทนผู้แจ้ง: ") |
 | `app_itrp_start(p_request_id)` | uuid | void · เฉพาะ it_admin · ใบปกติต้องอนุมัติครบ งานด่วนเริ่มก่อนได้ |
-| `app_itrp_complete(...)` | `p_request_id uuid`, `p_cause text` (บังคับ ≤2000), `p_cause_kind text`, `p_cause_kind_note text`, `p_repair_method text`, `p_repair_vendor text`, `p_repair_action text` (บังคับ ≤2000), `p_pr_po_no text` (≤100), `p_parts jsonb default '[]'` | **uuid ของบันทึกการซ่อมที่สร้าง** · เฉพาะ it_admin · ต้อง `in_progress` และอนุมัติครบ · `p_parts` = array ≤10 แถว `{"item_name": text ≤200, "quantity": ตัวเลข >0, "price": ตัวเลข ≥0 หรือ null, "note": text ≤200 หรือ null}` ทศนิยมไม่เกิน 2 ตำแหน่ง ≤8 หลักก่อนจุด รับเลขเป็น number หรือ string · แถวที่ว่างทุกช่องข้ามให้ · ตรวจผิดได้ข้อความ "แถวที่ N: …" ตามลำดับที่ส่ง · ช่างผู้ดำเนินการ = ผู้กด |
+| `app_itrp_complete(...)` | `p_request_id uuid`, `p_cause text` (บังคับ ≤2000), `p_cause_kind text`, `p_cause_kind_note text`, `p_repair_method text`, `p_repair_vendor text`, `p_repair_action text` (บังคับ ≤2000), `p_pr_po_no text` (≤100), `p_parts jsonb default '[]'`, `p_devices jsonb default '[]'` (เครื่องที่ซ่อม ดูหัวข้อประวัติการซ่อมเครื่อง · ไม่ส่ง = ไม่มีเครื่อง) | **uuid ของบันทึกการซ่อมที่สร้าง** · เฉพาะ it_admin · ต้อง `in_progress` และอนุมัติครบ · `p_parts` = array ≤10 แถว `{"item_name": text ≤200, "quantity": ตัวเลข >0, "price": ตัวเลข ≥0 หรือ null, "note": text ≤200 หรือ null}` ทศนิยมไม่เกิน 2 ตำแหน่ง ≤8 หลักก่อนจุด รับเลขเป็น number หรือ string · แถวที่ว่างทุกช่องข้ามให้ · ตรวจผิดได้ข้อความ "แถวที่ N: …" ตามลำดับที่ส่ง · ช่างผู้ดำเนินการ = ผู้กด |
 | `app_itrp_receive(p_request_id)` | uuid | void · เฉพาะผู้แจ้ง เมื่อ `it_closed` |
 | `app_itrp_request_rework(p_request_id, p_details, p_due_date)` | uuid, text บังคับ ≤2000, date บังคับ (ไม่ย้อนหลังเวลาไทย) | `{id, round_no}` (id = rework_id ไว้แนบไฟล์) · เฉพาะผู้แจ้ง เมื่อ `it_closed` · กลับ `in_progress` ทันที ไม่จำกัดรอบ |
 | `app_itrp_request_info(p_request_id, p_body)` | uuid, text บังคับ ≤2000 | `{comment_id}` (ไว้แนบไฟล์ของข้อความ) · ผู้อนุมัติของขั้นที่ใบรออยู่ / it_admin หลังอนุมัติ · ใบเป็น `need_info` |
@@ -83,7 +83,7 @@ migration: `supabase/migrations/20261212010000_itrp_repair_requests.sql` · ท�
 - `approvals {dept, it_mgr}` แต่ละอัน `{by, at, reason}` หรือ null (event แรกของแต่ละขั้น) · **`approvals.dept` = ลายเซ็น "ลงชื่อผู้อนุมัติ" ของใบพิมพ์ · `approvals.it_mgr` = "รับทราบ ฝ่ายบริหาร"**
 - ข้อมูลช่องท้ายใบพิมพ์: `started {by, at}` (event started → "เริ่มดำเนินการซ่อม"), `completed {by, at}` (event completed ล่าสุด → "ซ่อมเสร็จ", ผู้กด = "ช่างผู้ดำเนินการซ่อม" และ "ส่งมอบงาน แผนก IT"), `received {by, at}` (ผู้แจ้งที่กดรับ → "รับมอบงาน"), รวมเวลาให้คำนวณจาก `started.at` ถึง `completed.at` ตอนแสดง · ยังไม่เกิด = null
 - `rework_open` boolean = มีการขอแก้ไขค้างอยู่ (ขอแก้ไขหลังส่งงานล่าสุดและ IT ยังไม่ส่งงานใหม่) → ติ๊ก "ส่งแก้ไข" · ติ๊ก "ใช้งานได้สมบูรณ์" เมื่อ `status = 'received'`
-- `repair_report` = บันทึกการซ่อมชุดล่าสุด (ใช้แสดง/พิมพ์) หรือ null ถ้ายังไม่เคยส่งงาน · `repair_reports[]` ทุกชุดเรียงตามการส่งงาน (ชุดล่าสุดอยู่ท้ายสุด) ใช้เป็นประวัติ · แต่ละชุด `{id, completed_event_id, completed_at, completed_by_employee_no, completed_by_full_name, cause, cause_kind, cause_kind_note, repair_method, repair_vendor, repair_action, pr_po_no, parts[{line_no, item_name, quantity, price, note}]}` (quantity/price เป็นตัวเลขทศนิยม 2 ตำแหน่ง price เป็น null ได้)
+- `repair_report` = บันทึกการซ่อมชุดล่าสุด (ใช้แสดง/พิมพ์) หรือ null ถ้ายังไม่เคยส่งงาน (แต่ละชุดมี `devices[]` = เครื่องที่ซ่อม `[{seq, device_code, symptom_note, action_note, remark}]`) · `repair_reports[]` ทุกชุดเรียงตามการส่งงาน (ชุดล่าสุดอยู่ท้ายสุด) ใช้เป็นประวัติ · แต่ละชุด `{id, completed_event_id, completed_at, completed_by_employee_no, completed_by_full_name, cause, cause_kind, cause_kind_note, repair_method, repair_vendor, repair_action, pr_po_no, parts[{line_no, item_name, quantity, price, note}]}` (quantity/price เป็นตัวเลขทศนิยม 2 ตำแหน่ง price เป็น null ได้)
 - `allowed_actions[]` ปุ่มที่ผู้ดูทำได้ตอนนี้: `cancel`, `approve`, `reject`, `start`, `complete`, `receive`, `request_rework`, `request_info`, `provide_info` (ใช้ตัวนี้ตัดสินปุ่ม ไม่ต้องคำนวณเอง · ไม่มี `edit_access`)
 
 ## ไฟล์แนบ (Storage)
@@ -95,6 +95,47 @@ migration: `supabase/migrations/20261212010000_itrp_repair_requests.sql` · ท�
 ## แจ้งเตือน
 trigger บน `itrp_events` เรียก `private.office_notify` (ชุดเหตุการณ์/ผู้รับเดียวกับใบสั่งงาน IT) · `action_url` = `/office/repair/<uuid ของใบ>` · หัวข้อ `ใบแจ้งซ่อม <doc_no> …` · ใบด่วนขึ้นหัว `🚨 [ด่วน] ` และแจ้ง it_admin ทันทีตอนแจ้ง · ใบทดสอบไม่ส่ง · started/received ไม่แจ้ง · ล้มเหลวแล้วการอนุมัติ/ส่งงานไม่ล้มตาม
 ฝั่งหน้าเว็บ/Edge Function ต้องเพิ่มเส้นทาง `/office/repair/` (app.js notificationHref, notify-email, notify-push) — ไม่ได้ทำในงานฐานข้อมูล
+
+## ประวัติการซ่อมเครื่อง (IT01-FM02) — migration `20261218010000_itrp_repair_history.sql` · ทดสอบ `itrp_repair_history.test.sql`
+สเปกต้นทาง: `Work-Order/docs/itrp-history-spec.md` · ฐานข้อมูลอย่างเดียว (หน้าเว็บทำแยก) · **ไม่นำเข้าข้อมูลเก่า** (478 แถว + ทะเบียนเครื่องเป็นสคริปต์แยก) · ไม่เก็บรหัสผ่าน/License key ใด ๆ
+
+### สิทธิ์
+- **อ่าน** (`app_itrp_device_history`, `app_itrp_list_devices`, `app_itrp_history_get`) = ผู้ดูแลงาน IT (`is_it_admin`) หรือผู้อนุมัติขั้น IT (`is_it_approver`) จาก `itwo_staff` · **เขียน** (`app_itrp_save_device`, `app_itrp_history_add/_update/_void`) = ผู้ดูแลงาน IT เท่านั้น · anon เรียกไม่ได้ · พนักงานแผนก IT ที่ไม่อยู่ใน `itwo_staff`, ผู้แจ้ง, ผู้จัดการแผนก = อ่าน/เขียนไม่ได้ (แท็บ "ประวัติการซ่อม" ใช้ `app_itrp_my_role().is_it_admin || is_it_approver` ตัดสินการแสดง)
+- **โหมดทดสอบ**: ทะเบียนเครื่องและประวัติแยกแถวด้วย `is_test` เหมือนทุกตารางของ itrp (persona ไม่เห็น/แก้ของจริงได้เลย · โหมดทดสอบเริ่มจากทะเบียนว่าง ต้องเพิ่มเครื่องทดสอบเอง) · ล้างทิ้งด้วย `app_sandbox_purge_itrp` (ครอบ 5 ตารางใหม่แล้ว)
+- รหัสเครื่องทุกที่ = **trim + ตัวพิมพ์ใหญ่ 1–50 ตัว** (ฐานข้อมูลทำให้เอง ส่งตัวเล็กได้) ห้ามมีอักขระควบคุม (tab/ขึ้นบรรทัดใหม่)
+
+### ตารางใหม่ (5) — RLS deny-all ไม่มี grant ตรง (รวม service_role)
+| ตาราง | หน้าที่ | เพิ่มได้อย่างเดียว |
+|---|---|---|
+| `itrp_devices` | ทะเบียนเครื่องอย่างย่อ: code (ไม่ซ้ำต่อโหมด แก้ไม่ได้), kind (`computer`/`laptop`/`monitor`/`printer`/`ups`/`other`), user_name, division, cpu_name, cpu_model, started_on, asset_no, status (`active`/`retired`), note, created_by/at, updated_by/at | ลบไม่ได้ (ปิดการใช้งานแทน) · แก้ได้ผ่าน RPC |
+| `itrp_device_log` | ประวัติเพิ่ม/แก้ทะเบียน (action `created`/`updated`, old_values, new_values, actor) **เขียนโดย trigger** บน `itrp_devices` | ใช่ |
+| `itrp_report_devices` | เครื่องที่ซ่อมต่อบันทึกการซ่อม 1 รอบ (0–10 แถว): seq, device_code, symptom_note, action_note, remark (ข้อเสนอแนะ ≤500) | ใช่ |
+| `itrp_history_entries` | ประวัติที่ไม่ได้มาจากใบในระบบ: source (`import`/`manual`), doc_no, device_code, reported_on, symptom, action, finished_on, remark, reporter_name, created_by/at, updated_by/at, voided_by/at, void_reason | ลบไม่ได้ · แก้ได้ (trigger เก็บฉบับเดิมให้) · ยกเลิกรายการได้ |
+| `itrp_history_entry_revisions` | ฉบับก่อนแก้/ก่อนยกเลิก (snapshot ทั้งแถว, changed_by, reason, revision_no 1,2,…) **เขียนโดย trigger** | ใช่ |
+
+### แก้ `app_itrp_complete` — เพิ่ม `p_devices jsonb default '[]'` (ท้ายสุด)
+`app_itrp_complete(p_request_id, p_cause, p_cause_kind, p_cause_kind_note, p_repair_method, p_repair_vendor, p_repair_action, p_pr_po_no, p_parts default '[]', p_devices default '[]')` · คืน uuid ของบันทึกการซ่อมเหมือนเดิม · **เรียกแบบเดิม (ไม่ส่ง p_devices) ได้ทุกแบบ** (ตามตำแหน่ง 9 ตัวหรือตามชื่อ) = ไม่มีเครื่อง · เหลือฟังก์ชันเดียว ไม่มี overload
+`p_devices` = array ≤10 แถว `{"device_code": text (บังคับ 1–50 ห้ามซ้ำในรอบเดียวกัน), "symptom_note": text ≤2000 หรือ null, "action_note": text ≤2000 หรือ null, "remark": ข้อเสนอแนะ ≤500 หรือ null}` · แถวที่ว่างทุกช่องข้ามให้ · ตรวจผิดได้ข้อความ `แถวที่ N: …` (กรุณาระบุรหัสเครื่อง / รหัสเครื่องต้องไม่เกิน 50 ตัวอักษร / รหัสเครื่องมีอักขระที่ใช้ไม่ได้ / รหัสเครื่อง X ซ้ำกับแถวก่อนหน้า / อาการของเครื่อง… / การแก้ไขของเครื่อง… / ข้อเสนอแนะต้องไม่เกิน 500 ตัวอักษร) หรือ "เครื่อง/อุปกรณ์ที่ซ่อมต้องไม่เกิน 10 รายการ" · ผิดแล้วทั้งการส่งงานไม่เกิดขึ้น (ใบยัง `in_progress`)
+- หน้าเว็บเดิมบน main ที่ไม่ส่ง p_devices ทำงานได้ตามเดิม · ใบที่ส่งงานด้วยวิธีนี้ **ไม่มีแถวเครื่อง** → ตอนอ่านประวัติ ระบบใช้รหัสเครื่องที่ผู้แจ้งกรอก (`asset_code`) แทน (ไม่เขียนเพิ่ม) ถ้าไม่มี asset_code ใบนั้นไม่ขึ้นประวัติเครื่องใดเลย → หน้าเว็บส่งงานรุ่นใหม่ควรบังคับ ≥1 แถว (เติม asset_code ให้ก่อน)
+- `app_itrp_get_detail`: ไม่เปลี่ยนคีย์เดิม · เพิ่ม `repair_report.devices[]` (บันทึกรอบล่าสุด) และ `repair_reports[].devices[]` (ทุกรอบ) = `[{seq, device_code, symptom_note, action_note, remark}]` เรียงตาม seq · ไม่มี = `[]`
+
+### RPC ใหม่ (7)
+| RPC | พารามิเตอร์ | คืน / หมายเหตุ |
+|---|---|---|
+| `app_itrp_device_history(p_code)` | text บังคับ | jsonb `{code, is_test, device, rows[]}` · `device` = หัวจากทะเบียน `{id, code, kind, user_name, division, cpu_name, cpu_model, started_on, asset_no, status, note}` หรือ `null` ถ้ารหัสไม่อยู่ในทะเบียน (ของโหมดนี้) · `rows[]` เรียงตามวันที่แจ้ง **เก่าสุดก่อน** (วันที่ว่างไว้ท้าย แล้วตามเลขที่ใบ) แต่ละแถว `{source, entry_id, request_id, request_status, doc_no, reported_on, symptom, action, finished_on, remark, reporter_name, revision_count, updated_at}` · 7 คอลัมน์ของ FM02 = `doc_no, reported_on, symptom, action, finished_on, remark, reporter_name` · `source` = `request` (ใบในระบบ: มี request_id, entry_id ว่าง) / `import` / `manual` (มี entry_id, request_id ว่าง) · วันที่เป็น `YYYY-MM-DD` (วันที่ตามเวลาไทย) |
+| `app_itrp_list_devices(p_search default null, p_include_retired default true)` | text, boolean | แถว `code, in_registry, device_id, kind, user_name, division, cpu_name, cpu_model, started_on, asset_no, status, note, history_count, last_repair_on, updated_at` · รวมรหัสที่มีในประวัติแต่ไม่อยู่ในทะเบียน (`in_registry = false` ช่องของทะเบียนเป็น null) · ค้นไม่สนตัวพิมพ์ใหญ่เล็กใน รหัส/ผู้ใช้/แผนก/เลขทะเบียนทรัพย์สิน/Processor (ไม่ใช่ wildcard) · เรียงตามรหัส ≤2,000 แถว |
+| `app_itrp_save_device(p_code, p_kind default 'other', p_user_name, p_division, p_cpu_name, p_cpu_model, p_started_on, p_asset_no, p_status default 'active', p_note)` | ตามชื่อ | jsonb `{id, code, created, changed}` · เพิ่มถ้ารหัสยังไม่มีในโหมดนี้ ไม่งั้นแก้ (**ส่งค่าทั้งหมดของเครื่อง** ช่องที่ส่ง null = ล้างค่า · รหัสแก้ไม่ได้) · ไม่มีค่าใดเปลี่ยน = `changed: false` ไม่ลง log · ข้อจำกัด: user/division/cpu ≤200, asset_no ≤100, note ≤1000, started_on 1990–2100 |
+| `app_itrp_history_add(p_device_code, p_doc_no, p_reported_on, p_symptom, p_action, p_finished_on, p_remark, p_reporter_name)` | ทุกตัวส่งครบ (null ได้ยกเว้น code/reported_on) | bigint = id ของรายการ (source = `manual`) · บังคับ: รหัสเครื่อง, วันที่แจ้ง, อาการหรือการแก้ไขอย่างน้อยหนึ่ง · วันที่ไม่ใช่อนาคต (เวลาไทย) ไม่ก่อน 1990 · วันที่ซ่อมเสร็จไม่ก่อนวันที่แจ้ง · doc_no ≤50 ("-" = ไม่ระบุ) · symptom/action ≤2000 · remark ≤500 · reporter_name ≤200 · เครื่องเดียวกัน+เลขที่ใบเดียวกัน ลงซ้ำไม่ได้ (เฉพาะรายการที่ไม่ถูกยกเลิก) |
+| `app_itrp_history_update(p_entry_id, <ช่องเดียวกับ add ทั้ง 8 ช่อง>)` | bigint + ค่าทั้งหมด (null = ล้าง) | jsonb `{id, revision_count}` · กติกาข้อมูลเหมือน add · ไม่มีอะไรเปลี่ยน = ผิดพลาด "ไม่มีการเปลี่ยนแปลงจากรายการเดิม" · trigger เก็บฉบับก่อนแก้ลง revisions ทุกครั้ง · แก้รายการที่ยกเลิกแล้วไม่ได้ · แก้ได้ทั้ง `manual` และ `import` |
+| `app_itrp_history_void(p_entry_id, p_reason)` | bigint, text บังคับ ≤500 | jsonb `{id}` · ยกเลิกรายการ (ไม่ลบแถว) ไม่ขึ้นในประวัติของเครื่องอีก · ฉบับก่อนยกเลิกเก็บเป็น revision `change_kind = 'void'` · ยกเลิกซ้ำ/แก้หลังยกเลิกไม่ได้ |
+| `app_itrp_history_get(p_entry_id)` | bigint | jsonb `{entry{id, source, doc_no, device_code, reported_on, symptom, action, finished_on, remark, reporter_name, created_at, created_by_employee_no, created_by_full_name, updated_at, updated_by_full_name, voided_at, void_reason, voided_by_full_name}, revisions[{revision_no, change_kind ('update'/'void'), snapshot{…แถวเดิมก่อนการแก้ครั้งนั้น…}, changed_by_employee_no, changed_by_full_name, reason, created_at}]}` เรียง revision_no เก่าสุดก่อน · เปิดรายการที่ยกเลิกแล้วได้ (ให้ดูรอยแก้) |
+ข้อความ error เป็นภาษาไทยแสดงตรง ๆ เหมือน RPC เดิม · `rows[]` ของ `app_itrp_device_history` รวมรายการที่ยังไม่ถูกยกเลิกเท่านั้น
+
+### ประวัติของเครื่อง = 3 แหล่ง
+(ก) **ใบในระบบ**: ใบที่ IT เคยส่งงานอย่างน้อย 1 ครั้งและสถานะไม่ใช่ `cancelled`/`rejected` (ขึ้นทันทีที่ส่งงาน ไม่รอผู้แจ้งยืนยัน) · ใช้บันทึกการซ่อม **รอบล่าสุด** (ขอแก้ไขแล้วส่งใหม่ = ใช้รอบใหม่ ไม่ซ้ำเป็นสองแถว เครื่องที่ไม่อยู่ในรอบล่าสุดไม่ขึ้นใบนี้อีก) · เครื่อง = แถวใน `itrp_report_devices` ของรอบล่าสุด (ไม่มีแถวเลย → ใช้ `asset_code` ของใบ) · อาการ = `symptom_note` ของเครื่อง ว่าง = อาการของใบ · การแก้ไข = `action_note` ว่าง = `repair_action` ของบันทึก · วันที่แจ้ง = วันที่สร้างใบ · ซ่อมเสร็จ = วันที่ส่งงานรอบล่าสุด · ข้อเสนอแนะ = `remark` · ผู้แจ้ง = ชื่อผู้แจ้งใบ · เลขที่ใบ = `doc_no`
+(ข) `itrp_history_entries` source `import` (นำเข้าจาก Excel ด้วยสคริปต์แยก: เขียนตรงด้วยสิทธิ์ผู้ดูแลฐานข้อมูล ต้องใส่ `created_by` = พนักงานที่สั่งรัน และ `source = 'import'` · วันที่ "-" ใส่ null ได้)
+(ค) `itrp_history_entries` source `manual` (IT ลงย้อนหลังด้วย `app_itrp_history_add`)
+แยกโหมดจริง/ทดสอบตาม `is_test` (โหมดทดสอบเห็นเฉพาะข้อมูลทดสอบ)
 
 ## ที่ไม่ได้ทำในงานฐานข้อมูล
 หน้าเว็บ/เมนู/ใบพิมพ์/ลิงก์แจ้งเตือน (`app.js`, `modules/`, `sw.js`, `index.html`, Edge Functions) · การตั้ง `request_types.IT_REPAIR is_active=false` (ของเพื่อน)
