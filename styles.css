@@ -3686,6 +3686,7 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .gr-settings-table .rf-input, .gr-settings-table .rf-select { min-width: 110px; }
 @media (max-width: 640px) {
   .gr-record-form .bom-step-next .rf-btn { width: 100%; }
+}
 
 /* ---------- MNP LAB · รายงานทดสอบ MDR (lab-mdr-views.js) ---------- */
 /* ปุ่มอัปโหลดบนหัวโมดูลสี = ปุ่มหลักของหน้า (สี CTA ของหัว) · เมนูสองทางลอยใต้ปุ่ม จึงให้หัวโมดูลนี้ไม่ตัดขอบ */

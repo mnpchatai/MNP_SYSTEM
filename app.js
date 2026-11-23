@@ -5320,7 +5320,7 @@ async function refreshPushPanel({ reloadPause = true } = {}) {
 // กติกา/ตัวจัดการเสียงอยู่ใน modules/notification-sound.js (ทดสอบแล้ว) ที่นี่เป็นส่วนต่อกับหน้าเว็บ:
 //   1) push ทันที: sw.js ส่งข้อความ "mnp-notification" มาที่หน้า → รีเฟรชตัวเลขกระดิ่ง และถ้าหน้านี้โฟกัสอยู่จะถูกถามว่าเล่นเสียงเองไหม
 //   2) ถามฐานข้อมูลเป็นระยะ (สำรองสำหรับเครื่องที่ไม่ได้เปิด Push): เฉพาะตอนหน้าเห็นอยู่ ทุก ~60 วินาที และตอนกลับมาเห็นหน้า
-// เสียงเปิดเสมอ ไม่มีสวิตช์ให้ผู้ใช้ · ไฟล์ sounds/notify.mp3 ยังไม่มี = ทุกอย่างเงียบ และ sw.js ไม่ทำแจ้งเตือนเป็น silent
+// เสียงเปิดเสมอ ไม่มีสวิตช์ให้ผู้ใช้ · ไฟล์ sounds/notify.wav ยังไม่มี = ทุกอย่างเงียบ และ sw.js ไม่ทำแจ้งเตือนเป็น silent
 function createNotifySound() {
   const sound = window.MNP_NOTIFY_SOUND;
   let channel = null;
