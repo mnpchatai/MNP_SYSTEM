@@ -267,10 +267,13 @@
     button.disabled = true;
     result.hidden = false;
     result.innerHTML = views.uploadProgress(0, files.length);
-    const { accepted, skipped } = model.classifyFiles(await readFiles(files));
     const summary = { added: { F1: 0, F2: 0 }, duplicates: 0, skipped: [], failed: null };
     let done = 0;
+    let accepted = [];
+    let skipped = [];
     try {
+      // อ่านไฟล์อยู่ในตัวจับ error ด้วย: อ่านจากไดรฟ์แชร์ไม่ได้ (เครือข่ายหลุด ไฟล์ถูกย้าย) ต้องบอกผู้ใช้ ไม่ค้างที่ "กำลังอัปโหลด"
+      ({ accepted, skipped } = model.classifyFiles(await readFiles(files)));
       for (const part of model.PARTS) {
         for (const batch of model.chunk(accepted.filter((item) => item.part === part.key))) {
           let pending = batch;
@@ -295,7 +298,9 @@
     } catch (error) {
       if (mine !== version) return;
       if (isDenied(error)) { denied(); return; }
-      summary.failed = `อัปโหลดไม่สำเร็จ ${accepted.length - done} ครั้ง: ${friendlyError(error)} — เลือกไฟล์ชุดเดิมอีกครั้งได้ ผลที่บันทึกแล้วจะไม่ซ้ำ`;
+      summary.failed = accepted.length || skipped.length
+        ? `อัปโหลดไม่สำเร็จ ${accepted.length - done} ครั้ง: ${friendlyError(error)} — เลือกไฟล์ชุดเดิมอีกครั้งได้ ผลที่บันทึกแล้วจะไม่ซ้ำ`
+        : `อ่านไฟล์ที่เลือกไม่สำเร็จ (${files.length} ไฟล์): ${friendlyError(error)} — ตรวจว่ายังเปิดโฟลเดอร์ได้ แล้วเลือกใหม่อีกครั้ง`;
     }
     if (mine !== version) return;
     summary.skipped = model.groupSkipped(skipped);

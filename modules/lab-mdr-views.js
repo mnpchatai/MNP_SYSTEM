@@ -19,6 +19,8 @@
 
   const UPLOAD_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>`;
 
+  // data-attachment-skip: ไม่ใช่ไฟล์แนบ — ตัวจัดการไฟล์แนบของ app.js (attachment-image.js) ต้องไม่ตรวจ "ไม่เกิน 10 ไฟล์" หรือล้างช่องนี้
+  // (โฟลเดอร์ของวันมีไฟล์ .ini หลายสิบไฟล์)
   // ปุ่มอัปโหลด: เมนูสองทาง (เลือกไฟล์ / เลือกทั้งโฟลเดอร์ของวัน) เป็น popup ใต้ปุ่ม (data-popup ในกรอบเดียวกับปุ่ม ปิดด้วย closePopup ของ app.js)
   function uploadControl() {
     return `<div class="lab-mdr-upload">
@@ -27,8 +29,8 @@
         <button type="button" role="menuitem" data-pick="files"><strong>เลือกไฟล์</strong><small>เลือกได้หลายไฟล์</small></button>
         <button type="button" role="menuitem" data-pick="folder"><strong>เลือกทั้งโฟลเดอร์</strong><small>เช่น โฟลเดอร์ของวัน 2026-11-02</small></button>
       </div>
-      <input type="file" id="mdr-pick-files" accept=".ini" multiple hidden />
-      <input type="file" id="mdr-pick-folder" webkitdirectory multiple hidden />
+      <input type="file" id="mdr-pick-files" accept=".ini" multiple hidden data-attachment-skip />
+      <input type="file" id="mdr-pick-folder" webkitdirectory multiple hidden data-attachment-skip />
     </div>`;
   }
 
