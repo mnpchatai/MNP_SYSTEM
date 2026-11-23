@@ -32,6 +32,11 @@ insert into public.lab_mdr_tests (test_name, formula, part, machine_id, test_dat
 select 'BIGF1', 'BIG', 'F1', 'M' || n, date '2026-01-01' + d, time '08:00' + n * interval '1 minute', 155, 1, 1, 2,
        array[1, 1, 1, 1, 1, 2, 2, 2, 2, 2]::real[]
 from generate_series(0, 69) d, generate_series(1, 15) n;
+-- ONEDAY = วันเดียว 1,001 ครั้ง (เกินเพดานในวันเดียว)
+insert into public.lab_mdr_tests (test_name, formula, part, machine_id, test_date, test_time, temperature_c, set_minutes, ml, mh, curve)
+select 'ONEDAYF1', 'ONEDAY', 'F1', 'M' || n, date '2026-02-02', time '00:00' + n * interval '1 minute', 155, 1, 1, 2,
+       array[1, 1, 1, 1, 1, 2, 2, 2, 2, 2]::real[]
+from generate_series(1, 1001) n;
 
 -- 2. ผู้มีสิทธิ์ LAB อ่าน ------------------------------------------------------------------
 set local role authenticated;
@@ -58,6 +63,9 @@ select is(public.app_lab_mdr_curves('F1', 'BIG', '2026-01-01', '2026-03-31')->>'
 select is(public.app_lab_mdr_curves('F1', 'BIG', '2026-01-01', '2026-03-31')->>'from', '2026-01-05', 'the oldest days are the ones left out');
 select is(public.app_lab_mdr_curves('F1', 'BIG', '2026-01-01', '2026-03-31')->>'to', '2026-03-11', 'the newest day is kept');
 select is(jsonb_array_length(public.app_lab_mdr_curves('F1', 'BIG', '2026-01-01', '2026-03-31')->'curves'->0->'curve'), 2, 'many days are downsampled too');
+select is(jsonb_array_length(public.app_lab_mdr_curves('F1', 'ONEDAY', '2026-02-01', '2026-02-03')->'curves'), 1000, 'one day over the cap is cut at 1,000 curves');
+select is(public.app_lab_mdr_curves('F1', 'ONEDAY', '2026-02-01', '2026-02-03')->>'truncated', 'true', 'a day cut in the middle says so');
+select is(public.app_lab_mdr_curves('F1', 'ONEDAY', '2026-02-01', '2026-02-03')->>'from', '2026-02-02', 'that day is the one sent');
 
 -- ค่าผิดรูปแบบ
 select throws_ok($$select public.app_lab_mdr_curves('F3', 'A2004', '2026-11-01', '2026-11-03')$$, 'LAB_MDR_INVALID_PART', 'unknown part refused');

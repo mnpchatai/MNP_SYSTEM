@@ -350,8 +350,9 @@
           if (note) note.textContent = `อ่านกราฟแรงบิดไม่สำเร็จ: ${friendlyError(error)}`;
           return;
         }
-        if (mine !== request || stale()) return;
-        cache.set(key, entry);
+        if (stale()) return;
+        cache.set(key, entry); // คำตอบของช่วงที่ผู้ใช้ทิ้งไปแล้วก็จำไว้ (กลับมาช่วงนั้นอีกไม่ต้องอ่านซ้ำ) แต่ไม่วาด
+        if (mine !== request) return;
       }
       setBusy(false);
       shownKey = key;
