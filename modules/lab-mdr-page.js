@@ -13,7 +13,8 @@
   const INVALID_TEST = "ข้อมูลในไฟล์ไม่ผ่านการตรวจของระบบ";
   let version = 0;
   let current = null; // หน้าสูตร/รายการที่วาดอยู่: { route, data, observer, hidden:Set, mine, denied }
-  let lastRoute = null; // route ล่าสุดที่ขอ (ใช้วาดใหม่หลังอัปโหลด แม้การอ่านครั้งก่อนล้มเหลว)
+  let lastRoute = null;
+  let trendMode = "delta"; // ค่าที่กราฟแนวโน้มของ F2 แสดง (views.TREND_MODES) // route ล่าสุดที่ขอ (ใช้วาดใหม่หลังอัปโหลด แม้การอ่านครั้งก่อนล้มเหลว)
 
   const isDenied = (error) => /NOT_AUTHORIZED|AUTH_REQUIRED|JWT expired/.test(String(error?.message ?? "")) || error?.code === "PGRST301";
 
@@ -93,6 +94,8 @@
       goTo({ ...route, date: button.dataset.showDate });
       document.querySelector("#mdr-plot")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }));
+    const trend = document.querySelector("#mdr-trend");
+    if (trend) bindTrend(trend, route.part, model.groupByDate(data.tests));
     const plot = document.querySelector("#mdr-plot");
     if (!plot) return;
     const byId = new Map(data.tests.map((test) => [String(test.id), test]));
@@ -100,6 +103,28 @@
     const colors = views.colorMap(dayTests, data.curves);
     const series = data.curves.filter((item) => colors.has(String(item.id))).map((item) => ({ id: String(item.id), color: colors.get(String(item.id)), curve: item.curve, t90: byId.get(String(item.id))?.t90_s ?? null, machineId: byId.get(String(item.id))?.machine_id ?? "" }));
     bindChart(plot, series);
+  }
+
+  // กราฟแนวโน้มรายวันของ F2: ปุ่ม MH−ML / t90 สลับค่าในกราฟเดียว โหมดที่เลือกคงไว้เมื่อเปลี่ยนสูตร (trendMode) · วาดใหม่เมื่อความกว้างเปลี่ยน
+  function bindTrend(plot, partKey, days) {
+    const buttons = [...document.querySelectorAll("[data-trend]")];
+    let width = 0;
+    function draw(force = false) {
+      const next = Math.floor(plot.clientWidth - 36);
+      if (next <= 0 || (next === width && !force)) return;
+      width = next;
+      plot.innerHTML = views.trendSvg(days, trendMode, width, partKey).svg;
+      buttons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.trend === trendMode)));
+    }
+    buttons.forEach((button) => button.addEventListener("click", () => {
+      trendMode = button.dataset.trend;
+      draw(true);
+    }));
+    draw(true);
+    if (typeof ResizeObserver === "function") {
+      current.observer = new ResizeObserver(() => draw());
+      current.observer.observe(plot);
+    }
   }
 
   function bindChart(plot, series) {

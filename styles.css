@@ -3665,6 +3665,30 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .lab-mdr-tip-row { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
 .lab-mdr-tip-row b { margin-left: auto; padding-left: 12px; font-size: var(--text-ui); }
 
+/* กราฟแนวโน้มรายวันของ F2 (พื้นเข้มเดียวกับกราฟแรงบิดของ F1): ปุ่มสลับค่า แล้วคำอธิบายสัญลักษณ์บรรทัดเดียว */
+.lab-mdr-trend { padding-bottom: 8px; }
+.lab-mdr-trend-head { padding: 12px 18px 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.lab-mdr-trend .lab-seg { background: transparent; border-color: var(--line); }
+.lab-mdr-trend .lab-seg-btn { min-width: 84px; color: var(--muted); }
+.lab-mdr-trend .lab-seg-btn + .lab-seg-btn { border-left-color: var(--line); }
+.lab-mdr-trend .lab-seg-btn:hover { color: var(--ink); background: color-mix(in srgb, #fff 6%, transparent); }
+.lab-mdr-trend .lab-seg-btn[aria-pressed="true"] { color: #fff; background: linear-gradient(120deg, var(--m600), var(--m800)); }
+.lab-mdr-trend .lab-seg-btn:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; }
+.lab-mdr-trend-key { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; color: var(--muted); font-size: var(--text-caption); }
+.lab-mdr-k { width: 10px; height: 10px; margin-left: 8px; display: inline-block; flex: none; }
+.lab-mdr-k:first-child { margin-left: 0; }
+.lab-mdr-k-dot { background: #c9d4e3; border-radius: 50%; }
+.lab-mdr-k-avg { width: 16px; height: 3px; background: var(--m400); border-radius: 2px; }
+.lab-mdr-k-band { width: 16px; background: color-mix(in srgb, #4ea8ff 22%, transparent); border: 1px dashed #4ea8ff; }
+.lab-mdr-k-out { background: #ff5c5c; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.lab-mdr-band { fill: color-mix(in srgb, #4ea8ff 14%, transparent); stroke: #4ea8ff; stroke-width: 1; stroke-dasharray: 5 4; }
+.lab-mdr-avg { fill: none; stroke: var(--m400); stroke-width: 2.2; stroke-linejoin: round; }
+.lab-mdr-avg-pt { fill: var(--m400); stroke: var(--paper); stroke-width: 2; }
+.lab-mdr-dot { fill: #c9d4e3; fill-opacity: .8; }
+.lab-mdr-dot.is-out { fill: #ff5c5c; fill-opacity: 1; }
+.lab-mdr-trend-note { margin: 2px 0 0; color: var(--muted); font-size: var(--text-caption); font-variant-numeric: tabular-nums; }
+.lab-mdr-trend-empty { margin: 0; padding: 32px 0; color: var(--muted); text-align: center; }
+
 /* ตารางผลรายครั้ง: หัววันแบ่งกลุ่ม (สีของโมดูล) แถว AVG/SD เน้นใต้แต่ละวัน */
 .lab-mdr-scroll { max-height: min(70vh, 760px); }
 .lab-mdr-day-row th { padding: 9px 12px; text-align: left; background: color-mix(in srgb, var(--m400) 12%, var(--paper)); border-top: 2px solid color-mix(in srgb, var(--m600) 45%, transparent); }

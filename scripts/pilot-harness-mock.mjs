@@ -2989,7 +2989,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     },
   };
 
-  // MNP LAB · รายงานทดสอบ MDR (20261214010000_lab_mdr_tests.sql) — ผลอยู่ในหน่วยความจำของหน้า หายเมื่อโหลดใหม่
+  // MNP LAB · รายงานทดสอบ MDR (20261215010000_lab_mdr_tests.sql) — ผลอยู่ในหน่วยความจำของหน้า หายเมื่อโหลดใหม่
   // ผลตั้งต้น = globalThis.MNP_HARNESS_MDR_SEED ที่ scripts/pilot-harness.mjs อ่านจากโฟลเดอร์ .ini ใน MDR_SAMPLE_DIR (ไม่ตั้ง = ว่าง ลองอัปโหลดเองได้)
   // ตรวจเหมือนฐานข้อมูลเท่าที่หน้าจอต้องเห็น: ชื่อลงท้าย F1/F2, ไม่เกิน 25 รายการต่อครั้ง, ซ้ำ (ชื่อ + วันที่ + เวลา + ID) ไม่เขียนทับ
   let mdrRows = null;

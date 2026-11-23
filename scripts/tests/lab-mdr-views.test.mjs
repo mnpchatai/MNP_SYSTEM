@@ -93,3 +93,28 @@ test("chart: grid in minutes and dNm, one path per test with its colour, a t90 m
   assert.equal(views.niceStep(9, 5), 2);
   assert.match(views.tipHtml(166, [{ color: "#fff", machineId: "112", torque: 7.9 }]), /2:46 นาที[\s\S]*ID 112<b>7\.90<\/b>/);
 });
+
+test("swelling trend chart: one value at a time (MH−ML or t90), a dot per test, a daily AVG line, and a normal band from the formula history", () => {
+  const swelling = model.normalizeTests([
+    { id: 1, machine_id: "111", test_date: "2026-11-03", test_time: "15:12", ml: 8444, mh: 34131, t90_s: 261 },
+    { id: 2, machine_id: "112", test_date: "2026-11-03", test_time: "15:49", ml: 9170, mh: 32526, t90_s: 235 },
+    { id: 3, machine_id: "111", test_date: "2026-11-12", test_time: "09:00", ml: 6938, mh: 33776, t90_s: 396 },
+    { id: 4, machine_id: "112", test_date: "2026-11-12", test_time: "09:30", ml: 7356, mh: 35009, t90_s: null },
+  ]);
+  const page = views.formulaBody({ part: "F2", formula: "A2004" }, { formulas, tests: swelling, curveDate: null, curves: [] });
+  assert.match(page, /id="mdr-trend"/);
+  assert.match(page, /data-trend="delta" aria-pressed="true">MH−ML</);
+  assert.match(page, /data-trend="t90_s" aria-pressed="false">t90</);
+  assert.doesNotMatch(views.formulaBody({ part: "F1", formula: "A2004" }, { formulas, tests, curveDate: "2026-11-02", curves: [] }), /mdr-trend/, "cure keeps its torque chart instead");
+  const days = model.groupByDate(swelling);
+  const delta = views.trendSvg(days, "delta", 600, "F2").svg;
+  assert.equal(count(delta, /class="lab-mdr-dot/g), 4, "a dot per test");
+  assert.equal(count(delta, /class="lab-mdr-avg-pt"/g), 2, "an AVG point per day");
+  assert.match(delta, /lab-mdr-band/);
+  assert.ok(delta.indexOf("3 พ.ย.") < delta.indexOf("12 พ.ย."), "oldest day on the left");
+  assert.match(delta, /ID 111 15:12 · MH−ML 25,687/);
+  const time = views.trendSvg(days, "t90_s", 600, "F2").svg;
+  assert.equal(count(time, /class="lab-mdr-dot/g), 3, "a test without t90 is left out, not drawn as zero");
+  assert.match(time, />[0-9]+:[0-5][05]<\/text>/, "time ticks are m:ss");
+  assert.match(views.trendSvg([], "t90_s", 600, "F2").svg, /ไม่มีค่า t90/);
+});

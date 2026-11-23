@@ -104,8 +104,17 @@
           <div class="lab-tip lab-mdr-tip" id="mdr-tip" hidden></div>
         </div>
       </section>` : "";
+    // F2 ไม่มีกราฟแรงบิด: กราฟแนวโน้มรายวันแทน (ทีละค่า สลับ MH−ML / t90) วาดที่ lab-mdr-page.js ด้วย trendSvg
+    const trendCard = part.hasCurve ? "" : `<section class="card lab-chart-card lab-mdr-trend" aria-labelledby="mdr-trend-title">
+        <div class="lab-mdr-trend-head">
+          <h2 class="sr-only" id="mdr-trend-title">กราฟแนวโน้มรายวัน</h2>
+          <div class="lab-seg" role="group" aria-label="ค่าที่แสดงในกราฟ">${TREND_MODES.map((mode, index) => `<button type="button" class="lab-seg-btn" data-trend="${mode.key}" aria-pressed="${index === 0}">${esc(mode.label)}</button>`).join("")}</div>
+          <p class="lab-mdr-trend-key"><span class="lab-mdr-k lab-mdr-k-dot"></span>แต่ละครั้ง<span class="lab-mdr-k lab-mdr-k-avg"></span>AVG รายวัน<span class="lab-mdr-k lab-mdr-k-band"></span>ช่วงปกติของสูตร (AVG ± 2SD ทุกครั้ง)<span class="lab-mdr-k lab-mdr-k-out"></span>นอกช่วง</p>
+        </div>
+        <div class="lab-plot lab-mdr-trend-plot" id="mdr-trend" role="img" aria-label="กราฟแนวโน้มรายวันของสูตร ${esc(route.formula)}"></div>
+      </section>`;
     return `${formulaHead(route, data.formulas, days, curveDay?.date ?? null)}
-      ${chartCard}
+      ${chartCard}${trendCard}
       <section class="card flush lab-results-card" aria-labelledby="mdr-table-title">
         <div class="card-heading"><div class="lab-table-head"><h2 id="mdr-table-title">ผลทดสอบรายครั้ง</h2></div></div>
         <div class="lab-table-scroll lab-mdr-scroll" tabindex="0" role="region" aria-labelledby="mdr-table-title">${resultsTable(route.part, days, curveDay?.date ?? null)}</div>
@@ -167,6 +176,74 @@
     return `<div class="lab-mdr-result-body"><p class="lab-mdr-result-main"><strong>กำลังอัปโหลด ${done}/${total} ครั้ง…</strong></p><progress max="${total}" value="${done}"></progress></div>`;
   }
 
+  /* ---------- กราฟแนวโน้มรายวัน (F2) ---------- */
+
+  // โหมดของกราฟแนวโน้ม: ทีละค่า เพราะ MH−ML (หลักหมื่น) กับ t90 (นาที) ใช้แกนเดียวกันไม่ได้
+  const TREND_MODES = Object.freeze([
+    Object.freeze({ key: "delta", label: "MH−ML" }),
+    Object.freeze({ key: "t90_s", label: "t90" }),
+  ]);
+
+  // days = model.groupByDate (ล่าสุดก่อน) → กราฟเรียงเก่าไปใหม่ซ้ายไปขวา หนึ่งจุดต่อครั้ง เส้น AVG ต่อวัน
+  // แถบ = AVG ± 2SD ของทุกครั้งของสูตร (สถิติจากประวัติ ไม่ใช่สเปก) จุดนอกแถบเป็นสามเหลี่ยมสีแดง
+  function trendSvg(days, metricKey, width, partKey) {
+    const metric = model.METRICS.find((item) => item.key === metricKey);
+    const series = [...days].reverse().map((day) => ({ date: day.date, points: day.tests.map((test) => ({ test, value: model.metricValue(test, metricKey) })).filter((point) => point.value !== null) }))
+      .filter((day) => day.points.length);
+    const height = Math.round(Math.min(320, Math.max(220, width * 0.34)));
+    if (!series.length) return { svg: `<p class="lab-mdr-trend-empty">ไม่มีค่า ${esc(metric.label)} ในผลของสูตรนี้</p>`, height };
+    const values = series.flatMap((day) => day.points.map((point) => point.value));
+    const average = model.mean(values);
+    const spread = model.sampleSd(values) ?? 0;
+    const low = average - 2 * spread;
+    const high = average + 2 * spread;
+    const pad = { left: 62, right: 16, top: 16, bottom: 34 };
+    const plotW = Math.max(120, width - pad.left - pad.right);
+    const plotH = height - pad.top - pad.bottom;
+    const min = Math.min(low, ...values);
+    const max = Math.max(high, ...values);
+    // เวลา: ขั้นแกนเป็นวินาทีที่อ่านง่าย (15 วิ, 30 วิ, 1 นาที, …) แทนตัวเลขกลม ๆ ของฐานสิบ
+    const step = metric.kind === "time"
+      ? [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800].find((candidate) => (max - min) / candidate <= 6) ?? 3600
+      : niceStep(max - min || 1, 5);
+    const yMin = Math.floor(min / step) * step;
+    const yMax = Math.ceil(max / step) * step;
+    const slot = plotW / series.length;
+    const x = (index) => pad.left + slot * (index + 0.5);
+    const y = (value) => pad.top + plotH - ((value - yMin) / (yMax - yMin || 1)) * plotH;
+    const label = (value) => model.formatMetric(metric, value, partKey);
+    const parts = [];
+    for (let value = yMin; value <= yMax + step / 1000; value += step) {
+      parts.push(`<line class="lab-grid" x1="${pad.left}" x2="${pad.left + plotW}" y1="${y(value).toFixed(1)}" y2="${y(value).toFixed(1)}"/><text class="lab-tick" x="${pad.left - 8}" y="${(y(value) + 4).toFixed(1)}" text-anchor="end">${esc(label(value))}</text>`);
+    }
+    parts.push(`<rect class="lab-mdr-band" x="${pad.left}" width="${plotW}" y="${y(high).toFixed(1)}" height="${Math.max(0, y(low) - y(high)).toFixed(1)}"/>`);
+    // ป้ายวันที่: จอแคบหรือหลายวัน แสดงทุก n วันพอไม่ให้ทับกัน
+    const every = Math.max(1, Math.ceil(series.length / Math.max(1, Math.floor(plotW / 70))));
+    series.forEach((day, index) => {
+      if (index % every === 0 || index === series.length - 1) parts.push(`<text class="lab-tick" x="${x(index).toFixed(1)}" y="${pad.top + plotH + 20}" text-anchor="middle">${esc(model.formatDate(day.date).replace(/ \d{4}$/, ""))}</text>`);
+    });
+    const avgPoints = series.map((day, index) => ({ cx: x(index), cy: y(model.mean(day.points.map((point) => point.value))), day }));
+    parts.push(`<path class="lab-mdr-avg" d="${avgPoints.map((point, index) => `${index ? "L" : "M"}${point.cx.toFixed(1)} ${point.cy.toFixed(1)}`).join("")}"/>`);
+    const spreadX = Math.min(slot * 0.32, 18);
+    series.forEach((day, index) => {
+      day.points.forEach((point, at) => {
+        const offset = day.points.length > 1 ? (at / (day.points.length - 1) - 0.5) * 2 * spreadX : 0;
+        const cx = x(index) + offset;
+        const cy = y(point.value);
+        const out = point.value < low || point.value > high;
+        const tip = `${model.formatDate(day.date)} · ID ${point.test.machine_id} ${point.test.test_time} · ${metric.label} ${label(point.value)}${out ? " (นอกช่วงปกติ)" : ""}`;
+        parts.push(out
+          ? `<path class="lab-mdr-dot is-out" d="M${cx.toFixed(1)} ${(cy - 5).toFixed(1)}l5 9h-10z"><title>${esc(tip)}</title></path>`
+          : `<circle class="lab-mdr-dot" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="4"><title>${esc(tip)}</title></circle>`);
+      });
+    });
+    avgPoints.forEach((point) => parts.push(`<circle class="lab-mdr-avg-pt" cx="${point.cx.toFixed(1)}" cy="${point.cy.toFixed(1)}" r="5"><title>${esc(`${model.formatDate(point.day.date)} · AVG ${metric.label} ${label(model.mean(point.day.points.map((item) => item.value)))} (${point.day.points.length} ครั้ง)`)}</title></circle>`));
+    const outCount = values.filter((value) => value < low || value > high).length;
+    const svg = `<svg class="lab-svg lab-mdr-svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">${parts.join("")}</svg>
+      <p class="lab-mdr-trend-note">ช่วงปกติ ${esc(label(low))} – ${esc(label(high))} · นอกช่วง ${outCount} จาก ${values.length} ครั้ง</p>`;
+    return { svg, height };
+  }
+
   /* ---------- กราฟแรงบิด ---------- */
 
   function niceStep(span, ticks) {
@@ -225,7 +302,7 @@
     return `<span class="lab-tip-when">${esc(model.formatClock(second))} นาที</span>${items}`;
   }
 
-  const api = { LINE_COLORS, lineColor, colorMap, page, partTabs, overview, formulaBody, resultsTable, legend, uploadResult, uploadProgress, chartSvg, tipHtml, niceStep };
+  const api = { LINE_COLORS, TREND_MODES, trendSvg, lineColor, colorMap, page, partTabs, overview, formulaBody, resultsTable, legend, uploadResult, uploadProgress, chartSvg, tipHtml, niceStep };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_LAB_MDR_VIEWS = api;
 })(typeof window !== "undefined" ? window : globalThis);
