@@ -89,8 +89,8 @@ test("status labels, badge classes and the requester's own wording", () => {
   assert.equal(model.isTestDoc("IT01-26/001"), false);
 });
 
-test("the module version starts at 1.00 and no text of this module says 'ใบสั่งงาน'", () => {
-  assert.equal(model.MODULE_VERSION, "1.00");
+test("the module version is 1.01 and no text of this module says 'ใบสั่งงาน'", () => {
+  assert.equal(model.MODULE_VERSION, "1.01");
   assert.match(model.VERSION_DATE, /^\d{4}-\d{2}-\d{2}$/);
   for (const file of ["modules/itrp-model.js", "modules/itrp-pages.js", "modules/module-itrp.js"]) {
     // คอมเมนต์อ้างถึงใบสั่งงาน IT (โมดูลต้นแบบ) ได้ และหน้าตั้งค่ามีข้อความ 1 บรรทัดบอกว่าทีม IT แก้ที่ใบสั่งงาน IT · นอกนั้นข้อความที่ผู้ใช้เห็นต้องเป็น "ใบแจ้งซ่อม"
@@ -215,14 +215,27 @@ test("'other' cause needs text and 'sent out' needs the place, while an outside 
 
 test("parts: blank rows are skipped, a filled row needs an item and a quantity above zero, price is optional", () => {
   const blank = { ...model.EMPTY_PART_ROW };
-  assert.deepEqual(plain(model.normalizeParts([blank, blank])), { rows: [{ item_name: "", quantity: "", price: null, note: "" }, { item_name: "", quantity: "", price: null, note: "" }], errors: [], filled: 0 });
+  assert.deepEqual(plain(model.normalizeParts([blank, blank])), { rows: [{ item_name: "", quantity: "", price: null, note: "" }, { item_name: "", quantity: "", price: null, note: "" }], errors: [], filled: 0, invalid: [] });
   assert.deepEqual(plain(model.normalizeParts([{ item_name: " RAM 8GB ", quantity: "2", price: "1,250.50", note: " ใหม่ " }])), {
-    rows: [{ item_name: "RAM 8GB", quantity: "2", price: "1250.50", note: "ใหม่" }], errors: [], filled: 1,
+    rows: [{ item_name: "RAM 8GB", quantity: "2", price: "1250.50", note: "ใหม่" }], errors: [], filled: 1, invalid: [],
   });
   assert.equal(model.normalizeParts([{ item_name: "สาย", quantity: "1", price: "", note: "" }]).rows[0].price, null, "an empty price is null");
   assert.deepEqual(model.normalizeParts([blank, { item_name: "", quantity: "1", price: "", note: "" }]).errors, ["แถวที่ 2: กรุณาระบุรายการอะไหล่/วัสดุ"], "the row number is the row on screen");
   assert.deepEqual(model.normalizeParts([{ item_name: "สาย", quantity: "", price: "", note: "" }]).errors, ["แถวที่ 1: กรุณาระบุจำนวน"]);
   assert.deepEqual(model.normalizeParts([{ item_name: "", quantity: "", price: "", note: "หมายเหตุอย่างเดียว" }]).errors, ["แถวที่ 1: กรุณาระบุรายการอะไหล่/วัสดุ", "แถวที่ 1: กรุณาระบุจำนวน"]);
+});
+
+test("parts: invalid points at the exact row and field that failed (not the first row)", () => {
+  const good = { item_name: "WIFI62", quantity: "1", price: "2100", note: "" };
+  const bug = model.normalizeParts([good, { item_name: "awdwadaw", quantity: "-", price: "-", note: "" }]);
+  assert.deepEqual(bug.errors[0], "แถวที่ 2: จำนวนต้องเป็นตัวเลขมากกว่า 0 (ทศนิยมไม่เกิน 2 ตำแหน่ง)");
+  assert.deepEqual(plain(bug.invalid), [{ row: 1, field: "quantity" }, { row: 1, field: "price" }]);
+  assert.equal(bug.invalid.length, bug.errors.length);
+  assert.deepEqual(plain(model.normalizeParts([good, good]).invalid), []);
+  assert.deepEqual(plain(model.normalizeParts([{ item_name: "", quantity: "", price: "", note: "x" }, good]).invalid), [{ row: 0, field: "item_name" }, { row: 0, field: "quantity" }]);
+  assert.deepEqual(plain(model.normalizeParts([good, { item_name: "ก".repeat(201), quantity: "1", price: "", note: "ก".repeat(201) }]).invalid), [{ row: 1, field: "item_name" }, { row: 1, field: "note" }]);
+  const tooMany = model.normalizeParts(Array.from({ length: 11 }, () => good));
+  assert.deepEqual(plain(tooMany.invalid), [], "the too-many-rows error has no field");
 });
 
 test("parts numbers follow the database pattern: up to 8 digits and 2 decimals, quantity above zero, price not negative", () => {
@@ -243,7 +256,7 @@ test("at most 10 parts rows", () => {
   assert.deepEqual(model.normalizeParts(rows(10)).errors, []);
   assert.deepEqual(model.normalizeParts(rows(11)).errors, ["รายการอะไหล่/วัสดุที่ใช้ต้องไม่เกิน 10 แถว"]);
   assert.equal(model.MAX_PARTS, 10);
-  assert.deepEqual(plain(model.normalizeParts(undefined)), { rows: [], errors: [], filled: 0 });
+  assert.deepEqual(plain(model.normalizeParts(undefined)), { rows: [], errors: [], filled: 0, invalid: [] });
 });
 
 test("completeParams matches app_itrp_complete and clears text that does not belong to the choice", () => {
