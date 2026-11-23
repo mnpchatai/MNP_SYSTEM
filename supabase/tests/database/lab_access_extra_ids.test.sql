@@ -3,7 +3,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(12);
+select plan(13);
 
 -- 1. โครงสร้าง ------------------------------------------------------------------
 select is(private.lab_access_employee_nos(), array['GODGAZ'], 'the extra LAB access list is GODGAZ');
@@ -45,6 +45,8 @@ select set_config('request.jwt.claims', '{"sub":"83000000-0000-0000-0000-0000000
 select is(public.app_lab_access(), false, 'a deactivated GODGAZ has no LAB access');
 select throws_ok($$ select public.app_lab_mdr_feed('F1') $$, 'NOT_AUTHORIZED', 'a deactivated GODGAZ cannot read the MDR feed');
 reset role;
+select is(private.is_lab_access_employee('83000000-0000-0000-0000-000000000011'), false,
+  'the extra LAB access list itself ignores a deactivated employee');
 update public.employees set is_active = true where id = '83000000-0000-0000-0000-000000000011';
 
 -- 5. ผู้ใช้อื่นไม่ได้รับผลกระทบ ----------------------------------------------------------
