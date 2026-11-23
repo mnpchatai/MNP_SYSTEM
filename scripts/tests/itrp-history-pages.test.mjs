@@ -57,7 +57,7 @@ test("the panel shows the FM02 header, the 7 columns in order, links for request
   for (const [label, value] of [["เริ่มใช้วันที่", "01/04/2566"], ["Computer Code", "COM05"], ["User", "สมชาย"], ["Section", "บัญชี"], ["Processor", "Intel Core i5 10400"], ["เลขทะเบียนทรัพย์สินทางบัญชี", "AS-100"]]) {
     assert.match(html, new RegExp(`<dt>${label}</dt><dd>${value}</dd>`), label);
   }
-  assert.deepEqual([...html.matchAll(/<th scope="col">([^<]*)</g)].map((match) => match[1]), pages.FM02_COLUMNS);
+  assert.deepEqual([...html.matchAll(/<th scope="col">([^<]*)</g)].map((match) => match[1]).filter(Boolean), pages.FM02_COLUMNS, "the 7 paper columns (the unnamed actions column is not one of them)");
   assert.deepEqual(pages.FM02_COLUMNS, ["เลขที่ใบแจ้งซ่อม", "วันที่", "อาการเสีย", "การแก้ไข", "ซ่อมเสร็จ", "ข้อเสนอแนะ", "ผู้แจ้ง"]);
   assert.equal(count(html, /<tr data-hist-row=/g), 3, "rows in the order the database sends them");
   assert.ok(html.indexOf("IT01-16/0001") < html.indexOf("พิมพ์ไม่ออก") && html.indexOf("พิมพ์ไม่ออก") < html.indexOf("IT01-26/050"));
@@ -71,7 +71,13 @@ test("the panel shows the FM02 header, the 7 columns in order, links for request
   assert.match(html, /<td data-label="เลขที่ใบแจ้งซ่อม">-</, "a missing paper number is a dash");
   assert.match(html, /<td data-label="ซ่อมเสร็จ">-<\/td>/);
   assert.match(html, /id="itrp-hist-print" href="#\/office\?module=repair&amp;view=history-print&amp;code=COM05">พิมพ์ประวัติ \(A4\)/);
-  assert.doesNotMatch(html, /data-hist-edit|data-hist-void|data-hist-revisions|<th scope="col"><span class="sr-only">จัดการ/, "the read-only view has no management buttons");
+  assert.doesNotMatch(html, /data-hist-edit|data-hist-void/, "the read-only view has no edit or void buttons");
+  // ผู้อนุมัติขั้น IT (อ่านอย่างเดียว) ดูรอยแก้ได้: เฉพาะแถวที่เคยถูกแก้
+  assert.match(html, /<th scope="col"><span class="sr-only">จัดการ<\/span><\/th>/);
+  assert.match(html, /data-hist-revisions="7">ดูรอยแก้<\/button>/);
+  assert.equal(count(html, /data-hist-revisions=/g), 1, "only the row that was edited");
+  const untouched = pages.historyPanel({ ...DATA, rows: ROWS.map((row) => ({ ...row, revision_count: 0 })) }, { canEdit: false });
+  assert.doesNotMatch(untouched, /data-hist-revisions|จัดการ/, "nothing to show = no actions column at all");
 });
 
 test("the IT admin gets edit / void / revisions only on imported and manual rows, plus the register button", () => {
@@ -112,6 +118,8 @@ test("the tab holds the toolbar only for the admin, the search box, the list and
   assert.match(admin, /id="itrp-hist-search" type="search"/);
   assert.match(admin, /id="itrp-hist-count" role="status">3 เครื่อง</);
   assert.match(admin, /data-code="COM05"/);
+  assert.doesNotMatch(admin, /id="itrp-hist-panel"[^>]*aria-live/, "the panel is replaced wholesale, so it must not be a live region");
+  assert.match(admin, /<p class="sr-only" id="itrp-hist-status" role="status" aria-live="polite"><\/p>/, "a short hidden status line is announced instead");
   const reader = pages.historyTab({ devices: LIST, canEdit: false });
   assert.doesNotMatch(reader, /itrp-hist-add-entry|itrp-hist-add-device/);
   assert.match(reader, /เลือกเครื่องจากรายการ/);
@@ -135,8 +143,15 @@ test("the back-dating form has the eight fields in the paper order and fills the
   assert.match(html, /<h2 id="itrp-hist-form-title">ลงประวัติย้อนหลัง<\/h2>/);
   assert.match(html, /name="device_code" list="itrp-hist-code-list"[^>]*value="COM05"/);
   assert.match(html, /<option value="COM05" label="COM05 · สมชาย">/);
-  assert.match(html, /name="reported_on" type="date" min="1990-01-01"/);
-  assert.match(html, /name="finished_on" type="date"/);
+  // ช่องวันที่พิมพ์เอง (ปฏิทินกลางเลื่อนได้ทีละเดือน ใช้ย้อนหลังหลายปีไม่ไหว): text + ตัวอย่างรูปแบบใต้ช่อง
+  assert.match(html, /name="reported_on" type="text" data-date-text[^>]*placeholder="วว\/ดด\/ปปปป" aria-describedby="itrp-hist-reported-hint" value="">/);
+  assert.match(html, /name="finished_on" type="text" data-date-text/);
+  assert.doesNotMatch(html, /type="date"/);
+  assert.equal(count(html, /id="itrp-hist-(?:reported|finished)-hint">พิมพ์เป็น วว\/ดด\/ปปปป เช่น 05\/03\/2566 \(พ\.ศ\.\) หรือ 05\/03\/2023 \(ค\.ศ\.\)<\/small>/g), 2);
+  const filled = pages.historyFormCard({ mode: "edit", values: { ...model.EMPTY_HISTORY_FORM, reported_on: "2016-03-05", finished_on: "2016-03-06" } });
+  assert.match(filled, /name="reported_on"[^>]*value="05\/03\/2559"/, "a stored ISO date is shown dd/mm/yyyy in the Buddhist year");
+  assert.match(filled, /name="finished_on"[^>]*value="06\/03\/2559"/);
+  assert.match(pages.historyFormCard({ mode: "add", values: { ...model.EMPTY_HISTORY_FORM, reported_on: "31/04/2566" } }), /value="31\/04\/2566"/, "text the user typed is kept as typed");
   assert.match(html, /ต้องกรอกอาการเสียหรือการแก้ไขอย่างน้อยหนึ่งอย่าง/);
   assert.match(html, /<button type="submit" class="btn is-primary">ลงประวัติ<\/button>/);
   const edit = pages.historyFormCard({ mode: "edit", values: { ...model.EMPTY_HISTORY_FORM, symptom: XSS, doc_no: "IT01-16/0001" } });
@@ -159,7 +174,8 @@ test("the register form sends every field, keeps the code read-only when editing
   assert.match(edit, /name="code"[^>]*value="COM05" readonly/);
   assert.match(edit, /<option value="laptop" selected>โน้ตบุ๊ก<\/option>/);
   assert.match(edit, /<option value="retired" selected>ยกเลิกการใช้งาน<\/option>/);
-  assert.match(edit, /name="started_on" type="date"[^>]*value="2023-04-01"/);
+  assert.match(edit, /name="started_on" type="text" data-date-text[^>]*value="01\/04\/2566"/);
+  assert.match(edit, /id="itrp-device-started-hint">พิมพ์เป็น วว\/ดด\/ปปปป/);
   assert.match(edit, /รหัสแก้ไม่ได้หลังสร้าง/);
   assert.match(edit, /แก้ข้อมูลเครื่อง COM05/);
   assert.doesNotMatch(edit, /<img/);
@@ -191,8 +207,8 @@ test("the FM02 sheet has the title, the info block, a 7-column ruled table and t
   assert.deepEqual([...html.matchAll(/<th scope="col">([^<]*)</g)].map((match) => match[1]), pages.FM02_COLUMNS, "7 columns: เลขที่ใบแจ้งซ่อม · วันที่ · อาการเสีย · การแก้ไข · ซ่อมเสร็จ · ข้อเสนอแนะ · ผู้แจ้ง");
   assert.match(html, /<table class="itrp-sheet-table itrp-fm02-table"><thead>/, "the header lives in a thead so it repeats on every page");
   assert.equal(count(html, /<tbody>[\s\S]*<\/tbody>/g), 1);
-  assert.equal(count(html.slice(html.indexOf("<tbody>")), /<tr>/g), 3);
-  assert.match(html, /<p class="itrp-fm02-code">IT01-FM02<\/p>/);
+  assert.equal(count(html.slice(html.indexOf("<tbody>"), html.indexOf("</tbody>")), /<tr>/g), 3);
+  assert.match(html, /<tfoot><tr><td class="itrp-fm02-code" colspan="7">IT01-FM02<\/td><\/tr><\/tfoot>/, "the form code sits in a tfoot (repeats per page, never overlaps rows)");
   assert.match(html, /<td class="itrp-center">05\/03\/2559<\/td>/, "dates are dd/mm/yyyy in the Buddhist year");
   assert.doesNotMatch(html, /นำเข้าจาก Excel|ลงย้อนหลัง|ใบในระบบ|data-hist/, "no screen-only tags or buttons on paper");
   assert.doesNotMatch(html, /itrp-watermark/);
@@ -220,10 +236,11 @@ test("the print page wraps the sheet with a toolbar that is not printed and no d
 });
 
 /* ---------- CSS / การลงทะเบียนไฟล์ ---------- */
-test("the print CSS repeats the table head on every page, keeps the form code in the corner and reuses the A4 sheet rules", () => {
+test("the print CSS repeats the table head on every page, repeats the form code in the table foot and reuses the A4 sheet rules", () => {
   const css = read("styles.css");
   assert.match(css, /@media print \{[^}]*\.itrp-fm02-table thead \{ display: table-header-group; \}/);
-  assert.match(css, /\.itrp-fm02-code \{ position: fixed; right: 0; bottom: 0;/);
+  assert.match(css, /\.itrp-fm02-table tfoot \{ display: table-footer-group; \}/);
+  assert.doesNotMatch(css, /\.itrp-fm02-code[^}]*position: fixed/, "no fixed positioning that could cover the last table row");
   assert.match(css, /\.itrp-fm02-table th:nth-child\(7\)/, "all 7 columns have a width rule");
   assert.match(css, /\.itrp-hist-scroll \{[^}]*border/, "the wide table scrolls inside its own box on a phone");
   assert.match(css, /\.itrp-hist-table \{[^}]*min-width: 1000px/);

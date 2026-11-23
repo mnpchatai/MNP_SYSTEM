@@ -3585,11 +3585,10 @@ table.bom-tree td.right { white-space: nowrap; }
 .itrp-fm02-table th:nth-child(6) { width: 27mm; }
 .itrp-fm02-table th:nth-child(7) { width: 23mm; }
 .itrp-fm02-table td:nth-child(2), .itrp-fm02-table td:nth-child(5) { white-space: nowrap; }
-.itrp-fm02-code { margin: 8px 0 0; text-align: right; font-size: 9pt; color: #000; }
+.itrp-fm02-table .itrp-fm02-code { padding: 6px 0 0; text-align: right; font-size: 9pt; border: 0; }
 @media print {
   .itrp-fm02-table thead { display: table-header-group; }
-  .itrp-fm02-table { margin-bottom: 8mm; }
-  .itrp-fm02-code { position: fixed; right: 0; bottom: 0; margin: 0; }
+  .itrp-fm02-table tfoot { display: table-footer-group; } /* รหัสฟอร์มซ้ำท้ายทุกหน้าอยู่ในตารางเอง จึงไม่ทับแถวข้อมูล */
 }
 
 /* โมดูล SR (คลังยางเส้นยาว): แถบตัวกรองของหน้าในคลัง/ประวัติ · หน้าล็อต · ป้ายล็อต (พิมพ์) */

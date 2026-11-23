@@ -964,7 +964,24 @@ test("the IT approver sees the device list and a read-only FM02 table: no add/ed
   assert.match(w.html, /<a class="request-no register-no-link" href="#\/office\?module=repair&amp;view=order&amp;id=2f6c1b52[^"]*">IT01-26\/050<\/a>/, "a request row links to the request");
   assert.match(w.html, /นำเข้าจาก Excel/);
   assert.match(w.html, /พิมพ์ประวัติ \(A4\)/);
-  assert.doesNotMatch(w.html, /id="itrp-hist-add-entry"|id="itrp-hist-add-device"|data-hist-edit|data-hist-void|data-hist-revisions/);
+  assert.doesNotMatch(w.html, /id="itrp-hist-add-entry"|id="itrp-hist-add-device"|data-hist-edit|data-hist-void/);
+  assert.match(w.html, /data-hist-revisions="7"/, "the read-only approver can still open the revisions of an edited row");
+});
+
+test("the IT approver opens the revisions of a row (read-only RPC) but has no way to edit or void", async () => {
+  const w = world({ role: ROLE_APPROVER, handlers: historyHandlers({ app_itrp_history_get: () => ({
+    entry: { id: 7, doc_no: "IT01-16/0001", created_by_full_name: "สุริยา", created_at: "2026-11-23T01:00:00Z", voided_at: null },
+    revisions: [{ revision_no: 1, change_kind: "update", snapshot: { doc_no: "IT01-16/0001", device_code: "COM05", reported_on: "2016-03-05", symptom: "จอ" }, changed_by_full_name: "สุริยา", reason: null, created_at: "2026-11-23T03:00:00Z" }],
+  }) }) });
+  await w.open("view=history&code=COM05");
+  await delegate(panelOf(w), "[data-hist-revisions]", { histRevisions: "7" });
+  assert.deepEqual(w.last("app_itrp_history_get").args, { p_entry_id: "7" });
+  assert.match(w.hosts["#itrp-hist-forms"], /id="itrp-hist-revisions-card"/);
+  // ปุ่มแก้/ยกเลิกไม่มีให้ และคลิกที่ผูกไว้ก็ไม่ส่ง RPC เขียน
+  await delegate(panelOf(w), "[data-hist-void]", { histVoid: "7" });
+  await delegate(panelOf(w), "[data-hist-edit]", { histEdit: "7" });
+  assert.ok(!w.names().some((name) => /history_(void|update|add)|save_device/.test(name)));
+  assert.equal(w.calls.prompts.length, 0);
 });
 
 test("with no ?code= the placeholder shows, and choosing a machine loads its history without leaving the page", async () => {
@@ -1037,9 +1054,14 @@ test("the IT admin back-dates a paper entry: validated on the page, then app_itr
   assert.ok(!w.names().includes("app_itrp_history_add"));
   form.controls.device_code.value = " prt22 ";
   form.controls.doc_no.value = "IT01-25/012";
-  form.controls.reported_on.value = "2025-05-01";
+  form.controls.reported_on.value = "31/04/2568";
+  await form.listeners.submit[0]({ preventDefault() {} });
+  assert.deepEqual(w.calls.fieldErrors.map((error) => error.name), ["reported_on", "symptom"], "31 April is not a date");
+  assert.match(w.calls.fieldErrors[0].message, /วันที่แจ้งซ่อมไม่ถูกต้อง/);
+  assert.ok(!w.names().includes("app_itrp_history_add"));
+  form.controls.reported_on.value = " 01/05/2568 "; // พ.ศ. 2568 = ค.ศ. 2025
   form.controls.symptom.value = "พิมพ์ไม่ออก";
-  form.controls.finished_on.value = "2025-05-02";
+  form.controls.finished_on.value = "02/05/2025"; // ค.ศ. ก็พิมพ์ได้
   form.controls.reporter_name.value = "สมชาย";
   assert.equal(w.context.window.MNP_ITRP.unsavedCount(), 1, "typed data in the open form is counted");
   w.table.app_itrp_device_history = ({ p_code }) => HISTORY(p_code);
@@ -1078,8 +1100,8 @@ test("editing an imported row loads its current values and sends the whole row t
   const form = w.context.document.querySelector("#itrp-hist-form");
   assert.match(w.hosts["#itrp-hist-forms"], /แก้ไขรายการประวัติการซ่อม/);
   assert.deepEqual(Object.fromEntries(Object.entries(form.controls).map(([name, control]) => [name, control.value])), {
-    doc_no: "IT01-16/0001", device_code: "COM05", reported_on: "2016-03-05", finished_on: "2016-03-06", symptom: "จอเสีย", action: "เปลี่ยนจอ", remark: "", reporter_name: "สมชาย",
-  });
+    doc_no: "IT01-16/0001", device_code: "COM05", reported_on: "05/03/2559", finished_on: "06/03/2559", symptom: "จอเสีย", action: "เปลี่ยนจอ", remark: "", reporter_name: "สมชาย",
+  }, "a stored ISO date is shown as dd/mm/yyyy (Buddhist year) in a typed text field");
   form.controls.action.value = "";
   form.controls.remark.value = "ควรเปลี่ยนอีก";
   assert.equal(w.context.window.MNP_ITRP.unsavedCount(), 1, "an edited form counts against its loaded values");
@@ -1090,6 +1112,8 @@ test("editing an imported row loads its current values and sends the whole row t
   assert.equal(updates[0].p_action, null, "a blanked field is sent as null on purpose");
   assert.equal(updates[0].p_remark, "ควรเปลี่ยนอีก");
   assert.equal(updates[0].p_symptom, "จอเสีย", "an untouched field keeps its loaded value");
+  assert.equal(updates[0].p_reported_on, "2016-03-05", "the untouched shown date goes back as the same ISO date");
+  assert.equal(updates[0].p_finished_on, "2016-03-06");
   assert.deepEqual(Object.keys(updates[0]), ["p_entry_id", "p_device_code", "p_doc_no", "p_reported_on", "p_symptom", "p_action", "p_finished_on", "p_remark", "p_reporter_name"]);
   assert.ok(w.calls.toasts.some((toast) => toast.message === "แก้ไขรายการประวัติการซ่อมแล้ว"));
 });
@@ -1140,7 +1164,7 @@ test("the machine register: adding sends all ten fields, blocks a code already r
   assert.deepEqual(w.calls.fieldErrors.map((error) => error.name), ["code"]);
   form.controls.code.value = " com05 ";
   await form.listeners.submit[0]({ preventDefault() {} });
-  assert.match(w.calls.fieldErrors[0].message, /^รหัสเครื่องนี้อยู่ในทะเบียนแล้ว/, "an add that would silently overwrite a registered machine is stopped");
+  assert.match(w.calls.fieldErrors[0].message, /^รหัสนี้มีในทะเบียนแล้ว/, "an add that would silently overwrite a registered machine is stopped");
   assert.equal(saved.length, 0);
   form.controls.code.value = " mnt27 ";
   form.controls.kind.value = "monitor";
@@ -1154,7 +1178,7 @@ test("the machine register: adding sends all ten fields, blocks a code already r
   await delegate(panelOf(w), "[data-hist-edit-device]", {});
   form = w.context.document.querySelector("#itrp-device-form");
   assert.deepEqual(Object.fromEntries(Object.entries(form.controls).map(([name, control]) => [name, control.value])), {
-    code: "COM05", kind: "computer", user_name: "สมชาย", division: "บัญชี", cpu_name: "Intel Core i5", cpu_model: "10400", started_on: "2023-04-01", asset_no: "AS-100", status: "active", note: "ตั้งโต๊ะ",
+    code: "COM05", kind: "computer", user_name: "สมชาย", division: "บัญชี", cpu_name: "Intel Core i5", cpu_model: "10400", started_on: "01/04/2566", asset_no: "AS-100", status: "active", note: "ตั้งโต๊ะ",
   });
   assert.equal(form.controls.code.readOnly, true, "the code cannot be changed after creation");
   form.controls.status.value = "retired";
@@ -1192,6 +1216,155 @@ test("an open register form counts as unsaved until it is closed, and not once t
   assert.equal(w.context.window.MNP_ITRP.unsavedCount(), 0, "the probe was dropped");
   await w.open("view=history&code=COM05");
   assert.equal(w.context.window.MNP_ITRP.unsavedCount(), 0, "a fresh page starts clean");
+});
+
+test("adding a machine checks the database live: a code registered meanwhile is refused and never overwritten", async () => {
+  const saved = [];
+  // รายการในหน้าไม่มี NEW9 แต่ฐานข้อมูลมีแล้ว (มีคนเพิ่มจากแท็บอื่น)
+  const w = world({ role: ROLE_IT, handlers: historyHandlers({
+    app_itrp_list_devices: ({ p_search }) => (p_search ? [{ code: "NEW9", in_registry: true, kind: "computer", status: "active" }] : DEVICES),
+    app_itrp_save_device: (args) => { saved.push(args); return { id: 9, code: args.p_code, created: true, changed: true }; },
+  }) });
+  await w.open("view=history&code=COM05");
+  w.context.document.querySelector("#itrp-hist-add-device").listeners.click[0]();
+  const form = w.context.document.querySelector("#itrp-device-form");
+  form.controls.code.value = " new9 ";
+  await form.listeners.submit[0]({ preventDefault() {} });
+  await flush();
+  assert.deepEqual(w.last("app_itrp_list_devices").args, { p_search: "NEW9" }, "the exact code is searched, normalised");
+  assert.equal(saved.length, 0, "nothing is written over the existing machine");
+  assert.match(w.calls.fieldErrors[0].message, /^รหัสนี้มีในทะเบียนแล้ว/);
+  assert.equal(w.calls.fieldErrors[0].name, "code");
+  assert.notEqual(w.hosts["#itrp-hist-forms"], "", "the form stays open");
+  assert.deepEqual(w.calls.busy.slice(-2), [true, false], "the form is released again");
+  // รหัสที่มีแต่ในประวัติ (in_registry = false) ยังเพิ่มเข้าทะเบียนได้
+  w.table.app_itrp_list_devices = ({ p_search }) => (p_search ? [{ code: "OLD1", in_registry: false, kind: null }] : DEVICES);
+  form.controls.code.value = "old1";
+  await form.listeners.submit[0]({ preventDefault() {} });
+  await flush();
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].p_code, "OLD1");
+  // เช็กสดไม่สำเร็จ = ไม่เขียน และแจ้งเหตุผล
+  w.context.document.querySelector("#itrp-hist-add-device").listeners.click[0]();
+  const again = w.context.document.querySelector("#itrp-device-form");
+  again.controls.code.value = "NEW10";
+  w.rpcFail.set("app_itrp_list_devices", Object.assign(new Error("Failed to fetch"), { code: "" }));
+  await again.listeners.submit[0]({ preventDefault() {} });
+  await flush();
+  assert.equal(saved.length, 1, "a failed check never falls through to the write");
+  assert.match(w.elements["#itrp-device-form-message"].innerHTML, /ผลไม่แน่ชัด/);
+  // แก้เครื่องเดิมไม่ต้องเช็ก (รหัสแก้ไม่ได้)
+  await w.open("view=history&code=COM05");
+  await delegate(panelOf(w), "[data-hist-edit-device]", {});
+  const before = w.names().filter((name) => name === "app_itrp_list_devices").length;
+  const edit = w.context.document.querySelector("#itrp-device-form");
+  edit.controls.note.value = "แก้";
+  await edit.listeners.submit[0]({ preventDefault() {} });
+  await flush();
+  assert.equal(w.last("app_itrp_save_device").args.p_code, "COM05");
+  assert.equal(w.names().filter((name) => name === "app_itrp_list_devices").length - before, 1, "only the reload after saving, no pre-check for an edit");
+});
+
+test("the register date is typed too: a Buddhist-year date is sent as ISO and a bad one is refused on the field", async () => {
+  const saved = [];
+  const w = world({ role: ROLE_IT, handlers: historyHandlers({ app_itrp_save_device: (args) => { saved.push(args); return { id: 5, code: args.p_code, created: true, changed: true }; } }) });
+  await w.open("view=history&code=COM05");
+  w.context.document.querySelector("#itrp-hist-add-device").listeners.click[0]();
+  const form = w.context.document.querySelector("#itrp-device-form");
+  form.controls.code.value = "MNT27";
+  form.controls.started_on.value = "30/02/2566";
+  await form.listeners.submit[0]({ preventDefault() {} });
+  assert.deepEqual(w.calls.fieldErrors.map((error) => error.name), ["started_on"]);
+  assert.equal(saved.length, 0);
+  form.controls.started_on.value = "01/04/2566";
+  await form.listeners.submit[0]({ preventDefault() {} });
+  await flush();
+  assert.equal(saved[0].p_started_on, "2023-04-01");
+});
+
+test("opening another form, the revisions or another machine while a form has typed data asks first; an untouched form is replaced silently", async () => {
+  const w = world({ role: ROLE_IT, handlers: historyHandlers({ app_itrp_history_get: () => ({ entry: { id: 7, doc_no: "X", created_at: "2026-11-23T01:00:00Z" }, revisions: [] }) }) });
+  await w.open("view=history&code=COM05");
+  const listHost = w.context.document.querySelector("#itrp-hist-devices");
+  const addEntry = w.context.document.querySelector("#itrp-hist-add-entry");
+  const addDevice = w.context.document.querySelector("#itrp-hist-add-device");
+  // ยังไม่พิมพ์อะไร: เปลี่ยนฟอร์มได้ทันที ไม่ถาม
+  addEntry.listeners.click[0]();
+  addDevice.listeners.click[0]();
+  assert.equal(w.calls.confirms.length, 0, "an untouched form has nothing to lose");
+  assert.match(w.hosts["#itrp-hist-forms"], /id="itrp-device-form-card"/);
+  // พิมพ์ค้างไว้ แล้วกดเปิดฟอร์มอื่น: ถาม · ปฏิเสธ = ฟอร์มเดิมอยู่พร้อมข้อความ
+  w.context.document.querySelector("#itrp-device-form").controls.note.value = "พิมพ์ค้าง";
+  w.answers.confirm = false;
+  addEntry.listeners.click[0]();
+  await flush();
+  assert.equal(w.calls.confirms.length, 1);
+  assert.equal(w.calls.confirms[0].danger, true);
+  assert.match(w.calls.confirms[0].title, /ทิ้ง/);
+  assert.match(w.hosts["#itrp-hist-forms"], /id="itrp-device-form-card"/, "declined: the form with the typed text stays");
+  assert.equal(w.context.document.querySelector("#itrp-device-form").controls.note.value, "พิมพ์ค้าง");
+  // ยอมรับ = ทิ้งแล้วเปิดฟอร์มใหม่
+  w.answers.confirm = true;
+  addEntry.listeners.click[0]();
+  await flush();
+  assert.equal(w.calls.confirms.length, 2);
+  assert.match(w.hosts["#itrp-hist-forms"], /id="itrp-hist-form-card"/);
+  // ดูรอยแก้ขณะมีฟอร์มค้าง: ถามหลังดึงรอยแก้มาได้แล้ว · ปฏิเสธ = ฟอร์มเดิมอยู่
+  const form = w.context.document.querySelector("#itrp-hist-form");
+  form.controls.symptom.value = "กรอกค้างอยู่";
+  w.answers.confirm = false;
+  await delegate(panelOf(w), "[data-hist-revisions]", { histRevisions: "7" });
+  assert.equal(w.calls.confirms.length, 3);
+  assert.match(w.hosts["#itrp-hist-forms"], /id="itrp-hist-form-card"/, "declined: still the form");
+  w.answers.confirm = true;
+  await delegate(panelOf(w), "[data-hist-revisions]", { histRevisions: "7" });
+  assert.equal(w.calls.confirms.length, 4);
+  assert.match(w.hosts["#itrp-hist-forms"], /id="itrp-hist-revisions-card"/);
+  assert.equal(w.context.window.MNP_ITRP.unsavedCount(), 0, "a revisions card holds no typed data");
+  // ฟอร์มแก้ของเครื่องเดิม + เลือกเครื่องอื่น: ถามเมื่อมีของค้าง แล้วปิดฟอร์ม
+  await delegate(panelOf(w), "[data-hist-edit]", { histEdit: "7" });
+  const editForm = w.context.document.querySelector("#itrp-hist-form");
+  editForm.controls.action.value = "แก้ค้าง";
+  w.answers.confirm = false;
+  await delegate(listHost, "[data-hist-code]", { histCode: "PRT22" });
+  assert.equal(w.calls.confirms.length, 5);
+  assert.ok(!w.last("app_itrp_device_history") || w.last("app_itrp_device_history").args.p_code !== "PRT22", "declined: the machine does not change");
+  assert.match(w.hosts["#itrp-hist-forms"], /id="itrp-hist-form-card"/);
+  w.answers.confirm = true;
+  await delegate(listHost, "[data-hist-code]", { histCode: "PRT22" });
+  assert.equal(w.calls.confirms.length, 6);
+  assert.equal(w.last("app_itrp_device_history").args.p_code, "PRT22");
+  assert.equal(w.hosts["#itrp-hist-forms"], "", "the form of the old machine is closed");
+  // ฟอร์ม "เพิ่ม" ไม่ผูกกับเครื่อง: เลือกเครื่องอื่นไม่ถามและไม่ปิด
+  addEntry.listeners.click[0]();
+  w.context.document.querySelector("#itrp-hist-form").controls.symptom.value = "ลงย้อนหลังค้าง";
+  await delegate(listHost, "[data-hist-code]", { histCode: "OLD1" });
+  assert.equal(w.calls.confirms.length, 6, "an add form is not tied to the chosen machine");
+  assert.match(w.hosts["#itrp-hist-forms"], /id="itrp-hist-form-card"/);
+});
+
+test("choosing a machine redraws the list but keeps keyboard focus on that machine, and the panel is not a live region", async () => {
+  const w = world({ role: ROLE_IT, handlers: historyHandlers() });
+  await w.open("view=history");
+  assert.doesNotMatch(w.html, /id="itrp-hist-panel"[^>]*aria-live/, "the whole panel is not re-read by screen readers");
+  assert.match(w.html, /id="itrp-hist-status"[^>]*role="status"/);
+  const list = w.context.document.querySelector("#itrp-hist-devices");
+  const button = el({ dataset: { histCode: "COM05" } });
+  const other = el({ dataset: { histCode: "PRT22" } });
+  list.contains = (node) => node === button;
+  list.querySelectorAll = () => [other, button];
+  w.context.document.activeElement = button; // ผู้ใช้เลือกด้วยคีย์บอร์ด โฟกัสอยู่ที่ปุ่มของ COM05
+  el.focused = null;
+  await delegate(list, "[data-hist-code]", { histCode: "COM05" });
+  assert.equal(el.focused, button, "focus goes back to the chosen machine after the list is redrawn");
+  // โฟกัสอยู่นอกรายการ (เช่น ช่องค้นหา) ไม่ถูกแย่ง
+  el.focused = null;
+  w.context.document.activeElement = el();
+  await delegate(list, "[data-hist-code]", { histCode: "PRT22" });
+  assert.equal(el.focused, null);
+  // ประกาศสั้นๆ ผ่านบรรทัดสถานะ ไม่อ่านทั้งตาราง
+  await delegate(list, "[data-hist-code]", { histCode: "COM05" });
+  assert.equal(w.elements["#itrp-hist-status"].textContent, "โหลดประวัติของ COM05 แล้ว 2 รายการ");
 });
 
 test("the FM02 print page reads the machine, shows the 7 columns, and prints from its button", async () => {

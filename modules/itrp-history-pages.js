@@ -39,16 +39,18 @@
   const countText = (shown, total) => (shown === total ? `${total} เครื่อง` : `พบ ${shown} จาก ${total} เครื่อง`);
 
   /* ---------- แผงประวัติของเครื่องที่เลือก ---------- */
-  // ตาราง 7 คอลัมน์ตาม FM02 + ที่มา: ใบในระบบ = เลขที่เป็นลิงก์เปิดใบ · นำเข้า/ลงย้อนหลัง = ป้ายที่มา และ (it_admin) ปุ่มแก้ไข / ยกเลิกรายการ / ดูรอยแก้
+  // ตาราง 7 คอลัมน์ตาม FM02 + ที่มา: ใบในระบบ = เลขที่เป็นลิงก์เปิดใบ · นำเข้า/ลงย้อนหลัง = ป้ายที่มา และ (it_admin) ปุ่มแก้ไข / ยกเลิกรายการ · "ดูรอยแก้" เห็นได้ทุกคนที่อ่านประวัติได้ (รวมผู้อนุมัติขั้น IT ที่แก้ไม่ได้)
   function historyTable(rows, canEdit) {
     if (!rows.length) return '<p class="muted itrp-hist-empty">ยังไม่มีประวัติการซ่อมของเครื่องนี้</p>';
+    const revisionsButton = (row) => (row.revisionCount ? `<button type="button" class="btn secondary small" data-hist-revisions="${esc(row.entryId)}">ดูรอยแก้</button>` : "");
+    const hasActions = rows.some((row) => row.editable && (canEdit || row.revisionCount));
     const body = rows.map((row) => {
       const docNo = row.source === "request" && row.requestId
         ? `<a class="request-no register-no-link" href="${esc(orderHref(row.requestId))}">${esc(row.docNo)}</a>`
         : esc(row.docNo);
       const tags = [badge(row.sourceLabel, `is-${esc(row.source)}`), row.requestStatus ? badge(row.requestStatus, "is-status") : "", row.revisionCount ? badge(`แก้ไขแล้ว ${row.revisionCount} ครั้ง`, "is-edited") : ""].join("");
-      const actions = canEdit && row.editable
-        ? `<div class="itrp-hist-actions"><button type="button" class="btn secondary small" data-hist-edit="${esc(row.entryId)}">แก้ไข</button><button type="button" class="btn danger small" data-hist-void="${esc(row.entryId)}">ยกเลิกรายการ</button>${row.revisionCount ? `<button type="button" class="btn secondary small" data-hist-revisions="${esc(row.entryId)}">ดูรอยแก้</button>` : ""}</div>`
+      const actions = row.editable && (canEdit || row.revisionCount)
+        ? `<div class="itrp-hist-actions">${canEdit ? `<button type="button" class="btn secondary small" data-hist-edit="${esc(row.entryId)}">แก้ไข</button><button type="button" class="btn danger small" data-hist-void="${esc(row.entryId)}">ยกเลิกรายการ</button>` : ""}${revisionsButton(row)}</div>`
         : "";
       return `<tr data-hist-row="${esc(row.key)}" data-source="${esc(row.source)}">
           <td data-label="${esc(FM02_COLUMNS[0])}">${docNo}<div class="itrp-hist-tags">${tags}</div></td>
@@ -58,10 +60,10 @@
           <td data-label="${esc(FM02_COLUMNS[4])}">${esc(row.finishedOn)}</td>
           <td data-label="${esc(FM02_COLUMNS[5])}" class="itrp-text">${esc(row.remark)}</td>
           <td data-label="${esc(FM02_COLUMNS[6])}">${esc(row.reporter)}</td>
-          ${canEdit ? `<td class="itrp-hist-act">${actions}</td>` : ""}
+          ${hasActions ? `<td class="itrp-hist-act">${actions}</td>` : ""}
         </tr>`;
     }).join("");
-    return `<div class="table-wrap itrp-hist-scroll"><table class="itrp-hist-table" aria-label="ประวัติการซ่อมของเครื่อง"><thead><tr>${FM02_COLUMNS.map((label) => `<th scope="col">${esc(label)}</th>`).join("")}${canEdit ? '<th scope="col"><span class="sr-only">จัดการ</span></th>' : ""}</tr></thead><tbody>${body}</tbody></table></div>`;
+    return `<div class="table-wrap itrp-hist-scroll"><table class="itrp-hist-table" aria-label="ประวัติการซ่อมของเครื่อง"><thead><tr>${FM02_COLUMNS.map((label) => `<th scope="col">${esc(label)}</th>`).join("")}${hasActions ? '<th scope="col"><span class="sr-only">จัดการ</span></th>' : ""}</tr></thead><tbody>${body}</tbody></table></div>`;
   }
   const headFact = (label, value) => `<div class="definition"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`;
   // data = ผลของ app_itrp_device_history · canEdit = it_admin (ปุ่มแก้ข้อมูลเครื่อง/เพิ่มเข้าทะเบียน และปุ่มจัดการแถว)
@@ -112,10 +114,15 @@
             ${emptyHint}
             <ul class="itrp-hist-devices" id="itrp-hist-devices">${empty ? "" : deviceItems(list, selected?.code ?? "")}</ul>
           </section>
-          <div class="itrp-hist-detail" id="itrp-hist-panel" aria-live="polite">${panel}</div>
+          <p class="sr-only" id="itrp-hist-status" role="status" aria-live="polite"></p>
+          <div class="itrp-hist-detail" id="itrp-hist-panel">${panel}</div>
         </div>
       </div>`;
   }
+
+  /* ---------- ช่องวันที่แบบพิมพ์เอง ---------- */
+  // ปฏิทินกลางเลื่อนได้ทีละเดือน ใช้กับวันที่ย้อนหลังหลายปีไม่ไหว → พิมพ์ วว/ดด/ปปปป เอง (พ.ศ. หรือ ค.ศ.) · ค่าที่ส่งต่อให้ฐานข้อมูลแปลงเป็น ISO ที่ model.normalizeDateField · ออกจากช่องแล้ว module เติมรูปแบบ พ.ศ. ให้เห็นว่าตีความเป็นปีไหน
+  const dateField = ({ field, id, label, value, required = false }) => `<div class="field" data-field="${field}"><label for="${id}">${label}${required ? ` ${REQUIRED}` : ""}</label><input class="input" id="${id}" name="${field}" type="text" data-date-text autocomplete="off" spellcheck="false" placeholder="วว/ดด/ปปปป" aria-describedby="${id}-hint" value="${esc(model.dateInputText(value))}"><small id="${id}-hint">${esc(model.DATE_INPUT_HINT)}</small></div>`;
 
   /* ---------- ฟอร์ม: ลงประวัติย้อนหลัง / แก้ไขรายการ ---------- */
   // mode = "add" | "edit" · values = ค่าในฟอร์ม (model.EMPTY_HISTORY_FORM / historyFormValues) · deviceCodes = รหัสที่ให้เลือกใน datalist
@@ -129,8 +136,8 @@
           <div class="form-grid">
             <div class="field" data-field="doc_no"><label for="itrp-hist-doc-no">เลขที่ใบแจ้งซ่อม (กระดาษ)</label><input class="input" id="itrp-hist-doc-no" name="doc_no" maxlength="${model.MAX_DOC_NO}" autocomplete="off" placeholder="เช่น IT01-25/012" value="${esc(values.doc_no)}"></div>
             <div class="field" data-field="device_code"><label for="itrp-hist-code">รหัสเครื่อง ${REQUIRED}</label><input class="input" id="itrp-hist-code" name="device_code" list="itrp-hist-code-list" maxlength="${model.MAX_DEVICE_CODE}" autocomplete="off" autocapitalize="characters" spellcheck="false" value="${esc(values.device_code)}"><datalist id="itrp-hist-code-list">${itrpPages().codeOptions(deviceOptions)}</datalist></div>
-            <div class="field" data-field="reported_on"><label for="itrp-hist-reported">วันที่แจ้งซ่อม ${REQUIRED}</label><input class="input" id="itrp-hist-reported" name="reported_on" type="date" min="${model.MIN_HISTORY_DATE}" value="${esc(values.reported_on)}"></div>
-            <div class="field" data-field="finished_on"><label for="itrp-hist-finished">ซ่อมเสร็จวันที่ (ไม่บังคับ)</label><input class="input" id="itrp-hist-finished" name="finished_on" type="date" min="${model.MIN_HISTORY_DATE}" value="${esc(values.finished_on)}"></div>
+            ${dateField({ field: "reported_on", id: "itrp-hist-reported", label: "วันที่แจ้งซ่อม", value: values.reported_on, required: true })}
+            ${dateField({ field: "finished_on", id: "itrp-hist-finished", label: "ซ่อมเสร็จวันที่ (ไม่บังคับ)", value: values.finished_on })}
           </div>
           <div class="field" data-field="symptom"><label for="itrp-hist-symptom">อาการเสีย</label><textarea class="textarea" id="itrp-hist-symptom" name="symptom" rows="3" maxlength="2000">${esc(values.symptom)}</textarea><small>ต้องกรอกอาการเสียหรือการแก้ไขอย่างน้อยหนึ่งอย่าง</small></div>
           <div class="field" data-field="action"><label for="itrp-hist-action">การแก้ไข</label><textarea class="textarea" id="itrp-hist-action" name="action" rows="3" maxlength="2000">${esc(values.action)}</textarea></div>
@@ -160,7 +167,7 @@
             <div class="field" data-field="division"><label for="itrp-device-division">แผนก / ส่วนงาน (Section)</label><input class="input" id="itrp-device-division" name="division" maxlength="200" autocomplete="off" value="${esc(values.division)}"></div>
             <div class="field" data-field="cpu_name"><label for="itrp-device-cpu">Processor (CPU)</label><input class="input" id="itrp-device-cpu" name="cpu_name" maxlength="200" autocomplete="off" value="${esc(values.cpu_name)}"></div>
             <div class="field" data-field="cpu_model"><label for="itrp-device-cpu-model">รุ่น Processor</label><input class="input" id="itrp-device-cpu-model" name="cpu_model" maxlength="200" autocomplete="off" value="${esc(values.cpu_model)}"></div>
-            <div class="field" data-field="started_on"><label for="itrp-device-started">เริ่มใช้วันที่</label><input class="input" id="itrp-device-started" name="started_on" type="date" min="${model.MIN_HISTORY_DATE}" value="${esc(values.started_on)}"></div>
+            ${dateField({ field: "started_on", id: "itrp-device-started", label: "เริ่มใช้วันที่ (ไม่บังคับ)", value: values.started_on })}
             <div class="field" data-field="asset_no"><label for="itrp-device-asset">เลขทะเบียนทรัพย์สินทางบัญชี</label><input class="input" id="itrp-device-asset" name="asset_no" maxlength="100" autocomplete="off" value="${esc(values.asset_no)}"></div>
             <div class="field" data-field="status"><label for="itrp-device-status">สถานะ ${REQUIRED}</label><select class="select" id="itrp-device-status" name="status">${optionList(model.DEVICE_STATUSES, values.status)}</select></div>
           </div>
@@ -192,7 +199,7 @@
 
   /* ---------- ใบพิมพ์ FM02 (A4) ---------- */
   // หัวใบ: เริ่มใช้วันที่ / Computer Code / User / Section / Processor + กล่องเลขทะเบียนทรัพย์สินทางบัญชีทางขวา · ตาราง 7 คอลัมน์มีเส้น หัวตารางซ้ำทุกหน้า (CSS: display: table-header-group)
-  // ไม่แสดงรายการที่ยกเลิก (RPC ไม่ส่งมาให้อยู่แล้ว) · ยาวเกินขึ้นหน้าใหม่ได้ · รหัสฟอร์มมุมล่างขวา
+  // ไม่แสดงรายการที่ยกเลิก (RPC ไม่ส่งมาให้อยู่แล้ว) · ยาวเกินขึ้นหน้าใหม่ได้ · รหัสฟอร์มอยู่ใน tfoot (ตอนพิมพ์ซ้ำท้ายทุกหน้า ไม่ใช้ position: fixed เพราะอาจทับแถวสุดท้ายของตาราง)
   function printSheet(data) {
     const header = model.deviceHeader(data);
     const rows = model.historyRowsView(data?.rows);
@@ -219,8 +226,7 @@
           <dl class="itrp-fm02-fields">${fields.map(([label, value]) => `<div class="itrp-fm02-field"><dt>${esc(label)}:</dt><dd>${esc(value)}</dd></div>`).join("")}</dl>
           <div class="itrp-fm02-asset"><span>เลขทะเบียนทรัพย์สินทางบัญชี</span><strong>${esc(header.assetNo)}</strong></div>
         </div>
-        <table class="itrp-sheet-table itrp-fm02-table"><thead><tr>${FM02_COLUMNS.map((label) => `<th scope="col">${esc(label)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>
-        <p class="itrp-fm02-code">${FORM_CODE}</p>
+        <table class="itrp-sheet-table itrp-fm02-table"><thead><tr>${FM02_COLUMNS.map((label) => `<th scope="col">${esc(label)}</th>`).join("")}</tr></thead><tbody>${body}</tbody><tfoot><tr><td class="itrp-fm02-code" colspan="${FM02_COLUMNS.length}">${FORM_CODE}</td></tr></tfoot></table>
       </article>`;
   }
   function printPage(data) {

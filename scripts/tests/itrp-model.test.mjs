@@ -710,10 +710,10 @@ test("the back-dated history form follows the database rules and sends all eight
   assert.deepEqual(names({ ...model.EMPTY_HISTORY_FORM }), ["device_code", "reported_on", "symptom"], "code, report date and symptom-or-action are required");
   assert.deepEqual(names({ ...ok, symptom: "", action: "เปลี่ยนแรม" }), [], "an action alone is enough");
   assert.equal(validate(rules(), { ...ok, symptom: "" })[0].message, "กรุณาระบุอาการเสียหรือการแก้ไขอย่างน้อยหนึ่งอย่าง");
-  assert.equal(validate(rules(), { ...ok, reported_on: "2026-11-24" })[0].message, "วันที่แจ้งซ่อมไม่ถูกต้อง (ต้องไม่เป็นวันในอนาคต)");
+  assert.equal(validate(rules(), { ...ok, reported_on: "2026-11-24" })[0].message, "วันที่แจ้งซ่อมไม่ถูกต้อง (พิมพ์เป็น วว/ดด/ปปปป และต้องไม่เป็นวันในอนาคต)");
   assert.equal(validate(rules(), { ...ok, reported_on: "1989-12-31" })[0].name, "reported_on");
   assert.equal(validate(rules(), { ...ok, reported_on: "2026-02-30" })[0].name, "reported_on", "not a real date");
-  assert.equal(validate(rules(), { ...ok, finished_on: "2026-10-31" })[0].message, "วันที่ซ่อมเสร็จต้องไม่ก่อนวันที่แจ้งและไม่เป็นวันในอนาคต");
+  assert.equal(validate(rules(), { ...ok, finished_on: "2026-10-31" })[0].message, "วันที่ซ่อมเสร็จไม่ถูกต้อง (พิมพ์เป็น วว/ดด/ปปปป ต้องไม่ก่อนวันที่แจ้งและไม่เป็นวันในอนาคต)");
   assert.equal(validate(rules(), { ...ok, finished_on: "2026-11-24" })[0].name, "finished_on");
   assert.deepEqual(validate(rules(), { ...ok, finished_on: "2026-11-01" }), [], "finished on the same day is fine");
   assert.deepEqual(names({ ...ok, doc_no: "D".repeat(51), remark: "ย".repeat(501), reporter_name: "ช".repeat(201), action: "ก".repeat(2001) }), ["doc_no", "action", "remark", "reporter_name"]);
@@ -724,6 +724,67 @@ test("the back-dated history form follows the database rules and sends all eight
   assert.equal(model.historyUpdateParams(5, ok).p_entry_id, 5);
   assert.deepEqual(plain(model.historyFormValues({ doc_no: null, reported_on: "2026-11-01", symptom: "ก", action: null, finished_on: null, remark: "ข", reporter_name: "ค" }, "COM05")),
     { doc_no: "", device_code: "COM05", reported_on: "2026-11-01", symptom: "ก", action: "", finished_on: "", remark: "ข", reporter_name: "ค" });
+});
+
+test("typed dates (dd/mm/yyyy, Buddhist or Christian year) become ISO, and anything that is not a real date is refused", () => {
+  const parse = model.parseDateInput;
+  // พ.ศ. / ค.ศ.: ปี >= 2400 ถือเป็น พ.ศ.
+  assert.equal(parse("05/03/2566"), "2023-03-05");
+  assert.equal(parse("05/03/2023"), "2023-03-05");
+  assert.equal(parse("5/3/2566"), "2023-03-05", "one-digit day and month");
+  assert.equal(parse("01/01/2400"), "1857-01-01", "2400 is the first year read as Buddhist");
+  assert.equal(parse("31/12/2399"), "2399-12-31", "2399 is still Christian");
+  assert.equal(parse("05/03/1990"), "1990-03-05");
+  // ปีอธิกสุรทิน: 2024 = 2567 · 2000 = 2543 อธิกสุรทิน · 1900 = 2443 ไม่ใช่ · 2023 = 2566 ไม่ใช่
+  assert.equal(parse("29/02/2024"), "2024-02-29");
+  assert.equal(parse("29/02/2567"), "2024-02-29", "the same leap day in the Buddhist year");
+  assert.equal(parse("29/02/2543"), "2000-02-29", "2000 is a leap year");
+  assert.equal(parse("29/02/2023"), null);
+  assert.equal(parse("29/02/2566"), null, "the same non-leap year in the Buddhist era");
+  assert.equal(parse("29/02/2443"), null, "1900 is not a leap year");
+  // วันที่ไม่จริง
+  for (const bad of ["31/04/2566", "31/06/2023", "30/02/2024", "00/01/2566", "01/00/2566", "32/01/2566", "01/13/2566", "31/11/2566"]) assert.equal(parse(bad), null, bad);
+  // ตัวคั่น/ช่องว่าง/เลขไทย/พิมพ์ติด/ISO
+  assert.equal(parse("  05/03/2566  "), "2023-03-05", "surrounding spaces");
+  assert.equal(parse("05 / 03 / 2566"), "2023-03-05", "spaces around the slashes");
+  assert.equal(parse("05 03 2566"), "2023-03-05", "spaces as separators");
+  assert.equal(parse("05-03-2566"), "2023-03-05");
+  assert.equal(parse("05.03.2566"), "2023-03-05");
+  assert.equal(parse("๐๕/๐๓/๒๕๖๖"), "2023-03-05", "Thai digits");
+  assert.equal(parse("05032566"), "2023-03-05", "eight digits typed together");
+  assert.equal(parse("2023-03-05"), "2023-03-05", "ISO from a stored value");
+  assert.equal(parse("2023-02-30"), null);
+  // ไม่ใช่วันที่
+  for (const bad of ["", "   ", "abc", "05/03", "05/03/23", "05/03/202", "05/03/20233", "5/3/566", "0000-01-01", "1/1/0999", "05//2566", "2566", null, undefined]) assert.equal(parse(bad), null, String(bad));
+  // ค่าที่อ่านจากช่อง: จริง = ISO · ผิด = ข้อความเดิม (ให้กติกาปฏิเสธ) · ว่าง = ""
+  assert.equal(model.normalizeDateField(" 05/03/2566 "), "2023-03-05");
+  assert.equal(model.normalizeDateField("31/04/2566"), "31/04/2566");
+  assert.equal(model.normalizeDateField("   "), "");
+  assert.equal(model.normalizeDateField(undefined), "");
+  assert.equal(model.dateInputText("2016-03-05"), "05/03/2559");
+  assert.equal(model.dateInputText("31/04/2566"), "31/04/2566", "what the user typed is kept");
+  assert.equal(model.dateInputText(""), "");
+  assert.equal(model.dateInputText(null), "");
+  assert.match(model.DATE_INPUT_HINT, /วว\/ดด\/ปปปป/);
+  // ต่อเข้ากติกาของฟอร์ม: พ.ศ./ค.ศ. ที่พิมพ์ผ่าน ส่วนวันอนาคต/วันที่ไม่จริง/ก่อน 1990 ไม่ผ่าน
+  const today = "2026-11-23";
+  const rules = model.historyRules({ today: () => today });
+  const ok = { ...model.EMPTY_HISTORY_FORM, device_code: "COM05", symptom: "x" };
+  const errorsFor = (values) => validate(rules, { ...ok, ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, model.normalizeDateField(value)])) }).map((error) => error.name);
+  assert.deepEqual(errorsFor({ reported_on: "05/03/2559" }), []);
+  assert.deepEqual(errorsFor({ reported_on: "05/03/2016" }), []);
+  assert.deepEqual(errorsFor({ reported_on: "24/11/2569" }), ["reported_on"], "tomorrow (Buddhist year) is the future");
+  assert.deepEqual(errorsFor({ reported_on: "23/11/2569" }), [], "today is fine");
+  assert.deepEqual(errorsFor({ reported_on: "31/12/1989" }), ["reported_on"], "before the 1990 floor");
+  assert.deepEqual(errorsFor({ reported_on: "31/04/2566" }), ["reported_on"], "not a real date");
+  assert.deepEqual(errorsFor({ reported_on: "สวัสดี" }), ["reported_on"]);
+  assert.deepEqual(errorsFor({ reported_on: "05/03/2566", finished_on: "04/03/2566" }), ["finished_on"], "finished before reported");
+  assert.deepEqual(errorsFor({ reported_on: "05/03/2566", finished_on: "05/03/2566" }), []);
+  assert.deepEqual(errorsFor({ reported_on: "05/03/2566", finished_on: "" }), [], "finished is optional");
+  const deviceErrors = (started) => validate(model.deviceRules(), { ...model.EMPTY_DEVICE_FORM, code: "X", started_on: model.normalizeDateField(started) }).map((error) => error.name);
+  assert.deepEqual(deviceErrors("01/04/2566"), []);
+  assert.deepEqual(deviceErrors(""), []);
+  assert.deepEqual(deviceErrors("30/02/2566"), ["started_on"]);
 });
 
 test("the revisions view shows each earlier version with dashes for blanks and the reason", () => {

@@ -857,6 +857,28 @@
   const MAX_DEVICE_NOTE = 1000;
   const dateOrDash = (value) => (value ? formatDate(value) : "-");
 
+  /* ----- ช่องวันที่แบบพิมพ์เอง (แท็บประวัติ: วันที่ย้อนหลังหลายปี เลื่อนปฏิทินทีละเดือนไม่ไหว) ----- */
+  // รับ วว/ดด/ปปปป ทั้ง พ.ศ. และ ค.ศ. (ปี ≥ 2400 ถือเป็น พ.ศ.) · คั่นด้วย / - . หรือช่องว่าง · เลขไทยได้ · พิมพ์ติด 8 หลัก (05032566) ได้ · YYYY-MM-DD ก็รับ (ค่าเดิมในฟอร์มแก้ไข)
+  // คืน YYYY-MM-DD (ค.ศ.) เมื่อเป็นวันที่จริง ไม่งั้นคืน null (เช่น 31/04, 29/02 ของปีที่ไม่ใช่อธิกสุรทิน, ปีไม่ครบ 4 หลัก)
+  const THAI_DIGITS = "๐๑๒๓๔๕๖๗๘๙";
+  const DATE_INPUT_HINT = "พิมพ์เป็น วว/ดด/ปปปป เช่น 05/03/2566 (พ.ศ.) หรือ 05/03/2023 (ค.ศ.)";
+  function parseDateInput(text) {
+    const raw = String(text ?? "").replace(/[๐-๙]/g, (digit) => String(THAI_DIGITS.indexOf(digit))).trim();
+    let match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(raw);
+    let year; let month; let day;
+    if (match) [year, month, day] = match.slice(1).map(Number);
+    else if ((match = /^(\d{1,2})[\s/.-]+(\d{1,2})[\s/.-]+(\d{4})$/.exec(raw)) || (match = /^(\d{2})(\d{2})(\d{4})$/.exec(raw))) [day, month, year] = match.slice(1).map(Number);
+    else return null;
+    if (year >= 2400) year -= YEAR_OFFSET; // พ.ศ. → ค.ศ.
+    if (year < 1000) return null;
+    const iso = `${year}-${pad(month)}-${pad(day)}`;
+    return isRealDate(iso) ? iso : null;
+  }
+  // ค่าที่อ่านจากช่องพิมพ์เอง: วันที่จริง = ISO · พิมพ์ไม่ถูก = ส่งข้อความเดิมต่อไปให้กติกา (isRealDate) ปฏิเสธพร้อมข้อความ · ว่าง = ""
+  const normalizeDateField = (text) => parseDateInput(text) ?? String(text ?? "").trim();
+  // ค่าตั้งต้นของช่องพิมพ์เอง: ISO → วว/ดด/ปปปป (พ.ศ.) · ค่าอื่นแสดงตามที่มี
+  const dateInputText = (value) => (isRealDate(value) ? formatDate(value) : String(value ?? ""));
+
   // ค้นรายการเครื่องฝั่งหน้าเว็บ (รายการโหลดมาครบครั้งเดียว ≤ 2,000 แถว): คำค้นหลายคำคั่นด้วยช่องว่าง ทุกคำต้องเจอใน รหัส/ผู้ใช้/แผนก/เลขทะเบียนทรัพย์สิน/Processor/รุ่น (ไม่สนตัวพิมพ์)
   function filterDevices(devices, query) {
     const terms = textOf(query).toLowerCase().split(/\s+/).filter(Boolean);
@@ -908,7 +930,7 @@
     return [
       { name: "doc_no", check: (value) => charCount(value) <= MAX_DOC_NO, checkMessage: `เลขที่ใบแจ้งซ่อมต้องไม่เกิน ${MAX_DOC_NO} ตัวอักษร` },
       { name: "device_code", required: true, message: "กรุณาระบุรหัสเครื่อง", check: (value) => charCount(value) <= MAX_DEVICE_CODE, checkMessage: `รหัสเครื่องต้องไม่เกิน ${MAX_DEVICE_CODE} ตัวอักษร` },
-      { name: "reported_on", required: true, message: "กรุณาระบุวันที่แจ้งซ่อม", check: (value) => isRealDate(value) && value >= MIN_HISTORY_DATE && value <= today(), checkMessage: "วันที่แจ้งซ่อมไม่ถูกต้อง (ต้องไม่เป็นวันในอนาคต)" },
+      { name: "reported_on", required: true, message: "กรุณาระบุวันที่แจ้งซ่อม", check: (value) => isRealDate(value) && value >= MIN_HISTORY_DATE && value <= today(), checkMessage: "วันที่แจ้งซ่อมไม่ถูกต้อง (พิมพ์เป็น วว/ดด/ปปปป และต้องไม่เป็นวันในอนาคต)" },
       {
         name: "symptom", message: "กรุณาระบุอาการเสียหรือการแก้ไขอย่างน้อยหนึ่งอย่าง",
         get required() { return !textOf(action()); },
@@ -918,7 +940,7 @@
       {
         name: "finished_on", message: "วันที่ซ่อมเสร็จไม่ถูกต้อง",
         check: (value, values) => isRealDate(value) && value <= today() && (!isRealDate(values?.reported_on) || value >= values.reported_on),
-        checkMessage: "วันที่ซ่อมเสร็จต้องไม่ก่อนวันที่แจ้งและไม่เป็นวันในอนาคต",
+        checkMessage: "วันที่ซ่อมเสร็จไม่ถูกต้อง (พิมพ์เป็น วว/ดด/ปปปป ต้องไม่ก่อนวันที่แจ้งและไม่เป็นวันในอนาคต)",
       },
       { name: "remark", check: (value) => charCount(value) <= MAX_REMARK, checkMessage: `ข้อเสนอแนะต้องไม่เกิน ${MAX_REMARK} ตัวอักษร` },
       { name: "reporter_name", check: (value) => charCount(value) <= MAX_REPORTER, checkMessage: `ชื่อผู้แจ้งต้องไม่เกิน ${MAX_REPORTER} ตัวอักษร` },
@@ -971,7 +993,7 @@
       limit("division", MAX_DEVICE_TEXT, `ชื่อแผนก/ส่วนงานต้องไม่เกิน ${MAX_DEVICE_TEXT} ตัวอักษร`),
       limit("cpu_name", MAX_DEVICE_TEXT, `ข้อมูล Processor ต้องไม่เกิน ${MAX_DEVICE_TEXT} ตัวอักษร`),
       limit("cpu_model", MAX_DEVICE_TEXT, `ข้อมูลรุ่น Processor ต้องไม่เกิน ${MAX_DEVICE_TEXT} ตัวอักษร`),
-      { name: "started_on", message: "วันที่เริ่มใช้ไม่ถูกต้อง", check: (value) => isRealDate(value) && value >= MIN_HISTORY_DATE && value <= "2100-01-01" },
+      { name: "started_on", message: "วันที่เริ่มใช้ไม่ถูกต้อง (พิมพ์เป็น วว/ดด/ปปปป)", check: (value) => isRealDate(value) && value >= MIN_HISTORY_DATE && value <= "2100-01-01" },
       limit("asset_no", MAX_ASSET_NO, `เลขทะเบียนทรัพย์สินต้องไม่เกิน ${MAX_ASSET_NO} ตัวอักษร`),
       { name: "status", required: true, message: "กรุณาเลือกสถานะ", check: (value) => DEVICE_STATUSES.some((status) => status.value === value), checkMessage: "สถานะเครื่องต้องเป็น ใช้งาน หรือ ยกเลิกการใช้งาน" },
       limit("note", MAX_DEVICE_NOTE, `หมายเหตุต้องไม่เกิน ${MAX_DEVICE_NOTE.toLocaleString("en-US")} ตัวอักษร`),
@@ -1036,7 +1058,7 @@
     repairRules, createParams, validateReason, infoRules, infoParams,
     normalizeParts, EMPTY_DEVICE_ROW, NO_DEVICE_LABEL, NO_DEVICE_ERROR, normalizeDeviceCode, deviceCodeError, initialDeviceRows, normalizeDevices, deviceOptionText,
     completeRules, completeParams, vendorField, repairReports, reportView,
-    DEVICE_KINDS, DEVICE_STATUSES, deviceKindLabel, deviceStatusLabel, HISTORY_SOURCE_LABELS, historySourceLabel, historyUrl, historyPrintUrl, MIN_HISTORY_DATE, MAX_DOC_NO, MAX_REPORTER, filterDevices, deviceHeader, historyRowsView,
+    DEVICE_KINDS, DEVICE_STATUSES, deviceKindLabel, deviceStatusLabel, HISTORY_SOURCE_LABELS, historySourceLabel, historyUrl, historyPrintUrl, MIN_HISTORY_DATE, DATE_INPUT_HINT, parseDateInput, normalizeDateField, dateInputText, MAX_DOC_NO, MAX_REPORTER, filterDevices, deviceHeader, historyRowsView,
     EMPTY_HISTORY_FORM, historyRules, historyParams, historyUpdateParams, historyFormValues, HISTORY_FIELDS, revisionsView, EMPTY_DEVICE_FORM, deviceFormValues, deviceRules, deviceParams,
     fileExtension, fileMime, fileBucket, filePath, formatFileSize, validateFiles, makeUploadEntries, isAlreadyUploaded, isFileRejection, runUploads, roundLabel, attachmentGroups, galleryFile, reworkRounds, reworkRules, reworkParams,
     formatDocNo, validateNextSeq, staffRoleText,

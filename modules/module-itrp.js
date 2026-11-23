@@ -865,12 +865,18 @@
     let activeForm = null; // ฟอร์มที่เปิดอยู่ { card, dirty(), busy() } ให้ตัวตรวจของค้างเห็น (ปิดฟอร์ม/ออกจากหน้า = ไม่นับ)
     const fail = (error) => showToast(failure(error, { write: true }).message, "error");
 
+    // วาดรายการใหม่ทั้งก้อน (เลือกเครื่อง/ค้นหา) แล้วคืนโฟกัสคีย์บอร์ดให้ปุ่มเครื่องเดิมถ้าโฟกัสอยู่ในรายการ ไม่งั้นผู้ใช้คีย์บอร์ดต้อง Tab จากบนสุดใหม่ทุกครั้ง
     const drawList = () => {
       const filtered = model.filterDevices(devices, searchInput?.value ?? "");
+      const active = document.activeElement;
+      const focusedCode = listHost && active && listHost.contains?.(active) ? active.dataset?.histCode : undefined;
       if (listHost) listHost.innerHTML = devices.length ? historyPages.deviceItems(filtered, selectedCode) : "";
       if (countHost) countHost.textContent = historyPages.countText(filtered.length, devices.length);
+      if (focusedCode !== undefined) [...(listHost.querySelectorAll?.("[data-hist-code]") ?? [])].find((button) => button.dataset.histCode === focusedCode)?.focus?.({ preventScroll: true });
     };
     const drawPanel = (html) => { panelHost.innerHTML = html; };
+    // แผงประวัติไม่ใช้ aria-live (ไม่งั้นโปรแกรมอ่านจอจะอ่านทั้งตารางซ้ำ) · ประกาศแค่บรรทัดสั้นๆ ที่ซ่อนไว้แทน
+    const announce = (text) => { const status = document.querySelector("#itrp-hist-status"); if (status) status.textContent = text; };
     async function loadPanel(code, { scroll = false } = {}) {
       loadSeq += 1;
       const seq = loadSeq;
@@ -882,11 +888,13 @@
         if (seq !== loadSeq || !stillHere()) return;
         panelData = data;
         drawPanel(historyPages.historyPanel(data, { canEdit }));
+        announce(`โหลดประวัติของ ${code} แล้ว ${Array.isArray(data?.rows) ? data.rows.length : 0} รายการ`);
         if (scroll) panelHost.scrollIntoView?.({ block: "start", behavior: "smooth" }); // มือถือ: รายการอยู่เหนือแผง เลือกแล้วเลื่อนไปดูประวัติ
       } catch (error) {
         if (seq !== loadSeq || !stillHere()) return;
         panelData = null;
         drawPanel(historyPages.panelError(failure(error).message, code));
+        announce("");
       }
     }
     // หลังบันทึกใด ๆ: โหลดรายการเครื่อง (จำนวนรายการซ่อม/เครื่องใหม่) และประวัติของเครื่องที่เลือกใหม่
@@ -908,36 +916,53 @@
       formsHost.innerHTML = html;
       formsHost.scrollIntoView?.({ block: "start", behavior: "smooth" });
     };
-    const readFields = (form, names) => Object.fromEntries(names.map((name) => [name, form.querySelector(`[name="${name}"]`)?.value ?? ""]));
+    // ช่องวันที่ (พิมพ์เอง) อ่านออกมาเป็น ISO ถ้าเป็นวันที่จริง · พิมพ์ผิดส่งข้อความเดิมต่อให้กติกาตรวจแล้วแจ้ง
+    const DATE_FIELDS = ["reported_on", "finished_on", "started_on"];
+    const readFields = (form, names) => Object.fromEntries(names.map((name) => {
+      const value = form.querySelector(`[name="${name}"]`)?.value ?? "";
+      return [name, DATE_FIELDS.includes(name) ? model.normalizeDateField(value) : value];
+    }));
     const showFormError = (host, html) => {
       host.innerHTML = `<div class="form-message error" role="alert">${html}</div>`;
       host.scrollIntoView?.({ block: "nearest" });
     };
-    // ช่องวันที่ใช้ตัวเลือกวันที่ไทย · วันที่แจ้ง/ซ่อมเสร็จห้ามเป็นอนาคต (ตามเวลาไทย)
-    const enhanceDates = (form, { futureAllowed = false } = {}) => {
-      form.querySelectorAll?.('input[type="date"]').forEach((input) => {
-        if (!futureAllowed) input.max = model.todayBangkok();
-        window.MNP_DATE_PICKER?.enhance(input);
+    // ช่องวันที่พิมพ์เอง (วว/ดด/ปปปป): ออกจากช่องแล้วเติมรูปแบบ พ.ศ. ให้เห็นว่าตีความเป็นปีไหน (พิมพ์ผิดปล่อยไว้ตามที่พิมพ์ รอตรวจตอนบันทึก) · วันที่แจ้ง/ซ่อมเสร็จห้ามเป็นอนาคตตรวจที่ model.historyRules
+    const bindDateInputs = (form) => {
+      form.querySelectorAll?.("[data-date-text]").forEach((input) => {
+        input.addEventListener("blur", () => {
+          const iso = model.parseDateInput(input.value);
+          if (iso) input.value = model.dateInputText(iso);
+        });
       });
     };
-    function trackDirty(card, form, read) {
+    // scope = "machine": ฟอร์มที่ผูกกับเครื่องที่เลือกอยู่ (แก้รายการ/แก้ข้อมูลเครื่อง/รอยแก้) เปลี่ยนเครื่องแล้วต้องปิด · "free": ฟอร์มเพิ่มใหม่ ค้างไว้ข้ามเครื่องได้
+    function trackDirty(card, form, read, scope = "free") {
       const initial = JSON.stringify(read());
       let busy = false;
-      activeForm = { card, dirty: () => JSON.stringify(read()) !== initial, busy: () => busy, setBusy: (value) => { busy = value; } };
+      activeForm = { card, scope, dirty: () => JSON.stringify(read()) !== initial, busy: () => busy, setBusy: (value) => { busy = value; } };
       return activeForm;
+    }
+    // ฟอร์มที่เปิดอยู่มีของกรอกค้าง = ห้ามทิ้งเงียบ ๆ: ถามก่อน (ไม่มีของค้างก็ทำต่อทันทีแบบซิงก์) · กำลังบันทึกอยู่ = ไม่เปิดฟอร์มอื่นทับ
+    const formIsLive = () => Boolean(activeForm && activeForm.card.isConnected);
+    function guardUnsaved(proceed) {
+      if (formIsLive() && activeForm.busy()) return;
+      if (!(formIsLive() && activeForm.dirty())) { proceed(); return; }
+      confirmDialog({ title: "ทิ้งสิ่งที่กรอกไว้?", message: "ฟอร์มที่เปิดอยู่มีข้อมูลที่ยังไม่ได้บันทึก ถ้าไปต่อข้อมูลนั้นจะหายไป", confirmLabel: "ทิ้งและไปต่อ", cancelLabel: "กลับไปกรอกต่อ", danger: true })
+        .then((confirmed) => { if (confirmed && stillHere()) proceed(); });
     }
 
     const HISTORY_FIELDS = ["doc_no", "device_code", "reported_on", "symptom", "action", "finished_on", "remark", "reporter_name"];
     // mode = "add" (ลงประวัติย้อนหลัง) | "edit" (แก้รายการ import/manual: entryId) · values = ค่าตั้งต้น
-    function openHistoryForm({ mode, entryId = null, values }) {
+    function openHistoryForm(options) { guardUnsaved(() => renderHistoryForm(options)); }
+    function renderHistoryForm({ mode, entryId = null, values }) {
       showForm(historyPages.historyFormCard({ mode, values, deviceOptions: devices }));
       const card = document.querySelector("#itrp-hist-form-card");
       const form = document.querySelector("#itrp-hist-form");
       const message = document.querySelector("#itrp-hist-form-message");
       if (!card || !form) return;
-      enhanceDates(form);
+      bindDateInputs(form);
       const read = () => readFields(form, HISTORY_FIELDS);
-      const tracker = trackDirty(card, form, read);
+      const tracker = trackDirty(card, form, read, mode === "edit" ? "machine" : "free");
       document.querySelector("#itrp-hist-form-cancel")?.addEventListener("click", closeForm);
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -968,15 +993,17 @@
 
     const DEVICE_FIELDS = ["code", "kind", "user_name", "division", "cpu_name", "cpu_model", "started_on", "asset_no", "status", "note"];
     // mode = "add" | "edit" · แก้เครื่องเดิมต้องส่งค่าทุกช่อง (ค่าเดิมถูกโหลดมาในฟอร์มแล้ว ช่องที่เว้นว่างคือการล้างค่าจริง)
-    function openDeviceForm({ mode, values }) {
+    const CODE_IN_REGISTRY = "รหัสนี้มีในทะเบียนแล้ว (ระบบไม่เขียนทับ) ให้เลือกเครื่องจากรายการแล้วกด \"แก้ข้อมูลเครื่อง\"";
+    function openDeviceForm(options) { guardUnsaved(() => renderDeviceForm(options)); }
+    function renderDeviceForm({ mode, values }) {
       showForm(historyPages.deviceFormCard({ mode, values }));
       const card = document.querySelector("#itrp-device-form-card");
       const form = document.querySelector("#itrp-device-form");
       const message = document.querySelector("#itrp-device-form-message");
       if (!card || !form) return;
-      enhanceDates(form, { futureAllowed: true });
+      bindDateInputs(form);
       const read = () => readFields(form, DEVICE_FIELDS);
-      const tracker = trackDirty(card, form, read);
+      const tracker = trackDirty(card, form, read, mode === "edit" ? "machine" : "free");
       document.querySelector("#itrp-device-form-cancel")?.addEventListener("click", closeForm);
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -987,7 +1014,7 @@
         const code = model.normalizeDeviceCode(current.code);
         // เพิ่มเครื่องด้วยรหัสที่มีในทะเบียนแล้ว ฐานข้อมูลจะถือเป็นการแก้ทับทั้งแถว → กันไว้ที่นี่ให้ไปใช้ "แก้ข้อมูลเครื่อง" ที่โหลดค่าเดิมมาครบ
         if (!errors.length && mode === "add" && devices.some((device) => device.in_registry !== false && device.code === code)) {
-          errors.push({ name: "code", message: "รหัสเครื่องนี้อยู่ในทะเบียนแล้ว ให้เลือกเครื่องจากรายการแล้วกด \"แก้ข้อมูลเครื่อง\"" });
+          errors.push({ name: "code", message: CODE_IN_REGISTRY });
         }
         if (errors.length) { steps.showFieldErrors(form, errors)?.focus?.(); return; }
         steps.clearFieldErrors(form);
@@ -995,6 +1022,16 @@
         setFormBusy(form, true);
         let result;
         try {
+          // รายการในหน้าอาจเก่า (แท็บอื่นเพิ่งเพิ่มรหัสนี้) → เช็กสดกับฐานข้อมูลก่อนเขียน ไม่งั้น "เพิ่ม" จะกลายเป็นแก้ทับทั้งแถว (ค้นรหัสตรงตัวเท่านั้น)
+          if (mode === "add") {
+            const found = await rpc("app_itrp_list_devices", { p_search: code });
+            if ((Array.isArray(found) ? found : []).some((device) => device.in_registry !== false && model.normalizeDeviceCode(device.code) === code)) {
+              tracker.setBusy(false);
+              setFormBusy(form, false);
+              steps.showFieldErrors(form, [{ name: "code", message: CODE_IN_REGISTRY }])?.focus?.();
+              return;
+            }
+          }
           const data = await rpc("app_itrp_save_device", model.deviceParams(current));
           result = Array.isArray(data) ? data[0] : data;
         } catch (error) {
@@ -1011,16 +1048,22 @@
       form.querySelector(mode === "add" ? '[name="code"]' : '[name="kind"]')?.focus?.({ preventScroll: true });
     }
 
+    // ดึงรอยแก้ก่อน แล้วค่อยถามยืนยันทิ้งฟอร์มที่ค้าง (ดึงไม่สำเร็จ = ฟอร์มเดิมยังอยู่ ไม่ถามเปล่า) · ผู้อนุมัติขั้น IT (อ่านอย่างเดียว) เปิดได้ด้วย
     async function showRevisions(entryId) {
+      let data;
       try {
-        const data = await rpc("app_itrp_history_get", { p_entry_id: entryId });
-        if (!stillHere()) return;
-        activeForm = null;
-        showForm(historyPages.revisionsCard(data, model.revisionsView(data)));
-        document.querySelector("#itrp-hist-rev-close")?.addEventListener("click", closeForm);
+        data = await rpc("app_itrp_history_get", { p_entry_id: entryId });
       } catch (error) {
         fail(error);
+        return;
       }
+      if (!stillHere()) return;
+      guardUnsaved(() => {
+        showForm(historyPages.revisionsCard(data, model.revisionsView(data)));
+        const card = document.querySelector("#itrp-hist-revisions-card");
+        activeForm = card ? { card, scope: "machine", dirty: () => false, busy: () => false, setBusy() {} } : null; // ผูกกับเครื่องที่เลือก: เปลี่ยนเครื่องแล้วปิดเอง
+        document.querySelector("#itrp-hist-rev-close")?.addEventListener("click", closeForm);
+      });
     }
     async function voidEntry(entryId) {
       const reason = await textPromptDialog({
@@ -1041,14 +1084,21 @@
 
     /* ---- ผูกเหตุการณ์ ---- */
     searchInput?.addEventListener("input", drawList);
+    // เลือกเครื่องอื่นขณะมีฟอร์มของเครื่องเดิมเปิดอยู่ (แก้รายการ/แก้ข้อมูลเครื่อง/รอยแก้) = ถามก่อนทิ้งถ้ามีของค้าง แล้วปิดฟอร์มนั้น
+    function selectDevice(code) {
+      if (code !== selectedCode && formIsLive() && activeForm.scope === "machine") guardUnsaved(() => { closeForm(); loadPanel(code, { scroll: true }); });
+      else loadPanel(code, { scroll: true });
+    }
     listHost?.addEventListener("click", (event) => {
       const button = event.target.closest("[data-hist-code]");
-      if (button) loadPanel(button.dataset.histCode, { scroll: true });
+      if (button) selectDevice(button.dataset.histCode);
     });
     panelHost.addEventListener("click", (event) => {
       const target = event.target;
       const retry = target.closest("[data-hist-retry]");
       if (retry) { loadPanel(retry.dataset.histRetry); return; }
+      const revisions = target.closest("[data-hist-revisions]");
+      if (revisions) { showRevisions(revisions.dataset.histRevisions); return; } // อ่านอย่างเดียว ไม่ต้องมีสิทธิ์แก้ (RPC ตรวจสิทธิ์อ่านซ้ำ)
       if (!canEdit) return;
       if (target.closest("[data-hist-edit-device]")) {
         const device = panelData?.device ?? null;
@@ -1061,8 +1111,6 @@
         if (row) openHistoryForm({ mode: "edit", entryId: row.entry_id, values: model.historyFormValues(row, selectedCode) });
         return;
       }
-      const revisions = target.closest("[data-hist-revisions]");
-      if (revisions) { showRevisions(revisions.dataset.histRevisions); return; }
       const voided = target.closest("[data-hist-void]");
       if (voided) voidEntry(voided.dataset.histVoid);
     });
