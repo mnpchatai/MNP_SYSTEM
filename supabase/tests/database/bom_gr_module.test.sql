@@ -399,17 +399,22 @@ select is(gr_t.ho(gr_t.uid(201)) ->> 'status' || '/' || coalesce(gr_t.ho(gr_t.ui
 select public.app_sandbox_enter(current_setting('test.p_sbx_pk_staff')::uuid);
 select lives_ok($$ select gr_t.gr('grHandovers', jsonb_build_object('id', gr_t.uid(201)), 'receiveGrAtPk') $$, 'PK staff receive it again');
 reset role;
+-- ตาราง employees กันการเขียนขณะบัญชีที่ล็อกอินอยู่ในโหมดทดสอบ (SANDBOX_MODULE_UNSUPPORTED): ล้าง jwt ก่อนแก้บทบาท แล้วคืนค่าเดิม
+select set_config('request.jwt.claims', '', true);
 update public.employees set role_id = (select id from public.roles where code = 'assistant_department_manager') where employee_no = 'SBX-PK-MGR';
 select ok(not private.bom_can_edit((select e from public.employees e where e.employee_no = 'SBX-PK-MGR'))
           and private.bom_gr_is_head((select e from public.employees e where e.employee_no = 'SBX-PK-MGR'), 'PK'),
   'the PK assistant department manager is a PK head and not a planner');
+select set_config('request.jwt.claims', '{"sub":"8ed00000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 set local role authenticated;
 select public.app_sandbox_enter(current_setting('test.p_sbx_pk_mgr')::uuid);
 select lives_ok($$ select gr_t.gr('grHandovers', jsonb_build_object('id', gr_t.uid(201), 'reason', 'นับผิด'), 'cancelGrHandover') $$,
   'the PK assistant department manager (not a planner) reverses a receipt');
 select is(gr_t.ho(gr_t.uid(201)) ->> 'status', 'sent', 'the hand-over waits at PK again');
 reset role;
+select set_config('request.jwt.claims', '', true);
 update public.employees set role_id = (select id from public.roles where code = 'department_manager') where employee_no = 'SBX-PK-MGR';
+select set_config('request.jwt.claims', '{"sub":"8ed00000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 set local role authenticated;
 select public.app_sandbox_enter(current_setting('test.p_sbx_gr_amgr')::uuid);
 select lives_ok($$ select gr_t.gr('grHandovers', jsonb_build_object('id', gr_t.uid(202), 'reason', 'ส่งผิดใบ'), 'cancelGrHandover') $$, 'the GR head cancels an unreceived hand-over');
