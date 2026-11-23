@@ -356,6 +356,16 @@
         <td data-label="ราคาต่อหน่วย">${esc(part.price) || "—"}</td>
         <td data-label="หมายเหตุ">${esc(part.note) || "—"}</td></tr>`).join("")}</tbody></table></div>`;
   }
+  // เครื่อง/อุปกรณ์ที่ซ่อมในรอบนี้ (อ่านอย่างเดียว) · devices = reportView(...).devices · อาการ/การแก้ไขเฉพาะเครื่องว่าง = ใช้ของใบ (แสดง "—")
+  function devicesTable(devices) {
+    if (!devices.length) return "";
+    return `<h3 class="itrp-subhead">เครื่อง / อุปกรณ์ที่ซ่อม</h3><div class="table-wrap"><table class="itrp-parts-table itrp-devices-table"><thead><tr><th scope="col">ลำดับ</th><th scope="col">รหัสเครื่อง</th><th scope="col">อาการ (เฉพาะเครื่องนี้)</th><th scope="col">การแก้ไข (เฉพาะเครื่องนี้)</th><th scope="col">ข้อเสนอแนะ</th></tr></thead><tbody>${devices.map((device) => `<tr>
+        <td data-label="ลำดับ">${esc(device.seq)}</td>
+        <td data-label="รหัสเครื่อง"><strong>${esc(device.code)}</strong></td>
+        <td data-label="อาการ" class="itrp-text">${esc(device.symptom) || "—"}</td>
+        <td data-label="การแก้ไข" class="itrp-text">${esc(device.action) || "—"}</td>
+        <td data-label="ข้อเสนอแนะ" class="itrp-text">${esc(device.remark) || "—"}</td></tr>`).join("")}</tbody></table></div>`;
+  }
   // เนื้อหาของบันทึกการซ่อมหนึ่งชุด (ใช้ทั้งชุดล่าสุดและประวัติชุดก่อน) · duration = ผลของ model.repairDuration (เฉพาะชุดล่าสุด) หรือ null
   const reportBody = (view, duration = null) => `<dl class="definition-grid">
       ${fact("สาเหตุ", esc(view.cause), true)}
@@ -364,7 +374,7 @@
       ${fact("การซ่อม-แก้ไขที่เกิดขึ้น", esc(view.repairAction), true)}
       ${view.prPoNo ? fact("เอกสารอ้างอิง ใบ PR./PO.No.", esc(view.prPoNo)) : ""}
       ${duration ? fact("รวมเวลาในการซ่อม", esc(duration.text)) : ""}
-    </dl>${partsTable(view.parts)}`;
+    </dl>${devicesTable(view.devices ?? [])}${partsTable(view.parts)}`;
   // การ์ดบันทึกการซ่อมล่าสุด + ประวัติชุดก่อน (พับไว้) · ยังไม่เคยส่งงาน = ไม่วาดอะไร
   function reportCards(detail) {
     const { latest, earlier } = model.repairReports(detail);
@@ -400,6 +410,38 @@
         <td class="itrp-part-act"><button type="button" class="btn secondary small" data-part-remove aria-label="ลบแถวที่ ${no}">ลบ</button></td>
       </tr>`;
   }
+  // แถวเครื่อง/อุปกรณ์ที่ซ่อมในฟอร์มส่งงาน · index เริ่ม 0 · row = { device_code, remark, symptom_note, action_note } ค่าที่กรอก
+  // ช่องอาการ/การแก้ไขเฉพาะเครื่องอยู่ใน details (พับไว้ เปิดเองเมื่อมีค่า) · datalist #itrp-device-codes เติมจากทะเบียนเครื่องที่ module-itrp.js (โหลดไม่ได้ก็พิมพ์รหัสเองได้)
+  function deviceRow(index, row = {}) {
+    const no = index + 1;
+    const hasNotes = Boolean(String(row.symptom_note ?? "").trim() || String(row.action_note ?? "").trim());
+    return `<li class="itrp-device-row" data-device-row>
+        <div class="itrp-device-main">
+          <span class="itrp-device-no" aria-hidden="true">${no}</span>
+          <input class="input itrp-device-code" name="device_code" list="itrp-device-codes" maxlength="${model.MAX_DEVICE_CODE}" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="รหัสเครื่อง เช่น COM05" aria-label="รหัสเครื่อง แถวที่ ${no}" value="${esc(row.device_code)}">
+          <input class="input itrp-device-remark" name="device_remark" maxlength="${model.MAX_REMARK}" autocomplete="off" placeholder="ข้อเสนอแนะ (ไม่บังคับ)" aria-label="ข้อเสนอแนะ แถวที่ ${no}" value="${esc(row.remark)}">
+          <button type="button" class="btn secondary small" data-device-remove aria-label="ลบแถวที่ ${no}">ลบ</button>
+        </div>
+        <details class="itrp-device-notes"${hasNotes ? " open" : ""}>
+          <summary>ระบุอาการ / การแก้ไขเฉพาะเครื่องนี้ (ไม่บังคับ)</summary>
+          <label class="itrp-device-note"><span>อาการเสียของเครื่องนี้</span><textarea class="textarea" name="device_symptom" rows="2" maxlength="${model.MAX_LONG_TEXT}" aria-label="อาการเสียของเครื่อง แถวที่ ${no}">${esc(row.symptom_note)}</textarea></label>
+          <label class="itrp-device-note"><span>การแก้ไขเครื่องนี้</span><textarea class="textarea" name="device_action" rows="2" maxlength="${model.MAX_LONG_TEXT}" aria-label="การแก้ไขของเครื่อง แถวที่ ${no}">${esc(row.action_note)}</textarea></label>
+          <small>ไม่กรอก = ใช้อาการของใบ และ "การซ่อม-แก้ไขที่เกิดขึ้น" ด้านบน</small>
+        </details>
+      </li>`;
+  }
+  // ตัวเลือกรหัสเครื่องของ datalist (ฟอร์มส่งงาน / ฟอร์มลงประวัติย้อนหลัง) · เครื่องที่ยกเลิกการใช้งานแล้วมีหมายเหตุใน label · devices = ผลของ app_itrp_list_devices
+  const codeOptions = (devices) => (Array.isArray(devices) ? devices : []).map((device) => `<option value="${esc(device.code)}" label="${esc(model.deviceOptionText(device))}"></option>`).join("");
+  // ตารางเครื่องที่ซ่อม: ต้องมีอย่างน้อย 1 เครื่อง หรือติ๊ก "งานนี้ไม่มีรหัสเครื่อง" (ติ๊กแล้วซ่อมตาราง ส่งรายการว่าง) · ช่องติ๊กอยู่ท้ายตารางเพื่อให้ช่องแรกที่โฟกัสเมื่อผิดคือรหัสเครื่องแถวแรก
+  const devicesEditor = (assetCode = "") => `<div class="field itrp-devices" data-field="devices">
+      <span class="field-label">เครื่อง / อุปกรณ์ที่ซ่อม ${REQUIRED}</span>
+      <div id="itrp-devices-wrap">
+        <ul class="itrp-devices-list" id="itrp-devices-body">${model.initialDeviceRows(assetCode).map((row, index) => deviceRow(index, row)).join("")}</ul>
+        <datalist id="itrp-device-codes"></datalist>
+        <div class="itrp-parts-tools"><button type="button" class="btn secondary small" id="itrp-device-add">เพิ่มเครื่อง</button><small>ไม่เกิน ${model.MAX_DEVICES} เครื่อง · พิมพ์รหัสเองได้แม้ยังไม่มีในทะเบียน · ใช้เป็นประวัติการซ่อมของแต่ละเครื่อง</small></div>
+      </div>
+      <label class="itrp-choice itrp-no-device"><input type="checkbox" id="itrp-no-device" name="no_device"> <span>${esc(model.NO_DEVICE_LABEL)}</span></label>
+    </div>`;
   const partsEditor = () => `<div class="field itrp-parts" data-field="parts">
       <span class="field-label">รายการอะไหล่ / วัสดุที่ใช้ (ถ้ามี)</span>
       <div class="table-wrap"><table class="itrp-parts-edit"><thead><tr><th scope="col">ลำดับ</th><th scope="col">รายการ</th><th scope="col">จำนวน</th><th scope="col">ราคาต่อหน่วย (บาท)</th><th scope="col">หมายเหตุ</th><th scope="col"><span class="sr-only">ลบ</span></th></tr></thead>
@@ -409,7 +451,8 @@
 
   // ฟอร์มส่งงาน (ผู้ดูแลงาน IT) ซ่อนไว้จนกดปุ่ม "ส่งงาน" · ส่วน "สำหรับแผนก IT": สาเหตุ สรุปสาเหตุ การตรวจซ่อม การซ่อม-แก้ไข PR./PO. อะไหล่
   // ชื่อผู้ซ่อม/สถานที่ส่งซ่อมใช้ช่องเดียว: ซ่อมภายในซ่อนช่อง · เรียกผู้ซ่อมภายนอกไม่บังคับ · ส่งซ่อมที่บังคับ (ป้ายช่องเปลี่ยนที่ module-itrp.js)
-  function completeFormCard() {
+  // assetCode = รหัสเครื่องที่ผู้แจ้งกรอกไว้ในใบ (เติมให้แถวแรกของตารางเครื่อง แก้ได้)
+  function completeFormCard({ assetCode = "" } = {}) {
     return `<section class="card itrp-complete-card" id="itrp-complete-card" aria-labelledby="itrp-complete-title" hidden>
       <h2 id="itrp-complete-title">ส่งงาน · บันทึกการซ่อม (สำหรับแผนก IT)</h2>
       <p class="muted small">กรอกผลการซ่อมก่อนส่งใบกลับให้ผู้แจ้งตรวจ · ระบบบันทึกคุณเป็นช่างผู้ดำเนินการซ่อมพร้อมวันและเวลา</p>
@@ -422,6 +465,7 @@
         <div class="field" data-field="repair_vendor" id="itrp-vendor-field" hidden><label for="itrp-vendor" id="itrp-vendor-label">ชื่อผู้ซ่อม</label><input class="input" id="itrp-vendor" name="repair_vendor" maxlength="${model.MAX_NOTE}" autocomplete="off"></div>
         <div class="field" data-field="repair_action"><label for="itrp-repair-action">การซ่อม-แก้ไขที่เกิดขึ้น ${REQUIRED}</label><textarea class="textarea" id="itrp-repair-action" name="repair_action" rows="3" maxlength="${model.MAX_LONG_TEXT}"></textarea></div>
         <div class="field" data-field="pr_po_no"><label for="itrp-pr-po">เอกสารสำคัญอ้างอิง ใบ PR./PO.No. (ไม่บังคับ)</label><input class="input" id="itrp-pr-po" name="pr_po_no" maxlength="${model.MAX_PR_PO}" autocomplete="off"></div>
+        ${devicesEditor(assetCode)}
         ${partsEditor()}
         <div class="form-actions"><button type="button" class="btn secondary" id="itrp-complete-cancel">ยกเลิก</button><button type="submit" class="btn is-primary">ส่งงาน</button></div>
       </form>
@@ -507,7 +551,7 @@
         <div class="stack"${hasFiles ? ' id="attachment-gallery"' : ""}>
           ${pending ? answerCard(pending) : ""}
           ${actionsCard(buttons)}
-          ${has("complete") ? completeFormCard() : ""}
+          ${has("complete") ? completeFormCard({ assetCode: detail.asset_code }) : ""}
           ${has("request_rework") ? reworkFormCard() : ""}
           ${has("request_info") ? askFormCard() : ""}
           <section class="card itrp-facts" aria-labelledby="itrp-facts-title"><h2 id="itrp-facts-title">ข้อมูลใบแจ้งซ่อม</h2>
@@ -692,7 +736,7 @@
   // ล้างข้อมูลใบแจ้งซ่อมทดสอบ: เฉพาะ admin ตัวจริงที่อยู่ในโหมดทดสอบ (state.sandbox ตั้งโดย app.js)
   const purgeRow = () => `<div class="itrp-purge"><button type="button" class="btn danger small" id="itrp-purge">ล้างข้อมูลใบแจ้งซ่อมทดสอบ</button></div>`;
 
-  const api = { head, newButton, tabs, page, errorCard, mineList, approvalsList, itList, orderForm, orderReview, uploadPanel, detailPage, detailHead, completeFormCard, partRow, vendorLabel, reworkFormCard, askFormCard, answerCard, commentsCard, reportCards, partsTable, printComments, reworkRoundsCard, filesAndReworks, historyCard, actionsCard, printSheet, printPage, settingsPage, staffTable, docCounterCard, purgeRow, testTag };
+  const api = { head, newButton, tabs, page, errorCard, mineList, approvalsList, itList, orderForm, orderReview, uploadPanel, detailPage, detailHead, completeFormCard, partRow, deviceRow, devicesTable, codeOptions, vendorLabel, reworkFormCard, askFormCard, answerCard, commentsCard, reportCards, partsTable, printComments, reworkRoundsCard, filesAndReworks, historyCard, actionsCard, printSheet, printPage, settingsPage, staffTable, docCounterCard, purgeRow, testTag };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_ITRP_PAGES = Object.freeze(api);
 })(typeof window !== "undefined" ? window : globalThis);

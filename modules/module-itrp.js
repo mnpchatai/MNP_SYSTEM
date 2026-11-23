@@ -494,12 +494,22 @@
     }
 
     // ---- ฟอร์มส่งงาน (ผู้ดูแลงาน IT): ซ่อนไว้จนกดปุ่ม "ส่งงาน" · ส่วน "สำหรับแผนก IT" + ตารางอะไหล่ แล้วเรียก app_itrp_complete ครั้งเดียว ----
+    let deviceOptionsRequested = false;
+    async function loadDeviceOptions() {
+      if (deviceOptionsRequested) return;
+      deviceOptionsRequested = true;
+      const result = await attempt(rpc("app_itrp_list_devices", {})); // ล้มเหลว (เช่น สิทธิ์/เครือข่าย) = ไม่มีรายการให้เลือก ฟอร์มยังใช้ได้
+      const list = document.querySelector("#itrp-device-codes");
+      if (!result || !Array.isArray(result.value) || !list || list.isConnected === false) return;
+      list.innerHTML = pages.codeOptions(result.value);
+    }
     function openComplete() {
       const card = document.querySelector("#itrp-complete-card");
       if (!card) return;
       card.hidden = false;
       card.scrollIntoView?.({ block: "start", behavior: "smooth" });
       document.querySelector("#itrp-cause")?.focus({ preventScroll: true });
+      loadDeviceOptions();
     }
     function bindComplete() {
       const card = document.querySelector("#itrp-complete-card");
@@ -509,6 +519,10 @@
       const stepsApi = window.MNP_FORM_STEPS;
       const partsBody = form.querySelector("#itrp-parts-body");
       const addButton = form.querySelector("#itrp-part-add");
+      const devicesBody = form.querySelector("#itrp-devices-body");
+      const devicesWrap = form.querySelector("#itrp-devices-wrap");
+      const deviceAddButton = form.querySelector("#itrp-device-add");
+      const noDevice = form.querySelector("#itrp-no-device");
       const causeNoteField = form.querySelector("#itrp-cause-note-field");
       const vendorField = form.querySelector("#itrp-vendor-field");
       const vendorLabel = form.querySelector("#itrp-vendor-label");
@@ -529,6 +543,24 @@
         price: row.querySelector('[name="part_price"]').value,
         note: row.querySelector('[name="part_note"]').value,
       }));
+      // เครื่อง/อุปกรณ์ที่ซ่อม (แถวละเครื่อง) · ชื่อช่องตรงกับ model.normalizeDevices
+      const deviceRows = () => [...devicesBody.querySelectorAll("[data-device-row]")].map((row) => ({
+        device_code: row.querySelector('[name="device_code"]').value,
+        remark: row.querySelector('[name="device_remark"]').value,
+        symptom_note: row.querySelector('[name="device_symptom"]').value,
+        action_note: row.querySelector('[name="device_action"]').value,
+      }));
+      const DEVICE_INPUT_NAME = { device_code: "device_code", remark: "device_remark", symptom_note: "device_symptom", action_note: "device_action" };
+      // เหมือน markInvalidParts: กรอบแดงเฉพาะช่องที่ผิดจริง (กลไกกลางตั้งไว้ที่ช่องแรกของตารางเสมอ) คืนช่องแรกที่ผิด
+      const markInvalidDevices = (invalid) => {
+        devicesBody.querySelectorAll("[aria-invalid='true']").forEach((node) => node.removeAttribute("aria-invalid"));
+        const rows = [...devicesBody.querySelectorAll("[data-device-row]")];
+        const inputs = invalid.map(({ row, field }) => rows[row]?.querySelector(`[name="${DEVICE_INPUT_NAME[field]}"]`)).filter(Boolean);
+        inputs.forEach((input) => input.setAttribute("aria-invalid", "true"));
+        // ช่องอาการ/การแก้ไขอยู่ในส่วนที่พับ: ถ้าผิดที่ช่องนั้นให้เปิดส่วนที่พับก่อน ไม่งั้นมองไม่เห็นกรอบแดง
+        inputs.forEach((input) => { const details = input.closest?.("details"); if (details) details.open = true; });
+        return inputs[0] ?? null;
+      };
       // ชื่อช่องในตารางอะไหล่ ตรงกับ `invalid[].field` ของ model.normalizeParts
       const PART_INPUT_NAME = { item_name: "part_item", quantity: "part_quantity", price: "part_price", note: "part_note" };
       // ทำ aria-invalid (กรอบแดง) เฉพาะช่องที่ผิดจริง คืนช่องแรกที่ผิด · เรียกหลัง showFieldErrors เพราะมันตั้งกรอบแดงที่ช่องแรกของตารางไว้ก่อนแล้ว
@@ -552,6 +584,9 @@
         vendorField.hidden = !vendor.visible;
         if (vendor.visible) vendorLabel.innerHTML = pages.vendorLabel(vendor);
         else stepsApi.clearFieldError(form, "repair_vendor");
+        // ติ๊ก "งานนี้ไม่มีรหัสเครื่อง" = ซ่อนตารางเครื่อง (ค่าที่กรอกไว้ยังอยู่ ติ๊กออกแล้วกลับมา) และไม่ส่งรายการเครื่อง
+        devicesWrap.hidden = noDevice.checked;
+        if (noDevice.checked) stepsApi.clearFieldError(form, "devices");
       };
       // วาดตารางอะไหล่ใหม่จากข้อมูล (ลำดับ/ป้ายของช่องเรียงใหม่เสมอ) · ครบ MAX_PARTS แถวปิดปุ่มเพิ่ม · ลบแถวสุดท้ายแล้วเหลือแถวว่าง 1 แถว
       const drawParts = (rows, focusIndex = null) => {
@@ -560,6 +595,34 @@
         addButton.disabled = list.length >= model.MAX_PARTS;
         if (focusIndex !== null) partsBody.querySelectorAll('[name="part_item"]')[focusIndex]?.focus();
       };
+      // วาดแถวเครื่องใหม่จากข้อมูล (ลำดับ/ป้ายของช่องเรียงใหม่เสมอ) · ครบ MAX_DEVICES แถวปิดปุ่มเพิ่ม · ลบแถวสุดท้ายแล้วเหลือแถวว่าง 1 แถว
+      const drawDevices = (rows, focusIndex = null) => {
+        const list = rows.length ? rows : [{}];
+        devicesBody.innerHTML = list.map((row, index) => pages.deviceRow(index, row)).join("");
+        deviceAddButton.disabled = list.length >= model.MAX_DEVICES;
+        if (focusIndex !== null) devicesBody.querySelectorAll('[name="device_code"]')[focusIndex]?.focus();
+      };
+      deviceAddButton.addEventListener("click", () => {
+        const rows = deviceRows();
+        if (rows.length >= model.MAX_DEVICES) return;
+        stepsApi.clearFieldError(form, "devices");
+        drawDevices([...rows, {}], rows.length);
+      });
+      devicesBody.addEventListener("click", (event) => {
+        const remove = event.target.closest("[data-device-remove]");
+        if (!remove) return;
+        const rows = deviceRows();
+        const index = [...devicesBody.querySelectorAll("[data-device-row]")].indexOf(remove.closest("[data-device-row]"));
+        if (index < 0) return;
+        rows.splice(index, 1);
+        stepsApi.clearFieldError(form, "devices");
+        drawDevices(rows, Math.min(index, rows.length - 1) >= 0 ? Math.min(index, rows.length - 1) : 0);
+      });
+      // แก้ช่องไหนในตารางเครื่อง กรอบแดงของช่องนั้นหาย · แก้ครบทุกช่องที่ผิดแล้วข้อความใต้ตารางหายตาม
+      devicesBody.addEventListener("input", (event) => {
+        event.target.removeAttribute?.("aria-invalid");
+        if (!devicesBody.querySelector("[aria-invalid='true']")) stepsApi.clearFieldError(form, "devices");
+      });
       addButton.addEventListener("click", () => {
         const rows = partRows();
         if (rows.length >= model.MAX_PARTS) return;
@@ -584,7 +647,10 @@
       });
       syncChoices();
       // ฟอร์มเปิดอยู่และพิมพ์ค้าง = มีของค้างที่ยังไม่ส่ง · ระหว่างส่งแผงจัดการเอง (ไม่นับ)
-      const hasInput = () => Object.values(values()).some((value) => String(value ?? "").trim() !== "") || partRows().some((row) => Object.values(row).some((value) => String(value ?? "").trim() !== ""));
+      // แถวเครื่องแรกถูกเติมรหัสที่ผู้แจ้งกรอกไว้ให้ จึงเทียบกับค่าตั้งต้น (ไม่นับว่าพิมพ์ค้าง) · ติ๊ก "ไม่มีรหัสเครื่อง" นับว่าแก้แล้ว
+      const initialDevices = JSON.stringify(deviceRows());
+      const hasInput = () => Object.values(values()).some((value) => String(value ?? "").trim() !== "") || partRows().some((row) => Object.values(row).some((value) => String(value ?? "").trim() !== ""))
+        || noDevice.checked || JSON.stringify(deviceRows()) !== initialDevices;
       watchUnsaved(() => (card.isConnected && !card.hidden && !busy && hasInput() ? 1 : 0));
 
       document.querySelector("#itrp-complete-cancel")?.addEventListener("click", () => { card.hidden = true; message.innerHTML = ""; });
@@ -594,13 +660,17 @@
         message.innerHTML = "";
         const current = values();
         const errors = stepsApi.validate(model.completeRules({ causeKind: () => current.cause_kind, repairMethod: () => current.repair_method }), current);
+        // เครื่องที่ซ่อม (ตามลำดับบนจอ: ก่อนอะไหล่) ต้องมี ≥1 เครื่อง หรือติ๊ก "ไม่มีรหัสเครื่อง"
+        const devices = model.normalizeDevices(deviceRows(), { noDevice: noDevice.checked });
+        if (devices.errors.length) errors.push({ name: "devices", message: devices.errors[0] });
         const parts = model.normalizeParts(partRows());
         if (parts.errors.length) errors.push({ name: "parts", message: parts.errors[0] }); // แสดงข้อผิดพลาดแถวแรกที่พบ แก้แล้วกดส่งใหม่เพื่อดูแถวถัดไป
         if (errors.length) {
           const firstTarget = stepsApi.showFieldErrors(form, errors);
-          // กลไกกลางทำกรอบแดงที่ช่องแรกของตารางอะไหล่เสมอ → ย้ายไปที่ช่องที่ผิดจริงทุกช่อง (ข้อความใต้ตารางคงเดิม)
+          // กลไกกลางทำกรอบแดงที่ช่องแรกของตารางเครื่อง/อะไหล่เสมอ → ย้ายไปที่ช่องที่ผิดจริงทุกช่อง (ข้อความใต้ตารางคงเดิม)
+          const firstDeviceInput = markInvalidDevices(devices.invalid);
           const firstPartInput = markInvalidParts(parts.invalid);
-          const focusTarget = errors[0].name === "parts" ? firstPartInput : firstTarget;
+          const focusTarget = errors[0].name === "parts" ? firstPartInput : errors[0].name === "devices" ? firstDeviceInput : firstTarget;
           focusTarget?.focus?.();
           return;
         }
@@ -610,7 +680,7 @@
         busy = true;
         setFormBusy(form, true);
         try {
-          await rpc(spec.rpc, model.completeParams(detail.id, current, parts.rows));
+          await rpc(spec.rpc, model.completeParams(detail.id, current, parts.rows, devices.rows));
         } catch (error) {
           showError(escapeHtml(failure(error, { write: true }).message));
           busy = false;

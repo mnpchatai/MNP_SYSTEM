@@ -14,6 +14,9 @@
   const MAX_NOTE = 200; // ข้อความระบุของ "อื่นๆ" / ผู้ซ่อม-สถานที่ส่งซ่อม / ชื่อรายการและหมายเหตุของอะไหล่
   const MAX_PR_PO = 100;
   const MAX_PARTS = 10; // แถวอะไหล่/วัสดุสูงสุดต่อการส่งงานหนึ่งครั้ง
+  const MAX_DEVICES = 10; // แถวเครื่อง/อุปกรณ์ที่ซ่อมสูงสุดต่อการส่งงานหนึ่งครั้ง · ตรงกับ app_itrp_complete (p_devices)
+  const MAX_DEVICE_CODE = 50; // รหัสเครื่องในประวัติการซ่อม/ทะเบียนเครื่อง (ตรงกับ private.itrp_code_error)
+  const MAX_REMARK = 500; // ข้อเสนอแนะต่อเครื่อง / ในประวัติการซ่อม
   const MAX_REASON = 500;
   const MAX_INFO_BODY = 2000; // ข้อความถาม/ตอบ ตรงกับ app_itrp_request_info / app_itrp_provide_info
   const MAX_FILES = 10; // ต่อหนึ่งครั้งที่ส่ง (ตอนแจ้ง แต่ละรอบแก้ไข หรือแต่ละข้อความถาม/ตอบ) ตรงกับ app_itrp_add_attachment / app_itrp_add_comment_attachment
@@ -545,6 +548,59 @@
     });
     return { rows: sent, errors, filled, invalid };
   }
+  /* ---------- ฟอร์มส่งงาน: เครื่อง / อุปกรณ์ที่ซ่อม (ประวัติการซ่อมเครื่อง FM02) ---------- */
+  // แถวละ 1 เครื่อง: รหัสเครื่อง (ตัวพิมพ์ใหญ่ ไม่บังคับว่าต้องมีในทะเบียน) · ข้อเสนอแนะ (ไม่บังคับ) · อาการ/การแก้ไขเฉพาะเครื่อง (ไม่บังคับ ว่าง = ใช้ของใบ)
+  // ต้องมีอย่างน้อย 1 เครื่อง หรือติ๊ก "งานนี้ไม่มีรหัสเครื่อง" (ส่ง p_devices = [])
+  const EMPTY_DEVICE_ROW = Object.freeze({ device_code: "", remark: "", symptom_note: "", action_note: "" });
+  const NO_DEVICE_LABEL = "งานนี้ไม่มีรหัสเครื่อง (เช่น งานเครือข่าย)";
+  const NO_DEVICE_ERROR = `กรุณาระบุรหัสเครื่องอย่างน้อย 1 เครื่อง หรือติ๊ก "${NO_DEVICE_LABEL}"`;
+  // รหัสเครื่อง = ตัดช่องว่างหัวท้าย + ตัวพิมพ์ใหญ่ (ฐานข้อมูลทำเหมือนกัน จึงส่งตัวเล็กได้)
+  const normalizeDeviceCode = (value) => textOf(value).toUpperCase();
+  // ข้อความผิดของรหัสที่ผ่าน normalizeDeviceCode แล้ว (ตรงกับ private.itrp_code_error) · ผ่าน = null
+  function deviceCodeError(code) {
+    if (!code) return "กรุณาระบุรหัสเครื่อง";
+    if (charCount(code) > MAX_DEVICE_CODE) return `รหัสเครื่องต้องไม่เกิน ${MAX_DEVICE_CODE} ตัวอักษร`;
+    if (/[\u0000-\u001f\u007f-\u009f]/.test(code)) return "รหัสเครื่องมีอักขระที่ใช้ไม่ได้";
+    return null;
+  }
+  // แถวแรกของฟอร์มส่งงานเติมรหัสที่ผู้แจ้งกรอกไว้ให้ก่อน (แก้ได้) · ไม่มีรหัส = แถวว่าง 1 แถว
+  const initialDeviceRows = (assetCode) => [{ ...EMPTY_DEVICE_ROW, device_code: normalizeDeviceCode(assetCode) }];
+  // ตรวจและเตรียมแถวเครื่องที่กรอก: rows = [{ device_code, remark, symptom_note, action_note }] (ข้อความจากช่องกรอก) · noDevice = ติ๊ก "งานนี้ไม่มีรหัสเครื่อง"
+  // คืน { rows: แถวที่ส่งให้ฐานข้อมูล ([] เมื่อ noDevice) แถวว่างคงไว้ให้เลขแถวตรงกับจอ, errors: [ข้อความ], filled: จำนวนแถวที่มีข้อมูล,
+  //       invalid: [{ row: ลำดับแถวเริ่มที่ 0, field: device_code|remark|symptom_note|action_note }] = ช่องที่ผิดจริง (ให้หน้าเว็บทำกรอบแดงถูกช่อง) }
+  // ข้อผิดที่ไม่ผูกช่อง ("เกิน MAX_DEVICES แถว") อยู่ใน errors อย่างเดียว · ไม่มีเครื่องเลยและไม่ติ๊ก = ผูกกับรหัสเครื่องของแถวแรก
+  function normalizeDevices(rows, { noDevice = false } = {}) {
+    if (noDevice) return { rows: [], errors: [], filled: 0, invalid: [] };
+    const list = Array.isArray(rows) ? rows : [];
+    const errors = [];
+    const invalid = [];
+    const seen = new Set();
+    let filled = 0;
+    if (list.length > MAX_DEVICES) errors.push(`เครื่อง/อุปกรณ์ที่ซ่อมต้องไม่เกิน ${MAX_DEVICES} รายการ`);
+    const sent = list.map((row, index) => {
+      const code = normalizeDeviceCode(row?.device_code);
+      const symptom = textOf(row?.symptom_note);
+      const action = textOf(row?.action_note);
+      const remark = textOf(row?.remark);
+      if (!code && !symptom && !action && !remark) return { device_code: "", symptom_note: null, action_note: null, remark: null };
+      filled += 1;
+      const at = `แถวที่ ${index + 1}`;
+      const fail = (field, message) => { errors.push(message); invalid.push({ row: index, field }); };
+      const codeProblem = deviceCodeError(code);
+      if (codeProblem) fail("device_code", `${at}: ${codeProblem}`);
+      else if (seen.has(code)) fail("device_code", `${at}: รหัสเครื่อง ${code} ซ้ำกับแถวก่อนหน้า (ใส่รหัสเดียวกันสองครั้งในการส่งงานเดียวกันไม่ได้)`);
+      else seen.add(code);
+      if (charCount(symptom) > MAX_LONG_TEXT) fail("symptom_note", `${at}: อาการของเครื่องต้องไม่เกิน ${MAX_LONG_TEXT.toLocaleString("en-US")} ตัวอักษร`);
+      if (charCount(action) > MAX_LONG_TEXT) fail("action_note", `${at}: การแก้ไขของเครื่องต้องไม่เกิน ${MAX_LONG_TEXT.toLocaleString("en-US")} ตัวอักษร`);
+      if (charCount(remark) > MAX_REMARK) fail("remark", `${at}: ข้อเสนอแนะต้องไม่เกิน ${MAX_REMARK} ตัวอักษร`);
+      return { device_code: code, symptom_note: symptom || null, action_note: action || null, remark: remark || null };
+    });
+    if (!filled && !errors.length) { errors.push(NO_DEVICE_ERROR); invalid.push({ row: 0, field: "device_code" }); }
+    return { rows: sent, errors, filled, invalid };
+  }
+  // รายการรหัสเครื่องให้เลือกใน datalist: "<รหัส> · <ผู้ใช้> · <แผนก>" (เครื่องที่ยกเลิกการใช้งานแล้วบอกไว้) · devices = ผลของ app_itrp_list_devices
+  const deviceOptionText = (device) => [device?.code, device?.user_name, device?.division, device?.status === "retired" ? "(ยกเลิกการใช้งานแล้ว)" : ""].filter(Boolean).join(" · ");
+
   // กติกาของช่องส่วน "สำหรับแผนก IT" (ข้อความผิดพลาดตรงกับ app_itrp_complete) · ลำดับตามบนจอ
   function completeRules({ causeKind = () => "", repairMethod = () => "" } = {}) {
     return [
@@ -571,8 +627,9 @@
     if (method === "external_onsite") return { visible: true, required: false, label: "ชื่อผู้ซ่อม (ไม่บังคับ)" };
     return { visible: false, required: false, label: "" };
   }
-  // พารามิเตอร์ของ app_itrp_complete · parts = ผลของ normalizeParts(...).rows · ข้อความระบุที่ไม่เกี่ยวกับตัวเลือกที่เลือกไม่ส่ง (ซ่อมภายในไม่มีผู้ซ่อมภายนอก)
-  function completeParams(requestId, values, parts) {
+  // พารามิเตอร์ของ app_itrp_complete · parts = ผลของ normalizeParts(...).rows · devices = ผลของ normalizeDevices(...).rows ([] = ไม่มีรหัสเครื่อง)
+  // ข้อความระบุที่ไม่เกี่ยวกับตัวเลือกที่เลือกไม่ส่ง (ซ่อมภายในไม่มีผู้ซ่อมภายนอก)
+  function completeParams(requestId, values, parts, devices) {
     return {
       p_request_id: requestId,
       p_cause: textOf(values.cause),
@@ -583,6 +640,7 @@
       p_repair_action: textOf(values.repair_action),
       p_pr_po_no: textOf(values.pr_po_no) || null,
       p_parts: Array.isArray(parts) ? parts : [],
+      p_devices: Array.isArray(devices) ? devices : [],
     };
   }
   // บันทึกการซ่อมชุดล่าสุดสำหรับแสดงและพิมพ์ + ประวัติชุดก่อนหน้า (เก่า → ใหม่ · ชุดล่าสุดอยู่ท้าย) · ยังไม่เคยส่งงาน = report null
@@ -603,6 +661,10 @@
       repairMethod: repairMethodText(report.repair_method, report.repair_vendor),
       repairAction: report.repair_action,
       prPoNo: report.pr_po_no ?? "",
+      // เครื่อง/อุปกรณ์ที่ซ่อมในรอบนี้ (ไม่มีคีย์ devices = ฐานข้อมูลยังไม่ได้อัปเดต หรือไม่มีรหัสเครื่อง → ว่าง ไม่พัง)
+      devices: (Array.isArray(report.devices) ? report.devices : []).slice().sort((a, b) => Number(a.seq) - Number(b.seq)).map((device) => ({
+        seq: device.seq, code: device.device_code, symptom: device.symptom_note ?? "", action: device.action_note ?? "", remark: device.remark ?? "",
+      })),
       parts: (Array.isArray(report.parts) ? report.parts : []).slice().sort((a, b) => Number(a.line_no) - Number(b.line_no)).map((part) => ({
         no: part.line_no, item: part.item_name, quantity: formatQuantity(part.quantity), price: formatPrice(part.price), note: part.note ?? "",
       })),
@@ -803,7 +865,7 @@
   }
 
   const api = {
-    MODULE_VERSION, VERSION_DATE, IN_DEVELOPMENT, YEAR_OFFSET, MAX_SYMPTOM, MAX_LONG_TEXT, MAX_ASSET_CODE, MAX_DEVICE_NAME, MAX_NOTE, MAX_PR_PO, MAX_PARTS, MAX_INFO_BODY, MAX_REASON, MAX_REASON_ON_BEHALF, CANCEL_ON_BEHALF, isCancelOnBehalf, cancelReasonSpec, MAX_FILES, MAX_FILE_BYTES,
+    MODULE_VERSION, VERSION_DATE, IN_DEVELOPMENT, YEAR_OFFSET, MAX_SYMPTOM, MAX_LONG_TEXT, MAX_ASSET_CODE, MAX_DEVICE_NAME, MAX_NOTE, MAX_PR_PO, MAX_PARTS, MAX_DEVICES, MAX_DEVICE_CODE, MAX_REMARK, MAX_INFO_BODY, MAX_REASON, MAX_REASON_ON_BEHALF, CANCEL_ON_BEHALF, isCancelOnBehalf, cancelReasonSpec, MAX_FILES, MAX_FILE_BYTES,
     REQUEST_KINDS, REPAIR_TARGETS, CAUSE_KINDS, REPAIR_METHODS, FILE_MIME_BY_EXTENSION, FILE_ACCEPT, FILE_HINT, FILES_PREPARING_MESSAGE, EMPTY_REPAIR_FORM, EMPTY_COMPLETE_FORM, EMPTY_PART_ROW, EMPTY_REWORK_FORM, STATUS_LABELS, EVENT_LABELS, ACTION_BUTTONS, ACTION_ORDER, IT_GROUPS, APPROVAL_STATE_LABELS,
     requestKindLabel, repairTargetLabel, causeKindLabel, repairMethodLabel, requestKindText, repairTargetText, causeKindText, repairMethodText, deviceText,
     reworkTag, statusLabel, statusBadgeClass, myStatusLabel, isTestDoc, INFO_STAGE_LABELS, infoStageLabel, commentKindLabel, commentRows, allFiles, pendingQuestion, infoBadgeTitle,
@@ -812,7 +874,8 @@
     actionButtons, countsAsBothSteps, confirmMessageFor, BOTH_STEPS_NOTE, completeToast, answerToast, pendingStepLabel, eventLabel, eventLabelFor, CANCELLED_ON_BEHALF_LABEL, printSignoffs, printOutcome, approvalSummary,
     itGroupOf, groupItOrders, itActionableCount, awaitingMyReceiveCount, awaitingMyAnswerCount, mineWaiting, mineWaitingNote, waitingForMeCount, itApprovalProgress, CLOSED_STATUSES, openOrderCount, cardSummary,
     repairRules, createParams, validateReason, infoRules, infoParams,
-    normalizeParts, completeRules, completeParams, vendorField, repairReports, reportView,
+    normalizeParts, EMPTY_DEVICE_ROW, NO_DEVICE_LABEL, NO_DEVICE_ERROR, normalizeDeviceCode, deviceCodeError, initialDeviceRows, normalizeDevices, deviceOptionText,
+    completeRules, completeParams, vendorField, repairReports, reportView,
     fileExtension, fileMime, fileBucket, filePath, formatFileSize, validateFiles, makeUploadEntries, isAlreadyUploaded, isFileRejection, runUploads, roundLabel, attachmentGroups, galleryFile, reworkRounds, reworkRules, reworkParams,
     formatDocNo, validateNextSeq, staffRoleText,
     describeError, describeUploadError, purgeSummary,

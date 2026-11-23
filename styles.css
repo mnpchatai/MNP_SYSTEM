@@ -3509,6 +3509,23 @@ table.bom-tree td.right { white-space: nowrap; }
   .itrp-sheet-section { break-after: avoid; }
 }
 
+/* ---------- ใบแจ้งซ่อม (itrp) V1.02: เครื่อง/อุปกรณ์ที่ซ่อมในฟอร์มส่งงาน + บันทึกการซ่อม · modules/itrp-pages.js ---------- */
+.itrp-devices-list { margin: 0 0 8px; padding: 0; list-style: none; display: grid; gap: 10px; }
+.itrp-device-row { padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper); }
+.itrp-device-main { display: grid; grid-template-columns: 2em minmax(120px, 200px) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.itrp-device-no { color: var(--muted); font-weight: 700; text-align: center; }
+.itrp-device-main .input { min-width: 0; width: 100%; }
+.itrp-device-notes { margin-top: 8px; }
+.itrp-device-notes > summary { min-height: 36px; display: flex; align-items: center; cursor: pointer; color: var(--primary); font-size: var(--text-meta); font-weight: 700; }
+.itrp-device-note { display: grid; gap: 4px; margin-top: 8px; font-size: var(--text-meta); font-weight: 700; }
+.itrp-device-note .textarea { font-weight: 400; }
+.itrp-no-device { margin-top: 10px; }
+.itrp-subhead { margin: 16px 0 8px; font-size: var(--text-ui); }
+@media (max-width: 719px) {
+  .itrp-device-main { grid-template-columns: 2em minmax(0, 1fr) auto; }
+  .itrp-device-remark { grid-column: 2 / -1; }
+}
+
 /* โมดูล SR (คลังยางเส้นยาว): แถบตัวกรองของหน้าในคลัง/ประวัติ · หน้าล็อต · ป้ายล็อต (พิมพ์) */
 .sr-toolbar { align-items: flex-end; }
 .sr-filter { flex: 0 1 200px; min-width: 150px; margin: 0; }
