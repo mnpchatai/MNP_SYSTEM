@@ -92,7 +92,10 @@ test("chart: grid in minutes and dNm, one path per test with its colour, a t90 m
   assert.equal(geometry.seconds, 1800);
   assert.equal(geometry.width, 800);
   assert.equal(views.niceStep(9, 5), 2);
-  assert.match(views.tipHtml(166, [{ color: "#fff", machineId: "112", torque: 7.9 }]), /2:46 นาที[\s\S]*ID 112<b>7\.90<\/b>/);
+  const tip = views.tipHtml([{ color: "#fff", machineId: "112", t90: 166 }, { color: "#000", machineId: "113", t90: null }]);
+  assert.match(tip, /t90 \(นาที:วินาที\)[\s\S]*ID 112<b>2:46<\/b>/, "the tooltip shows each test t90, not the torque at the pointer");
+  assert.match(tip, /ID 113<b>–<\/b>/, "a test that never reached 90% shows a dash");
+  assert.doesNotMatch(views.chartSvg([{ id: "1", color: "#fff", curve, t90: 160 }], 800).svg, /mdr-cross/, "no vertical pointer line: the tooltip no longer depends on the pointer time");
 });
 
 test("swelling trend chart: one value at a time (MH−ML or t90), a dot per test, a daily AVG line, and a normal band from the formula history", () => {

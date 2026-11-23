@@ -161,13 +161,11 @@
       if (!geometry) return;
       cursor = Math.max(0, Math.min(geometry.seconds, Math.round(second)));
       const px = geometry.left + (cursor / geometry.seconds) * geometry.plotW;
-      const cross = plot.querySelector("#mdr-cross");
-      cross?.setAttribute("x1", px.toFixed(1));
-      cross?.setAttribute("x2", px.toFixed(1));
-      cross?.setAttribute("visibility", "visible");
-      const rows = series.filter((item) => !current.hidden.has(item.id) && cursor < item.curve.length)
-        .map((item) => ({ color: item.color, machineId: item.machineId, torque: item.curve[cursor] }));
-      tip.innerHTML = views.tipHtml(cursor, rows);
+      // ป้ายแสดง t90 ของทุกครั้งที่แสดงอยู่ (ไม่ใช่แรงบิด ณ วินาทีที่ชี้) ตำแหน่งที่ชี้ใช้แค่วางป้ายข้างเมาส์
+      const rows = series.filter((item) => !current.hidden.has(item.id))
+        .map((item) => ({ color: item.color, machineId: item.machineId, t90: item.t90 }));
+      if (!rows.length) { tip.hidden = true; return; } // ซ่อนทุกเส้นแล้ว: ไม่มีอะไรให้แสดง
+      tip.innerHTML = views.tipHtml(rows);
       tip.hidden = false;
       const left = px + 18 + 14; // 18 = padding ของกราฟ
       const room = plot.clientWidth - tip.offsetWidth - 8;
@@ -178,7 +176,6 @@
     function hide() {
       cursor = null;
       tip.hidden = true;
-      plot.querySelector("#mdr-cross")?.setAttribute("visibility", "hidden");
     }
 
     const secondAt = (event) => {
