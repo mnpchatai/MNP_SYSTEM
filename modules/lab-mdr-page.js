@@ -1,7 +1,8 @@
 // รายงานทดสอบ MDR ของ MNP LAB — การเชื่อมต่อของหน้า (#/lab?module=mdr): อ่านฟีด อัปโหลดไฟล์ .ini วาดกราฟ และผูกเหตุการณ์
 // ข้อมูลล้วนที่ lab-mdr-model.js · HTML/SVG ที่ lab-mdr-views.js · module-lab.js ตัดสินสิทธิ์ของหน้า (labAccess) แล้วเรียก open()
 //
-// สิทธิ์จริงอยู่ที่ RPC: app_lab_mdr_feed, app_lab_mdr_curves และ app_lab_mdr_upload ตรวจ private.can_access_lab ทุกครั้ง (ทุกคนที่เข้า LAB ได้ อ่านและอัปโหลดได้)
+// สิทธิ์จริงอยู่ที่ RPC: app_lab_mdr_feed และ app_lab_mdr_curves ตรวจ private.can_access_lab ทุกครั้ง · app_lab_mdr_upload ตรวจ
+// private.can_write_lab (admin และบัญชี lab-only อัปโหลดได้ · ID ในรายชื่อ private.lab_access_employee_nos ดูได้อย่างเดียว)
 // ไม่มีรีเฟรชอัตโนมัติ: ข้อมูลเปลี่ยนเมื่อมีคนอัปโหลดเท่านั้น หน้านี้อ่านใหม่หลังอัปโหลดของตัวเองและทุกครั้งที่เปิดหน้า
 // เปลี่ยนสูตร = อ่านใหม่แล้ววาดเฉพาะเนื้อหา และแก้ URL ด้วย replaceState (ผลการอัปโหลดที่แสดงอยู่ไม่หาย)
 // เปลี่ยนช่วงวันของกราฟแรงบิด = อ่านเฉพาะกราฟ (app_lab_mdr_curves; วันเดียวของ feed ไม่ต้องอ่านซ้ำ) URL มี date= เมื่อแสดงวันเดียวที่ไม่ใช่วันล่าสุด
@@ -58,7 +59,8 @@
     zoomOwner = ""; // เปิดหน้าใหม่ (ไม่ใช่ goTo ในหน้าเดิม) = ช่วงเริ่มที่ล่าสุดเสมอ
     const mine = ++version;
     const route = model.readRoute(params);
-    app.innerHTML = shell(views.page(route), path, title);
+    // บัญชีดูอย่างเดียว (labWrite === false จาก app_lab_can_write) ไม่เห็นปุ่มอัปโหลด — ฐานข้อมูลปฏิเสธอยู่แล้ว นี่เป็น UX
+    app.innerHTML = shell(views.page(route, { canUpload: state.employee?.labWrite !== false }), path, title);
     bindShell();
     bindUpload(mine, denied);
     await paint(route, mine, denied);

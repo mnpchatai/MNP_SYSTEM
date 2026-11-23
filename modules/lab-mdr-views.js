@@ -48,9 +48,10 @@
   }
 
   // route = { part, formula, date } · body ถูกวาดทีหลังเมื่ออ่านข้อมูลแล้ว
-  function page(route) {
+  // canUpload: false = บัญชีดูอย่างเดียว ไม่มีปุ่มอัปโหลด
+  function page(route, { canUpload = true } = {}) {
     return `<div class="lab-page lab-mdr">
-      ${sections.moduleHead("mdr", { extra: uploadControl() })}
+      ${sections.moduleHead("mdr", { extra: canUpload ? uploadControl() : "" })}
       ${partTabs(route.part, route.formula)}
       <section class="card lab-mdr-result" id="mdr-result" role="status" aria-live="polite" hidden></section>
       <div id="mdr-body" aria-busy="true"><div class="card lab-mdr-loading">กำลังโหลด…</div></div>

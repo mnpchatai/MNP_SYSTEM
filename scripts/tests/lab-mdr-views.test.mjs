@@ -32,6 +32,14 @@ test("the page: module banner with the upload control, one tab per test set, the
   assert.equal(count(visibleText(page), /ทดสอบการพองตัวของยาง/g), 1);
 });
 
+test("the page for a view-only account has no upload control but keeps the tabs", () => {
+  const page = views.page({ part: "F2", formula: "A2004", date: "" }, { canUpload: false });
+  assert.doesNotMatch(page, /id="mdr-upload"/);
+  assert.doesNotMatch(page, /type="file"/);
+  assert.match(page, /<h1>รายงานทดสอบ MDR<\/h1>/);
+  assert.match(page, /data-part="F2" aria-current="page"/);
+});
+
 test("formula list: one row per formula linking to its page; an empty set explains how to upload", () => {
   const html = views.overview("F1", formulas);
   assert.match(html, /href="#\/lab\?module=mdr&amp;part=F1&amp;formula=B0005">B0005<\/a>/);

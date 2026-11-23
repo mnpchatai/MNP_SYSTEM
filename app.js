@@ -2001,6 +2001,7 @@ async function loadEmployee() {
   if (!data) throw Object.assign(new Error("บัญชีนี้ยังไม่ได้ผูกกับข้อมูลพนักงาน"), { code: "EMPLOYEE_NOT_LINKED" });
   const [{ data: modulesData, error: modulesError }, labAccess, labOnly, actingRole, isMaster] = await Promise.all([sb.rpc("app_my_approval_modules"), loadLabAccess(), loadLabOnly(), loadActingRole(data.acting_role_id), loadMasterAccess()]);
   if (modulesError) throw modulesError;
+  const labWrite = labAccess ? await loadLabWrite() : false;
   state.employee = {
     ...data,
     role: relation(data.role),
@@ -2008,6 +2009,7 @@ async function loadEmployee() {
     actingRole,
     approvalModules: new Set((modulesData ?? []).map((item) => item.code)),
     labAccess,
+    labWrite,
     labOnly,
     isMaster,
   };
@@ -2037,6 +2039,17 @@ async function loadLabAccess() {
     return false;
   }
   return data === true;
+}
+
+// สิทธิ์เขียนใน MNP LAB (อัปโหลด MDR): ฐานข้อมูลตัดสิน (app_lab_can_write → private.can_write_lab) หน้าเว็บใช้แค่ซ่อนปุ่มอัปโหลด
+// เรียกไม่ได้ (ฐานข้อมูลยังไม่มี RPC นี้) = ถือว่าเขียนได้เหมือนก่อนมีสิทธิ์ดูอย่างเดียว ฐานข้อมูลยังเป็นผู้ปฏิเสธจริง
+async function loadLabWrite() {
+  const { data, error } = await sb.rpc("app_lab_can_write");
+  if (error) {
+    console.warn("lab write access unavailable", error);
+    return true;
+  }
+  return data !== false;
 }
 
 // บทบาทหลักในการทำงานของบัญชี admin (employees.acting_role_id) — embed จาก employees ไม่ได้เพราะตั้งใจไม่มี foreign key ไป roles
