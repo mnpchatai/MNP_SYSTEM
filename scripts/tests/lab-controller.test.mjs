@@ -511,6 +511,12 @@ test("MDR torque chart: a tap anywhere outside the chart hides the t90 tooltip (
   assert.equal(tip.hidden, false, "a tap on the chart itself keeps the tooltip");
   taps().forEach((fn) => fn({ target: app.element("#mdr-table-scroll") }));
   assert.equal(tip.hidden, true, "a tap elsewhere hides it");
+  app.element("#mdr-formula").listeners.change({ target: { value: "A2004" } }); // วาดสูตรใหม่ในหน้าเดิม (ไม่ผ่าน dispose)
+  await flush();
+  await flush();
+  assert.equal(taps().length, 2, "the new chart adds its own listener");
+  [...taps()].forEach((fn) => fn({ target: app.element("#mdr-table-scroll") }));
+  assert.equal(taps().length, 1, "the replaced chart's listener removed itself on the next tap: no pile-up");
   await app.open("module=mdr&part=F2"); // หน้าอื่น (รายการสูตร ไม่มีกราฟ) แทนที่หน้านี้
   [...taps()].forEach((fn) => fn({ target: app.element("#mdr-table-scroll") }));
   assert.equal(taps().length, 0, "after leaving the page the listener removes itself");
