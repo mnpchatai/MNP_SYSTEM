@@ -11,7 +11,7 @@ const FILES = [
   "modules/rubberflow-rules.js", "modules/rubberflow-derive.js", "modules/rubberflow-actions.js", "modules/rubberflow-seed.js", "modules/rubberflow-store.js",
   "modules/rubberflow-ui.js", "modules/factory-kit.js", "modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js",
   "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js",
-  "modules/module-st.js", "modules/module-sr.js", "modules/module-qa.js", "modules/module-gr.js", "modules/module-pt.js", "modules/module-bg.js", "modules/module-pk.js", "modules/wh-pages.js", "modules/module-wh.js",
+  "modules/module-st.js", "modules/module-sr.js", "modules/module-qa.js", "modules/gr-pages.js", "modules/module-gr.js", "modules/module-pt.js", "modules/module-bg.js", "modules/module-pk.js", "modules/wh-pages.js", "modules/module-wh.js",
 ];
 const DEPT_FILES = ["st", "sr", "qa", "gr", "pt", "bg", "pk", "wh"].map((dept) => `modules/module-${dept}.js`);
 const ALL_DEPTS = ["FACTORY_ST", "FACTORY_SR", "FACTORY_QA", "FACTORY_GR", "FACTORY_PT", "FACTORY_BG", "FACTORY_PK", "FACTORY_WH"];
@@ -369,16 +369,22 @@ test("GR shows its open jobs on the shared job card with the same buttons as BOM
   assert.doesNotMatch(html, /data-rf-open="jobClose"/, "staff cannot close a job");
   assert.doesNotMatch(html, /แท่งยาว/);
   assert.doesNotMatch(html, /#\/bom\?p=work/, "no link back to a BOM work page");
-  // เหมือนการ์ดเดียวกันที่หน้า BOM งานของฉัน ของผู้ใช้คนเดียวกัน
+  // เหมือนการ์ดเดียวกันที่หน้า BOM งานของฉัน ของผู้ใช้คนเดียวกัน · โมดูล GR เพิ่มปุ่มของตัวเอง (ขอเบิกยางเส้นยาว ส่งให้ PK) ที่หน้า BOM ไม่มี
   const work = await workPage(staff);
-  assert.deepEqual(plain(buttonsByCard(html)), plain(buttonsByCard(work.html)), "the dept page offers exactly what BOM work offers for this user");
+  const shared = (list) => list.map((buttons) => buttons.filter((name) => !["grRodRequest", "grSendPk"].includes(name)));
+  assert.deepEqual(plain(shared(buttonsByCard(html))), plain(buttonsByCard(work.html)), "the dept page offers what BOM work offers for this user, plus the GR buttons");
+  // งานที่ตั้งขั้นตอนแล้ว: ไม่มีปุ่มรายงานผลแบบเดิม ปุ่มหลักพาไปบันทึกผลรายวันของงานนั้น
+  const planned = data.jobs.find((job) => (data.grPlans ?? []).some((plan) => plan.jobId === job.id));
+  const plannedCard = html.split('<article class="card rf-card bom-job').find((card) => card.includes(`job=${planned.id}"`));
+  assert.ok(plannedCard.includes(`href="#/gr?tab=log&amp;j=${planned.id}"`));
+  assert.doesNotMatch(plannedCard, /jobReport/);
   // ฝ่ายวางแผนเห็นปุ่มปิดงานเพิ่ม เหมือนหน้า BOM
   const planner = load({ employee: emp("PP") });
   planner.store.setUser("B03");
   const plannerHtml = await planner.open("FACTORY_GR");
   assert.match(plannerHtml, /data-rf-open="jobClose"/);
   const plannerWork = await workPage(planner, "p=work&dept=GR");
-  assert.deepEqual(plain(buttonsByCard(plannerHtml)), plain(buttonsByCard(plannerWork.html)));
+  assert.deepEqual(plain(shared(buttonsByCard(plannerHtml))), plain(buttonsByCard(plannerWork.html)));
   // ไม่มีงาน: บรรทัดเดียว
   const emptied = load({ employee: emp("GR") });
   emptied.store.data().jobs = [];
@@ -393,12 +399,17 @@ test("the เสร็จแล้ว view lists finished jobs of the department
   const openBefore = data.jobs.filter((entry) => entry.dept === "GR" && liveOrder(data, entry) && entry.status !== "done").length;
   job.status = "done";
   job.qtyDone = job.qtyPlanned;
+  // GR: งานที่เสร็จแต่ยังมีของดีที่ยังไม่ได้ส่ง PK ยังอยู่ในงานของฉัน (ส่งได้อีก) · ส่งครบแล้ว (PK รับ) จึงไปอยู่ที่เสร็จแล้ว
+  const sent = env.context.MNP_BOM_RULES.grHandoverSummary(data, job).sent;
+  data.grHandovers.push({ id: "test-all-sent", jobId: job.id, orderId: job.orderId, itemCode: job.itemCode, qty: job.qtyDone - sent, status: "received", sentAt: 1 });
   const doneHtml = await env.open("FACTORY_GR", "st=done");
   assert.equal(h1Of(doneHtml), "เสร็จแล้ว");
   assert.ok(doneHtml.includes(escapeHtml(job.name)), "the finished job is on the done view");
   assert.doesNotMatch(doneHtml, /data-rf-open|data-rf-action/, "a finished job has no buttons");
   assert.doesNotMatch(doneHtml, /role="tablist"|class="rf-tab[ "]/, "no in-page tabs");
-  assert.deepEqual(plain(navOf(env, "FACTORY_GR").items.filter((item) => item.active).map((item) => item.label)), ["เสร็จแล้ว"]);
+  // GR: เสร็จแล้วเป็นตัวกรองของงานของฉัน (ลิงก์ในหน้า) ไม่ใช่รายการเมนู
+  assert.deepEqual(plain(navOf(env, "FACTORY_GR").items.filter((item) => item.active).map((item) => item.label)), ["งานของฉัน"]);
+  assert.match(doneHtml, /href="#\/gr">งานที่ยังไม่เสร็จ<\/a>/);
   const openHtml = await env.open("FACTORY_GR");
   assert.equal(h1Of(openHtml), "งานของฉัน");
   assert.equal([...openHtml.matchAll(/class="card rf-card bom-job/g)].length, openBefore - 1, "the finished job left งานของฉัน");
@@ -425,7 +436,9 @@ test("production departments PT, BG and PK use the same landing: their own jobs 
   const data = pk.store.data();
   const open = data.jobs.filter((job) => job.dept === "PK" && liveOrder(data, job) && job.status !== "done");
   const html = await pk.open("FACTORY_PK");
-  assert.equal([...html.matchAll(/class="card rf-card bom-job/g)].length, open.length);
+  // การ์ด "รับจาก GR" (งานที่ GR ส่งให้ PK และยังไม่รับ) อยู่หน้าการ์ดงานผลิต
+  const fromGr = (data.grHandovers ?? []).filter((row) => row.status === "sent").length;
+  assert.equal([...html.matchAll(/class="card rf-card bom-job/g)].length, open.length + fromGr);
   assert.doesNotMatch(html, /#\/bom\?p=work/);
   assert.equal(h1Of(html), "งานของฉัน");
   assert.match(html, /data-module="pk"/);
@@ -1091,7 +1104,7 @@ test("side menu: ST has งานของฉัน and ในคลัง; WH h
   }
 });
 
-test("side menu: GR (production) has งานของฉัน with the open-job count, เสร็จแล้ว and the read-only rod stock; PT, BG and PK have the first two", async () => {
+test("side menu: GR (production) has งานของฉัน with the open-job count and its own pages (settings only for a head); PT, BG and PK have งานของฉัน and เสร็จแล้ว", async () => {
   const env = load({ employee: emp("GR") });
   env.store.setUser("B05");
   const data = env.store.data();
@@ -1100,11 +1113,16 @@ test("side menu: GR (production) has งานของฉัน with the open-j
   await env.open("FACTORY_GR");
   assert.deepEqual(plain(navOf(env, "FACTORY_GR").items), [
     { label: "งานของฉัน", href: "#/gr", active: true, current: true, count: open },
-    { label: "เสร็จแล้ว", href: "#/gr?st=done", active: false, current: false, count: 0 },
-    { label: "ยางเส้นยาวในคลัง SR", href: "#/gr?tab=rods", active: false, current: false, count: 0 },
-  ]);
+    { label: "บันทึกผลรายวัน", href: "#/gr?tab=log", active: false, current: false, count: 0 },
+    { label: "ยางเส้นยาว", href: "#/gr?tab=rods", active: false, current: false, count: 0 },
+    { label: "ส่งให้ PK", href: "#/gr?tab=pk", active: false, current: false, count: 0 },
+    { label: "สรุปผล", href: "#/gr?tab=summary", active: false, current: false, count: 0 },
+  ], "GR staff: no settings item");
   await env.open("FACTORY_GR", "st=done");
-  assert.deepEqual(plain(navOf(env, "FACTORY_GR").items.map((item) => [item.label, item.active, item.count])), [["งานของฉัน", false, open], ["เสร็จแล้ว", true, 0], ["ยางเส้นยาวในคลัง SR", false, 0]], "done view: the open-job count stays on งานของฉัน");
+  assert.deepEqual(plain(navOf(env, "FACTORY_GR").items.map((item) => [item.label, item.active, item.count])).slice(0, 2), [["งานของฉัน", true, open], ["บันทึกผลรายวัน", false, 0]], "done view is a filter of งานของฉัน: the open-job count stays");
+  env.store.setUser("B03");
+  assert.equal(navOf(env, "FACTORY_GR").items.at(-1).label, "ตั้งค่าขั้นตอนและเป้า", "the planner sees settings");
+  env.store.setUser("B05");
   assert.equal(env.modules.FACTORY_GR.nav[0].subnav("bom"), "");
   for (const [code, route, userId, dept] of [["FACTORY_PT", "pt", "B06", "PT"], ["FACTORY_BG", "bg", "B07", "BG"], ["FACTORY_PK", "pk", "B03", "PP"]]) {
     const other = load({ employee: emp(dept) });
@@ -1521,10 +1539,10 @@ test("SR tables: a row is one stretched link to its detail page, other links and
   // ประวัติเข้าออกและหน้ารายละเอียดเองไม่เป็นแถวลิงก์
   assert.equal(rowsOf(await env.open("FACTORY_SR", "tab=history")).length, 0);
   assert.equal(rowsOf(await env.open("FACTORY_SR", `issue=DEMO-26006&code=${RB_DEMO}`)).length, 0);
-  // GR อ่านอย่างเดียว: ไม่มีลิงก์ (GR เปิด #/sr ไม่ได้) และไม่มีแถวคลิกได้
+  // GR อ่านอย่างเดียว: ตารางคลัง SR ในหน้า ยางเส้นยาว ของ GR ไม่มีลิงก์ (GR เปิด #/sr ไม่ได้) และไม่มีแถวคลิกได้ (แถวของตารางงานข้างบนเปิดหน้างานของ GR เอง)
   const gr = load({ employee: emp("GR") });
   gr.store.setUser("B05");
-  const readOnly = await gr.open("FACTORY_GR", "tab=rods");
+  const readOnly = (await gr.open("FACTORY_GR", "tab=rods")).split("ยางเส้นยาวในคลัง SR</h2>")[1];
   assert.ok(readOnly.includes("rf-table"));
   assert.doesNotMatch(readOnly, /row-link|#\/sr\?/);
 });
@@ -1718,18 +1736,20 @@ test("SR: who can open the module, its lots and labels: SR staff and planners in
   assert.equal(gr.store.run("setRodLocation", { lotId: rodLotOf(gr, 4).id, location: "X-2" }).ok, false);
 });
 
-test("GR ยางเส้นยาวในคลัง SR: the same stock table read-only inside #/gr, with the filters; no lot links, no actions, no way into the SR module", async () => {
+test("GR ยางเส้นยาว: the SR stock table read-only inside #/gr, with the filters; no lot links, no actions, no way into the SR module", async () => {
   const env = srEnv(emp("GR"), "B05");
-  const html = await env.open("FACTORY_GR", "tab=rods");
-  assert.equal(h1Of(html), "ยางเส้นยาวในคลัง SR");
-  assert.deepEqual(plain(navOf(env, "FACTORY_GR").items.map((item) => [item.label, item.href, item.active])), [["งานของฉัน", "#/gr", false], ["เสร็จแล้ว", "#/gr?st=done", false], ["ยางเส้นยาวในคลัง SR", "#/gr?tab=rods", true]]);
+  const page = await env.open("FACTORY_GR", "tab=rods");
+  assert.equal(h1Of(page), "ยางเส้นยาว");
+  assert.deepEqual(plain(navOf(env, "FACTORY_GR").items.filter((item) => item.active).map((item) => [item.label, item.href])), [["ยางเส้นยาว", "#/gr?tab=rods"]]);
+  // ตารางคลัง SR อยู่ใต้หัวข้อของตัวเอง (ตารางงาน คำขอเบิก และประวัติคำขออยู่ข้างบน · ดู gr-module.test.mjs)
+  const html = page.split("ยางเส้นยาวในคลัง SR</h2>")[1];
   for (const bucket of storedBuckets(env)) for (const text of [bucket.lot.lotNo, bucket.lot.location, bucket.itemCode]) assert.ok(html.includes(escapeHtml(text)), `shows ${text}`);
   for (const heading of ["เส้นยาง", "จำนวน", "ล็อต", "ตำแหน่ง", "ของ"]) assert.match(html, new RegExp(`>${heading}</th>`));
   assert.doesNotMatch(html, /data-rf-open|data-rf-action|<form[^>]*data-rf-form|href="#\/sr|รับยางนอกใบสั่ง|rodLocation/, "read-only");
   assert.doesNotMatch(html, /แท่ง/);
   assert.equal(lotLinks(html).length, 0, "no lot page for GR");
   // ตัวกรองและค้นหาทำงานภายใน GR
-  const owned = await env.open("FACTORY_GR", "tab=rods&own=order");
+  const owned = (await env.open("FACTORY_GR", "tab=rods&own=order")).split("ยางเส้นยาวในคลัง SR</h2>")[1];
   const lotNo = (no) => escapeHtml(rodLotOf(env, no).lotNo);
   assert.ok(owned.includes(lotNo(1)) && !owned.includes(lotNo(0)) && !owned.includes(lotNo(4)), "the owner filter works inside GR");
   assert.match(await env.open("FACTORY_GR", "tab=rods&q=ZZZ-NONE"), /ไม่พบเส้นยางที่ค้นหา/);

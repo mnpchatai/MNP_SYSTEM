@@ -2617,7 +2617,8 @@
       // ใบที่ปิดแล้วเบิกจ่ายไม่ได้ (บรรทัดที่เบิกไม่ครบคืนของเหลือได้ที่หน้าใบ) จึงไม่ชี้ไปเบิก
       if (part && job.status !== "done" && ["released", "in_progress"].includes(order?.status) && ctx.helpers.canIssueParts(user)) buttons.push(ui.link("เบิกจ่ายที่ใบ PI", ctx.url("orders", { sel: job.orderId }), "btn rf-btn secondary small"));
       // งานที่พักอยู่รายงานผลไม่ได้ ต้องกด "ทำต่อ" / "คืนคิว" (ปุ่มถัดไป) ก่อน
-      if (canWork && job.status !== "done" && job.status !== "hold") buttons.push(ctx.helpers.isLinkedJob?.(job) ? LINKED_NOTE : ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "small" }));
+      // งาน GR ที่ตั้งขั้นตอนแล้ว: ยอดมาจาก "บันทึกผลรายวัน" ของโมดูล GR (#/gr) ไม่มีปุ่มรายงานผล
+      if (canWork && job.status !== "done" && job.status !== "hold" && !(job.dept === "GR" && ctx.helpers.isGrPlanned?.(data, job))) buttons.push(ctx.helpers.isLinkedJob?.(job) ? LINKED_NOTE : ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "small" }));
       if (canWork && job.status !== "done") buttons.push(holdButton(ctx, job));
       // งานที่จะไม่มีใครรายงานแล้ว: ฝ่ายวางแผนปิดงานพร้อมเหตุผล (ไม่เพิ่มยอด) ใบจึงปิดได้ · ไม่มีกับงานของซื้อ (ST เบิกจ่ายที่ใบ)
       if (canWork && job.status !== "done" && ctx.helpers.canPlan(user)) buttons.push(ui.openButton("ปิดงานนี้", "jobClose", { jobId: job.id }, { className: "secondary small" }));

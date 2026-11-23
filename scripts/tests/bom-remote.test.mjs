@@ -2092,6 +2092,7 @@ test("drawing a fresh page clears the dirty state and merges what was held", asy
 // หน้าแรกของโมดูลแผนก (#/gr): store ของ BOM วาดหน้านั้นใหม่เหมือนหน้า BOM (ผู้อื่นบันทึก · บันทึกของเราถูกปฏิเสธและย้อนกลับ) และไม่วาดทับ dialog ที่เปิดอยู่
 async function deptEnv(hooks = {}) {
   const env = await dirtyEnv(hooks);
+  vm.runInContext(fs.readFileSync("modules/gr-pages.js", "utf8"), env.context, { filename: "modules/gr-pages.js" });
   vm.runInContext(fs.readFileSync("modules/module-gr.js", "utf8"), env.context, { filename: "modules/module-gr.js" });
   env.log.hash = "#/gr";
   const real = env.mock.client.rpc.bind(env.mock.client);

@@ -92,7 +92,8 @@
   const cardTitle = (title, href) => (href ? `<a class="bom-card-link" href="${attr(href)}">${esc(title)}</a>` : esc(title));
   const cardClass = (href) => (href ? " has-link" : "");
 
-  // การ์ดงานผลิต (หนึ่งงานต่อแผนก × ชิ้นงาน) · opts = { planner, dept, show, orderOf, actions = true, href }
+  // การ์ดงานผลิต (หนึ่งงานต่อแผนก × ชิ้นงาน) · opts = { planner, dept, show, orderOf, actions = true, href, body?, main?, more?, extra? }
+  // body = HTML แทนบรรทัดยอดและแถบความคืบหน้า (งาน GR ที่ตั้งขั้นตอน: ความคืบหน้ารายขั้น) · main / more = ปุ่มของโมดูลที่เรียก (ดูข้างล่าง) · extra = บรรทัดสถานะของโมดูล (เช่น คำขอเบิกที่รอ SR) ใต้บรรทัดยางเส้นยาว
   // planner && dept === "ALL" = แสดงป้ายแผนกหน้ารหัสชิ้นงาน · actions: false = การ์ดเดียวกันแบบอ่านอย่างเดียว (ไม่มีปุ่ม)
   // href = หน้ารายละเอียดของงาน (ข้อความ หรือฟังก์ชัน job → ข้อความ): คลิกที่ไหนของการ์ดก็เปิดหน้านั้น · ไม่ให้ = การ์ดไม่เป็นลิงก์
   function jobCard(ctx, job, opts = {}) {
@@ -107,8 +108,15 @@
     const started = job.qtyDone > 0 || job.status === "in_progress";
     const linkedJob = Boolean(ctx.helpers.isLinkedJob?.(job));
     // งานที่พักอยู่รายงานผลไม่ได้ ต้องกด "ทำต่อ" / "คืนคิว" ก่อน
-    const main = canWork && !linkedJob && job.status !== "hold" ? ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "bom-job-main" }) : "";
-    const more = [];
+    // งาน GR (20261214010000): ตั้งขั้นตอนแล้ว = ยอดมาจาก "บันทึกผลรายวัน" ของโมดูล GR ไม่มีปุ่มรายงานผล · ยังไม่ตั้งและยังไม่เคยรายงานแบบเดิม = หัวหน้าแผนก GR / ฝ่ายวางแผนตั้งขั้นตอนก่อน (คำตอบเจ้าของข้อ 7)
+    // งาน GR ที่รายงานยอดแบบเดิมไปแล้ว (ตั้งขั้นตอนไม่ได้) รายงานแบบเดิมต่อได้ · opts.main = ปุ่มหลักที่โมดูลส่งมาแทน ("" = ไม่มี)
+    const grPlanned = job.dept === "GR" && Boolean(ctx.helpers.isGrPlanned?.(data, job));
+    const grFresh = job.dept === "GR" && !grPlanned && typeof ctx.helpers.isGrPlanned === "function" && !(Number(job.qtyDone) > 0 || Number(job.qtyReject) > 0);
+    const grSetup = ctx.helpers.canGrLead?.(user) ? ui.openButton("ตั้งขั้นตอน", "grSteps", { jobId: job.id }, { className: "bom-job-main" }) : '<p class="small muted">รอหัวหน้าแผนก GR ตั้งขั้นตอนก่อนบันทึกผล</p>';
+    const defaultMain = canWork && !linkedJob && job.status !== "hold" ? (grPlanned ? "" : grFresh ? grSetup : ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "bom-job-main" })) : "";
+    const main = actions && opts.main !== undefined ? opts.main : defaultMain;
+    // opts.more = ปุ่มรองของโมดูล (เช่น ขอเบิกยางเส้นยาว ส่งให้ PK ของ GR) วางก่อนปุ่มพัก/ปิดงาน
+    const more = actions && Array.isArray(opts.more) ? opts.more.filter(Boolean) : [];
     const resume = (Number(job.qtyDone) || 0) > 0;
     if (canWork) more.push(job.status === "hold" ? ui.button(resume ? "ทำต่อ" : "คืนคิว", { action: "setJobStatus", args: { jobId: job.id, status: resume ? "in_progress" : "queued" }, className: "secondary small" }) : ui.openButton("พักงาน", "jobHold", { jobId: job.id }, { className: "secondary small" }));
     // งานที่จะไม่มีใครรายงานแล้ว: ฝ่ายวางแผนปิดงานพร้อมเหตุผล (ไม่เพิ่มยอด) ใบจึงปิดได้
@@ -123,15 +131,15 @@
       .map((need) => `<p class="small muted" title="${attr(`${need.itemCode} · GR ต้องใช้ ${rules.fmtQty(need.need)} ${uomText(ctx, need.uom)}`)}">${esc(`ยางเส้นยาวจาก SR ${rules.fmtQty(need.issued)}/${rules.fmtQty(need.need)} ${uomText(ctx, need.uom)}`)}</p>`).join("") : "";
     return `<article class="card rf-card bom-job${tone ? ` is-${tone}` : ""}${cardClass(href)}"><div class="bom-job-top"><span class="bom-job-state">${esc(label)}</span>${dueText(ctx, job.dueAt, job.status === "done")}</div>
         <h2>${cardTitle(job.name, href)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(job.dept, rules.DEPT_LABEL)} ` : ""}<span class="rf-mono">${esc(job.itemCode)}</span> · ใบ ${ui.link(job.orderId, ctx.url("orders", { sel: job.orderId }))}</p>
-        <div class="bom-job-amount"><span>${esc(amount)}</span>${started && job.status !== "done" ? `<span class="muted">เหลือ ${esc(rules.fmtQty(left))}</span>` : ""}</div>${started ? ui.progress(job.qtyDone, job.qtyPlanned, job.status === "hold" ? "bad" : "") : ""}${job.qtyReject ? `<p class="small muted">เสีย ${esc(rules.fmtQty(job.qtyReject))}</p>` : ""}${closedBy ? `<p class="small muted">${esc(`ปิดงานโดย ${closedBy.by}: ${closedBy.reason}`)}</p>` : ""}${heldBy ? `<p class="small muted">${esc(`พักโดย ${heldBy.by}: ${heldBy.reason}`)}</p>` : ""}${rodLine}${canWork && linkedJob ? '<p class="small muted" title="ยอดของงานนี้เพิ่มเองเมื่อคลังยางเส้นยาว (SR) รับยางเส้นยาวจากล็อตตกแต่งของ WO เข้าคลังและผ่านตรวจขนาด">ยอดมาจากการรับเข้าคลัง SR</p>' : ""}
+        ${opts.body ?? `<div class="bom-job-amount"><span>${esc(amount)}</span>${started && job.status !== "done" ? `<span class="muted">เหลือ ${esc(rules.fmtQty(left))}</span>` : ""}</div>${started ? ui.progress(job.qtyDone, job.qtyPlanned, job.status === "hold" ? "bad" : "") : ""}`}${job.qtyReject ? `<p class="small muted">เสีย ${esc(rules.fmtQty(job.qtyReject))}</p>` : ""}${closedBy ? `<p class="small muted">${esc(`ปิดงานโดย ${closedBy.by}: ${closedBy.reason}`)}</p>` : ""}${heldBy ? `<p class="small muted">${esc(`พักโดย ${heldBy.by}: ${heldBy.reason}`)}</p>` : ""}${rodLine}${actions ? opts.extra ?? "" : ""}${canWork && linkedJob ? '<p class="small muted" title="ยอดของงานนี้เพิ่มเองเมื่อคลังยางเส้นยาว (SR) รับยางเส้นยาวจากล็อตตกแต่งของ WO เข้าคลังและผ่านตรวจขนาด">ยอดมาจากการรับเข้าคลัง SR</p>' : ""}
         ${main}${more.length ? `<div class="rf-row bom-job-more">${more.join("")}</div>` : ""}</article>`;
   }
 
-  // dialog รายงานผลของงานผลิต (ฟอร์ม data-rf-form="reportJob" ส่งผ่าน bindRoot) · null = รายงานไม่ได้ (ไม่พบงาน พักอยู่ หรือยอดมาจากการรับเข้าคลัง)
+  // dialog รายงานผลของงานผลิต (ฟอร์ม data-rf-form="reportJob" ส่งผ่าน bindRoot) · null = รายงานไม่ได้ (ไม่พบงาน พักอยู่ ยอดมาจากการรับเข้าคลัง หรืองาน GR ที่ยอดมาจากผลรายวัน)
   function jobReportDialog(ctx, { jobId }) {
     const { ui, rules } = ctx;
     const job = ctx.data.jobs.find((entry) => entry.id === jobId);
-    if (!job || job.status === "hold" || ctx.helpers.isLinkedJob?.(job)) return null;
+    if (!job || job.status === "hold" || ctx.helpers.isLinkedJob?.(job) || (job.dept === "GR" && ctx.helpers.isGrPlanned?.(ctx.data, job))) return null;
     const remaining = Math.max(0, job.qtyPlanned - job.qtyDone);
     // ช่องจำนวนดีว่างไว้ (บอกยอดที่เหลือเป็น placeholder): กดบันทึกครั้งเดียวต้องไม่รายงานว่าเสร็จทั้งแผน
     // แผนกก่อนหน้าส่งมาพอสำหรับกี่หน่วย (null = ไม่รู้) · เตือนเมื่อยอดรวมที่รายงานเกิน ไม่ห้ามบันทึก
@@ -330,7 +338,10 @@
     let ctx = null;
     try { if (store?.status?.() === "ready" && state.employee?.isSandbox === true) ctx = deptPageCtx(def, params); } catch { ctx = null; }
     const current = viewOf(def.menu, params);
-    const items = def.menu.map((item) => {
+    // รายการที่มี when(ผู้ใช้ BOM) แสดงเฉพาะผู้ที่ทำงานในหน้านั้นได้ (เช่น ตั้งค่าของ GR: หัวหน้าแผนก GR และฝ่ายวางแผน) · ซ่อนเมนูเป็น UX หน้าและ action ตรวจสิทธิ์เอง
+    let who = null;
+    try { who = store?.user?.() ?? null; } catch { who = null; }
+    const items = def.menu.filter((item) => typeof item.when !== "function" || (who && item.when(who))).map((item) => {
       let count = 0;
       try { count = ctx && item.count ? Number(item.count(ctx)) || 0 : 0; } catch { count = 0; }
       const href = routeUrl(def.route, item.params);
@@ -389,7 +400,9 @@
     const mine = data.jobs.filter((job) => job.dept === dept && LIVE_ORDER.includes(orderOf(job.orderId)?.status));
     return { orderOf, open: mine.filter((job) => ctx.helpers.isOpenJob(data, job)), done: mine.filter((job) => job.status === "done") };
   }
-  function productionLanding(dept) {
+  // opts.cards(ctx) = การ์ดงานอื่นของแผนก (HTML) ที่วางหน้าการ์ดงานผลิตในหน้า "งานของฉัน" และนับรวมในตัวเลขที่เมนู (เช่น PK: รับงานจาก GR)
+  function productionLanding(dept, opts = {}) {
+    const extraCards = (ctx) => { try { return typeof opts.cards === "function" ? opts.cards(ctx) ?? [] : []; } catch { return []; } };
     const landing = function landing(ctx) {
       const { ui } = ctx;
       const show = ctx.view?.id === "done" ? "done" : "open";
@@ -397,12 +410,14 @@
       // กำลังทำก่อน พักไว้ท้าย แล้วตามกำหนดส่ง (เหมือนหน้า "งานของฉัน")
       const rank = (job) => (job.status === "in_progress" ? 0 : job.status === "hold" ? 2 : 1);
       const list = (show === "done" ? done : open).slice().sort((a, b) => rank(a) - rank(b) || (Number(a.dueAt) || 0) - (Number(b.dueAt) || 0) || String(a.id).localeCompare(String(b.id)));
-      const body = list.length ? `<div class="bom-job-grid">${list.map((job) => jobCard(ctx, job, { planner: false, dept, show, orderOf })).join("")}</div>` : ui.card(ui.empty(show === "done" ? "ยังไม่มีงานที่เสร็จ" : `ไม่มีงานของ ${dept} ค้างอยู่`));
+      const extra = show === "open" ? extraCards(ctx) : [];
+      const cards = [...extra, ...list.map((job) => jobCard(ctx, job, { planner: false, dept, show, orderOf }))];
+      const body = cards.length ? `<div class="bom-job-grid">${cards.join("")}</div>` : ui.card(ui.empty(show === "done" ? "ยังไม่มีงานที่เสร็จ" : `ไม่มีงานของ ${dept} ค้างอยู่`));
       // หัวหน้า = ชื่อหน้าในเมนูข้าง (งานของฉัน / เสร็จแล้ว) · ข้อความสถานะการบันทึก (module-bom.js เติมให้ระหว่างบันทึก)
       return { html: `${viewHead(ctx)}${body}`, actions: true };
     };
-    // เมนูข้าง: งานของฉัน (ตัวเลข = งานที่เปิดอยู่) · เสร็จแล้ว
-    landing.menu = Object.freeze([workItem((ctx) => productionJobs(ctx, dept).open.length), { id: "done", label: "เสร็จแล้ว", icon: "check", params: { st: "done" } }]);
+    // เมนูข้าง: งานของฉัน (ตัวเลข = งานที่เปิดอยู่ + การ์ดอื่นของแผนก) · เสร็จแล้ว
+    landing.menu = Object.freeze([workItem((ctx) => productionJobs(ctx, dept).open.length + extraCards(ctx).length), { id: "done", label: "เสร็จแล้ว", icon: "check", params: { st: "done" } }]);
     return landing;
   }
 
