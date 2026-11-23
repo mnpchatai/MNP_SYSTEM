@@ -399,6 +399,17 @@ test("MDR month pick (A): October with two test days shows those two days, the b
   assert.equal(app.element("#mdr-month-to").value, "2026-10", "the end box keeps October");
   bar.listeners.click({ target: { closest: () => ({ dataset: { step: "forward" }, disabled: false }) } });
   assert.equal((table.innerHTML.match(/class="lab-mdr-day-row/g) ?? []).length, 2, "panning a two-day pick moves two days, it does not widen to three");
+  // เดือนล่าสุดที่มี 2 วัน: ‹ แล้ว › กลับมาถึงวันล่าสุด ยังกว้าง 2 วัน
+  const latestTwo = setup(async () => ({ data: { formulas: [{ formula: "A2004" }], tests: [...rows.slice(0, 4).map((row, i) => ({ ...row, test_date: `2026-10-2${4 + i}` })), ...rows.slice(4)], curve_date: null, curves: [] }, error: null }));
+  await latestTwo.open("module=mdr&part=F2&formula=A2004");
+  const bar2 = latestTwo.element("#mdr-zoom");
+  latestTwo.element("#mdr-month-from").value = "2026-11";
+  latestTwo.element("#mdr-month-to").value = "2026-11";
+  bar2.listeners.change({ target: latestTwo.element("#mdr-month-to") });
+  const step = (key) => bar2.listeners.click({ target: { closest: () => ({ dataset: { step: key }, disabled: false }) } });
+  step("back");
+  step("forward");
+  assert.equal((latestTwo.element("#mdr-table-scroll").innerHTML.match(/class="lab-mdr-day-row/g) ?? []).length, 2, "back at the newest day: still two days");
 });
 
 test("MDR: a chosen day stays when older days arrive (E); a late feed of a formula left behind does not paint over the new one (G)", async () => {

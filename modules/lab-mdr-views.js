@@ -112,10 +112,12 @@
       </section>`;
   }
 
-  // เงื่อนไขของกราฟแนวโน้มที่ใช้จริง: ที่เลือกไว้ถ้ายังมีในผล ไม่อย่างนั้นเงื่อนไขที่มีผลมากที่สุด
+  // เงื่อนไขของกราฟแนวโน้มที่ใช้จริง: ที่เลือกไว้ถ้ายังมีในผล ไม่อย่างนั้นเงื่อนไขของครั้งล่าสุด (ช่วงตั้งต้น = วันล่าสุด จึงไม่เปิดมาเจอกราฟว่าง)
   function trendCondition(tests, wanted) {
     const conditions = model.conditionsOf(tests);
-    return conditions.find((item) => item.key === wanted)?.key ?? conditions[0]?.key ?? null;
+    if (conditions.some((item) => item.key === wanted)) return wanted;
+    const latest = tests.reduce((best, test) => (!best || `${test.test_date} ${test.test_time}` > `${best.test_date} ${best.test_time}` ? test : best), null);
+    return latest ? model.conditionKey(latest) : null;
   }
 
   /* ---------- กราฟแรงบิด (F1) และช่วงวันของกราฟ ---------- */

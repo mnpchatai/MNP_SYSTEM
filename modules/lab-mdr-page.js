@@ -182,7 +182,9 @@
     function setRange(next, floor = min) {
       const normal = rangeKit.normalize(next, total, floor);
       if (rangeKit.same(normal, resolve(get()))) return;
-      set(views.toDayZoom({ kind: "custom", start: normal.start, end: normal.end, follow: normal.end >= total }, days));
+      // ช่วงที่แคบกว่า min (เดือนที่มี 2 วัน) เก็บเป็นวันที่เสมอ แม้ติดวันล่าสุด: ช่วงที่ตามวันล่าสุด (follow) ถูกขยายถึง min ตอนคำนวณ
+      const follow = normal.end >= total && normal.end - normal.start >= Math.min(min, total);
+      set(views.toDayZoom({ kind: "custom", start: normal.start, end: normal.end, follow }, days));
     }
 
     bar?.addEventListener("click", (event) => {

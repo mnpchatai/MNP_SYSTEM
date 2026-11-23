@@ -277,7 +277,8 @@ test("B: the table shows the set time once, and a day with two set times gets tw
   assert.match(bad, /<td class="lab-mdr-result-bad">NG<\/td>/, "a result that is not OK is shown");
   const thirty = views.trendSvg(days, "delta", 600, "F1", null, "30|155").svg;
   assert.equal(count(thirty, /class="lab-mdr-dot/g), 4, "the trend draws only the chosen condition");
-  assert.equal(views.trendCondition(mixed, null), "30|155", "default condition = the one with most tests");
+  assert.equal(views.trendCondition(mixed, null), "30|155", "default condition = the latest test's (11 Nov, 30 min)");
+  assert.equal(views.trendCondition(mixed.slice(0, 6), null), "20|155", "latest test on 10 Nov was 20 min, though 30 min has as many tests");
   assert.equal(views.trendCondition(mixed, "20|155"), "20|155");
   assert.equal(views.trendCondition(mixed, "99|155"), "30|155", "a condition no longer in the data falls back");
   const card = views.trendCard({ formula: "A2004" }, days, "20|155");
