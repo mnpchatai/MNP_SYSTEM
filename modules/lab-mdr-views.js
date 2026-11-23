@@ -60,10 +60,12 @@
 
   /* ---------- รายการสูตร ---------- */
 
-  function overview(partKey, formulas) {
+  // canUpload: false = บัญชีดูอย่างเดียว ไม่บอกให้กดปุ่มอัปโหลดที่ไม่มี
+  function overview(partKey, formulas, { canUpload = true } = {}) {
     const part = model.findPart(partKey);
     if (!formulas.length) {
-      return `<section class="card">${sections.emptyBlock(`ยังไม่มีผล${part.label}`, { hint: "กด “อัปโหลดไฟล์ MDR (.ini)” แล้วเลือกไฟล์หรือโฟลเดอร์ของวันจากเครื่อง MDR" })}</section>`;
+      const hint = canUpload ? { hint: "กด “อัปโหลดไฟล์ MDR (.ini)” แล้วเลือกไฟล์หรือโฟลเดอร์ของวันจากเครื่อง MDR" } : {};
+      return `<section class="card">${sections.emptyBlock(`ยังไม่มีผล${part.label}`, hint)}</section>`;
     }
     const rows = formulas.map((item) => `<tr>
         <th scope="row" class="lab-name"><a href="${esc(model.routeUrl({ part: partKey, formula: item.formula }))}">${esc(item.formula)}</a></th>

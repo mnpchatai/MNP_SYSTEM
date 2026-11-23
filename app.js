@@ -2042,12 +2042,13 @@ async function loadLabAccess() {
 }
 
 // สิทธิ์เขียนใน MNP LAB (อัปโหลด MDR): ฐานข้อมูลตัดสิน (app_lab_can_write → private.can_write_lab) หน้าเว็บใช้แค่ซ่อนปุ่มอัปโหลด
-// เรียกไม่ได้ (ฐานข้อมูลยังไม่มี RPC นี้) = ถือว่าเขียนได้เหมือนก่อนมีสิทธิ์ดูอย่างเดียว ฐานข้อมูลยังเป็นผู้ปฏิเสธจริง
+// ฐานข้อมูลยังไม่มี RPC นี้ (ยังไม่ได้ apply migration) = เขียนได้เหมือนก่อนมีสิทธิ์ดูอย่างเดียว
+// error อื่น (เช่น เน็ตสะดุด) = ซ่อนปุ่ม ไม่ให้กดอัปโหลดแล้วถูกปฏิเสธจนหน้า LAB ทั้งหน้าถูกปิด ฐานข้อมูลยังเป็นผู้ปฏิเสธจริง
 async function loadLabWrite() {
   const { data, error } = await sb.rpc("app_lab_can_write");
   if (error) {
     console.warn("lab write access unavailable", error);
-    return true;
+    return error.code === "PGRST202" || error.code === "42883";
   }
   return data !== false;
 }

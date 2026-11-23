@@ -3,7 +3,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(20);
+select plan(22);
 
 -- 1. โครงสร้าง ------------------------------------------------------------------
 select is(private.lab_access_employee_nos(), array['GODGAZ'], 'the extra LAB access list is GODGAZ');
@@ -76,6 +76,18 @@ set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"83000000-0000-0000-0000-000000000003","role":"authenticated"}', true);
 select is(public.app_lab_can_write(), true, 'an admin can still write in LAB');
 select throws_ok($$ select public.app_lab_mdr_upload('[]'::jsonb) $$, 'LAB_MDR_INVALID_PAYLOAD', 'an admin passes the write check of the MDR upload');
+reset role;
+
+-- บัญชี lab-only ยังอัปโหลดได้
+insert into auth.users (id, email, raw_user_meta_data) values
+  ('83000000-0000-0000-0000-000000000004', 'mnplab001-write@pilot.mnp.local', '{}'::jsonb);
+insert into public.employees (id, employee_no, first_name, last_name, email, job_title, department_id, role_id, auth_user_id) values
+  ('83000000-0000-0000-0000-000000000014', 'MNPLAB001', 'แล็บ', 'หนึ่ง', 'mnplab001-write@pilot.mnp.local', 'LAB',
+   '10000000-0000-0000-0000-000000000007', '20000000-0000-0000-0000-000000000001', '83000000-0000-0000-0000-000000000004');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"83000000-0000-0000-0000-000000000004","role":"authenticated"}', true);
+select is(public.app_lab_can_write(), true, 'a lab-only account can still write in LAB');
+select throws_ok($$ select public.app_lab_mdr_upload('[]'::jsonb) $$, 'LAB_MDR_INVALID_PAYLOAD', 'a lab-only account passes the write check of the MDR upload');
 reset role;
 
 select ok(

@@ -38,6 +38,8 @@ test("the page for a view-only account has no upload control but keeps the tabs"
   assert.doesNotMatch(page, /type="file"/);
   assert.match(page, /<h1>รายงานทดสอบ MDR<\/h1>/);
   assert.match(page, /data-part="F2" aria-current="page"/);
+  assert.doesNotMatch(views.overview("F2", [], { canUpload: false }), /อัปโหลด/, "the empty state does not point at a hidden button");
+  assert.match(views.overview("F2", []), /อัปโหลดไฟล์ MDR/);
 });
 
 test("formula list: one row per formula linking to its page; an empty set explains how to upload", () => {

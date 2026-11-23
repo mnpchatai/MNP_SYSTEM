@@ -24,7 +24,7 @@
 --
 -- Rollback (ไม่มีข้อมูลถูกแก้): นำ private.can_access_lab() กลับเป็นนิยามของ 20261019005000_lab_only_accounts.sql;
 --   นำ app_lab_mdr_upload กลับเป็นนิยามของ 20261215010000_lab_mdr_tests.sql; ลบบรรทัด
---   "if not private.can_write_lab() then raise exception 'NOT_AUTHORIZED'; end if;" ออกจาก app_lab_strand_spec_save (ถ้ามี);
+--   "if not private.can_write_lab() then raise exception 'NOT_AUTHORIZED'; end if;" ออกจาก app_lab_strand_spec_save และ app_lab_strand_spec_delete (ถ้ามี);
 --   drop function public.app_lab_can_write(), private.can_write_lab(), private.is_lab_access_employee(uuid),
 --   private.lab_access_employee_nos()
 -- ============================================================================
@@ -231,28 +231,34 @@ $$;
 revoke all on function public.app_lab_mdr_upload(jsonb) from public, anon;
 grant execute on function public.app_lab_mdr_upload(jsonb) to authenticated;
 
--- app_lab_strand_spec_save: ไม่มีใน migrations ของ main (มีบน production) — เติมด่านสิทธิ์เขียนต่อจากด่าน can_access_lab ของนิยามปัจจุบัน
--- ไม่มีฟังก์ชันนี้ = ข้าม · มีด่านแล้ว = ข้าม (รันซ้ำได้) · หาด่าน can_access_lab ไม่เจอหรือเจอมากกว่าหนึ่ง = ล้มทั้ง migration
+-- ฟังก์ชันบันทึก/ลบสเปกยางเส้น (app_lab_strand_spec_save, app_lab_strand_spec_delete): ไม่มีใน migrations ของ main
+-- (save มีบน production จาก branch ที่ยังไม่ merge · delete ไม่มีบน production ณ 2026-11-23 แต่อยู่ใน branch เดียวกัน)
+-- เติมด่านสิทธิ์เขียนต่อจากด่าน can_access_lab ของนิยามปัจจุบัน: ไม่มีฟังก์ชัน = ข้าม · มีด่านแล้ว = ข้าม (รันซ้ำได้)
+-- หาด่าน can_access_lab ไม่เจอหรือเจอมากกว่าหนึ่ง = ล้มทั้ง migration
+-- ถ้าภายหลัง apply migration ของ branch นั้นทับ (create or replace) ด่านนี้จะหาย ต้องใส่ can_write_lab ใน branch นั้นก่อน merge
 do $$
 declare
-  v_fn regprocedure := to_regprocedure('public.app_lab_strand_spec_save(text,text,text,numeric,numeric,numeric,numeric,numeric,numeric,integer)');
+  v_name text;
+  v_fn regprocedure;
   v_def text;
   v_pattern constant text := 'if not private\.can_access_lab\(\) then\s+raise exception ''NOT_AUTHORIZED'';\s+end if;';
 begin
-  if v_fn is null then
-    return;
-  end if;
-  v_def := pg_get_functiondef(v_fn);
-  if v_def ~ 'private\.can_write_lab\(\)' then
-    return;
-  end if;
-  if (select count(*) from regexp_matches(v_def, v_pattern, 'g')) <> 1 then
-    raise exception 'app_lab_strand_spec_save: expected exactly one can_access_lab check, definition changed — update this migration';
-  end if;
-  execute regexp_replace(v_def, '(' || v_pattern || ')',
-    E'\\1\n  if not private.can_write_lab() then raise exception ''NOT_AUTHORIZED''; end if;');
-  if pg_get_functiondef(v_fn) !~ 'private\.can_write_lab\(\)' then
-    raise exception 'app_lab_strand_spec_save: write check was not added';
-  end if;
+  foreach v_name in array array[
+    'public.app_lab_strand_spec_save(text,text,text,numeric,numeric,numeric,numeric,numeric,numeric,integer)',
+    'public.app_lab_strand_spec_delete(text,text,integer)'
+  ] loop
+    v_fn := to_regprocedure(v_name);
+    continue when v_fn is null;
+    v_def := pg_get_functiondef(v_fn);
+    continue when v_def ~ 'private\.can_write_lab\(\)';
+    if (select count(*) from regexp_matches(v_def, v_pattern, 'g')) <> 1 then
+      raise exception '%: expected exactly one can_access_lab check, definition changed — update this migration', v_name;
+    end if;
+    execute regexp_replace(v_def, '(' || v_pattern || ')',
+      E'\\1\n  if not private.can_write_lab() then raise exception ''NOT_AUTHORIZED''; end if;');
+    if pg_get_functiondef(v_fn) !~ 'private\.can_write_lab\(\)' then
+      raise exception '%: write check was not added', v_name;
+    end if;
+  end loop;
 end;
 $$;

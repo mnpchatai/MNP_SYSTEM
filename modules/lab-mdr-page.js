@@ -94,7 +94,7 @@
       trendCondition = null;
       curveZoom = route.date ? views.curveZoomFor(model.groupByDate(data.tests), route.date) : { kind: "latest" };
     }
-    body.innerHTML = route.formula ? views.formulaBody(route, data, trendZoom, curveZoom, trendCondition) : views.overview(route.part, data.formulas);
+    body.innerHTML = route.formula ? views.formulaBody(route, data, trendZoom, curveZoom, trendCondition) : views.overview(route.part, data.formulas, { canUpload: state.employee?.labWrite !== false });
     if (route.formula) bindFormula();
   }
 
