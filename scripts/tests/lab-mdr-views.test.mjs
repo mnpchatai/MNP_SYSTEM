@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import test from "node:test";
 
 const require = createRequire(import.meta.url);
+require("../../modules/lab-range.js"); // ตั้ง globalThis.MNP_LAB_RANGE ให้กราฟ/หน้าที่ใช้แถบช่วง
 const model = require("../../modules/lab-mdr-model.js");
 globalThis.MNP_LAB_MDR = model;
 globalThis.MNP_LAB_SECTIONS = require("../../modules/lab-sections.js");
@@ -109,7 +110,10 @@ test("swelling trend chart: one value at a time (MH−ML or t90), a dot per test
   assert.match(page, /id="mdr-trend"/);
   assert.match(page, /data-trend="delta" aria-pressed="true">MH−ML</);
   assert.match(page, /data-trend="t90_s" aria-pressed="false">t90</);
-  assert.doesNotMatch(views.formulaBody({ part: "F1", formula: "A2004" }, { formulas, tests, curveDate: "2026-11-02", curves: [] }), /mdr-trend/, "cure keeps its torque chart instead");
+  assert.doesNotMatch(page, /data-trend="ts2_s"/, "swelling files have no ts2, so no ts2 button");
+  const cure = views.formulaBody({ part: "F1", formula: "A2004" }, { formulas, tests, curveDate: "2026-11-02", curves: [{ id: 1, curve }] });
+  assert.ok(cure.indexOf('id="mdr-plot"') < cure.indexOf('id="mdr-trend"'), "cure keeps the torque chart of one day first, then the daily trend");
+  assert.match(cure, /data-trend="delta" aria-pressed="true">MH−ML<\/button><button[^>]*data-trend="ts2_s"[^>]*>ts2<\/button><button[^>]*data-trend="t90_s"/);
   const days = model.groupByDate(swelling);
   const delta = views.trendSvg(days, "delta", 600, "F2").svg;
   assert.equal(count(delta, /class="lab-mdr-dot/g), 4, "a dot per test");
@@ -130,4 +134,45 @@ test("swelling trend chart: one value at a time (MH−ML or t90), a dot per test
   const many = model.normalizeTests(Array.from({ length: 11 }, (_, i) => ({ id: i, machine_id: "1", test_date: "2026-11-" + String(i + 1).padStart(2, "0"), test_time: "08:00", ml: 1, mh: 2 + i, t90_s: 100 })));
   const xs = [...views.trendSvg(model.groupByDate(many), "delta", 400, "F2").svg.matchAll(/<text class="lab-tick" x="([d.]+)" y="[d.]+" text-anchor="middle">/g)].map((m) => Number(m[1]));
   assert.ok(xs.every((x, i) => i === 0 || x - xs[i - 1] >= 60), "date labels never crowd each other");
+});
+
+// 40 วันที่ทดสอบ (ต.ค.–พ.ย.) วันละ 2 ครั้ง ค่า MH−ML เพิ่มทีละวัน: ใช้ทดสอบช่วงวัน
+const longRun = model.normalizeTests(Array.from({ length: 40 }, (_, i) => {
+  const date = new Date(Date.UTC(2026, 9, 1 + i)).toISOString().slice(0, 10);
+  return [0, 1].map((k) => ({ id: i * 2 + k, machine_id: String(110 + k), test_date: date, test_time: `0${8 + k}:00`, ml: 1, mh: 2 + i + k * 0.1, ts2_s: 30, t90_s: 100 + i }));
+}).flat());
+
+test("trend range: the latest 30 test days by default, all, months, and the table follows the range", () => {
+  const days = model.groupByDate(longRun);
+  assert.deepEqual(views.trendRange({ kind: "latest" }, days), { start: 10, end: 40 }, "the latest 30 days");
+  assert.deepEqual(views.trendRange(undefined, days), { start: 10, end: 40 });
+  assert.deepEqual(views.trendRange({ kind: "all" }, days), { start: 0, end: 40 });
+  assert.deepEqual(views.trendRange({ kind: "months", from: "2026-11", to: "2026-11" }, days), { start: 31, end: 40 }, "November = 1–9 Nov");
+  assert.deepEqual(views.trendRange({ kind: "custom", start: 38, end: 39 }, days), { start: 37, end: 40 }, "never narrower than 3 days");
+  assert.deepEqual(views.trendRange({ kind: "latest" }, days.slice(0, 16)), { start: 0, end: 16 }, "fewer days than 30: all of them");
+  const shown = views.rangeDays(days, { start: 37, end: 40 });
+  assert.deepEqual(shown.map((day) => day.date), ["2026-11-09", "2026-11-08", "2026-11-07"], "newest first, like the table");
+  assert.equal(views.rangeAnnouncement(days, { start: 37, end: 40 }), "แสดง 7 พ.ย. 2569 ถึง 9 พ.ย. 2569 3 จาก 40 วันที่ทดสอบ");
+  assert.equal(views.formatMonth("2026-10"), "ต.ค. 2569");
+  const page = views.formulaBody({ part: "F2", formula: "A2004" }, { formulas, tests: longRun, curveDate: null, curves: [] }, { kind: "custom", start: 37, end: 40 });
+  assert.equal(count(page, /class="lab-mdr-day-row/g), 3, "the table lists only the days in the range");
+  assert.match(page, /id="mdr-zoom"[^>]*hidden/, "the bar waits for the page script to paint its state");
+  assert.match(page, />ล่าสุด 30 วัน</);
+  assert.match(page, />ทั้งหมด</);
+  assert.match(page, /id="mdr-month-from" data-native-select/, "native month selects: tappable on iPhone, no app popup");
+  assert.equal(count(page, /class="lab-step" data-step="(back|forward|out|in)"/g), 4);
+});
+
+test("trend chart over a range: only the days in range are drawn, the normal band still comes from every test", () => {
+  const days = model.groupByDate(longRun);
+  const all = views.trendSvg(days, "delta", 800, "F1");
+  const part = views.trendSvg(days, "delta", 800, "F1", { start: 37, end: 40 });
+  assert.equal(count(part.svg, /class="lab-mdr-avg-pt"/g), 3, "an AVG point per day in range");
+  assert.equal(count(part.svg, /class="lab-mdr-dot/g), 6);
+  assert.equal(part.note, all.note, "same normal band whatever the range");
+  assert.notEqual(part.note, views.trendSvg(views.rangeDays(days, { start: 37, end: 40 }), "delta", 800, "F1").note, "a band of the range alone would differ");
+  assert.match(views.trendSvg(days, "ts2_s", 800, "F1").svg, /lab-mdr-dot/, "cure trend can show ts2");
+  const noValue = model.normalizeTests([{ id: 1, machine_id: "1", test_date: "2026-11-01", test_time: "08:00", ml: 1, mh: 2, t90_s: 100 }, { id: 2, machine_id: "1", test_date: "2026-11-05", test_time: "08:00", ml: 1, mh: 2, t90_s: null }]);
+  assert.match(views.trendSvg(model.groupByDate(noValue), "t90_s", 600, "F1", { start: 1, end: 2 }).note, /ไม่มีค่า t90 ในช่วงวันที่เลือก/);
+  assert.deepEqual(views.trendModes(model.groupByDate(noValue)).map((mode) => mode.key), ["delta", "t90_s"]);
 });

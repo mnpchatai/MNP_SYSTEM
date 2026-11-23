@@ -28,7 +28,7 @@ function setup(respond) {
     } },
     shell: (html) => html, bindShell() {}, loadingShell() {}, renderNotFound() { denied += 1; }, zoomIntoContent() {},
   });
-  for (const file of ["lab-mooney-model.js", "lab-mooney-chart.js", "lab-sections.js", "lab-mooney-views.js", "lab-mdr-model.js", "lab-mdr-views.js", "lab-mdr-page.js", "module-lab.js"]) {
+  for (const file of ["lab-range.js", "lab-mooney-model.js", "lab-mooney-chart.js", "lab-sections.js", "lab-mooney-views.js", "lab-mdr-model.js", "lab-mdr-views.js", "lab-mdr-page.js", "module-lab.js"]) {
     vm.runInContext(readFileSync(new URL(`../../modules/${file}`, import.meta.url), "utf8"), context);
   }
   return { context, calls, element, events, auth: (event) => authChange(event), denied: () => denied, tick: () => ticks.at(-1)(),
@@ -270,4 +270,34 @@ test("the MDR module reads its own feed per test set, opens the formula page, an
   await app.open("module=mdr");
   assert.equal(app.denied(), 1);
   assert.equal(app.context.state.employee.labAccess, false);
+});
+
+test("MDR daily trend: the range bar pans, zooms and picks months, and the table follows; a new formula starts at the latest days", async () => {
+  const rows = Array.from({ length: 40 }, (_, i) => ({ id: i + 1, machine_id: "111", test_date: new Date(Date.UTC(2026, 9, 1 + i)).toISOString().slice(0, 10), test_time: "08:00", temperature_c: 155, ml: 1, mh: 2 + i, ts2_s: 30, t90_s: 100 + i }));
+  const feed = { formulas: [{ formula: "A2004", tests: 40, days: 40, last_date: "2026-11-09" }], tests: rows, curve_date: null, curves: [] };
+  const app = setup(async () => ({ data: feed, error: null }));
+  await app.open("module=mdr&part=F2&formula=A2004");
+  const table = app.element("#mdr-table-scroll");
+  const bar = app.element("#mdr-zoom");
+  const dayRows = (html = table.innerHTML) => (html.match(/class="lab-mdr-day-row/g) ?? []).length;
+  assert.equal(dayRows(app.element("#mdr-body").innerHTML), 30, "the latest 30 test days by default");
+  assert.equal(bar.hidden, false);
+  assert.equal(app.element("#mdr-month-from").value, "2026-10");
+  assert.equal(app.element("#mdr-month-to").value, "2026-11");
+  assert.match(app.element("#mdr-trend").innerHTML, /<svg/);
+  const press = (dataset) => bar.listeners.click({ target: { closest: () => ({ dataset, disabled: false }) } });
+  press({ step: "in" });
+  assert.equal(dayRows(), 15, "zoom in halves the days, keeping the newest");
+  assert.match(table.innerHTML, /9 พ.ย. 2569/);
+  assert.match(app.element("#mdr-range-announce").textContent, /^แสดง 26 ต.ค. 2569 ถึง 9 พ.ย. 2569 15 จาก 40 วันที่ทดสอบ$/);
+  press({ step: "back" });
+  assert.doesNotMatch(table.innerHTML, /9 พ.ย. 2569/, "pan back leaves the newest days");
+  press({ range: "all" });
+  assert.equal(dayRows(), 40);
+  app.element("#mdr-month-from").value = "2026-11";
+  app.element("#mdr-month-to").value = "2026-10";
+  bar.listeners.change({ target: app.element("#mdr-month-from") });
+  assert.equal(dayRows(), 9, "a start month after the end month moves the end along: November only");
+  await app.open("module=mdr&part=F2&formula=B0005");
+  assert.equal(dayRows(app.element("#mdr-body").innerHTML), 30, "another formula starts at the latest days again");
 });
