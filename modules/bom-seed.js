@@ -1,4 +1,4 @@
-// BOM รายแผนก (โหมดทดสอบ) — ข้อมูลสาธิตสมมติทั้งชุด: บทบาท 12 คน สูตรยาง item master BOM อนุมัติ ใบสั่งผลิต งานรายแผนก และคลังแท่งยาว (SR)
+// BOM รายแผนก (โหมดทดสอบ) — ข้อมูลสาธิตสมมติทั้งชุด: บทบาท 12 คน สูตรยาง item master BOM อนุมัติ ใบสั่งผลิต งานรายแผนก คลังแท่งยาว (SR) และแปรรูปยาง (GR)
 // รหัส/ชื่อเลียนโครงสร้างจริงของชีต DATA BOM (FG → SE → RB · FG → PT → เม็ดพลาสติก · FG → BG → ผ้า/ซิป) แต่เป็นรหัส DEMO ไม่ใช่ข้อมูลลูกค้า
 // ประวัติสร้างโดยเรียก action จริงของ modules/bom-actions.js จึงสอดคล้องกันเอง (ผลเหมือนกันทุกครั้งเมื่อ now เท่ากัน)
 // โหลดหลัง modules/bom-rules.js และ bom-actions.js (ใน Node ตั้ง globalThis.MNP_BOM_RULES/_ACTIONS ก่อน require)
@@ -87,7 +87,8 @@
   const demoWoId = (now, index) => `WO-${ymd(now - WO_DAYS_AGO * rules().DAY)}-${String(index + 1).padStart(2, "0")}`;
 
   function emptyState() {
-    return { version: 6, counters: {}, users: USERS.map((user) => ({ ...user })), compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [], colors: [], colorSets: [], packages: [], processes: rules().DEFAULT_PROCESSES.map((entry) => ({ ...entry })), routings: [], stock: [], stockMoves: [], rodLots: [], rodMoves: [] };
+    return { version: 6, counters: {}, users: USERS.map((user) => ({ ...user })), compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [], colors: [], colorSets: [], packages: [], processes: rules().DEFAULT_PROCESSES.map((entry) => ({ ...entry })), routings: [], stock: [], stockMoves: [], rodLots: [], rodMoves: [],
+      grConfig: [], grPlans: [], grRecords: [], rodRequests: [], grHandovers: [], grWorkers: [] };
   }
 
   // คลังแท่งยาว (SR) สาธิต: แท่งของงาน RB ที่ผูก WO ของใบ DEMO-26006 (ฮูล่า 60 ชุด ต้องใช้ 36 เส้น) และสต็อกกลางจากใบ DEMO-26008 ที่ปิดแล้ว
@@ -134,7 +135,57 @@
     live.qtyDone = 20;
   }
 
-  function buildSeed(now = Date.now(), { rods = true } = {}) {
+  // แปรรูปยาง GR สาธิต (20261216010000): งานปลอกห่วงฮูล่า SE-HL24-YE03-400-19-30 ของใบ DEMO-26001 (ต้องทำ 120) ตั้งขั้นตอนจาก routing (ตัดยาง → ทากาว → เจียร์ → เจาะ)
+  // ผลรายวันสี่วันของพนักงานสมมติสามคน (ชื่อสาธิต) · เป้าชิ้น/ชม. สองขั้น · คำขอเบิกยางเส้นยาวที่ยังเปิดหนึ่งรายการ · ส่งให้ PK สองครั้ง (PK รับแล้วหนึ่ง รอรับหนึ่ง)
+  // งาน SE-TP01-BK01-140-3-20 คงเป็นงานที่รายงานยอดแบบเดิม (ไม่มีขั้นตอน) · งานลูกตอปิโดยังไม่ตั้งขั้นตอน (ตั้งจาก routing ได้)
+  const GR_WORKERS = Object.freeze([
+    { id: "B05", name: "สุนทร ใจงาม" },
+    { id: "GR-DEMO-2", name: "กมล ทดลองดี" },
+    { id: "GR-DEMO-3", name: "รัตนา สมมุติ" },
+  ].map((worker) => Object.freeze(worker)));
+  const grDemoId = (kind, n) => `6e1d0000-0000-4000-800${kind}-${String(n + 1).padStart(12, "0")}`;
+  function addGrDemo(d, now) {
+    const R = rules();
+    const A = actions();
+    const HOUR = 3600000;
+    const user = (role) => USERS.find((row) => row.role === role);
+    const at = (t, role) => ({ now: Math.round(t), user: user(role) });
+    const job = d.jobs.find((entry) => entry.orderId === "DEMO-26001" && entry.itemCode === "SE-HL24-YE03-400-19-30");
+    if (!job) return;
+    d.grWorkers = GR_WORKERS.map((worker) => ({ ...worker }));
+    // เวลาบันทึก: วันก่อนหน้า k วัน เวลา 17:00 (เวลาไทย)
+    const evening = (k) => Date.parse(`${R.grDay(now, -k)}T17:00:00+07:00`);
+    const config = R.grConfig(d);
+    A.saveGrConfig(d, { steps: config.steps, reasons: config.reasons, targets: [
+      { itemCode: job.itemCode, stepCode: "GR-04", perHour: 20 }, { itemCode: job.itemCode, stepCode: "GR-09", perHour: 12 },
+    ] }, at(evening(6), "planner"));
+    A.setGrJobSteps(d, { jobId: job.id, steps: R.grDefaultSteps(d, job) }, at(evening(6) + 60000, "planner"));
+    // หัวหน้า / ฝ่ายวางแผนบันทึกแทนพนักงานย้อนหลัง k วัน
+    const record = (k, workerId, stepCode, hours, good, reject = 0, reason = "") =>
+      A.addGrRecord(d, { jobId: job.id, workDate: R.grDay(now, -k), workerId, stepCode, hours, people: 1, good, reject, reason }, at(evening(k), "planner"));
+    // พนักงาน GR (B05) บันทึกผลของตัวเอง ณ เวลา t สำหรับวันนั้นหรือวันก่อน (offset 0 / −1)
+    const own = (t, offset, stepCode, hours, good, reject = 0, reason = "") =>
+      A.addGrRecord(d, { jobId: job.id, workDate: R.grDay(t, offset), stepCode, hours, people: 1, good, reject, reason }, at(t, "gr"));
+    record(4, "GR-DEMO-2", "GR-04", 8, 60, 2, "ขนาดไม่ได้");
+    record(4, "GR-DEMO-3", "GR-05", 8, 50);
+    record(3, "GR-DEMO-2", "GR-04", 8, 55);
+    record(3, "GR-DEMO-3", "GR-06", 7.5, 45, 3, "เจียร์เกิน");
+    record(2, "B05", "GR-09", 8, 30);
+    A.sendGrToPk(d, { jobId: job.id, qty: 30, note: "ปลอกห่วงชุดแรก" }, at(evening(2) + HOUR, "planner"));
+    A.receiveGrAtPk(d, { handoverId: d.grHandovers.at(-1).id }, at(evening(2) + 2 * HOUR, "planner"));
+    record(1, "GR-DEMO-3", "GR-06", 8, 50);
+    // พนักงาน GR บันทึกผลของตัวเองเมื่อวานและวันนี้
+    own(now - 2 * HOUR, -1, "GR-09", 8, 35, 1, "เจาะผิดตำแหน่ง");
+    A.requestRods(d, { jobId: job.id, itemCode: "RB-DM02-02-YE03-204-19-34", qty: 10, note: "เส้นยางหมดที่โต๊ะตัด" }, at(now - 90 * 60000, "gr"));
+    own(now - HOUR, 0, "GR-05", 4, 25);
+    A.sendGrToPk(d, { jobId: job.id, qty: 25 }, at(now - 30 * 60000, "planner"));
+    // id ของแถวคงที่ (ชุดสาธิตเหมือนกันทุกครั้งเมื่อ now เท่ากัน): แถวเหล่านี้ไม่ถูกอ้างจากที่อื่นแล้ว
+    d.grRecords.forEach((row, index) => { row.id = grDemoId(1, index); });
+    d.rodRequests.forEach((row, index) => { row.id = grDemoId(2, index); });
+    d.grHandovers.forEach((row, index) => { row.id = grDemoId(3, index); });
+  }
+
+  function buildSeed(now = Date.now(), { rods = true, gr = true } = {}) {
     const { DAY } = rules();
     const A = actions();
     const d = emptyState();
@@ -244,6 +295,7 @@
     A.receiveFg(d, { orderId: pi8, lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 12 }] }, at(now - 5 * DAY, "wh"));
     A.deliverFg(d, { orderId: pi8, lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 20 }] }, at(now - 4 * DAY, "wh"));
     if (rods) addRodDemo(d, now);
+    if (gr) addGrDemo(d, now);
     return d;
   }
 
@@ -251,7 +303,7 @@
   // mode: running = เดินสายผลิตถึงขั้นฉีด (WO กำลังผลิต) · issued = เบิกเคมีแล้วรอผสม · สูตรของ WO = สูตร PHR ที่สูตรยางของเส้นยางผูกไว้ (ไม่ผูก = ข้าม)
   function demoRfLinks(now = Date.now()) {
     // ยอดของ WO = ส่วนที่งาน RB ยังขาดตอนเปิด WO (ก่อนแท่งสาธิตของคลังแท่งยาวเข้า)
-    const d = buildSeed(now, { rods: false });
+    const d = buildSeed(now, { rods: false, gr: false });
     return DEMO_RF_ORDERS.map(([pi, , mode]) => {
       const job = d.jobs.find((entry) => entry.orderId === pi && entry.dept === "RB" && entry.externalRef?.woId);
       if (!job) return null;
@@ -265,7 +317,7 @@
     }).filter((link) => link && link.recipeId && link.qty > 0);
   }
 
-  const api = { USERS, COMPOUNDS, ITEMS, emptyState, buildSeed, demoRfLinks, demoWoId };
+  const api = { USERS, COMPOUNDS, ITEMS, GR_WORKERS, emptyState, buildSeed, demoRfLinks, demoWoId };
   if (isNode) module.exports = api;
   else root.MNP_BOM_SEED = api;
 })(typeof window !== "undefined" ? window : globalThis);

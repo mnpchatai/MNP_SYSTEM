@@ -12,7 +12,8 @@
   const model = root.MNP_LAB_MOONEY;
   const chart = root.MNP_LAB_CHART;
   const sections = root.MNP_LAB_SECTIONS;
-  if (!model || !chart || !sections) return;
+  const rangeKit = root.MNP_LAB_RANGE;
+  if (!model || !chart || !sections || !rangeKit) return;
 
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
   const int = (value) => Number(value).toLocaleString("th-TH");
@@ -498,34 +499,14 @@
   // เครื่องมือช่วงและซูมของกราฟโหมดลำดับ (module-lab.js ผูกปุ่มและซ่อนเมื่อดูประวัติ ID): ล่าสุด/ทั้งหมด + เลือกเดือน … ถึง … + เลื่อนซ้าย/ขวา + ซูมออก/เข้า
   // ปุ่มเป็นปุ่มแบน ส่วนเดือนเป็น <select> ของเบราว์เซอร์ (data-native-select: บน iPhone เป็นตัวเลือกของระบบที่แตะง่าย ไม่ใช่รายการลอยของแอป)
   // ป้ายปุ่ม "ล่าสุด" ใส่จำนวนครั้งตามความกว้างจอตอนวาด (ดู module-lab.js) คำอธิบายท่าทางอยู่ที่ title
-  const STEP_ICONS = Object.freeze({
-    back: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>`,
-    forward: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>`,
-    out: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg>`,
-    in: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg>`,
+  // HTML ของแถบอยู่ที่ lab-range.js (ใช้ร่วมกับกราฟแนวโน้มของ MDR)
+  const zoomBar = () => rangeKit.toolbar({
+    ids: { bar: "lab-zoom", from: "lab-month-from", to: "lab-month-to" },
+    titles: { latest: "ล่าสุดตามความกว้างจอ", all: "ทุกครั้งที่ทดสอบ", in: "ซูมเข้า (+) หรือ Ctrl + ล้อเมาส์ / บีบสองนิ้ว" },
   });
-  const RANGE_BUTTONS = Object.freeze([
-    { key: "latest", label: "ล่าสุด", title: "ล่าสุดตามความกว้างจอ" },
-    { key: "all", label: "ทั้งหมด", title: "ทุกครั้งที่ทดสอบ" },
-  ]);
-  const STEP_BUTTONS = Object.freeze([
-    { key: "back", label: "เลื่อนไปช่วงก่อนหน้า" },
-    { key: "forward", label: "เลื่อนไปช่วงถัดไป" },
-    { key: "out", label: "ซูมออก (−)" },
-    { key: "in", label: "ซูมเข้า (+) หรือ Ctrl + ล้อเมาส์ / บีบสองนิ้ว" },
-  ]);
-
-  function zoomBar() {
-    const ranges = RANGE_BUTTONS.map((button) => `<button type="button" class="lab-range-btn" data-range="${button.key}" aria-pressed="false" title="${esc(button.title)}">${esc(button.label)}</button>`).join("");
-    const steps = STEP_BUTTONS.map((button) => `<button type="button" class="lab-step" data-step="${button.key}" aria-label="${esc(button.label)}" title="${esc(button.label)}">${STEP_ICONS[button.key]}</button>`).join("");
-    const months = `<div class="lab-months" role="group" aria-label="ช่วงเดือนที่แสดง"><select class="select lab-month" id="lab-month-from" data-native-select aria-label="ตั้งแต่เดือน"></select><span class="lab-month-to" aria-hidden="true">ถึง</span><select class="select lab-month" id="lab-month-to" data-native-select aria-label="ถึงเดือน"></select></div>`;
-    return `<div class="lab-zoom" id="lab-zoom" role="toolbar" aria-label="ช่วงที่แสดงและการซูมของกราฟ" hidden><div class="lab-ranges" role="group" aria-label="ช่วงที่แสดง">${ranges}</div>${months}<div class="lab-steps">${steps}</div></div>`;
-  }
 
   // ตัวเลือกเดือนของช่องเดือน (months = "YYYY-MM" เรียงเก่า → ใหม่): ทุกเดือนที่มีผลทดสอบ ไม่ใส่จำนวนครั้ง เพราะแกนกราฟและตารางบอกอยู่แล้ว
-  const monthOptions = (months, selected) => months
-    .map((month) => `<option value="${esc(month)}"${month === selected ? " selected" : ""}>${esc(model.formatMonth(month))}</option>`)
-    .join("");
+  const monthOptions = (months, selected) => rangeKit.monthOptions(months, selected, model.formatMonth);
 
   // ข้อความสำหรับโปรแกรมอ่านหน้าจอเมื่อช่วงที่แสดงเปลี่ยน (ข้อความล้วน)
   function rangeAnnouncement({ items, range }) {

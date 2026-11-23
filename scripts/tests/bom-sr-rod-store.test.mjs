@@ -546,9 +546,10 @@ test("pages: SR's work board shows the pending lots and the GR issue card, QA ge
   assert.doesNotMatch(html, /p=rods/, "the long-rod store page is the SR module now: no link to the old BOM page");
   assert.doesNotMatch(html, /บัญชีนี้ไม่ได้อยู่ในแผนกผลิต/);
   // การ์ดจ่ายให้ GR: ทุกใบที่ปล่อยผลิตอยู่ซึ่งงาน GR ยังต้องใช้เส้นยางนั้น และคลังมีให้ (ของใบนั้นหรือสต็อกกลาง) = DEMO-26001 DEMO-26006 DEMO-26007 ของ RB-DM02-02-YE03 (สต็อกกลาง 6 เส้น)
-  // และ DEMO-26001 ของ RB-DM02-02-BK01 (ล็อตรับนอกใบสั่ง 15 เส้น)
-  assert.deepEqual([...html.matchAll(/จ่ายยางเส้นยาวให้ GR ตามใบ (DEMO-\d+)/g)].map((match) => match[1]).sort(), ["DEMO-26001", "DEMO-26001", "DEMO-26006", "DEMO-26007"]);
-  assert.equal(env.context.MNP_BOM_PAGES.hub.workCount(env.ctx()), 6, "the menu counts the six SR cards (two lots to receive, four order lines to supply)");
+  // และ DEMO-26001 ของ RB-DM02-02-BK01 (ล็อตรับนอกใบสั่ง 15 เส้น) · DEMO-26001 ของ RB-DM02-02-YE03 มีคำขอเบิกของ GR ที่ยังเปิด (ข้อมูลสาธิต GR): การ์ดคำขอแทนการ์ดจ่ายตามใบ ไม่ซ้ำกัน
+  assert.deepEqual([...html.matchAll(/จ่ายยางเส้นยาวให้ GR ตามใบ (DEMO-\d+)/g)].map((match) => match[1]).sort(), ["DEMO-26001", "DEMO-26006", "DEMO-26007"]);
+  assert.deepEqual([...html.matchAll(/จ่ายยางเส้นยาวตามคำขอของ GR ใบ (DEMO-\d+)/g)].map((match) => match[1]), ["DEMO-26001"]);
+  assert.equal(env.context.MNP_BOM_PAGES.hub.workCount(env.ctx()), 6, "the menu counts the six SR cards (two lots to receive, three order lines to supply, one GR request)");
   // QA: ยังไม่มีล็อตที่กัก → SR รับ L3 ไม่ผ่าน → QA เห็นการ์ดตัดสิน
   assert.equal(env.store.run("receiveRods", { lotId: lotId(3), qtyReceived: 8, values: FAIL, note: "ความหนาเกิน", location: "Q-01" }).ok, true);
   env.store.setUser("B12");

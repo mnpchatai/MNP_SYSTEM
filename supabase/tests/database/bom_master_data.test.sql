@@ -51,7 +51,8 @@ select is((select count(*) from information_schema.columns where table_schema = 
            and table_name in (select name from bom_tables)),
   9::bigint, 'every table the delta reads has changed_version');
 select is((select count(*) from pg_indexes where schemaname = 'public' and indexname like 'bom\_%\_changed\_idx'
-           and indexname <> all (array['bom_customers_changed_idx', 'bom_orders_changed_idx', 'bom_jobs_changed_idx', 'bom_stock_changed_idx', 'bom_stock_moves_changed_idx', 'bom_fg_moves_changed_idx', 'bom_rod_lots_changed_idx', 'bom_rod_moves_changed_idx'])),
+           and indexname <> all (array['bom_customers_changed_idx', 'bom_orders_changed_idx', 'bom_jobs_changed_idx', 'bom_stock_changed_idx', 'bom_stock_moves_changed_idx', 'bom_fg_moves_changed_idx', 'bom_rod_lots_changed_idx', 'bom_rod_moves_changed_idx',
+                                   'bom_gr_config_changed_idx', 'bom_gr_job_plans_changed_idx', 'bom_gr_records_changed_idx', 'bom_rod_requests_changed_idx', 'bom_gr_handovers_changed_idx'])),
   9::bigint, 'each of them is indexed by (is_test, changed_version)');
 select is((select count(*) from pg_constraint c join bom_tables t on c.conrelid = ('public.' || t.name)::regclass
            where c.contype = 'f' and pg_get_constraintdef(c.oid) like '%, is_test) REFERENCES %bom_%'),
@@ -141,10 +142,12 @@ select lives_ok($$ select public.app_bom_save_master('{}'::jsonb, 0, 'saveItem')
 
 -- 5. อ่านได้ทุก persona แต่เขียนไม่ได้ถ้าไม่ใช่ PP / ผู้จัดการขึ้นไป ------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
-select is(public.app_bom_master() - 'epoch',
+-- ชุดของ GR (20261216010000) ตรวจใน bom_gr_module.test.sql · grWorkers = รายชื่อบัญชีทดสอบของแผนก GR จึงไม่ว่าง
+select is(public.app_bom_master() - 'epoch' - array['grConfig', 'grPlans', 'grRecords', 'rodRequests', 'grHandovers', 'grWorkers'],
   '{"version":0,"items":[],"compounds":[],"colors":[],"colorSets":[],"packages":[],"boms":[],"processes":[],"routings":[],"customers":[],"orders":[],"jobs":[],"stock":[],"stockMoves":[],"fgMoves":[],"rodLots":[],"rodMoves":[]}'::jsonb,
   'a rubber-department staff persona reads an empty master and never sees the real row (the epoch is a separate field)');
-select is(public.app_bom_master_since(0) - 'epoch', '{"version":0,"changes":{"items":{"upsert":[],"delete":[]},"compounds":{"upsert":[],"delete":[]},"colors":{"upsert":[],"delete":[]},"colorSets":{"upsert":[],"delete":[]},"packages":{"upsert":[],"delete":[]},"boms":{"upsert":[],"delete":[]},"processes":{"upsert":[],"delete":[]},"routings":{"upsert":[],"delete":[]},"customers":{"upsert":[],"delete":[]},"orders":{"upsert":[],"delete":[]},"jobs":{"upsert":[],"delete":[]},"stock":{"upsert":[],"delete":[]},"stockMoves":{"upsert":[],"delete":[]},"fgMoves":{"upsert":[],"delete":[]},"rodLots":{"upsert":[],"delete":[]},"rodMoves":{"upsert":[],"delete":[]}}}'::jsonb,
+select is((select jsonb_set(m, '{changes}', (m -> 'changes') - array['grConfig', 'grPlans', 'grRecords', 'rodRequests', 'grHandovers', 'grWorkers'])
+             from (select public.app_bom_master_since(0) - 'epoch' as m) s), '{"version":0,"changes":{"items":{"upsert":[],"delete":[]},"compounds":{"upsert":[],"delete":[]},"colors":{"upsert":[],"delete":[]},"colorSets":{"upsert":[],"delete":[]},"packages":{"upsert":[],"delete":[]},"boms":{"upsert":[],"delete":[]},"processes":{"upsert":[],"delete":[]},"routings":{"upsert":[],"delete":[]},"customers":{"upsert":[],"delete":[]},"orders":{"upsert":[],"delete":[]},"jobs":{"upsert":[],"delete":[]},"stock":{"upsert":[],"delete":[]},"stockMoves":{"upsert":[],"delete":[]},"fgMoves":{"upsert":[],"delete":[]},"rodLots":{"upsert":[],"delete":[]},"rodMoves":{"upsert":[],"delete":[]}}}'::jsonb,
   'a rubber-department staff persona reads the delta of an empty master: all sixteen lists, empty upsert and delete');
 select throws_ok($$ select public.app_bom_save_master('{"items":{"upsert":[]}}'::jsonb, 0, 'saveItem') $$, 'BOM_FORBIDDEN',
   'a rubber-department staff persona cannot save');
