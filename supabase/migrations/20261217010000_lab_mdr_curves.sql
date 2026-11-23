@@ -24,6 +24,7 @@ declare
   v_step integer;
   v_max_curves constant integer := 1000;
   v_days integer;
+  v_kept_curves bigint;
   v_kept date[];
 begin
   if auth.uid() is null then raise exception 'AUTH_REQUIRED'; end if;
@@ -45,23 +46,25 @@ begin
     from days d
   )
   select (select count(*) from days)::integer,
+         coalesce(max(r.total) filter (where r.total <= v_max_curves or r.rank = 1), 0),
          coalesce(array_agg(r.test_date order by r.test_date) filter (where r.total <= v_max_curves or r.rank = 1), '{}'::date[])
-  into v_days, v_kept
+  into v_days, v_kept_curves, v_kept
   from running r;
 
   return jsonb_build_object(
     'step', v_step,
     'from', v_kept[1],
     'to', v_kept[cardinality(v_kept)],
-    'truncated', cardinality(v_kept) < v_days,
+    'truncated', cardinality(v_kept) < v_days or v_kept_curves > v_max_curves,
     'curves', coalesce((
       select jsonb_agg(c.item order by c.test_date, c.test_time, c.machine_id)
       from (
         select t.test_date, t.test_time, t.machine_id,
                jsonb_build_object(
                  'id', t.id, 'test_date', t.test_date,
+                 -- unnest อ่าน array ครั้งเดียวต่อแถว (t.curve[i] ทีละจุดจะคลาย TOAST ซ้ำทุกจุด) เก็บจุดที่ 1, 1 + step, … (วินาที 0, step, …)
                  'curve', case when v_step = 1 then to_jsonb(t.curve)
-                   else to_jsonb(array(select t.curve[i] from generate_series(1, cardinality(t.curve), v_step) as i order by i)) end
+                   else (select jsonb_agg(u.v order by u.o) from unnest(t.curve) with ordinality as u(v, o) where (u.o - 1) % v_step = 0) end
                ) as item
         from public.lab_mdr_tests t
         where t.part = p_part and t.formula = v_formula and t.test_date = any (v_kept) and t.curve is not null

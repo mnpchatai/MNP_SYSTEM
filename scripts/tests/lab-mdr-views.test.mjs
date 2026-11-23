@@ -220,6 +220,12 @@ test("torque chart over several days: a colour and a key per day, the tooltip li
   assert.deepEqual(rows.map((row) => [row.date, row.t90]), [["2026-11-02", 172], ["2026-11-03", 170]], "average t90 per day: (177 + 166) / 2 rounds to 172");
   assert.match(views.dayTipHtml(rows), /t90 เฉลี่ย \(นาที:วินาที\)[\s\S]*2 พ.ย. 2569<b>2:52<\/b>/);
   assert.equal(views.dayTipRows([{ day: "2026-11-02", color: "#fff", t90: null }])[0].t90, null, "a day where no test reached 90%: no average");
+  const manyRows = Array.from({ length: 20 }, (_, i) => ({ color: "#fff", date: `2026-10-${String(i + 1).padStart(2, "0")}`, t90: 160 }));
+  const longTip = views.dayTipHtml(manyRows);
+  assert.equal(count(longTip, /lab-mdr-tip-row/g), 12, "the tooltip never grows taller than the chart: the latest 12 days");
+  assert.match(longTip, /วันก่อนหน้าอีก 8 วัน/);
+  assert.match(longTip, /20 ต.ค. 2569/);
+  assert.doesNotMatch(longTip, />1 ต.ค. 2569</);
   const { svg, geometry } = views.chartSvg(both.series, 800);
   assert.equal(geometry.seconds, 1800, "361 points every 5 s still span 30 minutes");
   assert.match(svg, />30<\/text>/, "same 0–30 min axis");

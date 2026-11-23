@@ -3667,6 +3667,7 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .lab-mdr-axis-name { font-weight: 700; }
 .lab-mdr-tip { min-width: 140px; }
 .lab-mdr-tip-row { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.lab-mdr-tip-more { color: var(--muted); font-size: var(--text-caption); }
 .lab-mdr-tip-row b { margin-left: auto; padding-left: 12px; font-size: var(--text-ui); }
 
 /* กราฟแนวโน้มรายวันของ F1/F2 (พื้นเข้มเดียวกับกราฟแรงบิดของ F1): ปุ่มสลับค่า แล้วคำอธิบายสัญลักษณ์บรรทัดเดียว */

@@ -278,6 +278,7 @@
     if (data.curveDate) cache.set(`${data.curveDate}|${data.curveDate}`, { step: 1, curves: data.curves, from: data.curveDate, to: data.curveDate, truncated: false });
     let view = { multi: false, series: [], legend: "" };
     let shownKey = null;
+    let shownNote = ""; // ข้อความใต้กราฟของช่วงที่วาดอยู่
     let request = 0;
     let geometry = null;
     let cursor = null; // วินาทีที่ชี้อยู่
@@ -323,8 +324,13 @@
       plot.setAttribute("aria-label", views.plotLabel(dates));
       if (!dates.length) return;
       const key = `${dates[0]}|${dates.at(-1)}`;
-      if (key === shownKey) return;
+      // นับคำขอก่อนเทียบกับช่วงที่วาดอยู่: กลับมาที่ช่วงเดิมระหว่างรออ่านช่วงอื่น = ยกเลิกคำขอนั้น (ผลที่มาทีหลังไม่วาดทับ)
       const mine = ++request;
+      if (key === shownKey) {
+        setBusy(false);
+        if (note) note.textContent = shownNote;
+        return;
+      }
       let entry = cache.get(key);
       if (!entry) {
         setBusy(true);
@@ -353,11 +359,10 @@
       view = views.curveView(days, dates, entry.curves, entry.step);
       if (legend) legend.innerHTML = view.legend;
       bindKeys();
-      if (note) {
-        note.textContent = entry.truncated
-          ? `กราฟแสดงได้ไม่เกิน 1,000 ครั้ง — แสดงเฉพาะ ${model.formatDate(entry.from)} ถึง ${model.formatDate(entry.to)}`
-          : view.series.length ? "" : "ไม่มีกราฟแรงบิดในช่วงวันที่เลือก";
-      }
+      shownNote = entry.truncated
+        ? `กราฟแสดงได้ไม่เกิน 1,000 ครั้ง — แสดงเฉพาะ ${model.formatDate(entry.from)} ถึง ${model.formatDate(entry.to)}`
+        : view.series.length ? "" : "ไม่มีกราฟแรงบิดในช่วงวันที่เลือก";
+      if (note) note.textContent = shownNote;
       hide();
       width = 0;
       draw();

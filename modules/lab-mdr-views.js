@@ -196,9 +196,12 @@
     return [...byDay.values()].map((row) => ({ color: row.color, date: row.date, t90: row.values.length ? Math.round(model.mean(row.values)) : null }));
   }
 
+  // ป้ายไม่สูงเกินกราฟ: แสดง 12 วันล่าสุดที่แสดงอยู่ ที่เหลือบอกเป็นจำนวน (ซ่อนวันด้วยปุ่มเส้นเพื่อดูวันที่เก่ากว่า)
+  const TIP_DAYS = 12;
   function dayTipHtml(rows) {
-    const items = rows.map((row) => `<span class="lab-mdr-tip-row" style="--line-color:${row.color}"><span class="lab-mdr-swatch" aria-hidden="true"></span>${esc(model.formatDate(row.date))}<b>${esc(model.formatClock(row.t90))}</b></span>`).join("");
-    return `<span class="lab-tip-when">t90 เฉลี่ย (นาที:วินาที)</span>${items}`;
+    const more = Math.max(0, rows.length - TIP_DAYS);
+    const items = rows.slice(more).map((row) => `<span class="lab-mdr-tip-row" style="--line-color:${row.color}"><span class="lab-mdr-swatch" aria-hidden="true"></span>${esc(model.formatDate(row.date))}<b>${esc(model.formatClock(row.t90))}</b></span>`).join("");
+    return `<span class="lab-tip-when">t90 เฉลี่ย (นาที:วินาที)</span>${more ? `<span class="lab-mdr-tip-more">วันก่อนหน้าอีก ${more} วัน</span>` : ""}${items}`;
   }
 
   // กราฟแนวโน้มรายวัน (ทีละค่า สลับด้วยปุ่ม) + แถบช่วงวัน (lab-range.js) วาดและผูกที่ lab-mdr-page.js ด้วย trendSvg

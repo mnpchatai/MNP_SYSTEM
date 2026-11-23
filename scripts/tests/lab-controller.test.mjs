@@ -383,3 +383,35 @@ test("MDR torque chart: its own range bar (latest day by default), several days 
   assert.match(linked.element("#mdr-curve-when").textContent, /2 พ.ย. 2569/);
   assert.match(linked.element("#mdr-body").innerHTML, /data-show-date="2026-11-03"/, "the newest day offers its chart: the link's day is charted");
 });
+
+test("MDR torque chart: going back to the drawn range while another range is still loading cancels that read", async () => {
+  const dates = ["2026-11-01", "2026-11-02", "2026-11-03"];
+  const rows = dates.flatMap((date, d) => [0, 1].map((k) => ({ id: d * 2 + k + 1, machine_id: String(111 + k), test_date: date, test_time: `0${8 + k}:00`, temperature_c: 155, ml: 1, mh: 8, ts2_s: 30, t90_s: 160 })));
+  const curve = Array.from({ length: 1801 }, (_, second) => Math.min(8, 1 + second * 0.02));
+  const feed = { formulas: [{ formula: "A2004", tests: 6, days: 3, last_date: "2026-11-03" }], tests: rows, curve_date: "2026-11-03",
+    curves: rows.filter((row) => row.test_date === "2026-11-03").map((row) => ({ id: row.id, curve })) };
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const app = setup(async (name, args) => {
+    if (name === "app_lab_mdr_feed") return { data: feed, error: null };
+    await gate;
+    const inRange = rows.filter((row) => row.test_date >= args.p_from && row.test_date <= args.p_to);
+    return { data: { step: 5, from: args.p_from, to: args.p_to, truncated: false, curves: inRange.map((row) => ({ id: row.id, curve: curve.filter((_, i) => i % 5 === 0) })) }, error: null };
+  });
+  await app.open("module=mdr&part=F1&formula=A2004");
+  const bar = app.element("#mdr-curve-zoom");
+  const legend = app.element("#mdr-legend");
+  const press = (dataset) => bar.listeners.click({ target: { closest: () => ({ dataset, disabled: false }) } });
+  press({ step: "out" });
+  await flush();
+  assert.equal(app.element("#mdr-curve-note").textContent, "กำลังโหลดกราฟ…");
+  press({ step: "in" });
+  await flush();
+  assert.equal(app.element("#mdr-curve-note").textContent, "", "back on the drawn day: no loading message left behind");
+  release();
+  await flush();
+  await flush();
+  assert.equal((legend.innerHTML.match(/data-day=/g) ?? []).length, 0, "the late two-day answer does not draw over the one-day chart");
+  assert.equal((legend.innerHTML.match(/data-test=/g) ?? []).length, 2);
+  assert.match(app.element("#mdr-curve-when").textContent, /3 พ.ย. 2569/);
+});
