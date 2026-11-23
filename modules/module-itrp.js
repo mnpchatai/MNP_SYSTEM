@@ -6,6 +6,8 @@
 //   view=new                   ฟอร์มแจ้งซ่อม (เครื่อง · ประเภทคำขอ · ประเภทงานซ่อม · อาการเสีย · แนบไฟล์ · งานด่วน)
 //   view=order&id=<uuid>       รายละเอียดใบ + ไทม์ไลน์ + บันทึกการซ่อม + ปุ่มตาม allowed_actions (รวมฟอร์ม "ส่งงาน" ของ IT · "แก้ไขงาน" ของผู้แจ้ง · "ถามผู้แจ้ง" ของผู้อนุมัติ/IT · ฟอร์มตอบ)
 //   view=print&id=<uuid>       หน้าพิมพ์ A4 เหมือนฟอร์มกระดาษ "ใบแจ้งซ่อมคอมพิวเตอร์"
+//   view=history[&code=<รหัสเครื่อง>]   แท็บ "ประวัติการซ่อม" (it_admin / ผู้อนุมัติขั้น IT): รายการเครื่อง → ตาราง FM02 · it_admin ลงประวัติย้อนหลัง/แก้/ยกเลิกรายการ/จัดการทะเบียนเครื่อง
+//   view=history-print&code=<รหัสเครื่อง>   ใบพิมพ์ A4 "ประวัติการซ่อมเครื่องคอมพิวเตอร์" (IT01-FM02)
 //
 // คัดโครงจากใบสั่งงาน IT (module-itwo.js) กติกา flow เหมือนกัน (อนุมัติ 2 ขั้น · งานด่วน · ถาม-ตอบ · ส่งงาน/ยืนยันรับ/ขอแก้ไข · IT ยกเลิกแทนผู้แจ้งตอนรอตอบ)
 // ที่ต่าง: ไม่มีวันที่ต้องการงาน/ออเดอร์/ส่วนสิทธิ์ในระบบ · "ส่งงาน" เปิดฟอร์มบันทึกการซ่อม (สำหรับแผนก IT + ตารางอะไหล่ ≤10 แถว) แล้วเรียก app_itrp_complete ครั้งเดียว · ใบพิมพ์คนละเลย์เอาต์
@@ -21,14 +23,15 @@
 (function registerItrpModule() {
   const model = window.MNP_ITRP_MODEL;
   const pages = window.MNP_ITRP_PAGES;
-  if (!model || !pages) return;
+  const historyPages = window.MNP_ITRP_HISTORY_PAGES; // แท็บประวัติการซ่อม (HTML) · โหลดหลัง itrp-pages.js ตามลำดับใน index.html
+  if (!model || !pages || !historyPages) return;
 
   const PATH = "office"; // หน้าของโมดูลนี้ใช้เส้นทางของระบบสำนักงาน (เมนูข้างไฮไลต์ "ระบบสำนักงาน")
   const TITLE = "ใบแจ้งซ่อม";
   const PURGE_TEXT = "ล้างข้อมูลใบแจ้งซ่อมทดสอบ";
   let pageVersion = 0; // หน้าเก่าที่โหลดช้ากว่าหน้าใหม่ต้องไม่วาดทับ
   let pageHash = ""; // location.hash ตอนเริ่มวาดหน้าล่าสุด: ผู้ใช้ออกไปหน้าอื่น (เช่น IT SUPPORT) ระหว่างรอข้อมูล หน้านี้ต้องไม่วาดทับหน้านั้น
-  let unsavedProbe = null; // นับสิ่งที่กรอกค้างยังไม่ส่งของหน้าที่วาดอยู่ (app.js เรียกผ่าน MNP_ITRP.unsavedCount ก่อนออกจากหน้า) · ใช้กับฟอร์มส่งงาน ขอแก้ไขงาน ถาม/ตอบ และไฟล์ที่อัปโหลดไม่สำเร็จ
+  let unsavedProbe = null; // นับสิ่งที่กรอกค้างยังไม่ส่งของหน้าที่วาดอยู่ (app.js เรียกผ่าน MNP_ITRP.unsavedCount ก่อนออกจากหน้า) · ใช้กับฟอร์มส่งงาน ขอแก้ไขงาน ถาม/ตอบ ฟอร์มในแท็บประวัติการซ่อม และไฟล์ที่อัปโหลดไม่สำเร็จ
   const REMOVE_CHUNK = 100; // ลบไฟล์ทดสอบใน Storage ครั้งละกี่ไฟล์
 
   async function rpc(name, args) {
@@ -119,20 +122,22 @@
       if (view === "new") return renderNew(role, version);
       if (view === "order") return await renderOrder(params.get("id"), role, version);
       if (view === "print") return await renderPrint(params.get("id"), version);
-      return await renderTab(view, role, version);
+      if (view === "history-print") return await renderHistoryPrint(params.get("code"), version);
+      return await renderTab(view, role, version, params);
     } catch (error) {
       return errorPage(error, version);
     }
   }
 
   /* ---------- แท็บ: ใบของฉัน / รออนุมัติ / งาน IT / ตั้งค่า ---------- */
-  async function renderTab(view, role, version) {
+  async function renderTab(view, role, version, params) {
     const hasApprovals = Boolean(role.is_dept_approver || role.is_it_approver);
     const hasIt = Boolean(role.is_it_admin || role.is_it_approver);
     const mainCall = {
       mine: () => rpc("app_itrp_list_mine"),
       approvals: () => rpc("app_itrp_list_pending_approvals"),
       it: () => rpc("app_itrp_list_it"),
+      history: () => loadHistoryMain(params),
       settings: () => Promise.all([rpc("app_itrp_list_staff"), rpc("app_itrp_get_doc_counter")]),
     }[view];
     // ตัวเลขบนแท็บอื่นอ่านขนานไปด้วย ไม่รอและไม่ทำให้หน้าล้ม
@@ -156,10 +161,12 @@
     if (view === "mine") body = pages.mineList(main);
     else if (view === "approvals") body = pages.approvalsList(main);
     else if (view === "it") body = pages.itList(main);
+    else if (view === "history") body = historyPages.historyTab({ devices: main.devices, selected: main.selected, canEdit: model.canEditHistory(role), isTest: Boolean(role.is_test) });
     else body = pages.settingsPage({ staff: main[0], counter: main[1] });
     const html = pages.page(`${pages.head({ actions: pages.newButton(), isTest: Boolean(role.is_test) })}${pages.tabs(role, view, counts)}${body}${isSandbox() ? pages.purgeRow() : ""}`);
     if (!paint(html, TITLE, version)) return;
     bindPurge();
+    if (view === "history") bindHistory(main, role, version);
     if (view === "settings") bindSettings(main[1]);
   }
 
@@ -828,6 +835,257 @@
       });
     }
     draw();
+  }
+
+  /* ---------- แท็บ "ประวัติการซ่อม" (ประวัติการซ่อมเครื่อง FM02 + ทะเบียนเครื่อง) ---------- */
+  // รายการเครื่องโหลดครบครั้งเดียว (≤ 2,000 แถว) ค้นกรองฝั่งหน้าเว็บ · ?code= เลือกเครื่องตั้งแต่เปิดหน้า (ลิงก์กลับจากใบพิมพ์) · อ่านประวัติของเครื่องที่เลือกไม่ได้ = แจ้งในแผงขวา ไม่ล้มทั้งหน้า
+  async function loadHistoryMain(params) {
+    const code = model.normalizeDeviceCode(params?.get?.("code") ?? "");
+    const [devices, selected] = await Promise.all([
+      rpc("app_itrp_list_devices", {}),
+      code ? rpc("app_itrp_device_history", { p_code: code }).then((data) => ({ code, data }), (error) => ({ code, error: failure(error).message })) : null,
+    ]);
+    return { devices: Array.isArray(devices) ? devices : [], selected };
+  }
+
+  function bindHistory(main, role, version) {
+    const canEdit = model.canEditHistory(role);
+    const listHost = document.querySelector("#itrp-hist-devices");
+    const countHost = document.querySelector("#itrp-hist-count");
+    const panelHost = document.querySelector("#itrp-hist-panel");
+    const formsHost = document.querySelector("#itrp-hist-forms");
+    const searchInput = document.querySelector("#itrp-hist-search");
+    if (!panelHost || !formsHost) return;
+    const steps = window.MNP_FORM_STEPS;
+    const stillHere = () => version === pageVersion && location.hash === pageHash;
+    let devices = main.devices;
+    let selectedCode = main.selected?.code ?? "";
+    let panelData = main.selected?.data ?? null; // ผลล่าสุดของ app_itrp_device_history (ใช้ค่าตั้งต้นของฟอร์มแก้ข้อมูลเครื่อง/แก้รายการ)
+    let loadSeq = 0; // ลำดับการเลือกเครื่อง: กดเร็วหลายเครื่อง คำตอบที่มาช้ากว่าห้ามวาดทับเครื่องที่เลือกทีหลัง
+    let activeForm = null; // ฟอร์มที่เปิดอยู่ { card, dirty(), busy() } ให้ตัวตรวจของค้างเห็น (ปิดฟอร์ม/ออกจากหน้า = ไม่นับ)
+    const fail = (error) => showToast(failure(error, { write: true }).message, "error");
+
+    const drawList = () => {
+      const filtered = model.filterDevices(devices, searchInput?.value ?? "");
+      if (listHost) listHost.innerHTML = devices.length ? historyPages.deviceItems(filtered, selectedCode) : "";
+      if (countHost) countHost.textContent = historyPages.countText(filtered.length, devices.length);
+    };
+    const drawPanel = (html) => { panelHost.innerHTML = html; };
+    async function loadPanel(code, { scroll = false } = {}) {
+      loadSeq += 1;
+      const seq = loadSeq;
+      selectedCode = code;
+      drawList();
+      drawPanel(historyPages.panelLoading(code));
+      try {
+        const data = await rpc("app_itrp_device_history", { p_code: code });
+        if (seq !== loadSeq || !stillHere()) return;
+        panelData = data;
+        drawPanel(historyPages.historyPanel(data, { canEdit }));
+        if (scroll) panelHost.scrollIntoView?.({ block: "start", behavior: "smooth" }); // มือถือ: รายการอยู่เหนือแผง เลือกแล้วเลื่อนไปดูประวัติ
+      } catch (error) {
+        if (seq !== loadSeq || !stillHere()) return;
+        panelData = null;
+        drawPanel(historyPages.panelError(failure(error).message, code));
+      }
+    }
+    // หลังบันทึกใด ๆ: โหลดรายการเครื่อง (จำนวนรายการซ่อม/เครื่องใหม่) และประวัติของเครื่องที่เลือกใหม่
+    async function refresh() {
+      try {
+        const list = await rpc("app_itrp_list_devices", {});
+        if (!stillHere()) return;
+        devices = Array.isArray(list) ? list : devices;
+      } catch (error) {
+        fail(error);
+      }
+      if (selectedCode) await loadPanel(selectedCode);
+      else drawList();
+    }
+
+    /* ---- ฟอร์มที่เปิดในกล่องบนสุด (ลงประวัติ / แก้รายการ / ทะเบียนเครื่อง / รอยแก้) · เปิดทีละฟอร์ม ---- */
+    const closeForm = () => { activeForm = null; formsHost.innerHTML = ""; };
+    const showForm = (html) => {
+      formsHost.innerHTML = html;
+      formsHost.scrollIntoView?.({ block: "start", behavior: "smooth" });
+    };
+    const readFields = (form, names) => Object.fromEntries(names.map((name) => [name, form.querySelector(`[name="${name}"]`)?.value ?? ""]));
+    const showFormError = (host, html) => {
+      host.innerHTML = `<div class="form-message error" role="alert">${html}</div>`;
+      host.scrollIntoView?.({ block: "nearest" });
+    };
+    // ช่องวันที่ใช้ตัวเลือกวันที่ไทย · วันที่แจ้ง/ซ่อมเสร็จห้ามเป็นอนาคต (ตามเวลาไทย)
+    const enhanceDates = (form, { futureAllowed = false } = {}) => {
+      form.querySelectorAll?.('input[type="date"]').forEach((input) => {
+        if (!futureAllowed) input.max = model.todayBangkok();
+        window.MNP_DATE_PICKER?.enhance(input);
+      });
+    };
+    function trackDirty(card, form, read) {
+      const initial = JSON.stringify(read());
+      let busy = false;
+      activeForm = { card, dirty: () => JSON.stringify(read()) !== initial, busy: () => busy, setBusy: (value) => { busy = value; } };
+      return activeForm;
+    }
+
+    const HISTORY_FIELDS = ["doc_no", "device_code", "reported_on", "symptom", "action", "finished_on", "remark", "reporter_name"];
+    // mode = "add" (ลงประวัติย้อนหลัง) | "edit" (แก้รายการ import/manual: entryId) · values = ค่าตั้งต้น
+    function openHistoryForm({ mode, entryId = null, values }) {
+      showForm(historyPages.historyFormCard({ mode, values, deviceOptions: devices }));
+      const card = document.querySelector("#itrp-hist-form-card");
+      const form = document.querySelector("#itrp-hist-form");
+      const message = document.querySelector("#itrp-hist-form-message");
+      if (!card || !form) return;
+      enhanceDates(form);
+      const read = () => readFields(form, HISTORY_FIELDS);
+      const tracker = trackDirty(card, form, read);
+      document.querySelector("#itrp-hist-form-cancel")?.addEventListener("click", closeForm);
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (tracker.busy()) return;
+        message.innerHTML = "";
+        const current = read();
+        const errors = steps.validate(model.historyRules({ action: () => current.action }), current);
+        if (errors.length) { steps.showFieldErrors(form, errors)?.focus?.(); return; }
+        steps.clearFieldErrors(form);
+        tracker.setBusy(true);
+        setFormBusy(form, true);
+        try {
+          if (mode === "edit") await rpc("app_itrp_history_update", model.historyUpdateParams(entryId, current));
+          else await rpc("app_itrp_history_add", model.historyParams(current));
+        } catch (error) {
+          showFormError(message, escapeHtml(failure(error, { write: true }).message));
+          tracker.setBusy(false);
+          setFormBusy(form, false);
+          return;
+        }
+        showToast(mode === "edit" ? "แก้ไขรายการประวัติการซ่อมแล้ว" : "ลงประวัติการซ่อมย้อนหลังแล้ว");
+        closeForm();
+        selectedCode = model.normalizeDeviceCode(current.device_code); // เปิดเครื่องที่เพิ่งลง/ย้ายรายการไป ให้เห็นผลทันที
+        await refresh();
+      });
+      form.querySelector('[name="device_code"]')?.focus?.({ preventScroll: true });
+    }
+
+    const DEVICE_FIELDS = ["code", "kind", "user_name", "division", "cpu_name", "cpu_model", "started_on", "asset_no", "status", "note"];
+    // mode = "add" | "edit" · แก้เครื่องเดิมต้องส่งค่าทุกช่อง (ค่าเดิมถูกโหลดมาในฟอร์มแล้ว ช่องที่เว้นว่างคือการล้างค่าจริง)
+    function openDeviceForm({ mode, values }) {
+      showForm(historyPages.deviceFormCard({ mode, values }));
+      const card = document.querySelector("#itrp-device-form-card");
+      const form = document.querySelector("#itrp-device-form");
+      const message = document.querySelector("#itrp-device-form-message");
+      if (!card || !form) return;
+      enhanceDates(form, { futureAllowed: true });
+      const read = () => readFields(form, DEVICE_FIELDS);
+      const tracker = trackDirty(card, form, read);
+      document.querySelector("#itrp-device-form-cancel")?.addEventListener("click", closeForm);
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (tracker.busy()) return;
+        message.innerHTML = "";
+        const current = read();
+        const errors = steps.validate(model.deviceRules({ isNew: mode === "add" }), current);
+        const code = model.normalizeDeviceCode(current.code);
+        // เพิ่มเครื่องด้วยรหัสที่มีในทะเบียนแล้ว ฐานข้อมูลจะถือเป็นการแก้ทับทั้งแถว → กันไว้ที่นี่ให้ไปใช้ "แก้ข้อมูลเครื่อง" ที่โหลดค่าเดิมมาครบ
+        if (!errors.length && mode === "add" && devices.some((device) => device.in_registry !== false && device.code === code)) {
+          errors.push({ name: "code", message: "รหัสเครื่องนี้อยู่ในทะเบียนแล้ว ให้เลือกเครื่องจากรายการแล้วกด \"แก้ข้อมูลเครื่อง\"" });
+        }
+        if (errors.length) { steps.showFieldErrors(form, errors)?.focus?.(); return; }
+        steps.clearFieldErrors(form);
+        tracker.setBusy(true);
+        setFormBusy(form, true);
+        let result;
+        try {
+          const data = await rpc("app_itrp_save_device", model.deviceParams(current));
+          result = Array.isArray(data) ? data[0] : data;
+        } catch (error) {
+          showFormError(message, escapeHtml(failure(error, { write: true }).message));
+          tracker.setBusy(false);
+          setFormBusy(form, false);
+          return;
+        }
+        showToast(result?.created ? `เพิ่มเครื่อง ${code} เข้าทะเบียนแล้ว` : result?.changed === false ? "ไม่มีการเปลี่ยนแปลงข้อมูลเครื่อง" : `บันทึกข้อมูลเครื่อง ${code} แล้ว`);
+        closeForm();
+        selectedCode = code;
+        await refresh();
+      });
+      form.querySelector(mode === "add" ? '[name="code"]' : '[name="kind"]')?.focus?.({ preventScroll: true });
+    }
+
+    async function showRevisions(entryId) {
+      try {
+        const data = await rpc("app_itrp_history_get", { p_entry_id: entryId });
+        if (!stillHere()) return;
+        activeForm = null;
+        showForm(historyPages.revisionsCard(data, model.revisionsView(data)));
+        document.querySelector("#itrp-hist-rev-close")?.addEventListener("click", closeForm);
+      } catch (error) {
+        fail(error);
+      }
+    }
+    async function voidEntry(entryId) {
+      const reason = await textPromptDialog({
+        title: "ยกเลิกรายการประวัตินี้?", label: "เหตุผลที่ยกเลิก", hint: "รายการจะไม่ขึ้นในประวัติของเครื่องอีก แต่ระบบเก็บรายการและรอยแก้ไว้ ลบไม่ได้",
+        minLength: 1, maxLength: model.MAX_REASON, confirmLabel: "ยกเลิกรายการ", danger: true,
+      });
+      if (reason === null) return;
+      try {
+        await rpc("app_itrp_history_void", { p_entry_id: entryId, p_reason: reason });
+        showToast("ยกเลิกรายการประวัติแล้ว");
+      } catch (error) {
+        fail(error);
+        return;
+      }
+      await refresh();
+    }
+    const entryRow = (entryId) => (Array.isArray(panelData?.rows) ? panelData.rows : []).find((row) => String(row.entry_id) === String(entryId));
+
+    /* ---- ผูกเหตุการณ์ ---- */
+    searchInput?.addEventListener("input", drawList);
+    listHost?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-hist-code]");
+      if (button) loadPanel(button.dataset.histCode, { scroll: true });
+    });
+    panelHost.addEventListener("click", (event) => {
+      const target = event.target;
+      const retry = target.closest("[data-hist-retry]");
+      if (retry) { loadPanel(retry.dataset.histRetry); return; }
+      if (!canEdit) return;
+      if (target.closest("[data-hist-edit-device]")) {
+        const device = panelData?.device ?? null;
+        openDeviceForm(device ? { mode: "edit", values: model.deviceFormValues(device) } : { mode: "add", values: { ...model.EMPTY_DEVICE_FORM, code: selectedCode } });
+        return;
+      }
+      const edit = target.closest("[data-hist-edit]");
+      if (edit) {
+        const row = entryRow(edit.dataset.histEdit);
+        if (row) openHistoryForm({ mode: "edit", entryId: row.entry_id, values: model.historyFormValues(row, selectedCode) });
+        return;
+      }
+      const revisions = target.closest("[data-hist-revisions]");
+      if (revisions) { showRevisions(revisions.dataset.histRevisions); return; }
+      const voided = target.closest("[data-hist-void]");
+      if (voided) voidEntry(voided.dataset.histVoid);
+    });
+    document.querySelector("#itrp-hist-add-entry")?.addEventListener("click", () => openHistoryForm({ mode: "add", values: { ...model.EMPTY_HISTORY_FORM, device_code: selectedCode } }));
+    document.querySelector("#itrp-hist-add-device")?.addEventListener("click", () => openDeviceForm({ mode: "add", values: { ...model.EMPTY_DEVICE_FORM } }));
+
+    // ของค้างที่ยังไม่บันทึก = ฟอร์มที่เปิดอยู่และแก้จากค่าตั้งต้น (ระหว่างส่งแผงจัดการเอง ไม่นับ) · app.js ถามก่อนออกจากหน้า · หน้าใหม่ล้างตัวตรวจเองใน render()
+    if (version === pageVersion) unsavedProbe = () => (activeForm && activeForm.card.isConnected && !activeForm.busy() && activeForm.dirty() ? 1 : 0);
+  }
+
+  // ใบพิมพ์ A4 ประวัติการซ่อมของเครื่องหนึ่งเครื่อง (IT01-FM02) · ผู้ที่ไม่มีสิทธิ์อ่านประวัติถูกกันที่ viewAllowed และที่ RPC
+  async function renderHistoryPrint(rawCode, version) {
+    const code = model.normalizeDeviceCode(rawCode ?? "");
+    if (!code) return renderNotFound("ไม่พบรหัสเครื่อง");
+    let data;
+    try {
+      data = await rpc("app_itrp_device_history", { p_code: code });
+    } catch (error) {
+      return errorPage(error, version);
+    }
+    // ชื่อแท็บ = "ประวัติการซ่อม <รหัสเครื่อง>" (เป็นชื่อไฟล์เริ่มต้นเมื่อบันทึกเป็น PDF)
+    if (!paint(historyPages.printPage(data), "พิมพ์ประวัติการซ่อม", version, `ประวัติการซ่อม ${code}`)) return;
+    document.querySelector("#itrp-history-print-button")?.addEventListener("click", () => window.print());
   }
 
   /* ---------- หน้าพิมพ์ A4 ---------- */
