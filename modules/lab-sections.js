@@ -31,7 +31,7 @@
     { key: "dashboard", label: "แดชบอร์ด", palette: "bom", action: "ดูภาพรวม →" },
     { key: "chemical", label: "เปรียบเทียบเคมี", palette: "gr" },
     { key: "mooney", label: "รายงานทดสอบ Mooney", palette: "it", action: "ดูผลทดสอบ →" },
-    { key: "mdr", label: "รายงานทดสอบ MDR", palette: "pt" },
+    { key: "mdr", label: "รายงานทดสอบ MDR", palette: "pt", action: "ดูผลทดสอบ →" },
   ].map((section) => Object.freeze({ ...section })));
   const HOME = "home";
 
