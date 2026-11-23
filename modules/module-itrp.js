@@ -529,6 +529,16 @@
         price: row.querySelector('[name="part_price"]').value,
         note: row.querySelector('[name="part_note"]').value,
       }));
+      // ชื่อช่องในตารางอะไหล่ ตรงกับ `invalid[].field` ของ model.normalizeParts
+      const PART_INPUT_NAME = { item_name: "part_item", quantity: "part_quantity", price: "part_price", note: "part_note" };
+      // ทำ aria-invalid (กรอบแดง) เฉพาะช่องที่ผิดจริง คืนช่องแรกที่ผิด · เรียกหลัง showFieldErrors เพราะมันตั้งกรอบแดงที่ช่องแรกของตารางไว้ก่อนแล้ว
+      const markInvalidParts = (invalid) => {
+        partsBody.querySelectorAll("[aria-invalid='true']").forEach((node) => node.removeAttribute("aria-invalid"));
+        const rows = [...partsBody.querySelectorAll("[data-part-row]")];
+        const inputs = invalid.map(({ row, field }) => rows[row]?.querySelector(`[name="${PART_INPUT_NAME[field]}"]`)).filter(Boolean);
+        inputs.forEach((input) => input.setAttribute("aria-invalid", "true"));
+        return inputs[0] ?? null;
+      };
       const showError = (html) => {
         message.innerHTML = `<div class="form-message error" role="alert">${html}</div>`;
         message.scrollIntoView?.({ block: "nearest" });
@@ -567,6 +577,11 @@
         drawParts(rows, Math.min(index, rows.length - 1) >= 0 ? Math.min(index, rows.length - 1) : 0);
       });
       form.addEventListener("change", syncChoices);
+      // แก้ช่องไหนในตารางอะไหล่ กรอบแดงของช่องนั้นหาย · แก้ครบทุกช่องที่ผิดแล้วข้อความใต้ตารางหายตาม
+      partsBody.addEventListener("input", (event) => {
+        event.target.removeAttribute?.("aria-invalid");
+        if (!partsBody.querySelector("[aria-invalid='true']")) stepsApi.clearFieldError(form, "parts");
+      });
       syncChoices();
       // ฟอร์มเปิดอยู่และพิมพ์ค้าง = มีของค้างที่ยังไม่ส่ง · ระหว่างส่งแผงจัดการเอง (ไม่นับ)
       const hasInput = () => Object.values(values()).some((value) => String(value ?? "").trim() !== "") || partRows().some((row) => Object.values(row).some((value) => String(value ?? "").trim() !== ""));
@@ -581,7 +596,14 @@
         const errors = stepsApi.validate(model.completeRules({ causeKind: () => current.cause_kind, repairMethod: () => current.repair_method }), current);
         const parts = model.normalizeParts(partRows());
         if (parts.errors.length) errors.push({ name: "parts", message: parts.errors[0] }); // แสดงข้อผิดพลาดแถวแรกที่พบ แก้แล้วกดส่งใหม่เพื่อดูแถวถัดไป
-        if (errors.length) { stepsApi.showFieldErrors(form, errors); return; }
+        if (errors.length) {
+          const firstTarget = stepsApi.showFieldErrors(form, errors);
+          // กลไกกลางทำกรอบแดงที่ช่องแรกของตารางอะไหล่เสมอ → ย้ายไปที่ช่องที่ผิดจริงทุกช่อง (ข้อความใต้ตารางคงเดิม)
+          const firstPartInput = markInvalidParts(parts.invalid);
+          const focusTarget = errors[0].name === "parts" ? firstPartInput : firstTarget;
+          focusTarget?.focus?.();
+          return;
+        }
         stepsApi.clearFieldErrors(form);
         const spec = model.ACTION_BUTTONS.complete;
         if (!(await confirmDialog({ title: spec.confirmTitle, message: spec.confirmMessage, confirmLabel: spec.confirmLabel }))) return;
