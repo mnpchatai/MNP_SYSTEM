@@ -301,3 +301,85 @@ test("MDR daily trend: the range bar pans, zooms and picks months, and the table
   await app.open("module=mdr&part=F2&formula=B0005");
   assert.equal(dayRows(app.element("#mdr-body").innerHTML), 30, "another formula starts at the latest days again");
 });
+
+test("MDR torque chart: its own range bar (latest day by default), several days coloured by day from the curves RPC, the table's button and ?date= mean one day", async () => {
+  const dates = ["2026-11-01", "2026-11-02", "2026-11-03"];
+  const rows = dates.flatMap((date, d) => [0, 1].map((k) => ({ id: d * 2 + k + 1, machine_id: String(111 + k), test_date: date, test_time: `0${8 + k}:00`, temperature_c: 155, ml: 1, mh: 8, ts2_s: 30, t90_s: 160 + d * 10 + k * 2 })));
+  const curve = Array.from({ length: 1801 }, (_, second) => Math.min(8, 1 + second * 0.02));
+  const short = curve.filter((_, index) => index % 5 === 0);
+  const feed = (date) => ({ formulas: [{ formula: "A2004", tests: 6, days: 3, last_date: "2026-11-03" }], tests: rows, curve_date: date,
+    curves: rows.filter((row) => row.test_date === date).map((row) => ({ id: row.id, curve })) });
+  let curvesError = null;
+  const app = setup(async (name, args) => {
+    if (name === "app_lab_mdr_feed") return { data: feed(args.p_date || "2026-11-03"), error: null };
+    if (curvesError) return { data: null, error: curvesError };
+    const inRange = rows.filter((row) => row.test_date >= args.p_from && row.test_date <= args.p_to);
+    const one = args.p_from === args.p_to;
+    return { data: { step: one ? 1 : 5, from: inRange[0]?.test_date ?? null, to: inRange.at(-1)?.test_date ?? null, truncated: false,
+      curves: inRange.map((row) => ({ id: row.id, test_date: row.test_date, curve: one ? curve : short })) }, error: null };
+  });
+  const urls = [];
+  app.context.history.replaceState = (_state, _title, url) => { urls.push(url); };
+  const curveCalls = () => app.calls.filter((call) => call.name === "app_lab_mdr_curves").map((call) => JSON.parse(JSON.stringify(call.args)));
+
+  await app.open("module=mdr&part=F1&formula=A2004");
+  const bar = app.element("#mdr-curve-zoom");
+  const legend = app.element("#mdr-legend");
+  const table = app.element("#mdr-table-scroll");
+  const press = (dataset) => bar.listeners.click({ target: { closest: () => ({ dataset, disabled: false }) } });
+  assert.equal(bar.hidden, false, "the torque chart has its own bar");
+  assert.equal(curveCalls().length, 0, "today's view uses the curves the feed already sent");
+  assert.equal((legend.innerHTML.match(/data-test=/g) ?? []).length, 2, "one day: a key per test");
+  assert.match(app.element("#mdr-curve-when").textContent, /3 พ.ย. 2569/);
+  assert.match(app.element("#mdr-plot").innerHTML, /<svg/);
+  assert.equal((app.element("#mdr-body").innerHTML.match(/lab-mdr-day-flag/g) ?? []).length, 1, "only the charted day is marked in the table");
+
+  press({ step: "out" });
+  await flush();
+  assert.deepEqual(curveCalls(), [{ p_part: "F1", p_formula: "A2004", p_from: "2026-11-02", p_to: "2026-11-03" }], "− widens to two days keeping the newest");
+  assert.equal((legend.innerHTML.match(/data-day=/g) ?? []).length, 2, "several days: a key per day");
+  assert.match(legend.innerHTML, /3 พ.ย. 2569<\/span><small>2 ครั้ง<\/small>/);
+  assert.equal(app.element("#mdr-curve-when").textContent, "", "the dates are on the day keys, not repeated in the heading");
+  assert.match(app.element("#mdr-plot").innerHTML, /data-day="2026-11-02"/);
+  assert.equal((table.innerHTML.match(/lab-mdr-day-flag/g) ?? []).length, 2, "the table marks both charted days");
+  assert.equal(urls.at(-1), "#/lab?module=mdr&part=F1&formula=A2004", "several days are not put in the link");
+  assert.match(app.element("#mdr-curve-announce").textContent, /^แสดง 2 พ.ย. 2569 ถึง 3 พ.ย. 2569 2 จาก 3 วันที่ทดสอบ$/);
+
+  press({ step: "in" });
+  await flush();
+  assert.equal(curveCalls().length, 1, "+ back to the newest day: no new read");
+  assert.equal((legend.innerHTML.match(/data-test=/g) ?? []).length, 2);
+
+  press({ step: "back" });
+  await flush();
+  assert.deepEqual(curveCalls().at(-1), { p_part: "F1", p_formula: "A2004", p_from: "2026-11-02", p_to: "2026-11-02" }, "‹ steps one day back at width 1");
+  assert.equal(urls.at(-1), "#/lab?module=mdr&part=F1&formula=A2004&date=2026-11-02", "one past day goes into the link");
+
+  table.listeners.click({ target: { closest: (selector) => (selector === "[data-show-date]" ? { dataset: { showDate: "2026-11-01" } } : null) } });
+  await flush();
+  assert.deepEqual(curveCalls().at(-1), { p_part: "F1", p_formula: "A2004", p_from: "2026-11-01", p_to: "2026-11-01" }, "the table's ดูกราฟ = that one day");
+  assert.match(app.element("#mdr-curve-when").textContent, /1 พ.ย. 2569/);
+
+  press({ range: "all" });
+  await flush();
+  assert.deepEqual(curveCalls().at(-1), { p_part: "F1", p_formula: "A2004", p_from: "2026-11-01", p_to: "2026-11-03" });
+  assert.equal((legend.innerHTML.match(/data-day=/g) ?? []).length, 3);
+
+  curvesError = { message: "LAB_MDR_INVALID_RANGE" };
+  table.listeners.click({ target: { closest: (selector) => (selector === "[data-show-date]" ? { dataset: { showDate: "2026-11-01" } } : null) } });
+  press({ step: "out" }); // 1–2 พ.ย. ยังไม่เคยอ่าน
+  await flush();
+  assert.match(app.element("#mdr-curve-note").textContent, /^อ่านกราฟแรงบิดไม่สำเร็จ/, "a failed read says so under the chart");
+  assert.equal(legend.innerHTML, "");
+  curvesError = { message: "NOT_AUTHORIZED" };
+  press({ step: "back" });
+  await flush();
+  assert.equal(app.denied(), 1, "losing LAB access while reading curves drops the page");
+
+  // ลิงก์ที่มี date= เปิดกราฟวันนั้นวันเดียว (กราฟจาก feed ไม่ต้องอ่านซ้ำ)
+  const linked = setup(async (name, args) => ({ data: feed(args.p_date || "2026-11-03"), error: null }));
+  await linked.open("module=mdr&part=F1&formula=A2004&date=2026-11-02");
+  assert.equal(linked.calls.filter((call) => call.name === "app_lab_mdr_curves").length, 0);
+  assert.match(linked.element("#mdr-curve-when").textContent, /2 พ.ย. 2569/);
+  assert.match(linked.element("#mdr-body").innerHTML, /data-show-date="2026-11-03"/, "the newest day offers its chart: the link's day is charted");
+});

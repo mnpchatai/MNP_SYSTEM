@@ -100,8 +100,9 @@
   const STEP_LABELS = Object.freeze({ back: "เลื่อนไปช่วงก่อนหน้า", forward: "เลื่อนไปช่วงถัดไป", out: "ซูมออก (−)", in: "ซูมเข้า (+)" });
 
   // ids = { bar, from, to } · titles = { latest, all, in? } คำอธิบายปุ่ม (title) · ป้ายปุ่ม "ล่าสุด" ตั้งตอนวาด (จำนวนอาจตามความกว้างจอ)
+  // label = ชื่อแถบสำหรับโปรแกรมอ่านหน้าจอ (หน้าที่มีสองแถบ เช่น MDR F1 ต้องบอกว่าแถบไหนของกราฟไหน)
   // แถบซ่อนไว้ (hidden) จนกว่าตัวควบคุมจะวาดช่วงแรก
-  function toolbar({ ids, titles, latestLabel = "ล่าสุด" }) {
+  function toolbar({ ids, titles, latestLabel = "ล่าสุด", label = "ช่วงที่แสดงและการซูมของกราฟ" }) {
     const buttons = [{ key: "latest", label: latestLabel, title: titles.latest }, { key: "all", label: "ทั้งหมด", title: titles.all }];
     const ranges = buttons.map((button) => `<button type="button" class="lab-range-btn" data-range="${button.key}" aria-pressed="false" title="${esc(button.title)}">${esc(button.label)}</button>`).join("");
     const steps = ["back", "forward", "out", "in"].map((key) => {
@@ -109,7 +110,7 @@
       return `<button type="button" class="lab-step" data-step="${key}" aria-label="${esc(label)}" title="${esc(label)}">${STEP_ICONS[key]}</button>`;
     }).join("");
     const months = `<div class="lab-months" role="group" aria-label="ช่วงเดือนที่แสดง"><select class="select lab-month" id="${esc(ids.from)}" data-native-select aria-label="ตั้งแต่เดือน"></select><span class="lab-month-to" aria-hidden="true">ถึง</span><select class="select lab-month" id="${esc(ids.to)}" data-native-select aria-label="ถึงเดือน"></select></div>`;
-    return `<div class="lab-zoom" id="${esc(ids.bar)}" role="toolbar" aria-label="ช่วงที่แสดงและการซูมของกราฟ" hidden><div class="lab-ranges" role="group" aria-label="ช่วงที่แสดง">${ranges}</div>${months}<div class="lab-steps">${steps}</div></div>`;
+    return `<div class="lab-zoom" id="${esc(ids.bar)}" role="toolbar" aria-label="${esc(label)}" hidden><div class="lab-ranges" role="group" aria-label="ช่วงที่แสดง">${ranges}</div>${months}<div class="lab-steps">${steps}</div></div>`;
   }
 
   // ตัวเลือกของช่องเดือน (months = "YYYY-MM" เรียงเก่า → ใหม่) ป้ายจาก formatMonth ของแต่ละโมดูล
