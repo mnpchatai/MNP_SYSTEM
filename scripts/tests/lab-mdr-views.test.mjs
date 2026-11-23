@@ -314,6 +314,7 @@ test("D: the normal band needs 10 tests of one condition and says how many it is
   assert.match(ten.note, /^ช่วงปกติ MH−ML [\d.]+ – [\d.]+ \(AVG ± 2SD จาก 10 ครั้ง\)$/);
   const page = views.formulaBody({ part: "F1", formula: "A2004" }, { formulas, tests, curveDate: null, curves: [] });
   assert.match(page, /<span class="lab-mdr-key-band" id="mdr-band-key" hidden>/, "the band key waits until a band is drawn");
+  assert.match(page, /<h2 id="mdr-table-title" title="แสดงวันในช่วงเดียวกับกราฟแนวโน้ม[^"]*">ผลทดสอบรายครั้ง<span class="sr-only">/, "the table's link to the trend range is a title and screen-reader text, not permanent text");
 });
 
 test("E: a chosen range is kept as dates, so days uploaded before it do not move it", () => {

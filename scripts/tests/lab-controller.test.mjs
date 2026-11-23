@@ -6,6 +6,7 @@ import vm from "node:vm";
 function setup(respond) {
   const elements = new Map();
   const events = {};
+  const documentEvents = {};
   const calls = [];
   let authChange;
   let denied = 0;
@@ -13,7 +14,7 @@ function setup(respond) {
     if (!elements.has(selector)) elements.set(selector, {
       value: selector === "#lab-sort" ? "recent" : "", textContent: "", innerHTML: "", hidden: false, clientWidth: 600, listeners: {},
       addEventListener(name, fn) { this.listeners[name] = fn; }, setAttribute() {}, getAttribute() { return ""; }, removeAttribute() {}, classList: { toggle() {} },
-      querySelector: (inner) => element(inner), querySelectorAll: () => [],
+      querySelector: (inner) => element(inner), querySelectorAll: () => [], contains: (target) => target === elements.get(selector),
     });
     return elements.get(selector);
   };
@@ -21,7 +22,7 @@ function setup(respond) {
   const window = { addEventListener: (name, fn) => { events[name] = fn; }, setInterval: (fn) => { ticks.push(fn); return ticks.length; }, clearInterval() {}, clearTimeout() {}, cancelAnimationFrame() {} };
   const context = vm.createContext({ window, console, URLSearchParams, Map, Set, Date, Intl, location: { hash: "#/lab" }, history: { replaceState() {} },
     friendlyError: (error) => String(error?.message ?? error),
-    document: { hidden: false, addEventListener() {}, querySelector: element, querySelectorAll: () => [] },
+    document: { hidden: false, addEventListener(name, fn) { (documentEvents[name] ??= []).push(fn); }, removeEventListener(name, fn) { documentEvents[name] = (documentEvents[name] ?? []).filter((item) => item !== fn); }, querySelector: element, querySelectorAll: () => [] },
     state: { employee: { id: "admin", labAccess: true } }, app: { innerHTML: "" },
     sb: { auth: { onAuthStateChange: (fn) => { authChange = fn; } }, rpc: async (name, args) => {
       calls.push({ name, args }); return respond(name, args);
@@ -31,7 +32,7 @@ function setup(respond) {
   for (const file of ["lab-range.js", "lab-mooney-model.js", "lab-mooney-chart.js", "lab-sections.js", "lab-mooney-views.js", "lab-mdr-model.js", "lab-mdr-views.js", "lab-mdr-page.js", "module-lab.js"]) {
     vm.runInContext(readFileSync(new URL(`../../modules/${file}`, import.meta.url), "utf8"), context);
   }
-  return { context, calls, element, events, auth: (event) => authChange(event), denied: () => denied, tick: () => ticks.at(-1)(),
+  return { context, calls, element, events, documentEvents, auth: (event) => authChange(event), denied: () => denied, tick: () => ticks.at(-1)(),
     open: (params = "") => window.MNP_REQUEST_MODULES.MNP_LAB.pages.lab(new URLSearchParams(params)) };
 }
 const body = (materials = []) => ({ generated_at: new Date().toISOString(), materials, rows: [] });
@@ -494,4 +495,29 @@ test("MDR torque chart: going back to the drawn range while another range is sti
   assert.equal((legend.innerHTML.match(/data-day=/g) ?? []).length, 0, "the late two-day answer does not draw over the one-day chart");
   assert.equal((legend.innerHTML.match(/data-test=/g) ?? []).length, 2);
   assert.match(app.element("#mdr-curve-when").textContent, /3 พ.ย. 2569/);
+});
+
+test("MDR torque chart: a tap anywhere outside the chart hides the t90 tooltip (iPhone does not always blur), and the listener leaves with the page", async () => {
+  const rows = [{ id: 1, machine_id: "111", test_date: "2026-11-03", test_time: "08:00", set_minutes: 30, temperature_c: 155, ml: 1, mh: 8, t90_s: 160 }];
+  const curve = Array.from({ length: 1801 }, (_, second) => Math.min(8, 1 + second * 0.02));
+  const app = setup(async () => ({ data: { formulas: [{ formula: "A2004" }], tests: rows, curve_date: "2026-11-03", curves: [{ id: 1, curve }] }, error: null }));
+  await app.open("module=mdr&part=F1&formula=A2004");
+  const tip = app.element("#mdr-tip");
+  const plot = app.element("#mdr-plot");
+  const taps = () => app.documentEvents.pointerdown ?? [];
+  assert.equal(taps().length, 1, "one document listener per chart");
+  tip.hidden = false;
+  taps().forEach((fn) => fn({ target: plot }));
+  assert.equal(tip.hidden, false, "a tap on the chart itself keeps the tooltip");
+  taps().forEach((fn) => fn({ target: app.element("#mdr-table-scroll") }));
+  assert.equal(tip.hidden, true, "a tap elsewhere hides it");
+  app.element("#mdr-formula").listeners.change({ target: { value: "A2004" } }); // วาดสูตรใหม่ในหน้าเดิม (ไม่ผ่าน dispose)
+  await flush();
+  await flush();
+  assert.equal(taps().length, 2, "the new chart adds its own listener");
+  [...taps()].forEach((fn) => fn({ target: app.element("#mdr-table-scroll") }));
+  assert.equal(taps().length, 1, "the replaced chart's listener removed itself on the next tap: no pile-up");
+  await app.open("module=mdr&part=F2"); // หน้าอื่น (รายการสูตร ไม่มีกราฟ) แทนที่หน้านี้
+  [...taps()].forEach((fn) => fn({ target: app.element("#mdr-table-scroll") }));
+  assert.equal(taps().length, 0, "after leaving the page the listener removes itself");
 });
