@@ -16,6 +16,8 @@ select ok(has_function_privilege('authenticated', 'public.app_lab_mdr_upload(jso
 select ok(has_function_privilege('authenticated', 'public.app_lab_mdr_feed(text,text,date)', 'execute'), 'signed-in users reach the feed RPC (it checks LAB access)');
 select ok(exists (select 1 from pg_policy where polrelid = 'public.lab_mdr_tests'::regclass and polname = 'lab_only_no_access'),
   'table carries the lab-only guard policy');
+select ok(exists (select 1 from pg_trigger where tgrelid = 'public.lab_mdr_tests'::regclass and tgname = 'sandbox_guard'),
+  'table carries the sandbox guard trigger (no writes from test mode)');
 
 insert into auth.users(id, email, raw_user_meta_data) values
 ('83000000-0000-0000-0000-000000000001', 'lab-mdr-admin@mnp.local', '{}'),

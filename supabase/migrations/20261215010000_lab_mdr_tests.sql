@@ -46,6 +46,8 @@ create index lab_mdr_tests_formula_idx on public.lab_mdr_tests (part, formula, t
 alter table public.lab_mdr_tests enable row level security;
 revoke all on public.lab_mdr_tests from public, anon, authenticated;
 select private.lab_only_guard_table('public.lab_mdr_tests');
+-- ผลทดสอบจริงทั้งหมด: admin ที่อยู่ในโหมดทดสอบเขียนไม่ได้ (trigger sandbox_guard แบบเดียวกับ lab_mooney_results)
+select private.sandbox_guard_table('public.lab_mdr_tests');
 
 -- p_tests = อาร์เรย์ของผลทดสอบ 1–25 รายการ (หน้าเว็บแบ่งส่งเป็นชุด) แต่ละรายการ:
 --   name (ชื่อในไฟล์ ตัดช่องว่างแล้ว), machine_id, test_date (YYYY-MM-DD), test_time (HH:MM), temperature_c, set_minutes,
@@ -74,6 +76,8 @@ declare
 begin
   if auth.uid() is null then raise exception 'AUTH_REQUIRED'; end if;
   if not private.can_access_lab() then raise exception 'NOT_AUTHORIZED'; end if;
+  -- โหมดทดสอบเขียนผลจริงไม่ได้ (trigger sandbox_guard ก็กันอยู่) ตรวจก่อนวนรายการ เพราะตัวจับ exception ในวนจะแปลงทุก raise เป็น LAB_MDR_INVALID_TEST
+  if (private.sandbox_persona()).id is not null then raise exception 'SANDBOX_MODULE_UNSUPPORTED'; end if;
   v_employee := private.current_employee_id();
   if p_tests is null or jsonb_typeof(p_tests) <> 'array' then raise exception 'LAB_MDR_INVALID_PAYLOAD'; end if;
   v_count := jsonb_array_length(p_tests);
