@@ -6,6 +6,7 @@ import test from "node:test";
 // กราฟและ HTML ของ MNP LAB เป็นข้อความล้วน (ไม่มี DOM) โหลดตรงๆ ได้: ไฟล์ chart/views อ่าน model จาก globalThis เหมือนที่อ่านจาก window ใน browser
 // การโต้ตอบจริง (ชี้ แตะ คีย์บอร์ด ปรับขนาด) ตรวจด้วยเบราว์เซอร์แยกต่างหาก ที่นี่ตรวจรูปร่างของสิ่งที่วาดและความปลอดภัยของข้อความจากชีต
 const require = createRequire(import.meta.url);
+require("../../modules/lab-range.js"); // ตั้ง globalThis.MNP_LAB_RANGE ให้กราฟ/หน้าที่ใช้แถบช่วง
 const model = require("../../modules/lab-mooney-model.js");
 globalThis.MNP_LAB_MOONEY = model;
 globalThis.MNP_LAB_SECTIONS = require("../../modules/lab-sections.js");

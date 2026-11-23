@@ -8,7 +8,8 @@
 (function registerLabMdrPage() {
   const model = window.MNP_LAB_MDR;
   const views = window.MNP_LAB_MDR_VIEWS;
-  if (!model || !views) return;
+  const rangeKit = window.MNP_LAB_RANGE;
+  if (!model || !views || !rangeKit) return;
 
   const INVALID_TEST = "ข้อมูลในไฟล์ไม่ผ่านการตรวจของระบบ";
   let version = 0;
@@ -16,6 +17,9 @@
   let lastRoute = null;
   // route ล่าสุดที่ขอ (lastRoute: ใช้วาดใหม่หลังอัปโหลด แม้การอ่านครั้งก่อนล้มเหลว) · trendMode = ค่าที่กราฟแนวโน้มของ F2 แสดง (views.TREND_MODES)
   let trendMode = "delta";
+  // ช่วงวันของกราฟแนวโน้มและตาราง (views.trendRange) คงไว้เมื่อวาดสูตรเดิมใหม่ (เปลี่ยนวันของกราฟแรงบิด หลังอัปโหลด) เปลี่ยนสูตร/ชุดทดสอบ = เริ่มที่ล่าสุดใหม่
+  let trendZoom = { kind: "latest" };
+  let zoomOwner = "";
 
   const isDenied = (error) => /NOT_AUTHORIZED|AUTH_REQUIRED|JWT expired/.test(String(error?.message ?? "")) || error?.code === "PGRST301";
 
@@ -71,7 +75,12 @@
     current?.observer?.disconnect();
     current = { route, data, observer: null, hidden: new Set(), mine, denied };
     body.removeAttribute("aria-busy");
-    body.innerHTML = route.formula ? views.formulaBody(route, data) : views.overview(route.part, data.formulas);
+    const owner = `${route.part}|${route.formula}`;
+    if (owner !== zoomOwner) {
+      zoomOwner = owner;
+      trendZoom = { kind: "latest" };
+    }
+    body.innerHTML = route.formula ? views.formulaBody(route, data, trendZoom) : views.overview(route.part, data.formulas);
     if (route.formula) bindFormula();
   }
 
@@ -91,48 +100,137 @@
     const { route, data } = current;
     document.querySelector("#mdr-formula")?.addEventListener("change", (event) => goTo({ part: route.part, formula: event.target.value }));
     document.querySelector("#mdr-date")?.addEventListener("change", (event) => goTo({ ...route, date: event.target.value }));
-    document.querySelectorAll("[data-show-date]").forEach((button) => button.addEventListener("click", () => {
+    // ปุ่ม "ดูกราฟ" ในตาราง: ผูกที่กล่องตาราง เพราะตารางถูกวาดใหม่เมื่อช่วงวันเปลี่ยน
+    document.querySelector("#mdr-table-scroll")?.addEventListener("click", (event) => {
+      const button = event.target.closest?.("[data-show-date]");
+      if (!button) return;
       goTo({ ...route, date: button.dataset.showDate });
       document.querySelector("#mdr-plot")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    }));
+    });
+    const days = model.groupByDate(data.tests);
+    const observers = [];
     const trend = document.querySelector("#mdr-trend");
-    if (trend) bindTrend(trend, route.part, model.groupByDate(data.tests));
+    if (trend) observers.push(bindTrend(trend, route.part, days, data.curveDate));
     const plot = document.querySelector("#mdr-plot");
-    if (!plot) return;
-    const byId = new Map(data.tests.map((test) => [String(test.id), test]));
-    const dayTests = model.groupByDate(data.tests).find((day) => day.date === data.curveDate)?.tests ?? [];
-    const colors = views.colorMap(dayTests, data.curves);
-    const series = data.curves.filter((item) => colors.has(String(item.id))).map((item) => ({ id: String(item.id), color: colors.get(String(item.id)), curve: item.curve, t90: byId.get(String(item.id))?.t90_s ?? null, machineId: byId.get(String(item.id))?.machine_id ?? "" }));
-    bindChart(plot, series);
+    if (plot) observers.push(bindChart(plot, curveSeries(data, days)));
+    // ResizeObserver ตัวเดียวต่อหน้า ดูทั้งสองกราฟ (dispose ตัดทิ้งเมื่อออกจากหน้า)
+    const draws = observers.filter(Boolean);
+    if (draws.length && typeof ResizeObserver === "function") {
+      current.observer = new ResizeObserver(() => draws.forEach((entry) => entry.draw()));
+      draws.forEach((entry) => current.observer.observe(entry.plot));
+    }
   }
 
-  // กราฟแนวโน้มรายวันของ F2: ปุ่ม MH−ML / t90 สลับค่าในกราฟเดียว โหมดที่เลือกคงไว้เมื่อเปลี่ยนสูตร (trendMode) · วาดใหม่เมื่อความกว้างเปลี่ยน
-  function bindTrend(plot, partKey, days) {
+  // เส้นแรงบิดของวันที่เลือก (F1): สีตามลำดับในตาราง
+  function curveSeries(data, days) {
+    const byId = new Map(data.tests.map((test) => [String(test.id), test]));
+    const dayTests = days.find((day) => day.date === data.curveDate)?.tests ?? [];
+    const colors = views.colorMap(dayTests, data.curves);
+    return data.curves.filter((item) => colors.has(String(item.id))).map((item) => ({ id: String(item.id), color: colors.get(String(item.id)), curve: item.curve, t90: byId.get(String(item.id))?.t90_s ?? null, machineId: byId.get(String(item.id))?.machine_id ?? "" }));
+  }
+
+  // กราฟแนวโน้มรายวัน (F1 และ F2): ปุ่มค่าสลับค่าในกราฟเดียว โหมดที่เลือกคงไว้เมื่อเปลี่ยนสูตร (trendMode) ถ้าสูตรนั้นมีค่านั้น
+  // แถบช่วงวัน (lab-range.js เหมือนกราฟ Mooney): ล่าสุด 30 วัน / ทั้งหมด / เดือน … ถึง … / เลื่อน ‹ › / ซูม − + ช่วงที่เลือกกำหนดทั้งวันที่วาดและแถวในตาราง
+  // ปุ่มและ <select> เป็นของเบราว์เซอร์ทั้งหมด (ไม่มี popup ของแอป) จึงใช้ได้ทั้งเมาส์ แป้นพิมพ์ และการแตะบน iPhone
+  function bindTrend(plot, partKey, days, curveDate) {
     const buttons = [...document.querySelectorAll("[data-trend]")];
-    let width = 0;
+    const modes = buttons.map((button) => button.dataset.trend);
+    if (!modes.includes(trendMode)) trendMode = modes[0] ?? "delta";
     const note = document.querySelector("#mdr-trend-note");
+    const bar = document.querySelector("#mdr-zoom");
+    const monthFrom = document.querySelector("#mdr-month-from");
+    const monthTo = document.querySelector("#mdr-month-to");
+    const announcer = document.querySelector("#mdr-range-announce");
+    const table = document.querySelector("#mdr-table-scroll");
     const baseLabel = plot.getAttribute("aria-label");
+    const total = days.length;
+    const months = [...new Set(days.map((day) => rangeKit.monthOf(day.date)).filter(Boolean))].sort();
+    let width = 0;
+    let shown = views.trendRange(trendZoom, days); // ช่วงที่ตารางแสดงอยู่ (formulaBody วาดด้วยช่วงเดียวกัน)
+    let monthsPainted = false;
+
+    function paintBar(now) {
+      if (!bar) return;
+      bar.hidden = total === 0;
+      bar.querySelectorAll("[data-range]").forEach((button) => button.setAttribute("aria-pressed", String(trendZoom.kind === button.dataset.range)));
+      const first = rangeKit.monthOf(days[total - 1 - now.start]?.date);
+      const last = rangeKit.monthOf(days[total - now.end]?.date);
+      // วาดตัวเลือกเดือนครั้งเดียวต่อหน้า ไม่วาดทุกครั้งที่เลื่อน (ไม่ปิดตัวเลือกของระบบที่เปิดค้างอยู่)
+      if (monthFrom && monthTo && !monthsPainted) {
+        monthsPainted = true;
+        monthFrom.innerHTML = rangeKit.monthOptions(months, first, views.formatMonth);
+        monthTo.innerHTML = rangeKit.monthOptions(months, last, views.formatMonth);
+      }
+      if (monthFrom) monthFrom.value = first ?? "";
+      if (monthTo) monthTo.value = last ?? "";
+      const limits = rangeKit.limits(now, total, views.TREND_MIN_DAYS);
+      bar.querySelectorAll("[data-step]").forEach((button) => { button.disabled = limits[button.dataset.step]; });
+    }
+
     function draw(force = false) {
       // สถานะปุ่มก่อน: แม้กราฟยังวาดไม่ได้ (กว้าง 0 เช่นแท็บซ่อน) ปุ่มก็ตรงกับค่าที่เลือก
       buttons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.trend === trendMode)));
+      const now = views.trendRange(trendZoom, days);
+      paintBar(now);
+      if (table && !rangeKit.same(now, shown)) {
+        shown = now;
+        table.innerHTML = views.resultsTable(partKey, views.rangeDays(days, now), curveDate);
+        table.scrollTop = 0;
+      }
       const next = Math.floor(plot.clientWidth - 36);
       if (next <= 0 || (next === width && !force)) return;
       width = next;
-      const chart = views.trendSvg(days, trendMode, width, partKey);
+      const chart = views.trendSvg(days, trendMode, width, partKey, now);
       plot.innerHTML = chart.svg;
       if (note) note.textContent = chart.note;
       const mode = views.TREND_MODES.find((item) => item.key === trendMode);
       plot.setAttribute("aria-label", `${baseLabel} ค่า ${mode?.label ?? ""} รายครั้งและค่าเฉลี่ยรายวัน`);
     }
+
+    const announce = () => { if (announcer) announcer.textContent = views.rangeAnnouncement(days, views.trendRange(trendZoom, days)); };
+
+    // ซูม/เลื่อนมาเอง: ติดขอบขวา (วันล่าสุด) อยู่ = ขยับตามเมื่อมีวันใหม่เข้ามา
+    function setRange(next) {
+      const now = views.trendRange(trendZoom, days);
+      const normal = rangeKit.normalize(next, total, views.TREND_MIN_DAYS);
+      if (rangeKit.same(normal, now)) return;
+      trendZoom = { kind: "custom", start: normal.start, end: normal.end, follow: normal.end >= total };
+      draw(true);
+    }
+
     buttons.forEach((button) => button.addEventListener("click", () => {
       trendMode = button.dataset.trend;
       draw(true);
     }));
+
+    bar?.addEventListener("click", (event) => {
+      const button = event.target.closest("button");
+      if (!button || button.disabled) return;
+      const now = views.trendRange(trendZoom, days);
+      const min = views.TREND_MIN_DAYS;
+      if (button.dataset.range) {
+        trendZoom = { kind: button.dataset.range };
+        draw(true);
+      // ซูมด้วยปุ่ม: ช่วงที่ติดวันล่าสุดซูมโดยตรึงขอบขวา (ยังเห็นวันล่าสุด) นอกนั้นตรึงกลางกราฟ
+      } else if (button.dataset.step === "in") setRange(rangeKit.zoom(now, total, 2, now.end >= total ? 1 : 0.5, min));
+      else if (button.dataset.step === "out") setRange(rangeKit.zoom(now, total, 0.5, now.end >= total ? 1 : 0.5, min));
+      else if (button.dataset.step === "back") setRange(rangeKit.pan(now, total, rangeKit.panStep(now, -0.5), min));
+      else if (button.dataset.step === "forward") setRange(rangeKit.pan(now, total, rangeKit.panStep(now, 0.5), min));
+      else return;
+      announce();
+    });
+
+    // เลือกเดือน: ทุกวันของเดือนแรกถึงเดือนสุดท้ายที่เลือก (รวมทั้งสองเดือน) เดือนเริ่มหลังเดือนจบ = อีกช่องย้ายตามมา
+    bar?.addEventListener("change", (event) => {
+      if (event.target !== monthFrom && event.target !== monthTo) return;
+      const picked = rangeKit.pickMonths(monthFrom.value, monthTo.value, event.target === monthFrom ? "from" : "to");
+      trendZoom = { kind: "months", ...picked };
+      draw(true);
+      announce();
+    });
+
     draw(true);
-    if (typeof ResizeObserver === "function") {
-      current.observer = new ResizeObserver(() => draw());
-      current.observer.observe(plot);
-    }
+    return { plot, draw: () => draw() };
   }
 
   function bindChart(plot, series) {
@@ -217,10 +315,7 @@
     });
 
     draw();
-    if (typeof ResizeObserver === "function") {
-      current.observer = new ResizeObserver(() => draw());
-      current.observer.observe(plot);
-    }
+    return { plot, draw };
   }
 
   /* ---------- อัปโหลด ---------- */
