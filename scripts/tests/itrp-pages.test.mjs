@@ -33,7 +33,7 @@ test("the page head has one h1, a back link to IT SUPPORT, the new button, and t
 
 test("tabs follow the role, show counts, and a lone 'mine' tab is hidden unless something waits for the user", () => {
   const html = pages.tabs({ is_it_admin: true, is_dept_approver: true }, "approvals", { mine: 2, mineParts: { confirm: 1, answer: 1 }, approvals: 3, it: 100 });
-  assert.deepEqual([...html.matchAll(/class="view-tab[^"]*"[^>]*>([^<]+)</g)].map((match) => match[1].trim()), ["ใบของฉัน", "รออนุมัติ", "งาน IT", "ตั้งค่า"]);
+  assert.deepEqual([...html.matchAll(/class="view-tab[^"]*"[^>]*>([^<]+)</g)].map((match) => match[1].trim()), ["ใบของฉัน", "รออนุมัติ", "งาน IT", "ประวัติการซ่อม", "ตั้งค่า"]);
   assert.match(html, /aria-current="page" href="#\/office\?module=repair&amp;view=approvals"/);
   assert.match(html, /aria-label="2 รายการ \(รอคุณยืนยัน 1 · รอคุณตอบ 1\)"/);
   assert.match(html, />99\+</);
@@ -181,6 +181,51 @@ test("buttons and forms are drawn only for the actions the database allows", () 
   assert.doesNotMatch(answering, /data-itrp-action="provide_info"/, "the answer form is open, so no duplicate button");
   assert.equal(count(answering, /รุ่นอะไร/g), 1, "the pending question is shown once");
   assert.match(answering, /ตอบแล้วใบจะกลับไปที่ รอผู้อนุมัติขั้น IT/);
+});
+
+test("the complete form has a devices section before the parts table: code rows with datalist, optional notes, and a no-device tick", () => {
+  const html = pages.completeFormCard({ assetCode: "com05 " });
+  assert.ok(html.indexOf('data-field="devices"') > 0 && html.indexOf('data-field="devices"') < html.indexOf('data-field="parts"'), "devices come before parts");
+  assert.equal(count(html, /data-device-row/g), 1, "starts with one row");
+  assert.match(html, /name="device_code" list="itrp-device-codes"[^>]*autocapitalize="characters"[^>]*value="COM05"/, "the requester's code is prefilled in capitals");
+  assert.match(html, /<datalist id="itrp-device-codes"><\/datalist>/);
+  assert.match(html, /name="device_remark"[^>]*maxlength="500"/);
+  assert.match(html, /<details class="itrp-device-notes">/, "the per-device notes are folded when empty");
+  assert.match(html, /name="device_symptom"[^>]*maxlength="2000"/);
+  assert.match(html, /name="device_action"[^>]*maxlength="2000"/);
+  assert.match(html, /id="itrp-device-add"/);
+  assert.match(html, /ไม่เกิน 10 เครื่อง/);
+  assert.match(html, /id="itrp-no-device"[^>]*> <span>งานนี้ไม่มีรหัสเครื่อง \(เช่น งานเครือข่าย\)<\/span>/);
+  assert.match(html, /id="itrp-devices-wrap"/);
+  assert.ok(html.indexOf('id="itrp-no-device"') > html.indexOf('id="itrp-device-add"'), "the tick sits under the table so the first focus on error is the first code input");
+  assert.match(pages.completeFormCard(), /name="device_code"[^>]*value=""/);
+  const noted = pages.deviceRow(1, { device_code: XSS, remark: XSS, symptom_note: "จอดับ", action_note: "" });
+  assert.match(noted, /itrp-device-no" aria-hidden="true">2</);
+  assert.match(noted, /<details class="itrp-device-notes" open>/, "a row with notes opens its folded part");
+  assert.doesNotMatch(noted, /<img/);
+  assert.match(noted, /aria-label="รหัสเครื่อง แถวที่ 2"/);
+  assert.match(noted, /data-device-remove aria-label="ลบแถวที่ 2"/);
+});
+
+test("codeOptions builds datalist options with the register details as the label", () => {
+  const html = pages.codeOptions([{ code: "COM05", user_name: "สมชาย", division: "บัญชี" }, { code: XSS }]);
+  assert.match(html, /<option value="COM05" label="COM05 · สมชาย · บัญชี"><\/option>/);
+  assert.doesNotMatch(html, /<img/);
+  assert.equal(pages.codeOptions(undefined), "");
+});
+
+test("the report on the detail page lists the repaired devices with their notes, and a report without devices (or an old database) still renders", () => {
+  const report = { id: "r1", completed_at: "2026-11-21T03:00:00Z", completed_by_full_name: "ช่าง", cause: "c", cause_kind: "usage", repair_method: "internal", repair_action: "a", parts: [],
+    devices: [{ seq: 2, device_code: "PRT22", symptom_note: null, action_note: "ล้างหัวพิมพ์", remark: "ควรเปลี่ยนตลับ" }, { seq: 1, device_code: "COM05", symptom_note: "จอดับ", action_note: null, remark: null }] };
+  const html = pages.reportCards({ repair_report: report, repair_reports: [report] });
+  assert.match(html, /เครื่อง \/ อุปกรณ์ที่ซ่อม/);
+  assert.ok(html.indexOf("COM05") < html.indexOf("PRT22"), "devices in seq order");
+  assert.match(html, /ล้างหัวพิมพ์/);
+  assert.match(html, /ควรเปลี่ยนตลับ/);
+  const without = pages.reportCards({ repair_report: { ...report, devices: undefined }, repair_reports: [{ ...report, devices: undefined }] });
+  assert.doesNotMatch(without, /เครื่อง \/ อุปกรณ์ที่ซ่อม/);
+  assert.match(without, /บันทึกการซ่อม/);
+  assert.equal(pages.devicesTable([]), "");
 });
 
 test("the complete form has the IT section fields, a parts table of up to 10 rows, and unit price wording", () => {
@@ -395,7 +440,7 @@ test("settings: read-only IT team with a pointer to the work order module, plus 
 
 test("the purge button and the version tag", () => {
   assert.match(pages.purgeRow(), /id="itrp-purge"[^>]*>ล้างข้อมูลใบแจ้งซ่อมทดสอบ</);
-  assert.match(pages.page("<p>x</p>"), /<p class="itrp-version no-print" title="[^"]*1.01[^"]*">V1.01<\/p>/);
+  assert.match(pages.page("<p>x</p>"), /<p class="itrp-version no-print" title="[^"]*1.02[^"]*">V1.02<\/p>/);
   assert.match(pages.errorCard("พัง <b>"), /พัง &lt;b&gt;/);
   assert.doesNotMatch(pages.errorCard("x", { retry: false }), /itrp-retry/);
 });

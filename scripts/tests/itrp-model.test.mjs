@@ -19,14 +19,24 @@ test("every user gets 'ใบของฉัน'; approvals, IT work and setting
   assert.deepEqual(keys({}), ["mine"]);
   assert.deepEqual(keys(null), ["mine"]);
   assert.deepEqual(keys({ is_dept_approver: true }), ["mine", "approvals"]);
-  assert.deepEqual(keys({ is_it_approver: true }), ["mine", "approvals", "it"]);
-  assert.deepEqual(keys({ is_it_admin: true }), ["mine", "it", "settings"]);
-  assert.deepEqual(keys({ is_it_admin: true, is_it_approver: true }), ["mine", "approvals", "it", "settings"]);
+  assert.deepEqual(keys({ is_it_approver: true }), ["mine", "approvals", "it", "history"]);
+  assert.deepEqual(keys({ is_it_admin: true }), ["mine", "it", "history", "settings"]);
+  assert.deepEqual(keys({ is_it_admin: true, is_it_approver: true }), ["mine", "approvals", "it", "history", "settings"]);
+  // แท็บ "ประวัติการซ่อม" ต่อจาก "งาน IT" เฉพาะผู้ดูแลงาน IT / ผู้อนุมัติขั้น IT · ผู้แจ้งทั่วไปและผู้จัดการแผนกไม่เห็น
+  assert.deepEqual(model.visibleTabs({ is_it_admin: true }).find((tab) => tab.key === "history"), { key: "history", label: "ประวัติการซ่อม" });
+  for (const role of [{}, null, { is_dept_approver: true }, { is_it_department: true }]) assert.ok(!keys(role).includes("history"), JSON.stringify(role));
+  assert.equal(model.canViewHistory({ is_it_approver: true }), true);
+  assert.equal(model.canViewHistory({ is_dept_approver: true }), false);
+  assert.equal(model.canEditHistory({ is_it_admin: true }), true, "only the IT admin edits");
+  assert.equal(model.canEditHistory({ is_it_approver: true }), false, "the IT approver reads only");
 });
 
 test("a tab the user may not see is turned back, while detail/new/print pages are not tabs", () => {
   assert.equal(model.viewAllowed("mine", {}), true);
-  for (const view of ["approvals", "it", "settings"]) assert.equal(model.viewAllowed(view, {}), false, view);
+  for (const view of ["approvals", "it", "history", "settings", "history-print"]) assert.equal(model.viewAllowed(view, {}), false, view);
+  assert.equal(model.viewAllowed("history", { is_it_approver: true }), true);
+  assert.equal(model.viewAllowed("history-print", { is_it_approver: true }), true, "the FM02 print page needs the same right as the history tab");
+  assert.equal(model.viewAllowed("history", { is_dept_approver: true }), false);
   assert.equal(model.viewAllowed("approvals", { is_dept_approver: true }), true);
   for (const view of ["new", "order", "print"]) assert.equal(model.viewAllowed(view, {}), true);
 });
@@ -34,7 +44,7 @@ test("a tab the user may not see is turned back, while detail/new/print pages ar
 test("?view= picks the page and the repair URLs use module=repair", () => {
   assert.equal(model.readView(params("module=repair")), "mine");
   assert.equal(model.readView(null), "mine");
-  for (const view of ["mine", "approvals", "it", "settings", "new", "order", "print"]) assert.equal(model.readView(params(`view=${view}`)), view);
+  for (const view of ["mine", "approvals", "it", "history", "settings", "new", "order", "print", "history-print"]) assert.equal(model.readView(params(`view=${view}`)), view);
   for (const view of ["bogus", "constructor", "__proto__"]) assert.equal(model.readView(params(`view=${view}`)), null);
   assert.equal(model.repairUrl(), "#/office?module=repair");
   assert.equal(model.repairUrl("new"), "#/office?module=repair&view=new");
@@ -89,8 +99,8 @@ test("status labels, badge classes and the requester's own wording", () => {
   assert.equal(model.isTestDoc("IT01-26/001"), false);
 });
 
-test("the module version is 1.01 and no text of this module says 'ใบสั่งงาน'", () => {
-  assert.equal(model.MODULE_VERSION, "1.01");
+test("the module version is 1.02 and no text of this module says 'ใบสั่งงาน'", () => {
+  assert.equal(model.MODULE_VERSION, "1.02");
   assert.match(model.VERSION_DATE, /^\d{4}-\d{2}-\d{2}$/);
   for (const file of ["modules/itrp-model.js", "modules/itrp-pages.js", "modules/module-itrp.js"]) {
     // คอมเมนต์อ้างถึงใบสั่งงาน IT (โมดูลต้นแบบ) ได้ และหน้าตั้งค่ามีข้อความ 1 บรรทัดบอกว่าทีม IT แก้ที่ใบสั่งงาน IT · นอกนั้นข้อความที่ผู้ใช้เห็นต้องเป็น "ใบแจ้งซ่อม"
@@ -263,7 +273,7 @@ test("completeParams matches app_itrp_complete and clears text that does not bel
   const parts = model.normalizeParts([{ item_name: "RAM", quantity: "1", price: "100", note: "" }]).rows;
   assert.deepEqual(plain(model.completeParams("rid", { ...GOOD_COMPLETE, cause: " แรมเสื่อม ", repair_action: " เปลี่ยนแรม ", pr_po_no: " PO-1 ", cause_kind_note: "ignored", repair_vendor: "ignored" }, parts)), {
     p_request_id: "rid", p_cause: "แรมเสื่อม", p_cause_kind: "usage", p_cause_kind_note: null, p_repair_method: "internal", p_repair_vendor: null,
-    p_repair_action: "เปลี่ยนแรม", p_pr_po_no: "PO-1", p_parts: [{ item_name: "RAM", quantity: "1", price: "100", note: "" }],
+    p_repair_action: "เปลี่ยนแรม", p_pr_po_no: "PO-1", p_parts: [{ item_name: "RAM", quantity: "1", price: "100", note: "" }], p_devices: [],
   });
   const other = model.completeParams("rid", { ...GOOD_COMPLETE, cause_kind: "other", cause_kind_note: " ไฟตก ", repair_method: "sent_out", repair_vendor: " ร้าน ก. " }, []);
   assert.equal(other.p_cause_kind_note, "ไฟตก");
@@ -271,6 +281,9 @@ test("completeParams matches app_itrp_complete and clears text that does not bel
   assert.deepEqual(other.p_parts, []);
   assert.equal(model.completeParams("rid", { ...GOOD_COMPLETE, repair_method: "external_onsite" }, undefined).p_repair_vendor, null, "an optional repairer name left blank is null");
   assert.deepEqual(model.completeParams("rid", GOOD_COMPLETE).p_parts, []);
+  assert.deepEqual(model.completeParams("rid", GOOD_COMPLETE).p_devices, [], "no devices argument = an empty list (the database default)");
+  const devices = model.normalizeDevices([{ device_code: " com05 ", remark: " ควรเปลี่ยน ", symptom_note: "", action_note: "" }]).rows;
+  assert.deepEqual(plain(model.completeParams("rid", GOOD_COMPLETE, [], devices).p_devices), [{ device_code: "COM05", symptom_note: null, action_note: null, remark: "ควรเปลี่ยน" }]);
 });
 
 /* ---------- บันทึกการซ่อมชุดล่าสุดและประวัติ ---------- */
@@ -576,4 +589,237 @@ test("errors: Thai database messages are forwarded, technical ones are replaced"
   assert.equal(model.describeUploadError({ statusCode: "415" }).message, model.describeUploadError({ message: "invalid mime type" }).message);
   assert.equal(model.describeUploadError({ message: "Failed to fetch" }).kind, "unknown");
   assert.match(model.describeUploadError({ statusCode: "403" }, { comment: true }).message, /หลังส่งข้อความ/);
+});
+
+/* ---------- เครื่อง/อุปกรณ์ที่ซ่อม (ฟอร์มส่งงาน) ---------- */
+test("a device code is trimmed and upper-cased; the same checks as the database give the same Thai messages", () => {
+  assert.equal(model.normalizeDeviceCode("  com05 "), "COM05");
+  assert.equal(model.normalizeDeviceCode(null), "");
+  assert.equal(model.deviceCodeError(""), "กรุณาระบุรหัสเครื่อง");
+  assert.equal(model.deviceCodeError("X".repeat(51)), "รหัสเครื่องต้องไม่เกิน 50 ตัวอักษร");
+  assert.equal(model.deviceCodeError("X".repeat(50)), null);
+  assert.equal(model.deviceCodeError("A\tB"), "รหัสเครื่องมีอักขระที่ใช้ไม่ได้");
+  assert.deepEqual(plain(model.initialDeviceRows(" pc-001 ")), [{ device_code: "PC-001", remark: "", symptom_note: "", action_note: "" }], "the first row starts with the requester's code");
+  assert.deepEqual(plain(model.initialDeviceRows(null)), [{ device_code: "", remark: "", symptom_note: "", action_note: "" }]);
+});
+
+test("normalizeDevices needs at least one device or the no-device tick, and sends [] when ticked", () => {
+  const none = model.normalizeDevices([{ device_code: "", remark: "", symptom_note: "", action_note: "" }]);
+  assert.deepEqual(none.errors, ['กรุณาระบุรหัสเครื่องอย่างน้อย 1 เครื่อง หรือติ๊ก "งานนี้ไม่มีรหัสเครื่อง (เช่น งานเครือข่าย)"']);
+  assert.deepEqual(none.invalid, [{ row: 0, field: "device_code" }], "the red frame goes to the first code input");
+  assert.equal(none.filled, 0);
+  assert.deepEqual(plain(model.normalizeDevices(undefined).invalid), [{ row: 0, field: "device_code" }]);
+  const ticked = model.normalizeDevices([{ device_code: "", remark: "x" }], { noDevice: true });
+  assert.deepEqual(plain(ticked), { rows: [], errors: [], filled: 0, invalid: [] }, "ticked = nothing is sent, whatever the table holds");
+  assert.deepEqual(model.completeParams("rid", GOOD_COMPLETE, [], ticked.rows).p_devices, []);
+  assert.equal(model.NO_DEVICE_LABEL, "งานนี้ไม่มีรหัสเครื่อง (เช่น งานเครือข่าย)");
+});
+
+test("normalizeDevices cleans each row, keeps blank rows so row numbers match the screen, and marks the exact failing input", () => {
+  const ok = model.normalizeDevices([
+    { device_code: " com05 ", remark: " ควรเปลี่ยนแบต ", symptom_note: " จอดับ ", action_note: "" },
+    { device_code: "", remark: "", symptom_note: "", action_note: "" },
+    { device_code: "prt22", remark: "", symptom_note: "", action_note: " ล้างหัวพิมพ์ " },
+  ]);
+  assert.deepEqual(ok.errors, []);
+  assert.equal(ok.filled, 2);
+  assert.deepEqual(plain(ok.rows), [
+    { device_code: "COM05", symptom_note: "จอดับ", action_note: null, remark: "ควรเปลี่ยนแบต" },
+    { device_code: "", symptom_note: null, action_note: null, remark: null },
+    { device_code: "PRT22", symptom_note: null, action_note: "ล้างหัวพิมพ์", remark: null },
+  ]);
+  const bad = model.normalizeDevices([
+    { device_code: "COM05" },
+    { device_code: "com05", remark: "x" },
+    { device_code: "", remark: "มีแต่ข้อเสนอแนะ" },
+    { device_code: "OK", remark: "ย".repeat(501), symptom_note: "ก".repeat(2001), action_note: "ข".repeat(2001) },
+  ]);
+  assert.deepEqual(bad.errors, [
+    "แถวที่ 2: รหัสเครื่อง COM05 ซ้ำกับแถวก่อนหน้า (ใส่รหัสเดียวกันสองครั้งในการส่งงานเดียวกันไม่ได้)",
+    "แถวที่ 3: กรุณาระบุรหัสเครื่อง",
+    "แถวที่ 4: อาการของเครื่องต้องไม่เกิน 2,000 ตัวอักษร",
+    "แถวที่ 4: การแก้ไขของเครื่องต้องไม่เกิน 2,000 ตัวอักษร",
+    "แถวที่ 4: ข้อเสนอแนะต้องไม่เกิน 500 ตัวอักษร",
+  ]);
+  assert.deepEqual(plain(bad.invalid), [
+    { row: 1, field: "device_code" }, { row: 2, field: "device_code" }, { row: 3, field: "symptom_note" }, { row: 3, field: "action_note" }, { row: 3, field: "remark" },
+  ]);
+  const many = Array.from({ length: 11 }, (_, index) => ({ device_code: `D${index}` }));
+  assert.deepEqual(model.normalizeDevices(many).errors, ["เครื่อง/อุปกรณ์ที่ซ่อมต้องไม่เกิน 10 รายการ"]);
+  assert.deepEqual(model.normalizeDevices(many.slice(0, 10)).errors, []);
+  assert.equal(model.MAX_DEVICES, 10);
+});
+
+test("a report shows its devices in seq order and tolerates a database that has no devices key", () => {
+  const view = model.reportView({ id: "r", cause_kind: "usage", repair_method: "internal", parts: [],
+    devices: [{ seq: 2, device_code: "PRT22", symptom_note: null, action_note: "ล้าง", remark: null }, { seq: 1, device_code: "COM05", symptom_note: "จอดับ", action_note: null, remark: "ควรเปลี่ยน" }] });
+  assert.deepEqual(plain(view.devices), [
+    { seq: 1, code: "COM05", symptom: "จอดับ", action: "", remark: "ควรเปลี่ยน" },
+    { seq: 2, code: "PRT22", symptom: "", action: "ล้าง", remark: "" },
+  ]);
+  assert.deepEqual(model.reportView({ id: "r", cause_kind: "usage", repair_method: "internal" }).devices, [], "no devices key (old database) does not break");
+  assert.equal(model.deviceOptionText({ code: "COM05", user_name: "สมชาย", division: "บัญชี" }), "COM05 · สมชาย · บัญชี");
+  assert.match(model.deviceOptionText({ code: "COM01", status: "retired" }), /\(ยกเลิกการใช้งานแล้ว\)/);
+});
+
+/* ---------- แท็บประวัติการซ่อม (FM02) ---------- */
+test("history URLs keep the machine code, and the device list is searched on every word", () => {
+  assert.equal(model.historyUrl("COM05"), "#/office?module=repair&view=history&code=COM05");
+  assert.equal(model.historyPrintUrl("COM 05/1"), "#/office?module=repair&view=history-print&code=COM+05%2F1");
+  const devices = [
+    { code: "COM05", user_name: "สมชาย ใจดี", division: "บัญชี", asset_no: "AS-100", cpu_name: "Intel Core i5", cpu_model: "10400" },
+    { code: "PRT22", user_name: null, division: "คลังสินค้า", asset_no: null, cpu_name: null, cpu_model: null },
+    { code: "ZZ9", in_registry: false },
+  ];
+  assert.equal(model.filterDevices(devices, "").length, 3);
+  assert.deepEqual(model.filterDevices(devices, "com").map((d) => d.code), ["COM05"], "case-insensitive on the code");
+  assert.deepEqual(model.filterDevices(devices, "สมชาย บัญชี").map((d) => d.code), ["COM05"], "every word must match");
+  assert.deepEqual(model.filterDevices(devices, "สมชาย คลัง").map((d) => d.code), []);
+  assert.deepEqual(model.filterDevices(devices, "as-100").map((d) => d.code), ["COM05"], "the asset number is searchable");
+  assert.deepEqual(model.filterDevices(devices, "i5 10400").map((d) => d.code), ["COM05"]);
+  assert.deepEqual(model.filterDevices(null, "x"), []);
+});
+
+test("the FM02 header and rows read the 7 columns in the order the database sends them, with dashes for blanks", () => {
+  const header = model.deviceHeader({ code: "COM05", device: { started_on: "2023-04-01", user_name: "สมชาย", division: "บัญชี", cpu_name: "Intel Core i5", cpu_model: "10400", asset_no: "AS-100" } });
+  assert.deepEqual(plain(header), { code: "COM05", inRegistry: true, startedOn: "01/04/2566", user: "สมชาย", section: "บัญชี", processor: "Intel Core i5 10400", assetNo: "AS-100" });
+  assert.deepEqual(plain(model.deviceHeader({ code: "ZZ9", device: null })), { code: "ZZ9", inRegistry: false, startedOn: "-", user: "-", section: "-", processor: "-", assetNo: "-" }, "a code with history but no register entry shows dashes");
+  assert.equal(model.deviceHeader({ code: "C", device: { cpu_name: "Ryzen 5", cpu_model: null } }).processor, "Ryzen 5");
+  const rows = model.historyRowsView([
+    { source: "request", entry_id: null, request_id: "rid-1", request_status: "it_closed", doc_no: "IT01-26/050", reported_on: "2026-11-02", symptom: "เปิดไม่ติด", action: "เปลี่ยนแหล่งจ่าย", finished_on: "2026-11-03", remark: null, reporter_name: "สมหญิง", revision_count: 0 },
+    { source: "import", entry_id: 7, request_id: null, request_status: null, doc_no: "IT01-16/0001", reported_on: "2016-03-05", symptom: "จอเสีย", action: null, finished_on: null, remark: "ควรเปลี่ยน", reporter_name: null, revision_count: 2 },
+    { source: "manual", entry_id: 8, doc_no: null, reported_on: null, symptom: null, action: "x", finished_on: null },
+  ]);
+  assert.deepEqual(rows.map((row) => row.docNo), ["IT01-26/050", "IT01-16/0001", "-"]);
+  assert.deepEqual(rows.map((row) => row.reportedOn), ["02/11/2569", "05/03/2559", "-"], "dates are shown in the Buddhist year like the rest of the module");
+  assert.deepEqual(rows.map((row) => row.finishedOn), ["03/11/2569", "-", "-"]);
+  assert.deepEqual(rows.map((row) => row.editable), [false, true, true], "a request row is edited in its own page, import/manual rows here");
+  assert.deepEqual(rows.map((row) => row.sourceLabel), ["ใบในระบบ", "นำเข้าจาก Excel", "ลงย้อนหลัง"]);
+  assert.equal(rows[0].requestStatus, "IT ส่งงาน (รอผู้แจ้งยืนยัน)", "a request not yet confirmed by the requester says so");
+  assert.equal(model.historyRowsView([{ source: "request", request_id: "r", request_status: "received" }])[0].requestStatus, "");
+  assert.equal(rows[1].revisionCount, 2);
+  assert.deepEqual(model.historyRowsView(null), []);
+});
+
+test("the back-dated history form follows the database rules and sends all eight fields", () => {
+  const today = "2026-11-23";
+  const rules = (action = "") => model.historyRules({ today: () => today, action: () => action });
+  const names = (values) => validate(rules(values.action), values).map((error) => error.name);
+  const ok = { ...model.EMPTY_HISTORY_FORM, device_code: "com05", reported_on: "2026-11-01", symptom: "เปิดไม่ติด" };
+  assert.deepEqual(names(ok), []);
+  assert.deepEqual(names({ ...model.EMPTY_HISTORY_FORM }), ["device_code", "reported_on", "symptom"], "code, report date and symptom-or-action are required");
+  assert.deepEqual(names({ ...ok, symptom: "", action: "เปลี่ยนแรม" }), [], "an action alone is enough");
+  assert.equal(validate(rules(), { ...ok, symptom: "" })[0].message, "กรุณาระบุอาการเสียหรือการแก้ไขอย่างน้อยหนึ่งอย่าง");
+  assert.equal(validate(rules(), { ...ok, reported_on: "2026-11-24" })[0].message, "วันที่แจ้งซ่อมไม่ถูกต้อง (พิมพ์เป็น วว/ดด/ปปปป และต้องไม่เป็นวันในอนาคต)");
+  assert.equal(validate(rules(), { ...ok, reported_on: "1989-12-31" })[0].name, "reported_on");
+  assert.equal(validate(rules(), { ...ok, reported_on: "2026-02-30" })[0].name, "reported_on", "not a real date");
+  assert.equal(validate(rules(), { ...ok, finished_on: "2026-10-31" })[0].message, "วันที่ซ่อมเสร็จไม่ถูกต้อง (พิมพ์เป็น วว/ดด/ปปปป ต้องไม่ก่อนวันที่แจ้งและไม่เป็นวันในอนาคต)");
+  assert.equal(validate(rules(), { ...ok, finished_on: "2026-11-24" })[0].name, "finished_on");
+  assert.deepEqual(validate(rules(), { ...ok, finished_on: "2026-11-01" }), [], "finished on the same day is fine");
+  assert.deepEqual(names({ ...ok, doc_no: "D".repeat(51), remark: "ย".repeat(501), reporter_name: "ช".repeat(201), action: "ก".repeat(2001) }), ["doc_no", "action", "remark", "reporter_name"]);
+  assert.deepEqual(plain(model.historyParams({ ...ok, doc_no: " IT01-25/012 ", action: " ", remark: "", reporter_name: " สมชาย ", finished_on: "" })), {
+    p_device_code: "COM05", p_doc_no: "IT01-25/012", p_reported_on: "2026-11-01", p_symptom: "เปิดไม่ติด", p_action: null, p_finished_on: null, p_remark: null, p_reporter_name: "สมชาย",
+  });
+  assert.deepEqual(Object.keys(model.historyUpdateParams(5, ok)), ["p_entry_id", "p_device_code", "p_doc_no", "p_reported_on", "p_symptom", "p_action", "p_finished_on", "p_remark", "p_reporter_name"]);
+  assert.equal(model.historyUpdateParams(5, ok).p_entry_id, 5);
+  assert.deepEqual(plain(model.historyFormValues({ doc_no: null, reported_on: "2026-11-01", symptom: "ก", action: null, finished_on: null, remark: "ข", reporter_name: "ค" }, "COM05")),
+    { doc_no: "", device_code: "COM05", reported_on: "2026-11-01", symptom: "ก", action: "", finished_on: "", remark: "ข", reporter_name: "ค" });
+});
+
+test("typed dates (dd/mm/yyyy, Buddhist or Christian year) become ISO, and anything that is not a real date is refused", () => {
+  const parse = model.parseDateInput;
+  // พ.ศ. / ค.ศ.: ปี >= 2400 ถือเป็น พ.ศ.
+  assert.equal(parse("05/03/2566"), "2023-03-05");
+  assert.equal(parse("05/03/2023"), "2023-03-05");
+  assert.equal(parse("5/3/2566"), "2023-03-05", "one-digit day and month");
+  assert.equal(parse("01/01/2400"), "1857-01-01", "2400 is the first year read as Buddhist");
+  assert.equal(parse("31/12/2399"), "2399-12-31", "2399 is still Christian");
+  assert.equal(parse("05/03/1990"), "1990-03-05");
+  // ปีอธิกสุรทิน: 2024 = 2567 · 2000 = 2543 อธิกสุรทิน · 1900 = 2443 ไม่ใช่ · 2023 = 2566 ไม่ใช่
+  assert.equal(parse("29/02/2024"), "2024-02-29");
+  assert.equal(parse("29/02/2567"), "2024-02-29", "the same leap day in the Buddhist year");
+  assert.equal(parse("29/02/2543"), "2000-02-29", "2000 is a leap year");
+  assert.equal(parse("29/02/2023"), null);
+  assert.equal(parse("29/02/2566"), null, "the same non-leap year in the Buddhist era");
+  assert.equal(parse("29/02/2443"), null, "1900 is not a leap year");
+  // วันที่ไม่จริง
+  for (const bad of ["31/04/2566", "31/06/2023", "30/02/2024", "00/01/2566", "01/00/2566", "32/01/2566", "01/13/2566", "31/11/2566"]) assert.equal(parse(bad), null, bad);
+  // ตัวคั่น/ช่องว่าง/เลขไทย/พิมพ์ติด/ISO
+  assert.equal(parse("  05/03/2566  "), "2023-03-05", "surrounding spaces");
+  assert.equal(parse("05 / 03 / 2566"), "2023-03-05", "spaces around the slashes");
+  assert.equal(parse("05 03 2566"), "2023-03-05", "spaces as separators");
+  assert.equal(parse("05-03-2566"), "2023-03-05");
+  assert.equal(parse("05.03.2566"), "2023-03-05");
+  assert.equal(parse("๐๕/๐๓/๒๕๖๖"), "2023-03-05", "Thai digits");
+  assert.equal(parse("05032566"), "2023-03-05", "eight digits typed together");
+  assert.equal(parse("2023-03-05"), "2023-03-05", "ISO from a stored value");
+  assert.equal(parse("2023-02-30"), null);
+  // ไม่ใช่วันที่
+  for (const bad of ["", "   ", "abc", "05/03", "05/03/23", "05/03/202", "05/03/20233", "5/3/566", "0000-01-01", "1/1/0999", "05//2566", "2566", null, undefined]) assert.equal(parse(bad), null, String(bad));
+  // ค่าที่อ่านจากช่อง: จริง = ISO · ผิด = ข้อความเดิม (ให้กติกาปฏิเสธ) · ว่าง = ""
+  assert.equal(model.normalizeDateField(" 05/03/2566 "), "2023-03-05");
+  assert.equal(model.normalizeDateField("31/04/2566"), "31/04/2566");
+  assert.equal(model.normalizeDateField("   "), "");
+  assert.equal(model.normalizeDateField(undefined), "");
+  assert.equal(model.dateInputText("2016-03-05"), "05/03/2559");
+  assert.equal(model.dateInputText("31/04/2566"), "31/04/2566", "what the user typed is kept");
+  assert.equal(model.dateInputText(""), "");
+  assert.equal(model.dateInputText(null), "");
+  assert.match(model.DATE_INPUT_HINT, /วว\/ดด\/ปปปป/);
+  // ต่อเข้ากติกาของฟอร์ม: พ.ศ./ค.ศ. ที่พิมพ์ผ่าน ส่วนวันอนาคต/วันที่ไม่จริง/ก่อน 1990 ไม่ผ่าน
+  const today = "2026-11-23";
+  const rules = model.historyRules({ today: () => today });
+  const ok = { ...model.EMPTY_HISTORY_FORM, device_code: "COM05", symptom: "x" };
+  const errorsFor = (values) => validate(rules, { ...ok, ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, model.normalizeDateField(value)])) }).map((error) => error.name);
+  assert.deepEqual(errorsFor({ reported_on: "05/03/2559" }), []);
+  assert.deepEqual(errorsFor({ reported_on: "05/03/2016" }), []);
+  assert.deepEqual(errorsFor({ reported_on: "24/11/2569" }), ["reported_on"], "tomorrow (Buddhist year) is the future");
+  assert.deepEqual(errorsFor({ reported_on: "23/11/2569" }), [], "today is fine");
+  assert.deepEqual(errorsFor({ reported_on: "31/12/1989" }), ["reported_on"], "before the 1990 floor");
+  assert.deepEqual(errorsFor({ reported_on: "31/04/2566" }), ["reported_on"], "not a real date");
+  assert.deepEqual(errorsFor({ reported_on: "สวัสดี" }), ["reported_on"]);
+  assert.deepEqual(errorsFor({ reported_on: "05/03/2566", finished_on: "04/03/2566" }), ["finished_on"], "finished before reported");
+  assert.deepEqual(errorsFor({ reported_on: "05/03/2566", finished_on: "05/03/2566" }), []);
+  assert.deepEqual(errorsFor({ reported_on: "05/03/2566", finished_on: "" }), [], "finished is optional");
+  const deviceErrors = (started) => validate(model.deviceRules(), { ...model.EMPTY_DEVICE_FORM, code: "X", started_on: model.normalizeDateField(started) }).map((error) => error.name);
+  assert.deepEqual(deviceErrors("01/04/2566"), []);
+  assert.deepEqual(deviceErrors(""), []);
+  assert.deepEqual(deviceErrors("30/02/2566"), ["started_on"]);
+});
+
+test("the revisions view shows each earlier version with dashes for blanks and the reason", () => {
+  const data = { entry: { id: 7 }, revisions: [
+    { revision_no: 1, change_kind: "update", snapshot: { doc_no: "IT01-16/0001", device_code: "COM05", reported_on: "2016-03-05", symptom: "จอเสีย", action: null, finished_on: null, remark: null, reporter_name: "สมชาย" }, changed_by_full_name: "สุริยา", reason: null, created_at: "2026-11-23T03:00:00Z" },
+    { revision_no: 2, change_kind: "void", snapshot: { doc_no: "IT01-16/0001", device_code: "COM05", reported_on: "2016-03-05", symptom: "จอเสีย", action: "x", finished_on: "2016-03-06" }, changed_by_full_name: "สุริยา", reason: "ลงผิดเครื่อง", created_at: "2026-11-23T04:00:00Z" },
+  ] };
+  const view = model.revisionsView(data);
+  assert.deepEqual(view.map((revision) => [revision.no, revision.kindLabel, revision.reason]), [[1, "แก้ไข", ""], [2, "ยกเลิกรายการ", "ลงผิดเครื่อง"]]);
+  assert.deepEqual(view[0].fields.map((field) => [field.label, field.value]), [
+    ["เลขที่ใบแจ้งซ่อม", "IT01-16/0001"], ["รหัสเครื่อง", "COM05"], ["วันที่แจ้ง", "05/03/2559"], ["อาการเสีย", "จอเสีย"], ["การแก้ไข", "-"], ["ซ่อมเสร็จ", "-"], ["ข้อเสนอแนะ", "-"], ["ผู้แจ้ง", "สมชาย"],
+  ]);
+  assert.equal(view[1].fields[5].value, "06/03/2559");
+  assert.deepEqual(model.revisionsView(null), []);
+});
+
+test("the device register form sends every field every time (the database clears what is not sent)", () => {
+  const device = { code: "COM05", kind: "laptop", user_name: "สมชาย", division: "บัญชี", cpu_name: "Intel", cpu_model: "10400", started_on: "2023-04-01", asset_no: "AS-1", status: "retired", note: "เก่า" };
+  const values = model.deviceFormValues(device);
+  assert.deepEqual(plain(values), { code: "COM05", kind: "laptop", user_name: "สมชาย", division: "บัญชี", cpu_name: "Intel", cpu_model: "10400", started_on: "2023-04-01", asset_no: "AS-1", status: "retired", note: "เก่า" }, "edit loads the full current values");
+  assert.deepEqual(plain(model.deviceParams(values)), {
+    p_code: "COM05", p_kind: "laptop", p_user_name: "สมชาย", p_division: "บัญชี", p_cpu_name: "Intel", p_cpu_model: "10400", p_started_on: "2023-04-01", p_asset_no: "AS-1", p_status: "retired", p_note: "เก่า",
+  });
+  const sparse = model.deviceParams({ code: " prt22 ", kind: "printer", user_name: " ", status: "active" });
+  assert.deepEqual(Object.keys(sparse).sort(), ["p_asset_no", "p_code", "p_cpu_model", "p_cpu_name", "p_division", "p_kind", "p_note", "p_started_on", "p_status", "p_user_name"], "all ten fields are always present");
+  assert.equal(sparse.p_code, "PRT22");
+  assert.equal(sparse.p_user_name, null, "a blank field is sent as null on purpose (clears it)");
+  assert.equal(sparse.p_status, "active");
+  assert.deepEqual(plain(model.deviceFormValues(null)), { code: "", kind: "other", user_name: "", division: "", cpu_name: "", cpu_model: "", started_on: "", asset_no: "", status: "active", note: "" });
+  const check = (values, isNew = true) => validate(model.deviceRules({ isNew }), values).map((error) => error.name);
+  assert.deepEqual(check({ ...model.EMPTY_DEVICE_FORM }), ["code"]);
+  assert.deepEqual(check({ ...model.EMPTY_DEVICE_FORM }, false), [], "an existing machine's code is not editable so it is not checked");
+  assert.deepEqual(check({ ...model.EMPTY_DEVICE_FORM, code: "X", kind: "bogus", status: "bogus", started_on: "2101-01-01" }), ["kind", "started_on", "status"]);
+  assert.deepEqual(check({ ...model.EMPTY_DEVICE_FORM, code: "X", user_name: "ก".repeat(201), division: "ก".repeat(201), cpu_name: "ก".repeat(201), cpu_model: "ก".repeat(201), asset_no: "ก".repeat(101), note: "ก".repeat(1001) }), ["user_name", "division", "cpu_name", "cpu_model", "asset_no", "note"]);
+  assert.deepEqual(model.DEVICE_KINDS.map((kind) => kind.value), ["computer", "laptop", "monitor", "printer", "ups", "other"]);
+  assert.equal(model.deviceKindLabel("ups"), "UPS");
+  assert.equal(model.deviceStatusLabel("retired"), "ยกเลิกการใช้งาน");
 });

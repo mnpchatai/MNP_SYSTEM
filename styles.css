@@ -3509,6 +3509,88 @@ table.bom-tree td.right { white-space: nowrap; }
   .itrp-sheet-section { break-after: avoid; }
 }
 
+/* ---------- ใบแจ้งซ่อม (itrp) V1.02: เครื่อง/อุปกรณ์ที่ซ่อมในฟอร์มส่งงาน + บันทึกการซ่อม · modules/itrp-pages.js ---------- */
+.itrp-devices-list { margin: 0 0 8px; padding: 0; list-style: none; display: grid; gap: 10px; }
+.itrp-device-row { padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper); }
+.itrp-device-main { display: grid; grid-template-columns: 2em minmax(120px, 200px) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.itrp-device-no { color: var(--muted); font-weight: 700; text-align: center; }
+.itrp-device-main .input { min-width: 0; width: 100%; }
+.itrp-device-notes { margin-top: 8px; }
+.itrp-device-notes > summary { min-height: 36px; display: flex; align-items: center; cursor: pointer; color: var(--primary); font-size: var(--text-meta); font-weight: 700; }
+.itrp-device-note { display: grid; gap: 4px; margin-top: 8px; font-size: var(--text-meta); font-weight: 700; }
+.itrp-device-note .textarea { font-weight: 400; }
+.itrp-no-device { margin-top: 10px; }
+.itrp-subhead { margin: 16px 0 8px; font-size: var(--text-ui); }
+@media (max-width: 719px) {
+  .itrp-device-main { grid-template-columns: 2em minmax(0, 1fr) auto; }
+  .itrp-device-remark { grid-column: 2 / -1; }
+}
+
+/* ---------- แท็บ "ประวัติการซ่อม" (IT01-FM02) · modules/itrp-history-pages.js ---------- */
+.itrp-hist-toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.itrp-hist-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; } /* minmax(0, …) = ตารางกว้างไม่ดันทั้งหน้าให้เลื่อนแนวนอน (เลื่อนในกล่องของตารางเอง) */
+.itrp-hist-detail, .itrp-hist-list-card { min-width: 0; }
+@media (min-width: 960px) { .itrp-hist-layout { grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); } .itrp-hist-devices { max-height: 68vh; } }
+.itrp-hist-list-card h2 { margin-bottom: 10px; }
+.itrp-hist-search { margin-bottom: 6px; }
+.itrp-hist-devices { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; max-height: 40vh; overflow-y: auto; }
+.itrp-hist-device { width: 100%; min-height: 44px; padding: 10px 12px; display: grid; gap: 2px; text-align: left; font: inherit; color: inherit; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); cursor: pointer; }
+.itrp-hist-device:hover { border-color: var(--primary); }
+.itrp-hist-device:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.itrp-hist-device.is-selected { border-color: var(--primary); background: var(--primary-soft); }
+.itrp-hist-device.is-retired { opacity: .6; }
+.itrp-hist-device-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.itrp-hist-code { font-size: var(--text-ui); overflow-wrap: anywhere; }
+.itrp-hist-device-meta, .itrp-hist-device-count { font-size: var(--text-meta); color: var(--muted); overflow-wrap: anywhere; }
+.itrp-hist-none { padding: 8px 4px; }
+.itrp-hist-badge { padding: 2px 6px; font-weight: 600; }
+.itrp-hist-badge.is-import, .itrp-hist-badge.is-manual { border: 1px solid var(--line); }
+.itrp-hist-badge.is-edited, .itrp-hist-badge.is-status { color: var(--warning-ink); background: var(--warning-soft); }
+.itrp-hist-card-head { margin-bottom: 12px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.itrp-hist-card-head h2 { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; overflow-wrap: anywhere; }
+.itrp-hist-head-grid { margin-bottom: 14px; }
+.itrp-hist-placeholder, .itrp-hist-empty { padding: 8px 0; }
+.itrp-hist-scroll { position: relative; border: 1px solid var(--line); border-radius: var(--radius-md); } /* relative = ข้อความ .sr-only (ตำแหน่ง absolute) ในหัวตารางต้องถูกตัดในกล่องเลื่อน ไม่ดันทั้งหน้าให้เลื่อนแนวนอน */
+.itrp-hist-table { width: 100%; min-width: 1000px; border-collapse: collapse; font-size: var(--text-meta); }
+.itrp-hist-table th, .itrp-hist-table td { padding: 8px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--soft-line); overflow-wrap: anywhere; }
+.itrp-hist-table th { color: var(--muted); font-size: var(--text-caption); white-space: nowrap; }
+.itrp-hist-table td.itrp-text { min-width: 170px; }
+.itrp-hist-table td:first-child { min-width: 150px; }
+.itrp-hist-table td:nth-child(2), .itrp-hist-table td:nth-child(5) { white-space: nowrap; }
+.itrp-hist-tags { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
+.itrp-hist-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.itrp-hist-form-card { margin-bottom: 16px; border-color: var(--primary); }
+.itrp-hist-form-card .form-actions { flex-wrap: wrap; justify-content: flex-start; }
+.itrp-hist-revision { padding: 12px 0; border-top: 1px solid var(--soft-line); }
+.itrp-hist-revision h3 { margin: 0 0 6px; font-size: var(--text-ui); }
+.itrp-hist-revision p { margin: 0 0 6px; }
+
+/* ใบพิมพ์ประวัติการซ่อม (IT01-FM02) ใช้เปลือก .itrp-sheet ร่วมกับใบแจ้งซ่อม (ขอบกระดาษ A4/ซ่อมเมนูตอนพิมพ์มาจากกฎของ .itrp-sheet) · หัวตารางซ้ำทุกหน้า รหัสฟอร์มมุมล่างขวา */
+.itrp-fm02-title { flex: 1; }
+.itrp-fm02-title h1 { margin: 0; }
+.itrp-fm02-title p { margin: 0; font-size: 11pt; color: #000; }
+.itrp-fm02-info { margin-bottom: 8px; display: grid; grid-template-columns: minmax(0, 1fr) 62mm; gap: 8px; align-items: stretch; }
+.itrp-fm02-fields { margin: 0; display: grid; gap: 2px; }
+.itrp-fm02-field { display: flex; gap: 6px; }
+.itrp-fm02-field dt { min-width: 30mm; font-weight: 700; }
+.itrp-fm02-field dd { margin: 0; flex: 1; border-bottom: 1px dotted #000; overflow-wrap: anywhere; }
+.itrp-fm02-asset { padding: 4px 8px; display: grid; align-content: center; gap: 4px; text-align: center; border: 1px solid #000; }
+.itrp-fm02-asset span { font-size: 9.5pt; }
+.itrp-fm02-asset strong { font-size: 12pt; overflow-wrap: anywhere; }
+.itrp-fm02-table { table-layout: fixed; }
+.itrp-fm02-table th, .itrp-fm02-table td { padding: 3px 4px; font-size: 9pt; }
+.itrp-fm02-table th:nth-child(1) { width: 27mm; }
+.itrp-fm02-table th:nth-child(2) { width: 22mm; }
+.itrp-fm02-table th:nth-child(5) { width: 22mm; }
+.itrp-fm02-table th:nth-child(6) { width: 27mm; }
+.itrp-fm02-table th:nth-child(7) { width: 23mm; }
+.itrp-fm02-table td:nth-child(2), .itrp-fm02-table td:nth-child(5) { white-space: nowrap; }
+.itrp-fm02-table .itrp-fm02-code { padding: 6px 0 0; text-align: right; font-size: 9pt; border: 0; }
+@media print {
+  .itrp-fm02-table thead { display: table-header-group; }
+  .itrp-fm02-table tfoot { display: table-footer-group; } /* รหัสฟอร์มซ้ำท้ายทุกหน้าอยู่ในตารางเอง จึงไม่ทับแถวข้อมูล */
+}
+
 /* โมดูล SR (คลังยางเส้นยาว): แถบตัวกรองของหน้าในคลัง/ประวัติ · หน้าล็อต · ป้ายล็อต (พิมพ์) */
 .sr-toolbar { align-items: flex-end; }
 .sr-filter { flex: 0 1 200px; min-width: 150px; margin: 0; }

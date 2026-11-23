@@ -14,6 +14,9 @@
   const MAX_NOTE = 200; // ข้อความระบุของ "อื่นๆ" / ผู้ซ่อม-สถานที่ส่งซ่อม / ชื่อรายการและหมายเหตุของอะไหล่
   const MAX_PR_PO = 100;
   const MAX_PARTS = 10; // แถวอะไหล่/วัสดุสูงสุดต่อการส่งงานหนึ่งครั้ง
+  const MAX_DEVICES = 10; // แถวเครื่อง/อุปกรณ์ที่ซ่อมสูงสุดต่อการส่งงานหนึ่งครั้ง · ตรงกับ app_itrp_complete (p_devices)
+  const MAX_DEVICE_CODE = 50; // รหัสเครื่องในประวัติการซ่อม/ทะเบียนเครื่อง (ตรงกับ private.itrp_code_error)
+  const MAX_REMARK = 500; // ข้อเสนอแนะต่อเครื่อง / ในประวัติการซ่อม
   const MAX_REASON = 500;
   const MAX_INFO_BODY = 2000; // ข้อความถาม/ตอบ ตรงกับ app_itrp_request_info / app_itrp_provide_info
   const MAX_FILES = 10; // ต่อหนึ่งครั้งที่ส่ง (ตอนแจ้ง แต่ละรอบแก้ไข หรือแต่ละข้อความถาม/ตอบ) ตรงกับ app_itrp_add_attachment / app_itrp_add_comment_attachment
@@ -21,7 +24,7 @@
   // เลขเวอร์ชันของโมดูล (แสดงมุมขวาล่างทุกหน้า) รูปแบบ <ใหญ่>.<ย่อย 2 หลัก> · กติกาเดียวกับใบสั่งงาน IT (เจ้าของตัดสิน 20/11/2026)
   // อัปเดตย่อย (แก้คำ หน้าตา บั๊ก ช่องเล็ก ๆ) = +0.01 · อัปเดตใหญ่ (เปลี่ยนขั้นตอนงาน/สถานะ/ฟีเจอร์ใหม่ที่ผู้ใช้ต้องเรียนรู้) = ขึ้นหลักหน่วย .00
   // ถามเจ้าของทุกครั้งว่าเป็นอัปเดตย่อยหรือใหญ่ แล้วแก้ทั้งสองค่านี้ใน PR เดียวกับการเปลี่ยนแปลง (VERSION_DATE = วันที่ปล่อย YYYY-MM-DD)
-  const MODULE_VERSION = "1.01";
+  const MODULE_VERSION = "1.02";
   const VERSION_DATE = "2026-11-23";
   // ธง "กำลังพัฒนา" (จุดเดียว): true = การ์ดใบแจ้งซ่อม IT ในเมนูมีป้าย "กำลังพัฒนา" และทุกหน้าของโมดูลมีแถบข้อความว่ายังไม่เปิดใช้งานจริง
   // ป้ายกับแถบเป็นข้อความอย่างเดียว ไม่ปิดกั้นการกดเข้าหรือการใช้งาน · ถอดป้ายเมื่อเจ้าของสั่งเปิดใช้งานจริง: เปลี่ยนเป็น false ที่นี่ที่เดียว
@@ -219,22 +222,27 @@
 
   /* ---------- สิทธิ์ → แท็บ ---------- */
   // role = ผลของ app_itrp_my_role · แท็บเป็น UX ล้วน ฐานข้อมูลตรวจสิทธิ์ซ้ำทุก RPC
+  // อ่านประวัติการซ่อมเครื่อง (FM02) / ทะเบียนเครื่องได้เฉพาะผู้ดูแลงาน IT กับผู้อนุมัติขั้น IT · แก้ไข/ลงเพิ่มได้เฉพาะผู้ดูแลงาน IT (ฐานข้อมูลตรวจซ้ำทุก RPC)
+  const canViewHistory = (role) => Boolean(role?.is_it_admin || role?.is_it_approver);
+  const canEditHistory = (role) => Boolean(role?.is_it_admin);
   function visibleTabs(role) {
     const tabs = [{ key: "mine", label: "ใบของฉัน" }];
     if (role?.is_dept_approver || role?.is_it_approver) tabs.push({ key: "approvals", label: "รออนุมัติ" });
     if (role?.is_it_admin || role?.is_it_approver) tabs.push({ key: "it", label: "งาน IT" });
+    if (canViewHistory(role)) tabs.push({ key: "history", label: "ประวัติการซ่อม" });
     if (role?.is_it_admin) tabs.push({ key: "settings", label: "ตั้งค่า" });
     return tabs;
   }
-  const VIEWS = Object.freeze(["mine", "approvals", "it", "settings", "new", "order", "print"]);
-  const TAB_VIEWS = Object.freeze(["mine", "approvals", "it", "settings"]);
+  // history-print = ใบพิมพ์ประวัติการซ่อมของเครื่องหนึ่งเครื่อง (?view=history-print&code=<รหัสเครื่อง>) ไม่ใช่แท็บแต่ต้องมีสิทธิ์อ่านประวัติเหมือนแท็บ
+  const VIEWS = Object.freeze(["mine", "approvals", "it", "history", "settings", "new", "order", "print", "history-print"]);
+  const TAB_VIEWS = Object.freeze(["mine", "approvals", "it", "history", "settings"]);
   function readView(params) {
     const view = params?.get?.("view") ?? "";
     if (view === "") return "mine";
     return VIEWS.includes(view) ? view : null;
   }
-  // หน้าแท็บที่ผู้ใช้ไม่มีสิทธิ์เห็น (พิมพ์ URL เอง) ให้กลับ "ใบของฉัน" · หน้าอื่นไม่ใช่แท็บ
-  const viewAllowed = (view, role) => !TAB_VIEWS.includes(view) || visibleTabs(role).some((tab) => tab.key === view);
+  // หน้าแท็บที่ผู้ใช้ไม่มีสิทธิ์เห็น (พิมพ์ URL เอง) ให้กลับ "ใบของฉัน" · หน้าอื่นไม่ใช่แท็บ (ใบพิมพ์ประวัติใช้สิทธิ์เดียวกับแท็บประวัติ)
+  const viewAllowed = (view, role) => (view === "history-print" ? canViewHistory(role) : !TAB_VIEWS.includes(view) || visibleTabs(role).some((tab) => tab.key === view));
   function repairUrl(view = "mine", extra = {}) {
     const query = new URLSearchParams({ module: "repair" });
     if (view && view !== "mine") query.set("view", view);
@@ -545,6 +553,59 @@
     });
     return { rows: sent, errors, filled, invalid };
   }
+  /* ---------- ฟอร์มส่งงาน: เครื่อง / อุปกรณ์ที่ซ่อม (ประวัติการซ่อมเครื่อง FM02) ---------- */
+  // แถวละ 1 เครื่อง: รหัสเครื่อง (ตัวพิมพ์ใหญ่ ไม่บังคับว่าต้องมีในทะเบียน) · ข้อเสนอแนะ (ไม่บังคับ) · อาการ/การแก้ไขเฉพาะเครื่อง (ไม่บังคับ ว่าง = ใช้ของใบ)
+  // ต้องมีอย่างน้อย 1 เครื่อง หรือติ๊ก "งานนี้ไม่มีรหัสเครื่อง" (ส่ง p_devices = [])
+  const EMPTY_DEVICE_ROW = Object.freeze({ device_code: "", remark: "", symptom_note: "", action_note: "" });
+  const NO_DEVICE_LABEL = "งานนี้ไม่มีรหัสเครื่อง (เช่น งานเครือข่าย)";
+  const NO_DEVICE_ERROR = `กรุณาระบุรหัสเครื่องอย่างน้อย 1 เครื่อง หรือติ๊ก "${NO_DEVICE_LABEL}"`;
+  // รหัสเครื่อง = ตัดช่องว่างหัวท้าย + ตัวพิมพ์ใหญ่ (ฐานข้อมูลทำเหมือนกัน จึงส่งตัวเล็กได้)
+  const normalizeDeviceCode = (value) => textOf(value).toUpperCase();
+  // ข้อความผิดของรหัสที่ผ่าน normalizeDeviceCode แล้ว (ตรงกับ private.itrp_code_error) · ผ่าน = null
+  function deviceCodeError(code) {
+    if (!code) return "กรุณาระบุรหัสเครื่อง";
+    if (charCount(code) > MAX_DEVICE_CODE) return `รหัสเครื่องต้องไม่เกิน ${MAX_DEVICE_CODE} ตัวอักษร`;
+    if (/[\u0000-\u001f\u007f-\u009f]/.test(code)) return "รหัสเครื่องมีอักขระที่ใช้ไม่ได้";
+    return null;
+  }
+  // แถวแรกของฟอร์มส่งงานเติมรหัสที่ผู้แจ้งกรอกไว้ให้ก่อน (แก้ได้) · ไม่มีรหัส = แถวว่าง 1 แถว
+  const initialDeviceRows = (assetCode) => [{ ...EMPTY_DEVICE_ROW, device_code: normalizeDeviceCode(assetCode) }];
+  // ตรวจและเตรียมแถวเครื่องที่กรอก: rows = [{ device_code, remark, symptom_note, action_note }] (ข้อความจากช่องกรอก) · noDevice = ติ๊ก "งานนี้ไม่มีรหัสเครื่อง"
+  // คืน { rows: แถวที่ส่งให้ฐานข้อมูล ([] เมื่อ noDevice) แถวว่างคงไว้ให้เลขแถวตรงกับจอ, errors: [ข้อความ], filled: จำนวนแถวที่มีข้อมูล,
+  //       invalid: [{ row: ลำดับแถวเริ่มที่ 0, field: device_code|remark|symptom_note|action_note }] = ช่องที่ผิดจริง (ให้หน้าเว็บทำกรอบแดงถูกช่อง) }
+  // ข้อผิดที่ไม่ผูกช่อง ("เกิน MAX_DEVICES แถว") อยู่ใน errors อย่างเดียว · ไม่มีเครื่องเลยและไม่ติ๊ก = ผูกกับรหัสเครื่องของแถวแรก
+  function normalizeDevices(rows, { noDevice = false } = {}) {
+    if (noDevice) return { rows: [], errors: [], filled: 0, invalid: [] };
+    const list = Array.isArray(rows) ? rows : [];
+    const errors = [];
+    const invalid = [];
+    const seen = new Set();
+    let filled = 0;
+    if (list.length > MAX_DEVICES) errors.push(`เครื่อง/อุปกรณ์ที่ซ่อมต้องไม่เกิน ${MAX_DEVICES} รายการ`);
+    const sent = list.map((row, index) => {
+      const code = normalizeDeviceCode(row?.device_code);
+      const symptom = textOf(row?.symptom_note);
+      const action = textOf(row?.action_note);
+      const remark = textOf(row?.remark);
+      if (!code && !symptom && !action && !remark) return { device_code: "", symptom_note: null, action_note: null, remark: null };
+      filled += 1;
+      const at = `แถวที่ ${index + 1}`;
+      const fail = (field, message) => { errors.push(message); invalid.push({ row: index, field }); };
+      const codeProblem = deviceCodeError(code);
+      if (codeProblem) fail("device_code", `${at}: ${codeProblem}`);
+      else if (seen.has(code)) fail("device_code", `${at}: รหัสเครื่อง ${code} ซ้ำกับแถวก่อนหน้า (ใส่รหัสเดียวกันสองครั้งในการส่งงานเดียวกันไม่ได้)`);
+      else seen.add(code);
+      if (charCount(symptom) > MAX_LONG_TEXT) fail("symptom_note", `${at}: อาการของเครื่องต้องไม่เกิน ${MAX_LONG_TEXT.toLocaleString("en-US")} ตัวอักษร`);
+      if (charCount(action) > MAX_LONG_TEXT) fail("action_note", `${at}: การแก้ไขของเครื่องต้องไม่เกิน ${MAX_LONG_TEXT.toLocaleString("en-US")} ตัวอักษร`);
+      if (charCount(remark) > MAX_REMARK) fail("remark", `${at}: ข้อเสนอแนะต้องไม่เกิน ${MAX_REMARK} ตัวอักษร`);
+      return { device_code: code, symptom_note: symptom || null, action_note: action || null, remark: remark || null };
+    });
+    if (!filled && !errors.length) { errors.push(NO_DEVICE_ERROR); invalid.push({ row: 0, field: "device_code" }); }
+    return { rows: sent, errors, filled, invalid };
+  }
+  // รายการรหัสเครื่องให้เลือกใน datalist: "<รหัส> · <ผู้ใช้> · <แผนก>" (เครื่องที่ยกเลิกการใช้งานแล้วบอกไว้) · devices = ผลของ app_itrp_list_devices
+  const deviceOptionText = (device) => [device?.code, device?.user_name, device?.division, device?.status === "retired" ? "(ยกเลิกการใช้งานแล้ว)" : ""].filter(Boolean).join(" · ");
+
   // กติกาของช่องส่วน "สำหรับแผนก IT" (ข้อความผิดพลาดตรงกับ app_itrp_complete) · ลำดับตามบนจอ
   function completeRules({ causeKind = () => "", repairMethod = () => "" } = {}) {
     return [
@@ -571,8 +632,9 @@
     if (method === "external_onsite") return { visible: true, required: false, label: "ชื่อผู้ซ่อม (ไม่บังคับ)" };
     return { visible: false, required: false, label: "" };
   }
-  // พารามิเตอร์ของ app_itrp_complete · parts = ผลของ normalizeParts(...).rows · ข้อความระบุที่ไม่เกี่ยวกับตัวเลือกที่เลือกไม่ส่ง (ซ่อมภายในไม่มีผู้ซ่อมภายนอก)
-  function completeParams(requestId, values, parts) {
+  // พารามิเตอร์ของ app_itrp_complete · parts = ผลของ normalizeParts(...).rows · devices = ผลของ normalizeDevices(...).rows ([] = ไม่มีรหัสเครื่อง)
+  // ข้อความระบุที่ไม่เกี่ยวกับตัวเลือกที่เลือกไม่ส่ง (ซ่อมภายในไม่มีผู้ซ่อมภายนอก)
+  function completeParams(requestId, values, parts, devices) {
     return {
       p_request_id: requestId,
       p_cause: textOf(values.cause),
@@ -583,6 +645,7 @@
       p_repair_action: textOf(values.repair_action),
       p_pr_po_no: textOf(values.pr_po_no) || null,
       p_parts: Array.isArray(parts) ? parts : [],
+      p_devices: Array.isArray(devices) ? devices : [],
     };
   }
   // บันทึกการซ่อมชุดล่าสุดสำหรับแสดงและพิมพ์ + ประวัติชุดก่อนหน้า (เก่า → ใหม่ · ชุดล่าสุดอยู่ท้าย) · ยังไม่เคยส่งงาน = report null
@@ -603,6 +666,10 @@
       repairMethod: repairMethodText(report.repair_method, report.repair_vendor),
       repairAction: report.repair_action,
       prPoNo: report.pr_po_no ?? "",
+      // เครื่อง/อุปกรณ์ที่ซ่อมในรอบนี้ (ไม่มีคีย์ devices = ฐานข้อมูลยังไม่ได้อัปเดต หรือไม่มีรหัสเครื่อง → ว่าง ไม่พัง)
+      devices: (Array.isArray(report.devices) ? report.devices : []).slice().sort((a, b) => Number(a.seq) - Number(b.seq)).map((device) => ({
+        seq: device.seq, code: device.device_code, symptom: device.symptom_note ?? "", action: device.action_note ?? "", remark: device.remark ?? "",
+      })),
       parts: (Array.isArray(report.parts) ? report.parts : []).slice().sort((a, b) => Number(a.line_no) - Number(b.line_no)).map((part) => ({
         no: part.line_no, item: part.item_name, quantity: formatQuantity(part.quantity), price: formatPrice(part.price), note: part.note ?? "",
       })),
@@ -762,6 +829,183 @@
   // รายชื่อทีม IT อ่านจากตาราง itwo_staff ชุดเดียวกับใบสั่งงาน IT (อ่านอย่างเดียว แก้ที่ใบสั่งงาน IT)
   const staffRoleText = (row) => [row?.is_it_admin ? "ผู้ดูแลงาน IT" : "", row?.is_it_approver ? "ผู้อนุมัติขั้น IT" : ""].filter(Boolean).join(" · ");
 
+  /* ---------- ประวัติการซ่อมเครื่อง (IT01-FM02) + ทะเบียนเครื่อง ---------- */
+  // แท็บ "ประวัติการซ่อม": เลือกรหัสเครื่อง → ตาราง 7 คอลัมน์ตามฟอร์ม FM02 (เลขที่ใบแจ้งซ่อม วันที่ อาการเสีย การแก้ไข ซ่อมเสร็จ ข้อเสนอแนะ ผู้แจ้ง) → พิมพ์ A4
+  // ข้อมูลมาจาก app_itrp_device_history / app_itrp_list_devices (สัญญาที่ docs/itrp-contract.md) · วันที่ในฐานข้อมูลเป็น ค.ศ. YYYY-MM-DD แสดงด้วย formatDate (พ.ศ.)
+  const DEVICE_KINDS = Object.freeze([
+    { value: "computer", label: "คอมพิวเตอร์ตั้งโต๊ะ" },
+    { value: "laptop", label: "โน้ตบุ๊ก" },
+    { value: "monitor", label: "จอภาพ" },
+    { value: "printer", label: "เครื่องพิมพ์" },
+    { value: "ups", label: "UPS" },
+    { value: "other", label: "อื่นๆ" },
+  ]);
+  const DEVICE_STATUSES = Object.freeze([{ value: "active", label: "ใช้งาน" }, { value: "retired", label: "ยกเลิกการใช้งาน" }]);
+  const deviceKindLabel = (value) => labelOf(DEVICE_KINDS, value);
+  const deviceStatusLabel = (value) => labelOf(DEVICE_STATUSES, value);
+  // ที่มาของแถวประวัติ: request = ใบในระบบ (เปิดใบได้ แก้ที่นี่ไม่ได้) · import = นำเข้าจาก Excel · manual = IT ลงย้อนหลัง (สองอย่างหลังแก้/ยกเลิกรายการได้ โดยมีรอยแก้)
+  const HISTORY_SOURCE_LABELS = Object.freeze({ request: "ใบในระบบ", import: "นำเข้าจาก Excel", manual: "ลงย้อนหลัง" });
+  const historySourceLabel = (source) => HISTORY_SOURCE_LABELS[source] ?? source ?? "";
+  const historyUrl = (code) => repairUrl("history", { code });
+  const historyPrintUrl = (code) => repairUrl("history-print", { code });
+  const MIN_HISTORY_DATE = "1990-01-01"; // ตรงกับ app_itrp_history_add
+  const MAX_HISTORY_TEXT = 2000;
+  const MAX_DOC_NO = 50;
+  const MAX_REPORTER = 200;
+  const MAX_DEVICE_TEXT = 200; // ผู้ใช้ / แผนก / CPU / รุ่น ในทะเบียนเครื่อง
+  const MAX_ASSET_NO = 100;
+  const MAX_DEVICE_NOTE = 1000;
+  const dateOrDash = (value) => (value ? formatDate(value) : "-");
+
+  /* ----- ช่องวันที่แบบพิมพ์เอง (แท็บประวัติ: วันที่ย้อนหลังหลายปี เลื่อนปฏิทินทีละเดือนไม่ไหว) ----- */
+  // รับ วว/ดด/ปปปป ทั้ง พ.ศ. และ ค.ศ. (ปี ≥ 2400 ถือเป็น พ.ศ.) · คั่นด้วย / - . หรือช่องว่าง · เลขไทยได้ · พิมพ์ติด 8 หลัก (05032566) ได้ · YYYY-MM-DD ก็รับ (ค่าเดิมในฟอร์มแก้ไข)
+  // คืน YYYY-MM-DD (ค.ศ.) เมื่อเป็นวันที่จริง ไม่งั้นคืน null (เช่น 31/04, 29/02 ของปีที่ไม่ใช่อธิกสุรทิน, ปีไม่ครบ 4 หลัก)
+  const THAI_DIGITS = "๐๑๒๓๔๕๖๗๘๙";
+  const DATE_INPUT_HINT = "พิมพ์เป็น วว/ดด/ปปปป เช่น 05/03/2566 (พ.ศ.) หรือ 05/03/2023 (ค.ศ.)";
+  function parseDateInput(text) {
+    const raw = String(text ?? "").replace(/[๐-๙]/g, (digit) => String(THAI_DIGITS.indexOf(digit))).trim();
+    let match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(raw);
+    let year; let month; let day;
+    if (match) [year, month, day] = match.slice(1).map(Number);
+    else if ((match = /^(\d{1,2})[\s/.-]+(\d{1,2})[\s/.-]+(\d{4})$/.exec(raw)) || (match = /^(\d{2})(\d{2})(\d{4})$/.exec(raw))) [day, month, year] = match.slice(1).map(Number);
+    else return null;
+    if (year >= 2400) year -= YEAR_OFFSET; // พ.ศ. → ค.ศ.
+    if (year < 1000) return null;
+    const iso = `${year}-${pad(month)}-${pad(day)}`;
+    return isRealDate(iso) ? iso : null;
+  }
+  // ค่าที่อ่านจากช่องพิมพ์เอง: วันที่จริง = ISO · พิมพ์ไม่ถูก = ส่งข้อความเดิมต่อไปให้กติกา (isRealDate) ปฏิเสธพร้อมข้อความ · ว่าง = ""
+  const normalizeDateField = (text) => parseDateInput(text) ?? String(text ?? "").trim();
+  // ค่าตั้งต้นของช่องพิมพ์เอง: ISO → วว/ดด/ปปปป (พ.ศ.) · ค่าอื่นแสดงตามที่มี
+  const dateInputText = (value) => (isRealDate(value) ? formatDate(value) : String(value ?? ""));
+
+  // ค้นรายการเครื่องฝั่งหน้าเว็บ (รายการโหลดมาครบครั้งเดียว ≤ 2,000 แถว): คำค้นหลายคำคั่นด้วยช่องว่าง ทุกคำต้องเจอใน รหัส/ผู้ใช้/แผนก/เลขทะเบียนทรัพย์สิน/Processor/รุ่น (ไม่สนตัวพิมพ์)
+  function filterDevices(devices, query) {
+    const terms = textOf(query).toLowerCase().split(/\s+/).filter(Boolean);
+    const list = Array.isArray(devices) ? devices : [];
+    if (!terms.length) return list;
+    return list.filter((device) => {
+      const haystack = [device.code, device.user_name, device.division, device.asset_no, device.cpu_name, device.cpu_model].map((part) => String(part ?? "").toLowerCase()).join("\n");
+      return terms.every((term) => haystack.includes(term));
+    });
+  }
+  // หัวใบ FM02 จาก app_itrp_device_history().device (null = รหัสนี้ยังไม่อยู่ในทะเบียน ช่องที่เหลือเป็น "-")
+  function deviceHeader(data) {
+    const device = data?.device ?? null;
+    return {
+      code: data?.code ?? "",
+      inRegistry: Boolean(device),
+      startedOn: dateOrDash(device?.started_on),
+      user: textOf(device?.user_name) || "-",
+      section: textOf(device?.division) || "-",
+      processor: [device?.cpu_name, device?.cpu_model].map(textOf).filter(Boolean).join(" ") || "-",
+      assetNo: textOf(device?.asset_no) || "-",
+    };
+  }
+  // แถวของตาราง FM02 (เรียงตามที่ RPC คืนมา) · เลขที่ใบ/วันที่ซ่อมเสร็จว่าง = "-" · ใบในระบบที่ผู้แจ้งยังไม่ยืนยันรับงานมีสถานะกำกับ
+  function historyRowsView(rows) {
+    return (Array.isArray(rows) ? rows : []).map((row, index) => ({
+      key: row.entry_id ? `e${row.entry_id}` : `r${row.request_id ?? index}`,
+      source: row.source,
+      sourceLabel: historySourceLabel(row.source),
+      requestId: row.request_id ?? null,
+      entryId: row.entry_id ?? null,
+      requestStatus: row.source === "request" && row.request_status && row.request_status !== "received" ? statusLabel(row.request_status) : "",
+      docNo: textOf(row.doc_no) || "-",
+      reportedOn: dateOrDash(row.reported_on),
+      symptom: textOf(row.symptom),
+      action: textOf(row.action),
+      finishedOn: dateOrDash(row.finished_on),
+      remark: textOf(row.remark),
+      reporter: textOf(row.reporter_name),
+      revisionCount: Number(row.revision_count) || 0,
+      editable: row.source === "import" || row.source === "manual",
+    }));
+  }
+
+  /* ----- ฟอร์มลงประวัติย้อนหลัง / แก้ไขรายการ (it_admin) ----- */
+  const EMPTY_HISTORY_FORM = Object.freeze({ doc_no: "", device_code: "", reported_on: "", symptom: "", action: "", finished_on: "", remark: "", reporter_name: "" });
+  // ลำดับตามบนจอ · ข้อความผิดพลาดตรงกับ app_itrp_history_add/_update · symptom ต้องมีอย่างน้อยหนึ่งอย่างระหว่างอาการกับการแก้ไข (action = ตัวอ่านค่าช่องการแก้ไขตอนตรวจ)
+  function historyRules({ today = () => todayBangkok(), action = () => "" } = {}) {
+    return [
+      { name: "doc_no", check: (value) => charCount(value) <= MAX_DOC_NO, checkMessage: `เลขที่ใบแจ้งซ่อมต้องไม่เกิน ${MAX_DOC_NO} ตัวอักษร` },
+      { name: "device_code", required: true, message: "กรุณาระบุรหัสเครื่อง", check: (value) => charCount(value) <= MAX_DEVICE_CODE, checkMessage: `รหัสเครื่องต้องไม่เกิน ${MAX_DEVICE_CODE} ตัวอักษร` },
+      { name: "reported_on", required: true, message: "กรุณาระบุวันที่แจ้งซ่อม", check: (value) => isRealDate(value) && value >= MIN_HISTORY_DATE && value <= today(), checkMessage: "วันที่แจ้งซ่อมไม่ถูกต้อง (พิมพ์เป็น วว/ดด/ปปปป และต้องไม่เป็นวันในอนาคต)" },
+      {
+        name: "symptom", message: "กรุณาระบุอาการเสียหรือการแก้ไขอย่างน้อยหนึ่งอย่าง",
+        get required() { return !textOf(action()); },
+        check: (value) => charCount(value) <= MAX_HISTORY_TEXT, checkMessage: `อาการเสียต้องไม่เกิน ${MAX_HISTORY_TEXT.toLocaleString("en-US")} ตัวอักษร`,
+      },
+      { name: "action", check: (value) => charCount(value) <= MAX_HISTORY_TEXT, checkMessage: `การแก้ไขต้องไม่เกิน ${MAX_HISTORY_TEXT.toLocaleString("en-US")} ตัวอักษร` },
+      {
+        name: "finished_on", message: "วันที่ซ่อมเสร็จไม่ถูกต้อง",
+        check: (value, values) => isRealDate(value) && value <= today() && (!isRealDate(values?.reported_on) || value >= values.reported_on),
+        checkMessage: "วันที่ซ่อมเสร็จไม่ถูกต้อง (พิมพ์เป็น วว/ดด/ปปปป ต้องไม่ก่อนวันที่แจ้งและไม่เป็นวันในอนาคต)",
+      },
+      { name: "remark", check: (value) => charCount(value) <= MAX_REMARK, checkMessage: `ข้อเสนอแนะต้องไม่เกิน ${MAX_REMARK} ตัวอักษร` },
+      { name: "reporter_name", check: (value) => charCount(value) <= MAX_REPORTER, checkMessage: `ชื่อผู้แจ้งต้องไม่เกิน ${MAX_REPORTER} ตัวอักษร` },
+    ];
+  }
+  const nullable = (value) => textOf(value) || null;
+  // พารามิเตอร์ของ app_itrp_history_add (ส่งครบทั้ง 8 ช่อง ช่องว่าง = null) · _update เพิ่ม p_entry_id และใช้ค่าชุดเดียวกัน (null = ล้างช่อง)
+  const historyParams = (values) => ({
+    p_device_code: normalizeDeviceCode(values.device_code), p_doc_no: nullable(values.doc_no), p_reported_on: textOf(values.reported_on) || null, p_symptom: nullable(values.symptom),
+    p_action: nullable(values.action), p_finished_on: nullable(values.finished_on), p_remark: nullable(values.remark), p_reporter_name: nullable(values.reporter_name),
+  });
+  const historyUpdateParams = (entryId, values) => ({ p_entry_id: entryId, ...historyParams(values) });
+  // ค่าตั้งต้นของฟอร์มแก้ไขจากแถวของตาราง (วันที่ ISO ใส่ช่องวันที่ได้ตรง ๆ · เลขที่ใบ "-" ที่ฐานข้อมูลเก็บเป็นว่างอยู่แล้ว)
+  const historyFormValues = (row, code) => ({
+    doc_no: textOf(row?.doc_no), device_code: code ?? "", reported_on: row?.reported_on ?? "", symptom: row?.symptom ?? "", action: row?.action ?? "",
+    finished_on: row?.finished_on ?? "", remark: row?.remark ?? "", reporter_name: row?.reporter_name ?? "",
+  });
+  // รอยแก้ของรายการ (app_itrp_history_get): ฉบับก่อนแก้แต่ละครั้ง เรียงเก่า → ใหม่ · ฟิลด์ที่แสดงตามลำดับของตาราง FM02
+  const HISTORY_FIELDS = Object.freeze([
+    ["doc_no", "เลขที่ใบแจ้งซ่อม"], ["device_code", "รหัสเครื่อง"], ["reported_on", "วันที่แจ้ง"], ["symptom", "อาการเสีย"], ["action", "การแก้ไข"],
+    ["finished_on", "ซ่อมเสร็จ"], ["remark", "ข้อเสนอแนะ"], ["reporter_name", "ผู้แจ้ง"],
+  ]);
+  const REVISION_KIND_LABELS = Object.freeze({ update: "แก้ไข", void: "ยกเลิกรายการ" });
+  function revisionsView(data) {
+    return (Array.isArray(data?.revisions) ? data.revisions : []).map((revision) => ({
+      no: revision.revision_no,
+      kindLabel: REVISION_KIND_LABELS[revision.change_kind] ?? revision.change_kind ?? "",
+      by: revision.changed_by_full_name,
+      at: formatDateTime(revision.created_at),
+      reason: revision.reason ?? "",
+      // ฉบับเดิมก่อนการแก้ครั้งนั้น: ช่องวันที่แสดงเป็น วว/ดด/ปปปป ช่องว่าง = "-"
+      fields: HISTORY_FIELDS.map(([key, label]) => ({ label, value: key === "reported_on" || key === "finished_on" ? dateOrDash(revision.snapshot?.[key]) : (textOf(revision.snapshot?.[key]) || "-") })),
+    }));
+  }
+
+  /* ----- ฟอร์มทะเบียนเครื่อง (it_admin) ----- */
+  // app_itrp_save_device ต้องส่ง "ทุกช่อง" เสมอ: ช่องที่ส่ง null = ล้างค่า, status ไม่ส่ง = กลับเป็นใช้งาน → ฟอร์มแก้ต้องโหลดค่าเดิมมาเต็มก่อน (deviceFormValues)
+  const EMPTY_DEVICE_FORM = Object.freeze({ code: "", kind: "computer", user_name: "", division: "", cpu_name: "", cpu_model: "", started_on: "", asset_no: "", status: "active", note: "" });
+  const deviceFormValues = (device) => ({
+    code: device?.code ?? "", kind: device?.kind || "other", user_name: device?.user_name ?? "", division: device?.division ?? "", cpu_name: device?.cpu_name ?? "", cpu_model: device?.cpu_model ?? "",
+    started_on: device?.started_on ?? "", asset_no: device?.asset_no ?? "", status: device?.status || "active", note: device?.note ?? "",
+  });
+  // isNew = เพิ่มเครื่องใหม่ (กรอกรหัสได้) · แก้เครื่องเดิม = รหัสแก้ไม่ได้ จึงไม่ตรวจช่องรหัส
+  function deviceRules({ isNew = true } = {}) {
+    const limit = (name, max, message) => ({ name, check: (value) => charCount(value) <= max, checkMessage: message });
+    return [
+      ...(isNew ? [{ name: "code", required: true, message: "กรุณาระบุรหัสเครื่อง", check: (value) => charCount(value) <= MAX_DEVICE_CODE, checkMessage: `รหัสเครื่องต้องไม่เกิน ${MAX_DEVICE_CODE} ตัวอักษร` }] : []),
+      { name: "kind", required: true, message: "กรุณาเลือกชนิดอุปกรณ์", check: (value) => DEVICE_KINDS.some((kind) => kind.value === value), checkMessage: "ชนิดอุปกรณ์ไม่ถูกต้อง" },
+      limit("user_name", MAX_DEVICE_TEXT, `ชื่อผู้ใช้เครื่องต้องไม่เกิน ${MAX_DEVICE_TEXT} ตัวอักษร`),
+      limit("division", MAX_DEVICE_TEXT, `ชื่อแผนก/ส่วนงานต้องไม่เกิน ${MAX_DEVICE_TEXT} ตัวอักษร`),
+      limit("cpu_name", MAX_DEVICE_TEXT, `ข้อมูล Processor ต้องไม่เกิน ${MAX_DEVICE_TEXT} ตัวอักษร`),
+      limit("cpu_model", MAX_DEVICE_TEXT, `ข้อมูลรุ่น Processor ต้องไม่เกิน ${MAX_DEVICE_TEXT} ตัวอักษร`),
+      { name: "started_on", message: "วันที่เริ่มใช้ไม่ถูกต้อง (พิมพ์เป็น วว/ดด/ปปปป)", check: (value) => isRealDate(value) && value >= MIN_HISTORY_DATE && value <= "2100-01-01" },
+      limit("asset_no", MAX_ASSET_NO, `เลขทะเบียนทรัพย์สินต้องไม่เกิน ${MAX_ASSET_NO} ตัวอักษร`),
+      { name: "status", required: true, message: "กรุณาเลือกสถานะ", check: (value) => DEVICE_STATUSES.some((status) => status.value === value), checkMessage: "สถานะเครื่องต้องเป็น ใช้งาน หรือ ยกเลิกการใช้งาน" },
+      limit("note", MAX_DEVICE_NOTE, `หมายเหตุต้องไม่เกิน ${MAX_DEVICE_NOTE.toLocaleString("en-US")} ตัวอักษร`),
+    ];
+  }
+  // พารามิเตอร์ของ app_itrp_save_device: ส่งครบทั้ง 10 ช่องเสมอ (ช่องว่าง = null)
+  const deviceParams = (values) => ({
+    p_code: normalizeDeviceCode(values.code), p_kind: textOf(values.kind) || "other", p_user_name: nullable(values.user_name), p_division: nullable(values.division),
+    p_cpu_name: nullable(values.cpu_name), p_cpu_model: nullable(values.cpu_model), p_started_on: nullable(values.started_on), p_asset_no: nullable(values.asset_no),
+    p_status: textOf(values.status) || "active", p_note: nullable(values.note),
+  });
+
   /* ---------- error จาก RPC ---------- */
   // kind: "session" เซสชันหมดอายุ · "unknown" ไม่ได้คำตอบจากเซิร์ฟเวอร์ (ผลไม่แน่ชัด) · "missing" ฐานข้อมูลยังไม่มีฟังก์ชัน · "rejected" เซิร์ฟเวอร์ตอบปฏิเสธ
   // ข้อความไทยของฐานข้อมูล (errcode 42501 / 23514) ส่งต่อให้ผู้ใช้ตรงๆ ส่วนข้อความเทคนิคภาษาอังกฤษไม่แสดง
@@ -803,16 +1047,19 @@
   }
 
   const api = {
-    MODULE_VERSION, VERSION_DATE, IN_DEVELOPMENT, YEAR_OFFSET, MAX_SYMPTOM, MAX_LONG_TEXT, MAX_ASSET_CODE, MAX_DEVICE_NAME, MAX_NOTE, MAX_PR_PO, MAX_PARTS, MAX_INFO_BODY, MAX_REASON, MAX_REASON_ON_BEHALF, CANCEL_ON_BEHALF, isCancelOnBehalf, cancelReasonSpec, MAX_FILES, MAX_FILE_BYTES,
+    MODULE_VERSION, VERSION_DATE, IN_DEVELOPMENT, YEAR_OFFSET, MAX_SYMPTOM, MAX_LONG_TEXT, MAX_ASSET_CODE, MAX_DEVICE_NAME, MAX_NOTE, MAX_PR_PO, MAX_PARTS, MAX_DEVICES, MAX_DEVICE_CODE, MAX_REMARK, MAX_INFO_BODY, MAX_REASON, MAX_REASON_ON_BEHALF, CANCEL_ON_BEHALF, isCancelOnBehalf, cancelReasonSpec, MAX_FILES, MAX_FILE_BYTES,
     REQUEST_KINDS, REPAIR_TARGETS, CAUSE_KINDS, REPAIR_METHODS, FILE_MIME_BY_EXTENSION, FILE_ACCEPT, FILE_HINT, FILES_PREPARING_MESSAGE, EMPTY_REPAIR_FORM, EMPTY_COMPLETE_FORM, EMPTY_PART_ROW, EMPTY_REWORK_FORM, STATUS_LABELS, EVENT_LABELS, ACTION_BUTTONS, ACTION_ORDER, IT_GROUPS, APPROVAL_STATE_LABELS,
     requestKindLabel, repairTargetLabel, causeKindLabel, repairMethodLabel, requestKindText, repairTargetText, causeKindText, repairMethodText, deviceText,
     reworkTag, statusLabel, statusBadgeClass, myStatusLabel, isTestDoc, INFO_STAGE_LABELS, infoStageLabel, commentKindLabel, commentRows, allFiles, pendingQuestion, infoBadgeTitle,
     todayBangkok, formatDate, formatDateTime, formatDateOf, formatTimeOf, isRealDate, charCount, clip, repairDuration, formatQuantity, formatPrice,
-    visibleTabs, readView, viewAllowed, repairUrl, isUuid,
+    visibleTabs, canViewHistory, canEditHistory, readView, viewAllowed, repairUrl, isUuid,
     actionButtons, countsAsBothSteps, confirmMessageFor, BOTH_STEPS_NOTE, completeToast, answerToast, pendingStepLabel, eventLabel, eventLabelFor, CANCELLED_ON_BEHALF_LABEL, printSignoffs, printOutcome, approvalSummary,
     itGroupOf, groupItOrders, itActionableCount, awaitingMyReceiveCount, awaitingMyAnswerCount, mineWaiting, mineWaitingNote, waitingForMeCount, itApprovalProgress, CLOSED_STATUSES, openOrderCount, cardSummary,
     repairRules, createParams, validateReason, infoRules, infoParams,
-    normalizeParts, completeRules, completeParams, vendorField, repairReports, reportView,
+    normalizeParts, EMPTY_DEVICE_ROW, NO_DEVICE_LABEL, NO_DEVICE_ERROR, normalizeDeviceCode, deviceCodeError, initialDeviceRows, normalizeDevices, deviceOptionText,
+    completeRules, completeParams, vendorField, repairReports, reportView,
+    DEVICE_KINDS, DEVICE_STATUSES, deviceKindLabel, deviceStatusLabel, HISTORY_SOURCE_LABELS, historySourceLabel, historyUrl, historyPrintUrl, MIN_HISTORY_DATE, DATE_INPUT_HINT, parseDateInput, normalizeDateField, dateInputText, MAX_DOC_NO, MAX_REPORTER, filterDevices, deviceHeader, historyRowsView,
+    EMPTY_HISTORY_FORM, historyRules, historyParams, historyUpdateParams, historyFormValues, HISTORY_FIELDS, revisionsView, EMPTY_DEVICE_FORM, deviceFormValues, deviceRules, deviceParams,
     fileExtension, fileMime, fileBucket, filePath, formatFileSize, validateFiles, makeUploadEntries, isAlreadyUploaded, isFileRejection, runUploads, roundLabel, attachmentGroups, galleryFile, reworkRounds, reworkRules, reworkParams,
     formatDocNo, validateNextSeq, staffRoleText,
     describeError, describeUploadError, purgeSummary,
