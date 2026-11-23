@@ -26,7 +26,8 @@ function el(props = {}) {
     dataset: {}, style: {}, hidden: false, disabled: false, isConnected: true, value: "", checked: false, innerHTML: "", min: "", listeners,
     classList: { add() {}, remove() {}, toggle() {} },
     addEventListener(type, handler) { (listeners[type] ??= []).push(handler); },
-    focus() {}, scrollIntoView() {}, dispatchEvent() {}, closest: () => null, querySelector: () => null, querySelectorAll: () => [],
+    attrs: {}, setAttribute(name, value) { node.attrs[name] = String(value); }, removeAttribute(name) { delete node.attrs[name]; }, getAttribute: (name) => node.attrs[name] ?? null,
+    focus() { el.focused = node; }, scrollIntoView() {}, dispatchEvent() {}, closest: () => null, querySelector: () => null, querySelectorAll: () => [],
   };
   return Object.defineProperties(node, Object.getOwnPropertyDescriptors(props));
 }
@@ -101,7 +102,11 @@ function world({ role = ROLE_EMP, handlers = {}, draft = null, sandbox = false, 
         rows = values.map(makeRow);
       },
       get innerHTML() { return ""; },
-      querySelectorAll(selector) { return selector === "[data-part-row]" ? rows : selector === '[name="part_item"]' ? rows.map((row) => row.inputs.part_item) : []; },
+      querySelectorAll(selector) {
+        if (selector === "[aria-invalid='true']") return rows.flatMap((row) => Object.values(row.inputs)).filter((input) => input.attrs["aria-invalid"] === "true");
+        return selector === "[data-part-row]" ? rows : selector === '[name="part_item"]' ? rows.map((row) => row.inputs.part_item) : [];
+      },
+      querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; },
     });
     controls["#itrp-parts-body"] = body;
     return el({
@@ -215,7 +220,7 @@ const ROW = (id, status, extra = {}) => ({ id, doc_no: `IT01-26/${id}`, status, 
 /* ---------- ลงทะเบียนการ์ดและตัวเลขบนการ์ด ---------- */
 test("the module announces itself for the IT SUPPORT card with its own version", async () => {
   const w = world();
-  assert.equal(w.context.window.MNP_ITRP.version, "1.00");
+  assert.equal(w.context.window.MNP_ITRP.version, "1.01");
   assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_COMPUTER_REPAIR, w.context.window.MNP_ITRP);
   assert.equal(typeof w.context.window.MNP_ITRP.loadCardSummary, "function");
   assert.equal(typeof w.context.window.MNP_ITRP.unsavedCount, "function");
@@ -488,6 +493,27 @@ test("submitting the IT form with missing fields shows Thai errors and sends not
   assert.deepEqual(w.calls.fieldErrors.map((error) => [error.name, error.message]), [["parts", "แถวที่ 1: กรุณาระบุจำนวน"]]);
   assert.ok(!w.names().includes("app_itrp_complete"));
   assert.equal(w.calls.confirms.length, 0);
+});
+
+test("a bad parts row marks only the failing inputs red and focuses the first one (row 2, not row 1)", async () => {
+  const w = world({ role: ROLE_IT, handlers: { app_itrp_get_detail: IT_DETAIL, app_itrp_complete: () => "report" } });
+  await w.open(`view=order&id=${ID}`);
+  fillComplete(w, { method: "internal" });
+  w.completeForm.body.innerHTML = `<tr class="itrp-part-row"><td><input name="part_item" value="WIFI62"><input name="part_quantity" value="1"><input name="part_price" value="2100"></td></tr><tr class="itrp-part-row"><td><input name="part_item" value="awdwadaw"><input name="part_quantity" value="-"><input name="part_price" value="-"></td></tr>`;
+  const [row1, row2] = w.completeForm.rows;
+  // กลไกกลางตั้งกรอบแดงที่ช่องแรกของตารางเสมอ (จำลอง) → โค้ดหน้าเว็บต้องย้ายไปช่องที่ผิดจริง
+  row1.inputs.part_item.setAttribute("aria-invalid", "true");
+  await w.submit("#itrp-complete-form");
+  assert.equal(w.calls.fieldErrors[0].message, "แถวที่ 2: จำนวนต้องเป็นตัวเลขมากกว่า 0 (ทศนิยมไม่เกิน 2 ตำแหน่ง)");
+  assert.equal(row1.inputs.part_item.getAttribute("aria-invalid"), null);
+  assert.equal(row2.inputs.part_item.getAttribute("aria-invalid"), null);
+  assert.equal(row2.inputs.part_quantity.getAttribute("aria-invalid"), "true");
+  assert.equal(row2.inputs.part_price.getAttribute("aria-invalid"), "true");
+  assert.equal(el.focused, row2.inputs.part_quantity, "focus goes to the first failing input");
+  // แก้ช่องจำนวนแล้วกรอบแดงของช่องนั้นหาย อีกช่องยังแดง
+  w.completeForm.body.listeners.input[0]({ target: row2.inputs.part_quantity });
+  assert.equal(row2.inputs.part_quantity.getAttribute("aria-invalid"), null);
+  assert.equal(row2.inputs.part_price.getAttribute("aria-invalid"), "true");
 });
 
 test("a valid IT form is confirmed, then sent once with the parts list, and the request is reloaded", async () => {

@@ -21,8 +21,8 @@
   // เลขเวอร์ชันของโมดูล (แสดงมุมขวาล่างทุกหน้า) รูปแบบ <ใหญ่>.<ย่อย 2 หลัก> · กติกาเดียวกับใบสั่งงาน IT (เจ้าของตัดสิน 20/11/2026)
   // อัปเดตย่อย (แก้คำ หน้าตา บั๊ก ช่องเล็ก ๆ) = +0.01 · อัปเดตใหญ่ (เปลี่ยนขั้นตอนงาน/สถานะ/ฟีเจอร์ใหม่ที่ผู้ใช้ต้องเรียนรู้) = ขึ้นหลักหน่วย .00
   // ถามเจ้าของทุกครั้งว่าเป็นอัปเดตย่อยหรือใหญ่ แล้วแก้ทั้งสองค่านี้ใน PR เดียวกับการเปลี่ยนแปลง (VERSION_DATE = วันที่ปล่อย YYYY-MM-DD)
-  const MODULE_VERSION = "1.00";
-  const VERSION_DATE = "2026-11-21";
+  const MODULE_VERSION = "1.01";
+  const VERSION_DATE = "2026-11-23";
   // ธง "กำลังพัฒนา" (จุดเดียว): true = การ์ดใบแจ้งซ่อม IT ในเมนูมีป้าย "กำลังพัฒนา" และทุกหน้าของโมดูลมีแถบข้อความว่ายังไม่เปิดใช้งานจริง
   // ป้ายกับแถบเป็นข้อความอย่างเดียว ไม่ปิดกั้นการกดเข้าหรือการใช้งาน · ถอดป้ายเมื่อเจ้าของสั่งเปิดใช้งานจริง: เปลี่ยนเป็น false ที่นี่ที่เดียว
   const IN_DEVELOPMENT = true;
@@ -517,10 +517,13 @@
   const plainNumber = (value) => String(value ?? "").trim().replaceAll(",", "");
   // ตรวจและเตรียมแถวอะไหล่ที่กรอก: rows = [{ item_name, quantity, price, note }] (ข้อความจากช่องกรอก)
   // แถวที่ว่างทุกช่องข้าม (ไม่ผิด) · ผิด = ข้อความไทย "แถวที่ N: …" ตามลำดับแถวที่เห็นบนจอ (ตรงกับของฐานข้อมูล เพราะส่งทุกแถวตามลำดับ)
-  // คืน { rows: แถวที่ส่งให้ฐานข้อมูล (ครบทุกแถว แถวว่างคงไว้ให้เลขแถวตรงกัน), errors: [ข้อความ], filled: จำนวนแถวที่มีข้อมูล }
+  // คืน { rows: แถวที่ส่งให้ฐานข้อมูล (ครบทุกแถว แถวว่างคงไว้ให้เลขแถวตรงกัน), errors: [ข้อความ], filled: จำนวนแถวที่มีข้อมูล,
+  //       invalid: [{ row: ลำดับแถวเริ่มที่ 0, field: item_name|quantity|price|note }] = ตำแหน่งช่องที่ผิดจริง (ให้หน้าเว็บทำกรอบแดงถูกช่อง ไม่ใช่ช่องแรกของตาราง) }
+  // ข้อผิด "เกิน MAX_PARTS แถว" อยู่ใน errors อย่างเดียว ไม่ผูกช่องใด
   function normalizeParts(rows) {
     const list = Array.isArray(rows) ? rows : [];
     const errors = [];
+    const invalid = [];
     let filled = 0;
     if (list.length > MAX_PARTS) errors.push(`รายการอะไหล่/วัสดุที่ใช้ต้องไม่เกิน ${MAX_PARTS} แถว`);
     const sent = list.map((row, index) => {
@@ -531,15 +534,16 @@
       if (!item && !quantity && !price && !note) return { item_name: "", quantity: "", price: null, note: "" };
       filled += 1;
       const at = `แถวที่ ${index + 1}`;
-      if (!item) errors.push(`${at}: กรุณาระบุรายการอะไหล่/วัสดุ`);
-      else if (charCount(item) > MAX_NOTE) errors.push(`${at}: ชื่อรายการต้องไม่เกิน ${MAX_NOTE} ตัวอักษร`);
-      if (!quantity) errors.push(`${at}: กรุณาระบุจำนวน`);
-      else if (!DECIMAL.test(quantity) || Number(quantity) <= 0) errors.push(`${at}: จำนวนต้องเป็นตัวเลขมากกว่า 0 (ทศนิยมไม่เกิน 2 ตำแหน่ง)`);
-      if (price && !DECIMAL.test(price)) errors.push(`${at}: ราคาต่อหน่วยต้องเป็นตัวเลขไม่ติดลบ (ทศนิยมไม่เกิน 2 ตำแหน่ง)`);
-      if (note && charCount(note) > MAX_NOTE) errors.push(`${at}: หมายเหตุต้องไม่เกิน ${MAX_NOTE} ตัวอักษร`);
+      const fail = (field, message) => { errors.push(message); invalid.push({ row: index, field }); };
+      if (!item) fail("item_name", `${at}: กรุณาระบุรายการอะไหล่/วัสดุ`);
+      else if (charCount(item) > MAX_NOTE) fail("item_name", `${at}: ชื่อรายการต้องไม่เกิน ${MAX_NOTE} ตัวอักษร`);
+      if (!quantity) fail("quantity", `${at}: กรุณาระบุจำนวน`);
+      else if (!DECIMAL.test(quantity) || Number(quantity) <= 0) fail("quantity", `${at}: จำนวนต้องเป็นตัวเลขมากกว่า 0 (ทศนิยมไม่เกิน 2 ตำแหน่ง)`);
+      if (price && !DECIMAL.test(price)) fail("price", `${at}: ราคาต่อหน่วยต้องเป็นตัวเลขไม่ติดลบ (ทศนิยมไม่เกิน 2 ตำแหน่ง)`);
+      if (note && charCount(note) > MAX_NOTE) fail("note", `${at}: หมายเหตุต้องไม่เกิน ${MAX_NOTE} ตัวอักษร`);
       return { item_name: item, quantity, price: price || null, note };
     });
-    return { rows: sent, errors, filled };
+    return { rows: sent, errors, filled, invalid };
   }
   // กติกาของช่องส่วน "สำหรับแผนก IT" (ข้อความผิดพลาดตรงกับ app_itrp_complete) · ลำดับตามบนจอ
   function completeRules({ causeKind = () => "", repairMethod = () => "" } = {}) {
