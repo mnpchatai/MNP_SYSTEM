@@ -1,6 +1,6 @@
 // โมดูล MNP LAB ของ Pilot Web (#/lab) — ห้องปฏิบัติการ มี 4 โมดูล: แดชบอร์ด · เปรียบเทียบเคมี · รายงานทดสอบ Mooney · รายงานทดสอบ MDR
 // (รายการ ลำดับ สี และ URL ของโมดูลอยู่ที่ lab-sections.js) #/lab เป็นหน้าเลือกโมดูลแบบการ์ดสีเหมือนหน้าคำร้อง (ไม่เรียกฐานข้อมูล)
-// ตอนนี้มีข้อมูลเฉพาะ Mooney: แดชบอร์ดสรุปจากฟีดเดียวกัน ส่วนเปรียบเทียบเคมีและ MDR ยังไม่มีแหล่งข้อมูล
+// Mooney: แดชบอร์ดสรุปจากฟีดเดียวกัน · MDR: อัปโหลดไฟล์ .ini จากหน้าเว็บ (lab-mdr-page.js) · เปรียบเทียบเคมียังไม่มีแหล่งข้อมูล
 // จึงแสดงว่ายังไม่เปิดใช้งานและไม่เรียกข้อมูลใด ๆ
 //
 // Google Sheets เป็นข้อมูลต้นทาง; Apps Script ซิงก์เข้า Supabase ทุกนาทีผ่าน lab-sheet-sync
@@ -1090,6 +1090,11 @@
       return material
         ? openPage({ title: TITLE, html: views.materialPage(material, SECONDS), material, bind: () => bindMaterial(material) })
         : openPage({ title: TITLE, html: views.overviewPage(SECONDS), material: null, bind: bindOverview });
+    },
+    // MDR อ่านฐานข้อมูลของตัวเอง (อัปโหลดจากหน้าเว็บ ไม่มีรีเฟรชอัตโนมัติ) จึงไม่ใช้ openPage/ฟีด Mooney ดู lab-mdr-page.js
+    mdr: (params) => {
+      pageVersion += 1;
+      return window.MNP_LAB_MDR_PAGE.open(params, { denied: revoke, title: TITLE, path: PATH });
     },
   };
 

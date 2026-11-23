@@ -9,7 +9,8 @@
 // escapeHtml, showToast, friendlyError, confirmDialog, renderRoute, currentRoute) โดยถือว่าอยู่ในโหมดทดสอบเสมอ ข้อมูลของโมดูลอยู่ใน localStorage
 // ของเบราว์เซอร์เหมือนของจริง ใช้เพื่อดู/ลองกดเท่านั้น ไม่ใช่ทางเข้าของผู้ใช้จริง และสคริปต์นี้ไม่ถูกเผยแพร่ (ดู scripts/build-pilot.mjs)
 import http from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mockSupabaseScript } from "./pilot-harness-mock.mjs";
@@ -26,6 +27,35 @@ const STATIC_FILES = new Set(["index.html", "app.js", "styles.css", "favicon.ico
 const STATIC_DIRS = new Set(["modules", "fonts", "vendor", "icons", "sounds"]);
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
+// ผลตั้งต้นของรายงานทดสอบ MDR (MNP LAB): MDR_SAMPLE_DIR=<โฟลเดอร์ที่มีโฟลเดอร์ของวัน เช่น MDRbbb> → อ่านทุกไฟล์ .ini ด้วยตัวอ่านเดียวกับหน้าเว็บ
+// (modules/lab-mdr-model.js) แล้วส่งให้ Supabase จำลองเป็น globalThis.MNP_HARNESS_MDR_SEED · ไม่ตั้ง = เริ่มว่าง (ลองอัปโหลดเองได้)
+// ไฟล์จริงอยู่นอก repo เสมอ สคริปต์นี้อ่านอย่างเดียว
+let mdrSeed = null;
+async function mdrSeedScript() {
+  const dir = process.env.MDR_SAMPLE_DIR;
+  if (!dir) return "globalThis.MNP_HARNESS_MDR_SEED = [];\n";
+  if (!mdrSeed) {
+    const model = createRequire(import.meta.url)("../modules/lab-mdr-model.js");
+    const files = [];
+    const walk = async (folder, depth) => {
+      for (const entry of await readdir(folder, { withFileTypes: true })) {
+        const full = join(folder, entry.name);
+        if (entry.isDirectory() && depth < 2) await walk(full, depth + 1);
+        else if (entry.isFile()) {
+          const size = (await stat(full)).size;
+          const readable = /\.ini$/i.test(entry.name) && size <= model.MAX_FILE_BYTES;
+          files.push({ name: entry.name, size, text: readable ? await readFile(full, "latin1") : null });
+        }
+      }
+    };
+    await walk(dir, 0);
+    const { accepted, skipped } = model.classifyFiles(files);
+    console.log(`Pilot harness: MDR seed ${accepted.length} tests from ${dir} (${skipped.length} files skipped)`);
+    mdrSeed = `globalThis.MNP_HARNESS_MDR_SEED = ${JSON.stringify(accepted.map((item) => item.test))};\n`;
+  }
+  return mdrSeed;
+}
+
 function servable(relative) {
   const parts = relative.split(sep);
   if (parts.includes("..")) return false;
@@ -39,7 +69,7 @@ async function moduleScripts() {
 
 async function harnessPage() {
   // Supabase จำลองต้องโหลดก่อนโมดูล: module-bom.js ดูว่ามี window.supabase หรือไม่เพื่อเลือกเก็บข้อมูลหลักในฐานข้อมูล (จำลอง) แทน localStorage
-  const scripts = ["harness-mock-sandbox.js", ...(await moduleScripts())].map((path) => `  <script defer src="/${path}"></script>`).join("\n");
+  const scripts = ["harness-mdr-seed.js", "harness-mock-sandbox.js", ...(await moduleScripts())].map((path) => `  <script defer src="/${path}"></script>`).join("\n");
   return `<!doctype html>
 <html lang="th">
 <head>
@@ -53,18 +83,20 @@ async function harnessPage() {
     .h-side { padding: 12px; background: #0b1f3a; color: #fff; }
     .h-side a { color: #fff; }
     .h-side > div { margin-top: 10px; }
-    .content { padding: 16px; min-width: 0; }
+    /* margin: 0 = ยืดเต็มช่องของกริดเหมือน .main ของ app.js (margin auto ของ .content ใน styles.css ทำให้กว้างตามเนื้อหาจนล้นจอมือถือ) */
+    .content { margin: 0; padding: 16px; min-width: 0; }
     .h-toast { position: fixed; right: 12px; bottom: 12px; padding: 10px 14px; background: #222; color: #fff; border-radius: 8px; max-width: 420px; z-index: 99; }
     .h-toast.error { background: #b3261e; }
     .h-note { font-size: 12px; opacity: .75; }
-    @media (max-width: 760px) { .h-shell { grid-template-columns: 1fr; } .h-side { display: none; } }
+    @media (max-width: 760px) { .h-shell { grid-template-columns: minmax(0, 1fr); } .h-side { display: none; } }
   </style>
   <script>
     // stub ของ app.js: โมดูลอ้างเป็น global และ root.escapeHtml จึงต้องเป็น property ของ window
     window.MNP_REQUEST_MODULES = {};
     // บัญชีทดสอบ (persona) แบบ admin: BOM เทียบกับตำแหน่ง/แผนกนี้เพื่อให้เขียนข้อมูลหลักได้ (เหมือน persona ของ /pilot-shell.html?sandbox=1)
     // state.sandbox = admin ตัวจริงอยู่ในโหมดทดสอบ (ปุ่ม "ล้างข้อมูล BOM ทดสอบ" ของ BOM เห็นเฉพาะกรณีนี้) · persona เลือกได้ที่แถบข้าง "ทำหน้าที่เป็น" (โหลดจาก app_sandbox_status ของ Supabase จำลอง)
-    const state = { employee: { isSandbox: true, id: "persona-1", employee_no: "E001", first_name: "ปกรณ์", last_name: "ศรีวัฒนา", display_name: "harness", role: { code: "admin" }, department: { code: "MT" } }, sandbox: { active: true } };
+    // labAccess: เปิด MNP LAB (#/lab) ได้ เหมือนบัญชี admin ที่ app_lab_access ตอบ true
+    const state = { employee: { isSandbox: true, labAccess: true, id: "persona-1", employee_no: "E001", first_name: "ปกรณ์", last_name: "ศรีวัฒนา", display_name: "harness", role: { code: "admin" }, department: { code: "MT" } }, sandbox: { active: true } };
     // sb ของ app.js: RPC ข้อมูลหลัก BOM ไปที่ Supabase จำลองตัวเดียวกับ /pilot-shell.html (สคริปต์ /harness-mock-sandbox.js) ข้อมูลเก็บใน localStorage ของพอร์ตนี้
     const sb = { rpc: (name, args) => window.supabase.createClient().rpc(name, args) };
     let personas = [];
@@ -72,7 +104,7 @@ async function harnessPage() {
       const { data } = await sb.rpc("app_sandbox_status");
       if (!data || !data.persona) return;
       personas = data.personas || [];
-      state.employee = { ...data.persona, isSandbox: true };
+      state.employee = { ...data.persona, isSandbox: true, labAccess: true };
     }
     let app = null;
     const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
@@ -198,6 +230,11 @@ async function handle(request, response) {
     if (url.pathname === "/" || url.pathname === "/harness" || url.pathname === "/harness/") {
       response.writeHead(200, { "content-type": TYPES[".html"], "cache-control": "no-store" });
       response.end(await harnessPage());
+      return;
+    }
+    if (url.pathname === "/harness-mdr-seed.js") {
+      response.writeHead(200, { "content-type": TYPES[".js"], "cache-control": "no-store" });
+      response.end(await mdrSeedScript());
       return;
     }
     if (url.pathname === "/harness-mock-supabase.js") {
