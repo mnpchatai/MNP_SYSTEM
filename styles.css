@@ -3823,7 +3823,6 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .lab-mdr-day-flag { margin-left: 12px; padding: 2px 9px; color: var(--m900); background: var(--m100); border-radius: var(--radius-pill); font-size: var(--text-caption); font-weight: 700; }
 .lab-mdr-day-row.is-shown th { background: color-mix(in srgb, var(--m400) 26%, var(--paper)); }
 /* เงื่อนไขการทดสอบ (เวลาทดสอบ · อุณหภูมิ): ทั้งตาราง / ทั้งวัน / หัวกลุ่มในวันที่มีหลายเงื่อนไข */
-.lab-mdr-table-scope { margin-left: 10px; color: var(--muted); font-size: var(--text-caption); font-weight: 600; }
 .lab-mdr-cond-all { margin: 0; padding: 8px 12px; color: var(--muted); font-size: var(--text-caption); font-weight: 600; }
 .lab-mdr-day-cond { margin-left: 10px; padding: 2px 9px; color: var(--ink); background: color-mix(in srgb, var(--m400) 16%, var(--paper)); border: 1px solid color-mix(in srgb, var(--m600) 35%, transparent); border-radius: var(--radius-pill); font-size: var(--text-caption); font-weight: 700; font-variant-numeric: tabular-nums; }
 .lab-mdr-cond-row th { padding: 6px 12px 6px 22px; text-align: left; color: var(--m800); background: color-mix(in srgb, var(--m400) 6%, var(--paper)); border-left: 4px solid var(--m400); font-size: var(--text-caption); font-weight: 700; font-variant-numeric: tabular-nums; }
