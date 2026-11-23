@@ -96,7 +96,9 @@
     const plot = document.querySelector("#mdr-plot");
     if (!plot) return;
     const byId = new Map(data.tests.map((test) => [String(test.id), test]));
-    const series = data.curves.map((item, index) => ({ id: String(item.id), color: views.lineColor(index), curve: item.curve, t90: byId.get(String(item.id))?.t90_s ?? null, machineId: byId.get(String(item.id))?.machine_id ?? "" }));
+    const dayTests = model.groupByDate(data.tests).find((day) => day.date === data.curveDate)?.tests ?? [];
+    const colors = views.colorMap(dayTests, data.curves);
+    const series = data.curves.filter((item) => colors.has(String(item.id))).map((item) => ({ id: String(item.id), color: colors.get(String(item.id)), curve: item.curve, t90: byId.get(String(item.id))?.t90_s ?? null, machineId: byId.get(String(item.id))?.machine_id ?? "" }));
     bindChart(plot, series);
   }
 

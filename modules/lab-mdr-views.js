@@ -83,7 +83,7 @@
   // หัวหน้าสูตร: ตัวเลือกสูตร (ชื่อสูตรแสดงที่นี่ที่เดียว) · F1 มีตัวเลือกวันของกราฟ
   function formulaHead(route, formulas, days, curveDate) {
     const part = model.findPart(route.part);
-    const dateOptions = days.map((day) => `<option value="${esc(day.date)}"${day.date === curveDate ? " selected" : ""}>${esc(model.formatDate(day.date))} · ${day.tests.length} ครั้ง</option>`).join("");
+    const dateOptions = days.map((day) => `<option value="${esc(day.date)}"${day.date === curveDate ? " selected" : ""}>${esc(model.formatDate(day.date))}</option>`).join("");
     return `<div class="lab-head lab-mdr-head">
       <h2 class="lab-title"><label class="sr-only" for="mdr-formula">สูตร</label><select class="lab-title-select" id="mdr-formula">${formulaSelect(formulas, route.formula)}</select></h2>
       ${part.hasCurve && days.length ? `<label class="lab-mdr-day" for="mdr-date"><span>กราฟวันที่</span><select class="select" id="mdr-date" aria-label="วันที่ของกราฟ">${dateOptions}</select></label>` : ""}
@@ -113,9 +113,15 @@
   }
 
   // ปุ่มเส้นของแต่ละครั้ง: สีเดียวกับเส้น กดเพื่อซ่อน/แสดง ชี้เพื่อเน้นเส้นนั้น
+  // สีของแต่ละครั้งตัดสินที่นี่ที่เดียว (ลำดับเดียวกับตาราง) ทั้งปุ่มเส้นและเส้นกราฟใช้ map นี้ สีจึงไม่สลับกันแม้ลำดับจากฐานข้อมูลต่าง
+  function colorMap(tests, curves) {
+    const withCurve = new Set(curves.map((item) => String(item.id)));
+    return new Map(tests.filter((test) => withCurve.has(String(test.id))).map((test, index) => [String(test.id), lineColor(index)]));
+  }
+
   function legend(tests, curves) {
-    const withCurve = new Set(curves.map((item) => item.id));
-    return tests.filter((test) => withCurve.has(test.id)).map((test, index) => `<button type="button" class="lab-mdr-key" data-test="${esc(test.id)}" aria-pressed="true" style="--line-color:${lineColor(index)}">
+    const colors = colorMap(tests, curves);
+    return tests.filter((test) => colors.has(String(test.id))).map((test) => `<button type="button" class="lab-mdr-key" data-test="${esc(test.id)}" aria-pressed="true" style="--line-color:${colors.get(String(test.id))}">
         <span class="lab-mdr-swatch" aria-hidden="true"></span><span>ID ${esc(test.machine_id)}</span><small>${esc(test.test_time)}</small>
       </button>`).join("");
   }
@@ -219,7 +225,7 @@
     return `<span class="lab-tip-when">${esc(model.formatClock(second))} นาที</span>${items}`;
   }
 
-  const api = { LINE_COLORS, lineColor, page, partTabs, overview, formulaBody, resultsTable, legend, uploadResult, uploadProgress, chartSvg, tipHtml, niceStep };
+  const api = { LINE_COLORS, lineColor, colorMap, page, partTabs, overview, formulaBody, resultsTable, legend, uploadResult, uploadProgress, chartSvg, tipHtml, niceStep };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_LAB_MDR_VIEWS = api;
 })(typeof window !== "undefined" ? window : globalThis);

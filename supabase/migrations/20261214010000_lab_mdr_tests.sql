@@ -105,7 +105,7 @@ begin
       end if;
       v_ml := (v_item->>'ml')::numeric;
       v_mh := (v_item->>'mh')::numeric;
-      if v_ml < 0 or v_mh < v_ml or v_mh > case when v_part = 'F1' then 1000 else 10000000 end then
+      if v_ml < 0 or v_mh < v_ml or v_mh > (case when v_part = 'F1' then 1000 else 10000000 end) then
         raise exception 'bad torque';
       end if;
 

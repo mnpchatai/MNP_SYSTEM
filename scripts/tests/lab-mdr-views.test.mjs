@@ -41,7 +41,7 @@ test("cure formula page: chart of the chosen day with a key per test, then one t
   const html = views.formulaBody({ part: "F1", formula: "A2004" }, { formulas, tests, curveDate: "2026-11-02", curves: [{ id: 1, curve }, { id: 2, curve }] });
   assert.match(html, /id="mdr-formula"/);
   assert.match(html, /<option value="A2004" selected>A2004<\/option>/);
-  assert.match(html, /<option value="2026-11-02" selected>2 พ.ย. 2569 · 2 ครั้ง<\/option>/);
+  assert.match(html, /<option value="2026-11-02" selected>2 พ.ย. 2569<\/option>/);
   assert.equal(count(html, /class="lab-mdr-key"/g), 2, "a key per test drawn on the chart");
   assert.equal(count(html, /class="lab-mdr-stat"/g), 2, "an AVG row per date");
   assert.equal(count(html, /lab-mdr-sd/g), 2, "an SD row per date");
