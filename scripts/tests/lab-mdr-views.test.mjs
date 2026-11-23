@@ -24,6 +24,7 @@ test("the page: module banner with the upload control, one tab per test set, the
   assert.match(page, /id="mdr-pick-folder" webkitdirectory/);
   assert.match(page, /id="mdr-pick-files" accept="\.ini" multiple/);
   assert.match(page, /data-popup hidden/, "the menu uses the shared popup rule");
+  assert.equal(count(page, /type="file"[^>]*data-attachment-skip/g), 2, "both pickers opt out of the 10-file attachment rule of app.js");
   assert.match(page, /href="#\/lab\?module=mdr&amp;part=F1&amp;formula=A2004" data-part="F1">/, "the other tab keeps the formula");
   assert.match(page, /href="#\/lab\?module=mdr&amp;part=F2" data-part="F2" aria-current="page"/, "the open tab goes back to its formula list");
   assert.equal(count(visibleText(page), /ทดสอบการสุกของยาง/g), 1);

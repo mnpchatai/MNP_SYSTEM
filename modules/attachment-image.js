@@ -28,6 +28,8 @@
 // MAX_FILE_BYTES เท่ากับ MAX_BATCH_BYTES โดยตั้งใจ: ไฟล์เดียวใช้เพดาน 20 MB เต็มได้ (ภาพถูกบีบให้ไม่เกิน SAFE_BYTES อยู่แล้ว)
 //
 // Pilot Web: โหลดไฟล์นี้ก่อน app.js (ดู index.html) แล้ว app.js เรียก bindFileInputs() หนเดียว
+// ช่องไฟล์ที่ไม่ใช่ไฟล์แนบ (เช่น ไฟล์ข้อมูล .ini ของ MDR ที่เลือกทั้งโฟลเดอร์ได้หลายสิบไฟล์) ใส่ data-attachment-skip บน <input type="file">
+// bindFileInputs จะไม่แตะช่องนั้นเลย (ไม่แปลงรูป ไม่ตรวจจำนวน/ขนาดรวม ไม่ล้างช่อง ไม่แสดงสถานะ/ตัวอย่าง) หน้าของช่องนั้นจัดการไฟล์เอง
 // Next.js: คอมโพเนนต์ src/components/attachment-input.tsx เรียก normalizeAttachment() โดยส่งตัวโหลด
 // libheif-js ของตัวเองเข้ามา — ไลบรารีนี้คัดลอกไว้ที่ vendor/libheif/ สำหรับ Pilot (ดู README ในโฟลเดอร์นั้น)
 (function defineAttachmentImage(root, factory) {
@@ -469,6 +471,7 @@
     document.addEventListener("change", async (event) => {
       const input = event.target;
       if (!(input instanceof HTMLInputElement) || input.type !== "file") return;
+      if (input.hasAttribute("data-attachment-skip")) return; // ไม่ใช่ไฟล์แนบ หน้าของช่องนั้นจัดการไฟล์เอง (ดูหัวไฟล์)
       const originals = Array.from(input.files ?? []);
       const sequence = (latest.get(input) ?? 0) + 1;
       latest.set(input, sequence);
