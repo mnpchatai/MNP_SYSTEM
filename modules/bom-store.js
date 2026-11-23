@@ -197,7 +197,9 @@
   // stock = ยอดคงเหลือของซื้อ (นับด้วย countPartStock) · stockMoves = ประวัติ (เซิร์ฟเวอร์เขียนเอง client อ่านอย่างเดียว ไม่ส่งกลับ)
   // fgMoves = ประวัติรับเข้าคลัง/ส่งมอบ/ปิดใบรับไม่ครบของสินค้าสำเร็จรูป (เซิร์ฟเวอร์เขียนเอง เพิ่มต่อท้ายอย่างเดียว · client ส่งเป็นคำขอ ไม่ส่งเป็นระเบียน)
   // rodLots / rodMoves = คลังแท่งยาว SR (20261202010000): ล็อตแท่งจากล็อตตกแต่งของ RubberFlow และประวัติของแท่งที่ใช้ได้ · เซิร์ฟเวอร์เขียนเอง client ส่งเฉพาะแถวคำขอของคำสั่งคลังแท่ง (ROD_ACTIONS)
-  const WORK_LISTS = Object.freeze(["customers", "orders", "jobs", "stock", "stockMoves", "fgMoves", "rodLots", "rodMoves"]);
+  // grConfig / grPlans / grRecords / rodRequests / grHandovers = แปรรูปยาง GR (20261214010000): ตั้งค่า ขั้นตอนของงาน ผลรายวัน คำขอเบิกยางเส้นยาว ส่งงานให้ PK · เซิร์ฟเวอร์เขียนเอง
+  // client ส่งเฉพาะแถวคำขอของคำสั่ง GR (GR_ACTIONS) · grWorkers = พนักงาน active ของแผนก GR (มากับ snapshot เท่านั้น ส่วนต่างว่างเสมอ) อ่านอย่างเดียว
+  const WORK_LISTS = Object.freeze(["customers", "orders", "jobs", "stock", "stockMoves", "fgMoves", "rodLots", "rodMoves", "grConfig", "grPlans", "grRecords", "rodRequests", "grHandovers", "grWorkers"]);
   const REMOTE_LISTS = Object.freeze([...MASTER_LISTS, ...WORK_LISTS]);
   const LOCAL_KEY = "mnp-bom-local-v1"; // รุ่นก่อนหน้าเก็บใบสั่งผลิต/งาน/บันทึกการใช้งานไว้ที่นี่ · ตอนนี้ไม่อ่านไม่เขียน (ข้อมูลทดสอบเก่าไม่ย้ายเข้าฐานข้อมูล)
   const compareKey = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -211,6 +213,7 @@
     colorSets: (record) => `${record.base}\u0000${record.code}`, packages: (record) => `${record.base}\u0000${record.code}`,
     customers: (record) => customerKey(record.name), orders: (record) => record.id, jobs: (record) => record.id,
     stock: (record) => record.itemCode, stockMoves: (record) => record.id, fgMoves: (record) => record.id, rodLots: (record) => record.id, rodMoves: (record) => record.id,
+    grConfig: (record) => record.key ?? "gr", grPlans: (record) => record.jobId, grRecords: (record) => record.id, rodRequests: (record) => record.id, grHandovers: (record) => record.id, grWorkers: (record) => record.id,
   });
   const MASTER_DELETABLE = Object.freeze(["colorSets", "packages", "jobs"]);
   // ลำดับของชุดตามฐานข้อมูล: ใบสั่งผลิตใหม่สุดก่อน (วันที่สั่งผลิต แล้วเลขที่) · งานเรียงตามใบ แผนก ชิ้นงาน เลขงาน · ชุดอื่นเรียงตามกุญแจ
@@ -221,6 +224,10 @@
     fgMoves: (a, b) => (Number(a.at) || 0) - (Number(b.at) || 0) || compareKey(a.id, b.id),
     rodLots: (a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0) || compareKey(a.id, b.id),
     rodMoves: (a, b) => (Number(a.at) || 0) - (Number(b.at) || 0) || compareKey(a.id, b.id),
+    grRecords: (a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0) || compareKey(a.id, b.id),
+    rodRequests: (a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0) || compareKey(a.id, b.id),
+    grHandovers: (a, b) => (Number(a.sentAt) || 0) - (Number(b.sentAt) || 0) || compareKey(a.id, b.id),
+    grWorkers: (a, b) => String(a.name ?? "").localeCompare(String(b.name ?? ""), "th") || compareKey(a.id, b.id),
   });
   // เป้าหมายการลบ: ชุดสี/แพ็กเกจ = {base, code} · งาน = {id}
   const deleteTarget = (list, record) => (list === "jobs" ? { id: record.id } : { base: record.base, code: record.code });
@@ -249,7 +256,7 @@
   }
   // ส่วนต่างของข้อมูลก่อน/หลังรัน action → p_changes ของ app_bom_save_master (ระเบียนที่เพิ่ม/เปลี่ยน ส่งทั้งระเบียน · ชุดสี/แพ็กเกจ/งานลบได้)
   // stockMoves เซิร์ฟเวอร์เขียนเองเสมอ · stock ส่งเฉพาะ action countPartStock (การเบิกจ่ายหักสต็อกที่เซิร์ฟเวอร์ ค่าที่คำนวณในเครื่องใช้แสดงจนกว่าคำตอบมาถึง)
-  const SERVER_WRITTEN = Object.freeze(["stockMoves", "fgMoves", "rodLots", "rodMoves"]);
+  const SERVER_WRITTEN = Object.freeze(["stockMoves", "fgMoves", "rodLots", "rodMoves", "grConfig", "grPlans", "grRecords", "rodRequests", "grHandovers", "grWorkers"]);
   // คืนของซื้อ (undoOrderParts / returnOrderParts): ผลทั้งหมด (งานกลับไปรอเบิกจ่าย สต็อก ประวัติ) เซิร์ฟเวอร์คำนวณเอง จึงส่งเฉพาะแถวคำขอ { orderId, mode, reason, lines? } ในส่วน partReturns (action คืนแถวนี้ใน result.request)
   // สำเนาที่ action คำนวณในเครื่อง (งาน สต็อก) ใช้แสดงจนกว่าคำตอบมาถึง และยังใช้เทียบว่าระเบียนไหนเป็นของเรา
   const RETURN_ACTIONS = Object.freeze(["undoOrderParts", "returnOrderParts"]);
@@ -258,6 +265,9 @@
   // คลังแท่งยาว SR: action → ส่วนที่ส่งแถวคำขอ (action คืน result.request เป็นอาร์เรย์ของแถว) · ผลทั้งหมด (สถานะล็อต ประวัติแท่ง ยอดงาน RB) เซิร์ฟเวอร์คำนวณเอง
   // receiveRodsOpening (รับนอกใบสั่ง) / setRodLocation (ย้ายตำแหน่ง) ส่งในส่วน rodLots (20261204010000_bom_sr_store_module.sql)
   const ROD_ACTIONS = Object.freeze({ receiveRods: "rodLots", decideRods: "rodLots", receiveRodsOpening: "rodLots", setRodLocation: "rodLots", issueRods: "rodMoves", reverseRodIssue: "rodMoves", adjustRods: "rodMoves" });
+  // แปรรูปยาง GR (20261214010000_bom_gr_module.sql): action → ส่วนที่ส่งแถวคำขอเดียว (action คืน result.request เป็นอาร์เรย์หนึ่งแถว) · ยอดของงาน GR เซิร์ฟเวอร์คำนวณเองในธุรกรรมเดียวกัน
+  const GR_ACTIONS = Object.freeze({ saveGrConfig: "grConfig", setGrJobSteps: "grPlans", addGrRecord: "grRecords", editGrRecord: "grRecords", voidGrRecord: "grRecords",
+    requestRods: "rodRequests", cancelRodRequest: "rodRequests", sendGrToPk: "grHandovers", receiveGrAtPk: "grHandovers", cancelGrHandover: "grHandovers" });
   function diffMaster(before, after, action = "") {
     const changes = {};
     for (const list of REMOTE_LISTS) {
@@ -397,6 +407,8 @@
       BOM_INVALID_FG: "รับเข้าคลัง ส่งมอบ หรือปิดใบไม่ได้: ข้อมูลไม่ถูกต้อง (จำนวนต้องมากกว่า 0 สินค้าต้องอยู่ในใบ เหตุผลที่ปิดใบอย่างน้อย 3 ตัวอักษร)",
       BOM_FG_EXCEEDS: "ตัวเลขเปลี่ยนไปแล้ว: จำนวนที่รับเข้าคลังเกินที่ PK ส่งมอบ จำนวนที่ส่งมอบเกินที่มีในใบ หรือสต็อกสินค้าสำเร็จรูปที่ใบนี้ตั้งใช้ไม่พอ (อาจมีผู้อื่นบันทึกหรือปล่อยผลิตใบอื่นไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาตรวจตัวเลขแล้วทำรายการอีกครั้ง",
       BOM_INVALID_ROD: "ทำรายการคลังยางเส้นยาวไม่ได้: ข้อมูลไม่ถูกต้อง (จำนวนรับต้องมากกว่า 0 และไม่เกินที่ส่งมา ค่าที่วัดครบตามสเปกและผลตรงกับค่าที่วัด ตำแหน่งจัดเก็บ 1-40 ตัวอักษร เหตุผลอย่างน้อย 3 ตัวอักษร เลขล็อตซ้ำ รหัสที่ไม่ใช่เส้นยาง (RB) หรือหยิบยางเส้นยาวจากถังของใบอื่น)",
+      BOM_INVALID_GR: "ทำรายการของแผนก GR ไม่ได้: ข้อมูลไม่ถูกต้อง (ขั้นต้องอยู่ในขั้นตอนของงาน ดี + เสียมากกว่า 0 ของเสียต้องมีเหตุผลจากรายการ ผู้ทำต้องเป็นพนักงาน GR วันที่ไม่เกินวันนี้ ขั้นที่มีผลแล้วลบไม่ได้ หรือรายการนี้ถูกบันทึกไปแล้ว)",
+      BOM_GR_EXCEEDS: "ตัวเลขเปลี่ยนไปแล้ว: จำนวนที่ส่งให้ PK เกินของดีของงานที่ยังไม่ได้ส่ง ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาตรวจตัวเลขแล้วทำรายการอีกครั้ง",
       BOM_ROD_EXCEEDS: "ตัวเลขเปลี่ยนไปแล้ว: ยางเส้นยาวในคลังยางเส้นยาว (SR) ไม่พอที่จะจ่าย ปรับ หรือใช้ตอนปล่อยผลิต (อาจมีผู้อื่นจ่ายหรือปล่อยผลิตใบอื่นไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาตรวจตัวเลขแล้วทำรายการอีกครั้ง",
       BOM_INVALID_ORDER: "ใบสั่งผลิตไม่ผ่านการตรวจของฐานข้อมูล (เช่น ยกเลิกใบโดยไม่มีเหตุผล 3–200 ตัวอักษร หรือยอดที่ใช้จากสต็อกสินค้าสำเร็จรูปเกินจำนวนสั่ง) ตรวจแล้วทำรายการอีกครั้ง",
       BOM_INVALID_JOB: "บันทึกงานไม่ได้: ยอดหรือรายงานไม่ถูกต้อง (พักงานต้องมีเหตุผล 3–200 ตัวอักษร · งานที่ผูก WO ของ RubberFlow รับยอดจาก RubberFlow เท่านั้น รายงานผลที่นี่ไม่ได้)",
@@ -419,7 +431,7 @@
     return Object.assign(new Error(message), { code });
   }
   // การชน: ระเบียนที่แตะถูกผู้อื่นแก้ไปก่อน · เวอร์ชันฐานไม่ตรงฐานข้อมูล · เลขซ้ำ · สถานะใบเปลี่ยนไปแล้ว → ตามทันฐานข้อมูลก่อนให้ผู้ใช้ทำรายการใหม่
-  const CONFLICT_CODES = Object.freeze(["BOM_STALE", "BOM_INVALID_PAYLOAD", "BOM_CONFLICT", "BOM_INVALID_TRANSITION", "BOM_RESET", "BOM_INSUFFICIENT_STOCK", "BOM_INVALID_RETURN", "BOM_FG_EXCEEDS", "BOM_ROD_EXCEEDS", "BOM_REVISION_IMMUTABLE"]);
+  const CONFLICT_CODES = Object.freeze(["BOM_STALE", "BOM_INVALID_PAYLOAD", "BOM_CONFLICT", "BOM_INVALID_TRANSITION", "BOM_RESET", "BOM_INSUFFICIENT_STOCK", "BOM_INVALID_RETURN", "BOM_FG_EXCEEDS", "BOM_ROD_EXCEEDS", "BOM_GR_EXCEEDS", "BOM_REVISION_IMMUTABLE"]);
 
   // พนักงานที่ล็อกอิน (state.employee ของ app.js: บัญชีทดสอบในโหมดทดสอบ หรือพนักงานจริง) → ผู้ใช้ของ BOM
   // admin → admin · ผู้ช่วยผู้จัดการโรงงานขึ้นไป และผู้จัดการแผนกในสายผลิต → manager · แผนกวางแผน PP → planner · RB/GR/PT/BG/ST/WH → บทบาทของแผนกนั้น · อื่นๆ → ดูอย่างเดียว
@@ -722,6 +734,7 @@
       const sent = RETURN_ACTIONS.includes(name) && result?.request ? { partReturns: { upsert: [clone(result.request)] } }
         : FG_ACTIONS.includes(name) && result?.request ? { fgMoves: { upsert: [clone(result.request)] } }
         : Object.hasOwn(ROD_ACTIONS, name) && Array.isArray(result?.request) ? { [ROD_ACTIONS[name]]: { upsert: clone(result.request) } }
+        : Object.hasOwn(GR_ACTIONS, name) && Array.isArray(result?.request) ? { [GR_ACTIONS[name]]: { upsert: clone(result.request) } }
         : canPlan(user) ? changes : shapeForActor(changes, before);
       if (!hasChanges(sent)) return { ok: true, result: result ?? true, saving: Promise.resolve({ ok: true }) };
       // แบ่งเฉพาะการนำเข้าจาก Excel: ทำซ้ำได้ปลอดภัย (ชิ้นงานที่มีแล้วรวม BOM ที่มีแล้วข้าม) · คำสั่งอื่นที่ทำซ้ำอาจสร้าง revision ซ้ำ จึงส่งครั้งเดียวเสมอ
@@ -952,7 +965,7 @@
     return { load, data: getData, user: getUser, setUser, run, reset, isPersisted: () => persisted, size, now, isRemote: () => false, status: () => "ready", error: () => null, isSaving: () => false, hasNewer: () => false, version: () => null, ensureLoaded: () => Promise.resolve(), reload: () => Promise.resolve(), catchUp: () => Promise.resolve(false), audit: () => ({ status: "ready", entries: getData().audit, error: null }), loadAudit: () => Promise.resolve(), purge: () => Promise.resolve({ ok: false, error: new Error("ล้างข้อมูล BOM ทดสอบได้เฉพาะโหมดฐานข้อมูล") }), subscribe: () => () => {} };
   }
 
-  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, NAV, SETUP_PAGES, NAV_PARENT, navLabel, findModule, canSee, homeOf, DEPT_ROUTES, deptRoute, isValidState, migrate, createStore, MASTER_LISTS, WORK_LISTS, REMOTE_LISTS, diffMaster, splitForSave, combineDeltas, SAVE_BATCH_RECORDS, SAVE_BATCH_BYTES, sameMaster, customerName, customerKey, mapRemoteError, roleOfEmployee, personaUser, usesBom, isPlanner, PRODUCTION_DEPTS, ROD_ACTIONS };
+  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, NAV, SETUP_PAGES, NAV_PARENT, navLabel, findModule, canSee, homeOf, DEPT_ROUTES, deptRoute, isValidState, migrate, createStore, MASTER_LISTS, WORK_LISTS, REMOTE_LISTS, diffMaster, splitForSave, combineDeltas, SAVE_BATCH_RECORDS, SAVE_BATCH_BYTES, sameMaster, customerName, customerKey, mapRemoteError, roleOfEmployee, personaUser, usesBom, isPlanner, PRODUCTION_DEPTS, ROD_ACTIONS, GR_ACTIONS };
   if (isNode) module.exports = api;
   else root.MNP_BOM_STORE = api;
 })(typeof window !== "undefined" ? window : globalThis);

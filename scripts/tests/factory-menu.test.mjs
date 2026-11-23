@@ -438,7 +438,7 @@ test("a department page binds the real BOM actions once: report opens the dialog
   const env = load({ employee: emp("GR") });
   env.store.setUser("B05");
   const data = env.store.data();
-  const openJobs = data.jobs.filter((entry) => entry.dept === "GR" && liveOrder(data, entry) && entry.status !== "done" && ctxCanReport(entry));
+  const openJobs = data.jobs.filter((entry) => entry.dept === "GR" && liveOrder(data, entry) && entry.status !== "done" && ctxCanReport(entry) && !(data.grPlans ?? []).some((plan) => plan.jobId === entry.id));
   assert.ok(openJobs.length >= 2, "two open GR jobs: one is put on hold, the other is reported");
   const [job, other] = openJobs;
   assert.equal(env.store.run("reportJob", { jobId: job.id, qtyDone: 1, qtyReject: 0 }).ok, true);

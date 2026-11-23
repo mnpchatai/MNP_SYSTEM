@@ -1619,6 +1619,188 @@
     return { code, name: String(item?.name ?? ""), compound, color, colorName: named, size, text };
   }
 
+  // ---------- แปรรูปยาง GR (โรงงาน ขั้น 2 · 20261214010000_bom_gr_module.sql) ----------
+  // ตั้งค่าเริ่มต้น (ตรงกับ private.bom_gr_default_config): รหัสสายหลักใช้ขั้นตอนผลิตเดิม GR-01..GR-09 routing ของสินค้าจึงตรงกับขั้นของงาน · ขั้นเสริม ใส่ท่อ GR-11 คัดแยก GR-10 ตัดยาง(เข้ามุม) GR-12
+  // ชุด grConfig ว่าง (ยังไม่เคยตั้ง) = ใช้ค่านี้ · เป้า = ชิ้น/ชม. ที่ 100% ต่อรหัสชิ้น × ขั้น (เริ่มต้นไม่มี) · ไม่มีจำนวนเงิน
+  const GR_DEFAULT_CONFIG = Object.freeze({
+    steps: Object.freeze([
+      ["GR-01", "รีด", "main"], ["GR-02", "ปั๊ม", "main"], ["GR-03", "เปเปอร์", "main"], ["GR-04", "ตัดยาง", "main"], ["GR-05", "ทากาว", "main"],
+      ["GR-06", "เจียร์", "main"], ["GR-07", "เจียร์(หยาบ)", "main"], ["GR-08", "เจียร์(ละเอียด)", "main"], ["GR-09", "เจาะ", "main"],
+      ["GR-11", "ใส่ท่อ", "side"], ["GR-10", "คัดแยก", "side"], ["GR-12", "ตัดยาง(เข้ามุม)", "side"],
+    ].map(([code, name, kind], index) => Object.freeze({ code, name, kind, seq: index + 1, active: true }))),
+    reasons: Object.freeze(["ขนาดไม่ได้", "ผิวไม่สวย/มีรอย", "กาวไม่ติด", "เจียร์เกิน", "เจาะผิดตำแหน่ง", "ยางมีตำหนิจากต้นทาง", "อื่นๆ"]),
+    targets: Object.freeze([]),
+  });
+  // ขีดจำกัดเดียวกับฐานข้อมูล
+  const GR_LIMITS = Object.freeze({ steps: 40, reasons: 30, targets: 2000, name: 60, perHour: 100000, hours: 24, people: 50, qty: 10000000, note: 200, reasonMin: 3, reasonMax: 200, edits: 100, requestQty: 100000 });
+  const GR_STEP_CODE = /^GR-[A-Z0-9]{1,10}$/;
+  const GR_STEP_KIND_LABEL = Object.freeze({ main: "สายหลัก", side: "ขั้นเสริม" });
+  // ต้องทำ = ชั่วโมง × เป้า (ชิ้น/ชม. ที่ 100%) × 0.95 · % สำเร็จ = ดี ÷ ต้องทำ · ถึง 100% = ผ่านเป้า (สีเขียว)
+  const GR_TARGET_FACTOR = 0.95;
+  const GR_RECORD_STATUS_LABEL = Object.freeze({ active: "ใช้อยู่", void: "ยกเลิกแล้ว" });
+  const GR_HANDOVER_STATUS_LABEL = Object.freeze({ sent: "รอ PK รับ", received: "PK รับแล้ว", cancelled: "ยกเลิกแล้ว" });
+  const GR_REQUEST_STATUS_LABEL = Object.freeze({ open: "รอ SR จ่าย", covered: "SR จ่ายครบแล้ว", cancelled: "ยกเลิกแล้ว" });
+  const grRound = (n) => Math.round((Number(n) || 0) * 1e4) / 1e4;
+  // ตั้งค่าที่ใช้อยู่ { steps (เรียงตาม seq), reasons, targets, stored } · stored = มีแถวตั้งค่าในฐานข้อมูลแล้ว
+  function grConfig(data) {
+    const row = (data?.grConfig ?? [])[0] ?? null;
+    const source = row && Array.isArray(row.steps) && row.steps.length ? row : GR_DEFAULT_CONFIG;
+    const steps = [...source.steps].map((step) => ({ ...step })).sort((a, b) => (Number(a.seq) || 0) - (Number(b.seq) || 0) || String(a.code).localeCompare(String(b.code)));
+    return { steps, reasons: [...(source.reasons ?? GR_DEFAULT_CONFIG.reasons)], targets: [...(source.targets ?? [])].map((target) => ({ ...target })), stored: Boolean(row) };
+  }
+  const grStepOf = (config, code) => (config?.steps ?? []).find((step) => step.code === code) ?? null;
+  const grStepName = (config, code) => grStepOf(config, code)?.name ?? String(code ?? "");
+  // เป้าชิ้น/ชม. ที่ 100% ของรหัสชิ้น × ขั้น (null = ยังไม่ได้ตั้ง)
+  const grTarget = (config, itemCode, stepCode) => {
+    const hit = (config?.targets ?? []).find((target) => target.itemCode === canonicalCode(itemCode) && target.stepCode === stepCode);
+    return hit && Number(hit.perHour) > 0 ? Number(hit.perHour) : null;
+  };
+  // ต้องทำของชั่วโมงที่ทำ (null = ไม่มีเป้า) และ % สำเร็จ (null = ไม่มีต้องทำ)
+  const grRequired = (hours, perHour) => (Number(perHour) > 0 && Number(hours) > 0 ? grRound(Number(hours) * Number(perHour) * GR_TARGET_FACTOR) : null);
+  const grPercent = (good, required) => (Number(required) > 0 ? Math.round((Number(good) || 0) / Number(required) * 1000) / 10 : null);
+  // แผนขั้นตอนของงาน (ชุด grPlans) หรือ null
+  const grPlanOf = (data, jobId) => (data?.grPlans ?? []).find((plan) => plan.jobId === jobId) ?? null;
+  // ขั้นตอนเริ่มต้นของงานตอนตั้งครั้งแรก (คำตอบเจ้าของข้อ 7): ขั้นของแผนก GR ใน routing ที่ใช้อยู่ของชิ้นงาน (เฉพาะขั้นที่มีและใช้อยู่ในตั้งค่า) ตามลำดับ routing
+  // routing ไม่มีขั้น GR = [] (หัวหน้าเลือกเองก่อนบันทึกผล) · ต้องทำของแต่ละขั้น = จำนวนแผนของงาน (ปัดขึ้นเป็นจำนวนเต็ม อย่างน้อย 1)
+  function grDefaultSteps(data, job, config = grConfig(data)) {
+    const routing = (data?.routings ?? []).find((entry) => entry.itemCode === job?.itemCode && entry.status === "approved");
+    const qtyTarget = Math.max(1, Math.ceil(Number(job?.qtyPlanned) || 0));
+    const seen = new Set();
+    const steps = [];
+    for (const step of Array.isArray(routing?.steps) ? routing.steps : []) {
+      const found = grStepOf(config, step?.processCode);
+      if (!found || !found.active || seen.has(found.code)) continue;
+      seen.add(found.code);
+      steps.push({ code: found.code, qtyTarget });
+    }
+    return steps;
+  }
+  // ผลรายวันที่ใช้อยู่ (active) ของงาน
+  const grActiveRecords = (data, jobId) => (data?.grRecords ?? []).filter((record) => record.jobId === jobId && record.status === "active");
+  // ยอดของงานจากผลรายวัน (สูตรเดียวกับ private.bom_gr_recompute): ดี = ขั้นสุดท้ายของแผน · เสีย = ทุกขั้นในแผน · ไม่มีแผน = null
+  function grJobTotals(data, jobId, steps = grPlanOf(data, jobId)?.steps) {
+    if (!Array.isArray(steps) || !steps.length) return null;
+    const codes = new Set(steps.map((step) => step.code));
+    const last = steps.at(-1).code;
+    let good = 0;
+    let reject = 0;
+    for (const record of grActiveRecords(data, jobId)) {
+      if (!codes.has(record.stepCode)) continue;
+      if (record.stepCode === last) good += Number(record.good) || 0;
+      reject += Number(record.reject) || 0;
+    }
+    return { good: grRound(good), reject: grRound(reject), lastCode: last };
+  }
+  // ส่งให้ PK ของงาน: sent = Σ ที่ส่งแล้ว (รอ PK รับ + รับแล้ว ไม่นับยกเลิก) · received = PK รับแล้ว · pendingAtPk = ส่งแล้วรอ PK รับ
+  // waitingAtGr = ยอดดีของงานที่ยังไม่ได้ส่ง (ส่งได้อีกเท่านี้: เพดานเดียวกับ sendGrToPk)
+  function grHandoverSummary(data, job) {
+    const rows = (data?.grHandovers ?? []).filter((row) => row.jobId === job?.id);
+    const sum = (status) => grRound(rows.filter((row) => status.includes(row.status)).reduce((total, row) => total + (Number(row.qty) || 0), 0));
+    const sent = sum(["sent", "received"]);
+    return { rows, sent, received: sum(["received"]), pendingAtPk: sum(["sent"]), waitingAtGr: Math.max(0, grRound((Number(job?.qtyDone) || 0) - sent)) };
+  }
+  // ความคืบหน้ารายขั้นของงาน: [{ code, name, kind, qtyTarget, good, reject, hours, done }] ตามลำดับแผน + ยอดรวม (ไม่มีแผน = steps [] planned false)
+  function grJobProgress(data, job, config = grConfig(data)) {
+    const plan = grPlanOf(data, job?.id);
+    const records = grActiveRecords(data, job?.id);
+    const steps = (plan?.steps ?? []).map((step) => {
+      const mine = records.filter((record) => record.stepCode === step.code);
+      const good = grRound(mine.reduce((total, record) => total + (Number(record.good) || 0), 0));
+      const found = grStepOf(config, step.code);
+      return {
+        code: step.code, name: found?.name ?? step.code, kind: found?.kind ?? "main", active: found ? found.active !== false : false, qtyTarget: Number(step.qtyTarget) || 0,
+        good, reject: grRound(mine.reduce((total, record) => total + (Number(record.reject) || 0), 0)),
+        hours: grRound(mine.reduce((total, record) => total + (Number(record.hours) || 0), 0)), done: good + 1e-9 >= (Number(step.qtyTarget) || 0),
+      };
+    });
+    const totals = grJobTotals(data, job?.id, plan?.steps);
+    return { planned: Boolean(plan), plan, steps, good: totals?.good ?? 0, reject: totals?.reject ?? 0, lastCode: totals?.lastCode ?? null, ...grHandoverSummary(data, job) };
+  }
+  // ยางเส้นยาวที่ SR จ่ายให้ใบ × รหัสตั้งแต่เวลา since (แถว issue ที่ยังไม่ถูกย้อน: ย้อนแล้ว = ไม่นับทั้งแถว)
+  function grIssuedSince(data, orderId, itemCode, since) {
+    const reversed = rodReversedIds(data?.rodMoves);
+    return rodRound(-(data?.rodMoves ?? []).filter((move) => move.kind === "issue" && move.forOrderId === orderId && move.itemCode === itemCode
+      && (Number(move.at) || 0) >= (Number(since) || 0) && !reversed.has(move.id)).reduce((sum, move) => sum + (Number(move.qty) || 0), 0)) || 0;
+  }
+  // สถานะคำขอเบิกยางเส้นยาว (ไม่เก็บในฐานข้อมูล): คำขอ open ของใบ × รหัสเดียวกันเรียงตามเวลาขอ ได้ครบเมื่อยอดที่ SR จ่ายตั้งแต่คำขอแรก >= ยอดขอสะสมถึงคำขอนั้น
+  // คืน { status: open | covered | cancelled, issued (ส่วนที่นับให้คำขอนี้), remaining }
+  function grRequestState(data, request) {
+    if (!request || request.status === "cancelled") return { status: "cancelled", issued: 0, remaining: 0 };
+    const queue = (data?.rodRequests ?? []).filter((row) => row.status === "open" && row.orderId === request.orderId && row.itemCode === request.itemCode)
+      .sort((a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0) || String(a.id).localeCompare(String(b.id)));
+    const first = queue[0];
+    let pool = first ? grIssuedSince(data, request.orderId, request.itemCode, first.createdAt) : 0;
+    for (const row of queue) {
+      const take = Math.min(pool, Number(row.qty) || 0);
+      pool = rodRound(pool - take);
+      if (row.id === request.id) {
+        const remaining = Math.max(0, rodRound((Number(row.qty) || 0) - take));
+        return { status: remaining <= 1e-9 ? "covered" : "open", issued: rodRound(take), remaining };
+      }
+    }
+    return { status: "open", issued: 0, remaining: Number(request.qty) || 0 };
+  }
+  // คำขอที่ SR ยังต้องจ่าย (งานของ SR): คำขอ open ที่ยังไม่ครบ ของใบที่ปล่อยผลิตอยู่ เรียงเก่าก่อน [{ request, issued, remaining, order }]
+  function grOpenRequests(data, { orderId = null, jobId = null } = {}) {
+    const orders = new Map((data?.orders ?? []).map((order) => [order.id, order]));
+    return (data?.rodRequests ?? []).filter((row) => row.status === "open" && (!orderId || row.orderId === orderId) && (!jobId || row.jobId === jobId))
+      .map((request) => ({ request, order: orders.get(request.orderId) ?? null, ...grRequestState(data, request) }))
+      .filter((entry) => entry.status === "open" && ["released", "in_progress"].includes(entry.order?.status))
+      .sort((a, b) => (Number(a.request.createdAt) || 0) - (Number(b.request.createdAt) || 0));
+  }
+  // รหัสเส้นยาง (RB) ที่งาน GR นี้ตัด: บรรทัด RB ของผลระเบิดของใบที่ชิ้นแม่คือชิ้นของงาน (กฎเดียวกับ requestRods ของฐานข้อมูล)
+  const grRodCodesOf = (order, job) => [...new Set((order?.explosion ?? []).filter((line) => line.kind === "RB" && line.parentCode === job?.itemCode).map((line) => line.itemCode))].sort();
+  // ล็อตที่ SR จ่ายให้ใบ × รหัส (GR เห็นล็อตที่ได้): [{ lotId, lotNo, qty, at, by, moveId }] แถว issue ที่ยังไม่ถูกย้อน เก่าก่อน
+  function grLotsIssued(data, orderId, itemCode = null) {
+    const reversed = rodReversedIds(data?.rodMoves);
+    const lots = new Map((data?.rodLots ?? []).map((lot) => [lot.id, lot]));
+    return (data?.rodMoves ?? []).filter((move) => move.kind === "issue" && move.forOrderId === orderId && (!itemCode || move.itemCode === itemCode) && !reversed.has(move.id))
+      .map((move) => ({ moveId: move.id, lotId: move.lotId, lotNo: lots.get(move.lotId)?.lotNo ?? "", itemCode: move.itemCode, qty: rodRound(-Number(move.qty) || 0), at: move.at, by: move.by }))
+      .sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0));
+  }
+  // วันที่ทำงานตามเวลาไทย (YYYY-MM-DD) ของเวลา ms · offset = เลื่อนกี่วัน (−1 = เมื่อวาน)
+  const grDay = (ms, offset = 0) => {
+    const day = new Date((bangkokDay(ms) + offset) * 86400000);
+    return `${day.getUTCFullYear()}-${String(day.getUTCMonth() + 1).padStart(2, "0")}-${String(day.getUTCDate()).padStart(2, "0")}`;
+  };
+  // สรุปผลรายวัน (หน้า "สรุปผล"): กรองตาม { month: "YYYY-MM", workerId, stepCode, itemCode, customer, orderId, status = "active" } · คืน { records, byDay, byStep, byWorker, byReason }
+  // แต่ละกลุ่ม { key, label, hours, good, reject, required (เฉพาะผลที่มีเป้า), percent } · required / percent = null เมื่อไม่มีผลใดที่มีเป้า
+  function grSummary(data, filters = {}, config = grConfig(data)) {
+    const orders = new Map((data?.orders ?? []).map((order) => [order.id, order]));
+    const records = (data?.grRecords ?? []).filter((record) => (filters.status === "all" || record.status === (filters.status ?? "active"))
+      && (!filters.month || String(record.workDate ?? "").startsWith(filters.month)) && (!filters.workerId || record.workerId === filters.workerId)
+      && (!filters.stepCode || record.stepCode === filters.stepCode) && (!filters.itemCode || record.itemCode === filters.itemCode)
+      && (!filters.orderId || record.orderId === filters.orderId) && (!filters.customer || orders.get(record.orderId)?.customer === filters.customer))
+      .sort((a, b) => String(b.workDate).localeCompare(String(a.workDate)) || (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+    const group = (keyOf, labelOf) => {
+      const map = new Map();
+      for (const record of records) {
+        const key = keyOf(record);
+        if (key === null || key === undefined || key === "") continue;
+        const entry = map.get(key) ?? { key, label: labelOf(record), hours: 0, good: 0, reject: 0, required: null, targetGood: 0 };
+        entry.hours = grRound(entry.hours + (Number(record.hours) || 0));
+        entry.good = grRound(entry.good + (Number(record.good) || 0));
+        entry.reject = grRound(entry.reject + (Number(record.reject) || 0));
+        const need = grRequired(record.hours, grTarget(config, record.itemCode, record.stepCode));
+        if (need !== null) { entry.required = grRound((entry.required ?? 0) + need); entry.targetGood = grRound(entry.targetGood + (Number(record.good) || 0)); }
+        map.set(key, entry);
+      }
+      return [...map.values()].map(({ targetGood, ...entry }) => ({ ...entry, percent: entry.required === null ? null : grPercent(targetGood, entry.required) }));
+    };
+    const byDay = group((record) => record.workDate, (record) => record.workDate).sort((a, b) => String(b.key).localeCompare(String(a.key)));
+    const byStep = group((record) => record.stepCode, (record) => grStepName(config, record.stepCode))
+      .sort((a, b) => (Number(grStepOf(config, a.key)?.seq) || 999) - (Number(grStepOf(config, b.key)?.seq) || 999));
+    const byWorker = group((record) => record.workerId, (record) => record.workerName || record.workerId).sort((a, b) => String(a.label).localeCompare(String(b.label), "th"));
+    const reasons = new Map();
+    for (const record of records) {
+      if (!(Number(record.reject) > 0)) continue;
+      const key = record.reason || "ไม่ระบุ";
+      reasons.set(key, grRound((reasons.get(key) ?? 0) + Number(record.reject)));
+    }
+    const byReason = [...reasons].map(([reason, reject]) => ({ key: reason, label: reason, reject })).sort((a, b) => b.reject - a.reject);
+    return { records, byDay, byStep, byWorker, byReason };
+  }
+
   // ---------- จัดรูปแบบ ----------
   // วันที่แบบเดียวกับ formatDate ของระบบหลัก: วัน เดือนย่อ ปี พ.ศ. 4 หลัก (เช่น 6 พ.ย. 2569)
   const TH_MONTHS = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
@@ -1665,6 +1847,9 @@
     normalizeUom, uomLabel, ceilCountQty, issueDefaultQty, bangkokDay, bomRevisionLocked, rbPerSe, rbCutQty, rbCutDiffers, parseDelimited, detectHeader, readFlatRows, sheetNumber, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, partShortAllOrders, jobSupplyLimit, fgLabel, suggestFgName, draftBefore, draftPartDemand, draftRubberJobs, partReserved, partOnOrder, partReturned, partReturnLines, fgPosition, fgReverseBlock, fgReverseReopens, fgOnHand, fgFreeList, fgStockForDraft, fgStockLock, noBomInOrder, countedCodes,
     ROD_SPEC_KEYS, ROD_SPEC_LABEL, ROD_STATUS_LABEL, ROD_DECISION_LABEL, ROD_FREE_ORDER, rodBalance, rodOwnerFree, rodBuckets, rodFree, rodOwned, rodFifo, qcVerdict, rodCodesOf, rodStockForDraft, rodTaken, rodIssued, rodReversedIds, rodIssueNeeds, rodSummary,
     ROD_LOCATION_MAX, ROD_LOT_NO_MAX, ROD_RESERVED_LOT_PREFIX, ROD_SOURCE_LABEL, rodAttrs,
+    GR_DEFAULT_CONFIG, GR_LIMITS, GR_STEP_CODE, GR_STEP_KIND_LABEL, GR_TARGET_FACTOR, GR_RECORD_STATUS_LABEL, GR_HANDOVER_STATUS_LABEL, GR_REQUEST_STATUS_LABEL,
+    grConfig, grStepOf, grStepName, grTarget, grRequired, grPercent, grPlanOf, grDefaultSteps, grActiveRecords, grJobTotals, grHandoverSummary, grJobProgress,
+    grIssuedSince, grRequestState, grOpenRequests, grRodCodesOf, grLotsIssued, grDay, grSummary,
     DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };

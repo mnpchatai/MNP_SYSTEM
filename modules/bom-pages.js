@@ -2755,6 +2755,8 @@
     countPartStock: "นับสต็อกของซื้อ", issueOrderParts: "เบิกจ่ายของซื้อ", undoOrderParts: "ยกเลิกการเบิกจ่ายของซื้อ", returnOrderParts: "คืนของเหลือของซื้อ",
     receiveRods: "รับยางเส้นยาวเข้าคลัง (SR)", decideRods: "ตัดสินล็อตยางเส้นยาวที่กัก (QA)", issueRods: "จ่ายยางเส้นยาวให้ GR", reverseRodIssue: "ย้อนการจ่ายยางเส้นยาว", adjustRods: "ปรับยอดยางเส้นยาวในคลัง",
     receiveRodsOpening: "รับยางเส้นยาวนอกใบสั่ง (SR)", setRodLocation: "ย้ายตำแหน่งยางเส้นยาว (SR)",
+    saveGrConfig: "ตั้งค่าขั้นตอนและเป้า (GR)", setGrJobSteps: "ตั้งขั้นตอนของงาน (GR)", addGrRecord: "บันทึกผลรายวัน (GR)", editGrRecord: "แก้ไขผลรายวัน (GR)", voidGrRecord: "ยกเลิกผลรายวัน (GR)",
+    requestRods: "ขอเบิกยางเส้นยาวจาก SR (GR)", cancelRodRequest: "ยกเลิกคำขอเบิกยางเส้นยาว (GR)", sendGrToPk: "ส่งงานให้ PK (GR)", receiveGrAtPk: "รับงานจาก GR (PK)", cancelGrHandover: "ยกเลิกการส่งงาน / ย้อนการรับงานจาก GR",
     "rubberflow:recordFinishing": "ยางเส้นยาวจากล็อตตกแต่งเข้าคิวรับของคลังยางเส้นยาว (RubberFlow)", "rubberflow:addQcRecord": "ยางเส้นยาวจากล็อตตกแต่งที่ QA ปล่อยเข้าคิวรับของคลังยางเส้นยาว (RubberFlow)",
     "rubberflow:receiveBoxes": "WH รับกล่องจากล็อตตกแต่งเข้าคลัง นับยอดเข้างาน RB ของใบ (RubberFlow)", "rubberflow:reverseBoxReceipt": "ย้อนการรับกล่องเข้าคลังสินค้าสำเร็จรูป (WH) ถอนยอดที่นับเข้างาน RB (RubberFlow)", "rubberflow:shipBoxes": "ส่งมอบกล่องสินค้าให้ลูกค้า (RubberFlow)", "rubberflow:reverseBoxShip": "ย้อนการส่งมอบกล่องสินค้า (RubberFlow)",
     "rubberflow:createPurchaseOrder": "สั่งซื้อ (ใบสั่งซื้อใน RubberFlow)", "rubberflow:receivePurchaseLine": "รับของซื้อเข้าคลัง (ใบสั่งซื้อใน RubberFlow)",
@@ -2763,6 +2765,7 @@
     items: "ชิ้นงาน", compounds: "สูตรยาง", colors: "สี", colorSets: "ชุดสี", packages: "แพ็กเกจ", boms: "BOM", processes: "ขั้นตอนผลิต", routings: "ขั้นตอนผลิตของชิ้นงาน",
     customers: "ลูกค้า", orders: "ใบสั่งผลิต", jobs: "งาน", stock: "สต็อกของซื้อ", partReturns: "คืนของซื้อ", fgMoves: "รับ/ส่งมอบสินค้าสำเร็จรูป",
     rodLots: "ล็อตยางเส้นยาว", rodMoves: "ประวัติยางเส้นยาว",
+    grConfig: "ตั้งค่า GR", grPlans: "ขั้นตอนของงาน GR", grRecords: "ผลรายวัน GR", rodRequests: "คำขอเบิกยางเส้นยาว", grHandovers: "ส่งงาน GR ให้ PK",
   });
   // "jobs +3 -1, orders +1" (เซิร์ฟเวอร์เขียน) → "งาน +3 -1, ใบสั่งผลิต +1"
   const auditCounts = (detail) => String(detail ?? "").split(", ").map((part) => part.replace(/^[A-Za-z]+/, (key) => AUDIT_SECTION_LABEL[key] ?? key)).join(", ");

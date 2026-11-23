@@ -198,7 +198,7 @@ select throws_ok($$ select public.app_bom_save_master('{"stock":{"upsert":[{"ite
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select is(public.app_bom_master() -> 'stock', '[]'::jsonb, 'the stock list starts empty and never shows the real row');
 select is(public.app_bom_master() -> 'stockMoves', '[]'::jsonb, 'the move list starts empty and never shows the real move');
-select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 16::bigint, 'the snapshot has sixteen lists (rodLots and rodMoves since 20261202010000)');
+select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 22::bigint, 'the snapshot has twenty-two lists (rodLots and rodMoves since 20261202010000) · six GR lists since 20261214010000');
 select is(public.app_bom_save_master('{"items":{"upsert":[
   {"code":"FG-A","kind":"FG","name":"สินค้า A","ownerDept":"PK","uom":"set"},
   {"code":"SE-A","kind":"SE","name":"ชิ้นยาง A","ownerDept":"GR","uom":"pcs"},
@@ -737,8 +737,8 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select ok(ps_t.po_save(ps_t.receipt('PO-20261111-04', 0, 5), 'receivePurchaseLine') is not null, 'with the kind restored the same receipt works');
 
 -- 9. snapshot / delta ----------------------------------------------------------------------
-select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 16::bigint, 'the snapshot still has sixteen lists');
-select is((select count(*) from jsonb_object_keys(public.app_bom_master_since(0) -> 'changes')), 16::bigint, 'the delta names sixteen lists');
+select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 22::bigint, 'the snapshot still has twenty-two lists · six GR lists since 20261214010000');
+select is((select count(*) from jsonb_object_keys(public.app_bom_master_since(0) -> 'changes')), 22::bigint, 'the delta names twenty-two lists · six GR lists since 20261214010000');
 select is(public.app_bom_master_since(0) -> 'changes' -> 'stock', jsonb_build_object('upsert', public.app_bom_master() -> 'stock', 'delete', '[]'::jsonb),
   'the delta from version 0 equals the stock snapshot, with no deletes');
 select is(public.app_bom_master_since(0) -> 'changes' -> 'stockMoves', jsonb_build_object('upsert', public.app_bom_master() -> 'stockMoves', 'delete', '[]'::jsonb),
