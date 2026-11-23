@@ -83,8 +83,9 @@
   const MOVE_KEYS = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
   // ช่องค้นหา/ตัวเลือกบทบาทสาธิตไม่นับเป็นการแก้ · ปุ่มที่เปิดหน้า/dialog หรือสั่ง action เองไม่ได้แก้ฟอร์ม (dialog นับจากการเปิดอยู่)
   const NOT_EDITING = "[data-rf-search], [data-rf-user], [data-rf-open], [data-rf-go], [data-rf-action], [data-rf-close], [data-bom-retry], [data-rf-reset], [data-bom-purge], [data-bom-audit-reload], [data-bom-rf-create], [data-bom-rf-check], [data-bom-parts-buy], [data-tree-toggle], [data-tree-pick], [data-tree-all], [data-hub-qty], [data-bom-draft-buy], [data-tree-split]";
+  // หน้าของโมดูลแผนก (#/gr ฯลฯ) ก็นับ: ฟอร์มในหน้า (บันทึกผลรายวัน ตั้งค่าของ GR) ไม่ถูกวาดทับเมื่อผู้อื่นบันทึก · หน้าใหม่ล้างค่าที่ renderLanding (clearEditing)
   function markDirty(event) {
-    if (!event?.isTrusted || !onBomRoute()) return;
+    if (!event?.isTrusted || !(onBomRoute() || window.MNP_FACTORY?.onDeptRoute?.())) return;
     const target = event.target;
     if (!target?.closest?.(".content") || target.closest(NOT_EDITING)) return;
     if (event.type === "click") {
@@ -440,6 +441,19 @@
   }
   const listOf = (p, key) => (Array.isArray(p[key]) ? p[key] : p[key] === undefined ? [] : [p[key]]);
   const TRANSFORMS = {
+    // แปรรูปยาง GR (modules/gr-pages.js · 20261216010000): ขั้นตอนของงาน = ช่องติ๊ก code[] ตามลำดับขั้น + ต้องทำ qty.<รหัสขั้น>
+    setGrJobSteps: (p) => ({ jobId: p.jobId, steps: listOf(p, "code").map((code) => ({ code, qtyTarget: p.qty?.[code] ?? "" })) }),
+    // ตั้งค่า GR: แถวขั้นตอน step.code[] step.name[] step.kind[] step.active[] (1 / 0) ตามลำดับในฟอร์ม · เหตุผลของเสียหนึ่งบรรทัดต่อข้อ · แถวเป้า target.* (แถวว่างทั้งแถวถูกข้าม)
+    saveGrConfig: (p) => {
+      const step = p.step ?? {};
+      const target = p.target ?? {};
+      return {
+        steps: listOf(step, "name").map((name, index) => ({ code: listOf(step, "code")[index] ?? "", name, kind: listOf(step, "kind")[index] ?? "main", active: listOf(step, "active")[index] !== "0" })),
+        reasons: String(p.reasons ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
+        targets: listOf(target, "itemCode").map((itemCode, index) => ({ itemCode, stepCode: listOf(target, "stepCode")[index] ?? "", perHour: listOf(target, "perHour")[index] ?? "" }))
+          .filter((row) => String(row.itemCode).trim() || String(row.perHour).trim()),
+      };
+    },
     createOrder: (p) => ({ ...p, orderedAt: rules.fromInputDate(p.orderedAt), whDue: rules.fromInputDate(p.whDue), due: dueFrom(p.due), autoDue: p.autoDue === "1" || p.autoDue === "on" }),
     // ฟอร์ม "เพิ่มส่วนประกอบ" ของหน้าสินค้า (lineAdd) ใช้คำสั่งเดียวกัน: บรรทัดเดิมของ BOM อ่านจากข้อมูลล่าสุดตอนกดบันทึก แล้วต่อบรรทัดใหม่
     // หน้าต่างของหน้าสินค้าอีกสามแบบใช้คำสั่งเดียวกัน: วางหลายบรรทัด (linesPaste) คัดลอกโครงสร้าง (treeCopy) ข้อมูลเส้นยางที่มีบรรทัดสูตรยาง (rubberEdit)

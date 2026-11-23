@@ -57,8 +57,10 @@
       : held ? `<div class="small muted">${esc(`พักโดย ${held.by}: ${held.reason}`)}</div>` : "";
   };
   // ปุ่มพัก / ทำต่อของงาน: พักต้องมีเหตุผล (dialog jobHold) · งานที่พักแล้วมียอดกลับเป็น "กำลังทำ" (ทำต่อ) ไม่มียอดกลับไปรอคิว (คืนคิว)
+  // งานที่มีผลรายวันของ GR แล้วนับว่ามียอด (คืนคิวไม่ได้ · 20261216010000)
+  const resumes = (ctx, job) => (Number(job.qtyDone) || 0) > 0 || Boolean(ctx.helpers.hasGrRecords?.(ctx.data, job));
   const holdButton = (ctx, job) => (job.status === "hold"
-    ? ctx.ui.button((Number(job.qtyDone) || 0) > 0 ? "ทำต่อ" : "คืนคิว", { action: "setJobStatus", args: { jobId: job.id, status: (Number(job.qtyDone) || 0) > 0 ? "in_progress" : "queued" }, className: "secondary small" })
+    ? ctx.ui.button(resumes(ctx, job) ? "ทำต่อ" : "คืนคิว", { action: "setJobStatus", args: { jobId: job.id, status: resumes(ctx, job) ? "in_progress" : "queued" }, className: "secondary small" })
     : ctx.ui.openButton("พักงาน", "jobHold", { jobId: job.id }, { className: "secondary small" }));
   // งานที่ผูก WO ของ RubberFlow: ยอดมาจากแท่งที่คลังแท่งยาว (SR) รับเข้าคลังและผ่านตรวจขนาด (20261202010000 · เดิม = ล็อตตกแต่งที่ผ่าน QC) ไม่มีปุ่มรายงานผล · บอกครั้งเดียวในที่ของปุ่ม
   const LINKED_NOTE = '<span class="small muted" title="ยอดของงานนี้เพิ่มเองเมื่อคลังยางเส้นยาว (SR) รับยางเส้นยาวจากล็อตตกแต่งของ WO เข้าคลังและผ่านตรวจขนาด">ยอดมาจากการรับเข้าคลัง SR</span>';
@@ -2617,7 +2619,8 @@
       // ใบที่ปิดแล้วเบิกจ่ายไม่ได้ (บรรทัดที่เบิกไม่ครบคืนของเหลือได้ที่หน้าใบ) จึงไม่ชี้ไปเบิก
       if (part && job.status !== "done" && ["released", "in_progress"].includes(order?.status) && ctx.helpers.canIssueParts(user)) buttons.push(ui.link("เบิกจ่ายที่ใบ PI", ctx.url("orders", { sel: job.orderId }), "btn rf-btn secondary small"));
       // งานที่พักอยู่รายงานผลไม่ได้ ต้องกด "ทำต่อ" / "คืนคิว" (ปุ่มถัดไป) ก่อน
-      if (canWork && job.status !== "done" && job.status !== "hold") buttons.push(ctx.helpers.isLinkedJob?.(job) ? LINKED_NOTE : ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "small" }));
+      // งาน GR ที่ตั้งขั้นตอนแล้ว: ยอดมาจาก "บันทึกผลรายวัน" ของโมดูล GR (#/gr) ไม่มีปุ่มรายงานผล
+      if (canWork && job.status !== "done" && job.status !== "hold" && !(job.dept === "GR" && ctx.helpers.isGrPlanned?.(data, job))) buttons.push(ctx.helpers.isLinkedJob?.(job) ? LINKED_NOTE : ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "small" }));
       if (canWork && job.status !== "done") buttons.push(holdButton(ctx, job));
       // งานที่จะไม่มีใครรายงานแล้ว: ฝ่ายวางแผนปิดงานพร้อมเหตุผล (ไม่เพิ่มยอด) ใบจึงปิดได้ · ไม่มีกับงานของซื้อ (ST เบิกจ่ายที่ใบ)
       if (canWork && job.status !== "done" && ctx.helpers.canPlan(user)) buttons.push(ui.openButton("ปิดงานนี้", "jobClose", { jobId: job.id }, { className: "secondary small" }));
@@ -2755,6 +2758,8 @@
     countPartStock: "นับสต็อกของซื้อ", issueOrderParts: "เบิกจ่ายของซื้อ", undoOrderParts: "ยกเลิกการเบิกจ่ายของซื้อ", returnOrderParts: "คืนของเหลือของซื้อ",
     receiveRods: "รับยางเส้นยาวเข้าคลัง (SR)", decideRods: "ตัดสินล็อตยางเส้นยาวที่กัก (QA)", issueRods: "จ่ายยางเส้นยาวให้ GR", reverseRodIssue: "ย้อนการจ่ายยางเส้นยาว", adjustRods: "ปรับยอดยางเส้นยาวในคลัง",
     receiveRodsOpening: "รับยางเส้นยาวนอกใบสั่ง (SR)", setRodLocation: "ย้ายตำแหน่งยางเส้นยาว (SR)",
+    saveGrConfig: "ตั้งค่าขั้นตอนและเป้า (GR)", setGrJobSteps: "ตั้งขั้นตอนของงาน (GR)", addGrRecord: "บันทึกผลรายวัน (GR)", editGrRecord: "แก้ไขผลรายวัน (GR)", voidGrRecord: "ยกเลิกผลรายวัน (GR)",
+    requestRods: "ขอเบิกยางเส้นยาวจาก SR (GR)", cancelRodRequest: "ยกเลิกคำขอเบิกยางเส้นยาว (GR)", sendGrToPk: "ส่งงานให้ PK (GR)", receiveGrAtPk: "รับงานจาก GR (PK)", cancelGrHandover: "ยกเลิกการส่งงาน / ย้อนการรับงานจาก GR",
     "rubberflow:recordFinishing": "ยางเส้นยาวจากล็อตตกแต่งเข้าคิวรับของคลังยางเส้นยาว (RubberFlow)", "rubberflow:addQcRecord": "ยางเส้นยาวจากล็อตตกแต่งที่ QA ปล่อยเข้าคิวรับของคลังยางเส้นยาว (RubberFlow)",
     "rubberflow:receiveBoxes": "WH รับกล่องจากล็อตตกแต่งเข้าคลัง นับยอดเข้างาน RB ของใบ (RubberFlow)", "rubberflow:reverseBoxReceipt": "ย้อนการรับกล่องเข้าคลังสินค้าสำเร็จรูป (WH) ถอนยอดที่นับเข้างาน RB (RubberFlow)", "rubberflow:shipBoxes": "ส่งมอบกล่องสินค้าให้ลูกค้า (RubberFlow)", "rubberflow:reverseBoxShip": "ย้อนการส่งมอบกล่องสินค้า (RubberFlow)",
     "rubberflow:createPurchaseOrder": "สั่งซื้อ (ใบสั่งซื้อใน RubberFlow)", "rubberflow:receivePurchaseLine": "รับของซื้อเข้าคลัง (ใบสั่งซื้อใน RubberFlow)",
@@ -2763,6 +2768,7 @@
     items: "ชิ้นงาน", compounds: "สูตรยาง", colors: "สี", colorSets: "ชุดสี", packages: "แพ็กเกจ", boms: "BOM", processes: "ขั้นตอนผลิต", routings: "ขั้นตอนผลิตของชิ้นงาน",
     customers: "ลูกค้า", orders: "ใบสั่งผลิต", jobs: "งาน", stock: "สต็อกของซื้อ", partReturns: "คืนของซื้อ", fgMoves: "รับ/ส่งมอบสินค้าสำเร็จรูป",
     rodLots: "ล็อตยางเส้นยาว", rodMoves: "ประวัติยางเส้นยาว",
+    grConfig: "ตั้งค่า GR", grPlans: "ขั้นตอนของงาน GR", grRecords: "ผลรายวัน GR", rodRequests: "คำขอเบิกยางเส้นยาว", grHandovers: "ส่งงาน GR ให้ PK",
   });
   // "jobs +3 -1, orders +1" (เซิร์ฟเวอร์เขียน) → "งาน +3 -1, ใบสั่งผลิต +1"
   const auditCounts = (detail) => String(detail ?? "").split(", ").map((part) => part.replace(/^[A-Za-z]+/, (key) => AUDIT_SECTION_LABEL[key] ?? key)).join(", ");

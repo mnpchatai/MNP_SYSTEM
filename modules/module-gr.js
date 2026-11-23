@@ -1,18 +1,9 @@
 // โมดูลแผนก GR — แปรรูปยาง (ลำดับ 07 ของผังงาน) #/gr · เมนูกลุ่ม "โรงงาน" ในโหมดทดสอบ (ลงทะเบียนผ่าน MNP_FACTORY.registerDeptModule ใน modules/factory-kit.js)
-// หน้าแรก = งานของ GR ที่ยังเปิดอยู่ ใช้การ์ดงานกลาง (MNP_FACTORY.productionLanding): รายงานผล พักงาน/ทำต่อ และปิดงาน (ฝ่ายวางแผน) ได้ที่นี่ ชุดเดียวกับ BOM "งานของฉัน"
-// เมนูข้างมี "ยางเส้นยาวในคลัง SR" (?tab=rods): ตารางเดียวกับหน้า "ในคลัง" ของโมดูล SR แบบอ่านอย่างเดียว (GR เปิดโมดูล SR ไม่ได้ จึงดูยอดและตำแหน่งที่นี่) ไม่มีปุ่มทำรายการ
+// เมนูข้าง (ค่าตั้งต้น = งานของฉัน): งานของฉัน · บันทึกผลรายวัน (?tab=log) · ยางเส้นยาว (?tab=rods) · ส่งให้ PK (?tab=pk) · สรุปผล (?tab=summary)
+// · ตั้งค่าขั้นตอนและเป้า (?tab=settings · เฉพาะหัวหน้าแผนก GR และฝ่ายวางแผน) · หน้างาน ?job=<เลขงาน> (อยู่ใต้ "งานของฉัน")
+// หน้าทั้งหมดอยู่ใน modules/gr-pages.js (โหลดก่อนไฟล์นี้): ผลรายวันต่อคน × ขั้น × วัน ขอเบิกยางเส้นยาวจาก SR ส่งงานให้ PK (20261216010000)
 (function registerGrModule() {
   const F = window.MNP_FACTORY;
-  const work = F.productionLanding("GR");
-  const RODS = Object.freeze({ id: "rods", label: "ยางเส้นยาวในคลัง SR", icon: "ruler", params: { tab: "rods" } });
-
-  function landing(ctx) {
-    if (ctx.view?.id !== RODS.id) return work(ctx);
-    // ตารางจากโมดูล SR (window.MNP_SR · โหลดแล้วตอนวาดหน้า) · ไม่มีโมดูล SR = บอกตรงๆ แทนหน้าว่าง
-    const stock = window.MNP_SR?.stockView?.(ctx, { readOnly: true });
-    return { html: `${F.viewHead(ctx)}${stock?.html ?? ctx.ui.card(ctx.ui.empty("ไม่พบข้อมูลยางเส้นยาวในคลัง"))}`, bind: window.MNP_SR?.bindPage };
-  }
-  landing.menu = Object.freeze([...work.menu, RODS]);
-
-  F.registerDeptModule({ code: "FACTORY_GR", dept: "GR", route: "gr", label: "แปรรูปยาง (GR)", icon: "machine", palette: "gr", keep: ["own", "loc"], landing });
+  const pages = window.MNP_GR_PAGES;
+  F.registerDeptModule({ code: "FACTORY_GR", dept: "GR", route: "gr", label: "แปรรูปยาง (GR)", icon: "machine", palette: "gr", menu: pages.MENU, keep: pages.KEEP, landing: pages.landing });
 })();

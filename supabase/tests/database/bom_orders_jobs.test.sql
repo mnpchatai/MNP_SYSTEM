@@ -811,7 +811,7 @@ select set_config('test.pre_epoch', (public.app_bom_master() ->> 'epoch'), true)
 select ok(current_setting('test.pre_version')::bigint > 10, 'the counter is well above zero before the purge');
 select set_config('test.purge', public.app_sandbox_purge_bom()::text, true);
 select ok((current_setting('test.purge')::jsonb ->> 'deleted')::integer > 15, 'the purge reports the deleted rows');
-select is(public.app_bom_master() - 'epoch',
+select is(public.app_bom_master() - 'epoch' - array['grConfig', 'grPlans', 'grRecords', 'rodRequests', 'grHandovers', 'grWorkers'],
   jsonb_build_object('version', current_setting('test.pre_version')::bigint, 'items', '[]'::jsonb, 'compounds', '[]'::jsonb, 'colors', '[]'::jsonb, 'colorSets', '[]'::jsonb,
                      'packages', '[]'::jsonb, 'boms', '[]'::jsonb, 'processes', '[]'::jsonb, 'routings', '[]'::jsonb, 'customers', '[]'::jsonb, 'orders', '[]'::jsonb, 'jobs', '[]'::jsonb, 'stock', '[]'::jsonb, 'stockMoves', '[]'::jsonb, 'fgMoves', '[]'::jsonb, 'rodLots', '[]'::jsonb, 'rodMoves', '[]'::jsonb),
   'the test master is empty again and the counter keeps its value (it never goes back)');
