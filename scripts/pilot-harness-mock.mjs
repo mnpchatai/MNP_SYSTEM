@@ -3351,6 +3351,28 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       const curves = mine.filter((row) => row.test_date === curveDate && Array.isArray(row.curve)).sort(order).map((row) => ({ id: row.id, curve: row.curve }));
       return { formulas, tests, curve_date: curveDate, curves };
     },
+    // กราฟหลายวัน (20261217010000_lab_mdr_curves.sql): วันเดียว = ทุกวินาที หลายวัน = ทุก 5 วินาที ไม่เกิน 1,000 กราฟ (ตัดวันเก่าทั้งวัน)
+    app_lab_mdr_curves({ p_part, p_formula, p_from, p_to }) {
+      if (!["F1", "F2"].includes(p_part)) fail("LAB_MDR_INVALID_PART");
+      const formula = String(p_formula ?? "").trim();
+      if (!formula || formula.length > 40) fail("LAB_MDR_INVALID_FORMULA");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(p_from)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(p_to)) || p_from > p_to) fail("LAB_MDR_INVALID_RANGE");
+      const step = p_from === p_to ? 1 : 5;
+      const rows = mdrTests().filter((row) => row.part === p_part && row.formula === formula && row.test_date >= p_from && row.test_date <= p_to && Array.isArray(row.curve));
+      const dates = [...new Set(rows.map((row) => row.test_date))].sort().reverse();
+      const kept = [];
+      let total = 0;
+      for (const date of dates) {
+        const n = rows.filter((row) => row.test_date === date).length;
+        if (kept.length && total + n > 1000) break;
+        kept.unshift(date);
+        total += n;
+      }
+      const order = (a, b) => (a.test_date !== b.test_date ? (a.test_date < b.test_date ? -1 : 1) : a.test_time < b.test_time ? -1 : a.test_time > b.test_time ? 1 : a.machine_id < b.machine_id ? -1 : 1);
+      const curves = rows.filter((row) => kept.includes(row.test_date)).sort(order).slice(-1000)
+        .map((row) => ({ id: row.id, test_date: row.test_date, curve: step === 1 ? row.curve : row.curve.filter((_, index) => index % step === 0) }));
+      return { step, from: kept[0] ?? null, to: kept.at(-1) ?? null, truncated: kept.length < dates.length, curves };
+    },
   };
 
   const RPC = {
