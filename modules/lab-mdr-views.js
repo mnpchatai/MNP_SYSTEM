@@ -48,9 +48,10 @@
   }
 
   // route = { part, formula, date } · body ถูกวาดทีหลังเมื่ออ่านข้อมูลแล้ว
-  function page(route) {
+  // canUpload: false = บัญชีดูอย่างเดียว ไม่มีปุ่มอัปโหลด
+  function page(route, { canUpload = true } = {}) {
     return `<div class="lab-page lab-mdr">
-      ${sections.moduleHead("mdr", { extra: uploadControl() })}
+      ${sections.moduleHead("mdr", { extra: canUpload ? uploadControl() : "" })}
       ${partTabs(route.part, route.formula)}
       <section class="card lab-mdr-result" id="mdr-result" role="status" aria-live="polite" hidden></section>
       <div id="mdr-body" aria-busy="true"><div class="card lab-mdr-loading">กำลังโหลด…</div></div>
@@ -59,10 +60,12 @@
 
   /* ---------- รายการสูตร ---------- */
 
-  function overview(partKey, formulas) {
+  // canUpload: false = บัญชีดูอย่างเดียว ไม่บอกให้กดปุ่มอัปโหลดที่ไม่มี
+  function overview(partKey, formulas, { canUpload = true } = {}) {
     const part = model.findPart(partKey);
     if (!formulas.length) {
-      return `<section class="card">${sections.emptyBlock(`ยังไม่มีผล${part.label}`, { hint: "กด “อัปโหลดไฟล์ MDR (.ini)” แล้วเลือกไฟล์หรือโฟลเดอร์ของวันจากเครื่อง MDR" })}</section>`;
+      const hint = canUpload ? { hint: "กด “อัปโหลดไฟล์ MDR (.ini)” แล้วเลือกไฟล์หรือโฟลเดอร์ของวันจากเครื่อง MDR" } : {};
+      return `<section class="card">${sections.emptyBlock(`ยังไม่มีผล${part.label}`, hint)}</section>`;
     }
     const rows = formulas.map((item) => `<tr>
         <th scope="row" class="lab-name"><a href="${esc(model.routeUrl({ part: partKey, formula: item.formula }))}">${esc(item.formula)}</a></th>
