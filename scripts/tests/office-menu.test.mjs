@@ -188,7 +188,7 @@ test("the office module is standalone with a menu entry, sandbox for the repair 
   assert.match(source, /sandbox: true,/, "test mode keeps the menu for the work-order pages (modeAllowed hides the rest)");
   assert.match(source, /const modeAllowed = \(code\) => deptModuleAllowed\(code\) && \(!inSandbox\(\) \|\| code === sections\.WORK_ORDER_CODE \|\| code === sections\.REPAIR_CODE\);/);
   // ไฟล์ของใบแจ้งซ่อม IT (itrp) โหลดหลัง module-office.js และก่อน app.js ตามลำดับ model → pages → module เช่นกัน
-  assert.ok(at("modules/itrp-model.js") < at("modules/itrp-pages.js") && at("modules/itrp-pages.js") < at("modules/module-itrp.js"));
+  assert.ok(at("modules/itrp-model.js") < at("modules/itrp-pages.js") && at("modules/itrp-pages.js") < at("modules/itrp-history-pages.js") && at("modules/itrp-history-pages.js") < at("modules/module-itrp.js"));
   assert.ok(at("modules/module-office.js") < at("modules/module-itrp.js") && at("modules/module-itrp.js") < at("app.js"));
   // ไฟล์ของใบสั่งงาน IT โหลดหลัง module-office.js และก่อน app.js ตามลำดับ model → pages → module
   assert.ok(at("modules/itwo-model.js") < at("modules/itwo-pages.js") && at("modules/itwo-pages.js") < at("modules/module-itwo.js"));
