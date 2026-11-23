@@ -41,7 +41,8 @@ select ok(not exists (
     select 1 from pg_proc p
     where p.pronamespace in ('private'::regnamespace, 'public'::regnamespace)
       and (p.proname ~ '^(bom|rf)_' or p.proname ~ '^app_(bom|rf)_')
-      and p.prosrc ~ '\m[a-z]\.is_test\M(?!\s*=)'),
+      -- "(e.is_active or e.is_test)" เลือกบัญชีที่ใช้งานอยู่หรือบัญชีทดสอบ ไม่ใช่ตัวกรองโหมด (รายชื่อพนักงาน GR ของ 20261216010000 ตามด้วย e.is_test = โหมดของผู้เรียกเสมอ)
+      and regexp_replace(p.prosrc, '\(\s*[a-z]\.is_active\s+or\s+[a-z]\.is_test\s*\)', '', 'g') ~ '\m[a-z]\.is_test\M(?!\s*=)'),
   'no BOM or RubberFlow function filters on a constant is_test any more (every filter compares with the caller''s mode)');
 select ok(not exists (select 1 from pg_proc p where p.pronamespace = 'private'::regnamespace and p.proname in ('bom_actor', 'rf_actor')
                       and p.prosrc not like '%if not private.bom_real_open() then%'),

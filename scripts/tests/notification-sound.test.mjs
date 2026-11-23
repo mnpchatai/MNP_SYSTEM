@@ -50,7 +50,7 @@ test("an increase stays silent when the file is missing, locked, or just played"
 });
 
 // ---------- ตัวจัดการเสียง (ใส่ของปลอมแทนเบราว์เซอร์) ----------
-function fakeEnvironment({ file = { ok: true, type: "audio/mpeg" }, playResult = "ok", pushWaitMs = 20 } = {}) {
+function fakeEnvironment({ file = { ok: true, type: "audio/wav" }, playResult = "ok", pushWaitMs = 20 } = {}) {
   let clock = 1_000_000;
   const log = { fetched: [], plays: 0, mutedPlays: 0 };
   const audio = {
@@ -72,7 +72,7 @@ function fakeEnvironment({ file = { ok: true, type: "audio/mpeg" }, playResult =
     return { ok: file.ok, headers: { get: () => file.type }, arrayBuffer: async () => new ArrayBuffer(8) };
   };
   const sound = createNotificationSound({
-    url: "./sounds/notify.mp3?v=t", fetchFile, createAudio: () => audio, channel, now: () => clock, pushWaitMs,
+    url: "./sounds/notify.wav?v=t", fetchFile, createAudio: () => audio, channel, now: () => clock, pushWaitMs,
   });
   return { sound, audio, log, posted, channel, advance: (ms) => { clock += ms; } };
 }
@@ -85,7 +85,7 @@ const ready = async (options) => {
 };
 
 test("a missing sound file (404 or an HTML fallback page) means not ready and nothing ever plays", async () => {
-  for (const file of [{ ok: false, type: "text/html" }, { ok: true, type: "text/html; charset=utf-8" }, { ok: false, type: "audio/mpeg" }]) {
+  for (const file of [{ ok: false, type: "text/html" }, { ok: true, type: "text/html; charset=utf-8" }, { ok: false, type: "audio/wav" }]) {
     const { sound, log } = fakeEnvironment({ file });
     assert.equal(await sound.probe(), false);
     assert.equal(sound.isReady(), false);
@@ -102,7 +102,7 @@ test("a network error while checking the file is not remembered, so a later chec
   let attempts = 0;
   const audio = { play: () => Promise.resolve(), pause() {} };
   const sound = createNotificationSound({
-    fetchFile: async () => { attempts += 1; if (attempts === 1) throw new TypeError("offline"); return { ok: true, headers: { get: () => "audio/mpeg" }, arrayBuffer: async () => new ArrayBuffer(1) }; },
+    fetchFile: async () => { attempts += 1; if (attempts === 1) throw new TypeError("offline"); return { ok: true, headers: { get: () => "audio/wav" }, arrayBuffer: async () => new ArrayBuffer(1) }; },
     createAudio: () => audio,
   });
   assert.equal(await sound.probe(), false);
@@ -114,8 +114,8 @@ test("the file is checked once even when probe is called many times", async () =
   const { sound, log } = fakeEnvironment();
   await Promise.all([sound.probe(), sound.probe(), sound.probe()]);
   await sound.probe();
-  assert.deepEqual(log.fetched, ["./sounds/notify.mp3?v=t"]);
-  assert.equal(SOUND_PATH, "./sounds/notify.mp3");
+  assert.deepEqual(log.fetched, ["./sounds/notify.wav?v=t"]);
+  assert.equal(SOUND_PATH, "./sounds/notify.wav");
 });
 
 test("unlocking plays a muted sample and then unmutes; a blocked browser stays locked", async () => {

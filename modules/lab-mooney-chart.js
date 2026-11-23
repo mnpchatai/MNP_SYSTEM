@@ -8,7 +8,9 @@
 // จุดทุกจุดมี data-i = ตำแหน่งในรายการที่ส่งเข้ามา ให้ module-lab.js ผูกการชี้/แตะ/คีย์บอร์ดโดยคำนวณจากตำแหน่งแกน X (indexAt)
 (function (root) {
   const model = root.MNP_LAB_MOONEY;
-  if (!model) return;
+  // โหลดหลัง lab-range.js (index.html) · เทสต์ใน Node require lab-range.js ก่อน (ตั้ง MNP_LAB_RANGE บน globalThis)
+  const rangeKit = root.MNP_LAB_RANGE;
+  if (!model || !rangeKit) return;
 
   const SERIES = Object.freeze([
     { key: "mh", label: "MH", shape: "circle", avgKey: "avgMh", labelBelow: false },
@@ -44,77 +46,15 @@
   const defaultCount = (width) => (layoutFor(width).compact ? DEFAULT_VISIBLE_COMPACT : DEFAULT_VISIBLE);
 
   /* ---------- ช่วงที่แสดง (ซูม/เลื่อน) ---------- */
-  // ช่วง = { start, end } ตำแหน่งในรายการทั้งหมด (end ไม่รวม) ทุกฟังก์ชันคืนช่วงใหม่ที่ผ่าน normalizeRange แล้ว ไม่แก้ค่าเดิม
+  // คณิตของช่วงใช้ร่วมกับกราฟแนวโน้มของ MDR ที่ lab-range.js · ที่นี่ผูก MIN_VISIBLE (ซูมเข้าได้ไม่เกินสองแถบ) และจำนวนเริ่มต้นตามความกว้างจอ
 
-  // กว้างอย่างน้อย MIN_VISIBLE (หรือเท่าที่มี) อย่างมากทั้งรายการ และไม่เลยขอบรายการ
-  function normalizeRange(range, total) {
-    if (!(total > 0)) return { start: 0, end: 0 };
-    const start = Math.floor(Number(range?.start));
-    const end = Math.ceil(Number(range?.end));
-    const width = clamp((Number.isFinite(end) ? end : total) - (Number.isFinite(start) ? start : 0), Math.min(MIN_VISIBLE, total), total);
-    const first = clamp(Number.isFinite(start) ? start : 0, 0, total - width);
-    return { start: first, end: first + width };
-  }
-
-  const sameRange = (a, b) => Boolean(a && b) && a.start === b.start && a.end === b.end;
-
-  // ครั้งที่ทดสอบทั้งหมดของเดือน from ถึงเดือน to ("YYYY-MM" รวมทั้งสองเดือน) ไม่มีครั้งใดในช่วงนั้น = null
-  // ต่ำกว่า MIN_VISIBLE ครั้งถูกขยายเป็นอย่างน้อยสองแถบ (normalizeRange) จึงอาจเห็นเดือนข้างเคียงด้วย
-  function rangeForMonths(items, from, to) {
-    let start = -1;
-    let end = -1;
-    items.forEach((item, index) => {
-      const month = model.monthOf(item.testDate);
-      if (!month) return;
-      if (start < 0 && month >= from) start = index;
-      if (month <= to) end = index + 1;
-    });
-    return start >= 0 && end > start ? normalizeRange({ start, end }, items.length) : null;
-  }
-
-  // ช่วงจากตัวเลือกของผู้ใช้: "latest" = ล่าสุดตามความกว้างจอ, "all" = ทั้งหมด, "months" = เดือน from ถึงเดือน to (เดือนนั้นไม่มีข้อมูลแล้ว = ล่าสุด),
-  // "custom" = ช่วงที่ซูม/เลื่อนมาเอง (follow = ติดขอบขวาอยู่ จึงขยับตามเมื่อมีครั้งใหม่เข้ามา)
-  // ตัวเลือกที่ไม่ใช่ custom คำนวณใหม่ทุกครั้งที่วาด จึงตามข้อมูลใหม่และความกว้างจอ (เดือนที่เลือกรับครั้งใหม่ของเดือนนั้นเข้ามาเอง)
-  function rangeFor(zoom, items, width) {
-    const total = items.length;
-    const kind = zoom?.kind ?? "latest";
-    if (kind === "all") return normalizeRange({ start: 0, end: total }, total);
-    if (kind === "months") {
-      const range = rangeForMonths(items, zoom.from, zoom.to);
-      if (range) return range;
-    }
-    if (kind === "custom") {
-      const size = Number(zoom.end) - Number(zoom.start);
-      return normalizeRange(zoom.follow ? { start: total - size, end: total } : zoom, total);
-    }
-    return normalizeRange({ start: total - defaultCount(width), end: total }, total);
-  }
-
-  // ซูมด้วยตัวคูณ factor (>1 = เข้า, <1 = ออก) โดยตรึงตำแหน่งที่ anchor (0 = ขอบซ้าย … 1 = ขอบขวาของช่วง) ไว้ที่เดิม
-  function zoomRange(range, total, factor, anchor = 0.5) {
-    const current = normalizeRange(range, total);
-    const width = current.end - current.start;
-    const next = clamp(Math.round(width / (Number(factor) > 0 ? factor : 1)), Math.min(MIN_VISIBLE, total), total);
-    if (next === width) return current;
-    const at = clamp(Number.isFinite(anchor) ? anchor : 0.5, 0, 1);
-    const start = Math.round(current.start + at * width - at * next);
-    return normalizeRange({ start, end: start + next }, total);
-  }
-
-  function panRange(range, total, delta) {
-    const current = normalizeRange(range, total);
-    const shift = Math.round(Number(delta) || 0);
-    return normalizeRange({ start: current.start + shift, end: current.end + shift }, total);
-  }
-
-  // ทำให้ครั้งที่ index อยู่ในช่วง: เลยขอบไปแค่ครั้งเดียว (กดลูกศรเลื่อนต่อ) ขยับให้พอดีขอบ ไกลกว่านั้น (เช่น คลิกแถวในตาราง) วางไว้กลางช่วง
-  function revealRange(range, total, index) {
-    const current = normalizeRange(range, total);
-    if (!(index >= 0 && index < total) || (index >= current.start && index < current.end)) return current;
-    const width = current.end - current.start;
-    const first = index === current.start - 1 ? index : index === current.end ? index + 1 - width : Math.round(index - (width - 1) / 2);
-    return normalizeRange({ start: first, end: first + width }, total);
-  }
+  const normalizeRange = (range, total) => rangeKit.normalize(range, total, MIN_VISIBLE);
+  const sameRange = rangeKit.same;
+  const rangeForMonths = (items, from, to) => rangeKit.forMonths(items.map((item) => model.monthOf(item.testDate)), from, to, MIN_VISIBLE);
+  const rangeFor = (zoom, items, width) => rangeKit.resolve(zoom, items.map((item) => model.monthOf(item.testDate)), { latest: defaultCount(width), min: MIN_VISIBLE });
+  const zoomRange = (range, total, factor, anchor = 0.5) => rangeKit.zoom(range, total, factor, anchor, MIN_VISIBLE);
+  const panRange = (range, total, delta) => rangeKit.pan(range, total, delta, MIN_VISIBLE);
+  const revealRange = (range, total, index) => rangeKit.reveal(range, total, index, MIN_VISIBLE);
 
   // ป้ายวันที่บนแกน: วันล่าสุดและวันแรกมีป้ายเสมอ ที่เหลือเลือกวันที่มีแถวมากก่อน (กว้างกว่า อ่านง่ายกว่า) แล้วข้ามป้ายที่ทับกัน
   function pickDateLabels(candidates, layout) {

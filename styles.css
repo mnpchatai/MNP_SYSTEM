@@ -3589,6 +3589,21 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 @media (min-width: 1041px) {
   .wh-work-link { display: none; }
 }
+/* แปรรูปยาง (GR) #/gr · modules/gr-pages.js: ความคืบหน้ารายขั้นบนการ์ด (ขั้นที่ครบต้องทำเป็นสีของโมดูล) · ฟอร์มบันทึกผลรายวันช่องสูง 48px แตะง่ายบนมือถือ · ล็อตที่ได้ · ตารางสรุปผลเรียงตามความกว้างจอ */
+.gr-steps li.is-done { color: var(--m700); font-weight: 600; }
+.gr-steps li.is-done .rf-mono::before { content: "✓ "; }
+:root[data-theme="dark"] .gr-steps li.is-done { color: var(--m300); }
+.gr-record-form .rf-input, .gr-record-form .rf-select { min-height: 48px; font-size: 1.05rem; }
+.gr-record-form .bom-step-next .rf-btn { min-height: 48px; min-width: 160px; }
+.gr-target-line:empty { display: none; }
+.gr-lots { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.gr-check { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; }
+.gr-check input { width: 20px; height: 20px; flex: none; }
+.gr-summary { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); align-items: start; }
+.gr-settings-table .rf-input, .gr-settings-table .rf-select { min-width: 110px; }
+@media (max-width: 640px) {
+  .gr-record-form .bom-step-next .rf-btn { width: 100%; }
+}
 
 /* ---------- MNP LAB · รายงานทดสอบ MDR (lab-mdr-views.js) ---------- */
 /* ปุ่มอัปโหลดบนหัวโมดูลสี = ปุ่มหลักของหน้า (สี CTA ของหัว) · เมนูสองทางลอยใต้ปุ่ม จึงให้หัวโมดูลนี้ไม่ตัดขอบ */
@@ -3641,11 +3656,15 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 
 /* หน้าสูตร */
 .lab-mdr-head { margin-bottom: 12px; }
-.lab-mdr-day { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--text-meta); font-weight: 600; }
-.lab-mdr-day .select { width: auto; min-width: 190px; }
-/* ตัวเลือกที่ searchable-select แปลงเป็นช่องพิมพ์ (size ตามข้อความยาวสุด) ต้องหดตามจอได้ */
-.lab-mdr-day .ss-input { min-width: 0; max-width: 100%; }
 .lab-mdr-chart { padding-bottom: 10px; }
+/* หัวการ์ดกราฟแรงบิด: ชื่อกราฟ (+ วันที่เมื่อแสดงวันเดียว) ซ้าย แถบช่วงวันของกราฟนี้ขวา — คนละการ์ดกับแถบของกราฟแนวโน้ม */
+.lab-mdr-chart-head { padding: 12px 18px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.lab-mdr-chart-title { margin: 0; font-size: var(--text-ui); font-weight: 700; }
+.lab-mdr-chart-when { color: var(--muted); font-weight: 600; font-variant-numeric: tabular-nums; }
+.lab-mdr-plot.is-loading svg { opacity: .35; transition: opacity .12s ease-out; }
+/* หลายวัน: เส้นบางลงเล็กน้อย (หลายร้อยเส้นซ้อนกัน) สีต่อวัน */
+.lab-mdr-plot.is-multi .lab-mdr-line path { stroke-width: 1.3; }
+.lab-mdr-plot.is-multi .lab-mdr-t90 { stroke-width: 1.5; }
 .lab-mdr-legend { padding: 12px 18px 4px; display: flex; flex-wrap: wrap; gap: 6px; }
 .lab-mdr-key { min-height: 32px; padding: 0 10px; display: inline-flex; align-items: center; gap: 7px; color: var(--ink); background: color-mix(in srgb, var(--line) 55%, transparent); border: 1px solid var(--line); border-radius: var(--radius-pill); font: inherit; font-size: var(--text-caption); font-weight: 700; cursor: pointer; }
 .lab-mdr-key small { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
@@ -3663,9 +3682,10 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .lab-mdr-axis-name { font-weight: 700; }
 .lab-mdr-tip { min-width: 140px; }
 .lab-mdr-tip-row { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.lab-mdr-tip-more { color: var(--muted); font-size: var(--text-caption); }
 .lab-mdr-tip-row b { margin-left: auto; padding-left: 12px; font-size: var(--text-ui); }
 
-/* กราฟแนวโน้มรายวันของ F2 (พื้นเข้มเดียวกับกราฟแรงบิดของ F1): ปุ่มสลับค่า แล้วคำอธิบายสัญลักษณ์บรรทัดเดียว */
+/* กราฟแนวโน้มรายวันของ F1/F2 (พื้นเข้มเดียวกับกราฟแรงบิดของ F1): ปุ่มสลับค่า แล้วคำอธิบายสัญลักษณ์บรรทัดเดียว */
 .lab-mdr-trend { padding-bottom: 8px; }
 .lab-mdr-trend-head { padding: 12px 18px 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .lab-mdr-trend .lab-seg { background: transparent; border-color: var(--line); }
@@ -3686,6 +3706,8 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .lab-mdr-avg-pt { fill: var(--m400); stroke: var(--paper); stroke-width: 2; }
 .lab-mdr-dot { fill: #c9d4e3; fill-opacity: .8; }
 .lab-mdr-dot.is-out { fill: #ff5c5c; fill-opacity: 1; }
+/* แถบช่วงวัน (.lab-zoom ของกราฟ Mooney) อยู่ขวาของปุ่มค่า คำอธิบายสัญลักษณ์ลงบรรทัดใหม่ใต้ทั้งสอง */
+.lab-mdr-trend-head .lab-mdr-trend-key { flex: 1 1 100%; order: 3; }
 .lab-mdr-trend-note { margin: 2px 0 0; padding: 0 18px; color: var(--muted); font-size: var(--text-caption); font-variant-numeric: tabular-nums; }
 .lab-mdr-trend-empty { margin: 0; padding: 32px 0; color: var(--muted); text-align: center; }
 
@@ -3709,6 +3731,4 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
   .lab-mdr-legend { padding: 10px 12px 2px; gap: 4px; }
   .lab-mdr-key { min-height: 28px; padding: 0 8px; }
   .lab-mdr-key small { display: none; }
-  .lab-mdr-day { margin-left: 0; width: 100%; }
-  .lab-mdr-day :is(.select, .ss-input) { flex: 1 1 0; width: 100%; min-width: 0; }
 }

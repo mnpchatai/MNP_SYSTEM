@@ -1153,8 +1153,13 @@
     const tasks = [];
     if ((which === "SR" || which === "ALL") && helpers.canStoreRods?.(user)) {
       for (const lot of lots.filter((entry) => entry.status === "pending").sort(byTime("createdAt"))) tasks.push({ kind: "rodReceive", lot });
+      // คำขอเบิกของ GR ที่ SR ยังจ่ายไม่ครบ (rules.grOpenRequests · 20261216010000): หนึ่งการ์ดต่อคำขอ เก่าก่อน · ใบ × เส้นยางที่มีคำขออยู่ไม่มีการ์ด "รอจ่ายให้ GR" ซ้ำ
+      const requests = rules.grOpenRequests?.(data) ?? [];
+      const asked = new Set(requests.map((entry) => `${entry.request.orderId}\u0000${entry.request.itemCode}`));
+      const needs = rules.rodIssueNeeds(data);
+      for (const entry of requests) tasks.push({ kind: "rodRequest", entry, need: needs.find((need) => need.order.id === entry.request.orderId && need.itemCode === entry.request.itemCode) ?? null });
       // จ่ายได้เมื่อยังต้องจ่ายและคลังมีแท่งให้ (ของใบนี้หรือสต็อกกลาง) · ไม่มีแท่งเลย = ไม่มีการ์ดที่กดอะไรไม่ได้
-      for (const need of rules.rodIssueNeeds(data)) if (need.remaining > 1e-9 && need.owned + need.free > 1e-9) tasks.push({ kind: "rodIssue", need });
+      for (const need of needs) if (need.remaining > 1e-9 && need.owned + need.free > 1e-9 && !asked.has(`${need.order.id}\u0000${need.itemCode}`)) tasks.push({ kind: "rodIssue", need });
     }
     if ((which === "QA" || which === "ALL") && helpers.canDecideRods?.(user)) {
       for (const lot of lots.filter((entry) => entry.status === "held").sort(byTime("receivedAt"))) tasks.push({ kind: "rodDecide", lot });
@@ -1305,7 +1310,8 @@
     return { html: ui.dialog("rodDecide", `ตัดสินล็อตที่กัก · ${lot.lotNo}`, body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="bom-rod-decide-form">บันทึกผลตัดสิน</button>` }) };
   };
   // SR จ่ายแท่งให้ GR ตามใบ: จำนวนครั้งนี้ (ค่าเริ่ม = ที่ยังต้องจ่าย ไม่เกินที่มีในคลัง) · ระบบเลือกล็อตเก่าก่อน จากถังของใบนี้ก่อนแล้วสต็อกกลาง (แสดงสดตามจำนวนที่กรอก)
-  dialogs.rodIssue = (ctx, { orderId, itemCode }) => {
+  // qty = ค่าเริ่มของช่อง (การ์ดคำขอเบิกของ GR ส่งส่วนที่คำขอยังขาด) ไม่ส่ง = ที่ยังต้องจ่าย · ไม่เกินที่มีในคลังเสมอ
+  dialogs.rodIssue = (ctx, { orderId, itemCode, qty: askQty = null }) => {
     const { ui, rules, data } = ctx;
     const order = data.orders.find((entry) => entry.id === orderId);
     if (!order || !["released", "in_progress"].includes(order.status) || !ctx.helpers.canStoreRods?.(ctx.user)) return null;
@@ -1314,7 +1320,8 @@
     const unit = uomText(ctx, need.uom);
     const stock = Math.round((need.owned + need.free) * 1e4) / 1e4;
     if (!(stock > 0)) return null;
-    const start = String(Math.round(Math.min(need.remaining > 0 ? need.remaining : stock, stock) * 1e4) / 1e4);
+    const wanted = Number(askQty) > 0 ? Number(askQty) : need.remaining > 0 ? need.remaining : stock;
+    const start = String(Math.round(Math.min(wanted, stock) * 1e4) / 1e4);
     const body = `<form novalidate id="bom-rod-issue-form" data-rf-form="issueRods" data-rf-args="${attr(JSON.stringify({ orderId: order.id, itemCode }))}" data-rf-success="จ่ายยางเส้นยาว {result} ให้ GR แล้ว">
       ${ui.kv([
         ["เส้นยาง", `${ui.mono(itemCode)}${need.name ? `<div class="small muted">${esc(need.name)}</div>` : ""}`],
@@ -1458,6 +1465,22 @@
         <h2>${cardTitle(`จ่ายยางเส้นยาวให้ GR ตามใบ ${need.order.id}`, href)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "SR")} ` : ""}<span class="rf-mono">${esc(need.itemCode)}</span> · ${esc(need.order.customer ?? "")}</p>
         <div class="bom-job-amount"><span title="${attr(`GR ต้องใช้ ${rules.fmtQty(need.need)} จ่ายแล้ว ${rules.fmtQty(need.issued)}`)}">${esc(`ต้องจ่าย ${rodQty(ctx, need.remaining, need.uom)}`)}</span></div>
         ${gated("canStoreRods", ui.openButton("จ่ายยางเส้นยาว", "rodIssue", { orderId: need.order.id, itemCode: need.itemCode }, { className: "bom-job-main" }))}</article>`;
+    }
+    // คำขอเบิกยางเส้นยาวของ GR: การ์ดเปิดหน้ารายละเอียดการจ่ายของใบ × เส้นยาง (#/sr?issue=) · ปุ่มจ่ายเปิด dialog จ่ายตัวเดิม (ค่าเริ่ม = ที่คำขอยังขาด) · คลังไม่มีของ = บอกแทนปุ่ม
+    if (task.kind === "rodRequest") {
+      const { entry, need } = task;
+      const { request, order } = entry;
+      const href = srHref({ issue: request.orderId, code: request.itemCode });
+      const uom = need?.uom ?? itemOf(ctx, request.itemCode)?.uom ?? "";
+      const stock = need ? Math.round((need.owned + need.free) * 1e4) / 1e4 : 0;
+      const button = !need ? '<p class="small muted">ใบนี้ไม่มีงาน GR ที่ใช้เส้นยางนี้ค้างอยู่</p>' : stock > 0
+        ? gated("canStoreRods", ui.openButton("จ่ายยางเส้นยาว", "rodIssue", { orderId: request.orderId, itemCode: request.itemCode, qty: entry.remaining }, { className: "bom-job-main" }))
+        : '<p class="small muted">ไม่มีในคลัง</p>';
+      const amount = entry.issued > 0 ? `ขอ ${rules.fmtQty(request.qty)} · ยังขาด ${rodQty(ctx, entry.remaining, uom)}` : `ขอ ${rodQty(ctx, request.qty, uom)}`;
+      return `<article class="card rf-card bom-job is-now${cardClass(href)}"><div class="bom-job-top"><span class="bom-job-state">GR ขอเบิก</span><span class="muted">${esc(`ขอเมื่อ ${rules.fmtDateTime(request.createdAt)}`)}</span></div>
+        <h2>${cardTitle(`จ่ายยางเส้นยาวตามคำขอของ GR ใบ ${request.orderId}`, href)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "SR")} ` : ""}<span class="rf-mono">${esc(request.itemCode)}</span>${order?.customer ? ` · ${esc(order.customer)}` : ""}</p>
+        <div class="bom-job-amount"><span>${esc(amount)}</span></div><p class="small muted">${esc([request.createdBy, request.note].filter(Boolean).join(" · "))}</p>
+        ${button}</article>`;
     }
     if (task.kind === "fgClose") {
       return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">รอปิดใบ</span><span class="muted">ส่งมอบคลัง ${esc(rules.fmtDate(task.order.whDue))}</span></div>

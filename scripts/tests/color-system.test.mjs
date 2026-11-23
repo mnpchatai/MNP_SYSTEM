@@ -364,3 +364,17 @@ for (const theme of ["light", "dark"]) {
     }
   });
 }
+
+// วงเล็บปีกกาที่ไม่ปิด (เช่น @media ที่ลืม }) ทำให้เบราว์เซอร์ใช้ทุกกฎที่ตามมาเฉพาะในเงื่อนไขนั้น
+// หน้า MDR ทั้งหน้าไม่มีสไตล์บนจอกว้างหลัง #412 เพราะ @media (max-width: 640px) ของ GR ไม่มี } ปิด
+test("styles.css: every { has its } and nothing closes twice", () => {
+  let depth = 0;
+  css.split("\n").forEach((line, index) => {
+    for (const char of line) {
+      if (char === "{") depth += 1;
+      if (char === "}") depth -= 1;
+      assert.ok(depth >= 0, `an extra } on line ${index + 1} (comments removed)`);
+    }
+  });
+  assert.equal(depth, 0, "a { is never closed: every rule after it would apply only inside that block");
+});
