@@ -120,12 +120,13 @@ test("AVG and sample SD (n − 1, like Excel STDEV) per test date, newest date f
   const days = model.groupByDate(tests);
   assert.deepEqual(days.map((day) => day.date), ["2026-11-03", "2026-11-02"]);
   assert.deepEqual(days[1].tests.map((test) => test.machine_id), ["111", "112", "113"]);
-  const stats = days[1].stats;
+  assert.equal(days[1].groups.length, 1, "one set time and temperature: one group");
+  const stats = days[1].groups[0].stats;
   assert.ok(Math.abs(stats.mh.avg - 8.6033333) < 1e-6);
   assert.ok(Math.abs(stats.mh.sd - 0.0757188) < 1e-6, "STDEV(8.69, 8.57, 8.55)");
   assert.ok(Math.abs(stats.delta.avg - (8.6033333 - 2.1866667)) < 1e-6, "MH−ML per test, then averaged");
   assert.deepEqual([stats.t90_s.n, stats.t90_s.avg], [2, 171.5], "a missing time is left out, not counted as zero");
-  assert.equal(days[0].stats.mh.sd, null, "one test has no SD");
+  assert.equal(days[0].groups[0].stats.mh.sd, null, "one test has no SD");
   assert.equal(model.sampleSd([1]), null);
 });
 
@@ -151,4 +152,52 @@ test("routes: part defaults to F1, formula and date are validated, the date only
   assert.deepEqual(model.readRoute(params("module=mdr&part=F9&formula=<x>&date=yesterday")), { part: "F1", formula: "", date: "" });
   assert.equal(model.routeUrl({ part: "F2", formula: "B0005", date: "2026-11-03" }), "#/lab?module=mdr&part=F2&formula=B0005&date=2026-11-03");
   assert.equal(model.routeUrl({ part: "F1", date: "2026-11-03" }), "#/lab?module=mdr&part=F1");
+});
+
+// ข้อมูลจริง A2004 F1 10 พ.ย. 2569: สามครั้ง 30 นาที + สามครั้ง 20 นาที (รวมกันเฉลี่ย MH−ML ได้ 5.61 แยกกัน 5.25 / 5.98)
+const mixedDay = model.normalizeTests([
+  { id: 1, machine_id: "111", test_date: "2026-11-10", test_time: "14:35", set_minutes: 30, temperature_c: 155, ml: 1.97, mh: 7.24 },
+  { id: 2, machine_id: "112", test_date: "2026-11-10", test_time: "15:05", set_minutes: 30, temperature_c: 155, ml: 1.91, mh: 7.16 },
+  { id: 3, machine_id: "113", test_date: "2026-11-10", test_time: "15:36", set_minutes: 30, temperature_c: 155, ml: 1.91, mh: 7.12 },
+  { id: 4, machine_id: "121", test_date: "2026-11-10", test_time: "15:58", set_minutes: 20, temperature_c: 155, ml: 2.08, mh: 8.03 },
+  { id: 5, machine_id: "122", test_date: "2026-11-10", test_time: "16:18", set_minutes: 20, temperature_c: 155, ml: 1.97, mh: 8.15 },
+  { id: 6, machine_id: "123", test_date: "2026-11-10", test_time: "16:39", set_minutes: 20, temperature_c: 155, ml: 1.91, mh: 7.71 },
+]);
+
+test("B: tests with different set times (or temperatures) are averaged per group, never together", () => {
+  const [day] = model.groupByDate(mixedDay);
+  assert.deepEqual(day.groups.map((group) => [group.set_minutes, group.tests.length]), [[30, 3], [20, 3]], "groups in the order they were tested");
+  assert.ok(Math.abs(day.groups[0].stats.delta.avg - 5.25) < 0.01);
+  assert.ok(Math.abs(day.groups[1].stats.delta.avg - 5.98) < 0.01);
+  const hotter = model.normalizeTests([{ ...mixedDay[0], id: 9, temperature_c: 165 }, mixedDay[1]]);
+  assert.equal(model.groupByDate(hotter)[0].groups.length, 2, "same set time at another temperature is another group");
+  assert.deepEqual(model.conditionsOf([...mixedDay, mixedDay[0]]).map((item) => [item.key, item.n]), [["30|155", 4], ["20|155", 3]], "most tests first");
+  assert.equal(model.formatCondition({ set_minutes: 30, temperature_c: 155 }), "30 นาที · 155 °C");
+  assert.equal(model.formatCondition({ set_minutes: null, temperature_c: null }), "ไม่ระบุเวลาทดสอบ");
+});
+
+test("C: an F2 test where the rubber did not swell keeps ML/MH but its t50/t90 are not measured", () => {
+  const f2 = model.normalizeTests([
+    { id: 1, machine_id: "111", test_date: "2026-11-14", test_time: "09:00", set_minutes: 30, temperature_c: 155, ml: 6092, mh: 6097, t50_s: 1793, t90_s: 1797 },
+    { id: 2, machine_id: "112", test_date: "2026-11-16", test_time: "10:45", set_minutes: 40, temperature_c: 155, ml: 6337, mh: 6900, t50_s: 2400, t90_s: 2400 },
+    { id: 3, machine_id: "113", test_date: "2026-11-03", test_time: "15:12", set_minutes: 30, temperature_c: 155, ml: 8444, mh: 34131, t50_s: 61, t90_s: 261 },
+    { id: 4, machine_id: "114", test_date: "2026-11-03", test_time: "15:40", set_minutes: 30, temperature_c: 155, ml: 8000, mh: 8070, t50_s: 120, t90_s: 400 },
+  ]);
+  const shown = model.applyDisplayRules(f2, "F2");
+  assert.deepEqual(shown.map((test) => [test.no_swell === true, test.t90_s]), [[true, null], [true, null], [false, 261], [true, null]],
+    "MH−ML under 1% of ML (A2401 14 Nov), or t90 at the set time (SNBR002 40 min), or both");
+  assert.deepEqual([shown[0].ml, shown[0].mh, shown[0].t50_s, shown[0].t90_raw], [6092, 6097, null, 1797], "ML/MH stay, the machine's t90 is kept aside");
+  assert.equal(f2[0].t90_s, 1797, "the stored rows are not changed");
+  assert.equal(model.noSwell({ ml: 8000, mh: 8100, set_minutes: 30, t90_s: 1789 }), false, "1.25 % rise and t90 11 s before the end: a real result");
+  assert.equal(model.noSwell({ ml: 8000, mh: 8100, set_minutes: 30, t90_s: 1790 }), true, "t90 10 s before the end");
+  assert.equal(model.applyDisplayRules(f2, "F1"), f2, "cure tests are not touched");
+  const day = model.groupByDate(shown.slice(2))[0];
+  assert.equal(day.groups[0].stats.t90_s.n, 1, "a test that did not swell is left out of AVG/SD");
+});
+
+test("G: a curve shorter than the set time (machine stopped early) is skipped with a reason", () => {
+  assert.equal(model.parseIni(iniText({ seconds: 12, header: { Settime: "30" } })).reason, model.SKIP.curveTooShort, "12 seconds of a 30-minute test");
+  assert.equal(model.parseIni(iniText({ seconds: 294 })).reason, model.SKIP.curveTooShort, "6 s short of 5 minutes");
+  assert.equal(model.parseIni(iniText({ seconds: 295 })).ok, true, "up to 5 s short is still accepted");
+  assert.equal(model.parseIni(iniText({ seconds: 300 })).ok, true);
 });

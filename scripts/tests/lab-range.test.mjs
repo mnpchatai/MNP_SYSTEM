@@ -18,6 +18,13 @@ test("range math takes its own minimum width", () => {
   assert.deepEqual(range.resolve({ kind: "latest" }, ["2026-10", "2026-11", "2026-11"], { latest: 30, min: 3 }), { start: 0, end: 3 });
 });
 
+test("months: exactMonths (MDR) keeps exactly the chosen months; without it (Mooney) the range still widens to the minimum", () => {
+  const months = ["2026-10", "2026-10", "2026-11", "2026-11", "2026-11", "2026-11"];
+  assert.deepEqual(range.resolve({ kind: "months", from: "2026-10", to: "2026-10" }, months, { latest: 30, min: 3, exactMonths: true }), { start: 0, end: 2 });
+  assert.deepEqual(range.resolve({ kind: "months", from: "2026-10", to: "2026-10" }, months, { latest: 30, min: 3 }), { start: 0, end: 3 }, "Mooney behaviour unchanged");
+  assert.deepEqual(range.limits({ start: 0, end: 2 }, 6, 3), { back: true, forward: false, out: false, in: true }, "+ stays off below the minimum");
+});
+
 test("month picks: a start after the end moves the other select along", () => {
   assert.deepEqual(range.pickMonths("2026-10", "2026-11", "from"), { from: "2026-10", to: "2026-11" });
   assert.deepEqual(range.pickMonths("2026-12", "2026-11", "from"), { from: "2026-12", to: "2026-12" });

@@ -3740,14 +3740,20 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .lab-mdr-head { margin-bottom: 12px; }
 .lab-mdr-chart { padding-bottom: 10px; }
 /* หัวการ์ดกราฟแรงบิด: ชื่อกราฟ (+ วันที่เมื่อแสดงวันเดียว) ซ้าย แถบช่วงวันของกราฟนี้ขวา — คนละการ์ดกับแถบของกราฟแนวโน้ม */
-.lab-mdr-chart-head { padding: 12px 18px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.lab-mdr-chart-head { padding: 12px 18px 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .lab-mdr-chart-title { margin: 0; font-size: var(--text-ui); font-weight: 700; }
 .lab-mdr-chart-when { color: var(--muted); font-weight: 600; font-variant-numeric: tabular-nums; }
 .lab-mdr-plot.is-loading svg { opacity: .35; transition: opacity .12s ease-out; }
 /* หลายวัน: เส้นบางลงเล็กน้อย (หลายร้อยเส้นซ้อนกัน) สีต่อวัน */
 .lab-mdr-plot.is-multi .lab-mdr-line path { stroke-width: 1.3; }
 .lab-mdr-plot.is-multi .lab-mdr-t90 { stroke-width: 1.5; }
-.lab-mdr-legend { padding: 12px 18px 4px; display: flex; flex-wrap: wrap; gap: 6px; }
+/* ปุ่มเส้นอยู่ในหัวการ์ด: พับไว้ = ปุ่มเดียวต่อท้ายแถบช่วงวัน · ปุ่มหลายปุ่ม = ขึ้นแถวของตัวเองเต็มความกว้าง */
+.lab-mdr-legend { display: flex; flex-wrap: wrap; gap: 6px; }
+.lab-mdr-legend:empty { display: none; }
+.lab-mdr-chart-head > .lab-zoom { order: 2; }
+.lab-mdr-chart-head > .lab-mdr-legend { order: 3; }
+/* พับไว้: ปุ่มเดียวอยู่แถวเดียวกับชื่อกราฟ (แถบช่วงวันกว้าง ขึ้นแถวถัดไป) */
+.lab-mdr-chart-head > .lab-mdr-legend:has(> .lab-mdr-keys-toggle) { order: 1; }
 .lab-mdr-key { min-height: 32px; padding: 0 10px; display: inline-flex; align-items: center; gap: 7px; color: var(--ink); background: color-mix(in srgb, var(--line) 55%, transparent); border: 1px solid var(--line); border-radius: var(--radius-pill); font: inherit; font-size: var(--text-caption); font-weight: 700; cursor: pointer; }
 .lab-mdr-key small { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
 .lab-mdr-key[aria-pressed="false"] { opacity: .45; }
@@ -3766,6 +3772,17 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .lab-mdr-tip-row { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
 .lab-mdr-tip-more { color: var(--muted); font-size: var(--text-caption); }
 .lab-mdr-tip-row b { margin-left: auto; padding-left: 12px; font-size: var(--text-ui); }
+/* ป้าย t90 ต่อครั้ง: เกิน 8 แถว เรียงเป็นหลายคอลัมน์ (เรียงลงก่อน) ป้ายจึงไม่สูงเกินกราฟ */
+.lab-mdr-tip-rows { display: grid; grid-auto-flow: column; grid-template-rows: repeat(var(--tip-rows, 8), auto); gap: 4px 16px; }
+/* ปุ่มเส้นเกิน 8 ปุ่ม: พับไว้หลังปุ่มเดียว กางออกเป็นแถวปุ่มเหมือนเดิม */
+.lab-mdr-keys-toggle { min-height: 32px; padding: 0 12px; display: inline-flex; align-items: center; gap: 8px; color: var(--ink); background: color-mix(in srgb, var(--line) 55%, transparent); border: 1px solid var(--line); border-radius: var(--radius-pill); font: inherit; font-size: var(--text-caption); font-weight: 700; cursor: pointer; }
+.lab-mdr-keys-toggle small { color: var(--m400); font-weight: 600; }
+.lab-mdr-keys-toggle small:empty { display: none; }
+.lab-mdr-keys-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; transition: transform .12s ease-out; }
+.lab-mdr-keys-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.lab-mdr-keys-toggle:focus-visible { outline: 3px solid var(--primary); outline-offset: 1px; }
+.lab-mdr-keys { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 6px; }
+.lab-mdr-keys[hidden] { display: none; }
 
 /* กราฟแนวโน้มรายวันของ F1/F2 (พื้นเข้มเดียวกับกราฟแรงบิดของ F1): ปุ่มสลับค่า แล้วคำอธิบายสัญลักษณ์บรรทัดเดียว */
 .lab-mdr-trend { padding-bottom: 8px; }
@@ -3788,8 +3805,12 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .lab-mdr-avg-pt { fill: var(--m400); stroke: var(--paper); stroke-width: 2; }
 .lab-mdr-dot { fill: #c9d4e3; fill-opacity: .8; }
 .lab-mdr-dot.is-out { fill: #ff5c5c; fill-opacity: 1; }
-/* แถบช่วงวัน (.lab-zoom ของกราฟ Mooney) อยู่ขวาของปุ่มค่า คำอธิบายสัญลักษณ์ลงบรรทัดใหม่ใต้ทั้งสอง */
-.lab-mdr-trend-head .lab-mdr-trend-key { flex: 1 1 100%; order: 3; }
+/* แถบช่วงวัน (.lab-zoom ของกราฟ Mooney) และช่องเงื่อนไขอยู่ขวาของปุ่มค่า · คำอธิบายสัญลักษณ์กับช่วงปกติอยู่บรรทัดเดียวกันใต้กราฟ */
+.lab-mdr-cond { width: auto; min-height: 40px; padding: 4px 30px 4px 10px; font-size: var(--text-caption); font-weight: 600; }
+.lab-mdr-trend-foot { padding: 2px 18px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 18px; }
+.lab-mdr-trend-foot .lab-mdr-trend-note { padding: 0; }
+.lab-mdr-key-band { display: inline-flex; align-items: center; gap: 4px 6px; }
+.lab-mdr-key-band[hidden] { display: none; }
 .lab-mdr-trend-note { margin: 2px 0 0; padding: 0 18px; color: var(--muted); font-size: var(--text-caption); font-variant-numeric: tabular-nums; }
 .lab-mdr-trend-empty { margin: 0; padding: 32px 0; color: var(--muted); text-align: center; }
 
@@ -3801,6 +3822,15 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .lab-mdr-day-row .btn { min-height: 30px; margin-left: 12px; padding: 0 10px; }
 .lab-mdr-day-flag { margin-left: 12px; padding: 2px 9px; color: var(--m900); background: var(--m100); border-radius: var(--radius-pill); font-size: var(--text-caption); font-weight: 700; }
 .lab-mdr-day-row.is-shown th { background: color-mix(in srgb, var(--m400) 26%, var(--paper)); }
+/* เงื่อนไขการทดสอบ (เวลาทดสอบ · อุณหภูมิ): ทั้งตาราง / ทั้งวัน / หัวกลุ่มในวันที่มีหลายเงื่อนไข */
+.lab-mdr-table-scope { margin-left: 10px; color: var(--muted); font-size: var(--text-caption); font-weight: 600; }
+.lab-mdr-cond-all { margin: 0; padding: 8px 12px; color: var(--muted); font-size: var(--text-caption); font-weight: 600; }
+.lab-mdr-day-cond { margin-left: 10px; padding: 2px 9px; color: var(--ink); background: color-mix(in srgb, var(--m400) 16%, var(--paper)); border: 1px solid color-mix(in srgb, var(--m600) 35%, transparent); border-radius: var(--radius-pill); font-size: var(--text-caption); font-weight: 700; font-variant-numeric: tabular-nums; }
+.lab-mdr-cond-row th { padding: 6px 12px 6px 22px; text-align: left; color: var(--m800); background: color-mix(in srgb, var(--m400) 6%, var(--paper)); border-left: 4px solid var(--m400); font-size: var(--text-caption); font-weight: 700; font-variant-numeric: tabular-nums; }
+:root[data-theme="dark"] .lab-mdr-cond-row th { color: var(--m400); }
+.lab-mdr-unmeasured { color: var(--muted); cursor: help; }
+.lab-mdr-result-bad { color: var(--danger); font-weight: 700; }
+.lab-mdr-result-ok { color: var(--muted); }
 .lab-mdr-table tbody .sticky { background: var(--paper); }
 .lab-mdr-stat th, .lab-mdr-stat td, .lab-mdr-table tbody .lab-mdr-stat .sticky { font-weight: 700; background: color-mix(in srgb, var(--m400) 7%, var(--shell)); }
 .lab-mdr-stat.lab-mdr-sd th, .lab-mdr-stat.lab-mdr-sd td { color: var(--muted); font-weight: 600; }
@@ -3810,7 +3840,7 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
   .lab-mdr-menu { left: 0; right: 0; }
   .lab-mdr-parts { grid-template-columns: 1fr; }
   /* 15 ครั้งต่อวันบนจอแคบ: ปุ่มเส้นเหลือแค่ ID (เวลาอยู่ในตารางแล้ว) */
-  .lab-mdr-legend { padding: 10px 12px 2px; gap: 4px; }
+  .lab-mdr-legend { gap: 4px; }
   .lab-mdr-key { min-height: 28px; padding: 0 8px; }
   .lab-mdr-key small { display: none; }
 }
