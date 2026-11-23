@@ -15,7 +15,7 @@
   let version = 0;
   let current = null; // หน้าสูตร/รายการที่วาดอยู่: { route, data, observer, hidden:Set, mine, denied }
   let lastRoute = null;
-  // route ล่าสุดที่ขอ (lastRoute: ใช้วาดใหม่หลังอัปโหลด แม้การอ่านครั้งก่อนล้มเหลว) · trendMode = ค่าที่กราฟแนวโน้มของ F2 แสดง (views.TREND_MODES)
+  // route ล่าสุดที่ขอ (lastRoute: ใช้วาดใหม่หลังอัปโหลด แม้การอ่านครั้งก่อนล้มเหลว) · trendMode = ค่าที่ผู้ใช้เลือกให้กราฟแนวโน้มแสดง (views.TREND_MODES)
   let trendMode = "delta";
   // ช่วงวันของกราฟแนวโน้มและตาราง (views.trendRange) คงไว้เมื่อวาดสูตรเดิมใหม่ (เปลี่ยนวันของกราฟแรงบิด หลังอัปโหลด) เปลี่ยนสูตร/ชุดทดสอบ = เริ่มที่ล่าสุดใหม่
   let trendZoom = { kind: "latest" };
@@ -47,6 +47,7 @@
 
   async function open(params, { denied, title, path }) {
     dispose();
+    zoomOwner = ""; // เปิดหน้าใหม่ (ไม่ใช่ goTo ในหน้าเดิม) = ช่วงเริ่มที่ล่าสุดเสมอ
     const mine = ++version;
     const route = model.readRoute(params);
     app.innerHTML = shell(views.page(route), path, title);
@@ -135,7 +136,8 @@
   function bindTrend(plot, partKey, days, curveDate) {
     const buttons = [...document.querySelectorAll("[data-trend]")];
     const modes = buttons.map((button) => button.dataset.trend);
-    if (!modes.includes(trendMode)) trendMode = modes[0] ?? "delta";
+    // ค่าที่ผู้ใช้เลือก (trendMode) ไม่ถูกเขียนทับ: สูตรที่ไม่มีค่านั้น (เช่น ts2 ของ F2) แสดงค่าแรกแทนชั่วคราว
+    const shownMode = () => (modes.includes(trendMode) ? trendMode : modes[0] ?? "delta");
     const note = document.querySelector("#mdr-trend-note");
     const bar = document.querySelector("#mdr-zoom");
     const monthFrom = document.querySelector("#mdr-month-from");
@@ -169,7 +171,7 @@
 
     function draw(force = false) {
       // สถานะปุ่มก่อน: แม้กราฟยังวาดไม่ได้ (กว้าง 0 เช่นแท็บซ่อน) ปุ่มก็ตรงกับค่าที่เลือก
-      buttons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.trend === trendMode)));
+      buttons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.trend === shownMode())));
       const now = views.trendRange(trendZoom, days);
       paintBar(now);
       if (table && !rangeKit.same(now, shown)) {
@@ -180,10 +182,10 @@
       const next = Math.floor(plot.clientWidth - 36);
       if (next <= 0 || (next === width && !force)) return;
       width = next;
-      const chart = views.trendSvg(days, trendMode, width, partKey, now);
+      const chart = views.trendSvg(days, shownMode(), width, partKey, now);
       plot.innerHTML = chart.svg;
       if (note) note.textContent = chart.note;
-      const mode = views.TREND_MODES.find((item) => item.key === trendMode);
+      const mode = views.TREND_MODES.find((item) => item.key === shownMode());
       plot.setAttribute("aria-label", `${baseLabel} ค่า ${mode?.label ?? ""} รายครั้งและค่าเฉลี่ยรายวัน`);
     }
 
