@@ -3589,6 +3589,20 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 @media (min-width: 1041px) {
   .wh-work-link { display: none; }
 }
+/* แปรรูปยาง (GR) #/gr · modules/gr-pages.js: ความคืบหน้ารายขั้นบนการ์ด (ขั้นที่ครบต้องทำเป็นสีของโมดูล) · ฟอร์มบันทึกผลรายวันช่องสูง 48px แตะง่ายบนมือถือ · ล็อตที่ได้ · ตารางสรุปผลเรียงตามความกว้างจอ */
+.gr-steps li.is-done { color: var(--m700); font-weight: 600; }
+.gr-steps li.is-done .rf-mono::before { content: "✓ "; }
+:root[data-theme="dark"] .gr-steps li.is-done { color: var(--m300); }
+.gr-record-form .rf-input, .gr-record-form .rf-select { min-height: 48px; font-size: 1.05rem; }
+.gr-record-form .bom-step-next .rf-btn { min-height: 48px; min-width: 160px; }
+.gr-target-line:empty { display: none; }
+.gr-lots { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.gr-check { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; }
+.gr-check input { width: 20px; height: 20px; flex: none; }
+.gr-summary { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); align-items: start; }
+.gr-settings-table .rf-input, .gr-settings-table .rf-select { min-width: 110px; }
+@media (max-width: 640px) {
+  .gr-record-form .bom-step-next .rf-btn { width: 100%; }
 
 /* ---------- MNP LAB · รายงานทดสอบ MDR (lab-mdr-views.js) ---------- */
 /* ปุ่มอัปโหลดบนหัวโมดูลสี = ปุ่มหลักของหน้า (สี CTA ของหัว) · เมนูสองทางลอยใต้ปุ่ม จึงให้หัวโมดูลนี้ไม่ตัดขอบ */

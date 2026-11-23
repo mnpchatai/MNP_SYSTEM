@@ -1610,7 +1610,9 @@ test("the mock database enforces the contract: test mode, writer permission, per
 
   const { epoch: firstEpoch, ...firstSnapshot } = (await client.rpc("app_bom_master")).data;
   assert.equal(typeof firstEpoch, "string", "the snapshot carries the epoch of the data round");
-  assert.deepEqual(firstSnapshot, emptyMaster());
+  // grWorkers (20261216010000) = พนักงานแผนก GR ของโหมดทดสอบ (บัญชีทดสอบ) มากับ snapshot เท่านั้น ชุดอื่นว่าง
+  assert.deepEqual({ ...firstSnapshot, grWorkers: [] }, emptyMaster());
+  assert.deepEqual(firstSnapshot.grWorkers.map((row) => row.id), ["persona-gr", "persona-grh"], "the snapshot lists the GR workers of test mode");
   let reply = await save({ items: { upsert: [item("FG-1", "FG"), item("P-1")] } });
   assert.equal(reply.error, null);
   assert.equal(reply.data.version, 1);
@@ -1753,8 +1755,8 @@ test("the mock sandbox offers switchable personas (the planner group, producing 
   const { client } = createMockSupabase({ sandbox: true, now: () => NOW, storage });
   const status = (await client.rpc("app_sandbox_status")).data;
   assert.equal(status.persona.id, "persona-1", "the first persona is the simulated admin, as before");
-  assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-rbh", "persona-gr", "persona-st", "persona-sr", "persona-wh", "persona-whh", "persona-qa", "persona-pk", "persona-pt", "persona-bg"]);
-  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "st", "sr", "wh", "manager", "qa", "pk", "pt", "bg"], "each persona maps to a BOM role (the RB head and the WH head are department managers; SR runs the long-rod store and QA decides held rod lots; PK staff work their jobs by department)");
+  assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-rbh", "persona-gr", "persona-grh", "persona-st", "persona-sr", "persona-wh", "persona-whh", "persona-qa", "persona-pk", "persona-pt", "persona-bg"]);
+  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "gr", "st", "sr", "wh", "manager", "qa", "pk", "pt", "bg"], "each persona maps to a BOM role (the RB head and the WH head are department managers; the GR head is an assistant department manager, so GR by department; SR runs the long-rod store and QA decides held rod lots; PK staff work their jobs by department)");
   assert.deepEqual(status.personas.slice(-3).map((row) => [row.department.code, row.role.code]), [["PK", "staff"], ["PT", "staff"], ["BG", "staff"]], "PK, PT and BG staff can be tried too");
   assert.deepEqual(status.personas.slice(-3).map((row) => storeApi.personaUser(row).dept), ["PK", "PT", "BG"], "and work the jobs of their own department");
   assert.equal((await client.rpc("app_sandbox_enter", { p_persona_id: "persona-rb" })).error, null);
@@ -2090,6 +2092,7 @@ test("drawing a fresh page clears the dirty state and merges what was held", asy
 // หน้าแรกของโมดูลแผนก (#/gr): store ของ BOM วาดหน้านั้นใหม่เหมือนหน้า BOM (ผู้อื่นบันทึก · บันทึกของเราถูกปฏิเสธและย้อนกลับ) และไม่วาดทับ dialog ที่เปิดอยู่
 async function deptEnv(hooks = {}) {
   const env = await dirtyEnv(hooks);
+  vm.runInContext(fs.readFileSync("modules/gr-pages.js", "utf8"), env.context, { filename: "modules/gr-pages.js" });
   vm.runInContext(fs.readFileSync("modules/module-gr.js", "utf8"), env.context, { filename: "modules/module-gr.js" });
   env.log.hash = "#/gr";
   const real = env.mock.client.rpc.bind(env.mock.client);

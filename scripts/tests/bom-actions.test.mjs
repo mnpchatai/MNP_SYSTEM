@@ -1172,7 +1172,8 @@ test("a job started or held without output, or linked to RubberFlow, locks the o
 
 test("who may do what with a job or a count: the planner group everywhere, a department its own jobs, ST and WH count, RubberFlow links are RB's or the planners'", () => {
   const d = fresh();
-  const job = d.jobs.find((entry) => entry.orderId === "DEMO-26001" && entry.dept === "GR" && entry.status !== "done");
+  // งาน GR ที่ตั้งขั้นตอนแล้ว (ชุดสาธิตของ GR) ยอดมาจากผลรายวัน จึงใช้งานที่ยังรายงานแบบเดิมได้
+  const job = d.jobs.find((entry) => entry.orderId === "DEMO-26001" && entry.dept === "GR" && entry.status !== "done" && !d.grPlans.some((plan) => plan.jobId === entry.id));
   const staff = (role, dept) => ({ id: role, role, dept, name: role });
   const { canWorkJob, canCount, canLinkRubberflow } = A.helpers;
   for (const planning of [user("planner"), user("manager"), user("admin")]) assert.equal(canWorkJob(planning, job), true, "the planner group reports for every department");
