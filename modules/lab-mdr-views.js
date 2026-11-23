@@ -112,6 +112,7 @@
           <p class="lab-mdr-trend-key"><span class="lab-mdr-k lab-mdr-k-dot"></span>แต่ละครั้ง<span class="lab-mdr-k lab-mdr-k-avg"></span>AVG รายวัน<span class="lab-mdr-k lab-mdr-k-band"></span>ช่วงปกติของสูตร (AVG ± 2SD ทุกครั้ง)<span class="lab-mdr-k lab-mdr-k-out"></span>นอกช่วง</p>
         </div>
         <div class="lab-plot lab-mdr-trend-plot" id="mdr-trend" role="img" aria-label="กราฟแนวโน้มรายวันของสูตร ${esc(route.formula)}"></div>
+        <p class="lab-mdr-trend-note" id="mdr-trend-note" aria-live="polite"></p>
       </section>`;
     return `${formulaHead(route, data.formulas, days, curveDay?.date ?? null)}
       ${chartCard}${trendCard}
@@ -191,12 +192,16 @@
     const series = [...days].reverse().map((day) => ({ date: day.date, points: day.tests.map((test) => ({ test, value: model.metricValue(test, metricKey) })).filter((point) => point.value !== null) }))
       .filter((day) => day.points.length);
     const height = Math.round(Math.min(320, Math.max(220, width * 0.34)));
-    if (!series.length) return { svg: `<p class="lab-mdr-trend-empty">ไม่มีค่า ${esc(metric.label)} ในผลของสูตรนี้</p>`, height };
+    // note = ข้อความใต้กราฟ (ช่วงปกติ หรือเหตุที่ไม่มี) อยู่นอก role="img" ของกราฟ โปรแกรมอ่านหน้าจอจึงอ่านได้
+    if (!series.length) return { svg: "", note: `ไม่มีค่า ${metric.label} ในผลของสูตรนี้`, height };
     const values = series.flatMap((day) => day.points.map((point) => point.value));
     const average = model.mean(values);
     const spread = model.sampleSd(values) ?? 0;
-    const low = average - 2 * spread;
-    const high = average + 2 * spread;
+    // ช่วงปกติต้องมีอย่างน้อย 2 ครั้งที่ค่าต่างกัน · ทุกค่าที่แสดง (MH−ML, t90) ติดลบไม่ได้ ขอบล่างจึงไม่ต่ำกว่า 0
+    const hasBand = values.length >= 2 && spread > 0;
+    const low = hasBand ? Math.max(0, average - 2 * spread) : average;
+    const high = hasBand ? average + 2 * spread : average;
+    const isOut = (value) => hasBand && (value < low || value > high);
     const pad = { left: 62, right: 16, top: 16, bottom: 34 };
     const plotW = Math.max(120, width - pad.left - pad.right);
     const plotH = height - pad.top - pad.bottom;
@@ -206,7 +211,7 @@
     const step = metric.kind === "time"
       ? [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800].find((candidate) => (max - min) / candidate <= 6) ?? 3600
       : niceStep(max - min || 1, 5);
-    const yMin = Math.floor(min / step) * step;
+    const yMin = Math.max(0, Math.floor(min / step) * step);
     const yMax = Math.ceil(max / step) * step;
     const slot = plotW / series.length;
     const x = (index) => pad.left + slot * (index + 0.5);
@@ -216,11 +221,11 @@
     for (let value = yMin; value <= yMax + step / 1000; value += step) {
       parts.push(`<line class="lab-grid" x1="${pad.left}" x2="${pad.left + plotW}" y1="${y(value).toFixed(1)}" y2="${y(value).toFixed(1)}"/><text class="lab-tick" x="${pad.left - 8}" y="${(y(value) + 4).toFixed(1)}" text-anchor="end">${esc(label(value))}</text>`);
     }
-    parts.push(`<rect class="lab-mdr-band" x="${pad.left}" width="${plotW}" y="${y(high).toFixed(1)}" height="${Math.max(0, y(low) - y(high)).toFixed(1)}"/>`);
-    // ป้ายวันที่: จอแคบหรือหลายวัน แสดงทุก n วันพอไม่ให้ทับกัน
+    if (hasBand) parts.push(`<rect class="lab-mdr-band" x="${pad.left}" width="${plotW}" y="${y(high).toFixed(1)}" height="${Math.max(0, y(low) - y(high)).toFixed(1)}"/>`);
+    // ป้ายวันที่: จอแคบหรือหลายวัน แสดงทุก n วัน นับถอยจากวันล่าสุด (วันล่าสุดมีป้ายเสมอ และไม่มีป้ายสองอันชิดกัน)
     const every = Math.max(1, Math.ceil(series.length / Math.max(1, Math.floor(plotW / 70))));
     series.forEach((day, index) => {
-      if (index % every === 0 || index === series.length - 1) parts.push(`<text class="lab-tick" x="${x(index).toFixed(1)}" y="${pad.top + plotH + 20}" text-anchor="middle">${esc(model.formatDate(day.date).replace(/ \d{4}$/, ""))}</text>`);
+      if ((series.length - 1 - index) % every === 0) parts.push(`<text class="lab-tick" x="${x(index).toFixed(1)}" y="${pad.top + plotH + 20}" text-anchor="middle">${esc(model.formatDate(day.date).replace(/ \d{4}$/, ""))}</text>`);
     });
     const avgPoints = series.map((day, index) => ({ cx: x(index), cy: y(model.mean(day.points.map((point) => point.value))), day }));
     parts.push(`<path class="lab-mdr-avg" d="${avgPoints.map((point, index) => `${index ? "L" : "M"}${point.cx.toFixed(1)} ${point.cy.toFixed(1)}`).join("")}"/>`);
@@ -230,7 +235,7 @@
         const offset = day.points.length > 1 ? (at / (day.points.length - 1) - 0.5) * 2 * spreadX : 0;
         const cx = x(index) + offset;
         const cy = y(point.value);
-        const out = point.value < low || point.value > high;
+        const out = isOut(point.value);
         const tip = `${model.formatDate(day.date)} · ID ${point.test.machine_id} ${point.test.test_time} · ${metric.label} ${label(point.value)}${out ? " (นอกช่วงปกติ)" : ""}`;
         parts.push(out
           ? `<path class="lab-mdr-dot is-out" d="M${cx.toFixed(1)} ${(cy - 5).toFixed(1)}l5 9h-10z"><title>${esc(tip)}</title></path>`
@@ -238,10 +243,9 @@
       });
     });
     avgPoints.forEach((point) => parts.push(`<circle class="lab-mdr-avg-pt" cx="${point.cx.toFixed(1)}" cy="${point.cy.toFixed(1)}" r="5"><title>${esc(`${model.formatDate(point.day.date)} · AVG ${metric.label} ${label(model.mean(point.day.points.map((item) => item.value)))} (${point.day.points.length} ครั้ง)`)}</title></circle>`));
-    const outCount = values.filter((value) => value < low || value > high).length;
-    const svg = `<svg class="lab-svg lab-mdr-svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">${parts.join("")}</svg>
-      <p class="lab-mdr-trend-note">ช่วงปกติ ${esc(label(low))} – ${esc(label(high))} · นอกช่วง ${outCount} จาก ${values.length} ครั้ง</p>`;
-    return { svg, height };
+    const svg = `<svg class="lab-svg lab-mdr-svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">${parts.join("")}</svg>`;
+    const note = hasBand ? `ช่วงปกติ ${metric.label} ${label(low)} – ${label(high)}` : "ยังคำนวณช่วงปกติไม่ได้ (ต้องมีอย่างน้อย 2 ครั้งที่ค่าต่างกัน)";
+    return { svg, note, height };
   }
 
   /* ---------- กราฟแรงบิด ---------- */

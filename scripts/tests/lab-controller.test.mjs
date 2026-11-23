@@ -12,7 +12,7 @@ function setup(respond) {
   const element = (selector) => {
     if (!elements.has(selector)) elements.set(selector, {
       value: selector === "#lab-sort" ? "recent" : "", textContent: "", innerHTML: "", hidden: false, clientWidth: 600, listeners: {},
-      addEventListener(name, fn) { this.listeners[name] = fn; }, setAttribute() {}, removeAttribute() {}, classList: { toggle() {} },
+      addEventListener(name, fn) { this.listeners[name] = fn; }, setAttribute() {}, getAttribute() { return ""; }, removeAttribute() {}, classList: { toggle() {} },
       querySelector: (inner) => element(inner), querySelectorAll: () => [],
     });
     return elements.get(selector);

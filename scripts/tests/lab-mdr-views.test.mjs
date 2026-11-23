@@ -116,5 +116,14 @@ test("swelling trend chart: one value at a time (MH−ML or t90), a dot per test
   const time = views.trendSvg(days, "t90_s", 600, "F2").svg;
   assert.equal(count(time, /class="lab-mdr-dot/g), 3, "a test without t90 is left out, not drawn as zero");
   assert.match(time, />[0-9]+:[0-5][05]<\/text>/, "time ticks are m:ss");
-  assert.match(views.trendSvg([], "t90_s", 600, "F2").svg, /ไม่มีค่า t90/);
+  assert.match(views.trendSvg([], "t90_s", 600, "F2").note, /ไม่มีค่า t90/);
+  assert.match(views.trendSvg(days, "delta", 600, "F2").note, /^ช่วงปกติ MH−ML /);
+  const one = views.trendSvg(model.groupByDate(swelling.slice(0, 1)), "delta", 600, "F2");
+  assert.doesNotMatch(one.svg, /lab-mdr-band/, "one test: no normal band");
+  assert.match(one.note, /ยังคำนวณช่วงปกติไม่ได้/);
+  const spread = model.normalizeTests([10, 300, 15, 12].map((t90, i) => ({ id: i, machine_id: String(i), test_date: "2026-11-0" + (i + 1), test_time: "08:00", ml: 1, mh: 2, t90_s: t90 })));
+  assert.doesNotMatch(views.trendSvg(model.groupByDate(spread), "t90_s", 400, "F2").svg, />-d|y="-/, "no negative axis or band for values that cannot be negative");
+  const many = model.normalizeTests(Array.from({ length: 11 }, (_, i) => ({ id: i, machine_id: "1", test_date: "2026-11-" + String(i + 1).padStart(2, "0"), test_time: "08:00", ml: 1, mh: 2 + i, t90_s: 100 })));
+  const xs = [...views.trendSvg(model.groupByDate(many), "delta", 400, "F2").svg.matchAll(/<text class="lab-tick" x="([d.]+)" y="[d.]+" text-anchor="middle">/g)].map((m) => Number(m[1]));
+  assert.ok(xs.every((x, i) => i === 0 || x - xs[i - 1] >= 60), "date labels never crowd each other");
 });

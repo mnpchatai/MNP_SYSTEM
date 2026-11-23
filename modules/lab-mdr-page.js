@@ -14,7 +14,8 @@
   let version = 0;
   let current = null; // หน้าสูตร/รายการที่วาดอยู่: { route, data, observer, hidden:Set, mine, denied }
   let lastRoute = null;
-  let trendMode = "delta"; // ค่าที่กราฟแนวโน้มของ F2 แสดง (views.TREND_MODES) // route ล่าสุดที่ขอ (ใช้วาดใหม่หลังอัปโหลด แม้การอ่านครั้งก่อนล้มเหลว)
+  // route ล่าสุดที่ขอ (lastRoute: ใช้วาดใหม่หลังอัปโหลด แม้การอ่านครั้งก่อนล้มเหลว) · trendMode = ค่าที่กราฟแนวโน้มของ F2 แสดง (views.TREND_MODES)
+  let trendMode = "delta";
 
   const isDenied = (error) => /NOT_AUTHORIZED|AUTH_REQUIRED|JWT expired/.test(String(error?.message ?? "")) || error?.code === "PGRST301";
 
@@ -109,12 +110,19 @@
   function bindTrend(plot, partKey, days) {
     const buttons = [...document.querySelectorAll("[data-trend]")];
     let width = 0;
+    const note = document.querySelector("#mdr-trend-note");
+    const baseLabel = plot.getAttribute("aria-label");
     function draw(force = false) {
+      // สถานะปุ่มก่อน: แม้กราฟยังวาดไม่ได้ (กว้าง 0 เช่นแท็บซ่อน) ปุ่มก็ตรงกับค่าที่เลือก
+      buttons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.trend === trendMode)));
       const next = Math.floor(plot.clientWidth - 36);
       if (next <= 0 || (next === width && !force)) return;
       width = next;
-      plot.innerHTML = views.trendSvg(days, trendMode, width, partKey).svg;
-      buttons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.trend === trendMode)));
+      const chart = views.trendSvg(days, trendMode, width, partKey);
+      plot.innerHTML = chart.svg;
+      if (note) note.textContent = chart.note;
+      const mode = views.TREND_MODES.find((item) => item.key === trendMode);
+      plot.setAttribute("aria-label", `${baseLabel} ค่า ${mode?.label ?? ""} รายครั้งและค่าเฉลี่ยรายวัน`);
     }
     buttons.forEach((button) => button.addEventListener("click", () => {
       trendMode = button.dataset.trend;

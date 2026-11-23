@@ -3686,7 +3686,7 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .lab-mdr-avg-pt { fill: var(--m400); stroke: var(--paper); stroke-width: 2; }
 .lab-mdr-dot { fill: #c9d4e3; fill-opacity: .8; }
 .lab-mdr-dot.is-out { fill: #ff5c5c; fill-opacity: 1; }
-.lab-mdr-trend-note { margin: 2px 0 0; color: var(--muted); font-size: var(--text-caption); font-variant-numeric: tabular-nums; }
+.lab-mdr-trend-note { margin: 2px 0 0; padding: 0 18px; color: var(--muted); font-size: var(--text-caption); font-variant-numeric: tabular-nums; }
 .lab-mdr-trend-empty { margin: 0; padding: 32px 0; color: var(--muted); text-align: center; }
 
 /* ตารางผลรายครั้ง: หัววันแบ่งกลุ่ม (สีของโมดูล) แถว AVG/SD เน้นใต้แต่ละวัน */
