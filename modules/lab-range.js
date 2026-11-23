@@ -39,12 +39,13 @@
   // ช่วงจากตัวเลือกของผู้ใช้: "latest" = ล่าสุด latest รายการ, "all" = ทั้งหมด, "months" = เดือน from ถึงเดือน to (เดือนนั้นไม่มีข้อมูลแล้ว = ล่าสุด),
   // "custom" = ช่วงที่ซูม/เลื่อนมาเอง (follow = ติดขอบขวาอยู่ จึงขยับตามเมื่อมีรายการใหม่เข้ามา)
   // ตัวเลือกที่ไม่ใช่ custom คำนวณใหม่ทุกครั้งที่วาด จึงตามข้อมูลใหม่ (เดือนที่เลือกรับรายการใหม่ของเดือนนั้นเข้ามาเอง)
-  function resolve(zoom, months, { latest, min }) {
+  // exactMonths = เดือนที่เลือกได้เฉพาะรายการของเดือนนั้นจริง แม้น้อยกว่า min (MDR: ต.ค. มี 2 วัน = 2 วัน ไม่เติมวันของ พ.ย.) Mooney ไม่ส่ง = ขยายถึง min เหมือนเดิม
+  function resolve(zoom, months, { latest, min, exactMonths = false }) {
     const total = months.length;
     const kind = zoom?.kind ?? "latest";
     if (kind === "all") return normalize({ start: 0, end: total }, total, min);
     if (kind === "months") {
-      const range = forMonths(months, zoom.from, zoom.to, min);
+      const range = forMonths(months, zoom.from, zoom.to, exactMonths ? 1 : min);
       if (range) return range;
     }
     if (kind === "custom") {

@@ -15,6 +15,11 @@
   const MAX_POINTS = 7201; // 120 นาที ทุก 1 วินาที (ตรงกับข้อจำกัดของฐานข้อมูล)
   const UPLOAD_BATCH = 20; // ต่อคำขอ (ฐานข้อมูลรับไม่เกิน 25) ไฟล์ละ ~13–50 KB เมื่อเป็น JSON
   const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,38}F[12]$/;
+  const CURVE_SLACK_S = 5; // กราฟสั้นกว่าเวลาทดสอบได้ไม่เกินเท่านี้
+  // F2 ที่ยางไม่พองตัว (ค่าตั้งต้นที่เสนอเจ้าของงาน 2026-11-23): MH−ML น้อยกว่า 1% ของ ML หรือ t90 ถึงเวลาทดสอบ − 10 วินาที = เครื่องเขียน t50/t90 เป็นเวลาจบการทดสอบ
+  const NO_SWELL_RISE = 0.01;
+  const NO_SWELL_END_S = 10;
+  const MIN_BAND_TESTS = 10; // ช่วงปกติ (AVG ± 2SD) ต้องมีผลอย่างน้อยเท่านี้ในเงื่อนไขเดียวกัน
 
   // ชุดทดสอบ: ลำดับนี้ = ลำดับแท็บในหน้า · unit = หน่วยของ ML/MH (F2 เครื่องไม่ระบุหน่วย จึงไม่แสดง)
   const PARTS = Object.freeze([
@@ -42,6 +47,7 @@
     noCurve: "ไม่มีข้อมูลกราฟ",
     badValues: "ผลไม่สมบูรณ์ (MH ต่ำกว่า ML หรือไม่มีค่า)",
     curveTooLong: "กราฟยาวเกิน 120 นาที",
+    curveTooShort: "กราฟสั้นกว่าเวลาทดสอบ (เครื่องหยุดก่อนครบเวลา)",
     sameInBatch: "ไฟล์ซ้ำกันในชุดที่เลือก",
   });
 
@@ -145,6 +151,8 @@
     if (temperature === null || setMinutes === null || temperature < 0 || temperature > 300 || setMinutes < 0 || setMinutes > 600) {
       return { ok: false, reason: SKIP.unreadable, name: named.name };
     }
+    // กราฟ n จุด = n − 1 วินาที · ไฟล์จริงทุกไฟล์ยาวเท่าเวลาทดสอบพอดี กราฟที่สั้นกว่าเวลาทดสอบเกิน 5 วินาที = เครื่องหยุดกลางคัน ผลจากกราฟเชื่อไม่ได้
+    if (curve.length > 0 && curve.length - 1 < setMinutes * 60 - CURVE_SLACK_S) return { ok: false, reason: SKIP.curveTooShort, name: named.name };
     const test = {
       name: named.name,
       machine_id: id,
@@ -224,7 +232,27 @@
     return out;
   }
 
-  // ผลจากฟีด → [{ date, tests, stats }] วันล่าสุดก่อน ในวันเรียงตามเวลา (ลำดับเดียวกับเครื่อง)
+  /* ---------- เงื่อนไขการทดสอบ (เวลาทดสอบ + อุณหภูมิ) ---------- */
+  // ผลต่างเงื่อนไขกันเทียบกันไม่ได้ (เช่น SEP003 วันที่ 12 พ.ย. 30 นาที MH 15.65 / 40 นาที MH 16.65–17.03) จึงเฉลี่ย ทำกราฟแนวโน้ม และช่วงปกติแยกตามเงื่อนไข
+  const conditionKey = (test) => `${test.set_minutes ?? "-"}|${test.temperature_c ?? "-"}`;
+  function formatCondition(condition) {
+    const time = Number.isFinite(condition?.set_minutes) ? `${condition.set_minutes} นาที` : "ไม่ระบุเวลาทดสอบ";
+    const heat = Number.isFinite(condition?.temperature_c) ? ` · ${condition.temperature_c} °C` : "";
+    return `${time}${heat}`;
+  }
+  // เงื่อนไขทั้งหมดของผล [{ key, set_minutes, temperature_c, n }] มากครั้งก่อน (เท่ากัน = เวลาทดสอบสั้นก่อน)
+  function conditionsOf(tests) {
+    const found = new Map();
+    for (const test of tests) {
+      const key = conditionKey(test);
+      if (!found.has(key)) found.set(key, { key, set_minutes: test.set_minutes ?? null, temperature_c: test.temperature_c ?? null, n: 0 });
+      found.get(key).n += 1;
+    }
+    return [...found.values()].sort((a, b) => b.n - a.n || (a.set_minutes ?? 0) - (b.set_minutes ?? 0) || (a.temperature_c ?? 0) - (b.temperature_c ?? 0));
+  }
+
+  // ผลจากฟีด → [{ date, tests, groups: [{ key, set_minutes, temperature_c, tests, stats }] }] วันล่าสุดก่อน ในวันเรียงตามเวลา (ลำดับเดียวกับเครื่อง)
+  // AVG/SD ต่อ (วัน, เงื่อนไข) ไม่ใช่ต่อวัน กลุ่มในวันเรียงตามครั้งแรกของกลุ่ม
   function groupByDate(tests) {
     const days = new Map();
     for (const test of tests) {
@@ -235,8 +263,31 @@
       .sort((a, b) => b[0].localeCompare(a[0]))
       .map(([date, items]) => {
         const sorted = [...items].sort((a, b) => a.test_time.localeCompare(b.test_time) || a.machine_id.localeCompare(b.machine_id, "en", { numeric: true }));
-        return { date, tests: sorted, stats: summarize(sorted) };
+        const groups = new Map();
+        for (const test of sorted) {
+          const key = conditionKey(test);
+          if (!groups.has(key)) groups.set(key, { key, set_minutes: test.set_minutes ?? null, temperature_c: test.temperature_c ?? null, tests: [] });
+          groups.get(key).tests.push(test);
+        }
+        return { date, tests: sorted, groups: [...groups.values()].map((group) => ({ ...group, stats: summarize(group.tests) })) };
       });
+  }
+  // มีค่า key ในผลอย่างน้อยหนึ่งครั้ง (คอลัมน์/ปุ่มที่ว่างทั้งหมดไม่แสดง)
+  const hasMetric = (days, key) => days.some((day) => day.tests.some((test) => metricValue(test, key) !== null));
+
+  /* ---------- F2: ยางไม่พองตัว ---------- */
+  // เครื่องเขียน t50/t90 = เวลาจบการทดสอบ เมื่อแรงบิดแทบไม่ขึ้น (A2401 F2 14 พ.ย.: ML 6092 / MH 6097 t90 29:57) ค่านั้นไม่ใช่ผลวัด
+  // ใช้ตอนแสดงผลกับแถวที่เก็บไว้ ไม่แก้ข้อมูลในฐานข้อมูล: t50/t90 = null (แสดง "–" ไม่นับใน AVG/SD กราฟ และช่วงปกติ) ML/MH คงไว้
+  function noSwell(test) {
+    const { ml, mh } = test;
+    const flat = Number.isFinite(ml) && Number.isFinite(mh) && ml > 0 && mh - ml < NO_SWELL_RISE * ml;
+    const end = Number.isFinite(test.set_minutes) ? test.set_minutes * 60 - NO_SWELL_END_S : null;
+    const atEnd = end !== null && Number.isFinite(test.t90_s) && test.t90_s >= end;
+    return flat || atEnd;
+  }
+  function applyDisplayRules(tests, partKey) {
+    if (partKey !== "F2") return tests;
+    return tests.map((test) => (noSwell(test) ? { ...test, t50_s: null, t90_s: null, no_swell: true, t90_raw: test.t90_s } : test));
   }
 
   // ฟีดจากฐานข้อมูล → ตัวเลขเป็น number (numeric ของ Postgres อาจมาเป็นข้อความ)
@@ -300,9 +351,10 @@
   }
 
   const api = {
-    MAX_FILE_BYTES, MAX_POINTS, UPLOAD_BATCH, PARTS, METRICS, SKIP, findPart,
+    MAX_FILE_BYTES, MAX_POINTS, UPLOAD_BATCH, CURVE_SLACK_S, NO_SWELL_RISE, NO_SWELL_END_S, MIN_BAND_TESTS, PARTS, METRICS, SKIP, findPart,
     parseClock, splitName, cureFromCurve, parseIni, testKey, classifyFiles, groupSkipped, chunk,
-    mean, sampleSd, metricValue, summarize, groupByDate, normalizeTests,
+    mean, sampleSd, metricValue, summarize, groupByDate, hasMetric, normalizeTests, noSwell, applyDisplayRules,
+    conditionKey, conditionsOf, formatCondition,
     formatClock, formatTorque, formatMetric, formatSd, formatDate, readRoute, routeUrl,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

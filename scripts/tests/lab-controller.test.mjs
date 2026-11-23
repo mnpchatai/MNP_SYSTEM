@@ -384,6 +384,75 @@ test("MDR torque chart: its own range bar (latest day by default), several days 
   assert.match(linked.element("#mdr-body").innerHTML, /data-show-date="2026-11-03"/, "the newest day offers its chart: the link's day is charted");
 });
 
+test("MDR month pick (A): October with two test days shows those two days, the boxes keep October, and ‹ › keep the width", async () => {
+  const dates = ["2026-10-27", "2026-10-28", "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05"];
+  const rows = dates.map((date, i) => ({ id: i + 1, machine_id: "111", test_date: date, test_time: "08:00", set_minutes: 30, temperature_c: 155, ml: 1, mh: 6 + i * 0.1, t90_s: 150 }));
+  const app = setup(async () => ({ data: { formulas: [{ formula: "A2004", tests: 6, days: 6, last_date: "2026-11-05" }], tests: rows, curve_date: null, curves: [] }, error: null }));
+  await app.open("module=mdr&part=F2&formula=A2004");
+  const bar = app.element("#mdr-zoom");
+  const table = app.element("#mdr-table-scroll");
+  app.element("#mdr-month-from").value = "2026-10";
+  app.element("#mdr-month-to").value = "2026-10";
+  bar.listeners.change({ target: app.element("#mdr-month-to") });
+  assert.equal((table.innerHTML.match(/class="lab-mdr-day-row/g) ?? []).length, 2);
+  assert.doesNotMatch(table.innerHTML, /2 พ.ย./, "no November day added");
+  assert.equal(app.element("#mdr-month-to").value, "2026-10", "the end box keeps October");
+  bar.listeners.click({ target: { closest: () => ({ dataset: { step: "forward" }, disabled: false }) } });
+  assert.equal((table.innerHTML.match(/class="lab-mdr-day-row/g) ?? []).length, 2, "panning a two-day pick moves two days, it does not widen to three");
+});
+
+test("MDR: a chosen day stays when older days arrive (E); a late feed of a formula left behind does not paint over the new one (G)", async () => {
+  const row = (id, date) => ({ id, machine_id: "111", test_date: date, test_time: "08:00", set_minutes: 30, temperature_c: 155, ml: 1, mh: 8, ts2_s: 30, t90_s: 160 });
+  let rows = [row(1, "2026-11-01"), row(2, "2026-11-02"), row(3, "2026-11-03")];
+  const curve = Array.from({ length: 1801 }, (_, second) => Math.min(8, 1 + second * 0.02));
+  const gates = new Map();
+  const app = setup(async (name, args) => {
+    if (gates.has(args.p_formula)) await gates.get(args.p_formula);
+    if (name === "app_lab_mdr_curves") {
+      const inRange = rows.filter((item) => item.test_date >= args.p_from && item.test_date <= args.p_to);
+      return { data: { step: 1, from: args.p_from, to: args.p_to, truncated: false, curves: inRange.map((item) => ({ id: item.id, curve })) }, error: null };
+    }
+    const date = args.p_date || rows.at(-1).test_date;
+    return { data: { formulas: [{ formula: "A2004" }, { formula: "B0005" }, { formula: "C1" }], tests: rows, curve_date: date,
+      curves: rows.filter((item) => item.test_date === date).map((item) => ({ id: item.id, curve })) }, error: null };
+  });
+  await app.open("module=mdr&part=F1&formula=A2004&date=2026-11-02");
+  assert.match(app.element("#mdr-curve-when").textContent, /2 พ.ย. 2569/);
+  rows = [row(8, "2026-10-29"), row(9, "2026-10-30"), ...rows];
+  app.element("#mdr-formula").listeners.change({ target: { value: "A2004" } }); // วาดสูตรเดิมใหม่ (เหมือนหลังอัปโหลด)
+  await flush();
+  await flush();
+  assert.match(app.element("#mdr-curve-when").textContent, /2 พ.ย. 2569/, "still 2 Nov after two older days arrived (was 31 Oct before the fix)");
+
+  let release;
+  gates.set("B0005", new Promise((resolve) => { release = resolve; }));
+  app.element("#mdr-formula").listeners.change({ target: { value: "B0005" } });
+  app.element("#mdr-formula").listeners.change({ target: { value: "C1" } });
+  await flush();
+  await flush();
+  assert.match(app.element("#mdr-body").innerHTML, /<option value="C1" selected>/);
+  release();
+  await flush();
+  await flush();
+  assert.match(app.element("#mdr-body").innerHTML, /<option value="C1" selected>/, "B0005 answered last but C1 stays on screen");
+});
+
+test("MDR torque chart: the table marks only the days actually drawn when the 1,000-curve cap trims old days (F)", async () => {
+  const dates = ["2026-11-01", "2026-11-02", "2026-11-03"];
+  const rows = dates.map((date, i) => ({ id: i + 1, machine_id: "111", test_date: date, test_time: "08:00", set_minutes: 30, temperature_c: 155, ml: 1, mh: 8, ts2_s: 30, t90_s: 160 }));
+  const curve = Array.from({ length: 361 }, (_, i) => Math.min(8, 1 + i * 0.1));
+  const app = setup(async (name) => (name === "app_lab_mdr_feed"
+    ? { data: { formulas: [{ formula: "A2004" }], tests: rows, curve_date: "2026-11-03", curves: [{ id: 3, curve }] }, error: null }
+    : { data: { step: 5, from: "2026-11-02", to: "2026-11-03", truncated: true, curves: [{ id: 2, curve }, { id: 3, curve }] }, error: null }));
+  await app.open("module=mdr&part=F1&formula=A2004");
+  app.element("#mdr-curve-zoom").listeners.click({ target: { closest: () => ({ dataset: { range: "all" }, disabled: false }) } });
+  await flush();
+  const table = app.element("#mdr-table-scroll").innerHTML;
+  assert.equal((table.match(/lab-mdr-day-flag/g) ?? []).length, 2, "1 Nov was cut by the cap: no tag");
+  assert.match(table, /data-show-date="2026-11-01"/, "the cut day offers its own chart instead");
+  assert.match(app.element("#mdr-curve-note").textContent, /^กราฟแสดงได้ไม่เกิน 1,000 ครั้ง/);
+});
+
 test("MDR torque chart: going back to the drawn range while another range is still loading cancels that read", async () => {
   const dates = ["2026-11-01", "2026-11-02", "2026-11-03"];
   const rows = dates.flatMap((date, d) => [0, 1].map((k) => ({ id: d * 2 + k + 1, machine_id: String(111 + k), test_date: date, test_time: `0${8 + k}:00`, temperature_c: 155, ml: 1, mh: 8, ts2_s: 30, t90_s: 160 })));

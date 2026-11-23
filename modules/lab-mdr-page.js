@@ -22,7 +22,11 @@
   // เปลี่ยนสูตร/ชุดทดสอบ หรือเปิดหน้าใหม่ = เริ่มที่ล่าสุดใหม่ (กราฟแรงบิด: วันของ ?date= ถ้ามี)
   let trendZoom = { kind: "latest" };
   let curveZoom = { kind: "latest" };
+  // เงื่อนไข (เวลาทดสอบ · อุณหภูมิ) ของกราฟแนวโน้ม (model.conditionKey) null = เงื่อนไขที่มีผลมากที่สุด · เริ่มใหม่เมื่อเปลี่ยนสูตร
+  let trendCondition = null;
   let zoomOwner = "";
+  // นับคำขอฟีด: เปลี่ยนสูตรเร็ว ๆ แล้วคำตอบของสูตรก่อนมาทีหลัง = ไม่วาดทับสูตรที่เลือกล่าสุด (แบบเดียวกับ request ของกราฟแรงบิด)
+  let paintSeq = 0;
 
   const isDenied = (error) => /NOT_AUTHORIZED|AUTH_REQUIRED|JWT expired/.test(String(error?.message ?? "")) || error?.code === "PGRST301";
 
@@ -40,7 +44,8 @@
     if (!data || !Array.isArray(data.formulas) || !Array.isArray(data.tests) || !Array.isArray(data.curves)) throw new Error("LAB_FEED_UNREADABLE");
     return {
       formulas: data.formulas,
-      tests: model.normalizeTests(data.tests),
+      // F2 ที่ยางไม่พองตัว: t50/t90 ไม่นับ (ใช้ตอนแสดงผล ไม่แก้ข้อมูลที่เก็บไว้)
+      tests: model.applyDisplayRules(model.normalizeTests(data.tests), route.part),
       curveDate: data.curve_date ? String(data.curve_date) : null,
       curves: data.curves.filter((item) => Array.isArray(item?.curve)).map((item) => ({ id: item.id, curve: item.curve.map(Number) })),
     };
@@ -64,18 +69,19 @@
     const body = document.querySelector("#mdr-body");
     if (!body) return;
     lastRoute = route;
+    const ticket = ++paintSeq;
     body.setAttribute("aria-busy", "true");
     let data;
     try {
       data = await loadFeed(route);
     } catch (error) {
-      if (mine !== version) return;
+      if (mine !== version || ticket !== paintSeq) return;
       if (isDenied(error)) { denied(); return; }
       body.removeAttribute("aria-busy");
       body.innerHTML = `<section class="card">${window.MNP_LAB_SECTIONS.emptyBlock("อ่านผลทดสอบ MDR ไม่สำเร็จ", { hint: friendlyError(error) })}</section>`;
       return;
     }
-    if (mine !== version) return;
+    if (mine !== version || ticket !== paintSeq) return;
     current?.observer?.disconnect();
     current = { route, data, observer: null, hidden: new Set(), mine, denied };
     body.removeAttribute("aria-busy");
@@ -83,9 +89,10 @@
     if (owner !== zoomOwner) {
       zoomOwner = owner;
       trendZoom = { kind: "latest" };
+      trendCondition = null;
       curveZoom = route.date ? views.curveZoomFor(model.groupByDate(data.tests), route.date) : { kind: "latest" };
     }
-    body.innerHTML = route.formula ? views.formulaBody(route, data, trendZoom, curveZoom) : views.overview(route.part, data.formulas);
+    body.innerHTML = route.formula ? views.formulaBody(route, data, trendZoom, curveZoom, trendCondition) : views.overview(route.part, data.formulas);
     if (route.formula) bindFormula();
   }
 
@@ -107,8 +114,10 @@
     const days = model.groupByDate(data.tests);
     const hasCurve = Boolean(model.findPart(route.part)?.hasCurve);
     const table = document.querySelector("#mdr-table-scroll");
-    // ตาราง = วันในช่วงของกราฟแนวโน้ม · ป้าย "กราฟด้านบน" = วันในช่วงของกราฟแรงบิด (formulaBody วาดครั้งแรกด้วยช่วงเดียวกัน)
-    const curveDates = () => (hasCurve ? views.curveRangeDates(days, views.curveRange(curveZoom, days)) : []);
+    // ตาราง = วันในช่วงของกราฟแนวโน้ม · ป้าย "ในกราฟแรงบิด" = วันที่กราฟแรงบิดวาดอยู่จริง (bindChart ตั้ง drawn หลังอ่านกราฟ:
+    // เกิน 1,000 กราฟ วันเก่าถูกตัด ไม่ได้ป้าย) ก่อนอ่านเสร็จ = วันในช่วงของกราฟแรงบิด (formulaBody วาดครั้งแรกด้วยช่วงเดียวกัน)
+    let drawn = null;
+    const curveDates = () => (hasCurve ? drawn ?? views.curveRangeDates(days, views.curveRange(curveZoom, days)) : []);
     const tableKey = () => { const range = views.trendRange(trendZoom, days); return [`${range.start}-${range.end}`, curveDates().join(",")]; };
     let tableShown = tableKey();
     function refreshTable() {
@@ -121,7 +130,7 @@
     }
     const observers = [];
     const plot = hasCurve ? document.querySelector("#mdr-plot") : null;
-    const chart = plot ? bindChart(plot, days, refreshTable) : null;
+    const chart = plot ? bindChart(plot, days, refreshTable, (dates) => { drawn = dates; refreshTable(); }) : null;
     if (chart) observers.push(chart);
     const trend = document.querySelector("#mdr-trend");
     if (trend) observers.push(bindTrend(trend, route.part, days, refreshTable));
@@ -154,8 +163,9 @@
       const now = resolve(zoom);
       bar.hidden = total === 0;
       bar.querySelectorAll("[data-range]").forEach((button) => button.setAttribute("aria-pressed", String(zoom.kind === button.dataset.range)));
-      const first = rangeKit.monthOf(days[total - 1 - now.start]?.date);
-      const last = rangeKit.monthOf(days[total - now.end]?.date);
+      // เลือกเดือนไว้ = ช่องเดือนคงค่าที่ผู้ใช้เลือก (ไม่ตั้งจากช่วงที่คำนวณได้)
+      const first = zoom.kind === "months" ? zoom.from : rangeKit.monthOf(days[total - 1 - now.start]?.date);
+      const last = zoom.kind === "months" ? zoom.to : rangeKit.monthOf(days[total - now.end]?.date);
       // วาดตัวเลือกเดือนครั้งเดียวต่อหน้า ไม่วาดทุกครั้งที่เลื่อน (ไม่ปิดตัวเลือกของระบบที่เปิดค้างอยู่)
       if (monthFrom && monthTo && !monthsPainted) {
         monthsPainted = true;
@@ -168,10 +178,11 @@
       bar.querySelectorAll("[data-step]").forEach((button) => { button.disabled = limits[button.dataset.step]; });
     }
 
-    function setRange(next) {
-      const normal = rangeKit.normalize(next, total, min);
+    // ช่วงที่ไม่ติดวันล่าสุดเก็บเป็นวันที่ (views.toDayZoom) อัปโหลดวันที่เก่ากว่าเข้ามาแล้วยังอยู่ที่วันเดิม
+    function setRange(next, floor = min) {
+      const normal = rangeKit.normalize(next, total, floor);
       if (rangeKit.same(normal, resolve(get()))) return;
-      set({ kind: "custom", start: normal.start, end: normal.end, follow: normal.end >= total });
+      set(views.toDayZoom({ kind: "custom", start: normal.start, end: normal.end, follow: normal.end >= total }, days));
     }
 
     bar?.addEventListener("click", (event) => {
@@ -181,8 +192,11 @@
       if (button.dataset.range) set({ kind: button.dataset.range });
       else if (button.dataset.step === "in") setRange(rangeKit.zoom(now, total, 2, anchor(now), min));
       else if (button.dataset.step === "out") setRange(rangeKit.zoom(now, total, 0.5, anchor(now), min));
-      else if (button.dataset.step === "back") setRange(rangeKit.pan(now, total, rangeKit.panStep(now, -0.5), min));
-      else if (button.dataset.step === "forward") setRange(rangeKit.pan(now, total, rangeKit.panStep(now, 0.5), min));
+      // เลื่อนช่วงที่แคบกว่า min (เดือนที่มี 2 วัน) คงความกว้างเดิม ไม่ขยายเอง
+      else if (button.dataset.step === "back" || button.dataset.step === "forward") {
+        const floor = Math.min(min, now.end - now.start);
+        setRange(rangeKit.pan(now, total, rangeKit.panStep(now, button.dataset.step === "back" ? -0.5 : 0.5), floor), floor);
+      }
       else return;
       onChange();
     });
@@ -205,6 +219,9 @@
     // ค่าที่ผู้ใช้เลือก (trendMode) ไม่ถูกเขียนทับ: สูตรที่ไม่มีค่านั้น (เช่น ts2 ของ F2) แสดงค่าแรกแทนชั่วคราว
     const shownMode = () => (modes.includes(trendMode) ? trendMode : modes[0] ?? "delta");
     const note = document.querySelector("#mdr-trend-note");
+    const bandKey = document.querySelector("#mdr-band-key");
+    const picker = document.querySelector("#mdr-cond");
+    const condition = () => views.trendCondition(days.flatMap((day) => day.tests), trendCondition);
     const announcer = document.querySelector("#mdr-range-announce");
     const baseLabel = plot.getAttribute("aria-label");
     const resolve = (zoom) => views.trendRange(zoom, days);
@@ -230,9 +247,10 @@
       const next = Math.floor(plot.clientWidth - 36);
       if (next <= 0 || (next === width && !force)) return;
       width = next;
-      const chart = views.trendSvg(days, shownMode(), width, partKey, now);
+      const chart = views.trendSvg(days, shownMode(), width, partKey, now, condition());
       plot.innerHTML = chart.svg;
       if (note) note.textContent = chart.note;
+      if (bandKey) bandKey.hidden = !chart.hasBand;
       const mode = views.TREND_MODES.find((item) => item.key === shownMode());
       plot.setAttribute("aria-label", `${baseLabel} ค่า ${mode?.label ?? ""} รายครั้งและค่าเฉลี่ยรายวัน`);
     }
@@ -241,6 +259,10 @@
       trendMode = button.dataset.trend;
       draw(true);
     }));
+    picker?.addEventListener("change", () => {
+      trendCondition = picker.value;
+      draw(true);
+    });
 
     draw(true);
     return { plot, draw: () => draw() };
@@ -265,7 +287,8 @@
 
   // กราฟแรงบิด (F1) + แถบช่วงวันของตัวเอง: วันล่าสุดวันเดียวเริ่มต้น (กราฟจาก feed ไม่ต้องอ่านซ้ำ) ช่วงอื่นอ่านจาก app_lab_mdr_curves แล้วจำไว้ในหน้า
   // หนึ่งวัน = สีและปุ่มเส้นต่อครั้ง ป้าย t90 ต่อครั้ง · หลายวัน = สีและปุ่มเส้นต่อวัน ป้าย t90 เฉลี่ยต่อวัน (views.curveView)
-  function bindChart(plot, days, refreshTable) {
+  // onDrawn(dates) = วันที่วาดอยู่จริงหลังอ่านกราฟ (ป้าย "ในกราฟแรงบิด" ของตาราง)
+  function bindChart(plot, days, refreshTable, onDrawn) {
     const self = current;
     const { route, data, hidden } = self;
     const tip = document.querySelector("#mdr-tip");
@@ -344,6 +367,7 @@
           shownKey = null;
           view = { multi: false, series: [], legend: "" };
           if (legend) legend.innerHTML = "";
+          onDrawn([]);
           plot.innerHTML = "";
           geometry = null;
           if (tip) tip.hidden = true;
@@ -360,6 +384,7 @@
       view = views.curveView(days, dates, entry.curves, entry.step);
       if (legend) legend.innerHTML = view.legend;
       bindKeys();
+      onDrawn([...new Set(view.series.map((item) => item.day))]);
       shownNote = entry.truncated
         ? `กราฟแสดงได้ไม่เกิน 1,000 ครั้ง — แสดงเฉพาะ ${model.formatDate(entry.from)} ถึง ${model.formatDate(entry.to)}`
         : view.series.length ? "" : "ไม่มีกราฟแรงบิดในช่วงวันที่เลือก";
@@ -411,7 +436,19 @@
       if (tip) tip.hidden = true;
     }
 
+    // ปุ่มเส้นที่พับไว้ (เกิน views.KEYS_OPEN_MAX): ปุ่มเปิด/ปิด และบอกจำนวนเส้นที่ซ่อนอยู่ขณะพับ
+    function keysHiddenNote() {
+      const count = legend?.querySelector("#mdr-keys-hidden");
+      if (count) count.textContent = hidden.size ? `ซ่อนอยู่ ${hidden.size}` : "";
+    }
     function bindKeys() {
+      const toggle = legend?.querySelector("#mdr-keys-toggle");
+      const box = legend?.querySelector("#mdr-legend-keys");
+      toggle?.addEventListener("click", () => {
+        const open = toggle.getAttribute("aria-expanded") !== "true";
+        toggle.setAttribute("aria-expanded", String(open));
+        if (box) box.hidden = !open;
+      });
       legend?.querySelectorAll(".lab-mdr-key").forEach((key) => {
         const id = view.multi ? key.dataset.day : key.dataset.test;
         const attr = view.multi ? "data-day" : "data-test";
@@ -419,6 +456,7 @@
           const on = key.getAttribute("aria-pressed") !== "true";
           key.setAttribute("aria-pressed", String(on));
           if (on) hidden.delete(id); else hidden.add(id);
+          keysHiddenNote();
           applyVisibility();
           if (cursor !== null) showAt(cursor);
         });
@@ -439,7 +477,10 @@
       const x = ((event.clientX - box.left) / box.width) * geometry.width;
       return ((x - geometry.left) / geometry.plotW) * geometry.seconds;
     };
-    plot.addEventListener("pointermove", (event) => { const second = secondAt(event); if (second !== null) showAt(second); });
+    // แตะครั้งเดียวบน iPhone ไม่มี pointermove: pointerdown แสดงป้ายด้วย (ป้ายหายเมื่อกราฟเสียโฟกัสหรือกด Esc เหมือนเดิม)
+    const point = (event) => { const second = secondAt(event); if (second !== null) showAt(second); };
+    plot.addEventListener("pointermove", point);
+    plot.addEventListener("pointerdown", point);
     plot.addEventListener("pointerleave", (event) => { if (event.pointerType === "mouse") hide(); });
     plot.addEventListener("keydown", (event) => {
       const moves = { ArrowRight: 10, ArrowLeft: -10, PageUp: 60, PageDown: -60 };
