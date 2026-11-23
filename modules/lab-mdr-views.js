@@ -102,7 +102,7 @@
     const chartCard = part.hasCurve && curveDay ? `<section class="card lab-chart-card lab-mdr-chart" aria-label="กราฟแรงบิดของวันที่ ${esc(model.formatDate(curveDay.date))}">
         <div class="lab-mdr-legend" id="mdr-legend" role="group" aria-label="แสดงหรือซ่อนเส้นของแต่ละครั้ง">${legend(curveDay.tests, data.curves)}</div>
         <div class="lab-plot-wrap">
-          <div class="lab-plot lab-mdr-plot" id="mdr-plot" tabindex="0" role="img" aria-label="กราฟแรงบิด (dNm) ตามเวลา (นาที) ทุกครั้งของวันที่ ${esc(model.formatDate(curveDay.date))} ใช้ปุ่มลูกศรซ้ายขวาเพื่อดูค่าทีละ 10 วินาที"></div>
+          <div class="lab-plot lab-mdr-plot" id="mdr-plot" tabindex="0" role="img" aria-label="กราฟแรงบิด (dNm) ตามเวลา (นาที) ทุกครั้งของวันที่ ${esc(model.formatDate(curveDay.date))} ชี้ที่กราฟหรือกดปุ่มลูกศรเพื่อดู t90 ของแต่ละครั้ง"></div>
           <div class="lab-tip lab-mdr-tip" id="mdr-tip" hidden></div>
         </div>
       </section>` : "";
@@ -297,15 +297,16 @@
       <text class="lab-tick lab-mdr-axis-name" x="${pad.left + plotW}" y="${height - 2}" text-anchor="end">นาที</text>
       <text class="lab-tick lab-mdr-axis-name" x="${pad.left - 8}" y="${pad.top - 10}" text-anchor="end">dNm</text>
       ${lines}
-      <line class="lab-cross" id="mdr-cross" y1="${pad.top}" y2="${pad.top + plotH}" x1="0" x2="0" visibility="hidden"/>
     </svg>`;
     return { svg, geometry: { width, height, left: pad.left, plotW, seconds } };
   }
 
   // ป้ายค่าที่วินาทีที่ชี้: เวลา แล้วแรงบิดของทุกเส้นที่แสดงอยู่ ณ วินาทีนั้น (เส้นที่จบก่อนแล้วไม่แสดง)
-  function tipHtml(second, rows) {
-    const items = rows.map((row) => `<span class="lab-mdr-tip-row" style="--line-color:${row.color}"><span class="lab-mdr-swatch" aria-hidden="true"></span>ID ${esc(row.machineId)}<b>${esc(model.formatTorque(row.torque, "F1"))}</b></span>`).join("");
-    return `<span class="lab-tip-when">${esc(model.formatClock(second))} นาที</span>${items}`;
+  // ป้ายตอนชี้กราฟ: t90 ของแต่ละครั้งที่แสดงอยู่ (ผู้ใช้ขอ 2026-11-23) ไม่ขึ้นกับตำแหน่งที่ชี้ จึงไม่มีเส้นตั้งและเวลาที่ชี้
+  // rows = [{ color, machineId, t90 }] · t90 = วินาที หรือ null (ไม่ถึง 90% ภายในเวลาทดสอบ)
+  function tipHtml(rows) {
+    const items = rows.map((row) => `<span class="lab-mdr-tip-row" style="--line-color:${row.color}"><span class="lab-mdr-swatch" aria-hidden="true"></span>ID ${esc(row.machineId)}<b>${esc(model.formatClock(row.t90))}</b></span>`).join("");
+    return `<span class="lab-tip-when">t90 (นาที:วินาที)</span>${items}`;
   }
 
   const api = { LINE_COLORS, TREND_MODES, trendSvg, lineColor, colorMap, page, partTabs, overview, formulaBody, resultsTable, legend, uploadResult, uploadProgress, chartSvg, tipHtml, niceStep };
