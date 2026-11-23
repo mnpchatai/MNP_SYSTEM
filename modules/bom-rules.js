@@ -1660,20 +1660,11 @@
   const grPercent = (good, required) => (Number(required) > 0 ? Math.round((Number(good) || 0) / Number(required) * 1000) / 10 : null);
   // แผนขั้นตอนของงาน (ชุด grPlans) หรือ null
   const grPlanOf = (data, jobId) => (data?.grPlans ?? []).find((plan) => plan.jobId === jobId) ?? null;
-  // ขั้นตอนเริ่มต้นของงานตอนตั้งครั้งแรก (คำตอบเจ้าของข้อ 7): ขั้นของแผนก GR ใน routing ที่ใช้อยู่ของชิ้นงาน (เฉพาะขั้นที่มีและใช้อยู่ในตั้งค่า) ตามลำดับ routing
-  // routing ไม่มีขั้น GR = [] (หัวหน้าเลือกเองก่อนบันทึกผล) · ต้องทำของแต่ละขั้น = จำนวนแผนของงาน (ปัดขึ้นเป็นจำนวนเต็ม อย่างน้อย 1)
+  // ขั้นตอนเริ่มต้นของงานตอนตั้งครั้งแรก (เจ้าของสั่ง 2026-11-23 "เริ่มครบ 9 ขั้นทุกงาน"): ทุกขั้นสายหลักที่ใช้อยู่ในตั้งค่า ตามลำดับในตั้งค่า
+  // หัวหน้า GR เอาขั้นที่งานนี้ไม่ทำออก หรือเพิ่มขั้นแยกเองในหน้าต่างตั้งขั้นตอน · ต้องทำของแต่ละขั้น = จำนวนแผนของงาน (ปัดขึ้นเป็นจำนวนเต็ม อย่างน้อย 1)
   function grDefaultSteps(data, job, config = grConfig(data)) {
-    const routing = (data?.routings ?? []).find((entry) => entry.itemCode === job?.itemCode && entry.status === "approved");
     const qtyTarget = Math.max(1, Math.ceil(Number(job?.qtyPlanned) || 0));
-    const seen = new Set();
-    const steps = [];
-    for (const step of Array.isArray(routing?.steps) ? routing.steps : []) {
-      const found = grStepOf(config, step?.processCode);
-      if (!found || !found.active || seen.has(found.code)) continue;
-      seen.add(found.code);
-      steps.push({ code: found.code, qtyTarget });
-    }
-    return steps;
+    return (config?.steps ?? []).filter((step) => step.kind === "main" && step.active !== false).map((step) => ({ code: step.code, qtyTarget }));
   }
   // ผลรายวันที่ใช้อยู่ (active) ของงาน
   const grActiveRecords = (data, jobId) => (data?.grRecords ?? []).filter((record) => record.jobId === jobId && record.status === "active");

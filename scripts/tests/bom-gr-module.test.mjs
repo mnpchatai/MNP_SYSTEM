@@ -34,7 +34,7 @@ const USERS = {
 const ctx = (who, extra = {}) => ({ now: NOW, user: USERS[who], ...extra });
 
 // ---------- กฎ ----------
-test("rules: the default config, the job steps from the routing, the job totals, the hand-over summary and the target figures", () => {
+test("rules: the default config, the job steps (all 9 main steps for every job), the job totals, the hand-over summary and the target figures", () => {
   const d = fresh();
   const empty = R.grConfig({});
   assert.deepEqual(empty.steps.map((step) => step.code), ["GR-01", "GR-02", "GR-03", "GR-04", "GR-05", "GR-06", "GR-07", "GR-08", "GR-09", "GR-11", "GR-10", "GR-12"]);
@@ -48,14 +48,15 @@ test("rules: the default config, the job steps from the routing, the job totals,
   assert.equal(R.grRequired(8, null), null);
   assert.equal(R.grPercent(91.2, 91.2), 100);
   assert.equal(R.grPercent(10, null), null);
-  // routing ของลูกตอปิโด: ตัดยาง GR-04 → ทากาว GR-05 → เจียร์ GR-06 → เจาะ GR-09 · ต้องทำ = จำนวนแผนของงาน
+  // เจ้าของสั่ง "เริ่มครบ 9 ขั้นทุกงาน": ทุกขั้นสายหลักตามลำดับในตั้งค่า ไม่ขึ้นกับ routing · ต้องทำ = จำนวนแผนของงาน
   const tp = jobOf(d, TP);
-  assert.deepEqual(R.grDefaultSteps(d, tp), ["GR-04", "GR-05", "GR-06", "GR-09"].map((code) => ({ code, qtyTarget: tp.qtyPlanned })));
-  assert.deepEqual(R.grDefaultSteps(d, { itemCode: "NO-ROUTING", qtyPlanned: 5 }), [], "no GR steps in the routing = empty");
+  const MAIN9 = ["GR-01", "GR-02", "GR-03", "GR-04", "GR-05", "GR-06", "GR-07", "GR-08", "GR-09"];
+  assert.deepEqual(R.grDefaultSteps(d, tp), MAIN9.map((code) => ({ code, qtyTarget: tp.qtyPlanned })));
+  assert.deepEqual(R.grDefaultSteps(d, { itemCode: "NO-ROUTING", qtyPlanned: 5 }), MAIN9.map((code) => ({ code, qtyTarget: 5 })), "no routing still starts with all 9 main steps");
   const hl = jobOf(d, HL);
   const progress = R.grJobProgress(d, hl);
   assert.equal(progress.planned, true);
-  assert.deepEqual(progress.steps.map((step) => [step.name, step.good]), [["ตัดยาง", 115], ["ทากาว", 75], ["เจียร์", 95], ["เจาะ", 65]]);
+  assert.deepEqual(progress.steps.map((step) => [step.name, step.good]), [["รีด", 0], ["ปั๊ม", 0], ["เปเปอร์", 0], ["ตัดยาง", 115], ["ทากาว", 75], ["เจียร์", 95], ["เจียร์(หยาบ)", 0], ["เจียร์(ละเอียด)", 0], ["เจาะ", 65]], "the demo plan starts with all 9 main steps; steps with no records show 0");
   assert.deepEqual([progress.good, progress.reject, hl.qtyDone, hl.qtyReject, hl.status], [65, 6, 65, 6, "in_progress"], "good of the last step, rejects of every step");
   assert.deepEqual([progress.sent, progress.received, progress.pendingAtPk, progress.waitingAtGr], [55, 30, 25, 10]);
   assert.equal(R.grJobProgress(d, tp).planned, false);
@@ -120,7 +121,7 @@ test("actions: only the GR head or the planners change the config; a step in use
   A.saveGrConfig(d, body, ctx("planner"));
 });
 
-test("actions: the job steps — head or planner, a GR job in production, steps from the config, never over a job reported the old way, never dropping a step with records", () => {
+test("actions: the job steps — head or planner, a GR job in production, starts with all 9 steps from the config, never over a job reported the old way, never dropping a step with records", () => {
   const d = fresh();
   const tp = jobOf(d, TP);
   const steps = R.grDefaultSteps(d, tp);
@@ -139,8 +140,8 @@ test("actions: the job steps — head or planner, a GR job in production, steps 
   const plan = R.grPlanOf(d, hl.id).steps;
   rejects(() => A.setGrJobSteps(d, { jobId: hl.id, steps: [...plan, { code: "GR-10", qtyTarget: 120 }] }, ctx("head")), /เปลี่ยนขั้นตอนไม่ได้.*ต่ำกว่าที่ส่งให้ PK แล้ว 55.*ยกเลิกการส่ง/);
   assert.deepEqual(R.grPlanOf(d, hl.id).steps, plan, "the refused plan changed nothing");
-  A.setGrJobSteps(d, { jobId: hl.id, steps: [plan[0], plan[1], plan[3], plan[2]] }, ctx("head"));
-  assert.deepEqual(R.grPlanOf(d, hl.id).steps.map((step) => step.code), ["GR-04", "GR-05", "GR-09", "GR-06"], "the plan keeps the order it was given");
+  A.setGrJobSteps(d, { jobId: hl.id, steps: [...plan.slice(0, 5), plan[6], plan[7], plan[8], plan[5]] }, ctx("head"));
+  assert.deepEqual(R.grPlanOf(d, hl.id).steps.map((step) => step.code), ["GR-01", "GR-02", "GR-03", "GR-04", "GR-05", "GR-07", "GR-08", "GR-09", "GR-06"], "the plan keeps the order it was given");
   assert.deepEqual([hl.qtyDone, hl.qtyReject], [95, 6], "the last step of the new order (เจียร์) counts");
   A.setGrJobSteps(d, { jobId: hl.id, steps: plan }, ctx("planner"));
   assert.deepEqual([hl.qtyDone, hl.qtyReject], [65, 6]);
@@ -153,6 +154,8 @@ test("actions: daily records — staff record their own work of today or yesterd
   const d = fresh();
   const hl = jobOf(d, HL);
   const base = { jobId: hl.id, stepCode: "GR-09", hours: 8, good: 10 };
+  // the plan starts with all 9 steps; drop one without records so a step outside the plan can be refused
+  A.setGrJobSteps(d, { jobId: hl.id, steps: R.grPlanOf(d, hl.id).steps.filter((step) => step.code !== "GR-01") }, ctx("head"));
   rejects(() => A.addGrRecord(d, base, ctx("rb")), /แผนก GR หรือฝ่ายวางแผน/);
   rejects(() => A.addGrRecord(d, { ...base, workerId: "GR-DEMO-2" }, ctx("gr")), /ผลของตัวเอง/);
   rejects(() => A.addGrRecord(d, { ...base, workDate: "2026-11-20" }, ctx("gr")), /วันนี้หรือเมื่อวาน/);

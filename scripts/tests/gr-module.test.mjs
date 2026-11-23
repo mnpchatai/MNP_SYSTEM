@@ -241,14 +241,14 @@ test("GR settings: hidden from staff (the page refuses too); a head edits steps,
   assert.equal(staff.store.run("saveGrConfig", payload).ok, false, "staff cannot save settings");
 });
 
-test("GR dialogs: set steps (head, defaults from the routing), request rods (staff), send to PK (head, capped at the unsent good), cancel a send; each refuses the wrong user", () => {
+test("GR dialogs: set steps (head, default = all 9 main steps), request rods (staff), send to PK (head, capped at the unsent good), cancel a send; each refuses the wrong user", () => {
   const head = as("head");
   const staff = as("staff");
   const fresh = jobOf(head, "SE-TP01-OR01-100-18-65");
   const steps = dialog(head, "grSteps", { jobId: fresh.id });
   assert.match(steps.html, /data-rf-form="setGrJobSteps"/);
-  for (const code of ["GR-04", "GR-05", "GR-06", "GR-09"]) assert.match(steps.html, new RegExp(`name="code\\[\\]" value="${code}" checked`), `${code} from the routing`);
-  assert.doesNotMatch(steps.html, /name="code\[\]" value="GR-01" checked/);
+  for (const code of ["GR-01", "GR-02", "GR-03", "GR-04", "GR-05", "GR-06", "GR-07", "GR-08", "GR-09"]) assert.match(steps.html, new RegExp(`name="code\\[\\]" value="${code}" checked`), `${code} is a main step, ticked by default`);
+  for (const code of ["GR-10", "GR-11", "GR-12"]) assert.doesNotMatch(steps.html, new RegExp(`name="code\\[\\]" value="${code}" checked`), `${code} is a side step, not ticked`);
   assert.equal(dialog(staff, "grSteps", { jobId: fresh.id }), null);
   const transform = head.context.MNP_BOM.transforms().setGrJobSteps;
   const result = head.store.run("setGrJobSteps", transform({ jobId: fresh.id, code: ["GR-04", "GR-09"], qty: { "GR-04": "240", "GR-09": "240", "GR-05": "1" } }));
@@ -266,13 +266,13 @@ test("GR dialogs: set steps (head, defaults from the routing), request rods (sta
   assert.equal((again.html.match(/data-gr-move="down"/g) ?? []).length, order.length, "and down");
   assert.match(again.html, /aria-label="เลื่อน เจาะ ขึ้น"/);
   assert.equal(typeof again.bind, "function", "the dialog binds the move buttons");
-  // routing ที่ลำดับต่างจากตั้งค่า: ค่าเริ่มตามลำดับ routing
+  // routing ไม่มีผลต่อค่าเริ่ม: เริ่มครบ 9 ขั้นสายหลักตามลำดับในตั้งค่าเสมอ
   const other = jobOf(head, "SE-TP01-OR01-75-3-30");
   const routing = dataOf(head).routings.find((entry) => entry.itemCode === other.itemCode && entry.status === "approved");
   routing.steps = [{ processCode: "GR-09" }, { processCode: "GR-05" }];
   const fromRouting = [...dialog(head, "grSteps", { jobId: other.id }).html.matchAll(/name="code\[\]" value="(GR-[0-9A-Z]+)"( checked)?/g)].map((match) => [match[1], Boolean(match[2])]);
-  assert.deepEqual(plain(fromRouting.slice(0, 2)), [["GR-09", true], ["GR-05", true]], "a fresh job starts in the routing order");
-  assert.equal(fromRouting.slice(2).some(([, on]) => on), false, "the other steps are offered unticked");
+  assert.deepEqual(plain(fromRouting.slice(0, 9)), ["GR-01", "GR-02", "GR-03", "GR-04", "GR-05", "GR-06", "GR-07", "GR-08", "GR-09"].map((code) => [code, true]), "a routing does not change the default: all 9 main steps in the settings order");
+  assert.equal(fromRouting.slice(9).some(([, on]) => on), false, "the side steps are offered unticked");
   // ขอเบิก: เส้นยางของงานนี้
   const rod = dialog(staff, "grRodRequest", { jobId: fresh.id });
   assert.match(rod.html, /data-rf-form="requestRods"/);

@@ -424,7 +424,7 @@
   const jobOf = (ctx, jobId) => ctx.data.jobs.find((entry) => entry.id === jobId && entry.dept === "GR") ?? null;
   const reasonInput = (ctx, label, placeholder, id) => ctx.ui.field(label, ctx.ui.input("reason", { required: true, placeholder, id, extra: `minlength="${ctx.rules.GR_LIMITS.reasonMin}" maxlength="${ctx.rules.GR_LIMITS.reasonMax}"` }), { id, required: true });
   // ตั้งขั้นตอนของงาน: ลำดับในรายการ = ลำดับขั้นที่ส่ง (ขั้นสุดท้ายที่ติ๊ก = ขั้นที่นับเป็นยอดดีของงาน) · ติ๊กขั้นที่งานนี้ทำ + ต้องทำของแต่ละขั้น (ค่าเริ่ม = จำนวนแผนของงาน)
-  // ลำดับเริ่มต้น: ขั้นของแผนเดิมตามลำดับแผน · ยังไม่ตั้ง = ขั้น GR ใน routing ของชิ้นงานตามลำดับ routing (rules.grDefaultSteps) · แล้วขั้นที่เหลือที่ใช้อยู่ตามลำดับในตั้งค่า
+  // ลำดับเริ่มต้น: ขั้นของแผนเดิมตามลำดับแผน · ยังไม่ตั้ง = ขั้นสายหลักทุกขั้นตามลำดับในตั้งค่า (rules.grDefaultSteps) · แล้วขั้นที่เหลือที่ใช้อยู่ (ขั้นแยก) ตามลำดับในตั้งค่า
   // หัวหน้าเลื่อนขั้นขึ้น / ลงได้ (bindStepOrder) · ขั้นที่มีผลแล้วเอาออกไม่ได้ (ช่องติ๊กล็อกไว้ แต่เลื่อนได้)
   function stepOrder(ctx, job, config) {
     const { rules, data } = ctx;
@@ -455,7 +455,7 @@
     });
     const body = `<form novalidate id="gr-steps-form" data-rf-form="setGrJobSteps" data-rf-args="${attr(JSON.stringify({ jobId: job.id }))}" data-rf-success="ตั้งขั้นตอน {result} แล้ว">
       <p class="small muted">${esc(`${job.itemCode} · ใบ ${job.orderId}`)}</p>
-      ${!plan && !chosen.size ? ui.callout("info", esc("routing ของชิ้นงานนี้ไม่มีขั้นของ GR เลือกขั้นที่งานนี้ทำเอง")) : ""}
+      ${!plan ? ui.callout("info", esc("ติ๊กไว้ครบทุกขั้นสายหลัก เอาขั้นที่งานนี้ไม่ทำออก")) : ""}
       ${ui.table([{ label: "ขั้นตอน", title: "ลำดับในรายการ = ลำดับขั้นของงาน · ขั้นสุดท้ายที่ติ๊ก = ยอดดีของงาน" }, "ประเภท", { label: "ต้องทำ (ชิ้น)", title: "ขั้นสุดท้ายที่ติ๊ก = ยอดดีของงาน" }, { label: "", className: "right" }], rows)}</form>`;
     return { html: ui.dialog("grSteps", `${plan ? "แก้ขั้นตอน" : "ตั้งขั้นตอน"} · ${job.name}`, body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="gr-steps-form">บันทึกขั้นตอน</button>` }), bind: (dialog) => bindStepOrder(dialog.querySelector?.("form")) };
   };
