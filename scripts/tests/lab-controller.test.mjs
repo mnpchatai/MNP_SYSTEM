@@ -12,14 +12,15 @@ function setup(respond) {
   const element = (selector) => {
     if (!elements.has(selector)) elements.set(selector, {
       value: selector === "#lab-sort" ? "recent" : "", textContent: "", innerHTML: "", hidden: false, clientWidth: 600, listeners: {},
-      addEventListener(name, fn) { this.listeners[name] = fn; }, setAttribute() {}, classList: { toggle() {} },
+      addEventListener(name, fn) { this.listeners[name] = fn; }, setAttribute() {}, getAttribute() { return ""; }, removeAttribute() {}, classList: { toggle() {} },
       querySelector: (inner) => element(inner), querySelectorAll: () => [],
     });
     return elements.get(selector);
   };
   const ticks = [];
   const window = { addEventListener: (name, fn) => { events[name] = fn; }, setInterval: (fn) => { ticks.push(fn); return ticks.length; }, clearInterval() {}, clearTimeout() {}, cancelAnimationFrame() {} };
-  const context = vm.createContext({ window, console, URLSearchParams, Map, Set, Date, Intl, location: { hash: "#/lab" },
+  const context = vm.createContext({ window, console, URLSearchParams, Map, Set, Date, Intl, location: { hash: "#/lab" }, history: { replaceState() {} },
+    friendlyError: (error) => String(error?.message ?? error),
     document: { hidden: false, addEventListener() {}, querySelector: element, querySelectorAll: () => [] },
     state: { employee: { id: "admin", labAccess: true } }, app: { innerHTML: "" },
     sb: { auth: { onAuthStateChange: (fn) => { authChange = fn; } }, rpc: async (name, args) => {
@@ -27,7 +28,7 @@ function setup(respond) {
     } },
     shell: (html) => html, bindShell() {}, loadingShell() {}, renderNotFound() { denied += 1; }, zoomIntoContent() {},
   });
-  for (const file of ["lab-mooney-model.js", "lab-mooney-chart.js", "lab-sections.js", "lab-mooney-views.js", "module-lab.js"]) {
+  for (const file of ["lab-mooney-model.js", "lab-mooney-chart.js", "lab-sections.js", "lab-mooney-views.js", "lab-mdr-model.js", "lab-mdr-views.js", "lab-mdr-page.js", "module-lab.js"]) {
     vm.runInContext(readFileSync(new URL(`../../modules/${file}`, import.meta.url), "utf8"), context);
   }
   return { context, calls, element, events, auth: (event) => authChange(event), denied: () => denied, tick: () => ticks.at(-1)(),
@@ -123,7 +124,7 @@ test("the dashboard reads the same compact overview RPC the Mooney list uses", a
 
 test("modules without a data source open without any RPC; unknown modules look like a missing page", async () => {
   const app = setup(() => { throw new Error("must not query"); });
-  for (const key of ["chemical", "mdr"]) {
+  for (const key of ["chemical"]) {
     await app.open(`module=${key}`);
     assert.match(app.context.app.innerHTML, /ยังไม่เปิดใช้งาน/);
     assert.match(app.context.app.innerHTML, /lab-module-header is-off/);
@@ -134,7 +135,7 @@ test("modules without a data source open without any RPC; unknown modules look l
   assert.equal(app.calls.length, 0);
   const denied = setup(() => { throw new Error("must not query"); });
   denied.context.state.employee.labAccess = false;
-  await denied.open("module=mdr");
+  await denied.open("module=chemical");
   assert.equal(denied.denied(), 1, "no LAB access: even a page without data is not shown");
 });
 
@@ -174,7 +175,8 @@ test("#/lab is the module chooser: no RPC, a card per module, and only modules w
   assert.equal((page.match(/lab-module-card/g) ?? []).length, 4);
   assert.match(page, /href="#\/lab\?module=dashboard"/);
   assert.match(page, /href="#\/lab\?module=mooney"/);
-  assert.doesNotMatch(page, /href="#\/lab\?module=(chemical|mdr)"/);
+  assert.match(page, /href="#\/lab\?module=mdr"/);
+  assert.doesNotMatch(page, /href="#\/lab\?module=chemical"/);
   const denied = setup(() => { throw new Error("must not query"); });
   denied.context.state.employee.labAccess = false;
   await denied.open();
@@ -246,4 +248,26 @@ test("with health summaries the dashboard shows the latest day, the trends, the 
   await app.tick();
   await flush();
   assert.match(app.element("#lab-control-plot").innerHTML, /aria-label="B0005 MH/);
+});
+
+test("the MDR module reads its own feed per test set, opens the formula page, and drops access when revoked", async () => {
+  const feed = { formulas: [{ formula: "A2004", tests: 2, days: 1, first_date: "2026-11-02", last_date: "2026-11-02" }], tests: [], curve_date: null, curves: [] };
+  let response = { data: feed, error: null };
+  const app = setup(async () => response);
+  await app.open("module=mdr");
+  assert.deepEqual(JSON.parse(JSON.stringify(app.calls)), [{ name: "app_lab_mdr_feed", args: { p_part: "F1", p_formula: null, p_date: null } }]);
+  assert.match(app.context.app.innerHTML, /<h1>รายงานทดสอบ MDR<\/h1>/);
+  assert.match(app.context.app.innerHTML, /อัปโหลดไฟล์ MDR \(\.ini\)/);
+  assert.match(app.element("#mdr-body").innerHTML, /href="#\/lab\?module=mdr&amp;part=F1&amp;formula=A2004"/);
+  response = { data: { ...feed, tests: [
+    { id: 1, machine_id: "111", test_date: "2026-11-02", test_time: "15:49", temperature_c: 155, ml: 2.18, mh: 8.69, ts2_s: 39, t90_s: 177 },
+    { id: 2, machine_id: "112", test_date: "2026-11-02", test_time: "16:21", temperature_c: 155, ml: 2.18, mh: 8.57, ts2_s: 39, t90_s: 166 },
+  ] }, error: null };
+  await app.open("module=mdr&part=F2&formula=A2004&date=2026-11-02");
+  assert.deepEqual(JSON.parse(JSON.stringify(app.calls.at(-1).args)), { p_part: "F2", p_formula: "A2004", p_date: "2026-11-02" });
+  assert.match(app.element("#mdr-body").innerHTML, /AVG/);
+  response = { data: null, error: { message: "NOT_AUTHORIZED" } };
+  await app.open("module=mdr");
+  assert.equal(app.denied(), 1);
+  assert.equal(app.context.state.employee.labAccess, false);
 });

@@ -1,4 +1,4 @@
-// หน้าของโมดูลแปรรูปยาง (GR) #/gr — โหลดก่อน modules/module-gr.js (ดู index.html) · โรงงาน ขั้น 2 (20261214010000_bom_gr_module.sql) โหมดทดสอบเท่านั้น
+// หน้าของโมดูลแปรรูปยาง (GR) #/gr — โหลดก่อน modules/module-gr.js (ดู index.html) · โรงงาน ขั้น 2 (20261216010000_bom_gr_module.sql) โหมดทดสอบเท่านั้น
 // เมนูข้าง: งานของฉัน (ค่าตั้งต้น · ตัวกรอง ?st=done = เสร็จแล้ว) · บันทึกผลรายวัน ?tab=log · ยางเส้นยาว ?tab=rods · ส่งให้ PK ?tab=pk · สรุปผล ?tab=summary
 // · ตั้งค่าขั้นตอนและเป้า ?tab=settings (เฉพาะหัวหน้าแผนก GR และฝ่ายวางแผน) · หน้างาน ?job=<เลขงาน> (อยู่ใต้ "งานของฉัน")
 // ข้อมูลและคำสั่งมาจาก store ของ BOM (grConfig grPlans grRecords rodRequests grHandovers grWorkers · คำสั่งใน modules/bom-actions.js) · กฎกลางใน modules/bom-rules.js (gr*)

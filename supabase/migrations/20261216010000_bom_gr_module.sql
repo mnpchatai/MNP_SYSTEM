@@ -1178,7 +1178,7 @@ as $$
       left join public.bom_orders ow on ow.id = m.owner_order_pk
       left join public.bom_orders fo on fo.id = m.for_order_pk
       where m.is_test = (select private.bom_test_mode()) and m.changed_version > p_since), '[]'::jsonb),
-    -- แปรรูปยาง GR (20261214010000): ตั้งค่า (ว่าง = ใช้ค่าเริ่มต้น) ขั้นตอนของงาน ผลรายวัน คำขอเบิกยางเส้นยาว การส่งงานให้ PK (เลขงาน / เลข PI แทน uuid ของแถว)
+    -- แปรรูปยาง GR (20261216010000): ตั้งค่า (ว่าง = ใช้ค่าเริ่มต้น) ขั้นตอนของงาน ผลรายวัน คำขอเบิกยางเส้นยาว การส่งงานให้ PK (เลขงาน / เลข PI แทน uuid ของแถว)
     'grConfig', coalesce((
       select jsonb_agg(jsonb_build_object(
           'key', 'gr', 'steps', c.steps, 'reasons', c.reasons, 'targets', c.targets,
@@ -1381,7 +1381,7 @@ begin
                       or (p_action in ('issueRods', 'reverseRodIssue', 'adjustRods') and v_key <> 'rodMoves')) then
         raise exception 'BOM_INVALID_ROD';
       end if;
-      -- แปรรูปยาง GR (20261214010000): ส่วน grConfig / grPlans / grRecords / rodRequests / grHandovers ส่งได้เฉพาะ action ของส่วนนั้น (private.bom_gr_section)
+      -- แปรรูปยาง GR (20261216010000): ส่วน grConfig / grPlans / grRecords / rodRequests / grHandovers ส่งได้เฉพาะ action ของส่วนนั้น (private.bom_gr_section)
       -- และสิบ action ของ GR ส่งได้เฉพาะส่วนของตัวเอง (ผิด = BOM_INVALID_GR)
       if v_n > 0 and ((v_key in ('grConfig', 'grPlans', 'grRecords', 'rodRequests', 'grHandovers') and v_gr_section is distinct from v_key)
                       or (v_gr_section is not null and v_key <> v_gr_section)) then
@@ -1532,7 +1532,7 @@ begin
       v_rod_n := private.bom_rod_save_moves(v_actor, v_planner, p_action, p_changes #> '{rodMoves,upsert}');
       v_counts := v_counts || jsonb_build_object('rodMoves', jsonb_build_object('upsert', v_rod_n));
     end if;
-    -- แปรรูปยาง GR (20261214010000): ตั้งค่า / ขั้นตอนของงาน / ผลรายวัน / ขอเบิกยางเส้นยาว / ส่งงานให้ PK ผ่าน private.bom_gr_save (แถวคำขอเดียว)
+    -- แปรรูปยาง GR (20261216010000): ตั้งค่า / ขั้นตอนของงาน / ผลรายวัน / ขอเบิกยางเส้นยาว / ส่งงานให้ PK ผ่าน private.bom_gr_save (แถวคำขอเดียว)
     -- ยอดของงาน GR คำนวณใหม่ในธุรกรรมเดียวกัน · audit นับส่วนของคำขอตามปกติ และ jobs / orders เมื่อยอดหรือสถานะของงาน / ใบเปลี่ยน
     if v_gr_section is not null then
       v_gr := private.bom_gr_save(v_actor, v_actor_name, v_planner, p_action, p_changes #> array[v_gr_section, 'upsert'], p_base_version, v_version);

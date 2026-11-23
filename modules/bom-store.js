@@ -197,7 +197,7 @@
   // stock = ยอดคงเหลือของซื้อ (นับด้วย countPartStock) · stockMoves = ประวัติ (เซิร์ฟเวอร์เขียนเอง client อ่านอย่างเดียว ไม่ส่งกลับ)
   // fgMoves = ประวัติรับเข้าคลัง/ส่งมอบ/ปิดใบรับไม่ครบของสินค้าสำเร็จรูป (เซิร์ฟเวอร์เขียนเอง เพิ่มต่อท้ายอย่างเดียว · client ส่งเป็นคำขอ ไม่ส่งเป็นระเบียน)
   // rodLots / rodMoves = คลังแท่งยาว SR (20261202010000): ล็อตแท่งจากล็อตตกแต่งของ RubberFlow และประวัติของแท่งที่ใช้ได้ · เซิร์ฟเวอร์เขียนเอง client ส่งเฉพาะแถวคำขอของคำสั่งคลังแท่ง (ROD_ACTIONS)
-  // grConfig / grPlans / grRecords / rodRequests / grHandovers = แปรรูปยาง GR (20261214010000): ตั้งค่า ขั้นตอนของงาน ผลรายวัน คำขอเบิกยางเส้นยาว ส่งงานให้ PK · เซิร์ฟเวอร์เขียนเอง
+  // grConfig / grPlans / grRecords / rodRequests / grHandovers = แปรรูปยาง GR (20261216010000): ตั้งค่า ขั้นตอนของงาน ผลรายวัน คำขอเบิกยางเส้นยาว ส่งงานให้ PK · เซิร์ฟเวอร์เขียนเอง
   // client ส่งเฉพาะแถวคำขอของคำสั่ง GR (GR_ACTIONS) · grWorkers = พนักงาน active ของแผนก GR (มากับ snapshot เท่านั้น ส่วนต่างว่างเสมอ) อ่านอย่างเดียว
   const WORK_LISTS = Object.freeze(["customers", "orders", "jobs", "stock", "stockMoves", "fgMoves", "rodLots", "rodMoves", "grConfig", "grPlans", "grRecords", "rodRequests", "grHandovers", "grWorkers"]);
   const REMOTE_LISTS = Object.freeze([...MASTER_LISTS, ...WORK_LISTS]);
@@ -265,7 +265,7 @@
   // คลังแท่งยาว SR: action → ส่วนที่ส่งแถวคำขอ (action คืน result.request เป็นอาร์เรย์ของแถว) · ผลทั้งหมด (สถานะล็อต ประวัติแท่ง ยอดงาน RB) เซิร์ฟเวอร์คำนวณเอง
   // receiveRodsOpening (รับนอกใบสั่ง) / setRodLocation (ย้ายตำแหน่ง) ส่งในส่วน rodLots (20261204010000_bom_sr_store_module.sql)
   const ROD_ACTIONS = Object.freeze({ receiveRods: "rodLots", decideRods: "rodLots", receiveRodsOpening: "rodLots", setRodLocation: "rodLots", issueRods: "rodMoves", reverseRodIssue: "rodMoves", adjustRods: "rodMoves" });
-  // แปรรูปยาง GR (20261214010000_bom_gr_module.sql): action → ส่วนที่ส่งแถวคำขอเดียว (action คืน result.request เป็นอาร์เรย์หนึ่งแถว) · ยอดของงาน GR เซิร์ฟเวอร์คำนวณเองในธุรกรรมเดียวกัน
+  // แปรรูปยาง GR (20261216010000_bom_gr_module.sql): action → ส่วนที่ส่งแถวคำขอเดียว (action คืน result.request เป็นอาร์เรย์หนึ่งแถว) · ยอดของงาน GR เซิร์ฟเวอร์คำนวณเองในธุรกรรมเดียวกัน
   const GR_ACTIONS = Object.freeze({ saveGrConfig: "grConfig", setGrJobSteps: "grPlans", addGrRecord: "grRecords", editGrRecord: "grRecords", voidGrRecord: "grRecords",
     requestRods: "rodRequests", cancelRodRequest: "rodRequests", sendGrToPk: "grHandovers", receiveGrAtPk: "grHandovers", cancelGrHandover: "grHandovers" });
   function diffMaster(before, after, action = "") {

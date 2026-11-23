@@ -441,7 +441,7 @@
   }
   const listOf = (p, key) => (Array.isArray(p[key]) ? p[key] : p[key] === undefined ? [] : [p[key]]);
   const TRANSFORMS = {
-    // แปรรูปยาง GR (modules/gr-pages.js · 20261214010000): ขั้นตอนของงาน = ช่องติ๊ก code[] ตามลำดับขั้น + ต้องทำ qty.<รหัสขั้น>
+    // แปรรูปยาง GR (modules/gr-pages.js · 20261216010000): ขั้นตอนของงาน = ช่องติ๊ก code[] ตามลำดับขั้น + ต้องทำ qty.<รหัสขั้น>
     setGrJobSteps: (p) => ({ jobId: p.jobId, steps: listOf(p, "code").map((code) => ({ code, qtyTarget: p.qty?.[code] ?? "" })) }),
     // ตั้งค่า GR: แถวขั้นตอน step.code[] step.name[] step.kind[] step.active[] (1 / 0) ตามลำดับในฟอร์ม · เหตุผลของเสียหนึ่งบรรทัดต่อข้อ · แถวเป้า target.* (แถวว่างทั้งแถวถูกข้าม)
     saveGrConfig: (p) => {

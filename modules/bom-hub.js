@@ -1153,7 +1153,7 @@
     const tasks = [];
     if ((which === "SR" || which === "ALL") && helpers.canStoreRods?.(user)) {
       for (const lot of lots.filter((entry) => entry.status === "pending").sort(byTime("createdAt"))) tasks.push({ kind: "rodReceive", lot });
-      // คำขอเบิกของ GR ที่ SR ยังจ่ายไม่ครบ (rules.grOpenRequests · 20261214010000): หนึ่งการ์ดต่อคำขอ เก่าก่อน · ใบ × เส้นยางที่มีคำขออยู่ไม่มีการ์ด "รอจ่ายให้ GR" ซ้ำ
+      // คำขอเบิกของ GR ที่ SR ยังจ่ายไม่ครบ (rules.grOpenRequests · 20261216010000): หนึ่งการ์ดต่อคำขอ เก่าก่อน · ใบ × เส้นยางที่มีคำขออยู่ไม่มีการ์ด "รอจ่ายให้ GR" ซ้ำ
       const requests = rules.grOpenRequests?.(data) ?? [];
       const asked = new Set(requests.map((entry) => `${entry.request.orderId}\u0000${entry.request.itemCode}`));
       const needs = rules.rodIssueNeeds(data);

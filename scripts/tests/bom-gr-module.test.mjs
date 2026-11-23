@@ -3,7 +3,7 @@ import test from "node:test";
 import { createRequire } from "node:module";
 import { createMockSupabase } from "../pilot-harness-mock.mjs";
 
-// แปรรูปยาง GR (โรงงาน ขั้น 2 · 20261214010000_bom_gr_module.sql): กฎ (modules/bom-rules.js) · คำสั่ง (modules/bom-actions.js) · store (modules/bom-store.js)
+// แปรรูปยาง GR (โรงงาน ขั้น 2 · 20261216010000_bom_gr_module.sql): กฎ (modules/bom-rules.js) · คำสั่ง (modules/bom-actions.js) · store (modules/bom-store.js)
 // และ Supabase จำลองของ harness (scripts/pilot-harness-mock.mjs) ต้องตอบรหัสเดียวกับฐานข้อมูล (pgTAP คู่กัน: supabase/tests/database/bom_gr_module.test.sql)
 // ข้อมูลสาธิต (modules/bom-seed.js addGrDemo): งาน SE-HL24-YE03-400-19-30 ของใบ DEMO-26001 (ต้องทำ 120) ตั้งขั้นตอน ตัดยาง → ทากาว → เจียร์ → เจาะ มีผลสี่วัน
 // ยอดดี 65 (ขั้นเจาะ) เสีย 6 · ส่งให้ PK 30 (รับแล้ว) + 25 (รอ PK รับ) · คำขอเบิก RB-DM02-02-YE03-204-19-34 × 10 ยังเปิด · งานลูกตอปิโดยังไม่มีขั้นตอน

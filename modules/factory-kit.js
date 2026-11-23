@@ -108,7 +108,7 @@
     const started = job.qtyDone > 0 || job.status === "in_progress";
     const linkedJob = Boolean(ctx.helpers.isLinkedJob?.(job));
     // งานที่พักอยู่รายงานผลไม่ได้ ต้องกด "ทำต่อ" / "คืนคิว" ก่อน
-    // งาน GR (20261214010000): ตั้งขั้นตอนแล้ว = ยอดมาจาก "บันทึกผลรายวัน" ของโมดูล GR ไม่มีปุ่มรายงานผล · ยังไม่ตั้งและยังไม่เคยรายงานแบบเดิม = หัวหน้าแผนก GR / ฝ่ายวางแผนตั้งขั้นตอนก่อน (คำตอบเจ้าของข้อ 7)
+    // งาน GR (20261216010000): ตั้งขั้นตอนแล้ว = ยอดมาจาก "บันทึกผลรายวัน" ของโมดูล GR ไม่มีปุ่มรายงานผล · ยังไม่ตั้งและยังไม่เคยรายงานแบบเดิม = หัวหน้าแผนก GR / ฝ่ายวางแผนตั้งขั้นตอนก่อน (คำตอบเจ้าของข้อ 7)
     // งาน GR ที่รายงานยอดแบบเดิมไปแล้ว (ตั้งขั้นตอนไม่ได้) รายงานแบบเดิมต่อได้ · opts.main = ปุ่มหลักที่โมดูลส่งมาแทน ("" = ไม่มี)
     const grPlanned = job.dept === "GR" && Boolean(ctx.helpers.isGrPlanned?.(data, job));
     const grFresh = job.dept === "GR" && !grPlanned && typeof ctx.helpers.isGrPlanned === "function" && !(Number(job.qtyDone) > 0 || Number(job.qtyReject) > 0);

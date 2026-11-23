@@ -312,7 +312,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     not: (column, operator, value) => { const inner = FILTERS[operator]?.(column, value); return inner ? (row) => !inner(row) : () => true; },
   };
   const ok = (data, count = null) => Promise.resolve({ data, error: null, count });
-  const failed = (error) => Promise.resolve({ data: null, error: { message: error.code ?? error.message, code: error.code ?? "MOCK_ERROR" }, count: null });
+  const failed = (error) => Promise.resolve({ data: null, error: { message: error.code ?? error.message, code: error.code ?? "MOCK_ERROR", details: error.details ?? null }, count: null });
 
   function compare(left, right, ascending) {
     if (left === right) return 0;
@@ -487,7 +487,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     try { storage?.setItem?.(BOM_KEY, JSON.stringify(bomMaster)); } catch { warnOnce("bom-storage", "[pilot harness] เก็บข้อมูล BOM ลง storage ไม่ได้ ข้อมูลอยู่ในหน่วยความจำของหน้านี้เท่านั้น"); }
   }
   // ที่หน้าเห็น (ตรงกับ app_bom_master): ไม่มีข้อมูลภายใน (versions / tombstones / audit)
-  // grWorkers (แปรรูปยาง GR · 20261214010000): พนักงาน active ของแผนก GR ในโหมดนั้น มากับ snapshot เท่านั้น ส่วนต่างเป็นชุดว่างเสมอ
+  // grWorkers (แปรรูปยาง GR · 20261216010000): พนักงาน active ของแผนก GR ในโหมดนั้น มากับ snapshot เท่านั้น ส่วนต่างเป็นชุดว่างเสมอ
   const bomView = (current) => ({ version: current.version, epoch: current.epoch, ...Object.fromEntries(BOM_LISTS.map((list) => [list, clone(current[list]).sort(bomSorter(list))])), grWorkers: bomGrWorkers() });
   // ส่วนต่างตั้งแต่เวอร์ชัน since (ตรงกับ private.bom_delta): ครบทุกชุด delete มีเฉพาะชุดสี/แพ็กเกจ/งาน
   function bomDelta(current, since) {
@@ -509,7 +509,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     // หัวหน้าแผนก RB (ผู้จัดการแผนก): อนุมัติสูตร/ปล่อยผลิตของ RubberFlow ได้ · ตำแหน่งที่ 7 = รหัสบทบาท (ไม่ระบุ = พนักงาน staff)
     ["persona-rbh", "สุรีย์", "หัวหน้ารีด", "หัวหน้าแผนก RB", "RB", "ฝ่ายผลิต RB", "department_manager"],
     ["persona-gr", "มานี", "ตัดยาง", "พนักงานแผนก GR", "GR", "ฝ่ายผลิต GR"],
-    // หัวหน้าแผนก GR (ผู้ช่วยผู้จัดการแผนก: ไม่อยู่ในกลุ่มวางแผน เหมือนบัญชีทดสอบ SBX-GR-AMGR): ตั้งค่าขั้นตอน / ตั้งขั้นตอนของงาน / บันทึกและแก้ผลของทุกคน / ส่งงานให้ PK (20261214010000)
+    // หัวหน้าแผนก GR (ผู้ช่วยผู้จัดการแผนก: ไม่อยู่ในกลุ่มวางแผน เหมือนบัญชีทดสอบ SBX-GR-AMGR): ตั้งค่าขั้นตอน / ตั้งขั้นตอนของงาน / บันทึกและแก้ผลของทุกคน / ส่งงานให้ PK (20261216010000)
     ["persona-grh", "วิไล", "หัวหน้าแปรรูป", "หัวหน้าแผนก GR (ผู้ช่วยผู้จัดการแผนก)", "GR", "ฝ่ายผลิต GR", "assistant_department_manager"],
     ["persona-st", "วิชัย", "คลังวัตถุดิบ", "พนักงานคลังวัตถุดิบ (ST)", "ST", "คลังวัตถุดิบ"],
     // SR = คลังยางเส้นยาวของ BOM (รับเข้าคลัง ตรวจขนาด รับนอกใบสั่ง ย้ายตำแหน่ง ปรับยอด จ่ายให้ GR · 20261202010000 / 20261204010000)
@@ -829,9 +829,9 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       if (Math.abs(((Number(record.qtyDone) || 0) - (Number(prev.qtyDone) || 0)) - sum("good")) > 0.001 || Math.abs(((Number(record.qtyReject) || 0) - (Number(prev.qtyReject) || 0)) - sum("reject")) > 0.001) fail("BOM_INVALID_JOB");
     }
     // ฝ่ายวางแผนปิดงานที่ผูก WO พร้อมเหตุผล: WO planned / released ยกเลิก · in_progress / on_hold หยุด · completed / cancelled คงเดิม (bomRfCancelOp กรองสถานะเอง)
-    // งาน GR ที่ตั้งขั้นตอนแล้ว: ยอดดี / เสียมาจากผลรายวันเท่านั้น (trigger bom_jobs_gr_guard ของ 20261214010000 · ทุกผู้เรียกทุก action)
+    // งาน GR ที่ตั้งขั้นตอนแล้ว: ยอดดี / เสียมาจากผลรายวันเท่านั้น (trigger bom_jobs_gr_guard ของ 20261216010000 · ทุกผู้เรียกทุก action)
     if ((next.grPlans ?? []).some((plan) => plan.jobId === prev.id) && !sameOutput) fail("BOM_INVALID_JOB");
-    // งาน GR ที่มีผลรายวันแล้ว (ทุกสถานะของผล) คืนกลับเป็นรอคิวไม่ได้ (trigger bom_jobs_gr_guard ของ 20261214010000)
+    // งาน GR ที่มีผลรายวันแล้ว (ทุกสถานะของผล) คืนกลับเป็นรอคิวไม่ได้ (trigger bom_jobs_gr_guard ของ 20261216010000)
     if (record.status === "queued" && prev.status !== "queued" && (next.grRecords ?? []).some((entry) => entry.jobId === prev.id)) fail("BOM_INVALID_TRANSITION");
     if (closing && rfCancel && (record.externalRef?.woId ?? prev.externalRef?.woId)) rfCancel.push(bomRfCancelOp("closeJob", [{ ...prev, externalRef: record.externalRef ?? prev.externalRef }]));
   }
@@ -1219,7 +1219,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     }
     return written;
   }
-  // ---- แปรรูปยาง GR (ตรงกับ 20261214010000_bom_gr_module.sql) ----
+  // ---- แปรรูปยาง GR (ตรงกับ 20261216010000_bom_gr_module.sql) ----
   // ห้าชุดที่เซิร์ฟเวอร์เขียน (grConfig / grPlans / grRecords / rodRequests / grHandovers) · แถวคำขอเดียวต่อคำสั่ง ส่วนกับ action ต้องคู่กัน (ผิด / ว่าง = BOM_INVALID_GR)
   // ลำดับตรวจเหมือนตัวเขียน private.bom_gr_save_*: รูปแถว (BOM_INVALID_GR) → สิทธิ์ (BOM_FORBIDDEN) → แถวที่อ้าง (BOM_INVALID_GR) → ชนรุ่น (BOM_STALE) → สถานะ (BOM_INVALID_TRANSITION) → กติกา
   // ยอดของงาน GR ที่มีขั้นตอน = ดีของขั้นสุดท้าย / เสียของทุกขั้น (bomGrRecompute = private.bom_gr_recompute) · reportJob ของงานนั้น = BOM_INVALID_JOB (bomJobRules = trigger bom_jobs_gr_guard)
@@ -3298,8 +3298,64 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     },
   };
 
+  // MNP LAB · รายงานทดสอบ MDR (20261215010000_lab_mdr_tests.sql) — ผลอยู่ในหน่วยความจำของหน้า หายเมื่อโหลดใหม่
+  // ผลตั้งต้น = globalThis.MNP_HARNESS_MDR_SEED ที่ scripts/pilot-harness.mjs อ่านจากโฟลเดอร์ .ini ใน MDR_SAMPLE_DIR (ไม่ตั้ง = ว่าง ลองอัปโหลดเองได้)
+  // ตรวจเหมือนฐานข้อมูลเท่าที่หน้าจอต้องเห็น: ชื่อลงท้าย F1/F2, ไม่เกิน 25 รายการต่อครั้ง, ซ้ำ (ชื่อ + วันที่ + เวลา + ID) ไม่เขียนทับ
+  let mdrRows = null;
+  let mdrSeq = 0;
+  const mdrKey = (test) => [String(test.name ?? "").trim(), test.test_date, test.test_time, test.machine_id].join("|");
+  function mdrAdd(test) {
+    const key = mdrKey(test);
+    if (mdrRows.some((row) => row.key === key)) return false;
+    const name = String(test.name).trim();
+    mdrRows.push({ ...clone(test), key, id: ++mdrSeq, name, formula: name.slice(0, -2), part: name.slice(-2) });
+    return true;
+  }
+  function mdrTests() {
+    if (!mdrRows) {
+      mdrRows = [];
+      for (const test of globalThis.MNP_HARNESS_MDR_SEED ?? []) mdrAdd(test);
+    }
+    return mdrRows;
+  }
+  const MDR_RPC = {
+    app_lab_mdr_upload({ p_tests }) {
+      mdrTests();
+      if (!Array.isArray(p_tests) || p_tests.length < 1 || p_tests.length > 25) fail("LAB_MDR_INVALID_PAYLOAD");
+      p_tests.forEach((test, index) => {
+        const valid = /^[A-Za-z0-9][A-Za-z0-9._-]{0,38}F[12]$/.test(String(test?.name ?? "").trim()) && Number.isFinite(test.ml) && Number.isFinite(test.mh) && test.mh >= test.ml
+          && (String(test.name).trim().endsWith("F2") || (Array.isArray(test.curve) && test.curve.length >= 10 && test.curve.length <= 7201));
+        if (!valid) throw Object.assign(new Error("LAB_MDR_INVALID_TEST"), { code: "LAB_MDR_INVALID_TEST", details: String(index + 1) });
+      });
+      const inserted = p_tests.filter((test) => mdrAdd(test)).length;
+      return { received: p_tests.length, inserted, duplicates: p_tests.length - inserted };
+    },
+    app_lab_mdr_feed({ p_part, p_formula = null, p_date = null }) {
+      if (!["F1", "F2"].includes(p_part)) fail("LAB_MDR_INVALID_PART");
+      const rows = mdrTests().filter((row) => row.part === p_part);
+      const byFormula = new Map();
+      for (const row of rows) {
+        if (!byFormula.has(row.formula)) byFormula.set(row.formula, []);
+        byFormula.get(row.formula).push(row);
+      }
+      const formulas = [...byFormula].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([formula, items]) => {
+        const dates = items.map((item) => item.test_date).sort();
+        return { formula, tests: items.length, days: new Set(dates).size, first_date: dates[0], last_date: dates.at(-1) };
+      });
+      const mine = p_formula ? (byFormula.get(String(p_formula).trim()) ?? []) : [];
+      const dates = mine.map((row) => row.test_date).sort();
+      const curveDate = mine.length ? (dates.includes(p_date) ? p_date : dates.at(-1)) : null;
+      const order = (a, b) => (a.test_time < b.test_time ? -1 : a.test_time > b.test_time ? 1 : a.machine_id < b.machine_id ? -1 : 1);
+      const tests = [...mine].sort((a, b) => (a.test_date !== b.test_date ? (a.test_date < b.test_date ? 1 : -1) : order(a, b)))
+        .map(({ id, machine_id, test_date, test_time, temperature_c, set_minutes, ml, mh, ts1_s, ts2_s, t50_s, t90_s, vc1, vc2, result }) => ({ id, machine_id, test_date, test_time, temperature_c, set_minutes, ml, mh, ts1_s, ts2_s, t50_s, t90_s, vc1, vc2, result }));
+      const curves = mine.filter((row) => row.test_date === curveDate && Array.isArray(row.curve)).sort(order).map((row) => ({ id: row.id, curve: row.curve }));
+      return { formulas, tests, curve_date: curveDate, curves };
+    },
+  };
+
   const RPC = {
     ...(itwoMock ? itwoMock.handlers : {}),
+    ...MDR_RPC,
     ...NCR_RPC,
     app_my_approval_modules: () => request_types.map(({ code }) => ({ code })),
     app_lab_access: () => false,

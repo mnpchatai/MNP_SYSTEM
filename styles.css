@@ -3603,4 +3603,126 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .gr-settings-table .rf-input, .gr-settings-table .rf-select { min-width: 110px; }
 @media (max-width: 640px) {
   .gr-record-form .bom-step-next .rf-btn { width: 100%; }
+
+/* ---------- MNP LAB · รายงานทดสอบ MDR (lab-mdr-views.js) ---------- */
+/* ปุ่มอัปโหลดบนหัวโมดูลสี = ปุ่มหลักของหน้า (สี CTA ของหัว) · เมนูสองทางลอยใต้ปุ่ม จึงให้หัวโมดูลนี้ไม่ตัดขอบ */
+.lab-mdr > .lab-module-header { overflow: visible; }
+.lab-mdr > * { min-width: 0; }
+.lab-mdr-upload { position: relative; margin-left: auto; flex-shrink: 0; }
+.lab-mdr-upload-btn { gap: 8px; }
+.lab-mdr-upload-btn svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.request-module-header .lab-mdr-upload-btn { color: var(--mod-cta-ink); background: var(--mod-cta); border-color: var(--mod-cta-edge); box-shadow: var(--mod-cta-shadow); }
+.request-module-header .lab-mdr-upload-btn:hover { color: var(--mod-cta-ink); background: var(--mod-cta); border-color: var(--mod-cta-edge); }
+.lab-mdr-upload-btn:disabled { opacity: .6; cursor: progress; }
+.lab-mdr-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; min-width: 250px; padding: 6px; display: grid; gap: 2px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: 0 14px 34px rgba(16, 32, 59, .2); }
+.lab-mdr-menu[hidden] { display: none; }
+.lab-mdr-menu button { min-height: 48px; padding: 8px 12px; display: grid; gap: 1px; color: inherit; background: transparent; border: 0; border-radius: var(--radius-sm); font: inherit; text-align: left; cursor: pointer; }
+.lab-mdr-menu button:hover, .lab-mdr-menu button:focus-visible { background: var(--shell); outline: 0; }
+.lab-mdr-menu strong { font-size: var(--text-ui); }
+.lab-mdr-menu small { color: var(--muted); font-size: var(--text-caption); }
+
+/* จานสีของโมดูล (pt ใน lab-sections.js) สำหรับแท็บ หัววัน และแถบผลอัปโหลด — ค่าเดียวกับ [data-module="pt"] ด้านบน */
+.lab-mdr { --m100: #ffedd5; --m400: #fb923c; --m500: #f97316; --m600: #ea580c; --m800: #9a3412; --m900: #7c2d12; }
+
+/* แท็บชุดทดสอบ: การ์ดสองใบสีของโมดูล (จานสี pt เดียวกับหัวโมดูล) ใบที่เปิดอยู่เต็มสี */
+.lab-mdr-part { min-height: 56px; padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-left: 5px solid var(--m400); border-radius: var(--radius-md); font-weight: 700; text-decoration: none; }
+.lab-mdr-parts { margin-bottom: 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.lab-mdr-part small { padding: 2px 9px; color: var(--m800); background: var(--m100); border-radius: var(--radius-pill); font-size: var(--text-caption); font-variant-numeric: tabular-nums; }
+.lab-mdr-part:hover { border-color: var(--m400); }
+.lab-mdr-part[aria-current="page"] { color: #fff; background: linear-gradient(120deg, var(--m600), var(--m800)); border-color: transparent; box-shadow: 0 6px 16px color-mix(in srgb, var(--m600) 30%, transparent); }
+.lab-mdr-part[aria-current="page"] small { color: var(--m900); background: color-mix(in srgb, #fff 88%, transparent); }
+.lab-mdr-part:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+
+/* ผลการอัปโหลด */
+.lab-mdr-result { margin-bottom: 14px; padding: 12px 16px; display: flex; align-items: flex-start; gap: 12px; border-left: 5px solid var(--m500); }
+.lab-mdr-result[hidden] { display: none; }
+.lab-mdr-result-body { flex: 1 1 auto; min-width: 0; display: grid; gap: 4px; }
+.lab-mdr-result-body p { margin: 0; font-size: var(--text-meta); }
+.lab-mdr-result-main strong { font-size: var(--text-ui); }
+.lab-mdr-result-main span { color: var(--muted); }
+.lab-mdr-result-error { color: var(--danger); font-weight: 600; }
+.lab-mdr-result progress { width: min(360px, 100%); height: 8px; accent-color: var(--m600); }
+.lab-mdr-skipped summary { color: var(--warning); font-size: var(--text-meta); font-weight: 700; cursor: pointer; }
+.lab-mdr-skipped ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; font-size: var(--text-meta); }
+.lab-mdr-skipped small { display: block; color: var(--muted); font-size: var(--text-caption); overflow-wrap: anywhere; }
+.lab-mdr-result-close { flex-shrink: 0; }
+.lab-mdr-loading { padding: 28px; color: var(--muted); text-align: center; }
+
+/* รายการสูตร: ตารางเต็มความกว้าง (4 คอลัมน์พอดีจอมือถือ ไม่ต้องแปลงเป็นการ์ด) */
+.lab-mdr-overview { width: 100%; }
+.lab-mdr-overview th, .lab-mdr-overview td { padding: 11px 16px; vertical-align: middle; }
+.lab-mdr-overview tbody tr:hover { background: color-mix(in srgb, var(--m400) 6%, var(--paper)); }
+
+/* หน้าสูตร */
+.lab-mdr-head { margin-bottom: 12px; }
+.lab-mdr-day { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--text-meta); font-weight: 600; }
+.lab-mdr-day .select { width: auto; min-width: 190px; }
+/* ตัวเลือกที่ searchable-select แปลงเป็นช่องพิมพ์ (size ตามข้อความยาวสุด) ต้องหดตามจอได้ */
+.lab-mdr-day .ss-input { min-width: 0; max-width: 100%; }
+.lab-mdr-chart { padding-bottom: 10px; }
+.lab-mdr-legend { padding: 12px 18px 4px; display: flex; flex-wrap: wrap; gap: 6px; }
+.lab-mdr-key { min-height: 32px; padding: 0 10px; display: inline-flex; align-items: center; gap: 7px; color: var(--ink); background: color-mix(in srgb, var(--line) 55%, transparent); border: 1px solid var(--line); border-radius: var(--radius-pill); font: inherit; font-size: var(--text-caption); font-weight: 700; cursor: pointer; }
+.lab-mdr-key small { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+.lab-mdr-key[aria-pressed="false"] { opacity: .45; }
+.lab-mdr-key:focus-visible { outline: 3px solid var(--primary); outline-offset: 1px; }
+.lab-mdr-swatch { width: 14px; height: 4px; flex: none; display: inline-block; background: var(--line-color); border-radius: 2px; }
+.lab-mdr-key[aria-pressed="false"] .lab-mdr-swatch { background: transparent; box-shadow: inset 0 0 0 1px var(--line-color); }
+.lab-mdr-plot { cursor: crosshair; }
+.lab-mdr-line path { fill: none; stroke: var(--line-color); stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; transition: opacity .12s ease-out, stroke-width .12s ease-out; }
+.lab-mdr-t90 { fill: var(--paper); stroke: var(--line-color); stroke-width: 2; }
+.lab-mdr-line.is-off { display: none; }
+.lab-mdr-plot.is-focus .lab-mdr-line { opacity: .22; }
+.lab-mdr-plot.is-focus .lab-mdr-line.is-hot { opacity: 1; }
+.lab-mdr-plot.is-focus .lab-mdr-line.is-hot path { stroke-width: 3; }
+.lab-mdr-axis-name { font-weight: 700; }
+.lab-mdr-tip { min-width: 140px; }
+.lab-mdr-tip-row { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.lab-mdr-tip-row b { margin-left: auto; padding-left: 12px; font-size: var(--text-ui); }
+
+/* กราฟแนวโน้มรายวันของ F2 (พื้นเข้มเดียวกับกราฟแรงบิดของ F1): ปุ่มสลับค่า แล้วคำอธิบายสัญลักษณ์บรรทัดเดียว */
+.lab-mdr-trend { padding-bottom: 8px; }
+.lab-mdr-trend-head { padding: 12px 18px 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.lab-mdr-trend .lab-seg { background: transparent; border-color: var(--line); }
+.lab-mdr-trend .lab-seg-btn { min-width: 84px; color: var(--muted); }
+.lab-mdr-trend .lab-seg-btn + .lab-seg-btn { border-left-color: var(--line); }
+.lab-mdr-trend .lab-seg-btn:hover { color: var(--ink); background: color-mix(in srgb, #fff 6%, transparent); }
+.lab-mdr-trend .lab-seg-btn[aria-pressed="true"] { color: #fff; background: linear-gradient(120deg, var(--m600), var(--m800)); }
+.lab-mdr-trend .lab-seg-btn:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; }
+.lab-mdr-trend-key { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; color: var(--muted); font-size: var(--text-caption); }
+.lab-mdr-k { width: 10px; height: 10px; margin-left: 8px; display: inline-block; flex: none; }
+.lab-mdr-k:first-child { margin-left: 0; }
+.lab-mdr-k-dot { background: #c9d4e3; border-radius: 50%; }
+.lab-mdr-k-avg { width: 16px; height: 3px; background: var(--m400); border-radius: 2px; }
+.lab-mdr-k-band { width: 16px; background: color-mix(in srgb, #4ea8ff 22%, transparent); border: 1px dashed #4ea8ff; }
+.lab-mdr-k-out { background: #ff5c5c; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.lab-mdr-band { fill: color-mix(in srgb, #4ea8ff 14%, transparent); stroke: #4ea8ff; stroke-width: 1; stroke-dasharray: 5 4; }
+.lab-mdr-avg { fill: none; stroke: var(--m400); stroke-width: 2.2; stroke-linejoin: round; }
+.lab-mdr-avg-pt { fill: var(--m400); stroke: var(--paper); stroke-width: 2; }
+.lab-mdr-dot { fill: #c9d4e3; fill-opacity: .8; }
+.lab-mdr-dot.is-out { fill: #ff5c5c; fill-opacity: 1; }
+.lab-mdr-trend-note { margin: 2px 0 0; padding: 0 18px; color: var(--muted); font-size: var(--text-caption); font-variant-numeric: tabular-nums; }
+.lab-mdr-trend-empty { margin: 0; padding: 32px 0; color: var(--muted); text-align: center; }
+
+/* ตารางผลรายครั้ง: หัววันแบ่งกลุ่ม (สีของโมดูล) แถว AVG/SD เน้นใต้แต่ละวัน */
+.lab-mdr-scroll { max-height: min(70vh, 760px); }
+.lab-mdr-day-row th { padding: 9px 12px; text-align: left; background: color-mix(in srgb, var(--m400) 12%, var(--paper)); border-top: 2px solid color-mix(in srgb, var(--m600) 45%, transparent); }
+.lab-mdr-day-name { font-size: var(--text-ui); font-weight: 700; }
+.lab-mdr-day-count { margin-left: 10px; color: var(--muted); font-size: var(--text-caption); font-weight: 600; }
+.lab-mdr-day-row .btn { min-height: 30px; margin-left: 12px; padding: 0 10px; }
+.lab-mdr-day-flag { margin-left: 12px; padding: 2px 9px; color: var(--m900); background: var(--m100); border-radius: var(--radius-pill); font-size: var(--text-caption); font-weight: 700; }
+.lab-mdr-day-row.is-shown th { background: color-mix(in srgb, var(--m400) 26%, var(--paper)); }
+.lab-mdr-table tbody .sticky { background: var(--paper); }
+.lab-mdr-stat th, .lab-mdr-stat td, .lab-mdr-table tbody .lab-mdr-stat .sticky { font-weight: 700; background: color-mix(in srgb, var(--m400) 7%, var(--shell)); }
+.lab-mdr-stat.lab-mdr-sd th, .lab-mdr-stat.lab-mdr-sd td { color: var(--muted); font-weight: 600; }
+@media (max-width: 720px) {
+  .lab-mdr-upload { width: 100%; margin-left: 0; }
+  .lab-mdr-upload-btn { width: 100%; justify-content: center; }
+  .lab-mdr-menu { left: 0; right: 0; }
+  .lab-mdr-parts { grid-template-columns: 1fr; }
+  /* 15 ครั้งต่อวันบนจอแคบ: ปุ่มเส้นเหลือแค่ ID (เวลาอยู่ในตารางแล้ว) */
+  .lab-mdr-legend { padding: 10px 12px 2px; gap: 4px; }
+  .lab-mdr-key { min-height: 28px; padding: 0 8px; }
+  .lab-mdr-key small { display: none; }
+  .lab-mdr-day { margin-left: 0; width: 100%; }
+  .lab-mdr-day :is(.select, .ss-input) { flex: 1 1 0; width: 100%; min-width: 0; }
 }

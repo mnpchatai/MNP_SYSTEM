@@ -234,7 +234,8 @@ test("normalizeAttachments and describeBatch honour perFile and keep the old beh
 test("a file input marked data-attachment-limit=\"per-file\" gets the per-file limit; any other input keeps the combined limit", async () => {
   assert.equal(attachmentImage.ATTACHMENT_LIMIT_PER_FILE, "per-file");
   class FakeInput {
-    constructor(files, dataset) {
+    constructor(files, dataset, attributes = []) {
+      this.attributes = new Set(attributes);
       this.type = "file";
       this.multiple = true;
       this.files = files;
@@ -242,6 +243,7 @@ test("a file input marked data-attachment-limit=\"per-file\" gets the per-file l
       this.nextElementSibling = null;
       this.validity = "";
     }
+    hasAttribute(name) { return this.attributes.has(name); }
     setCustomValidity(text) { this.validity = text; }
     dispatchEvent() {}
     insertAdjacentElement(_where, node) { this.nextElementSibling = node; }
@@ -257,8 +259,8 @@ test("a file input marked data-attachment-limit=\"per-file\" gets the per-file l
     const notices = [];
     attachmentImage.bindFileInputs({ notify: (message) => notices.push(message) });
     assert.equal(typeof changeHandler, "function");
-    const pick = async (dataset, files) => {
-      const input = new FakeInput(files, dataset);
+    const pick = async (dataset, files, attributes = []) => {
+      const input = new FakeInput(files, dataset, attributes);
       await changeHandler({ target: input });
       return { status: input.nextElementSibling?.textContent, notices: notices.splice(0) };
     };
@@ -274,6 +276,17 @@ test("a file input marked data-attachment-limit=\"per-file\" gets the per-file l
     const plain = await pick({}, [pdfFile("a.pdf", 15 * MB), pdfFile("b.pdf", 15 * MB)]);
     assert.equal(plain.status, MESSAGES.batchTooLarge, "an input without the attribute keeps the combined 20 MB limit");
     assert.deepEqual(plain.notices, [MESSAGES.batchTooLarge]);
+
+    // ช่องที่ไม่ใช่ไฟล์แนบ (data-attachment-skip เช่น ไฟล์ .ini ของ MDR ทั้งโฟลเดอร์): ไม่ตรวจ ไม่แจ้ง ไม่ล้าง ไม่แสดงสถานะ
+    const dataFiles = Array.from({ length: 30 }, (_, index) => pdfFile(`A2004F1$${index}.ini`, 70 * 1024));
+    const skipInput = new FakeInput(dataFiles, {}, ["data-attachment-skip"]);
+    await changeHandler({ target: skipInput });
+    assert.equal(skipInput.files, dataFiles, "the picked files stay as they are");
+    assert.equal(skipInput.nextElementSibling, null, "no attachment status under the input");
+    assert.equal(skipInput.validity, "");
+    assert.deepEqual(notices.splice(0), [], "no 'at most 10 files' toast");
+    const tooMany = await pick({}, dataFiles);
+    assert.equal(tooMany.status, MESSAGES.tooManyFiles, "attachment inputs still allow at most 10 files");
   } finally {
     globalThis.document = saved.document;
     globalThis.HTMLInputElement = saved.HTMLInputElement;

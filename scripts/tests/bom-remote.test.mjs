@@ -1610,7 +1610,7 @@ test("the mock database enforces the contract: test mode, writer permission, per
 
   const { epoch: firstEpoch, ...firstSnapshot } = (await client.rpc("app_bom_master")).data;
   assert.equal(typeof firstEpoch, "string", "the snapshot carries the epoch of the data round");
-  // grWorkers (20261214010000) = พนักงานแผนก GR ของโหมดทดสอบ (บัญชีทดสอบ) มากับ snapshot เท่านั้น ชุดอื่นว่าง
+  // grWorkers (20261216010000) = พนักงานแผนก GR ของโหมดทดสอบ (บัญชีทดสอบ) มากับ snapshot เท่านั้น ชุดอื่นว่าง
   assert.deepEqual({ ...firstSnapshot, grWorkers: [] }, emptyMaster());
   assert.deepEqual(firstSnapshot.grWorkers.map((row) => row.id), ["persona-gr", "persona-grh"], "the snapshot lists the GR workers of test mode");
   let reply = await save({ items: { upsert: [item("FG-1", "FG"), item("P-1")] } });
