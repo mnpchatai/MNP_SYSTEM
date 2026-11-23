@@ -1,9 +1,11 @@
 -- โมดูลแปรรูปยาง GR (โรงงาน ขั้น 2) ของ BOM โหมดทดสอบ (20261214010000_bom_gr_module.sql)
 -- ตรวจทั้งฝั่งอนุญาตและปฏิเสธ: โครงสร้าง / สิทธิ์ของห้าตารางใหม่ รายการ action · นอกโหมดทดสอบ = BOM_TEST_MODE_ONLY
 -- · saveGrConfig (หัวหน้า GR / กลุ่มวางแผน · พนักงาน GR / RB ไม่ได้ · ขั้นที่มีผลลบไม่ได้ ตั้งไม่ใช้ได้) · setGrJobSteps (หัวหน้า / กลุ่มวางแผน · ขั้นที่มีผลเอาออกไม่ได้)
--- · addGrRecord / editGrRecord / voidGrRecord (พนักงานของตัวเอง วันนี้ / เมื่อวาน แก้ได้วันที่บันทึก · หัวหน้าของทุกคนทุกวัน · เหตุผลทุกครั้ง · งาน done = กลุ่มวางแผน)
--- · ยอดของงานคำนวณใหม่ทุกครั้ง (ดี = ขั้นสุดท้าย · เสีย = ทุกขั้น) · reportJob ของงานที่มีขั้นตอน = BOM_INVALID_JOB · พัก / ทำต่อยังได้
--- · requestRods / cancelRodRequest · sendGrToPk (เพดานยอดดี) / receiveGrAtPk (PK) / cancelGrHandover (ยกเลิก = หัวหน้า GR · ย้อนรับ = หัวหน้า PK)
+-- · addGrRecord / editGrRecord / voidGrRecord (พนักงานของตัวเอง วันนี้ / เมื่อวาน แก้ได้วันที่บันทึก · หัวหน้าของทุกคนทุกวัน · เหตุผลทุกครั้ง
+--   · งาน done เพราะยอดถึงแผน = กติกาปกติ · งานที่ฝ่ายวางแผนปิดพร้อมเหตุผล = กลุ่มวางแผนเท่านั้น)
+-- · ยอดของงานคำนวณใหม่ทุกครั้ง (ดี = ขั้นสุดท้าย · เสีย = ทุกขั้น) · reportJob ของงานที่มีขั้นตอน = BOM_INVALID_JOB · พัก / ทำต่อยังได้ · มีผลแล้วคืนคิวไม่ได้
+-- · requestRods / cancelRodRequest · sendGrToPk (เพดานยอดดี) / receiveGrAtPk (PK) / cancelGrHandover (ยกเลิก = หัวหน้า GR · ย้อนรับ = หัวหน้า PK รวมผู้ช่วยผู้จัดการแผนก)
+-- · แก้ / ยกเลิกผล หรือเปลี่ยนขั้นสุดท้ายจนยอดดีต่ำกว่าที่ส่งให้ PK = BOM_GR_EXCEEDS
 -- ข้อควรระวัง: ถ้าอ่านตารางตรงในนาม authenticated จะเกิด 42501 และทำให้ทั้งไฟล์ล้ม ("No plan found") อ่านตารางด้วย reset role เท่านั้น
 begin;
 create extension if not exists pgtap with schema extensions;
@@ -217,6 +219,11 @@ select lives_ok($$ select gr_t.plan(array['GR-04', 'GR-09']) $$, 'the GR head se
 select is((select jsonb_agg(s ->> 'code') from jsonb_array_elements((select p -> 'steps' from jsonb_array_elements(public.app_bom_master() -> 'grPlans') p where p ->> 'jobId' = 'JOB-1-GR')) s),
   '["GR-04", "GR-09"]'::jsonb, 'the plan keeps the order of the steps');
 select is(gr_t.totals(), '0/0/queued', 'a plan alone does not start the job');
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_staff')::uuid);
+select lives_ok($$ select gr_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(gr_t.job('JOB-1-GR') || '{"status":"in_progress"}'::jsonb))), 'setJobStatus') $$,
+  'GR staff start a job that has no record yet');
+select lives_ok($$ select gr_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(gr_t.job('JOB-1-GR') || '{"status":"queued"}'::jsonb))), 'setJobStatus') $$,
+  'and put it back in the queue while it has no record');
 
 -- 7. addGrRecord: พนักงานของตัวเอง / หัวหน้าของทุกคน · ยอดของงาน ----------------------------------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
@@ -245,6 +252,8 @@ select lives_ok($$ select gr_t.add(1, '{"stepCode":"GR-04","good":6}'::jsonb) $$
 select is(gr_t.rec(gr_t.uid(1)) ->> 'workerName' || '/' || (gr_t.rec(gr_t.uid(1)) ->> 'createdBy') || '/' || (gr_t.rec(gr_t.uid(1)) ->> 'status'),
   current_setting('test.n_sbx_gr_staff') || '/' || current_setting('test.n_sbx_gr_staff') || '/active', 'the record keeps the worker and who recorded it');
 select is(gr_t.totals(), '0/0/in_progress', 'good of a step before the last does not count yet, but the job has started');
+select throws_ok($$ select gr_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(gr_t.job('JOB-1-GR') || '{"status":"queued"}'::jsonb))), 'setJobStatus') $$,
+  'BOM_INVALID_TRANSITION', 'a job with a GR record (no good on the last step yet) cannot go back to the queue');
 select is(gr_t.order_row('251214-26001') ->> 'status', 'in_progress', 'the order is in progress');
 select is(gr_t.ver(), current_setting('test.bv')::bigint + 1, 'one BOM counter step');
 select ok(gr_t.audit() like '%grRecords +1%' and gr_t.audit() like '%jobs +1%', 'the history counts the record and the job');
@@ -271,6 +280,8 @@ select lives_ok($$ select gr_t.save(jsonb_build_object('jobs', jsonb_build_objec
   || jsonb_build_object('status', 'hold', 'reports', (gr_t.job('JOB-1-GR') -> 'reports') || '[{"good":0,"reject":0,"note":"รอเครื่องเจียร์"}]'::jsonb)))), 'setJobStatus') $$,
   'GR staff still put the job on hold with a reason');
 select throws_ok($$ select gr_t.add(5, '{}'::jsonb) $$, 'BOM_INVALID_TRANSITION', 'a job on hold takes no new record');
+select throws_ok($$ select gr_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(gr_t.job('JOB-1-GR') || '{"status":"queued"}'::jsonb))), 'setJobStatus') $$,
+  'BOM_INVALID_TRANSITION', 'a job on hold with GR records cannot go back to the queue either');
 select lives_ok($$ select gr_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(gr_t.job('JOB-1-GR') || '{"status":"in_progress"}'::jsonb))), 'setJobStatus') $$,
   'and resume it');
 
@@ -317,13 +328,14 @@ select throws_ok($$ select gr_t.plan(array['GR-04', 'GR-09', 'GR-03']) $$, 'BOM_
 select lives_ok($$ select gr_t.plan(array['GR-04', 'GR-09']) $$, 'the head puts the plan back');
 select is(gr_t.totals(), '3/0/in_progress', 'and the totals follow again');
 
--- 11. งานเสร็จ: เพิ่ม / แก้ได้เฉพาะกลุ่มวางแผน · ยกเลิกจนต่ำกว่าแผน = กลับเป็นกำลังทำ ---------------------------------------------------------------
+-- 11. งานที่เสร็จเพราะยอดถึงแผน: รับผลตามกติกาปกติ (รวมขั้นก่อนหน้า) · ยกเลิกจนต่ำกว่าแผน = กลับเป็นกำลังทำ ------------------------------------------
 select lives_ok($$ select gr_t.add(6, '{"good":7}'::jsonb) $$, 'the head records the rest');
 select is(gr_t.totals(), '10/0/done', 'reaching the plan finishes the job');
 select ok(gr_t.job('JOB-1-GR') ->> 'doneAt' is not null, 'with a done time');
-select throws_ok($$ select gr_t.add(7, '{}'::jsonb) $$, 'BOM_INVALID_TRANSITION', 'the GR head cannot add to a done job');
+select lives_ok($$ select gr_t.add(7, '{"stepCode":"GR-04"}'::jsonb) $$, 'the GR head still records an earlier step of a job done by quantity');
 select public.app_sandbox_enter(current_setting('test.p_sbx_gr_staff')::uuid);
-select throws_ok($$ select gr_t.add(7, '{}'::jsonb) $$, 'BOM_INVALID_TRANSITION', 'nor can GR staff');
+select lives_ok($$ select gr_t.add(8, '{"stepCode":"GR-04"}'::jsonb) $$, 'and so do GR staff, for their own work of today');
+select is(gr_t.totals(), '10/0/done', 'an earlier step keeps the job done');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select lives_ok($$ select gr_t.gr('grRecords', jsonb_build_object('id', gr_t.uid(6), 'reason', 'นับผิดทั้งรายการ'), 'voidGrRecord') $$, 'a planner cancels a record of a done job');
 select is(gr_t.totals(), '3/0/in_progress', 'below the plan again the job is back in progress');
@@ -383,12 +395,53 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_pk_mgr')::uuid);
 select lives_ok($$ select gr_t.gr('grHandovers', jsonb_build_object('id', gr_t.uid(201), 'reason', 'นับผิด'), 'cancelGrHandover') $$, 'the PK department manager reverses the receipt');
 select is(gr_t.ho(gr_t.uid(201)) ->> 'status' || '/' || coalesce(gr_t.ho(gr_t.uid(201)) ->> 'receivedBy', 'null') || '/' || (gr_t.ho(gr_t.uid(201)) -> 'moves' -> 2 ->> 'kind'),
   'sent/null/unreceive', 'the hand-over waits at PK again and the history keeps the reversal');
+-- หัวหน้า PK ที่ไม่ใช่กลุ่มวางแผน (ผู้ช่วยผู้จัดการแผนก): ตั้งบทบาทของบัญชีทดสอบ PK-MGR ชั่วคราวในธุรกรรมนี้
+select public.app_sandbox_enter(current_setting('test.p_sbx_pk_staff')::uuid);
+select lives_ok($$ select gr_t.gr('grHandovers', jsonb_build_object('id', gr_t.uid(201)), 'receiveGrAtPk') $$, 'PK staff receive it again');
+reset role;
+update public.employees set role_id = (select id from public.roles where code = 'assistant_department_manager') where employee_no = 'SBX-PK-MGR';
+select ok(not private.bom_can_edit((select e from public.employees e where e.employee_no = 'SBX-PK-MGR'))
+          and private.bom_gr_is_head((select e from public.employees e where e.employee_no = 'SBX-PK-MGR'), 'PK'),
+  'the PK assistant department manager is a PK head and not a planner');
+set local role authenticated;
+select public.app_sandbox_enter(current_setting('test.p_sbx_pk_mgr')::uuid);
+select lives_ok($$ select gr_t.gr('grHandovers', jsonb_build_object('id', gr_t.uid(201), 'reason', 'นับผิด'), 'cancelGrHandover') $$,
+  'the PK assistant department manager (not a planner) reverses a receipt');
+select is(gr_t.ho(gr_t.uid(201)) ->> 'status', 'sent', 'the hand-over waits at PK again');
+reset role;
+update public.employees set role_id = (select id from public.roles where code = 'department_manager') where employee_no = 'SBX-PK-MGR';
+set local role authenticated;
 select public.app_sandbox_enter(current_setting('test.p_sbx_gr_amgr')::uuid);
 select lives_ok($$ select gr_t.gr('grHandovers', jsonb_build_object('id', gr_t.uid(202), 'reason', 'ส่งผิดใบ'), 'cancelGrHandover') $$, 'the GR head cancels an unreceived hand-over');
 select is(gr_t.ho(gr_t.uid(202)) ->> 'status' || '/' || (gr_t.ho(gr_t.uid(202)) ->> 'cancelReason'), 'cancelled/ส่งผิดใบ', 'cancelled with its reason');
 select lives_ok($$ select gr_t.gr('grHandovers', jsonb_build_object('id', gr_t.uid(203), 'jobId', 'JOB-1-GR', 'qty', 1), 'sendGrToPk') $$, 'a cancelled hand-over frees its pieces');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pk_staff')::uuid);
 select throws_ok($$ select gr_t.gr('grHandovers', jsonb_build_object('id', gr_t.uid(202)), 'receiveGrAtPk') $$, 'BOM_INVALID_TRANSITION', 'a cancelled hand-over cannot be received');
+
+-- 13b. ยอดดีต้องไม่ต่ำกว่าที่ส่งให้ PK (ส่งแล้ว 201 × 2 + 203 × 1 = ยอดดี 3: ผล 4 × 2 + ผล 5 × 1 ของขั้นสุดท้าย) ------------------------------------
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_amgr')::uuid);
+select throws_ok($$ select gr_t.gr('grRecords', jsonb_build_object('id', gr_t.uid(5), 'reason', 'บันทึกซ้ำ'), 'voidGrRecord') $$, 'BOM_GR_EXCEEDS',
+  'a cancel that leaves the good below what was sent to PK is refused');
+select throws_ok($$ select gr_t.edit(4, '{"good":1}'::jsonb) $$, 'BOM_GR_EXCEEDS', 'so is an edit');
+select throws_ok($$ select gr_t.plan(array['GR-04', 'GR-09', 'GR-10']) $$, 'BOM_GR_EXCEEDS', 'and a new last step with no good yet');
+select is(gr_t.totals() || '/' || (gr_t.rec(gr_t.uid(5)) ->> 'status'), '3/0/in_progress/active', 'nothing changed');
+select lives_ok($$ select gr_t.gr('grHandovers', jsonb_build_object('id', gr_t.uid(203), 'reason', 'ส่งเกิน'), 'cancelGrHandover') $$, 'the head cancels the unreceived send first');
+select lives_ok($$ select gr_t.gr('grRecords', jsonb_build_object('id', gr_t.uid(5), 'reason', 'บันทึกซ้ำ'), 'voidGrRecord') $$, 'then the cancel goes through');
+select is(gr_t.totals(), '2/0/in_progress', 'down to what is still sent');
+
+-- 13c. งานที่ฝ่ายวางแผนปิดพร้อมเหตุผล (ยอดต่ำกว่าแผน): เพิ่ม / แก้ผลได้เฉพาะกลุ่มวางแผน ----------------------------------------------------
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select lives_ok($$ select gr_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(gr_t.job('JOB-1-GR')
+  || jsonb_build_object('status', 'done', 'reports', (gr_t.job('JOB-1-GR') -> 'reports') || '[{"good":0,"reject":0,"note":"ลูกค้าลดจำนวน"}]'::jsonb)))), 'setJobStatus') $$,
+  'a planner closes the job below the plan with a reason');
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_staff')::uuid);
+select throws_ok($$ select gr_t.add(10, '{"stepCode":"GR-04"}'::jsonb) $$, 'BOM_INVALID_TRANSITION', 'GR staff cannot record on a job the planners closed');
+select throws_ok($$ select gr_t.gr('grRecords', jsonb_build_object('id', gr_t.uid(8), 'reason', 'บันทึกซ้ำ'), 'voidGrRecord') $$, 'BOM_INVALID_TRANSITION', 'nor cancel their record of it');
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_amgr')::uuid);
+select throws_ok($$ select gr_t.add(10, '{"stepCode":"GR-04"}'::jsonb) $$, 'BOM_INVALID_TRANSITION', 'nor can the GR head');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select lives_ok($$ select gr_t.add(10, '{"stepCode":"GR-04"}'::jsonb) $$, 'a planner still records on it');
+select is(gr_t.totals(), '2/0/done', 'and the closed job stays closed');
 
 -- 14. ชุดเรคอร์ด -----------------------------------------------------------------------------------------------------------------
 select is((select array_agg(k order by k collate "C") from jsonb_object_keys(gr_t.rec(gr_t.uid(1))) k),

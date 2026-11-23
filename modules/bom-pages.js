@@ -57,8 +57,10 @@
       : held ? `<div class="small muted">${esc(`พักโดย ${held.by}: ${held.reason}`)}</div>` : "";
   };
   // ปุ่มพัก / ทำต่อของงาน: พักต้องมีเหตุผล (dialog jobHold) · งานที่พักแล้วมียอดกลับเป็น "กำลังทำ" (ทำต่อ) ไม่มียอดกลับไปรอคิว (คืนคิว)
+  // งานที่มีผลรายวันของ GR แล้วนับว่ามียอด (คืนคิวไม่ได้ · 20261214010000)
+  const resumes = (ctx, job) => (Number(job.qtyDone) || 0) > 0 || Boolean(ctx.helpers.hasGrRecords?.(ctx.data, job));
   const holdButton = (ctx, job) => (job.status === "hold"
-    ? ctx.ui.button((Number(job.qtyDone) || 0) > 0 ? "ทำต่อ" : "คืนคิว", { action: "setJobStatus", args: { jobId: job.id, status: (Number(job.qtyDone) || 0) > 0 ? "in_progress" : "queued" }, className: "secondary small" })
+    ? ctx.ui.button(resumes(ctx, job) ? "ทำต่อ" : "คืนคิว", { action: "setJobStatus", args: { jobId: job.id, status: resumes(ctx, job) ? "in_progress" : "queued" }, className: "secondary small" })
     : ctx.ui.openButton("พักงาน", "jobHold", { jobId: job.id }, { className: "secondary small" }));
   // งานที่ผูก WO ของ RubberFlow: ยอดมาจากแท่งที่คลังแท่งยาว (SR) รับเข้าคลังและผ่านตรวจขนาด (20261202010000 · เดิม = ล็อตตกแต่งที่ผ่าน QC) ไม่มีปุ่มรายงานผล · บอกครั้งเดียวในที่ของปุ่ม
   const LINKED_NOTE = '<span class="small muted" title="ยอดของงานนี้เพิ่มเองเมื่อคลังยางเส้นยาว (SR) รับยางเส้นยาวจากล็อตตกแต่งของ WO เข้าคลังและผ่านตรวจขนาด">ยอดมาจากการรับเข้าคลัง SR</span>';

@@ -831,6 +831,8 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     // ฝ่ายวางแผนปิดงานที่ผูก WO พร้อมเหตุผล: WO planned / released ยกเลิก · in_progress / on_hold หยุด · completed / cancelled คงเดิม (bomRfCancelOp กรองสถานะเอง)
     // งาน GR ที่ตั้งขั้นตอนแล้ว: ยอดดี / เสียมาจากผลรายวันเท่านั้น (trigger bom_jobs_gr_guard ของ 20261214010000 · ทุกผู้เรียกทุก action)
     if ((next.grPlans ?? []).some((plan) => plan.jobId === prev.id) && !sameOutput) fail("BOM_INVALID_JOB");
+    // งาน GR ที่มีผลรายวันแล้ว (ทุกสถานะของผล) คืนกลับเป็นรอคิวไม่ได้ (trigger bom_jobs_gr_guard ของ 20261214010000)
+    if (record.status === "queued" && prev.status !== "queued" && (next.grRecords ?? []).some((entry) => entry.jobId === prev.id)) fail("BOM_INVALID_TRANSITION");
     if (closing && rfCancel && (record.externalRef?.woId ?? prev.externalRef?.woId)) rfCancel.push(bomRfCancelOp("closeJob", [{ ...prev, externalRef: record.externalRef ?? prev.externalRef }]));
   }
   // ---- สต็อกของซื้อ (ตรงกับ private.bom_save_stock / bom_issue_parts) ----
@@ -1262,6 +1264,9 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     const good = active.filter((record) => record.stepCode === last).reduce((sum, record) => sum + record.good, 0);
     const reject = active.reduce((sum, record) => sum + record.reject, 0);
     const any = next.grRecords.some((record) => record.jobId === job.id);
+    // ยอดดีต้องไม่ต่ำกว่าที่ส่งให้ PK แล้ว (ไม่นับยกเลิก) = BOM_GR_EXCEEDS
+    const sent = next.grHandovers.filter((entry) => entry.jobId === job.id && entry.status !== "cancelled").reduce((sum, entry) => sum + entry.qty, 0);
+    if (good + 1e-9 < sent) fail("BOM_GR_EXCEEDS");
     const planned = Number(job.qtyPlanned) || 0;
     const oldDone = Number(job.qtyDone) || 0;
     const oldReject = Number(job.qtyReject) || 0;
@@ -1412,7 +1417,8 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         if (fields && (fields.workerId !== actor.id || ![today, bomGrDay(at, -1)].includes(fields.workDate))) fail("BOM_FORBIDDEN");
       }
       if (!bomGrOrderOpen(next, job.orderId)) fail("BOM_INVALID_TRANSITION");
-      if (job.status === "done" && !planner) fail("BOM_INVALID_TRANSITION");
+      // งานที่ฝ่ายวางแผนปิดพร้อมเหตุผล (done ยอดต่ำกว่าแผน) = กลุ่มวางแผนเท่านั้น · done เพราะยอดถึงแผน = กติกาปกติ
+      if (job.status === "done" && (Number(job.qtyDone) || 0) + 1e-9 < (Number(job.qtyPlanned) || 0) && !planner) fail("BOM_INVALID_TRANSITION");
       if (action === "addGrRecord" && job.status === "hold") fail("BOM_INVALID_TRANSITION");
       if (record && record.status !== "active") fail("BOM_INVALID_TRANSITION");
       if (fields) {

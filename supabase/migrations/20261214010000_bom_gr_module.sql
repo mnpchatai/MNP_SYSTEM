@@ -29,12 +29,15 @@
 -- ยอดของงาน GR ที่มีขั้นตอน (ไม่มีใครพิมพ์ยอดซ้ำ): หลังเพิ่ม / แก้ / ยกเลิกผลทุกครั้ง และหลังตั้งขั้นตอน ในธุรกรรมเดียวกัน private.bom_gr_recompute ตั้ง
 --   qty_done = Σ ดีของผลที่ active ของขั้นสุดท้ายในแผน · qty_reject = Σ เสียของผลที่ active ของทุกขั้นในแผน
 --   สถานะ: hold คงเดิม · done ที่ฝ่ายวางแผนปิดพร้อมเหตุผล (done ทั้งที่ยอดต่ำกว่าแผน) คงเดิม · ยอดดี >= แผน = done (done_at) · มีผลแล้ว = in_progress · ใบ released -> in_progress
+--     งานที่ done เพราะยอดถึงแผน ยังรับผลตามกติกาปกติ (รวมผลของขั้นก่อนหน้า) และกลับเป็น in_progress เมื่อยอดดีลดต่ำกว่าแผน
+--   ยอดดีหลังคำสั่งต้องไม่ต่ำกว่า Σ ที่ส่งให้ PK (sent / received ไม่นับยกเลิก) ไม่งั้น BOM_GR_EXCEEDS (ยกเลิกการส่ง / ให้ PK ย้อนการรับก่อน) · ใช้กับแก้ / ยกเลิกผล และตั้งขั้นตอนที่เปลี่ยนขั้นสุดท้าย
 --   ยอดเปลี่ยน = ต่อท้าย bom_jobs.reports หนึ่งรายการ {at, by, good: max(ยอดดีที่เพิ่ม, 0), reject: max(ยอดเสียที่เพิ่ม, 0), note (ยอดเดิม → ยอดใหม่), kind: 'gr'}
 --     เหตุที่ไม่ใส่ค่าติดลบ: private.bom_parse_reports ตรวจรายการเดิมทุกครั้งที่ bom_save_jobs แก้งาน (พัก / ปิด) และรับเฉพาะยอด >= 0
 --     ไม่มีผู้อ่านใดใช้ Σ รายการเป็นยอดของงาน (ยอดจริงอยู่ที่ qty_done / qty_reject แบบเดียวกับ rf_box_uncredit ที่ถอนยอดด้วยรายการยอด 0)
 --     รายการเต็ม 1000 แล้ว = ตั้งยอดโดยไม่ต่อท้ายรายการ · ยอดไม่เปลี่ยน = ไม่ต่อท้าย
 --   งาน GR ที่มีขั้นตอนแล้ว: trigger bom_jobs_gr_guard ปฏิเสธการเปลี่ยน qty_done / qty_reject จากทางอื่น (reportJob ผ่าน bom_save_jobs ได้ BOM_INVALID_JOB)
---     โดยไม่ต้องเขียน bom_save_jobs ใหม่ · พัก / ทำต่อ / คืนคิว / ปิดงานพร้อมเหตุผล ยังทำได้เพราะไม่เปลี่ยนยอด
+--     โดยไม่ต้องเขียน bom_save_jobs ใหม่ · พัก / ทำต่อ / ปิดงานพร้อมเหตุผล ยังทำได้เพราะไม่เปลี่ยนยอด
+--     งาน GR ที่มีผลรายวันแล้ว (ทุกสถานะ รวมผลที่ยกเลิก) คืนกลับเป็น queued ไม่ได้ (BOM_INVALID_TRANSITION) งานจึงนับว่าเริ่มแล้วเสมอ ไม่ต้องแก้ private.bom_started_jobs
 --   งานที่รายงานยอดแบบเดิมไปแล้ว (qty_done / qty_reject > 0 และยังไม่มีขั้นตอน) ตั้งขั้นตอนไม่ได้ (BOM_INVALID_TRANSITION) ยอดเดิมจึงไม่ถูกทับ
 --
 -- action ใหม่ของ app_bom_save_master (ส่วน upsert แถวเดียวต่อคำสั่ง ส่วนกับ action ต้องคู่กัน ผิด / ว่าง = BOM_INVALID_GR) ลำดับตรวจ: รูปแถว (BOM_INVALID_GR)
@@ -47,7 +50,8 @@
 --   editGrRecord grRecords [{id, stepCode, workDate, workerId, hours, people, good, reject, reason, note, editReason 3-200}] · voidGrRecord grRecords [{id, reason 3-200}]
 --     พนักงานแผนก GR: ผลของตัวเองเท่านั้น (workerId = ผู้เรียก) วันที่ทำงาน = วันนี้หรือเมื่อวาน (Asia/Bangkok) · แก้ / ยกเลิกผลของตัวเองได้เฉพาะวันที่บันทึก
 --     หัวหน้า GR / กลุ่มวางแผน: ผลของพนักงาน GR คนใดก็ได้ (แผนก GR โหมดเดียวกัน: ใช้งานจริงต้อง active · บัญชีทดสอบ inactive เสมอ) วันที่ใดก็ได้ไม่เกินวันนี้ แก้ / ยกเลิกได้ทุกวัน
---     งานต้องมีขั้นตอนที่มีขั้นนั้น · ใบ released / in_progress · งาน done = กลุ่มวางแผนเท่านั้น · งานที่พักอยู่เพิ่มผลไม่ได้ (เหมือน reportJob) แก้ / ยกเลิกได้
+--     งานต้องมีขั้นตอนที่มีขั้นนั้น · ใบ released / in_progress · งานที่ฝ่ายวางแผนปิดพร้อมเหตุผล (done ยอดต่ำกว่าแผน) = กลุ่มวางแผนเท่านั้น
+--     งานที่ done เพราะยอดถึงแผน = กติกาปกติ · งานที่พักอยู่เพิ่มผลไม่ได้ (เหมือน reportJob) แก้ / ยกเลิกได้
 --     ดี + เสีย > 0 · เสีย > 0 ต้องมีเหตุผลจากรายการตั้งค่า (เสีย 0 = ไม่เก็บเหตุผล) · แก้ได้ไม่เกิน 100 ครั้งต่อผล
 --   requestRods (แผนก GR / กลุ่มวางแผน) rodRequests [{id (uuid ใหม่), jobId, itemCode, qty 1-100000, note <= 200}] งาน GR ใบ released / in_progress งานยังไม่ done
 --     รหัสต้องเป็นบรรทัดเส้นยาง (RB) ของผลระเบิดของใบที่ชิ้นแม่คือชิ้นของงาน GR นี้
@@ -366,6 +370,7 @@ revoke all on function private.bom_gr_section(text) from public, anon, authentic
 -- 3. ยอดของงาน GR ที่มีขั้นตอน ----------------------------------------------------------------------------------------------------------
 -- งานที่มีแผนขั้นตอนแล้ว: qty_done / qty_reject เปลี่ยนได้เฉพาะ private.bom_gr_recompute (ตั้งค่า mnp.bom_gr_recompute ระหว่างเขียน)
 -- reportJob / การแก้ยอดอื่นผ่าน bom_save_jobs = BOM_INVALID_JOB · พัก / ทำต่อ / ปิดงานพร้อมเหตุผลไม่เปลี่ยนยอดจึงผ่าน
+-- งานที่มีผลรายวันแล้ว (ทุกสถานะของผล) คืนกลับเป็น queued ไม่ได้ (BOM_INVALID_TRANSITION) · bom_started_jobs จึงเห็นงานนี้ว่าเริ่มแล้วเสมอ (สถานะไม่ใช่ queued)
 create or replace function private.bom_gr_job_guard()
 returns trigger
 language plpgsql
@@ -377,6 +382,10 @@ begin
      and coalesce(current_setting('mnp.bom_gr_recompute', true), '') <> 'on'
      and exists (select 1 from public.bom_gr_job_plans p where p.job_id = old.id) then
     raise exception 'BOM_INVALID_JOB';
+  end if;
+  if new.status = 'queued' and old.status <> 'queued'
+     and exists (select 1 from public.bom_gr_records r where r.job_id = old.id) then
+    raise exception 'BOM_INVALID_TRANSITION';
   end if;
   return new;
 end;
@@ -401,6 +410,7 @@ declare
   v_good numeric;
   v_rej numeric;
   v_any boolean;
+  v_sent numeric;
   v_status text;
   v_reports jsonb;
   v_dg numeric;
@@ -418,7 +428,11 @@ begin
   where r.job_id = p_job_id and r.status = 'active'
     and r.step_code in (select s.value ->> 'code' from jsonb_array_elements(v_steps) as s);
   v_any := exists (select 1 from public.bom_gr_records r where r.job_id = p_job_id);
+  -- ยอดดีต้องไม่ต่ำกว่าที่ส่งให้ PK แล้ว (ไม่นับยกเลิก): แก้ / ยกเลิกผล หรือเปลี่ยนขั้นสุดท้าย ต้องยกเลิกการส่ง / ย้อนการรับก่อน
+  select coalesce(sum(h.qty), 0) into v_sent from public.bom_gr_handovers h where h.job_id = p_job_id and h.status <> 'cancelled';
+  if v_good + 0.000000001 < v_sent then raise exception 'BOM_GR_EXCEEDS'; end if;
   -- พักอยู่ = คงพัก · ฝ่ายวางแผนปิดพร้อมเหตุผล (done ทั้งที่ยอดต่ำกว่าแผน) = คง done · ถึงแผน = done · มีผลแล้ว = กำลังทำ
+  -- (งานที่ done เพราะยอดถึงแผนแล้วยอดลดต่ำกว่าแผน = กลับเป็นกำลังทำ)
   v_status := case
     when v_job.status = 'hold' then 'hold'
     when v_job.status = 'done' and v_job.qty_done + 0.000000001 < v_job.qty_planned then 'done'
@@ -744,8 +758,9 @@ begin
 
   select * into v_ord from public.bom_orders o where o.id = v_job.order_pk;
   if v_ord.status not in ('released', 'in_progress') then raise exception 'BOM_INVALID_TRANSITION'; end if;
-  -- งานเสร็จแล้ว = กลุ่มวางแผนเท่านั้น · งานที่พักอยู่เพิ่มผลไม่ได้ (เหมือน reportJob) · ผลที่ยกเลิกแล้วแก้ / ยกเลิกซ้ำไม่ได้
-  if v_job.status = 'done' and not p_planner then raise exception 'BOM_INVALID_TRANSITION'; end if;
+  -- งานที่ฝ่ายวางแผนปิดพร้อมเหตุผล (done ทั้งที่ยอดดีต่ำกว่าแผน) = กลุ่มวางแผนเท่านั้น · งานที่ done เพราะยอดถึงแผน = กติกาปกติ (bom_gr_recompute คืนเป็นกำลังทำเมื่อยอดลดต่ำกว่าแผน)
+  -- งานที่พักอยู่เพิ่มผลไม่ได้ (เหมือน reportJob) · ผลที่ยกเลิกแล้วแก้ / ยกเลิกซ้ำไม่ได้
+  if v_job.status = 'done' and v_job.qty_done + 0.000000001 < v_job.qty_planned and not p_planner then raise exception 'BOM_INVALID_TRANSITION'; end if;
   if p_action = 'addGrRecord' and v_job.status = 'hold' then raise exception 'BOM_INVALID_TRANSITION'; end if;
   if p_action <> 'addGrRecord' and v_rec.status <> 'active' then raise exception 'BOM_INVALID_TRANSITION'; end if;
 

@@ -117,7 +117,8 @@
     const main = actions && opts.main !== undefined ? opts.main : defaultMain;
     // opts.more = ปุ่มรองของโมดูล (เช่น ขอเบิกยางเส้นยาว ส่งให้ PK ของ GR) วางก่อนปุ่มพัก/ปิดงาน
     const more = actions && Array.isArray(opts.more) ? opts.more.filter(Boolean) : [];
-    const resume = (Number(job.qtyDone) || 0) > 0;
+    // งานที่มียอด หรือมีผลรายวันของ GR แล้ว (คืนคิวไม่ได้) = ทำต่อ · ยังไม่มีอะไร = คืนคิว
+    const resume = (Number(job.qtyDone) || 0) > 0 || Boolean(ctx.helpers.hasGrRecords?.(data, job));
     if (canWork) more.push(job.status === "hold" ? ui.button(resume ? "ทำต่อ" : "คืนคิว", { action: "setJobStatus", args: { jobId: job.id, status: resume ? "in_progress" : "queued" }, className: "secondary small" }) : ui.openButton("พักงาน", "jobHold", { jobId: job.id }, { className: "secondary small" }));
     // งานที่จะไม่มีใครรายงานแล้ว: ฝ่ายวางแผนปิดงานพร้อมเหตุผล (ไม่เพิ่มยอด) ใบจึงปิดได้
     if (canWork && ctx.helpers.canPlan(user)) more.push(ui.openButton("ปิดงานนี้", "jobClose", { jobId: job.id }, { className: "secondary small" }));

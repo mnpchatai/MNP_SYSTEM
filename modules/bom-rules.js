@@ -1692,12 +1692,13 @@
     return { good: grRound(good), reject: grRound(reject), lastCode: last };
   }
   // ส่งให้ PK ของงาน: sent = Σ ที่ส่งแล้ว (รอ PK รับ + รับแล้ว ไม่นับยกเลิก) · received = PK รับแล้ว · pendingAtPk = ส่งแล้วรอ PK รับ
-  // waitingAtGr = ยอดดีของงานที่ยังไม่ได้ส่ง (ส่งได้อีกเท่านี้: เพดานเดียวกับ sendGrToPk)
+  // waitingAtGr = ยอดดีของงานที่ยังไม่ได้ส่ง (ส่งได้อีกเท่านี้: เพดานเดียวกับ sendGrToPk) · ไม่ติดลบ: ยอดดีลดต่ำกว่าที่ส่งแล้วไม่ได้ (แก้ / ยกเลิกผล ตั้งขั้นตอน = BOM_GR_EXCEEDS)
+  // และยอดของงานที่ไม่มีขั้นตอนเพิ่มได้อย่างเดียว (รายการรายงานยอด >= 0)
   function grHandoverSummary(data, job) {
     const rows = (data?.grHandovers ?? []).filter((row) => row.jobId === job?.id);
     const sum = (status) => grRound(rows.filter((row) => status.includes(row.status)).reduce((total, row) => total + (Number(row.qty) || 0), 0));
     const sent = sum(["sent", "received"]);
-    return { rows, sent, received: sum(["received"]), pendingAtPk: sum(["sent"]), waitingAtGr: Math.max(0, grRound((Number(job?.qtyDone) || 0) - sent)) };
+    return { rows, sent, received: sum(["received"]), pendingAtPk: sum(["sent"]), waitingAtGr: grRound((Number(job?.qtyDone) || 0) - sent) };
   }
   // ความคืบหน้ารายขั้นของงาน: [{ code, name, kind, qtyTarget, good, reject, hours, done }] ตามลำดับแผน + ยอดรวม (ไม่มีแผน = steps [] planned false)
   function grJobProgress(data, job, config = grConfig(data)) {

@@ -135,10 +135,14 @@ test("actions: the job steps — head or planner, a GR job in production, steps 
   assert.equal(tp.status, "queued", "a plan alone does not start the job");
   const hl = jobOf(d, HL);
   rejects(() => A.setGrJobSteps(d, { jobId: hl.id, steps: [{ code: "GR-09", qtyTarget: 120 }] }, ctx("head")), /มีผลบันทึกแล้ว/);
-  // ขั้นสุดท้ายใหม่ = ยอดของงานตามขั้นนั้น (ยังไม่มีผล = 0) · ใส่กลับ = ยอดเดิม
-  A.setGrJobSteps(d, { jobId: hl.id, steps: [...R.grPlanOf(d, hl.id).steps, { code: "GR-10", qtyTarget: 120 }] }, ctx("head"));
-  assert.deepEqual([hl.qtyDone, hl.qtyReject], [0, 6]);
-  A.setGrJobSteps(d, { jobId: hl.id, steps: R.grPlanOf(d, hl.id).steps.slice(0, 4) }, ctx("planner"));
+  // ลำดับที่ส่ง = ลำดับขั้น: ขั้นสุดท้ายของลำดับเป็นยอดของงาน · ขั้นสุดท้ายใหม่ที่ทำให้ยอดดีต่ำกว่าที่ส่งให้ PK แล้ว (55) = ไม่ได้
+  const plan = R.grPlanOf(d, hl.id).steps;
+  rejects(() => A.setGrJobSteps(d, { jobId: hl.id, steps: [...plan, { code: "GR-10", qtyTarget: 120 }] }, ctx("head")), /เปลี่ยนขั้นตอนไม่ได้.*ต่ำกว่าที่ส่งให้ PK แล้ว 55.*ยกเลิกการส่ง/);
+  assert.deepEqual(R.grPlanOf(d, hl.id).steps, plan, "the refused plan changed nothing");
+  A.setGrJobSteps(d, { jobId: hl.id, steps: [plan[0], plan[1], plan[3], plan[2]] }, ctx("head"));
+  assert.deepEqual(R.grPlanOf(d, hl.id).steps.map((step) => step.code), ["GR-04", "GR-05", "GR-09", "GR-06"], "the plan keeps the order it was given");
+  assert.deepEqual([hl.qtyDone, hl.qtyReject], [95, 6], "the last step of the new order (เจียร์) counts");
+  A.setGrJobSteps(d, { jobId: hl.id, steps: plan }, ctx("planner"));
   assert.deepEqual([hl.qtyDone, hl.qtyReject], [65, 6]);
   assert.equal(hl.reports.at(-1).kind, "gr");
   // งานที่มีขั้นตอนแล้ว: รายงานผลแบบเดิมไม่ได้
@@ -171,14 +175,70 @@ test("actions: daily records — staff record their own work of today or yesterd
   const forOther = A.addGrRecord(d, { ...base, workerId: "GR-DEMO-2", workDate: "2026-11-01", good: 5 }, ctx("head"));
   assert.equal(d.grRecords.find((row) => row.id === forOther.id).workerName, "กมล ทดลองดี");
   rejects(() => A.addGrRecord(d, { ...base, workerId: "SOMEONE" }, ctx("head")), /พนักงานแผนก GR/);
+  // ผู้ทำต้องอยู่ในรายชื่อพนักงาน GR (grWorkers) เหมือนฐานข้อมูล รวมผู้บันทึกเอง: หัวหน้าที่ไม่อยู่ในรายชื่อต้องเลือกผู้ทำ
+  rejects(() => A.addGrRecord(d, { ...base, stepCode: "GR-04" }, ctx("head")), /ไม่อยู่ในรายชื่อพนักงานแผนก GR กรุณาเลือกผู้ทำ/);
+  rejects(() => A.addGrRecord(d, { ...base, stepCode: "GR-04", workerId: USERS.planner.id }, ctx("planner")), /ไม่อยู่ในรายชื่อ/);
+  d.grWorkers.push({ id: USERS.head.id, name: USERS.head.name });
+  A.addGrRecord(d, { ...base, stepCode: "GR-04", good: 1 }, ctx("head"));
+  assert.equal(d.grRecords.at(-1).workerId, USERS.head.id, "a head on the list records for themselves");
   assert.equal(hl.qtyDone, 90);
-  // ถึงแผน = เสร็จ · งานเสร็จ = ฝ่ายวางแผนเท่านั้น
-  A.addGrRecord(d, { ...base, good: 30 }, ctx("head"));
+  // ถึงแผน = เสร็จ · งานที่เสร็จเพราะยอดถึงแผนยังรับผลตามกติกาปกติ (รวมผลของขั้นก่อนหน้า) · ยกเลิกจนต่ำกว่าแผน = กลับเป็นกำลังทำ
+  A.addGrRecord(d, { ...base, workerId: "B05", good: 30 }, ctx("head"));
   assert.deepEqual([hl.qtyDone, hl.status, hl.doneAt], [120, "done", NOW]);
-  rejects(() => A.addGrRecord(d, base, ctx("head")), /ฝ่ายวางแผนเท่านั้น/);
-  A.voidGrRecord(d, { recordId: out.id, reason: "บันทึกซ้ำ" }, ctx("planner"));
-  assert.deepEqual([hl.qtyDone, hl.qtyReject, hl.status, hl.doneAt], [110, 6, "in_progress", undefined], "a void below the plan puts the job back in progress");
+  assert.equal(A.helpers.grJobBlock(d, hl, USERS.gr), null, "a job done by quantity still takes records");
+  A.addGrRecord(d, { ...base, stepCode: "GR-04", good: 5 }, ctx("gr"));
+  assert.deepEqual([hl.qtyDone, hl.status], [120, "done"], "an earlier step after the last step reached the plan keeps the job done");
+  A.voidGrRecord(d, { recordId: out.id, reason: "บันทึกซ้ำ" }, ctx("gr"));
+  assert.deepEqual([hl.qtyDone, hl.qtyReject, hl.status, hl.doneAt], [110, 6, "in_progress", undefined], "staff cancel their own record of today; below the plan the job is back in progress");
   assert.equal(A.helpers.jobCloseNote(hl), null, "GR items are never read as a planner's close reason");
+  // ฝ่ายวางแผนปิดงานพร้อมเหตุผล (done ยอดต่ำกว่าแผน): เพิ่ม / แก้ / ยกเลิกผลได้เฉพาะฝ่ายวางแผน งานคงปิด
+  A.setJobStatus(d, { jobId: hl.id, status: "done", reason: "ลูกค้าลดจำนวน" }, ctx("planner"));
+  assert.equal(A.helpers.isGrClosedShort(hl), true);
+  rejects(() => A.addGrRecord(d, { ...base, stepCode: "GR-04" }, ctx("gr")), /ฝ่ายวางแผนปิดงานนี้แล้ว/);
+  rejects(() => A.addGrRecord(d, { ...base, workerId: "B05", stepCode: "GR-04" }, ctx("head")), /ฝ่ายวางแผนปิดงานนี้แล้ว/);
+  const late = d.grRecords.find((row) => row.jobId === hl.id && row.status === "active" && row.workerId === "B05" && R.grDay(row.createdAt) === TODAY);
+  rejects(() => A.voidGrRecord(d, { recordId: late.id, reason: "บันทึกซ้ำ" }, ctx("gr")), /ฝ่ายวางแผนปิดงานนี้แล้ว/);
+  A.addGrRecord(d, { ...base, workerId: "B05", stepCode: "GR-04", good: 1 }, ctx("planner"));
+  assert.deepEqual([hl.status, A.helpers.jobCloseNote(hl)?.reason], ["done", "ลูกค้าลดจำนวน"], "a planner still records; the closed job stays closed");
+});
+
+test("actions: a cancel, an edit or a new last step never leaves the job's good below what was sent to PK", () => {
+  const d = fresh();
+  const hl = jobOf(d, HL);
+  const drill = d.grRecords.find((row) => row.jobId === hl.id && row.stepCode === "GR-09" && row.good === 35);
+  assert.deepEqual([hl.qtyDone, R.grHandoverSummary(d, hl).sent], [65, 55]);
+  rejects(() => A.voidGrRecord(d, { recordId: drill.id, reason: "บันทึกผิด" }, ctx("head")), /ยกเลิกผลนี้ไม่ได้: ยอดดีของงานจะเหลือ 30 ต่ำกว่าที่ส่งให้ PK แล้ว 55 ยกเลิกการส่ง/);
+  rejects(() => A.editGrRecord(d, { recordId: drill.id, good: 24, editReason: "นับผิด" }, ctx("head")), /แก้ผลนี้ไม่ได้: ยอดดีของงานจะเหลือ 54/);
+  assert.deepEqual([drill.good, drill.status, drill.edits.length, hl.qtyDone], [35, "active", 0, 65], "a refused change leaves the record and the job as they were");
+  A.editGrRecord(d, { recordId: drill.id, good: 25, editReason: "นับผิด" }, ctx("head"));
+  assert.deepEqual([hl.qtyDone, R.grHandoverSummary(d, hl).waitingAtGr], [55, 0], "exactly what was sent is allowed");
+  // ยกเลิกการส่งที่ PK ยังไม่รับก่อน แล้วจึงยกเลิกผลได้
+  const pending = d.grHandovers.find((row) => row.jobId === hl.id && row.status === "sent");
+  A.cancelGrHandover(d, { handoverId: pending.id, reason: "ส่งเกิน" }, ctx("head"));
+  A.voidGrRecord(d, { recordId: drill.id, reason: "บันทึกผิด" }, ctx("head"));
+  assert.deepEqual([hl.qtyDone, R.grHandoverSummary(d, hl).waitingAtGr], [30, 0]);
+});
+
+test("actions: a GR job with daily records (even all cancelled) never goes back to the queue; on hold it resumes instead", () => {
+  const d = fresh();
+  const hl = jobOf(d, HL);
+  A.setJobStatus(d, { jobId: hl.id, status: "hold", reason: "รอเครื่องเจียร์" }, ctx("gr"));
+  rejects(() => A.setJobStatus(d, { jobId: hl.id, status: "queued" }, ctx("planner")), /มีผลรายวันของ GR แล้ว คืนคิวไม่ได้/);
+  A.setJobStatus(d, { jobId: hl.id, status: "in_progress" }, ctx("gr"));
+  const tp = jobOf(d, TP);
+  A.setGrJobSteps(d, { jobId: tp.id, steps: R.grDefaultSteps(d, tp) }, ctx("head"));
+  const first = A.addGrRecord(d, { jobId: tp.id, stepCode: "GR-04", hours: 1, good: 3 }, ctx("gr"));
+  A.voidGrRecord(d, { recordId: first.id, reason: "บันทึกผิดงาน" }, ctx("gr"));
+  assert.deepEqual([tp.qtyDone, tp.qtyReject, tp.status, A.helpers.hasGrRecords(d, tp)], [0, 0, "in_progress", true], "a cancelled record still marks the job as started");
+  rejects(() => A.setJobStatus(d, { jobId: tp.id, status: "queued" }, ctx("gr")), /คืนคิวไม่ได้/);
+  A.setJobStatus(d, { jobId: tp.id, status: "hold", reason: "รอเครื่องเจียร์" }, ctx("gr"));
+  rejects(() => A.setJobStatus(d, { jobId: tp.id, status: "queued" }, ctx("gr")), /คืนคิวไม่ได้/);
+  // งานที่ยังไม่มีผล คืนคิวได้ตามเดิม
+  const fresh2 = jobOf(d, "SE-TP01-OR01-75-3-30");
+  assert.deepEqual([fresh2.status, A.helpers.hasGrRecords(d, fresh2)], ["queued", false]);
+  A.setJobStatus(d, { jobId: fresh2.id, status: "in_progress" }, ctx("gr"));
+  A.setJobStatus(d, { jobId: fresh2.id, status: "queued" }, ctx("gr"));
+  assert.equal(fresh2.status, "queued");
 });
 
 test("actions: edit and cancel — staff own records on the day they recorded them, the head any record any day, a reason every time and the history kept", () => {
@@ -367,6 +427,48 @@ test("mock: rod requests and hand-overs — who may ask, cancel, send, receive a
   assert.deepEqual(view.grHandovers.find((row) => row.id === uid(201)).moves.map((move) => move.kind), ["send", "receive", "unreceive"]);
   assert.ok((await s.gr("persona-grh", "cancelGrHandover", "grHandovers", { id: uid(201), reason: "ส่งผิดใบ" })).data, "the GR head cancels an unreceived hand-over");
   assert.ok((await s.gr("persona-grh", "sendGrToPk", "grHandovers", send(2, 10))).data, "a cancelled hand-over frees its pieces");
+});
+
+test("mock: no return to the queue once a job has records; the good never drops below what was sent; a job done by quantity keeps the normal rules, a planner-closed job takes only planners", async () => {
+  const s = mockScene();
+  const tp = jobOf(s.data, TP);
+  const planned = tp.qtyPlanned;
+  const jobNow = async () => (await s.view()).jobs.find((entry) => entry.id === tp.id);
+  const status = (job, next, note = null) => ({ ...job, status: next, reports: note ? [...job.reports, { at: NOW, by: "ทดสอบ", good: 0, reject: 0, note }] : job.reports });
+  const steps = (codes) => ({ jobId: tp.id, steps: codes.map((code) => ({ code, qtyTarget: planned })) });
+  const row = (n, extra = {}) => ({ id: uid(300 + n), jobId: tp.id, stepCode: "GR-04", workDate: TODAY, workerId: "persona-gr", hours: 8, people: 1, good: 10, reject: 0, reason: "", note: "", ...extra });
+  assert.ok((await s.gr("persona-grh", "setGrJobSteps", "grPlans", steps(["GR-04", "GR-09"]))).data);
+  assert.ok((await s.gr("persona-gr", "addGrRecord", "grRecords", row(1))).data);
+  // มีผลแล้ว (ยังไม่มียอดดีของขั้นสุดท้าย) คืนคิวไม่ได้ ทั้งจากกำลังทำและจากพัก
+  let job = await jobNow();
+  assert.deepEqual([job.qtyDone, job.status], [0, "in_progress"]);
+  assert.equal(await codeOf(s.save("persona-gr", "setJobStatus", { jobs: { upsert: [status(job, "queued")] } })), "BOM_INVALID_TRANSITION", "a job with a record stays started");
+  assert.ok((await s.save("persona-gr", "setJobStatus", { jobs: { upsert: [status(job, "hold", "รอเครื่องเจียร์")] } })).data, "it can be put on hold");
+  job = await jobNow();
+  assert.equal(await codeOf(s.save("persona-pp", "setJobStatus", { jobs: { upsert: [status(job, "queued")] } })), "BOM_INVALID_TRANSITION", "not back to the queue from hold either, not even by a planner");
+  assert.ok((await s.save("persona-gr", "setJobStatus", { jobs: { upsert: [status(job, "in_progress")] } })).data, "it resumes");
+  // ยอดดีต้องไม่ต่ำกว่าที่ส่งให้ PK
+  assert.ok((await s.gr("persona-gr", "addGrRecord", "grRecords", row(2, { stepCode: "GR-09", good: 20 }))).data);
+  assert.ok((await s.gr("persona-grh", "sendGrToPk", "grHandovers", { id: uid(310), jobId: tp.id, qty: 20, note: "" })).data);
+  assert.equal(await codeOf(s.gr("persona-gr", "voidGrRecord", "grRecords", { id: uid(302), reason: "บันทึกผิด" })), "BOM_GR_EXCEEDS", "no cancel below what was sent");
+  assert.equal(await codeOf(s.gr("persona-gr", "editGrRecord", "grRecords", { ...row(2, { stepCode: "GR-09", good: 19 }), editReason: "นับผิด" })), "BOM_GR_EXCEEDS", "no edit below it");
+  assert.equal(await codeOf(s.gr("persona-grh", "setGrJobSteps", "grPlans", steps(["GR-04", "GR-09", "GR-10"]))), "BOM_GR_EXCEEDS", "no new last step below it");
+  assert.ok((await s.gr("persona-grh", "cancelGrHandover", "grHandovers", { id: uid(310), reason: "ส่งก่อนเวลา" })).data);
+  assert.ok((await s.gr("persona-gr", "voidGrRecord", "grRecords", { id: uid(302), reason: "บันทึกผิด" })).data, "after the send is cancelled the record can go");
+  // เสร็จเพราะยอดถึงแผน: กติกาปกติ (พนักงานเพิ่มขั้นก่อนหน้า ยกเลิกผลของตัวเองวันนี้) · ต่ำกว่าแผน = กลับเป็นกำลังทำ
+  assert.ok((await s.gr("persona-gr", "addGrRecord", "grRecords", row(3, { stepCode: "GR-09", good: planned }))).data);
+  assert.equal((await jobNow()).status, "done");
+  assert.ok((await s.gr("persona-gr", "addGrRecord", "grRecords", row(4))).data, "staff record an earlier step of a job done by quantity");
+  assert.ok((await s.gr("persona-gr", "voidGrRecord", "grRecords", { id: uid(303), reason: "บันทึกผิด" })).data, "and cancel their own record of today");
+  job = await jobNow();
+  assert.deepEqual([job.qtyDone, job.status], [0, "in_progress"]);
+  // ฝ่ายวางแผนปิดงานพร้อมเหตุผล (ยอดต่ำกว่าแผน): ฝ่ายวางแผนเท่านั้น
+  assert.ok((await s.save("persona-pp", "setJobStatus", { jobs: { upsert: [status(job, "done", "ลูกค้าลดจำนวน")] } })).data);
+  assert.equal(await codeOf(s.gr("persona-gr", "addGrRecord", "grRecords", row(5))), "BOM_INVALID_TRANSITION", "staff cannot record on a closed job");
+  assert.equal(await codeOf(s.gr("persona-grh", "addGrRecord", "grRecords", row(5))), "BOM_INVALID_TRANSITION", "nor the GR head");
+  assert.equal(await codeOf(s.gr("persona-gr", "voidGrRecord", "grRecords", { id: uid(304), reason: "บันทึกผิด" })), "BOM_INVALID_TRANSITION", "nor cancel a record of it");
+  assert.ok((await s.gr("persona-pp", "addGrRecord", "grRecords", row(5))).data, "a planner still records");
+  assert.equal((await jobNow()).status, "done", "the closed job stays closed");
 });
 
 test("mock: the store round trip — GR staff record through the page store, only the GR section is sent and the reply brings the job totals", async () => {

@@ -132,11 +132,13 @@
   const filterSelect = (ctx, name, label, options, value, placeholder) => `<div class="field rf-field sr-filter"><label class="sr-only" for="gr-${name}">${esc(label)}</label>${ctx.ui.select(name, options, { value, placeholder, id: `gr-${name}`, extra: `data-gr-filter title="${attr(label)}"` })}</div>`;
 
   // ---------- บันทึกผลรายวัน ----------
-  // ฟอร์มใหญ่สำหรับมือถือ: วันที่ (ค่าเริ่ม วันนี้) · ผู้ทำ (พนักงาน = ตัวเอง · หัวหน้า / ฝ่ายวางแผนเลือกพนักงาน GR ได้ ค่าเริ่ม = ตัวเอง) · งาน · ขั้นตอน (ของงานนั้น) · ชั่วโมง · คน (ค่าเริ่ม 1) · ดี · เสีย + เหตุผล (เมื่อมีของเสีย) · หมายเหตุ
+  // ฟอร์มใหญ่สำหรับมือถือ: วันที่ (ค่าเริ่ม วันนี้) · ผู้ทำ (พนักงาน = ตัวเอง · หัวหน้า / ฝ่ายวางแผนเลือกจากพนักงาน GR: ค่าเริ่ม = ตัวเองเฉพาะเมื่ออยู่ในรายชื่อ ไม่งั้นว่างและต้องเลือก) · งาน · ขั้นตอน (ของงานนั้น) · ชั่วโมง · คน (ค่าเริ่ม 1) · ดี · เสีย + เหตุผล (เมื่อมีของเสีย) · หมายเหตุ
   // เป้าของชิ้นงาน × ขั้น (ถ้ามี) บอกต้องทำและ % ขณะกรอก (bindRecordForm) · action ตรวจกติกาซ้ำทั้งหมด
+  // ตัวเลือกผู้ทำ = พนักงานแผนก GR (grWorkers · ชุดเดียวกับที่ฐานข้อมูลตรวจ) + ผู้ทำเดิมของผลที่แก้ (คงไว้ได้โดยไม่ตรวจซ้ำ) · ผู้ใช้ที่ไม่อยู่ในรายชื่อไม่ถูกเติมเข้าไป
+  const isGrWorker = (ctx, id) => (ctx.data.grWorkers ?? []).some((row) => row.id === id);
   function workerOptions(ctx, extra = null) {
     const list = [...(ctx.data.grWorkers ?? [])];
-    for (const person of [ctx.user, extra]) if (person?.id && !list.some((row) => row.id === person.id)) list.unshift({ id: person.id, name: person.name });
+    if (extra?.id && !list.some((row) => row.id === extra.id)) list.unshift({ id: extra.id, name: extra.name });
     return list.map((row) => ({ value: row.id, label: row.name || row.id }));
   }
   const planSteps = (ctx, job) => (ctx.rules.grPlanOf(ctx.data, job.id)?.steps ?? []).map((step) => [step.code, ctx.rules.grStepName(ctx.rules.grConfig(ctx.data), step.code)]);
@@ -159,7 +161,8 @@
     const jobField = record ? "" : ui.field("งาน", ui.select("jobId", jobs.map((row) => ({ value: row.id, label: jobLabel(row) })), { value: job?.id ?? "", placeholder: jobs.length === 1 ? null : "เลือกงาน", id: `${prefix}-job`, extra: "required data-gr-job" }), { id: `${prefix}-job`, required: true });
     const stepField = ui.field("ขั้นตอน", ui.select("stepCode", steps.map(([value, label]) => ({ value, label })), { value: stepValue, placeholder: "เลือกขั้นตอน", id: `${prefix}-step`, extra: "required data-gr-step" }), { id: `${prefix}-step`, required: true });
     const dateField = ui.field("วันที่ทำงาน", ui.input("workDate", { type: "date", value: record?.workDate ?? today, max: today, min: lead ? "" : rules.grDay(ctx.now, -1), id: `${prefix}-date`, required: true, extra: `title="${attr(lead ? "ไม่เกินวันนี้" : "วันนี้หรือเมื่อวาน")}"` }), { id: `${prefix}-date`, required: true });
-    const workerField = lead ? ui.field("ผู้ทำ", ui.select("workerId", workerOptions(ctx, record ? { id: record.workerId, name: record.workerName } : null), { value: record?.workerId ?? ctx.user?.id ?? "", id: `${prefix}-worker` }), { id: `${prefix}-worker`, required: true }) : "";
+    const workerValue = record?.workerId ?? (isGrWorker(ctx, ctx.user?.id) ? ctx.user.id : "");
+    const workerField = lead ? ui.field("ผู้ทำ", ui.select("workerId", workerOptions(ctx, record ? { id: record.workerId, name: record.workerName } : null), { value: workerValue, placeholder: workerValue ? null : "เลือกผู้ทำ", id: `${prefix}-worker`, extra: "required" }), { id: `${prefix}-worker`, required: true }) : "";
     const number = (name, label, value, opts) => ui.field(label, ui.input(name, { type: "number", value, id: `${prefix}-${name}`, ...opts }), { id: `${prefix}-${name}`, required: Boolean(opts.required) });
     const reasonField = `<div class="field rf-field" data-gr-reason${reject > 0 ? "" : " hidden"}><label for="${prefix}-reason">เหตุผลของเสีย <span class="field-required">(จำเป็น)</span></label>${ui.select("reason", config.reasons, { value: record?.reason ?? "", placeholder: "เลือกเหตุผล", id: `${prefix}-reason`, extra: "required" })}</div>`;
     return `<div class="rf-grid rf-g2 gr-record-grid">${jobField}${stepField}${dateField}${workerField}
@@ -209,8 +212,8 @@
   }
 
   // ---------- ยางเส้นยาว ----------
-  // ต่อ ใบ × เส้นยาง ที่งาน GR ยังต้องใช้: ได้จาก SR / ต้องใช้ · ล็อตที่ได้ (rules.grLotsIssued) · คำขอที่ยังเปิด · ปุ่มขอเบิก / ยกเลิกคำขอ
-  // ประวัติคำขอทั้งหมด (ทีละ 100 แถว) · ยางเส้นยาวในคลัง SR (ตารางเดียวกับโมดูล SR แบบอ่านอย่างเดียว · window.MNP_SR.stockView)
+  // ต่อ ใบ × เส้นยาง ที่งาน GR ยังต้องใช้: ได้จาก SR / ต้องใช้ · ล็อตที่ได้ (rules.grLotsIssued) · ปุ่มขอเบิก (เมื่อยังไม่มีคำขอที่เปิดอยู่)
+  // คำขอทั้งหมด (ทีละ 100 แถว) เป็นที่เดียวที่แสดงคำขอ: สถานะ (รอ SR จ่าย / จ่ายครบ / ยกเลิก) + ปุ่มยกเลิกคำขอที่ยังเปิด · ยางเส้นยาวในคลัง SR (ตารางเดียวกับโมดูล SR แบบอ่านอย่างเดียว · window.MNP_SR.stockView)
   const requestState = (ctx, request) => ctx.rules.grRequestState(ctx.data, request);
   const canCancelRequest = (ctx, request) => request.status === "open" && (canLead(ctx) || request.createdById === ctx.user?.id);
   function lotList(ctx, orderId, code, uom) {
@@ -225,17 +228,15 @@
     const open = rules.grOpenRequests(data);
     const rows = needs.map((need) => {
       const unit = uomText(ctx, need.uom);
-      const asked = open.filter((entry) => entry.request.orderId === need.order.id && entry.request.itemCode === need.itemCode);
+      const asked = open.some((entry) => entry.request.orderId === need.order.id && entry.request.itemCode === need.itemCode);
       const job = need.grJobs.find((entry) => entry.status !== "done") ?? need.grJobs[0];
-      const askedText = asked.length ? asked.map((entry) => `<div>${esc(`ขอ ${rules.fmtQty(entry.request.qty)} · รอ ${rules.fmtQty(entry.remaining)}`)}</div><div class="small muted">${esc(entry.request.createdBy ?? "")}</div>`).join("") : dash;
-      const action = asked.length
-        ? asked.filter((entry) => canCancelRequest(ctx, entry.request)).map((entry) => ui.openButton("ยกเลิกคำขอ", "grRodCancel", { requestId: entry.request.id }, { className: "secondary small", ariaLabel: `ยกเลิกคำขอ ${need.itemCode} ใบ ${need.order.id}` })).join("")
-        : record && job && canRequestRods(ctx, job) ? ui.openButton("ขอเบิก", "grRodRequest", { jobId: job.id, itemCode: need.itemCode }, { className: "small", ariaLabel: `ขอเบิกยางเส้นยาว ${need.itemCode} ใบ ${need.order.id}` }) : "";
+      // มีคำขอที่เปิดอยู่แล้ว: สถานะและปุ่มยกเลิกอยู่ในตารางคำขอ (ไม่แสดงซ้ำที่นี่)
+      const action = !asked && record && job && canRequestRods(ctx, job) ? ui.openButton("ขอเบิก", "grRodRequest", { jobId: job.id, itemCode: need.itemCode }, { className: "small", ariaLabel: `ขอเบิกยางเส้นยาว ${need.itemCode} ใบ ${need.order.id}` }) : "";
       const href = job ? jobHref(job.id) : null;
       return `<tr${rowAttr(href)}><td>${href ? mainLink(ctx, need.order.id, href, "rf-mono") : ui.mono(need.order.id)}<div class="small muted">${esc(need.order.customer ?? "")}</div></td><td>${ui.mono(need.itemCode)}${need.name ? `<div class="small muted">${esc(need.name)}</div>` : ""}</td>`
-        + `<td class="right rf-mono">${esc(`${rules.fmtQty(need.issued)}/${rules.fmtQty(need.need)} ${unit}`)}</td><td>${lotList(ctx, need.order.id, need.itemCode, need.uom)}</td><td>${askedText}</td><td class="right">${action}</td></tr>`;
+        + `<td class="right rf-mono">${esc(`${rules.fmtQty(need.issued)}/${rules.fmtQty(need.need)} ${unit}`)}</td><td>${lotList(ctx, need.order.id, need.itemCode, need.uom)}</td><td class="right">${action}</td></tr>`;
     });
-    const needsCard = ui.card(ui.table(["ใบสั่งผลิต", "เส้นยาง", { label: "ได้จาก SR / ต้องใช้", className: "right", title: "ยางเส้นยาวที่คลังยางเส้นยาว (SR) จ่ายให้ใบนี้แล้ว เทียบกับที่งาน GR ของใบต้องใช้" }, { label: "ล็อตที่ได้", title: "ชี้ที่เลขล็อตเพื่อดูจำนวนและเวลาที่ SR จ่าย" }, "คำขอที่รอ SR", ""], rows, { emptyText: "ไม่มีใบที่งาน GR ยังต้องใช้ยางเส้นยาว" }), { title: esc("ยางเส้นยาวของงานที่เปิดอยู่"), flush: true });
+    const needsCard = ui.card(ui.table(["ใบสั่งผลิต", "เส้นยาง", { label: "ได้จาก SR / ต้องใช้", className: "right", title: "ยางเส้นยาวที่คลังยางเส้นยาว (SR) จ่ายให้ใบนี้แล้ว เทียบกับที่งาน GR ของใบต้องใช้" }, { label: "ล็อตที่ได้", title: "ชี้ที่เลขล็อตเพื่อดูจำนวนและเวลาที่ SR จ่าย" }, { label: "", className: "right" }], rows, { emptyText: "ไม่มีใบที่งาน GR ยังต้องใช้ยางเส้นยาว" }), { title: esc("ยางเส้นยาวของงานที่เปิดอยู่"), flush: true });
     const history = (data.rodRequests ?? []).slice().sort((a, b) => num(b.createdAt) - num(a.createdAt) || String(b.id).localeCompare(String(a.id)));
     const { shown, more } = F.limited(ctx, history);
     const LABEL = rules.GR_REQUEST_STATUS_LABEL;
@@ -243,9 +244,10 @@
       const state = requestState(ctx, request);
       const tone = state.status === "open" ? "warn" : state.status === "covered" ? "good" : "";
       const detail = state.status === "cancelled" ? `${request.cancelledBy ?? ""}: ${request.cancelReason ?? ""}` : state.status === "open" && state.issued > 0 ? `จ่ายแล้ว ${rules.fmtQty(state.issued)}` : "";
-      return `<tr${state.status === "cancelled" ? ' class="muted"' : ""}><td class="nowrap small">${esc(rules.fmtDateTime(request.createdAt))}</td><td>${ui.link(request.orderId, jobHref(request.jobId), "rf-mono")}</td><td>${ui.mono(request.itemCode)}${request.note ? `<div class="small muted">${esc(request.note)}</div>` : ""}</td><td class="right rf-mono">${esc(rules.fmtQty(request.qty))}</td><td>${ui.badge(tone, LABEL[state.status] ?? state.status)}${detail ? `<div class="small muted">${esc(detail)}</div>` : ""}</td><td class="small">${esc(request.createdBy ?? "")}</td></tr>`;
+      const cancel = state.status === "open" && canCancelRequest(ctx, request) ? ui.openButton("ยกเลิกคำขอ", "grRodCancel", { requestId: request.id }, { className: "secondary small", ariaLabel: `ยกเลิกคำขอ ${request.itemCode} ใบ ${request.orderId}` }) : "";
+      return `<tr${state.status === "cancelled" ? ' class="muted"' : ""}><td class="nowrap small">${esc(rules.fmtDateTime(request.createdAt))}</td><td>${ui.link(request.orderId, jobHref(request.jobId), "rf-mono")}</td><td>${ui.mono(request.itemCode)}${request.note ? `<div class="small muted">${esc(request.note)}</div>` : ""}</td><td class="right rf-mono">${esc(rules.fmtQty(request.qty))}</td><td>${ui.badge(tone, LABEL[state.status] ?? state.status)}${detail ? `<div class="small muted">${esc(detail)}</div>` : ""}</td><td class="small">${esc(request.createdBy ?? "")}</td><td class="right">${cancel}</td></tr>`;
     });
-    const historyCard = ui.card(`${ui.table(["เวลาขอ", "ใบสั่งผลิต", "เส้นยาง", { label: "ขอ", className: "right" }, "สถานะ", "ผู้ขอ"], historyRows, { emptyText: "ยังไม่เคยขอเบิกยางเส้นยาว" })}${more}`, { title: esc("ประวัติคำขอเบิก"), flush: true });
+    const historyCard = ui.card(`${ui.table(["เวลาขอ", "ใบสั่งผลิต", "เส้นยาง", { label: "ขอ", className: "right" }, "สถานะ", "ผู้ขอ", { label: "", className: "right" }], historyRows, { emptyText: "ยังไม่เคยขอเบิกยางเส้นยาว" })}${more}`, { title: esc("คำขอเบิก"), flush: true });
     const stock = root.MNP_SR?.stockView?.(ctx, { readOnly: true });
     const stockPart = `<h2 class="bom-h3">${esc("ยางเส้นยาวในคลัง SR")}</h2>${stock?.html ?? ui.card(ui.empty("ไม่พบข้อมูลยางเส้นยาวในคลัง"))}`;
     return `${needsCard}${historyCard}${stockPart}`;
@@ -421,31 +423,41 @@
   // ---------- dialog ----------
   const jobOf = (ctx, jobId) => ctx.data.jobs.find((entry) => entry.id === jobId && entry.dept === "GR") ?? null;
   const reasonInput = (ctx, label, placeholder, id) => ctx.ui.field(label, ctx.ui.input("reason", { required: true, placeholder, id, extra: `minlength="${ctx.rules.GR_LIMITS.reasonMin}" maxlength="${ctx.rules.GR_LIMITS.reasonMax}"` }), { id, required: true });
-  // ตั้งขั้นตอนของงาน: ขั้นที่ใช้อยู่ในตั้งค่า (และขั้นเดิมของงานที่ตั้งไม่ใช้แล้ว) ตามลำดับขั้น · ติ๊กขั้นที่งานนี้ทำ + ต้องทำของแต่ละขั้น (ค่าเริ่ม = จำนวนแผนของงาน)
-  // ค่าเริ่มของงานที่ยังไม่ตั้ง = ขั้น GR ใน routing ของชิ้นงาน (rules.grDefaultSteps) · ขั้นที่มีผลแล้วเอาออกไม่ได้ (ช่องติ๊กล็อกไว้)
+  // ตั้งขั้นตอนของงาน: ลำดับในรายการ = ลำดับขั้นที่ส่ง (ขั้นสุดท้ายที่ติ๊ก = ขั้นที่นับเป็นยอดดีของงาน) · ติ๊กขั้นที่งานนี้ทำ + ต้องทำของแต่ละขั้น (ค่าเริ่ม = จำนวนแผนของงาน)
+  // ลำดับเริ่มต้น: ขั้นของแผนเดิมตามลำดับแผน · ยังไม่ตั้ง = ขั้น GR ใน routing ของชิ้นงานตามลำดับ routing (rules.grDefaultSteps) · แล้วขั้นที่เหลือที่ใช้อยู่ตามลำดับในตั้งค่า
+  // หัวหน้าเลื่อนขั้นขึ้น / ลงได้ (bindStepOrder) · ขั้นที่มีผลแล้วเอาออกไม่ได้ (ช่องติ๊กล็อกไว้ แต่เลื่อนได้)
+  function stepOrder(ctx, job, config) {
+    const { rules, data } = ctx;
+    const plan = rules.grPlanOf(data, job.id);
+    const first = plan?.steps ?? rules.grDefaultSteps(data, job, config);
+    const chosen = new Map(first.map((step) => [step.code, step.qtyTarget]));
+    const known = (code) => rules.grStepOf(config, code) ?? { code, name: code, kind: "main", active: false };
+    const rest = config.steps.filter((step) => step.active !== false && !chosen.has(step.code));
+    return { plan, chosen, steps: [...first.map((step) => known(step.code)), ...rest] };
+  }
   dialogs.grSteps = (ctx, { jobId }) => {
     const { ui, rules, data } = ctx;
     const job = jobOf(ctx, jobId);
     if (!job || !canSetSteps(ctx, job)) return null;
     const config = rules.grConfig(data);
-    const plan = rules.grPlanOf(data, job.id);
-    const chosen = new Map((plan?.steps ?? rules.grDefaultSteps(data, job, config)).map((step) => [step.code, step.qtyTarget]));
+    const { plan, chosen, steps } = stepOrder(ctx, job, config);
     const busy = new Set(rules.grActiveRecords(data, job.id).map((record) => record.stepCode));
     const base = Math.max(1, Math.ceil(num(job.qtyPlanned)));
-    const rows = config.steps.filter((step) => step.active !== false || chosen.has(step.code)).map((step) => {
+    const rows = steps.map((step) => {
       const on = chosen.has(step.code);
       const locked = busy.has(step.code);
       const id = `gr-step-${step.code}`;
       const box = locked
         ? `<input type="hidden" name="code[]" value="${attr(step.code)}"><input type="checkbox" id="${attr(id)}" checked disabled title="มีผลบันทึกแล้ว เอาออกไม่ได้">`
         : `<input type="checkbox" id="${attr(id)}" name="code[]" value="${attr(step.code)}"${on ? " checked" : ""}>`;
-      return `<tr><td><label class="gr-check" for="${attr(id)}">${box}<span>${esc(step.name)}</span></label></td><td class="small muted">${esc(rules.GR_STEP_KIND_LABEL[step.kind] ?? step.kind)}</td><td>${ui.input(`qty.${step.code}`, { type: "number", value: chosen.get(step.code) ?? base, step: 1, min: 1, max: rules.GR_LIMITS.qty, extra: `aria-label="${attr(`ต้องทำของขั้น ${step.name}`)}"` })}</td></tr>`;
+      const move = (dir, arrow, word) => `<button class="btn rf-btn secondary small" type="button" data-gr-move="${dir}" aria-label="${attr(`เลื่อน ${step.name} ${word}`)}">${arrow}</button>`;
+      return `<tr data-gr-row="plan"><td><label class="gr-check" for="${attr(id)}">${box}<span>${esc(step.name)}</span></label></td><td class="small muted">${esc(rules.GR_STEP_KIND_LABEL[step.kind] ?? step.kind)}</td><td>${ui.input(`qty.${step.code}`, { type: "number", value: chosen.get(step.code) ?? base, step: 1, min: 1, max: rules.GR_LIMITS.qty, extra: `aria-label="${attr(`ต้องทำของขั้น ${step.name}`)}"` })}</td><td class="right nowrap">${move("up", "↑", "ขึ้น")}${move("down", "↓", "ลง")}</td></tr>`;
     });
     const body = `<form novalidate id="gr-steps-form" data-rf-form="setGrJobSteps" data-rf-args="${attr(JSON.stringify({ jobId: job.id }))}" data-rf-success="ตั้งขั้นตอน {result} แล้ว">
       <p class="small muted">${esc(`${job.itemCode} · ใบ ${job.orderId}`)}</p>
       ${!plan && !chosen.size ? ui.callout("info", esc("routing ของชิ้นงานนี้ไม่มีขั้นของ GR เลือกขั้นที่งานนี้ทำเอง")) : ""}
-      ${ui.table(["ขั้นตอน", "ประเภท", { label: "ต้องทำ (ชิ้น)", title: "ขั้นสุดท้ายที่ติ๊ก = ยอดดีของงาน" }], rows)}</form>`;
-    return { html: ui.dialog("grSteps", `${plan ? "แก้ขั้นตอน" : "ตั้งขั้นตอน"} · ${job.name}`, body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="gr-steps-form">บันทึกขั้นตอน</button>` }) };
+      ${ui.table([{ label: "ขั้นตอน", title: "ลำดับในรายการ = ลำดับขั้นของงาน · ขั้นสุดท้ายที่ติ๊ก = ยอดดีของงาน" }, "ประเภท", { label: "ต้องทำ (ชิ้น)", title: "ขั้นสุดท้ายที่ติ๊ก = ยอดดีของงาน" }, { label: "", className: "right" }], rows)}</form>`;
+    return { html: ui.dialog("grSteps", `${plan ? "แก้ขั้นตอน" : "ตั้งขั้นตอน"} · ${job.name}`, body, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="gr-steps-form">บันทึกขั้นตอน</button>` }), bind: (dialog) => bindStepOrder(dialog.querySelector?.("form")) };
   };
   // แก้ผลรายวัน: ช่องเดียวกับฟอร์มบันทึก (ค่าเดิมเติมไว้) + เหตุผลที่แก้ (จำเป็น) · ประวัติการแก้เก็บที่ฐานข้อมูล
   dialogs.grRecordEdit = (ctx, { recordId }) => {
@@ -618,6 +630,18 @@
       });
     });
     renumber();
+  }
+  // dialog ตั้งขั้นตอน: เลื่อนแถวขึ้น / ลง (ลำดับแถว = ลำดับ code[] ที่ส่ง) · โฟกัสคงอยู่ที่ปุ่มที่กด
+  function bindStepOrder(form) {
+    if (!form?.addEventListener) return;
+    form.addEventListener("click", (event) => {
+      const button = event.target?.closest?.("[data-gr-move]");
+      const row = button?.closest?.("tr");
+      if (!row?.parentElement) return;
+      if (button.dataset.grMove === "up" && row.previousElementSibling) row.parentElement.insertBefore(row, row.previousElementSibling);
+      else if (button.dataset.grMove === "down" && row.nextElementSibling) row.parentElement.insertBefore(row.nextElementSibling, row);
+      button.focus?.();
+    });
   }
   function bindPage(node, pageCtx) {
     node.querySelectorAll("[data-gr-filter]").forEach((select) => select.addEventListener("change", () => { location.hash = pageCtx.pageUrl({ [select.name]: select.value || null, n: null }); }));

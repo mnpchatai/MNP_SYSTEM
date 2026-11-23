@@ -188,12 +188,18 @@ test("GR บันทึกผลรายวัน: the form defaults to today,
   const old = dataOf(staff).grRecords.find((record) => record.workerId === "B05" && R.grDay(record.createdAt) !== today);
   if (old) assert.ok(!mine.includes(`&quot;recordId&quot;:&quot;${old.id}&quot;`), "an older record is not editable by staff");
   assert.equal(staff.store.run("addGrRecord", { jobId: job.id, stepCode: "GR-05", workDate: today, workerId: "GR-DEMO-2", hours: "1", good: "1" }).ok, false, "staff cannot record for another worker");
-  // หัวหน้า: เลือกผู้ทำได้ ค่าเริ่ม = ตัวเอง · ตารางทุกผลพร้อมตัวกรอง
+  // หัวหน้า: เลือกผู้ทำจากพนักงาน GR (grWorkers) · ไม่อยู่ในรายชื่อ = ไม่มีชื่อตัวเองให้เลือก ช่องว่างและต้องเลือก · อยู่ในรายชื่อ = ค่าเริ่มเป็นตัวเอง · ตารางทุกผลพร้อมตัวกรอง
   const head = as("head");
   const headHtml = await gr(head, "tab=log");
-  assert.match(headHtml, /<select[^>]*name="workerId"/);
-  assert.match(headHtml, /<option value="GR-HEAD" selected>/);
-  assert.match(headHtml, /<option value="GR-DEMO-2">/);
+  const workerSelect = headHtml.match(/<select[^>]*name="workerId"[\s\S]*?<\/select>/)?.[0] ?? "";
+  assert.match(workerSelect, /<select[^>]*name="workerId"[^>]*required/);
+  assert.match(workerSelect, /<option value="">เลือกผู้ทำ<\/option>/);
+  assert.doesNotMatch(workerSelect, /GR-HEAD/, "a head outside the GR worker list is not offered as the worker");
+  assert.doesNotMatch(workerSelect, / selected>/, "nothing is chosen for them");
+  assert.match(workerSelect, /<option value="GR-DEMO-2">/);
+  assert.equal(head.store.run("addGrRecord", { jobId: job.id, stepCode: "GR-05", workDate: today, hours: "1", good: "1" }).ok, false, "the action refuses a worker outside the list, like the database");
+  dataOf(head).grWorkers.push({ id: "GR-HEAD", name: "หัวหน้า GR ทดสอบ" });
+  assert.match(await gr(head, "tab=log"), /<option value="GR-HEAD" selected>/, "a head on the list starts as the worker");
   assert.match(headHtml, /name="day"[^>]*data-gr-filter/);
   assert.match(headHtml, /<h2>ผลที่บันทึก<\/h2>/);
   // dialog แก้ / ยกเลิก: เหตุผลจำเป็น · พนักงานเปิดของเก่าไม่ได้
@@ -248,6 +254,25 @@ test("GR dialogs: set steps (head, defaults from the routing), request rods (sta
   const result = head.store.run("setGrJobSteps", transform({ jobId: fresh.id, code: ["GR-04", "GR-09"], qty: { "GR-04": "240", "GR-09": "240", "GR-05": "1" } }));
   assert.equal(result.ok, true, String(result.error?.message ?? ""));
   assert.deepEqual(plain(head.R.grPlanOf(dataOf(head), fresh.id).steps.map((step) => step.code)), ["GR-04", "GR-09"]);
+  // ลำดับในรายการ = ลำดับที่ส่ง: แผนเดิมตามลำดับแผนก่อน แล้วขั้นที่เหลือตามตั้งค่า · มีปุ่มเลื่อนขึ้น / ลง · ส่งตามลำดับที่แสดง (ขั้นสุดท้าย = ยอดของงาน)
+  const reordered = head.store.run("setGrJobSteps", transform({ jobId: fresh.id, code: ["GR-09", "GR-04"], qty: { "GR-04": "240", "GR-09": "240" } }));
+  assert.equal(reordered.ok, true, String(reordered.error?.message ?? ""));
+  assert.deepEqual(plain(head.R.grPlanOf(dataOf(head), fresh.id).steps.map((step) => step.code)), ["GR-09", "GR-04"], "the order shown is the order sent");
+  const again = dialog(head, "grSteps", { jobId: fresh.id });
+  const order = [...again.html.matchAll(/name="qty\.(GR-[0-9A-Z]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(order.slice(0, 2), ["GR-09", "GR-04"], "the plan's own order comes first");
+  assert.deepEqual(order.slice(2), plain(head.R.grConfig(dataOf(head)).steps.filter((step) => step.active && !["GR-09", "GR-04"].includes(step.code)).map((step) => step.code)), "then the other steps in the settings order");
+  assert.equal((again.html.match(/data-gr-move="up"/g) ?? []).length, order.length, "every row moves up");
+  assert.equal((again.html.match(/data-gr-move="down"/g) ?? []).length, order.length, "and down");
+  assert.match(again.html, /aria-label="เลื่อน เจาะ ขึ้น"/);
+  assert.equal(typeof again.bind, "function", "the dialog binds the move buttons");
+  // routing ที่ลำดับต่างจากตั้งค่า: ค่าเริ่มตามลำดับ routing
+  const other = jobOf(head, "SE-TP01-OR01-75-3-30");
+  const routing = dataOf(head).routings.find((entry) => entry.itemCode === other.itemCode && entry.status === "approved");
+  routing.steps = [{ processCode: "GR-09" }, { processCode: "GR-05" }];
+  const fromRouting = [...dialog(head, "grSteps", { jobId: other.id }).html.matchAll(/name="code\[\]" value="(GR-[0-9A-Z]+)"( checked)?/g)].map((match) => [match[1], Boolean(match[2])]);
+  assert.deepEqual(plain(fromRouting.slice(0, 2)), [["GR-09", true], ["GR-05", true]], "a fresh job starts in the routing order");
+  assert.equal(fromRouting.slice(2).some(([, on]) => on), false, "the other steps are offered unticked");
   // ขอเบิก: เส้นยางของงานนี้
   const rod = dialog(staff, "grRodRequest", { jobId: fresh.id });
   assert.match(rod.html, /data-rf-form="requestRods"/);
@@ -261,6 +286,36 @@ test("GR dialogs: set steps (head, defaults from the routing), request rods (sta
   const sent = dataOf(head).grHandovers.find((row) => row.status === "sent");
   assert.match(dialog(head, "grHandoverCancel", { handoverId: sent.id }).html, /ยกเลิกการส่ง/);
   assert.equal(dialog(staff, "grHandoverCancel", { handoverId: sent.id }), null);
+});
+
+test("GR ยางเส้นยาว shows each open request once (in the request table, with its cancel button); a job done by quantity still takes records, a planner-closed one does not; a held job with records resumes instead of going back to the queue", async () => {
+  const staff = as("staff");
+  const rods = await gr(staff, "tab=rods");
+  assert.doesNotMatch(rods, /คำขอที่รอ SR/, "no second column of open requests");
+  assert.match(rods, /<h2>คำขอเบิก<\/h2>/);
+  assert.equal((rods.match(/รอ SR จ่าย/g) ?? []).length, 1, "the open request shows once");
+  assert.equal((rods.match(/data-rf-open="grRodCancel"/g) ?? []).length, 1, "with one cancel button, in the request table");
+  const needsTable = rods.split("<h2>คำขอเบิก</h2>")[0];
+  assert.doesNotMatch(needsTable, new RegExp(`aria-label="ขอเบิกยางเส้นยาว ${ROD} ใบ DEMO-26001"`), "no second request for a rod already asked on that order");
+  assert.match(needsTable, new RegExp(`aria-label="ขอเบิกยางเส้นยาว ${ROD} ใบ DEMO-26006"`), "another order without a request still offers it");
+  // งานเสร็จเพราะยอดถึงแผน: ยังบันทึกผลได้ · ฝ่ายวางแผนปิดก่อนถึงแผน: พนักงานบันทึกไม่ได้
+  const job = jobOf(staff, HL);
+  Object.assign(job, { status: "done", qtyDone: job.qtyPlanned });
+  assert.equal(staff.context.MNP_BOM_ACTIONS.helpers.grJobBlock(dataOf(staff), job, dataOf(staff).users.find((user) => user.id === "B05")), null);
+  assert.match(await gr(staff, `tab=log&j=${job.id}`), new RegExp(`<option value="${job.id}" selected>`), "a job done by quantity is still in the record form");
+  Object.assign(job, { qtyDone: 65 });
+  assert.doesNotMatch(await gr(staff, "tab=log"), new RegExp(`<option value="${job.id}"`), "a job closed below the plan is not offered to staff");
+  // พักงาน: มีผลรายวันแล้ว = ทำต่อ (คืนคิวไม่ได้) · ยังไม่มีผล = คืนคิว
+  const head = as("head");
+  const planned = jobOf(head, HL);
+  const fresh = jobOf(head, "SE-TP01-OR01-100-18-65");
+  planned.status = "hold";
+  fresh.status = "hold";
+  const html = await gr(head);
+  const card = (entry) => cardsOf(html).find((item) => item.includes(`job=${entry.id}"`)) ?? "";
+  assert.match(card(planned), /&quot;status&quot;:&quot;in_progress&quot;[^>]*>ทำต่อ</);
+  assert.doesNotMatch(card(planned), />คืนคิว</);
+  assert.match(card(fresh), />คืนคิว</);
 });
 
 test("PK งานของฉัน: one รับจาก GR card per unreceived send, รับ takes the whole send; someone outside PK sees it read-only", async () => {
