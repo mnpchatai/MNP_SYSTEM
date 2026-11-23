@@ -164,6 +164,7 @@
       // ป้ายแสดง t90 ของทุกครั้งที่แสดงอยู่ (ไม่ใช่แรงบิด ณ วินาทีที่ชี้) ตำแหน่งที่ชี้ใช้แค่วางป้ายข้างเมาส์
       const rows = series.filter((item) => !current.hidden.has(item.id))
         .map((item) => ({ color: item.color, machineId: item.machineId, t90: item.t90 }));
+      if (!rows.length) { tip.hidden = true; return; } // ซ่อนทุกเส้นแล้ว: ไม่มีอะไรให้แสดง
       tip.innerHTML = views.tipHtml(rows);
       tip.hidden = false;
       const left = px + 18 + 14; // 18 = padding ของกราฟ
