@@ -107,7 +107,7 @@
     return `${formulaHead(route, data.formulas)}
       ${part.hasCurve ? curveCard(days, curveDates, data) : ""}${trendCard(route, days, trendCondition(data.tests, condition))}
       <section class="card flush lab-results-card" aria-labelledby="mdr-table-title">
-        <div class="card-heading"><div class="lab-table-head"><h2 id="mdr-table-title">ผลทดสอบรายครั้ง<span class="lab-mdr-table-scope">ช่วงวันเดียวกับกราฟแนวโน้ม</span></h2></div></div>
+        <div class="card-heading"><div class="lab-table-head"><h2 id="mdr-table-title" title="แสดงวันในช่วงเดียวกับกราฟแนวโน้ม (เลือกช่วงที่แถบของกราฟแนวโน้ม)">ผลทดสอบรายครั้ง<span class="sr-only"> ช่วงวันเดียวกับกราฟแนวโน้ม</span></h2></div></div>
         <div class="lab-table-scroll lab-mdr-scroll" id="mdr-table-scroll" tabindex="0" role="region" aria-labelledby="mdr-table-title">${resultsTable(route.part, shownDays, curveDates)}</div>
       </section>`;
   }

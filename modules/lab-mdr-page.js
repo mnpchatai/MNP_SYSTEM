@@ -494,6 +494,13 @@
       event.preventDefault();
     });
     plot.addEventListener("blur", hide);
+    // แตะที่อื่นของหน้า (นอกกราฟ) = ซ่อนป้าย: บน iPhone การแตะไม่ย้ายโฟกัสเสมอ blur จึงอาจไม่เกิด (AGENTS.md: ปิดด้วย pointer down นอกกรอบ)
+    // ตัวฟังอยู่ที่ document จึงถอดตัวเองเมื่อหน้านี้ถูกแทนที่แล้ว (เปลี่ยนสูตร ออกจากหน้า)
+    const outside = (event) => {
+      if (stale()) { document.removeEventListener("pointerdown", outside, true); return; }
+      if (!plot.contains(event.target)) hide();
+    };
+    document.addEventListener("pointerdown", outside, true);
 
     void load();
     // showDay = ปุ่ม "ดูกราฟ" ในตาราง: ช่วงหนึ่งวันของวันนั้น
