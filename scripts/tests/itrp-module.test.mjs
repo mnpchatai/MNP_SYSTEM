@@ -798,7 +798,7 @@ test("the module only uses app_itrp_* RPCs (plus the sandbox purge) and its own 
 
 test("app.js asks the repair module before leaving a page, and the bell and menu are wired to it", () => {
   const app = read("app.js");
-  assert.match(app, /\(window\.MNP_ITRP\?\.unsavedCount\?\.\(\) \?\? 0\) > 0;/, "leaving with typed IT data or a failed file asks first");
+  assert.match(app, /\(window\.MNP_ITRP\?\.unsavedCount\?\.\(\) \?\? 0\) > 0( \|\| \(window\.MNP_ITAS\?\.unsavedCount\?\.\(\) \?\? 0\) > 0)?;/, "leaving with typed IT data or a failed file asks first");
   assert.match(app, /action_url\?\.startsWith\("\/office\/repair\/"\)/);
   assert.match(read("modules/module-office.js"), /window\.MNP_ITRP\.render\(params\)/);
 });
