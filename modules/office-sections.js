@@ -6,6 +6,7 @@
 //   #/office?module=it-support  = IT SUPPORT: ใบแจ้งซ่อม IT (โมดูล itrp) · ใบสั่งงาน IT (ลิงก์ไปหน้าของโมดูล)
 //   #/office?module=repair      = ใบแจ้งซ่อม IT (ใบแจ้งซ่อมคอมพิวเตอร์) หน้าจริงอยู่ที่ modules/module-itrp.js · ที่นี่รู้แค่ว่าเป็นหน้าย่อยของ IT SUPPORT และสิทธิ์แผนก (IT_COMPUTER_REPAIR)
 //   #/office?module=work-order  = ใบสั่งงาน IT (IT01-FM06) หน้าจริงอยู่ที่ modules/module-itwo.js · ที่นี่รู้แค่ว่าเป็นหน้าย่อยของ IT SUPPORT และสิทธิ์แผนก (IT_WORK_ORDER)
+//   #/office?module=assets      = ทะเบียนอุปกรณ์ IT (โมดูล itas) หน้าจริงอยู่ที่ modules/module-itas.js · การ์ดแสดงเฉพาะผู้อยู่ใน allowlist ของโมดูล (app_itas_my_access) รหัสโมดูลคือ IT_ASSET_REGISTER
 //   #/office?module=hr          = หน้า "ระบบกำลังพัฒนา" (เปิดได้จาก URL ตรง ๆ เท่านั้น)
 //
 // สิทธิ์แผนก: ทุกการ์ดมีรหัสโมดูลของตัวเอง และกรองด้วย allowed(code) (= deptModuleAllowed ของ app.js ซึ่งอ่านรายการที่อนุญาตจาก department-access.js)
@@ -37,6 +38,9 @@
   // ใบแจ้งซ่อม IT (ใบแจ้งซ่อมคอมพิวเตอร์ itrp) เป็นหน้าย่อยของ IT SUPPORT เช่นกัน · สิทธิ์ดูจากรหัสโมดูล IT_COMPUTER_REPAIR (แผนก ID เห็นการ์ดนี้ ดู department-access.js)
   const REPAIR = "repair";
   const REPAIR_CODE = "IT_COMPUTER_REPAIR";
+  // ทะเบียนอุปกรณ์ IT (itas): สิทธิ์ตัดสินที่ฐานข้อมูล (allowlist เฉพาะผู้ดูแลงาน IT) การ์ดจึงขึ้นเมื่อ module-office.js ตรวจ app_itas_my_access แล้วเท่านั้น (ดู modeAllowed) · รหัสนี้ไม่อยู่ในรายการอนุญาตของแผนกที่จำกัดโมดูล (แผนก ID ไม่เห็น)
+  const ASSETS = "assets";
+  const ASSET_CODE = "IT_ASSET_REGISTER";
   const ALLOW_ALL = () => true;
   const DEV_LABEL = "กำลังพัฒนา";
   // code = รหัสโมดูลที่ใช้ตัดสินสิทธิ์แผนก · ระบบที่มี cards ไม่มี code ของตัวเอง ดูจากการ์ดลูก
@@ -47,6 +51,7 @@
   const IT_SUPPORT_CARDS = Object.freeze([
     { key: "repair", label: "ใบแจ้งซ่อม IT", palette: "it", icon: "monitor", open: true, code: "IT_COMPUTER_REPAIR", action: "แจ้งซ่อมและติดตามใบแจ้งซ่อม →" },
     { key: "work-order", label: "ใบสั่งงาน IT", palette: "it", icon: "clipboard-check", open: true, code: "IT_WORK_ORDER", action: "แจ้งงานและติดตามใบสั่งงาน →" },
+    { key: "assets", label: "ทะเบียนอุปกรณ์ IT", palette: "it", icon: "box", open: true, code: "IT_ASSET_REGISTER", action: "ดูและบันทึกทะเบียนอุปกรณ์ →" },
   ].map((card) => Object.freeze({ ...card })));
   const SECTIONS = Object.freeze([
     { key: "it-support", label: "IT SUPPORT", palette: "it", icon: "wrench", open: true, action: "เปิดระบบ →", cards: IT_SUPPORT_CARDS },
@@ -71,14 +76,15 @@
   function readSection(params) {
     const key = params?.get?.("module");
     if (key === null || key === undefined || key === "") return HOME;
-    if (key === WORK_ORDER || key === REPAIR) return key;
+    if (key === WORK_ORDER || key === REPAIR || key === ASSETS) return key;
     return find(key)?.key ?? null;
   }
   const workOrderVisible = (allowed = ALLOW_ALL) => Boolean(allowed(WORK_ORDER_CODE));
   const repairVisible = (allowed = ALLOW_ALL) => Boolean(allowed(REPAIR_CODE));
+  const assetsVisible = (allowed = ALLOW_ALL) => Boolean(allowed(ASSET_CODE));
 
   function sectionUrl(key) {
-    if (key === WORK_ORDER || key === REPAIR) return `#/office?module=${key}`;
+    if (key === WORK_ORDER || key === REPAIR || key === ASSETS) return `#/office?module=${key}`;
     const section = find(key);
     return section ? `#/office?module=${encodeURIComponent(section.key)}` : "#/office";
   }
@@ -162,7 +168,7 @@
     </div>`;
   }
 
-  const api = { SECTIONS, IT_SUPPORT_CARDS, HOME, WORK_ORDER, WORK_ORDER_CODE, workOrderVisible, REPAIR, REPAIR_CODE, repairVisible, visibleCards, sectionVisible, visibleSections, hasVisibleSection, readSection, sectionUrl, chooserPage, moduleHead, itSupportPage, notReadyPage };
+  const api = { SECTIONS, IT_SUPPORT_CARDS, HOME, WORK_ORDER, WORK_ORDER_CODE, workOrderVisible, REPAIR, REPAIR_CODE, repairVisible, ASSETS, ASSET_CODE, assetsVisible, visibleCards, sectionVisible, visibleSections, hasVisibleSection, readSection, sectionUrl, chooserPage, moduleHead, itSupportPage, notReadyPage };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_OFFICE_SECTIONS = api;
 })(typeof window !== "undefined" ? window : globalThis);
