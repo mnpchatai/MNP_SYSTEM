@@ -24,6 +24,9 @@ const PASS = { thickness: 7.5, width: 34.1, weightPerM: 1205 };
 const FAIL = { thickness: 7.95, width: 34.1, weightPerM: 1205 };
 const user = (role, dept = role.toUpperCase()) => seed.USERS.find((row) => row.role === role) ?? { id: `u-${role}`, role, dept, name: `ทดสอบ ${role}` };
 const ctx = (role, extra = {}) => ({ now: NOW, user: user(role), ...extra });
+// ตัดสินล็อตที่กัก = หัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบเท่านั้น (20261224 · rules.canQaRelease): บัญชีหัวหน้า QA = ผู้จัดการแผนก QA (department_manager)
+const qaHead = { id: "u-qah", role: "manager", dept: "QA", roleCode: "department_manager", name: "หัวหน้า QA" };
+const head = (extra = {}) => ({ now: NOW, user: qaHead, ...extra });
 const rejects = (fn, pattern) => assert.throws(fn, (error) => { assert.match(error.message, pattern); return true; });
 const fresh = () => seed.buildSeed(NOW);
 const job06 = (d) => d.jobs.find((job) => job.orderId === "DEMO-26006" && job.dept === "RB");
@@ -101,17 +104,23 @@ test("QA decides a held lot: accept stores and credits with the overflow to free
   const d = fresh();
   A.receiveRods(d, { lotId: lotId(2), qtyReceived: 12, values: PASS, location: "A-03" }, ctx("sr"));
   A.receiveRods(d, { lotId: lotId(3), qtyReceived: 8, values: FAIL, note: "ความหนาเกิน", location: "Q-01" }, ctx("sr"));
-  rejects(() => A.decideRods(structuredClone(d), { lotId: lotId(3), decision: "accept", note: "ใช้ได้" }, ctx("sr")), /ตรวจคุณภาพ \(QA\) หรือฝ่ายวางแผน/);
-  rejects(() => A.decideRods(structuredClone(d), { lotId: lotId(3), decision: "accept", note: "ok" }, ctx("qa")), /อย่างน้อย 3 ตัวอักษร/);
-  rejects(() => A.decideRods(structuredClone(d), { lotId: lotId(3), decision: "keep", note: "ใช้ได้" }, ctx("qa")), /เลือกผลตัดสิน/);
-  rejects(() => A.decideRods(structuredClone(d), { lotId: lotId(2), decision: "accept", note: "ใช้ได้" }, ctx("qa")), /ไม่ได้กักรออยู่/);
+  // ตัดสินได้เฉพาะหัวหน้า QA ขึ้นไป: SR พนักงาน QA ฝ่ายวางแผน หัวหน้า RB และผู้ช่วยผู้จัดการโรงงานทำไม่ได้ · หัวหน้า QA ผู้จัดการทั่วไป ผู้จัดการโรงงาน และ admin ทำได้
+  const attempt = (c) => A.decideRods(structuredClone(d), { lotId: lotId(3), decision: "accept", note: "ใช้ได้" }, c);
+  const as = (role, dept, roleCode) => ({ now: NOW, user: { id: `u-${role}-${dept}-${roleCode}`, role, dept, roleCode, name: "ทดสอบ" } });
+  for (const denied of [ctx("sr"), ctx("qa"), ctx("planner"), ctx("gr"), as("manager", "RB", "department_manager"), as("manager", "PP", "department_manager"), as("manager", "FT", "assistant_factory_manager"), as("qa", "QA", "staff"), as("manager", "RB", "assistant_department_manager")]) rejects(() => attempt(denied), /เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน\/ผู้ดูแลระบบ/);
+  for (const allowed of [head(), as("manager", "QA", "assistant_department_manager"), as("manager", "FT", "factory_manager"), as("manager", "FT", "general_manager"), as("admin", "AD", "admin"), ctx("manager"), ctx("admin")]) assert.equal(attempt(allowed).status, "stored");
+  assert.equal(A.helpers.canSeeRodHolds(user("qa")), true, "QA staff still see the held lots (the card says who decides)");
+  assert.equal(A.helpers.canDecideRods(user("qa")), false);
+  rejects(() => A.decideRods(structuredClone(d), { lotId: lotId(3), decision: "accept", note: "ok" }, head()), /อย่างน้อย 3 ตัวอักษร/);
+  rejects(() => A.decideRods(structuredClone(d), { lotId: lotId(3), decision: "keep", note: "ใช้ได้" }, head()), /เลือกผลตัดสิน/);
+  rejects(() => A.decideRods(structuredClone(d), { lotId: lotId(2), decision: "accept", note: "ใช้ได้" }, head()), /ไม่ได้กักรออยู่/);
   for (const [decision, status] of [["return", "returned"], ["scrap", "scrapped"]]) {
     const e = structuredClone(d);
-    const out = A.decideRods(e, { lotId: lotId(3), decision, note: "เกินสเปกมาก" }, ctx("qa"));
+    const out = A.decideRods(e, { lotId: lotId(3), decision, note: "เกินสเปกมาก" }, head());
     assert.deepEqual(out.request, [{ id: lotId(3), decision, decisionNote: "เกินสเปกมาก" }]);
     assert.deepEqual([lot(e, 3).status, job06(e).qtyDone, e.rodMoves.length], [status, 32, d.rodMoves.length]);
   }
-  A.decideRods(d, { lotId: lotId(3), decision: "accept", note: "หนาเกินเล็กน้อย ใช้ตัดได้" }, ctx("qa"));
+  A.decideRods(d, { lotId: lotId(3), decision: "accept", note: "หนาเกินเล็กน้อย ใช้ตัดได้" }, head());
   assert.deepEqual([lot(d, 3).status, lot(d, 3).decision, job06(d).qtyDone, job06(d).status], ["stored", "accept", 40, "done"]);
   assert.match(job06(d).reports.at(-1).note, /เกิน 4 เข้าสต็อกกลาง$/);
   assert.deepEqual(d.rodMoves.filter((move) => move.lotId === lotId(3)).map((move) => [move.kind, move.qty, move.ownerOrderId]), [["receive", 4, "DEMO-26006"], ["receive", 4, null]]);
@@ -292,11 +301,11 @@ test("mock: QA accepts, returns or scraps a held lot; SR cannot decide; the acce
     await scene.save("persona-sr", "receiveRods", receiveRow(2));
     await scene.save("persona-sr", "receiveRods", receiveRow(3, { qc: { values: FAIL, result: "fail", note: "ความหนาเกิน" } }));
     const row = { rodLots: { upsert: [{ id: lotId(3), decision, decisionNote: "ตัดสินแล้ว" }] } };
-    assert.equal(await codeOf(scene.save("persona-sr", "decideRods", row)), "BOM_FORBIDDEN", "SR may not decide");
-    assert.equal(await codeOf(scene.save("persona-gr", "decideRods", row)), "BOM_FORBIDDEN");
-    assert.equal(await codeOf(scene.save("persona-qa", "decideRods", { rodLots: { upsert: [{ id: lotId(3), decision, decisionNote: "ok" }] } })), "BOM_INVALID_ROD", "a reason of 3-300 characters");
-    assert.equal(await codeOf(scene.save("persona-qa", "decideRods", { rodLots: { upsert: [{ id: lotId(2), decision, decisionNote: "ตัดสินแล้ว" }] } })), "BOM_INVALID_TRANSITION", "only a held lot");
-    assert.ok((await scene.save("persona-qa", "decideRods", row)).data);
+    // ตัดสินล็อตที่กัก = หัวหน้า QA ขึ้นไป (20261221010000): ฐานข้อมูลตอบ BOM_QA_HEAD_ONLY กับทุกคนที่ไม่ใช่ (SR GR พนักงาน QA ฝ่ายวางแผน หัวหน้า RB)
+    for (const persona of ["persona-sr", "persona-gr", "persona-qa", "persona-pp", "persona-rbh"]) assert.equal(await codeOf(scene.save(persona, "decideRods", row)), "BOM_QA_HEAD_ONLY", `${persona} may not decide`);
+    assert.equal(await codeOf(scene.save("persona-qah", "decideRods", { rodLots: { upsert: [{ id: lotId(3), decision, decisionNote: "ok" }] } })), "BOM_INVALID_ROD", "a reason of 3-300 characters");
+    assert.equal(await codeOf(scene.save("persona-qah", "decideRods", { rodLots: { upsert: [{ id: lotId(2), decision, decisionNote: "ตัดสินแล้ว" }] } })), "BOM_INVALID_TRANSITION", "only a held lot");
+    assert.ok((await scene.save("persona-qah", "decideRods", row)).data);
     const after = await scene.master();
     const job = after.jobs.find((entry) => entry.orderId === "DEMO-26006" && entry.dept === "RB");
     assert.equal(after.rodLots.find((entry) => entry.id === lotId(3)).status, status);
@@ -558,11 +567,17 @@ test("pages: SR's work board shows the pending lots and the GR issue card, QA ge
   assert.match(html, /ตัดสินล็อตยางเส้นยาว ล็อต FN-\d{8}-93/);
   assert.match(html, /SR: ความหนาเกิน/);
   assert.doesNotMatch(html, /data-rf-open="rodReceive"|data-rf-open="rodIssue"/, "QA only decides");
+  assert.doesNotMatch(html, /data-rf-open="rodDecide"/, "QA staff see the held lot but only the QA head decides it");
+  assert.match(html, /ตัดสินได้เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน\/ผู้ดูแลระบบ/, "the card says who decides");
   env.store.setUser("B03");
   html = await env.render("p=work");
   assert.match(html, /RB \d+<\/a>[\s\S]*SR 5<\/a>[\s\S]*QA 1<\/a>[\s\S]*GR \d+<\/a>/, "the planner's department tabs include SR (one lot left to receive, four order lines to supply) and QA in flow order");
   html = await env.render("p=work&dept=QA");
-  assert.match(html, /data-rf-open="rodDecide"/);
+  assert.doesNotMatch(html, /data-rf-open="rodDecide"/, "the planner cannot decide a held rod lot any more");
+  assert.match(html, /ตัดสินได้เฉพาะหัวหน้า QA/);
+  env.store.setUser("B02");
+  html = await env.render("p=work&dept=QA");
+  assert.match(html, /data-rf-open="rodDecide"/, "the factory manager decides");
   // GR: การ์ดงานบอกยางเส้นยาวที่ได้รับจาก SR
   env.store.setUser("B05");
   html = await env.render("p=work");
@@ -671,6 +686,8 @@ test("pages: the reverse and adjust dialogs, the decide dialog and the draft's u
   env.store.setUser("B11");
   env.store.run("receiveRods", { lotId: lotId(3), qtyReceived: 8, values: FAIL, note: "ความหนาเกิน", location: "Q-01" });
   env.store.setUser("B12");
+  assert.equal(env.dialogs.rodDecide(env.ctx(), { lotId: lotId(3) }), null, "QA staff get no decide dialog");
+  env.store.setUser("B02");
   const decide = env.dialogs.rodDecide(env.ctx(), { lotId: lotId(3) });
   clean(decide.html);
   assert.match(decide.html, /data-rf-form="decideRods"/);
@@ -825,7 +842,7 @@ test("setRodLocation moves a stored or held lot (SR or a planner) and touches no
   A.receiveRods(d, { lotId: lotId(3), qtyReceived: 8, values: FAIL, note: "ความหนาเกิน", location: "Q-01" }, ctx("sr"));
   A.setRodLocation(d, { lotId: lotId(3), location: "Q-02" }, ctx("planner"));
   assert.equal(lot(d, 3).location, "Q-02", "a held lot can be moved while it waits for QA");
-  A.decideRods(d, { lotId: lotId(3), decision: "return", note: "ส่งคืน RB" }, ctx("qa"));
+  A.decideRods(d, { lotId: lotId(3), decision: "return", note: "ส่งคืน RB" }, head());
   rejects(() => A.setRodLocation(d, { lotId: lotId(3), location: "Q-03" }, ctx("sr")), /ไม่ได้อยู่ในคลัง \(คืน RB แก้ไข\)/);
   assert.deepEqual([A.helpers.canAdjustRods(user("sr")), A.helpers.canAdjustRods(user("planner")), A.helpers.canAdjustRods(user("gr")), A.helpers.canAdjustRods(user("qa"))], [true, true, false, false]);
 });
@@ -877,7 +894,7 @@ test("mock: receiveRods needs a location; receiveRodsOpening and setRodLocation 
   assert.equal((await scene.call("app_bom_audit", {}))[0].detail, "rodLots +1");
   await scene.save("persona-sr", "receiveRods", receiveRow(3, { qc: { values: FAIL, result: "fail", note: "ความหนาเกิน" } }));
   assert.ok((await scene.save("persona-pp", "setRodLocation", move(lotId(3), "Q-02"))).data, "a held lot can be moved");
-  await scene.save("persona-qa", "decideRods", lots([{ id: lotId(3), decision: "scrap", decisionNote: "เสียทั้งล็อต" }]));
+  await scene.save("persona-qah", "decideRods", lots([{ id: lotId(3), decision: "scrap", decisionNote: "เสียทั้งล็อต" }]));
   assert.equal(await codeOf(scene.save("persona-sr", "setRodLocation", move(lotId(3), "Q-03"))), "BOM_INVALID_TRANSITION", "a scrapped lot is gone");
   // ล็อตนอกใบสั่งจ่ายให้ GR ของใบที่ผลิตอยู่ได้ (ถังสต็อกกลาง)
   const issue = { id: "9d000000-0000-4000-8000-000000000011", kind: "issue", lotId: "9d000000-0000-4000-8000-000000000001", ownerOrderId: null, forOrderId: "DEMO-26001", itemCode: BK, qty: -4 };
@@ -939,7 +956,7 @@ test("pages: the opening receipt dialog offers RB codes only and the location di
 
 test("wording: no user-visible text in the BOM, RubberFlow or factory modules calls the rods แท่ง (comments aside); the bars of charts keep their word", async () => {
   const fs = await import("node:fs");
-  const files = ["bom-actions", "bom-pages", "bom-rules", "bom-hub", "bom-store", "bom-seed", "module-bom", "factory-kit", "module-sr", "module-gr", "module-qa", "module-st", "st-pages", "module-wh", "wh-pages", "module-rubberflow", "rubberflow-actions", "rubberflow-pages-line", "rubberflow-pages-plan", "rubberflow-pages-quality", "rubberflow-store"];
+  const files = ["bom-actions", "bom-pages", "bom-rules", "bom-hub", "bom-store", "bom-seed", "module-bom", "factory-kit", "module-sr", "module-gr", "qa-pages", "module-qa", "module-st", "st-pages", "module-wh", "wh-pages", "module-rubberflow", "rubberflow-actions", "rubberflow-pages-line", "rubberflow-pages-plan", "rubberflow-pages-quality", "rubberflow-store"];
   for (const name of files) {
     // the one place the old words stay on purpose: the legacy audit text the audit page still has to recognise
     const code = fs.readFileSync(`modules/${name}.js`, "utf8").split(/\r?\n/).filter((line) => !line.trimStart().startsWith("//") && !line.includes("ROD_STOCK_AUDIT_TEXT_LEGACY =")).join("\n");

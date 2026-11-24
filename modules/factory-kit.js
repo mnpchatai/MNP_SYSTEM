@@ -245,9 +245,9 @@
   // งานที่รอของแผนกคลัง/ตรวจคุณภาพ (SR ST WH QA): การ์ดสั่งงานชุดเดียวกับหน้า BOM "งานของฉัน" (MNP_BOM_PAGES.hub.taskCard / boardCards ไม่คัดลอก HTML)
   // รายการงานมาจากกระดานของแผนก (workBoard ของ deptCtx: ฝ่ายวางแผน/ผู้จัดการเปิดโมดูลแล้วเห็นงานของแผนกนั้น) · ปุ่มและ dialog ตัดสินสิทธิ์ด้วยผู้ใช้จริง (ctx.user) ไม่มีสิทธิ์ = การ์ดดูอย่างเดียว
   // ใช้กับ landing ที่คืน actions: true · waiting = ข้อความกำลังโหลดที่ใส่เหนือการ์ด · emptyText = ข้อความเมื่อไม่มีงาน
-  // afterReceipts = การ์ด HTML ของโมดูลเอง (เช่นล็อตของ RubberFlow ที่รอ WH รับ) วางต่อจากการ์ดงานรับเข้า (hub.isReceiptTask) ก่อนการ์ดงานอื่น · นับรวมใน count
+  // note = HTML ที่วางใต้หัวข้อครั้งเดียว (ไม่ซ้ำทุกการ์ด) เมื่อมีการ์ด · afterReceipts = การ์ด HTML ของโมดูลเอง (เช่นล็อตของ RubberFlow ที่รอ WH รับ) วางต่อจากการ์ดงานรับเข้า (hub.isReceiptTask) ก่อนการ์ดงานอื่น · นับรวมใน count
   // คืน { count, html } · title = null ไม่ใส่หัวข้อ (ใช้ใต้แท็บ "งานที่รอ" ที่บอกอยู่แล้ว)
-  function deptWork(ctx, { title = "งานที่รอ", emptyText = "ไม่มีงานค้าง", waiting = "", quietWhenEmpty = false, afterReceipts = [] } = {}) {
+  function deptWork(ctx, { title = "งานที่รอ", emptyText = "ไม่มีงานค้าง", waiting = "", quietWhenEmpty = false, afterReceipts = [], note = "" } = {}) {
     const hub = root.MNP_BOM_PAGES?.hub;
     const board = hub.workBoard(deptCtx(ctx), new URLSearchParams());
     const { taskCards, cards } = hub.boardCards(ctx, board);
@@ -255,7 +255,7 @@
     const all = [...taskCards.filter(receipt), ...afterReceipts, ...taskCards.filter((card, i) => !receipt(card, i)), ...cards];
     if (!all.length && quietWhenEmpty && !waiting) return { count: 0, html: "" };
     const head = title ? `<h2 class="bom-h3">${esc(title)}</h2>` : "";
-    return { count: all.length, html: `${head}${waiting}${all.length ? `<div class="bom-job-grid">${all.join("")}</div>` : waiting ? "" : ctx.ui.card(ctx.ui.empty(emptyText))}` };
+    return { count: all.length, html: `${head}${all.length ? note : ""}${waiting}${all.length ? `<div class="bom-job-grid">${all.join("")}</div>` : waiting ? "" : ctx.ui.card(ctx.ui.empty(emptyText))}` };
   }
   const deptWorkSection = (ctx, options) => deptWork(ctx, options).html;
 
@@ -311,6 +311,41 @@
   // RubberFlow โหลดไม่สำเร็จ: หน้าแผนกแสดงบรรทัดเดียวแทนตารางที่ว่างเปล่า (ปุ่มลองใหม่อยู่ที่หน้า RubberFlow)
   const failed = (store) => Boolean(store?.isRemote?.()) && store.status() === "error";
   const rubberflowFailed = (ctx, title, actions = "") => ctx.ui.card('<p class="small muted" role="alert">โหลดข้อมูล RubberFlow ไม่สำเร็จ</p>', { title: esc(title), actions });
+
+  // ---- วัตถุดิบที่กัก (ล็อตเคมีของ RubberFlow): หน้าเดียวกันสองที่ #/qa?tab=material และ #/st?tab=hold (เจ้าของสั่ง 2026-11-24 "วัตถุดิบที่กักให้มี 2 ที่ คือ QA และ ST และให้หัวหน้า ST ปลดได้ด้วย") ----
+  // ที่เดียวของตาราง ปุ่มปลดกักกัน และประโยคสิทธิ์ (หน้า QA / ST เรียกตัวนี้ ไม่มีสำเนา) · สิทธิ์ปลดกักกัน = can("releaseMaterial") (rules.canReleaseMaterial: หัวหน้า QA หรือหัวหน้า ST ขึ้นไป · ฐานข้อมูล RF_MATERIAL_RELEASE_HEAD_ONLY)
+  // ล็อตที่กักเรียงตามวันหมดอายุ (หมดก่อนอยู่บน) · ยอดของล็อต = คลัง ST + คลัง RB (ล็อตที่กักจ่ายไม่ได้ทั้งสองคลังจนกว่าจะปลด)
+  const heldMaterialLots = (data) => (data?.materialLots ?? []).filter((lot) => lot.status === "hold")
+    .sort((a, b) => (Number(a.expiry) || 0) - (Number(b.expiry) || 0) || String(a.lotNo).localeCompare(String(b.lotNo)));
+  // งานรอปลดกักกัน (การ์ดงานของฉัน QA / ST): เฉพาะล็อตที่กักและยังมียอด (ST + RB) · ล็อตที่หมดแล้วยังเห็นในตารางหน้าวัตถุดิบที่กัก แต่ไม่ค้างเป็นงาน
+  const heldMaterialWork = (data) => {
+    const R = root.MNP_RUBBERFLOW_RULES;
+    return heldMaterialLots(data).filter((lot) => !R?.lotKg || R.lotKg(lot, "ST") + R.lotKg(lot, "RB") > 0.0001);
+  };
+  const materialReleaseText = () => root.MNP_RUBBERFLOW_RULES?.MATERIAL_RELEASE_TEXT ?? "ปลดกักกันวัตถุดิบได้เฉพาะหัวหน้า QA หัวหน้า ST หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ";
+  // ปุ่มปลดกักกัน (คำสั่ง setMaterialLotStatus ของ RubberFlow · data-rf-right ให้ตัวผูกของ RubberFlow ซ่อนปุ่มตามสิทธิ์ปลดกักกัน ไม่ใช่สิทธิ์กักกัน) · ต้องอยู่ใน [data-rf-scope]
+  const materialReleaseButton = (ui, lot, className = "bom-job-main") => ui.button("ปลดกักกัน", { action: "setMaterialLotStatus", args: { lotNo: lot.lotNo, status: "available" }, className, confirmText: `ปลดกักกันล็อต ${lot.lotNo}? ล็อตจะจ่ายได้ตามปกติอีกครั้ง`, success: "ปลดกักกันล็อต {result} แล้ว", ariaLabel: `ปลดกักกันล็อต ${lot.lotNo}` }).replace("<button ", '<button data-rf-right="releaseMaterial" ');
+  // หน้าวัตถุดิบที่กัก: ตารางล็อตที่กักอยู่ (ปุ่มปลดกักกันเฉพาะผู้ที่ทำได้ · คนอื่นเห็นประโยคสิทธิ์ครั้งเดียวเหนือตาราง) และค้นหาล็อตที่ใช้ได้เพื่อกักกัน (ไม่ค้นหา = ไม่แสดงรายการยาวๆ)
+  // ctx = ctx ของหน้าแผนก (ui rules q pageUrl) · data = ข้อมูล RubberFlow ที่โหลดแล้ว (ผู้เรียกบอกสถานะโหลดเอง) · release / holdable = สิทธิ์ตามผู้ใช้ของ RubberFlow
+  // ปุ่มอยู่ใน [data-rf-scope] ที่ตัวผูกของ RubberFlow ผูก · ฟอร์มค้นหาอยู่นอก scope (ตัวผูกของหน้าแผนกส่งไป ctx.pageUrl ของหน้านั้น)
+  function heldMaterialView(ctx, data, { release = false, holdable = false } = {}) {
+    const { ui, rules, q } = ctx;
+    const R = root.MNP_RUBBERFLOW_RULES;
+    const num = (value) => Number(value) || 0;
+    const scope = (html) => `<div data-rf-scope="rubberflow">${html}</div>`;
+    const nameOf = (code) => (data.materials ?? []).find((row) => row.code === code)?.name ?? "";
+    const kgOf = (lot) => R.lotKg(lot, "ST") + R.lotKg(lot, "RB");
+    const row = (lot, action) => `<tr><td>${ui.mono(lot.lotNo)}</td><td>${ui.mono(lot.materialCode)}<div class="small muted">${esc(nameOf(lot.materialCode))}</div></td><td class="nowrap small">${lot.expiry ? esc(rules.fmtDate(lot.expiry)) : '<span class="muted">—</span>'}</td><td class="right rf-mono">${esc(rules.fmtQty(kgOf(lot)))}</td><td class="right">${action}</td></tr>`;
+    const head = ["ล็อต", "วัตถุดิบ", "หมดอายุ", { label: "คงเหลือ (kg)", className: "right" }, ""];
+    const held = heldMaterialLots(data);
+    const heldNote = held.length && !release ? `<p class="small muted">${esc(materialReleaseText())}</p>` : "";
+    const heldCard = ui.card(ui.table(head, held.map((lot) => row(lot, release ? materialReleaseButton(ui, lot, "secondary small") : "")), { emptyText: "ไม่มีล็อตวัตถุดิบที่กัก" }), { title: esc("ล็อตที่กักอยู่"), flush: true });
+    const found = q ? (data.materialLots ?? []).filter((lot) => lot.status !== "hold" && kgOf(lot) > 0.0001 && includesText(`${lot.lotNo} ${lot.materialCode} ${nameOf(lot.materialCode)}`, q)).sort((a, b) => num(a.expiry) - num(b.expiry)) : [];
+    const holdButton = (lot) => ui.button("กักกัน", { action: "setMaterialLotStatus", args: { lotNo: lot.lotNo, status: "hold" }, className: "secondary small", confirmText: `กักกันล็อต ${lot.lotNo}? ล็อตที่กักกันจ่ายไม่ได้ทั้งคลัง ST และคลัง RB จนกว่าหัวหน้า QA หรือหัวหน้า ST จะปลดกักกัน`, success: "กักกันล็อต {result} แล้ว", ariaLabel: `กักกันล็อต ${lot.lotNo}` });
+    const shownFound = found.slice(0, 20);
+    const searchCard = ui.card(`<div class="rf-row sr-toolbar">${searchForm(ctx, "ค้นหาล็อตหรือวัตถุดิบที่จะกักกัน")}${q ? ui.link("ล้างคำค้น", ctx.pageUrl({ q: null }), "btn rf-btn secondary small") : ""}</div>${q ? scope(ui.table(head, shownFound.map((lot) => row(lot, holdable ? holdButton(lot) : "")), { emptyText: "ไม่พบล็อตที่ใช้ได้ตามคำค้น" })) : ""}${found.length > shownFound.length ? `<p class="small muted">${esc(`แสดง 20 จาก ${found.length} ล็อต ค้นให้แคบลง`)}</p>` : ""}`, { title: esc("กักกันล็อตวัตถุดิบ") });
+    return `${heldNote}${scope(heldCard)}${searchCard}`;
+  }
   // งานที่รอของแผนก ไม่ใช่ของผู้เปิดหน้า: ฝ่ายวางแผนและผู้จัดการเห็นงานชุดเดียวกับแผนกนั้น (สิทธิ์ลงมือยังตัดสินที่หน้า BOM และฐานข้อมูล · หน้านี้อ่านอย่างเดียว)
   function deptCtx(ctx) {
     const dept = ctx.factory?.dept;
@@ -492,5 +527,6 @@
     esc, attr, formPayload, parseArgs, bindRoot, deptChip, dueText, jobCard, jobReportDialog, cardTitle, cardClass,
     FACTORY_GROUP, canSeeDept, canOpenDeptModule, deptLink, orderNavItems, registerDeptModule, productionLanding, mountDeptJobs,
     pageHead, searchForm, includesText, limited, deptWork, deptWorkSection, storeLanding, STORE_MENU, workItem, deptWorkCount, viewHead, actionLink, wake, failed, rubberflowFailed, deptCtx, routeUrl, onDeptRoute: onFactoryRoute,
+    heldMaterialLots, heldMaterialWork, heldMaterialView, materialReleaseButton, materialReleaseText,
   });
 })(window);

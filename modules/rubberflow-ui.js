@@ -34,7 +34,7 @@
   // ค่า = ชื่อไอคอนใน MNP_UI_ICONS.PATHS (อ้างตอนวาด เพราะเทสต์โหลดไฟล์นี้แยก)
   const ICONS = Object.freeze({
     dashboard: "factory", orders: "clipboard", recipes: "flask", requisition: "scale", mixing: "mix", extrusion: "ruler", curing: "flame", finishing: "box", wip: "cycle",
-    quality: "shield", spc: "chart", trace: "search", warehouse: "warehouse", molds: "mold", audit: "history",
+    quality: "shield", ncr: "shield", spc: "chart", trace: "search", warehouse: "warehouse", molds: "mold", audit: "history",
     bad: "error", warn: "warning", good: "approve", info: "info",
   });
   const icon = (id) => (ICONS[id] ? `<span class="rf-ico" aria-hidden="true">${root.MNP_UI_ICONS.icon(ICONS[id])}</span>` : "");
@@ -206,7 +206,7 @@
     return { title: split < 0 ? text : text.slice(0, split + 1), message: split < 0 ? "" : text.slice(split + 2).trim(), confirmLabel: label, ...(/^ยกเลิก/.test(label) ? { cancelLabel: "ไม่ยกเลิก" } : {}), danger: /^(ลบ|ยกเลิก)/.test(label) };
   };
   // ปุ่มเปิด dialog (module-rubberflow.js หา data-rf-open แล้วเรียก dialog ตามชื่อ)
-  const openButton = (text, dialog, args = {}, { className = "secondary", ariaLabel = "" } = {}) => `<button class="btn rf-btn ${className}" type="button" data-rf-open="${attr(dialog)}"${Object.keys(args).length ? ` data-rf-args="${attr(JSON.stringify(args))}"` : ""}${ariaLabel ? ` aria-label="${attr(ariaLabel)}"` : ""}>${esc(text)}</button>`;
+  const openButton = (text, dialog, args = {}, { className = "secondary", ariaLabel = "", title = "" } = {}) => `<button class="btn rf-btn ${className}" type="button" data-rf-open="${attr(dialog)}"${Object.keys(args).length ? ` data-rf-args="${attr(JSON.stringify(args))}"` : ""}${ariaLabel ? ` aria-label="${attr(ariaLabel)}"` : ""}${title ? ` title="${attr(title)}"` : ""}>${esc(text)}</button>`;
   const link = (text, href, className = "") => `<a${className ? ` class="${attr(className)}"` : ""} href="${attr(href)}">${esc(text)}</a>`;
 
   // dialog ของเบราว์เซอร์ (showModal): ปิดด้วย Escape/ปุ่มปิด/แตะฉากหลัง ไม่ปิดจาก blur (แตะบน iPhone ได้)

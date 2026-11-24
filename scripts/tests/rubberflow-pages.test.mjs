@@ -21,7 +21,8 @@ const FILES = [
 ];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 const XSS = "<script>alert(1)</script>";
-const PAGES = ["dashboard", "orders", "recipes", "requisition", "mixing", "extrusion", "curing", "finishing", "wip", "quality", "spc", "trace", "warehouse", "molds", "audit"];
+// quality / spc / trace moved to the QA module (#/qa · modules/qa-pages.js): the old links redirect (tested below) · "ncr" = the page where RB answers the open NCRs
+const PAGES = ["dashboard", "orders", "recipes", "requisition", "mixing", "extrusion", "curing", "finishing", "wip", "ncr", "warehouse", "molds", "audit"];
 
 function load({ sandbox = true, route = "", storage = new Map() } = {}) {
   const context = vm.createContext({});
@@ -192,17 +193,21 @@ test("the dashboard, stations and quality pages show the prototype's facts from 
   const finishing = await env.render("p=finishing");
   assert.match(finishing, /ด่านรับมอบ/, "nothing received at finishing yet");
   assert.doesNotMatch(finishing, /data-rf-form="recordFinishing"/);
-  const quality = text(await env.render("p=quality"));
-  assert.match(quality, /ล็อตกักรอตัดสิน 1/);
-  assert.match(quality, /NCR \/ CAR/);
-  const ncr = await env.render("p=quality&tab=ncr");
-  assert.match(ncr, /วิเคราะห์ทำไม 5 ครั้ง \(5-Why\)/);
-  assert.match(ncr, /data-rf-form="closeNcr"/, "the open NCR has a close form for QC");
-  const spc = await env.render("p=spc&ch=cu.temp");
-  assert.match(spc, /แผนภูมิควบคุม · อบ · อุณหภูมิอบ/);
-  assert.match(spc, /rf-spc-chart/);
-  assert.match(spc, /<option value="cu.temp" selected>/);
-  const trace = await env.render(`p=trace&q=${env.store.data().fgBoxes[0].id}`);
+  // the quality bodies are shared views (one implementation): the QA module (#/qa) draws them, RubberFlow keeps only the NCR answer page (p=ncr)
+  const quality = env.context.MNP_RUBBERFLOW_VIEWS.quality;
+  const qctx = env.ctx();
+  assert.equal(quality.qcRecordsTable(qctx).includes("<table"), true);
+  const ncrAnswer = await env.render("p=ncr");
+  assert.match(ncrAnswer, /<h1>NCR ที่ RB ต้องตอบ<\/h1>/);
+  assert.match(ncrAnswer, /วิเคราะห์ทำไม 5 ครั้ง \(5-Why\)/);
+  assert.doesNotMatch(ncrAnswer, /data-rf-form="closeNcr"/, "RB answers the NCR; QA closes it in #/qa");
+  const ncr = quality.ncrList(qctx, { canClose: true });
+  assert.match(ncr, /data-rf-form="closeNcr"/, "the open NCR has a close form for QC (in the QA module)");
+  const spc = quality.spc(env.ctx("ch=cu.temp"));
+  assert.match(spc.html, /แผนภูมิควบคุม · อบ · อุณหภูมิอบ/);
+  assert.match(spc.html, /rf-spc-chart/);
+  assert.match(spc.picker, /<option value="cu.temp" selected>/);
+  const trace = quality.trace(env.ctx(`q=${env.store.data().fgBoxes[0].id}`)).html;
   assert.match(trace, /ย้อนกลับไปต้นทาง/);
   assert.match(trace, /rf-node is-hit/);
   const wip = text(await env.render("p=wip"));
@@ -243,10 +248,16 @@ test("text from the data is escaped on every page that shows it", async () => {
   env.store.run("createNcr", { title: XSS, lotId: env.store.data().lots[0].id, stage: "curing", whys: [XSS], containment: XSS });
   const lotNo = env.store.run("receiveMaterial", { materialCode: "ZNO", qtyKg: 1, expiry: now + 86400000, supplier: XSS, location: XSS }).result;
   // ล็อตวัตถุดิบ (ผู้ขาย ที่เก็บ) แสดงที่โมดูล ST แล้ว (ทดสอบใน st-module.test.mjs) · หน้าคลังของ RubberFlow เหลือรายการวัตถุดิบ
-  for (const page of ["dashboard", "orders", "quality&tab=ncr", "audit", `trace&q=${lotNo}`]) {
+  for (const page of ["dashboard", "orders", "ncr", "audit"]) {
     const html = await env.render(page === "dashboard" ? "" : `p=${page}`);
     assert.doesNotMatch(html, /<script>/, page);
     assert.match(html, /&lt;script&gt;/, page);
+  }
+  // the QA module draws these shared views (modules/qa-pages.js): the same escaping
+  const quality = env.context.MNP_RUBBERFLOW_VIEWS.quality;
+  for (const html of [quality.ncrList(env.ctx(), { canClose: true }), quality.trace(env.ctx(`q=${lotNo}`)).html]) {
+    assert.doesNotMatch(html, /<script>/);
+    assert.match(html, /&lt;script&gt;/);
   }
   const scan = env.context.MNP_RUBBERFLOW_DIALOGS.scan(env.ctx(), { code: result.result });
   assert.doesNotMatch(scan.html, /<script>/);
@@ -593,11 +604,16 @@ test("molds can be added and edited from the page (escaped, validated by the act
   // an open NCR carries the fill form (the close form stays with the QC decision); a closed one is read-only text
   const lot = env.store.data().lots[0];
   const ncr = env.store.run("createNcr", { title: "ผิวหยาบ", lotId: lot.id, stage: lot.stage, whys: ["ก"], containment: "ข" }).result;
-  html = await env.render("p=quality&tab=ncr");
+  // RB answers on its own page (p=ncr: open NCRs only, no close form) · QA's list in #/qa draws the same card with the close form (shared view)
+  html = await env.render("p=ncr");
   assert.match(html, /data-rf-form="updateNcr"[^>]*>[\s\S]*name="corrective"[\s\S]*name="preventive"/);
+  assert.doesNotMatch(html, /data-rf-form="closeNcr"/, "the close form stays with QA");
+  assert.match(env.context.MNP_RUBBERFLOW_VIEWS.quality.ncrList(env.ctx(), { canClose: true }), /data-rf-form="closeNcr"/);
   assert.equal(env.store.run("updateNcr", { id: ncr, corrective: "ล้างแม่พิมพ์", preventive: "เพิ่มรอบล้าง" }).ok, true);
   assert.equal(env.store.run("closeNcr", { id: ncr, verification: "ok" }).ok, true);
-  html = await env.render("p=quality&tab=ncr");
+  html = await env.render("p=ncr");
+  assert.doesNotMatch(html, new RegExp(ncr), "a closed NCR leaves the RB answer page: only open NCRs are asked");
+  html = env.context.MNP_RUBBERFLOW_VIEWS.quality.ncrList(env.ctx(), { canClose: true });
   assert.doesNotMatch(html.split("<section").find((part) => part.includes(ncr)) ?? "", /data-rf-form="updateNcr"/, "a closed NCR has no form");
   assert.match(html, /ล้างแม่พิมพ์/);
   assert.match(env.store.run("updateNcr", { id: ncr, corrective: "x" }).error.message, /ปิดแล้ว/);
@@ -1264,7 +1280,8 @@ test("the extrusion spec lives on the recipe: the recipe form edits it, the reci
   await submit({ id: "RC-SPEC-3" });
   assert.equal("extrusionSpec" in env.store.data().recipes.find((row) => row.id === "RC-SPEC-3"), false, "no spec typed = no spec");
   // SPC: กราฟมิติแยกต่อสูตรที่มีสเปก (Door Seal) · ล็อตของสูตรโอริงที่ไม่มีสเปกไม่เข้ากราฟ
-  const spc = await env.render("p=spc");
+  const built = env.context.MNP_RUBBERFLOW_VIEWS.quality.spc(env.ctx());
+  const spc = `${built.picker}${built.html}`;
   assert.match(spc, /<option value="ex\.thickness\.RC-EPDM-DS01" selected>ฉีด · ความหนา · RC-EPDM-DS01<\/option>/, "the first chart is the Door Seal thickness");
   assert.doesNotMatch(spc, /ex\.[a-zA-Z]+\.RC-NBR-OR02/, "the O-ring recipe has no spec, so no extrusion chart");
   assert.match(spc, /สเปก 2.5 ± 0.12 mm/);
@@ -1327,4 +1344,69 @@ test("the RubberFlow context reads the SR lot of a finishing lot from the loaded
   // BOM ไม่โหลด (ไม่มี store ระยะไกล): null ไม่ error
   assert.equal(env.ctx("p=finishing").bomRodLot("FN-X"), null);
   assert.equal(env.ctx("p=finishing").bomRodLot(""), null);
+});
+
+// งาน QA ย้ายไปโมดูล QA (#/qa · โรงงานขั้น 5): ลิงก์เก่า p=quality / p=spc / p=trace พาไปแท็บเดียวกัน · ผู้ที่เปิดโมดูล QA ไม่ได้เห็นข้อความบรรทัดเดียว (รูปแบบเดียวกับ p=rbstore → p=warehouse)
+test("the old quality, spc and trace links redirect to the matching #/qa tab; roles that cannot open #/qa get one line instead of a second copy of the page", async () => {
+  const env = load();
+  env.store.setUser("U01");
+  const routeUrl = (route, query = {}) => { const params = new URLSearchParams(); for (const [key, value] of Object.entries(query)) if (value !== null && value !== undefined && value !== "") params.set(key, String(value)); const textOf = params.toString(); return `#/${route}${textOf ? `?${textOf}` : ""}`; };
+  env.context.MNP_FACTORY = { canOpenDeptModule: (_employee, dept, code) => dept === "QA" && code === "FACTORY_QA", routeUrl };
+  const cases = [["p=quality", "#/qa"], ["p=quality&tab=hold", "#/qa"], ["p=quality&tab=records", "#/qa?tab=records"], ["p=quality&tab=ncr", "#/qa?tab=ncr"], ["p=quality&tab=coa", "#/qa?tab=coa"],
+    ["p=spc", "#/qa?tab=spc"], ["p=spc&ch=cu.temp", "#/qa?tab=spc&ch=cu.temp"], ["p=trace", "#/qa?tab=trace"], ["p=trace&q=FN-1", "#/qa?tab=trace&q=FN-1"]];
+  for (const [query, target] of cases) {
+    assert.equal(await env.render(query), "", `${query} draws nothing here`);
+    assert.equal(env.log.hash, target, query);
+  }
+  // not allowed to open #/qa: one line that says where the work went, no table, no form, no button, no redirect
+  env.context.MNP_FACTORY = { canOpenDeptModule: () => false, routeUrl };
+  for (const query of ["p=quality", "p=spc", "p=trace&q=FN-1"]) {
+    const html = await env.render(query);
+    assert.match(html, /อยู่ที่โมดูลตรวจคุณภาพ \(QA\)/, query);
+    assert.doesNotMatch(html, /<table|data-rf-form|data-rf-open="qcRecord"|rf-spc/, query);
+    assert.equal(env.log.hash, `#/rubberflow?${query}`, `${query} stays where it is`);
+  }
+  // the menu has no entry for them any more, and an ordinary unknown page still goes home
+  const sub = env.module.nav[0].subnav("rubberflow");
+  assert.doesNotMatch(sub, /p=quality|p=spc|p=trace/);
+  assert.match(sub, /p=ncr/);
+  env.store.setUser("U05");
+  assert.doesNotMatch(env.module.nav[0].subnav("rubberflow"), /p=ncr/, "a mixer does not answer NCRs");
+});
+
+test("the NCR page for RB lists only the open NCRs (cause and corrective / preventive form, no close form, no open button) and its menu number counts them", async () => {
+  const env = load();
+  const planner = env.store.data().users.find((row) => row.role === "planner");
+  env.store.setUser(planner.id);
+  const rb = env.store.user();
+  assert.equal(env.context.MNP_RUBBERFLOW_STORE.canSee(rb, "ncr"), true, `${rb.role} sees the page`);
+  const lot = env.store.data().lots[0];
+  const open = env.store.run("createNcr", { title: "ผิวหยาบ", lotId: lot.id, stage: lot.stage, whys: ["ก"], containment: "ข" }).result;
+  const closed = env.store.run("createNcr", { title: "ปิดแล้ว", lotId: lot.id, stage: lot.stage, whys: ["ก"], containment: "ข", corrective: "แก้", preventive: "กัน" }).result;
+  assert.equal(env.store.run("closeNcr", { id: closed, verification: "ok" }).ok, true);
+  const html = await env.render("p=ncr");
+  assert.match(html, new RegExp(open));
+  assert.doesNotMatch(html, new RegExp(closed));
+  assert.match(html, /data-rf-form="updateNcr"/);
+  assert.doesNotMatch(html, /data-rf-form="closeNcr"|data-rf-open="ncr"|data-rf-open="qcRecord"/);
+  const count = env.module.nav[0].subnav("rubberflow").match(/p=ncr"[^>]*>[\s\S]*?<span class="rf-nav-count"[^>]*>(\d+)<\/span>/)?.[1];
+  assert.equal(Number(count), env.store.data().ncrs.filter((ncr) => ncr.status === "open").length, "the number on the menu = the open NCRs");
+  env.store.setUser("U01");
+  assert.match(await env.render("p=ncr"), /ไม่มี NCR ที่รอ RB ตอบ|data-rf-form="updateNcr"/);
+});
+
+test("finishing page: the CoA button becomes a link to #/qa?tab=coa&lot= for roles that open the QA module and disappears for the others", async () => {
+  const env = load();
+  env.store.setUser("U01");
+  const routeUrl = (route, query = {}) => `#/${route}?${new URLSearchParams(query).toString()}`;
+  env.context.MNP_FACTORY = { canOpenDeptModule: () => true, routeUrl };
+  const lot = env.store.data().lots.find((row) => row.stage === "finishing");
+  const withLink = await env.render("p=finishing");
+  assert.ok(withLink.includes(`href="#/qa?tab=coa&amp;lot=${lot.id}"`), "a link to the CoA of that lot in #/qa");
+  assert.match(withLink, /<th[^>]*>CoA<\/th>/, "the CoA column exists for a user who can open QA");
+  assert.doesNotMatch(withLink, /data-rf-open="coa"/, "no CoA dialog on the finishing page");
+  env.context.MNP_FACTORY = { canOpenDeptModule: () => false, routeUrl };
+  const without = await env.render("p=finishing");
+  assert.doesNotMatch(without, /tab=coa|data-rf-open="coa"/, "RB sees the QC badge of the lot but no CoA");
+  assert.doesNotMatch(without, /<th[^>]*>CoA<\/th>/, "and no empty CoA column");
 });

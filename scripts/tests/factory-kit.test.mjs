@@ -29,7 +29,7 @@ const stubUi = { validateForm: () => true, confirmOptions: (node) => ({ title: n
 
 test("MNP_FACTORY exports the shared pieces and is frozen", () => {
   const { kit } = loadKit();
-  assert.deepEqual(Object.keys(kit).sort(), ["FACTORY_GROUP", "STORE_MENU", "actionLink", "attr", "bindRoot", "canOpenDeptModule", "canSeeDept", "cardClass", "cardTitle", "deptChip", "deptCtx", "deptLink", "deptWork", "deptWorkCount", "deptWorkSection", "dueText", "esc", "failed", "formPayload", "includesText", "jobCard", "jobReportDialog", "limited", "mountDeptJobs", "onDeptRoute", "orderNavItems", "pageHead", "parseArgs", "productionLanding", "registerDeptModule", "routeUrl", "rubberflowFailed", "searchForm", "storeLanding", "viewHead", "wake", "workItem"]);
+  assert.deepEqual(Object.keys(kit).sort(), ["FACTORY_GROUP", "STORE_MENU", "actionLink", "attr", "bindRoot", "canOpenDeptModule", "canSeeDept", "cardClass", "cardTitle", "deptChip", "deptCtx", "deptLink", "deptWork", "deptWorkCount", "deptWorkSection", "dueText", "esc", "failed", "formPayload", "heldMaterialLots", "heldMaterialView", "heldMaterialWork", "includesText", "jobCard", "jobReportDialog", "limited", "materialReleaseButton", "materialReleaseText", "mountDeptJobs", "onDeptRoute", "orderNavItems", "pageHead", "parseArgs", "productionLanding", "registerDeptModule", "routeUrl", "rubberflowFailed", "searchForm", "storeLanding", "viewHead", "wake", "workItem"]);
   assert.ok(Object.isFrozen(kit));
   assert.equal(kit.esc("<b>"), "&lt;b&gt;");
   assert.equal(kit.attr(null), "");
@@ -218,4 +218,17 @@ test("index.html loads factory-kit.js before bom-pages.js and every ?v= is the s
   assert.ok(kit > 0 && kit < html.indexOf("modules/bom-pages.js?v="));
   const versions = new Set([...html.matchAll(/(?:modules\/[\w-]+\.js|app\.js|styles\.css)\?v=([\w-]+)/g)].map((match) => match[1]));
   assert.equal(versions.size, 1);
+});
+
+test("held chemical lots: the work cards count only lots that still have stock in ST or RB; the held-lot table keeps every held lot", () => {
+  const lotKg = (lot, store) => Number(store === "RB" ? lot.rbKg : lot.qtyKg) || 0;
+  const { kit } = loadKit({ MNP_RUBBERFLOW_RULES: { lotKg } });
+  const data = { materialLots: [
+    { lotNo: "L-EMPTY", status: "hold", qtyKg: 0, rbKg: 0, expiry: 1 },
+    { lotNo: "L-RB", status: "hold", qtyKg: 0, rbKg: 2, expiry: 2 },
+    { lotNo: "L-ST", status: "hold", qtyKg: 5, rbKg: 0, expiry: 3 },
+    { lotNo: "L-OK", status: "available", qtyKg: 9, rbKg: 0, expiry: 4 },
+  ] };
+  assert.deepEqual([...kit.heldMaterialLots(data)].map((lot) => lot.lotNo), ["L-EMPTY", "L-RB", "L-ST"]);
+  assert.deepEqual([...kit.heldMaterialWork(data)].map((lot) => lot.lotNo), ["L-RB", "L-ST"]);
 });

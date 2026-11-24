@@ -25,9 +25,7 @@
     { id: "curing", label: "3 · อบ HCM", group: "สายการผลิต" },
     { id: "finishing", label: "4 · ตกแต่งและบรรจุ", group: "สายการผลิต" },
     { id: "wip", label: "ส่งมอบ WIP", group: "สายการผลิต" },
-    { id: "quality", label: "QC · NCR · CoA", group: "คุณภาพ" },
-    { id: "spc", label: "SPC / Cpk", group: "คุณภาพ" },
-    { id: "trace", label: "สืบย้อนกลับ", group: "คุณภาพ" },
+    { id: "ncr", label: "NCR ที่ RB ต้องตอบ", group: "คุณภาพ" },
     { id: "warehouse", label: "คลังวัตถุดิบและสินค้า", group: "คลังและเครื่องมือ" },
     { id: "molds", label: "แม่พิมพ์และหัวดาย", group: "คลังและเครื่องมือ" },
     { id: "audit", label: "บันทึกการใช้งาน", group: "คลังและเครื่องมือ" },
@@ -43,18 +41,18 @@
   const ROLES = Object.freeze({
     admin: { label: "ผู้ดูแลระบบ", modules: MODULE_IDS },
     manager: { label: "ผู้จัดการโรงงาน", modules: Object.freeze(MODULE_IDS.filter((id) => id !== "audit")) },
-    planner: { label: "ฝ่ายวางแผนการผลิต", modules: Object.freeze(["dashboard", "orders", "recipes", "wip", "trace", "warehouse"]) },
-    store: { label: "เจ้าหน้าที่คลัง", modules: Object.freeze(["dashboard", "requisition", "warehouse", "wip", "trace"]) },
+    planner: { label: "ฝ่ายวางแผนการผลิต", modules: Object.freeze(["dashboard", "orders", "recipes", "wip", "ncr", "warehouse"]) },
+    store: { label: "เจ้าหน้าที่คลัง", modules: Object.freeze(["dashboard", "requisition", "warehouse", "wip"]) },
     mixer: { label: "พนักงานผสมยาง", modules: Object.freeze(["dashboard", "requisition", "mixing", "wip", "warehouse"]) },
     extruder: { label: "พนักงานฉีดยาง", modules: Object.freeze(["dashboard", "extrusion", "wip", "molds"]) },
     curer: { label: "พนักงานอบยาง", modules: Object.freeze(["dashboard", "curing", "wip", "molds"]) },
     finisher: { label: "พนักงานตกแต่ง/บรรจุ", modules: Object.freeze(["dashboard", "finishing", "wip", "warehouse"]) },
-    qc: { label: "วิศวกรควบคุมคุณภาพ", modules: Object.freeze(["dashboard", "recipes", "quality", "spc", "trace", "warehouse", "molds", "wip"]) },
+    qc: { label: "วิศวกรควบคุมคุณภาพ", modules: Object.freeze(["dashboard", "recipes", "warehouse", "molds", "wip"]) },
     // บัญชีทดสอบของโหมดฐานข้อมูล (personaUser): พนักงานแผนก RB ทำงานสายผลิตทั้งสาย รวมรับมอบ WIP ระหว่างสถานี (20261204010000) · แผนก SR (คลังยางเส้นยาว) และแผนกอื่นดูได้อย่างเดียว
-    rb: { label: "พนักงานแผนก RB", modules: Object.freeze(["dashboard", "orders", "recipes", "requisition", "mixing", "extrusion", "curing", "finishing", "wip", "quality", "trace", "warehouse", "molds"]) },
-    sr: { label: "คลังยางเส้นยาว (SR) ดูอย่างเดียว", modules: Object.freeze(["dashboard", "wip", "trace", "warehouse"]) },
-    warehouse: { label: "พนักงานคลังสินค้า (WH)", modules: Object.freeze(["dashboard", "warehouse", "wip", "trace"]) },
-    viewer: { label: "ดูข้อมูลอย่างเดียว", modules: Object.freeze(["dashboard", "orders", "recipes", "wip", "trace", "warehouse"]) },
+    rb: { label: "พนักงานแผนก RB", modules: Object.freeze(["dashboard", "orders", "recipes", "requisition", "mixing", "extrusion", "curing", "finishing", "wip", "ncr", "warehouse", "molds"]) },
+    sr: { label: "คลังยางเส้นยาว (SR) ดูอย่างเดียว", modules: Object.freeze(["dashboard", "wip", "warehouse"]) },
+    warehouse: { label: "พนักงานคลังสินค้า (WH)", modules: Object.freeze(["dashboard", "warehouse", "wip"]) },
+    viewer: { label: "ดูข้อมูลอย่างเดียว", modules: Object.freeze(["dashboard", "orders", "recipes", "wip", "warehouse"]) },
   });
 
   // กล่องสินค้าของคลังสินค้าสำเร็จรูป (ตรงกับ private.rf_save_boxes ของ 20261207010000) รับผู้ใช้ทั้งรูปของ RubberFlow (personaUser: role / dept / roleCode / whHead)
@@ -74,6 +72,7 @@
 
   // สิทธิ์ย่อยของปุ่มในหน้า (ซ่อน/แสดงเท่านั้น) · โหมดสาธิตตามบทบาท · ผู้ใช้โหมดฐานข้อมูล (db) ตามตัวกำกับ planner / rb / rbHead ที่ตรงกับกฎของฐานข้อมูล
   const PLAN_ROLES = Object.freeze(["admin", "manager", "planner"]);
+  const qaRelease = (user) => Boolean(root.MNP_RUBBERFLOW_RULES?.canQaRelease?.(user));
   const CAN = Object.freeze({
     approveRecipe: Object.freeze(["admin", "manager", "qc"]),
     releaseOrder: PLAN_ROLES,
@@ -81,7 +80,9 @@
     workOrder: PLAN_ROLES, // พัก/ผลิตต่อ/ปิดงาน/ยกเลิกใบสั่งผลิต
     editMaster: Object.freeze(["admin", "manager", "planner", "qc"]), // วัตถุดิบ / ร่างสูตร
     qcDecision: Object.freeze(["admin", "manager", "qc"]),
-    holdMaterial: Object.freeze(["admin", "manager", "qc"]), // กักกัน/ปลดกักกันล็อตวัตถุดิบ
+    qaRelease: Object.freeze(["admin", "manager", "qc"]), // ปล่อยล็อตที่กัก (โหมดสาธิต: ผู้จัดการ / QC แทนหัวหน้า QA)
+    releaseMaterial: Object.freeze(["admin", "manager", "qc"]), // ปลดกักกันวัตถุดิบ (โหมดสาธิต: ผู้จัดการ / QC แทนหัวหน้า QA / หัวหน้า ST)
+    holdMaterial: Object.freeze(["admin", "manager", "qc"]), // กักกันล็อตวัตถุดิบ
     skipRest: Object.freeze(["admin", "manager", "qc"]), // ข้ามเวลาบ่ม (พร้อมเหตุผล): ผู้จัดการ / QC แทนหัวหน้า RB และ QA ของโหมดฐานข้อมูล
     returnRequisition: Object.freeze(["admin", "manager", "store"]), // รับเคมีที่เบิกไปแล้วคืนเข้าล็อตเดิม (WO ถูกยกเลิก): เจ้าหน้าที่คลัง
   });
@@ -92,6 +93,8 @@
     workOrder: (user) => Boolean(user.planner || user.rb),
     editMaster: (user) => Boolean(user.planner || user.rb),
     qcDecision: (user) => Boolean(user.planner || user.qa), // บันทึกผลตรวจ / เปิด-ปิด NCR / ตัดสินล็อต
+    qaRelease: (user) => qaRelease(user), // ผลตรวจผ่าน/ไม่ผ่านของล็อตที่กัก: หัวหน้า QA หรือผู้จัดการโรงงานขึ้นไปเท่านั้น (นิยามเดียว rules.canQaRelease) · พนักงาน QA บันทึก "กักต่อ" ได้
+    releaseMaterial: (user) => Boolean(root.MNP_RUBBERFLOW_RULES?.canReleaseMaterial?.(user)), // ปลดกักกันวัตถุดิบ: หัวหน้า QA หรือหัวหน้า ST หรือผู้จัดการโรงงานขึ้นไป (นิยามเดียว rules.canReleaseMaterial)
     holdMaterial: (user) => Boolean(user.planner || user.st || user.qa),
     skipRest: (user) => Boolean(user.rbHead || user.qa), // ข้ามเวลาบ่มพร้อมเหตุผล: หัวหน้า RB (รวมผู้ช่วยผู้จัดการโรงงานขึ้นไปและ admin) หรือแผนก QA (20261128010000) · ฐานข้อมูลประทับเวลาและผู้ข้ามเอง
     returnRequisition: (user) => Boolean(user.st || user.role === "admin"), // รับเคมีที่เบิกไปแล้วคืนเข้าล็อตเดิมเมื่อ WO ถูกยกเลิก: แผนก ST (admin ไว้แก้ปัญหา)
@@ -264,6 +267,9 @@
       RF_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้ใน RubberFlow (สั่งซื้อ รับวัตถุดิบ ตรวจสอบรับเข้าและยกเลิกใบสั่งซื้อ: คลังวัตถุดิบ (ST) เท่านั้น · เบิกเคมี ผลิต ส่งมอบและรับมอบ WIP: แผนก RB · รับกล่องเข้าคลังและส่งมอบให้ลูกค้า: คลังสินค้าสำเร็จรูป (WH) หรือผู้ดูแลระบบ · ย้อนการรับเข้าหรือการส่งมอบกล่อง: ผู้จัดการแผนก WH หรือผู้ดูแลระบบ · ขอเบิกและคืนเคมี: แผนก RB · จ่ายเคมีและรับคืน: ST · นับคลังเคมี RB: ผู้จัดการแผนก RB หรือฝ่ายวางแผน · ผลตรวจและ NCR: QA · อนุมัติสูตรและปล่อยผลิต: ผู้จัดการแผนก RB ขึ้นไป · งานอื่นฝ่ายวางแผนและผู้จัดการทำได้)",
       RF_STALE: "มีผู้อื่นบันทึกข้อมูล RubberFlow ไปก่อน (หรือเลขที่ซ้ำ) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_CONFLICT: "รายการนี้ซ้ำกับที่มีอยู่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
+      RF_QA_HEAD_ONLY: "เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ ปล่อยล็อตที่กักหรือตัดสินผ่าน/ไม่ผ่านได้ (พนักงาน QA บันทึกกักต่อ/ตรวจซ้ำได้)",
+      BOM_QA_HEAD_ONLY: "เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ ตัดสินล็อตยางเส้นยาวที่กักได้",
+      RF_MATERIAL_RELEASE_HEAD_ONLY: "ปลดกักกันวัตถุดิบได้เฉพาะหัวหน้า QA หัวหน้า ST หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ",
       RF_INVALID_TRANSITION: "รายการอยู่ในสถานะที่ทำรายการนี้ไม่ได้ (อาจมีผู้อื่นเปลี่ยนสถานะไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
       RF_RESET: "ข้อมูล RubberFlow ทดสอบถูกล้างและเริ่มใหม่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_NOT_DEPLOYED: "ฐานข้อมูลยังไม่มีระบบ RubberFlow (ยังไม่ได้ติดตั้ง migration) ติดต่อผู้ดูแลระบบ",
@@ -314,7 +320,7 @@
     const role = roleCode === "admin" ? "admin" : plannerRole ? "manager" : DEPT_ROLES[dept] ?? "viewer";
     const name = `${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim() || employee.display_name || employee.employee_no || "ผู้ใช้ทดสอบ";
     // roleCode / whHead (20261207010000): ผู้จัดการแผนก WH ย้อนการรับเข้า / ส่งมอบกล่องได้ (canReverseBoxes)
-    return { id: String(employee.id ?? employee.employee_no ?? name), role, roleCode, dept, name, planner, rb, rbHead, st: dept === "ST", sr: dept === "SR", wh: dept === "WH", whHead: dept === "WH" && roleCode === "department_manager", qa: dept === "QA", db: true };
+    return { id: String(employee.id ?? employee.employee_no ?? name), role, roleCode, dept, name, planner, rb, rbHead, st: dept === "ST", sr: dept === "SR", wh: dept === "WH", whHead: dept === "WH" && roleCode === "department_manager", qa: dept === "QA", qaHead: qaRelease({ role, roleCode, dept }), db: true };
   }
   // ใครเห็นเมนูและหน้า RubberFlow (UX ล้วน สิทธิ์จริงตัดสินที่ฐานข้อมูล 20261130010000): โหมดทดสอบ = ทุกบัญชีทดสอบเหมือนเดิม ·
   // ใช้งานจริง = กลุ่มวางแผน หรือพนักงานแผนก RB ST QA SR WH (ตรงกับ private.rf_can_read ที่ RPC ของ RubberFlow ใช้ปฏิเสธข้อมูลจริง: คนอื่นได้ RF_FORBIDDEN)
