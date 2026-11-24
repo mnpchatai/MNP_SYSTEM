@@ -33,6 +33,8 @@
   const DEV_NOTICE = "ระบบทะเบียนอุปกรณ์ IT กำลังพัฒนาและทดสอบ ยังไม่เปิดใช้งานจริง";
   const devNotice = () => (model.IN_DEVELOPMENT ? `<p class="rf-callout is-warn itas-dev-notice no-print" role="status">${DEV_NOTICE}</p>` : "");
   const page = (inner) => `<div class="itas-page" data-module="${PALETTE}">${devNotice()}${inner}${versionTag()}</div>`;
+  // กล่องข้อความผิดพลาดใต้หัวฟอร์ม (escape ทุกครั้ง) · reload = มีปุ่ม "โหลดข้อมูลล่าสุด" (แก้ชนกัน)
+  const messageBox = (message, { reload = false } = {}) => `<div class="form-message error" role="alert">${esc(message)}${reload ? ' <button type="button" class="btn secondary small" id="itas-reload-asset">โหลดข้อมูลล่าสุด</button>' : ""}</div>`;
   const errorCard = (message, { retry = true } = {}) => `<section class="card"><div class="form-message error" role="alert">${esc(message)}</div>${retry ? '<button class="btn secondary" type="button" id="itas-retry">ลองอีกครั้ง</button>' : ""}</section>`;
   const purgeRow = () => '<div class="itas-purge-row no-print"><button class="btn danger small" type="button" id="itas-purge">ล้างข้อมูลทะเบียนอุปกรณ์ทดสอบ</button></div>';
 
@@ -264,7 +266,7 @@
       </section>`;
 
   const api = {
-    TITLE, MASK, head, page, errorCard, purgeRow, versionTag, devNotice, vaultBar, vaultSetupForm, recoveryShow, unlockForm, forgotForm, changeForm, newRecoveryForm, strengthText,
+    TITLE, MASK, head, page, messageBox, errorCard, purgeRow, versionTag, devNotice, vaultBar, vaultSetupForm, recoveryShow, unlockForm, forgotForm, changeForm, newRecoveryForm, strengthText,
     typeList, toolbar, assetTable, fieldBlock, secretsSection, assetForm, historyPanel, mainPage, layout, mainPanel,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

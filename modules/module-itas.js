@@ -198,9 +198,7 @@
   function showVaultMessage(error) {
     const info = failure(error, { write: true });
     const target = byId("itas-vault-message");
-    if (target) target.innerHTML = `<div class="form-message error" role="alert"></div>`;
-    const node = target?.firstElementChild;
-    if (node) node.textContent = info.message; // textContent: ข้อความจาก error ไม่ผ่าน innerHTML
+    if (target) target.innerHTML = pages.messageBox(info.message); // ผ่าน esc ใน pages ทุกครั้ง
     else showToast(info.message, "error");
   }
   function setVaultBusy(form, busy) {
@@ -237,7 +235,7 @@
     if (watching) return;
     watching = true;
     vault.subscribe(onVaultChange);
-    window.addEventListener("hashchange", () => { if (!onAssetsPage()) { vault.lock("leave"); ui && (ui.form = null); } });
+    window.addEventListener("hashchange", () => { if (onAssetsPage()) return; vault.lock("leave"); if (ui) ui.form = null; });
     window.addEventListener("pagehide", () => vault.lock("pagehide"));
     window.addEventListener("beforeunload", (event) => { if (unsavedCount() > 0) { event.preventDefault(); event.returnValue = ""; } });
     for (const name of ["pointerdown", "keydown", "input", "touchstart"]) document.addEventListener(name, noteActivity, { passive: true });
@@ -282,11 +280,13 @@
     const target = event.target;
     const button = target.closest?.("button, [data-itas-row]");
     if (!button) return;
-    if (button.id && BUTTONS[button.id]) { BUTTONS[button.id](button); return; }
-    if (button.dataset.itasType !== undefined) { switchType(button.dataset.itasType); return; }
-    if (button.dataset.itasSort !== undefined) { toggleSort(button.dataset.itasSort); return; }
-    if (button.dataset.secretAct !== undefined) { secretAction(button); return; }
-    if (button.dataset.itasRow !== undefined && target.closest("[data-itas-row]")) openForm("edit", button.dataset.itasRow);
+    // คืน promise ของงานที่เริ่ม (ไม่มีใครรอในหน้าจริง แต่ทำให้ทดสอบรอจนจบได้)
+    if (button.id && BUTTONS[button.id]) return BUTTONS[button.id](button);
+    if (button.dataset.itasType !== undefined) return switchType(button.dataset.itasType);
+    if (button.dataset.itasSort !== undefined) return toggleSort(button.dataset.itasSort);
+    if (button.dataset.secretAct !== undefined) return secretAction(button);
+    if (button.dataset.itasRow !== undefined && target.closest("[data-itas-row]")) return openForm("edit", button.dataset.itasRow);
+    return undefined;
   }
   function onInput(event) {
     const target = event.target;
@@ -301,7 +301,7 @@
     if (!form.id) return;
     event.preventDefault();
     const handler = { "itas-vault-setup-form": submitSetup, "itas-recovery-form": submitRecovery, "itas-vault-unlock-form": submitUnlock, "itas-vault-forgot-form": submitForgot, "itas-vault-change-form": submitChange, "itas-vault-recovery-form": submitNewRecovery, "itas-form": submitAsset }[form.id];
-    handler?.(form);
+    return handler?.(form);
   }
 
   /* ---------- ตู้เซฟ: ขั้นตอนต่าง ๆ ---------- */
@@ -312,7 +312,7 @@
   const formError = (form, message) => {
     window.MNP_FORM_STEPS?.clearFieldErrors?.(form);
     const target = byId("itas-vault-message");
-    if (target) { target.innerHTML = '<div class="form-message error" role="alert"></div>'; target.firstElementChild.textContent = message; }
+    if (target) target.innerHTML = pages.messageBox(message);
   };
   // ตรวจรหัสใหม่ + พิมพ์ซ้ำ (ใช้ร่วมกันในหน้าตั้งตู้เซฟ/ลืมรหัส/เปลี่ยนรหัส) · คืนข้อความผิดพลาดหรือ ""
   function newPasswordProblem(password, again) {
@@ -556,8 +556,7 @@
   function formMessage(message, { reload = false } = {}) {
     const target = byId("itas-form-message");
     if (!target) return;
-    target.innerHTML = `<div class="form-message error" role="alert"><span></span>${reload ? ' <button type="button" class="btn secondary small" id="itas-reload-asset">โหลดข้อมูลล่าสุด</button>' : ""}</div>`;
-    target.querySelector("span").textContent = message;
+    target.innerHTML = pages.messageBox(message, { reload });
   }
   async function submitAsset(form) {
     const state0 = ui?.form;

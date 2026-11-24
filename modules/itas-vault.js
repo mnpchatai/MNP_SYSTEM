@@ -299,7 +299,6 @@
       checkPassword(password);
       const raw = randomBytes(DEK_BYTES);
       try {
-        const aes = await subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
         const hkdf = await subtle.importKey("raw", raw, "HKDF", false, ["deriveBits"]);
         const authHash = toBase64(await sha256(await tokenOfHkdfKey(hkdf)));
         const recoveryCode = newRecoveryCode();

@@ -65,28 +65,30 @@ test("the HR page opened by URL is a static not-ready page", () => {
 });
 
 /* ---------- IT SUPPORT (ชั้นที่ 2) ---------- */
-test("IT SUPPORT shows the IT repair card and the IT work-order card, both as links to their own pages", () => {
+test("IT SUPPORT shows the IT repair card, the IT work-order card and the asset-register card, all as links to their own pages", () => {
   const page = sections.itSupportPage();
   assert.match(page, /<h1>IT SUPPORT<\/h1>/);
   assert.match(page, /<a class="request-back-link" href="#\/office">‹ เลือกระบบ<\/a>/);
-  assert.equal(count(page, /class="type-card request-type-card lab-module-card/g), 2);
+  assert.equal(count(page, /class="type-card request-type-card lab-module-card/g), 3);
+  assert.match(page, /<a class="type-card request-type-card lab-module-card" href="#\/office\?module=assets" data-module="it"/);
   assert.match(page, /<a class="type-card request-type-card lab-module-card" href="#\/office\?module=repair" data-module="it"/);
   assert.match(page, /<a class="type-card request-type-card lab-module-card" href="#\/office\?module=work-order" data-module="it"/);
-  assert.ok(page.indexOf("module=repair") < page.indexOf("module=work-order"), "the repair card comes first");
+  assert.ok(page.indexOf("module=repair") < page.indexOf("module=work-order") && page.indexOf("module=work-order") < page.indexOf("module=assets"), "the repair card comes first, the asset register last");
+  assert.equal(count(visibleText(page), /ทะเบียนอุปกรณ์ IT/g), 1);
   assert.equal(count(visibleText(page), /ใบแจ้งซ่อม IT/g), 1);
   assert.equal(count(visibleText(page), /ใบสั่งงาน IT/g), 1);
   assert.doesNotMatch(page, /is-off/, "both cards are open");
   assert.doesNotMatch(page, /#\/requests/, "the repair card no longer opens the shared request list");
   assert.doesNotMatch(visibleText(page), /กำลังย้ายระบบ/);
-  assert.equal(count(page, /<a class="type-card/g), 2, "both cards are links");
+  assert.equal(count(page, /<a class="type-card/g), 3, "every card is a link");
   assert.doesNotMatch(page, /style="/);
 });
 test("a card the department may not open is left out, and a card that declares nothing shows no badge", () => {
-  const noRepair = sections.itSupportPage({ allowed: (code) => code !== "IT_COMPUTER_REPAIR" });
+  const noRepair = sections.itSupportPage({ allowed: (code) => code !== "IT_COMPUTER_REPAIR" && code !== "IT_ASSET_REGISTER" });
   assert.doesNotMatch(noRepair, /ใบแจ้งซ่อม IT/);
   assert.equal(count(noRepair, /<a class="type-card/g), 1, "only the work-order card is left, and it is a link");
   assert.match(noRepair, /href="#\/office\?module=work-order"/);
-  const noWork = sections.itSupportPage({ allowed: (code) => code !== "IT_WORK_ORDER" });
+  const noWork = sections.itSupportPage({ allowed: (code) => code !== "IT_WORK_ORDER" && code !== "IT_ASSET_REGISTER" });
   assert.doesNotMatch(noWork, /ใบสั่งงาน IT/);
   assert.match(noWork, /href="#\/office\?module=repair"/);
   assert.doesNotMatch(sections.itSupportPage(), /request-type-count|request-type-version/, "nothing declared = no badge and no version");
@@ -186,7 +188,10 @@ test("the office module is standalone with a menu entry, sandbox for the repair 
   assert.match(source, /nav: \[\{ path: PATH, label: TITLE, icon: NAV_ICON \}\]/);
   assert.match(source, /const TITLE = "ระบบสำนักงาน";/);
   assert.match(source, /sandbox: true,/, "test mode keeps the menu for the work-order pages (modeAllowed hides the rest)");
-  assert.match(source, /const modeAllowed = \(code\) => deptModuleAllowed\(code\) && \(!inSandbox\(\) \|\| code === sections\.WORK_ORDER_CODE \|\| code === sections\.REPAIR_CODE\);/);
+  assert.match(source, /const modeAllowed = \(code\) => deptModuleAllowed\(code\)\r?\n    && \(!inSandbox\(\) \|\| code === sections\.WORK_ORDER_CODE \|\| code === sections\.REPAIR_CODE \|\| code === sections\.ASSET_CODE\)\r?\n    && \(code !== sections\.ASSET_CODE \|\| Boolean\(window\.MNP_ITAS\?\.hasAccess\?\.\(\)\)\);/);
+  // ไฟล์ของทะเบียนอุปกรณ์ IT (itas) โหลดหลัง module-office.js และก่อน app.js ตามลำดับ model → vault → pages → module
+  assert.ok(at("modules/itas-model.js") < at("modules/itas-vault.js") && at("modules/itas-vault.js") < at("modules/itas-pages.js") && at("modules/itas-pages.js") < at("modules/module-itas.js"));
+  assert.ok(at("modules/module-office.js") < at("modules/module-itas.js") && at("modules/module-itas.js") < at("app.js"));
   // ไฟล์ของใบแจ้งซ่อม IT (itrp) โหลดหลัง module-office.js และก่อน app.js ตามลำดับ model → pages → module เช่นกัน
   assert.ok(at("modules/itrp-model.js") < at("modules/itrp-pages.js") && at("modules/itrp-pages.js") < at("modules/itrp-history-pages.js") && at("modules/itrp-history-pages.js") < at("modules/module-itrp.js"));
   assert.ok(at("modules/module-office.js") < at("modules/module-itrp.js") && at("modules/module-itrp.js") < at("app.js"));
@@ -196,15 +201,22 @@ test("the office module is standalone with a menu entry, sandbox for the repair 
 });
 
 /* ---------- ทดลองรันโมดูลจริงใน vm: ลงทะเบียน เมนู และหน้า ---------- */
-function setup({ employee, repairSummary = { openCount: 5, badge: "", title: "" }, repairVersion = "1.00", itwoSummary = null, itwoVersion, declare = true, sandbox = false, repairInDevelopment = false } = {}) {
+function setup({ employee, repairSummary = { openCount: 5, badge: "", title: "" }, repairVersion = "1.00", itwoSummary = null, itwoVersion, declare = true, sandbox = false, repairInDevelopment = false, itas = null } = {}) {
   const queries = [];
+  // ทะเบียนอุปกรณ์ IT (ตัวแทน): สิทธิ์มาจาก app_itas_my_access (resolveAccess) · hasAccess ตอบได้หลัง resolveAccess แล้วเท่านั้น · itas = { allowed, fail } หรือ null = ไม่มีโมดูลนี้
+  const itasState = { resolved: false, resolves: 0, rendered: [] };
+  const itasStub = itas ? {
+    resolveAccess: async () => { itasState.resolves += 1; itasState.resolved = !itas.fail; return !itas.fail && Boolean(itas.allowed); },
+    hasAccess: () => itasState.resolved && Boolean(itas.allowed),
+    render: async (query) => { itasState.rendered.push(String(query)); },
+  } : null;
   const painted = { itwoRendered: [], itrpRendered: [], html: "", active: null, title: null, notFound: 0, loading: 0, zooms: 0, queued: [], went: [] };
   // หน้าจริงของใบสั่งงาน IT / ใบแจ้งซ่อม IT อยู่ที่ module-itwo.js / module-itrp.js (ทดสอบที่ itwo-module.test.mjs / itrp-module.test.mjs) ที่นี่ใช้ตัวแทนที่บันทึกการเรียกและคืนตัวเลขบนการ์ด
   const itwo = { render: async (query) => { painted.itwoRendered.push(String(query)); }, loadCardSummary: async () => (itwoSummary instanceof Error ? Promise.reject(itwoSummary) : itwoSummary), version: itwoVersion };
   const itrp = { render: async (query) => { painted.itrpRendered.push(String(query)); }, loadCardSummary: async () => (repairSummary instanceof Error ? Promise.reject(repairSummary) : repairSummary), version: repairVersion };
   // โมดูลประกาศตัวเองให้การ์ด (window.MNP_OFFICE_CARDS[รหัสโมดูล]) · declare: false = โมดูลที่ไม่ประกาศ
   const window = {
-    MNP_ITWO: itwo, MNP_ITRP: itrp,
+    MNP_ITWO: itwo, MNP_ITRP: itrp, ...(itasStub ? { MNP_ITAS: itasStub } : {}),
     MNP_OFFICE_CARDS: declare ? { IT_WORK_ORDER: { version: itwoVersion, loadCardSummary: itwo.loadCardSummary }, IT_COMPUTER_REPAIR: { version: repairVersion, inDevelopment: repairInDevelopment, loadCardSummary: itrp.loadCardSummary } } : {},
   };
   const context = vm.createContext({
@@ -222,7 +234,8 @@ function setup({ employee, repairSummary = { openCount: 5, badge: "", title: "" 
     deptModuleAllowed: (code) => departmentAccess.moduleAllowed(context.state.employee, code),
   });
   for (const file of ["ui-icons.js", "request-center.js", "module-it.js", "office-sections.js", "module-office.js"]) vm.runInContext(read(`modules/${file}`), context);
-  return { context, window, queries, painted, open: (query = "") => window.MNP_REQUEST_MODULES.OFFICE.pages.office(params(query)) };
+  if (itasStub && window.MNP_OFFICE_CARDS) window.MNP_OFFICE_CARDS.IT_ASSET_REGISTER = { version: "1.00", inDevelopment: true };
+  return { context, window, queries, painted, itasState, open: (query = "") => window.MNP_REQUEST_MODULES.OFFICE.pages.office(params(query)) };
 }
 test("module-office registers a standalone menu entry visible to any signed-in user", () => {
   const { window } = setup({ employee: mt });
@@ -333,7 +346,7 @@ test("department ID, which is restricted, still gets the repair card and can ope
 const allowedFor = (employee) => (code) => departmentAccess.moduleAllowed(employee, code);
 
 test("every card has its own module code, and the IT SUPPORT hub has none of its own", () => {
-  assert.deepEqual(sections.IT_SUPPORT_CARDS.map((card) => [card.key, card.code]), [["repair", "IT_COMPUTER_REPAIR"], ["work-order", "IT_WORK_ORDER"]]);
+  assert.deepEqual(sections.IT_SUPPORT_CARDS.map((card) => [card.key, card.code]), [["repair", "IT_COMPUTER_REPAIR"], ["work-order", "IT_WORK_ORDER"], ["assets", "IT_ASSET_REGISTER"]]);
   const hr = sections.SECTIONS.find((section) => section.key === "hr");
   assert.equal(hr.code, "HR");
   const hub = sections.SECTIONS.find((section) => section.key === "it-support");
@@ -344,7 +357,7 @@ test("every card has its own module code, and the IT SUPPORT hub has none of its
 test("an unrestricted department sees every system and every card, exactly as before", () => {
   const allowed = allowedFor(mt);
   assert.deepEqual(sections.visibleSections(allowed).map((section) => section.key), ["it-support", "hr"]);
-  assert.deepEqual(sections.visibleCards(allowed).map((card) => card.key), ["repair", "work-order"]);
+  assert.deepEqual(sections.visibleCards(allowed).map((card) => card.key), ["repair", "work-order", "assets"]);
   assert.equal(sections.hasVisibleSection(allowed), true);
   assert.equal(sections.chooserPage({ allowed }), sections.chooserPage(), "no allowed callback = the same page");
   assert.equal(sections.itSupportPage({ allowed }), sections.itSupportPage());
@@ -641,4 +654,70 @@ test("the way for a new module to declare its card is written at the top of offi
   assert.match(read("README.md"), /MNP_OFFICE_CARDS/);
   assert.match(read("modules/module-itwo.js"), /MNP_OFFICE_CARDS \?\?= \{\}\)\.IT_WORK_ORDER/);
   assert.match(read("modules/module-itrp.js"), /MNP_OFFICE_CARDS \?\?= \{\}\)\.IT_COMPUTER_REPAIR/);
+});
+
+/* ---------- ทะเบียนอุปกรณ์ IT (itas): การ์ดขึ้นเฉพาะเมื่อ app_itas_my_access ยืนยันสิทธิ์ ---------- */
+test("the asset-register card is hidden unless app_itas_my_access allowed it (and it is hidden without the module or when the check fails)", async () => {
+  const allowed = setup({ employee: mt, itas: { allowed: true } });
+  await allowed.open("module=it-support");
+  assert.match(allowed.painted.html, /href="#\/office\?module=assets"/);
+  assert.match(allowed.painted.html, /ทะเบียนอุปกรณ์ IT/);
+  assert.match(allowed.painted.html, /กำลังพัฒนา/, "the card carries the development badge from the module's declaration");
+  assert.equal(allowed.itasState.resolves, 1);
+  for (const [label, options] of [["not allowed", { itas: { allowed: false } }], ["check failed", { itas: { fail: true } }], ["module absent", { itas: null }]]) {
+    const app = setup({ employee: mt, ...options });
+    await app.open("module=it-support");
+    assert.doesNotMatch(app.painted.html, /module=assets|ทะเบียนอุปกรณ์ IT/, label);
+    assert.match(app.painted.html, /href="#\/office\?module=repair"/, `${label}: the other cards stay`);
+  }
+});
+
+test("typing #/office?module=assets without access is sent home before anything else is called; with access the module renders", async () => {
+  const denied = setup({ employee: mt, itas: { allowed: false } });
+  await denied.open("module=assets");
+  assert.deepEqual(denied.painted.went, ["dashboard"]);
+  assert.deepEqual(denied.itasState.rendered, []);
+  assert.equal(denied.itasState.resolves, 1, "only the access check ran");
+  assert.deepEqual(denied.queries, []);
+  assert.equal(denied.painted.html, "");
+  const failed = setup({ employee: mt, itas: { fail: true } });
+  await failed.open("module=assets");
+  assert.deepEqual(failed.painted.went, ["dashboard"]);
+  assert.deepEqual(failed.itasState.rendered, []);
+  const absent = setup({ employee: mt, itas: null });
+  await absent.open("module=assets");
+  assert.deepEqual(absent.painted.went, ["dashboard"]);
+  const granted = setup({ employee: mt, itas: { allowed: true } });
+  await granted.open("module=assets");
+  assert.deepEqual(granted.painted.went, []);
+  assert.deepEqual(granted.itasState.rendered, ["module=assets"]);
+});
+
+test("the access check runs only for the chooser, IT SUPPORT and the assets page, and never for department ID (which may not open the card)", async () => {
+  const app = setup({ employee: mt, itas: { allowed: true } });
+  await app.open("");
+  assert.equal(app.itasState.resolves, 1);
+  await app.open("module=repair");
+  await app.open("module=work-order");
+  assert.equal(app.itasState.resolves, 1, "the repair and work-order pages do not ask");
+  await app.open("module=it-support");
+  assert.equal(app.itasState.resolves, 2);
+  const restricted = setup({ employee: { ...mt, department: { code: "ID" } }, itas: { allowed: true } });
+  await restricted.open("module=it-support");
+  await restricted.open("module=assets");
+  assert.equal(restricted.itasState.resolves, 0, "department ID: no lookup at all");
+  assert.doesNotMatch(restricted.painted.html, /module=assets/);
+  assert.deepEqual(restricted.painted.went, ["dashboard"]);
+});
+
+test("in test mode the asset-register card and page open for a persona that has access (and only through the access check)", async () => {
+  const sandbox = setup({ employee: mt, sandbox: true, itas: { allowed: true } });
+  await sandbox.open("module=it-support");
+  assert.match(sandbox.painted.html, /module=assets/);
+  await sandbox.open("module=assets");
+  assert.deepEqual(sandbox.itasState.rendered, ["module=assets"]);
+  assert.deepEqual(sandbox.painted.went, []);
+  const noAccess = setup({ employee: mt, sandbox: true, itas: { allowed: false } });
+  await noAccess.open("module=assets");
+  assert.deepEqual(noAccess.painted.went, ["office"], "test mode sends the user back to the chooser, like the HR page");
 });

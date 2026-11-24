@@ -29,7 +29,8 @@ function fakeServer({ isTest = false } = {}) {
     async get() {
       db.calls.push("get");
       if (!db.row) return { initialized: false, is_test: isTest };
-      const { auth_hash: _hidden, ...visible } = db.row; // ฐานข้อมูลไม่คืน auth_hash
+      const visible = structuredClone(db.row);
+      delete visible.auth_hash; // ฐานข้อมูลไม่คืน auth_hash
       return { initialized: true, is_test: isTest, ...structuredClone(visible) };
     },
     async init(params) {
@@ -386,7 +387,7 @@ test("the vault refuses to be created with fewer than 600,000 rounds", () => {
 test("test mode and real mode wrap with different AAD: a wrapped key from one mode does not open in the other", async () => {
   const { server: realServer } = await setUp(fakeServer({ isTest: false }));
   const testServer = fakeServer({ isTest: true });
-  testServer.get = async () => ({ ...(await fakeServer({ isTest: false }).get()), initialized: true, is_test: true, ...structuredClone((({ auth_hash, ...rest }) => rest)(realServer.db.row)) });
+  testServer.get = async () => ({ ...(await fakeServer({ isTest: false }).get()), initialized: true, is_test: true, ...Object.fromEntries(Object.entries(structuredClone(realServer.db.row)).filter(([key]) => key !== "auth_hash")) });
   const vault = makeVault(testServer);
   assert.equal(await reason(vault.unlock("pass", PASSWORD)), "WRONG_SECRET");
 });
