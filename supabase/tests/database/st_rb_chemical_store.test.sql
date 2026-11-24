@@ -392,13 +392,26 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select ok(st_t.give_back('REQ-L1', '[5]'::jsonb) is not null, 'ST takes back the old requisition');
 select is(st_t.kg('RM-B-1'), '170/30', 'into the ST store as before');
 
--- 13. QA กักกัน / ปลดกักกันล็อต (setMaterialLotStatus) ได้เหมือนเดิม (ปุ่มอยู่ที่หน้าล็อตของ #/st ในโหมดผู้เข้าชมของ QA) ------------------------
+-- 13. QA กักกันล็อต (setMaterialLotStatus) ได้เหมือนเดิม · ปลดกักกัน = หัวหน้า QA หรือหัวหน้า ST ตั้งแต่ 20261221010000 ------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
 select ok(st_t.rf(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array(st_t.mlot('RM-A-2') || '{"status":"hold"}'::jsonb))), 'setMaterialLotStatus') is not null,
   'QA staff puts a lot on hold');
 select is(st_t.mlot('RM-A-2') ->> 'status', 'hold', 'the lot is held');
+-- ปล่อยวัตถุดิบที่กัก (hold -> available) = หัวหน้า QA หรือหัวหน้า ST (20261221010000_qa_head_decisions.sql · qa_head_decisions.test.sql)
+select throws_ok($$ select st_t.rf(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array(st_t.mlot('RM-A-2') || '{"status":"available"}'::jsonb))), 'setMaterialLotStatus') $$,
+  'RF_MATERIAL_RELEASE_HEAD_ONLY', 'QA staff cannot release it');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select throws_ok($$ select st_t.rf(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array(st_t.mlot('RM-A-2') || '{"status":"available"}'::jsonb))), 'setMaterialLotStatus') $$,
+  'RF_MATERIAL_RELEASE_HEAD_ONLY', 'nor can ST staff');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_mgr_t')::uuid);
 select ok(st_t.rf(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array(st_t.mlot('RM-A-2') || '{"status":"available"}'::jsonb))), 'setMaterialLotStatus') is not null,
-  'and releases it');
+  'the ST head releases it');
+select is(st_t.mlot('RM-A-2') ->> 'status', 'available', 'the lot is available after the ST head release');
+select ok(st_t.rf(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array(st_t.mlot('RM-A-2') || '{"status":"hold"}'::jsonb))), 'setMaterialLotStatus') is not null,
+  'the ST head holds it again');
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_mgr')::uuid);
+select ok(st_t.rf(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array(st_t.mlot('RM-A-2') || '{"status":"available"}'::jsonb))), 'setMaterialLotStatus') is not null,
+  'the QA head releases it');
 select is(st_t.mlot('RM-A-2') ->> 'status', 'available', 'the lot is available again');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select st_t.rf(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array(st_t.mlot('RM-A-2') || '{"status":"hold"}'::jsonb))), 'setMaterialLotStatus') $$,

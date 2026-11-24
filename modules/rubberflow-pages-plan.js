@@ -359,6 +359,8 @@
   function stButton(ctx) {
     const factory = root.MNP_FACTORY;
     const access = typeof state !== "undefined" ? root.MNP_ST_PAGES?.access?.(state.employee) ?? null : null;
+    // แผนก QA กักกัน / ปลดกักกันวัตถุดิบที่โมดูล QA (โรงงานขั้น 5) ไม่ใช่ที่โมดูล ST
+    if (!access && factory && typeof state !== "undefined" && factory.canOpenDeptModule?.(state.employee, "QA", "FACTORY_QA") && String(state.employee?.department?.code ?? state.employee?.department_code ?? "").toUpperCase() === "QA") return ctx.ui.link("ไปที่วัตถุดิบที่กัก (QA)", factory.routeUrl("qa", { tab: "material" }), "btn rf-btn");
     if (!access || !factory) return "";
     return ctx.ui.link(access === "full" ? "ไปที่คลังวัตถุดิบ (ST)" : "ดูเคมีในคลัง ST", factory.routeUrl("st", { tab: "stock" }), "btn rf-btn");
   }

@@ -1,7 +1,7 @@
 -- คลังแท่งยาว SR (ขั้น 05-06) ของ BOM โหมดทดสอบ (20261202010000_bom_sr_rod_store.sql)
 -- ตรวจทั้งฝั่งอนุญาตและปฏิเสธ: โครงสร้าง / สิทธิ์ของ bom_rod_lots และ bom_rod_moves, รายการ action, ล็อตตกแต่งของ WO ที่ผูกงาน BOM เป็นแท่งรอรับ (ไม่มีกล่อง
 -- ไม่ป้อนยอดให้งานตอนตกแต่ง) WO ที่ไม่ผูกงานยังมีกล่อง ล็อตที่ hold เกิดแท่งรอรับเมื่อ QA ตัดสิน pass (ครั้งเดียว) · receiveRods (SR / กลุ่มวางแผน ผ่าน = เครดิตงานและแยกส่วนเกิน
--- เข้าสต็อกกลาง ไม่ผ่าน = กัก) สเปกต้องตรงผลคำนวณ ล็อตไม่มีสเปกต้องมีผลของ SR · decideRods (QA / กลุ่มวางแผน) · issueRods (ยอดถัง ถังของใบอื่น ทั้งหมดหรือไม่เลย)
+-- เข้าสต็อกกลาง ไม่ผ่าน = กัก) สเปกต้องตรงผลคำนวณ ล็อตไม่มีสเปกต้องมีผลของ SR · decideRods (หัวหน้า QA ตั้งแต่ 20261221010000) · issueRods (ยอดถัง ถังของใบอื่น ทั้งหมดหรือไม่เลย)
 -- · reverseRodIssue (ย้อนครั้งเดียว) · adjustRods (SR / กลุ่มวางแผน ตั้งแต่ 20261204010000 · GR ไม่ได้) · ปล่อยผลิตหยิบสต็อกกลางล็อตเก่าก่อน (BOM_ROD_EXCEEDS) · เปิดกลับเป็นร่างคืน · ใบที่ปิดคืนถังเป็นสต็อกกลาง
 -- · ชุด rodLots / rodMoves ใน snapshot / delta · audit · ล้างข้อมูลทดสอบ
 -- ข้อควรระวัง: ถ้าอ่านตารางตรงในนาม authenticated จะเกิด 42501 และทำให้ทั้งไฟล์ล้ม ("No plan found") อ่านตารางด้วย reset role เท่านั้น
@@ -308,7 +308,8 @@ select sr_t.rf(jsonb_build_object('lots', jsonb_build_object('upsert', jsonb_bui
   'recordFinishing');
 select ok(sr_t.lot('FN-S2') is null, 'a finishing lot on hold makes no rod lot');
 select is(sr_t.ver(), current_setting('test.bv1')::bigint, 'and does not move the BOM counter');
-select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
+-- ปล่อยล็อตที่กัก = หัวหน้า QA เท่านั้น (20261221010000_qa_head_decisions.sql · qa_head_decisions.test.sql)
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_mgr')::uuid);
 select sr_t.rf(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.qc')::jsonb || '{"id":"QC-S1","lotId":"FN-S2","result":"pass"}'::jsonb))), 'addQcRecord');
 select is(sr_t.lot('FN-S2') ->> 'status' || '/' || (sr_t.lot('FN-S2') ->> 'qtySent'), 'pending/30', 'QA passing the held lot makes the pending rod lot');
@@ -459,31 +460,35 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select lives_ok($$ select sr_t.receive('FN-S5', 5, current_setting('test.thick')::jsonb, 'fail', 'หนาเกินสเปก') $$, 'a planner can receive too');
 select is(sr_t.lot('FN-S5') ->> 'status', 'held', 'and the lot is held');
 
--- 9. decideRods: QA หรือกลุ่มวางแผนตัดสินล็อตที่กัก ----------------------------------------------------------------------------------------
+-- 9. decideRods: หัวหน้า QA ตัดสินล็อตที่กัก (20261221010000_qa_head_decisions.sql · เดิม QA ทุกบทบาทหรือกลุ่มวางแผน) ------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_sr_staff')::uuid);
-select throws_ok($$ select sr_t.decide('FN-S3', 'accept', 'ใช้ตามสภาพ') $$, 'BOM_FORBIDDEN', 'SR cannot decide a held lot');
+select throws_ok($$ select sr_t.decide('FN-S3', 'accept', 'ใช้ตามสภาพ') $$, 'BOM_QA_HEAD_ONLY', 'SR cannot decide a held lot');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
-select throws_ok($$ select sr_t.decide('FN-S3', 'accept', 'ใช้ตามสภาพ') $$, 'BOM_FORBIDDEN', 'RB staff cannot decide a held lot');
+select throws_ok($$ select sr_t.decide('FN-S3', 'accept', 'ใช้ตามสภาพ') $$, 'BOM_QA_HEAD_ONLY', 'RB staff cannot decide a held lot');
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
 select throws_ok($$ select sr_t.decide('FN-S3', 'accept', 'ab') $$, 'BOM_INVALID_ROD', 'a decision needs a note of three characters');
 select throws_ok($$ select sr_t.decide('FN-S3', 'keep', 'ใช้ตามสภาพ') $$, 'BOM_INVALID_ROD', 'an unknown decision is refused');
+select throws_ok($$ select sr_t.decide('FN-S3', 'accept', 'ใช้ตามสภาพ') $$, 'BOM_QA_HEAD_ONLY', 'QA staff cannot decide a held lot (QA head only)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select throws_ok($$ select sr_t.decide('FN-S3', 'accept', 'ใช้ตามสภาพ') $$, 'BOM_QA_HEAD_ONLY', 'nor can a planner');
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_mgr')::uuid);
 select throws_ok($$ select sr_t.decide('FN-S1', 'accept', 'ใช้ตามสภาพ') $$, 'BOM_INVALID_TRANSITION', 'a stored lot is not decided');
 select throws_ok($$ select sr_t.decide('FN-N1', 'scrap', 'ทิ้งทั้งหมด') $$, 'BOM_INVALID_TRANSITION', 'nor is a lot that passed');
-select lives_ok($$ select sr_t.decide('FN-S3', 'accept', 'ใช้ตามสภาพ') $$, 'QA accepts a held lot');
+select lives_ok($$ select sr_t.decide('FN-S3', 'accept', 'ใช้ตามสภาพ') $$, 'the QA head accepts a held lot');
 select is(sr_t.lot('FN-S3') ->> 'status' || '/' || (sr_t.lot('FN-S3') ->> 'decision') || '/' || (sr_t.lot('FN-S3') ->> 'decisionNote'), 'stored/accept/ใช้ตามสภาพ',
   'the accepted lot is stored with the decision');
-select is(sr_t.lot('FN-S3') ->> 'decidedBy', current_setting('test.n_sbx_qa_staff'), 'the decider is the persona');
+select is(sr_t.lot('FN-S3') ->> 'decidedBy', current_setting('test.n_sbx_qa_mgr'), 'the decider is the persona');
 select is(sr_t.bal('FN-S3', null), 10::numeric, 'an accepted lot is credited (the job is done: free central stock)');
-select lives_ok($$ select sr_t.decide('FN-S4', 'return', 'ส่งคืน RB แก้ไข') $$, 'QA returns a held lot to RB');
+select lives_ok($$ select sr_t.decide('FN-S4', 'return', 'ส่งคืน RB แก้ไข') $$, 'the QA head returns a held lot to RB');
 select is(sr_t.lot('FN-S4') ->> 'status', 'returned', 'the lot is returned');
 select ok(not exists (select 1 from jsonb_array_elements(public.app_bom_master() -> 'rodMoves') m where m ->> 'lotId' = sr_t.lot_id('FN-S4')), 'a returned lot has no stock move');
 select throws_ok($$ select sr_t.decide('FN-S4', 'accept', 'ลองใหม่') $$, 'BOM_INVALID_TRANSITION', 'a decided lot cannot be decided again');
-select lives_ok($$ select sr_t.decide('FN-S5', 'scrap', 'เสียหายทั้งล็อต') $$, 'QA scraps a held lot');
+select lives_ok($$ select sr_t.decide('FN-S5', 'scrap', 'เสียหายทั้งล็อต') $$, 'the QA head scraps a held lot');
 select is(sr_t.lot('FN-S5') ->> 'status', 'scrapped', 'the lot is scrapped');
 select ok(not exists (select 1 from jsonb_array_elements(public.app_bom_master() -> 'rodMoves') m where m ->> 'lotId' = sr_t.lot_id('FN-S5')), 'a scrapped lot has no stock move');
-select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
-select lives_ok($$ select sr_t.decide('FN-S6', 'return', 'ส่งคืน RB แก้ไข') $$, 'a planner decides too');
-select is(sr_t.lot('FN-S6') ->> 'status' || '/' || (sr_t.lot('FN-S6') ->> 'decidedBy'), 'returned/' || current_setting('test.n_sbx_pp_staff'), 'the lot is returned by the planner');
+select public.app_sandbox_enter(current_setting('test.p_sbx_ft_fm')::uuid);
+select lives_ok($$ select sr_t.decide('FN-S6', 'return', 'ส่งคืน RB แก้ไข') $$, 'the factory manager decides instead of the QA head');
+select is(sr_t.lot('FN-S6') ->> 'status' || '/' || (sr_t.lot('FN-S6') ->> 'decidedBy'), 'returned/' || current_setting('test.n_sbx_ft_fm'), 'the lot is returned by the factory manager');
 select is(sr_t.free('RB-A'), 58::numeric, 'free central stock is 20 (FN-S1) + 28 (FN-S2) + 10 (FN-S3)');
 select is(sr_t.owned('251202-25001', 'RB-A') || '/' || sr_t.owned('251202-25002', 'RB-A'), '100/40', 'and the order buckets hold 100 and 40');
 

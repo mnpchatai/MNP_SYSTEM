@@ -80,7 +80,10 @@ insert into public.employees (id, employee_no, first_name, last_name, email, job
 -- persona ผู้ดูแลระบบ (is_test) ไว้ตรวจว่า admin ยังรับล็อตใหม่ได้ (ไม่มี persona บทบาท admin ในชุดตั้งต้น)
 insert into public.employees (employee_no, first_name, last_name, email, job_title, department_id, role_id, is_active, is_test) values
   ('SBX-ADMIN-T', 'ทดสอบ', 'ผู้ดูแลระบบ', 'sbx-admin-t@sandbox.local', 'ผู้ดูแลระบบ (ทดสอบ)',
-   (select id from public.departments where code = 'MGT'), (select id from public.roles where code = 'admin'), false, true);
+   (select id from public.departments where code = 'MGT'), (select id from public.roles where code = 'admin'), false, true),
+  -- ผู้ช่วยผู้จัดการแผนก QA (หัวหน้า QA ที่ไม่อยู่กลุ่มวางแผน · 20261221010000_qa_head_decisions.sql) ไม่มีในชุดตั้งต้น
+  ('SBX-QA-AMGR-T', 'ทดสอบ', 'ผู้ช่วย ผจก. QA', 'sbx-qa-amgr-t@sandbox.local', 'ผู้ช่วย ผจก. QA (ทดสอบ)',
+   (select id from public.departments where code = 'QA'), (select id from public.roles where code = 'assistant_department_manager'), false, true);
 select count(set_config('test.p_' || lower(replace(employee_no, '-', '_')), id::text, true)) from public.employees where is_test;
 select count(set_config('test.n_' || lower(replace(employee_no, '-', '_')), first_name || ' ' || last_name, true)) from public.employees where is_test;
 -- ข้อมูลจริง (ไม่ใช่โหมดทดสอบ) ใส่ตรง: โหมดทดสอบต้องมองไม่เห็นและ purge ไม่แตะ
@@ -220,13 +223,15 @@ select throws_ok($$ select public.app_rf_save(jsonb_build_object('materialLots',
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array((select x || '{"expiry":1}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-A-2')))), (public.app_rf_master() ->> 'version')::bigint, 'setMaterialLotStatus') $$, 'RF_INVALID_MATERIAL_LOT', 'the expiry of a received lot cannot change');
 select is(public.app_rf_save(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array((select x || '{"qtyKg":1,"initialKg":1}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-A-2')))), (public.app_rf_master() ->> 'version')::bigint, 'setMaterialLotStatus') ->> 'version', current_setting('test.v0'), 'quantities sent by a client are ignored: nothing is written');
 select is(public.app_rf_save(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"hold"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-A-2')))), (public.app_rf_master() ->> 'version')::bigint, 'setMaterialLotStatus') -> 'changes' -> 'materialLots' -> 'upsert' -> 0 ->> 'status', 'hold', 'ST staff puts a lot on hold');
-select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
-select is(public.app_rf_save(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"available"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-A-2')))), (public.app_rf_master() ->> 'version')::bigint, 'setMaterialLotStatus') -> 'changes' -> 'materialLots' -> 'upsert' -> 0 ->> 'status', 'available', 'QA staff releases a lot');
+-- ปล่อยวัตถุดิบที่กัก (hold -> available) = หัวหน้า QA เท่านั้น (20261221010000_qa_head_decisions.sql · qa_head_decisions.test.sql)
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_mgr')::uuid);
+select is(public.app_rf_save(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"available"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-A-2')))), (public.app_rf_master() ->> 'version')::bigint, 'setMaterialLotStatus') -> 'changes' -> 'materialLots' -> 'upsert' -> 0 ->> 'status', 'available', 'the QA head releases a lot');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select set_config('test.rbase', (public.app_rf_master() ->> 'version')::text, true);
 select set_config('test.stalelot', ((select x from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-A-2'))::text, true);
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select public.app_rf_save(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"hold"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-A-2')))), (public.app_rf_master() ->> 'version')::bigint, 'setMaterialLotStatus');
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_mgr')::uuid);
 select public.app_rf_save(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"available"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-A-2')))), (public.app_rf_master() ->> 'version')::bigint, 'setMaterialLotStatus');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.stalelot')::jsonb || '{"status":"hold"}'::jsonb))), current_setting('test.rbase')::bigint, 'setMaterialLotStatus') $$, 'RF_STALE', 'a stale copy asking for a hold it may not make is stale before it is forbidden');
@@ -275,7 +280,8 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select public.app_rf_save(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"hold"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-B-1')))), (public.app_rf_master() ->> 'version')::bigint, 'setMaterialLotStatus');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"REQ-1"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRequisition') $$, 'RF_INSUFFICIENT_STOCK', 'a lot on hold is never allocated');
-select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
+-- ปล่อยวัตถุดิบที่กัก (hold -> available) = หัวหน้า QA เท่านั้น (20261221010000_qa_head_decisions.sql · qa_head_decisions.test.sql)
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_mgr')::uuid);
 select public.app_rf_save(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"available"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-B-1')))), (public.app_rf_master() ->> 'version')::bigint, 'setMaterialLotStatus');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select set_config('test.res', (public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"REQ-1","batches":1}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRequisition'))::text, true);
@@ -354,7 +360,8 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select public.app_rf_save(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"hold"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-C-1')))), (public.app_rf_master() ->> 'version')::bigint, 'setMaterialLotStatus');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array((select r || jsonb_build_object('lines', (select jsonb_agg(case when e.ord - 1 = 1 then e.v || '{"actualKg":5.05}'::jsonb when e.ord - 1 = 2 then e.v || '{"actualKg":2.02}'::jsonb else e.v end order by e.ord) from jsonb_array_elements(r -> 'lines') with ordinality as e(v, ord))) from jsonb_array_elements(public.app_rf_master() -> 'requisitions') r where r ->> 'id' = 'REQ-L1')))), (public.app_rf_master() ->> 'version')::bigint, 'weighLine') $$, 'RF_LOT_UNAVAILABLE', 'a line whose lot went on hold cannot be weighed');
-select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
+-- ปล่อยวัตถุดิบที่กัก (hold -> available) = หัวหน้า QA เท่านั้น (20261221010000_qa_head_decisions.sql · qa_head_decisions.test.sql)
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_mgr')::uuid);
 select public.app_rf_save(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"available"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-C-1')))), (public.app_rf_master() ->> 'version')::bigint, 'setMaterialLotStatus');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select set_config('test.res', (public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array((select r || jsonb_build_object('lines', (select jsonb_agg(case when e.ord - 1 = 1 then e.v || '{"actualKg":5.05}'::jsonb when e.ord - 1 = 2 then e.v || '{"actualKg":2.02}'::jsonb else e.v end order by e.ord) from jsonb_array_elements(r -> 'lines') with ordinality as e(v, ord))) from jsonb_array_elements(public.app_rf_master() -> 'requisitions') r where r ->> 'id' = 'REQ-L1')))), (public.app_rf_master() ->> 'version')::bigint, 'weighLine'))::text, true);
@@ -482,6 +489,8 @@ select is(current_setting('test.res')::jsonb -> 'changes' -> 'qcRecords' -> 'ups
 select set_config('test.v', (public.app_rf_master() ->> 'version')::text, true);
 select is(public.app_rf_save(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array((select x || '{"result":"fail","note":"แก้ย้อนหลัง"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'qcRecords') x where x ->> 'id' = 'QC-1')))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord') ->> 'version', current_setting('test.v'), 'a QC record is final: changes to it are ignored');
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.qc')::jsonb || '{"id":"QC-1","at":9}'::jsonb))), 0, 'addQcRecord') $$, 'RF_STALE', 'a QC number that someone else just used is stale');
+-- ปล่อยล็อตที่กัก = หัวหน้า QA เท่านั้น (20261221010000_qa_head_decisions.sql · qa_head_decisions.test.sql)
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_mgr')::uuid);
 select set_config('test.res', (public.app_rf_save(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.qc')::jsonb || '{"id":"QC-2"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord'))::text, true);
 select is((select x ->> 'qc' from jsonb_array_elements(public.app_rf_master() -> 'lots') x where x ->> 'id' = 'MX-2'), 'pass', 'an all-pass result releases the held lot');
 select ok((select x ->> 'holdReasons' from jsonb_array_elements(public.app_rf_master() -> 'lots') x where x ->> 'id' = 'MX-2')::jsonb = '[]'::jsonb, 'and clears its hold reasons');
@@ -654,7 +663,8 @@ select is((select count(*)::integer from jsonb_array_elements(public.app_bom_mas
 select is((public.app_bom_master() ->> 'version')::bigint, current_setting('test.bvf')::bigint, 'the BOM counter did not move');
 select ok(not exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:recordFinishing'), 'and the BOM history has no row for it');
 select is(public.app_bom_master_since(current_setting('test.bvf')::bigint) -> 'changes' -> 'jobs' -> 'upsert', '[]'::jsonb, 'a BOM client sees no job change in the delta');
-select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
+-- ปล่อยล็อตที่กัก = หัวหน้า QA เท่านั้น (20261221010000_qa_head_decisions.sql · qa_head_decisions.test.sql) · ผู้ช่วยผู้จัดการแผนก QA ไม่อยู่กลุ่มวางแผน (ปิด WO ไม่ได้เหมือนพนักงาน QA เดิม)
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_amgr_t')::uuid);
 select set_config('test.v', (public.app_rf_master() ->> 'version')::text, true);
 select set_config('test.res', (public.app_rf_save(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.qc')::jsonb || '{"id":"QC-5","lotId":"FN-1","stage":"finishing"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord'))::text, true);
 select is((select x ->> 'qc' from jsonb_array_elements(public.app_rf_master() -> 'lots') x where x ->> 'id' = 'FN-1') || '/' || (select x ->> 'countedToOrder' from jsonb_array_elements(public.app_rf_master() -> 'lots') x where x ->> 'id' = 'FN-1'), 'pass/true', 'QA passes the finishing lot: it is counted to the work order');
@@ -662,7 +672,7 @@ select is((select x ->> 'status' from jsonb_array_elements(public.app_rf_master(
 select is((select x ->> 'producedQty' from jsonb_array_elements(public.app_rf_master() -> 'orders') x where x ->> 'id' = 'WO-S1'), '250', '100 + 150 pieces are counted');
 select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 0::numeric, 'the QA pass of a lot of a work order for sale feeds no BOM job');
 select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'rodLots')), 0, 'nor makes a rod lot');
-select is((select x ->> 'status' from jsonb_array_elements(public.app_rf_master() -> 'orders') x where x ->> 'id' = 'WO-S1'), 'in_progress', 'QA cannot close the work order even though the target (140) is reached');
+select is((select x ->> 'status' from jsonb_array_elements(public.app_rf_master() -> 'orders') x where x ->> 'id' = 'WO-S1'), 'in_progress', 'a QA head outside the planner group cannot close the work order even though the target (140) is reached');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select set_config('test.res', (public.app_rf_save(jsonb_build_object('lots', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.fn')::jsonb || '{"id":"FN-3","sources":[{"type":"transfer","id":"TR-3","lotId":"CU-1","qty":20}],"goodQty":20,"qc":"pass"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'recordFinishing'))::text, true);
 select is((select x ->> 'producedQty' from jsonb_array_elements(public.app_rf_master() -> 'orders') x where x ->> 'id' = 'WO-S1'), '270', 'the last 20 pieces are counted');
@@ -697,7 +707,8 @@ select is((select x ->> 'producedQty' from jsonb_array_elements(public.app_rf_ma
 select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 0::numeric, 'and the BOM job is not fed for a lot that is already counted');
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('fgBoxes', jsonb_build_object('upsert', jsonb_build_array((select x || '{"status":"shipped"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'fgBoxes') x where x ->> 'id' = 'BOX-2-002')))), (public.app_rf_master() ->> 'version')::bigint, 'shipBoxes') $$, 'RF_INVALID_TRANSITION', 'even WH cannot ship a box on hold');
-select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
+-- ปล่อยล็อตที่กัก = หัวหน้า QA เท่านั้น (20261221010000_qa_head_decisions.sql · qa_head_decisions.test.sql)
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_mgr')::uuid);
 select public.app_rf_save(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.qc')::jsonb || '{"id":"QC-7","lotId":"FN-2","stage":"finishing"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord');
 select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 0::numeric, 'a later pass of an already counted lot feeds nothing');
 select is((select x ->> 'status' from jsonb_array_elements(public.app_rf_master() -> 'fgBoxes') x where x ->> 'id' = 'BOX-2-002'), 'in_stock', 'QA releases the lot: the received box is back in stock');

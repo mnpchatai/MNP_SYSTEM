@@ -18,7 +18,10 @@ const memory = () => {
 const make = (storage = memory()) => ({ storage, store: storeApi.createStore({ storage, seed: () => seed.buildSeed(NOW), actions, now: () => NOW }) });
 
 test("roles see the prototype's module sets and fine-grained permissions", () => {
-  assert.equal(storeApi.MODULES.length, 15, "15 pages of the prototype: the RB chemical store is a tab of the warehouse page, not a menu entry");
+  assert.equal(storeApi.MODULES.length, 13, "13 pages: the QA pages (quality, spc, trace) moved to #/qa and RB answers its NCRs on one page (p=ncr); the RB chemical store is a tab of the warehouse page, not a menu entry");
+  for (const gone of ["quality", "spc", "trace"]) assert.ok(!storeApi.MODULE_IDS.includes(gone) && Object.values(storeApi.ROLES).every((role) => !role.modules.includes(gone)), `${gone} is no RubberFlow menu entry any more`);
+  assert.equal(storeApi.findModule("ncr").label, "NCR ที่ RB ต้องตอบ");
+  assert.deepEqual(Object.entries(storeApi.ROLES).filter(([, role]) => role.modules.includes("ncr")).map(([id]) => id), ["admin", "manager", "planner", "rb"], "RB staff and the planner answer NCRs; QA works in #/qa");
   assert.equal(storeApi.findModule("rbstore"), null, "no separate rbstore menu entry");
   assert.ok(!storeApi.MODULE_IDS.includes("rbstore") && Object.values(storeApi.ROLES).every((role) => !role.modules.includes("rbstore")));
   assert.equal(storeApi.findModule("warehouse").label, "คลังวัตถุดิบและสินค้า", "the menu item keeps its name");
@@ -30,7 +33,7 @@ test("roles see the prototype's module sets and fine-grained permissions", () =>
   assert.ok(!storeApi.ROLES.manager.modules.includes("audit"));
   const mixer = { role: "mixer" };
   assert.equal(storeApi.canSee(mixer, "mixing"), true);
-  assert.equal(storeApi.canSee(mixer, "quality"), false);
+  assert.equal(storeApi.canSee(mixer, "ncr"), false);
   assert.equal(storeApi.canSee(null, "dashboard"), false);
   assert.equal(storeApi.canSee({ role: "ghost" }, "dashboard"), false);
   assert.equal(storeApi.can({ role: "qc" }, "qcDecision"), true);
@@ -38,7 +41,7 @@ test("roles see the prototype's module sets and fine-grained permissions", () =>
   assert.equal(storeApi.can({ role: "planner" }, "nope"), false);
   assert.equal(storeApi.homeOf({ role: "store" }), "dashboard");
   assert.equal(storeApi.homeOf(null), "dashboard");
-  assert.equal(storeApi.findModule("spc").label, "SPC / Cpk");
+  assert.equal(storeApi.findModule("spc"), null, "SPC lives in #/qa");
   assert.equal(storeApi.findModule("nope"), null);
 });
 

@@ -1483,7 +1483,10 @@
   // (ปรับยอด: SR ทำได้ตั้งแต่ 20261204010000_bom_sr_store_module.sql เดิมกลุ่มวางแผนเท่านั้น)
   // โหมดฐานข้อมูลคืน request = แถวคำขอที่ store ส่งในส่วน rodLots / rodMoves (section) · โหมดในเครื่องเขียนผล (ล็อต ประวัติ งาน) เอง
   const canStoreRods = (user) => canPlan(user) || user?.dept === "SR";
-  const canDecideRods = (user) => canPlan(user) || user?.dept === "QA";
+  // เห็นล็อตที่กักรอตัดสิน (การ์ดงานของ QA): แผนก QA ทุกตำแหน่งหรือกลุ่มวางแผน · ตัดสินจริง (ปุ่มและคำสั่ง decideRods) = หัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบเท่านั้น (เจ้าของสั่ง 2026-11-24 · ฐานข้อมูล BOM_QA_HEAD_ONLY)
+  // นิยามเดียวกับการปล่อยล็อตของ RubberFlow: rules.canQaRelease (modules/rubberflow-rules.js) · ไม่มีกฎ (ไม่ได้โหลด RubberFlow) = ตัดสินไม่ได้
+  const canSeeRodHolds = (user) => canPlan(user) || user?.dept === "QA";
+  const canDecideRods = (user) => Boolean(root.MNP_RUBBERFLOW_RULES?.canQaRelease?.(user));
   const canAdjustRods = (user) => canStoreRods(user);
   const ROD_NOTE_MAX = 300;
   const ROD_REASON_MIN = 3;
@@ -1633,7 +1636,7 @@
     const user = requireUser(ctx);
     const R = rules();
     const lot = rodLotOf(d, p?.lotId);
-    if (!canDecideRods(user)) fail("ตัดสินล็อตที่กักได้โดยตรวจคุณภาพ (QA) หรือฝ่ายวางแผนเท่านั้น");
+    if (!canDecideRods(user)) fail("ตัดสินล็อตที่กักได้เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ");
     if (lot.status !== "held") fail(`${lotText(lot)} ไม่ได้กักรออยู่ (${R.ROD_STATUS_LABEL[lot.status] ?? lot.status})`);
     const decision = String(p?.decision ?? "");
     if (!Object.hasOwn(R.ROD_DECISION_LABEL, decision)) fail("เลือกผลตัดสิน: ใช้ได้ตามสภาพ คืน RB แก้ไข หรือทิ้ง");
@@ -2136,7 +2139,7 @@
     saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, receiveFg, deliverFg, closeOrderShort, closeOrder, reverseFg, receiveRods, decideRods, issueRods, reverseRodIssue, adjustRods, receiveRodsOpening, setRodLocation,
     saveGrConfig, setGrJobSteps, addGrRecord, editGrRecord, voidGrRecord, requestRods, cancelRodRequest, sendGrToPk, receiveGrAtPk, cancelGrHandover,
     reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage, countPartStock, issueOrderParts, undoOrderParts, returnOrderParts,
-    helpers: { customerName, customerKey, startedJobs, isPartJob, isOpenJob, isLinkedJob, jobCloseNote, jobHoldNote, deptText, canIssueParts, canHandleFg, canReverseFg, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canSetSafety, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS, canStoreRods, canDecideRods, canAdjustRods, newUuid,
+    helpers: { customerName, customerKey, startedJobs, isPartJob, isOpenJob, isLinkedJob, jobCloseNote, jobHoldNote, deptText, canIssueParts, canHandleFg, canReverseFg, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canSetSafety, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS, canStoreRods, canDecideRods, canSeeRodHolds, canAdjustRods, newUuid,
       isDeptHead, canGrLead, canGrRecord, canReceiveGr, canReverseGrReceipt, isGrPlanned, isGrClosedShort, hasGrRecords, grJobBlock, grRecordBlock },
   };
   if (isNode) module.exports = api;
