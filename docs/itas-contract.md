@@ -1,6 +1,6 @@
 # สัญญาฐานข้อมูลของโมดูล "ทะเบียนอุปกรณ์ IT" (`itas_*`)
 
-migration: `supabase/migrations/20261221010000_itas_asset_register.sql` · ทดสอบ: `supabase/tests/database/itas_asset_register.test.sql`
+migration: `supabase/migrations/20261222010000_itas_asset_register.sql` · ทดสอบ: `supabase/tests/database/itas_asset_register.test.sql`
 สเปกต้นทาง: `Work-Order/docs/it-asset-register-spec.md` (เจ้าของตัดสิน 24/11/2026) · เอกสารนี้ไว้ให้คนทำหน้าเว็บ (Pilot) ใช้เป็นสัญญา · **ส่วนที่ 1 = ฐานข้อมูลอย่างเดียว** (ยังไม่มีหน้าเว็บ ไม่นำเข้าข้อมูล ไม่ผูกกับหัวใบ FM02 ของ `itrp_devices` — เป็นงานรอบหลัง)
 
 ทุก RPC เรียกผ่าน `sb.rpc('app_itas_…', { p_… })` ด้วย session ของผู้ใช้ (SECURITY DEFINER, anon เรียกไม่ได้) · ข้อความ error เป็นภาษาไทยแสดงให้ผู้ใช้เห็นตรง ๆ (`error.message`)
