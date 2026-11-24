@@ -3,7 +3,8 @@
 // หน้า: งานของฉัน (ค่าตั้งต้น) · ในคลัง ?tab=stock (หน้าของซื้อ ?part=<รหัส> · หน้าล็อตเคมี ?lot=<ล็อต>) · ใบสั่งซื้อ ?tab=po · จ่ายออก ?tab=issue (&order=<ใบ>) · รับคืน ?tab=returns · นับสต็อก ?tab=count
 // คำสั่งของของซื้อวิ่งไป store ของ BOM (dialog issueParts / returnParts / undoParts และฟอร์ม countPartStock ผ่านตัวผูกของหน้าแผนก)
 // ส่วนของ RubberFlow (ใบสั่งซื้อ เคมี ใบขอเบิก ใบคืน ป้าย กักกัน) อยู่ใน [data-rf-scope] ที่ตัวผูกของ RubberFlow ผูกเอง (dialog และคำสั่งชุดเดียวกับหน้า RubberFlow · ตัวผูกของหน้าแผนกข้ามส่วนนี้)
-// ผู้เข้าชม (ไม่อยู่ในเมนู เข้าทางลิงก์ · access): แผนก RB ดูเคมีในคลัง ST อย่างเดียว · แผนก WH ดูและนับของซื้อ · คนอื่นไม่พบหน้า
+// ผู้เข้าชม (ไม่อยู่ในเมนู เข้าทางลิงก์ · access): แผนก RB ดูเคมีในคลัง ST อย่างเดียว · แผนก WH ดูและนับของซื้อ
+//   · แผนก QA ดูเคมีในคลัง ST และกักกัน / ปลดกักกันล็อตที่หน้าล็อต (สิทธิ์ holdMaterial เดิมของ QA) · คนอื่นไม่พบหน้า
 // การซ่อน/แสดงปุ่มเป็นแค่ UX สิทธิ์จริงตัดสินที่ action และฐานข้อมูล: จ่ายเคมี ปิดยอด รับคืน ใบสั่งซื้อ = แผนก ST (admin) · เบิกจ่ายของซื้อ = ST / ฝ่ายวางแผน · นับ = ST / WH / ฝ่ายวางแผน · สต็อกขั้นต่ำ = ST / ฝ่ายวางแผน
 (function registerStPages(root) {
   const F = root.MNP_FACTORY;
@@ -24,18 +25,20 @@
   const hub = () => root.MNP_BOM_PAGES?.hub ?? null;
 
   // ---------- ใครเปิดหน้าไหนได้ ----------
-  // full = ผู้ใช้โมดูล (แผนก ST · แผนก PP · ผู้จัดการ: canOpenDeptModule) · rb = แผนก RB ดูเคมีในคลัง ST อย่างเดียว · wh = แผนก WH ดูและนับของซื้อ · null = ไม่พบหน้า
+  // full = ผู้ใช้โมดูล (แผนก ST · แผนก PP · ผู้จัดการ: canOpenDeptModule) · rb = แผนก RB ดูเคมีในคลัง ST อย่างเดียว · wh = แผนก WH ดูและนับของซื้อ
+  // · qa = แผนก QA ดูเคมีในคลัง ST และกักกัน / ปลดกักกันล็อต (ปุ่มเดียวของ QA ที่หน้าล็อต) · null = ไม่พบหน้า
   const deptOf = (employee) => String(employee?.department?.code ?? employee?.department_code ?? "").toUpperCase();
+  const GUEST_DEPTS = Object.freeze({ RB: "rb", WH: "wh", QA: "qa" });
   function access(employee) {
     if (!employee || employee.isSandbox !== true) return null;
     if (F.canOpenDeptModule(employee, "ST", "FACTORY_ST")) return "full";
     if (!root.MNP_BOM_STORE?.usesBom?.(employee) || root.MNP_DEPARTMENT_ACCESS?.isRestricted?.(employee)) return null;
-    const dept = deptOf(employee);
-    return dept === "RB" ? "rb" : dept === "WH" ? "wh" : null;
+    return GUEST_DEPTS[deptOf(employee)] ?? null;
   }
-  const guest = (employee) => { const mode = access(employee); return mode === "rb" || mode === "wh" ? mode : null; };
-  // หน้าที่ผู้เข้าชมเปิดได้ (อย่างอื่นกลับไปหน้าในคลัง)
-  const GUEST_VIEWS = Object.freeze({ rb: ["stock"], wh: ["stock", "count"] });
+  const guest = (employee) => { const mode = access(employee); return mode && mode !== "full" ? mode : null; };
+  // หน้าที่ผู้เข้าชมเปิดได้ (อย่างอื่นกลับไปหน้าในคลัง) · chem = เห็นเฉพาะเคมี (หน้าล็อตเปิดได้) · part = เห็นเฉพาะของซื้อ (หน้าของซื้อเปิดได้)
+  const GUEST_VIEWS = Object.freeze({ rb: ["stock"], wh: ["stock", "count"], qa: ["stock"] });
+  const GUEST_KIND = Object.freeze({ rb: "chem", wh: "part", qa: "chem" });
 
   // ---------- ข้อมูลของ RubberFlow (ยังไม่โหลด: สั่งโหลดและวาดหน้าใหม่เมื่อเสร็จ) ----------
   function rfState(ctx) {
@@ -49,8 +52,9 @@
     return rfCtx ? { status: "ready", data: rfCtx.data, ctx: rfCtx } : { status: "none", data: null, ctx: null };
   }
   const rfNote = (ctx, rf, title = "เคมีและใบสั่งซื้อ") => (rf.status === "loading" ? '<p class="small muted" role="status">กำลังโหลดข้อมูลเคมีและใบสั่งซื้อ…</p>' : rf.status === "failed" ? F.rubberflowFailed(ctx, title) : "");
-  // สิทธิ์ของคำสั่ง RubberFlow ตามผู้ใช้ของ RubberFlow (ตารางสิทธิ์ชุดเดียวกับหน้า RubberFlow) · ผู้เข้าชมไม่มีปุ่มของ RubberFlow
-  const rfCan = (ctx, rf, permission) => !ctx.guest && rf.status === "ready" && Boolean(rf.ctx?.can?.(permission));
+  // สิทธิ์ของคำสั่ง RubberFlow ตามผู้ใช้ของ RubberFlow (ตารางสิทธิ์ชุดเดียวกับหน้า RubberFlow) · ผู้เข้าชมไม่มีปุ่มของ RubberFlow ยกเว้น QA กักกัน / ปลดกักกันล็อต
+  const GUEST_RIGHTS = Object.freeze({ qa: Object.freeze(["holdMaterial"]) });
+  const rfCan = (ctx, rf, permission) => (!ctx.guest || (GUEST_RIGHTS[ctx.guest] ?? []).includes(permission)) && rf.status === "ready" && Boolean(rf.ctx?.can?.(permission));
   const materialOf = (rf, code) => rf.data?.materials?.find((row) => row.code === code) ?? null;
   const kg = (ctx, value) => `${ctx.rules.fmtQty(value)} kg`;
 
@@ -106,8 +110,8 @@
   }
   function stockView(ctx, rf) {
     const { ui, rules, q } = ctx;
-    // ผู้เข้าชม: RB เห็นเฉพาะเคมี · WH เห็นเฉพาะของซื้อ (ไม่มีตัวกรองชนิด)
-    const forced = ctx.guest === "rb" ? "chem" : ctx.guest === "wh" ? "part" : "";
+    // ผู้เข้าชม: RB / QA เห็นเฉพาะเคมี · WH เห็นเฉพาะของซื้อ (ไม่มีตัวกรองชนิด)
+    const forced = ctx.guest ? GUEST_KIND[ctx.guest] ?? "" : "";
     const kind = forced || (["part", "chem"].includes(ctx.params.get("kind")) ? ctx.params.get("kind") : "");
     const list = stockRows(ctx, rf).filter((row) => (!kind || row.kind === kind) && F.includesText(`${row.code} ${row.name} ${row.lotNo}`, q));
     const { shown, more } = F.limited(ctx, list);
@@ -204,13 +208,14 @@
       ...(transit > 0 ? [["RB คืนระหว่างทาง", esc(kg(ctx, transit))]] : []),
       ["รับเข้า", esc(`${kg(ctx, lot.initialKg)} · ${rules.fmtDate(lot.receivedAt)}${lot.coa ? " · มี CoA" : ""}`)],
     ]);
-    // ป้าย (บาร์โค้ด Code 39 ของ RubberFlow) และกักกัน / ปลดกักกัน: ชุดเดียวกับหน้า RubberFlow เดิม · ไม่ให้ผู้เข้าชม
+    // ป้าย (บาร์โค้ด Code 39 ของ RubberFlow) และกักกัน / ปลดกักกัน: ชุดเดียวกับหน้า RubberFlow เดิม · ผู้เข้าชม QA ได้เฉพาะกักกัน / ปลดกักกัน · ผู้เข้าชมอื่นไม่มีปุ่ม
     const hold = rfCan(ctx, rf, "holdMaterial");
-    const buttons = ctx.guest ? "" : rfScope([
-      ui.openButton("พิมพ์ป้าย", "tag", { kind: "material", id: lot.lotNo }, { className: "secondary" }),
+    const holdButtons = [
       hold && lot.status !== "hold" && state !== "empty" ? ui.button("กักกัน", { action: "setMaterialLotStatus", args: { lotNo: lot.lotNo, status: "hold" }, className: "secondary", confirmText: `กักกันล็อต ${lot.lotNo}? ล็อตที่กักกันจ่ายไม่ได้ทั้งคลัง ST และคลัง RB จนกว่าจะปลดกักกัน`, success: "กักกันล็อต {result} แล้ว" }) : "",
       hold && lot.status === "hold" ? ui.button("ปลดกักกัน", { action: "setMaterialLotStatus", args: { lotNo: lot.lotNo, status: "available" }, className: "secondary", confirmText: `ปลดกักกันล็อต ${lot.lotNo}?`, success: "ปลดกักกันล็อต {result} แล้ว" }) : "",
-    ].join(""));
+    ].join("");
+    const buttons = !ctx.guest ? rfScope(`${ui.openButton("พิมพ์ป้าย", "tag", { kind: "material", id: lot.lotNo }, { className: "secondary" })}${holdButtons}`)
+      : ctx.guest === "qa" ? rfScope(holdButtons) : "";
     const rows = lotEvents(ctx, rf, lot.lotNo).map((event) => `<tr><td class="nowrap small">${event.at ? esc(rules.fmtDateTime(event.at)) : dash}</td><td>${esc(event.text)}${event.badge && views().chemStatus ? ` ${views().chemStatus(ui, event.badge)}` : ""}${event.detail ? `<div class="small muted">${esc(event.detail)}</div>` : ""}</td><td class="right rf-mono">${event.kg === null ? dash : esc(rules.fmtQty(event.kg))}</td><td class="small">${esc(event.by)}</td></tr>`);
     const history = ui.card(ui.table(["เวลา", "รายการ", { label: "kg", className: "right" }, "ผู้ทำ"], rows, { emptyText: "ยังไม่มีความเคลื่อนไหว" }), { title: esc("ความเคลื่อนไหวของล็อต"), flush: true });
     return `${back}${F.pageHead(ctx, `ล็อต ${lot.lotNo}`, buttons)}${ui.card(facts, { className: "sr-lot-facts" })}${history}`;
@@ -264,7 +269,7 @@
       cards.push(card({ state: R.poTouched(po) ? "รับแล้วบางส่วน" : "รอรับเข้า", when: `สั่งเมื่อ ${rules.fmtDate(po.createdAt)}`, title: `รับเข้าตามใบสั่งซื้อ ${po.id}`, href: stUrl({ tab: "po", q: po.id }),
         sub: po.sourcePi ? esc(`สั่งจากใบ ${po.sourcePi}`) : "",
         lines: cardLines(lines, (line) => `<li><span><span class="rf-mono">${esc(line.materialCode)}</span>${nameOf(line) ? ` <span class="small muted">${esc(nameOf(line))}</span>` : ""}</span><span class="nowrap">${esc(`${rules.fmtQty(R.poLineOpen(line))} ${unit(line)}`)}</span></li>`),
-        actions: ctx.ui.link("ตรวจสอบรับเข้า", stUrl({ tab: "po", q: po.id }), "btn rf-btn bom-job-main") }));
+        actions: ctx.ui.link("รับเข้าคลังวัตถุดิบ (ST)", stUrl({ tab: "po", q: po.id }), "btn rf-btn bom-job-main") }));
     }
     return cards;
   }
@@ -514,8 +519,8 @@
     const part = ctx.params.get("part");
     const lotNo = ctx.params.get("lot");
     const done = (html, actions = !ctx.guest || ctx.guest === "wh") => ({ html, bind: bindPage, actions });
-    if (lotNo && ctx.guest !== "wh") return done(lotView(ctx, rf, lotNo));
-    if (part && ctx.guest !== "rb") return done(partView(ctx, part));
+    if (lotNo && (!ctx.guest || GUEST_KIND[ctx.guest] === "chem")) return done(lotView(ctx, rf, lotNo));
+    if (part && (!ctx.guest || GUEST_KIND[ctx.guest] === "part")) return done(partView(ctx, part));
     const allowed = ctx.guest ? GUEST_VIEWS[ctx.guest] : null;
     const id = allowed && !allowed.includes(ctx.view?.id) ? "stock" : ctx.view?.id;
     // ผู้เข้าชมไม่มีเมนูข้าง: แท็บในหน้า (WH: ในคลัง · นับสต็อก) · หัวข้อ = หน้าที่เปิด

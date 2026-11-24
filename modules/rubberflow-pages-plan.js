@@ -368,7 +368,7 @@
   }
 
   // ตารางใบสั่งซื้อ (ใช้ที่หน้าใบสั่งซื้อของโมดูล ST #/st ผ่าน MNP_RUBBERFLOW_VIEWS · ปุ่มผูกด้วยตัวผูกของ RubberFlow) · q = คำค้น
-  // ใบที่ยังรอรับก่อน แล้วรับครบ/ยกเลิก (ใหม่สุดก่อนในแต่ละกลุ่ม) · หนึ่งแถวหัวใบ (เลขที่ สถานะ ผู้สั่ง ต้นทาง ยกเลิก) แล้วหนึ่งแถวต่อวัตถุดิบ (ปุ่มตรวจสอบรับเข้า / ปิดยอดที่เหลืออยู่ที่บรรทัด)
+  // ใบที่ยังรอรับก่อน แล้วรับครบ/ยกเลิก (ใหม่สุดก่อนในแต่ละกลุ่ม) · หนึ่งแถวหัวใบ (เลขที่ สถานะ ผู้สั่ง ต้นทาง ยกเลิก) แล้วหนึ่งแถวต่อวัตถุดิบ (ปุ่มรับเข้าคลังวัตถุดิบ (ST) / ปิดยอดที่เหลืออยู่ที่บรรทัด)
   // รับได้หลายครั้งต่อบรรทัดจนครบหรือ ST ปิดยอดที่เหลือ (20261128020000): ช่องรับเข้าแสดงยอดสะสม ล็อตของแต่ละครั้ง ยอดที่ค้างรับ และยอดที่ปิดพร้อมเหตุผล
   function purchaseOrderTable(ctx, { q = ctx.q, status = "" } = {}) {
     const { data, ui, rules } = ctx;
@@ -394,7 +394,7 @@
         const lines = po.lines.map((line) => {
           const open = po.status === "ordered" && !rules.poLineDone(line);
           const action = open && mayReceive
-            ? `<div class="rf-row rf-end">${ui.openButton("ตรวจสอบรับเข้า", "receivePurchase", { id: po.id, materialCode: line.materialCode }, { className: "small", ariaLabel: `ตรวจสอบรับเข้า ${po.id} ${line.materialCode}` })}${ui.openButton("ปิดยอดที่เหลือ", "closePurchase", { id: po.id, materialCode: line.materialCode }, { className: "secondary small", ariaLabel: `ปิดยอดที่เหลือ ${po.id} ${line.materialCode}` })}</div>`
+            ? `<div class="rf-row rf-end">${ui.openButton("รับเข้าคลังวัตถุดิบ (ST)", "receivePurchase", { id: po.id, materialCode: line.materialCode }, { className: "small", ariaLabel: `รับเข้าคลังวัตถุดิบ (ST) ตามใบ ${po.id} ${line.materialCode}` })}${ui.openButton("ปิดยอดที่เหลือ", "closePurchase", { id: po.id, materialCode: line.materialCode }, { className: "secondary small", ariaLabel: `ปิดยอดที่เหลือ ${po.id} ${line.materialCode}` })}</div>`
             : "";
           const receipts = rules.poLineReceipts(line);
           const left = rules.poLineOpen(line);

@@ -699,7 +699,7 @@ test("purchasing screens: the check opens one dialog (escaped, safety stock and 
   assert.ok(page.includes(po.id));
   assert.match(page, /data-rf-open="receivePurchase"/);
   assert.match(page, /data-rf-action="cancelPurchaseOrder"/);
-  assert.match(page, /ตรวจสอบรับเข้า/);
+  assert.match(page, /data-rf-open="receivePurchase"[^>]*>รับเข้าคลังวัตถุดิบ \(ST\)</, "the line receive button names the store");
   assert.doesNotMatch(page, /undefined|NaN/);
   // the buttons follow the rights of the account (the database decides for real)
   const wh = poPage(env, "", { ...env.ctx(), can: (right) => right !== "receiveMaterial" && right !== "cancelPurchase" });

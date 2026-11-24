@@ -37,7 +37,9 @@ function state() {
 const kg = (d, lotNo) => { const row = d.materialLots.find((item) => item.lotNo === lotNo); return [row.qtyKg, row.rbKg]; };
 const rbUser = { name: "พนักงาน RB", rb: true, db: true };
 const stUser = { name: "พนักงาน ST", st: true, db: true };
-const plannerUser = { name: "ผู้จัดการ RB", planner: true, rb: true, rbHead: true, db: true };
+const plannerUser = { name: "ผู้จัดการ RB", planner: true, rb: true, rbHead: true, roleCode: "department_manager", dept: "RB", db: true };
+// ผู้จัดการแผนก WH: อยู่ในกลุ่มวางแผนของ BOM (planner) แต่ไม่ใช่ฝ่ายวางแผนคลังเคมี
+const whHeadUser = { name: "ผู้จัดการ WH", planner: true, wh: true, roleCode: "department_manager", dept: "WH", db: true };
 const qaUser = { name: "พนักงาน QA", qa: true, db: true };
 const remote = (user, now = NOW) => ({ now, user, remote: true });
 
@@ -108,7 +110,8 @@ test("actions: RB asks, ST issues FEFO in part, closes the rest; a request is ca
   rejects(() => A.requestChemicals(d, { lines: [{ materialCode: "MAT-A", qtyKg: -1 }] }, remote(rbUser)), /มากกว่า 0/);
   rejects(() => A.requestChemicals(d, { lines: [{ materialCode: "MAT-A", qtyKg: 1 }] }, remote(stUser)), /ไม่มีสิทธิ์: ขอเบิกเคมี/);
   rejects(() => A.requestChemicals(d, { lines: [{ materialCode: "MAT-A", qtyKg: 1 }] }, remote(qaUser)), /ไม่มีสิทธิ์/);
-  const id = A.requestChemicals(d, { note: " เติมคลัง ", lines: [{ materialCode: "MAT-A", qtyKg: "120" }, { materialCode: "MAT-B", qtyKg: 30 }, { materialCode: "MAT-OFF", qtyKg: "" }] }, remote(rbUser));
+  rejects(() => A.requestChemicals(d, { lines: [{ materialCode: "MAT-A", qtyKg: 1 }] }, remote(whHeadUser)), /ไม่มีสิทธิ์: ขอเบิกเคมี/, "a department manager outside RB is not the chemical planning group");
+  const id =A.requestChemicals(d, { note: " เติมคลัง ", lines: [{ materialCode: "MAT-A", qtyKg: "120" }, { materialCode: "MAT-B", qtyKg: 30 }, { materialCode: "MAT-OFF", qtyKg: "" }] }, remote(rbUser));
   assert.equal(id, `CR-${TODAY}-01`);
   const doc = d.chemDocs[0];
   assert.deepEqual([doc.kind, doc.status, doc.note, doc.reason, doc.createdBy, doc.lines], ["request", "open", "เติมคลัง", "", "พนักงาน RB",
@@ -154,6 +157,8 @@ test("actions: RB returns per lot (whole receipt or rejection by ST); only the p
   // ยอดนับไม่เกินยอดรับเข้า − ST − ระหว่างทาง (300 − 290 − 6 = 4)
   rejects(() => A.countRbStock(d, { lines: [{ lotNo: "A-2", countedKg: 3 }], reason: "นับประจำเดือน" }, remote(rbUser)), /ไม่มีสิทธิ์: นับและปรับยอดคลังเคมี RB/);
   rejects(() => A.countRbStock(d, { lines: [{ lotNo: "A-2", countedKg: 3 }], reason: "นับประจำเดือน" }, remote(stUser)), /ไม่มีสิทธิ์/);
+  rejects(() => A.countRbStock(d, { lines: [{ lotNo: "A-2", countedKg: 3 }], reason: "นับประจำเดือน" }, remote(whHeadUser)), /ไม่มีสิทธิ์: นับและปรับยอดคลังเคมี RB/, "nor the WH department manager");
+  rejects(() => A.returnChemicals(d, { lines: [{ lotNo: "A-2", kg: 1 }] }, remote(whHeadUser)), /ไม่มีสิทธิ์: ขอเบิกเคมี/, "nor does the WH department manager return");
   rejects(() => A.countRbStock(d, { lines: [{ lotNo: "A-2", countedKg: 5 }], reason: "นับประจำเดือน" }, remote(plannerUser)), /เกินที่ล็อตอยู่นอกคลัง ST ได้ \(4 kg\)/);
   rejects(() => A.countRbStock(d, { lines: [{ lotNo: "A-2", countedKg: 3 }], reason: "" }, remote(plannerUser)), /เหตุผล/);
   rejects(() => A.countRbStock(d, { lines: [{ lotNo: "A-2", countedKg: 3 }, { lotNo: "A-2", countedKg: 2 }], reason: "นับซ้ำ" }, remote(plannerUser)), /ซ้ำในใบนับ/);
@@ -205,12 +210,19 @@ test("store: the chemical documents are the 13th list and each button names its 
   const person = (role, dept) => storeApi.personaUser({ id: `${role}-${dept}`, first_name: "ก", last_name: "ข", role: { code: role }, department: { code: dept } });
   const rights = (user) => ["requestChem", "issueChem", "countRb"].map((right) => storeApi.can(user, right));
   assert.deepEqual(rights(person("staff", "RB")), [true, false, false], "RB staff ask and return, never issue nor count");
-  assert.deepEqual(rights(person("department_manager", "RB")), [true, false, true], "the RB manager (planning group) counts");
-  assert.deepEqual(rights(person("assistant_department_manager", "RB")), [true, false, false], "an RB assistant manager is not in the planning group");
+  assert.deepEqual(rights(person("department_manager", "RB")), [true, false, true], "the RB department manager counts");
+  assert.deepEqual(rights(person("assistant_department_manager", "RB")), [true, false, false], "an RB assistant manager asks but does not count");
   assert.deepEqual(rights(person("staff", "ST")), [false, true, false], "ST issues, closes, receives and rejects");
-  assert.deepEqual(rights(person("staff", "PP")), [true, false, true]);
+  assert.deepEqual(rights(person("staff", "PP")), [true, false, true], "planning asks and counts");
   assert.deepEqual(rights(person("staff", "QA")), [false, false, false]);
   assert.deepEqual(rights(person("admin", "MGT")), [true, true, true]);
+  assert.deepEqual(rights(person("factory_manager", "MGT")), [true, false, true], "the factory managers are in the chemical planning group");
+  // ผู้จัดการแผนกอื่นในสายผลิต (อยู่ในกลุ่มวางแผนของ BOM) ไม่ใช่ฝ่ายวางแผนคลังเคมี: หัวหน้า ST ขอเบิกแล้วจ่ายให้ตัวเองไม่ได้ · หัวหน้า WH / GR / QA นับคลัง RB ไม่ได้
+  assert.deepEqual(rights(person("department_manager", "ST")), [false, true, false], "the ST head issues but never asks");
+  assert.deepEqual(rights(person("department_manager", "WH")), [false, false, false], "the WH head neither asks nor counts");
+  assert.deepEqual(rights(person("department_manager", "GR")), [false, false, false], "nor the GR head");
+  assert.deepEqual(rights(person("department_manager", "QA")), [false, false, false], "nor the QA head");
+  assert.equal(person("department_manager", "WH").planner, true, "although the WH head is in the BOM planning group");
   assert.deepEqual(["requestChemicals", "cancelChemicalRequest", "returnChemicals", "issueChemicals", "closeChemicalRequest", "receiveChemicalReturn", "rejectChemicalReturn", "countRbStock"].map(storeApi.rightForAction),
     ["requestChem", "requestChem", "requestChem", "issueChem", "issueChem", "issueChem", "issueChem", "countRb"]);
   assert.deepEqual([storeApi.rightForRequisitionReturn({ store: "RB" }), storeApi.rightForRequisitionReturn({})], ["requestChem", "returnRequisition"]);
@@ -296,6 +308,7 @@ test("the mock database follows rf_save_chem_docs: request → partial FEFO issu
   assert.equal(await s.direct("persona-st", { chemDocs: { upsert: [cr] } }, "requestChemicals"), "RF_FORBIDDEN", "ST cannot raise an RB request");
   assert.equal(await s.direct("persona-qa", { chemDocs: { upsert: [cr] } }, "requestChemicals"), "RF_FORBIDDEN", "nor QA");
   assert.equal(await s.direct("persona-wh", { chemDocs: { upsert: [cr] } }, "requestChemicals"), "RF_FORBIDDEN", "nor WH");
+  assert.equal(await s.direct("persona-whh", { chemDocs: { upsert: [cr] } }, "requestChemicals"), "RF_FORBIDDEN", "nor the WH department manager (BOM planning group, not the chemical planning group)");
   assert.equal(await s.direct("persona-rb", { chemDocs: { upsert: [cr] } }, "saveMaterial"), "RF_INVALID_CHEM", "documents travel only with the chemical actions");
   assert.equal(await s.direct("persona-rb", { chemDocs: { upsert: [cr] }, orders: { upsert: [(await s.master()).orders[0]] } }, "requestChemicals"), "RF_INVALID_CHEM", "and those actions carry no other list");
   assert.equal(await s.direct("persona-rb", { chemDocs: { upsert: [{ ...cr, lines: [{ materialCode: "EPDM-55", qtyKg: 0 }] }] } }, "requestChemicals"), "RF_INVALID_CHEM", "a zero quantity");
@@ -317,6 +330,15 @@ test("the mock database follows rf_save_chem_docs: request → partial FEFO issu
   assert.deepEqual((await docOf(s, request)).lines[0].issues.map((row) => [row.lotNo, row.kg, row.by]), [[soon, 40, "วิชัย คลังวัตถุดิบ"], [later, 10, "วิชัย คลังวัตถุดิบ"]], "FEFO skips the held lot");
   assert.deepEqual([await lotOf(s, soon), await lotOf(s, later), await lotOf(s, held)], [[0, 40], [30, 10], [40, 0]]);
   await inSync(s, "partly issued");
+  // สำเนาล็อตที่มากับคำสั่งคลังเคมีต้องตรงกับที่เก็บทุกช่องยกเว้นยอด (ตรงกับ private.rf_check_chem_lot_copies)
+  const lotRow = (await s.master()).materialLots.find((row) => row.lotNo === later);
+  const withLot = async (lot) => s.direct("persona-st", { chemDocs: { upsert: [await docOf(s, request)] }, materialLots: { upsert: [lot] } }, "issueChemicals");
+  assert.equal(await withLot({ ...lotRow, status: "hold" }), "RF_INVALID_CHEM", "a chemical action cannot hold a lot through its lot copy");
+  assert.equal(await withLot({ ...lotRow, lotNo: "RM-NEW-1" }), "RF_INVALID_CHEM", "nor receive a new lot");
+  assert.equal(await withLot({ ...lotRow, supplier: "ผู้ขายอื่น" }), "RF_INVALID_CHEM", "nor change what the lot records");
+  assert.equal(await withLot({ ...lotRow, qtyKg: 1, rbKg: 0 }), undefined, "a copy that differs only in the balances is ignored");
+  const lotsNow = (await s.master()).materialLots;
+  assert.deepEqual([lotsNow.find((row) => row.lotNo === later).status, lotsNow.some((row) => row.lotNo === "RM-NEW-1"), await lotOf(s, later)], ["available", false, [30, 10]]);
   await run(s, "persona-st", "issueChemicals", { id: request, kgs: [0, 30] });
   assert.equal(await s.direct("persona-rb", { chemDocs: { upsert: [{ ...(await docOf(s, request)), status: "cancelled" }] } }, "cancelChemicalRequest"), "RF_INVALID_TRANSITION", "a partly issued request is not cancelled");
   assert.equal(await s.direct("persona-rb", { chemDocs: { upsert: [{ ...(await docOf(s, request)), status: "closed", reason: "พอแล้ว" }] } }, "closeChemicalRequest"), "RF_FORBIDDEN", "RB cannot close it");
@@ -351,6 +373,7 @@ test("the mock database follows rf_save_chem_docs: request → partial FEFO issu
   const cc = { id: `CC-${TODAY}-01`, kind: "count", status: "done", reason: "นับประจำเดือน", lines: [{ lotNo: soon, countedKg: 8 }] };
   assert.equal(await s.direct("persona-rb", { chemDocs: { upsert: [cc] } }, "countRbStock"), "RF_FORBIDDEN", "RB staff cannot count the RB store");
   assert.equal(await s.direct("persona-st", { chemDocs: { upsert: [cc] } }, "countRbStock"), "RF_FORBIDDEN", "nor ST");
+  assert.equal(await s.direct("persona-whh", { chemDocs: { upsert: [cc] } }, "countRbStock"), "RF_FORBIDDEN", "nor the WH department manager");
   assert.equal(await s.direct("persona-rbh", { chemDocs: { upsert: [{ ...cc, lines: [{ lotNo: soon, countedKg: 41 }] }] } }, "countRbStock"), "RF_INVALID_CHEM", "not above what the lot can hold outside ST");
   assert.equal(await s.direct("persona-rbh", { chemDocs: { upsert: [{ ...cc, reason: "" }] } }, "countRbStock"), "RF_INVALID_CHEM", "a count needs a reason");
   await run(s, "persona-rbh", "countRbStock", { lines: [{ lotNo: soon, countedKg: 8 }], reason: "นับประจำเดือน" });
@@ -358,6 +381,8 @@ test("the mock database follows rf_save_chem_docs: request → partial FEFO issu
   await inSync(s, "counted");
   const usage = rules.rbUsage(s.store.data()).rows.find((row) => row.materialCode === "EPDM-55");
   assert.deepEqual([usage.receivedKg, usage.recipeKg, usage.returnedKg, usage.countAdjustKg, usage.onHandKg], [50, 31.25, 4, -0.75, 14], "usage against the recipe from the documents");
+  const recount = await run(s, "persona-pp", "countRbStock", { lines: [{ lotNo: soon, countedKg: 8 }], reason: "ตรวจนับซ้ำ" });
+  assert.deepEqual([(await docOf(s, recount)).doneBy, await lotOf(s, soon)], ["สมศรี วางแผน", [0, 8]], "the planning department counts the RB store too");
 
   // ใบเบิกเดิมของคลัง ST (ก่อนแยกคลัง) ที่ค้างชั่ง: จองยอด ST ไว้ และจ่ายแล้วตัดคลัง ST
   s.mock.rf.edit((m) => {

@@ -5,9 +5,10 @@
 --   1) RB ขอเบิกเคมี (รหัส + kg ไม่ผูก WO ใส่หมายเหตุได้) -> ST จ่าย: เซิร์ฟเวอร์จัดสรรล็อต FEFO (ข้ามล็อตกักกัน / หมดอายุ) kg ย้าย ST -> RB ทันที
 --      จ่ายบางส่วนได้ · ST ปิดยอดที่เหลือพร้อมเหตุผล · RB ยกเลิกใบที่ยังไม่ได้จ่ายเลยได้
 --   2) ใบเบิกผสมของ RB (createRequisition) ตัดคลัง RB รายล็อต (FEFO บน rb_kg) · ใบเบิกเดิม (คลัง ST) ชั่ง / จ่าย / คืนต่อจากคลัง ST เหมือนเดิม
---   3) นับ / ปรับยอดคลัง RB รายล็อตพร้อมเหตุผล = กลุ่มวางแผนเท่านั้น (private.bom_can_edit รวมผู้จัดการแผนก RB · พนักงาน RB นับไม่ได้)
+--   3) นับ / ปรับยอดคลัง RB รายล็อตพร้อมเหตุผล = ผู้จัดการแผนก RB (department_manager ของแผนก RB) หรือฝ่ายวางแผนคลังเคมี (private.rf_chem_planner) เท่านั้น
+--      · พนักงาน RB นับไม่ได้ · ผู้จัดการแผนกอื่นในสายผลิต (WH QA GR ST SR ...) ไม่อยู่ในกลุ่มนี้ แม้จะอยู่ใน private.bom_can_edit
 --   4) RB คืนเคมีที่ไม่ใช้รายล็อตจากคลัง RB -> รอ ST รับ -> ST รับทั้งใบตามยอดที่ส่ง (ไม่มีรับบางส่วน) หรือปฏิเสธพร้อมเหตุผล (kg กลับคลัง RB)
---   ที่เจ้าของยังไม่ตัดสิน (ข้อเสนอ ระบุใน PR): กักกันมีผลทั้งล็อตทั้งสองคลัง · เคมีของใบเบิกคลัง RB ของ WO ที่ยกเลิก คืนเข้าคลัง RB (กลุ่มวางแผน / RB)
+--   ที่เจ้าของยังไม่ตัดสิน (ข้อเสนอ ระบุใน PR): กักกันมีผลทั้งล็อตทั้งสองคลัง · เคมีของใบเบิกคลัง RB ของ WO ที่ยกเลิก คืนเข้าคลัง RB (ฝ่ายวางแผนคลังเคมี / RB)
 --   ยังเป็นโหมดทดสอบเท่านั้น: ไม่แตะ private.bom_real_open() (ยังเป็น false) และกลไก rf_actor / rf_reader / bom_actor
 --
 -- ตาราง
@@ -21,15 +22,18 @@
 --     lines (ช่องคำนวณเป็นของเซิร์ฟเวอร์): request {materialCode, qtyKg, issuedKg, issues:[{lotNo, kg, at, by}]}
 --       · return {lotNo, materialCode, kg, receivedKg} · count {lotNo, materialCode, beforeKg, countedKg}
 --
--- คำสั่งใหม่ของ app_rf_save (ส่งได้เฉพาะชุด chemDocs + สำเนาล็อตวัตถุดิบที่เมินยอด · ชุดอื่น / ชุด chemDocs กับคำสั่งอื่น = RF_INVALID_CHEM)
---   requestChemicals (กลุ่มวางแผน | RB) · cancelChemicalRequest (กลุ่มวางแผน | RB · ใบ open ที่ยังไม่จ่ายเลย)
+-- ฝ่ายวางแผนคลังเคมี = private.rf_chem_planner(): แผนก PP ทุกบทบาท หรือบทบาท admin / general_manager / factory_manager / assistant_factory_manager (ทุกแผนก)
+--   ไม่ใช่ private.bom_can_edit เพราะตัวนั้นรวม department_manager ของทุกแผนกในสายผลิต (หัวหน้า ST จะขอเบิกแล้วจ่ายให้ตัวเองได้ · หัวหน้า WH จะนับคลัง RB ได้)
+-- คำสั่งใหม่ของ app_rf_save (ส่งได้เฉพาะชุด chemDocs + สำเนาล็อตวัตถุดิบที่ตรงกับที่เก็บทุกช่องยกเว้นยอด · ชุดอื่น / ชุด chemDocs กับคำสั่งอื่น
+--   / สำเนาล็อตที่ต่างจากที่เก็บ (สถานะ ข้อมูลล็อต หรือล็อตใหม่) = RF_INVALID_CHEM ด้วย private.rf_check_chem_lot_copies ก่อนตัวเขียนล็อต)
+--   requestChemicals (ฝ่ายวางแผนคลังเคมี | RB) · cancelChemicalRequest (ฝ่ายวางแผนคลังเคมี | RB · ใบ open ที่ยังไม่จ่ายเลย)
 --   issueChemicals (ST | admin · issuedKg สะสมต่อบรรทัด เซิร์ฟเวอร์คิดยอดครั้งนี้จากส่วนต่าง จัดสรร FEFO จาก qty_kg หักที่ใบเบิกเดิมของคลัง ST ที่ค้างชั่งจองไว้)
 --     · closeChemicalRequest (ST | admin · เหตุผล 3-300)
---   countRbStock (กลุ่มวางแผน · เหตุผล 3-300 · ตั้ง rb_kg = countedKg ไม่เกิน initial_kg - qty_kg - ที่คืนระหว่างทาง)
---   returnChemicals (กลุ่มวางแผน | RB · หัก rb_kg ทันที) · receiveChemicalReturn (ST | admin · ทั้งใบ บวก qty_kg) · rejectChemicalReturn (ST | admin · เหตุผล 3-300 · บวก rb_kg คืน)
+--   countRbStock (ฝ่ายวางแผนคลังเคมี | department_manager ของแผนก RB · เหตุผล 3-300 · ตั้ง rb_kg = countedKg ไม่เกิน initial_kg - qty_kg - ที่คืนระหว่างทาง)
+--   returnChemicals (ฝ่ายวางแผนคลังเคมี | RB · หัก rb_kg ทันที) · receiveChemicalReturn (ST | admin · ทั้งใบ บวก qty_kg) · rejectChemicalReturn (ST | admin · เหตุผล 3-300 · บวก rb_kg คืน)
 --   ลำดับตรวจ: ชน (RF_STALE) -> สิทธิ์ (RF_FORBIDDEN) -> ทาง (RF_INVALID_TRANSITION) -> เนื้อหา (RF_INVALID_CHEM) · ST ไม่พอ = RF_INSUFFICIENT_STOCK
 --   คำสั่งเดิม: createRequisition FEFO บน rb_kg และใส่ source_store RB · weighLine / issueRequisition ตัดคอลัมน์ตาม source_store
---     · returnRequisition: ใบคลัง ST = เดิม (ST | admin เข้า qty_kg) · ใบคลัง RB = กลุ่มวางแผน | RB เข้า rb_kg · เพดานใหม่ qty_kg + rb_kg + ระหว่างทาง + คืน <= initial_kg
+--     · returnRequisition: ใบคลัง ST = เดิม (ST | admin เข้า qty_kg) · ใบคลัง RB = ฝ่ายวางแผนคลังเคมี | RB เข้า rb_kg · เพดานใหม่ qty_kg + rb_kg + ระหว่างทาง + คืน <= initial_kg
 --   รูปเรคอร์ดที่ส่งกลับ: materialLots + rbKg · requisitions + store · ชุดใหม่ chemDocs {id, kind, status, lines, note, reason, createdAt, createdBy, doneAt?, doneBy?}
 --
 -- นิยามที่ replace (ลายเซ็นเดิม คง owner / grant เดิม · ทุกตัวเริ่มจากนิยามล่าสุดบน main)
@@ -42,6 +46,7 @@
 --   - private.sandbox_unguarded_tables()  จาก 20261218010000_itrp_repair_history.sql (+ rf_chem_docs)
 --   - public.app_sandbox_purge_rf()  จาก 20261110010000_rf_purchase_orders.sql (+ rf_chem_docs)
 --   ใหม่ (security definer · search_path = '' · revoke all from public, anon, authenticated): private.rf_lot_in_transit(text),
+--     private.rf_chem_planner(public.employees), private.rf_check_chem_lot_copies(jsonb, bigint, bigint),
 --     private.rf_save_chem_docs(public.employees, text, boolean, boolean, boolean, text, jsonb, bigint, bigint)
 --   ไม่แตะ: rf_save_material_lots (ล็อตใหม่ rb_kg = 0 · ยอดจาก client เมินเหมือนเดิม) · rf_check_po_receipt · rf_snapshot · app_rf_master(_since)
 --     · rf_save_lots (ผสมไม่แตะล็อตวัตถุดิบ) · private.bom_real_open() · rf_actor() · rf_reader()
@@ -56,7 +61,7 @@
 --   1) update public.rf_material_lots set qty_kg = qty_kg + rb_kg + private.rf_lot_in_transit(lot_no) (ทำในโหมดของแถว: is_test true / false แยกกัน
 --      ด้วย app_sandbox_enter หรือคำนวณจาก rf_chem_docs ตรง) ให้เคมีที่อยู่คลัง RB / ระหว่างทางกลับคลัง ST
 --   2) create or replace แปดฟังก์ชันกลับด้วยนิยามต้นทางที่ระบุข้างบน · drop function private.rf_save_chem_docs(public.employees, text, boolean, boolean, boolean, text, jsonb, bigint, bigint),
---      private.rf_lot_in_transit(text)
+--      private.rf_check_chem_lot_copies(jsonb, bigint, bigint), private.rf_chem_planner(public.employees), private.rf_lot_in_transit(text)
 --   3) drop table public.rf_chem_docs · alter table public.rf_requisitions drop column source_store · alter table public.rf_material_lots drop column rb_kg
 --   ใบเบิกคลัง RB ที่สร้างหลังไฟล์นี้กลายเป็นใบของคลัง ST (ยอดถูกรวมกลับข้อ 1 แล้ว)
 -- ============================================================================
@@ -138,6 +143,66 @@ as $$
 $$;
 revoke all on function private.rf_lot_in_transit(text) from public, anon, authenticated;
 
+-- 3b. ฝ่ายวางแผนคลังเคมี (กฎของเจ้าของโรงงาน: นับ / ปรับยอดคลัง RB = ผู้จัดการแผนก RB และฝ่ายวางแผน · ขอเบิก ยกเลิก คืน = แผนก RB และฝ่ายวางแผน)
+--   แผนก PP ทุกบทบาท หรือบทบาทระดับโรงงาน / admin (ชุดเดียวกับ private.rf_is_rb_head) · ไม่รวม department_manager ของแผนกในสายผลิตอื่นแบบ private.bom_can_edit
+create or replace function private.rf_chem_planner(p_employee public.employees)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(private.bom_dept_of(p_employee) = 'PP', false)
+      or coalesce(private.employee_role_code(p_employee.id) in ('assistant_factory_manager', 'factory_manager', 'general_manager', 'admin'), false)
+$$;
+revoke all on function private.rf_chem_planner(public.employees) from public, anon, authenticated;
+
+-- 3c. สำเนาล็อตวัตถุดิบที่มากับคำสั่งคลังเคมี (ผู้เรียกเดียวคือ app_rf_save ก่อนตัวเขียนล็อต) ------------------------------------
+--   สำเนาต้องเป็นล็อตที่มีอยู่และตรงกับที่เก็บทุกช่องที่ rf_save_material_lots เขียนได้ (รหัส หมดอายุ ผู้ขาย ตำแหน่ง CoA สถานะ · อ่านแบบเดียวกับตัวเขียนล็อต)
+--   ยอด (qtyKg rbKg) และตราของเซิร์ฟเวอร์เมินได้ · ล็อตใหม่ / ต่างจากที่เก็บ = RF_INVALID_CHEM (ล็อตเปลี่ยนหลังเวอร์ชันฐาน = RF_STALE)
+--   ไม่เช่นนั้นคำสั่งคลังเคมีจะรับเข้าล็อตใหม่หรือกักกันล็อตได้ภายใต้ client_action ที่ไม่ใช่ของงานนั้น
+create or replace function private.rf_check_chem_lot_copies(p_rows jsonb, p_base bigint, p_cur bigint)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_row jsonb;
+  v_no text;
+  v_exp numeric;
+  v_node jsonb;
+  v_coa jsonb;
+  v_old public.rf_material_lots%rowtype;
+begin
+  for v_row in select value from jsonb_array_elements(p_rows) loop
+    if jsonb_typeof(v_row) <> 'object' then raise exception 'RF_INVALID_CHEM'; end if;
+    v_no := private.bom_text(v_row, 'lotNo', 60, 1, 'RF_INVALID_CHEM');
+    select * into v_old from public.rf_material_lots l where l.is_test = (select private.bom_test_mode()) and l.lot_no = v_no;
+    if not found then raise exception 'RF_INVALID_CHEM'; end if;
+    v_exp := private.bom_num(v_row -> 'expiry', 'RF_INVALID_CHEM', 1, 100000000000000);
+    v_node := v_row -> 'coa';
+    if v_node is null or jsonb_typeof(v_node) = 'null' then
+      v_coa := 'false'::jsonb;
+    elsif jsonb_typeof(v_node) in ('boolean', 'object') and char_length(v_node::text) <= 2000 then
+      v_coa := v_node;
+    else
+      raise exception 'RF_INVALID_CHEM';
+    end if;
+    if v_exp is null or v_exp <> trunc(v_exp)
+       or v_old.material_code <> private.bom_text(v_row, 'materialCode', 40, 1, 'RF_INVALID_CHEM')
+       or v_old.expiry <> v_exp::bigint
+       or v_old.supplier <> coalesce(nullif(private.bom_text(v_row, 'supplier', 120, 0, 'RF_INVALID_CHEM'), ''), '-')
+       or v_old.location <> private.bom_text(v_row, 'location', 160, 0, 'RF_INVALID_CHEM')
+       or v_old.coa <> v_coa
+       or v_old.status <> coalesce(nullif(private.bom_text(v_row, 'status', 10, 0, 'RF_INVALID_CHEM'), ''), 'available') then
+      perform private.rf_fail(v_old.changed_version, p_base, p_cur, 'RF_INVALID_CHEM');
+    end if;
+  end loop;
+end;
+$$;
+revoke all on function private.rf_check_chem_lot_copies(jsonb, bigint, bigint) from public, anon, authenticated;
+
 -- 4. ตัวเขียนเอกสารคลังเคมี (ผู้เรียกเดียวคือ app_rf_save) -----------------------------------------------------------------------
 -- แถว = เรคอร์ดเต็มของเอกสาร · ช่องที่เขียนได้ขึ้นกับคำสั่ง (ช่องอื่นเมิน) · ระเบียนเดิมที่ไม่มีอะไรเปลี่ยนตามความหมายของคำสั่ง = ข้าม (ส่งซ้ำได้)
 --   requestChemicals: ใบใหม่ CR · lines [{materialCode, qtyKg > 0}] 1..100 รหัสไม่ซ้ำ วัตถุดิบต้องใช้งานอยู่ · note 0-300
@@ -147,8 +212,10 @@ revoke all on function private.rf_lot_in_transit(text) from public, anon, authen
 --   returnChemicals: ใบใหม่ CT · lines [{lotNo, kg > 0 ไม่เกิน rb_kg}] ล็อตไม่ซ้ำ · note 0-300
 --   receiveChemicalReturn: status received · pending · ทั้งใบ (receivedKg = kg) · rejectChemicalReturn: status rejected · pending · reason 3-300
 --   countRbStock: ใบใหม่ CC · lines [{lotNo, countedKg >= 0}] ล็อตไม่ซ้ำ · reason 3-300 · note 0-300
+-- p_chem_plan = private.rf_chem_planner(ผู้ทำ) (ไม่ใช่ bom_can_edit) · p_rb = สมาชิกแผนก RB · p_st = สมาชิกแผนก ST
+--   ขอเบิก / ยกเลิก / คืน = p_chem_plan | p_rb · นับ = p_chem_plan | department_manager ของแผนก RB · จ่าย / ปิดยอด / รับคืน / ปฏิเสธ = p_st | admin
 create or replace function private.rf_save_chem_docs(
-  p_actor public.employees, p_actor_name text, p_planner boolean, p_rb boolean, p_st boolean, p_action text, p_rows jsonb, p_base bigint, p_cur bigint)
+  p_actor public.employees, p_actor_name text, p_chem_plan boolean, p_rb boolean, p_st boolean, p_action text, p_rows jsonb, p_base bigint, p_cur bigint)
 returns integer
 language plpgsql
 security definer
@@ -184,6 +251,8 @@ declare
   v_changed boolean;
   v_done boolean;
   v_st_admin boolean := p_st or coalesce(private.employee_role_code(p_actor.id) = 'admin', false);
+  v_rb_side boolean := p_chem_plan or p_rb;
+  v_rb_count boolean := p_chem_plan or (p_rb and coalesce(private.employee_role_code(p_actor.id) = 'department_manager', false));
   v_now_ms bigint := private.bom_ms(now());
   v_count integer := 0;
 begin
@@ -283,7 +352,7 @@ begin
         where id = v_old.id;
       elsif p_action = 'cancelChemicalRequest' then
         if v_old.kind <> 'request' or v_status <> 'cancelled' then raise exception 'RF_INVALID_CHEM'; end if;
-        if not (p_planner or p_rb) then raise exception 'RF_FORBIDDEN'; end if;
+        if not v_rb_side then raise exception 'RF_FORBIDDEN'; end if;
         if v_old.status <> 'open' or exists (select 1 from jsonb_array_elements(v_old.lines) e where (e ->> 'issuedKg')::numeric > 0) then
           raise exception 'RF_INVALID_TRANSITION';
         end if;
@@ -334,7 +403,7 @@ begin
 
     -- เอกสารใหม่: ชนิดตามคำสั่ง (เลขเอกสารต้องตรงชนิด) · สิทธิ์ก่อนเนื้อหา
     if p_action = 'requestChemicals' then
-      if not (p_planner or p_rb) then raise exception 'RF_FORBIDDEN'; end if;
+      if not v_rb_side then raise exception 'RF_FORBIDDEN'; end if;
       if v_no !~ '^CR-' then raise exception 'RF_INVALID_CHEM'; end if;
       v_note := private.bom_text(v_row, 'note', 300, 0, 'RF_INVALID_CHEM');
       v_n := jsonb_array_length(v_clines);
@@ -355,9 +424,9 @@ begin
       insert into public.rf_chem_docs (is_test, doc_no, kind, status, lines, note, created_by)
       values ((select private.bom_test_mode()), v_no, 'request', 'open', v_lines, v_note, p_actor.id);
     elsif p_action in ('returnChemicals', 'countRbStock') then
-      if p_action = 'returnChemicals' and not (p_planner or p_rb) then raise exception 'RF_FORBIDDEN'; end if;
-      -- นับ / ปรับยอดคลัง RB: กลุ่มวางแผนเท่านั้น (รวมผู้จัดการแผนก RB · พนักงาน RB นับไม่ได้)
-      if p_action = 'countRbStock' and not p_planner then raise exception 'RF_FORBIDDEN'; end if;
+      if p_action = 'returnChemicals' and not v_rb_side then raise exception 'RF_FORBIDDEN'; end if;
+      -- นับ / ปรับยอดคลัง RB: ผู้จัดการแผนก RB หรือฝ่ายวางแผนคลังเคมีเท่านั้น (พนักงาน RB และผู้จัดการแผนกอื่นนับไม่ได้)
+      if p_action = 'countRbStock' and not v_rb_count then raise exception 'RF_FORBIDDEN'; end if;
       if v_no !~ (case when p_action = 'returnChemicals' then '^CT-' else '^CC-' end) then raise exception 'RF_INVALID_CHEM'; end if;
       v_note := private.bom_text(v_row, 'note', 300, 0, 'RF_INVALID_CHEM');
       v_reason := private.bom_text(v_row, 'reason', 300, (case when p_action = 'countRbStock' then 3 else 0 end), 'RF_INVALID_CHEM');
@@ -618,7 +687,7 @@ revoke all on function private.rf_save_requisitions(uuid, text, boolean, text, j
 
 -- 6. รับเคมีคืนของใบเบิกของ WO ที่ยกเลิก: ตามคลังของใบ -----------------------------------------------------------------------
 -- private.rf_return_requisitions(public.employees, text, jsonb, bigint, bigint) จาก 20261130010000_bom_rf_go_live.sql
---   (+ ใบของคลัง RB: กลุ่มวางแผน / RB คืนเข้า rb_kg · ใบคลัง ST เหมือนเดิม · เพดานรวมสองคลังและที่คืนระหว่างทาง)
+--   (+ ใบของคลัง RB: ฝ่ายวางแผนคลังเคมี (private.rf_chem_planner) / RB คืนเข้า rb_kg · ใบคลัง ST เหมือนเดิม · เพดานรวมสองคลังและที่คืนระหว่างทาง)
 create or replace function private.rf_return_requisitions(
   p_actor public.employees, p_actor_name text, p_rows jsonb, p_base bigint, p_cur bigint)
 returns integer
@@ -669,8 +738,8 @@ begin
     end loop;
     if not v_changed then continue; end if;
     if v_old.changed_version > p_base and v_old.changed_version <= p_cur then raise exception 'RF_STALE'; end if;
-    -- ใบของคลัง RB (20261220010000): กลุ่มวางแผนหรือแผนก RB คืนเข้าคลัง RB · ใบเดิมของคลัง ST: แผนก ST หรือ admin เข้าคลัง ST เหมือนเดิม
-    if (v_old.source_store = 'RB' and not (private.bom_can_edit(p_actor) or private.rf_is_rb(p_actor)))
+    -- ใบของคลัง RB (20261220010000): ฝ่ายวางแผนคลังเคมีหรือแผนก RB คืนเข้าคลัง RB (ไม่ใช่ผู้จัดการแผนกอื่นใน bom_can_edit) · ใบเดิมของคลัง ST: แผนก ST หรือ admin เข้าคลัง ST เหมือนเดิม
+    if (v_old.source_store = 'RB' and not (private.rf_chem_planner(p_actor) or private.rf_is_rb(p_actor)))
        or (v_old.source_store <> 'RB'
            and not (coalesce(private.bom_dept_of(p_actor) = 'ST', false) or coalesce(private.employee_role_code(p_actor.id) = 'admin', false))) then
       raise exception 'RF_FORBIDDEN';
@@ -1011,7 +1080,8 @@ begin
         when 'qcRecords' then v_planner or v_qa
         when 'ncrs' then v_planner or v_qa or v_rb
         when 'purchaseOrders' then v_planner or v_rb or v_st
-        -- เอกสารคลังเคมี: สิทธิ์รายคำสั่งตรวจในตัวเขียน (ขอเบิก / ยกเลิก / คืน = กลุ่มวางแผน | RB · จ่าย / ปิดยอด / รับคืน / ปฏิเสธ = ST | admin · นับ = กลุ่มวางแผน)
+        -- เอกสารคลังเคมี: ด่านหยาบ · สิทธิ์รายคำสั่งตรวจในตัวเขียน (ขอเบิก / ยกเลิก / คืน = ฝ่ายวางแผนคลังเคมี | RB · จ่าย / ปิดยอด / รับคืน / ปฏิเสธ = ST | admin
+        --   · นับ = ฝ่ายวางแผนคลังเคมี | ผู้จัดการแผนก RB) ผู้จัดการแผนกอื่นผ่านด่านนี้ได้แต่ตัวเขียนปฏิเสธ
         when 'chemDocs' then v_planner or v_rb or v_st
         else false end;
       if v_n > 0 and not v_may then raise exception 'RF_FORBIDDEN'; end if;
@@ -1053,6 +1123,11 @@ begin
     v_po := private.rf_save_purchase_orders(v_actor, v_actor_name, v_planner, v_rb, v_st, p_action,
                                             coalesce(p_changes #> '{purchaseOrders,upsert}', '[]'::jsonb), p_base_version, v_version);
     v_bom_stock := coalesce((v_po ->> 'bomStock')::integer, 0);
+    -- คำสั่งคลังเคมี (20261220010000): สำเนาล็อตที่มาด้วยต้องตรงกับที่เก็บทุกช่องยกเว้นยอด (ล็อตใหม่ / เปลี่ยนสถานะ / ข้อมูลล็อต = RF_INVALID_CHEM)
+    --   ตรวจก่อนตัวเขียนล็อต ตัวเขียนล็อตจึงข้ามทุกแถว (ไม่มีการรับเข้าหรือกักกันภายใต้คำสั่งคลังเคมี)
+    if p_action = any (v_chem_actions) then
+      perform private.rf_check_chem_lot_copies(coalesce(p_changes #> '{materialLots,upsert}', '[]'::jsonb), p_base_version, v_version);
+    end if;
     perform private.rf_save_material_lots(v_actor.id, v_planner, v_st, v_qa, coalesce(p_changes #> '{materialLots,upsert}', '[]'::jsonb), p_base_version, v_version);
     perform private.rf_check_po_receipt(v_actor.id, v_po -> 'receipt', v_version);
     -- รับบรรทัดของซื้อ = ไม่มีล็อตวัตถุดิบมาด้วย (ล็อตที่ถูกเขียนในคำสั่งนี้ = ย้อนทั้งคำสั่ง)
@@ -1061,9 +1136,10 @@ begin
       raise exception 'RF_INVALID_PURCHASE';
     end if;
     -- เอกสารคลังเคมี ST / RB (20261220010000): หลังตัวเขียนล็อต (สำเนาล็อตที่มากับคำสั่งถูกเมินยอด) ก่อนใบเบิก · ล็อกล็อตตามเลขล็อตเหมือนตัวเขียนใบเบิก
-    perform private.rf_save_chem_docs(v_actor, v_actor_name, v_planner, v_rb, v_st, p_action,
+    --   สิทธิ์ใช้ฝ่ายวางแผนคลังเคมี (private.rf_chem_planner) ไม่ใช่ v_planner (bom_can_edit รวมผู้จัดการแผนกทุกแผนกในสายผลิต)
+    perform private.rf_save_chem_docs(v_actor, v_actor_name, private.rf_chem_planner(v_actor), v_rb, v_st, p_action,
                                       coalesce(p_changes #> '{chemDocs,upsert}', '[]'::jsonb), p_base_version, v_version);
-    -- รับเคมีคืนเข้าล็อตเดิม (returnRequisition: ใบคลัง ST = แผนก ST หรือ admin · ใบคลัง RB = กลุ่มวางแผน หรือ RB) ใช้ตัวเขียนของตัวเอง · คำสั่งอื่นใช้ตัวเขียนใบเบิกเดิม
+    -- รับเคมีคืนเข้าล็อตเดิม (returnRequisition: ใบคลัง ST = แผนก ST หรือ admin · ใบคลัง RB = ฝ่ายวางแผนคลังเคมี หรือ RB) ใช้ตัวเขียนของตัวเอง · คำสั่งอื่นใช้ตัวเขียนใบเบิกเดิม
     if p_action = 'returnRequisition' then
       perform private.rf_return_requisitions(v_actor, v_actor_name, coalesce(p_changes #> '{requisitions,upsert}', '[]'::jsonb), p_base_version, v_version);
     else

@@ -61,6 +61,11 @@
 
   // โหมดฐานข้อมูล (ctx.remote): ผู้ใช้คือบัญชีทดสอบที่มี flags planner / rb / rbHead (modules/rubberflow-store.js personaUser) · ฐานข้อมูลตัดสินสิทธิ์จริงอีกครั้ง
   // ตรงนี้ปฏิเสธก่อนส่งเพื่อให้ได้ข้อความไทย · โหมดสาธิต (localStorage) ไม่ตรวจสิทธิ์ในคำสั่ง เหมือนเดิม
+  // ฝ่ายวางแผนคลังเคมี (ตรงกับ private.rf_chem_planner ของ 20261220010000 และ modules/rubberflow-store.js): แผนก PP หรือ admin / ผู้ช่วยผู้จัดการโรงงานขึ้นไป
+  // ไม่ใช่ user.planner (รวมผู้จัดการแผนกทุกแผนกในสายผลิต) · นับคลัง RB = กลุ่มนี้ หรือผู้จัดการแผนก (department_manager) ของแผนก RB
+  const CHEM_PLAN_ROLE_CODES = Object.freeze(["admin", "assistant_factory_manager", "factory_manager", "general_manager"]);
+  const isChemPlanner = (user) => Boolean(user) && (user.role === "admin" || CHEM_PLAN_ROLE_CODES.includes(user.roleCode) || String(user.dept ?? "").toUpperCase() === "PP");
+  const isRbCountHead = (user) => Boolean(user?.rb) && user.roleCode === "department_manager";
   const MAY = Object.freeze({
     master: (user) => Boolean(user.planner || user.rb), // วัตถุดิบ / สูตร (ร่าง) / เปิดใบสั่งผลิต: ฝ่ายวางแผนขึ้นไป หรือพนักงานแผนก RB
     approve: (user) => Boolean(user.rbHead), // อนุมัติสูตร: หัวหน้า RB ขึ้นไป
@@ -85,9 +90,9 @@
     skipRest: (user) => Boolean(user.rbHead || user.qa), // ข้ามเวลาบ่ม: หัวหน้า RB (รวมผู้ช่วยผู้จัดการโรงงานขึ้นไปและ admin) หรือแผนก QA พร้อมเหตุผล (20261128010000)
     returnRequisition: (user) => Boolean(user.st || user.role === "admin"), // รับเคมีที่เบิกไปแล้วคืนเข้าล็อตเดิม (WO ถูกยกเลิก): แผนก ST (admin ไว้แก้ปัญหา)
     // คลังเคมี ST / RB (20261220010000 · ตรงกับ private.rf_save_chem_docs)
-    requestChem: (user) => Boolean(user.planner || user.rb), // ขอเบิกเคมีจาก ST / ยกเลิกใบที่ยังไม่จ่าย / คืนเคมีให้ ST / คืนใบเบิกคลัง RB ของ WO ที่ยกเลิก
+    requestChem: (user) => Boolean(isChemPlanner(user) || user.rb), // ขอเบิกเคมีจาก ST / ยกเลิกใบที่ยังไม่จ่าย / คืนเคมีให้ ST / คืนใบเบิกคลัง RB ของ WO ที่ยกเลิก: แผนก RB หรือฝ่ายวางแผนคลังเคมี
     issueChem: (user) => Boolean(user.st || user.role === "admin"), // จ่ายเคมีตามใบขอเบิก / ปิดยอดที่เหลือ / รับคืน / ปฏิเสธใบคืน
-    countRb: (user) => Boolean(user.planner), // นับ / ปรับยอดคลัง RB: กลุ่มวางแผนเท่านั้น (รวมผู้จัดการแผนก RB)
+    countRb: (user) => Boolean(isChemPlanner(user) || isRbCountHead(user)), // นับ / ปรับยอดคลัง RB: ผู้จัดการแผนก RB หรือฝ่ายวางแผนคลังเคมี
   });
   const MAY_TEXT = Object.freeze({
     master: "แก้ข้อมูลหลักของ RubberFlow ได้โดยฝ่ายวางแผน ผู้จัดการ ผู้ดูแลระบบ หรือพนักงานแผนก RB",
@@ -111,9 +116,9 @@
     cancelPurchase: "ยกเลิกใบสั่งซื้อได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
     skipRest: "ข้ามเวลาบ่มได้โดยผู้จัดการแผนก RB หรือผู้ช่วยผู้จัดการแผนก RB ผู้ช่วยผู้จัดการโรงงานขึ้นไป หรือแผนก QA เท่านั้น",
     returnRequisition: "รับเคมีคืนเข้าคลังได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
-    requestChem: "ขอเบิกเคมีจากคลัง ST และคืนเคมีให้ ST ได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
+    requestChem: "ขอเบิกเคมีจากคลัง ST และคืนเคมีให้ ST ได้โดยพนักงานแผนก RB ฝ่ายวางแผน (PP) หรือผู้ช่วยผู้จัดการโรงงานขึ้นไป",
     issueChem: "จ่ายเคมี ปิดยอดใบขอเบิก และรับเคมีคืนได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
-    countRb: "นับและปรับยอดคลังเคมี RB ได้โดยผู้จัดการแผนก RB หรือฝ่ายวางแผนเท่านั้น",
+    countRb: "นับและปรับยอดคลังเคมี RB ได้โดยผู้จัดการแผนก RB ฝ่ายวางแผน (PP) หรือผู้ช่วยผู้จัดการโรงงานขึ้นไปเท่านั้น",
   });
   function needRight(ctx, right) {
     if (!ctx.remote) return;

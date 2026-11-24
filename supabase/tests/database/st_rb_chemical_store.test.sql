@@ -1,6 +1,8 @@
 -- คลังเคมี ST (กลาง) กับคลังเคมีของ RB (20261220010000_st_rb_chemical_store.sql) ตรวจทั้งฝั่งอนุญาตและปฏิเสธของทุกคำสั่งใหม่:
---   ขอเบิก / ยกเลิก (กลุ่มวางแผน | RB) · จ่าย FEFO ข้ามล็อตกักกัน / หมดอายุ จ่ายบางส่วน ปิดยอดที่เหลือ (ST | admin) · นับคลัง RB (กลุ่มวางแผนเท่านั้น)
---   คืน (กลุ่มวางแผน | RB) · รับคืนทั้งใบ / ปฏิเสธพร้อมเหตุผล (ST | admin) · ใบเบิกผสมตัดคลัง RB · ใบเบิกเดิม (คลัง ST) ยังตัดคลัง ST · คืนใบเบิกตามคลังของใบ
+--   ขอเบิก / ยกเลิก (ฝ่ายวางแผนคลังเคมี | RB) · จ่าย FEFO ข้ามล็อตกักกัน / หมดอายุ จ่ายบางส่วน ปิดยอดที่เหลือ (ST | admin)
+--   · นับคลัง RB (ผู้จัดการแผนก RB | ฝ่ายวางแผนคลังเคมี · ผู้จัดการแผนกอื่นใน bom_can_edit ไม่ได้) · สำเนาล็อตที่ต่างจากที่เก็บนอกจากยอด = RF_INVALID_CHEM
+--   คืน (ฝ่ายวางแผนคลังเคมี | RB) · รับคืนทั้งใบ / ปฏิเสธพร้อมเหตุผล (ST | admin) · ใบเบิกผสมตัดคลัง RB · ใบเบิกเดิม (คลัง ST) ยังตัดคลัง ST · คืนใบเบิกตามคลังของใบ
+--   · QA กักกัน / ปลดกักกันล็อตได้
 -- (authenticated อ่านตาราง rf_* ตรงไม่ได้ จึงอ่านตารางด้วย reset role เสมอ)
 begin;
 create extension if not exists pgtap with schema extensions;
@@ -27,13 +29,16 @@ select ok('rf_chem_docs' = any (private.sandbox_unguarded_tables()) and 'rf_purc
   'the new table is sandbox aware and the redefined list keeps the earlier tables');
 select ok(position('rf_chem_docs' in pg_get_functiondef('public.app_sandbox_purge_rf()'::regprocedure)) > 0, 'the RubberFlow purge deletes the test documents too');
 select ok(not exists (
-    select 1 from unnest(array['private.rf_save_chem_docs(public.employees,text,boolean,boolean,boolean,text,jsonb,bigint,bigint)', 'private.rf_lot_in_transit(text)']) f(sig)
+    select 1 from unnest(array['private.rf_save_chem_docs(public.employees,text,boolean,boolean,boolean,text,jsonb,bigint,bigint)', 'private.rf_lot_in_transit(text)',
+                               'private.rf_chem_planner(public.employees)', 'private.rf_check_chem_lot_copies(jsonb,bigint,bigint)']) f(sig)
     where has_function_privilege('anon', f.sig, 'execute') or has_function_privilege('authenticated', f.sig, 'execute')),
   'clients cannot call the new private helpers');
-select ok((select bool_and(p.prosecdef and p.proconfig @> array['search_path=""']) from pg_proc p
+select is((select count(*)::integer from pg_proc p
            where p.oid in ('private.rf_save_chem_docs(public.employees,text,boolean,boolean,boolean,text,jsonb,bigint,bigint)'::regprocedure,
-                           'private.rf_lot_in_transit(text)'::regprocedure, 'public.app_rf_save(jsonb,bigint,text,jsonb,text)'::regprocedure)),
-  'the writer, the helper and the RPC are security definer with an empty search_path');
+                           'private.rf_lot_in_transit(text)'::regprocedure, 'private.rf_chem_planner(public.employees)'::regprocedure,
+                           'private.rf_check_chem_lot_copies(jsonb,bigint,bigint)'::regprocedure, 'public.app_rf_save(jsonb,bigint,text,jsonb,text)'::regprocedure)
+             and p.prosecdef and p.proconfig @> array['search_path=""']), 5,
+  'the writer, the helpers and the RPC are security definer with an empty search_path');
 select ok(not has_function_privilege('anon', 'public.app_rf_save(jsonb,bigint,text,jsonb,text)', 'execute')
       and has_function_privilege('authenticated', 'public.app_rf_save(jsonb,bigint,text,jsonb,text)', 'execute'),
   'the RubberFlow save RPC keeps its grants');
@@ -51,6 +56,13 @@ insert into public.employees (id, employee_no, first_name, last_name, email, job
 insert into public.employees (employee_no, first_name, last_name, email, job_title, department_id, role_id, is_active, is_test) values
   ('SBX-ADMIN-T', 'ทดสอบ', 'ผู้ดูแลระบบ', 'sbx-admin-t@sandbox.local', 'ผู้ดูแลระบบ (ทดสอบ)',
    (select id from public.departments where code = 'MGT'), (select id from public.roles where code = 'admin'), false, true);
+-- ผู้จัดการแผนก (department_manager) ของแผนกในสายผลิตที่ไม่ใช่ RB: อยู่ใน private.bom_can_edit แต่ไม่ใช่ฝ่ายวางแผนคลังเคมี (ยังไม่มีบัญชีทดสอบของบทบาทนี้)
+insert into public.employees (employee_no, first_name, last_name, email, job_title, department_id, role_id, is_active, is_test)
+select v.no, 'ทดสอบ', v.last_name, lower(v.no) || '@sandbox.local', v.last_name || ' (ทดสอบ)', d.id, r.id, false, true
+from (values ('SBX-WH-MGR-T', 'ผจก. WH', 'WH'), ('SBX-ST-MGR-T', 'ผจก. ST', 'ST'), ('SBX-GR-MGR-T', 'ผจก. GR', 'GR')) v(no, last_name, dept)
+join public.departments d on d.code = v.dept
+cross join public.roles r where r.code = 'department_manager';
+select is((select count(*)::integer from public.employees where employee_no in ('SBX-WH-MGR-T', 'SBX-ST-MGR-T', 'SBX-GR-MGR-T')), 3, 'the three test department managers exist');
 select count(set_config('test.p_' || lower(replace(employee_no, '-', '_')), id::text, true)) from public.employees where is_test;
 select count(set_config('test.n_' || lower(replace(employee_no, '-', '_')), first_name || ' ' || last_name, true)) from public.employees where is_test;
 select set_config('test.now_ms', (extract(epoch from now()) * 1000)::bigint::text, true);
@@ -156,6 +168,16 @@ select throws_ok($$ select st_t.chem(current_setting('test.cr')::jsonb || '{"id"
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
 select throws_ok($$ select st_t.chem(current_setting('test.cr')::jsonb || '{"id":"CR-20261124-01","lines":[{"materialCode":"MAT-A","qtyKg":5}]}'::jsonb, 'requestChemicals') $$,
   'RF_FORBIDDEN', 'nor WH staff');
+-- ผู้จัดการแผนกอื่นในสายผลิต (อยู่ใน bom_can_edit) ไม่ใช่ฝ่ายวางแผนคลังเคมี: หัวหน้า ST ขอเบิกแล้วจ่ายให้ตัวเองไม่ได้
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_mgr_t')::uuid);
+select throws_ok($$ select st_t.chem(current_setting('test.cr')::jsonb || '{"id":"CR-20261124-01","lines":[{"materialCode":"MAT-A","qtyKg":5}]}'::jsonb, 'requestChemicals') $$,
+  'RF_FORBIDDEN', 'the ST department manager cannot raise a request (and then issue it)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_mgr_t')::uuid);
+select throws_ok($$ select st_t.chem(current_setting('test.cr')::jsonb || '{"id":"CR-20261124-01","lines":[{"materialCode":"MAT-A","qtyKg":5}]}'::jsonb, 'requestChemicals') $$,
+  'RF_FORBIDDEN', 'nor the GR department manager');
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_mgr_t')::uuid);
+select throws_ok($$ select st_t.chem(current_setting('test.cr')::jsonb || '{"id":"CR-20261124-01","lines":[{"materialCode":"MAT-A","qtyKg":5}]}'::jsonb, 'requestChemicals') $$,
+  'RF_FORBIDDEN', 'nor the WH department manager');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select st_t.chem(current_setting('test.cr')::jsonb || '{"id":"CR-20261124-01","lines":[{"materialCode":"MAT-A","qtyKg":0}]}'::jsonb, 'requestChemicals') $$,
   'RF_INVALID_CHEM', 'a zero quantity is refused');
@@ -191,6 +213,8 @@ select ok(st_t.chem(current_setting('test.cr')::jsonb || '{"id":"CR-20261124-02"
 -- 5. ยกเลิกใบขอเบิก (cancelChemicalRequest): กลุ่มวางแผน หรือ RB · ใบที่ยังไม่จ่ายเลยเท่านั้น -------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select st_t.set_status('CR-20261124-02', 'cancelled', 'cancelChemicalRequest') $$, 'RF_FORBIDDEN', 'ST staff cannot cancel an RB request');
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_mgr_t')::uuid);
+select throws_ok($$ select st_t.set_status('CR-20261124-02', 'cancelled', 'cancelChemicalRequest') $$, 'RF_FORBIDDEN', 'nor the WH department manager');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select st_t.set_status('CR-20261124-02', 'closed', 'cancelChemicalRequest') $$, 'RF_INVALID_CHEM', 'cancelling sets the cancelled status, nothing else');
 select is(st_t.set_status('CR-20261124-02', 'cancelled', 'cancelChemicalRequest') -> 'changes' -> 'chemDocs' -> 'upsert' -> 0 ->> 'status', 'cancelled', 'RB staff cancels an untouched request');
@@ -220,6 +244,21 @@ select is((st_t.doc('CR-20261124-01') -> 'lines' -> 0 ->> 'issuedKg') || '/' || 
 select throws_ok($$ select st_t.issue('CR-20261124-01', '[0, 5]'::jsonb, current_setting('test.base')::bigint) $$, 'RF_STALE', 'a copy older than the last issue is stale');
 select set_config('test.rv', st_t.rver()::text, true);
 select is(st_t.issue('CR-20261124-01', '[0, 0]'::jsonb) ->> 'version', current_setting('test.rv'), 'a copy with nothing more to issue writes nothing');
+-- สำเนาล็อตที่มากับคำสั่งคลังเคมีต้องตรงกับที่เก็บทุกช่องยกเว้นยอด: กักกัน / รับล็อตใหม่ / แก้ข้อมูลล็อตภายใต้คำสั่งคลังเคมีไม่ได้
+select throws_ok($$ select st_t.rf(jsonb_build_object('chemDocs', jsonb_build_object('upsert', jsonb_build_array(st_t.doc('CR-20261124-01'))),
+  'materialLots', jsonb_build_object('upsert', jsonb_build_array(st_t.mlot('RM-A-2') || '{"status":"hold"}'::jsonb))), 'issueChemicals') $$,
+  'RF_INVALID_CHEM', 'a chemical store action cannot put a lot on hold through its lot copies');
+select throws_ok($$ select st_t.rf(jsonb_build_object('chemDocs', jsonb_build_object('upsert', jsonb_build_array(st_t.doc('CR-20261124-01'))),
+  'materialLots', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.ml')::jsonb || '{"lotNo":"RM-A-NEW"}'::jsonb))), 'issueChemicals') $$,
+  'RF_INVALID_CHEM', 'nor receive a new lot');
+select throws_ok($$ select st_t.rf(jsonb_build_object('chemDocs', jsonb_build_object('upsert', jsonb_build_array(st_t.doc('CR-20261124-01'))),
+  'materialLots', jsonb_build_object('upsert', jsonb_build_array(st_t.mlot('RM-A-2') || '{"supplier":"ผู้ขายอื่น"}'::jsonb))), 'issueChemicals') $$,
+  'RF_INVALID_CHEM', 'nor change what the lot records');
+select is(jsonb_build_array(st_t.mlot('RM-A-2') ->> 'status', st_t.mlot('RM-A-2') ->> 'supplier', st_t.mlot('RM-A-NEW')), '["available", "บจก. โพลีเคม", null]'::jsonb,
+  'the lot is unchanged and no lot was created');
+select is(st_t.rf(jsonb_build_object('chemDocs', jsonb_build_object('upsert', jsonb_build_array(st_t.doc('CR-20261124-01'))),
+  'materialLots', jsonb_build_object('upsert', jsonb_build_array(st_t.mlot('RM-A-2') || '{"qtyKg":1,"rbKg":999}'::jsonb))), 'issueChemicals') ->> 'version', current_setting('test.rv'),
+  'a lot copy that differs only in the balances the server owns is ignored');
 select ok(st_t.issue('CR-20261124-01', '[0, 30]'::jsonb) is not null, 'ST issues all of MAT-B in a second round');
 select is(jsonb_build_array(st_t.doc('CR-20261124-01') ->> 'status', st_t.kg('RM-B-1')), '["partial", "170/30"]'::jsonb, 'still partial while MAT-A is short by 10 kg');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
@@ -252,12 +291,21 @@ select is(jsonb_build_array(st_t.kg('RM-A-1'), st_t.kg('RM-B-1')), '["0/60", "17
 select throws_ok($$ select st_t.rf(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array('{"id":"REQ-2","orderId":"WO-2","batches":2,"note":""}'::jsonb))), 'createRequisition') $$,
   'RF_INSUFFICIENT_STOCK', 'two batches need more MAT-B than the RB store holds (the ST stock does not count)');
 
--- 9. นับคลัง RB (countRbStock): กลุ่มวางแผนเท่านั้น (รวมผู้จัดการแผนก RB) ------------------------------------------------------
+-- 9. นับคลัง RB (countRbStock): ผู้จัดการแผนก RB หรือฝ่ายวางแผนคลังเคมี (PP · ผู้จัดการโรงงานขึ้นไป · admin) เท่านั้น ---------------------
 select throws_ok($$ select st_t.chem('{"id":"CC-20261124-01","kind":"count","status":"done","reason":"นับประจำเดือน","lines":[{"lotNo":"RM-A-1","countedKg":58}]}'::jsonb, 'countRbStock') $$,
   'RF_FORBIDDEN', 'RB staff cannot adjust the RB store');
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select st_t.chem('{"id":"CC-20261124-01","kind":"count","status":"done","reason":"นับประจำเดือน","lines":[{"lotNo":"RM-A-1","countedKg":58}]}'::jsonb, 'countRbStock') $$,
   'RF_FORBIDDEN', 'nor ST staff');
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_mgr_t')::uuid);
+select throws_ok($$ select st_t.chem('{"id":"CC-20261124-01","kind":"count","status":"done","reason":"นับประจำเดือน","lines":[{"lotNo":"RM-A-1","countedKg":58}]}'::jsonb, 'countRbStock') $$,
+  'RF_FORBIDDEN', 'nor the WH department manager (in bom_can_edit, not in the chemical store planning group)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_mgr_t')::uuid);
+select throws_ok($$ select st_t.chem('{"id":"CC-20261124-01","kind":"count","status":"done","reason":"นับประจำเดือน","lines":[{"lotNo":"RM-A-1","countedKg":58}]}'::jsonb, 'countRbStock') $$,
+  'RF_FORBIDDEN', 'nor the ST department manager');
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_mgr')::uuid);
+select throws_ok($$ select st_t.chem('{"id":"CC-20261124-01","kind":"count","status":"done","reason":"นับประจำเดือน","lines":[{"lotNo":"RM-A-1","countedKg":58}]}'::jsonb, 'countRbStock') $$,
+  'RF_FORBIDDEN', 'nor the QA department manager');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_mgr')::uuid);
 select throws_ok($$ select st_t.chem('{"id":"CC-20261124-01","kind":"count","status":"done","lines":[{"lotNo":"RM-A-1","countedKg":58}]}'::jsonb, 'countRbStock') $$,
   'RF_INVALID_CHEM', 'a count needs a reason');
@@ -266,24 +314,37 @@ select throws_ok($$ select st_t.chem('{"id":"CC-20261124-01","kind":"count","sta
 select throws_ok($$ select st_t.chem('{"id":"CC-20261124-01","kind":"count","status":"done","reason":"นับประจำเดือน","lines":[{"lotNo":"RM-A-1","countedKg":58},{"lotNo":"RM-A-1","countedKg":57}]}'::jsonb, 'countRbStock') $$,
   'RF_INVALID_CHEM', 'a lot twice in one count is refused');
 select ok(st_t.chem('{"id":"CC-20261124-01","kind":"count","status":"done","reason":"นับประจำเดือน","lines":[{"lotNo":"RM-A-1","countedKg":58},{"lotNo":"RM-B-1","countedKg":10}]}'::jsonb, 'countRbStock') is not null,
-  'the RB manager (planning group) counts the RB store');
+  'the RB department manager counts the RB store');
 select is(st_t.doc('CC-20261124-01') -> 'lines', '[{"lotNo":"RM-A-1","materialCode":"MAT-A","beforeKg":60,"countedKg":58},{"lotNo":"RM-B-1","materialCode":"MAT-B","beforeKg":10,"countedKg":10}]'::jsonb,
   'each line keeps the balance before and the counted balance');
 select is(jsonb_build_array(st_t.doc('CC-20261124-01') ->> 'status', st_t.doc('CC-20261124-01') ->> 'doneBy', st_t.kg('RM-A-1')), jsonb_build_array('done', current_setting('test.n_sbx_rb_mgr'), '0/58'),
   'the count is done at once and sets the RB balance');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select ok(st_t.chem('{"id":"CC-20261124-03","kind":"count","status":"done","reason":"ตรวจนับซ้ำ","lines":[{"lotNo":"RM-B-1","countedKg":10}]}'::jsonb, 'countRbStock') is not null,
+  'the planning department counts the RB store too');
+select is(jsonb_build_array(st_t.doc('CC-20261124-03') ->> 'doneBy', st_t.kg('RM-B-1')), jsonb_build_array(current_setting('test.n_sbx_pp_staff'), '170/10'),
+  'a count that matches the balance records the count and moves nothing');
 
 -- 10. คืนเคมีให้ ST (returnChemicals): กลุ่มวางแผน หรือ RB · หักคลัง RB ทันที -------------------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select st_t.chem('{"id":"CT-20261124-01","kind":"return","status":"pending","lines":[{"lotNo":"RM-A-2","kg":6}]}'::jsonb, 'returnChemicals') $$, 'RF_FORBIDDEN', 'ST staff cannot raise an RB return');
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
 select throws_ok($$ select st_t.chem('{"id":"CT-20261124-01","kind":"return","status":"pending","lines":[{"lotNo":"RM-A-2","kg":6}]}'::jsonb, 'returnChemicals') $$, 'RF_FORBIDDEN', 'nor QA staff');
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_mgr_t')::uuid);
+select throws_ok($$ select st_t.chem('{"id":"CT-20261124-01","kind":"return","status":"pending","lines":[{"lotNo":"RM-A-2","kg":6}]}'::jsonb, 'returnChemicals') $$, 'RF_FORBIDDEN', 'nor the WH department manager');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select throws_ok($$ select st_t.rf(jsonb_build_object('chemDocs', jsonb_build_object('upsert', jsonb_build_array('{"id":"CT-20261124-01","kind":"return","status":"pending","lines":[{"lotNo":"RM-A-2","kg":6}]}'::jsonb)),
+  'materialLots', jsonb_build_object('upsert', jsonb_build_array(st_t.mlot('RM-A-1') || '{"status":"hold"}'::jsonb))), 'returnChemicals') $$,
+  'RF_INVALID_CHEM', 'a return cannot carry a hold on another lot');
 select throws_ok($$ select st_t.chem('{"id":"CT-20261124-01","kind":"return","status":"pending","lines":[{"lotNo":"RM-A-2","kg":11}]}'::jsonb, 'returnChemicals') $$, 'RF_INVALID_CHEM', 'no more than the RB balance of the lot');
 select throws_ok($$ select st_t.chem('{"id":"CT-20261124-01","kind":"return","status":"pending","lines":[{"lotNo":"RM-NOPE","kg":1}]}'::jsonb, 'returnChemicals') $$, 'RF_INVALID_CHEM', 'an unknown lot is refused');
 select ok(st_t.chem('{"id":"CT-20261124-01","kind":"return","status":"pending","note":"เหลือจากงาน","lines":[{"lotNo":"RM-A-2","kg":6,"receivedKg":6}]}'::jsonb, 'returnChemicals') is not null, 'RB staff returns 6 kg of RM-A-2');
 select is(st_t.doc('CT-20261124-01') -> 'lines', '[{"lotNo":"RM-A-2","materialCode":"MAT-A","kg":6,"receivedKg":null}]'::jsonb, 'the line takes its material from the lot and waits for ST');
 select is(jsonb_build_array(st_t.doc('CT-20261124-01') ->> 'status', st_t.kg('RM-A-2')), '["pending", "290/4"]'::jsonb, 'the return leaves the RB store at once and is pending');
-select ok(st_t.chem('{"id":"CT-20261124-02","kind":"return","status":"pending","lines":[{"lotNo":"RM-B-1","kg":5}]}'::jsonb, 'returnChemicals') is not null, 'and 5 kg of RM-B-1');
+select ok(st_t.rf(jsonb_build_object('chemDocs', jsonb_build_object('upsert', jsonb_build_array('{"id":"CT-20261124-02","kind":"return","status":"pending","lines":[{"lotNo":"RM-B-1","kg":5}]}'::jsonb)),
+  'materialLots', jsonb_build_object('upsert', jsonb_build_array(st_t.mlot('RM-B-1') || '{"qtyKg":1,"rbKg":0}'::jsonb))), 'returnChemicals') is not null,
+  'and 5 kg of RM-B-1 with a lot copy that differs only in the balances');
+select is(st_t.kg('RM-B-1'), '170/5', 'the server computes the balance, not the copy');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select throws_ok($$ select st_t.chem('{"id":"CC-20261124-02","kind":"count","status":"done","reason":"นับซ้ำ","lines":[{"lotNo":"RM-A-2","countedKg":5}]}'::jsonb, 'countRbStock') $$,
   'RF_INVALID_CHEM', 'a count leaves room for what is on the way back to ST (300 - 290 in ST - 6 in transit = 4)');
@@ -321,6 +382,8 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select ok(st_t.rf(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(st_t.wo('WO-1') || '{"status":"cancelled"}'::jsonb))), 'setOrderStatus') is not null, 'the planner cancels WO-1');
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select st_t.give_back('REQ-1', '[40, 20]'::jsonb) $$, 'RF_FORBIDDEN', 'ST cannot take back a requisition of the RB store');
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_mgr_t')::uuid);
+select throws_ok($$ select st_t.give_back('REQ-1', '[40, 20]'::jsonb) $$, 'RF_FORBIDDEN', 'nor the WH department manager');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select st_t.give_back('REQ-L1', '[5]'::jsonb) $$, 'RF_FORBIDDEN', 'RB cannot take back a requisition of the ST store');
 select ok(st_t.give_back('REQ-1', '[40, 20]'::jsonb) is not null, 'RB puts the unmixed chemicals of its own requisition back');
@@ -329,9 +392,21 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select ok(st_t.give_back('REQ-L1', '[5]'::jsonb) is not null, 'ST takes back the old requisition');
 select is(st_t.kg('RM-B-1'), '170/30', 'into the ST store as before');
 
--- 13. ชุดข้อมูลและ audit -------------------------------------------------------------------------------------
+-- 13. QA กักกัน / ปลดกักกันล็อต (setMaterialLotStatus) ได้เหมือนเดิม (ปุ่มอยู่ที่หน้าล็อตของ #/st ในโหมดผู้เข้าชมของ QA) ------------------------
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
+select ok(st_t.rf(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array(st_t.mlot('RM-A-2') || '{"status":"hold"}'::jsonb))), 'setMaterialLotStatus') is not null,
+  'QA staff puts a lot on hold');
+select is(st_t.mlot('RM-A-2') ->> 'status', 'hold', 'the lot is held');
+select ok(st_t.rf(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array(st_t.mlot('RM-A-2') || '{"status":"available"}'::jsonb))), 'setMaterialLotStatus') is not null,
+  'and releases it');
+select is(st_t.mlot('RM-A-2') ->> 'status', 'available', 'the lot is available again');
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select throws_ok($$ select st_t.rf(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array(st_t.mlot('RM-A-2') || '{"status":"hold"}'::jsonb))), 'setMaterialLotStatus') $$,
+  'RF_FORBIDDEN', 'RB staff cannot hold a lot');
+
+-- 14. ชุดข้อมูลและ audit -------------------------------------------------------------------------------------
 select ok(public.app_rf_master_since(0) -> 'changes' ? 'chemDocs', 'the delta names the chemical documents list');
-select is((select count(*)::integer from jsonb_array_elements(public.app_rf_master() -> 'chemDocs')), 6, 'the snapshot lists the six test documents');
+select is((select count(*)::integer from jsonb_array_elements(public.app_rf_master() -> 'chemDocs')), 7, 'the snapshot lists the seven test documents');
 reset role;
 select is((select count(*) from public.audit_logs where action = 'RF_SAVE' and metadata ->> 'client_action' = 'issueChemicals'), 2::bigint, 'each issue round has one RubberFlow audit row');
 select is((select count(*) from public.rf_chem_docs where not is_test), 1::bigint, 'the real document is untouched');

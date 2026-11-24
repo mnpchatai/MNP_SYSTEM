@@ -64,6 +64,12 @@
   // ย้อนการรับเข้า (ทั้งล็อต) / ย้อนการส่งมอบ (รายกล่อง) พร้อมเหตุผล: ผู้จัดการแผนก (department_manager) ของแผนก WH หรือ admin
   const canReverseBoxes = (user) => Boolean(user) && (isAdminUser(user) || (isWhUser(user) && (user.whHead === true || user.roleCode === "department_manager")));
 
+  // ฝ่ายวางแผนคลังเคมี (ตรงกับ private.rf_chem_planner ของ 20261220010000): แผนก PP ทุกบทบาท หรือ admin / ผู้ช่วยผู้จัดการโรงงานขึ้นไป
+  // ไม่ใช่ user.planner (bom_can_edit รวมผู้จัดการแผนกทุกแผนกในสายผลิต) · นับคลัง RB = กลุ่มนี้ หรือผู้จัดการแผนก (department_manager) ของแผนก RB
+  const CHEM_PLAN_ROLE_CODES = Object.freeze(["admin", "assistant_factory_manager", "factory_manager", "general_manager"]);
+  const isChemPlanner = (user) => Boolean(user) && (user.role === "admin" || CHEM_PLAN_ROLE_CODES.includes(user.roleCode) || String(user.dept ?? "").toUpperCase() === "PP");
+  const isRbCountHead = (user) => Boolean(user?.rb) && user.roleCode === "department_manager";
+
   // สิทธิ์ย่อยของปุ่มในหน้า (ซ่อน/แสดงเท่านั้น) · โหมดสาธิตตามบทบาท · ผู้ใช้โหมดฐานข้อมูล (db) ตามตัวกำกับ planner / rb / rbHead ที่ตรงกับกฎของฐานข้อมูล
   const PLAN_ROLES = Object.freeze(["admin", "manager", "planner"]);
   const CAN = Object.freeze({
@@ -103,9 +109,9 @@
     cancelPurchase: (user) => Boolean(user.st || user.role === "admin"), // ยกเลิกใบสั่งซื้อ
     viewPurchase: (user) => Boolean(user.planner || user.rb || user.st), // เปิดหน้าต่างดูว่าขาดอะไร (กลุ่มวางแผนและ RB ดูได้ สั่งไม่ได้)
     // คลังเคมี ST / RB (20261220010000 · ตรงกับ private.rf_save_chem_docs): โหมดสาธิตไม่จำกัดสิทธิ์ของปุ่มเหล่านี้
-    requestChem: (user) => Boolean(user.planner || user.rb), // ขอเบิกเคมีจาก ST · ยกเลิกใบที่ยังไม่จ่าย · คืนเคมีให้ ST · คืนใบเบิกคลัง RB ของ WO ที่ยกเลิก
+    requestChem: (user) => Boolean(isChemPlanner(user) || user.rb), // ขอเบิกเคมีจาก ST · ยกเลิกใบที่ยังไม่จ่าย · คืนเคมีให้ ST · คืนใบเบิกคลัง RB ของ WO ที่ยกเลิก: แผนก RB หรือฝ่ายวางแผนคลังเคมี
     issueChem: (user) => Boolean(user.st || user.role === "admin"), // จ่ายเคมีตามใบขอเบิก · ปิดยอดที่เหลือ · รับคืนทั้งใบ · ปฏิเสธใบคืน
-    countRb: (user) => Boolean(user.planner), // นับ / ปรับยอดคลัง RB: กลุ่มวางแผนเท่านั้น (รวมผู้จัดการแผนก RB · พนักงาน RB นับไม่ได้)
+    countRb: (user) => Boolean(isChemPlanner(user) || isRbCountHead(user)), // นับ / ปรับยอดคลัง RB: ผู้จัดการแผนก RB หรือฝ่ายวางแผนคลังเคมี (พนักงาน RB และผู้จัดการแผนกอื่นนับไม่ได้)
   });
 
   // ปุ่ม/ฟอร์มของคำสั่งแต่ละตัวต้องมีสิทธิ์ข้อใด (module-rubberflow.js ซ่อนปุ่ม/ปิดฟอร์มที่ไม่ใช่สิทธิ์ของบัญชี · ฐานข้อมูลตัดสินจริงอีกครั้ง) · คำสั่งที่ไม่อยู่ในตารางนี้ไม่ถูกจำกัดที่หน้าจอ
@@ -129,7 +135,7 @@
     chemRequest: "requestChemicals", chemReturn: "returnChemicals", rbCount: "countRbStock", chemIssue: "issueChemicals", chemClose: "closeChemicalRequest", chemReject: "rejectChemicalReturn",
   });
   const rightForAction = (name) => ACTION_RIGHT[name] ?? null;
-  // คืนใบเบิกของ WO ที่ยกเลิก: สิทธิ์ขึ้นกับคลังของใบ (20261220010000) · ใบคลัง RB = กลุ่มวางแผน / RB (requestChem) · ใบเดิมคลัง ST = ST / admin (returnRequisition)
+  // คืนใบเบิกของ WO ที่ยกเลิก: สิทธิ์ขึ้นกับคลังของใบ (20261220010000) · ใบคลัง RB = ฝ่ายวางแผนคลังเคมี / RB (requestChem) · ใบเดิมคลัง ST = ST / admin (returnRequisition)
   const rightForRequisitionReturn = (requisition) => (requisition?.store === "RB" ? "requestChem" : "returnRequisition");
   const rightForDialog = (name) => (DIALOG_ACTION[name] ? ACTION_RIGHT[DIALOG_ACTION[name]] ?? null : null);
 

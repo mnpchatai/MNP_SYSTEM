@@ -2082,6 +2082,11 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     const planner = bomIsPlanner(actor);
     const master = planner || rfIsRb(actor);
     const head = rfIsHead(actor);
+    // คลังเคมี (ตรงกับ private.rf_chem_planner ของ 20261220010000): ฝ่ายวางแผนคลังเคมี = แผนก PP หรือ admin / ผู้ช่วยผู้จัดการโรงงานขึ้นไป (ไม่ใช่ planner ที่รวมผู้จัดการแผนกทุกแผนกในสายผลิต)
+    //   ขอเบิก / ยกเลิก / คืน / คืนใบเบิกคลัง RB = chemSide · นับคลัง RB = chemCount (เพิ่มผู้จัดการแผนก RB)
+    const chemPlan = actor.role === "admin" || BOM_MANAGER_ROLES.includes(actor.role) || actor.dept === "PP";
+    const chemSide = chemPlan || rfIsRb(actor);
+    const chemCount = chemPlan || (rfIsRb(actor) && actor.role === "department_manager");
     const approvedNow = [];
     const supersededSent = [];
     // stock = สต็อกของซื้อฝั่ง BOM ที่ใบสั่งซื้อเขียน (สต็อกขั้นต่ำตอนสร้างใบ / บวกยอดตอนรับบรรทัดของซื้อ) · rods = ล็อตตกแต่งที่ผ่าน QC ของ WO ที่ผูกงาน BOM → ล็อตแท่งรอ SR รับ (20261202010000)
@@ -2172,9 +2177,9 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         const lines = Array.isArray(record.lines) ? record.lines : [];
         const kgOf = (value) => (value === undefined || value === null ? null : value);
         if (!prev.lines.some((old, i) => bomCanon(kgOf(lines[i]?.returnedKg)) !== bomCanon(kgOf(old.returnedKg)))) return "skip";
-        // ใบของคลัง RB (20261220010000): กลุ่มวางแผน / RB คืนเข้า rbKg · ใบเดิมของคลัง ST: ST / admin เข้า qtyKg
+        // ใบของคลัง RB (20261220010000): ฝ่ายวางแผนคลังเคมี / RB คืนเข้า rbKg · ใบเดิมของคลัง ST: ST / admin เข้า qtyKg
         const backStore = prev.store === "RB" ? "RB" : "ST";
-        if (backStore === "RB" ? !master : !stOrAdmin) fail("RF_FORBIDDEN");
+        if (backStore === "RB" ? !chemSide : !stOrAdmin) fail("RF_FORBIDDEN");
         const wo = next.orders.find((row) => row.id === prev.orderId);
         if (!["issued", "weighing"].includes(prev.status) || wo?.status !== "cancelled" || prev.lines.some((old) => Object.hasOwn(old, "returnedAt"))) fail("RF_INVALID_TRANSITION");
         if (lines.length !== prev.lines.length) fail(bad);
@@ -2762,7 +2767,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         }
         if (action === "cancelChemicalRequest") {
           if (prev.kind !== "request" || status !== "cancelled") fail(bad);
-          if (!master) fail("RF_FORBIDDEN");
+          if (!chemSide) fail("RF_FORBIDDEN");
           if (prev.status !== "open" || prev.lines.some((line) => line.issuedKg > 0)) fail("RF_INVALID_TRANSITION");
           put({ ...prev, status: "cancelled", reason: plainText(record.reason, 0), doneAt: at, doneBy: actor.name });
           return null;
@@ -2793,7 +2798,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         fail(bad);
       }
       if (action === "requestChemicals") {
-        if (!master) fail("RF_FORBIDDEN");
+        if (!chemSide) fail("RF_FORBIDDEN");
         if (!record.id.startsWith("CR-")) fail(bad);
         const note = plainText(record.note, 0);
         if (clines.length < 1 || clines.length > 100) fail(bad);
@@ -2814,8 +2819,8 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       }
       if (action === "returnChemicals" || action === "countRbStock") {
         const back = action === "returnChemicals";
-        // คืน = กลุ่มวางแผน / RB · นับคลัง RB = กลุ่มวางแผนเท่านั้น (รวมผู้จัดการแผนก RB)
-        if (back ? !master : !planner) fail("RF_FORBIDDEN");
+        // คืน = ฝ่ายวางแผนคลังเคมี / RB · นับคลัง RB = ฝ่ายวางแผนคลังเคมี หรือผู้จัดการแผนก RB (ผู้จัดการแผนกอื่นไม่ได้)
+        if (back ? !chemSide : !chemCount) fail("RF_FORBIDDEN");
         if (!record.id.startsWith(back ? "CT-" : "CC-")) fail(bad);
         const note = plainText(record.note, 0);
         const reason = plainText(record.reason, back ? 0 : 3);
@@ -2868,6 +2873,8 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         // เท่าของล่าสุดทุกช่อง (ไม่นับตราของเซิร์ฟเวอร์) = ไม่ทำอะไร ไม่ตรวจชน ไม่ตรวจสิทธิ์ (เหมือนตัวเขียนของฐานข้อมูล)
         // เอกสารคลังเคมีตัดสินว่า "เปลี่ยน" และ "ชน" ตามความหมายของคำสั่งในตัวเขียนของตัวเอง (chemDoc)
         if (prev && list !== "chemDocs" && !(list === "purchaseOrders" && typeof record.createdAt === "number" && record.createdAt !== prev.createdAt) && rfSame(rfNorm(list, prev), rfNorm(list, record), RF_NOOP[list])) continue;
+        // คำสั่งคลังเคมี (ตรงกับ private.rf_check_chem_lot_copies): สำเนาล็อตต้องตรงกับที่เก็บทุกช่องยกเว้นยอด · ล็อตใหม่ / ต่างจากที่เก็บ = RF_INVALID_CHEM (ล็อตเปลี่ยนหลังเวอร์ชันฐาน = RF_STALE)
+        if (list === "materialLots" && RF_CHEM_ACTIONS.includes(action)) fail(prev && stale(list, id) ? "RF_STALE" : "RF_INVALID_CHEM");
         // ชนก่อนสิทธิ์/เนื้อหาเสมอ: ระเบียนถูกผู้อื่นแก้/เพิ่มหลัง base (รวมเลข WO ซ้ำ) = ฝั่ง client ถือสำเนาเก่า ต้องได้ RF_STALE ไม่ใช่ RF_FORBIDDEN
         if (prev && list !== "chemDocs" && stale(list, id)) fail("RF_STALE");
         if (list === "materials") {
