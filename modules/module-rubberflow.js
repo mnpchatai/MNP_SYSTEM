@@ -121,7 +121,8 @@
   const WH_REPAINT = Object.freeze(["saved", "synced", "reverted"]);
   store.subscribe((event) => {
     if (!onRfRoute()) {
-      if (onWhRoute() && WH_REPAINT.includes(event.type) && !document.querySelectorAll("dialog[data-rf-dialog][open]").length) renderRoute();
+      // ช่องที่กรอกค้างในหน้า BOM / หน้าแผนก (MNP_BOM.isEditing) ไม่ถูกวาดทับ เหมือนที่ store ของ BOM รอเอง
+      if (onWhRoute() && WH_REPAINT.includes(event.type) && !document.querySelectorAll("dialog[data-rf-dialog][open]").length && !window.MNP_BOM?.isEditing?.()) renderRoute();
       return;
     }
     // บันทึกการใช้งานโหลดเสร็จ: วาดใหม่เฉพาะเมื่อผู้ใช้ยังอยู่ที่หน้านั้นและไม่ได้แก้ฟอร์มอื่นค้าง
