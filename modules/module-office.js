@@ -26,7 +26,10 @@
   // โหมดทดสอบของ admin: เหลือเฉพาะใบแจ้งซ่อม IT กับใบสั่งงาน IT (ฐานข้อมูลแยกข้อมูลทดสอบให้แล้ว) HR ยังซ่อนเหมือนเดิม
   // isSandboxMode เป็นของ app.js (อ้างตอนเรียกใช้เท่านั้น)
   const inSandbox = () => typeof isSandboxMode === "function" && isSandboxMode();
-  const modeAllowed = (code) => deptModuleAllowed(code) && (!inSandbox() || code === sections.WORK_ORDER_CODE || code === sections.REPAIR_CODE);
+  // ทะเบียนอุปกรณ์ IT (IT_ASSET_REGISTER): นอกจากสิทธิ์แผนก ต้องเป็นผู้อยู่ใน allowlist ของโมดูล (window.MNP_ITAS.hasAccess = ผลของ app_itas_my_access ที่ resolveAccess ตรวจก่อนวาดหน้า) · ไม่มีผล/ล้ม = ซ่อน
+  const modeAllowed = (code) => deptModuleAllowed(code)
+    && (!inSandbox() || code === sections.WORK_ORDER_CODE || code === sections.REPAIR_CODE || code === sections.ASSET_CODE)
+    && (code !== sections.ASSET_CODE || Boolean(window.MNP_ITAS?.hasAccess?.()));
 
   // การ์ดของโมดูลที่ประกาศตัวเองใน window.MNP_OFFICE_CARDS[<รหัสโมดูล>] = { version, loadCardSummary } (วิธีเพิ่มโมดูลใหม่ดูหัวไฟล์ office-sections.js)
   // คืน { <รหัสโมดูล>: { version, inDevelopment, openCount, waiting, title } } (inDevelopment = ป้าย "กำลังพัฒนา" การ์ดยังกดเข้าได้) เฉพาะการ์ดที่ผู้ใช้เห็น (สิทธิ์แผนก/โหมดทดสอบ) · ไม่ประกาศ = ไม่มีรายการ การ์ดไม่แสดงป้าย
@@ -65,19 +68,23 @@
     const version = pageVersion;
     const section = sections.readSection(params);
     if (!section) return renderNotFound(); // ?module= ที่ไม่มีจริง = URL ที่ไม่มีอยู่
+    // สิทธิ์ทะเบียนอุปกรณ์ IT ตรวจที่ฐานข้อมูล (app_itas_my_access) ก่อนตัดสินว่าจะแสดงการ์ด/หน้านี้ · เรียกเฉพาะหน้าที่แสดงการ์ดนี้หรือเปิดหน้านี้ และเฉพาะแผนกที่การ์ดนี้ไม่ถูกจำกัดไว้ · ผลเก็บ 60 วินาที
+    if ([sections.HOME, "it-support", sections.ASSETS].includes(section) && deptModuleAllowed(sections.ASSET_CODE)) await window.MNP_ITAS?.resolveAccess?.();
     // ระบบที่แผนกนี้ไม่มีสิทธิ์ (หรือไม่เหลือระบบใดเลย) พากลับหน้าหลักเหมือน routeAllowed ของหน้าโมดูลอื่น ก่อนเรียกข้อมูลใด ๆ
     // หน้าใบแจ้งซ่อม IT / ใบสั่งงาน IT (ย่อยของ IT SUPPORT) ดูจากรหัสโมดูล IT_COMPUTER_REPAIR / IT_WORK_ORDER ของมันเอง · โหมดทดสอบพากลับหน้าเลือกระบบ (หน้าหลักไม่อยู่ในโหมดนี้)
     const visible = sections.visibleSections(modeAllowed);
     const hidden = section === sections.HOME ? visible.length === 0
       : section === sections.WORK_ORDER ? !sections.workOrderVisible(modeAllowed)
         : section === sections.REPAIR ? !sections.repairVisible(modeAllowed)
-          : !visible.some((item) => item.key === section);
+          : section === sections.ASSETS ? !sections.assetsVisible(modeAllowed)
+            : !visible.some((item) => item.key === section);
     if (hidden) {
       go(inSandbox() && visible.length ? "office" : "dashboard");
       return;
     }
     if (section === sections.WORK_ORDER) return window.MNP_ITWO.render(params);
     if (section === sections.REPAIR) return window.MNP_ITRP.render(params);
+    if (section === sections.ASSETS) return window.MNP_ITAS.render(params);
     if (section === sections.HOME) return paint(sections.chooserPage({ allowed: modeAllowed }), TITLE, version);
     if (section === "it-support") {
       loadingShell(PATH, TITLE);

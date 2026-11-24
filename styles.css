@@ -3845,3 +3845,63 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
   .lab-mdr-key { min-height: 28px; padding: 0 8px; }
   .lab-mdr-key small { display: none; }
 }
+
+/* ---------- ทะเบียนอุปกรณ์ IT (itas) · modules/itas-pages.js ---------- */
+.badge.itas-test-tag { color: var(--warning-ink); background: var(--warning-soft); border: 1px solid var(--warning); }
+.itas-head .itas-test-tag { margin-left: 10px; align-self: center; }
+.itas-dev-notice { margin: 0 0 14px; font-weight: 600; }
+.itas-version { margin: 24px 0 0; text-align: right; font-size: 12px; color: var(--muted, #6b7280); }
+.itas-purge-row { margin-top: 18px; display: flex; justify-content: flex-end; }
+/* แถบสถานะตู้เซฟ */
+.itas-vault-bar { margin: 0 0 14px; padding: 10px 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper); }
+.itas-vault-bar.is-unlocked { border-color: var(--primary); background: var(--primary-soft); }
+.itas-vault-state { display: inline-flex; align-items: center; gap: 6px; }
+.itas-vault-note { flex: 1 1 260px; min-width: 0; }
+.itas-vault-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.itas-vault-card { margin-bottom: 14px; border-color: var(--primary); }
+.itas-vault-card .form-actions { flex-wrap: wrap; justify-content: flex-start; }
+.itas-recovery-code { margin: 12px 0; padding: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 1.15rem; font-weight: 700; letter-spacing: .06em; text-align: center; overflow-wrap: anywhere; user-select: all; border: 2px dashed var(--primary); border-radius: var(--radius-md); background: var(--paper); }
+.itas-recovery-tools { margin-bottom: 12px; }
+.itas-strength { min-height: 1.4em; margin: -4px 0 8px; }
+/* รายการชนิด + ตาราง */
+.itas-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+.itas-main, .itas-types-card { min-width: 0; }
+@media (min-width: 960px) { .itas-layout { grid-template-columns: minmax(200px, 250px) minmax(0, 1fr); } .itas-types { max-height: 72vh; } }
+.itas-types-card h2 { margin-bottom: 10px; }
+.itas-types { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; max-height: 36vh; overflow-y: auto; }
+.itas-type { width: 100%; min-height: 44px; padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; font: inherit; color: inherit; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); cursor: pointer; }
+.itas-type:hover { border-color: var(--primary); }
+.itas-type:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.itas-type.is-selected { border-color: var(--primary); background: var(--primary-soft); font-weight: 700; }
+.itas-type.is-off { opacity: .6; }
+.itas-type-count { min-width: 2em; padding: 1px 8px; font-size: var(--text-meta); text-align: center; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; }
+.itas-toolbar { margin-bottom: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.itas-search { flex: 1 1 240px; margin: 0; }
+.itas-status-filter { margin: 0; }
+.itas-scroll { position: relative; border: 1px solid var(--line); border-radius: var(--radius-md); }
+.itas-table { width: 100%; min-width: 880px; border-collapse: collapse; font-size: var(--text-meta); }
+.itas-table th, .itas-table td { padding: 8px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--soft-line); overflow-wrap: anywhere; }
+.itas-table th { color: var(--muted); font-size: var(--text-caption); white-space: nowrap; }
+.itas-sort { padding: 4px 0; min-height: 32px; font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.itas-sort:hover { color: var(--primary); }
+.itas-row { cursor: pointer; }
+.itas-row:hover, .itas-row:focus-visible { background: var(--primary-soft); outline: none; }
+.itas-row.status-retired td { opacity: .65; }
+@media (max-width: 719px) { .itas-table { min-width: 720px; } }
+/* ฟอร์ม */
+.itas-form-card { margin-bottom: 16px; border-color: var(--primary); }
+.itas-form-card .form-actions { flex-wrap: wrap; justify-content: flex-start; }
+.itas-group { margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-md); min-width: 0; }
+.itas-group legend { padding: 0 6px; font-weight: 700; }
+.itas-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0 16px; }
+.itas-grid .itas-wide { grid-column: 1 / -1; }
+.itas-subhead { margin: 8px 0; font-size: var(--text-ui); }
+.itas-secret-mask { color: var(--muted); letter-spacing: .08em; }
+.itas-secret-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.itas-secret-line .input { flex: 1 1 180px; min-width: 0; }
+.itas-secret-shown { min-width: 4em; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+.itas-secret-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.itas-history { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--soft-line); }
+.itas-log { padding: 8px 0; border-top: 1px solid var(--soft-line); }
+.itas-log h4 { margin: 0 0 4px; font-size: var(--text-ui); }
+.itas-log ul { margin: 0; padding-left: 18px; }
