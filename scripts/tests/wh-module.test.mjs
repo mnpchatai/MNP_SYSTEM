@@ -11,7 +11,7 @@ const FILES = [
   "modules/rubberflow-rules.js", "modules/rubberflow-derive.js", "modules/rubberflow-actions.js", "modules/rubberflow-seed.js", "modules/rubberflow-store.js",
   "modules/rubberflow-ui.js", "modules/factory-kit.js", "modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js",
   "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js",
-  "modules/module-st.js", "modules/module-sr.js", "modules/module-qa.js", "modules/gr-pages.js", "modules/module-gr.js", "modules/module-pt.js", "modules/module-bg.js", "modules/module-pk.js", "modules/wh-pages.js", "modules/module-wh.js",
+  "modules/st-pages.js", "modules/module-st.js", "modules/module-sr.js", "modules/module-qa.js", "modules/gr-pages.js", "modules/module-gr.js", "modules/module-pt.js", "modules/module-bg.js", "modules/module-pk.js", "modules/wh-pages.js", "modules/module-wh.js",
 ];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 const read = (file) => fs.readFileSync(file, "utf8");
@@ -463,10 +463,10 @@ test("WH: a box label is reprinted from the lot page with the RubberFlow tag dia
   }
 });
 
-test("the old places keep no second copy: the order page in BOM has no receive, delivery, close or reverse controls; the RubberFlow finished-goods tab is one link; BOM's purchased-parts store page has no finished-goods table", async () => {
+test("the old places keep no second copy: the order page in BOM has no receive, delivery, close or reverse controls; the RubberFlow finished-goods tab is one link; the ST store has no finished-goods table", async () => {
   const env = whEnv("admin");
-  const ctx = env.context.MNP_BOM.context(new URLSearchParams("p=stock"));
-  const stock = env.context.MNP_BOM_PAGES.stock(ctx).html;
+  assert.equal(env.context.MNP_BOM_PAGES.stock, undefined, "BOM's purchased-parts page moved to the ST module");
+  const stock = await env.open("FACTORY_ST", "tab=stock");
   assert.doesNotMatch(stock, /สินค้าสำเร็จรูปคงคลัง|อยู่ในคลัง<\/th>|สต็อกสินค้าสำเร็จรูป<\/th>/, "the finished-goods stock list is the warehouse's");
   const source = (file) => fs.readFileSync(file, "utf8");
   const hub = source("modules/bom-hub.js");

@@ -20,6 +20,8 @@
     { id: "orders", label: "ใบสั่งผลิต", group: "วางแผน" },
     { id: "recipes", label: "สูตรยาง (BOM/PHR)", group: "วางแผน" },
     { id: "requisition", label: "เบิกเคมี", group: "สายการผลิต" },
+    // คลังเคมีของ RB (20261220010000): ยอดเคมีที่ RB รับจาก ST ต่อล็อต · ขอเบิก / คืนให้ ST · นับยอด (หัวหน้า RB / ฝ่ายวางแผน) · ใช้จริงเทียบสูตร
+    { id: "rbstore", label: "คลังเคมี RB", group: "สายการผลิต" },
     { id: "mixing", label: "1 · ผสมยาง", group: "สายการผลิต" },
     { id: "extrusion", label: "2 · ฉีดขึ้นรูป", group: "สายการผลิต" },
     { id: "curing", label: "3 · อบ HCM", group: "สายการผลิต" },
@@ -39,15 +41,15 @@
   const ROLES = Object.freeze({
     admin: { label: "ผู้ดูแลระบบ", modules: MODULE_IDS },
     manager: { label: "ผู้จัดการโรงงาน", modules: Object.freeze(MODULE_IDS.filter((id) => id !== "audit")) },
-    planner: { label: "ฝ่ายวางแผนการผลิต", modules: Object.freeze(["dashboard", "orders", "recipes", "wip", "trace", "warehouse"]) },
+    planner: { label: "ฝ่ายวางแผนการผลิต", modules: Object.freeze(["dashboard", "orders", "recipes", "rbstore", "wip", "trace", "warehouse"]) },
     store: { label: "เจ้าหน้าที่คลัง", modules: Object.freeze(["dashboard", "requisition", "warehouse", "wip", "trace"]) },
-    mixer: { label: "พนักงานผสมยาง", modules: Object.freeze(["dashboard", "requisition", "mixing", "wip"]) },
+    mixer: { label: "พนักงานผสมยาง", modules: Object.freeze(["dashboard", "requisition", "rbstore", "mixing", "wip"]) },
     extruder: { label: "พนักงานฉีดยาง", modules: Object.freeze(["dashboard", "extrusion", "wip", "molds"]) },
     curer: { label: "พนักงานอบยาง", modules: Object.freeze(["dashboard", "curing", "wip", "molds"]) },
     finisher: { label: "พนักงานตกแต่ง/บรรจุ", modules: Object.freeze(["dashboard", "finishing", "wip", "warehouse"]) },
     qc: { label: "วิศวกรควบคุมคุณภาพ", modules: Object.freeze(["dashboard", "recipes", "quality", "spc", "trace", "warehouse", "molds", "wip"]) },
     // บัญชีทดสอบของโหมดฐานข้อมูล (personaUser): พนักงานแผนก RB ทำงานสายผลิตทั้งสาย รวมรับมอบ WIP ระหว่างสถานี (20261204010000) · แผนก SR (คลังยางเส้นยาว) และแผนกอื่นดูได้อย่างเดียว
-    rb: { label: "พนักงานแผนก RB", modules: Object.freeze(["dashboard", "orders", "recipes", "requisition", "mixing", "extrusion", "curing", "finishing", "wip", "quality", "trace", "warehouse", "molds"]) },
+    rb: { label: "พนักงานแผนก RB", modules: Object.freeze(["dashboard", "orders", "recipes", "requisition", "rbstore", "mixing", "extrusion", "curing", "finishing", "wip", "quality", "trace", "warehouse", "molds"]) },
     sr: { label: "คลังยางเส้นยาว (SR) ดูอย่างเดียว", modules: Object.freeze(["dashboard", "wip", "trace", "warehouse"]) },
     warehouse: { label: "พนักงานคลังสินค้า (WH)", modules: Object.freeze(["dashboard", "warehouse", "wip", "trace"]) },
     viewer: { label: "ดูข้อมูลอย่างเดียว", modules: Object.freeze(["dashboard", "orders", "recipes", "wip", "trace", "warehouse"]) },
@@ -123,6 +125,8 @@
     receiveMaterial: "receiveMaterial", createRequisition: "createRequisition", transfer: "createTransfer", receive: "receiveTransfer", qcRecord: "addQcRecord", ncr: "createNcr",
     purchase: "createPurchaseOrder", receivePurchase: "receivePurchaseLine", closePurchase: "closePurchaseLine", skipRest: "endRest", returnRequisition: "returnRequisition",
     moldEdit: "saveMold", materialEdit: "saveMaterial", createOrder: "createOrder", recipeEdit: "saveRecipe", recipeNew: "createRecipe",
+    // คลังเคมี ST / RB (20261220010000): ขอเบิก คืน นับ (หน้าคลังเคมี RB) · จ่าย ปิดยอด ไม่รับคืน (โมดูล ST #/st)
+    chemRequest: "requestChemicals", chemReturn: "returnChemicals", rbCount: "countRbStock", chemIssue: "issueChemicals", chemClose: "closeChemicalRequest", chemReject: "rejectChemicalReturn",
   });
   const rightForAction = (name) => ACTION_RIGHT[name] ?? null;
   // คืนใบเบิกของ WO ที่ยกเลิก: สิทธิ์ขึ้นกับคลังของใบ (20261220010000) · ใบคลัง RB = กลุ่มวางแผน / RB (requestChem) · ใบเดิมคลัง ST = ST / admin (returnRequisition)

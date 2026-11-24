@@ -1944,19 +1944,21 @@
       }
       // ตรวจวัตถุดิบ: เทียบเคมีที่ WO ของใบนี้ต้องใช้กับสต็อกใน RubberFlow แล้วสั่งซื้อส่วนที่ขาด (dialog เดียวกับที่เด้งหลังปล่อยผลิต) · ผู้ที่สั่งซื้อได้ = ฝ่ายวางแผนหรือแผนก RB
       const checkWos = data.jobs.filter((job) => job.orderId === order.id && job.dept === "RB" && job.externalRef?.woId).map((job) => job.externalRef.woId);
-      // ของซื้อ: ST / ฝ่ายวางแผนเบิกจ่ายได้หลายครั้งจนครบ (dialog เลือกบรรทัดและจำนวน บอกที่ขาด) · ปุ่มตรวจวัตถุดิบเทียบเคมีของ WO และของซื้อที่ยังไม่เบิกจ่ายกับสต็อก
+      // ของซื้อ: เบิกจ่าย คืนของเหลือ และยกเลิกการเบิกจ่ายทำที่หน้าจ่ายออกของโมดูลคลังวัตถุดิบ (ST) ที่เดียว (โรงงานขั้น 3 · dialog ชุดเดียวกัน) ที่นี่เหลือลิงก์เดียวไปที่ใบนี้ในหน้านั้น
+      // ลิงก์เฉพาะผู้ที่เบิกจ่ายได้ (ST / ฝ่ายวางแผน) และเปิดโมดูล ST ได้ (ผู้จัดการแผนกอื่นที่อยู่ในกลุ่มวางแผนไม่เห็นโมดูล ST จึงไม่มีลิงก์) · ปุ่มตรวจวัตถุดิบเทียบเคมีของ WO และของซื้อที่ยังไม่เบิกจ่ายกับสต็อก
       const openOrder = ["released", "in_progress"].includes(order.status);
       const partsLeft = ctx.helpers.partIssuePlan(data, order.id).lines.length;
-      if (openOrder && partsLeft && ctx.helpers.canIssueParts(user)) main("issue", ui.openButton("เบิกจ่ายของซื้อ", "issueParts", { orderId: order.id }, { className: "" }));
-      // คืนของซื้อ: เมื่อมีของที่เบิกจ่ายแล้ว (ครบหรือบางส่วน · ST / ฝ่ายวางแผน) · คืนของเหลือได้จนกว่าใบจะถูกยกเลิก (รวมใบที่ปิดแล้ว) · ยกเลิกการเบิกจ่ายได้เฉพาะใบที่ยังไม่ปิด
-      // คืนของเหลือแสดงเมื่อยังมีบรรทัดที่คืนได้ (บรรทัดที่ยังเบิกไม่ครบของใบที่ยังเปิดคืนของเหลือไม่ได้ · ใบที่ปิดแล้วคืนได้ทุกบรรทัดที่เบิกไป) · ยกเลิกการเบิกจ่ายยังแสดง เพราะพางานกลับเป็นรอเบิกได้แม้ไม่มีอะไรคืนเข้าสต็อก
       const returnLines = rules.partReturnLines(data, order.id);
-      if (returnLines.length && ctx.helpers.canIssueParts(user)) {
-        if (returnLines.some((line) => !line.partial && line.returnable > 0)) {
-          const back = ui.openButton("คืนของเหลือ", "returnParts", { orderId: order.id }, { className: order.status === "cancelled" ? "" : "secondary" });
-          if (order.status === "cancelled") main("returnParts", back); else buttons.push(back);
-        }
-        if (openOrder) buttons.push(ui.openButton("ยกเลิกการเบิกจ่าย", "undoParts", { orderId: order.id }, { className: "secondary" }));
+      const stFull = typeof state !== "undefined" && root.MNP_ST_PAGES?.access?.(state.employee) === "full";
+      // ใบที่ยังเปิด: มีของรอเบิก หรือเบิกไปแล้ว (คืน / ยกเลิกการเบิกจ่าย) · ใบที่ปิดหรือยกเลิกแล้ว: ยังมีบรรทัดที่คืนของเหลือได้
+      const leftover = returnLines.some((line) => !line.partial && line.returnable > 0);
+      const partWork = (openOrder && (partsLeft || returnLines.length)) || (!openOrder && leftover);
+      if (partWork && stFull && ctx.helpers.canIssueParts(user)) {
+        const href = root.MNP_FACTORY.routeUrl("st", { tab: "issue", order: order.id });
+        const link = ui.link(openOrder ? "เบิกจ่ายที่คลังวัตถุดิบ (ST)" : "คืนของเหลือที่คลังวัตถุดิบ (ST)", href, `btn rf-btn${(openOrder && partsLeft) || order.status === "cancelled" ? "" : " secondary"}`);
+        if (order.status === "cancelled") main("returnParts", link);
+        else if (openOrder && partsLeft) main("issue", link);
+        else buttons.push(link);
       }
       if (openOrder && (checkWos.length || partsLeft) && ctx.rubberflow() && (pages.hub?.rfCan ? pages.hub.rfCan(ctx, "purchase") || pages.hub.rfCan(ctx, "viewPurchase") : ctx.helpers.canLinkRubberflow(user, { dept: "RB" }))) main("check", `<button class="btn rf-btn secondary" type="button" data-bom-rf-check data-bom-order="${attr(order.id)}" data-bom-wos="${attr(JSON.stringify(checkWos))}" title="เทียบเคมีที่ WO ของใบนี้ต้องใช้และของซื้อที่ยังไม่เบิกจ่ายกับสต็อก (สั่งซื้อโดยคลังวัตถุดิบ ST)">ตรวจวัตถุดิบ</button>`);
       if (!["completed", "cancelled"].includes(order.status) && canPlan) {
@@ -2394,9 +2396,8 @@
   };
 
 
-  // ---------- คลังของซื้อ ----------
-  // ยอดคงเหลือหนึ่งแถวต่อรหัสของซื้อ (ไม่มีล็อต ไม่มีวันหมดอายุ) · ยอดตั้งต้นมาจาก ST/WH นับที่หน้านี้ แล้วเพิ่มจากการรับเข้าตามใบสั่งซื้อ (RubberFlow) และลดจากการเบิกจ่ายของใบ PI
-  // คอลัมน์: คงเหลือ (นับได้ที่นี่) · จองแล้ว = ใบ PI ที่ปล่อยผลิตแล้วยังไม่เบิกจ่าย · สั่งค้างรับ = ใบสั่งซื้อที่ยังไม่รับ (ต้องโหลด RubberFlow) · สต็อกขั้นต่ำ (ฝ่ายวางแผนแก้)
+  // ---------- ของซื้อ ----------
+  // ยอดคงเหลือหนึ่งแถวต่อรหัสของซื้อ (ไม่มีล็อต ไม่มีวันหมดอายุ) · ใบสั่งซื้อของ RubberFlow ที่ยังไม่รับ = สั่งค้างรับ (ต้องโหลด RubberFlow)
   const rfPurchaseOrdersOf = (ctx) => {
     const store = rfStore(ctx);
     if (!store) return null;
@@ -2406,39 +2407,8 @@
     }
     try { return store.data().purchaseOrders ?? []; } catch { return null; }
   };
-  const STOCK_PAGE = 100;
-  pages.stock = (ctx) => {
-    const { data, ui, rules, user, params } = ctx;
-    const canCount = ctx.helpers.canCount(user);
-    const canSafety = ctx.helpers.canSetSafety(user);
-    const limit = Math.max(STOCK_PAGE, Math.min(5000, Number(params.get("n")) || STOCK_PAGE));
-    const stockOf = new Map((data.stock ?? []).map((row) => [row.itemCode, row]));
-    const list = data.items.filter((item) => item.kind === "PURCHASED" && (item.active !== false || stockOf.has(item.code)) && includes(`${item.code} ${item.name}`, ctx.q)).sort((a, b) => a.code.localeCompare(b.code));
-    const reserved = rules.partReserved(data.jobs, data.orders);
-    const purchaseOrders = rfPurchaseOrdersOf(ctx);
-    const onOrder = purchaseOrders ? rules.partOnOrder(purchaseOrders) : null;
-    const fmt = (value) => esc(rules.fmtQty(value));
-    const rowHtml = (item) => {
-      const row = stockOf.get(item.code);
-      const unit = esc(uomText(ctx, item.uom));
-      const qtyCell = canCount
-        ? `<label class="bom-count-input"><span class="sr-only">${esc(`ยอดคงเหลือ ${item.code}`)}</span><input class="input rf-input" name="qty[]" type="number" inputmode="decimal" step="any" min="0" value="${attr(row?.qty ?? "")}" placeholder="—"><span class="small muted">${unit}</span></label>`
-        : `${fmt(row?.qty ?? 0)} <span class="small muted">${unit}</span>`;
-      const safetyCell = canSafety
-        ? `<label class="bom-count-input"><span class="sr-only">${esc(`สต็อกขั้นต่ำ ${item.code}`)}</span><input class="input rf-input" name="safetyQty[]" type="number" inputmode="decimal" step="any" min="0" value="${attr(row?.safetyQty ?? 0)}"></label>`
-        : fmt(row?.safetyQty ?? 0);
-      return `<tr><td>${ui.mono(item.code)}<input type="hidden" name="itemCode[]" value="${attr(item.code)}"><div class="small muted">${esc(item.name)}${row?.countedAt ? ` · นับล่าสุด ${esc(rules.fmtDate(row.countedAt))} โดย ${esc(row.countedBy)}` : ""}</div></td><td class="right">${qtyCell}</td><td class="right rf-mono">${fmt(reserved.get(item.code) || 0)}</td><td class="right rf-mono">${onOrder ? fmt(onOrder.get(item.code) || 0) : '<span class="muted">—</span>'}</td><td class="right">${safetyCell}</td><td class="right">${ui.openButton("ประวัติ", "partHistory", { code: item.code }, { className: "secondary small", ariaLabel: `ประวัติ ${item.code}` })}</td></tr>`;
-    };
-    const shown = list.slice(0, limit);
-    const more = list.length > shown.length ? `<div class="rf-row">${ui.link(`แสดงเพิ่ม (อีก ${list.length - shown.length})`, ctx.url("stock", { q: ctx.q || null, n: limit + STOCK_PAGE }), "btn rf-btn secondary small")}</div>` : "";
-    const table = ui.table(["ของซื้อ", { label: "คงเหลือ", className: "right" }, { label: "จองแล้ว", className: "right", title: "ใบสั่งผลิตที่ปล่อยผลิตแล้วและยังไม่ได้เบิกจ่ายต้องใช้" }, { label: "สั่งค้างรับ", className: "right", title: "ใบสั่งซื้อ (RubberFlow) ที่ยังไม่ได้รับเข้า" }, { label: "สต็อกขั้นต่ำ", className: "right", title: "ใช้เป็นค่าเริ่มของจำนวนสั่งตอนสั่งซื้อ" }, ""], shown.map(rowHtml), { emptyText: ctx.q ? "ไม่พบของซื้อที่ค้นหา" : "ยังไม่มีของซื้อในทะเบียนชิ้นงาน" });
-    const body = canCount && shown.length
-      ? `<form novalidate data-rf-form="countPartStock" data-rf-success="บันทึกยอดที่นับ {result}" class="bom-count-form">${table}<div class="bom-count-save"><button class="btn rf-btn" type="submit">บันทึกยอดที่นับ</button></div></form>`
-      : table;
-    const html = `${head(ctx, "คลังของซื้อ", "ยอดคงเหลือของชิ้นส่วนที่ซื้อ (กล่อง ถุง สติ๊กเกอร์ ฯลฯ) ST/WH นับได้ที่นี่ · ยอดลดเมื่อ ST เบิกจ่ายของใบสั่งผลิต และเพิ่มเมื่อรับเข้าตามใบสั่งซื้อ", searchForm(ctx, "ค้นหารหัสหรือชื่อของซื้อ…"))}
-      ${ui.card(`${body}${more}`, { flush: true })}`;
-    return { html };
-  };
+  // หน้าคลังของซื้อ (นับ สต็อกขั้นต่ำ ประวัติ ค้นหา) อยู่ที่โมดูลคลังวัตถุดิบ (ST) #/st ที่เดียว (modules/st-pages.js · โรงงานขั้น 3) · ลิงก์เก่า p=stock เปลี่ยนที่อยู่ไปที่นั่น (module-bom.js)
+  // dialog ประวัติ / เบิกจ่าย / คืน / ยกเลิกการเบิกจ่ายด้านล่างยังเป็นชุดเดียวที่โมดูล ST เปิดผ่านตัวผูกของหน้าแผนก
   dialogs.partHistory = (ctx, { code }) => {
     const { ui, rules } = ctx;
     const item = itemOf(ctx, code);
@@ -2562,12 +2532,17 @@
     const mixedReqs = reqs.filter((req) => req.status === "consumed");
     return { linked, stopped, done, woText, issuedReqs, mixedReqs };
   };
+  // เคมีที่เบิกไปแล้วของ WO ที่จะถูกยกเลิก: ใบเดิมของคลัง ST = ST รับคืนเข้าล็อตเดิม · ใบเบิกคลัง RB (20261220010000) = แผนก RB คืนเข้าคลังเคมี RB ที่หน้าเบิกเคมี · "" = ไม่มี
+  const chemBackText = (reqs) => {
+    const ids = (store) => reqs.filter((req) => (req.store === "RB" ? "RB" : "ST") === store).map((req) => req.id).join(", ");
+    return [ids("ST") ? `เคมีที่เบิกไปแล้ว (${ids("ST")}) คลังวัตถุดิบ (ST) จะได้งานรับคืนเข้าล็อตเดิม` : "", ids("RB") ? `เคมีที่เบิกไปแล้ว (${ids("RB")}) แผนก RB คืนเข้าคลังเคมี RB ล็อตเดิมที่หน้าเบิกเคมี` : ""].filter(Boolean).join(" · ");
+  };
   // ข้อความต่อท้ายกล่องแก้/ลบสินค้าของใบที่ปล่อยผลิตแล้ว: WO ที่จะถูกยกเลิก (ถ้ามี) และเคมีที่เบิกไปแล้ว (ถ้ามี) · ไม่มี WO = ว่าง
   const reopenRfText = (ctx, order) => {
     if (!order || order.status === "draft") return "";
     const { stopped, woText, issuedReqs } = rfLinkedInfo(ctx, order);
     if (!stopped.length) return "";
-    const chem = issuedReqs.length ? ` · เคมีที่เบิกไปแล้ว (${issuedReqs.map((req) => req.id).join(", ")}) คลังวัตถุดิบ (ST) จะได้งานรับคืนเข้าล็อตเดิม` : "";
+    const chem = issuedReqs.length ? ` · ${chemBackText(issuedReqs)}` : "";
     return ` WO ใน RubberFlow ที่จะถูกยกเลิกหรือหยุด: ${stopped.map(woText).join(", ")}${chem}`;
   };
   dialogs.orderCancel = (ctx, { orderId }) => {
@@ -2585,8 +2560,8 @@
     const lines = [
       stopped.length ? `WO ใน RubberFlow ที่จะถูกยกเลิกหรือหยุด: ${stopped.map(woText).join(", ")}` : "",
       done.length ? `WO ที่ปิดแล้วคงเดิม: ${done.map(woText).join(", ")}` : "",
-      issuedReqs.length ? `เคมีที่เบิกไปแล้ว (${issuedReqs.map((req) => req.id).join(", ")}) คลังวัตถุดิบ (ST) จะได้งานรับคืนเข้าล็อตเดิม` : "",
-      parts.length ? `ของซื้อที่เบิกจ่ายไปแล้ว (${parts.map((line) => `${line.itemCode} × ${rules.fmtQty(line.returnable)}`).join(", ")}) คืนเข้าสต็อกด้วยปุ่ม “คืนของเหลือ” ของใบนี้หลังยกเลิก` : "",
+      issuedReqs.length ? chemBackText(issuedReqs) : "",
+      parts.length ? `ของซื้อที่เบิกจ่ายไปแล้ว (${parts.map((line) => `${line.itemCode} × ${rules.fmtQty(line.returnable)}`).join(", ")}) คืนเข้าสต็อกที่หน้าจ่ายออกของคลังวัตถุดิบ (ST) หลังยกเลิก` : "",
       received.length ? `สินค้าสำเร็จรูปที่รับเข้าคลังแล้ว (${received.map((product) => `${product.fgCode} × ${rules.fmtQty(product.own)}`).join(", ")}) อยู่ในคลังต่อเป็นสต็อกสินค้าสำเร็จรูป ใบอื่นใช้ได้` : "",
       fgLock.took.length ? fgReturnText(ctx, fgLock).trim() : "",
       poNote,
@@ -2617,7 +2592,7 @@
       const canWork = ctx.helpers.canWorkJob(user, job) && ["released", "in_progress"].includes(order?.status) && !part;
       const buttons = [];
       // ใบที่ปิดแล้วเบิกจ่ายไม่ได้ (บรรทัดที่เบิกไม่ครบคืนของเหลือได้ที่หน้าใบ) จึงไม่ชี้ไปเบิก
-      if (part && job.status !== "done" && ["released", "in_progress"].includes(order?.status) && ctx.helpers.canIssueParts(user)) buttons.push(ui.link("เบิกจ่ายที่ใบ PI", ctx.url("orders", { sel: job.orderId }), "btn rf-btn secondary small"));
+      if (part && job.status !== "done" && ["released", "in_progress"].includes(order?.status) && ctx.helpers.canIssueParts(user) && typeof state !== "undefined" && root.MNP_ST_PAGES?.access?.(state.employee) === "full") buttons.push(ui.link("เบิกจ่ายที่คลังวัตถุดิบ (ST)", root.MNP_FACTORY.routeUrl("st", { tab: "issue", order: job.orderId }), "btn rf-btn secondary small"));
       // งานที่พักอยู่รายงานผลไม่ได้ ต้องกด "ทำต่อ" / "คืนคิว" (ปุ่มถัดไป) ก่อน
       // งาน GR ที่ตั้งขั้นตอนแล้ว: ยอดมาจาก "บันทึกผลรายวัน" ของโมดูล GR (#/gr) ไม่มีปุ่มรายงานผล
       if (canWork && job.status !== "done" && job.status !== "hold" && !(job.dept === "GR" && ctx.helpers.isGrPlanned?.(data, job))) buttons.push(ctx.helpers.isLinkedJob?.(job) ? LINKED_NOTE : ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "small" }));

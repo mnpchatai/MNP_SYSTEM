@@ -111,7 +111,7 @@
     const listHtml = list.map((requisition) => {
       const left = requisition.lines.filter((line) => line.actualKg === null).length;
       const returnState = rules.requisitionReturnState?.(data, requisition);
-      const stateBadge = returnState === "pending" ? ui.badge("warn", "WO ถูกยกเลิก · รอ ST รับคืน") : returnState === "returned" ? ui.badge("good", "รับคืนแล้ว") : ui.status(requisition.status);
+      const stateBadge = returnState === "pending" ? ui.badge("warn", rules.requisitionStore(requisition) === "RB" ? "WO ถูกยกเลิก · รอคืนเข้าคลัง RB" : "WO ถูกยกเลิก · รอ ST รับคืน") : returnState === "returned" ? ui.badge("good", "รับคืนแล้ว") : ui.status(requisition.status);
       return `<a class="rf-list-item${requisition.id === selected?.id ? " is-selected" : ""}" href="${esc(ctx.pageUrl({ sel: requisition.id }))}"${requisition.id === selected?.id ? ' aria-current="true"' : ""}><div class="rf-row rf-between"><strong class="rf-mono">${esc(requisition.id)}</strong>${stateBadge}</div><div class="small muted">${esc(`${requisition.orderId} · ${requisition.batches} ชุดผสม · ${fmtNum(requisition.totalKg, 1)} kg${left ? ` · ค้างจ่าย ${left}/${requisition.lines.length}` : ""}`)}</div></a>`;
     }).join("");
 
@@ -122,7 +122,11 @@
       const parts = [];
       const returnState = rules.requisitionReturnState?.(data, selected);
       if (returnState === "pending") {
-        parts.push(ui.callout("warn", `<div class="rf-row rf-between"><span>${esc(`WO ${selected.orderId} ถูกยกเลิก เคมีที่จ่ายไปแล้วยังไม่ได้ผสม รอคลังวัตถุดิบ (ST) รับคืนเข้าล็อตเดิม`)}</span>${ctx.can("returnRequisition") ? ui.openButton("รับคืนเคมี", "returnRequisition", { id: selected.id }, { className: "small" }) : ""}</div>`));
+        // ใบเบิกคลัง RB (20261220010000): RB / ฝ่ายวางแผนคืนเข้าคลัง RB ล็อตเดิม · ใบเดิมของคลัง ST: ST รับคืน (สิทธิ์ตามคลังของใบ rightForRequisitionReturn)
+        const rbStore = rules.requisitionStore(selected) === "RB";
+        const right = root.MNP_RUBBERFLOW_STORE?.rightForRequisitionReturn?.(selected) ?? "returnRequisition";
+        const button = ctx.can(right) ? ui.openButton(rbStore ? "คืนเข้าคลัง RB" : "รับคืนเคมี", "returnRequisition", { id: selected.id }, { className: "small" }).replace("<button ", `<button data-rf-right="${esc(right)}" `) : "";
+        parts.push(ui.callout("warn", `<div class="rf-row rf-between"><span>${esc(rbStore ? `WO ${selected.orderId} ถูกยกเลิก เคมีที่จ่ายไปแล้วยังไม่ได้ผสม คืนเข้าคลังเคมี RB ล็อตเดิม` : `WO ${selected.orderId} ถูกยกเลิก เคมีที่จ่ายไปแล้วยังไม่ได้ผสม รอคลังวัตถุดิบ (ST) รับคืนเข้าล็อตเดิม`)}</span>${button}</div>`));
       }
       const returnedNote = returnState === "returned" ? selected.lines.find((line) => line.returnedAt) : null;
       // ใบเก่าของ WO ที่ยกเลิก (รอรับคืนหรือรับคืนแล้ว) ไม่มีปุ่มเบิกทั้งใบ: เบิกต่อหลังรับคืนจะหักสต็อกที่คืนอีกไม่ได้ (ฝั่งเซิร์ฟเวอร์ยังไม่ปฏิเสธ = งานต่อ)
@@ -170,9 +174,10 @@
       const orderSelect = dialog.querySelector("[data-rf-order]");
       if (!orderSelect) return;
       const batches = dialog.querySelector("[data-rf-batches]");
-      const mayBuy = ctx.can("purchase") && typeof (bindCtx ?? ctx).openDialog === "function";
+      // คลังเคมี RB ไม่พอ (20261220010000): ขอเบิกส่วนที่ขาดจาก ST (หน้าต่างขอเบิกเติมจำนวนให้) · ST เป็นผู้สั่งซื้อเมื่อคลัง ST ไม่พอ
+      const mayRequest = ctx.can("requestChem") && typeof (bindCtx ?? ctx).openDialog === "function";
+      const reserved = rules.weighingReservedKg(data.requisitions, "RB", { remote: ctx.store.isRemote() });
       let shortRows = [];
-      let shortNote = "";
       const paint = () => {
         const order = data.orders.find((row) => row.id === orderSelect.value);
         const recipe = order && rules.recipeOf(data.recipes, order.recipeId, order.recipeRevision);
@@ -181,25 +186,22 @@
         // เหลือเกิน 10 batch: ใบนี้เบิกได้ 10 ที่เหลือเบิกเป็นใบถัดไป (บอกใน title ไม่เพิ่มข้อความถาวร)
         const left = order && recipe ? rules.remainingBatches(order, recipe, data.requisitions) : 0;
         batches.title = left > n ? `ใบนี้เบิกได้สูงสุด ${n} ชุดผสม · เหลืออีก ${left - n} ชุดผสม ต้องเบิกเป็นใบถัดไป` : "";
-        const preview = recipe ? recipeLines(recipe).map((line) => ({ ...line, need: line.kgPerBatch * n, ...allocateFefo(data.materialLots, line.materialCode, line.kgPerBatch * n, now) })) : [];
+        const preview = recipe ? recipeLines(recipe).map((line) => ({ ...line, need: line.kgPerBatch * n, ...allocateFefo(data.materialLots, line.materialCode, line.kgPerBatch * n, now, reserved, "RB") })) : [];
         const short = preview.some((row) => row.shortage > 0.0001);
-        // ปุ่ม "สั่งซื้อส่วนที่ขาด" ส่งวัตถุดิบที่ขาดเข้า dialog สั่งซื้อ โดยคำนวณคอลัมน์เดียวกับทางเข้าอื่น (rules.chemicalNeeds): ขาด = ต้องใช้ − (คงเหลือ − จองแล้ว + สั่งค้างรับ)
-        // ความต้องการ = ของใบเบิกนี้ (n batch) · ใบเบิกเก่าของ WO เดียวกันที่ค้างจ่ายยังนับเป็นจองแล้ว และที่สั่งค้างรับหักออกจากจำนวนสั่ง
-        const shortCodes = new Set(preview.filter((row) => row.shortage > 0.0001).map((row) => row.materialCode));
-        shortRows = order && recipe && shortCodes.size
-          ? rules.chemicalNeeds(data, [order.id], now, { remote: ctx.store.isRemote(), needKg: { [order.id]: recipe.batchKg * n } }).rows.filter((row) => shortCodes.has(row.materialCode))
-          : [];
-        shortNote = order ? `ขาดจากใบเบิกของ ${order.id} (${n} batch)` : "";
+        // ปุ่ม "ขอเบิกจาก ST" เปิดหน้าต่างขอเบิกพร้อมจำนวนที่คลัง RB ขาดของใบเบิกนี้ (รวมต่อวัตถุดิบ)
+        const shortBy = new Map();
+        for (const row of preview) if (row.shortage > 0.0001) shortBy.set(row.materialCode, (shortBy.get(row.materialCode) ?? 0) + row.shortage);
+        shortRows = [...shortBy].map(([materialCode, qtyKg]) => ({ materialCode, qtyKg }));
         dialog.querySelector("[data-rf-recipe-line]").textContent = recipe ? `สูตร ${rules.recipeLabel(recipe)} · น้ำหนักรวม ${fmtNum(recipe.batchKg * n, 2)} kg` : "";
-        dialog.querySelector("[data-rf-shortage]").innerHTML = short ? ui.callout("bad", `<div>สต็อกพร้อมใช้ไม่พอ (ไม่นับล็อตหมดอายุหรือกักกัน)</div>${mayBuy ? '<button class="btn rf-btn secondary small" type="button" data-rf-po-short>สั่งซื้อส่วนที่ขาด</button>' : "<div>แจ้งคลังวัตถุดิบ (ST) ให้สั่งซื้อ คลังวัตถุดิบเห็นรายการที่ขาดในแท็บใบสั่งซื้อของหน้าคลัง</div>"}`) : "";
+        dialog.querySelector("[data-rf-shortage]").innerHTML = short ? ui.callout("bad", `<div>คลังเคมี RB มีพร้อมใช้ไม่พอ (ไม่นับล็อตหมดอายุหรือกักกัน)</div>${mayRequest ? '<button class="btn rf-btn secondary small" type="button" data-rf-po-short>ขอเบิกจาก ST</button>' : "<div>ให้แผนก RB ขอเบิกจาก ST ก่อน</div>"}`) : "";
         dialog.querySelector("[data-rf-preview]").innerHTML = ui.table(["วัตถุดิบ", "ขั้น", { label: "ต้องใช้ (kg)", className: "right" }, "ล็อตที่ระบบจะจ่าย (FEFO)"], preview.map((row) => `<tr><td class="rf-mono">${esc(row.materialCode)}</td><td class="nowrap">${esc(`ขั้น ${row.stage}`)}</td><td class="right rf-mono">${esc(fmtNum(row.need, 3))}</td><td class="small">${row.picks.map((pick) => `<div class="rf-mono">${esc(`${pick.lotNo} → ${pick.kg.toFixed(3)} kg`)}</div>`).join("")}${row.shortage > 0.0001 ? ui.badge("bad", `ขาด ${row.shortage.toFixed(2)} kg`) : ""}</td></tr>`), { emptyText: "เลือกใบสั่งผลิตก่อน" });
         if (submit) submit.disabled = !order || short;
       };
       orderSelect.addEventListener("change", paint);
-      // ปุ่มอยู่ในกล่องที่วาดซ้ำทุกครั้ง จึงผูกที่กล่อง: เปิด dialog สั่งซื้อพร้อมส่วนที่ขาดของใบเบิกนี้ (แทน dialog นี้)
+      // ปุ่มอยู่ในกล่องที่วาดซ้ำทุกครั้ง จึงผูกที่กล่อง: เปิดหน้าต่างขอเบิกจาก ST พร้อมส่วนที่ขาดของใบเบิกนี้ (แทน dialog นี้)
       dialog.querySelector("[data-rf-shortage]").addEventListener("click", (event) => {
         if (!event.target?.closest?.("[data-rf-po-short]")) return;
-        (bindCtx ?? ctx).openDialog?.("purchase", { rows: shortRows, note: shortNote });
+        (bindCtx ?? ctx).openDialog?.("chemRequest", { rows: shortRows });
       });
       paint();
     };
@@ -222,12 +224,141 @@
         : `<input type="hidden" name="issuedKg[]" value="0"><input type="hidden" name="returnedKg[]" value="0"><span class="muted">—</span>`;
       return `<tr><td class="rf-mono">${esc(line.materialCode)}</td><td class="rf-mono small">${esc(line.lotNo)}${state === "expired" || state === "hold" ? ` ${ui.badge("warn", state === "expired" ? "หมดอายุแล้ว" : "กักกัน")}` : ""}<div class="small muted">${esc(lot ? `หมดอายุ ${fmtDate(lot.expiry)}` : "ไม่พบล็อต")}</div></td><td class="right rf-mono">${esc(fmtNum(issued, 3))}</td><td class="right">${control}</td></tr>`;
     });
-    const body = `${ui.callout("info", "ยอดที่คืนบวกเข้าล็อตเดิมของแต่ละบรรทัด ล็อตคงวันหมดอายุและสถานะเดิม ล็อตที่หมดอายุแล้วยังใช้เบิกไม่ได้ (ระบบจ่ายตาม FEFO ข้ามล็อตนั้น)")}
+    const rbStore = rules.requisitionStore(requisition) === "RB";
+    const right = root.MNP_RUBBERFLOW_STORE?.rightForRequisitionReturn?.(requisition) ?? "returnRequisition";
+    const body = `${ui.callout("info", rbStore ? "ยอดที่คืนบวกเข้าคลังเคมี RB ของล็อตเดิมแต่ละบรรทัด ล็อตคงวันหมดอายุและสถานะเดิม ใบเบิกผสมใบต่อไปจ่ายตาม FEFO จากคลัง RB" : "ยอดที่คืนบวกเข้าล็อตเดิมของแต่ละบรรทัด ล็อตคงวันหมดอายุและสถานะเดิม ล็อตที่หมดอายุแล้วยังใช้เบิกไม่ได้ (ระบบจ่ายตาม FEFO ข้ามล็อตนั้น)")}
       ${ui.table(["วัตถุดิบ", "ล็อตเดิม", { label: "จ่ายไป (kg)", className: "right" }, { label: "คืนจริง (kg)", className: "right", title: "ไม่มีของคืนใส่ 0" }], rows)}
       ${ui.field("เหตุผล (จำเป็นเมื่อคืนไม่ครบ)", ui.input("note", { placeholder: "เช่น หกระหว่างขนย้าย", extra: 'maxlength="300"' }))}`;
-    const html = ui.dialog("returnRequisition", `รับเคมีคืน · ${requisition.id}`, `<form novalidate data-rf-form="returnRequisition" data-rf-args='${esc(JSON.stringify({ id: requisition.id }))}' data-rf-success="รับเคมีคืนตามใบเบิก {result} แล้ว" id="rf-return-req">${body}</form>`, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-return-req">รับคืนเข้าคลัง</button>` });
+    const html = ui.dialog("returnRequisition", `${rbStore ? "คืนเข้าคลัง RB" : "รับเคมีคืน"} · ${requisition.id}`, `<form novalidate data-rf-form="returnRequisition" data-rf-right="${esc(right)}" data-rf-args='${esc(JSON.stringify({ id: requisition.id }))}' data-rf-success="${rbStore ? "คืนเคมีของใบเบิก {result} เข้าคลัง RB แล้ว" : "รับเคมีคืนตามใบเบิก {result} แล้ว"}" id="rf-return-req">${body}</form>`, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-return-req">${rbStore ? "คืนเข้าคลัง RB" : "รับคืนเข้าคลังวัตถุดิบ (ST)"}</button>` });
     return { html };
   };
+
+  // ---------- คลังเคมีของ RB (20261220010000) ----------
+  // ยอดเคมีที่ RB รับจาก ST ต่อล็อต (rbKg) · ใบขอเบิกจาก ST และใบคืนให้ ST พร้อมสถานะ · นับ / ปรับยอด (ผู้จัดการแผนก RB / ฝ่ายวางแผน: สิทธิ์ countRb) · ใช้จริงเทียบสูตร (rules.rbUsage)
+  // ใบเบิกผสม (หน้าเบิกเคมี) ตัดคลังนี้ตามล็อต FEFO · ST จ่ายและรับคืนที่โมดูลคลังวัตถุดิบ (ST) #/st · RB ดูเคมีในคลัง ST ได้อย่างเดียวที่นั่น
+  // สถานะของเอกสารคลังเคมี: ข้อความชุดเดียวกันทั้งหน้านี้และโมดูล ST (MNP_RUBBERFLOW_VIEWS.chemStatus)
+  const CHEM_STATUS = Object.freeze({
+    request: { open: ["warn", "รอ ST จ่าย"], partial: ["warn", "ST จ่ายบางส่วน"], done: ["good", "จ่ายครบแล้ว"], closed: ["", "ST ปิดยอดที่เหลือแล้ว"], cancelled: ["", "ยกเลิกแล้ว"] },
+    return: { pending: ["warn", "รอ ST รับคืน"], received: ["good", "ST รับคืนแล้ว"], rejected: ["bad", "ST ไม่รับคืน (กลับคลัง RB)"] },
+    count: { done: ["good", "นับแล้ว"] },
+  });
+  const chemStatus = (ui, doc) => { const [tone, text] = CHEM_STATUS[doc?.kind]?.[doc?.status] ?? ["", doc?.status ?? ""]; return ui.badge(tone, text); };
+  const kgText = (rules, kg) => `${rules.fmtNum(Number(kg) || 0, 3)} kg`;
+  const materialName = (data, code) => data.materials.find((row) => row.code === code)?.name ?? "";
+  // บรรทัดของใบขอเบิก: ขอ / จ่ายแล้ว · ใบคืน: ล็อต kg · ใบนับ: ก่อน → นับได้ · ไม่เกิน 5 บรรทัด ที่เหลือบอกจำนวน
+  const DOC_LINES = 5;
+  function chemDocLines(ctx, doc) {
+    const { rules } = ctx;
+    const list = doc.lines ?? [];
+    const line = (row) => (doc.kind === "request"
+      ? `<li><span class="rf-mono">${esc(row.materialCode)}</span> <span class="nowrap">${esc(Number(row.issuedKg) > 0 ? `จ่ายแล้ว ${rules.fmtNum(row.issuedKg, 3)} จาก ${kgText(rules, row.qtyKg)}` : kgText(rules, row.qtyKg))}</span></li>`
+      : doc.kind === "return" ? `<li><span class="rf-mono">${esc(row.lotNo)}</span> <span class="nowrap">${esc(kgText(rules, row.kg))}</span></li>`
+      : `<li><span class="rf-mono">${esc(row.lotNo)}</span> <span class="nowrap">${esc(`${rules.fmtNum(row.beforeKg, 3)} → ${kgText(rules, row.countedKg)}`)}</span></li>`);
+    return `<ul class="bom-job-parts">${list.slice(0, DOC_LINES).map(line).join("")}</ul>${list.length > DOC_LINES ? `<p class="small muted">${esc(`อีก ${list.length - DOC_LINES} รายการ`)}</p>` : ""}`;
+  }
+  // เวลา ผู้ทำ หมายเหตุ และเหตุผลของเอกสาร (บรรทัดเล็กใต้เลขที่)
+  const chemDocMeta = (ctx, doc) => `<div class="small muted">${esc([ctx.rules.fmtDateTime(doc.createdAt), doc.createdBy].filter(Boolean).join(" · "))}</div>${doc.note ? `<div class="small muted">${esc(doc.note)}</div>` : ""}${doc.reason ? `<div class="small muted">${esc(`เหตุผล: ${doc.reason}`)}</div>` : ""}`;
+  // ยอดพร้อมใช้ของวัตถุดิบในคลังที่ระบุ (ไม่นับล็อตกักกัน / หมดอายุ)
+  const readyKg = (rules, lots, code, now, store) => lots.filter((lot) => lot.materialCode === code && rules.lotState(lot, now, store) === "available").reduce((sum, lot) => sum + rules.lotKg(lot, store), 0);
+
+  const RB_TABS = Object.freeze([{ id: "stock", label: "ในคลัง RB" }, { id: "requests", label: "ใบขอเบิกจาก ST" }, { id: "returns", label: "ใบคืนให้ ST" }, { id: "usage", label: "ใช้จริงเทียบสูตร" }]);
+  const USAGE_DAYS = Object.freeze([7, 30, 90]);
+  pages.rbstore = (ctx) => {
+    const { data, now, ui, rules, params } = ctx;
+    const tab = RB_TABS.some((entry) => entry.id === params.get("tab")) ? params.get("tab") : "stock";
+    const docs = rules.chemDocsOf(data);
+    let body = "";
+    if (tab === "stock") {
+      const stock = rules.rbStockLots(data, now).filter(({ lot }) => includes(`${lot.lotNo} ${lot.materialCode} ${materialName(data, lot.materialCode)}`, ctx.q));
+      const rows = stock.map(({ lot, rbKg, state }) => {
+        const days = Math.ceil((lot.expiry - now) / rules.DAY);
+        return `<tr><td>${esc(materialName(data, lot.materialCode))}<div class="small muted rf-mono">${esc(lot.materialCode)}</div></td><td class="rf-mono small">${esc(lot.lotNo)}</td>
+          <td class="nowrap">${esc(rules.fmtDate(lot.expiry))}<div class="small ${days < 0 ? "rf-late" : days < 30 ? "rf-warn-text" : "muted"}">${esc(days < 0 ? `เลยมา ${-days} วัน` : `อีก ${days} วัน`)}</div></td>
+          <td class="right rf-mono">${esc(kgText(rules, rbKg))}</td><td>${state === "available" ? "" : ui.status(state)}</td></tr>`;
+      });
+      body = ui.table(["วัตถุดิบ", "ล็อต", "หมดอายุ", { label: "คงเหลือ", className: "right" }, ""], rows, { emptyText: ctx.q ? "ไม่พบเคมีที่ค้นหา" : "ยังไม่มีเคมีในคลัง RB ขอเบิกจาก ST ก่อน" });
+    } else if (tab === "requests" || tab === "returns") {
+      const kind = tab === "requests" ? "request" : "return";
+      const list = docs.filter((doc) => doc.kind === kind && includes(`${doc.id} ${(doc.lines ?? []).map((line) => `${line.materialCode} ${line.lotNo ?? ""}`).join(" ")} ${doc.note ?? ""}`, ctx.q))
+        .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+      const mayCancel = ctx.can("requestChem");
+      const rows = list.map((doc) => {
+        const cancel = kind === "request" && doc.status === "open" && mayCancel
+          ? ui.button("ยกเลิกใบ", { action: "cancelChemicalRequest", args: { id: doc.id }, className: "secondary small", confirmText: `ยกเลิก ${doc.id}? ST ยังไม่ได้จ่ายเคมีของใบนี้ ยกเลิกแล้วแก้กลับไม่ได้`, success: "ยกเลิก {result} แล้ว", ariaLabel: `ยกเลิก ${doc.id}` }) : "";
+        return `<tr><td><strong class="rf-mono">${esc(doc.id)}</strong>${chemDocMeta(ctx, doc)}</td><td>${chemDocLines(ctx, doc)}</td><td>${chemStatus(ui, doc)}</td><td class="right">${cancel}</td></tr>`;
+      });
+      body = ui.table(["ใบ", "รายการ", "สถานะ", { label: "", className: "right" }], rows, { emptyText: ctx.q ? "ไม่พบใบที่ค้นหา" : kind === "request" ? "ยังไม่มีใบขอเบิก" : "ยังไม่มีใบคืน" });
+    } else {
+      const days = USAGE_DAYS.includes(Number(params.get("days"))) ? Number(params.get("days")) : params.get("days") === "all" ? null : 30;
+      const usage = rules.rbUsage(data, days === null ? {} : { since: now - days * rules.DAY });
+      const num = (value) => `<td class="right rf-mono">${esc(rules.fmtNum(value, 3))}</td>`;
+      const rows = usage.rows.filter((row) => includes(`${row.materialCode} ${materialName(data, row.materialCode)}`, ctx.q))
+        .map((row) => `<tr><td>${esc(materialName(data, row.materialCode))}<div class="small muted rf-mono">${esc(row.materialCode)}</div></td>${num(row.receivedKg)}${num(row.recipeKg)}${num(row.returnedKg)}${num(row.expectedKg)}${num(row.countAdjustKg)}${num(row.onHandKg)}</tr>`);
+      const total = usage.rows.length && !ctx.q ? [`<tr><td><strong>รวม</strong></td>${num(usage.totals.receivedKg)}${num(usage.totals.recipeKg)}${num(usage.totals.returnedKg)}${num(usage.totals.expectedKg)}${num(usage.totals.countAdjustKg)}${num(usage.totals.onHandKg)}</tr>`] : [];
+      const range = ui.tabs([...USAGE_DAYS.map((value) => ({ id: String(value), label: `${value} วัน` })), { id: "all", label: "ทั้งหมด" }], days === null ? "all" : String(days), (id) => ctx.pageUrl({ tab: "usage", days: id === "30" ? null : id }));
+      body = `${range}${ui.table(["วัตถุดิบ", { label: "รับจาก ST (kg)", className: "right" }, { label: "ใช้ตามสูตร (kg)", className: "right", title: "กิโลตามสูตรของใบเบิกผสมที่ตัดคลัง RB หักที่คืนเข้าคลัง RB เมื่อ WO ถูกยกเลิก" }, { label: "คืนให้ ST (kg)", className: "right" },
+        { label: "ควรเพิ่มตามสูตร (kg)", className: "right", title: "รับจาก ST − ใช้ตามสูตร − คืนให้ ST" }, { label: "ปรับจากการนับ (kg)", className: "right", title: "ยอดนับได้ − ยอดในระบบก่อนนับ · ติดลบ = ใช้จริงมากกว่าสูตรหรือสูญหาย" }, { label: "คงเหลือตอนนี้ (kg)", className: "right", title: "ยอดคลัง RB ตอนนี้ (ไม่ตามช่วงเวลา)" }], [...rows, ...total], { emptyText: "ยังไม่มีการรับ ใช้ หรือคืนเคมีในช่วงนี้" })}`;
+    }
+    const tabs = ui.tabs(RB_TABS, tab, (id) => ctx.pageUrl({ tab: id === "stock" ? null : id, q: null, days: null }));
+    const factory = root.MNP_FACTORY;
+    // ลิงก์ไปดูเคมีในคลัง ST: เฉพาะผู้ที่เปิดหน้านั้นได้ (โมดูล ST หรือ RB ที่ดูได้อย่างเดียว · MNP_ST_PAGES.access)
+    const stAccess = typeof state !== "undefined" ? root.MNP_ST_PAGES?.access?.(state.employee) ?? null : null;
+    const stLink = stAccess && factory ? ui.link("ดูเคมีในคลัง ST", factory.routeUrl("st", { tab: "stock", kind: "chem" }), "btn rf-btn secondary") : "";
+    const anyStock = rules.rbStockLots(data, now).length > 0;
+    const actions = [
+      ui.openButton("ขอเบิกจาก ST", "chemRequest", {}, { className: "" }),
+      anyStock ? ui.openButton("คืนให้ ST", "chemReturn", {}, { className: "secondary" }) : "",
+      anyStock && ctx.can("countRb") ? ui.openButton("นับยอดคลัง RB", "rbCount", {}, { className: "secondary" }) : "",
+      stLink,
+    ].join("");
+    const listbar = `<div class="rf-listbar">${tabs}<div class="rf-row">${searchForm(ctx, "ค้นหารหัส ชื่อ ล็อต หรือเลขใบ…")}</div></div>`;
+    return { html: `${ui.pageHead("คลังเคมี RB", "", actions)}${ui.card(`${listbar}${body}`, { flush: true })}` };
+  };
+
+  // RB ขอเบิกเคมีจาก ST (ไม่ผูก WO): ทุกวัตถุดิบที่ใช้งานอยู่ (ช่องว่าง = ไม่ขอ) · args.rows = [{ materialCode, qtyKg }] เติมไว้ก่อนและอยู่บนสุด (ส่วนที่ขาดของใบเบิกผสม)
+  dialogs.chemRequest = (ctx, { rows = [] } = {}) => {
+    const { data, now, ui, rules } = ctx;
+    const preset = new Map((Array.isArray(rows) ? rows : []).filter((row) => Number(row?.qtyKg) > 0).map((row) => [row.materialCode, Math.ceil(Number(row.qtyKg) * 1000) / 1000]));
+    const materials = data.materials.filter((material) => material.active !== false)
+      .sort((a, b) => Number(preset.has(b.code)) - Number(preset.has(a.code)) || a.code.localeCompare(b.code));
+    if (!materials.length) return null;
+    const lineRows = materials.map((material) => `<tr${preset.has(material.code) ? ' class="rf-po-need"' : ""}><td>${ui.mono(material.code)}<div class="small muted">${esc(material.name)}</div><input type="hidden" name="materialCode[]" value="${esc(material.code)}"></td>
+      <td class="right rf-mono">${esc(rules.fmtNum(readyKg(rules, data.materialLots, material.code, now, "RB"), 3))}</td><td class="right rf-mono">${esc(rules.fmtNum(readyKg(rules, data.materialLots, material.code, now, "ST"), 3))}</td>
+      <td>${ui.input("qtyKg[]", { type: "number", step: "any", min: 0, value: preset.has(material.code) ? String(preset.get(material.code)) : "", placeholder: "0", extra: `aria-label="${esc(`ขอเบิก ${material.code} (kg)`)}"` })}</td></tr>`);
+    const body = `${preset.size ? ui.callout("warn", esc(`เติมจำนวนที่คลังเคมี RB ขาด ${preset.size} รายการให้แล้ว แก้ได้ก่อนส่ง`)) : ""}
+      ${ui.table(["วัตถุดิบ", { label: "พร้อมใช้ในคลัง RB (kg)", className: "right" }, { label: "พร้อมจ่ายในคลัง ST (kg)", className: "right", title: "ไม่นับล็อตกักกันหรือหมดอายุ" }, "ขอเบิก (kg)"], lineRows)}
+      ${ui.field("หมายเหตุ", ui.input("note", { placeholder: "เช่น ใช้กับ WO ที่จะปล่อยสัปดาห์หน้า", extra: 'maxlength="300"' }))}`;
+    const html = ui.dialog("chemRequest", "ขอเบิกเคมีจาก ST", `<form novalidate data-rf-form="requestChemicals" data-rf-success="ส่งใบขอเบิก {result} ให้ ST แล้ว" id="rf-chem-request">${body}</form>`, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-chem-request">ขอเบิกจาก ST</button>` });
+    return { html };
+  };
+
+  // RB คืนเคมีที่ไม่ใช้ให้ ST รายล็อต (ช่องว่าง = ไม่คืน) · ยอดออกจากคลัง RB ทันที ST รับคืนทั้งใบ หรือไม่รับคืน (ยอดกลับเข้าคลัง RB)
+  dialogs.chemReturn = (ctx) => {
+    const { data, now, ui, rules } = ctx;
+    const lots = rules.rbStockLots(data, now);
+    if (!lots.length) return null;
+    const rows = lots.map(({ lot, rbKg, state }) => `<tr><td>${ui.mono(lot.materialCode)}<div class="small muted">${esc(materialName(data, lot.materialCode))}</div></td><td class="rf-mono small">${esc(lot.lotNo)}<input type="hidden" name="lotNo[]" value="${esc(lot.lotNo)}"><div class="small muted">${esc(`หมดอายุ ${rules.fmtDate(lot.expiry)}`)}</div>${state === "available" ? "" : ui.status(state)}</td>
+      <td class="right rf-mono">${esc(rules.fmtNum(rbKg, 3))}</td><td>${ui.input("kg[]", { type: "number", step: "any", min: 0, value: "", placeholder: "0", extra: `max="${esc(String(+rbKg.toFixed(4)))}" aria-label="${esc(`คืน ${lot.lotNo} (kg)`)}"` })}</td></tr>`);
+    const body = `${ui.callout("info", "ยอดที่คืนออกจากคลัง RB ทันที ST รับคืนทั้งใบตามยอดที่ส่ง หรือไม่รับคืน (ยอดกลับเข้าคลัง RB ล็อตเดิม)")}
+      ${ui.table(["วัตถุดิบ", "ล็อต", { label: "ในคลัง RB (kg)", className: "right" }, "คืน (kg)"], rows)}
+      ${ui.field("หมายเหตุ", ui.input("note", { placeholder: "เช่น เหลือจากการผสม", extra: 'maxlength="300"' }))}`;
+    const html = ui.dialog("chemReturn", "คืนเคมีให้ ST", `<form novalidate data-rf-form="returnChemicals" data-rf-success="ส่งใบคืน {result} ให้ ST แล้ว" id="rf-chem-return">${body}</form>`, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-chem-return">คืนให้ ST</button>` });
+    return { html };
+  };
+
+  // นับ / ปรับยอดคลัง RB รายล็อต (ผู้จัดการแผนก RB / ฝ่ายวางแผน) · ช่องว่าง = ไม่เปลี่ยน · ยอดนับไม่เกินที่ล็อตอยู่นอกคลัง ST (rules.rbCountCapKg) · ต้องมีเหตุผล
+  dialogs.rbCount = (ctx) => {
+    const { data, now, ui, rules } = ctx;
+    const lots = rules.rbStockLots(data, now);
+    if (!lots.length || !ctx.can("countRb")) return null;
+    const rows = lots.map(({ lot, rbKg }) => `<tr><td>${ui.mono(lot.materialCode)}<div class="small muted">${esc(materialName(data, lot.materialCode))}</div></td><td class="rf-mono small">${esc(lot.lotNo)}<input type="hidden" name="lotNo[]" value="${esc(lot.lotNo)}"></td>
+      <td class="right rf-mono">${esc(rules.fmtNum(rbKg, 3))}</td><td>${ui.input("countedKg[]", { type: "number", step: "any", min: 0, value: "", placeholder: rules.fmtNum(rbKg, 3), extra: `max="${esc(String(+rules.rbCountCapKg(data, lot).toFixed(4)))}" aria-label="${esc(`นับได้ ${lot.lotNo} (kg)`)}"` })}</td></tr>`);
+    const body = `${ui.table(["วัตถุดิบ", "ล็อต", { label: "ในระบบ (kg)", className: "right" }, { label: "นับได้ (kg)", className: "right", title: "เว้นว่าง = ไม่เปลี่ยน" }], rows)}
+      <div class="rf-grid rf-g2">${ui.field("เหตุผล", ui.input("reason", { required: true, placeholder: "เช่น นับสต็อกสิ้นเดือน", extra: 'minlength="3" maxlength="300"' }), { required: true })}${ui.field("หมายเหตุ", ui.input("note", { extra: 'maxlength="300"' }))}</div>`;
+    const html = ui.dialog("rbCount", "นับยอดคลังเคมี RB", `<form novalidate data-rf-form="countRbStock" data-rf-success="บันทึกยอดนับ {result} แล้ว" id="rf-rb-count">${body}</form>`, { wide: true, footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-rb-count">บันทึกยอดนับ</button>` });
+    return { html };
+  };
+  root.MNP_RUBBERFLOW_VIEWS = Object.freeze({ ...(root.MNP_RUBBERFLOW_VIEWS ?? {}), chemStatus, chemDocLines, chemDocMeta });
 
   // ---------- สถานีที่ 1 ผสมยาง ----------
   pages.mixing = (ctx) => {

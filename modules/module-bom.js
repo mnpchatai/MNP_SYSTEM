@@ -204,6 +204,11 @@
     const gr = reach("GR");
     return gr ? `${gr}?tab=rods` : url(storeApi.homeOf(user));
   };
+  // ลิงก์เก่า #/bom?p=stock (หน้าคลังของซื้อเดิมของ BOM) ไปที่โมดูลคลังวัตถุดิบ (ST) หน้า "ในคลัง" ถ้าผู้ใช้เปิดหน้านั้นได้ (ผู้ใช้โมดูล ST และแผนก WH ที่นับของซื้อ) · ไม่ได้ = หน้าแรกของ BOM
+  const stockRedirect = (user) => {
+    const mode = window.MNP_ST_PAGES?.access?.(state.employee) ?? null;
+    return mode === "full" || mode === "wh" ? `${storeApi.deptRoute("ST")}?tab=stock` : url(storeApi.homeOf(user));
+  };
   const defaultPage = () => { const home = storeApi.homeOf(store.user()); return pages[home] ? home : "dashboard"; };
   const currentPage = (params) => storeApi.findModule(params.get("p") ?? defaultPage())?.id ?? null;
 
@@ -744,9 +749,10 @@
 
   async function renderBom(params) {
     if (!storeApi.usesBom(state.employee)) return renderNotFound();
-    if (["work", "rods"].includes(params.get("p")) && store.user()) {
-      // งานของฉัน และคลังยางเส้นยาว ย้ายไปอยู่ที่โมดูลของแผนกแล้ว: เปลี่ยนที่อยู่แทนรายการเดิม (กดย้อนกลับไม่วนกลับมาหน้านี้)
-      const target = params.get("p") === "rods" ? rodsRedirect(store.user()) : workRedirect(store.user(), params);
+    if (["work", "rods", "stock"].includes(params.get("p")) && store.user()) {
+      // งานของฉัน คลังยางเส้นยาว และคลังของซื้อ ย้ายไปอยู่ที่โมดูลของแผนกแล้ว: เปลี่ยนที่อยู่แทนรายการเดิม (กดย้อนกลับไม่วนกลับมาหน้านี้)
+      const p = params.get("p");
+      const target = p === "rods" ? rodsRedirect(store.user()) : p === "stock" ? stockRedirect(store.user()) : workRedirect(store.user(), params);
       if (typeof location.replace === "function") location.replace(target);
       else location.hash = target;
       return undefined;

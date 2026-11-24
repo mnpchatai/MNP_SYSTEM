@@ -18,7 +18,10 @@ const memory = () => {
 const make = (storage = memory()) => ({ storage, store: storeApi.createStore({ storage, seed: () => seed.buildSeed(NOW), actions, now: () => NOW }) });
 
 test("roles see the prototype's module sets and fine-grained permissions", () => {
-  assert.equal(storeApi.MODULES.length, 15);
+  assert.equal(storeApi.MODULES.length, 16, "15 pages of the prototype + the RB chemical store (20261220010000)");
+  assert.equal(storeApi.findModule("rbstore").label, "คลังเคมี RB");
+  for (const role of ["rb", "mixer", "planner", "admin", "manager"]) assert.equal(storeApi.canSee({ role }, "rbstore"), true, role);
+  for (const role of ["store", "qc", "warehouse", "sr", "viewer"]) assert.equal(storeApi.canSee({ role }, "rbstore"), false, role);
   assert.deepEqual(storeApi.GROUPS, ["ภาพรวม", "วางแผน", "สายการผลิต", "คุณภาพ", "คลังและเครื่องมือ"]);
   assert.deepEqual(storeApi.ROLES.admin.modules, storeApi.MODULE_IDS);
   assert.ok(!storeApi.ROLES.manager.modules.includes("audit"));

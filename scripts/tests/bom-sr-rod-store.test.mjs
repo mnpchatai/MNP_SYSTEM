@@ -939,7 +939,7 @@ test("pages: the opening receipt dialog offers RB codes only and the location di
 
 test("wording: no user-visible text in the BOM, RubberFlow or factory modules calls the rods แท่ง (comments aside); the bars of charts keep their word", async () => {
   const fs = await import("node:fs");
-  const files = ["bom-actions", "bom-pages", "bom-rules", "bom-hub", "bom-store", "bom-seed", "module-bom", "factory-kit", "module-sr", "module-gr", "module-qa", "module-st", "module-wh", "wh-pages", "module-rubberflow", "rubberflow-actions", "rubberflow-pages-line", "rubberflow-pages-plan", "rubberflow-pages-quality", "rubberflow-store"];
+  const files = ["bom-actions", "bom-pages", "bom-rules", "bom-hub", "bom-store", "bom-seed", "module-bom", "factory-kit", "module-sr", "module-gr", "module-qa", "module-st", "st-pages", "module-wh", "wh-pages", "module-rubberflow", "rubberflow-actions", "rubberflow-pages-line", "rubberflow-pages-plan", "rubberflow-pages-quality", "rubberflow-store"];
   for (const name of files) {
     // the one place the old words stay on purpose: the legacy audit text the audit page still has to recognise
     const code = fs.readFileSync(`modules/${name}.js`, "utf8").split(/\r?\n/).filter((line) => !line.trimStart().startsWith("//") && !line.includes("ROD_STOCK_AUDIT_TEXT_LEGACY =")).join("\n");

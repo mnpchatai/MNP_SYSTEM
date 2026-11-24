@@ -1080,11 +1080,12 @@
         if (lines.length) tasks.push({ kind: "partReturn", order, lines });
       }
     }
-    // เคมีที่เบิกไปแล้วของ WO ที่ถูกยกเลิก (ยกเลิกใบ / เปิดใบกลับมาแก้ / ยกเลิก WO) และยังไม่ได้รับคืน: แผนก ST (หรือ admin) รับคืนเข้าล็อตเดิมที่หน้าใบเบิกของ RubberFlow
+    // เคมีที่เบิกไปแล้วของ WO ที่ถูกยกเลิก (ยกเลิกใบ / เปิดใบกลับมาแก้ / ยกเลิก WO) และยังไม่ได้รับคืน: แผนก ST (หรือ admin) รับคืนเข้าล็อตเดิมที่หน้ารับคืนของโมดูล ST
+    // เฉพาะใบเดิมของคลัง ST (20261220010000) · ใบเบิกคลัง RB นั้น RB / ฝ่ายวางแผนคืนเข้าคลัง RB เองที่หน้าเบิกเคมี
     if (rfCan(ctx, "returnRequisition")) {
       const rf = (() => { try { return ctx.rubberflow()?.store?.data?.() ?? null; } catch { return null; } })();
       const rules = (() => { try { return root.MNP_RUBBERFLOW_RULES ?? null; } catch { return null; } })();
-      for (const req of rf && rules?.returnableRequisitions ? rules.returnableRequisitions(rf) : []) tasks.push({ kind: "chemReturn", req, wo: (rf.orders ?? []).find((row) => row.id === req.orderId) ?? null });
+      for (const req of rf && rules?.returnableRequisitions ? rules.returnableRequisitions(rf, "ST") : []) tasks.push({ kind: "chemReturn", req, wo: (rf.orders ?? []).find((row) => row.id === req.orderId) ?? null });
     }
     // บัญชีที่ไม่มีสิทธิ์ของคลังวัตถุดิบไม่ต้องรอหรือสั่งโหลด RubberFlow (เมนูนับงานทุกหน้า)
     const purchaseOrders = rfCan(ctx, "receiveMaterial") || rfCan(ctx, "purchase") ? pages.tools?.purchaseOrdersOf?.(ctx) ?? [] : [];
@@ -1510,7 +1511,7 @@
       return `<article class="card rf-card bom-job ${task.cancelled ? "is-hold" : "is-now"}"><div class="bom-job-top"><span class="bom-job-state">${task.cancelled ? "ใบสั่งผลิตถูกยกเลิกแล้ว" : "รอรับเข้า"}</span><span class="muted">สั่งเมื่อ ${esc(rules.fmtDate(task.po.createdAt))}</span></div>
         <h2>${esc(`${task.cancelled ? "ตัดสินใบสั่งซื้อ" : "รับเข้าตามใบสั่งซื้อ"} ${task.po.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${task.po.sourcePi ? esc(`สั่งจากใบ ${task.po.sourcePi}`) : ""}${task.cancelled ? (task.partly ? " · รับเข้าไปแล้วบางส่วน ใบนี้ยกเลิกไม่ได้ รับส่วนที่เหลือเข้าเป็นสต็อกไว้ใช้กับใบอื่น หรือปิดยอดที่เหลือ" : " · ยกเลิกใบสั่งซื้อ หรือรับเข้าเป็นสต็อกไว้ใช้กับใบอื่น") : ""}</p>
         ${cardLines(task.lines, (line) => `<li><span><span class="rf-mono">${esc(line.materialCode)}</span>${nameOf(line) ? ` <span class="small muted">${esc(nameOf(line))}</span>` : ""}</span><span class="nowrap"${line.received > 0 ? ` title="${attr(`สั่ง ${rules.fmtQty(line.qtyKg)} รับแล้ว ${rules.fmtQty(line.received)}`)}"` : ""}>${esc(`${line.received > 0 ? "ค้างรับ " : ""}${rules.fmtQty(line.open)} ${unit(line)}`)}</span></li>`)}
-        ${ui.link(task.cancelled ? "เปิดใบสั่งซื้อ" : "ตรวจสอบรับเข้า", `#/rubberflow?p=warehouse&tab=po&q=${encodeURIComponent(task.po.id)}`, "btn rf-btn bom-job-main")}</article>`;
+        ${ui.link(task.cancelled ? "เปิดใบสั่งซื้อ" : "ตรวจสอบรับเข้า", root.MNP_FACTORY.routeUrl("st", { tab: "po", q: task.po.id }), "btn rf-btn bom-job-main")}</article>`;
     }
     if (task.kind === "partReturn") {
       return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">ใบสั่งผลิตถูกยกเลิกแล้ว</span></div>
@@ -1522,13 +1523,13 @@
       const kg = task.req.lines.reduce((sum, line) => sum + (Number(line.actualKg) || 0), 0);
       return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">WO ถูกยกเลิก · รอ ST รับคืน</span></div>
         <h2>${esc(`รับเคมีคืนตามใบเบิก ${task.req.id}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${esc(`WO ${task.req.orderId}${task.wo?.customerPo ? ` · ใบ ${task.wo.customerPo}` : ""} · จ่ายไป ${rules.fmtQty(kg)} กก.`)}</p>
-        ${ui.link("เปิดใบเบิกเพื่อรับคืน", `#/rubberflow?p=requisition&sel=${encodeURIComponent(task.req.id)}`, "btn rf-btn bom-job-main")}</article>`;
+        ${ui.link("เปิดหน้ารับคืน", root.MNP_FACTORY.routeUrl("st", { tab: "returns" }), "btn rf-btn bom-job-main")}</article>`;
     }
     if (task.kind === "chem") {
       return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">เคมีขาด ยังไม่ได้สั่ง</span></div>
         <h2>${esc(`สั่งซื้อเคมีที่ขาด ${task.short.length} รายการ`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}สำหรับใบสั่งผลิตของแผนก RB ที่เปิดอยู่</p>
         ${cardLines(task.short, (row) => `<li><span>${esc(row.name || row.materialCode)}</span><span class="nowrap">${esc(`ขาด ${rules.fmtQty(row.shortageKg)} กก.`)}</span></li>`)}
-        ${ui.link("เปิดหน้าใบสั่งซื้อ", "#/rubberflow?p=warehouse&tab=po", "btn rf-btn bom-job-main")}</article>`;
+        ${ui.link("เปิดหน้าใบสั่งซื้อ", root.MNP_FACTORY.routeUrl("st", { tab: "po" }), "btn rf-btn bom-job-main")}</article>`;
     }
     // การ์ดต่อวัตถุดิบ: หัวบอกยอดที่ต้องสั่งรวมทุกใบ รายการข้างล่างบอกใบที่ต้องใช้พร้อมจำนวนของใบนั้น · ปุ่มพาไปสั่งซื้อที่ใบที่ขาดมากสุด (task.order)
     return `<article class="card rf-card bom-job is-hold"><div class="bom-job-top"><span class="bom-job-state">ของขาด ยังไม่ได้สั่ง</span></div>
@@ -1545,7 +1546,7 @@
     const { ui, rules, user } = ctx;
     const rank = (job) => (job.status === "in_progress" ? 0 : job.status === "hold" ? 2 : 1);
     const list = (show === "done" ? done : open).slice().sort((a, b) => rank(a) - rank(b) || a.dueAt - b.dueAt || a.id.localeCompare(b.id));
-    // ของซื้อ (งานของคลังวัตถุดิบ): รวมเป็นการ์ดเดียวต่อใบ เพราะเบิกจ่ายที่หน้าใบสั่งผลิต (เลือกบรรทัดและจำนวนได้ หลายครั้งจนครบ)
+    // ของซื้อ (งานของคลังวัตถุดิบ): รวมเป็นการ์ดเดียวต่อใบ · ปุ่มเปิดหน้าต่างเบิกจ่าย (เลือกบรรทัดและจำนวนได้ หลายครั้งจนครบ · ชุดเดียวกับหน้าจ่ายออกของโมดูล ST)
     // การ์ดรอเบิกแสดงส่วนที่ยังต้องเบิกของแต่ละบรรทัด (แผน − เบิกแล้ว) · การ์ดเบิกแล้วแสดงยอดที่เบิก (รวมที่เบิกเกินแผน)
     const partGroups = new Map();
     const cards = [];
@@ -1561,7 +1562,7 @@
         const jobs = partGroups.get(entry.parts);
         const order = orderOf(entry.parts);
         const finished = show === "done";
-        const button = !finished && ctx.helpers.canIssueParts(user) ? ui.link("เบิกจ่ายที่ใบสั่งผลิต", ctx.url("orders", { sel: entry.parts }), "btn rf-btn bom-job-main") : ui.link("เปิดใบสั่งผลิต", ctx.url("orders", { sel: entry.parts }), "btn rf-btn secondary bom-job-main");
+        const button = !finished && ctx.helpers.canIssueParts(user) && ["released", "in_progress"].includes(order?.status) ? ui.openButton("เบิกจ่าย", "issueParts", { orderId: entry.parts }, { className: "bom-job-main", ariaLabel: `เบิกจ่ายของซื้อของใบ ${entry.parts}` }) : ui.link("เปิดใบสั่งผลิต", ctx.url("orders", { sel: entry.parts }), "btn rf-btn secondary bom-job-main");
         return `<article class="card rf-card bom-job"><div class="bom-job-top"><span class="bom-job-state">${finished ? "เบิกแล้ว" : "รอเบิก"}</span>${dueText(Math.min(...jobs.map((job) => job.dueAt)), finished)}</div>
           <h2>${esc(`เบิกของตามใบ ${entry.parts}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${esc(order?.customer ?? "")}</p>
           ${cardLines(jobs, (job) => `<li><span>${esc(job.name)}</span><span class="nowrap">${esc(`${rules.fmtQty(finished ? job.qtyDone : Math.max(0, job.qtyPlanned - (Number(job.qtyDone) || 0)))} ${uomText(ctx, job.uom)}`)}</span></li>`)}${button}</article>`;
@@ -1598,7 +1599,7 @@
   // ---------- ข้อมูลตั้งต้น: ทางเข้าหน้าข้อมูลหลักที่ไม่ได้ใช้ทุกวัน ----------
   const SETUP_NOTE = Object.freeze({
     import: "นำเข้า BOM จากไฟล์ Excel", variants: "ชุดสีและแพ็กเกจของแต่ละสินค้า", compounds: "ผูกสูตรยางกับสูตรใน RubberFlow", customers: "รายชื่อลูกค้าของใบสั่งผลิต",
-    stock: "ยอดคงเหลือและสต็อกขั้นต่ำของของซื้อ", count: "กรอกยอดชิ้นงานที่มีอยู่ของใบที่ยังเป็นร่าง", check: "รายการข้อมูลที่ยังไม่ครบ", audit: "ใครทำอะไร เมื่อไร",
+    count: "กรอกยอดชิ้นงานที่มีอยู่ของใบที่ยังเป็นร่าง", check: "รายการข้อมูลที่ยังไม่ครบ", audit: "ใครทำอะไร เมื่อไร",
   });
   pages.setup = (ctx) => {
     const store = root.MNP_BOM_STORE;
@@ -1610,5 +1611,5 @@
 
   // ชิ้นส่วนของยางเส้นยาวที่โมดูล SR (modules/module-sr.js) ใช้วาดหน้าล็อตและตาราง ไม่คัดลอก
   const rod = Object.freeze({ bucketText, rodStatusBadge, qcRowsHtml, rodQty, rodItemName, ROD_KIND_LABEL, pickPlanHtml });
-  pages.hub = { rod, ratioText, orderStepOf, hubUrl, treeTab, pastePreview, copyPreview, draftChemicals, rfCan, storeTasks, fgTasks, rodTasks, workBoard, workCount, taskCard, boardCards, isReceiptTask };
+  pages.hub = { rod, cardLines, ratioText, orderStepOf, hubUrl, treeTab, pastePreview, copyPreview, draftChemicals, rfCan, storeTasks, fgTasks, rodTasks, workBoard, workCount, taskCard, boardCards, isReceiptTask };
 })(typeof window !== "undefined" ? window : globalThis);

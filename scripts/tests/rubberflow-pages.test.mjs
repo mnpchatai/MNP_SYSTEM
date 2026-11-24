@@ -64,6 +64,8 @@ function load({ sandbox = true, route = "", storage = new Map() } = {}) {
   return { context, app, log, fakes, root, storage, module: registered, store: context.MNP_RUBBERFLOW.store, render, ctx };
 }
 const text = (html) => String(html).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+// ตารางใบสั่งซื้อ + ปุ่มสั่งซื้อเคมี (หน้าใบสั่งซื้อของโมดูล ST วาดด้วยตัวนี้ · 20261220010000) · q = คำค้น
+const poPage = (env, q = "", ctx = env.ctx()) => `${env.context.MNP_RUBBERFLOW_VIEWS.purchaseButton(ctx)}${env.context.MNP_RUBBERFLOW_VIEWS.purchaseOrderTable(ctx, { q })}`;
 
 test("the module registers a sandbox-only standalone page, refuses users outside the sandbox and shows the role chooser first", async () => {
   const env = load();
@@ -240,7 +242,8 @@ test("text from the data is escaped on every page that shows it", async () => {
   env.store.run("setOrderStatus", { id: result.result, status: "released" });
   env.store.run("createNcr", { title: XSS, lotId: env.store.data().lots[0].id, stage: "curing", whys: [XSS], containment: XSS });
   const lotNo = env.store.run("receiveMaterial", { materialCode: "ZNO", qtyKg: 1, expiry: now + 86400000, supplier: XSS, location: XSS }).result;
-  for (const page of ["dashboard", "orders", "quality&tab=ncr", "warehouse", "audit", `trace&q=${lotNo}`]) {
+  // ล็อตวัตถุดิบ (ผู้ขาย ที่เก็บ) แสดงที่โมดูล ST แล้ว (ทดสอบใน st-module.test.mjs) · หน้าคลังของ RubberFlow เหลือรายการวัตถุดิบ
+  for (const page of ["dashboard", "orders", "quality&tab=ncr", "audit", `trace&q=${lotNo}`]) {
     const html = await env.render(page === "dashboard" ? "" : `p=${page}`);
     assert.doesNotMatch(html, /<script>/, page);
     assert.match(html, /&lt;script&gt;/, page);
@@ -252,7 +255,7 @@ test("text from the data is escaped on every page that shows it", async () => {
   assert.match(tag.html, /&lt;script&gt;/);
 });
 
-test("the requisition dialog sends the purchase dialog the same breakdown: its own need, on hand, reserved, on order and shortage that add up", () => {
+test("the requisition dialog cuts the RB chemical store: a shortage there offers a request to ST (the request dialog opens with what is short), not a purchase (20261220010000)", () => {
   const env = load();
   env.store.setUser("U03");
   const data = env.store.data();
@@ -264,32 +267,35 @@ test("the requisition dialog sends the purchase dialog the same breakdown: its o
   const batches = rules.nextRequisitionBatches(order, recipe, data.requisitions);
   assert.ok(batches >= 1);
   const [first] = rules.recipeLines(recipe);
-  for (const lot of data.materialLots) if (lot.materialCode === first.materialCode) { lot.qtyKg = 0; lot.rbKg = 0; } // ไม่มีทั้งคลัง ST และคลัง RB (20261220010000)
-  const opened = [];
-  const run = (onOrderKg) => {
-    data.purchaseOrders = onOrderKg ? [{ id: "PO-T", status: "ordered", lines: [{ materialCode: first.materialCode, qtyKg: onOrderKg, receivedKg: null }] }] : [];
+  const need = rules.recipeLines(recipe).filter((line) => line.materialCode === first.materialCode).reduce((sum, line) => sum + line.kgPerBatch * batches, 0);
+  const open = () => {
+    const opened = [];
     const nodes = {
       "[data-rf-order]": { value: order.id, addEventListener() {} }, "[data-rf-batches]": { value: "" }, "[data-rf-submit]": { disabled: false },
       "[data-rf-recipe-line]": {}, "[data-rf-preview]": {}, "[data-rf-shortage]": { innerHTML: "", handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } },
     };
-    const built = env.context.MNP_RUBBERFLOW_DIALOGS.createRequisition(env.ctx());
-    built.bind({ querySelector: (selector) => nodes[selector] }, { openDialog: (name, args) => opened.push([name, args]) });
-    assert.match(nodes["[data-rf-shortage]"].innerHTML, /data-rf-po-short/, "the shortage button is offered");
-    nodes["[data-rf-shortage]"].handlers.click({ target: { closest: (selector) => (selector === "[data-rf-po-short]" ? {} : null) } });
-    const [name, args] = opened.at(-1);
-    assert.equal(name, "purchase");
-    return args.rows.find((row) => row.materialCode === first.materialCode);
+    env.context.MNP_RUBBERFLOW_DIALOGS.createRequisition(env.ctx()).bind({ querySelector: (selector) => nodes[selector] }, { openDialog: (name, args) => opened.push([name, args]) });
+    return { nodes, opened };
   };
-  const plain = run(0);
-  const ordered = run(1);
-  assert.equal(plain.needKg, Math.ceil(first.kgPerBatch * batches * 1000 - 1e-6) / 1000, "the need is the batches the WO still has to requisition, rounded up at 3 decimals (never less than the requisition issues)");
-  assert.equal(ordered.onOrderKg, 1, "the line on order is passed on");
-  for (const row of [plain, ordered]) {
-    assert.equal(row.availableKg, Math.round((row.onHandKg - row.reservedKg + row.onOrderKg) * 1000) / 1000, "on hand − reserved + on order");
-    assert.equal(row.shortageKg, Math.round(Math.max(0, row.needKg - row.availableKg) * 1000) / 1000, "shortage = need − available");
-  }
-  assert.equal(Math.round((plain.shortageKg - ordered.shortageKg) * 1000) / 1000, 1, "the kilos already on order reduce the shortage");
-  assert.equal(Math.round((plain.orderKg - ordered.orderKg) * 1000) / 1000, 1, "and the default order quantity");
+  // คลัง ST มีเต็ม แต่คลัง RB ไม่มีของวัตถุดิบนี้: ขาด = ทั้งหมดที่ใบเบิกต้องใช้
+  for (const lot of data.materialLots) if (lot.materialCode === first.materialCode) lot.rbKg = 0;
+  const { nodes, opened } = open();
+  assert.match(nodes["[data-rf-shortage]"].innerHTML, /คลังเคมี RB มีพร้อมใช้ไม่พอ[\s\S]*data-rf-po-short>ขอเบิกจาก ST</, "the planner may request from ST");
+  assert.equal(nodes["[data-rf-submit]"].disabled, true, "the requisition cannot be sent while the RB store is short");
+  assert.match(nodes["[data-rf-preview]"].innerHTML, new RegExp(`${first.materialCode}[\\s\\S]*ขาด`), "the preview reads the RB store");
+  nodes["[data-rf-shortage]"].handlers.click({ target: { closest: (selector) => (selector === "[data-rf-po-short]" ? {} : null) } });
+  const [name, args] = opened.at(-1);
+  assert.equal(name, "chemRequest");
+  const row = args.rows.find((entry) => entry.materialCode === first.materialCode);
+  assert.ok(Math.abs(row.qtyKg - need) < 1e-6, "the request starts at what the RB store lacks for this requisition");
+  // the request dialog puts the short material first, prefilled
+  const dialog = env.context.MNP_RUBBERFLOW_DIALOGS.chemRequest(env.ctx(), { rows: args.rows }).html;
+  assert.match(dialog, new RegExp(`class="rf-po-need"><td><span class="rf-mono">${first.materialCode}</span>`));
+  assert.match(dialog, /data-rf-form="requestChemicals"/);
+  // คลัง RB มีพอ: ไม่ขาด ส่งใบเบิกได้
+  for (const lot of data.materialLots) if (lot.materialCode === first.materialCode && rules.lotState(lot, Date.now(), "ST") === "available") lot.rbKg = need + 100;
+  const enough = open();
+  assert.doesNotMatch(enough.nodes["[data-rf-shortage]"].innerHTML, new RegExp(first.materialCode));
 });
 
 test("the requisition dialog lists only work orders with batches left, fills the batch count from the WO (read-only, shown once) and shows an empty state when every WO is covered", () => {
@@ -623,7 +629,7 @@ test("purchasing screens: the check opens one dialog (escaped, safety stock and 
   env.store.setUser("U03");
   const DAY = 86400000;
   const now = Date.now();
-  const { MNP_RUBBERFLOW: module, MNP_RUBBERFLOW_DIALOGS: dialogs, MNP_RUBBERFLOW_PAGES: pages } = env.context;
+  const { MNP_RUBBERFLOW: module, MNP_RUBBERFLOW_DIALOGS: dialogs } = env.context;
   const big = env.store.run("createOrder", { recipeId: "RC-EPDM-DS01", customer: "ลูกค้า", targetQty: 600000, startDate: now, dueDate: now + DAY });
   assert.equal(big.ok, true, big.error?.message);
 
@@ -688,20 +694,21 @@ test("purchasing screens: the check opens one dialog (escaped, safety stock and 
   delete env.fakes["form[data-rf-form]"];
 
   // the warehouse tab: the open order first with its receive button and cancel button, the tab counts open orders
-  let page = await env.render("p=warehouse&tab=po");
-  assert.match(page, /ใบสั่งซื้อ \(2\)/, "the new order and the demo order that is still waiting");
+  let page = poPage(env);
+  assert.equal((page.match(/rf-badge is-warn">รอรับเข้า</g) ?? []).length, 2, "the new order and the demo order that is still waiting");
   assert.ok(page.includes(po.id));
   assert.match(page, /data-rf-open="receivePurchase"/);
   assert.match(page, /data-rf-action="cancelPurchaseOrder"/);
   assert.match(page, /ตรวจสอบรับเข้า/);
   assert.doesNotMatch(page, /undefined|NaN/);
   // the buttons follow the rights of the account (the database decides for real)
-  const wh = pages.warehouse({ ...env.ctx("p=warehouse&tab=po"), can: (right) => right !== "receiveMaterial" && right !== "cancelPurchase" }).html;
+  const wh = poPage(env, "", { ...env.ctx(), can: (right) => right !== "receiveMaterial" && right !== "cancelPurchase" });
   assert.doesNotMatch(wh, /data-rf-open="receivePurchase"|cancelPurchaseOrder/);
   assert.ok(wh.includes(po.id), "read-only accounts still see the order");
   // the chemical check button (the variant without a shortage too) is cut at render time for accounts that cannot order, not removed afterwards by applyRights
   assert.match(page, /data-rf-open="purchase"[^>]*>(สั่งซื้อเคมีที่ขาด \d+ รายการ|ตรวจเคมีของใบสั่งผลิตที่เปิดอยู่)</, "an account that can order sees one of the two variants");
-  const noOrder = pages.warehouse({ ...env.ctx("p=warehouse&tab=po"), can: (right) => right !== "purchase" }).html;
+  const noOrder = poPage(env, "", { ...env.ctx(), can: (right) => right !== "purchase" });
+  assert.doesNotMatch(await env.render("p=warehouse&tab=po"), /data-rf-open="receivePurchase"|cancelPurchaseOrder/, "the RubberFlow purchase-order tab is one link to the ST module");
   assert.doesNotMatch(noOrder, /data-rf-open="purchase"|ตรวจเคมีของใบสั่งผลิตที่เปิดอยู่|สั่งซื้อเคมีที่ขาด/);
   assert.ok(noOrder.includes(po.id), "the orders stay visible");
   // the materials tab and the material form carry the new fields
@@ -751,7 +758,7 @@ test("purchasing screens: the check opens one dialog (escaped, safety stock and 
   delete env.fakes["form[data-rf-form]"];
   // รับไม่ครบ (58 จาก 60 · 20261128020000): ใบยังรอรับ ส่วนที่เหลือค้างรับ รับเพิ่มได้ (ตั้งต้น = ยอดค้าง) หรือปิดยอดที่เหลือพร้อมเหตุผล
   assert.equal(env.store.data().purchaseOrders[0].status, "ordered", "the 2 kg not delivered stay on order");
-  page = text(await env.render(`p=warehouse&tab=po&q=${po.id}`));
+  page = text(poPage(env, po.id));
   assert.match(page, /58\.00 kg\s*ค้างรับ 2\.00/);
   assert.ok(page.includes(lot.lotNo));
   const again = dialogs.receivePurchase(env.ctx(), { id: po.id, materialCode: "EPDM-55" }).html;
@@ -765,7 +772,7 @@ test("purchasing screens: the check opens one dialog (escaped, safety stock and 
   assert.equal(env.store.run("closePurchaseLine", { id: po.id, materialCode: "EPDM-55", reason: "ผู้ขายแจ้งว่าไม่มีของส่งเพิ่ม" }).ok, true);
   assert.equal(env.store.data().purchaseOrders[0].status, "received");
   assert.equal(dialogs.closePurchase(env.ctx(), { id: po.id, materialCode: "EPDM-55" }), null, "a closed line has no close dialog");
-  page = text(await env.render(`p=warehouse&tab=po&q=${po.id}`));
+  page = text(poPage(env, po.id));
   assert.match(page, /รับครบแล้ว/);
   assert.ok(page.includes(lot.lotNo));
   assert.match(page, /ปิดยอดที่เหลือ 2\.00 kg: ผู้ขายแจ้งว่าไม่มีของส่งเพิ่ม/);
@@ -799,7 +806,7 @@ test("the material check refuses accounts that may not order, and says nothing w
 test("purchasing with purchased parts: the dialog adds a part table after the chemicals (unit shown, same form), a part order line is listed with its unit and received by quantity only", async () => {
   const env = load();
   env.store.setUser("U03");
-  const { MNP_RUBBERFLOW_DIALOGS: dialogs, MNP_RUBBERFLOW_PAGES: pages } = env.context;
+  const { MNP_RUBBERFLOW_DIALOGS: dialogs } = env.context;
   const parts = { rows: [
     { itemCode: "P-BOX-01", name: "กล่องนอก <b>", uom: "box", needQty: 7, onHandQty: 5, reservedQty: 0, onOrderQty: 0, shortage: 2, safetyQty: 10, orderQty: 12 },
     { itemCode: "P-STK-01", name: "สติ๊กเกอร์", uom: "pcs", needQty: 120, onHandQty: 400, reservedQty: 0, onOrderQty: 0, shortage: 0, safetyQty: 0, orderQty: 0 },
@@ -833,7 +840,7 @@ test("purchasing with purchased parts: the dialog adds a part table after the ch
 
   // the order list shows the unit and no lot line for the part, the receive dialog asks the quantity only
   const po = env.store.data().purchaseOrders[0];
-  const list = text(pages.warehouse({ ...env.ctx("p=warehouse&tab=po") }).html);
+  const list = text(poPage(env));
   assert.match(list, /P-BOX-01[^]*12\.00 box/);
   assert.match(list, /ZNO[^]*5\.00 kg/);
   const receive = dialogs.receivePurchase(env.ctx("p=warehouse&tab=po"), { id: po.id, materialCode: "P-BOX-01" }).html;
@@ -844,7 +851,7 @@ test("purchasing with purchased parts: the dialog adds a part table after the ch
   assert.match(chem, /name="expiry"/, "a chemical line still asks the expiry");
   const received = env.store.run("receivePurchaseLine", { id: po.id, materialCode: "P-BOX-01", qtyKg: 11 });
   assert.equal(received.ok, true, received.error?.message);
-  assert.match(text(pages.warehouse({ ...env.ctx("p=warehouse&tab=po") }).html), /11\.00 box/);
+  assert.match(text(poPage(env)), /11\.00 box/);
   // รับไม่ครบ (11 จาก 12): ยังรับเพิ่มได้ ตั้งต้น = ยอดที่ค้าง · ปิดยอดที่เหลือแล้วไม่มีหน้าต่างรับอีก
   assert.match(dialogs.receivePurchase(env.ctx("p=warehouse&tab=po"), { id: po.id, materialCode: "P-BOX-01" }).html, /name="qtyKg"[^>]*value="1"/);
   assert.equal(env.store.run("closePurchaseLine", { id: po.id, materialCode: "P-BOX-01", reason: "ผู้ขายส่งไม่ครบ" }).ok, true);
@@ -896,7 +903,7 @@ test("purchase dialog: rows to order come first and together, chemicals and part
 test("a purchase order line shows the part name next to its code (list and receive dialog), loads the BOM data when it is missing, and shows the code alone when no name is known", async () => {
   const env = load();
   env.store.setUser("U03");
-  const { MNP_RUBBERFLOW_DIALOGS: dialogs, MNP_RUBBERFLOW_PAGES: pages } = env.context;
+  const { MNP_RUBBERFLOW_DIALOGS: dialogs } = env.context;
   const posted = env.store.run("createPurchaseOrder", {
     lines: [{ materialCode: "ZNO", needKg: 10, availableKg: 6, shortageKg: 4, qtyKg: 5 }, { materialCode: "P-BOX-01", source: "bom", uom: "box", needKg: 7, availableKg: 5, shortageKg: 2, safetyKg: 10, qtyKg: 12 }, { materialCode: "P-NONE-01", source: "bom", uom: "pcs", needKg: 1, availableKg: 0, shortageKg: 1, safetyKg: 0, qtyKg: 1 }],
     safety: { ZNO: 4, "P-BOX-01": 10, "P-NONE-01": 0 }, sourcePi: "PI-9",
@@ -905,23 +912,23 @@ test("a purchase order line shows the part name next to its code (list and recei
   const po = env.store.data().purchaseOrders[0];
   const material = env.store.data().materials.find((row) => row.code === "ZNO");
   const withNames = { ...env.ctx("p=warehouse&tab=po"), bomItems: () => [{ code: "P-BOX-01", name: "กล่องนอก <b>" }] };
-  const list = pages.warehouse(withNames).html;
+  const list = poPage(env, "", withNames);
   assert.match(list, /<td><span class="rf-mono">P-BOX-01<\/span><div class="small muted">กล่องนอก &lt;b&gt;<\/div><\/td>/, "the BOM item name is under the part code, escaped");
   assert.match(list, new RegExp(`ZNO</span><div class="small muted">${material.name}</div>`), "a chemical keeps the name from the RubberFlow materials");
   assert.match(list, /P-NONE-01<\/span><div class="small muted"><\/div>/, "a part the BOM does not know shows the code alone");
   assert.equal((list.match(/กล่องนอก/g) ?? []).length, 1, "the name is not repeated");
   assert.match(dialogs.receivePurchase(withNames, { id: po.id, materialCode: "P-BOX-01" }).html, /P-BOX-01 · กล่องนอก &lt;b&gt;/, "the receive dialog names the part");
   assert.doesNotMatch(dialogs.receivePurchase(withNames, { id: po.id, materialCode: "P-NONE-01" }).html, /P-NONE-01 ·/, "no dangling separator without a name");
-  assert.doesNotMatch(pages.warehouse({ ...env.ctx("p=warehouse&tab=po"), bomItems: () => null }).html, /กล่องนอก/, "BOM data not loaded: code only");
+  assert.doesNotMatch(poPage(env, "", { ...env.ctx("p=warehouse&tab=po"), bomItems: () => null }), /กล่องนอก/, "BOM data not loaded: code only");
   // BOM ยังไม่ได้โหลด (เปิด RubberFlow ก่อนหน้า BOM): สั่งโหลดให้ครั้งเดียวแล้วเติมชื่อเมื่อพร้อม
   let loads = 0;
   let status = "idle";
   env.context.MNP_BOM = { store: { isRemote: () => true, status: () => status, data: () => ({ items: [{ code: "P-BOX-01", name: "กล่องนอก" }], orders: [] }), ensureLoaded: () => { loads += 1; status = "ready"; return Promise.resolve(); } } };
-  const first = pages.warehouse(env.ctx("p=warehouse&tab=po")).html;
+  const first = poPage(env);
   assert.doesNotMatch(first, /กล่องนอก/, "nothing yet while the BOM loads");
   assert.equal(loads, 1, "the BOM load is requested by the page");
   await Promise.resolve();
-  assert.match(pages.warehouse(env.ctx("p=warehouse&tab=po")).html, /P-BOX-01<\/span><div class="small muted">กล่องนอก<\/div>/, "the name appears once the BOM is ready");
+  assert.match(poPage(env), /P-BOX-01<\/span><div class="small muted">กล่องนอก<\/div>/, "the name appears once the BOM is ready");
   assert.equal(loads, 1, "no second load");
 });
 
@@ -1098,8 +1105,11 @@ test("list empty states: nothing yet says so and offers the first step, a search
   // คลัง: ค้นหาไม่เจอ = ไม่พบ · ยังว่างเฉยๆ = ยังไม่มี
   env.store.setUser("U01");
   const warehouse = (query, data = {}) => { const ctx = env.ctx(query); return pages.warehouse({ ...ctx, data: { ...ctx.data, ...data } }).html; };
-  assert.match(warehouse("p=warehouse&tab=raw", { materialLots: [] }), /ยังไม่มีล็อตวัตถุดิบ/);
-  assert.match(warehouse("p=warehouse&tab=raw&q=zzzz-no-match"), /ไม่พบล็อตวัตถุดิบ/);
+  // ล็อตวัตถุดิบและใบสั่งซื้ออยู่ที่โมดูลคลังวัตถุดิบ (ST): แท็บเหล่านี้เป็นข้อความเดียว (ลิงก์ไปที่นั่นเฉพาะผู้ที่เปิดโมดูลนั้นได้)
+  assert.match(warehouse("p=warehouse&tab=raw", { materialLots: [] }), /ล็อตวัตถุดิบ การรับเข้า และใบสั่งซื้ออยู่ที่คลังวัตถุดิบ \(ST\)/);
+  assert.match(warehouse("p=warehouse&tab=po"), /ล็อตวัตถุดิบ การรับเข้า และใบสั่งซื้ออยู่ที่คลังวัตถุดิบ \(ST\)/);
+  assert.doesNotMatch(warehouse("p=warehouse&tab=raw"), /rf-search|data-rf-open="tag"|setMaterialLotStatus/, "no lot list, label or hold button here");
+  assert.match(warehouse("p=warehouse&tab=materials&q=zzzz-no-match"), /ไม่พบวัตถุดิบ/);
   assert.match(warehouse("p=warehouse&tab=fg", { fgBoxes: [] }), /สินค้าสำเร็จรูปอยู่ที่คลังสินค้าสำเร็จรูป \(WH\)/, "the finished-goods tab has no list to be empty: it points to the warehouse module");
   assert.doesNotMatch(warehouse("p=warehouse&tab=fg"), /rf-search/, "and has nothing to search");
 });

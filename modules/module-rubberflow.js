@@ -115,8 +115,8 @@
     if (isEditing()) showToast("มีผู้อื่นอัปเดตข้อมูล RubberFlow ข้อมูลล่าสุดจะแสดงเมื่อเปิดหน้านี้ใหม่");
     else renderRoute();
   };
-  // หน้าโมดูล WH (#/wh) วาดกล่องสินค้าจาก store นี้ด้วย: บันทึกสำเร็จ ผู้อื่นบันทึก หรือย้อนกลับ = วาดหน้านั้นใหม่ (ไม่ทับ dialog ที่เปิดอยู่)
-  const onWhRoute = () => { try { return currentRoute().path === "wh"; } catch { return false; } };
+  // หน้าโมดูล WH (#/wh) วาดกล่องสินค้า และโมดูล ST (#/st) วาดล็อตเคมี ใบสั่งซื้อ และเอกสารคลังเคมีจาก store นี้ด้วย: บันทึกสำเร็จ ผู้อื่นบันทึก หรือย้อนกลับ = วาดหน้านั้นใหม่ (ไม่ทับ dialog ที่เปิดอยู่)
+  const onWhRoute = () => { try { return ["wh", "st"].includes(currentRoute().path); } catch { return false; } };
   const WH_REPAINT = Object.freeze(["saved", "synced", "reverted"]);
   store.subscribe((event) => {
     if (!onRfRoute()) {
@@ -176,6 +176,7 @@
   }
 
   const listOf = (value) => (Array.isArray(value) ? value : value === undefined ? [] : [value]);
+  const filled = (value) => value !== undefined && value !== null && String(value).trim() !== "";
   const itemsOf = (p) => listOf(p.materialCode).map((materialCode, index) => ({ materialCode, phr: listOf(p.phr)[index], stage: listOf(p.stage)[index] }));
   // ฟอร์มสูตรและฟอร์มผสมมีช่อง mixerTemp1 dumpTemp1 mixMin1 / ...2 (ขั้น 1 และขั้น 2) รวมเป็น stages
   const stagesOf = (p) => rules.MIX_STAGES.map((stage) => ({ stage, mixerTemp: p[`mixerTemp${stage}`], dumpTemp: p[`dumpTemp${stage}`], mixMin: p[`mixMin${stage}`] }));
@@ -213,10 +214,11 @@
     },
     // คลังเคมี ST / RB (20261220010000): ฟอร์มส่งช่องรายแถวเป็นอาร์เรย์ตามลำดับ · แถวที่จำนวนว่าง / 0 ถูกข้ามใน action
     // ขอเบิก: materialCode[] qtyKg[] note · จ่าย: id issueKg[] (ตามลำดับบรรทัดของใบ) · คืน: lotNo[] kg[] note · นับ: lotNo[] countedKg[] reason note
-    requestChemicals: (p) => ({ lines: listOf(p.materialCode).map((materialCode, index) => ({ materialCode, qtyKg: listOf(p.qtyKg)[index] })), note: p.note }),
+    // หน้าต่างแสดงทุกวัตถุดิบ / ทุกล็อต: แถวที่ช่องว่างไม่ส่ง (ใบหนึ่งมีได้ไม่เกิน 100 รายการ)
+    requestChemicals: (p) => ({ lines: listOf(p.materialCode).map((materialCode, index) => ({ materialCode, qtyKg: listOf(p.qtyKg)[index] })).filter((line) => filled(line.qtyKg)), note: p.note }),
     issueChemicals: (p) => ({ id: p.id, kgs: listOf(p.issueKg) }),
-    returnChemicals: (p) => ({ lines: listOf(p.lotNo).map((lotNo, index) => ({ lotNo, kg: listOf(p.kg)[index] })), note: p.note }),
-    countRbStock: (p) => ({ lines: listOf(p.lotNo).map((lotNo, index) => ({ lotNo, countedKg: listOf(p.countedKg)[index] })), reason: p.reason, note: p.note }),
+    returnChemicals: (p) => ({ lines: listOf(p.lotNo).map((lotNo, index) => ({ lotNo, kg: listOf(p.kg)[index] })).filter((line) => filled(line.kg)), note: p.note }),
+    countRbStock: (p) => ({ lines: listOf(p.lotNo).map((lotNo, index) => ({ lotNo, countedKg: listOf(p.countedKg)[index] })).filter((line) => filled(line.countedKg)), reason: p.reason, note: p.note }),
     createNcr: (p) => ({ ...p, whys: p.whys ?? [] }),
     addQcRecord: (p) => ({ ...p, values: p.values ?? {}, result: p.result || undefined }),
   };
@@ -334,13 +336,14 @@
   // บัญชีที่ไม่มีสิทธิ์ของคำสั่งนั้น: ซ่อนปุ่ม (คำสั่ง/เปิด dialog) และปิดฟอร์มพร้อมบอกครั้งเดียว · เป็นแค่ตัวช่วยไม่ให้กดผิด ฐานข้อมูลตัดสินสิทธิ์จริงอีกครั้งเสมอ
   // คำสั่งที่ไม่อยู่ในตารางสิทธิ์ (storeApi.rightForAction) ไม่ถูกจำกัดที่หน้าจอ · โหมดสาธิตไม่จำกัดสิทธิ์ของปุ่มเหล่านี้
   const NO_RIGHT_NOTE = "บัญชีนี้ดูข้อมูลได้อย่างเดียว ไม่มีสิทธิ์ทำรายการนี้";
+  // data-rf-right บนปุ่ม/ฟอร์ม = สิทธิ์ที่ใช้แทนสิทธิ์ตามชื่อคำสั่ง (คำสั่งเดียวที่สิทธิ์ขึ้นกับข้อมูล เช่น คืนใบเบิกคลัง RB = requestChem · ใบเดิมคลัง ST = returnRequisition)
   function applyRights(root, ctx) {
     if (!store.isRemote() || !ctx.user) return;
     const lacks = (right) => Boolean(right) && !storeApi.can(ctx.user, right);
-    root.querySelectorAll("[data-rf-action]").forEach((button) => { if (lacks(storeApi.rightForAction(button.dataset.rfAction))) button.remove(); });
-    root.querySelectorAll("[data-rf-open]").forEach((button) => { if (lacks(storeApi.rightForDialog(button.dataset.rfOpen))) button.remove(); });
+    root.querySelectorAll("[data-rf-action]").forEach((button) => { if (lacks(button.dataset.rfRight || storeApi.rightForAction(button.dataset.rfAction))) button.remove(); });
+    root.querySelectorAll("[data-rf-open]").forEach((button) => { if (lacks(button.dataset.rfRight || storeApi.rightForDialog(button.dataset.rfOpen))) button.remove(); });
     root.querySelectorAll("form[data-rf-form]").forEach((form) => {
-      if (!lacks(storeApi.rightForAction(form.dataset.rfForm))) return;
+      if (!lacks(form.dataset.rfRight || storeApi.rightForAction(form.dataset.rfForm))) return;
       form.dataset.rfReadonly = "";
       form.querySelectorAll("input, select, textarea, button").forEach((node) => { node.disabled = true; });
       if (form.id) root.querySelectorAll(`button[form="${CSS.escape(form.id)}"]`).forEach((node) => { node.disabled = true; });
