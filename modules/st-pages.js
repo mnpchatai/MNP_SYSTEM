@@ -279,7 +279,7 @@
   function holdCards(ctx, rf) {
     const R = rfRules();
     if (rf.status !== "ready" || !R || !rfCan(ctx, rf, "releaseMaterial")) return [];
-    const held = F.heldMaterialLots(rf.data);
+    const held = F.heldMaterialWork(rf.data);
     if (!held.length) return [];
     return [card({ tone: "is-hold", state: "วัตถุดิบถูกกัก", title: `วัตถุดิบที่กักรอปลดกักกัน ${held.length} ล็อต`, href: stUrl({ tab: "hold" }),
       lines: cardLines(held, (lot) => `<li><span><span class="rf-mono">${esc(lot.lotNo)}</span> <span class="small muted">${esc(chemName(rf, lot.materialCode))}</span></span><span class="nowrap">${esc(kg(ctx, R.lotKg(lot, "ST") + R.lotKg(lot, "RB")))}</span></li>`, "ล็อต"),

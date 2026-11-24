@@ -212,7 +212,12 @@ test("วัตถุดิบที่กัก (#/st?tab=hold): the held chemi
   for (const lot of data.materialLots) lot.status = "hold";
   const many = cardsOf(await env.open("")).find((entry) => entry.includes("วัตถุดิบที่กักรอปลดกักกัน")) ?? "";
   assert.equal((many.match(/<li>/g) ?? []).length, 5);
-  assert.match(many, new RegExp(`อีก ${data.materialLots.length - 5} ล็อต`));
+  // งานนับเฉพาะล็อตที่ยังมียอด (ST + RB) · ล็อตที่หมดแล้วยังอยู่ในตารางหน้าวัตถุดิบที่กัก
+  const R = env.context.MNP_RUBBERFLOW_RULES;
+  const withStock = data.materialLots.filter((lot) => R.lotKg(lot, "ST") + R.lotKg(lot, "RB") > 0.0001).length;
+  assert.ok(withStock < data.materialLots.length, "the seed has an empty lot, so the rule is exercised");
+  assert.match(many, new RegExp(`วัตถุดิบที่กักรอปลดกักกัน ${withStock} ล็อต`));
+  assert.match(many, new RegExp(`อีก ${withStock - 5} ล็อต`));
   // the actions say the same as the page (and the database): ST head releases, ST staff are refused in Thai, ST staff still hold
   const A = env.context.MNP_RUBBERFLOW_ACTIONS;
   const base = structuredClone(env.rf.store.data());

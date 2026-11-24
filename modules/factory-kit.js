@@ -317,6 +317,11 @@
   // ล็อตที่กักเรียงตามวันหมดอายุ (หมดก่อนอยู่บน) · ยอดของล็อต = คลัง ST + คลัง RB (ล็อตที่กักจ่ายไม่ได้ทั้งสองคลังจนกว่าจะปลด)
   const heldMaterialLots = (data) => (data?.materialLots ?? []).filter((lot) => lot.status === "hold")
     .sort((a, b) => (Number(a.expiry) || 0) - (Number(b.expiry) || 0) || String(a.lotNo).localeCompare(String(b.lotNo)));
+  // งานรอปลดกักกัน (การ์ดงานของฉัน QA / ST): เฉพาะล็อตที่กักและยังมียอด (ST + RB) · ล็อตที่หมดแล้วยังเห็นในตารางหน้าวัตถุดิบที่กัก แต่ไม่ค้างเป็นงาน
+  const heldMaterialWork = (data) => {
+    const R = root.MNP_RUBBERFLOW_RULES;
+    return heldMaterialLots(data).filter((lot) => !R?.lotKg || R.lotKg(lot, "ST") + R.lotKg(lot, "RB") > 0.0001);
+  };
   const materialReleaseText = () => root.MNP_RUBBERFLOW_RULES?.MATERIAL_RELEASE_TEXT ?? "ปลดกักกันวัตถุดิบได้เฉพาะหัวหน้า QA หัวหน้า ST หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ";
   // ปุ่มปลดกักกัน (คำสั่ง setMaterialLotStatus ของ RubberFlow · data-rf-right ให้ตัวผูกของ RubberFlow ซ่อนปุ่มตามสิทธิ์ปลดกักกัน ไม่ใช่สิทธิ์กักกัน) · ต้องอยู่ใน [data-rf-scope]
   const materialReleaseButton = (ui, lot, className = "bom-job-main") => ui.button("ปลดกักกัน", { action: "setMaterialLotStatus", args: { lotNo: lot.lotNo, status: "available" }, className, confirmText: `ปลดกักกันล็อต ${lot.lotNo}? ล็อตจะจ่ายได้ตามปกติอีกครั้ง`, success: "ปลดกักกันล็อต {result} แล้ว", ariaLabel: `ปลดกักกันล็อต ${lot.lotNo}` }).replace("<button ", '<button data-rf-right="releaseMaterial" ');
@@ -522,6 +527,6 @@
     esc, attr, formPayload, parseArgs, bindRoot, deptChip, dueText, jobCard, jobReportDialog, cardTitle, cardClass,
     FACTORY_GROUP, canSeeDept, canOpenDeptModule, deptLink, orderNavItems, registerDeptModule, productionLanding, mountDeptJobs,
     pageHead, searchForm, includesText, limited, deptWork, deptWorkSection, storeLanding, STORE_MENU, workItem, deptWorkCount, viewHead, actionLink, wake, failed, rubberflowFailed, deptCtx, routeUrl, onDeptRoute: onFactoryRoute,
-    heldMaterialLots, heldMaterialView, materialReleaseButton, materialReleaseText,
+    heldMaterialLots, heldMaterialWork, heldMaterialView, materialReleaseButton, materialReleaseText,
   });
 })(window);

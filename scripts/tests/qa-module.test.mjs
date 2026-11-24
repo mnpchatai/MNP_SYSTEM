@@ -554,7 +554,7 @@ test("the QA module files: pages in qa-pages.js, loaded before module-qa.js with
   assert.ok(order.indexOf("modules/qa-pages.js") >= 0 && order.indexOf("modules/qa-pages.js") < order.indexOf("modules/module-qa.js"), "qa-pages.js before module-qa.js");
   assert.ok(order.indexOf("modules/module-qa.js") < order.indexOf("app.js"));
   assert.equal(new Set(scripts.map((match) => match[2])).size, 1, "one ?v= for every entry");
-  assert.equal(scripts[0][2], "20261128qamodule3");
+  assert.equal(scripts[0][2], "20261128qamodule4");
   const quality = read("modules/rubberflow-pages-quality.js");
   assert.doesNotMatch(quality, /pages\.(quality|spc|trace)\s*=/, "the RubberFlow pages are gone, the bodies are shared views");
   const pagesSource = read("modules/qa-pages.js");

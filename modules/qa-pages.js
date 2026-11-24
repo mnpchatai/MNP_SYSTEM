@@ -90,7 +90,7 @@
     const rod = F.deptWork(ctx, { title: "ยางเส้นยาวที่กักรอตัดสิน", quietWhenEmpty: true, note: ctx.helpers?.canDecideRods?.(ctx.user) ? "" : groupNote(`ตัดสินได้${headOnlyText()}`) });
     const ready = rf.status === "ready" && Boolean(rfRules());
     const lots = ready ? heldLots(rf.data).map((lot) => lotCard(ctx, rf, lot)) : [];
-    const materials = ready ? F.heldMaterialLots(rf.data).map((lot) => materialCard(ctx, rf, lot)) : [];
+    const materials = ready ? F.heldMaterialWork(rf.data).map((lot) => materialCard(ctx, rf, lot)) : [];
     const ncrs = ready ? openNcrs(rf.data).map((ncr) => ncrCard(ctx, rf, ncr)) : [];
     return { rod, lots, materials, ncrs, count: rod.count + lots.length + materials.length + ncrs.length };
   }
