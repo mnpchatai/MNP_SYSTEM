@@ -3193,6 +3193,11 @@ table.bom-tree td.right { white-space: nowrap; }
 /* หน้าต่างสั่งซื้อ: แถวที่ต้องสั่งและช่องจำนวนสั่งของแถวนั้น */
 .rf-modal .rf-table tr.rf-po-need td { background: color-mix(in srgb, var(--warning, #b7791f) 12%, var(--paper)); }
 .rf-modal .rf-table tr.rf-po-need [data-rf-qty] { border-color: var(--warning, #b7791f); border-width: 2px; font-weight: 700; }
+/* ช่องสต็อกขั้นต่ำและจำนวนสั่ง: กว้างพอเห็นตัวเลขครบ (เช่น 3,603.605) ชิดขวาแบบตัวเลขในตาราง ไม่มีลูกศรเพิ่มลดบังตัวเลข · ช่องที่แก้ไม่ได้ดูต่างจากช่องที่แก้ได้ */
+.rf-modal .rf-table [data-rf-qty], .rf-modal .rf-table [data-rf-safety] { width: 12ch; min-width: 12ch; padding-inline: 10px; text-align: right; font-variant-numeric: tabular-nums; -moz-appearance: textfield; appearance: textfield; }
+.rf-modal .rf-table [data-rf-qty]::-webkit-inner-spin-button, .rf-modal .rf-table [data-rf-qty]::-webkit-outer-spin-button,
+.rf-modal .rf-table [data-rf-safety]::-webkit-inner-spin-button, .rf-modal .rf-table [data-rf-safety]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.rf-modal .rf-table [data-rf-safety][readonly], .rf-modal .rf-table [data-rf-qty][readonly] { background: transparent; border-style: dashed; }
 /* แถบลากปรับความกว้างของแผงรายละเอียด (เฉพาะจอกว้างที่ต้นไม้กับแผงอยู่ข้างกัน) */
 .bom-tree-split { display: none; }
 @media (min-width: 1041px) {
