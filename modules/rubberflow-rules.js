@@ -146,18 +146,23 @@
   };
   const approvedRecipes = (recipes) => currentRecipes(recipes).filter((recipe) => recipe.status === "approved");
 
-  function lotState(lot, now) {
+  // คลังเคมี (20261220010000): ล็อตเดียวมียอดสองคลัง qtyKg = คลังวัตถุดิบกลาง (ST) · rbKg = คลังเคมีของ RB · ไม่ระบุคลัง = ST (ความหมายเดิม)
+  // สถานะกักกันมีผลทั้งล็อตทั้งสองคลัง · ล็อตก่อนแยกคลังไม่มี rbKg = 0
+  const STORES = Object.freeze(["ST", "RB"]);
+  const lotKg = (lot, store = "ST") => Number(store === "RB" ? lot?.rbKg : lot?.qtyKg) || 0;
+  function lotState(lot, now, store = "ST") {
     if (lot.status === "hold") return "hold";
-    if (lot.qtyKg <= 0.0001) return "empty";
+    if (lotKg(lot, store) <= 0.0001) return "empty";
     if (lot.expiry <= now) return "expired";
     return "available";
   }
 
-  // จัดสรรล็อตแบบหมดอายุก่อนจ่ายก่อน (FEFO) จากล็อตที่ใช้ได้ หักที่จองไว้แล้ว (reserved[lotNo] = kg)
-  function allocateFefo(materialLots, materialCode, kgNeeded, now, reserved = {}) {
+  // จัดสรรล็อตแบบหมดอายุก่อนจ่ายก่อน (FEFO) จากล็อตที่ใช้ได้ของคลังที่ระบุ หักที่จองไว้แล้ว (reserved[lotNo] = kg)
+  // store "ST" = จ่ายตามใบขอเบิกของ RB (issueChemicals) และใบเบิกเดิม · "RB" = ใบเบิกผสมของ RB (createRequisition) · ตรงกับ FEFO ของฐานข้อมูล (หมดอายุ → รับเข้า → เลขล็อต)
+  function allocateFefo(materialLots, materialCode, kgNeeded, now, reserved = {}, store = "ST") {
     const candidates = materialLots
-      .filter((lot) => lot.materialCode === materialCode && lotState(lot, now) === "available")
-      .map((lot) => ({ lot, free: lot.qtyKg - (reserved[lot.lotNo] || 0) }))
+      .filter((lot) => lot.materialCode === materialCode && lotState(lot, now, store) === "available")
+      .map((lot) => ({ lot, free: lotKg(lot, store) - (reserved[lot.lotNo] || 0) }))
       .filter((candidate) => candidate.free > 0.0001)
       .sort((a, b) => a.lot.expiry - b.lot.expiry || a.lot.receivedAt - b.lot.receivedAt);
     const picks = [];
@@ -261,8 +266,9 @@
       const recipe = recipeOf(recipes, order.recipeId, order.recipeRevision);
       if (recipe && Array.isArray(recipe.items) && recipe.items.length) share(order, recipe, other);
     }
+    // คงเหลือสำหรับคิดสั่งซื้อ = คลัง ST + คลัง RB ของล็อตที่ใช้ได้ (ไม่กักกัน ไม่หมดอายุ · 20261220010000 ข้อเสนอที่ระบุใน PR)
     const onHand = new Map();
-    for (const lot of materialLots) if (lotState(lot, now) === "available") add(onHand, lot.materialCode, Number(lot.qtyKg) || 0);
+    for (const lot of materialLots) if (lot.status !== "hold" && lot.expiry > now) add(onHand, lot.materialCode, lotKg(lot, "ST") + lotKg(lot, "RB"));
     const reserved = new Map();
     for (const requisition of requisitions) {
       if (requisition.status !== "weighing") continue;
@@ -416,16 +422,113 @@
     if (wo?.status !== "cancelled" || !["issued", "weighing"].includes(requisition?.status) || !(issuedKgOf(requisition) > 0)) return null;
     return (requisition.lines ?? []).some((line) => line && Object.hasOwn(line, "returnedAt")) ? "returned" : "pending";
   }
-  const returnableRequisitions = (data) => (data?.requisitions ?? []).filter((requisition) => requisitionReturnState(data, requisition) === "pending");
+  // คลังของใบเบิก (20261220010000): "RB" = ใบเบิกผสมที่ตัดคลัง RB (รับคืนเข้าคลัง RB โดยกลุ่มวางแผน / RB) · อื่น = ใบเดิมของคลัง ST (รับคืนโดย ST)
+  const requisitionStore = (requisition) => (requisition?.store === "RB" ? "RB" : "ST");
+  // store (ไม่บังคับ) = เฉพาะใบของคลังนั้น · ไม่ส่ง = ทุกใบ (เหมือนเดิม)
+  const returnableRequisitions = (data, store) => (data?.requisitions ?? []).filter((requisition) => requisitionReturnState(data, requisition) === "pending" && (!store || requisitionStore(requisition) === store));
   // ใบเบิกที่หน้าผสมยางเลือกได้: จ่ายครบแล้ว (issued) และ WO ยังไม่ถูกยกเลิก
   const mixableRequisitions = (data) => (data?.requisitions ?? []).filter((requisition) => requisition.status === "issued" && (data?.orders ?? []).find((order) => order.id === requisition.orderId)?.status !== "cancelled");
+
+  // ---------- เอกสารคลังเคมี ST / RB (chemDocs · ตรงกับ private.rf_save_chem_docs ของ 20261220010000 และ mock ของ harness) ----------
+  // { id: CR- | CT- | CC- -yyyymmdd-nn, kind: request | return | count, status, lines, note, reason, createdAt, createdBy, doneAt?, doneBy? }
+  // request: open → partial → done | closed (ST ปิดยอดพร้อมเหตุผล) | cancelled (RB ยกเลิกก่อนจ่าย) · lines [{ materialCode, qtyKg, issuedKg, issues: [{ lotNo, kg, at, by }] }]
+  // return: pending → received (ST รับทั้งใบ) | rejected (กลับคลัง RB) · lines [{ lotNo, materialCode, kg, receivedKg }] · count: done · lines [{ lotNo, materialCode, beforeKg, countedKg }]
+  const CHEM_REASON_MIN = 3;
+  const CHEM_REASON_MAX = 300;
+  const chemDocsOf = (data) => (Array.isArray(data?.chemDocs) ? data.chemDocs : []);
+  const chemLineOpenKg = (line) => Math.max(0, round9((Number(line?.qtyKg) || 0) - (Number(line?.issuedKg) || 0)));
+  const chemRequestOpen = (doc) => doc?.kind === "request" && ["open", "partial"].includes(doc.status);
+  // ใบขอเบิกที่ ST ต้องจ่าย (open / partial) · ใบคืนที่ ST ต้องรับ (pending) เรียงเก่าสุดก่อน
+  const byCreated = (a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0) || String(a.id).localeCompare(String(b.id));
+  const chemRequestsToIssue = (data) => chemDocsOf(data).filter(chemRequestOpen).sort(byCreated);
+  // กิโลที่ใบเบิกค้างชั่ง (weighing) ของคลังนั้นจองไว้ต่อล็อต { lotNo: kg } · remote (ฐานข้อมูล) = เฉพาะบรรทัดที่ยังไม่ชั่ง · โหมดสาธิตหักตอนชั่งครบ จึงจองทุกบรรทัด
+  // ใบ weighing เดิมเป็นของคลัง ST: ST จ่ายส่วนที่จองให้ RB ไม่ได้ (FEFO ของ issueChemicals หักส่วนนี้ ตรงกับฐานข้อมูล)
+  function weighingReservedKg(requisitions, store = "ST", { remote = true } = {}) {
+    const reserved = {};
+    for (const requisition of requisitions ?? []) {
+      if (requisition?.status !== "weighing" || requisitionStore(requisition) !== store) continue;
+      for (const line of requisition.lines ?? []) if (!remote || line.actualKg === null || line.actualKg === undefined) reserved[line.lotNo] = (reserved[line.lotNo] || 0) + (Number(line.targetKg) || 0);
+    }
+    return reserved;
+  }
+  const chemReturnsPending = (data) => chemDocsOf(data).filter((doc) => doc?.kind === "return" && doc.status === "pending").sort(byCreated);
+  // ยอดที่คืนระหว่างทาง (ใบคืนที่รอ ST รับ) ของล็อต
+  const lotInTransitKg = (data, lotNo) => round9(chemReturnsPending(data).reduce((sum, doc) => sum + (doc.lines ?? []).filter((line) => line?.lotNo === lotNo).reduce((kg, line) => kg + (Number(line.kg) || 0), 0), 0));
+  // ยอดนับสูงสุดของล็อตในคลัง RB = ยอดรับเข้า − คลัง ST − ที่คืนระหว่างทาง
+  const rbCountCapKg = (data, lot) => Math.max(0, round9((Number(lot?.initialKg) || 0) - lotKg(lot, "ST") - lotInTransitKg(data, lot?.lotNo)));
+
+  // ST เห็นล็อตก่อนยืนยันการจ่าย: FEFO จากคลัง ST ต่อบรรทัด · kgs = ยอดจ่ายครั้งนี้ตามลำดับบรรทัด (ไม่ส่ง / ว่าง = ยอดคงค้างทั้งหมด · 0 = ไม่จ่ายบรรทัดนี้)
+  // คืน [{ materialCode, openKg, kg, picks: [{ lotNo, kg, expiry }], shortageKg }] · ฐานข้อมูลจัดสรรเองอีกครั้งตอนบันทึก (ผลเดียวกันถ้าข้อมูลไม่เปลี่ยน)
+  // options.remote = false (โหมดสาธิต): ใบค้างชั่งจองทุกบรรทัด
+  function chemIssuePreview(data, doc, kgs, now = Date.now(), options = {}) {
+    const lots = data?.materialLots ?? [];
+    const reserved = weighingReservedKg(data?.requisitions, "ST", { remote: options.remote !== false });
+    return (doc?.lines ?? []).map((line, index) => {
+      const openKg = chemLineOpenKg(line);
+      const raw = Array.isArray(kgs) ? kgs[index] : undefined;
+      const kg = raw === undefined || raw === null || String(raw).trim() === "" ? openKg : Math.max(0, Math.min(openKg, Number(raw) || 0));
+      const { picks, shortage } = kg > 0 ? allocateFefo(lots, line.materialCode, kg, now, reserved, "ST") : { picks: [], shortage: 0 };
+      return {
+        materialCode: line.materialCode, openKg, kg,
+        picks: picks.map((pick) => ({ lotNo: pick.lotNo, kg: round9(pick.kg), expiry: lots.find((lot) => lot.lotNo === pick.lotNo)?.expiry ?? null })),
+        shortageKg: round9(shortage),
+      };
+    });
+  }
+
+  // ล็อตที่อยู่คลัง RB (rbKg > 0) พร้อมสถานะในคลัง RB (available / hold / expired) เรียงตามวัตถุดิบแล้วหมดอายุก่อน
+  const rbStockLots = (data, now = Date.now()) => (data?.materialLots ?? [])
+    .filter((lot) => lotKg(lot, "RB") > 0.0001)
+    .map((lot) => ({ lot, rbKg: lotKg(lot, "RB"), state: lotState(lot, now, "RB") }))
+    .sort((a, b) => String(a.lot.materialCode).localeCompare(String(b.lot.materialCode)) || a.lot.expiry - b.lot.expiry || String(a.lot.lotNo).localeCompare(String(b.lot.lotNo)));
+
+  // ใช้จริงเทียบสูตรของคลัง RB ต่อวัตถุดิบ (มุมมอง RB): ไม่ชั่งเพิ่ม คิดจากเอกสารที่มีอยู่
+  //   receivedKg = รับจาก ST (issues ของใบขอเบิก) · recipeKg = ใช้ตามสูตร (targetKg ของใบเบิกคลัง RB − ที่คืนเข้าคลัง RB ของใบนั้น)
+  //   returnedKg = คืนให้ ST (ใบคืนที่ไม่ถูกปฏิเสธ) · expectedKg = รับ − ใช้ตามสูตร − คืน (ยอดที่ควรเพิ่มขึ้นในคลัง RB ตามสูตร)
+  //   countAdjustKg = ผลรวมการปรับยอดจากการนับ (นับได้ − ยอดก่อนนับ · ติดลบ = ใช้จริงมากกว่าสูตรหรือสูญหาย) · onHandKg = ยอดคลัง RB ตอนนี้ (ไม่ตามช่วงเวลา)
+  // options.since / options.until (ms ไม่บังคับ) = นับเฉพาะรายการในช่วงเวลานั้น · คืน { rows (เรียงตามรหัส), totals }
+  function rbUsage(data, { since = null, until = null } = {}) {
+    const inWindow = (at) => (since === null || Number(at) >= since) && (until === null || Number(at) <= until);
+    const rows = new Map();
+    const row = (code) => {
+      if (!rows.has(code)) rows.set(code, { materialCode: code, receivedKg: 0, recipeKg: 0, returnedKg: 0, expectedKg: 0, countAdjustKg: 0, onHandKg: 0 });
+      return rows.get(code);
+    };
+    for (const doc of chemDocsOf(data)) {
+      for (const line of doc.lines ?? []) {
+        if (!line?.materialCode) continue;
+        if (doc.kind === "request") for (const issue of line.issues ?? []) { if (inWindow(issue?.at)) row(line.materialCode).receivedKg += Number(issue?.kg) || 0; }
+        else if (doc.kind === "return" && doc.status !== "rejected" && inWindow(doc.createdAt)) row(line.materialCode).returnedKg += Number(line.kg) || 0;
+        else if (doc.kind === "count" && inWindow(doc.createdAt)) row(line.materialCode).countAdjustKg += (Number(line.countedKg) || 0) - (Number(line.beforeKg) || 0);
+      }
+    }
+    for (const requisition of data?.requisitions ?? []) {
+      if (requisitionStore(requisition) !== "RB") continue;
+      for (const line of requisition.lines ?? []) {
+        if (!line?.materialCode) continue;
+        if (inWindow(requisition.createdAt)) row(line.materialCode).recipeKg += Number(line.targetKg) || 0;
+        if (typeof line.returnedKg === "number" && inWindow(line.returnedAt)) row(line.materialCode).recipeKg -= line.returnedKg;
+      }
+    }
+    for (const lot of data?.materialLots ?? []) if (lotKg(lot, "RB") > 0 || rows.has(lot.materialCode)) row(lot.materialCode).onHandKg += lotKg(lot, "RB");
+    const keys = ["receivedKg", "recipeKg", "returnedKg", "expectedKg", "countAdjustKg", "onHandKg"];
+    const list = [...rows.values()].map((item) => {
+      item.expectedKg = item.receivedKg - item.recipeKg - item.returnedKg;
+      for (const key of keys) item[key] = round3(item[key]) || 0;
+      return item;
+    }).filter((item) => keys.some((key) => item[key] !== 0)).sort((a, b) => String(a.materialCode).localeCompare(String(b.materialCode)));
+    const totals = Object.fromEntries(keys.map((key) => [key, round3(list.reduce((sum, item) => sum + item[key], 0)) || 0]));
+    return { rows: list, totals };
+  }
 
   const api = {
     DAY, HOUR, STAGES, STAGE_LABEL, NEXT_STAGE, PREV_STAGE, SHIFTS, MACHINES, SPECS, WEIGH_TOL_PCT, WEIGH_TOL_MIN_KG,
     MIX_STAGES, itemStage, recipeStage, recipeLabel, orderLabel, unitText, inSpec, specText, specLimits, EXTRUSION_KEYS, extrusionSpecOf, orderExtrusionSpec, extrusionHoldReasons, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, OPEN_ORDER, orderRemainingKg, MAX_REQ_BATCHES, remainingBatches, nextRequisitionBatches, suggestOrderKg, chemicalNeeds, stats, cpkVerdict,
     fmtDate, fmtDateTime, fmtNum, fmtDuration, ymd, toInputDate, fromInputDate, niceScale,
-    issuedKgOf, requisitionReturnState, returnableRequisitions, mixableRequisitions,
+    issuedKgOf, requisitionReturnState, returnableRequisitions, mixableRequisitions, requisitionStore,
     poLineReceived, poLineReceipts, poLineClosed, poLineOpen, poLineDone, poTouched,
+    STORES, lotKg, CHEM_REASON_MIN, CHEM_REASON_MAX, chemDocsOf, chemLineOpenKg, chemRequestOpen, chemRequestsToIssue, chemReturnsPending, lotInTransitKg, rbCountCapKg, weighingReservedKg,
+    chemIssuePreview, rbStockLots, rbUsage,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_RUBBERFLOW_RULES = api;

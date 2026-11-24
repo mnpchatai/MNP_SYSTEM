@@ -14,7 +14,10 @@ const FILES = [
   "modules/wh-pages.js", "modules/module-wh.js",
 ];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
-const PAGES = ["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "check", "orders", "customers", "count", "stock", "jobs", "audit"];
+const PAGES = ["dashboard", "build", "items", "product", "structure", "variants", "compounds", "import", "check", "orders", "customers", "count", "jobs", "audit"];
+// ลิงก์ไปหน้าจ่ายออกของโมดูลคลังวัตถุดิบ (ST #/st · modules/st-pages.js ไม่ได้โหลดที่นี่: ใช้ MNP_ST_PAGES จำลองที่เปิดหน้านั้นได้)
+const stIssue = (orderId, text = "เบิกจ่ายที่คลังวัตถุดิบ \\(ST\\)") => new RegExp(`href="#/st\\?tab=issue&amp;order=${orderId}"[^>]*>${text}<`);
+const NO_PART_DIALOG_BUTTON = /data-rf-open="(issueParts|returnParts|undoParts)"/;
 const ROLES = ["admin", "manager", "planner", "rb", "gr", "pt", "bg", "st", "wh"];
 const XSS = "<script>alert(1)</script>";
 
@@ -45,6 +48,7 @@ function load({ sandbox = true, route = "", storage = new Map() } = {}) {
     FormData: class { constructor(form) { this.values = form?.__values ?? {}; } entries() { return Object.entries(this.values).flatMap(([key, value]) => (Array.isArray(value) ? value.map((item) => [key, item]) : [[key, value]])); } get(key) { return this.values[key] ?? null; } },
     MNP_REQUEST_MODULES: {},
     TextDecoder, Uint8Array, DataView,
+    MNP_ST_PAGES: { access: () => "full" },
   });
   context.window.MNP_REQUEST_MODULES = context.MNP_REQUEST_MODULES;
   for (const file of FILES) vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file });
@@ -1507,51 +1511,25 @@ test("in the in-browser demo a release opens no WOs: the confirm says nothing ab
   assert.doesNotMatch(html, /งาน RB ที่ยังไม่มี WO ใน RubberFlow/, "demo jobs are linked by hand; the database mode is the only one that opens WOs for you");
 });
 
-test("the part stock page: ST and WH count, the planning group and ST edit the safety stock, the list is searchable and paged, the history dialog lists the moves", async () => {
+test("BOM keeps no part stock page: p=stock moves to the ST module's store view (or BOM home for whoever cannot open it); the history dialog stays for the ST pages", async () => {
   const env = load();
   env.store.setUser("B08"); // ST
-  let html = await env.render("p=stock");
-  clean(html);
-  assert.match(html, /data-rf-form="countPartStock"/);
-  assert.match(html, /name="itemCode\[\]" value="P-BOX-01"/);
-  assert.match(html, /name="qty\[\]"[^>]*value="5"/, "the counted balance of the demo box");
-  assert.match(html, /name="safetyQty\[\]"/, "ST edits the safety stock");
-  assert.match(html, /name="safetyQty\[\][^>]*value="\d/, "ST's safety input carries the stored value");
-  assert.doesNotMatch(html, /value="(SE|RB|BG|PT)-/, "only purchased parts are listed");
-  assert.match(html, /data-rf-open="partHistory"/);
-  assert.match(html, /—/, "no RubberFlow purchase data in this run: the on-order column shows a dash");
-  html = await env.render("p=stock&q=box");
-  assert.match(html, /P-BOX-01/);
-  assert.doesNotMatch(html, /value="P-STK-01"/, "search narrows the list");
-  assert.match(await env.render("p=stock&q=zzzz"), /ไม่พบของซื้อที่ค้นหา/);
-  env.store.setUser("B03"); // ฝ่ายวางแผน
-  html = await env.render("p=stock");
-  assert.match(html, /name="safetyQty\[\]"[^>]*value="10"/, "the planner edits the safety stock");
-  // ผู้ที่เข้าหน้านี้ได้แต่ตั้งสต็อกขั้นต่ำไม่ได้ (WH นับได้อย่างเดียว) เห็นเป็นตัวเลข: จำลองด้วยสิทธิ์ที่ canSetSafety ปฏิเสธ
-  const stockCtx = env.ctx("p=stock");
-  const asWh = { ...stockCtx, user: { id: "WH1", role: "wh", dept: "WH", name: "คลังสินค้า" }, helpers: stockCtx.helpers };
-  const whHtml = env.context.MNP_BOM_PAGES.stock(asWh).html;
-  assert.match(whHtml, /name="qty\[\]"/, "WH still counts the balance");
-  assert.doesNotMatch(whHtml, /name="safetyQty\[\]"/, "WH cannot edit the safety stock");
-  env.store.setUser("B04"); // RB: เมนูนี้ไม่มี
-  assert.match(await env.render("p=stock"), /ไม่มีสิทธิ์เข้าถึงหน้านี้/);
-
-  // หลายร้อยรายการ: แสดง 100 แล้ว "แสดงเพิ่ม"
-  env.store.setUser("B03");
-  const data = env.store.data();
-  for (let n = 0; n < 250; n += 1) data.items.push({ code: `P-BULK-${String(n).padStart(3, "0")}`, kind: "PURCHASED", name: `ของซื้อ ${n}`, uom: "pcs", ownerDept: "ST", active: true });
-  html = await env.render("p=stock");
-  assert.equal((html.match(/name="itemCode\[\]"/g) ?? []).length, 100);
-  assert.match(html, /แสดงเพิ่ม \(อีก 15\d\)/);
-  assert.equal((await env.render("p=stock&n=200")).match(/name="itemCode\[\]"/g).length, 200);
-
+  await env.render("p=stock");
+  assert.equal(env.log.hash, "#/st?tab=stock", "ST lands on ในคลัง of the ST module");
+  assert.equal(env.context.MNP_BOM_STORE.findModule("stock"), null, "no BOM page id stock any more");
+  assert.ok(!env.context.MNP_BOM_STORE.SETUP_PAGES.includes("stock"), "no setup card for it");
+  env.context.MNP_ST_PAGES = { access: () => null };
+  env.store.setUser("B04"); // RB: ไม่มีหน้าคลังของซื้อ
+  await env.render("p=stock");
+  assert.equal(env.log.hash, "#/bom?p=orders", "someone who cannot open the ST store goes to BOM home");
+  assert.doesNotMatch(env.context.MNP_BOM_PAGES.setup(env.ctx("p=setup")).html, /คลังของซื้อ/);
   // ประวัติของชิ้น
   const D = env.context.MNP_BOM_DIALOGS;
   env.store.setUser("B08");
-  const history = D.partHistory(env.ctx("p=stock"), { code: "P-BOX-01" }).html;
+  const history = D.partHistory(env.ctx("p=count"), { code: "P-BOX-01" }).html;
   clean(history);
   assert.match(history, /นับ[\s\S]*\+5[\s\S]*สมศักดิ์ แก้วใส/);
-  assert.equal(D.partHistory(env.ctx("p=stock"), { code: "NOPE" }), null);
+  assert.equal(D.partHistory(env.ctx("p=count"), { code: "NOPE" }), null);
 });
 
 test("issuing parts from the PI page: the dialog has a tick box and an editable quantity per line, a short line starts unticked and marked and offers the purchase, one button issues the ticked lines; part jobs have no report buttons", async () => {
@@ -1559,7 +1537,8 @@ test("issuing parts from the PI page: the dialog has a tick box and an editable 
   env.store.setUser("B08"); // ST
   const D = env.context.MNP_BOM_DIALOGS;
   let html = await env.render("p=orders&sel=DEMO-26001");
-  assert.match(html, /data-rf-open="issueParts"[^>]*>เบิกจ่ายของซื้อ</, "ST sees the issue button of a PI with parts left");
+  assert.match(html, stIssue("DEMO-26001"), "ST sees one link to the issue page of the ST module for a PI with parts left");
+  assert.doesNotMatch(html, NO_PART_DIALOG_BUTTON, "the PI page keeps no second copy of the issue, return and undo buttons");
   assert.doesNotMatch(html, /data-rf-open="stockCount"/, "no per-PI counting of a released PI, and none for purchased parts");
   let dialog = D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html;
   clean(dialog);
@@ -1631,8 +1610,7 @@ test("issuing parts from the PI page: the dialog has a tick box and an editable 
   env.store.setUser("B08");
   // คืนของเหลือ: บรรทัดที่ยังเบิกไม่ครบคืนไม่ได้ (ไม่มีปุ่มเมื่อมีแต่บรรทัดแบบนี้) · ยกเลิกการเบิกจ่ายมีให้
   html = await env.render("p=orders&sel=DEMO-26001");
-  assert.doesNotMatch(html, /data-rf-open="returnParts"/);
-  assert.match(html, /data-rf-open="undoParts"/);
+  assert.match(html, stIssue("DEMO-26001"));
   const partialReturn = D.returnParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html;
   assert.match(partialReturn, /name="qty\[\]" type="number" readonly[^>]*aria-label="P-BOX-01 ยังเบิกไม่ครบ คืนของเหลือได้เมื่อเบิกครบแล้ว"><div class="small muted">ยังเบิกไม่ครบ<\/div>/);
   assert.match(D.undoParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }).html, /P-BOX-01[\s\S]*3 กล่อง/, "the undo gives back the partly issued 3");
@@ -1641,7 +1619,7 @@ test("issuing parts from the PI page: the dialog has a tick box and an editable 
   assert.equal(issued.ok, true, issued.error?.message);
   assert.deepEqual([box01().status, box01().qtyDone], ["done", 7]);
   html = await env.render("p=orders&sel=DEMO-26001");
-  assert.doesNotMatch(html, /data-rf-open="issueParts"/);
+  assert.match(html, stIssue("DEMO-26001"), "fully issued and still open: the link stays for the return and the undo");
   assert.equal(D.issueParts(env.ctx("p=orders&sel=DEMO-26001"), { orderId: "DEMO-26001" }), null);
   assert.equal(D.issueParts(env.ctx("p=orders&sel=DEMO-26002"), { orderId: "DEMO-26002" }), null, "a draft order has no part jobs");
   // หน้างานแผนก ST: งานของซื้อไม่มีปุ่มรายงาน/พักงาน
@@ -1651,7 +1629,7 @@ test("issuing parts from the PI page: the dialog has a tick box and an editable 
   const fresh = load();
   fresh.store.setUser("B08");
   html = await fresh.render("p=jobs&dept=ST");
-  assert.match(html, /เบิกจ่ายที่ใบ PI/, "an open part job points to the PI page");
+  assert.match(html, /href="#\/st\?tab=issue&amp;order=[^"]+"[^>]*>เบิกจ่ายที่คลังวัตถุดิบ \(ST\)</, "an open part job points to the issue page of the ST module");
   assert.doesNotMatch(html, /data-rf-open="jobReport"|data-rf-action="setJobStatus"/, "and offers no report or hold");
 });
 
@@ -1661,26 +1639,28 @@ test("returning parts from the PI page: the buttons appear only for ST and the p
   const page = "p=orders&sel=DEMO-26001";
   env.store.setUser("B08"); // ST
   let html = await env.render(page);
-  assert.doesNotMatch(html, /data-rf-open="returnParts"|data-rf-open="undoParts"/, "nothing issued yet → nothing to return");
+  assert.doesNotMatch(html, NO_PART_DIALOG_BUTTON, "the PI page has a link only");
   assert.equal(D.returnParts(env.ctx(page), { orderId: "DEMO-26001" }), null);
   assert.equal(D.undoParts(env.ctx(page), { orderId: "DEMO-26001" }), null);
   assert.equal(env.store.run("countPartStock", { counts: [{ itemCode: "P-BOX-01", qty: 7 }] }).ok, true);
   assert.equal(env.store.run("issueOrderParts", { orderId: "DEMO-26001" }).ok, true);
   html = await env.render(page);
-  assert.match(html, /data-rf-open="returnParts"[^>]*>คืนของเหลือ</);
-  assert.match(html, /data-rf-open="undoParts"[^>]*>ยกเลิกการเบิกจ่าย</);
+  assert.match(html, stIssue("DEMO-26001"));
+  assert.doesNotMatch(html, NO_PART_DIALOG_BUTTON);
   // บทบาทอื่น: ไม่เห็นปุ่มและเปิด dialog ไม่ได้
   for (const id of ["B04", "B07"]) {
     env.store.setUser(id);
     html = await env.render(page);
-    assert.doesNotMatch(html, /data-rf-open="returnParts"|data-rf-open="undoParts"/, id);
+    assert.doesNotMatch(html, /#\/st\?tab=issue/, id);
     assert.equal(D.returnParts(env.ctx(page), { orderId: "DEMO-26001" }), null, id);
     assert.equal(D.undoParts(env.ctx(page), { orderId: "DEMO-26001" }), null, id);
   }
   env.store.setUser("B03"); // ฝ่ายวางแผน
   html = await env.render(page);
-  assert.match(html, /data-rf-open="returnParts"/);
-  assert.match(html, /data-rf-open="undoParts"/);
+  assert.match(html, stIssue("DEMO-26001"));
+  env.context.MNP_ST_PAGES = { access: () => null };
+  assert.doesNotMatch(await env.render(page), /#\/st\?tab=issue/, "a planner who cannot open the ST module (another department's head) gets no link");
+  env.context.MNP_ST_PAGES = { access: () => "full" };
   env.store.setUser("B08");
   // คืนของเหลือ: หนึ่งแถวต่อรายการที่เบิกจ่าย พร้อมช่องจำนวนและเหตุผล
   let dialog = D.returnParts(env.ctx(page), { orderId: "DEMO-26001" }).html;
@@ -1705,13 +1685,12 @@ test("returning parts from the PI page: the buttons appear only for ST and the p
   assert.match(dialog, /P-BOX-01/);
   assert.equal(env.store.run("undoOrderParts", { orderId: "DEMO-26001", reason: "เบิกผิดใบ" }).ok, true);
   html = await env.render(page);
-  assert.doesNotMatch(html, /data-rf-open="returnParts"|data-rf-open="undoParts"/, "after the undo nothing is issued again");
-  assert.match(html, /data-rf-open="issueParts"/, "and the issue button is back");
+  assert.match(html, stIssue("DEMO-26001"), "after the undo the parts wait again");
   // ประวัติของชิ้น: ชนิดคืนและเหตุผล
-  const history = D.partHistory(env.ctx("p=stock"), { code: "P-STK-01" }).html;
+  const history = D.partHistory(env.ctx("p=count"), { code: "P-STK-01" }).html;
   clean(history);
   assert.match(history, /คืน[\s\S]*DEMO-26001[\s\S]*ใช้ไม่หมด/);
-  const box = D.partHistory(env.ctx("p=stock"), { code: "P-BOX-01" }).html;
+  const box = D.partHistory(env.ctx("p=count"), { code: "P-BOX-01" }).html;
   assert.match(box, /คืน[\s\S]*เบิกผิดใบ/);
   // บันทึกการใช้งานเรียกชื่อการกระทำเป็นภาษาไทย
   assert.ok(env.store.data().audit.some((row) => row.action === "ยกเลิกการเบิกจ่ายของซื้อ"));
@@ -1722,8 +1701,7 @@ test("returning parts from the PI page: the buttons appear only for ST and the p
   assert.ok(all.length > 0);
   assert.equal(env.store.run("returnOrderParts", { orderId: "DEMO-26001", lines: all, reason: "คืนครบ" }).ok, true);
   html = await env.render(page);
-  assert.doesNotMatch(html, /data-rf-open="returnParts"/, "nothing left to return → no leftover button");
-  assert.match(html, /data-rf-open="undoParts"/, "the undo stays");
+  assert.match(html, stIssue("DEMO-26001"), "the open PI keeps its link (the undo stays on the ST page)");
 });
 
 test("a PI that closes while a part line is partly issued: the PI page offers the leftover return of that line (no issue, no undo), the dialog takes up to what was issued, and the ST work page has no dead waiting card", async () => {
@@ -1738,14 +1716,14 @@ test("a PI that closes while a part line is partly issued: the PI page offers th
   // แถวงานของซื้อของใบนี้ที่หน้างานแผนก (ใบยังเปิด = มีลิงก์ไปเบิก)
   const rowsOf = (text) => text.split("<tr").filter((row) => row.includes("orders&amp;sel=DEMO-26001") || row.includes("orders&sel=DEMO-26001"));
   html = await env.render("p=jobs&dept=ST");
-  assert.ok(rowsOf(html).some((row) => row.includes("เบิกจ่ายที่ใบ PI")), "while the PI is open its part jobs link to the issue");
+  assert.ok(rowsOf(html).some((row) => row.includes("เบิกจ่ายที่คลังวัตถุดิบ (ST)")), "while the PI is open its part jobs link to the issue");
   html = await env.render(page);
-  assert.doesNotMatch(html, /data-rf-open="returnParts"/, "an open PI: the partly issued line takes no leftover return");
+  assert.match(html, stIssue("DEMO-26001"), "an open PI: one link (the partly issued line takes no leftover return there)");
   // ใบปิด (คลังสินค้ารับครบ / ปิดใบรับไม่ครบ) ขณะบรรทัดยังเบิกไม่ครบ
   env.store.data().orders.find((order) => order.id === "DEMO-26001").status = "completed";
   html = await env.render(page);
-  assert.match(html, /data-rf-open="returnParts"[^>]*>คืนของเหลือ</, "the closed PI offers the leftover return of the partly issued line");
-  assert.doesNotMatch(html, /data-rf-open="issueParts"|data-rf-open="undoParts"/, "but no issue and no undo");
+  assert.match(html, stIssue("DEMO-26001", "คืนของเหลือที่คลังวัตถุดิบ \\(ST\\)"), "the closed PI links to the leftover return of the partly issued line");
+  assert.doesNotMatch(html, NO_PART_DIALOG_BUTTON, "and has no dialog button of its own");
   assert.equal(D.issueParts(env.ctx(page), { orderId: "DEMO-26001" }), null);
   assert.equal(D.undoParts(env.ctx(page), { orderId: "DEMO-26001" }), null);
   const dialog = D.returnParts(env.ctx(page), { orderId: "DEMO-26001" }).html;
@@ -1756,7 +1734,7 @@ test("a PI that closes while a part line is partly issued: the PI page offers th
   assert.equal(sent.ok, true, sent.error?.message);
   assert.equal(env.store.data().stock.find((row) => row.itemCode === "P-STK-01").qty, 400, "the 50 are back in stock");
   html = await env.render(page);
-  assert.doesNotMatch(html, /data-rf-open="returnParts"/, "nothing left to return");
+  assert.doesNotMatch(html, /#\/st\?tab=issue/, "nothing left to return");
   // งานของฉัน (ST) และหน้างานแผนก: ใบที่ปิดแล้วไม่มีการ์ดรอเบิกหรือปุ่มเบิกจ่ายที่กดอะไรไม่ได้
   html = await env.render("p=work&dept=ST");
   assert.doesNotMatch(html, /เบิกของตามใบ DEMO-26001/, "no waiting card for a closed PI");
@@ -1769,7 +1747,7 @@ test("a PI that closes while a part line is partly issued: the PI page offers th
   const openSt = env.store.data().jobs.filter((job) => job.dept === "ST" && job.status !== "done" && ["released", "in_progress"].includes(env.store.data().orders.find((order) => order.id === job.orderId)?.status)).length;
   assert.match(html, new RegExp(`>ST \\(${openSt}\\)<`), "the ST tab counts no job of the closed PI");
   html = await env.render("p=jobs&dept=ST&st=all");
-  assert.ok(rowsOf(html).length > 0 && rowsOf(html).every((row) => !row.includes("เบิกจ่ายที่ใบ PI")), "no issue link on the closed PI's part jobs");
+  assert.ok(rowsOf(html).length > 0 && rowsOf(html).every((row) => !row.includes("เบิกจ่ายที่คลังวัตถุดิบ")), "no issue link on the closed PI's part jobs");
   assert.ok(rowsOf(html).every((row) => !row.includes("เลยกำหนด") && !row.includes('class="is-late"') && row.includes(">ใบปิดแล้ว<")), "no overdue mark, and the status says the PI is closed");
   env.store.setUser("B03"); // ฝ่ายวางแผน: แท็บ ST ของงานของฉันไม่นับการ์ดนั้น
   html = await env.render("p=work&dept=ST");
@@ -2496,7 +2474,7 @@ test("drafts reserve chemicals among themselves in calculation order like purcha
   const needB = free9.rows.find((row) => row.itemCode === code).required;
   // คงเหลือพอสำหรับใบที่ใหญ่กว่าใบเดียว (ไม่พอสองใบรวมกัน)
   const template = rf.materialLots.find((lot) => lot.materialCode === code);
-  rf.materialLots = [...rf.materialLots.filter((lot) => lot.materialCode !== code), { ...template, qtyKg: Math.max(needA, needB) + 0.0004 }];
+  rf.materialLots = [...rf.materialLots.filter((lot) => lot.materialCode !== code), { ...template, qtyKg: Math.max(needA, needB) + 0.0004, rbKg: 0 }];
   const A = hub.draftChemicals(env.ctx(), orderOf("DEMO-26002"));
   const B = hub.draftChemicals(env.ctx(), orderOf("DEMO-26009"));
   const rowA = A.rows.find((row) => row.itemCode === code);
@@ -2702,7 +2680,7 @@ test("purchasing belongs to the raw-material store: the purchase dialog is read-
   const html = env.context.MNP_BOM_PAGES.work(stCtx(["purchase", "receiveMaterial"])).html;
   clean(html);
   assert.match(html, /<h2>รับเข้าตามใบสั่งซื้อ PO-20261113-01<\/h2>/);
-  assert.match(html, /href="#\/rubberflow\?p=warehouse&amp;tab=po&amp;q=PO-20261113-01">ตรวจสอบรับเข้า</);
+  assert.match(html, /href="#\/st\?tab=po&amp;q=PO-20261113-01">ตรวจสอบรับเข้า</, "the receive card leads to the purchase orders of the ST module");
   const boxName = env.store.data().items.find((item) => item.code === "P-BOX-01").name;
   assert.ok(boxName, "the demo part has a name");
   assert.ok(html.includes(`<span class="rf-mono">P-BOX-01</span> <span class="small muted">${boxName}</span>`), "the receive card shows the part name next to the code (a purchase order line holds only the code)");
@@ -2767,16 +2745,18 @@ test("the store orders chemicals for every open RubberFlow work order from the p
   assert.ok(open.length > 0, "the demo has open work orders");
   const rfCtx = (rights, query = "p=warehouse&tab=po") => ({ ...env.rf.context(new URLSearchParams(query)), can: (permission) => rights.includes(permission) });
   // สต็อกพอ: ปุ่มเป็นปุ่มตรวจ · ทำให้เคมีตัวหนึ่งขาด: ปุ่มบอกจำนวนรายการที่ขาด
-  let page = env.context.MNP_RUBBERFLOW_PAGES.warehouse(rfCtx(["purchase"])).html;
+  const button = (rights) => env.context.MNP_RUBBERFLOW_VIEWS.purchaseButton(rfCtx(rights));
+  let page = button(["purchase"]);
   clean(page);
   assert.match(page, /data-rf-open="purchase" data-rf-args="\{&quot;allOpen&quot;:true,&quot;parts&quot;:false\}"/);
+  assert.equal(button([]), "", "no button for an account that cannot order");
+  assert.doesNotMatch(env.context.MNP_RUBBERFLOW_PAGES.warehouse(rfCtx(["purchase"])).html, /allOpen|data-rf-open="receivePurchase"/, "the RubberFlow purchase-order tab is one link to the ST module now");
   const all = env.rf.openChemicalNeeds();
   assert.ok(all.rows.length > 0);
   const code = all.rows[0].materialCode;
   rf.materialLots = rf.materialLots.filter((lot) => lot.materialCode !== code);
-  page = env.context.MNP_RUBBERFLOW_PAGES.warehouse(rfCtx(["purchase"])).html;
+  page = button(["purchase"]);
   assert.match(page, />สั่งซื้อเคมีที่ขาด 1 รายการ</);
-  assert.doesNotMatch(env.context.MNP_RUBBERFLOW_PAGES.warehouse(rfCtx(["purchase"], "p=warehouse")).html, /allOpen/, "only on the purchase-order tab");
   // หน้าต่าง: เคมีของทุกใบที่เปิดอยู่ ชุดเดียวกับ openChemicalNeeds · ไม่มีตารางของซื้อของ BOM
   const dialog = env.context.MNP_RUBBERFLOW_DIALOGS.purchase(rfCtx(["purchase"]), { allOpen: true, parts: false }).html;
   clean(dialog);
@@ -2794,7 +2774,7 @@ test("the store orders chemicals for every open RubberFlow work order from the p
   const html = env.context.MNP_BOM_PAGES.work(stCtx(["purchase"])).html;
   clean(html);
   assert.match(html, /<h2>สั่งซื้อเคมีที่ขาด 1 รายการ<\/h2>/);
-  assert.match(html, /href="#\/rubberflow\?p=warehouse&amp;tab=po">เปิดหน้าใบสั่งซื้อ</);
+  assert.match(html, /href="#\/st\?tab=po">เปิดหน้าใบสั่งซื้อ</);
   assert.equal(hub.storeTasks(stCtx(["receiveMaterial"])).some((task) => task.kind === "chem"), false);
   // แผนก RB ที่เคมีไม่พอ: ไม่มีปุ่มสั่ง มีข้อความให้แจ้งคลังวัตถุดิบ
   // วาดหน้าต่างเบิกเคมีจริงของ WO ที่เคมี (code) ขาด แล้วผูกกับ dialog จำลอง: บัญชีที่สั่งซื้อไม่ได้เห็นข้อความ ไม่เห็นปุ่ม · บัญชีที่สั่งซื้อได้เห็นปุ่ม ไม่เห็นข้อความ
@@ -2815,13 +2795,14 @@ test("the store orders chemicals for every open RubberFlow work order from the p
     built.bind({ querySelector: (selector) => nodes[selector] }, extra);
     return nodes;
   };
-  const rbNodes = openRequisition([]);
-  assert.match(rbNodes["[data-rf-shortage]"].innerHTML, /แจ้งคลังวัตถุดิบ \(ST\) ให้สั่งซื้อ คลังวัตถุดิบเห็นรายการที่ขาดในแท็บใบสั่งซื้อของหน้าคลัง/);
-  assert.doesNotMatch(rbNodes["[data-rf-shortage]"].innerHTML, /data-rf-po-short/, "no order button for an account that cannot order");
-  assert.equal(rbNodes["[data-rf-submit]"].disabled, true, "and the requisition cannot be sent while a chemical is short");
-  const stNodes = openRequisition(["purchase"], { openDialog() {} });
-  assert.match(stNodes["[data-rf-shortage]"].innerHTML, /data-rf-po-short/, "the store gets the button");
-  assert.doesNotMatch(stNodes["[data-rf-shortage]"].innerHTML, /แจ้งคลังวัตถุดิบ/);
+  const viewNodes = openRequisition([]);
+  assert.match(viewNodes["[data-rf-shortage]"].innerHTML, /คลังเคมี RB มีพร้อมใช้ไม่พอ[\s\S]*ให้แผนก RB ขอเบิกจาก ST ก่อน/);
+  assert.doesNotMatch(viewNodes["[data-rf-shortage]"].innerHTML, /data-rf-po-short/, "no request button for an account that cannot request");
+  assert.equal(viewNodes["[data-rf-submit]"].disabled, true, "and the requisition cannot be sent while a chemical is short");
+  const opened = [];
+  const rbNodes = openRequisition(["requestChem"], { openDialog(name, args) { opened.push([name, args]); } });
+  assert.match(rbNodes["[data-rf-shortage]"].innerHTML, /data-rf-po-short>ขอเบิกจาก ST</, "RB gets the request button");
+
 });
 
 test("lines are reordered across departments (the saved order is kept), moved under another item of the same structure in one save, and a cancelled PI turns its purchase order into a decision for the store", async () => {
@@ -3785,7 +3766,7 @@ test("cancel after production started (20261128010000): the dialog lists what ha
   const dialog = dialogs.orderCancel(env.ctx("p=orders&sel=DEMO-26007"), { orderId: "DEMO-26007" }).html;
   clean(dialog);
   assert.ok(dialog.includes(`WO ใน RubberFlow ที่จะถูกยกเลิกหรือหยุด: ${woId}`), "the work order to stop is named");
-  assert.ok(dialog.includes(`เคมีที่เบิกไปแล้ว (${reqId}) คลังวัตถุดิบ (ST) จะได้งานรับคืนเข้าล็อตเดิม`), "the issued requisition is named");
+  assert.ok(dialog.includes(`เคมีที่เบิกไปแล้ว (${reqId}) แผนก RB คืนเข้าคลังเคมี RB ล็อตเดิมที่หน้าเบิกเคมี`), "the issued requisition is named: it cut the RB chemical store, so RB takes it back there (20261220010000)");
   assert.ok(dialog.includes("งานทุกแผนกของใบนี้หยุดและรายงานต่อไม่ได้ · ล็อตที่ฉีด อบ และตกแต่งแล้ว ยังเก็บเป็นประวัติ ไม่ถูกลบ"), "what is not undone");
   assert.match(dialog, /เหตุผลที่ยกเลิก <span class="field-required">\(จำเป็น\)<\/span>/);
   assert.match(dialog, /data-rf-form="cancelOrder"/);
@@ -3797,8 +3778,13 @@ test("cancel after production started (20261128010000): the dialog lists what ha
   assert.equal(env.store.run("cancelOrder", { orderId: "DEMO-26007", reason: "ลูกค้ายกเลิกคำสั่งซื้อ" }).ok, true);
   assert.equal(data().orders.find((order) => order.id === "DEMO-26007").cancelReason, "ลูกค้ายกเลิกคำสั่งซื้อ");
   assert.ok(data().jobs.some((job) => job.orderId === "DEMO-26007"), "the jobs stay");
-  // งานของ ST: ใบเบิกของ WO ที่ถูกยกเลิกเป็นการ์ดรับคืน (ฐานข้อมูลยกเลิก WO ให้เอง ที่นี่ตั้งเองเพราะโหมดในเครื่องไม่แตะ RubberFlow)
+  // งานของ ST: ใบเบิกเดิมของคลัง ST ของ WO ที่ถูกยกเลิกเป็นการ์ดรับคืน (ฐานข้อมูลยกเลิก WO ให้เอง ที่นี่ตั้งเองเพราะโหมดในเครื่องไม่แตะ RubberFlow)
+  // ใบของชุดสาธิตตัดคลังเคมี RB (RB คืนเอง ไม่ใช่งานของ ST) จึงทำให้เป็นใบเดิมของคลัง ST ก่อน แล้วตรวจว่าใบคลัง RB ไม่ขึ้นเป็นงานของ ST
   env.rf.store.data().orders.find((row) => row.id === woId).status = "cancelled";
+  const req = env.rf.store.data().requisitions.find((row) => row.id === reqId);
+  assert.equal(req.store, "RB");
+  assert.deepEqual(json(hub.storeTasks({ ...env.ctx("p=work"), user: data().users.find((user) => user.role === "st"), store: { ...env.store, isRemote: () => true }, rubberflow: () => ({ ...env.rf, can: () => true }) }).filter((task) => task.kind === "chemReturn")), [], "an RB-store requisition is not the store's return");
+  delete req.store;
   const stUser = data().users.find((user) => user.role === "st");
   const stCtx = (rights) => ({ ...env.ctx("p=work"), user: stUser, store: { ...env.store, isRemote: () => true }, rubberflow: () => ({ ...env.rf, can: (permission) => rights.includes(permission) }) });
   const tasks = hub.storeTasks(stCtx(["returnRequisition"]));
@@ -3808,7 +3794,7 @@ test("cancel after production started (20261128010000): the dialog lists what ha
   clean(html);
   assert.ok(html.includes("WO ถูกยกเลิก · รอ ST รับคืน"));
   assert.ok(html.includes(`<h2>รับเคมีคืนตามใบเบิก ${reqId}</h2>`));
-  assert.ok(html.includes(`href="#/rubberflow?p=requisition&amp;sel=${reqId}">เปิดใบเบิกเพื่อรับคืน<`), "the card opens the requisition where the return dialog is");
+  assert.ok(html.includes('href="#/st?tab=returns">เปิดหน้ารับคืน<'), "the card opens the returns page of the ST module where the return dialog is");
   // ของซื้อที่เบิกแล้วของใบที่ยกเลิก (DEMO-26006): การ์ดคืนของซื้อของ ST ค้างจนคืนครบ · ปุ่มคืนของเหลืออยู่ในแผงของใบที่ยกเลิก
   env.store.setUser("B08");
   const stk = data().jobs.find((job) => job.orderId === "DEMO-26006" && job.dept === "ST");
@@ -3824,7 +3810,7 @@ test("cancel after production started (20261128010000): the dialog lists what ha
   assert.match(html, /data-rf-open="returnParts"/);
   assert.ok(dialogs.returnParts(env.ctx("p=work"), { orderId: "DEMO-26006" })?.html, "the return dialog opens for a cancelled order");
   html = await env.render("p=orders&sel=DEMO-26006");
-  assert.match(html, /ใบนี้ถูกยกเลิก: ลูกค้าเลื่อนไม่มีกำหนด[\s\S]*data-rf-open="returnParts"/, "the cancelled order shows the return button next to its reason");
+  assert.match(html, /ใบนี้ถูกยกเลิก: ลูกค้าเลื่อนไม่มีกำหนด[\s\S]*href="#\/st\?tab=issue&amp;order=DEMO-26006">คืนของเหลือที่คลังวัตถุดิบ \(ST\)</, "the cancelled order links to the leftover return next to its reason");
   const back = env.store.run("returnOrderParts", { orderId: "DEMO-26006", lines: [{ itemCode: stk.itemCode, qty: stk.qtyPlanned }], reason: "ยกเลิกใบ" });
   assert.equal(back.ok, true, back.error?.message);
   assert.ok(!(await env.render("p=work")).includes("คืนของซื้อที่เบิกไปแล้ว DEMO-26006"), "the card goes once everything is back");
@@ -4226,7 +4212,7 @@ test("editing an item of a released order that has issued chemicals tells ST wil
   const edit = dialogs.orderItemEdit(env.ctx("p=orders&sel=DEMO-26007"), { orderId: order.id, fgCode: order.items[0].fgCode }).html;
   clean(edit);
   assert.ok(edit.includes(`WO ใน RubberFlow ที่จะถูกยกเลิกหรือหยุด: ${woId}`), "the work order that will be cancelled is named");
-  assert.ok(edit.includes(`เคมีที่เบิกไปแล้ว (${reqId}) คลังวัตถุดิบ (ST) จะได้งานรับคืนเข้าล็อตเดิม`), "the issued requisition is named");
+  assert.ok(edit.includes(`เคมีที่เบิกไปแล้ว (${reqId}) แผนก RB คืนเข้าคลังเคมี RB ล็อตเดิมที่หน้าเบิกเคมี`), "the issued requisition is named (an RB-store requisition goes back into the RB store)");
   // a linked WO with nothing issued yet is still named, without the chemicals part
   const requisitions = env.rf.store.data().requisitions;
   const kept = requisitions.filter((req) => req.orderId !== woId);

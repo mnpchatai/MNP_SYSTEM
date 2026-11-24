@@ -193,12 +193,24 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select ok(cs_t.wo_status('WO-C1', 'released') is not null, 'the planner releases WO-C1');
 select ok(cs_t.wo_status('WO-C2', 'released') is not null, 'and WO-C2');
 select ok(cs_t.wo_status('WO-C3', 'released') is not null, 'and WO-C3');
+-- ใบเบิกใหม่ตัดคลังเคมีของ RB (20261220010000): ย้ายยอดของล็อตเข้าคลัง RB ตรง ๆ ก่อนเบิก (การขอเบิกจาก ST ตรวจใน st_rb_chemical_store.test.sql)
+reset role;
+update public.rf_material_lots set rb_kg = qty_kg, qty_kg = 0 where is_test;
+update public.rf_master_state set version = version + 1 where is_test;
+set local role authenticated;
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select is(cs_t.rf(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array('{"id":"REQ-C1","orderId":"WO-C1","batches":1,"note":""}'::jsonb))), 'createRequisition')
             -> 'changes' -> 'requisitions' -> 'upsert' -> 0 ->> 'status', 'issued', 'RB issues the chemicals of WO-C1 (one batch, drawn from stock at once)');
 select is(jsonb_build_array(cs_t.req('REQ-C1') -> 'lines' -> 0 ->> 'lotNo', cs_t.req('REQ-C1') -> 'lines' -> 0 ->> 'actualKg', cs_t.req('REQ-C1') -> 'lines' -> 1 ->> 'lotNo', cs_t.req('REQ-C1') -> 'lines' -> 1 ->> 'actualKg'),
   '["RM-A-1","40","RM-B-1","20"]'::jsonb, 'the requisition took 40 kg of MAT-A and 20 kg of MAT-B');
-select is(jsonb_build_array(cs_t.mlot('RM-A-1') ->> 'qtyKg', cs_t.mlot('RM-B-1') ->> 'qtyKg'), '["60","180"]'::jsonb, 'the lots were drawn down');
+select is(jsonb_build_array(cs_t.mlot('RM-A-1') ->> 'rbKg', cs_t.mlot('RM-B-1') ->> 'rbKg'), '["60","180"]'::jsonb, 'the lots were drawn down in the RB store');
+-- หัวข้อ 9 ตรวจการรับคืนของ ST: จำลอง REQ-C1 เป็นใบเบิกรุ่นก่อนแยกคลัง (คลัง ST · ยอดของล็อตอยู่คลัง ST) · การคืนใบของคลัง RB ตรวจใน st_rb_chemical_store.test.sql
+reset role;
+update public.rf_requisitions set source_store = 'ST' where is_test and req_no = 'REQ-C1';
+update public.rf_material_lots set qty_kg = rb_kg, rb_kg = 0 where is_test;
+update public.rf_master_state set version = version + 1 where is_test;
+set local role authenticated;
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select ok(cs_t.wo_status('WO-C1', 'in_progress') is not null, 'RB starts WO-C1');
 select ok(cs_t.wo_status('WO-C2', 'in_progress') is not null, 'and WO-C2');
 select ok(cs_t.wo_status('WO-C3', 'in_progress') is not null, 'and WO-C3');

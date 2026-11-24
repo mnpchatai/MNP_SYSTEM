@@ -748,7 +748,17 @@ async function prepare(s, rig, { linked = false, target = 90 } = {}) {
   for (const [code, days] of [["EPDM-55", 30], ["EPDM-55", 10], ["CB-N550", 60]]) {
     lots.push((await saved(rig.store.run("receiveMaterial", { materialCode: code, qtyKg: 40, expiry: NOW + days * DAY, supplier: "ผู้ขาย", location: "A-1", coa: true }))).result);
   }
+  await stockRb(s, rig);
   return { order, lots };
+}
+// ใบเบิกผสมตัดคลังเคมีของ RB (20261220010000): ตั้งยอดคลัง RB ของทุกล็อตเท่ายอด ST ตรง ๆ ในฐานข้อมูลจำลอง (ยอด ST คงเดิม)
+// แล้วให้หน้าตามทัน · การย้ายจริง ST → RB ด้วยใบขอเบิกตรวจใน scripts/tests/st-rb-chemical-store.test.mjs
+async function stockRb(s, rig) {
+  s.mock.rf.edit((m) => {
+    m.version += 1;
+    for (const lot of m.materialLots) { lot.rbKg = lot.qtyKg; m.versions.materialLots[lot.lotNo] = m.version; }
+  });
+  await rig.store.catchUp();
 }
 // ใบสั่งผลิตอีกใบ (ปล่อยผลิตแล้ว ต้องใช้ 1 batch เหมือนใบแรก): ใบเบิกใบแรกของ WO เบิกครบทุก batch แล้ว ใบเบิกใบที่สองของข้อทดสอบจึงต้องเป็นของ WO อีกใบ
 async function addOrder(s, rig) {
@@ -786,7 +796,9 @@ test("the whole line on the database: receive → FEFO requisition (issued at on
   assert.deepEqual(req.lines.map((line) => [line.materialCode, line.lotNo, line.targetKg, line.actualKg]), [["EPDM-55", soon, 31.25, 31.25], ["CB-N550", carbon, 18.75, 18.75]]);
   assert.equal(req.requestedBy, "ประยุทธ รีดยาง");
   assert.deepEqual([req.status, req.issuedBy, req.lines[0].weighedBy, typeof req.issuedAt], ["issued", "ประยุทธ รีดยาง", "ประยุทธ รีดยาง", "number"]);
-  assert.deepEqual([(await master()).materialLots.find((row) => row.lotNo === soon).qtyKg, (await master()).materialLots.find((row) => row.lotNo === carbon).qtyKg], [8.75, 21.25], "stock fell by the issued kilograms at once");
+  assert.deepEqual([(await master()).materialLots.find((row) => row.lotNo === soon).rbKg, (await master()).materialLots.find((row) => row.lotNo === carbon).rbKg], [8.75, 21.25], "the RB store fell by the issued kilograms at once");
+  assert.deepEqual([(await master()).materialLots.find((row) => row.lotNo === soon).qtyKg, (await master()).materialLots.find((row) => row.lotNo === carbon).qtyKg], [40, 40], "the ST store is not touched by a mixing requisition");
+  assert.equal(req.store, "RB", "the requisition belongs to the RB store");
   await inSync(s, rig, "requisition issued");
   // WO นี้เบิกครบแล้ว (ต้องใช้ 1 batch): เบิกซ้ำไม่ได้ ทั้งหน้าจอและฐานข้อมูล (batch ไม่ตรงกับที่เหลือ = 0)
   assert.match(rig.store.run("createRequisition", { orderId: order }).error.message, /เบิกเคมีครบตามที่ใบสั่งผลิตต้องใช้แล้ว/);
@@ -890,14 +902,15 @@ test("an old requisition that is still weighing: weigh it line by line within th
   const { order, lots } = await prepare(s, rig);
   const [slow, soon, carbon] = lots;
   const master = () => s.call("app_rf_master");
-  const stock = async (lotNo) => (await master()).materialLots.find((row) => row.lotNo === lotNo).qtyKg;
+  // ใบเบิกผสมของคลัง RB (20261220010000) ที่จำลองเป็นใบค้างชั่ง: ชั่ง / จ่ายตัดคลังของใบ (rbKg) · ใบค้างชั่งของคลังเดียวกันจองยอดของใบเบิกใหม่
+  const stock = async (lotNo) => (await master()).materialLots.find((row) => row.lotNo === lotNo).rbKg;
   // a requisition the way the database held it before the one-press issue: kilograms back in the lots, no weights, status weighing (the action cannot create one any more)
   const makeOld = (id) => s.mock.rf.edit((m) => {
     const q = m.requisitions.find((row) => row.id === id);
     m.version += 1;
     for (const line of q.lines) {
       const lot = m.materialLots.find((row) => row.lotNo === line.lotNo);
-      lot.qtyKg = Math.round((lot.qtyKg + line.actualKg) * 1e6) / 1e6;
+      lot.rbKg = Math.round((lot.rbKg + line.actualKg) * 1e6) / 1e6;
       m.versions.materialLots[lot.lotNo] = m.version;
       line.actualKg = null;
       line.weighedAt = null;
@@ -1074,7 +1087,7 @@ test("the database computes the numbers itself: a client cannot set the stock, t
   assert.equal(forged.data.version, snap.version, "nothing was written");
   assert.deepEqual(forged.data.changes.materialLots.upsert, []);
   const after = await master();
-  assert.deepEqual([after.materialLots.map((row) => row.qtyKg), after.lots[0].transferredQty, after.transfers[0].remaining, after.orders[0].producedQty, after.molds.map((row) => row.usageSinceClean)], [[21.25, 40, 8.75], 48, 47, 0, [0, 0]]);
+  assert.deepEqual([after.materialLots.map((row) => row.rbKg), after.lots[0].transferredQty, after.transfers[0].remaining, after.orders[0].producedQty, after.molds.map((row) => row.usageSinceClean)], [[21.25, 40, 8.75], 48, 47, 0, [0, 0]]);
   // ใบส่งมอบ: ส่งเกินที่ส่งต่อได้ไม่ได้ · รับเกิน +2% ไม่ได้ · ส่งซ้ำของล็อตที่ส่งครบแล้วไม่ได้
   assert.match(rig.store.run("createTransfer", { lotId: mx, qty: 1 }).error.message, /ส่งมอบ/);
   const extra = { ...snap.transfers[0], id: `TR-${TODAY}-09`, qtySent: 5, status: "in_transit", qtyReceived: null, remaining: 0 };
@@ -1417,8 +1430,9 @@ async function sendPo(s, persona, changes, action = "createPurchaseOrder") {
 }
 
 test("the purchase order list is the 12th list: in the snapshot, in the delta and in the store, and the materials carry the safety stock and the shelf life", async () => {
-  assert.equal(storeApi.REMOTE_LISTS.length, 12);
-  assert.equal(storeApi.REMOTE_LISTS.at(-1), "purchaseOrders");
+  // 20261220010000 เพิ่มชุดที่ 13 (chemDocs) ต่อท้าย
+  assert.equal(storeApi.REMOTE_LISTS.length, 13);
+  assert.equal(storeApi.REMOTE_LISTS.at(-2), "purchaseOrders");
   const s = await session();
   const rig = await s.make();
   assert.deepEqual(rig.store.data().purchaseOrders, []);

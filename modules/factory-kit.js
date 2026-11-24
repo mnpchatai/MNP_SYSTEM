@@ -32,10 +32,14 @@
   // opts.run(name, payload, successText, after) → true/false หรือ Promise (ผู้เรียกส่งคำสั่งเข้า store ของตัวเอง แจ้งผลเอง)
   // opts.transforms = { ชื่อคำสั่ง: (raw) => payload } · opts.beforeSubmit(name, raw, payload, form) → { payload?, after? } | false (ตะขอเฉพาะโมดูล false = ไม่ส่ง)
   // opts.openDialog(name, args, ctx) · opts.rerender() (ค่าตั้งต้น renderRoute) · ui / confirmDialog / showToast / friendlyError มาจาก global ของแอป
+  // ส่วนที่อยู่ใน [data-rf-scope] เป็นของโมดูลอื่น (เช่น ตารางใบสั่งซื้อของ RubberFlow ในหน้า #/st) ตัวผูกของโมดูลนั้นผูกเอง จึงข้ามที่นี่ (ไม่ผูกซ้ำสองทาง)
   function bindRoot(scope, ctx, opts = {}) {
     const ui = opts.ui ?? root.MNP_RUBBERFLOW_UI;
     const rerender = opts.rerender ?? (() => renderRoute());
-    scope.querySelectorAll("form[data-rf-form]").forEach((form) => form.addEventListener("submit", async (event) => {
+    const owner = (node) => node.closest?.("[data-rf-scope]")?.dataset?.rfScope ?? "";
+    const inside = Boolean(owner(scope));
+    const pick = (selector) => [...scope.querySelectorAll(selector)].filter((node) => inside || !owner(node));
+    pick("form[data-rf-form]").forEach((form) => form.addEventListener("submit", async (event) => {
       event.preventDefault();
       // ตรวจช่องเป็นภาษาไทยใต้ช่องก่อน (ฟอร์มเป็น novalidate) · action ยังตรวจกติกาของตัวเองซ้ำ
       if (!ui.validateForm(form)) return;
@@ -62,7 +66,7 @@
       form.querySelectorAll("button").forEach((node) => { node.disabled = true; });
       rerender();
     }));
-    scope.querySelectorAll("[data-rf-action]").forEach((button) => button.addEventListener("click", async () => {
+    pick("[data-rf-action]").forEach((button) => button.addEventListener("click", async () => {
       if (button.dataset.rfConfirm && !(await confirmDialog(ui.confirmOptions(button)))) return;
       let ok = opts.run(button.dataset.rfAction, parseArgs(button), button.dataset.rfSuccess, null);
       if (ok && typeof ok.then === "function") ok = await ok;
@@ -70,8 +74,8 @@
       button.disabled = true;
       rerender();
     }));
-    scope.querySelectorAll("[data-rf-open]").forEach((button) => button.addEventListener("click", () => opts.openDialog?.(button.dataset.rfOpen, parseArgs(button), ctx)));
-    scope.querySelectorAll("[data-rf-go]").forEach((button) => button.addEventListener("click", () => { location.hash = button.dataset.rfGo; }));
+    pick("[data-rf-open]").forEach((button) => button.addEventListener("click", () => opts.openDialog?.(button.dataset.rfOpen, parseArgs(button), ctx)));
+    pick("[data-rf-go]").forEach((button) => button.addEventListener("click", () => { location.hash = button.dataset.rfGo; }));
     scope.querySelectorAll("form[data-rf-search]").forEach((form) => form.addEventListener("submit", (event) => {
       event.preventDefault();
       const q = String(new FormData(form).get("q") ?? "").trim().slice(0, 100);
@@ -353,10 +357,13 @@
   }
 
   // หน้าแรกรายแผนก: ประตูเมนู → โหลด store ของ BOM → landing(ctx) คืน { html, bind? } → วางใน shell ของระบบหลัก
+  // ผู้เข้าชม (def.guest): แผนกอื่นที่เปิดหน้าของโมดูลนี้ได้บางหน้าทางลิงก์ (ไม่อยู่ในเมนู) เช่น RB ดูเคมีในคลัง ST · คืนชื่อโหมด (ข้อความ) หรือ null = ไม่ให้เข้า
+  const guestOf = (def, employee) => (employee?.isSandbox === true && bomGate(employee) && !canOpenDeptModule(employee, def.dept, def.code) && typeof def.guest === "function" ? def.guest(employee) || null : null);
+  const mayOpen = (def, employee) => employee?.isSandbox === true && (canOpenDeptModule(employee, def.dept, def.code) || Boolean(guestOf(def, employee)));
   async function renderLanding(def, params, landing) {
     const employee = state.employee;
-    // นอกโหมดทดสอบ หรือแผนกนี้ไม่ใช่ของผู้ใช้: ไม่เจอหน้า (พิมพ์ URL เองก็เข้าไม่ได้) · เมนูซ่อนด้วยประตูเดียวกัน
-    if (employee?.isSandbox !== true || !canOpenDeptModule(employee, def.dept, def.code)) return renderNotFound();
+    // นอกโหมดทดสอบ หรือแผนกนี้ไม่ใช่ของผู้ใช้ (และไม่ใช่ผู้เข้าชมที่โมดูลยอมให้): ไม่เจอหน้า (พิมพ์ URL เองก็เข้าไม่ได้) · เมนูซ่อนด้วยประตูเดียวกัน
+    if (!mayOpen(def, employee)) return renderNotFound();
     const bom = root.MNP_BOM;
     if (!bom?.store) return renderNotFound();
     const { store } = bom;
@@ -364,6 +371,7 @@
     const ui = root.MNP_RUBBERFLOW_UI;
     ui.module = "";
     const ctx = deptPageCtx(def, params);
+    ctx.guest = guestOf(def, employee); // null = ผู้ใช้ของโมดูล · อื่น = โหมดผู้เข้าชมที่ def.guest คืน (หน้าเลือกเองว่าแสดงอะไร)
     // dialog เปิดด้วย ctx ของหน้านี้ (ไม่ใช่ ctx ของ BOM) · ฟอร์มใน dialog ส่งผ่านตัวผูกของ BOM
     if (typeof bom.openDialog === "function") ctx.openDialog = (name, args) => bom.openDialog(name, args, ctx);
     bom.clearEditing?.(); // หน้าใหม่ = ไม่มีฟอร์มที่แก้ค้างจากหน้าก่อน (เหมือน renderBom)
@@ -454,7 +462,7 @@
     return true;
   }
 
-  // def = { code, dept, route, label, icon, palette, landing(ctx), pages? }
+  // def = { code, dept, route, label, icon, palette, landing(ctx), pages?, guest? }
   // code เช่น "FACTORY_SR" (ไม่ชนโมดูลอื่น) · dept = รหัสแผนกใน rules.PROCESS_FLOW · route = path ของหน้าแรก (#/sr) · icon = ชื่อไอคอนใน MNP_UI_ICONS
   // keep = ชื่อพารามิเตอร์ตัวกรองของโมดูลที่ ctx.pageUrl พาไปด้วย · menu[].owns = พารามิเตอร์ที่ทำให้หน้าเป็นของรายการเมนูนั้น
   // landing(ctx) คืน { html, bind?, actions? } (actions: true = ผูกคำสั่งและ dialog ของ BOM ให้การ์ดสั่งงานได้) · ctx = ctx ของ BOM (data, rules, ui, helpers, url, user, q, params, runAction, openDialog) + pageUrl ของหน้านี้ + factory (def) · pages = หน้าเพิ่มเติมของแผนก { path: (params) => … } ผ่านประตูเดียวกัน
@@ -466,8 +474,9 @@
     const modules = (root.MNP_REQUEST_MODULES ??= {});
     if (modules[code]) throw new Error(`registerDeptModule: โมดูล ${code} ลงทะเบียนแล้ว`);
     const flow = flowNo ?? root.MNP_BOM_RULES?.PROCESS_FLOW?.find((entry) => entry.dept === dept)?.no;
-    const factory = Object.freeze({ code, dept, route, label, icon, palette, menu, keep: Object.freeze([...keep]) });
-    const guarded = (page) => (params) => (state.employee?.isSandbox !== true || !canOpenDeptModule(state.employee, dept, code) ? renderNotFound() : page(params));
+    // guest(employee) = โหมดผู้เข้าชมของแผนกอื่น (ไม่อยู่ในเมนู เข้าทางลิงก์) · ไม่ให้ = เฉพาะผู้ที่เปิดโมดูลได้
+    const factory = Object.freeze({ code, dept, route, label, icon, palette, menu, keep: Object.freeze([...keep]), guest: typeof def.guest === "function" ? def.guest : null });
+    const guarded = (page) => (params) => (!mayOpen(factory, state.employee) ? renderNotFound() : page(params));
     ROUTES.add(route);
     const extra = Object.fromEntries(Object.entries(pages).map(([path, page]) => { ROUTES.add(path); return [path, guarded(page)]; }));
     modules[code] = {

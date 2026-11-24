@@ -2858,10 +2858,14 @@ test("a transfer receipt does not touch the BOM job; when pieces pass finishing 
   const head = await asPersona(scene, "persona-rbh");
   await rf(head).ensureLoaded();
   await saved(rf(head).run("setOrderStatus", { id: wo.id, status: "released" }));
-  // คลังรับวัตถุดิบ → RB เบิก ชั่ง ผสม ส่งมอบ
+  // คลังเคมีของ RB (20261220010000): RB ขอเบิกจาก ST → คลังรับวัตถุดิบแล้วจ่ายตาม FEFO (ย้ายเข้าคลัง RB) → RB เบิก ชั่ง ผสม ส่งมอบ
+  const asker = await asPersona(scene, "persona-rb");
+  await rf(asker).ensureLoaded();
+  const requested = await saved(rf(asker).run("requestChemicals", { lines: [{ materialCode: "EPDM-55", qtyKg: 40 }, { materialCode: "CB-N550", qtyKg: 40 }] }));
   const st = await asPersona(scene, "persona-st");
   await rf(st).ensureLoaded();
   for (const code of ["EPDM-55", "CB-N550"]) await saved(rf(st).run("receiveMaterial", { materialCode: code, qtyKg: 40, expiry: NOW + 30 * 86400000 }));
+  await saved(rf(st).run("issueChemicals", { id: requested.result, kgs: [40, 40] }));
   // สถานีผลิตและ SR ใช้เวลาจริงของเครื่อง (เวลาบ่มของยางเทียบกับเวลาของหน้าและของฐานข้อมูลจำลองต้องเป็นนาฬิกาเดียวกัน)
   const realClock = { mockOptions: { now: () => Date.now() } };
   const rb = await asPersona(scene, "persona-rb", realClock);
@@ -3350,13 +3354,9 @@ test("part stock through the module on the (mock) database: counts send only the
   const partJob = planning.store.data().jobs.find((row) => row.dept === "ST");
   assert.deepEqual([partJob.kind, partJob.itemCode, partJob.qtyPlanned, partJob.qtyRequired, partJob.stockCounted], ["PURCHASED", "P-TEST-01", 10, 10, null], "release made the ST job of the purchased part with its gross requirement");
 
-  // ST: หน้าคลังของซื้อ → นับ → ส่งเฉพาะชุด stock (ไม่ส่งประวัติ) · ฐานข้อมูลประทับผู้นับและเขียนประวัติ
+  // ST: นับ (หน้านับสต็อกของโมดูล ST #/st ส่งคำสั่งเดียวกัน) → ส่งเฉพาะชุด stock (ไม่ส่งประวัติ) · ฐานข้อมูลประทับผู้นับและเขียนประวัติ
   const st = await asPersona({ env: planning }, "persona-st");
-  let html = await st.render("p=stock");
-  assert.match(html, /data-rf-form="countPartStock"/);
-  assert.match(html, /name="itemCode\[\]" value="P-TEST-01"/);
-  assert.match(html, /name="safetyQty\[\]"/, "ST edits the safety stock");
-  assert.match(html, /data-rf-open="partHistory"/);
+  let html = "";
   const outcome = st.store.run("countPartStock", { counts: [{ itemCode: "P-TEST-01", qty: 6 }] });
   assert.equal(outcome.ok, true, outcome.error?.message);
   await outcome.saving;
@@ -3413,8 +3413,6 @@ test("part stock through the module on the (mock) database: counts send only the
   await safety.saving;
   assert.equal(database().stock[0].safetyQty, 4);
   assert.equal(database().stockMoves.length, 3, "a safety change writes no move");
-  html = await pp.render("p=stock");
-  assert.match(html, /name="safetyQty\[\]"/, "the planner edits the safety stock");
   html = await pp.render(`p=orders&sel=${id}`);
   assert.doesNotMatch(html, /data-rf-open="issueParts"/, "nothing left to issue → no issue button");
 });
@@ -3499,8 +3497,8 @@ test("a PI that closes while a part line is partly issued, through the module on
   // ST โหลดใหม่: หน้าใบเสนอคืนของเหลือ (ไม่มีเบิกจ่าย / ยกเลิกการเบิกจ่าย) · หน้างานของฉันไม่มีการ์ดรอเบิกของใบนี้
   const st2 = await asPersona({ env: planning }, "persona-st");
   let html = await st2.render(`p=orders&sel=${id}`);
-  assert.match(html, /data-rf-open="returnParts"/);
-  assert.doesNotMatch(html, /data-rf-open="issueParts"|data-rf-open="undoParts"/);
+  assert.doesNotMatch(html, /data-rf-open="(issueParts|returnParts|undoParts)"/, "the PI page links to the ST module instead of keeping its own buttons");
+  assert.ok(st2.context.MNP_BOM_RULES.partReturnLines(st2.store.data(), id).some((line) => !line.partial && line.returnable > 0), "the closed PI still has a leftover to return (on the ST issue page)");
   assert.doesNotMatch(await st2.render("p=work&dept=ST"), new RegExp(`เบิกของตามใบ ${id}`), "no dead waiting card for the closed PI");
   const sent = [];
   const rpc = st2.mock.client.rpc.bind(st2.mock.client);

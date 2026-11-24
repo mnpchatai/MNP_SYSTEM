@@ -234,6 +234,12 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.ml')::jsonb || '{"lotNo":"RM-A-1","qtyKg":100,"receivedAt":5}'::jsonb))), 0, 'receiveMaterial') $$, 'RF_STALE', 'a lot number that someone else just received is stale, not a silent overwrite');
 
 -- 6. ใบเบิก: เซิร์ฟเวอร์จัดสรร FEFO เองแล้วจ่ายทันที (actualKg = targetKg หักสต็อกล็อต สถานะ issued) -------------------------------------------------------------------
+-- ใบเบิกใหม่ตัดคลังเคมีของ RB (rb_kg · 20261220010000_st_rb_chemical_store.sql): ตั้งยอดคลัง RB ของล็อตทดสอบเท่ายอด ST ตรง ๆ (ยอดคลัง ST คงเดิม
+-- ไว้ให้ใบเบิกเก่าที่ค้างชั่งในหัวข้อ 7 ตัดต่อ) · การย้ายจริง ST -> RB ด้วยใบขอเบิกตรวจใน st_rb_chemical_store.test.sql
+reset role;
+update public.rf_material_lots set rb_kg = qty_kg where is_test;
+update public.rf_master_state set version = version + 1 where is_test;
+set local role authenticated;
 select set_config('test.req', '{"id":"X","orderId":"WO-S1","recipeId":"RC-1","recipeRevision":1,"batches":1,"totalKg":60,"lines":[{"materialCode":"MAT-A","lotNo":"RM-A-2","targetKg":999,"actualKg":5}],"status":"issued","note":"","requestedBy":"ใครก็ได้","createdAt":1}', true);
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"REQ-1"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createRequisition') $$, 'RF_FORBIDDEN', 'ST staff cannot create a requisition');
@@ -286,9 +292,11 @@ select is(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> '
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 -> 'lines' -> 2 ->> 'actualKg', '3.75', 'including the stage 2 line');
 select ok(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 ? 'issuedAt', 'the issue time is set by the server');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 ->> 'issuedBy', current_setting('test.n_sbx_rb_staff'), 'and the issuer is the persona');
-select is((select x ->> 'qtyKg' from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-A-1'), '62.5', 'the stock lot is drawn down at once (100 - 37.5)');
-select is((select x ->> 'qtyKg' from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-B-1'), '181.25', 'every issued lot is drawn down (200 - 18.75)');
-select is((select x ->> 'qtyKg' from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-C-1'), '16.25', 'including the stage 2 lot (20 - 3.75)');
+select is((select x ->> 'rbKg' from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-A-1'), '62.5', 'the RB store of the lot is drawn down at once (100 - 37.5)');
+select is((select x ->> 'rbKg' from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-B-1'), '181.25', 'every issued lot is drawn down (200 - 18.75)');
+select is((select x ->> 'rbKg' from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-C-1'), '16.25', 'including the stage 2 lot (20 - 3.75)');
+select is((select x ->> 'qtyKg' from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-A-1'), '100', 'the ST store of the lot is not touched by a mixing requisition');
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 ->> 'store', 'RB', 'the requisition belongs to the RB store');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 ->> 'status', 'issued', 'the status is set by the server, not by the client: a requisition is issued at once');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 ->> 'requestedBy', current_setting('test.n_sbx_rb_staff'), 'the requester is the persona');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 ->> 'totalKg', '60', 'the total is batches x batch weight');
@@ -309,8 +317,8 @@ select is(jsonb_array_length(current_setting('test.res')::jsonb -> 'changes' -> 
 select is((current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 -> 'lines' -> 0 ->> 'lotNo') || '/' || (current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 -> 'lines' -> 0 ->> 'targetKg'), 'RM-A-1/62.5', 'the first lot is only free for what the first requisition did not reserve');
 select is((current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 -> 'lines' -> 1 ->> 'lotNo') || '/' || (current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 -> 'lines' -> 1 ->> 'targetKg'), 'RM-A-2/12.5', 'the rest comes from the next lot');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 ->> 'totalKg', '120', 'two batches weigh 120 kg');
-select is((select x ->> 'qtyKg' from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-A-1'), '0', 'the first lot is empty now');
-select is((select x ->> 'qtyKg' from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-A-2'), '287.5', 'and the next lot gives the rest (300 - 12.5)');
+select is((select x ->> 'rbKg' from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-A-1'), '0', 'the first lot is empty in the RB store now');
+select is((select x ->> 'rbKg' from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-A-2'), '287.5', 'and the next lot gives the rest (300 - 12.5)');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.req')::jsonb || '{"id":"REQ-1","createdAt":5}'::jsonb))), 0, 'createRequisition') $$, 'RF_STALE', 'a requisition number that someone else just created is stale');
 
@@ -337,7 +345,7 @@ select is(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> '
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 -> 'lines' -> 0 ->> 'weighedBy', current_setting('test.n_sbx_rb_staff'), 'the weigher is the persona');
 select ok((current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 -> 'lines' -> 0 ->> 'weighedAt')::bigint >= current_setting('test.now_ms')::bigint, 'the weighing time is the server time');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 ->> 'status', 'weighing', 'the requisition is still weighing');
-select is((select x ->> 'qtyKg' from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-A-2'), '277.4', 'the stock lot is reduced as soon as the line is weighed');
+select is((select x ->> 'qtyKg' from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-A-2'), '289.9', 'the ST stock of the lot is reduced as soon as the line of the old requisition is weighed (300 - 10.1)');
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array((select r || jsonb_build_object('lines', (select jsonb_agg(case when e.ord - 1 = 0 then e.v || '{"actualKg":10}'::jsonb else e.v end order by e.ord) from jsonb_array_elements(r -> 'lines') with ordinality as e(v, ord))) from jsonb_array_elements(public.app_rf_master() -> 'requisitions') r where r ->> 'id' = 'REQ-L1')))), (public.app_rf_master() ->> 'version')::bigint, 'weighLine') $$, 'RF_INVALID_REQUISITION', 'a line that is already weighed cannot be weighed again');
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array((select r || jsonb_build_object('lines', (select jsonb_agg(case when e.ord - 1 = 0 then e.v || '{"actualKg":null}'::jsonb else e.v end order by e.ord) from jsonb_array_elements(r -> 'lines') with ordinality as e(v, ord))) from jsonb_array_elements(public.app_rf_master() -> 'requisitions') r where r ->> 'id' = 'REQ-L1')))), (public.app_rf_master() ->> 'version')::bigint, 'weighLine') $$, 'RF_INVALID_REQUISITION', 'a weighed line cannot be un-weighed');
 select set_config('test.v', (public.app_rf_master() ->> 'version')::text, true);
@@ -352,7 +360,7 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select set_config('test.res', (public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array((select r || jsonb_build_object('lines', (select jsonb_agg(case when e.ord - 1 = 1 then e.v || '{"actualKg":5.05}'::jsonb when e.ord - 1 = 2 then e.v || '{"actualKg":2.02}'::jsonb else e.v end order by e.ord) from jsonb_array_elements(r -> 'lines') with ordinality as e(v, ord))) from jsonb_array_elements(public.app_rf_master() -> 'requisitions') r where r ->> 'id' = 'REQ-L1')))), (public.app_rf_master() ->> 'version')::bigint, 'weighLine'))::text, true);
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 ->> 'status', 'issued', 'weighing the last lines issues the requisition');
 select ok(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 ? 'issuedAt', 'the issue time is set by the server');
-select is((select x ->> 'qtyKg' from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-B-1'), '138.7', 'the other stock lots are reduced too');
+select is((select x ->> 'qtyKg' from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-B-1'), '194.95', 'the other stock lots are reduced too (200 - 5.05)');
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array((select r || jsonb_build_object('lines', (select jsonb_agg(case when e.ord - 1 = 0 then e.v || '{"actualKg":10.05}'::jsonb else e.v end order by e.ord) from jsonb_array_elements(r -> 'lines') with ordinality as e(v, ord))) from jsonb_array_elements(public.app_rf_master() -> 'requisitions') r where r ->> 'id' = 'REQ-L1')))), (public.app_rf_master() ->> 'version')::bigint, 'weighLine') $$, 'RF_INVALID_TRANSITION', 'an issued requisition cannot be weighed again');
 
 -- 7b. จ่ายทั้งใบ (issueRequisition): สมาชิก RB / กลุ่มวางแผน · ทุกบรรทัดที่ยังไม่ชั่งต้องตั้ง = เป้าหมายพอดี ------------------------------------------------
@@ -371,8 +379,8 @@ select is((current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 -> 'lines' -> 1 ->> 'weighedBy', current_setting('test.n_sbx_rb_staff'), 'the issuer is the persona');
 select ok(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 ? 'issuedAt', 'the issue time is set by the server');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'requisitions' -> 'upsert' -> 0 ->> 'issuedBy', current_setting('test.n_sbx_rb_staff'), 'and the issuer');
-select is((select x ->> 'qtyKg' from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-A-2'), '257.4', 'the stock of the first lot falls by the issued kilograms once (277.4 - 20)');
-select is((select x ->> 'qtyKg' from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-B-1'), '128.7', 'and the second (138.7 - 10)');
+select is((select x ->> 'qtyKg' from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-A-2'), '269.9', 'the stock of the first lot falls by the issued kilograms once (289.9 - 20)');
+select is((select x ->> 'qtyKg' from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x where x ->> 'lotNo' = 'RM-B-1'), '184.95', 'and the second (194.95 - 10)');
 select set_config('test.v', (public.app_rf_master() ->> 'version')::text, true);
 select is(public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array((select x from jsonb_array_elements(public.app_rf_master() -> 'requisitions') x where x ->> 'id' = 'REQ-L2')))), (public.app_rf_master() ->> 'version')::bigint, 'issueRequisition') ->> 'version', current_setting('test.v'), 'sending the same weights again changes nothing (no second draw-down)');
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array((select r || jsonb_build_object('lines', (select jsonb_agg(case when e.ord - 1 = 0 then e.v || '{"actualKg":19}'::jsonb else e.v end order by e.ord) from jsonb_array_elements(r -> 'lines') with ordinality as e(v, ord))) from jsonb_array_elements(public.app_rf_master() -> 'requisitions') r where r ->> 'id' = 'REQ-L2')))), (public.app_rf_master() ->> 'version')::bigint, 'issueRequisition') $$, 'RF_INVALID_TRANSITION', 'different weights on an issued requisition are refused');
@@ -784,7 +792,7 @@ select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a wh
 select is((select count(*) from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:receiveTransfer'), 0::bigint, 'no receipt writes a BOM history row');
 select is((select count(*) from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:recordFinishing'), 0::bigint, 'no finishing save of the unlinked work order wrote a BOM history row');
 select is((select count(*) from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:addQcRecord'), 0::bigint, 'nor did the QA pass of FN-1');
-select is(public.app_rf_master_since(0) -> 'changes', (select jsonb_object_agg(l, jsonb_build_object('upsert', public.app_rf_master() -> l, 'delete', '[]'::jsonb)) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs','purchaseOrders']) l), 'the delta from version 0 equals the snapshot for all twelve lists');
+select is(public.app_rf_master_since(0) -> 'changes', (select jsonb_object_agg(l, jsonb_build_object('upsert', public.app_rf_master() -> l, 'delete', '[]'::jsonb)) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs','purchaseOrders','chemDocs']) l), 'the delta from version 0 equals the snapshot for all twelve lists');
 select set_config('test.vb', (public.app_rf_master() ->> 'version')::text, true);
 select set_config('test.res', public.app_rf_save(jsonb_build_object('molds', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.mold')::jsonb || '{"id":"DIE-9","name":"หัวดายใหม่"}'::jsonb))), current_setting('test.vb')::bigint, 'saveMold')::text, true);
 select is(current_setting('test.res')::jsonb -> 'changes', public.app_rf_master_since(current_setting('test.vb')::bigint) -> 'changes', 'the reply to a save equals the delta RPC from the same base');
@@ -802,7 +810,7 @@ select set_config('test.pre_version', public.app_rf_master() ->> 'version', true
 select set_config('test.pre_bom_version', public.app_bom_master() ->> 'version', true);
 select set_config('test.purge', public.app_sandbox_purge_rf()::text, true);
 select ok((current_setting('test.purge')::jsonb ->> 'deleted')::integer > 40, 'the purge reports the many rows it deleted');
-select is(public.app_rf_master() - 'epoch', (select jsonb_build_object('version', current_setting('test.pre_version')::bigint) || jsonb_object_agg(l, '[]'::jsonb) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs','purchaseOrders']) l), 'all twelve lists are empty again and the counter keeps its value');
+select is(public.app_rf_master() - 'epoch', (select jsonb_build_object('version', current_setting('test.pre_version')::bigint) || jsonb_object_agg(l, '[]'::jsonb) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs','purchaseOrders','chemDocs']) l), 'all twelve lists are empty again and the counter keeps its value');
 select is(public.app_bom_master() ->> 'version', current_setting('test.pre_bom_version'), 'the purge did not touch BOM');
 reset role;
 select is((select count(*) from public.rf_molds where is_test) + (select count(*) from public.rf_material_lots where is_test) + (select count(*) from public.rf_requisitions where is_test)
