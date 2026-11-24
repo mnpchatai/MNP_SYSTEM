@@ -35,17 +35,30 @@ const ASSET = { id: ASSET_ID, type_code: "COMPUTER", reg_no: "COM-001", device_c
 // ฐานข้อมูลจำลองของตู้เซฟ (เหมือน app_itas_vault_get/init/rotate)
 function fakeVaultServer() {
   const db = { row: null, calls: [] };
-  const sha = (value) => Buffer.from(webcrypto.getRandomValues(new Uint8Array(0))).toString() + value; // ไม่ใช้ในเทสต์นี้ (ไม่หมุนรหัส)
-  void sha;
+  const sha = async (b64) => Buffer.from(await subtle.digest("SHA-256", Buffer.from(b64, "base64"))).toString("base64");
   return {
     db,
-    get: async () => (db.row ? { initialized: true, is_test: false, ...structuredClone(db.row) } : { initialized: false, is_test: false }),
+    get: async () => {
+      if (!db.row) return { initialized: false, is_test: false };
+      const visible = structuredClone(db.row);
+      delete visible.auth_hash; // ฐานข้อมูลไม่คืน auth_hash
+      return { initialized: true, is_test: false, ...visible };
+    },
     init: async (params) => {
       db.calls.push("init");
-      db.row = { key_version: 1, rev: 1, kdf: params.p_kdf, kdf_iterations: params.p_kdf_iterations, salt: params.p_salt, wrapped_key_pass: params.p_wrapped_key_pass, recovery_kdf_iterations: params.p_recovery_kdf_iterations, recovery_salt: params.p_recovery_salt, wrapped_key_recovery: params.p_wrapped_key_recovery, updated_at: STAMP };
+      db.row = { key_version: 1, rev: 1, kdf: params.p_kdf, kdf_iterations: params.p_kdf_iterations, salt: params.p_salt, wrapped_key_pass: params.p_wrapped_key_pass, recovery_kdf_iterations: params.p_recovery_kdf_iterations, recovery_salt: params.p_recovery_salt, wrapped_key_recovery: params.p_wrapped_key_recovery, auth_hash: params.p_auth_hash, updated_at: STAMP };
       return { rev: 1, key_version: 1 };
     },
-    rotate: async () => ({ ok: false, code: "AUTH_TOKEN_INVALID" }),
+    // เหมือน app_itas_vault_rotate: ตรวจ rev และ auth token (sha256 ตรงกับ auth_hash) · token ผิด = คืน ok:false ไม่ raise
+    rotate: async (params) => {
+      db.calls.push(`rotate:${params.p_action}`);
+      if (params.p_expected_rev !== db.row.rev) throw Object.assign(new Error("ตู้เซฟถูกเปลี่ยนจากที่อื่นแล้ว"), { code: "40001" });
+      if (!params.p_auth_token || (await sha(params.p_auth_token)) !== db.row.auth_hash) return { ok: false, code: "AUTH_TOKEN_INVALID" };
+      if (params.p_action === "change_password") Object.assign(db.row, { kdf_iterations: params.p_kdf_iterations, salt: params.p_salt, wrapped_key_pass: params.p_wrapped_key_pass });
+      else Object.assign(db.row, { recovery_kdf_iterations: params.p_recovery_kdf_iterations, recovery_salt: params.p_recovery_salt, wrapped_key_recovery: params.p_wrapped_key_recovery });
+      db.row.rev += 1;
+      return { ok: true, rev: db.row.rev, key_version: 1 };
+    },
   };
 }
 
@@ -326,6 +339,84 @@ test("the idle timer: the vault gets touched by activity on the page (throttled)
   for (const name of ["pointerdown", "keydown", "input", "touchstart"]) assert.match(source, new RegExp(`"${name}"`));
   assert.match(source, /vault\.touch\(\)/);
   assert.match(read("modules/itas-vault.js"), /const IDLE_MS = 10 \* 60 \* 1000;/);
+});
+
+const twoPasswords = (id, fields) => ({ id, elements: Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, { value }])), querySelectorAll: () => [], toggleAttribute() {} });
+const NEW_PASSWORD = "correct horse battery staple 99";
+
+test("forgot the password: the recovery code unlocks and sets a new password in one step; the old password stops working; the code is never sent anywhere", async () => {
+  const { row, recoveryCode } = await initializedVaultRow();
+  const w = await world({ vaultRow: row });
+  await w.render();
+  await w.click(w.button("itas-vault-unlock"));
+  await w.click(w.button("itas-vault-forgot"));
+  assert.match(w.hosts["itas-vault-panel"], /ปลดล็อกด้วยรหัสกู้คืน/);
+  await w.submit(twoPasswords("itas-vault-forgot-form", { recovery: recoveryCode, password: "short", password2: "short" }));
+  assert.match(w.hosts["itas-vault-message"], /ต้องยาวอย่างน้อย 14 ตัวอักษร/);
+  await w.submit(twoPasswords("itas-vault-forgot-form", { recovery: "0000-0000-0000-0000-0000-0000-0000-0000", password: NEW_PASSWORD, password2: NEW_PASSWORD }));
+  assert.match(w.hosts["itas-vault-message"], /รหัสไม่ถูกต้อง/);
+  assert.equal(w.status(), "locked");
+  await w.submit(twoPasswords("itas-vault-forgot-form", { recovery: recoveryCode.toLowerCase(), password: NEW_PASSWORD, password2: NEW_PASSWORD }));
+  assert.equal(w.status(), "unlocked");
+  assert.ok(w.server.db.calls.includes("rotate:change_password"));
+  assert.equal(w.hosts["itas-vault-panel"], "");
+  assert.ok(!JSON.stringify(w.calls.rpc).includes(recoveryCode.replaceAll("-", "")), "รหัสกู้คืนไม่ถูกส่งออก");
+  assert.ok(!JSON.stringify(w.calls.rpc).includes(NEW_PASSWORD));
+  await w.click(w.button("itas-vault-lock"));
+  await w.click(w.button("itas-vault-unlock"));
+  await w.submit(passwordForm(PASSWORD));
+  assert.equal(w.status(), "locked", "รหัสเก่าใช้ไม่ได้แล้ว");
+  await w.submit(passwordForm(NEW_PASSWORD));
+  assert.equal(w.status(), "unlocked");
+});
+
+test("change password asks for the current password again; a wrong current password changes nothing", async () => {
+  const { row } = await initializedVaultRow();
+  const w = await world({ vaultRow: row });
+  await w.render();
+  await unlockVia(w);
+  await w.click(w.button("itas-vault-change"));
+  await w.submit(twoPasswords("itas-vault-change-form", { current: "ผิดผิดผิดผิดผิดผิดผิดผิด", password: NEW_PASSWORD, password2: NEW_PASSWORD }));
+  assert.match(w.hosts["itas-vault-message"], /รหัสไม่ถูกต้อง/);
+  assert.ok(!w.server.db.calls.includes("rotate:change_password"));
+  await w.submit(twoPasswords("itas-vault-change-form", { current: PASSWORD, password: NEW_PASSWORD, password2: `${NEW_PASSWORD}!` }));
+  assert.match(w.hosts["itas-vault-message"], /ไม่ตรงกัน/);
+  await w.submit(twoPasswords("itas-vault-change-form", { current: PASSWORD, password: NEW_PASSWORD, password2: NEW_PASSWORD }));
+  assert.ok(w.server.db.calls.includes("rotate:change_password"));
+  assert.equal(w.hosts["itas-vault-panel"], "");
+  assert.match(w.calls.toasts.at(-1).message, /เปลี่ยนรหัสตู้เซฟแล้ว/);
+  assert.equal(w.status(), "unlocked");
+  const rotate = w.calls.rpc.find((call) => call.name === "app_itas_vault_rotate");
+  assert.equal(rotate.args.p_action, "change_password");
+  assert.equal(rotate.args.p_wrapped_key_recovery, null, "ไม่ส่งชุดรหัสกู้คืนตอนเปลี่ยนรหัสตู้เซฟ");
+  assert.ok(rotate.args.p_auth_token);
+});
+
+test("new recovery code: shown once, typed back to confirm, only then sent; a rejected auth token locks the vault with a clear message", async () => {
+  const { row } = await initializedVaultRow();
+  const w = await world({ vaultRow: row });
+  await w.render();
+  await unlockVia(w);
+  await w.click(w.button("itas-vault-recovery"));
+  await w.submit(twoPasswords("itas-vault-recovery-form", { current: PASSWORD }));
+  const code = /id="itas-recovery-code"[^>]*>([^<]+)</.exec(w.hosts["itas-vault-panel"])?.[1];
+  assert.match(code, /^([0-9A-Z]{4}-){7}[0-9A-Z]{4}$/);
+  assert.match(w.hosts["itas-vault-panel"], /ยืนยันและเปลี่ยนรหัสกู้คืน/);
+  assert.ok(!w.server.db.calls.includes("rotate:new_recovery"), "ยังไม่ส่งก่อนยืนยัน");
+  await w.submit(twoPasswords("itas-recovery-form", { typed: "NOPE" }));
+  assert.match(w.hosts["itas-vault-message"], /ไม่ตรงกัน/);
+  await w.submit(twoPasswords("itas-recovery-form", { typed: code }));
+  assert.ok(w.server.db.calls.includes("rotate:new_recovery"));
+  assert.equal(w.hosts["itas-vault-panel"], "");
+  assert.ok(!w.html().includes(code), "รหัสใหม่ไม่ค้างในหน้า");
+  // เซิร์ฟเวอร์ปฏิเสธ token → ล็อกและบอกให้ปลดล็อกใหม่
+  const bad = await world({ vaultRow: row, rpcHandlers: { app_itas_vault_rotate: () => ({ ok: false, code: "AUTH_TOKEN_INVALID", message: "x" }) } });
+  await bad.render();
+  await unlockVia(bad);
+  await bad.click(bad.button("itas-vault-change"));
+  await bad.submit(twoPasswords("itas-vault-change-form", { current: PASSWORD, password: NEW_PASSWORD, password2: NEW_PASSWORD }));
+  assert.match(bad.hosts["itas-vault-message"], /ยืนยันกุญแจของตู้เซฟไม่ผ่าน/);
+  assert.equal(bad.status(), "locked");
 });
 
 /* ---------- ฟอร์ม: บันทึก ช่องลับ แก้ชนกัน ---------- */
