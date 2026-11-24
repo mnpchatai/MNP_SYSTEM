@@ -9,7 +9,8 @@
 //  - ค่าลับที่ถอดรหัสแล้วใส่ DOM ด้วย textContent เท่านั้น (ไม่ผ่าน innerHTML) และซ่อนคืนเองใน 30 วินาที · ไม่เก็บลงตัวแปร global/data-* / localStorage / URL
 //  - ไม่ใช้ระบบร่างอัตโนมัติ (MNP_FORM_DRAFT) กับฟอร์มนี้เลย: ช่องลับและรหัสตู้เซฟจึงไม่เคยถูกเก็บลงเครื่อง
 //  - ไม่มี console.* กับค่าใด ๆ ที่เกี่ยวกับตู้เซฟ · error ของตู้เซฟเป็นข้อความคงที่ (VaultError) · error ของ crypto ไม่ถูกส่งเข้า log (MNP_ERROR_LOG)
-//  - ตู้เซฟล็อกเมื่อ: ไม่ใช้งาน 10 นาที · ออกจากหน้านี้ (hashchange) · ปิด/ซ่อนหน้า (pagehide) · ออกจากระบบ · เปลี่ยนผู้ใช้/โหมดทดสอบ/persona · กดล็อก
+//  - ตู้เซฟล็อกเมื่อ: ไม่ใช้งาน 10 นาที (นับจากนาฬิกาจริง ตรวจเป็นระยะและตอนกลับมาที่แท็บ) · ออกจากหน้านี้ (hashchange) · ปิด/ซ่อนหน้า (pagehide) · ออกจากระบบ · เปลี่ยนผู้ใช้/โหมดทดสอบ/persona · กดล็อก
+//  - รหัสกู้คืนไม่มีปุ่มคัดลอก (ต้องจด/พิมพ์เก็บ ไม่ผ่านคลิปบอร์ด) · ช่องรหัสและช่องค่าลับถูกกันไม่ให้ตัวจัดการรหัสผ่านเติม/เสนอเก็บ (ดู hardenSecretInputs) และกัน copy/cut ออกจากช่องที่ปิดบังอยู่
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) เรียก helper ของ app.js (state, sb, app, shell, bindShell, loadingShell, renderNotFound, showToast, confirmDialog,
 // setFormBusy, setButtonBusy, renderRoute, go) ได้เพราะถูกเรียกหลัง app.js โหลดเสร็จ
 (function registerItasModule() {
@@ -21,7 +22,9 @@
   const PATH = "office"; // หน้าของโมดูลนี้ใช้เส้นทางของระบบสำนักงาน (เมนูข้างไฮไลต์ "ระบบสำนักงาน")
   const TITLE = "ทะเบียนอุปกรณ์ IT";
   const PURGE_TEXT = "ล้างข้อมูลทะเบียนอุปกรณ์ทดสอบ";
-  const ACCESS_TTL_MS = 60 * 1000;
+  const ACCESS_TTL_MS = 10 * 60 * 1000; // ผลสิทธิ์ที่ "มีสิทธิ์" เก็บไว้นานเท่านี้ (ไม่ต้องยิง RPC ซ้ำทุกครั้งที่เปิดเมนู) · สิทธิ์จริงตัดสินที่ RPC ทุกตัวอยู่แล้ว ค่านี้ใช้แค่ซ่อน/แสดงการ์ด
+  const DENIED_TTL_MS = 60 * 1000; // "ไม่มีสิทธิ์" เก็บสั้นกว่า เพื่อให้คนที่เพิ่งได้สิทธิ์เห็นการ์ดเร็ว
+  const ACCESS_CHECK_FAILED = "ตรวจสิทธิ์ไม่ได้ กรุณาลองใหม่อีกครั้ง";
   const REVEAL_MS = 30 * 1000; // ค่าลับที่กด "แสดง" ซ่อนคืนเองเมื่อครบเวลา
   const ACTIVITY_THROTTLE_MS = 1000;
   const CONTEXT_CHECK_MS = 5000;
@@ -34,9 +37,12 @@
 
   let pageVersion = 0; // หน้าเก่าที่โหลดช้ากว่าหน้าใหม่ต้องไม่วาดทับ
   let pageHash = ""; // location.hash ตอนเริ่มวาดหน้าล่าสุด
-  let access = null; // { key, allowed, isTest, at } ผลของ app_itas_my_access ต่อบริบท (ผู้ใช้ + โหมดทดสอบ + persona)
+  let access = null; // { key, allowed, isTest, at } ผลของ app_itas_my_access ต่อบริบท (ผู้ใช้ + โหมดทดสอบ + persona) · ล้างเมื่อออกจากระบบ
+  let accessFlight = null; // { key, promise } คำขอสิทธิ์ที่กำลังรอ (เรียกพร้อมกันหลายที่ใช้ RPC เดียว)
+  let accessFailedKey = null; // บริบทที่ตรวจสิทธิ์ล่าสุดแล้วล้ม (เน็ต/เซิร์ฟเวอร์) · ไม่เก็บเป็นผลสิทธิ์
   let ui = null; // สถานะหน้าจอ (ไม่มีความลับ) · รีเซ็ตเมื่อบริบทเปลี่ยน
   let watching = false;
+  let authWatching = false;
   let activityAt = 0;
   let contextTimer = null;
   const revealTimers = new Map(); // ค่าลับที่กำลังแสดง: key → timer id
@@ -57,23 +63,49 @@
     return info;
   }
 
-  /* ---------- สิทธิ์ของโมดูล (ใช้ตัดสินว่าจะแสดงการ์ด) ---------- */
-  // เรียกก่อนวาดหน้า #/office (module-office.js) · ผลเก็บ 60 วินาทีต่อบริบท · RPC ล้ม/ยังไม่มี = ไม่มีสิทธิ์ (ซ่อนการ์ดเงียบ ๆ) และไม่เก็บผลที่ล้ม
-  async function resolveAccess() {
-    const key = contextKey();
-    if (access && access.key === key && Date.now() - access.at < ACCESS_TTL_MS) return access.allowed;
-    try {
-      const data = await rpc("app_itas_my_access");
-      access = { key, allowed: data?.allowed === true, isTest: data?.is_test === true, at: Date.now() };
-    } catch {
-      access = null;
-      return false;
-    }
-    return access.allowed;
+  /* ---------- สิทธิ์ของโมดูล (ใช้ตัดสินว่าจะแสดงการ์ด/เปิดหน้า) ---------- */
+  // ผลเก็บต่อบริบท (ผู้ใช้ + persona + โหมดทดสอบ) นาน 10 นาที (ไม่มีสิทธิ์ 1 นาที) · ล้างเมื่อออกจากระบบ · คำขอที่ซ้อนกันใช้ RPC เดียว
+  // สถานะ: allowed / denied / error (ตรวจไม่ได้ เช่นเน็ตหลุด — ไม่เก็บเป็นผลสิทธิ์ ให้ผู้เรียกลองใหม่ได้)
+  function accessFresh() {
+    if (!access || access.key !== contextKey()) return null;
+    return Date.now() - access.at < (access.allowed ? ACCESS_TTL_MS : DENIED_TTL_MS) ? access : null;
   }
+  async function checkAccess() {
+    const key = contextKey();
+    const cached = accessFresh();
+    if (cached) return { status: cached.allowed ? "allowed" : "denied" };
+    if (accessFlight?.key === key) return accessFlight.promise;
+    watchAuth();
+    const promise = (async () => {
+      try {
+        const data = await rpc("app_itas_my_access");
+        if (contextKey() !== key) return checkAccess(); // สลับผู้ใช้/โหมดระหว่างรอ: ผลนี้ไม่ใช่ของบริบทปัจจุบัน ถามใหม่
+        access = { key, allowed: data?.allowed === true, isTest: data?.is_test === true, at: Date.now() };
+        accessFailedKey = null;
+        return { status: access.allowed ? "allowed" : "denied" };
+      } catch (error) {
+        accessFailedKey = key;
+        return { status: "error", error };
+      } finally {
+        if (accessFlight?.key === key) accessFlight = null;
+      }
+    })();
+    accessFlight = { key, promise };
+    return promise;
+  }
+  // รุ่นที่คืน true/false (ใช้โดย module-office.js ก่อนวาดการ์ด) · ล้ม = false
+  async function resolveAccess() { return (await checkAccess()).status === "allowed"; }
   const hasAccess = () => Boolean(access && access.key === contextKey() && access.allowed);
+  // สถานะที่รู้อยู่ตอนนี้โดยไม่ยิง RPC: unknown (ยังไม่เคยตรวจ/หมดอายุ) · allowed · denied · error (ตรวจล่าสุดแล้วล้ม)
+  function accessStatus() {
+    const cached = accessFresh();
+    if (cached) return cached.allowed ? "allowed" : "denied";
+    return accessFailedKey === contextKey() ? "error" : "unknown";
+  }
 
   /* ---------- ตู้เซฟ (ตัวเดียวของแท็บนี้) ---------- */
+  // ค่าที่ห้ามใช้เป็นรหัสตู้เซฟ: รหัสพนักงาน/ชื่อผู้ใช้ที่ล็อกอิน (และของ persona ตอนทดสอบ)
+  const forbiddenValues = () => [state.employee?.employee_no, state.employee?.username, String(state.session?.user?.email ?? "").split("@")[0]];
   const vault = vaultApi.createVault({
     server: {
       get: () => rpc("app_itas_vault_get"),
@@ -81,6 +113,7 @@
       rotate: (params) => rpc("app_itas_vault_rotate", params),
     },
     getContext: contextKey,
+    getForbidden: forbiddenValues,
   });
   const onAssetsPage = () => {
     const hash = location.hash;
@@ -105,6 +138,13 @@
     if (!paint(pages.page(`${pages.head({ title: TITLE })}${pages.errorCard(info.message, { retry: info.kind === "unknown" })}`), TITLE, version)) return;
     document.querySelector("#itas-retry")?.addEventListener("click", () => renderRoute());
   }
+  // ตรวจสิทธิ์ไม่ได้ (ไม่ใช่ไม่มีสิทธิ์): เซสชันหมด/ฐานข้อมูลยังไม่อัปเดต = ข้อความเฉพาะ · อื่น ๆ (เน็ต เซิร์ฟเวอร์) = "ตรวจสิทธิ์ไม่ได้ กรุณาลองใหม่" พร้อมปุ่มลองอีกครั้ง
+  function accessErrorPage(error, version) {
+    const info = failure(error);
+    const message = info.kind === "session" || info.kind === "missing" ? info.message : ACCESS_CHECK_FAILED;
+    if (!paint(pages.page(`${pages.head({ title: TITLE })}${pages.errorCard(message, { retry: true })}`), TITLE, version)) return;
+    document.querySelector("#itas-retry")?.addEventListener("click", () => renderRoute());
+  }
   const root = () => document.querySelector(".itas-page");
   const byId = (id) => document.getElementById(id);
 
@@ -118,9 +158,13 @@
     vault.ensureContext();
     if (!ui || ui.context !== contextKey()) resetUi();
     ui.form = null; // วาดหน้าใหม่ = ฟอร์มที่เปิดค้างไม่เกี่ยวแล้ว (ผู้ใช้ยืนยันทิ้งไปแล้วหรือไม่มีอะไรค้าง)
-    // สิทธิ์ตรวจซ้ำอีกชั้น (module-office.js ตรวจแล้ว) · ไม่มีสิทธิ์ = พากลับหน้าหลักโดยไม่เรียก RPC อื่น
-    if (!(await resolveAccess())) { go("dashboard"); return; }
-    ui.isTest = Boolean(access?.isTest);
+    // สิทธิ์ตรวจซ้ำอีกชั้น (module-office.js ตรวจแล้ว ใช้ผลที่เก็บไว้) · ไม่มีสิทธิ์จริง = พากลับหน้าหลักโดยไม่เรียก RPC อื่น
+    // ตรวจไม่ได้ชั่วคราว (เน็ตหลุด) = แจ้งให้ลองใหม่ ไม่เด้งกลับเงียบ ๆ · ผู้ใช้ออกจากหน้านี้ไปแล้วระหว่างรอ = ไม่ทำอะไรต่อ (ไม่ไปทับหน้าที่เขาอยู่)
+    const outcome = await checkAccess();
+    if (version !== pageVersion || location.hash !== pageHash) return;
+    if (outcome.status === "denied") { go("dashboard"); return; }
+    if (outcome.status === "error") return accessErrorPage(outcome.error, version);
+    ui.isTest = Boolean(accessFresh()?.isTest);
     try {
       const [types] = await Promise.all([rpc("app_itas_list_types"), vault.load().catch((error) => { ui.vaultError = error; })]);
       ui.types = Array.isArray(types) ? types : [];
@@ -187,10 +231,19 @@
     if (host) host.innerHTML = ""; // ทิ้งช่องรหัสและรหัสกู้คืนที่แสดงอยู่ออกจากหน้า
     if (ui) ui.vaultPanel = null;
   }
+  // ช่องรหัส/ค่าลับ (มี data-mask) ตั้งต้นเป็น type=password · ถ้าเบราว์เซอร์ปิดบังด้วย CSS ได้ (-webkit-text-security) เปลี่ยนเป็น type=text + .itas-mask
+  // เหตุผล: type=password ถูกตัวจัดการรหัสผ่านของเบราว์เซอร์ (Chrome/Edge/Safari/Firefox) เสนอ "บันทึกรหัสผ่าน"/เติมรหัสเข้าสู่ระบบให้ แม้ใส่ autocomplete=off (Chrome ไม่เชื่อ) ส่วน type=text + CSS ไม่ถูกตรวจจับเป็นช่องรหัสผ่าน
+  // เบราว์เซอร์ที่ไม่รองรับ CSS นี้ (ตรวจด้วย CSS.supports) คงเป็น password เพื่อให้ปิดบังแน่นอน (ยอมให้ถูกเสนอบันทึกได้ ดีกว่าแสดงรหัสเป็นข้อความชัด)
+  const canMaskWithCss = () => typeof CSS !== "undefined" && typeof CSS.supports === "function" && (CSS.supports("-webkit-text-security", "disc") || CSS.supports("text-security", "disc"));
+  function hardenSecretInputs(host) {
+    if (!host || !canMaskWithCss()) return;
+    host.querySelectorAll?.("input[data-mask]").forEach((input) => { input.type = "text"; input.classList?.add("itas-mask"); });
+  }
   function showVaultPanel(kind, html) {
     const host = byId("itas-vault-panel");
     if (!host) return;
     host.innerHTML = html;
+    hardenSecretInputs(host);
     ui.vaultPanel = kind;
     host.querySelector("input")?.focus();
     host.scrollIntoView?.({ block: "nearest" });
@@ -231,15 +284,25 @@
     activityAt = now;
     vault.touch();
   }
+  // ออกจากระบบ: ล้างผลสิทธิ์ + ล็อกตู้เซฟ (ลงทะเบียนครั้งเดียว เรียกจากทั้งการตรวจสิทธิ์และการวาดหน้า เพราะการ์ดตรวจสิทธิ์ก่อนที่จะเปิดหน้านี้)
+  function watchAuth() {
+    if (authWatching) return;
+    authWatching = true;
+    sb.auth.onAuthStateChange((event) => { if (event === "SIGNED_OUT") { access = null; accessFailedKey = null; vault.lock("signout"); } });
+  }
+  // เวลาไม่ใช้งานนับจากนาฬิกาจริง: กลับมาที่แท็บ/หน้าถูกกู้คืน/โฟกัสหน้าต่าง แล้วเกิน 10 นาทีนับจากกิจกรรมล่าสุด = ล็อกทันที (ไม่รอตัวจับเวลาที่เบราว์เซอร์อาจหน่วงตอนแท็บถูกซ่อน)
+  const checkIdleNow = () => vault.checkIdle();
   function ensureWatchers() {
     if (watching) return;
     watching = true;
+    watchAuth();
     vault.subscribe(onVaultChange);
     window.addEventListener("hashchange", () => { if (onAssetsPage()) return; vault.lock("leave"); if (ui) ui.form = null; });
     window.addEventListener("pagehide", () => vault.lock("pagehide"));
-    window.addEventListener("beforeunload", (event) => { if (unsavedCount() > 0) { event.preventDefault(); event.returnValue = ""; } });
+    window.addEventListener("pageshow", checkIdleNow);
+    window.addEventListener("focus", checkIdleNow);
+    document.addEventListener("visibilitychange", checkIdleNow);
     for (const name of ["pointerdown", "keydown", "input", "touchstart"]) document.addEventListener(name, noteActivity, { passive: true });
-    sb.auth.onAuthStateChange((event) => { if (event === "SIGNED_OUT") vault.lock("signout"); });
   }
 
   /* ---------- ผูกเหตุการณ์ของหน้า (delegation: เนื้อหาถูกวาดทับเป็นส่วน ๆ) ---------- */
@@ -250,6 +313,8 @@
     host.addEventListener("input", onInput);
     host.addEventListener("change", onChange);
     host.addEventListener("submit", onSubmit);
+    // ช่องที่ปิดบังด้วย CSS (type=text) คัดลอก/ตัดออกมาได้ต่างจาก type=password → กันเองให้เหมือนกัน
+    for (const name of ["copy", "cut"]) host.addEventListener(name, (event) => { if (event.target?.closest?.("input[data-mask]")) event.preventDefault(); });
     host.addEventListener("keydown", (event) => {
       const row = event.target.closest?.("[data-itas-row]");
       if (row && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); openForm("edit", row.dataset.itasRow); }
@@ -269,7 +334,6 @@
     "itas-vault-recovery": () => showVaultPanel("new-recovery", pages.newRecoveryForm()),
     "itas-vault-forgot": () => showVaultPanel("forgot", pages.forgotForm()),
     "itas-vault-cancel": () => { vault.cancelPending(); wipeInputs(byId("itas-vault-panel")); closeVaultPanel(); refreshVaultBar(); },
-    "itas-recovery-copy": () => copyRecoveryCode(),
     "itas-add": () => openForm("add"),
     "itas-form-cancel": () => closeForm(),
     "itas-history-load": () => loadHistory(),
@@ -291,7 +355,11 @@
   function onInput(event) {
     const target = event.target;
     if (target.id === "itas-search") { ui.query = target.value; updateTable(); }
-    if (target.id === "itas-vault-pass" && byId("itas-vault-strength")) byId("itas-vault-strength").textContent = pages.strengthText(model.passwordStrength(target.value));
+    if (target.id === "itas-vault-pass" && byId("itas-vault-strength")) {
+      // กฎที่บล็อกจริง (ตัวอักษรซ้ำ/เรียงกัน/เท่ากับรหัสพนักงาน) แจ้งทันทีที่พิมพ์ · ที่เหลือเป็นตัววัดความแข็งแรงคร่าว ๆ
+      const reason = target.value ? vaultApi.passwordProblem(target.value, forbiddenValues()) : null;
+      byId("itas-vault-strength").textContent = reason && reason !== "WEAK_PASSWORD" ? vaultApi.MESSAGES[reason] : pages.strengthText(model.passwordStrength(target.value));
+    }
   }
   function onChange(event) {
     if (event.target.id === "itas-status") { ui.status = event.target.value; updateTable(); }
@@ -313,10 +381,12 @@
     window.MNP_FORM_STEPS?.clearFieldErrors?.(form);
     const target = byId("itas-vault-message");
     if (target) target.innerHTML = pages.messageBox(message);
+    else showToast(message, "error"); // แผงถูกปิดไปแล้ว (เช่น ตู้เซฟถูกล็อกระหว่างทำ) ข้อความต้องไม่หาย
   };
-  // ตรวจรหัสใหม่ + พิมพ์ซ้ำ (ใช้ร่วมกันในหน้าตั้งตู้เซฟ/ลืมรหัส/เปลี่ยนรหัส) · คืนข้อความผิดพลาดหรือ ""
+  // ตรวจรหัสใหม่ + พิมพ์ซ้ำ (ใช้ร่วมกันในหน้าตั้งตู้เซฟ/ลืมรหัส/เปลี่ยนรหัส) · คืนข้อความผิดพลาดหรือ "" · กฎเดียวกับที่ตู้เซฟบังคับ (itas-vault.js passwordProblem)
   function newPasswordProblem(password, again) {
-    if (!model.passwordStrength(password).ok) return `รหัสตู้เซฟต้องยาวอย่างน้อย ${model.MIN_PASSWORD_LENGTH} ตัวอักษร`;
+    const reason = vaultApi.passwordProblem(password, forbiddenValues());
+    if (reason) return vaultApi.MESSAGES[reason];
     if (password !== again) return "รหัสที่พิมพ์ยืนยันไม่ตรงกัน";
     return "";
   }
@@ -330,6 +400,7 @@
       const info = failure(error, { write: true });
       formError(form, info.message);
       if (info.kind === "conflict") vault.load().catch(() => {}); // ตู้เซฟถูกแก้จากที่อื่น: อ่านสถานะล่าสุด
+      refreshVaultBar(); // สถานะอาจเปลี่ยนไประหว่างทำ (เช่น ตั้งสำเร็จแต่ถูกล็อกกลางคัน)
       return false;
     }
     return true;
@@ -388,16 +459,6 @@
     wipeInputs(form);
     if (ok) showVaultPanel("recovery-show", pages.recoveryShow({ code: recoveryCode, mode: "recovery" }));
   }
-  async function copyRecoveryCode() {
-    const text = byId("itas-recovery-code")?.textContent ?? "";
-    try {
-      await navigator.clipboard.writeText(text);
-      showToast("คัดลอกรหัสกู้คืนแล้ว (ล้างคลิปบอร์ดหลังวางเสร็จ)");
-    } catch {
-      showToast("คัดลอกไม่ได้ กรุณาจดด้วยมือ", "error");
-    }
-  }
-
   /* ---------- รายการ: เปลี่ยนชนิด / เรียง ---------- */
   async function confirmDiscard() {
     if (!isDirty()) return true;
@@ -469,9 +530,19 @@
     const host = byId("itas-form-area");
     if (!host) return;
     clearReveals();
-    // สร้างใหม่: uuid สร้างที่หน้าเว็บ (เป็น AAD ของช่องลับ) · คงเดิมตลอดที่ฟอร์มเปิดอยู่ เพื่อลองบันทึกซ้ำหลังเน็ตหลุดได้ปลอดภัย
-    ui.form = { mode, type, original, draftId: mode === "add" ? window.crypto.randomUUID() : original.id, initial: "", submitting: false };
+    // สร้างใหม่: uuid สร้างที่หน้าเว็บ (เป็น AAD ของช่องลับ) · คงเดิมตลอดที่ฟอร์มเปิดอยู่ เพื่อลองบันทึกซ้ำหลังเน็ตหลุดได้ปลอดภัย · เบราว์เซอร์ที่ไม่มี randomUUID สร้างเองจาก getRandomValues
+    let draftId = original?.id;
+    if (mode === "add") {
+      try {
+        draftId = vaultApi.newUuid(window.crypto);
+      } catch (error) {
+        showToast(failure(error).message, "error");
+        return;
+      }
+    }
+    ui.form = { mode, type, original, draftId, initial: "", submitting: false };
     host.innerHTML = pages.assetForm({ mode, type, values, asset: original, vaultStatus: vault.status() });
+    hardenSecretInputs(host);
     ui.form.initial = JSON.stringify(readFormValues(formEl(), type));
     host.scrollIntoView?.({ block: "start" });
     formEl()?.querySelector("input, select, textarea")?.focus();
@@ -489,6 +560,7 @@
     if (!host || !ui?.form) return;
     clearReveals();
     host.innerHTML = pages.secretsSection({ fields: model.secretFields(ui.form.type), asset: ui.form.original, vaultStatus: vault.status() });
+    hardenSecretInputs(host);
   }
   function clearReveals() {
     for (const timer of revealTimers.values()) clearTimeout(timer);
@@ -637,7 +709,7 @@
     }
   }
 
-  const api = Object.freeze({ render, resolveAccess, hasAccess, unsavedCount, version: model.MODULE_VERSION, inDevelopment: model.IN_DEVELOPMENT });
+  const api = Object.freeze({ render, resolveAccess, hasAccess, accessStatus, unsavedCount, version: model.MODULE_VERSION, inDevelopment: model.IN_DEVELOPMENT });
   window.MNP_ITAS = api;
   // ประกาศตัวเองให้การ์ดในเมนู "ระบบสำนักงาน" (วิธีเพิ่มโมดูลใหม่ดูที่หัวไฟล์ modules/office-sections.js) key = รหัสโมดูลของการ์ด · ไม่มีตัวเลขงานค้าง
   (window.MNP_OFFICE_CARDS ??= {})[model.ASSET_CODE] = { version: model.MODULE_VERSION, inDevelopment: model.IN_DEVELOPMENT };

@@ -55,17 +55,20 @@
         <span class="itas-vault-actions">${buttons}</span>
       </div>`;
   }
-  const secretInput = ({ id, name, label, autocomplete = "off", hint = "" }) => `<div class="field" data-field="${esc(name)}"><label for="${esc(id)}">${esc(label)}</label><input class="input" id="${esc(id)}" name="${esc(name)}" type="password" autocomplete="${esc(autocomplete)}" autocapitalize="off" spellcheck="false" data-vault-input>${hint ? `<small>${esc(hint)}</small>` : ""}</div>`;
+  // ชุดแอตทริบิวต์ของช่องรหัส/ค่าลับทุกช่อง: ไม่ให้เบราว์เซอร์/ตัวจัดการรหัสผ่านเติมหรือเสนอเก็บ (autocomplete=off + data-lpignore ของ LastPass + data-1p-ignore ของ 1Password + data-form-type=other ของ Dashlane/Bitwarden) และไม่ให้แก้/เติมคำอัตโนมัติ
+  // markup ตั้งต้นเป็น type=password (ปิดบังแน่นอนแม้สคริปต์ไม่ทำงาน) · module เปลี่ยนเป็น type=text + CSS .itas-mask เมื่อเบราว์เซอร์รองรับ -webkit-text-security เพื่อไม่ให้ถูกเสนอ "บันทึกรหัสผ่าน" (ดู hardenSecretInputs ใน module-itas.js)
+  const NO_AUTOFILL = 'autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other"';
+  const secretInput = ({ id, name, label, hint = "" }) => `<div class="field" data-field="${esc(name)}"><label for="${esc(id)}">${esc(label)}</label><input class="input" id="${esc(id)}" name="${esc(name)}" type="password" ${NO_AUTOFILL} data-vault-input data-mask>${hint ? `<small>${esc(hint)}</small>` : ""}</div>`;
   const vaultCard = (title, body) => `<section class="card itas-vault-card" id="itas-vault-card" aria-labelledby="itas-vault-title"><h2 id="itas-vault-title">${esc(title)}</h2><div id="itas-vault-message" role="status"></div>${body}</section>`;
   const busyLine = '<p class="muted small itas-busy" id="itas-vault-busy" role="status" hidden>กำลังคำนวณกุญแจ… อาจใช้เวลาไม่กี่วินาที (บนมือถือนานกว่า) อย่าปิดหน้านี้</p>';
 
   function vaultSetupForm({ isTest = false } = {}) {
     return vaultCard(isTest ? "ตั้งตู้เซฟทดสอบ" : "ตั้งตู้เซฟ", `
       <p class="muted small">รหัสตู้เซฟใช้ปลดล็อกช่องลับ ระบบไม่เก็บรหัสนี้ที่ใดเลย ${isTest ? "(โหมดทดสอบใช้รหัสคนละตัวกับของจริง และตู้เซฟทดสอบถูกล้างได้)" : ""}</p>
-      <form id="itas-vault-setup-form" novalidate>
-        ${secretInput({ id: "itas-vault-pass", name: "password", label: `รหัสตู้เซฟ (อย่างน้อย ${model.MIN_PASSWORD_LENGTH} ตัวอักษร)`, autocomplete: "new-password", hint: model.PASSWORD_ADVICE })}
+      <form id="itas-vault-setup-form" novalidate autocomplete="off">
+        ${secretInput({ id: "itas-vault-pass", name: "password", label: `รหัสตู้เซฟ (อย่างน้อย ${model.MIN_PASSWORD_LENGTH} ตัวอักษร)`, hint: model.PASSWORD_ADVICE })}
         <p class="itas-strength muted small" id="itas-vault-strength" aria-live="polite"></p>
-        ${secretInput({ id: "itas-vault-pass2", name: "password2", label: "พิมพ์รหัสตู้เซฟอีกครั้ง", autocomplete: "new-password" })}
+        ${secretInput({ id: "itas-vault-pass2", name: "password2", label: "พิมพ์รหัสตู้เซฟอีกครั้ง" })}
         ${busyLine}
         <div class="form-actions"><button type="button" class="btn secondary" id="itas-vault-cancel">ยกเลิก</button><button type="submit" class="btn is-primary">ต่อไป: สร้างรหัสกู้คืน</button></div>
       </form>`);
@@ -74,19 +77,18 @@
   function recoveryShow({ code, mode = "setup" } = {}) {
     const submit = mode === "setup" ? "ยืนยันและตั้งตู้เซฟ" : "ยืนยันและเปลี่ยนรหัสกู้คืน";
     return vaultCard(mode === "setup" ? "จดรหัสกู้คืน" : "รหัสกู้คืนใหม่", `
-      <p class="form-message warning" role="alert">รหัสกู้คืนนี้แสดงครั้งเดียว ระบบไม่เก็บไว้ · จดลงกระดาษแล้วเก็บในที่ปลอดภัย (ไม่ใช่ในเครื่องนี้) · ถ้าลืมรหัสตู้เซฟและทำรหัสกู้คืนหาย จะกู้ข้อมูลลับไม่ได้อีก</p>
+      <p class="form-message warning" role="alert">รหัสกู้คืนนี้แสดงครั้งเดียว ระบบไม่เก็บไว้ · จดด้วยมือลงกระดาษแล้วเก็บในที่ปลอดภัย (ไม่ใช่ในเครื่องนี้ และไม่ควรคัดลอกหรือถ่ายภาพหน้าจอเก็บไว้) · ถ้าลืมรหัสตู้เซฟและทำรหัสกู้คืนหาย จะกู้ข้อมูลลับไม่ได้อีก</p>
       <p class="itas-recovery-code" id="itas-recovery-code" translate="no" aria-label="รหัสกู้คืน">${esc(code)}</p>
-      <div class="itas-recovery-tools"><button type="button" class="btn secondary" id="itas-recovery-copy">คัดลอกรหัส</button></div>
-      <form id="itas-recovery-form" novalidate>
-        <div class="field" data-field="typed"><label for="itas-recovery-typed">พิมพ์รหัสกู้คืนกลับเข้ามาเพื่อยืนยันว่าจดแล้ว ${REQUIRED}</label><input class="input" id="itas-recovery-typed" name="typed" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" data-vault-input placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"></div>
+      <form id="itas-recovery-form" novalidate autocomplete="off">
+        <div class="field" data-field="typed"><label for="itas-recovery-typed">พิมพ์รหัสกู้คืนกลับเข้ามาเพื่อยืนยันว่าจดแล้ว ${REQUIRED}</label><input class="input" id="itas-recovery-typed" name="typed" type="text" ${NO_AUTOFILL.replace('autocapitalize="off"', 'autocapitalize="characters"')} data-vault-input placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"></div>
         ${busyLine}
         <div class="form-actions"><button type="button" class="btn secondary" id="itas-vault-cancel">ยกเลิก</button><button type="submit" class="btn is-primary">${submit}</button></div>
       </form>`);
   }
   function unlockForm({ isTest = false } = {}) {
     return vaultCard(isTest ? "ปลดล็อกตู้เซฟทดสอบ" : "ปลดล็อกตู้เซฟ", `
-      <form id="itas-vault-unlock-form" novalidate>
-        ${secretInput({ id: "itas-vault-pass", name: "password", label: "รหัสตู้เซฟ", autocomplete: "current-password" })}
+      <form id="itas-vault-unlock-form" novalidate autocomplete="off">
+        ${secretInput({ id: "itas-vault-pass", name: "password", label: "รหัสตู้เซฟ" })}
         ${busyLine}
         <div class="form-actions"><button type="button" class="btn secondary" id="itas-vault-cancel">ยกเลิก</button><button type="submit" class="btn is-primary">ปลดล็อก</button><button type="button" class="btn secondary" id="itas-vault-forgot">ลืมรหัส ใช้รหัสกู้คืน</button></div>
       </form>`);
@@ -95,11 +97,11 @@
   function forgotForm() {
     return vaultCard("ปลดล็อกด้วยรหัสกู้คืน", `
       <p class="muted small">ใช้รหัสกู้คืนที่จดไว้ แล้วตั้งรหัสตู้เซฟใหม่ (รหัสกู้คืนเดิมยังใช้ได้อยู่)</p>
-      <form id="itas-vault-forgot-form" novalidate>
-        <div class="field" data-field="recovery"><label for="itas-vault-code">รหัสกู้คืน ${REQUIRED}</label><input class="input" id="itas-vault-code" name="recovery" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" data-vault-input></div>
-        ${secretInput({ id: "itas-vault-pass", name: "password", label: `รหัสตู้เซฟใหม่ (อย่างน้อย ${model.MIN_PASSWORD_LENGTH} ตัวอักษร)`, autocomplete: "new-password", hint: model.PASSWORD_ADVICE })}
+      <form id="itas-vault-forgot-form" novalidate autocomplete="off">
+        <div class="field" data-field="recovery"><label for="itas-vault-code">รหัสกู้คืน ${REQUIRED}</label><input class="input" id="itas-vault-code" name="recovery" type="text" ${NO_AUTOFILL.replace('autocapitalize="off"', 'autocapitalize="characters"')} data-vault-input></div>
+        ${secretInput({ id: "itas-vault-pass", name: "password", label: `รหัสตู้เซฟใหม่ (อย่างน้อย ${model.MIN_PASSWORD_LENGTH} ตัวอักษร)`, hint: model.PASSWORD_ADVICE })}
         <p class="itas-strength muted small" id="itas-vault-strength" aria-live="polite"></p>
-        ${secretInput({ id: "itas-vault-pass2", name: "password2", label: "พิมพ์รหัสตู้เซฟใหม่อีกครั้ง", autocomplete: "new-password" })}
+        ${secretInput({ id: "itas-vault-pass2", name: "password2", label: "พิมพ์รหัสตู้เซฟใหม่อีกครั้ง" })}
         ${busyLine}
         <div class="form-actions"><button type="button" class="btn secondary" id="itas-vault-cancel">ยกเลิก</button><button type="submit" class="btn is-primary">ปลดล็อกและตั้งรหัสใหม่</button></div>
       </form>`);
@@ -108,11 +110,11 @@
   function changeForm() {
     return vaultCard("เปลี่ยนรหัสตู้เซฟ", `
       <p class="muted small">ข้อมูลลับที่เก็บไว้ไม่ต้องเข้ารหัสใหม่ · ต้องกรอกรหัสตู้เซฟปัจจุบันอีกครั้งเพื่อยืนยัน</p>
-      <form id="itas-vault-change-form" novalidate>
-        ${secretInput({ id: "itas-vault-current", name: "current", label: "รหัสตู้เซฟปัจจุบัน", autocomplete: "current-password" })}
-        ${secretInput({ id: "itas-vault-pass", name: "password", label: `รหัสตู้เซฟใหม่ (อย่างน้อย ${model.MIN_PASSWORD_LENGTH} ตัวอักษร)`, autocomplete: "new-password", hint: model.PASSWORD_ADVICE })}
+      <form id="itas-vault-change-form" novalidate autocomplete="off">
+        ${secretInput({ id: "itas-vault-current", name: "current", label: "รหัสตู้เซฟปัจจุบัน" })}
+        ${secretInput({ id: "itas-vault-pass", name: "password", label: `รหัสตู้เซฟใหม่ (อย่างน้อย ${model.MIN_PASSWORD_LENGTH} ตัวอักษร)`, hint: model.PASSWORD_ADVICE })}
         <p class="itas-strength muted small" id="itas-vault-strength" aria-live="polite"></p>
-        ${secretInput({ id: "itas-vault-pass2", name: "password2", label: "พิมพ์รหัสตู้เซฟใหม่อีกครั้ง", autocomplete: "new-password" })}
+        ${secretInput({ id: "itas-vault-pass2", name: "password2", label: "พิมพ์รหัสตู้เซฟใหม่อีกครั้ง" })}
         ${busyLine}
         <div class="form-actions"><button type="button" class="btn secondary" id="itas-vault-cancel">ยกเลิก</button><button type="submit" class="btn is-primary">เปลี่ยนรหัสตู้เซฟ</button></div>
       </form>`);
@@ -120,8 +122,8 @@
   function newRecoveryForm() {
     return vaultCard("ออกรหัสกู้คืนใหม่", `
       <p class="muted small">รหัสกู้คืนเดิมจะใช้ไม่ได้อีก · ต้องกรอกรหัสตู้เซฟปัจจุบันเพื่อยืนยัน</p>
-      <form id="itas-vault-recovery-form" novalidate>
-        ${secretInput({ id: "itas-vault-current", name: "current", label: "รหัสตู้เซฟปัจจุบัน", autocomplete: "current-password" })}
+      <form id="itas-vault-recovery-form" novalidate autocomplete="off">
+        ${secretInput({ id: "itas-vault-current", name: "current", label: "รหัสตู้เซฟปัจจุบัน" })}
         ${busyLine}
         <div class="form-actions"><button type="button" class="btn secondary" id="itas-vault-cancel">ยกเลิก</button><button type="submit" class="btn is-primary">ต่อไป: สร้างรหัสกู้คืนใหม่</button></div>
       </form>`);
@@ -194,7 +196,7 @@
           <label for="${inputId}">${esc(field.label)} <span class="badge">ลับ</span></label>
           <div class="itas-secret-line">
             <span class="itas-secret-shown" data-secret-shown aria-live="polite">${has ? MASK : "—"}</span>
-            <input class="input" id="${inputId}" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" data-secret-input${has ? " hidden" : ""}>
+            <input class="input" id="${inputId}" type="password" ${NO_AUTOFILL} data-secret-input data-mask${has ? " hidden" : ""}>
             ${has ? `<span class="itas-secret-actions">
               <button type="button" class="btn secondary small" data-secret-act="show">แสดง</button>
               <button type="button" class="btn secondary small" data-secret-act="edit">ตั้งค่าใหม่</button>
@@ -221,7 +223,7 @@
     return `<section class="card itas-form-card" id="itas-form-card" aria-labelledby="itas-form-title">
         <h2 id="itas-form-title">${title}</h2>
         <div id="itas-form-message" role="status"></div>
-        <form id="itas-form" novalidate>
+        <form id="itas-form" novalidate autocomplete="off">
           ${groups}
           <div id="itas-secrets-host">${secretsSection({ fields: model.secretFields(type), asset, vaultStatus })}</div>
           <div class="form-actions"><button type="button" class="btn secondary" id="itas-form-cancel">${edit ? "ปิด" : "ยกเลิก"}</button><button type="submit" class="btn is-primary">${edit ? "บันทึกการแก้ไข" : "เพิ่มอุปกรณ์"}</button></div>

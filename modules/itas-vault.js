@@ -6,6 +6,8 @@
 //  - DEK เป็น CryptoKey แบบ non-extractable เสมอ อยู่ในตัวแปรปิดของไฟล์นี้เท่านั้น (ไม่ผูก window ไม่ลง localStorage/sessionStorage/IndexedDB)
 //    raw ของ DEK มีแค่ชั่วคราวตอนตั้งครั้งแรกและตอนห่อใหม่ แล้ว fill(0) ทันที
 //  - ล็อก = ทิ้ง CryptoKey ทั้งหมด + ล้างรหัสที่ค้างระหว่างตั้ง (ล็อกเองเมื่อไม่ใช้งาน 10 นาที / เปลี่ยนบริบท (ผู้ใช้ โหมดทดสอบ persona) / module เรียก lock())
+//  - ไม่ใช้งาน 10 นาที: นับจากนาฬิกาจริง (Date.now ของกิจกรรมล่าสุด) ไม่พึ่ง setTimeout ก้อนเดียว · มีตัวตรวจเป็นระยะ และ checkIdle() ให้ module เรียกเมื่อกลับมาที่แท็บ
+//  - ทุกงาน async ที่ตั้งกุญแจ/สถานะหลัง await (ปลดล็อก ตั้งครั้งแรก เตรียมรหัส) เทียบ "รุ่นของการล็อก" (generation) ก่อนตั้ง · ถ้ามี lock() คั่นกลางทิ้งผลและโยน INTERRUPTED
 //  - ข้อความ error ของไฟล์นี้เป็นข้อความคงที่ทั้งหมด ไม่ต่อด้วยค่าที่ผู้ใช้กรอกหรือถอดได้ (modules/client-error-log.js ส่งข้อความ error ขึ้นฐานข้อมูล)
 //  - ไม่ใช้ Math.random · ตัวเลขสุ่มทั้งหมดมาจาก crypto.getRandomValues
 (function (root) {
@@ -24,7 +26,9 @@
   const MAX_PLAIN_BYTES = 4080;
   const AUTH_INFO = "itas-vault-auth-v1";
   const MIN_PASSWORD_LENGTH = 14;
+  const MIN_DISTINCT_CHARS = 6; // รหัสตู้เซฟต้องมีตัวอักษรไม่ซ้ำกันอย่างน้อยกี่แบบ
   const IDLE_MS = 10 * 60 * 1000;
+  const IDLE_CHECK_MS = 30 * 1000; // ตรวจเวลาไม่ใช้งานทุกกี่มิลลิวินาที (ตัวตรวจอีกทางคือ checkIdle() ตอนกลับมาที่แท็บ)
   // รหัสกู้คืน: 32 ตัว × 5 บิต = 160 บิต · ตัวอักษรแบบ Crockford base32 (ไม่มี I L O U ไม่สับสนกับ 1 0) · 256 หารด้วย 32 ลงตัว จึงไม่มีความเอนเอียงตอนสุ่ม
   const RECOVERY_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
   const RECOVERY_LENGTH = 32;
@@ -39,6 +43,12 @@
     NOT_INITIALIZED: "ตู้เซฟยังไม่ได้ตั้งค่า",
     ALREADY_INITIALIZED: "ตู้เซฟถูกตั้งค่าไปแล้ว ตั้งซ้ำไม่ได้",
     WEAK_PASSWORD: `รหัสตู้เซฟต้องยาวอย่างน้อย ${MIN_PASSWORD_LENGTH} ตัวอักษร`,
+    WEAK_FEW_DISTINCT: `รหัสตู้เซฟใช้ตัวอักษรซ้ำกันมากเกินไป (ต้องมีตัวอักษรไม่ซ้ำกันอย่างน้อย ${MIN_DISTINCT_CHARS} แบบ)`,
+    WEAK_PATTERN: "รหัสตู้เซฟเป็นตัวอักษรเรียงกันหรือซ้ำเป็นแพทเทิร์นที่เดาง่าย กรุณาใช้วลีหลายคำที่เดายาก",
+    WEAK_FORBIDDEN: "รหัสตู้เซฟห้ามเป็นรหัสพนักงานหรือชื่อผู้ใช้ของคุณ",
+    INTERRUPTED: "ตู้เซฟถูกล็อกระหว่างดำเนินการ ไม่ได้ปลดล็อกให้ กรุณาลองใหม่",
+    SETUP_LOCKED: "ตั้งตู้เซฟเรียบร้อยแล้ว แต่ตู้เซฟถูกล็อกระหว่างดำเนินการ กรุณาปลดล็อกด้วยรหัสตู้เซฟที่เพิ่งตั้ง",
+    ROTATE_VERIFY_FAILED: "ส่งการเปลี่ยนแปลงขึ้นระบบแล้ว แต่ตรวจสอบชุดรหัสใหม่ไม่ผ่าน ห้ามทิ้งรหัสเดิม และกรุณาแจ้งผู้ดูแลระบบให้กู้ตู้เซฟจากประวัติก่อนใช้งานต่อ",
     CONFIRM_MISMATCH: "รหัสที่พิมพ์ยืนยันไม่ตรงกัน",
     NOTHING_PENDING: "ไม่มีขั้นตอนที่รอยืนยันอยู่ กรุณาเริ่มใหม่",
     DECRYPT_FAILED: "ถอดรหัสไม่ได้",
@@ -93,6 +103,50 @@
   }
   const isRecoveryFormat = (canonical) => canonical.length === RECOVERY_LENGTH && [...canonical].every((char) => RECOVERY_ALPHABET.includes(char));
 
+  /* ---------- กฎรหัสตู้เซฟ (บล็อกจริง ไม่ใช่แค่เตือน) ---------- */
+  // ฐานข้อมูลกันเดารหัสแทนไม่ได้ (ข้อมูลที่ถูกขโมยไปเดารหัสออฟไลน์ได้) จึงบล็อกรหัสที่เดาง่าย: สั้น · ตัวอักษรไม่ซ้ำน้อยกว่า 6 · เรียง/ซ้ำชัดเจน · เท่ากับรหัสพนักงาน/username
+  const PATTERN_RUNS = ["qwertyuiopasdfghjklzxcvbnm", "abcdefghijklmnopqrstuvwxyz", "01234567890123456789"];
+  const reverseText = (text) => Array.from(text).reverse().join("");
+  function isObviousPattern(compact) {
+    if (!compact.length) return true;
+    // ทุกคู่ติดกันห่างกันไม่เกิน 1 (aaaa… abcd… 4321… ก ข ค ง…)
+    if (compact.every((char, index) => index === 0 || Math.abs(char.codePointAt(0) - compact[index - 1].codePointAt(0)) <= 1)) return true;
+    // ซ้ำหน่วยสั้น ๆ (abab… 1212… abc123abc123…) ไม่เกิน 4 ตัว
+    for (let unit = 1; unit <= 4; unit += 1) if (compact.every((char, index) => char === compact[index % unit])) return true;
+    // แถวคีย์บอร์ด / ตัวอักษร / ตัวเลขเรียงต่อกัน (ทั้งไปและกลับ)
+    const joined = compact.join("");
+    return PATTERN_RUNS.some((run) => run.includes(joined) || reverseText(run).includes(joined));
+  }
+  // คืนรหัสเหตุผล (คีย์ใน MESSAGES) หรือ null ถ้าผ่าน · forbidden = ค่าที่ห้ามใช้ (รหัสพนักงาน username ของผู้ใช้ที่ล็อกอิน)
+  function passwordProblem(password, forbidden = []) {
+    const text = String(password ?? "").normalize("NFKC");
+    const chars = Array.from(text);
+    if (chars.length < MIN_PASSWORD_LENGTH) return "WEAK_PASSWORD";
+    const lower = text.toLowerCase();
+    if (new Set(Array.from(lower)).size < MIN_DISTINCT_CHARS) return "WEAK_FEW_DISTINCT";
+    if (isObviousPattern(Array.from(lower.replace(/\s+/g, "")))) return "WEAK_PATTERN";
+    for (const item of forbidden ?? []) {
+      const value = String(item ?? "").normalize("NFKC").trim().toLowerCase();
+      if (!value) continue;
+      // เท่ากับค่านั้นเป๊ะ หรือเหลือแต่ค่านั้นซ้ำ ๆ (เหลือตัวอื่นไม่เกิน 2 ตัวหลังตัดทิ้ง)
+      if (lower === value || (value.length >= 3 && Array.from(lower.split(value).join("").replace(/\s+/g, "")).length <= 2)) return "WEAK_FORBIDDEN";
+    }
+    return null;
+  }
+
+  // UUID v4: ใช้ randomUUID ถ้ามี ไม่มี (เบราว์เซอร์เก่า) สร้างเองจาก getRandomValues
+  function newUuid(cryptoObject = root.crypto) {
+    if (typeof cryptoObject?.randomUUID === "function") return cryptoObject.randomUUID();
+    if (typeof cryptoObject?.getRandomValues !== "function") throw new VaultError("UNSUPPORTED");
+    const bytes = new Uint8Array(16);
+    cryptoObject.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+    bytes.fill(0);
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+
   /* ---------- ตรวจข้อมูลตู้เซฟจากเซิร์ฟเวอร์ก่อนใช้ ---------- */
   function validWrapped(value) {
     if (!value || typeof value !== "object") return null;
@@ -145,6 +199,7 @@
   function createVault({
     subtle = root.crypto?.subtle, getRandomValues = (bytes) => root.crypto.getRandomValues(bytes), server, getContext = () => "",
     iterations = DEFAULT_ITERATIONS, idleMs = IDLE_MS, setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (id) => clearTimeout(id),
+    now = () => Date.now(), getForbidden = () => [],
   } = {}) {
     if (!Number.isInteger(iterations) || iterations < MIN_ITERATIONS || iterations > MAX_ITERATIONS) throw new VaultError("CORRUPT");
     // ตัวแปรปิดทั้งหมด: ไม่มีทางอ่านออกจากภายนอก
@@ -152,6 +207,9 @@
     let keys = null; // { aes, hkdf, keyVersion, isTest, context } เมื่อปลดล็อก
     let pending = null; // ขั้นตอนที่รอผู้ใช้ยืนยันรหัสกู้คืน (ตั้งครั้งแรก / ออกรหัสกู้คืนใหม่)
     let timer = null;
+    let lastActive = 0; // Date.now() ของกิจกรรมล่าสุดขณะปลดล็อก (เวลาไม่ใช้งานตัดสินจากค่านี้ ไม่ใช่จาก setTimeout)
+    let generation = 0; // เพิ่มทุกครั้งที่ lock() · งาน async ที่เริ่มก่อนล็อกแล้วเสร็จหลังล็อกต้องไม่ตั้งกุญแจ/สถานะ
+    const checkMs = Math.min(IDLE_CHECK_MS, idleMs);
     const listeners = new Set();
 
     const ensureCrypto = () => { if (!subtle || typeof subtle.deriveKey !== "function") throw new VaultError("UNSUPPORTED"); };
@@ -170,24 +228,38 @@
     const snapshot = () => ({ status: status(), isTest: info?.isTest ?? null, hasPending: Boolean(pending) });
     const emit = (reason = "") => { for (const listener of [...listeners]) { try { listener({ ...snapshot(), reason }); } catch { /* ตัวฟังพังต้องไม่ขวางการล็อก */ } } };
     function stopTimer() { if (timer !== null) { clearTimer(timer); timer = null; } }
-    function startTimer() {
-      stopTimer();
-      if (keys) timer = setTimer(() => lock("idle"), idleMs);
+    // ตัวตรวจเวลาไม่ใช้งานเป็นระยะ (ตั้งต่อกันทีละครั้ง) · ตัวตัดสินจริงคือ checkIdle() ที่เทียบนาฬิกา
+    // ถ้าเบราว์เซอร์หน่วงตัวจับเวลาตอนแท็บถูกซ่อน/เครื่องหลับ การเรียก checkIdle() ครั้งถัดไป (เช่นตอนกลับมาที่แท็บ) ก็ยังล็อกถูกต้อง
+    function armTimer() {
+      if (timer !== null || !keys) return;
+      timer = setTimer(() => { timer = null; checkIdle(); if (keys) armTimer(); }, checkMs);
     }
+    // ไม่ใช้งานเกินกำหนด (หรือนาฬิกาถอยหลัง = ผิดปกติ) = ล็อกทันที · คืน true ถ้าล็อกแล้ว
+    function checkIdle() {
+      if (!keys) return false;
+      const elapsed = now() - lastActive;
+      if (elapsed >= idleMs || elapsed < 0) { lock("idle"); return true; }
+      return false;
+    }
+    function markActive() { lastActive = now(); armTimer(); }
     function lock(reason = "manual") {
       const changed = Boolean(keys || pending);
+      generation += 1; // งานที่ค้างอยู่ระหว่าง await ต้องทิ้งผลของตัวเอง
       keys = null;
       pending = null; // ทิ้งรหัสและกุญแจที่ค้างระหว่างตั้ง
       stopTimer();
       if (changed || reason === "reset") emit(reason);
     }
-    // มีการใช้งาน: เริ่มนับเวลาไม่ใช้งานใหม่
-    function touch() { if (keys) startTimer(); }
-    // ถ้าบริบทเปลี่ยนไปจากตอนปลดล็อก (สลับผู้ใช้ เข้า/ออกโหมดทดสอบ สลับ persona) ล็อกทันที
+    // มีการใช้งาน: เริ่มนับเวลาไม่ใช้งานใหม่ (ถ้าเกินกำหนดไปแล้ว ล็อกแทนที่จะต่อเวลาให้)
+    function touch() { if (keys && !checkIdle()) markActive(); }
+    // ถ้าบริบทเปลี่ยนไปจากตอนปลดล็อก (สลับผู้ใช้ เข้า/ออกโหมดทดสอบ สลับ persona) หรือไม่ใช้งานเกินกำหนด ล็อกทันที
     function ensureContext() {
+      checkIdle();
       if (keys && keys.context !== getContext()) lock("context");
       if (pending && pending.context !== getContext()) lock("context");
     }
+    // งานที่เริ่มเมื่อรุ่น gen และบริบท context: ถ้ามีการล็อก/เปลี่ยนบริบทคั่นกลางระหว่าง await = ถูกขัดจังหวะ (ผู้เรียกทิ้งผลและโยน error)
+    const interrupted = (gen, context) => gen !== generation || context !== getContext();
 
     async function deriveKek(secret, salt, rounds) {
       ensureCrypto();
@@ -268,24 +340,33 @@
 
     /* ----- ปลดล็อก ----- */
     // kind: "pass" = รหัสตู้เซฟ · "recovery" = รหัสกู้คืน (ผู้เรียกส่งข้อความที่ผู้ใช้พิมพ์มา)
+    // ข้อความที่ผู้ใช้พิมพ์ → ข้อความที่ใช้ derive จริง · รหัสกู้คืนที่รูปแบบผิด (ไม่ใช่ 32 ตัวของตัวอักษรที่กำหนด) ปฏิเสธก่อนเสียเวลา KDF และก่อนเรียกเซิร์ฟเวอร์
+    function secretText(kind, secret) {
+      const text = kind === "recovery" ? normalizeRecoveryCode(secret) : String(secret ?? "");
+      if (!text || (kind === "recovery" && !isRecoveryFormat(text))) throw new VaultError("WRONG_SECRET");
+      return text;
+    }
     async function unlock(kind, secret) {
+      // รุ่นและบริบทตอนเริ่ม: ถ้ามี lock() หรือเปลี่ยนผู้ใช้/โหมดคั่นระหว่างรอ KDF ต้องไม่ตั้งกุญแจ (ไม่งั้นตู้เซฟค้างปลดล็อกหลังออกจากหน้าไปแล้ว)
+      const gen = generation;
+      const context = getContext();
+      const text = secretText(kind, secret);
       const state = await fetchState({ initialized: true });
       const part = kind === "recovery" ? state.recovery : state.pass;
-      const text = kind === "recovery" ? normalizeRecoveryCode(secret) : String(secret ?? "");
-      if (!text) throw new VaultError("WRONG_SECRET");
-      const context = getContext();
       const kek = await deriveKek(text, part.salt, part.iterations);
       const opened = await openKeys(kek, part.wrapped, aadForWrap(state.isTest, kind === "recovery" ? "recovery" : "pass", state.keyVersion));
+      if (interrupted(gen, context)) throw new VaultError("INTERRUPTED"); // ทิ้ง opened (CryptoKey ที่ดึงออกไม่ได้) ปล่อยให้ถูกเก็บกวาด
       keys = { ...opened, keyVersion: state.keyVersion, isTest: state.isTest, context };
       pending = null;
-      startTimer();
+      markActive();
       emit("unlock");
       return snapshot();
     }
 
     /* ----- ตั้งครั้งแรก (สองจังหวะ: เตรียม → ผู้ใช้จดและพิมพ์รหัสกู้คืนกลับ → ส่งขึ้นเซิร์ฟเวอร์) ----- */
     function checkPassword(password) {
-      if (Array.from(String(password ?? "")).length < MIN_PASSWORD_LENGTH) throw new VaultError("WEAK_PASSWORD");
+      const problem = passwordProblem(password, getForbidden());
+      if (problem) throw new VaultError(problem);
     }
     function newRecoveryCode() {
       const bytes = randomBytes(RECOVERY_LENGTH);
@@ -295,6 +376,8 @@
       return code;
     }
     async function prepareSetup(password) {
+      const gen = generation;
+      const context = getContext();
       const state = await fetchState({ initialized: false });
       checkPassword(password);
       const raw = randomBytes(DEK_BYTES);
@@ -308,8 +391,9 @@
         const recoveryKek = await deriveKek(recoveryCode, recoverySalt, iterations);
         const wrappedPass = await wrapRaw(passKek, raw, aadForWrap(state.isTest, "pass", 1));
         const wrappedRecovery = await wrapRaw(recoveryKek, raw, aadForWrap(state.isTest, "recovery", 1));
+        if (interrupted(gen, context)) throw new VaultError("INTERRUPTED"); // ล็อกแล้วระหว่างคำนวณ: ห้ามเก็บรหัสที่เพิ่งสร้างไว้ใน pending
         pending = {
-          type: "setup", context: getContext(), password: String(password), recoveryCode, authHash,
+          type: "setup", context, password: String(password), recoveryCode, authHash,
           params: {
             p_kdf: KDF, p_kdf_iterations: iterations, p_salt: toBase64(salt), p_wrapped_key_pass: wrappedPass,
             p_recovery_kdf_iterations: iterations, p_recovery_salt: toBase64(recoverySalt), p_wrapped_key_recovery: wrappedRecovery, p_auth_hash: authHash,
@@ -327,6 +411,7 @@
     }
     // typed = รหัสกู้คืนที่ผู้ใช้พิมพ์กลับเข้ามา (ยืนยันว่าจดแล้ว) · ผ่านแล้วค่อยส่งขึ้นเซิร์ฟเวอร์ แล้วตรวจตัวเอง: ปลดล็อกได้ด้วยรหัสตู้เซฟ + รหัสกู้คืนจริง และ auth token ตรงกับที่ส่งไป
     async function commitSetup(typed) {
+      const gen = generation;
       const current = requirePending("setup");
       if (normalizeRecoveryCode(typed) !== current.recoveryCode) throw new VaultError("CONFIRM_MISMATCH");
       await server.init(current.params);
@@ -339,12 +424,14 @@
         const hashPass = toBase64(await sha256(await tokenOfHkdfKey(viaPass.hkdf)));
         const hashRecovery = toBase64(await sha256(await tokenOfHkdfKey(viaRecovery.hkdf)));
         if (hashPass !== authHash || hashRecovery !== authHash) throw new VaultError("VERIFY_FAILED");
+        // ตั้งขึ้นเซิร์ฟเวอร์สำเร็จและตรวจผ่านแล้ว แต่ถ้าถูกล็อกระหว่างนี้ ห้ามปลดล็อกให้เอง (ผู้ใช้ปลดล็อกด้วยรหัสที่เพิ่งตั้ง)
+        if (interrupted(gen, current.context)) throw new VaultError("SETUP_LOCKED");
         keys = { ...viaPass, keyVersion: state.keyVersion, isTest: state.isTest, context: current.context };
-        startTimer();
+        markActive();
         emit("setup");
         return snapshot();
       } catch (error) {
-        if (error instanceof VaultError && error.reason === "VERIFY_FAILED") throw error;
+        if (error instanceof VaultError && (error.reason === "VERIFY_FAILED" || error.reason === "SETUP_LOCKED")) throw error;
         throw new VaultError("VERIFY_FAILED");
       }
     }
@@ -353,10 +440,9 @@
     /* ----- เปลี่ยนรหัสตู้เซฟ / ออกรหัสกู้คืนใหม่ ----- */
     // ต้องพิสูจน์ตัวใหม่ทุกครั้งด้วยรหัสตู้เซฟหรือรหัสกู้คืน (ไม่ใช้ DEK ที่ค้างอยู่) · ไม่แตะแถวข้อมูล ไม่เปลี่ยน DEK
     async function reauthenticate(kind, secret) {
+      const text = secretText(kind, secret);
       const state = await fetchState({ initialized: true });
       const part = kind === "recovery" ? state.recovery : state.pass;
-      const text = kind === "recovery" ? normalizeRecoveryCode(secret) : String(secret ?? "");
-      if (!text) throw new VaultError("WRONG_SECRET");
       const kek = await deriveKek(text, part.salt, part.iterations);
       const raw = await openRaw(kek, part.wrapped, aadForWrap(state.isTest, kind === "recovery" ? "recovery" : "pass", state.keyVersion));
       return { state, raw };
@@ -372,13 +458,17 @@
     }
     // เปลี่ยนรหัสตู้เซฟ · kind/secret = รหัสปัจจุบัน (รหัสตู้เซฟ หรือรหัสกู้คืนกรณีลืมรหัส)
     async function changePassword({ kind, secret, newPassword }) {
+      const gen = generation;
+      const context = getContext();
       checkPassword(newPassword);
       const { state, raw } = await reauthenticate(kind, secret);
+      let token;
       try {
-        const token = toBase64(await rawToken(raw));
+        token = toBase64(await rawToken(raw));
         const salt = randomBytes(SALT_BYTES);
         const kek = await deriveKek(newPassword, salt, iterations);
         const wrapped = await wrapRaw(kek, raw, aadForWrap(state.isTest, "pass", state.keyVersion));
+        if (interrupted(gen, context)) throw new VaultError("INTERRUPTED"); // ผู้ใช้ออกจากหน้า/ถูกล็อกระหว่างคำนวณ: ยังไม่ส่งอะไรขึ้นเซิร์ฟเวอร์
         await callRotate({
           p_expected_rev: state.rev, p_action: "change_password", p_auth_token: token,
           p_kdf_iterations: iterations, p_salt: toBase64(salt), p_wrapped_key_pass: wrapped,
@@ -387,14 +477,34 @@
       } finally {
         raw.fill(0);
       }
+      await verifyRotated("pass", newPassword, token);
       emit("rotated");
     }
     async function rawToken(raw) {
       const key = await subtle.importKey("raw", raw, "HKDF", false, ["deriveBits"]);
       return tokenOfHkdfKey(key);
     }
+    // หลังเปลี่ยนรหัส/ออกรหัสกู้คืนใหม่สำเร็จ: โหลดชุดที่เก็บอยู่บนเซิร์ฟเวอร์กลับมาแล้วถอดด้วยรหัสใหม่จริง ๆ ว่าได้ DEK ตัวเดิม (token ตรง)
+    // ถ้าถอดไม่ได้ = ชุดใหม่ใช้ไม่ได้ ต้องบอกผู้ใช้ชัดเจน ห้ามทำเหมือนสำเร็จ (รหัสเดิมยังไม่ควรทิ้ง และให้ผู้ดูแลกู้จากประวัติ)
+    async function verifyRotated(kind, text, expectedToken) {
+      try {
+        const state = await fetchState({ initialized: true });
+        const part = kind === "recovery" ? state.recovery : state.pass;
+        const kek = await deriveKek(text, part.salt, part.iterations);
+        const raw = await openRaw(kek, part.wrapped, aadForWrap(state.isTest, kind === "recovery" ? "recovery" : "pass", state.keyVersion));
+        try {
+          if (toBase64(await rawToken(raw)) !== expectedToken) throw new VaultError("ROTATE_VERIFY_FAILED");
+        } finally {
+          raw.fill(0);
+        }
+      } catch {
+        throw new VaultError("ROTATE_VERIFY_FAILED");
+      }
+    }
     // ออกรหัสกู้คืนใหม่ (สองจังหวะเหมือนตั้งครั้งแรก): เตรียม → แสดงรหัสให้จด → ผู้ใช้พิมพ์กลับ → ส่ง
     async function prepareNewRecovery({ kind, secret }) {
+      const gen = generation;
+      const context = getContext();
       const { state, raw } = await reauthenticate(kind, secret);
       try {
         const token = toBase64(await rawToken(raw));
@@ -402,8 +512,9 @@
         const salt = randomBytes(SALT_BYTES);
         const kek = await deriveKek(recoveryCode, salt, iterations);
         const wrapped = await wrapRaw(kek, raw, aadForWrap(state.isTest, "recovery", state.keyVersion));
+        if (interrupted(gen, context)) throw new VaultError("INTERRUPTED");
         pending = {
-          type: "recovery", context: getContext(), recoveryCode,
+          type: "recovery", context, recoveryCode, token,
           params: {
             p_expected_rev: state.rev, p_action: "new_recovery", p_auth_token: token,
             p_kdf_iterations: null, p_salt: null, p_wrapped_key_pass: null,
@@ -420,6 +531,7 @@
       if (normalizeRecoveryCode(typed) !== current.recoveryCode) throw new VaultError("CONFIRM_MISMATCH");
       pending = null;
       await callRotate(current.params);
+      await verifyRotated("recovery", current.recoveryCode, current.token);
       emit("rotated");
     }
 
@@ -433,24 +545,28 @@
     // plaintext ว่าง = null (ส่งไปเป็นการลบค่า) · nonce สุ่มใหม่ทุกครั้ง
     async function encryptField(assetId, fieldKey, plaintext) {
       const active = requireKeys();
+      const gen = generation;
       const text = String(plaintext ?? "").normalize("NFC").trim();
       if (!text) return null;
       const bytes = utf8(text);
       if (bytes.length > MAX_PLAIN_BYTES) { bytes.fill(0); throw new VaultError("VALUE_TOO_LONG"); }
       const nonce = randomBytes(NONCE_BYTES);
+      let cipher;
       try {
-        const cipher = new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: aadForField(assetId, fieldKey, active.keyVersion), tagLength: 128 }, active.aes, bytes));
-        touch();
-        return { v: 1, n: toBase64(nonce), c: toBase64(cipher) };
+        cipher = new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: aadForField(assetId, fieldKey, active.keyVersion), tagLength: 128 }, active.aes, bytes));
       } catch {
         throw new VaultError("ENCRYPT_FAILED");
       } finally {
         bytes.fill(0);
       }
+      if (gen !== generation) throw new VaultError("LOCKED"); // ถูกล็อกระหว่างเข้ารหัส: ไม่ส่งผลออกไป
+      touch();
+      return { v: 1, n: toBase64(nonce), c: toBase64(cipher) };
     }
     // ถอดไม่ได้ (AAD/กุญแจ/ข้อมูลไม่ตรง) = VaultError DECRYPT_FAILED ผู้เรียกแสดง "ถอดรหัสไม่ได้" เฉพาะช่องนั้น
     async function decryptField(assetId, fieldKey, envelope) {
       const active = requireKeys();
+      const gen = generation;
       const parsed = validEnvelope(envelope);
       if (!parsed) throw new VaultError("DECRYPT_FAILED");
       let bytes;
@@ -459,6 +575,8 @@
       } catch {
         throw new VaultError("DECRYPT_FAILED");
       }
+      // ถูกล็อกระหว่างถอดรหัส: ห้ามคืนค่าที่ถอดได้ (ไม่งั้นค่าลับขึ้นหน้าหลังล็อกไปแล้ว)
+      if (gen !== generation) { bytes.fill(0); throw new VaultError("LOCKED"); }
       try {
         touch();
         return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -474,7 +592,7 @@
       return () => listeners.delete(listener);
     }
     return Object.freeze({
-      load, status, snapshot, unlock, lock, touch, ensureContext, subscribe,
+      load, status, snapshot, unlock, lock, touch, checkIdle, ensureContext, subscribe,
       prepareSetup, commitSetup, cancelPending, changePassword, prepareNewRecovery, commitNewRecovery,
       encryptField, decryptField,
       // ใช้แสดงผลเท่านั้น (ไม่ใช่ความลับ)
@@ -489,7 +607,7 @@
   const api = {
     KDF, MIN_ITERATIONS, MAX_ITERATIONS, DEFAULT_ITERATIONS, MIN_PASSWORD_LENGTH, IDLE_MS, RECOVERY_LENGTH, RECOVERY_ALPHABET, MESSAGES,
     VaultError, createVault, parseVaultState, validEnvelope, authMaterialFromRaw, toBase64, fromBase64,
-    formatRecoveryCode, normalizeRecoveryCode, isRecoveryFormat,
+    formatRecoveryCode, normalizeRecoveryCode, isRecoveryFormat, passwordProblem, newUuid,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_ITAS_VAULT = Object.freeze(api);

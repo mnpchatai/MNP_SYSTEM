@@ -3861,7 +3861,8 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .itas-vault-card { margin-bottom: 14px; border-color: var(--primary); }
 .itas-vault-card .form-actions { flex-wrap: wrap; justify-content: flex-start; }
 .itas-recovery-code { margin: 12px 0; padding: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 1.15rem; font-weight: 700; letter-spacing: .06em; text-align: center; overflow-wrap: anywhere; user-select: all; border: 2px dashed var(--primary); border-radius: var(--radius-md); background: var(--paper); }
-.itas-recovery-tools { margin-bottom: 12px; }
+/* ช่องรหัส/ค่าลับที่ module-itas.js เปลี่ยนเป็น type=text เพื่อไม่ให้ตัวจัดการรหัสผ่านเสนอเก็บ: ปิดบังตัวอักษรด้วย CSS · เบราว์เซอร์ที่ไม่รองรับ module ไม่เปลี่ยน type จึงยังเป็น password */
+.input.itas-mask { -webkit-text-security: disc; text-security: disc; }
 .itas-strength { min-height: 1.4em; margin: -4px 0 8px; }
 /* รายการชนิด + ตาราง */
 .itas-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }

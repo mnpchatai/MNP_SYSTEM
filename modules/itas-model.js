@@ -370,7 +370,7 @@
   }
 
   /* ---------- รหัสตู้เซฟ: ตัววัดความแข็งแรงคร่าว ๆ ---------- */
-  // ฐานข้อมูลกันเดารหัสไม่ได้ ความแข็งแรงของรหัสจึงสำคัญ · ตัววัดนี้แค่ช่วยผู้ใช้ (บังคับจริงมีแค่ความยาว ≥ 14 ตัวอักษร ที่ vault)
+  // ฐานข้อมูลกันเดารหัสไม่ได้ ความแข็งแรงของรหัสจึงสำคัญ · ตัววัดนี้แค่ช่วยผู้ใช้ (กฎที่บล็อกจริงอยู่ที่ passwordProblem ใน itas-vault.js: ยาว ≥ 14 · ตัวอักษรไม่ซ้ำ ≥ 6 · ไม่เรียง/ซ้ำชัดเจน · ไม่เท่ากับรหัสพนักงาน)
   // level: 0 สั้นเกินไป · 1 พอใช้ · 2 ดี · 3 ดีมาก (วลีหลายคำยาว ๆ)
   const MIN_PASSWORD_LENGTH = 14;
   function passwordStrength(text) {
@@ -380,7 +380,7 @@
     const words = value.trim().split(/\s+/).filter((word) => word.length >= 2).length;
     const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^\p{L}\p{N}]/u, /[ก-๙]/].filter((pattern) => pattern.test(value)).length;
     const distinct = new Set(Array.from(value.toLowerCase())).size;
-    if (distinct < 6) return { level: 1, label: "พอใช้ แต่ตัวอักษรซ้ำกันมาก ควรเปลี่ยน", ok: true };
+    if (distinct < 6) return { level: 0, label: "ตัวอักษรซ้ำกันมากเกินไป (ต้องมีตัวอักษรไม่ซ้ำอย่างน้อย 6 แบบ)", ok: false };
     if (words >= 4 && length >= 20) return { level: 3, label: "ดีมาก", ok: true };
     if (words >= 3 || length >= 18 || classes >= 3) return { level: 2, label: "ดี", ok: true };
     return { level: 1, label: "พอใช้ แนะนำให้ใช้วลียาว ๆ หลายคำ", ok: true };
