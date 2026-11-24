@@ -11,7 +11,7 @@ const FILES = [
   "modules/rubberflow-rules.js", "modules/rubberflow-derive.js", "modules/rubberflow-actions.js", "modules/rubberflow-seed.js", "modules/rubberflow-store.js",
   "modules/rubberflow-ui.js", "modules/factory-kit.js", "modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js",
   "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js",
-  "modules/st-pages.js", "modules/module-st.js", "modules/module-sr.js", "modules/module-qa.js", "modules/gr-pages.js", "modules/module-gr.js", "modules/module-pt.js", "modules/module-bg.js", "modules/module-pk.js", "modules/wh-pages.js", "modules/module-wh.js",
+  "modules/st-pages.js", "modules/module-st.js", "modules/module-sr.js", "modules/qa-pages.js", "modules/module-qa.js", "modules/gr-pages.js", "modules/module-gr.js", "modules/module-pt.js", "modules/module-bg.js", "modules/module-pk.js", "modules/wh-pages.js", "modules/module-wh.js",
 ];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 const read = (file) => fs.readFileSync(file, "utf8");
@@ -93,15 +93,15 @@ test("menu: งานของฉัน first (with the count of the cards), the
   assert.equal(navOf(env).find((item) => item.active)?.label, "ในคลัง", "a lot page sits under ในคลัง");
 });
 
-test("who opens #/st: ST staff and head, PP and the managers see the module; RB, WH and QA only reach their pages by link; everyone else gets not found", async () => {
+test("who opens #/st: ST staff and head, PP and the managers see the module; RB and WH only reach their pages by link; QA works in #/qa; everyone else gets not found", async () => {
   const { modules, context } = load();
   const allowed = [emp("ST"), emp("ST", "department_manager"), emp("PP"), emp("AD", "admin"), emp("PP", "factory_manager"), emp("OFFICE", "general_manager")];
   const hidden = [emp("RB"), emp("RB", "department_manager"), emp("WH"), emp("QA"), emp("QA", "department_manager"), emp("GR"), emp("SR", "department_manager"), emp("ID"), emp("HR"), { ...emp("ST"), isSandbox: false }];
   for (const employee of allowed) assert.equal(modules.FACTORY_ST.navAllowed(employee), true, JSON.stringify(employee));
   for (const employee of hidden) assert.equal(modules.FACTORY_ST.navAllowed(employee), false, `${JSON.stringify(employee)} has no menu entry`);
   const pages = context.MNP_ST_PAGES;
-  assert.deepEqual([emp("RB"), emp("WH"), emp("QA"), emp("QA", "department_manager"), emp("GR"), emp("ST")].map(pages.guest), ["rb", "wh", "qa", "qa", null, null], "the guest modes by department");
-  for (const employee of [emp("GR"), emp("SR"), emp("ID"), emp("HR"), emp("GR", "department_manager"), { ...emp("RB"), isSandbox: false }, { ...emp("QA"), isSandbox: false }]) {
+  assert.deepEqual([emp("RB"), emp("WH"), emp("QA"), emp("QA", "department_manager"), emp("GR"), emp("ST")].map(pages.guest), ["rb", "wh", null, null, null, null], "the guest modes by department (QA is no guest since step 5)");
+  for (const employee of [emp("GR"), emp("SR"), emp("ID"), emp("HR"), emp("GR", "department_manager"), emp("QA"), emp("QA", "department_manager"), { ...emp("RB"), isSandbox: false }, { ...emp("QA"), isSandbox: false }]) {
     const env = load({ employee, bomUser: null });
     await env.open("tab=stock");
     assert.equal(env.log.notFound, 1, `${JSON.stringify(employee)} is refused`);
@@ -126,35 +126,45 @@ test("RB sees the chemicals of the ST store read-only: one list of lots, no filt
   assert.doesNotMatch(lot, /data-rf-open|data-rf-action|data-rf-scope/, "no label or hold button for RB");
 });
 
-test("QA sees the chemicals of the ST store and holds or releases a lot on its page (the right QA had in RubberFlow); no issue, purchase order, count or label button", async () => {
+test("QA is no guest of #/st any more: hold and release of chemical lots moved to #/qa?tab=material; the RubberFlow warehouse tab points QA there", async () => {
   const env = load({ employee: emp("QA"), bomUser: "B12", rfUser: "U09" });
-  const html = await env.open("tab=stock");
-  assert.equal(env.log.notFound, 0, "QA reaches the page by link");
-  assert.equal(h1Of(html), "ในคลัง");
-  const rows = rowsOf(html);
-  assert.ok(rows.length > 0 && rows.every((row) => /href="#\/st\?lot=/.test(row)), "only chemical lots");
-  assert.doesNotMatch(html, /data-rf-open|data-rf-action|data-rf-form|data-st-filter|data-rf-scope/, "the list itself has no button, form or filter");
-  for (const tab of ["po", "issue", "returns", "count", ""]) {
-    const page = await env.open(tab ? `tab=${tab}` : "");
-    assert.equal(h1Of(page), "ในคลัง", `QA on ${tab || "work"} sees ในคลัง`);
-    assert.doesNotMatch(page, /issueChemicals|chemIssue|receiveChemicalReturn|receivePurchase|receiveMaterial|countPartStock|data-rf-open="purchase"/, `no store button on ${tab || "work"}`);
+  for (const query of ["tab=stock", "tab=po", "tab=count", ""]) {
+    await env.open(query);
+    assert.equal(env.log.notFound > 0, true, `QA gets not found on #/st${query ? `?${query}` : ""}`);
+    env.log.notFound = 0;
   }
-  const part = env.bom.data().items.find((item) => item.kind === "PURCHASED");
-  assert.equal(h1Of(await env.open(`part=${encodeURIComponent(part.code)}`)), "ในคลัง", "no purchased-part page for QA");
+  const lotNo = env.rf.store.data().materialLots.find((row) => row.qtyKg > 0).lotNo;
+  await env.open(`lot=${encodeURIComponent(lotNo)}`);
+  assert.equal(env.log.notFound, 1, "a lot link of the old QA guest page is gone: QA works in #/qa");
+  // the stock rights of a QA account are unchanged (hold yes, the rest no) and the release is the head's
+  const rfApi = env.context.MNP_RUBBERFLOW_STORE;
+  const qa = rfApi.personaUser({ ...emp("QA"), id: "qa" });
+  assert.deepEqual(["holdMaterial", "issueChem", "requestChem", "countRb", "purchase", "receiveMaterial", "qaRelease"].map((right) => rfApi.can(qa, right)), [true, false, false, false, false, false, false]);
+  const head = rfApi.personaUser({ ...emp("QA", "department_manager"), id: "qah" });
+  assert.equal(rfApi.can(head, "qaRelease"), true, "the QA head releases");
+  // the RubberFlow warehouse tab links QA to the held-material page of #/qa (not to the ST chemicals)
+  const warehouse = await env.rfOpen("p=warehouse");
+  assert.match(warehouse, /href="#\/qa\?tab=material"[^>]*>ไปที่วัตถุดิบที่กัก \(QA\)</);
+  assert.doesNotMatch(warehouse, /ดูเคมีในคลัง ST/);
+});
+
+test("the lot page of #/st: the hold button needs the hold right, the release button needs the QA-head right (the demo QC role has both, a planner neither); a database ST account never releases", async () => {
+  const env = load({ rfUser: "U09" });
   const lot = env.rf.store.data().materialLots.find((row) => row.qtyKg > 0 && row.status !== "hold" && row.expiry > Date.now());
   const page = await env.open(`lot=${encodeURIComponent(lot.lotNo)}`);
-  assert.equal(h1Of(page), `ล็อต ${lot.lotNo}`);
-  assert.match(page, /<div data-rf-scope="rubberflow"><button[^>]*data-rf-action="setMaterialLotStatus"[^>]*>กักกัน<\/button><\/div>/, "the only button is the hold, bound by RubberFlow");
-  assert.doesNotMatch(page, /data-rf-open|data-rf-form|>ปลดกักกัน</, "no label button, no form, no release while the lot is available");
+  assert.match(page, /data-rf-action="setMaterialLotStatus"[^>]*>กักกัน</, "the hold button");
   assert.equal(env.rf.runAction("setMaterialLotStatus", { lotNo: lot.lotNo, status: "hold" }, "ok"), true, JSON.stringify(env.log.toasts));
   const held = await env.open(`lot=${encodeURIComponent(lot.lotNo)}`);
-  assert.match(held, /data-rf-action="setMaterialLotStatus"[^>]*>ปลดกักกัน</, "a held lot offers the release");
+  assert.match(held, /data-rf-action="setMaterialLotStatus"[^>]*>ปลดกักกัน</, "the demo QC role releases");
   assert.doesNotMatch(held, />กักกัน</);
-  // สิทธิ์ของบัญชี QA ในโหมดฐานข้อมูล: กักกันได้ ส่วนจ่าย ขอเบิก นับ สั่งซื้อ รับเข้าไม่ได้
-  const qa = env.context.MNP_RUBBERFLOW_STORE.personaUser({ ...emp("QA"), id: "qa" });
-  assert.deepEqual(["holdMaterial", "issueChem", "requestChem", "countRb", "purchase", "receiveMaterial"].map((right) => env.context.MNP_RUBBERFLOW_STORE.can(qa, right)), [true, false, false, false, false, false]);
-  // หน้าคลังวัตถุดิบของ RubberFlow พา QA มาที่นี่
-  assert.match(await env.rfOpen("p=warehouse"), /href="#\/st\?tab=stock"[^>]*>ดูเคมีในคลัง ST</, "the RubberFlow warehouse tab links QA to the ST chemicals");
+  env.rf.store.setUser(env.rf.store.data().users.find((row) => row.role === "planner").id);
+  const planner = await env.open(`lot=${encodeURIComponent(lot.lotNo)}`);
+  assert.doesNotMatch(planner, /ปลดกักกัน</, "no release button without the QA-head right");
+  const rfApi = env.context.MNP_RUBBERFLOW_STORE;
+  assert.equal(rfApi.can(rfApi.personaUser({ ...emp("ST"), id: "st" }), "qaRelease"), false);
+  assert.equal(rfApi.can(rfApi.personaUser({ ...emp("ST", "department_manager"), id: "sth" }), "qaRelease"), false, "an ST head is no QA head");
+  assert.equal(rfApi.can(rfApi.personaUser({ ...emp("ST"), id: "st" }), "holdMaterial"), true, "but ST still holds");
+  assert.equal(rfApi.can(rfApi.personaUser({ ...emp("PP", "factory_manager"), id: "fm" }), "qaRelease"), true);
 });
 
 test("WH sees the purchased parts of the ST store and counts them (no safety stock, no chemicals, no other page)", async () => {

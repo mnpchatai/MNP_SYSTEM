@@ -1,5 +1,7 @@
-// RubberFlow MES (แผนก RB โหมดทดสอบ) — หน้าคุณภาพ: QC · NCR · CoA, SPC / Cpk และสืบย้อนกลับ
+// RubberFlow MES (แผนก RB โหมดทดสอบ) — ส่วนคุณภาพ: ผลตรวจ QC · NCR · CoA, SPC / Cpk และสืบย้อนกลับ
 // ยกมาจาก pages/Quality.jsx, Spc.jsx, Trace.jsx ของต้นแบบ (กราฟ recharts → SVG ของ modules/rubberflow-ui.js)
+// งาน QA ทั้งหมดย้ายไปโมดูล QA (#/qa · modules/qa-pages.js · โรงงานขั้น 5) ที่ใช้ส่วนวาดของไฟล์นี้ผ่าน window.MNP_RUBBERFLOW_VIEWS.quality (ที่เดียว ไม่มีสำเนาที่สอง)
+// ที่เหลือใน RubberFlow: หน้า "NCR ที่ RB ต้องตอบ" (p=ncr: เฉพาะ NCR ที่เปิดอยู่ แผนก RB กรอกการแก้ไข/ป้องกัน) และ dialog qcRecord / ncr / coa ที่ปุ่มของ #/qa เปิดผ่านตัวผูกของ RubberFlow
 // ลงทะเบียนใน window.MNP_RUBBERFLOW_PAGES / _DIALOGS กติกา event อยู่ที่ modules/module-rubberflow.js — โหลดหลัง modules/rubberflow-ui.js
 (function (root) {
   const pages = (root.MNP_RUBBERFLOW_PAGES ??= {});
@@ -7,47 +9,20 @@
   const esc = (value) => root.escapeHtml(value);
   // หน่วยของ WO/ล็อต/กล่อง: ป้ายไทยของ BOM สำหรับรหัสหน่วยของ BOM (rules.unitText) · ไม่มีกฎ = รหัสเดิม
   const unitText = (code) => root.MNP_RUBBERFLOW_RULES?.unitText?.(code) ?? String(code ?? "");
+  const views = {};
 
-  // ---------- QC · NCR · CoA ----------
-  pages.quality = (ctx) => {
-    const { data, ui, rules, params } = ctx;
-    const { STAGE_LABEL, SPECS, fmtDate, fmtDateTime, fmtNum } = rules;
-    const tab = ["hold", "records", "ncr", "coa"].includes(params.get("tab")) ? params.get("tab") : "hold";
-    const decide = ctx.can("qcDecision");
-    const held = data.lots.filter((lot) => lot.qc === "hold").sort((a, b) => b.createdAt - a.createdAt);
-    const records = data.qcRecords;
-    const fpy = records.length ? (records.filter((record) => record.result === "pass").length / records.length) * 100 : 100;
-    const openNcr = data.ncrs.filter((ncr) => ncr.status === "open");
-    const finLots = data.lots.filter((lot) => lot.stage === "finishing").sort((a, b) => b.createdAt - a.createdAt);
-    const tabs = ui.tabs([{ id: "hold", label: "รอตัดสิน" }, { id: "records", label: "ผลตรวจทั้งหมด" }, { id: "ncr", label: `NCR / CAR (${data.ncrs.length})` }, { id: "coa", label: "ใบรับรอง CoA" }], tab, (id) => ctx.pageUrl({ tab: id === "hold" ? null : id }));
-
-    let section = "";
-    if (tab === "hold") {
-      section = ui.card(ui.table(["ล็อต", "ขั้นตอน", "สาเหตุที่กักกัน", { label: "ปริมาณ", className: "right" }, { label: "", className: "right" }], held.map((lot) => `<tr><td>${ui.mono(lot.id)}<div class="small muted">${esc(lot.orderId)}</div></td><td>${esc(STAGE_LABEL[lot.stage])}</td><td class="small">${esc((lot.holdReasons || []).join(", ") || "-")}</td><td class="right">${esc(`${fmtNum(lot.goodQty, 2)} ${unitText(lot.uom)}`)}</td>
-        <td class="right">${decide ? ui.openButton("ตรวจซ้ำ / ตัดสิน", "qcRecord", { lotId: lot.id }, { className: "small" }) : '<span class="small muted">เฉพาะ QC</span>'}</td></tr>`), { emptyText: "ไม่มีล็อตที่ถูกกักกัน" }), { flush: true });
-    } else if (tab === "records") {
-      section = ui.card(ui.table(["เลขที่", "ล็อต", "ผลทดสอบ", "ผล", "ผู้ตรวจ"], records.map((record) => `<tr><td>${ui.mono(record.id)}<div class="small muted">${esc(fmtDateTime(record.at))}</div></td><td class="rf-mono small">${esc(record.lotId)}<div class="muted">${esc(STAGE_LABEL[record.stage])}</div></td>
-        <td class="small">${record.tests.map((test) => ui.badge(test.pass ? "" : "bad", `${SPECS.lab[test.key]?.label ?? test.key} ${test.value}`)).join(" ")}${record.note ? `<div class="muted">${esc(record.note)}</div>` : ""}</td><td>${ui.status(record.result)}</td><td class="small">${esc(record.inspector ?? "-")}</td></tr>`), { emptyText: "ยังไม่มีผลตรวจ" }), { flush: true });
-    } else if (tab === "ncr") {
-      section = data.ncrs.length ? `<div class="rf-stack">${data.ncrs.map((ncr) => ncrCard(ctx, ncr, decide)).join("")}</div>` : ui.card(ui.empty("ยังไม่มี NCR"));
-    } else {
-      section = ui.card(ui.table(["ล็อตสินค้าสำเร็จรูป", "ลูกค้า / สินค้า", { label: "จำนวน", className: "right" }, "QC", { label: "", className: "right" }], finLots.map((lot) => {
-        const order = data.orders.find((row) => row.id === lot.orderId);
-        return `<tr><td>${ui.mono(lot.id)}<div class="small muted">${esc(fmtDate(lot.createdAt))}</div></td><td>${esc(order?.customer ?? "")}<div class="small muted">${esc(order ? rules.orderLabel(order) : "")}</div></td><td class="right">${esc(`${fmtNum(lot.goodQty)} ${unitText(lot.uom)}`)}<div class="small muted">${esc(`${lot.boxes} กล่อง`)}</div></td><td>${ui.status(lot.qc)}</td><td class="right">${ui.openButton("เปิด CoA", "coa", { lotId: lot.id }, { className: "secondary small" })}</td></tr>`;
-      }), { emptyText: "ยังไม่มีล็อตสินค้าสำเร็จรูป" }), { flush: true });
-    }
-    const actions = decide ? `${ui.openButton("เปิด NCR", "ncr", {}, { className: "secondary" })}${ui.openButton("บันทึกผลตรวจ", "qcRecord", {}, { className: "" })}` : "";
-    const html = `${ui.pageHead("ควบคุมคุณภาพ · NCR · CoA", "ตัดสินล็อตที่ถูกกักกัน บันทึกผลทดสอบในแล็บ ติดตามปัญหาด้วย NCR และการวิเคราะห์ทำไม 5 ครั้ง (5-Why) และออกใบรับรองผล (CoA)", actions)}
-      ${ui.stats([
-        { label: "อัตราผ่านตรวจครั้งแรก", value: `${fpy.toFixed(1)}%`, sub: `${records.length} ครั้งที่บันทึก` },
-        { label: "ล็อตกักรอตัดสิน", value: String(held.length), tone: held.length ? "warn" : "" },
-        { label: "NCR ที่เปิดอยู่", value: String(openNcr.length), tone: openNcr.length ? "bad" : "" },
-        { label: "ล็อตพร้อมออก CoA", value: String(finLots.filter((lot) => lot.qc === "pass").length) },
-      ])}${tabs}${section}`;
-    return { html };
+  // ---------- ผลตรวจ ----------
+  views.qcRecordsTable = (ctx, { records = ctx.data.qcRecords, limit = 0 } = {}) => {
+    const { ui, rules } = ctx;
+    const { STAGE_LABEL, SPECS, fmtDateTime } = rules;
+    const list = limit > 0 ? records.slice(0, limit) : records;
+    return ui.table(["เลขที่", "ล็อต", "ผลทดสอบ", "ผล", "ผู้ตรวจ"], list.map((record) => `<tr><td>${ui.mono(record.id)}<div class="small muted">${esc(fmtDateTime(record.at))}</div></td><td class="rf-mono small">${esc(record.lotId)}<div class="muted">${esc(STAGE_LABEL[record.stage])}</div></td>
+        <td class="small">${record.tests.map((test) => ui.badge(test.pass ? "" : "bad", `${SPECS.lab[test.key]?.label ?? test.key} ${test.value}`)).join(" ")}${record.note ? `<div class="muted">${esc(record.note)}</div>` : ""}</td><td>${ui.status(record.result)}</td><td class="small">${esc(record.inspector ?? "-")}</td></tr>`), { emptyText: "ยังไม่มีผลตรวจ" });
   };
 
-  function ncrCard(ctx, ncr, canClose) {
+  // ---------- NCR ----------
+  // canClose = ปิดเคสได้ (QA) · fill = ช่องแก้ไข/ป้องกันที่แผนก RB และ QA กรอกได้ตามสิทธิ์ fillNcr (ปิดแล้วแสดงอย่างเดียว)
+  function ncrCard(ctx, ncr, { canClose = false } = {}) {
     const { ui, rules } = ctx;
     const { STAGE_LABEL, fmtDateTime, fmtNum } = rules;
     const closeForm = ncr.status === "open" && canClose ? `<form novalidate class="rf-row" data-rf-form="closeNcr" data-rf-args='${esc(JSON.stringify({ id: ncr.id }))}' data-rf-success="ปิด NCR แล้ว"><div class="rf-grow">${ui.input("verification", { placeholder: "ผลการทวนสอบประสิทธิผล…" })}</div>${ui.submitButton("ปิดเคส")}</form>` : "";
@@ -65,20 +40,70 @@
           ${ncr.verification ? `<div><strong>ผลการทวนสอบ</strong><div>${esc(ncr.verification)}</div></div>` : ""}${closeForm}</div></div>`,
     { title: `${ui.mono(ncr.id)} ${esc(ncr.title)}`, actions: `${ui.status(ncr.severity)}${ui.status(ncr.status)}` });
   }
+  views.ncrCard = ncrCard;
+  // เปิดอยู่ก่อน แล้วปิดแล้ว (ใหม่สุดก่อนในแต่ละกลุ่ม)
+  views.ncrList = (ctx, { canClose = false, openOnly = false, emptyText = "ยังไม่มี NCR" } = {}) => {
+    const { ui } = ctx;
+    const list = ctx.data.ncrs.filter((ncr) => !openOnly || ncr.status === "open").slice().sort((a, b) => (a.status === "open" ? 0 : 1) - (b.status === "open" ? 0 : 1) || b.createdAt - a.createdAt);
+    return list.length ? `<div class="rf-stack">${list.map((ncr) => ncrCard(ctx, ncr, { canClose })).join("")}</div>` : ui.card(ui.empty(emptyText));
+  };
+
+  // ---------- CoA ----------
+  // ล็อตสินค้าสำเร็จรูป (ล็อตตกแต่ง) ใหม่สุดก่อน · lotId = กรองเหลือล็อตเดียว (ลิงก์จากหน้าตกแต่ง) · q = ค้นหาล็อต ใบสั่งผลิต ลูกค้า · แสดงไม่เกิน limit ล็อตล่าสุด
+  views.coaTable = (ctx, { lotId = "", q = "", limit = 100 } = {}) => {
+    const { data, ui, rules } = ctx;
+    const { fmtDate, fmtNum } = rules;
+    const needle = String(q ?? "").trim().toLowerCase();
+    const matches = (lot) => !needle || `${lot.id} ${lot.orderId} ${data.orders.find((row) => row.id === lot.orderId)?.customer ?? ""}`.toLowerCase().includes(needle);
+    const finLots = data.lots.filter((lot) => lot.stage === "finishing" && (!lotId || lot.id === lotId) && matches(lot)).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+    return ui.table(["ล็อตสินค้าสำเร็จรูป", "ลูกค้า / สินค้า", { label: "จำนวน", className: "right" }, "QC", { label: "", className: "right" }], finLots.map((lot) => {
+      const order = data.orders.find((row) => row.id === lot.orderId);
+      return `<tr><td>${ui.mono(lot.id)}<div class="small muted">${esc(fmtDate(lot.createdAt))}</div></td><td>${esc(order?.customer ?? "")}<div class="small muted">${esc(order ? rules.orderLabel(order) : "")}</div></td><td class="right">${esc(`${fmtNum(lot.goodQty)} ${unitText(lot.uom)}`)}<div class="small muted">${esc(`${lot.boxes} กล่อง`)}</div></td><td>${ui.status(lot.qc)}</td><td class="right">${ui.openButton("เปิด CoA", "coa", { lotId: lot.id }, { className: "secondary small" })}</td></tr>`;
+    }), { emptyText: lotId ? "ไม่พบล็อตสินค้าสำเร็จรูปนี้" : "ยังไม่มีล็อตสินค้าสำเร็จรูป" });
+  };
+
+  // ---------- หน้า "NCR ที่ RB ต้องตอบ" (p=ncr) ----------
+  // เฉพาะ NCR ที่เปิดอยู่ · แผนก RB (และฝ่ายวางแผน) กรอกการแก้ไข/ป้องกันซ้ำ (updateNcr · สิทธิ์ fillNcr) · เปิดและปิด NCR อยู่ที่โมดูล QA (#/qa?tab=ncr) ที่เดียว
+  pages.ncr = (ctx) => {
+    const { ui } = ctx;
+    return { html: `${ui.pageHead("NCR ที่ RB ต้องตอบ", "NCR ที่ QA เปิดไว้และยังไม่ปิด: แผนก RB กรอกการแก้ไข (Corrective) และการป้องกันซ้ำ (Preventive) ที่นี่ QA เป็นผู้ปิดเคส")}${views.ncrList(ctx, { openOnly: true, emptyText: "ไม่มี NCR ที่รอ RB ตอบ" })}` };
+  };
 
   dialogs.qcRecord = (ctx, { lotId = "" } = {}) => {
     const { data, ui, rules } = ctx;
     const { STAGE_LABEL, SPECS } = rules;
     const target = data.lots.find((lot) => lot.id === lotId) ?? null;
+    // ล็อตที่กักอยู่: ตัดสินผ่าน/ไม่ผ่าน (ปล่อยล็อต) ได้เฉพาะหัวหน้า QA ขึ้นไป · พนักงาน QA เลือกได้แค่ "กักต่อ / ตรวจซ้ำ" (ฐานข้อมูลตรวจซ้ำ: RF_QA_HEAD_ONLY)
+    const head = ctx.can("qaRelease");
+    const restricted = (lot) => !head && lot?.qc === "hold";
     const options = [...data.lots].sort((a, b) => b.createdAt - a.createdAt).slice(0, 60).map((lot) => ({ value: lot.id, label: `${lot.id} · ${STAGE_LABEL[lot.stage]} · ${ui.statusLabel(lot.qc)}` }));
+    const locked = restricted(target);
+    const results = [{ value: "", label: "อัตโนมัติจากผลวัด", gate: true }, { value: "pass", label: "ผ่าน — ปลดกักกัน", gate: true }, { value: "hold", label: "กักกันต่อ / ตรวจซ้ำ" }, { value: "fail", label: "ไม่ผ่าน — ทิ้ง/แก้ไขงาน (Rework)", gate: true }]
+      .map((entry) => ({ value: entry.value, label: entry.label, disabled: Boolean(entry.gate && locked) }));
     const body = `<div class="rf-grid rf-g2">
-        ${ui.field("ล็อตที่ตรวจ", ui.select("lotId", options, { value: lotId, placeholder: "เลือก…", extra: "required" }), { required: true })}
-        ${ui.field("ผลตัดสิน", ui.select("result", [{ value: "", label: "อัตโนมัติจากผลวัด" }, { value: "pass", label: "ผ่าน — ปลดกักกัน" }, { value: "hold", label: "กักกันต่อ" }, { value: "fail", label: "ไม่ผ่าน — ทิ้ง/แก้ไขงาน (Rework)" }]), { hint: "เว้นว่างให้ระบบตัดสินจากค่าที่วัด" })}
-      </div>${target?.holdReasons?.length ? ui.callout("warn", esc(`สาเหตุที่กักกัน: ${target.holdReasons.join(", ")}`)) : ""}
+        ${ui.field("ล็อตที่ตรวจ", ui.select("lotId", options, { value: lotId, placeholder: "เลือก…", extra: "required data-qc-lot" }), { required: true })}
+        ${ui.field("ผลตัดสิน", ui.select("result", results, { value: locked ? "hold" : "", extra: "data-qc-result" }), { hint: "เว้นว่างให้ระบบตัดสินจากค่าที่วัด" })}
+      </div><p class="small muted" role="note" data-qc-head-only${locked ? "" : " hidden"}>${esc(`ล็อตนี้กักอยู่ ตัดสินผ่านหรือไม่ผ่านได้${root.MNP_RUBBERFLOW_RULES?.QA_RELEASE_TEXT ?? "เฉพาะหัวหน้า QA"} · บัญชีนี้บันทึกกักต่อ/ตรวจซ้ำได้`)}</p>${target?.holdReasons?.length ? ui.callout("warn", esc(`สาเหตุที่กักกัน: ${target.holdReasons.join(", ")}`)) : ""}
       <div class="rf-grid rf-g3">${Object.entries(SPECS.lab).map(([key, spec]) => ui.specInput(`values.${key}`, `${spec.label} · ${spec.method}`, spec)).join("")}</div>
       ${ui.field("หมายเหตุ", ui.textarea("note"))}`;
     const html = ui.dialog("qcRecord", "บันทึกผลตรวจคุณภาพ", `<form novalidate data-rf-form="addQcRecord" data-rf-success="บันทึกผลตรวจ {result} แล้ว" id="rf-qc-record">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-qc-record">บันทึกผล</button>`, wide: true });
-    return { html };
+    // เปลี่ยนล็อตในช่องเลือก: ล็อตที่กักและบัญชีนี้ปล่อยไม่ได้ = เหลือแค่ "กักต่อ" (ข้อมูลล็อตมาจาก ctx ที่ dialog ถูกสร้าง)
+    const bind = (dialog) => {
+      const lotSelect = dialog.querySelector("[data-qc-lot]");
+      const resultSelect = dialog.querySelector("[data-qc-result]");
+      const note = dialog.querySelector("[data-qc-head-only]");
+      if (!lotSelect || !resultSelect) return;
+      const sync = () => {
+        const lock = restricted(data.lots.find((lot) => lot.id === lotSelect.value));
+        for (const option of resultSelect.options) option.disabled = lock && option.value !== "hold";
+        if (lock) resultSelect.value = "hold";
+        else if (resultSelect.selectedOptions?.[0]?.disabled) resultSelect.value = "";
+        if (note) note.hidden = !lock;
+      };
+      lotSelect.addEventListener("change", sync);
+      sync();
+    };
+    return { html, bind };
   };
 
   dialogs.ncr = (ctx) => {
@@ -137,8 +162,10 @@
       { id: "mx.dump", label: "ผสม · อุณหภูมิปล่อยยางขั้น 2 (สูตร EPDM)", spec: { label: "อุณหภูมิปล่อยยาง", unit: "°C", target: 140, tol: 6 }, source: (d) => d.lots.filter((lot) => lot.stage === "mixing" && lot.recipeId === "RC-EPDM-DS01").map((lot) => ({ id: lot.id, at: lot.createdAt, v: lot.params?.stages?.find((row) => Number(row.stage) === 2)?.dumpTemp })) },
     ];
   };
+  views.spcChars = spcChars;
 
-  pages.spc = (ctx) => {
+  // เนื้อหา SPC (หัวหน้าหน้าและช่องเลือกค่าที่ติดตามเป็นของหน้าที่เรียก): ctx.params.get("ch") เลือกค่า · ctx.pageUrl พาไปหน้าเดิมพร้อมค่าใหม่ · คืน { html, picker, bind }
+  views.spc = (ctx) => {
     const { data, ui, rules, params } = ctx;
     const { stats, cpkVerdict, specLimits, specText, fmtDate } = rules;
     const chars = spcChars(rules, data);
@@ -160,8 +187,7 @@
     const oos = points.filter((point) => (usl !== undefined && point.v > usl) || (lsl !== undefined && point.v < lsl));
     const r = (x, digits = 3) => (x === undefined || x === null ? "-" : x.toFixed(digits));
     const picker = `<form novalidate class="rf-row" data-rf-pick><label class="sr-only" for="rf-spc-ch">ค่าที่ติดตาม</label>${ui.select("ch", chars.map((row) => ({ value: row.id, label: row.label })), { value: ch.id, id: "rf-spc-ch", className: "rf-spc-pick", extra: "data-rf-ch" })}</form>`;
-    const html = `${ui.pageHead("SPC / ความสามารถของกระบวนการ", "แผนภูมิควบคุมค่ารายตัว (I-chart), ฮิสโตแกรม และดัชนี Cp / Cpk คำนวณจากข้อมูลการผลิตจริงในระบบ", picker)}
-      ${ui.stats([
+    const html = `${ui.stats([
         { label: "Cpk", value: r(s?.cpk, 2), sub: verdict.text, tone: verdict.tone === "muted" ? "" : verdict.tone },
         { label: "Cp / Ppk", value: `${r(s?.cp, 2)} / ${r(s?.ppk, 2)}`, sub: "Ppk ใช้ σ รวมทั้งหมด" },
         { label: "ค่าเฉลี่ย / σ (MR)", value: `${r(s?.mean)} / ${r(s?.sdWithin)}`, sub: `n = ${s?.n ?? points.length} · สเปก ${specText(ch.spec)}` },
@@ -176,11 +202,12 @@
       rootNode.querySelector("[data-rf-ch]")?.addEventListener("change", (event) => { location.hash = ctx.pageUrl({ ch: event.target.value }); });
       rootNode.querySelector("[data-rf-pick]")?.addEventListener("submit", (event) => event.preventDefault());
     };
-    return { html, bind };
+    return { html, picker, bind };
   };
 
   // ---------- สืบย้อนกลับ ----------
-  pages.trace = (ctx) => {
+  // ช่องค้นหา (data-rf-search) ส่งไป ctx.pageUrl({ q }) ของหน้าที่เรียก
+  views.trace = (ctx) => {
     const { data, ui, rules, derive } = ctx;
     const { STAGE_LABEL, fmtDateTime, fmtNum } = rules;
     const query = ctx.q;
@@ -217,8 +244,7 @@
       if (!boxes.length) return `<div class="small muted">ยังไม่ถูกบรรจุเป็นสินค้าสำเร็จรูป</div>`;
       return ui.callout("warn", esc(`ขอบเขตที่ได้รับผลกระทบ: ${boxes.length} กล่อง (${boxes.filter((box) => box.status === "shipped").length} กล่องส่งมอบลูกค้าแล้ว)`));
     };
-    const html = `${ui.pageHead("สืบย้อนกลับ (Traceability)", "ย้อนจากกล่องสินค้าไปถึงล็อตวัตถุดิบ หรือไล่ไปข้างหน้าจากล็อตวัตถุดิบว่าถูกใช้ในกล่องใดบ้าง (สำหรับกรณีเรียกคืนสินค้า)")}
-      ${ui.card(`<form novalidate class="rf-search rf-search-wide" data-rf-search role="search"><label class="sr-only" for="rf-q">รหัส</label>${ui.input("q", { id: "rf-q", type: "search", value: query, placeholder: "สแกนหรือพิมพ์รหัสกล่อง ล็อต หรือล็อตวัตถุดิบ" })}<button class="btn rf-btn" type="submit">ค้นหา</button></form>
+    const html = `${ui.card(`<form novalidate class="rf-search rf-search-wide" data-rf-search role="search"><label class="sr-only" for="rf-q">รหัส</label>${ui.input("q", { id: "rf-q", type: "search", value: query, placeholder: "สแกนหรือพิมพ์รหัสกล่อง ล็อต หรือล็อตวัตถุดิบ" })}<button class="btn rf-btn" type="submit">ค้นหา</button></form>
         <div class="rf-row small muted rf-samples">ตัวอย่าง: ${samples.map((sample) => ui.link(sample, ctx.pageUrl({ q: sample }), "rf-badge")).join("")}</div>`)}
       ${query && !hit ? ui.callout("bad", esc(`ไม่พบรหัส “${query}”`)) : ""}${note ? ui.callout("info", esc(note)) : ""}
       <div class="rf-grid rf-g2">
@@ -227,4 +253,6 @@
       </div>`;
     return { html };
   };
+
+  root.MNP_RUBBERFLOW_VIEWS = Object.freeze({ ...(root.MNP_RUBBERFLOW_VIEWS ?? {}), quality: Object.freeze(views) });
 })(typeof window !== "undefined" ? window : globalThis);

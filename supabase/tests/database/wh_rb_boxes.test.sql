@@ -245,7 +245,8 @@ select is(wb_t.box('BOX-U1-001') ->> 'customer' || '/' || (wb_t.box('BOX-U1-001'
 select lives_ok($$ select wb_t.finish('{"id":"FN-U2","orderId":"WO-U","goodQty":20,"qc":"hold","params":{"perBox":20},"sources":[{"type":"transfer","id":"TR-U1","lotId":"CU-U1","qty":20}]}'::jsonb) $$,
   'a lot for sale on hold is recorded');
 select ok(wb_t.lot('FN-U2') -> 'destination' = 'null'::jsonb and wb_t.states('FN-U2') = 'hold', 'its box is on hold and the lot has no destination yet');
-select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
+-- ปล่อยล็อตที่กัก = หัวหน้า QA เท่านั้น (20261221010000_qa_head_decisions.sql · qa_head_decisions.test.sql)
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_mgr')::uuid);
 select wb_t.rf(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(
   '{"id":"QC-W1","lotId":"FN-U2","orderId":"WO-U","stage":"finishing","tests":[{"key":"hardness","value":65,"pass":true}],"result":"pass","note":"","inspector":"x","at":1}'::jsonb))), 'addQcRecord');
 select is(wb_t.lot('FN-U2') ->> 'destination' || '/' || wb_t.states('FN-U2'), 'customer/pending_wh', 'QA releases it: the lot goes to the customer and the box waits for WH');
@@ -408,11 +409,16 @@ select throws_ok($$ select wb_t.boxes(wb_t.lot_rows('FN-C1', 'hold', 'pending_wh
 select throws_ok($$ select wb_t.boxes(jsonb_build_array(wb_t.row_of(wb_t.box('BOX-C1-001'), 'shipped', null, null)), 'shipBoxes') $$, 'RF_INVALID_TRANSITION',
   'nor shipped');
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
+select throws_ok($$ select wb_t.rf(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(
+  '{"id":"QC-W3X","lotId":"FN-C1","orderId":"WO-L","stage":"finishing","tests":[{"key":"hardness","value":65,"pass":true}],"result":"pass","note":"","inspector":"x","at":1}'::jsonb))), 'addQcRecord') $$,
+  'RF_QA_HEAD_ONLY', 'QA staff cannot release the held lot (QA head only since 20261221010000)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_mgr')::uuid);
 select wb_t.rf(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(
   '{"id":"QC-W3","lotId":"FN-C1","orderId":"WO-L","stage":"finishing","tests":[{"key":"hardness","value":65,"pass":true}],"result":"pass","note":"","inspector":"x","at":1}'::jsonb))), 'addQcRecord');
 select is(wb_t.states('FN-C1') || '/' || (wb_t.job('JOB-W-RB') ->> 'qtyDone'), 'in_stock,in_stock,in_stock/60',
   'QA releases it: the received boxes are back in stock and the credit is unchanged');
 select is(wb_t.states('FN-U1'), 'pending_wh,pending_wh', 'a lot that WH has not received stays waiting');
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
 
 -- QA ผ่านซ้ำย้ายเฉพาะกล่องที่กัก: กล่องในคลังที่ไม่มีวันที่รับ (เหมือนกล่องก่อนไฟล์นี้) ไม่ถูกส่งกลับไปรอ WH
 reset role;

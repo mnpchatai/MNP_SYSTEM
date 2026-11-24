@@ -40,7 +40,11 @@
     if (!hit) return "";
     const page = KIND_PAGE[hit.kind];
     const param = KIND_PARAM[hit.kind];
-    const open = ctx.canSee(page) ? `<a class="btn rf-btn" href="${esc(ctx.url(page, param ? { [param]: codeOf(hit) } : {}))}" data-rf-close>เปิดดูรายละเอียด</a>` : "";
+    // ล็อต / กล่อง → สืบย้อนกลับที่โมดูล QA (#/qa?tab=trace · โรงงานขั้น 5) เฉพาะผู้ที่เปิดโมดูล QA ได้ · หน้าอื่นตามเมนูของ RubberFlow
+    const factory = root.MNP_FACTORY;
+    const qaTrace = page === "trace" && typeof state !== "undefined" && Boolean(factory?.canOpenDeptModule?.(state.employee, "QA", "FACTORY_QA"));
+    const open = qaTrace ? `<a class="btn rf-btn" href="${esc(factory.routeUrl("qa", { tab: "trace", q: codeOf(hit) }))}" data-rf-close>เปิดดูรายละเอียด</a>`
+      : ctx.canSee(page) ? `<a class="btn rf-btn" href="${esc(ctx.url(page, param ? { [param]: codeOf(hit) } : {}))}" data-rf-close>เปิดดูรายละเอียด</a>` : "";
     const print = ["lot", "box", "material", "order", "requisition", "transfer"].includes(hit.kind) ? ui.openButton("พิมพ์ป้าย", "tag", { kind: hit.kind, id: codeOf(hit) }, { className: "secondary" }) : "";
     return `<div class="card rf-card rf-scan-hit"><div class="rf-row rf-between"><div><div class="small muted">${esc(KIND_LABEL[hit.kind])}</div><h3 class="rf-mono">${esc(codeOf(hit))}</h3></div><div class="rf-row">${print}${open}</div></div>${scanSummary(ctx, hit)}</div>`;
   }

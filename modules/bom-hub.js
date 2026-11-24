@@ -1162,7 +1162,8 @@
       // จ่ายได้เมื่อยังต้องจ่ายและคลังมีแท่งให้ (ของใบนี้หรือสต็อกกลาง) · ไม่มีแท่งเลย = ไม่มีการ์ดที่กดอะไรไม่ได้
       for (const need of needs) if (need.remaining > 1e-9 && need.owned + need.free > 1e-9 && !asked.has(`${need.order.id}\u0000${need.itemCode}`)) tasks.push({ kind: "rodIssue", need });
     }
-    if ((which === "QA" || which === "ALL") && helpers.canDecideRods?.(user)) {
+    // เห็นการ์ดตัดสิน = แผนก QA หรือกลุ่มวางแผน · ปุ่ม "ตัดสิน" ของการ์ดเป็นของหัวหน้า QA ขึ้นไป (canDecideRods) · คนอื่นเห็นข้อความบอกผู้ที่ตัดสินได้
+    if ((which === "QA" || which === "ALL") && helpers.canSeeRodHolds?.(user)) {
       for (const lot of lots.filter((entry) => entry.status === "held").sort(byTime("receivedAt"))) tasks.push({ kind: "rodDecide", lot });
     }
     return tasks;
@@ -1471,7 +1472,7 @@
       return `<article class="card rf-card bom-job ${receive ? "is-now" : "is-hold"}${cardClass(href)}"><div class="bom-job-top"><span class="bom-job-state">${receive ? "รอรับเข้าคลัง" : "กักรอ QA ตัดสิน"}</span><span class="muted">${esc(`${receive ? "ส่งมาจาก RB" : "รับเมื่อ"} ${rules.fmtDateTime(receive ? lot.createdAt : lot.receivedAt)}`)}</span></div>
         <h2>${cardTitle(`${receive ? "รับยางเส้นยาวเข้าคลัง" : "ตัดสินล็อตยางเส้นยาว"} ล็อต ${lot.lotNo}`, href)}</h2><p class="small muted">${chip}<span class="rf-mono">${esc(lot.itemCode)}</span> · ใบ ${ui.link(lot.orderId, ctx.url("orders", { sel: lot.orderId }))}</p>
         <div class="bom-job-amount"><span>${esc(`${receive ? "จำนวน" : "รับไว้"} ${rodQty(ctx, receive ? lot.qtySent : lot.qtyReceived, lot.uom)}`)}</span></div>${!receive && lot.qc?.note ? `<p class="small muted">${esc(`SR: ${lot.qc.note}`)}</p>` : ""}
-        ${gated(receive ? "canStoreRods" : "canDecideRods", ui.openButton(receive ? "รับเข้าคลัง" : "ตัดสิน", receive ? "rodReceive" : "rodDecide", { lotId: lot.id }, { className: "bom-job-main" }))}</article>`;
+        ${!receive && !ctx.helpers.canDecideRods?.(ctx.user) ? `<p class="small muted">${esc(`ตัดสินได้${root.MNP_RUBBERFLOW_RULES?.QA_RELEASE_TEXT ?? "เฉพาะหัวหน้า QA"}`)}</p>` : gated(receive ? "canStoreRods" : "canDecideRods", ui.openButton(receive ? "รับเข้าคลัง" : "ตัดสิน", receive ? "rodReceive" : "rodDecide", { lotId: lot.id }, { className: "bom-job-main" }))}</article>`;
     }
     if (task.kind === "rodIssue") {
       const { need } = task;

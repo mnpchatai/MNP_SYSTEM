@@ -146,7 +146,9 @@ test("alerts rank bad before warn before info and cover expiry, molds, holds, re
   assert.ok(alerts.some((alert) => alert.title.startsWith("รอรับมอบ")), "a transfer to finishing is in transit");
   assert.ok(alerts.some((alert) => alert.title.startsWith("ใกล้กำหนดส่ง")), "the urgent order is due in two days");
   assert.ok(alerts.some((alert) => alert.title.startsWith("NCR เปิดอยู่")));
-  for (const alert of alerts) assert.ok(["warehouse", "molds", "quality", "mixing", "wip", "orders"].includes(alert.module), alert.module);
+  // งานคุณภาพย้ายไป #/qa: ล็อตที่กักชี้ไปหน้าสถานีของล็อต · NCR ชี้ไปหน้า "NCR ที่ RB ต้องตอบ" · ไม่มีการแจ้งเตือนชี้ไปหน้า quality ที่ไม่มีแล้ว
+  for (const alert of alerts) assert.ok(["warehouse", "molds", "ncr", "mixing", "extrusion", "curing", "finishing", "wip", "orders"].includes(alert.module), alert.module);
+  assert.ok(alerts.filter((alert) => alert.title.startsWith("NCR เปิดอยู่")).every((alert) => alert.module === "ncr"));
 });
 
 test("lookupCode finds every document kind by code (case-insensitive) and traceability trees link boxes to raw-material lots", () => {

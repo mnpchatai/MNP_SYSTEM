@@ -34,7 +34,7 @@
   // ค่า = ชื่อไอคอนใน MNP_UI_ICONS.PATHS (อ้างตอนวาด เพราะเทสต์โหลดไฟล์นี้แยก)
   const ICONS = Object.freeze({
     dashboard: "factory", orders: "clipboard", recipes: "flask", requisition: "scale", mixing: "mix", extrusion: "ruler", curing: "flame", finishing: "box", wip: "cycle",
-    quality: "shield", spc: "chart", trace: "search", warehouse: "warehouse", molds: "mold", audit: "history",
+    quality: "shield", ncr: "shield", spc: "chart", trace: "search", warehouse: "warehouse", molds: "mold", audit: "history",
     bad: "error", warn: "warning", good: "approve", info: "info",
   });
   const icon = (id) => (ICONS[id] ? `<span class="rf-ico" aria-hidden="true">${root.MNP_UI_ICONS.icon(ICONS[id])}</span>` : "");

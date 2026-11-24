@@ -518,8 +518,11 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     ["persona-wh", "สุดา", "คลังสินค้า", "พนักงานคลังสินค้า (WH)", "WH", "คลังสินค้า"],
     // หัวหน้าแผนก WH (ผู้จัดการแผนก): BOM นับเป็นบทบาท manager แต่แผนกคือ WH จึงรับเข้าคลัง/ส่งมอบสินค้าสำเร็จรูปได้เหมือนพนักงาน WH และย้อนรายการที่บันทึกผิดได้ (reverseFg · 20261128020000) ซึ่งพนักงาน WH ทำไม่ได้
     ["persona-whh", "ชัย", "หัวหน้าคลัง", "หัวหน้าแผนกคลังสินค้า (WH)", "WH", "คลังสินค้า", "department_manager"],
-    // QA ตัดสินล็อตแท่งที่กักในคลังแท่งยาวของ BOM ด้วย (20261202010000)
+    // พนักงาน QA: บันทึกผลตรวจ กักล็อต / วัตถุดิบ · การตัดสินล็อตที่กักเป็นของหัวหน้า QA ตั้งแต่ 20261221010000 (persona-qah)
     ["persona-qa", "ธนา", "ตรวจสอบ", "เจ้าหน้าที่ QA (ตรวจคุณภาพ)", "QA", "ประกันคุณภาพ"],
+    // หัวหน้าแผนก QA (ผู้จัดการแผนก เหมือน SBX-QA-MGR): ปล่อย / ตัดสินล็อตที่กักของสายผลิต ตัดสินยางเส้นยาวที่ SR กัก และปล่อยวัตถุดิบที่กัก (private.qa_head · 20261221010000)
+    //   พนักงาน QA (persona-qa) ยังบันทึกผลตรวจ กัก และบันทึกผลบนล็อตที่ไม่ได้กักได้
+    ["persona-qah", "อรุณี", "หัวหน้าตรวจสอบ", "หัวหน้าแผนก QA (ตรวจคุณภาพ)", "QA", "ประกันคุณภาพ", "department_manager"],
     // พนักงานแผนกผลิตที่เหลือ (PK บรรจุ · PT ฉีดพลาสติก · BG เย็บกระเป๋า): ลองรายงานผล / พักงานของแผนกตัวเอง และดูว่าแผนกอื่นทำแทนไม่ได้
     ["persona-pk", "ปรีชา", "บรรจุ", "พนักงานแผนก PK (บรรจุ)", "PK", "ฝ่ายผลิต PK"],
     ["persona-pt", "พิมพ์ใจ", "ฉีดพลาสติก", "พนักงานแผนก PT (ฉีดพลาสติก)", "PT", "ฝ่ายผลิต PT"],
@@ -577,6 +580,10 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
   };
   const bomIsPlanner = (actor) => actor.role === "admin" || BOM_MANAGER_ROLES.includes(actor.role) || actor.dept === "PP"
     || (actor.role === "department_manager" && BOM_PRODUCTION_DEPTS.includes(actor.dept));
+  // หัวหน้า QA (private.qa_head ของ 20261221010000): แผนก QA บทบาท department_manager / assistant_department_manager หรือ factory_manager / general_manager / admin
+  //   (ไม่รวม assistant_factory_manager) · ผู้ตัดสินล็อตที่กักของสายผลิต (ผล pass / fail = RF_QA_HEAD_ONLY) ยางเส้นยาวที่กัก (decideRods = BOM_QA_HEAD_ONLY) และปล่อยวัตถุดิบที่กัก
+  const qaHead = (actor) => (actor.dept === "QA" && ["department_manager", "assistant_department_manager"].includes(actor.role))
+    || ["factory_manager", "general_manager", "admin"].includes(actor.role);
   // ใครใช้ข้อมูลจริงได้ (private.bom_can_read / rf_can_read): กลุ่มวางแผน หรือพนักงานแผนกของโมดูล · โหมดทดสอบทุก persona อ่านได้เหมือนเดิม
   // SR และ QA อ่าน BOM ได้ตั้งแต่ 20261202010000 (คลังแท่งยาว: SR รับเข้า / จ่ายให้ GR · QA ตัดสินล็อตที่กัก)
   const bomCanRead = (actor) => bomIsPlanner(actor) || ["RB", "GR", "PT", "BG", "PK", "ST", "WH", "SR", "QA"].includes(actor.dept);
@@ -1644,7 +1651,8 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     const decision = bomRodText(row.decision, 1, 10);
     if (!["accept", "return", "scrap"].includes(decision)) fail("BOM_INVALID_ROD");
     const note = bomRodText(row.decisionNote, 3, 300);
-    bomRodRights(actor, "QA");
+    // ตัดสินล็อตที่กัก = หัวหน้า QA เท่านั้น (20261221010000) · พนักงาน QA กลุ่มวางแผน และแผนกอื่น = BOM_QA_HEAD_ONLY
+    if (!qaHead(actor)) fail("BOM_QA_HEAD_ONLY");
     const lot = bomRodLotOf(next, id);
     if (lot.status !== "held") fail("BOM_INVALID_TRANSITION");
     Object.assign(lot, { decision, decisionNote: note, decidedBy: actor.name, decidedAt: at, status: decision === "accept" ? "stored" : decision === "return" ? "returned" : "scrapped" });
@@ -2167,6 +2175,8 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         }
         if (!(inDept("ST") || actor.dept === "QA")) fail("RF_FORBIDDEN");
         if (!rfSame(prev, record, ["status", ...RF_NOOP.materialLots])) fail(bad);
+        // ปล่อยล็อตที่กัก (hold -> available) = หัวหน้า QA เท่านั้น (20261221010000) · กักยังเป็นของกลุ่มวางแผน / ST / QA
+        if (prev.status === "hold" && record.status === "available" && !qaHead(actor)) fail("RF_QA_HEAD_ONLY");
         put({ ...prev, status: record.status });
         return null;
       }
@@ -2535,6 +2545,10 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
           return { key: test.key, value: num(test.value), pass: R.inSpec(test.value, spec) };
         });
         if (record.result === "pass" && !tests.every((test) => test.pass)) fail(bad);
+        // ผล pass / fail บนล็อตที่กักอยู่ก่อนคำสั่งนี้ = หัวหน้า QA เท่านั้น (rf_save_qc ของ 20261221010000) · ล็อตเปลี่ยนหลัง base = RF_STALE ก่อน
+        //   hold ซ้ำบนล็อตที่กัก และผลใดก็ได้บนล็อตที่ไม่ได้กัก = QA ทุกบทบาท / กลุ่มวางแผนเหมือนเดิม
+        const before = current.lots.find((row) => row.id === lot.id);
+        if (before?.qc === "hold" && ["pass", "fail"].includes(record.result) && !qaHead(actor)) fail(stale("lots", lot.id) ? "RF_STALE" : "RF_QA_HEAD_ONLY");
         qcNew.push({ id: record.id, lotId: lot.id, result: record.result });
         put({ ...clone(record), orderId: lot.orderId, stage: lot.stage, tests, inspector: actor.name, at });
         return null;

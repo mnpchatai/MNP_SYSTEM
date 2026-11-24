@@ -161,7 +161,8 @@ select ok(not exists (select 1 from jsonb_array_elements(public.app_bom_master()
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.qc')::jsonb || '{"id":"QC-X0","lotId":"FN-X2","stage":"finishing","result":"pass"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord') $$, 'RF_FORBIDDEN', 'an RB member cannot decide a QC result');
 select ok(not exists (select 1 from jsonb_array_elements(public.app_bom_master() -> 'rodLots') l where l ->> 'lotNo' = 'FN-X2'), 'and a refused decision makes no rod lot');
-select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
+-- ปล่อยล็อตที่กัก = หัวหน้า QA เท่านั้น (20261221010000_qa_head_decisions.sql · qa_head_decisions.test.sql)
+select public.app_sandbox_enter(current_setting('test.p_sbx_qa_mgr')::uuid);
 select set_config('test.bv2', (public.app_bom_master() ->> 'version')::text, true);
 select set_config('test.res', (public.app_rf_save(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.qc')::jsonb || '{"id":"QC-X1","lotId":"FN-X2","stage":"finishing","result":"pass"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord'))::text, true);
 select is((select x ->> 'qc' from jsonb_array_elements(public.app_rf_master() -> 'lots') x where x ->> 'id' = 'FN-X2'), 'pass', 'QA passes the finishing lot');
@@ -170,7 +171,7 @@ select is((select (l ->> 'status') || '/' || (l ->> 'qtySent') from jsonb_array_
   'and becomes a pending rod lot once');
 select is((select (j ->> 'qtyDone')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-X1-RB'), 0::numeric, 'the BOM job is still not fed');
 select is((public.app_bom_master() ->> 'version')::bigint, current_setting('test.bv2')::bigint + 1, 'the BOM counter went up by one for the QA decision');
-select ok(exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:addQcRecord' and a ->> 'detail' = 'rodLots +1' and a ->> 'user' = current_setting('test.n_sbx_qa_staff')), 'the BOM history records the QA decision');
+select ok(exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:addQcRecord' and a ->> 'detail' = 'rodLots +1' and a ->> 'user' = current_setting('test.n_sbx_qa_mgr')), 'the BOM history records the QA decision');
 select set_config('test.bv3', (public.app_bom_master() ->> 'version')::text, true);
 select set_config('test.res', (public.app_rf_save(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.qc')::jsonb || '{"id":"QC-X2","lotId":"FN-X2","stage":"finishing","result":"hold"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord'))::text, true);
 select set_config('test.res', (public.app_rf_save(jsonb_build_object('qcRecords', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.qc')::jsonb || '{"id":"QC-X3","lotId":"FN-X2","stage":"finishing","result":"pass"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'addQcRecord'))::text, true);

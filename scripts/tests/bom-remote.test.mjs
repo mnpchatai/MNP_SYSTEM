@@ -1755,8 +1755,8 @@ test("the mock sandbox offers switchable personas (the planner group, producing 
   const { client } = createMockSupabase({ sandbox: true, now: () => NOW, storage });
   const status = (await client.rpc("app_sandbox_status")).data;
   assert.equal(status.persona.id, "persona-1", "the first persona is the simulated admin, as before");
-  assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-rbh", "persona-gr", "persona-grh", "persona-st", "persona-sr", "persona-wh", "persona-whh", "persona-qa", "persona-pk", "persona-pt", "persona-bg"]);
-  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "gr", "st", "sr", "wh", "manager", "qa", "pk", "pt", "bg"], "each persona maps to a BOM role (the RB head and the WH head are department managers; the GR head is an assistant department manager, so GR by department; SR runs the long-rod store and QA decides held rod lots; PK staff work their jobs by department)");
+  assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-rbh", "persona-gr", "persona-grh", "persona-st", "persona-sr", "persona-wh", "persona-whh", "persona-qa", "persona-qah", "persona-pk", "persona-pt", "persona-bg"]);
+  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "gr", "st", "sr", "wh", "manager", "qa", "manager", "pk", "pt", "bg"], "each persona maps to a BOM role (the RB head and the WH head are department managers; the GR head is an assistant department manager, so GR by department; SR runs the long-rod store and QA decides held rod lots; PK staff work their jobs by department)");
   assert.deepEqual(status.personas.slice(-3).map((row) => [row.department.code, row.role.code]), [["PK", "staff"], ["PT", "staff"], ["BG", "staff"]], "PK, PT and BG staff can be tried too");
   assert.deepEqual(status.personas.slice(-3).map((row) => storeApi.personaUser(row).dept), ["PK", "PT", "BG"], "and work the jobs of their own department");
   assert.equal((await client.rpc("app_sandbox_enter", { p_persona_id: "persona-rb" })).error, null);
@@ -2703,7 +2703,7 @@ async function rfScene() {
 
 test("RubberFlow in database mode: loading state, no demo role picker or reset, every page draws on an empty database, and the buttons follow the persona", async () => {
   const scene = await planningScene();
-  const PAGES = ["dashboard", "orders", "recipes", "requisition", "mixing", "extrusion", "curing", "finishing", "wip", "quality", "spc", "trace", "warehouse", "molds", "audit"];
+  const PAGES = ["dashboard", "orders", "recipes", "requisition", "mixing", "extrusion", "curing", "finishing", "wip", "ncr", "warehouse", "molds", "audit"];
   const admin = await asPersona(scene, "persona-1", { sandboxAdmin: true });
   let html = await rfPage(admin, "", { wait: false });
   assert.equal(admin.context.MNP_RUBBERFLOW.store.isRemote(), true);
@@ -2936,7 +2936,7 @@ test("a transfer receipt does not touch the BOM job; when pieces pass finishing 
   const lot2 = await saved(rf(rb4).run("recordFinishing", held));
   await rb4.store.catchUp();
   assert.equal(rb4.store.data().rodLots.length, 1);
-  const qa = await asPersona(scene, "persona-qa", realClock);
+  const qa = await asPersona(scene, "persona-qah", realClock);
   await rf(qa).ensureLoaded();
   await qa.store.ensureLoaded();
   const qaView = qa.context.MNP_RUBBERFLOW;

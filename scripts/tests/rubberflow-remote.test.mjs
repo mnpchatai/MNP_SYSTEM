@@ -172,7 +172,16 @@ test("the persona decides the RubberFlow role and the planner / RB member / RB h
   assert.ok(storeApi.ROLES.warehouse);
   assert.equal(storeApi.personaUser(employee("staff", "WH")).role, "warehouse");
   assert.ok(storeApi.canSee(who.wh, "warehouse") && !storeApi.canSee(who.wh, "mixing"));
-  assert.ok(storeApi.canSee(who.rb, "quality"), "RB reads the NCR page to fill corrective / preventive");
+  assert.ok(storeApi.canSee(who.rb, "ncr"), "RB reads the NCR page to fill corrective / preventive (the QA pages moved to #/qa)");
+  for (const gone of ["quality", "spc", "trace"]) assert.ok(!storeApi.canSee(who.rb, gone) && !storeApi.canSee(who.qa, gone), `${gone} is no RubberFlow page any more`);
+  // ปล่อยของที่ QA กัก = หัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบเท่านั้น (นิยามเดียว rules.canQaRelease): ฝ่ายวางแผน พนักงาน QA หัวหน้า RB และผู้ช่วยผู้จัดการโรงงานปล่อยไม่ได้
+  const headOf = (role, dept) => storeApi.personaUser(employee(role, dept));
+  const releasers = [["department_manager", "QA"], ["assistant_department_manager", "QA"], ["admin", "MT"], ["general_manager", "MT"], ["factory_manager", "GR"]];
+  const others = [["staff", "QA"], ["assistant_department_manager", "RB"], ["department_manager", "RB"], ["department_manager", "PP"], ["staff", "PP"], ["department_manager", "ST"], ["assistant_factory_manager", "GR"], ["staff", "RB"]];
+  for (const [role, dept] of releasers) assert.deepEqual([storeApi.can(headOf(role, dept), "qaRelease"), headOf(role, dept).qaHead], [true, true], `${role} ${dept} releases`);
+  for (const [role, dept] of others) assert.deepEqual([storeApi.can(headOf(role, dept), "qaRelease"), headOf(role, dept).qaHead], [false, false], `${role} ${dept} does not release`);
+  assert.equal(storeApi.can(headOf("staff", "QA"), "qcDecision"), true, "QA staff still record results and hold");
+  assert.equal(storeApi.can(headOf("department_manager", "RB"), "qcDecision"), true, "the RB head is in the planner group (records results, cannot release)");
   for (const role of ["rb", "sr", "viewer"]) assert.ok(storeApi.ROLES[role], role);
   assert.equal(storeApi.ROLES.gatekeeper, undefined, "no role receives WIP for SR any more");
   assert.ok(storeApi.canSee(rbStaff, "recipes") && storeApi.canSee(rbStaff, "mixing"));
@@ -1055,10 +1064,25 @@ test("each shop-floor action is open to its own department and the planner group
   const statusOf = async () => (await master()).materialLots.find((row) => row.lotNo === lots[0]).status;
   assert.equal((await go(s, rig, "persona-pp", "setMaterialLotStatus", { lotNo: lots[0], status: "hold" })).ok, true);
   assert.equal(await statusOf(), "hold");
-  await go(s, rig, "persona-st", "setMaterialLotStatus", { lotNo: lots[0], status: "available" });
+  // ปลดกักกัน = หัวหน้า QA ขึ้นไปเท่านั้น (ST / QA พนักงาน / ฝ่ายวางแผนปลดไม่ได้ · หน้าจอบอกก่อน) · กักกันยังเป็นของ ST / QA / ฝ่ายวางแผน
+  for (const persona of ["persona-st", "persona-qa", "persona-pp"]) {
+    await s.as(persona);
+    assert.match(rig.store.run("setMaterialLotStatus", { lotNo: lots[0], status: "available" }).error.message, /หัวหน้า QA/, `${persona} cannot release`);
+  }
+  assert.equal(await statusOf(), "hold");
+  // ...and the database says the same to a direct call (RF_QA_HEAD_ONLY), writing nothing
+  for (const persona of ["persona-st", "persona-qa", "persona-pp", "persona-rbh"]) {
+    await s.as(persona);
+    const before = await master();
+    const row = before.materialLots.find((entry) => entry.lotNo === lots[0]);
+    const reply = await s.mock.client.rpc("app_rf_save", { p_changes: { materialLots: { upsert: [{ ...row, status: "available" }] } }, p_base_version: before.version, p_action: "setMaterialLotStatus" });
+    assert.equal(reply.error?.code, "RF_QA_HEAD_ONLY", `${persona} straight to the database`);
+    assert.equal((await master()).version, before.version, "nothing was written");
+  }
+  await go(s, rig, "persona-qah", "setMaterialLotStatus", { lotNo: lots[0], status: "available" });
   assert.equal(await statusOf(), "available");
   await go(s, rig, "persona-qa", "setMaterialLotStatus", { lotNo: lots[0], status: "hold" });
-  assert.equal(await statusOf(), "hold", "ST and QA both hold and release material lots");
+  assert.equal(await statusOf(), "hold", "ST and QA both hold material lots; only the QA head (or the factory managers / admin) releases");
 });
 
 test("the database computes the numbers itself: a client cannot set the stock, the remaining quantity, the produced quantity or the mold counter by writing them", async () => {
@@ -1114,7 +1138,22 @@ test("mixing holds the lot per stage, the QC decision releases it and adds the p
   assert.match(rig.store.run("addQcRecord", { lotId: mx, values: { hardness: 65 } }).error.message, /ไม่มีสิทธิ์/);
   await s.as("persona-qa");
   assert.match(rig.store.run("addQcRecord", { lotId: mx, values: { hardness: 80 }, result: "pass" }).error.message, /นอกสเปก/);
-  await go(s, rig, "persona-qa", "addQcRecord", { lotId: mx, values: { hardness: 65, sg: 1.18 }, result: "pass", note: "ตรวจซ้ำ" });
+  // ปล่อยล็อตที่กัก = หัวหน้า QA ขึ้นไปเท่านั้น: พนักงาน QA และหัวหน้า RB ทำไม่ได้ (หน้าจอบอกก่อน) · พนักงาน QA บันทึก "กักต่อ" ได้ · admin ปล่อยได้
+  assert.match(rig.store.run("addQcRecord", { lotId: mx, values: { hardness: 65, sg: 1.18 }, result: "pass" }).error.message, /หัวหน้า QA/, "QA staff cannot release a held lot");
+  assert.match(rig.store.run("addQcRecord", { lotId: mx, values: { hardness: 65 }, result: "fail" }).error.message, /หัวหน้า QA/, "nor decide it as a fail");
+  await go(s, rig, "persona-qa", "addQcRecord", { lotId: mx, values: { hardness: 65 }, result: "hold", note: "ตรวจซ้ำ ยังไม่ปล่อย" });
+  await s.as("persona-rbh");
+  assert.match(rig.store.run("addQcRecord", { lotId: mx, values: { hardness: 65 }, result: "pass" }).error.message, /หัวหน้า QA/, "the RB head cannot release a QA hold");
+  // the database says the same to a direct call: pass or fail of a held lot is the QA head's (RF_QA_HEAD_ONLY), hold is not
+  for (const persona of ["persona-qa", "persona-pp", "persona-rbh"]) {
+    await s.as(persona);
+    for (const result of ["pass", "fail"]) {
+      const heldSnap = await s.call("app_rf_master");
+      const reply = await s.mock.client.rpc("app_rf_save", { p_changes: { lots: { upsert: [{ ...heldSnap.lots[0], qc: result }] }, qcRecords: { upsert: [{ id: `QC-${TODAY}-08`, lotId: mx, tests: [{ key: "hardness", value: 65, pass: true }], result }] } }, p_base_version: heldSnap.version, p_action: "addQcRecord" });
+      assert.equal(reply.error?.code, "RF_QA_HEAD_ONLY", `${persona} ${result} of a held lot straight to the database`);
+    }
+  }
+  await go(s, rig, "persona-qah", "addQcRecord", { lotId: mx, values: { hardness: 65, sg: 1.18 }, result: "pass", note: "ตรวจซ้ำ" });
   const released = (await s.call("app_rf_master")).lots[0];
   assert.deepEqual([released.qc, released.holdReasons], ["pass", []]);
   await inSync(s, rig, "released");
@@ -1136,7 +1175,7 @@ test("mixing holds the lot per stage, the QC decision releases it and adds the p
   let snapshot = await s.call("app_rf_master");
   assert.deepEqual([snapshot.orders[0].producedQty, snapshot.fgBoxes[0].status, snapshot.lots.find((row) => row.id === fn).countedToOrder], [0, "hold", false]);
   await inSync(s, rig, "finishing on hold");
-  await go(s, rig, "persona-qa", "addQcRecord", { lotId: fn, values: { hardness: 66 }, result: "pass" });
+  await go(s, rig, "persona-qah", "addQcRecord", { lotId: fn, values: { hardness: 66 }, result: "pass" }); // ปล่อยล็อตที่กัก = หัวหน้า QA ขึ้นไป
   snapshot = await s.call("app_rf_master");
   assert.deepEqual([snapshot.orders[0].producedQty, snapshot.fgBoxes[0].status, snapshot.lots.find((row) => row.id === fn).countedToOrder, snapshot.orders[0].status], [20, "pending_wh", true, "in_progress"]);
   await inSync(s, rig, "finishing released by QA");
@@ -1229,7 +1268,7 @@ test("a finishing lot of a WO linked to a BOM job makes no boxes and becomes a p
   // ล็อตตกแต่งที่ hold: ไม่มีล็อตแท่งจน QA ตัดสินเป็น pass แล้วเกิดครั้งเดียว ผลตรวจถัดไปไม่สร้างซ้ำ
   const fn2 = (await fin({ useQty: 20, passedQty: 20, qcResult: "hold" })).result;
   assert.deepEqual([(await rodLots()).length, (await bom()).version], [1, before + 1], "a lot on hold makes no rod lot");
-  await go(s, rig, "persona-qa", "addQcRecord", { lotId: fn2, values: { hardness: 66 }, result: "pass" });
+  await go(s, rig, "persona-qah", "addQcRecord", { lotId: fn2, values: { hardness: 66 }, result: "pass" }); // ปล่อยล็อตที่กัก = หัวหน้า QA ขึ้นไป
   lots = await rodLots();
   assert.deepEqual(lots.map((lot) => [lot.lotNo, lot.qtySent, lot.status]), [[fn1, 30, "pending"], [fn2, 20, "pending"]], "the QA pass makes the rod lot");
   assert.equal((await bom()).version, before + 2);

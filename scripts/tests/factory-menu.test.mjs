@@ -11,7 +11,7 @@ const FILES = [
   "modules/rubberflow-rules.js", "modules/rubberflow-derive.js", "modules/rubberflow-actions.js", "modules/rubberflow-seed.js", "modules/rubberflow-store.js",
   "modules/rubberflow-ui.js", "modules/factory-kit.js", "modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js",
   "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js",
-  "modules/st-pages.js", "modules/module-st.js", "modules/module-sr.js", "modules/module-qa.js", "modules/gr-pages.js", "modules/module-gr.js", "modules/module-pt.js", "modules/module-bg.js", "modules/module-pk.js", "modules/wh-pages.js", "modules/module-wh.js",
+  "modules/st-pages.js", "modules/module-st.js", "modules/module-sr.js", "modules/qa-pages.js", "modules/module-qa.js", "modules/gr-pages.js", "modules/module-gr.js", "modules/module-pt.js", "modules/module-bg.js", "modules/module-pk.js", "modules/wh-pages.js", "modules/module-wh.js",
 ];
 const DEPT_FILES = ["st", "sr", "qa", "gr", "pt", "bg", "pk", "wh"].map((dept) => `modules/module-${dept}.js`);
 const ALL_DEPTS = ["FACTORY_ST", "FACTORY_SR", "FACTORY_QA", "FACTORY_GR", "FACTORY_PT", "FACTORY_BG", "FACTORY_PK", "FACTORY_WH"];
@@ -241,7 +241,7 @@ test("the pages for a department use no 'แท่งยาว' wording, escape 
     assert.equal(h1Of(html), "งานของฉัน", `${code} opens on งานของฉัน`);
     assert.doesNotMatch(html, /role="tablist"|class="rf-tab[ "]/, `${code} has no in-page tabs`);
   }
-  assert.match(pages.FACTORY_QA, /href="#\/rubberflow\?p=quality"/);
+  assert.doesNotMatch(pages.FACTORY_QA, /#\/rubberflow\?p=(quality|spc|trace)/, "the QA module no longer sends anyone to the RubberFlow quality pages");
 });
 
 // หน้าคลัง (SR ST WH): ไม่มีแท็บในหน้า · เมนูข้างมี "งานของฉัน" (ค่าตั้งต้นเสมอ) กับ "ในคลัง" (?tab=stock) · h1 = ชื่อรายการเมนูที่เปิดอยู่
@@ -484,9 +484,10 @@ test("the store subscription of module-bom repaints a department route and the k
   assert.match(bom, /store\.subscribe\(\(event\) => \{\r?\n    if \(!onOwnRoute\(\)\) return;/);
 });
 
-test("QA shows the rod lots held for a decision and the RubberFlow lots held in the line, each with one link to where the decision is made", async () => {
+test("QA's งานของฉัน: the rod lots held at SR are the shared BOM cards, the lots held in the line, the held chemical lots and the open NCRs are cards of the RubberFlow store; nothing links to the RubberFlow quality pages", async () => {
   const env = load({ employee: emp("QA") });
-  assert.match(await env.open("FACTORY_QA"), /ไม่มียางเส้นยาวที่กักรอตัดสิน/);
+  env.rf.store.setUser("U09");
+  assert.doesNotMatch(await env.open("FACTORY_QA"), /ยางเส้นยาวที่กักรอตัดสิน/, "no rod section while no rod lot is held");
   // SR รับล็อตที่ไม่ผ่านขนาด → กักรอ QA
   env.store.setUser("B11");
   const pending = env.store.data().rodLots.find((lot) => lot.status === "pending");
@@ -497,12 +498,17 @@ test("QA shows the rod lots held for a decision and the RubberFlow lots held in 
   assert.ok(html.includes(escapeHtml(pending.lotNo)), "the held rod lot is listed");
   assert.match(html, /ยางเส้นยาวที่กักรอตัดสิน/);
   assert.match(html, /ล็อตในสายผลิตที่กักรอตัดสิน/);
+  assert.match(html, /วัตถุดิบที่กักรอปลดกักกัน/);
+  assert.match(html, /NCR ที่ยังเปิดอยู่/);
   const rfHeld = env.rf.store.data().lots.filter((lot) => lot.qc === "hold");
   assert.ok(rfHeld.length >= 1, "the RubberFlow demo seed holds a lot");
   for (const lot of rfHeld) assert.ok(html.includes(escapeHtml(lot.id)), `RubberFlow lot ${lot.id} is listed`);
-  assert.doesNotMatch(html, /#\/bom\?p=work/, "no link back to a BOM work page");
-  assert.equal([...html.matchAll(/href="#\/rubberflow\?p=quality"/g)].length, 1);
+  for (const lot of env.rf.store.data().materialLots.filter((row) => row.status === "hold")) assert.ok(html.includes(escapeHtml(lot.lotNo)), `held material lot ${lot.lotNo} is listed`);
+  for (const ncr of env.rf.store.data().ncrs.filter((row) => row.status === "open")) assert.ok(html.includes(escapeHtml(ncr.id)), `open NCR ${ncr.id} is listed`);
+  assert.doesNotMatch(html, /#\/bom\?p=work|#\/rubberflow\?p=(quality|spc|trace)/, "no link back to a BOM work page or the retired RubberFlow pages");
+  assert.match(html, /data-rf-scope="rubberflow"/, "the RubberFlow cards are bound by RubberFlow's own binder");
 });
+
 
 test("a database store that is still loading or failed shows one short line, never an empty or broken page", async () => {
   const env = load({ employee: emp("SR") });
@@ -644,27 +650,35 @@ test("SR: the landing shows the same task cards as BOM งานของฉั�
   assert.match(readOnly, /ดูอย่างเดียว/);
 });
 
-test("QA: held rod lots are cards with the decide button, the RubberFlow held lots keep their link, and a submit decides the lot", async () => {
+test("QA: the held rod lot is a card for staff (read-only, says who decides) and has the decide button for the QA head; a head's submit decides the lot", async () => {
   const env = load({ employee: emp("QA") });
+  env.rf.store.setUser("U09");
   env.store.setUser("B11");
   const pending = env.store.data().rodLots.find((lot) => lot.status === "pending");
   assert.equal(env.store.run("receiveRods", { lotId: pending.id, qtyReceived: pending.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ขนาดเกินสเปก", location: "Q-01" }).ok, true);
   env.store.setUser("B12");
   const bom = cardsOf((await workPage(env)).html);
   assert.equal(bom.length, 1, "one held lot waits for QA");
+  const staff = await env.open("FACTORY_QA");
+  const rodCards = (html) => cardsOf(html).filter((card) => /ตัดสินล็อตยางเส้นยาว/.test(card));
+  assert.deepEqual(plain(rodCards(staff)), plain(bom), "the page draws the BOM card as it is");
+  assert.doesNotMatch(staff, /data-rf-open="rodDecide"/, "QA staff cannot decide a held rod lot");
+  assert.match(staff, /ตัดสินได้เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน\/ผู้ดูแลระบบ/);
+  assert.doesNotMatch(staff, /แท่ง/);
+  // the QA head (the demo manager account stands for the head: no role code = the manager role)
+  env.setEmployee(emp("QA", "department_manager"));
+  env.store.setUser("B02");
   const page = await landingWith(env, "FACTORY_QA");
-  assert.deepEqual(plain(cardsOf(page.html)), plain(bom));
   assert.match(page.html, /data-rf-open="rodDecide"/);
-  assert.equal([...page.html.matchAll(/href="#\/rubberflow\?p=quality"/g)].length, 1, "the RubberFlow held lots keep their one link");
-  assert.match(page.html, /ล็อตในสายผลิตที่กักรอตัดสิน/);
-  assert.doesNotMatch(page.html, /แท่ง/);
+  assert.equal(rodCards(page.html).length, 1);
   const dialog = await page.click("rodDecide");
   assert.match(dialog, /data-rf-form="decideRods"/);
   assert.doesNotMatch(dialog, /แท่ง/);
   await page.submit({ decision: "accept", note: "ใช้ได้ตามสภาพ" });
   assert.equal(env.store.data().rodLots.find((lot) => lot.id === pending.id).status, "stored", "the decision ran against the BOM store");
-  assert.match(await env.open("FACTORY_QA"), /ไม่มียางเส้นยาวที่กักรอตัดสิน/);
+  assert.doesNotMatch(await env.open("FACTORY_QA"), /ยางเส้นยาวที่กักรอตัดสิน/, "the section leaves with its last card");
 });
+
 
 // ใบที่ปล่อยผลิตแล้วที่ PK ทำไม่ครบตามสั่งและรับเข้าคลังแล้ว (ปิดใบแบบรับไม่ครบได้)
 function makeShortClosable(env) {
@@ -737,14 +751,16 @@ test("the task cards are drawn once (bom-hub taskCard / boardCards); the departm
   assert.match(hub, /const \{ taskCards, cards \} = boardCards\(ctx, board\);/, "BOM work page uses it too");
   assert.match(read("modules/factory-kit.js"), /hub\.boardCards\(ctx, board\)/);
   for (const dept of ["sr", "st", "wh", "qa"]) {
-    const source = read(dept === "wh" ? "modules/wh-pages.js" : dept === "st" ? "modules/st-pages.js" : `modules/module-${dept}.js`);
-    assert.match(source, dept === "qa" ? /F\.deptWorkSection\(ctx/ : dept === "sr" || dept === "wh" ? /F\.deptWork\(ctx/ : /hub\(\)\.boardCards\(ctx, \{ \.\.\.board/, `${dept} places the shared section`);
+    const source = read(dept === "wh" ? "modules/wh-pages.js" : dept === "st" ? "modules/st-pages.js" : dept === "qa" ? "modules/qa-pages.js" : `modules/module-${dept}.js`);
+    assert.match(source, dept === "sr" || dept === "wh" || dept === "qa" ? /F\.deptWork\(ctx/ : /hub\(\)\.boardCards\(ctx, \{ \.\.\.board/, `${dept} places the shared section`);
     assert.match(source, dept === "st" ? /bind: bindPage, actions \}/ : /actions: true/, `${dept} asks for the real actions`);
     // SR draws its own tables (stock, receipts, issues, ledger) with the shared dialog buttons, but never the card markup · WH draws the cards of RubberFlow boxes (not BOM tasks) and never a BOM task card
     // ST draws the cards of RubberFlow documents (requests, returns, purchase orders) and of the safety stock, never a BOM task card
-    assert.doesNotMatch(source, dept === "sr" ? /bom-job|taskTable/ : dept === "wh" || dept === "st" ? /taskTable|task\.kind|fgReceive|fgDeliver|fgCloseShort|partReturn"\)|kind === "buy"/ : /bom-job|openButton|data-rf-open|taskTable/, `${dept} keeps no copy of the card HTML`);
+    assert.doesNotMatch(source, dept === "sr" ? /bom-job|taskTable/ : dept === "wh" || dept === "st" || dept === "qa" ? /taskTable|task\.kind|fgReceive|fgDeliver|fgCloseShort|partReturn"\)|kind === "buy"|rodDecide/ : /bom-job|openButton|data-rf-open|taskTable/, `${dept} keeps no copy of the card HTML`);
   }
   assert.doesNotMatch(read("modules/module-st.js"), /bom-job|openButton|data-rf-open|taskTable/, "module-st.js only registers the module");
+  assert.doesNotMatch(read("modules/module-qa.js"), /bom-job|openButton|data-rf-open|taskTable|deptWork/, "module-qa.js only registers the module (the pages are in qa-pages.js)");
+  assert.doesNotMatch(read("modules/qa-pages.js"), /rubberflow\?p=(quality|spc|trace)|p=quality/, "qa-pages.js has no link to the retired RubberFlow pages");
 });
 
 // ---- RubberFlow (แผนก RB): การ์ดงาน RB จาก BOM "งานของฉัน" บนหน้าภาพรวม ----
@@ -1112,21 +1128,35 @@ test("side menu: GR (production) has งานของฉัน with the open-j
   assert.equal(navOf(env, "FACTORY_GR").items[0].count, 0);
 });
 
-test("side menu: QA has only งานของฉัน, counted by its work cards", async () => {
+test("side menu: QA has งานของฉัน (counted by its cards), ผลตรวจ, NCR, CoA, SPC, สืบย้อนกลับ and วัตถุดิบที่กัก; each opens its page", async () => {
   const env = load({ employee: emp("QA") });
+  env.rf.store.setUser("U09");
   env.store.setUser("B11");
   const pending = env.store.data().rodLots.find((lot) => lot.status === "pending");
   assert.equal(env.store.run("receiveRods", { lotId: pending.id, qtyReceived: pending.qtySent, values: { thickness: 99, width: 99, weightPerM: 9999 }, note: "ขนาดเกินสเปก", location: "Q-01" }).ok, true);
   env.store.setUser("B12");
   const html = await env.open("FACTORY_QA");
   assert.equal(h1Of(html), "งานของฉัน");
-  assert.equal(cardsOf(html).length, 1);
-  assert.deepEqual(plain(navOf(env, "FACTORY_QA").items), [{ label: "งานของฉัน", href: "#/qa", active: true, current: true, count: 1 }]);
+  const cards = cardsOf(html).length;
+  assert.ok(cards >= 4, "a rod lot, a line lot, a chemical lot and an NCR");
+  const items = plain(navOf(env, "FACTORY_QA").items);
+  assert.deepEqual(items.map((item) => [item.label, item.href]), [["งานของฉัน", "#/qa"], ["ผลตรวจ", "#/qa?tab=records"], ["NCR", "#/qa?tab=ncr"], ["CoA", "#/qa?tab=coa"], ["SPC", "#/qa?tab=spc"], ["สืบย้อนกลับ", "#/qa?tab=trace"], ["วัตถุดิบที่กัก", "#/qa?tab=material"]]);
+  assert.deepEqual(items.map((item) => item.active), [true, false, false, false, false, false, false]);
+  assert.equal(items[0].count, cards, "the number on the menu = the cards of the page");
+  assert.deepEqual(items.slice(1).map((item) => item.count), [0, 0, 0, 0, 0, 0], "no other item repeats a number");
   assert.equal(env.modules.FACTORY_QA.nav[0].subnav("sr"), "");
-  // ตัดสินแล้ว ไม่มีงานค้าง: ไม่มีตัวเลข
+  for (const [tab, label] of [["records", "ผลตรวจ"], ["ncr", "NCR"], ["coa", "CoA"], ["spc", "SPC"], ["trace", "สืบย้อนกลับ"], ["material", "วัตถุดิบที่กัก"]]) {
+    const page = await env.open("FACTORY_QA", `tab=${tab}`);
+    assert.equal(h1Of(page), label, tab);
+    assert.equal(navOf(env, "FACTORY_QA").items.find((item) => item.active)?.label, label, `${tab} is the marked page`);
+    assert.doesNotMatch(page, /undefined|NaN|\[object Object\]|แท่ง/, tab);
+  }
+  // ตัดสินแล้ว (หัวหน้า) ตัวเลขลดลง
+  env.setEmployee(emp("QA", "department_manager"));
+  env.store.setUser("B02");
   assert.equal(env.store.run("decideRods", { lotId: pending.id, decision: "accept", note: "ใช้ได้ตามสภาพ" }).ok, true);
   await env.open("FACTORY_QA");
-  assert.equal(navOf(env, "FACTORY_QA").items[0].count, 0);
+  assert.equal(navOf(env, "FACTORY_QA").items[0].count, cards - 1);
 });
 
 test("side menu: viewOf and the menu definitions; nothing outside test mode", () => {

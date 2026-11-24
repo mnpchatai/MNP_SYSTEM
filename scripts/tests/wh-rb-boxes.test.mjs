@@ -153,7 +153,15 @@ test("finishing destination: a linked lot may go to the customer (boxes waiting 
   assert.equal((await s.call("app_bom_master")).rodLots.filter((row) => row.lotNo === srLot).length, 1);
   const held = (await saved(s.store.run("recordFinishing", { transferId: "TR-U", useQty: 10, passedQty: 10, perBox: 10, qcResult: "hold" }))).result;
   assert.deepEqual([(await s.rf()).lots.find((row) => row.id === held).destination, await s.states(held)], [null, "hold"]);
+  // ปล่อยล็อตที่กัก = หัวหน้า QA ขึ้นไป (RF_QA_HEAD_ONLY): พนักงาน QA ปล่อยไม่ได้ · admin ปล่อยได้
   await s.as("persona-qa");
+  assert.match(s.store.run("addQcRecord", { lotId: held, values: { hardness: 65 }, result: "pass" }).error.message, /หัวหน้า QA/, "the page says no first");
+  for (const result of ["pass", "fail"]) {
+    const snap = await s.rf();
+    const reply = await s.mock.client.rpc("app_rf_save", { p_changes: { lots: { upsert: [{ ...snap.lots.find((row) => row.id === held), qc: result }] }, qcRecords: { upsert: [{ id: "QC-X-77", lotId: held, tests: [{ key: "hardness", value: 65, pass: true }], result }] } }, p_base_version: snap.version, p_action: "addQcRecord" });
+    assert.equal(reply.error?.code, "RF_QA_HEAD_ONLY", `QA staff ${result} of a held lot straight to the database`);
+  }
+  await s.as("persona-qah");
   await saved(s.store.run("addQcRecord", { lotId: held, values: { hardness: 65 }, result: "pass" }));
   assert.deepEqual([(await s.rf()).lots.find((row) => row.id === held).destination, await s.states(held)], ["customer", "pending_wh"], "QA releases it to the customer through WH");
 });
@@ -248,6 +256,7 @@ test("boxes from before this change that are in stock or shipped get their creat
   await s.as("persona-qa");
   await saved(s.store.run("addQcRecord", { lotId: "FN-O1", values: { hardness: 65 }, result: "hold" }));
   assert.equal(await s.states("FN-O1"), "hold,hold,shipped");
+  await s.as("persona-qah"); // ปล่อยล็อตที่กัก = หัวหน้า QA ขึ้นไป
   await saved(s.store.run("addQcRecord", { lotId: "FN-O1", values: { hardness: 65 }, result: "pass" }));
   assert.equal(await s.states("FN-O1"), "in_stock,in_stock,shipped", "QA releases the old boxes back into stock");
 });
@@ -281,12 +290,13 @@ test("a QA fail of a lot WH received takes its credit back from the RB job in th
   await saved(s.store.run("addQcRecord", { lotId: "FN-L1", values: { hardness: 80 }, result: "hold" }));
   assert.deepEqual([await s.states("FN-L1"), (await s.job()).qtyDone], ["hold,hold,hold", 60], "a hold keeps the credit");
   const bomBefore = (await s.call("app_bom_master")).version;
+  await s.as("persona-qah"); // ตัดสินล็อตที่กักเป็นไม่ผ่าน = หัวหน้า QA ขึ้นไป
   const id = (await saved(s.store.run("addQcRecord", { lotId: "FN-L1", values: { hardness: 80 }, result: "fail" }))).result;
   const lot = (await s.rf()).lots.find((row) => row.id === "FN-L1");
   assert.deepEqual([lot.qc, lot.whCredit, await s.states("FN-L1")], ["fail", null, "hold,hold,hold"]);
   const job = await s.job();
   assert.deepEqual([job.qtyDone, job.status, job.reports.at(-1).good, job.reports.at(-1).note, job.reports.at(-1).by],
-    [0, "in_progress", 0, `QA ตัดสินไม่ผ่าน ล็อต FN-L1 ถอนยอด 60 (${id})`, "ธนา ตรวจสอบ"]);
+    [0, "in_progress", 0, `QA ตัดสินไม่ผ่าน ล็อต FN-L1 ถอนยอด 60 (${id})`, storeApi.personaUser(s.rows["persona-qah"]).name]);
   assert.ok(!job.reports.some((report) => report.note.includes("ย้อนรับเข้า")), "the fail is not written as a receipt reversal");
   assert.equal((await s.call("app_bom_master")).version, bomBefore + 1, "one BOM counter step");
   assert.equal(s.store.data().lots.find((row) => row.id === "FN-L1").whCredit, null, "the page equals the database");
@@ -306,6 +316,7 @@ test("QA is never blocked from a fail: a lot credited to a closed order fails wi
   await s.as("persona-qa");
   await saved(s.store.run("addQcRecord", { lotId: "FN-L1", values: { hardness: 80 }, result: "hold" }));
   const bomBefore = await s.call("app_bom_master");
+  await s.as("persona-qah"); // ตัดสินล็อตที่กักเป็นไม่ผ่าน = หัวหน้า QA ขึ้นไป
   await saved(s.store.run("addQcRecord", { lotId: "FN-L1", values: { hardness: 80 }, result: "fail" }));
   const lot = (await s.rf()).lots.find((row) => row.id === "FN-L1");
   assert.deepEqual([lot.qc, lot.whCredit, await s.states("FN-L1")], ["fail", { jobNo: "JOB-W", qty: 60 }, "hold,hold,hold"], "the fail is recorded and the credit is kept");

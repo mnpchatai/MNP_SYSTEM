@@ -115,8 +115,8 @@
     if (isEditing()) showToast("มีผู้อื่นอัปเดตข้อมูล RubberFlow ข้อมูลล่าสุดจะแสดงเมื่อเปิดหน้านี้ใหม่");
     else renderRoute();
   };
-  // หน้าโมดูล WH (#/wh) วาดกล่องสินค้า และโมดูล ST (#/st) วาดล็อตเคมี ใบสั่งซื้อ และเอกสารคลังเคมีจาก store นี้ด้วย: บันทึกสำเร็จ ผู้อื่นบันทึก หรือย้อนกลับ = วาดหน้านั้นใหม่ (ไม่ทับ dialog ที่เปิดอยู่)
-  const onWhRoute = () => { try { return ["wh", "st"].includes(currentRoute().path); } catch { return false; } };
+  // หน้าโมดูล WH (#/wh) วาดกล่องสินค้า โมดูล ST (#/st) วาดล็อตเคมี ใบสั่งซื้อ และเอกสารคลังเคมี และโมดูล QA (#/qa) วาดผลตรวจ NCR ล็อตที่กัก จาก store นี้ด้วย: บันทึกสำเร็จ ผู้อื่นบันทึก หรือย้อนกลับ = วาดหน้านั้นใหม่ (ไม่ทับ dialog ที่เปิดอยู่)
+  const onWhRoute = () => { try { return ["wh", "st", "qa"].includes(currentRoute().path); } catch { return false; } };
   const WH_REPAINT = Object.freeze(["saved", "synced", "reverted"]);
   store.subscribe((event) => {
     if (!onRfRoute()) {
@@ -453,9 +453,9 @@
   const navCounts = (data) => ({
     wip: data.transfers.filter((transfer) => transfer.status === "in_transit").length,
     requisition: data.requisitions.filter((requisition) => requisition.status === "weighing").length,
-    quality: data.lots.filter((lot) => lot.qc === "hold").length,
+    ncr: data.ncrs.filter((ncr) => ncr.status === "open").length,
   });
-  const countTitle = (id) => ({ wip: "ใบส่งมอบรอรับ", requisition: "ใบเบิกเก่าที่ค้างจ่าย", quality: "ล็อตรอตัดสิน" })[id] ?? "";
+  const countTitle = (id) => ({ wip: "ใบส่งมอบรอรับ", requisition: "ใบเบิกเก่าที่ค้างจ่าย", ncr: "NCR ที่เปิดอยู่" })[id] ?? "";
 
   // แถบเครื่องมือของ RubberFlow ใต้หัวหน้า: ทำหน้าที่เป็น · สแกนรหัส · แจ้งเตือน · รีเซ็ต
   const canPurge = () => store.isRemote() && Boolean(state.sandbox?.active);
@@ -672,6 +672,14 @@
     });
   }
 
+  // p=quality (tab hold → งานของฉัน · records · ncr · coa) / p=spc (ch) / p=trace (q) → พารามิเตอร์ของ #/qa · หน้าอื่น = null
+  function movedToQa(params) {
+    const page = params.get("p");
+    if (page === "quality") { const tab = ["records", "ncr", "coa"].includes(params.get("tab")) ? params.get("tab") : null; return tab ? { tab } : {}; }
+    if (page === "spc") return { tab: "spc", ch: params.get("ch") };
+    if (page === "trace") return { tab: "trace", q: params.get("q") };
+    return null;
+  }
   async function renderRubberFlow(params) {
     if (!storeApi.usesRubberFlow(state.employee)) return renderNotFound();
     // ลิงก์เก่า p=rbstore (คลังเคมี RB เคยมีเมนูของตัวเอง) → แท็บคลังเคมี RB ของ p=warehouse (แท็บย่อยเดิม tab= เป็น view=)
@@ -680,15 +688,24 @@
       location.hash = url("warehouse", { view: sub, q: params.get("q"), days: params.get("days") });
       return undefined;
     }
+    // ลิงก์เก่า p=quality / p=spc / p=trace: งาน QA ย้ายไปโมดูล QA (#/qa · โรงงานขั้น 5) · ผู้ที่เปิดโมดูล QA ได้ไปที่แท็บเดียวกัน · คนอื่นเห็นข้อความบรรทัดเดียวบอกว่าย้ายไปไหน (ไม่มีสำเนาหน้าที่สอง)
+    const moved = movedToQa(params);
+    const factory = window.MNP_FACTORY;
+    const qaOpen = Boolean(moved) && Boolean(factory?.canOpenDeptModule?.(state.employee, "QA", "FACTORY_QA"));
+    if (moved && qaOpen) {
+      location.hash = factory.routeUrl("qa", moved);
+      return undefined;
+    }
     store.ensureLoaded(); // โหมดฐานข้อมูล: โหลดข้อมูลหลักครั้งแรก (วาดหน้าใหม่เองเมื่อเสร็จ) · โหมดในเครื่องไม่ทำอะไร
     const ctx = makeContext(params);
     const { user, page } = ctx;
-    const entry = page ? storeApi.findModule(page) : null;
+    const entry = moved ? null : page ? storeApi.findModule(page) : null;
     ui.module = entry && user ? page : ""; // ไอคอนหน้าชื่อหน้า (ui.pageHead)
     const title = entry && user ? `${TITLE} / ${entry.label}` : TITLE;
     let body;
     let bind = null;
     if (!user) body = introHtml();
+    else if (moved) body = `${pageNavHtml(user, null)}${ui.card(ui.empty("งานคุณภาพ (ผลตรวจ NCR CoA SPC และสืบย้อนกลับ) อยู่ที่โมดูลตรวจคุณภาพ (QA) บัญชีนี้เปิดโมดูลนั้นไม่ได้ · NCR ที่ RB ต้องตอบอยู่ที่เมนู “NCR ที่ RB ต้องตอบ” ของ RubberFlow"))}`;
     else if (!entry) {
       // หน้าไม่รู้จัก → หน้าแรกของบทบาท (ไม่แสดงหน้าว่าง)
       location.hash = url(storeApi.homeOf(user));

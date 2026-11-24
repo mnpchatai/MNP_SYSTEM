@@ -83,6 +83,7 @@
     shipBoxes: (user) => Boolean(user.wh || user.role === "admin"),
     reverseBoxes: (user) => Boolean(user.whHead || user.role === "admin"),
     qc: (user) => Boolean(user.planner || user.qa), // ผลตรวจ เปิด/ปิด NCR: แผนก QA
+    qaRelease: (user) => Boolean(rules().canQaRelease?.(user)), // ผลตรวจผ่าน/ไม่ผ่านของล็อตที่กัก · ปลดกักกันวัตถุดิบ: หัวหน้า QA หรือผู้จัดการโรงงานขึ้นไป (นิยามเดียว rules.canQaRelease · ฐานข้อมูล RF_QA_HEAD_ONLY)
     fillNcr: (user) => Boolean(user.planner || user.qa || user.rb), // กรอกการแก้ไข/ป้องกันของ NCR ที่เปิดอยู่: QA หรือ RB
     editMold: (user) => Boolean(user.planner || user.rb), // เพิ่ม/แก้แม่พิมพ์: แผนก RB
     purchase: (user) => Boolean(user.st || user.role === "admin"), // สั่งซื้อวัตถุดิบ (สร้างใบสั่งซื้อ): แผนก ST เท่านั้น (admin ไว้แก้ปัญหา)
@@ -110,6 +111,7 @@
     shipBoxes: "ส่งมอบกล่องสินค้าได้โดยแผนกคลังสินค้าสำเร็จรูป (WH) หรือผู้ดูแลระบบเท่านั้น",
     reverseBoxes: "ย้อนการรับเข้าหรือการส่งมอบกล่องได้โดยผู้จัดการแผนกคลังสินค้าสำเร็จรูป (WH) หรือผู้ดูแลระบบเท่านั้น",
     qc: "บันทึกผลตรวจและเปิด/ปิด NCR ได้โดยแผนก QA หรือฝ่ายวางแผน",
+    qaRelease: "ปล่อยล็อตที่กักหรือตัดสินผ่าน/ไม่ผ่าน (รวมปลดกักกันวัตถุดิบ) ได้เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ · พนักงาน QA บันทึกกักต่อ/ตรวจซ้ำได้",
     fillNcr: "กรอกการแก้ไขและป้องกันของ NCR ได้โดยแผนก QA พนักงานแผนก RB หรือฝ่ายวางแผน",
     editMold: "เพิ่ม/แก้แม่พิมพ์ได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
     purchase: "สั่งซื้อวัตถุดิบได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
@@ -683,6 +685,8 @@
     needRight(ctx, "holdMaterial");
     if (!["hold", "available"].includes(status)) fail("สถานะล็อตไม่ถูกต้อง");
     const lot = d.materialLots.find((row) => row.lotNo === lotNo) || fail("ไม่พบล็อต");
+    // ปลดกักกัน (hold → available) = หัวหน้า QA เท่านั้น · กักกันยังเป็นของ ST / QA / ฝ่ายวางแผนตามเดิม
+    if (lot.status === "hold" && status === "available") needRight(ctx, "qaRelease");
     lot.status = status;
     audit(d, ctx, status === "hold" ? "กักกันล็อตวัตถุดิบ" : "ปลดกักกันล็อตวัตถุดิบ", lotNo);
   }
@@ -1286,6 +1290,8 @@
     const result = p.result || (allPass ? "pass" : "hold");
     if (!["pass", "hold", "fail"].includes(result)) fail("ผลตัดสินไม่ถูกต้อง");
     if (result === "pass" && !allPass) fail('มีค่าทดสอบนอกสเปก ตัดสินเป็น "ผ่าน" ไม่ได้');
+    // ล็อตที่กักอยู่ตัดสินเป็นผ่านหรือไม่ผ่าน = ปล่อยล็อต: หัวหน้า QA เท่านั้น · กักต่อ/ตรวจซ้ำ และผลของล็อตที่ไม่ได้กัก ยังเป็นของ QA ทุกคน
+    if (lot.qc === "hold" && result !== "hold") needRight(ctx, "qaRelease");
     const id = nextId(d, "QC", ctx.now, ctx, d.qcRecords, rowId);
     d.qcRecords.unshift({ id, lotId: lot.id, orderId: lot.orderId, stage: lot.stage, tests, result, note: p.note || "", inspector: ctx.user?.name, at: ctx.now });
     lot.qc = result;
