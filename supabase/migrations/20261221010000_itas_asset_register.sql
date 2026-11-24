@@ -11,14 +11,16 @@
 --   - itas_asset_log      ประวัติเพิ่ม/แก้ทุกแถว (ค่าเดิม ค่าใหม่ทั้งแถว ช่องลับเป็น ciphertext) · เพิ่มได้อย่างเดียว · เขียนโดย trigger
 --   - itas_asset_moves    ประวัติย้าย/เปลี่ยนชิ้นส่วนอัตโนมัติ (host_code/slot/status เปลี่ยน) · เพิ่มได้อย่างเดียว · เขียนโดย trigger
 --   - itas_vault          ตู้เซฟ 1 แถวต่อโหมด: เก็บเฉพาะ salt / พารามิเตอร์ KDF / กุญแจหลักที่ถูกห่อ (ห่อด้วยรหัสตู้เซฟ และรหัสกู้คืน)
---   - itas_vault_log      ประวัติตั้ง/เปลี่ยนรหัสตู้เซฟ/ออกรหัสกู้คืนใหม่ (ไม่เก็บ secret ใด ๆ) · เพิ่มได้อย่างเดียว · เขียนโดย trigger
+--                         + auth_hash = SHA-256 ของ "auth token" ที่ derive จากกุญแจหลัก (DEK) ใช้พิสูจน์ว่าผู้เรียก rotate รู้กุญแจจริง (ไม่ส่งกลับให้ใครอ่าน)
+--   - itas_vault_log      ประวัติตั้ง/เปลี่ยนรหัสตู้เซฟ/ออกรหัสกู้คืนใหม่/พยายาม rotate ล้มเหลว · เก็บชุด wrap เดิมที่ถูกแทน (ciphertext + salt ไม่ใช่ plaintext) · เพิ่มได้อย่างเดียว · เขียนโดย trigger
+--   - itas_admins         รายชื่อผู้ใช้ทะเบียนอุปกรณ์ (allowlist ของโมดูลเอง แยกจาก itwo_staff) · ไม่มี RPC เพิ่ม/ลบ แก้ทาง migration/SQL เท่านั้น
 --
 -- ช่องลับ (client-side encryption): ฐานข้อมูลเก็บเฉพาะ envelope {v:1, n:<nonce 12 ไบต์ base64>, c:<ciphertext+tag base64>} ที่หน้าเว็บเข้ารหัสมาแล้ว
 --   ไม่มีฟังก์ชัน/คอลัมน์ใดรับหรือเก็บ plaintext ของช่องลับ · ไม่ใช้ pgcrypto · เซิร์ฟเวอร์ตรวจได้แค่รูปแบบ/ขนาด/ว่าช่องนั้นนิยามเป็น secret
 --   (ตารางมี CHECK รูปแบบ envelope อีกชั้น เขียนตรงด้วยสิทธิ์สูงก็เก็บ plaintext ไม่ได้) · ผู้ดูแลฐานข้อมูลทำลาย ciphertext ได้ (อ่านไม่ได้) → เจ้าของควรส่งออกสำรองเป็นระยะ
 --   รหัสตู้เซฟ/กุญแจ ไม่ส่งขึ้นเซิร์ฟเวอร์ · ไม่บันทึกว่าใครกดดูช่องลับเมื่อไร (เจ้าของตัดสิน) แต่ประวัติแก้ไขข้อมูลเก็บครบ
 --
--- สิทธิ์: it_admin ใน itwo_staff เท่านั้นทุก RPC (อ่านจาก itwo_staff แบบเดียวกับ itrp · ผู้อนุมัติขั้น IT / ผจก. / พนักงาน เรียกไม่ได้) · anon เรียกไม่ได้
+-- สิทธิ์: ผู้อยู่ใน itas_admins เท่านั้นทุก RPC (เจ้าของตัดสิน 24/11/2026: ผู้ดูแลคนเดียว IT3462 — ไม่อ่าน itwo_staff อีก · it_admin ของใบสั่งงาน/ผู้อนุมัติขั้น IT / ผจก. / พนักงาน เรียกไม่ได้) · anon เรียกไม่ได้
 --   RLS deny-all ทุกตาราง + ไม่มี grant ตรงให้ anon/authenticated/service_role · อ่าน/เขียนผ่าน RPC app_itas_* (SECURITY DEFINER, search_path ว่าง) เท่านั้น
 --
 -- โหมดทดสอบ (Admin Sandbox): ทุกตารางมี is_test + trigger private.sandbox_row_scope · persona ทดสอบ (SBX-IT-ADMIN) แก้ของจริงไม่ได้
@@ -34,15 +36,15 @@
 --
 -- สิ่งที่แตะนอกจากของใหม่ itas_*
 --   1) replace private.sandbox_unguarded_tables() — เริ่มจากนิยามล่าสุดบน main (20261220010000_st_rb_chemical_store.sql ทุกชื่อ รวม rf_chem_docs และ itwo/itrp)
---      แล้วต่อ 7 ตารางใหม่ (to_regclass เหมือน itwo/itrp) · ก่อน apply ต้องเทียบ md5(pg_get_functiondef('private.sandbox_unguarded_tables()'::regprocedure)) บน prod
+--      แล้วต่อ 8 ตารางใหม่ (to_regclass เหมือน itwo/itrp) · ก่อน apply ต้องเทียบ md5(pg_get_functiondef('private.sandbox_unguarded_tables()'::regprocedure)) บน prod
 --      ว่าตรงกับฉบับของ 20261220010000 · ไม่ตรง = เพื่อนมี migration ใหม่ที่ replace ไว้ ให้หยุดแล้วใช้ฉบับล่าสุดเป็นฐาน
 --   ไม่แตะ: ตาราง/ฟังก์ชัน/trigger ของ itwo และ itrp (หัวใบ FM02 ผูกกับทะเบียนใหม่เป็นงานรอบหลัง), ฟังก์ชันกลางอื่นของเพื่อน, storage
 --
 -- ลำดับ deploy: ตารางและ RPC ใหม่ล้วน ยังไม่มีหน้าเว็บเรียก · apply ก่อน merge หน้าเว็บ
---   ก่อน apply ที่ production: เช็ก migration ใหม่บน prod, md5 ของ private.sandbox_unguarded_tables(), itwo_staff ยังมี it_admin
---   หลัง apply ตรวจ: relrowsecurity ของ 7 ตาราง, ไม่มี grant ตรง, RPC anon เรียกไม่ได้, seed ชนิด 23 + 23 (จริง/ทดสอบ), ไม่มีแถว itas_assets/itas_vault
+--   ก่อน apply ที่ production: เช็ก migration ใหม่บน prod, md5 ของ private.sandbox_unguarded_tables(), มีพนักงาน IT3462 (active) และ persona SBX-IT-ADMIN
+--   หลัง apply ตรวจ: relrowsecurity ของ 8 ตาราง, ไม่มี grant ตรง, RPC anon เรียกไม่ได้, seed ชนิด 23 + 23 (จริง/ทดสอบ), itas_admins = IT3462 + SBX-IT-ADMIN, ไม่มีแถว itas_assets/itas_vault
 --
--- Rollback (ยังไม่มีข้อมูลจริง): drop function public.app_itas_* / app_sandbox_purge_itas / private.itas_* · drop table itas_vault_log, itas_vault, itas_asset_moves,
+-- Rollback (ยังไม่มีข้อมูลจริง): drop function public.app_itas_* / app_sandbox_purge_itas / private.itas_* · drop table itas_admins, itas_vault_log, itas_vault, itas_asset_moves,
 --   itas_asset_log, itas_assets, itas_type_log, itas_types (ลูกก่อนแม่) · create or replace private.sandbox_unguarded_tables() กลับเป็นนิยามของ 20261220010000
 --   ถ้ามีข้อมูลจริงแล้ว ห้ามย้อนด้วยการ drop (เป็นบันทึก ISO และข้อมูลที่เข้ารหัสแล้วกู้ไม่ได้) ให้แก้ไปข้างหน้าด้วย migration ใหม่
 -- ============================================================================
@@ -50,8 +52,11 @@
 -- 0. ตรวจข้อมูลอ้างอิงที่ migration นี้ต้องใช้ ------------------------------------------
 do $$
 begin
-  if to_regclass('public.itwo_staff') is null then
-    raise exception 'ไม่พบตาราง itwo_staff (สิทธิ์ทีม IT) กรุณา apply migration ใบสั่งงาน IT ก่อน';
+  if to_regprocedure('private.office_notify(uuid, text, text, text, uuid)') is null then
+    raise exception 'ไม่พบ private.office_notify (migration แจ้งเตือนของระบบสำนักงาน) กรุณา apply ก่อน';
+  end if;
+  if to_regclass('public.employees') is null or to_regprocedure('private.sandbox_persona()') is null then
+    raise exception 'ไม่พบตารางพนักงานหรือระบบโหมดทดสอบ (Admin Sandbox) กรุณา apply migration ก่อนหน้า';
   end if;
   if to_regclass('public.rf_chem_docs') is null then
     raise exception 'ไม่พบตาราง rf_chem_docs กรุณา apply 20261220010000_st_rb_chemical_store.sql ก่อน (รายชื่อ private.sandbox_unguarded_tables ต้องต่อจากฉบับนั้น)';
@@ -295,6 +300,9 @@ create table public.itas_vault (
   recovery_kdf_iterations integer not null check (recovery_kdf_iterations between 600000 and 10000000),
   recovery_salt text not null check (private.itas_b64_len(recovery_salt) is not distinct from 16),
   wrapped_key_recovery jsonb not null check (private.itas_wrapped_key_error(wrapped_key_recovery) is null),
+  -- SHA-256 (32 ไบต์) ของ "auth token" 32 ไบต์ที่หน้าเว็บ derive จากกุญแจหลัก DEK (HKDF) · ใช้พิสูจน์ว่าผู้เรียก rotate รู้ DEK จริง (ไม่ใช่แค่มี session ของ it_admin)
+  -- ไม่เคยส่งกลับให้ใครอ่าน (app_itas_vault_get ไม่คืน) · แก้ไม่ได้หลังตั้ง (DEK ไม่เปลี่ยนเมื่อเปลี่ยนรหัส)
+  auth_hash bytea not null check (octet_length(auth_hash) = 32),
   created_by uuid not null references public.employees(id),
   created_at timestamptz not null default now(),
   updated_by uuid not null references public.employees(id),
@@ -303,21 +311,38 @@ create table public.itas_vault (
 create index itas_vault_created_by_idx on public.itas_vault (created_by);
 create index itas_vault_updated_by_idx on public.itas_vault (updated_by);
 comment on table public.itas_vault is
-  'ตู้เซฟของทะเบียนอุปกรณ์ (1 แถวต่อโหมด): salt/พารามิเตอร์ KDF/กุญแจหลักที่ห่อด้วยรหัสตู้เซฟและรหัสกู้คืน · ไม่มีรหัส/กุญแจ plaintext · init ได้ครั้งเดียว แก้ผ่าน app_itas_vault_rotate (ต้องส่ง rev ปัจจุบัน)';
+  'ตู้เซฟของทะเบียนอุปกรณ์ (1 แถวต่อโหมด): salt/พารามิเตอร์ KDF/กุญแจหลักที่ห่อด้วยรหัสตู้เซฟและรหัสกู้คืน + auth_hash (SHA-256 ของ auth token ที่ derive จากกุญแจหลัก) · ไม่มีรหัส/กุญแจ plaintext · init ได้ครั้งเดียว แก้ผ่าน app_itas_vault_rotate (ต้องส่ง rev ปัจจุบัน + auth token ที่ถูกต้อง)';
 
 create table public.itas_vault_log (
   id bigint generated always as identity primary key,
   is_test boolean not null default false,
-  action text not null check (action in ('init', 'change_password', 'new_recovery', 'both')),
+  action text not null check (action in ('init', 'change_password', 'new_recovery', 'both', 'rotate_failed')),
   rev integer not null,
   actor_id uuid not null references public.employees(id),
+  -- ชุดเดิมที่ถูกแทนที่ตอน rotate สำเร็จ {key_version, rev, kdf, kdf_iterations, salt, wrapped_key_pass, recovery_kdf_iterations, recovery_salt, wrapped_key_recovery}
+  --   (ciphertext + salt เท่านั้น ไม่ใช่ plaintext · ไม่มี auth_hash) ไว้กู้ถ้า rotate ผิดพลาด · init และ rotate_failed ไม่มีค่าเดิม (null)
+  --   ไม่มี RPC ใดอ่านคอลัมน์นี้ (กู้ด้วย SQL โดยผู้ดูแลฐานข้อมูลเท่านั้น)
+  old_values jsonb,
   created_at timestamptz not null default now(),
-  foreign key (is_test) references public.itas_vault (is_test)
+  foreign key (is_test) references public.itas_vault (is_test),
+  constraint itas_vault_log_old_values_ck check ((old_values is null) = (action in ('init', 'rotate_failed')))
 );
 create index itas_vault_log_actor_idx on public.itas_vault_log (actor_id);
 create index itas_vault_log_vault_idx on public.itas_vault_log (is_test, id);
 comment on table public.itas_vault_log is
-  'ประวัติตั้งตู้เซฟ/เปลี่ยนรหัส/ออกรหัสกู้คืนใหม่ (ไม่เก็บ secret ใด ๆ) · เพิ่มได้อย่างเดียว (trigger) · เขียนโดย trigger บน itas_vault';
+  'ประวัติตั้งตู้เซฟ/เปลี่ยนรหัส/ออกรหัสกู้คืนใหม่/พยายาม rotate ล้มเหลว (ไม่เก็บ secret plaintext · old_values เก็บชุด wrap เดิมที่ถูกแทน = ciphertext) · เพิ่มได้อย่างเดียว (trigger) · เขียนโดย trigger บน itas_vault (rotate_failed เขียนโดย app_itas_vault_rotate)';
+
+-- รายชื่อผู้ใช้ทะเบียนอุปกรณ์ (allowlist ของโมดูลเอง · เจ้าของตัดสิน 24/11/2026: ผู้ดูแลคนเดียว IT3462) · ไม่มี RPC เพิ่ม/ลบ แก้ทาง migration/SQL เท่านั้น
+--   is_test ต้องตรงกับ employees.is_test ของแถว (itas_is_it_admin ตรวจ) · added_by เป็น null สำหรับแถว seed
+create table public.itas_admins (
+  employee_id uuid primary key references public.employees(id),
+  is_test boolean not null default false,
+  added_by uuid references public.employees(id),
+  added_at timestamptz not null default now()
+);
+create index itas_admins_added_by_idx on public.itas_admins (added_by) where added_by is not null;
+comment on table public.itas_admins is
+  'ผู้ใช้ทะเบียนอุปกรณ์ IT (allowlist ของโมดูล แยกจาก itwo_staff) · seed IT3462 (จริง) + SBX-IT-ADMIN (โหมดทดสอบ) · ไม่มี RPC เพิ่ม/ลบ แก้ด้วย migration/SQL เท่านั้น · ไม่ถูกล้างโดย app_sandbox_purge_itas';
 
 -- 3. ปิดการเข้าถึงตรงทั้งหมด (deny-all) อ่าน/เขียนผ่าน RPC เท่านั้น --------------------
 do $$
@@ -326,7 +351,7 @@ declare
   v_sequence text;
 begin
   foreach v_table in array array[
-    'itas_types', 'itas_type_log', 'itas_assets', 'itas_asset_log', 'itas_asset_moves', 'itas_vault', 'itas_vault_log'
+    'itas_types', 'itas_type_log', 'itas_assets', 'itas_asset_log', 'itas_asset_moves', 'itas_vault', 'itas_vault_log', 'itas_admins'
   ] loop
     -- ถอน service_role ด้วย (บันทึก ISO และตู้เซฟต้องไม่ถูกเขียนตรงด้วย secret key)
     execute format('revoke all on public.%I from public, anon, authenticated, service_role', v_table);
@@ -386,7 +411,7 @@ begin
 end;
 $$;
 
--- สิทธิ์ทะเบียนอุปกรณ์ = ผู้ดูแลงาน IT (it_admin) ใน itwo_staff เท่านั้น (อ่านอย่างเดียว แก้สิทธิ์ที่ใบสั่งงาน IT) · ผู้อนุมัติขั้น IT ไม่มีสิทธิ์
+-- สิทธิ์ทะเบียนอุปกรณ์ = ผู้อยู่ใน itas_admins (allowlist ของโมดูลเอง ไม่อ่าน itwo_staff) · แถวต้องอยู่โหมดเดียวกับพนักงาน (persona ↔ แถว is_test)
 create or replace function private.itas_is_it_admin(p_employee_id uuid)
 returns boolean
 language sql
@@ -394,10 +419,14 @@ stable
 security definer
 set search_path = ''
 as $$
-  select exists (select 1 from public.itwo_staff s where s.employee_id = p_employee_id and s.is_it_admin)
+  select exists (
+    select 1
+    from public.itas_admins a
+    join public.employees e on e.id = a.employee_id
+    where a.employee_id = p_employee_id and a.is_test = e.is_test)
 $$;
 
--- ผู้ทำรายการต้องเป็น it_admin (ทุก RPC เรียกเป็นลำดับแรกหลังด่าน lab-only) · คืนแถวพนักงาน
+-- ผู้ทำรายการต้องอยู่ใน itas_admins (ทุก RPC เรียกเป็นลำดับแรกหลังด่าน lab-only) · คืนแถวพนักงาน
 create or replace function private.itas_require_admin()
 returns public.employees
 language plpgsql
@@ -414,6 +443,46 @@ begin
   end if;
   return v_actor;
 end;
+$$;
+
+-- แจ้งเตือนเรื่องตู้เซฟถึงผู้ดูแลทะเบียนทุกคน (itas_admins จริง) ผ่านคิวกลาง private.office_notify (กระดิ่ง + อีเมล + Push) · action_url = '/' (ไปหน้าหลัก ยังไม่มีเส้นทางเปิดโมดูลตรง ๆ)
+--   ส่งถึง "ทุกคนรวมผู้ที่กดเอง" (ไม่ใส่ p_exclude_id) เพราะจุดประสงค์คือให้เจ้าของบัญชีรู้ว่ามีการแตะตู้เซฟ ถ้าเป็นคนอื่นใช้ session ของเขา เจ้าของจะเห็นที่อุปกรณ์อื่น
+--   โหมดทดสอบไม่ส่ง (office_notify ข้ามให้อีกชั้นเมื่อ session เป็น persona) · แจ้งเตือนเป็นเรื่องรอง: ล้มรายคนแล้วเป็น warning ไม่ขวางการบันทึกตู้เซฟ
+create or replace function private.itas_notify_admins(p_is_test boolean, p_title text, p_body text)
+returns void
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_id uuid;
+begin
+  if p_is_test then
+    return;
+  end if;
+  for v_id in
+    select a.employee_id from public.itas_admins a where not a.is_test order by a.employee_id
+  loop
+    begin
+      perform private.office_notify(v_id, p_title, p_body, '/', null);
+    exception when others then
+      raise warning 'itas_notify_admins: ส่งแจ้งเตือนถึง % ไม่สำเร็จ: % [%]', v_id, sqlerrm, sqlstate;
+    end;
+  end loop;
+end;
+$$;
+
+-- ข้อความ "โดยใคร เมื่อไร" ของแจ้งเตือนตู้เซฟ (เวลาไทย วว/ดด/ปปปป พ.ศ. ตามที่ระบบสำนักงานใช้) · ไม่มี secret ใด ๆ
+create or replace function private.itas_notify_body(p_actor public.employees)
+returns text
+language sql
+stable
+set search_path = ''
+as $$
+  select 'โดย ' || p_actor.employee_no || ' ' || coalesce(p_actor.first_name, '') || ' ' || coalesce(p_actor.last_name, '')
+    || ' เมื่อ ' || private.office_format_date((now() at time zone 'Asia/Bangkok')::date) || ' ' || to_char(now() at time zone 'Asia/Bangkok', 'HH24:MI')
+    || ' น. · ถ้าไม่ใช่คุณ กรุณาตรวจสอบบัญชีและแจ้งผู้ดูแลระบบทันที'
 $$;
 
 -- ลบได้เฉพาะแถวทดสอบ ภายใน app_sandbox_purge_itas (ตั้ง itas.purge = on แบบ transaction-local) แถวจริงลบไม่ได้เลย
@@ -493,7 +562,7 @@ begin
 end;
 $$;
 
--- ตู้เซฟ: ลบไม่ได้ (ยกเว้น purge แถวทดสอบ) · แก้ได้ครั้งละหนึ่งรุ่น (rev ต้องเพิ่มทีละ 1) · key_version/โหมด/ผู้และเวลาที่สร้างแก้ไม่ได้
+-- ตู้เซฟ: ลบไม่ได้ (ยกเว้น purge แถวทดสอบ) · แก้ได้ครั้งละหนึ่งรุ่น (rev ต้องเพิ่มทีละ 1) · key_version/auth_hash/โหมด/ผู้และเวลาที่สร้างแก้ไม่ได้
 create or replace function private.itas_vault_guard()
 returns trigger
 language plpgsql
@@ -508,9 +577,9 @@ begin
   elsif tg_op = 'TRUNCATE' then
     raise exception 'ตู้เซฟล้างทั้งตารางไม่ได้ (ข้อมูลลับที่เข้ารหัสไว้จะกู้ไม่ได้)' using errcode = 'insufficient_privilege';
   end if;
-  if (new.is_test, new.key_version, new.created_by, new.created_at)
-     is distinct from (old.is_test, old.key_version, old.created_by, old.created_at) then
-    raise exception 'รุ่นของกุญแจหลักและผู้ตั้งตู้เซฟแก้ไขไม่ได้' using errcode = 'insufficient_privilege';
+  if (new.is_test, new.key_version, new.auth_hash, new.created_by, new.created_at)
+     is distinct from (old.is_test, old.key_version, old.auth_hash, old.created_by, old.created_at) then
+    raise exception 'รุ่นของกุญแจหลัก ตัวพิสูจน์กุญแจ และผู้ตั้งตู้เซฟแก้ไขไม่ได้' using errcode = 'insufficient_privilege';
   end if;
   if new.rev <> old.rev + 1 then
     raise exception 'ตู้เซฟต้องแก้ทีละรุ่น (rev เพิ่มทีละ 1)' using errcode = 'check_violation';
@@ -582,7 +651,7 @@ begin
 end;
 $$;
 
--- ลง itas_vault_log (ไม่เก็บ secret ใด ๆ): ตั้งครั้งแรก / เปลี่ยนรหัส / ออกรหัสกู้คืนใหม่
+-- ลง itas_vault_log (ไม่เก็บ secret plaintext): ตั้งครั้งแรก / เปลี่ยนรหัส / ออกรหัสกู้คืนใหม่ (พร้อมชุด wrap เดิมที่ถูกแทน)
 create or replace function private.itas_vault_log()
 returns trigger
 language plpgsql
@@ -594,16 +663,21 @@ declare
   v_recovery_changed boolean;
 begin
   if tg_op = 'INSERT' then
-    insert into public.itas_vault_log (is_test, action, rev, actor_id) values (new.is_test, 'init', new.rev, new.updated_by);
+    insert into public.itas_vault_log (is_test, action, rev, actor_id, old_values) values (new.is_test, 'init', new.rev, new.updated_by, null);
     return null;
   end if;
   v_pass_changed := (new.kdf, new.kdf_iterations, new.salt, new.wrapped_key_pass) is distinct from (old.kdf, old.kdf_iterations, old.salt, old.wrapped_key_pass);
   v_recovery_changed := (new.recovery_kdf_iterations, new.recovery_salt, new.wrapped_key_recovery)
     is distinct from (old.recovery_kdf_iterations, old.recovery_salt, old.wrapped_key_recovery);
-  insert into public.itas_vault_log (is_test, action, rev, actor_id)
+  -- เก็บชุดเดิมที่ถูกแทน (ciphertext + salt ไม่ใช่ plaintext · ไม่รวม auth_hash) ไว้กู้ถ้า rotate ผิดพลาด
+  insert into public.itas_vault_log (is_test, action, rev, actor_id, old_values)
   values (new.is_test,
           case when v_pass_changed and v_recovery_changed then 'both' when v_pass_changed then 'change_password' else 'new_recovery' end,
-          new.rev, new.updated_by);
+          new.rev, new.updated_by,
+          jsonb_build_object(
+            'key_version', old.key_version, 'rev', old.rev, 'kdf', old.kdf, 'kdf_iterations', old.kdf_iterations, 'salt', old.salt,
+            'wrapped_key_pass', old.wrapped_key_pass, 'recovery_kdf_iterations', old.recovery_kdf_iterations,
+            'recovery_salt', old.recovery_salt, 'wrapped_key_recovery', old.wrapped_key_recovery));
   return null;
 end;
 $$;
@@ -613,7 +687,7 @@ declare
   v_table text;
 begin
   foreach v_table in array array[
-    'itas_types', 'itas_type_log', 'itas_assets', 'itas_asset_log', 'itas_asset_moves', 'itas_vault', 'itas_vault_log'
+    'itas_types', 'itas_type_log', 'itas_assets', 'itas_asset_log', 'itas_asset_moves', 'itas_vault', 'itas_vault_log', 'itas_admins'
   ] loop
     execute format('create trigger %I before insert or update or delete on public.%I for each row execute function private.sandbox_row_scope()',
                    v_table || '_sandbox_scope', v_table);
@@ -750,8 +824,27 @@ $$;
 select private.itas_seed_types(false);
 select private.itas_seed_types(true);
 
+-- 5.1 ผู้ใช้ทะเบียนอุปกรณ์ (seed) -------------------------------------------------------------
+-- IT3462 (เจ้าของ) = โหมดจริง · SBX-IT-ADMIN (persona ของใบสั่งงาน IT) = โหมดทดสอบ · ไม่ล้มถ้าไม่พบแถว (CI/local ไม่มี IT3462) แต่เตือน
+insert into public.itas_admins (employee_id, is_test)
+select e.id, e.is_test
+from public.employees e
+where (upper(e.employee_no) = 'IT3462' and not e.is_test)
+   or (upper(e.employee_no) = 'SBX-IT-ADMIN' and e.is_test)
+on conflict (employee_id) do nothing;
+
+do $$
+begin
+  if not exists (select 1 from public.itas_admins a join public.employees e on e.id = a.employee_id where upper(e.employee_no) = 'IT3462' and not a.is_test) then
+    raise notice 'itas: ไม่พบพนักงาน IT3462 จึงยังไม่มีผู้ใช้ทะเบียนอุปกรณ์ในโหมดจริง (ถ้าเป็นฐานข้อมูล production ให้หยุดและตรวจ)';
+  end if;
+  if not exists (select 1 from public.itas_admins a join public.employees e on e.id = a.employee_id where upper(e.employee_no) = 'SBX-IT-ADMIN' and a.is_test) then
+    raise notice 'itas: ไม่พบ persona SBX-IT-ADMIN จึงยังไม่มีผู้ใช้ทะเบียนอุปกรณ์ในโหมดทดสอบ';
+  end if;
+end $$;
+
 -- 6. ตารางใหม่รู้จักโหมดทดสอบ: replace private.sandbox_unguarded_tables() -----------------------
--- เริ่มจากนิยามล่าสุดบน main (20261220010000_st_rb_chemical_store.sql) ครบทุกชื่อ + เพิ่ม 7 ตารางใหม่ในส่วน to_regclass (หลัง itrp_*)
+-- เริ่มจากนิยามล่าสุดบน main (20261220010000_st_rb_chemical_store.sql) ครบทุกชื่อ + เพิ่ม 8 ตารางใหม่ในส่วน to_regclass (หลัง itrp_*)
 create or replace function private.sandbox_unguarded_tables()
 returns text[] language sql stable set search_path = '' as $$
   select array['ncr_reports','ncr_responsibilities','ncr_losses','ncr_status_history','ncr_attachments',
@@ -772,7 +865,7 @@ returns text[] language sql stable set search_path = '' as $$
                                       'itrp_devices','itrp_device_log','itrp_report_devices','itrp_history_entries',
                                       'itrp_history_entry_revisions',
                                       'itas_types','itas_type_log','itas_assets','itas_asset_log','itas_asset_moves',
-                                      'itas_vault','itas_vault_log']) as t
+                                      'itas_vault','itas_vault_log','itas_admins']) as t
            where to_regclass('public.' || t) is not null)
 $$;
 revoke all on function private.sandbox_unguarded_tables() from public, anon, authenticated;
@@ -1281,7 +1374,7 @@ end;
 $$;
 
 -- เพิ่ม/แก้อุปกรณ์ (เฉพาะ it_admin)
---   p_id: ว่าง = เพิ่มใหม่ (ฐานข้อมูลสร้าง uuid) · ส่ง uuid ที่ยังไม่มี = เพิ่มใหม่ด้วย id นั้น (หน้าเว็บสร้างเองเพราะต้องใช้เป็น AAD ตอนเข้ารหัสก่อนส่ง) · ส่ง uuid ที่มีแล้ว = แก้ (ต้องส่ง expected_updated_at)
+--   p_id: ว่าง = เพิ่มใหม่ (ฐานข้อมูลสร้าง uuid · ใช้ได้เฉพาะรายการที่ไม่มีช่องลับ: สร้างพร้อมช่องลับที่ไม่ใช่ null ต้องส่ง p_id เสมอ เพราะ id เป็น AAD ของการเข้ารหัส) · ส่ง uuid ที่ยังไม่มี = เพิ่มใหม่ด้วย id นั้น (หน้าเว็บสร้างเองเพราะต้องใช้เป็น AAD ตอนเข้ารหัสก่อนส่ง) · ส่ง uuid ที่มีแล้ว = แก้ (ต้องส่ง expected_updated_at)
 --   p_type_code: จำเป็นตอนเพิ่ม (ชนิดต้องอยู่ในโหมดนี้และเปิดใช้งาน) · ตอนแก้ไม่ต้องส่ง ถ้าส่งต้องตรงกับของเดิม (เปลี่ยนชนิดไม่ได้)
 --   p_data: ช่องกลาง {reg_no, device_code, name, model, serial, status, host_code, slot, place, install_date, record_date, purchase_date, vendor, price, tax_rate,
 --     warranty_text, warranty_end, express_code, account_no, note} · ส่งเฉพาะช่องที่ต้องการตั้ง/เปลี่ยน (ช่องที่ไม่ส่งคงค่าเดิม) · ส่ง null/"" = ล้างค่า (status ล้างไม่ได้) · ช่องที่ไม่รู้จัก = ผิดพลาด
@@ -1333,6 +1426,12 @@ begin
   v_exists := v_old.id is not null;
   if v_exists and v_old.is_test <> v_actor.is_test then
     raise exception 'ไม่พบอุปกรณ์นี้ หรือรหัสอุปกรณ์ (id) นี้ถูกใช้แล้ว' using errcode = 'check_violation';
+  end if;
+
+  -- สร้างใหม่พร้อมช่องลับ ต้องมี id จากหน้าเว็บ: id เป็นส่วนหนึ่งของ AAD ที่ผูกตอนเข้ารหัส (ถ้าให้ฐานข้อมูลสุ่ม id ให้ ciphertext จะถอดไม่ออก)
+  --   (ส่ง null เพื่อลบค่าลับของช่องในแถวที่ยังไม่มี ไม่นับว่าเป็นการส่งช่องลับ)
+  if not v_exists and p_id is null and exists (select 1 from jsonb_each(v_secrets_in) e where jsonb_typeof(e.value) <> 'null') then
+    raise exception 'สร้างอุปกรณ์ที่มีข้อมูลลับต้องส่ง id ของอุปกรณ์มาด้วย (ใช้ผูกกับการเข้ารหัส)' using errcode = 'check_violation';
   end if;
 
   if v_exists then
@@ -1578,7 +1677,8 @@ end;
 $$;
 
 -- 10. RPC ตู้เซฟ -----------------------------------------------------------------------
--- อ่านตู้เซฟของโหมดปัจจุบัน (เฉพาะ it_admin) · หน้าเว็บต้องใช้ค่าเหล่านี้ปลดล็อกในเบราว์เซอร์ (ถอดห่อกุญแจหลักด้วยรหัสตู้เซฟหรือรหัสกู้คืน) จึงคืน wrapped key ให้ it_admin ได้
+-- อ่านตู้เซฟของโหมดปัจจุบัน (เฉพาะผู้อยู่ใน itas_admins) · หน้าเว็บต้องใช้ค่าเหล่านี้ปลดล็อกในเบราว์เซอร์ (ถอดห่อกุญแจหลักด้วยรหัสตู้เซฟหรือรหัสกู้คืน) จึงคืน wrapped key ให้ผู้ใช้ทะเบียนได้
+--   ไม่คืน auth_hash (ตัวพิสูจน์กุญแจ) ไม่คืนประวัติตู้เซฟ (itas_vault_log.old_values) ให้ใคร
 --   ยังไม่ตั้ง: {initialized: false, is_test}
 --   ตั้งแล้ว: {initialized: true, is_test, key_version, rev, kdf, kdf_iterations, salt, wrapped_key_pass{n,c}, recovery_kdf_iterations, recovery_salt, wrapped_key_recovery{n,c}, updated_at}
 create or replace function public.app_itas_vault_get()
@@ -1606,10 +1706,12 @@ begin
 end;
 $$;
 
--- ตั้งตู้เซฟครั้งแรกของโหมดนี้ (เฉพาะ it_admin) · ตั้งได้ครั้งเดียว (ตั้งแล้วเรียกซ้ำ = ผิดพลาด ไม่เขียนทับ)
+-- ตั้งตู้เซฟครั้งแรกของโหมดนี้ (เฉพาะผู้อยู่ใน itas_admins) · ตั้งได้ครั้งเดียว (ตั้งแล้วเรียกซ้ำ = ผิดพลาด ไม่เขียนทับ)
 --   p_kdf = 'PBKDF2-SHA256' · p_kdf_iterations / p_recovery_kdf_iterations = 600,000–10,000,000
 --   p_salt / p_recovery_salt = base64 ของ 16 ไบต์ · p_wrapped_key_pass / p_wrapped_key_recovery = {n: base64 12 ไบต์, c: base64 48 ไบต์} (กุญแจหลัก 32 ไบต์ ห่อด้วย AES-GCM)
---   ไม่รับ/ไม่เก็บรหัสตู้เซฟ รหัสกู้คืน หรือกุญแจหลัก plaintext · คืน {rev, key_version}
+--   p_auth_hash = base64 ของ SHA-256 (32 ไบต์) ของ auth token ที่ derive จากกุญแจหลัก: HKDF-SHA256(DEK, salt ว่าง, info "itas-vault-auth-v1") -> 32 ไบต์ -> SHA-256
+--     (ฐานข้อมูลตรวจไม่ได้ว่า derive ถูก: หน้าเว็บต้องตรวจเองหลัง init โดยปลดล็อกใหม่จากตู้เซฟที่อ่านกลับมาแล้ว derive ซ้ำให้ได้ hash เดิม)
+--   ไม่รับ/ไม่เก็บรหัสตู้เซฟ รหัสกู้คืน กุญแจหลัก หรือ auth token plaintext · คืน {rev, key_version} · แจ้งเตือนผู้ใช้ทะเบียนทุกคน
 create or replace function public.app_itas_vault_init(
   p_kdf text,
   p_kdf_iterations integer,
@@ -1617,7 +1719,8 @@ create or replace function public.app_itas_vault_init(
   p_wrapped_key_pass jsonb,
   p_recovery_kdf_iterations integer,
   p_recovery_salt text,
-  p_wrapped_key_recovery jsonb
+  p_wrapped_key_recovery jsonb,
+  p_auth_hash text
 )
 returns jsonb
 language plpgsql
@@ -1654,28 +1757,41 @@ begin
   if v_error is not null then
     raise exception 'กุญแจที่ห่อด้วยรหัสกู้คืน: %', v_error using errcode = 'check_violation';
   end if;
+  if private.itas_b64_len(p_auth_hash) is distinct from 32 then
+    raise exception 'ตัวพิสูจน์กุญแจ (auth_hash) ต้องเป็น base64 ยาว 32 ไบต์' using errcode = 'check_violation';
+  end if;
 
   insert into public.itas_vault (
-    is_test, kdf, kdf_iterations, salt, wrapped_key_pass, recovery_kdf_iterations, recovery_salt, wrapped_key_recovery, created_by, updated_by)
+    is_test, kdf, kdf_iterations, salt, wrapped_key_pass, recovery_kdf_iterations, recovery_salt, wrapped_key_recovery, auth_hash, created_by, updated_by)
   values (
-    v_actor.is_test, p_kdf, p_kdf_iterations, p_salt, p_wrapped_key_pass, p_recovery_kdf_iterations, p_recovery_salt, p_wrapped_key_recovery, v_actor.id, v_actor.id)
+    v_actor.is_test, p_kdf, p_kdf_iterations, p_salt, p_wrapped_key_pass, p_recovery_kdf_iterations, p_recovery_salt, p_wrapped_key_recovery,
+    decode(p_auth_hash, 'base64'), v_actor.id, v_actor.id)
   on conflict (is_test) do nothing
   returning * into v_vault;
   if v_vault.is_test is null then
     raise exception 'ตั้งตู้เซฟไปแล้ว ตั้งซ้ำไม่ได้ (ถ้าจะเปลี่ยนรหัสให้ใช้การเปลี่ยนรหัสตู้เซฟ)' using errcode = 'check_violation';
   end if;
+
+  perform private.itas_notify_admins(v_actor.is_test, 'ตั้งตู้เซฟทะเบียนอุปกรณ์ IT แล้ว', private.itas_notify_body(v_actor));
   return jsonb_build_object('rev', v_vault.rev, 'key_version', v_vault.key_version);
 end;
 $$;
 
--- เปลี่ยนรหัสตู้เซฟ หรือออกรหัสกู้คืนใหม่ (เฉพาะ it_admin) · หน้าเว็บปลดล็อกแล้วห่อกุญแจหลักเดิมด้วยกุญแจใหม่ ไม่แตะแถวข้อมูล
+-- เปลี่ยนรหัสตู้เซฟ หรือออกรหัสกู้คืนใหม่ (เฉพาะผู้อยู่ใน itas_admins) · หน้าเว็บปลดล็อกแล้วห่อกุญแจหลักเดิมด้วยกุญแจใหม่ ไม่แตะแถวข้อมูล
+--   p_auth_token = base64 ของ auth token 32 ไบต์ (HKDF จากกุญแจหลัก DEK เหมือนตอน init) · ฐานข้อมูลตรวจ sha256(decode(token)) = itas_vault.auth_hash
+--     ผู้ที่มีแค่ session ของผู้ดูแลแต่ไม่รู้รหัสตู้เซฟ/รหัสกู้คืน (ไม่มี DEK) ผ่านด่านนี้ไม่ได้ จึงเขียนทับชุด wrap แล้วทำให้ข้อมูลลับถอดไม่ได้ไม่ได้
+--     token ไม่เคยถูกเก็บหรือบันทึกที่ใด (เก็บแต่ hash ใน itas_vault.auth_hash)
+--   token ผิด/ขาด/รูปแบบผิด: **ไม่ raise** (ถ้า raise ธุรกรรมย้อน log หาย) คืน {ok:false, code:'AUTH_TOKEN_INVALID', message} · ลง itas_vault_log action 'rotate_failed'
+--     + แจ้งเตือนผู้ใช้ทะเบียนทุกคน (ไม่เกิน 1 ครั้ง/10 นาที/โหมด กันถูกใช้ท่วมกระดิ่ง) · ตู้เซฟไม่เปลี่ยน · หน้าเว็บต้องตรวจ ok ทุกครั้ง
 --   p_expected_rev = rev ที่หน้าเว็บอ่านมาจาก app_itas_vault_get (ไม่ตรง = errcode 40001 ให้โหลดใหม่ กันเขียนทับการเปลี่ยนจากที่อื่น)
 --   p_action = 'change_password': ส่ง p_kdf_iterations + p_salt + p_wrapped_key_pass (ชุดของรหัสตู้เซฟ) เท่านั้น · ใช้ตอนลืมรหัสแล้วปลดล็อกด้วยรหัสกู้คืนก็ได้
 --   p_action = 'new_recovery': ส่ง p_recovery_kdf_iterations + p_recovery_salt + p_wrapped_key_recovery (ชุดของรหัสกู้คืน) เท่านั้น
---   พารามิเตอร์ของอีกชุดต้องเป็น null · กฎรูปแบบ/ขนาดเหมือน app_itas_vault_init · key_version ไม่เปลี่ยน (ช่องลับที่เข้ารหัสไว้ยังถอดได้) · คืน {rev, key_version}
+--   พารามิเตอร์ของอีกชุดต้องเป็น null · กฎรูปแบบ/ขนาดเหมือน app_itas_vault_init · key_version ไม่เปลี่ยน (ช่องลับที่เข้ารหัสไว้ยังถอดได้) · DEK ไม่เปลี่ยน (auth_hash เดิมใช้ต่อ)
+--   สำเร็จ: คืน {ok:true, rev, key_version} · ลง log พร้อมชุด wrap เดิมที่ถูกแทน (old_values) + แจ้งเตือนผู้ใช้ทะเบียนทุกคน
 create or replace function public.app_itas_vault_rotate(
   p_expected_rev integer,
   p_action text,
+  p_auth_token text default null,
   p_kdf_iterations integer default null,
   p_salt text default null,
   p_wrapped_key_pass jsonb default null,
@@ -1692,6 +1808,8 @@ declare
   v_actor public.employees%rowtype;
   v_vault public.itas_vault%rowtype;
   v_error text;
+  v_token_ok boolean := false;
+  v_recent_failure boolean;
 begin
   perform private.lab_only_block();
   v_actor := private.itas_require_admin();
@@ -1702,6 +1820,26 @@ begin
   if v_vault.is_test is null then
     raise exception 'ยังไม่ได้ตั้งตู้เซฟ' using errcode = 'check_violation';
   end if;
+
+  -- พิสูจน์ว่ารู้กุญแจหลัก: sha256(token) ต้องเท่ากับ auth_hash (เทียบ bytea ทั้งก้อน · ใช้ sha256 ที่มากับ Postgres ไม่พึ่ง extension)
+  if private.itas_b64_len(p_auth_token) is not distinct from 32 then
+    v_token_ok := sha256(decode(p_auth_token, 'base64')) = v_vault.auth_hash;
+  end if;
+  if not v_token_ok then
+    select exists (
+      select 1 from public.itas_vault_log l
+      where l.is_test = v_vault.is_test and l.action = 'rotate_failed' and l.created_at > now() - interval '10 minutes'
+    ) into v_recent_failure;
+    insert into public.itas_vault_log (is_test, action, rev, actor_id, old_values)
+    values (v_vault.is_test, 'rotate_failed', v_vault.rev, v_actor.id, null);
+    if not v_recent_failure then
+      perform private.itas_notify_admins(v_vault.is_test, 'มีผู้พยายามเปลี่ยนตู้เซฟทะเบียนอุปกรณ์ IT แต่ไม่สำเร็จ',
+        private.itas_notify_body(v_actor));
+    end if;
+    return jsonb_build_object('ok', false, 'code', 'AUTH_TOKEN_INVALID',
+      'message', 'ยืนยันกุญแจของตู้เซฟไม่ผ่าน จึงไม่ได้เปลี่ยนอะไร กรุณาปลดล็อกตู้เซฟด้วยรหัสที่ถูกต้องแล้วลองใหม่');
+  end if;
+
   if p_expected_rev is null or p_expected_rev <> v_vault.rev then
     raise exception 'ตู้เซฟถูกเปลี่ยนจากที่อื่นแล้ว กรุณาโหลดตู้เซฟใหม่แล้วลองอีกครั้ง' using errcode = '40001';
   end if;
@@ -1727,6 +1865,7 @@ begin
     set kdf_iterations = p_kdf_iterations, salt = p_salt, wrapped_key_pass = p_wrapped_key_pass, rev = v_vault.rev + 1, updated_by = v_actor.id
     where is_test = v_vault.is_test
     returning * into v_vault;
+    perform private.itas_notify_admins(v_vault.is_test, 'เปลี่ยนรหัสตู้เซฟทะเบียนอุปกรณ์ IT', private.itas_notify_body(v_actor));
   else
     if p_kdf_iterations is not null or p_salt is not null or p_wrapped_key_pass is not null then
       raise exception 'ออกรหัสกู้คืนใหม่ต้องไม่ส่งข้อมูลของรหัสตู้เซฟมาด้วย' using errcode = 'check_violation';
@@ -1749,8 +1888,27 @@ begin
         rev = v_vault.rev + 1, updated_by = v_actor.id
     where is_test = v_vault.is_test
     returning * into v_vault;
+    perform private.itas_notify_admins(v_vault.is_test, 'ออกรหัสกู้คืนตู้เซฟทะเบียนอุปกรณ์ IT ใหม่', private.itas_notify_body(v_actor));
   end if;
-  return jsonb_build_object('rev', v_vault.rev, 'key_version', v_vault.key_version);
+  return jsonb_build_object('ok', true, 'rev', v_vault.rev, 'key_version', v_vault.key_version);
+end;
+$$;
+
+-- เพิ่มจากที่ได้รับมอบหมายเพราะจำเป็น: หน้าเว็บเคยใช้ app_itrp_my_role (อ่านจาก itwo_staff) ตัดสินว่าจะแสดงการ์ดทะเบียนอุปกรณ์ ซึ่งไม่ตรงกับ allowlist ใหม่แล้ว
+-- ผู้ใช้ทะเบียนอุปกรณ์หรือไม่ (ไม่ raise เมื่อไม่มีสิทธิ์ ต่างจาก RPC อื่น) · คืน {allowed, is_test} · ต้องล็อกอิน (anon เรียกไม่ได้)
+create or replace function public.app_itas_my_access()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itas_actor();
+  return jsonb_build_object('allowed', private.itas_is_it_admin(v_actor.id), 'is_test', v_actor.is_test);
 end;
 $$;
 

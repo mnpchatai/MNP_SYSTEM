@@ -1,16 +1,16 @@
 -- ทดสอบทะเบียนอุปกรณ์ IT (20261221010000_itas_asset_register.sql) — ส่วนฐานข้อมูลของโมดูล itas
---   1) โครงสร้าง: 7 ตาราง RLS/ไม่มี grant/trigger/ลงทะเบียนโหมดทดสอบ, RPC ทุกตัว SECURITY DEFINER + anon เรียกไม่ได้, ไม่มีฟังก์ชันถอดรหัสฝั่งเซิร์ฟเวอร์, seed 23 ชนิด
---   2) สิทธิ์: it_admin เท่านั้น (ผู้อนุมัติขั้น IT / ผจก. / พนักงาน / anon เรียกไม่ได้ทุก RPC)
+--   1) โครงสร้าง: 8 ตาราง RLS/ไม่มี grant/trigger/ลงทะเบียนโหมดทดสอบ, RPC ทุกตัว SECURITY DEFINER + anon เรียกไม่ได้, ไม่มีฟังก์ชันถอดรหัสฝั่งเซิร์ฟเวอร์, seed 23 ชนิด
+--   2) สิทธิ์: เฉพาะผู้อยู่ใน itas_admins (allowlist ของโมดูล) — it_admin ของใบสั่งงาน IT ที่ไม่อยู่ในรายชื่อ / ผู้อนุมัติขั้น IT / ผจก. / พนักงาน / anon เรียกไม่ได้ทุก RPC
 --   3) ชนิดอุปกรณ์: เพิ่ม/แก้นิยามช่อง กติกาลบ/เปลี่ยนช่องที่มีข้อมูลแล้ว log ลบ/ล้างไม่ได้
 --   4) อุปกรณ์: เพิ่ม/แก้/ค้น/กรอง/แบ่งหน้า, ตรวจ attrs ตามนิยามช่อง, ช่องลับรับเฉพาะ envelope ที่ถูกรูป (plaintext ผิดช่อง/envelope ผิดรูป/key ไม่รู้จักถูกปฏิเสธ),
 --      ส่งบางช่องลับ = แก้เฉพาะช่องนั้น + null = ลบ, กันแก้ชนกัน, unique ต่อโหมด (ไม่นับ null), log + moves จาก trigger, ลบ/แก้ย้อนหลัง/truncate ไม่ได้, host_overview
---   5) ตู้เซฟ: ตั้งได้ครั้งเดียว, rotate ต้องส่ง rev ปัจจุบัน, ตรวจรูปแบบ/รอบ KDF, log ไม่เก็บ secret, สิทธิ์
+--   5) ตู้เซฟ: ตั้งได้ครั้งเดียว, rotate ต้องส่ง rev ปัจจุบัน + auth token ที่พิสูจน์ว่ารู้กุญแจ (ผิด/ขาด = ไม่เปลี่ยน + log + แจ้งเตือน), เก็บชุด wrap เดิมไว้ใน log, vault_get ไม่คืน auth_hash, แจ้งเตือนผู้ใช้ทะเบียน, ตรวจรูปแบบ/รอบ KDF, สิทธิ์
 --   6) โหมดทดสอบ: แยกชนิด/อุปกรณ์/ตู้เซฟ, persona แตะของจริงไม่ได้, ล้างข้อมูลทดสอบไม่แตะของจริงและ seed ชนิดทดสอบกลับ
 -- ผู้ใช้ทดสอบเป็นบัญชีจริงใหม่ (ITA-*) · persona SBX-IT-* มาจาก migration ใบสั่งงาน IT
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(439);
+select plan(504);
 
 -- ตัวช่วย (ชั่วคราว) ---------------------------------------------------------
 -- claims ของผู้ใช้ทดสอบเลขที่ n
@@ -34,6 +34,9 @@ create function pg_temp.b64(p_seed integer, p_bytes integer) returns text langua
 -- กุญแจที่ห่อ {n 12 ไบต์, c 48 ไบต์}
 create function pg_temp.wrap(p_seed integer) returns jsonb language sql as $$
   select jsonb_build_object('n', pg_temp.b64(p_seed, 12), 'c', pg_temp.b64(p_seed, 48)) $$;
+-- auth_hash ของ token ที่ b64(seed, 32): SHA-256 เป็น base64 (หน้าเว็บส่งค่านี้ตอน init)
+create function pg_temp.ah(p_seed integer) returns text language sql as $$
+  select replace(encode(sha256(decode(pg_temp.b64(p_seed, 32), 'base64')), 'base64'), chr(10), '') $$;
 create function pg_temp.asset(p_id uuid) returns jsonb language sql as $$ select public.app_itas_get_asset(p_id) $$;
 create function pg_temp.ua(p_id uuid) returns timestamptz language sql as $$ select (public.app_itas_get_asset(p_id) ->> 'updated_at')::timestamptz $$;
 create function pg_temp.items(p_type text default null, p_search text default null, p_status text default null, p_host text default null) returns jsonb language sql as $$
@@ -44,21 +47,22 @@ create function pg_temp.codes(p_items jsonb) returns text language sql as $$
 -- 1. โครงสร้าง ----------------------------------------------------------
 reset role;
 select set_config('request.jwt.claims', '', true);
-select is((select count(*)::int from pg_class c where c.relnamespace = 'public'::regnamespace and c.relname in ('itas_types', 'itas_type_log', 'itas_assets', 'itas_asset_log', 'itas_asset_moves', 'itas_vault', 'itas_vault_log') and c.relkind = 'r' and c.relrowsecurity), 7, 'RLS is enabled on the seven itas tables');
+select is((select count(*)::int from pg_class c where c.relnamespace = 'public'::regnamespace and c.relname in ('itas_types', 'itas_type_log', 'itas_assets', 'itas_asset_log', 'itas_asset_moves', 'itas_vault', 'itas_vault_log', 'itas_admins') and c.relkind = 'r' and c.relrowsecurity), 8, 'RLS is enabled on the eight itas tables');
 select ok(not exists (select 1 from information_schema.role_table_grants g where g.table_schema = 'public' and g.table_name like 'itas\_%' and g.grantee in ('anon', 'authenticated', 'service_role', 'PUBLIC')), 'anon, authenticated, service_role and PUBLIC have no direct grant on the itas tables');
 select ok(not exists (select 1 from pg_class c cross join unnest(array['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p(priv) cross join unnest(array['anon', 'authenticated', 'service_role']) r(rolname) where c.relnamespace = 'public'::regnamespace and c.relname like 'itas\_%' and c.relkind = 'r' and has_table_privilege(r.rolname, c.oid, p.priv)), 'no role has any table privilege on the itas tables (checked per privilege)');
 select ok(not exists (select 1 from pg_class c cross join unnest(array['USAGE', 'SELECT', 'UPDATE']) p(priv) cross join unnest(array['service_role', 'anon', 'authenticated']) r(rolname) where c.relnamespace = 'public'::regnamespace and c.relname like 'itas\_%' and c.relkind = 'S' and has_sequence_privilege(r.rolname, c.oid, p.priv)), 'the identity sequences of the itas tables are closed');
 select is((select count(*)::int from pg_class c where c.relnamespace = 'public'::regnamespace and c.relname like 'itas\_%' and c.relkind = 'S'), 4, 'the four identity sequences exist (type log, asset log, moves, vault log)');
-select is((select count(*)::int from pg_policy p join pg_class c on c.oid = p.polrelid where c.relname like 'itas\_%' and p.polname like '%\_no\_direct\_access'), 7, 'every itas table has a deny-all policy');
-select is((select count(*)::int from pg_policy p join pg_class c on c.oid = p.polrelid where c.relname like 'itas\_%' and p.polname = 'lab_only_no_access' and not p.polpermissive), 7, 'every itas table has the restrictive lab-only policy');
-select is((select count(*)::int from pg_trigger t join pg_class c on c.oid = t.tgrelid where c.relname like 'itas\_%' and t.tgname like '%\_sandbox\_scope' and not t.tgisinternal), 7, 'every itas table has the sandbox scope trigger');
+select is((select count(*)::int from pg_policy p join pg_class c on c.oid = p.polrelid where c.relname like 'itas\_%' and p.polname like '%\_no\_direct\_access'), 8, 'every itas table has a deny-all policy');
+select is((select count(*)::int from pg_policy p join pg_class c on c.oid = p.polrelid where c.relname like 'itas\_%' and p.polname = 'lab_only_no_access' and not p.polpermissive), 8, 'every itas table has the restrictive lab-only policy');
+select is((select count(*)::int from pg_trigger t join pg_class c on c.oid = t.tgrelid where c.relname like 'itas\_%' and t.tgname like '%\_sandbox\_scope' and not t.tgisinternal), 8, 'every itas table has the sandbox scope trigger');
 select is((select count(*)::int from pg_trigger t join pg_class c on c.oid = t.tgrelid where c.relname in ('itas_type_log', 'itas_asset_log', 'itas_asset_moves', 'itas_vault_log') and (t.tgname like '%\_append\_only' or t.tgname like '%\_no\_truncate') and not t.tgisinternal), 8, 'the four logs are append-only (update/delete + truncate triggers)');
 select is((select count(*)::int from pg_trigger t join pg_class c on c.oid = t.tgrelid where c.relname in ('itas_types', 'itas_assets', 'itas_vault') and t.tgname like '%\_no\_truncate' and not t.tgisinternal), 3, 'types, assets and vault cannot be truncated');
 select is((select count(*)::int from pg_trigger t join pg_class c on c.oid = t.tgrelid where c.relname in ('itas_types', 'itas_assets', 'itas_vault') and t.tgname like '%\_guard' and not t.tgisinternal), 3, 'types, assets and vault have the update/delete guard');
 select is((select count(*)::int from pg_trigger t join pg_class c on c.oid = t.tgrelid where c.relname in ('itas_assets', 'itas_types', 'itas_vault') and t.tgname in ('itas_assets_log', 'itas_assets_moves', 'itas_types_log', 'itas_vault_log') and not t.tgisinternal), 4, 'the history writers are triggers (not RPC code)');
-select ok((select bool_and(t = any (private.sandbox_unguarded_tables())) from unnest(array['itas_types', 'itas_type_log', 'itas_assets', 'itas_asset_log', 'itas_asset_moves', 'itas_vault', 'itas_vault_log']) t), 'the seven new tables are registered in private.sandbox_unguarded_tables()');
+select ok((select bool_and(t = any (private.sandbox_unguarded_tables())) from unnest(array['itas_types', 'itas_type_log', 'itas_assets', 'itas_asset_log', 'itas_asset_moves', 'itas_vault', 'itas_vault_log', 'itas_admins']) t), 'the eight new tables are registered in private.sandbox_unguarded_tables()');
 select ok(array['itrp_requests', 'itrp_devices', 'itrp_history_entry_revisions', 'itwo_work_orders', 'ncr_reports', 'audit_logs', 'sandbox_sessions', 'bom_gr_config'] <@ private.sandbox_unguarded_tables(), 'sandbox_unguarded_tables still keeps the earlier names (itrp, itwo, BOM GR and central)');
-select is((select count(*)::int from pg_proc p where p.pronamespace = 'public'::regnamespace and (p.proname like 'app\_itas\_%' or p.proname = 'app_sandbox_purge_itas')), 11, 'the eleven public RPCs exist');
+select ok(cardinality(array(select t from unnest(private.sandbox_unguarded_tables()) t where t not like 'itas\_%')) >= 79 and cardinality(array(select t from unnest(private.sandbox_unguarded_tables()) t where t like 'itas\_%')) = 8, 'sandbox_unguarded_tables keeps at least the 79 earlier names (57 listed + itwo 8 + itrp 14) and gains exactly the 8 itas names');
+select is((select count(*)::int from pg_proc p where p.pronamespace = 'public'::regnamespace and (p.proname like 'app\_itas\_%' or p.proname = 'app_sandbox_purge_itas')), 12, 'the twelve public RPCs exist');
 select ok((select bool_and(has_function_privilege('authenticated', p.oid, 'execute') and not has_function_privilege('anon', p.oid, 'execute') and p.prosecdef and p.proconfig @> array['search_path=""']) from pg_proc p where p.pronamespace = 'public'::regnamespace and (p.proname like 'app\_itas\_%' or p.proname = 'app_sandbox_purge_itas')), 'every itas RPC is SECURITY DEFINER with an empty search_path, callable by authenticated and not by anon');
 select ok(not exists (select 1 from pg_proc p where p.pronamespace = 'private'::regnamespace and p.proname like 'itas\_%' and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute'))), 'the private itas helpers are not callable by anon or authenticated');
 select ok(not exists (select 1 from private.lab_only_unguarded_functions() f where f like '%itas%'), 'every itas RPC has the lab-only guard');
@@ -99,10 +103,11 @@ from (values
   (6, 'ITA-ADM2', 'MGT', 'staff')
 ) as v(n, no, dep, role)
 join public.departments d on d.code = v.dep join public.roles r on r.code = v.role;
--- สิทธิ์ทีม IT อยู่ที่ itwo_staff (itas อ่านอย่างเดียว): ADM/ADM2 = ผู้ดูแลงาน (it_admin) · APPR = ผู้อนุมัติขั้น IT เท่านั้น (ไม่มีสิทธิ์ทะเบียน)
+-- สิทธิ์ทีม IT ของใบสั่งงาน (itwo_staff): ADM/ADM2 = ผู้ดูแลงาน (it_admin) · APPR = ผู้อนุมัติขั้น IT · ทะเบียนอุปกรณ์ไม่อ่านตารางนี้แล้ว: ใช้ allowlist itas_admins (ใส่เฉพาะ ADM)
 insert into public.itwo_staff (employee_id, is_it_admin, is_it_approver)
 select e.id, v.adm, v.appr from (values ('ITA-ADM', true, false), ('ITA-APPR', false, true), ('ITA-ADM2', true, false)) v(no, adm, appr)
 join public.employees e on e.employee_no = v.no;
+insert into public.itas_admins (employee_id, is_test) select e.id, false from public.employees e where e.employee_no = 'ITA-ADM';
 select count(set_config('test.e_' || lower(replace(employee_no, '-', '_')), id::text, true)) from public.employees where employee_no like 'ITA-%';
 select count(set_config('test.p_' || lower(replace(employee_no, '-', '_')), id::text, true)) from public.employees where is_test;
 
@@ -117,18 +122,20 @@ insert into pg_temp_calls values
   ('asset_history', $$ select public.app_itas_asset_history('00000000-0000-0000-0000-000000000001') $$),
   ('host_overview', $$ select public.app_itas_host_overview('COM01') $$),
   ('vault_get', $$ select public.app_itas_vault_get() $$),
-  ('vault_init', $$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, 'AAAAAAAAAAAAAAAAAAAAAA==', '{}'::jsonb, 600000, 'AAAAAAAAAAAAAAAAAAAAAA==', '{}'::jsonb) $$),
+  ('vault_init', $$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, 'AAAAAAAAAAAAAAAAAAAAAA==', '{}'::jsonb, 600000, 'AAAAAAAAAAAAAAAAAAAAAA==', '{}'::jsonb, 'x') $$),
   ('vault_rotate', $$ select public.app_itas_vault_rotate(1, 'change_password') $$);
 grant select on pg_temp_calls to authenticated;
 set local role authenticated;
 select set_config('request.jwt.claims', pg_temp.sub(2), true);
-select is(pg_temp.try(c.sql), '42501: เฉพาะผู้ดูแลงาน IT เท่านั้นที่ใช้ทะเบียนอุปกรณ์ได้', 'the IT approver (no it_admin right) cannot call ' || c.name) from pg_temp_calls c;
+select is(pg_temp.try(c.sql), '42501: เฉพาะผู้ดูแลงาน IT เท่านั้นที่ใช้ทะเบียนอุปกรณ์ได้', 'the IT approver (not in itas_admins) cannot call ' || c.name) from pg_temp_calls c;
 select set_config('request.jwt.claims', pg_temp.sub(3), true);
 select is(pg_temp.try(c.sql), '42501: เฉพาะผู้ดูแลงาน IT เท่านั้นที่ใช้ทะเบียนอุปกรณ์ได้', 'a department manager cannot call ' || c.name) from pg_temp_calls c;
 select set_config('request.jwt.claims', pg_temp.sub(4), true);
 select is(pg_temp.try(c.sql), '42501: เฉพาะผู้ดูแลงาน IT เท่านั้นที่ใช้ทะเบียนอุปกรณ์ได้', 'a plain employee cannot call ' || c.name) from pg_temp_calls c;
 select set_config('request.jwt.claims', pg_temp.sub(5), true);
-select is(pg_temp.try(c.sql), '42501: เฉพาะผู้ดูแลงาน IT เท่านั้นที่ใช้ทะเบียนอุปกรณ์ได้', 'an MNP admin without an itwo_staff admin row cannot call ' || c.name) from pg_temp_calls c;
+select is(pg_temp.try(c.sql), '42501: เฉพาะผู้ดูแลงาน IT เท่านั้นที่ใช้ทะเบียนอุปกรณ์ได้', 'an MNP admin that is not in itas_admins cannot call ' || c.name) from pg_temp_calls c;
+select set_config('request.jwt.claims', pg_temp.sub(6), true);
+select is(pg_temp.try(c.sql), '42501: เฉพาะผู้ดูแลงาน IT เท่านั้นที่ใช้ทะเบียนอุปกรณ์ได้', 'an itwo it_admin that is not in itas_admins cannot call ' || c.name) from pg_temp_calls c;
 select set_config('request.jwt.claims', '', true);
 select is(substr(pg_temp.try(c.sql), 1, 5), '42501', 'a caller without a session cannot call ' || c.name) from pg_temp_calls c;
 reset role;
@@ -144,8 +151,30 @@ set local role authenticated;
 select set_config('request.jwt.claims', pg_temp.sub(1), true);
 select throws_ok($$ select count(*) from public.itas_assets $$, '42501', null, 'even it_admin cannot read the asset table directly (RPC only)');
 select throws_ok($$ select count(*) from public.itas_vault $$, '42501', null, 'even it_admin cannot read the vault table directly');
+select throws_ok($$ select count(*) from public.itas_admins $$, '42501', null, 'even it_admin cannot read the allowlist table directly');
+select throws_ok($$ insert into public.itas_admins (employee_id) values (current_setting('test.e_ita_staff')::uuid) $$, '42501', null, 'nobody can add themselves to the allowlist through the API');
 select throws_ok($$ insert into public.itas_assets (type_code, name, created_by, updated_by) values ('MONITOR', 'x', current_setting('test.e_ita_adm')::uuid, current_setting('test.e_ita_adm')::uuid) $$, '42501', null, 'even it_admin cannot insert into the asset table directly');
 reset role;
+select set_config('request.jwt.claims', '', true);
+select ok(exists (select 1 from public.itas_admins a join public.employees e on e.id = a.employee_id where e.employee_no = 'SBX-IT-ADMIN' and a.is_test and e.is_test), 'the seed puts the SBX-IT-ADMIN persona in the allowlist (test mode)');
+select is((select count(*)::int from public.itas_admins a join public.employees e on e.id = a.employee_id where upper(e.employee_no) not in ('IT3462', 'SBX-IT-ADMIN', 'ITA-ADM')), 0, 'the allowlist holds only IT3462, the persona and the test admin (no one is added by default)');
+select ok(not exists (select 1 from pg_proc p where p.pronamespace in ('public'::regnamespace, 'private'::regnamespace) and p.proname like '%itas%' and p.proname ~ '(add|remove|set|grant)_?admin|admins?_(add|remove|set)'), 'there is no function that adds or removes allowlist members (changed by migration or SQL only)');
+select ok(position('itwo_staff' in pg_get_functiondef('private.itas_is_it_admin(uuid)'::regprocedure)) = 0 and position('itas_admins' in pg_get_functiondef('private.itas_is_it_admin(uuid)'::regprocedure)) > 0, 'the permission check reads itas_admins and no longer reads itwo_staff');
+insert into public.itas_admins (employee_id, is_test) select e.id, true from public.employees e where e.employee_no = 'ITA-STAFF';
+set local role authenticated;
+select set_config('request.jwt.claims', pg_temp.sub(4), true);
+select is(pg_temp.try('select public.app_itas_list_types()'), '42501: เฉพาะผู้ดูแลงาน IT เท่านั้นที่ใช้ทะเบียนอุปกรณ์ได้', 'an allowlist row whose mode differs from the employee (is_test mismatch) grants nothing');
+reset role;
+select set_config('request.jwt.claims', '', true);
+delete from public.itas_admins where employee_id = (select id from public.employees where employee_no = 'ITA-STAFF');
+select set_config('request.jwt.claims', pg_temp.sub(1), true);
+select is(public.app_itas_my_access(), '{"allowed": true, "is_test": false}'::jsonb, 'my_access tells the allowlisted admin that he is allowed');
+select set_config('request.jwt.claims', pg_temp.sub(6), true);
+select is(public.app_itas_my_access(), '{"allowed": false, "is_test": false}'::jsonb, 'my_access says "not allowed" (no error) for an itwo it_admin outside the allowlist');
+select set_config('request.jwt.claims', pg_temp.sub(4), true);
+select is(public.app_itas_my_access() ->> 'allowed', 'false', 'my_access says "not allowed" for a plain employee');
+select set_config('request.jwt.claims', pg_temp.sub(1), true);
+select is(substr(pg_temp.try('select public.app_itas_my_access()'), 1, 5), 'OK', 'my_access works for the allowlisted admin through pg_temp.try as well');
 select is(jsonb_array_length(public.app_itas_list_types()), 23, 'it_admin lists the 23 seeded types');
 select is((public.app_itas_list_types() -> 0) ->> 'code', 'COMPUTER', 'the first type is COMPUTER (sorted by sort)');
 select is((public.app_itas_list_types() -> 2) ->> 'asset_count', '0', 'no asset yet in MONITOR');
@@ -215,7 +244,7 @@ select is((select count(*)::int from public.itas_asset_moves where asset_id = cu
 select is((select to_host || '/' || to_slot || '/' || to_status || '/' || coalesce(from_host, 'null') from public.itas_asset_moves where asset_id = current_setting('t.mon1_id')::uuid), 'COM01/Port 1/in_use/null', 'the creation move goes from nothing to COM01');
 select set_config('t.mon1_ua', pg_temp.ua(current_setting('t.mon1_id')::uuid)::text, true);
 -- สร้างโดยไม่ส่ง id
-select set_config('t.com1_id', (public.app_itas_save_asset(null, 'COMPUTER', '{"device_code": "com01", "name": "เครื่องบัญชี", "status": "in_use"}'::jsonb, '{"auth_name": "somchai", "os": "Windows 11", "started_on": "2020-05-01", "express": "yes"}'::jsonb,
+select set_config('t.com1_id', (public.app_itas_save_asset(gen_random_uuid(), 'COMPUTER', '{"device_code": "com01", "name": "เครื่องบัญชี", "status": "in_use"}'::jsonb, '{"auth_name": "somchai", "os": "Windows 11", "started_on": "2020-05-01", "express": "yes"}'::jsonb,
   jsonb_build_object('ip', pg_temp.env(1), 'license_os', pg_temp.env(2, 64)), null) -> 'asset' ->> 'id'), true);
 select ok(current_setting('t.com1_id')::uuid is not null, 'an asset created without an id gets a generated uuid');
 select is(pg_temp.asset(current_setting('t.com1_id')::uuid) -> 'secrets' -> 'ip', pg_temp.env(1), 'the secret comes back exactly as it was sent (ciphertext only)');
@@ -291,20 +320,24 @@ select throws_ok($$ select public.app_itas_save_asset(null, 'ZZ_TEST', '{"name":
 -- plaintext ผิดช่อง / envelope ผิดรูป
 select throws_ok($$ select public.app_itas_save_asset(null, 'COMPUTER', '{"name": "x"}'::jsonb, '{"ip": "192.168.1.5"}'::jsonb) $$, '23514', 'ช่อง "IP Address" เป็นช่องลับ ต้องส่งในรูปข้อมูลที่เข้ารหัสแล้ว (secrets) เท่านั้น ห้ามส่งค่าลับใน attrs', 'a plaintext sent to a secret field in attrs is refused');
 select throws_ok($$ select public.app_itas_save_asset(null, 'COMPUTER', '{"name": "x"}'::jsonb, '{"license_os": null}'::jsonb) $$, '23514', 'ช่อง "License OS" เป็นช่องลับ ต้องส่งในรูปข้อมูลที่เข้ารหัสแล้ว (secrets) เท่านั้น ห้ามส่งค่าลับใน attrs', 'even a null for a secret key in attrs is refused');
-select throws_ok($$ select public.app_itas_save_asset(null, 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, '{"ip": "192.168.1.5"}'::jsonb) $$, '23514', 'ช่องลับ "IP Address": รูปแบบข้อมูลลับต้องเป็นข้อมูลที่เข้ารหัสแล้ว {v, n, c}', 'a plaintext string in secrets is refused');
-select throws_ok($$ select public.app_itas_save_asset(null, 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, '{"os": {"v": 1, "n": "AAAAAAAAAAAAAAAA", "c": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}'::jsonb) $$, '23514', 'ช่อง "ระบบปฏิบัติการ (OS)" ไม่ใช่ช่องลับ ให้ส่งใน attrs', 'a non-secret field sent in secrets is refused');
-select throws_ok($$ select public.app_itas_save_asset(null, 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('wifi_password', pg_temp.env(1))) $$, '23514', 'ช่อง "wifi_password" ไม่มีในชนิดอุปกรณ์ COMPUTER', 'an unknown secret key is refused');
-select throws_ok($$ select public.app_itas_save_asset(null, 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', '["a"]'::jsonb)) $$, '23514', 'ช่องลับ "IP Address": รูปแบบข้อมูลลับต้องเป็นข้อมูลที่เข้ารหัสแล้ว {v, n, c}', 'an array instead of an envelope is refused');
-select throws_ok($$ select public.app_itas_save_asset(null, 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1) || '{"extra": 1}'::jsonb)) $$, '23514', 'ช่องลับ "IP Address": รูปแบบข้อมูลลับต้องมีเฉพาะ v, n, c', 'an envelope with an extra key is refused');
-select throws_ok($$ select public.app_itas_save_asset(null, 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1) - 'n')) $$, '23514', 'ช่องลับ "IP Address": รูปแบบข้อมูลลับต้องมีเฉพาะ v, n, c', 'an envelope without a nonce is refused');
-select throws_ok($$ select public.app_itas_save_asset(null, 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1) || '{"v": 2}'::jsonb)) $$, '23514', 'ช่องลับ "IP Address": เวอร์ชันของข้อมูลลับต้องเป็น 1', 'an envelope with another version is refused');
-select throws_ok($$ select public.app_itas_save_asset(null, 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1) || jsonb_build_object('n', pg_temp.b64(1, 11)))) $$, '23514', 'ช่องลับ "IP Address": nonce ของข้อมูลลับต้องเป็น base64 ยาว 12 ไบต์', 'a nonce of 11 bytes is refused');
-select throws_ok($$ select public.app_itas_save_asset(null, 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1) || jsonb_build_object('n', pg_temp.b64(1, 13)))) $$, '23514', 'ช่องลับ "IP Address": nonce ของข้อมูลลับต้องเป็น base64 ยาว 12 ไบต์', 'a nonce of 13 bytes is refused');
-select throws_ok($$ select public.app_itas_save_asset(null, 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1) || '{"n": "not base64!"}'::jsonb)) $$, '23514', 'ช่องลับ "IP Address": nonce ของข้อมูลลับต้องเป็น base64 ยาว 12 ไบต์', 'a nonce that is not base64 is refused');
-select throws_ok($$ select public.app_itas_save_asset(null, 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1) || '{"c": "192.168.1.5"}'::jsonb)) $$, '23514', 'ช่องลับ "IP Address": ciphertext ของข้อมูลลับต้องเป็น base64 ที่ถูกต้อง', 'a ciphertext that is a plaintext IP is refused (not base64)');
-select throws_ok($$ select public.app_itas_save_asset(null, 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1, 16))) $$, '23514', 'ช่องลับ "IP Address": ciphertext ของข้อมูลลับต้องยาว 17–4,096 ไบต์ (ค่าลับยาวสุดประมาณ 4,000 ตัวอักษร)', 'a ciphertext of 16 bytes (tag only, empty plaintext) is refused');
-select throws_ok($$ select public.app_itas_save_asset(null, 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1, 4097))) $$, '23514', 'ช่องลับ "IP Address": ciphertext ของข้อมูลลับต้องยาว 17–4,096 ไบต์ (ค่าลับยาวสุดประมาณ 4,000 ตัวอักษร)', 'a ciphertext over 4 KB is refused');
-select lives_ok($$ select public.app_itas_save_asset(null, 'COMPUTER', '{"name": "ขอบเขตขนาด"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1, 17), 'mac', pg_temp.env(2, 4096))) $$, 'ciphertexts of exactly 17 and 4096 bytes are accepted');
+select throws_ok($$ select public.app_itas_save_asset(gen_random_uuid(), 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, '{"ip": "192.168.1.5"}'::jsonb) $$, '23514', 'ช่องลับ "IP Address": รูปแบบข้อมูลลับต้องเป็นข้อมูลที่เข้ารหัสแล้ว {v, n, c}', 'a plaintext string in secrets is refused');
+select throws_ok($$ select public.app_itas_save_asset(gen_random_uuid(), 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, '{"os": {"v": 1, "n": "AAAAAAAAAAAAAAAA", "c": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}'::jsonb) $$, '23514', 'ช่อง "ระบบปฏิบัติการ (OS)" ไม่ใช่ช่องลับ ให้ส่งใน attrs', 'a non-secret field sent in secrets is refused');
+select throws_ok($$ select public.app_itas_save_asset(gen_random_uuid(), 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('wifi_password', pg_temp.env(1))) $$, '23514', 'ช่อง "wifi_password" ไม่มีในชนิดอุปกรณ์ COMPUTER', 'an unknown secret key is refused');
+select throws_ok($$ select public.app_itas_save_asset(gen_random_uuid(), 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', '["a"]'::jsonb)) $$, '23514', 'ช่องลับ "IP Address": รูปแบบข้อมูลลับต้องเป็นข้อมูลที่เข้ารหัสแล้ว {v, n, c}', 'an array instead of an envelope is refused');
+select throws_ok($$ select public.app_itas_save_asset(gen_random_uuid(), 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1) || '{"extra": 1}'::jsonb)) $$, '23514', 'ช่องลับ "IP Address": รูปแบบข้อมูลลับต้องมีเฉพาะ v, n, c', 'an envelope with an extra key is refused');
+select throws_ok($$ select public.app_itas_save_asset(gen_random_uuid(), 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1) - 'n')) $$, '23514', 'ช่องลับ "IP Address": รูปแบบข้อมูลลับต้องมีเฉพาะ v, n, c', 'an envelope without a nonce is refused');
+select throws_ok($$ select public.app_itas_save_asset(gen_random_uuid(), 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1) || '{"v": 2}'::jsonb)) $$, '23514', 'ช่องลับ "IP Address": เวอร์ชันของข้อมูลลับต้องเป็น 1', 'an envelope with another version is refused');
+select throws_ok($$ select public.app_itas_save_asset(gen_random_uuid(), 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1) || jsonb_build_object('n', pg_temp.b64(1, 11)))) $$, '23514', 'ช่องลับ "IP Address": nonce ของข้อมูลลับต้องเป็น base64 ยาว 12 ไบต์', 'a nonce of 11 bytes is refused');
+select throws_ok($$ select public.app_itas_save_asset(gen_random_uuid(), 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1) || jsonb_build_object('n', pg_temp.b64(1, 13)))) $$, '23514', 'ช่องลับ "IP Address": nonce ของข้อมูลลับต้องเป็น base64 ยาว 12 ไบต์', 'a nonce of 13 bytes is refused');
+select throws_ok($$ select public.app_itas_save_asset(gen_random_uuid(), 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1) || '{"n": "not base64!"}'::jsonb)) $$, '23514', 'ช่องลับ "IP Address": nonce ของข้อมูลลับต้องเป็น base64 ยาว 12 ไบต์', 'a nonce that is not base64 is refused');
+select throws_ok($$ select public.app_itas_save_asset(gen_random_uuid(), 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1) || '{"c": "192.168.1.5"}'::jsonb)) $$, '23514', 'ช่องลับ "IP Address": ciphertext ของข้อมูลลับต้องเป็น base64 ที่ถูกต้อง', 'a ciphertext that is a plaintext IP is refused (not base64)');
+select throws_ok($$ select public.app_itas_save_asset(gen_random_uuid(), 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1, 16))) $$, '23514', 'ช่องลับ "IP Address": ciphertext ของข้อมูลลับต้องยาว 17–4,096 ไบต์ (ค่าลับยาวสุดประมาณ 4,000 ตัวอักษร)', 'a ciphertext of 16 bytes (tag only, empty plaintext) is refused');
+select throws_ok($$ select public.app_itas_save_asset(gen_random_uuid(), 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1, 4097))) $$, '23514', 'ช่องลับ "IP Address": ciphertext ของข้อมูลลับต้องยาว 17–4,096 ไบต์ (ค่าลับยาวสุดประมาณ 4,000 ตัวอักษร)', 'a ciphertext over 4 KB is refused');
+select lives_ok($$ select public.app_itas_save_asset(gen_random_uuid(), 'COMPUTER', '{"name": "ขอบเขตขนาด"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1, 17), 'mac', pg_temp.env(2, 4096))) $$, 'ciphertexts of exactly 17 and 4096 bytes are accepted');
+select throws_ok($$ select public.app_itas_save_asset(null, 'COMPUTER', '{"name": "x"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1))) $$, '23514', 'สร้างอุปกรณ์ที่มีข้อมูลลับต้องส่ง id ของอุปกรณ์มาด้วย (ใช้ผูกกับการเข้ารหัส)', 'creating an asset with a secret needs the client-made id (it is part of the AAD)');
+select throws_ok($$ select public.app_itas_save_asset(null, 'COMPUTER', '{}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(1), 'mac', null)) $$, '23514', 'สร้างอุปกรณ์ที่มีข้อมูลลับต้องส่ง id ของอุปกรณ์มาด้วย (ใช้ผูกกับการเข้ารหัส)', 'even one non-null secret among null ones needs the id');
+select throws_ok($$ select public.app_itas_save_asset(null, 'COMPUTER', '{}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', null)) $$, '23514', 'กรุณาระบุอย่างน้อยหนึ่งอย่าง: เลขทะเบียน รหัสอุปกรณ์ ชื่อ รุ่น Serial หรือหมายเหตุ', 'null secrets alone do not need an id (the call fails later for its own reason)');
+select is((select count(*)::int from public.itas_assets where name = 'x'), 0, 'none of the refused creations left a row');
 select is((select count(*)::int from public.itas_assets where not is_test), 11, 'the refused saves created nothing (11 = 9 + the ZZ_TEST asset + the boundary computer)');
 
 -- แก้อุปกรณ์: กันแก้ชนกัน / ชนิดเปลี่ยนไม่ได้ / merge ราย key
@@ -417,56 +450,91 @@ select is((select from_status || '->' || to_status from public.itas_asset_moves 
 select is((select e.employee_no from public.itas_asset_moves m join public.employees e on e.id = m.actor_id where m.asset_id = '2a500000-0000-0000-0000-0000000000a1' order by m.id desc limit 1), 'ITA-ADM2', 'the move actor is the updating user');
 select lives_ok($$ update public.itas_assets set updated_by = (select id from public.employees where employee_no = 'ITA-ADM') where id = '2a500000-0000-0000-0000-0000000000a1' $$, 'an update that changes nothing but the editor');
 select is((select count(*)::int from public.itas_asset_log where asset_id = '2a500000-0000-0000-0000-0000000000a1'), 2, 'writes no log row (nothing changed)');
-select ok((select updated_at > created_at or updated_at = created_at from public.itas_assets where id = '2a500000-0000-0000-0000-0000000000a1'), 'updated_at is maintained by the trigger');
-select ok(not exists (select 1 from public.itas_asset_log l where l.action = 'updated' and l.old_values is null) and not exists (select 1 from public.itas_asset_log l where l.action = 'created' and l.old_values is not null), 'the log table forces old values to exist exactly for updates');
+select lives_ok($$ update public.itas_assets set updated_at = timestamptz '2000-01-01' where id = '2a500000-0000-0000-0000-0000000000a1' $$, 'an update that tries to set updated_at by hand');
+select ok((select updated_at > timestamptz '2020-01-01' from public.itas_assets where id = '2a500000-0000-0000-0000-0000000000a1'), 'updated_at is overwritten by the trigger (a hand-set value does not stick)');
+select throws_ok($$ insert into public.itas_asset_log (is_test, asset_id, action, actor_id, old_values, new_values) values (false, '2a500000-0000-0000-0000-0000000000a1', 'updated', (select id from public.employees where employee_no = 'ITA-ADM'), null, '{}'::jsonb) $$, '23514', null, 'the table refuses an updated log row without old values');
+select throws_ok($$ insert into public.itas_asset_log (is_test, asset_id, action, actor_id, old_values, new_values) values (false, '2a500000-0000-0000-0000-0000000000a1', 'created', (select id from public.employees where employee_no = 'ITA-ADM'), '{}'::jsonb, '{}'::jsonb) $$, '23514', null, 'and a created log row that has old values');
 
 -- 6. ตู้เซฟ -------------------------------------------------------------
 select set_config('request.jwt.claims', pg_temp.sub(1), true);
 select is(public.app_itas_vault_get(), '{"initialized": false, "is_test": false}'::jsonb, 'the vault is not initialized at first');
-select throws_ok($$ select public.app_itas_vault_init('SHA1', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1), 600000, pg_temp.b64(2, 16), pg_temp.wrap(2)) $$, '23514', 'รองรับเฉพาะ KDF แบบ PBKDF2-SHA256', 'only PBKDF2-SHA256 is accepted');
-select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 599999, pg_temp.b64(1, 16), pg_temp.wrap(1), 600000, pg_temp.b64(2, 16), pg_temp.wrap(2)) $$, '23514', 'จำนวนรอบ KDF ของรหัสตู้เซฟต้องอยู่ระหว่าง 600,000–10,000,000', 'fewer than 600000 rounds are refused');
-select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 10000001, pg_temp.b64(1, 16), pg_temp.wrap(1), 600000, pg_temp.b64(2, 16), pg_temp.wrap(2)) $$, '23514', 'จำนวนรอบ KDF ของรหัสตู้เซฟต้องอยู่ระหว่าง 600,000–10,000,000', 'more than 10 million rounds are refused (ceiling)');
-select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1), 1000, pg_temp.b64(2, 16), pg_temp.wrap(2)) $$, '23514', 'จำนวนรอบ KDF ของรหัสกู้คืนต้องอยู่ระหว่าง 600,000–10,000,000', 'the recovery code needs the same minimum rounds');
-select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(1, 15), pg_temp.wrap(1), 600000, pg_temp.b64(2, 16), pg_temp.wrap(2)) $$, '23514', 'salt ของรหัสตู้เซฟต้องเป็น base64 ยาว 16 ไบต์', 'a salt of 15 bytes is refused');
-select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1), 600000, 'not base64', pg_temp.wrap(2)) $$, '23514', 'salt ของรหัสกู้คืนต้องเป็น base64 ยาว 16 ไบต์', 'a recovery salt that is not base64 is refused');
-select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1) || '{"extra": 1}'::jsonb, 600000, pg_temp.b64(2, 16), pg_temp.wrap(2)) $$, '23514', 'กุญแจที่ห่อด้วยรหัสตู้เซฟ: กุญแจที่ห่อต้องมีเฉพาะ n และ c', 'a wrapped key with an extra key is refused');
-select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), jsonb_build_object('n', pg_temp.b64(1, 12), 'c', pg_temp.b64(1, 47)), 600000, pg_temp.b64(2, 16), pg_temp.wrap(2)) $$, '23514', 'กุญแจที่ห่อด้วยรหัสตู้เซฟ: กุญแจที่ห่อต้องเป็น base64 ยาว 48 ไบต์ (กุญแจ 32 ไบต์ + tag 16 ไบต์)', 'a wrapped key of 47 bytes is refused (must be exactly 32 + 16)');
-select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1), 600000, pg_temp.b64(2, 16), jsonb_build_object('n', pg_temp.b64(2, 13), 'c', pg_temp.b64(2, 48))) $$, '23514', 'กุญแจที่ห่อด้วยรหัสกู้คืน: nonce ของกุญแจที่ห่อต้องเป็น base64 ยาว 12 ไบต์', 'a recovery wrapped key with a 13-byte nonce is refused');
-select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), '"just text"'::jsonb, 600000, pg_temp.b64(2, 16), pg_temp.wrap(2)) $$, '23514', 'กุญแจที่ห่อด้วยรหัสตู้เซฟ: กุญแจที่ห่อต้องเป็นข้อมูล {n, c}', 'a wrapped key that is a string is refused');
-select is(public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1), 700000, pg_temp.b64(2, 16), pg_temp.wrap(2)), '{"rev": 1, "key_version": 1}'::jsonb, 'the vault is initialized (rev 1, key version 1)');
-select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(3, 16), pg_temp.wrap(3), 600000, pg_temp.b64(4, 16), pg_temp.wrap(4)) $$, '23514', 'ตั้งตู้เซฟไปแล้ว ตั้งซ้ำไม่ได้ (ถ้าจะเปลี่ยนรหัสให้ใช้การเปลี่ยนรหัสตู้เซฟ)', 'initializing twice is refused (never overwrites)');
+select throws_ok($$ select public.app_itas_vault_rotate(1, 'change_password', pg_temp.b64(1, 32), 600000, pg_temp.b64(5, 16), pg_temp.wrap(5)) $$, '23514', 'ยังไม่ได้ตั้งตู้เซฟ', 'rotating before the vault is initialized is refused');
+select is(encode(sha256(decode('MONtsBv3SGt5rtFXTIMD+RxPGsTP7Raus25hHKFbZRw=', 'base64')), 'base64'), '8S9NnL83CX+lJfH1GShX6MhE0LQoSw1KOeKm0Ucx/ps=', 'sha256(token) in Postgres equals SHA-256 computed by Web Crypto (test vector from the contract)');
+select throws_ok($$ select public.app_itas_vault_init('SHA1', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1), 600000, pg_temp.b64(2, 16), pg_temp.wrap(2), pg_temp.ah(1)) $$, '23514', 'รองรับเฉพาะ KDF แบบ PBKDF2-SHA256', 'only PBKDF2-SHA256 is accepted');
+select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 599999, pg_temp.b64(1, 16), pg_temp.wrap(1), 600000, pg_temp.b64(2, 16), pg_temp.wrap(2), pg_temp.ah(1)) $$, '23514', 'จำนวนรอบ KDF ของรหัสตู้เซฟต้องอยู่ระหว่าง 600,000–10,000,000', 'a password KDF below 600,000 rounds is refused');
+select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 10000001, pg_temp.b64(1, 16), pg_temp.wrap(1), 600000, pg_temp.b64(2, 16), pg_temp.wrap(2), pg_temp.ah(1)) $$, '23514', 'จำนวนรอบ KDF ของรหัสตู้เซฟต้องอยู่ระหว่าง 600,000–10,000,000', 'a password KDF above 10,000,000 rounds is refused');
+select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1), 1000, pg_temp.b64(2, 16), pg_temp.wrap(2), pg_temp.ah(1)) $$, '23514', 'จำนวนรอบ KDF ของรหัสกู้คืนต้องอยู่ระหว่าง 600,000–10,000,000', 'a recovery KDF below 600,000 rounds is refused');
+select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(1, 15), pg_temp.wrap(1), 600000, pg_temp.b64(2, 16), pg_temp.wrap(2), pg_temp.ah(1)) $$, '23514', 'salt ของรหัสตู้เซฟต้องเป็น base64 ยาว 16 ไบต์', 'a salt of 15 bytes is refused');
+select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1), 600000, 'not base64', pg_temp.wrap(2), pg_temp.ah(1)) $$, '23514', 'salt ของรหัสกู้คืนต้องเป็น base64 ยาว 16 ไบต์', 'a recovery salt that is not base64 is refused');
+select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1) || '{"extra": 1}'::jsonb, 600000, pg_temp.b64(2, 16), pg_temp.wrap(2), pg_temp.ah(1)) $$, '23514', 'กุญแจที่ห่อด้วยรหัสตู้เซฟ: กุญแจที่ห่อต้องมีเฉพาะ n และ c', 'a wrapped key with an extra property is refused');
+select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), jsonb_build_object('n', pg_temp.b64(1, 12), 'c', pg_temp.b64(1, 47)), 600000, pg_temp.b64(2, 16), pg_temp.wrap(2), pg_temp.ah(1)) $$, '23514', 'กุญแจที่ห่อด้วยรหัสตู้เซฟ: กุญแจที่ห่อต้องเป็น base64 ยาว 48 ไบต์ (กุญแจ 32 ไบต์ + tag 16 ไบต์)', 'a wrapped key of 47 bytes is refused');
+select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1), 600000, pg_temp.b64(2, 16), jsonb_build_object('n', pg_temp.b64(2, 13), 'c', pg_temp.b64(2, 48)), pg_temp.ah(1)) $$, '23514', 'กุญแจที่ห่อด้วยรหัสกู้คืน: nonce ของกุญแจที่ห่อต้องเป็น base64 ยาว 12 ไบต์', 'a recovery wrapped key with a 13-byte nonce is refused');
+select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), '"just text"'::jsonb, 600000, pg_temp.b64(2, 16), pg_temp.wrap(2), pg_temp.ah(1)) $$, '23514', 'กุญแจที่ห่อด้วยรหัสตู้เซฟ: กุญแจที่ห่อต้องเป็นข้อมูล {n, c}', 'a wrapped key that is not an object is refused');
+select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1), 600000, pg_temp.b64(2, 16), pg_temp.wrap(2), null) $$, '23514', 'ตัวพิสูจน์กุญแจ (auth_hash) ต้องเป็น base64 ยาว 32 ไบต์', 'init without an auth_hash is refused');
+select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1), 600000, pg_temp.b64(2, 16), pg_temp.wrap(2), pg_temp.b64(1, 31)) $$, '23514', 'ตัวพิสูจน์กุญแจ (auth_hash) ต้องเป็น base64 ยาว 32 ไบต์', 'an auth_hash of 31 bytes is refused');
+select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1), 600000, pg_temp.b64(2, 16), pg_temp.wrap(2), 'not base64') $$, '23514', 'ตัวพิสูจน์กุญแจ (auth_hash) ต้องเป็น base64 ยาว 32 ไบต์', 'an auth_hash that is not base64 is refused');
+select is((select count(*)::int from public.itas_vault), 0, 'every refused init left no vault row');
+select is(public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1), 700000, pg_temp.b64(2, 16), pg_temp.wrap(2), pg_temp.ah(1)), '{"rev": 1, "key_version": 1}'::jsonb, 'the vault is initialized (rev 1, key version 1)');
+select throws_ok($$ select public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(3, 16), pg_temp.wrap(3), 600000, pg_temp.b64(4, 16), pg_temp.wrap(4), pg_temp.ah(3)) $$, '23514', 'ตั้งตู้เซฟไปแล้ว ตั้งซ้ำไม่ได้ (ถ้าจะเปลี่ยนรหัสให้ใช้การเปลี่ยนรหัสตู้เซฟ)', 'initializing twice is refused (the first vault is not overwritten)');
+select is((select auth_hash from public.itas_vault where not is_test), sha256(decode(pg_temp.b64(1, 32), 'base64')), 'the stored auth_hash is the SHA-256 of the token the browser derived (the token itself is not stored)');
 select is(public.app_itas_vault_get() ->> 'initialized', 'true', 'the vault is initialized now');
 select is(public.app_itas_vault_get() ->> 'kdf_iterations', '600000', 'the vault returns the password KDF rounds');
 select is(public.app_itas_vault_get() ->> 'recovery_kdf_iterations', '700000', 'and the recovery KDF rounds');
-select is(public.app_itas_vault_get() -> 'wrapped_key_pass', pg_temp.wrap(1), 'the wrapped key is returned to it_admin (needed to unlock in the browser)');
+select is(public.app_itas_vault_get() -> 'wrapped_key_pass', pg_temp.wrap(1), 'the wrapped key is returned to the register user (needed to unlock in the browser)');
 select is(public.app_itas_vault_get() ->> 'salt', pg_temp.b64(1, 16), 'the salt is returned');
 select ok(not (public.app_itas_vault_get() ? 'created_by') and not (public.app_itas_vault_get() ? 'password'), 'the vault response has no author and no password field');
-select is((select count(*)::int from public.itas_vault_log where action = 'init' and rev = 1 and not is_test), 1, 'the initialization is logged (without any secret)');
-select throws_ok($$ select public.app_itas_vault_rotate(2, 'change_password', 600000, pg_temp.b64(5, 16), pg_temp.wrap(5)) $$, '40001', 'ตู้เซฟถูกเปลี่ยนจากที่อื่นแล้ว กรุณาโหลดตู้เซฟใหม่แล้วลองอีกครั้ง', 'rotating with a wrong rev is refused with 40001');
-select throws_ok($$ select public.app_itas_vault_rotate(null, 'change_password', 600000, pg_temp.b64(5, 16), pg_temp.wrap(5)) $$, '40001', 'ตู้เซฟถูกเปลี่ยนจากที่อื่นแล้ว กรุณาโหลดตู้เซฟใหม่แล้วลองอีกครั้ง', 'rotating without a rev is refused');
-select throws_ok($$ select public.app_itas_vault_rotate(1, 'reset', 600000, pg_temp.b64(5, 16), pg_temp.wrap(5)) $$, '23514', 'การกระทำต้องเป็น change_password หรือ new_recovery', 'an unknown action is refused');
-select throws_ok($$ select public.app_itas_vault_rotate(1, 'change_password', 600000, pg_temp.b64(5, 16), pg_temp.wrap(5), 600000, pg_temp.b64(6, 16), pg_temp.wrap(6)) $$, '23514', 'เปลี่ยนรหัสตู้เซฟต้องไม่ส่งข้อมูลของรหัสกู้คืนมาด้วย', 'a password change must not carry recovery data');
-select throws_ok($$ select public.app_itas_vault_rotate(1, 'change_password', 1000, pg_temp.b64(5, 16), pg_temp.wrap(5)) $$, '23514', 'จำนวนรอบ KDF ของรหัสตู้เซฟต้องอยู่ระหว่าง 600,000–10,000,000', 'a password change below 600000 rounds is refused');
-select throws_ok($$ select public.app_itas_vault_rotate(1, 'change_password', 600000, pg_temp.b64(1, 16), pg_temp.wrap(5)) $$, '23514', 'ต้องใช้ salt และการห่อกุญแจชุดใหม่ (สุ่มใหม่ทุกครั้ง)', 'the old salt cannot be reused');
-select throws_ok($$ select public.app_itas_vault_rotate(1, 'change_password', 600000, pg_temp.b64(5, 16), pg_temp.wrap(1)) $$, '23514', 'ต้องใช้ salt และการห่อกุญแจชุดใหม่ (สุ่มใหม่ทุกครั้ง)', 'the old wrapped key cannot be replayed');
-select throws_ok($$ select public.app_itas_vault_rotate(1, 'change_password', 600000, pg_temp.b64(5, 15), pg_temp.wrap(5)) $$, '23514', 'salt ของรหัสตู้เซฟต้องเป็น base64 ยาว 16 ไบต์', 'a 15-byte salt is refused on rotation too');
-select throws_ok($$ select public.app_itas_vault_rotate(1, 'new_recovery', 600000, null, null, 600000, pg_temp.b64(6, 16), pg_temp.wrap(6)) $$, '23514', 'ออกรหัสกู้คืนใหม่ต้องไม่ส่งข้อมูลของรหัสตู้เซฟมาด้วย', 'a new recovery code must not carry password data');
-select throws_ok($$ select public.app_itas_vault_rotate(1, 'new_recovery', null, null, null, 600000, pg_temp.b64(2, 16), pg_temp.wrap(6)) $$, '23514', 'ต้องใช้ salt และการห่อกุญแจชุดใหม่ (สุ่มใหม่ทุกครั้ง)', 'the old recovery salt cannot be reused');
-select is(public.app_itas_vault_rotate(1, 'change_password', 800000, pg_temp.b64(5, 16), pg_temp.wrap(5)), '{"rev": 2, "key_version": 1}'::jsonb, 'the password is changed (rev 2, key version unchanged so the ciphertexts still decrypt)');
+select ok(not (public.app_itas_vault_get() ? 'auth_hash') and position(pg_temp.ah(1) in public.app_itas_vault_get()::text) = 0, 'vault_get never returns the auth_hash');
+select is((select count(*)::int from public.itas_vault_log where action = 'init' and rev = 1 and not is_test and old_values is null), 1, 'the initialization is logged (without any secret)');
+select is((select count(*)::int from public.notifications where recipient_id = current_setting('test.e_ita_adm')::uuid and title = 'ตั้งตู้เซฟทะเบียนอุปกรณ์ IT แล้ว'), 1, 'the register user is notified when the vault is set up');
+select ok((select body not like '%' || pg_temp.b64(1, 32) || '%' and body like 'โดย ITA-ADM %' and action_url = '/' from public.notifications where recipient_id = current_setting('test.e_ita_adm')::uuid and title = 'ตั้งตู้เซฟทะเบียนอุปกรณ์ IT แล้ว'), 'the notification names the actor, links to the home page and carries no secret');
+select is((select count(*)::int from public.notifications where recipient_id <> current_setting('test.e_ita_adm')::uuid and title like '%ตู้เซฟทะเบียนอุปกรณ์ IT%'), 0, 'nobody outside the allowlist is notified');
+-- ด่านพิสูจน์กุญแจ: token ผิด/ขาด/ผิดรูป = ไม่เปลี่ยนอะไร + ลง log + แจ้งเตือน (ไม่ raise เพื่อให้ log อยู่)
+select is(public.app_itas_vault_rotate(1, 'change_password', null, 600000, pg_temp.b64(5, 16), pg_temp.wrap(5)) ->> 'code', 'AUTH_TOKEN_INVALID', 'rotating without a token is refused (change_password)');
+select is(public.app_itas_vault_rotate(1, 'change_password', pg_temp.b64(2, 32), 600000, pg_temp.b64(5, 16), pg_temp.wrap(5)) ->> 'ok', 'false', 'rotating with a wrong token is refused (change_password)');
+select is(public.app_itas_vault_rotate(1, 'new_recovery', null, null, null, null, 600000, pg_temp.b64(6, 16), pg_temp.wrap(6)) ->> 'code', 'AUTH_TOKEN_INVALID', 'rotating without a token is refused (new_recovery)');
+select is(public.app_itas_vault_rotate(1, 'new_recovery', pg_temp.b64(2, 32), null, null, null, 600000, pg_temp.b64(6, 16), pg_temp.wrap(6)) ->> 'ok', 'false', 'rotating with a wrong token is refused (new_recovery)');
+select is(public.app_itas_vault_rotate(1, 'change_password', pg_temp.b64(1, 31), 600000, pg_temp.b64(5, 16), pg_temp.wrap(5)) ->> 'ok', 'false', 'a token of 31 bytes is refused');
+select is(public.app_itas_vault_rotate(1, 'change_password', 'not base64!', 600000, pg_temp.b64(5, 16), pg_temp.wrap(5)) ->> 'ok', 'false', 'a token that is not base64 is refused');
+select is(public.app_itas_vault_rotate(9, 'change_password', pg_temp.b64(2, 32), 600000, pg_temp.b64(5, 16), pg_temp.wrap(5)) ->> 'ok', 'false', 'a wrong token is refused before the revision is looked at (nothing is revealed)');
+select is(public.app_itas_vault_rotate(1, 'change_password', pg_temp.b64(2, 32), 600000, pg_temp.b64(5, 16), pg_temp.wrap(5)) -> 'message', to_jsonb('ยืนยันกุญแจของตู้เซฟไม่ผ่าน จึงไม่ได้เปลี่ยนอะไร กรุณาปลดล็อกตู้เซฟด้วยรหัสที่ถูกต้องแล้วลองใหม่'::text), 'the refusal carries a Thai message');
+select is((select rev || '/' || salt || '/' || (wrapped_key_pass = pg_temp.wrap(1))::text || '/' || (wrapped_key_recovery = pg_temp.wrap(2))::text from public.itas_vault where not is_test), '1/' || pg_temp.b64(1, 16) || '/true/true', 'refused rotations changed nothing in the vault (the old wrapping is still there)');
+select is((select count(*)::int from public.itas_vault_log where action = 'rotate_failed' and not is_test and old_values is null and rev = 1), 8, 'every refused rotation is logged as rotate_failed');
+select is((select count(*)::int from public.notifications where recipient_id = current_setting('test.e_ita_adm')::uuid and title = 'มีผู้พยายามเปลี่ยนตู้เซฟทะเบียนอุปกรณ์ IT แต่ไม่สำเร็จ'), 1, 'the register user is notified of the failed attempts (rate limited: once for the burst)');
+select throws_ok($$ select public.app_itas_vault_rotate(2, 'change_password', pg_temp.b64(1, 32), 600000, pg_temp.b64(5, 16), pg_temp.wrap(5)) $$, '40001', 'ตู้เซฟถูกเปลี่ยนจากที่อื่นแล้ว กรุณาโหลดตู้เซฟใหม่แล้วลองอีกครั้ง', 'with the right token a stale revision is refused (40001)');
+select throws_ok($$ select public.app_itas_vault_rotate(null, 'change_password', pg_temp.b64(1, 32), 600000, pg_temp.b64(5, 16), pg_temp.wrap(5)) $$, '40001', 'ตู้เซฟถูกเปลี่ยนจากที่อื่นแล้ว กรุณาโหลดตู้เซฟใหม่แล้วลองอีกครั้ง', 'a missing revision is refused');
+select throws_ok($$ select public.app_itas_vault_rotate(1, 'reset', pg_temp.b64(1, 32), 600000, pg_temp.b64(5, 16), pg_temp.wrap(5)) $$, '23514', 'การกระทำต้องเป็น change_password หรือ new_recovery', 'an unknown action is refused');
+select throws_ok($$ select public.app_itas_vault_rotate(1, 'change_password', pg_temp.b64(1, 32), 600000, pg_temp.b64(5, 16), pg_temp.wrap(5), 600000, pg_temp.b64(6, 16), pg_temp.wrap(6)) $$, '23514', 'เปลี่ยนรหัสตู้เซฟต้องไม่ส่งข้อมูลของรหัสกู้คืนมาด้วย', 'a password change must not carry recovery data');
+select throws_ok($$ select public.app_itas_vault_rotate(1, 'change_password', pg_temp.b64(1, 32), 1000, pg_temp.b64(5, 16), pg_temp.wrap(5)) $$, '23514', 'จำนวนรอบ KDF ของรหัสตู้เซฟต้องอยู่ระหว่าง 600,000–10,000,000', 'a password change below 600,000 rounds is refused');
+select throws_ok($$ select public.app_itas_vault_rotate(1, 'change_password', pg_temp.b64(1, 32), 600000, pg_temp.b64(1, 16), pg_temp.wrap(5)) $$, '23514', 'ต้องใช้ salt และการห่อกุญแจชุดใหม่ (สุ่มใหม่ทุกครั้ง)', 'the old salt cannot be reused');
+select throws_ok($$ select public.app_itas_vault_rotate(1, 'change_password', pg_temp.b64(1, 32), 600000, pg_temp.b64(5, 16), pg_temp.wrap(1)) $$, '23514', 'ต้องใช้ salt และการห่อกุญแจชุดใหม่ (สุ่มใหม่ทุกครั้ง)', 'the old wrapped key cannot be reused');
+select throws_ok($$ select public.app_itas_vault_rotate(1, 'change_password', pg_temp.b64(1, 32), 600000, pg_temp.b64(5, 15), pg_temp.wrap(5)) $$, '23514', 'salt ของรหัสตู้เซฟต้องเป็น base64 ยาว 16 ไบต์', 'a 15-byte salt is refused on rotation too');
+select throws_ok($$ select public.app_itas_vault_rotate(1, 'new_recovery', pg_temp.b64(1, 32), 600000, null, null, 600000, pg_temp.b64(6, 16), pg_temp.wrap(6)) $$, '23514', 'ออกรหัสกู้คืนใหม่ต้องไม่ส่งข้อมูลของรหัสตู้เซฟมาด้วย', 'a new recovery code must not carry password data');
+select throws_ok($$ select public.app_itas_vault_rotate(1, 'new_recovery', pg_temp.b64(1, 32), null, null, null, 600000, pg_temp.b64(2, 16), pg_temp.wrap(6)) $$, '23514', 'ต้องใช้ salt และการห่อกุญแจชุดใหม่ (สุ่มใหม่ทุกครั้ง)', 'the old recovery salt cannot be reused');
+select is(public.app_itas_vault_rotate(1, 'change_password', pg_temp.b64(1, 32), 800000, pg_temp.b64(5, 16), pg_temp.wrap(5)), '{"ok": true, "rev": 2, "key_version": 1}'::jsonb, 'with the right token the password is changed (rev 2, key version unchanged so the ciphertexts still decrypt)');
 select is(public.app_itas_vault_get() ->> 'salt', pg_temp.b64(5, 16), 'the new salt is stored');
 select is(public.app_itas_vault_get() ->> 'kdf_iterations', '800000', 'the new rounds are stored');
 select is(public.app_itas_vault_get() -> 'wrapped_key_recovery', pg_temp.wrap(2), 'the recovery wrapping is untouched by a password change');
-select throws_ok($$ select public.app_itas_vault_rotate(1, 'change_password', 600000, pg_temp.b64(7, 16), pg_temp.wrap(7)) $$, '40001', 'ตู้เซฟถูกเปลี่ยนจากที่อื่นแล้ว กรุณาโหลดตู้เซฟใหม่แล้วลองอีกครั้ง', 'the old rev no longer works');
-select is(public.app_itas_vault_rotate(2, 'new_recovery', null, null, null, 650000, pg_temp.b64(6, 16), pg_temp.wrap(6)), '{"rev": 3, "key_version": 1}'::jsonb, 'a new recovery code is issued (rev 3)');
+select is((select old_values -> 'wrapped_key_pass' from public.itas_vault_log where action = 'change_password' and not is_test), pg_temp.wrap(1), 'the log keeps the replaced password wrapping (to recover from a bad rotation)');
+select is((select old_values ->> 'salt' || '/' || (old_values ->> 'kdf_iterations') || '/' || (old_values ->> 'rev') || '/' || (old_values ->> 'key_version') from public.itas_vault_log where action = 'change_password' and not is_test), pg_temp.b64(1, 16) || '/600000/1/1', 'the log keeps the replaced salt, rounds, rev and key version');
+select ok((select old_values -> 'wrapped_key_recovery' = pg_temp.wrap(2) and old_values ->> 'recovery_salt' = pg_temp.b64(2, 16) and old_values ->> 'recovery_kdf_iterations' = '700000' from public.itas_vault_log where action = 'change_password' and not is_test), 'and the recovery wrapping that was current at that time');
+select ok((select not (old_values ? 'auth_hash') and old_values::text !~ pg_temp.b64(1, 32) from public.itas_vault_log where action = 'change_password' and not is_test), 'the replaced set carries no auth_hash and no token');
+select throws_ok($$ select public.app_itas_vault_rotate(1, 'change_password', pg_temp.b64(1, 32), 600000, pg_temp.b64(7, 16), pg_temp.wrap(7)) $$, '40001', 'ตู้เซฟถูกเปลี่ยนจากที่อื่นแล้ว กรุณาโหลดตู้เซฟใหม่แล้วลองอีกครั้ง', 'a second rotation with the old revision is refused');
+select is(public.app_itas_vault_rotate(2, 'new_recovery', pg_temp.b64(1, 32), null, null, null, 650000, pg_temp.b64(6, 16), pg_temp.wrap(6)), '{"ok": true, "rev": 3, "key_version": 1}'::jsonb, 'a new recovery code is issued with the right token (rev 3)');
+select is((select old_values -> 'wrapped_key_recovery' from public.itas_vault_log where action = 'new_recovery' and not is_test), pg_temp.wrap(2), 'the log keeps the replaced recovery wrapping');
+select is((select old_values -> 'wrapped_key_pass' from public.itas_vault_log where action = 'new_recovery' and not is_test), pg_temp.wrap(5), 'and the password wrapping that was current then');
 select is(public.app_itas_vault_get() -> 'wrapped_key_pass', pg_temp.wrap(5), 'the password wrapping is untouched by a new recovery code');
 select is(public.app_itas_vault_get() ->> 'recovery_kdf_iterations', '650000', 'the new recovery rounds are stored');
-select is((select string_agg(action || ':' || rev, ',' order by id) from public.itas_vault_log where not is_test), 'init:1,change_password:2,new_recovery:3', 'the vault log has one row per change and no secret');
-select ok(not exists (select 1 from information_schema.columns c where c.table_name = 'itas_vault_log' and c.column_name not in ('id', 'is_test', 'action', 'rev', 'actor_id', 'created_at')), 'the vault log table has no column that could hold a secret');
+select is((select count(*)::int from public.notifications where recipient_id = current_setting('test.e_ita_adm')::uuid and title = 'เปลี่ยนรหัสตู้เซฟทะเบียนอุปกรณ์ IT'), 1, 'the register user is notified when the password is changed');
+select is((select count(*)::int from public.notifications where recipient_id = current_setting('test.e_ita_adm')::uuid and title = 'ออกรหัสกู้คืนตู้เซฟทะเบียนอุปกรณ์ IT ใหม่'), 1, 'and when a new recovery code is issued');
+select is((select string_agg(action || ':' || rev, ',' order by id) from public.itas_vault_log where not is_test), 'init:1,rotate_failed:1,rotate_failed:1,rotate_failed:1,rotate_failed:1,rotate_failed:1,rotate_failed:1,rotate_failed:1,rotate_failed:1,change_password:2,new_recovery:3', 'the vault log has one row per change and per refused attempt');
+select ok(not exists (select 1 from information_schema.columns c where c.table_name = 'itas_vault_log' and c.column_name not in ('id', 'is_test', 'action', 'rev', 'actor_id', 'old_values', 'created_at')), 'the vault log table has no column for a password, a key or a token (old_values holds ciphertext only)');
+select ok(not exists (select 1 from public.itas_vault_log l where to_jsonb(l)::text like '%' || pg_temp.b64(1, 32) || '%'), 'the token is nowhere in the vault log');
 select is(pg_temp.asset(current_setting('t.com1_id')::uuid) -> 'secrets' -> 'ip', pg_temp.env(4), 'rotating the vault never touches the encrypted asset data');
 reset role;
 select set_config('request.jwt.claims', '', true);
 select throws_ok($$ update public.itas_vault set rev = rev + 2 where not is_test $$, '23514', 'ตู้เซฟต้องแก้ทีละรุ่น (rev เพิ่มทีละ 1)', 'a direct update must raise rev by exactly one');
-select throws_ok($$ update public.itas_vault set key_version = 2 where not is_test $$, '42501', 'รุ่นของกุญแจหลักและผู้ตั้งตู้เซฟแก้ไขไม่ได้', 'the key version cannot be changed');
+select throws_ok($$ update public.itas_vault set key_version = 2 where not is_test $$, '42501', 'รุ่นของกุญแจหลัก ตัวพิสูจน์กุญแจ และผู้ตั้งตู้เซฟแก้ไขไม่ได้', 'the key version cannot be changed');
+select throws_ok($$ update public.itas_vault set auth_hash = sha256('other'::bytea), rev = rev + 1 where not is_test $$, '42501', 'รุ่นของกุญแจหลัก ตัวพิสูจน์กุญแจ และผู้ตั้งตู้เซฟแก้ไขไม่ได้', 'the auth_hash cannot be replaced even by a direct update');
 select throws_ok($$ update public.itas_vault set salt = 'short', rev = rev + 1 where not is_test $$, '23514', null, 'a direct update cannot store a malformed salt');
 select throws_ok($$ update public.itas_vault set kdf_iterations = 1000, rev = rev + 1 where not is_test $$, '23514', null, 'a direct update cannot lower the KDF rounds');
 select throws_ok($$ delete from public.itas_vault where not is_test $$, '42501', 'ตู้เซฟลบไม่ได้ (ข้อมูลลับที่เข้ารหัสไว้จะกู้ไม่ได้)', 'the vault cannot be deleted');
@@ -474,11 +542,17 @@ select throws_ok($$ truncate public.itas_vault cascade $$, '42501', null, 'the v
 select throws_ok($$ delete from public.itas_vault_log where not is_test $$, '42501', 'ประวัติทะเบียนอุปกรณ์ลบไม่ได้ (บันทึกสำหรับ ISO)', 'the vault log cannot be deleted');
 select throws_ok($$ update public.itas_vault_log set action = 'init' $$, '42501', 'ประวัติทะเบียนอุปกรณ์แก้ไขย้อนหลังไม่ได้ (บันทึกสำหรับ ISO)', 'the vault log cannot be updated');
 select is((select count(*)::int from public.itas_vault where not is_test), 1, 'there is exactly one real vault');
-select throws_ok($$ insert into public.itas_vault (is_test, kdf, kdf_iterations, salt, wrapped_key_pass, recovery_kdf_iterations, recovery_salt, wrapped_key_recovery, created_by, updated_by) values (false, 'PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1), 600000, pg_temp.b64(2, 16), pg_temp.wrap(2), current_setting('test.e_ita_adm')::uuid, current_setting('test.e_ita_adm')::uuid) $$, '23505', null, 'a second vault row for the same mode cannot be added');
-select throws_ok($$ insert into public.itas_vault (is_test, kdf, kdf_iterations, salt, wrapped_key_pass, recovery_kdf_iterations, recovery_salt, wrapped_key_recovery, created_by, updated_by) values (true, 'PBKDF2-SHA256', 600000, 'short', pg_temp.wrap(1), 600000, pg_temp.b64(2, 16), pg_temp.wrap(2), current_setting('test.e_ita_adm')::uuid, current_setting('test.e_ita_adm')::uuid) $$, '23514', null, 'the table refuses a vault row with a malformed salt');
-select throws_ok($$ insert into public.itas_vault (is_test, kdf, kdf_iterations, salt, wrapped_key_pass, recovery_kdf_iterations, recovery_salt, wrapped_key_recovery, created_by, updated_by) values (true, 'PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1), 600000, 'short', pg_temp.wrap(2), current_setting('test.e_ita_adm')::uuid, current_setting('test.e_ita_adm')::uuid) $$, '23514', null, 'the table refuses a vault row with a malformed recovery salt');
+select throws_ok($$ insert into public.itas_vault (is_test, kdf, kdf_iterations, salt, wrapped_key_pass, recovery_kdf_iterations, recovery_salt, wrapped_key_recovery, auth_hash, created_by, updated_by) values (false, 'PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1), 600000, pg_temp.b64(2, 16), pg_temp.wrap(2), sha256('x'::bytea), current_setting('test.e_ita_adm')::uuid, current_setting('test.e_ita_adm')::uuid) $$, '23505', null, 'a second vault row for the same mode cannot be added');
+select throws_ok($$ insert into public.itas_vault (is_test, kdf, kdf_iterations, salt, wrapped_key_pass, recovery_kdf_iterations, recovery_salt, wrapped_key_recovery, auth_hash, created_by, updated_by) values (true, 'PBKDF2-SHA256', 600000, 'short', pg_temp.wrap(1), 600000, pg_temp.b64(2, 16), pg_temp.wrap(2), sha256('x'::bytea), current_setting('test.e_ita_adm')::uuid, current_setting('test.e_ita_adm')::uuid) $$, '23514', null, 'the table refuses a vault row with a malformed salt');
+select throws_ok($$ insert into public.itas_vault (is_test, kdf, kdf_iterations, salt, wrapped_key_pass, recovery_kdf_iterations, recovery_salt, wrapped_key_recovery, auth_hash, created_by, updated_by) values (true, 'PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1), 600000, 'short', pg_temp.wrap(2), sha256('x'::bytea), current_setting('test.e_ita_adm')::uuid, current_setting('test.e_ita_adm')::uuid) $$, '23514', null, 'the table refuses a vault row with a malformed recovery salt');
+select throws_ok($$ insert into public.itas_vault (is_test, kdf, kdf_iterations, salt, wrapped_key_pass, recovery_kdf_iterations, recovery_salt, wrapped_key_recovery, auth_hash, created_by, updated_by) values (true, 'PBKDF2-SHA256', 600000, pg_temp.b64(1, 16), pg_temp.wrap(1), 600000, pg_temp.b64(2, 16), pg_temp.wrap(2), '\x00'::bytea, current_setting('test.e_ita_adm')::uuid, current_setting('test.e_ita_adm')::uuid) $$, '23514', null, 'the table refuses an auth_hash that is not 32 bytes');
+select throws_ok($$ insert into public.itas_vault_log (is_test, action, rev, actor_id, old_values) values (false, 'change_password', 9, current_setting('test.e_ita_adm')::uuid, null) $$, '23514', null, 'a rotation log row must carry the replaced wrapping (CHECK)');
+select throws_ok($$ insert into public.itas_vault_log (is_test, action, rev, actor_id, old_values) values (false, 'init', 9, current_setting('test.e_ita_adm')::uuid, '{}'::jsonb) $$, '23514', null, 'and an init log row must not');
 
 -- 7. โหมดทดสอบ ----------------------------------------------------------
+select count(set_config('t.real_vault_log', (select count(*)::text from public.itas_vault_log where not is_test), true));
+select count(set_config('t.real_admins', (select count(*)::text from public.itas_admins), true));
+select count(set_config('t.real_notify', (select count(*)::text from public.notifications), true));
 select count(set_config('t.real_assets', (select count(*)::text from public.itas_assets where not is_test), true));
 select count(set_config('t.real_log', (select count(*)::text from public.itas_asset_log where not is_test), true));
 select count(set_config('t.real_types', (select count(*)::text from public.itas_types where not is_test), true));
@@ -502,10 +576,10 @@ select is(public.app_itas_save_asset(null, 'MONITOR', '{"reg_no": "MNT20190001",
 select is(public.app_itas_save_asset(null, 'MONITOR', '{"name": "จอทดสอบ 2", "host_code": "COM01", "slot": "P1"}'::jsonb, '{"monitor_type": "LCD"}'::jsonb) ->> 'created', 'true', 'a second test asset is created');
 select is(public.app_itas_save_type('ZZ_TEST', 'ชนิดทดสอบในโหมดทดสอบ', null, false, '[{"key": "k1", "label": "K1", "type": "text"}]'::jsonb, 1, true) ->> 'created', 'true', 'the same custom type code can be created in the test world (separate rows)');
 select is(public.app_itas_save_type('MONITOR', 'จอภาพ (ลองแก้)', 'MNT', true, (select fields from public.itas_types where code = 'MONITOR' and is_test), 30, true) ->> 'changed', 'true', 'the persona edits a seeded test type');
-select is(public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(21, 16), pg_temp.wrap(21), 600000, pg_temp.b64(22, 16), pg_temp.wrap(22)) ->> 'rev', '1', 'the test vault is initialized on its own');
+select is(public.app_itas_vault_init('PBKDF2-SHA256', 600000, pg_temp.b64(21, 16), pg_temp.wrap(21), 600000, pg_temp.b64(22, 16), pg_temp.wrap(22), pg_temp.ah(21)) ->> 'rev', '1', 'the test vault is initialized on its own');
 select is(public.app_itas_vault_get() ->> 'is_test', 'true', 'and reports itself as the test vault');
 select is(public.app_itas_host_overview('com01') ->> 'total_parts', '2', 'the test overview counts only test assets');
-select is(public.app_itas_save_asset(null, 'COMPUTER', '{"name": "คอมทดสอบ"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(9))) ->> 'created', 'true', 'a test computer with a (fake) secret');
+select is(public.app_itas_save_asset(gen_random_uuid(), 'COMPUTER', '{"name": "คอมทดสอบ"}'::jsonb, '{}'::jsonb, jsonb_build_object('ip', pg_temp.env(9))) ->> 'created', 'true', 'a test computer with a (fake) secret');
 select lives_ok($$ select public.app_sandbox_exit() $$, 'the admin leaves the test mode');
 select throws_ok($$ select public.app_sandbox_purge_itas() $$, null, 'SANDBOX_NOT_ACTIVE', 'the purge needs an active test mode');
 reset role;
@@ -539,13 +613,16 @@ select is((select count(*)::int from public.itas_asset_log where not is_test), c
 select is((select count(*)::int from public.itas_types where not is_test), current_setting('t.real_types')::int, 'the real types survived the purge');
 select is((select count(*)::int from public.itas_type_log where not is_test), current_setting('t.real_type_log')::int, 'the real type log survived the purge');
 select is((select rev from public.itas_vault where not is_test), 3, 'the real vault survived the purge');
-select is((select count(*)::int from public.itas_vault_log where not is_test), 3, 'the real vault log survived the purge');
+select is((select count(*)::int from public.itas_vault_log where not is_test), current_setting('t.real_vault_log')::int, 'the real vault log survived the purge');
 select throws_ok($$ delete from public.itas_assets where not is_test $$, '42501', 'อุปกรณ์ลบไม่ได้ ให้เปลี่ยนสถานะเป็นยกเลิกใช้งานแทน (บันทึกสำหรับ ISO)', 'real assets still cannot be deleted after a purge');
 select throws_ok($$ delete from public.itas_asset_log where not is_test $$, '42501', 'ประวัติทะเบียนอุปกรณ์ลบไม่ได้ (บันทึกสำหรับ ISO)', 'the real log still cannot be deleted after a purge');
 select throws_ok($$ delete from public.itas_vault where not is_test $$, '42501', 'ตู้เซฟลบไม่ได้ (ข้อมูลลับที่เข้ารหัสไว้จะกู้ไม่ได้)', 'the real vault still cannot be deleted after a purge');
 select is(current_setting('itas.purge', true), 'off', 'the purge flag is switched off again');
 select is((select count(*)::int from public.audit_logs where action = 'ITAS_SANDBOX_PURGE'), 1, 'the purge is recorded in the audit log');
 select ok(array['itas_assets', 'itas_vault'] <@ private.sandbox_unguarded_tables(), 'the registry is still listed after the purge');
+
+select is((select count(*)::int from public.itas_admins), current_setting('t.real_admins')::int, 'the purge does not touch the allowlist');
+select is((select count(*)::int from public.notifications), current_setting('t.real_notify')::int + 0, 'the test mode sent no notification at all (vault init, refused rotation)');
 
 select * from finish();
 rollback;
