@@ -115,8 +115,9 @@
     if (isEditing()) showToast("มีผู้อื่นอัปเดตข้อมูล RubberFlow ข้อมูลล่าสุดจะแสดงเมื่อเปิดหน้านี้ใหม่");
     else renderRoute();
   };
+  // หน้า BOM (#/bom) วาดปุ่มเปิด/ปล่อยใบสั่งผลิตยางและ WO รอปล่อย (โรงงานขั้น 6): บันทึกชนกัน (RF_STALE) ย้อนกลับ หรือผู้อื่นบันทึก = วาดใหม่ด้วย
   // หน้าโมดูล WH (#/wh) วาดกล่องสินค้า โมดูล ST (#/st) วาดล็อตเคมี ใบสั่งซื้อ และเอกสารคลังเคมี และโมดูล QA (#/qa) วาดผลตรวจ NCR ล็อตที่กัก จาก store นี้ด้วย: บันทึกสำเร็จ ผู้อื่นบันทึก หรือย้อนกลับ = วาดหน้านั้นใหม่ (ไม่ทับ dialog ที่เปิดอยู่)
-  const onWhRoute = () => { try { return ["wh", "st", "qa"].includes(currentRoute().path); } catch { return false; } };
+  const onWhRoute = () => { try { return ["wh", "st", "qa", "bom"].includes(currentRoute().path); } catch { return false; } };
   const WH_REPAINT = Object.freeze(["saved", "synced", "reverted"]);
   store.subscribe((event) => {
     if (!onRfRoute()) {
@@ -689,6 +690,12 @@
     const factory = window.MNP_FACTORY;
     // p=warehouse&tab=fg (แท็บสินค้าสำเร็จรูปถูกถอดออกจากคลังเคมี RB · โรงงานขั้น 6): ผู้ที่เปิดโมดูล WH ได้ไปหน้า "ในคลัง" ของ WH · คนอื่นที่เปิดหน้า RubberFlow ได้เห็นข้อความบรรทัดเดียว
     const fgMoved = params.get("p") === "warehouse" && params.get("tab") === "fg";
+    // p=warehouse&tab=raw / tab=po (ล็อตวัตถุดิบและใบสั่งซื้อ ย้ายไปโมดูล ST ตั้งแต่ขั้น 3): ผู้ใช้โมดูล ST ไปหน้าในคลัง / ใบสั่งซื้อของ ST · คนอื่นที่เปิดหน้า RubberFlow ได้เห็นแท็บตั้งต้นเหมือนเดิม
+    const stTab = params.get("p") === "warehouse" ? { raw: "stock", po: "po" }[params.get("tab")] : undefined;
+    if (stTab && factory?.canOpenDeptModule?.(state.employee, "ST", "FACTORY_ST")) {
+      location.hash = factory.routeUrl("st", { tab: stTab, q: params.get("q") });
+      return undefined;
+    }
     if (fgMoved && factory?.canOpenDeptModule?.(state.employee, "WH", "FACTORY_WH")) {
       location.hash = factory.routeUrl("wh", { tab: "stock" });
       return undefined;

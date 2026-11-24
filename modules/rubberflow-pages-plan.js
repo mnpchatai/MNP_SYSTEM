@@ -143,7 +143,9 @@
     const { DAY, fmtNum, toInputDate } = rules;
     const approved = rules.approvedRecipes(data.recipes);
     // ยังไม่มีสูตรที่อนุมัติ: ไม่วางช่องเลือกที่ไม่มีตัวเลือก บอกเหตุผลพร้อมทางไปหน้าสูตรยาง และปิดปุ่มบันทึก (ปุ่มลิงก์ปิด dialog ก่อนไปหน้านั้น)
-    const recipeLink = ctx.canSee("recipes") ? `<a class="btn rf-btn secondary small" href="${esc(ctx.url("recipes"))}" data-rf-close>ไปที่สูตรยาง</a>` : "";
+    // dialog นี้เปิดจาก #/bom ด้วย: ผู้จัดการแผนกอื่นในสายผลิตเปิดหน้า RubberFlow ไม่ได้ จึงไม่มีลิงก์ที่พาไป "ไม่พบ"
+    const canGoRf = typeof state !== "undefined" && Boolean(root.MNP_RUBBERFLOW_STORE?.canOpenRubberFlowPage?.(state.employee));
+    const recipeLink = canGoRf && ctx.canSee("recipes") ? `<a class="btn rf-btn secondary small" href="${esc(ctx.url("recipes"))}" data-rf-close>ไปที่สูตรยาง</a>` : "";
     const recipeField = approved.length
       ? ui.field("สินค้า / สูตร (เฉพาะสูตรที่อนุมัติแล้ว)", ui.select("recipeId", approved.map((recipe) => ({ value: recipe.id, label: rules.recipeLabel(recipe) })), { value: approved[0].id, placeholder: "เลือกสินค้า / สูตร", extra: "data-rf-recipe required" }), { required: true })
       : ui.field("สินค้า / สูตร", ui.callout("warn", `<strong>ยังไม่มีสูตรที่อนุมัติ</strong><br>ต้องมีสูตรที่อนุมัติแล้วก่อนจึงเปิดใบสั่งผลิตได้${recipeLink ? `<div>${recipeLink}</div>` : ""}`));

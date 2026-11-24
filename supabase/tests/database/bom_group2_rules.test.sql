@@ -275,9 +275,9 @@ select ok(g2_t.save(jsonb_build_object(
   'releaseOrder') is not null, 'order 29001 is released with six RB jobs, a PK job and a GR job');
 select throws_ok($$ select g2_t.edit_bom('BOM-G2-1', '[{"childCode":"P-G1","qty":2}]'::jsonb) $$,
   'BOM_REVISION_IMMUTABLE', 'a released order that used the revision locks it');
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select ok(g2_t.rf(jsonb_build_object('orders', jsonb_build_object('upsert', (select jsonb_agg(current_setting('test.wo')::jsonb || jsonb_build_object('id', 'WO-G' || x, 'sourceJobId', 'JOB-G-' || x) order by x)
-    from unnest(array['A', 'B', 'C', 'D', 'E', 'F']) x))), 'createOrder') is not null, 'RB opens six work orders linked to the RB jobs');
+    from unnest(array['A', 'B', 'C', 'D', 'E', 'F']) x))), 'createOrder') is not null, 'the planner opens six work orders linked to the RB jobs');
 select is((select jsonb_agg(g2_t.job('JOB-G-' || x) -> 'externalRef' ->> 'woId' order by x) from unnest(array['A', 'F']) x), '["WO-GA","WO-GF"]'::jsonb, 'each RB job is linked');
 reset role;
 update public.rf_orders set status = 'released' where is_test and wo_no = 'WO-GB';
@@ -357,11 +357,11 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select is(g2_t.job('JOB-G-F') ->> 'qtyDone', '3', 'the open job received the 3 pieces');
 
 -- 9. N2 ล็อตฉีดใช้สเปกของสูตรที่ WO ผูก ----------------------------------------------------------------------------
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select ok(g2_t.rf(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || '{"id":"WO-GS","recipeId":"RC-S","customerPo":"S-1"}'::jsonb,
   current_setting('test.wo')::jsonb || '{"id":"WO-GN","recipeId":"RC-N","customerPo":"N-1"}'::jsonb))), 'createOrder') is not null,
-  'RB opens a work order for the recipe with a spec and one for the recipe without');
+  'the planner opens a work order for the recipe with a spec and one for the recipe without');
 select is(g2_t.wo('WO-GS') ->> 'recipeRevision', '1', 'the work order uses the approved revision 1');
 reset role;
 update public.rf_orders set status = 'in_progress' where is_test and wo_no in ('WO-GS', 'WO-GN');

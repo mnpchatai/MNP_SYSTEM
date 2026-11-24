@@ -238,7 +238,7 @@ set local role authenticated;
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   (select w || '{"status":"released"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = current_setting('test.wp') || '08')))),
-  (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') $$, 'RF_FORBIDDEN', 'RB staff still cannot release the automatic work order (the RB head does)');
+  (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') $$, 'RF_FORBIDDEN', 'RB staff still cannot release the automatic work order (only the planning group does)');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || jsonb_build_object('id', current_setting('test.wp') || '30', 'sourceJobId', 'JOB-A-02')))),

@@ -342,6 +342,8 @@
   const RB_PAGE_ALL_ROLE_CODES = Object.freeze(["admin", "general_manager", "factory_manager", "assistant_factory_manager"]);
   function canOpenRubberFlowPage(employee) {
     if (!usesRubberFlow(employee)) return false;
+    // กติกาเดียวกับโมดูลแผนกอื่น: ใช้ MNP_FACTORY.canSeeDept ตัวเดียว (โหลดทุกครั้งในเบราว์เซอร์) · สำเนาข้างล่างใช้เฉพาะเทสต์ที่โหลด store โดยไม่โหลด factory-kit
+    if (typeof root.MNP_FACTORY?.canSeeDept === "function") return Boolean(root.MNP_FACTORY.canSeeDept(employee, "RB", "FACTORY_RB"));
     const access = root.MNP_DEPARTMENT_ACCESS;
     if (access?.isRestricted?.(employee) && !access.moduleAllowed(employee, "FACTORY_RB")) return false;
     const dept = String(employee.department?.code ?? employee.department_code ?? "").toUpperCase();

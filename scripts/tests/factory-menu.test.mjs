@@ -278,6 +278,44 @@ test("RubberFlow alerts and scans: expiry → ST chemical stock, held lot → QA
   assert.match(read("modules/qa-pages.js"), /traceView/);
 });
 
+// ตรวจหลังผู้ตรวจ: ลิงก์สูตรใน dialog เปิดใบ · repaint ของ #/bom · ลิงก์เก่า tab=raw / po ของ ST · กติกาหน้า RF ตัวเดียวกับ canSeeDept
+test("RubberFlow follow-ups: the order dialog links to recipes only for accounts that open RubberFlow, #/bom repaints on a reverted save, old ST warehouse tabs go to #/st, the page rule delegates to canSeeDept", async () => {
+  // the order dialog opens from #/bom: a head of another production department is in the planner group but cannot open RubberFlow
+  const dialogHtml = (employee) => {
+    const env = load({ employee, route: "rubberflow" });
+    env.rf.store.setUser("U01");
+    const ctx = env.rf.context(new URLSearchParams());
+    const noRecipes = { ...ctx, data: { ...ctx.data, recipes: [] } };
+    return env.context.MNP_RUBBERFLOW_DIALOGS.createOrder(noRecipes).html;
+  };
+  assert.match(dialogHtml(emp("PP")), /ไปที่สูตรยาง/, "planning opens RubberFlow: the link stays");
+  for (const person of [emp("QA", "department_manager"), emp("ST", "department_manager"), emp("WH", "department_manager")]) assert.doesNotMatch(dialogHtml(person), /ไปที่สูตรยาง/, `${person.department.code} head: plain text, no dead link`);
+  // a reverted / synced save redraws #/bom too (the release buttons and the waiting list live there)
+  assert.match(read("modules/module-rubberflow.js"), /\["wh", "st", "qa", "bom"\]\.includes\(currentRoute\(\)\.path\)/);
+  // old warehouse tabs of ST: raw → the ST stock list, po → the ST purchase-order tab; accounts that cannot open ST keep the old handling
+  for (const [query, target] of [["p=warehouse&tab=raw", "#/st?tab=stock"], ["p=warehouse&tab=po", "#/st?tab=po"], ["p=warehouse&tab=po&q=PO-1", "#/st?tab=po&q=PO-1"]]) {
+    for (const person of [emp("ST"), emp("ST", "department_manager"), emp("PP")]) {
+      const env = load({ employee: person, route: "rubberflow" });
+      await env.open("RUBBERFLOW", query);
+      assert.equal(env.log.hash, target, `${person.department.code} ${query}`);
+    }
+    const rb = load({ employee: emp("RB"), route: "rubberflow" });
+    rb.rf.store.setUser("U01");
+    const html = await rb.open("RUBBERFLOW", query);
+    assert.notEqual(html, "<notfound></notfound>", "RB cannot open ST: the default tab of the RB chemical store");
+    assert.equal(rb.log.hash, `#/rubberflow?${query}`);
+    const wh = load({ employee: emp("WH"), route: "rubberflow" });
+    assert.equal(await wh.open("RUBBERFLOW", query), "<notfound></notfound>", "WH cannot open ST or RubberFlow: not found");
+  }
+  // one rule: the page gate is canSeeDept for RB when factory-kit is loaded (the store alone keeps a copy for its own unit tests)
+  const env = load();
+  const real = env.context.MNP_FACTORY.canSeeDept;
+  assert.equal(typeof real, "function");
+  const store = env.context.MNP_RUBBERFLOW_STORE;
+  assert.equal(store.canOpenRubberFlowPage(emp("RB")), real(emp("RB"), "RB", "FACTORY_RB"));
+  assert.match(read("modules/rubberflow-store.js"), /MNP_FACTORY\.canSeeDept\(employee, "RB", "FACTORY_RB"\)/);
+});
+
 test("RubberFlow menu: five groups with RB words, the warehouse is the RB chemical store, the page ids stay for old bookmarks", async () => {
   const env = load({ employee: emp("RB", "department_manager"), route: "rubberflow" });
   env.rf.store.setUser("U01");
