@@ -782,21 +782,36 @@ test("weak vault passwords are refused in the setup form: sequences, repeats and
 
 /* ---------- autofill / ตัวจัดการรหัสผ่าน ---------- */
 test("secret inputs are switched to masked text only where the browser can mask with CSS; copy/cut out of a masked input is blocked", async () => {
-  const makeInput = () => ({ type: "password", attributes: {}, classes: new Set(), classList: { add(name) { this.owner.classes.add(name); }, owner: null } });
+  const makeInput = () => ({ type: "password", attributes: {}, classes: new Set(), classList: { add(name) { this.owner.classes.add(name); }, remove(name) { this.owner.classes.delete(name); }, owner: null } });
   const wire = (input) => { input.classList.owner = input; return input; };
-  for (const [supported, expectType] of [[true, "text"], [false, "password"]]) {
+  // [CSS.supports ตอบ, สไตล์ที่คำนวณได้จริงบนช่อง, type ที่ควรได้]
+  // CSS.supports ตอบว่ารองรับ แต่สไตล์จริงไม่ปิดบัง (styles.css เก่าค้างแคชไม่มี .itas-mask) = ต้องคืนเป็น password ทันที
+  for (const [supported, computed, expectType] of [[true, "disc", "text"], [false, "disc", "password"], [true, "none", "password"], [true, undefined, "password"]]) {
     const { row } = await initializedVaultRow();
     const w = await world({ vaultRow: row });
     await w.render();
     w.context.CSS = { supports: () => supported };
+    w.context.getComputedStyle = () => ({ webkitTextSecurity: computed });
     const inputs = [wire(makeInput()), wire(makeInput())];
     const panel = w.context.document.getElementById("itas-vault-panel");
     panel.querySelectorAll = (selector) => (selector === "input[data-mask]" ? inputs : []);
     await w.click(w.button("itas-vault-unlock"));
     for (const input of inputs) {
-      assert.equal(input.type, expectType, `supported=${supported}`);
-      assert.equal(input.classes.has("itas-mask"), supported);
+      assert.equal(input.type, expectType, `supported=${supported} computed=${computed}`);
+      assert.equal(input.classes.has("itas-mask"), expectType === "text");
     }
+  }
+  // ตรวจสไตล์ไม่ได้เลย (ไม่มี getComputedStyle) = คง password ไม่เสี่ยงแสดงรหัสเป็นข้อความชัด
+  {
+    const { row } = await initializedVaultRow();
+    const w = await world({ vaultRow: row });
+    await w.render();
+    w.context.CSS = { supports: () => true };
+    assert.equal(typeof w.context.getComputedStyle, "undefined");
+    const inputs = [wire(makeInput())];
+    w.context.document.getElementById("itas-vault-panel").querySelectorAll = (selector) => (selector === "input[data-mask]" ? inputs : []);
+    await w.click(w.button("itas-vault-unlock"));
+    assert.equal(inputs[0].type, "password");
   }
   // ไม่มี CSS ในสภาพแวดล้อมเลย (เบราว์เซอร์เก่ามาก) = คง password
   const w = await world();
@@ -806,11 +821,11 @@ test("secret inputs are switched to masked text only where the browser can mask 
   const prevented = [];
   const inMask = { closest: (selector) => (selector === "input[data-mask]" ? {} : null) };
   const elsewhere = { closest: () => null };
-  for (const name of ["copy", "cut"]) {
+  for (const name of ["copy", "cut", "dragstart"]) {
     await fireOn(w.host, name, { target: inMask, preventDefault: () => prevented.push(name) });
     await fireOn(w.host, name, { target: elsewhere, preventDefault: () => prevented.push(`other-${name}`) });
   }
-  assert.deepEqual(prevented, ["copy", "cut"]);
+  assert.deepEqual(prevented, ["copy", "cut", "dragstart"]);
   const css = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
   assert.match(css, /\.input\.itas-mask\s*\{[^}]*-webkit-text-security:\s*disc/);
 });
@@ -835,7 +850,7 @@ test("after a password change the new set is checked; a stored set that cannot b
   await unlockVia(w);
   await w.click(w.button("itas-vault-change"));
   await w.submit(twoPasswords("itas-vault-change-form", { current: PASSWORD, password: NEW_PASSWORD, password2: NEW_PASSWORD }));
-  assert.match(w.hosts["itas-vault-message"], /ตรวจสอบชุดรหัสใหม่ไม่ผ่าน/);
+  assert.match(w.hosts["itas-vault-message"], /ตรวจสอบรหัสใหม่ไม่ผ่าน/);
   assert.match(w.hosts["itas-vault-message"], /แจ้งผู้ดูแลระบบ/);
   assert.ok(!w.calls.toasts.some((toast) => /เปลี่ยนรหัสตู้เซฟแล้ว/.test(toast.message)), "ไม่ทำเหมือนสำเร็จ");
   assert.notEqual(w.hosts["itas-vault-panel"], "", "แผงยังเปิดอยู่เพื่อให้ผู้ใช้เห็นข้อความ");
@@ -870,4 +885,65 @@ test("leaving with a typed form: counted while the form is on screen, dropped on
   assert.match(app, /\(window\.MNP_ITAS\?\.unsavedCount\?\.\(\) \?\? 0\) > 0/, "ออกจากหน้าที่มีฟอร์มทะเบียนพิมพ์ค้างต้องถามก่อน");
   assert.match(app, /function leaveWarningPending\(\) \{\r?\n  return [^\n]*MNP_ITRP\?\.unsavedCount[^\n]*MNP_ITAS\?\.unsavedCount/);
   assert.equal(typeof w.itas.unsavedCount, "function");
+});
+
+/* ---------- รอบแก้ตามผลตรวจ auditor รอบ 2 ---------- */
+test("hasAccess respects the age of the answer: an expired answer is 'unknown' (hidden) until a new check succeeds, and a failed re-check never revives the old answer", async () => {
+  const clock = { time: 1_700_000_000_000 };
+  let fail = false;
+  const w = await world({ clock, rpcHandlers: { app_itas_my_access: () => { if (fail) throw Object.assign(new Error("x"), { code: "PGRST202" }); return { allowed: true, is_test: false }; } } });
+  assert.equal(await w.itas.resolveAccess(), true);
+  assert.equal(w.itas.hasAccess(), true);
+  clock.time += 9 * 60 * 1000;
+  assert.equal(w.itas.hasAccess(), true, "ยังไม่หมดอายุ");
+  clock.time += 2 * 60 * 1000;
+  assert.equal(w.itas.hasAccess(), false, "หมดอายุ = ยังไม่รู้ ไม่แสดงการ์ด");
+  assert.equal(w.itas.accessStatus(), "unknown");
+  fail = true;
+  assert.equal(await w.itas.resolveAccess(), false);
+  assert.equal(w.itas.hasAccess(), false, "ตรวจใหม่ล้ม ไม่หยิบผลเก่ามาใช้");
+  assert.equal(w.itas.accessStatus(), "error");
+  fail = false;
+  assert.equal(await w.itas.resolveAccess(), true);
+  assert.equal(w.itas.hasAccess(), true, "ตรวจใหม่สำเร็จแล้วกลับมามีสิทธิ์");
+});
+
+test("idle lock covers the setup step before unlocking: after 10 idle minutes the recovery code is removed from the page and typing it back no longer works", async () => {
+  const clock = { time: 1_700_000_000_000 };
+  const w = await world({ clock });
+  await w.render();
+  await w.click(w.button("itas-vault-setup"));
+  await w.submit(setupForm(PASSWORD));
+  const code = /id="itas-recovery-code"[^>]*>([^<]+)</.exec(w.hosts["itas-vault-panel"])?.[1];
+  assert.ok(code, "แสดงรหัสกู้คืนให้จด");
+  clock.time += 10 * 60 * 1000 + 1000; // วางไว้ไม่แตะ (ยังไม่ได้ปลดล็อก ไม่มี keys)
+  await w.documentEvent("visibilitychange");
+  assert.equal(w.hosts["itas-vault-panel"], "", "แผงถูกปิด รหัสกู้คืนหายจากหน้า");
+  assert.ok(!w.html().includes(code));
+  assert.match(w.calls.toasts.map((toast) => toast.message).join("|"), /ไม่ได้ใช้งานนาน 10 นาที/);
+  await w.submit({ id: "itas-recovery-form", elements: { typed: { value: code } }, querySelectorAll: () => [], toggleAttribute() {} });
+  assert.match(w.hosts["itas-vault-message"] + JSON.stringify(w.calls.toasts), /ไม่มีขั้นตอนที่รอยืนยัน/);
+  assert.ok(!w.server.db.calls.includes("init"), "ไม่ส่งอะไรขึ้นเซิร์ฟเวอร์");
+});
+
+test("auto-lock while the form is open says that the typed secret fields and delete marks were cleared; no notice when nothing was lost or the user locked it", async () => {
+  const { row } = await initializedVaultRow();
+  const lockAndRead = async ({ secrets, how }) => {
+    const clock = { time: 1_700_000_000_000 };
+    const w = await world({ vaultRow: row, clock });
+    await w.render();
+    await unlockVia(w);
+    await w.click(w.button("itas-add"));
+    w.forms.current = assetForm({ values: { name: "ฟิลด์ธรรมดาที่พิมพ์ค้าง" }, secrets });
+    if (how === "manual") await w.click(w.button("itas-vault-lock"));
+    else { clock.time += 10 * 60 * 1000 + 1000; await w.documentEvent("visibilitychange"); }
+    assert.equal(w.status(), "locked");
+    return w.hosts["itas-form-message"] ?? "";
+  };
+  const typed = await lockAndRead({ secrets: { ip: { value: "x" } }, how: "idle" });
+  assert.match(typed, /ตู้เซฟถูกล็อก ช่องลับที่พิมพ์ค้างและเครื่องหมายลบค่าถูกล้าง ปลดล็อกแล้วกรอกใหม่/);
+  const marked = await lockAndRead({ secrets: { ip: { clear: true, hidden: true } }, how: "idle" });
+  assert.match(marked, /เครื่องหมายลบค่าถูกล้าง/);
+  assert.equal(await lockAndRead({ secrets: { ip: { value: "" } }, how: "idle" }), "", "ไม่มีอะไรหาย ไม่ต้องเตือน");
+  assert.equal(await lockAndRead({ secrets: { ip: { value: "x" } }, how: "manual" }), "", "ผู้ใช้กดล็อกเอง ไม่ใช่ล็อกอัตโนมัติ");
 });

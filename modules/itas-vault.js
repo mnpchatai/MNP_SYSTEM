@@ -46,9 +46,12 @@
     WEAK_FEW_DISTINCT: `รหัสตู้เซฟใช้ตัวอักษรซ้ำกันมากเกินไป (ต้องมีตัวอักษรไม่ซ้ำกันอย่างน้อย ${MIN_DISTINCT_CHARS} แบบ)`,
     WEAK_PATTERN: "รหัสตู้เซฟเป็นตัวอักษรเรียงกันหรือซ้ำเป็นแพทเทิร์นที่เดาง่าย กรุณาใช้วลีหลายคำที่เดายาก",
     WEAK_FORBIDDEN: "รหัสตู้เซฟห้ามเป็นรหัสพนักงานหรือชื่อผู้ใช้ของคุณ",
+    WEAK_COMMON: "รหัสตู้เซฟเป็นคำยอดนิยมที่เดาง่าย (เช่น password, admin, qwerty) ต่อด้วยตัวเลขก็ยังเดาง่าย กรุณาใช้วลีหลายคำที่เดายาก",
     INTERRUPTED: "ตู้เซฟถูกล็อกระหว่างดำเนินการ ไม่ได้ปลดล็อกให้ กรุณาลองใหม่",
     SETUP_LOCKED: "ตั้งตู้เซฟเรียบร้อยแล้ว แต่ตู้เซฟถูกล็อกระหว่างดำเนินการ กรุณาปลดล็อกด้วยรหัสตู้เซฟที่เพิ่งตั้ง",
-    ROTATE_VERIFY_FAILED: "ส่งการเปลี่ยนแปลงขึ้นระบบแล้ว แต่ตรวจสอบชุดรหัสใหม่ไม่ผ่าน ห้ามทิ้งรหัสเดิม และกรุณาแจ้งผู้ดูแลระบบให้กู้ตู้เซฟจากประวัติก่อนใช้งานต่อ",
+    // ตรงกับพฤติกรรมจริง: เปลี่ยนรหัส = ชุดรหัสตู้เซฟบนเซิร์ฟเวอร์ถูกแทนแล้ว (รหัสกู้คืนเดิมยังใช้ได้) · ออกรหัสกู้คืนใหม่ = ชุดรหัสกู้คืนถูกแทนแล้ว (รหัสตู้เซฟเดิมยังใช้ได้)
+    ROTATE_VERIFY_FAILED: "เปลี่ยนรหัสตู้เซฟแล้ว แต่ตรวจสอบรหัสใหม่ไม่ผ่าน ยังไม่ต้องปิดหน้านี้ ให้ลองเปลี่ยนรหัสอีกครั้ง หรือใช้รหัสกู้คืนเดิม (ยังใช้ได้) รหัสตู้เซฟเดิมอาจใช้ไม่ได้แล้ว และกรุณาแจ้งผู้ดูแลระบบ",
+    ROTATE_VERIFY_FAILED_RECOVERY: "ออกรหัสกู้คืนใหม่แล้ว แต่ตรวจสอบรหัสกู้คืนใหม่ไม่ผ่าน ยังไม่ต้องปิดหน้านี้ และอย่าเพิ่งทิ้งรหัสตู้เซฟเดิม (ยังใช้ได้) ให้ลองออกรหัสกู้คืนใหม่อีกครั้ง รหัสกู้คืนเดิมใช้ไม่ได้แล้ว และกรุณาแจ้งผู้ดูแลระบบ",
     CONFIRM_MISMATCH: "รหัสที่พิมพ์ยืนยันไม่ตรงกัน",
     NOTHING_PENDING: "ไม่มีขั้นตอนที่รอยืนยันอยู่ กรุณาเริ่มใหม่",
     DECRYPT_FAILED: "ถอดรหัสไม่ได้",
@@ -61,8 +64,9 @@
   });
 
   class VaultError extends Error {
-    constructor(reason) {
-      super(MESSAGES[reason] ?? MESSAGES.GENERIC);
+    // messageKey = ข้อความอีกแบบของเหตุผลเดียวกัน (เช่น ROTATE_VERIFY_FAILED ของการออกรหัสกู้คืนใหม่) · reason/code ไม่เปลี่ยน
+    constructor(reason, messageKey = reason) {
+      super(MESSAGES[messageKey] ?? MESSAGES.GENERIC);
       this.name = "VaultError";
       this.reason = reason;
       this.code = `ITAS_VAULT_${reason}`;
@@ -104,7 +108,7 @@
   const isRecoveryFormat = (canonical) => canonical.length === RECOVERY_LENGTH && [...canonical].every((char) => RECOVERY_ALPHABET.includes(char));
 
   /* ---------- กฎรหัสตู้เซฟ (บล็อกจริง ไม่ใช่แค่เตือน) ---------- */
-  // ฐานข้อมูลกันเดารหัสแทนไม่ได้ (ข้อมูลที่ถูกขโมยไปเดารหัสออฟไลน์ได้) จึงบล็อกรหัสที่เดาง่าย: สั้น · ตัวอักษรไม่ซ้ำน้อยกว่า 6 · เรียง/ซ้ำชัดเจน · เท่ากับรหัสพนักงาน/username
+  // ฐานข้อมูลกันเดารหัสแทนไม่ได้ (ข้อมูลที่ถูกขโมยไปเดารหัสออฟไลน์ได้) จึงบล็อกรหัสที่เดาง่าย: สั้น · ตัวอักษรไม่ซ้ำน้อยกว่า 6 · เรียง/ซ้ำชัดเจน · เท่ากับรหัสพนักงาน/username · เป็นคำยอดนิยมล้วน ๆ
   const PATTERN_RUNS = ["qwertyuiopasdfghjklzxcvbnm", "abcdefghijklmnopqrstuvwxyz", "01234567890123456789"];
   const reverseText = (text) => Array.from(text).reverse().join("");
   function isObviousPattern(compact) {
@@ -116,6 +120,35 @@
     // แถวคีย์บอร์ด / ตัวอักษร / ตัวเลขเรียงต่อกัน (ทั้งไปและกลับ)
     const joined = compact.join("");
     return PATTERN_RUNS.some((run) => run.includes(joined) || reverseText(run).includes(joined));
+  }
+  // คำยอดนิยมที่ใช้เป็นรหัสกันบ่อย (ฝังในโค้ด ไม่ต้องโหลดจากภายนอก) · รหัสที่ประกอบจากคำเหล่านี้ล้วน ๆ (ต่อกันหรือซ้ำก็ตาม ตัวเลข/สัญลักษณ์คั่นหรือท้ายไม่ช่วย) = เดาง่าย
+  // ไม่ใส่คำสามัญทั่วไป เพื่อให้วลีหลายคำปกติ (เช่น correct horse battery staple) ไม่ถูกบล็อกผิด
+  const COMMON_WORDS = new Set([
+    "password", "passwd", "pass", "qwerty", "qwertyuiop", "asdf", "asdfgh", "asdfghjkl", "zxcvbn", "letmein", "iloveyou", "admin", "administrator", "root",
+    "welcome", "login", "master", "monkey", "dragon", "football", "baseball", "superman", "batman", "sunshine", "princess", "shadow", "abc", "abcd", "test", "guest",
+    "changeme", "secret", "computer", "internet", "company", "hello", "world", "thailand", "bangkok", "mnp", "mnpchat", "mnpworld", "vault", "itas", "asset", "register", "safe",
+  ]);
+  // ตัวเลข/สัญลักษณ์ที่มักใช้แทนตัวอักษร (p@ssw0rd) · ใช้ตรวจเพิ่มอีกรอบ ไม่ได้แทนที่รอบตรวจปกติ
+  const LEET_MAP = { "@": "a", "4": "a", "0": "o", "$": "s", "5": "s", "3": "e", "1": "i", "7": "t" };
+  // ข้อความทั้งก้อนประกอบจากคำในรายการล้วน ๆ ไหม: ตัดเป็นช่วงตัวอักษรก่อน (ตัวเลข/สัญลักษณ์/เว้นวรรคเป็นตัวคั่น) แล้วแต่ละช่วงต้องแบ่งเป็นคำในรายการได้ครบ
+  function isMadeOfCommonWords(text) {
+    const tokens = text.split(/[^\p{L}]+/u).filter(Boolean);
+    if (!tokens.length) return false;
+    return tokens.every((token) => {
+      const reachable = new Array(token.length + 1).fill(false);
+      reachable[0] = true;
+      for (let end = 1; end <= token.length; end += 1) {
+        for (let start = 0; start < end && !reachable[end]; start += 1) if (reachable[start] && COMMON_WORDS.has(token.slice(start, end))) reachable[end] = true;
+      }
+      return reachable[token.length];
+    });
+  }
+  // ตัดตัวเลข/สัญลักษณ์ท้าย (และหน้า) ออกก่อนแทนตัวอักษร ไม่งั้น p@ssw0rd123456 จะกลายเป็น passwordi2ea... ตรวจไม่เจอ
+  const stripTrailing = (text) => text.replace(/[^\p{L}]+$/u, "");
+  const stripBoth = (text) => stripTrailing(text).replace(/^[^\p{L}]+/u, "");
+  const leetOf = (text) => Array.from(text, (char) => LEET_MAP[char] ?? char).join("");
+  function isCommonPassword(lower) {
+    return [lower, leetOf(lower), leetOf(stripTrailing(lower)), leetOf(stripBoth(lower))].some((variant) => isMadeOfCommonWords(variant));
   }
   // คืนรหัสเหตุผล (คีย์ใน MESSAGES) หรือ null ถ้าผ่าน · forbidden = ค่าที่ห้ามใช้ (รหัสพนักงาน username ของผู้ใช้ที่ล็อกอิน)
   function passwordProblem(password, forbidden = []) {
@@ -131,6 +164,7 @@
     }
     if (new Set(Array.from(lower)).size < MIN_DISTINCT_CHARS) return "WEAK_FEW_DISTINCT";
     if (isObviousPattern(Array.from(lower.replace(/\s+/g, "")))) return "WEAK_PATTERN";
+    if (isCommonPassword(lower)) return "WEAK_COMMON";
     return null;
   }
 
@@ -230,13 +264,14 @@
     function stopTimer() { if (timer !== null) { clearTimer(timer); timer = null; } }
     // ตัวตรวจเวลาไม่ใช้งานเป็นระยะ (ตั้งต่อกันทีละครั้ง) · ตัวตัดสินจริงคือ checkIdle() ที่เทียบนาฬิกา
     // ถ้าเบราว์เซอร์หน่วงตัวจับเวลาตอนแท็บถูกซ่อน/เครื่องหลับ การเรียก checkIdle() ครั้งถัดไป (เช่นตอนกลับมาที่แท็บ) ก็ยังล็อกถูกต้อง
+    // ครอบทั้งตอนปลดล็อกแล้ว (keys) และขั้นที่ยังไม่ปลดล็อกแต่ถือรหัสค้างอยู่ (pending: กำลังตั้งตู้เซฟ / ออกรหัสกู้คืนใหม่ ซึ่งมีรหัสกู้คืนและรหัสตู้เซฟอยู่ในหน่วยความจำ)
     function armTimer() {
-      if (timer !== null || !keys) return;
-      timer = setTimer(() => { timer = null; checkIdle(); if (keys) armTimer(); }, checkMs);
+      if (timer !== null || !(keys || pending)) return;
+      timer = setTimer(() => { timer = null; checkIdle(); if (keys || pending) armTimer(); }, checkMs);
     }
-    // ไม่ใช้งานเกินกำหนด (หรือนาฬิกาถอยหลัง = ผิดปกติ) = ล็อกทันที · คืน true ถ้าล็อกแล้ว
+    // ไม่ใช้งานเกินกำหนด (หรือนาฬิกาถอยหลัง = ผิดปกติ) = ล็อกทันที (ล้างทั้งกุญแจและรหัสที่ค้างระหว่างตั้ง) · คืน true ถ้าล็อกแล้ว
     function checkIdle() {
-      if (!keys) return false;
+      if (!keys && !pending) return false;
       const elapsed = now() - lastActive;
       if (elapsed >= idleMs || elapsed < 0) { lock("idle"); return true; }
       return false;
@@ -251,7 +286,7 @@
       if (changed || reason === "reset") emit(reason);
     }
     // มีการใช้งาน: เริ่มนับเวลาไม่ใช้งานใหม่ (ถ้าเกินกำหนดไปแล้ว ล็อกแทนที่จะต่อเวลาให้)
-    function touch() { if (keys && !checkIdle()) markActive(); }
+    function touch() { if ((keys || pending) && !checkIdle()) markActive(); }
     // ถ้าบริบทเปลี่ยนไปจากตอนปลดล็อก (สลับผู้ใช้ เข้า/ออกโหมดทดสอบ สลับ persona) หรือไม่ใช้งานเกินกำหนด ล็อกทันที
     function ensureContext() {
       checkIdle();
@@ -322,16 +357,23 @@
     const sha256 = async (bytes) => new Uint8Array(await subtle.digest("SHA-256", bytes));
 
     // อ่านสถานะจากเซิร์ฟเวอร์ (ใหม่ทุกครั้ง) และตรวจพารามิเตอร์ KDF ก่อนใช้
+    // คำตอบที่มาถึงช้าหลังเปลี่ยนบริบท (สลับผู้ใช้/โหมดทดสอบ/persona) หรือหลังมีการล็อกคั่น เป็นของบริบทเก่า: ห้ามเขียนทับ info ของบริบทปัจจุบัน
     async function load() {
       ensureCrypto();
+      const gen = generation;
+      const context = getContext();
       const parsed = parseVaultState(await server.get());
+      if (interrupted(gen, context)) return snapshot();
       info = parsed;
       // ตู้เซฟที่เซิร์ฟเวอร์ว่า "ยังไม่ตั้ง" ทั้งที่เครื่องนี้ปลดล็อกอยู่ = ผิดปกติ ล็อกไว้ก่อน
       if (keys && !parsed.initialized) lock("reset");
       return snapshot();
     }
     async function fetchState({ initialized }) {
+      const gen = generation;
+      const context = getContext();
       const parsed = parseVaultState(await server.get());
+      if (interrupted(gen, context)) throw new VaultError("INTERRUPTED");
       info = parsed;
       if (initialized && !parsed.initialized) throw new VaultError("NOT_INITIALIZED");
       if (!initialized && parsed.initialized) throw new VaultError("ALREADY_INITIALIZED");
@@ -399,6 +441,7 @@
             p_recovery_kdf_iterations: iterations, p_recovery_salt: toBase64(recoverySalt), p_wrapped_key_recovery: wrappedRecovery, p_auth_hash: authHash,
           },
         };
+        markActive(); // เริ่มนับเวลาไม่ใช้งานของขั้นที่ยังไม่ปลดล็อก: ครบกำหนดแล้วรหัสกู้คืน/รหัสตู้เซฟที่ค้างถูกล้าง
         return { recoveryCode: formatRecoveryCode(recoveryCode) };
       } finally {
         raw.fill(0);
@@ -432,6 +475,7 @@
         return snapshot();
       } catch (error) {
         if (error instanceof VaultError && (error.reason === "VERIFY_FAILED" || error.reason === "SETUP_LOCKED")) throw error;
+        if (error instanceof VaultError && error.reason === "INTERRUPTED") throw new VaultError("SETUP_LOCKED"); // ตั้งขึ้นเซิร์ฟเวอร์แล้ว แต่ถูกล็อก/เปลี่ยนบริบทระหว่างตรวจ
         throw new VaultError("VERIFY_FAILED");
       }
     }
@@ -487,18 +531,19 @@
     // หลังเปลี่ยนรหัส/ออกรหัสกู้คืนใหม่สำเร็จ: โหลดชุดที่เก็บอยู่บนเซิร์ฟเวอร์กลับมาแล้วถอดด้วยรหัสใหม่จริง ๆ ว่าได้ DEK ตัวเดิม (token ตรง)
     // ถ้าถอดไม่ได้ = ชุดใหม่ใช้ไม่ได้ ต้องบอกผู้ใช้ชัดเจน ห้ามทำเหมือนสำเร็จ (รหัสเดิมยังไม่ควรทิ้ง และให้ผู้ดูแลกู้จากประวัติ)
     async function verifyRotated(kind, text, expectedToken) {
+      const failure = () => new VaultError("ROTATE_VERIFY_FAILED", kind === "recovery" ? "ROTATE_VERIFY_FAILED_RECOVERY" : "ROTATE_VERIFY_FAILED"); // ข้อความต่างกันตาม action (ชุดไหนถูกแทนแล้ว)
       try {
         const state = await fetchState({ initialized: true });
         const part = kind === "recovery" ? state.recovery : state.pass;
         const kek = await deriveKek(text, part.salt, part.iterations);
         const raw = await openRaw(kek, part.wrapped, aadForWrap(state.isTest, kind === "recovery" ? "recovery" : "pass", state.keyVersion));
         try {
-          if (toBase64(await rawToken(raw)) !== expectedToken) throw new VaultError("ROTATE_VERIFY_FAILED");
+          if (toBase64(await rawToken(raw)) !== expectedToken) throw failure();
         } finally {
           raw.fill(0);
         }
       } catch {
-        throw new VaultError("ROTATE_VERIFY_FAILED");
+        throw failure();
       }
     }
     // ออกรหัสกู้คืนใหม่ (สองจังหวะเหมือนตั้งครั้งแรก): เตรียม → แสดงรหัสให้จด → ผู้ใช้พิมพ์กลับ → ส่ง
@@ -521,6 +566,7 @@
             p_recovery_kdf_iterations: iterations, p_recovery_salt: toBase64(salt), p_wrapped_key_recovery: wrapped,
           },
         };
+        markActive(); // เหมือนตั้งครั้งแรก: รหัสกู้คืนใหม่ที่ค้างอยู่ต้องไม่ค้างเกินเวลาไม่ใช้งาน
         return { recoveryCode: formatRecoveryCode(recoveryCode) };
       } finally {
         raw.fill(0);

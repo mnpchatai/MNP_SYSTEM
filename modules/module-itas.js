@@ -10,7 +10,7 @@
 //  - ไม่ใช้ระบบร่างอัตโนมัติ (MNP_FORM_DRAFT) กับฟอร์มนี้เลย: ช่องลับและรหัสตู้เซฟจึงไม่เคยถูกเก็บลงเครื่อง
 //  - ไม่มี console.* กับค่าใด ๆ ที่เกี่ยวกับตู้เซฟ · error ของตู้เซฟเป็นข้อความคงที่ (VaultError) · error ของ crypto ไม่ถูกส่งเข้า log (MNP_ERROR_LOG)
 //  - ตู้เซฟล็อกเมื่อ: ไม่ใช้งาน 10 นาที (นับจากนาฬิกาจริง ตรวจเป็นระยะและตอนกลับมาที่แท็บ) · ออกจากหน้านี้ (hashchange) · ปิด/ซ่อนหน้า (pagehide) · ออกจากระบบ · เปลี่ยนผู้ใช้/โหมดทดสอบ/persona · กดล็อก
-//  - รหัสกู้คืนไม่มีปุ่มคัดลอก (ต้องจด/พิมพ์เก็บ ไม่ผ่านคลิปบอร์ด) · ช่องรหัสและช่องค่าลับถูกกันไม่ให้ตัวจัดการรหัสผ่านเติม/เสนอเก็บ (ดู hardenSecretInputs) และกัน copy/cut ออกจากช่องที่ปิดบังอยู่
+//  - รหัสกู้คืนไม่มีปุ่มคัดลอก (ต้องจด/พิมพ์เก็บ ไม่ผ่านคลิปบอร์ด) · ช่องรหัสและช่องค่าลับถูกกันไม่ให้ตัวจัดการรหัสผ่านเติม/เสนอเก็บ (ดู hardenSecretInputs) และกัน copy/cut/ลากออก (dragstart) จากช่องที่ปิดบังอยู่
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) เรียก helper ของ app.js (state, sb, app, shell, bindShell, loadingShell, renderNotFound, showToast, confirmDialog,
 // setFormBusy, setButtonBusy, renderRoute, go) ได้เพราะถูกเรียกหลัง app.js โหลดเสร็จ
 (function registerItasModule() {
@@ -30,6 +30,9 @@
   const CONTEXT_CHECK_MS = 5000;
   // เหตุผลของการล็อกที่ต้องปิดแผงตู้เซฟทิ้ง (แผงอาจถือรหัสกู้คืน/ช่องรหัสอยู่)
   const LOCK_REASONS = new Set(["idle", "context", "leave", "pagehide", "signout", "reset", "manual"]);
+  // ล็อกเองโดยระบบ (ไม่ใช่ผู้ใช้กดล็อก/ออกจากหน้าเอง): ถ้าฟอร์มเปิดอยู่ต้องบอกว่าช่องลับถูกล้าง
+  const AUTO_LOCK_REASONS = new Set(["idle", "context", "signout", "reset"]);
+  const SECRETS_CLEARED_MESSAGE = "ตู้เซฟถูกล็อก ช่องลับที่พิมพ์ค้างและเครื่องหมายลบค่าถูกล้าง ปลดล็อกแล้วกรอกใหม่";
   const LOCK_TOASTS = Object.freeze({
     idle: "ตู้เซฟถูกล็อกเพราะไม่ได้ใช้งานนาน 10 นาที", context: "ตู้เซฟถูกล็อกเพราะเปลี่ยนผู้ใช้หรือโหมด", leave: "ตู้เซฟถูกล็อกเพราะออกจากหน้าทะเบียน",
     pagehide: "ตู้เซฟถูกล็อก", signout: "ตู้เซฟถูกล็อกเพราะออกจากระบบ", reset: "ตู้เซฟถูกล็อก", manual: "ล็อกตู้เซฟแล้ว",
@@ -95,7 +98,8 @@
   }
   // รุ่นที่คืน true/false (ใช้โดย module-office.js ก่อนวาดการ์ด) · ล้ม = false
   async function resolveAccess() { return (await checkAccess()).status === "allowed"; }
-  const hasAccess = () => Boolean(access && access.key === contextKey() && access.allowed);
+  // เคารพอายุของผล: หมดอายุ = "ยังไม่รู้" (false จนกว่าจะตรวจใหม่สำเร็จ) · ตรวจใหม่ล้ม = ไม่หยิบผลเก่าที่หมดอายุมาใช้
+  const hasAccess = () => accessFresh()?.allowed === true;
   // สถานะที่รู้อยู่ตอนนี้โดยไม่ยิง RPC: unknown (ยังไม่เคยตรวจ/หมดอายุ) · allowed · denied · error (ตรวจล่าสุดแล้วล้ม)
   function accessStatus() {
     const cached = accessFresh();
@@ -235,9 +239,24 @@
   // เหตุผล: type=password ถูกตัวจัดการรหัสผ่านของเบราว์เซอร์ (Chrome/Edge/Safari/Firefox) เสนอ "บันทึกรหัสผ่าน"/เติมรหัสเข้าสู่ระบบให้ แม้ใส่ autocomplete=off (Chrome ไม่เชื่อ) ส่วน type=text + CSS ไม่ถูกตรวจจับเป็นช่องรหัสผ่าน
   // เบราว์เซอร์ที่ไม่รองรับ CSS นี้ (ตรวจด้วย CSS.supports) คงเป็น password เพื่อให้ปิดบังแน่นอน (ยอมให้ถูกเสนอบันทึกได้ ดีกว่าแสดงรหัสเป็นข้อความชัด)
   const canMaskWithCss = () => typeof CSS !== "undefined" && typeof CSS.supports === "function" && (CSS.supports("-webkit-text-security", "disc") || CSS.supports("text-security", "disc"));
+  // ตรวจว่า CSS ปิดบังจริงบนช่องนี้ (styles.css อาจเป็นรุ่นเก่าที่ค้างแคชและยังไม่มีคลาส .itas-mask) · ตรวจไม่ได้ = ถือว่าไม่ปิดบัง
+  function isMaskedByCss(input) {
+    if (typeof getComputedStyle !== "function") return false;
+    try {
+      const style = getComputedStyle(input);
+      return (style?.webkitTextSecurity ?? style?.textSecurity) === "disc";
+    } catch {
+      return false;
+    }
+  }
   function hardenSecretInputs(host) {
     if (!host || !canMaskWithCss()) return;
-    host.querySelectorAll?.("input[data-mask]").forEach((input) => { input.type = "text"; input.classList?.add("itas-mask"); });
+    host.querySelectorAll?.("input[data-mask]").forEach((input) => {
+      input.type = "text";
+      input.classList?.add("itas-mask");
+      // ปิดบังไม่จริง (CSS ไม่มา) = คืนเป็น password ทันที ห้ามแสดงรหัสเป็นข้อความชัด
+      if (!isMaskedByCss(input)) { input.type = "password"; input.classList?.remove("itas-mask"); }
+    });
   }
   function showVaultPanel(kind, html) {
     const host = byId("itas-vault-panel");
@@ -270,7 +289,12 @@
       closeVaultPanel();
       if (event.reason !== "pagehide") showToast(LOCK_TOASTS[event.reason] ?? "ตู้เซฟถูกล็อก", event.reason === "manual" ? "success" : "error");
     }
-    if (ui?.form && (event.status !== "unlocked" || event.reason === "unlock" || event.reason === "setup")) refreshSecrets();
+    if (ui?.form && (event.status !== "unlocked" || event.reason === "unlock" || event.reason === "setup")) {
+      // ล็อกอัตโนมัติขณะฟอร์มเปิด: ช่องลับที่พิมพ์ค้าง/เครื่องหมายลบค่าจะถูกล้าง ต้องบอกผู้ใช้ ไม่ให้หายเงียบ ๆ (ช่องไม่ลับคงอยู่)
+      const lostSecrets = event.status !== "unlocked" && AUTO_LOCK_REASONS.has(event.reason) && hasSecretWork();
+      refreshSecrets();
+      if (lostSecrets) formMessage(SECRETS_CLEARED_MESSAGE);
+    }
     // ตรวจบริบททุก 5 วินาทีขณะปลดล็อก (สลับ persona/ผู้ใช้โดยไม่ผ่านการวาดหน้าใหม่)
     if (event.status === "unlocked" && contextTimer === null) contextTimer = setInterval(() => vault.ensureContext(), CONTEXT_CHECK_MS);
     if (event.status !== "unlocked" && contextTimer !== null) { clearInterval(contextTimer); contextTimer = null; }
@@ -314,7 +338,8 @@
     host.addEventListener("change", onChange);
     host.addEventListener("submit", onSubmit);
     // ช่องที่ปิดบังด้วย CSS (type=text) คัดลอก/ตัดออกมาได้ต่างจาก type=password → กันเองให้เหมือนกัน
-    for (const name of ["copy", "cut"]) host.addEventListener(name, (event) => { if (event.target?.closest?.("input[data-mask]")) event.preventDefault(); });
+    // dragstart: ลากข้อความที่เลือกในช่องที่ปิดบังออกไปวางที่อื่น (ได้ข้อความจริง) ก็กันด้วย
+    for (const name of ["copy", "cut", "dragstart"]) host.addEventListener(name, (event) => { if (event.target?.closest?.("input[data-mask]")) event.preventDefault(); });
     host.addEventListener("keydown", (event) => {
       const row = event.target.closest?.("[data-itas-row]");
       if (row && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); openForm("edit", row.dataset.itasRow); }
@@ -504,6 +529,12 @@
     const form = ui?.form && formEl();
     if (!form || !onAssetsPage()) return false;
     if (JSON.stringify(readFormValues(form, ui.form.type)) !== ui.form.initial) return true;
+    return hasSecretWork();
+  }
+  // ช่องลับที่ผู้ใช้พิมพ์ค้างหรือสั่งลบไว้ (ล็อกตู้เซฟแล้วส่วนนี้ถูกล้าง)
+  function hasSecretWork() {
+    const form = ui?.form && formEl();
+    if (!form) return false;
     return [...form.querySelectorAll("[data-secret]")].some((row) => row.dataset.clear === "1" || (row.querySelector("[data-secret-input]")?.value ?? "") !== "");
   }
   function unsavedCount() {
