@@ -529,6 +529,7 @@
       ui, rules, derive, actions, store,
       can: (permission) => storeApi.can(user, permission),
       canSee: (id) => storeApi.canSee(user, id),
+      canSeeRbStore: () => storeApi.canSeeRbStore(user),
       // ความต้องการของซื้อของใบ PI เทียบสต็อกใน BOM (โหมดฐานข้อมูลที่โหลด BOM แล้วเท่านั้น · null = ไม่มีข้อมูล) ใช้ในหน้าต่างสั่งซื้อและ checkMaterials
       bomPartNeeds: (sourcePi) => {
         try {
@@ -673,6 +674,12 @@
 
   async function renderRubberFlow(params) {
     if (!storeApi.usesRubberFlow(state.employee)) return renderNotFound();
+    // ลิงก์เก่า p=rbstore (คลังเคมี RB เคยมีเมนูของตัวเอง) → แท็บคลังเคมี RB ของ p=warehouse (แท็บย่อยเดิม tab= เป็น view=)
+    if (params.get("p") === "rbstore") {
+      const sub = ["requests", "returns", "usage"].includes(params.get("tab")) ? params.get("tab") : null;
+      location.hash = url("warehouse", { view: sub, q: params.get("q"), days: params.get("days") });
+      return undefined;
+    }
     store.ensureLoaded(); // โหมดฐานข้อมูล: โหลดข้อมูลหลักครั้งแรก (วาดหน้าใหม่เองเมื่อเสร็จ) · โหมดในเครื่องไม่ทำอะไร
     const ctx = makeContext(params);
     const { user, page } = ctx;

@@ -1105,13 +1105,36 @@ test("list empty states: nothing yet says so and offers the first step, a search
   // คลัง: ค้นหาไม่เจอ = ไม่พบ · ยังว่างเฉยๆ = ยังไม่มี
   env.store.setUser("U01");
   const warehouse = (query, data = {}) => { const ctx = env.ctx(query); return pages.warehouse({ ...ctx, data: { ...ctx.data, ...data } }).html; };
-  // ล็อตวัตถุดิบและใบสั่งซื้ออยู่ที่โมดูลคลังวัตถุดิบ (ST): แท็บเหล่านี้เป็นข้อความเดียว (ลิงก์ไปที่นั่นเฉพาะผู้ที่เปิดโมดูลนั้นได้)
-  assert.match(warehouse("p=warehouse&tab=raw", { materialLots: [] }), /ล็อตวัตถุดิบ การรับเข้า และใบสั่งซื้ออยู่ที่คลังวัตถุดิบ \(ST\)/);
-  assert.match(warehouse("p=warehouse&tab=po"), /ล็อตวัตถุดิบ การรับเข้า และใบสั่งซื้ออยู่ที่คลังวัตถุดิบ \(ST\)/);
-  assert.doesNotMatch(warehouse("p=warehouse&tab=raw"), /rf-search|data-rf-open="tag"|setMaterialLotStatus/, "no lot list, label or hold button here");
+  // หน้าคลังเปิดที่แท็บคลังเคมี RB (ตั้งต้น) · ล็อตวัตถุดิบและใบสั่งซื้อ (ST) ไม่มีแท็บที่นี่แล้ว: tab=raw / po ลิงก์เก่าเปิดแท็บตั้งต้น
+  const home = warehouse("p=warehouse");
+  assert.match(home, /<a class="rf-tab is-active"[^>]*>คลังเคมี RB<\/a>/, "the chemical store of RB is the first and default tab");
+  assert.match(home, /รายการวัตถุดิบ<\/a>[\s\S]*สินค้าสำเร็จรูป<\/a>/, "the materials master and the finished-goods tabs stay");
+  assert.match(home, /data-rf-open="chemRequest"/, "the RB store's own buttons sit on this tab");
+  for (const old of ["raw", "po"]) assert.equal(warehouse(`p=warehouse&tab=${old}`), home, `the old ${old} tab opens the default tab`);
+  assert.doesNotMatch(home, />ล็อตวัตถุดิบ<|>ใบสั่งซื้อ<|data-rf-open="tag"|setMaterialLotStatus/, "no lot list, purchase-order tab, label or hold button here");
+  assert.match(warehouse("p=warehouse&view=requests"), /ใบขอเบิกจาก ST[\s\S]*<table/, "the RB store's own sub-tabs use ?view=");
+  // บทบาทที่ไม่มีคลังเคมี RB (เจ้าหน้าที่คลัง): เริ่มที่รายการวัตถุดิบ ไม่มีแท็บคลังเคมี RB
+  env.store.setUser("U04");
+  const keeper = warehouse("p=warehouse");
+  assert.doesNotMatch(keeper, />คลังเคมี RB<|chemRequest/, "a store keeper has no RB chemical store tab");
+  assert.match(keeper, /<a class="rf-tab is-active"[^>]*>รายการวัตถุดิบ<\/a>/);
+  assert.equal(warehouse("p=warehouse&tab=rb"), keeper, "a link to the RB tab opens the materials tab for them");
+  env.store.setUser("U01");
   assert.match(warehouse("p=warehouse&tab=materials&q=zzzz-no-match"), /ไม่พบวัตถุดิบ/);
   assert.match(warehouse("p=warehouse&tab=fg", { fgBoxes: [] }), /สินค้าสำเร็จรูปอยู่ที่คลังสินค้าสำเร็จรูป \(WH\)/, "the finished-goods tab has no list to be empty: it points to the warehouse module");
   assert.doesNotMatch(warehouse("p=warehouse&tab=fg"), /rf-search/, "and has nothing to search");
+});
+
+test("the RB chemical store has no menu entry: its old links p=rbstore (and its sub-tab) open the warehouse page", async () => {
+  const env = load();
+  for (const user of ["U01", "U03", "U05"]) {
+    env.store.setUser(user);
+    assert.doesNotMatch(await env.render("p=warehouse"), /p=rbstore/, `${user} has no rbstore link`);
+  }
+  for (const [old, now] of [["p=rbstore", "#/rubberflow?p=warehouse"], ["p=rbstore&tab=requests", "#/rubberflow?p=warehouse&view=requests"], ["p=rbstore&tab=usage&days=90", "#/rubberflow?p=warehouse&view=usage&days=90"], ["p=rbstore&tab=stock&q=NR", "#/rubberflow?p=warehouse&q=NR"]]) {
+    await env.render(old);
+    assert.equal(env.log.hash, now, old);
+  }
 });
 
 test("skipping the rest opens a reason dialog for the manager and QC only (the rubber head or QA in the database), and the lot row says who skipped it and why (20261128010000)", async () => {

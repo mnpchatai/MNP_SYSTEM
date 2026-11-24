@@ -261,11 +261,13 @@
   // ยอดพร้อมใช้ของวัตถุดิบในคลังที่ระบุ (ไม่นับล็อตกักกัน / หมดอายุ)
   const readyKg = (rules, lots, code, now, store) => lots.filter((lot) => lot.materialCode === code && rules.lotState(lot, now, store) === "available").reduce((sum, lot) => sum + rules.lotKg(lot, store), 0);
 
+  // แท็บ "คลังเคมี RB" ของหน้า p=warehouse (หน้าคลังเรียกผ่าน MNP_RUBBERFLOW_VIEWS.rbStoreSection) · แท็บย่อยอยู่ใน ?view= (stock ตั้งต้น · requests · returns · usage)
+  // คืน { actions: ปุ่มหัวหน้า, html: แถบแท็บย่อยและตาราง, search: ช่องค้นหา }
   const RB_TABS = Object.freeze([{ id: "stock", label: "ในคลัง RB" }, { id: "requests", label: "ใบขอเบิกจาก ST" }, { id: "returns", label: "ใบคืนให้ ST" }, { id: "usage", label: "ใช้จริงเทียบสูตร" }]);
   const USAGE_DAYS = Object.freeze([7, 30, 90]);
-  pages.rbstore = (ctx) => {
+  const rbStoreSection = (ctx) => {
     const { data, now, ui, rules, params } = ctx;
-    const tab = RB_TABS.some((entry) => entry.id === params.get("tab")) ? params.get("tab") : "stock";
+    const tab = RB_TABS.some((entry) => entry.id === params.get("view")) ? params.get("view") : "stock";
     const docs = rules.chemDocsOf(data);
     let body = "";
     if (tab === "stock") {
@@ -295,11 +297,11 @@
       const rows = usage.rows.filter((row) => includes(`${row.materialCode} ${materialName(data, row.materialCode)}`, ctx.q))
         .map((row) => `<tr><td>${esc(materialName(data, row.materialCode))}<div class="small muted rf-mono">${esc(row.materialCode)}</div></td>${num(row.receivedKg)}${num(row.recipeKg)}${num(row.returnedKg)}${num(row.expectedKg)}${num(row.countAdjustKg)}${num(row.onHandKg)}</tr>`);
       const total = usage.rows.length && !ctx.q ? [`<tr><td><strong>รวม</strong></td>${num(usage.totals.receivedKg)}${num(usage.totals.recipeKg)}${num(usage.totals.returnedKg)}${num(usage.totals.expectedKg)}${num(usage.totals.countAdjustKg)}${num(usage.totals.onHandKg)}</tr>`] : [];
-      const range = ui.tabs([...USAGE_DAYS.map((value) => ({ id: String(value), label: `${value} วัน` })), { id: "all", label: "ทั้งหมด" }], days === null ? "all" : String(days), (id) => ctx.pageUrl({ tab: "usage", days: id === "30" ? null : id }));
+      const range = ui.tabs([...USAGE_DAYS.map((value) => ({ id: String(value), label: `${value} วัน` })), { id: "all", label: "ทั้งหมด" }], days === null ? "all" : String(days), (id) => ctx.pageUrl({ tab: null, view: "usage", days: id === "30" ? null : id }));
       body = `${range}${ui.table(["วัตถุดิบ", { label: "รับจาก ST (kg)", className: "right" }, { label: "ใช้ตามสูตร (kg)", className: "right", title: "กิโลตามสูตรของใบเบิกผสมที่ตัดคลัง RB หักที่คืนเข้าคลัง RB เมื่อ WO ถูกยกเลิก" }, { label: "คืนให้ ST (kg)", className: "right" },
         { label: "ควรเพิ่มตามสูตร (kg)", className: "right", title: "รับจาก ST − ใช้ตามสูตร − คืนให้ ST" }, { label: "ปรับจากการนับ (kg)", className: "right", title: "ยอดนับได้ − ยอดในระบบก่อนนับ · ติดลบ = ใช้จริงมากกว่าสูตรหรือสูญหาย" }, { label: "คงเหลือตอนนี้ (kg)", className: "right", title: "ยอดคลัง RB ตอนนี้ (ไม่ตามช่วงเวลา)" }], [...rows, ...total], { emptyText: "ยังไม่มีการรับ ใช้ หรือคืนเคมีในช่วงนี้" })}`;
     }
-    const tabs = ui.tabs(RB_TABS, tab, (id) => ctx.pageUrl({ tab: id === "stock" ? null : id, q: null, days: null }));
+    const tabs = ui.tabs(RB_TABS, tab, (id) => ctx.pageUrl({ tab: null, view: id === "stock" ? null : id, q: null, days: null }));
     const factory = root.MNP_FACTORY;
     // ลิงก์ไปดูเคมีในคลัง ST: เฉพาะผู้ที่เปิดหน้านั้นได้ (โมดูล ST หรือ RB ที่ดูได้อย่างเดียว · MNP_ST_PAGES.access)
     const stAccess = typeof state !== "undefined" ? root.MNP_ST_PAGES?.access?.(state.employee) ?? null : null;
@@ -311,9 +313,9 @@
       anyStock && ctx.can("countRb") ? ui.openButton("นับยอดคลัง RB", "rbCount", {}, { className: "secondary" }) : "",
       stLink,
     ].join("");
-    const listbar = `<div class="rf-listbar">${tabs}<div class="rf-row">${searchForm(ctx, "ค้นหารหัส ชื่อ ล็อต หรือเลขใบ…")}</div></div>`;
-    return { html: `${ui.pageHead("คลังเคมี RB", "", actions)}${ui.card(`${listbar}${body}`, { flush: true })}` };
+    return { actions, tabs, search: searchForm(ctx, "ค้นหารหัส ชื่อ ล็อต หรือเลขใบ…"), body };
   };
+  root.MNP_RUBBERFLOW_VIEWS = Object.freeze({ ...(root.MNP_RUBBERFLOW_VIEWS ?? {}), rbStoreSection });
 
   // RB ขอเบิกเคมีจาก ST (ไม่ผูก WO): ทุกวัตถุดิบที่ใช้งานอยู่ (ช่องว่าง = ไม่ขอ) · args.rows = [{ materialCode, qtyKg }] เติมไว้ก่อนและอยู่บนสุด (ส่วนที่ขาดของใบเบิกผสม)
   dialogs.chemRequest = (ctx, { rows = [] } = {}) => {

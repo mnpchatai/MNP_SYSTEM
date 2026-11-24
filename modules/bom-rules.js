@@ -1051,6 +1051,31 @@
     }
     return Math.round(total * 1e4) / 1e4;
   }
+  // แผนกที่รับของซื้อของใบ = แผนกเจ้าของชิ้นพ่อที่ใช้ของซื้อนั้นในการระเบิด BOM ของใบ (พ่อเป็นตัวสินค้า FG = PK) · คืน Map(รหัสของซื้อ → แผนกเรียงตามผังงาน) · ใบไม่มี explosion = Map ว่าง
+  // งานของซื้อมีหนึ่งงานต่อรหัสต่อใบ (เบิกจ่ายทั้งใบรวมกัน) ของซื้อที่หลายแผนกใช้จึงได้หลายแผนกในรายการเดียว
+  function partReceivers(order) {
+    const lines = Array.isArray(order?.explosion) ? order.explosion : [];
+    const producerOf = new Map(lines.map((line) => [`${line.fgCode}|${line.itemCode}`, line.producerDept]));
+    const sets = new Map();
+    for (const line of lines) {
+      if (line.kind !== "PURCHASED" || !line.parentCode) continue;
+      const dept = line.level <= 1 ? "PK" : producerOf.get(`${line.fgCode}|${line.parentCode}`) || "PK";
+      (sets.get(line.itemCode) ?? sets.set(line.itemCode, new Set()).get(line.itemCode)).add(dept);
+    }
+    return new Map([...sets].map(([code, depts]) => [code, [...depts].sort((a, b) => flowStepOf(a) - flowStepOf(b) || a.localeCompare(b))]));
+  }
+  // จัดบรรทัดของซื้อ (มี itemCode) ตามแผนกที่รับ: หนึ่งกลุ่มต่อชุดแผนกเดียวกัน เรียงตามลำดับในผังงาน · ไม่รู้แผนก (depts ว่าง) ไว้ท้าย · ลำดับบรรทัดในกลุ่มคงเดิม
+  function partReceiverGroups(order, lines) {
+    const receivers = partReceivers(order);
+    const groups = new Map();
+    for (const line of lines) {
+      const depts = receivers.get(line.itemCode) ?? [];
+      const key = depts.join("+");
+      (groups.get(key) ?? groups.set(key, { depts, lines: [] }).get(key)).lines.push(line);
+    }
+    const rank = (group) => (group.depts.length ? flowStepOf(group.depts[0]) : 99);
+    return [...groups.values()].sort((a, b) => rank(a) - rank(b) || a.depts.join("+").localeCompare(b.depts.join("+")));
+  }
   // รายการของซื้อที่เบิกจ่ายแล้วของใบ (งาน ST / PURCHASED ที่ done หรือเบิกไปบางส่วน รวมต่อรหัส) พร้อมยอดที่คืนไปแล้วและที่ยังคืนได้ · เรียงตามรหัส
   // partial = บรรทัดยังเบิกไม่ครบ (งานยังไม่ done) ของใบที่ยังไม่ปิด: ยกเลิกการเบิกจ่ายคืนยอดนี้ได้ แต่คืนของเหลือไม่ได้
   // ใบที่ปิดแล้ว (completed) หรือยกเลิกแล้ว (cancelled) เบิกส่วนที่เหลือ / ยกเลิกการเบิกจ่ายไม่ได้แล้ว บรรทัดที่เบิกไม่ครบจึงไม่ใช่ partial (คืนของเหลือได้เหมือนบรรทัดที่ done) · ตรงกับ private.bom_return_parts ของ 20261123020000
@@ -1836,7 +1861,7 @@
     piNumber, piYear, LEAD_DAYS, defaultDueDates, producerPair, SHEETS, sheetOf, sheetLines,
     canonicalCode, isBlankCode, kindOf, ownerDeptOf, parseFgCode, buildFgCode, parseRbCode, parseSeCode, buildRbCode, buildSeCode,
     parseColorCode, colorName, colorOfCode, colorSlotKey, recolorCode, renameColor, colorSlotsOf, colorChangePlan,
-    normalizeUom, uomLabel, ceilCountQty, issueDefaultQty, bangkokDay, bomRevisionLocked, rbPerSe, rbCutQty, rbCutDiffers, parseDelimited, detectHeader, readFlatRows, sheetNumber, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, partShortAllOrders, jobSupplyLimit, fgLabel, suggestFgName, draftBefore, draftPartDemand, draftRubberJobs, partReserved, partOnOrder, partReturned, partReturnLines, fgPosition, fgReverseBlock, fgReverseReopens, fgOnHand, fgFreeList, fgStockForDraft, fgStockLock, noBomInOrder, countedCodes,
+    normalizeUom, uomLabel, ceilCountQty, issueDefaultQty, bangkokDay, bomRevisionLocked, rbPerSe, rbCutQty, rbCutDiffers, parseDelimited, detectHeader, readFlatRows, sheetNumber, parseBomPaste, auditMaster, buildFromFlat, subpartOptions, subpartIndex, explode, aggregateRequirements, netRequirements, groupByDept, toMake, wholeRods, partNeeds, partShortAllOrders, jobSupplyLimit, fgLabel, suggestFgName, draftBefore, draftPartDemand, draftRubberJobs, partReserved, partOnOrder, partReturned, partReturnLines, partReceivers, partReceiverGroups, fgPosition, fgReverseBlock, fgReverseReopens, fgOnHand, fgFreeList, fgStockForDraft, fgStockLock, noBomInOrder, countedCodes,
     ROD_SPEC_KEYS, ROD_SPEC_LABEL, ROD_STATUS_LABEL, ROD_DECISION_LABEL, ROD_FREE_ORDER, rodBalance, rodOwnerFree, rodBuckets, rodFree, rodOwned, rodFifo, qcVerdict, rodCodesOf, rodStockForDraft, rodTaken, rodIssued, rodReversedIds, rodIssueNeeds, rodSummary,
     ROD_LOCATION_MAX, ROD_LOT_NO_MAX, ROD_RESERVED_LOT_PREFIX, ROD_SOURCE_LABEL, rodAttrs,
     GR_DEFAULT_CONFIG, GR_LIMITS, GR_STEP_CODE, GR_STEP_KIND_LABEL, GR_TARGET_FACTOR, GR_RECORD_STATUS_LABEL, GR_HANDOVER_STATUS_LABEL, GR_REQUEST_STATUS_LABEL,

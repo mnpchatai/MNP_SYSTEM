@@ -33,7 +33,7 @@
   // ---------- ไอคอน (ไอคอนเส้นชุดเดียวกับระบบหลักจาก modules/ui-icons.js ประจำโมดูลและโทนแจ้งเตือน ใช้ในเมนูข้าง หัวหน้า และกล่องแจ้งเตือน สไตล์ .rf-ico ใน styles.css) ----------
   // ค่า = ชื่อไอคอนใน MNP_UI_ICONS.PATHS (อ้างตอนวาด เพราะเทสต์โหลดไฟล์นี้แยก)
   const ICONS = Object.freeze({
-    dashboard: "factory", orders: "clipboard", recipes: "flask", requisition: "scale", rbstore: "layers", mixing: "mix", extrusion: "ruler", curing: "flame", finishing: "box", wip: "cycle",
+    dashboard: "factory", orders: "clipboard", recipes: "flask", requisition: "scale", mixing: "mix", extrusion: "ruler", curing: "flame", finishing: "box", wip: "cycle",
     quality: "shield", spc: "chart", trace: "search", warehouse: "warehouse", molds: "mold", audit: "history",
     bad: "error", warn: "warning", good: "approve", info: "info",
   });

@@ -2432,6 +2432,7 @@
     if (!plan.lines.length) return null;
     const onOrder = rules.partOnOrder(rfPurchaseOrdersOf(ctx) ?? []);
     const fmt = (value) => esc(rules.fmtQty(value));
+    const receivers = rules.partReceivers(order);
     const rows = plan.lines.map((line) => {
       const unit = uomText(ctx, line.uom);
       const picked = line.short <= 0 && line.onHand > 0;
@@ -2442,7 +2443,7 @@
       const issuedText = line.issued > 0 ? `เบิกแล้ว ${rules.fmtQty(line.issued)} จาก ${rules.fmtQty(line.planned)}` : "";
       const need = `${fmt(line.remaining)} <span class="small muted">${esc(unit)}</span>${issuedText ? `<span class="sr-only">${esc(` (${issuedText})`)}</span>` : ""}`;
       const stock = `${fmt(line.onHand)}${line.short > 0 ? `<div>${ui.badge("bad", `ขาด ${rules.fmtQty(line.short)}`)}</div>${onOrder.get(line.itemCode) > 0 ? `<div class="small muted">สั่งแล้ว รอรับ ${fmt(onOrder.get(line.itemCode))}</div>` : ""}` : ""}`;
-      return `<tr><td class="center">${pick}</td><td>${ui.mono(line.itemCode)}<div class="small muted">${esc(line.name)}</div></td><td class="right rf-mono"${issuedText ? ` title="${attr(issuedText)}"` : ""}>${need}</td><td class="right">${qty}</td><td class="right rf-mono">${stock}</td></tr>`;
+      return `<tr><td class="center">${pick}</td><td>${ui.mono(line.itemCode)}<div class="small muted">${esc(line.name)}</div>${receivers.has(line.itemCode) ? `<div class="small muted" title="${attr(receivers.get(line.itemCode).map((dept) => rules.DEPT_LABEL[dept] ?? dept).join(", "))}">${esc(`ให้ ${receivers.get(line.itemCode).join(", ")}`)}</div>` : ""}</td><td class="right rf-mono"${issuedText ? ` title="${attr(issuedText)}"` : ""}>${need}</td><td class="right">${qty}</td><td class="right rf-mono">${stock}</td></tr>`;
     });
     const rfCan = (permission) => Boolean(pages.hub?.rfCan?.(ctx, permission));
     const canBuy = rfCan("purchase");

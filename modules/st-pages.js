@@ -345,12 +345,14 @@
   }
 
   // ---------- จ่ายออก: เคมีตามใบขอเบิกของ RB · ของซื้อตามใบสั่งผลิต ----------
+  // ปลายทางของเคมีที่ ST จ่าย: คลังเคมีของแผนก RB (ไม่ใช่ใบเบิกต่อใบสั่งผลิต)
+  const RB_STORE_TARGET = "ให้แผนก RB · คลังเคมี RB";
   function chemRequestTable(ctx, rf) {
     const { ui } = ctx;
     const R = rfRules();
     const list = R.chemRequestsToIssue(rf.data);
     const mayIssue = rfCan(ctx, rf, "issueChem");
-    const rows = list.map((doc) => `<tr><td><strong class="rf-mono">${esc(doc.id)}</strong>${views().chemDocMeta?.(rf.ctx, doc) ?? ""}</td><td>${views().chemDocLines?.(rf.ctx, doc) ?? ""}</td><td>${views().chemStatus?.(ui, doc) ?? ""}</td><td class="right">${mayIssue ? rfScope(`<div class="rf-row rf-end">${issueButton(ctx, doc, "small")}${closeButton(ctx, doc)}</div>`) : ""}</td></tr>`);
+    const rows = list.map((doc) => `<tr><td><strong class="rf-mono">${esc(doc.id)}</strong><div class="small">${esc(RB_STORE_TARGET)}</div>${views().chemDocMeta?.(rf.ctx, doc) ?? ""}</td><td>${views().chemDocLines?.(rf.ctx, doc) ?? ""}</td><td>${views().chemStatus?.(ui, doc) ?? ""}</td><td class="right">${mayIssue ? rfScope(`<div class="rf-row rf-end">${issueButton(ctx, doc, "small")}${closeButton(ctx, doc)}</div>`) : ""}</td></tr>`);
     return ui.card(ui.table(["ใบขอเบิก", "รายการ", "สถานะ", { label: "", className: "right" }], rows, { emptyText: "ไม่มีใบขอเบิกเคมีที่รอจ่าย" }), { title: esc("เคมีตามใบขอเบิกของ RB"), flush: true });
   }
   function partOrders(ctx) {
@@ -364,13 +366,15 @@
     }).filter((row) => (only ? row.order.id === only : row.plan.lines.length || (row.open && row.back.length) || (row.order.status === "cancelled" && row.returnable)))
       .sort((a, b) => num(a.order.dueAt) - num(b.order.dueAt) || String(a.order.id).localeCompare(String(b.order.id)));
   }
+  // ของซื้อของใบ จัดตามแผนกที่รับ (หัวข้อต่อแผนก · bom-hub partLinesByDept) · ไม่มี hub = รายการเรียบ
+  const partLines = (ctx, order, lines, render) => hub()?.partLinesByDept?.(ctx, order, lines, render) ?? cardLines(lines, render);
   function partOrderTable(ctx) {
     const { ui, rules, user } = ctx;
     const may = ctx.helpers.canIssueParts(user) && !ctx.guest;
     const only = ctx.params.get("order");
     const rows = partOrders(ctx).map(({ order, open, plan, back, returnable }) => {
       const lines = plan.lines.length
-        ? cardLines(plan.lines, (line) => `<li><span>${esc(line.name || line.itemCode)}</span><span class="nowrap">${esc(`${rules.fmtQty(line.remaining)} ${rules.uomLabel(line.uom)}`)}${line.short > 0 ? ` ${ui.badge("bad", `ขาด ${rules.fmtQty(line.short)}`)}` : ""}</span></li>`)
+        ? partLines(ctx, order, plan.lines, (line) => `<li><span>${esc(line.name || line.itemCode)}</span><span class="nowrap">${esc(`${rules.fmtQty(line.remaining)} ${rules.uomLabel(line.uom)}`)}${line.short > 0 ? ` ${ui.badge("bad", `ขาด ${rules.fmtQty(line.short)}`)}` : ""}</span></li>`)
         : `<span class="small muted">${esc(order.status === "cancelled" ? "ใบถูกยกเลิก คืนของที่เบิกไปแล้ว" : back.length ? "เบิกจ่ายครบแล้ว" : "ไม่มีของซื้อที่ต้องเบิก")}</span>`;
       const buttons = may ? [
         open && plan.lines.length ? ui.openButton("เบิกจ่าย", "issueParts", { orderId: order.id }, { className: "small", ariaLabel: `เบิกจ่ายของซื้อของใบ ${order.id}` }) : "",
@@ -380,7 +384,7 @@
       return `<tr><td>${ui.link(order.id, ctx.url("orders", { sel: order.id }), "rf-mono")}<div class="small muted">${esc([order.customer, order.status === "cancelled" ? "ยกเลิกแล้ว" : ""].filter(Boolean).join(" · "))}</div></td><td>${lines}</td><td class="right"><div class="rf-row rf-end">${buttons}</div></td></tr>`;
     });
     const scope = only ? `<p class="bom-back">เฉพาะใบ ${esc(only)} · ${ui.link("ดูทุกใบ", stUrl({ tab: "issue" }))}</p>` : "";
-    return `${scope}${ui.card(ui.table(["ใบสั่งผลิต", "ของซื้อที่ต้องเบิก", { label: "", className: "right" }], rows, { emptyText: only ? "ใบนี้ไม่มีของซื้อให้เบิกจ่ายหรือคืน" : "ไม่มีใบที่รอเบิกของซื้อ" }), { title: esc("ของซื้อตามใบสั่งผลิต"), flush: true })}`;
+    return `${scope}${ui.card(ui.table(["ใบสั่งผลิต", "ของซื้อที่ต้องเบิก (ตามแผนกที่รับ)", { label: "", className: "right" }], rows, { emptyText: only ? "ใบนี้ไม่มีของซื้อให้เบิกจ่ายหรือคืน" : "ไม่มีใบที่รอเบิกของซื้อ" }), { title: esc("ของซื้อตามใบสั่งผลิต"), flush: true })}`;
   }
   function issueView(ctx, rf) {
     const chem = ctx.params.get("order") ? "" : rf.status === "ready" ? chemRequestTable(ctx, rf) : rfNote(ctx, rf);
@@ -414,7 +418,6 @@
     const low = ctx.params.get("low") === "1";
     const canCount = ctx.helpers.canCount(user);
     const canSafety = !ctx.guest && ctx.helpers.canSetSafety(user);
-    const reserved = rules.partReserved(ctx.data.jobs, ctx.data.orders);
     const onOrder = partOnOrder(ctx);
     const list = partRegister(ctx, stockOf).filter((item) => (!low || partLow(stockOf, item.code)) && F.includesText(`${item.code} ${item.name}`, q))
       .sort((a, b) => a.code.localeCompare(b.code));
@@ -423,11 +426,12 @@
     const rows = shown.map((item) => {
       const row = stockOf.get(item.code);
       const unit = esc(rules.uomLabel(item.uom));
-      const qty = canCount ? `${qtyInput("qty[]", `ยอดคงเหลือ ${item.code}`, row?.qty ?? "", "—")}` : `${fmt(row?.qty ?? 0)}`;
+      // ยอดนับจริงเริ่มว่าง (ยอดในระบบเป็น placeholder): แถวที่ไม่ได้พิมพ์ไม่ถูกบันทึก (countPartStock ข้ามแถวที่ยอดเท่าเดิม) · หน่วยบอกครั้งเดียวที่ยอดคงเหลือในระบบ
+      const counted = canCount ? qtyInput("qty[]", `ยอดนับจริง ${item.code}`, "", rules.fmtQty(row?.qty ?? 0)) : dash;
       const safety = canSafety ? qtyInput("safetyQty[]", `สต็อกขั้นต่ำ ${item.code}`, row?.safetyQty ?? 0) : fmt(row?.safetyQty ?? 0);
-      return `<tr><td>${ui.link(item.code, partHref(item.code), "rf-mono")}<input type="hidden" name="itemCode[]" value="${attr(item.code)}"><div class="small muted">${esc(item.name ?? "")}${row?.countedAt ? ` · นับล่าสุด ${esc(rules.fmtDate(row.countedAt))}` : ""}</div></td><td class="right">${qty} <span class="small muted">${unit}</span></td><td class="right rf-mono">${fmt(reserved.get(item.code) || 0)}</td><td class="right rf-mono">${onOrder ? fmt(onOrder.get(item.code) || 0) : dash}</td><td class="right">${safety}</td></tr>`;
+      return `<tr><td>${ui.link(item.code, partHref(item.code), "rf-mono")}<input type="hidden" name="itemCode[]" value="${attr(item.code)}"><div class="small muted">${esc(item.name ?? "")}${row?.countedAt ? ` · นับล่าสุด ${esc(rules.fmtDate(row.countedAt))}` : ""}</div></td><td class="right rf-mono">${fmt(row?.qty ?? 0)} <span class="small muted">${unit}</span></td><td class="right">${counted}</td><td class="right">${safety}</td><td class="right rf-mono">${onOrder ? fmt(onOrder.get(item.code) || 0) : dash}</td></tr>`;
     });
-    const table = ui.table(["ของซื้อ", { label: "คงเหลือ", className: "right" }, { label: "จองแล้ว", className: "right", title: "ใบสั่งผลิตที่ปล่อยผลิตแล้วและยังไม่ได้เบิกจ่ายต้องใช้" }, { label: "สั่งค้างรับ", className: "right", title: "ใบสั่งซื้อที่ยังไม่ได้รับเข้า" }, { label: "สต็อกขั้นต่ำ", className: "right" }], rows, { emptyText: q || low ? "ไม่พบของซื้อที่ค้นหา" : "ยังไม่มีของซื้อในทะเบียนชิ้นงาน" });
+    const table = ui.table(["ของซื้อ", { label: "ยอดคงเหลือในระบบ", className: "right" }, { label: "ยอดนับจริง", className: "right", title: "เว้นว่าง = ไม่เปลี่ยนยอด" }, { label: "สต็อกขั้นต่ำ", className: "right" }, { label: "รอรับเข้า", className: "right", title: "สั่งซื้อแล้วและยังไม่ได้รับเข้า" }], rows, { emptyText: q || low ? "ไม่พบของซื้อที่ค้นหา" : "ยังไม่มีของซื้อในทะเบียนชิ้นงาน" });
     const body = (canCount || canSafety) && shown.length
       ? `<form novalidate data-rf-form="countPartStock" data-rf-success="บันทึกยอด {result}" class="bom-count-form">${table}<div class="bom-count-save"><button class="btn rf-btn" type="submit">บันทึกยอดที่นับ</button></div></form>`
       : table;

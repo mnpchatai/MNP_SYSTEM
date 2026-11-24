@@ -20,8 +20,6 @@
     { id: "orders", label: "ใบสั่งผลิต", group: "วางแผน" },
     { id: "recipes", label: "สูตรยาง (BOM/PHR)", group: "วางแผน" },
     { id: "requisition", label: "เบิกเคมี", group: "สายการผลิต" },
-    // คลังเคมีของ RB (20261220010000): ยอดเคมีที่ RB รับจาก ST ต่อล็อต · ขอเบิก / คืนให้ ST · นับยอด (หัวหน้า RB / ฝ่ายวางแผน) · ใช้จริงเทียบสูตร
-    { id: "rbstore", label: "คลังเคมี RB", group: "สายการผลิต" },
     { id: "mixing", label: "1 · ผสมยาง", group: "สายการผลิต" },
     { id: "extrusion", label: "2 · ฉีดขึ้นรูป", group: "สายการผลิต" },
     { id: "curing", label: "3 · อบ HCM", group: "สายการผลิต" },
@@ -38,18 +36,22 @@
   const GROUPS = Object.freeze([...new Set(MODULES.map((entry) => entry.group))]);
   const findModule = (id) => MODULES.find((entry) => entry.id === String(id ?? "")) ?? null;
 
+  // คลังเคมีของ RB (20261220010000) เป็นแท็บแรกของหน้า p=warehouse (ไม่มีเมนูของตัวเอง): ยอดเคมีที่ RB รับจาก ST ต่อล็อต · ขอเบิก / คืนให้ ST · นับยอด · ใช้จริงเทียบสูตร
+  // เห็นแท็บนี้ = บทบาทที่เคยเห็นหน้า rbstore (ผู้ดูแล ผู้จัดการ ฝ่ายวางแผน พนักงานผสมยาง แผนก RB) · บทบาทอื่นเห็นหน้าคลังที่รายการวัตถุดิบ
+  const RB_STORE_ROLES = Object.freeze(["admin", "manager", "planner", "mixer", "rb"]);
+
   const ROLES = Object.freeze({
     admin: { label: "ผู้ดูแลระบบ", modules: MODULE_IDS },
     manager: { label: "ผู้จัดการโรงงาน", modules: Object.freeze(MODULE_IDS.filter((id) => id !== "audit")) },
-    planner: { label: "ฝ่ายวางแผนการผลิต", modules: Object.freeze(["dashboard", "orders", "recipes", "rbstore", "wip", "trace", "warehouse"]) },
+    planner: { label: "ฝ่ายวางแผนการผลิต", modules: Object.freeze(["dashboard", "orders", "recipes", "wip", "trace", "warehouse"]) },
     store: { label: "เจ้าหน้าที่คลัง", modules: Object.freeze(["dashboard", "requisition", "warehouse", "wip", "trace"]) },
-    mixer: { label: "พนักงานผสมยาง", modules: Object.freeze(["dashboard", "requisition", "rbstore", "mixing", "wip"]) },
+    mixer: { label: "พนักงานผสมยาง", modules: Object.freeze(["dashboard", "requisition", "mixing", "wip", "warehouse"]) },
     extruder: { label: "พนักงานฉีดยาง", modules: Object.freeze(["dashboard", "extrusion", "wip", "molds"]) },
     curer: { label: "พนักงานอบยาง", modules: Object.freeze(["dashboard", "curing", "wip", "molds"]) },
     finisher: { label: "พนักงานตกแต่ง/บรรจุ", modules: Object.freeze(["dashboard", "finishing", "wip", "warehouse"]) },
     qc: { label: "วิศวกรควบคุมคุณภาพ", modules: Object.freeze(["dashboard", "recipes", "quality", "spc", "trace", "warehouse", "molds", "wip"]) },
     // บัญชีทดสอบของโหมดฐานข้อมูล (personaUser): พนักงานแผนก RB ทำงานสายผลิตทั้งสาย รวมรับมอบ WIP ระหว่างสถานี (20261204010000) · แผนก SR (คลังยางเส้นยาว) และแผนกอื่นดูได้อย่างเดียว
-    rb: { label: "พนักงานแผนก RB", modules: Object.freeze(["dashboard", "orders", "recipes", "requisition", "rbstore", "mixing", "extrusion", "curing", "finishing", "wip", "quality", "trace", "warehouse", "molds"]) },
+    rb: { label: "พนักงานแผนก RB", modules: Object.freeze(["dashboard", "orders", "recipes", "requisition", "mixing", "extrusion", "curing", "finishing", "wip", "quality", "trace", "warehouse", "molds"]) },
     sr: { label: "คลังยางเส้นยาว (SR) ดูอย่างเดียว", modules: Object.freeze(["dashboard", "wip", "trace", "warehouse"]) },
     warehouse: { label: "พนักงานคลังสินค้า (WH)", modules: Object.freeze(["dashboard", "warehouse", "wip", "trace"]) },
     viewer: { label: "ดูข้อมูลอย่างเดียว", modules: Object.freeze(["dashboard", "orders", "recipes", "wip", "trace", "warehouse"]) },
@@ -148,6 +150,7 @@
   // โหมดฐานข้อมูล: บันทึกการใช้งานอ่านได้ทุกบัญชีทดสอบ (ข้อมูลหลักอยู่ในฐานข้อมูลที่ทุกคนเห็นร่วมกัน เหมือนหน้าบันทึกการใช้งานของ BOM)
   // กลุ่มวางแผน (role planner) ทำได้ทุกอย่างในฐานข้อมูล จึงเห็นทุกหน้าเหมือนผู้จัดการ · เซิร์ฟเวอร์ยังเป็นด่านตัดสินสิทธิ์ · โหมดสาธิตเมนูเดิม
   const canSee = (user, moduleId) => Boolean(user) && Boolean(ROLES[user.role]) && (ROLES[user.role].modules.includes(moduleId) || (Boolean(user.db) && (moduleId === "audit" || user.role === "planner")));
+  const canSeeRbStore = (user) => Boolean(user) && Boolean(ROLES[user.role]) && RB_STORE_ROLES.includes(user.role);
   const homeOf = (user) => (user && ROLES[user.role] ? ROLES[user.role].modules[0] : "dashboard");
 
   // state ที่อ่านจาก storage ต้องมีโครงครบ ไม่เช่นนั้นถือว่าเสีย (สร้างชุดสาธิตใหม่)
@@ -676,7 +679,7 @@
     return { load, data: getData, user: getUser, setUser, run, reset, isPersisted: () => persisted, now, isRemote: () => false, status: () => "ready", error: () => null, isSaving: () => false, hasNewer: () => false, version: () => null, ensureLoaded: () => Promise.resolve(), reload: () => Promise.resolve(), catchUp: () => Promise.resolve(false), audit: () => ({ status: "ready", entries: getData().audit, error: null }), loadAudit: () => Promise.resolve(), purge: () => Promise.resolve({ ok: false, error: new Error("ล้างข้อมูล RubberFlow ทดสอบได้เฉพาะโหมดฐานข้อมูล") }), subscribe: () => () => {} };
   }
 
-  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, CAN, findModule, can, canSee, homeOf, isValidState, createStore, REMOTE_LISTS, diffMaster, mapRemoteError, personaUser, usesRubberFlow, rightForAction, rightForDialog, rightForRequisitionReturn, canReceiveBoxes, canReverseBoxes };
+  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, CAN, findModule, can, canSee, canSeeRbStore, homeOf, isValidState, createStore, REMOTE_LISTS, diffMaster, mapRemoteError, personaUser, usesRubberFlow, rightForAction, rightForDialog, rightForRequisitionReturn, canReceiveBoxes, canReverseBoxes };
   if (isNode) module.exports = api;
   else root.MNP_RUBBERFLOW_STORE = api;
 })(typeof window !== "undefined" ? window : globalThis);

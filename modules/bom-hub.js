@@ -1434,6 +1434,21 @@
   // รายการในการ์ดงาน (ทุกชนิด รวมการ์ดเบิกของซื้อ): ไม่เกิน CARD_LINES บรรทัด ที่เหลือบอกจำนวน · การ์ดพาไปหน้ารายละเอียดที่มีครบทุกบรรทัด (ใบที่มี 40 รหัสไม่ยืดการ์ดจนเต็มจอ)
   const CARD_LINES = 5;
   const cardLines = (list, render, noun = "รายการ") => `<ul class="bom-job-parts">${list.slice(0, CARD_LINES).map(render).join("")}</ul>${list.length > CARD_LINES ? `<p class="small muted">${esc(`อีก ${list.length - CARD_LINES} ${noun}`)}</p>` : ""}`;
+  // รายการของซื้อของใบ จัดตามแผนกที่รับของ (rules.partReceiverGroups): หัวข้อ "ให้ <ชื่อเต็มแผนก>" ต่อกลุ่ม แล้วบรรทัดของกลุ่ม · ไม่รู้แผนก = ไม่มีหัวข้อ
+  // นับเฉพาะบรรทัดของ (ไม่เกิน CARD_LINES ที่เหลือบอกจำนวน) · ใช้ที่การ์ดเบิกของตามใบและตารางจ่ายออกของโมดูล ST
+  const deptNames = (ctx, depts) => depts.map((dept) => ctx.rules.DEPT_LABEL[dept] ?? dept).join(", ");
+  function partLinesByDept(ctx, order, lines, render, noun = "รายการ") {
+    let left = CARD_LINES;
+    const items = [];
+    for (const group of ctx.rules.partReceiverGroups(order, lines)) {
+      const shown = group.lines.slice(0, Math.max(0, left));
+      if (!shown.length) break;
+      left -= shown.length;
+      if (group.depts.length) items.push(`<li class="bom-job-dept">${esc(`ให้ ${deptNames(ctx, group.depts)}`)}</li>`);
+      items.push(...shown.map(render));
+    }
+    return `<ul class="bom-job-parts">${items.join("")}</ul>${lines.length > CARD_LINES ? `<p class="small muted">${esc(`อีก ${lines.length - CARD_LINES} ${noun}`)}</p>` : ""}`;
+  }
   // การ์ดของงานที่ไม่ใช่งานผลิต (คลังยางเส้นยาว SR · ตรวจคุณภาพ QA · คลังวัตถุดิบ ST · คลังสินค้า WH) เป็นชิ้นส่วนกลาง: หน้า "งานของฉัน" และโมดูลแผนกวาดชุดเดียวกัน
   // ctx = ผู้ใช้จริง (ปุ่มลงมือทำเปิดได้เมื่อมีสิทธิ์จริง ไม่เช่นนั้นเป็นข้อความดูอย่างเดียว · หน้างานของฉันได้การ์ดตามสิทธิ์อยู่แล้ว จึงเห็นปุ่มเสมอ) · view = { planner, dept } ของกระดานที่วาด (ป้ายแผนกขึ้นเฉพาะมุมมองทุกแผนกของฝ่ายวางแผน)
   function taskCard(ctx, task, { planner, dept }) {
@@ -1565,7 +1580,7 @@
         const button = !finished && ctx.helpers.canIssueParts(user) && ["released", "in_progress"].includes(order?.status) ? ui.openButton("เบิกจ่าย", "issueParts", { orderId: entry.parts }, { className: "bom-job-main", ariaLabel: `เบิกจ่ายของซื้อของใบ ${entry.parts}` }) : ui.link("เปิดใบสั่งผลิต", ctx.url("orders", { sel: entry.parts }), "btn rf-btn secondary bom-job-main");
         return `<article class="card rf-card bom-job"><div class="bom-job-top"><span class="bom-job-state">${finished ? "เบิกแล้ว" : "รอเบิก"}</span>${dueText(Math.min(...jobs.map((job) => job.dueAt)), finished)}</div>
           <h2>${esc(`เบิกของตามใบ ${entry.parts}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${esc(order?.customer ?? "")}</p>
-          ${cardLines(jobs, (job) => `<li><span>${esc(job.name)}</span><span class="nowrap">${esc(`${rules.fmtQty(finished ? job.qtyDone : Math.max(0, job.qtyPlanned - (Number(job.qtyDone) || 0)))} ${uomText(ctx, job.uom)}`)}</span></li>`)}${button}</article>`;
+          ${partLinesByDept(ctx, order, jobs, (job) => `<li><span>${esc(job.name)}</span><span class="nowrap">${esc(`${rules.fmtQty(finished ? job.qtyDone : Math.max(0, job.qtyPlanned - (Number(job.qtyDone) || 0)))} ${uomText(ctx, job.uom)}`)}</span></li>`)}${button}</article>`;
       }
       // การ์ดงานผลิตเป็นชิ้นส่วนกลาง (modules/factory-kit.js) ใช้ร่วมกับโมดูลแผนกอื่น
       return root.MNP_FACTORY.jobCard(ctx, entry.job, { planner, dept, show, orderOf });
@@ -1611,5 +1626,5 @@
 
   // ชิ้นส่วนของยางเส้นยาวที่โมดูล SR (modules/module-sr.js) ใช้วาดหน้าล็อตและตาราง ไม่คัดลอก
   const rod = Object.freeze({ bucketText, rodStatusBadge, qcRowsHtml, rodQty, rodItemName, ROD_KIND_LABEL, pickPlanHtml });
-  pages.hub = { rod, cardLines, ratioText, orderStepOf, hubUrl, treeTab, pastePreview, copyPreview, draftChemicals, rfCan, storeTasks, fgTasks, rodTasks, workBoard, workCount, taskCard, boardCards, isReceiptTask };
+  pages.hub = { rod, cardLines, partLinesByDept, ratioText, orderStepOf, hubUrl, treeTab, pastePreview, copyPreview, draftChemicals, rfCan, storeTasks, fgTasks, rodTasks, workBoard, workCount, taskCard, boardCards, isReceiptTask };
 })(typeof window !== "undefined" ? window : globalThis);

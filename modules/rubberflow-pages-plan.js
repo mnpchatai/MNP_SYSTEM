@@ -354,17 +354,13 @@
     return ui.empty("สินค้าสำเร็จรูปอยู่ที่คลังสินค้าสำเร็จรูป (WH) รับเข้า ส่งมอบ และดูของในคลังได้ที่นั่น", link);
   }
 
-  // ล็อตวัตถุดิบและใบสั่งซื้อ (คลัง ST) อยู่ที่โมดูลคลังวัตถุดิบ (ST) #/st ที่เดียว (โรงงานขั้น 3 · 20261220010000) ที่นี่เหลือลิงก์เดียวเหมือนสินค้าสำเร็จรูป
-  // ลิงก์ตามสิทธิ์ของโมดูล ST (MNP_ST_PAGES.access): ผู้ใช้โมดูลไปหน้านั้นตรงๆ · RB ดูเคมีในคลัง ST ได้อย่างเดียว · คนอื่นได้ข้อความอย่างเดียว
-  function stHome(ctx, tab) {
-    const { ui } = ctx;
+  // ล็อตวัตถุดิบและใบสั่งซื้อ (คลัง ST) อยู่ที่โมดูลคลังวัตถุดิบ (ST) #/st ที่เดียว (โรงงานขั้น 3 · 20261220010000) · ผู้ที่ไม่เห็นแท็บคลังเคมี RB ได้ปุ่มลิงก์เดียวที่หัวหน้า (RB ได้ปุ่มเดียวกันในแท็บคลังเคมี RB)
+  // ลิงก์ตามสิทธิ์ของโมดูล ST (MNP_ST_PAGES.access): ผู้ใช้โมดูลไปหน้านั้นตรงๆ · RB / QA ดูเคมีในคลัง ST ได้อย่างเดียว · คนอื่นไม่มีปุ่ม
+  function stButton(ctx) {
     const factory = root.MNP_FACTORY;
     const access = typeof state !== "undefined" ? root.MNP_ST_PAGES?.access?.(state.employee) ?? null : null;
-    const full = access === "full";
-    const href = access && factory ? factory.routeUrl("st", { tab: full && tab === "po" ? "po" : "stock" }) : null;
-    const label = full ? (tab === "po" ? "ไปที่ใบสั่งซื้อของคลังวัตถุดิบ (ST)" : "ไปที่คลังวัตถุดิบ (ST)") : "ดูเคมีในคลัง ST";
-    const link = href ? `<div class="rf-row">${ui.link(label, href, "btn rf-btn")}</div>` : "";
-    return ui.empty("ล็อตวัตถุดิบ การรับเข้า และใบสั่งซื้ออยู่ที่คลังวัตถุดิบ (ST)", link);
+    if (!access || !factory) return "";
+    return ctx.ui.link(access === "full" ? "ไปที่คลังวัตถุดิบ (ST)" : "ดูเคมีในคลัง ST", factory.routeUrl("st", { tab: "stock" }), "btn rf-btn");
   }
 
   // ตารางใบสั่งซื้อ (ใช้ที่หน้าใบสั่งซื้อของโมดูล ST #/st ผ่าน MNP_RUBBERFLOW_VIEWS · ปุ่มผูกด้วยตัวผูกของ RubberFlow) · q = คำค้น
@@ -422,21 +418,28 @@
   }
   root.MNP_RUBBERFLOW_VIEWS = Object.freeze({ ...(root.MNP_RUBBERFLOW_VIEWS ?? {}), purchaseOrderTable, purchaseButton });
 
-  // หน้าคลังของ RubberFlow: เหลือรายการวัตถุดิบ (ข้อมูลหลัก แก้โดยฝ่ายวางแผน / RB) · ล็อตวัตถุดิบ ใบสั่งซื้อ และสินค้าสำเร็จรูปเป็นลิงก์ไปโมดูลคลังของแผนกนั้น
+  // หน้าคลังของ RubberFlow: แท็บคลังเคมี RB (ตั้งต้นของผู้ที่เห็น · เนื้อหาอยู่ใน rubberflow-pages-line.js) · รายการวัตถุดิบ (ข้อมูลหลัก แก้โดยฝ่ายวางแผน / RB) · สินค้าสำเร็จรูปเป็นลิงก์ไปโมดูลคลังของแผนกนั้น
+  // ล็อตวัตถุดิบและใบสั่งซื้อ (คลัง ST) อยู่ที่ #/st · ลิงก์เก่า tab=raw / po และ p=rbstore เปิดแท็บตั้งต้น (p=rbstore เปลี่ยนทางใน module-rubberflow.js)
   pages.warehouse = (ctx) => {
     const { data, ui, rules, params } = ctx;
     const { fmtNum } = rules;
-    const tab = ["fg", "materials", "po"].includes(params.get("tab")) ? params.get("tab") : "raw";
+    const rbAllowed = Boolean(ctx.canSeeRbStore?.());
+    const chosen = params.get("tab");
+    const tab = ["fg", "materials"].includes(chosen) ? chosen : rbAllowed ? "rb" : "materials";
+    const firstTab = rbAllowed ? "rb" : "materials";
     const mayEditMaterial = ctx.can("editMaster");
-    const tabs = ui.tabs([{ id: "raw", label: "ล็อตวัตถุดิบ" }, { id: "po", label: "ใบสั่งซื้อ" }, { id: "materials", label: "รายการวัตถุดิบ" }, { id: "fg", label: "สินค้าสำเร็จรูป" }], tab, (id) => ctx.pageUrl({ tab: id === "raw" ? null : id, q: null }));
+    const tabs = ui.tabs([...(rbAllowed ? [{ id: "rb", label: "คลังเคมี RB" }] : []), { id: "materials", label: "รายการวัตถุดิบ" }, { id: "fg", label: "สินค้าสำเร็จรูป" }], tab, (id) => ctx.pageUrl({ tab: id === firstTab ? null : id, q: null, view: null, days: null }));
+    const rbStore = tab === "rb" ? root.MNP_RUBBERFLOW_VIEWS?.rbStoreSection?.(ctx) ?? null : null;
     const materialRows = data.materials
       .filter((material) => includes(`${material.code} ${material.name} ${material.category ?? ""}`, ctx.q))
       .map((material) => `<tr><td class="rf-mono small">${esc(material.code)}</td><td>${esc(material.name)}</td><td class="small">${esc(material.category ?? "")}</td><td class="small">${esc(material.storage ?? "")}</td><td>${esc(material.uom ?? "kg")}</td><td class="right">${esc(fmtNum(material.safetyKg ?? 0, 2))}</td><td class="right">${esc(fmtNum(material.shelfLifeDays ?? 180))}</td><td>${material.active === false ? ui.badge("", "เลิกใช้") : ui.badge("good", "ใช้งาน")}</td><td class="right">${mayEditMaterial ? ui.openButton("แก้ไข", "materialEdit", { code: material.code }, { className: "secondary small", ariaLabel: `แก้ไข ${material.code}` }) : ""}</td></tr>`);
-    const listbar = `<div class="rf-listbar">${tabs}<div class="rf-row">${tab === "materials" && mayEditMaterial ? ui.openButton("เพิ่มวัตถุดิบ", "materialEdit", {}, { className: "small" }) : ""}${tab === "materials" ? searchForm(ctx, "ค้นหารหัส…", { tab: true }) : ""}</div></div>`;
-    const tableHtml = tab === "materials"
+    const listbar = `<div class="rf-listbar">${tabs}<div class="rf-row">${tab === "materials" && mayEditMaterial ? ui.openButton("เพิ่มวัตถุดิบ", "materialEdit", {}, { className: "small" }) : ""}${tab === "materials" ? searchForm(ctx, "ค้นหารหัส…", { tab: true }) : ""}${rbStore ? rbStore.search : ""}</div></div>${rbStore ? rbStore.tabs : ""}`;
+    const tableHtml = tab === "rb" ? (rbStore?.body ?? "")
+      : tab === "materials"
       ? ui.table(["รหัส", "ชื่อวัตถุดิบ", "หมวด", "ที่จัดเก็บ", "หน่วย", { label: "สต็อกขั้นต่ำ (kg)", className: "right" }, { label: "อายุการเก็บ (วัน)", className: "right" }, "สถานะ", { label: "", className: "right" }], materialRows, { emptyText: ctx.q ? "ไม่พบวัตถุดิบ" : "ยังไม่มีวัตถุดิบ" })
-      : tab === "fg" ? fgHome(ctx) : stHome(ctx, tab);
-    const html = `${ui.pageHead("คลังวัตถุดิบและสินค้าสำเร็จรูป")}${ui.card(`${listbar}${tableHtml}`, { flush: true })}`;
+      : fgHome(ctx);
+    const actions = rbStore ? rbStore.actions : rbAllowed ? "" : stButton(ctx);
+    const html = `${ui.pageHead("คลังวัตถุดิบและสินค้าสำเร็จรูป", "", actions)}${ui.card(`${listbar}${tableHtml}`, { flush: true })}`;
     return { html };
   };
 

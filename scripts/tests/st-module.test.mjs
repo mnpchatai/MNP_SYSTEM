@@ -3,7 +3,7 @@ import fs from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 
-// โมดูลคลังวัตถุดิบ (ST) #/st · modules/st-pages.js (โรงงาน ขั้น 3 · 20261220010000) และคลังเคมีของ RB (RubberFlow p=rbstore)
+// โมดูลคลังวัตถุดิบ (ST) #/st · modules/st-pages.js (โรงงาน ขั้น 3 · 20261220010000) และคลังเคมีของ RB (แท็บแรกของ RubberFlow p=warehouse)
 // เมนู · ใครเปิดหน้าไหนได้ (ST / PP / ผู้จัดการ เต็ม · RB ดูเคมีอย่างเดียว · WH ดูและนับของซื้อ · คนอื่นไม่พบหน้า) · ในคลังไม่แสดงของที่ยอด 0 · ตัวกรองชนิด · ทีละ 100 แถว
 // · การเปลี่ยนที่อยู่ของ BOM p=stock · งานของฉัน (ใบขอเบิก ใบคืน ใบสั่งซื้อ) · หน้าต่างจ่ายเคมีแสดงล็อต FEFO · ถ้อยคำที่บอกชื่อคลัง
 const FILES = [
@@ -299,9 +299,9 @@ test("purchase orders: the RubberFlow table and dialogs, the store-named receive
   const po = env.rf.store.data().purchaseOrders[0];
   assert.match(await env.open(`tab=po&q=${po.id}`), new RegExp(po.id));
   const raw = await env.rfOpen("p=warehouse");
-  assert.match(raw, /href="#\/st\?tab=stock"[^>]*>ไปที่คลังวัตถุดิบ \(ST\)</);
-  assert.match(await env.rfOpen("p=warehouse&tab=po"), /href="#\/st\?tab=po"[^>]*>ไปที่ใบสั่งซื้อของคลังวัตถุดิบ \(ST\)</);
-  assert.doesNotMatch(raw, /setMaterialLotStatus|data-rf-open="tag"/, "no lot list left in RubberFlow");
+  assert.match(raw, /href="#\/st\?tab=stock"[^>]*>ไปที่คลังวัตถุดิบ \(ST\)</, "one link to the ST module remains (a store keeper has no RB chemical store tab)");
+  assert.doesNotMatch(raw, />ล็อตวัตถุดิบ<|>ใบสั่งซื้อ<|setMaterialLotStatus|data-rf-open="tag"/, "no lot list or purchase-order tab left in RubberFlow");
+  assert.equal(await env.rfOpen("p=warehouse&tab=po"), raw, "the old purchase-order tab link opens the default tab");
 });
 
 test("จ่ายออก: parts per order open the BOM issue / return / undo dialogs; ?order= narrows to one order", async () => {
@@ -334,18 +334,26 @@ test("RubberFlow คลังเคมี RB: RB lots, requests and returns with
   const env = load({ employee: emp("RB"), bomUser: "B04", rfUser: "U05" });
   const rules = env.context.MNP_RUBBERFLOW_RULES;
   const rfData = env.rf.store.data();
-  const html = await env.rfOpen("p=rbstore");
-  assert.match(html, /<h1>คลังเคมี RB<\/h1>/);
+  const html = await env.rfOpen("p=warehouse");
+  assert.match(html, /<h1>คลังวัตถุดิบและสินค้าสำเร็จรูป<\/h1>/, "the menu item and page keep their name");
+  assert.match(html, /<a class="rf-tab is-active"[^>]*>คลังเคมี RB<\/a>/, "the chemical store of RB is the default tab");
+  assert.doesNotMatch(html, /p=rbstore/, "no separate menu entry or link");
   assert.equal(rowsOf(html).length, rules.rbStockLots(rfData, Date.now()).length, "one row per lot the RB store holds");
   assert.match(html, /data-rf-open="chemRequest"[^>]*>ขอเบิกจาก ST</);
   assert.match(html, /data-rf-open="chemReturn"[^>]*>คืนให้ ST</);
   assert.match(html, /href="#\/st\?tab=stock&amp;kind=chem"[^>]*>ดูเคมีในคลัง ST</);
-  const requests = await env.rfOpen("p=rbstore&tab=requests");
+  const requests = await env.rfOpen("p=warehouse&view=requests");
   for (const doc of rules.chemDocsOf(rfData).filter((row) => row.kind === "request")) assert.ok(requests.includes(doc.id), doc.id);
   assert.match(requests, /รอ ST จ่าย/);
   assert.match(requests, /data-rf-action="cancelChemicalRequest"/, "a request not yet issued can be cancelled");
-  assert.match(await env.rfOpen("p=rbstore&tab=returns"), /รอ ST รับคืน/);
-  assert.match(await env.rfOpen("p=rbstore&tab=usage"), /ใช้ตามสูตร \(kg\)[\s\S]*รวม/);
+  assert.match(await env.rfOpen("p=warehouse&view=returns"), /รอ ST รับคืน/);
+  assert.match(await env.rfOpen("p=warehouse&view=usage"), /ใช้ตามสูตร \(kg\)[\s\S]*รวม/);
+  // ลิงก์เก่า p=rbstore เปลี่ยนทางไปแท็บคลังเคมี RB ของหน้าคลัง
+  await env.rfOpen("p=rbstore");
+  assert.equal(env.log.hash, "#/rubberflow?p=warehouse");
+  await env.rfOpen("p=rbstore&tab=returns");
+  assert.equal(env.log.hash, "#/rubberflow?p=warehouse&view=returns");
+  assert.ok(!env.context.MNP_RUBBERFLOW_STORE.MODULES.some((entry) => entry.id === "rbstore"), "no menu entry of its own");
   const rbCtx = (user) => ({ ...env.rf.context(new URLSearchParams()), can: (permission) => env.context.MNP_RUBBERFLOW_STORE.can(user, permission) });
   const persona = (employee) => env.context.MNP_RUBBERFLOW_STORE.personaUser({ ...employee, id: "x" });
   assert.equal(env.context.MNP_RUBBERFLOW_DIALOGS.rbCount(rbCtx(persona(emp("RB"))), {}), null, "RB staff cannot count the RB store");
@@ -353,6 +361,59 @@ test("RubberFlow คลังเคมี RB: RB lots, requests and returns with
   // หน้าต่างขอเบิก: ส่งเฉพาะแถวที่กรอก (ทะเบียนวัตถุดิบยาวได้ ใบหนึ่งไม่เกิน 100 รายการ)
   const payload = env.rf.transforms.requestChemicals({ materialCode: ["A", "B", "C"], qtyKg: ["", "5", " "], note: "" });
   assert.deepEqual(JSON.parse(JSON.stringify(payload.lines)), [{ materialCode: "B", qtyKg: "5" }]);
+});
+
+test("งานของฉัน: the parts issue card says which department receives the parts, grouped per department", async () => {
+  const env = load();
+  const html = await env.open();
+  const card = cardsOf(html).find((entry) => entry.includes("เบิกของตามใบ"));
+  assert.ok(card, "the demo has a parts issue card");
+  assert.match(card, /<li class="bom-job-dept">ให้ [A-Z]{2} · [^<]+<\/li>/, "a heading names the receiving department (code and Thai name)");
+  assert.ok(!(card.match(/<li><span>[^<]*<\/span><span class="nowrap">[^<]*<\/span><\/li>/g) ?? []).some((line) => /ให้ /.test(line)), "the department is not repeated on every line");
+  // กฎเดียวกันที่ตารางจ่ายออก: ตารางของซื้อตามใบสั่งผลิตมีหัวข้อแผนกต่อกลุ่ม · ตารางเคมีบอกว่าให้แผนก RB คลังเคมี RB
+  const issue = await env.open("tab=issue");
+  assert.match(issue, /<li class="bom-job-dept">ให้ [A-Z]{2} · [^<]+<\/li>/, "the parts per order are grouped by receiving department");
+  assert.match(issue, /ให้แผนก RB · คลังเคมี RB/, "the chemical requests say they go to the RB chemical store");
+  // กลุ่ม: ของซื้อที่ใช้ในชิ้นของ PT และ PK = แผนกทั้งสองในรายการเดียว · ไม่รู้แผนก = ท้ายสุดไม่มีหัวข้อ
+  const rules = env.context.MNP_BOM_RULES;
+  const line = (itemCode, parentCode, level, kind, producerDept) => ({ fgCode: "F1", itemCode, parentCode, level, kind, producerDept });
+  const order = { explosion: [line("F1", null, 0, "FG", "PK"), line("SE-1", "F1", 1, "PT", "PT"), line("P-1", "SE-1", 2, "PURCHASED", "ST"), line("P-2", "F1", 1, "PURCHASED", "ST"), line("P-3", "F1", 1, "PURCHASED", "ST"), line("P-3", "SE-1", 2, "PURCHASED", "ST")] };
+  assert.deepEqual(JSON.parse(JSON.stringify([...rules.partReceivers(order)])), [["P-1", ["PT"]], ["P-2", ["PK"]], ["P-3", ["PT", "PK"]]]);
+  const groups = rules.partReceiverGroups(order, [{ itemCode: "P-9" }, { itemCode: "P-2" }, { itemCode: "P-3" }, { itemCode: "P-1" }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(groups.map((group) => [group.depts.join("+"), group.lines.map((entry) => entry.itemCode).join(",")]))), [["PT", "P-1"], ["PT+PK", "P-3"], ["PK", "P-2"], ["", "P-9"]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(rules.partReceiverGroups({}, [{ itemCode: "P-1" }]).map((group) => group.depts.length))), [0], "an order without an explosion has no department");
+  // หน้าต่างเบิกจ่าย: แต่ละบรรทัดบอกแผนกที่รับ
+  const dialog = env.context.MNP_BOM_DIALOGS.issueParts(env.context.MNP_BOM.context(new URLSearchParams()), { orderId: /data-rf-open="issueParts" data-rf-args="\{&quot;orderId&quot;:&quot;([^&]+)&quot;\}"/.exec(issue)[1] }).html;
+  assert.match(dialog, /<div class="small muted" title="[^"]*">ให้ [A-Z]{2}/, "the issue dialog names the receiving department on each line");
+});
+
+test("นับสต็อก: four number columns with exact headings, the count starts empty (the system balance is the placeholder), no reserved column, only typed rows are saved", async () => {
+  const env = load();
+  const data = env.bom.data();
+  const part = data.items.find((item) => item.kind === "PURCHASED");
+  data.stock = [{ itemCode: part.code, qty: 9, safetyQty: 3 }];
+  const html = await env.open(`tab=count&q=${encodeURIComponent(part.code)}`);
+  const heads = [...html.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((match) => match[1]);
+  assert.deepEqual(heads, ["ของซื้อ", "ยอดคงเหลือในระบบ", "ยอดนับจริง", "สต็อกขั้นต่ำ", "รอรับเข้า"]);
+  assert.doesNotMatch(html, /จองแล้ว/);
+  const row = rowsOf(html).find((entry) => entry.includes(`value="${part.code}"`));
+  assert.match(row, /<td class="right rf-mono">9 [^<]*<span class="small muted">[^<]+<\/span><\/td>/, "the system balance is text with the unit once");
+  assert.match(row, /name="qty\[\]" type="number"[^>]*value=""[^>]*placeholder="9"/, "the counted quantity starts empty with the system balance as placeholder");
+  assert.match(row, /name="safetyQty\[\]"[^>]*value="3"/, "the safety stock is an input for those who may set it");
+  assert.equal((row.match(/<span class="small muted">/g) ?? []).length, 1, "the unit appears once in the row");
+  // แถวที่ไม่ได้พิมพ์ไม่ถูกบันทึก (ส่งช่องว่างมาทุกแถว)
+  const other = data.items.find((item) => item.kind === "PURCHASED" && item.code !== part.code);
+  const outcome = env.bom.run("countPartStock", { counts: [{ itemCode: part.code, qty: "", safetyQty: "3" }, { itemCode: other.code, qty: "7", safetyQty: "0" }] });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome));
+  assert.equal(env.bom.data().stock.find((entry) => entry.itemCode === part.code).qty, 9, "the empty row keeps its balance");
+  assert.equal(env.bom.data().stock.find((entry) => entry.itemCode === other.code).qty, 7, "the typed row is counted");
+  // ผู้ที่ตั้งสต็อกขั้นต่ำไม่ได้ (WH): ตัวเลขอย่างเดียว
+  const wh = load({ employee: emp("WH"), bomUser: "B09", rfUser: null });
+  const whData = wh.bom.data();
+  whData.stock = [{ itemCode: part.code, qty: 9, safetyQty: 3 }];
+  const whRow = rowsOf(await wh.open(`tab=count&q=${encodeURIComponent(part.code)}`)).find((entry) => entry.includes(`value="${part.code}"`));
+  assert.doesNotMatch(whRow, /name="safetyQty\[\]"/, "read-only safety stock for WH");
+  assert.match(whRow, /<td class="right">3<\/td>/);
 });
 
 test("wording: the store is named on its buttons, no rod word, and module-st.js only registers", () => {
