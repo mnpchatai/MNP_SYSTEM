@@ -164,7 +164,7 @@ select public.app_bom_save_master('{"items":{"upsert":[{"code":"RB-Q","kind":"RB
   qh_t.bver(), 'importFlat');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select qh_t.rf(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
-  '{"id":"RC-Q","revision":1,"productCode":"P-Q","uom":"m","batchKg":60,"stages":[{"stage":1,"mixerTemp":80,"dumpTemp":115,"mixMin":3}],"dumpTol":6,"restHours":4,"yieldPerKg":6.1,"items":[{"materialCode":"MAT-A","phr":100,"stage":1}],"status":"draft"}'::jsonb))),
+  '{"id":"RC-Q","revision":1,"productCode":"P-Q","uom":"m","batchKg":60,"stages":[{"stage":1,"mixerTemp":80,"dumpTemp":115,"mixMin":3},{"stage":2,"mixerTemp":90,"dumpTemp":140,"mixMin":2}],"dumpTol":6,"restHours":4,"yieldPerKg":6.1,"items":[{"materialCode":"MAT-A","phr":100,"stage":1}],"status":"draft"}'::jsonb))),
   'createRecipe');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_mgr')::uuid);
 select qh_t.rf(jsonb_build_object('recipes', jsonb_build_object('upsert',
