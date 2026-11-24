@@ -83,7 +83,7 @@ select public.app_bom_save_master(jsonb_build_object(
     current_setting('test.job')::jsonb || '{"id":"JOB-X1-GR","orderId":"251108-25001","dept":"GR","itemCode":"SE-A","kind":"SE"}'::jsonb,
     current_setting('test.job')::jsonb || '{"id":"JOB-X1-PK","orderId":"251108-25001","dept":"PK","itemCode":"FG-A","kind":"FG","uom":"set"}'::jsonb))),
   (public.app_bom_master() ->> 'version')::bigint, 'releaseOrder');
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || '{"sourceJobId":"JOB-X1-RB"}'::jsonb, current_setting('test.wo')::jsonb || '{"id":"WO-X2","targetQty":50}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createOrder');
 select is((select j -> 'externalRef' ->> 'woId' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-X1-RB'), 'WO-X1', 'WO-X1 is linked to the RB job (WO-X2 is not linked to any job)');

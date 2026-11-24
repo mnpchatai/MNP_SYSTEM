@@ -169,7 +169,7 @@ select qh_t.rf(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_mgr')::uuid);
 select qh_t.rf(jsonb_build_object('recipes', jsonb_build_object('upsert',
   (select jsonb_agg(r || '{"status":"approved"}'::jsonb) from jsonb_array_elements(public.app_rf_master() -> 'recipes') r where r ->> 'id' = 'RC-Q'))), 'approveRecipe');
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select qh_t.rf(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   '{"id":"WO-Q","customer":"ACME","customerPo":"PO-Q","recipeId":"RC-Q","recipeRevision":1,"color":"ดำ","targetQty":1000,"targetKg":17.5,"kgPerUnit":0.125,"producedQty":0,"startDate":1762387200000,"dueDate":1765065600000,"priority":"normal","note":"","status":"planned"}'::jsonb))),
   'createOrder');

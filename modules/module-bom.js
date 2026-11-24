@@ -638,8 +638,8 @@
     const { data, user } = ctx;
     // โหมดฐานข้อมูล: ผู้ใช้คือพนักงานที่ล็อกอิน (หรือบัญชีทดสอบที่ admin เลือกในโหมดทดสอบ) ไม่มีตัวเลือกบทบาทสาธิตและไม่มีรีเซ็ต (ข้อมูลหลักอยู่ในฐานข้อมูล)
     if (store.isRemote()) {
-      // ลิงก์ไป RubberFlow เฉพาะผู้ที่เปิดหน้า RubberFlow ได้ (แผนก GR PT BG PK ใช้งานจริงไม่เห็นเมนู RubberFlow)
-      const rfLink = (window.MNP_RUBBERFLOW_STORE?.usesRubberFlow?.(state.employee) ?? true)
+      // ลิงก์ไป RubberFlow เฉพาะผู้ที่เปิดหน้า RubberFlow ได้ (แผนก RB · PP · ผู้จัดการ · โรงงานขั้น 6)
+      const rfLink = (window.MNP_RUBBERFLOW_STORE?.canOpenRubberFlowPage?.(state.employee) ?? true)
         ?`<div class="rf-row"><a class="btn rf-btn secondary" href="#/rubberflow?p=orders" title="ไปที่ใบสั่งผลิตของแผนก RB ใน RubberFlow">ใบสั่งผลิต (RubberFlow)</a></div>`
         : "";
       return `<div class="rf-toolbar"><span class="small muted" role="status" data-bom-sync>${escapeHtml(syncText())}</span>

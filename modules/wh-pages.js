@@ -431,7 +431,7 @@
     const facts = ui.kv([
       ["สินค้า", `${ui.mono(group.code)}${itemOf(ctx, group.code)?.name ? `<div class="small muted">${esc(itemOf(ctx, group.code).name)}</div>` : ""}`],
       ...(whoseText(group) ? [["ของ", esc(whoseText(group))]] : []),
-      ["ใบสั่งผลิต (RubberFlow)", ui.link(group.wo?.id ?? group.lot?.orderId ?? "-", `#/rubberflow?p=orders&q=${encodeURIComponent(group.wo?.id ?? "")}`, "rf-mono")],
+      ["ใบสั่งผลิต (RubberFlow)", (() => { const woId = group.wo?.id ?? group.lot?.orderId ?? "-"; const href = F.rfOrderHref(group.wo?.id ?? ""); return href ? ui.link(woId, href, "rf-mono") : ui.mono(woId); })()],
       ["ปลายทาง", "ส่งมอบให้ลูกค้าผ่าน WH"],
       ["กล่อง", `${counts}`],
       ["ตกแต่งเสร็จ", esc(rules.fmtDateTime(group.createdAt))],

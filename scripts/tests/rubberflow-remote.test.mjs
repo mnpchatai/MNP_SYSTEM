@@ -130,9 +130,16 @@ test("the persona decides the RubberFlow role and the planner / RB member / RB h
   assert.equal(storeApi.can(rbHead, "approveRecipe"), true);
   assert.equal(storeApi.can(rbStaff, "approveRecipe"), false);
   assert.equal(storeApi.can(planner, "approveRecipe"), false, "planning does not approve recipes");
-  assert.equal(storeApi.can(rbStaff, "editMaster") && storeApi.can(rbStaff, "createOrder") && storeApi.can(rbStaff, "workOrder"), true);
-  assert.equal(storeApi.can(rbStaff, "releaseOrder"), false, "releasing is for heads and the planner group");
-  assert.equal(storeApi.can(planner, "releaseOrder"), true);
+  assert.equal(storeApi.can(rbStaff, "editMaster") && storeApi.can(rbStaff, "workOrder"), true);
+  // โรงงานขั้น 6: เปิดใบสั่งผลิตใหม่และปล่อยผลิตเป็นของกลุ่มวางแผนเท่านั้น (แผนก RB และผู้ช่วยผู้จัดการแผนก RB เริ่มงานได้หลังปล่อย)
+  const rbAssistant = storeApi.personaUser(employee("assistant_department_manager", "RB"));
+  for (const permission of ["createOrder", "releaseOrder"]) {
+    assert.equal(storeApi.can(rbStaff, permission), false, `RB staff cannot ${permission}`);
+    assert.equal(storeApi.can(rbAssistant, permission), false, `the RB assistant head cannot ${permission} (a head, but not in the planner group)`);
+    for (const allowed of [planner, rbHead, storeApi.personaUser(employee("admin", "MT")), storeApi.personaUser(employee("general_manager", "MT"))]) assert.equal(storeApi.can(allowed, permission), true, permission);
+    assert.equal(storeApi.can(storeApi.personaUser(employee("staff", "ST")), permission), false);
+  }
+  assert.equal(storeApi.can(rbAssistant, "workOrder"), true, "start, hold, resume and close stay with the RB department");
   // ข้ามเวลาบ่ม (20261128010000): หัวหน้า RB หรือแผนก QA พร้อมเหตุผล · พนักงาน RB ทั่วไป / ST / กลุ่มวางแผนที่ไม่ใช่หัวหน้า RB ไม่ได้
   assert.equal(storeApi.can(rbStaff, "skipRest"), false, "RB staff no longer skip the rest time");
   assert.equal(storeApi.can(rbHead, "skipRest"), true, "the RB head does (with a reason)");
@@ -275,7 +282,7 @@ test("an approved revision is immutable: editing issues revision + 1 as a draft,
   const rig = await s.make();
   await s.as("persona-rbh");
   await withApprovedRecipe(s, rig);
-  await s.as("persona-rb");
+  await s.as("persona-pp");
   const first = await saved(rig.store.run("createOrder", ORDER));
   assert.match(first.result, new RegExp(`^WO-${rules.ymd(NOW)}-01$`));
   assert.equal(rig.store.data().orders[0].recipeRevision, 1);
@@ -313,6 +320,7 @@ test("an approved revision is immutable: editing issues revision + 1 as a draft,
   assert.equal((await saved(rig.store.run("saveRecipe", RECIPE))).result, 3);
   // ฐานข้อมูลรับเฉพาะร่างของสูตรที่อนุมัติแล้วเปิดใบ: สูตรที่มีแต่ร่างเปิดใบไม่ได้
   await saved(rig.store.run("createRecipe", { ...RECIPE, id: "RC-DRAFT-ONLY" }));
+  await s.as("persona-pp");
   assert.match(rig.store.run("createOrder", { ...ORDER, recipeId: "RC-DRAFT-ONLY" }).error.message, /ยังไม่ได้รับอนุมัติ/);
 });
 
@@ -342,7 +350,8 @@ test("work orders: the number comes from the database snapshot, a duplicate is a
   // สถานะ: ปล่อยผลิต = หัวหน้า RB/ผู้วางแผน · ที่เหลือ = สมาชิก RB/ผู้วางแผน · ข้ามลำดับไม่ได้
   const id = one.result;
   await s.as("persona-rb");
-  assert.match(a.store.run("setOrderStatus", { id, status: "released" }).error.message, /ปล่อยผลิตได้โดย/);
+  assert.match(a.store.run("setOrderStatus", { id, status: "released" }).error.message, /ปล่อยผลิตได้โดยฝ่ายวางแผน/);
+  assert.match(a.store.run("createOrder", ORDER).error.message, /เปิดใบสั่งผลิตได้โดยฝ่ายวางแผน/, "RB staff cannot open an order either (the page says so before sending)");
   assert.match(a.store.run("setOrderStatus", { id, status: "completed" }).error.message, /เปลี่ยนสถานะจาก planned เป็น completed ไม่ได้/);
   await s.as("persona-rbh");
   await saved(a.store.run("setOrderStatus", { id, status: "released" }));
@@ -362,6 +371,12 @@ test("work orders: the number comes from the database snapshot, a duplicate is a
   const asked = { orders: { upsert: [{ ...planned, status: "released" }] } };
   assert.equal((await s.mock.client.rpc("app_rf_save", { p_changes: asked, p_base_version: 0, p_action: "setOrderStatus" })).error.code, "RF_STALE", "stale is reported before permissions");
   assert.equal((await s.mock.client.rpc("app_rf_save", { p_changes: asked, p_base_version: snapshot.version, p_action: "setOrderStatus" })).error.code, "RF_FORBIDDEN");
+  // โรงงานขั้น 6: ใบสั่งผลิตใหม่ที่พนักงาน RB ส่งตรงก็ถูกฐานข้อมูลปฏิเสธ (เปิดใบ = กลุ่มวางแผนเท่านั้น) · หัวหน้าแผนก RB อยู่ในกลุ่มวางแผนจึงเปิดได้
+  const fresh = { ...planned, id: `WO-${rules.ymd(NOW)}-77` };
+  assert.equal((await s.mock.client.rpc("app_rf_save", { p_changes: { orders: { upsert: [fresh] } }, p_base_version: snapshot.version, p_action: "createOrder" })).error.code, "RF_FORBIDDEN", "RB staff cannot insert a work order");
+  await s.as("persona-rbh");
+  assert.equal((await s.mock.client.rpc("app_rf_save", { p_changes: { orders: { upsert: [fresh] } }, p_base_version: snapshot.version, p_action: "createOrder" })).error, null, "the RB department manager is in the planner group");
+  await s.as("persona-rb");
   const badAction = await s.mock.client.rpc("app_rf_save", { p_changes: {}, p_base_version: snapshot.version, p_action: "dropTables" });
   assert.equal(badAction.error.code, "RF_INVALID_ACTION");
   await s.as("persona-rb");
@@ -392,7 +407,7 @@ test("a WO made from a BOM RB job links the job in the same save, the job's quan
   const bomVersion = () => s.call("app_bom_master").then((master) => master.version);
   assert.equal(await bomVersion(), 4);
 
-  await s.as("persona-rb");
+  await s.as("persona-pp");
   const link = { ...ORDER, customerPo: "PI-R", targetQty: 10, sourceJobId: "JOB-RB1", uom: "pcs", targetKg: 12.5, kgPerUnit: 1.25 };
   const out = await saved(rig.store.run("createOrder", link));
   const order = rig.store.data().orders.find((row) => row.id === out.result);
@@ -402,7 +417,7 @@ test("a WO made from a BOM RB job links the job in the same save, the job's quan
   assert.equal(job.externalRef.system, "rubberflow");
   assert.equal(job.externalRef.woId, out.result);
   assert.equal(job.externalRef.kg, 12.5);
-  assert.equal(job.externalRef.by, "ประยุทธ รีดยาง");
+  assert.equal(job.externalRef.by, "สมศรี วางแผน");
   assert.equal(master.version, 5, "the BOM counter moved so BOM clients catch the link up");
   const delta = await s.call("app_bom_master_since", { p_version: 4 });
   assert.deepEqual(delta.changes.jobs.upsert.map((row) => row.id), ["JOB-RB1"]);
@@ -656,7 +671,7 @@ test("cancelling a linked WO clears the link and notes it on the job, the job ta
   const s = await session({ withBom: true });
   const rig = await s.make();
   await withApprovedRecipe(s, rig);
-  await s.as("persona-rb");
+  await s.as("persona-pp");
   const first = await saved(rig.store.run("createOrder", { ...ORDER, customerPo: "PI-R", sourceJobId: "JOB-RB4", uom: "pcs", targetQty: 70, targetKg: 8, kgPerUnit: 0.1143 }));
   const before = await s.call("app_bom_master");
   const plain = await saved(rig.store.run("createOrder", ORDER));
@@ -669,7 +684,7 @@ test("cancelling a linked WO clears the link and notes it on the job, the job ta
   assert.equal(job.externalRef, null, "the link is cleared by the server in the same save");
   assert.deepEqual([job.qtyDone, job.status], [30, "in_progress"], "the reported quantity and the status stay");
   assert.deepEqual(job.reports.map((row) => [row.good, row.reject, row.note]), [[30, 0, "กะเช้า"], [0, 0, `WO ${first.result} ถูกยกเลิก`]], "a system note is appended");
-  assert.equal(job.reports[1].by, "ประยุทธ รีดยาง", "stamped by the server with the persona");
+  assert.equal(job.reports[1].by, "สมศรี วางแผน", "stamped by the server with the persona");
   assert.equal(after.version, before.version + 1, "the BOM counter moved once");
   assert.deepEqual((await s.call("app_bom_master_since", { p_version: before.version })).changes.jobs.upsert.map((row) => row.id), ["JOB-RB4"], "BOM clients catch the unlink up");
   assert.ok((await s.call("app_bom_audit", {})).some((entry) => entry.action === "rubberflow:setOrderStatus" && entry.detail === "jobs +1"));
@@ -747,13 +762,14 @@ async function inSync(s, rig, label) {
 async function prepare(s, rig, { linked = false, target = 90 } = {}) {
   await s.as("persona-1");
   await withApprovedRecipe(s, rig);
-  await s.as("persona-rb");
+  await s.as("persona-pp"); // โรงงานขั้น 6: ฝ่ายวางแผนเปิดใบสั่งผลิตและปล่อยผลิต
   const order = (await saved(rig.store.run("createOrder", linked
     ? { ...ORDER, customerPo: "PI-R", sourceJobId: "JOB-RB2", uom: "pcs", targetQty: target, targetKg: target * 0.5, kgPerUnit: 0.5 }
     : { ...ORDER, targetQty: target }))).result;
+  await s.as("persona-rb");
   await saved(rig.store.run("saveMold", { id: "DIE-1", name: "หัวดายทดสอบ", kind: "die", unit: "m", perCycle: 1, cleanEvery: 5000, pmLimit: 100000 }));
   await saved(rig.store.run("saveMold", { id: "MD-1", name: "แม่พิมพ์ 2 cavity", kind: "mold", unit: "shot", perCycle: 2, cleanEvery: 1000, pmLimit: 50000 }));
-  await s.as("persona-rbh");
+  await s.as("persona-pp");
   await saved(rig.store.run("setOrderStatus", { id: order, status: "released" }));
   await s.as("persona-st");
   const lots = [];
@@ -774,9 +790,8 @@ async function stockRb(s, rig) {
 }
 // ใบสั่งผลิตอีกใบ (ปล่อยผลิตแล้ว ต้องใช้ 1 batch เหมือนใบแรก): ใบเบิกใบแรกของ WO เบิกครบทุก batch แล้ว ใบเบิกใบที่สองของข้อทดสอบจึงต้องเป็นของ WO อีกใบ
 async function addOrder(s, rig) {
-  await s.as("persona-rb");
+  await s.as("persona-pp");
   const id = (await saved(rig.store.run("createOrder", { ...ORDER }))).result;
-  await s.as("persona-rbh");
   await saved(rig.store.run("setOrderStatus", { id, status: "released" }));
   return id;
 }

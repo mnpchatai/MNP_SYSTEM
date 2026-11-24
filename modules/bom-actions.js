@@ -1219,7 +1219,8 @@
   // รายงานผล/เปลี่ยนสถานะงาน: ฝ่ายวางแผน ผู้จัดการ ผู้ดูแล (ทุกแผนก) หรือพนักงานทุกบทบาทของแผนกเจ้าของงาน · แผนกอื่นดูได้อย่างเดียว
   const canWorkJob = (user, job) => canPlan(user) || (Boolean(user?.dept) && user.dept === job.dept);
   // ผูกงาน RB กับ RubberFlow: ฝ่ายวางแผน ผู้จัดการ ผู้ดูแล หรือแผนก RB
-  const canLinkRubberflow = (user, job) => job?.dept === "RB" && (canPlan(user) || user?.dept === "RB");
+  // สร้าง WO ของงาน RB / ผูกงานกับ WO = ฝ่ายวางแผนและผู้จัดการเท่านั้น (โรงงานขั้น 6: เปิดใบสั่งผลิตยางย้ายมาที่ฝ่ายวางแผน · แผนก RB เริ่มงานของ WO ที่ปล่อยแล้ว)
+  const canLinkRubberflow = (user, job) => job?.dept === "RB" && canPlan(user);
 
   function reportJob(d, p, ctx) {
     const user = requireUser(ctx);
@@ -2082,7 +2083,7 @@
     const user = requireUser(ctx);
     const job = jobById(d, jobId);
     if (job.dept !== "RB") fail("เชื่อม RubberFlow ได้เฉพาะงานของแผนก RB");
-    if (!canLinkRubberflow(user, job)) fail("เชื่อม RubberFlow ได้โดยแผนก RB ฝ่ายวางแผน หรือผู้จัดการ");
+    if (!canLinkRubberflow(user, job)) fail("เชื่อม RubberFlow ได้โดยฝ่ายวางแผนหรือผู้จัดการ");
     if (job.externalRef?.woId) fail(`งานนี้ผูกกับ ${job.externalRef.woId} อยู่แล้ว`);
     if (!["released", "in_progress"].includes(orderById(d, job.orderId).status)) fail("ใบสั่งผลิตไม่อยู่ในสถานะผลิต");
     job.externalRef = { system: "rubberflow", woId: text(woId, "เลข WO", 40), kg: Number(kg) || 0, linkedAt: ctx.now, by: user.name };

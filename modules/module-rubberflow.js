@@ -11,7 +11,7 @@
 // ไม่มี Supabase (เทสต์ใน Node) ใช้ชุดสาธิตทั้งชุดใน localStorage และบทบาทสาธิต 9 คนของต้นแบบเหมือนเดิม
 // บทบาทใช้ซ่อน/แสดงเมนูและปุ่มเท่านั้น (โหมดฐานข้อมูลซ่อนปุ่มและปิดฟอร์มของคำสั่งที่บัญชีไม่มีสิทธิ์ ดู applyRights) สิทธิ์จริงทุกชุดตัดสินที่ฐานข้อมูล
 // ใช้งานจริง (20261130010000): พนักงานจริงใช้ได้ด้วยบัญชีของตัวเอง ข้อมูลจริงแยกจากข้อมูลทดสอบที่ฐานข้อมูล · เมนูและหน้า #/rubberflow เปิดให้บทบาทของสถานี
-// ตาม storeApi.usesRubberFlow (กลุ่มวางแผน RB ST QA SR WH · โหมดทดสอบเห็นทุกบัญชีทดสอบเหมือนเดิม) · ล้างข้อมูลทดสอบมีเฉพาะ admin ในโหมดทดสอบ
+// ตาม storeApi.canOpenRubberFlowPage (แผนก RB · PP · ผู้จัดการ ซ้อนบนประตูข้อมูล usesRubberFlow ที่ ST QA SR WH BOM ใช้อ่านข้อมูลของ store นี้) · ล้างข้อมูลทดสอบมีเฉพาะ admin ในโหมดทดสอบ
 //
 // กติกา event (ทุกหน้าใช้ร่วมกัน ผูกโดย bindRoot):
 //   <form data-rf-form="<action>" data-rf-success="ข้อความ {result}" data-rf-args='{...}'>  ส่งแล้วเรียก action ของ store พร้อมค่าจากฟอร์ม
@@ -681,31 +681,42 @@
     return null;
   }
   async function renderRubberFlow(params) {
+    // ประตูข้อมูล (โหมดทดสอบ · นอกโหมดทดสอบยังปิดทุกคน): ไม่ผ่าน = ไม่เจอหน้า
     if (!storeApi.usesRubberFlow(state.employee)) return renderNotFound();
+    // ลิงก์เก่าที่ย้ายไปโมดูลแผนกอื่นพาไปหน้าใหม่เองก่อนตรวจว่าเห็นหน้า RubberFlow หรือไม่ (ผู้ใช้เดิมของลิงก์เหล่านั้นคือ QA / WH ซึ่งไม่เห็น RubberFlow แล้ว)
+    // p=quality / p=spc / p=trace: งาน QA ย้ายไปโมดูล QA (#/qa · โรงงานขั้น 5) · ผู้ที่เปิดโมดูล QA ได้ไปที่แท็บเดียวกัน · คนอื่นที่เปิดหน้า RubberFlow ได้เห็นข้อความบรรทัดเดียวบอกว่าย้ายไปไหน (ไม่มีสำเนาหน้าที่สอง)
+    const moved = movedToQa(params);
+    const factory = window.MNP_FACTORY;
+    // p=warehouse&tab=fg (แท็บสินค้าสำเร็จรูปถูกถอดออกจากคลังเคมี RB · โรงงานขั้น 6): ผู้ที่เปิดโมดูล WH ได้ไปหน้า "ในคลัง" ของ WH · คนอื่นที่เปิดหน้า RubberFlow ได้เห็นข้อความบรรทัดเดียว
+    const fgMoved = params.get("p") === "warehouse" && params.get("tab") === "fg";
+    if (fgMoved && factory?.canOpenDeptModule?.(state.employee, "WH", "FACTORY_WH")) {
+      location.hash = factory.routeUrl("wh", { tab: "stock" });
+      return undefined;
+    }
+    const qaOpen = Boolean(moved) && Boolean(factory?.canOpenDeptModule?.(state.employee, "QA", "FACTORY_QA"));
+    if (moved && qaOpen) {
+      location.hash = factory.routeUrl("qa", moved);
+      return undefined;
+    }
+    // โรงงานขั้น 6: เห็นหน้านี้ = แผนก RB + แผนก PP + ผู้จัดการ (ST SR WH QA ไม่เห็น พิมพ์ URL เองก็ไม่เจอหน้า เหมือนโมดูลแผนกอื่น) · ข้อมูลของ store ที่โมดูลอื่นอ่านไม่ขึ้นกับประตูนี้
+    if (!storeApi.canOpenRubberFlowPage(state.employee)) return renderNotFound();
     // ลิงก์เก่า p=rbstore (คลังเคมี RB เคยมีเมนูของตัวเอง) → แท็บคลังเคมี RB ของ p=warehouse (แท็บย่อยเดิม tab= เป็น view=)
     if (params.get("p") === "rbstore") {
       const sub = ["requests", "returns", "usage"].includes(params.get("tab")) ? params.get("tab") : null;
       location.hash = url("warehouse", { view: sub, q: params.get("q"), days: params.get("days") });
       return undefined;
     }
-    // ลิงก์เก่า p=quality / p=spc / p=trace: งาน QA ย้ายไปโมดูล QA (#/qa · โรงงานขั้น 5) · ผู้ที่เปิดโมดูล QA ได้ไปที่แท็บเดียวกัน · คนอื่นเห็นข้อความบรรทัดเดียวบอกว่าย้ายไปไหน (ไม่มีสำเนาหน้าที่สอง)
-    const moved = movedToQa(params);
-    const factory = window.MNP_FACTORY;
-    const qaOpen = Boolean(moved) && Boolean(factory?.canOpenDeptModule?.(state.employee, "QA", "FACTORY_QA"));
-    if (moved && qaOpen) {
-      location.hash = factory.routeUrl("qa", moved);
-      return undefined;
-    }
     store.ensureLoaded(); // โหมดฐานข้อมูล: โหลดข้อมูลหลักครั้งแรก (วาดหน้าใหม่เองเมื่อเสร็จ) · โหมดในเครื่องไม่ทำอะไร
     const ctx = makeContext(params);
     const { user, page } = ctx;
-    const entry = moved ? null : page ? storeApi.findModule(page) : null;
+    const entry = moved || fgMoved ? null : page ? storeApi.findModule(page) : null;
     ui.module = entry && user ? page : ""; // ไอคอนหน้าชื่อหน้า (ui.pageHead)
     const title = entry && user ? `${TITLE} / ${entry.label}` : TITLE;
     let body;
     let bind = null;
     if (!user) body = introHtml();
     else if (moved) body = `${pageNavHtml(user, null)}${ui.card(ui.empty("งานคุณภาพ (ผลตรวจ NCR CoA SPC และสืบย้อนกลับ) อยู่ที่โมดูลตรวจคุณภาพ (QA) บัญชีนี้เปิดโมดูลนั้นไม่ได้ · NCR ที่ RB ต้องตอบอยู่ที่เมนู “NCR ที่ RB ต้องตอบ” ของ RubberFlow"))}`;
+    else if (fgMoved) body = `${pageNavHtml(user, null)}${ui.card(ui.empty("สินค้าสำเร็จรูปอยู่ที่โมดูลคลังสินค้าสำเร็จรูป (WH) บัญชีนี้เปิดโมดูลนั้นไม่ได้ · คลังเคมีของ RB อยู่ที่เมนู “คลังเคมี RB”"))}`;
     else if (!entry) {
       // หน้าไม่รู้จัก → หน้าแรกของบทบาท (ไม่แสดงหน้าว่าง)
       location.hash = url(storeApi.homeOf(user));
@@ -782,8 +793,8 @@
     sandbox: true,
     label: TITLE,
     palette: "rf",
-    // เมนูเห็นเฉพาะผู้ที่ใช้ RubberFlow (storeApi.usesRubberFlow: ทุกบัญชีทดสอบ · ใช้งานจริง = บทบาทของสถานี)
-    navAllowed: (employee) => storeApi.usesRubberFlow(employee),
+    // เมนูเห็นเฉพาะแผนก RB + แผนก PP + ผู้จัดการ (storeApi.canOpenRubberFlowPage · โรงงานขั้น 6) ในโหมดทดสอบ · นอกโหมดทดสอบยังปิดทุกคน (REAL_STAFF_OPEN)
+    navAllowed: (employee) => storeApi.canOpenRubberFlowPage(employee),
     // หัวกลุ่มของเมนูข้าง: "โรงงาน" ในโหมดทดสอบ (sandboxOnly · เรียงตามลำดับในผังงาน flowNo 4 = RB ร่วมกับโมดูลรายแผนก ดู factory-kit.js) · "การผลิต" เมื่อใช้งานจริง (realOnly) — รายการเดียวกัน แสดงทีละโหมด
     nav: [
       { path: PATH, label: "RubberFlow (แผนก RB)", icon: NAV_ICON, sandboxOnly: true, group: "โรงงาน", flowNo: 4, subnav: sidebarNav },

@@ -149,10 +149,10 @@ reset role;
 insert into public.rf_material_lots (is_test, lot_no, material_code, qty_kg, initial_kg, expiry) values (true, 'RM-A-X', 'MAT-A', 50, 50, current_setting('test.now_ms')::bigint - 86400000);
 update public.rf_master_state set version = version + 1 where is_test;
 set local role authenticated;
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select ok(st_t.rf(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || '{"id":"WO-1"}'::jsonb, current_setting('test.wo')::jsonb || '{"id":"WO-2","targetKg":120}'::jsonb))), 'createOrder') is not null,
-  'RB opens two work orders');
+  'the planner opens two work orders');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select ok(st_t.rf(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(st_t.wo('WO-1') || '{"status":"released"}'::jsonb, st_t.wo('WO-2') || '{"status":"released"}'::jsonb))), 'setOrderStatus') is not null,
   'the planner releases both');

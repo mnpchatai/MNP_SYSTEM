@@ -112,7 +112,7 @@ select is(jsonb_array_length(public.app_bom_save_master($json$
 $json$::jsonb, 0, 'importFlat') -> 'changes' -> 'items' -> 'upsert'), 13, 'the planner seeds the compounds, the rubber items and two approved rod BOMs');
 
 -- เลข WO ที่มีอยู่ก่อนปล่อย: -07 ของวันนี้ (ต่อจากนี้เป็น -08) และเลขวันอื่นที่ใหญ่กว่า (ต้องไม่นับ)
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || jsonb_build_object('id', current_setting('test.wp') || '07'),
   current_setting('test.wo')::jsonb || '{"id":"WO-20200101-99"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createOrder');
@@ -239,6 +239,7 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   (select w || '{"status":"released"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = current_setting('test.wp') || '08')))),
   (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') $$, 'RF_FORBIDDEN', 'RB staff still cannot release the automatic work order (the RB head does)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || jsonb_build_object('id', current_setting('test.wp') || '30', 'sourceJobId', 'JOB-A-02')))),
   (public.app_rf_master() ->> 'version')::bigint, 'createOrder') $$, 'RF_INVALID_SOURCE_JOB', 'a job that already has an automatic work order cannot get a second one by hand');
@@ -297,7 +298,7 @@ select public.app_bom_save_master(jsonb_build_object(
   (public.app_bom_master() ->> 'version')::bigint, 'releaseOrder');
 select is((select jsonb_agg(j ->> 'id' order by j ->> 'id') from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'orderId' = '261108-26002' and j -> 'externalRef' <> 'null'::jsonb),
   '["JOB-B-01","JOB-B-02"]'::jsonb, 'the second release opened two more work orders (numbers 13 and 14)');
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select is(public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || jsonb_build_object('id', current_setting('test.wp') || '15', 'sourceJobId', 'JOB-B-03', 'targetKg', 10)))),
   (public.app_rf_master() ->> 'version')::bigint, 'createOrder') -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'sourceJobId', 'JOB-B-03',
@@ -459,7 +460,7 @@ select is((select count(*) from public.audit_logs where action = 'RF_SAVE' and c
 select is((select metadata -> 'rubberflow' from public.audit_logs where action = 'BOM_MASTER_SAVE' and metadata ->> 'client_action' = 'releaseOrder'
            and entity_id = current_setting('test.res')::jsonb ->> 'version'), '{"opened":0,"skipped":1,"cancelled":0}'::jsonb, 'the BOM audit row still records the skip');
 set local role authenticated;
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select is(public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || jsonb_build_object('id', current_setting('test.wp') || '22', 'sourceJobId', 'JOB-E-01', 'targetKg', 10)))),
   (public.app_rf_master() ->> 'version')::bigint, 'createOrder') -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'sourceJobId', 'JOB-E-01',

@@ -197,6 +197,47 @@ test("งานของฉัน: the page opens on it; staff and planning see 
   assert.equal((html.match(/<h1>/g) ?? []).length, 1);
 });
 
+// โรงงานขั้น 6: QA เปิดหน้า RubberFlow ไม่ได้แล้ว สิทธิ์ข้ามเวลาบ่มที่ QA มีอยู่ (DB: หัวหน้า RB หรือแผนก QA) จึงมีที่ "งานของฉัน" ของโมดูลนี้ด้วย · dialog / คำสั่ง / สิทธิ์ชุดเดียวกับหน้าผสมของ RubberFlow
+test("งานของฉัน: QA members skip the ageing of a resting mixing lot here with the same RubberFlow dialog and right; accounts without the right, and ST / WH, do not get it", async () => {
+  const env = load();
+  const resting = env.rf.store.data().lots.find((lot) => lot.stage === "mixing" && lot.readyAt > Date.now());
+  assert.ok(resting, "the demo has a batch that is still resting");
+  const groupOf = (html) => html.split('<h2 class="bom-h3">').find((part) => part.startsWith("ล็อตผสมที่กำลังบ่ม")) ?? "";
+  for (const employee of [STAFF, HEAD]) {
+    const html = await env.asDb(employee).open("");
+    const group = groupOf(html);
+    assert.ok(group, `${employee.role.code}: the resting lots are listed`);
+    assert.match(group, /data-rf-scope="rubberflow"|<div class="bom-job-grid">/);
+    const card = cardOf(html, resting.id);
+    assert.match(card, new RegExp(`data-rf-open="skipRest"[^>]*>ข้ามเวลาบ่ม<`), "the button opens the RubberFlow dialog");
+    assert.equal(JSON.parse(card.match(/data-rf-args="([^"]*)"/)[1].replaceAll("&quot;", '"')).lotId, resting.id);
+    assert.match(html, /<div data-rf-scope="rubberflow"><h2 class="bom-h3">ล็อตผสมที่กำลังบ่ม/, "inside the scope that RubberFlow's binder owns");
+    // the dialog is the one the RubberFlow mixing page uses, built with the same context and asking for a reason
+    const dialog = env.context.MNP_RUBBERFLOW_DIALOGS.skipRest(env.rf.context(new URLSearchParams()), { lotId: resting.id });
+    assert.match(dialog.html, /data-rf-form="endRest"/);
+    assert.match(dialog.html, /name="reason"[^>]*required|required[^>]*name="reason"/);
+  }
+  env.asDb(STAFF);
+  // the group stays when it is the only thing on the page (no empty-state line next to it)
+  const quiet = env.rf.store.data();
+  quiet.lots.forEach((lot) => { if (lot.qc === "hold") lot.qc = "pass"; });
+  quiet.ncrs.forEach((ncr) => { ncr.status = "closed"; });
+  quiet.materialLots.forEach((lot) => { if (lot.status === "hold") lot.status = "available"; });
+  const onlyResting = await env.open("");
+  assert.ok(groupOf(onlyResting) && !onlyResting.includes("ไม่มีงานค้าง"));
+  // no resting lot = no group
+  quiet.lots.forEach((lot) => { lot.readyAt = 0; });
+  assert.equal(groupOf(await env.asDb(STAFF).open("")), "", "nothing resting: the group is not drawn");
+  // deny: the planning group opens #/qa but has no skip right (DB: RB head or QA); ST / WH staff do not open #/qa at all
+  const fresh = load();
+  assert.equal(groupOf(await fresh.asDb(emp("PP", "staff")).open("")), "", "planning staff cannot skip the rest time");
+  for (const employee of [emp("ST", "staff"), emp("WH", "staff"), emp("ST", "department_manager"), emp("WH", "department_manager")]) {
+    fresh.asDb(employee);
+    fresh.log.notFound = 0;
+    assert.equal(await fresh.open(""), "<notfound></notfound>", `${employee.department.code} ${employee.role.code} has no QA page, so no skip button`);
+  }
+});
+
 test("ผลตรวจ: the newest record is first (by tested time, then number), whatever order the store holds them in; the search keeps that order", async () => {
   const env = load();
   const data = env.rf.store.data();
@@ -224,7 +265,7 @@ test("งานของฉัน: each source shows at most six cards and says 
   const all = await env.open("all=1");
   assert.equal(cardsOf(all).filter((card) => /ตัดสินล็อต /.test(card)).length, held);
   assert.doesNotMatch(all, /แสดงทั้งหมด/);
-  assert.equal(env.nav()[0].count, cardsOf(all).length, "the menu counts every card, shown or not");
+  assert.equal(env.nav()[0].count, cardsOf(all).filter((card) => !/กำลังบ่มยาง/.test(card)).length, "the menu counts every waiting card, shown or not (a resting lot is not work waiting)");
 });
 
 test("qcRecord dialog: a held lot offers a QA staff only 'hold / re-check'; the head (and any lot that is not held) gets every result; changing the lot re-checks it", async () => {
@@ -438,9 +479,11 @@ test("สืบย้อนกลับ: search by box, lot or material lot with
   assert.match(await env.open("tab=trace&q=NOT-A-CODE"), /ไม่พบรหัส/);
   const lot = data.materialLots[0];
   assert.match(await env.open(`tab=trace&q=${encodeURIComponent(lot.lotNo)}`), /ไปข้างหน้า \(ใช้ที่ไหนบ้าง\)/);
-  // the scan dialog of RubberFlow sends a lot or box code to this tab (the roles that open #/qa)
-  const scan = env.context.MNP_RUBBERFLOW_DIALOGS.scan(env.rf.context(new URLSearchParams()), { code: box.id });
-  assert.ok(scan.html.includes(escapeHtml(`#/qa?tab=trace&q=${box.id}`).replaceAll("&amp;", "&amp;")) || scan.html.includes(`#/qa?tab=trace&amp;q=${box.id}`), "scan → trace in #/qa");
+  // the scan dialog of RubberFlow sends a lot code to this tab (the roles that open #/qa) · a box goes to the warehouse module (step 6), so a QA account gets no trace link for a box
+  const scan = env.context.MNP_RUBBERFLOW_DIALOGS.scan(env.rf.context(new URLSearchParams()), { code: data.lots[0].id });
+  assert.ok(scan.html.includes(`#/qa?tab=trace&amp;q=${data.lots[0].id}`), "scan → trace in #/qa");
+  const boxScan = env.context.MNP_RUBBERFLOW_DIALOGS.scan(env.rf.context(new URLSearchParams()), { code: box.id });
+  assert.ok(!boxScan.html.includes("#/qa?tab=trace"), "a box is the warehouse's: no trace link from the box scan");
 });
 
 test("one link each to the QC inspection sheets (#/qc) and the NCR/CAR requests (#/ncr) on งานของฉัน, only to a module the user may open; no copy of their screens", async () => {
@@ -525,7 +568,7 @@ test("the old RubberFlow quality, spc and trace links go to the matching #/qa ta
   assert.doesNotMatch(answer, /undefined|NaN/);
   // QA's own account does not use that page (it works in #/qa)
   env.asDb(STAFF);
-  assert.match(await env.rfOpen("p=ncr"), /ไม่มีสิทธิ์เข้าถึงโมดูลนี้/);
+  assert.equal(await env.rfOpen("p=ncr"), "<notfound></notfound>", "QA's own account does not open RubberFlow any more (step 6)");
 });
 
 test("finishing page: RB reads the QC badge and hold reasons but has no CoA button; QA, planning and managers get a link to the CoA of the lot in #/qa; skip ageing stays on the line page for the RB head and QA", async () => {
@@ -540,7 +583,7 @@ test("finishing page: RB reads the QC badge and hold reasons but has no CoA butt
   env.asDb(emp("PP", "staff"));
   assert.ok((await env.rfOpen("p=finishing")).includes(`href="#/qa?tab=coa&amp;lot=${lot.id}"`), "planning gets the link too");
   env.asDb(STAFF);
-  assert.match(await env.rfOpen("p=finishing"), /ไม่มีสิทธิ์เข้าถึงโมดูลนี้/, "QA staff work in #/qa: the RubberFlow station page is not theirs");
+  assert.equal(await env.rfOpen("p=finishing"), "<notfound></notfound>", "QA staff work in #/qa: the RubberFlow station page is not theirs");
   // skip ageing (endRest): unchanged rights and the button is on the mixing page
   const rfApi = env.rfApi;
   assert.deepEqual([emp("RB", "department_manager"), STAFF, emp("RB", "staff"), emp("PP", "staff")].map((employee) => rfApi.can(rfApi.personaUser(employee), "skipRest")), [true, true, false, false]);
@@ -554,7 +597,7 @@ test("the QA module files: pages in qa-pages.js, loaded before module-qa.js with
   assert.ok(order.indexOf("modules/qa-pages.js") >= 0 && order.indexOf("modules/qa-pages.js") < order.indexOf("modules/module-qa.js"), "qa-pages.js before module-qa.js");
   assert.ok(order.indexOf("modules/module-qa.js") < order.indexOf("app.js"));
   assert.equal(new Set(scripts.map((match) => match[2])).size, 1, "one ?v= for every entry");
-  assert.equal(scripts[0][2], "20261128qamodule4");
+  assert.match(scripts[0][2], /^\d{8}[a-z0-9]+$/, "a dated ?v= value");
   const quality = read("modules/rubberflow-pages-quality.js");
   assert.doesNotMatch(quality, /pages\.(quality|spc|trace)\s*=/, "the RubberFlow pages are gone, the bodies are shared views");
   const pagesSource = read("modules/qa-pages.js");

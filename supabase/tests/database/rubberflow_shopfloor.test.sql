@@ -134,7 +134,7 @@ select public.app_bom_save_master(jsonb_build_object(
   (public.app_bom_master() ->> 'version')::bigint, 'releaseOrder');
 select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'jobs')), 3, 'three jobs were created by the release');
 
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || '{"sourceJobId":"JOB-S1-RB"}'::jsonb, current_setting('test.wo')::jsonb || '{"id":"WO-S2","targetQty":50}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createOrder');
 select is((select j -> 'externalRef' ->> 'woId' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-S1-RB'), 'WO-S1', 'the work order is linked to the RB job');

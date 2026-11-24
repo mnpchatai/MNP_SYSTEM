@@ -240,7 +240,7 @@ select sr_t.release('251202-25002', '{}'::jsonb, jsonb_build_array(
 select is(sr_t.order_row('251202-25001') ->> 'status' || '/' || (sr_t.order_row('251202-25002') ->> 'status') || '/' || (sr_t.order_row('251202-25003') ->> 'status'),
   'released/released/draft', 'two orders are released and the third stays a draft');
 
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select sr_t.rf(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || '{"id":"WO-S1","sourceJobId":"JOB-1-RB"}'::jsonb,
   current_setting('test.wo')::jsonb || '{"id":"WO-N1","recipeId":"RC-N","sourceJobId":"JOB-2-RB"}'::jsonb,

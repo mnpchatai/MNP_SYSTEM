@@ -142,10 +142,10 @@ test("QA is no guest of #/st any more: hold and release of chemical lots moved t
   assert.deepEqual(["holdMaterial", "issueChem", "requestChem", "countRb", "purchase", "receiveMaterial", "qaRelease"].map((right) => rfApi.can(qa, right)), [true, false, false, false, false, false, false]);
   const head = rfApi.personaUser({ ...emp("QA", "department_manager"), id: "qah" });
   assert.equal(rfApi.can(head, "qaRelease"), true, "the QA head releases");
-  // the RubberFlow warehouse tab links QA to the held-material page of #/qa (not to the ST chemicals)
-  const warehouse = await env.rfOpen("p=warehouse");
-  assert.match(warehouse, /href="#\/qa\?tab=material"[^>]*>ไปที่วัตถุดิบที่กัก \(QA\)</);
-  assert.doesNotMatch(warehouse, /ดูเคมีในคลัง ST/);
+  // step 6: RubberFlow is for RB, planning and the managers: QA gets not found on its warehouse page (the held chemicals are in #/qa?tab=material)
+  const before = env.log.notFound;
+  await env.rfOpen("p=warehouse");
+  assert.equal(env.log.notFound, before + 1, "QA staff cannot open the RubberFlow warehouse page");
 });
 
 test("the lot page of #/st: the hold button needs the hold right, the release button needs the QA-head right (the demo QC role has both, a planner neither); a database ST account never releases", async () => {
@@ -375,6 +375,9 @@ test("returns: ST receives an RB return whole or rejects it with a reason; the o
 
 test("purchase orders: the RubberFlow table and dialogs, the store-named receive button, and the RubberFlow warehouse tabs point here", async () => {
   const env = load();
+  // step 6: the ST staff do not open RubberFlow at all (the purchase orders live here)
+  await env.rfOpen("p=warehouse");
+  assert.equal(env.log.notFound, 1, "ST staff get not found on the RubberFlow warehouse page");
   const html = await env.open("tab=po");
   assert.match(html, /data-rf-open="receiveMaterial"[^>]*>รับเข้าคลังวัตถุดิบ \(ST\)</);
   assert.match(html, /data-rf-open="receivePurchase"[^>]*>รับเข้าคลังวัตถุดิบ \(ST\)</, "the line receive button names the store");
@@ -383,10 +386,10 @@ test("purchase orders: the RubberFlow table and dialogs, the store-named receive
   assert.match(html, /data-rf-scope="rubberflow"/);
   const po = env.rf.store.data().purchaseOrders[0];
   assert.match(await env.open(`tab=po&q=${po.id}`), new RegExp(po.id));
-  const raw = await env.rfOpen("p=warehouse");
-  assert.match(raw, /href="#\/st\?tab=stock"[^>]*>ไปที่คลังวัตถุดิบ \(ST\)</, "one link to the ST module remains (a store keeper has no RB chemical store tab)");
+  const rb = load({ employee: emp("RB"), bomUser: "B04", rfUser: "U05" });
+  const raw = await rb.rfOpen("p=warehouse");
   assert.doesNotMatch(raw, />ล็อตวัตถุดิบ<|>ใบสั่งซื้อ<|setMaterialLotStatus|data-rf-open="tag"/, "no lot list or purchase-order tab left in RubberFlow");
-  assert.equal(await env.rfOpen("p=warehouse&tab=po"), raw, "the old purchase-order tab link opens the default tab");
+  assert.equal(await rb.rfOpen("p=warehouse&tab=po"), raw, "the old purchase-order tab link opens the default tab");
 });
 
 test("จ่ายออก: parts per order open the BOM issue / return / undo dialogs; ?order= narrows to one order", async () => {
@@ -422,7 +425,8 @@ test("RubberFlow คลังเคมี RB: RB lots, requests and returns with
   const rules = env.context.MNP_RUBBERFLOW_RULES;
   const rfData = env.rf.store.data();
   const html = await env.rfOpen("p=warehouse");
-  assert.match(html, /<h1>คลังวัตถุดิบและสินค้าสำเร็จรูป<\/h1>/, "the menu item and page keep their name");
+  assert.match(html, /<h1>คลังเคมี RB<\/h1>/, "the page is named for what it holds");
+  assert.doesNotMatch(html, /สินค้าสำเร็จรูป/, "no finished-goods tab: that is the WH module");
   assert.match(html, /<a class="rf-tab is-active"[^>]*>คลังเคมี RB<\/a>/, "the chemical store of RB is the default tab");
   assert.doesNotMatch(html, /p=rbstore/, "no separate menu entry or link");
   assert.equal(rowsOf(html).length, rules.rbStockLots(rfData, Date.now()).length, "one row per lot the RB store holds");

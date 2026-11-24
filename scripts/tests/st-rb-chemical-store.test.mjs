@@ -291,8 +291,8 @@ test("the mock database follows rf_save_chem_docs: request → partial FEFO issu
   await run(s, "persona-1", "saveMaterial", { code: "CB-N550", name: "เขม่าดำ", category: "สารตัวเติม", storage: "B-1", uom: "kg", active: true });
   await run(s, "persona-1", "createRecipe", { id: "RC-T", productCode: "P", uom: "m", batchKg: 50, dumpTol: 5, yieldPerKg: 6, stages: [{ stage: 1, mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 130, mixMin: 2 }], items: [{ materialCode: "EPDM-55", phr: 100, stage: 1 }, { materialCode: "CB-N550", phr: 60, stage: 2 }] });
   await run(s, "persona-1", "approveRecipe", { id: "RC-T", revision: 1 });
-  const wo = await run(s, "persona-rb", "createOrder", { recipeId: "RC-T", customer: "ลูกค้า", targetQty: 100, startDate: NOW, dueDate: NOW + DAY });
-  await run(s, "persona-rbh", "setOrderStatus", { id: wo, status: "released" });
+  const wo = await run(s, "persona-pp", "createOrder", { recipeId: "RC-T", customer: "ลูกค้า", targetQty: 100, startDate: NOW, dueDate: NOW + DAY });
+  await run(s, "persona-pp", "setOrderStatus", { id: wo, status: "released" });
   const soon = await run(s, "persona-st", "receiveMaterial", { materialCode: "EPDM-55", qtyKg: 40, expiry: NOW + 10 * DAY });
   const later = await run(s, "persona-st", "receiveMaterial", { materialCode: "EPDM-55", qtyKg: 40, expiry: NOW + 90 * DAY });
   const held = await run(s, "persona-st", "receiveMaterial", { materialCode: "EPDM-55", qtyKg: 40, expiry: NOW + 5 * DAY });

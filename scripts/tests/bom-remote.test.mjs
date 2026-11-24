@@ -2287,7 +2287,7 @@ test("the screens show only what the persona may do: planner group everything, S
   const rowOf = (html, id) => html.split("<tr").find((row) => row.includes(`>${id}<`)) ?? "";
   const rb = await jobPage("persona-rb");
   assert.match(rowOf(rb, "JOB-RB1"), /data-rf-open="jobReport"/, "RB reports its job");
-  assert.match(rowOf(rb, "JOB-RB1"), /data-rf-open="jobRubberflow"/, "and creates the WO");
+  assert.doesNotMatch(rowOf(rb, "JOB-RB1"), /data-rf-open="jobRubberflow"/, "but does not open the WO: planning does (factory step 6)");
   assert.doesNotMatch(rowOf(rb, "JOB-GR1"), /data-rf-open="jobReport"|data-rf-action="setJobStatus"/, "but not the GR job");
   const gr = await jobPage("persona-gr");
   assert.match(rowOf(gr, "JOB-GR1"), /data-rf-open="jobReport"/);
@@ -2770,7 +2770,7 @@ test("RubberFlow in database mode: loading state, no demo role picker or reset, 
   html = await rfPage(head, "p=orders");
   assert.doesNotMatch(html, /data-rf-open="closeOrder"/, "an order without produced quantity that is not from a BOM job cannot be closed yet");
   assert.match(html, /Rev\.2/, "the order shows the recipe revision it was opened with");
-  assert.match(html, /data-rf-open="createOrder"/);
+  assert.doesNotMatch(html, /data-rf-open="createOrder"|data-rf-action="setOrderStatus"[^>]*released/, "step 6: the RubberFlow orders page has no button to open or release an order, even for the RB head");
   const close = dialogs.closeOrder(head.context.MNP_RUBBERFLOW.context(new URLSearchParams("p=orders")), { id: order.result });
   assert.doesNotMatch(close.html, /name="producedQty"/, "the database counts the produced quantity from the finishing lots; there is nothing to type");
   assert.match(close.html, /data-rf-form="setOrderStatus"/);
@@ -2794,7 +2794,13 @@ test("the BOM 'create WO' dialog creates the WO through the RubberFlow store wit
   assert.equal((await refused.saving).error.code, "BOM_INVALID_COMPOUND", "the database only links a recipe code that exists in RubberFlow");
   await saved(admin.store.run("linkCompound", { code: "DM01", recipeId: "RC-TEST-01" }));
 
-  const env = await asPersona(scene, "persona-rb");
+  // RB staff are told only planning opens the WO and get no create button (the database refuses them too)
+  const staff = await asPersona(scene, "persona-rb");
+  await rf(staff).ensureLoaded();
+  const refusedDialog = staff.context.MNP_BOM_DIALOGS.jobRubberflow(staff.ctx("p=jobs&dept=RB"), { jobId: "JOB-RB1" });
+  assert.match(refusedDialog.html, /เปิด WO ได้โดยฝ่ายวางแผนหรือผู้จัดการ/);
+  assert.doesNotMatch(refusedDialog.html, /data-bom-rf-create/);
+  const env = await asPersona(scene, "persona-pp");
   const rfStore = rf(env);
   await rfStore.ensureLoaded();
   const ctx = env.ctx("p=jobs&dept=RB");
@@ -2845,7 +2851,7 @@ test("a transfer receipt does not touch the BOM job; when pieces pass finishing 
   const admin = await asPersona(scene, "persona-1");
   await saved(admin.store.run("saveItem", saveItemPayload("RB-ITEM", { kind: "RB", name: "เส้นยางทดสอบ", uom: "pcs", weightG: 500, rubber: { compound: "DM01", color: "BK" } })));
   await saved(admin.store.run("linkCompound", { code: "DM01", recipeId: "RC-TEST-01" }));
-  const env = await asPersona(scene, "persona-rb");
+  const env = await asPersona(scene, "persona-pp");
   await rf(env).ensureLoaded();
   // WO ที่ผูกงาน JOB-RB1 (10 เส้น เส้นละ 0.525 kg) ผ่านปุ่มของ BOM
   const ctx = env.ctx("p=jobs&dept=RB");
@@ -2973,7 +2979,7 @@ test("cancelling the WO in RubberFlow clears the job's link in BOM and the job o
   const admin = await asPersona(scene, "persona-1");
   await saved(admin.store.run("saveItem", saveItemPayload("RB-ITEM", { kind: "RB", name: "เส้นยางทดสอบ", uom: "pcs", weightG: 500, rubber: { compound: "DM01", color: "BK" } })));
   await saved(admin.store.run("linkCompound", { code: "DM01", recipeId: "RC-TEST-01" }));
-  const env = await asPersona(scene, "persona-rb");
+  const env = await asPersona(scene, "persona-pp");
   const rfStore = rf(env);
   await rfStore.ensureLoaded();
   const rowOf = (html) => html.split("<tr").find((row) => row.includes(">JOB-RB1<")) ?? "";
@@ -2993,6 +2999,63 @@ test("cancelling the WO in RubberFlow clears the job's link in BOM and the job o
   assert.doesNotMatch(again.html, /ไว้แล้ว/);
   assert.match(again.html, /ล็อตตกแต่งของ WO นั้นผ่าน QC ยางเส้นยาวของล็อตส่งเข้าคลังยางเส้นยาว \(SR\) และเมื่อ SR รับเข้าคลังและผ่านตรวจขนาด/, "the dialog says the rods of each finishing lot that passes go to the SR store and count once received");
   assert.doesNotMatch(again.html, /รับมอบใบส่งมอบของ WO นั้น/, "and no longer says a receipt does");
+});
+
+// โรงงานขั้น 6: เปิดใบสั่งผลิตยางเองและปล่อยผลิต WO อยู่ที่ BOM (ฝ่ายวางแผน) · RB และแผนกอื่นไม่มีปุ่มทั้งสอง · ปุ่มใช้ dialog / คำสั่งของ RubberFlow (ผูกด้วยตัวผูกของ RubberFlow ใน [data-rf-scope])
+test("BOM planners open rubber work orders and release the planned ones (PI list card, PI jobs tab); RB staff and other departments get neither button, and an account that cannot open RubberFlow sees the WO number as text", async () => {
+  const { scene, rf } = await rfScene();
+  const pp = await asPersona(scene, "persona-pp");
+  await rf(pp).ensureLoaded();
+  const link = { recipeId: "RC-TEST-01", customer: "ลูกค้า", customerPo: "PI-R", targetQty: 10, startDate: NOW, dueDate: NOW + 86400000, sourceJobId: "JOB-RB1", uom: "pcs", targetKg: 5.25, kgPerUnit: 0.525 };
+  const planned = await saved(rf(pp).run("createOrder", link));
+  const manual = await saved(rf(pp).run("createOrder", { recipeId: "RC-TEST-01", customer: "ลูกค้าเปิดเอง", targetQty: 50, startDate: NOW, dueDate: NOW + 86400000 }));
+  await pp.store.catchUp();
+  // the PI list: one button to open a rubber work order and one card listing the planned ones, each with its release button
+  let html = await pp.render("p=orders");
+  assert.match(html, /<span data-rf-scope="rubberflow"><button[^>]*data-rf-open="createOrder"[^>]*>เปิดใบสั่งผลิตยาง</, "planning opens a rubber work order here");
+  assert.match(html, /ใบสั่งผลิตยางที่รอปล่อยผลิต \(2\)/);
+  for (const id of [planned.result, manual.result]) assert.match(html, new RegExp(`data-rf-action="setOrderStatus" data-rf-args="[^"]*${id}[^"]*released`), `${id} has a release button`);
+  assert.match(html, /เปิดเอง/, "a work order opened by hand says so; the linked one names its PI");
+  assert.match(html, /tab=jobs">PI-R</);
+  // the buttons are bound by RubberFlow's own binder (one call per [data-rf-scope] slot, with RubberFlow's context), on the list page and on the jobs page
+  const bound = [];
+  pp.context.MNP_RUBBERFLOW_BIND = (slot, rfCtx) => bound.push([slot.name, typeof rfCtx.can]);
+  const slots = [{ name: "a" }, { name: "b" }];
+  const fakeRoot = { querySelectorAll: (selector) => (selector === "[data-rf-scope]" ? slots : []) };
+  pp.context.MNP_BOM_PAGES.orders(pp.ctx("p=orders")).bind(fakeRoot);
+  pp.context.MNP_BOM_PAGES.jobs(pp.ctx("p=jobs&dept=ALL")).bind(fakeRoot);
+  assert.deepEqual(bound, [["a", "function"], ["b", "function"], ["a", "function"], ["b", "function"]], "both pages hand every RubberFlow slot to the RubberFlow binder");
+  // the PI page: the WO of the RB job is a link with its release button
+  html = await pp.render("p=orders&sel=PI-R&tab=jobs");
+  const row = html.split("<tr").find((entry) => entry.includes(">JOB-RB1<")) ?? "";
+  assert.match(row, new RegExp(`href="#/rubberflow\\?p=orders&amp;q=${planned.result}"`), "the WO links to the RubberFlow order page for those who open it");
+  assert.match(row, /data-rf-scope="rubberflow"[\s\S]*>ปล่อยผลิต</);
+  // released: no card, no button (the WO is the RB department's to start)
+  await saved(rf(pp).run("setOrderStatus", { id: planned.result, status: "released" }));
+  await saved(rf(pp).run("setOrderStatus", { id: manual.result, status: "released" }));
+  await pp.store.catchUp();
+  html = await pp.render("p=orders");
+  assert.doesNotMatch(html, /ใบสั่งผลิตยางที่รอปล่อยผลิต|>ปล่อยผลิต</, "nothing waits for release any more");
+  assert.match(html, /data-rf-open="createOrder"[^>]*>เปิดใบสั่งผลิตยาง</, "opening a new one stays available");
+  // RB staff: the department starts the WO but does not open or release it
+  const waiting = await saved(rf(pp).run("createOrder", { recipeId: "RC-TEST-01", customer: "รอปล่อย", targetQty: 20, startDate: NOW, dueDate: NOW + 86400000 }));
+  const rb = await asPersona(scene, "persona-rb");
+  await rf(rb).ensureLoaded();
+  html = await rb.render("p=orders");
+  assert.doesNotMatch(html, /เปิดใบสั่งผลิตยาง|ใบสั่งผลิตยางที่รอปล่อยผลิต/, "RB staff have no open button and no waiting card");
+  html = await rb.render("p=orders&sel=PI-R&tab=jobs");
+  assert.doesNotMatch(html, new RegExp(`data-rf-args="[^"]*${waiting.result}[^"]*released`), "and no release button");
+  assert.match(html, new RegExp(`href="#/rubberflow\\?p=orders&amp;q=${planned.result}"`), "RB opens RubberFlow, so the WO is a link");
+  // a department that cannot open RubberFlow sees the WO number as plain text, with no button
+  const st = await asPersona(scene, "persona-st");
+  await rf(st).ensureLoaded();
+  html = await st.render("p=orders&sel=PI-R&tab=jobs");
+  const stRow = html.split("<tr").find((entry) => entry.includes(">JOB-RB1<")) ?? "";
+  assert.ok(stRow.includes(planned.result), "the WO number is still shown");
+  assert.doesNotMatch(stRow, /#\/rubberflow|data-rf-action="setOrderStatus"/, "as text: no link to a page the account cannot open, no release button");
+  // the database agrees: RB staff cannot release or open (RF_FORBIDDEN) even by a direct call
+  assert.equal(rf(rb).run("setOrderStatus", { id: waiting.result, status: "released" }).ok, false, "the page says no first");
+  assert.equal(rf(rb).run("createOrder", { recipeId: "RC-TEST-01", customer: "x", targetQty: 1, startDate: NOW, dueDate: NOW }).ok, false);
 });
 
 test("the compounds page and the link dialog list only recipes approved in the database, and the BOM page loads RubberFlow by itself", async () => {
