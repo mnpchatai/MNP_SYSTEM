@@ -408,7 +408,7 @@ select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' ->
 select ok((current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 -> 'lines' -> 0 ->> 'receivedAt')::numeric > 1000, 'the receipt time is set by the server');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 -> 'lines' -> 1 -> 'receivedKg', 'null'::jsonb, 'the other line is still open');
 select is((current_setting('test.res')::jsonb -> 'changes' -> 'materialLots' -> 'upsert' -> 0) - 'expiry' - 'receivedAt',
-  '{"lotNo":"PO1-A","materialCode":"MAT-A","qtyKg":140,"initialKg":140,"supplier":"PO-20261110-01","location":"โกดัง A-1","status":"available","coa":false}'::jsonb
+  '{"lotNo":"PO1-A","materialCode":"MAT-A","qtyKg":140,"rbKg":0,"initialKg":140,"supplier":"PO-20261110-01","location":"โกดัง A-1","status":"available","coa":false}'::jsonb
     || jsonb_build_object('receivedBy', current_setting('test.n_sbx_st_staff')),
   'the receipt created an available stock lot in the same save (location defaults to the material storage)');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'materialLots' -> 'upsert' -> 0 ->> 'expiry',
@@ -545,13 +545,13 @@ select throws_ok($$ select rf3_t.recv(rf3_t.receipt_po('PO-20261110-03', 0, 5, '
 select is(public.app_rf_master() ->> 'version', (current_setting('test.vc')::bigint + 1)::text, 'nothing was written by the refused calls');
 
 -- 8. snapshot / delta / audit -------------------------------------------------------------------
-select is((select count(*) from jsonb_object_keys(public.app_rf_master() - 'version' - 'epoch')), 12::bigint, 'the snapshot has twelve lists');
+select is((select count(*) from jsonb_object_keys(public.app_rf_master() - 'version' - 'epoch')), 13::bigint, 'the snapshot has thirteen lists (chemDocs since 20261220010000)');
 select is((select jsonb_agg(p ->> 'id') from jsonb_array_elements(public.app_rf_master() -> 'purchaseOrders') p),
   '["PO-20261110-01","PO-20261110-02","PO-20261110-03","PO-20261110-04"]'::jsonb, 'the orders are listed by number');
 select is(public.app_rf_master_since(0) -> 'changes', (select jsonb_object_agg(l, jsonb_build_object('upsert', public.app_rf_master() -> l, 'delete', '[]'::jsonb))
-  from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs','purchaseOrders']) l),
-  'the delta from version 0 equals the snapshot for all twelve lists');
-select is((select count(*) from jsonb_object_keys(public.app_rf_master_since(0) -> 'changes')), 12::bigint, 'the delta names twelve lists');
+  from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs','purchaseOrders','chemDocs']) l),
+  'the delta from version 0 equals the snapshot for all thirteen lists');
+select is((select count(*) from jsonb_object_keys(public.app_rf_master_since(0) -> 'changes')), 13::bigint, 'the delta names thirteen lists');
 select is(jsonb_array_length(public.app_rf_master_since(current_setting('test.vc')::bigint) -> 'changes' -> 'purchaseOrders' -> 'upsert'), 1, 'the delta after the cancel holds only that order');
 select is(public.app_rf_master_since(current_setting('test.vc')::bigint) -> 'changes' -> 'purchaseOrders' -> 'upsert' -> 0 ->> 'id', 'PO-20261110-03', 'and it is the cancelled one');
 select is(public.app_rf_master_since(current_setting('test.vc')::bigint) -> 'changes' -> 'purchaseOrders' -> 'delete', '[]'::jsonb, 'orders are never deleted');
@@ -575,8 +575,8 @@ select set_config('test.pre_version', public.app_rf_master() ->> 'version', true
 select set_config('test.purge', public.app_sandbox_purge_rf()::text, true);
 select ok((current_setting('test.purge')::jsonb ->> 'deleted')::integer > 8, 'the purge reports the rows it deleted (orders included)');
 select is(public.app_rf_master() - 'epoch', (select jsonb_build_object('version', current_setting('test.pre_version')::bigint) || jsonb_object_agg(l, '[]'::jsonb)
-  from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs','purchaseOrders']) l),
-  'all twelve lists are empty again and the counter keeps its value');
+  from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs','purchaseOrders','chemDocs']) l),
+  'all thirteen lists are empty again and the counter keeps its value');
 reset role;
 select is((select count(*) from public.rf_purchase_orders where is_test), 0::bigint, 'no test order is left');
 select is((select count(*) from public.rf_purchase_orders where not is_test), 1::bigint, 'the real order survives the purge');

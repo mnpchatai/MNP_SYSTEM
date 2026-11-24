@@ -99,6 +99,7 @@
       materials: MATERIALS.map((material) => ({ ...material })),
       materialLots: [],
       purchaseOrders: [],
+      chemDocs: [],
       recipes: [],
       orders: [],
       requisitions: [],
@@ -152,6 +153,15 @@
       });
     });
     d.materialLots.find((lot) => lot.materialCode === "CBS" && lot.initialKg === 45).status = "hold";
+
+    // คลังเคมีของ RB (20261220010000): RB ขอเบิกจาก ST แล้ว ST จ่ายครบ (FEFO ย้ายยอดเข้าคลัง RB) ก่อนเริ่มเบิกผสม · ใบเบิกผสมตัดคลัง RB
+    // ขอเฉพาะเคมีของสูตรที่อนุมัติแล้ว (ล็อตที่หมดอายุแล้วของเคมีที่ไม่มีสูตรอนุมัติใช้จึงยังอยู่คลัง ST ให้หน้าคลังแสดงล็อตหมดอายุ)
+    const used = new Set(d.recipes.filter((recipe) => recipe.status === "approved").flatMap((recipe) => recipe.items.map((item) => item.materialCode)));
+    const stocked = A.requestChemicals(d, {
+      note: "เติมคลังเคมี RB (ข้อมูลสาธิต)",
+      lines: MATERIALS.filter((material) => used.has(material.code)).map((material) => ({ materialCode: material.code, qtyKg: ["โพลิเมอร์", "สารตัวเติม", "น้ำมัน"].includes(material.category) ? 400 : 30 })),
+    }, at(t0, "mixer"));
+    A.issueChemicals(d, { id: stocked, kgs: d.chemDocs.find((doc) => doc.id === stocked).lines.map((line) => line.qtyKg) }, at(t0 + HOUR, "store"));
 
     // เดินหนึ่ง batch ผ่านสายผลิต หยุดหลังขั้น `until`
     const chain = (orderId, start, until = "finishing", opts = {}) => {
@@ -287,6 +297,13 @@
       { materialCode: "CBS", needKg: 30, availableKg: 0, shortageKg: 30, qtyKg: 30 },
     ] }, at(now - DAY, "store"));
     A.receivePurchaseLine(d, { id: demoPo, materialCode: "EPDM-55", qtyKg: 300, expiry: now + 180 * DAY, supplier: "บจก. โพลีเคม ไทย" }, at(now - 4 * HOUR, "store"));
+
+    // งานคลังเคมีที่ค้าง: ใบขอเบิกที่ ST จ่ายไปบางส่วน · ใบขอเบิกที่ยังไม่จ่าย · ใบคืนที่รอ ST รับ
+    const partial = A.requestChemicals(d, { note: "ใช้กับ WO ที่จะปล่อยสัปดาห์หน้า", lines: [{ materialCode: "CB-N550", qtyKg: 150 }, { materialCode: "ZNO", qtyKg: 10 }] }, at(now - 6 * HOUR, "mixer"));
+    A.issueChemicals(d, { id: partial, kgs: [100, 0] }, at(now - 5 * HOUR, "store"));
+    A.requestChemicals(d, { lines: [{ materialCode: "S-80", qtyKg: 8 }, { materialCode: "TMTD", qtyKg: 4 }] }, at(now - 2 * HOUR, "mixer"));
+    const leftover = rules().rbStockLots(d, now).find((row) => row.lot.materialCode === "STA" && row.state === "available");
+    if (leftover) A.returnChemicals(d, { note: "เหลือจากการผสม (ข้อมูลสาธิต)", lines: [{ lotNo: leftover.lot.lotNo, kg: Math.min(2, leftover.rbKg) }] }, at(now - HOUR, "mixer"));
 
     // กรณีคุณภาพ
     A.createNcr(d, {

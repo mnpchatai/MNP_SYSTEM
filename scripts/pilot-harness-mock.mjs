@@ -1957,13 +1957,18 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
   // สมาชิก RB รับมอบ WIP ด้วย (20261204010000 · เดิม SR) · WH ส่งมอบกล่อง · QA บันทึกผลตรวจและเปิด/ปิด NCR · ฐานข้อมูลคำนวณเอง: สต็อกล็อตหลังชั่ง คงเหลือ/ยอดส่งต่อของใบส่งมอบ ยอดผลิตของ WO สถานะกล่องตามผล QC การใช้แม่พิมพ์ (ไม่เชื่อค่าที่ client ส่ง)
   // WO ที่มี sourceJobId ผูกงาน RB ของ BOM ในคำสั่งเดียวกัน (externalRef) · ล็อตตกแต่งของ WO ที่ผูกงานผ่าน QC และนับเข้า WO (ตอนบันทึก หรือ QA ตัดสินเป็น pass) → ไม่สร้างกล่อง แต่สร้างล็อตแท่ง pending ในคลังแท่งยาวของ BOM (20261202010000 · งาน RB นับยอดเมื่อ SR รับเข้าผ่าน) (การรับมอบใบส่งมอบไม่เขียน BOM) ผ่านตัวนับเวอร์ชันของ BOM ด้วย
   const RF_KEY = sandbox ? "mnp-harness-rf-master" : "mnp-harness-rf-master-real";
-  const RF_LISTS = ["materials", "recipes", "orders", "materialLots", "requisitions", "lots", "transfers", "fgBoxes", "qcRecords", "ncrs", "molds", "purchaseOrders"];
+  // chemDocs (20261220010000): เอกสารคลังเคมี ST / RB ใบขอเบิก CR ใบคืน CT ใบนับคลัง RB CC (ตรงกับ public.rf_chem_docs)
+  const RF_LISTS = ["materials", "recipes", "orders", "materialLots", "requisitions", "lots", "transfers", "fgBoxes", "qcRecords", "ncrs", "molds", "purchaseOrders", "chemDocs"];
   const RF_ID = { materials: (record) => record.code, recipes: (record) => `${record.id}|${record.revision}`, orders: (record) => record.id, materialLots: (record) => record.lotNo };
   for (const list of RF_LISTS) RF_ID[list] ??= (record) => record.id;
   const rfSorter = (list) => (list === "recipes" ? (a, b) => bomCmp(a.id, b.id) || a.revision - b.revision : (a, b) => bomCmp(RF_ID[list](a), RF_ID[list](b)));
   const RF_ACTIONS = ["saveMaterial", "createRecipe", "saveRecipe", "approveRecipe", "createOrder", "setOrderStatus", "receiveMaterial", "setMaterialLotStatus", "createRequisition", "weighLine", "recordMixing", "endRest", "recordExtrusion", "recordCuring", "recordFinishing", "createTransfer", "receiveTransfer", "shipBoxes", "addQcRecord", "createNcr", "updateNcr", "closeNcr", "cleanMold", "saveMold", "createPurchaseOrder", "receivePurchaseLine", "cancelPurchaseOrder", "issueRequisition", "returnRequisition", "closePurchaseLine",
     // กล่องสินค้าของคลังสินค้าสำเร็จรูป (20261207010000)
-    "receiveBoxes", "reverseBoxReceipt", "reverseBoxShip"];
+    "receiveBoxes", "reverseBoxReceipt", "reverseBoxShip",
+    // คลังเคมี ST / RB (20261220010000)
+    "requestChemicals", "cancelChemicalRequest", "issueChemicals", "closeChemicalRequest", "countRbStock", "returnChemicals", "receiveChemicalReturn", "rejectChemicalReturn"];
+  // คำสั่งของคลังเคมี: ส่งได้เฉพาะชุด chemDocs กับสำเนาล็อตวัตถุดิบ · ชุด chemDocs ส่งได้เฉพาะคำสั่งเหล่านี้ (ผิด = RF_INVALID_CHEM ตรงกับ app_rf_save)
+  const RF_CHEM_ACTIONS = ["requestChemicals", "cancelChemicalRequest", "issueChemicals", "closeChemicalRequest", "countRbStock", "returnChemicals", "receiveChemicalReturn", "rejectChemicalReturn"];
   // คำสั่งของกล่อง: ทาง [จาก, ไป, ชนิดประวัติ] (ตรงกับ private.rf_save_boxes ของ 20261207010000) · ส่งได้เฉพาะชุด fgBoxes
   const RF_BOX_STEPS = { receiveBoxes: ["pending_wh", "in_stock", "receive"], shipBoxes: ["in_stock", "shipped", "ship"], reverseBoxReceipt: ["in_stock", "pending_wh", "unreceive"], reverseBoxShip: ["shipped", "in_stock", "unship"] };
   const RF_FLOW = { planned: ["released", "cancelled"], released: ["in_progress", "on_hold", "cancelled"], in_progress: ["on_hold", "completed"], on_hold: ["in_progress"] };
@@ -1976,14 +1981,15 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
   const RF_MATERIAL_STAMPS = ["createdAt", "createdBy", "updatedAt", "updatedBy"];
   // รหัสต้องตรงกับ check ของตาราง rf_* (rf_materials.code · rf_recipes.recipe_code · rf_orders.wo_no) ผิด = รหัสข้อผิดพลาดของชุดนั้น
   const RF_CODE = { materials: /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/, recipes: /^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$/, orders: /^[A-Za-z0-9._-]{1,40}$/ };
-  const RF_BAD = { materials: "RF_INVALID_MATERIAL", recipes: "RF_INVALID_RECIPE", orders: "RF_INVALID_ORDER", materialLots: "RF_INVALID_MATERIAL_LOT", requisitions: "RF_INVALID_REQUISITION", lots: "RF_INVALID_LOT", transfers: "RF_INVALID_TRANSFER", fgBoxes: "RF_INVALID_BOX", qcRecords: "RF_INVALID_QC", ncrs: "RF_INVALID_NCR", molds: "RF_INVALID_MOLD", purchaseOrders: "RF_INVALID_PURCHASE" };
+  const RF_BAD = { materials: "RF_INVALID_MATERIAL", recipes: "RF_INVALID_RECIPE", orders: "RF_INVALID_ORDER", materialLots: "RF_INVALID_MATERIAL_LOT", requisitions: "RF_INVALID_REQUISITION", lots: "RF_INVALID_LOT", transfers: "RF_INVALID_TRANSFER", fgBoxes: "RF_INVALID_BOX", qcRecords: "RF_INVALID_QC", ncrs: "RF_INVALID_NCR", molds: "RF_INVALID_MOLD", purchaseOrders: "RF_INVALID_PURCHASE", chemDocs: "RF_INVALID_CHEM" };
   // ชุดหน้างาน: เลขที่/รหัสของเอกสาร (lotNo ของล็อตวัตถุดิบ, id ของที่เหลือ) · ใบสั่งซื้อ = PO-yyyymmdd-nn (po_no)
   for (const list of RF_LISTS.slice(3)) RF_CODE[list] = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
   RF_CODE.purchaseOrders = /^PO-[0-9]{8}-[0-9]{2,6}$/;
+  RF_CODE.chemDocs = /^C[RTC]-[0-9]{8}-[0-9]{2,6}$/;
   // ช่องที่ฐานข้อมูลประทับ/คำนวณเอง ต่อชุด: ระเบียนที่ต่างจากของเดิมเฉพาะช่องเหล่านี้ถือว่าไม่มีอะไรเปลี่ยน (ไม่ตรวจชน ไม่ตรวจสิทธิ์ ไม่เพิ่มเวอร์ชัน)
   const RF_NOOP = {
     materials: RF_MATERIAL_STAMPS, recipes: RF_RECIPE_STAMPS, orders: [...RF_ORDER_STAMPS, "producedQty"],
-    materialLots: ["qtyKg", "receivedAt", "receivedBy"], requisitions: ["requestedBy", "createdAt", "issuedAt", "issuedBy"],
+    materialLots: ["qtyKg", "rbKg", "receivedAt", "receivedBy"], requisitions: ["requestedBy", "createdAt", "issuedAt", "issuedBy", "store"],
     lots: ["operator", "createdAt", "transferredQty", "countedToOrder", "destination", "whCredit"], transfers: ["remaining", "createdAt", "createdBy", "receivedAt", "receivedBy"],
     fgBoxes: ["createdAt", "shippedAt", "shippedBy", "receivedAt", "receivedBy", "moves", "customer", "customerPo"], qcRecords: ["inspector", "at"], ncrs: ["createdAt", "createdBy", "closedAt", "closedBy"], molds: ["totalUsage"],
     purchaseOrders: ["createdAt", "createdBy", "cancelledAt"],
@@ -2017,6 +2023,9 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         rfMaster.version += 1;
         for (const box of legacy) { box.receivedAt = box.createdAt; rfMaster.versions.fgBoxes[box.id] = rfMaster.version; }
       }
+      // ข้อมูลก่อนแยกคลังเคมี (20261220010000): ล็อตเดิมอยู่คลัง ST ทั้งหมด (rbKg 0) · ใบเบิกเดิมเป็นของคลัง ST (ค่าเริ่มของคอลัมน์ ไม่เลื่อนตัวนับ)
+      for (const lot of rfMaster.materialLots) if (lot && typeof lot.rbKg !== "number") lot.rbKg = 0;
+      for (const requisition of rfMaster.requisitions) if (requisition && requisition.store !== "RB" && requisition.store !== "ST") requisition.store = "ST";
     }
     return rfMaster;
   }
@@ -2084,6 +2093,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       const sent = Array.isArray(changes[list]?.upsert) && changes[list].upsert.length > 0;
       if (sent && (PO_LISTS[action] ? !PO_LISTS[action].includes(list) : list === "purchaseOrders")) fail("RF_INVALID_PURCHASE");
       if (sent && RF_BOX_STEPS[action] && list !== "fgBoxes") fail("RF_INVALID_BOX");
+      if (sent && ((list === "chemDocs" && !RF_CHEM_ACTIONS.includes(action)) || (RF_CHEM_ACTIONS.includes(action) && !["chemDocs", "materialLots"].includes(list)))) fail("RF_INVALID_CHEM");
     }
     // รูปของ payload และสิทธิ์ระดับส่วน (ก่อนตรวจรายระเบียน)
     for (const list of Object.keys(changes)) {
@@ -2101,7 +2111,9 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         if (list === "recipes" || (list === "materials" && !(actor.dept === "ST" && action === "createPurchaseOrder"))) fail("RF_FORBIDDEN");
         if (list === "orders" && entry.upsert.some((row) => { const old = current.orders.find((order) => order.id === row?.id); return !old || !rfSame(old, row, RF_NOOP.orders); })) fail("RF_FORBIDDEN");
       }
-      // รับเคมีคืน (ตรงกับ app_rf_save ของ 20261128010000): ชุดใบเบิกส่งได้โดยกลุ่มวางแผน / RB / ST (สิทธิ์จริง ST หรือ admin ตรวจรายใบ) · ชุดอื่นนอกจากล็อตวัตถุดิบ = RF_INVALID_REQUISITION
+      // เอกสารคลังเคมี (20261220010000): กลุ่มวางแผน / RB / ST ส่งชุดได้ (สิทธิ์รายคำสั่งตรวจในตัวเขียน) · แผนกอื่น = RF_FORBIDDEN
+      if (entry.upsert.length && list === "chemDocs" && !(master || actor.dept === "ST")) fail("RF_FORBIDDEN");
+      // รับเคมีคืน (ตรงกับ app_rf_save ของ 20261128010000): ชุดใบเบิกส่งได้โดยกลุ่มวางแผน / RB / ST (สิทธิ์จริงตามคลังของใบ ตรวจรายใบ) · ชุดอื่นนอกจากล็อตวัตถุดิบ = RF_INVALID_REQUISITION
       if (entry.upsert.length && action === "returnRequisition") {
         if (list === "requisitions" && !(master || actor.dept === "ST")) fail("RF_FORBIDDEN");
         if (!["requisitions", "materialLots"].includes(list)) fail("RF_INVALID_REQUISITION");
@@ -2126,6 +2138,10 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     const qcNew = [];
     const touchedOrders = new Set();
     const round3 = (value) => Math.round(value * 1000) / 1000;
+    const round6 = (value) => Math.round(value * 1e6) / 1e6;
+    // ยอดที่คืนระหว่างทาง (ใบคืน CT ที่รอ ST รับ) ของล็อต ตรงกับ private.rf_lot_in_transit
+    const transitKg = (lotNo) => next.chemDocs.filter((doc) => doc.kind === "return" && doc.status === "pending")
+      .reduce((sum, doc) => sum + doc.lines.filter((line) => line.lotNo === lotNo).reduce((kg, line) => kg + line.kg, 0), 0);
     const shop = (list, prev, record, index) => {
       const bad = RF_BAD[list];
       const rows = next[list];
@@ -2140,7 +2156,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
           if (!material || material.active === false) fail(bad);
           if (!(num(record.qtyKg) > 0) || record.initialKg !== record.qtyKg || num(record.expiry) <= at) fail(bad);
           if (record.status !== "available") fail("RF_INVALID_TRANSITION");
-          put({ ...clone(record), receivedAt: at, receivedBy: actor.name });
+          put({ ...clone(record), rbKg: 0, receivedAt: at, receivedBy: actor.name });
           newLots.push(record.lotNo);
           return null;
         }
@@ -2156,7 +2172,9 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         const lines = Array.isArray(record.lines) ? record.lines : [];
         const kgOf = (value) => (value === undefined || value === null ? null : value);
         if (!prev.lines.some((old, i) => bomCanon(kgOf(lines[i]?.returnedKg)) !== bomCanon(kgOf(old.returnedKg)))) return "skip";
-        if (!stOrAdmin) fail("RF_FORBIDDEN");
+        // ใบของคลัง RB (20261220010000): กลุ่มวางแผน / RB คืนเข้า rbKg · ใบเดิมของคลัง ST: ST / admin เข้า qtyKg
+        const backStore = prev.store === "RB" ? "RB" : "ST";
+        if (backStore === "RB" ? !master : !stOrAdmin) fail("RF_FORBIDDEN");
         const wo = next.orders.find((row) => row.id === prev.orderId);
         if (!["issued", "weighing"].includes(prev.status) || wo?.status !== "cancelled" || prev.lines.some((old) => Object.hasOwn(old, "returnedAt"))) fail("RF_INVALID_TRANSITION");
         if (lines.length !== prev.lines.length) fail(bad);
@@ -2179,8 +2197,9 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
           if (!(kgs[i] > 0)) return;
           const lotIndex = next.materialLots.findIndex((row) => row.lotNo === old.lotNo);
           const lot = next.materialLots[lotIndex] ?? fail(bad);
-          if (lot.qtyKg + kgs[i] > lot.initialKg + 1e-6) fail(bad);
-          next.materialLots[lotIndex] = { ...lot, qtyKg: Math.round((lot.qtyKg + kgs[i]) * 1e6) / 1e6 };
+          // เพดาน: คลัง ST + คลัง RB + ที่คืนระหว่างทาง + ที่คืนครั้งนี้ ไม่เกินยอดรับเข้า
+          if (lot.qtyKg + (lot.rbKg ?? 0) + transitKg(lot.lotNo) + kgs[i] > lot.initialKg + 1e-6) fail(bad);
+          next.materialLots[lotIndex] = backStore === "RB" ? { ...lot, rbKg: round6((lot.rbKg ?? 0) + kgs[i]) } : { ...lot, qtyKg: round6(lot.qtyKg + kgs[i]) };
           stampVersion("materialLots", lot.lotNo);
         });
         put({ ...prev, lines: prev.lines.map((old, i) => ({ ...old, returnedKg: kgs[i], returnedAt: at, returnedBy: actor.name, returnNote: note })) });
@@ -2201,11 +2220,12 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
             fail(bad);
           }
           // FEFO ในธุรกรรมเดียวกับการสร้างใบ: หักที่ใบเบิกเก่า (ยัง weighing) จองไว้ในรายการที่ยังไม่ชั่ง · ฐานข้อมูลจัดสรรเอง ไม่เชื่อรายการล็อตที่ client ส่ง · แล้วจ่ายทันที: actualKg = targetKg หักสต็อกล็อตตามบรรทัด
+          // คลังเคมีของ RB (20261220010000): จัดสรรและตัดยอดคลัง RB (rbKg) · ใบ weighing เดิมเป็นของคลัง ST จึงไม่จองยอดคลัง RB
           const reserved = {};
-          for (const open of next.requisitions) for (const line of open.status === "weighing" ? open.lines : []) if (line.actualKg === null) reserved[line.lotNo] = (reserved[line.lotNo] || 0) + line.targetKg;
+          for (const open of next.requisitions) for (const line of open.status === "weighing" && open.store === "RB" ? open.lines : []) if (line.actualKg === null) reserved[line.lotNo] = (reserved[line.lotNo] || 0) + line.targetKg;
           const lines = [];
           for (const item of R.recipeLines(recipe)) {
-            const { picks, shortage } = R.allocateFefo(next.materialLots, item.materialCode, item.kgPerBatch * record.batches, at, reserved);
+            const { picks, shortage } = R.allocateFefo(next.materialLots, item.materialCode, item.kgPerBatch * record.batches, at, reserved, "RB");
             if (shortage > 0.0001) fail("RF_INSUFFICIENT_STOCK");
             for (const pick of picks) {
               reserved[pick.lotNo] = (reserved[pick.lotNo] || 0) + pick.kg;
@@ -2215,12 +2235,12 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
           for (const line of lines) {
             const lotIndex = next.materialLots.findIndex((row) => row.lotNo === line.lotNo);
             // ตรงกับ SQL: หักแล้วติดลบ = หยุด ไม่ปัดเป็น 0 เงียบ ๆ
-            const after = Math.round((next.materialLots[lotIndex].qtyKg - line.targetKg) * 1e6) / 1e6;
+            const after = Math.round(((next.materialLots[lotIndex].rbKg ?? 0) - line.targetKg) * 1e6) / 1e6;
             if (after < 0) fail("RF_INSUFFICIENT_STOCK");
-            next.materialLots[lotIndex] = { ...next.materialLots[lotIndex], qtyKg: after };
+            next.materialLots[lotIndex] = { ...next.materialLots[lotIndex], rbKg: after };
             stampVersion("materialLots", line.lotNo);
           }
-          put({ ...clone(record), recipeId: recipe.id, recipeRevision: recipe.revision, totalKg: recipe.batchKg * record.batches, lines, status: "issued", requestedBy: actor.name, createdAt: at, issuedAt: at, issuedBy: actor.name });
+          put({ ...clone(record), recipeId: recipe.id, recipeRevision: recipe.revision, totalKg: recipe.batchKg * record.batches, lines, status: "issued", requestedBy: actor.name, createdAt: at, issuedAt: at, issuedBy: actor.name, store: "RB" });
           return null;
         }
         if (prev.status === "consumed") fail("RF_INVALID_TRANSITION");
@@ -2241,8 +2261,10 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
           else if (Math.abs(kg - old.targetKg) > R.weighTolerance(old.targetKg) + 1e-9) fail("RF_OUT_OF_TOLERANCE");
           const lotIndex = next.materialLots.findIndex((row) => row.lotNo === old.lotNo);
           const lot = next.materialLots[lotIndex];
-          if (!lot || R.lotState(lot, at) !== "available" || lot.qtyKg + 1e-9 < kg) fail("RF_LOT_UNAVAILABLE");
-          next.materialLots[lotIndex] = { ...lot, qtyKg: Math.round((lot.qtyKg - kg) * 1e6) / 1e6 };
+          // คลังของใบ (20261220010000): ใบเดิม = คลัง ST (qtyKg) · ใบคลัง RB = rbKg
+          const store = prev.store === "RB" ? "RB" : "ST";
+          if (!lot || R.lotState(lot, at, store) !== "available" || R.lotKg(lot, store) + 1e-9 < kg) fail("RF_LOT_UNAVAILABLE");
+          next.materialLots[lotIndex] = { ...lot, [store === "RB" ? "rbKg" : "qtyKg"]: Math.round((R.lotKg(lot, store) - kg) * 1e6) / 1e6 };
           stampVersion("materialLots", lot.lotNo);
           lines[i] = { ...old, actualKg: kg, weighedAt: at, weighedBy: actor.name };
           weighed += 1;
@@ -2664,6 +2686,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         put({ ...prev, lines, status: lines.every(poDone) ? "received" : "ordered" });
         return null;
       }
+      if (list === "chemDocs") return chemDoc(prev, record, put, bad);
       // molds: เพิ่ม/แก้นิยามและบันทึกล้าง = กลุ่มวางแผนหรือแผนก RB · ยอดใช้งานสะสมนับจากล็อตฉีด/อบเท่านั้น
       if (!master) fail("RF_FORBIDDEN");
       if (blank(record.name) || String(record.name).length > 120 || !["die", "mold", "line"].includes(record.kind) || !["m", "pcs", "shot"].includes(record.unit)) fail(bad);
@@ -2681,6 +2704,153 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       put(out);
       return null;
     };
+    // เอกสารคลังเคมี ST / RB (ตรงกับ private.rf_save_chem_docs ของ 20261220010000) · ลำดับตรวจ: ชน → สิทธิ์ → ทาง → เนื้อหา (RF_INVALID_CHEM)
+    // ระเบียนเดิม: client บอกได้แค่สถานะ (ยกเลิก ปิดยอด รับ ปฏิเสธ) และยอดจ่ายสะสม issuedKg ของใบขอเบิก · ใบนับแก้ไม่ได้ · ไม่มีอะไรเปลี่ยนตามความหมาย = ข้าม
+    function chemDoc(prev, record, put, bad) {
+      const plainText = (value, min, max = 300) => {
+        if (value !== undefined && value !== null && typeof value !== "string") fail(bad);
+        const out = String(value ?? "").trim();
+        if (out.length < min || out.length > max) fail(bad);
+        return out;
+      };
+      const kgIn = (value) => (value === undefined || value === null ? null : typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1e9 ? value : fail(bad));
+      const status = plainText(record.status, 0, 20);
+      const clines = Array.isArray(record.lines) ? record.lines : [];
+      const lotAt = (lotNo) => next.materialLots.findIndex((row) => row.lotNo === lotNo);
+      const setLot = (index, patch) => { next.materialLots[index] = { ...next.materialLots[index], ...patch }; stampVersion("materialLots", next.materialLots[index].lotNo); };
+      const anyLotStale = () => next.materialLots.some((row) => stale("materialLots", row.lotNo));
+      if (prev) {
+        if (typeof record.createdAt === "number" && record.createdAt !== prev.createdAt) fail(stale("chemDocs", prev.id) ? "RF_STALE" : "RF_CONFLICT");
+        let changed = status !== "" && status !== prev.status;
+        if (prev.kind === "request" && !changed) prev.lines.forEach((old, i) => { const kg = clines[i]?.issuedKg; if (typeof kg === "number" && Math.abs(kg - old.issuedKg) > 0.0000005) changed = true; });
+        if (prev.kind === "count" || !changed) return "skip";
+        if (stale("chemDocs", prev.id)) fail("RF_STALE");
+        if (action === "issueChemicals") {
+          if (prev.kind !== "request") fail(bad);
+          if (!stOrAdmin) fail("RF_FORBIDDEN");
+          if (!["open", "partial"].includes(prev.status)) fail("RF_INVALID_TRANSITION");
+          if (clines.length !== prev.lines.length) fail(bad);
+          let any = false;
+          const lines = prev.lines.map((old, i) => {
+            const line = clines[i];
+            if (!rfPlain(line) || line.materialCode !== old.materialCode) fail(bad);
+            let kg = round6((kgIn(line.issuedKg) ?? old.issuedKg) - old.issuedKg);
+            if (kg < 0) fail(bad);
+            if (kg === 0) return old;
+            const left = old.qtyKg - old.issuedKg;
+            if (kg > left + 0.000001) fail(bad);
+            kg = Math.min(kg, left);
+            if (kg <= 0) return old;
+            any = true;
+            // FEFO จากคลัง ST: available ไม่หมดอายุ (ข้ามล็อตกักกัน) หักที่ใบเบิกเดิมของคลัง ST ที่ค้างชั่งจองไว้ · ย้าย qtyKg → rbKg ทันที
+            const { picks, shortage } = R.allocateFefo(next.materialLots, old.materialCode, kg, at, R.weighingReservedKg(next.requisitions, "ST"), "ST");
+            if (shortage > 1e-9) fail(anyLotStale() ? "RF_STALE" : "RF_INSUFFICIENT_STOCK");
+            const issues = [...(Array.isArray(old.issues) ? old.issues : [])];
+            for (const pick of picks) {
+              const index = lotAt(pick.lotNo);
+              const lot = next.materialLots[index];
+              const take = round6(pick.kg);
+              setLot(index, { qtyKg: round6(lot.qtyKg - take), rbKg: round6((lot.rbKg ?? 0) + take) });
+              issues.push({ lotNo: pick.lotNo, kg: take, at, by: actor.name });
+            }
+            return { ...old, issuedKg: round6(old.issuedKg + kg), issues };
+          });
+          if (!any) fail(bad);
+          const done = lines.every((line) => line.issuedKg >= line.qtyKg);
+          put({ ...prev, lines, status: done ? "done" : "partial", ...(done ? { doneAt: at, doneBy: actor.name } : {}) });
+          return null;
+        }
+        if (action === "cancelChemicalRequest") {
+          if (prev.kind !== "request" || status !== "cancelled") fail(bad);
+          if (!master) fail("RF_FORBIDDEN");
+          if (prev.status !== "open" || prev.lines.some((line) => line.issuedKg > 0)) fail("RF_INVALID_TRANSITION");
+          put({ ...prev, status: "cancelled", reason: plainText(record.reason, 0), doneAt: at, doneBy: actor.name });
+          return null;
+        }
+        if (action === "closeChemicalRequest") {
+          if (prev.kind !== "request" || status !== "closed") fail(bad);
+          if (!stOrAdmin) fail("RF_FORBIDDEN");
+          if (!["open", "partial"].includes(prev.status)) fail("RF_INVALID_TRANSITION");
+          put({ ...prev, status: "closed", reason: plainText(record.reason, 3), doneAt: at, doneBy: actor.name });
+          return null;
+        }
+        if (action === "receiveChemicalReturn" || action === "rejectChemicalReturn") {
+          const receive = action === "receiveChemicalReturn";
+          if (prev.kind !== "return" || status !== (receive ? "received" : "rejected")) fail(bad);
+          if (!stOrAdmin) fail("RF_FORBIDDEN");
+          if (prev.status !== "pending") fail("RF_INVALID_TRANSITION");
+          const reason = plainText(record.reason, receive ? 0 : 3);
+          // รับทั้งใบตามยอดที่ส่ง (เข้าคลัง ST) หรือปฏิเสธ (กลับคลัง RB) ไม่มีรับบางส่วน
+          for (const line of prev.lines) {
+            const index = lotAt(line.lotNo);
+            if (index === -1) fail(bad);
+            const lot = next.materialLots[index];
+            setLot(index, receive ? { qtyKg: round6(lot.qtyKg + line.kg) } : { rbKg: round6((lot.rbKg ?? 0) + line.kg) });
+          }
+          put({ ...prev, status: receive ? "received" : "rejected", reason, lines: receive ? prev.lines.map((line) => ({ ...line, receivedKg: line.kg })) : prev.lines, doneAt: at, doneBy: actor.name });
+          return null;
+        }
+        fail(bad);
+      }
+      if (action === "requestChemicals") {
+        if (!master) fail("RF_FORBIDDEN");
+        if (!record.id.startsWith("CR-")) fail(bad);
+        const note = plainText(record.note, 0);
+        if (clines.length < 1 || clines.length > 100) fail(bad);
+        const codes = new Set();
+        const lines = clines.map((line) => {
+          if (!rfPlain(line)) fail(bad);
+          const code = plainText(line.materialCode, 1, 40);
+          if (codes.has(code)) fail(bad);
+          codes.add(code);
+          const material = next.materials.find((row) => row.code === code);
+          if (!material || material.active === false) fail(bad);
+          const kg = kgIn(line.qtyKg);
+          if (kg === null || !(round6(kg) > 0)) fail(bad);
+          return { materialCode: material.code, qtyKg: round6(kg), issuedKg: 0, issues: [] };
+        });
+        put({ id: record.id, kind: "request", status: "open", lines, note, reason: "", createdAt: at, createdBy: actor.name });
+        return null;
+      }
+      if (action === "returnChemicals" || action === "countRbStock") {
+        const back = action === "returnChemicals";
+        // คืน = กลุ่มวางแผน / RB · นับคลัง RB = กลุ่มวางแผนเท่านั้น (รวมผู้จัดการแผนก RB)
+        if (back ? !master : !planner) fail("RF_FORBIDDEN");
+        if (!record.id.startsWith(back ? "CT-" : "CC-")) fail(bad);
+        const note = plainText(record.note, 0);
+        const reason = plainText(record.reason, back ? 0 : 3);
+        if (clines.length < 1 || clines.length > 100) fail(bad);
+        const lots = new Set();
+        for (const line of clines) {
+          if (!rfPlain(line)) fail(bad);
+          const lotNo = plainText(line.lotNo, 1, 60);
+          if (lots.has(lotNo)) fail(bad);
+          lots.add(lotNo);
+        }
+        const lines = clines.map((line) => {
+          const index = lotAt(String(line.lotNo).trim());
+          if (index === -1) fail(bad);
+          const lot = next.materialLots[index];
+          if (back) {
+            const kg = kgIn(line.kg);
+            if (kg === null || !(round6(kg) > 0)) fail(bad);
+            if (round6(kg) > (lot.rbKg ?? 0)) fail(stale("materialLots", lot.lotNo) ? "RF_STALE" : bad);
+            setLot(index, { rbKg: round6((lot.rbKg ?? 0) - round6(kg)) });
+            return { lotNo: lot.lotNo, materialCode: lot.materialCode, kg: round6(kg), receivedKg: null };
+          }
+          const counted = kgIn(line.countedKg);
+          if (counted === null) fail(bad);
+          // ยอดนับไม่เกินยอดรับเข้า − คลัง ST − ที่คืนระหว่างทาง
+          if (round6(counted) > lot.initialKg - lot.qtyKg - transitKg(lot.lotNo) + 0.000001) fail(stale("materialLots", lot.lotNo) ? "RF_STALE" : bad);
+          const beforeKg = lot.rbKg ?? 0;
+          if (round6(counted) !== beforeKg) setLot(index, { rbKg: round6(counted) });
+          return { lotNo: lot.lotNo, materialCode: lot.materialCode, beforeKg, countedKg: round6(counted) };
+        });
+        put({ id: record.id, kind: back ? "return" : "count", status: back ? "pending" : "done", lines, note, reason, createdAt: at, createdBy: actor.name, ...(back ? {} : { doneAt: at, doneBy: actor.name }) });
+        return null;
+      }
+      fail(bad);
+    }
     const seen = new Set();
     for (const list of RF_LISTS) {
       const bad = RF_BAD[list];
@@ -2696,9 +2866,10 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         const index = next[list].findIndex((row) => RF_ID[list](row) === id);
         const prev = index === -1 ? null : next[list][index];
         // เท่าของล่าสุดทุกช่อง (ไม่นับตราของเซิร์ฟเวอร์) = ไม่ทำอะไร ไม่ตรวจชน ไม่ตรวจสิทธิ์ (เหมือนตัวเขียนของฐานข้อมูล)
-        if (prev && !(list === "purchaseOrders" && typeof record.createdAt === "number" && record.createdAt !== prev.createdAt) && rfSame(rfNorm(list, prev), rfNorm(list, record), RF_NOOP[list])) continue;
+        // เอกสารคลังเคมีตัดสินว่า "เปลี่ยน" และ "ชน" ตามความหมายของคำสั่งในตัวเขียนของตัวเอง (chemDoc)
+        if (prev && list !== "chemDocs" && !(list === "purchaseOrders" && typeof record.createdAt === "number" && record.createdAt !== prev.createdAt) && rfSame(rfNorm(list, prev), rfNorm(list, record), RF_NOOP[list])) continue;
         // ชนก่อนสิทธิ์/เนื้อหาเสมอ: ระเบียนถูกผู้อื่นแก้/เพิ่มหลัง base (รวมเลข WO ซ้ำ) = ฝั่ง client ถือสำเนาเก่า ต้องได้ RF_STALE ไม่ใช่ RF_FORBIDDEN
-        if (prev && stale(list, id)) fail("RF_STALE");
+        if (prev && list !== "chemDocs" && stale(list, id)) fail("RF_STALE");
         if (list === "materials") {
           // สั่งซื้อ: วัตถุดิบที่มากับใบสั่งซื้อแก้ได้เฉพาะ safetyKg ของวัตถุดิบที่มีอยู่ (ที่เหลือหรือวัตถุดิบใหม่ = RF_INVALID_MATERIAL)
           if (action === "createPurchaseOrder" && (!prev || !rfSame(rfNorm(list, prev), rfNorm(list, record), [...RF_MATERIAL_STAMPS, "safetyKg"]))) fail(bad);

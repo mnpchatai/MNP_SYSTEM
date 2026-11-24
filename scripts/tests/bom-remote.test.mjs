@@ -2858,10 +2858,14 @@ test("a transfer receipt does not touch the BOM job; when pieces pass finishing 
   const head = await asPersona(scene, "persona-rbh");
   await rf(head).ensureLoaded();
   await saved(rf(head).run("setOrderStatus", { id: wo.id, status: "released" }));
-  // คลังรับวัตถุดิบ → RB เบิก ชั่ง ผสม ส่งมอบ
+  // คลังเคมีของ RB (20261220010000): RB ขอเบิกจาก ST → คลังรับวัตถุดิบแล้วจ่ายตาม FEFO (ย้ายเข้าคลัง RB) → RB เบิก ชั่ง ผสม ส่งมอบ
+  const asker = await asPersona(scene, "persona-rb");
+  await rf(asker).ensureLoaded();
+  const requested = await saved(rf(asker).run("requestChemicals", { lines: [{ materialCode: "EPDM-55", qtyKg: 40 }, { materialCode: "CB-N550", qtyKg: 40 }] }));
   const st = await asPersona(scene, "persona-st");
   await rf(st).ensureLoaded();
   for (const code of ["EPDM-55", "CB-N550"]) await saved(rf(st).run("receiveMaterial", { materialCode: code, qtyKg: 40, expiry: NOW + 30 * 86400000 }));
+  await saved(rf(st).run("issueChemicals", { id: requested.result, kgs: [40, 40] }));
   // สถานีผลิตและ SR ใช้เวลาจริงของเครื่อง (เวลาบ่มของยางเทียบกับเวลาของหน้าและของฐานข้อมูลจำลองต้องเป็นนาฬิกาเดียวกัน)
   const realClock = { mockOptions: { now: () => Date.now() } };
   const rb = await asPersona(scene, "persona-rb", realClock);

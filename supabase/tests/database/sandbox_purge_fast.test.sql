@@ -21,7 +21,7 @@ create temp table purge_bom_tables(name text) on commit drop;
 insert into purge_bom_tables values ('bom_jobs'), ('bom_orders'), ('bom_customers'), ('bom_bom_lines'), ('bom_boms'), ('bom_routings'), ('bom_color_sets'),
   ('bom_packages'), ('bom_colors'), ('bom_processes'), ('bom_compounds'), ('bom_items'), ('bom_deleted_keys'), ('bom_stock'), ('bom_stock_moves'), ('bom_fg_moves');
 create temp table purge_rf_tables(name text) on commit drop;
-insert into purge_rf_tables values ('rf_purchase_orders'), ('rf_ncrs'), ('rf_qc_records'), ('rf_fg_boxes'), ('rf_transfers'), ('rf_requisitions'), ('rf_lots'), ('rf_material_lots'),
+insert into purge_rf_tables values ('rf_chem_docs'), ('rf_purchase_orders'), ('rf_ncrs'), ('rf_qc_records'), ('rf_fg_boxes'), ('rf_transfers'), ('rf_requisitions'), ('rf_lots'), ('rf_material_lots'),
   ('rf_molds'), ('rf_orders'), ('rf_recipes'), ('rf_materials'), ('rf_deleted_keys');
 
 -- 1. ดัชนีฝั่งตารางลูกของ foreign key และนิยามฟังก์ชัน -----------------------------------------
@@ -90,6 +90,7 @@ insert into public.rf_orders (wo_no, customer, recipe_code, recipe_revision, pro
 values ('REAL-WO', 'ลูกค้าจริง', 'REAL-RC', 1, 'RP', 'm', 5, 1762300000000, 1762400000000);
 insert into public.rf_molds (mold_no, name, clean_every) values ('REAL-DIE', 'หัวดายจริง', 1000);
 insert into public.rf_purchase_orders (po_no, lines) values ('PO-20260101-01', '[{"materialCode":"REAL-MAT","qtyKg":1}]'::jsonb);
+insert into public.rf_chem_docs (doc_no, kind, status, lines) values ('CR-20260101-01', 'request', 'open', '[{"materialCode":"REAL-MAT","qtyKg":1,"issuedKg":0,"issues":[]}]'::jsonb);
 
 -- 3.2 BOM ทดสอบจำนวนมากเท่าขนาดข้อมูลจริง: 7,000 item · 4,000 BOM × 5 บรรทัด · งาน 500 · และตารางที่เหลืออย่างน้อยหนึ่งแถว
 insert into public.bom_items (is_test, code, kind, name, owner_dept, uom)
@@ -140,6 +141,8 @@ insert into public.rf_ncrs (is_test, ncr_no, title, lot_no) values (true, 'TN-1'
 insert into public.rf_purchase_orders (is_test, po_no, lines)
 select true, 'PO-20260102-' || lpad(g::text, 3, '0'), '[{"materialCode":"TM-1","qtyKg":1}]'::jsonb from generate_series(1, 20) g;
 insert into public.rf_deleted_keys (is_test, list, key) values (true, 'orders', 'T-DEL');
+insert into public.rf_chem_docs (is_test, doc_no, kind, status, lines)
+select true, 'CT-20260102-' || lpad(g::text, 3, '0'), 'return', 'pending', '[{"lotNo":"TML-1","materialCode":"TM-1","kg":1,"receivedKg":null}]'::jsonb from generate_series(1, 20) g;
 
 select ok(pg_temp.cnt('bom_bom_lines', true) = 20000 and pg_temp.cnt('bom_items', true) = 7000 and pg_temp.cnt('bom_boms', true) = 4000,
   'the large BOM fixture is in place (7,000 items, 4,000 BOMs, 20,000 lines)');

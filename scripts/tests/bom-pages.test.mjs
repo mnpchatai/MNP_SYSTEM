@@ -2496,7 +2496,7 @@ test("drafts reserve chemicals among themselves in calculation order like purcha
   const needB = free9.rows.find((row) => row.itemCode === code).required;
   // คงเหลือพอสำหรับใบที่ใหญ่กว่าใบเดียว (ไม่พอสองใบรวมกัน)
   const template = rf.materialLots.find((lot) => lot.materialCode === code);
-  rf.materialLots = [...rf.materialLots.filter((lot) => lot.materialCode !== code), { ...template, qtyKg: Math.max(needA, needB) + 0.0004 }];
+  rf.materialLots = [...rf.materialLots.filter((lot) => lot.materialCode !== code), { ...template, qtyKg: Math.max(needA, needB) + 0.0004, rbKg: 0 }];
   const A = hub.draftChemicals(env.ctx(), orderOf("DEMO-26002"));
   const B = hub.draftChemicals(env.ctx(), orderOf("DEMO-26009"));
   const rowA = A.rows.find((row) => row.itemCode === code);

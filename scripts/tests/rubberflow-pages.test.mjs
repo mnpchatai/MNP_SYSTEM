@@ -264,7 +264,7 @@ test("the requisition dialog sends the purchase dialog the same breakdown: its o
   const batches = rules.nextRequisitionBatches(order, recipe, data.requisitions);
   assert.ok(batches >= 1);
   const [first] = rules.recipeLines(recipe);
-  for (const lot of data.materialLots) if (lot.materialCode === first.materialCode) lot.qtyKg = 0;
+  for (const lot of data.materialLots) if (lot.materialCode === first.materialCode) { lot.qtyKg = 0; lot.rbKg = 0; } // ไม่มีทั้งคลัง ST และคลัง RB (20261220010000)
   const opened = [];
   const run = (onOrderKg) => {
     data.purchaseOrders = onOrderKg ? [{ id: "PO-T", status: "ordered", lines: [{ materialCode: first.materialCode, qtyKg: onOrderKg, receivedKg: null }] }] : [];
@@ -866,7 +866,7 @@ test("purchase dialog: rows to order come first and together, chemicals and part
   assert.deepEqual(needOf(only), [true, true, false, false]);
   assert.deepEqual(codesOf(dialogs.purchase({ ...ctx, bomPartNeeds: () => ({ rows: [part("P-X", 0), part("P-Y", 0)], anyShort: false }) }, { woIds: [], sourcePi: "PI-9" }).html), ["P-X", "P-Y"], "nothing to order: the order is untouched");
   // เคมี (ใบสั่งผลิตที่เปิดอยู่ทั้งหมด) ร่วมกับของซื้อ: ตารางเดียว แถวที่ต้องสั่งของสองชนิดอยู่บนสุดด้วยกัน
-  for (const lot of env.store.data().materialLots) if (["CBS", "OIL-PAR"].includes(lot.materialCode)) lot.qtyKg = 0; // two chemicals run short, in the middle of the code order
+  for (const lot of env.store.data().materialLots) if (["CBS", "OIL-PAR"].includes(lot.materialCode)) { lot.qtyKg = 0; lot.rbKg = 0; } // two chemicals run short (in neither store), in the middle of the code order
   env.store.data().purchaseOrders.length = 0; // ใบสั่งซื้อสาธิตที่ค้างรับ CBS 30 kg จะทำให้ CBS ไม่ขาด
   const chemOnly = dialogs.purchase(env.ctx("p=orders"), { allOpen: true }).html;
   const chemCodes = codesOf(chemOnly);
@@ -1136,10 +1136,12 @@ test("a requisition of a cancelled WO waits for the store to take the chemicals 
   const rulesApi = env.context.MNP_RUBBERFLOW_RULES;
   assert.ok(rulesApi.mixableRequisitions(data()).some((row) => row.id === requisition.id));
   data().orders.find((order) => order.id === requisition.orderId).status = "cancelled";
-  // ห้องปฏิบัติการ: ให้ล็อตมีที่ว่างพอรับคืน (ยอดคืนไม่เกินยอดที่รับเข้าคลัง)
+  // ใบเบิกรุ่นก่อนแยกคลังเคมี (คลัง ST · 20261220010000): ST รับคืนเข้าคลัง ST เหมือนเดิม · ใบของคลัง RB ตรวจใน scripts/tests/st-rb-chemical-store.test.mjs
+  requisition.store = "ST";
+  // ห้องปฏิบัติการ: ให้ล็อตมีที่ว่างพอรับคืน (ยอดสองคลัง + ที่คืนไม่เกินยอดที่รับเข้าคลัง)
   for (const line of requisition.lines) {
     const lot = data().materialLots.find((row) => row.lotNo === line.lotNo);
-    if (lot) lot.initialKg = Number(lot.qtyKg) + 1000;
+    if (lot) lot.initialKg = Number(lot.qtyKg) + Number(lot.rbKg ?? 0) + 1000;
   }
   assert.ok(!rulesApi.mixableRequisitions(data()).some((row) => row.id === requisition.id), "no longer offered for mixing");
   assert.equal(rulesApi.returnableRequisitions(data()).map((row) => row.id).join(","), requisition.id);

@@ -211,6 +211,12 @@
       });
       return { id: p.id, kgs, note: p.note };
     },
+    // คลังเคมี ST / RB (20261220010000): ฟอร์มส่งช่องรายแถวเป็นอาร์เรย์ตามลำดับ · แถวที่จำนวนว่าง / 0 ถูกข้ามใน action
+    // ขอเบิก: materialCode[] qtyKg[] note · จ่าย: id issueKg[] (ตามลำดับบรรทัดของใบ) · คืน: lotNo[] kg[] note · นับ: lotNo[] countedKg[] reason note
+    requestChemicals: (p) => ({ lines: listOf(p.materialCode).map((materialCode, index) => ({ materialCode, qtyKg: listOf(p.qtyKg)[index] })), note: p.note }),
+    issueChemicals: (p) => ({ id: p.id, kgs: listOf(p.issueKg) }),
+    returnChemicals: (p) => ({ lines: listOf(p.lotNo).map((lotNo, index) => ({ lotNo, kg: listOf(p.kg)[index] })), note: p.note }),
+    countRbStock: (p) => ({ lines: listOf(p.lotNo).map((lotNo, index) => ({ lotNo, countedKg: listOf(p.countedKg)[index] })), reason: p.reason, note: p.note }),
     createNcr: (p) => ({ ...p, whys: p.whys ?? [] }),
     addQcRecord: (p) => ({ ...p, values: p.values ?? {}, result: p.result || undefined }),
   };

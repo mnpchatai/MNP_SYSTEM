@@ -84,6 +84,10 @@
     cancelPurchase: (user) => Boolean(user.st || user.role === "admin"), // ยกเลิกใบสั่งซื้อ: แผนก ST
     skipRest: (user) => Boolean(user.rbHead || user.qa), // ข้ามเวลาบ่ม: หัวหน้า RB (รวมผู้ช่วยผู้จัดการโรงงานขึ้นไปและ admin) หรือแผนก QA พร้อมเหตุผล (20261128010000)
     returnRequisition: (user) => Boolean(user.st || user.role === "admin"), // รับเคมีที่เบิกไปแล้วคืนเข้าล็อตเดิม (WO ถูกยกเลิก): แผนก ST (admin ไว้แก้ปัญหา)
+    // คลังเคมี ST / RB (20261220010000 · ตรงกับ private.rf_save_chem_docs)
+    requestChem: (user) => Boolean(user.planner || user.rb), // ขอเบิกเคมีจาก ST / ยกเลิกใบที่ยังไม่จ่าย / คืนเคมีให้ ST / คืนใบเบิกคลัง RB ของ WO ที่ยกเลิก
+    issueChem: (user) => Boolean(user.st || user.role === "admin"), // จ่ายเคมีตามใบขอเบิก / ปิดยอดที่เหลือ / รับคืน / ปฏิเสธใบคืน
+    countRb: (user) => Boolean(user.planner), // นับ / ปรับยอดคลัง RB: กลุ่มวางแผนเท่านั้น (รวมผู้จัดการแผนก RB)
   });
   const MAY_TEXT = Object.freeze({
     master: "แก้ข้อมูลหลักของ RubberFlow ได้โดยฝ่ายวางแผน ผู้จัดการ ผู้ดูแลระบบ หรือพนักงานแผนก RB",
@@ -107,6 +111,9 @@
     cancelPurchase: "ยกเลิกใบสั่งซื้อได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
     skipRest: "ข้ามเวลาบ่มได้โดยผู้จัดการแผนก RB หรือผู้ช่วยผู้จัดการแผนก RB ผู้ช่วยผู้จัดการโรงงานขึ้นไป หรือแผนก QA เท่านั้น",
     returnRequisition: "รับเคมีคืนเข้าคลังได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
+    requestChem: "ขอเบิกเคมีจากคลัง ST และคืนเคมีให้ ST ได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
+    issueChem: "จ่ายเคมี ปิดยอดใบขอเบิก และรับเคมีคืนได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
+    countRb: "นับและปรับยอดคลังเคมี RB ได้โดยผู้จัดการแผนก RB หรือฝ่ายวางแผนเท่านั้น",
   });
   function needRight(ctx, right) {
     if (!ctx.remote) return;
@@ -363,28 +370,32 @@
   // ---------- เบิกเคมี ----------
 
   // ใบเบิกที่ยังค้างสถานะ weighing (ข้อมูลเก่าก่อนมีการจ่ายทันที) จองสต็อกของบรรทัดที่ยังไม่จ่าย · โหมดสาธิตหักสต็อกตอนจ่ายครบ จึงจองทุกบรรทัดของใบที่ยังไม่จ่ายครบ
-  function reservedByOpenRequisitions(d, ctx) {
-    const reserved = {};
-    d.requisitions.filter((requisition) => requisition.status === "weighing").forEach((requisition) =>
-      requisition.lines.filter((line) => !ctx.remote || line.actualKg === null).forEach((line) => { reserved[line.lotNo] = (reserved[line.lotNo] || 0) + line.targetKg; }));
-    return reserved;
-  }
+  // store = คลังที่ถาม (20261220010000): ใบ weighing เดิมเป็นของคลัง ST จึงจองยอดคลัง ST เท่านั้น
+  const reservedByOpenRequisitions = (d, ctx, store = "ST") => rules().weighingReservedKg(d.requisitions, store, { remote: Boolean(ctx.remote) });
 
-  // ล็อตของบรรทัดต้องใช้ได้และมีพอ แล้วหักสต็อกตามกิโลที่จ่าย (ฐานข้อมูลทำเองเช่นกัน)
-  function takeFromLot(d, line, kg, ctx) {
-    const { lotState } = rules();
+  // ล็อตของบรรทัดต้องใช้ได้และมีพอในคลังของใบ แล้วหักสต็อกตามกิโลที่จ่าย (ฐานข้อมูลทำเองเช่นกัน) · store "ST" = qtyKg · "RB" = rbKg
+  function takeFromLot(d, line, kg, ctx, store = "ST") {
+    const { lotState, lotKg } = rules();
     const lot = d.materialLots.find((row) => row.lotNo === line.lotNo);
-    if (!lot || lotState(lot, ctx.now) !== "available") fail(`ล็อต ${line.lotNo} ใช้ไม่ได้แล้ว (หมดอายุ/กักกัน/หมด)`);
-    if (lot.qtyKg < kg) fail(`ล็อต ${line.lotNo} คงเหลือไม่พอ`);
+    if (!lot || lotState(lot, ctx.now, store) !== "available") fail(`ล็อต ${line.lotNo} ใช้ไม่ได้แล้ว (หมดอายุ/กักกัน/หมด)`);
+    if (lotKg(lot, store) < kg) fail(`ล็อต ${line.lotNo} คงเหลือไม่พอ`);
     return lot;
   }
   // หักแล้วติดลบ = หยุด ไม่ปัดเป็น 0 เงียบ ๆ (|| 0 กัน -0)
-  const deduct = (lot, kg) => {
-    if (kg > lot.qtyKg + 1e-9) fail(`ล็อต ${lot.lotNo} คงเหลือไม่พอ`);
-    lot.qtyKg = +(lot.qtyKg - kg).toFixed(6) || 0;
+  const STORE_FIELD = Object.freeze({ ST: "qtyKg", RB: "rbKg" });
+  const deduct = (lot, kg, store = "ST") => {
+    const field = STORE_FIELD[store];
+    const have = Number(lot[field]) || 0;
+    if (kg > have + 1e-9) fail(`ล็อต ${lot.lotNo} คงเหลือไม่พอ`);
+    lot[field] = +(have - kg).toFixed(6) || 0;
+  };
+  const addKg = (lot, kg, store) => {
+    const field = STORE_FIELD[store];
+    lot[field] = +((Number(lot[field]) || 0) + kg).toFixed(6) || 0;
   };
 
   // เบิก = สร้างใบเบิกและจ่ายทันที: ระเบิดสูตร จัดสรร FEFO หักสต็อกล็อตตามบรรทัด จ่ายตามสูตร (actualKg = targetKg) สถานะ issued พร้อมผสม · ไม่มีขั้นตอนชั่งรายบรรทัด
+  // คลังเคมีของ RB (20261220010000): ใบใหม่จัดสรร FEFO และตัดยอดคลัง RB (rbKg) ของล็อต store "RB" · คลัง RB ไม่พอ = ขอเบิกจาก ST ก่อน (requestChemicals)
   // จำนวน batch ไม่ได้กรอก: คำนวณจาก WO (ที่ WO ต้องใช้ − ที่ใบเบิกก่อนหน้าเบิกไปแล้ว ปัดขึ้นเป็น batch · ใบละไม่เกิน 10) ค่า batches ที่ส่งมาเมิน · WO ที่เบิกครบแล้วเบิกอีกไม่ได้
   // ctx.history (เฉพาะตัวสร้างข้อมูลสาธิต modules/rubberflow-seed.js ที่จำลองประวัติเบิกทีละ batch) ใช้ batches ที่ส่งมาโดยไม่ตรวจยอดที่เบิกแล้ว
   function createRequisition(d, { orderId, batches, note }, ctx) {
@@ -397,24 +408,24 @@
     if (ctx.history && (!Number.isInteger(n) || n < 1 || n > 10)) fail("จำนวนชุดผสมต้องเป็นจำนวนเต็ม 1–10");
     if (n < 1) fail(`${order.id} เบิกเคมีครบตามที่ใบสั่งผลิตต้องใช้แล้ว`);
     // จองสต็อกที่ใบเบิกเก่าที่ค้างอยู่สัญญาไว้แล้ว ใบเบิกสองใบจึงไม่หยิบกิโลเดียวกัน
-    const reserved = reservedByOpenRequisitions(d, ctx);
+    const reserved = reservedByOpenRequisitions(d, ctx, "RB");
     const lines = [];
     const shortages = [];
     for (const item of recipeLines(recipe)) {
       const need = item.kgPerBatch * n;
-      const { picks, shortage } = allocateFefo(d.materialLots, item.materialCode, need, ctx.now, reserved);
+      const { picks, shortage } = allocateFefo(d.materialLots, item.materialCode, need, ctx.now, reserved, "RB");
       if (shortage > 0.0001) shortages.push(`${item.materialCode} ขาด ${shortage.toFixed(2)} kg`);
       picks.forEach((pick) => {
         reserved[pick.lotNo] = (reserved[pick.lotNo] || 0) + pick.kg;
         lines.push({ materialCode: item.materialCode, stage: item.stage, lotNo: pick.lotNo, targetKg: pick.kg, actualKg: pick.kg, weighedAt: ctx.now, weighedBy: ctx.user?.name });
       });
     }
-    if (shortages.length) fail(`สต็อกไม่พอตามหลัก FEFO: ${shortages.join(", ")}`);
-    for (const line of lines) deduct(d.materialLots.find((row) => row.lotNo === line.lotNo), line.targetKg);
+    if (shortages.length) fail(`สต็อกไม่พอตามหลัก FEFO: ${shortages.join(", ")} (คลังเคมี RB · ขอเบิกจาก ST ก่อน)`);
+    for (const line of lines) deduct(d.materialLots.find((row) => row.lotNo === line.lotNo), line.targetKg, "RB");
     const id = nextId(d, "REQ", ctx.now, ctx, d.requisitions, rowId);
     d.requisitions.unshift({
       id, orderId, recipeId: recipe.id, recipeRevision: recipe.revision, batches: n, totalKg: recipe.batchKg * n, lines,
-      status: "issued", note: note || "", requestedBy: ctx.user?.name, createdAt: ctx.now, issuedAt: ctx.now, issuedBy: ctx.user?.name,
+      status: "issued", note: note || "", requestedBy: ctx.user?.name, createdAt: ctx.now, issuedAt: ctx.now, issuedBy: ctx.user?.name, store: "RB",
     });
     audit(d, ctx, "เบิกเคมีและจ่ายวัตถุดิบ", `${id} (${order.id}, ${n} batch)`);
     return id;
@@ -430,12 +441,14 @@
     const kg = num(actualKg, "น้ำหนักที่ชั่งได้");
     const tol = weighTolerance(line.targetKg);
     if (Math.abs(kg - line.targetKg) > tol + 1e-9) fail(`น้ำหนักอยู่นอกเกณฑ์ ±${tol.toFixed(3)} kg ระบบไม่ให้บันทึก`);
-    const lot = takeFromLot(d, line, kg, ctx);
+    // ตัดคลังของใบ (ใบเดิมเป็นของคลัง ST · 20261220010000)
+    const store = rules().requisitionStore(requisition);
+    const lot = takeFromLot(d, line, kg, ctx, store);
     line.actualKg = kg;
     line.weighedAt = ctx.now;
     line.weighedBy = ctx.user?.name;
     // โหมดฐานข้อมูล: ฐานข้อมูลหักสต็อกของล็อตทันทีที่ชั่งแต่ละรายการ (โหมดสาธิตหักตอนชั่งครบทุกรายการ)
-    if (ctx.remote) deduct(lot, kg);
+    if (ctx.remote) deduct(lot, kg, store);
     if (requisition.lines.every((row) => row.actualKg !== null)) finishWeighing(d, requisition, ctx);
   }
 
@@ -444,19 +457,20 @@
     needRight(ctx, "requisition");
     const requisition = find(d.requisitions, id, "ใบเบิก");
     if (requisition.status !== "weighing") fail("ใบเบิกนี้จ่ายวัตถุดิบครบแล้ว");
+    const store = rules().requisitionStore(requisition);
     const open = requisition.lines.filter((line) => line.actualKg === null);
     // ตรวจทุกบรรทัดก่อนแก้อะไร (ล็อตเดียวกันอาจอยู่หลายบรรทัด จึงรวมกิโลต่อล็อต)
     const need = {};
-    for (const line of open) takeFromLot(d, line, 0, ctx);
+    for (const line of open) takeFromLot(d, line, 0, ctx, store);
     for (const line of ctx.remote ? open : requisition.lines) need[line.lotNo] = (need[line.lotNo] || 0) + line.targetKg;
     for (const [lotNo, kg] of Object.entries(need)) {
-      if (d.materialLots.find((row) => row.lotNo === lotNo).qtyKg < kg - 1e-9) fail(`ล็อต ${lotNo} คงเหลือไม่พอ`);
+      if (rules().lotKg(d.materialLots.find((row) => row.lotNo === lotNo), store) < kg - 1e-9) fail(`ล็อต ${lotNo} คงเหลือไม่พอ`);
     }
     for (const line of open) {
       line.actualKg = line.targetKg;
       line.weighedAt = ctx.now;
       line.weighedBy = ctx.user?.name;
-      if (ctx.remote) deduct(d.materialLots.find((row) => row.lotNo === line.lotNo), line.targetKg);
+      if (ctx.remote) deduct(d.materialLots.find((row) => row.lotNo === line.lotNo), line.targetKg, store);
     }
     finishWeighing(d, requisition, ctx);
   }
@@ -464,7 +478,8 @@
   // ทุกบรรทัดจ่ายแล้ว: โหมดสาธิตหักสต็อกทั้งใบตอนนี้ (โหมดฐานข้อมูลหักไปแล้วรายบรรทัด) แล้วใบเป็น issued
   function finishWeighing(d, requisition, ctx) {
     if (!ctx.remote) {
-      requisition.lines.forEach((row) => deduct(d.materialLots.find((item) => item.lotNo === row.lotNo), row.actualKg));
+      const store = rules().requisitionStore(requisition);
+      requisition.lines.forEach((row) => deduct(d.materialLots.find((item) => item.lotNo === row.lotNo), row.actualKg, store));
     }
     requisition.status = "issued";
     requisition.issuedAt = ctx.now;
@@ -481,7 +496,7 @@
     if (!p.expiry || p.expiry <= ctx.now) fail("วันหมดอายุต้องเป็นวันในอนาคต");
     const lotNo = nextId(d, `RM-${material.code}`, ctx.now, ctx, d.materialLots, (row) => row.lotNo);
     d.materialLots.push({
-      lotNo, materialCode: material.code, qtyKg: qty, initialKg: qty, expiry: p.expiry, receivedAt: ctx.now,
+      lotNo, materialCode: material.code, qtyKg: qty, rbKg: 0, initialKg: qty, expiry: p.expiry, receivedAt: ctx.now,
       supplier: p.supplier || "-", location: p.location || material.storage, status: "available", coa: Boolean(p.coa),
     });
     audit(d, ctx, "รับวัตถุดิบเข้าคลัง", `${lotNo} ${qty} kg`);
@@ -752,9 +767,12 @@
   // รับเคมีที่เบิกไปแล้วคืนเข้าล็อตเดิม (ตรงกับ private.rf_return_requisitions ของ 20261128010000): ใบเบิกที่จ่ายแล้วและยังไม่ได้ผสมของ WO ที่ถูกยกเลิก · แผนก ST
   // kgs = ยอดที่คืนจริงตามลำดับบรรทัด (บรรทัดที่จ่ายไปต้องกรอก ไม่มีคืนใส่ 0) 0..ที่จ่าย · คืนไม่ครบต้องมีเหตุผล 3-300 · รับคืนได้ครั้งเดียวต่อใบ
   // ยอดคืนบวกเข้าล็อตเดิมของบรรทัด (ไม่เกินยอดรับเข้าของล็อต) ล็อตคงวันหมดอายุและสถานะเดิม (ล็อตที่หมดอายุแล้วยังหมดอายุ FEFO ข้ามเหมือนเดิม)
+  // คลังของใบ (20261220010000): ใบเดิมของคลัง ST = กติกาเดิม (ST รับคืนเข้า qtyKg) · ใบเบิกคลัง RB = กลุ่มวางแผน / RB คืนเข้า rbKg ของล็อตเดิม
+  // เพดานของล็อต: คลัง ST + คลัง RB + ที่คืนระหว่างทาง + ที่คืนครั้งนี้ ไม่เกินยอดรับเข้า
   function returnRequisition(d, { id, kgs, note }, ctx) {
-    needRight(ctx, "returnRequisition");
     const requisition = find(d.requisitions, id, "ใบเบิก");
+    const store = rules().requisitionStore(requisition);
+    needRight(ctx, store === "RB" ? "requestChem" : "returnRequisition");
     const state = rules().requisitionReturnState(d, requisition);
     if (state === "returned") fail(`ใบเบิก ${requisition.id} รับคืนแล้ว (รับคืนได้ครั้งเดียว)`);
     if (state !== "pending") fail("รับคืนได้เฉพาะใบเบิกที่จ่ายแล้วและยังไม่ได้ผสม ของใบสั่งผลิตที่ถูกยกเลิก");
@@ -775,23 +793,219 @@
     const why = typeof note === "string" ? note.trim() : "";
     if (short && why.length < 3) fail("คืนไม่ครบตามที่จ่ายไป กรุณาระบุเหตุผล (อย่างน้อย 3 ตัวอักษร)");
     if (why.length > 300) fail("เหตุผลยาวเกิน 300 ตัวอักษร");
-    const after = new Map();
+    const R = rules();
+    const added = new Map();
     requisition.lines.forEach((line, index) => {
       if (!(amounts[index] > 0)) return;
       const lot = d.materialLots.find((row) => row.lotNo === line.lotNo) || fail(`ไม่พบล็อต ${line.lotNo}`);
-      const qty = (after.get(lot.lotNo) ?? Number(lot.qtyKg) ?? 0) + amounts[index];
-      if (qty > Number(lot.initialKg) + 1e-6) fail(`ล็อต ${lot.lotNo} รับคืนเกินยอดที่รับเข้าคลัง (${lot.initialKg} kg) ไม่ได้`);
-      after.set(lot.lotNo, qty);
+      const more = (added.get(lot.lotNo) ?? 0) + amounts[index];
+      if (R.lotKg(lot, "ST") + R.lotKg(lot, "RB") + R.lotInTransitKg(d, lot.lotNo) + more > Number(lot.initialKg) + 1e-6) fail(`ล็อต ${lot.lotNo} รับคืนเกินยอดที่รับเข้าคลัง (${lot.initialKg} kg) ไม่ได้`);
+      added.set(lot.lotNo, more);
     });
-    for (const [lotNo, qty] of after) {
-      const lot = d.materialLots.find((row) => row.lotNo === lotNo);
-      lot.qtyKg = +qty.toFixed(6);
-    }
+    for (const [lotNo, kg] of added) addKg(d.materialLots.find((row) => row.lotNo === lotNo), kg, store);
     requisition.lines = requisition.lines.map((line, index) => ({ ...line, returnedKg: amounts[index], returnedAt: ctx.now, returnedBy: ctx.user?.name ?? "", returnNote: why }));
     requisition.returnNote = why;
     const total = amounts.reduce((sum, kg) => sum + kg, 0);
-    audit(d, ctx, "รับเคมีคืนเข้าล็อตเดิม", `${requisition.id} (${requisition.orderId}) คืน ${+total.toFixed(4)} kg${why ? ` — ${why}` : ""}`);
+    audit(d, ctx, store === "RB" ? "คืนเคมีของใบเบิกเข้าคลัง RB" : "รับเคมีคืนเข้าล็อตเดิม", `${requisition.id} (${requisition.orderId}) คืน ${+total.toFixed(4)} kg${why ? ` — ${why}` : ""}`);
     return requisition.id;
+  }
+
+  // ---------- คลังเคมี ST (กลาง) / คลังเคมีของ RB (20261220010000 · ตรงกับ private.rf_save_chem_docs และ mock ของ harness) ----------
+  // เอกสาร chemDocs: ใบขอเบิก CR (RB ขอ → ST จ่าย FEFO ย้าย qtyKg → rbKg) · ใบคืน CT (rbKg → รอ ST รับทั้งใบเข้า qtyKg หรือปฏิเสธกลับ rbKg) · ใบนับคลัง RB CC
+  // รูปเอกสารและกฎสถานะอยู่ที่ modules/rubberflow-rules.js (chemDocsOf …) · ฐานข้อมูลจัดสรรล็อตและคำนวณยอดเองอีกครั้ง (ค่าที่นี่เป็นสำเนาให้หน้าจอเห็นทันที)
+  const CHEM_MAX_LINES = 100;
+  const round6 = (value) => Math.round(Number(value) * 1e6) / 1e6;
+  const blankKg = (value) => value === undefined || value === null || String(value).trim() === "";
+  const chemList = (d) => (d.chemDocs ??= []);
+  const CHEM_KIND_TEXT = Object.freeze({ request: "ใบขอเบิกเคมี", return: "ใบคืนเคมี", count: "ใบนับคลังเคมี RB" });
+  function findChem(d, id, kind) {
+    const doc = chemList(d).find((row) => row.id === id) || fail(`ไม่พบ${CHEM_KIND_TEXT[kind]}${ref(id)}`);
+    if (doc.kind !== kind) fail(`${doc.id} ไม่ใช่${CHEM_KIND_TEXT[kind]}`);
+    return doc;
+  }
+  function chemText(value, label, min) {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (text.length < min) fail(`กรุณาระบุ${label} (อย่างน้อย ${min} ตัวอักษร)`);
+    if (text.length > rules().CHEM_REASON_MAX) fail(`${label}ยาวเกิน ${rules().CHEM_REASON_MAX} ตัวอักษร`);
+    return text;
+  }
+  const chemLinesOf = (lines, label) => {
+    const list = Array.isArray(lines) ? lines : [];
+    if (list.length > CHEM_MAX_LINES) fail(`${label}มีได้ไม่เกิน ${CHEM_MAX_LINES} รายการ`);
+    return list;
+  };
+  const doneBy = (doc, ctx) => { doc.doneAt = ctx.now; doc.doneBy = ctx.user?.name ?? ""; };
+  const requestStatusText = (doc) => ({ done: "จ่ายครบแล้ว", closed: "ปิดยอดแล้ว", cancelled: "ถูกยกเลิกแล้ว" }[doc.status] ?? "อยู่ในสถานะที่ทำรายการนี้ไม่ได้");
+
+  // RB ขอเบิกเคมีจาก ST (ไม่ผูก WO): lines [{ materialCode, qtyKg }] (จำนวนว่าง / 0 ถูกข้าม) รหัสไม่ซ้ำ วัตถุดิบต้องใช้งานอยู่ · note ไม่บังคับ · คืนเลข CR-
+  function requestChemicals(d, { lines, note }, ctx) {
+    needRight(ctx, "requestChem");
+    const given = chemLinesOf(lines, "ใบขอเบิก").filter((line) => !blankKg(line?.qtyKg) && Number(line.qtyKg) !== 0);
+    if (!given.length) fail("กรุณาระบุเคมีและจำนวนที่ขอเบิกอย่างน้อย 1 รายการ");
+    const seen = new Set();
+    const rows = given.map((line) => {
+      const code = String(line.materialCode ?? "").trim();
+      const material = d.materials.find((row) => row.code === code) || fail(`ไม่พบวัตถุดิบ${ref(code)}`);
+      if (material.active === false) fail(`วัตถุดิบ ${code} เลิกใช้แล้ว ขอเบิกไม่ได้`);
+      if (seen.has(code)) fail(`${code} ซ้ำในใบขอเบิก`);
+      seen.add(code);
+      return { materialCode: code, qtyKg: kgOf(line.qtyKg, `จำนวนที่ขอเบิกของ ${code}`, { positive: true }), issuedKg: 0, issues: [] };
+    });
+    const id = nextId(d, "CR", ctx.now, ctx, chemList(d), rowId);
+    chemList(d).unshift({ id, kind: "request", status: "open", lines: rows, note: chemText(note ?? "", "หมายเหตุ", 0), reason: "", createdAt: ctx.now, createdBy: ctx.user?.name ?? "" });
+    audit(d, ctx, "ขอเบิกเคมีจาก ST", `${id} ${rows.map((row) => `${row.materialCode} ${row.qtyKg} kg`).join(", ")}`.slice(0, 300));
+    return id;
+  }
+
+  // ยกเลิกใบขอเบิกที่ยังไม่ได้จ่ายเลย (open): กลุ่มวางแผน / RB · reason ไม่บังคับ · จ่ายไปบางส่วนแล้ว = ให้ ST ปิดยอดที่เหลือแทน
+  function cancelChemicalRequest(d, { id, reason }, ctx) {
+    needRight(ctx, "requestChem");
+    const doc = findChem(d, id, "request");
+    if (doc.status === "partial" || (doc.lines ?? []).some((line) => Number(line.issuedKg) > 0)) fail(`${doc.id} จ่ายไปแล้วบางส่วน ยกเลิกไม่ได้ ให้ ST ปิดยอดที่เหลือแทน`);
+    if (doc.status !== "open") fail(`${doc.id} ${requestStatusText(doc)} ยกเลิกไม่ได้`);
+    doc.status = "cancelled";
+    doc.reason = chemText(reason ?? "", "เหตุผลที่ยกเลิก", 0);
+    doneBy(doc, ctx);
+    audit(d, ctx, "ยกเลิกใบขอเบิกเคมี", `${doc.id}${doc.reason ? ` — ${doc.reason}` : ""}`);
+    return doc.id;
+  }
+
+  // ST จ่ายตามใบขอเบิก: kgs = จำนวนจ่ายครั้งนี้ตามลำดับบรรทัด (ว่าง / 0 = ไม่จ่ายบรรทัดนี้) ไม่เกินยอดคงค้าง อย่างน้อยหนึ่งบรรทัด
+  // จัดสรร FEFO จากคลัง ST (ข้ามล็อตกักกัน / หมดอายุ · rules.chemIssuePreview ให้หน้าจอแสดงก่อนยืนยัน) แล้วย้าย qtyKg → rbKg ทันที · ครบทุกบรรทัด = done ไม่ครบ = partial
+  function issueChemicals(d, { id, kgs }, ctx) {
+    needRight(ctx, "issueChem");
+    const R = rules();
+    const doc = findChem(d, id, "request");
+    if (!R.chemRequestOpen(doc)) fail(`${doc.id} ${requestStatusText(doc)} จ่ายไม่ได้`);
+    const list = Array.isArray(kgs) ? kgs : [];
+    // ใบเบิกเดิมของคลัง ST ที่ค้างชั่งจองยอดของล็อตไว้ (จ่ายส่วนนั้นให้ RB ไม่ได้)
+    const reserved = reservedByOpenRequisitions(d, ctx, "ST");
+    const plan = doc.lines.map((line, index) => {
+      const raw = list[index];
+      if (blankKg(raw)) return null;
+      const kg = kgOf(raw, `จำนวนจ่ายของ ${line.materialCode}`);
+      if (kg === 0) return null;
+      const open = R.chemLineOpenKg(line);
+      if (kg > open + 1e-9) fail(`${line.materialCode} จ่ายได้ไม่เกินที่ค้าง ${+open.toFixed(4)} kg`);
+      const { picks, shortage } = R.allocateFefo(d.materialLots, line.materialCode, Math.min(kg, open), ctx.now, reserved, "ST");
+      if (shortage > 1e-9) fail(`คลัง ST มี ${line.materialCode} พร้อมจ่ายไม่พอ (ขาด ${+shortage.toFixed(4)} kg ไม่นับล็อตกักกันหรือหมดอายุ)`);
+      return { line, kg: Math.min(kg, open), picks };
+    });
+    if (!plan.some(Boolean)) fail("กรุณาระบุจำนวนที่จ่ายอย่างน้อย 1 รายการ");
+    const by = ctx.user?.name ?? "";
+    for (const item of plan.filter(Boolean)) {
+      for (const pick of item.picks) {
+        const lot = d.materialLots.find((row) => row.lotNo === pick.lotNo);
+        const kg = round6(pick.kg);
+        deduct(lot, kg, "ST");
+        addKg(lot, kg, "RB");
+        item.line.issues = [...(Array.isArray(item.line.issues) ? item.line.issues : []), { lotNo: pick.lotNo, kg, at: ctx.now, by }];
+      }
+      item.line.issuedKg = round6((Number(item.line.issuedKg) || 0) + item.kg);
+    }
+    const done = doc.lines.every((line) => (Number(line.issuedKg) || 0) >= (Number(line.qtyKg) || 0));
+    doc.status = done ? "done" : "partial";
+    if (done) doneBy(doc, ctx);
+    audit(d, ctx, "จ่ายเคมีให้ RB", `${doc.id} ${plan.filter(Boolean).map((item) => `${item.line.materialCode} ${+item.kg.toFixed(4)} kg`).join(", ")}${done ? " (ครบ)" : ""}`.slice(0, 300));
+    return doc.id;
+  }
+
+  // ST ปิดยอดที่เหลือของใบขอเบิก (open / partial) พร้อมเหตุผล 3-300 ตัวอักษร · ไม่ย้ายเคมี
+  function closeChemicalRequest(d, { id, reason }, ctx) {
+    needRight(ctx, "issueChem");
+    const doc = findChem(d, id, "request");
+    if (!rules().chemRequestOpen(doc)) fail(`${doc.id} ${requestStatusText(doc)} ปิดยอดไม่ได้`);
+    doc.reason = chemText(reason, "เหตุผลที่ปิดยอดที่เหลือ", rules().CHEM_REASON_MIN);
+    doc.status = "closed";
+    doneBy(doc, ctx);
+    audit(d, ctx, "ปิดยอดใบขอเบิกเคมี", `${doc.id} — ${doc.reason}`);
+    return doc.id;
+  }
+
+  // นับ / ปรับยอดคลัง RB รายล็อต (กลุ่มวางแผนเท่านั้น รวมผู้จัดการแผนก RB): lines [{ lotNo, countedKg }] (ว่างถูกข้าม) ล็อตไม่ซ้ำ · reason 3-300 · note ไม่บังคับ
+  // ยอดนับไม่เกินยอดรับเข้า − คลัง ST − ที่คืนระหว่างทาง (rules.rbCountCapKg) · ตั้ง rbKg = ยอดนับ · ใบ CC เสร็จทันที
+  function countRbStock(d, { lines, reason, note }, ctx) {
+    needRight(ctx, "countRb");
+    const R = rules();
+    const given = chemLinesOf(lines, "ใบนับ").filter((line) => !blankKg(line?.countedKg));
+    if (!given.length) fail("กรุณาระบุยอดนับอย่างน้อย 1 ล็อต");
+    const why = chemText(reason, "เหตุผลของการนับ / ปรับยอด", R.CHEM_REASON_MIN);
+    const seen = new Set();
+    const rows = given.map((line) => {
+      const lot = d.materialLots.find((row) => row.lotNo === line.lotNo) || fail(`ไม่พบล็อต${ref(line.lotNo)}`);
+      if (seen.has(lot.lotNo)) fail(`ล็อต ${lot.lotNo} ซ้ำในใบนับ`);
+      seen.add(lot.lotNo);
+      const counted = kgOf(line.countedKg, `ยอดนับของล็อต ${lot.lotNo}`, { digits: 4 });
+      const cap = R.rbCountCapKg(d, lot);
+      if (counted > cap + 1e-6) fail(`ยอดนับของล็อต ${lot.lotNo} เกินที่ล็อตอยู่นอกคลัง ST ได้ (${+cap.toFixed(4)} kg)`);
+      return { lot, counted };
+    });
+    const id = nextId(d, "CC", ctx.now, ctx, chemList(d), rowId);
+    const docLines = rows.map(({ lot, counted }) => {
+      const beforeKg = R.lotKg(lot, "RB");
+      lot.rbKg = counted;
+      return { lotNo: lot.lotNo, materialCode: lot.materialCode, beforeKg, countedKg: counted };
+    });
+    const doc = { id, kind: "count", status: "done", lines: docLines, note: chemText(note ?? "", "หมายเหตุ", 0), reason: why, createdAt: ctx.now, createdBy: ctx.user?.name ?? "" };
+    doneBy(doc, ctx);
+    chemList(d).unshift(doc);
+    audit(d, ctx, "นับคลังเคมี RB", `${id} ${docLines.length} ล็อต — ${why}`.slice(0, 300));
+    return id;
+  }
+
+  // RB คืนเคมีที่ไม่ใช้ให้ ST รายล็อต: lines [{ lotNo, kg }] (ว่าง / 0 ถูกข้าม) ไม่เกินยอดคลัง RB ของล็อต · หัก rbKg ทันที ใบ CT รอ ST รับ · note ไม่บังคับ
+  function returnChemicals(d, { lines, note }, ctx) {
+    needRight(ctx, "requestChem");
+    const R = rules();
+    const given = chemLinesOf(lines, "ใบคืน").filter((line) => !blankKg(line?.kg) && Number(line.kg) !== 0);
+    if (!given.length) fail("กรุณาระบุล็อตและจำนวนที่คืนอย่างน้อย 1 รายการ");
+    const seen = new Set();
+    const rows = given.map((line) => {
+      const lot = d.materialLots.find((row) => row.lotNo === line.lotNo) || fail(`ไม่พบล็อต${ref(line.lotNo)}`);
+      if (seen.has(lot.lotNo)) fail(`ล็อต ${lot.lotNo} ซ้ำในใบคืน`);
+      seen.add(lot.lotNo);
+      const have = R.lotKg(lot, "RB");
+      // คืนทั้งหมดของล็อต: ค่าที่กรอกห่างจากยอดคลัง RB ไม่ถึง 0.0001 ส่งเป็นยอดเต็ม (ไม่เหลือเศษทศนิยม)
+      const kg = Math.abs(Number(line.kg) - have) < 1e-4 ? have : kgOf(line.kg, `จำนวนคืนของล็อต ${lot.lotNo}`, { positive: true, digits: 4 });
+      if (kg > have + 1e-9) fail(`ล็อต ${lot.lotNo} คืนได้ไม่เกินยอดในคลัง RB ${+have.toFixed(4)} kg`);
+      return { lot, kg };
+    });
+    const id = nextId(d, "CT", ctx.now, ctx, chemList(d), rowId);
+    for (const { lot, kg } of rows) deduct(lot, kg, "RB");
+    chemList(d).unshift({
+      id, kind: "return", status: "pending", lines: rows.map(({ lot, kg }) => ({ lotNo: lot.lotNo, materialCode: lot.materialCode, kg, receivedKg: null })),
+      note: chemText(note ?? "", "หมายเหตุ", 0), reason: "", createdAt: ctx.now, createdBy: ctx.user?.name ?? "",
+    });
+    audit(d, ctx, "คืนเคมีให้ ST", `${id} ${rows.map(({ lot, kg }) => `${lot.lotNo} ${+kg.toFixed(4)} kg`).join(", ")}`.slice(0, 300));
+    return id;
+  }
+
+  // ST รับเคมีคืนทั้งใบตามยอดที่ RB ส่ง (ไม่มีรับบางส่วน) เข้าคลัง ST ของล็อตเดิม
+  function receiveChemicalReturn(d, { id }, ctx) {
+    needRight(ctx, "issueChem");
+    const doc = findChem(d, id, "return");
+    if (doc.status !== "pending") fail(`${doc.id} ${doc.status === "received" ? "รับคืนแล้ว" : "ถูกปฏิเสธแล้ว"} รับคืนไม่ได้`);
+    for (const line of doc.lines) {
+      addKg(d.materialLots.find((row) => row.lotNo === line.lotNo) || fail(`ไม่พบล็อต ${line.lotNo}`), Number(line.kg) || 0, "ST");
+      line.receivedKg = line.kg;
+    }
+    doc.status = "received";
+    doneBy(doc, ctx);
+    audit(d, ctx, "รับเคมีคืนจาก RB", doc.id);
+    return doc.id;
+  }
+
+  // ST ปฏิเสธใบคืนพร้อมเหตุผล 3-300 ตัวอักษร: ยอดกลับเข้าคลัง RB ของล็อตเดิม
+  function rejectChemicalReturn(d, { id, reason }, ctx) {
+    needRight(ctx, "issueChem");
+    const doc = findChem(d, id, "return");
+    if (doc.status !== "pending") fail(`${doc.id} ${doc.status === "received" ? "รับคืนแล้ว" : "ถูกปฏิเสธแล้ว"} ปฏิเสธไม่ได้`);
+    doc.reason = chemText(reason, "เหตุผลที่ไม่รับคืน", rules().CHEM_REASON_MIN);
+    for (const line of doc.lines) addKg(d.materialLots.find((row) => row.lotNo === line.lotNo) || fail(`ไม่พบล็อต ${line.lotNo}`), Number(line.kg) || 0, "RB");
+    doc.status = "rejected";
+    doneBy(doc, ctx);
+    audit(d, ctx, "ไม่รับเคมีคืน (กลับคลัง RB)", `${doc.id} — ${doc.reason}`);
+    return doc.id;
   }
 
   function recordExtrusion(d, p, ctx) {
@@ -1182,6 +1396,7 @@
     recordMixing, endRest, returnRequisition, recordExtrusion, recordCuring, recordFinishing, shipBoxes, transferableQty, createTransfer, receiveTransfer,
     receiveBoxes, reverseBoxReceipt, reverseBoxShip, FINISH_DESTINATIONS,
     addQcRecord, createNcr, updateNcr, closeNcr, saveMold, cleanMold,
+    requestChemicals, cancelChemicalRequest, issueChemicals, closeChemicalRequest, countRbStock, returnChemicals, receiveChemicalReturn, rejectChemicalReturn,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_RUBBERFLOW_ACTIONS = api;

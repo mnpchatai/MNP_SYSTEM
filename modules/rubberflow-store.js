@@ -2,7 +2,7 @@
 // ไม่มี DOM/Supabase: storage ส่งเข้ามาได้ (localStorage ในเบราว์เซอร์ / Map ในเทสต์) เทสต์ด้วย node --test (scripts/tests/rubberflow-store.test.mjs)
 //
 // สองโหมด: (1) ไม่ส่ง remote = ข้อมูลทั้งชุดอยู่ใน localStorage ของเบราว์เซอร์นี้ (ข้อมูลสมมติ + บทบาทสาธิต 9 คน ใช้ใน Node เทสต์) เหมือนต้นแบบ
-// (2) ส่ง remote = ข้อมูลทั้ง 12 ชุด (วัตถุดิบ สูตรยางทุก revision ใบสั่งผลิต WO ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ส่งมอบ กล่อง QC NCR แม่พิมพ์ ใบสั่งซื้อ) อยู่ใน Supabase ผ่าน app_rf_master (โหลดครั้งแรก)
+// (2) ส่ง remote = ข้อมูลทั้ง 13 ชุด (วัตถุดิบ สูตรยางทุก revision ใบสั่งผลิต WO ล็อตวัตถุดิบ ใบเบิก ล็อตผลิต ส่งมอบ กล่อง QC NCR แม่พิมพ์ ใบสั่งซื้อ เอกสารคลังเคมี) อยู่ใน Supabase ผ่าน app_rf_master (โหลดครั้งแรก)
 // app_rf_save (บันทึก คืนส่วนต่างตั้งแต่เวอร์ชันฐาน) และ app_rf_master_since (ตามทัน) ชนกันรายระเบียน · บันทึกการใช้งานอ่านจาก app_rf_audit · ไม่มีข้อมูลธุรกิจเหลืออยู่ในเบราว์เซอร์
 // (คีย์ mnp-rubberflow-local-v1 ของรุ่นก่อนไม่ถูกอ่านและไม่ถูกแตะ) · ผู้ใช้คือบัญชีทดสอบ (persona) ของ admin (personaUser)
 // บทบาทเป็นแค่ตัวซ่อน/แสดงเมนูและปุ่ม สิทธิ์จริงทุกชุดตัดสินที่ฐานข้อมูล (ดูข้อจำกัดในหัวข้อ "RubberFlow MES" ของ README)
@@ -100,6 +100,10 @@
     purchase: (user) => Boolean(user.st || user.role === "admin"), // สั่งซื้อวัตถุดิบ (สร้างใบสั่งซื้อ): แผนก ST เท่านั้น (admin ไว้แก้ปัญหา)
     cancelPurchase: (user) => Boolean(user.st || user.role === "admin"), // ยกเลิกใบสั่งซื้อ
     viewPurchase: (user) => Boolean(user.planner || user.rb || user.st), // เปิดหน้าต่างดูว่าขาดอะไร (กลุ่มวางแผนและ RB ดูได้ สั่งไม่ได้)
+    // คลังเคมี ST / RB (20261220010000 · ตรงกับ private.rf_save_chem_docs): โหมดสาธิตไม่จำกัดสิทธิ์ของปุ่มเหล่านี้
+    requestChem: (user) => Boolean(user.planner || user.rb), // ขอเบิกเคมีจาก ST · ยกเลิกใบที่ยังไม่จ่าย · คืนเคมีให้ ST · คืนใบเบิกคลัง RB ของ WO ที่ยกเลิก
+    issueChem: (user) => Boolean(user.st || user.role === "admin"), // จ่ายเคมีตามใบขอเบิก · ปิดยอดที่เหลือ · รับคืนทั้งใบ · ปฏิเสธใบคืน
+    countRb: (user) => Boolean(user.planner), // นับ / ปรับยอดคลัง RB: กลุ่มวางแผนเท่านั้น (รวมผู้จัดการแผนก RB · พนักงาน RB นับไม่ได้)
   });
 
   // ปุ่ม/ฟอร์มของคำสั่งแต่ละตัวต้องมีสิทธิ์ข้อใด (module-rubberflow.js ซ่อนปุ่ม/ปิดฟอร์มที่ไม่ใช่สิทธิ์ของบัญชี · ฐานข้อมูลตัดสินจริงอีกครั้ง) · คำสั่งที่ไม่อยู่ในตารางนี้ไม่ถูกจำกัดที่หน้าจอ
@@ -111,6 +115,8 @@
     updateNcr: "fillNcr", saveMold: "editMold",
     createPurchaseOrder: "purchase", receivePurchaseLine: "receiveMaterial", closePurchaseLine: "receiveMaterial", cancelPurchaseOrder: "cancelPurchase",
     saveMaterial: "editMaster", createRecipe: "editMaster", saveRecipe: "editMaster", approveRecipe: "approveRecipe", createOrder: "createOrder",
+    requestChemicals: "requestChem", cancelChemicalRequest: "requestChem", returnChemicals: "requestChem",
+    issueChemicals: "issueChem", closeChemicalRequest: "issueChem", receiveChemicalReturn: "issueChem", rejectChemicalReturn: "issueChem", countRbStock: "countRb",
   });
   // dialog ที่เปิดจากปุ่ม → คำสั่งที่ dialog นั้นส่ง
   const DIALOG_ACTION = Object.freeze({
@@ -119,6 +125,8 @@
     moldEdit: "saveMold", materialEdit: "saveMaterial", createOrder: "createOrder", recipeEdit: "saveRecipe", recipeNew: "createRecipe",
   });
   const rightForAction = (name) => ACTION_RIGHT[name] ?? null;
+  // คืนใบเบิกของ WO ที่ยกเลิก: สิทธิ์ขึ้นกับคลังของใบ (20261220010000) · ใบคลัง RB = กลุ่มวางแผน / RB (requestChem) · ใบเดิมคลัง ST = ST / admin (returnRequisition)
+  const rightForRequisitionReturn = (requisition) => (requisition?.store === "RB" ? "requestChem" : "returnRequisition");
   const rightForDialog = (name) => (DIALOG_ACTION[name] ? ACTION_RIGHT[DIALOG_ACTION[name]] ?? null : null);
 
   const can = (user, permission) => {
@@ -158,12 +166,13 @@
 
   const clone = (value) => (typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value)));
 
-  // ---------- โหมดฐานข้อมูล (remote): ข้อมูลทั้ง 12 ชุดอยู่ใน Supabase ----------
+  // ---------- โหมดฐานข้อมูล (remote): ข้อมูลทั้ง 13 ชุดอยู่ใน Supabase ----------
   // วัตถุดิบ (materials) · สูตรยางทุก revision (recipes) · ใบสั่งผลิต WO (orders) · ล็อตวัตถุดิบ (materialLots) · ใบเบิก (requisitions) · ล็อตผลิต MX/EX/CU/FN (lots) ·
-  // ใบส่งมอบ WIP (transfers) · กล่องสินค้า (fgBoxes) · ผลตรวจ QC (qcRecords) · NCR (ncrs) · แม่พิมพ์/หัวดาย (molds) · ใบสั่งซื้อ (purchaseOrders) — ไม่มีชุดไหนเหลืออยู่ในเครื่อง
+  // ใบส่งมอบ WIP (transfers) · กล่องสินค้า (fgBoxes) · ผลตรวจ QC (qcRecords) · NCR (ncrs) · แม่พิมพ์/หัวดาย (molds) · ใบสั่งซื้อ (purchaseOrders) ·
+  // เอกสารคลังเคมี ST / RB (chemDocs: ใบขอเบิก CR ใบคืน CT ใบนับคลัง RB CC · 20261220010000) — ไม่มีชุดไหนเหลืออยู่ในเครื่อง
   // ชนกันรายระเบียน ไม่ใช่ทั้งชุด · เลขเอกสาร WO/REQ/MX/EX/CU/FN/TR/QC/NCR/RM ออกจากข้อมูลที่มีในฐานข้อมูล (เลขสูงสุดของวันนั้น + 1 · action ส่ง ctx.remote) ซ้ำ = ฐานข้อมูลตอบ RF_STALE
   // ตัวเลขที่ฐานข้อมูลคำนวณเอง (สต็อกล็อตหลังชั่ง ยอดส่งต่อ/คงเหลือของใบส่งมอบ ยอดผลิตของใบสั่งผลิต การใช้แม่พิมพ์) action ยังคำนวณสำเนาของตัวเองให้หน้าจอเห็นทันที — ส่วนต่างที่ตอบกลับแก้ให้ตรงของจริง
-  const REMOTE_LISTS = Object.freeze(["materials", "recipes", "orders", "materialLots", "requisitions", "lots", "transfers", "fgBoxes", "qcRecords", "ncrs", "molds", "purchaseOrders"]);
+  const REMOTE_LISTS = Object.freeze(["materials", "recipes", "orders", "materialLots", "requisitions", "lots", "transfers", "fgBoxes", "qcRecords", "ncrs", "molds", "purchaseOrders", "chemDocs"]);
   const compareKey = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
   // กุญแจของระเบียน: วัตถุดิบ = code · สูตร = รหัส + revision · ล็อตวัตถุดิบ = lotNo · ที่เหลือ = id
   const byId = (record) => record.id;
@@ -180,6 +189,7 @@
     ncrs: byId,
     molds: byId,
     purchaseOrders: byId,
+    chemDocs: byId,
   });
   const deleteKey = (list, target) => (list === "recipes" ? MASTER_KEY.recipes(target ?? {}) : String(target?.code ?? target?.lotNo ?? target?.id ?? ""));
 
@@ -238,7 +248,7 @@
     const code = /RF_[A-Z0-9_]+/.exec(haystack)?.[0] ?? (/BOM_[A-Z0-9_]+/.exec(haystack)?.[0]) ?? (/NOT_AUTHORIZED|SANDBOX_NOT_ACTIVE/.exec(haystack)?.[0]) ?? (/PGRST202|42883/.test(haystack) ? "RF_NOT_DEPLOYED" : "RF_REMOTE_FAILED");
     const message = {
       RF_TEST_MODE_ONLY: "ข้อมูล RubberFlow ใช้ได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ",
-      RF_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้ใน RubberFlow (สั่งซื้อ รับวัตถุดิบ ตรวจสอบรับเข้าและยกเลิกใบสั่งซื้อ: คลังวัตถุดิบ (ST) เท่านั้น · เบิกเคมี ผลิต ส่งมอบและรับมอบ WIP: แผนก RB · รับกล่องเข้าคลังและส่งมอบให้ลูกค้า: คลังสินค้าสำเร็จรูป (WH) หรือผู้ดูแลระบบ · ย้อนการรับเข้าหรือการส่งมอบกล่อง: ผู้จัดการแผนก WH หรือผู้ดูแลระบบ · ผลตรวจและ NCR: QA · อนุมัติสูตรและปล่อยผลิต: ผู้จัดการแผนก RB ขึ้นไป · งานอื่นฝ่ายวางแผนและผู้จัดการทำได้)",
+      RF_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้ใน RubberFlow (สั่งซื้อ รับวัตถุดิบ ตรวจสอบรับเข้าและยกเลิกใบสั่งซื้อ: คลังวัตถุดิบ (ST) เท่านั้น · เบิกเคมี ผลิต ส่งมอบและรับมอบ WIP: แผนก RB · รับกล่องเข้าคลังและส่งมอบให้ลูกค้า: คลังสินค้าสำเร็จรูป (WH) หรือผู้ดูแลระบบ · ย้อนการรับเข้าหรือการส่งมอบกล่อง: ผู้จัดการแผนก WH หรือผู้ดูแลระบบ · ขอเบิกและคืนเคมี: แผนก RB · จ่ายเคมีและรับคืน: ST · นับคลังเคมี RB: ผู้จัดการแผนก RB หรือฝ่ายวางแผน · ผลตรวจและ NCR: QA · อนุมัติสูตรและปล่อยผลิต: ผู้จัดการแผนก RB ขึ้นไป · งานอื่นฝ่ายวางแผนและผู้จัดการทำได้)",
       RF_STALE: "มีผู้อื่นบันทึกข้อมูล RubberFlow ไปก่อน (หรือเลขที่ซ้ำ) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_CONFLICT: "รายการนี้ซ้ำกับที่มีอยู่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_INVALID_TRANSITION: "รายการอยู่ในสถานะที่ทำรายการนี้ไม่ได้ (อาจมีผู้อื่นเปลี่ยนสถานะไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
@@ -246,10 +256,11 @@
       RF_NOT_DEPLOYED: "ฐานข้อมูลยังไม่มีระบบ RubberFlow (ยังไม่ได้ติดตั้ง migration) ติดต่อผู้ดูแลระบบ",
       RF_REVISION_IMMUTABLE: "สูตรฉบับที่อนุมัติแล้วแก้ไม่ได้ ให้ออกฉบับแก้ไขใหม่",
       RF_INVALID_SOURCE_JOB: "งาน BOM ที่ใช้สร้างใบสั่งผลิตนี้ใช้ไม่ได้แล้ว (อาจผูกกับ WO อื่นไปแล้ว หรือใบ PI ไม่อยู่ในสถานะผลิต) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
-      RF_INSUFFICIENT_STOCK: "สต็อกวัตถุดิบพร้อมใช้ไม่พอตามหลัก FEFO (ไม่นับล็อตหมดอายุ กักกัน หรือที่ใบเบิกอื่นจองไว้) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
+      RF_INSUFFICIENT_STOCK: "สต็อกเคมีพร้อมใช้ไม่พอตามหลัก FEFO (ใบเบิกผสมใช้คลังเคมี RB ให้ขอเบิกจาก ST ก่อน · การจ่ายตามใบขอเบิกใช้คลัง ST · ไม่นับล็อตหมดอายุ กักกัน หรือที่ใบเบิกอื่นจองไว้) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
       RF_OUT_OF_TOLERANCE: "น้ำหนักที่ชั่งอยู่นอกเกณฑ์ ฐานข้อมูลไม่รับ",
       RF_LOT_UNAVAILABLE: "ล็อตวัตถุดิบใช้ไม่ได้แล้ว (หมดอายุ กักกัน หรือคงเหลือไม่พอ) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
       RF_INVALID_MATERIAL_LOT: "ข้อมูลล็อตวัตถุดิบไม่ถูกต้อง",
+      RF_INVALID_CHEM: "ข้อมูลเอกสารคลังเคมีไม่ถูกต้อง (จำนวนต้องมากกว่า 0 ไม่เกินยอดคงค้างหรือยอดในคลัง RB รายการไม่ซ้ำ การปิดยอด ปฏิเสธใบคืน และการนับต้องมีเหตุผล 3-300 ตัวอักษร)",
       RF_INVALID_REQUISITION: "ข้อมูลใบเบิกไม่ถูกต้อง",
       RF_INVALID_LOT: "ข้อมูลล็อตผลิตไม่ถูกต้อง",
       RF_INVALID_TRANSFER: "ข้อมูลใบส่งมอบไม่ถูกต้อง (ล็อตต้องผ่าน QC ครบเวลาบ่ม และปริมาณไม่เกินที่ส่งต่อได้)",
@@ -588,7 +599,7 @@
   }
 
   // remote = { load(): Promise<snapshot>, save(changes, baseVersion, action, audit, epoch): Promise<delta>, since(version): Promise<delta>, audit(limit): Promise<[{at, user, action, detail}]>, purge(): Promise<{deleted}> }
-  // snapshot = { version, epoch, <ทั้ง 12 ชุด> } · delta = { version, epoch, changes: { <ชุด>: { upsert: [...], delete: [...] } } }
+  // snapshot = { version, epoch, <ทั้ง 13 ชุด> } · delta = { version, epoch, changes: { <ชุด>: { upsert: [...], delete: [...] } } }
   // ไม่ส่ง remote = ทั้งชุดอยู่ใน localStorage เหมือนเดิม (ชุดสาธิต + บทบาทสาธิต) · persona() = ผู้ใช้ปัจจุบันของโหมดฐานข้อมูล
   // storage: { getItem, setItem, removeItem } · seed: buildSeed() · actions: ตาราง action · now: () => ms
   function createStore({ storage = null, seed, actions, now = () => Date.now(), remote = null, persona = () => null, idSuffix, shouldHold } = {}) {
@@ -655,7 +666,7 @@
     return { load, data: getData, user: getUser, setUser, run, reset, isPersisted: () => persisted, now, isRemote: () => false, status: () => "ready", error: () => null, isSaving: () => false, hasNewer: () => false, version: () => null, ensureLoaded: () => Promise.resolve(), reload: () => Promise.resolve(), catchUp: () => Promise.resolve(false), audit: () => ({ status: "ready", entries: getData().audit, error: null }), loadAudit: () => Promise.resolve(), purge: () => Promise.resolve({ ok: false, error: new Error("ล้างข้อมูล RubberFlow ทดสอบได้เฉพาะโหมดฐานข้อมูล") }), subscribe: () => () => {} };
   }
 
-  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, CAN, findModule, can, canSee, homeOf, isValidState, createStore, REMOTE_LISTS, diffMaster, mapRemoteError, personaUser, usesRubberFlow, rightForAction, rightForDialog, canReceiveBoxes, canReverseBoxes };
+  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, CAN, findModule, can, canSee, homeOf, isValidState, createStore, REMOTE_LISTS, diffMaster, mapRemoteError, personaUser, usesRubberFlow, rightForAction, rightForDialog, rightForRequisitionReturn, canReceiveBoxes, canReverseBoxes };
   if (isNode) module.exports = api;
   else root.MNP_RUBBERFLOW_STORE = api;
 })(typeof window !== "undefined" ? window : globalThis);

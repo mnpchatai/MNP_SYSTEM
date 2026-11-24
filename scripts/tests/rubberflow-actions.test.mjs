@@ -20,11 +20,12 @@ const STAGES = [{ stage: 1, mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, { stage: 
 const recipeForm = (over = {}) => ({ id: "RC-NEW", items: [{ materialCode: "ZNO", phr: "5" }], batchKg: "40", stages: STAGES, yieldPerKg: "3", ...over });
 const rejects = (fn, pattern) => assert.throws(fn, (error) => { assert.match(error.message, pattern); return true; });
 // ใบเก่าที่ค้างสถานะ weighing (ข้อมูลก่อนมีการจ่ายทันที และก่อนกฎจำนวน batch จาก WO): สร้างด้วย createRequisition (ctx.history ข้ามกฎ) แล้วคืนสถานะและสต็อกให้เป็นแบบเดิม
+// ใบเบิกผสมตัดคลังเคมีของ RB (20261220010000) จึงคืนกิโลเข้าคลัง RB (rbKg) · ใบค้างชั่งของคลัง ST ตรวจใน scripts/tests/st-rb-chemical-store.test.mjs
 function legacyWeighing(d, orderId, batches = 1) {
   const id = A.createRequisition(d, { orderId, batches }, { ...ctx("store"), history: true });
   const req = d.requisitions.find((row) => row.id === id);
   for (const line of req.lines) {
-    d.materialLots.find((lot) => lot.lotNo === line.lotNo).qtyKg += line.actualKg;
+    d.materialLots.find((lot) => lot.lotNo === line.lotNo).rbKg += line.actualKg;
     line.actualKg = null;
     line.weighedAt = null;
     delete line.weighedBy;
@@ -113,11 +114,13 @@ test("recipes: required fields, unique ids, at least one material, draft until a
 
 test("a requisition is issued in one press: FEFO lots, every line at its target, stock drawn down at once; old weighing requisitions still reserve their kilos; short stock refuses", () => {
   const d = fresh();
+  // ใบเบิกผสมจัดสรรและตัดคลังเคมีของ RB (rbKg) · คลัง ST (qtyKg) ไม่ถูกแตะ
+  const stBefore = Object.fromEntries(d.materialLots.map((lot) => [lot.lotNo, lot.qtyKg]));
   const released = d.orders.find((order) => order.status === "released");
   rejects(() => A.createRequisition(d, { orderId: d.orders.find((order) => order.status === "planned").id }, ctx("store")), /ปล่อยผลิต/);
   // จำนวน batch มาจาก WO (ต้องใช้ 120 kg ÷ 60 kg ต่อ batch = 2) ค่า batches ที่ส่งมาเมิน
   released.targetKg = 120;
-  const stockBefore = Object.fromEntries(d.materialLots.map((lot) => [lot.lotNo, lot.qtyKg]));
+  const stockBefore = Object.fromEntries(d.materialLots.map((lot) => [lot.lotNo, lot.rbKg]));
   const id = A.createRequisition(d, { orderId: released.id, batches: 7 }, ctx("store"));
   const req = d.requisitions.find((row) => row.id === id);
   assert.equal(req.batches, 2, "batches come from the work order, not from the input");
@@ -127,7 +130,9 @@ test("a requisition is issued in one press: FEFO lots, every line at its target,
   assert.ok(req.lines.every((line) => line.actualKg === line.targetKg && line.weighedAt === NOW && line.weighedBy === user("store").name), "every line is issued at its target");
   const drawn = {};
   for (const line of req.lines) drawn[line.lotNo] = (drawn[line.lotNo] || 0) + line.targetKg;
-  for (const [lotNo, kg] of Object.entries(drawn)) assert.ok(Math.abs(d.materialLots.find((lot) => lot.lotNo === lotNo).qtyKg - (stockBefore[lotNo] - kg)) < 1e-6, `${lotNo} is drawn down by what was issued`);
+  for (const [lotNo, kg] of Object.entries(drawn)) assert.ok(Math.abs(d.materialLots.find((lot) => lot.lotNo === lotNo).rbKg - (stockBefore[lotNo] - kg)) < 1e-6, `${lotNo} is drawn down by what was issued`);
+  assert.deepEqual(Object.fromEntries(d.materialLots.map((lot) => [lot.lotNo, lot.qtyKg])), stBefore, "the ST store is not touched");
+  assert.equal(req.store, "RB", "the requisition belongs to the RB store");
   assert.equal(req.totalKg, 120);
   const recipe = d.recipes.find((row) => row.id === released.recipeId);
   for (const line of rules.recipeLines(recipe)) {
@@ -136,11 +141,11 @@ test("a requisition is issued in one press: FEFO lots, every line at its target,
   }
   for (const line of req.lines) {
     const lot = d.materialLots.find((row) => row.lotNo === line.lotNo);
-    assert.equal(rules.lotState({ ...lot, qtyKg: stockBefore[line.lotNo] }, NOW), "available", "no expired or held lot is issued");
+    assert.equal(rules.lotState({ ...lot, rbKg: stockBefore[line.lotNo] }, NOW, "RB"), "available", "no expired or held lot is issued");
   }
   // ล็อต EPDM ที่จะหมดอายุก่อนถูกหยิบก่อน
   const epdm = req.lines.filter((line) => line.materialCode === "EPDM-55");
-  const soonest = d.materialLots.map((lot) => ({ ...lot, qtyKg: stockBefore[lot.lotNo] })).filter((lot) => lot.materialCode === "EPDM-55" && rules.lotState(lot, NOW) === "available").sort((a, b) => a.expiry - b.expiry)[0];
+  const soonest = d.materialLots.map((lot) => ({ ...lot, rbKg: stockBefore[lot.lotNo] })).filter((lot) => lot.materialCode === "EPDM-55" && rules.lotState(lot, NOW, "RB") === "available").sort((a, b) => a.expiry - b.expiry)[0];
   assert.equal(epdm[0].lotNo, soonest.lotNo);
   // ใบเก่าที่ค้าง weighing จองกิโลที่ยังไม่จ่าย ใบใหม่ไม่หยิบซ้ำ · สต็อกไม่พอ → ปฏิเสธทั้งใบ ไม่สร้างใบเบิกครึ่งเดียว
   // WO เบิกครบแล้ว (เบิก 2 batch ตามที่ต้องใช้) เบิกอีกไม่ได้ จนกว่ายอดที่ต้องใช้จะเพิ่ม
@@ -153,9 +158,9 @@ test("a requisition is issued in one press: FEFO lots, every line at its target,
   assert.equal(d.requisitions[0].batches, 1, "240 kg needed − 120 issued − 60 old requisition = 1 batch");
   const owed = {};
   old.lines.forEach((line) => { owed[line.lotNo] = (owed[line.lotNo] || 0) + line.targetKg; });
-  for (const [lotNo, kg] of Object.entries(owed)) assert.ok(d.materialLots.find((lot) => lot.lotNo === lotNo).qtyKg >= kg - 1e-9, `the kilos the old requisition promised on ${lotNo} are not taken again`);
+  for (const [lotNo, kg] of Object.entries(owed)) assert.ok(d.materialLots.find((lot) => lot.lotNo === lotNo).rbKg >= kg - 1e-9, `the kilos the old requisition promised on ${lotNo} are not taken again`);
   const reservedEpdm = 1;
-  d.materialLots.filter((lot) => lot.materialCode === "EPDM-55").forEach((lot) => { lot.qtyKg = Math.min(lot.qtyKg, reservedEpdm); });
+  d.materialLots.filter((lot) => lot.materialCode === "EPDM-55").forEach((lot) => { lot.rbKg = Math.min(lot.rbKg, reservedEpdm); });
   const count = d.requisitions.length;
   released.targetKg = 1200;
   rejects(() => A.createRequisition(d, { orderId: released.id }, ctx("store")), /สต็อกไม่พอตามหลัก FEFO: EPDM-55 ขาด/);
@@ -175,13 +180,13 @@ test("an old requisition that is still weighing: weighing is Poka-Yoke (outside 
   lot.status = "hold";
   rejects(() => A.weighLine(d, { reqId: req.id, index, actualKg: line.targetKg }, ctx("store")), /ใช้ไม่ได้แล้ว/);
   lot.status = "available";
-  const before = Object.fromEntries(req.lines.map((row) => [row.lotNo, d.materialLots.find((item) => item.lotNo === row.lotNo).qtyKg]));
+  const before = Object.fromEntries(req.lines.map((row) => [row.lotNo, d.materialLots.find((item) => item.lotNo === row.lotNo).rbKg]));
   req.lines.forEach((row, i) => { if (row.actualKg === null) A.weighLine(d, { reqId: req.id, index: i, actualKg: row.targetKg }, ctx("store")); });
   assert.equal(req.status, "issued");
   assert.equal(req.issuedBy, user("store").name);
   for (const row of req.lines) {
-    const stock = d.materialLots.find((item) => item.lotNo === row.lotNo).qtyKg;
-    assert.ok(stock <= before[row.lotNo], `${row.lotNo} was drawn down`);
+    const stock = d.materialLots.find((item) => item.lotNo === row.lotNo).rbKg;
+    assert.ok(stock < before[row.lotNo], `${row.lotNo} was drawn down`);
   }
   rejects(() => A.weighLine(d, { reqId: req.id, index: 0, actualKg: 1 }, ctx("store")), /ชั่งครบแล้ว/);
 });
@@ -192,7 +197,7 @@ test("issueRequisition issues every line of an old weighing requisition at its t
     const released = d.orders.find((order) => order.status === "released");
     const req = legacyWeighing(d, released.id, 2);
     const run = (name, payload) => A[name](d, payload, { ...ctx("store"), remote, user: { ...user("store"), rb: true } });
-    const before = Object.fromEntries(d.materialLots.map((lot) => [lot.lotNo, lot.qtyKg]));
+    const before = Object.fromEntries(d.materialLots.map((lot) => [lot.lotNo, lot.rbKg]));
     rejects(() => run("issueRequisition", { id: "REQ-NOPE" }), /ไม่พบใบเบิก/);
     // ถ้าบางบรรทัดถูกชั่งไปแล้ว (ค่าจริงต่างจากเป้าหมายได้) ที่เหลือจ่ายตามเป้าหมาย
     const first = req.lines[0];
@@ -212,7 +217,7 @@ test("issueRequisition issues every line of an old weighing requisition at its t
     assert.ok(req.lines.slice(1).every((line) => line.actualKg === line.targetKg && line.weighedAt === NOW && line.weighedBy === user("store").name));
     const expected = {};
     req.lines.forEach((line) => { expected[line.lotNo] = (expected[line.lotNo] || 0) + line.actualKg; });
-    for (const [lotNo, kg] of Object.entries(expected)) assert.ok(Math.abs(d.materialLots.find((row) => row.lotNo === lotNo).qtyKg - (before[lotNo] - kg)) < 1e-6, `${remote ? "database" : "demo"} mode draws ${lotNo} down exactly once`);
+    for (const [lotNo, kg] of Object.entries(expected)) assert.ok(Math.abs(d.materialLots.find((row) => row.lotNo === lotNo).rbKg - (before[lotNo] - kg)) < 1e-6, `${remote ? "database" : "demo"} mode draws ${lotNo} down exactly once`);
     rejects(() => run("issueRequisition", { id: req.id }), /จ่ายวัตถุดิบครบแล้ว/);
     rejects(() => run("weighLine", { reqId: req.id, index: 0, actualKg: 1 }), /ชั่งครบแล้ว/);
   }
