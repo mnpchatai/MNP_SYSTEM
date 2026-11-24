@@ -10,7 +10,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(429);
+select plan(439);
 
 -- ตัวช่วย (ชั่วคราว) ---------------------------------------------------------
 -- claims ของผู้ใช้ทดสอบเลขที่ n
@@ -407,6 +407,17 @@ select throws_ok($$ update public.itas_type_log set action = 'created' $$, '4250
 select throws_ok($$ delete from public.itas_types where not is_test $$, '42501', 'ชนิดอุปกรณ์ลบไม่ได้ ให้ปิดการใช้งานแทน (บันทึกสำหรับ ISO)', 'a type cannot be deleted');
 select throws_ok($$ truncate public.itas_types cascade $$, '42501', null, 'the type table cannot be truncated');
 select throws_ok($$ update public.itas_types set code = 'ZZ_OTHER' where code = 'ZZ_TEST' and not is_test $$, '42501', 'รหัสชนิดและผู้บันทึกของชนิดอุปกรณ์แก้ไขไม่ได้', 'the code of a type cannot change');
+-- ประวัติเขียนโดย trigger: เพิ่ม/แก้ตรงด้วยสิทธิ์สูง (ไม่ผ่าน RPC) ก็ยังลง log + moves ให้ เลี่ยงไม่ได้
+select lives_ok(format($$ insert into public.itas_assets (id, type_code, name, host_code, status, created_by, updated_by) values ('2a500000-0000-0000-0000-0000000000a1', 'CASE', 'เคสเขียนตรง', 'COM01', 'spare', %L, %L) $$, current_setting('test.e_ita_adm'), current_setting('test.e_ita_adm')), 'an asset written directly by a superuser (bypassing the RPC)');
+select is((select count(*)::int from public.itas_asset_log where asset_id = '2a500000-0000-0000-0000-0000000000a1' and action = 'created'), 1, 'still gets its created log row from the trigger');
+select is((select to_host || '/' || to_status from public.itas_asset_moves where asset_id = '2a500000-0000-0000-0000-0000000000a1'), 'COM01/spare', 'and its move row');
+select lives_ok($$ update public.itas_assets set status = 'in_use', updated_by = (select id from public.employees where employee_no = 'ITA-ADM2') where id = '2a500000-0000-0000-0000-0000000000a1' $$, 'a direct status update');
+select is((select count(*)::int from public.itas_asset_log where asset_id = '2a500000-0000-0000-0000-0000000000a1' and action = 'updated'), 1, 'is logged too');
+select is((select from_status || '->' || to_status from public.itas_asset_moves where asset_id = '2a500000-0000-0000-0000-0000000000a1' order by id desc limit 1), 'spare->in_use', 'and recorded as a move with the editor as actor');
+select is((select e.employee_no from public.itas_asset_moves m join public.employees e on e.id = m.actor_id where m.asset_id = '2a500000-0000-0000-0000-0000000000a1' order by m.id desc limit 1), 'ITA-ADM2', 'the move actor is the updating user');
+select lives_ok($$ update public.itas_assets set updated_by = (select id from public.employees where employee_no = 'ITA-ADM') where id = '2a500000-0000-0000-0000-0000000000a1' $$, 'an update that changes nothing but the editor');
+select is((select count(*)::int from public.itas_asset_log where asset_id = '2a500000-0000-0000-0000-0000000000a1'), 2, 'writes no log row (nothing changed)');
+select ok((select updated_at > created_at or updated_at = created_at from public.itas_assets where id = '2a500000-0000-0000-0000-0000000000a1'), 'updated_at is maintained by the trigger');
 select ok(not exists (select 1 from public.itas_asset_log l where l.action = 'updated' and l.old_values is null) and not exists (select 1 from public.itas_asset_log l where l.action = 'created' and l.old_values is not null), 'the log table forces old values to exist exactly for updates');
 
 -- 6. ตู้เซฟ -------------------------------------------------------------
