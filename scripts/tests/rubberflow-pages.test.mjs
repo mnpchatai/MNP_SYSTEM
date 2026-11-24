@@ -1403,8 +1403,10 @@ test("finishing page: the CoA button becomes a link to #/qa?tab=coa&lot= for rol
   const lot = env.store.data().lots.find((row) => row.stage === "finishing");
   const withLink = await env.render("p=finishing");
   assert.ok(withLink.includes(`href="#/qa?tab=coa&amp;lot=${lot.id}"`), "a link to the CoA of that lot in #/qa");
+  assert.match(withLink, /<th[^>]*>CoA<\/th>/, "the CoA column exists for a user who can open QA");
   assert.doesNotMatch(withLink, /data-rf-open="coa"/, "no CoA dialog on the finishing page");
   env.context.MNP_FACTORY = { canOpenDeptModule: () => false, routeUrl };
   const without = await env.render("p=finishing");
   assert.doesNotMatch(without, /tab=coa|data-rf-open="coa"/, "RB sees the QC badge of the lot but no CoA");
+  assert.doesNotMatch(without, /<th[^>]*>CoA<\/th>/, "and no empty CoA column");
 });

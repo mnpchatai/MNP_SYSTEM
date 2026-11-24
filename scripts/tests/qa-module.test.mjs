@@ -158,10 +158,17 @@ test("งานของฉัน: the page opens on it; staff and planning see 
     const lotCard = cardOf(html, lotTitle);
     assert.match(lotCard, /data-rf-open="qcRecord"[^>]*>ตรวจซ้ำ \(กักต่อ\)</, `${employee.role.code} ${employee.department.code} re-checks`);
     assert.doesNotMatch(lotCard, />ตัดสิน</);
-    assert.match(lotCard, /ปล่อยหรือตัดสินผ่าน\/ไม่ผ่านได้เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน\/ผู้ดูแลระบบ/);
+    // the head-only sentence is not repeated on the card: it sits once under the group heading and in the title of the button they do see
+    assert.doesNotMatch(lotCard.replace(/ (title|aria-label)="[^"]*"/g, ""), /เฉพาะหัวหน้า QA/, "no sentence on the lot card");
+    assert.match(lotCard, /<button [^>]*title="ปล่อยหรือตัดสินผ่าน\/ไม่ผ่านได้เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน\/ผู้ดูแลระบบ"/, "the re-check button explains itself");
+    assert.match(lotCard, /aria-label="ตรวจซ้ำล็อต [^"]*เฉพาะหัวหน้า QA/);
     const materialCard = cardOf(html, materialTitle);
     assert.doesNotMatch(materialCard, /data-rf-action="setMaterialLotStatus"/, "no release button");
-    assert.match(materialCard, /ปลดกักกันได้เฉพาะหัวหน้า QA/);
+    assert.doesNotMatch(materialCard, /เฉพาะหัวหน้า QA/, "no sentence on the chemical card");
+    const sentences = html.match(/<p class="small muted">[^<]*เฉพาะหัวหน้า QA[^<]*<\/p>/g) ?? [];
+    assert.equal(sentences.filter((text) => text.includes("ปล่อยหรือตัดสินผ่าน/ไม่ผ่านได้")).length, 1, "the lots group says it once under its heading");
+    assert.equal(sentences.filter((text) => text.includes("ปลดกักกันได้")).length, 1, "the chemicals group says it once under its heading");
+    assert.equal(new Set(sentences).size, sentences.length, "no sentence twice on the page");
   }
   for (const employee of PEOPLE.heads) {
     const html = await env.asDb(employee).open("");
@@ -177,6 +184,19 @@ test("งานของฉัน: the page opens on it; staff and planning see 
   assert.doesNotMatch(html, /แท่ง|undefined|NaN|\[object Object\]/);
   assert.equal(new Set(cardsOf(html)).size, cardsOf(html).length, "no card twice");
   assert.equal((html.match(/<h1>/g) ?? []).length, 1);
+});
+
+test("ผลตรวจ: the newest record is first (by tested time, then number), whatever order the store holds them in; the search keeps that order", async () => {
+  const env = load();
+  const data = env.rf.store.data();
+  const template = data.qcRecords[0];
+  data.qcRecords.splice(0, data.qcRecords.length, ...[3, 1, 5, 2, 4].map((n) => ({ ...structuredClone(template), id: `QC-ORD-${n}`, lotId: `LOT-ORD-${n}`, at: 1_700_000_000_000 + (n === 4 ? 3 : n) * 1000 })));
+  const html = await env.asDb(STAFF).open("tab=records");
+  const ids = rowsOf(html).map((row) => row.match(/QC-ORD-\d/)[0]);
+  assert.deepEqual(ids, ["QC-ORD-5", "QC-ORD-4", "QC-ORD-3", "QC-ORD-2", "QC-ORD-1"], "newest time first; equal time = higher number first");
+  const filtered = await env.open("tab=records&q=QC-ORD");
+  assert.deepEqual(rowsOf(filtered).map((row) => row.match(/QC-ORD-\d/)[0]), ids);
+  assert.deepEqual([...data.qcRecords.map((record) => record.id)], ["QC-ORD-3", "QC-ORD-1", "QC-ORD-5", "QC-ORD-2", "QC-ORD-4"], "the store itself is not reordered");
 });
 
 test("งานของฉัน: each source shows at most six cards and says how many more with one link; the rest opens with ?all=1", async () => {
@@ -516,7 +536,7 @@ test("the QA module files: pages in qa-pages.js, loaded before module-qa.js with
   assert.ok(order.indexOf("modules/qa-pages.js") >= 0 && order.indexOf("modules/qa-pages.js") < order.indexOf("modules/module-qa.js"), "qa-pages.js before module-qa.js");
   assert.ok(order.indexOf("modules/module-qa.js") < order.indexOf("app.js"));
   assert.equal(new Set(scripts.map((match) => match[2])).size, 1, "one ?v= for every entry");
-  assert.equal(scripts[0][2], "20261128qamodule");
+  assert.equal(scripts[0][2], "20261128qamodule2");
   const quality = read("modules/rubberflow-pages-quality.js");
   assert.doesNotMatch(quality, /pages\.(quality|spc|trace)\s*=/, "the RubberFlow pages are gone, the bodies are shared views");
   const pagesSource = read("modules/qa-pages.js");

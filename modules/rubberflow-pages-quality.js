@@ -12,10 +12,13 @@
   const views = {};
 
   // ---------- ผลตรวจ ----------
+  // ผลตรวจใหม่สุดก่อน (เวลาตรวจ แล้วเลขที่) · ทุกที่ที่แสดงตารางนี้เรียงชุดเดียวกัน ก่อนตัดจำนวนแถว
+  views.qcRecordsNewestFirst = (records) => [...records].sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0) || String(b.id).localeCompare(String(a.id), "en", { numeric: true }));
   views.qcRecordsTable = (ctx, { records = ctx.data.qcRecords, limit = 0 } = {}) => {
     const { ui, rules } = ctx;
     const { STAGE_LABEL, SPECS, fmtDateTime } = rules;
-    const list = limit > 0 ? records.slice(0, limit) : records;
+    const sorted = views.qcRecordsNewestFirst(records);
+    const list = limit > 0 ? sorted.slice(0, limit) : sorted;
     return ui.table(["เลขที่", "ล็อต", "ผลทดสอบ", "ผล", "ผู้ตรวจ"], list.map((record) => `<tr><td>${ui.mono(record.id)}<div class="small muted">${esc(fmtDateTime(record.at))}</div></td><td class="rf-mono small">${esc(record.lotId)}<div class="muted">${esc(STAGE_LABEL[record.stage])}</div></td>
         <td class="small">${record.tests.map((test) => ui.badge(test.pass ? "" : "bad", `${SPECS.lab[test.key]?.label ?? test.key} ${test.value}`)).join(" ")}${record.note ? `<div class="muted">${esc(record.note)}</div>` : ""}</td><td>${ui.status(record.result)}</td><td class="small">${esc(record.inspector ?? "-")}</td></tr>`), { emptyText: "ยังไม่มีผลตรวจ" });
   };

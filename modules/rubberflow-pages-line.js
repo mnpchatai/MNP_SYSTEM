@@ -592,10 +592,10 @@
     : linked && choice === "hold" ? "บันทึก {result} แล้ว กักรอ QC" : base);
   // ล็อตที่ส่งมอบให้ลูกค้าผ่าน WH อยู่ที่ไหนแล้ว (จากกล่องของล็อต): รอ WH รับเข้า / WH รับแล้ว / ส่งมอบแล้ว · ป้ายเป็นลิงก์ไปหน้าล็อตของ WH เมื่อผู้ใช้เปิดโมดูล WH ได้
   // CoA อยู่ที่โมดูล QA (#/qa?tab=coa · โรงงานขั้น 5): ลิงก์ไปที่ล็อตนั้นเฉพาะผู้ที่เปิดโมดูล QA ได้ (QA ฝ่ายวางแผน ผู้จัดการ) · แผนก RB ไม่เห็นปุ่ม (เห็นผล QC ของล็อตในคอลัมน์ QC อย่างเดียว)
+  const canOpenQa = () => typeof state !== "undefined" && Boolean(root.MNP_FACTORY?.canOpenDeptModule?.(state.employee, "QA", "FACTORY_QA"));
   function qaCoaLink(ctx, lot) {
     const factory = root.MNP_FACTORY;
-    const open = typeof state !== "undefined" && Boolean(factory?.canOpenDeptModule?.(state.employee, "QA", "FACTORY_QA"));
-    return open ? ctx.ui.link("ดู CoA", factory.routeUrl("qa", { tab: "coa", lot: lot.id }), "btn rf-btn secondary small") : "";
+    return canOpenQa() ? ctx.ui.link("ดู CoA", factory.routeUrl("qa", { tab: "coa", lot: lot.id }), "btn rf-btn secondary small") : "";
   }
   function whStateHtml(ctx, lot) {
     const boxes = (ctx.data.fgBoxes ?? []).filter((box) => box.lotId === lot.id);
@@ -638,7 +638,7 @@
           if (!toSr) return `${esc(`${lot.boxes} กล่อง × ${fmtNum(lot.params.perBox)} · เกรด ${lot.grade}`)}${whStateHtml(ctx, lot)}`;
           return `${esc(`ส่งคลังยางเส้นยาว (SR) · เกรด ${lot.grade}`)}${srStateHtml(ctx, lot)}`;
         } },
-        { label: "CoA", render: (lot) => qaCoaLink(ctx, lot) },
+        ...(canOpenQa() ? [{ label: "CoA", render: (lot) => qaCoaLink(ctx, lot) }] : []),
       ])}`;
     const bind = (rootNode) => {
       const form = rootNode.querySelector("[data-rf-finishing]");

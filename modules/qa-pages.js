@@ -16,7 +16,11 @@
   const rfScope = (html) => (html ? `<div data-rf-scope="rubberflow">${html}</div>` : "");
   const dash = '<span class="muted">—</span>';
   const readOnlyNote = '<p class="small muted">ดูอย่างเดียว บัญชีนี้ไม่มีสิทธิ์ดำเนินการ</p>';
+  // ประโยค "ตัดสินได้เฉพาะหัวหน้า" แสดงครั้งเดียวใต้หัวกลุ่มการ์ด (และใน title ของปุ่ม) ไม่ซ้ำทุกการ์ด
   const headOnlyText = () => rfRules()?.QA_RELEASE_TEXT ?? "เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ";
+  const releaseHeadText = () => `ปล่อยหรือตัดสินผ่าน/ไม่ผ่านได้${headOnlyText()}`;
+  const unholdHeadText = () => `ปลดกักกันได้${headOnlyText()}`;
+  const groupNote = (text) => (text ? `<p class="small muted">${esc(text)}</p>` : "");
   // การ์ดของแต่ละแหล่งแสดงสูงสุดเท่านี้ใบ ที่เหลือบอก "อีก N รายการ" และขยายด้วย ?all=1 (เห็นงานทั้งหมดโดยไม่ต้องเลื่อนยาว)
   const CARD_LIMIT = 6;
 
@@ -64,7 +68,7 @@
     const reasons = (lot.holdReasons ?? []).filter(Boolean);
     const head = rfCan(rf, "qaRelease");
     const action = !rfCan(rf, "qcDecision") ? readOnlyNote
-      : `${ui.openButton(head ? "ตัดสิน" : "ตรวจซ้ำ (กักต่อ)", "qcRecord", { lotId: lot.id }, { className: "bom-job-main", ariaLabel: `${head ? "ตัดสิน" : "ตรวจซ้ำ"}ล็อต ${lot.id}` })}${head ? "" : `<p class="small muted">${esc(`ปล่อยหรือตัดสินผ่าน/ไม่ผ่านได้${headOnlyText()}`)}</p>`}`;
+      : ui.openButton(head ? "ตัดสิน" : "ตรวจซ้ำ (กักต่อ)", "qcRecord", { lotId: lot.id }, { className: "bom-job-main", ariaLabel: `${head ? "ตัดสิน" : "ตรวจซ้ำ"}ล็อต ${lot.id}${head ? "" : ` · ${releaseHeadText()}`}`, title: head ? "" : releaseHeadText() });
     return card({ tone: "is-hold", state: "กักรอตัดสิน", when: `กักเมื่อ ${rules.fmtDate(lot.createdAt)}`, title: `ตัดสินล็อต ${lot.id}`, sub: esc(sub), lines: reasons.length ? cardLines(reasons, (reason) => `<li><span>${esc(reason)}</span></li>`, "สาเหตุ") : "", actions: action });
   }
   // ล็อตวัตถุดิบที่กัก (ปลดกักกัน = หัวหน้า QA ขึ้นไป · ยอดจ่ายไม่ได้ทั้งคลัง ST และคลัง RB จนกว่าจะปลด)
@@ -74,7 +78,7 @@
     const R = rfRules();
     const name = materialName(rf.data, lot.materialCode);
     const action = rfCan(rf, "qaRelease") ? releaseButton(ui, lot)
-      : rfCan(rf, "holdMaterial") ? `<p class="small muted">${esc(`ปลดกักกันได้${headOnlyText()}`)}</p>` : readOnlyNote;
+      : rfCan(rf, "holdMaterial") ? "" : readOnlyNote;
     return card({ tone: "is-hold", state: "วัตถุดิบถูกกัก", when: `หมดอายุ ${rules.fmtDate(lot.expiry)}`, title: `ปลดกักกันล็อต ${lot.lotNo}`, sub: `<span class="rf-mono">${esc(lot.materialCode)}</span>${name ? ` ${esc(name)}` : ""} · ${esc(`${lotKgText(ctx, R, lot, "ST")} · ${lotKgText(ctx, R, lot, "RB")}`)}`, actions: action });
   }
   // NCR ที่ยังเปิดอยู่ (ของ RubberFlow ไม่ใช่ใบคำร้อง NCR/CAR) · RB กรอกการแก้ไข/ป้องกันที่หน้า "NCR ที่ RB ต้องตอบ" · ปิดเคสที่แท็บ NCR
@@ -86,7 +90,7 @@
 
   // งานของฉัน: ยางเส้นยาวที่กัก (การ์ดของ BOM) + ล็อตในสายผลิต + วัตถุดิบที่กัก + NCR ที่เปิดอยู่ · count = จำนวนการ์ดทั้งหมด (ตัวเลขที่เมนู)
   function workData(ctx, rf) {
-    const rod = F.deptWork(ctx, { title: "ยางเส้นยาวที่กักรอตัดสิน", quietWhenEmpty: true });
+    const rod = F.deptWork(ctx, { title: "ยางเส้นยาวที่กักรอตัดสิน", quietWhenEmpty: true, note: ctx.helpers?.canDecideRods?.(ctx.user) ? "" : groupNote(`ตัดสินได้${headOnlyText()}`) });
     const ready = rf.status === "ready" && Boolean(rfRules());
     const lots = ready ? heldLots(rf.data).map((lot) => lotCard(ctx, rf, lot)) : [];
     const materials = ready ? heldMaterials(rf.data).map((lot) => materialCard(ctx, rf, lot)) : [];
@@ -96,16 +100,16 @@
   function workCount(ctx) {
     try { return workData(ctx, rfState(ctx)).count; } catch { return 0; }
   }
-  function section(ctx, title, cards) {
+  function section(ctx, title, cards, note = "") {
     if (!cards.length) return "";
     const all = ctx.params.get("all") === "1";
     const shown = all ? cards : cards.slice(0, CARD_LIMIT);
     const more = cards.length > shown.length ? `<p class="small muted">${esc(`อีก ${cards.length - shown.length} รายการ`)} ${ctx.ui.link("แสดงทั้งหมด", ctx.pageUrl({ all: 1 }), "btn rf-btn secondary small")}</p>` : "";
-    return rfScope(`<h2 class="bom-h3">${esc(title)}</h2><div class="bom-job-grid">${shown.join("")}</div>${more}`);
+    return rfScope(`<h2 class="bom-h3">${esc(title)}</h2>${groupNote(note)}<div class="bom-job-grid">${shown.join("")}</div>${more}`);
   }
   function workView(ctx, rf) {
     const work = workData(ctx, rf);
-    const parts = [work.rod.html, section(ctx, "ล็อตในสายผลิตที่กักรอตัดสิน", work.lots), section(ctx, "วัตถุดิบที่กักรอปลดกักกัน", work.materials), section(ctx, "NCR ที่ยังเปิดอยู่", work.ncrs), rfNote(ctx, rf)].filter(Boolean);
+    const parts = [work.rod.html, section(ctx, "ล็อตในสายผลิตที่กักรอตัดสิน", work.lots, rfCan(rf, "qcDecision") && !rfCan(rf, "qaRelease") ? releaseHeadText() : ""), section(ctx, "วัตถุดิบที่กักรอปลดกักกัน", work.materials, rfCan(rf, "holdMaterial") && !rfCan(rf, "qaRelease") ? unholdHeadText() : ""), section(ctx, "NCR ที่ยังเปิดอยู่", work.ncrs), rfNote(ctx, rf)].filter(Boolean);
     return work.count || rf.status !== "ready" ? parts.join("") : ctx.ui.card(ctx.ui.empty("ไม่มีงานค้าง"));
   }
   // ลิงก์ไปโมดูลใบตรวจ QC (#/qc) และใบ NCR/CAR (#/ncr): โมดูลของตัวเอง ไม่ใช่ NCR ของ RubberFlow ที่อยู่ในแท็บ NCR
@@ -115,7 +119,7 @@
   function recordsView(ctx, rf) {
     const { ui, q } = ctx;
     if (rf.status !== "ready") return rfNote(ctx, rf) || ui.card(ui.empty("ไม่มีข้อมูล RubberFlow"));
-    const list = (rf.data.qcRecords ?? []).filter((record) => F.includesText(`${record.id} ${record.lotId} ${record.inspector ?? ""} ${record.note ?? ""}`, q));
+    const list = rfViews().qcRecordsNewestFirst(rf.data.qcRecords ?? []).filter((record) => F.includesText(`${record.id} ${record.lotId} ${record.inspector ?? ""} ${record.note ?? ""}`, q));
     const { shown, more } = F.limited(ctx, list);
     const toolbar = `<div class="rf-row sr-toolbar">${F.searchForm(ctx, "ค้นหาเลขที่ ล็อต หรือผู้ตรวจ")}${q ? ui.link("ล้างตัวกรอง", ctx.pageUrl({ q: null }), "btn rf-btn secondary small") : ""}</div>`;
     return `${toolbar}${ui.card(`${rfViews().qcRecordsTable(rf.ctx, { records: shown })}${more}`, { flush: true })}`;
@@ -149,13 +153,14 @@
     const row = (lot, action) => `<tr><td>${ui.mono(lot.lotNo)}</td><td>${ui.mono(lot.materialCode)}<div class="small muted">${esc(materialName(data, lot.materialCode))}</div></td><td class="nowrap small">${lot.expiry ? esc(rules.fmtDate(lot.expiry)) : dash}</td><td class="right rf-mono">${esc(rules.fmtQty(kgOf(lot)))}</td><td class="right">${action}</td></tr>`;
     const head = ["ล็อต", "วัตถุดิบ", "หมดอายุ", { label: "คงเหลือ (kg)", className: "right" }, ""];
     const held = heldMaterials(data);
-    const heldRows = held.map((lot) => row(lot, release ? releaseButton(ui, lot, "secondary small") : holdable ? `<span class="small muted">${esc(headOnlyText())}</span>` : ""));
+    const heldRows = held.map((lot) => row(lot, release ? releaseButton(ui, lot, "secondary small") : ""));
+    const heldNote = held.length && holdable && !release ? groupNote(unholdHeadText()) : "";
     const heldCard = ui.card(ui.table(head, heldRows, { emptyText: "ไม่มีล็อตวัตถุดิบที่กัก" }), { title: esc("ล็อตที่กักอยู่"), flush: true });
     const found = q ? (data.materialLots ?? []).filter((lot) => lot.status !== "hold" && kgOf(lot) > 0.0001 && F.includesText(`${lot.lotNo} ${lot.materialCode} ${materialName(data, lot.materialCode)}`, q)).sort((a, b) => num(a.expiry) - num(b.expiry)) : [];
     const holdButton = (lot) => ui.button("กักกัน", { action: "setMaterialLotStatus", args: { lotNo: lot.lotNo, status: "hold" }, className: "secondary small", confirmText: `กักกันล็อต ${lot.lotNo}? ล็อตที่กักกันจ่ายไม่ได้ทั้งคลัง ST และคลัง RB จนกว่าหัวหน้า QA จะปลดกักกัน`, success: "กักกันล็อต {result} แล้ว", ariaLabel: `กักกันล็อต ${lot.lotNo}` });
     const shownFound = found.slice(0, 20);
     const searchCard = ui.card(`<div class="rf-row sr-toolbar">${F.searchForm(ctx, "ค้นหาล็อตหรือวัตถุดิบที่จะกักกัน")}${q ? ui.link("ล้างคำค้น", ctx.pageUrl({ q: null }), "btn rf-btn secondary small") : ""}</div>${q ? ui.table(head, shownFound.map((lot) => row(lot, holdable ? holdButton(lot) : "")), { emptyText: "ไม่พบล็อตที่ใช้ได้ตามคำค้น" }) : ""}${found.length > shownFound.length ? `<p class="small muted">${esc(`แสดง 20 จาก ${found.length} ล็อต ค้นให้แคบลง`)}</p>` : ""}`, { title: esc("กักกันล็อตวัตถุดิบ") });
-    return rfScope(`${heldCard}${searchCard}`);
+    return rfScope(`${heldNote}${heldCard}${searchCard}`);
   }
 
   // ---------- หน้าแรกของโมดูล ----------
