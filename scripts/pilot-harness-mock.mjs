@@ -512,6 +512,9 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     // หัวหน้าแผนก GR (ผู้ช่วยผู้จัดการแผนก: ไม่อยู่ในกลุ่มวางแผน เหมือนบัญชีทดสอบ SBX-GR-AMGR): ตั้งค่าขั้นตอน / ตั้งขั้นตอนของงาน / บันทึกและแก้ผลของทุกคน / ส่งงานให้ PK (20261216010000)
     ["persona-grh", "วิไล", "หัวหน้าแปรรูป", "หัวหน้าแผนก GR (ผู้ช่วยผู้จัดการแผนก)", "GR", "ฝ่ายผลิต GR", "assistant_department_manager"],
     ["persona-st", "วิชัย", "คลังวัตถุดิบ", "พนักงานคลังวัตถุดิบ (ST)", "ST", "คลังวัตถุดิบ"],
+    // หัวหน้าแผนก ST (ผู้จัดการแผนก): ปล่อยวัตถุดิบที่กักได้เหมือนหัวหน้า QA (private.material_release_ok · 20261221010000 · คำสั่งเจ้าของ 2026-11-24)
+    //   แต่ไม่ได้ตัดสินล็อตที่กักของสายผลิตหรือยางเส้นยาวที่ SR กัก (หัวหน้า QA เท่านั้น)
+    ["persona-sth", "ประสิทธิ์", "หัวหน้าคลังวัตถุดิบ", "หัวหน้าแผนกคลังวัตถุดิบ (ST)", "ST", "คลังวัตถุดิบ", "department_manager"],
     // SR = คลังยางเส้นยาวของ BOM (รับเข้าคลัง ตรวจขนาด รับนอกใบสั่ง ย้ายตำแหน่ง ปรับยอด จ่ายให้ GR · 20261202010000 / 20261204010000)
     // ใบส่งมอบ WIP ของ RubberFlow รับมอบโดยแผนก RB แล้ว (SR ดู RubberFlow ได้อย่างเดียว)
     ["persona-sr", "ศิริ", "รับมอบ", "พนักงานแผนก SR (คลังยางเส้นยาว)", "SR", "คลังยางเส้นยาว"],
@@ -584,6 +587,10 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
   //   (ไม่รวม assistant_factory_manager) · ผู้ตัดสินล็อตที่กักของสายผลิต (ผล pass / fail = RF_QA_HEAD_ONLY) ยางเส้นยาวที่กัก (decideRods = BOM_QA_HEAD_ONLY) และปล่อยวัตถุดิบที่กัก
   const qaHead = (actor) => (actor.dept === "QA" && ["department_manager", "assistant_department_manager"].includes(actor.role))
     || ["factory_manager", "general_manager", "admin"].includes(actor.role);
+  // ผู้ปล่อยวัตถุดิบที่กัก (private.material_release_ok ของ 20261221010000): หัวหน้า QA หรือหัวหน้า ST (แผนก ST บทบาท department_manager / assistant_department_manager)
+  //   ปฏิเสธ = RF_MATERIAL_RELEASE_HEAD_ONLY
+  const materialReleaseOk = (actor) => qaHead(actor)
+    || (actor.dept === "ST" && ["department_manager", "assistant_department_manager"].includes(actor.role));
   // ใครใช้ข้อมูลจริงได้ (private.bom_can_read / rf_can_read): กลุ่มวางแผน หรือพนักงานแผนกของโมดูล · โหมดทดสอบทุก persona อ่านได้เหมือนเดิม
   // SR และ QA อ่าน BOM ได้ตั้งแต่ 20261202010000 (คลังแท่งยาว: SR รับเข้า / จ่ายให้ GR · QA ตัดสินล็อตที่กัก)
   const bomCanRead = (actor) => bomIsPlanner(actor) || ["RB", "GR", "PT", "BG", "PK", "ST", "WH", "SR", "QA"].includes(actor.dept);
@@ -2175,8 +2182,8 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         }
         if (!(inDept("ST") || actor.dept === "QA")) fail("RF_FORBIDDEN");
         if (!rfSame(prev, record, ["status", ...RF_NOOP.materialLots])) fail(bad);
-        // ปล่อยล็อตที่กัก (hold -> available) = หัวหน้า QA เท่านั้น (20261221010000) · กักยังเป็นของกลุ่มวางแผน / ST / QA
-        if (prev.status === "hold" && record.status === "available" && !qaHead(actor)) fail("RF_QA_HEAD_ONLY");
+        // ปล่อยล็อตที่กัก (hold -> available) = หัวหน้า QA หรือหัวหน้า ST (20261221010000) · กักยังเป็นของกลุ่มวางแผน / ST / QA
+        if (prev.status === "hold" && record.status === "available" && !materialReleaseOk(actor)) fail("RF_MATERIAL_RELEASE_HEAD_ONLY");
         put({ ...prev, status: record.status });
         return null;
       }

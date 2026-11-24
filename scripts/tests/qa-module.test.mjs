@@ -4,7 +4,8 @@ import test from "node:test";
 import vm from "node:vm";
 
 // โมดูลตรวจคุณภาพ (QA) #/qa · modules/qa-pages.js (โรงงาน ขั้น 5) — งาน QA ย้ายมาจาก RubberFlow (p=quality / spc / trace) และ #/st?lot= (กักกันวัตถุดิบ)
-// หน้า: งานของฉัน · ผลตรวจ · NCR · CoA · SPC · สืบย้อนกลับ · วัตถุดิบที่กัก · สิทธิ์ใหม่: ปล่อยล็อตที่กัก / ตัดสินยางเส้นยาวที่กัก / ปลดกักกันวัตถุดิบ = หัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบเท่านั้น
+// หน้า: งานของฉัน · ผลตรวจ · NCR · CoA · SPC · สืบย้อนกลับ · วัตถุดิบที่กัก · สิทธิ์ใหม่: ปล่อยล็อตที่กัก / ตัดสินยางเส้นยาวที่กัก = หัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบเท่านั้น
+// · ปลดกักกันวัตถุดิบ = หัวหน้า QA หรือหัวหน้า ST ขึ้นไป (RF_MATERIAL_RELEASE_HEAD_ONLY · หน้าวัตถุดิบที่กักชุดเดียวกับ #/st?tab=hold)
 // (ฐานข้อมูลตัดสินจริง RF_QA_HEAD_ONLY / BOM_QA_HEAD_ONLY · หน้าจอซ่อนปุ่มเป็น UX) · ลิงก์เก่าของ RubberFlow พาไปแท็บเดียวกัน · แผนก RB ตอบ NCR ที่หน้า p=ncr ของ RubberFlow
 const FILES = [
   "vendor/qrcode-generator/qrcode.js", "modules/ui-icons.js", "modules/department-access.js",
@@ -143,6 +144,16 @@ test("the QA-head rule is one definition for the page, the RubberFlow actions an
     assert.equal(error.code, code);
     assert.match(error.message, /เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน\/ผู้ดูแลระบบ/);
   }
+  // releasing a held chemical lot is wider (owner order 2026-11-24): every QA head plus the ST head (manager or assistant manager); never QA / ST staff, planning or the RB head
+  // the other two head-only decisions stay with the QA head: the ST head neither releases a line lot nor decides a rod lot
+  const releases = (employee) => rules.canReleaseMaterial(env.rfApi.personaUser(employee)) && env.rfApi.can(env.rfApi.personaUser(employee), "releaseMaterial");
+  for (const employee of [...PEOPLE.heads, emp("ST", "department_manager"), emp("ST", "assistant_department_manager")]) assert.equal(releases(employee), true, `${employee.role.code} ${employee.department.code} releases chemicals`);
+  for (const employee of [...PEOPLE.others, emp("ST", "staff"), emp("RB", "department_manager"), emp("PK", "department_manager")]) assert.equal(env.rfApi.can(env.rfApi.personaUser(employee), "releaseMaterial"), false, `${employee.role.code} ${employee.department.code} does not`);
+  const stHead = emp("ST", "assistant_department_manager");
+  assert.equal(env.rfApi.can(env.rfApi.personaUser(stHead), "qaRelease") || bomActions.helpers.canDecideRods(env.bomApi.personaUser(stHead)), false, "the ST head stays out of the QA-head decisions");
+  const refusal = env.rfApi.mapRemoteError({ code: "RF_MATERIAL_RELEASE_HEAD_ONLY", message: "RF_MATERIAL_RELEASE_HEAD_ONLY" });
+  assert.equal(refusal.message, "ปลดกักกันวัตถุดิบได้เฉพาะหัวหน้า QA หัวหน้า ST หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ");
+  assert.equal(rules.MATERIAL_RELEASE_TEXT, refusal.message, "the page and the refusal say the same rule");
 });
 
 test("งานของฉัน: the page opens on it; staff and planning see a held line lot as a re-check (hold only), the head sees the decide button; the chemical release is the head's", async () => {
@@ -167,7 +178,7 @@ test("งานของฉัน: the page opens on it; staff and planning see 
     assert.doesNotMatch(materialCard, /เฉพาะหัวหน้า QA/, "no sentence on the chemical card");
     const sentences = html.match(/<p class="small muted">[^<]*เฉพาะหัวหน้า QA[^<]*<\/p>/g) ?? [];
     assert.equal(sentences.filter((text) => text.includes("ปล่อยหรือตัดสินผ่าน/ไม่ผ่านได้")).length, 1, "the lots group says it once under its heading");
-    assert.equal(sentences.filter((text) => text.includes("ปลดกักกันได้")).length, 1, "the chemicals group says it once under its heading");
+    assert.equal(sentences.filter((text) => text.includes("ปลดกักกันวัตถุดิบได้เฉพาะหัวหน้า QA หัวหน้า ST หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ")).length, 1, "the chemicals group says it once under its heading (the ST head may release too)");
     assert.equal(new Set(sentences).size, sentences.length, "no sentence twice on the page");
   }
   for (const employee of PEOPLE.heads) {
@@ -175,7 +186,7 @@ test("งานของฉัน: the page opens on it; staff and planning see 
     assert.match(cardOf(html, lotTitle), /data-rf-open="qcRecord"[^>]*>ตัดสิน</, `${employee.role.code} ${employee.department.code} decides`);
     assert.doesNotMatch(cardOf(html, lotTitle), /ตรวจซ้ำ|เฉพาะหัวหน้า QA/);
     const release = cardOf(html, materialTitle);
-    assert.match(release, /data-rf-right="qaRelease"[^>]*data-rf-action="setMaterialLotStatus"|data-rf-action="setMaterialLotStatus"[^>]*data-rf-right="qaRelease"/);
+    assert.match(release, /data-rf-right="releaseMaterial"[^>]*data-rf-action="setMaterialLotStatus"|data-rf-action="setMaterialLotStatus"[^>]*data-rf-right="releaseMaterial"/);
     assert.match(release, />ปลดกักกัน</);
     assert.equal(JSON.parse(release.match(/data-rf-args="([^"]*)"/)[1].replaceAll("&quot;", '"')).status, "available");
   }
@@ -257,7 +268,7 @@ test("qcRecord dialog: a held lot offers a QA staff only 'hold / re-check'; the 
   assert.equal(note.hidden, true);
 });
 
-test("the client mirrors the database on the actions: staff and planning hold a held lot again, only the head releases or fails it; releasing a held chemical lot is the head's, holding stays with ST, QA and planning", () => {
+test("the client mirrors the database on the actions: staff and planning hold a held lot again, only the head releases or fails it; releasing a held chemical lot is the QA or ST head's, holding stays with ST, QA and planning", () => {
   const env = load();
   const A = env.context.MNP_RUBBERFLOW_ACTIONS;
   const base = structuredClone(env.rf.store.data());
@@ -269,6 +280,7 @@ test("the client mirrors the database on the actions: staff and planning hold a 
   const record = (employee, lotId, result) => A.addQcRecord(structuredClone(base), { lotId, values: { hardness: 65 }, result }, ctxOf(employee));
   const release = (employee) => A.setMaterialLotStatus(structuredClone(base), { lotNo: heldMaterialLot.lotNo, status: "available" }, ctxOf(employee));
   const refused = (fn) => assert.throws(fn, (error) => { assert.match(error.message, /เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน\/ผู้ดูแลระบบ/); return true; });
+  const refusedRelease = (fn) => assert.throws(fn, (error) => { assert.match(error.message, /ปลดกักกันวัตถุดิบได้เฉพาะหัวหน้า QA หัวหน้า ST หรือผู้จัดการโรงงาน\/ผู้ดูแลระบบ/); return true; });
   for (const employee of PEOPLE.others) {
     // a held lot: hold (re-check) is open to staff, planning and the RB head; pass and fail are the head's
     if (employee.department.code === "QA" || employee.department.code === "PP" || employee.department.code === "RB") assert.doesNotThrow(() => record(employee, held.id, "hold"), `${employee.department.code}/${employee.role.code} may hold again`);
@@ -277,7 +289,7 @@ test("the client mirrors the database on the actions: staff and planning hold a 
       refused(() => record(employee, held.id, "fail"));
       assert.doesNotThrow(() => record(employee, free.id, "pass"), "a lot that is not held is any QA member's to record");
     }
-    refused(() => release(employee));
+    refusedRelease(() => release(employee));
     if (env.rfApi.can(env.rfApi.personaUser(employee), "holdMaterial")) assert.doesNotThrow(() => A.setMaterialLotStatus(structuredClone(base), { lotNo: availableMaterial.lotNo, status: "hold" }, ctxOf(employee)), "holding a chemical lot stays open to ST, QA and planning");
   }
   for (const employee of PEOPLE.heads) {
@@ -285,15 +297,20 @@ test("the client mirrors the database on the actions: staff and planning hold a 
     assert.doesNotThrow(() => record(employee, held.id, "fail"));
     assert.doesNotThrow(() => release(employee));
   }
-  // ST holds but cannot release
+  // ST staff hold but cannot release; the ST head (manager or assistant manager) releases a held chemical lot but still cannot release or fail a held line lot
   assert.doesNotThrow(() => A.setMaterialLotStatus(structuredClone(base), { lotNo: availableMaterial.lotNo, status: "hold" }, ctxOf(emp("ST", "staff"))));
-  refused(() => release(emp("ST", "staff")));
+  refusedRelease(() => release(emp("ST", "staff")));
+  for (const head of [emp("ST", "department_manager"), emp("ST", "assistant_department_manager")]) {
+    assert.doesNotThrow(() => release(head), `${head.role.code} ST releases a chemical lot`);
+    assert.throws(() => record(head, held.id, "pass"), `${head.role.code} ST releases no line lot`);
+  }
+  refusedRelease(() => release(emp("RB", "department_manager")));
   // the page and the demo store (no rights in the demo) are unchanged
   assert.doesNotThrow(() => A.addQcRecord(structuredClone(base), { lotId: held.id, values: { hardness: 65 }, result: "pass" }, { now: Date.now(), user: { name: "demo" } }));
   assert.match(read("modules/bom-actions.js"), /canDecideRods = \(user\) => Boolean\(root\.MNP_RUBBERFLOW_RULES\?\.canQaRelease\?\.\(user\)\)/, "BOM decides with the same helper");
 });
 
-test("วัตถุดิบที่กัก: held chemical lots with the release for the head only, and a search that finds available lots to put on hold", async () => {
+test("วัตถุดิบที่กัก: held chemical lots with the release for the heads only (the same page as #/st?tab=hold), and a search that finds available lots to put on hold", async () => {
   const env = load();
   const material = heldMaterial(env);
   const available = env.rf.store.data().materialLots.find((lot) => lot.status !== "hold" && lot.qtyKg > 0);
@@ -302,15 +319,16 @@ test("วัตถุดิบที่กัก: held chemical lots with the re
     assert.equal(h1Of(html), "วัตถุดิบที่กัก");
     assert.ok(html.includes(escapeHtml(material.lotNo)), "the held lot is listed");
     assert.doesNotMatch(html, /data-rf-action="setMaterialLotStatus"[^>]*>ปลดกักกัน</, `${employee.role.code} ${employee.department.code} cannot release`);
-    assert.match(html, /เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน\/ผู้ดูแลระบบ/);
+    assert.equal(html.split("ปลดกักกันวัตถุดิบได้เฉพาะหัวหน้า QA หัวหน้า ST หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ").length - 1, 1, "the release rule is said once");
     const found = await env.open(`tab=material&q=${encodeURIComponent(available.lotNo)}`);
     assert.match(found, /data-rf-action="setMaterialLotStatus"[^>]*>กักกัน</, "the hold button on an available lot (QA, ST and planning hold)");
     assert.equal(JSON.parse(found.match(/data-rf-action="setMaterialLotStatus"[^>]*data-rf-args="([^"]*)"|data-rf-args="([^"]*)"[^>]*data-rf-action="setMaterialLotStatus"/).slice(1).find(Boolean).replaceAll("&quot;", '"')).status, "hold");
   }
   for (const employee of PEOPLE.heads) {
     const html = await env.asDb(employee).open("tab=material");
-    assert.match(html, /data-rf-right="qaRelease"/);
+    assert.match(html, /data-rf-right="releaseMaterial"/);
     assert.match(html, />ปลดกักกัน</);
+    assert.ok(!html.includes("ปลดกักกันวัตถุดิบได้เฉพาะ"), "no rule sentence for a head");
     assert.doesNotMatch(html, /แท่ง|undefined|NaN/);
   }
   // no search = no long list of usable lots; a search with no hit says so
@@ -536,7 +554,7 @@ test("the QA module files: pages in qa-pages.js, loaded before module-qa.js with
   assert.ok(order.indexOf("modules/qa-pages.js") >= 0 && order.indexOf("modules/qa-pages.js") < order.indexOf("modules/module-qa.js"), "qa-pages.js before module-qa.js");
   assert.ok(order.indexOf("modules/module-qa.js") < order.indexOf("app.js"));
   assert.equal(new Set(scripts.map((match) => match[2])).size, 1, "one ?v= for every entry");
-  assert.equal(scripts[0][2], "20261128qamodule2");
+  assert.equal(scripts[0][2], "20261128qamodule3");
   const quality = read("modules/rubberflow-pages-quality.js");
   assert.doesNotMatch(quality, /pages\.(quality|spc|trace)\s*=/, "the RubberFlow pages are gone, the bodies are shared views");
   const pagesSource = read("modules/qa-pages.js");

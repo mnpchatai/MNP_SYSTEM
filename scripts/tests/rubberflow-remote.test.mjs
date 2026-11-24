@@ -180,6 +180,9 @@ test("the persona decides the RubberFlow role and the planner / RB member / RB h
   const others = [["staff", "QA"], ["assistant_department_manager", "RB"], ["department_manager", "RB"], ["department_manager", "PP"], ["staff", "PP"], ["department_manager", "ST"], ["assistant_factory_manager", "GR"], ["staff", "RB"]];
   for (const [role, dept] of releasers) assert.deepEqual([storeApi.can(headOf(role, dept), "qaRelease"), headOf(role, dept).qaHead], [true, true], `${role} ${dept} releases`);
   for (const [role, dept] of others) assert.deepEqual([storeApi.can(headOf(role, dept), "qaRelease"), headOf(role, dept).qaHead], [false, false], `${role} ${dept} does not release`);
+  // ปลดกักกันวัตถุดิบ (เจ้าของสั่ง 2026-11-24): หัวหน้า QA ทุกคนข้างบน และหัวหน้า ST (ผู้จัดการ / ผู้ช่วยผู้จัดการแผนก ST) · นิยามเดียว rules.canReleaseMaterial
+  for (const [role, dept] of [...releasers, ["department_manager", "ST"], ["assistant_department_manager", "ST"]]) assert.equal(storeApi.can(headOf(role, dept), "releaseMaterial"), true, `${role} ${dept} releases chemicals`);
+  for (const [role, dept] of [...others.filter(([, dept]) => dept !== "ST"), ["staff", "ST"]]) assert.equal(storeApi.can(headOf(role, dept), "releaseMaterial"), false, `${role} ${dept} releases no chemical`);
   assert.equal(storeApi.can(headOf("staff", "QA"), "qcDecision"), true, "QA staff still record results and hold");
   assert.equal(storeApi.can(headOf("department_manager", "RB"), "qcDecision"), true, "the RB head is in the planner group (records results, cannot release)");
   for (const role of ["rb", "sr", "viewer"]) assert.ok(storeApi.ROLES[role], role);
@@ -1064,25 +1067,35 @@ test("each shop-floor action is open to its own department and the planner group
   const statusOf = async () => (await master()).materialLots.find((row) => row.lotNo === lots[0]).status;
   assert.equal((await go(s, rig, "persona-pp", "setMaterialLotStatus", { lotNo: lots[0], status: "hold" })).ok, true);
   assert.equal(await statusOf(), "hold");
-  // ปลดกักกัน = หัวหน้า QA ขึ้นไปเท่านั้น (ST / QA พนักงาน / ฝ่ายวางแผนปลดไม่ได้ · หน้าจอบอกก่อน) · กักกันยังเป็นของ ST / QA / ฝ่ายวางแผน
+  // ปลดกักกัน = หัวหน้า QA หรือหัวหน้า ST ขึ้นไปเท่านั้น (พนักงาน ST / QA / ฝ่ายวางแผนปลดไม่ได้ · หน้าจอบอกก่อน) · กักกันยังเป็นของ ST / QA / ฝ่ายวางแผน
   for (const persona of ["persona-st", "persona-qa", "persona-pp"]) {
     await s.as(persona);
-    assert.match(rig.store.run("setMaterialLotStatus", { lotNo: lots[0], status: "available" }).error.message, /หัวหน้า QA/, `${persona} cannot release`);
+    assert.match(rig.store.run("setMaterialLotStatus", { lotNo: lots[0], status: "available" }).error.message, /ปลดกักกันวัตถุดิบได้เฉพาะหัวหน้า QA หัวหน้า ST/, `${persona} cannot release`);
   }
   assert.equal(await statusOf(), "hold");
-  // ...and the database says the same to a direct call (RF_QA_HEAD_ONLY), writing nothing
+  // ...and the database says the same to a direct call (RF_MATERIAL_RELEASE_HEAD_ONLY), writing nothing
   for (const persona of ["persona-st", "persona-qa", "persona-pp", "persona-rbh"]) {
     await s.as(persona);
     const before = await master();
     const row = before.materialLots.find((entry) => entry.lotNo === lots[0]);
     const reply = await s.mock.client.rpc("app_rf_save", { p_changes: { materialLots: { upsert: [{ ...row, status: "available" }] } }, p_base_version: before.version, p_action: "setMaterialLotStatus" });
-    assert.equal(reply.error?.code, "RF_QA_HEAD_ONLY", `${persona} straight to the database`);
+    assert.equal(reply.error?.code, "RF_MATERIAL_RELEASE_HEAD_ONLY", `${persona} straight to the database`);
     assert.equal((await master()).version, before.version, "nothing was written");
   }
   await go(s, rig, "persona-qah", "setMaterialLotStatus", { lotNo: lots[0], status: "available" });
   assert.equal(await statusOf(), "available");
   await go(s, rig, "persona-qa", "setMaterialLotStatus", { lotNo: lots[0], status: "hold" });
-  assert.equal(await statusOf(), "hold", "ST and QA both hold material lots; only the QA head (or the factory managers / admin) releases");
+  assert.equal(await statusOf(), "hold", "ST and QA both hold material lots");
+  // the ST head (persona-sth) releases too, through the page and straight to the database (owner order 2026-11-24)
+  await go(s, rig, "persona-sth", "setMaterialLotStatus", { lotNo: lots[0], status: "available" });
+  assert.equal(await statusOf(), "available", "the ST head released the lot");
+  await go(s, rig, "persona-st", "setMaterialLotStatus", { lotNo: lots[0], status: "hold" });
+  await s.as("persona-sth");
+  const before = await master();
+  const row = before.materialLots.find((entry) => entry.lotNo === lots[0]);
+  const reply = await s.mock.client.rpc("app_rf_save", { p_changes: { materialLots: { upsert: [{ ...row, status: "available" }] } }, p_base_version: before.version, p_action: "setMaterialLotStatus" });
+  assert.equal(reply.error, null, "the database lets the ST head release");
+  assert.equal(await statusOf(), "available", "only the QA or ST head (or the factory managers / admin) releases; anyone in ST, QA or planning holds");
 });
 
 test("the database computes the numbers itself: a client cannot set the stock, the remaining quantity, the produced quantity or the mold counter by writing them", async () => {
@@ -1144,8 +1157,8 @@ test("mixing holds the lot per stage, the QC decision releases it and adds the p
   await go(s, rig, "persona-qa", "addQcRecord", { lotId: mx, values: { hardness: 65 }, result: "hold", note: "ตรวจซ้ำ ยังไม่ปล่อย" });
   await s.as("persona-rbh");
   assert.match(rig.store.run("addQcRecord", { lotId: mx, values: { hardness: 65 }, result: "pass" }).error.message, /หัวหน้า QA/, "the RB head cannot release a QA hold");
-  // the database says the same to a direct call: pass or fail of a held lot is the QA head's (RF_QA_HEAD_ONLY), hold is not
-  for (const persona of ["persona-qa", "persona-pp", "persona-rbh"]) {
+  // the database says the same to a direct call: pass or fail of a held lot is the QA head's (RF_QA_HEAD_ONLY), hold is not · the ST head releases chemicals only
+  for (const persona of ["persona-qa", "persona-pp", "persona-rbh", "persona-sth"]) {
     await s.as(persona);
     for (const result of ["pass", "fail"]) {
       const heldSnap = await s.call("app_rf_master");

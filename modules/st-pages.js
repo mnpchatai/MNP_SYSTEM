@@ -1,10 +1,12 @@
 // หน้าของโมดูลคลังวัตถุดิบ (ST) #/st — โหลดก่อน modules/module-st.js (ดู index.html) · ที่เดียวที่ ST จ่ายเคมีให้ RB รับคืน รับเข้าตามใบสั่งซื้อ เบิกจ่ายของซื้อ และนับสต็อก (ไม่มีสำเนาที่สองในหน้า BOM / RubberFlow)
 // ของในคลังมาจากสองทาง: ของซื้อ (store ของ BOM: stock / stockMoves) และล็อตเคมี (store ของ RubberFlow: materialLots ยอดคลัง ST = qtyKg · คลังเคมีของ RB = rbKg · 20261220010000)
-// หน้า: งานของฉัน (ค่าตั้งต้น) · ในคลัง ?tab=stock (หน้าของซื้อ ?part=<รหัส> · หน้าล็อตเคมี ?lot=<ล็อต>) · ใบสั่งซื้อ ?tab=po · จ่ายออก ?tab=issue (&order=<ใบ>) · รับคืน ?tab=returns · นับสต็อก ?tab=count
+// หน้า: งานของฉัน (ค่าตั้งต้น) · ในคลัง ?tab=stock (หน้าของซื้อ ?part=<รหัส> · หน้าล็อตเคมี ?lot=<ล็อต>) · วัตถุดิบที่กัก ?tab=hold · ใบสั่งซื้อ ?tab=po · จ่ายออก ?tab=issue (&order=<ใบ>) · รับคืน ?tab=returns · นับสต็อก ?tab=count
 // คำสั่งของของซื้อวิ่งไป store ของ BOM (dialog issueParts / returnParts / undoParts และฟอร์ม countPartStock ผ่านตัวผูกของหน้าแผนก)
 // ส่วนของ RubberFlow (ใบสั่งซื้อ เคมี ใบขอเบิก ใบคืน ป้าย กักกัน) อยู่ใน [data-rf-scope] ที่ตัวผูกของ RubberFlow ผูกเอง (dialog และคำสั่งชุดเดียวกับหน้า RubberFlow · ตัวผูกของหน้าแผนกข้ามส่วนนี้)
 // ผู้เข้าชม (ไม่อยู่ในเมนู เข้าทางลิงก์ · access): แผนก RB ดูเคมีในคลัง ST อย่างเดียว · แผนก WH ดูและนับของซื้อ
-//   · แผนก QA ไม่ใช่ผู้เข้าชมแล้ว (โรงงานขั้น 5): กักกัน / ปลดกักกันวัตถุดิบของ QA อยู่ที่ #/qa?tab=material · ST กักกันล็อตที่หน้าล็อตได้เอง แต่ปลดกักกันเป็นของหัวหน้า QA ขึ้นไป (ปุ่มปลดกักกันแสดงเฉพาะผู้ที่ทำได้) · คนอื่นไม่พบหน้า
+//   · แผนก QA ไม่ใช่ผู้เข้าชมแล้ว (โรงงานขั้น 5): กักกัน / ปลดกักกันวัตถุดิบของ QA อยู่ที่ #/qa?tab=material · คนอื่นไม่พบหน้า
+// วัตถุดิบที่กักแสดงสองที่ (เจ้าของสั่ง 2026-11-24 "วัตถุดิบที่กักให้มี 2 ที่ คือ QA และ ST และให้หัวหน้า ST ปลดได้ด้วย"): หน้า ?tab=hold ที่นี่และ #/qa?tab=material เป็นชุดเดียวกัน (MNP_FACTORY.heldMaterialView)
+//   · ST กักกันได้ (หน้าล็อตและหน้าวัตถุดิบที่กัก) · ปลดกักกัน = หัวหน้า ST หรือหัวหน้า QA ขึ้นไป (rules.canReleaseMaterial · ปุ่มแสดงเฉพาะผู้ที่ทำได้ · ฐานข้อมูล RF_MATERIAL_RELEASE_HEAD_ONLY)
 // การซ่อน/แสดงปุ่มเป็นแค่ UX สิทธิ์จริงตัดสินที่ action และฐานข้อมูล: จ่ายเคมี ปิดยอด รับคืน ใบสั่งซื้อ = แผนก ST (admin) · เบิกจ่ายของซื้อ = ST / ฝ่ายวางแผน · นับ = ST / WH / ฝ่ายวางแผน · สต็อกขั้นต่ำ = ST / ฝ่ายวางแผน
 (function registerStPages(root) {
   const F = root.MNP_FACTORY;
@@ -52,7 +54,7 @@
     return rfCtx ? { status: "ready", data: rfCtx.data, ctx: rfCtx } : { status: "none", data: null, ctx: null };
   }
   const rfNote = (ctx, rf, title = "เคมีและใบสั่งซื้อ") => (rf.status === "loading" ? '<p class="small muted" role="status">กำลังโหลดข้อมูลเคมีและใบสั่งซื้อ…</p>' : rf.status === "failed" ? F.rubberflowFailed(ctx, title) : "");
-  // สิทธิ์ของคำสั่ง RubberFlow ตามผู้ใช้ของ RubberFlow (ตารางสิทธิ์ชุดเดียวกับหน้า RubberFlow) · ผู้เข้าชมไม่มีปุ่มของ RubberFlow ยกเว้น QA กักกัน / ปลดกักกันล็อต
+  // สิทธิ์ของคำสั่ง RubberFlow ตามผู้ใช้ของ RubberFlow (ตารางสิทธิ์ชุดเดียวกับหน้า RubberFlow) · ผู้เข้าชมไม่มีปุ่มของ RubberFlow
   const rfCan = (ctx, rf, permission) => !ctx.guest && rf.status === "ready" && Boolean(rf.ctx?.can?.(permission));
   const materialOf = (rf, code) => rf.data?.materials?.find((row) => row.code === code) ?? null;
   const kg = (ctx, value) => `${ctx.rules.fmtQty(value)} kg`;
@@ -207,11 +209,11 @@
       ...(transit > 0 ? [["RB คืนระหว่างทาง", esc(kg(ctx, transit))]] : []),
       ["รับเข้า", esc(`${kg(ctx, lot.initialKg)} · ${rules.fmtDate(lot.receivedAt)}${lot.coa ? " · มี CoA" : ""}`)],
     ]);
-    // ป้าย (บาร์โค้ด Code 39 ของ RubberFlow) และกักกัน / ปลดกักกัน: ชุดเดียวกับหน้า RubberFlow เดิม · ผู้เข้าชม QA ได้เฉพาะกักกัน / ปลดกักกัน · ผู้เข้าชมอื่นไม่มีปุ่ม
+    // ป้าย (บาร์โค้ด Code 39 ของ RubberFlow) และกักกัน / ปลดกักกัน: ชุดเดียวกับหน้า RubberFlow เดิม · ปลดกักกัน = หัวหน้า ST หรือหัวหน้า QA ขึ้นไป (ปุ่มชุดเดียวกับหน้าวัตถุดิบที่กัก) · ผู้เข้าชมไม่มีปุ่ม
     const hold = rfCan(ctx, rf, "holdMaterial");
     const holdButtons = [
       hold && lot.status !== "hold" && state !== "empty" ? ui.button("กักกัน", { action: "setMaterialLotStatus", args: { lotNo: lot.lotNo, status: "hold" }, className: "secondary", confirmText: `กักกันล็อต ${lot.lotNo}? ล็อตที่กักกันจ่ายไม่ได้ทั้งคลัง ST และคลัง RB จนกว่าจะปลดกักกัน`, success: "กักกันล็อต {result} แล้ว" }) : "",
-      rfCan(ctx, rf, "qaRelease") && lot.status === "hold" ? ui.button("ปลดกักกัน", { action: "setMaterialLotStatus", args: { lotNo: lot.lotNo, status: "available" }, className: "secondary", confirmText: `ปลดกักกันล็อต ${lot.lotNo}?`, success: "ปลดกักกันล็อต {result} แล้ว" }) : "",
+      rfCan(ctx, rf, "releaseMaterial") && lot.status === "hold" ? F.materialReleaseButton(ui, lot, "secondary") : "",
     ].join("");
     const buttons = !ctx.guest ? rfScope(`${ui.openButton("พิมพ์ป้าย", "tag", { kind: "material", id: lot.lotNo }, { className: "secondary" })}${holdButtons}`) : "";
     const rows = lotEvents(ctx, rf, lot.lotNo).map((event) => `<tr><td class="nowrap small">${event.at ? esc(rules.fmtDateTime(event.at)) : dash}</td><td>${esc(event.text)}${event.badge && views().chemStatus ? ` ${views().chemStatus(ui, event.badge)}` : ""}${event.detail ? `<div class="small muted">${esc(event.detail)}</div>` : ""}</td><td class="right rf-mono">${event.kg === null ? dash : esc(rules.fmtQty(event.kg))}</td><td class="small">${esc(event.by)}</td></tr>`);
@@ -272,6 +274,18 @@
     return cards;
   }
 
+  // วัตถุดิบที่กัก: การ์ดเดียวรวมทุกล็อต (บรรทัดไม่เกินที่ hub.cardLines กำหนด ที่เหลือบอก "อีก N ล็อต") พาไปหน้าวัตถุดิบที่กัก · เฉพาะผู้ที่ปลดกักกันได้ (หัวหน้า ST ขึ้นไป) เพราะเป็นงานของเขา
+  // พนักงาน ST ไม่มีการ์ดนี้ (ปลดไม่ได้) แต่เห็นล็อตที่กักที่หน้าวัตถุดิบที่กักและสถานะในหน้าในคลัง
+  function holdCards(ctx, rf) {
+    const R = rfRules();
+    if (rf.status !== "ready" || !R || !rfCan(ctx, rf, "releaseMaterial")) return [];
+    const held = F.heldMaterialLots(rf.data);
+    if (!held.length) return [];
+    return [card({ tone: "is-hold", state: "วัตถุดิบถูกกัก", title: `วัตถุดิบที่กักรอปลดกักกัน ${held.length} ล็อต`, href: stUrl({ tab: "hold" }),
+      lines: cardLines(held, (lot) => `<li><span><span class="rf-mono">${esc(lot.lotNo)}</span> <span class="small muted">${esc(chemName(rf, lot.materialCode))}</span></span><span class="nowrap">${esc(kg(ctx, R.lotKg(lot, "ST") + R.lotKg(lot, "RB")))}</span></li>`, "ล็อต"),
+      actions: ctx.ui.link("ไปที่วัตถุดิบที่กัก", stUrl({ tab: "hold" }), "btn rf-btn bom-job-main") })];
+  }
+
   // ต่ำกว่าสต็อกขั้นต่ำ (ยังไม่นับที่สั่งค้างรับ): เคมี = สั่งซื้อได้จากหน้าต่างสั่งซื้อของ RubberFlow (เติมถึงขั้นต่ำ) · ของซื้อ = ไปหน้านับสต็อกที่กรองเฉพาะรายการต่ำกว่าขั้นต่ำ
   function lowParts(ctx) {
     const stockOf = stockMap(ctx);
@@ -316,7 +330,7 @@
   }
   function workCards(ctx, rf) {
     const bom = bomCards(ctx);
-    return [...chemCards(ctx, rf), ...bom.tasks, ...lowCards(ctx, rf), ...bom.jobs];
+    return [...chemCards(ctx, rf), ...bom.tasks, ...holdCards(ctx, rf), ...lowCards(ctx, rf), ...bom.jobs];
   }
   function workCount(ctx) {
     try { return workCards(ctx, rfState(ctx)).length; } catch { return 0; }
@@ -326,6 +340,13 @@
     const cards = workCards(ctx, rf);
     const note = rfNote(ctx, rf);
     return `${note}${cards.length ? `<div class="bom-job-grid">${cards.join("")}</div>` : note ? "" : ui.card(ui.empty("ไม่มีงานค้าง"))}`;
+  }
+
+  // ---------- วัตถุดิบที่กัก: หน้าชุดเดียวกับ #/qa?tab=material (MNP_FACTORY.heldMaterialView) ----------
+  function holdView(ctx, rf) {
+    const { ui } = ctx;
+    if (rf.status !== "ready" || !rfRules()) return rfNote(ctx, rf) || ui.card(ui.empty("ไม่มีข้อมูล RubberFlow"));
+    return F.heldMaterialView(ctx, rf.data, { release: rfCan(ctx, rf, "releaseMaterial"), holdable: rfCan(ctx, rf, "holdMaterial") });
   }
 
   // ---------- ใบสั่งซื้อ ----------
@@ -536,6 +557,7 @@
       return done(`${head(work)}${guestTabs}${stockView({ ...ctx, view }, rf)}`);
     }
     if (id === "count") return done(`${head()}${guestTabs}${countView({ ...ctx, view })}`);
+    if (id === "hold") return done(`${head()}${holdView(ctx, rf)}`);
     if (id === "po") return done(`${head(poActions(ctx, rf))}${poView(ctx, rf)}`);
     if (id === "issue") return done(`${head()}${issueView(ctx, rf)}`);
     if (id === "returns") return done(`${head()}${returnsView(ctx, rf)}`);
@@ -545,11 +567,12 @@
   const MENU = Object.freeze([
     F.workItem(workCount),
     { id: "stock", label: "ในคลัง", icon: "warehouse", params: { tab: "stock" }, owns: ["part", "lot"] },
+    { id: "hold", label: "วัตถุดิบที่กัก", icon: "flask", params: { tab: "hold" } },
     { id: "po", label: "ใบสั่งซื้อ", icon: "clipboard", params: { tab: "po" } },
     { id: "issue", label: "จ่ายออก", icon: "box", params: { tab: "issue" } },
     { id: "returns", label: "รับคืน", icon: "cycle", params: { tab: "returns" } },
     { id: "count", label: "นับสต็อก", icon: "scale", params: { tab: "count" } },
   ]);
 
-  root.MNP_ST_PAGES = Object.freeze({ landing, MENU, KEEP: Object.freeze(["kind", "low", "order"]), access, guest, stockRows, workCount, workCards, lowParts, lowChems });
+  root.MNP_ST_PAGES = Object.freeze({ landing, MENU, KEEP: Object.freeze(["kind", "low", "order"]), access, guest, stockRows, workCount, workCards, holdCards, lowParts, lowChems });
 })(window);

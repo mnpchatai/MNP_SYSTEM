@@ -1080,11 +1080,11 @@ test("side menu: SR (a store) has งานของฉัน with the card coun
   assert.deepEqual(plain(navOf(env, "FACTORY_SR").items.map((item) => [item.label, item.count])), [["งานของฉัน", 0], ["ในคลัง", 0], ["รับเข้า", 0], ["จ่ายให้ GR", 0], ["ประวัติเข้าออก", 0]], "BOM not ready: no count");
 });
 
-test("side menu: ST has งานของฉัน, ในคลัง, ใบสั่งซื้อ, จ่ายออก, รับคืน and นับสต็อก; WH has งานของฉัน, ในคลัง, รับเข้า, ส่งมอบ and ประวัติ, with the lot and order pages under ในคลัง", async () => {
+test("side menu: ST has งานของฉัน, ในคลัง, วัตถุดิบที่กัก, ใบสั่งซื้อ, จ่ายออก, รับคืน and นับสต็อก; WH has งานของฉัน, ในคลัง, รับเข้า, ส่งมอบ and ประวัติ, with the lot and order pages under ในคลัง", async () => {
   const env = load({ employee: emp("ST") });
   env.store.setUser("B08");
   await env.open("FACTORY_ST");
-  assert.deepEqual(plain(navOf(env, "FACTORY_ST").items.map((item) => [item.label, item.href, item.active])), [["งานของฉัน", "#/st", true], ["ในคลัง", "#/st?tab=stock", false], ["ใบสั่งซื้อ", "#/st?tab=po", false], ["จ่ายออก", "#/st?tab=issue", false], ["รับคืน", "#/st?tab=returns", false], ["นับสต็อก", "#/st?tab=count", false]]);
+  assert.deepEqual(plain(navOf(env, "FACTORY_ST").items.map((item) => [item.label, item.href, item.active])), [["งานของฉัน", "#/st", true], ["ในคลัง", "#/st?tab=stock", false], ["วัตถุดิบที่กัก", "#/st?tab=hold", false], ["ใบสั่งซื้อ", "#/st?tab=po", false], ["จ่ายออก", "#/st?tab=issue", false], ["รับคืน", "#/st?tab=returns", false], ["นับสต็อก", "#/st?tab=count", false]]);
   const wh = load({ employee: emp("WH") });
   wh.store.setUser("B09");
   await wh.open("FACTORY_WH");

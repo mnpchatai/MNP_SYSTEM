@@ -1,7 +1,8 @@
 // โมดูลแผนก QA — ตรวจคุณภาพ (ลำดับ 06 ของผังงาน) #/qa · เมนูกลุ่ม "โรงงาน" ในโหมดทดสอบ (ลงทะเบียนผ่าน MNP_FACTORY.registerDeptModule ใน modules/factory-kit.js)
 // เมนูข้าง (ค่าตั้งต้น = งานของฉัน): งานของฉัน · ผลตรวจ (?tab=records) · NCR (?tab=ncr) · CoA (?tab=coa) · SPC (?tab=spc) · สืบย้อนกลับ (?tab=trace) · วัตถุดิบที่กัก (?tab=material)
 // หน้าทั้งหมดอยู่ใน modules/qa-pages.js (โหลดก่อนไฟล์นี้): ยางเส้นยาวที่ SR กัก (store ของ BOM) และล็อตในสายผลิต ผลตรวจ NCR CoA SPC สืบย้อนกลับ ล็อตวัตถุดิบที่กัก (store ของ RubberFlow) ในที่เดียว
-// งาน QA ย้ายมาจาก RubberFlow (p=quality / spc / trace) และจาก #/st?lot= (กักกันวัตถุดิบ) · ตัดสินล็อตที่กัก / ปล่อยล็อต / ปลดกักกันวัตถุดิบ = หัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ
+// งาน QA ย้ายมาจาก RubberFlow (p=quality / spc / trace) และจาก #/st?lot= (กักกันวัตถุดิบ) · ตัดสินล็อตที่กัก / ปล่อยล็อต = หัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ
+// · วัตถุดิบที่กักแสดงสองที่ (หน้านี้ ?tab=material และ #/st?tab=hold · ชุดเดียวกัน) ปลดกักกัน = หัวหน้า QA หรือหัวหน้า ST ขึ้นไป (เจ้าของสั่ง 2026-11-24)
 (function registerQaModule() {
   const F = window.MNP_FACTORY;
   const pages = window.MNP_QA_PAGES;

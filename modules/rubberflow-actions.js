@@ -73,7 +73,7 @@
     work: (user) => Boolean(user.planner || user.rb), // สถานะอื่นของใบสั่งผลิต
     closePurchaseLine: (user) => Boolean(user.st || user.role === "admin"), // ปิดยอดที่เหลือของใบสั่งซื้อ: สิทธิ์เดียวกับรับเข้า (ST) ข้อความปฏิเสธของตัวเอง
     receiveMaterial: (user) => Boolean(user.st || user.role === "admin"), // รับวัตถุดิบเข้าคลัง (รวมรับเข้าตามใบสั่งซื้อ): แผนก ST เท่านั้น (admin ไว้แก้ปัญหา)
-    holdMaterial: (user) => Boolean(user.planner || user.st || user.qa), // กักกัน/ปลดกักกันล็อตวัตถุดิบ: ST หรือ QA
+    holdMaterial: (user) => Boolean(user.planner || user.st || user.qa), // กักกันล็อตวัตถุดิบ: ST หรือ QA (ปลดกักกัน = releaseMaterial)
     requisition: (user) => Boolean(user.planner || user.rb), // เบิกเคมี (สร้างใบเบิกและจ่ายทันที) / จ่ายใบเก่าที่ค้างชั่ง: แผนก RB
     station: (user) => Boolean(user.planner || user.rb), // ผสม ฉีด อบ ตกแต่ง ข้ามเวลาบ่ม ทำความสะอาดแม่พิมพ์: แผนก RB
     sendTransfer: (user) => Boolean(user.planner || user.rb), // สร้างใบส่งมอบ WIP: แผนก RB
@@ -83,7 +83,8 @@
     shipBoxes: (user) => Boolean(user.wh || user.role === "admin"),
     reverseBoxes: (user) => Boolean(user.whHead || user.role === "admin"),
     qc: (user) => Boolean(user.planner || user.qa), // ผลตรวจ เปิด/ปิด NCR: แผนก QA
-    qaRelease: (user) => Boolean(rules().canQaRelease?.(user)), // ผลตรวจผ่าน/ไม่ผ่านของล็อตที่กัก · ปลดกักกันวัตถุดิบ: หัวหน้า QA หรือผู้จัดการโรงงานขึ้นไป (นิยามเดียว rules.canQaRelease · ฐานข้อมูล RF_QA_HEAD_ONLY)
+    qaRelease: (user) => Boolean(rules().canQaRelease?.(user)), // ผลตรวจผ่าน/ไม่ผ่านของล็อตที่กัก: หัวหน้า QA หรือผู้จัดการโรงงานขึ้นไป (นิยามเดียว rules.canQaRelease · ฐานข้อมูล RF_QA_HEAD_ONLY)
+    releaseMaterial: (user) => Boolean(rules().canReleaseMaterial?.(user)), // ปลดกักกันวัตถุดิบ: หัวหน้า QA หรือหัวหน้า ST หรือผู้จัดการโรงงานขึ้นไป (นิยามเดียว rules.canReleaseMaterial · ฐานข้อมูล RF_MATERIAL_RELEASE_HEAD_ONLY)
     fillNcr: (user) => Boolean(user.planner || user.qa || user.rb), // กรอกการแก้ไข/ป้องกันของ NCR ที่เปิดอยู่: QA หรือ RB
     editMold: (user) => Boolean(user.planner || user.rb), // เพิ่ม/แก้แม่พิมพ์: แผนก RB
     purchase: (user) => Boolean(user.st || user.role === "admin"), // สั่งซื้อวัตถุดิบ (สร้างใบสั่งซื้อ): แผนก ST เท่านั้น (admin ไว้แก้ปัญหา)
@@ -102,7 +103,7 @@
     work: "เปลี่ยนสถานะใบสั่งผลิตได้โดยฝ่ายวางแผน ผู้จัดการ หรือพนักงานแผนก RB",
     receiveMaterial: "รับวัตถุดิบเข้าคลังได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
     closePurchaseLine: "ปิดยอดที่เหลือของใบสั่งซื้อได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
-    holdMaterial: "กักกัน/ปลดกักกันล็อตวัตถุดิบได้โดยแผนกคลังวัตถุดิบ (ST) หรือ QA",
+    holdMaterial: "กักกันล็อตวัตถุดิบได้โดยแผนกคลังวัตถุดิบ (ST) หรือ QA",
     requisition: "เบิกเคมีได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
     station: "บันทึกการผลิตของสถานีได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
     sendTransfer: "สร้างใบส่งมอบ WIP ได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
@@ -111,7 +112,8 @@
     shipBoxes: "ส่งมอบกล่องสินค้าได้โดยแผนกคลังสินค้าสำเร็จรูป (WH) หรือผู้ดูแลระบบเท่านั้น",
     reverseBoxes: "ย้อนการรับเข้าหรือการส่งมอบกล่องได้โดยผู้จัดการแผนกคลังสินค้าสำเร็จรูป (WH) หรือผู้ดูแลระบบเท่านั้น",
     qc: "บันทึกผลตรวจและเปิด/ปิด NCR ได้โดยแผนก QA หรือฝ่ายวางแผน",
-    qaRelease: "ปล่อยล็อตที่กักหรือตัดสินผ่าน/ไม่ผ่าน (รวมปลดกักกันวัตถุดิบ) ได้เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ · พนักงาน QA บันทึกกักต่อ/ตรวจซ้ำได้",
+    qaRelease: "ปล่อยล็อตที่กักหรือตัดสินผ่าน/ไม่ผ่านได้เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ · พนักงาน QA บันทึกกักต่อ/ตรวจซ้ำได้",
+    releaseMaterial: "ปลดกักกันวัตถุดิบได้เฉพาะหัวหน้า QA หัวหน้า ST หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ",
     fillNcr: "กรอกการแก้ไขและป้องกันของ NCR ได้โดยแผนก QA พนักงานแผนก RB หรือฝ่ายวางแผน",
     editMold: "เพิ่ม/แก้แม่พิมพ์ได้โดยพนักงานแผนก RB หรือฝ่ายวางแผน",
     purchase: "สั่งซื้อวัตถุดิบได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
@@ -685,8 +687,8 @@
     needRight(ctx, "holdMaterial");
     if (!["hold", "available"].includes(status)) fail("สถานะล็อตไม่ถูกต้อง");
     const lot = d.materialLots.find((row) => row.lotNo === lotNo) || fail("ไม่พบล็อต");
-    // ปลดกักกัน (hold → available) = หัวหน้า QA เท่านั้น · กักกันยังเป็นของ ST / QA / ฝ่ายวางแผนตามเดิม
-    if (lot.status === "hold" && status === "available") needRight(ctx, "qaRelease");
+    // ปลดกักกัน (hold → available) = หัวหน้า QA หรือหัวหน้า ST เท่านั้น · กักกันยังเป็นของ ST / QA / ฝ่ายวางแผนตามเดิม
+    if (lot.status === "hold" && status === "available") needRight(ctx, "releaseMaterial");
     lot.status = status;
     audit(d, ctx, status === "hold" ? "กักกันล็อตวัตถุดิบ" : "ปลดกักกันล็อตวัตถุดิบ", lotNo);
   }

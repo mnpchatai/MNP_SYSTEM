@@ -4,8 +4,9 @@
 -- ทำไม (คำตอบเจ้าของโรงงาน 2026-11-24, factory-step5-qa-spec ข้อ 4-6): "ให้หัวหน้า QA เท่านั้น" สำหรับ
 --   A) ปล่อยล็อตที่กักในสายผลิต: ผลตรวจใหม่ที่เป็น pass หรือ fail บนล็อต RubberFlow ที่ qc ปัจจุบันเป็น hold
 --   B) ตัดสินยางเส้นยาวที่ SR กัก: decideRods (accept / return / scrap) ของล็อต held ในคลังยางเส้นยาว
---   C) ปล่อยวัตถุดิบที่กัก: ล็อตวัตถุดิบ hold -> available
---   ผู้ทำแทนได้: ผู้จัดการโรงงาน / ผู้จัดการทั่วไป / ผู้ดูแลระบบ · ฝ่ายวางแผน (PP) หัวหน้าแผนกอื่น (รวมหัวหน้า RB) และพนักงาน QA ทั่วไปทำไม่ได้แล้ว
+--   C) ปล่อยวัตถุดิบที่กัก: ล็อตวัตถุดิบ hold -> available · คำสั่งเพิ่มของเจ้าของ (2026-11-24): "วัตถุดิบที่กักให้มี 2 ที่ คือ QA และ ST และให้หัวหน้า ST ปลดได้ด้วย"
+--      = หัวหน้า QA หรือหัวหน้า ST (private.material_release_ok) · ข้อ A และ B ยังเป็นหัวหน้า QA อย่างเดียว
+--   ผู้ทำแทนได้: ผู้จัดการโรงงาน / ผู้จัดการทั่วไป / ผู้ดูแลระบบ · ฝ่ายวางแผน (PP) หัวหน้าแผนกอื่น (รวมหัวหน้า RB) และพนักงาน QA / ST ทั่วไปทำไม่ได้แล้ว
 --   ไม่เปลี่ยน: บันทึกผล hold บนล็อตที่กัก · บันทึกผลใดก็ได้บนล็อตที่ไม่ได้กัก (QA ทุกบทบาท หรือกลุ่มวางแผน) · กักวัตถุดิบ (กลุ่มวางแผน / ST / QA)
 --     · ข้ามเวลาบ่ม endRest (หัวหน้า RB หรือ QA ทุกบทบาท ต้องมีเหตุผล) · เปิด / ปิด NCR ของ RubberFlow
 --   ทางอื่นที่ปล่อยล็อตที่กัก: ไม่มี · rf_save_ncrs เปิด NCR = กักล็อตที่ pass (hold) แต่ปิด NCR ไม่ปล่อยล็อต (ปล่อยด้วยผลตรวจใหม่ผ่าน rf_save_qc เท่านั้น)
@@ -17,8 +18,11 @@
 --   หรือบทบาท factory_manager / general_manager / admin (ทุกแผนก)
 --   ไม่รวม assistant_factory_manager: เจ้าของระบุ "ผู้จัดการโรงงาน" และบทบาทนี้ไม่ได้เท่ากับ factory_manager ทุกที่ (เช่น NCR phase 1 ใช้ factory_manager อย่างเดียว)
 --   แผนก QC ไม่มีในตาราง departments (QC เป็นชื่อเรียกของ QA) จึงตรวจรหัส QA อย่างเดียวผ่าน private.rf_is_qa
+-- ผู้ปล่อยวัตถุดิบที่กัก = private.material_release_ok(public.employees) (ใหม่ · security definer · search_path = '' · revoke all from public, anon, authenticated)
+--   = private.qa_head หรือหัวหน้า ST (แผนก ST ตาม private.bom_dept_of และบทบาท department_manager / assistant_department_manager · แบบเดียวกับ qa_head)
 --
--- รหัสข้อผิดพลาดใหม่ (client แสดงข้อความภาษาไทยได้): RF_QA_HEAD_ONLY (app_rf_save: addQcRecord บนล็อตที่กัก · setMaterialLotStatus ปล่อยล็อตวัตถุดิบ)
+-- รหัสข้อผิดพลาดใหม่ (client แสดงข้อความภาษาไทยได้): RF_QA_HEAD_ONLY (app_rf_save: addQcRecord บนล็อตที่กัก)
+--   · RF_MATERIAL_RELEASE_HEAD_ONLY (app_rf_save: setMaterialLotStatus ปล่อยล็อตวัตถุดิบ hold -> available โดยผู้ที่ไม่ใช่หัวหน้า QA / หัวหน้า ST)
 --   · BOM_QA_HEAD_ONLY (app_bom_save_master: decideRods · ทุกคนที่ไม่ใช่หัวหน้า QA รวม SR / RB ที่เดิมได้ BOM_FORBIDDEN)
 --   ลำดับตรวจเดิมคงอยู่: รูปแถว / ค่าไม่ถูก -> ชน (RF_STALE) -> สิทธิ์เดิม (RF_FORBIDDEN) -> หัวหน้า QA · fail เป็นสถานะสุดท้ายยังได้ RF_INVALID_TRANSITION ก่อน
 --
@@ -30,15 +34,15 @@
 --     · private.rf_is_qa / rf_is_rb_head / bom_can_edit · private.bom_real_open() · rf_actor() · bom_actor()
 --
 -- ลำดับ deploy: backward compatible ทั้งสองทาง (ไม่มีช่องหรือ action ใหม่ แค่ปฏิเสธเพิ่ม)
---   Pilot เก่า + ฐานข้อมูลใหม่: ปุ่มตัดสินของพนักงาน QA / กลุ่มวางแผนยังแสดงแต่กดแล้วได้ RF_QA_HEAD_ONLY / BOM_QA_HEAD_ONLY (ข้อความผิดพลาดทั่วไป)
---   Pilot ใหม่ + ฐานข้อมูลเก่า: ซ่อนปุ่มของผู้ที่ไม่ใช่หัวหน้า QA แต่ฐานข้อมูลยังยอมให้พนักงาน QA / กลุ่มวางแผนตัดสินถ้าเรียก RPC ตรง
+--   Pilot เก่า + ฐานข้อมูลใหม่: ปุ่มตัดสินของพนักงาน QA / กลุ่มวางแผนยังแสดงแต่กดแล้วได้ RF_QA_HEAD_ONLY / RF_MATERIAL_RELEASE_HEAD_ONLY / BOM_QA_HEAD_ONLY (ข้อความผิดพลาดทั่วไป)
+--   Pilot ใหม่ + ฐานข้อมูลเก่า: ซ่อนปุ่มของผู้ที่ไม่ใช่หัวหน้า QA (วัตถุดิบ: หัวหน้า QA / ST) แต่ฐานข้อมูลยังยอมให้พนักงาน QA / ST / กลุ่มวางแผนตัดสินถ้าเรียก RPC ตรง
 --   ก่อน apply ที่ production (ต้องได้อนุมัติของผู้ใช้สำหรับไฟล์นี้): เทียบ md5(pg_get_functiondef(oid)) ของสามฟังก์ชันที่ replace กับนิยามในไฟล์ต้นทางที่ระบุ
---   แล้ว apply "ไฟล์ที่อยู่บน branch" ตรง ๆ · หลัง apply เทียบ md5 กับ local stack ที่ผ่าน db:test + has_function_privilege ของ private.qa_head
+--   แล้ว apply "ไฟล์ที่อยู่บน branch" ตรง ๆ · หลัง apply เทียบ md5 กับ local stack ที่ผ่าน db:test + has_function_privilege ของ private.qa_head / private.material_release_ok
 --
 -- Rollback (ไม่มีข้อมูลเปลี่ยน · ไม่ต้องลบแถว):
 --   1) create or replace สามฟังก์ชันกลับด้วยนิยามในไฟล์ต้นทาง (rf_save_qc จาก 20261207010000_wh_rb_boxes.sql · bom_rod_save_lots จาก
 --      20261204010000_bom_sr_store_module.sql · rf_save_material_lots จาก 20261130010000_bom_rf_go_live.sql) ลายเซ็นเดิม สิทธิ์เดิมคงอยู่
---   2) drop function private.qa_head(public.employees);  (หลังข้อ 1 เท่านั้น เพราะสามฟังก์ชันใหม่เรียกตัวนี้)
+--   2) drop function private.material_release_ok(public.employees); แล้ว drop function private.qa_head(public.employees);  (หลังข้อ 1 เท่านั้น เพราะสามฟังก์ชันใหม่เรียกสองตัวนี้)
 -- ============================================================================
 
 -- 1. หัวหน้า QA ------------------------------------------------------------------------------------------------------------------
@@ -55,7 +59,22 @@ as $$
       or coalesce(private.employee_role_code(p_employee.id) in ('factory_manager', 'general_manager', 'admin'), false)
 $$;
 revoke all on function private.qa_head(public.employees) from public, anon, authenticated;
-comment on function private.qa_head(public.employees) is 'หัวหน้า QA (20261221010000): แผนก QA บทบาท department_manager / assistant_department_manager หรือบทบาท factory_manager / general_manager / admin · ผู้ตัดสินล็อตที่กัก (rf_save_qc) ยางเส้นยาวที่กัก (decideRods) และปล่อยวัตถุดิบที่กัก';
+comment on function private.qa_head(public.employees) is 'หัวหน้า QA (20261221010000): แผนก QA บทบาท department_manager / assistant_department_manager หรือบทบาท factory_manager / general_manager / admin · ผู้ตัดสินล็อตที่กัก (rf_save_qc) ยางเส้นยาวที่กัก (decideRods) · ปล่อยวัตถุดิบที่กักผ่าน private.material_release_ok';
+
+-- หัวหน้า QA หรือหัวหน้า ST: ผู้ปล่อยวัตถุดิบที่กัก (hold -> available) · หัวหน้า ST = สมาชิกแผนก ST ที่เป็น department_manager / assistant_department_manager
+create or replace function private.material_release_ok(p_employee public.employees)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select private.qa_head(p_employee)
+      or (coalesce(private.bom_dept_of(p_employee) = 'ST', false)
+          and coalesce(private.employee_role_code(p_employee.id) in ('department_manager', 'assistant_department_manager'), false))
+$$;
+revoke all on function private.material_release_ok(public.employees) from public, anon, authenticated;
+comment on function private.material_release_ok(public.employees) is 'ผู้ปล่อยวัตถุดิบที่กัก (20261221010000): private.qa_head หรือหัวหน้า ST (แผนก ST บทบาท department_manager / assistant_department_manager) · ใช้ใน rf_save_material_lots ตอน hold -> available';
 
 -- 2. ตัดสินล็อตที่กักของสายผลิต ------------------------------------------------------------------------------------------------
 -- private.rf_save_qc(public.employees, boolean, boolean, jsonb, bigint, bigint) จาก 20261207010000_wh_rb_boxes.sql (+ ล็อตที่กัก: pass / fail = หัวหน้า QA)
@@ -347,7 +366,7 @@ $$;
 revoke all on function private.bom_rod_save_lots(public.employees, text, boolean, text, jsonb) from public, anon, authenticated;
 
 -- 4. ปล่อยวัตถุดิบที่กัก ----------------------------------------------------------------------------------------------------------
--- private.rf_save_material_lots(uuid, boolean, boolean, boolean, jsonb, bigint, bigint) จาก 20261130010000_bom_rf_go_live.sql (+ hold -> available = หัวหน้า QA)
+-- private.rf_save_material_lots(uuid, boolean, boolean, boolean, jsonb, bigint, bigint) จาก 20261130010000_bom_rf_go_live.sql (+ hold -> available = หัวหน้า QA หรือหัวหน้า ST)
 create or replace function private.rf_save_material_lots(p_actor uuid, p_planner boolean, p_st boolean, p_qa boolean, p_rows jsonb, p_base bigint, p_cur bigint)
 returns integer
 language plpgsql
@@ -406,8 +425,8 @@ begin
       if v_old.changed_version > p_base and v_old.changed_version <= p_cur then raise exception 'RF_STALE'; end if;
       if not (p_planner or p_st or p_qa) then raise exception 'RF_FORBIDDEN'; end if;
       if v_content then raise exception 'RF_INVALID_MATERIAL_LOT'; end if;
-      -- 20261221010000: ปล่อยล็อตที่กัก (hold -> available) = หัวหน้า QA (private.qa_head) เท่านั้น · กัก (available -> hold) = กลุ่มวางแผน / ST / QA เหมือนเดิม
-      if v_old.status = 'hold' and v_status = 'available' and not private.qa_head(v_emp) then raise exception 'RF_QA_HEAD_ONLY'; end if;
+      -- 20261221010000: ปล่อยล็อตที่กัก (hold -> available) = หัวหน้า QA หรือหัวหน้า ST (private.material_release_ok) เท่านั้น · กัก (available -> hold) = กลุ่มวางแผน / ST / QA เหมือนเดิม
+      if v_old.status = 'hold' and v_status = 'available' and not private.material_release_ok(v_emp) then raise exception 'RF_MATERIAL_RELEASE_HEAD_ONLY'; end if;
       update public.rf_material_lots set status = v_status, updated_at = now() where id = v_old.id;
       continue;
     end if;

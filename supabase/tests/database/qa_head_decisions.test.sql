@@ -3,7 +3,9 @@
 -- · ไม่ใช่ assistant_factory_manager ฝ่ายวางแผน หัวหน้า RB หรือพนักงาน QA) · โครงสร้างและสิทธิ์ของฟังก์ชัน
 -- · A) ผล pass / fail บนล็อตที่กัก (RF_QA_HEAD_ONLY) · hold บนล็อตที่กักและผลใดก็ได้บนล็อตที่ไม่ได้กักยังเป็นของ QA ทุกบทบาท · ชนก่อนสิทธิ์ (RF_STALE)
 --   · หัวหน้า RB ยังข้ามเวลาบ่มได้แต่ปล่อยล็อตไม่ได้
--- · B) decideRods (BOM_QA_HEAD_ONLY) · C) ปล่อยวัตถุดิบที่กัก hold -> available (RF_QA_HEAD_ONLY) · กักยังเป็นของกลุ่มวางแผน / ST / QA
+-- · B) decideRods (BOM_QA_HEAD_ONLY) · C) ปล่อยวัตถุดิบที่กัก hold -> available = หัวหน้า QA หรือหัวหน้า ST (private.material_release_ok
+--   · RF_MATERIAL_RELEASE_HEAD_ONLY · คำสั่งเจ้าของ 2026-11-24 "ให้หัวหน้า ST ปลดได้ด้วย") · กักยังเป็นของกลุ่มวางแผน / ST / QA
+--   · หัวหน้า ST ยังตัดสิน A และ B ไม่ได้
 -- (authenticated อ่านตาราง rf_* / bom_* ตรงไม่ได้ จึงใส่ข้อมูลตั้งต้นด้วย reset role และอ่านผลผ่าน RPC ของ client เท่านั้น)
 begin;
 create extension if not exists pgtap with schema extensions;
@@ -11,26 +13,29 @@ select no_plan();
 
 -- 1. โครงสร้างและสิทธิ์ ------------------------------------------------------------------------------------------------------
 select ok(to_regprocedure('private.qa_head(public.employees)') is not null, 'the QA head helper exists');
+select ok(to_regprocedure('private.material_release_ok(public.employees)') is not null, 'the material release helper exists');
 select ok((select bool_and(p.prosecdef and p.proconfig @> array['search_path=""']) from pg_proc p
-           where p.oid in ('private.qa_head(public.employees)'::regprocedure,
+           where p.oid in ('private.qa_head(public.employees)'::regprocedure, 'private.material_release_ok(public.employees)'::regprocedure,
                            'private.rf_save_qc(public.employees,boolean,boolean,jsonb,bigint,bigint)'::regprocedure,
                            'private.bom_rod_save_lots(public.employees,text,boolean,text,jsonb)'::regprocedure,
                            'private.rf_save_material_lots(uuid,boolean,boolean,boolean,jsonb,bigint,bigint)'::regprocedure)),
-  'the helper and the three replaced writers are security definer with an empty search_path');
+  'the two helpers and the three replaced writers are security definer with an empty search_path');
 select ok(not exists (
-    select 1 from unnest(array['private.qa_head(public.employees)', 'private.rf_save_qc(public.employees,boolean,boolean,jsonb,bigint,bigint)',
+    select 1 from unnest(array['private.qa_head(public.employees)', 'private.material_release_ok(public.employees)',
+                               'private.rf_save_qc(public.employees,boolean,boolean,jsonb,bigint,bigint)',
                                'private.bom_rod_save_lots(public.employees,text,boolean,text,jsonb)',
                                'private.rf_save_material_lots(uuid,boolean,boolean,boolean,jsonb,bigint,bigint)']) f(sig)
     where has_function_privilege('anon', f.sig::regprocedure, 'execute') or has_function_privilege('authenticated', f.sig::regprocedure, 'execute')
        or has_function_privilege('public', f.sig::regprocedure, 'execute')),
-  'clients cannot call the helper or the writers directly');
+  'clients cannot call the helpers or the writers directly');
 select ok(not exists (select 1 from unnest(array['public.app_rf_save(jsonb,bigint,text,jsonb,text)', 'public.app_bom_save_master(jsonb,bigint,text,jsonb,text)']) f(sig)
                       where has_function_privilege('anon', f.sig, 'execute') or not has_function_privilege('authenticated', f.sig, 'execute')),
   'the two save RPCs keep their grants (signed-in users only)');
 select ok(position('private.qa_head(p_actor)' in pg_get_functiondef('private.rf_save_qc(public.employees,boolean,boolean,jsonb,bigint,bigint)'::regprocedure)) > 0
       and position('private.qa_head(p_actor)' in pg_get_functiondef('private.bom_rod_save_lots(public.employees,text,boolean,text,jsonb)'::regprocedure)) > 0
-      and position('private.qa_head(v_emp)' in pg_get_functiondef('private.rf_save_material_lots(uuid,boolean,boolean,boolean,jsonb,bigint,bigint)'::regprocedure)) > 0,
-  'the three writers ask the QA head helper');
+      and position('private.material_release_ok(v_emp)' in pg_get_functiondef('private.rf_save_material_lots(uuid,boolean,boolean,boolean,jsonb,bigint,bigint)'::regprocedure)) > 0
+      and position('private.qa_head(p_employee)' in pg_get_functiondef('private.material_release_ok(public.employees)'::regprocedure)) > 0,
+  'the line-lot and rod writers ask the QA head helper; the material writer asks the release helper, which includes every QA head');
 select ok(position('rf_box_uncredit' in pg_get_functiondef('private.rf_save_qc(public.employees,boolean,boolean,jsonb,bigint,bigint)'::regprocedure)) > 0
       and position('bom_rod_lot_create' in pg_get_functiondef('private.rf_save_qc(public.employees,boolean,boolean,jsonb,bigint,bigint)'::regprocedure)) > 0
       and position('receiveRodsOpening' in pg_get_functiondef('private.bom_rod_save_lots(public.employees,text,boolean,text,jsonb)'::regprocedure)) > 0,
@@ -43,12 +48,16 @@ insert into auth.users (id, email, raw_user_meta_data) values ('8f500000-0000-00
 insert into public.employees (id, employee_no, first_name, last_name, email, job_title, department_id, role_id, auth_user_id) values
   ('8f500000-0000-0000-0000-000000000101', 'QAHEAD-ADMIN', 'Qahead', 'Admin', 'qahead-admin@test.local', 'System Administrator',
    (select id from public.departments where code = 'MGT'), (select id from public.roles where code = 'admin'), '8f500000-0000-0000-0000-000000000001');
--- persona เพิ่ม (is_test): ผู้ดูแลระบบ และผู้ช่วยผู้จัดการแผนก QA (หัวหน้า QA ที่ไม่อยู่กลุ่มวางแผน) ไม่มีในชุดตั้งต้น
+-- persona เพิ่ม (is_test): ผู้ดูแลระบบ ผู้ช่วยผู้จัดการแผนก QA (หัวหน้า QA ที่ไม่อยู่กลุ่มวางแผน) และผู้จัดการ / ผู้ช่วยผู้จัดการแผนก ST (หัวหน้า ST) ไม่มีในชุดตั้งต้น
 insert into public.employees (employee_no, first_name, last_name, email, job_title, department_id, role_id, is_active, is_test) values
   ('SBX-ADMIN-T', 'ทดสอบ', 'ผู้ดูแลระบบ', 'sbx-admin-t@sandbox.local', 'ผู้ดูแลระบบ (ทดสอบ)',
    (select id from public.departments where code = 'MGT'), (select id from public.roles where code = 'admin'), false, true),
   ('SBX-QA-AMGR-T', 'ทดสอบ', 'ผู้ช่วย ผจก. QA', 'sbx-qa-amgr-t@sandbox.local', 'ผู้ช่วย ผจก. QA (ทดสอบ)',
-   (select id from public.departments where code = 'QA'), (select id from public.roles where code = 'assistant_department_manager'), false, true);
+   (select id from public.departments where code = 'QA'), (select id from public.roles where code = 'assistant_department_manager'), false, true),
+  ('SBX-ST-MGR-T', 'ทดสอบ', 'ผจก. ST', 'sbx-st-mgr-t@sandbox.local', 'ผจก. ST (ทดสอบ)',
+   (select id from public.departments where code = 'ST'), (select id from public.roles where code = 'department_manager'), false, true),
+  ('SBX-ST-AMGR-T', 'ทดสอบ', 'ผู้ช่วย ผจก. ST', 'sbx-st-amgr-t@sandbox.local', 'ผู้ช่วย ผจก. ST (ทดสอบ)',
+   (select id from public.departments where code = 'ST'), (select id from public.roles where code = 'assistant_department_manager'), false, true);
 select count(set_config('test.p_' || lower(replace(employee_no, '-', '_')), id::text, true)) from public.employees where is_test;
 select count(set_config('test.n_' || lower(replace(employee_no, '-', '_')), first_name || ' ' || last_name, true)) from public.employees where is_test;
 select is((select count(*)::integer from public.employees e join public.departments d on d.id = e.department_id join public.roles r on r.id = e.role_id
@@ -59,12 +68,14 @@ select is((select count(*)::integer from public.employees e join public.departme
                                 or (e.employee_no = 'SBX-RB-MGR' and d.code = 'RB' and r.code = 'department_manager')
                                 or (e.employee_no = 'SBX-RB-STAFF' and d.code = 'RB' and r.code = 'staff')
                                 or (e.employee_no = 'SBX-ST-STAFF' and d.code = 'ST' and r.code = 'staff')
+                                or (e.employee_no = 'SBX-ST-MGR-T' and d.code = 'ST' and r.code = 'department_manager')
+                                or (e.employee_no = 'SBX-ST-AMGR-T' and d.code = 'ST' and r.code = 'assistant_department_manager')
                                 or (e.employee_no = 'SBX-SR-STAFF' and d.code = 'SR' and r.code = 'staff')
                                 or (e.employee_no = 'SBX-PK-MGR' and d.code = 'PK' and r.code = 'department_manager')
                                 or (e.employee_no = 'SBX-FT-FM' and r.code = 'factory_manager')
                                 or (e.employee_no = 'SBX-FT-AFM' and r.code = 'assistant_factory_manager')
                                 or (e.employee_no = 'SBX-MGT-GM' and r.code = 'general_manager')
-                                or (e.employee_no = 'SBX-ADMIN-T' and r.code = 'admin'))), 13,
+                                or (e.employee_no = 'SBX-ADMIN-T' and r.code = 'admin'))), 15,
   'the personas used below belong to the departments and roles the rules name');
 
 -- หัวหน้า QA ตามบทบาท (เรียกในนามเจ้าของฐานข้อมูล ก่อนเปลี่ยนเป็น authenticated)
@@ -85,6 +96,18 @@ select ok((select not private.qa_head(e) and private.bom_can_edit(e) from public
 select ok((select private.qa_head(e) and not private.bom_can_edit(e) from public.employees e where e.employee_no = 'SBX-QA-AMGR-T'),
   'the QA assistant manager is a QA head outside the planner group');
 select ok(not private.qa_head(null::public.employees), 'an unknown caller is not a QA head');
+select ok((select not private.qa_head(e) from public.employees e where e.employee_no = 'SBX-ST-MGR-T')
+      and (select not private.qa_head(e) from public.employees e where e.employee_no = 'SBX-ST-AMGR-T'), 'the ST heads are not QA heads');
+
+-- ผู้ปล่อยวัตถุดิบที่กัก = หัวหน้า QA ทุกคน และหัวหน้า ST (ผู้จัดการ / ผู้ช่วยผู้จัดการแผนก ST)
+select is((select string_agg(e.employee_no, ',' order by e.employee_no) from public.employees e
+           where e.is_test and e.employee_no like 'SBX-%' and private.material_release_ok(e)
+             and e.employee_no in ('SBX-QA-MGR', 'SBX-QA-AMGR-T', 'SBX-QA-STAFF', 'SBX-PP-STAFF', 'SBX-RB-MGR', 'SBX-RB-STAFF', 'SBX-ST-STAFF',
+                                   'SBX-ST-MGR-T', 'SBX-ST-AMGR-T', 'SBX-SR-STAFF', 'SBX-PK-MGR', 'SBX-FT-FM', 'SBX-FT-AFM', 'SBX-MGT-GM', 'SBX-ADMIN-T')),
+  'SBX-ADMIN-T,SBX-FT-FM,SBX-MGT-GM,SBX-QA-AMGR-T,SBX-QA-MGR,SBX-ST-AMGR-T,SBX-ST-MGR-T',
+  'material releasers: every QA head plus the ST department manager and assistant manager');
+select ok((select not private.material_release_ok(e) from public.employees e where e.employee_no = 'SBX-ST-STAFF'), 'ordinary ST staff cannot release a held material lot');
+select ok(not private.material_release_ok(null::public.employees), 'an unknown caller cannot release a held material lot');
 
 -- 3. ตัวช่วยของเทสต์ (schema แยก ลบพร้อม rollback): รันในฐานะผู้เรียก (authenticated) ผ่าน RPC สาธารณะเท่านั้น -------------------------------
 create schema qh_t;
@@ -211,6 +234,10 @@ select lives_ok($$ select qh_t.end_rest('MX-R1', 'ทดสอบความห
 select is(qh_t.lot('MX-R1') -> 'params' -> 'skipRest' ->> 'by', current_setting('test.n_sbx_rb_mgr'), 'with the RB head as the one who skipped it');
 select throws_ok($$ select qh_t.qc('QC-D9', 'MX-R1', 'pass') $$, 'RF_QA_HEAD_ONLY', 'but the RB head cannot release the held lot');
 select is(qh_t.lot('MX-R1') ->> 'qc', 'hold', 'the lot is still held');
+-- หัวหน้า ST ปล่อยวัตถุดิบได้ (ข้อ 6) แต่ไม่ได้ตัดสินล็อตที่กักของสายผลิต
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_mgr_t')::uuid);
+select throws_ok($$ select qh_t.qc('QC-D11', 'MX-H1', 'pass') $$, 'RF_QA_HEAD_ONLY', 'the ST head cannot release a held line lot');
+select is(qh_t.lot('MX-H1') ->> 'qc', 'hold', 'the line lot stays held');
 
 -- ชนก่อนสิทธิ์: ล็อตถูกกักหลังเวอร์ชันฐานของผู้เรียก = RF_STALE (ไม่ใช่ RF_QA_HEAD_ONLY)
 select set_config('test.base', qh_t.rver()::text, true);
@@ -239,23 +266,29 @@ select is((select string_agg(x ->> 'id' || ':' || (x ->> 'qc'), ',' order by x -
            where x ->> 'id' in ('MX-H1', 'MX-H2', 'MX-H3', 'MX-H4', 'MX-H5', 'MX-R1')),
   'MX-H1:pass,MX-H2:fail,MX-H3:pass,MX-H4:fail,MX-H5:pass,MX-R1:pass', 'each head decision set the lot');
 
--- 6. C) ปล่อยวัตถุดิบที่กัก hold -> available = หัวหน้า QA เท่านั้น · กักยังเป็นของกลุ่มวางแผน / ST / QA ---------------------------------
+-- 6. C) ปล่อยวัตถุดิบที่กัก hold -> available = หัวหน้า QA หรือหัวหน้า ST · กักยังเป็นของกลุ่มวางแผน / ST / QA ---------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select lives_ok($$ select qh_t.mstatus('RM-Q1', 'hold') $$, 'ST still holds a material lot');
 select is(qh_t.mlot('RM-Q1') ->> 'status', 'hold', 'the lot is held');
-select throws_ok($$ select qh_t.mstatus('RM-Q1', 'available') $$, 'RF_QA_HEAD_ONLY', 'ST cannot release it');
+select throws_ok($$ select qh_t.mstatus('RM-Q1', 'available') $$, 'RF_MATERIAL_RELEASE_HEAD_ONLY', 'ST staff cannot release it');
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
-select throws_ok($$ select qh_t.mstatus('RM-Q1', 'available') $$, 'RF_QA_HEAD_ONLY', 'nor can QA staff');
+select throws_ok($$ select qh_t.mstatus('RM-Q1', 'available') $$, 'RF_MATERIAL_RELEASE_HEAD_ONLY', 'nor can QA staff');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
-select throws_ok($$ select qh_t.mstatus('RM-Q1', 'available') $$, 'RF_QA_HEAD_ONLY', 'nor planning (PP)');
+select throws_ok($$ select qh_t.mstatus('RM-Q1', 'available') $$, 'RF_MATERIAL_RELEASE_HEAD_ONLY', 'nor planning (PP)');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_mgr')::uuid);
-select throws_ok($$ select qh_t.mstatus('RM-Q1', 'available') $$, 'RF_QA_HEAD_ONLY', 'nor the RB head');
+select throws_ok($$ select qh_t.mstatus('RM-Q1', 'available') $$, 'RF_MATERIAL_RELEASE_HEAD_ONLY', 'nor the RB head');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pk_mgr')::uuid);
+select throws_ok($$ select qh_t.mstatus('RM-Q1', 'available') $$, 'RF_MATERIAL_RELEASE_HEAD_ONLY', 'nor another department manager of the production line');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select qh_t.mstatus('RM-Q1', 'available') $$, 'RF_FORBIDDEN', 'RB staff still have no right on material lots at all');
 select is(qh_t.mlot('RM-Q1') ->> 'status', 'hold', 'every refused release left the material lot held');
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_mgr')::uuid);
 select lives_ok($$ select qh_t.mstatus('RM-Q1', 'available') $$, 'the QA head releases the material lot');
 select is(qh_t.mlot('RM-Q1') ->> 'status', 'available', 'the lot is available again');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_mgr_t')::uuid);
+select lives_ok($$ select qh_t.mstatus('RM-Q1', 'hold') $$, 'the ST head holds a material lot');
+select lives_ok($$ select qh_t.mstatus('RM-Q1', 'available') $$, 'and the ST head releases it (owner order 2026-11-24)');
+select is(qh_t.mlot('RM-Q1') ->> 'status', 'available', 'the lot is available again after the ST head release');
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
 select lives_ok($$ select qh_t.mstatus('RM-Q1', 'hold') $$, 'QA staff still hold a material lot');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
@@ -268,6 +301,10 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_admin_t')::uuid);
 select lives_ok($$ select qh_t.mstatus('RM-Q2', 'available') $$, 'and so may the admin');
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_amgr_t')::uuid);
 select lives_ok($$ select qh_t.mstatus('RM-Q3', 'available') $$, 'and the QA assistant manager');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select lives_ok($$ select qh_t.mstatus('RM-Q3', 'hold') $$, 'ST staff hold the lot once more');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_amgr_t')::uuid);
+select lives_ok($$ select qh_t.mstatus('RM-Q3', 'available') $$, 'and the ST assistant manager releases it');
 select is((select string_agg(x ->> 'lotNo' || ':' || (x ->> 'status'), ',' order by x ->> 'lotNo') from jsonb_array_elements(public.app_rf_master() -> 'materialLots') x),
   'RM-Q1:available,RM-Q2:available,RM-Q3:available', 'every material lot is available again');
 
@@ -283,6 +320,8 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_ft_afm')::uuid);
 select throws_ok($$ select qh_t.decide('QAH-R1', 'scrap', 'เสียหายทั้งล็อต') $$, 'BOM_QA_HEAD_ONLY', 'nor the assistant factory manager');
 select public.app_sandbox_enter(current_setting('test.p_sbx_sr_staff')::uuid);
 select throws_ok($$ select qh_t.decide('QAH-R1', 'accept', 'ใช้ตามสภาพ') $$, 'BOM_QA_HEAD_ONLY', 'nor SR staff');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_mgr_t')::uuid);
+select throws_ok($$ select qh_t.decide('QAH-R1', 'accept', 'ใช้ตามสภาพ') $$, 'BOM_QA_HEAD_ONLY', 'nor the ST head (material release only)');
 select is(qh_t.rod('QAH-R1') ->> 'status', 'held', 'every refused decision left the rod lot held');
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_mgr')::uuid);
 select lives_ok($$ select qh_t.decide('QAH-R1', 'accept', 'ใช้ตามสภาพ') $$, 'the QA head accepts a held rod lot');

@@ -522,7 +522,7 @@
   }
 
   // ปล่อยของที่ QA กัก = หัวหน้า QA เท่านั้น (เจ้าของสั่ง 2026-11-24 · ฐานข้อมูล RF_QA_HEAD_ONLY / BOM_QA_HEAD_ONLY): ผู้จัดการแผนกหรือผู้ช่วยผู้จัดการแผนก (department_manager / assistant_department_manager) ของแผนก QA หรือ admin / ผู้จัดการทั่วไป / ผู้จัดการโรงงาน
-  // ไม่ใช่ฝ่ายวางแผน (PP) พนักงาน QA หัวหน้า RB หรือผู้ช่วยผู้จัดการโรงงาน · ใช้กับ: ผลตรวจผ่าน/ไม่ผ่านของล็อตที่กัก · ตัดสินยางเส้นยาวที่ SR กัก · ปลดกักกันวัตถุดิบ
+  // ไม่ใช่ฝ่ายวางแผน (PP) พนักงาน QA หัวหน้า RB หรือผู้ช่วยผู้จัดการโรงงาน · ใช้กับ: ผลตรวจผ่าน/ไม่ผ่านของล็อตที่กัก · ตัดสินยางเส้นยาวที่ SR กัก (ปลดกักกันวัตถุดิบ = canReleaseMaterial ข้างล่าง)
   // นิยามเดียวของฝั่งหน้าจอ (RubberFlow ใช้ผ่าน can("qaRelease") · BOM ผ่าน canDecideRods) · รับผู้ใช้ทั้งรูปของ RubberFlow และของ BOM (role / roleCode / dept) · บัญชีสาธิตในเครื่องไม่มี roleCode: ใช้บทบาท manager แทน (แบบเดียวกับ canReverseFg)
   const QA_RELEASE_ROLE_CODES = Object.freeze(["admin", "general_manager", "factory_manager"]);
   const QA_RELEASE_TEXT = "เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ";
@@ -533,9 +533,17 @@
     if (!roleCode) return user.role === "manager";
     return String(user.dept ?? "").toUpperCase() === "QA" && ["department_manager", "assistant_department_manager"].includes(roleCode);
   }
+  // ปลดกักกันวัตถุดิบ (ล็อตเคมี hold → available) = หัวหน้า QA (canQaRelease) หรือหัวหน้า ST (ผู้จัดการ / ผู้ช่วยผู้จัดการแผนก ST) · เจ้าของสั่ง 2026-11-24 "วัตถุดิบที่กักให้มี 2 ที่ คือ QA และ ST และให้หัวหน้า ST ปลดได้ด้วย"
+  // ฐานข้อมูล private.material_release_ok · RF_MATERIAL_RELEASE_HEAD_ONLY · นิยามเดียวของฝั่งหน้าจอ (RubberFlow can("releaseMaterial") · หน้าวัตถุดิบที่กักของ #/qa และ #/st) · พนักงาน ST / QA กักกันได้แต่ปลดไม่ได้
+  const MATERIAL_RELEASE_TEXT = "ปลดกักกันวัตถุดิบได้เฉพาะหัวหน้า QA หัวหน้า ST หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ";
+  function canReleaseMaterial(user) {
+    if (canQaRelease(user)) return true;
+    const roleCode = String(user?.roleCode ?? "");
+    return Boolean(roleCode) && String(user.dept ?? "").toUpperCase() === "ST" && ["department_manager", "assistant_department_manager"].includes(roleCode);
+  }
 
   const api = {
-    QA_RELEASE_TEXT, canQaRelease,
+    QA_RELEASE_TEXT, canQaRelease, MATERIAL_RELEASE_TEXT, canReleaseMaterial,
     DAY, HOUR, STAGES, STAGE_LABEL, NEXT_STAGE, PREV_STAGE, SHIFTS, MACHINES, SPECS, WEIGH_TOL_PCT, WEIGH_TOL_MIN_KG,
     MIX_STAGES, itemStage, recipeStage, recipeLabel, orderLabel, unitText, inSpec, specText, specLimits, EXTRUSION_KEYS, extrusionSpecOf, orderExtrusionSpec, extrusionHoldReasons, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, OPEN_ORDER, orderRemainingKg, MAX_REQ_BATCHES, remainingBatches, nextRequisitionBatches, suggestOrderKg, chemicalNeeds, stats, cpkVerdict,
     fmtDate, fmtDateTime, fmtNum, fmtDuration, ymd, toInputDate, fromInputDate, niceScale,

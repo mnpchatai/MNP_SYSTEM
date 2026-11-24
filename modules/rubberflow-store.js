@@ -80,8 +80,9 @@
     workOrder: PLAN_ROLES, // พัก/ผลิตต่อ/ปิดงาน/ยกเลิกใบสั่งผลิต
     editMaster: Object.freeze(["admin", "manager", "planner", "qc"]), // วัตถุดิบ / ร่างสูตร
     qcDecision: Object.freeze(["admin", "manager", "qc"]),
-    qaRelease: Object.freeze(["admin", "manager", "qc"]), // ปล่อยล็อตที่กัก / ปลดกักกันวัตถุดิบ (โหมดสาธิต: ผู้จัดการ / QC แทนหัวหน้า QA)
-    holdMaterial: Object.freeze(["admin", "manager", "qc"]), // กักกัน/ปลดกักกันล็อตวัตถุดิบ
+    qaRelease: Object.freeze(["admin", "manager", "qc"]), // ปล่อยล็อตที่กัก (โหมดสาธิต: ผู้จัดการ / QC แทนหัวหน้า QA)
+    releaseMaterial: Object.freeze(["admin", "manager", "qc"]), // ปลดกักกันวัตถุดิบ (โหมดสาธิต: ผู้จัดการ / QC แทนหัวหน้า QA / หัวหน้า ST)
+    holdMaterial: Object.freeze(["admin", "manager", "qc"]), // กักกันล็อตวัตถุดิบ
     skipRest: Object.freeze(["admin", "manager", "qc"]), // ข้ามเวลาบ่ม (พร้อมเหตุผล): ผู้จัดการ / QC แทนหัวหน้า RB และ QA ของโหมดฐานข้อมูล
     returnRequisition: Object.freeze(["admin", "manager", "store"]), // รับเคมีที่เบิกไปแล้วคืนเข้าล็อตเดิม (WO ถูกยกเลิก): เจ้าหน้าที่คลัง
   });
@@ -92,7 +93,8 @@
     workOrder: (user) => Boolean(user.planner || user.rb),
     editMaster: (user) => Boolean(user.planner || user.rb),
     qcDecision: (user) => Boolean(user.planner || user.qa), // บันทึกผลตรวจ / เปิด-ปิด NCR / ตัดสินล็อต
-    qaRelease: (user) => qaRelease(user), // ผลตรวจผ่าน/ไม่ผ่านของล็อตที่กัก · ปลดกักกันวัตถุดิบ: หัวหน้า QA หรือผู้จัดการโรงงานขึ้นไปเท่านั้น (นิยามเดียว rules.canQaRelease) · พนักงาน QA บันทึก "กักต่อ" ได้
+    qaRelease: (user) => qaRelease(user), // ผลตรวจผ่าน/ไม่ผ่านของล็อตที่กัก: หัวหน้า QA หรือผู้จัดการโรงงานขึ้นไปเท่านั้น (นิยามเดียว rules.canQaRelease) · พนักงาน QA บันทึก "กักต่อ" ได้
+    releaseMaterial: (user) => Boolean(root.MNP_RUBBERFLOW_RULES?.canReleaseMaterial?.(user)), // ปลดกักกันวัตถุดิบ: หัวหน้า QA หรือหัวหน้า ST หรือผู้จัดการโรงงานขึ้นไป (นิยามเดียว rules.canReleaseMaterial)
     holdMaterial: (user) => Boolean(user.planner || user.st || user.qa),
     skipRest: (user) => Boolean(user.rbHead || user.qa), // ข้ามเวลาบ่มพร้อมเหตุผล: หัวหน้า RB (รวมผู้ช่วยผู้จัดการโรงงานขึ้นไปและ admin) หรือแผนก QA (20261128010000) · ฐานข้อมูลประทับเวลาและผู้ข้ามเอง
     returnRequisition: (user) => Boolean(user.st || user.role === "admin"), // รับเคมีที่เบิกไปแล้วคืนเข้าล็อตเดิมเมื่อ WO ถูกยกเลิก: แผนก ST (admin ไว้แก้ปัญหา)
@@ -267,6 +269,7 @@
       RF_CONFLICT: "รายการนี้ซ้ำกับที่มีอยู่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_QA_HEAD_ONLY: "เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ ปล่อยล็อตที่กักหรือตัดสินผ่าน/ไม่ผ่านได้ (พนักงาน QA บันทึกกักต่อ/ตรวจซ้ำได้)",
       BOM_QA_HEAD_ONLY: "เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ ตัดสินล็อตยางเส้นยาวที่กักได้",
+      RF_MATERIAL_RELEASE_HEAD_ONLY: "ปลดกักกันวัตถุดิบได้เฉพาะหัวหน้า QA หัวหน้า ST หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ",
       RF_INVALID_TRANSITION: "รายการอยู่ในสถานะที่ทำรายการนี้ไม่ได้ (อาจมีผู้อื่นเปลี่ยนสถานะไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
       RF_RESET: "ข้อมูล RubberFlow ทดสอบถูกล้างและเริ่มใหม่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_NOT_DEPLOYED: "ฐานข้อมูลยังไม่มีระบบ RubberFlow (ยังไม่ได้ติดตั้ง migration) ติดต่อผู้ดูแลระบบ",

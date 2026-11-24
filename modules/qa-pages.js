@@ -2,7 +2,8 @@
 // ข้อมูลมาจากสองทาง: ยางเส้นยาวที่ SR กักตอนรับเข้า (store ของ BOM: rodLots · การ์ดตัดสินชุดเดียวกับ BOM) และล็อตในสายผลิต ผลตรวจ NCR ล็อตวัตถุดิบ (store ของ RubberFlow: lots qcRecords ncrs materialLots)
 // หน้า: งานของฉัน (ค่าตั้งต้น) · ผลตรวจ ?tab=records · NCR ?tab=ncr · CoA ?tab=coa (&lot=<ล็อตตกแต่ง>) · SPC ?tab=spc (&ch=) · สืบย้อนกลับ ?tab=trace (&q=) · วัตถุดิบที่กัก ?tab=material
 // ส่วนวาดของ RubberFlow (ตารางผลตรวจ การ์ด NCR ตาราง CoA SPC สืบย้อนกลับ และ dialog qcRecord / ncr / coa) มาจาก window.MNP_RUBBERFLOW_VIEWS.quality / MNP_RUBBERFLOW_DIALOGS (modules/rubberflow-pages-quality.js ที่เดียว) · ปุ่มของ RubberFlow อยู่ใน [data-rf-scope] ที่ตัวผูกของ RubberFlow ผูกเอง
-// สิทธิ์: การซ่อน/แสดงปุ่มเป็นแค่ UX ฐานข้อมูลตัดสินจริง · ปล่อยล็อตที่กัก (ผลตรวจผ่าน/ไม่ผ่านของล็อตที่กัก) ตัดสินยางเส้นยาวที่กัก และปลดกักกันวัตถุดิบ = หัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบเท่านั้น (rules.canQaRelease · RF_QA_HEAD_ONLY / BOM_QA_HEAD_ONLY)
+// สิทธิ์: การซ่อน/แสดงปุ่มเป็นแค่ UX ฐานข้อมูลตัดสินจริง · ปล่อยล็อตที่กัก (ผลตรวจผ่าน/ไม่ผ่านของล็อตที่กัก) และตัดสินยางเส้นยาวที่กัก = หัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบเท่านั้น (rules.canQaRelease · RF_QA_HEAD_ONLY / BOM_QA_HEAD_ONLY)
+//   · ปลดกักกันวัตถุดิบ = หัวหน้า QA หรือหัวหน้า ST ขึ้นไป (rules.canReleaseMaterial · RF_MATERIAL_RELEASE_HEAD_ONLY) · หน้าวัตถุดิบที่กักเป็นชุดเดียวกับ #/st?tab=hold (MNP_FACTORY.heldMaterialView)
 // พนักงาน QA บันทึกผลตรวจของล็อตที่ไม่ได้กัก บันทึก "กักต่อ / ตรวจซ้ำ" ของล็อตที่กัก กักกันวัตถุดิบ และเปิด/ปิด NCR ได้ · ข้ามเวลาบ่ม (endRest) ยังอยู่ที่สถานีของ RubberFlow ตามเดิม
 (function registerQaPages(root) {
   const F = root.MNP_FACTORY;
@@ -14,12 +15,10 @@
   const rfViews = () => root.MNP_RUBBERFLOW_VIEWS?.quality ?? null;
   const hub = () => root.MNP_BOM_PAGES?.hub ?? null;
   const rfScope = (html) => (html ? `<div data-rf-scope="rubberflow">${html}</div>` : "");
-  const dash = '<span class="muted">—</span>';
   const readOnlyNote = '<p class="small muted">ดูอย่างเดียว บัญชีนี้ไม่มีสิทธิ์ดำเนินการ</p>';
   // ประโยค "ตัดสินได้เฉพาะหัวหน้า" แสดงครั้งเดียวใต้หัวกลุ่มการ์ด (และใน title ของปุ่ม) ไม่ซ้ำทุกการ์ด
   const headOnlyText = () => rfRules()?.QA_RELEASE_TEXT ?? "เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ";
   const releaseHeadText = () => `ปล่อยหรือตัดสินผ่าน/ไม่ผ่านได้${headOnlyText()}`;
-  const unholdHeadText = () => `ปลดกักกันได้${headOnlyText()}`;
   const groupNote = (text) => (text ? `<p class="small muted">${esc(text)}</p>` : "");
   // การ์ดของแต่ละแหล่งแสดงสูงสุดเท่านี้ใบ ที่เหลือบอก "อีก N รายการ" และขยายด้วย ?all=1 (เห็นงานทั้งหมดโดยไม่ต้องเลื่อนยาว)
   const CARD_LIMIT = 6;
@@ -50,7 +49,6 @@
   // ---------- รายการงาน ----------
   const byNewest = (a, b) => num(b.createdAt) - num(a.createdAt) || String(a.id ?? a.lotNo).localeCompare(String(b.id ?? b.lotNo));
   const heldLots = (data) => (data.lots ?? []).filter((lot) => lot.qc === "hold").sort(byNewest);
-  const heldMaterials = (data) => (data.materialLots ?? []).filter((lot) => lot.status === "hold").sort((a, b) => num(a.expiry) - num(b.expiry) || String(a.lotNo).localeCompare(String(b.lotNo)));
   const openNcrs = (data) => (data.ncrs ?? []).filter((ncr) => ncr.status === "open").sort(byNewest);
   const materialName = (data, code) => (data.materials ?? []).find((row) => row.code === code)?.name ?? "";
   const lotKgText = (ctx, R, lot, store) => `${store} ${ctx.rules.fmtQty(R.lotKg(lot, store))} kg`;
@@ -71,13 +69,12 @@
       : ui.openButton(head ? "ตัดสิน" : "ตรวจซ้ำ (กักต่อ)", "qcRecord", { lotId: lot.id }, { className: "bom-job-main", ariaLabel: `${head ? "ตัดสิน" : "ตรวจซ้ำ"}ล็อต ${lot.id}${head ? "" : ` · ${releaseHeadText()}`}`, title: head ? "" : releaseHeadText() });
     return card({ tone: "is-hold", state: "กักรอตัดสิน", when: `กักเมื่อ ${rules.fmtDate(lot.createdAt)}`, title: `ตัดสินล็อต ${lot.id}`, sub: esc(sub), lines: reasons.length ? cardLines(reasons, (reason) => `<li><span>${esc(reason)}</span></li>`, "สาเหตุ") : "", actions: action });
   }
-  // ล็อตวัตถุดิบที่กัก (ปลดกักกัน = หัวหน้า QA ขึ้นไป · ยอดจ่ายไม่ได้ทั้งคลัง ST และคลัง RB จนกว่าจะปลด)
-  const releaseButton = (ui, lot, className = "bom-job-main") => ui.button("ปลดกักกัน", { action: "setMaterialLotStatus", args: { lotNo: lot.lotNo, status: "available" }, className, confirmText: `ปลดกักกันล็อต ${lot.lotNo}? ล็อตจะจ่ายได้ตามปกติอีกครั้ง`, success: "ปลดกักกันล็อต {result} แล้ว", ariaLabel: `ปลดกักกันล็อต ${lot.lotNo}` }).replace("<button ", '<button data-rf-right="qaRelease" ');
+  // ล็อตวัตถุดิบที่กัก (ปลดกักกัน = หัวหน้า QA หรือหัวหน้า ST ขึ้นไป · ยอดจ่ายไม่ได้ทั้งคลัง ST และคลัง RB จนกว่าจะปลด · ปุ่มชุดเดียวกับหน้าวัตถุดิบที่กัก F.materialReleaseButton)
   function materialCard(ctx, rf, lot) {
     const { ui, rules } = ctx;
     const R = rfRules();
     const name = materialName(rf.data, lot.materialCode);
-    const action = rfCan(rf, "qaRelease") ? releaseButton(ui, lot)
+    const action = rfCan(rf, "releaseMaterial") ? F.materialReleaseButton(ui, lot)
       : rfCan(rf, "holdMaterial") ? "" : readOnlyNote;
     return card({ tone: "is-hold", state: "วัตถุดิบถูกกัก", when: `หมดอายุ ${rules.fmtDate(lot.expiry)}`, title: `ปลดกักกันล็อต ${lot.lotNo}`, sub: `<span class="rf-mono">${esc(lot.materialCode)}</span>${name ? ` ${esc(name)}` : ""} · ${esc(`${lotKgText(ctx, R, lot, "ST")} · ${lotKgText(ctx, R, lot, "RB")}`)}`, actions: action });
   }
@@ -93,7 +90,7 @@
     const rod = F.deptWork(ctx, { title: "ยางเส้นยาวที่กักรอตัดสิน", quietWhenEmpty: true, note: ctx.helpers?.canDecideRods?.(ctx.user) ? "" : groupNote(`ตัดสินได้${headOnlyText()}`) });
     const ready = rf.status === "ready" && Boolean(rfRules());
     const lots = ready ? heldLots(rf.data).map((lot) => lotCard(ctx, rf, lot)) : [];
-    const materials = ready ? heldMaterials(rf.data).map((lot) => materialCard(ctx, rf, lot)) : [];
+    const materials = ready ? F.heldMaterialLots(rf.data).map((lot) => materialCard(ctx, rf, lot)) : [];
     const ncrs = ready ? openNcrs(rf.data).map((ncr) => ncrCard(ctx, rf, ncr)) : [];
     return { rod, lots, materials, ncrs, count: rod.count + lots.length + materials.length + ncrs.length };
   }
@@ -109,7 +106,7 @@
   }
   function workView(ctx, rf) {
     const work = workData(ctx, rf);
-    const parts = [work.rod.html, section(ctx, "ล็อตในสายผลิตที่กักรอตัดสิน", work.lots, rfCan(rf, "qcDecision") && !rfCan(rf, "qaRelease") ? releaseHeadText() : ""), section(ctx, "วัตถุดิบที่กักรอปลดกักกัน", work.materials, rfCan(rf, "holdMaterial") && !rfCan(rf, "qaRelease") ? unholdHeadText() : ""), section(ctx, "NCR ที่ยังเปิดอยู่", work.ncrs), rfNote(ctx, rf)].filter(Boolean);
+    const parts = [work.rod.html, section(ctx, "ล็อตในสายผลิตที่กักรอตัดสิน", work.lots, rfCan(rf, "qcDecision") && !rfCan(rf, "qaRelease") ? releaseHeadText() : ""), section(ctx, "วัตถุดิบที่กักรอปลดกักกัน", work.materials, rfCan(rf, "holdMaterial") && !rfCan(rf, "releaseMaterial") ? F.materialReleaseText() : ""), section(ctx, "NCR ที่ยังเปิดอยู่", work.ncrs), rfNote(ctx, rf)].filter(Boolean);
     return work.count || rf.status !== "ready" ? parts.join("") : ctx.ui.card(ctx.ui.empty("ไม่มีงานค้าง"));
   }
   // ลิงก์ไปโมดูลใบตรวจ QC (#/qc) และใบ NCR/CAR (#/ncr): โมดูลของตัวเอง ไม่ใช่ NCR ของ RubberFlow ที่อยู่ในแท็บ NCR
@@ -141,26 +138,11 @@
   const traceView = (ctx, rf) => (rf.status !== "ready" ? rfNote(ctx, rf) || ctx.ui.card(ctx.ui.empty("ไม่มีข้อมูล RubberFlow")) : rfViews().trace(rf.ctx).html);
 
   // ---------- วัตถุดิบที่กัก ----------
-  // ที่กักอยู่ (ปลดกักกัน = หัวหน้า QA ขึ้นไป) และค้นหาล็อตที่ใช้ได้เพื่อกักกัน (QA ST ฝ่ายวางแผน) · ไม่ค้นหา = ไม่แสดงรายการยาวๆ ของล็อตที่ใช้ได้
+  // หน้าชุดเดียวกับ #/st?tab=hold (MNP_FACTORY.heldMaterialView): ที่กักอยู่ (ปลดกักกัน = หัวหน้า QA หรือหัวหน้า ST ขึ้นไป) และค้นหาล็อตที่ใช้ได้เพื่อกักกัน (QA ST ฝ่ายวางแผน)
   function materialView(ctx, rf) {
-    const { ui, rules, q } = ctx;
+    const { ui } = ctx;
     if (rf.status !== "ready" || !rfRules()) return rfNote(ctx, rf) || ui.card(ui.empty("ไม่มีข้อมูล RubberFlow"));
-    const R = rfRules();
-    const { data } = rf;
-    const holdable = rfCan(rf, "holdMaterial");
-    const release = rfCan(rf, "qaRelease");
-    const kgOf = (lot) => R.lotKg(lot, "ST") + R.lotKg(lot, "RB");
-    const row = (lot, action) => `<tr><td>${ui.mono(lot.lotNo)}</td><td>${ui.mono(lot.materialCode)}<div class="small muted">${esc(materialName(data, lot.materialCode))}</div></td><td class="nowrap small">${lot.expiry ? esc(rules.fmtDate(lot.expiry)) : dash}</td><td class="right rf-mono">${esc(rules.fmtQty(kgOf(lot)))}</td><td class="right">${action}</td></tr>`;
-    const head = ["ล็อต", "วัตถุดิบ", "หมดอายุ", { label: "คงเหลือ (kg)", className: "right" }, ""];
-    const held = heldMaterials(data);
-    const heldRows = held.map((lot) => row(lot, release ? releaseButton(ui, lot, "secondary small") : ""));
-    const heldNote = held.length && holdable && !release ? groupNote(unholdHeadText()) : "";
-    const heldCard = ui.card(ui.table(head, heldRows, { emptyText: "ไม่มีล็อตวัตถุดิบที่กัก" }), { title: esc("ล็อตที่กักอยู่"), flush: true });
-    const found = q ? (data.materialLots ?? []).filter((lot) => lot.status !== "hold" && kgOf(lot) > 0.0001 && F.includesText(`${lot.lotNo} ${lot.materialCode} ${materialName(data, lot.materialCode)}`, q)).sort((a, b) => num(a.expiry) - num(b.expiry)) : [];
-    const holdButton = (lot) => ui.button("กักกัน", { action: "setMaterialLotStatus", args: { lotNo: lot.lotNo, status: "hold" }, className: "secondary small", confirmText: `กักกันล็อต ${lot.lotNo}? ล็อตที่กักกันจ่ายไม่ได้ทั้งคลัง ST และคลัง RB จนกว่าหัวหน้า QA จะปลดกักกัน`, success: "กักกันล็อต {result} แล้ว", ariaLabel: `กักกันล็อต ${lot.lotNo}` });
-    const shownFound = found.slice(0, 20);
-    const searchCard = ui.card(`<div class="rf-row sr-toolbar">${F.searchForm(ctx, "ค้นหาล็อตหรือวัตถุดิบที่จะกักกัน")}${q ? ui.link("ล้างคำค้น", ctx.pageUrl({ q: null }), "btn rf-btn secondary small") : ""}</div>${q ? ui.table(head, shownFound.map((lot) => row(lot, holdable ? holdButton(lot) : "")), { emptyText: "ไม่พบล็อตที่ใช้ได้ตามคำค้น" }) : ""}${found.length > shownFound.length ? `<p class="small muted">${esc(`แสดง 20 จาก ${found.length} ล็อต ค้นให้แคบลง`)}</p>` : ""}`, { title: esc("กักกันล็อตวัตถุดิบ") });
-    return rfScope(`${heldNote}${heldCard}${searchCard}`);
+    return F.heldMaterialView(ctx, rf.data, { release: rfCan(rf, "releaseMaterial"), holdable: rfCan(rf, "holdMaterial") });
   }
 
   // ---------- หน้าแรกของโมดูล ----------
