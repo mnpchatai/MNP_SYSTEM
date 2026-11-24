@@ -201,13 +201,15 @@ test("the office module is standalone with a menu entry, sandbox for the repair 
 });
 
 /* ---------- ทดลองรันโมดูลจริงใน vm: ลงทะเบียน เมนู และหน้า ---------- */
-function setup({ employee, repairSummary = { openCount: 5, badge: "", title: "" }, repairVersion = "1.00", itwoSummary = null, itwoVersion, declare = true, sandbox = false, repairInDevelopment = false, itas = null } = {}) {
+function setup({ employee, repairSummary = { openCount: 5, badge: "", title: "" }, repairVersion = "1.00", itwoSummary = null, itwoVersion, declare = true, sandbox = false, repairInDevelopment = false, itas = null, deptAllowed = null } = {}) {
   const queries = [];
   // ทะเบียนอุปกรณ์ IT (ตัวแทน): สิทธิ์มาจาก app_itas_my_access (resolveAccess) · hasAccess ตอบได้หลัง resolveAccess แล้วเท่านั้น · itas = { allowed, fail } หรือ null = ไม่มีโมดูลนี้
-  const itasState = { resolved: false, resolves: 0, rendered: [] };
+  // itas.gate = promise ที่ต้องรอก่อน resolveAccess จะเสร็จ (ทดสอบว่าหน้าไม่ต้องรอ/ไม่วาดทับหน้าเก่า) · accessStatus: unknown ก่อนตรวจ, error เมื่อตรวจล้ม
+  const itasState = { resolved: false, resolves: 0, rendered: [], failed: false };
   const itasStub = itas ? {
-    resolveAccess: async () => { itasState.resolves += 1; itasState.resolved = !itas.fail; return !itas.fail && Boolean(itas.allowed); },
+    resolveAccess: async () => { itasState.resolves += 1; if (itas.gate) await itas.gate; itasState.resolved = !itas.fail; itasState.failed = Boolean(itas.fail); return !itas.fail && Boolean(itas.allowed); },
     hasAccess: () => itasState.resolved && Boolean(itas.allowed),
+    accessStatus: () => (itasState.failed ? "error" : itasState.resolved ? (itas.allowed ? "allowed" : "denied") : "unknown"),
     render: async (query) => { itasState.rendered.push(String(query)); },
   } : null;
   const painted = { itwoRendered: [], itrpRendered: [], html: "", active: null, title: null, notFound: 0, loading: 0, zooms: 0, queued: [], went: [] };
@@ -231,7 +233,7 @@ function setup({ employee, repairSummary = { openCount: 5, badge: "", title: "" 
     bindShell() {}, loadingShell() { painted.loading += 1; }, renderNotFound() { painted.notFound += 1; }, go(path) { painted.went.push(path); },
     zoomIntoContent() { painted.zooms += 1; }, queueModuleZoom(hash) { painted.queued.push(hash); },
     requestTypeCounts: async () => { queries.push({ counted: true }); return new Map(); },
-    deptModuleAllowed: (code) => departmentAccess.moduleAllowed(context.state.employee, code),
+    deptModuleAllowed: (code) => (deptAllowed ? deptAllowed(code) : departmentAccess.moduleAllowed(context.state.employee, code)),
   });
   for (const file of ["ui-icons.js", "request-center.js", "module-it.js", "office-sections.js", "module-office.js"]) vm.runInContext(read(`modules/${file}`), context);
   if (itasStub && window.MNP_OFFICE_CARDS) window.MNP_OFFICE_CARDS.IT_ASSET_REGISTER = { version: "1.00", inDevelopment: true };
@@ -680,10 +682,11 @@ test("typing #/office?module=assets without access is sent home before anything 
   assert.equal(denied.itasState.resolves, 1, "only the access check ran");
   assert.deepEqual(denied.queries, []);
   assert.equal(denied.painted.html, "");
+  // ตรวจสิทธิ์ล้มชั่วคราว (เน็ตหลุด): ไม่เด้งกลับเงียบ ๆ ให้โมดูลแสดง "ตรวจสิทธิ์ไม่ได้ ลองใหม่" (module-itas.js)
   const failed = setup({ employee: mt, itas: { fail: true } });
   await failed.open("module=assets");
-  assert.deepEqual(failed.painted.went, ["dashboard"]);
-  assert.deepEqual(failed.itasState.rendered, []);
+  assert.deepEqual(failed.painted.went, []);
+  assert.deepEqual(failed.itasState.rendered, ["module=assets"]);
   const absent = setup({ employee: mt, itas: null });
   await absent.open("module=assets");
   assert.deepEqual(absent.painted.went, ["dashboard"]);
@@ -693,14 +696,16 @@ test("typing #/office?module=assets without access is sent home before anything 
   assert.deepEqual(granted.itasState.rendered, ["module=assets"]);
 });
 
-test("the access check runs only for the chooser, IT SUPPORT and the assets page, and never for department ID (which may not open the card)", async () => {
+test("the access check runs only for IT SUPPORT and the assets page (not the chooser, which has no asset card), and never for department ID (which may not open the card)", async () => {
   const app = setup({ employee: mt, itas: { allowed: true } });
   await app.open("");
-  assert.equal(app.itasState.resolves, 1);
+  assert.equal(app.itasState.resolves, 0, "the chooser lists systems only and other systems exist, so it neither waits for nor asks the access check");
   await app.open("module=repair");
   await app.open("module=work-order");
-  assert.equal(app.itasState.resolves, 1, "the repair and work-order pages do not ask");
+  assert.equal(app.itasState.resolves, 0, "the repair and work-order pages do not ask");
   await app.open("module=it-support");
+  assert.equal(app.itasState.resolves, 1);
+  await app.open("module=assets");
   assert.equal(app.itasState.resolves, 2);
   const restricted = setup({ employee: { ...mt, department: { code: "ID" } }, itas: { allowed: true } });
   await restricted.open("module=it-support");
@@ -720,4 +725,61 @@ test("in test mode the asset-register card and page open for a persona that has 
   const noAccess = setup({ employee: mt, sandbox: true, itas: { allowed: false } });
   await noAccess.open("module=assets");
   assert.deepEqual(noAccess.painted.went, ["office"], "test mode sends the user back to the chooser, like the HR page");
+});
+
+/* ---------- ทะเบียนอุปกรณ์ IT: ไม่ทำงานกับหน้าที่ผู้ใช้ออกไปแล้ว + ไม่ต่อคิวรอสิทธิ์ ---------- */
+const gateOf = () => { let open; const promise = new Promise((resolve) => { open = resolve; }); return { promise, open }; };
+
+test("a slow access check does not act on a page the user already left: nothing renders, no redirect, no paint over the newer page", async () => {
+  const gate = gateOf();
+  const app = setup({ employee: mt, itas: { allowed: true, gate: gate.promise } });
+  const slowAssets = app.open("module=assets"); // รอผลสิทธิ์อยู่
+  await app.open("module=work-order"); // ผู้ใช้ไปหน้าอื่นแล้ว
+  assert.deepEqual(app.painted.itwoRendered, ["module=work-order"]);
+  gate.open();
+  await slowAssets;
+  assert.deepEqual(app.itasState.rendered, [], "ไม่เปิดหน้าทะเบียนทับ");
+  assert.deepEqual(app.painted.went, [], "ไม่เด้งไปหน้าอื่น");
+  // หน้า IT SUPPORT ที่ช้าก็ไม่วาดทับหน้าที่ใหม่กว่า
+  const gate2 = gateOf();
+  const second = setup({ employee: mt, itas: { allowed: true, gate: gate2.promise } });
+  const slowSupport = second.open("module=it-support");
+  await second.open("module=work-order");
+  gate2.open();
+  await slowSupport;
+  assert.equal(second.painted.html, "", "หน้า IT SUPPORT ที่ช้าไม่วาดทับ");
+  // ไม่มีสิทธิ์จริงแต่ผู้ใช้ออกไปแล้ว: ไม่เด้งกลับหน้าหลักมาทับหน้าที่เขาอยู่
+  const gate3 = gateOf();
+  const third = setup({ employee: mt, itas: { allowed: false, gate: gate3.promise } });
+  const slowDenied = third.open("module=assets");
+  await third.open("module=repair");
+  gate3.open();
+  await slowDenied;
+  assert.deepEqual(third.painted.went, []);
+});
+
+test("IT SUPPORT asks for access in parallel with the card summaries (not in front of them), and paints once with the asset card", async () => {
+  const app = setup({ employee: mt, itas: { allowed: true } });
+  const askedBeforeSummary = [];
+  app.window.MNP_OFFICE_CARDS.IT_COMPUTER_REPAIR.loadCardSummary = async () => { askedBeforeSummary.push(app.itasState.resolves); return { openCount: 2, badge: "", title: "" }; };
+  await app.open("module=it-support");
+  assert.deepEqual(askedBeforeSummary, [1], "the access request was already on its way when the summaries started");
+  assert.match(app.painted.html, /href="#\/office\?module=assets"/);
+  assert.match(app.painted.html, /V1\.00/, "the asset card carries its version although it was declared before the answer came");
+  // ไม่มีสิทธิ์: ข้อมูลของการ์ดทะเบียนถูกเตรียมไว้แต่ไม่แสดง
+  const denied = setup({ employee: mt, itas: { allowed: false } });
+  await denied.open("module=it-support");
+  assert.doesNotMatch(denied.painted.html, /module=assets/);
+});
+
+test("the chooser waits for the access answer only when the asset register would be the only thing a department can open", async () => {
+  const onlyAssets = (code) => code === "IT_ASSET_REGISTER" || code === "OFFICE";
+  const allowed = setup({ employee: mt, itas: { allowed: true }, deptAllowed: onlyAssets });
+  await allowed.open("");
+  assert.equal(allowed.itasState.resolves, 1);
+  assert.match(allowed.painted.html, /IT SUPPORT/, "the answer decides whether there is any system to show");
+  assert.deepEqual(allowed.painted.went, []);
+  const denied = setup({ employee: mt, itas: { allowed: false }, deptAllowed: onlyAssets });
+  await denied.open("");
+  assert.deepEqual(denied.painted.went, ["dashboard"]);
 });

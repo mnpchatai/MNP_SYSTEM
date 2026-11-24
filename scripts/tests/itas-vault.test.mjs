@@ -145,7 +145,7 @@ test("setup rejects short passwords (<14 characters) before touching the server"
   assert.equal(await reason(vault.prepareSetup("สั้นไป 123")), "WEAK_PASSWORD");
   assert.equal(await reason(vault.prepareSetup("abcdefghijklm")), "WEAK_PASSWORD", "13 ตัว");
   assert.equal(server.db.calls.filter((call) => call === "init").length, 0);
-  await vault.prepareSetup("abcdefghijklmn"); // 14 ตัวผ่าน
+  await vault.prepareSetup("kv9#Xq2!mZ7pLw"); // 14 ตัวและไม่เดาง่าย ผ่าน
 });
 
 test("setting up twice is refused and does not overwrite the first vault", async () => {
@@ -203,19 +203,53 @@ test("locking drops the keys: encrypt/decrypt fail afterwards and the lock liste
   assert.equal(events.length, 1);
 });
 
-test("auto-lock after the idle time; touch() restarts the clock", async () => {
-  const timers = [];
-  const { vault } = await setUp(fakeServer(), { idleMs: 600000, setTimer: (fn, ms) => { timers.push({ fn, ms, active: true }); return timers.length - 1; }, clearTimer: (id) => { timers[id].active = false; } });
-  assert.equal(timers.at(-1).ms, 600000, "10 นาที");
-  const first = timers.length - 1;
-  vault.touch();
-  assert.equal(timers[first].active, false, "นับใหม่");
-  assert.equal(timers.at(-1).active, true);
-  timers.at(-1).fn();
+// นาฬิกาจำลอง + ตัวจับเวลาจำลอง: เวลาไม่ใช้งานตัดสินจากนาฬิกา ไม่ใช่จากตัวจับเวลา
+function fakeClock() {
+  const clock = { time: 1_000_000, timers: [] };
+  clock.now = () => clock.time;
+  clock.setTimer = (fn, ms) => { clock.timers.push({ fn, ms, active: true }); return clock.timers.length - 1; };
+  clock.clearTimer = (id) => { clock.timers[id].active = false; };
+  clock.fireActive = () => { for (const timer of clock.timers.filter((item) => item.active)) { timer.active = false; timer.fn(); } };
+  return clock;
+}
+test("auto-lock after 10 idle minutes by the wall clock: the periodic check locks, touch() extends only while still within the limit", async () => {
+  const clock = fakeClock();
+  const { vault } = await setUp(fakeServer(), { idleMs: 600000, now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer });
+  assert.ok(clock.timers.at(-1).ms <= 30000, "ตัวตรวจเป็นระยะ ไม่ใช่ก้อนเดียว 10 นาที");
+  clock.time += 599000;
+  vault.touch(); // ยังไม่เกิน 10 นาที: ต่อเวลาให้
+  clock.time += 599000;
+  clock.fireActive();
+  assert.equal(vault.status(), "unlocked", "นับจากกิจกรรมล่าสุด (touch) ไม่ใช่จากตอนปลดล็อก");
+  clock.time += 2000; // ไม่ใช้งานครบ 10 นาทีแล้ว
+  clock.fireActive();
   assert.equal(vault.status(), "locked");
-  assert.equal(timers.filter((timer) => timer.active).length, 0);
-  assert.equal(vault.status(), "locked");
+  assert.equal(clock.timers.filter((timer) => timer.active).length, 0, "ล็อกแล้วไม่เหลือตัวตรวจ");
   assert.equal(vaultApi.IDLE_MS, 600000);
+});
+
+test("idle lock does not depend on a timer firing: a hidden tab whose timers were frozen still locks on checkIdle(), on touch(), and on the next use of a key", async () => {
+  for (const wake of [(vault) => vault.checkIdle(), (vault) => vault.touch(), (vault) => vault.ensureContext()]) {
+    const clock = fakeClock();
+    const { vault } = await setUp(fakeServer(), { idleMs: 600000, now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer });
+    const events = [];
+    vault.subscribe((event) => events.push(`${event.status}:${event.reason}`));
+    clock.time += 600000 + 1; // ไม่มี timer ถูกยิงเลย (แท็บถูกซ่อน/เครื่องหลับ)
+    wake(vault);
+    assert.equal(vault.status(), "locked");
+    assert.deepEqual(events, ["locked:idle"]);
+  }
+  const clock = fakeClock();
+  const { vault } = await setUp(fakeServer(), { idleMs: 600000, now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer });
+  const envelope = await vault.encryptField(ASSET, "ip", "10.1.1.1");
+  clock.time += 600001;
+  assert.equal(await reason(vault.decryptField(ASSET, "ip", envelope)), "LOCKED", "ใช้กุญแจหลังไม่ใช้งานเกินกำหนดไม่ได้");
+  // นาฬิกาถอยหลัง = ผิดปกติ ล็อกไว้ก่อน
+  const back = fakeClock();
+  const second = await setUp(fakeServer(), { idleMs: 600000, now: back.now, setTimer: back.setTimer, clearTimer: back.clearTimer });
+  back.time -= 5000;
+  assert.equal(second.vault.checkIdle(), true);
+  assert.equal(second.vault.status(), "locked");
 });
 
 test("changing user / sandbox / persona context locks the vault on next use", async () => {
@@ -277,7 +311,7 @@ test("CryptoKeys are non-extractable and the vault object exposes no key materia
   });
   const { vault } = await setUp(fakeServer(), { subtle: spy });
   assert.equal(exported.length, 0);
-  assert.deepEqual(Reflect.ownKeys(vault).sort(), ["cancelPending", "changePassword", "commitNewRecovery", "commitSetup", "decryptField", "encryptField", "ensureContext", "hasPending", "initialized", "isTest", "iterations", "load", "lock", "pendingType", "prepareNewRecovery", "prepareSetup", "snapshot", "status", "subscribe", "touch", "unlock"], "ไม่มีช่องให้อ่านกุญแจ");
+  assert.deepEqual(Reflect.ownKeys(vault).sort(), ["cancelPending", "changePassword", "checkIdle", "commitNewRecovery", "commitSetup", "decryptField", "encryptField", "ensureContext", "hasPending", "initialized", "isTest", "iterations", "load", "lock", "pendingType", "prepareNewRecovery", "prepareSetup", "snapshot", "status", "subscribe", "touch", "unlock"], "ไม่มีช่องให้อ่านกุญแจ");
   assert.ok(Object.isFrozen(vault));
   // ทุกครั้งที่ import/derive/unwrap ต้องส่ง extractable = false (ตรวจจากซอร์ส)
   const source = read("modules/itas-vault.js").replace(/\/\/.*$/gm, ""); // ตัดคอมเมนต์ก่อนตรวจโค้ดจริง
@@ -448,4 +482,209 @@ test("unlock falls back to decrypt + import (raw wiped right away) when unwrapKe
   assert.equal(await vault.decryptField(ASSET, "ip", envelope), "10.0.0.1");
   vault.lock();
   assert.equal(await reason(vault.unlock("pass", `${PASSWORD}!`)), "WRONG_SECRET", "ผิดรหัสยังถูกปฏิเสธบนทางสำรอง");
+});
+
+/* ---------- งาน async ที่ถูก lock() คั่นกลาง ต้องไม่ปลดล็อก/ตั้งสถานะ ---------- */
+// ตัวแทน subtle ที่เรียก hook() หลัง deriveKey ที่ติดธง armed เสร็จ (= ล็อกเกิดขึ้นระหว่างที่งานกำลังรอ KDF) · nth = ล็อกหลัง deriveKey ครั้งที่เท่าไรนับจากตอนตั้งธง
+function lockingSubtle() {
+  const state = { armed: false, nth: 1, seen: 0, hook: () => {} };
+  const proxy = new Proxy(subtle, {
+    get(target, name) {
+      if (name === "deriveKey") {
+        return async (...args) => {
+          const key = await target.deriveKey(...args);
+          if (state.armed) {
+            state.seen += 1;
+            if (state.seen >= state.nth) { state.armed = false; state.hook(); }
+          }
+          return key;
+        };
+      }
+      const value = target[name];
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  const arm = (hook, nth = 1) => { Object.assign(state, { armed: true, nth, seen: 0, hook }); };
+  return { proxy, arm };
+}
+
+test("unlock(); lock(); await → stays locked and says why (no keys are installed after the lock)", async () => {
+  const { vault } = await setUp();
+  vault.lock();
+  const pending = vault.unlock("pass", PASSWORD); // เริ่มแล้วล็อกทันทีก่อนผลออก
+  vault.lock("leave");
+  assert.equal(await reason(pending), "INTERRUPTED");
+  assert.equal(vault.status(), "locked");
+  assert.equal(await reason(vault.encryptField(ASSET, "ip", "x")), "LOCKED");
+  // ล็อกกลางการคำนวณ KDF ก็เหมือนกัน (ทั้งรหัสตู้เซฟและรหัสกู้คืน)
+  for (const kind of ["pass", "recovery"]) {
+    const spy = lockingSubtle();
+    const second = await setUp(fakeServer(), { subtle: spy.proxy });
+    second.vault.lock();
+    spy.arm(() => second.vault.lock("leave"));
+    const secret = kind === "recovery" ? second.recoveryCode : PASSWORD;
+    assert.equal(await reason(second.vault.unlock(kind, secret)), "INTERRUPTED", kind);
+    assert.equal(second.vault.status(), "locked", kind);
+    assert.equal(await reason(second.vault.encryptField(ASSET, "ip", "x")), "LOCKED", kind);
+    await second.vault.unlock(kind, secret); // ครั้งถัดไปที่ไม่มีใครล็อกคั่น ปลดล็อกได้ตามปกติ
+    assert.equal(second.vault.status(), "unlocked", kind);
+  }
+});
+
+test("a context change (user / test mode / persona) while the unlock is running also drops the result", async () => {
+  let context = "user-1|real";
+  const spy = lockingSubtle();
+  const { vault } = await setUp(fakeServer(), { subtle: spy.proxy, getContext: () => context });
+  vault.lock();
+  spy.arm(() => { context = "user-2|real"; });
+  assert.equal(await reason(vault.unlock("pass", PASSWORD)), "INTERRUPTED");
+  assert.equal(vault.status(), "locked");
+});
+
+test("setup interrupted by a lock: while computing → nothing is kept pending; after the server accepted it → says so, stays locked, no keys installed", async () => {
+  const spy = lockingSubtle();
+  const server = fakeServer();
+  const vault = makeVault(server, { subtle: spy.proxy });
+  await vault.load();
+  spy.arm(() => vault.lock("leave"));
+  assert.equal(await reason(vault.prepareSetup(PASSWORD)), "INTERRUPTED");
+  assert.equal(vault.hasPending, false, "รหัสที่เพิ่งสร้างไม่ถูกเก็บไว้หลังล็อก");
+  // ล็อกระหว่างตรวจหลังตั้ง (init สำเร็จไปแล้ว)
+  const { recoveryCode } = await vault.prepareSetup(PASSWORD);
+  spy.arm(() => vault.lock("leave"));
+  assert.equal(await reason(vault.commitSetup(recoveryCode)), "SETUP_LOCKED");
+  assert.equal(server.db.calls.filter((call) => call === "init").length, 1, "ตั้งขึ้นเซิร์ฟเวอร์ไปแล้ว");
+  assert.equal(vault.status(), "locked");
+  assert.equal(await reason(vault.encryptField(ASSET, "ip", "x")), "LOCKED");
+  await vault.unlock("pass", PASSWORD);
+  assert.equal(vault.status(), "unlocked");
+});
+
+test("change password / new recovery code interrupted by a lock while the new set is being computed: nothing is sent to the server", async () => {
+  const spy = lockingSubtle();
+  const { vault, server } = await setUp(fakeServer(), { subtle: spy.proxy });
+  // deriveKey ครั้งที่ 1 = พิสูจน์ตัวด้วยรหัสปัจจุบัน · ครั้งที่ 2 = ชุดใหม่ → ล็อกหลังครั้งที่ 2
+  spy.arm(() => vault.lock("leave"), 2);
+  assert.equal(await reason(vault.changePassword({ kind: "pass", secret: PASSWORD, newPassword: OTHER_PASSWORD })), "INTERRUPTED");
+  assert.ok(!server.db.calls.includes("rotate:change_password"), "ไม่ส่งขึ้นเซิร์ฟเวอร์");
+  assert.equal(server.db.row.rev, 1);
+  spy.arm(() => vault.lock("leave"), 2);
+  assert.equal(await reason(vault.prepareNewRecovery({ kind: "pass", secret: PASSWORD })), "INTERRUPTED");
+  assert.equal(vault.hasPending, false);
+  assert.ok(!server.db.calls.some((call) => call.startsWith("rotate")));
+});
+
+test("a value decrypted while a lock happens is not returned (no plaintext after the lock); same for encryption", async () => {
+  let lockNow = () => {};
+  const wrapped = new Proxy(subtle, {
+    get(target, name) {
+      if (name === "decrypt" || name === "encrypt") return async (...args) => { const out = await target[name](...args); lockNow(); return out; };
+      const value = target[name];
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  const { vault } = await setUp(fakeServer(), { subtle: wrapped });
+  const sealed = await vault.encryptField(ASSET, "ip", "10.20.30.40");
+  await vault.unlock("pass", PASSWORD).catch(() => {});
+  assert.equal(vault.status(), "unlocked");
+  lockNow = () => vault.lock("leave");
+  assert.equal(await reason(vault.decryptField(ASSET, "ip", sealed)), "LOCKED");
+  await vault.unlock("pass", PASSWORD);
+  lockNow = () => vault.lock("leave");
+  assert.equal(await reason(vault.encryptField(ASSET, "ip", "10.20.30.41")), "LOCKED");
+});
+
+/* ---------- รหัสตู้เซฟ: บล็อกจริง ---------- */
+test("password rules block weak phrases (few distinct characters, sequences, repeats, keyboard rows, the employee code) and allow ordinary phrases in Thai and English", () => {
+  const { passwordProblem, MESSAGES } = vaultApi;
+  assert.equal(passwordProblem("short"), "WEAK_PASSWORD");
+  assert.equal(passwordProblem("abcdefghijklmn"), "WEAK_PATTERN", "เรียงตามตัวอักษร");
+  assert.equal(passwordProblem("zyxwvutsrqponm"), "WEAK_PATTERN", "เรียงถอยหลัง");
+  assert.equal(passwordProblem("12345678901234"), "WEAK_PATTERN");
+  assert.equal(passwordProblem("qwertyuiopasdf"), "WEAK_PATTERN", "แถวคีย์บอร์ด");
+  assert.equal(passwordProblem("a".repeat(20)), "WEAK_FEW_DISTINCT");
+  assert.equal(passwordProblem("abababababababab"), "WEAK_FEW_DISTINCT", "สองแบบ");
+  assert.equal(passwordProblem("abcabcabcabcabcabc"), "WEAK_FEW_DISTINCT", "สามแบบ");
+  assert.equal(passwordProblem("abcdeabcdeabcdeabcde"), "WEAK_FEW_DISTINCT", "ห้าแบบ (ต่ำกว่า 6)");
+  assert.equal(passwordProblem("abcdefabcdefabcdef"), "WEAK_PATTERN", "หกแบบแต่วนซ้ำเป็นหน่วยเรียง");
+  assert.equal(passwordProblem("กขฃคฅฆงจฉชซฌญฎฏ"), "WEAK_PATTERN", "ตัวอักษรไทยเรียงกัน");
+  assert.equal(passwordProblem("it3462IT3462It3462it3462", ["IT3462"]), "WEAK_FORBIDDEN", "รหัสพนักงานซ้ำ ๆ ไม่ว่าตัวพิมพ์ใหญ่เล็ก");
+  assert.equal(passwordProblem("  IT3462 IT3462 IT3462  ", ["it3462"]), "WEAK_FORBIDDEN");
+  assert.equal(passwordProblem("ม้าลายกินหญ้า สีเขียวมะลิ 2026"), null);
+  assert.equal(passwordProblem("correct horse battery staple 99", ["IT3462", "", null, undefined]), null);
+  assert.equal(passwordProblem("my IT3462 phrase is long enough", ["IT3462"]), null, "มีรหัสพนักงานปนในวลียาวได้");
+  assert.equal(passwordProblem("kv9#Xq2!mZ7pLw"), null);
+  for (const key of ["WEAK_PASSWORD", "WEAK_FEW_DISTINCT", "WEAK_PATTERN", "WEAK_FORBIDDEN", "INTERRUPTED", "SETUP_LOCKED", "ROTATE_VERIFY_FAILED"]) assert.match(MESSAGES[key], /[฀-๿]/);
+});
+
+test("the vault enforces the password rules on setup, change and forgot flows (not only the form), with the logged-in employee code forbidden", async () => {
+  const server = fakeServer();
+  const vault = makeVault(server, { getForbidden: () => ["IT3462", "it3462@users.example"] });
+  await vault.load();
+  for (const [password, expected] of [["abcdefghijklmn", "WEAK_PATTERN"], ["aaaaaaaaaaaaaaaa", "WEAK_FEW_DISTINCT"], ["IT3462 it3462 IT3462", "WEAK_FORBIDDEN"]]) {
+    assert.equal(await reason(vault.prepareSetup(password)), expected, password);
+  }
+  assert.equal(server.db.calls.filter((call) => call === "init").length, 0);
+  const { recoveryCode } = await vault.prepareSetup(PASSWORD);
+  await vault.commitSetup(recoveryCode);
+  assert.equal(await reason(vault.changePassword({ kind: "pass", secret: PASSWORD, newPassword: "qwertyuiopasdf" })), "WEAK_PATTERN");
+  assert.equal(await reason(vault.changePassword({ kind: "recovery", secret: recoveryCode, newPassword: "IT3462IT3462IT3462" })), "WEAK_FORBIDDEN");
+  assert.equal(server.db.row.rev, 1);
+});
+
+/* ---------- หลังเปลี่ยนรหัส/ออกรหัสกู้คืนใหม่: ตรวจว่าชุดใหม่ถอดได้จริง ---------- */
+test("after a password change / new recovery code the stored set is re-read and opened with the new secret; a set that cannot be opened is reported, not shown as success", async () => {
+  // เซิร์ฟเวอร์ที่รับคำขอเปลี่ยนแล้วเก็บชุดที่ถอดไม่ได้ (จำลองข้อมูลเสีย)
+  const corrupt = (server, field) => {
+    const realRotate = server.rotate;
+    server.rotate = async (params) => {
+      const result = await realRotate(params);
+      server.db.row[field] = { n: toBase64(new Uint8Array(12)), c: toBase64(new Uint8Array(48)) };
+      return result;
+    };
+  };
+  const first = fakeServer();
+  const a = await setUp(first);
+  corrupt(first, "wrapped_key_pass");
+  assert.equal(await reason(a.vault.changePassword({ kind: "pass", secret: PASSWORD, newPassword: OTHER_PASSWORD })), "ROTATE_VERIFY_FAILED");
+  const second = fakeServer();
+  const b = await setUp(second);
+  corrupt(second, "wrapped_key_recovery");
+  const { recoveryCode: next } = await b.vault.prepareNewRecovery({ kind: "pass", secret: PASSWORD });
+  assert.equal(await reason(b.vault.commitNewRecovery(next)), "ROTATE_VERIFY_FAILED");
+  assert.match(vaultApi.MESSAGES.ROTATE_VERIFY_FAILED, /แจ้งผู้ดูแลระบบ/);
+  // ปกติ: ผ่านและทำต่อเนื่องกันได้ (ตัวตรวจไม่ทำให้ชุดที่ดีล้ม)
+  const c = await setUp(fakeServer());
+  await c.vault.changePassword({ kind: "pass", secret: PASSWORD, newPassword: OTHER_PASSWORD });
+  const { recoveryCode: fresh } = await c.vault.prepareNewRecovery({ kind: "pass", secret: OTHER_PASSWORD });
+  await c.vault.commitNewRecovery(fresh);
+  c.vault.lock();
+  await c.vault.unlock("recovery", fresh);
+  assert.equal(c.vault.status(), "unlocked");
+});
+
+/* ---------- รหัสกู้คืนรูปแบบผิด / UUID ---------- */
+test("a malformed recovery code is refused before any KDF or server call (unlock and re-authentication)", async () => {
+  const { vault, server } = await setUp();
+  vault.lock();
+  const before = server.db.calls.length;
+  for (const bad of ["", "abc", "0000-0000", "UUUU-UUUU-UUUU-UUUU-UUUU-UUUU-UUUU-UUUU", "0".repeat(33)]) {
+    assert.equal(await reason(vault.unlock("recovery", bad)), "WRONG_SECRET", bad);
+    assert.equal(await reason(vault.changePassword({ kind: "recovery", secret: bad, newPassword: OTHER_PASSWORD })), "WRONG_SECRET", bad);
+    assert.equal(await reason(vault.prepareNewRecovery({ kind: "recovery", secret: bad })), "WRONG_SECRET", bad);
+  }
+  assert.equal(server.db.calls.length, before, "ไม่เรียกเซิร์ฟเวอร์เลย");
+});
+
+test("newUuid: uses randomUUID when present, otherwise builds a v4 UUID from getRandomValues", () => {
+  assert.equal(vaultApi.newUuid({ randomUUID: () => "fixed" }), "fixed");
+  const ids = new Set();
+  for (let index = 0; index < 50; index += 1) {
+    const id = vaultApi.newUuid({ getRandomValues: (bytes) => webcrypto.getRandomValues(bytes) });
+    assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    ids.add(id);
+  }
+  assert.equal(ids.size, 50);
+  assert.equal(vaultApi.newUuid({ getRandomValues: (bytes) => { bytes.fill(0xff); return bytes; } }), "ffffffff-ffff-4fff-bfff-ffffffffffff");
+  assert.throws(() => vaultApi.newUuid({}), (error) => error.reason === "UNSUPPORTED");
 });

@@ -72,7 +72,8 @@ function el(props = {}) {
   return Object.defineProperties(node, Object.getOwnPropertyDescriptors(props));
 }
 
-async function world({ allowed = true, accessFail = false, isTest = false, vaultRow = null, rpcHandlers = {}, assets = [ASSET], confirm = true } = {}) {
+// clock = { time } ทำให้ Date.now() ในโมดูล/ตู้เซฟควบคุมได้ (ทดสอบเวลาไม่ใช้งานโดยไม่ต้องรอจริง)
+async function world({ allowed = true, accessFail = false, isTest = false, vaultRow = null, rpcHandlers = {}, assets = [ASSET], confirm = true, clock = null, employee = { id: "e1" } } = {}) {
   const server = fakeVaultServer();
   if (vaultRow) server.db.row = vaultRow;
   const calls = { rpc: [], toasts: [], confirms: [], went: [], renderRoutes: 0, notFound: 0, busy: [] };
@@ -84,7 +85,7 @@ async function world({ allowed = true, accessFail = false, isTest = false, vault
   let painted = "";
   let hash = "#/office?module=assets";
   const session = { user: { id: "u1" } };
-  const stateObj = { session, employee: { id: "e1" }, sandbox: isTest ? { active: true } : null };
+  const stateObj = { session, employee, sandbox: isTest ? { active: true } : null };
   const forms = { current: null };
   const host = el();
   const handlers = {
@@ -105,7 +106,7 @@ async function world({ allowed = true, accessFail = false, isTest = false, vault
   };
   const context = vm.createContext({});
   Object.assign(context, {
-    window: context, console, URLSearchParams, Intl, Date, Number, Object, Promise, Array, JSON, Math, Set, Map, String, Boolean, Uint8Array, TextEncoder, TextDecoder, atob, btoa, Error, clearTimeout, clearInterval,
+    window: context, console, URLSearchParams, Intl, Date: clock ? class FakeDate extends Date { static now() { return clock.time; } } : Date, Number, Object, Promise, Array, JSON, Math, Set, Map, String, Boolean, Uint8Array, TextEncoder, TextDecoder, atob, btoa, Error, clearTimeout, clearInterval,
     // ตัวจับเวลาที่ unref แล้ว: ตู้เซฟที่ปลดล็อกค้างไว้ไม่ทำให้ process ของเทสต์ไม่จบ
     setTimeout: (fn, ms) => { const id = setTimeout(fn, ms); id.unref?.(); return id; }, setInterval: (fn, ms) => { const id = setInterval(fn, ms); id.unref?.(); return id; },
     crypto: { randomUUID: () => ID_NEW, subtle, getRandomValues: (bytes) => webcrypto.getRandomValues(bytes) },
@@ -152,6 +153,10 @@ async function world({ allowed = true, accessFail = false, isTest = false, vault
     // เหตุการณ์ของหน้าต่าง/เอกสาร
     hashchange: (value) => { hash = value; return fire(winListeners.hashchange); },
     pagehide: () => fire(winListeners.pagehide),
+    windowEvent: (name) => fire(winListeners[name]),
+    documentEvent: (name, event = {}) => fire(docListeners[name], event),
+    registered: { window: winListeners, document: docListeners },
+    fireInput: (target) => fire(host.listeners.input, { target }),
     signOut: () => fire(authListeners.map((listener) => (event) => listener("SIGNED_OUT", event))),
     click: async (target) => { await fire(host.listeners.click, { target }); },
     submit: async (form) => { await fire(host.listeners.submit, { target: form, preventDefault() {} }); },
@@ -602,4 +607,267 @@ test("source rules: no console, no storage, no Math.random, no draft autosave, n
   assert.doesNotMatch(pagesSource, /console\.|localStorage|sessionStorage/);
   const modelSource = read("modules/itas-model.js").replace(/\/\/.*$/gm, "");
   assert.doesNotMatch(modelSource, /console\.|localStorage|sessionStorage|crypto/);
+});
+
+/* ====================================================================================
+   รอบแก้ตามผลตรวจ auditor: ปลดล็อกค้างหลังออกจากหน้า · รหัสกู้คืนไม่คัดลอก · สิทธิ์เก็บผล/ไม่ทับหน้าเก่า
+   · เวลาไม่ใช้งานนับจากนาฬิกา · กฎรหัสตู้เซฟ · autofill · ตรวจชุดใหม่หลังเปลี่ยนรหัส · UUID สำรอง · ถามก่อนออกจากหน้า
+   ==================================================================================== */
+const gateOf = () => { let open; const promise = new Promise((resolve) => { open = resolve; }); return { promise, open }; };
+const setupForm = (password, password2 = password) => ({ id: "itas-vault-setup-form", elements: { password: { value: password }, password2: { value: password2 } }, querySelectorAll: () => [], toggleAttribute() {} });
+
+/* ---------- ปลดล็อกค้างหลังออกจากหน้า ---------- */
+test("leaving the page while the unlock is still computing: the vault ends locked, the panel is gone, and the user is told (no unlock after the lock)", async () => {
+  const { row } = await initializedVaultRow();
+  const w = await world({ vaultRow: row });
+  await w.render();
+  await w.click(w.button("itas-vault-unlock"));
+  const unlocking = w.submit(passwordForm(PASSWORD)); // กำลังคำนวณกุญแจ (KDF)
+  await w.hashchange("#/dashboard"); // ผู้ใช้ออกจากหน้า → ล็อก
+  await unlocking;
+  assert.equal(w.status(), "locked");
+  assert.equal(w.itas.unsavedCount(), 0);
+  // ในหน้าจริงแผงถูกปิดไปแล้วจึงขึ้นเป็นข้อความแจ้ง (toast) · ในตัวจำลองมีกล่องข้อความอยู่เสมอ จึงตรวจทั้งสองที่
+  assert.match(JSON.stringify(w.calls.toasts) + (w.hosts["itas-vault-message"] ?? ""), /ถูกล็อกระหว่างดำเนินการ/);
+});
+
+test("setup finished after the user left: the vault is set on the server but stays locked and says so", async () => {
+  const w = await world();
+  await w.render();
+  await w.click(w.button("itas-vault-setup"));
+  await w.submit(setupForm(PASSWORD));
+  const code = /id="itas-recovery-code"[^>]*>([^<]+)</.exec(w.hosts["itas-vault-panel"])?.[1];
+  assert.ok(code);
+  const committing = w.submit({ id: "itas-recovery-form", elements: { typed: { value: code } }, querySelectorAll: () => [], toggleAttribute() {} });
+  await w.hashchange("#/dashboard");
+  await committing;
+  assert.equal(w.status(), "locked");
+  assert.equal(w.server.db.calls.filter((call) => call === "init").length, 1, "ตั้งขึ้นเซิร์ฟเวอร์ไปแล้วจริง");
+  assert.match(JSON.stringify(w.calls.toasts) + (w.hosts["itas-vault-message"] ?? ""), /ปลดล็อกด้วยรหัสตู้เซฟที่เพิ่งตั้ง/);
+});
+
+/* ---------- รหัสกู้คืน: ไม่มีปุ่มคัดลอก ---------- */
+test("the recovery code cannot be copied from the page: no button, no handler, no clipboard use", async () => {
+  const w = await world();
+  await w.render();
+  await w.click(w.button("itas-vault-setup"));
+  await w.submit(setupForm(PASSWORD));
+  assert.doesNotMatch(w.hosts["itas-vault-panel"], /itas-recovery-copy|<button[^>]*>[^<]*คัดลอก/);
+  const calls = [];
+  w.context.navigator.clipboard.writeText = async (text) => { calls.push(text); };
+  await w.click(w.button("itas-recovery-copy")); // ปุ่มนี้ไม่มีอีกแล้ว: ต่อให้มีใครกดก็ต้องไม่เกิดอะไร
+  assert.deepEqual(calls, []);
+  assert.doesNotMatch(read("modules/module-itas.js").replace(/\/\/.*$/gm, ""), /clipboard|copyRecoveryCode/);
+});
+
+/* ---------- สิทธิ์: เก็บผล ไม่ยิงซ้ำ ไม่ทับหน้าเก่า แยก "ตรวจไม่ได้" ออกจาก "ไม่มีสิทธิ์" ---------- */
+test("access: the answer is kept for ten minutes per user/mode, concurrent callers share one request, sign-out clears it, and a failure is not kept", async () => {
+  const clock = { time: 1_700_000_000_000 };
+  const gate = gateOf();
+  const w = await world({ clock, rpcHandlers: { app_itas_my_access: () => gate.promise.then(() => ({ allowed: true, is_test: false })) } });
+  assert.equal(w.itas.accessStatus(), "unknown");
+  const first = w.itas.resolveAccess();
+  const second = w.itas.resolveAccess();
+  gate.open();
+  assert.deepEqual(await Promise.all([first, second]), [true, true]);
+  assert.equal(w.rpcNames().filter((name) => name === "app_itas_my_access").length, 1, "คำขอซ้อนกันใช้ RPC เดียว");
+  assert.equal(w.itas.accessStatus(), "allowed");
+  clock.time += 9 * 60 * 1000;
+  await w.itas.resolveAccess();
+  assert.equal(w.rpcNames().filter((name) => name === "app_itas_my_access").length, 1, "ภายใน 10 นาทีไม่ยิงซ้ำ (เดิมยิงทุก 60 วินาที)");
+  clock.time += 2 * 60 * 1000;
+  assert.equal(w.itas.accessStatus(), "unknown", "เกิน 10 นาทีต้องตรวจใหม่");
+  await w.itas.resolveAccess();
+  assert.equal(w.rpcNames().filter((name) => name === "app_itas_my_access").length, 2);
+  await w.signOut();
+  assert.equal(w.itas.accessStatus(), "unknown", "ออกจากระบบแล้วล้างผล");
+  assert.equal(w.itas.hasAccess(), false);
+  // ไม่มีสิทธิ์เก็บสั้นกว่า (1 นาที) · ตรวจล้มไม่เก็บและบอกสถานะ error
+  const denied = await world({ clock, allowed: false });
+  await denied.itas.resolveAccess();
+  assert.equal(denied.itas.accessStatus(), "denied");
+  clock.time += 61 * 1000;
+  assert.equal(denied.itas.accessStatus(), "unknown");
+  const broken = await world({ accessFail: true });
+  assert.equal(await broken.itas.resolveAccess(), false);
+  assert.equal(broken.itas.accessStatus(), "error");
+});
+
+test("render: a transient failure of the access check shows a retry message instead of silently going home; a real 'no access' still goes home; a retry works", async () => {
+  let down = true;
+  const w = await world({ rpcHandlers: { app_itas_my_access: () => { if (down) throw Object.assign(new Error("Failed to fetch"), { code: "" }); return { allowed: true, is_test: false }; } } });
+  await w.render();
+  assert.deepEqual(w.calls.went, [], "ไม่เด้งไปหน้าหลักเงียบ ๆ");
+  assert.match(w.html(), /ตรวจสิทธิ์ไม่ได้ กรุณาลองใหม่/);
+  assert.match(w.html(), /id="itas-retry"/);
+  assert.deepEqual(w.rpcNames(), ["app_itas_my_access"], "ยังไม่เรียก RPC อื่นของทะเบียน");
+  down = false;
+  await w.render();
+  assert.match(w.html(), /COM-001/);
+  assert.deepEqual(w.calls.went, []);
+  // เซสชันหมดอายุ: ข้อความเฉพาะของเซสชัน
+  const expired = await world({ rpcHandlers: { app_itas_my_access: () => { throw Object.assign(new Error("JWT expired"), { code: "PGRST301" }); } } });
+  await expired.render();
+  assert.match(expired.html(), /หมดเวลาการเข้าสู่ระบบ/);
+  assert.deepEqual(expired.calls.went, []);
+});
+
+test("render: when the user has already left the page, a late access answer neither paints nor redirects", async () => {
+  const gate = gateOf();
+  const w = await world({ rpcHandlers: { app_itas_my_access: () => gate.promise.then(() => ({ allowed: false, is_test: false })) } });
+  const rendering = w.render();
+  w.setHash("#/office?module=repair"); // ผู้ใช้ไปหน้าอื่นแล้ว
+  gate.open();
+  await rendering;
+  assert.deepEqual(w.calls.went, [], "ไม่เด้งกลับหน้าหลักมาทับหน้าที่ผู้ใช้อยู่");
+  assert.equal(w.html(), "");
+  const second = await world({ rpcHandlers: { app_itas_my_access: () => gate.promise.then(() => ({ allowed: true, is_test: false })) } });
+  const renderingAllowed = second.render();
+  second.setHash("#/office?module=repair");
+  await renderingAllowed;
+  assert.equal(second.html(), "", "ไม่วาดหน้าทะเบียนทับ");
+  assert.deepEqual(second.rpcNames(), ["app_itas_my_access"], "ไม่ไปโหลดข้อมูลทะเบียนต่อ");
+});
+
+/* ---------- เวลาไม่ใช้งานนับจากนาฬิกา ---------- */
+test("idle lock follows the wall clock: coming back to the tab after 10+ minutes locks at once (visibilitychange / pageshow / focus), and a click after that cannot extend it", async () => {
+  const { row } = await initializedVaultRow();
+  for (const wake of [(w) => w.documentEvent("visibilitychange"), (w) => w.windowEvent("pageshow"), (w) => w.windowEvent("focus")]) {
+    const clock = { time: 1_700_000_000_000 };
+    const w = await world({ vaultRow: row, clock });
+    await w.render();
+    await unlockVia(w);
+    assert.equal(w.status(), "unlocked");
+    clock.time += 10 * 60 * 1000 + 1000; // แท็บถูกซ่อน ตัวจับเวลาไม่ทำงาน
+    await wake(w);
+    assert.equal(w.status(), "locked");
+    assert.match(w.calls.toasts.map((toast) => toast.message).join("|"), /ไม่ได้ใช้งานนาน 10 นาที/);
+  }
+  const clock = { time: 1_700_000_000_000 };
+  const w = await world({ vaultRow: row, clock });
+  await w.render();
+  await unlockVia(w);
+  clock.time += 9 * 60 * 1000;
+  await w.documentEvent("pointerdown"); // ยังใช้งานอยู่: ต่อเวลาให้
+  clock.time += 9 * 60 * 1000;
+  await w.documentEvent("visibilitychange");
+  assert.equal(w.status(), "unlocked", "นับจากกิจกรรมล่าสุด");
+  clock.time += 11 * 60 * 1000;
+  await w.documentEvent("pointerdown"); // กดหลังเกินเวลาแล้ว: ล็อก ไม่ใช่ต่อเวลา
+  assert.equal(w.status(), "locked");
+});
+
+/* ---------- กฎรหัสตู้เซฟ (ฝั่งหน้าจอ) ---------- */
+test("weak vault passwords are refused in the setup form: sequences, repeats and the logged-in employee code; nothing reaches the server", async () => {
+  const w = await world({ employee: { id: "e1", employee_no: "IT3462" } });
+  await w.render();
+  await w.click(w.button("itas-vault-setup"));
+  for (const [weak, message] of [["abcdefghijklmn", /เรียงกัน|เดายาก/], ["aaaaaaaaaaaaaaaaaa", /ซ้ำกันมากเกินไป/], ["qwertyuiopasdf", /เรียงกัน|เดายาก/], ["IT3462 it3462 IT3462", /รหัสพนักงาน/]]) {
+    await w.submit(setupForm(weak));
+    assert.match(w.hosts["itas-vault-message"], message, weak);
+    assert.doesNotMatch(w.hosts["itas-vault-panel"] ?? "", /itas-recovery-code/);
+  }
+  assert.equal(w.server.db.calls.length, 0);
+  assert.ok(!JSON.stringify(w.calls.rpc).includes("IT3462 it3462"));
+  await w.submit(setupForm(PASSWORD));
+  assert.match(w.hosts["itas-vault-panel"], /itas-recovery-code/);
+  // ตัววัดตอนพิมพ์ก็บอกเหตุผลเดียวกัน
+  const strength = { textContent: "" };
+  w.elements["itas-vault-strength"] = strength;
+  await w.fireInput({ id: "itas-vault-pass", value: "abcdefghijklmn" });
+  assert.match(strength.textContent, /เรียงกัน|เดายาก/);
+  await w.fireInput({ id: "itas-vault-pass", value: "short" });
+  assert.match(strength.textContent, /สั้นเกินไป/);
+});
+
+/* ---------- autofill / ตัวจัดการรหัสผ่าน ---------- */
+test("secret inputs are switched to masked text only where the browser can mask with CSS; copy/cut out of a masked input is blocked", async () => {
+  const makeInput = () => ({ type: "password", attributes: {}, classes: new Set(), classList: { add(name) { this.owner.classes.add(name); }, owner: null } });
+  const wire = (input) => { input.classList.owner = input; return input; };
+  for (const [supported, expectType] of [[true, "text"], [false, "password"]]) {
+    const { row } = await initializedVaultRow();
+    const w = await world({ vaultRow: row });
+    await w.render();
+    w.context.CSS = { supports: () => supported };
+    const inputs = [wire(makeInput()), wire(makeInput())];
+    const panel = w.context.document.getElementById("itas-vault-panel");
+    panel.querySelectorAll = (selector) => (selector === "input[data-mask]" ? inputs : []);
+    await w.click(w.button("itas-vault-unlock"));
+    for (const input of inputs) {
+      assert.equal(input.type, expectType, `supported=${supported}`);
+      assert.equal(input.classes.has("itas-mask"), supported);
+    }
+  }
+  // ไม่มี CSS ในสภาพแวดล้อมเลย (เบราว์เซอร์เก่ามาก) = คง password
+  const w = await world();
+  await w.render();
+  assert.equal(typeof w.context.CSS, "undefined");
+  // กัน copy/cut ออกจากช่องที่ปิดบัง
+  const prevented = [];
+  const inMask = { closest: (selector) => (selector === "input[data-mask]" ? {} : null) };
+  const elsewhere = { closest: () => null };
+  for (const name of ["copy", "cut"]) {
+    await fireOn(w.host, name, { target: inMask, preventDefault: () => prevented.push(name) });
+    await fireOn(w.host, name, { target: elsewhere, preventDefault: () => prevented.push(`other-${name}`) });
+  }
+  assert.deepEqual(prevented, ["copy", "cut"]);
+  const css = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
+  assert.match(css, /\.input\.itas-mask\s*\{[^}]*-webkit-text-security:\s*disc/);
+});
+const fireOn = async (host, name, event) => { for (const handler of host.listeners[name] ?? []) await handler(event); };
+
+/* ---------- หลังเปลี่ยนรหัส: ตรวจชุดใหม่ ---------- */
+test("after a password change the new set is checked; a stored set that cannot be opened is reported honestly, not as success", async () => {
+  const { row } = await initializedVaultRow();
+  let ref;
+  const w = await world({
+    vaultRow: row,
+    rpcHandlers: {
+      app_itas_vault_rotate: async (params) => {
+        const result = await ref.server.rotate(params);
+        ref.server.db.row.wrapped_key_pass = { n: toBase64(new Uint8Array(12)), c: toBase64(new Uint8Array(48)) }; // เซิร์ฟเวอร์เก็บชุดที่เปิดไม่ได้
+        return result;
+      },
+    },
+  });
+  ref = w;
+  await w.render();
+  await unlockVia(w);
+  await w.click(w.button("itas-vault-change"));
+  await w.submit(twoPasswords("itas-vault-change-form", { current: PASSWORD, password: NEW_PASSWORD, password2: NEW_PASSWORD }));
+  assert.match(w.hosts["itas-vault-message"], /ตรวจสอบชุดรหัสใหม่ไม่ผ่าน/);
+  assert.match(w.hosts["itas-vault-message"], /แจ้งผู้ดูแลระบบ/);
+  assert.ok(!w.calls.toasts.some((toast) => /เปลี่ยนรหัสตู้เซฟแล้ว/.test(toast.message)), "ไม่ทำเหมือนสำเร็จ");
+  assert.notEqual(w.hosts["itas-vault-panel"], "", "แผงยังเปิดอยู่เพื่อให้ผู้ใช้เห็นข้อความ");
+});
+
+/* ---------- UUID สำรอง ---------- */
+test("a browser without crypto.randomUUID still creates a valid v4 id for a new asset", async () => {
+  const w = await world();
+  w.context.crypto = { subtle, getRandomValues: (bytes) => webcrypto.getRandomValues(bytes) }; // ไม่มี randomUUID
+  await w.render();
+  await w.click(w.button("itas-add"));
+  w.forms.current = assetForm({ values: { reg_no: "COM-880", name: "เบราว์เซอร์เก่า" } });
+  await w.submit(w.forms.current);
+  const save = w.calls.rpc.find((call) => call.name === "app_itas_save_asset");
+  assert.match(save.args.p_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.notEqual(save.args.p_id, ID_NEW);
+});
+
+/* ---------- ถามก่อนออกจากหน้า (app.js เรียก MNP_ITAS.unsavedCount) ---------- */
+test("leaving with a typed form: counted while the form is on screen, dropped once the user has left, never revived by coming back to the old address; app.js asks the module", async () => {
+  const w = await world();
+  await w.render();
+  await w.click(w.button("itas-add"));
+  w.forms.current = assetForm({ values: { name: "พิมพ์ค้างไว้" } });
+  assert.equal(w.itas.unsavedCount(), 1);
+  assert.equal(w.registered.window.beforeunload, undefined, "ถามก่อนปิดแท็บทำที่ app.js ที่เดียว (ไม่ถามซ้ำสองชั้น)");
+  w.setHash("#/dashboard"); // ผู้ใช้ยืนยันออกไปแล้ว
+  assert.equal(w.itas.unsavedCount(), 0);
+  w.setHash("#/office?module=assets");
+  assert.equal(w.itas.unsavedCount(), 0, "ตัวตรวจถูกทิ้งแล้ว ไม่กลับมานับจากฟอร์มที่ถอดออกจากหน้า");
+  const app = read("app.js");
+  assert.match(app, /\(window\.MNP_ITAS\?\.unsavedCount\?\.\(\) \?\? 0\) > 0/, "ออกจากหน้าที่มีฟอร์มทะเบียนพิมพ์ค้างต้องถามก่อน");
+  assert.match(app, /function leaveWarningPending\(\) \{\r?\n  return [^\n]*MNP_ITRP\?\.unsavedCount[^\n]*MNP_ITAS\?\.unsavedCount/);
+  assert.equal(typeof w.itas.unsavedCount, "function");
 });

@@ -203,8 +203,10 @@ test("password strength: under 14 characters is not ok; long multi-word phrases 
   assert.equal(model.passwordStrength("").label, "");
   assert.equal(model.passwordStrength("short").ok, false);
   assert.match(model.passwordStrength("short").label, /อีก 9 ตัวอักษร/);
-  assert.equal(model.passwordStrength("a".repeat(20)).level, 1);
-  assert.equal(model.passwordStrength("abcdefghijklmn").ok, true);
+  // ตัวอักษรไม่ซ้ำน้อยกว่า 6 แบบ = ไม่ผ่าน (ตัววัดสอดคล้องกับกฎที่ตู้เซฟบล็อกจริง)
+  assert.equal(model.passwordStrength("a".repeat(20)).ok, false);
+  assert.equal(model.passwordStrength("a".repeat(20)).level, 0);
+  assert.equal(model.passwordStrength("kv9#Xq2!mZ7pLw").ok, true);
   assert.equal(model.passwordStrength("ม้าลาย กินหญ้า ริมน้ำ ยามเช้า").level, 3);
   assert.ok(model.passwordStrength("blue horse eats apples").level >= 2);
   assert.match(model.PASSWORD_ADVICE, /ห้ามใช้รหัสเดียวกับรหัสเข้าสู่ระบบ/);

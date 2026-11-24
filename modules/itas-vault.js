@@ -111,8 +111,8 @@
     if (!compact.length) return true;
     // ทุกคู่ติดกันห่างกันไม่เกิน 1 (aaaa… abcd… 4321… ก ข ค ง…)
     if (compact.every((char, index) => index === 0 || Math.abs(char.codePointAt(0) - compact[index - 1].codePointAt(0)) <= 1)) return true;
-    // ซ้ำหน่วยสั้น ๆ (abab… 1212… abc123abc123…) ไม่เกิน 4 ตัว
-    for (let unit = 1; unit <= 4; unit += 1) if (compact.every((char, index) => char === compact[index % unit])) return true;
+    // วนซ้ำหน่วยเดิมอย่างน้อย 2 รอบ (abab… 1212… abc123abc123…)
+    for (let unit = 1; unit * 2 <= compact.length; unit += 1) if (compact.every((char, index) => char === compact[index % unit])) return true;
     // แถวคีย์บอร์ด / ตัวอักษร / ตัวเลขเรียงต่อกัน (ทั้งไปและกลับ)
     const joined = compact.join("");
     return PATTERN_RUNS.some((run) => run.includes(joined) || reverseText(run).includes(joined));
@@ -123,14 +123,14 @@
     const chars = Array.from(text);
     if (chars.length < MIN_PASSWORD_LENGTH) return "WEAK_PASSWORD";
     const lower = text.toLowerCase();
-    if (new Set(Array.from(lower)).size < MIN_DISTINCT_CHARS) return "WEAK_FEW_DISTINCT";
-    if (isObviousPattern(Array.from(lower.replace(/\s+/g, "")))) return "WEAK_PATTERN";
     for (const item of forbidden ?? []) {
       const value = String(item ?? "").normalize("NFKC").trim().toLowerCase();
       if (!value) continue;
       // เท่ากับค่านั้นเป๊ะ หรือเหลือแต่ค่านั้นซ้ำ ๆ (เหลือตัวอื่นไม่เกิน 2 ตัวหลังตัดทิ้ง)
       if (lower === value || (value.length >= 3 && Array.from(lower.split(value).join("").replace(/\s+/g, "")).length <= 2)) return "WEAK_FORBIDDEN";
     }
+    if (new Set(Array.from(lower)).size < MIN_DISTINCT_CHARS) return "WEAK_FEW_DISTINCT";
+    if (isObviousPattern(Array.from(lower.replace(/\s+/g, "")))) return "WEAK_PATTERN";
     return null;
   }
 

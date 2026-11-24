@@ -56,17 +56,30 @@ test("vault bar: shows state for every status with the right buttons; test vault
   assert.match(pages.vaultBar({ status: "locked" }), /role="status"/);
 });
 
-test("vault forms: password fields are type=password with no autofill leak, recovery code is shown with a typed-back confirmation", () => {
-  const forms = [pages.vaultSetupForm(), pages.unlockForm(), pages.forgotForm(), pages.changeForm(), pages.newRecoveryForm()];
+// ทุกช่องรหัส/รหัสกู้คืน/ค่าลับต้องมีชุดแอตทริบิวต์กัน autofill ตัวจัดการรหัสผ่าน และการแก้คำอัตโนมัติ
+const NO_AUTOFILL_ATTRIBUTES = [/autocomplete="off"/, /data-lpignore="true"/, /data-1p-ignore/, /data-form-type="other"/, /autocorrect="off"/, /spellcheck="false"/, /autocapitalize="(off|characters)"/];
+const assertNoAutofill = (input, label) => { for (const pattern of NO_AUTOFILL_ATTRIBUTES) assert.match(input, pattern, `${label}: ${pattern}`); };
+test("vault forms: every secret/recovery input blocks autofill, password managers and autocorrect; passwords start as type=password; forms are autocomplete=off; the recovery code has no copy button", () => {
+  const forms = [pages.vaultSetupForm(), pages.unlockForm(), pages.forgotForm(), pages.changeForm(), pages.newRecoveryForm(), pages.recoveryShow({ code: "ABCD-EFGH", mode: "setup" })];
+  let inspected = 0;
   for (const html of forms) {
     for (const input of html.match(/<input[^>]*data-vault-input[^>]*>/g) ?? []) {
-      if (/name="recovery"|name="typed"/.test(input)) assert.match(input, /autocomplete="off"/);
-      else assert.match(input, /type="password"/);
-      assert.match(input, /autocomplete="(off|new-password|current-password)"/);
+      inspected += 1;
+      if (/name="recovery"|name="typed"/.test(input)) assert.match(input, /type="text"/);
+      else { assert.match(input, /type="password"/); assert.match(input, /data-mask/, "module เปลี่ยนเป็น text + CSS mask เฉพาะช่องที่มี data-mask"); }
+      assertNoAutofill(input, input.slice(0, 60));
+      assert.doesNotMatch(input, /autocomplete="(new|current)-password"/, "ไม่ขอให้ตัวจัดการรหัสผ่านเติม/เสนอรหัสใหม่");
       assert.doesNotMatch(input, /\svalue=/);
     }
+    for (const form of html.match(/<form [^>]*>/g) ?? []) assert.match(form, /autocomplete="off"/);
     assert.match(html, /id="itas-vault-message" role="status"/);
   }
+  assert.ok(inspected >= 9, "ตรวจครบทุกช่องของทุกฟอร์ม");
+  // ช่องค่าลับในฟอร์มอุปกรณ์ก็ชุดเดียวกัน
+  const secretInputs = pages.secretsSection({ fields: model.secretFields(TYPE), asset: ASSET, vaultStatus: "unlocked" }).match(/<input[^>]*data-secret-input[^>]*>/g) ?? [];
+  assert.equal(secretInputs.length, 2);
+  for (const input of secretInputs) { assertNoAutofill(input, "secret"); assert.match(input, /data-mask/); }
+  assert.match(pages.assetForm({ mode: "add", type: TYPE, values: model.emptyFormValues(TYPE), vaultStatus: "locked" }), /<form id="itas-form" novalidate autocomplete="off">/);
   assert.match(pages.vaultSetupForm(), new RegExp(`อย่างน้อย ${model.MIN_PASSWORD_LENGTH} ตัวอักษร`));
   assert.match(pages.vaultSetupForm(), /ห้ามใช้รหัสเดียวกับรหัสเข้าสู่ระบบ/);
   assert.match(pages.vaultSetupForm(), /id="itas-vault-strength"/);
@@ -75,7 +88,9 @@ test("vault forms: password fields are type=password with no autofill leak, reco
   const show = pages.recoveryShow({ code: "ABCD-EFGH", mode: "setup" });
   assert.match(show, /id="itas-recovery-code"[^>]*>ABCD-EFGH</);
   assert.match(show, /แสดงครั้งเดียว/);
-  assert.match(show, /id="itas-recovery-copy"/);
+  assert.doesNotMatch(show, /itas-recovery-copy|คัดลอกรหัส|<button[^>]*>[^<]*คัดลอก/, "รหัสกู้คืนต้องจด/พิมพ์เก็บ ไม่ผ่านคลิปบอร์ด");
+  assert.match(show, /จดด้วยมือลงกระดาษ/);
+  assert.match(show, /ไม่ควรคัดลอก/);
   assert.match(show, /พิมพ์รหัสกู้คืนกลับเข้ามาเพื่อยืนยันว่าจดแล้ว/);
   assert.match(show, /ยืนยันและตั้งตู้เซฟ/);
   assert.match(pages.recoveryShow({ code: "X", mode: "recovery" }), /ยืนยันและเปลี่ยนรหัสกู้คืน/);
@@ -163,12 +178,12 @@ test("secret section when unlocked: shown value is masked, buttons per field, em
   assert.match(ip, /data-secret-act="show"/);
   assert.match(ip, /data-secret-act="edit"/);
   assert.match(ip, /data-secret-act="clear"/);
-  assert.match(ip, /<input[^>]*type="password"[^>]*data-secret-input hidden/);
+  assert.match(ip, /<input[^>]*type="password"[^>]*data-secret-input data-mask hidden/);
   const os = /data-secret="license_os"[\s\S]*$/.exec(html)[0];
   assert.match(os, /data-has-value="0"/);
   assert.match(os, /data-secret-shown[^>]*>—</);
   assert.doesNotMatch(os, /data-secret-act/);
-  assert.match(os, /<input[^>]*type="password"[^>]*data-secret-input>/);
+  assert.match(os, /<input[^>]*type="password"[^>]*data-secret-input data-mask>/);
   assert.doesNotMatch(html, /<input[^>]*\svalue=/);
   assert.ok(!html.includes(CIPHER));
   assert.equal(pages.secretsSection({ fields: [], asset: null, vaultStatus: "unlocked" }), "");
