@@ -69,7 +69,9 @@
   const MAY = Object.freeze({
     master: (user) => Boolean(user.planner || user.rb), // วัตถุดิบ / สูตร (ร่าง) / เปิดใบสั่งผลิต: ฝ่ายวางแผนขึ้นไป หรือพนักงานแผนก RB
     approve: (user) => Boolean(user.rbHead), // อนุมัติสูตร: หัวหน้า RB ขึ้นไป
-    release: (user) => Boolean(user.planner || user.rbHead), // ปล่อยผลิต
+    // เปิดใบสั่งผลิตใหม่ และปล่อยผลิต (planned → released) = กลุ่มวางแผนเท่านั้น (โรงงานขั้น 6 · ทำที่โมดูล BOM) · แผนก RB และหัวหน้า RB เริ่มงาน พัก ผลิตต่อ ปิดงานได้ตามเดิม (work)
+    openOrder: (user) => Boolean(user.planner),
+    release: (user) => Boolean(user.planner), // ปล่อยผลิต
     work: (user) => Boolean(user.planner || user.rb), // สถานะอื่นของใบสั่งผลิต
     closePurchaseLine: (user) => Boolean(user.st || user.role === "admin"), // ปิดยอดที่เหลือของใบสั่งซื้อ: สิทธิ์เดียวกับรับเข้า (ST) ข้อความปฏิเสธของตัวเอง
     receiveMaterial: (user) => Boolean(user.st || user.role === "admin"), // รับวัตถุดิบเข้าคลัง (รวมรับเข้าตามใบสั่งซื้อ): แผนก ST เท่านั้น (admin ไว้แก้ปัญหา)
@@ -99,7 +101,8 @@
   const MAY_TEXT = Object.freeze({
     master: "แก้ข้อมูลหลักของ RubberFlow ได้โดยฝ่ายวางแผน ผู้จัดการ ผู้ดูแลระบบ หรือพนักงานแผนก RB",
     approve: "อนุมัติสูตรได้โดยผู้จัดการแผนก RB หรือผู้ช่วยผู้จัดการแผนก RB ผู้จัดการโรงงานขึ้นไป หรือผู้ดูแลระบบ",
-    release: "ปล่อยผลิตได้โดยฝ่ายวางแผน ผู้จัดการ หรือผู้จัดการแผนก RB",
+    openOrder: "เปิดใบสั่งผลิตได้โดยฝ่ายวางแผนหรือผู้จัดการ (ที่โมดูล BOM)",
+    release: "ปล่อยผลิตได้โดยฝ่ายวางแผนหรือผู้จัดการ (ที่โมดูล BOM)",
     work: "เปลี่ยนสถานะใบสั่งผลิตได้โดยฝ่ายวางแผน ผู้จัดการ หรือพนักงานแผนก RB",
     receiveMaterial: "รับวัตถุดิบเข้าคลังได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
     closePurchaseLine: "ปิดยอดที่เหลือของใบสั่งซื้อได้โดยแผนกคลังวัตถุดิบ (ST) เท่านั้น",
@@ -144,7 +147,7 @@
   // ---------- ใบสั่งผลิต ----------
 
   function createOrder(d, p, ctx) {
-    needRight(ctx, "master");
+    needRight(ctx, "openOrder");
     const { currentRecipe, approvedRecipes } = rules();
     if (!String(p.recipeId ?? "").trim()) fail(approvedRecipes(d.recipes).length ? "กรุณาเลือกสินค้า / สูตร" : "ยังไม่มีสูตรที่อนุมัติ ต้องอนุมัติสูตรก่อนจึงเปิดใบสั่งผลิตได้");
     const recipe = currentRecipe(d.recipes, p.recipeId) || fail(`ไม่พบสูตร${ref(p.recipeId)}`);

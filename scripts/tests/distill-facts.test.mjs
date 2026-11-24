@@ -211,7 +211,8 @@ test("small consistency fixes: file toggle marker, read-only fields, parts table
   assert.match(mt, /<div class="field parts-field"><label>รายการอะไหล่/);
   assert.match(read("modules/shortcut-help.js"), /"อนุมัติ ไม่อนุมัติ และขอข้อมูลเพิ่ม ส่งทันทีหลังกดยืนยัน"/, "no undo window for decisions any more (user 2026-11-13)");
   assert.doesNotMatch(read("modules/shortcut-help.js"), /เลิกทำ|5 วินาที|นับถอยหลัง/);
-  assert.match(read("modules/rubberflow-pages-plan.js"), /ต้องมีสูตรยางที่อนุมัติแล้วก่อน จึงเปิดใบสั่งผลิตได้/);
+  // โรงงานขั้น 6: หน้าใบสั่งผลิตของ RB ไม่มีปุ่มเปิดใบแล้ว ข้อความสถานะว่างบอกว่าใครเปิด
+  assert.match(read("modules/rubberflow-pages-plan.js"), /ฝ่ายวางแผนเปิดใบสั่งผลิตและปล่อยผลิตที่โมดูล BOM/);
 });
 
 // ---- รอบ 13: ปุ่ม 44px · ค่าเสียหายครั้งเดียว · แดชบอร์ดข้อมูลน้อย · ใครต้องทำต่อแบบเดียว ----

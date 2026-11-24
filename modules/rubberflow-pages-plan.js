@@ -1,4 +1,4 @@
-// RubberFlow MES (แผนก RB โหมดทดสอบ) — หน้า ภาพรวมโรงงาน · ใบสั่งผลิต · สูตรยาง · คลังวัตถุดิบและสินค้า · แม่พิมพ์ · บันทึกการใช้งาน
+// RubberFlow MES (แผนก RB โหมดทดสอบ) — หน้า ภาพรวม RB · ใบสั่งผลิต · สูตรยาง · คลังเคมี RB · แม่พิมพ์ · บันทึกการใช้งาน
 // ยกมาจาก pages/Dashboard.jsx, Orders.jsx, Recipes.jsx, Warehouse.jsx, Molds.jsx, Audit.jsx ของต้นแบบ (React → HTML สตริง + bind)
 // ทุกหน้าคืน { html, bind?(root, ctx) } และ dialog คืน { html, bind? } ลงทะเบียนใน window.MNP_RUBBERFLOW_PAGES / _DIALOGS
 // กติกา event (data-rf-form / data-rf-action / data-rf-open) อยู่ที่ modules/module-rubberflow.js — โหลดหลัง modules/rubberflow-ui.js
@@ -27,9 +27,9 @@
   const includes = (haystack, q) => !q || String(haystack).toLowerCase().includes(q.toLowerCase());
   const searchForm = (ctx, placeholder, { tab = null } = {}) => `<form novalidate class="rf-search" data-rf-search${tab ? ` data-rf-keep="tab"` : ""} role="search"><label class="sr-only" for="rf-q">ค้นหา</label>${ctx.ui.input("q", { id: "rf-q", type: "search", value: ctx.q, placeholder })}<button class="btn rf-btn secondary" type="submit">ค้นหา</button></form>`;
 
-  // ---------- ภาพรวมโรงงาน ----------
+  // ---------- ภาพรวม RB ----------
   pages.dashboard = (ctx) => {
-    const { data, now, ui, rules, derive } = ctx;
+    const { data, now, ui, rules, derive, actions } = ctx;
     const { STAGES, STAGE_LABEL, DAY, fmtDate, fmtNum } = rules;
     const byStage = Object.fromEntries(STAGES.map((stage) => [stage, data.lots.filter((lot) => lot.stage === stage)]));
     const stageYield = Object.fromEntries(STAGES.map((stage) => [stage, yieldOf(byStage[stage])]));
@@ -47,7 +47,8 @@
     const wipAt = (stage) => data.transfers.filter((transfer) => transfer.to === stage && (transfer.status === "in_transit" || transfer.remaining > 0));
     const active = data.orders.filter((order) => ["released", "in_progress", "on_hold"].includes(order.status));
     const alerts = derive.buildAlerts(data, now);
-    const fgBoxes = data.fgBoxes.filter((box) => box.status === "in_stock");
+    // ล็อตที่ผ่านแล้วและยังมียอดรอส่งไปสถานีถัดไป (ข้อเท็จจริงของ RB เอง · สินค้าสำเร็จรูปในคลังเป็นของ WH ดูที่ #/wh)
+    const waitingHandover = data.lots.filter((lot) => actions.transferableQty(lot, now) > 0).length;
 
     // หนึ่งแถวต่อสถานี: ชื่อคอลัมน์อยู่ครั้งเดียวที่หัวตาราง (ไม่พิมพ์ซ้ำทุกการ์ด) · งานรอ = ใบส่งมอบที่รอเข้าสถานี (ห้องผสม = ชุดผสมที่กำลังบ่ม)
     const flowRows = STAGES.map((stage, i) => {
@@ -69,17 +70,15 @@
     // ยังไม่มีล็อตที่บันทึกผลผลิตเลย: กราฟสองใบบอกว่าว่าง ไม่วาดแกนที่ไม่มีความหมาย (ของเสีย 0% ของล็อตจริงยังวาดเป็นกราฟ)
     const hasProduction = data.lots.some((lot) => lot.goodQty + lot.scrapQty > 0);
     const noProduction = ui.empty("ยังไม่มีผลผลิตที่บันทึก");
-    // ยังไม่มีข้อมูลเลย: ขั้นแรกคือเปิดใบสั่งผลิต (ยังไม่มีสูตรที่อนุมัติ = ไปสร้างสูตรก่อน) · ปุ่มเดียวนี้หายไปเมื่อมีใบสั่งแล้ว
-    const start = data.orders.length ? ""
-      : !rules.approvedRecipes(data.recipes).length ? (ctx.canSee("recipes") ? ui.link("สร้างสูตรยาง", ctx.url("recipes"), "btn rf-btn") : "")
-      : ctx.can("createOrder") ? ui.openButton("เปิดใบสั่งผลิต", "createOrder", {}, { className: "" }) : "";
-    const html = `${ui.pageHead("ภาพรวมโรงงาน", `ข้อมูล ณ ${rules.fmtDateTime(now)}`, start)}
+    // ยังไม่มีข้อมูลเลย: ขั้นแรกคือสูตรยางที่อนุมัติ (ใบสั่งผลิตเปิดที่โมดูล BOM โดยฝ่ายวางแผน · โรงงานขั้น 6) · ปุ่มเดียวนี้หายไปเมื่อมีใบสั่งแล้วหรือมีสูตรที่อนุมัติแล้ว
+    const start = data.orders.length || rules.approvedRecipes(data.recipes).length ? "" : ctx.canSee("recipes") ? ui.link("สร้างสูตรยาง", ctx.url("recipes"), "btn rf-btn") : "";
+    const html = `${ui.pageHead("ภาพรวม RB", `ข้อมูล ณ ${rules.fmtDateTime(now)}`, start)}
       ${ctx.bomJobsSlot?.() ?? ""}
       ${ui.stats([
         { label: "อัตราได้ของดีรวม 4 ขั้นตอน", value: hasProduction ? `${overall.toFixed(1)}%` : "—", sub: "เป้าหมาย ≥ 95.0%", tone: overall >= 95 ? "good" : "warn" },
         { label: "ใบสั่งผลิตที่เปิดอยู่", value: String(active.length), sub: `ด่วน ${active.filter((order) => order.priority === "urgent").length} รายการ` },
         { label: "ของเสียห้องผสม (สะสม)", value: `${fmtNum(mixingScrapKg, 1)} kg`, },
-        { label: "สินค้าพร้อมส่งในคลัง", value: `${fgBoxes.length} กล่อง`, sub: `รอ WH รับเข้า ${data.fgBoxes.filter((box) => box.status === "pending_wh").length} · กักกัน ${data.fgBoxes.filter((box) => box.status === "hold").length}` },
+        { label: "ล็อตรอส่งมอบ WIP", value: String(waitingHandover) },
       ])}
       ${flow}
       <div class="rf-grid rf-g2">
@@ -98,11 +97,12 @@
     { id: "all", label: "ทั้งหมด" }, { id: "planned", label: "วางแผน" }, { id: "released", label: "ปล่อยผลิต" },
     { id: "in_progress", label: "กำลังผลิต" }, { id: "on_hold", label: "พักงาน" }, { id: "completed", label: "เสร็จสิ้น" },
   ];
+  // ใบสั่งผลิตที่ยังเป็นวางแผน: ฝ่ายวางแผนเป็นผู้ปล่อยผลิต (ที่โมดูล BOM · โรงงานขั้น 6) แผนก RB เริ่มงานได้หลังปล่อยแล้ว
+  const PLANNED_HINT = "ฝ่ายวางแผนปล่อยผลิตที่โมดูล BOM แล้วแผนก RB จึงเริ่มงานได้";
   pages.orders = (ctx) => {
     const { data, now, ui, rules, params } = ctx;
     const { fmtDate, fmtNum } = rules;
     const filter = ORDER_FILTERS.some((row) => row.id === params.get("tab")) ? params.get("tab") : "all";
-    const mayRelease = ctx.can("releaseOrder");
     const mayWork = ctx.can("workOrder");
     const rows = [...data.orders]
       .sort((a, b) => b.createdAt - a.createdAt)
@@ -114,7 +114,6 @@
       const late = order.dueDate < now && order.status !== "completed";
       const buttons = [
         ui.openButton("ป้าย", "tag", { kind: "order", id: order.id }, { className: "secondary small", ariaLabel: `พิมพ์ป้าย ${order.id}` }),
-        mayRelease && order.status === "planned" ? setStatus(order, "released", "", "ปล่อยผลิต", { className: "small" }) : "",
         mayWork && order.status === "planned" ? setStatus(order, "cancelled", "", "ยกเลิก", { className: "danger small", confirmText: `ยกเลิก ${order.id}?` }) : "",
         mayWork && ["released", "in_progress"].includes(order.status) ? setStatus(order, "on_hold", "", "พัก") : "",
         mayWork && order.status === "on_hold" ? setStatus(order, "in_progress", "", "ผลิตต่อ") : "",
@@ -128,17 +127,13 @@
         <td class="nowrap">${esc(`${fmtNum(order.targetQty)} ${unitText(order.uom)}`)}<div class="small muted">${order.targetKg ? `${esc(`≈ ${fmtNum(order.targetKg, 1)} kg`)} · ` : ""}สี ${esc(order.color)}</div></td>
         <td class="rf-progress-cell">${ui.progress(order.producedQty, order.targetQty, late ? "bad" : "")}<div class="small muted">${esc(`${fmtNum(order.producedQty)} (${Math.round((order.producedQty / order.targetQty) * 100)}%)`)}</div></td>
         <td class="nowrap small">${esc(fmtDate(order.startDate))}<br><span${late ? ' class="rf-late"' : ""}>${esc(fmtDate(order.dueDate))}</span></td>
-        <td>${ui.status(order.status)}</td>
+        <td>${order.status === "planned" ? `<span title="${esc(PLANNED_HINT)}">${ui.badge("warn", "รอฝ่ายวางแผนปล่อย")}</span>` : ui.status(order.status)}</td>
         <td class="right"><div class="rf-row rf-end">${buttons}</div></td></tr>`;
     });
-    // ยังไม่มีใบสั่งผลิตเลย (ไม่ใช่ค้นหา/กรองแล้วไม่เจอ): บอกว่ายังไม่มี และให้ปุ่มเปิดใบอยู่ตรงนั้น (ยังไม่มีสูตรที่อนุมัติ = ไปสร้างสูตรก่อน เหมือนหน้าภาพรวม) · "ไม่พบ" ใช้เมื่อค้นหา/กรองแล้วไม่มีผลเท่านั้น
+    // ยังไม่มีใบสั่งผลิตเลย (ไม่ใช่ค้นหา/กรองแล้วไม่เจอ): บอกว่ายังไม่มีและใครเป็นคนเปิด (ฝ่ายวางแผนเปิดและปล่อยผลิตที่โมดูล BOM · โรงงานขั้น 6) · "ไม่พบ" ใช้เมื่อค้นหา/กรองแล้วไม่มีผลเท่านั้น
     const noOrdersYet = !data.orders.length;
-    const needRecipe = noOrdersYet && ctx.can("createOrder") && !rules.approvedRecipes(data.recipes).length;
-    const startAction = !noOrdersYet || !ctx.can("createOrder") ? ""
-      : !rules.approvedRecipes(data.recipes).length ? (ctx.canSee("recipes") ? ui.link("สร้างสูตรยาง", ctx.url("recipes"), "btn rf-btn") : "")
-      : ui.openButton("เปิดใบสั่งผลิต", "createOrder", {}, { className: "" });
-    const ordersEmpty = noOrdersYet ? { emptyText: "ยังไม่มีใบสั่งผลิต", emptyHtml: `<div class="empty-state"><p>${esc("ยังไม่มีใบสั่งผลิต")}</p>${needRecipe ? `<small>${esc("ต้องมีสูตรยางที่อนุมัติแล้วก่อน จึงเปิดใบสั่งผลิตได้")}</small>` : ""}${startAction}</div>` } : { emptyText: "ไม่พบใบสั่งผลิต" };
-    const html = `${ui.pageHead("ใบสั่งผลิต", "วางแผน ปล่อยผลิต พักงาน และติดตามความคืบหน้าของแต่ละใบสั่งผลิต", ctx.can("createOrder") && !noOrdersYet ? ui.openButton("เปิดใบสั่งผลิต", "createOrder", {}, { className: "" }) : "")}
+    const ordersEmpty = noOrdersYet ? { emptyText: "ยังไม่มีใบสั่งผลิต", emptyHtml: `<div class="empty-state"><p>${esc("ยังไม่มีใบสั่งผลิต")}</p><small>${esc("ฝ่ายวางแผนเปิดใบสั่งผลิตและปล่อยผลิตที่โมดูล BOM")}</small></div>` } : { emptyText: "ไม่พบใบสั่งผลิต" };
+    const html = `${ui.pageHead("ใบสั่งผลิต", "ติดตามความคืบหน้า พักงาน ผลิตต่อ และปิดงานของแต่ละใบสั่งผลิต")}
       ${ui.card(`<div class="rf-listbar">${tabs}${searchForm(ctx, "ค้นหาเลขที่ ลูกค้า สินค้า…", { tab: true })}</div>${ui.table(["เลขที่ / PO ลูกค้า", "ลูกค้า", "สินค้า / สูตร", "จำนวน", "ความคืบหน้า", "เริ่ม – ส่ง", "สถานะ", { label: "จัดการ", className: "right" }], body, ordersEmpty)}`, { flush: true })}`;
     return { html };
   };
@@ -148,7 +143,9 @@
     const { DAY, fmtNum, toInputDate } = rules;
     const approved = rules.approvedRecipes(data.recipes);
     // ยังไม่มีสูตรที่อนุมัติ: ไม่วางช่องเลือกที่ไม่มีตัวเลือก บอกเหตุผลพร้อมทางไปหน้าสูตรยาง และปิดปุ่มบันทึก (ปุ่มลิงก์ปิด dialog ก่อนไปหน้านั้น)
-    const recipeLink = ctx.canSee("recipes") ? `<a class="btn rf-btn secondary small" href="${esc(ctx.url("recipes"))}" data-rf-close>ไปที่สูตรยาง</a>` : "";
+    // dialog นี้เปิดจาก #/bom ด้วย: ผู้จัดการแผนกอื่นในสายผลิตเปิดหน้า RubberFlow ไม่ได้ จึงไม่มีลิงก์ที่พาไป "ไม่พบ"
+    const canGoRf = typeof state !== "undefined" && Boolean(root.MNP_RUBBERFLOW_STORE?.canOpenRubberFlowPage?.(state.employee));
+    const recipeLink = canGoRf && ctx.canSee("recipes") ? `<a class="btn rf-btn secondary small" href="${esc(ctx.url("recipes"))}" data-rf-close>ไปที่สูตรยาง</a>` : "";
     const recipeField = approved.length
       ? ui.field("สินค้า / สูตร (เฉพาะสูตรที่อนุมัติแล้ว)", ui.select("recipeId", approved.map((recipe) => ({ value: recipe.id, label: rules.recipeLabel(recipe) })), { value: approved[0].id, placeholder: "เลือกสินค้า / สูตร", extra: "data-rf-recipe required" }), { required: true })
       : ui.field("สินค้า / สูตร", ui.callout("warn", `<strong>ยังไม่มีสูตรที่อนุมัติ</strong><br>ต้องมีสูตรที่อนุมัติแล้วก่อนจึงเปิดใบสั่งผลิตได้${recipeLink ? `<div>${recipeLink}</div>` : ""}`));
@@ -344,27 +341,7 @@
     return { html };
   };
 
-  // ---------- คลังวัตถุดิบและสินค้าสำเร็จรูป ----------
-  // แท็บ "สินค้าสำเร็จรูป": กล่องสินค้า การรับเข้า และการส่งมอบอยู่ที่โมดูลคลังสินค้าสำเร็จรูป (WH) ที่เดียว (20261207010000) ที่นี่เหลือลิงก์เดียว · ไม่มีสิทธิ์เปิดโมดูล WH = ข้อความอย่างเดียว
-  function fgHome(ctx) {
-    const { ui } = ctx;
-    const factory = root.MNP_FACTORY;
-    const open = typeof state !== "undefined" && Boolean(factory?.canOpenDeptModule?.(state.employee, "WH", "FACTORY_WH"));
-    const link = open ? `<div class="rf-row">${ui.link("ไปที่คลังสินค้าสำเร็จรูป (WH)", factory.routeUrl("wh", { tab: "stock" }), "btn rf-btn")}</div>` : "";
-    return ui.empty("สินค้าสำเร็จรูปอยู่ที่คลังสินค้าสำเร็จรูป (WH) รับเข้า ส่งมอบ และดูของในคลังได้ที่นั่น", link);
-  }
-
-  // ล็อตวัตถุดิบและใบสั่งซื้อ (คลัง ST) อยู่ที่โมดูลคลังวัตถุดิบ (ST) #/st ที่เดียว (โรงงานขั้น 3 · 20261220010000) · ผู้ที่ไม่เห็นแท็บคลังเคมี RB ได้ปุ่มลิงก์เดียวที่หัวหน้า (RB ได้ปุ่มเดียวกันในแท็บคลังเคมี RB)
-  // ลิงก์ตามสิทธิ์ของโมดูล ST (MNP_ST_PAGES.access): ผู้ใช้โมดูลไปหน้านั้นตรงๆ · RB / QA ดูเคมีในคลัง ST ได้อย่างเดียว · คนอื่นไม่มีปุ่ม
-  function stButton(ctx) {
-    const factory = root.MNP_FACTORY;
-    const access = typeof state !== "undefined" ? root.MNP_ST_PAGES?.access?.(state.employee) ?? null : null;
-    // แผนก QA กักกัน / ปลดกักกันวัตถุดิบที่โมดูล QA (โรงงานขั้น 5) ไม่ใช่ที่โมดูล ST
-    if (!access && factory && typeof state !== "undefined" && factory.canOpenDeptModule?.(state.employee, "QA", "FACTORY_QA") && String(state.employee?.department?.code ?? state.employee?.department_code ?? "").toUpperCase() === "QA") return ctx.ui.link("ไปที่วัตถุดิบที่กัก (QA)", factory.routeUrl("qa", { tab: "material" }), "btn rf-btn");
-    if (!access || !factory) return "";
-    return ctx.ui.link(access === "full" ? "ไปที่คลังวัตถุดิบ (ST)" : "ดูเคมีในคลัง ST", factory.routeUrl("st", { tab: "stock" }), "btn rf-btn");
-  }
-
+  // ---------- ใบสั่งซื้อ (ใช้ที่โมดูล ST) ----------
   // ตารางใบสั่งซื้อ (ใช้ที่หน้าใบสั่งซื้อของโมดูล ST #/st ผ่าน MNP_RUBBERFLOW_VIEWS · ปุ่มผูกด้วยตัวผูกของ RubberFlow) · q = คำค้น
   // ใบที่ยังรอรับก่อน แล้วรับครบ/ยกเลิก (ใหม่สุดก่อนในแต่ละกลุ่ม) · หนึ่งแถวหัวใบ (เลขที่ สถานะ ผู้สั่ง ต้นทาง ยกเลิก) แล้วหนึ่งแถวต่อวัตถุดิบ (ปุ่มรับเข้าคลังวัตถุดิบ (ST) / ปิดยอดที่เหลืออยู่ที่บรรทัด)
   // รับได้หลายครั้งต่อบรรทัดจนครบหรือ ST ปิดยอดที่เหลือ (20261128020000): ช่องรับเข้าแสดงยอดสะสม ล็อตของแต่ละครั้ง ยอดที่ค้างรับ และยอดที่ปิดพร้อมเหตุผล
@@ -420,28 +397,26 @@
   }
   root.MNP_RUBBERFLOW_VIEWS = Object.freeze({ ...(root.MNP_RUBBERFLOW_VIEWS ?? {}), purchaseOrderTable, purchaseButton });
 
-  // หน้าคลังของ RubberFlow: แท็บคลังเคมี RB (ตั้งต้นของผู้ที่เห็น · เนื้อหาอยู่ใน rubberflow-pages-line.js) · รายการวัตถุดิบ (ข้อมูลหลัก แก้โดยฝ่ายวางแผน / RB) · สินค้าสำเร็จรูปเป็นลิงก์ไปโมดูลคลังของแผนกนั้น
-  // ล็อตวัตถุดิบและใบสั่งซื้อ (คลัง ST) อยู่ที่ #/st · ลิงก์เก่า tab=raw / po และ p=rbstore เปิดแท็บตั้งต้น (p=rbstore เปลี่ยนทางใน module-rubberflow.js)
+  // หน้าคลังเคมี RB: แท็บคลังเคมี RB (ตั้งต้นของผู้ที่เห็น · เนื้อหาอยู่ใน rubberflow-pages-line.js) · รายการวัตถุดิบ (ข้อมูลหลัก แก้โดยฝ่ายวางแผน / RB) · ไม่มีแท็บสินค้าสำเร็จรูป (อยู่ที่โมดูล WH · โรงงานขั้น 6)
+  // ล็อตวัตถุดิบและใบสั่งซื้อ (คลัง ST) อยู่ที่ #/st ที่เดียว (โรงงานขั้น 3 · 20261220010000) · ลิงก์เก่า tab=raw / po และ p=rbstore เปิดแท็บตั้งต้น (p=rbstore และ tab=fg เปลี่ยนทางใน module-rubberflow.js)
   pages.warehouse = (ctx) => {
     const { data, ui, rules, params } = ctx;
     const { fmtNum } = rules;
     const rbAllowed = Boolean(ctx.canSeeRbStore?.());
     const chosen = params.get("tab");
-    const tab = ["fg", "materials"].includes(chosen) ? chosen : rbAllowed ? "rb" : "materials";
+    const tab = chosen === "materials" ? chosen : rbAllowed ? "rb" : "materials";
     const firstTab = rbAllowed ? "rb" : "materials";
     const mayEditMaterial = ctx.can("editMaster");
-    const tabs = ui.tabs([...(rbAllowed ? [{ id: "rb", label: "คลังเคมี RB" }] : []), { id: "materials", label: "รายการวัตถุดิบ" }, { id: "fg", label: "สินค้าสำเร็จรูป" }], tab, (id) => ctx.pageUrl({ tab: id === firstTab ? null : id, q: null, view: null, days: null }));
+    const tabs = ui.tabs([...(rbAllowed ? [{ id: "rb", label: "คลังเคมี RB" }] : []), { id: "materials", label: "รายการวัตถุดิบ" }], tab, (id) => ctx.pageUrl({ tab: id === firstTab ? null : id, q: null, view: null, days: null }));
     const rbStore = tab === "rb" ? root.MNP_RUBBERFLOW_VIEWS?.rbStoreSection?.(ctx) ?? null : null;
     const materialRows = data.materials
       .filter((material) => includes(`${material.code} ${material.name} ${material.category ?? ""}`, ctx.q))
       .map((material) => `<tr><td class="rf-mono small">${esc(material.code)}</td><td>${esc(material.name)}</td><td class="small">${esc(material.category ?? "")}</td><td class="small">${esc(material.storage ?? "")}</td><td>${esc(material.uom ?? "kg")}</td><td class="right">${esc(fmtNum(material.safetyKg ?? 0, 2))}</td><td class="right">${esc(fmtNum(material.shelfLifeDays ?? 180))}</td><td>${material.active === false ? ui.badge("", "เลิกใช้") : ui.badge("good", "ใช้งาน")}</td><td class="right">${mayEditMaterial ? ui.openButton("แก้ไข", "materialEdit", { code: material.code }, { className: "secondary small", ariaLabel: `แก้ไข ${material.code}` }) : ""}</td></tr>`);
     const listbar = `<div class="rf-listbar">${tabs}<div class="rf-row">${tab === "materials" && mayEditMaterial ? ui.openButton("เพิ่มวัตถุดิบ", "materialEdit", {}, { className: "small" }) : ""}${tab === "materials" ? searchForm(ctx, "ค้นหารหัส…", { tab: true }) : ""}${rbStore ? rbStore.search : ""}</div></div>${rbStore ? rbStore.tabs : ""}`;
     const tableHtml = tab === "rb" ? (rbStore?.body ?? "")
-      : tab === "materials"
-      ? ui.table(["รหัส", "ชื่อวัตถุดิบ", "หมวด", "ที่จัดเก็บ", "หน่วย", { label: "สต็อกขั้นต่ำ (kg)", className: "right" }, { label: "อายุการเก็บ (วัน)", className: "right" }, "สถานะ", { label: "", className: "right" }], materialRows, { emptyText: ctx.q ? "ไม่พบวัตถุดิบ" : "ยังไม่มีวัตถุดิบ" })
-      : fgHome(ctx);
-    const actions = rbStore ? rbStore.actions : rbAllowed ? "" : stButton(ctx);
-    const html = `${ui.pageHead("คลังวัตถุดิบและสินค้าสำเร็จรูป", "", actions)}${ui.card(`${listbar}${tableHtml}`, { flush: true })}`;
+      : ui.table(["รหัส", "ชื่อวัตถุดิบ", "หมวด", "ที่จัดเก็บ", "หน่วย", { label: "สต็อกขั้นต่ำ (kg)", className: "right" }, { label: "อายุการเก็บ (วัน)", className: "right" }, "สถานะ", { label: "", className: "right" }], materialRows, { emptyText: ctx.q ? "ไม่พบวัตถุดิบ" : "ยังไม่มีวัตถุดิบ" });
+    const actions = rbStore ? rbStore.actions : "";
+    const html = `${ui.pageHead("คลังเคมี RB", "", actions)}${ui.card(`${listbar}${tableHtml}`, { flush: true })}`;
     return { html };
   };
 

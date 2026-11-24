@@ -7,6 +7,7 @@ import vm from "node:vm";
 // แบบ stub และ localStorage จำลอง แล้ววาดทุกหน้า × ทุกบทบาท เรียก dialog ทุกตัว และยิงฟอร์ม/ปุ่มผ่านกติกา data-rf-* ของไฟล์หลัก
 const FILES = [
   "modules/ui-icons.js",
+  "modules/department-access.js",
   "modules/rubberflow-rules.js",
   "modules/rubberflow-derive.js",
   "modules/rubberflow-actions.js",
@@ -43,7 +44,7 @@ function load({ sandbox = true, route = "", storage = new Map() } = {}) {
     window: context, escapeHtml, showToast: (message, kind) => log.toasts.push([message, kind ?? "ok"]), friendlyError: (error) => String(error?.message ?? error),
     renderRoute: async () => { log.renders += 1; }, confirmDialog: async (options) => { log.confirms.push(options); return log.confirmAnswer; }, URLSearchParams, Intl, Date, structuredClone, setInterval: () => 0, requestAnimationFrame: () => 0,
     location: { get hash() { return log.hash; }, set hash(value) { log.hash = value.startsWith("#") ? value : `#${value}`; } },
-    app, state: { employee: { isSandbox: sandbox } },
+    app, state: { employee: { isSandbox: sandbox, role: { code: "admin" }, department: { code: "PP" } } }, // โรงงานขั้น 6: เห็นหน้า RubberFlow = แผนก RB · PP · ผู้จัดการ (ตัวช่วยนี้ใช้ admin ของแผนก PP)
     shell: (content, path, title) => `<shell path="${path}" title="${escapeHtml(title)}">${content}</shell>`,
     bindShell() {}, loadingShell() {}, renderNotFound: () => { log.notFound += 1; app.innerHTML = "<notfound></notfound>"; },
     currentRoute: () => { const raw = log.hash.replace(/^#\/?/, ""); const [path, query = ""] = raw.split("?"); return { path, params: new URLSearchParams(query) }; },
@@ -161,6 +162,10 @@ test("the dashboard, stations and quality pages show the prototype's facts from 
   const dashboard = text(await env.render());
   assert.match(dashboard, /อัตราได้ของดีรวม 4 ขั้นตอน/);
   assert.match(dashboard, /ใบสั่งผลิตที่เปิดอยู่ 3/, "released + in_progress orders");
+  // โรงงานขั้น 6: หน้าภาพรวมเป็นของแผนก RB อย่างเดียว · การ์ดสินค้าพร้อมส่งในคลัง (ของ WH) ถูกแทนด้วยล็อตรอส่งมอบ WIP · ชื่อหน้า = "ภาพรวม RB"
+  assert.match(dashboard, /ภาพรวม RB/);
+  assert.doesNotMatch(dashboard, /ภาพรวมโรงงาน|สินค้าพร้อมส่งในคลัง|รอ WH รับเข้า/, "no finished-goods box counts on the RB overview");
+  assert.match(dashboard, /ล็อตรอส่งมอบ WIP \d+/, "the RB fact that replaces the warehouse card");
   assert.match(dashboard, /1\. ผสมยาง[\s\S]*4\. ตกแต่งและบรรจุ/);
   assert.equal((dashboard.match(/ล็อตทั้งหมด|งานรอเข้า/g) ?? []).length, 0, "station labels are table column heads, not repeated on every card");
   assert.match(await env.render(), /rf-chart-area[\s\S]*rf-chart-bar/, "both SVG charts are drawn");
@@ -214,11 +219,14 @@ test("the dashboard, stations and quality pages show the prototype's facts from 
   assert.match(wip, /รอรับมอบ/);
   assert.match(wip, /ผสมยาง[\s\S]*ตกแต่งและบรรจุ/, "the stations are the rows of one table");
   assert.equal((wip.match(/รับแล้วรอใช้/g) ?? []).length, 1, "each column name is printed once, not on every station card");
+  // the finished-goods tab is gone (step 6): the old link tab=fg gets one line when the account cannot open the WH module (the redirect for those who can is tested in factory-menu.test.mjs)
   const warehouse = await env.render("p=warehouse&tab=fg");
-  // the finished-goods tab is one pointer to the warehouse module: no boxes, no shipping form here (WH is the only place); the raw-material tabs stay
   assert.doesNotMatch(warehouse, /data-rf-form="shipBoxes"|name="ids\[\]"|data-rf-ship|rf-ship/);
-  assert.match(warehouse, /สินค้าสำเร็จรูปอยู่ที่คลังสินค้าสำเร็จรูป \(WH\)/);
+  assert.match(warehouse, /สินค้าสำเร็จรูปอยู่ที่โมดูลคลังสินค้าสำเร็จรูป \(WH\)/);
   assert.doesNotMatch(warehouse, /สินค้าพร้อมส่ง/, "the boxes ready to ship are counted at the warehouse, not repeated here");
+  const warehousePage = await env.render("p=warehouse");
+  assert.match(warehousePage, /<h1>คลังเคมี RB<\/h1>/, "the page head says what the page is");
+  assert.doesNotMatch(warehousePage, /สินค้าสำเร็จรูป/, "no finished-goods tab or word on the RB chemical store page");
   const requisition = await env.render("p=requisition");
   assert.match(requisition, /<th class="right">จ่าย \(kg\)<\/th>/, "the detail lists the kilos that were issued");
   assert.match(requisition, /จ่ายครบ รอผสม/, "the status badge says it once; no extra callout repeats it");
@@ -488,7 +496,7 @@ test("RubberFlow and BOM go live: real employees by role, every persona in test 
   assert.match(app, /\.filter\(\(item\) => !item\.sandboxOnly \|\| isSandboxMode\(\)\)/, "the side menu drops sandboxOnly items outside test mode");
   assert.match(app, /\.filter\(\(item\) => !item\.realOnly \|\| !isSandboxMode\(\)\)/, "and realOnly items inside test mode");
   assert.match(app, /if \(state\.employee\?\.role\?\.code !== "admin" \|\| state\.employee\.labOnly\) return;/, "only an admin can enter test mode");
-  for (const [file, gate] of [["modules/module-rubberflow.js", "usesRubberFlow"], ["modules/module-bom.js", "usesBom"]]) {
+  for (const [file, gate] of [["modules/module-rubberflow.js", "canOpenRubberFlowPage"], ["modules/module-bom.js", "usesBom"]]) {
     const source = read(file);
     assert.ok(source.includes(`if (!storeApi.${gate}(state.employee)) return renderNotFound();`), `${file} refuses a typed URL from someone the module is not for`);
     assert.ok(source.includes(`navAllowed: (employee) => storeApi.${gate}(employee),`), `${file} hides its menu from the same people`);
@@ -505,12 +513,31 @@ test("RubberFlow and BOM go live: real employees by role, every persona in test 
   for (const dept of ["PP", "RB", "ST", "QA", "SR", "WH", "GR", "MT"]) assert.equal(allowed(employee(dept)), false, `real ${dept} staff do not see RubberFlow yet`);
   for (const role of ["assistant_factory_manager", "factory_manager", "general_manager", "department_manager"]) assert.equal(allowed(employee("RB", role)), false, `a real ${role} does not see RubberFlow yet`);
   assert.equal(allowed(employee("MT", "admin")), false, "the admin does not see RubberFlow outside test mode");
-  assert.equal(allowed(employee("MT", "staff", { isSandbox: true })), true, "every persona keeps the module in test mode");
+  // โรงงานขั้น 6: ในโหมดทดสอบเห็นเฉพาะแผนก RB (ทุกตำแหน่ง) แผนก PP และผู้จัดการ · ข้อมูลของ store ที่โมดูลอื่นอ่านใช้ประตู usesRubberFlow ซึ่งเปิดทุกบัญชีทดสอบเหมือนเดิม
+  for (const [dept, role, shown] of [["RB", "staff", true], ["RB", "department_manager", true], ["RB", "assistant_department_manager", true], ["PP", "staff", true], ["MT", "admin", true], ["MT", "general_manager", true], ["MT", "factory_manager", true], ["MT", "assistant_factory_manager", true],
+    ["ST", "staff", false], ["ST", "department_manager", false], ["SR", "staff", false], ["WH", "department_manager", false], ["QA", "staff", false], ["QA", "department_manager", false], ["GR", "staff", false], ["MT", "staff", false], ["ID", "admin", false], ["ID", "staff", false]]) {
+    const person = employee(dept, role, { isSandbox: true });
+    assert.equal(allowed(person), shown, `${dept} ${role} in test mode`);
+    assert.equal(env.context.MNP_RUBBERFLOW_STORE.usesRubberFlow(person), true, `${dept} ${role}: the data gate is open to every persona, so ST SR WH QA and BOM keep reading the RubberFlow data`);
+  }
   assert.equal(allowed(null), false, "nobody signed in");
   const admin = load({ sandbox: false });
   admin.context.state.employee = employee("MT", "admin");
   await admin.render();
   assert.equal(admin.log.notFound, 1, "the admin outside test mode gets not found for a typed URL");
+  // พิมพ์ URL เอง: ST / WH / QA / SR (และหัวหน้า) ในโหมดทดสอบได้ not found เหมือนโมดูลแผนกอื่น
+  for (const [dept, role] of [["ST", "staff"], ["ST", "department_manager"], ["WH", "staff"], ["QA", "department_manager"], ["SR", "staff"], ["ID", "admin"]]) {
+    const other = load();
+    other.context.state.employee = employee(dept, role, { isSandbox: true });
+    await other.render();
+    assert.equal(other.log.notFound, 1, `${dept} ${role} typing #/rubberflow gets not found`);
+  }
+  for (const [dept, role] of [["RB", "staff"], ["PP", "staff"], ["MT", "factory_manager"]]) {
+    const own = load();
+    own.context.state.employee = employee(dept, role, { isSandbox: true });
+    await own.render();
+    assert.equal(own.log.notFound, 0, `${dept} ${role} opens the page`);
+  }
   const rbStaff = load({ sandbox: false });
   rbStaff.context.state.employee = employee("RB");
   await rbStaff.render();
@@ -1045,6 +1072,25 @@ test("submit check: a bad form shows the errors under the fields and focuses the
   assert.equal(ui.validateForm(fakeForm([{ name: "customer", required: true }])), true);
 });
 
+test("the RubberFlow orders page has no button to open or release an order: a planned order says it waits for planning, everything the RB department does stays", async () => {
+  const env = load();
+  env.store.setUser("U01");
+  const data = env.store.data();
+  assert.ok(data.orders.some((order) => order.status === "planned"), "the demo has a planned order");
+  const html = await env.render("p=orders");
+  assert.doesNotMatch(html, /data-rf-open="createOrder"|เปิดใบสั่งผลิต</, "no open button, not even for the admin");
+  assert.doesNotMatch(html, /data-rf-args="[^"]*released[^"]*"/, "no release button");
+  assert.match(html, /<span title="ฝ่ายวางแผนปล่อยผลิตที่โมดูล BOM[^"]*"><span class="rf-badge[^"]*">รอฝ่ายวางแผนปล่อย<\/span><\/span>/, "a planned order shows who it waits for");
+  assert.match(html, /data-rf-open="closeOrder"|data-rf-args="[^"]*on_hold[^"]*"/, "hold and close stay on the page");
+  // the rights table: only the planner group opens and releases (the dialog stays for the BOM module to reuse)
+  const rfStore = env.context.MNP_RUBBERFLOW_STORE;
+  for (const permission of ["createOrder", "releaseOrder"]) {
+    assert.equal(rfStore.can({ db: true, planner: false, rb: true, rbHead: true, role: "rb" }, permission), false, `an RB head is refused ${permission}`);
+    assert.equal(rfStore.can({ db: true, planner: true, rb: false, rbHead: false, role: "planner" }, permission), true);
+  }
+  assert.equal(typeof env.context.MNP_RUBBERFLOW_DIALOGS.createOrder, "function", "the order dialog is kept: BOM opens it through the RubberFlow binder");
+});
+
 test("an empty overview points at the first step; the station gates and the mixing station lead to the page that unblocks them", async () => {
   const env = load();
   env.store.setUser("U01");
@@ -1053,7 +1099,7 @@ test("an empty overview points at the first step; the station gates and the mixi
   const html = (ctx) => pages.dashboard(ctx).html;
   assert.doesNotMatch(html(base), /data-rf-open="createOrder"/, "with orders on the page there is no start button");
   const empty = (extra = {}) => ({ ...base, data: { ...base.data, orders: [], lots: [], transfers: [], ...extra } });
-  assert.match(html(empty()), /data-rf-open="createOrder"[^>]*>เปิดใบสั่งผลิต</, "no orders yet: one primary action opens the order form");
+  assert.doesNotMatch(html(empty()), /data-rf-open="createOrder"/, "no orders yet: RB does not open orders here (planning opens them in BOM)");
   assert.match(html(empty({ recipes: [] })), /href="[^"]*recipes[^"]*"[^>]*>สร้างสูตรยาง</, "no approved recipe: go and make one first");
   assert.doesNotMatch(html(empty({ recipes: [] })), /data-rf-open="createOrder"/);
 
@@ -1101,17 +1147,13 @@ test("list empty states: nothing yet says so and offers the first step, a search
   const empty = orders(noOrders);
   assert.match(empty, /ยังไม่มีใบสั่งผลิต/);
   assert.doesNotMatch(empty, /ไม่พบใบสั่งผลิต/);
-  assert.equal((empty.match(/data-rf-open="createOrder"/g) ?? []).length, 1, "the one action sits in the empty state, not twice");
-  assert.match(empty, /class="empty-state"><p>ยังไม่มีใบสั่งผลิต<\/p><button[^>]*data-rf-open="createOrder"/);
-  // ยังไม่มีสูตรที่อนุมัติ: ไปสร้างสูตรก่อน
-  const noRecipe = orders({ ...noOrders, data: { ...noOrders.data, recipes: [] } });
-  assert.match(noRecipe, /href="[^"]*recipes[^"]*"[^>]*>สร้างสูตรยาง</);
-  assert.doesNotMatch(noRecipe, /data-rf-open="createOrder"/);
+  assert.doesNotMatch(empty, /data-rf-open="createOrder"/, "step 6: no button to open an order on the RubberFlow orders page");
+  assert.match(empty, /class="empty-state"><p>ยังไม่มีใบสั่งผลิต<\/p><small>ฝ่ายวางแผนเปิดใบสั่งผลิตและปล่อยผลิตที่โมดูล BOM<\/small>/, "the empty state says who opens the orders");
   // ค้นหาแล้วไม่เจอ (มีใบอยู่): ไม่พบ · ปุ่มเปิดใบอยู่ที่หัวหน้า
   const searched = orders(env.ctx("p=orders&q=zzzz-no-match"));
   assert.match(searched, /ไม่พบใบสั่งผลิต/);
   assert.doesNotMatch(searched, /ยังไม่มีใบสั่งผลิต/);
-  assert.equal((searched.match(/data-rf-open="createOrder"/g) ?? []).length, 1);
+  assert.doesNotMatch(searched, /data-rf-open="createOrder"/);
   // ผู้ที่เปิดใบไม่ได้ไม่เห็นปุ่มในสถานะว่าง
   env.store.setUser("U06");
   const viewer = env.ctx("p=orders");
@@ -1124,7 +1166,8 @@ test("list empty states: nothing yet says so and offers the first step, a search
   // หน้าคลังเปิดที่แท็บคลังเคมี RB (ตั้งต้น) · ล็อตวัตถุดิบและใบสั่งซื้อ (ST) ไม่มีแท็บที่นี่แล้ว: tab=raw / po ลิงก์เก่าเปิดแท็บตั้งต้น
   const home = warehouse("p=warehouse");
   assert.match(home, /<a class="rf-tab is-active"[^>]*>คลังเคมี RB<\/a>/, "the chemical store of RB is the first and default tab");
-  assert.match(home, /รายการวัตถุดิบ<\/a>[\s\S]*สินค้าสำเร็จรูป<\/a>/, "the materials master and the finished-goods tabs stay");
+  assert.match(home, /รายการวัตถุดิบ<\/a>/, "the materials master tab stays");
+  assert.doesNotMatch(home, /สินค้าสำเร็จรูป/, "no finished-goods tab: the warehouse module owns the products");
   assert.match(home, /data-rf-open="chemRequest"/, "the RB store's own buttons sit on this tab");
   for (const old of ["raw", "po"]) assert.equal(warehouse(`p=warehouse&tab=${old}`), home, `the old ${old} tab opens the default tab`);
   assert.doesNotMatch(home, />ล็อตวัตถุดิบ<|>ใบสั่งซื้อ<|data-rf-open="tag"|setMaterialLotStatus/, "no lot list, purchase-order tab, label or hold button here");
@@ -1132,13 +1175,12 @@ test("list empty states: nothing yet says so and offers the first step, a search
   // บทบาทที่ไม่มีคลังเคมี RB (เจ้าหน้าที่คลัง): เริ่มที่รายการวัตถุดิบ ไม่มีแท็บคลังเคมี RB
   env.store.setUser("U04");
   const keeper = warehouse("p=warehouse");
-  assert.doesNotMatch(keeper, />คลังเคมี RB<|chemRequest/, "a store keeper has no RB chemical store tab");
+  assert.doesNotMatch(keeper, /<a class="rf-tab[^"]*"[^>]*>คลังเคมี RB<\/a>|chemRequest/, "a store keeper has no RB chemical store tab");
   assert.match(keeper, /<a class="rf-tab is-active"[^>]*>รายการวัตถุดิบ<\/a>/);
   assert.equal(warehouse("p=warehouse&tab=rb"), keeper, "a link to the RB tab opens the materials tab for them");
   env.store.setUser("U01");
   assert.match(warehouse("p=warehouse&tab=materials&q=zzzz-no-match"), /ไม่พบวัตถุดิบ/);
-  assert.match(warehouse("p=warehouse&tab=fg", { fgBoxes: [] }), /สินค้าสำเร็จรูปอยู่ที่คลังสินค้าสำเร็จรูป \(WH\)/, "the finished-goods tab has no list to be empty: it points to the warehouse module");
-  assert.doesNotMatch(warehouse("p=warehouse&tab=fg"), /rf-search/, "and has nothing to search");
+  assert.equal(warehouse("p=warehouse&tab=fg"), warehouse("p=warehouse"), "tab=fg is not a tab any more: the page shows the default tab (the module redirects the old link)");
 });
 
 test("the RB chemical store has no menu entry: its old links p=rbstore (and its sub-tab) open the warehouse page", async () => {

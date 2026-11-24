@@ -153,7 +153,7 @@ test("orderNavItems: sorts a group by flowNo (items without one last), leaves ot
   assert.deepEqual(plain(orderNavItems([])), []);
 });
 
-test("each department sees only its own module, in test mode; PP and the managers see all of them; BOM and RubberFlow stay visible to everyone in test mode", () => {
+test("each department sees only its own module, in test mode; PP and the managers see all of them; BOM stays visible to everyone and RubberFlow only to RB, PP and the managers", () => {
   const env = load();
   const OWN = { ST: "FACTORY_ST", SR: "FACTORY_SR", QA: "FACTORY_QA", GR: "FACTORY_GR", PT: "FACTORY_PT", BG: "FACTORY_BG", PK: "FACTORY_PK", WH: "FACTORY_WH" };
   for (const [dept, code] of Object.entries(OWN)) {
@@ -168,15 +168,164 @@ test("each department sees only its own module, in test mode; PP and the manager
   for (const person of [emp("PP"), emp("PP", "department_manager"), emp("MT", "admin"), emp("MT", "general_manager"), emp("PK", "factory_manager"), emp("PK", "assistant_factory_manager")]) {
     assert.deepEqual(seen(env, person), ALL_DEPTS, `${person.department.code} ${person.role.code} sees all of them`);
   }
-  // BOM และ RubberFlow ไม่เปลี่ยนสิทธิ์การเห็น: ทุกบัญชีทดสอบเห็นทั้งสอง
+  // BOM ไม่เปลี่ยนสิทธิ์การเห็น: ทุกบัญชีทดสอบเห็น · RubberFlow เห็นเฉพาะแผนก RB + PP + ผู้จัดการ (โรงงานขั้น 6 · ดูการทดสอบเต็มด้านล่าง)
   for (const person of [emp("SR"), emp("RB"), emp("MT", "department_manager"), emp("ID")]) {
     env.setEmployee(person);
     const links = labelsOf(env.nav());
-    assert.ok(links.includes("BOM รายแผนก") && links.includes("RubberFlow (แผนก RB)"), `${person.department.code} keeps BOM and RubberFlow`);
+    assert.ok(links.includes("BOM รายแผนก"), `${person.department.code} keeps BOM`);
+    assert.equal(links.includes("RubberFlow (แผนก RB)"), person.department.code === "RB", `${person.department.code} RubberFlow entry`);
   }
   // snake_case จากแถวพนักงานก็อ่านได้
   assert.deepEqual(seen(env, { department_code: "sr", role_code: "employee", isSandbox: true }), ["FACTORY_SR"]);
   assert.deepEqual(seen(env, null), []);
+});
+
+// โรงงานขั้น 6 (เจ้าของสั่ง 2026-11-24): RubberFlow = แผนก RB (ทุกตำแหน่ง) + แผนก PP + ผู้จัดการ · กติกาเดียวกับโมดูลแผนกอื่น (canSeeDept) · ข้อมูลของ store ที่ ST SR WH QA BOM อ่านไม่ขึ้นกับเมนูนี้
+test("RubberFlow shows only to RB, PP and the managers: every other department and its heads, and ID, never see the entry or the page; the page rule equals the factory rule", async () => {
+  const env = load();
+  const rfStore = env.context.MNP_RUBBERFLOW_STORE;
+  const shown = (person) => { env.setEmployee(person); return labelsOf(env.nav()).includes("RubberFlow (แผนก RB)"); };
+  const visible = [emp("RB"), emp("RB", "supervisor"), emp("RB", "department_manager"), emp("RB", "assistant_department_manager"), emp("PP"), emp("PP", "department_manager"), emp("MT", "admin"), emp("MT", "general_manager"), emp("MT", "factory_manager"), emp("MT", "assistant_factory_manager"), emp("PK", "factory_manager")];
+  const hidden = [];
+  for (const dept of ["ST", "SR", "WH", "QA", "GR", "PT", "BG", "PK", "MT", "HR", "IT", "SA"]) hidden.push(emp(dept), emp(dept, "department_manager"), emp(dept, "assistant_department_manager"));
+  hidden.push(emp("ID"), emp("ID", "admin"), emp("ID", "factory_manager"), emp("ID", "general_manager"));
+  for (const person of visible) {
+    assert.equal(shown(person), true, `${person.department.code} ${person.role.code} sees the entry`);
+    assert.equal(env.modules.RUBBERFLOW.navAllowed(person), true);
+  }
+  for (const person of hidden) {
+    assert.equal(shown(person), false, `${person.department.code} ${person.role.code} does not see the entry`);
+    assert.equal(env.modules.RUBBERFLOW.navAllowed(person), false);
+  }
+  // same answer as the rule the other department modules use (canSeeDept for RB), so the two cannot drift apart
+  const { canSeeDept } = env.context.MNP_FACTORY;
+  for (const person of [...visible, ...hidden]) assert.equal(rfStore.canOpenRubberFlowPage(person), canSeeDept(person, "RB", "FACTORY_RB"), `${person.department.code} ${person.role.code}: page rule = factory rule`);
+  // typing #/rubberflow: the same "not found" the other department modules give; the rightful accounts open it
+  for (const person of [emp("ST"), emp("ST", "department_manager"), emp("WH"), emp("QA", "department_manager"), emp("SR"), emp("ID", "admin")]) {
+    const other = load({ employee: person, route: "rubberflow" });
+    assert.equal(await other.open("RUBBERFLOW"), "<notfound></notfound>", `${person.department.code} ${person.role.code} typing #/rubberflow`);
+  }
+  for (const person of [emp("RB"), emp("PP"), emp("MT", "factory_manager")]) {
+    const own = load({ employee: person, route: "rubberflow" });
+    assert.notEqual(await own.open("RUBBERFLOW"), "<notfound></notfound>", `${person.department.code} ${person.role.code} opens it`);
+  }
+  // outside test mode nobody sees it, not even admin (REAL_STAFF_OPEN stays false)
+  for (const person of [emp("RB", "employee", { isSandbox: false }), emp("MT", "admin", { isSandbox: false }), emp("PP", "employee", { isSandbox: false })]) assert.equal(env.modules.RUBBERFLOW.navAllowed(person), false);
+  // hiding the page does not take the data away: ST, SR, WH, QA and the BOM module still read the RubberFlow store (data gate = usesRubberFlow)
+  for (const person of hidden.filter((row) => row.department.code !== "ID")) assert.equal(rfStore.usesRubberFlow(person), true, `${person.department.code}: the data gate stays open in test mode`);
+  // the old links that moved to another module still work for the people they were for, even though they cannot open RubberFlow any more
+  const qa = load({ employee: emp("QA"), route: "rubberflow" });
+  await qa.open("RUBBERFLOW", "p=quality&tab=ncr");
+  assert.equal(qa.log.hash, "#/qa?tab=ncr", "p=quality goes to #/qa for QA");
+  const wh = load({ employee: emp("WH"), route: "rubberflow" });
+  await wh.open("RUBBERFLOW", "p=warehouse&tab=fg");
+  assert.equal(wh.log.hash, "#/wh?tab=stock", "the old finished-goods tab goes to the WH stock page");
+  const rb = load({ employee: emp("RB"), route: "rubberflow" });
+  rb.rf.store.setUser("U01");
+  const line = await rb.open("RUBBERFLOW", "p=warehouse&tab=fg");
+  assert.match(line, /สินค้าสำเร็จรูปอยู่ที่โมดูลคลังสินค้าสำเร็จรูป \(WH\)/, "RB cannot open WH: one line instead of the old tab");
+  assert.equal(rb.log.hash, "#/rubberflow?p=warehouse&tab=fg");
+  const pp = load({ employee: emp("PP"), route: "rubberflow" });
+  await pp.open("RUBBERFLOW", "p=warehouse&tab=fg");
+  assert.equal(pp.log.hash, "#/wh?tab=stock", "planning opens WH, so it is sent there");
+});
+
+// โรงงานขั้น 6: การแจ้งเตือนและผลสแกนของ RubberFlow ไปหน้าของโมดูลแผนกที่เป็นเจ้าของเรื่อง เฉพาะผู้ที่เปิดโมดูลนั้นได้ · ไม่ได้ = หน้าของ RB (ถ้ามีในเมนู) · ไม่มีลิงก์ที่ตาย
+test("RubberFlow alerts and scans: expiry → ST chemical stock, held lot → QA, lot → QA trace, box → WH lot page, material lot → ST stock; accounts that cannot open that module get the RB page or no link", async () => {
+  const hrefsOf = (html) => [...html.matchAll(/href="([^"]*)"/g)].map((match) => match[1].replaceAll("&amp;", "&"));
+  const alertLinks = (employee) => {
+    const env = load({ employee, route: "rubberflow" });
+    env.rf.store.setUser("U01");
+    return { env, ctx: env.rf.context(new URLSearchParams()), dialogs: env.context.MNP_RUBBERFLOW_DIALOGS };
+  };
+  const planner = alertLinks(emp("PP"));
+  const data = planner.ctx.data;
+  const dialogs = planner.env.context.MNP_RUBBERFLOW_DIALOGS;
+  const alerts = planner.ctx.derive.buildAlerts(data, planner.ctx.now);
+  const expired = alerts.find((alert) => alert.title.startsWith("ล็อตหมดอายุ"));
+  const held = alerts.find((alert) => alert.title.startsWith("กักรอตัดสิน"));
+  assert.ok(expired && held, "the seed has an expired lot and a held lot");
+  const lotNo = expired.title.replace("ล็อตหมดอายุ ", "");
+  // planning opens ST and QA: both alerts leave RubberFlow for the owner of the matter
+  const plannerLinks = hrefsOf(dialogs.alerts(planner.ctx).html);
+  assert.ok(plannerLinks.includes(`#/st?tab=stock&kind=chem&q=${lotNo}`), "expiry → the ST chemical stock, searched by the lot");
+  assert.ok(plannerLinks.includes("#/qa"), "held lot → QA");
+  assert.ok(!plannerLinks.includes("#/rubberflow?p=warehouse&q=" + lotNo), "no second link for the same alert");
+  // RB staff open neither (RB is only a guest of ST): their own chemical store and the station page of the lot
+  const rb = alertLinks(emp("RB"));
+  const rbLinks = hrefsOf(rb.dialogs.alerts(rb.ctx).html);
+  assert.ok(rbLinks.includes(`#/rubberflow?p=warehouse&q=${lotNo}`), `expiry → the RB chemical store ${JSON.stringify(rbLinks)}`);
+  assert.ok(rbLinks.some((href) => href.startsWith("#/rubberflow?p=extrusion")), "held lot → its station page");
+  assert.ok(!rbLinks.some((href) => href.startsWith("#/st") || href.startsWith("#/qa")), "no link RB cannot open");
+  // QA opens #/qa but not ST: the held lot goes to QA, the expiry stays in RubberFlow only when the account's menu has the page (QA persona U01 here has it)
+  const qa = alertLinks(emp("QA"));
+  const qaLinks = hrefsOf(qa.dialogs.alerts(qa.ctx).html);
+  assert.ok(qaLinks.includes("#/qa") && !qaLinks.some((href) => href.startsWith("#/st")));
+  // scan: lot → QA trace (or the station page), box → the WH lot page (or the finishing page), material lot → ST stock (or the RB store), order → the orders page
+  const lot = data.lots[0];
+  const box = data.fgBoxes[0];
+  const scanHref = (who, code) => hrefsOf(who.dialogs.scan(who.ctx, { code }).html.split("data-rf-scan-result")[1] ?? "").find((href) => href.startsWith("#/") && !href.startsWith("#/rubberflow?p=tag")) ?? null;
+  assert.equal(scanHref(planner, lot.id), `#/qa?tab=trace&q=${lot.id}`);
+  assert.equal(scanHref(rb, lot.id), `#/rubberflow?p=${lot.stage}&q=${lot.id}`, "RB cannot open QA: the station page of the lot");
+  assert.equal(scanHref(planner, box.id), `#/wh?lot=${box.lotId}`, "a box is the warehouse's");
+  assert.equal(scanHref(rb, box.id), `#/rubberflow?p=finishing&q=${box.lotId}`, "RB cannot open WH: the finishing page");
+  assert.equal(scanHref(planner, lotNo), `#/st?tab=stock&kind=chem&q=${lotNo}`);
+  assert.equal(scanHref(rb, lotNo), `#/rubberflow?p=warehouse&q=${lotNo}`);
+  assert.equal(scanHref(planner, data.orders[0].id), `#/rubberflow?p=orders&q=${data.orders[0].id}`);
+  // the pages the links point at read the query: the ST stock list filters by q and kind, the WH lot page takes lot=, the QA trace tab takes q=
+  assert.match(read("modules/st-pages.js"), /ctx\.params\.get\("kind"\)/);
+  assert.match(read("modules/wh-pages.js"), /ctx\.params\.get\("lot"\)/);
+  assert.match(read("modules/qa-pages.js"), /traceView/);
+});
+
+// ตรวจหลังผู้ตรวจ: ลิงก์สูตรใน dialog เปิดใบ · repaint ของ #/bom · ลิงก์เก่า tab=raw / po ของ ST · กติกาหน้า RF ตัวเดียวกับ canSeeDept
+test("RubberFlow follow-ups: the order dialog links to recipes only for accounts that open RubberFlow, #/bom repaints on a reverted save, old ST warehouse tabs go to #/st, the page rule delegates to canSeeDept", async () => {
+  // the order dialog opens from #/bom: a head of another production department is in the planner group but cannot open RubberFlow
+  const dialogHtml = (employee) => {
+    const env = load({ employee, route: "rubberflow" });
+    env.rf.store.setUser("U01");
+    const ctx = env.rf.context(new URLSearchParams());
+    const noRecipes = { ...ctx, data: { ...ctx.data, recipes: [] } };
+    return env.context.MNP_RUBBERFLOW_DIALOGS.createOrder(noRecipes).html;
+  };
+  assert.match(dialogHtml(emp("PP")), /ไปที่สูตรยาง/, "planning opens RubberFlow: the link stays");
+  for (const person of [emp("QA", "department_manager"), emp("ST", "department_manager"), emp("WH", "department_manager")]) assert.doesNotMatch(dialogHtml(person), /ไปที่สูตรยาง/, `${person.department.code} head: plain text, no dead link`);
+  // a reverted / synced save redraws #/bom too (the release buttons and the waiting list live there)
+  assert.match(read("modules/module-rubberflow.js"), /\["wh", "st", "qa", "bom"\]\.includes\(currentRoute\(\)\.path\)/);
+  // old warehouse tabs of ST: raw → the ST stock list, po → the ST purchase-order tab; accounts that cannot open ST keep the old handling
+  for (const [query, target] of [["p=warehouse&tab=raw", "#/st?tab=stock"], ["p=warehouse&tab=po", "#/st?tab=po"], ["p=warehouse&tab=po&q=PO-1", "#/st?tab=po&q=PO-1"]]) {
+    for (const person of [emp("ST"), emp("ST", "department_manager"), emp("PP")]) {
+      const env = load({ employee: person, route: "rubberflow" });
+      await env.open("RUBBERFLOW", query);
+      assert.equal(env.log.hash, target, `${person.department.code} ${query}`);
+    }
+    const rb = load({ employee: emp("RB"), route: "rubberflow" });
+    rb.rf.store.setUser("U01");
+    const html = await rb.open("RUBBERFLOW", query);
+    assert.notEqual(html, "<notfound></notfound>", "RB cannot open ST: the default tab of the RB chemical store");
+    assert.equal(rb.log.hash, `#/rubberflow?${query}`);
+    const wh = load({ employee: emp("WH"), route: "rubberflow" });
+    assert.equal(await wh.open("RUBBERFLOW", query), "<notfound></notfound>", "WH cannot open ST or RubberFlow: not found");
+  }
+  // one rule: the page gate is canSeeDept for RB when factory-kit is loaded (the store alone keeps a copy for its own unit tests)
+  const env = load();
+  const real = env.context.MNP_FACTORY.canSeeDept;
+  assert.equal(typeof real, "function");
+  const store = env.context.MNP_RUBBERFLOW_STORE;
+  assert.equal(store.canOpenRubberFlowPage(emp("RB")), real(emp("RB"), "RB", "FACTORY_RB"));
+  assert.match(read("modules/rubberflow-store.js"), /MNP_FACTORY\.canSeeDept\(employee, "RB", "FACTORY_RB"\)/);
+});
+
+test("RubberFlow menu: five groups with RB words, the warehouse is the RB chemical store, the page ids stay for old bookmarks", async () => {
+  const env = load({ employee: emp("RB", "department_manager"), route: "rubberflow" });
+  env.rf.store.setUser("U01");
+  await env.open("RUBBERFLOW");
+  const menu = env.modules.RUBBERFLOW.nav[0].subnav("rubberflow");
+  const groups = [...menu.matchAll(/<li class="rf-nav-group"><span>([^<]*)<\/span>/g)].map((match) => match[1]);
+  assert.deepEqual(groups, ["ภาพรวม", "ใบสั่งผลิตและสูตร", "สายการผลิต", "คุณภาพ", "คลังเคมีและเครื่องมือ"]);
+  for (const label of ["ภาพรวม RB", "คลังเคมี RB", "ใบสั่งผลิต", "สูตรยาง (BOM/PHR)"]) assert.ok(menu.includes(`<span class="rf-nav-text">${label}</span>`), label);
+  assert.doesNotMatch(menu, /ภาพรวมโรงงาน|คลังวัตถุดิบและสินค้า|คลังและเครื่องมือ/);
+  for (const id of ["dashboard", "orders", "recipes", "requisition", "mixing", "extrusion", "curing", "finishing", "wip", "ncr", "warehouse", "molds", "audit"]) assert.ok(menu.includes(id === "dashboard" ? 'href="#/rubberflow"' : `href="#/rubberflow?p=${id}"`), `p=${id} kept`);
 });
 
 test("the Indesign department never sees any of them, admin included (department-access), while the other restricted-free departments are unchanged", () => {
@@ -808,7 +957,7 @@ test("RubberFlow: RB staff see the RB job cards of BOM งานของฉั�
   assert.deepEqual(plain(cardsOf(slot.innerHTML)), plain(expected), "string-identical to the BOM page for the same user");
   assert.match(slot.innerHTML, /งานจากใบสั่งผลิต \(BOM\)/);
   assert.doesNotMatch(slot.innerHTML, /#\/bom\?p=work/, "no link to a BOM work page (งานของฉัน is no longer in BOM)");
-  assert.match(slot.innerHTML, /data-rf-open="jobRubberflow"/, "create the RubberFlow WO");
+  assert.doesNotMatch(slot.innerHTML, /data-rf-open="jobRubberflow"/, "RB staff do not open the WO: planning does (factory step 6)");
   assert.match(slot.innerHTML, /data-rf-open="jobHold"/);
   assert.doesNotMatch(slot.innerHTML, /data-rf-open="jobClose"/, "staff cannot close a job");
   const buttonCount = [...slot.innerHTML.matchAll(/data-rf-(?:open|action)="/g)].length;
@@ -827,10 +976,7 @@ test("RubberFlow: a click on a BOM card opens the real BOM dialog; resume runs t
   assert.match(shown.html, /<dialog[^>]*data-rf-dialog/, "the BOM hold dialog opens on the RubberFlow route");
   assert.match(shown.html, /data-rf-form="\w+"/);
   shown.html = "";
-  const create = slot.buttons("open").find((button) => button.name === "jobRubberflow");
-  assert.ok(create, "creating the RubberFlow WO is offered");
-  await create.handlers.click();
-  assert.match(shown.html, /<dialog[^>]*data-rf-dialog/, "the create-WO dialog of BOM opens");
+  assert.equal(slot.buttons("open").find((button) => button.name === "jobRubberflow"), undefined, "creating the RubberFlow WO is planning's job now");
   // งานที่พักอยู่: ปุ่มคืนคิว/ทำต่อสั่งงานผ่าน store ของ BOM แล้ววาดหน้า RubberFlow ใหม่
   const job = env.store.data().jobs.find((entry) => entry.dept === "RB" && liveOrder(env.store.data(), entry) && entry.status !== "done" && !entry.externalRef);
   assert.ok(job);
@@ -865,9 +1011,11 @@ test("RubberFlow: a planner sees the RB cards with the close button, same as BOM
   assert.deepEqual(plain(cardsOf(planner.slot.innerHTML)), plain(cardsOf(work.html)));
   assert.match(planner.slot.innerHTML, /data-rf-open="jobClose"/);
   assert.deepEqual(plain(buttonsByCard(planner.slot.innerHTML)), plain(buttonsByCard(work.html)));
+  // the planner also gets the "create the WO" button (planning opens WOs)
+  assert.match(planner.slot.innerHTML, /data-rf-open="jobRubberflow"/);
   for (const [dept, userId] of [["GR", "B05"], ["ST", "B08"]]) {
     const other = await rubberflowDashboard({ employee: emp(dept), bomUser: userId });
-    assert.equal(other.slot.removed, true, `${dept} has no RB cards in BOM, so none here`);
+    assert.equal(other.html, "<notfound></notfound>", `${dept} cannot open the RubberFlow overview at all (step 6)`);
     assert.equal(other.env.rf.showsBomJobs(), false, `${dept}: the page does not claim BOM data`);
   }
 });
@@ -910,7 +1058,7 @@ test("RubberFlow: a user who is not RB or a planner never makes the BOM store lo
     env.fakes["[data-bom-jobs]"] = [slot];
     await env.open("RUBBERFLOW");
     assert.equal(calls, loads, `${dept}: ensureLoaded calls`);
-    assert.equal(slot.removed, loads === 0, `${dept}: the empty slot is removed when there are no cards`);
+    if (loads === 0) assert.equal(env.app.innerHTML, "<notfound></notfound>", `${dept}: the page is not theirs, nothing is drawn`);
     assert.equal(env.rf.showsBomJobs(), loads === 1, `${dept}: only a page with BOM data asks to be repainted`);
   }
 });
@@ -1137,7 +1285,7 @@ test("side menu: QA has งานของฉัน (counted by its cards), ผ�
   env.store.setUser("B12");
   const html = await env.open("FACTORY_QA");
   assert.equal(h1Of(html), "งานของฉัน");
-  const cards = cardsOf(html).length;
+  const cards = cardsOf(html).filter((card) => !/กำลังบ่มยาง/.test(card)).length; // a resting mixing lot (skip ageing) is a card but not waiting work
   assert.ok(cards >= 4, "a rod lot, a line lot, a chemical lot and an NCR");
   const items = plain(navOf(env, "FACTORY_QA").items);
   assert.deepEqual(items.map((item) => [item.label, item.href]), [["งานของฉัน", "#/qa"], ["ผลตรวจ", "#/qa?tab=records"], ["NCR", "#/qa?tab=ncr"], ["CoA", "#/qa?tab=coa"], ["SPC", "#/qa?tab=spc"], ["สืบย้อนกลับ", "#/qa?tab=trace"], ["วัตถุดิบที่กัก", "#/qa?tab=material"]]);

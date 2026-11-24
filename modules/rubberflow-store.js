@@ -16,9 +16,9 @@
 
   // เมนูของโมดูล (id = ค่า p= ใน URL) เรียงตามกลุ่มที่แสดงในแถบข้าง
   const MODULES = Object.freeze([
-    { id: "dashboard", label: "ภาพรวมโรงงาน", group: "ภาพรวม" },
-    { id: "orders", label: "ใบสั่งผลิต", group: "วางแผน" },
-    { id: "recipes", label: "สูตรยาง (BOM/PHR)", group: "วางแผน" },
+    { id: "dashboard", label: "ภาพรวม RB", group: "ภาพรวม" },
+    { id: "orders", label: "ใบสั่งผลิต", group: "ใบสั่งผลิตและสูตร" },
+    { id: "recipes", label: "สูตรยาง (BOM/PHR)", group: "ใบสั่งผลิตและสูตร" },
     { id: "requisition", label: "เบิกเคมี", group: "สายการผลิต" },
     { id: "mixing", label: "1 · ผสมยาง", group: "สายการผลิต" },
     { id: "extrusion", label: "2 · ฉีดขึ้นรูป", group: "สายการผลิต" },
@@ -26,9 +26,9 @@
     { id: "finishing", label: "4 · ตกแต่งและบรรจุ", group: "สายการผลิต" },
     { id: "wip", label: "ส่งมอบ WIP", group: "สายการผลิต" },
     { id: "ncr", label: "NCR ที่ RB ต้องตอบ", group: "คุณภาพ" },
-    { id: "warehouse", label: "คลังวัตถุดิบและสินค้า", group: "คลังและเครื่องมือ" },
-    { id: "molds", label: "แม่พิมพ์และหัวดาย", group: "คลังและเครื่องมือ" },
-    { id: "audit", label: "บันทึกการใช้งาน", group: "คลังและเครื่องมือ" },
+    { id: "warehouse", label: "คลังเคมี RB", group: "คลังเคมีและเครื่องมือ" },
+    { id: "molds", label: "แม่พิมพ์และหัวดาย", group: "คลังเคมีและเครื่องมือ" },
+    { id: "audit", label: "บันทึกการใช้งาน", group: "คลังเคมีและเครื่องมือ" },
   ].map((entry) => Object.freeze(entry)));
   const MODULE_IDS = Object.freeze(MODULES.map((entry) => entry.id));
   const GROUPS = Object.freeze([...new Set(MODULES.map((entry) => entry.group))]);
@@ -75,8 +75,8 @@
   const qaRelease = (user) => Boolean(root.MNP_RUBBERFLOW_RULES?.canQaRelease?.(user));
   const CAN = Object.freeze({
     approveRecipe: Object.freeze(["admin", "manager", "qc"]),
-    releaseOrder: PLAN_ROLES,
-    createOrder: PLAN_ROLES, // เปิดใบสั่งผลิต
+    releaseOrder: PLAN_ROLES, // ปล่อยผลิต (ที่โมดูล BOM · โรงงานขั้น 6)
+    createOrder: PLAN_ROLES, // เปิดใบสั่งผลิต (ที่โมดูล BOM · โรงงานขั้น 6)
     workOrder: PLAN_ROLES, // พัก/ผลิตต่อ/ปิดงาน/ยกเลิกใบสั่งผลิต
     editMaster: Object.freeze(["admin", "manager", "planner", "qc"]), // วัตถุดิบ / ร่างสูตร
     qcDecision: Object.freeze(["admin", "manager", "qc"]),
@@ -88,8 +88,9 @@
   });
   const DB_CAN = Object.freeze({
     approveRecipe: (user) => Boolean(user.rbHead),
-    releaseOrder: (user) => Boolean(user.planner || user.rbHead),
-    createOrder: (user) => Boolean(user.planner || user.rb),
+    // เปิดใบสั่งผลิตใหม่และปล่อยผลิต (planned → released) = กลุ่มวางแผนเท่านั้น (โรงงานขั้น 6) · แผนก RB และหัวหน้า RB เริ่มงาน พัก ผลิตต่อ ปิดงานได้ตามเดิม
+    releaseOrder: (user) => Boolean(user.planner),
+    createOrder: (user) => Boolean(user.planner),
     workOrder: (user) => Boolean(user.planner || user.rb),
     editMaster: (user) => Boolean(user.planner || user.rb),
     qcDecision: (user) => Boolean(user.planner || user.qa), // บันทึกผลตรวจ / เปิด-ปิด NCR / ตัดสินล็อต
@@ -264,7 +265,7 @@
     const code = /RF_[A-Z0-9_]+/.exec(haystack)?.[0] ?? (/BOM_[A-Z0-9_]+/.exec(haystack)?.[0]) ?? (/NOT_AUTHORIZED|SANDBOX_NOT_ACTIVE/.exec(haystack)?.[0]) ?? (/PGRST202|42883/.test(haystack) ? "RF_NOT_DEPLOYED" : "RF_REMOTE_FAILED");
     const message = {
       RF_TEST_MODE_ONLY: "ข้อมูล RubberFlow ใช้ได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ",
-      RF_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้ใน RubberFlow (สั่งซื้อ รับวัตถุดิบ ตรวจสอบรับเข้าและยกเลิกใบสั่งซื้อ: คลังวัตถุดิบ (ST) เท่านั้น · เบิกเคมี ผลิต ส่งมอบและรับมอบ WIP: แผนก RB · รับกล่องเข้าคลังและส่งมอบให้ลูกค้า: คลังสินค้าสำเร็จรูป (WH) หรือผู้ดูแลระบบ · ย้อนการรับเข้าหรือการส่งมอบกล่อง: ผู้จัดการแผนก WH หรือผู้ดูแลระบบ · ขอเบิกและคืนเคมี: แผนก RB · จ่ายเคมีและรับคืน: ST · นับคลังเคมี RB: ผู้จัดการแผนก RB หรือฝ่ายวางแผน · ผลตรวจและ NCR: QA · อนุมัติสูตรและปล่อยผลิต: ผู้จัดการแผนก RB ขึ้นไป · งานอื่นฝ่ายวางแผนและผู้จัดการทำได้)",
+      RF_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้ใน RubberFlow (สั่งซื้อ รับวัตถุดิบ ตรวจสอบรับเข้าและยกเลิกใบสั่งซื้อ: คลังวัตถุดิบ (ST) เท่านั้น · เบิกเคมี ผลิต ส่งมอบและรับมอบ WIP: แผนก RB · รับกล่องเข้าคลังและส่งมอบให้ลูกค้า: คลังสินค้าสำเร็จรูป (WH) หรือผู้ดูแลระบบ · ย้อนการรับเข้าหรือการส่งมอบกล่อง: ผู้จัดการแผนก WH หรือผู้ดูแลระบบ · ขอเบิกและคืนเคมี: แผนก RB · จ่ายเคมีและรับคืน: ST · นับคลังเคมี RB: ผู้จัดการแผนก RB หรือฝ่ายวางแผน · ผลตรวจและ NCR: QA · อนุมัติสูตร: ผู้จัดการแผนก RB ขึ้นไป · เปิดใบสั่งผลิตและปล่อยผลิต: ฝ่ายวางแผน (ที่โมดูล BOM) · งานอื่นฝ่ายวางแผนและผู้จัดการทำได้)",
       RF_STALE: "มีผู้อื่นบันทึกข้อมูล RubberFlow ไปก่อน (หรือเลขที่ซ้ำ) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_CONFLICT: "รายการนี้ซ้ำกับที่มีอยู่แล้ว ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       RF_QA_HEAD_ONLY: "เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ ปล่อยล็อตที่กักหรือตัดสินผ่าน/ไม่ผ่านได้ (พนักงาน QA บันทึกกักต่อ/ตรวจซ้ำได้)",
@@ -333,6 +334,20 @@
     const user = personaUser(employee);
     if (!REAL_STAFF_OPEN) return false;
     return user.planner || STATION_DEPTS.includes(user.dept);
+  }
+
+  // ใครเห็นเมนูและหน้า RubberFlow (โรงงานขั้น 6 · เจ้าของสั่ง 2026-11-24): แผนก RB ทุกตำแหน่ง + แผนก PP + ผู้จัดการ (admin · ผู้จัดการทั่วไป · ผู้จัดการโรงงาน · ผู้ช่วยผู้จัดการโรงงาน)
+  // กติกาเดียวกับโมดูลแผนกอื่น (MNP_FACTORY.canSeeDept ใน modules/factory-kit.js — เทสต์ factory-menu เทียบสองฝั่งให้ตรงกัน) · แผนก ST SR WH QA และหัวหน้าของแผนกเหล่านั้นไม่เห็น · แผนก ID ไม่เห็นเลย
+  // ซ้อนบนประตูข้อมูล usesRubberFlow (ข้อมูลของ RubberFlow ที่โมดูล ST SR WH QA และ BOM อ่านผ่าน store นี้ไม่ขึ้นกับตัวนี้) · เป็นการซ่อนเมนู/หน้าเท่านั้น (UX) สิทธิ์จริงอยู่ที่ฐานข้อมูล
+  const RB_PAGE_ALL_ROLE_CODES = Object.freeze(["admin", "general_manager", "factory_manager", "assistant_factory_manager"]);
+  function canOpenRubberFlowPage(employee) {
+    if (!usesRubberFlow(employee)) return false;
+    // กติกาเดียวกับโมดูลแผนกอื่น: ใช้ MNP_FACTORY.canSeeDept ตัวเดียว (โหลดทุกครั้งในเบราว์เซอร์) · สำเนาข้างล่างใช้เฉพาะเทสต์ที่โหลด store โดยไม่โหลด factory-kit
+    if (typeof root.MNP_FACTORY?.canSeeDept === "function") return Boolean(root.MNP_FACTORY.canSeeDept(employee, "RB", "FACTORY_RB"));
+    const access = root.MNP_DEPARTMENT_ACCESS;
+    if (access?.isRestricted?.(employee) && !access.moduleAllowed(employee, "FACTORY_RB")) return false;
+    const dept = String(employee.department?.code ?? employee.department_code ?? "").toUpperCase();
+    return RB_PAGE_ALL_ROLE_CODES.includes(String(employee.role?.code ?? employee.role_code ?? "")) || dept === "PP" || dept === "RB";
   }
 
   function normalizeSnapshot(value) {
@@ -685,7 +700,7 @@
     return { load, data: getData, user: getUser, setUser, run, reset, isPersisted: () => persisted, now, isRemote: () => false, status: () => "ready", error: () => null, isSaving: () => false, hasNewer: () => false, version: () => null, ensureLoaded: () => Promise.resolve(), reload: () => Promise.resolve(), catchUp: () => Promise.resolve(false), audit: () => ({ status: "ready", entries: getData().audit, error: null }), loadAudit: () => Promise.resolve(), purge: () => Promise.resolve({ ok: false, error: new Error("ล้างข้อมูล RubberFlow ทดสอบได้เฉพาะโหมดฐานข้อมูล") }), subscribe: () => () => {} };
   }
 
-  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, CAN, findModule, can, canSee, canSeeRbStore, homeOf, isValidState, createStore, REMOTE_LISTS, diffMaster, mapRemoteError, personaUser, usesRubberFlow, rightForAction, rightForDialog, rightForRequisitionReturn, canReceiveBoxes, canReverseBoxes };
+  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, CAN, findModule, can, canSee, canSeeRbStore, homeOf, isValidState, createStore, REMOTE_LISTS, diffMaster, mapRemoteError, personaUser, usesRubberFlow, canOpenRubberFlowPage, rightForAction, rightForDialog, rightForRequisitionReturn, canReceiveBoxes, canReverseBoxes };
   if (isNode) module.exports = api;
   else root.MNP_RUBBERFLOW_STORE = api;
 })(typeof window !== "undefined" ? window : globalThis);

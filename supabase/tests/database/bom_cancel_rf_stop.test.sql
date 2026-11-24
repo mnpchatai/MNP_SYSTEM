@@ -182,12 +182,12 @@ select ok(cs_t.save(jsonb_build_object(
     current_setting('test.job')::jsonb || '{"id":"JOB-2-RB","orderId":"251128-25002","dept":"RB","itemCode":"RB-B","name":"เส้นยาง B","kind":"RB","uom":"pcs","qtyPlanned":100,"qtyRequired":100}'::jsonb,
     current_setting('test.job')::jsonb || '{"id":"JOB-2-PK","orderId":"251128-25002","qtyPlanned":5,"qtyRequired":5}'::jsonb))),
   'releaseOrder') is not null, 'order 25002 is released with two RB jobs and a PK job');
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select ok(cs_t.rf(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || '{"id":"WO-C1","sourceJobId":"JOB-1-RB"}'::jsonb,
   current_setting('test.wo')::jsonb || '{"id":"WO-C2","sourceJobId":"JOB-2-RA","customerPo":"251128-25002"}'::jsonb,
   current_setting('test.wo')::jsonb || '{"id":"WO-C3","sourceJobId":"JOB-2-RB","customerPo":"251128-25002"}'::jsonb))), 'createOrder') is not null,
-  'RB opens three work orders linked to the RB jobs');
+  'the planner opens three work orders linked to the RB jobs');
 select is(cs_t.job('JOB-1-RB') -> 'externalRef' ->> 'woId', 'WO-C1', 'JOB-1-RB is linked to WO-C1');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select ok(cs_t.wo_status('WO-C1', 'released') is not null, 'the planner releases WO-C1');

@@ -149,6 +149,15 @@ test("alerts rank bad before warn before info and cover expiry, molds, holds, re
   // งานคุณภาพย้ายไป #/qa: ล็อตที่กักชี้ไปหน้าสถานีของล็อต · NCR ชี้ไปหน้า "NCR ที่ RB ต้องตอบ" · ไม่มีการแจ้งเตือนชี้ไปหน้า quality ที่ไม่มีแล้ว
   for (const alert of alerts) assert.ok(["warehouse", "molds", "ncr", "mixing", "extrusion", "curing", "finishing", "wip", "orders"].includes(alert.module), alert.module);
   assert.ok(alerts.filter((alert) => alert.title.startsWith("NCR เปิดอยู่")).every((alert) => alert.module === "ncr"));
+  // โรงงานขั้น 6: เคมีหมดอายุ / ใกล้หมดอายุ → คลังเคมี ST (เจ้าของเรื่อง) · ล็อตที่กักรอตัดสิน → QA · ที่เหลืออยู่ใน RB (ไม่มี target) · module ยังเป็นหน้าสำรองของ RubberFlow
+  for (const alert of alerts.filter((row) => /^(ล็อตหมดอายุ|ใกล้หมดอายุ) /.test(row.title))) {
+    const lotNo = alert.title.split(" ")[1];
+    assert.deepEqual(JSON.parse(JSON.stringify(alert.target)), { dept: "ST", query: { tab: "stock", kind: "chem", q: lotNo } }, alert.title);
+    assert.deepEqual(JSON.parse(JSON.stringify(alert.params)), { q: lotNo }, "the RB chemical store is searched by the same lot");
+    assert.equal(alert.module, "warehouse");
+  }
+  for (const alert of alerts.filter((row) => row.title.startsWith("กักรอตัดสิน"))) assert.equal(alert.target.dept, "QA", alert.title);
+  for (const alert of alerts.filter((row) => /^(กำลังบ่มยาง|รอรับมอบ|ใกล้กำหนดส่ง|NCR เปิดอยู่|ถึงรอบล้าง) /.test(row.title))) assert.equal(alert.target, undefined, `${alert.title} stays in RubberFlow`);
 });
 
 test("lookupCode finds every document kind by code (case-insensitive) and traceability trees link boxes to raw-material lots", () => {

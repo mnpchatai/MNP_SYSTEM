@@ -171,7 +171,7 @@ select wb_t.save(jsonb_build_object(
     current_setting('test.job')::jsonb || '{"id":"JOB-W-PK","dept":"PK","itemCode":"FG-W","kind":"FG","uom":"set"}'::jsonb))), 'releaseOrder');
 select is(wb_t.order_row('251205-27001') ->> 'status', 'released', 'the order is released');
 
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select set_config('test.wo', '{"id":"X","customer":"ACME","customerPo":"PI-27001","recipeId":"RC-W","recipeRevision":1,"color":"ดำ","targetQty":1000,"targetKg":17.5,"kgPerUnit":0.125,"producedQty":0,"startDate":1762387200000,"dueDate":1765065600000,"priority":"normal","note":"","status":"planned"}', true);
 select wb_t.rf(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || '{"id":"WO-L","sourceJobId":"JOB-W-RB"}'::jsonb,

@@ -2963,7 +2963,8 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
           if (!RF_ORDER_STATUSES.includes(record.status)) fail(bad);
           if (!(Number(record.targetQty) > 0) || !String(record.customer ?? "").trim() || !(Number(record.producedQty ?? 0) >= 0)) fail(bad);
           if (!prev) {
-            if (!master) fail("RF_FORBIDDEN");
+            // ใบสั่งผลิตใหม่ = กลุ่มวางแผนเท่านั้น (โรงงานขั้น 6) · แผนก RB และหัวหน้า RB ไม่เปิดเอง
+            if (!planner) fail("RF_FORBIDDEN");
             if (record.status !== "planned") fail("RF_INVALID_TRANSITION");
             if (Number(record.producedQty ?? 0) !== 0) fail(bad);
             if (record.sourceJobId !== undefined && record.sourceJobId !== null && !RF_CODE.orders.test(String(record.sourceJobId))) fail(bad);
@@ -2992,7 +2993,8 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
             // ยอดผลิตมาจากล็อตตกแต่งที่นับแล้ว ฐานข้อมูลคำนวณเอง (ไม่รับค่าจาก client) · เปลี่ยนสถานะ = กลุ่มวางแผนหรือสมาชิก RB เท่านั้น (QA เพิ่มยอดผ่านผลตรวจ ซึ่งไม่ผ่านระเบียนใบสั่งผลิต)
             if (!master) fail("RF_FORBIDDEN");
             if (!rfSame(prev, record, RF_ORDER_OWNED)) fail("RF_INVALID_ORDER");
-            if (to === "released" && from !== to && !(planner || head)) fail("RF_FORBIDDEN");
+            // ปล่อยผลิต (planned → released) = กลุ่มวางแผนเท่านั้น (โรงงานขั้น 6) · RB และหัวหน้า RB เริ่มงาน พัก ผลิตต่อ ปิดงานได้ตามเดิม
+            if (to === "released" && from !== to && !planner) fail("RF_FORBIDDEN");
             if (from !== to && !(RF_FLOW[from] ?? []).includes(to)) fail("RF_INVALID_TRANSITION");
             const out = { ...clone(record), createdAt: prev.createdAt, createdBy: prev.createdBy, producedQty: prev.producedQty };
             for (const stampKey of ["releasedAt", "releasedBy", "completedAt", "cancelledAt"]) if (prev[stampKey] !== undefined) out[stampKey] = prev[stampKey];

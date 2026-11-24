@@ -582,16 +582,17 @@ test("RB jobs link to a RubberFlow work order once and the compound kilograms co
   assert.equal(A.helpers.rbJobKg({ qtyPlanned: 10, qtyDone: 0 }, null), 0);
   const gr = d.jobs.find((job) => job.orderId === "DEMO-26001" && job.dept === "GR");
   rejects(() => A.linkJobToRubberFlow(d, { jobId: gr.id, woId: "WO-1" }, ctx("admin")), /แผนก RB/);
-  rejects(() => A.linkJobToRubberFlow(d, { jobId: rb.id, woId: "WO-1" }, ctx("gr")), /แผนก RB ฝ่ายวางแผน/);
-  rejects(() => A.linkJobToRubberFlow(d, { jobId: rb.id, woId: "" }, ctx("rb")), /เลข WO/);
+  rejects(() => A.linkJobToRubberFlow(d, { jobId: rb.id, woId: "WO-1" }, ctx("gr")), /ฝ่ายวางแผนหรือผู้จัดการ/);
+  rejects(() => A.linkJobToRubberFlow(d, { jobId: rb.id, woId: "WO-1" }, ctx("rb")), /ฝ่ายวางแผนหรือผู้จัดการ/); // แผนก RB เปิด WO เองไม่ได้ (โรงงานขั้น 6)
+  rejects(() => A.linkJobToRubberFlow(d, { jobId: rb.id, woId: "" }, ctx("planner")), /เลข WO/);
   A.linkJobToRubberFlow(d, { jobId: rb.id, woId: "WO-69-0007", kg: 3.1 }, ctx("planner"));
   assert.equal(rb.externalRef.woId, "WO-69-0007");
   assert.equal(rb.status, "in_progress");
-  rejects(() => A.linkJobToRubberFlow(d, { jobId: rb.id, woId: "WO-69-0008" }, ctx("rb")), /ผูกกับ WO-69-0007 อยู่แล้ว/);
+  rejects(() => A.linkJobToRubberFlow(d, { jobId: rb.id, woId: "WO-69-0008" }, ctx("planner")), /ผูกกับ WO-69-0007 อยู่แล้ว/);
   const d2 = fresh();
   A.releaseOrder(d2, { orderId: "DEMO-26002" }, ctx("planner"));
   const job2 = d2.jobs.find((job) => job.orderId === "DEMO-26002" && job.dept === "RB");
-  A.linkJobToRubberFlow(d2, { jobId: job2.id, woId: "WO-X" }, ctx("rb"));
+  A.linkJobToRubberFlow(d2, { jobId: job2.id, woId: "WO-X" }, ctx("planner"));
   rejects(() => A.reportJob(d2, { jobId: job2.id, qtyDone: 1 }, ctx("rb")), /WO-X[\s\S]*RubberFlow/);
   A.cancelOrder(d2, { orderId: "DEMO-26002", reason: "ลูกค้ายกเลิก" }, ctx("planner"));
   assert.deepEqual([d2.orders.find((order) => order.id === "DEMO-26002").status, job2.externalRef.woId], ["cancelled", "WO-X"], "a linked order is cancelled and the job keeps its link");
@@ -1157,7 +1158,7 @@ test("a job started or held without output, or linked to RubberFlow, locks the o
   }
   const linked = open("T-LINK");
   A.releaseOrder(d, { orderId: linked.id }, ctx("planner"));
-  A.linkJobToRubberFlow(d, { jobId: rbJob(linked).id, woId: "WO-1", kg: 3 }, ctx("rb"));
+  A.linkJobToRubberFlow(d, { jobId: rbJob(linked).id, woId: "WO-1", kg: 3 }, ctx("planner"));
   A.setJobStatus(d, { jobId: rbJob(linked).id, status: "queued" }, ctx("rb"));
   rejects(() => A.removeOrderItem(d, { orderId: linked.id, fgCode: "DEMO-TP-01(P)-Y" }, ctx("planner")), /มีงานที่เริ่มแล้ว/, "a RubberFlow work order locks the order even when the job is queued again");
   // ยอดคงคลังที่นับไว้คงอยู่หลังเปิดใบกลับมาแก้ ส่วนเวลาระเบิดล้าง
@@ -1184,8 +1185,9 @@ test("who may do what with a job or a count: the planner group everywhere, a dep
   for (const allowed of [user("planner"), user("manager"), user("admin"), user("st"), staff("wh", "WH")]) assert.equal(canCount(allowed), true);
   for (const denied of [user("rb"), user("gr"), staff("viewer", "QA")]) assert.equal(canCount(denied), false);
   const rbJob = { dept: "RB" };
-  for (const allowed of [user("planner"), user("manager"), user("admin"), user("rb")]) assert.equal(canLinkRubberflow(allowed, rbJob), true);
-  for (const denied of [user("gr"), user("st")]) assert.equal(canLinkRubberflow(denied, rbJob), false);
+  for (const allowed of [user("planner"), user("manager"), user("admin")]) assert.equal(canLinkRubberflow(allowed, rbJob), true);
+  // โรงงานขั้น 6: แผนก RB เปิด WO เองไม่ได้แล้ว (ฝ่ายวางแผนเปิดและปล่อยผลิตที่ BOM)
+  for (const denied of [user("rb"), user("gr"), user("st")]) assert.equal(canLinkRubberflow(denied, rbJob), false);
   assert.equal(canLinkRubberflow(user("planner"), job), false, "only RB jobs");
 
   // planner กลุ่มรายงานงานของแผนกอื่นได้ (เดิมได้เฉพาะ PK)

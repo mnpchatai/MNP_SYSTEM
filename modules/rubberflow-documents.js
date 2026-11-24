@@ -10,9 +10,33 @@
 
   const COMPANY = Object.freeze({ name: "บริษัท รับเบอร์โฟลว์ อินดัสทรี จำกัด (ข้อมูลสาธิต)", address: "99/9 หมู่ 4 นิคมอุตสาหกรรมตัวอย่าง จ.ชลบุรี 20000" });
   const KIND_LABEL = Object.freeze({ order: "ใบสั่งผลิต", lot: "ล็อตงานระหว่างผลิต", box: "กล่องสินค้าสำเร็จรูป", material: "ล็อตวัตถุดิบ", requisition: "ใบเบิกวัตถุดิบ", transfer: "ใบส่งมอบ WIP", mold: "แม่พิมพ์/หัวดาย" });
-  const KIND_PAGE = Object.freeze({ order: "orders", lot: "trace", box: "trace", material: "warehouse", requisition: "requisition", transfer: "wip", mold: "molds" });
+  // หน้าของ RubberFlow ที่เปิดดูรหัสแต่ละชนิด (lot = หน้าสถานีของล็อต) · ล็อต กล่อง ล็อตวัตถุดิบ ไปโมดูลแผนกที่เป็นเจ้าของถ้าผู้ใช้เปิดได้ (deptTarget · โรงงานขั้น 6)
+  const KIND_PAGE = Object.freeze({ order: "orders", box: "finishing", material: "warehouse", requisition: "requisition", transfer: "wip", mold: "molds" });
   const KIND_PARAM = Object.freeze({ order: "q", lot: "q", box: "q", material: "q", requisition: "sel", transfer: "q", mold: null });
   const codeOf = (hit) => hit.item.id || hit.item.lotNo;
+
+  // ลิงก์ไปหน้าของโมดูลแผนกที่เป็นเจ้าของเรื่อง เฉพาะเมื่อผู้ใช้เปิดโมดูลนั้นได้เต็มตัว (ไม่มีลิงก์ที่พาไปหน้า "ไม่พบ") · แผนก RB เข้า ST ได้แค่ดูเคมีในฐานะผู้เข้าชม จึงไปคลังเคมี RB ของตัวเองแทน
+  // คืน null = เปิดไม่ได้ ผู้เรียกใช้หน้าของ RubberFlow แทน (ถ้าเมนูของบัญชีนี้มี) หรือไม่ใส่ลิงก์
+  function deptTarget(target) {
+    const factory = root.MNP_FACTORY;
+    const employee = typeof state !== "undefined" ? state.employee : null;
+    if (!target?.dept || !factory || !employee) return null;
+    return factory.canOpenDeptModule?.(employee, target.dept, `FACTORY_${target.dept}`) ? factory.routeUrl(target.dept.toLowerCase(), target.query ?? {}) : null;
+  }
+  // ลิงก์ของหน้า RubberFlow ที่ใช้แทน: ต้องเป็นหน้าที่เมนูของบัญชีนี้มี
+  const rfPageHref = (ctx, page, params) => (page && ctx.canSee(page) ? ctx.url(page, params ?? {}) : null);
+  // ลิงก์ของการแจ้งเตือน: โมดูลแผนกที่เป็นเจ้าของเรื่องก่อน (alert.target) ไม่ได้ก็หน้าของ RubberFlow (alert.module)
+  const alertHref = (ctx, alert) => deptTarget(alert.target) ?? rfPageHref(ctx, alert.module, alert.params);
+  // ลิงก์ของรหัสที่สแกน: ล็อต → สืบย้อนกลับที่ QA · กล่อง → ล็อตของ WH · ล็อตวัตถุดิบ → เคมีในคลัง ST · ไม่ได้ก็หน้าของ RubberFlow
+  function scanHref(ctx, hit) {
+    const code = codeOf(hit);
+    const page = KIND_PAGE[hit.kind];
+    const param = KIND_PARAM[hit.kind];
+    if (hit.kind === "lot") return deptTarget({ dept: "QA", query: { tab: "trace", q: code } }) ?? rfPageHref(ctx, hit.item.stage, { q: code });
+    if (hit.kind === "box") return deptTarget({ dept: "WH", query: { lot: hit.item.lotId } }) ?? rfPageHref(ctx, page, { q: hit.item.lotId });
+    if (hit.kind === "material") return deptTarget({ dept: "ST", query: { tab: "stock", kind: "chem", q: code } }) ?? rfPageHref(ctx, page, { q: code });
+    return rfPageHref(ctx, page, param ? { [param]: code } : {});
+  }
   const printButton = (ui, text = "พิมพ์") => `<button class="btn rf-btn" type="button" data-rf-print>${esc(text)}</button>`;
   const bindPrint = (dialog) => dialog.querySelector("[data-rf-print]")?.addEventListener("click", () => window.print());
 
@@ -38,13 +62,9 @@
     const hit = query ? derive.lookupCode(data, query) : null;
     if (query && !hit) return ui.callout("bad", esc(`ไม่พบรหัส “${query}” ในระบบ ตรวจสอบป้ายบาร์โค้ดอีกครั้ง`));
     if (!hit) return "";
-    const page = KIND_PAGE[hit.kind];
-    const param = KIND_PARAM[hit.kind];
-    // ล็อต / กล่อง → สืบย้อนกลับที่โมดูล QA (#/qa?tab=trace · โรงงานขั้น 5) เฉพาะผู้ที่เปิดโมดูล QA ได้ · หน้าอื่นตามเมนูของ RubberFlow
-    const factory = root.MNP_FACTORY;
-    const qaTrace = page === "trace" && typeof state !== "undefined" && Boolean(factory?.canOpenDeptModule?.(state.employee, "QA", "FACTORY_QA"));
-    const open = qaTrace ? `<a class="btn rf-btn" href="${esc(factory.routeUrl("qa", { tab: "trace", q: codeOf(hit) }))}" data-rf-close>เปิดดูรายละเอียด</a>`
-      : ctx.canSee(page) ? `<a class="btn rf-btn" href="${esc(ctx.url(page, param ? { [param]: codeOf(hit) } : {}))}" data-rf-close>เปิดดูรายละเอียด</a>` : "";
+    // ไม่มีหน้าที่บัญชีนี้เปิดได้ = ไม่มีปุ่ม (ไม่มีลิงก์ที่พาไปหน้า "ไม่พบ")
+    const href = scanHref(ctx, hit);
+    const open = href ? `<a class="btn rf-btn" href="${esc(href)}" data-rf-close>เปิดดูรายละเอียด</a>` : "";
     const print = ["lot", "box", "material", "order", "requisition", "transfer"].includes(hit.kind) ? ui.openButton("พิมพ์ป้าย", "tag", { kind: hit.kind, id: codeOf(hit) }, { className: "secondary" }) : "";
     return `<div class="card rf-card rf-scan-hit"><div class="rf-row rf-between"><div><div class="small muted">${esc(KIND_LABEL[hit.kind])}</div><h3 class="rf-mono">${esc(codeOf(hit))}</h3></div><div class="rf-row">${print}${open}</div></div>${scanSummary(ctx, hit)}</div>`;
   }
@@ -170,7 +190,7 @@
   dialogs.alerts = (ctx) => {
     const { data, now, ui, derive } = ctx;
     const alerts = derive.buildAlerts(data, now);
-    const body = alerts.length ? `<div class="rf-stack">${alerts.map((alert) => ui.callout(alert.tone, `<div class="rf-row rf-between rf-grow"><div><strong>${esc(alert.title)}</strong><br>${esc(alert.text)}</div>${ctx.canSee(alert.module) ? `<a class="btn rf-btn secondary small" href="${esc(ctx.url(alert.module))}" data-rf-close>ไปที่หน้า</a>` : ""}</div>`)).join("")}</div>` : ui.empty("ไม่มีการแจ้งเตือน");
+    const body = alerts.length ? `<div class="rf-stack">${alerts.map((alert) => ui.callout(alert.tone, `<div class="rf-row rf-between rf-grow"><div><strong>${esc(alert.title)}</strong><br>${esc(alert.text)}</div>${alertHref(ctx, alert) ? `<a class="btn rf-btn secondary small" href="${esc(alertHref(ctx, alert))}" data-rf-close>ไปที่หน้า</a>` : ""}</div>`)).join("")}</div>` : ui.empty("ไม่มีการแจ้งเตือน");
     const html = ui.dialog("alerts", "การแจ้งเตือน", body);
     return { html };
   };

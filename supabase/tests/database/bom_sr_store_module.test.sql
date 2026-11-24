@@ -321,7 +321,7 @@ select sm_t.rf(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_mgr')::uuid);
 select sm_t.rf(jsonb_build_object('recipes', jsonb_build_object('upsert',
   (select jsonb_agg(r || '{"status":"approved"}'::jsonb) from jsonb_array_elements(public.app_rf_master() -> 'recipes') r where r ->> 'id' = 'RC-SM'))), 'approveRecipe');
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select sm_t.rf(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.wo')::jsonb))), 'createOrder');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select sm_t.rf(jsonb_build_object('orders', jsonb_build_object('upsert',

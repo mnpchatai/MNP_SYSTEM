@@ -129,7 +129,7 @@
     const closedBy = ctx.helpers.jobCloseNote(job);
     const heldBy = closedBy ? null : ctx.helpers.jobHoldNote?.(job);
     if (actions && job.status !== "done" && ctx.helpers.canLinkRubberflow(user, job) && ["released", "in_progress"].includes(order?.status) && !job.externalRef) more.push(ui.openButton("สร้าง WO ใน RubberFlow", "jobRubberflow", { jobId: job.id }, { className: "secondary small" }));
-    if (actions && job.externalRef) more.push(ui.link(`WO ${job.externalRef.woId}`, `#/rubberflow?p=orders&q=${encodeURIComponent(job.externalRef.woId)}`, "btn rf-btn secondary small"));
+    if (actions && job.externalRef) { const woHref = rfOrderHref(job.externalRef.woId); if (woHref) more.push(ui.link(`WO ${job.externalRef.woId}`, woHref, "btn rf-btn secondary small")); }
     const amount = started ? `ได้แล้ว ${rules.fmtQty(job.qtyDone)} จาก ${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}` : `ต้องได้ ${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`;
     // งาน GR: ยางเส้นยาวที่คลังยางเส้นยาว (SR) จ่ายให้ใบนี้แล้ว ต่อเส้นยางที่ชิ้นงานนี้ใช้ (rules.rodIssueNeeds)
     const rodLine = job.dept === "GR" && job.status !== "done" ? rules.rodIssueNeeds(data, job.orderId).filter((need) => need.grJobs.some((entry) => entry.id === job.id))
@@ -196,11 +196,13 @@
   // เปิดโมดูลแผนกได้หรือไม่: ประตูเดียวกับ BOM (ไม่มี store = ปิด) แล้วจึงตามกติกาแผนก
   const bomGate = (employee) => Boolean(root.MNP_BOM_STORE?.usesBom?.(employee));
   const canOpenDeptModule = (employee, dept, moduleCode = null) => bomGate(employee) && canSeeDept(employee, dept, moduleCode);
+  // ลิงก์ไปใบสั่งผลิต (WO) ใน RubberFlow เฉพาะผู้ที่เปิดหน้า RubberFlow ได้ (แผนก RB · PP · ผู้จัดการ · โรงงานขั้น 6) · null = ไม่มีลิงก์ ผู้เรียกแสดงเลข WO เป็นข้อความ
+  const rfOrderHref = (woId) => (root.MNP_RUBBERFLOW_STORE?.canOpenRubberFlowPage?.(typeof state !== "undefined" ? state.employee : null) ? `#/rubberflow?p=orders&q=${encodeURIComponent(woId)}` : null);
   // ลิงก์ไปโมดูลของแผนก เฉพาะเมื่อผู้ใช้เปิดโมดูลนั้นได้ (ไม่พาไปหน้า "ไม่พบ") · RB = RubberFlow (เปิดได้ทุกคนที่ใช้ BOM ได้) · คืน null = ไม่มีลิงก์
   const deptLink = (employee, dept) => {
     const route = root.MNP_BOM_STORE?.deptRoute?.(dept) ?? null;
     if (!route) return null;
-    if (dept === "RB") return (root.MNP_RUBBERFLOW_STORE?.usesRubberFlow?.(employee) ?? bomGate(employee)) ? route : null;
+    if (dept === "RB") return (root.MNP_RUBBERFLOW_STORE?.canOpenRubberFlowPage?.(employee) ?? bomGate(employee)) ? route : null;
     return canOpenDeptModule(employee, dept, `FACTORY_${dept}`) ? route : null;
   };
 
@@ -525,7 +527,7 @@
 
   root.MNP_FACTORY = Object.freeze({
     esc, attr, formPayload, parseArgs, bindRoot, deptChip, dueText, jobCard, jobReportDialog, cardTitle, cardClass,
-    FACTORY_GROUP, canSeeDept, canOpenDeptModule, deptLink, orderNavItems, registerDeptModule, productionLanding, mountDeptJobs,
+    FACTORY_GROUP, canSeeDept, canOpenDeptModule, deptLink, rfOrderHref, orderNavItems, registerDeptModule, productionLanding, mountDeptJobs,
     pageHead, searchForm, includesText, limited, deptWork, deptWorkSection, storeLanding, STORE_MENU, workItem, deptWorkCount, viewHead, actionLink, wake, failed, rubberflowFailed, deptCtx, routeUrl, onDeptRoute: onFactoryRoute,
     heldMaterialLots, heldMaterialWork, heldMaterialView, materialReleaseButton, materialReleaseText,
   });

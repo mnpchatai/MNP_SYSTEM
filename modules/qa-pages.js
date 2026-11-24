@@ -4,7 +4,7 @@
 // ส่วนวาดของ RubberFlow (ตารางผลตรวจ การ์ด NCR ตาราง CoA SPC สืบย้อนกลับ และ dialog qcRecord / ncr / coa) มาจาก window.MNP_RUBBERFLOW_VIEWS.quality / MNP_RUBBERFLOW_DIALOGS (modules/rubberflow-pages-quality.js ที่เดียว) · ปุ่มของ RubberFlow อยู่ใน [data-rf-scope] ที่ตัวผูกของ RubberFlow ผูกเอง
 // สิทธิ์: การซ่อน/แสดงปุ่มเป็นแค่ UX ฐานข้อมูลตัดสินจริง · ปล่อยล็อตที่กัก (ผลตรวจผ่าน/ไม่ผ่านของล็อตที่กัก) และตัดสินยางเส้นยาวที่กัก = หัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบเท่านั้น (rules.canQaRelease · RF_QA_HEAD_ONLY / BOM_QA_HEAD_ONLY)
 //   · ปลดกักกันวัตถุดิบ = หัวหน้า QA หรือหัวหน้า ST ขึ้นไป (rules.canReleaseMaterial · RF_MATERIAL_RELEASE_HEAD_ONLY) · หน้าวัตถุดิบที่กักเป็นชุดเดียวกับ #/st?tab=hold (MNP_FACTORY.heldMaterialView)
-// พนักงาน QA บันทึกผลตรวจของล็อตที่ไม่ได้กัก บันทึก "กักต่อ / ตรวจซ้ำ" ของล็อตที่กัก กักกันวัตถุดิบ และเปิด/ปิด NCR ได้ · ข้ามเวลาบ่ม (endRest) ยังอยู่ที่สถานีของ RubberFlow ตามเดิม
+// พนักงาน QA บันทึกผลตรวจของล็อตที่ไม่ได้กัก บันทึก "กักต่อ / ตรวจซ้ำ" ของล็อตที่กัก กักกันวัตถุดิบ และเปิด/ปิด NCR ได้ · ข้ามเวลาบ่ม (endRest · โรงงานขั้น 6) อยู่ที่ "งานของฉัน" ของโมดูลนี้ด้วย (กลุ่ม "ล็อตผสมที่กำลังบ่ม") เพราะ QA เปิดหน้า RubberFlow ไม่ได้แล้ว · dialog / คำสั่ง / สิทธิ์ชุดเดียวกับปุ่มที่หน้าผสมของ RubberFlow (หัวหน้า RB ยังกดที่นั่นได้)
 (function registerQaPages(root) {
   const F = root.MNP_FACTORY;
   const ROUTE = "qa";
@@ -104,10 +104,20 @@
     const more = cards.length > shown.length ? `<p class="small muted">${esc(`อีก ${cards.length - shown.length} รายการ`)} ${ctx.ui.link("แสดงทั้งหมด", ctx.pageUrl({ all: 1 }), "btn rf-btn secondary small")}</p>` : "";
     return rfScope(`<h2 class="bom-h3">${esc(title)}</h2>${groupNote(note)}<div class="bom-job-grid">${shown.join("")}</div>${more}`);
   }
+  // ล็อตผสมที่ยังบ่มอยู่ ซึ่งผู้ใช้ข้ามเวลาบ่มได้ (สิทธิ์ skipRest ชุดเดียวกับหน้าผสมของ RubberFlow: หัวหน้า RB หรือแผนก QA พร้อมเหตุผล) · ไม่นับเป็นงานค้าง (ไม่ขึ้นตัวเลขที่เมนู) แสดงเฉพาะเมื่อมีล็อตแบบนี้
+  function restingCards(ctx, rf) {
+    if (rf.status !== "ready" || !rfCan(rf, "skipRest")) return [];
+    const { ui } = ctx;
+    const { now } = rf.ctx;
+    return (rf.data.lots ?? []).filter((lot) => lot.stage === "mixing" && num(lot.readyAt) > now).sort((a, b) => num(a.readyAt) - num(b.readyAt))
+      .map((lot) => card({ tone: "is-now", state: "กำลังบ่มยาง", when: `บ่มอีก ${rfRules().fmtDuration(num(lot.readyAt) - now)}`, title: lot.id, sub: esc([lot.orderId, `${ctx.rules.fmtQty(lot.goodQty)} kg`].filter(Boolean).join(" · ")),
+        actions: ui.openButton("ข้ามเวลาบ่ม", "skipRest", { lotId: lot.id }, { className: "bom-job-main", ariaLabel: `ข้ามเวลาบ่ม ${lot.id}` }) }));
+  }
   function workView(ctx, rf) {
     const work = workData(ctx, rf);
-    const parts = [work.rod.html, section(ctx, "ล็อตในสายผลิตที่กักรอตัดสิน", work.lots, rfCan(rf, "qcDecision") && !rfCan(rf, "qaRelease") ? releaseHeadText() : ""), section(ctx, "วัตถุดิบที่กักรอปลดกักกัน", work.materials, rfCan(rf, "holdMaterial") && !rfCan(rf, "releaseMaterial") ? F.materialReleaseText() : ""), section(ctx, "NCR ที่ยังเปิดอยู่", work.ncrs), rfNote(ctx, rf)].filter(Boolean);
-    return work.count || rf.status !== "ready" ? parts.join("") : ctx.ui.card(ctx.ui.empty("ไม่มีงานค้าง"));
+    const resting = restingCards(ctx, rf);
+    const parts = [work.rod.html, section(ctx, "ล็อตในสายผลิตที่กักรอตัดสิน", work.lots, rfCan(rf, "qcDecision") && !rfCan(rf, "qaRelease") ? releaseHeadText() : ""), section(ctx, "วัตถุดิบที่กักรอปลดกักกัน", work.materials, rfCan(rf, "holdMaterial") && !rfCan(rf, "releaseMaterial") ? F.materialReleaseText() : ""), section(ctx, "NCR ที่ยังเปิดอยู่", work.ncrs), section(ctx, "ล็อตผสมที่กำลังบ่ม", resting), rfNote(ctx, rf)].filter(Boolean);
+    return work.count || resting.length || rf.status !== "ready" ? parts.join("") : ctx.ui.card(ctx.ui.empty("ไม่มีงานค้าง"));
   }
   // ลิงก์ไปโมดูลใบตรวจ QC (#/qc) และใบ NCR/CAR (#/ncr): โมดูลของตัวเอง ไม่ใช่ NCR ของ RubberFlow ที่อยู่ในแท็บ NCR
   const workLinks = (ctx) => `${moduleLink(ctx, "QC", "#/qc", "ใบตรวจ QC")}${moduleLink(ctx, "NCR_CAR", "#/ncr", "NCR/CAR (ใบคำร้อง)")}`;

@@ -24,11 +24,14 @@ test("roles see the prototype's module sets and fine-grained permissions", () =>
   assert.deepEqual(Object.entries(storeApi.ROLES).filter(([, role]) => role.modules.includes("ncr")).map(([id]) => id), ["admin", "manager", "planner", "rb"], "RB staff and the planner answer NCRs; QA works in #/qa");
   assert.equal(storeApi.findModule("rbstore"), null, "no separate rbstore menu entry");
   assert.ok(!storeApi.MODULE_IDS.includes("rbstore") && Object.values(storeApi.ROLES).every((role) => !role.modules.includes("rbstore")));
-  assert.equal(storeApi.findModule("warehouse").label, "คลังวัตถุดิบและสินค้า", "the menu item keeps its name");
+  // โรงงานขั้น 6: เมนูเป็นของแผนก RB อย่างเดียว · ชื่อและกลุ่มใหม่ ส่วนรหัสหน้า (p=) คงเดิมเพื่อให้ลิงก์เก่าใช้ได้
+  assert.equal(storeApi.findModule("warehouse").label, "คลังเคมี RB", "the warehouse page is the RB chemical store");
+  assert.equal(storeApi.findModule("dashboard").label, "ภาพรวม RB");
+  assert.deepEqual(storeApi.MODULES.map((entry) => [entry.id, entry.group]), [["dashboard", "ภาพรวม"], ["orders", "ใบสั่งผลิตและสูตร"], ["recipes", "ใบสั่งผลิตและสูตร"], ["requisition", "สายการผลิต"], ["mixing", "สายการผลิต"], ["extrusion", "สายการผลิต"], ["curing", "สายการผลิต"], ["finishing", "สายการผลิต"], ["wip", "สายการผลิต"], ["ncr", "คุณภาพ"], ["warehouse", "คลังเคมีและเครื่องมือ"], ["molds", "คลังเคมีและเครื่องมือ"], ["audit", "คลังเคมีและเครื่องมือ"]]);
   for (const role of ["rb", "mixer", "planner", "admin", "manager"]) assert.equal(storeApi.canSeeRbStore({ role }), true, role);
   for (const role of ["store", "qc", "warehouse", "sr", "viewer", "ghost"]) assert.equal(storeApi.canSeeRbStore({ role }), false, role);
   assert.equal(storeApi.canSeeRbStore(null), false);
-  assert.deepEqual(storeApi.GROUPS, ["ภาพรวม", "วางแผน", "สายการผลิต", "คุณภาพ", "คลังและเครื่องมือ"]);
+  assert.deepEqual(storeApi.GROUPS, ["ภาพรวม", "ใบสั่งผลิตและสูตร", "สายการผลิต", "คุณภาพ", "คลังเคมีและเครื่องมือ"]);
   assert.deepEqual(storeApi.ROLES.admin.modules, storeApi.MODULE_IDS);
   assert.ok(!storeApi.ROLES.manager.modules.includes("audit"));
   const mixer = { role: "mixer" };

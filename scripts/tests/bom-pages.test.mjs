@@ -39,7 +39,7 @@ function load({ sandbox = true, route = "", storage = new Map() } = {}) {
     window: context, addEventListener: (type, handler) => { (log.listeners[type] ??= []).push(handler); }, escapeHtml, showToast: (message, kind) => log.toasts.push([message, kind ?? "ok"]), friendlyError: (error) => String(error?.message ?? error),
     renderRoute: async () => { log.renders += 1; }, confirmDialog: async (options) => { log.confirms.push(options); return log.confirmAnswer; }, URLSearchParams, Intl, Date, structuredClone, setInterval: () => 0, setTimeout: () => 0, encodeURIComponent,
     location: { get hash() { return log.hash; }, set hash(value) { log.hash = value.startsWith("#") ? value : `#${value}`; } },
-    app, state: { employee: { isSandbox: sandbox } },
+    app, state: { employee: { isSandbox: sandbox, department: { code: "RB" }, role: { code: "staff" } } }, // แผนก RB: เห็นหน้า RubberFlow (โรงงานขั้น 6) แต่ไม่เห็นโมดูลแผนกอื่น
     shell: (content, path, title) => `<shell path="${path}" title="${escapeHtml(title)}">${content}</shell>`,
     bindShell() {}, loadingShell() {}, renderNotFound: () => { log.notFound += 1; app.innerHTML = "<notfound></notfound>"; },
     currentRoute: () => { const raw = log.hash.replace(/^#\/?/, ""); const [path, query = ""] = raw.split("?"); return { path, params: new URLSearchParams(query) }; },
@@ -477,7 +477,7 @@ test("forms go through the data-rf-* rules: a new order is created with dates co
 
 test("an RB job creates a RubberFlow work order through the RubberFlow store and the job keeps the WO number", async () => {
   const env = load();
-  env.store.setUser("B04");
+  env.store.setUser("B03"); // โรงงานขั้น 6: ฝ่ายวางแผนเปิด WO (แผนก RB เปิดเองไม่ได้ ดูด้านล่าง)
   env.rf.store.load();
   await env.render("p=jobs");
   const c = env.ctx("p=jobs&dept=RB");
@@ -507,6 +507,9 @@ test("an RB job creates a RubberFlow work order through the RubberFlow store and
   const noRecipe = env.context.MNP_BOM_DIALOGS.jobRubberflow(c, { jobId: unlinked.id });
   assert.match(noRecipe.html, /ยังไม่ผูกกับสูตร PHR/);
   assert.doesNotMatch(noRecipe.html, /data-bom-rf-create/);
+  // แผนก RB เปิด WO เองไม่ได้แล้ว (โรงงานขั้น 6): ไม่มีปุ่มสร้าง WO ที่งานของตัวเอง
+  env.store.setUser("B04");
+  assert.doesNotMatch(await env.render("p=jobs&dept=RB"), /สร้าง WO ใน RubberFlow/, "RB staff do not open a WO, planning does");
 });
 
 test("the import page parses pasted TSV, reports before saving and the orders page exports CSV with the BOMSHEET columns", async () => {

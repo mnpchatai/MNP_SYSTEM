@@ -521,7 +521,7 @@ select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb
   current_setting('test.wo')::jsonb || '{"id":"WO-20261107-01"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createOrder') $$,
   'RF_FORBIDDEN', 'QA staff cannot create a work order');
 
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || '{"id":"WO-20261107-01","recipeId":"RC-3","recipeRevision":1}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createOrder') $$,
   'RF_INVALID_RECIPE', 'a draft recipe cannot be used for a work order');
@@ -556,17 +556,18 @@ select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb
 select set_config('test.res', public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   (current_setting('test.wo')::jsonb - 'recipeRevision') || jsonb_build_object('id', 'WO-20261107-01', 'productCode', 'ZZ-9', 'productName', 'ชื่ออื่น', 'uom', 'kg', 'createdBy', 'ใครก็ได้', 'createdAt', 1)))),
   (public.app_rf_master() ->> 'version')::bigint, 'createOrder')::text, true);
-select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'planned', 'an RB member creates a planned work order');
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'planned', 'a planner creates a planned work order');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'recipeRevision', '2', 'without a revision the work order takes the approved one');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'productCode', 'P-1B', 'the product code is copied from the recipe, not from the client');
 select ok(not (current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ? 'productName'), 'a work order has no product name');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'uom', 'm', 'a manual work order takes the unit of the recipe');
-select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'createdBy', current_setting('test.n_sbx_rb_staff'), 'the creator is the persona');
+select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'createdBy', current_setting('test.n_sbx_pp_staff'), 'the creator is the persona');
 select isnt(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'createdAt', '1', 'the creation time is the server time');
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'producedQty', '0', 'nothing is produced yet');
 select ok(not (current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert' -> 0 ? 'sourceJobId'), 'a manual work order has no BOM job');
 
--- สถานะ: ปล่อยผลิต = กลุ่มวางแผนหรือหัว RB เท่านั้น
+-- สถานะ: ปล่อยผลิต = กลุ่มวางแผนเท่านั้น (คำสั่งเจ้าของ 2026-11-24 · หัว RB ที่ไม่อยู่กลุ่มวางแผนปล่อยไม่ได้)
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select set_config('test.w1', (select w::text from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-01'), true);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.w1')::jsonb || '{"status":"released"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') $$,
@@ -630,11 +631,13 @@ select is(public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('up
   current_setting('test.w1')::jsonb || '{"producedQty":65}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') ->> 'version',
   public.app_rf_master() ->> 'version', 'a produced quantity sent for a completed work order is ignored too: nothing is written');
 
--- ปิด WO ที่ไม่ผูก BOM โดยไม่มียอดผลิตได้ · ยกเลิกใบ planned · ผู้ช่วย ผจก. RB (หัว RB ที่ไม่ใช่กลุ่มวางแผน) ปล่อยผลิตได้
+-- ปิด WO ที่ไม่ผูก BOM โดยไม่มียอดผลิตได้ · ยกเลิกใบ planned · ผู้ช่วย ผจก. RB (หัว RB ที่ไม่ใช่กลุ่มวางแผน) ปล่อยผลิตไม่ได้ ผจก. แผนก RB (อยู่กลุ่มวางแผน) ปล่อยได้
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select set_config('test.res', public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || '{"id":"WO-20261107-02"}'::jsonb, current_setting('test.wo')::jsonb || '{"id":"WO-20261107-03","priority":"urgent"}'::jsonb))),
   (public.app_rf_master() ->> 'version')::bigint, 'createOrder')::text, true);
 select is((select count(*)::integer from jsonb_array_elements(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert') w), 2, 'two work orders are created in one call');
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select is(public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   (select w || '{"status":"cancelled"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-03')))),
   (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'cancelled', 'an RB member cancels a planned work order');
@@ -642,14 +645,19 @@ select ok((select w ? 'cancelledAt' from jsonb_array_elements(public.app_rf_mast
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   (select w || '{"status":"released"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-03')))),
   (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') $$, 'RF_FORBIDDEN', 'RB staff cannot release a cancelled work order either (permission first)');
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_amgr_t')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_mgr')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   (select w || '{"status":"released"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-03')))),
-  (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') $$, 'RF_INVALID_TRANSITION', 'a cancelled work order is final even for an RB head');
+  (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') $$, 'RF_INVALID_TRANSITION', 'a cancelled work order is final even for the RB manager');
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_amgr_t')::uuid);
+select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
+  (select w || '{"status":"released"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-02')))),
+  (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') $$, 'RF_FORBIDDEN', 'the RB assistant manager (an RB head outside the planning group) cannot release a work order');
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_mgr')::uuid);
 select is(public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   (select w || '{"status":"released"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-02')))),
-  (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'releasedBy', current_setting('test.n_sbx_rb_amgr_t'),
-  'the RB assistant manager releases a work order');
+  (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'releasedBy', current_setting('test.n_sbx_rb_mgr'),
+  'the RB manager (in the planning group) releases a work order');
 select is(public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   (select w || '{"status":"in_progress"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = 'WO-20261107-02')))),
   (public.app_rf_master() ->> 'version')::bigint, 'setOrderStatus') -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'in_progress', 'and starts it');
@@ -669,6 +677,7 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || '{"id":"WO-20261107-04","customer":"คนที่สอง"}'::jsonb))), current_setting('test.b4')::bigint, 'createOrder') $$,
   'RF_STALE', 'a work order number that someone else just created is stale, not a silent overwrite');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select is(public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || '{"id":"WO-20261107-06","customer":"คนที่สอง"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createOrder')
   -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'id', 'WO-20261107-06', 'after catching up the next number is accepted');
@@ -732,7 +741,7 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || '{"id":"WO-20261107-11","sourceJobId":"JOB-L1-RB"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createOrder') $$,
   'RF_FORBIDDEN', 'ST staff cannot create a work order from a BOM job');
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || '{"id":"WO-20261107-11","sourceJobId":"JOB-NOPE"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createOrder') $$,
   'RF_INVALID_SOURCE_JOB', 'an unknown BOM job is refused');
@@ -760,7 +769,7 @@ select is((select j -> 'externalRef' ->> 'woId' from jsonb_array_elements(public
   'the BOM job now points to the work order (written by the server in the same call)');
 select is((select j -> 'externalRef' ->> 'system' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L1-RB'), 'rubberflow', 'the link names the system');
 select is((select (j -> 'externalRef' ->> 'kg')::numeric from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L1-RB'), 12.5, 'the link carries the kilograms');
-select is((select j -> 'externalRef' ->> 'by' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L1-RB'), current_setting('test.n_sbx_rb_staff'),
+select is((select j -> 'externalRef' ->> 'by' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L1-RB'), current_setting('test.n_sbx_pp_staff'),
   'the link records the persona');
 select ok((select j -> 'externalRef' ? 'linkedAt' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L1-RB'), 'the link time is set');
 select is((select j ->> 'status' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L1-RB'), 'in_progress', 'a queued job starts when it is linked');
@@ -784,7 +793,7 @@ select is((select j ->> 'status' from jsonb_array_elements(public.app_bom_save_m
   (public.app_bom_master() ->> 'version')::bigint, 'setJobStatus') -> 'changes' -> 'jobs' -> 'upsert') j), 'hold',
   'a linked job can still be held with a reason through the BOM RPC (the unchanged link is not a change)');
 select ok(exists (select 1 from jsonb_array_elements(public.app_bom_audit()) a where a ->> 'action' = 'rubberflow:createOrder' and a ->> 'detail' = 'jobs +1, orders +1'
-                  and a ->> 'user' = current_setting('test.n_sbx_rb_staff')),
+                  and a ->> 'user' = current_setting('test.n_sbx_pp_staff')),
   'the BOM history records that RubberFlow linked a job and moved a PI');
 select ok(exists (select 1 from jsonb_array_elements(public.app_rf_audit()) a where a ->> 'action' = 'createOrder' and a ->> 'detail' = 'orders +1'),
   'the RubberFlow history records the work order');
@@ -884,9 +893,10 @@ select public.app_bom_save_master(jsonb_build_object(
     current_setting('test.job')::jsonb || '{"id":"JOB-L5-RB","orderId":"251107-25005","dept":"RB","itemCode":"RB-A","kind":"RB"}'::jsonb,
     current_setting('test.job')::jsonb || '{"id":"JOB-L5-PK","orderId":"251107-25005","dept":"PK","itemCode":"FG-A","kind":"FG","uom":"set"}'::jsonb))),
   (public.app_bom_master() ->> 'version')::bigint, 'releaseOrder');
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || '{"id":"WO-20261107-31","sourceJobId":"JOB-L5-RB"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createOrder');
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select is((select j -> 'externalRef' ->> 'woId' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-L5-RB'), 'WO-20261107-31',
   'another RB job is linked to its first work order');
 -- งานที่ผูก WO รายงานผ่าน BOM ไม่ได้ (20261128010000) · ยอด 30 จำลองด้วยการแก้ตารางตรง (ยอดที่ RubberFlow ป้อนกลับหรือรายงานก่อนกติกานี้)
@@ -923,6 +933,7 @@ select is((select j ->> 'externalRef' from jsonb_array_elements(public.app_bom_m
 reset role;
 update public.bom_jobs set external_ref = jsonb_build_object('system', 'rubberflow', 'woId', 'WO-20261107-11', 'kg', 0) where is_test and job_no = 'JOB-L5-RB';
 set local role authenticated;
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select throws_ok($$ select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || '{"id":"WO-20261107-32","sourceJobId":"JOB-L5-RB"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createOrder') $$,
   'RF_INVALID_SOURCE_JOB', 'a job whose link points to a work order that is not cancelled cannot be linked again');
@@ -953,6 +964,7 @@ select is((select jsonb_array_length(j -> 'reports') from jsonb_array_elements(p
   'and appends no report (the two entries are the earlier shift report and the unlink note)');
 
 -- QA เขียน WO ไม่ได้เลย (ยอดผลิตนับฝั่งเซิร์ฟเวอร์ตอน QA บันทึกผลตรวจ ดู rubberflow_shopfloor.test.sql)
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select public.app_rf_save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.wo')::jsonb || '{"id":"WO-20261107-33"}'::jsonb))), (public.app_rf_master() ->> 'version')::bigint, 'createOrder');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
@@ -1018,7 +1030,7 @@ select throws_ok($$ select public.app_bom_save_master('{"compounds":{"upsert":[{
   'BOM_STALE', 'the compound writer still checks for collisions before anything else');
 
 -- 11. delta / audit ---------------------------------------------------------------------------
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select is(public.app_rf_master_since(0) -> 'changes', (select jsonb_object_agg(l, jsonb_build_object('upsert', public.app_rf_master() -> l, 'delete', '[]'::jsonb)) from unnest(array['materials','recipes','orders','molds','materialLots','requisitions','lots','transfers','fgBoxes','qcRecords','ncrs','purchaseOrders','chemDocs']) l),
   'the delta from version 0 equals the snapshot (same shapes, same order)');
 select is(public.app_rf_master_since((public.app_rf_master() ->> 'version')::bigint) -> 'changes',
@@ -1033,7 +1045,7 @@ select set_config('test.res', public.app_rf_save(jsonb_build_object(
   'orders', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.wo')::jsonb || '{"id":"WO-20261107-21"}'::jsonb))),
   current_setting('test.vb')::bigint, 'createOrder', '[{"action":"สร้าง WO","detail":"WO-20261107-21"}]'::jsonb)::text, true);
 select is(current_setting('test.res')::jsonb -> 'changes', public.app_rf_master_since(current_setting('test.vb')::bigint) -> 'changes', 'the reply to a save equals the delta RPC from the same base');
-select is((public.app_rf_audit(1) -> 0) - 'at', jsonb_build_object('user', current_setting('test.n_sbx_rb_staff'), 'action', 'createOrder', 'detail', 'materials +1, orders +1',
+select is((public.app_rf_audit(1) -> 0) - 'at', jsonb_build_object('user', current_setting('test.n_sbx_pp_staff'), 'action', 'createOrder', 'detail', 'materials +1, orders +1',
                      'entries', '[{"action":"สร้าง WO","detail":"WO-20261107-21"}]'::jsonb),
   'the history line is what the server recorded (action and counts); the client text is kept apart as entries');
 select is(jsonb_array_length(public.app_rf_audit(0)), 1, 'a limit below 1 is clamped to 1');

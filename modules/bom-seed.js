@@ -277,7 +277,7 @@
       const item = d.items.find((entry) => entry.code === rb?.itemCode);
       if (!rb || !item) return;
       const kg = A.helpers.rbJobKg(rb, item, { scrapPct: 5, bom: A.helpers.approvedBomOf(d, item.code) });
-      A.linkJobToRubberFlow(d, { jobId: rb.id, woId: demoWoId(now, index), kg }, at(now - WO_DAYS_AGO * DAY, "rb"));
+      A.linkJobToRubberFlow(d, { jobId: rb.id, woId: demoWoId(now, index), kg }, at(now - WO_DAYS_AGO * DAY, "planner")); // WO เปิดโดยฝ่ายวางแผนเท่านั้น (โรงงานขั้น 6)
     });
     // ใบที่ผลิต รับเข้าคลัง และส่งมอบครบแล้ว (ลองย้อนด้วยผู้จัดการแผนกคลังสินค้า): DEMO-26008 ฮูล่า 20 ชุด ทุกแผนกรายงานครบ · WH รับเข้า 8 แล้ว 12 (ใบปิดเอง) · ส่งมอบ 20
     // ย้อนรับเข้าได้หลังย้อนการส่งมอบก่อน · ย้อนรับเข้าแล้วของไม่ครบ ใบเปิดกลับเป็นกำลังผลิต · งานของซื้อของใบที่ปิดแล้วไม่เป็นงานค้าง
