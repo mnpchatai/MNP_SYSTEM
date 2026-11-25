@@ -18,7 +18,7 @@
   // เลขเวอร์ชันของโมดูล (แสดงมุมขวาล่างทุกหน้า) รูปแบบ <ใหญ่>.<ย่อย 2 หลัก> · เจ้าของตัดสิน 20/11/2026
   // อัปเดตย่อย (แก้คำ หน้าตา บั๊ก ช่องเล็ก ๆ) = +0.01 · อัปเดตใหญ่ (เปลี่ยนขั้นตอนงาน/สถานะ/ฟีเจอร์ใหม่ที่ผู้ใช้ต้องเรียนรู้) = ขึ้นหลักหน่วย .00
   // ถามเจ้าของทุกครั้งว่าเป็นอัปเดตย่อยหรือใหญ่ แล้วแก้ทั้งสองค่านี้ใน PR เดียวกับการเปลี่ยนแปลง (VERSION_DATE = วันที่ปล่อย YYYY-MM-DD)
-  const MODULE_VERSION = "1.05";
+  const MODULE_VERSION = "1.06";
   const VERSION_DATE = "2026-11-25";
   const DURATION_NOTE = "งานออกแบบ 3–7 วันนับจากวันที่ได้ข้อมูลครบ · งานเบ็ดเตล็ดตามตกลง";
 
@@ -162,6 +162,15 @@
     if (Number.isNaN(date.getTime())) return String(timestamp);
     const { year, month, day, hour, minute } = bangkokParts(date);
     return `${day}/${month}/${Number(year) + YEAR_OFFSET} ${hour}:${minute}`;
+  }
+  // วันที่และเวลาแยกกัน (ช่อง "วันที่แจ้ง" / "เวลา" บนใบพิมพ์) · ไม่มีค่า = ""
+  function formatDateOf(timestamp) {
+    const text = formatDateTime(timestamp);
+    return text === "—" ? "" : text.split(" ")[0];
+  }
+  function formatTimeOf(timestamp) {
+    const text = formatDateTime(timestamp);
+    return text === "—" ? "" : (text.split(" ")[1] ?? "");
   }
   const isRealDate = (value) => {
     const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? ""));
@@ -728,7 +737,7 @@
     MODULE_VERSION, VERSION_DATE, YEAR_OFFSET, MAX_INFO_BODY, MAX_DETAILS, MAX_ORDER_REF, MAX_ATTACHMENT_NOTE, MAX_REASON, MAX_REASON_ON_BEHALF, CANCEL_ON_BEHALF, isCancelOnBehalf, cancelReasonSpec, MAX_MISC_DETAIL, MAX_FILES, MAX_FILE_BYTES, DURATION_NOTE,
     REQUEST_TYPES, LEGACY_REQUEST_TYPES, ATTACHMENT_FLAGS, ACCESS_SYSTEMS, ACCESS_ACTIONS, FILE_MIME_BY_EXTENSION, FILE_ACCEPT, FILE_HINT, FILES_PREPARING_MESSAGE, EMPTY_REWORK_FORM, STATUS_LABELS, EVENT_LABELS, ACTION_BUTTONS, ACTION_ORDER, IT_GROUPS, EMPTY_ORDER_FORM, SIGNATURE_SLOTS, APPROVAL_STATE_LABELS,
     requestTypeLabel, printRequestTypes, requestTypeText, reworkTag, attachmentFlagLabel, accessSystemLabel, accessActionLabel, statusLabel, statusBadgeClass, myStatusLabel, isTestDoc, INFO_STAGE_LABELS, infoStageLabel, commentKindLabel, commentRows, allFiles, pendingQuestion, infoBadgeTitle,
-    todayBangkok, formatDate, formatDateTime, isRealDate, charCount, clip,
+    todayBangkok, formatDate, formatDateTime, formatDateOf, formatTimeOf, isRealDate, charCount, clip,
     visibleTabs, readView, viewAllowed, workOrderUrl, isUuid,
     actionButtons, countsAsBothSteps, confirmMessageFor, BOTH_STEPS_NOTE, completeToast, answerToast, pendingStepLabel, eventLabel, eventLabelFor, CANCELLED_ON_BEHALF_LABEL, signatureSlots, approvalSummary,
     itGroupOf, groupItOrders, itActionableCount, awaitingMyReceiveCount, awaitingMyAnswerCount, mineWaiting, mineWaitingNote, waitingForMeCount, itApprovalProgress, CLOSED_STATUSES, openOrderCount, cardSummary,

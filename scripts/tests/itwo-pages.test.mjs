@@ -411,8 +411,8 @@ test("the print sheet adds a Q&A table only when there are messages: number, ask
   assert.match(visibleText(rows[2]), /^ 2 ตอบ ทีม IT สมชาย ใจดี 19\/11\/2569 11:00 แนบมาให้แล้ว 1 $/);
   assert.match(visibleText(rows[3]), /^ 3 ถาม ผู้จัดการแผนก สมหญิง ผู้จัดการ 19\/11\/2569 12:00 ใช้กับงานไหน 0 $/, "a message without files counts 0");
   assert.doesNotMatch(html, /<script>|<b>หนึ่ง/);
-  assert.doesNotMatch(html, /<img|data-attachment|attachment-tile/, "no pictures on paper; only the count");
-  assert.ok(html.indexOf("ประวัติถาม-ตอบ") < html.indexOf("ลายเซ็น"), "the Q&A history comes before the signatures");
+  assert.doesNotMatch(html, /<img(?! class="itwo-sheet-logo")|data-attachment|attachment-tile/, "no pictures on paper; only the count");
+  assert.ok(html.indexOf("itwo-signs") < html.indexOf("ประวัติถาม-ตอบ"), "like the repair form: signatures first, the Q&A history follows");
   assert.match(html, /สถานะใบสั่งงาน ณ ที่พิมพ์: รอผู้แจ้งตอบ/);
 });
 
@@ -421,13 +421,14 @@ test("print: the IT signature slot is 'ส่งงาน', and a Q&A history si
   assert.match(html, /IT ผู้ดำเนินการ \(ส่งงาน\)/);
   assert.doesNotMatch(html, /ปิดงาน/);
   assert.ok(html.indexOf("ประวัติการแก้ไขงาน") < html.indexOf("ประวัติถาม-ตอบ"));
+  assert.ok(html.indexOf("itwo-signs") < html.indexOf("ประวัติการแก้ไขงาน"));
 });
 
 test("the stylesheet keeps the Q&A print table's rows whole and repeats its header like the rework table", () => {
   const css = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
   assert.match(css, /\.itwo-sheet-reworks, \.itwo-sheet-comments \{ break-inside: auto; \}/);
   assert.match(css, /\.itwo-sheet-reworks thead, \.itwo-sheet-comments thead \{ display: table-header-group; \}/);
-  assert.match(css, /\.itwo-sheet-reworks tr, \.itwo-sheet-comments tr \{ break-inside: avoid; \}/);
+  assert.match(css, /\.itwo-sheet-table tr \{ break-inside: avoid; \}/);
 });
 
 test("the upload panel shows each file's state, a summary, and offers a retry only for failed files once idle", () => {
@@ -468,10 +469,13 @@ test("the print sheet follows FM06: two request types ticked with the misc work,
       { action: "completed", created_at: "2026-11-19T05:00:00Z", actor_full_name: "ไอที หนึ่ง" },
     ],
   });
-  assert.match(html, /<h1>ใบสั่งงานแผนก IT<\/h1>/);
-  assert.match(html, /IT01-FM06/);
-  assert.match(html, /<strong>IT06-26\/001<\/strong>/);
-  assert.match(html, /\(งานด่วน\)/);
+  assert.match(html, /<h1>ใบสั่งงานแผนก IT <span class="itwo-urgent-mark">\(งานด่วน\)<\/span><\/h1>/, "urgent mark sits in the title like the repair form");
+  assert.match(pages.printSheet({ ...DETAIL, is_urgent: false }), /<h1>ใบสั่งงานแผนก IT<\/h1>/);
+  // หัวใบแบบเดียวกับใบแจ้งซ่อม: ไอคอนแอป + ชื่อฟอร์ม + กล่องเลขที่เอกสาร (ไม่มีบรรทัดรหัสฟอร์ม)
+  assert.match(html, /<header class="itwo-sheet-title">\s*<img class="itwo-sheet-logo" src="\.\/icons\/icon-192\.png" alt="">/);
+  assert.match(html, /<div class="itwo-docbox"><span>เลขที่ใบสั่งงาน<\/span><strong>IT06-26\/001<\/strong><\/div>/);
+  assert.doesNotMatch(html, /IT01-FM06|itwo-form-code/, "no form code line in the doc box");
+  assert.match(visibleText(html), /วันที่แจ้ง 19\/11\/2569 เวลา 08:00/, "date and time are separate fields");
   const text = visibleText(html);
   assert.match(text, /☐ งานออกแบบ ☑ เบ็ดเตล็ดอื่นๆ \(ระบุ: ซ่อมเมาส์ &lt;i&gt;\)/);
   assert.doesNotMatch(text, /สิทธิ์การใช้งานในระบบคอมพิวเตอร์/, "the removed type is not on the form");
@@ -481,7 +485,10 @@ test("the print sheet follows FM06: two request types ticked with the misc work,
   assert.match(html, /data-slot="dept_manager">[\s\S]*สมหญิง ผู้จัดการ[\s\S]*19\/11\/2569 09:00/);
   assert.match(html, /data-slot="it_approver">[\s\S]*รสริน เชน[\s\S]*19\/11\/2569 10:00/);
   assert.match(html, /รับงาน: ไอที หนึ่ง 19\/11\/2569 11:00/);
-  assert.match(html, /data-slot="receiver">\s*<div class="itwo-signature-label">ผู้รับงาน<\/div>\s*<div class="itwo-signature-name"><\/div>/, "not received yet: the box is left blank");
+  assert.match(html, /data-slot="receiver">\s*<div class="itwo-sign-label">ผู้รับงาน<\/div>\s*<div class="itwo-sign-name"><\/div>\s*<div class="itwo-sign-time"><\/div>/, "not received yet: the box is left blank");
+  assert.match(html, /<div class="itwo-detail-row">[\s\S]*เมาส์เสีย[\s\S]*data-slot="requester">[\s\S]*สมชาย ใจดี[\s\S]*19\/11\/2569 08:00/, "the requester signature sits beside the details");
+  assert.equal(count(html, /class="itwo-sign" data-slot="/g), 5, "five signature boxes: requester, two approvers, IT, receiver");
+  assert.equal(count(html.slice(html.indexOf('class="itwo-signs"')), /class="itwo-sign" data-slot="/g), 4, "four boxes in the row under the band");
   assert.doesNotMatch(html, /itwo-watermark/);
   assert.match(html, /สถานะใบสั่งงาน ณ ที่พิมพ์: รอผู้อนุมัติขั้น IT|สถานะใบสั่งงาน ณ ที่พิมพ์: จบงานแล้ว/);
 });
@@ -501,7 +508,7 @@ test("the print sheet lists the initial files by name (no pictures) and the rewo
     reworks: [ROUND(1, "แก้สี <b>เข้มขึ้น</b>", "2026-12-01"), ROUND(2, "แก้ขนาด", "2026-12-10", { created_at: "2026-12-03T03:00:00Z" })],
     attachments: [FILE("f1", "แบบกล่อง.pdf"), FILE("f2", "รูป <x>.png", 0, { size_bytes: 3 * 1024 * 1024 }), FILE("f3", "ตัวอย่างสี.pdf", 1)],
   });
-  assert.doesNotMatch(html, /<img|data-attachment|attachment-tile/, "no pictures on paper");
+  assert.doesNotMatch(html, /<img(?! class="itwo-sheet-logo")|data-attachment|attachment-tile/, "no pictures on paper");
   assert.match(html, /<th scope="row">ไฟล์แนบ<\/th><td colspan="3"><ul class="itwo-sheet-files"><li>แบบกล่อง\.pdf <span class="itwo-sheet-file-size">\(1\.5 KB\)<\/span><\/li><li>รูป &lt;x&gt;\.png/);
   assert.doesNotMatch(html.slice(0, html.indexOf("ประวัติการแก้ไขงาน")), /ตัวอย่างสี\.pdf/, "a rework file is in the rework table, not the first-filing row");
   assert.match(html, /<h2 class="itwo-sheet-section">ประวัติการแก้ไขงาน<\/h2>/);
@@ -510,7 +517,7 @@ test("the print sheet lists the initial files by name (no pictures) and the rewo
   assert.match(visibleText(rows[1]), /1 26\/11\/2569 10:00 สมชาย ใจดี แก้สี &lt;b&gt;เข้มขึ้น&lt;\/b&gt; 01\/12\/2569 ตัวอย่างสี\.pdf/);
   assert.match(visibleText(rows[2]), /2 03\/12\/2569 10:00 สมชาย ใจดี แก้ขนาด 10\/12\/2569 —/, "a round without files shows a dash");
   // ลำดับบนกระดาษ: ข้อมูลใบ → ประวัติแก้ไข → ลายเซ็น (ลายเซ็นไม่ถูกตัดครึ่ง ดู CSS break-inside)
-  assert.ok(html.indexOf("ประวัติการแก้ไขงาน") < html.indexOf("ลายเซ็น"));
+  assert.ok(html.indexOf("itwo-signs") < html.indexOf("ประวัติการแก้ไขงาน"));
 });
 
 test("a test sheet is stamped as a test on the paper itself", () => {
@@ -525,6 +532,60 @@ test("the print page has a back link and a print button that are left off the pa
   assert.match(html, /class="itwo-print-toolbar no-print"/);
   assert.match(html, /id="itwo-print-button"/);
   assert.match(html, /href="#\/office\?module=work-order&amp;view=order&amp;id=00000000-0000-4000-8000-000000000001"/);
+});
+
+test("v1.06: the print sheet escapes every free-text field (details, names, document number, order, misc work, attachment note, file names, reasons)", () => {
+  const XSS = '<img src=x onerror=alert(1)>';
+  const html = pages.printSheet({
+    ...DETAIL, doc_no: `IT06-26/001${XSS}`, details: XSS, order_ref: XSS, misc_detail: XSS, attachment_note: XSS,
+    requester: { employee_no: "MK1", full_name: XSS }, department: { code: "MK", name_th: XSS },
+    attachments: [FILE("f1", XSS)],
+    events: [{ action: "created", created_at: "2026-11-19T01:00:00Z", actor_full_name: XSS }, { action: "dept_approved", created_at: "2026-11-19T02:00:00Z", actor_full_name: XSS }],
+  });
+  assert.doesNotMatch(html, /<img(?! class="itwo-sheet-logo")/, "no injected element");
+  assert.doesNotMatch(html, /onerror=alert\(1\)>/, "the attribute text never lands in a tag");
+  assert.ok(count(html, /&lt;img src=x onerror=alert\(1\)&gt;/g) >= 8, "every field shows the text, escaped");
+});
+
+test("v1.06: the print sheet has every FM06 field with the same look as the repair form: app icon, title, document box with the form code, bordered tables, signature boxes", () => {
+  const html = pages.printSheet({ ...DETAIL, status: "received", events: [
+    { action: "created", created_at: "2026-11-19T01:00:00Z", actor_full_name: "สมชาย ใจดี" },
+    { action: "dept_approved", created_at: "2026-11-19T02:00:00Z", actor_full_name: "สมหญิง ผู้จัดการ" },
+    { action: "it_mgr_approved", created_at: "2026-11-19T03:00:00Z", actor_full_name: "รสริน เชน" },
+    { action: "started", created_at: "2026-11-19T04:00:00Z", actor_full_name: "ไอที หนึ่ง" },
+    { action: "completed", created_at: "2026-11-19T05:00:00Z", actor_full_name: "ไอที หนึ่ง" },
+    { action: "received", created_at: "2026-11-19T06:00:00Z", actor_full_name: "สมชาย ใจดี" },
+  ] });
+  const text = visibleText(html);
+  for (const label of ["ผู้แจ้ง", "แผนก", "วันที่แจ้ง", "เวลา", "ประเภทคำขอ", "ออเดอร์", "เอกสารแนบ", "วันที่ต้องการงาน", "งานด่วน", "รายละเอียด", "การอนุมัติและการดำเนินการ", "ผู้จัดการแผนก", "ผู้อนุมัติขั้น IT", "IT ผู้ดำเนินการ (ส่งงาน)", "ผู้รับงาน", "หมายเหตุ: ระยะเวลาทำงาน งานออกแบบ 3–7 วันนับจากวันที่ได้ข้อมูลครบ · งานเบ็ดเตล็ดตามตกลง", "ลงนามอิเล็กทรอนิกส์ผ่านระบบ"]) {
+    assert.ok(text.includes(label), `missing on the sheet: ${label}`);
+  }
+  assert.match(text, /19\/11\/2569 13:00/, "the receiver's signature time");
+  assert.match(html, /<tr><th scope="row">วันที่แจ้ง<\/th><td>19\/11\/2569<\/td><th scope="row">เวลา<\/th><td>08:00<\/td><\/tr>/);
+  assert.equal(count(html, /<table class="itwo-sheet-table"/g), 1, "one bordered facts table before the history tables");
+  assert.ok(html.indexOf("itwo-detail-row") < html.indexOf("itwo-signs") && html.indexOf("itwo-signs") < html.indexOf("หมายเหตุ: ระยะเวลาทำงาน"));
+});
+
+test("v1.06: the Q&A / rework history and the notes come after the signatures, the notes before the long tables so a long history cannot push them alone onto a new page", () => {
+  const html = pages.printSheet({ ...DETAIL, status: "in_progress", reworks: [ROUND(1, "แก้สี", "2026-12-01")], comments: [QUESTION2] });
+  const at = (needle) => html.indexOf(needle);
+  assert.ok(at("itwo-signs") < at("หมายเหตุ: ระยะเวลาทำงาน") && at("หมายเหตุ: ระยะเวลาทำงาน") < at("ประวัติการแก้ไขงาน") && at("ประวัติการแก้ไขงาน") < at("ประวัติถาม-ตอบ"));
+});
+
+test("v1.06: the stylesheet gives the itwo sheet the same print look as the repair sheet (A4 named page, grey label cells, header icon and document box, signature grid) without touching the itrp rules", () => {
+  const css = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
+  const rule = (selector) => { const index = css.indexOf(`${selector} {`); assert.ok(index >= 0, `missing rule ${selector}`); return css.slice(index, css.indexOf("}", index)); };
+  assert.match(css, /@page itwo-a4 \{ size: A4; margin: 12mm; \}/);
+  assert.match(rule(".itwo-sheet"), /page: itwo-a4/);
+  assert.match(rule(".itwo-sheet"), /font-size: 10pt/);
+  assert.match(rule(".itwo-sheet-logo"), /width: 14mm/);
+  assert.match(rule(".itwo-docbox"), /border: 1px solid #000/);
+  assert.match(rule(".itwo-sheet-table th[scope=\"row\"]"), /print-color-adjust: exact/);
+  assert.match(rule(".itwo-signs"), /repeat\(4, minmax\(0, 1fr\)\)/);
+  assert.match(rule(".itwo-detail-row"), /58mm/);
+  assert.match(css, /\.itwo-signs, \.itwo-detail-row, \.itwo-sheet-title, \.itwo-sheet-table tr \{ break-inside: avoid; \}/);
+  assert.doesNotMatch(css, /\.itwo-signature|\.itwo-sheet-details/, "the old sheet classes are gone");
+  assert.equal(readFileSync(new URL("../../modules/itwo-pages.js", import.meta.url), "utf8").includes("itrp"), false, "the itwo sheet is its own copy, it does not reach into the itrp module");
 });
 
 /* ---------- ตั้งค่า ---------- */
@@ -561,7 +622,7 @@ test("the print sheet puts the single-click remark under both approval signature
       { action: "it_mgr_approved", actor_employee_no: "FANG", created_at: "2026-11-19T02:00:00Z", actor_full_name: "รสริน เชน" },
     ],
   });
-  assert.equal(count(html, /itwo-signature-remark[^>]*>\(อนุมัติครั้งเดียว นับเป็นทั้งสองขั้น\)/g), 2);
+  assert.equal(count(html, /itwo-sign-remark[^>]*>\(อนุมัติครั้งเดียว นับเป็นทั้งสองขั้น\)/g), 2);
   assert.match(html, /data-slot="dept_manager">[\s\S]*?รสริน เชน/);
   assert.match(html, /data-slot="it_approver">[\s\S]*?รสริน เชน/);
 });
