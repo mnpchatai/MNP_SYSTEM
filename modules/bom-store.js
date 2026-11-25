@@ -74,7 +74,7 @@
   // หน้าแรก: ผู้ที่ดูแลข้อมูล (ผู้ดูแล ผู้จัดการ ฝ่ายวางแผน ผู้ดูอย่างเดียว) เริ่มที่สินค้า · แผนกอื่นเริ่มที่ใบสั่งผลิต (งานของแต่ละแผนกอยู่ที่โมดูลของแผนกนั้น ไม่อยู่ใน BOM แล้ว)
   const homeOf = (user) => (user && ROLES[user.role] ? (["admin", "manager", "planner", "viewer"].includes(user.role) ? "find" : "orders") : "dashboard");
   // งานของแต่ละแผนกอยู่ที่โมดูลของแผนกนั้น (โมดูลรายแผนกของกลุ่มโรงงาน · RB = RubberFlow) · แผนกที่ไม่มีโมดูล (เช่น MT PP) = null
-  const DEPT_ROUTES = Object.freeze({ GR: "gr", PT: "pt", BG: "bg", PK: "pk", SR: "sr", ST: "st", WH: "wh", QA: "qa", RB: "rubberflow" });
+  const DEPT_ROUTES = Object.freeze({ GR: "gr", PT: "pt", BG: "bg", PK: "pk", SR: "sr", ST: "st", WH: "wh", QA: "qa", RB: "rubberflow", SA: "sa" });
   const deptRoute = (dept) => (Object.hasOwn(DEPT_ROUTES, dept) ? `#/${DEPT_ROUTES[dept]}` : null);
 
   const BASE_LISTS = ["users", "compounds", "items", "boms", "orders", "jobs", "audit"];

@@ -278,6 +278,6 @@ for (const address of ["127.0.0.1", "::1"]) {
       process.exit(1);
     })
     .listen(port, address, () => {
-      if (address === "127.0.0.1") console.log(`Pilot harness: http://localhost:${port}/harness/  (BOM: #/bom · RubberFlow: #/rubberflow) · shell: /pilot-shell.html`);
+      if (address === "127.0.0.1") console.log(`Pilot harness: http://localhost:${port}/harness/  (ฝ่ายวางแผน: #/pp · ฝ่ายขาย: #/sa · RubberFlow: #/rubberflow) · shell: /pilot-shell.html`);
     });
 }

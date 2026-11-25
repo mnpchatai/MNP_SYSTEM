@@ -516,7 +516,7 @@ test("the RubberFlow parts are bound by RubberFlow's own binder with a context w
   assert.equal(calls[0][1].pageUrl({ tab: "ncr" }), "#/qa?tab=ncr", "the RubberFlow context links stay in this module");
   assert.equal(typeof calls[0][1].can, "function");
   // the RubberFlow store repaints #/qa (and #/wh, #/st) after a save
-  assert.match(read("modules/module-rubberflow.js"), /\["wh", "st", "qa", "bom"\]\.includes\(currentRoute\(\)\.path\)/);
+  assert.match(read("modules/module-rubberflow.js"), /\["wh", "st", "qa", "pp"\]\.includes\(currentRoute\(\)\.path\)/);
   // while RubberFlow loads or failed the page says so once and the BOM part still shows
   const rf = env.rf.store;
   rf.isRemote = () => true;

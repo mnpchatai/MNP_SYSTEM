@@ -22,6 +22,8 @@
     // คลังแท่งยาว (SR) รับแท่งเข้าคลังและจ่ายให้ GR · ตรวจคุณภาพ (QA) ตัดสินล็อตที่กัก
     { id: "B11", role: "sr", dept: "SR", name: "ศิริ รับมอบ" },
     { id: "B12", role: "qa", dept: "QA", name: "ธนา ตรวจสอบ" },
+    // ฝ่ายขาย (SA · โรงงานขั้น 8): ออกใบสั่งผลิตของฝ่ายขาย ส่งให้ฝ่ายวางแผน ขอยกเลิก / แก้ใบหลังปล่อยผลิต
+    { id: "B13", role: "sa", dept: "SA", name: "สุนิสา ขายดี" },
   ].map((user) => Object.freeze(user)));
 
   // สูตรยางสาธิต: DM01/DM02 ผูกกับสูตร PHR ของชุดสาธิต RubberFlow (rubberflow-seed.js) DM03 ยังไม่ผูก
@@ -199,6 +201,25 @@
     { id: "B07", name: "จันทร์เพ็ญ ดวงแก้ว", dept: "BG" }, { id: "BG-DEMO-2", name: "ลำดวน ทดลองเย็บ", dept: "BG" },
     { id: "PK-DEMO-1", name: "ปรีชา ทดลองบรรจุ", dept: "PK" }, { id: "PK-DEMO-2", name: "อำไพ ทดลองประกอบ", dept: "PK" },
   ].map((worker) => Object.freeze(worker)));
+  // ฝ่ายขาย (โรงงานขั้น 8): ใบที่ส่งให้ฝ่ายวางแผนแล้วรอปล่อยผลิต · ใบร่างที่ยังไม่ส่ง · ใบที่ปล่อยผลิตแล้วพร้อมคำขอยกเลิกที่ฝ่ายวางแผนยังไม่ตัดสิน
+  function addSalesDemo(d, now) {
+    const A = actions();
+    const DAY = 86400000;
+    const day = (n) => new Date(now + n * DAY).setHours(0, 0, 0, 0);
+    const user = (role) => USERS.find((row) => row.role === role);
+    const at = (t, role) => ({ now: Math.round(t), user: user(role) });
+    if (!d.items.some((item) => item.code === "DEMO-HL-24(B)-A") || !d.items.some((item) => item.code === "DEMO-TP-01(P)-Y")) return;
+    const header = (pi, whDue, note) => ({ pi, customer: "ลูกค้าสาธิต ระยอง", country: "Thailand", orderedAt: day(-2), whDue, note });
+    A.createOrder(d, { ...header("DEMO-SA-01", day(14), "ใบสาธิตของฝ่ายขาย: ส่งให้ฝ่ายวางแผนแล้ว รอปล่อยผลิต"), lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 12 }], send: true }, at(now - 2 * DAY, "sa"));
+    A.createOrder(d, { ...header("DEMO-SA-02", day(21), "ใบสาธิตของฝ่ายขาย: ร่าง ยังไม่ส่งให้ฝ่ายวางแผน"), lines: [{ fgCode: "DEMO-TP-01(P)-Y", qty: 30 }] }, at(now - 1 * DAY, "sa"));
+    const sent = A.createOrder(d, { ...header("DEMO-SA-03", day(10), "ใบสาธิตของฝ่ายขาย: ปล่อยผลิตแล้ว มีคำขอยกเลิกรอตัดสิน"), lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 6 }], send: true }, at(now - 3 * DAY, "sa"));
+    A.explodeOrder(d, { orderId: sent }, at(now - 3 * DAY + 3600000, "planner"));
+    A.releaseOrder(d, { orderId: sent }, at(now - 3 * DAY + 7200000, "planner"));
+    A.requestOrderCancel(d, { orderId: sent, reason: "ลูกค้าขอยกเลิกคำสั่งซื้อ" }, at(now - 3600000, "sa"));
+    // รหัสคำขอสุ่มทุกครั้งที่สร้าง: ตรึงให้ชุดสาธิตเหมือนเดิมทุกรอบ
+    const request = d.orderRequests.at(-1);
+    request.id = "5a000000-0000-4000-8000-000000000001";
+  }
   function addDeptDemo(d, now) {
     const R = rules();
     const A = actions();
@@ -230,7 +251,7 @@
   }
 
   // parts = false: ไม่มีการเบิกจ่ายของซื้อสาธิตของ DEMO-26001 (เทสต์ขั้นตอนเบิก / คืนของซื้อเริ่มจากใบที่ยังไม่เบิกเลย)
-  function buildSeed(now = Date.now(), { rods = true, gr = true, parts = true } = {}) {
+  function buildSeed(now = Date.now(), { rods = true, gr = true, parts = true, sales = false } = {}) {
     const { DAY } = rules();
     const A = actions();
     const d = emptyState();
@@ -351,6 +372,8 @@
     if (rods) addRodDemo(d, now);
     if (gr) addGrDemo(d, now);
     if (gr) addDeptDemo(d, now);
+    // sales = ใบสาธิตของฝ่ายขาย (ส่งให้ฝ่ายวางแผน ร่างที่ยังไม่ส่ง ปล่อยผลิตแล้วพร้อมคำขอยกเลิก) · ปิดไว้ตามค่าตั้งต้นเพื่อไม่เพิ่มใบ/งานให้ชุดสาธิตเดิม (เทสต์นับจากชุดนั้น) · harness เปิดด้วย { sales: true }
+    if (sales) addSalesDemo(d, now);
     return d;
   }
 

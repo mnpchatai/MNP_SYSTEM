@@ -1439,7 +1439,7 @@ async function pageEnv({ storage = memoryStorage(), pageStorage = memoryStorage(
   const status = data ?? { persona: { id: "persona-1", first_name: "ทดสอบ", last_name: "ระบบ", role: { code: "admin" }, department: { code: "MT" } } };
   const context = vm.createContext({});
   const app = { innerHTML: "" };
-  const log = { toasts: [], renders: 0, notFound: 0, hash: "#/bom", dialogs: [] };
+  const log = { toasts: [], renders: 0, notFound: 0, hash: "#/pp", dialogs: [] };
   const node = () => ({ handlers: {}, dataset: {}, value: "", disabled: false, textContent: "", innerHTML: "", addEventListener() {}, querySelector: (selector) => hooks.nodes?.[selector] ?? null, querySelectorAll: () => [], focus() {}, close() {}, remove() {}, showModal() {}, setAttribute() {}, insertAdjacentHTML(_, html) { log.dialogs.push(html); this.lastElementChild = { ...node(), tagName: "DIALOG" }; } });
   Object.assign(context, {
     window: context, escapeHtml, showToast: (message, kind) => log.toasts.push([message, kind ?? "ok"]), friendlyError: (error) => String(error?.message ?? error),
@@ -1456,12 +1456,12 @@ async function pageEnv({ storage = memoryStorage(), pageStorage = memoryStorage(
   context.window.MNP_REQUEST_MODULES = context.MNP_REQUEST_MODULES;
   for (const file of FILES) vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file });
   const registered = context.MNP_REQUEST_MODULES.BOM;
-  // ตารางงานเดิม (#/bom?p=work) ถูกถอดออกจาก BOM แล้ว (งานอยู่ที่โมดูลของแต่ละแผนก และ #/bom?p=work เปลี่ยนที่อยู่ไปที่นั่น) แต่ตัววาดยังอยู่ให้เทสต์ใช้เป็นตัวอย่างของ workBoard / boardCards จึงวาดตรงๆ ที่นี่
+  // ตารางงานเดิม (#/pp?p=work) ถูกถอดออกจาก BOM แล้ว (งานอยู่ที่โมดูลของแต่ละแผนก และ #/pp?p=work เปลี่ยนที่อยู่ไปที่นั่น) แต่ตัววาดยังอยู่ให้เทสต์ใช้เป็นตัวอย่างของ workBoard / boardCards จึงวาดตรงๆ ที่นี่
   const render = async (query = "") => {
-    log.hash = `#/bom${query ? `?${query}` : ""}`;
+    log.hash = `#/pp${query ? `?${query}` : ""}`;
     app.innerHTML = "";
     if (/(^|&)p=work(&|$)/.test(query)) app.innerHTML = context.MNP_BOM_PAGES.work(context.MNP_BOM.context(new URLSearchParams(query))).html;
-    else await registered.pages.bom(new URLSearchParams(query));
+    else await registered.pages.pp(new URLSearchParams(query));
     return app.innerHTML;
   };
   // โมดูล WH (#/wh): รับเข้า ส่งมอบ ปิดใบ ย้อน · เปิดได้เฉพาะคนที่ประตูของโมดูลให้ผ่าน (แผนก WH · PP · ผู้จัดการ) คนอื่นได้หน้า "ไม่พบ"
@@ -1546,9 +1546,9 @@ test("in the browser the module talks to the (mock) database: loading state, emp
   for (const page of ["dashboard", "items", "product", "structure", "variants"]) {
     html = await env.render(page === "dashboard" ? "" : `p=${page}`);
     assert.match(html, /ยังไม่มีข้อมูล BOM ในฐานข้อมูล/, `${page} explains the empty database`);
-    assert.match(html, /href="#\/bom\?p=import"/, `${page} points to the import page`);
-    assert.match(html, /class="empty empty-state rf-empty">[\s\S]*<p>ยังไม่มีข้อมูล BOM ในฐานข้อมูล · เริ่มจากนำเข้าไฟล์ Excel<\/p><a class="btn rf-btn" href="#\/bom\?p=import">นำเข้าจาก Excel<\/a>/, `${page}: the import action sits next to the text that asks for it`);
-    assert.equal((html.match(/class="btn rf-btn" href="#\/bom\?p=import"/g) ?? []).length, 1, `${page}: the import button is shown once (not also in the header)`);
+    assert.match(html, /href="#\/pp\?p=import"/, `${page} points to the import page`);
+    assert.match(html, /class="empty empty-state rf-empty">[\s\S]*<p>ยังไม่มีข้อมูล BOM ในฐานข้อมูล · เริ่มจากนำเข้าไฟล์ Excel<\/p><a class="btn rf-btn" href="#\/pp\?p=import">นำเข้าจาก Excel<\/a>/, `${page}: the import action sits next to the text that asks for it`);
+    assert.equal((html.match(/class="btn rf-btn" href="#\/pp\?p=import"/g) ?? []).length, 1, `${page}: the import button is shown once (not also in the header)`);
     assert.match(html, /data-bom-sync/, "status slot in the toolbar");
     assert.doesNotMatch(html, /undefined|NaN|\[object Object\]/);
   }
@@ -1968,7 +1968,7 @@ test("focusing the page catches up with other users' saves and redraws only when
   env.log.hash = "#/home";
   await fire();
   assert.equal(env.store.data().items.length, 0, "away from the BOM pages the focus does nothing");
-  env.log.hash = "#/bom";
+  env.log.hash = "#/pp";
   await fire("visibilitychange");
   assert.deepEqual(Array.from(env.store.data().items, (item) => item.code), ["P-OTHER"]);
   assert.equal(env.store.version(), 1);
@@ -2302,7 +2302,7 @@ test("the screens show only what the persona may do: planner group everything, S
   for (const persona of ["persona-rb", "persona-st", "persona-wh", "persona-qa"]) assert.equal((await menu(persona)).includes("customers"), false, persona);
   for (const persona of ["persona-st", "persona-wh"]) assert.ok((await menu(persona)).includes("count"), persona);
   assert.equal((await menu("persona-rb")).includes("count"), false);
-  const denied = await sees("persona-rb", "p=customers");
+  const denied = await sees("persona-rb", "p=import");
   assert.match(denied.html, /ไม่มีสิทธิ์เข้าถึงหน้านี้/);
 
   // งานของแผนก: รายงาน/พักงานเฉพาะงานของแผนกตน (planner group ทุกแผนก) · WO ของ RubberFlow เฉพาะ RB และฝ่ายวางแผน
@@ -2313,10 +2313,13 @@ test("the screens show only what the persona may do: planner group everything, S
   assert.doesNotMatch(rowOf(rb, "JOB-RB1"), /data-rf-open="jobRubberflow"/, "but does not open the WO: planning does (factory step 6)");
   assert.doesNotMatch(rowOf(rb, "JOB-GR1"), /data-rf-open="jobReport"|data-rf-action="setJobStatus"/, "but not the GR job");
   const gr = await jobPage("persona-gr");
-  assert.match(rowOf(gr, "JOB-GR1"), /data-rf-open="jobReport"/);
+  assert.doesNotMatch(rowOf(gr, "JOB-GR1"), /data-rf-open="jobReport"/, "GR reports in its own module now");
+  assert.match(rowOf(gr, "JOB-GR1"), /ทำงานที่โมดูล GR/);
   assert.doesNotMatch(rowOf(gr, "JOB-RB1"), /data-rf-open="jobReport"|jobRubberflow/);
   const planner = await jobPage("persona-pp");
-  for (const id of ["JOB-RB1", "JOB-GR1"]) assert.match(rowOf(planner, id), /data-rf-open="jobReport"/, `the planner group reports ${id}`);
+  assert.match(rowOf(planner, "JOB-RB1"), /data-rf-open="jobReport"/, "the planner group reports the RB job");
+  assert.doesNotMatch(rowOf(planner, "JOB-GR1"), /data-rf-open="jobReport"/, "GR jobs are reported in the GR module");
+  assert.match(rowOf(planner, "JOB-GR1"), /ทำงานที่โมดูล GR/);
   assert.match(rowOf(planner, "JOB-RB1"), /jobRubberflow/);
   for (const persona of ["persona-qa", "persona-st", "persona-wh"]) {
     const html = await jobPage(persona);
@@ -2324,9 +2327,11 @@ test("the screens show only what the persona may do: planner group everything, S
   }
 
   // ลูกค้า: เพิ่ม/แก้เฉพาะฝ่ายวางแผนขึ้นไป · ฟอร์มเปิดใบมีรายการลูกค้าให้เลือก
-  const customers = await sees("persona-pp", "p=customers");
-  assert.match(customers.html, /Acme Trading/);
-  assert.equal(buttons(customers.html, "customerEdit") >= 2, true, "add + edit");
+  // (the register is the sales module's page now: the table body is shared, see modules/sa-pages.js)
+  const customers = await sees("persona-pp", "p=orders");
+  const customersView = customers.env.context.MNP_BOM_PAGES.sales.customersView(customers.env.ctx());
+  assert.match(customersView.body, /Acme Trading/);
+  assert.equal(buttons(customersView.body + customersView.add, "customerEdit") >= 2, true, "add + edit");
   const dialog = customers.env.context.MNP_BOM_DIALOGS.orderNew(customers.env.ctx());
   assert.match(dialog.html, /<datalist id="bom-customer-list"><option value="Acme Trading">/);
   assert.match(dialog.html, /list="bom-customer-list"/);
@@ -2988,7 +2993,7 @@ test("RubberFlow's store holds other users' data back only for its own forms on 
   let dialog = false;
   const env = await pageEnv({ persona: "persona-rb", sandboxAdmin: false, hooks: { dialogOpen: () => dialog } });
   const editing = env.context.MNP_RUBBERFLOW.isEditing;
-  env.log.hash = "#/bom?p=jobs";
+  env.log.hash = "#/pp?p=jobs";
   dialog = true;
   assert.equal(editing(), false, "the create-WO dialog of BOM is not a RubberFlow form");
   env.log.hash = "#/rubberflow?p=orders";

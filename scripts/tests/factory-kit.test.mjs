@@ -68,10 +68,10 @@ test("bindRoot: a data-rf-action click and a data-rf-form submit reach opts.run 
   const submitBtn = fakeNode();
   const form = fakeNode({ dataset: { rfForm: "reportJob", rfArgs: '{"jobId":"J1","qtyDone":"9"}', rfSuccess: "saved {result}" }, __values: { qtyDone: "4", note: "n" }, closest: () => ({ close: () => { dialogClosed = true; } }), querySelectorAll: () => [submitBtn] });
   const openBtn = fakeNode({ dataset: { rfOpen: "jobReport", rfArgs: '{"jobId":"J2"}' } });
-  const goBtn = fakeNode({ dataset: { rfGo: "#/bom?p=work" } });
+  const goBtn = fakeNode({ dataset: { rfGo: "#/pp?p=work" } });
   const search = fakeNode({ __values: { q: "  abc  " } });
   const root = fakeRoot({ "form[data-rf-form]": [form], "[data-rf-action]": [button, confirmed], "[data-rf-open]": [openBtn], "[data-rf-go]": [goBtn], "form[data-rf-search]": [search] });
-  const ctx = { pageUrl: ({ q }) => `#/bom?q=${q}` };
+  const ctx = { pageUrl: ({ q }) => `#/pp?q=${q}` };
   kit.bindRoot(root, ctx, {
     ui: stubUi,
     run: (name, payload, successText, after) => { calls.push({ name, payload: JSON.parse(JSON.stringify(payload)), successText, after }); return true; },
@@ -93,9 +93,9 @@ test("bindRoot: a data-rf-action click and a data-rf-form submit reach opts.run 
   openBtn.handlers.click();
   assert.deepEqual(opened, [["jobReport", { jobId: "J2" }, true]]);
   goBtn.handlers.click();
-  assert.equal(log.hash, "#/bom?p=work");
+  assert.equal(log.hash, "#/pp?p=work");
   search.handlers.submit({ preventDefault() {} });
-  assert.equal(log.hash, "#/bom?q=abc");
+  assert.equal(log.hash, "#/pp?q=abc");
 });
 
 test("bindRoot: validation, a refused run, the beforeSubmit hook and transform errors", async () => {
@@ -135,8 +135,8 @@ function loadBom() {
   Object.assign(context, {
     window: context, addEventListener() {}, escapeHtml, showToast() {}, friendlyError: (error) => String(error?.message ?? error), renderRoute: async () => {}, confirmDialog: async () => true,
     URLSearchParams, Intl, Date, structuredClone, setInterval: () => 0, setTimeout: () => 0, encodeURIComponent,
-    location: { hash: "#/bom" }, app, state: { employee: { isSandbox: true } },
-    shell: (content) => content, bindShell() {}, loadingShell() {}, renderNotFound() {}, currentRoute: () => ({ path: "bom", params: new URLSearchParams("") }),
+    location: { hash: "#/pp" }, app, state: { employee: { isSandbox: true } },
+    shell: (content) => content, bindShell() {}, loadingShell() {}, renderNotFound() {}, currentRoute: () => ({ path: "pp", params: new URLSearchParams("") }),
     document: { querySelector: () => generic(), querySelectorAll: () => [], body: generic(), activeElement: null, createElement: generic },
     localStorage: { getItem: (key) => (storage.has(key) ? storage.get(key) : null), setItem: (key, value) => storage.set(key, String(value)), removeItem: (key) => storage.delete(key) },
     FormData: FormDataFake, MNP_REQUEST_MODULES: {}, TextDecoder, Uint8Array, DataView,

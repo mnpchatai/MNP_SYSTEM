@@ -37,7 +37,7 @@ test("the demo seed is deterministic, valid for the store and internally consist
   const a = fresh();
   assert.deepEqual(a, fresh());
   assert.ok(storeApi.isValidState(a));
-  assert.equal(a.users.length, 12);
+  assert.equal(a.users.length, 13);
   assert.deepEqual(a.users.filter((user) => user.dept === "WH").map((user) => [user.id, user.role]), [["B09", "wh"], ["B10", "manager"]], "the warehouse has a staff user and a manager");
   assert.deepEqual(a.users.filter((user) => ["SR", "QA"].includes(user.dept)).map((user) => [user.id, user.role]), [["B11", "sr"], ["B12", "qa"]], "the long-rod store and QA have a demo user each");
   assert.equal(a.items.length, seed.ITEMS.length);

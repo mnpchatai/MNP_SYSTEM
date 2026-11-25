@@ -1,4 +1,4 @@
-// BOM รายแผนก — โมดูล Pilot Web ในโหมดทดสอบ (#/bom?p=<หน้า>) รุ่นทดสอบของ docs/BOM_SYSTEM_PLAN.md ก่อนขึ้นฐานข้อมูล
+// ฝ่ายวางแผน (PP) เดิมชื่อ BOM รายแผนก — โมดูล Pilot Web ในโหมดทดสอบ (#/pp?p=<หน้า> · ลิงก์เก่า #/bom พาไป #/pp) รุ่นทดสอบของ docs/BOM_SYSTEM_PLAN.md ก่อนขึ้นฐานข้อมูล
 // โครงเดียวกับ RubberFlow: modules/bom-rules.js (กฎล้วน) · bom-actions.js (กฎธุรกิจ) · bom-seed.js (ข้อมูลสาธิต) · bom-store.js (บทบาท + localStorage) ·
 // bom-pages.js (หน้าและ dialog ลงทะเบียนใน window.MNP_BOM_PAGES / _DIALOGS) · ไฟล์นี้ (shell เส้นทาง การผูก event)
 // ใช้ชิ้นส่วน HTML และสไตล์ .rf-* ของ RubberFlow (window.MNP_RUBBERFLOW_UI) จึงใช้กติกา event ชื่อเดียวกัน (data-rf-form / data-rf-action / data-rf-open / data-rf-go)
@@ -11,8 +11,10 @@
 // ไฟล์นี้โหลดก่อน app.js (ดู index.html) เรียก helper ของ app.js (state, app, shell, bindShell, renderNotFound, escapeHtml, showToast,
 // friendlyError, confirmDialog, renderRoute, currentRoute) ได้เพราะถูกเรียกหลัง app.js โหลดเสร็จ
 (function registerBomModule() {
-  const PATH = "bom";
-  const TITLE = "BOM รายแผนก";
+  // โรงงานขั้น 8: BOM รายแผนก เปลี่ยนชื่อเป็นโมดูลฝ่ายวางแผน (PP) ที่ #/pp · ลิงก์เก่า #/bom… พาไป #/pp… (renderLegacyBom) · palette / data-module "bom" ของสไตล์คงเดิม
+  const PATH = "pp";
+  const LEGACY_PATH = "bom";
+  const TITLE = "ฝ่ายวางแผน (PP)";
   const NAV_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h6v4H4zM14 3h6v4h-6zM14 10h6v4h-6zM14 17h6v4h-6z"/><path d="M10 7h2v13h2M12 12h2M12 5h2"/></svg>`;
 
   const rules = window.MNP_BOM_RULES;
@@ -461,6 +463,8 @@
       };
     },
     createOrder: (p) => ({ ...p, orderedAt: rules.fromInputDate(p.orderedAt), whDue: rules.fromInputDate(p.whDue), due: dueFrom(p.due), autoDue: p.autoDue === "1" || p.autoDue === "on" }),
+    // แก้หัวใบ (โมดูลฝ่ายขาย · ฝ่ายวางแผน): วันส่งมอบคลังจากช่องวันที่ · ช่องที่ไม่ส่งมาคงเดิม
+    updateOrderHeader: (p) => ({ ...p, ...(p.whDue !== undefined ? { whDue: rules.fromInputDate(p.whDue) } : {}) }),
     // ฟอร์ม "เพิ่มส่วนประกอบ" ของหน้าสินค้า (lineAdd) ใช้คำสั่งเดียวกัน: บรรทัดเดิมของ BOM อ่านจากข้อมูลล่าสุดตอนกดบันทึก แล้วต่อบรรทัดใหม่
     // หน้าต่างของหน้าสินค้าอีกสามแบบใช้คำสั่งเดียวกัน: วางหลายบรรทัด (linesPaste) คัดลอกโครงสร้าง (treeCopy) ข้อมูลเส้นยางที่มีบรรทัดสูตรยาง (rubberEdit)
     saveBomTree: (p) => (p.lineAdd ? treeFromLineAdd(p) : p.linesPaste ? treeFromPaste(p) : p.treeCopy ? treeFromCopy(p) : p.rubberEdit ? treeFromRubberEdit(p) : p.wipInsert ? treeFromWipInsert(p) : p.lineMove ? treeFromLineMove(p) : treeFromRows(p)),
@@ -748,8 +752,24 @@
     });
   }
 
+  // ลิงก์เก่า #/bom?… → #/pp?… (คงคำค้นทั้งหมด · location.replace ไม่ทิ้งหน้าเก่าไว้ในประวัติ) · ทะเบียนลูกค้า (?p=customers) ย้ายไปโมดูลฝ่ายขาย #/sa?tab=customers
+  function legacyTarget(params) {
+    if (params.get("p") === "customers") {
+      const q = String(params.get("q") ?? "").trim();
+      return `#/sa?tab=customers${q ? `&q=${encodeURIComponent(q)}` : ""}`;
+    }
+    const text = params.toString();
+    return `#/${PATH}${text ? `?${text}` : ""}`;
+  }
+  function renderLegacyBom(params) {
+    const target = legacyTarget(params);
+    if (typeof location.replace === "function") location.replace(target);
+    else location.hash = target;
+    return undefined;
+  }
   async function renderBom(params) {
     if (!storeApi.usesBom(state.employee)) return renderNotFound();
+    if (params.get("p") === "customers") return renderLegacyBom(params);
     if (["work", "rods", "stock"].includes(params.get("p")) && store.user()) {
       // งานของฉัน คลังยางเส้นยาว และคลังของซื้อ ย้ายไปอยู่ที่โมดูลของแผนกแล้ว: เปลี่ยนที่อยู่แทนรายการเดิม (กดย้อนกลับไม่วนกลับมาหน้านี้)
       const p = params.get("p");
@@ -804,12 +824,13 @@
     label: TITLE,
     palette: "bom",
     // เมนูเห็นเฉพาะผู้ที่ใช้ BOM (storeApi.usesBom: ทุกบัญชีทดสอบ · ใช้งานจริง = กลุ่มวางแผนและแผนกในสายผลิต)
-    navAllowed: (employee) => storeApi.usesBom(employee),
+    // โหมดทดสอบ: โมดูลนี้เป็นของฝ่ายวางแผน (PP) เมนูจึงเห็นเฉพาะฝ่ายวางแผนและผู้จัดการ (factory-kit canSeeDept) · แผนกอื่นยังเปิดลิงก์ที่โมดูลของตนสร้างมาได้ (ซ่อนแค่เมนู)
+    navAllowed: (employee) => storeApi.usesBom(employee) && (employee?.isSandbox !== true || window.MNP_FACTORY?.canSeeDept?.(employee, "PP") !== false),
     // หัวกลุ่มของเมนูข้าง: "โรงงาน" ในโหมดทดสอบ (sandboxOnly · เรียงตามลำดับในผังงาน flowNo 2 = PP ร่วมกับโมดูลรายแผนก ดู factory-kit.js) · "การผลิต" เมื่อใช้งานจริง (realOnly) — รายการเดียวกัน แสดงทีละโหมด
     nav: [
-      { path: PATH, label: "BOM รายแผนก", icon: NAV_ICON, sandboxOnly: true, group: "โรงงาน", flowNo: 2, subnav: sidebarNav },
-      { path: PATH, label: "BOM รายแผนก", icon: NAV_ICON, realOnly: true, group: "การผลิต", subnav: sidebarNav },
+      { path: PATH, label: TITLE, icon: NAV_ICON, sandboxOnly: true, group: "โรงงาน", flowNo: 2, subnav: sidebarNav },
+      { path: PATH, label: TITLE, icon: NAV_ICON, realOnly: true, group: "การผลิต", subnav: sidebarNav },
     ],
-    pages: { [PATH]: renderBom },
+    pages: { [PATH]: renderBom, [LEGACY_PATH]: renderLegacyBom },
   };
 })();

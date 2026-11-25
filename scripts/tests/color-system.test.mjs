@@ -87,8 +87,8 @@ function assertReadable(label, tokens, foreground, background) {
 }
 
 test("every module and department has a full 50-950 ramp plus a paired colour", () => {
-  for (const key of ["mt", "ncr", "mg", "it", "rf", "bom", "qa", "qc", "rb", "gr", "bg", "pt", "pk", "st"]) assert.ok(RAMPS.has(key), `module palette ${key}`);
-  for (const code of ["RB", "GR", "BG", "PT", "PK", "QA", "ST", "SR", "FT", "MT", "AD", "ID"]) assert.ok(RAMPS.has(`dept:${code}`), `department palette ${code}`);
+  for (const key of ["mt", "ncr", "mg", "it", "rf", "bom", "qa", "qc", "rb", "gr", "bg", "pt", "pk", "st", "sa"]) assert.ok(RAMPS.has(key), `module palette ${key}`);
+  for (const code of ["RB", "GR", "BG", "PT", "PK", "QA", "ST", "SR", "FT", "MT", "AD", "ID", "SA"]) assert.ok(RAMPS.has(`dept:${code}`), `department palette ${code}`);
   for (const [key, ramp] of RAMPS) {
     for (const step of RAMP_STEPS) assert.match(ramp.get(`--m${step}`) ?? "", /^#[0-9a-f]{6}$/i, `${key} --m${step}`);
     for (const name of ["--p", "--p50"]) assert.match(ramp.get(name) ?? "", /^#[0-9a-f]{6}$/i, `${key} ${name}`);

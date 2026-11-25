@@ -493,14 +493,14 @@ test("WH receive panel: the column is what PK sent to WH and the receivable foll
   const planner = as("planner");
   const bom = planner.context.MNP_BOM_PAGES.jobs(ctxOf(planner, "p=jobs&dept=ALL&st=all")).html;
   const rowOf = (job) => bom.match(new RegExp(`<tr[^>]*>(?:(?!</tr>)[\\s\\S])*?${job.id}(?:(?!</tr>)[\\s\\S])*?</tr>`))?.[0] ?? "";
-  for (const dept of ["PT", "BG", "PK"]) {
+  for (const dept of ["GR", "PT", "BG", "PK"]) {
     const row = rowOf(jobBy(planner, dept, (job) => job.status !== "done") ?? jobBy(planner, dept));
     assert.ok(row, dept);
     assert.match(row, new RegExp(`href="#/${dept.toLowerCase()}"[^>]*>ทำงานที่โมดูล ${dept}`), dept);
     assert.doesNotMatch(row, /data-rf-open="(jobReport|jobHold|jobClose)"|data-rf-action="setJobStatus"/, `${dept}: no report, hold or close here`);
   }
-  const grRow = rowOf(jobBy(planner, "GR", (job) => job.status !== "done"));
-  assert.match(grRow, /data-rf-open="jobClose"/, "other departments keep their buttons");
+  const rbRow = rowOf(jobBy(planner, "RB", (job) => job.status !== "done"));
+  assert.match(rbRow, /data-rf-open="jobClose"/, "other departments keep their buttons");
 });
 
 test("dialogs of the shared step machinery follow the job's department: steps, edit and cancel of a record; PK jobs start with the three steps", async () => {

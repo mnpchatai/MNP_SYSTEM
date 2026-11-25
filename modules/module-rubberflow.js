@@ -117,7 +117,7 @@
   };
   // หน้า BOM (#/bom) วาดปุ่มเปิด/ปล่อยใบสั่งผลิตยางและ WO รอปล่อย (โรงงานขั้น 6): บันทึกชนกัน (RF_STALE) ย้อนกลับ หรือผู้อื่นบันทึก = วาดใหม่ด้วย
   // หน้าโมดูล WH (#/wh) วาดกล่องสินค้า โมดูล ST (#/st) วาดล็อตเคมี ใบสั่งซื้อ และเอกสารคลังเคมี และโมดูล QA (#/qa) วาดผลตรวจ NCR ล็อตที่กัก จาก store นี้ด้วย: บันทึกสำเร็จ ผู้อื่นบันทึก หรือย้อนกลับ = วาดหน้านั้นใหม่ (ไม่ทับ dialog ที่เปิดอยู่)
-  const onWhRoute = () => { try { return ["wh", "st", "qa", "bom"].includes(currentRoute().path); } catch { return false; } };
+  const onWhRoute = () => { try { return ["wh", "st", "qa", "pp"].includes(currentRoute().path); } catch { return false; } };
   const WH_REPAINT = Object.freeze(["saved", "synced", "reverted"]);
   store.subscribe((event) => {
     if (!onRfRoute()) {
