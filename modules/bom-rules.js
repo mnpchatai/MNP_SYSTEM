@@ -1781,7 +1781,7 @@
     const jobs = (data?.jobs ?? []).filter((job) => job.orderId === order?.id);
     const sources = jobs.filter((job) => ["GR", "PT", "BG"].includes(job.dept)).map((job) => {
       const summary = grHandoverSummary(data, job);
-      const needed = grRound(Number(job.status === "done" ? job.qtyDone : job.qtyPlanned) || 0);
+      const needed = grRound(Number(job.status === "done" ? Math.min(Number(job.qtyDone) || 0, Number(job.qtyPlanned) || 0) : job.qtyPlanned) || 0);
       return { job, dept: job.dept, itemCode: job.itemCode, needed, sent: summary.sent, received: summary.received, ready: summary.received + 1e-9 >= needed };
     }).sort((a, b) => flowStepOf(a.dept) - flowStepOf(b.dept) || String(a.itemCode).localeCompare(String(b.itemCode)));
     const receivers = partReceivers(order);

@@ -1113,8 +1113,8 @@ with recv as (
   where a.received - a.before > 0
 )
 insert into public.bom_gr_handovers (is_test, job_id, order_pk, item_code, qty, note, sent_by, sent_at, moves, from_dept, to_dept)
-select a.is_test, a.job_id, a.order_pk, a.fg_code, trim_scale(q.qty), 'ยอดรับก่อนมีการส่ง', a.first_by, a.first_at,
-       jsonb_build_array(jsonb_build_object('kind', 'send', 'at', private.bom_ms(a.first_at), 'by', coalesce(private.bom_person(a.first_by), 'ระบบ'),
+select a.is_test, a.job_id, a.order_pk, a.fg_code, trim_scale(q.qty), 'ยอดรับก่อนมีการส่ง', null, a.first_at,
+       jsonb_build_array(jsonb_build_object('kind', 'send', 'at', private.bom_ms(a.first_at), 'by', 'ระบบ',
                                             'note', 'ยอดรับก่อนมีการส่ง')),
        'PK', 'WH'
 from alloc a
