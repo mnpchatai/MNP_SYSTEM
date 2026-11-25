@@ -539,6 +539,125 @@
     return `<section class="card detail-history" aria-labelledby="detail-history-title"><h2 id="detail-history-title">ประวัติเอกสาร</h2><div class="timeline">${items || '<div class="muted small">ยังไม่มีประวัติ</div>'}</div></section>`;
   }
 
+  /* ---------- เปลี่ยน / ย้ายชิ้นส่วน (ผู้ดูแลงาน IT บันทึกลงทะเบียนอุปกรณ์ · ทุกคนที่เห็นใบอ่านประวัติได้) ---------- */
+  // ที่ว่างสองที่ในหน้ารายละเอียด: module-itrp.js โหลดข้อมูลแล้วเติมทีหลัง (ไม่มีข้อมูล/ไม่มีสิทธิ์ = ซ่อนไว้ ไม่กระทบส่วนอื่นของใบ)
+  const partChangesPlaceholders = () => '<div id="itrp-partchg-apply" hidden></div><div id="itrp-partchg-history" hidden></div>';
+
+  // ประวัติที่บันทึกแล้ว (items = model.partChangeItems) · ไม่มีรายการ = ไม่วาด
+  function partChangesHistoryCard(items) {
+    if (!items.length) return "";
+    return `<section class="card itrp-partchg-history" aria-labelledby="itrp-partchg-history-title"><h2 id="itrp-partchg-history-title">ประวัติการเปลี่ยน / ย้ายชิ้นส่วน <span class="detail-section-count">${items.length}</span></h2>
+      <div class="table-wrap"><table class="itrp-parts-table"><thead><tr><th scope="col">ลำดับ</th><th scope="col">วันเวลา</th><th scope="col">เครื่อง</th><th scope="col">รายการ</th><th scope="col">ผู้บันทึก</th></tr></thead><tbody>${items.map((item) => `<tr>
+        <td data-label="ลำดับ">${esc(item.no)}</td>
+        <td data-label="วันเวลา">${esc(item.atText)}</td>
+        <td data-label="เครื่อง"><strong>${esc(item.host)}</strong></td>
+        <td data-label="รายการ" class="itrp-text">${esc(item.text)}${item.slot ? ` <span class="muted small">· ช่อง ${esc(item.slot)}</span>` : ""}${item.note ? `<br><span class="muted small">หมายเหตุ: ${esc(item.note)}</span>` : ""}</td>
+        <td data-label="ผู้บันทึก">${esc(item.by)}</td></tr>`).join("")}</tbody></table></div>
+    </section>`;
+  }
+
+  const pcButton = (action, label, { host = "", asset = "", index = null, tone = "secondary", disabled = false, aria = "" } = {}) => `<button type="button" class="btn ${tone} small" data-pc-act="${esc(action)}"${host ? ` data-pc-host="${esc(host)}"` : ""}${asset ? ` data-pc-asset="${esc(asset)}"` : ""}${index !== null ? ` data-pc-index="${index}"` : ""}${aria ? ` aria-label="${esc(aria)}"` : ""}${disabled ? " disabled" : ""}>${esc(label)}</button>`;
+  const spareOption = (item) => `<option value="${esc(item.id)}">${esc(model.partAssetDetail(item))}</option>`;
+  // ตัวเลือกของ select ชิ้นสำรอง (วาดใหม่เมื่อพิมพ์ค้นหา) · groups = model.availableSpares · หลายชนิดจัดเป็น optgroup
+  function spareOptions(groups, { grouped = false } = {}) {
+    if (!groups.length) return '<option value="">ไม่พบชิ้นสำรองที่ตรงกัน</option>';
+    const body = grouped
+      ? groups.map((group) => `<optgroup label="${esc(group.typeName)}">${group.items.map(spareOption).join("")}</optgroup>`).join("")
+      : groups.flatMap((group) => group.items).map(spareOption).join("");
+    return `<option value="">— เลือกชิ้นสำรอง —</option>${body}`;
+  }
+  const resultStatusField = (value = "broken") => `<div class="field" data-field="result_status"><label for="itrp-pc-result">สถานะของชิ้นเดิมหลังถอดออก ${REQUIRED}</label><select class="select" id="itrp-pc-result" name="result_status">${model.PART_RESULT_STATUSES.map((item) => `<option value="${esc(item.value)}"${item.value === value ? " selected" : ""}>${esc(item.label)}</option>`).join("")}</select></div>`;
+  const slotField = (hint) => `<div class="field" data-field="slot"><label for="itrp-pc-slot">ช่อง / Slot (ไม่บังคับ)</label><input class="input" id="itrp-pc-slot" name="slot" maxlength="${model.MAX_PART_SLOT}" autocomplete="off">${hint ? `<small>${esc(hint)}</small>` : ""}</div>`;
+  const noteField = () => `<div class="field" data-field="note"><label for="itrp-pc-note">หมายเหตุ (ไม่บังคับ)</label><input class="input" id="itrp-pc-note" name="note" maxlength="${model.MAX_PART_NOTE}" autocomplete="off"></div>`;
+  const spareSearchField = () => '<div class="field" data-field="spare_q"><label for="itrp-pc-spare-q">ค้นหาชิ้นสำรอง (เลขทะเบียน ชื่อ รุ่น ซีเรียล ที่เก็บ)</label><input class="input" id="itrp-pc-spare-q" name="spare_q" type="search" autocomplete="off" spellcheck="false"></div>';
+
+  // ฟอร์มเลือกรายละเอียดของรายการหนึ่ง (วาดใต้ชิ้นส่วนที่กด หรือใต้ปุ่ม "ติดตั้งชิ้นสำรองเพิ่ม") · editor = { action, host_code, asset_id }
+  function partChangeEditor({ ctx, rows, editor, busy }) {
+    const part = editor.action === "install" ? null : model.findInstalledPart(ctx, editor.host_code, editor.asset_id);
+    if (editor.action !== "install" && !part) return "";
+    let body = "";
+    let title = "";
+    let blocked = "";
+    if (editor.action === "replace") {
+      title = `เปลี่ยน ${model.partAssetLabel(part)}`;
+      const groups = model.availableSpares(ctx, rows, { typeCode: part.type_code });
+      if (!groups.length) blocked = `ไม่มีชิ้นสำรองชนิด ${part.type_name ?? part.type_code} ในทะเบียน (เลือกได้เฉพาะชนิดเดียวกัน) กรุณาเพิ่มชิ้นสำรองในทะเบียนอุปกรณ์ก่อน`;
+      body = `${spareSearchField()}
+        <div class="field" data-field="new_asset_id"><label for="itrp-pc-spare">ชิ้นสำรองที่จะใส่แทน (ชนิด ${esc(part.type_name ?? part.type_code)}) ${REQUIRED}</label><select class="select" id="itrp-pc-spare" name="new_asset_id" data-spare-type="${esc(part.type_code)}">${spareOptions(groups)}</select></div>
+        ${resultStatusField("broken")}${slotField("ไม่กรอก = ใช้ช่องเดิมของชิ้นที่ถอด")}${noteField()}`;
+    } else if (editor.action === "remove") {
+      title = `ถอด ${model.partAssetLabel(part)} ออกจากเครื่อง`;
+      body = `${resultStatusField("broken")}${noteField()}`;
+    } else if (editor.action === "move") {
+      title = `ย้าย ${model.partAssetLabel(part)} ไปเครื่องอื่น`;
+      const targets = model.availableMoveTargets(ctx, editor.host_code);
+      if (!targets.length) blocked = "ไม่มีเครื่องปลายทางในทะเบียน";
+      body = `<div class="field" data-field="to_host_code"><label for="itrp-pc-target">เครื่องปลายทาง (พิมพ์รหัสหรือเลือกจากรายการ) ${REQUIRED}</label><input class="input" id="itrp-pc-target" name="to_host_code" list="itrp-pc-target-list" maxlength="50" autocomplete="off" autocapitalize="characters" spellcheck="false"><datalist id="itrp-pc-target-list">${targets.map((target) => `<option value="${esc(target.code)}" label="${esc(target.name)}"></option>`).join("")}</datalist></div>
+        ${slotField("ไม่กรอก = ล้างช่องเดิม (ชิ้นส่วนอยู่ในเครื่องปลายทางโดยไม่ระบุช่อง)")}${noteField()}`;
+    } else {
+      title = `ติดตั้งชิ้นสำรองเพิ่มในเครื่อง ${editor.host_code}`;
+      const groups = model.availableSpares(ctx, rows);
+      if (!groups.length) blocked = "ไม่มีชิ้นสำรองในทะเบียน (เลือกได้เฉพาะชิ้นที่สถานะสำรองและยังไม่ผูกเครื่อง)";
+      body = `${spareSearchField()}
+        <div class="field" data-field="asset_id"><label for="itrp-pc-spare">ชิ้นสำรองที่จะติดตั้ง ${REQUIRED}</label><select class="select" id="itrp-pc-spare" name="asset_id" data-spare-type="">${spareOptions(groups, { grouped: true })}</select></div>
+        ${slotField("")}${noteField()}`;
+    }
+    return `<form class="itrp-partchg-editor" id="itrp-partchg-editor" data-pc-editor novalidate>
+      <h4>${esc(title)}</h4>
+      <div class="itrp-partchg-editor-message" data-pc-editor-message role="alert"></div>
+      ${blocked ? `<p class="rf-callout is-warn" role="status">${esc(blocked)}</p>` : body}
+      <div class="form-actions">${pcButton("editor-cancel", "ยกเลิก", { disabled: busy })}${blocked ? "" : `<button type="submit" class="btn is-primary small"${busy ? " disabled" : ""}>เพิ่มเข้ารายการ</button>`}</div>
+    </form>`;
+  }
+
+  // รายละเอียดรองของชิ้นส่วน (รุ่น / ซีเรียล / ที่เก็บ) ที่ยังไม่อยู่ในชื่อ
+  function partExtraText(part, label) {
+    return [part.model, part.serial ? `S/N ${part.serial}` : "", part.place].map((bit) => String(bit ?? "").trim()).filter((bit) => bit && !label.includes(bit)).join(" · ");
+  }
+
+  // การ์ดบันทึกการเปลี่ยนชิ้นส่วน (ผู้ดูแลงาน IT) · ctx = model.normalizePartContext · rows = รายการที่เลือกไว้ยังไม่บันทึก
+  // message = ข้อความ (HTML ที่ escape แล้ว) เหนือรายการ · errorRow = เลขแถว (เริ่ม 1) ที่ฐานข้อมูลบอกว่าผิด
+  function partChangesCard({ ctx, rows = [], editor = null, busy = false, message = "", errorRow = null } = {}) {
+    const open = (inner) => `<section class="card itrp-partchg-card" id="itrp-partchg-card" aria-labelledby="itrp-partchg-title"${busy ? ' aria-busy="true"' : ""}><h2 id="itrp-partchg-title">เปลี่ยน / ย้ายชิ้นส่วน</h2>${inner}</section>`;
+    if (!ctx.canApply) return open(`<p class="rf-callout is-warn" role="status">${esc(ctx.blockedReason || "ยังบันทึกการเปลี่ยนชิ้นส่วนไม่ได้")}</p>`);
+    const used = model.usedPartIds(rows);
+    const editorHtml = editor ? partChangeEditor({ ctx, rows, editor, busy }) : "";
+    const partRow = (host, part) => {
+      const pending = used.has(part.id);
+      const label = model.partAssetLabel(part);
+      const extra = partExtraText(part, label);
+      const actions = model.canChangePart(part) && !pending
+        ? ["replace", "remove", "move"].map((action) => pcButton(action, model.partActionLabel(action), { host: host.code, asset: part.id, disabled: busy, aria: `${model.partActionLabel(action)} ${label}` })).join("")
+        : "";
+      const editingThis = editor && editor.action !== "install" && editor.host_code === host.code && editor.asset_id === part.id;
+      return `<li class="itrp-partchg-part${pending ? " is-pending" : ""}" data-asset="${esc(part.id)}">
+        <div class="itrp-partchg-part-main"><strong>${esc(label)}</strong> <span class="badge itrp-partchg-status is-${esc(part.status)}">${esc(model.partAssetStatusLabel(part.status))}</span>${part.slot ? ` <span class="muted small">ช่อง ${esc(part.slot)}</span>` : ""}${extra ? ` <span class="muted small">${esc(extra)}</span>` : ""}${pending ? ' <span class="badge itrp-partchg-pending">รอบันทึก</span>' : ""}</div>
+        ${actions ? `<div class="itrp-partchg-part-actions">${actions}</div>` : ""}
+        ${editingThis ? editorHtml : ""}
+      </li>`;
+    };
+    const hostHtml = ctx.hosts.map((host) => {
+      const groups = model.partGroups(host.parts);
+      return `<section class="itrp-partchg-host" data-host="${esc(host.code)}" aria-label="เครื่อง ${esc(host.code)}">
+        <h3>${esc(host.code)}${host.device?.name ? ` <span class="muted small">${esc(host.device.name)}</span>` : ""} <span class="badge itrp-partchg-source">${esc(model.partHostSourceLabel(host.source) || "เครื่องของใบ")}</span></h3>
+        ${groups.length ? groups.map((group) => `<div class="itrp-partchg-group"><h4>${esc(group.typeName)}</h4><ul class="itrp-partchg-parts">${group.items.map((part) => partRow(host, part)).join("")}</ul></div>`).join("") : '<p class="muted small">ยังไม่มีชิ้นส่วนที่ผูกกับเครื่องนี้ในทะเบียน</p>'}
+        <div class="itrp-partchg-host-actions">${pcButton("install", "ติดตั้งชิ้นสำรองเพิ่ม", { host: host.code, disabled: busy })}</div>
+        ${editor && editor.action === "install" && editor.host_code === host.code ? editorHtml : ""}
+      </section>`;
+    }).join("");
+    const pendingHtml = rows.length
+      ? `<div class="itrp-partchg-pending-box"><h3>รายการที่เลือก <span class="detail-section-count">${rows.length}/${ctx.max}</span></h3>
+        <ol class="itrp-partchg-pending-list">${rows.map((row, index) => `<li class="itrp-partchg-pending-row${errorRow === index + 1 ? " is-error" : ""}" data-pc-line="${index + 1}"><span class="itrp-text">${esc(model.partChangeSummary(row, ctx))}</span>${pcButton("remove-row", "ลบ", { index, disabled: busy, aria: `ลบรายการที่ ${index + 1}` })}</li>`).join("")}</ol>
+        <div class="form-actions"><button type="button" class="btn is-primary" data-pc-act="save"${busy ? " disabled" : ""}>บันทึกการเปลี่ยนชิ้นส่วน (${rows.length} รายการ)</button></div></div>`
+      : '<p class="muted small">ยังไม่ได้เลือกรายการ · กดปุ่มที่ชิ้นส่วนเพื่อเปลี่ยน ถอด หรือย้าย แล้วกดบันทึกทีเดียว</p>';
+    return open(`<p class="muted small">เลือกรายการกับเครื่องของใบนี้ได้ครั้งละไม่เกิน ${ctx.max} รายการ แล้วกดบันทึกทีเดียว ระบบอัปเดตทะเบียนอุปกรณ์พร้อมกัน ถ้ามีแถวไหนผิดจะไม่บันทึกเลย · ประวัติที่บันทึกแล้วแก้หรือลบไม่ได้</p>
+      <div id="itrp-partchg-message" role="status">${message}</div>
+      ${hostHtml}${pendingHtml}`);
+  }
+
+  // โหลดข้อมูลชิ้นส่วนไม่สำเร็จ (เน็ตหลุด) · ผู้ดูแลงาน IT ลองใหม่ได้โดยไม่ต้องโหลดทั้งหน้า
+  const partChangesLoadFailed = () => `<section class="card itrp-partchg-card" aria-labelledby="itrp-partchg-title"><h2 id="itrp-partchg-title">เปลี่ยน / ย้ายชิ้นส่วน</h2><p class="muted small">โหลดข้อมูลชิ้นส่วนไม่สำเร็จ ตรวจอินเทอร์เน็ตแล้วลองใหม่</p><div class="form-actions">${pcButton("reload", "ลองอีกครั้ง")}</div></section>`;
+
   // ใบทั้งใบ · ปุ่มซ่อนตาม allowed_actions อยู่แล้ว (ฟอร์มถาม/ส่งงาน/แก้ไขงานวาดเฉพาะผู้ที่มีปุ่มนั้น)
   function detailPage(detail, { back } = {}) {
     const buttons = model.actionButtons(detail.allowed_actions);
@@ -564,6 +683,7 @@
             </dl>
           </section>
           ${reportCards(detail)}
+          ${partChangesPlaceholders()}
           ${commentsCard(comments, { pendingId: detail.info_pending?.comment_id ?? null, hideId: pending ? pending.commentId : null })}
           ${filesAndReworks(detail)}
         </div>
@@ -617,7 +737,19 @@
           <td class="itrp-sheet-text">${esc(row.body)}</td></tr>`).join("")}</tbody></table>`;
   }
 
-  function printSheet(detail) {
+  // ประวัติเปลี่ยน/ย้ายชิ้นส่วน (ตารางเล็กท้ายใบ) · items = model.partChangeItems · ไม่มีรายการ = ไม่มีส่วนนี้
+  function printPartChanges(items) {
+    if (!items.length) return "";
+    return `<h2 class="itrp-sheet-section">ประวัติการเปลี่ยน / ย้ายชิ้นส่วน</h2>
+        <table class="itrp-sheet-table itrp-sheet-partchg"><thead><tr><th>ลำดับ</th><th>วันเวลา</th><th>เครื่อง</th><th>รายการ</th><th>ผู้บันทึก</th></tr></thead><tbody>${items.map((item) => `<tr>
+          <td class="itrp-center">${item.no}</td>
+          <td>${esc(item.atText)}</td>
+          <td>${esc(item.host)}</td>
+          <td class="itrp-sheet-text">${esc(item.text)}${item.slot ? ` · ช่อง ${esc(item.slot)}` : ""}${item.note ? ` · ${esc(item.note)}` : ""}</td>
+          <td>${esc(item.by)}</td></tr>`).join("")}</tbody></table>`;
+  }
+
+  function printSheet(detail, { partChanges = [] } = {}) {
     const isTest = Boolean(detail.is_test) || model.isTestDoc(detail.doc_no);
     const latest = model.repairReports(detail).latest;
     const report = model.reportView(latest);
@@ -681,16 +813,17 @@
         </div>
         ${printReworks(model.reworkRounds(detail))}
         ${printComments(model.commentRows(detail))}
+        ${printPartChanges(partChanges)}
         <p class="itrp-sheet-note">ลงนามอิเล็กทรอนิกส์ผ่านระบบ (ชื่อและวันเวลาตามที่กดในระบบ) · สถานะใบแจ้งซ่อม ณ ที่พิมพ์: ${esc(model.statusLabel(detail.status))}</p>
       </article>`;
   }
 
-  function printPage(detail) {
+  function printPage(detail, { partChanges = [] } = {}) {
     return page(`<div class="itrp-print-toolbar no-print">
         <a class="btn secondary" href="${esc(orderHref(detail.id))}">‹ กลับไปรายละเอียด</a>
         <button type="button" class="btn is-primary" id="itrp-print-button">พิมพ์</button>
       </div>
-      ${printSheet(detail)}`, { showDevNotice: false });
+      ${printSheet(detail, { partChanges })}`, { showDevNotice: false });
   }
 
   /* ---------- ตั้งค่า (it_admin) ---------- */
@@ -736,7 +869,7 @@
   // ล้างข้อมูลใบแจ้งซ่อมทดสอบ: เฉพาะ admin ตัวจริงที่อยู่ในโหมดทดสอบ (state.sandbox ตั้งโดย app.js)
   const purgeRow = () => `<div class="itrp-purge"><button type="button" class="btn danger small" id="itrp-purge">ล้างข้อมูลใบแจ้งซ่อมทดสอบ</button></div>`;
 
-  const api = { head, newButton, tabs, page, errorCard, mineList, approvalsList, itList, orderForm, orderReview, uploadPanel, detailPage, detailHead, completeFormCard, partRow, deviceRow, devicesTable, codeOptions, vendorLabel, reworkFormCard, askFormCard, answerCard, commentsCard, reportCards, partsTable, printComments, reworkRoundsCard, filesAndReworks, historyCard, actionsCard, printSheet, printPage, settingsPage, staffTable, docCounterCard, purgeRow, testTag };
+  const api = { head, newButton, tabs, page, errorCard, mineList, approvalsList, itList, orderForm, orderReview, uploadPanel, detailPage, detailHead, completeFormCard, partRow, deviceRow, devicesTable, codeOptions, vendorLabel, reworkFormCard, askFormCard, answerCard, commentsCard, reportCards, partsTable, printComments, reworkRoundsCard, filesAndReworks, historyCard, actionsCard, partChangesCard, partChangesLoadFailed, partChangeEditor, partChangesHistoryCard, spareOptions, printPartChanges, printSheet, printPage, settingsPage, staffTable, docCounterCard, purgeRow, testTag };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_ITRP_PAGES = Object.freeze(api);
 })(typeof window !== "undefined" ? window : globalThis);
