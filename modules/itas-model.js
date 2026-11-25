@@ -871,7 +871,8 @@
           ]);
         }
       }
-      return { kind, label: KIND_LABELS[kind], count: kind === "internal" ? grouped.counts.internal : grouped.counts.peripheral, lines };
+      // count = จำนวนแถวที่พิมพ์ (รวมที่ยกเลิกใช้งานแล้ว) ให้ตรงกับตารางใต้หัวข้อ · จำนวนที่ยังใช้อยู่ดูที่ summary
+      return { kind, label: KIND_LABELS[kind], count: lines.length, lines };
     };
     return {
       code: textOf(host?.device_code) || textOf(host?.reg_no),
