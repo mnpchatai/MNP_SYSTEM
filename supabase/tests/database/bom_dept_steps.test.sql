@@ -142,6 +142,20 @@ create function ds_t.fg_own() returns numeric language sql stable as $$
   select coalesce(sum(case when m ->> 'kind' = 'receive' then (m ->> 'qty')::numeric when m ->> 'kind' = 'unreceive' then -(m ->> 'qty')::numeric else 0 end), 0)
   from jsonb_array_elements(public.app_bom_master() -> 'fgMoves') m where m ->> 'orderId' = '251225-27001' and m ->> 'fgCode' = 'FG-A'
 $$;
+-- ใบ × สินค้า (ทั้งสองโหมด) ที่ WH รับสุทธิเกิน Σ ที่ PK ส่งให้ WH (ไม่นับยกเลิก) · ต้องเป็น 0 เสมอหลังไฟล์นี้ (ข้อ 7 เติมแถวส่งของยอดที่รับก่อนมีการส่ง)
+-- อ่านตารางตรง จึงเรียกด้วย reset role เท่านั้น
+create function ds_t.wh_over_sent() returns integer language sql stable as $$
+  select count(*)::integer
+  from (select m.is_test, m.order_pk, m.fg_code, sum(case when m.kind = 'receive' then m.qty else -m.qty end) as received
+        from public.bom_fg_moves m where m.kind in ('receive', 'unreceive') group by m.is_test, m.order_pk, m.fg_code) r
+  where r.received > 0.000000001 + coalesce((select sum(h.qty) from public.bom_gr_handovers h
+                                             where h.is_test = r.is_test and h.order_pk = r.order_pk and h.item_code = r.fg_code
+                                               and h.to_dept = 'WH' and h.status <> 'cancelled'), 0)
+$$;
+select is(ds_t.wh_over_sent(), 0, 'after the migration every order and product has at least as much sent from PK to WH as WH received');
+select ok(not exists (select 1 from public.bom_gr_handovers h where h.to_dept = 'WH' and h.note = 'ยอดรับก่อนมีการส่ง'
+                        and (h.status <> 'sent' or h.from_dept <> 'PK' or h.qty > (select j.qty_done from public.bom_jobs j where j.id = h.job_id) + 0.000000001)),
+  'a filled-in send is a PK to WH send still sent and never above the good pieces of its job');
 select set_config('test.cfg_pt', private.bom_dept_default_config('PT')::text, true);
 select set_config('test.cfg_bg', private.bom_dept_default_config('BG')::text, true);
 select set_config('test.cfg_pk', private.bom_dept_default_config('PK')::text, true);
@@ -339,6 +353,9 @@ select lives_ok($$ select ds_t.send('sendPkToWh', 323, 'JOB-7-PK', 0.5) $$, 'a s
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
 select throws_ok($$ select ds_t.receive_fg(1) $$, 'BOM_FG_EXCEEDS', 'WH receives the fraction only');
 select lives_ok($$ select ds_t.receive_fg(0.5) $$, 'WH receives the half piece');
+reset role;
+select is(ds_t.wh_over_sent(), 0, 'after the receipts WH still never holds more than PK sent, for every order and product');
+set local role authenticated;
 
 -- 11. ชุดเรคอร์ด -----------------------------------------------------------------------------------------------------------------
 select ok(ds_t.ho(ds_t.uid(301)) ?& array['id', 'jobId', 'orderId', 'itemCode', 'qty', 'status', 'note', 'fromDept', 'toDept', 'sentBy', 'sentAt', 'receivedBy', 'receivedAt',

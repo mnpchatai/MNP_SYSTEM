@@ -229,7 +229,8 @@
     fixGrDemoIds(d);
   }
 
-  function buildSeed(now = Date.now(), { rods = true, gr = true } = {}) {
+  // parts = false: ไม่มีการเบิกจ่ายของซื้อสาธิตของ DEMO-26001 (เทสต์ขั้นตอนเบิก / คืนของซื้อเริ่มจากใบที่ยังไม่เบิกเลย)
+  function buildSeed(now = Date.now(), { rods = true, gr = true, parts = true } = {}) {
     const { DAY } = rules();
     const A = actions();
     const d = emptyState();
@@ -345,6 +346,8 @@
     A.receiveFg(d, { orderId: pi8, lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 8 }] }, at(now - 6 * DAY, "wh"));
     A.receiveFg(d, { orderId: pi8, lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 12 }] }, at(now - 5 * DAY, "wh"));
     A.deliverFg(d, { orderId: pi8, lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 20 }] }, at(now - 4 * DAY, "wh"));
+    // ST จ่ายวัตถุดิบบางส่วนของใบ DEMO-26001 ให้เห็นในหน้า "วัตถุดิบจาก ST" ของ PT / BG (จำนวน วันที่ ผู้จ่าย): เม็ดพลาสติกของแกน PT 0.2 kg · ผ้าตาข่ายของกระเป๋า BG 10 หลา
+    if (parts) A.issueOrderParts(d, { orderId: pi1, lines: [{ itemCode: "P-PEL-BK", qty: 0.2 }, { itemCode: "P-FAB-BL", qty: 10 }] }, at(now - 3 * DAY, "st"));
     if (rods) addRodDemo(d, now);
     if (gr) addGrDemo(d, now);
     if (gr) addDeptDemo(d, now);

@@ -42,6 +42,8 @@
 --   แก้ / ยกเลิกผล หรือเปลี่ยนขั้นสุดท้ายของงาน PK จนยอดดีต่ำกว่าที่ส่งให้ WH แล้ว = BOM_GR_EXCEEDS (private.bom_gr_recompute เดิมนับทุกการส่งของงาน)
 --   receiveFg (private.bom_fg_move): เพดานรับสะสมของใบ × สินค้า = min(ยอดที่ PK ทำ (bom_fg_pk_done เดิม), Σ ที่ PK ส่งให้ WH ไม่นับยกเลิก (bom_fg_pk_sent)) เกิน = BOM_FG_EXCEEDS
 --     อย่างอื่นของ bom_fg_move ไม่เปลี่ยน: รับบางส่วน ปิดใบอัตโนมัติ closeOrder / closeOrderShort (ยังต้องรับเท่ายอดที่ PK ทำ) ส่วนเกินเป็นสต็อก reverseFg
+--   ข้อมูลเดิม (ข้อ 7): ใบ × สินค้าที่ WH รับเข้าแล้วก่อนไฟล์นี้ได้แถวส่ง PK → WH (sent · note 'ยอดรับก่อนมีการส่ง') เท่ายอดรับสุทธิ ทั้งสองโหมด
+--     จึง Σ ที่ส่ง >= ที่รับเสมอ: ใบเก่าไม่ค้าง "ยังไม่ได้ส่ง WH" และ closeOrderShort ไม่ติดเพดานใหม่
 --   รหัสข้อผิดพลาด: ใช้รหัสเดิมทั้งหมด (BOM_INVALID_GR / BOM_GR_EXCEEDS / BOM_FG_EXCEEDS / BOM_FORBIDDEN / BOM_STALE / BOM_INVALID_TRANSITION)
 --
 -- รูปเรคอร์ดที่ส่งกลับ (เพิ่มช่อง ชุดเดิม): grConfig + dept · key = lower(dept) ('gr' ของ GR เหมือนเดิม) เรียง GR ก่อน
@@ -74,7 +76,7 @@
 -- Rollback (ข้อมูลทดสอบเท่านั้น) ลำดับสำคัญ:
 --   1) create or replace สิบฟังก์ชันกลับด้วยนิยามต้นทางที่ระบุข้างบน (ลายเซ็นเดิม สิทธิ์เดิมคงอยู่)
 --   2) drop function private.bom_fg_pk_sent(uuid, text), private.bom_dept_config_now(text), private.bom_dept_default_config(text)
---   3) delete from public.bom_gr_handovers where from_dept <> 'GR' · delete from public.bom_gr_config where dept <> 'GR'
+--   3) delete from public.bom_gr_handovers where from_dept <> 'GR' (รวมแถวที่ข้อ 7 เติม) · delete from public.bom_gr_config where dept <> 'GR'
 --      · ลบผล / แผนของงาน PT BG PK: delete from public.bom_gr_records r using public.bom_jobs j where j.id = r.job_id and j.dept <> 'GR' (และ bom_gr_job_plans แบบเดียวกัน)
 --   4) alter table public.bom_gr_handovers drop constraint bom_gr_handovers_route_check, drop constraint bom_gr_handovers_wh_status_check, drop constraint bom_gr_handovers_qty_check,
 --      drop column from_dept, drop column to_dept, alter column qty type integer, add constraint bom_gr_handovers_qty_check check (qty between 1 and 10000000)
@@ -1079,3 +1081,42 @@ begin
 end;
 $$;
 revoke all on function private.bom_fg_move(public.employees, text, jsonb) from public, anon, authenticated;
+
+-- 7. ยอดที่ WH รับเข้าก่อนมีการส่ง PK → WH: เติมแถวส่ง (sent) เท่ายอดรับสุทธิ ----------------------------------------------------------------
+-- ทำไม: ใบที่ WH รับเข้าแล้วก่อนไฟล์นี้ไม่มีแถวส่งให้ WH · เพดานใหม่ (ข้อ 6) = min(ยอด PK, Σ ที่ส่ง) จึงต้องนับที่รับไปแล้วเป็นที่ส่งแล้ว
+--   ไม่งั้นการ์ด PK แสดง "ยังไม่ได้ส่ง WH" เท่ายอดที่ WH รับไปแล้ว ส่งแล้ว WH ก็รับเพิ่มไม่ได้ และ closeOrderShort ติด
+--   หลังเติม: ทุกใบ × สินค้า Σ ที่ส่ง (ไม่นับยกเลิก) >= ที่ WH รับสุทธิ (pgTAP bom_dept_steps ตรวจ) · client นับที่ยังไม่ได้ส่งจากแถวส่งอย่างเดียว เหมือนฐานข้อมูล
+-- ยอดรับสุทธิต่อโหมด × ใบ × สินค้า = Σ receive − Σ unreceive (แบบ private.bom_fg_total · ทั้งสองโหมด is_test ไม่ผ่าน bom_test_mode())
+--   กระจายลงงาน PK / FG ของใบ × สินค้า ตามลำดับงาน (created_at, job_no) งานละไม่เกินยอดดีของงาน (qty_done: เพดาน Σ ที่ส่งของ private.bom_gr_recompute)
+--   ปัดขึ้นทศนิยม 4 ตำแหน่ง (constraint ของแถว) ถ้าไม่เกินยอดดี ไม่งั้นปัดลง · ส่วนที่เกินยอดดีของทุกงาน (ไม่ควรมี: เพดานรับเดิม = ยอด PK) ไม่มีงานให้ผูก จึงไม่เติม
+-- แถวที่เติม: note = 'ยอดรับก่อนมีการส่ง' · sent_by / sent_at = ผู้รับและเวลาของการรับครั้งแรก (sent_by เป็น null ได้: on delete set null) · moves = หนึ่งแถว send ชื่อผู้รับ (ไม่มี = 'ระบบ')
+--   trigger ของตาราง: sandbox_row_scope ไม่ทับ is_test ตอนไม่มี auth.uid() (migration) · bom_stamp_version ประทับเวอร์ชันถัดไป client จึงได้แถวใน delta รอบหน้า
+--   ไม่มีแถวส่งให้ WH ก่อนข้อนี้ (คอลัมน์ to_dept เพิ่งเพิ่ม) จึงไม่ต้องหักที่ส่งอยู่แล้ว · rollback ข้อ 3 (from_dept <> 'GR') ลบแถวเหล่านี้ไปด้วย
+with recv as (
+  select m.is_test, m.order_pk, m.fg_code,
+         sum(case when m.kind = 'receive' then m.qty else -m.qty end) as qty,
+         min(m.created_at) filter (where m.kind = 'receive') as first_at,
+         (array_agg(m.created_by order by m.created_at, m.id) filter (where m.kind = 'receive'))[1] as first_by
+  from public.bom_fg_moves m
+  where m.kind in ('receive', 'unreceive')
+  group by m.is_test, m.order_pk, m.fg_code
+), jobs as (
+  select r.is_test, r.order_pk, r.fg_code, r.qty as received, r.first_at, r.first_by, j.id as job_id, j.qty_done,
+         coalesce(sum(j.qty_done) over (partition by r.is_test, r.order_pk, r.fg_code order by j.created_at, j.job_no
+                                        rows between unbounded preceding and 1 preceding), 0) as before
+  from recv r
+  join public.bom_jobs j on j.is_test = r.is_test and j.order_pk = r.order_pk and j.dept = 'PK' and j.kind = 'FG' and j.item_code = r.fg_code and j.qty_done > 0
+  where r.qty > 0
+), alloc as (
+  select a.*, least(a.qty_done, a.received - a.before) as raw
+  from jobs a
+  where a.received - a.before > 0
+)
+insert into public.bom_gr_handovers (is_test, job_id, order_pk, item_code, qty, note, sent_by, sent_at, moves, from_dept, to_dept)
+select a.is_test, a.job_id, a.order_pk, a.fg_code, trim_scale(q.qty), 'ยอดรับก่อนมีการส่ง', a.first_by, a.first_at,
+       jsonb_build_array(jsonb_build_object('kind', 'send', 'at', private.bom_ms(a.first_at), 'by', coalesce(private.bom_person(a.first_by), 'ระบบ'),
+                                            'note', 'ยอดรับก่อนมีการส่ง')),
+       'PK', 'WH'
+from alloc a
+cross join lateral (select case when ceil(a.raw * 10000) / 10000 <= a.qty_done then ceil(a.raw * 10000) / 10000 else floor(a.raw * 10000) / 10000 end as qty) q
+where q.qty > 0;

@@ -95,17 +95,41 @@ test("rules: PK readiness lists every GR / PT / BG job of the order and the purc
   assert.equal(R.pkReadiness(d, { id: "NONE", explosion: [] }).ready, true, "nothing to wait for = ready");
 });
 
+test("rules: PK readiness counts a finished source by the good pieces it made (planner closed short too), so the order is ready once all of that arrived", () => {
+  const d = fresh();
+  const order = d.orders.find((row) => row.id === "DEMO-26006");
+  for (const row of R.pkReadiness(d, order).parts) Object.assign(row.job, { qtyDone: row.needed, status: "done" });
+  const bg = R.pkReadiness(d, order).sources.find((row) => row.dept === "BG");
+  assert.deepEqual([bg.needed, bg.received, bg.ready], [Number(bg.job.qtyPlanned), 20, false], "an open job waits for its plan");
+  // ฝ่ายวางแผนปิดงานไม่ครบ: ทำได้ 44 ส่งให้ PK และ PK รับครบ 44 → ครบ
+  Object.assign(bg.job, { status: "done", qtyDone: 44, closeReason: "ผ้าหมด" });
+  const waiting = R.pkReadiness(d, order).sources.find((row) => row.dept === "BG");
+  assert.deepEqual([waiting.needed, waiting.ready], [44, false], "a finished job needs what it made, here 20 of 44 arrived");
+  d.grHandovers.push({ id: "bg-rest", jobId: bg.job.id, orderId: order.id, itemCode: bg.itemCode, qty: 24, status: "received", fromDept: "BG", toDept: "PK" });
+  const done = R.pkReadiness(d, order).sources.find((row) => row.dept === "BG");
+  assert.deepEqual([done.needed, done.received, done.ready], [44, 44, true], "everything it made arrived");
+  const gr = R.pkReadiness(d, order).sources.find((row) => row.dept === "GR");
+  Object.assign(gr.job, { status: "done", qtyDone: 0 });
+  const after = R.pkReadiness(d, order);
+  assert.deepEqual([after.sources.find((row) => row.dept === "GR").needed, after.ready], [0, true], "a source closed with nothing made has nothing to wait for");
+});
+
 test("rules: materials of a PT / BG job are the purchased parts of the order that go to that department, with what ST issued and when", () => {
   const d = fresh();
   const pt = ptJobOf(d);
   const [pellet] = R.deptMaterials(d, pt);
   assert.equal(pellet.itemCode, "P-PEL-BK");
-  assert.deepEqual([pellet.issued, pellet.lastAt], [0, null], "nothing issued yet");
+  // ชุดสาธิต: ST จ่ายเม็ดพลาสติกบางส่วน 0.2 kg เมื่อสามวันก่อน (issueOrderParts)
+  assert.deepEqual([pellet.issued, pellet.lastAt, pellet.lastBy, pellet.moves.length], [0.2, NOW - 3 * DAY, "สมศักดิ์ แก้วใส", 1], "the demo partial issue");
+  assert.ok(pellet.issued < pellet.planned, "partly issued");
   const part = d.jobs.find((job) => job.orderId === "DEMO-26001" && job.dept === "ST" && job.itemCode === "P-PEL-BK");
-  part.qtyDone = 0.2;
-  d.stockMoves.push({ id: "m-pel", itemCode: "P-PEL-BK", kind: "issue", qty: -0.2, balance: 4.8, ref: "DEMO-26001", at: NOW - DAY, by: "สมศักดิ์ แก้วใส", note: "" });
+  part.qtyDone = 0.25;
+  d.stockMoves.push({ id: "m-pel", itemCode: "P-PEL-BK", kind: "issue", qty: -0.05, balance: 4.75, ref: "DEMO-26001", at: NOW - DAY, by: "ทดสอบ ST", note: "" });
   const [issued] = R.deptMaterials(d, pt);
-  assert.deepEqual([issued.issued, issued.lastAt, issued.lastBy, issued.moves.length], [0.2, NOW - DAY, "สมศักดิ์ แก้วใส", 1]);
+  assert.deepEqual([issued.issued, issued.lastAt, issued.lastBy, issued.moves.length], [0.25, NOW - DAY, "ทดสอบ ST", 2], "the latest issue is shown");
+  // BG ของใบเดียวกัน: ผ้าตาข่ายจ่ายแล้ว 10 หลา ซิปยังไม่จ่าย
+  const bgOwn = R.deptMaterials(d, d.jobs.find((job) => job.orderId === "DEMO-26001" && job.dept === "BG"));
+  assert.deepEqual(bgOwn.map((row) => [row.itemCode, row.issued, row.lastBy]), [["P-FAB-BL", 10, "สมศักดิ์ แก้วใส"], ["P-ROPE-01", 0, ""], ["P-ZIP-05", 0, ""]]);
   const bgParts = R.deptMaterials(d, bgJobOf(d)).map((row) => row.itemCode);
   assert.deepEqual(bgParts.sort(), ["P-FAB-BL", "P-ROPE-01", "P-ZIP-05"], "the BG job gets fabric, zip and rope");
 });

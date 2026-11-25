@@ -1773,14 +1773,15 @@
     received = grRound(received);
     return { pkDone, sent, received, waitingAtWh: grRound(Math.max(0, sent - received)), waitingAtPk: grRound(Math.max(0, pkDone - sent)) };
   }
-  // ความพร้อมของ PK ต่อใบ (เจ้าของสั่ง 2026-11-25 "แสดงสถานะให้เห็น"): ต่อแหล่ง = งาน GR / PT / BG ของใบ { job, dept, needed (แผน), sent, received (PK รับแล้ว), ready }
+  // ความพร้อมของ PK ต่อใบ (เจ้าของสั่ง 2026-11-25 "แสดงสถานะให้เห็น"): ต่อแหล่ง = งาน GR / PT / BG ของใบ { job, dept, needed, sent, received (PK รับแล้ว), ready }
+  // needed = แผนของงาน · งานที่เสร็จแล้ว (รวมฝ่ายวางแผนปิดงานไม่ครบ) = ยอดดีที่ทำได้จริง (qtyDone) เพราะจะไม่มีของมาเพิ่มอีก
   // และของซื้อที่ ST จ่ายให้ PK (rules.partReceivers มี PK) { itemCode, name, uom, needed (แผนของงานของซื้อ), issued (ที่ ST จ่ายแล้วทั้งใบ), ready }
   // ready = ทุกแหล่งได้ครบ (ไม่มีแหล่งเลย = พร้อม) · PK บันทึกผลได้เสมอแม้ยังไม่พร้อม · งาน PK ทำชิ้นย่อยเองไม่นับเป็นแหล่ง
   function pkReadiness(data, order) {
     const jobs = (data?.jobs ?? []).filter((job) => job.orderId === order?.id);
     const sources = jobs.filter((job) => ["GR", "PT", "BG"].includes(job.dept)).map((job) => {
       const summary = grHandoverSummary(data, job);
-      const needed = grRound(Number(job.qtyPlanned) || 0);
+      const needed = grRound(Number(job.status === "done" ? job.qtyDone : job.qtyPlanned) || 0);
       return { job, dept: job.dept, itemCode: job.itemCode, needed, sent: summary.sent, received: summary.received, ready: summary.received + 1e-9 >= needed };
     }).sort((a, b) => flowStepOf(a.dept) - flowStepOf(b.dept) || String(a.itemCode).localeCompare(String(b.itemCode)));
     const receivers = partReceivers(order);

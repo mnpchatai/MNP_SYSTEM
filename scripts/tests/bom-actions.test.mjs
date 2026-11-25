@@ -16,7 +16,8 @@ const NOW = Date.parse("2026-10-29T10:00:00+07:00");
 const { DAY } = rules;
 const user = (role) => seed.USERS.find((row) => row.role === role);
 const ctx = (role = "admin", now = NOW) => ({ now, user: user(role) });
-const fresh = () => seed.buildSeed(NOW);
+// ไม่มีการเบิกจ่ายของซื้อสาธิต: เทสต์เบิก / คืนของซื้อของ DEMO-26001 เริ่มจากใบที่ยังไม่เบิกเลย
+const fresh = () => seed.buildSeed(NOW, { parts: false });
 const rejects = (fn, pattern) => assert.throws(fn, (error) => { assert.match(error.message, pattern); return true; });
 const approved = (d, code) => A.helpers.approvedBomOf(d, code);
 const day = (n) => new Date(NOW + n * DAY).setHours(0, 0, 0, 0);

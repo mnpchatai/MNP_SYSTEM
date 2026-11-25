@@ -21,7 +21,8 @@ const NO_PART_DIALOG_BUTTON = /data-rf-open="(issueParts|returnParts|undoParts)"
 const ROLES = ["admin", "manager", "planner", "rb", "gr", "pt", "bg", "st", "wh"];
 const XSS = "<script>alert(1)</script>";
 
-function load({ sandbox = true, route = "", storage = new Map() } = {}) {
+// seed: ตัวเลือกของ buildSeed ชุดสาธิต (เช่น { parts: false } = ยังไม่เบิกของซื้อของ DEMO-26001)
+function load({ sandbox = true, route = "", storage = new Map(), seed = null } = {}) {
   const context = vm.createContext({});
   const app = { innerHTML: "" };
   const log = { listeners: {}, toasts: [], renders: 0, notFound: 0, hash: `#/bom${route ? `?${route}` : ""}`, dialogs: [], confirms: [], confirmAnswer: true };
@@ -51,7 +52,13 @@ function load({ sandbox = true, route = "", storage = new Map() } = {}) {
     MNP_ST_PAGES: { access: () => "full" },
   });
   context.window.MNP_REQUEST_MODULES = context.MNP_REQUEST_MODULES;
-  for (const file of FILES) vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file });
+  for (const file of FILES) {
+    vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file });
+    if (seed && file === "modules/bom-seed.js") {
+      const build = context.MNP_BOM_SEED.buildSeed;
+      context.MNP_BOM_SEED.buildSeed = (now, options) => build(now, { ...seed, ...options });
+    }
+  }
   const registered = context.MNP_REQUEST_MODULES.BOM;
   const renderRaw = async (query = route) => {
     log.hash = `#/bom${query ? `?${query}` : ""}`;
@@ -1536,7 +1543,7 @@ test("BOM keeps no part stock page: p=stock moves to the ST module's store view 
 });
 
 test("issuing parts from the PI page: the dialog has a tick box and an editable quantity per line, a short line starts unticked and marked and offers the purchase, one button issues the ticked lines; part jobs have no report buttons", async () => {
-  const env = load();
+  const env = load({ seed: { parts: false } });
   env.store.setUser("B08"); // ST
   const D = env.context.MNP_BOM_DIALOGS;
   let html = await env.render("p=orders&sel=DEMO-26001");
@@ -1637,7 +1644,7 @@ test("issuing parts from the PI page: the dialog has a tick box and an editable 
 });
 
 test("returning parts from the PI page: the buttons appear only for ST and the planner once something is issued, the leftover dialog lists issued and returned, the undo dialog asks for a reason and the history shows the return with its reason", async () => {
-  const env = load();
+  const env = load({ seed: { parts: false } });
   const D = env.context.MNP_BOM_DIALOGS;
   const page = "p=orders&sel=DEMO-26001";
   env.store.setUser("B08"); // ST
@@ -1708,7 +1715,7 @@ test("returning parts from the PI page: the buttons appear only for ST and the p
 });
 
 test("a PI that closes while a part line is partly issued: the PI page offers the leftover return of that line (no issue, no undo), the dialog takes up to what was issued, and the ST work page has no dead waiting card", async () => {
-  const env = load();
+  const env = load({ seed: { parts: false } });
   const D = env.context.MNP_BOM_DIALOGS;
   const page = "p=orders&sel=DEMO-26001";
   env.store.setUser("B08"); // ST

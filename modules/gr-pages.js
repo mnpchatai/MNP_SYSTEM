@@ -44,13 +44,9 @@
   // งานของใบที่ปล่อยผลิตแล้ว · ยังเปิด = งานที่ยังไม่เสร็จ หรือเสร็จแล้วแต่ยังมีของดีที่ยังไม่ได้ส่ง PK (ส่งได้อีก) · เสร็จแล้ว = ที่เหลือที่ปิดงานแล้ว
   // งาน PK ส่งให้ WH ได้ทั้งใบที่ปิดแล้ว (ส่วนที่ผลิตเกิน) จึงนับใบ completed ด้วย · GR / PT / BG ส่งให้ PK เฉพาะใบที่กำลังผลิต
   const canSendOrder = (ctx, job) => (job?.dept === "PK" ? LIVE : ACTIVE).includes(orderOf(ctx, job?.orderId)?.status);
-  // ของดีที่ยังไม่ได้ส่งต่อ · PK: ส่วนที่ WH รับเข้าคลังไปแล้วโดยไม่มีรายการส่ง (ใบที่รับก่อนมีการส่ง PK → WH) ไม่นับเป็นของที่รอส่ง ไม่งั้นใบเก่าจะค้างที่ "งานของฉัน" ตลอด
-  function waitingOf(ctx, job) {
-    const sum = ctx.rules.deptHandoverSummary(ctx.data, job);
-    if (job.dept !== "PK") return sum.waiting;
-    const wh = ctx.rules.pkToWhPosition(ctx.data, job.orderId, job.itemCode);
-    return Math.max(0, sum.waiting - Math.max(0, wh.received - wh.sent));
-  }
+  // ของดีที่ยังไม่ได้ส่งต่อ = ยอดดีของงาน − Σ ที่ส่งแล้ว (ไม่นับยกเลิก) · เพดานเดียวกับฐานข้อมูล (sendToPk / sendPkToWh)
+  // ใบที่ WH รับเข้าก่อนมีการส่ง PK → WH ได้แถวส่งจาก migration 20261224010000 (ข้อ 7) แล้ว จึงไม่หักยอดรับของ WH ที่นี่
+  const waitingOf = (ctx, job) => ctx.rules.deptHandoverSummary(ctx.data, job).waiting;
   function grJobs(ctx) {
     const { data } = ctx;
     const dept = deptOf(ctx);

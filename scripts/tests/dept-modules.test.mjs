@@ -206,14 +206,22 @@ test("PT / BG วัตถุดิบจาก ST: per open order the materials
   const bgHtml = await bg.open("FACTORY_BG", "tab=materials");
   assert.match(bgHtml, /P-FAB-BL/);
   assert.match(bgHtml, /P-ZIP-05/);
-  // ST จ่ายแล้ว: ยอดและผู้จ่ายขึ้นในตาราง
+  // ชุดสาธิต: ST จ่ายบางส่วนแล้ว (เม็ดพลาสติก 0.2 kg ให้ PT · ผ้าตาข่าย 10 หลาให้ BG) ยอด วันที่ และผู้จ่ายขึ้นในตาราง
+  const rowOf = (page, code) => (page.split("<tr").find((row) => row.includes(code) && row.includes("DEMO-26001")) ?? "");
+  const stDay = pt.R.fmtDate(dataOf(pt).stockMoves.find((move) => move.itemCode === "P-PEL-BK" && move.kind === "issue").at);
+  assert.ok(rowOf(html, "P-PEL-BK").includes(`>${pt.R.fmtQty(0.2)}<`), "issued quantity");
+  assert.match(rowOf(html, "P-PEL-BK"), /สมศักดิ์ แก้วใส/, "issued by");
+  assert.ok(rowOf(html, "P-PEL-BK").includes(stDay), "issued on");
+  assert.ok(rowOf(bgHtml, "P-FAB-BL").includes(`>${pt.R.fmtQty(10)}<`), "the BG fabric issued");
+  assert.match(rowOf(bgHtml, "P-FAB-BL"), /สมศักดิ์ แก้วใส/);
+  // ST จ่ายเพิ่ม: ยอดใหม่และผู้จ่ายล่าสุดขึ้นในตาราง
   const data = dataOf(pt);
   const stJob = data.jobs.find((job) => job.dept === "ST" && job.orderId === "DEMO-26001" && job.itemCode === "P-PEL-BK");
   stJob.qtyDone = 0.28;
-  data.stockMoves.push({ id: "SM-X1", itemCode: "P-PEL-BK", kind: "issue", qty: -0.28, ref: "DEMO-26001", at: Date.parse("2026-11-20T09:00:00+07:00"), by: "สมศักดิ์ แก้วใส" });
+  data.stockMoves.push({ id: "SM-X1", itemCode: "P-PEL-BK", kind: "issue", qty: -0.08, ref: "DEMO-26001", at: Date.now(), by: "ทดสอบ ST" });
   const issued = await pt.open("FACTORY_PT", "tab=materials");
   assert.match(issued, /0\.28/);
-  assert.match(issued, /สมศักดิ์ แก้วใส/);
+  assert.match(issued, /ทดสอบ ST/);
   // ค้นหาและหน้าที่ไม่มีข้อมูล
   assert.match(await pt.open("FACTORY_PT", "tab=materials&q=zzzz"), /ไม่พบวัตถุดิบที่ค้นหา/);
 });
@@ -543,16 +551,29 @@ test("user text is escaped and the files keep to the wording rules: no raw job n
   assert.doesNotMatch(read("modules/bom-pages.js"), /ส่งงาน GR ให้ PK/, "the audit label covers every department and WH");
 });
 
-test("PK งานของฉัน: a finished job whose good WH already received before sends existed is not left open; an unsent finished job stays", async () => {
-  const env = as("pk");
+test("PK งานของฉัน: waiting to send = good pieces minus the sends (not cancelled), the same cap as the database; what WH received is never subtracted", async () => {
+  const env = as("pkHead");
   const data = dataOf(env);
+  const { waitingOf } = env.context.MNP_GR_PAGES.kit;
+  const ctx = () => ctxOf(env);
   const done = jobBy(env, "PK", (job) => job.status === "done" && job.kind === "FG" && job.orderId === "DEMO-26008");
   assert.ok(done, "the seed has a finished PK job on the closed order");
-  // ใบที่ WH รับเข้าก่อนมีการส่ง PK → WH: ไม่มีรายการส่ง แต่ WH รับครบแล้ว (fgMoves ของใบสาธิต)
-  data.grHandovers = data.grHandovers.filter((row) => !(row.orderId === done.orderId && row.itemCode === done.itemCode && (row.toDept ?? "PK") === "WH"));
-  assert.ok(data.fgMoves.some((move) => move.orderId === done.orderId && move.fgCode === done.itemCode && move.kind === "receive"), "WH received it");
+  // ใบสาธิตส่งครบแล้ว (เหมือนแถวที่ migration เติมให้ใบที่ WH รับก่อนมีการส่ง): ไม่มีอะไรรอส่ง ไม่อยู่ที่งานของฉัน
+  assert.equal(waitingOf(ctx(), done), 0);
   assert.ok(!(await env.open("FACTORY_PK")).includes(`job=${done.id}"`), "nothing left to send: not on งานของฉัน");
-  // ยังไม่มีใครรับและไม่มีการส่ง: ค้างอยู่ให้หัวหน้าส่ง
-  data.fgMoves = data.fgMoves.filter((move) => !(move.orderId === done.orderId && move.fgCode === done.itemCode));
-  assert.ok((await env.open("FACTORY_PK")).includes(`job=${done.id}"`), "unsent good keeps the job open");
+  // ไม่มีแถวส่งแม้ WH รับแล้ว: ฐานข้อมูลนับจากแถวส่งอย่างเดียว (Σ ที่ส่ง) client จึงนับเท่ากัน ไม่หักยอดรับของ WH
+  const [send] = data.grHandovers.filter((row) => row.jobId === done.id);
+  data.grHandovers = data.grHandovers.filter((row) => row.jobId !== done.id);
+  assert.ok(data.fgMoves.some((move) => move.orderId === done.orderId && move.fgCode === done.itemCode && move.kind === "receive"), "WH received it");
+  assert.equal(waitingOf(ctx(), done), Number(done.qtyDone), "the whole good is waiting, as the database lets the head send it");
+  assert.ok((await env.open("FACTORY_PK")).includes(`job=${done.id}"`), "so the job is on งานของฉัน for the head to send");
+  // ส่งบางส่วน + แถวที่ยกเลิก: ยกเลิกไม่นับ
+  data.grHandovers.push({ ...send, id: "W-1", qty: 5, status: "sent" }, { ...send, id: "W-2", qty: 3, status: "cancelled", cancelledAt: Date.now(), cancelReason: "ผิด" });
+  assert.equal(waitingOf(ctx(), done), Number(done.qtyDone) - 5);
+  assert.match(cardOf(await env.open("FACTORY_PK"), done), new RegExp(`ยังไม่ได้ส่ง WH ${Number(done.qtyDone) - 5}`), "the card says what is still to send");
+  // งาน PT: ยอดดี − ที่ส่งให้ PK (ไม่นับยกเลิก)
+  const pt = ptJob(env);
+  const ptSent = data.grHandovers.filter((row) => row.jobId === pt.id && row.status !== "cancelled").reduce((sum, row) => sum + Number(row.qty), 0);
+  assert.ok(ptSent > 0, "the seed PT job has a send");
+  assert.equal(waitingOf(ctx(), pt), Number(pt.qtyDone) - ptSent);
 });
