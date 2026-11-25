@@ -1,6 +1,6 @@
 // ทะเบียนอุปกรณ์ IT (itas) ของ Pilot Web — หน้าอยู่ใต้ #/office?module=assets (ระบบสำนักงาน › IT SUPPORT › ทะเบียนอุปกรณ์ IT)
 //
-// หน้าเดียว: รายการชนิดอุปกรณ์ (ซ้าย/บน) → ตารางของชนิดที่เลือก (ค้นหา/กรองสถานะ/เรียง) → ฟอร์มเพิ่ม/แก้ + ประวัติการแก้ไข/การย้าย · แถบสถานะตู้เซฟ (ตั้ง/ปลดล็อก/ล็อก/เปลี่ยนรหัส/รหัสกู้คืน)
+// หน้าเดียว: ช่องค้นหาข้ามทุกชนิด + ชิปกรองชนิด → ตารางรวมทุกชนิด (เรียง/กรองสถานะ) → ฟอร์มเพิ่ม/แก้ (เลือกชนิดในฟอร์ม) + ประวัติการแก้ไข/การย้าย · แถบสถานะตู้เซฟ (ตั้ง/ปลดล็อก/ล็อก/เปลี่ยนรหัส/รหัสกู้คืน)
 // ฐานข้อมูล: supabase/migrations/20261222010000_itas_asset_register.sql ทุกอย่างเรียกผ่าน RPC app_itas_* · สัญญา: docs/itas-contract.md
 // สิทธิ์: เฉพาะผู้อยู่ใน allowlist ของโมดูล (app_itas_my_access) · การ์ดและหน้านี้ซ่อน/พากลับเมื่อไม่มีสิทธิ์ เป็น UX ล้วน สิทธิ์จริงตัดสินที่ RPC ทุกตัว
 // ข้อมูลล้วนอยู่ที่ itas-model.js · HTML อยู่ที่ itas-pages.js · เข้ารหัส/ตู้เซฟอยู่ที่ itas-vault.js (กุญแจอยู่ในตัวแปรปิดของไฟล์นั้นเท่านั้น) · ไฟล์นี้ดูแลเฉพาะการเรียก RPC และผูกเหตุการณ์
@@ -8,6 +8,7 @@
 // กฎความปลอดภัยของไฟล์นี้:
 //  - ค่าลับที่ถอดรหัสแล้วใส่ DOM ด้วย textContent เท่านั้น (ไม่ผ่าน innerHTML) และซ่อนคืนเองใน 30 วินาที · ไม่เก็บลงตัวแปร global/data-* / localStorage / URL
 //  - ไม่ใช้ระบบร่างอัตโนมัติ (MNP_FORM_DRAFT) กับฟอร์มนี้เลย: ช่องลับและรหัสตู้เซฟจึงไม่เคยถูกเก็บลงเครื่อง
+//  - ที่เก็บในเครื่องมีอย่างเดียว: จำ "ยี่ห้อ/รุ่น + สถานที่" ของรายการที่เพิ่งเพิ่มล่าสุดต่อชนิด (ต่อบัญชีต่อโหมด) ไว้เติมฟอร์มครั้งหน้า · ผ่าน model.parseMemory/serializeMemory ที่รับเฉพาะ 2 คีย์นี้ ช่องอื่นและช่องลับเก็บไม่ได้
 //  - ไม่มี console.* กับค่าใด ๆ ที่เกี่ยวกับตู้เซฟ · error ของตู้เซฟเป็นข้อความคงที่ (VaultError) · error ของ crypto ไม่ถูกส่งเข้า log (MNP_ERROR_LOG)
 //  - ตู้เซฟล็อกเมื่อ: ไม่ใช้งาน 10 นาที (นับจากนาฬิกาจริง ตรวจเป็นระยะและตอนกลับมาที่แท็บ) · ออกจากหน้านี้ (hashchange) · ปิด/ซ่อนหน้า (pagehide) · ออกจากระบบ · เปลี่ยนผู้ใช้/โหมดทดสอบ/persona · กดล็อก
 //  - รหัสกู้คืนไม่มีปุ่มคัดลอก (ต้องจด/พิมพ์เก็บ ไม่ผ่านคลิปบอร์ด) · ช่องรหัสและช่องค่าลับถูกกันไม่ให้ตัวจัดการรหัสผ่านเติม/เสนอเก็บ (ดู hardenSecretInputs) และกัน copy/cut/ลากออก (dragstart) จากช่องที่ปิดบังอยู่
@@ -125,10 +126,15 @@
     return new URLSearchParams(hash.split("?")[1] ?? "").get("module") === "assets";
   };
 
+  // typeCode "" = มุมมอง "ทั้งหมด" (ค่าเริ่มต้น) · loadedFor = ขอบเขตที่โหลดมาจากฐานข้อมูลล่าสุด ("" = ทุกชนิด) · showEmptyTypes = ขยายชิป "ชนิดอื่นๆ" (ชนิดที่ยังไม่มีของ)
   function resetUi() {
-    ui = { context: contextKey(), types: [], typeCode: "", rows: [], total: 0, query: "", status: "", sort: { key: "reg_no", direction: "ascending" }, form: null, isTest: false, busy: false };
+    ui = { context: contextKey(), types: [], typeCode: "", loadedFor: "", showEmptyTypes: false, rows: [], total: 0, query: "", status: "", sort: defaultSort(""), form: null, isTest: false, busy: false };
   }
   const currentType = () => ui.types.find((type) => type.code === ui.typeCode) ?? null;
+  const typeByCode = (code) => ui.types.find((type) => type.code === code) ?? null;
+  // เรียงตั้งต้น: มุมมองทั้งหมด = จัดกลุ่มตามชนิด · ชนิดเดียว = ตามเลขทะเบียน
+  const defaultSort = (typeCode) => ({ key: typeCode ? "reg_no" : "type", direction: "ascending" });
+  const typeNameMap = () => Object.fromEntries(ui.types.map((type) => [type.code, type.name]));
 
   /* ---------- วาดหน้า ---------- */
   function paint(html, title, version) {
@@ -172,40 +178,52 @@
     try {
       const [types] = await Promise.all([rpc("app_itas_list_types"), vault.load().catch((error) => { ui.vaultError = error; })]);
       ui.types = Array.isArray(types) ? types : [];
-      if (!ui.types.some((type) => type.code === ui.typeCode)) ui.typeCode = (ui.types.find((type) => type.is_active !== false) ?? ui.types[0])?.code ?? "";
-      await loadAssets();
+      if (ui.typeCode && !typeByCode(ui.typeCode)) { ui.typeCode = ""; ui.sort = defaultSort(""); }
+      await loadAssets(ui.typeCode);
     } catch (error) {
       return errorPage(error, version);
     }
-    const html = pages.mainPage({ isTest: ui.isTest, vault: vault.snapshot(), content: pages.layout({ types: ui.types, selectedCode: ui.typeCode, main: mainPanelHtml() }) });
+    const html = pages.mainPage({ isTest: ui.isTest, vault: vault.snapshot(), content: pages.layout({ main: mainPanelHtml() }) });
     if (!paint(html, TITLE, version)) return;
     bindPage();
     if (ui.vaultError) { showVaultMessage(ui.vaultError); ui.vaultError = null; }
   }
 
-  async function loadAssets() {
-    const type = currentType();
-    if (!type) { ui.rows = []; ui.total = 0; return; }
-    const data = await rpc("app_itas_list_assets", { p_type_code: type.code, p_limit: model.MAX_LISTED, p_offset: 0 });
+  // โหลดจากฐานข้อมูล: typeCode "" = ทุกชนิด (ค่าเริ่มต้น กรองชนิดในเบราว์เซอร์ทันที) · ระบุชนิด = โหลดเฉพาะชนิดนั้น (ใช้ตอนทั้งหมดเกินเพดาน 2,000 แถว)
+  async function loadAssets(typeCode = ui.loadedFor) {
+    const args = { p_limit: model.MAX_LISTED, p_offset: 0 };
+    if (typeCode) args.p_type_code = typeCode;
+    const data = await rpc("app_itas_list_assets", args);
+    ui.loadedFor = typeCode;
     ui.rows = Array.isArray(data?.items) ? data.items : [];
     ui.total = Number.isFinite(data?.total) ? data.total : ui.rows.length;
   }
   const visibleRows = () => {
     const type = currentType();
-    const columns = model.tableColumns(type);
-    const filtered = model.filterAssets(ui.rows, { query: ui.query, status: ui.status });
+    const columns = type ? model.tableColumns(type) : model.allColumns(ui.types);
+    const filtered = model.filterAssets(ui.rows, { query: ui.query, status: ui.status, typeCode: ui.typeCode, typeNames: typeNameMap() });
     const column = columns.find((item) => item.key === ui.sort.key) ?? columns[0];
     return { columns, rows: model.sortAssets(filtered, column, ui.sort.direction) };
   };
+  const grandTotal = () => ui.types.reduce((sum, type) => sum + (Number(type.asset_count) || 0), 0);
+  const truncatedNotice = () => (ui.total > ui.rows.length ? `มี ${ui.total} รายการ แต่โหลดมาแสดงได้ ${ui.rows.length} รายการแรก ใช้คำค้นหาหรือเลือกชนิดเพื่อให้ตรงมากขึ้น` : "");
+  // ชนิดที่เลือกอยู่แต่ว่าง ต้องไม่ถูกพับซ่อนไว้ใต้ "ชนิดอื่นๆ"
+  const chipsHtml = () => {
+    const selected = currentType();
+    const showEmpty = ui.showEmptyTypes || Boolean(selected && !(Number(selected.asset_count) > 0));
+    return pages.typeChips({ types: ui.types, selectedCode: ui.typeCode, total: grandTotal(), showEmpty });
+  };
+  const canAddAny = () => ui.types.some((type) => type.is_active !== false);
   function mainPanelHtml() {
     const type = currentType();
     const { columns, rows } = visibleRows();
     return pages.mainPanel({
       type,
-      toolbarHtml: pages.toolbar({ query: ui.query, status: ui.status, canAdd: Boolean(type) && type.is_active !== false }),
+      toolbarHtml: pages.toolbar({ query: ui.query, status: ui.status, canAdd: canAddAny() }),
+      chipsHtml: chipsHtml(),
       countText: model.countText(rows.length, ui.total, ui.rows.length),
       tableHtml: pages.assetTable({ rows, columns, sort: ui.sort, typeName: type?.name ?? "" }),
-      notice: ui.total > ui.rows.length ? `ชนิดนี้มี ${ui.total} รายการ แต่โหลดมาแสดงได้ ${ui.rows.length} รายการแรก ใช้คำค้นหาเพื่อให้ตรงมากขึ้น` : "",
+      notice: truncatedNotice(),
     });
   }
   function updateTable() {
@@ -216,12 +234,17 @@
     const count = byId("itas-count");
     if (count) count.textContent = model.countText(rows.length, ui.total, ui.rows.length);
   }
+  function updateChips() {
+    const host = byId("itas-types-host");
+    if (host) host.innerHTML = chipsHtml();
+    const title = byId("itas-list-title");
+    if (title) title.innerHTML = pages.listTitle(currentType());
+  }
   async function refreshData() {
     const types = await rpc("app_itas_list_types");
     ui.types = Array.isArray(types) ? types : ui.types;
     await loadAssets();
-    const typesHost = byId("itas-types-host");
-    if (typesHost) typesHost.innerHTML = pages.typeList(ui.types, ui.typeCode);
+    updateChips();
     updateTable();
   }
 
@@ -352,6 +375,7 @@
     });
   }
   const BUTTONS = {
+    "itas-types-more": () => { ui.showEmptyTypes = !ui.showEmptyTypes; updateChips(); },
     "itas-vault-setup": () => startSetup(),
     "itas-vault-unlock": () => showVaultPanel("unlock", pages.unlockForm({ isTest: vault.isTest === true })),
     "itas-vault-lock": () => vault.lock("manual"),
@@ -361,6 +385,8 @@
     "itas-vault-cancel": () => { vault.cancelPending(); wipeInputs(byId("itas-vault-panel")); closeVaultPanel(); refreshVaultBar(); },
     "itas-add": () => openForm("add"),
     "itas-form-cancel": () => closeForm(),
+    "itas-copy-asset": () => copyAsset(),
+    "itas-clear-remembered": () => clearRemembered(),
     "itas-history-load": () => loadHistory(),
     "itas-purge": (button) => purge(button),
     "itas-reload-asset": () => reloadAfterConflict(),
@@ -388,6 +414,10 @@
   }
   function onChange(event) {
     if (event.target.id === "itas-status") { ui.status = event.target.value; updateTable(); }
+    if (event.target.name === "type_code") return changeFormType(event.target);
+    if (event.target.id === "itas-batch-toggle") return toggleBatch(event.target);
+    if (event.target.name === "batch_columns") return changeBatchColumns(event.target);
+    return undefined;
   }
   function onSubmit(event) {
     const form = event.target;
@@ -489,22 +519,24 @@
     if (!isDirty()) return true;
     return confirmDialog({ title: "ยังไม่ได้บันทึกสิ่งที่กรอก", message: "ถ้าไปต่อ ข้อมูลที่พิมพ์ในฟอร์มจะหาย", confirmLabel: "ทิ้งและไปต่อ", cancelLabel: "อยู่ต่อ", danger: true });
   }
+  // ชิปกรองชนิดเปลี่ยนแค่รายการ ไม่แตะฟอร์มที่เปิดค้างอยู่ (ฟอร์มมีตัวเลือกชนิดของตัวเอง) · คำค้นหาและสถานะคงเดิม
+  // โหลดครบทุกชนิดแล้ว = กรองในเบราว์เซอร์ทันที · ถ้ารายการถูกตัดที่เพดาน 2,000 แถว (หรือเคยโหลดแยกชนิด) โหลดใหม่เฉพาะชนิดที่เลือก
   async function switchType(code) {
     if (code === ui.typeCode || ui.busy) return;
-    if (!(await confirmDiscard())) return;
     ui.busy = true;
+    const before = { typeCode: ui.typeCode, sort: ui.sort };
     try {
-      closeForm({ force: true });
+      const localFilter = ui.loadedFor === "" && ui.total <= ui.rows.length;
       ui.typeCode = code;
-      ui.query = "";
-      ui.status = "";
-      ui.sort = { key: "reg_no", direction: "ascending" };
-      await loadAssets();
-      const typesHost = byId("itas-types-host");
-      if (typesHost) typesHost.innerHTML = pages.typeList(ui.types, ui.typeCode);
-      const main = byId("itas-main-host");
-      if (main) main.innerHTML = mainPanelHtml();
+      ui.sort = defaultSort(code);
+      if (!localFilter) await loadAssets(code);
+      updateChips();
+      updateTable();
+      const notice = byId("itas-notice");
+      if (notice) notice.textContent = truncatedNotice();
     } catch (error) {
+      ui.typeCode = before.typeCode;
+      ui.sort = before.sort;
       showToast(failure(error).message, "error");
     } finally {
       ui.busy = false;
@@ -529,8 +561,12 @@
     const form = ui?.form && formEl();
     if (!form || !onAssetsPage()) return false;
     if (JSON.stringify(readFormValues(form, ui.form.type)) !== ui.form.initial) return true;
+    if (batchLinesText(form) !== "") return true; // รายการเพิ่มหลายเครื่องที่พิมพ์ค้าง
     return hasSecretWork();
   }
+  const batchLinesText = (form) => String(form?.elements?.batch_lines?.value ?? "").trim();
+  // สถานะ "เพิ่มหลายเครื่อง" ของฟอร์มที่เปิดอยู่ (ยกไปให้ฟอร์มใหม่ตอนเปลี่ยนชนิด)
+  const readBatchState = (form) => ({ on: Boolean(ui?.form?.batch), columns: form?.elements?.batch_columns?.value ?? "", lines: String(form?.elements?.batch_lines?.value ?? "") });
   // ช่องลับที่ผู้ใช้พิมพ์ค้างหรือสั่งลบไว้ (ล็อกตู้เซฟแล้วส่วนนี้ถูกล้าง)
   function hasSecretWork() {
     const form = ui?.form && formEl();
@@ -542,22 +578,127 @@
     if (location.hash !== pageHash || !onAssetsPage()) { ui.form = null; return 0; }
     return isDirty() ? 1 : 0;
   }
+  /* ---------- จำค่าล่าสุดต่อชนิด ---------- */
+  // เก็บในเครื่องผู้ใช้ ต่อบัญชีต่อโหมด (จริง/ทดสอบ) · เฉพาะ ยี่ห้อ/รุ่น + สถานที่ ของรายการที่เพิ่งเพิ่ม + ชนิดล่าสุด (model.REMEMBER_KEYS) · ห้ามเก็บช่องลับเด็ดขาด
+  // ที่เก็บใช้ไม่ได้/เต็ม/ยังไม่ล็อกอิน = ข้ามเงียบ ๆ (ฟีเจอร์นี้แค่ช่วยกรอก ไม่กระทบการบันทึก)
+  const memoryKey = () => (state.session?.user?.id ? `mnp.itas.last.v1:${state.session.user.id}:${isSandbox() ? "test" : "real"}` : "");
+  function readMemory() {
+    try {
+      const key = memoryKey();
+      return model.parseMemory(key ? window.localStorage?.getItem(key) : "");
+    } catch {
+      return model.parseMemory("");
+    }
+  }
+  function writeMemory(memory) {
+    try {
+      const key = memoryKey();
+      if (key) window.localStorage?.setItem(key, model.serializeMemory(memory));
+    } catch {
+      // ไม่มีที่เก็บหรือเต็ม: ข้าม
+    }
+  }
+  // ฟอร์มเพิ่มใหม่ของชนิดนี้ พร้อมค่าที่จำไว้ (ยี่ห้อ/รุ่น สถานที่) · applied = ช่องที่เติมให้ (ไว้แสดงข้อความ + ปุ่มล้าง)
+  const freshAddValues = (type) => model.applyRemembered(type, model.emptyFormValues(type), readMemory());
+  // ชนิดตั้งต้นของฟอร์มเพิ่ม: ชนิดที่กรองอยู่ (ถ้าเปิดใช้งาน) → ชนิดที่เพิ่มล่าสุด → ชนิดแรกที่มีของ (ไม่มีก็ชนิดเปิดใช้งานชนิดแรก)
+  function defaultAddType() {
+    const active = ui.types.filter((type) => type.is_active !== false);
+    const filtered = currentType();
+    if (filtered && filtered.is_active !== false) return filtered;
+    const last = active.find((type) => type.code === readMemory().lastType);
+    return last ?? active.find((type) => Number(type.asset_count) > 0) ?? active[0] ?? null;
+  }
+  // ล้างค่าที่ระบบเติมให้: เฉพาะช่องที่ยังเป็นค่านั้นอยู่ (ที่ผู้ใช้พิมพ์ทับไว้แล้วไม่แตะ) + ลืมค่าที่จำของชนิดนี้
+  function clearRemembered() {
+    const state0 = ui?.form;
+    const form = formEl();
+    if (!state0 || state0.mode !== "add" || !form) return;
+    const wasDirty = isDirty();
+    for (const item of state0.remembered ?? []) { const input = form.elements?.[item.key]; if (input && input.value === item.value) input.value = ""; }
+    writeMemory(model.forgetType(readMemory(), state0.type.code));
+    state0.remembered = [];
+    byId("itas-remembered")?.remove?.();
+    if (!wasDirty) state0.initial = JSON.stringify(readFormValues(form, state0.type)); // ที่ล้างไปไม่นับเป็น "พิมพ์ค้าง"
+  }
   async function openForm(mode, id = null) {
-    const type = currentType();
-    if (!type || ui.busy) return;
+    if (ui.busy || (mode === "add" && !canAddAny())) return;
     if (!(await confirmDiscard())) return;
-    let original = null;
     if (mode === "edit") {
+      let original;
       try {
         original = await rpc("app_itas_get_asset", { p_id: id }); // โหลดแถวล่าสุด (updated_at ใช้กันแก้ชนกัน)
       } catch (error) {
         showToast(failure(error).message, "error");
         return;
       }
+      const type = typeByCode(original?.type_code); // ชนิดมาจากตัวอุปกรณ์เอง (มุมมอง "ทั้งหมด" ไม่มีชนิดที่เลือก)
+      if (!type) { showToast("ไม่พบชนิดของอุปกรณ์นี้ กรุณาโหลดหน้าใหม่", "error"); return; }
+      mountForm("edit", type, original, model.formValuesFromAsset(original, type));
+      return;
     }
-    mountForm(mode, type, original, original ? model.formValuesFromAsset(original, type) : model.emptyFormValues(type));
+    const type = defaultAddType();
+    if (!type) return;
+    const { values, applied } = freshAddValues(type);
+    mountForm("add", type, null, values, { remembered: applied });
   }
-  function mountForm(mode, type, original, values) {
+  // เปลี่ยนชนิดในฟอร์มเพิ่ม: วาดช่องใหม่ตามชนิด ยกค่าที่พิมพ์แล้วที่ชื่อช่องตรงกันไปให้ (ช่องลับล้าง ต้องถามก่อนถ้าพิมพ์ค้างอยู่) · uuid ร่างเดิมคงไว้
+  async function changeFormType(select) {
+    const state0 = ui?.form;
+    if (!state0 || state0.mode !== "add") return;
+    const next = typeByCode(select.value);
+    if (!next || next.code === state0.type.code) return;
+    if (hasSecretWork() && !(await confirmDialog({ title: "เปลี่ยนชนิดอุปกรณ์?", message: "ช่องลับที่พิมพ์ไว้จะถูกล้าง (ช่องอื่นที่ชื่อตรงกันยังอยู่)", confirmLabel: "เปลี่ยนชนิด", cancelLabel: "อยู่ต่อ", danger: true }))) {
+      select.value = state0.type.code;
+      return;
+    }
+    // ยกเฉพาะที่ผู้ใช้พิมพ์เอง (ค่าที่ระบบเติมให้จากชนิดเดิมไม่ยกไป) · ชนิดใหม่เติมค่าที่จำของมันเองให้ ยกเว้นช่องที่ผู้ใช้พิมพ์ทับ
+    const typed = model.typedSince(readFormValues(formEl(), state0.type), JSON.parse(state0.initial));
+    const { values, applied } = freshAddValues(next);
+    // ช่องที่ผู้ใช้แตะแล้ว (key อยู่ใน typed.core) ไม่เติมค่าที่จำไว้ให้ รวมถึงช่องที่ผู้ใช้ล้างเองเป็นค่าว่าง (ต้องคงว่าง) ไม่ใช่แค่ช่องที่มีค่า
+    const touched = (key) => Object.prototype.hasOwnProperty.call(typed.core, key);
+    for (const item of applied) if (touched(item.key)) values.core[item.key] = "";
+    const shown = applied.filter((item) => !touched(item.key));
+    mountForm("add", next, null, values, { carry: typed, draftId: state0.draftId, remembered: shown, batch: readBatchState(formEl()) });
+  }
+  // ติ๊ก/เลิกติ๊ก "เพิ่มหลายเครื่องรุ่นเดียวกัน": เปิดกล่องรายการ ซ่อนช่องลับ (โหมดนี้ไม่รองรับช่องลับ · ช่องลับที่พิมพ์ไว้ต้องยืนยันก่อนล้าง)
+  async function toggleBatch(box) {
+    const state0 = ui?.form;
+    if (!state0 || state0.mode !== "add") return;
+    const on = Boolean(box.checked);
+    if (on && hasSecretWork()) {
+      if (!(await confirmDialog({ title: "เพิ่มหลายเครื่อง?", message: "โหมดนี้ไม่รองรับช่องลับ ช่องลับที่พิมพ์ไว้จะถูกล้าง", confirmLabel: "ล้างช่องลับและต่อไป", cancelLabel: "อยู่ต่อ", danger: true }))) { box.checked = false; return; }
+      clearSecretInputs(formEl());
+    }
+    state0.batch = on;
+    const panel = byId("itas-batch-panel");
+    if (panel) panel.hidden = !on;
+    const secrets = byId("itas-secrets-host");
+    if (secrets) secrets.hidden = on;
+  }
+  // เปลี่ยนรูปแบบบรรทัด: ตัวอย่างในกล่อง (placeholder) เปลี่ยนตาม
+  function changeBatchColumns(select) {
+    const state0 = ui?.form;
+    const box = formEl()?.elements?.batch_lines;
+    if (!state0 || !box) return;
+    box.placeholder = model.batchOptionOf(state0.type, select.value).example;
+  }
+  // คัดลอกเป็นเครื่องใหม่: เปิดฟอร์มเพิ่มชนิดเดียวกัน เติมช่องไม่ลับจากรายการที่บันทึกไว้ (ไม่ใช่ที่แก้ค้างอยู่) · เลขทะเบียน/รหัส/Serial เว้นว่าง · ช่องลับไม่คัดลอก
+  async function copyAsset() {
+    const state0 = ui?.form;
+    if (!state0 || state0.mode !== "edit" || !state0.original || ui.busy) return;
+    if (!(await confirmDiscard())) return; // ถ้าแก้ค้างอยู่ การคัดลอกใช้ค่าที่บันทึกไว้ ไม่ใช่ที่พิมพ์ค้าง จึงถามก่อนทิ้ง
+    const { original, type } = state0;
+    const { values, skipped } = model.copyValuesFromAsset(original, type);
+    const source = original.reg_no || original.device_code || original.name || "อุปกรณ์เดิม";
+    const blanked = skipped.length ? `${skipped.join(", ")} เว้นว่างไว้ให้กรอกใหม่ (ต้องไม่ซ้ำกับเครื่องอื่น)` : "ตรวจเลขทะเบียน/รหัส/Serial ของเครื่องใหม่ให้ครบ (ต้องไม่ซ้ำกับเครื่องอื่น)";
+    mountForm("add", type, null, values, { notice: `คัดลอกจาก ${source}: ${blanked} · ช่องลับ (รหัสผ่าน/License/IP) ไม่ถูกคัดลอก`, openMore: model.extraFieldsHaveValues(type, values) });
+  }
+  // วางค่าที่ยกมาลงช่องของฟอร์มที่เพิ่งวาด (หลังเก็บค่าตั้งต้นไว้เทียบแล้ว ค่าเหล่านี้จึงนับเป็น "พิมพ์ค้าง")
+  function applyValues(form, type, values) {
+    for (const [key, value] of Object.entries(values.core ?? {})) if (form.elements?.[key]) form.elements[key].value = value;
+    for (const [key, value] of Object.entries(values.attrs ?? {})) if (form.elements?.[`attrs.${key}`]) form.elements[`attrs.${key}`].value = value;
+  }
+  function mountForm(mode, type, original, values, { carry = null, draftId: keepDraftId = null, openMore = null, notice = "", remembered = [], batch = null } = {}) {
     const host = byId("itas-form-area");
     if (!host) return;
     clearReveals();
@@ -565,18 +706,27 @@
     let draftId = original?.id;
     if (mode === "add") {
       try {
-        draftId = vaultApi.newUuid(window.crypto);
+        draftId = keepDraftId ?? vaultApi.newUuid(window.crypto);
       } catch (error) {
         showToast(failure(error).message, "error");
         return;
       }
     }
-    ui.form = { mode, type, original, draftId, initial: "", submitting: false };
-    host.innerHTML = pages.assetForm({ mode, type, values, asset: original, vaultStatus: vault.status() });
+    // batch = เพิ่มหลายเครื่องอยู่หรือไม่ · batchIds = รายการ (ข้อความบรรทัด) → uuid ที่ใช้ไปแล้ว ลองซ้ำหลังเน็ตหลุดจะไม่เพิ่มซ้ำ
+    ui.form = { mode, type, original, draftId, initial: "", submitting: false, remembered, batch: mode === "add" && Boolean(batch?.on), batchIds: new Map() };
+    // "รายละเอียดเพิ่มเติม" เปิดให้เองเมื่อมีค่าอยู่ในช่องที่พับไว้ (แก้ไขอุปกรณ์ที่กรอกไว้แล้ว · ค่าที่ยกมาตอนเปลี่ยนชนิด) · เพิ่มใหม่เริ่มแบบพับ
+    const extrasFilled = model.extraFieldsHaveValues(type, carry ? model.carryOver(type, carry) : mode === "edit" ? values : null);
+    host.innerHTML = pages.assetForm({ mode, type, values, asset: original, vaultStatus: vault.status(), types: mode === "add" ? ui.types : null, openMore: openMore ?? extrasFilled, notice, remembered, batch, suggestions: model.suggestionsFor(ui.rows, type) });
     hardenSecretInputs(host);
-    ui.form.initial = JSON.stringify(readFormValues(formEl(), type));
+    const form = formEl();
+    ui.form.initial = JSON.stringify(readFormValues(form, type));
+    if (carry) {
+      applyValues(form, type, model.carryOver(type, carry));
+      form?.querySelector?.("#itas-f-type_code")?.focus?.(); // เปลี่ยนชนิดในฟอร์มที่เปิดอยู่: ไม่เลื่อนหน้า โฟกัสกลับที่ตัวเลือกชนิด
+      return;
+    }
     host.scrollIntoView?.({ block: "start" });
-    formEl()?.querySelector("input, select, textarea")?.focus();
+    form?.querySelector("input, select, textarea")?.focus();
   }
   function closeForm({ force = false } = {}) {
     if (!force && isDirty()) { confirmDiscard().then((ok) => { if (ok) closeForm({ force: true }); }); return; }
@@ -667,9 +817,12 @@
     const { type, original } = state0;
     window.MNP_FORM_STEPS?.clearFieldErrors?.(form);
     byId("itas-form-message").innerHTML = "";
+    if (state0.mode === "add" && state0.batch) return submitBatch(form, state0);
     const values = readFormValues(form, type);
     const errors = model.validateAsset({ type, values });
     if (errors.length) {
+      // ช่องที่ผิดอยู่ในส่วนที่พับ: เปิด "รายละเอียดเพิ่มเติม" ก่อน ไม่งั้นกรอบแดงกับโฟกัสไปอยู่ในที่ที่มองไม่เห็น
+      if (model.errorsInExtraFields(type, errors)) { const more = form.querySelector?.("#itas-more"); if (more) more.open = true; }
       const focus = window.MNP_FORM_STEPS?.showFieldErrors?.(form, errors.map((item) => ({ name: item.field, message: item.message })));
       focus?.focus?.();
       return;
@@ -689,6 +842,7 @@
         else throw error;
       }
       clearSecretInputs(form);
+      if (!original) writeMemory(model.rememberAdded(readMemory(), type.code, values)); // จำ ยี่ห้อ/รุ่น + สถานที่ ไว้เติมให้ครั้งหน้า (ไม่มีช่องลับ)
       showToast(result?.created ? "เพิ่มอุปกรณ์แล้ว" : result?.changed === false ? "ไม่มีการเปลี่ยนแปลง" : "บันทึกแล้ว");
       closeForm({ force: true });
       await refreshData();
@@ -698,6 +852,80 @@
       const info = failure(error, { write: true });
       formMessage(info.message, { reload: info.kind === "conflict" });
     }
+  }
+  // เพิ่มหลายเครื่องรุ่นเดียวกัน (เฉพาะช่องไม่ลับ): ตรวจทั้งชุดก่อน (ผิดข้อเดียว = ไม่ส่งอะไรเลย) → ถามยืนยันจำนวน → บันทึกทีละเครื่องต่อกัน
+  // เครื่องที่ไม่สำเร็จคงไว้ในกล่องรายการ (ที่สำเร็จแล้วถูกเอาออก) แก้แล้วกดซ้ำได้ · ส่งแล้วไม่แน่ใจผล (เน็ตหลุด) ใช้ uuid เดิมของบรรทัดนั้นเสมอ ลองซ้ำไม่เพิ่มซ้ำ
+  // เซสชันหมด/ไม่มีสิทธิ์/เน็ตหลุด = หยุดทันที ไม่ยิงบรรทัดที่เหลือต่อ (บรรทัดที่เหลือคงไว้ในกล่อง)
+  const STOP_KINDS = new Set(["session", "missing", "access", "unknown"]);
+  async function submitBatch(form, state0) {
+    const { type } = state0;
+    const resultHost = byId("itas-batch-result");
+    if (resultHost) resultHost.innerHTML = "";
+    const base = readFormValues(form, type);
+    const plan = model.buildBatchPlan({ type, base, columns: form.elements?.batch_columns?.value, text: form.elements?.batch_lines?.value });
+    if (!plan.ok) {
+      if (resultHost && plan.lineErrors.length) resultHost.innerHTML = pages.batchProblems(plan.lineErrors);
+      if (plan.fieldErrors.length) {
+        if (model.errorsInExtraFields(type, plan.fieldErrors)) { const more = form.querySelector?.("#itas-more"); if (more) more.open = true; }
+        const focus = window.MNP_FORM_STEPS?.showFieldErrors?.(form, plan.fieldErrors.map((item) => ({ name: item.field, message: item.message })));
+        focus?.focus?.();
+      }
+      return;
+    }
+    const count = plan.items.length;
+    if (!(await confirmDialog({ title: `เพิ่มอุปกรณ์ ${count} รายการ?`, message: `ชนิด ${type.name} · ${count} เครื่อง ใช้ข้อมูลช่องอื่นร่วมกัน ต่างกันที่ ${plan.option.label} · ถ้าบางรายการไม่สำเร็จ ที่เหลือจะถูกเก็บไว้ในกล่องรายการ`, confirmLabel: `เพิ่ม ${count} รายการ`, cancelLabel: "กลับไปแก้" }))) return;
+    state0.submitting = true;
+    setFormBusy(form, true);
+    try {
+      await sendBatch(form, state0, plan, base);
+    } finally {
+      // ไม่ว่าจบแบบไหน (รวมถึงมี exception) ต้องปลดสถานะกำลังส่งเสมอ ไม่งั้นฟอร์มกดส่งซ้ำไม่ได้อีก
+      state0.submitting = false;
+      if (ui?.form === state0) setFormBusy(form, false);
+    }
+  }
+  async function sendBatch(form, state0, plan, base) {
+    const { type } = state0;
+    const context0 = contextKey();
+    // ผู้ใช้ออกจากหน้า/ปิดหรือเปิดฟอร์มอื่น/สลับโหมดจริง-ทดสอบ/สลับผู้ใช้ระหว่างส่ง = หยุดทันที ไม่ส่งบรรทัดที่เหลือต่อโดยไม่มีผลให้เห็น
+    const stillHere = () => ui?.form === state0 && contextKey() === context0;
+    const done = [];
+    const failed = [];
+    const notTried = [];
+    let stopped = false;
+    for (const item of plan.items) {
+      if (!stopped && !stillHere()) stopped = true;
+      if (stopped) { notTried.push(item); continue; }
+      let id = state0.batchIds.get(item.raw);
+      if (!id) {
+        try { id = vaultApi.newUuid(window.crypto); } catch (error) { failed.push({ item, message: failure(error).message }); stopped = true; continue; }
+        state0.batchIds.set(item.raw, id);
+      }
+      try {
+        await rpc("app_itas_save_asset", model.buildSavePayload({ type, values: item.values, assetId: id }));
+        done.push(item);
+      } catch (error) {
+        if (model.isAlreadyExists(error)) { done.push(item); continue; } // ครั้งก่อนบันทึกไปแล้ว (ผลไม่แน่ชัด) = นับว่าสำเร็จ
+        const info = failure(error, { write: true });
+        failed.push({ item, message: info.message });
+        if (STOP_KINDS.has(info.kind)) stopped = true;
+      }
+    }
+    if (contextKey() !== context0) return; // สลับผู้ใช้/โหมดไปแล้ว: ไม่เขียนความจำหรือโหลดรายการของบริบทอื่น (เครื่องที่เพิ่มไปแล้วอยู่ในฐานข้อมูลแล้ว)
+    if (done.length) writeMemory(model.rememberAdded(readMemory(), type.code, base));
+    if (done.length) { try { await refreshData(); } catch { /* รายการในตารางจะอัปเดตเมื่อโหลดหน้าใหม่ · เครื่องที่เพิ่มไปแล้วไม่ได้หาย */ } }
+    if (!stillHere()) return; // ผู้ใช้ออกจากหน้า/เปิดฟอร์มอื่นระหว่างรอ: ไม่วาดทับ
+    if (!failed.length && !notTried.length) {
+      showToast(`เพิ่มอุปกรณ์ ${done.length} รายการแล้ว`);
+      closeForm({ force: true });
+      return;
+    }
+    // เหลือรายการที่ยังไม่สำเร็จ: เก็บเฉพาะบรรทัดเหล่านั้นไว้ในกล่อง (เรียงตามบรรทัดเดิม) พร้อมแสดงสาเหตุรายบรรทัด
+    const remaining = [...failed.map((entry) => entry.item), ...notTried].sort((a, b) => a.line - b.line);
+    if (form.elements?.batch_lines) form.elements.batch_lines.value = remaining.map((item) => item.raw).join("\n");
+    const target = byId("itas-batch-result");
+    if (target) target.innerHTML = pages.batchResult({ added: done.length, failed: failed.map((entry) => ({ line: entry.item.line, label: entry.item.label, message: entry.message })), notTried: notTried.map((item) => ({ line: item.line, label: item.label })) });
+    if (done.length) showToast(`เพิ่มอุปกรณ์แล้ว ${done.length} รายการ · ยังไม่สำเร็จ ${failed.length + notTried.length} รายการ`, "error");
   }
   // แก้ชนกัน: ผู้ใช้เลือกโหลดข้อมูลล่าสุดเอง (ทิ้งสิ่งที่พิมพ์ หลังถามก่อน) ไม่ทิ้งเงียบ ๆ
   async function reloadAfterConflict() {

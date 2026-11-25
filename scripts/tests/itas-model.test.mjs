@@ -235,8 +235,223 @@ test("routes and version metadata", () => {
   assert.equal(model.assetsUrl(), "#/office?module=assets");
   assert.equal(model.readView(new URLSearchParams("module=assets")), "main");
   assert.equal(model.readView(new URLSearchParams("module=assets&view=other")), null);
-  assert.equal(model.MODULE_VERSION, "1.00");
+  assert.equal(model.MODULE_VERSION, "1.01");
   assert.equal(model.IN_DEVELOPMENT, true);
   assert.equal(model.ASSET_CODE, "IT_ASSET_REGISTER");
   assert.ok(model.isUuid(ID) && !model.isUuid("x"));
+});
+
+/* ---------- หน้าทะเบียนรวม: ชิปชนิด ตารางทั้งหมด ค้นหาข้ามชนิด ---------- */
+const CHIP_TYPES = [
+  { code: "COMPUTER", name: "เครื่องคอมพิวเตอร์", asset_count: 5 },
+  { code: "MOUSE", name: "เมาส์", asset_count: 0 },
+  { code: "MONITOR", name: "จอภาพ", asset_count: 3 },
+  { code: "OLD", name: "ชนิดเก่า", asset_count: 0, is_active: false },
+];
+const ROWS = [
+  { id: "1", type_code: "COMPUTER", reg_no: "COM-2", device_code: "COM2", name: "เครื่องบัญชี", model: "Dell 3050", status: "in_use", host_code: null, place: "สำนักงาน", attrs: { user_name: "สมหญิง", cpu: "i5" }, secrets: { ip: ENVELOPE } },
+  { id: "2", type_code: "MONITOR", reg_no: "MNT-1", device_code: "MNT1", name: "จอ 24 นิ้ว", model: "LG", status: "spare", host_code: "COM2", place: "โรงงาน", attrs: {}, secrets: {} },
+  { id: "3", type_code: "COMPUTER", reg_no: "COM-10", device_code: "COM10", name: "เครื่องขาย", model: "HP", status: "broken", host_code: null, place: null, attrs: { user_name: "สมชาย" }, secrets: {} },
+];
+
+test("type chips: types that hold equipment come first (database order kept), empty types are grouped apart", () => {
+  const { used, empty } = model.typeChipGroups(CHIP_TYPES);
+  assert.deepEqual(used.map((type) => type.code), ["COMPUTER", "MONITOR"]);
+  assert.deepEqual(empty.map((type) => type.code), ["MOUSE", "OLD"]);
+  assert.deepEqual(model.typeChipGroups(null), { used: [], empty: [] });
+});
+
+test("all-types table: shared columns, the type name is shown but sorted by the database type order, 'user' falls back from user_name to host_code", () => {
+  const columns = model.allColumns(CHIP_TYPES);
+  assert.deepEqual(columns.map((column) => column.key), ["reg_no", "device_code", "type", "name", "user", "place", "status"]);
+  const byKey = Object.fromEntries(columns.map((column) => [column.key, column]));
+  assert.equal(model.cellText(ROWS[0], byKey.type), "เครื่องคอมพิวเตอร์");
+  assert.equal(model.cellText(ROWS[0], byKey.user), "สมหญิง", "ผู้ใช้จากช่อง user_name");
+  assert.equal(model.cellText(ROWS[1], byKey.user), "COM2", "ชนิดที่ไม่มี user_name ใช้ ติดตั้งที่");
+  assert.equal(model.cellText(ROWS[0], byKey.name), "เครื่องบัญชี · Dell 3050");
+  // ชนิดเรียงตามลำดับของฐานข้อมูล (COMPUTER ก่อน MONITOR) ไม่ใช่ตัวอักษรไทย (จอภาพ มาก่อน เครื่อง)
+  assert.deepEqual(model.sortAssets(ROWS, byKey.type).map((row) => row.id), ["1", "3", "2"]);
+  assert.deepEqual(model.sortAssets(ROWS, byKey.type, "descending").map((row) => row.id), ["2", "1", "3"]);
+  assert.deepEqual(model.sortAssets(ROWS, byKey.reg_no).map((row) => row.id), ["1", "3", "2"], "COM-2 ก่อน COM-10 แบบ natural");
+});
+
+test("search works across all types on non-secret fields only: reg no, code, name, brand/model, user, place, type name; secrets are never searchable", () => {
+  const typeNames = Object.fromEntries(CHIP_TYPES.map((type) => [type.code, type.name]));
+  const find = (query, extra = {}) => model.filterAssets(ROWS, { query, typeNames, ...extra }).map((row) => row.id);
+  assert.deepEqual(find("dell"), ["1"], "รุ่น/ยี่ห้อ ไม่สนตัวพิมพ์");
+  assert.deepEqual(find("สมชาย"), ["3"], "ผู้ใช้");
+  assert.deepEqual(find("โรงงาน"), ["2"], "สถานที่");
+  assert.deepEqual(find("com2"), ["1", "2"], "รหัสเครื่อง และ ติดตั้งที่");
+  assert.deepEqual(find("จอภาพ"), ["2"], "ชื่อชนิด");
+  assert.deepEqual(find("เครื่อง สมหญิง"), ["1"], "หลายคำ ทุกคำต้องเจอ");
+  assert.deepEqual(find(""), ["1", "2", "3"]);
+  assert.deepEqual(find("", { typeCode: "COMPUTER" }), ["1", "3"], "ชิปชนิด");
+  assert.deepEqual(find("", { status: "spare" }), ["2"]);
+  assert.deepEqual(find(ENVELOPE.c), [], "ciphertext ของช่องลับไม่เข้าไปในข้อความค้นหา");
+});
+
+test("main form fields: code(s), name, brand/model, user, status; the user is user_name when the type has it, otherwise the install host; the rest is folded", () => {
+  assert.deepEqual(model.primaryFieldNames(COMPUTER), ["reg_no", "device_code", "name", "model", "host_code", "status"]);
+  assert.deepEqual(model.primaryFieldNames(MOUSE), ["reg_no", "name", "model", "host_code", "status"], "ไม่มีรหัสอุปกรณ์ในชนิดนี้");
+  const withUser = { ...COMPUTER, fields: [{ key: "user_name", label: "ชื่อผู้ใช้", type: "text", secret: false, order: 0 }, ...COMPUTER.fields] };
+  assert.equal(model.userFieldName(withUser), "attrs.user_name");
+  assert.ok(model.isPrimaryField(withUser, "attrs.user_name") && !model.isPrimaryField(withUser, "host_code"));
+  const hiddenUser = { ...COMPUTER, fields: [{ key: "user_name", label: "ชื่อผู้ใช้", type: "text", secret: false, order: 0, hidden: true }] };
+  assert.equal(model.userFieldName(hiddenUser), "host_code", "ช่องที่ซ่อนไม่นับ");
+  assert.equal(model.CORE_FIELDS.find((field) => field.key === "model").label, "ยี่ห้อ / รุ่น");
+  // เปิดรายละเอียดเพิ่มเติมเมื่อช่องที่พับมีค่า (แก้ของเดิม) · ช่องหลักอย่างเดียวไม่นับ
+  assert.equal(model.extraFieldsHaveValues(COMPUTER, model.emptyFormValues(COMPUTER)), false);
+  const main = model.emptyFormValues(COMPUTER);
+  Object.assign(main.core, { reg_no: "COM-1", name: "x", model: "Dell", host_code: "COM2" });
+  assert.equal(model.extraFieldsHaveValues(COMPUTER, main), false);
+  const place = structuredClone(main); place.core.place = "ออฟฟิศ";
+  assert.equal(model.extraFieldsHaveValues(COMPUTER, place), true);
+  const cpu = structuredClone(main); cpu.attrs.cpu = "i5";
+  assert.equal(model.extraFieldsHaveValues(COMPUTER, cpu), true);
+  assert.equal(model.extraFieldsHaveValues(COMPUTER, model.formValuesFromAsset(ASSET, COMPUTER)), true);
+  assert.equal(model.extraFieldsHaveValues(COMPUTER, null), false);
+  assert.equal(model.errorsInExtraFields(COMPUTER, [{ field: "reg_no" }, { field: "status" }]), false);
+  assert.equal(model.errorsInExtraFields(COMPUTER, [{ field: "reg_no" }, { field: "price" }]), true);
+  assert.equal(model.errorsInExtraFields(COMPUTER, [{ field: "attrs.cpu" }]), true);
+});
+
+test("copy as a new device: every non-secret field is copied except the ones that must be unique (reg no, device code, serial, accounting no, serial-like attrs); status resets; secrets are never in the values", () => {
+  const withSerial = { ...COMPUTER, fields: [...COMPUTER.fields, { key: "battery_serial", label: "Battery Serial", type: "text", secret: false, order: 8 }, { key: "doc_code", label: "รหัสเอกสาร", type: "text", secret: false, order: 9 }] };
+  const source = { ...ASSET, account_no: "ACC-9", status: "retired", attrs: { ...ASSET.attrs, battery_serial: "B1", doc_code: "D1" }, secrets: { ip: ENVELOPE, license_os: ENVELOPE } };
+  const { values, skipped } = model.copyValuesFromAsset(source, withSerial);
+  assert.equal(values.core.reg_no, "");
+  assert.equal(values.core.device_code, "");
+  assert.equal(values.core.serial, "");
+  assert.equal(values.core.account_no, "");
+  assert.equal(values.attrs.battery_serial, "");
+  assert.equal(values.attrs.doc_code, "");
+  assert.deepEqual(skipped, ["เลขทะเบียน", "รหัสอุปกรณ์", "Serial", "เลขทะเบียนทรัพย์สินทางบัญชี", "Battery Serial", "รหัสเอกสาร"]);
+  assert.equal(values.core.name, "เครื่องบัญชี");
+  assert.equal(values.core.model, "Dell 3050");
+  assert.equal(values.core.place, "ออฟฟิศ");
+  assert.equal(values.core.install_date, "05/03/2568");
+  assert.equal(values.core.price, "25000");
+  assert.equal(values.attrs.cpu, "i5");
+  assert.equal(values.core.status, "in_use", "เครื่องใหม่เริ่มที่ ใช้งาน แม้ต้นฉบับยกเลิกแล้ว");
+  assert.ok(!JSON.stringify(values).includes(ENVELOPE.c) && !("ip" in values.attrs) && !("license_os" in values.attrs), "ไม่คัดลอกช่องลับ");
+  assert.equal(source.reg_no, "COM-001", "ไม่แตะต้นฉบับ");
+  assert.deepEqual(model.copyValuesFromAsset({ ...ASSET, serial: null, reg_no: null, device_code: null }, COMPUTER).skipped, [], "ช่องที่ต้นฉบับไม่มีค่าไม่ต้องบอกว่าเว้นว่าง");
+});
+
+test("suggestions: from values already entered in the same type, most frequent first, only plain text fields, never secrets, bounded", () => {
+  const rows = [
+    { type_code: "COMPUTER", model: "Dell 3050", place: "สำนักงาน", host_code: null, vendor: "ร้าน A", attrs: { cpu: "i5", ram_gb: 8, os_installed: "2025-03-01", kind: "PC" }, secrets: { ip: ENVELOPE } },
+    { type_code: "COMPUTER", model: "HP 400", place: "โรงงาน", host_code: "COM1", vendor: null, attrs: { cpu: "i5" }, secrets: {} },
+    { type_code: "COMPUTER", model: "Dell 3050", place: "สำนักงาน", host_code: "COM1", vendor: "ร้าน A", attrs: { cpu: "i7" }, secrets: {} },
+    { type_code: "COMPUTER", model: "Dell 3050", place: "  ", host_code: "", vendor: "x".repeat(81), attrs: { cpu: "" }, secrets: {} },
+    { type_code: "MOUSE", model: "Logitech", place: "โรงงาน", attrs: {}, secrets: {} },
+  ];
+  const s = model.suggestionsFor(rows, COMPUTER);
+  assert.deepEqual(s.core.model, ["Dell 3050", "HP 400"], "ความถี่มากก่อน");
+  assert.deepEqual(s.core.place, ["สำนักงาน", "โรงงาน"]);
+  assert.deepEqual(s.core.host_code, ["COM1"]);
+  assert.deepEqual(s.core.vendor, ["ร้าน A"], "ค่ายาวเกิน 80 ตัวอักษรไม่แนะนำ");
+  assert.deepEqual(s.attrs.cpu, ["i5", "i7"]);
+  assert.ok(!("ram_gb" in s.attrs) && !("os_installed" in s.attrs) && !("kind" in s.attrs), "เฉพาะช่องข้อความ ไม่ใช่ตัวเลข/วันที่/ตัวเลือก");
+  assert.ok(!("ip" in s.attrs) && !JSON.stringify(s).includes(ENVELOPE.c), "ช่องลับไม่เข้าคำแนะนำ");
+  assert.deepEqual(model.suggestionsFor(rows, MOUSE).core, { model: ["Logitech"], place: ["โรงงาน"] }, "แยกตามชนิด ไม่ปนข้ามชนิด");
+  assert.deepEqual(model.suggestionsFor([], COMPUTER), { core: {}, attrs: {} });
+  const many = Array.from({ length: 100 }, (_, index) => ({ type_code: "MOUSE", model: `รุ่น ${index}`, attrs: {} }));
+  assert.equal(model.suggestionsFor(many, MOUSE).core.model.length, model.MAX_SUGGESTIONS);
+});
+
+test("remembered values: only brand/model and place per type (+ last type), sanitised on read, never anything else", () => {
+  const values = { core: { model: " Dell 3050 ", place: "สำนักงาน", serial: "SN9", reg_no: "COM-1", price: "100" }, attrs: { cpu: "i5", ip: "10.1.1.1" } };
+  const memory = model.rememberAdded(model.parseMemory(""), "COMPUTER", values);
+  assert.deepEqual(plain(memory), { lastType: "COMPUTER", types: { COMPUTER: { model: "Dell 3050", place: "สำนักงาน" } } });
+  const text = model.serializeMemory(memory);
+  for (const secretish of ["SN9", "COM-1", "10.1.1.1", "i5", "100"]) assert.ok(!text.includes(secretish), `ไม่เก็บ ${secretish}`);
+  assert.deepEqual(plain(model.parseMemory(text)), plain(memory));
+  // ชนิดอื่นไม่ทับกัน · ชนิดเดียวกันครั้งใหม่ทับครั้งเก่า
+  const next = model.rememberAdded(memory, "MOUSE", { core: { model: "Logitech", place: "" } });
+  assert.deepEqual(plain(next.types), { COMPUTER: { model: "Dell 3050", place: "สำนักงาน" }, MOUSE: { model: "Logitech" } });
+  assert.equal(next.lastType, "MOUSE");
+  assert.deepEqual(plain(model.rememberAdded(next, "MOUSE", { core: {} }).types), { COMPUTER: { model: "Dell 3050", place: "สำนักงาน" } }, "ครั้งล่าสุดไม่มีค่า = ลืมของชนิดนั้น");
+  // ข้อความที่เสีย/ถูกแก้ไม่ทำให้พัง และไม่ยอมรับคีย์แปลก ๆ
+  for (const bad of [null, "", "{", "[]", "123", '{"types":[]}']) assert.deepEqual(plain(model.parseMemory(bad)), { lastType: "", types: {} }, String(bad));
+  const hostile = model.parseMemory(JSON.stringify({ lastType: "bad code", types: { COMPUTER: { model: "ok", ip: "1.2.3.4", place: 5, serial: "S" }, "../x": { model: "y" }, MOUSE: { model: "m".repeat(201) } } }));
+  assert.deepEqual(plain(hostile), { lastType: "", types: { COMPUTER: { model: "ok" } } });
+  assert.deepEqual(plain(model.forgetType(memory, "COMPUTER").types), {});
+  assert.equal(model.forgetType(memory, "COMPUTER").lastType, "COMPUTER");
+});
+
+test("applying remembered values fills only the type's own empty brand/place fields and reports what it filled; typing wins over it when changing type", () => {
+  const memory = model.rememberAdded(model.parseMemory(""), "COMPUTER", { core: { model: "Dell", place: "สำนักงาน" } });
+  const { values, applied } = model.applyRemembered(COMPUTER, model.emptyFormValues(COMPUTER), memory);
+  assert.equal(values.core.model, "Dell");
+  assert.equal(values.core.place, "สำนักงาน");
+  assert.deepEqual(applied.map((item) => [item.key, item.label, item.value]), [["model", "ยี่ห้อ / รุ่น", "Dell"], ["place", "สถานที่", "สำนักงาน"]]);
+  assert.equal(values.core.reg_no, "");
+  assert.deepEqual(model.applyRemembered(MOUSE, model.emptyFormValues(MOUSE), memory).applied, [], "ชนิดอื่นไม่ได้รับ");
+  const typedAlready = model.emptyFormValues(COMPUTER); typedAlready.core.model = "HP";
+  assert.equal(model.applyRemembered(COMPUTER, typedAlready, memory).values.core.model, "HP", "ช่องที่มีค่าอยู่ไม่ถูกทับ");
+  // ค่าที่ระบบเติมให้ไม่นับเป็นที่พิมพ์เอง
+  const initial = values; const current = structuredClone(values); current.core.name = "ชื่อใหม่"; current.attrs.cpu = "i7";
+  assert.deepEqual(plain(model.typedSince(current, initial)), { core: { name: "ชื่อใหม่" }, attrs: { cpu: "i7" } });
+});
+
+test("batch lines: one device per line, blank lines skipped, two-column lines split on tab or comma, duplicates inside the batch flagged, bounded", () => {
+  const one = model.parseBatchLines("SN001\n\n  SN002  \r\nSN001\nsn002", ["serial"]);
+  assert.deepEqual(one.items.map((item) => [item.line, item.values.serial]), [[1, "SN001"], [3, "SN002"]]);
+  assert.deepEqual(one.errors.map((error) => error.message), ["บรรทัด 4: Serial ซ้ำกับบรรทัด 1", "บรรทัด 5: Serial ซ้ำกับบรรทัด 3"]);
+  const two = model.parseBatchLines("COM01, SN1\nCOM02\tSN2\nCOM03\ncom01, SN9\nCOM05, ", ["device_code", "serial"]);
+  assert.deepEqual(two.items.map((item) => [item.values.device_code, item.values.serial]), [["COM01", "SN1"], ["COM02", "SN2"]]);
+  assert.deepEqual(two.errors.map((error) => error.line), [3, 4, 5]);
+  assert.match(two.errors[0].message, /ต้องมี 2 ค่า/);
+  assert.match(two.errors[1].message, /รหัสอุปกรณ์ ซ้ำกับบรรทัด 1/, "รหัสเทียบแบบไม่สนตัวพิมพ์เล็กใหญ่");
+  const huge = model.parseBatchLines(Array.from({ length: 51 }, (_, index) => `SN${index}`).join("\n"), ["serial"]);
+  assert.equal(huge.errors[0].line, 0);
+  assert.match(huge.errors[0].message, /ไม่เกิน 50/);
+  assert.deepEqual(model.parseBatchLines("", ["serial"]), { items: [], errors: [] });
+});
+
+test("batch options follow the type: device code choices only when the type has one", () => {
+  assert.deepEqual(model.batchColumnOptions(COMPUTER).map((option) => option.value), ["serial", "reg_no", "device_code", "device_code,serial", "reg_no,serial"]);
+  assert.deepEqual(model.batchColumnOptions(MOUSE).map((option) => option.value), ["serial", "reg_no", "reg_no,serial"]);
+  assert.equal(model.batchOptionOf(MOUSE, "device_code").value, "serial", "ตัวเลือกที่ชนิดนี้ไม่มี = ใช้ตัวแรก");
+});
+
+test("batch plan: shared fields come from the form, the per-line fields from the list; unique fields in the form must be empty; one bad line blocks the whole batch", () => {
+  const base = model.emptyFormValues(COMPUTER);
+  Object.assign(base.core, { name: "เครื่องออฟฟิศ", model: "Dell 3050", place: "สำนักงาน", host_code: "" });
+  base.attrs.cpu = "i5";
+  const ok = model.buildBatchPlan({ type: COMPUTER, base, columns: "device_code,serial", text: "COM01, SN1\ncom02, SN2" });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.items.map((item) => item.label), ["COM01", "com02"]);
+  assert.equal(ok.items[1].values.core.device_code, "com02");
+  assert.equal(ok.items[1].values.core.name, "เครื่องออฟฟิศ");
+  assert.equal(ok.items[0].values.attrs.cpu, "i5");
+  const payload = model.buildSavePayload({ type: COMPUTER, values: ok.items[1].values, assetId: ID });
+  assert.deepEqual(plain(payload.p_data), { device_code: "COM02", serial: "SN2", name: "เครื่องออฟฟิศ", model: "Dell 3050", status: "in_use", place: "สำนักงาน" });
+  assert.deepEqual(plain(payload.p_secrets), {}, "ไม่มีช่องลับในโหมดนี้");
+  assert.equal(payload.p_type_code, "COMPUTER");
+  // เลขทะเบียน/รหัสอุปกรณ์/ช่องที่ใช้ในรายการ ต้องเว้นว่างในฟอร์ม
+  const clash = structuredClone(base); clash.core.reg_no = "COM-1"; clash.core.serial = "SN-X";
+  const bad = model.buildBatchPlan({ type: COMPUTER, base: clash, columns: "serial", text: "SN1" });
+  assert.equal(bad.ok, false);
+  assert.deepEqual(bad.fieldErrors.map((error) => error.field).sort(), ["reg_no", "serial"]);
+  // ค่าผิดในบรรทัดเดียว = ทั้งชุดไม่ผ่าน และบอกเลขบรรทัด · ข้อผิดของฟอร์มร่วมรายงานครั้งเดียว
+  const long = model.buildBatchPlan({ type: COMPUTER, base, columns: "serial", text: `SN1\n${"x".repeat(201)}\nSN3` });
+  assert.equal(long.ok, false);
+  assert.deepEqual(long.lineErrors.map((error) => error.line), [2]);
+  const price = structuredClone(base); price.core.price = "abc";
+  const shared = model.buildBatchPlan({ type: COMPUTER, base: price, columns: "serial", text: "A\nB\nC" });
+  assert.deepEqual(shared.fieldErrors.map((error) => error.field), ["price"]);
+  assert.equal(shared.lineErrors.length, 0);
+  assert.equal(model.buildBatchPlan({ type: COMPUTER, base, columns: "serial", text: "  \n " }).ok, false, "ไม่มีรายการ");
+});
+
+test("changing the type inside the add form carries over only typed values whose field exists in the new type", () => {
+  const carried = { core: { reg_no: "X1", device_code: "COM9", name: "ชื่อ", model: "", status: "spare" }, attrs: { cpu: "i7", ram_gb: "", kind: "PC" } };
+  const next = model.carryOver(MOUSE, carried);
+  assert.deepEqual(plain(next), { core: { reg_no: "X1", name: "ชื่อ", status: "spare" }, attrs: {} }, "เมาส์ไม่มีรหัสอุปกรณ์/ช่องเฉพาะ · ค่าว่างไม่ถูกยก");
+  const back = model.carryOver(COMPUTER, carried);
+  assert.equal(back.core.device_code, "COM9");
+  assert.deepEqual(plain(back.attrs), { cpu: "i7", kind: "PC" });
+  assert.ok(!JSON.stringify(model.carryOver(COMPUTER, { core: {}, attrs: { ip: "10.0.0.1" } })).includes("10.0.0.1"), "ช่องลับไม่ใช่ช่องธรรมดา จึงไม่ถูกยก");
 });

@@ -34,7 +34,7 @@ test("head: one h1, back link to IT SUPPORT, test tag only in test mode, dev not
   assert.doesNotMatch(html, /itas-test-tag/);
   assert.match(pages.head({ isTest: true }), /<span class="badge itas-test-tag"[^>]*>ทดสอบ<\/span>/);
   assert.match(html, /กำลังพัฒนาและทดสอบ ยังไม่เปิดใช้งานจริง/);
-  assert.match(html, /<p class="itas-version no-print"[^>]*>V1\.00<\/p>/);
+  assert.match(html, /<p class="itas-version no-print"[^>]*>V1\.01<\/p>/);
 });
 
 test("vault bar: shows state for every status with the right buttons; test vault is labelled", () => {
@@ -99,19 +99,31 @@ test("vault forms: every secret/recovery input blocks autofill, password manager
   assert.equal(pages.strengthText({ label: "" }), "");
 });
 
-test("type list and toolbar", () => {
-  const types = [{ code: "COMPUTER", name: "เครื่องคอมพิวเตอร์", asset_count: 12, is_active: true }, { code: "OLD", name: `เก่า ${XSS}`, asset_count: 0, is_active: false }];
-  const html = pages.typeList(types, "COMPUTER");
+test("type chips: all + used types first, empty types folded under 'other types', selected state, escaping; toolbar has one search box and one add button", () => {
+  const types = [
+    { code: "COMPUTER", name: "เครื่องคอมพิวเตอร์", asset_count: 12, is_active: true },
+    { code: "MOUSE", name: "เมาส์", asset_count: 0, is_active: true },
+    { code: "OLD", name: `เก่า ${XSS}`, asset_count: 2, is_active: false },
+  ];
+  const html = pages.typeChips({ types, selectedCode: "COMPUTER", total: 14 });
+  assert.match(html, /data-itas-type="" aria-pressed="false"><span class="itas-chip-name">ทั้งหมด<\/span><span[^>]*>14</);
   assert.match(html, /data-itas-type="COMPUTER" aria-pressed="true"/);
   assert.match(html, /data-itas-type="OLD" aria-pressed="false"/);
   assert.match(html, /is-off/);
   assert.doesNotMatch(html, /<img/);
-  assert.match(html, />12</);
-  assert.match(pages.typeList([], ""), /ยังไม่มีชนิดอุปกรณ์/);
+  assert.ok(html.indexOf("COMPUTER") < html.indexOf("OLD") && html.indexOf("OLD") < html.indexOf("itas-types-more"), "ชนิดที่มีของมาก่อน ปุ่มชนิดอื่นๆ อยู่ท้าย");
+  assert.doesNotMatch(html, /data-itas-type="MOUSE"/, "ชนิดว่างถูกพับไว้");
+  assert.match(html, /id="itas-types-more" aria-expanded="false">ชนิดอื่นๆ \(1\) ▾/);
+  const open = pages.typeChips({ types, selectedCode: "MOUSE", total: 14, showEmpty: true });
+  assert.match(open, /data-itas-type="MOUSE" aria-pressed="true"/);
+  assert.match(open, /aria-expanded="true"/);
+  assert.doesNotMatch(pages.typeChips({ types: [types[0]], total: 12 }), /itas-types-more/, "ไม่มีชนิดว่าง = ไม่มีปุ่ม");
   const toolbar = pages.toolbar({ query: `"><b>`, status: "broken" });
   assert.match(toolbar, /value="&quot;&gt;&lt;b&gt;"/);
   assert.match(toolbar, /<option value="broken" selected>ชำรุด<\/option>/);
-  assert.match(toolbar, /id="itas-add"/);
+  assert.equal(count(toolbar, /type="search"/g), 1);
+  assert.match(toolbar, /placeholder="ค้นหาทุกชนิด[^"]*ผู้ใช้[^"]*สถานที่"/);
+  assert.match(toolbar, /id="itas-add">\+ เพิ่มอุปกรณ์/);
   assert.doesNotMatch(pages.toolbar({ canAdd: false }), /itas-add/);
 });
 
@@ -132,7 +144,8 @@ test("asset table: escapes every cell, status badge, sortable headers with aria-
 
 test("asset form (add): fields come from the type definition, dates are typed text, choices are selects, secret section is locked-safe", () => {
   const html = pages.assetForm({ mode: "add", type: TYPE, values: model.emptyFormValues(TYPE), vaultStatus: "locked" });
-  assert.match(html, /เพิ่มเครื่องคอมพิวเตอร์/);
+  assert.match(html, /<h2[^>]*>เพิ่มอุปกรณ์<\/h2>/);
+  assert.doesNotMatch(html, /name="type_code"/, "ไม่ส่ง types = ไม่มีตัวเลือกชนิด");
   assert.match(html, /name="reg_no"/);
   assert.match(html, /name="device_code"/);
   assert.match(html, /name="attrs.cpu"/);
@@ -148,6 +161,77 @@ test("asset form (add): fields come from the type definition, dates are typed te
   const mouse = pages.assetForm({ mode: "add", type: { code: "MOUSE", name: "เมาส์", fields: [], has_device_code: false }, values: model.emptyFormValues({ fields: [], has_device_code: false }) });
   assert.doesNotMatch(mouse, /name="device_code"/);
   assert.doesNotMatch(mouse, /itas-secrets"/);
+});
+
+test("asset form: only code, name, brand/model, user (+ status) are always visible; everything else is folded under 'more details'; secrets stay outside the fold", () => {
+  const split = (html) => { const at = html.indexOf('<details class="itas-more"'); const end = html.indexOf("</details>"); return { head: html.slice(0, at), fold: html.slice(at, end), tail: html.slice(end) }; };
+  const html = pages.assetForm({ mode: "add", type: TYPE, values: model.emptyFormValues(TYPE), vaultStatus: "locked", types: [TYPE] });
+  const { head, fold, tail } = split(html);
+  for (const name of ["type_code", "reg_no", "device_code", "name", "model", "host_code", "status"]) assert.match(head, new RegExp(`name="${name}"`), `${name} เห็นเสมอ`);
+  for (const name of ["serial", "slot", "place", "install_date", "purchase_date", "vendor", "price", "warranty_text", "express_code", "account_no", "note", "attrs.cpu", "attrs.kind", "attrs.installed"]) {
+    assert.doesNotMatch(head, new RegExp(`name="${name}"`), `${name} ต้องไม่อยู่ในช่องหลัก`);
+    assert.match(fold, new RegExp(`name="${name}"`), `${name} พับอยู่ใต้รายละเอียดเพิ่มเติม`);
+  }
+  assert.match(head, /ยี่ห้อ \/ รุ่น/);
+  assert.match(head, /ผู้ใช้ \/ ติดตั้งที่ \(Used by\)/, "ชนิดที่ไม่มี user_name ใช้ ติดตั้งที่ เป็นผู้ใช้");
+  assert.doesNotMatch(fold, /open/, "เพิ่มใหม่เริ่มแบบพับ");
+  assert.match(tail, /id="itas-secrets-host"/, "ช่องลับอยู่นอกส่วนที่พับ");
+  assert.match(pages.assetForm({ mode: "add", type: TYPE, values: model.emptyFormValues(TYPE), openMore: true }), /<details class="itas-more" id="itas-more" open>/);
+  // ชนิดที่มีช่อง user_name (เครื่องคอมพิวเตอร์จริง): ผู้ใช้เป็นช่อง user_name ส่วน ติดตั้งที่ ไปอยู่ในส่วนที่พับ
+  const computer = { ...TYPE, fields: [{ key: "user_name", label: "ชื่อผู้ใช้ (User)", type: "text", secret: false, order: 1 }, ...TYPE.fields] };
+  const pc = split(pages.assetForm({ mode: "add", type: computer, values: model.emptyFormValues(computer) }));
+  assert.match(pc.head, /name="attrs.user_name"/);
+  assert.doesNotMatch(pc.head, /name="host_code"/);
+  assert.match(pc.fold, /name="host_code"/);
+  // ชนิดที่ไม่มีรหัสอุปกรณ์ไม่มีช่องรหัสอุปกรณ์เลย
+  const mouse = { code: "MOUSE", name: "เมาส์", fields: [], has_device_code: false };
+  assert.doesNotMatch(pages.assetForm({ mode: "add", type: mouse, values: model.emptyFormValues(mouse) }), /name="device_code"/);
+});
+
+test("suggestions render as escaped datalists attached to plain text inputs only; the remembered-values notice has a clear button", () => {
+  const suggestions = { core: { model: ["Dell 3050", XSS], place: ["สำนักงาน"], install_date: ["01/01/2568"] }, attrs: { cpu: ["i5"], kind: ["PC"] } };
+  const html = pages.assetForm({ mode: "add", type: TYPE, values: model.emptyFormValues(TYPE), suggestions, remembered: [{ key: "model", label: "ยี่ห้อ / รุ่น", value: "Dell 3050" }, { key: "place", label: "สถานที่", value: XSS }] });
+  assert.match(html, /<datalist id="itas-dl-model"><option value="Dell 3050"><\/option><option value="&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;"><\/option><\/datalist>/);
+  assert.match(html, /<datalist id="itas-dl-attrs-cpu">/);
+  assert.match(html, /name="model" type="text" autocomplete="off" list="itas-dl-model"/);
+  assert.match(html, /name="place" type="text" autocomplete="off" list="itas-dl-place"/);
+  assert.match(html, /name="attrs.cpu" type="text" autocomplete="off" list="itas-dl-attrs-cpu"/);
+  assert.doesNotMatch(html, /name="install_date"[^>]*list=/, "ช่องวันที่ไม่มีคำแนะนำ");
+  assert.doesNotMatch(html, /name="attrs.kind"[^>]*list=/, "ช่องตัวเลือกไม่มีคำแนะนำ");
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /id="itas-remembered"[^>]*>เติมให้จากรายการล่าสุดของชนิดนี้: <strong>ยี่ห้อ \/ รุ่น<\/strong> Dell 3050 · <strong>สถานที่<\/strong> &lt;img/);
+  assert.match(html, /id="itas-clear-remembered">ล้างค่าที่เติมให้/);
+  const plainForm = pages.assetForm({ mode: "add", type: TYPE, values: model.emptyFormValues(TYPE) });
+  assert.doesNotMatch(plainForm, /datalist|itas-remembered|list=/);
+});
+
+test("batch section: only in the add form; checkbox + hidden panel; options follow the type; the lines box is escaped; secrets host is hidden while batch is on; results and problems escape everything", () => {
+  const add = pages.assetForm({ mode: "add", type: TYPE, values: model.emptyFormValues(TYPE) });
+  assert.match(add, /<input type="checkbox" id="itas-batch-toggle" name="batch_on"> เพิ่มหลายเครื่องรุ่นเดียวกัน/);
+  assert.match(add, /<div id="itas-batch-panel" hidden>/);
+  assert.match(add, /<option value="device_code,serial">รหัสอุปกรณ์ \+ Serial<\/option>/);
+  assert.match(add, /name="batch_lines"/);
+  assert.doesNotMatch(add, /id="itas-secrets-host" hidden/);
+  const on = pages.assetForm({ mode: "add", type: TYPE, values: model.emptyFormValues(TYPE), batch: { on: true, columns: "device_code,serial", lines: `a${XSS}` } });
+  assert.match(on, /id="itas-batch-toggle" name="batch_on" checked>/);
+  assert.match(on, /<div id="itas-batch-panel">/);
+  assert.match(on, /<option value="device_code,serial" selected>/);
+  assert.match(on, /<textarea[^>]*name="batch_lines"[^>]*>a&lt;img/);
+  assert.match(on, /id="itas-secrets-host" hidden>/, "โหมดนี้ไม่รองรับช่องลับ");
+  assert.doesNotMatch(on, /<img/);
+  assert.doesNotMatch(pages.assetForm({ mode: "edit", type: TYPE, values: model.formValuesFromAsset(ASSET, TYPE), asset: ASSET }), /itas-batch/, "แก้ไขไม่มีเพิ่มหลายเครื่อง");
+  const noCode = pages.assetForm({ mode: "add", type: { code: "MOUSE", name: "เมาส์", fields: [], has_device_code: false }, values: model.emptyFormValues({ fields: [] }) });
+  assert.doesNotMatch(noCode, /value="device_code/);
+  const result = pages.batchResult({ added: 2, failed: [{ line: 3, label: `SN${XSS}`, message: "เลขทะเบียนซ้ำ" }], notTried: [{ line: 4, label: "SN4" }] });
+  assert.match(result, /เพิ่มสำเร็จ 2 รายการ/);
+  assert.match(result, /ยังไม่สำเร็จ 2 รายการ/);
+  assert.match(result, /<strong>SN&lt;img[^<]*<\/strong>: เลขทะเบียนซ้ำ/);
+  assert.match(result, /ยังไม่ได้ส่ง: SN4/);
+  assert.match(pages.batchResult({ added: 3 }), /form-message success/);
+  assert.doesNotMatch(result, /<img/);
+  const problems = pages.batchProblems([{ message: `บรรทัด 2: ${XSS}` }]);
+  assert.match(problems, /ยังไม่ได้เพิ่มอะไร/);
+  assert.doesNotMatch(problems, /<img/);
 });
 
 test("asset form (edit): values escaped, history button, secret fields masked and never carry ciphertext or plaintext", () => {
