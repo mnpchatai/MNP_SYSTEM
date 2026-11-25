@@ -562,19 +562,19 @@ test("the sound has no user interface at all: no panel, no switch, no preview, n
 
 test("the unlock listeners stay armed so a browser that blocks again can be unlocked by the next tap", () => {
   const arm = appSource.slice(appSource.indexOf("function armSoundUnlock("), appSource.indexOf("// รอบถามฐานข้อมูล"));
-  assert.match(arm, /if \(notifySound\.isReady\(\)\) notifySound\.unlock\(\);/);
+  assert.match(arm, /if \(COMPANY_NOTIFY_SOUND_ENABLED && notifySound\.isReady\(\)\) notifySound\.unlock\(\);/);
   assert.match(arm, /\["pointerdown", "keydown"\]\.forEach/);
   assert.doesNotMatch(arm, /removeEventListener/);
 });
 
 test("a push-driven reload never announces by itself, and a failed count is not compared", () => {
   const load = appSource.slice(appSource.indexOf("async function loadUnread("), appSource.indexOf("const NAV_ICONS"));
-  assert.match(load, /announce && !isSandboxMode\(\)/);
+  assert.match(load, /announce && COMPANY_NOTIFY_SOUND_ENABLED && !isSandboxMode\(\)/);
   assert.match(load, /if \(!error\) \{\n {4}state\.unread = count \?\? 0;\n {4}observe\(count\);/);
   const push = appSource.slice(appSource.indexOf("async function onNotificationPushMessage("), appSource.indexOf("async function showSoundFallbackNotification("));
   assert.match(push, /loadUnread\(\{ announce: false \}\)/);
   // ไม่รับปากเล่นเสียงในโหมดทดสอบ/lab-only
-  assert.match(push, /!isLabOnly\(\) && !isSandboxMode\(\) && notifySound\.canHandle\(\)/);
+  assert.match(push, /COMPANY_NOTIFY_SOUND_ENABLED && Boolean\(state\.employee\) && !isLabOnly\(\) && !isSandboxMode\(\) && notifySound\.canHandle\(\)/);
 });
 
 test("a failed count keeps the old unread number in both branches so the bell badge does not vanish", () => {
@@ -607,4 +607,22 @@ test("the index loads the sound module before app.js", () => {
   const html = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
   assert.ok(html.indexOf("modules/notification-sound.js") > 0);
   assert.ok(html.indexOf("modules/notification-sound.js") < html.indexOf("./app.js?v="));
+});
+
+// ---------- ธงปิดเสียงบริษัท (เจ้าของสั่ง 25/11/2026) ----------
+test("the company sound flag is defined once, and is off so the operating system plays its own sound", () => {
+  assert.equal(appSource.match(/^const COMPANY_NOTIFY_SOUND_ENABLED = (true|false);$/gm)?.length, 1);
+  assert.match(appSource, /^const COMPANY_NOTIFY_SOUND_ENABLED = false;$/m);
+});
+
+test("with the flag off every path that could play the company sound is gated by it", () => {
+  const push = appSource.slice(appSource.indexOf("async function onNotificationPushMessage("), appSource.indexOf("async function showSoundFallbackNotification("));
+  // ตอบ sw.js ด้วย canPlay ซึ่งต้องเป็น false เมื่อธงปิด (sw.js จึงไม่ทำ silent)
+  assert.match(push, /const canPlay = COMPANY_NOTIFY_SOUND_ENABLED && /);
+  assert.match(push, /postMessage\(\{ willPlaySound: canPlay \}\)/);
+  const poll = appSource.slice(appSource.indexOf("async function pollUnreadForSound("), appSource.indexOf("// ข้อความจาก sw.js ตอนมี push เข้า"));
+  assert.match(poll, /COMPANY_NOTIFY_SOUND_ENABLED && !notifySound\.isReady\(\)/);
+  // รอบถามยังไม่อ่านยังอัปเดตป้ายกระดิ่งอยู่ (ไม่ถูกตัดทิ้งเมื่อธงปิด)
+  assert.match(poll, /await loadUnread\(\);\n\s*updateUnreadBadges\(\);/);
+  assert.match(appSource, /COMPANY_NOTIFY_SOUND_ENABLED && !isLabOnly\(\) && !isSandboxMode\(\)\) notifySound\.probe\(\)/);
 });
