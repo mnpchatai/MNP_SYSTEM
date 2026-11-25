@@ -8,7 +8,7 @@
 
   const YEAR_OFFSET = 543;
   // เลขเวอร์ชันของโมดูล (ป้ายบนการ์ด + มุมขวาล่างทุกหน้า) รูปแบบ <ใหญ่>.<ย่อย 2 หลัก> · กติกาเดียวกับใบสั่งงาน/ใบแจ้งซ่อม (ถามเจ้าของก่อนเปลี่ยนทุกครั้ง)
-  const MODULE_VERSION = "1.04";
+  const MODULE_VERSION = "1.05";
   const VERSION_DATE = "2026-11-25";
   // ธง "กำลังพัฒนา" (จุดเดียว): true = การ์ดมีป้าย "กำลังพัฒนา" และทุกหน้าของโมดูลมีแถบข้อความว่ายังไม่เปิดใช้งานจริง · ถอดเมื่อเจ้าของสั่ง
   const IN_DEVELOPMENT = true;
@@ -150,9 +150,15 @@
   // เจ้าของกำหนด: รหัส ชื่อ ยี่ห้อ/รุ่น ผู้ใช้ (+ ชนิด และสถานะ) · "รหัส" = เลขทะเบียน + รหัสอุปกรณ์ (ถ้าชนิดนั้นมี) · "ยี่ห้อ/รุ่น" = ช่องรุ่น (ฐานข้อมูลไม่มีช่องยี่ห้อแยก)
   // "ผู้ใช้" = ช่อง user_name ของชนิด (เครื่องคอมพิวเตอร์) ถ้ามี ไม่มีก็ใช้ "ติดตั้งที่" (host_code) · ชื่อช่องแบบเดียวกับ validateAsset: คีย์ช่องกลาง หรือ "attrs.<key>"
   const userFieldName = (type) => (plainFields(type).some((field) => field.key === USER_ATTR_KEY) ? `attrs.${USER_ATTR_KEY}` : "host_code");
+  // ชนิดสิ้นเปลือง (หมึก/โทนเนอร์): ซื้อมาแล้วใช้เลย ไม่มีสต๊อก → ไม่แสดงสถานะ (ฐานข้อมูลยังบังคับมีค่า จึงส่งค่าเดิม/in_use ผ่านช่องซ่อน) แต่ย้าย วันที่ซื้อ + ราคา ขึ้นมาเป็นช่องหลักแทน
+  const CONSUMABLE_TYPES = Object.freeze(new Set(["INK_TONER"]));
+  const isConsumableType = (typeCode) => CONSUMABLE_TYPES.has(String(typeCode ?? "").trim().toUpperCase());
   function primaryFieldNames(type) {
-    return ["reg_no", ...(type?.has_device_code ? ["device_code"] : []), "name", "model", userFieldName(type), "status"];
+    const head = ["reg_no", ...(type?.has_device_code ? ["device_code"] : []), "name", "model", userFieldName(type)];
+    return isConsumableType(type?.code) ? [...head, "purchase_date", "price"] : [...head, "status"];
   }
+  // ช่องสถานะในตาราง/การ์ดของชนิดสิ้นเปลือง: แสดง "ซื้อ วว/ดด/ปปปป" (ถ้ามีวันที่ซื้อ) ไม่มีป้ายสถานะ
+  const consumablePurchaseText = (row) => (isConsumableType(row?.type_code) && row?.purchase_date ? `ซื้อ ${formatDate(row.purchase_date)}` : "");
   const isPrimaryField = (type, name) => primaryFieldNames(type).includes(name);
   // ป้ายชื่อของช่องหลักที่เปลี่ยนจากป้ายปกติ (เฉพาะในฟอร์ม): "ติดตั้งที่" ที่ทำหน้าที่เป็น "ผู้ใช้"
   const PRIMARY_LABEL_OVERRIDES = Object.freeze({ host_code: "ผู้ใช้ / ติดตั้งที่ (Used by)" });
@@ -853,7 +859,7 @@
   const api = {
     MODULE_VERSION, VERSION_DATE, IN_DEVELOPMENT, ASSET_CODE, YEAR_OFFSET, MIN_DATE, MAX_DATE, MAX_PLAIN_BYTES, MAX_LISTED, MIN_PASSWORD_LENGTH, DATE_INPUT_HINT, PASSWORD_ADVICE,
     STATUSES, CORE_FIELDS, GROUP_LABELS, GROUP_ORDER, IDENTITY_KEYS,
-    assetsUrl, readView, isUuid, statusLabel, statusBadgeClass,
+    assetsUrl, readView, isUuid, isConsumableType, CONSUMABLE_TYPES, consumablePurchaseText, statusLabel, statusBadgeClass,
     formatDate, formatDateTime, parseDateInput, dateInputText, isRealDate,
     typeFields, plainFields, secretFields, coreFieldsOf, normalizeCode, emptyFormValues, formValuesFromAsset, carryOver, copyValuesFromAsset, MAX_BATCH, batchColumnOptions, batchOptionOf, parseBatchLines, buildBatchPlan, suggestionsFor, MAX_SUGGESTIONS, REMEMBER_KEYS, parseMemory, serializeMemory, rememberAdded, forgetType, applyRemembered, typedSince, userFieldName, primaryFieldNames, isPrimaryField, PRIMARY_LABEL_OVERRIDES, extraFieldsHaveValues, errorsInExtraFields, parseField, validateAsset, buildSavePayload, payloadIsEmpty,
     tableColumns, allColumns, typeChipGroups, TYPE_ALL_LABEL, typeShortName, USER_ATTR_KEY, userValueOf, cellValue, cellText, formatCell, filterAssets, sortAssets, countText,
