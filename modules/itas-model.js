@@ -8,7 +8,7 @@
 
   const YEAR_OFFSET = 543;
   // เลขเวอร์ชันของโมดูล (ป้ายบนการ์ด + มุมขวาล่างทุกหน้า) รูปแบบ <ใหญ่>.<ย่อย 2 หลัก> · กติกาเดียวกับใบสั่งงาน/ใบแจ้งซ่อม (ถามเจ้าของก่อนเปลี่ยนทุกครั้ง)
-  const MODULE_VERSION = "1.05";
+  const MODULE_VERSION = "1.06";
   const VERSION_DATE = "2026-11-25";
   // ธง "กำลังพัฒนา" (จุดเดียว): true = การ์ดมีป้าย "กำลังพัฒนา" และทุกหน้าของโมดูลมีแถบข้อความว่ายังไม่เปิดใช้งานจริง · ถอดเมื่อเจ้าของสั่ง
   const IN_DEVELOPMENT = true;
@@ -806,6 +806,134 @@
     return { log, moves };
   }
 
+  /* ---------- พิมพ์ทะเบียน A4 + ส่งออก CSV (รุ่น 1.06) ---------- */
+  // กฎเหล็ก: ทั้งใบพิมพ์และไฟล์ส่งออก "ไม่มีช่องลับ" · ใช้เฉพาะ plainFields (ช่องที่ไม่ลับตามนิยามชนิด) กับช่องกลาง · ไม่แตะ row.secrets เลย
+  const dateTimeText = (now) => formatDateTime(now ?? new Date());
+  // เงื่อนไขกรองปัจจุบัน → รายการ [ป้าย, ค่า] ไว้พิมพ์บนหัวใบ
+  function printFilterItems({ typeName = "", status = "", query = "" } = {}) {
+    const wanted = status && status !== "all" ? status : "";
+    const items = [["ชนิด", textOf(typeName) || TYPE_ALL_LABEL], ["สถานะ", wanted ? statusLabel(wanted) : "ทุกสถานะ"]];
+    if (textOf(query)) items.push(["ค้นหา", textOf(query)]);
+    return items;
+  }
+  // ตารางใบพิมพ์รายการ: rows = แถวหลังกรอง/เรียงแล้ว (ตามที่เห็นบนหน้าจอ) · คอลัมน์ชนิดแสดงเฉพาะมุมมองทั้งหมด · รหัสอุปกรณ์แสดงเมื่อชนิดนั้นมีรหัส/มีแถวที่มีรหัส
+  // ชนิดสิ้นเปลือง (หมึก/โทนเนอร์) ไม่มีสถานะ → ช่องสุดท้ายเป็น "ซื้อ วว/ดด/ปปปป" (ทุกแถวเป็นชนิดนี้ = หัวคอลัมน์ "วันที่ซื้อ")
+  function printList({ rows, types, typeCode = "" }) {
+    const list = Array.isArray(rows) ? rows : [];
+    const typeList = Array.isArray(types) ? types : [];
+    const names = new Map(typeList.map((type) => [type.code, type.name]));
+    const type = typeCode ? typeList.find((item) => item.code === typeCode) : null;
+    const showType = !typeCode;
+    const showDeviceCode = typeCode ? Boolean(type?.has_device_code) : list.some((row) => textOf(row.device_code));
+    const allConsumable = list.length > 0 && list.every((row) => isConsumableType(row.type_code));
+    const columns = [
+      { key: "no", label: "ลำดับ", cls: "center" },
+      { key: "reg_no", label: "เลขทะเบียน", cls: "mono" },
+      ...(showDeviceCode ? [{ key: "device_code", label: "รหัสอุปกรณ์", cls: "mono" }] : []),
+      ...(showType ? [{ key: "type", label: "ชนิด", cls: "" }] : []),
+      { key: "name", label: "ชื่อ", cls: "" },
+      { key: "model", label: "ยี่ห้อ / รุ่น", cls: "" },
+      { key: "user", label: "ผู้ใช้ / ติดตั้งที่", cls: "" },
+      { key: "status", label: allConsumable ? "วันที่ซื้อ" : "สถานะ", cls: "nowrap" },
+    ];
+    const cell = (row, key, position) => {
+      switch (key) {
+        case "no": return String(position + 1);
+        case "type": return names.get(row.type_code) ?? row.type_code ?? "";
+        case "user": return userValueOf(row);
+        case "status": return isConsumableType(row.type_code) ? consumablePurchaseText(row) : statusLabel(row.status);
+        default: return textOf(row[key]);
+      }
+    };
+    return { columns, lines: list.map((row, position) => columns.map((column) => cell(row, column.key, position))) };
+  }
+
+  // ใบสรุปเครื่องคอมพิวเตอร์ 1 เครื่อง: ตารางชิ้นส่วนภายใน + อุปกรณ์ต่อพ่วง (รวมที่ยกเลิกใช้งานแล้ว แสดงสถานะกำกับ)
+  const HOST_PRINT_COLUMNS = Object.freeze([
+    { key: "slot", label: "ช่อง/ตำแหน่ง", cls: "" },
+    { key: "type", label: "ชนิด", cls: "" },
+    { key: "code", label: "เลขทะเบียน / รหัส", cls: "mono" },
+    { key: "name", label: "ชื่อ", cls: "" },
+    { key: "spec", label: "ยี่ห้อ / รุ่น · รายละเอียด", cls: "" },
+    { key: "status", label: "สถานะ", cls: "nowrap" },
+  ]);
+  function hostPrint({ host, type, parts, types }) {
+    const grouped = groupParts(parts, types);
+    const typeList = Array.isArray(types) ? types : [];
+    const section = (kind, groups) => {
+      const lines = [];
+      for (const group of groups) {
+        for (const row of group.items) {
+          const part = typeList.find((item) => item.code === row.type_code);
+          lines.push([
+            textOf(row.slot), group.type_name ?? row.type_code ?? "", textOf(row.reg_no) || textOf(row.device_code), textOf(row.name), partSpecText(row, part),
+            isConsumableType(row.type_code) ? consumablePurchaseText(row) : statusLabel(row.status),
+          ]);
+        }
+      }
+      // count = จำนวนแถวที่พิมพ์ (รวมที่ยกเลิกใช้งานแล้ว) ให้ตรงกับตารางใต้หัวข้อ · จำนวนที่ยังใช้อยู่ดูที่ summary
+      return { kind, label: KIND_LABELS[kind], count: lines.length, lines };
+    };
+    return {
+      code: textOf(host?.device_code) || textOf(host?.reg_no),
+      title: textOf(host?.name) || textOf(host?.model) || textOf(type?.name) || "เครื่องคอมพิวเตอร์",
+      status: statusLabel(host?.status),
+      facts: hostFacts(host, type),
+      summary: `${partsSummaryText(grouped.counts)}${grouped.counts.retired ? ` · เลิกใช้ ${grouped.counts.retired}` : ""}`,
+      columns: HOST_PRINT_COLUMNS,
+      sections: [section("internal", grouped.internal), section("peripheral", grouped.peripheral)],
+    };
+  }
+
+  // ----- ส่งออก CSV (UTF-8 + BOM ให้ Excel ภาษาไทยอ่านได้) -----
+  // ทุกเซลล์ใส่เครื่องหมายคำพูดครอบและ escape " เป็น "" · ค่าที่ขึ้นต้นด้วย = + - @ tab CR ใส่ ' นำหน้า กัน CSV injection (Excel ไม่ตีเป็นสูตร)
+  const CSV_BOM = "﻿";
+  const CSV_NEWLINE = "\r\n";
+  function csvCell(value) {
+    let text = String(value ?? "");
+    if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+    return `"${text.replaceAll('"', '""')}"`;
+  }
+  // วันที่ส่งออกเป็น ค.ศ. YYYY-MM-DD (Excel อ่านได้ตรง ไม่สลับวัน/เดือน) · ตัวเลขส่งออกเป็นค่าดิบ ไม่ใส่จุลภาคคั่นหลักพัน
+  const csvValue = (field, value) => {
+    if (value === null || value === undefined) return "";
+    if (field.type === "status") return statusLabel(value);
+    return String(value);
+  };
+  // คอลัมน์ของไฟล์: ชนิด + ช่องกลางทั้งหมด + ช่องเฉพาะชนิดที่ไม่ลับของ "ชนิดที่มีอยู่ในชุดที่ส่งออก" (ช่องคีย์เดียวกันและป้ายเดียวกันรวมเป็นคอลัมน์เดียว)
+  function csvColumns(rows, types) {
+    const present = new Set((Array.isArray(rows) ? rows : []).map((row) => row.type_code));
+    const columns = [{ header: "ชนิด", get: (row, names) => names.get(row.type_code) ?? row.type_code ?? "" }];
+    for (const field of CORE_FIELDS) columns.push({ header: field.label, get: (row) => csvValue(field, row[field.key]) });
+    const merged = new Map();
+    for (const type of (Array.isArray(types) ? types : []).filter((item) => present.has(item.code))) {
+      for (const field of plainFields(type)) { // plainFields = ไม่ลับ และไม่ซ่อน · ช่องลับไม่ผ่านตรงนี้เด็ดขาด
+        const id = `${field.key}\u0000${field.label}`;
+        if (!merged.has(id)) merged.set(id, { header: field.label, key: field.key, field, typeCodes: new Set() });
+        merged.get(id).typeCodes.add(type.code);
+      }
+    }
+    for (const item of merged.values()) columns.push({ header: item.header, get: (row) => (item.typeCodes.has(row.type_code) ? csvValue(item.field, row.attrs?.[item.key]) : ""), key: item.key });
+    // หัวคอลัมน์ซ้ำกัน (ชื่อช่องของชนิดอื่นตรงกับช่องกลางหรือกันเอง): ต่อท้ายคีย์ช่องให้แยกออก
+    const seen = new Map();
+    for (const column of columns) seen.set(column.header, (seen.get(column.header) ?? 0) + 1);
+    for (const column of columns) if (seen.get(column.header) > 1 && column.key) column.header = `${column.header} (${column.key})`;
+    return columns;
+  }
+  function buildCsv({ rows, types }) {
+    const list = Array.isArray(rows) ? rows : [];
+    const names = new Map((Array.isArray(types) ? types : []).map((type) => [type.code, type.name]));
+    const columns = csvColumns(list, types);
+    const lines = [columns.map((column) => csvCell(column.header)).join(",")];
+    for (const row of list) lines.push(columns.map((column) => csvCell(column.get(row, names))).join(","));
+    return `${CSV_BOM}${lines.join(CSV_NEWLINE)}${CSV_NEWLINE}`;
+  }
+  // itas-<real|test>-YYYYMMDD.csv (วันที่ตามเวลาไทย ค.ศ.)
+  function csvFileName({ isTest = false, now = new Date() } = {}) {
+    const { year, month, day } = bangkokParts(now);
+    return `itas-${isTest ? "test" : "real"}-${year}${month}${day}.csv`;
+  }
+
   /* ---------- รหัสตู้เซฟ: ตัววัดความแข็งแรงคร่าว ๆ ---------- */
   // ฐานข้อมูลกันเดารหัสไม่ได้ ความแข็งแรงของรหัสจึงสำคัญ · ตัววัดนี้แค่ช่วยผู้ใช้ (กฎที่บล็อกจริงอยู่ที่ passwordProblem ใน itas-vault.js: ยาว ≥ 14 · ตัวอักษรไม่ซ้ำ ≥ 6 · ไม่เรียง/ซ้ำชัดเจน · ไม่เท่ากับรหัสพนักงาน)
   // level: 0 สั้นเกินไป · 1 พอใช้ · 2 ดี · 3 ดีมาก (วลีหลายคำยาว ๆ)
@@ -864,6 +992,7 @@
     typeFields, plainFields, secretFields, coreFieldsOf, normalizeCode, emptyFormValues, formValuesFromAsset, carryOver, copyValuesFromAsset, MAX_BATCH, batchColumnOptions, batchOptionOf, parseBatchLines, buildBatchPlan, suggestionsFor, MAX_SUGGESTIONS, REMEMBER_KEYS, parseMemory, serializeMemory, rememberAdded, forgetType, applyRemembered, typedSince, userFieldName, primaryFieldNames, isPrimaryField, PRIMARY_LABEL_OVERRIDES, extraFieldsHaveValues, errorsInExtraFields, parseField, validateAsset, buildSavePayload, payloadIsEmpty,
     tableColumns, allColumns, typeChipGroups, TYPE_ALL_LABEL, typeShortName, USER_ATTR_KEY, userValueOf, cellValue, cellText, formatCell, filterAssets, sortAssets, countText,
     labelOfKey, logChanges, historyView, passwordStrength,
+    dateTimeText, printFilterItems, printList, hostPrint, csvCell, csvColumns, buildCsv, csvFileName, CSV_BOM,
     HOST_TYPE_CODES, INTERNAL_TYPE_CODES, KIND_LABELS, TYPE_ICON_PATHS, isHostTypeCode, typeKind, typeIconPaths, statusTone, hostKeyOf, countParts, partsSummaryText, buildHostIndex, groupParts, partSpecText, hostFacts, hostMoveHistory, labelOfAsset, MAX_HOST_MOVES,
     describeError, isAlreadyExists, purgeSummary,
   };

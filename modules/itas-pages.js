@@ -155,11 +155,13 @@
       : "";
     return `<div class="itas-chips" role="group" aria-label="กรองตามชนิดอุปกรณ์">${chip("", model.TYPE_ALL_LABEL, total)}${used.map(typeChip).join("")}${more}</div>`;
   }
-  function toolbar({ query = "", status = "", canAdd = true } = {}) {
+  // canOutput = แสดงปุ่ม "พิมพ์" และ "ส่งออก Excel" (ตามตัวกรองปัจจุบัน) · hasRows = false ปิดปุ่มไว้ (ไม่มีอะไรให้พิมพ์/ส่งออก) module สลับเองเมื่อตัวกรองเปลี่ยน
+  function toolbar({ query = "", status = "", canAdd = true, canOutput = true, hasRows = true } = {}) {
     const options = [{ value: "", label: "ทุกสถานะ" }, ...model.STATUSES].map((item) => `<option value="${esc(item.value)}"${item.value === status ? " selected" : ""}>${esc(item.label)}</option>`).join("");
     return `<div class="itas-toolbar">
         <div class="field itas-search"><label class="sr-only" for="itas-search">ค้นหาอุปกรณ์ทุกชนิด</label><input class="input" id="itas-search" type="search" autocomplete="off" placeholder="ค้นหาทุกชนิด: เลขทะเบียน / รหัส / ชื่อ / ยี่ห้อ รุ่น / ผู้ใช้ / สถานที่" value="${esc(query)}"></div>
         <div class="field itas-status-filter"><label class="sr-only" for="itas-status">กรองตามสถานะ</label><select class="select" id="itas-status">${options}</select></div>
+        ${canOutput ? `<button type="button" class="btn secondary no-print" id="itas-print"${hasRows ? "" : " disabled"}>พิมพ์</button><button type="button" class="btn secondary no-print" id="itas-export"${hasRows ? "" : " disabled"}>ส่งออก Excel</button>` : ""}
         ${canAdd ? '<button type="button" class="btn" id="itas-add">+ เพิ่มอุปกรณ์</button>' : ""}
       </div>`;
   }
@@ -419,7 +421,7 @@
           ${statusPill(host.status)}
         </div>
         ${facts.length ? `<dl class="itas-facts">${facts.map((fact) => `<div><dt>${esc(fact.label)}</dt><dd class="itas-mono">${esc(fact.value)}</dd></div>`).join("")}</dl>` : ""}
-        <div class="itas-host-foot"><span class="itas-host-counts itas-mono">${esc(`${model.partsSummaryText(counts)}${retired}`)}</span><button type="button" class="btn" id="itas-host-edit">แก้ไขเครื่องนี้</button></div>
+        <div class="itas-host-foot"><span class="itas-host-counts itas-mono">${esc(`${model.partsSummaryText(counts)}${retired}`)}</span><span class="itas-host-buttons"><button type="button" class="btn secondary" id="itas-host-print">พิมพ์</button><button type="button" class="btn" id="itas-host-edit">แก้ไขเครื่องนี้</button></span></div>
       </section>
       ${partsNotice ? `<p class="rf-callout is-warn">${esc(partsNotice)}</p>` : ""}
       ${groupsHtml}
@@ -427,6 +429,38 @@
   }
   // เปลือกหน้า: ช่องฟอร์ม (แก้ไขเครื่อง/ชิ้นส่วน) อยู่นอกส่วนที่วาดซ้ำ เพื่อไม่ให้ฟอร์มที่เปิดค้างถูกลบตอนรีเฟรชรายการชิ้นส่วน
   const hostShell = (bodyHtml) => `<div id="itas-form-area"></div><div id="itas-host-host">${bodyHtml}</div>`;
+
+  /* ---------- ใบพิมพ์ A4 (รุ่น 1.06) ---------- */
+  // ใบพิมพ์ถูกแทรกเป็นลูกของ .itas-page ชั่วคราวตอนกดพิมพ์ (ซ่อนบนหน้าจอ แสดงเฉพาะตอนพิมพ์ ส่วนอื่นของหน้าถูกซ่อน)
+  // ไม่มีช่องลับ: ใช้เฉพาะข้อมูลที่ model เตรียมให้ (ช่องไม่ลับ) · ทุกค่าผ่าน esc()
+  const sheetHead = (title, isTest) => `<div class="itas-sheet-title"><h2>${esc(title)}</h2></div>${isTest ? '<p class="itas-sheet-test">ข้อมูลทดสอบ (ไม่ใช่ทะเบียนจริง)</p>' : ""}`;
+  const cellClass = (column) => (column.cls ? ` class="itas-sheet-${esc(column.cls)}"` : "");
+  const sheetHeadRow = (columns) => `<tr>${columns.map((column) => `<th scope="col"${cellClass(column)}>${esc(column.label)}</th>`).join("")}</tr>`;
+  const sheetRows = (columns, lines, emptyText) => (lines.length
+    ? lines.map((line) => `<tr>${line.map((value, index) => `<td${cellClass(columns[index])}>${esc(value)}</td>`).join("")}</tr>`).join("")
+    : `<tr><td colspan="${columns.length}">${esc(emptyText)}</td></tr>`);
+  const metaItem = (label, value) => `<div><dt>${esc(label)}:</dt><dd>${esc(value)}</dd></div>`;
+  // ตารางรายการ (A4 แนวนอน): หัวตารางซ้ำทุกหน้า (thead = table-header-group ใน CSS) · แถวไม่ถูกตัดกลาง
+  // view = model.printList · filters = model.printFilterItems · notice = ข้อความเตือนเมื่อรายการที่โหลดมาไม่ครบ
+  function printListSheet({ view, filters, countText, printedAt, notice = "", isTest = false }) {
+    return `<article class="itas-sheet itas-sheet-list" aria-hidden="true">
+        ${sheetHead(TITLE, isTest)}
+        <dl class="itas-sheet-meta">${filters.map(([label, value]) => metaItem(label, value)).join("")}${metaItem("จำนวน", countText)}${metaItem("วันที่พิมพ์", printedAt)}</dl>
+        ${notice ? `<p class="itas-sheet-notice">${esc(notice)}</p>` : ""}
+        <table class="itas-sheet-table"><thead>${sheetHeadRow(view.columns)}</thead><tbody>${sheetRows(view.columns, view.lines, "ไม่มีรายการ")}</tbody></table>
+      </article>`;
+  }
+  // ใบสรุปเครื่อง (A4 แนวตั้ง): หัวเครื่อง + ข้อมูลเครื่อง + ตารางชิ้นส่วนภายใน + ตารางอุปกรณ์ต่อพ่วง · view = model.hostPrint
+  function printHostSheet({ view, printedAt, isTest = false }) {
+    const facts = view.facts.length ? `<dl class="itas-sheet-meta">${view.facts.map((fact) => metaItem(fact.label, fact.value)).join("")}</dl>` : "";
+    const sections = view.sections.map((section) => `<h3 class="itas-sheet-section">${esc(section.label)} (${esc(String(section.count))})</h3><table class="itas-sheet-table"><thead>${sheetHeadRow(view.columns)}</thead><tbody>${sheetRows(view.columns, section.lines, `ไม่มี${section.label}ที่ผูกกับเครื่องนี้`)}</tbody></table>`).join("");
+    return `<article class="itas-sheet itas-sheet-host" aria-hidden="true">
+        ${sheetHead("ใบสรุปเครื่องคอมพิวเตอร์", isTest)}
+        <dl class="itas-sheet-meta itas-sheet-machine">${metaItem("รหัสเครื่อง", view.code || "—")}${metaItem("ชื่อ", view.title)}${metaItem("สถานะ", view.status)}${metaItem("ชิ้นส่วน", view.summary)}${metaItem("วันที่พิมพ์", printedAt)}</dl>
+        ${facts}
+        ${sections}
+      </article>`;
+  }
 
   /* ---------- โครงหน้าหลัก ---------- */
   // ช่อง id ที่ module วาดทับเป็นส่วน ๆ: itas-vault-bar · itas-vault-panel · itas-types-host · itas-main · itas-form-area
@@ -452,7 +486,7 @@
 
   const api = {
     TITLE, MASK, head, page, messageBox, errorCard, purgeRow, versionTag, devNotice, vaultBar, vaultSetupForm, recoveryShow, unlockForm, forgotForm, changeForm, newRecoveryForm, strengthText,
-    typeChips, toolbar, assetTable, glyph, kindPill, statusPill, hostLoading, hostError, hostBody, hostShell, hostMovesSection, partButton, fieldBlock, suggestionLists, batchSection, batchResult, batchProblems, secretsSection, assetForm, historyPanel, mainPage, layout, mainPanel, listTitle,
+    typeChips, toolbar, assetTable, printListSheet, printHostSheet, glyph, kindPill, statusPill, hostLoading, hostError, hostBody, hostShell, hostMovesSection, partButton, fieldBlock, suggestionLists, batchSection, batchResult, batchProblems, secretsSection, assetForm, historyPanel, mainPage, layout, mainPanel, listTitle,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_ITAS_PAGES = Object.freeze(api);

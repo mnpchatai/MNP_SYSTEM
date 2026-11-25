@@ -223,7 +223,7 @@
     const { columns, rows } = visibleRows();
     return pages.mainPanel({
       type,
-      toolbarHtml: pages.toolbar({ query: ui.query, status: ui.status, canAdd: canAddAny() }),
+      toolbarHtml: pages.toolbar({ query: ui.query, status: ui.status, canAdd: canAddAny(), hasRows: rows.length > 0 }),
       chipsHtml: chipsHtml(),
       countText: model.countText(rows.length, ui.total, ui.rows.length),
       tableHtml: pages.assetTable({ rows, columns, sort: ui.sort, typeName: type?.name ?? "" }),
@@ -235,6 +235,8 @@
     const host = byId("itas-table-host");
     if (!host) return;
     host.innerHTML = pages.assetTable({ rows, columns, sort: ui.sort, typeName: currentType()?.name ?? "" });
+    // ไม่มีรายการตามตัวกรอง = ปิดปุ่มพิมพ์/ส่งออก (ไม่มีอะไรให้พิมพ์)
+    for (const id of ["itas-print", "itas-export"]) { const button = byId(id); if (button) button.disabled = rows.length === 0; }
     const count = byId("itas-count");
     if (count) count.textContent = model.countText(rows.length, ui.total, ui.rows.length);
   }
@@ -401,6 +403,9 @@
     "itas-host-retry": () => (ui.host ? loadHost(ui.host.id) : undefined),
     "itas-host-edit": () => (ui.host ? openForm("edit", ui.host.id) : undefined),
     "itas-host-moves-load": () => loadHostMoves(),
+    "itas-print": () => printList(),
+    "itas-export": () => exportCsv(),
+    "itas-host-print": () => printHost(),
   };
   function onClick(event) {
     const target = event.target;
@@ -438,6 +443,64 @@
     event.preventDefault();
     const handler = { "itas-vault-setup-form": submitSetup, "itas-recovery-form": submitRecovery, "itas-vault-unlock-form": submitUnlock, "itas-vault-forgot-form": submitForgot, "itas-vault-change-form": submitChange, "itas-vault-recovery-form": submitNewRecovery, "itas-form": submitAsset }[form.id];
     return handler?.(form);
+  }
+
+  /* ---------- พิมพ์ทะเบียน A4 / ส่งออก CSV (รุ่น 1.06) ---------- */
+  // ทั้งใบพิมพ์และไฟล์ส่งออกใช้เฉพาะช่องที่ไม่ลับ (model.printList / hostPrint / buildCsv ไม่แตะ secrets) · ตามตัวกรองและการเรียงที่เห็นบนหน้าจอ
+  // ใบพิมพ์แทรกเป็นลูกของ .itas-page ชั่วคราว (หน้าจอซ่อนไว้ ตอนพิมพ์ CSS ซ่อนส่วนอื่นทั้งหมด) แล้วเอาออกเมื่อพิมพ์/ปิดหน้าต่างพิมพ์เสร็จ (afterprint)
+  const removePrintSheets = () => document.querySelectorAll(".itas-sheet").forEach((node) => node.remove());
+  function printSheet(html) {
+    const host = root();
+    if (!host) return;
+    removePrintSheets();
+    host.insertAdjacentHTML("beforeend", html);
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      window.removeEventListener?.("afterprint", finish);
+      removePrintSheets();
+    };
+    window.addEventListener("afterprint", finish);
+    window.print();
+  }
+  function printList() {
+    const { rows } = visibleRows();
+    if (!rows.length) { showToast("ไม่มีรายการให้พิมพ์ตามตัวกรองนี้", "error"); return; }
+    printSheet(pages.printListSheet({
+      view: model.printList({ rows, types: ui.types, typeCode: ui.typeCode }),
+      filters: model.printFilterItems({ typeName: currentType()?.name ?? "", status: ui.status, query: ui.query }),
+      countText: `${rows.length} รายการ`,
+      printedAt: model.dateTimeText(new Date()),
+      notice: truncatedNotice() ? "รายการที่โหลดมาไม่ครบทั้งหมด ใบนี้แสดงเฉพาะส่วนที่โหลดมา" : "",
+      isTest: ui.isTest,
+    }));
+  }
+  function printHost() {
+    const state0 = ui?.host;
+    if (!state0 || state0.status !== "ready") return;
+    printSheet(pages.printHostSheet({
+      view: model.hostPrint({ host: state0.host, type: typeByCode(state0.host.type_code), parts: state0.parts, types: ui.types }),
+      printedAt: model.dateTimeText(new Date()),
+      isTest: ui.isTest,
+    }));
+  }
+  function downloadText(fileName, text, mime) {
+    const url = URL.createObjectURL(new Blob([text], { type: mime }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.hidden = true;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  function exportCsv() {
+    const { rows } = visibleRows();
+    if (!rows.length) { showToast("ไม่มีรายการให้ส่งออกตามตัวกรองนี้", "error"); return; }
+    downloadText(model.csvFileName({ isTest: ui.isTest }), model.buildCsv({ rows, types: ui.types }), "text/csv;charset=utf-8");
+    showToast(`ส่งออก ${rows.length} รายการแล้ว (ไม่รวมช่องลับ)`);
   }
 
   /* ---------- ตู้เซฟ: ขั้นตอนต่าง ๆ ---------- */
@@ -930,6 +993,9 @@
     const target = byId("itas-form-message");
     if (!target) return;
     target.innerHTML = pages.messageBox(message, { reload });
+    // ปุ่มบันทึกอยู่ที่หัวฟอร์มแบบติดขอบบน: ผู้ใช้อาจเลื่อนลงไปไกลจากกล่องข้อความ → เลื่อนให้เห็น + แจ้งซ้ำเป็น toast กันพลาด
+    target.scrollIntoView?.({ block: "nearest" });
+    showToast(message, "error");
   }
   async function submitAsset(form) {
     const state0 = ui?.form;
