@@ -235,7 +235,7 @@ test("routes and version metadata", () => {
   assert.equal(model.assetsUrl(), "#/office?module=assets");
   assert.equal(model.readView(new URLSearchParams("module=assets")), "main");
   assert.equal(model.readView(new URLSearchParams("module=assets&view=other")), null);
-  assert.equal(model.MODULE_VERSION, "1.04");
+  assert.equal(model.MODULE_VERSION, "1.06");
   assert.equal(model.IN_DEVELOPMENT, true);
   assert.equal(model.ASSET_CODE, "IT_ASSET_REGISTER");
   assert.ok(model.isUuid(ID) && !model.isUuid("x"));
@@ -599,4 +599,172 @@ test("host move history: keeps only moves into or out of this computer, newest f
   assert.deepEqual(model.hostMoveHistory(null, "COM12"), []);
   const many = [{ asset: { id: "a", type_code: "RAM" }, moves: Array.from({ length: 150 }, (_, i) => ({ id: i, from_host: null, to_host: "COM12", created_at: `2026-01-01T00:00:${String(i % 60).padStart(2, "0")}+00:00` })) }];
   assert.equal(model.hostMoveHistory(many, "COM12").length, model.MAX_HOST_MOVES);
+});
+
+/* ---------- รุ่น 1.05: ชนิดสิ้นเปลือง (หมึก/โทนเนอร์) ไม่แสดงสถานะ ---------- */
+test("consumable type: primary fields drop status and bring purchase date + price up; other types keep status", () => {
+  const ink = { code: "INK_TONER", name: "หมึก / โทนเนอร์", fields: [] };
+  const names = model.primaryFieldNames(ink);
+  assert.ok(!names.includes("status"));
+  assert.deepEqual(names.slice(-2), ["purchase_date", "price"]);
+  assert.ok(model.isPrimaryField(ink, "purchase_date") && model.isPrimaryField(ink, "price"));
+  assert.ok(model.primaryFieldNames({ code: "MOUSE", fields: [] }).includes("status"));
+  assert.ok(!model.primaryFieldNames({ code: "MOUSE", fields: [] }).includes("price"));
+  assert.equal(model.isConsumableType("ink_toner"), true);
+  assert.equal(model.isConsumableType("COMPUTER"), false);
+  assert.equal(model.isConsumableType(undefined), false);
+  // ค่าสถานะที่ส่งให้ฐานข้อมูลยังเป็น in_use ตามค่าเริ่มต้น
+  assert.equal(model.emptyFormValues(ink).core.status, "in_use");
+});
+
+test("consumablePurchaseText: 'ซื้อ วว/ดด/ปปปป' only for consumable rows that have a purchase date", () => {
+  assert.equal(model.consumablePurchaseText({ type_code: "INK_TONER", purchase_date: "2026-03-05" }), "ซื้อ 05/03/2569");
+  assert.equal(model.consumablePurchaseText({ type_code: "INK_TONER", purchase_date: null }), "");
+  assert.equal(model.consumablePurchaseText({ type_code: "MONITOR", purchase_date: "2026-03-05" }), "");
+});
+
+/* ---------- รุ่น 1.06: พิมพ์ทะเบียน A4 + ส่งออก CSV ---------- */
+const INK = { code: "INK_TONER", name: "หมึก / โทนเนอร์", has_device_code: false, is_active: true, fields: [{ key: "color", label: "สี", type: "text", secret: false, order: 1 }] };
+const PRINT_TYPES = [COMPUTER, MOUSE, INK];
+const LAPTOP = { code: "LAPTOP", name: "โน้ตบุ๊ก", has_device_code: true, is_active: true, fields: [{ key: "cpu", label: "ตัวประมวลผล", type: "text", secret: false, order: 1 }, { key: "pin", label: "PIN", type: "text", secret: true, order: 2 }] };
+const PRINT_ROWS = [
+  { ...ASSET, attrs: { cpu: "i5", ram_gb: 16, os_installed: "2025-03-01", kind: "PC", old_col: "ซ่อน", user_name: "สมชาย" } },
+  { id: "b", type_code: "MOUSE", reg_no: "MS-1", device_code: null, name: "เมาส์", model: "Logitech", serial: null, status: "spare", host_code: "COM12", place: "ห้อง IT", price: 250.5, attrs: {}, secrets: { x: ENVELOPE } },
+  { id: "c", type_code: "INK_TONER", reg_no: "INK-1", name: "หมึกดำ", model: "HP 12A", status: "in_use", purchase_date: "2026-03-05", attrs: { color: "ดำ" } },
+];
+
+test("printList: the all-types view shows the type column; the status column is the purchase date for consumables; device code only when some row has one", () => {
+  const view = model.printList({ rows: PRINT_ROWS, types: PRINT_TYPES, typeCode: "" });
+  assert.deepEqual(view.columns.map((column) => column.label), ["ลำดับ", "เลขทะเบียน", "รหัสอุปกรณ์", "ชนิด", "ชื่อ", "ยี่ห้อ / รุ่น", "ผู้ใช้ / ติดตั้งที่", "สถานะ"]);
+  assert.deepEqual(view.lines[0], ["1", "COM-001", "COM12", "เครื่องคอมพิวเตอร์", "เครื่องบัญชี", "Dell 3050", "สมชาย", "ใช้งาน"]);
+  assert.equal(view.lines[1][6], "COM12", "ชนิดที่ไม่มีช่องผู้ใช้ใช้ ติดตั้งที่");
+  assert.equal(view.lines[2][7], "ซื้อ 05/03/2569", "หมึกไม่มีป้ายสถานะ แสดงวันที่ซื้อ");
+  // ชนิดเดียว: ไม่มีคอลัมน์ชนิด · ชนิดที่ไม่มีรหัสอุปกรณ์ไม่มีคอลัมน์รหัส · ทุกแถวเป็นหมึก = หัว "วันที่ซื้อ"
+  const mouse = model.printList({ rows: [PRINT_ROWS[1]], types: PRINT_TYPES, typeCode: "MOUSE" });
+  assert.deepEqual(mouse.columns.map((column) => column.label), ["ลำดับ", "เลขทะเบียน", "ชื่อ", "ยี่ห้อ / รุ่น", "ผู้ใช้ / ติดตั้งที่", "สถานะ"]);
+  const ink = model.printList({ rows: [PRINT_ROWS[2]], types: PRINT_TYPES, typeCode: "INK_TONER" });
+  assert.equal(ink.columns.at(-1).label, "วันที่ซื้อ");
+  assert.equal(model.printList({ rows: [], types: PRINT_TYPES }).lines.length, 0);
+});
+
+test("printList never carries a secret or ciphertext", () => {
+  const text = JSON.stringify(model.printList({ rows: PRINT_ROWS, types: PRINT_TYPES }));
+  assert.doesNotMatch(text, new RegExp(ENVELOPE.c));
+  assert.doesNotMatch(text, /ciphertext|secrets/i);
+});
+
+test("printFilterItems + dateTimeText: type/status/search for the sheet head, Buddhist date in Bangkok time", () => {
+  assert.deepEqual(model.printFilterItems({}), [["ชนิด", "ทั้งหมด"], ["สถานะ", "ทุกสถานะ"]]);
+  assert.deepEqual(model.printFilterItems({ typeName: "เมาส์", status: "broken", query: " dell " }), [["ชนิด", "เมาส์"], ["สถานะ", "ชำรุด"], ["ค้นหา", "dell"]]);
+  assert.deepEqual(model.printFilterItems({ status: "all" })[1], ["สถานะ", "ทุกสถานะ"]);
+  assert.equal(model.dateTimeText(new Date("2026-11-25T07:05:00Z")), "25/11/2569 14:05");
+});
+
+test("hostPrint: internal parts and peripherals in two tables, spec text without secrets, retired kept with its status", () => {
+  const ram = { code: "RAM", name: "RAM", fields: [{ key: "size", label: "ความจุ", type: "text", secret: false, order: 1 }, { key: "key", label: "License", type: "text", secret: true, order: 2 }] };
+  const monitor = { code: "MONITOR", name: "จอภาพ", fields: [] };
+  const parts = [
+    { id: "p1", type_code: "RAM", reg_no: "RAM-1", name: "แรม", model: "Kingston", slot: "A1", status: "in_use", attrs: { size: "8 GB", key: "SHOULD-NOT-SHOW" }, secrets: { key: ENVELOPE } },
+    { id: "p2", type_code: "MONITOR", reg_no: "MON-1", device_code: "MN1", name: "จอ", model: "LG", status: "retired", attrs: {} },
+  ];
+  const view = model.hostPrint({ host: { ...ASSET, attrs: { user_name: "สมชาย" } }, type: COMPUTER, parts, types: [COMPUTER, ram, monitor] });
+  assert.equal(view.code, "COM12");
+  assert.equal(view.title, "เครื่องบัญชี");
+  assert.equal(view.status, "ใช้งาน");
+  assert.match(view.summary, /1 ชิ้น/);
+  assert.match(view.summary, /เลิกใช้ 1/);
+  assert.deepEqual(view.sections.map((section) => [section.kind, section.lines.length]), [["internal", 1], ["peripheral", 1]]);
+  assert.deepEqual(view.sections[0].lines[0], ["A1", "RAM", "RAM-1", "แรม", "Kingston · ความจุ: 8 GB", "ใช้งาน"]);
+  assert.equal(view.sections[1].lines[0][5], "ยกเลิกใช้งาน");
+  assert.doesNotMatch(JSON.stringify(view), /SHOULD-NOT-SHOW|License|ciphertext/i);
+  assert.ok(view.facts.some((fact) => fact.label === "ผู้ใช้" && fact.value === "สมชาย"));
+});
+
+/* ---------- CSV ---------- */
+const parseCsv = (csv) => {
+  const rows = []; let row = []; let cell = ""; let quoted = false;
+  const text = csv.replace(/^﻿/, "");
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quoted) { if (ch === '"' && text[i + 1] === '"') { cell += '"'; i += 1; } else if (ch === '"') quoted = false; else cell += ch; }
+    else if (ch === '"') quoted = true;
+    else if (ch === ",") { row.push(cell); cell = ""; }
+    else if (ch === "\r") { /* ข้าม */ }
+    else if (ch === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+    else cell += ch;
+  }
+  return rows;
+};
+
+test("csv: starts with a UTF-8 BOM, CRLF lines, every cell quoted, quotes doubled", () => {
+  const csv = model.buildCsv({ rows: [{ ...PRINT_ROWS[0], name: 'เครื่อง "A", ห้อง\nสอง' }], types: PRINT_TYPES });
+  assert.equal(csv.charCodeAt(0), 0xfeff);
+  assert.ok(csv.endsWith("\r\n"));
+  assert.match(csv, /"เครื่อง ""A"", ห้อง\nสอง"/);
+  const table = parseCsv(csv);
+  assert.equal(table.length, 2, "หัว + 1 แถว");
+  const header = table[0];
+  assert.equal(header[0], "ชนิด");
+  assert.equal(table[1][header.indexOf("ชื่อ")], 'เครื่อง "A", ห้อง\nสอง');
+  assert.ok(table.every((line) => line.length === header.length), "ทุกแถวมีจำนวนคอลัมน์เท่าหัว");
+});
+
+test("csv: core fields + the non-secret fields of the exported types only (hidden ones left out); dates are ISO, numbers raw", () => {
+  const table = parseCsv(model.buildCsv({ rows: PRINT_ROWS, types: PRINT_TYPES }));
+  const header = table[0];
+  for (const label of ["ชนิด", "เลขทะเบียน", "รหัสอุปกรณ์", "ชื่อ", "ยี่ห้อ / รุ่น", "Serial", "สถานะ", "ติดตั้งที่ (Used by)", "ช่อง/ตำแหน่ง", "สถานที่", "วันที่ติดตั้ง", "วันที่ซื้อ", "ราคา (บาท)", "หมายเหตุ", "CPU", "RAM (GB)", "ติดตั้ง OS เมื่อ", "สี"]) assert.ok(header.includes(label), label);
+  assert.ok(!header.includes("คอลัมน์เก่า"), "ช่องที่ซ่อนไม่ส่งออก");
+  assert.ok(!header.includes("IP") && !header.includes("License OS"), "ช่องลับไม่มีหัวคอลัมน์");
+  const first = table[1];
+  assert.equal(first[header.indexOf("ชนิด")], "เครื่องคอมพิวเตอร์");
+  assert.equal(first[header.indexOf("สถานะ")], "ใช้งาน");
+  assert.equal(first[header.indexOf("วันที่ติดตั้ง")], "2025-03-05");
+  assert.equal(first[header.indexOf("ติดตั้ง OS เมื่อ")], "2025-03-01");
+  assert.equal(first[header.indexOf("ราคา (บาท)")], "25000");
+  assert.equal(first[header.indexOf("RAM (GB)")], "16");
+  assert.equal(table[2][header.indexOf("ราคา (บาท)")], "250.5");
+  assert.equal(table[2][header.indexOf("CPU")], "", "ช่องเฉพาะชนิดอื่นว่าง");
+  assert.equal(table[3][header.indexOf("สี")], "ดำ");
+});
+
+test("csv: only the types present in the exported rows add their own columns", () => {
+  const header = parseCsv(model.buildCsv({ rows: [PRINT_ROWS[1]], types: PRINT_TYPES }))[0];
+  assert.ok(!header.includes("CPU") && !header.includes("สี"));
+  assert.equal(parseCsv(model.buildCsv({ rows: [], types: PRINT_TYPES })).length, 1, "ไม่มีแถว = มีแต่หัว");
+});
+
+test("csv: no secret field and no ciphertext, whatever is stored on the rows", () => {
+  const rows = [{ ...PRINT_ROWS[0], secrets: { ip: ENVELOPE, license_os: ENVELOPE }, attrs: { ...PRINT_ROWS[0].attrs, ip: "10.1.1.1-SECRET", license_os: "AAAAA-LICENSE-SECRET" } }, { id: "l", type_code: "LAPTOP", reg_no: "NB-1", name: "โน้ตบุ๊ก", status: "in_use", attrs: { cpu: "i7", pin: "PIN-SECRET" }, secrets: { pin: ENVELOPE } }];
+  const csv = model.buildCsv({ rows, types: [COMPUTER, LAPTOP] });
+  for (const needle of [ENVELOPE.c, ENVELOPE.n, "10.1.1.1-SECRET", "AAAAA-LICENSE-SECRET", "PIN-SECRET", "License OS", '"PIN"', '"IP"']) assert.ok(!csv.includes(needle), `ต้องไม่มี ${needle}`);
+  assert.ok(csv.includes("i7"));
+  // ชนิดที่ไม่อยู่ในรายการชนิด (ไม่มีนิยามช่อง) ก็ไม่ส่งช่องเฉพาะชนิดใดเลย
+  assert.ok(!model.buildCsv({ rows: [{ ...PRINT_ROWS[0], attrs: { cpu: "LEAK" } }], types: [] }).includes("LEAK"));
+});
+
+test("csv: values that could start a spreadsheet formula get a leading apostrophe", () => {
+  for (const value of ["=1+1", "+66812345678", "-5", "@SUM(A1)", "\tx", "\rx"]) assert.equal(model.csvCell(value), `"'${value}"`, JSON.stringify(value));
+  assert.equal(model.csvCell("ปกติ = ไม่ขึ้นต้น"), '"ปกติ = ไม่ขึ้นต้น"');
+  assert.equal(model.csvCell(null), '""');
+  assert.equal(model.csvCell(0), '"0"');
+  const rows = [{ ...PRINT_ROWS[0], name: '=HYPERLINK("http://x")', note: "@cmd", attrs: { cpu: "+evil" } }];
+  const table = parseCsv(model.buildCsv({ rows, types: PRINT_TYPES }));
+  const header = table[0];
+  assert.equal(table[1][header.indexOf("ชื่อ")], "'=HYPERLINK(\"http://x\")");
+  assert.equal(table[1][header.indexOf("หมายเหตุ")], "'@cmd");
+  assert.equal(table[1][header.indexOf("CPU")], "'+evil");
+});
+
+test("csv: same-key columns of different types merge; clashing headers get the field key appended", () => {
+  const tower = { code: "TOWER", name: "ทาวเวอร์", fields: [{ key: "cpu", label: "CPU", type: "text", secret: false, order: 1 }, { key: "note2", label: "หมายเหตุ", type: "text", secret: false, order: 2 }] };
+  const header = parseCsv(model.buildCsv({ rows: [PRINT_ROWS[0], { id: "t", type_code: "TOWER", reg_no: "T-1", status: "in_use", attrs: { cpu: "Xeon", note2: "x" } }], types: [COMPUTER, tower] }))[0];
+  assert.equal(header.filter((label) => label === "CPU").length, 1);
+  assert.ok(header.includes("หมายเหตุ (note2)"));
+  assert.equal(new Set(header).size, header.length, "หัวคอลัมน์ไม่ซ้ำกัน");
+});
+
+test("csvFileName: itas-<real|test>-YYYYMMDD.csv by Bangkok date", () => {
+  assert.equal(model.csvFileName({ isTest: false, now: new Date("2026-11-25T03:00:00Z") }), "itas-real-20261125.csv");
+  assert.equal(model.csvFileName({ isTest: true, now: new Date("2026-11-25T03:00:00Z") }), "itas-test-20261125.csv");
+  assert.equal(model.csvFileName({ now: new Date("2026-11-24T18:30:00Z") }), "itas-real-20261125.csv", "ข้ามเที่ยงคืนตามเวลาไทย");
 });

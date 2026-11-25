@@ -34,7 +34,7 @@ test("head: one h1, back link to IT SUPPORT, test tag only in test mode, dev not
   assert.doesNotMatch(html, /itas-test-tag/);
   assert.match(pages.head({ isTest: true }), /<span class="badge itas-test-tag"[^>]*>ทดสอบ<\/span>/);
   assert.match(html, /กำลังพัฒนาและทดสอบ ยังไม่เปิดใช้งานจริง/);
-  assert.match(html, /<p class="itas-version no-print"[^>]*>V1\.04<\/p>/);
+  assert.match(html, /<p class="itas-version no-print"[^>]*>V1.06<\/p>/);
 });
 
 test("vault bar: shows state for every status with the right buttons; test vault is labelled", () => {
@@ -464,4 +464,86 @@ test("table cells: codes/dates never wrap (itas-mono / itas-nowrap), long text c
   for (const label of ["เลขทะเบียน", "รหัสอุปกรณ์", "Serial", "ติดตั้งที่"]) assert.ok(html.includes('<td class="itas-mono" data-label="' + label + '">'), label);
   assert.ok(html.includes('<td class="itas-nowrap" data-label="วันที่ติดตั้ง">'));
   assert.ok(html.includes('<td class="itas-text" data-label="ชื่อ / รุ่น">'));
+});
+
+/* ---------- รุ่น 1.05: ชนิดสิ้นเปลือง (หมึก/โทนเนอร์) ไม่แสดงสถานะ ---------- */
+const INK = { code: "INK_TONER", name: "หมึก / โทนเนอร์", has_device_code: false, is_active: true, fields: [] };
+test("consumable type: table shows 'ซื้อ <date>' (or blank) instead of a status badge; other types keep the badge", () => {
+  const ink = (extra) => ({ ...ASSET, type_code: "INK_TONER", status: "retired", ...extra });
+  const columns = model.tableColumns(INK);
+  const bought = pages.assetTable({ rows: [ink({ purchase_date: "2026-03-05" })], columns, typeName: INK.name });
+  assert.match(bought, /<td class="itas-nowrap" data-label="สถานะ">ซื้อ 05\/03\/2569<\/td>/);
+  assert.doesNotMatch(bought, /itas-status|ยกเลิกใช้งาน|status-retired/);
+  const blank = pages.assetTable({ rows: [ink({ purchase_date: null })], columns, typeName: INK.name });
+  assert.match(blank, /<td class="itas-cell-empty" data-label="สถานะ"><\/td>/);
+  assert.match(pages.assetTable({ rows: [{ ...ASSET, status: "retired" }], columns: model.tableColumns(TYPE), typeName: TYPE.name }), /class="badge itas-status is-off">ยกเลิกใช้งาน</);
+});
+
+test("consumable form: no status select, hidden status keeps the DB value, purchase date + price move to the main section", () => {
+  const values = (type, status) => ({ ...model.emptyFormValues(type), core: { ...model.emptyFormValues(type).core, status } });
+  const html = pages.assetForm({ mode: "edit", type: INK, values: values(INK, "retired"), asset: { ...ASSET, type_code: "INK_TONER" }, vaultStatus: "locked" });
+  assert.doesNotMatch(html, /<select[^>]*name="status"/);
+  assert.match(html, /<input type="hidden" name="status" value="retired">/);
+  assert.match(pages.assetForm({ mode: "add", type: INK, values: model.emptyFormValues(INK), vaultStatus: "locked" }), /<input type="hidden" name="status" value="in_use">/);
+  const main = html.match(/<fieldset class="itas-group itas-primary">[\s\S]*?<\/fieldset>/)[0];
+  assert.match(main, /name="purchase_date"/);
+  assert.match(main, /name="price"/);
+  assert.doesNotMatch(html.replace(main, ""), /name="purchase_date"|name="price"/);
+  const other = pages.assetForm({ mode: "add", type: TYPE, values: model.emptyFormValues(TYPE), vaultStatus: "locked" });
+  assert.match(other, /<select class="select" id="itas-f-status" name="status">/);
+  assert.doesNotMatch(other, /type="hidden" name="status"/);
+});
+
+/* ---------- รุ่น 1.06: ปุ่มพิมพ์/ส่งออก + ใบพิมพ์ A4 ---------- */
+test("toolbar: print and export buttons are there by default, disabled when nothing is listed, absent when output is off; the add button is independent", () => {
+  const on = pages.toolbar({});
+  assert.match(on, /id="itas-print"[^>]*>พิมพ์</);
+  assert.match(on, /id="itas-export"[^>]*>ส่งออก Excel</);
+  assert.doesNotMatch(on, /id="itas-print"[^>]*disabled/);
+  assert.match(pages.toolbar({ hasRows: false }), /id="itas-print"[^>]* disabled/);
+  assert.match(pages.toolbar({ hasRows: false }), /id="itas-export"[^>]* disabled/);
+  const off = pages.toolbar({ canOutput: false });
+  assert.doesNotMatch(off, /itas-print|itas-export/);
+  assert.match(off, /id="itas-add"/);
+  assert.doesNotMatch(pages.toolbar({ canAdd: false }), /id="itas-add"/);
+  assert.match(pages.toolbar({ canAdd: false }), /id="itas-print"/);
+});
+
+test("host page: the print button sits next to edit", () => {
+  const html = pages.hostBody({ host: { ...ASSET, attrs: {} }, type: TYPE, parts: [], types: [TYPE] });
+  assert.match(html, /id="itas-host-print"[^>]*>พิมพ์</);
+  assert.match(html, /id="itas-host-edit"/);
+});
+
+const listView = () => model.printList({ rows: [{ ...ASSET, name: XSS, model: "A&B", secrets: { ip: { c: CIPHER } }, attrs: { cpu: XSS } }], types: [TYPE], typeCode: "" });
+test("print list sheet: head with title/filters/count/printed date, one header row (repeats per page via CSS), rows escaped, no secrets", () => {
+  const html = pages.printListSheet({ view: listView(), filters: model.printFilterItems({ typeName: XSS, status: "in_use", query: XSS }), countText: "1 รายการ", printedAt: "25/11/2569 14:05", isTest: false });
+  assert.match(html, /<h2>ทะเบียนอุปกรณ์ IT<\/h2>/);
+  assert.match(html, /<dt>จำนวน:<\/dt><dd>1 รายการ<\/dd>/);
+  assert.match(html, /<dt>วันที่พิมพ์:<\/dt><dd>25\/11\/2569 14:05<\/dd>/);
+  assert.match(html, /<dt>สถานะ:<\/dt><dd>ใช้งาน<\/dd>/);
+  assert.equal(count(html, /<thead>/g), 1);
+  assert.doesNotMatch(html, /<img/, "ทุกค่า escape"); assert.ok(html.includes("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;"));
+  assert.match(html, /A&amp;B/);
+  assert.doesNotMatch(html, new RegExp(CIPHER));
+  assert.doesNotMatch(html, /ช่องลับ|ciphertext/i);
+  assert.doesNotMatch(html, /การทดสอบ|ข้อมูลทดสอบ/);
+  assert.match(pages.printListSheet({ view: listView(), filters: [], countText: "1 รายการ", printedAt: "x", isTest: true }), /itas-sheet-test">ข้อมูลทดสอบ/);
+  assert.match(pages.printListSheet({ view: listView(), filters: [], countText: "1 รายการ", printedAt: "x", notice: "ไม่ครบ" }), /itas-sheet-notice">ไม่ครบ</);
+  assert.match(pages.printListSheet({ view: model.printList({ rows: [], types: [TYPE] }), filters: [], countText: "0 รายการ", printedAt: "x" }), /ไม่มีรายการ/);
+});
+
+test("print host sheet: machine head, facts, two tables; escaped; no secret fields", () => {
+  const ram = { code: "RAM", name: "RAM", fields: [{ key: "size", label: "ความจุ", type: "text", secret: false, order: 1 }, { key: "lic", label: "License", type: "text", secret: true, order: 2 }] };
+  const part = { id: "p1", type_code: "RAM", reg_no: "RAM-1", name: XSS, model: "Kingston", slot: "A1", status: "in_use", attrs: { size: "8 GB", lic: "LIC-SECRET" }, secrets: { lic: { c: CIPHER } } };
+  const view = model.hostPrint({ host: { ...ASSET, attrs: { user_name: XSS }, secrets: { ip: { c: CIPHER } } }, type: TYPE, parts: [part], types: [TYPE, ram] });
+  const html = pages.printHostSheet({ view, printedAt: "25/11/2569 14:05" });
+  assert.match(html, /<h2>ใบสรุปเครื่องคอมพิวเตอร์<\/h2>/);
+  assert.match(html, /<dt>รหัสเครื่อง:<\/dt><dd>COM12<\/dd>/);
+  assert.match(html, /ชิ้นส่วนภายใน \(1\)/);
+  assert.match(html, /อุปกรณ์ต่อพ่วง \(0\)/);
+  assert.match(html, /ไม่มีอุปกรณ์ต่อพ่วงที่ผูกกับเครื่องนี้/);
+  assert.equal(count(html, /<thead>/g), 2);
+  assert.doesNotMatch(html, /<img/);
+  assert.doesNotMatch(html, new RegExp(`${CIPHER}|LIC-SECRET|License`));
 });

@@ -67,7 +67,7 @@ function el(props = {}) {
   const node = {
     dataset: {}, hidden: false, disabled: false, value: "", textContent: "", innerHTML: "", firstElementChild: null, listeners,
     addEventListener(type, handler) { (listeners[type] ??= []).push(handler); },
-    closest: () => null, querySelector: () => null, querySelectorAll: () => [], focus() {}, scrollIntoView() {}, setAttribute() {}, removeAttribute() {}, toggleAttribute() {},
+    closest: () => null, querySelector: () => null, querySelectorAll: () => [], focus() {}, scrollIntoView(options) { node.scrolled = (node.scrolled ?? 0) + 1; node.scrollOptions = options; }, setAttribute() {}, removeAttribute() {}, toggleAttribute() {},
   };
   return Object.defineProperties(node, Object.getOwnPropertyDescriptors(props));
 }
@@ -93,6 +93,11 @@ async function world({ allowed = true, accessFail = false, isTest = false, vault
     ? { getItem() { throw new Error("denied"); }, setItem() { throw new Error("denied"); } }
     : { getItem: (key) => (storage.has(key) ? storage.get(key) : null), setItem: (key, value) => { storage.set(key, String(value)); }, removeItem: (key) => { storage.delete(key); } };
   const host = el();
+  // ใบพิมพ์/ไฟล์ส่งออก (รุ่น 1.06): แทรกใบพิมพ์เข้า .itas-page แล้วเรียก window.print · ดาวน์โหลดผ่าน Blob + ลิงก์ชั่วคราว
+  const sheets = [];
+  host.insertAdjacentHTML = (position, html) => { sheets.push({ html, removed: false, remove() { this.removed = true; } }); };
+  const printed = [];
+  const downloads = [];
   const handlers = {
     app_itas_my_access: () => { if (accessFail) throw Object.assign(new Error("x"), { code: "PGRST202" }); return { allowed, is_test: isTest }; },
     app_itas_list_types: () => [TYPE],
@@ -120,9 +125,14 @@ async function world({ allowed = true, accessFail = false, isTest = false, vault
     document: {
       getElementById: byId,
       querySelector: (selector) => (selector === ".itas-page" ? host : null),
-      querySelectorAll: () => [],
+      querySelectorAll: (selector) => (selector === ".itas-sheet" ? sheets.filter((sheet) => !sheet.removed) : []),
       addEventListener: (type, handler) => { (docListeners[type] ??= []).push(handler); },
+      body: { appendChild() {} },
+      createElement: () => ({ click() { downloads.at(-1).fileName = this.download; }, remove() {} }),
     },
+    print: () => { printed.push(sheets.filter((sheet) => !sheet.removed).map((sheet) => sheet.html)); },
+    Blob: class { constructor(parts, options) { this.text = parts.join(""); this.type = options?.type; } },
+    URL: { createObjectURL: (blob) => { downloads.push({ text: blob.text, type: blob.type }); return "blob:test"; }, revokeObjectURL() {} },
     state: stateObj,
     sb: {
       rpc: async (name, args) => {
@@ -152,7 +162,7 @@ async function world({ allowed = true, accessFail = false, isTest = false, vault
   const itas = context.window.MNP_ITAS;
   const fire = async (list, event = {}) => { for (const handler of list ?? []) await handler(event); await tick(); };
   const world0 = {
-    context, itas, calls, server, storage, hosts, elements, host, forms, stateObj, session, rpcNames: () => calls.rpc.map((call) => call.name),
+    context, itas, calls, server, storage, hosts, elements, host, forms, stateObj, session, sheets, printed, downloads, rpcNames: () => calls.rpc.map((call) => call.name),
     setHash: (value) => { hash = value; },
     html: () => painted + Object.values(hosts).join(""),
     // เหตุการณ์ของหน้าต่าง/เอกสาร
@@ -245,9 +255,9 @@ test("render without access goes home and calls nothing else; with access it loa
   assert.match(html, /data-itas-type="" aria-pressed="true"/, "ชิป ทั้งหมด ถูกเลือกตั้งต้น");
   assert.match(html, /data-itas-type="COMPUTER" aria-pressed="false"/);
   assert.doesNotMatch(html, /itas-purge/, "ไม่ใช่โหมดทดสอบ");
-  assert.equal(w.itas.version, "1.04");
+  assert.equal(w.itas.version, "1.06");
   assert.equal(w.itas.inDevelopment, true);
-  assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_ASSET_REGISTER.version, "1.04");
+  assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_ASSET_REGISTER.version, "1.06");
   // โหมดทดสอบ: มีปุ่มล้างข้อมูล + แท็ก ทดสอบ
   const test = await world({ isTest: true });
   await test.render();
@@ -1616,4 +1626,124 @@ test("back button asks before dropping a half-typed form; declining keeps the fo
   await drop.click(drop.button("itas-form-back"));
   assert.equal(drop.calls.confirms.at(-1), "ยังไม่ได้บันทึกสิ่งที่กรอก");
   assert.equal(drop.hosts["itas-form-area"], "", "ยืนยันทิ้ง = ปิดฟอร์ม");
+});
+
+/* ---------- รุ่น 1.06: พิมพ์ทะเบียน A4 + ส่งออก CSV + ข้อความฟอร์ม ---------- */
+const SECRET_BLOB = "U0VDUkVULUNJUEhFUlRFWFQtMTIzNDU2Nzg5MA==";
+const withSecrets = (row) => ({ ...row, secrets: { ip: { v: 1, n: "AAAAAAAAAAAAAAAA", c: SECRET_BLOB } } });
+const PRINTWORLD = (extra = {}) => HOSTWORLD({ assets: [withSecrets(ASSET), withSecrets(CPU_ASSET), withSecrets(MOUSE_ON_HOST), withSecrets(MOUSE_ASSET)], ...extra });
+const printWorld = (extra = {}) => {
+  const base = PRINTWORLD(extra);
+  const all = base.assets;
+  return { ...base, rpcHandlers: { ...base.rpcHandlers, app_itas_list_assets: ({ p_host_code, p_type_code }) => { const items = all.filter((row) => (!p_host_code || row.host_code === p_host_code) && (!p_type_code || row.type_code === p_type_code)); return { total: items.length, items }; }, app_itas_get_asset: ({ p_id }) => all.find((row) => row.id === p_id) } };
+};
+
+test("the list has print and export buttons; they are disabled when the filter leaves nothing", async () => {
+  const w = await world(printWorld());
+  await w.render();
+  assert.match(w.html(), /id="itas-print"/);
+  assert.match(w.html(), /id="itas-export"/);
+  assert.doesNotMatch(w.html(), /id="itas-print"[^>]* disabled/);
+  await w.fireInput({ id: "itas-search", value: "ไม่มีอะไรตรงกับคำนี้แน่นอน" });
+  assert.equal(w.elements["itas-print"].disabled, true);
+  assert.equal(w.elements["itas-export"].disabled, true);
+  await w.fireInput({ id: "itas-search", value: "" });
+  assert.equal(w.elements["itas-print"].disabled, false);
+});
+
+test("print: the sheet follows the current search/type/status filter and sort, is added to the page, printed, and removed after the print dialog", async () => {
+  const w = await world(printWorld());
+  await w.render();
+  await w.fireInput({ id: "itas-search", value: "logitech" });
+  await w.click(w.button("itas-print"));
+  assert.equal(w.printed.length, 1);
+  const html = w.printed[0].join("");
+  assert.match(html, /itas-sheet-list/);
+  assert.match(html, /<dt>ค้นหา:<\/dt><dd>logitech<\/dd>/);
+  assert.match(html, /MOU-001/);
+  assert.doesNotMatch(html, /COM-001/, "แถวที่ไม่ผ่านตัวกรองไม่ถูกพิมพ์");
+  assert.match(html, /<dt>จำนวน:<\/dt><dd>2 รายการ<\/dd>/);
+  assert.match(html, /<dt>วันที่พิมพ์:<\/dt><dd>\d{2}\/\d{2}\/25\d{2} \d{2}:\d{2}<\/dd>/);
+  assert.equal(w.sheets.filter((sheet) => !sheet.removed).length, 1, "ใบพิมพ์อยู่ในหน้าระหว่างพิมพ์");
+  await w.windowEvent("afterprint");
+  assert.equal(w.sheets.filter((sheet) => !sheet.removed).length, 0, "เอาใบพิมพ์ออกหลังพิมพ์เสร็จ");
+  // พิมพ์ซ้ำ: ไม่ซ้อนกัน
+  await w.click(w.button("itas-print"));
+  await w.click(w.button("itas-print"));
+  assert.equal(w.sheets.filter((sheet) => !sheet.removed).length, 1);
+  // กรองตามชนิด: หัวใบบอกชนิด
+  await w.click(chip("MOUSE"));
+  await w.fireInput({ id: "itas-search", value: "" });
+  await w.click(w.button("itas-print"));
+  assert.match(w.printed.at(-1).join(""), /<dt>ชนิด:<\/dt><dd>เมาส์<\/dd>/);
+});
+
+test("print and export with nothing to list only say so", async () => {
+  const w = await world(printWorld());
+  await w.render();
+  await w.fireInput({ id: "itas-search", value: "ไม่มีอะไรตรงกับคำนี้แน่นอน" });
+  await w.click(w.button("itas-print"));
+  await w.click(w.button("itas-export"));
+  assert.equal(w.printed.length, 0);
+  assert.equal(w.downloads.length, 0);
+  assert.equal(w.calls.toasts.filter((toast) => toast.type === "error").length, 2);
+});
+
+test("the printed list and the exported file never contain the secret ciphertext", async () => {
+  const w = await world(printWorld());
+  await w.render();
+  await w.click(w.button("itas-print"));
+  await w.click(w.button("itas-export"));
+  assert.ok(!w.printed.flat().join("").includes(SECRET_BLOB));
+  assert.ok(!w.downloads[0].text.includes(SECRET_BLOB));
+  assert.ok(!w.downloads[0].text.includes('"IP"'));
+});
+
+test("export: a UTF-8 BOM CSV of the filtered rows named itas-real-YYYYMMDD.csv (itas-test in test mode), plus a toast", async () => {
+  const w = await world(printWorld());
+  await w.render();
+  await w.fireInput({ id: "itas-search", value: "logitech" });
+  await w.click(w.button("itas-export"));
+  assert.equal(w.downloads.length, 1);
+  const [file] = w.downloads;
+  assert.match(file.fileName, /^itas-real-\d{8}\.csv$/);
+  assert.equal(file.type, "text/csv;charset=utf-8");
+  assert.equal(file.text.charCodeAt(0), 0xfeff);
+  assert.match(file.text, /MOU-001/);
+  assert.doesNotMatch(file.text, /COM-001/, "ส่งออกตามตัวกรอง");
+  assert.match(w.calls.toasts.at(-1).message, /ส่งออก 2 รายการแล้ว/);
+  const test = await world(printWorld({ isTest: true }));
+  await test.render();
+  await test.click(test.button("itas-export"));
+  assert.match(test.downloads[0].fileName, /^itas-test-\d{8}\.csv$/);
+  await test.click(test.button("itas-print"));
+  assert.match(test.printed[0].join(""), /ข้อมูลทดสอบ/);
+});
+
+test("computer page: the print button prints a one-machine summary (head, internal parts, peripherals) without secrets", async () => {
+  const w = await world(printWorld());
+  await w.render();
+  await w.click(rowClick(ASSET_ID));
+  await w.click(w.button("itas-host-print"));
+  assert.equal(w.printed.length, 1);
+  const html = w.printed[0].join("");
+  assert.match(html, /itas-sheet-host/);
+  assert.match(html, /ใบสรุปเครื่องคอมพิวเตอร์/);
+  assert.match(html, /<dt>รหัสเครื่อง:<\/dt><dd>COM12<\/dd>/);
+  assert.match(html, /CPU-001/, "ชิ้นส่วนภายใน");
+  assert.match(html, /MOU-002/, "อุปกรณ์ต่อพ่วง");
+  assert.doesNotMatch(html, /MOU-001/, "ของเครื่องอื่นไม่ปน");
+  assert.ok(!html.includes(SECRET_BLOB));
+});
+
+test("form message: an error from the save is shown, scrolled into view and repeated as a toast (the save button is in the sticky head)", async () => {
+  const w = await world({ rpcHandlers: { app_itas_save_asset: () => { throw Object.assign(new Error("เลขทะเบียนนี้มีอยู่แล้ว"), { code: "23514" }); } } });
+  await w.render();
+  await openEdit(w, ASSET_ID);
+  w.forms.current = assetForm({ values: { reg_no: "COM-001", name: "x", "attrs.cpu": "i5" } });
+  await w.submit(w.forms.current);
+  assert.match(w.hosts["itas-form-message"], /เลขทะเบียนนี้มีอยู่แล้ว/);
+  assert.equal(w.elements["itas-form-message"].scrolled, 1);
+  assert.equal(w.elements["itas-form-message"].scrollOptions.block, "nearest");
+  assert.deepEqual(w.calls.toasts.at(-1), { message: "เลขทะเบียนนี้มีอยู่แล้ว", type: "error" });
 });

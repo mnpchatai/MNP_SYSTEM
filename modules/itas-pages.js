@@ -23,6 +23,8 @@
   // ป้ายชนิดในตารางใช้ชื่อสั้น (model.typeShortName) ชื่อเต็มอยู่ใน title
   const kindPill = (code, label) => `<span class="itas-kind is-${esc(model.typeKind(code))}" title="${esc(label)}">${glyph(code)}<span>${esc(model.typeShortName(label))}</span></span>`;
   // ป้ายสถานะ: ใช้งาน เขียว · สำรอง ฟ้า · ชำรุด แดง · ยกเลิกใช้งาน เทา (สีมาจากโทนใน model ไม่ใช่คลาส badge เดิมที่ใช้สีผิดความหมาย)
+  // แถวของชนิดสิ้นเปลือง (หมึก/โทนเนอร์) ไม่มีป้ายสถานะ: แสดง "ซื้อ วว/ดด/ปปปป" หรือว่าง
+  const rowStatusPill = (row) => (model.isConsumableType(row?.type_code) ? esc(model.consumablePurchaseText(row)) : statusPill(row?.status));
   const statusPill = (status) => `<span class="badge itas-status is-${esc(model.statusTone(status))}">${esc(model.statusLabel(status))}</span>`;
   const testTag = (isTest) => (isTest ? '<span class="badge itas-test-tag" title="ข้อมูลทดสอบ แยกจากระบบจริง">ทดสอบ</span>' : "");
 
@@ -153,11 +155,13 @@
       : "";
     return `<div class="itas-chips" role="group" aria-label="กรองตามชนิดอุปกรณ์">${chip("", model.TYPE_ALL_LABEL, total)}${used.map(typeChip).join("")}${more}</div>`;
   }
-  function toolbar({ query = "", status = "", canAdd = true } = {}) {
+  // canOutput = แสดงปุ่ม "พิมพ์" และ "ส่งออก Excel" (ตามตัวกรองปัจจุบัน) · hasRows = false ปิดปุ่มไว้ (ไม่มีอะไรให้พิมพ์/ส่งออก) module สลับเองเมื่อตัวกรองเปลี่ยน
+  function toolbar({ query = "", status = "", canAdd = true, canOutput = true, hasRows = true } = {}) {
     const options = [{ value: "", label: "ทุกสถานะ" }, ...model.STATUSES].map((item) => `<option value="${esc(item.value)}"${item.value === status ? " selected" : ""}>${esc(item.label)}</option>`).join("");
     return `<div class="itas-toolbar">
         <div class="field itas-search"><label class="sr-only" for="itas-search">ค้นหาอุปกรณ์ทุกชนิด</label><input class="input" id="itas-search" type="search" autocomplete="off" placeholder="ค้นหาทุกชนิด: เลขทะเบียน / รหัส / ชื่อ / ยี่ห้อ รุ่น / ผู้ใช้ / สถานที่" value="${esc(query)}"></div>
         <div class="field itas-status-filter"><label class="sr-only" for="itas-status">กรองตามสถานะ</label><select class="select" id="itas-status">${options}</select></div>
+        ${canOutput ? `<button type="button" class="btn secondary no-print" id="itas-print"${hasRows ? "" : " disabled"}>พิมพ์</button><button type="button" class="btn secondary no-print" id="itas-export"${hasRows ? "" : " disabled"}>ส่งออก Excel</button>` : ""}
         ${canAdd ? '<button type="button" class="btn" id="itas-add">+ เพิ่มอุปกรณ์</button>' : ""}
       </div>`;
   }
@@ -165,7 +169,10 @@
   const MONO_COLUMNS = new Set(["reg_no", "device_code", "serial", "host_code"]);
   function cellHtml(row, column) {
     const text = model.cellText(row, column);
-    if (column.key === "status") return { inner: statusPill(row.status), cls: "" };
+    if (column.key === "status") {
+      if (model.isConsumableType(row.type_code)) { const bought = model.consumablePurchaseText(row); return bought ? { inner: esc(bought), cls: " itas-nowrap" } : { inner: "", cls: " itas-cell-empty" }; }
+      return { inner: statusPill(row.status), cls: "" };
+    }
     if (column.role === "type") return { inner: text ? kindPill(row.type_code, text) : "—", cls: "" };
     if (column.role === "parts") return text ? { inner: `<span class="itas-partcount itas-mono">${esc(text)}</span>`, cls: "" } : { inner: "", cls: " itas-cell-empty" };
     // รหัส/เลขทะเบียน (itas-mono) ห้ามตัดกลางคำ · วันที่ไม่ตัด · คอลัมน์ข้อความยาว (ชื่อ ยี่ห้อ ผู้ใช้ สถานที่) ตัดบรรทัดตามคำได้ (itas-text)
@@ -181,7 +188,7 @@
       const aria = active ? ` aria-sort="${sort.direction === "descending" ? "descending" : "ascending"}"` : "";
       return `<th scope="col"${aria}><button type="button" class="itas-sort" data-itas-sort="${esc(column.key)}">${esc(column.label)}${active ? (sort.direction === "descending" ? " ▼" : " ▲") : ""}</button></th>`;
     }).join("");
-    const body = rows.map((row) => `<tr class="itas-row status-${esc(row.status)}${model.isHostTypeCode(row.type_code) ? " is-host" : ""}" data-itas-row="${esc(row.id)}" tabindex="0">${columns.map((column) => {
+    const body = rows.map((row) => `<tr class="itas-row${model.isConsumableType(row.type_code) ? "" : ` status-${esc(row.status)}`}${model.isHostTypeCode(row.type_code) ? " is-host" : ""}" data-itas-row="${esc(row.id)}" tabindex="0">${columns.map((column) => {
       const { inner, cls } = cellHtml(row, column);
       return `<td${cls.trim() ? ` class="${cls.trim()}"` : ""} data-label="${esc(column.label)}">${inner}</td>`;
     }).join("")}</tr>`).join("");
@@ -290,6 +297,7 @@
     const edit = mode === "edit";
     const coreList = model.coreFieldsOf(type);
     const attrList = model.plainFields(type);
+    const consumable = model.isConsumableType(type?.code);
     const listOf = (part, key) => (suggestions?.[part]?.[key]?.length ? { listId: listIdOf(part === "attrs" ? `attrs.${key}` : key) } : {});
     const blockOf = (name) => {
       if (name.startsWith("attrs.")) {
@@ -303,7 +311,7 @@
     };
     const primary = `<fieldset class="itas-group itas-primary"><legend>ข้อมูลหลัก</legend><div class="itas-grid">${model.primaryFieldNames(type).map(blockOf).join("")}</div></fieldset>`;
     const groups = model.GROUP_ORDER.map((groupKey) => {
-      const fields = coreList.filter((field) => field.group === groupKey && !model.isPrimaryField(type, field.key));
+      const fields = coreList.filter((field) => field.group === groupKey && !model.isPrimaryField(type, field.key) && !(consumable && field.key === "status"));
       const extras = groupKey === "identity" ? attrList.filter((field) => !model.isPrimaryField(type, `attrs.${field.key}`)) : [];
       if (!fields.length && !extras.length) return "";
       const core = fields.map((field) => fieldBlock(field, values.core[field.key] ?? "", field.key, listOf("core", field.key))).join("");
@@ -327,6 +335,7 @@
           ${rememberedNotice(remembered)}
           ${typeBlock}
           ${primary}
+          ${consumable ? `<input type="hidden" name="status" value="${esc(values.core.status || "in_use")}">` : ""}
           ${edit ? "" : batchSection(type, batch ?? {})}
           ${more}
           ${suggestionLists(suggestions)}
@@ -364,7 +373,7 @@
     return `<li><button type="button" class="itas-part is-${esc(model.typeKind(row.type_code))}${row.status === "retired" ? " is-retired" : ""}" data-itas-part="${esc(row.id)}">
         <span class="itas-part-type">${glyph(row.type_code)}<span>${esc(typeLabel)}</span>${row.slot ? `<span class="itas-part-slot" title="ช่อง/ตำแหน่ง">${esc(row.slot)}</span>` : ""}</span>
         <span class="itas-part-main"><span class="itas-part-top"><span class="itas-mono itas-part-code">${esc(code || "—")}</span>${row.name ? `<span class="itas-part-name">${esc(row.name)}</span>` : ""}</span>${spec ? `<span class="itas-mono itas-part-spec">${esc(spec)}</span>` : ""}</span>
-        <span class="itas-part-foot">${statusPill(row.status)}</span>
+        <span class="itas-part-foot">${rowStatusPill(row)}</span>
       </button></li>`;
   }
   // รวมการ์ดของทุกชนิดในหมวดเดียวเป็น grid เดียว (เรียงชนิดต่อกัน) · ชื่อชนิดดึงจากกลุ่มที่จัดไว้แล้ว
@@ -412,7 +421,7 @@
           ${statusPill(host.status)}
         </div>
         ${facts.length ? `<dl class="itas-facts">${facts.map((fact) => `<div><dt>${esc(fact.label)}</dt><dd class="itas-mono">${esc(fact.value)}</dd></div>`).join("")}</dl>` : ""}
-        <div class="itas-host-foot"><span class="itas-host-counts itas-mono">${esc(`${model.partsSummaryText(counts)}${retired}`)}</span><button type="button" class="btn" id="itas-host-edit">แก้ไขเครื่องนี้</button></div>
+        <div class="itas-host-foot"><span class="itas-host-counts itas-mono">${esc(`${model.partsSummaryText(counts)}${retired}`)}</span><span class="itas-host-buttons"><button type="button" class="btn secondary" id="itas-host-print">พิมพ์</button><button type="button" class="btn" id="itas-host-edit">แก้ไขเครื่องนี้</button></span></div>
       </section>
       ${partsNotice ? `<p class="rf-callout is-warn">${esc(partsNotice)}</p>` : ""}
       ${groupsHtml}
@@ -420,6 +429,38 @@
   }
   // เปลือกหน้า: ช่องฟอร์ม (แก้ไขเครื่อง/ชิ้นส่วน) อยู่นอกส่วนที่วาดซ้ำ เพื่อไม่ให้ฟอร์มที่เปิดค้างถูกลบตอนรีเฟรชรายการชิ้นส่วน
   const hostShell = (bodyHtml) => `<div id="itas-form-area"></div><div id="itas-host-host">${bodyHtml}</div>`;
+
+  /* ---------- ใบพิมพ์ A4 (รุ่น 1.06) ---------- */
+  // ใบพิมพ์ถูกแทรกเป็นลูกของ .itas-page ชั่วคราวตอนกดพิมพ์ (ซ่อนบนหน้าจอ แสดงเฉพาะตอนพิมพ์ ส่วนอื่นของหน้าถูกซ่อน)
+  // ไม่มีช่องลับ: ใช้เฉพาะข้อมูลที่ model เตรียมให้ (ช่องไม่ลับ) · ทุกค่าผ่าน esc()
+  const sheetHead = (title, isTest) => `<div class="itas-sheet-title"><h2>${esc(title)}</h2></div>${isTest ? '<p class="itas-sheet-test">ข้อมูลทดสอบ (ไม่ใช่ทะเบียนจริง)</p>' : ""}`;
+  const cellClass = (column) => (column.cls ? ` class="itas-sheet-${esc(column.cls)}"` : "");
+  const sheetHeadRow = (columns) => `<tr>${columns.map((column) => `<th scope="col"${cellClass(column)}>${esc(column.label)}</th>`).join("")}</tr>`;
+  const sheetRows = (columns, lines, emptyText) => (lines.length
+    ? lines.map((line) => `<tr>${line.map((value, index) => `<td${cellClass(columns[index])}>${esc(value)}</td>`).join("")}</tr>`).join("")
+    : `<tr><td colspan="${columns.length}">${esc(emptyText)}</td></tr>`);
+  const metaItem = (label, value) => `<div><dt>${esc(label)}:</dt><dd>${esc(value)}</dd></div>`;
+  // ตารางรายการ (A4 แนวนอน): หัวตารางซ้ำทุกหน้า (thead = table-header-group ใน CSS) · แถวไม่ถูกตัดกลาง
+  // view = model.printList · filters = model.printFilterItems · notice = ข้อความเตือนเมื่อรายการที่โหลดมาไม่ครบ
+  function printListSheet({ view, filters, countText, printedAt, notice = "", isTest = false }) {
+    return `<article class="itas-sheet itas-sheet-list" aria-hidden="true">
+        ${sheetHead(TITLE, isTest)}
+        <dl class="itas-sheet-meta">${filters.map(([label, value]) => metaItem(label, value)).join("")}${metaItem("จำนวน", countText)}${metaItem("วันที่พิมพ์", printedAt)}</dl>
+        ${notice ? `<p class="itas-sheet-notice">${esc(notice)}</p>` : ""}
+        <table class="itas-sheet-table"><thead>${sheetHeadRow(view.columns)}</thead><tbody>${sheetRows(view.columns, view.lines, "ไม่มีรายการ")}</tbody></table>
+      </article>`;
+  }
+  // ใบสรุปเครื่อง (A4 แนวตั้ง): หัวเครื่อง + ข้อมูลเครื่อง + ตารางชิ้นส่วนภายใน + ตารางอุปกรณ์ต่อพ่วง · view = model.hostPrint
+  function printHostSheet({ view, printedAt, isTest = false }) {
+    const facts = view.facts.length ? `<dl class="itas-sheet-meta">${view.facts.map((fact) => metaItem(fact.label, fact.value)).join("")}</dl>` : "";
+    const sections = view.sections.map((section) => `<h3 class="itas-sheet-section">${esc(section.label)} (${esc(String(section.count))})</h3><table class="itas-sheet-table"><thead>${sheetHeadRow(view.columns)}</thead><tbody>${sheetRows(view.columns, section.lines, `ไม่มี${section.label}ที่ผูกกับเครื่องนี้`)}</tbody></table>`).join("");
+    return `<article class="itas-sheet itas-sheet-host" aria-hidden="true">
+        ${sheetHead("ใบสรุปเครื่องคอมพิวเตอร์", isTest)}
+        <dl class="itas-sheet-meta itas-sheet-machine">${metaItem("รหัสเครื่อง", view.code || "—")}${metaItem("ชื่อ", view.title)}${metaItem("สถานะ", view.status)}${metaItem("ชิ้นส่วน", view.summary)}${metaItem("วันที่พิมพ์", printedAt)}</dl>
+        ${facts}
+        ${sections}
+      </article>`;
+  }
 
   /* ---------- โครงหน้าหลัก ---------- */
   // ช่อง id ที่ module วาดทับเป็นส่วน ๆ: itas-vault-bar · itas-vault-panel · itas-types-host · itas-main · itas-form-area
@@ -445,7 +486,7 @@
 
   const api = {
     TITLE, MASK, head, page, messageBox, errorCard, purgeRow, versionTag, devNotice, vaultBar, vaultSetupForm, recoveryShow, unlockForm, forgotForm, changeForm, newRecoveryForm, strengthText,
-    typeChips, toolbar, assetTable, glyph, kindPill, statusPill, hostLoading, hostError, hostBody, hostShell, hostMovesSection, partButton, fieldBlock, suggestionLists, batchSection, batchResult, batchProblems, secretsSection, assetForm, historyPanel, mainPage, layout, mainPanel, listTitle,
+    typeChips, toolbar, assetTable, printListSheet, printHostSheet, glyph, kindPill, statusPill, hostLoading, hostError, hostBody, hostShell, hostMovesSection, partButton, fieldBlock, suggestionLists, batchSection, batchResult, batchProblems, secretsSection, assetForm, historyPanel, mainPage, layout, mainPanel, listTitle,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_ITAS_PAGES = Object.freeze(api);

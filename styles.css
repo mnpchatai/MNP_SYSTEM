@@ -4103,3 +4103,41 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
   .itas-row.is-host td:first-child { box-shadow: none; }
   .itas-table tr.itas-row.is-host { border-left: 4px solid var(--itas-host); }
 }
+
+/* ===== ทะเบียนอุปกรณ์ IT รุ่น 1.06: พิมพ์ทะเบียน A4 · ส่งออก CSV · แก้ UX ฟอร์ม ===== */
+/* ฟอร์มมีหัวติดขอบบน (sticky ~130px รวมแถบบน): ช่องที่โฟกัส/เลื่อนไปหาต้องไม่ถูกหัวบัง · กล่องข้อความผิดพลาดของฟอร์มด้วย */
+.itas-form :is(input, select, textarea, summary), #itas-form-message { scroll-margin-top: 130px; }
+.itas-host-buttons { display: inline-flex; flex-wrap: wrap; gap: 10px; }
+@media (max-width: 719px) { .itas-host-buttons { flex-direction: column; } }
+.itas-toolbar .btn[disabled] { opacity: .5; cursor: not-allowed; }
+/* ใบพิมพ์: อยู่ใน DOM เฉพาะตอนกดพิมพ์ ซ่อนบนหน้าจอเสมอ */
+.itas-sheet { display: none; }
+@page itas-list { size: A4 landscape; margin: 10mm 10mm 14mm; @bottom-center { content: "หน้า " counter(page) " / " counter(pages); font-size: 9pt; } }
+@page itas-host { size: A4 portrait; margin: 12mm 12mm 14mm; @bottom-center { content: "หน้า " counter(page) " / " counter(pages); font-size: 9pt; } }
+@media print {
+  body:has(.itas-sheet) :is(.sidebar, .topbar, .mobile-nav-toggle, .nav-backdrop, .sandbox-banner, .push-prompt, .skip-link, .offline-banner, .update-banner, .toast, .install-banner, .no-print) { display: none !important; }
+  body:has(.itas-sheet), body:has(.itas-sheet) .app-shell, body:has(.itas-sheet) .main, body:has(.itas-sheet) .content { display: block; margin: 0; padding: 0; background: #fff; max-width: none; }
+  body:has(.itas-sheet) .itas-page { margin: 0; padding: 0; max-width: none; }
+  /* ซ่อนทุกอย่างในหน้าทะเบียน เหลือแต่ใบพิมพ์ */
+  body:has(.itas-sheet) .itas-page > :not(.itas-sheet) { display: none !important; }
+  .itas-sheet { display: block; margin: 0; padding: 0; color: #000; background: #fff; font-size: 9.5pt; line-height: 1.35; }
+  .itas-sheet-list { page: itas-list; }
+  .itas-sheet-host { page: itas-host; }
+  .itas-sheet-title h2 { margin: 0 0 4px; font-size: 15pt; line-height: 1.3; letter-spacing: 0; color: #000; }
+  .itas-sheet-test { margin: 0 0 4px; font-weight: 700; color: #000; }
+  .itas-sheet-meta { margin: 0 0 8px; display: flex; flex-wrap: wrap; gap: 2px 18px; }
+  .itas-sheet-meta > div { display: flex; gap: 5px; }
+  .itas-sheet-meta dt { font-weight: 700; }
+  .itas-sheet-meta dd { margin: 0; }
+  .itas-sheet-notice { margin: 0 0 6px; font-weight: 700; }
+  .itas-sheet-section { margin: 10px 0 4px; font-size: 11.5pt; color: #000; break-after: avoid; }
+  .itas-sheet-table { width: 100%; margin-bottom: 6px; border-collapse: collapse; }
+  .itas-sheet-table thead { display: table-header-group; } /* หัวตารางซ้ำทุกหน้า */
+  .itas-sheet-table tr { break-inside: avoid; }
+  .itas-sheet-table tbody tr:last-child :is(td, th) { border-bottom: 1px solid #000; } /* กฎกลาง tbody tr:last-child td ตัดเส้นล่างของตาราง ต้องมีเส้นปิดตาราง */
+  .itas-sheet-table th, .itas-sheet-table td { padding: 2px 5px; text-align: left; vertical-align: top; border: 1px solid #000; overflow-wrap: anywhere; color: #000; background: transparent; font-size: 9pt; }
+  .itas-sheet-table thead th { text-align: center; font-weight: 700; background: #f0f0f0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .itas-sheet-table .itas-sheet-center { text-align: center; }
+  .itas-sheet-table .itas-sheet-mono { font-family: var(--itas-mono-font, ui-monospace, Consolas, monospace); white-space: nowrap; }
+  .itas-sheet-table .itas-sheet-nowrap { white-space: nowrap; }
+}
