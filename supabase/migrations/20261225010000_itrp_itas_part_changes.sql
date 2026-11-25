@@ -168,8 +168,9 @@ as $$
   select c.request_id, r.doc_no
   from public.itrp_part_changes c
   join public.itrp_requests r on r.id = c.request_id and r.is_test = c.is_test
-  where c.is_test = p_is_test
-    and c.batch_id::text = coalesce(current_setting('itas.change_batch', true), '')
+  where nullif(current_setting('itas.change_batch', true), '') is not null
+    and c.is_test = p_is_test
+    and c.batch_id::text = current_setting('itas.change_batch', true)
     and c.created_at = now()
     and (c.asset_id = p_asset_id or c.new_asset_id = p_asset_id)
   order by c.id desc
