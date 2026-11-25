@@ -34,7 +34,7 @@ test("head: one h1, back link to IT SUPPORT, test tag only in test mode, dev not
   assert.doesNotMatch(html, /itas-test-tag/);
   assert.match(pages.head({ isTest: true }), /<span class="badge itas-test-tag"[^>]*>ทดสอบ<\/span>/);
   assert.match(html, /กำลังพัฒนาและทดสอบ ยังไม่เปิดใช้งานจริง/);
-  assert.match(html, /<p class="itas-version no-print"[^>]*>V1\.02<\/p>/);
+  assert.match(html, /<p class="itas-version no-print"[^>]*>V1\.03<\/p>/);
 });
 
 test("vault bar: shows state for every status with the right buttons; test vault is labelled", () => {
@@ -413,4 +413,25 @@ test("edit form of a part shows 'installed at COMxx' as a button only when the c
   assert.doesNotMatch(withLink, /<img/);
   assert.doesNotMatch(pages.assetForm({ mode: "edit", type, values, asset }), /ติดตั้งอยู่ที่/);
   assert.doesNotMatch(pages.assetForm({ mode: "add", type, values, hostLink: { id: ID, label: "COM12" } }), /ติดตั้งอยู่ที่/);
+});
+
+/* ---------- รุ่น 1.03: หัวฟอร์ม + การ์ดชิ้นส่วนใน grid เดียว ---------- */
+test("form header: back button, title and a save button live inside the form (so the busy state disables them and Enter/submit still reaches the form)", () => {
+  for (const mode of ["add", "edit"]) {
+    const html = pages.assetForm({ mode, type: TYPE, asset: mode === "edit" ? ASSET : null, values: model.emptyFormValues(TYPE), vaultStatus: "locked" });
+    const form = html.slice(html.indexOf('<form id="itas-form"'), html.indexOf("</form>"));
+    assert.match(form, /<div class="itas-form-head">/);
+    assert.match(form, /id="itas-form-back">‹ ย้อนกลับ</);
+    assert.match(form, /<h2 id="itas-form-title">/);
+    assert.match(form, new RegExp(`itas-form-head-save">${mode === "edit" ? "บันทึก" : "เพิ่ม"}<`));
+    assert.match(form, /id="itas-form-cancel"/, "ปุ่มล่างฟอร์มยังอยู่");
+  }
+});
+
+test("computer page parts: every type of a kind goes into one grid of cards, each card labelled with its type icon + name (no per-type blocks)", () => {
+  const html = pages.hostBody({ host: HOST, type: H_TYPES[0], parts: PARTS, types: H_TYPES });
+  assert.doesNotMatch(html, /itas-typegroup/);
+  assert.match(html, /<span class="itas-part-type"><svg[^>]*>.*?<\/svg><span>CPU<\/span><span class="itas-part-slot" title="ช่อง\/ตำแหน่ง">CPU1<\/span><\/span>/);
+  assert.match(html, /<span class="itas-part-type"><svg[^>]*>.*?<\/svg><span>จอภาพ<\/span><\/span>/);
+  assert.equal(count(html, /<ul class="itas-parts">/g), 2, "หมวดละ grid เดียว");
 });
