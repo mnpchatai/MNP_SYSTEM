@@ -537,6 +537,7 @@ select so_t.save($json$
    {"code": "RB-S9", "kind": "RB", "name": "เส้นยาง S9", "ownerDept": "RB", "uom": "pcs", "rubber": {"compound": "DMS1", "kgPerRoll": 2}}]}}
 $json$::jsonb, 'importFlat');
 -- ตัวช่วย: งานตามเลข · แถวงานสำหรับปล่อยผลิต / งานใหม่ · คำสั่งเปิดงานเพิ่ม (แถวใบปัจจุบัน + ผลระเบิดใหม่ + งาน)
+reset role;
 create function so_t.job(p_id text) returns jsonb language sql stable as $$
   select j from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = p_id
 $$;
@@ -551,6 +552,7 @@ create function so_t.add(p_order text, p_jobs jsonb, p_order_extra jsonb default
       jsonb_build_array(jsonb_build_object('itemCode', 'FG-S9', 'fgCode', 'FG-S9', 'kind', 'FG', 'level', 0, 'fgQty', 7, 'required', 7))) || p_order_extra)),
     'jobs', jsonb_build_object('upsert', p_jobs)), 'addJobsForChanges')
 $$;
+set local role authenticated;
 -- ใบของฝ่ายวางแผน 251225-28301: ปล่อยผลิตพร้อมงาน PK (FG-S9 × 5) งาน RB (RB-S9 × 10 · ได้ WO อัตโนมัติ) และงาน RB อีกสองงาน (RB-S6 / RB-S7) แล้ว PK เริ่มงาน
 select lives_ok($$ select so_t.orders(jsonb_build_array(so_t.sa_order('251225-28301', '{"items":[{"fgCode":"FG-S9","qty":5,"colorSet":"","note":""}]}'::jsonb)), 'createOrder') $$,
   'planning opens an order of FG-S9');
