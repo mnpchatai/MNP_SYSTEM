@@ -157,6 +157,7 @@ select ok(not exists (select 1 from public.bom_gr_handovers h where h.to_dept = 
                         and (h.status <> 'sent' or h.from_dept <> 'PK' or h.qty > (select j.qty_done from public.bom_jobs j where j.id = h.job_id) + 0.000000001)),
   'a filled-in send is a PK to WH send still sent and never above the good pieces of its job');
 select set_config('test.cfg_pt', private.bom_dept_default_config('PT')::text, true);
+select set_config('test.cfg_gr', private.bom_gr_default_config()::text, true);
 select set_config('test.cfg_bg', private.bom_dept_default_config('BG')::text, true);
 select set_config('test.cfg_pk', private.bom_dept_default_config('PK')::text, true);
 
@@ -203,7 +204,7 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_pt_amgr_t')::uuid);
 select throws_ok($$ select ds_t.config('PT', '{"steps":[{"code":"GR-01","name":"รีด","kind":"main","seq":1,"active":true}]}'::jsonb) $$, 'BOM_INVALID_GR',
   'a PT step code starts with PT-');
 select throws_ok($$ select ds_t.config('PT', '{"dept":"XX"}'::jsonb) $$, 'BOM_INVALID_GR', 'an unknown department is refused');
-select throws_ok($$ select ds_t.gr('grConfig', jsonb_build_object('steps', private.bom_gr_default_config() -> 'steps', 'reasons', private.bom_gr_default_config() -> 'reasons'), 'saveGrConfig') $$,
+select throws_ok($$ select ds_t.gr('grConfig', jsonb_build_object('steps', current_setting('test.cfg_gr')::jsonb -> 'steps', 'reasons', current_setting('test.cfg_gr')::jsonb -> 'reasons'), 'saveGrConfig') $$,
   'BOM_FORBIDDEN', 'the PT head cannot change the GR config (no department = GR)');
 select lives_ok($$ select ds_t.config('PT', jsonb_build_object('steps', (current_setting('test.cfg_pt')::jsonb -> 'steps')
                                             || '[{"code":"PT-02","name":"ตัดแต่ง","kind":"side","seq":2,"active":true}]'::jsonb)) $$,
