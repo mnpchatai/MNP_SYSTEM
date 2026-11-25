@@ -453,6 +453,7 @@
       const step = p.step ?? {};
       const target = p.target ?? {};
       return {
+        ...(p.dept ? { dept: p.dept } : {}), // PT / BG / PK (20261224010000): แผนกของตั้งค่า (ฟอร์มส่ง data-rf-args)
         steps: listOf(step, "name").map((name, index) => ({ code: listOf(step, "code")[index] ?? "", name, kind: listOf(step, "kind")[index] ?? "main", active: listOf(step, "active")[index] !== "0" })),
         reasons: String(p.reasons ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
         targets: listOf(target, "itemCode").map((itemCode, index) => ({ itemCode, stepCode: listOf(target, "stepCode")[index] ?? "", perHour: listOf(target, "perHour")[index] ?? "" }))

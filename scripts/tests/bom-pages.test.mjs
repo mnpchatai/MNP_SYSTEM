@@ -21,7 +21,8 @@ const NO_PART_DIALOG_BUTTON = /data-rf-open="(issueParts|returnParts|undoParts)"
 const ROLES = ["admin", "manager", "planner", "rb", "gr", "pt", "bg", "st", "wh"];
 const XSS = "<script>alert(1)</script>";
 
-function load({ sandbox = true, route = "", storage = new Map() } = {}) {
+// seed: ตัวเลือกของ buildSeed ชุดสาธิต (เช่น { parts: false } = ยังไม่เบิกของซื้อของ DEMO-26001)
+function load({ sandbox = true, route = "", storage = new Map(), seed = null } = {}) {
   const context = vm.createContext({});
   const app = { innerHTML: "" };
   const log = { listeners: {}, toasts: [], renders: 0, notFound: 0, hash: `#/bom${route ? `?${route}` : ""}`, dialogs: [], confirms: [], confirmAnswer: true };
@@ -51,7 +52,13 @@ function load({ sandbox = true, route = "", storage = new Map() } = {}) {
     MNP_ST_PAGES: { access: () => "full" },
   });
   context.window.MNP_REQUEST_MODULES = context.MNP_REQUEST_MODULES;
-  for (const file of FILES) vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file });
+  for (const file of FILES) {
+    vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file });
+    if (seed && file === "modules/bom-seed.js") {
+      const build = context.MNP_BOM_SEED.buildSeed;
+      context.MNP_BOM_SEED.buildSeed = (now, options) => build(now, { ...seed, ...options });
+    }
+  }
   const registered = context.MNP_REQUEST_MODULES.BOM;
   const renderRaw = async (query = route) => {
     log.hash = `#/bom${query ? `?${query}` : ""}`;
@@ -1536,7 +1543,7 @@ test("BOM keeps no part stock page: p=stock moves to the ST module's store view 
 });
 
 test("issuing parts from the PI page: the dialog has a tick box and an editable quantity per line, a short line starts unticked and marked and offers the purchase, one button issues the ticked lines; part jobs have no report buttons", async () => {
-  const env = load();
+  const env = load({ seed: { parts: false } });
   env.store.setUser("B08"); // ST
   const D = env.context.MNP_BOM_DIALOGS;
   let html = await env.render("p=orders&sel=DEMO-26001");
@@ -1637,7 +1644,7 @@ test("issuing parts from the PI page: the dialog has a tick box and an editable 
 });
 
 test("returning parts from the PI page: the buttons appear only for ST and the planner once something is issued, the leftover dialog lists issued and returned, the undo dialog asks for a reason and the history shows the return with its reason", async () => {
-  const env = load();
+  const env = load({ seed: { parts: false } });
   const D = env.context.MNP_BOM_DIALOGS;
   const page = "p=orders&sel=DEMO-26001";
   env.store.setUser("B08"); // ST
@@ -1708,7 +1715,7 @@ test("returning parts from the PI page: the buttons appear only for ST and the p
 });
 
 test("a PI that closes while a part line is partly issued: the PI page offers the leftover return of that line (no issue, no undo), the dialog takes up to what was issued, and the ST work page has no dead waiting card", async () => {
-  const env = load();
+  const env = load({ seed: { parts: false } });
   const D = env.context.MNP_BOM_DIALOGS;
   const page = "p=orders&sel=DEMO-26001";
   env.store.setUser("B08"); // ST
@@ -2268,6 +2275,7 @@ test("creating a product does not navigate when the code already exists", async 
 
 test("my jobs for the warehouse and for a read-only account: no job cards of other departments and no report buttons", () => {
   const env = load();
+  clearDemoWhSends(env);
   env.store.setUser("B03");
   const work = env.context.MNP_BOM_PAGES.work;
   for (const user of [{ id: "W1", role: "wh", dept: "WH", name: "คลังสินค้า" }, { id: "V1", role: "viewer", dept: "HR", name: "ผู้ดู" }, { id: "V2", role: "viewer", name: "ไม่มีแผนก" }]) {
@@ -2924,7 +2932,28 @@ const pkReport = (env, made, backTo = "B09") => {
     const qty = job.kind === "FG" ? made[job.itemCode] ?? 0 : job.qtyPlanned; // จำนวนที่รายงานเพิ่มครั้งนี้
     if (qty > 0) assert.equal(env.store.run("reportJob", { jobId: job.id, qtyDone: qty }).ok, true);
   }
+  // 20261224010000: WH รับได้ไม่เกินที่ PK ส่งให้ WH · ฝ่ายวางแผนส่งที่ PK ทำครบให้ WH (การส่งเองตรวจใน scripts/tests/bom-dept-steps.test.mjs)
+  shipPk(env);
   env.store.setUser(backTo);
+};
+// ข้อมูลสาธิตมีการส่ง PK → WH ของใบ DEMO-26006 ที่ WH ยังไม่รับ (20261224010000) · เทสต์ที่เริ่มจากคลังสินค้าที่ไม่มีอะไรรอรับ ให้ฝ่ายวางแผนยกเลิกการส่งนั้นก่อน
+const clearDemoWhSends = (env) => {
+  const back = env.store.user()?.id ?? "B09";
+  env.store.setUser("B03");
+  for (const row of env.store.data().grHandovers.filter((entry) => entry.toDept === "WH" && entry.status === "sent")) {
+    const own = env.store.data().fgMoves.filter((move) => move.orderId === row.orderId && move.fgCode === row.itemCode && move.kind === "receive").length;
+    if (own) continue;
+    const out = env.store.run("cancelPkToWh", { handoverId: row.id, reason: "เทสต์เริ่มจากคลังว่าง" });
+    assert.equal(out.ok, true, out.error?.message);
+  }
+  env.store.setUser(back);
+};
+const shipPk = (env, orderId = FG_PI) => {
+  const data = env.store.data();
+  for (const job of data.jobs.filter((entry) => entry.orderId === orderId && entry.dept === "PK" && entry.kind === "FG")) {
+    const left = Math.round(((Number(job.qtyDone) || 0) - env.context.MNP_BOM_RULES.grHandoverSummary(data, job).sent) * 1e4) / 1e4;
+    if (left > 0) { const out = env.store.run("sendPkToWh", { jobId: job.id, qty: left }); assert.equal(out.ok, true, out.error?.message); }
+  }
 };
 const fgRun = (env, action, lines, extra = {}) => { const result = env.store.run(action, { orderId: FG_PI, lines: lines.map(([fgCode, qty]) => ({ fgCode, qty })), ...extra }); assert.equal(result.ok, true, result.error?.message); return result; };
 const count = (html, pattern) => (html.match(pattern) ?? []).length;
@@ -2967,7 +2996,7 @@ test("step 5: the order page is read-only progress for everyone with one link to
   html = await env.render(`p=orders&sel=${FG_PI}&step=5`);
   clean(html);
   assert.match(html, /<li class="bom-step is-now" aria-current="step"><div><span class="bom-step-no">ขั้น 5/);
-  for (const head of ["สั่ง", "PK ส่งมอบแล้ว", "รับเข้า WH แล้ว", "รอรับ"]) assert.match(html, new RegExp(`<th class="right">${head}</th>`), head);
+  for (const head of ["สั่ง", "PK ส่งให้ WH แล้ว", "รับเข้า WH แล้ว", "รอรับ"]) assert.match(html, new RegExp(`<th class="right"[^>]*>${head}</th>`), head);
   assert.doesNotMatch(html, /รับครั้งนี้|data-rf-form="receiveFg"|name="qty\[\]"|data-rf-open="closeShort"|data-rf-action="closeOrder"/, "no controls on the order page: the warehouse acts in its own module");
   assert.match(html, /คลังสินค้า \(WH\) เป็นผู้รับเข้า ส่งมอบ และปิดใบ/, "someone who cannot open the module is told who acts");
   assert.doesNotMatch(html, /href="#\/wh/, "and gets no link");
@@ -2980,7 +3009,7 @@ test("step 5: the order page is read-only progress for everyone with one link to
   html = await env.whRender(`order=${FG_PI}`);
   clean(html);
   assert.match(html, /<h2>รับเข้า WH<\/h2>/);
-  for (const head of ["สั่ง", "PK ส่งมอบแล้ว", "รับเข้าแล้ว", "รอรับ", "รับครั้งนี้"]) assert.match(html, new RegExp(`<th class="right">${head}</th>`), head);
+  for (const head of ["สั่ง", "PK ส่งให้ WH แล้ว", "รับเข้าแล้ว", "รอรับ", "รับครั้งนี้"]) assert.match(html, new RegExp(`<th class="right"[^>]*>${head}</th>`), head);
   assert.match(html, /data-rf-form="receiveFg" data-rf-args="\{&quot;orderId&quot;:&quot;DEMO-26001&quot;\}"/);
   assert.equal(count(html, /name="qty\[\]"/g), 1, "one input: HL has nothing to receive and gets none, and nothing is deliverable yet");
   assert.match(html, /name="qty\[\]" type="number" inputmode="decimal" step="any" min="0" max="30" value="30"/, "prefilled with what is waiting");
@@ -2995,7 +3024,7 @@ test("step 5: the order page is read-only progress for everyone with one link to
     clean(html);
     if (id === "B01") { assert.match(html, /data-rf-form="receiveFg"/, "admin may receive"); continue; }
     assert.doesNotMatch(html, /data-rf-form="receiveFg"|name="qty\[\]"|data-rf-open="closeShort"/, `${id} cannot act`);
-    assert.match(html, /<th class="right">PK ส่งมอบแล้ว<\/th>/, `${id} sees the table`);
+    assert.match(html, /<th class="right"[^>]*>PK ส่งให้ WH แล้ว<\/th>/, `${id} sees the table`);
     assert.match(html, /คลังสินค้า \(WH\) เป็นผู้รับสินค้าเข้าคลัง/, `${id} is told who acts`);
   }
 });
@@ -3126,6 +3155,7 @@ test("closing short: only when PK is done and everything PK made is received; th
 
 test("closing short (U6): the warehouse gets a card and the menu count follows; everyone else reads at step 4 what the warehouse waits for, also while PK is still open", async () => {
   const env = whLoad();
+  clearDemoWhSends(env);
   env.store.setUser("B09");
   pkReport(env, { [FG_TP]: 70, [FG_HL]: 40 });
   fgRun(env, "receiveFg", [[FG_TP, 70], [FG_HL, 40]]);
@@ -3352,6 +3382,7 @@ test("close rules: everything received while RB and GR are open: step 5 names th
 
 test("my jobs for the warehouse: a card to receive per PI with something waiting, a card to deliver per closed PI with stock left, linked to the right step", async () => {
   const env = whLoad();
+  clearDemoWhSends(env);
   env.store.setUser("B09");
   let html = await env.render("p=work");
   clean(html);
@@ -3384,6 +3415,7 @@ test("my jobs for the warehouse: a card to receive per PI with something waiting
 
 test("the work count used by the department modules is the open tab's card count for every role: admin, planner, both kinds of manager, the warehouse and each department", async () => {
   const env = whLoad();
+  clearDemoWhSends(env);
   pkReport(env, { [FG_TP]: 30 }, "B01"); // a card to receive for the warehouse
   const tab = (html) => Number(/>ต้องทำ (\d+)</.exec(html)?.[1] ?? 0);
   const seen = {};

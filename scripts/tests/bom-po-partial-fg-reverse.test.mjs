@@ -41,6 +41,9 @@ function seeded({ surplus = false } = {}) {
     bom.fgMoves.push(move("00000005-r4", "PI-1", "receive", 2));
     bom.orders.push(order("PI-4", { status: "draft", items: [{ fgCode: "FG-1", qty: 2, colorSet: "", note: "" }], stockCounts: { "FG-1": 2 }, explodedAt: null }));
   }
+  // 20261224010000: WH รับได้ไม่เกินที่ PK ส่งให้ WH · ข้อมูลตั้งต้นมีแถวส่ง PK → WH เท่ายอดที่ PK ทำของทุกงาน (เพดานจึงเท่ายอดที่ PK ทำเหมือนเดิม)
+  bom.grHandovers = bom.jobs.filter((job) => job.qtyDone > 0).map((job, index) => ({ id: `5a1e0000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`, jobId: job.id, orderId: job.orderId, itemCode: job.itemCode, qty: job.qtyDone,
+    status: "sent", note: "", fromDept: "PK", toDept: "WH", sentBy: "x", sentAt: 1, receivedBy: null, receivedAt: null, cancelledBy: null, cancelledAt: null, cancelReason: null, moves: [] }));
   const rf = { version: 7, epoch: "e-rf", versions: Object.fromEntries(RF_LISTS.map((list) => [list, {}])), audit: [], ...Object.fromEntries(RF_LISTS.map((list) => [list, []])) };
   rf.materials = [{ code: "MAT-A", name: "ยาง", category: "เคมี", storage: "A-1", uom: "kg", active: true, safetyKg: 0, shelfLifeDays: 180 }];
   map.set("mnp-harness-bom-master", JSON.stringify(bom));
@@ -139,6 +142,9 @@ test("mock: a receipt whose surplus another order already took cannot be reverse
   const job = (await s.bomView()).jobs.find((row) => row.id === "JOB-2");
   await s.as("persona-pk");
   assert.equal((await s.bomSave({ jobs: { upsert: [{ ...job, status: "in_progress", qtyDone: 2, reports: [{ at: 1, by: "x", good: 2, reject: 0, note: "" }] }] } }, "reportJob")).error, null);
+  // PK ส่งให้ WH ก่อนรับ (20261224010000) โดยฝ่ายวางแผน
+  await s.as("persona-pp");
+  assert.equal((await s.bomSave({ grHandovers: { upsert: [{ id: "5a1e0000-0000-4000-8000-000000000099", jobId: "JOB-2", qty: 2, note: "" }] } }, "sendPkToWh")).error, null);
   await s.as("persona-wh");
   assert.equal((await receive(s, "PI-2", 2)).error, null);
   const delivered = await s.bomSave({ fgMoves: { upsert: [{ orderId: "PI-2", kind: "deliver", lines: [{ fgCode: "FG-1", qty: 2 }] }] } }, "deliverFg");

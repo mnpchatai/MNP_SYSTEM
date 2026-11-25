@@ -16,6 +16,25 @@ const storeApi = require("../../modules/bom-store.js");
 globalThis.MNP_RUBBERFLOW_RULES = require("../../modules/rubberflow-rules.js"); // Supabase จำลองของ harness ใช้กฎสเปก/FEFO ของ RubberFlow ตอนบันทึกชุดหน้างาน
 
 const NOW = Date.parse("2026-11-05T10:00:00+07:00");
+// 20261224010000: WH รับได้ไม่เกินที่ PK ส่งให้ WH (sendPkToWh) · ตัวช่วยของเทสต์ = ฝ่ายวางแผน (persona-pp) ส่ง PK → WH ครบยอดที่ PK ทำของทุกงาน PK / FG ของใบ แล้วกลับเป็นบัญชีเดิม
+// (เพดานรับจึงเท่ายอดที่ PK ทำเหมือนเดิม) · การส่งเองและสิทธิ์ของมันตรวจใน scripts/tests/bom-dept-steps.test.mjs
+let shipSeq = 0;
+async function shipPkToWh(rpc, orderId) {
+  const was = (await rpc("app_sandbox_status"))?.data?.persona?.id ?? null;
+  const master = (await rpc("app_bom_master")).data;
+  const left = master.jobs.filter((job) => job.orderId === orderId && job.dept === "PK" && job.kind === "FG")
+    .map((job) => [job, Math.round(((Number(job.qtyDone) || 0) - master.grHandovers.filter((row) => row.jobId === job.id && row.status !== "cancelled").reduce((sum, row) => sum + row.qty, 0)) * 1e4) / 1e4])
+    .filter(([, qty]) => qty > 0);
+  if (!left.length) return;
+  if (was) await rpc("app_sandbox_enter", { p_persona_id: "persona-pp" });
+  for (const [job, qty] of left) {
+    shipSeq += 1;
+    const version = (await rpc("app_bom_master")).data.version;
+    const out = await rpc("app_bom_save_master", { p_changes: { grHandovers: { upsert: [{ id: `5a1e0000-0000-4000-8000-${String(shipSeq).padStart(12, "0")}`, jobId: job.id, qty, note: "" }] } }, p_base_version: version, p_action: "sendPkToWh" });
+    assert.equal(out.error, null, `ship ${job.id}`);
+  }
+  if (was) await rpc("app_sandbox_enter", { p_persona_id: was });
+}
 const SERVER_AT = NOW + 60000;
 const MASTER = storeApi.REMOTE_LISTS; // ทุกชุดที่อยู่ในฐานข้อมูล: ข้อมูลหลัก 8 ชุด + ลูกค้า ใบสั่งผลิต งาน
 const emptyMaster = () => ({ version: 0, ...Object.fromEntries(MASTER.map((list) => [list, []])) });
@@ -1612,7 +1631,8 @@ test("the mock database enforces the contract: test mode, writer permission, per
   assert.equal(typeof firstEpoch, "string", "the snapshot carries the epoch of the data round");
   // grWorkers (20261216010000) = พนักงานแผนก GR ของโหมดทดสอบ (บัญชีทดสอบ) มากับ snapshot เท่านั้น ชุดอื่นว่าง
   assert.deepEqual({ ...firstSnapshot, grWorkers: [] }, emptyMaster());
-  assert.deepEqual(firstSnapshot.grWorkers.map((row) => row.id), ["persona-gr", "persona-grh"], "the snapshot lists the GR workers of test mode");
+  assert.deepEqual(firstSnapshot.grWorkers.filter((row) => row.dept === "GR").map((row) => row.id), ["persona-gr", "persona-grh"], "the snapshot lists the GR workers of test mode");
+  assert.deepEqual(firstSnapshot.grWorkers.map((row) => row.dept), ["GR", "GR", "BG", "BG", "PK", "PK", "PT", "PT"], "and the workers of BG, PK and PT with their department, GR first (20261224010000)");
   let reply = await save({ items: { upsert: [item("FG-1", "FG"), item("P-1")] } });
   assert.equal(reply.error, null);
   assert.equal(reply.data.version, 1);
@@ -1755,8 +1775,8 @@ test("the mock sandbox offers switchable personas (the planner group, producing 
   const { client } = createMockSupabase({ sandbox: true, now: () => NOW, storage });
   const status = (await client.rpc("app_sandbox_status")).data;
   assert.equal(status.persona.id, "persona-1", "the first persona is the simulated admin, as before");
-  assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-rbh", "persona-gr", "persona-grh", "persona-st", "persona-sth", "persona-sr", "persona-wh", "persona-whh", "persona-qa", "persona-qah", "persona-pk", "persona-pt", "persona-bg"]);
-  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "gr", "st", "manager", "sr", "wh", "manager", "qa", "manager", "pk", "pt", "bg"], "each persona maps to a BOM role (the RB head, the ST head and the WH head are department managers; the GR head is an assistant department manager, so GR by department; SR runs the long-rod store and QA decides held rod lots; PK staff work their jobs by department)");
+  assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-rbh", "persona-gr", "persona-grh", "persona-st", "persona-sth", "persona-sr", "persona-wh", "persona-whh", "persona-qa", "persona-qah", "persona-pth", "persona-bgh", "persona-pkh", "persona-pk", "persona-pt", "persona-bg"]);
+  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "gr", "st", "manager", "sr", "wh", "manager", "qa", "manager", "manager", "manager", "manager", "pk", "pt", "bg"], "each persona maps to a BOM role (the RB head, the ST head and the WH head are department managers; the GR head is an assistant department manager, so GR by department; SR runs the long-rod store and QA decides held rod lots; PK staff work their jobs by department)");
   assert.deepEqual(status.personas.slice(-3).map((row) => [row.department.code, row.role.code]), [["PK", "staff"], ["PT", "staff"], ["BG", "staff"]], "PK, PT and BG staff can be tried too");
   assert.deepEqual(status.personas.slice(-3).map((row) => storeApi.personaUser(row).dept), ["PK", "PT", "BG"], "and work the jobs of their own department");
   assert.equal((await client.rpc("app_sandbox_enter", { p_persona_id: "persona-rb" })).error, null);
@@ -2227,6 +2247,9 @@ test("a planner opens a PI, releases it, a department reports, counts are saved 
   const closedPt = JSON.parse(env.pageStorage.getItem("mnp-harness-bom-master")).jobs.find((row) => row.id === pt.id);
   assert.deepEqual([closedPt.status, closedPt.qtyDone, closedPt.reports.at(-1).good, closedPt.reports.at(-1).reject, closedPt.reports.at(-1).note, closedPt.reports.at(-1).by],
     ["done", 0, 0, 0, "ใช้ชิ้นพลาสติกค้างไลน์", "ปกรณ์ ศรีวัฒนา"], "the database keeps the closing entry with the reason and no output");
+  const pkToShip = env.store.data().jobs.find((row) => row.orderId === id && row.dept === "PK" && row.kind === "FG");
+  assert.equal(ctx.runAction("sendPkToWh", { jobId: pkToShip.id, qty: pkToShip.qtyDone }, "ส่งให้ WH {result} แล้ว"), true, "the admin (planning group) sends what PK made to WH first (20261224010000)");
+  await settle();
   assert.equal(ctx.runAction("receiveFg", { orderId: id, lines: [{ fgCode: "FG-TEST-01", qty: 5 }] }, "รับเข้าคลัง {result} แล้ว"), true, "the admin may receive: everything PK made is received, the order closes by itself");
   await settle();
   assert.equal(env.log.toasts.at(-1)[0], "รับเข้าคลัง 1 รายการ แล้ว");
@@ -3554,6 +3577,7 @@ test("a PI that closes while a part line is partly issued, through the module on
   const admin = await asPersona({ env: planning }, "persona-1");
   const pk = admin.store.data().jobs.find((row) => row.orderId === id && row.dept === "PK");
   assert.equal((await admin.store.run("reportJob", { jobId: pk.id, qtyDone: pk.qtyPlanned, note: "ครบ" }).saving).ok, true);
+  assert.equal((await admin.store.run("sendPkToWh", { jobId: pk.id, qty: pk.qtyPlanned }).saving).ok, true);
   assert.equal((await admin.store.run("receiveFg", { orderId: id, lines: [{ fgCode: "FG-TEST-01", qty: 5 }] }).saving).ok, true);
   assert.equal(database().orders[0].status, "completed");
   assert.deepEqual([database().jobs.find((row) => row.dept === "ST").status, database().jobs.find((row) => row.dept === "ST").qtyDone], ["in_progress", 4]);
@@ -3839,6 +3863,7 @@ test("the mock database follows 20261123020000: issue a subset, part of a line t
   // ยอดเปลี่ยนต้องมีรายการรายงาน ทุกผู้เรียกรวมฝ่ายวางแผน (20261129010000)
   const pk3 = await job("J-PK3");
   assert.equal((await save({ jobs: { upsert: [{ ...pk3, status: "done", qtyDone: 2, reports: [...pk3.reports, { at: 1, by: "x", good: 2, reject: 0, note: "" }] }] } }, "reportJob")).error, null);
+  await shipPkToWh(rpc, "PI-P3");
   await as("persona-wh");
   assert.equal((await save({ fgMoves: { upsert: [{ orderId: "PI-P3", kind: "receive", lines: [{ fgCode: "FG-1", qty: 2 }] }] } }, "receiveFg")).error, null);
   assert.equal((await view()).orders.find((row) => row.id === "PI-P3").status, "completed", "the PI closes with the part line still partly issued");
@@ -4053,6 +4078,7 @@ test("the mock database follows the SQL rules of the part return: payload shapes
   const pk = (await jobsNow()).find((row) => row.id === "J-PK");
   // ยอดเปลี่ยนต้องมีรายการรายงาน ทุกผู้เรียกรวมฝ่ายวางแผน (20261129010000)
   assert.equal((await save({ jobs: { upsert: [{ ...done(pk), reports: [...pk.reports, { at: 1, by: "x", good: pk.qtyPlanned - pk.qtyDone, reject: 0, note: "" }] }] } }, "reportJob")).error, null);
+  await shipPkToWh(rpc, "PI-M1");
   await as("persona-wh");
   assert.equal((await save({ fgMoves: { upsert: [{ orderId: "PI-M1", kind: "receive", lines: [{ fgCode: "FG-1", qty: 2 }] }] } }, "receiveFg")).error, null);
   assert.equal((await view()).orders.find((row) => row.id === "PI-M1").status, "completed", "the warehouse receiving everything closes the PI");
@@ -4103,13 +4129,14 @@ async function fgMock() {
   };
   const request = (orderId, kind, lines, extra = {}) => ({ orderId, kind, ...(lines ? { lines } : {}), ...extra });
   const fg = (row, action) => save({ fgMoves: { upsert: [row] } }, action);
-  const receive = (lines, extra = {}, orderId = "PI-F") => fg(request(orderId, "receive", lines, extra), "receiveFg");
+  const ship = (orderId = "PI-F") => shipPkToWh(rpc, orderId);
+  const receive = async (lines, extra = {}, orderId = "PI-F") => { await ship(orderId); return fg(request(orderId, "receive", lines, extra), "receiveFg"); };
   const deliver = (lines, extra = {}, orderId = "PI-F") => fg(request(orderId, "deliver", lines, extra), "deliverFg");
   const close = (note, extra = {}, orderId = "PI-F") => fg(request(orderId, "close", undefined, { note, ...extra }), "closeOrderShort");
   await as("persona-pp");
   assert.equal((await save({ orders: { upsert: [mockOrder("PI-FD", { items: items(["FG-1", 5]), explosion: [] })] } }, "createOrder")).error, null);
   await release(mockOrder("PI-F", { items: items(["FG-1", 10], ["FG-2", 5]), explosion: [] }), [pkJob("J-F1", "PI-F", "FG-1", 10), pkJob("J-F2", "PI-F", "FG-2", 5), mockJob("J-FS", "PI-F", "PK", { itemCode: "XP-1", kind: "SUBPART", qtyPlanned: 3 })]);
-  return { mock, rpc, as, view, version, save, code, order, job, items, pkJob, release, report, request, fg, receive, deliver, close };
+  return { mock, rpc, as, view, version, save, code, order, job, items, pkJob, release, report, request, fg, ship, receive, deliver, close };
 }
 
 test("the mock database follows the finished-goods contract: payload shapes first, then the permission, then the order status, then the numbers", async () => {
@@ -4174,7 +4201,10 @@ test("the mock database receives and delivers finished goods: caps from PK, part
   assert.equal(await code(deliver([{ fgCode: "FG-1", qty: 1 }])), "BOM_FG_EXCEEDS", "nothing is received");
   await as("persona-pp");
   assert.equal((await report("J-F1", 6)).error, null);
+  // PK ส่งให้ WH ก่อน (20261224010000) · ที่ทำแล้วยังไม่ส่ง รับไม่ได้
   await as("persona-wh");
+  assert.equal(await code(s.fg(s.request("PI-F", "receive", [{ fgCode: "FG-1", qty: 1 }]), "receiveFg")), "BOM_FG_EXCEEDS", "made by PK but not sent to WH yet");
+  await s.ship("PI-F");
   const versionBefore = await s.version();
   assert.equal(await code(receive([{ fgCode: "FG-1", qty: 7 }])), "BOM_FG_EXCEEDS", "more than PK reported (6)");
   assert.equal(await code(receive([{ fgCode: "FG-1", qty: 1 }, { fgCode: "FG-2", qty: 1 }])), "BOM_FG_EXCEEDS", "FG-2 has no PK report: the whole call fails");
@@ -4453,6 +4483,7 @@ test("a finished-goods action travels as a request: the store sends one fgMoves 
   const s = await fgMock();
   await s.as("persona-pp");
   assert.equal((await s.report("J-F1", 6)).error, null);
+  await s.ship("PI-F");
   await s.as("persona-wh");
   const whUser = storeApi.personaUser({ id: "persona-wh", first_name: "สุดา", last_name: "คลังสินค้า", role: { code: "staff" }, department: { code: "WH" } });
   assert.deepEqual({ role: whUser.role, dept: whUser.dept }, { role: "wh", dept: "WH" });
@@ -4500,6 +4531,7 @@ test("a finished-goods action travels as a request: the store sends one fgMoves 
   assert.equal((await s.report("J-F1", 4)).error, null);
   assert.equal((await s.report("J-F2", 5)).error, null);
   assert.equal((await s.report("J-FS", 3)).error, null);
+  await s.ship("PI-F");
   await s.as("persona-wh");
   await a.store.catchUp();
   const all = a.store.run("receiveFg", { orderId: "PI-F", lines: [{ fgCode: "FG-1", qty: 4 }, { fgCode: "FG-2", qty: 5 }] });
@@ -4528,6 +4560,8 @@ test("on the screens the warehouse acts and everybody else reads: WH staff, the 
   const pk = env.store.data().jobs.find((row) => row.dept === "PK");
   assert.equal(ctx.runAction("reportJob", { jobId: pk.id, qtyDone: 3 }, ""), true);
   await settle();
+  assert.equal(ctx.runAction("sendPkToWh", { jobId: pk.id, qty: 3 }, ""), true, "PK's work goes to WH first (20261224010000)");
+  await settle();
   const scene = { env };
   const html = async (persona, query) => (await asPersona(scene, persona)).render(query);
   const form = (page, name) => (page.match(new RegExp(`data-rf-form="${name}"`, "g")) ?? []).length;
@@ -4536,13 +4570,13 @@ test("on the screens the warehouse acts and everybody else reads: WH staff, the 
   // the order page of BOM is read-only progress for everyone
   for (const persona of ["persona-wh", "persona-whh", "persona-1", "persona-pp", "persona-st", "persona-rb", "persona-qa"]) {
     const page = await html(persona, "p=orders&sel=PI-W&step=5");
-    assert.match(page, /<th class="right">PK ส่งมอบแล้ว<\/th>/, `${persona} sees the table`);
+    assert.match(page, /<th class="right"[^>]*>PK ส่งให้ WH แล้ว<\/th>/, `${persona} sees the table`);
     assert.equal(form(page, "receiveFg"), 0, `${persona}: no receive form on the order page`);
   }
   // the warehouse module: the forms are for the warehouse and admin; the planning group reads; other departments cannot open it at all
   for (const [persona, acts] of [["persona-wh", true], ["persona-whh", true], ["persona-1", true], ["persona-pp", false]]) {
     const page = await whHtml(persona, "order=PI-W");
-    assert.match(page, /<th class="right">PK ส่งมอบแล้ว<\/th>/, `${persona} sees the table`);
+    assert.match(page, /<th class="right"[^>]*>PK ส่งให้ WH แล้ว<\/th>/, `${persona} sees the table`);
     assert.equal(form(page, "receiveFg"), acts ? 1 : 0, `${persona}: receive form`);
     assert.equal(/คลังสินค้า \(WH\) เป็นผู้รับสินค้าเข้าคลัง/.test(page), !acts, `${persona}: told who acts`);
     assert.doesNotMatch(page, /data-rf-action="completeOrder"/, `${persona}: no close button`);
@@ -4806,6 +4840,7 @@ test("through the module on the mock database: a surplus becomes stock, a draft 
   assert.equal(await run("reportJob", { jobId: pk.id, qtyDone: 8 }), true);
   const ptSrc = env.store.data().jobs.find((job) => job.orderId === "PI-SRC" && job.dept === "PT");
   assert.equal(await run("reportJob", { jobId: ptSrc.id, qtyDone: ptSrc.qtyPlanned }), true, "PT finishes too: the order closes only when every production job is done");
+  assert.equal(await run("sendPkToWh", { jobId: pk.id, qty: 8 }), true, "PK sends all 8 to WH (20261224010000)");
   assert.equal(await run("receiveFg", { orderId: "PI-SRC", lines: [{ fgCode: "FG-TEST-01", qty: 8 }] }), true);
   assert.equal(orderOfStore("PI-SRC").status, "completed");
   assert.deepEqual([stockOf().onHand, stockOf().free], [8, 3], "8 in the warehouse, 3 beyond what the order asked");

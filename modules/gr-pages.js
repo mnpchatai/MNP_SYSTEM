@@ -1,4 +1,5 @@
 // หน้าของโมดูลแปรรูปยาง (GR) #/gr — โหลดก่อน modules/module-gr.js (ดู index.html) · โรงงาน ขั้น 2 (20261216010000_bom_gr_module.sql) โหมดทดสอบเท่านั้น
+// ชุดหน้าเดียวกันใช้กับแผนก PT / BG / PK ด้วย (โรงงาน ขั้น 7 · 20261224010000_bom_dept_steps.sql): แผนกมาจาก ctx.factory.dept (งานหรือแถวที่เปิด = แผนกของงานนั้น) · ส่วนเฉพาะ PT / BG / PK อยู่ใน modules/dept-pages.js
 // เมนูข้าง: งานของฉัน (ค่าตั้งต้น · ตัวกรอง ?st=done = เสร็จแล้ว) · บันทึกผลรายวัน ?tab=log · ยางเส้นยาว ?tab=rods · ส่งให้ PK ?tab=pk · สรุปผล ?tab=summary
 // · ตั้งค่าขั้นตอนและเป้า ?tab=settings (เฉพาะหัวหน้าแผนก GR และฝ่ายวางแผน) · หน้างาน ?job=<เลขงาน> (อยู่ใต้ "งานของฉัน")
 // ข้อมูลและคำสั่งมาจาก store ของ BOM (grConfig grPlans grRecords rodRequests grHandovers grWorkers · คำสั่งใน modules/bom-actions.js) · กฎกลางใน modules/bom-rules.js (gr*)
@@ -7,13 +8,15 @@
 (function registerGrPages(root) {
   const F = root.MNP_FACTORY;
   const dialogs = (root.MNP_BOM_DIALOGS ??= {});
-  const ROUTE = "gr";
+  // แผนกที่มีขั้นตอนรายวัน → path ของโมดูล · แผนกของหน้า = แผนกของโมดูลที่เปิดอยู่ (ไม่ระบุ = GR)
+  const ROUTES = Object.freeze({ GR: "gr", PT: "pt", BG: "bg", PK: "pk" });
+  const deptOf = (ctx) => (ROUTES[ctx.factory?.dept] ? ctx.factory.dept : "GR");
   const esc = (value) => root.escapeHtml(value);
   const attr = (value) => esc(value ?? "");
   const num = (value) => Number(value) || 0;
-  const grUrl = (query = {}) => F.routeUrl(ROUTE, query);
-  const jobHref = (jobId) => grUrl({ job: jobId });
-  const logHref = (jobId) => grUrl({ tab: "log", j: jobId });
+  const grUrl = (ctx, query = {}) => F.routeUrl(ROUTES[deptOf(ctx)], query);
+  const jobHref = (ctx, jobId) => grUrl(ctx, { job: jobId });
+  const logHref = (ctx, jobId) => grUrl(ctx, { tab: "log", j: jobId });
   const backLink = (href, text) => `<a class="request-back-link" href="${attr(href)}">${esc(text)}</a>`;
   const rowAttr = (href, extra = "") => { const names = [href ? "row-link" : "", extra].filter(Boolean).join(" "); return names ? ` class="${names}"` : ""; };
   const mainLink = (ctx, text, href, cls = "") => ctx.ui.link(text, href, [cls, "row-link-main"].filter(Boolean).join(" "));
@@ -29,15 +32,26 @@
   const dayText = (ctx, day) => (day ? ctx.rules.fmtDate(Date.parse(`${day}T12:00:00+07:00`)) : "");
 
   // ---------- สิทธิ์ (UX เท่านั้น · ตัวช่วยเดียวกับ action) ----------
-  const canLead = (ctx) => Boolean(ctx.helpers.canGrLead?.(ctx.user));
-  const canRecord = (ctx) => Boolean(ctx.helpers.canGrRecord?.(ctx.user));
+  // หัวหน้าแผนก (หรือฝ่ายวางแผน) / พนักงานแผนกที่บันทึกผลได้ · ของแผนกที่ระบุ (ค่าเริ่มต้น = แผนกของหน้า)
+  const leadFor = (ctx, dept) => Boolean(ctx.helpers.canDeptLead?.(ctx.user, dept));
+  const recordFor = (ctx, dept) => Boolean(ctx.helpers.canDeptRecord?.(ctx.user, dept));
+  const canLead = (ctx) => leadFor(ctx, deptOf(ctx));
+  const canRecord = (ctx) => recordFor(ctx, deptOf(ctx));
+  // ปลายทางของการส่งงาน: PK ส่งให้ WH · GR / PT / BG ส่งให้ PK
+  const targetOf = (dept) => (dept === "PK" ? "WH" : "PK");
 
   // ---------- งานของ GR ----------
   // งานของใบที่ปล่อยผลิตแล้ว · ยังเปิด = งานที่ยังไม่เสร็จ หรือเสร็จแล้วแต่ยังมีของดีที่ยังไม่ได้ส่ง PK (ส่งได้อีก) · เสร็จแล้ว = ที่เหลือที่ปิดงานแล้ว
+  // งาน PK ส่งให้ WH ได้ทั้งใบที่ปิดแล้ว (ส่วนที่ผลิตเกิน) จึงนับใบ completed ด้วย · GR / PT / BG ส่งให้ PK เฉพาะใบที่กำลังผลิต
+  const canSendOrder = (ctx, job) => (job?.dept === "PK" ? LIVE : ACTIVE).includes(orderOf(ctx, job?.orderId)?.status);
+  // ของดีที่ยังไม่ได้ส่งต่อ = ยอดดีของงาน − Σ ที่ส่งแล้ว (ไม่นับยกเลิก) · เพดานเดียวกับฐานข้อมูล (sendToPk / sendPkToWh)
+  // ใบที่ WH รับเข้าก่อนมีการส่ง PK → WH ได้แถวส่งจาก migration 20261224010000 (ข้อ 7) แล้ว จึงไม่หักยอดรับของ WH ที่นี่
+  const waitingOf = (ctx, job) => ctx.rules.deptHandoverSummary(ctx.data, job).waiting;
   function grJobs(ctx) {
-    const { data, rules } = ctx;
-    const all = data.jobs.filter((job) => job.dept === "GR" && LIVE.includes(orderOf(ctx, job.orderId)?.status));
-    const unsent = (job) => isActive(ctx, job) && rules.grHandoverSummary(data, job).waitingAtGr > 0;
+    const { data } = ctx;
+    const dept = deptOf(ctx);
+    const all = data.jobs.filter((job) => job.dept === dept && LIVE.includes(orderOf(ctx, job.orderId)?.status));
+    const unsent = (job) => canSendOrder(ctx, job) && waitingOf(ctx, job) > 0;
     const rank = (job) => (job.status === "in_progress" ? 0 : job.status === "hold" ? 2 : job.status === "done" ? 3 : 1);
     const sort = (list) => list.sort((a, b) => rank(a) - rank(b) || num(a.dueAt) - num(b.dueAt) || String(a.id).localeCompare(String(b.id)));
     return {
@@ -46,21 +60,23 @@
       done: sort(all.filter((job) => job.status === "done" && !unsent(job))),
     };
   }
-  const workCount = (ctx) => grJobs(ctx).open.length;
+  // PK: การ์ด "รับจาก GR / PT / BG" นับรวมในตัวเลขที่เมนู
+  const workCount = (ctx) => grJobs(ctx).open.length + (deptOf(ctx) === "PK" ? pkCards(ctx).length : 0);
   // งานที่ผู้ใช้บันทึกผลได้ตอนนี้ (ตั้งขั้นตอนแล้ว และ grJobBlock ไม่มีเหตุห้าม)
   const recordableJobs = (ctx) => grJobs(ctx).all.filter((job) => ctx.helpers.isGrPlanned?.(ctx.data, job) && !ctx.helpers.grJobBlock?.(ctx.data, job, ctx.user));
   // ตั้งขั้นตอนได้: หัวหน้า GR / ฝ่ายวางแผน · ใบกำลังผลิต · งานยังไม่เสร็จ · ไม่เคยรายงานยอดแบบเดิม (ยกเว้นตั้งไว้แล้ว = แก้ได้)
-  const canSetSteps = (ctx, job) => canLead(ctx) && isActive(ctx, job) && job.status !== "done"
+  const canSetSteps = (ctx, job) => leadFor(ctx, job.dept) && isActive(ctx, job) && job.status !== "done"
     && (ctx.helpers.isGrPlanned?.(ctx.data, job) || !(num(job.qtyDone) > 0 || num(job.qtyReject) > 0));
   // ยางเส้นยาวของงาน: [{ code, need (rules.rodIssueNeeds ของใบ × รหัส หรือ null), open: คำขอที่ยังเปิดของงานนี้ }]
   function rodsOfJob(ctx, job) {
     const { data, rules } = ctx;
+    if (job.dept !== "GR") return [];
     const order = orderOf(ctx, job.orderId);
     const needs = ACTIVE.includes(order?.status) ? rules.rodIssueNeeds(data, order.id) : [];
     const open = rules.grOpenRequests(data, { jobId: job.id });
     return rules.grRodCodesOf(order, job).map((code) => ({ code, need: needs.find((need) => need.itemCode === code) ?? null, open: open.filter((entry) => entry.request.itemCode === code) }));
   }
-  const canRequestRods = (ctx, job) => canRecord(ctx) && isActive(ctx, job) && job.status !== "done";
+  const canRequestRods = (ctx, job) => job.dept === "GR" && recordFor(ctx, "GR") && isActive(ctx, job) && job.status !== "done";
 
   // ---------- การ์ดงาน (การ์ดกลาง MNP_FACTORY.jobCard + ความคืบหน้ารายขั้น) ----------
   // ตั้งขั้นตอนแล้ว: บรรทัดยอดของการ์ดเป็นรายขั้น (ทำแล้ว/ต้องทำ) · ปุ่มหลัก "บันทึกผล" พาไปหน้าบันทึกผลรายวันพร้อมงานนี้
@@ -73,19 +89,22 @@
   function grCard(ctx, job, show) {
     const { data, rules, ui } = ctx;
     const progress = rules.grJobProgress(data, job);
-    const href = jobHref(job.id);
+    const href = jobHref(ctx, job.id);
     const more = [];
     const rods = rodsOfJob(ctx, job);
     const wantRods = rods.some((row) => !row.open.length && (row.need?.remaining ?? 0) > 1e-9);
     if (canRequestRods(ctx, job) && wantRods) more.push(ui.openButton("ขอเบิกยางเส้นยาว", "grRodRequest", { jobId: job.id }, { className: "secondary small" }));
-    if (canLead(ctx) && isActive(ctx, job) && progress.waitingAtGr > 0) more.push(ui.openButton("ส่งให้ PK", "grSendPk", { jobId: job.id }, { className: "secondary small" }));
+    const to = targetOf(job.dept);
+    const waiting = waitingOf(ctx, job);
+    if (leadFor(ctx, job.dept) && canSendOrder(ctx, job) && waiting > 0) more.push(ui.openButton(`ส่งให้ ${to}`, to === "WH" ? "pkSendWh" : "grSendPk", { jobId: job.id }, { className: "secondary small" }));
     const asked = rods.flatMap((row) => row.open).map((entry) => `<p class="small muted">${esc(`ขอเบิก ${entry.request.itemCode} รอ SR จ่าย ${rules.fmtQty(entry.remaining)}`)}</p>`).join("");
-    const unsent = progress.waitingAtGr > 0 ? `<p class="small muted" title="ของดีที่ GR ยังไม่ได้ส่งให้ PK">${esc(`ยังไม่ได้ส่ง PK ${rules.fmtQty(progress.waitingAtGr)} ${uomText(ctx, job.uom)}`)}</p>` : "";
-    const opts = { planner: false, dept: "GR", show, href, more, extra: `${asked}${unsent}` };
+    const unsent = waiting > 0 ? `<p class="small muted" title="${attr(`ของดีที่ ${job.dept} ยังไม่ได้ส่งให้ ${to}`)}">${esc(`ยังไม่ได้ส่ง ${to} ${rules.fmtQty(waiting)} ${uomText(ctx, job.uom)}`)}</p>` : "";
+    const ready = root.MNP_DEPT_PAGES?.cardExtra?.(ctx, job) ?? "";
+    const opts = { planner: false, dept: job.dept, show, href, more, extra: `${asked}${unsent}${ready}` };
     if (progress.planned) {
       const block = ctx.helpers.grJobBlock?.(data, job, ctx.user);
       opts.body = stepList(ctx, progress);
-      opts.main = canRecord(ctx) && !block ? ui.link("บันทึกผล", logHref(job.id), "btn rf-btn bom-job-main") : "";
+      opts.main = canRecord(ctx) && !block ? ui.link("บันทึกผล", logHref(ctx, job.id), "btn rf-btn bom-job-main") : "";
     }
     return F.jobCard(ctx, job, opts);
   }
@@ -94,11 +113,16 @@
     const show = ctx.params.get("st") === "done" ? "done" : "open";
     const jobs = grJobs(ctx);
     const list = show === "done" ? jobs.done : jobs.open;
-    const body = list.length ? `<div class="bom-job-grid">${list.map((job) => grCard(ctx, job, show)).join("")}</div>` : ui.card(ui.empty(show === "done" ? "ยังไม่มีงานที่เสร็จ" : "ไม่มีงานของ GR ค้างอยู่"));
+    const dept = deptOf(ctx);
+    // PK: การ์ด "รับจาก GR / PT / BG" ก่อนการ์ดงาน (หน้า "งานของฉัน" เท่านั้น)
+    const receive = show === "open" && dept === "PK" ? pkCards(ctx) : [];
+    const { shown, more } = F.limited(ctx, [...receive, ...list.map((job) => grCard(ctx, job, show))]);
+    const cards = shown;
+    const body = cards.length ? `<div class="bom-job-grid">${cards.join("")}</div>${more}` : ui.card(ui.empty(show === "done" ? "ยังไม่มีงานที่เสร็จ" : `ไม่มีงานของ ${dept} ค้างอยู่`));
     // ลิงก์ตัวกรองแทนรายการเมนู "เสร็จแล้ว" (เมนูข้างของ GR มีหกรายการแล้ว) · จำนวนงานที่ค้างอยู่ที่เมนูข้าง "งานของฉัน" แล้ว จึงไม่ซ้ำที่ลิงก์
     const head = show === "done"
-      ? F.pageHead(ctx, "เสร็จแล้ว", `${ui.link("งานที่ยังไม่เสร็จ", grUrl({}), "btn rf-btn secondary small")}${syncLine()}`)
-      : F.viewHead(ctx, ui.link("เสร็จแล้ว", grUrl({ st: "done" }), "btn rf-btn secondary small"));
+      ? F.pageHead(ctx, "เสร็จแล้ว", `${ui.link("งานที่ยังไม่เสร็จ", grUrl(ctx), "btn rf-btn secondary small")}${syncLine()}`)
+      : F.viewHead(ctx, ui.link("เสร็จแล้ว", grUrl(ctx, { st: "done" }), "btn rf-btn secondary small"));
     return `${head}${body}`;
   }
 
@@ -108,9 +132,9 @@
       { label: "% สำเร็จ", className: "right", title: "ดี ÷ ต้องทำ · ต้องทำ = ชั่วโมง × เป้าชิ้นต่อชั่วโมง × 0.95 (เฉพาะชิ้นงานและขั้นที่ตั้งเป้าไว้)" }, ...(actions ? [{ label: "", className: "right" }] : [])];
   }
   const percentCell = (ctx, percent) => (percent === null ? dash : percent >= 100 ? ctx.ui.badge("good", `${ctx.rules.fmtQty(percent)}%`) : esc(`${ctx.rules.fmtQty(percent)}%`));
-  function recordRows(ctx, records, { showJob = true, showWorker = true, actions = true } = {}) {
+  function recordRows(ctx, records, { showJob = true, showWorker = true, actions = true, dept = deptOf(ctx) } = {}) {
     const { ui, rules, data, user } = ctx;
-    const config = rules.grConfig(data);
+    const config = rules.grConfig(data, dept);
     return records.map((record) => {
       const voided = record.status !== "active";
       const need = rules.grRequired(record.hours, rules.grTarget(config, record.itemCode, record.stepCode));
@@ -119,7 +143,7 @@
       const last = edits.at(-1);
       const edited = edits.length ? `<div class="small muted" title="${attr(`แก้ไขล่าสุดโดย ${last.by ?? ""} ${rules.fmtDateTime(last.at)}: ${last.reason ?? ""}`)}">${esc(`แก้ไขแล้ว ${edits.length} ครั้ง`)}</div>` : "";
       const voidNote = voided ? `<div class="small muted">${esc(`ยกเลิก: ${record.voidReason ?? ""}`)}</div>` : "";
-      const where = showJob ? `<div class="small muted">${ui.link(`${record.itemCode} · ใบ ${record.orderId}`, jobHref(record.jobId))}</div>` : "";
+      const where = showJob ? `<div class="small muted">${ui.link(`${record.itemCode} · ใบ ${record.orderId}`, jobHref(ctx, record.jobId))}</div>` : "";
       const who = `${record.workDate} ${record.workerName ?? ""}`.trim();
       const buttons = actions && !ctx.helpers.grRecordBlock?.(data, user, record, ctx.now)
         ? `${ui.openButton("แก้ไข", "grRecordEdit", { recordId: record.id }, { className: "secondary small", ariaLabel: `แก้ไขผล ${who}` })}${ui.openButton("ยกเลิก", "grRecordVoid", { recordId: record.id }, { className: "secondary small", ariaLabel: `ยกเลิกผล ${who}` })}` : "";
@@ -135,24 +159,32 @@
   // ฟอร์มใหญ่สำหรับมือถือ: วันที่ (ค่าเริ่ม วันนี้) · ผู้ทำ (พนักงาน = ตัวเอง · หัวหน้า / ฝ่ายวางแผนเลือกจากพนักงาน GR: ค่าเริ่ม = ตัวเองเฉพาะเมื่ออยู่ในรายชื่อ ไม่งั้นว่างและต้องเลือก) · งาน · ขั้นตอน (ของงานนั้น) · ชั่วโมง · คน (ค่าเริ่ม 1) · ดี · เสีย + เหตุผล (เมื่อมีของเสีย) · หมายเหตุ
   // เป้าของชิ้นงาน × ขั้น (ถ้ามี) บอกต้องทำและ % ขณะกรอก (bindRecordForm) · action ตรวจกติกาซ้ำทั้งหมด
   // ตัวเลือกผู้ทำ = พนักงานแผนก GR (grWorkers · ชุดเดียวกับที่ฐานข้อมูลตรวจ) + ผู้ทำเดิมของผลที่แก้ (คงไว้ได้โดยไม่ตรวจซ้ำ) · ผู้ใช้ที่ไม่อยู่ในรายชื่อไม่ถูกเติมเข้าไป
-  const isGrWorker = (ctx, id) => (ctx.data.grWorkers ?? []).some((row) => row.id === id);
-  function workerOptions(ctx, extra = null) {
-    const list = [...(ctx.data.grWorkers ?? [])];
+  // ชุด grWorkers / grRecords / grHandovers มีของแผนก PT / BG / PK ด้วยตั้งแต่ 20261224010000: หน้าของ GR อ่านเฉพาะของ GR (rules.stepWorkers / recordDept / handoverFrom)
+  const grWorkerRows = (ctx, dept = deptOf(ctx)) => ctx.rules.stepWorkers(ctx.data, dept);
+  const grRecordRows = (data, rules, dept = "GR") => (data.grRecords ?? []).filter((record) => rules.recordDept(data, record) === dept);
+  // การส่งงานของแผนกหนึ่งให้ PK (GR / PT / BG) หรือให้ WH (PK) · from ไม่ระบุ = ทุกแผนกที่ส่งให้ PK
+  const sendRowsOf = (data, rules, from = null) => (data.grHandovers ?? []).filter((row) => (from ? rules.handoverFrom(row) === from : rules.handoverTo(row) === "PK") && rules.handoverTo(row) === targetOf(rules.handoverFrom(row)));
+  const isGrWorker = (ctx, id, dept = deptOf(ctx)) => grWorkerRows(ctx, dept).some((row) => row.id === id);
+  function workerOptions(ctx, extra = null, dept = deptOf(ctx)) {
+    const list = [...grWorkerRows(ctx, dept)];
     if (extra?.id && !list.some((row) => row.id === extra.id)) list.unshift({ id: extra.id, name: extra.name });
     return list.map((row) => ({ value: row.id, label: row.name || row.id }));
   }
-  const planSteps = (ctx, job) => (ctx.rules.grPlanOf(ctx.data, job.id)?.steps ?? []).map((step) => [step.code, ctx.rules.grStepName(ctx.rules.grConfig(ctx.data), step.code)]);
+  const planSteps = (ctx, job) => (ctx.rules.grPlanOf(ctx.data, job.id)?.steps ?? []).map((step) => [step.code, ctx.rules.grStepName(ctx.rules.grConfig(ctx.data, job.dept), step.code)]);
   const targetMap = (ctx, jobs) => {
-    const config = ctx.rules.grConfig(ctx.data);
     const map = {};
-    for (const job of jobs) for (const [code] of planSteps(ctx, job)) { const per = ctx.rules.grTarget(config, job.itemCode, code); if (per) map[`${job.id}|${code}`] = per; }
+    for (const job of jobs) {
+      const config = ctx.rules.grConfig(ctx.data, job.dept);
+      for (const [code] of planSteps(ctx, job)) { const per = ctx.rules.grTarget(config, job.itemCode, code); if (per) map[`${job.id}|${code}`] = per; }
+    }
     return map;
   };
   const jobLabel = (job) => `${job.name} · ${job.itemCode} · ใบ ${job.orderId}`;
   function recordFields(ctx, { jobs, job, record = null }) {
     const { ui, rules } = ctx;
-    const config = rules.grConfig(ctx.data);
-    const lead = canLead(ctx);
+    const dept = job?.dept ?? deptOf(ctx);
+    const config = rules.grConfig(ctx.data, dept);
+    const lead = leadFor(ctx, dept);
     const today = rules.grDay(ctx.now);
     const steps = job ? planSteps(ctx, job) : [];
     const stepValue = record?.stepCode ?? (steps.length === 1 ? steps[0][0] : "");
@@ -161,8 +193,8 @@
     const jobField = record ? "" : ui.field("งาน", ui.select("jobId", jobs.map((row) => ({ value: row.id, label: jobLabel(row) })), { value: job?.id ?? "", placeholder: jobs.length === 1 ? null : "เลือกงาน", id: `${prefix}-job`, extra: "required data-gr-job" }), { id: `${prefix}-job`, required: true });
     const stepField = ui.field("ขั้นตอน", ui.select("stepCode", steps.map(([value, label]) => ({ value, label })), { value: stepValue, placeholder: "เลือกขั้นตอน", id: `${prefix}-step`, extra: "required data-gr-step" }), { id: `${prefix}-step`, required: true });
     const dateField = ui.field("วันที่ทำงาน", ui.input("workDate", { type: "date", value: record?.workDate ?? today, max: today, min: lead ? "" : rules.grDay(ctx.now, -1), id: `${prefix}-date`, required: true, extra: `title="${attr(lead ? "ไม่เกินวันนี้" : "วันนี้หรือเมื่อวาน")}"` }), { id: `${prefix}-date`, required: true });
-    const workerValue = record?.workerId ?? (isGrWorker(ctx, ctx.user?.id) ? ctx.user.id : "");
-    const workerField = lead ? ui.field("ผู้ทำ", ui.select("workerId", workerOptions(ctx, record ? { id: record.workerId, name: record.workerName } : null), { value: workerValue, placeholder: workerValue ? null : "เลือกผู้ทำ", id: `${prefix}-worker`, extra: "required" }), { id: `${prefix}-worker`, required: true }) : "";
+    const workerValue = record?.workerId ?? (isGrWorker(ctx, ctx.user?.id, dept) ? ctx.user.id : "");
+    const workerField = lead ? ui.field("ผู้ทำ", ui.select("workerId", workerOptions(ctx, record ? { id: record.workerId, name: record.workerName } : null, dept), { value: workerValue, placeholder: workerValue ? null : "เลือกผู้ทำ", id: `${prefix}-worker`, extra: "required" }), { id: `${prefix}-worker`, required: true }) : "";
     const number = (name, label, value, opts) => ui.field(label, ui.input(name, { type: "number", value, id: `${prefix}-${name}`, ...opts }), { id: `${prefix}-${name}`, required: Boolean(opts.required) });
     const reasonField = `<div class="field rf-field" data-gr-reason${reject > 0 ? "" : " hidden"}><label for="${prefix}-reason">เหตุผลของเสีย <span class="field-required">(จำเป็น)</span></label>${ui.select("reason", config.reasons, { value: record?.reason ?? "", placeholder: "เลือกเหตุผล", id: `${prefix}-reason`, extra: "required" })}</div>`;
     return `<div class="rf-grid rf-g2 gr-record-grid">${jobField}${stepField}${dateField}${workerField}
@@ -187,7 +219,8 @@
   function logView(ctx) {
     const { ui, data, rules, user } = ctx;
     const lead = canLead(ctx);
-    const all = (data.grRecords ?? []).slice().sort(byNewest);
+    const dept = deptOf(ctx);
+    const all = grRecordRows(data, rules, dept).slice().sort(byNewest);
     if (!lead) {
       // พนักงาน: ผลของตัวเองวันนี้และเมื่อวาน (แก้ / ยกเลิกได้เฉพาะที่บันทึกวันนี้)
       const since = rules.grDay(ctx.now, -1);
@@ -196,7 +229,7 @@
       return `${recordForm(ctx)}${list}`;
     }
     // หัวหน้า / ฝ่ายวางแผน: ทุกผล ใหม่ก่อน กรองตามวัน ผู้ทำ ขั้นตอน · ทีละ 100 แถว
-    const config = rules.grConfig(data);
+    const config = rules.grConfig(data, dept);
     const day = ctx.params.get("day") ?? "";
     const worker = ctx.params.get("w") ?? "";
     const step = ctx.params.get("s") ?? "";
@@ -206,7 +239,7 @@
     const workers = [...new Map(all.map((record) => [record.workerId, record.workerName || record.workerId])).entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]), "th")).map(([value, label]) => ({ value, label }));
     const steps = config.steps.map((row) => ({ value: row.code, label: row.name }));
     const filtered = Boolean(day || worker || step);
-    const toolbar = `<div class="rf-row sr-toolbar">${filterSelect(ctx, "day", "วันที่ทำงาน", days, day, "ทุกวัน")}${filterSelect(ctx, "w", "ผู้ทำ", workers, worker, "ทุกคน")}${filterSelect(ctx, "s", "ขั้นตอน", steps, step, "ทุกขั้นตอน")}${filtered ? ui.link("ล้างตัวกรอง", grUrl({ tab: "log" }), "btn rf-btn secondary small") : ""}</div>`;
+    const toolbar = `<div class="rf-row sr-toolbar">${filterSelect(ctx, "day", "วันที่ทำงาน", days, day, "ทุกวัน")}${filterSelect(ctx, "w", "ผู้ทำ", workers, worker, "ทุกคน")}${filterSelect(ctx, "s", "ขั้นตอน", steps, step, "ทุกขั้นตอน")}${filtered ? ui.link("ล้างตัวกรอง", grUrl(ctx, { tab: "log" }), "btn rf-btn secondary small") : ""}</div>`;
     const table = ui.card(`${ui.table(recordHead(), recordRows(ctx, shown), { emptyText: filtered ? "ไม่พบผลที่ตรงกับตัวกรอง" : "ยังไม่มีผลรายวัน" })}${more}`, { title: esc("ผลที่บันทึก"), flush: true });
     return `${recordForm(ctx)}${toolbar}${table}`;
   }
@@ -232,7 +265,7 @@
       const job = need.grJobs.find((entry) => entry.status !== "done") ?? need.grJobs[0];
       // มีคำขอที่เปิดอยู่แล้ว: สถานะและปุ่มยกเลิกอยู่ในตารางคำขอ (ไม่แสดงซ้ำที่นี่)
       const action = !asked && record && job && canRequestRods(ctx, job) ? ui.openButton("ขอเบิก", "grRodRequest", { jobId: job.id, itemCode: need.itemCode }, { className: "small", ariaLabel: `ขอเบิกยางเส้นยาว ${need.itemCode} ใบ ${need.order.id}` }) : "";
-      const href = job ? jobHref(job.id) : null;
+      const href = job ? jobHref(ctx, job.id) : null;
       return `<tr${rowAttr(href)}><td>${href ? mainLink(ctx, need.order.id, href, "rf-mono") : ui.mono(need.order.id)}<div class="small muted">${esc(need.order.customer ?? "")}</div></td><td>${ui.mono(need.itemCode)}${need.name ? `<div class="small muted">${esc(need.name)}</div>` : ""}</td>`
         + `<td class="right rf-mono">${esc(`${rules.fmtQty(need.issued)}/${rules.fmtQty(need.need)} ${unit}`)}</td><td>${lotList(ctx, need.order.id, need.itemCode, need.uom)}</td><td class="right">${action}</td></tr>`;
     });
@@ -245,7 +278,7 @@
       const tone = state.status === "open" ? "warn" : state.status === "covered" ? "good" : "";
       const detail = state.status === "cancelled" ? `${request.cancelledBy ?? ""}: ${request.cancelReason ?? ""}` : state.status === "open" && state.issued > 0 ? `จ่ายแล้ว ${rules.fmtQty(state.issued)}` : "";
       const cancel = state.status === "open" && canCancelRequest(ctx, request) ? ui.openButton("ยกเลิกคำขอ", "grRodCancel", { requestId: request.id }, { className: "secondary small", ariaLabel: `ยกเลิกคำขอ ${request.itemCode} ใบ ${request.orderId}` }) : "";
-      return `<tr${state.status === "cancelled" ? ' class="muted"' : ""}><td class="nowrap small">${esc(rules.fmtDateTime(request.createdAt))}</td><td>${ui.link(request.orderId, jobHref(request.jobId), "rf-mono")}</td><td>${ui.mono(request.itemCode)}${request.note ? `<div class="small muted">${esc(request.note)}</div>` : ""}</td><td class="right rf-mono">${esc(rules.fmtQty(request.qty))}</td><td>${ui.badge(tone, LABEL[state.status] ?? state.status)}${detail ? `<div class="small muted">${esc(detail)}</div>` : ""}</td><td class="small">${esc(request.createdBy ?? "")}</td><td class="right">${cancel}</td></tr>`;
+      return `<tr${state.status === "cancelled" ? ' class="muted"' : ""}><td class="nowrap small">${esc(rules.fmtDateTime(request.createdAt))}</td><td>${ui.link(request.orderId, jobHref(ctx, request.jobId), "rf-mono")}</td><td>${ui.mono(request.itemCode)}${request.note ? `<div class="small muted">${esc(request.note)}</div>` : ""}</td><td class="right rf-mono">${esc(rules.fmtQty(request.qty))}</td><td>${ui.badge(tone, LABEL[state.status] ?? state.status)}${detail ? `<div class="small muted">${esc(detail)}</div>` : ""}</td><td class="small">${esc(request.createdBy ?? "")}</td><td class="right">${cancel}</td></tr>`;
     });
     const historyCard = ui.card(`${ui.table(["เวลาขอ", "ใบสั่งผลิต", "เส้นยาง", { label: "ขอ", className: "right" }, "สถานะ", "ผู้ขอ", { label: "", className: "right" }], historyRows, { emptyText: "ยังไม่เคยขอเบิกยางเส้นยาว" })}${more}`, { title: esc("คำขอเบิก"), flush: true });
     const stock = root.MNP_SR?.stockView?.(ctx, { readOnly: true });
@@ -253,39 +286,60 @@
     return `${needsCard}${historyCard}${stockPart}`;
   }
 
-  // ---------- ส่งให้ PK ----------
-  // ต่องาน: ยอดดี (ขั้นสุดท้าย) · ส่งแล้ว (รอ PK รับ + PK รับแล้ว · รายละเอียดที่ title) · ยังไม่ได้ส่ง (รอที่ GR) · ปุ่มส่ง (หัวหน้า GR / ฝ่ายวางแผน)
-  // รายการส่งทั้งหมด ใหม่ก่อน ทีละ 100 แถว: ยกเลิกการส่งที่ PK ยังไม่รับ (หัวหน้า GR / ฝ่ายวางแผน) · ย้อนการรับ (หัวหน้า PK / ฝ่ายวางแผน)
+  // ---------- ส่งให้ PK (GR / PT / BG) · ส่งให้ WH (PK) ----------
+  // ต่องาน: ยอดดี (ขั้นสุดท้าย) · ส่งแล้ว (รอรับ + รับแล้ว · รายละเอียดที่ title) · ยังไม่ได้ส่ง (รอที่แผนก) · ปุ่มส่ง (หัวหน้าแผนก / ฝ่ายวางแผน)
+  // รายการส่งทั้งหมด ใหม่ก่อน ทีละ 100 แถว: ยกเลิกการส่งที่ปลายทางยังไม่รับ (หัวหน้าแผนกผู้ส่ง / ฝ่ายวางแผน) · ย้อนการรับของ PK (หัวหน้า PK / ฝ่ายวางแผน)
+  // การส่ง PK → WH: WH รับด้วยหน้ารับเข้าของ WH (แถวส่งไม่เปลี่ยนสถานะ) ยกเลิกได้เฉพาะส่วนที่ WH ยังไม่รับ
   const HANDOVER_TONE = Object.freeze({ sent: "warn", received: "good", cancelled: "" });
+  const WH_STATUS_LABEL = Object.freeze({ sent: "ส่งให้ WH แล้ว", cancelled: "ยกเลิกแล้ว" });
+  const handoverLabel = (rules, row) => (rules.handoverTo(row) === "WH" ? WH_STATUS_LABEL : rules.GR_HANDOVER_STATUS_LABEL)[row.status] ?? row.status;
+  // ยกเลิกการส่งให้ WH ได้เมื่อส่วนที่เหลือที่ส่ง (ไม่นับแถวนี้) ยังไม่ต่ำกว่าที่ WH รับสุทธิแล้ว · ตรงกับ action cancelPkToWh
+  function whCancelable(ctx, row) {
+    const position = ctx.rules.pkToWhPosition(ctx.data, row.orderId, row.itemCode);
+    return row.status === "sent" && position.received <= position.sent - num(row.qty) + 1e-9;
+  }
   function handoverRows(ctx, rows, { showJob = true } = {}) {
     const { ui, rules, data, user } = ctx;
     const jobs = new Map(data.jobs.map((job) => [job.id, job]));
-    const LABEL = rules.GR_HANDOVER_STATUS_LABEL;
     return rows.map((row) => {
       const job = jobs.get(row.jobId);
-      const active = ACTIVE.includes(orderOf(ctx, row.orderId)?.status);
+      const toWh = rules.handoverTo(row) === "WH";
+      const from = rules.handoverFrom(row);
+      const active = (toWh ? LIVE : ACTIVE).includes(orderOf(ctx, row.orderId)?.status);
       const unit = uomText(ctx, job?.uom ?? "pcs");
       const detail = row.status === "received" ? `${row.receivedBy ?? ""} · ${rules.fmtDateTime(row.receivedAt)}` : row.status === "cancelled" ? `${row.cancelledBy ?? ""}: ${row.cancelReason ?? ""}` : "";
-      const button = !active ? "" : row.status === "sent" && canLead(ctx) ? ui.openButton("ยกเลิกการส่ง", "grHandoverCancel", { handoverId: row.id }, { className: "secondary small", ariaLabel: `ยกเลิกการส่ง ${row.itemCode} ${rules.fmtQty(row.qty)}` })
-        : row.status === "received" && ctx.helpers.canReverseGrReceipt?.(user) ? ui.openButton("ย้อนการรับ", "grHandoverCancel", { handoverId: row.id }, { className: "secondary small", ariaLabel: `ย้อนการรับ ${row.itemCode} ${rules.fmtQty(row.qty)}` }) : "";
-      const what = showJob ? `<td>${ui.link(job?.name ?? row.itemCode, jobHref(row.jobId))}<div class="small muted">${esc(`${row.itemCode} · ใบ ${row.orderId}`)}</div></td>` : "";
-      return `<tr${row.status === "cancelled" ? ' class="muted"' : ""}><td class="nowrap small">${esc(rules.fmtDateTime(row.sentAt))}</td>${what}<td class="right rf-mono">${esc(`${rules.fmtQty(row.qty)} ${unit}`)}</td><td>${ui.badge(HANDOVER_TONE[row.status] ?? "", LABEL[row.status] ?? row.status)}${detail ? `<div class="small muted">${esc(detail)}</div>` : ""}${row.note ? `<div class="small muted">${esc(row.note)}</div>` : ""}</td><td class="small">${esc(row.sentBy ?? "")}</td><td class="right">${button}</td></tr>`;
+      let button = "";
+      if (active && toWh) {
+        if (row.status === "sent" && leadFor(ctx, "PK")) button = whCancelable(ctx, row) ? ui.openButton("ยกเลิกการส่ง", "pkWhCancel", { handoverId: row.id }, { className: "secondary small", ariaLabel: `ยกเลิกการส่งให้ WH ${row.itemCode} ${rules.fmtQty(row.qty)}` }) : `<span class="small muted" title="${attr("WH รับเข้าคลังแล้ว ให้ผู้จัดการ WH ย้อนรับเข้าก่อนจึงยกเลิกได้")}">WH รับแล้ว</span>`;
+      } else if (active) {
+        const dialog = "grHandoverCancel";
+        button = row.status === "sent" && leadFor(ctx, from) ? ui.openButton("ยกเลิกการส่ง", dialog, { handoverId: row.id }, { className: "secondary small", ariaLabel: `ยกเลิกการส่ง ${row.itemCode} ${rules.fmtQty(row.qty)}` })
+          : row.status === "received" && ctx.helpers.canReversePkReceipt?.(user) ? ui.openButton("ย้อนการรับ", dialog, { handoverId: row.id }, { className: "secondary small", ariaLabel: `ย้อนการรับ ${row.itemCode} ${rules.fmtQty(row.qty)}` }) : "";
+      }
+      const what = showJob ? `<td>${ui.link(job?.name ?? row.itemCode, jobHref(ctx, row.jobId))}<div class="small muted">${esc(`${row.itemCode} · ใบ ${row.orderId}`)}</div></td>` : "";
+      return `<tr${row.status === "cancelled" ? ' class="muted"' : ""}><td class="nowrap small">${esc(rules.fmtDateTime(row.sentAt))}</td>${what}<td class="right rf-mono">${esc(`${rules.fmtQty(row.qty)} ${unit}`)}</td><td>${ui.badge(HANDOVER_TONE[row.status] ?? "", handoverLabel(rules, row))}${detail ? `<div class="small muted">${esc(detail)}</div>` : ""}${row.note ? `<div class="small muted">${esc(row.note)}</div>` : ""}</td><td class="small">${esc(row.sentBy ?? "")}</td><td class="right">${button}</td></tr>`;
     });
   }
   const handoverHead = (showJob = true) => ["เวลาส่ง", ...(showJob ? ["งาน"] : []), { label: "จำนวน", className: "right" }, "สถานะ", "ผู้ส่ง", { label: "", className: "right" }];
   function pkView(ctx) {
     const { ui, rules, data } = ctx;
-    const jobs = grJobs(ctx).all.filter((job) => num(job.qtyDone) > 0 || (data.grHandovers ?? []).some((row) => row.jobId === job.id));
+    const dept = deptOf(ctx);
+    const to = targetOf(dept);
+    const jobs = grJobs(ctx).all.filter((job) => (num(job.qtyDone) > 0 || (data.grHandovers ?? []).some((row) => row.jobId === job.id)) && (dept !== "PK" || job.kind === "FG"));
     const rows = jobs.map((job) => {
-      const sum = rules.grHandoverSummary(data, job);
+      const sum = rules.deptHandoverSummary(data, job);
       const unit = uomText(ctx, job.uom);
-      const button = canLead(ctx) && isActive(ctx, job) && sum.waitingAtGr > 0 ? ui.openButton("ส่งให้ PK", "grSendPk", { jobId: job.id }, { className: "small", ariaLabel: `ส่งให้ PK ${job.itemCode}` }) : "";
-      return `<tr${rowAttr(jobHref(job.id))}><td>${mainLink(ctx, job.name, jobHref(job.id))}<div class="small muted">${esc(`${job.itemCode} · ใบ ${job.orderId}`)}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(job.qtyDone)} ${unit}`)}</td><td class="right rf-mono" title="${attr(`PK รับแล้ว ${rules.fmtQty(sum.received)} · รอ PK รับ ${rules.fmtQty(sum.pendingAtPk)}`)}">${esc(rules.fmtQty(sum.sent))}</td><td class="right rf-mono">${sum.waitingAtGr > 0 ? `<strong>${esc(rules.fmtQty(sum.waitingAtGr))}</strong>` : esc("0")}</td><td class="right">${button}</td></tr>`;
+      const send = to === "WH" ? "pkSendWh" : "grSendPk";
+      const button = leadFor(ctx, job.dept) && canSendOrder(ctx, job) && sum.waiting > 0 ? ui.openButton(`ส่งให้ ${to}`, send, { jobId: job.id }, { className: "small", ariaLabel: `ส่งให้ ${to} ${job.itemCode}` }) : "";
+      const sentTitle = to === "WH" ? `WH รับเข้าแล้ว ${rules.fmtQty(sum.received)} · รอ WH รับ ${rules.fmtQty(sum.pending)}` : `${to} รับแล้ว ${rules.fmtQty(sum.received)} · รอ ${to} รับ ${rules.fmtQty(sum.pending)}`;
+      const received = to === "WH" ? `<td class="right rf-mono" title="${attr("ที่ WH รับเข้าคลังแล้ว (นับรวมทั้งใบของสินค้านี้)")}">${esc(rules.fmtQty(sum.received))}</td>` : "";
+      return `<tr${rowAttr(jobHref(ctx, job.id))}><td>${mainLink(ctx, job.name, jobHref(ctx, job.id))}<div class="small muted">${esc(`${job.itemCode} · ใบ ${job.orderId}`)}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(job.qtyDone)} ${unit}`)}</td><td class="right rf-mono" title="${attr(sentTitle)}">${esc(rules.fmtQty(sum.sent))}</td>${received}<td class="right rf-mono">${sum.waiting > 0 ? `<strong>${esc(rules.fmtQty(sum.waiting))}</strong>` : esc("0")}</td><td class="right">${button}</td></tr>`;
     });
-    const jobsCard = ui.card(ui.table(["งาน", { label: "ยอดดี", className: "right", title: "ยอดดีของขั้นสุดท้ายของงาน" }, { label: "ส่งแล้ว", className: "right", title: "รวมที่ PK รับแล้วและที่รอ PK รับ (ไม่นับที่ยกเลิก)" }, { label: "รอที่ GR", className: "right", title: "ของดีที่ยังไม่ได้ส่งให้ PK" }, ""], rows, { emptyText: "ยังไม่มีงานที่มีของดีให้ส่ง" }), { title: esc("ของดีของแต่ละงาน"), flush: true });
-    const sends = (data.grHandovers ?? []).slice().sort((a, b) => num(b.sentAt) - num(a.sentAt) || String(b.id).localeCompare(String(a.id)));
+    const { shown: shownJobs, more: moreJobs } = F.limited(ctx, rows);
+    const jobsCard = ui.card(`${ui.table(["งาน", { label: "ยอดดี", className: "right", title: "ยอดดีของขั้นสุดท้ายของงาน" }, { label: "ส่งแล้ว", className: "right", title: `รวมที่ ${to} รับแล้วและที่รอ ${to} รับ (ไม่นับที่ยกเลิก)` }, ...(to === "WH" ? [{ label: "WH รับแล้ว", className: "right" }] : []), { label: `รอที่ ${dept}`, className: "right", title: `ของดีที่ยังไม่ได้ส่งให้ ${to}` }, ""], shownJobs, { emptyText: "ยังไม่มีงานที่มีของดีให้ส่ง" })}${moreJobs}`, { title: esc("ของดีของแต่ละงาน"), flush: true });
+    const sends = sendRowsOf(data, rules, dept).sort((a, b) => num(b.sentAt) - num(a.sentAt) || String(b.id).localeCompare(String(a.id)));
     const { shown, more } = F.limited(ctx, sends);
-    const sendsCard = ui.card(`${ui.table(handoverHead(), handoverRows(ctx, shown), { emptyText: "ยังไม่เคยส่งให้ PK" })}${more}`, { title: esc("รายการส่ง"), flush: true });
+    const sendsCard = ui.card(`${ui.table(handoverHead(), handoverRows(ctx, shown), { emptyText: `ยังไม่เคยส่งให้ ${to}` })}${more}`, { title: esc("รายการส่ง"), flush: true });
     return `${jobsCard}${sendsCard}`;
   }
 
@@ -301,13 +355,14 @@
   }
   function summaryView(ctx) {
     const { ui, rules, data, q } = ctx;
-    const config = rules.grConfig(data);
+    const dept = deptOf(ctx);
+    const config = rules.grConfig(data, dept);
     const thisMonth = rules.grDay(ctx.now).slice(0, 7);
     const monthParam = ctx.params.get("m") ?? thisMonth;
     const month = monthParam === "all" ? "" : monthParam;
-    const filters = { month, workerId: ctx.params.get("w") ?? "", stepCode: ctx.params.get("s") ?? "", itemCode: ctx.params.get("item") ?? "", customer: ctx.params.get("cust") ?? "", orderId: ctx.params.get("ord") ?? "" };
+    const filters = { dept, month, workerId: ctx.params.get("w") ?? "", stepCode: ctx.params.get("s") ?? "", itemCode: ctx.params.get("item") ?? "", customer: ctx.params.get("cust") ?? "", orderId: ctx.params.get("ord") ?? "" };
     const sum = rules.grSummary(data, filters, config);
-    const records = (data.grRecords ?? []).filter((record) => record.status === "active");
+    const records = grRecordRows(data, rules, dept).filter((record) => record.status === "active");
     const orders = new Map(data.orders.map((order) => [order.id, order]));
     const distinct = (list) => [...new Set(list.filter(Boolean))];
     const months = distinct([thisMonth, ...records.map((record) => String(record.workDate ?? "").slice(0, 7))]).sort().reverse();
@@ -320,7 +375,7 @@
       ${filterSelect(ctx, "item", "ชิ้นงาน", distinct(records.map((record) => record.itemCode)).sort(), filters.itemCode, "ทุกชิ้นงาน")}
       ${filterSelect(ctx, "cust", "ลูกค้า", distinct(records.map((record) => orders.get(record.orderId)?.customer)).sort((a, b) => a.localeCompare(b, "th")), filters.customer, "ทุกลูกค้า")}
       ${filterSelect(ctx, "ord", "ใบสั่งผลิต", distinct(records.map((record) => record.orderId)).sort().reverse(), filters.orderId, "ทุกใบ")}
-      ${[...Object.values(filters).slice(1), monthParam === thisMonth ? "" : "x"].some(Boolean) ? ui.link("ล้างตัวกรอง", grUrl({ tab: "summary" }), "btn rf-btn secondary small") : ""}</div>`;
+      ${[...Object.values(filters).slice(2), monthParam === thisMonth ? "" : "x"].some(Boolean) ? ui.link("ล้างตัวกรอง", grUrl(ctx, { tab: "summary" }), "btn rf-btn secondary small") : ""}</div>`;
     const days = sum.byDay.slice(0, DAY_ROWS).map((row) => ({ ...row, label: dayText(ctx, row.key) }));
     const dayTitle = sum.byDay.length > DAY_ROWS ? `ต่อวัน (${DAY_ROWS} วันล่าสุด)` : "ต่อวัน";
     const reasons = ui.card(ui.table(["เหตุผล", { label: "เสีย", className: "right" }], sum.byReason.map((row) => `<tr><td>${esc(row.label)}</td><td class="right rf-mono">${esc(rules.fmtQty(row.reject))}</td></tr>`), { emptyText: "ไม่มีของเสีย" }), { title: esc("ของเสียตามเหตุผล"), flush: true });
@@ -352,10 +407,12 @@
   }
   function settingsView(ctx) {
     const { ui, rules, data } = ctx;
-    if (!canLead(ctx)) return ui.card(ui.empty("หน้านี้สำหรับหัวหน้าแผนก GR และฝ่ายวางแผน"));
-    const config = rules.grConfig(data);
-    const used = new Set([...(data.grRecords ?? []).map((record) => record.stepCode), ...(data.grPlans ?? []).flatMap((plan) => (plan.steps ?? []).map((step) => step.code))]);
-    const codes = [...new Set([...data.jobs.filter((job) => job.dept === "GR").map((job) => job.itemCode), ...config.targets.map((target) => target.itemCode)])].sort();
+    const dept = deptOf(ctx);
+    if (!canLead(ctx)) return ui.card(ui.empty(`หน้านี้สำหรับหัวหน้าแผนก ${dept} และฝ่ายวางแผน`));
+    const config = rules.grConfig(data, dept);
+    const deptJobIds = new Set(data.jobs.filter((job) => job.dept === dept).map((job) => job.id));
+    const used = new Set([...grRecordRows(data, rules, dept).map((record) => record.stepCode), ...(data.grPlans ?? []).filter((plan) => deptJobIds.has(plan.jobId)).flatMap((plan) => (plan.steps ?? []).map((step) => step.code))]);
+    const codes = [...new Set([...data.jobs.filter((job) => job.dept === dept).map((job) => job.itemCode), ...config.targets.map((target) => target.itemCode)])].sort();
     const stepsCard = ui.card(`${ui.table(["ลำดับ", "ชื่อขั้นตอน", "ประเภท", "สถานะ", { label: "", className: "right" }], config.steps.map((step) => stepRow(ctx, step, used.has(step.code))), { className: "gr-settings-table" }).replace("<tbody>", '<tbody data-gr-rows="step">')}
       <template data-gr-template="step">${stepRow(ctx, null, false)}</template><div class="rf-row"><button class="btn rf-btn secondary" type="button" data-gr-add="step">เพิ่มขั้นตอน</button></div>`, { title: esc("ขั้นตอน") });
     const reasonsCard = ui.card(ui.field("เหตุผลของเสีย", `<textarea class="textarea rf-textarea" id="gr-reasons" name="reasons" rows="${Math.min(12, config.reasons.length + 2)}" required title="หนึ่งบรรทัดต่อหนึ่งเหตุผล" placeholder="หนึ่งบรรทัดต่อหนึ่งเหตุผล">${esc(config.reasons.join("\n"))}</textarea>`, { id: "gr-reasons", required: true }), { title: esc("เหตุผลของเสีย") });
@@ -364,19 +421,21 @@
       <template data-gr-template="target">${targetRow(ctx, null, config.steps)}</template><datalist id="gr-item-codes">${codes.map((code) => `<option value="${attr(code)}"></option>`).join("")}</datalist>
       <div class="rf-row"><button class="btn rf-btn secondary" type="button" data-gr-add="target">เพิ่มเป้า</button></div>`, { title: esc("เป้าชิ้นต่อชั่วโมง (ที่ 100%)"), flush: true });
     const note = config.stored ? "" : '<p class="small muted">ยังใช้ขั้นตอนและเหตุผลตั้งต้น บันทึกครั้งแรกแล้วแก้ได้ตามต้องการ</p>';
-    return `<form novalidate class="gr-settings" data-rf-form="saveGrConfig" data-rf-success="บันทึกตั้งค่าแล้ว {result}">${note}${stepsCard}${reasonsCard}${targetsCard}<div class="rf-row bom-step-next"><button class="btn rf-btn" type="submit">บันทึกตั้งค่า</button></div></form>`;
+    return `<form novalidate class="gr-settings" data-rf-form="saveGrConfig"${dept === "GR" ? "" : ` data-rf-args="${attr(JSON.stringify({ dept }))}"`} data-rf-success="บันทึกตั้งค่าแล้ว {result}">${note}${stepsCard}${reasonsCard}${targetsCard}<div class="rf-row bom-step-next"><button class="btn rf-btn" type="submit">บันทึกตั้งค่า</button></div></form>`;
   }
 
   // ---------- หน้างาน (?job=) ----------
   function jobView(ctx, jobId) {
     const { ui, rules, data } = ctx;
-    const back = backLink(grUrl({}), "‹ งานของฉัน");
-    const job = data.jobs.find((entry) => entry.id === jobId && entry.dept === "GR");
-    if (!job) return { html: `${back}${F.pageHead(ctx, "งานของ GR")}${ui.card(ui.empty("ไม่พบงานนี้ (อาจถูกลบหรือยังโหลดไม่เสร็จ)"))}` };
+    const dept = deptOf(ctx);
+    const back = backLink(grUrl(ctx), "‹ งานของฉัน");
+    const job = data.jobs.find((entry) => entry.id === jobId && entry.dept === dept);
+    if (!job) return { html: `${back}${F.pageHead(ctx, `งานของ ${dept}`)}${ui.card(ui.empty("ไม่พบงานนี้ (อาจถูกลบหรือยังโหลดไม่เสร็จ)"))}` };
     const order = orderOf(ctx, job.orderId);
     const progress = rules.grJobProgress(data, job);
     const unit = uomText(ctx, job.uom);
-    const active = isActive(ctx, job);
+    const to = targetOf(dept);
+    const waiting = waitingOf(ctx, job);
     const tone = { in_progress: ["good", "กำลังทำ"], queued: ["", "รอคิว"], hold: ["bad", "พักงาน"], done: ["", "เสร็จ"] }[job.status] ?? ["", job.status];
     const facts = ui.kv([
       ["ชิ้นงาน", ui.mono(job.itemCode)],
@@ -388,17 +447,17 @@
     const block = ctx.helpers.grJobBlock?.(data, job, ctx.user);
     const rods = rodsOfJob(ctx, job);
     const buttons = [
-      progress.planned && canRecord(ctx) && !block ? ui.link("บันทึกผล", logHref(job.id), "btn rf-btn") : "",
+      progress.planned && canRecord(ctx) && !block ? ui.link("บันทึกผล", logHref(ctx, job.id), "btn rf-btn") : "",
       canSetSteps(ctx, job) ? ui.openButton(progress.planned ? "แก้ขั้นตอน" : "ตั้งขั้นตอน", "grSteps", { jobId: job.id }, { className: progress.planned ? "secondary" : "" }) : "",
       canRequestRods(ctx, job) && rods.length ? ui.openButton("ขอเบิกยางเส้นยาว", "grRodRequest", { jobId: job.id }, { className: "secondary" }) : "",
-      canLead(ctx) && active && progress.waitingAtGr > 0 ? ui.openButton("ส่งให้ PK", "grSendPk", { jobId: job.id }, { className: "secondary" }) : "",
+      canLead(ctx) && canSendOrder(ctx, job) && waiting > 0 ? ui.openButton(`ส่งให้ ${to}`, to === "WH" ? "pkSendWh" : "grSendPk", { jobId: job.id }, { className: "secondary" }) : "",
     ].join("");
     const steps = progress.planned
       ? ui.card(ui.table(["ขั้นตอน", { label: "ทำแล้ว / ต้องทำ", className: "right" }, { label: "เสีย", className: "right" }, { label: "ชม.", className: "right", title: "ชั่วโมงทำงานรวม" }],
         progress.steps.map((step, index) => `<tr${index === progress.steps.length - 1 ? ` title="${attr("ขั้นสุดท้าย ยอดดีของขั้นนี้เป็นยอดของงาน")}"` : ""}><td>${esc(step.name)}${step.kind === "side" ? ` <span class="small muted">${esc(rules.GR_STEP_KIND_LABEL.side)}</span>` : ""}${ui.progress(step.good, step.qtyTarget, step.done ? "good" : "")}</td><td class="right rf-mono">${esc(`${rules.fmtQty(step.good)} / ${rules.fmtQty(step.qtyTarget)}`)}</td><td class="right rf-mono">${esc(rules.fmtQty(step.reject))}</td><td class="right rf-mono">${esc(rules.fmtQty(step.hours))}</td></tr>`)), { title: esc("ขั้นตอนของงาน"), flush: true })
       : ui.card(ui.callout("info", num(job.qtyDone) > 0 || num(job.qtyReject) > 0
         ? esc(`งานนี้รายงานยอดแบบเดิม ได้แล้ว ${rules.fmtQty(job.qtyDone)} จาก ${rules.fmtQty(job.qtyPlanned)} ${unit}${num(job.qtyReject) ? ` · เสีย ${rules.fmtQty(job.qtyReject)}` : ""} (ตั้งขั้นตอนไม่ได้)`)
-        : esc("ยังไม่ได้ตั้งขั้นตอน หัวหน้าแผนก GR หรือฝ่ายวางแผนตั้งขั้นตอนก่อน แล้วจึงบันทึกผลรายวันได้")), { title: esc("ขั้นตอนของงาน") });
+        : esc(`ยังไม่ได้ตั้งขั้นตอน หัวหน้าแผนก ${dept} หรือฝ่ายวางแผนตั้งขั้นตอนก่อน แล้วจึงบันทึกผลรายวันได้`)), { title: esc("ขั้นตอนของงาน") });
     // ยางเส้นยาว: ต่อรหัส ได้จาก SR / ต้องใช้ และล็อตที่ได้ · คำขอของงานนี้ทั้งหมด (ยกเลิกได้ถ้ายังเปิด)
     const rodRows = rods.map((row) => `<tr><td>${ui.mono(row.code)}</td><td class="right rf-mono">${row.need ? esc(`${rules.fmtQty(row.need.issued)}/${rules.fmtQty(row.need.need)} ${uomText(ctx, row.need.uom)}`) : dash}</td><td>${lotList(ctx, job.orderId, row.code, row.need?.uom ?? "")}</td></tr>`);
     const requests = (data.rodRequests ?? []).filter((request) => request.jobId === job.id).sort((a, b) => num(b.createdAt) - num(a.createdAt));
@@ -412,16 +471,20 @@
       : "";
     const sends = (data.grHandovers ?? []).filter((row) => row.jobId === job.id).sort((a, b) => num(b.sentAt) - num(a.sentAt));
     // ยอดส่งแต่ละครั้งและสถานะอยู่ในตาราง จึงบอกเฉพาะส่วนที่ยังไม่ได้ส่ง (ไม่ซ้ำผลรวมของตาราง)
-    const pkFacts = ui.kv([["ยังไม่ได้ส่ง", esc(`${rules.fmtQty(progress.waitingAtGr)} ${unit}`)]]);
-    const pkCard = progress.planned || num(job.qtyDone) > 0 || sends.length ? ui.card(`<div class="rf-card-pad">${pkFacts}</div>${sends.length ? ui.table(handoverHead(false), handoverRows(ctx, sends, { showJob: false })) : ""}`, { title: esc("ส่งให้ PK"), flush: true }) : "";
+    const pkFacts = ui.kv([["ยังไม่ได้ส่ง", esc(`${rules.fmtQty(waiting)} ${unit}`)]]);
+    const pkCard = progress.planned || num(job.qtyDone) > 0 || sends.length ? ui.card(`<div class="rf-card-pad">${pkFacts}</div>${sends.length ? ui.table(handoverHead(false), handoverRows(ctx, sends, { showJob: false })) : ""}`, { title: esc(`ส่งให้ ${to}`), flush: true }) : "";
+    // PT / BG: วัตถุดิบที่ ST จ่ายให้ใบนี้ · PK: ความพร้อมของที่ต้องรับ (modules/dept-pages.js)
+    const deptCards = root.MNP_DEPT_PAGES?.jobCards?.(ctx, job) ?? "";
     const records = (data.grRecords ?? []).filter((record) => record.jobId === job.id).sort(byNewest);
     const { shown, more } = F.limited(ctx, records);
     const recordsCard = progress.planned || records.length ? ui.card(`${ui.table(recordHead(), recordRows(ctx, shown, { showJob: false }), { emptyText: "ยังไม่มีผลรายวันของงานนี้" })}${more}`, { title: esc("ผลรายวันของงานนี้"), flush: true }) : "";
-    return { html: `${back}${F.pageHead(ctx, job.name, `${buttons}${syncLine()}`)}<div class="sr-lot">${ui.card(facts, { className: "sr-lot-facts" })}${steps}</div>${rodsCard}${pkCard}${recordsCard}` };
+    return { html: `${back}${F.pageHead(ctx, job.name, `${buttons}${syncLine()}`)}<div class="sr-lot">${ui.card(facts, { className: "sr-lot-facts" })}${steps}</div>${deptCards}${rodsCard}${pkCard}${recordsCard}` };
   }
 
   // ---------- dialog ----------
-  const jobOf = (ctx, jobId) => ctx.data.jobs.find((entry) => entry.id === jobId && entry.dept === "GR") ?? null;
+  // งานของแผนกที่มีขั้นตอน (GR / PT / BG / PK) ตามเลขงาน (dialog ใช้แผนกของงานเอง) · rodJobOf = งาน GR เท่านั้น (ยางเส้นยาว)
+  const jobOf = (ctx, jobId) => ctx.data.jobs.find((entry) => entry.id === jobId && ROUTES[entry.dept]) ?? null;
+  const rodJobOf = (ctx, jobId) => ctx.data.jobs.find((entry) => entry.id === jobId && entry.dept === "GR") ?? null;
   const reasonInput = (ctx, label, placeholder, id) => ctx.ui.field(label, ctx.ui.input("reason", { required: true, placeholder, id, extra: `minlength="${ctx.rules.GR_LIMITS.reasonMin}" maxlength="${ctx.rules.GR_LIMITS.reasonMax}"` }), { id, required: true });
   // ตั้งขั้นตอนของงาน: ลำดับในรายการ = ลำดับขั้นที่ส่ง (ขั้นสุดท้ายที่ติ๊ก = ขั้นที่นับเป็นยอดดีของงาน) · ติ๊กขั้นที่งานนี้ทำ + ต้องทำของแต่ละขั้น (ค่าเริ่ม = จำนวนแผนของงาน)
   // ลำดับเริ่มต้น: ขั้นของแผนเดิมตามลำดับแผน · ยังไม่ตั้ง = ขั้นสายหลักทุกขั้นตามลำดับในตั้งค่า (rules.grDefaultSteps) · แล้วขั้นที่เหลือที่ใช้อยู่ (ขั้นแยก) ตามลำดับในตั้งค่า
@@ -439,7 +502,7 @@
     const { ui, rules, data } = ctx;
     const job = jobOf(ctx, jobId);
     if (!job || !canSetSteps(ctx, job)) return null;
-    const config = rules.grConfig(data);
+    const config = rules.grConfig(data, job.dept);
     const { plan, chosen, steps } = stepOrder(ctx, job, config);
     const busy = new Set(rules.grActiveRecords(data, job.id).map((record) => record.stepCode));
     const base = Math.max(1, Math.ceil(num(job.qtyPlanned)));
@@ -476,7 +539,8 @@
     const { ui, rules, data } = ctx;
     const record = (data.grRecords ?? []).find((row) => row.id === recordId);
     if (!record || ctx.helpers.grRecordBlock?.(data, ctx.user, record, ctx.now)) return null;
-    const config = rules.grConfig(data);
+    const job = jobOf(ctx, record.jobId);
+    const config = rules.grConfig(data, job?.dept ?? deptOf(ctx));
     const facts = ui.kv([["วันที่", esc(dayText(ctx, record.workDate))], ["ผู้ทำ", esc(record.workerName ?? record.workerId)], ["ขั้นตอน", esc(`${rules.grStepName(config, record.stepCode)} · ${record.itemCode}`)], ["ผล", esc(`ดี ${rules.fmtQty(record.good)} · เสีย ${rules.fmtQty(record.reject)} · ${rules.fmtQty(record.hours)} ชม.`)]]);
     const body = `<form novalidate id="gr-void-form" data-rf-form="voidGrRecord" data-rf-args="${attr(JSON.stringify({ recordId }))}" data-rf-success="ยกเลิกผลแล้ว">
       ${facts}${ui.callout("warn", esc("ยอดของงานคำนวณใหม่ทันที ผลนี้ยังอยู่ในประวัติพร้อมเหตุผล ยกเลิกแล้วเปิดกลับไม่ได้ (บันทึกใหม่แทน)"))}
@@ -486,7 +550,7 @@
   // ขอเบิกยางเส้นยาวจาก SR: เส้นยางของงานนี้ (rules.grRodCodesOf) · จำนวน (ค่าเริ่ม = ที่ยังต้องใช้ ปัดขึ้น) · หมายเหตุ · SR จ่ายด้วยการจ่ายตามใบเดิม
   dialogs.grRodRequest = (ctx, { jobId, itemCode = "" }) => {
     const { ui, rules } = ctx;
-    const job = jobOf(ctx, jobId);
+    const job = rodJobOf(ctx, jobId);
     if (!job || !canRequestRods(ctx, job)) return null;
     const rods = rodsOfJob(ctx, job);
     if (!rods.length) return { html: ui.dialog("grRodRequest", "ขอเบิกยางเส้นยาว", ui.callout("info", esc("งานนี้ไม่มียางเส้นยาวใน BOM ของใบ")), { footer: ui.closeButton("ปิด") }) };
@@ -510,52 +574,55 @@
     return { html: ui.dialog("grRodCancel", "ยกเลิกคำขอเบิกยางเส้นยาว", body, { footer: `${ui.closeButton("ไม่ยกเลิก")}<button class="btn rf-btn" type="submit" form="gr-rod-cancel-form">ยกเลิกคำขอ</button>` }) };
   };
   // ส่งให้ PK: จำนวน (ค่าเริ่ม = ของดีที่ยังไม่ได้ส่งทั้งหมด ไม่เกินนั้น) · ยืนยันแล้วส่งทันที · PK กดรับเองที่โมดูล PK
+  // GR / PT / BG ส่งให้ PK (GR ใช้ action เดิม sendGrToPk · PT / BG ใช้ sendToPk) · PK ส่งให้ WH = dialog pkSendWh (modules/dept-pages.js)
   dialogs.grSendPk = (ctx, { jobId }) => {
-    const { ui, rules, data } = ctx;
+    const { ui, rules } = ctx;
     const job = jobOf(ctx, jobId);
-    if (!job || !canLead(ctx) || !isActive(ctx, job)) return null;
-    const { waitingAtGr } = rules.grHandoverSummary(data, job);
+    if (!job || job.dept === "PK" || !leadFor(ctx, job.dept) || !isActive(ctx, job)) return null;
+    const waitingAtGr = waitingOf(ctx, job);
     if (!(waitingAtGr > 0)) return null;
     const unit = uomText(ctx, job.uom);
-    const body = `<form novalidate id="gr-send-form" data-rf-form="sendGrToPk" data-rf-args="${attr(JSON.stringify({ jobId: job.id }))}" data-rf-success="ส่งให้ PK {result} แล้ว">
+    const body = `<form novalidate id="gr-send-form" data-rf-form="${job.dept === "GR" ? "sendGrToPk" : "sendToPk"}" data-rf-args="${attr(JSON.stringify({ jobId: job.id }))}" data-rf-success="ส่งให้ PK {result} แล้ว">
       <p class="small muted">${esc(jobLabel(job))}</p>
       ${ui.field(`จำนวนที่ส่ง (${unit})`, ui.input("qty", { type: "number", value: Math.floor(waitingAtGr), step: 1, min: 1, max: Math.floor(waitingAtGr), required: true, id: "gr-send-qty", extra: `title="${attr(`ไม่เกินของดีที่ยังไม่ได้ส่ง ${rules.fmtQty(waitingAtGr)} ${unit}`)}"` }), { id: "gr-send-qty", required: true })}
       ${ui.field("หมายเหตุ", ui.input("note", { id: "gr-send-note", placeholder: "ถ้ามี", extra: `maxlength="${rules.GR_LIMITS.note}"` }), { id: "gr-send-note" })}</form>`;
-    const confirm = "ส่งงานให้ PK ตามจำนวนที่กรอก? PK กดรับเมื่อได้ของ ถ้าส่งผิด หัวหน้าแผนก GR หรือฝ่ายวางแผนยกเลิกได้จนกว่า PK รับ";
+    const confirm = `ส่งงานให้ PK ตามจำนวนที่กรอก? PK กดรับเมื่อได้ของ ถ้าส่งผิด หัวหน้าแผนก ${job.dept} หรือฝ่ายวางแผนยกเลิกได้จนกว่า PK รับ`;
     return { html: ui.dialog("grSendPk", "ส่งให้ PK", body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="gr-send-form" data-rf-confirm="${attr(confirm)}">ส่งให้ PK</button>` }) };
   };
   // ยกเลิกการส่ง (PK ยังไม่รับ: หัวหน้า GR / ฝ่ายวางแผน) หรือย้อนการรับ (PK รับแล้ว: หัวหน้า PK / ฝ่ายวางแผน → กลับเป็นรอ PK รับ) · เหตุผลจำเป็น
   dialogs.grHandoverCancel = (ctx, { handoverId }) => {
     const { ui, rules, data, user } = ctx;
     const row = (data.grHandovers ?? []).find((entry) => entry.id === handoverId);
-    if (!row || !ACTIVE.includes(orderOf(ctx, row.orderId)?.status)) return null;
+    if (!row || rules.handoverTo(row) !== "PK" || !ACTIVE.includes(orderOf(ctx, row.orderId)?.status)) return null;
+    const from = rules.handoverFrom(row);
     const reversing = row.status === "received";
-    if (row.status === "cancelled" || (reversing ? !ctx.helpers.canReverseGrReceipt?.(user) : !canLead(ctx))) return null;
+    if (row.status === "cancelled" || (reversing ? !ctx.helpers.canReversePkReceipt?.(user) : !leadFor(ctx, from))) return null;
     const label = reversing ? "ย้อนการรับ" : "ยกเลิกการส่ง";
-    const effect = reversing ? "รายการกลับเป็นรอ PK รับ แล้ว PK รับใหม่ได้" : "ของจำนวนนี้กลับเป็นของที่ยังไม่ได้ส่ง (รอที่ GR) แล้วส่งใหม่ได้";
-    const body = `<form novalidate id="gr-handover-form" data-rf-form="cancelGrHandover" data-rf-args="${attr(JSON.stringify({ handoverId }))}" data-rf-success="${attr(`${label}แล้ว`)}">
+    const effect = reversing ? "รายการกลับเป็นรอ PK รับ แล้ว PK รับใหม่ได้" : `ของจำนวนนี้กลับเป็นของที่ยังไม่ได้ส่ง (รอที่ ${from}) แล้วส่งใหม่ได้`;
+    const body = `<form novalidate id="gr-handover-form" data-rf-form="${from === "GR" ? "cancelGrHandover" : "cancelHandover"}" data-rf-args="${attr(JSON.stringify({ handoverId }))}" data-rf-success="${attr(`${label}แล้ว`)}">
       ${ui.kv([["รายการ", esc(`${row.itemCode} × ${rules.fmtQty(row.qty)} · ใบ ${row.orderId}`)], ["ส่งโดย", esc(`${row.sentBy ?? ""} · ${rules.fmtDateTime(row.sentAt)}`)]])}
       ${ui.callout("warn", esc(`${effect} · รายการเดิมยังอยู่ในประวัติ`))}
       ${reasonInput(ctx, "เหตุผล", reversing ? "เช่น รับผิดรายการ" : "เช่น ส่งจำนวนผิด", "gr-handover-why")}</form>`;
     return { html: ui.dialog("grHandoverCancel", label, body, { footer: `${ui.closeButton("ไม่ทำ")}<button class="btn rf-btn" type="submit" form="gr-handover-form">${esc(label)}</button>` }) };
   };
 
-  // ---------- การ์ด "รับจาก GR" ของโมดูล PK (#/pk งานของฉัน) ----------
+  // ---------- การ์ด "รับจาก GR / PT / BG" ของโมดูล PK (#/pk งานของฉัน) ----------
   // หนึ่งการ์ดต่อรายการส่งที่ PK ยังไม่รับ (ใบที่ยังผลิตอยู่) เก่าก่อน · ปุ่ม "รับ" รับทั้งรายการ ยืนยันแล้วส่งทันที · แผนก PK หรือฝ่ายวางแผน (อื่น ๆ ดูอย่างเดียว)
   function pkCards(ctx) {
     const { ui, rules, data } = ctx;
     const jobs = new Map(data.jobs.map((job) => [job.id, job]));
-    const can = Boolean(ctx.helpers.canReceiveGr?.(ctx.user));
-    return (data.grHandovers ?? []).filter((row) => row.status === "sent" && ACTIVE.includes(orderOf(ctx, row.orderId)?.status))
+    const can = Boolean(ctx.helpers.canReceiveAtPk?.(ctx.user));
+    return sendRowsOf(data, rules).filter((row) => row.status === "sent" && ACTIVE.includes(orderOf(ctx, row.orderId)?.status))
       .sort((a, b) => num(a.sentAt) - num(b.sentAt) || String(a.id).localeCompare(String(b.id)))
       .map((row) => {
         const job = jobs.get(row.jobId);
         const order = orderOf(ctx, row.orderId);
         const qty = `${rules.fmtQty(row.qty)} ${uomText(ctx, job?.uom ?? "pcs")}`;
+        const from = rules.handoverFrom(row);
         const action = can
-          ? ui.button("รับ", { action: "receiveGrAtPk", args: { handoverId: row.id }, className: "bom-job-main", confirmText: `รับงานจาก GR ${row.itemCode} ทั้ง ${qty}? รับทั้งรายการในครั้งเดียว ถ้ารับผิด หัวหน้าแผนก PK หรือฝ่ายวางแผนย้อนได้`, success: "รับงานจาก GR {result} แล้ว", ariaLabel: `รับจาก GR ${row.itemCode} ${qty}` })
+          ? ui.button("รับ", { action: from === "GR" ? "receiveGrAtPk" : "receiveAtPk", args: { handoverId: row.id }, className: "bom-job-main", confirmText: `รับงานจาก ${from} ${row.itemCode} ทั้ง ${qty}? รับทั้งรายการในครั้งเดียว ถ้ารับผิด หัวหน้าแผนก PK หรือฝ่ายวางแผนย้อนได้`, success: `รับงานจาก ${from} {result} แล้ว`, ariaLabel: `รับจาก ${from} ${row.itemCode} ${qty}` })
           : READ_ONLY;
-        return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">รับจาก GR</span><span class="muted">${esc(`ส่งเมื่อ ${rules.fmtDateTime(row.sentAt)}`)}</span></div>
+        return `<article class="card rf-card bom-job is-now"><div class="bom-job-top"><span class="bom-job-state">${esc(`รับจาก ${from}`)}</span><span class="muted">${esc(`ส่งเมื่อ ${rules.fmtDateTime(row.sentAt)}`)}</span></div>
           <h2>${esc(job?.name ?? row.itemCode)}</h2><p class="small muted"><span class="rf-mono">${esc(row.itemCode)}</span> · ใบ ${ui.link(row.orderId, ctx.url("orders", { sel: row.orderId }))}${order?.customer ? ` · ${esc(order.customer)}` : ""}</p>
           <div class="bom-job-amount"><span>${esc(qty)}</span></div><p class="small muted">${esc([`ส่งโดย ${row.sentBy ?? ""}`, row.note].filter(Boolean).join(" · "))}</p>${action}</article>`;
       });
@@ -658,8 +725,11 @@
     const head = (extra = "") => F.viewHead(ctx, extra);
     if (id === "log") return { html: `${head()}${logView(ctx)}`, bind: bindPage, actions: true };
     // ยางเส้นยาว: ตารางคลัง SR ใช้ตัวกรองของโมดูล SR (data-sr-filter → ctx.pageUrl ของหน้านี้)
-    if (id === "rods") return { html: `${head()}${rodsView(ctx)}`, bind: (node, pageCtx) => { bindPage(node, pageCtx); root.MNP_SR?.bindPage?.(node, pageCtx); }, actions: true };
-    if (id === "pk") return { html: `${head()}${pkView(ctx)}`, bind: bindPage, actions: true };
+    // ?tab=materials / incoming / wh = หน้าเฉพาะ PT / BG / PK (modules/dept-pages.js)
+    const own = root.MNP_DEPT_PAGES?.view?.(ctx, id);
+    if (own) return { html: `${head()}${own}`, bind: bindPage, actions: true };
+    if (id === "rods" && deptOf(ctx) === "GR") return { html: `${head()}${rodsView(ctx)}`, bind: (node, pageCtx) => { bindPage(node, pageCtx); root.MNP_SR?.bindPage?.(node, pageCtx); }, actions: true };
+    if ((id === "pk" && deptOf(ctx) !== "PK") || (id === "wh" && deptOf(ctx) === "PK")) return { html: `${head()}${pkView(ctx)}`, bind: bindPage, actions: true };
     if (id === "summary") return { html: `${head()}${summaryView(ctx)}`, bind: bindPage, actions: true };
     if (id === "settings") return { html: `${head()}${settingsView(ctx)}`, bind: bindPage, actions: true };
     return { html: workView(ctx), bind: bindPage, actions: true };
@@ -676,5 +746,7 @@
   ]);
   const KEEP = Object.freeze(["own", "loc", "day", "w", "s", "m", "item", "cust", "ord"]);
 
-  root.MNP_GR_PAGES = Object.freeze({ landing, MENU, KEEP, grJobs, workCount, pkCards, recordRows });
+  // ชิ้นส่วนที่ modules/dept-pages.js (หน้าเฉพาะ PT / BG / PK) ใช้ร่วม
+  const kit = Object.freeze({ ROUTES, deptOf, grUrl, jobHref, logHref, leadFor, recordFor, targetOf, grJobs, canSendOrder, waitingOf, handoverRows, handoverHead, sendRowsOf, whCancelable, backLink, rowAttr, mainLink, orderOf, uomText, isActive, dash, num, ACTIVE, LIVE, READ_ONLY, dayText });
+  root.MNP_GR_PAGES = Object.freeze({ landing, MENU, KEEP, grJobs, workCount, pkCards, recordRows, kit });
 })(window);

@@ -52,6 +52,20 @@ select count(set_config('test.n_' || lower(replace(employee_no, '-', '_')), firs
 
 -- ตัวช่วยของเทสต์ (schema แยก ลบพร้อม rollback): รันในฐานะผู้เรียก (authenticated) ผ่าน RPC สาธารณะเท่านั้น
 create schema pr_t;
+-- 20261224010000: WH รับได้ไม่เกินที่ PK ส่งให้ WH (sendPkToWh) · ก่อนรับเข้าคลังเทสต์นี้ให้ PK ส่งครบยอดที่ทำแล้วของทุกงาน PK / FG ของใบ เพดานจึงเท่ายอดที่ PK ทำเหมือนเดิม
+-- ใส่แถวตรงด้วยสิทธิ์เจ้าของตาราง (security definer ของเทสต์) · การส่งผ่าน sendPkToWh และสิทธิ์ของมันตรวจใน bom_dept_steps.test.sql
+create function pr_t.ship(p_order text) returns integer language sql volatile security definer set search_path = '' as $$
+  with todo as (
+    select j.id, j.is_test, j.order_pk, j.item_code,
+           j.qty_done - coalesce((select sum(h.qty) from public.bom_gr_handovers h where h.job_id = j.id and h.status <> 'cancelled'), 0) as qty
+    from public.bom_jobs j join public.bom_orders o on o.id = j.order_pk
+    where o.pi_no = upper(btrim(p_order)) and j.is_test = (select private.bom_test_mode()) and j.dept = 'PK' and j.kind = 'FG'),
+  ins as (
+    insert into public.bom_gr_handovers (is_test, job_id, order_pk, item_code, qty, from_dept, to_dept, note)
+    select t.is_test, t.id, t.order_pk, t.item_code, round(t.qty, 4), 'PK', 'WH', 'เทสต์: ส่งครบยอดที่ PK ทำ' from todo t where round(t.qty, 4) > 0
+    returning 1)
+  select count(*)::integer from ins
+$$;
 grant usage on schema pr_t to authenticated;
 create function pr_t.ver() returns bigint language sql stable as $$ select (public.app_bom_master() ->> 'version')::bigint $$;
 create function pr_t.save(p_changes jsonb, p_action text, p_base bigint default null) returns jsonb language sql volatile as $$
@@ -270,6 +284,7 @@ select ok(pr_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', json
   pr_t.job('JOB2-PK-A') || jsonb_build_object('status', 'done', 'qtyDone', 3, 'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 3, 'reject', 0, 'note', '')))))), 'reportJob') is not null,
   'the packing job is finished');
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select pr_t.ship('251112-25002');
 select is(pr_t.save('{"fgMoves":{"upsert":[{"orderId":"251112-25002","kind":"receive","lines":[{"fgCode":"FG-A","qty":3}]}]}}'::jsonb, 'receiveFg')
           -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'completed', 'and WH receives all 3 sets, which completes the order');
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
@@ -349,6 +364,7 @@ select ok(pr_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', json
   pr_t.job('JOB4-PK-A') || jsonb_build_object('status', 'done', 'qtyDone', 2, 'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 2, 'reject', 0, 'note', '')))))), 'reportJob') is not null,
   'the packing job is finished');
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select pr_t.ship('251112-25004');
 select is(pr_t.save('{"fgMoves":{"upsert":[{"orderId":"251112-25004","kind":"receive","lines":[{"fgCode":"FG-A","qty":2}]}]}}'::jsonb, 'receiveFg')
           -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'status', 'completed', 'WH receives both sets and the order closes with the pigment line still partly issued');
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);

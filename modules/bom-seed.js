@@ -1,4 +1,5 @@
-// BOM รายแผนก (โหมดทดสอบ) — ข้อมูลสาธิตสมมติทั้งชุด: บทบาท 12 คน สูตรยาง item master BOM อนุมัติ ใบสั่งผลิต งานรายแผนก คลังแท่งยาว (SR) และแปรรูปยาง (GR)
+// BOM รายแผนก (โหมดทดสอบ) — ข้อมูลสาธิตสมมติทั้งชุด: บทบาท 12 คน สูตรยาง item master BOM อนุมัติ ใบสั่งผลิต งานรายแผนก คลังแท่งยาว (SR) แปรรูปยาง (GR)
+// และขั้นตอนรายแผนกของ PT / BG / PK พร้อมการส่งงาน PT / BG → PK · PK → WH (โรงงาน ขั้น 7)
 // รหัส/ชื่อเลียนโครงสร้างจริงของชีต DATA BOM (FG → SE → RB · FG → PT → เม็ดพลาสติก · FG → BG → ผ้า/ซิป) แต่เป็นรหัส DEMO ไม่ใช่ข้อมูลลูกค้า
 // ประวัติสร้างโดยเรียก action จริงของ modules/bom-actions.js จึงสอดคล้องกันเอง (ผลเหมือนกันทุกครั้งเมื่อ now เท่ากัน)
 // โหลดหลัง modules/bom-rules.js และ bom-actions.js (ใน Node ตั้ง globalThis.MNP_BOM_RULES/_ACTIONS ก่อน require)
@@ -152,7 +153,8 @@
     const at = (t, role) => ({ now: Math.round(t), user: user(role) });
     const job = d.jobs.find((entry) => entry.orderId === "DEMO-26001" && entry.itemCode === "SE-HL24-YE03-400-19-30");
     if (!job) return;
-    d.grWorkers = GR_WORKERS.map((worker) => ({ ...worker }));
+    // GR ก่อน (ลำดับเดียวกับฐานข้อมูล) ตามด้วยพนักงานของ PT / BG / PK ที่ buildSeed ใส่ไว้
+    d.grWorkers = [...GR_WORKERS.map((worker) => ({ ...worker })), ...(d.grWorkers ?? []).filter((worker) => worker.dept && worker.dept !== "GR")];
     // เวลาบันทึก: วันก่อนหน้า k วัน เวลา 17:00 (เวลาไทย)
     const evening = (k) => Date.parse(`${R.grDay(now, -k)}T17:00:00+07:00`);
     const config = R.grConfig(d);
@@ -180,12 +182,55 @@
     own(now - HOUR, 0, "GR-05", 4, 25);
     A.sendGrToPk(d, { jobId: job.id, qty: 25 }, at(now - 30 * 60000, "planner"));
     // id ของแถวคงที่ (ชุดสาธิตเหมือนกันทุกครั้งเมื่อ now เท่ากัน): แถวเหล่านี้ไม่ถูกอ้างจากที่อื่นแล้ว
+    fixGrDemoIds(d);
+  }
+  const fixGrDemoIds = (d) => {
     d.grRecords.forEach((row, index) => { row.id = grDemoId(1, index); });
     d.rodRequests.forEach((row, index) => { row.id = grDemoId(2, index); });
     d.grHandovers.forEach((row, index) => { row.id = grDemoId(3, index); });
+  };
+
+  // ขั้นตอนรายแผนก PT / BG / PK สาธิต (20261224010000_bom_dept_steps.sql) · พนักงานสมมติของแต่ละแผนก (ชื่อสาธิต) ในชุด grWorkers (dept)
+  // PT: งานแกน PT-00320 ของใบ DEMO-26001 บันทึกด้วยขั้นตอน (buildSeed) แล้วส่งให้ PK 10 ชิ้น รอ PK รับ
+  // BG: งานกระเป๋า BG-0092 ของใบ DEMO-26006 ตั้งขั้นตอนเย็บ มีผลสองวัน ส่งให้ PK 20 ใบ PK รับแล้ว
+  // PK: งานฮูล่าของใบ DEMO-26006 สามขั้น ประกอบ 15 → ใส่กระเป๋า 12 → บรรจุกล่อง 10 · ส่งให้ WH 6 ชุด WH ยังไม่รับ
+  const DEPT_WORKERS = Object.freeze([
+    { id: "B06", name: "มานพ ศักดิ์ดี", dept: "PT" }, { id: "PT-DEMO-2", name: "สมพร ทดลองฉีด", dept: "PT" },
+    { id: "B07", name: "จันทร์เพ็ญ ดวงแก้ว", dept: "BG" }, { id: "BG-DEMO-2", name: "ลำดวน ทดลองเย็บ", dept: "BG" },
+    { id: "PK-DEMO-1", name: "ปรีชา ทดลองบรรจุ", dept: "PK" }, { id: "PK-DEMO-2", name: "อำไพ ทดลองประกอบ", dept: "PK" },
+  ].map((worker) => Object.freeze(worker)));
+  function addDeptDemo(d, now) {
+    const R = rules();
+    const A = actions();
+    const HOUR = 3600000;
+    const user = (role) => USERS.find((row) => row.role === role);
+    const at = (t, role) => ({ now: Math.round(t), user: user(role) });
+    const evening = (k) => Date.parse(`${R.grDay(now, -k)}T17:00:00+07:00`);
+    const record = (job, k, workerId, stepCode, hours, good, reject = 0, reason = "") =>
+      A.addGrRecord(d, { jobId: job.id, workDate: R.grDay(now, -k), workerId, stepCode, hours, people: 1, good, reject, reason }, at(evening(k), "planner"));
+    const pt = d.jobs.find((entry) => entry.orderId === "DEMO-26001" && entry.itemCode === "PT-00320");
+    if (pt && R.grPlanOf(d, pt.id)) A.sendToPk(d, { jobId: pt.id, qty: 10, note: "แกนรอบแรก" }, at(now - 2 * HOUR, "planner"));
+    const bg = d.jobs.find((entry) => entry.orderId === "DEMO-26006" && entry.dept === "BG");
+    if (bg) {
+      A.setGrJobSteps(d, { jobId: bg.id, steps: R.grDefaultSteps(d, bg) }, at(evening(3), "planner"));
+      record(bg, 2, "B07", "BG-02", 8, 25);
+      record(bg, 1, "BG-DEMO-2", "BG-02", 8, 20, 1, "ฝีเข็มไม่สวย/หลุด");
+      A.sendToPk(d, { jobId: bg.id, qty: 20, note: "กระเป๋าชุดแรก" }, at(evening(1) + HOUR, "planner"));
+      A.receiveAtPk(d, { handoverId: d.grHandovers.at(-1).id }, at(evening(1) + 2 * HOUR, "planner"));
+    }
+    const pk = d.jobs.find((entry) => entry.orderId === "DEMO-26006" && entry.dept === "PK" && entry.kind === "FG");
+    if (pk) {
+      A.setGrJobSteps(d, { jobId: pk.id, steps: R.grDefaultSteps(d, pk) }, at(evening(2), "planner"));
+      record(pk, 1, "PK-DEMO-2", "PK-01", 8, 15);
+      record(pk, 1, "PK-DEMO-1", "PK-02", 4, 12);
+      record(pk, 1, "PK-DEMO-1", "PK-03", 4, 10, 1, "กระเป๋า/กล่องเสียหาย");
+      A.sendPkToWh(d, { jobId: pk.id, qty: 6, note: "กล่องชุดแรก" }, at(now - HOUR, "planner"));
+    }
+    fixGrDemoIds(d);
   }
 
-  function buildSeed(now = Date.now(), { rods = true, gr = true } = {}) {
+  // parts = false: ไม่มีการเบิกจ่ายของซื้อสาธิตของ DEMO-26001 (เทสต์ขั้นตอนเบิก / คืนของซื้อเริ่มจากใบที่ยังไม่เบิกเลย)
+  function buildSeed(now = Date.now(), { rods = true, gr = true, parts = true } = {}) {
     const { DAY } = rules();
     const A = actions();
     const d = emptyState();
@@ -250,7 +295,11 @@
     const job = (code) => d.jobs.find((entry) => entry.orderId === pi1 && entry.itemCode === code);
     A.reportJob(d, { jobId: job("RB-DM01-02-OR01-202-18-70").id, qtyDone: 5, note: "รอบรีดที่ 1" }, at(now - 10 * DAY, "rb"));
     A.reportJob(d, { jobId: job("RB-DM01-01-OR01-200-0-72").id, qtyDone: 4.8 }, at(now - 9 * DAY, "rb"));
-    A.reportJob(d, { jobId: job("PT-00320").id, qtyDone: 14 }, at(now - 8 * DAY, "pt"));
+    // PT ขึ้นรูปแกน 14 ชิ้นด้วยขั้นตอนรายแผนก (20261224010000): ฝ่ายวางแผนตั้งขั้นตอน PT-01 แล้วบันทึกผลแทนพนักงาน PT (ยอดถึงแผน = เสร็จ)
+    d.grWorkers = DEPT_WORKERS.map((worker) => ({ ...worker }));
+    const ptJob = job("PT-00320");
+    A.setGrJobSteps(d, { jobId: ptJob.id, steps: rules().grDefaultSteps(d, ptJob) }, at(now - 8 * DAY - 3600000, "planner"));
+    A.addGrRecord(d, { jobId: ptJob.id, stepCode: "PT-01", workDate: rules().grDay(now - 8 * DAY), workerId: "B06", hours: 6, people: 1, good: 14, reject: 0 }, at(now - 8 * DAY, "planner"));
     A.reportJob(d, { jobId: job("SE-TP01-BK01-140-3-20").id, qtyDone: 120, qtyReject: 4, note: "ครึ่งแรก" }, at(now - 5 * DAY, "gr"));
     A.setJobStatus(d, { jobId: job("BG-0092").id, status: "hold", reason: "รอผ้าตาข่ายล็อตใหม่" }, at(now - 4 * DAY, "bg"));
 
@@ -291,11 +340,17 @@
     d.jobs.filter((entry) => entry.orderId === pi8 && !(entry.dept === "ST" && entry.kind === "PURCHASED")).forEach((entry, index) => {
       A.reportJob(d, { jobId: entry.id, qtyDone: Math.max(0, Number(entry.qtyPlanned) - Number(entry.qtyDone || 0)) }, at(now - 7 * DAY + index * 60000, "planner"));
     });
+    // PK ส่งให้ WH ก่อน (20261224010000: WH รับได้ไม่เกินที่ PK ส่ง)
+    const pk8 = d.jobs.find((entry) => entry.orderId === pi8 && entry.dept === "PK" && entry.kind === "FG" && entry.itemCode === "DEMO-HL-24(B)-A");
+    A.sendPkToWh(d, { jobId: pk8.id, qty: Number(pk8.qtyDone) || 0, note: "ส่งครบ" }, at(now - 6 * DAY - 60000, "planner"));
     A.receiveFg(d, { orderId: pi8, lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 8 }] }, at(now - 6 * DAY, "wh"));
     A.receiveFg(d, { orderId: pi8, lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 12 }] }, at(now - 5 * DAY, "wh"));
     A.deliverFg(d, { orderId: pi8, lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 20 }] }, at(now - 4 * DAY, "wh"));
+    // ST จ่ายวัตถุดิบบางส่วนของใบ DEMO-26001 ให้เห็นในหน้า "วัตถุดิบจาก ST" ของ PT / BG (จำนวน วันที่ ผู้จ่าย): เม็ดพลาสติกของแกน PT 0.2 kg · ผ้าตาข่ายของกระเป๋า BG 10 หลา
+    if (parts) A.issueOrderParts(d, { orderId: pi1, lines: [{ itemCode: "P-PEL-BK", qty: 0.2 }, { itemCode: "P-FAB-BL", qty: 10 }] }, at(now - 3 * DAY, "st"));
     if (rods) addRodDemo(d, now);
     if (gr) addGrDemo(d, now);
+    if (gr) addDeptDemo(d, now);
     return d;
   }
 
@@ -317,7 +372,7 @@
     }).filter((link) => link && link.recipeId && link.qty > 0);
   }
 
-  const api = { USERS, COMPOUNDS, ITEMS, GR_WORKERS, emptyState, buildSeed, demoRfLinks, demoWoId };
+  const api = { USERS, COMPOUNDS, ITEMS, GR_WORKERS, DEPT_WORKERS, emptyState, buildSeed, demoRfLinks, demoWoId };
   if (isNode) module.exports = api;
   else root.MNP_BOM_SEED = api;
 })(typeof window !== "undefined" ? window : globalThis);

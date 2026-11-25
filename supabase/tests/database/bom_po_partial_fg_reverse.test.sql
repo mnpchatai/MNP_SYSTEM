@@ -96,6 +96,20 @@ select ok((select count(*) from public.employees e join public.departments d on 
 select set_config('test.exp', ((extract(epoch from now()) * 1000)::bigint + 31536000000)::text, true);
 
 create schema b2_t;
+-- 20261224010000: WH รับได้ไม่เกินที่ PK ส่งให้ WH (sendPkToWh) · ก่อนรับเข้าคลังเทสต์นี้ให้ PK ส่งครบยอดที่ทำแล้วของทุกงาน PK / FG ของใบ เพดานจึงเท่ายอดที่ PK ทำเหมือนเดิม
+-- ใส่แถวตรงด้วยสิทธิ์เจ้าของตาราง (security definer ของเทสต์) · การส่งผ่าน sendPkToWh และสิทธิ์ของมันตรวจใน bom_dept_steps.test.sql
+create function b2_t.ship(p_order text) returns integer language sql volatile security definer set search_path = '' as $$
+  with todo as (
+    select j.id, j.is_test, j.order_pk, j.item_code,
+           j.qty_done - coalesce((select sum(h.qty) from public.bom_gr_handovers h where h.job_id = j.id and h.status <> 'cancelled'), 0) as qty
+    from public.bom_jobs j join public.bom_orders o on o.id = j.order_pk
+    where o.pi_no = upper(btrim(p_order)) and j.is_test = (select private.bom_test_mode()) and j.dept = 'PK' and j.kind = 'FG'),
+  ins as (
+    insert into public.bom_gr_handovers (is_test, job_id, order_pk, item_code, qty, from_dept, to_dept, note)
+    select t.is_test, t.id, t.order_pk, t.item_code, round(t.qty, 4), 'PK', 'WH', 'เทสต์: ส่งครบยอดที่ PK ทำ' from todo t where round(t.qty, 4) > 0
+    returning 1)
+  select count(*)::integer from ins
+$$;
 grant usage on schema b2_t to authenticated;
 create function b2_t.rver() returns bigint language sql stable as $$ select (public.app_rf_master() ->> 'version')::bigint $$;
 create function b2_t.bver() returns bigint language sql stable as $$ select (public.app_bom_master() ->> 'version')::bigint $$;
@@ -153,6 +167,7 @@ create function b2_t.fg(p_row jsonb, p_action text) returns jsonb language sql v
   select b2_t.save(jsonb_build_object('fgMoves', jsonb_build_object('upsert', jsonb_build_array(p_row))), p_action)
 $$;
 create function b2_t.receive(p_order text, p_qty numeric) returns jsonb language sql volatile as $$
+  select b2_t.ship(p_order);
   select b2_t.fg(jsonb_build_object('orderId', p_order, 'kind', 'receive', 'lines', jsonb_build_array(jsonb_build_object('fgCode', 'FG-A', 'qty', p_qty))), 'receiveFg')
 $$;
 create function b2_t.deliver(p_order text, p_qty numeric) returns jsonb language sql volatile as $$

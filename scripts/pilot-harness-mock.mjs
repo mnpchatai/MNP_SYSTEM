@@ -526,6 +526,11 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     // หัวหน้าแผนก QA (ผู้จัดการแผนก เหมือน SBX-QA-MGR): ปล่อย / ตัดสินล็อตที่กักของสายผลิต ตัดสินยางเส้นยาวที่ SR กัก และปล่อยวัตถุดิบที่กัก (private.qa_head · 20261221010000)
     //   พนักงาน QA (persona-qa) ยังบันทึกผลตรวจ กัก และบันทึกผลบนล็อตที่ไม่ได้กักได้
     ["persona-qah", "อรุณี", "หัวหน้าตรวจสอบ", "หัวหน้าแผนก QA (ตรวจคุณภาพ)", "QA", "ประกันคุณภาพ", "department_manager"],
+    // หัวหน้าแผนก PT / BG / PK (ผู้จัดการแผนก · T-PTH / T-BGH / T-PKH · โรงงาน ขั้น 7 · 20261224010000): ตั้งค่าขั้นตอนของแผนก ตั้งขั้นตอนของงาน บันทึก / แก้ผลของทุกคน
+    //   ส่งงานให้ PK (PT / BG) · ย้อนการรับ / ส่งสินค้าให้ WH (PK) · ผู้จัดการแผนกในสายผลิตอยู่ในกลุ่มวางแผนของ BOM ด้วย (เหมือนฐานข้อมูล)
+    ["persona-pth", "ประภา", "หัวหน้าฉีดพลาสติก", "หัวหน้าแผนก PT (ฉีดพลาสติก)", "PT", "ฝ่ายผลิต PT", "department_manager"],
+    ["persona-bgh", "บุษบา", "หัวหน้าเย็บกระเป๋า", "หัวหน้าแผนก BG (เย็บกระเป๋า)", "BG", "ฝ่ายผลิต BG", "department_manager"],
+    ["persona-pkh", "ปกรณ์", "หัวหน้าบรรจุ", "หัวหน้าแผนก PK (ประกอบและบรรจุ)", "PK", "ฝ่ายผลิต PK", "department_manager"],
     // พนักงานแผนกผลิตที่เหลือ (PK บรรจุ · PT ฉีดพลาสติก · BG เย็บกระเป๋า): ลองรายงานผล / พักงานของแผนกตัวเอง และดูว่าแผนกอื่นทำแทนไม่ได้
     ["persona-pk", "ปรีชา", "บรรจุ", "พนักงานแผนก PK (บรรจุ)", "PK", "ฝ่ายผลิต PK"],
     ["persona-pt", "พิมพ์ใจ", "ฉีดพลาสติก", "พนักงานแผนก PT (ฉีดพลาสติก)", "PT", "ฝ่ายผลิต PT"],
@@ -1019,12 +1024,14 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     "countPartStock", "issueOrderParts", "undoOrderParts", "returnOrderParts",
     "receiveFg", "deliverFg", "closeOrderShort", "closeOrder", "reverseFg",
     "receiveRods", "decideRods", "issueRods", "reverseRodIssue", "adjustRods", "receiveRodsOpening", "setRodLocation",
-    "saveGrConfig", "setGrJobSteps", "addGrRecord", "editGrRecord", "voidGrRecord", "requestRods", "cancelRodRequest", "sendGrToPk", "receiveGrAtPk", "cancelGrHandover"];
+    "saveGrConfig", "setGrJobSteps", "addGrRecord", "editGrRecord", "voidGrRecord", "requestRods", "cancelRodRequest", "sendGrToPk", "receiveGrAtPk", "cancelGrHandover",
+    "sendToPk", "receiveAtPk", "cancelHandover", "sendPkToWh", "cancelPkToWh"];
   // reverseFg (20261128020000) ไม่อยู่ในรายการของพนักงาน: พนักงาน WH ได้ BOM_FORBIDDEN ที่ด่านหยาบ · ผู้จัดการแผนก WH อยู่ในกลุ่มวางแผนอยู่แล้ว
   // คลังยางเส้นยาว (20261202010000 · 20261204010000): adjustRods อยู่ในรายการของพนักงานแล้ว (SR ปรับยอดเองได้ สิทธิ์จริงตรวจในตัวเขียน) · receiveRodsOpening / setRodLocation ของ SR
   const BOM_STAFF_ACTIONS = ["setStockCount", "setStockCounts", "reportJob", "setJobStatus", "linkJobToRubberFlow", "countPartStock", "issueOrderParts", "undoOrderParts", "returnOrderParts",
     "receiveFg", "deliverFg", "closeOrderShort", "closeOrder", "receiveRods", "decideRods", "issueRods", "reverseRodIssue", "adjustRods", "receiveRodsOpening", "setRodLocation",
-    "saveGrConfig", "setGrJobSteps", "addGrRecord", "editGrRecord", "voidGrRecord", "requestRods", "cancelRodRequest", "sendGrToPk", "receiveGrAtPk", "cancelGrHandover"];
+    "saveGrConfig", "setGrJobSteps", "addGrRecord", "editGrRecord", "voidGrRecord", "requestRods", "cancelRodRequest", "sendGrToPk", "receiveGrAtPk", "cancelGrHandover",
+    "sendToPk", "receiveAtPk", "cancelHandover", "sendPkToWh", "cancelPkToWh"];
   // สินค้าสำเร็จรูป (ตรงกับสัญญา bom-wh-fg และ bom-fg-stock): แถวเดียว { orderId, kind, lines?, note? } ลำดับตรวจ: รูปคำขอ (รวมใบที่ไม่รู้จัก/สินค้านอกใบ) → สิทธิ์ (แผนก WH หรือ admin) → สถานะใบ → ยอด
   // ต่อใบ O รหัส X: own = Σ receive · in = Σ transfer − Σ untransfer ของใบนี้ · out = Σ transfer − Σ untransfer ที่ fromOrderId = O · delivered = Σ deliver · have = own + in
   // งานผลิต = ทุกงานของใบยกเว้นการเบิกของซื้อ (ST / PURCHASED) · ปิดใบทุกทางต้องให้ทุกงานผลิตเสร็จก่อน (20261125010000)
@@ -1110,7 +1117,10 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     const closeNow = () => { order.status = "completed"; order.completedAt = at; next.versions.orders[order.id] = nextVersion; closed = true; };
     if (kind === "receive") {
       if (!BOM_FG_STOCK_STATUS.includes(order.status)) fail("BOM_INVALID_TRANSITION");
-      for (const line of wanted) if (productOf(line.fgCode).own + line.qty > productOf(line.fgCode).made + 1e-9) fail("BOM_FG_EXCEEDS");
+      // 20261224010000: และไม่เกินที่ PK ส่งให้ WH แล้ว (private.bom_fg_pk_sent) · เพดาน = min(ยอดที่ PK ทำ, ที่ PK ส่ง)
+      const shipped = (code) => bomFgRound((next.grHandovers ?? []).filter((row) => row.orderId === order.id && row.itemCode === code && (row.toDept ?? "PK") === "WH" && row.status !== "cancelled")
+        .reduce((total, row) => total + (Number(row.qty) || 0), 0));
+      for (const line of wanted) if (productOf(line.fgCode).own + line.qty > Math.min(productOf(line.fgCode).made, shipped(line.fgCode)) + 1e-9) fail("BOM_FG_EXCEEDS");
       for (const line of wanted) push(line.fgCode, line.qty);
       if (order.status !== "completed" && prodDone && products.every((product) => product.have + (wanted.find((line) => line.fgCode === product.fgCode)?.qty ?? 0) + 1e-9 >= product.ordered)) closeNow();
     } else if (kind === "deliver") {
@@ -1238,7 +1248,9 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
   // ลำดับตรวจเหมือนตัวเขียน private.bom_gr_save_*: รูปแถว (BOM_INVALID_GR) → สิทธิ์ (BOM_FORBIDDEN) → แถวที่อ้าง (BOM_INVALID_GR) → ชนรุ่น (BOM_STALE) → สถานะ (BOM_INVALID_TRANSITION) → กติกา
   // ยอดของงาน GR ที่มีขั้นตอน = ดีของขั้นสุดท้าย / เสียของทุกขั้น (bomGrRecompute = private.bom_gr_recompute) · reportJob ของงานนั้น = BOM_INVALID_JOB (bomJobRules = trigger bom_jobs_gr_guard)
   const BOM_GR_SECTIONS = { saveGrConfig: "grConfig", setGrJobSteps: "grPlans", addGrRecord: "grRecords", editGrRecord: "grRecords", voidGrRecord: "grRecords",
-    requestRods: "rodRequests", cancelRodRequest: "rodRequests", sendGrToPk: "grHandovers", receiveGrAtPk: "grHandovers", cancelGrHandover: "grHandovers" };
+    requestRods: "rodRequests", cancelRodRequest: "rodRequests", sendGrToPk: "grHandovers", receiveGrAtPk: "grHandovers", cancelGrHandover: "grHandovers",
+    // ขั้นตอนรายแผนก (20261224010000): ส่งงาน GR / PT / BG → PK · PK รับ · ยกเลิก / ย้อนรับ · PK → WH · ยกเลิกการส่งให้ WH
+    sendToPk: "grHandovers", receiveAtPk: "grHandovers", cancelHandover: "grHandovers", sendPkToWh: "grHandovers", cancelPkToWh: "grHandovers" };
   const BOM_GR_LISTS = ["grConfig", "grPlans", "grRecords", "rodRequests", "grHandovers"];
   const BOM_GR_DEFAULT = {
     steps: [["GR-01", "รีด", "main"], ["GR-02", "ปั๊ม", "main"], ["GR-03", "เปเปอร์", "main"], ["GR-04", "ตัดยาง", "main"], ["GR-05", "ทากาว", "main"], ["GR-06", "เจียร์", "main"],
@@ -1247,6 +1259,17 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     reasons: ["ขนาดไม่ได้", "ผิวไม่สวย/มีรอย", "กาวไม่ติด", "เจียร์เกิน", "เจาะผิดตำแหน่ง", "ยางมีตำหนิจากต้นทาง", "อื่นๆ"],
     targets: [],
   };
+  // ขั้นตอนรายแผนก PT / BG / PK (private.bom_dept_default_config ของ 20261224010000)
+  const bomDeptDefault = (steps, reasons) => ({ steps: steps.map(([code, name, kind], index) => ({ code, name, kind, seq: index + 1, active: true })), reasons, targets: [] });
+  const BOM_DEPT_DEFAULT = {
+    GR: BOM_GR_DEFAULT,
+    PT: bomDeptDefault([["PT-01", "ขึ้นรูป", "main"]], ["ขึ้นรูปไม่เต็ม", "ขนาดไม่ได้", "ผิวไม่สวย/มีรอย", "สีไม่ตรง", "วัตถุดิบมีตำหนิ", "อื่นๆ"]),
+    BG: bomDeptDefault([["BG-02", "เย็บ", "main"]], ["ฝีเข็มไม่สวย/หลุด", "เย็บผิดตำแหน่ง", "ขนาดไม่ได้", "ผ้า/ซิปมีตำหนิ", "อื่นๆ"]),
+    PK: bomDeptDefault([["PK-01", "ประกอบ", "main"], ["PK-02", "ใส่กระเป๋า", "main"], ["PK-03", "บรรจุกล่อง", "main"]], ["ประกอบไม่ได้", "ชิ้นส่วนมีตำหนิ", "ชิ้นส่วนไม่ครบ", "กระเป๋า/กล่องเสียหาย", "อื่นๆ"]),
+  };
+  const BOM_STEP_DEPTS = ["GR", "PT", "BG", "PK"];
+  const bomConfigDept = (row) => row?.dept ?? (row?.key && row.key !== "gr" ? String(row.key).toUpperCase() : "GR");
+  const bomJobDept = (next, jobId) => next.jobs.find((job) => job.id === jobId)?.dept ?? "GR";
   const bomGrSection = (action) => (Object.hasOwn(BOM_GR_SECTIONS, action) ? BOM_GR_SECTIONS[action] : null);
   const bomGrBad = () => fail("BOM_INVALID_GR");
   const bomGrText = (value, min, max) => { const text = typeof value === "string" ? value.trim() : value === undefined || value === null ? "" : bomGrBad(); if (text.length < min || text.length > max) bomGrBad(); return text; };
@@ -1262,13 +1285,15 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     const day = new Date((Math.floor((Number(ms) + 7 * 3600000) / 86400000) + offset) * 86400000);
     return `${day.getUTCFullYear()}-${String(day.getUTCMonth() + 1).padStart(2, "0")}-${String(day.getUTCDate()).padStart(2, "0")}`;
   };
-  const bomGrConfigNow = (next) => next.grConfig[0] ?? BOM_GR_DEFAULT;
+  const bomGrConfigNow = (next, dept = "GR") => next.grConfig.find((row) => bomConfigDept(row) === dept) ?? BOM_DEPT_DEFAULT[dept];
   const bomGrOrderOpen = (next, orderId) => ["released", "in_progress"].includes(next.orders.find((order) => order.id === orderId)?.status);
   const bomGrStale = (next, list, id, base, cur) => { const version = next.versions[list][id] ?? 0; if (version > base && version <= cur) fail("BOM_STALE"); };
-  // พนักงาน active ของแผนก GR ในโหมดเดียวกัน (ชุด grWorkers ของ snapshot)
-  const bomGrWorkers = () => (sandbox ? personaRows().filter((row) => String(row.department?.code ?? "").toUpperCase() === "GR" && row.id !== "persona-1")
-    : [expand("employees", ME)].filter((row) => String(row.department?.code ?? "").toUpperCase() === "GR"))
-    .map((row) => ({ id: row.id, name: `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() }));
+  // พนักงาน active ของแผนก GR / PT / BG / PK ในโหมดเดียวกัน (ชุด grWorkers ของ snapshot + dept · GR ก่อน · 20261224010000) · dept = เฉพาะแผนกนั้น
+  const bomGrWorkers = (dept = null) => (sandbox ? personaRows().filter((row) => BOM_STEP_DEPTS.includes(String(row.department?.code ?? "").toUpperCase()) && row.id !== "persona-1")
+    : [expand("employees", ME)].filter((row) => BOM_STEP_DEPTS.includes(String(row.department?.code ?? "").toUpperCase())))
+    .map((row) => ({ id: row.id, name: `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim(), dept: String(row.department?.code ?? "").toUpperCase() }))
+    .filter((row) => !dept || row.dept === dept)
+    .sort((a, b) => Number(a.dept !== "GR") - Number(b.dept !== "GR") || a.dept.localeCompare(b.dept));
   // ยอดของงานจากผลรายวัน (private.bom_gr_recompute) · คืน { jobs, orders }
   function bomGrRecompute(next, job, nextVersion, actor, at, label) {
     const plan = next.grPlans.find((row) => row.jobId === job.id) ?? bomGrBad();
@@ -1310,19 +1335,23 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     const none = { jobs: 0, orders: 0 };
     const planner = bomIsPlanner(actor);
     const lead = planner || bomGrHead(actor, "GR");
+    // ด่านหยาบของแผนกที่มีขั้นตอน (ก่อนอ่านงาน): หัวหน้าของ GR / PT / BG / PK
+    const anyHead = planner || (BOM_STEP_DEPTS.includes(actor.dept) && bomGrHead(actor, actor.dept));
     if (!Array.isArray(rows) || rows.length !== 1) bomGrBad();
     const row = rows[0];
     if (!row || typeof row !== "object" || Array.isArray(row)) bomGrBad();
     const jobOf = (no) => { const job = next.jobs.find((entry) => entry.id === no); if (!job || job.dept !== "GR") bomGrBad(); return job; };
     const stamp = (list, id) => { next.versions[list][id] = nextVersion; };
     if (action === "saveGrConfig") {
+      const dept = (bomGrText(row.dept, 0, 2) || "GR").toUpperCase();
+      if (!BOM_STEP_DEPTS.includes(dept)) bomGrBad();
       const rawSteps = row.steps;
       if (!Array.isArray(rawSteps) || rawSteps.length < 1 || rawSteps.length > 40) bomGrBad();
       const codes = [];
       const steps = rawSteps.map((step) => {
         if (!step || typeof step !== "object" || Array.isArray(step)) bomGrBad();
         const code = bomGrText(step.code, 1, 20).toUpperCase();
-        if (!/^GR-[A-Z0-9]{1,10}$/.test(code) || codes.includes(code)) bomGrBad();
+        if (!new RegExp(`^${dept}-[A-Z0-9]{1,10}$`).test(code) || codes.includes(code)) bomGrBad();
         codes.push(code);
         const name = bomGrText(step.name, 1, 60);
         const kind = bomGrText(step.kind, 1, 10);
@@ -1353,12 +1382,15 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         return { itemCode, stepCode, perHour };
       });
       if (targets.some((target) => !next.items.some((item) => item.code === target.itemCode))) bomGrBad();
-      if (!lead) fail("BOM_FORBIDDEN");
-      if (next.grConfig[0]) bomGrStale(next, "grConfig", "gr", base, cur);
-      // ขั้นที่มีผลบันทึกแล้ว (ทุกสถานะ) หรืออยู่ในขั้นตอนของงานใด ลบไม่ได้
-      if (next.grRecords.some((record) => !codes.includes(record.stepCode)) || next.grPlans.some((plan) => plan.steps.some((step) => !codes.includes(step.code)))) bomGrBad();
-      next.grConfig = [{ key: "gr", steps, reasons, targets, updatedBy: actor.name, updatedAt: at }];
-      stamp("grConfig", "gr");
+      if (!(planner || bomGrHead(actor, dept))) fail("BOM_FORBIDDEN");
+      const key = dept.toLowerCase();
+      if (next.grConfig.some((entry) => bomConfigDept(entry) === dept)) bomGrStale(next, "grConfig", key, base, cur);
+      // ขั้นที่มีผลบันทึกแล้ว (ทุกสถานะ) หรืออยู่ในขั้นตอนของงานใดของแผนกนี้ ลบไม่ได้
+      if (next.grRecords.some((record) => bomJobDept(next, record.jobId) === dept && !codes.includes(record.stepCode))
+        || next.grPlans.some((plan) => bomJobDept(next, plan.jobId) === dept && plan.steps.some((step) => !codes.includes(step.code)))) bomGrBad();
+      next.grConfig = [...next.grConfig.filter((entry) => bomConfigDept(entry) !== dept), { key, dept, steps, reasons, targets, updatedBy: actor.name, updatedAt: at }]
+        .sort((a, b) => Number(bomConfigDept(a) !== "GR") - Number(bomConfigDept(b) !== "GR") || bomConfigDept(a).localeCompare(bomConfigDept(b)));
+      stamp("grConfig", key);
       return none;
     }
     if (action === "setGrJobSteps") {
@@ -1372,14 +1404,16 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         codes.push(code);
         return { code, qtyTarget: bomGrInt(step.qtyTarget, 1, 10000000) };
       });
-      if (!lead) fail("BOM_FORBIDDEN");
-      const job = jobOf(no);
+      if (!anyHead) fail("BOM_FORBIDDEN");
+      const job = next.jobs.find((entry) => entry.id === no) ?? bomGrBad();
+      if (!BOM_STEP_DEPTS.includes(job.dept)) bomGrBad();
+      if (!(planner || bomGrHead(actor, job.dept))) fail("BOM_FORBIDDEN");
       const old = next.grPlans.find((plan) => plan.jobId === job.id) ?? null;
       if (old) bomGrStale(next, "grPlans", job.id, base, cur);
       if (!bomGrOrderOpen(next, job.orderId) || job.status === "done") fail("BOM_INVALID_TRANSITION");
       if (!old && (Number(job.qtyDone) > 0 || Number(job.qtyReject) > 0)) fail("BOM_INVALID_TRANSITION");
       const oldCodes = (old?.steps ?? []).map((step) => step.code);
-      const config = bomGrConfigNow(next);
+      const config = bomGrConfigNow(next, job.dept);
       for (const code of codes) {
         const found = config.steps.find((step) => step.code === code) ?? bomGrBad();
         if (!found.active && !oldCodes.includes(code)) bomGrBad();
@@ -1388,7 +1422,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       const plan = { jobId: job.id, orderId: job.orderId, steps, createdBy: old?.createdBy ?? actor.name, createdAt: old?.createdAt ?? at, updatedBy: actor.name, updatedAt: at };
       next.grPlans = [...next.grPlans.filter((entry) => entry.jobId !== job.id), plan];
       stamp("grPlans", job.id);
-      return bomGrRecompute(next, job, nextVersion, actor, at, "GR ตั้งขั้นตอนของงาน");
+      return bomGrRecompute(next, job, nextVersion, actor, at, `${job.dept} ตั้งขั้นตอนของงาน`);
     }
     if (["addGrRecord", "editGrRecord", "voidGrRecord"].includes(action)) {
       const id = bomGrUuid(row.id);
@@ -1414,19 +1448,23 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         const note = bomGrText(row.note, 0, 200);
         fields = { stepCode, workDate, workerId, hours, people, good, reject, reason, note };
       }
-      if (!(planner || actor.dept === "GR")) fail("BOM_FORBIDDEN");
+      if (!(planner || BOM_STEP_DEPTS.includes(actor.dept))) fail("BOM_FORBIDDEN");
       let record = null;
       let job;
       if (action === "addGrRecord") {
         if (next.grRecords.some((entry) => String(entry.id).toLowerCase() === id)) bomGrBad();
-        job = jobOf(no);
+        job = next.jobs.find((entry) => entry.id === no) ?? bomGrBad();
+        if (!BOM_STEP_DEPTS.includes(job.dept)) bomGrBad();
       } else {
         record = next.grRecords.find((entry) => String(entry.id).toLowerCase() === id) ?? bomGrBad();
         bomGrStale(next, "grRecords", record.id, base, cur);
         job = next.jobs.find((entry) => entry.id === record.jobId) ?? bomGrBad();
       }
+      // สิทธิ์ของแผนกงาน: พนักงานแผนกนั้น หรือกลุ่มวางแผน · หัวหน้าแผนกนั้น = ผู้นำ
+      if (!(planner || actor.dept === job.dept)) fail("BOM_FORBIDDEN");
+      const recordLead = planner || bomGrHead(actor, job.dept);
       const today = bomGrDay(at);
-      if (!lead) {
+      if (!recordLead) {
         if (record && (record.workerId !== actor.id || bomGrDay(record.createdAt) !== today)) fail("BOM_FORBIDDEN");
         if (fields && (fields.workerId !== actor.id || ![today, bomGrDay(at, -1)].includes(fields.workDate))) fail("BOM_FORBIDDEN");
       }
@@ -1438,9 +1476,9 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       if (fields) {
         const plan = next.grPlans.find((entry) => entry.jobId === job.id);
         if (!plan || !plan.steps.some((step) => step.code === fields.stepCode)) bomGrBad();
-        if ((action === "addGrRecord" || fields.workerId !== record.workerId) && !bomGrWorkers().some((worker) => worker.id === fields.workerId)) bomGrBad();
+        if ((action === "addGrRecord" || fields.workerId !== record.workerId) && !bomGrWorkers(job.dept).some((worker) => worker.id === fields.workerId)) bomGrBad();
         if (fields.workDate > today || fields.workDate < "2000-01-01") bomGrBad();
-        if (fields.reason !== null && !bomGrConfigNow(next).reasons.includes(fields.reason)) bomGrBad();
+        if (fields.reason !== null && !bomGrConfigNow(next, job.dept).reasons.includes(fields.reason)) bomGrBad();
       }
       if (record && (record.edits ?? []).length >= 100) bomGrBad();
       const workerName = (workerId) => bomGrWorkers().find((worker) => worker.id === workerId)?.name ?? (workerId === actor.id ? actor.name : record?.workerName ?? "");
@@ -1449,14 +1487,14 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         next.grRecords.push({ id, jobId: job.id, orderId: job.orderId, itemCode: job.itemCode, ...fields, workerName: workerName(fields.workerId), status: "active", voidReason: null, edits: [],
           createdBy: actor.name, createdById: actor.id, createdAt: at, updatedBy: null, updatedAt: null });
         stamp("grRecords", id);
-        label = `GR บันทึกผล ${fields.stepCode} ${fields.workDate}`;
+        label = `${job.dept} บันทึกผล ${fields.stepCode} ${fields.workDate}`;
       } else {
         const before = { stepCode: record.stepCode, workDate: record.workDate, workerId: record.workerId, hours: record.hours, people: record.people, good: record.good, reject: record.reject, reason: record.reason, note: record.note };
         const edits = [...(record.edits ?? []), { at, by: actor.name, kind: action === "voidGrRecord" ? "void" : "edit", reason: why, before }];
         if (action === "voidGrRecord") Object.assign(record, { status: "void", voidReason: why, edits, updatedBy: actor.name, updatedAt: at });
         else Object.assign(record, fields, { workerName: workerName(fields.workerId), edits, updatedBy: actor.name, updatedAt: at });
         stamp("grRecords", record.id);
-        label = `${action === "voidGrRecord" ? "GR ยกเลิกผล" : "GR แก้ไขผล"} ${before.stepCode} ${before.workDate}`;
+        label = `${job.dept} ${action === "voidGrRecord" ? "ยกเลิกผล" : "แก้ไขผล"} ${before.stepCode} ${before.workDate}`;
       }
       return bomGrRecompute(next, job, nextVersion, actor, at, label);
     }
@@ -1489,28 +1527,49 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       return none;
     }
     const id = bomGrUuid(row.id);
-    if (action === "sendGrToPk") {
+    // ส่งงานระหว่างแผนก (private.bom_gr_save_handover ของ 20261224010000): sendGrToPk (งาน GR) · sendToPk (งาน GR / PT / BG) · sendPkToWh (งาน PK / FG)
+    const to = ["sendPkToWh", "cancelPkToWh"].includes(action) ? "WH" : "PK";
+    if (["sendGrToPk", "sendToPk", "sendPkToWh"].includes(action)) {
       const no = bomGrJobNo(row.jobId);
-      const qty = bomGrInt(row.qty, 1, 10000000);
+      const qty = bomGrNum(row.qty, 0, 10000000);
+      if (qty === null || qty <= 0 || Math.round(qty * 1e4) / 1e4 !== qty || (to === "PK" && !Number.isInteger(qty))) bomGrBad();
       const note = bomGrText(row.note, 0, 200);
-      if (!lead) fail("BOM_FORBIDDEN");
+      if (!(planner || (action === "sendGrToPk" && bomGrHead(actor, "GR")) || (action === "sendToPk" && ["GR", "PT", "BG"].includes(actor.dept) && bomGrHead(actor, actor.dept))
+        || (action === "sendPkToWh" && bomGrHead(actor, "PK")))) fail("BOM_FORBIDDEN");
       if (next.grHandovers.some((entry) => String(entry.id).toLowerCase() === id)) bomGrBad();
-      const job = jobOf(no);
-      if (!bomGrOrderOpen(next, job.orderId)) fail("BOM_INVALID_TRANSITION");
+      const job = next.jobs.find((entry) => entry.id === no) ?? bomGrBad();
+      if ((action === "sendGrToPk" && job.dept !== "GR") || (action === "sendToPk" && !["GR", "PT", "BG"].includes(job.dept)) || (action === "sendPkToWh" && (job.dept !== "PK" || job.kind !== "FG"))) bomGrBad();
+      if (action === "sendToPk" && !(planner || bomGrHead(actor, job.dept))) fail("BOM_FORBIDDEN");
+      const status = next.orders.find((order) => order.id === job.orderId)?.status;
+      if (!(["released", "in_progress"].includes(status) || (to === "WH" && status === "completed"))) fail("BOM_INVALID_TRANSITION");
       const sent = next.grHandovers.filter((entry) => entry.jobId === job.id && entry.status !== "cancelled").reduce((sum, entry) => sum + entry.qty, 0);
       if (sent + qty > (Number(job.qtyDone) || 0) + 1e-9) fail("BOM_GR_EXCEEDS");
-      next.grHandovers.push({ id, jobId: job.id, orderId: job.orderId, itemCode: job.itemCode, qty, status: "sent", note, sentBy: actor.name, sentAt: at, receivedBy: null, receivedAt: null,
+      next.grHandovers.push({ id, jobId: job.id, orderId: job.orderId, itemCode: job.itemCode, qty, status: "sent", note, fromDept: job.dept, toDept: to, sentBy: actor.name, sentAt: at, receivedBy: null, receivedAt: null,
         cancelledBy: null, cancelledAt: null, cancelReason: null, moves: [{ kind: "send", at, by: actor.name, note }] });
       stamp("grHandovers", id);
       return none;
     }
-    const why = action === "cancelGrHandover" ? bomGrReason(row.reason) : null;
+    const receiving = ["receiveGrAtPk", "receiveAtPk"].includes(action);
+    const why = ["cancelGrHandover", "cancelHandover", "cancelPkToWh"].includes(action) ? bomGrReason(row.reason) : null;
     const handover = next.grHandovers.find((entry) => String(entry.id).toLowerCase() === id) ?? bomGrBad();
-    if (action === "receiveGrAtPk" && !(planner || actor.dept === "PK")) fail("BOM_FORBIDDEN");
-    if (action === "cancelGrHandover" && !(planner || bomGrHead(actor, handover.status === "received" ? "PK" : "GR"))) fail("BOM_FORBIDDEN");
+    if ((handover.toDept ?? "PK") !== to) bomGrBad();
+    if (receiving && !(planner || actor.dept === "PK")) fail("BOM_FORBIDDEN");
+    if (["cancelGrHandover", "cancelHandover"].includes(action) && !(planner || bomGrHead(actor, handover.status === "received" ? "PK" : handover.fromDept ?? "GR"))) fail("BOM_FORBIDDEN");
+    if (action === "cancelPkToWh" && !(planner || bomGrHead(actor, "PK"))) fail("BOM_FORBIDDEN");
     bomGrStale(next, "grHandovers", handover.id, base, cur);
+    if (action === "cancelPkToWh") {
+      // ยกเลิกได้เฉพาะส่วนที่ WH ยังไม่รับ: ที่ส่งที่เหลือของใบ × สินค้า (ไม่นับแถวนี้) ≥ ที่ WH รับสุทธิแล้ว
+      const status = next.orders.find((order) => order.id === handover.orderId)?.status;
+      if (!["released", "in_progress", "completed"].includes(status) || handover.status !== "sent") fail("BOM_INVALID_TRANSITION");
+      const left = next.grHandovers.filter((entry) => entry.orderId === handover.orderId && entry.itemCode === handover.itemCode && (entry.toDept ?? "PK") === "WH" && entry.status !== "cancelled" && entry.id !== handover.id)
+        .reduce((sum, entry) => sum + entry.qty, 0);
+      if (bomFgFigures(next.fgMoves, handover.orderId, handover.itemCode).own > left + 1e-9) fail("BOM_FG_EXCEEDS");
+      Object.assign(handover, { status: "cancelled", cancelledBy: actor.name, cancelledAt: at, cancelReason: why, moves: [...handover.moves, { kind: "cancel", at, by: actor.name, note: why }] });
+      stamp("grHandovers", handover.id);
+      return none;
+    }
     if (!bomGrOrderOpen(next, handover.orderId)) fail("BOM_INVALID_TRANSITION");
-    if (action === "receiveGrAtPk") {
+    if (receiving) {
       if (handover.status !== "sent") fail("BOM_INVALID_TRANSITION");
       Object.assign(handover, { status: "received", receivedBy: actor.name, receivedAt: at, moves: [...handover.moves, { kind: "receive", at, by: actor.name, note: "" }] });
     } else if (handover.status === "sent") {

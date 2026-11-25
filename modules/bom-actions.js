@@ -1128,7 +1128,8 @@
     if (!["released", "in_progress", "completed"].includes(order.status)) fail("รับสินค้าเข้าคลังได้เฉพาะใบที่ปล่อยผลิตแล้ว");
     for (const line of lines) {
       const product = position.products.find((entry) => entry.fgCode === line.fgCode);
-      if (line.qty > product.receivable + 1e-9) fail(`${line.fgCode} รับได้อีกไม่เกิน ${rules().fmtQty(product.receivable)} (PK ส่งมอบแล้ว ${rules().fmtQty(product.pkDone)} รับเข้าคลังไปแล้ว ${rules().fmtQty(product.own)})`);
+      // 20261224010000: รับได้ไม่เกินที่ PK ส่งให้ WH แล้ว (และไม่เกินยอดที่ PK ทำ)
+      if (line.qty > product.receivable + 1e-9) fail(`${line.fgCode} รับได้อีกไม่เกิน ${rules().fmtQty(product.receivable)} (PK ส่งให้ WH แล้ว ${rules().fmtQty(Math.min(product.pkDone, product.pkSent ?? product.pkDone))} รับเข้าคลังไปแล้ว ${rules().fmtQty(product.own)})`);
     }
     // ใบปิดเองเมื่อทุกสินค้ามีของครบตามที่สั่ง รับเอง + ได้จากสต็อก และทุกงานผลิตเสร็จแล้ว (โหมดฐานข้อมูล: เซิร์ฟเวอร์ทำเองและส่งใบกลับมา · ฝั่งนี้ทำล่วงหน้าให้หน้าแสดงทันที) · ใบที่ปิดแล้วไม่ปิดซ้ำ
     // รับครบแต่ยังมีงานผลิตเปิด: ใบเปิดต่อ คลังสินค้า (WH) ปิดใบเมื่อทุกแผนกปิดงานแล้ว (closeOrder)
@@ -1167,7 +1168,8 @@
     if (!position.hasPkJobs) fail("ใบนี้ไม่มีงานบรรจุ (PK) ให้ปิดแบบรับไม่ครบ");
     if (!position.pkAllDone) fail("งานบรรจุ (PK) ยังไม่เสร็จครบทุกสินค้า");
     if (!position.productionDone) fail(productionOpenText(position));
-    if (position.products.some((product) => product.receivable > 1e-9)) fail("ยังมีสินค้าที่ PK ทำเสร็จแต่ยังไม่ได้รับเข้าคลัง รับเข้าให้ครบก่อน");
+    // ทุกสินค้ารับเข้าคลังเท่ายอดที่ PK ทำ (ตรงกับ private.bom_fg_move) · 20261224010000: ส่วนที่ PK ทำแต่ยังไม่ส่งให้ WH ก็ยังไม่ได้รับเข้าคลัง
+    if (position.products.some((product) => product.pkDone - product.own > 1e-9)) fail("ยังมีสินค้าที่ PK ทำเสร็จแต่ยังไม่ได้รับเข้าคลัง (PK ส่งให้ WH แล้ว WH รับเข้า) ให้ครบก่อน");
     if (!position.products.some((product) => product.have + 1e-9 < product.ordered)) fail("มีสินค้าครบตามที่สั่งแล้ว ไม่ต้องปิดแบบรับไม่ครบ ใช้ “ปิดใบ” แทน");
     if (!ctx.remote) pushFgMoves(d, ctx, order, "close", [], note);
     closeOrderNow(order, ctx);
@@ -1727,7 +1729,18 @@
   // รับงานจาก GR = แผนก PK หรือฝ่ายวางแผน · ย้อนการรับ = หัวหน้า PK หรือฝ่ายวางแผน
   const canReceiveGr = (user) => canPlan(user) || user?.dept === "PK";
   const canReverseGrReceipt = (user) => canPlan(user) || isDeptHead(user, "PK");
+  // ขั้นตอนรายแผนก PT / BG / PK แบบเดียวกับ GR (20261224010000_bom_dept_steps.sql): หัวหน้าแผนกนั้น (หรือฝ่ายวางแผน) = ผู้นำของแผนก · พนักงานแผนกนั้นบันทึกผลของตัวเอง
+  // ส่งให้ PK = หัวหน้าแผนกของงาน GR / PT / BG · PK รับ = แผนก PK ทุกบทบาท · ส่งให้ WH / ยกเลิกการส่งให้ WH = หัวหน้า PK · ฝ่ายวางแผนทำได้ทุกอย่าง
+  const STEP_DEPTS = Object.freeze(["GR", "PT", "BG", "PK"]);
+  const TO_PK_DEPTS = Object.freeze(["GR", "PT", "BG"]);
+  const canDeptLead = (user, dept) => canPlan(user) || isDeptHead(user, dept);
+  const canDeptRecord = (user, dept) => canPlan(user) || (Boolean(user?.dept) && user.dept === dept);
+  const canReceiveAtPk = canReceiveGr;
+  const canReversePkReceipt = canReverseGrReceipt;
+  const canSendPkToWh = (user) => canDeptLead(user, "PK");
   const GR_ACTIVE_ORDER = Object.freeze(["released", "in_progress"]);
+  // ส่งให้ WH / ยกเลิกการส่งให้ WH ได้ทั้งใบที่ปิดแล้ว (ส่วนที่ PK ผลิตเกินจำนวนสั่ง WH รับเป็นสต็อกได้หลังใบปิด · ตรงกับ private.bom_gr_save_handover)
+  const WH_SEND_ORDER = Object.freeze(["released", "in_progress", "completed"]);
   const grReason = (value, label) => {
     const note = value === undefined || value === null ? "" : typeof value === "string" ? value.trim() : fail(`${label}ต้องเป็นข้อความ`);
     if (note.length < rules().GR_LIMITS.reasonMin) fail(`กรุณาระบุ${label} (อย่างน้อย ${rules().GR_LIMITS.reasonMin} ตัวอักษร)`);
@@ -1752,6 +1765,17 @@
     if (job.dept !== "GR") fail(`งาน ${job.id} ไม่ใช่งานของแผนก GR`);
     return job;
   };
+  // งานของแผนกที่มีขั้นตอน (GR / PT / BG / PK) ที่ผู้ใช้ทำได้ตาม can(user, แผนกของงาน) · หัวหน้าแผนกอื่น = "ไม่ใช่งานของแผนก <แผนกของผู้ใช้>" · ไม่ผ่าน = what(แผนกของงาน)
+  function stepJobFor(d, jobId, user, can, what) {
+    const job = jobById(d, String(jobId ?? "").trim());
+    const own = !canPlan(user) && STEP_DEPTS.includes(user?.dept) ? user.dept : null;
+    if (!STEP_DEPTS.includes(job.dept)) fail(`งาน ${job.id} ไม่ใช่งานของแผนก ${own ?? STEP_DEPTS.join(" / ")}`);
+    if (!can(user, job.dept)) fail(own && own !== job.dept ? `งาน ${job.id} ไม่ใช่งานของแผนก ${own}` : what(job.dept));
+    return job;
+  }
+  const deptOfJobId = (d, jobId) => (d?.jobs ?? []).find((job) => job.id === jobId)?.dept ?? "GR";
+  // ปลายทางของการส่งงานของแผนก: PK ส่งให้ WH · GR / PT / BG ส่งให้ PK
+  const handoverTarget = (dept) => (dept === "PK" ? "WH" : "PK");
   const isGrPlanned = (d, job) => Boolean(rules().grPlanOf(d, job?.id));
   // งานที่มีผลรายวันของ GR แล้ว (ทุกสถานะของผล): นับว่าเริ่มแล้ว คืนคิวไม่ได้ (ปุ่มที่พักอยู่ = ทำต่อ)
   const hasGrRecords = (d, job) => (d?.grRecords ?? []).some((record) => record.jobId === job?.id);
@@ -1764,18 +1788,19 @@
     if (!order || !GR_ACTIVE_ORDER.includes(order.status)) return "ใบสั่งผลิตไม่อยู่ในสถานะผลิต";
     if (isGrClosedShort(job) && !canPlan(user)) return "ฝ่ายวางแผนปิดงานนี้แล้ว แก้ผลได้โดยฝ่ายวางแผนเท่านั้น";
     if (adding && job.status === "hold") return "งานนี้พักอยู่ กด ทำต่อ ก่อนบันทึกผล";
-    if (adding && !isGrPlanned(d, job)) return "งานนี้ยังไม่ได้ตั้งขั้นตอน ให้หัวหน้าแผนก GR ตั้งขั้นตอนก่อนบันทึกผล";
+    if (adding && !isGrPlanned(d, job)) return `งานนี้ยังไม่ได้ตั้งขั้นตอน ให้หัวหน้าแผนก ${job.dept ?? "GR"} ตั้งขั้นตอนก่อนบันทึกผล`;
     return null;
   }
-  // เหตุที่ผู้ใช้แก้ / ยกเลิกผลนี้ไม่ได้ (null = ได้): พนักงานแก้ได้เฉพาะผลของตัวเองที่บันทึกวันนี้ (เวลาไทย) · หัวหน้า GR / ฝ่ายวางแผน ได้ทุกผล
+  // เหตุที่ผู้ใช้แก้ / ยกเลิกผลนี้ไม่ได้ (null = ได้): พนักงานของแผนกงานแก้ได้เฉพาะผลของตัวเองที่บันทึกวันนี้ (เวลาไทย) · หัวหน้าแผนกนั้น / ฝ่ายวางแผน ได้ทุกผล
   function grRecordBlock(d, user, record, now) {
     if (!record || record.status !== "active") return "ผลนี้ถูกยกเลิกแล้ว";
-    if (!canGrRecord(user)) return "แก้ผลรายวันได้โดยแผนก GR หรือฝ่ายวางแผนเท่านั้น";
-    if (!canGrLead(user)) {
-      if (record.workerId !== user.id) return "พนักงานแก้ได้เฉพาะผลของตัวเอง";
-      if (rules().grDay(record.createdAt) !== rules().grDay(now)) return "พนักงานแก้ผลได้เฉพาะวันที่บันทึก ให้หัวหน้าแผนก GR แก้แทน";
-    }
     const job = d.jobs.find((entry) => entry.id === record.jobId);
+    const dept = job?.dept ?? "GR";
+    if (!canDeptRecord(user, dept)) return `แก้ผลรายวันได้โดยแผนก ${dept} หรือฝ่ายวางแผนเท่านั้น`;
+    if (!canDeptLead(user, dept)) {
+      if (record.workerId !== user.id) return "พนักงานแก้ได้เฉพาะผลของตัวเอง";
+      if (rules().grDay(record.createdAt) !== rules().grDay(now)) return `พนักงานแก้ผลได้เฉพาะวันที่บันทึก ให้หัวหน้าแผนก ${dept} แก้แทน`;
+    }
     return job ? grJobBlock(d, job, user, { adding: false }) : "ไม่พบงานของผลนี้";
   }
   // ยอดของงานจากผลรายวัน (สูตรเดียวกับ private.bom_gr_recompute) · ยอดเปลี่ยน = รายการรายงาน kind gr (ยอด >= 0 ยอดเดิม → ใหม่ในหมายเหตุ)
@@ -1812,26 +1837,35 @@
     const R = rules();
     const good = R.grJobTotals({ grRecords: records }, job.id, steps ?? R.grPlanOf(d, job.id)?.steps)?.good ?? 0;
     const { sent } = R.grHandoverSummary(d, job);
-    if (good + 1e-9 < sent) fail(`${what}ไม่ได้: ยอดดีของงานจะเหลือ ${R.fmtQty(good)} ต่ำกว่าที่ส่งให้ PK แล้ว ${R.fmtQty(sent)} ยกเลิกการส่ง (หรือให้หัวหน้าแผนก PK ย้อนการรับ) ก่อน`);
+    // งาน PK ส่งให้ WH (20261224010000): ยกเลิกการส่งให้ WH ก่อน (ส่วนที่ WH รับแล้วต้องให้ WH ย้อนรับเข้าก่อน)
+    const to = handoverTarget(job.dept);
+    const undo = to === "WH" ? "ยกเลิกการส่งให้ WH (ส่วนที่ WH รับแล้วให้ผู้จัดการ WH ย้อนรับเข้า) ก่อน" : "ยกเลิกการส่ง (หรือให้หัวหน้าแผนก PK ย้อนการรับ) ก่อน";
+    if (good + 1e-9 < sent) fail(`${what}ไม่ได้: ยอดดีของงานจะเหลือ ${R.fmtQty(good)} ต่ำกว่าที่ส่งให้ ${to} แล้ว ${R.fmtQty(sent)} ${undo}`);
   }
 
   // ตั้งค่า GR: { steps: [{ code?, name, kind: main | side, active }] (ลำดับในอาร์เรย์ = ลำดับขั้น), reasons: [ข้อความ], targets: [{ itemCode, stepCode, perHour }] }
   // ขั้นใหม่ที่ไม่ส่ง code ได้รหัส GR-<เลขถัดไป> · ขั้นที่มีผลบันทึกแล้วหรืออยู่ในขั้นตอนของงานใด ลบไม่ได้ (ตั้ง active = false แทน)
+  // ขั้นตอนรายแผนก (20261224010000): p.dept = GR (ค่าเริ่มต้น) | PT | BG | PK · รหัสขั้นขึ้นต้นด้วยแผนก · สิทธิ์ = หัวหน้าแผนกนั้น · ขั้นที่ใช้อยู่ตรวจเฉพาะงานของแผนกนั้น
   function saveGrConfig(d, p, ctx) {
     const user = requireUser(ctx);
     const R = rules();
     const L = R.GR_LIMITS;
-    if (!canGrLead(user)) fail("ตั้งค่าขั้นตอนและเป้าได้โดยหัวหน้าแผนก GR หรือฝ่ายวางแผนเท่านั้น");
+    const dept = p?.dept === undefined || p?.dept === null || p?.dept === "" ? "GR" : String(p.dept).trim().toUpperCase();
+    if (!STEP_DEPTS.includes(dept)) fail(`แผนก ${dept} ไม่มีขั้นตอนให้ตั้ง`);
+    if (!canDeptLead(user, dept)) fail(`ตั้งค่าขั้นตอนและเป้าได้โดยหัวหน้าแผนก ${dept} หรือฝ่ายวางแผนเท่านั้น`);
     const rawSteps = Array.isArray(p?.steps) ? p.steps : fail("กรุณาระบุขั้นตอน");
     if (!rawSteps.length) fail("ต้องมีอย่างน้อย 1 ขั้นตอน");
     if (rawSteps.length > L.steps) fail(`ขั้นตอนได้ไม่เกิน ${L.steps} ขั้น`);
     const given = rawSteps.map((step) => String(step?.code ?? "").trim().toUpperCase()).filter(Boolean);
-    let next = Math.max(12, ...given.map((code) => Number(/^GR-(\d+)$/.exec(code)?.[1]) || 0));
+    const numbered = new RegExp(`^${dept}-(\\d+)$`);
+    const defaults = (R.DEPT_DEFAULT_CONFIG[dept] ?? R.GR_DEFAULT_CONFIG).steps.map((step) => step.code);
+    let next = Math.max(0, ...[...defaults, ...given].map((code) => Number(numbered.exec(code)?.[1]) || 0));
+    const pattern = R.deptStepCode(dept);
     const codes = new Set();
     const steps = rawSteps.map((step, index) => {
       let code = String(step?.code ?? "").trim().toUpperCase();
-      if (!code) { next += 1; code = `GR-${String(next).padStart(2, "0")}`; }
-      if (!R.GR_STEP_CODE.test(code)) fail(`รหัสขั้นตอน ${code} ต้องเป็นรูป GR- ตามด้วยตัวอักษรหรือตัวเลข 1-10 ตัว`);
+      if (!code) { next += 1; code = `${dept}-${String(next).padStart(2, "0")}`; }
+      if (!pattern.test(code)) fail(`รหัสขั้นตอน ${code} ต้องเป็นรูป ${dept}- ตามด้วยตัวอักษรหรือตัวเลข 1-10 ตัว`);
       if (codes.has(code)) fail(`รหัสขั้นตอน ${code} ซ้ำ`);
       codes.add(code);
       const name = text(step?.name, `ชื่อขั้นตอนที่ ${index + 1}`, L.name);
@@ -1858,22 +1892,27 @@
       if (perHour > L.perHour) fail(`เป้าของ ${itemCode} ขั้น ${stepCode} ต้องไม่เกิน ${R_fmt(L.perHour)} ชิ้นต่อชั่วโมง`);
       return { itemCode, stepCode, perHour };
     });
-    // ขั้นที่ใช้อยู่ลบไม่ได้
-    const config = R.grConfig(d);
-    const used = new Set([...(d.grRecords ?? []).map((record) => record.stepCode), ...(d.grPlans ?? []).flatMap((plan) => (plan.steps ?? []).map((step) => step.code))]);
+    // ขั้นที่ใช้อยู่ (ผล / แผนของงานแผนกนี้) ลบไม่ได้
+    const config = R.grConfig(d, dept);
+    const used = new Set([...(d.grRecords ?? []).filter((record) => R.recordDept(d, record) === dept).map((record) => record.stepCode),
+      ...(d.grPlans ?? []).filter((plan) => deptOfJobId(d, plan.jobId) === dept).flatMap((plan) => (plan.steps ?? []).map((step) => step.code))]);
     const dropped = [...used].filter((code) => !codes.has(code));
     if (dropped.length) fail(`ขั้น ${dropped.map((code) => R.grStepName(config, code)).join(", ")} มีผลบันทึกแล้วหรืออยู่ในขั้นตอนของงาน ลบไม่ได้ ตั้งเป็นไม่ใช้แทน`);
-    d.grConfig = [{ key: "gr", steps, reasons, targets, updatedBy: user.name, updatedAt: ctx.now }];
-    audit(d, ctx, "ตั้งค่าขั้นตอนและเป้า (GR)", `${steps.length} ขั้น · เหตุผล ${reasons.length} ข้อ · เป้า ${targets.length} รายการ`);
-    return { summary: `${steps.length} ขั้นตอน`, section: "grConfig", request: [{ steps, reasons, targets }] };
+    // หนึ่งแถวต่อแผนก (GR ก่อนเหมือนลำดับของฐานข้อมูล)
+    const row = { key: dept.toLowerCase(), dept, steps, reasons, targets, updatedBy: user.name, updatedAt: ctx.now };
+    d.grConfig = [...(d.grConfig ?? []).filter((entry) => R.configDept(entry) !== dept), row]
+      .sort((a, b) => Number(R.configDept(a) !== "GR") - Number(R.configDept(b) !== "GR") || R.configDept(a).localeCompare(R.configDept(b)));
+    audit(d, ctx, `ตั้งค่าขั้นตอนและเป้า (${dept})`, `${steps.length} ขั้น · เหตุผล ${reasons.length} ข้อ · เป้า ${targets.length} รายการ`);
+    // แถวคำขอของ GR คงรูปเดิม (ไม่มี dept = GR) · แผนกอื่นส่ง dept
+    return { summary: `${steps.length} ขั้นตอน`, section: "grConfig", request: [{ ...(dept === "GR" ? {} : { dept }), steps, reasons, targets }] };
   }
 
   // ตั้งขั้นตอนของงาน GR: { jobId, steps: [{ code, qtyTarget }] } ตามลำดับ (ขั้นสุดท้าย = ขั้นที่นับเป็นยอดดีของงาน) · ค่าเริ่มต้นของหน้า = rules.grDefaultSteps
   function setGrJobSteps(d, p, ctx) {
     const user = requireUser(ctx);
     const R = rules();
-    if (!canGrLead(user)) fail("ตั้งขั้นตอนของงานได้โดยหัวหน้าแผนก GR หรือฝ่ายวางแผนเท่านั้น");
-    const job = grJobOf(d, p?.jobId);
+    if (!(canPlan(user) || STEP_DEPTS.some((dept) => isDeptHead(user, dept)))) fail(`ตั้งขั้นตอนของงานได้โดยหัวหน้าแผนก ${STEP_DEPTS.includes(user?.dept) ? user.dept : "GR"} หรือฝ่ายวางแผนเท่านั้น`);
+    const job = stepJobFor(d, p?.jobId, user, canDeptLead, (dept) => `ตั้งขั้นตอนของงานได้โดยหัวหน้าแผนก ${dept} หรือฝ่ายวางแผนเท่านั้น`);
     const order = orderById(d, job.orderId);
     if (!GR_ACTIVE_ORDER.includes(order.status)) fail("ใบสั่งผลิตไม่อยู่ในสถานะผลิต");
     if (job.status === "done") fail("งานนี้เสร็จแล้ว ตั้งขั้นตอนไม่ได้");
@@ -1882,7 +1921,7 @@
     const raw = Array.isArray(p?.steps) ? p.steps : fail("กรุณาเลือกขั้นตอน");
     if (!raw.length) fail("เลือกอย่างน้อย 1 ขั้นตอน");
     if (raw.length > R.GR_LIMITS.steps) fail(`ขั้นตอนได้ไม่เกิน ${R.GR_LIMITS.steps} ขั้น`);
-    const config = R.grConfig(d);
+    const config = R.grConfig(d, job.dept);
     const oldCodes = new Set((old?.steps ?? []).map((step) => step.code));
     const seen = new Set();
     const steps = raw.map((step) => {
@@ -1899,8 +1938,8 @@
     d.grPlans ??= [];
     const plan = { jobId: job.id, orderId: job.orderId, steps, createdBy: old?.createdBy ?? user.name, createdAt: old?.createdAt ?? ctx.now, updatedBy: user.name, updatedAt: ctx.now };
     d.grPlans = [...d.grPlans.filter((entry) => entry.jobId !== job.id), plan];
-    recomputeGrJob(d, job, ctx, "GR ตั้งขั้นตอนของงาน");
-    audit(d, ctx, "ตั้งขั้นตอนของงาน (GR)", `${job.id} ${job.itemCode}: ${steps.map((step) => R.grStepName(config, step.code)).join(" → ")}`);
+    recomputeGrJob(d, job, ctx, `${job.dept} ตั้งขั้นตอนของงาน`);
+    audit(d, ctx, `ตั้งขั้นตอนของงาน (${job.dept})`, `${job.id} ${job.itemCode}: ${steps.map((step) => R.grStepName(config, step.code)).join(" → ")}`);
     return { summary: `${job.id} ${steps.length} ขั้น`, section: "grPlans", request: [{ jobId: job.id, steps }] };
   }
 
@@ -1909,7 +1948,8 @@
     const R = rules();
     const L = R.GR_LIMITS;
     const pick = (key, fallback) => (p?.[key] === undefined ? fallback : p[key]);
-    const config = R.grConfig(d);
+    const dept = job.dept ?? "GR";
+    const config = R.grConfig(d, dept);
     const plan = R.grPlanOf(d, job.id);
     const stepCode = String(pick("stepCode", base?.stepCode) ?? "").trim().toUpperCase();
     if (!stepCode) fail("กรุณาเลือกขั้นตอน");
@@ -1920,15 +1960,15 @@
     if (workDate > today) fail("วันที่ทำงานต้องไม่เกินวันนี้");
     const workerId = String(pick("workerId", base?.workerId ?? user.id) ?? "").trim();
     if (!workerId) fail("กรุณาเลือกผู้ทำ");
-    const lead = canGrLead(user);
+    const lead = canDeptLead(user, dept);
     if (!lead) {
       if (workerId !== user.id) fail("พนักงานบันทึกได้เฉพาะผลของตัวเอง");
-      if (![today, R.grDay(ctx.now, -1)].includes(workDate)) fail("พนักงานบันทึกผลได้เฉพาะวันนี้หรือเมื่อวาน ให้หัวหน้าแผนก GR บันทึกแทน");
+      if (![today, R.grDay(ctx.now, -1)].includes(workDate)) fail(`พนักงานบันทึกผลได้เฉพาะวันนี้หรือเมื่อวาน ให้หัวหน้าแผนก ${dept} บันทึกแทน`);
     }
-    // ผู้ทำใหม่ (เพิ่มผล หรือเปลี่ยนผู้ทำของผลที่แก้) ต้องอยู่ในรายชื่อพนักงานแผนก GR (grWorkers) ทุกผู้เรียก รวมผู้บันทึกเอง · ตรงกับ private.bom_gr_save_record
-    const workers = d.grWorkers ?? [];
+    // ผู้ทำใหม่ (เพิ่มผล หรือเปลี่ยนผู้ทำของผลที่แก้) ต้องอยู่ในรายชื่อพนักงานของแผนกงาน (grWorkers ของแผนกนั้น) ทุกผู้เรียก รวมผู้บันทึกเอง · ตรงกับ private.bom_gr_save_record
+    const workers = R.stepWorkers(d, dept);
     const worker = workers.find((entry) => entry.id === workerId) ?? null;
-    if (workerId !== base?.workerId && !worker) fail(workerId === user.id ? "บัญชีนี้ไม่อยู่ในรายชื่อพนักงานแผนก GR กรุณาเลือกผู้ทำ" : "ผู้ทำต้องเป็นพนักงานแผนก GR");
+    if (workerId !== base?.workerId && !worker) fail(workerId === user.id ? `บัญชีนี้ไม่อยู่ในรายชื่อพนักงานแผนก ${dept} กรุณาเลือกผู้ทำ` : `ผู้ทำต้องเป็นพนักงานแผนก ${dept}`);
     const workerName = worker?.name ?? (workerId === user.id ? user.name : workerId === base?.workerId ? base.workerName : String(p?.workerName ?? "").trim());
     const hours = Number(pick("hours", base?.hours));
     if (!Number.isFinite(hours) || hours <= 0) fail("ชั่วโมงทำงานต้องมากกว่า 0");
@@ -1941,7 +1981,7 @@
     let reason = String(pick("reason", base?.reason) ?? "").trim();
     if (reject === 0) reason = "";
     else if (!reason) fail("มีของเสีย กรุณาเลือกเหตุผล");
-    else if (!config.reasons.includes(reason)) fail(`เหตุผล ${reason} ไม่อยู่ในรายการของแผนก GR`);
+    else if (!config.reasons.includes(reason)) fail(`เหตุผล ${reason} ไม่อยู่ในรายการของแผนก ${dept}`);
     const note = grNote(pick("note", base?.note));
     return { stepCode, workDate, workerId, workerName, hours, people, good, reject, reason: reason || null, note };
   }
@@ -1951,8 +1991,7 @@
   function addGrRecord(d, p, ctx) {
     const user = requireUser(ctx);
     const R = rules();
-    if (!canGrRecord(user)) fail("บันทึกผลรายวันได้โดยแผนก GR หรือฝ่ายวางแผนเท่านั้น");
-    const job = grJobOf(d, p?.jobId);
+    const job = stepJobFor(d, p?.jobId, user, canDeptRecord, (dept) => `บันทึกผลรายวันได้โดยแผนก ${dept} หรือฝ่ายวางแผนเท่านั้น`);
     const blocked = grJobBlock(d, job, user);
     if (blocked) fail(blocked);
     const fields = grRecordFields(d, p, ctx, user, job);
@@ -1961,9 +2000,9 @@
       createdBy: user.name, createdById: user.id, createdAt: ctx.now, updatedBy: null, updatedAt: null };
     d.grRecords ??= [];
     d.grRecords.push(record);
-    recomputeGrJob(d, job, ctx, `GR บันทึกผล ${fields.stepCode} ${fields.workDate}`);
-    const config = R.grConfig(d);
-    audit(d, ctx, "บันทึกผลรายวัน (GR)", `${job.id} ${R.grStepName(config, fields.stepCode)} ${fields.workDate} ${fields.workerName}: ดี ${fields.good} เสีย ${fields.reject}${fields.reason ? ` (${fields.reason})` : ""}`);
+    recomputeGrJob(d, job, ctx, `${job.dept} บันทึกผล ${fields.stepCode} ${fields.workDate}`);
+    const config = R.grConfig(d, job.dept);
+    audit(d, ctx, `บันทึกผลรายวัน (${job.dept})`, `${job.id} ${R.grStepName(config, fields.stepCode)} ${fields.workDate} ${fields.workerName}: ดี ${fields.good} เสีย ${fields.reject}${fields.reason ? ` (${fields.reason})` : ""}`);
     return { id, summary: `${R.grStepName(config, fields.stepCode)} ดี ${R.fmtQty(fields.good)}`, section: "grRecords", request: [{ id, jobId: job.id, ...grRecordRequest(record) }] };
   }
   // แก้ผลรายวัน: { recordId, ...ช่องที่แก้ (ไม่ส่ง = ค่าเดิม), editReason } เหตุผล 3-200 ทุกครั้ง · ประวัติเก็บค่าก่อนแก้
@@ -1980,8 +2019,8 @@
     grKeepSent(d, job, (d.grRecords ?? []).map((row) => (row === record ? { ...row, ...fields } : row)), undefined, "แก้ผลนี้");
     const before = { ...grRecordRequest(record), reason: record.reason ?? null };
     Object.assign(record, fields, { edits: [...(record.edits ?? []), { at: ctx.now, by: user.name, kind: "edit", reason: why, before }], updatedBy: user.name, updatedAt: ctx.now });
-    recomputeGrJob(d, job, ctx, `GR แก้ไขผล ${before.stepCode} ${before.workDate}`);
-    audit(d, ctx, "แก้ไขผลรายวัน (GR)", `${job.id} ${before.workDate} ${record.workerName}: ดี ${before.good} → ${fields.good} เสีย ${before.reject} → ${fields.reject} — ${why}`);
+    recomputeGrJob(d, job, ctx, `${job.dept} แก้ไขผล ${before.stepCode} ${before.workDate}`);
+    audit(d, ctx, `แก้ไขผลรายวัน (${job.dept})`, `${job.id} ${before.workDate} ${record.workerName}: ดี ${before.good} → ${fields.good} เสีย ${before.reject} → ${fields.reject} — ${why}`);
     return { id: record.id, summary: `ดี ${R.fmtQty(fields.good)} เสีย ${R.fmtQty(fields.reject)}`, section: "grRecords", request: [{ id: record.id, ...grRecordRequest(record), editReason: why }] };
   }
   // ยกเลิกผลรายวัน: { recordId, reason } เหตุผล 3-200 · ผลยังอยู่ในประวัติ (status void)
@@ -1997,8 +2036,8 @@
     grKeepSent(d, job, (d.grRecords ?? []).map((row) => (row === record ? { ...row, status: "void" } : row)), undefined, "ยกเลิกผลนี้");
     const before = { ...grRecordRequest(record), reason: record.reason ?? null };
     Object.assign(record, { status: "void", voidReason: why, edits: [...(record.edits ?? []), { at: ctx.now, by: user.name, kind: "void", reason: why, before }], updatedBy: user.name, updatedAt: ctx.now });
-    recomputeGrJob(d, job, ctx, `GR ยกเลิกผล ${before.stepCode} ${before.workDate}`);
-    audit(d, ctx, "ยกเลิกผลรายวัน (GR)", `${job.id} ${before.workDate} ${record.workerName}: ดี ${before.good} เสีย ${before.reject} — ${why}`);
+    recomputeGrJob(d, job, ctx, `${job.dept} ยกเลิกผล ${before.stepCode} ${before.workDate}`);
+    audit(d, ctx, `ยกเลิกผลรายวัน (${job.dept})`, `${job.id} ${before.workDate} ${record.workerName}: ดี ${before.good} เสีย ${before.reject} — ${why}`);
     return { id: record.id, summary: `ยกเลิกผล ${before.workDate}`, section: "grRecords", request: [{ id: record.id, reason: why }] };
   }
 
@@ -2033,51 +2072,109 @@
     return { id: request.id, summary: `${request.itemCode} × ${rules().fmtQty(request.qty)}`, section: "rodRequests", request: [{ id: request.id, reason: why }] };
   }
 
-  // GR ส่งงานให้ PK: { jobId, qty, note } หัวหน้า GR หรือฝ่ายวางแผน · ส่งรวมได้ไม่เกินยอดดีของงาน (รอที่ GR = rules.grHandoverSummary().waitingAtGr)
-  function sendGrToPk(d, p, ctx) {
-    const user = requireUser(ctx);
+  // ---------- ส่งงานระหว่างแผนก (GR 20261216010000 · PT / BG / PK 20261224010000_bom_dept_steps.sql) ----------
+  // ชุด grHandovers แถวละการส่ง { id, jobId, orderId, itemCode, qty, status, note, fromDept, toDept, sentBy, sentAt, receivedBy, receivedAt, cancelledBy, cancelledAt, cancelReason, moves }
+  // GR / PT / BG → PK: sent → received (PK รับทั้งรายการ · ย้อนรับ = กลับเป็น sent) | sent → cancelled · PK → WH: sent | cancelled (WH รับด้วย receiveFg ไม่เปลี่ยนแถวส่ง)
+  // ส่งรวมของงาน (ไม่นับยกเลิก) ไม่เกินยอดดีของงาน (rules.grHandoverSummary().waitingAtGr = ส่งได้อีกเท่านี้) · ตรงกับ private.bom_gr_save_handover
+  function pushHandover(d, ctx, user, job, p, to, label) {
     const R = rules();
-    if (!canGrLead(user)) fail("ส่งงานให้ PK ได้โดยหัวหน้าแผนก GR หรือฝ่ายวางแผนเท่านั้น");
-    const job = grJobOf(d, p?.jobId);
     const order = orderById(d, job.orderId);
-    if (!GR_ACTIVE_ORDER.includes(order.status)) fail("ใบสั่งผลิตไม่อยู่ในสถานะผลิต");
-    const qty = grWhole(p?.qty, "จำนวนที่ส่ง", { min: 1 });
+    if (!(to === "WH" ? WH_SEND_ORDER : GR_ACTIVE_ORDER).includes(order.status)) fail("ใบสั่งผลิตไม่อยู่ในสถานะผลิต");
+    // ส่งให้ PK = จำนวนเต็ม · ส่งให้ WH = ทศนิยมได้ 4 ตำแหน่ง (ยอดของงาน PK / FG เป็นทศนิยมได้เหมือนที่ WH รับ)
+    const qty = to === "WH" ? qtyRound(num(p?.qty, "จำนวนที่ส่ง")) : grWhole(p?.qty, "จำนวนที่ส่ง", { min: 1 });
+    if (qty <= 0) fail("จำนวนที่ส่งต้องมากกว่า 0");
+    if (qty > R.GR_LIMITS.qty) fail(`จำนวนที่ส่งต้องไม่เกิน ${R_fmt(R.GR_LIMITS.qty)}`);
     const { waitingAtGr } = R.grHandoverSummary(d, job);
-    if (qty > waitingAtGr + 1e-9) fail(`ส่งได้ไม่เกินของดีที่ยังไม่ได้ส่ง ${R.fmtQty(waitingAtGr)} ชิ้น`);
+    if (qty > waitingAtGr + 1e-9) fail(`ส่งได้ไม่เกินของดีที่ยังไม่ได้ส่ง ${R.fmtQty(Math.max(0, waitingAtGr))} ${to === "WH" ? "" : "ชิ้น"}`.trim());
     const note = grNote(p?.note);
     const id = newUuid();
     d.grHandovers ??= [];
-    d.grHandovers.push({ id, jobId: job.id, orderId: order.id, itemCode: job.itemCode, qty, status: "sent", note, sentBy: user.name, sentAt: ctx.now, receivedBy: null, receivedAt: null,
+    d.grHandovers.push({ id, jobId: job.id, orderId: order.id, itemCode: job.itemCode, qty, status: "sent", note, fromDept: job.dept, toDept: to, sentBy: user.name, sentAt: ctx.now, receivedBy: null, receivedAt: null,
       cancelledBy: null, cancelledAt: null, cancelReason: null, moves: [{ kind: "send", at: ctx.now, by: user.name, note }] });
-    audit(d, ctx, "ส่งงานให้ PK (GR)", `${job.id} ${job.itemCode} × ${qty}${note ? ` — ${note}` : ""}`);
+    audit(d, ctx, label, `${job.id} ${job.itemCode} × ${qty}${note ? ` — ${note}` : ""}`);
     return { id, summary: `${job.itemCode} × ${R.fmtQty(qty)}`, section: "grHandovers", request: [{ id, jobId: job.id, qty, note }] };
   }
-  const grHandoverOf = (d, id) => (d.grHandovers ?? []).find((row) => row.id === String(id ?? "").trim()) ?? fail("ไม่พบรายการส่งงานนี้ (อาจมีผู้อื่นทำรายการไปก่อน)");
-  // PK รับงานจาก GR ทั้งรายการ: { handoverId } แผนก PK หรือฝ่ายวางแผน
-  function receiveGrAtPk(d, p, ctx) {
+  // GR ส่งงานให้ PK: { jobId, qty, note } หัวหน้า GR หรือฝ่ายวางแผน · งาน GR เท่านั้น (action เดิมของ GR)
+  function sendGrToPk(d, p, ctx) {
     const user = requireUser(ctx);
-    if (!canReceiveGr(user)) fail("รับงานจาก GR ได้โดยแผนก PK หรือฝ่ายวางแผนเท่านั้น");
-    const row = grHandoverOf(d, p?.handoverId ?? p?.id);
+    if (!canGrLead(user)) fail("ส่งงานให้ PK ได้โดยหัวหน้าแผนก GR หรือฝ่ายวางแผนเท่านั้น");
+    const job = grJobOf(d, p?.jobId);
+    return pushHandover(d, ctx, user, job, p, "PK", "ส่งงานให้ PK (GR)");
+  }
+  // GR / PT / BG ส่งงานให้ PK: { jobId, qty, note } หัวหน้าแผนกของงาน หรือฝ่ายวางแผน
+  function sendToPk(d, p, ctx) {
+    const user = requireUser(ctx);
+    const job = jobById(d, String(p?.jobId ?? "").trim());
+    if (!TO_PK_DEPTS.includes(job.dept)) fail(`งาน ${job.id} ไม่ใช่งานที่ส่งให้ PK (${TO_PK_DEPTS.join(" / ")})`);
+    if (!canDeptLead(user, job.dept)) fail(`ส่งงานให้ PK ได้โดยหัวหน้าแผนก ${job.dept} หรือฝ่ายวางแผนเท่านั้น`);
+    return pushHandover(d, ctx, user, job, p, "PK", `ส่งงานให้ PK (${job.dept})`);
+  }
+  // PK ส่งสินค้าให้ WH: { jobId (งาน PK ชนิด FG), qty, note } หัวหน้า PK หรือฝ่ายวางแผน · ใบที่ปิดแล้วส่งส่วนที่ผลิตเกินได้ · WH รับได้ไม่เกินที่ส่ง (rules.fgPosition().receivable)
+  function sendPkToWh(d, p, ctx) {
+    const user = requireUser(ctx);
+    if (!canSendPkToWh(user)) fail("ส่งสินค้าให้ WH ได้โดยหัวหน้าแผนก PK หรือฝ่ายวางแผนเท่านั้น");
+    const job = jobById(d, String(p?.jobId ?? "").trim());
+    if (job.dept !== "PK" || job.kind !== "FG") fail(`งาน ${job.id} ไม่ใช่งานสินค้าสำเร็จรูปของแผนก PK`);
+    return pushHandover(d, ctx, user, job, p, "WH", "ส่งสินค้าให้ WH (PK)");
+  }
+  const grHandoverOf = (d, id) => (d.grHandovers ?? []).find((row) => row.id === String(id ?? "").trim()) ?? fail("ไม่พบรายการส่งงานนี้ (อาจมีผู้อื่นทำรายการไปก่อน)");
+  // แถวที่ส่งให้ PK (รับ / ยกเลิก / ย้อนรับของ PK) · แถวที่ส่งให้ WH ใช้ cancelPkToWh
+  const pkHandoverOf = (d, id) => {
+    const row = grHandoverOf(d, id);
+    if (rules().handoverTo(row) !== "PK") fail("รายการนี้เป็นการส่งสินค้าให้ WH (ยกเลิกได้ที่การส่งให้ WH)");
+    return row;
+  };
+  // PK รับงานทั้งรายการ: { handoverId } แผนก PK หรือฝ่ายวางแผน · รับได้ทุกแผนกที่ส่งให้ PK (GR / PT / BG) · receiveGrAtPk = action เดิมของ GR (กติกาเดียวกัน)
+  function receiveAtPk(d, p, ctx) {
+    const user = requireUser(ctx);
+    if (!canReceiveAtPk(user)) fail("รับงานได้โดยแผนก PK หรือฝ่ายวางแผนเท่านั้น");
+    const row = pkHandoverOf(d, p?.handoverId ?? p?.id);
     if (!GR_ACTIVE_ORDER.includes(orderById(d, row.orderId).status)) fail("ใบสั่งผลิตไม่อยู่ในสถานะผลิต");
     if (row.status !== "sent") fail(row.status === "received" ? "รายการนี้รับไปแล้ว" : "รายการนี้ถูกยกเลิกแล้ว");
     Object.assign(row, { status: "received", receivedBy: user.name, receivedAt: ctx.now, moves: [...(row.moves ?? []), { kind: "receive", at: ctx.now, by: user.name, note: "" }] });
-    audit(d, ctx, "รับงานจาก GR (PK)", `${row.jobId} ${row.itemCode} × ${row.qty}`);
+    audit(d, ctx, `รับงานจาก ${rules().handoverFrom(row)} (PK)`, `${row.jobId} ${row.itemCode} × ${row.qty}`);
     return { id: row.id, summary: `${row.itemCode} × ${rules().fmtQty(row.qty)}`, section: "grHandovers", request: [{ id: row.id }] };
   }
-  // ยกเลิกการส่ง (ยังไม่รับ: หัวหน้า GR) หรือย้อนการรับ (รับแล้ว: หัวหน้า PK → กลับเป็นรอ PK รับ) · ฝ่ายวางแผนทำได้ทั้งสอง · { handoverId, reason } เหตุผล 3-200
-  function cancelGrHandover(d, p, ctx) {
+  function receiveGrAtPk(d, p, ctx) {
+    if (!canReceiveGr(requireUser(ctx))) fail("รับงานจาก GR ได้โดยแผนก PK หรือฝ่ายวางแผนเท่านั้น");
+    return receiveAtPk(d, p, ctx);
+  }
+  // ยกเลิกการส่ง (ยังไม่รับ: หัวหน้าแผนกผู้ส่ง) หรือย้อนการรับ (รับแล้ว: หัวหน้า PK → กลับเป็นรอ PK รับ) · ฝ่ายวางแผนทำได้ทั้งสอง · { handoverId, reason } เหตุผล 3-200
+  // cancelGrHandover = action เดิมของ GR (กติกาเดียวกัน)
+  function cancelHandover(d, p, ctx) {
     const user = requireUser(ctx);
-    const row = grHandoverOf(d, p?.handoverId ?? p?.id);
+    const row = pkHandoverOf(d, p?.handoverId ?? p?.id);
     if (row.status === "cancelled") fail("รายการนี้ถูกยกเลิกแล้ว");
+    const from = rules().handoverFrom(row);
     const reversing = row.status === "received";
-    if (reversing ? !canReverseGrReceipt(user) : !canGrLead(user)) fail(reversing ? "ย้อนการรับงานได้โดยหัวหน้าแผนก PK หรือฝ่ายวางแผนเท่านั้น" : "ยกเลิกการส่งงานได้โดยหัวหน้าแผนก GR หรือฝ่ายวางแผนเท่านั้น");
+    if (reversing ? !canReversePkReceipt(user) : !canDeptLead(user, from)) fail(reversing ? "ย้อนการรับงานได้โดยหัวหน้าแผนก PK หรือฝ่ายวางแผนเท่านั้น" : `ยกเลิกการส่งงานได้โดยหัวหน้าแผนก ${from} หรือฝ่ายวางแผนเท่านั้น`);
     if (!GR_ACTIVE_ORDER.includes(orderById(d, row.orderId).status)) fail("ใบสั่งผลิตไม่อยู่ในสถานะผลิต");
     const why = grReason(p?.reason, reversing ? "เหตุผลที่ย้อนการรับ" : "เหตุผลที่ยกเลิก");
     if (reversing) Object.assign(row, { status: "sent", receivedBy: null, receivedAt: null, moves: [...(row.moves ?? []), { kind: "unreceive", at: ctx.now, by: user.name, note: why }] });
     else Object.assign(row, { status: "cancelled", cancelledBy: user.name, cancelledAt: ctx.now, cancelReason: why, moves: [...(row.moves ?? []), { kind: "cancel", at: ctx.now, by: user.name, note: why }] });
-    audit(d, ctx, reversing ? "ย้อนการรับงานจาก GR (PK)" : "ยกเลิกการส่งงานให้ PK (GR)", `${row.jobId} ${row.itemCode} × ${row.qty} — ${why}`);
+    audit(d, ctx, reversing ? `ย้อนการรับงานจาก ${from} (PK)` : `ยกเลิกการส่งงานให้ PK (${from})`, `${row.jobId} ${row.itemCode} × ${row.qty} — ${why}`);
     return { id: row.id, status: row.status, summary: `${row.itemCode} × ${rules().fmtQty(row.qty)}`, section: "grHandovers", request: [{ id: row.id, reason: why }] };
   }
+  const cancelGrHandover = cancelHandover;
+  // ยกเลิกการส่งสินค้าให้ WH: { handoverId, reason } หัวหน้า PK หรือฝ่ายวางแผน · แถวที่ยังไม่ถูกยกเลิก · เฉพาะส่วนที่ WH ยังไม่รับ:
+  // ที่ส่งที่เหลือของใบ × สินค้า (ไม่นับแถวนี้) ต้องไม่ต่ำกว่าที่ WH รับสุทธิแล้ว (ไม่งั้นให้ WH ย้อนรับเข้าก่อน · ฐานข้อมูลตอบ BOM_FG_EXCEEDS)
+  function cancelPkToWh(d, p, ctx) {
+    const user = requireUser(ctx);
+    const R = rules();
+    const row = grHandoverOf(d, p?.handoverId ?? p?.id);
+    if (R.handoverTo(row) !== "WH") fail("รายการนี้เป็นการส่งงานให้ PK (ยกเลิกได้ที่การส่งงานให้ PK)");
+    if (!canSendPkToWh(user)) fail("ยกเลิกการส่งสินค้าให้ WH ได้โดยหัวหน้าแผนก PK หรือฝ่ายวางแผนเท่านั้น");
+    if (!WH_SEND_ORDER.includes(orderById(d, row.orderId).status)) fail("ใบสั่งผลิตไม่อยู่ในสถานะผลิต");
+    if (row.status !== "sent") fail("รายการนี้ถูกยกเลิกแล้ว");
+    const why = grReason(p?.reason, "เหตุผลที่ยกเลิก");
+    const position = R.pkToWhPosition(d, row.orderId, row.itemCode);
+    const left = R_round(position.sent - (Number(row.qty) || 0));
+    if (position.received > left + 1e-9) fail(`ยกเลิกไม่ได้: WH รับเข้าคลังแล้ว ${R.fmtQty(position.received)} ถ้ายกเลิกรายการนี้จะเหลือที่ส่ง ${R.fmtQty(left)} ให้ผู้จัดการ WH ย้อนรับเข้าก่อน`);
+    Object.assign(row, { status: "cancelled", cancelledBy: user.name, cancelledAt: ctx.now, cancelReason: why, moves: [...(row.moves ?? []), { kind: "cancel", at: ctx.now, by: user.name, note: why }] });
+    audit(d, ctx, "ยกเลิกการส่งสินค้าให้ WH (PK)", `${row.jobId} ${row.itemCode} × ${row.qty} — ${why}`);
+    return { id: row.id, status: row.status, summary: `${row.itemCode} × ${R.fmtQty(row.qty)}`, section: "grHandovers", request: [{ id: row.id, reason: why }] };
+  }
+  const R_round = (n) => Math.round((Number(n) || 0) * 1e4) / 1e4;
 
   function linkJobToRubberFlow(d, { jobId, woId, kg }, ctx) {
     const user = requireUser(ctx);
@@ -2139,9 +2236,11 @@
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
     saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, receiveFg, deliverFg, closeOrderShort, closeOrder, reverseFg, receiveRods, decideRods, issueRods, reverseRodIssue, adjustRods, receiveRodsOpening, setRodLocation,
     saveGrConfig, setGrJobSteps, addGrRecord, editGrRecord, voidGrRecord, requestRods, cancelRodRequest, sendGrToPk, receiveGrAtPk, cancelGrHandover,
+    sendToPk, receiveAtPk, cancelHandover, sendPkToWh, cancelPkToWh,
     reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage, countPartStock, issueOrderParts, undoOrderParts, returnOrderParts,
     helpers: { customerName, customerKey, startedJobs, isPartJob, isOpenJob, isLinkedJob, jobCloseNote, jobHoldNote, deptText, canIssueParts, canHandleFg, canReverseFg, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canSetSafety, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS, canStoreRods, canDecideRods, canSeeRodHolds, canAdjustRods, newUuid,
-      isDeptHead, canGrLead, canGrRecord, canReceiveGr, canReverseGrReceipt, isGrPlanned, isGrClosedShort, hasGrRecords, grJobBlock, grRecordBlock },
+      isDeptHead, canGrLead, canGrRecord, canReceiveGr, canReverseGrReceipt, isGrPlanned, isGrClosedShort, hasGrRecords, grJobBlock, grRecordBlock,
+      STEP_DEPTS, canDeptLead, canDeptRecord, canReceiveAtPk, canReversePkReceipt, canSendPkToWh, handoverTarget },
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_ACTIONS = api;

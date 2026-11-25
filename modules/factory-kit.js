@@ -114,9 +114,11 @@
     // งานที่พักอยู่รายงานผลไม่ได้ ต้องกด "ทำต่อ" / "คืนคิว" ก่อน
     // งาน GR (20261216010000): ตั้งขั้นตอนแล้ว = ยอดมาจาก "บันทึกผลรายวัน" ของโมดูล GR ไม่มีปุ่มรายงานผล · ยังไม่ตั้งและยังไม่เคยรายงานแบบเดิม = หัวหน้าแผนก GR / ฝ่ายวางแผนตั้งขั้นตอนก่อน (คำตอบเจ้าของข้อ 7)
     // งาน GR ที่รายงานยอดแบบเดิมไปแล้ว (ตั้งขั้นตอนไม่ได้) รายงานแบบเดิมต่อได้ · opts.main = ปุ่มหลักที่โมดูลส่งมาแทน ("" = ไม่มี)
-    const grPlanned = job.dept === "GR" && Boolean(ctx.helpers.isGrPlanned?.(data, job));
-    const grFresh = job.dept === "GR" && !grPlanned && typeof ctx.helpers.isGrPlanned === "function" && !(Number(job.qtyDone) > 0 || Number(job.qtyReject) > 0);
-    const grSetup = ctx.helpers.canGrLead?.(user) ? ui.openButton("ตั้งขั้นตอน", "grSteps", { jobId: job.id }, { className: "bom-job-main" }) : '<p class="small muted">รอหัวหน้าแผนก GR ตั้งขั้นตอนก่อนบันทึกผล</p>';
+    // โรงงานขั้น 7 (20261224010000): PT / BG / PK มีขั้นตอนรายวันแบบเดียวกับ GR (helpers.STEP_DEPTS)
+    const stepDept = (ctx.helpers.STEP_DEPTS ?? ["GR"]).includes(job.dept);
+    const grPlanned = stepDept && Boolean(ctx.helpers.isGrPlanned?.(data, job));
+    const grFresh = stepDept && !grPlanned && typeof ctx.helpers.isGrPlanned === "function" && !(Number(job.qtyDone) > 0 || Number(job.qtyReject) > 0);
+    const grSetup = (ctx.helpers.canDeptLead ?? ((u, d) => d === "GR" && ctx.helpers.canGrLead?.(u)))(user, job.dept) ? ui.openButton("ตั้งขั้นตอน", "grSteps", { jobId: job.id }, { className: "bom-job-main" }) : `<p class="small muted">${esc(`รอหัวหน้าแผนก ${job.dept} ตั้งขั้นตอนก่อนบันทึกผล`)}</p>`;
     const defaultMain = canWork && !linkedJob && job.status !== "hold" ? (grPlanned ? "" : grFresh ? grSetup : ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "bom-job-main" })) : "";
     const main = actions && opts.main !== undefined ? opts.main : defaultMain;
     // opts.more = ปุ่มรองของโมดูล (เช่น ขอเบิกยางเส้นยาว ส่งให้ PK ของ GR) วางก่อนปุ่มพัก/ปิดงาน
@@ -144,7 +146,7 @@
   function jobReportDialog(ctx, { jobId }) {
     const { ui, rules } = ctx;
     const job = ctx.data.jobs.find((entry) => entry.id === jobId);
-    if (!job || job.status === "hold" || ctx.helpers.isLinkedJob?.(job) || (job.dept === "GR" && ctx.helpers.isGrPlanned?.(ctx.data, job))) return null;
+    if (!job || job.status === "hold" || ctx.helpers.isLinkedJob?.(job) || ((ctx.helpers.STEP_DEPTS ?? ["GR"]).includes(job.dept) && ctx.helpers.isGrPlanned?.(ctx.data, job))) return null;
     const remaining = Math.max(0, job.qtyPlanned - job.qtyDone);
     // ช่องจำนวนดีว่างไว้ (บอกยอดที่เหลือเป็น placeholder): กดบันทึกครั้งเดียวต้องไม่รายงานว่าเสร็จทั้งแผน
     // แผนกก่อนหน้าส่งมาพอสำหรับกี่หน่วย (null = ไม่รู้) · เตือนเมื่อยอดรวมที่รายงานเกิน ไม่ห้ามบันทึก
