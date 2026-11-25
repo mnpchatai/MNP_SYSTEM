@@ -20,7 +20,8 @@
     : `<div class="empty"><p>${esc(text)}</p>${hint ? `<small>${esc(hint)}</small>` : ""}</div>`);
   // ไอคอนเส้นต่อชนิด (path จาก model.TYPE_ICON_PATHS ไม่มีข้อมูลผู้ใช้) · ป้ายหมวดสี: ชิ้นส่วนภายใน = ม่วง, อุปกรณ์ต่อพ่วง = เขียวอมฟ้า, เครื่องคอมพิวเตอร์ = น้ำเงิน
   const glyph = (code) => `<svg class="ui-icon itas-glyph" viewBox="0 0 24 24" aria-hidden="true">${model.typeIconPaths(code)}</svg>`;
-  const kindPill = (code, label) => `<span class="itas-kind is-${esc(model.typeKind(code))}">${glyph(code)}<span>${esc(label)}</span></span>`;
+  // ป้ายชนิดในตารางใช้ชื่อสั้น (model.typeShortName) ชื่อเต็มอยู่ใน title
+  const kindPill = (code, label) => `<span class="itas-kind is-${esc(model.typeKind(code))}" title="${esc(label)}">${glyph(code)}<span>${esc(model.typeShortName(label))}</span></span>`;
   // ป้ายสถานะ: ใช้งาน เขียว · สำรอง ฟ้า · ชำรุด แดง · ยกเลิกใช้งาน เทา (สีมาจากโทนใน model ไม่ใช่คลาส badge เดิมที่ใช้สีผิดความหมาย)
   const statusPill = (status) => `<span class="badge itas-status is-${esc(model.statusTone(status))}">${esc(model.statusLabel(status))}</span>`;
   const testTag = (isTest) => (isTest ? '<span class="badge itas-test-tag" title="ข้อมูลทดสอบ แยกจากระบบจริง">ทดสอบ</span>' : "");
@@ -141,12 +142,12 @@
   // total = จำนวนอุปกรณ์ทั้งหมด · showEmpty = ขยายชนิดว่างอยู่ · ชนิดที่เลือกอยู่แล้วว่างจะขยายให้เองโดย module
   function typeChips({ types, selectedCode = "", total = 0, showEmpty = false } = {}) {
     const { used, empty } = model.typeChipGroups(types);
-    const chip = (code, label, count, { off = false } = {}) => {
+    const chip = (code, label, count, { off = false, short = false } = {}) => {
       const selected = code === selectedCode;
       const kind = code ? ` is-${esc(model.typeKind(code))}` : "";
-      return `<button type="button" class="itas-chip${kind}${selected ? " is-selected" : ""}${off ? " is-off" : ""}" data-itas-type="${esc(code)}" aria-pressed="${selected ? "true" : "false"}">${code ? glyph(code) : ""}<span class="itas-chip-name">${esc(label)}</span><span class="itas-chip-count" aria-label="${esc(String(count))} รายการ">${esc(String(count))}</span></button>`;
+      return `<button type="button" class="itas-chip${kind}${selected ? " is-selected" : ""}${off ? " is-off" : ""}" data-itas-type="${esc(code)}" aria-pressed="${selected ? "true" : "false"}"${short ? ` title="${esc(label)}"` : ""}>${code ? glyph(code) : ""}<span class="itas-chip-name">${esc(short ? model.typeShortName(label) : label)}</span><span class="itas-chip-count" aria-label="${esc(String(count))} รายการ">${esc(String(count))}</span></button>`;
     };
-    const typeChip = (type) => chip(type.code, type.name, type.asset_count ?? 0, { off: type.is_active === false });
+    const typeChip = (type) => chip(type.code, type.name, type.asset_count ?? 0, { off: type.is_active === false, short: true });
     const more = empty.length
       ? `<button type="button" class="itas-chip itas-chip-more" id="itas-types-more" aria-expanded="${showEmpty ? "true" : "false"}">ชนิดอื่นๆ (${empty.length}) ${showEmpty ? "▴" : "▾"}</button>${showEmpty ? empty.map(typeChip).join("") : ""}`
       : "";
@@ -167,7 +168,10 @@
     if (column.key === "status") return { inner: statusPill(row.status), cls: "" };
     if (column.role === "type") return { inner: text ? kindPill(row.type_code, text) : "—", cls: "" };
     if (column.role === "parts") return text ? { inner: `<span class="itas-partcount itas-mono">${esc(text)}</span>`, cls: "" } : { inner: "", cls: " itas-cell-empty" };
-    return { inner: esc(text) || "—", cls: MONO_COLUMNS.has(column.key) ? " itas-mono" : "" };
+    // รหัส/เลขทะเบียน (itas-mono) ห้ามตัดกลางคำ · วันที่ไม่ตัด · คอลัมน์ข้อความยาว (ชื่อ ยี่ห้อ ผู้ใช้ สถานที่) ตัดบรรทัดตามคำได้ (itas-text)
+    if (MONO_COLUMNS.has(column.key)) return { inner: esc(text) || "—", cls: " itas-mono" };
+    if (column.key === "install_date") return { inner: esc(text) || "—", cls: " itas-nowrap" };
+    return { inner: esc(text) || "—", cls: " itas-text" };
   }
   // rows = แถวหลังกรอง/เรียง · sort = { key, direction } · ตารางกว้างเลื่อนในกล่องของตัวเอง (ไม่ดันทั้งหน้า) · แถวเครื่องคอมพิวเตอร์ (is-host) กดแล้วเปิดหน้ารายละเอียดเครื่อง
   function assetTable({ rows, columns, sort = null, typeName = "" }) {

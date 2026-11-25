@@ -3886,7 +3886,11 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .itas-status-filter { margin: 0; }
 .itas-scroll { position: relative; border: 1px solid var(--line); border-radius: var(--radius-md); }
 .itas-table { width: 100%; min-width: 880px; border-collapse: collapse; font-size: var(--text-meta); }
-.itas-table th, .itas-table td { padding: 8px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--soft-line); overflow-wrap: anywhere; }
+.itas-table th, .itas-table td { padding: 8px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--soft-line); overflow-wrap: break-word; }
+/* รหัส/เลขทะเบียน/Serial/รหัสเครื่อง/วันที่ ห้ามตัดกลางคำ: คอลัมน์ขยายตามความยาวรหัส ถ้าจอแคบกว่าความกว้างรวมให้เลื่อนแนวนอนในกรอบ .itas-scroll · คอลัมน์ข้อความยาวเป็นตัวที่ตัดบรรทัดตามคำ */
+.itas-table td.itas-mono, .itas-table td.itas-nowrap { white-space: nowrap; }
+.itas-table td.itas-text { min-width: 9em; max-width: 26em; }
+.itas-table .badge.itas-status { white-space: nowrap; }
 .itas-table th { color: var(--muted); font-size: var(--text-caption); white-space: nowrap; }
 .itas-sort { padding: 4px 0; min-height: 32px; font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
 .itas-sort:hover { color: var(--primary); }
@@ -3901,6 +3905,8 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
   .itas-table tbody, .itas-table tr, .itas-table td { display: block; }
   .itas-table tr.itas-row { margin: 0 0 8px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper); }
   .itas-table td { padding: 2px 0; border: 0; display: flex; gap: 8px; }
+  .itas-table td.itas-mono, .itas-table td.itas-nowrap { white-space: normal; overflow-wrap: anywhere; }
+  .itas-table td.itas-text { min-width: 0; max-width: none; }
   .itas-table td::before { content: attr(data-label); flex: 0 0 34%; max-width: 8em; color: var(--muted); font-size: var(--text-caption); }
 }
 /* ฟอร์ม */
