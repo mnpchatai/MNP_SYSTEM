@@ -500,6 +500,8 @@ select is((select count(*)::integer from jsonb_array_elements(public.app_bom_mas
 
 -- 10. ฝ่ายวางแผนเปิดงานเพิ่มจากฝ่ายขายแก้ใบ (addJobsForChanges · private.bom_add_change_jobs) -------------------------------------------------
 -- คู่ (แผนก, ชิ้นงาน) ใหม่ = งานใหม่ · คู่เดิม = เพิ่มยอดแผนอย่างเดียว · WO ที่ยังวางแผนอยู่เพิ่มยอดตาม · งาน RB ใหม่ได้ WO ของตัวเอง (WO หนึ่งใบต่องาน)
+-- ฟังก์ชัน private เรียกได้เฉพาะบทบาทเจ้าของ (บทบาท authenticated เรียกไม่ได้)
+reset role;
 select ok(array['addJobsForChanges'] <@ private.bom_client_actions() and not (array['addJobsForChanges'] <@ private.bom_sales_actions())
           and not (array['addJobsForChanges'] <@ private.bom_staff_actions()),
   'opening extra jobs is a planning action: not on the sales or staff lists');
@@ -508,6 +510,7 @@ select ok((select p.prosecdef and p.proconfig @> array['search_path=""'] from pg
           and not has_function_privilege('authenticated', 'private.bom_add_change_jobs(public.employees,text,boolean,jsonb,jsonb,bigint,bigint)', 'execute')
           and not has_function_privilege('anon', 'private.bom_add_change_jobs(public.employees,text,boolean,jsonb,jsonb,bigint,bigint)', 'execute'),
   'the extra-jobs writer is security definer with an empty search_path and clients cannot call it');
+set local role authenticated;
 -- ข้อมูลตั้งต้น: วัตถุดิบ สูตร RCS-1 (อนุมัติ) คอมปาวด์ DMS1 เส้นยาง RB-S8 / RB-S9 ชิ้นยาง SE-S9 สินค้า FG-S9
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select public.app_rf_save(jsonb_build_object('materials', jsonb_build_object('upsert', jsonb_build_array(
