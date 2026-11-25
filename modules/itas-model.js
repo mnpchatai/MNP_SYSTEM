@@ -8,7 +8,7 @@
 
   const YEAR_OFFSET = 543;
   // เลขเวอร์ชันของโมดูล (ป้ายบนการ์ด + มุมขวาล่างทุกหน้า) รูปแบบ <ใหญ่>.<ย่อย 2 หลัก> · กติกาเดียวกับใบสั่งงาน/ใบแจ้งซ่อม (ถามเจ้าของก่อนเปลี่ยนทุกครั้ง)
-  const MODULE_VERSION = "1.03";
+  const MODULE_VERSION = "1.04";
   const VERSION_DATE = "2026-11-25";
   // ธง "กำลังพัฒนา" (จุดเดียว): true = การ์ดมีป้าย "กำลังพัฒนา" และทุกหน้าของโมดูลมีแถบข้อความว่ายังไม่เปิดใช้งานจริง · ถอดเมื่อเจ้าของสั่ง
   const IN_DEVELOPMENT = true;
@@ -505,6 +505,18 @@
     return { used: list.filter(hasAssets), empty: list.filter((type) => !hasAssets(type)) };
   }
   const TYPE_ALL_LABEL = "ทั้งหมด";
+  // ชื่อชนิดแบบสั้นสำหรับชิป/ป้ายในตาราง: ชื่อในฐานข้อมูลเป็น "ชื่อไทย (English)" · ใช้ชื่อไทยถ้าไม่ยาวเกิน SHORT_TYPE_MAX ตัว
+  // ถ้ายาวกว่านั้นให้เลือกอันที่สั้นกว่าระหว่างชื่อไทยกับส่วนในวงเล็บ (เช่น "โน้ตบุ๊ก / PC Set / แท็บเล็ต (Laptop-PCSet-Tablet)" → "Laptop-PCSet-Tablet") · ชื่อเต็มไปอยู่ใน title ที่ฝั่งหน้า
+  const SHORT_TYPE_MAX = 20;
+  function typeShortName(name) {
+    const full = textOf(name);
+    const match = /^(.*?)\s*\(([^()]+)\)\s*$/.exec(full);
+    if (!match || !match[1].trim()) return full;
+    const thai = match[1].trim();
+    const inner = match[2].trim();
+    if (Array.from(thai).length <= SHORT_TYPE_MAX) return thai;
+    return Array.from(inner).length < Array.from(thai).length ? inner : thai;
+  }
 
   // ตารางมุมมอง "ทั้งหมด" (รวมทุกชนิด): คอลัมน์กลางที่ทุกชนิดมีเหมือนกัน · valueFn = ค่าที่แสดง · sortFn = ค่าที่ใช้เรียง (ชนิดเรียงตามลำดับของฐานข้อมูล ไม่ใช่ตัวอักษร)
   function allColumns(types, index = null) {
@@ -844,7 +856,7 @@
     assetsUrl, readView, isUuid, statusLabel, statusBadgeClass,
     formatDate, formatDateTime, parseDateInput, dateInputText, isRealDate,
     typeFields, plainFields, secretFields, coreFieldsOf, normalizeCode, emptyFormValues, formValuesFromAsset, carryOver, copyValuesFromAsset, MAX_BATCH, batchColumnOptions, batchOptionOf, parseBatchLines, buildBatchPlan, suggestionsFor, MAX_SUGGESTIONS, REMEMBER_KEYS, parseMemory, serializeMemory, rememberAdded, forgetType, applyRemembered, typedSince, userFieldName, primaryFieldNames, isPrimaryField, PRIMARY_LABEL_OVERRIDES, extraFieldsHaveValues, errorsInExtraFields, parseField, validateAsset, buildSavePayload, payloadIsEmpty,
-    tableColumns, allColumns, typeChipGroups, TYPE_ALL_LABEL, USER_ATTR_KEY, userValueOf, cellValue, cellText, formatCell, filterAssets, sortAssets, countText,
+    tableColumns, allColumns, typeChipGroups, TYPE_ALL_LABEL, typeShortName, USER_ATTR_KEY, userValueOf, cellValue, cellText, formatCell, filterAssets, sortAssets, countText,
     labelOfKey, logChanges, historyView, passwordStrength,
     HOST_TYPE_CODES, INTERNAL_TYPE_CODES, KIND_LABELS, TYPE_ICON_PATHS, isHostTypeCode, typeKind, typeIconPaths, statusTone, hostKeyOf, countParts, partsSummaryText, buildHostIndex, groupParts, partSpecText, hostFacts, hostMoveHistory, labelOfAsset, MAX_HOST_MOVES,
     describeError, isAlreadyExists, purgeSummary,

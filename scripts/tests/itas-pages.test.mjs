@@ -34,7 +34,7 @@ test("head: one h1, back link to IT SUPPORT, test tag only in test mode, dev not
   assert.doesNotMatch(html, /itas-test-tag/);
   assert.match(pages.head({ isTest: true }), /<span class="badge itas-test-tag"[^>]*>ทดสอบ<\/span>/);
   assert.match(html, /กำลังพัฒนาและทดสอบ ยังไม่เปิดใช้งานจริง/);
-  assert.match(html, /<p class="itas-version no-print"[^>]*>V1\.03<\/p>/);
+  assert.match(html, /<p class="itas-version no-print"[^>]*>V1\.04<\/p>/);
 });
 
 test("vault bar: shows state for every status with the right buttons; test vault is labelled", () => {
@@ -341,8 +341,8 @@ test("asset table (all types): type pill with icon, mono codes, parts count on c
   const columns = model.allColumns(H_TYPES, index);
   const html = pages.assetTable({ rows: [HOST, PARTS[0]], columns, sort: null });
   assert.match(html, /<tr class="itas-row status-in_use is-host" data-itas-row="2a500000-0000-4000-8000-000000000001" tabindex="0">/);
-  assert.match(html, /<span class="itas-kind is-host"><svg[^>]*>.*<\/svg><span>เครื่องคอมพิวเตอร์<\/span><\/span>/);
-  assert.match(html, /<span class="itas-kind is-internal">/);
+  assert.match(html, /<span class="itas-kind is-host" title="เครื่องคอมพิวเตอร์"><svg[^>]*>.*<\/svg><span>เครื่องคอมพิวเตอร์<\/span><\/span>/);
+  assert.match(html, /<span class="itas-kind is-internal"/);
   assert.match(html, /<span class="itas-partcount itas-mono">1 ชิ้น<\/span>/, "จอที่ยกเลิกใช้งานไม่นับ");
   assert.match(html, /<td class="itas-mono" data-label="เลขทะเบียน">COM-001<\/td>/);
   assert.match(html, /<td class="itas-cell-empty" data-label="ชิ้นส่วน"><\/td>/);
@@ -434,4 +434,34 @@ test("computer page parts: every type of a kind goes into one grid of cards, eac
   assert.match(html, /<span class="itas-part-type"><svg[^>]*>.*?<\/svg><span>CPU<\/span><span class="itas-part-slot" title="ช่อง\/ตำแหน่ง">CPU1<\/span><\/span>/);
   assert.match(html, /<span class="itas-part-type"><svg[^>]*>.*?<\/svg><span>จอภาพ<\/span><\/span>/);
   assert.equal(count(html, /<ul class="itas-parts">/g), 2, "หมวดละ grid เดียว");
+});
+
+/* ---------- รุ่น 1.04: ตารางไม่ตัดรหัสกลางคำ + ชื่อชนิดสั้น ---------- */
+test("typeShortName: Thai name when short, else the shorter of Thai/parenthetical, full name kept in title", () => {
+  assert.equal(model.typeShortName("จอภาพ (Monitor)"), "จอภาพ");
+  assert.equal(model.typeShortName("หมึก / โทนเนอร์ (INK&Toner)"), "หมึก / โทนเนอร์");
+  assert.equal(model.typeShortName("โน้ตบุ๊ก / PC Set / แท็บเล็ต (Laptop-PCSet-Tablet)"), "Laptop-PCSet-Tablet");
+  assert.equal(model.typeShortName("อุปกรณ์เสริมคอมพิวเตอร์ (Computer Accessories)"), "Computer Accessories");
+  assert.equal(model.typeShortName("เครื่องคอมพิวเตอร์"), "เครื่องคอมพิวเตอร์", "ไม่มีวงเล็บ = ชื่อเดิม");
+  assert.equal(model.typeShortName(""), "");
+});
+
+test("type chips use the short name and keep the full name in title; asset table pill does the same", () => {
+  const long = "โน้ตบุ๊ก / PC Set / แท็บเล็ต (Laptop-PCSet-Tablet)";
+  const types = [{ code: "LAPTOP", name: long, asset_count: 3, is_active: true }];
+  const chips = pages.typeChips({ types, total: 3 });
+  assert.ok(chips.includes('title="' + long + '"'), "ชื่อเต็มอยู่ใน title");
+  assert.ok(chips.includes('<span class="itas-chip-name">Laptop-PCSet-Tablet</span>'));
+  assert.ok(chips.includes('<span class="itas-chip-name">ทั้งหมด</span>'), "ชิป ทั้งหมด ไม่ถูกย่อ");
+  const pill = pages.kindPill("LAPTOP", long);
+  assert.ok(pill.includes('title="' + long + '"'));
+  assert.ok(pill.includes("<span>Laptop-PCSet-Tablet</span>"));
+});
+
+test("table cells: codes/dates never wrap (itas-mono / itas-nowrap), long text columns wrap by word (itas-text)", () => {
+  const columns = model.tableColumns({ ...TYPE, has_device_code: true });
+  const html = pages.assetTable({ rows: [ASSET], columns });
+  for (const label of ["เลขทะเบียน", "รหัสอุปกรณ์", "Serial", "ติดตั้งที่"]) assert.ok(html.includes('<td class="itas-mono" data-label="' + label + '">'), label);
+  assert.ok(html.includes('<td class="itas-nowrap" data-label="วันที่ติดตั้ง">'));
+  assert.ok(html.includes('<td class="itas-text" data-label="ชื่อ / รุ่น">'));
 });
