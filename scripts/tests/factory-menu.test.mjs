@@ -2133,3 +2133,58 @@ test("the demo seed has the sales demo on request: one order sent to planning, o
   assert.equal(env.context.MNP_BOM_SEED.buildSeed(Date.now()).orders.some((order) => order.source === "SA"), false, "the default demo is unchanged");
   assert.equal(seeded.users.find((user) => user.role === "sa")?.dept, "SA");
 });
+
+test("SA order page: while RubberFlow loads, a released order with a work-order-linked RB job says so (not that a department started), the page repaints when RubberFlow is ready and then offers the edit; a failed load says so", async () => {
+  const env = salesScene();
+  const job = env.store.data().jobs.find((entry) => entry.orderId === "SA-T-3" && entry.status === "queued");
+  job.externalRef = { system: "rubberflow", woId: "WO-SA-T-3", kg: 1 };
+  // RubberFlow ของฐานข้อมูลที่ยังไม่โหลด: rfWake สั่งโหลด (idle → loading) แล้ววาดหน้าใหม่เมื่อเสร็จ
+  const rf = env.rf.store;
+  let status = "idle";
+  let finish = null;
+  rf.isRemote = () => true;
+  rf.status = () => status;
+  rf.ensureLoaded = () => { status = "loading"; return new Promise((resolve) => { finish = resolve; }); };
+  rf.data = () => ({ orders: [{ id: "WO-SA-T-3", sourceJobId: job.id, status: "planned" }] });
+  const loading = await env.open("FACTORY_SA", "order=SA-T-3");
+  assert.match(loading, /กำลังโหลดข้อมูล RubberFlow/);
+  assert.doesNotMatch(loading, /แผนกเริ่มงานแล้ว/, "not the wrong 'a department started' hint");
+  assert.doesNotMatch(loading, /data-rf-open="saOrderHeader"/, "no edit until the work order is known");
+  assert.equal(typeof finish, "function", "the sales page asked RubberFlow to load");
+  const renders = env.log.renders;
+  status = "ready";
+  finish();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(env.log.renders, renders + 1, "the sales page repaints once RubberFlow is ready");
+  const ready = await env.open("FACTORY_SA", "order=SA-T-3");
+  assert.match(ready, /data-rf-open="saOrderHeader"/, "the planned work order has not started: sales may edit");
+  assert.doesNotMatch(ready, /กำลังโหลดข้อมูล RubberFlow|แผนกเริ่มงานแล้ว/);
+  status = "error";
+  const failed = await env.open("FACTORY_SA", "order=SA-T-3");
+  assert.match(failed, /โหลดข้อมูล RubberFlow ไม่สำเร็จ/);
+  assert.doesNotMatch(failed, /แผนกเริ่มงานแล้ว|data-rf-open="saOrderHeader"/);
+  status = "ready";
+  job.status = "in_progress";
+  assert.match(await env.open("FACTORY_SA", "order=SA-T-3"), /แผนกเริ่มงานแล้ว/, "a job that really started still says so");
+});
+
+test("PP: an open sales request on a cancelled order offers no decision; cancelling an order closes its open requests", async () => {
+  const env = salesScene();
+  env.setEmployee(emp("PP"));
+  env.store.setUser("B03");
+  assert.match(await env.open("BOM", "p=orders"), /คำขอจากฝ่ายขาย \(1\)/);
+  // คำขอที่ค้างบนใบที่ยกเลิกแล้ว (ข้อมูลก่อนกติกานี้): การ์ดไม่แสดง ไม่มีปุ่มตัดสิน
+  const order = env.store.data().orders.find((entry) => entry.id === "SA-T-3");
+  order.status = "cancelled";
+  const stale = await env.open("BOM", "p=orders");
+  assert.doesNotMatch(stale, /คำขอจากฝ่ายขาย/);
+  assert.doesNotMatch(stale, /data-rf-action="decideOrderRequest"|data-rf-open="saRequestDecline"/);
+  assert.doesNotMatch(await env.open("BOM", "p=orders&sel=SA-T-3"), /data-rf-action="decideOrderRequest"/);
+  // ฝ่ายวางแผนยกเลิกใบเอง: คำขอยกเลิกที่เปิดอยู่ปิดเองพร้อมหมายเหตุ ฝ่ายขายเห็นผล
+  order.status = "released";
+  assert.equal(env.store.run("cancelOrder", { orderId: "SA-T-3", reason: "ฝ่ายวางแผนยกเลิกเอง" }).ok, true);
+  assert.deepEqual(plain(env.store.data().orderRequests.map((row) => [row.orderId, row.status, row.decisionNote])), [["SA-T-3", "done", "ใบถูกยกเลิกแล้ว"]]);
+  env.setEmployee(emp("SA"));
+  env.store.setUser("B13");
+  assert.match(await env.open("FACTORY_SA", "order=SA-T-3"), /ใบถูกยกเลิกแล้ว/);
+});

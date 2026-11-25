@@ -206,7 +206,11 @@
       ["ส่งให้ฝ่ายวางแผน", helpers.isSentOrder(order) ? esc(`${rules.fmtDateTime(order.sentAt)}${order.sentBy ? ` โดย ${order.sentBy}` : ""}`) : "ยังไม่ส่ง"],
       order.note ? ["หมายเหตุ", esc(order.note)] : null, order.cancelReason ? ["เหตุผลยกเลิก", esc(order.cancelReason)] : null,
     ]);
-    const hint = state.reopen ? `<p class="small muted">${esc("ใบนี้ปล่อยผลิตแล้ว ยังไม่มีแผนกไหนเริ่มงาน แก้ได้ แต่ใบจะกลับไปให้ฝ่ายวางแผนปล่อยผลิตใหม่")}</p>` : open && !state.canEdit ? `<p class="small muted">${esc("แผนกเริ่มงานแล้ว แก้ใบโดยตรงไม่ได้ ส่ง “ขอแก้ใบ” ให้ฝ่ายวางแผนแทน")}</p>` : "";
+    // ข้อมูล RubberFlow ยังโหลดอยู่ (หน้าวาดใหม่เมื่อโหลดเสร็จ) หรือโหลดไม่สำเร็จ: ยังรู้ไม่ได้ว่างานยาง (RB) เริ่มแล้วหรือยัง จึงไม่บอกว่าแผนกเริ่มงานแล้ว
+    const pendingText = { loading: "กำลังโหลดข้อมูล RubberFlow เพื่อตรวจว่างานยาง (RB) เริ่มแล้วหรือยัง ปุ่มแก้ใบจะแสดงเมื่อโหลดเสร็จ", failed: "โหลดข้อมูล RubberFlow ไม่สำเร็จ จึงยังตรวจไม่ได้ว่างานยาง (RB) เริ่มแล้วหรือยัง โหลดหน้าใหม่อีกครั้ง หรือส่ง “ขอแก้ใบ” ให้ฝ่ายวางแผน" }[state.rfPending] ?? "";
+    const hint = state.reopen ? `<p class="small muted">${esc("ใบนี้ปล่อยผลิตแล้ว ยังไม่มีแผนกไหนเริ่มงาน แก้ได้ แต่ใบจะกลับไปให้ฝ่ายวางแผนปล่อยผลิตใหม่")}</p>`
+      : pendingText ? `<p class="small muted" role="status">${esc(pendingText)}</p>`
+        : open && !state.canEdit ? `<p class="small muted">${esc("แผนกเริ่มงานแล้ว แก้ใบโดยตรงไม่ได้ ส่ง “ขอแก้ใบ” ให้ฝ่ายวางแผนแทน")}</p>` : "";
     const itemRows = order.items.map((item) => `<tr><td>${ui.mono(item.fgCode)}<div class="small muted">${esc(helpers.itemOf(ctx.data, item.fgCode)?.name ?? "")}${item.note ? ` · ${esc(item.note)}` : ""}</div></td><td class="right rf-mono">${esc(rules.fmtQty(item.qty))}</td><td class="nowrap">${mayEdit ? `${ui.openButton("แก้จำนวน", "orderItemEdit", { orderId: order.id, fgCode: item.fgCode }, { className: "secondary small", ariaLabel: `แก้จำนวน ${item.fgCode}` })} ${ui.button("ลบ", { action: "removeOrderItem", args: { orderId: order.id, fgCode: item.fgCode }, className: "secondary small", ariaLabel: `ลบ ${item.fgCode} ออกจากใบ`, confirmText: `ลบ ${item.fgCode} ออกจากใบ ${order.id}?${state.reopenNote}` })}` : ""}</td></tr>`);
     const items = ui.card(ui.table(["สินค้า", { label: "จำนวน", className: "right" }, ""], itemRows, { emptyText: "ยังไม่มีสินค้า เพิ่มสินค้าก่อนส่งให้ฝ่ายวางแผน" }), { title: esc("สินค้าที่สั่ง"), flush: true });
     const head = F.pageHead(ctx, `ใบ ${order.id}`, `${statusBadge(ctx, order)}<span class="small muted" role="status" data-bom-sync>${esc(root.MNP_BOM?.syncText?.() ?? "")}</span>`);
@@ -289,7 +293,9 @@
         cards.push(ui.card(ui.table(["เลข PI / ลูกค้า", "สินค้า", "กำหนดส่งคลัง", "ฝ่ายขาย"], rows), { title: esc(`ใบใหม่จากฝ่ายขาย (${fresh.length})`), flush: true }));
       }
     }
-    const open = (ctx.data.orderRequests ?? []).filter((row) => row.status === "open" && (!orderId || row.orderId === orderId));
+    // ใบที่ยกเลิกแล้วไม่มีอะไรให้ตัดสิน (ฐานข้อมูลปิดคำขอของใบที่ยกเลิกเอง · กันข้อมูลค้างจากก่อนกติกานี้หรือคำตอบที่ยังไม่มาถึง)
+    const cancelled = new Set(ctx.data.orders.filter((order) => order.status === "cancelled").map((order) => order.id));
+    const open = (ctx.data.orderRequests ?? []).filter((row) => row.status === "open" && !cancelled.has(row.orderId) && (!orderId || row.orderId === orderId));
     if (open.length) {
       const items = open.sort((a, b) => (Number(a.requestedAt) || 0) - (Number(b.requestedAt) || 0)).map((row) => {
         const cancel = row.kind === "cancel";

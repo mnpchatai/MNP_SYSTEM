@@ -322,6 +322,12 @@ select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(15), 'orde
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select lives_ok($$ select so_t.release('251225-28103', 'JOB-8-SA3') $$, 'planning releases the order that was sent on opening');
 select public.app_sandbox_enter(current_setting('test.p_sbx_sa_staff')::uuid);
+-- ตัวลบงานตรง ๆ (jobs.delete) รับเฉพาะกลุ่มวางแผน: payload ของฝ่ายขายที่ยังพาการลบงานของใบที่เปิดกลับไปด้วยถูกปฏิเสธทั้งคำสั่ง (store ของหน้าไม่ส่งส่วนนี้ · ฐานข้อมูลลบงานของใบเอง)
+select throws_ok($$ select so_t.save(jsonb_build_object(
+  'orders', jsonb_build_object('upsert', jsonb_build_array(so_t.order_row('251225-28103') || '{"status":"draft","revision":1,"explosion":null,"items":[{"fgCode":"FG-S1","qty":7,"colorSet":"","note":""}]}'::jsonb)),
+  'jobs', jsonb_build_object('delete', jsonb_build_array(jsonb_build_object('id', 'JOB-8-SA3')))), 'updateOrderItem') $$, 'BOM_FORBIDDEN',
+  'a sales payload that also deletes the jobs of the reopened order is refused');
+select is(so_t.order_row('251225-28103') ->> 'status', 'released', 'the refused call changed nothing');
 select lives_ok($$ select so_t.edit('251225-28103', '{"status":"draft","revision":1,"explosion":null,"items":[{"fgCode":"FG-S1","qty":7,"colorSet":"","note":""}]}'::jsonb, 'updateOrderItem') $$,
   'sales edits the released order while no job started (the order goes back to draft)');
 select is(so_t.order_row('251225-28103') ->> 'status' || '/' || (so_t.order_row('251225-28103') ->> 'revision') || '/' || (so_t.order_row('251225-28103') -> 'items' -> 0 ->> 'qty'),
@@ -330,13 +336,25 @@ select ok(so_t.order_row('251225-28103') ? 'sentAt' and not exists (select 1 fro
   'it stays sent to planning and its jobs are gone');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select lives_ok($$ select so_t.release('251225-28103', 'JOB-8-SA3B') $$, 'planning releases it again');
+-- แก้หัวใบของใบที่ปล่อยแล้ว (รูปที่หน้าส่งจริง: แถวใบแถวเดียว สถานะร่าง revision + 1 ผลระเบิดเดิม · ไม่มี jobs.delete) · วันส่งมอบคลังเลื่อนออกได้
+select public.app_sandbox_enter(current_setting('test.p_sbx_sa_staff')::uuid);
+select lives_ok($$ select so_t.edit('251225-28103', '{"status":"draft","revision":2,"explodedAt":null,"whDue":1769385600000,"note":"ลูกค้าขอเลื่อนส่ง"}'::jsonb, 'updateOrderHeader') $$,
+  'sales edits the header of the released order (the order goes back to draft)');
+select is(so_t.order_row('251225-28103') ->> 'status' || '/' || (so_t.order_row('251225-28103') ->> 'revision') || '/' || (so_t.order_row('251225-28103') ->> 'whDue')
+          || '/' || (so_t.order_row('251225-28103') ->> 'note'),
+  'draft/2/1769385600000/ลูกค้าขอเลื่อนส่ง', 'a draft again at revision 2 with the new warehouse date and note');
+select ok(not exists (select 1 from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'orderId' = '251225-28103')
+          and exists (select 1 from jsonb_array_elements(public.app_bom_master_since(so_t.ver() - 1) -> 'changes' -> 'jobs' -> 'delete') d where d ->> 'id' = 'JOB-8-SA3B'),
+  'the server dropped its job and the delta carries the tombstone the page applies');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select lives_ok($$ select so_t.release('251225-28103', 'JOB-8-SA3C') $$, 'planning releases it once more');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pk_staff')::uuid);
 select lives_ok($$ select so_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
-  (select j from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-8-SA3B')
+  (select j from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-8-SA3C')
   || jsonb_build_object('status', 'in_progress', 'qtyDone', 1, 'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'ใครก็ได้', 'good', 1, 'reject', 0, 'note', 'เริ่ม')))))), 'reportJob') $$,
   'PK starts the job');
 select public.app_sandbox_enter(current_setting('test.p_sbx_sa_staff')::uuid);
-select throws_ok($$ select so_t.edit('251225-28103', '{"status":"draft","revision":2,"explosion":null,"items":[{"fgCode":"FG-S1","qty":8,"colorSet":"","note":""}]}'::jsonb, 'updateOrderItem') $$,
+select throws_ok($$ select so_t.edit('251225-28103', '{"status":"draft","revision":3,"explosion":null,"items":[{"fgCode":"FG-S1","qty":8,"colorSet":"","note":""}]}'::jsonb, 'updateOrderItem') $$,
   'BOM_INVALID_TRANSITION', 'once a job started sales cannot pull the order back');
 select lives_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(20), 'orderId', '251225-28103', 'reason', 'ขอเพิ่ม FG-S1 เป็น 8 ชุด'), 'requestOrderChange') $$,
   'sales asks for the change instead');
@@ -344,13 +362,32 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select lives_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(20), 'decision', 'done', 'note', 'เปิดใบ 251225-28104 เพิ่ม 1 ชุด'), 'decideOrderRequest') $$,
   'planning marks the change request done');
 select is(so_t.request(so_t.uid(20)) ->> 'status' || '/' || (so_t.request(so_t.uid(20)) ->> 'decisionNote'), 'done/เปิดใบ 251225-28104 เพิ่ม 1 ชุด', 'with its note');
+select ok(exists (select 1 from jsonb_array_elements(public.app_bom_master_since(so_t.ver() - 1) -> 'changes' -> 'orderRequests' -> 'upsert') r where r ->> 'id' = so_t.uid(20)),
+  'the delta carries the decided request');
+
+-- 8b. ใบถูกยกเลิก: คำขอที่ยังเปิดของใบปิดเอง (ขอยกเลิก = done · ขอแก้ใบ = declined · "ใบถูกยกเลิกแล้ว") -------------------------------------------
+select public.app_sandbox_enter(current_setting('test.p_sbx_sa_staff')::uuid);
+select lives_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(21), 'orderId', '251225-28103', 'reason', 'ลูกค้ายกเลิกคำสั่งซื้อ'), 'requestOrderCancel') $$,
+  'sales asks to cancel the order in production');
+select lives_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(22), 'orderId', '251225-28103', 'reason', 'ขอลดเหลือ 5 ชุด'), 'requestOrderChange') $$,
+  'and asks for a change at the same time');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select lives_ok($$ select so_t.edit('251225-28103', '{"status":"cancelled","cancelReason":"ฝ่ายวางแผนยกเลิกเอง"}'::jsonb, 'cancelOrder') $$,
+  'planning cancels the order directly (not through the request)');
+select is(so_t.request(so_t.uid(21)) ->> 'status' || '/' || (so_t.request(so_t.uid(21)) ->> 'decisionNote') || '/' || (so_t.request(so_t.uid(21)) ->> 'decidedBy'),
+  'done/ใบถูกยกเลิกแล้ว/' || current_setting('test.n_sbx_pp_staff'), 'the open cancel request is done, noted, by who cancelled');
+select is(so_t.request(so_t.uid(22)) ->> 'status' || '/' || (so_t.request(so_t.uid(22)) ->> 'decisionNote'), 'declined/ใบถูกยกเลิกแล้ว', 'the open change request is declined');
+select is(so_t.request(so_t.uid(20)) ->> 'decisionNote', 'เปิดใบ 251225-28104 เพิ่ม 1 ชุด', 'a request decided earlier keeps its decision');
+select ok((select count(*) from jsonb_array_elements(public.app_bom_master_since(so_t.ver() - 1) -> 'changes' -> 'orderRequests' -> 'upsert') r
+           where r ->> 'id' in (so_t.uid(21), so_t.uid(22))) = 2, 'the delta of the cancel carries both closed requests');
+select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(22), 'decision', 'done', 'note', ''), 'decideOrderRequest') $$, 'BOM_INVALID_TRANSITION',
+  'nothing is left to decide on the cancelled order');
 
 -- 9. ชุดเรคอร์ด ----------------------------------------------------------------------------------------------------------------------
 select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 23::bigint, 'the snapshot has twenty-three lists (orderRequests since 20261225010000)');
 select is((select count(*) from jsonb_object_keys(public.app_bom_master_since(0) -> 'changes')), 23::bigint, 'and so has the delta');
-select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'orderRequests')), 3, 'the three requests accepted above are listed (refused calls wrote nothing)');
-select ok(exists (select 1 from jsonb_array_elements(public.app_bom_master_since(so_t.ver() - 1) -> 'changes' -> 'orderRequests' -> 'upsert') r where r ->> 'id' = so_t.uid(20)),
-  'the delta carries the request decided last');
+select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'orderRequests')), 5, 'the five requests accepted above are listed (refused calls wrote nothing)');
+select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'orderRequests') r where r ->> 'status' = 'open'), 0, 'none is left open');
 
 reset role;
 select is((select count(*)::integer from public.bom_order_requests where not is_test), 0, 'test requests never land in the real data');

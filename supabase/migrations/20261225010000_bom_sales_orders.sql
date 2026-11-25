@@ -41,6 +41,8 @@
 --       confirm = คำขอยกเลิกเท่านั้น: ต้องมากับแถวยกเลิกใบ (ส่วน orders แถวเดียว ในคำสั่งเดียวกัน) ที่เหตุผล = เหตุผลของคำขอ (ตัวเขียนใบยกเลิกตามกติกาเดิม: คืนสต็อก ยกเลิก / หยุด WO)
 --         หรือใบถูกยกเลิกไปก่อนแล้ว · ไม่งั้น BOM_INVALID_TRANSITION · คำขอเป็น done พร้อมผู้ยืนยัน
 --       decline = ไม่ทำตามคำขอ หมายเหตุ 3-200 (declined) · done = คำขอแก้ใบเท่านั้น ฝ่ายวางแผนแก้แล้ว (หมายเหตุไม่บังคับ)
+--     ใบถูกยกเลิก (ทุกทางในคำสั่งใดก็ได้): คำขออื่นของใบที่ยังเปิดปิดเองใน app_bom_save_master หลังตัวเขียนคำขอ (ขอยกเลิก = done · ขอแก้ใบ = declined
+--       หมายเหตุ "ใบถูกยกเลิกแล้ว" ผู้ตัดสิน = ผู้ยกเลิกใบ) จึงไม่มีคำขอเปิดค้างบนใบที่ยกเลิกแล้ว
 --   บันทึกการใช้งาน: แถว BOM_MASTER_SAVE เดิม (client_action + จำนวนต่อส่วน + entries ของ client เช่น "ฝ่ายขายส่งใบให้ฝ่ายวางแผน") · ผู้ขอ / ผู้ตัดสินเก็บในแถวคำขอ
 --   รหัสข้อผิดพลาดใหม่: BOM_INVALID_REQUEST · BOM_REQUEST_OPEN
 --
@@ -1125,6 +1127,19 @@ begin
     v_cancelled_orders := array(select t.value::uuid from jsonb_array_elements_text(coalesce(v_res -> 'cancelledOrders', '[]'::jsonb)) as t(value));
     if p_action in ('requestOrderCancel', 'requestOrderChange', 'decideOrderRequest') then
       perform private.bom_save_order_request(v_actor, v_order_planner, p_action, p_changes #> '{orderRequests,upsert}', v_cancelled_orders, p_base_version, v_version);
+    end if;
+    -- ใบที่ยกเลิกในคำสั่งนี้ (ฝ่ายวางแผนยกเลิกตรง / ยืนยันคำขอยกเลิก / ฝ่ายขายยกเลิกใบร่าง): คำขออื่นของใบที่ยังเปิดอยู่ปิดเองหลังตัวเขียนคำขอ
+    -- (คำขอที่เพิ่งยืนยันในคำสั่งนี้เป็น done แล้วจึงไม่ถูกแตะ) · ขอยกเลิก = done · ขอแก้ใบ = declined · หมายเหตุ "ใบถูกยกเลิกแล้ว" · ผู้ตัดสิน = ผู้ยกเลิกใบ
+    -- นับเป็น orderRequests ของบันทึกการใช้งาน
+    if cardinality(v_cancelled_orders) > 0 then
+      update public.bom_order_requests q
+      set status = case when q.kind = 'cancel' then 'done' else 'declined' end,
+          decided_by = v_actor.id, decided_at = clock_timestamp(), decision_note = 'ใบถูกยกเลิกแล้ว'
+      where q.is_test = (select private.bom_test_mode()) and q.status = 'open' and q.order_pk = any (v_cancelled_orders);
+      get diagnostics v_n = row_count;
+      if v_n > 0 then
+        v_counts := v_counts || jsonb_build_object('orderRequests', jsonb_build_object('upsert', coalesce((v_counts #>> '{orderRequests,upsert}')::integer, 0) + v_n));
+      end if;
     end if;
     -- สต็อกสินค้าสำเร็จรูป: แถว transfer (ปล่อยผลิต) / untransfer (ยกเลิก / เปิดกลับ) ที่ตัวเขียนใบเขียนเอง นับเป็น fgMoves (ส่วน fgMoves ไม่มากับ action ของใบ)
     v_fg_orders_n := coalesce((v_res ->> 'fgMoves')::integer, 0);

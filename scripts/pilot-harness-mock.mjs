@@ -2109,6 +2109,13 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     // แปรรูปยาง GR (private.bom_gr_save): ยอดของงาน / สถานะใบที่เปลี่ยนนับเป็น jobs / orders ของบันทึกการใช้งาน
     // คำขอของฝ่ายขาย (private.bom_save_order_request · 20261225010000) หลังตัวเขียนใบ: ยืนยันยกเลิกเห็นใบที่เพิ่งยกเลิกในคำสั่งนี้
     if (BOM_REQUEST_ACTIONS.includes(action)) bomOrderRequestSave(next, changes.orderRequests?.upsert ?? [], base, current.version, nextVersion, actor, at, action, cancelledOrders);
+    // ใบที่ยกเลิกในคำสั่งนี้: คำขออื่นของใบที่ยังเปิดปิดเองหลังตัวเขียนคำขอ (ขอยกเลิก = done · ขอแก้ใบ = declined · หมายเหตุ "ใบถูกยกเลิกแล้ว") นับเป็น orderRequests ของบันทึกการใช้งาน
+    for (const request of next.orderRequests ?? []) {
+      if (request.status !== "open" || !cancelledOrders.includes(request.orderId)) continue;
+      Object.assign(request, { status: request.kind === "cancel" ? "done" : "declined", decidedBy: actor.name, decidedAt: at, decisionNote: "ใบถูกยกเลิกแล้ว" });
+      next.versions.orderRequests[request.id] = nextVersion;
+      meta.requestsClosed = (meta.requestsClosed ?? 0) + 1;
+    }
     if (bomGrSection(action)) meta.gr = bomGrSave(next, changes[bomGrSection(action)]?.upsert ?? [], base, current.version, nextVersion, actor, at, action);
     // ใบที่ปล่อยผลิตในคำสั่งนี้ (ตรงกับ app_bom_save_master ของ 20261124010000): ยังไม่ completed ต้องมีงาน (ปล่อยผลิตโดยไม่มีงานเลยไม่ได้)
     // completed (ได้ครบทุกสินค้าจากสต็อกตอนปล่อย ด้านบน) ต้องไม่มีงาน เพราะงานของใบที่ปิดแล้วทำต่อไม่ได้
@@ -3823,7 +3830,9 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         // คลังแท่งยาว: rodMoves = จำนวนแถวประวัติที่เขียน (รับเข้า / จ่าย / ย้อน / ปรับ / ย้ายตอนปล่อยผลิตหรือเปิดใบกลับ) · jobs +1 เมื่อรับเข้านับเข้างาน RB
         ...(meta.rod ? { ...(meta.rod.lots ? { rodLots: [meta.rod.lots, 0] } : { rodLots: [0, 0] }), rodMoves: [meta.rod.moves, 0], ...(meta.rod.job ? { jobs: [1, 0] } : {}) } : {}),
         ...(meta.rodMoves ? { rodMoves: [meta.rodMoves, 0] } : {}),
-        ...(meta.gr?.jobs ? { jobs: [meta.gr.jobs, 0] } : {}), ...(meta.gr?.orders ? { orders: [meta.gr.orders, 0] } : {}) };
+        ...(meta.gr?.jobs ? { jobs: [meta.gr.jobs, 0] } : {}), ...(meta.gr?.orders ? { orders: [meta.gr.orders, 0] } : {}),
+        // คำขอที่ปิดเองเพราะใบถูกยกเลิก (ตรงกับ v_counts ของ app_bom_save_master ใน 20261225010000)
+        ...(meta.requestsClosed ? { orderRequests: [(p_changes.orderRequests?.upsert?.length ?? 0) + meta.requestsClosed, 0] } : {}) };
       const counts = Object.keys(counted).sort().map((key) => {
         const [up, del] = counted[key];
         return up || del ? `${key}${up ? ` +${up}` : ""}${del ? ` -${del}` : ""}` : "";

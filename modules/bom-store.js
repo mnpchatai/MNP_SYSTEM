@@ -333,6 +333,18 @@
     if (!kept.length) delete entry.upsert;
     if (Object.keys(entry).length) next.orders = entry;
     else delete next.orders;
+    // ใบที่เปิดกลับเป็นร่างในคำสั่งนี้ (released / in_progress → draft เช่น ฝ่ายขายแก้ใบที่ยังไม่มีงานเริ่ม): ฐานข้อมูลลบงานของใบเอง (private.bom_delete_order_jobs)
+    // แล้วส่งหลุมฝังศพกลับมาในคำตอบ · ตัวลบงานตรงๆ (private.bom_delete_jobs) รับเฉพาะกลุ่มวางแผน จึงไม่ส่งการลบงานของใบเหล่านี้ (ส่งไป = BOM_FORBIDDEN ทั้งคำสั่ง)
+    const reopened = new Set(upserts.filter((record) => ["released", "in_progress"].includes(old.get(record.id)?.status) && record.status === "draft").map((record) => record.id));
+    const removed = changes.jobs?.delete;
+    if (reopened.size && removed?.length) {
+      const orderOfJob = new Map((before.jobs ?? []).map((job) => [job.id, job.orderId]));
+      const left = removed.filter((target) => !reopened.has(orderOfJob.get(target.id)));
+      const jobs = { ...changes.jobs, delete: left };
+      if (!left.length) delete jobs.delete;
+      if (Object.keys(jobs).length) next.jobs = jobs;
+      else delete next.jobs;
+    }
     return next;
   }
 
@@ -410,7 +422,7 @@
     const code = /BOM_[A-Z0-9_]+/.exec(haystack)?.[0] ?? (/PGRST202|42883/.test(haystack) ? "BOM_NOT_DEPLOYED" : /57014|statement timeout/i.test(haystack) ? "BOM_TIMEOUT" : "BOM_REMOTE_FAILED");
     const message = {
       BOM_TEST_MODE_ONLY: "ข้อมูล BOM ใช้ได้เฉพาะผู้ดูแลระบบในโหมดทดสอบ",
-      BOM_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์แก้ข้อมูล BOM รายการนี้ (ฝ่ายวางแผน ผู้จัดการ และผู้ดูแลระบบทำได้ทุกรายการ แผนกอื่นรายงานได้เฉพาะงานของแผนกตน)",
+      BOM_FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้ (ใบสั่งผลิตและทะเบียนลูกค้า: ฝ่ายขาย ฝ่ายวางแผน และผู้จัดการ · ฝ่ายขายแก้ได้เฉพาะใบที่ฝ่ายขายเปิด · โครงสร้างสินค้า: ฝ่ายวางแผนและผู้จัดการ · แผนกอื่นบันทึกได้เฉพาะงานของแผนกตน)",
       BOM_QA_HEAD_ONLY: "เฉพาะหัวหน้า QA หรือผู้จัดการโรงงาน/ผู้ดูแลระบบ ตัดสินล็อตยางเส้นยาวที่กักได้",
       BOM_STALE: "มีผู้อื่นบันทึกข้อมูล BOM ไปก่อน ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",
       BOM_CONFLICT: "รายการนี้ซ้ำกับที่มีอยู่แล้ว (เช่น เลขที่ PI) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาลองทำรายการอีกครั้ง",

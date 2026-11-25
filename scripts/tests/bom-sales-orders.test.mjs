@@ -149,11 +149,14 @@ test("database mode: request actions return one request row; the store sends it 
 const BOM_KEY = "mnp-harness-bom-master";
 const memoryStorage = (map = new Map()) => ({ getItem: (key) => (map.has(key) ? map.get(key) : null), setItem: (key, value) => map.set(key, String(value)), removeItem: (key) => map.delete(key), map });
 const LISTS = ["items", "compounds", "colors", "colorSets", "packages", "boms", "processes", "routings", "customers", "orders", "jobs", "stock", "stockMoves", "fgMoves", "rodLots", "rodMoves", "grConfig", "grPlans", "grRecords", "rodRequests", "grHandovers"];
-function mockScene() {
+// prepare(data) แก้ข้อมูลตั้งต้นของ BOM ก่อนเก็บ · rf = ข้อมูลตั้งต้นของ RubberFlow (ไม่ให้ = ว่าง)
+function mockScene({ prepare = null, rf = null } = {}) {
   const data = fresh();
+  prepare?.(data);
   const master = { version: 1, epoch: "so-e1", versions: {}, tombstones: [], audit: [], ...Object.fromEntries(LISTS.map((list) => [list, data[list] ?? []])) };
   const storage = memoryStorage();
   storage.setItem(BOM_KEY, JSON.stringify(master));
+  if (rf) storage.setItem("mnp-harness-rf-master", JSON.stringify(rf));
   const mock = createMockSupabase({ sandbox: true, now: () => NOW, storage });
   const call = async (name, args) => { const { data: out, error } = await mock.client.rpc(name, args); if (error) throw Object.assign(new Error(error.message), { code: error.code }); return out; };
   const save = async (persona, action, changes) => {
@@ -164,8 +167,8 @@ function mockScene() {
   };
   const view = () => call("app_bom_master");
   const orderRow = async (id) => (await view()).orders.find((row) => row.id === id);
-  // store ของหน้า (ผู้ทำรายการ = persona) · sent = สิ่งที่ส่งให้ app_bom_save_master
-  const storeFor = async (personaId) => {
+  // store ของหน้า (ผู้ทำรายการ = persona) · sent = สิ่งที่ส่งให้ app_bom_save_master · rfOrders = WO ของ RubberFlow ที่หน้าโหลดไว้ (ไม่ให้ = ยังไม่โหลด)
+  const storeFor = async (personaId, { rfOrders } = {}) => {
     const enter = () => call("app_sandbox_enter", { p_persona_id: personaId });
     await enter();
     const persona = (await call("app_sandbox_status")).personas.find((row) => row.id === personaId);
@@ -175,7 +178,7 @@ function mockScene() {
       save: (changes, baseVersion, action, audit, epoch) => { sent.push({ changes, action }); return call("app_bom_save_master", { p_changes: changes, p_base_version: baseVersion, p_action: action, p_audit: audit ?? [], p_epoch: epoch ?? null }); },
       since: (version) => call("app_bom_master_since", { p_version: version }),
     };
-    const store = storeApi.createStore({ actions: A, now: () => NOW, remote, persona: () => storeApi.personaUser({ ...persona, isSandbox: true }) });
+    const store = storeApi.createStore({ actions: A, now: () => NOW, remote, persona: () => storeApi.personaUser({ ...persona, isSandbox: true }), rfOrders });
     await store.ensureLoaded();
     return { store, sent, enter };
   };
@@ -250,4 +253,109 @@ test("mock: the store round trip — sales opens and sends with products, planni
   assert.deepEqual(pp.store.data().orderRequests.map((row) => [row.status, row.decidedBy]), [["done", "สมศรี วางแผน"]]);
   const view = await s.view();
   assert.equal(view.orderRequests.length, 1, "the snapshot lists the request");
+});
+
+// ---------- ฝ่ายขายแก้ใบที่ปล่อยผลิตแล้ว (ยังไม่มีงานเริ่ม) ผ่าน store จริง ----------
+// ฉาก: SA-E1 ใบของฝ่ายขายที่ปล่อยแล้ว · งาน RB ผูก WO-E1 (planned = ยังไม่เริ่ม) · งาน PK · ใช้สต็อก FG 2 ชิ้นจาก SRC-1 (แถว transfer)
+// เดิม store ส่งการลบงานของใบ (jobs.delete) ไปด้วย ตัวลบงาน (private.bom_delete_jobs) รับเฉพาะกลุ่มวางแผน ทั้งคำสั่งจึงเป็น BOM_FORBIDDEN
+const FG2 = "DEMO-TP-01(P)-Y";
+const RF_LISTS = ["materials", "recipes", "orders", "materialLots", "requisitions", "lots", "transfers", "fgBoxes", "qcRecords", "ncrs", "molds", "purchaseOrders"];
+function releasedSalesScene(items) {
+  const header = { customer: "ลูกค้าฝ่ายขาย", country: "Thailand", orderType: "SA", orderedAt: NOW - DAY, whDue: NOW + 30 * DAY, due: { PK: NOW + 20 * DAY }, dueDefaults: [], note: "", createdBy: "x", createdAt: NOW - DAY };
+  const job = (id, dept, extra = {}) => ({ id, orderId: "SA-E1", dept, itemCode: FG, name: "งาน", kind: dept === "RB" ? "RB" : "FG", uom: "pcs", qtyPlanned: 5, qtyRequired: 5, stockCounted: null, qtyDone: 0, qtyReject: 0,
+    dueAt: NOW + 10 * DAY, status: "queued", externalRef: null, fgCodes: [FG], createdAt: NOW - DAY, reports: [], ...extra });
+  const prepare = (d) => {
+    d.orders.push({ ...header, id: "SRC-1", source: "PP", revision: 0, status: "completed", items: [{ fgCode: FG, qty: 1, colorSet: "A", note: "" }], explosion: [{ itemCode: FG, kind: "FG", level: 0 }], explodedAt: NOW - DAY, stockCounts: {} },
+      { ...header, id: "SA-E1", source: "SA", sentAt: NOW - DAY, sentBy: "สุนิสา ขายดี", revision: 0, status: "released", releasedAt: NOW - DAY, releasedBy: "สมศรี วางแผน", items,
+        explosion: [{ itemCode: FG, kind: "FG", level: 0 }], explodedAt: NOW - DAY, stockCounts: { [FG]: 2 } });
+    d.jobs.push(job("JOB-E-RB", "RB", { externalRef: { system: "rubberflow", woId: "WO-E1", kg: 5 } }), job("JOB-E-PK", "PK"));
+    d.fgMoves.push({ id: "fg-src-1", orderId: "SRC-1", fgCode: FG, kind: "receive", qty: 3, note: "", at: NOW - DAY, by: "x" },
+      { id: "fg-take-1", orderId: "SA-E1", fromOrderId: "SRC-1", fgCode: FG, kind: "transfer", qty: 2, note: "", at: NOW - DAY, by: "x" });
+  };
+  const rf = { version: 3, epoch: "e-rf", versions: Object.fromEntries(RF_LISTS.map((list) => [list, {}])), audit: [], ...Object.fromEntries(RF_LISTS.map((list) => [list, []])) };
+  rf.orders = [{ id: "WO-E1", customer: "ลูกค้าฝ่ายขาย", customerPo: "SA-E1", recipeId: "RC-1", recipeRevision: 1, productCode: "", uom: "pcs", color: "ดำ", targetQty: 5, producedQty: 0,
+    startDate: NOW, dueDate: NOW + DAY, priority: "normal", note: "", status: "planned", sourceJobId: "JOB-E-RB", createdAt: NOW - DAY, createdBy: "x" }];
+  return mockScene({ prepare, rf });
+}
+const SA_EDITS = [
+  ["updateOrderHeader", [{ fgCode: FG, qty: 5, colorSet: "A", note: "" }], { orderId: "SA-E1", whDue: NOW + 40 * DAY, note: "ลูกค้าขอเลื่อนส่ง" }, (order) => [order.whDue, order.note], [NOW + 40 * DAY, "ลูกค้าขอเลื่อนส่ง"]],
+  ["updateOrderItem", [{ fgCode: FG, qty: 5, colorSet: "A", note: "" }], { orderId: "SA-E1", fgCode: FG, qty: 6 }, (order) => order.items.map((item) => [item.fgCode, item.qty]), [[FG, 6]]],
+  ["addOrderItem", [{ fgCode: FG, qty: 5, colorSet: "A", note: "" }], { orderId: "SA-E1", fgCode: FG2, qty: 4 }, (order) => order.items.map((item) => [item.fgCode, item.qty, item.colorSet]), [[FG, 5, "A"], [FG2, 4, "Y"]]],
+  ["removeOrderItem", [{ fgCode: FG, qty: 5, colorSet: "A", note: "" }, { fgCode: FG2, qty: 2, colorSet: "Y", note: "" }], { orderId: "SA-E1", fgCode: FG2 }, (order) => order.items.map((item) => item.fgCode), [FG]],
+];
+for (const [action, items, payload, pick, expected] of SA_EDITS) {
+  test(`mock store: sales ${action} on a released sales order with no job started — only the order row travels; the server drops the jobs, cancels the planned work order and returns the stock`, async () => {
+    const s = releasedSalesScene(items);
+    await s.call("app_sandbox_enter", { p_persona_id: "persona-sa" });
+    const woList = (await s.call("app_rf_master")).orders;
+    const sa = await s.storeFor("persona-sa", { rfOrders: () => woList });
+    const edit = sa.store.run(action, payload);
+    assert.equal(edit.ok, true, edit.error?.message);
+    const saved = await edit.saving;
+    assert.equal(saved.ok, true, saved.error?.message);
+    assert.deepEqual(Object.keys(sa.sent.at(-1).changes), ["orders"], "no jobs.delete: the database drops the jobs of the reopened order itself");
+    const order = await s.orderRow("SA-E1");
+    assert.deepEqual([order.status, order.revision, order.sentAt !== undefined, pick(order)], ["draft", 1, true, expected], "back to draft for planning, still sent, with the edit");
+    const view = await s.view();
+    assert.deepEqual(view.jobs.filter((job) => job.orderId === "SA-E1"), [], "the jobs of the order are gone");
+    assert.deepEqual(sa.store.data().jobs.filter((job) => job.orderId === "SA-E1"), [], "and the page dropped them too");
+    assert.equal((await s.call("app_rf_master")).orders.find((wo) => wo.id === "WO-E1").status, "cancelled", "the planned work order opened at release is cancelled, as when planning reopens");
+    assert.deepEqual(view.fgMoves.filter((move) => move.orderId === "SA-E1" && move.kind === "untransfer").map((move) => [move.fromOrderId, move.fgCode, move.qty]), [["SRC-1", FG, 2]],
+      "the finished goods taken from stock go back to the source order");
+    assert.deepEqual((await s.call("app_bom_audit", { p_limit: 1 }))[0].rubberflow, { opened: 0, skipped: 0, cancelled: 1 }, "the save records the cancelled work order");
+  });
+}
+test("mock: a sales payload that still carries jobs.delete of its reopened order is refused like the database (BOM_FORBIDDEN) — the store never sends it", async () => {
+  const s = releasedSalesScene([{ fgCode: FG, qty: 5, colorSet: "A", note: "" }]);
+  const row = { ...(await s.orderRow("SA-E1")), status: "draft", revision: 1, explosion: null, items: [{ fgCode: FG, qty: 6, colorSet: "A", note: "" }] };
+  assert.equal(await codeOf(s.save("persona-sa", "updateOrderItem", { orders: { upsert: [row] }, jobs: { delete: [{ id: "JOB-E-RB" }, { id: "JOB-E-PK" }] } })), "BOM_FORBIDDEN");
+  assert.ok((await s.save("persona-sa", "updateOrderItem", { orders: { upsert: [row] } })).data, "the order row alone reopens it");
+  // planning's payload keeps jobs.delete (the planner group may delete jobs; jobs deleted in the same call are skipped)
+  const shaped = storeApi.diffMaster({ orders: [{ id: "O", status: "released" }], jobs: [{ id: "J", orderId: "O" }] }, { orders: [{ id: "O", status: "draft" }], jobs: [] });
+  assert.deepEqual(shaped.jobs, { delete: [{ id: "J" }] });
+});
+
+// ---------- ยกเลิกใบ: คำขออื่นที่ยังเปิดของใบปิดเอง ----------
+test("cancelling an order closes its other open requests: a cancel request is done, a change request is declined, both noted 'ใบถูกยกเลิกแล้ว'", () => {
+  const d = fresh();
+  saOrder(d, "SA-C1", { send: true });
+  A.releaseOrder(d, { orderId: "SA-C1" }, ctx("planner"));
+  const change = A.requestOrderChange(d, { orderId: "SA-C1", reason: "เพิ่มเป็น 5 ชุด" }, ctx("sa"));
+  const cancel = A.requestOrderCancel(d, { orderId: "SA-C1", reason: "ลูกค้ายกเลิก" }, ctx("sa"));
+  A.cancelOrder(d, { orderId: "SA-C1", reason: "ฝ่ายวางแผนยกเลิกเอง" }, ctx("planner"));
+  assert.deepEqual(A.helpers.orderRequestsOf(d, "SA-C1").map((row) => [row.id, row.status, row.decisionNote, row.decidedBy]),
+    [[change.id, "declined", "ใบถูกยกเลิกแล้ว", USERS.planner.name], [cancel.id, "done", "ใบถูกยกเลิกแล้ว", USERS.planner.name]]);
+  rejects(() => A.decideOrderRequest(d, { requestId: change.id, decision: "done" }, ctx("planner")), /ตัดสินไปแล้ว/);
+  // ยืนยันคำขอยกเลิก: คำขอแก้ใบที่เปิดอยู่ปิดเอง · คำขอที่ยืนยันได้ผลของการยืนยัน
+  saOrder(d, "SA-C2", { send: true });
+  A.releaseOrder(d, { orderId: "SA-C2" }, ctx("planner"));
+  const change2 = A.requestOrderChange(d, { orderId: "SA-C2", reason: "ขอแก้จำนวน" }, ctx("sa"));
+  const cancel2 = A.requestOrderCancel(d, { orderId: "SA-C2", reason: "ลูกค้ายกเลิก" }, ctx("sa"));
+  A.decideOrderRequest(d, { requestId: cancel2.id, decision: "confirm", note: "ยืนยัน" }, ctx("planner"));
+  assert.deepEqual(A.helpers.orderRequestsOf(d, "SA-C2").map((row) => [row.id, row.status, row.decisionNote]), [[change2.id, "declined", "ใบถูกยกเลิกแล้ว"], [cancel2.id, "done", "ยืนยัน"]]);
+});
+
+test("mock store: planning cancels a sales order with open requests; the server closes them in the same call and the page shows the closed rows", async () => {
+  const s = mockScene();
+  const sa = await s.storeFor("persona-sa");
+  assert.equal((await sa.store.run("createOrder", { pi: "SA-C3", customer: "ลูกค้ารอบเดียว", country: "Thailand", orderedAt: NOW, whDue: NOW + 30 * DAY, lines: [{ fgCode: FG, qty: 3 }], send: true }).saving).ok, true);
+  const pp = await s.storeFor("persona-pp");
+  assert.equal((await pp.store.run("releaseOrder", { orderId: "SA-C3" }).saving).ok, true);
+  await sa.enter();
+  await sa.store.catchUp();
+  const change = sa.store.run("requestOrderChange", { orderId: "SA-C3", reason: "ขอเพิ่มจำนวน" });
+  assert.equal((await change.saving).ok, true);
+  const cancel = sa.store.run("requestOrderCancel", { orderId: "SA-C3", reason: "ลูกค้ายกเลิก" });
+  assert.equal((await cancel.saving).ok, true);
+  await pp.enter();
+  await pp.store.catchUp();
+  const cancelled = pp.store.run("cancelOrder", { orderId: "SA-C3", reason: "ฝ่ายวางแผนยกเลิกเอง" });
+  assert.equal(cancelled.ok, true, cancelled.error?.message);
+  assert.equal((await cancelled.saving).ok, true);
+  assert.deepEqual(Object.keys(pp.sent.at(-1).changes), ["orders"], "the requests are closed by the server, not sent");
+  const rows = (await s.view()).orderRequests.filter((row) => row.orderId === "SA-C3").map((row) => [row.id, row.status, row.decisionNote, row.decidedBy]).sort();
+  assert.deepEqual(rows, [[cancel.result.id, "done", "ใบถูกยกเลิกแล้ว", "สมศรี วางแผน"], [change.result.id, "declined", "ใบถูกยกเลิกแล้ว", "สมศรี วางแผน"]].sort());
+  assert.deepEqual(pp.store.data().orderRequests.filter((row) => row.orderId === "SA-C3").map((row) => row.status).sort(), ["declined", "done"]);
+  assert.match((await s.call("app_bom_audit", { p_limit: 1 }))[0].detail, /orderRequests \+2/, "the closed requests are counted in the audit row");
+  assert.equal(await codeOf(s.save("persona-pp", "decideOrderRequest", { orderRequests: { upsert: [{ id: change.result.id, decision: "done", note: "" }] } })), "BOM_INVALID_TRANSITION", "nothing is left to decide");
 });

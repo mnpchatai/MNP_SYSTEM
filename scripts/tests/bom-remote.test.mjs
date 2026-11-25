@@ -221,7 +221,10 @@ test("Thai messages for the BOM RPC errors, whatever shape the error arrives in"
   assert.equal(storeApi.mapRemoteError(new TypeError("Failed to fetch"), "โหลดไม่สำเร็จ").message, "โหลดไม่สำเร็จ");
   assert.match(message({ message: "BOM_CONFLICT" }), /ซ้ำกับที่มีอยู่แล้ว.*ลองทำรายการอีกครั้ง/);
   assert.match(message({ message: "BOM_INVALID_TRANSITION" }), /สถานะที่ทำรายการนี้ไม่ได้/);
-  assert.match(message({ message: "BOM_FORBIDDEN" }), /แผนกอื่นรายงานได้เฉพาะงานของแผนกตน/, "the per-field rule is explained");
+  assert.match(message({ message: "BOM_FORBIDDEN" }), /แผนกอื่นบันทึกได้เฉพาะงานของแผนกตน/, "the per-field rule is explained");
+  // กติกาขั้น 8 (20261225010000): ใบสั่งผลิตและลูกค้า = ฝ่ายขาย ฝ่ายวางแผน ผู้จัดการ · โครงสร้างสินค้า = ฝ่ายวางแผน · ไม่ใช้คำว่า BOM เป็นชื่อโมดูล
+  assert.match(message({ message: "BOM_FORBIDDEN" }), /ใบสั่งผลิตและทะเบียนลูกค้า: ฝ่ายขาย ฝ่ายวางแผน และผู้จัดการ.*โครงสร้างสินค้า: ฝ่ายวางแผน/);
+  assert.doesNotMatch(message({ message: "BOM_FORBIDDEN" }), /BOM/);
   const again = storeApi.mapRemoteError(storeApi.mapRemoteError({ message: "BOM_STALE" }));
   assert.equal(again.code, "BOM_STALE", "mapping twice keeps the code and the message");
 });
@@ -648,7 +651,7 @@ test("a rejected save reverts the whole action to the last server snapshot, and 
   assert.equal(env.store.data().orders[0].items.length, 1);
   assert.ok(env.store.data().items.some((item) => item.code === "TOY-01(B)-A"));
   const refused = await variant.saving;
-  assert.match(refused.error.message, /ไม่มีสิทธิ์แก้ข้อมูล BOM/);
+  assert.match(refused.error.message, /ไม่มีสิทธิ์ทำรายการนี้/);
   assert.equal(env.store.data().orders[0].items.length, 0, "the order line is gone with the product it pointed at");
   assert.equal(env.store.data().items.some((item) => item.code === "TOY-01(B)-A"), false);
   assert.deepEqual(env.store.data(), before);
@@ -1995,7 +1998,7 @@ test("a persona who may not write sees read-only pages and a save is refused by 
   assert.equal(out.ok, true);
   const failed = await out.saving;
   assert.equal(failed.ok, false);
-  assert.match(failed.error.message, /ไม่มีสิทธิ์แก้ข้อมูล BOM/);
+  assert.match(failed.error.message, /ไม่มีสิทธิ์ทำรายการนี้/);
   assert.equal(asPlanner.store.data().items.length, 0, "reverted");
 });
 

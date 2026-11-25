@@ -1171,8 +1171,18 @@
     order.status = "cancelled";
     order.cancelledAt = ctx.now;
     order.cancelReason = why;
+    closeOpenRequests(d, order, ctx);
     audit(d, ctx, "ยกเลิกใบสั่งผลิต", `${order.id} — ${why}${returned.length ? ` · คืนสต็อกสินค้าสำเร็จรูป ${returned.length} รายการ` : ""}`);
     return order.id;
+  }
+  // ใบถูกยกเลิก (ยกเลิกตรง / ยืนยันคำขอยกเลิก / ฝ่ายขายยกเลิกใบร่าง): คำขอของใบที่ยังเปิดอยู่ปิดเอง ขอยกเลิก = done · ขอแก้ใบ = declined หมายเหตุ "ใบถูกยกเลิกแล้ว"
+  // ตรงกับ app_bom_save_master ของ 20261225010000 (โหมดฐานข้อมูลเซิร์ฟเวอร์ปิดเองแล้วส่งแถวกลับ ค่าในเครื่องใช้แสดงจนคำตอบมาถึง) · คำขอที่กำลังยืนยัน decideOrderRequest เขียนผลทับเอง
+  const ORDER_CANCELLED_NOTE = "ใบถูกยกเลิกแล้ว";
+  function closeOpenRequests(d, order, ctx) {
+    for (const row of d.orderRequests ?? []) {
+      if (row.orderId !== order.id || row.status !== "open") continue;
+      Object.assign(row, { status: row.kind === "cancel" ? "done" : "declined", decidedBy: ctx.user?.name ?? "", decidedAt: ctx.now, decisionNote: ORDER_CANCELLED_NOTE });
+    }
   }
 
   // ---------- คำขอของฝ่ายขาย (20261225010000_bom_sales_orders.sql): ขอยกเลิก / ขอแก้ใบหลังปล่อยผลิต · ฝ่ายวางแผนตัดสิน ----------

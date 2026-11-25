@@ -1586,7 +1586,8 @@
     if (!rfWakeHooked) {
       rfWakeHooked = true;
       // ผู้ใช้กำลังแก้ฟอร์มหรือเปิด dialog อยู่ (MNP_BOM.isEditing): ไม่วาดทับสิ่งที่พิมพ์ค้าง ข้อมูลเคมีแสดงเมื่อหน้าวาดครั้งถัดไป
-      const done = () => { rfWakeHooked = false; try { if (currentRoute().path === "pp" && !root.MNP_BOM?.isEditing?.()) renderRoute(); } catch { /* ออกจากหน้า BOM แล้ว */ } };
+      // หน้าของโมดูลแผนก (#/sa ฯลฯ) ที่ใช้ตัวช่วยของหน้านี้ (เช่น orderEditState ของหน้าใบของฝ่ายขาย) วาดใหม่ด้วย (MNP_FACTORY.onDeptRoute)
+      const done = () => { rfWakeHooked = false; try { if ((currentRoute().path === "pp" || root.MNP_FACTORY?.onDeptRoute?.()) && !root.MNP_BOM?.isEditing?.()) renderRoute(); } catch { /* ออกจากหน้า BOM แล้ว */ } };
       store.ensureLoaded().then(done, done);
     }
     return true;
@@ -1938,13 +1939,21 @@
   const visibleToPlanning = (ctx, order) => ctx.helpers.orderSource(order) !== "SA" || ctx.helpers.isSentOrder(order) || ctx.helpers.canSell(ctx.user);
   const planningCards = (ctx, options = {}) => (ctx.helpers.canPlanOrders(ctx.user) ? root.MNP_SA_PAGES?.planningCards?.(ctx, options) ?? "" : "");
   // ใบของฝ่ายขายแก้ได้เมื่อ: ยังเป็นร่าง หรือปล่อยผลิตแล้วแต่ยังไม่มีแผนกไหนเริ่มงาน (แก้แล้วใบกลับเป็นร่างให้ฝ่ายวางแผนปล่อยผลิตใหม่) · กติกาเดียวกับหน้าใบของฝ่ายวางแผน
+  // rfPending: ใบที่ปล่อยแล้วมีงานผูก WO ของ RubberFlow ที่ยังรู้ไม่ได้ว่าเริ่มแล้วหรือยัง เพราะข้อมูล RubberFlow ยังโหลดอยู่ ("loading" · หน้าวาดใหม่เมื่อโหลดเสร็จ: rfWake)
+  // หรือโหลดไม่สำเร็จ ("failed") · ระหว่างนั้นแก้ใบไม่ได้ (กฎเดิม: ไม่มีรายการ WO = นับว่าเริ่มแล้ว) แต่ไม่ใช่เพราะแผนกเริ่มงาน · null = รู้ครบแล้ว หรือมีงานเริ่มจริง
   const orderEditState = (ctx, order) => {
     const { data, rules } = ctx;
     const draft = order.status === "draft";
     const fgLock = rules.fgStockLock(data, order);
-    const reopen = ["released", "in_progress"].includes(order.status) && !ctx.helpers.startedJobs(data, order, rfOrdersOf(ctx)).length && !fgLock.blocked && !(rules.rodIssued(data, order.id) > 1e-9);
+    const released = ["released", "in_progress"].includes(order.status);
+    const rfOrders = released ? rfOrdersOf(ctx) : null;
+    const started = released ? ctx.helpers.startedJobs(data, order, rfOrders) : [];
+    const reopen = released && !started.length && !fgLock.blocked && !(rules.rodIssued(data, order.id) > 1e-9);
+    // ทุกงานที่นับว่าเริ่มเป็นงานรอคิวที่ไม่มียอดและรายงาน นับเพียงเพราะผูก WO แต่ยังไม่มีรายการ WO ให้ตรวจ
+    const onlyUnknownWo = started.length > 0 && started.every((job) => job.externalRef && job.status === "queued" && !(job.qtyDone > 0) && !(job.qtyReject > 0) && !job.reports?.length);
+    const rfPending = !Array.isArray(rfOrders) && rfRemote(ctx) && onlyUnknownWo ? (rfStore(ctx)?.status?.() === "error" ? "failed" : "loading") : null;
     const reopenNote = reopen ? ` ใบนี้ปล่อยผลิตแล้ว แก้แล้วใบจะกลับไปให้ฝ่ายวางแผนปล่อยผลิตใหม่ งานรายแผนกถูกลบ${fgReturnText(ctx, fgLock)}${reopenRfText(ctx, order)}` : "";
-    return { draft, reopen, fgLock, canEdit: draft || reopen, reopenNote };
+    return { draft, reopen, fgLock, canEdit: draft || reopen, reopenNote, rfPending };
   };
   pages.orders = (ctx) => {
     const { data, ui, rules, user, params } = ctx;
