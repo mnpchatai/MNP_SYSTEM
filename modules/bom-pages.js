@@ -2244,7 +2244,7 @@
   const openPoText = (pos) => (pos.length ? `มีใบสั่งซื้อที่สั่งจากใบนี้และยังรับของไม่ครบ: ${pos.map((po) => (po.received ? `${po.id} (รับแล้ว ${po.received}/${po.total} บรรทัด)` : po.id)).join(", ")} ระบบไม่ยกเลิกหรือแก้ใบสั่งซื้อให้ ตรวจที่หน้าใบสั่งซื้อของ RubberFlow${pos.some((po) => po.touched) ? " · ใบที่รับเข้าหรือปิดยอดไปแล้วบางส่วนยกเลิกไม่ได้ (ปิดยอดที่เหลือได้)" : ""}` : "");
   const openPoCallout = (ctx, order) => { const text = order ? openPoText(openPurchaseOrdersOf(ctx, order.id)) : ""; return text ? ctx.ui.callout("warn", esc(text)) : ""; };
   // ฝ่ายขายแก้ใบที่เริ่มงานแล้ว (รอบ 2): ใบเปลี่ยนทันที ไม่กลับเป็นร่าง (orderEditState.inPlace) · อื่น ๆ ที่ไม่ใช่ร่าง = กลับเป็นร่าง
-  const IN_PLACE_TEXT = "แผนกเริ่มงานแล้ว: บันทึกแล้วใบเปลี่ยนทันที สถานะและงานของแผนกไม่เปลี่ยนเอง ฝ่ายวางแผนได้รับแจ้ง “ฝ่ายขายแก้ใบ” แล้วปรับงานเอง";
+  const IN_PLACE_TEXT = "แผนกเริ่มงานแล้ว: บันทึกแล้วใบเปลี่ยนทันที สถานะและงานของแผนกไม่เปลี่ยนเอง ฝ่ายวางแผนได้รับแจ้ง “ฝ่ายขายแก้ใบ” แล้วเปิดงานเพิ่มสำหรับส่วนที่เพิ่ม (ส่วนที่ลด ฝ่ายวางแผนปรับงานเอง)";
   const reopenCallout = (ctx, order) => {
     if (!order || order.status === "draft") return "";
     if (ctx.helpers.salesOnly(ctx.user) && orderEditState(ctx, order).inPlace) return ctx.ui.callout("info", esc(IN_PLACE_TEXT));

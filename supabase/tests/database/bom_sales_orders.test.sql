@@ -528,6 +528,8 @@ select so_t.save($json$
    {"code": "FG-S9", "kind": "FG", "name": "สินค้า S9", "ownerDept": "PK", "uom": "set"},
    {"code": "SE-S9", "kind": "SE", "name": "ชิ้นยาง S9", "ownerDept": "GR", "uom": "pcs"},
    {"code": "DMS1", "kind": "CP", "name": "EPDM ขาย", "ownerDept": "RB", "uom": "kg"},
+   {"code": "RB-S6", "kind": "RB", "name": "เส้นยาง S6", "ownerDept": "RB", "uom": "pcs", "rubber": {"compound": "DMS1", "kgPerRoll": 2}},
+   {"code": "RB-S7", "kind": "RB", "name": "เส้นยาง S7", "ownerDept": "RB", "uom": "pcs", "rubber": {"compound": "DMS1", "kgPerRoll": 2}},
    {"code": "RB-S8", "kind": "RB", "name": "เส้นยาง S8", "ownerDept": "RB", "uom": "pcs", "rubber": {"compound": "DMS1", "kgPerRoll": 2}},
    {"code": "RB-S9", "kind": "RB", "name": "เส้นยาง S9", "ownerDept": "RB", "uom": "pcs", "rubber": {"compound": "DMS1", "kgPerRoll": 2}}]}}
 $json$::jsonb, 'importFlat');
@@ -546,20 +548,29 @@ create function so_t.add(p_order text, p_jobs jsonb, p_order_extra jsonb default
       jsonb_build_array(jsonb_build_object('itemCode', 'FG-S9', 'fgCode', 'FG-S9', 'kind', 'FG', 'level', 0, 'fgQty', 7, 'required', 7))) || p_order_extra)),
     'jobs', jsonb_build_object('upsert', p_jobs)), 'addJobsForChanges')
 $$;
--- ใบของฝ่ายวางแผน 251225-28301: ปล่อยผลิตพร้อมงาน PK (FG-S9 × 5) และงาน RB (RB-S9 × 10 · ได้ WO อัตโนมัติ) แล้ว PK เริ่มงาน
+-- ใบของฝ่ายวางแผน 251225-28301: ปล่อยผลิตพร้อมงาน PK (FG-S9 × 5) งาน RB (RB-S9 × 10 · ได้ WO อัตโนมัติ) และงาน RB อีกสองงาน (RB-S6 / RB-S7) แล้ว PK เริ่มงาน
 select lives_ok($$ select so_t.orders(jsonb_build_array(so_t.sa_order('251225-28301', '{"items":[{"fgCode":"FG-S9","qty":5,"colorSet":"","note":""}]}'::jsonb)), 'createOrder') $$,
   'planning opens an order of FG-S9');
 select lives_ok($$ select so_t.save(jsonb_build_object(
     'orders', jsonb_build_object('upsert', jsonb_build_array(so_t.order_row('251225-28301') || jsonb_build_object('status', 'released',
       'explosion', jsonb_build_array(jsonb_build_object('itemCode', 'FG-S9', 'fgCode', 'FG-S9', 'kind', 'FG', 'level', 0, 'fgQty', 5, 'required', 5))))),
     'jobs', jsonb_build_object('upsert', jsonb_build_array(
-      so_t.new_job('JOB-8-X1', '251225-28301', 'PK', 'FG-S9', 'FG', 5), so_t.new_job('JOB-8-X2', '251225-28301', 'RB', 'RB-S9', 'RB', 10)))), 'releaseOrder') $$,
+      so_t.new_job('JOB-8-X1', '251225-28301', 'PK', 'FG-S9', 'FG', 5), so_t.new_job('JOB-8-X2', '251225-28301', 'RB', 'RB-S9', 'RB', 10),
+      so_t.new_job('JOB-8-X6', '251225-28301', 'RB', 'RB-S6', 'RB', 3), so_t.new_job('JOB-8-X7', '251225-28301', 'RB', 'RB-S7', 'RB', 3)))), 'releaseOrder') $$,
   'and releases it');
 select ok(so_t.job('JOB-8-X2') -> 'externalRef' ->> 'woId' is not null, 'the RB job got its work order at release');
 select set_config('test.wo_x2', so_t.job('JOB-8-X2') -> 'externalRef' ->> 'woId', true);
 select public.app_sandbox_enter(current_setting('test.p_sbx_pk_staff')::uuid);
 select lives_ok($$ select so_t.start('JOB-8-X1') $$, 'PK starts the job: the order is in progress');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+-- งาน RB ของใบที่ไม่มี WO (เหมือน RubberFlow ยกเลิก WO แล้วถอดการผูก): X6 ฝ่ายวางแผนปิดแล้ว · X7 ยังรอคิว · เปิดงานเพิ่มต้องไม่เปิด WO ให้สองงานนี้
+reset role;
+update public.rf_orders set status = 'cancelled' where is_test and source_job_no in ('JOB-8-X6', 'JOB-8-X7');
+update public.bom_jobs set external_ref = null where is_test and job_no in ('JOB-8-X6', 'JOB-8-X7');
+set local role authenticated;
+select lives_ok($$ select so_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(so_t.job('JOB-8-X6') || jsonb_build_object('status', 'done',
+    'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 0, 'reject', 0, 'note', 'ไม่ทำส่วนนี้แล้ว')))))), 'setJobStatus') $$,
+  'planning closes the RB job that lost its work order');
 select set_config('test.ver_before', so_t.ver()::text, true);
 -- ปฏิเสธ: ผู้ที่ไม่ใช่กลุ่มวางแผนของใบสั่งผลิต
 select public.app_sandbox_enter(current_setting('test.p_sbx_sa_staff')::uuid);
@@ -603,8 +614,8 @@ select lives_ok($$ select so_t.add('251225-28301', jsonb_build_array(
   'planning opens the extra jobs of an order in progress');
 select is(so_t.job('JOB-8-X1') ->> 'qtyPlanned' || '/' || (so_t.job('JOB-8-X1') ->> 'qtyDone') || '/' || (so_t.job('JOB-8-X1') ->> 'status'), '7/1/in_progress',
   'the started PK job keeps its work and plans 7');
-select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'orderId' = '251225-28301'), 4,
-  'two raised jobs and two new ones: no second row for a pair');
+select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'orderId' = '251225-28301'), 6,
+  'four released jobs and two new ones: no second row for a pair');
 select is(so_t.job('JOB-8-X3') ->> 'status' || '/' || (so_t.job('JOB-8-X3') ->> 'qtyPlanned') || '/' || coalesce(so_t.job('JOB-8-X3') -> 'externalRef' ->> 'woId', '-'), 'queued/4/-',
   'the new GR job is queued with its plan');
 select ok(so_t.job('JOB-8-X4') -> 'externalRef' ->> 'woId' is not null and so_t.job('JOB-8-X4') -> 'externalRef' ->> 'woId' <> current_setting('test.wo_x2'),
@@ -618,6 +629,9 @@ select is((select o.status || '/' || trim_scale(o.target_qty)::text from public.
 select is((select (j.external_ref ->> 'kg')::numeric = o.target_kg from public.bom_jobs j join public.rf_orders o on o.is_test and o.wo_no = j.external_ref ->> 'woId'
            where j.is_test and j.job_no = 'JOB-8-X2'), true, 'the job carries the new kilograms of its work order');
 select is((select count(*)::integer from public.rf_orders o where o.is_test and o.source_job_no = 'JOB-8-X4' and o.status = 'planned'), 1, 'one planned work order for the new RB job');
+select is((select count(*)::integer from public.rf_orders o where o.is_test and o.source_job_no in ('JOB-8-X6', 'JOB-8-X7') and o.status <> 'cancelled'), 0,
+  'no work order for the other RB jobs of the order without one (the closed X6 and the queued X7): only the jobs this call created');
+select ok((select bool_and(j.external_ref is null) from public.bom_jobs j where j.is_test and j.job_no in ('JOB-8-X6', 'JOB-8-X7')), 'and they stay unlinked');
 select ok(exists (select 1 from public.audit_logs a where a.action = 'RF_SAVE' and a.metadata ->> 'client_action' = 'bom:addJobsForChanges' and (a.metadata ->> 'is_test')::boolean),
   'RubberFlow records the work orders opened and raised by the extra jobs');
 select ok(exists (select 1 from public.audit_logs a where a.action = 'BOM_MASTER_SAVE' and a.metadata ->> 'client_action' = 'addJobsForChanges'

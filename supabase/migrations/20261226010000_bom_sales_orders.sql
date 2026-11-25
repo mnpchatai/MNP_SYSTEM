@@ -62,7 +62,7 @@
 --   บันทึกการใช้งาน: แถว BOM_MASTER_SAVE เดิม (client_action + จำนวนต่อส่วน + entries ของ client เช่น "ฝ่ายขายแก้ใบ" "ฝ่ายขายยกเลิกใบ" "ฝ่ายวางแผนรับทราบ"
 --     "ฝ่ายวางแผนเลือกผลิตต่อจนจบส่ง WH" "ฝ่ายวางแผนเลือกหยุดและเก็บยางเส้นยาวที่ SR") · ผู้แจ้ง / ผู้ตัดสิน / ทางเลือกเก็บในแถวการแจ้ง
 --   ฝ่ายวางแผนเปิดงานเพิ่มจากฝ่ายขายแก้ใบ (addJobsForChanges · ฝ่ายวางแผนกดปุ่มเดียว): ส่วน orders (แถวเดียว ผลระเบิดใหม่) + jobs (งานใหม่ / เพิ่มยอดแผนของงานเดิม)
---     ไปที่ private.bom_add_change_jobs แทนตัวเขียนใบ / ตัวเขียนงาน (กติกาที่หัวฟังก์ชัน 6b) แล้ว private.bom_open_rf_orders ของใบ · WO ที่ยังวางแผนอยู่เพิ่มยอดตามงาน
+--     ไปที่ private.bom_add_change_jobs แทนตัวเขียนใบ / ตัวเขียนงาน (กติกาที่หัวฟังก์ชัน 6b) แล้ว private.bom_open_rf_jobs เฉพาะงาน RB ที่คำสั่งนี้สร้าง · WO ที่ยังวางแผนอยู่เพิ่มยอดตามงาน
 --     คำตอบ rubberflow + raised [{jobId, woId, kg}] (เฉพาะเมื่อมี) · audit ของ RF แถว bom:addJobsForChanges · บันทึกการใช้งาน "ฝ่ายวางแผนเปิดงานเพิ่มจากฝ่ายขายแก้ใบ" (entries ของ client)
 --   รหัสข้อผิดพลาดใหม่: BOM_INVALID_REQUEST
 --
@@ -82,7 +82,7 @@
 --   ใหม่: private.bom_can_sell(public.employees), private.bom_can_plan_orders(public.employees), private.bom_can_order(public.employees),
 --     private.bom_sales_actions(), private.bom_sa_items_ok(jsonb, jsonb), private.bom_order_locked(uuid), private.bom_sa_change_summary(public.bom_orders, text, text, text, bigint, text, jsonb),
 --     private.bom_save_order_request(public.employees, boolean, text, jsonb, uuid[], bigint, bigint),
---     private.bom_add_change_jobs(public.employees, text, boolean, jsonb, jsonb, bigint, bigint)
+--     private.bom_add_change_jobs(public.employees, text, boolean, jsonb, jsonb, bigint, bigint), private.bom_open_rf_jobs(public.employees, text, uuid, text[])
 --   ไม่แตะ: private.bom_can_edit · private.bom_staff_actions · private.bom_save_customers · private.bom_save_jobs · private.bom_real_open() · private.bom_actor()
 --
 -- ก่อน apply / ลำดับ deploy: Pilot Web ที่ใช้ action / ช่องใหม่ (โมดูล SA) ต้องรอให้ apply ไฟล์นี้ที่ production (ด้วยการอนุมัติของผู้ใช้ ครั้งนี้เท่านั้น) ก่อน merge
@@ -94,7 +94,7 @@
 --
 -- Rollback (ข้อมูลทดสอบเท่านั้น · ใบของฝ่ายขายเป็นใบธรรมดาหลัง rollback) ลำดับสำคัญ:
 --   1) create or replace แปดฟังก์ชันกลับด้วยนิยามต้นทางที่ระบุข้างบน (ลายเซ็นเดิม สิทธิ์เดิมคงอยู่)
---   2) drop function private.bom_add_change_jobs(public.employees, text, boolean, jsonb, jsonb, bigint, bigint),
+--   2) drop function private.bom_open_rf_jobs(public.employees, text, uuid, text[]), private.bom_add_change_jobs(public.employees, text, boolean, jsonb, jsonb, bigint, bigint),
 --      private.bom_save_order_request(public.employees, boolean, text, jsonb, uuid[], bigint, bigint),
 --      private.bom_sa_change_summary(public.bom_orders, text, text, text, bigint, text, jsonb), private.bom_order_locked(uuid), private.bom_sa_items_ok(jsonb, jsonb),
 --      private.bom_sales_actions(), private.bom_can_order(public.employees), private.bom_can_plan_orders(public.employees), private.bom_can_sell(public.employees)
@@ -823,8 +823,8 @@ revoke all on function private.bom_save_order_request(public.employees, boolean,
 --       งานเดิม: ของใบนี้ ไม่ถูกแก้หลังเวอร์ชันฐาน · ทุกช่องเท่าเดิมยกเว้นยอดแผนที่ "เพิ่มขึ้น" (ลด / เท่าเดิม / ช่องอื่นเปลี่ยน = BOM_INVALID_JOB)
 --         งานที่ปิดแล้ว (done) = BOM_INVALID_TRANSITION · ผูก WO: WO ต้องชี้กลับมาที่งานนี้และยัง planned (ไม่งั้น BOM_INVALID_TRANSITION · WO หนึ่งใบต่องาน rf_orders_source_job_idx
 --         จึงเปิด WO ใบที่สองไม่ได้) แล้ว WO ได้ยอด = ยอดแผน − ยอดดี และกิโลกรัมใหม่ (private.bom_rb_job_kg) · external_ref.kg ของงานตาม
---     ผลระเบิดของใบเป็นของรายการปัจจุบัน (exploded_at = now) · ผู้เรียก (app_bom_save_master) เปิด WO ให้งาน RB ที่ยังไม่มี WO ของใบนี้ (private.bom_open_rf_orders)
---     คืน {orderPk, raised: [{jobId, woId, kg}]}
+--     ผลระเบิดของใบเป็นของรายการปัจจุบัน (exploded_at = now) · ผู้เรียก (app_bom_save_master) เปิด WO ให้เฉพาะงาน RB ที่คำสั่งนี้สร้าง (newRb · private.bom_open_rf_jobs)
+--     คืน {orderPk, raised: [{jobId, woId, kg}], newRb: [job_no ของงาน RB ที่สร้าง]}
 create or replace function private.bom_add_change_jobs(
   p_actor public.employees, p_actor_name text, p_planner boolean, p_orders jsonb, p_jobs jsonb, p_base bigint, p_cur bigint)
 returns jsonb
@@ -860,6 +860,8 @@ declare
   v_kg numeric;
   v_locked boolean := false;
   v_raised jsonb := '[]'::jsonb;
+  -- งาน RB ที่คำสั่งนี้สร้าง: ผู้เรียกเปิด WO ให้เฉพาะงานเหล่านี้ (private.bom_open_rf_jobs)
+  v_new_rb text[] := '{}';
 begin
   if not p_planner then raise exception 'BOM_FORBIDDEN'; end if;
   if jsonb_typeof(p_orders) <> 'array' or jsonb_array_length(p_orders) <> 1 or jsonb_typeof(p_jobs) <> 'array' or jsonb_array_length(p_jobs) = 0 then
@@ -938,6 +940,7 @@ begin
       insert into public.bom_jobs (
         is_test, job_no, order_pk, dept, item_code, name, kind, uom, qty_planned, qty_required, stock_counted, due_at, fg_codes, created_by)
       values ((select private.bom_test_mode()), v_no, v_old.id, v_dept, v_code, v_name, v_kind, v_uom, v_planned, v_required, v_stock, v_due::bigint, v_fg, p_actor.id);
+      if v_dept = 'RB' then v_new_rb := v_new_rb || v_no; end if;
       continue;
     end if;
 
@@ -978,10 +981,110 @@ begin
   end loop;
 
   update public.bom_orders set explosion = v_expl, exploded_at = now(), updated_at = now() where id = v_old.id;
-  return jsonb_build_object('orderPk', v_old.id, 'raised', v_raised);
+  return jsonb_build_object('orderPk', v_old.id, 'raised', v_raised, 'newRb', to_jsonb(v_new_rb));
 end;
 $$;
 revoke all on function private.bom_add_change_jobs(public.employees, text, boolean, jsonb, jsonb, bigint, bigint) from public, anon, authenticated;
+
+-- 6c. เปิด WO ให้งาน RB ที่เปิดงานเพิ่มเพิ่งสร้างเท่านั้น (p_job_nos) · ตัวเปิดเดิม private.bom_open_rf_orders(public.employees, text, uuid) ของปล่อยผลิตไม่เปลี่ยน
+--     เนื้อเดียวกับ private.bom_open_rf_orders จาก 20261130010000_bom_rf_go_live.sql + กรองงานตามรายการ: งาน RB อื่นของใบที่ไม่มี WO (ปิดแล้ว ข้ามตอนปล่อยเพราะไม่มีสูตร
+--     หรือ WO ถูกยกเลิกแล้วถอดการผูก) ไม่ได้ WO ใหม่จากคำสั่งนี้
+create or replace function private.bom_open_rf_jobs(p_actor public.employees, p_actor_name text, p_order_pk uuid, p_job_nos text[])
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_ord public.bom_orders%rowtype;
+  v_job public.bom_jobs%rowtype;
+  v_item public.bom_items%rowtype;
+  v_rec public.rf_recipes%rowtype;
+  v_compound text;
+  v_recipe_code text;
+  v_reason text;
+  v_qty numeric;
+  v_kg numeric;
+  v_wo text;
+  v_seq numeric := 0;
+  v_locked boolean := false;
+  v_stamp text := to_char(now() at time zone 'Asia/Bangkok', 'YYYYMMDD');
+  v_today bigint := private.bom_ms((date_trunc('day', now() at time zone 'Asia/Bangkok')) at time zone 'Asia/Bangkok');
+  v_now bigint := private.bom_ms(now());
+  v_opened jsonb := '[]'::jsonb;
+  v_skipped jsonb := '[]'::jsonb;
+begin
+  select * into v_ord from public.bom_orders o where o.is_test = (select private.bom_test_mode()) and o.id = p_order_pk;
+  if not found or coalesce(cardinality(p_job_nos), 0) = 0 then return jsonb_build_object('opened', v_opened, 'skipped', v_skipped); end if;
+
+  for v_job in
+    select j.* from public.bom_jobs j
+    where j.is_test = (select private.bom_test_mode()) and j.order_pk = p_order_pk and j.dept = 'RB' and j.external_ref is null
+      and j.job_no = any (p_job_nos)
+    order by j.job_no collate "C"
+    for update
+  loop
+    v_reason := null;
+    v_rec := null;
+    select * into v_item from public.bom_items i where i.is_test = (select private.bom_test_mode()) and i.code = v_job.item_code;
+    v_compound := nullif(v_item.rubber ->> 'compound', '');
+    if v_compound is null then
+      v_reason := 'ไม่มีรหัสสูตรยาง';
+    else
+      select c.recipe_id into v_recipe_code from public.bom_compounds c where c.is_test = (select private.bom_test_mode()) and c.code = v_compound;
+      if v_recipe_code is null then
+        v_reason := 'ยังไม่ผูกสูตร RubberFlow';
+      else
+        select * into v_rec from public.rf_recipes r where r.is_test = (select private.bom_test_mode()) and r.recipe_code = v_recipe_code and r.status = 'approved';
+        if not found then v_reason := 'สูตร ' || v_recipe_code || ' ยังไม่อนุมัติ'; end if;
+      end if;
+    end if;
+    v_qty := greatest(0, v_job.qty_planned - v_job.qty_done);
+    if v_reason is null and v_qty <= 0 then v_reason := 'ไม่มียอดให้ผลิต'; end if;
+    if v_reason is null then
+      v_kg := private.bom_rb_job_kg(v_job, v_item);
+      if v_kg is null or v_kg <= 0 or v_kg > 1000000000 or v_kg / v_qty > 1000000000 then v_reason := 'คำนวณกิโลกรัมไม่ได้'; end if;
+    end if;
+
+    if v_reason is not null then
+      v_skipped := v_skipped || jsonb_build_array(jsonb_build_object('jobId', v_job.job_no, 'itemCode', v_job.item_code, 'reason', v_reason));
+      continue;
+    end if;
+
+    if not v_locked then
+      perform private.bom_lock_rf();
+      v_locked := true;
+      select coalesce(max((m.n)[1]::numeric), 0) into v_seq
+      from (select regexp_match(o.wo_no, '^WO-' || v_stamp || '-(\d{1,8})$') as n from public.rf_orders o where o.is_test = (select private.bom_test_mode())) m
+      where m.n is not null;
+    end if;
+    v_seq := v_seq + 1;
+    v_wo := 'WO-' || v_stamp || '-' || lpad(v_seq::text, greatest(2, length(v_seq::text)), '0');
+
+    insert into public.rf_orders (
+      is_test, wo_no, customer, customer_po, recipe_code, recipe_revision, product_code, uom, color,
+      target_qty, target_kg, kg_per_unit, produced_qty, start_date, due_date, priority, note, status, source_job_no, created_by)
+    values (
+      (select private.bom_test_mode()), v_wo, v_ord.customer, v_ord.pi_no, v_rec.recipe_code, v_rec.revision, v_rec.product_code, v_job.uom,
+      coalesce(nullif(left(v_item.rubber ->> 'color', 40), ''), 'ดำ'),
+      v_qty, v_kg, private.bom_kg_per_unit(v_kg, v_qty), 0, v_today, greatest(coalesce(v_job.due_at, v_today), v_today),
+      case when v_job.due_at < v_now then 'urgent' else 'normal' end,
+      left('จาก BOM งาน ' || v_job.job_no || ' · PI ' || v_ord.pi_no || ' · ' || v_job.item_code || ' ' || trim_scale(v_qty)::text || ' ' || v_job.uom
+           || ' ≈ ' || trim_scale(v_kg)::text || ' kg · เปิดอัตโนมัติตอนเปิดงานเพิ่ม', 300),
+      'planned', v_job.job_no, p_actor.id);
+
+    update public.bom_jobs set
+      external_ref = jsonb_build_object('system', 'rubberflow', 'woId', v_wo, 'kg', v_kg, 'linkedAt', v_now, 'by', p_actor_name, 'auto', true),
+      updated_at = now()
+    where id = v_job.id;
+
+    v_opened := v_opened || jsonb_build_array(jsonb_build_object('jobId', v_job.job_no, 'woId', v_wo, 'kg', v_kg));
+  end loop;
+
+  return jsonb_build_object('opened', v_opened, 'skipped', v_skipped);
+end;
+$$;
+revoke all on function private.bom_open_rf_jobs(public.employees, text, uuid, text[]) from public, anon, authenticated;
 
 -- 7. ชุดเรคอร์ด -------------------------------------------------------------------------------------------------------------------
 -- private.bom_records(bigint) จาก 20261224010000_bom_dept_steps.sql (orders + source / sentAt / sentBy · ชุดใหม่ orderRequests)
@@ -1559,7 +1662,9 @@ begin
     if p_action = 'addJobsForChanges' then
       v_res := private.bom_add_change_jobs(v_actor, v_actor_name, v_order_planner, p_changes #> '{orders,upsert}', p_changes #> '{jobs,upsert}', p_base_version, v_version);
       v_rf_raised := coalesce(v_res -> 'raised', '[]'::jsonb);
-      v_res := private.bom_open_rf_orders(v_actor, v_actor_name, (v_res ->> 'orderPk')::uuid);
+      -- WO เฉพาะงาน RB ที่คำสั่งนี้สร้าง (งาน RB อื่นของใบที่ไม่มี WO ไม่ถูกแตะ: ปิดแล้ว ข้ามตอนปล่อย หรือ WO ถูกยกเลิก)
+      v_res := private.bom_open_rf_jobs(v_actor, v_actor_name, (v_res ->> 'orderPk')::uuid,
+                                        array(select jsonb_array_elements_text(coalesce(v_res -> 'newRb', '[]'::jsonb))));
       v_rf_opened := v_rf_opened || (v_res -> 'opened');
       v_rf_skipped := v_rf_skipped || (v_res -> 'skipped');
     end if;

@@ -2060,7 +2060,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
   // ฝ่ายวางแผนเปิดงานเพิ่มจากฝ่ายขายแก้ใบ (ตรงกับ private.bom_add_change_jobs ของ 20261226010000)
   // ลำดับตรวจ: สิทธิ์ (กลุ่มวางแผนของใบสั่งผลิต · BOM_FORBIDDEN) → แถวใบ (BOM_INVALID_ORDER) → ชนรุ่น (BOM_STALE) → สถานะใบ (BOM_INVALID_TRANSITION) → ช่องอื่นของใบต้องเท่าเดิม
   // งาน: ใหม่ = รอคิว ยอดแผน > 0 ไม่มียอด / รายงาน / WO และยังไม่มีงานคู่ (แผนก, ชิ้นงาน) เดียวกันในใบ · เดิม = เพิ่มยอดแผนอย่างเดียว (ช่องอื่นเท่าเดิม ไม่ลด · BOM_INVALID_JOB)
-  // งานเดิมที่ปิดแล้ว (done) หรือผูก WO ที่ไม่ใช่ planned = BOM_INVALID_TRANSITION · WO planned เพิ่มยอดตามงาน (bomRfFollow) · งาน RB ที่ยังไม่มี WO เปิด WO เหมือนปล่อยผลิต
+  // งานเดิมที่ปิดแล้ว (done) หรือผูก WO ที่ไม่ใช่ planned = BOM_INVALID_TRANSITION · WO planned เพิ่มยอดตามงาน (bomRfFollow) · WO ใหม่เฉพาะงาน RB ที่คำสั่งนี้สร้าง (rfOps.onlyJobs)
   const BOM_CHANGE_JOB_KEYS = ["dept", "itemCode", "name", "kind", "uom", "qtyRequired", "stockCounted", "dueAt", "fgCodes", "status", "qtyDone", "qtyReject", "reports", "externalRef"];
   const BOM_CHANGE_ORDER_KEYS = ["customer", "country", "orderType", "orderedAt", "whDue", "due", "dueDefaults", "items", "stockCounts", "note", "status"];
   function bomAddChangeJobs(next, changes, base, cur, nextVersion, actor, at, rfOps) {
@@ -2073,6 +2073,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     if (!["released", "in_progress"].includes(order.status) || bomSalesCancelled(order)) fail("BOM_INVALID_TRANSITION");
     if (BOM_CHANGE_ORDER_KEYS.some((key) => bomCanon(order[key] ?? null) !== bomCanon(row[key] ?? null)) || !Array.isArray(row.explosion) || !row.explosion.length) fail("BOM_INVALID_ORDER");
     const raise = [];
+    const newRb = [];
     const seen = new Set();
     for (const record of changes.jobs.upsert) {
       if (!record || typeof record !== "object" || !/^[A-Za-z0-9._-]{1,40}$/.test(String(record.id ?? "")) || seen.has(record.id)) fail("BOM_INVALID_JOB");
@@ -2087,6 +2088,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         next.tombstones = next.tombstones.filter((grave) => !(grave.list === "jobs" && grave.code === record.id));
         next.jobs.push(bomStamp("jobs", record, undefined, actor, at));
         next.versions.jobs[record.id] = nextVersion;
+        if (record.dept === "RB") newRb.push(record.id);
         continue;
       }
       if (changedLater("jobs", prev.id)) fail("BOM_STALE");
@@ -2096,6 +2098,10 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       if (prev.externalRef?.woId) {
         const wo = rfLoad().orders.find((entry) => entry.id === prev.externalRef.woId && entry.sourceJobId === prev.id);
         if (!wo || wo.status !== "planned") fail("BOM_INVALID_TRANSITION");
+        // กิโลกรัมของ WO ตามยอดใหม่ต้องคำนวณได้และไม่เกินเพดานของคอลัมน์ ไม่งั้นไม่เพิ่ม (ตรงกับ private.bom_add_change_jobs: BOM_INVALID_TRANSITION)
+        const qty = Math.max(0, Number(record.qtyPlanned) - Number(prev.qtyDone || 0));
+        const kg = bomRbJobKg(next, prev, next.items.find((row) => row.code === prev.itemCode), qty);
+        if (!(qty > 0) || !(kg > 0) || kg > 1e9 || kg / qty > 1e9) fail("BOM_INVALID_TRANSITION");
         raise.push(prev.id);
       }
       prev.qtyPlanned = Number(record.qtyPlanned);
@@ -2105,6 +2111,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     order.explodedAt = at;
     next.versions.orders[order.id] = nextVersion;
     rfOps.release = [order.id];
+    rfOps.onlyJobs = newRb;
     rfOps.raise = raise;
     rfOps.label = "bom:addJobsForChanges";
     return next;
@@ -3552,6 +3559,17 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
   // ใบ PI ที่ปล่อยผลิต: เปิด WO (planned) ใน RubberFlow ให้งาน RB ที่ผูกสูตรอนุมัติแล้ว · ยกเลิก/เปิดใบกลับมาแก้: ยกเลิก WO แผนก/ปล่อยผลิตที่ผูกงานของใบ
   // ตรงกับ private.bom_open_rf_orders / bom_cancel_rf_orders (ธุรกรรมเดียวกับการบันทึก BOM) · เรียกหลังบันทึก BOM สำเร็จ แก้ next (งานได้ externalRef.auto) และข้อมูล RubberFlow (เวอร์ชัน +1 ครั้งเดียว บันทึกการใช้งาน bom:<action>)
   // คืน { opened: [{jobId, woId, kg}], skipped: [{jobId, itemCode, reason}], cancelled: [woId] }
+  // kg = rbJobKg ของหน้า: บรรทัดแรกของ BOM ที่อนุมัติแล้วเป็น kg/g ใช้ปริมาณ + % เผื่อเสียของบรรทัดนั้น ไม่เช่นนั้น kg/เส้น หรือน้ำหนักต่อชิ้น เผื่อ 5% (private.bom_rb_job_kg)
+  function bomRbJobKg(next, job, item, qty) {
+    const line = next.boms.find((row) => row.itemCode === job.itemCode && row.status === "approved")?.lines?.[0];
+    const perKg = { kg: 1, g: 0.001 }[line?.uom];
+    if (line && perKg && Number(line.qty) > 0) return Math.round(qty * Number(line.qty) * perKg * (1 + (Number(line.scrapPct) || 0) / 100) * 100) / 100;
+    let kg = 0;
+    if (item?.uom === "kg") kg = qty;
+    else if (item?.rubber?.kgPerRoll) kg = qty * Number(item.rubber.kgPerRoll);
+    else if (item?.weightG) kg = qty * Number(item.weightG) / 1000;
+    return Math.round(kg * 1.05 * 100) / 100;
+  }
   function bomRfFollow(next, rfOps, actor, at) {
     const rf = rfLoad();
     const version = rf.version + 1;
@@ -3577,17 +3595,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     const key = `WO-${day.getFullYear()}${String(day.getMonth() + 1).padStart(2, "0")}${String(day.getDate()).padStart(2, "0")}`;
     const top = () => rf.orders.reduce((max, row) => { const match = /^WO-(\d{8})-(\d+)$/.exec(String(row.id)); return match && `WO-${match[1]}` === key ? Math.max(max, Number(match[2])) : max; }, 0);
     const start = new Date(at).setHours(0, 0, 0, 0);
-    // kg = rbJobKg ของหน้า: บรรทัดแรกของ BOM ที่อนุมัติแล้วเป็น kg/g ใช้ปริมาณ + % เผื่อเสียของบรรทัดนั้น ไม่เช่นนั้น kg/เส้น หรือน้ำหนักต่อชิ้น เผื่อ 5% (private.bom_rb_job_kg)
-    const jobKg = (job, item, qty) => {
-      const line = next.boms.find((row) => row.itemCode === job.itemCode && row.status === "approved")?.lines?.[0];
-      const perKg = { kg: 1, g: 0.001 }[line?.uom];
-      if (line && perKg && Number(line.qty) > 0) return Math.round(qty * Number(line.qty) * perKg * (1 + (Number(line.scrapPct) || 0) / 100) * 100) / 100;
-      let kg = 0;
-      if (item?.uom === "kg") kg = qty;
-      else if (item?.rubber?.kgPerRoll) kg = qty * Number(item.rubber.kgPerRoll);
-      else if (item?.weightG) kg = qty * Number(item.weightG) / 1000;
-      return Math.round(kg * 1.05 * 100) / 100;
-    };
+    const jobKg = (job, item, qty) => bomRbJobKg(next, job, item, qty);
     // เปิดงานเพิ่มจากฝ่ายขายแก้ใบ: WO ที่ยังวางแผนอยู่ของงานที่เพิ่มยอด ได้ยอดและกิโลกรัมตามงาน (ตรงกับ private.bom_add_change_jobs) · bomAddChangeJobs ตรวจสถานะ WO แล้ว
     out.raised = [];
     for (const jobId of rfOps.raise ?? []) {
@@ -3604,7 +3612,8 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     let openedCount = 0;
     for (const orderId of rfOps.release) {
       const pi = next.orders.find((row) => row.id === orderId);
-      const jobs = next.jobs.filter((row) => row.orderId === orderId && row.dept === "RB" && !row.externalRef).sort((a, b) => bomCmp(a.id, b.id));
+      // เปิดงานเพิ่ม: เฉพาะงาน RB ที่คำสั่งนี้สร้าง (rfOps.onlyJobs · private.bom_open_rf_jobs) · ปล่อยผลิต: ทุกงาน RB ของใบที่ยังไม่มี WO
+      const jobs = next.jobs.filter((row) => row.orderId === orderId && row.dept === "RB" && !row.externalRef && (!rfOps.onlyJobs || rfOps.onlyJobs.includes(row.id))).sort((a, b) => bomCmp(a.id, b.id));
       for (const job of jobs) {
         const item = next.items.find((row) => row.code === job.itemCode);
         const compoundCode = item?.rubber?.compound;
@@ -3619,7 +3628,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         rf.orders.push({
           id: woId, customer: pi.customer, customerPo: pi.id, recipeId: recipe.id, recipeRevision: recipe.revision, productCode: recipe.productCode ?? "", uom: job.uom,
           color: String(item.rubber?.color ?? "").slice(0, 40).trim() || "ดำ", targetQty: qty, producedQty: 0, startDate: start, dueDate: Math.max(job.dueAt, start), priority: job.dueAt < at ? "urgent" : "normal",
-          note: `จาก BOM งาน ${job.id} · PI ${pi.id} · ${job.itemCode} ${qty} ${job.uom} ≈ ${kg} kg · เปิดอัตโนมัติตอนปล่อยใบ`.slice(0, 300),
+          note: `จาก BOM งาน ${job.id} · PI ${pi.id} · ${job.itemCode} ${qty} ${job.uom} ≈ ${kg} kg · เปิดอัตโนมัติตอน${rfOps.onlyJobs ? "เปิดงานเพิ่ม" : "ปล่อยใบ"}`.slice(0, 300),
           status: "planned", sourceJobId: job.id, targetKg: kg, kgPerUnit: Number((kg / qty).toPrecision(12)), createdAt: at, createdBy: actor.name,
         });
         rf.versions.orders[woId] = version;

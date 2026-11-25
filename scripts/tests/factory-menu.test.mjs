@@ -2193,7 +2193,9 @@ test("the planning order page shows what sales added and the jobs it opens (new 
   // ฝ่ายขายไม่เห็นการ์ดนี้ (หน้าใบของฝ่ายขาย)
   env.setEmployee(emp("SA"));
   env.store.setUser("B13");
-  assert.doesNotMatch(await env.open("FACTORY_SA", "order=SA-T-4"), /เปิดงานเพิ่ม/);
+  const salesPage = await env.open("FACTORY_SA", "order=SA-T-4");
+  assert.doesNotMatch(salesPage, /data-rf-action="addJobsForChanges"/);
+  assert.doesNotMatch(salesPage, /ฝ่ายขายเพิ่มสินค้า\/จำนวน — เปิดงานเพิ่ม/);
 });
 
 test("the demo seed has the sales demo on request: one order sent to planning, one unsent draft, a started order sales edited and a started order sales cancelled mid-way", () => {

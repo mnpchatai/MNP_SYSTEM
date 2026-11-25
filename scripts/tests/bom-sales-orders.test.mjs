@@ -566,7 +566,7 @@ test("extra jobs: a closed job, a work order past planning or an unknown work or
 });
 
 // ผ่าน store จริงกับ Supabase จำลอง: SA-M1 งาน RB ผูก WO-M1 (planned) · SA-M2 งาน RB ผูก WO-M2 (in_progress) และงาน BG ปิดแล้ว · ฝ่ายขายเพิ่มจำนวน 3 → 5 ทั้งสองใบ
-function extraJobsScene() {
+function extraJobsScene({ noWeight = false, odd = false } = {}) {
   const rbIds = {};
   const prepare = (d) => {
     for (const pi of ["SA-M1", "SA-M2"]) {
@@ -578,6 +578,13 @@ function extraJobsScene() {
     }
     d.orderRequests = [];
     jobsOfOrder(d, "SA-M2").find((job) => job.dept === "BG").status = "done";
+    // กิโลกรัมของ WO คำนวณไม่ได้ (ไม่มี กก./เส้น น้ำหนัก หรือบรรทัด BOM เป็น kg)
+    if (noWeight) for (const item of d.items.filter((row) => row.kind === "RB")) { item.rubber = { ...item.rubber, kgPerRoll: 0 }; item.weightG = 0; }
+    // งาน RB อื่นของ SA-M1 ที่ไม่มี WO (ปิดแล้ว / ยังรอคิว): เปิดงานเพิ่มต้องไม่เปิด WO ให้
+    if (odd) {
+      const rb = jobsOfOrder(d, "SA-M1").find((job) => job.dept === "RB");
+      d.jobs.push({ ...rb, id: "JOB-ODD-1", itemCode: "RB-DM01-02-OR01-202-18-70", status: "done", externalRef: null }, { ...rb, id: "JOB-ODD-2", itemCode: "RB-DM01-01-OR01-200-0-72", externalRef: null });
+    }
   };
   const data = fresh();
   prepare(data);
@@ -633,4 +640,28 @@ test("mock store: planning opens the extra jobs in one save — existing jobs ra
   const rb2 = jobs2.find((job) => job.dept === "RB");
   assert.equal(await codeOf(s.save("persona-pp", "addJobsForChanges", pay(row2, [{ ...rb2, qtyPlanned: rb2.qtyPlanned + 1 }]))), "BOM_INVALID_TRANSITION", "nor a job whose work order is past planning");
   assert.ok((await s.save("persona-pp", "addJobsForChanges", raisePk)).data, "the plain raise is accepted");
+});
+
+test("mock store: opening extra jobs opens work orders only for the RB jobs it creates — other RB jobs of the order without one (closed or queued) are left alone", async () => {
+  const s = extraJobsScene({ odd: true });
+  await s.call("app_sandbox_enter", { p_persona_id: "persona-pp" });
+  const woList = (await s.call("app_rf_master")).orders;
+  const pp = await s.storeFor("persona-pp", { rfOrders: () => woList });
+  const run = pp.store.run("addJobsForChanges", { orderId: "SA-M1" });
+  assert.equal(run.ok, true, run.error?.message);
+  const saved = await run.saving;
+  assert.equal(saved.ok, true, saved.error?.message);
+  assert.deepEqual([saved.rubberflow?.opened ?? [], saved.rubberflow?.skipped ?? []], [[], []], "no work order is opened or even tried for jobs this call did not create");
+  const view = await s.view();
+  assert.deepEqual(view.jobs.filter((job) => job.id.startsWith("JOB-ODD-")).map((job) => [job.id, job.externalRef ?? null]).sort((x, y) => x[0].localeCompare(y[0])), [["JOB-ODD-1", null], ["JOB-ODD-2", null]]);
+  assert.equal((await s.call("app_rf_master")).orders.filter((wo) => ["JOB-ODD-1", "JOB-ODD-2"].includes(wo.sourceJobId)).length, 0);
+});
+
+test("mock: a planned work order whose kilograms cannot be computed is not raised (BOM_INVALID_TRANSITION, like the database)", async () => {
+  const s = extraJobsScene({ noWeight: true });
+  const row = await s.orderRow("SA-M1");
+  const rb = (await s.view()).jobs.find((job) => job.orderId === "SA-M1" && job.dept === "RB");
+  const payload = { orders: { upsert: [{ ...row, explosion: [{ itemCode: FG, kind: "FG", level: 0, fgCode: FG, required: 5 }] }] }, jobs: { upsert: [{ ...rb, qtyPlanned: rb.qtyPlanned + 1 }] } };
+  assert.equal(await codeOf(s.save("persona-pp", "addJobsForChanges", payload)), "BOM_INVALID_TRANSITION");
+  assert.equal((await s.call("app_rf_master")).orders.find((wo) => wo.id === "WO-M1").targetQty, 2, "the work order is untouched");
 });
