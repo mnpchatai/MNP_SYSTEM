@@ -52,7 +52,8 @@ select is((select count(*) from information_schema.columns where table_schema = 
   9::bigint, 'every table the delta reads has changed_version');
 select is((select count(*) from pg_indexes where schemaname = 'public' and indexname like 'bom\_%\_changed\_idx'
            and indexname <> all (array['bom_customers_changed_idx', 'bom_orders_changed_idx', 'bom_jobs_changed_idx', 'bom_stock_changed_idx', 'bom_stock_moves_changed_idx', 'bom_fg_moves_changed_idx', 'bom_rod_lots_changed_idx', 'bom_rod_moves_changed_idx',
-                                   'bom_gr_config_changed_idx', 'bom_gr_job_plans_changed_idx', 'bom_gr_records_changed_idx', 'bom_rod_requests_changed_idx', 'bom_gr_handovers_changed_idx'])),
+                                   'bom_gr_config_changed_idx', 'bom_gr_job_plans_changed_idx', 'bom_gr_records_changed_idx', 'bom_rod_requests_changed_idx', 'bom_gr_handovers_changed_idx',
+                                   'bom_order_requests_changed_idx'])),
   9::bigint, 'each of them is indexed by (is_test, changed_version)');
 select is((select count(*) from pg_constraint c join bom_tables t on c.conrelid = ('public.' || t.name)::regclass
            where c.contype = 'f' and pg_get_constraintdef(c.oid) like '%, is_test) REFERENCES %bom_%'),

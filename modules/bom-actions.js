@@ -49,7 +49,14 @@
   const canPlan = (user) => isBoss(user) || user?.role === "planner"; // สร้าง/แก้ item, BOM, ใบสั่งผลิต
   // สต็อกขั้นต่ำของของซื้อ: กลุ่มวางแผน หรือแผนก ST (ตรงกับ private.bom_save_stock ใน 20261120010000_st_sets_safety_stock.sql) · WH นับได้อย่างเดียว
   const canSetSafety = (user) => canPlan(user) || user?.role === "st";
-  const canCount = (user) => canPlan(user) || user?.role === "st" || user?.role === "wh"; // นับคงคลังของใบร่าง: ฝ่ายวางแผน ผู้จัดการ ผู้ดูแล หรือพนักงานแผนก ST / WH
+  // ผู้เขียนใบสั่งผลิตและลูกค้า (20261225010000_bom_sales_orders.sql · คำตอบเจ้าของข้อ 7): กลุ่มวางแผนของใบสั่งผลิต (admin · ฝ่ายวางแผน PP · ผู้จัดการโรงงาน /
+  // ผู้ช่วย / ผู้จัดการทั่วไป = private.bom_can_plan_orders) และฝ่ายขาย (แผนก SA = private.bom_can_sell) · ผู้จัดการแผนกในสายผลิต (role manager ที่ roleCode
+  // department_manager) ยังเป็น canPlan สำหรับ BOM / งาน แต่ไม่ใช่ผู้เขียนใบสั่งผลิต / ลูกค้าแล้ว · บทบาทสาธิตของโหมดในเครื่องไม่มี roleCode: manager = ผู้จัดการโรงงาน
+  const canPlanOrders = (user) => Boolean(user) && (user.role === "admin" || user.role === "planner" || (user.role === "manager" && user.roleCode !== "department_manager"));
+  const canSell = (user) => user?.role === "sa";
+  const canOrder = (user) => canSell(user) || canPlanOrders(user);
+  // นับคงคลังของใบร่าง: กลุ่มวางแผนของใบสั่งผลิต หรือแผนก ST / WH (รวมผู้จัดการแผนก ST / WH ที่เป็นบทบาท manager) ตรงกับ bom_save_orders
+  const canCount = (user) => canPlanOrders(user) || user?.role === "st" || user?.role === "wh" || ["ST", "WH"].includes(user?.dept);
   // ของซื้อ: งานของซื้อ (ST / PURCHASED) เปลี่ยนผลงานได้ทางเดียวคือ "เบิกจ่ายของซื้อ" ของใบ (issueOrderParts) · เบิกจ่าย = กลุ่มวางแผนหรือแผนก ST · สต็อกขั้นต่ำแก้ได้เฉพาะกลุ่มวางแผน
   const isPartJob = (job) => job?.dept === "ST" && job?.kind === "PURCHASED";
   // งานที่ยังต้องทำ (กติกาเดียวของงานของฉัน ขั้น 4 ของหน้าใบ หน้างานของแผนก และภาพรวม): ยังไม่ done และใบยังไม่ปิดหรือถูกยกเลิก · งานทุกงานของใบที่ปิดแล้ว (completed)
@@ -62,6 +69,16 @@
   const canIssueParts = (user) => canPlan(user) || user?.role === "st";
   const requireUser = (ctx) => ctx.user ?? fail("กรุณาเลือกบทบาทสาธิตก่อน");
   const requirePlanner = (ctx, what) => { const user = requireUser(ctx); if (!canPlan(user)) fail(`${what} ได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น`); return user; };
+  // ใบสั่งผลิต / ลูกค้า: requireOrderer = ฝ่ายขายหรือกลุ่มวางแผนของใบ · requireOrderPlanner = กลุ่มวางแผนของใบเท่านั้น (คำนวณ ปล่อยผลิต กำหนดเสร็จรายแผนก ตัดสินคำขอ)
+  const requireOrderer = (ctx, what) => { const user = requireUser(ctx); if (!canOrder(user)) fail(`${what} ได้โดยฝ่ายวางแผนหรือผู้จัดการ และฝ่ายขายเท่านั้น`); return user; };
+  const requireOrderPlanner = (ctx, what) => { const user = requireUser(ctx); if (!canPlanOrders(user)) fail(`${what} ได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น`); return user; };
+  // ที่มาของใบ: ไม่มี (ใบเดิม / ฐานข้อมูลรุ่นก่อน) = ฝ่ายวางแผน · ฝ่ายขายแก้ได้เฉพาะใบของฝ่ายขาย (ฐานข้อมูลปฏิเสธใบของฝ่ายวางแผน BOM_FORBIDDEN)
+  const orderSource = (order) => (order?.source === "SA" ? "SA" : "PP");
+  const isSentOrder = (order) => order?.sentAt !== undefined && order?.sentAt !== null;
+  const salesOnly = (user) => canSell(user) && !canPlanOrders(user);
+  const requireSalesOrder = (user, order) => { if (salesOnly(user) && orderSource(order) !== "SA") fail(`ฝ่ายขายแก้ได้เฉพาะใบที่ฝ่ายขายเปิด (${order.id} เป็นใบของฝ่ายวางแผน)`); };
+  // ชุดสีของบรรทัดที่ฝ่ายขายเพิ่ม = ชุดสีในรหัสสินค้า (ตรงกับ private.bom_sa_items_ok)
+  const codeColorSet = (code) => String(rules().parseFgCode(code).colorSet ?? "").slice(0, 10);
 
   // แปลงรหัสครั้งเดียวก่อนไล่หา (เดิมแปลงซ้ำทุกชิ้นที่ไล่ผ่าน) · งานที่ค้นเป็นพันครั้ง เช่น importFlat ใช้ดัชนี Map แทน
   const itemOf = (d, code) => {
@@ -482,8 +499,13 @@
   }
 
   // ---------- ใบสั่งผลิต (PI) ----------
+  // ฝ่ายขาย (20261225010000): เปิดใบได้ (ที่มา SA) แต่ไม่ตั้งกำหนดเสร็จรายแผนก · lines = [{ fgCode, qty, note }] เพิ่มสินค้าในคำสั่งเดียวกัน (ทุกผู้เปิด)
+  // send = ส่งให้ฝ่ายวางแผนพร้อมเปิด (ใบของฝ่ายขายที่มีสินค้าเท่านั้น) · ฐานข้อมูลตั้ง source / sentAt / sentBy เอง
   function createOrder(d, p, ctx) {
-    const user = requirePlanner(ctx, "เปิดใบสั่งผลิต");
+    const user = requireOrderer(ctx, "เปิดใบสั่งผลิต");
+    const sales = salesOnly(user);
+    if (sales && (p.autoDue || Object.values(p.due ?? {}).some((value) => value !== undefined && value !== null && value !== ""))) fail("กำหนดเสร็จรายแผนกตั้งได้โดยฝ่ายวางแผนเท่านั้น");
+    if (p.send && !sales) fail("ส่งให้ฝ่ายวางแผนได้เฉพาะใบที่ฝ่ายขายเปิด");
     const R = rules();
     const orderedAt = p.orderedAt === null || p.orderedAt === "" ? NaN : Number(p.orderedAt);
     const whDue = p.whDue === null || p.whDue === "" ? NaN : Number(p.whDue);
@@ -526,12 +548,90 @@
     d.customers ??= [];
     const knownCustomer = d.customers.find((entry) => customerKey(entry.name) === customerKey(typedCustomer));
     if (!knownCustomer) d.customers.push({ name: typedCustomer, country, orderType, note: "" });
-    d.orders.unshift({
+    const order = {
       id, customer: knownCustomer?.name ?? typedCustomer, country, orderType, orderedAt, whDue, due, dueDefaults: p.autoDue ? R.DUE_DEPTS.filter((dept) => !p.due?.[dept] && due[dept] !== undefined) : [], revision: 0,
       status: "draft", items: [], explosion: null, explodedAt: null, stockCounts: {}, note: String(p.note ?? "").trim().slice(0, 300), createdBy: user.name, createdAt: ctx.now,
-    });
-    audit(d, ctx, "เปิดใบสั่งผลิต", `${id} ${knownCustomer?.name ?? typedCustomer}${p.pi ? "" : " (ออกเลขอัตโนมัติ)"}${knownCustomer ? "" : " · เพิ่มลูกค้าใหม่"}`);
+      source: sales ? "SA" : "PP",
+    };
+    d.orders.unshift(order);
+    audit(d, ctx, "เปิดใบสั่งผลิต", `${id} ${knownCustomer?.name ?? typedCustomer}${p.pi ? "" : " (ออกเลขอัตโนมัติ)"}${knownCustomer ? "" : " · เพิ่มลูกค้าใหม่"}${sales ? " · ฝ่ายขาย" : ""}`);
+    // สินค้าหลายบรรทัดในคำสั่งเดียว: กติกาเดียวกับ addOrderItem (สินค้าสำเร็จรูปที่มี BOM รหัสที่มีอยู่แล้วเท่านั้น · บรรทัดรหัสซ้ำรวมจำนวน)
+    const lines = Array.isArray(p.lines) ? p.lines : [];
+    for (const line of lines) addOrderItem(d, { orderId: id, fgCode: line?.fgCode, qty: line?.qty, note: line?.note }, ctx, { quiet: true });
+    if (lines.length) audit(d, ctx, "เพิ่มสินค้าในใบสั่งผลิต", `${id} ${order.items.map((item) => `${item.fgCode} × ${item.qty}`).join(", ")}`);
+    if (p.send) markSent(d, order, ctx, user);
     return id;
+  }
+  // ส่งใบของฝ่ายขายให้ฝ่ายวางแผน (ครั้งเดียว · ใบร่างที่มีสินค้า) · เวลา / ผู้ส่งฐานข้อมูลประทับใหม่
+  function markSent(d, order, ctx, user) {
+    if (orderSource(order) !== "SA") fail("ส่งให้ฝ่ายวางแผนได้เฉพาะใบที่ฝ่ายขายเปิด");
+    if (isSentOrder(order)) fail(`ใบ ${order.id} ส่งให้ฝ่ายวางแผนแล้ว`);
+    if (order.status !== "draft") fail("ส่งได้เฉพาะใบที่ยังเป็นร่าง");
+    if (!order.items.length) fail("ใบยังไม่มีสินค้า เพิ่มสินค้าก่อนส่งให้ฝ่ายวางแผน");
+    order.sentAt = ctx.now;
+    order.sentBy = user.name;
+    audit(d, ctx, "ฝ่ายขายส่งใบให้ฝ่ายวางแผน", `${order.id} ${order.customer} · ${order.items.length} รายการ`);
+  }
+  function sendOrderToPlanning(d, { orderId }, ctx) {
+    const user = requireOrderer(ctx, "ส่งใบให้ฝ่ายวางแผน");
+    const order = orderById(d, orderId);
+    markSent(d, order, ctx, user);
+    return order.id;
+  }
+  // แก้หัวใบ: ลูกค้า ประเทศ ประเภท วันส่งมอบคลัง หมายเหตุ (ฝ่ายขายและฝ่ายวางแผน) · กำหนดเสร็จรายแผนก due / autoDue = ฝ่ายวางแผนเท่านั้น
+  // ใบที่ปล่อยผลิตแล้วแต่ยังไม่มีงานเริ่ม กลับเป็นร่าง (เหมือนแก้รายการสินค้า) · ช่องที่ไม่ส่งมาคงเดิม
+  function updateOrderHeader(d, p, ctx) {
+    const user = requireOrderer(ctx, "แก้หัวใบสั่งผลิต");
+    const order = orderById(d, p.orderId);
+    requireSalesOrder(user, order);
+    const R = rules();
+    const has = (key) => p[key] !== undefined;
+    if ((has("due") || p.autoDue) && !canPlanOrders(user)) fail("กำหนดเสร็จรายแผนกตั้งได้โดยฝ่ายวางแผนเท่านั้น");
+    const next = { customer: order.customer, country: order.country, orderType: order.orderType, whDue: order.whDue, note: order.note ?? "", due: order.due ?? {}, dueDefaults: order.dueDefaults ?? [] };
+    if (has("country")) next.country = text(p.country, "ประเทศ", 60);
+    if (has("orderType")) {
+      const typeRaw = String(p.orderType ?? "").trim().toUpperCase();
+      next.orderType = typeRaw === "" ? R.orderTypeOf(next.country) : ["SA", "EX"].includes(typeRaw) ? typeRaw : fail("ประเภทออร์เดอร์ไม่ถูกต้อง (SA หรือ EX)");
+    }
+    if (has("whDue")) {
+      const whDue = p.whDue === null || p.whDue === "" ? NaN : Number(p.whDue);
+      if (!Number.isFinite(whDue) || whDue <= 0) fail("กรุณาระบุวันส่งมอบคลัง");
+      if (whDue < order.orderedAt) fail("วันส่งมอบคลังต้องไม่ก่อนวันที่สั่งผลิต");
+      next.whDue = whDue;
+    }
+    if (has("note")) next.note = String(p.note ?? "").trim().slice(0, 300);
+    let newCustomer = null;
+    if (has("customer")) {
+      const typed = text(customerName(p.customer), "ชื่อลูกค้า", 120);
+      d.customers ??= [];
+      const known = d.customers.find((entry) => customerKey(entry.name) === customerKey(typed));
+      next.customer = known?.name ?? typed;
+      if (!known) newCustomer = { name: typed, country: next.country, orderType: next.orderType, note: "" };
+    }
+    if (has("due") || p.autoDue) {
+      const due = {};
+      const defaults = p.autoDue ? R.defaultDueDates(next.whDue) : {};
+      for (const dept of R.DUE_DEPTS) {
+        const value = p.due?.[dept];
+        if (value === undefined || value === "" || value === null) {
+          if (defaults[dept] !== undefined) due[dept] = Math.max(defaults[dept], new Date(order.orderedAt).setHours(0, 0, 0, 0));
+          continue;
+        }
+        const ms = Number(value);
+        if (!Number.isFinite(ms)) fail(`กำหนดเสร็จ ${dept} ไม่ถูกต้อง`);
+        if (ms > next.whDue) fail(`กำหนดเสร็จ ${dept} ต้องไม่หลังวันส่งมอบคลัง`);
+        due[dept] = ms;
+      }
+      next.due = due;
+      next.dueDefaults = p.autoDue ? R.DUE_DEPTS.filter((dept) => !p.due?.[dept] && due[dept] !== undefined) : [];
+    }
+    const changed = ["customer", "country", "orderType", "whDue", "note", "due", "dueDefaults"].filter((key) => JSON.stringify(next[key]) !== JSON.stringify(order[key] ?? (key === "note" ? "" : key === "due" ? {} : key === "dueDefaults" ? [] : undefined)));
+    if (!changed.length) fail("หัวใบเท่าเดิม");
+    editableItems(d, order, ctx); // ใบที่ปล่อยผลิตแล้ว (ยังไม่มีงานเริ่ม) กลับเป็นร่าง · ใบที่ปิด / ยกเลิกแล้วแก้ไม่ได้
+    if (newCustomer) d.customers.push(newCustomer);
+    for (const key of changed) order[key] = next[key];
+    audit(d, ctx, "แก้หัวใบสั่งผลิต", `${order.id} ${changed.join(", ")}${newCustomer ? " · เพิ่มลูกค้าใหม่" : ""}`);
+    return order.id;
   }
 
   // ---------- ลูกค้า ----------
@@ -540,7 +640,7 @@
   const customerName = (name) => String(name ?? "").replace(/\s+/g, " ").trim();
   const customerKey = (name) => customerName(name).toLowerCase();
   function saveCustomer(d, p, ctx) {
-    requirePlanner(ctx, "เพิ่ม/แก้ลูกค้า");
+    requireOrderer(ctx, "เพิ่ม/แก้ลูกค้า");
     const R = rules();
     const name = text(customerName(p.name), "ชื่อลูกค้า", 120);
     const country = text(p.country, "ประเทศ", 60);
@@ -811,9 +911,14 @@
   }
 
   // เลือกสินค้าด้วยรหัสเต็ม (fgCode) หรือ 3 ช่องแบบชีต ;}o (base + pkg + colorSet) — รหัสเต็มที่ยังไม่มีแต่มีฐานรหัสเดียวกัน จะสร้างจากต้นแบบให้
-  function addOrderItem(d, p, ctx) {
-    requirePlanner(ctx, "แก้รายการสินค้า");
+  // ฝ่ายขาย: ใบของฝ่ายขายเท่านั้น · เลือกได้เฉพาะสินค้าที่มีรหัสอยู่แล้ว (สร้างรุ่นสินค้าใหม่ = ข้อมูลหลักของฝ่ายวางแผน) · ชุดสีของบรรทัด = ชุดสีในรหัส
+  // options.quiet = เรียกจาก createOrder (บันทึกการใช้งานรวมบรรทัดเดียว)
+  function addOrderItem(d, p, ctx, options = {}) {
+    const user = requireOrderer(ctx, "แก้รายการสินค้า");
     const order = orderById(d, p.orderId);
+    requireSalesOrder(user, order);
+    const sales = salesOnly(user);
+    if (sales && !p.fgCode) fail("ฝ่ายขายเลือกได้เฉพาะสินค้าที่มีรหัสในทะเบียนแล้ว (รุ่นสินค้าใหม่ให้ฝ่ายวางแผนสร้าง)");
     editableItems(d, order, ctx);
     const R = rules();
     const byParts = !p.fgCode && p.base;
@@ -835,15 +940,16 @@
     const existing = order.items.find((item) => item.fgCode === fg.code);
     if (fg.active === false && !existing) fail(`${fg.code} เลิกใช้แล้ว เพิ่มในใบสั่งผลิตใหม่ไม่ได้`);
     if (existing) existing.qty += qty;
-    else order.items.push({ fgCode: fg.code, qty, colorSet: (colorSet || R.parseFgCode(fg.code).colorSet).slice(0, 10), note: String(p.note ?? "").trim().slice(0, 120) });
+    else order.items.push({ fgCode: fg.code, qty, colorSet: sales ? codeColorSet(fg.code) : (colorSet || R.parseFgCode(fg.code).colorSet).slice(0, 10), note: String(p.note ?? "").trim().slice(0, 120) });
     order.explosion = null;
-    audit(d, ctx, "เพิ่มสินค้าในใบสั่งผลิต", `${order.id} ${fg.code} × ${qty}`);
+    if (!options.quiet) audit(d, ctx, "เพิ่มสินค้าในใบสั่งผลิต", `${order.id} ${fg.code} × ${qty}`);
     return order.id;
   }
 
   function removeOrderItem(d, { orderId, fgCode }, ctx) {
-    requirePlanner(ctx, "แก้รายการสินค้า");
+    const user = requireOrderer(ctx, "แก้รายการสินค้า");
     const order = orderById(d, orderId);
+    requireSalesOrder(user, order);
     const code = rules().canonicalCode(fgCode);
     if (!order.items.some((item) => item.fgCode === code)) fail("ไม่พบสินค้านี้ในใบ");
     editableItems(d, order, ctx);
@@ -857,8 +963,9 @@
 
   // แก้จำนวนสั่ง/หมายเหตุของสินค้าในใบ (เปลี่ยนตัวสินค้า = ลบแล้วเพิ่มใหม่)
   function updateOrderItem(d, p, ctx) {
-    requirePlanner(ctx, "แก้รายการสินค้า");
+    const user = requireOrderer(ctx, "แก้รายการสินค้า");
     const order = orderById(d, p.orderId);
+    requireSalesOrder(user, order);
     const code = rules().canonicalCode(p.fgCode);
     const line = order.items.find((item) => item.fgCode === code) ?? fail("ไม่พบสินค้านี้ในใบ");
     const qty = num(p.qty, "จำนวนสั่ง");
@@ -876,7 +983,7 @@
   }
 
   function explodeOrder(d, { orderId }, ctx) {
-    requirePlanner(ctx, "คำนวณวัตถุดิบ");
+    requireOrderPlanner(ctx, "คำนวณวัตถุดิบ");
     const order = orderById(d, orderId);
     editable(order);
     if (!order.items.length) fail("ใบยังไม่มีสินค้า");
@@ -899,9 +1006,11 @@
   }
 
   function releaseOrder(d, { orderId }, ctx) {
-    const user = requirePlanner(ctx, "ปล่อยผลิต");
+    const user = requireOrderPlanner(ctx, "ปล่อยผลิต");
     const order = orderById(d, orderId);
     editable(order);
+    // ใบของฝ่ายขายที่ยังไม่ส่งให้ฝ่ายวางแผนปล่อยผลิตไม่ได้ (ตรงกับ bom_save_orders ของ 20261225010000)
+    if (orderSource(order) === "SA" && !isSentOrder(order)) fail("ใบนี้ฝ่ายขายยังไม่ส่งให้ฝ่ายวางแผน ปล่อยผลิตไม่ได้");
     explodeOrder(d, { orderId }, ctx);
     const R = rules();
     const noBom = order.explosion.filter((line) => line.noBom).map((line) => line.itemCode);
@@ -999,12 +1108,12 @@
     const value = num(qty, product || rod ? "ยอดที่ใช้จากสต็อก" : "ยอดคงคลัง", { allowZero: true });
     if (rod) {
       // ตั้งได้เฉพาะกลุ่มวางแผน (ฐานข้อมูลปฏิเสธ ST / WH ที่ตั้งคีย์รหัส RB ด้วย BOM_FORBIDDEN เหมือนคีย์สินค้า)
-      if (!canPlan(user)) fail("ตั้งยอดที่ใช้จากคลังยางเส้นยาว (SR) ได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น");
+      if (!canPlanOrders(user)) fail("ตั้งยอดที่ใช้จากคลังยางเส้นยาว (SR) ได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น");
       const row = rules().rodStockForDraft(d, order).find((entry) => entry.itemCode === code);
       if (row && value > row.max + 1e-9) fail(value > row.available + 1e-9 ? `${code} คลังยางเส้นยาว (SR) มีสต็อกกลางที่ใช้ได้กับใบนี้ ${rules().fmtQty(row.available)}${row.taken > 0 ? ` (ใบร่างที่คำนวณก่อนใบนี้ตั้งใช้ไว้ ${rules().fmtQty(row.taken)})` : ""} ใช้ ${rules().fmtQty(value)} ไม่ได้` : `${code} ใบนี้ต้องใช้ไม่เกิน ${rules().fmtQty(row.max)} ${rules().uomLabel(row.uom)}`);
     }
     if (product) {
-      if (!canPlan(user)) fail("ตั้งยอดที่ใช้จากสต็อกสินค้าสำเร็จรูปได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น");
+      if (!canPlanOrders(user)) fail("ตั้งยอดที่ใช้จากสต็อกสินค้าสำเร็จรูปได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น");
       const row = rules().fgStockForDraft(d, order).find((entry) => entry.fgCode === code);
       if (value > row.ordered + 1e-9) fail(`${code} ใช้จากสต็อกได้ไม่เกินจำนวนสั่ง ${rules().fmtQty(row.ordered)}`);
       if (value > row.available + 1e-9) fail(`${code} สต็อกสินค้าสำเร็จรูปที่ใช้ได้กับใบนี้มี ${rules().fmtQty(row.available)}${row.taken > 0 ? ` (ใบร่างที่คำนวณก่อนใบนี้ตั้งใช้ไว้ ${rules().fmtQty(row.taken)})` : ""} ใช้ ${rules().fmtQty(value)} ไม่ได้`);
@@ -1044,11 +1153,17 @@
   // สินค้าที่ใบนี้รับเข้าคลังเองเป็นสต็อกสินค้าสำเร็จรูป (rules.fgFreeList นับใบที่ยกเลิก สั่ง = 0)
   const CANCEL_REASON_MIN = 3;
   const CANCEL_REASON_MAX = 200;
+  // ฝ่ายขาย (20261225010000): ยกเลิกได้เฉพาะใบร่างของฝ่ายขาย · ใบที่ปล่อยผลิตแล้วส่ง "คำขอยกเลิก" (requestOrderCancel) ให้ฝ่ายวางแผนยืนยัน
   function cancelOrder(d, { orderId, reason }, ctx) {
-    requirePlanner(ctx, "ยกเลิกใบ");
+    const user = requireOrderer(ctx, "ยกเลิกใบ");
     const order = orderById(d, orderId);
+    requireSalesOrder(user, order);
     if (order.status === "completed") fail("ใบที่เสร็จแล้วยกเลิกไม่ได้");
     if (order.status === "cancelled") fail("ใบนี้ถูกยกเลิกแล้ว");
+    if (salesOnly(user) && order.status !== "draft") fail("ใบที่ปล่อยผลิตแล้ว ฝ่ายขายส่งคำขอยกเลิกให้ฝ่ายวางแผนยืนยัน");
+    return cancelNow(d, order, reason, ctx);
+  }
+  function cancelNow(d, order, reason, ctx) {
     const why = typeof reason === "string" ? reason.trim() : "";
     if (why.length < CANCEL_REASON_MIN) fail(`กรุณาระบุเหตุผลที่ยกเลิก (อย่างน้อย ${CANCEL_REASON_MIN} ตัวอักษร)`);
     if (why.length > CANCEL_REASON_MAX) fail(`เหตุผลยาวเกิน ${CANCEL_REASON_MAX} ตัวอักษร`);
@@ -1058,6 +1173,58 @@
     order.cancelReason = why;
     audit(d, ctx, "ยกเลิกใบสั่งผลิต", `${order.id} — ${why}${returned.length ? ` · คืนสต็อกสินค้าสำเร็จรูป ${returned.length} รายการ` : ""}`);
     return order.id;
+  }
+
+  // ---------- คำขอของฝ่ายขาย (20261225010000_bom_sales_orders.sql): ขอยกเลิก / ขอแก้ใบหลังปล่อยผลิต · ฝ่ายวางแผนตัดสิน ----------
+  // ชุด orderRequests: { id, orderId, kind: cancel | change, reason, status: open | done | declined, requestedBy, requestedById, requestedAt, decidedBy, decidedAt, decisionNote }
+  // ขอได้ = ฝ่ายขาย · ใบของฝ่ายขายที่ปล่อยผลิตแล้ว / กำลังผลิต · คำขอที่ยังเปิดชนิดเดียวกันต่อใบได้หนึ่งรายการ · เหตุผลขอยกเลิก 3-200 (เป็นเหตุผลที่ยกเลิกใบ) ขอแก้ 3-300
+  // ตัดสิน = กลุ่มวางแผนของใบสั่งผลิต: confirm (คำขอยกเลิก: ยกเลิกใบด้วยเหตุผลของฝ่ายขาย ในคำสั่งเดียวกัน) · decline (หมายเหตุ 3-200) · done (คำขอแก้ใบ: แก้แล้ว)
+  // โหมดฐานข้อมูลคืน request = [แถวคำขอเดียว] ที่ store ส่งในส่วน orderRequests (ยืนยันยกเลิกส่งแถวยกเลิกใบไปด้วย) · ฐานข้อมูลประทับผู้ขอ / ผู้ตัดสิน / เวลาเอง
+  const ORDER_REQUEST_REASON_MAX = Object.freeze({ cancel: CANCEL_REASON_MAX, change: 300 });
+  const DECISION_NOTE_MAX = 200;
+  const orderRequestsOf = (d, orderId) => (d.orderRequests ?? []).filter((row) => row.orderId === orderId);
+  const openOrderRequest = (d, orderId, kind) => orderRequestsOf(d, orderId).find((row) => row.kind === kind && row.status === "open") ?? null;
+  const orderRequestOf = (d, id) => (d.orderRequests ?? []).find((row) => row.id === String(id ?? "").trim()) ?? fail("ไม่พบคำขอนี้ (อาจมีผู้อื่นตัดสินไปก่อน)");
+  function requestOrder(d, { orderId, reason }, ctx, kind) {
+    const user = requireUser(ctx);
+    if (!canSell(user)) fail(kind === "cancel" ? "ขอยกเลิกใบได้โดยฝ่ายขายเท่านั้น (ฝ่ายวางแผนยกเลิกใบได้เอง)" : "ขอแก้ใบได้โดยฝ่ายขายเท่านั้น (ฝ่ายวางแผนแก้ใบได้เอง)");
+    const why = typeof reason === "string" ? reason.trim() : "";
+    if (why.length < CANCEL_REASON_MIN) fail(`กรุณาระบุ${kind === "cancel" ? "เหตุผลที่ขอยกเลิก" : "สิ่งที่ต้องการแก้"} (อย่างน้อย ${CANCEL_REASON_MIN} ตัวอักษร)`);
+    if (why.length > ORDER_REQUEST_REASON_MAX[kind]) fail(`ข้อความยาวเกิน ${ORDER_REQUEST_REASON_MAX[kind]} ตัวอักษร`);
+    const order = orderById(d, orderId);
+    if (orderSource(order) !== "SA") fail(`ขอได้เฉพาะใบที่ฝ่ายขายเปิด (${order.id} เป็นใบของฝ่ายวางแผน)`);
+    if (order.status === "draft") fail(kind === "cancel" ? "ใบร่าง ฝ่ายขายยกเลิกได้เองโดยไม่ต้องขอ" : "ใบร่าง ฝ่ายขายแก้ได้เองโดยไม่ต้องขอ");
+    if (!["released", "in_progress"].includes(order.status)) fail("ใบที่ปิดหรือยกเลิกแล้วขอยกเลิก / แก้ไม่ได้");
+    if (openOrderRequest(d, order.id, kind)) fail(`ใบ ${order.id} มีคำขอ${kind === "cancel" ? "ยกเลิก" : "แก้ใบ"}ที่ฝ่ายวางแผนยังไม่ตัดสินอยู่แล้ว`);
+    const id = newUuid();
+    d.orderRequests ??= [];
+    d.orderRequests.push({ id, orderId: order.id, kind, reason: why, status: "open", requestedBy: user.name, requestedById: user.id, requestedAt: ctx.now, decidedBy: null, decidedAt: null, decisionNote: "" });
+    audit(d, ctx, kind === "cancel" ? "ฝ่ายขายขอยกเลิกใบ" : "ฝ่ายขายขอแก้ใบ", `${order.id} — ${why}`);
+    return { id, summary: `${order.id} — ${why}`, section: "orderRequests", request: [{ id, orderId: order.id, reason: why }] };
+  }
+  const requestOrderCancel = (d, p, ctx) => requestOrder(d, p, ctx, "cancel");
+  const requestOrderChange = (d, p, ctx) => requestOrder(d, p, ctx, "change");
+  // decision: confirm | decline | done · note: decline 3-200 (บังคับ) · อื่น ๆ ไม่บังคับ
+  function decideOrderRequest(d, { requestId, decision, note }, ctx) {
+    const user = requireOrderPlanner(ctx, "ตัดสินคำขอของฝ่ายขาย");
+    const row = orderRequestOf(d, requestId);
+    if (row.status !== "open") fail("คำขอนี้ตัดสินไปแล้ว");
+    if (!["confirm", "decline", "done"].includes(decision)) fail("ไม่รู้จักผลการตัดสินนี้");
+    if (decision === "confirm" && row.kind !== "cancel") fail("ยืนยันยกเลิกได้เฉพาะคำขอยกเลิก");
+    if (decision === "done" && row.kind !== "change") fail("คำขอยกเลิกปิดได้ด้วยการยืนยันยกเลิกหรือไม่ยกเลิก");
+    const remark = typeof note === "string" ? note.trim() : "";
+    if (decision === "decline" && remark.length < CANCEL_REASON_MIN) fail(`กรุณาระบุเหตุผลที่ไม่ทำตามคำขอ (อย่างน้อย ${CANCEL_REASON_MIN} ตัวอักษร)`);
+    if (remark.length > DECISION_NOTE_MAX) fail(`หมายเหตุยาวเกิน ${DECISION_NOTE_MAX} ตัวอักษร`);
+    const order = orderById(d, row.orderId);
+    // ยืนยันยกเลิก: ยกเลิกใบด้วยเหตุผลของฝ่ายขาย (กติกาเดียวกับ cancelOrder) · ใบที่ถูกยกเลิกไปก่อนแล้วปิดคำขอได้เลย
+    if (decision === "confirm" && order.status !== "cancelled") {
+      if (order.status === "completed") fail("ใบที่เสร็จแล้วยกเลิกไม่ได้");
+      cancelNow(d, order, row.reason, ctx);
+    }
+    Object.assign(row, { status: decision === "decline" ? "declined" : "done", decidedBy: user.name, decidedAt: ctx.now, decisionNote: remark });
+    const label = decision === "confirm" ? "ฝ่ายวางแผนยืนยันยกเลิกตามคำขอ" : decision === "done" ? "ฝ่ายวางแผนแก้ใบตามคำขอแล้ว" : row.kind === "cancel" ? "ฝ่ายวางแผนไม่ยกเลิก" : "ฝ่ายวางแผนไม่แก้ตามคำขอ";
+    audit(d, ctx, label, `${order.id} — ${row.reason}${remark ? ` · ${remark}` : ""}`);
+    return { id: row.id, status: row.status, summary: `${order.id} — ${label}`, section: "orderRequests", request: [{ id: row.id, decision, note: remark }] };
   }
 
   // ---------- สินค้าสำเร็จรูป (FG): คลังสินค้า (WH) รับเข้า · ใบปิดเองเมื่อรับครบ · ปิดใบ (รับครบ) · ปิดรับไม่ครบด้วยเหตุผล · ส่งมอบลูกค้า ----------
@@ -2234,13 +2401,15 @@
   const api = {
     saveItem, saveBom, saveBomTree, linkCompound, importFlat,
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
-    saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder, receiveFg, deliverFg, closeOrderShort, closeOrder, reverseFg, receiveRods, decideRods, issueRods, reverseRodIssue, adjustRods, receiveRodsOpening, setRodLocation,
+    saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder,
+    updateOrderHeader, sendOrderToPlanning, requestOrderCancel, requestOrderChange, decideOrderRequest, receiveFg, deliverFg, closeOrderShort, closeOrder, reverseFg, receiveRods, decideRods, issueRods, reverseRodIssue, adjustRods, receiveRodsOpening, setRodLocation,
     saveGrConfig, setGrJobSteps, addGrRecord, editGrRecord, voidGrRecord, requestRods, cancelRodRequest, sendGrToPk, receiveGrAtPk, cancelGrHandover,
     sendToPk, receiveAtPk, cancelHandover, sendPkToWh, cancelPkToWh,
     reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage, countPartStock, issueOrderParts, undoOrderParts, returnOrderParts,
     helpers: { customerName, customerKey, startedJobs, isPartJob, isOpenJob, isLinkedJob, jobCloseNote, jobHoldNote, deptText, canIssueParts, canHandleFg, canReverseFg, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canSetSafety, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS, canStoreRods, canDecideRods, canSeeRodHolds, canAdjustRods, newUuid,
       isDeptHead, canGrLead, canGrRecord, canReceiveGr, canReverseGrReceipt, isGrPlanned, isGrClosedShort, hasGrRecords, grJobBlock, grRecordBlock,
-      STEP_DEPTS, canDeptLead, canDeptRecord, canReceiveAtPk, canReversePkReceipt, canSendPkToWh, handoverTarget },
+      STEP_DEPTS, canDeptLead, canDeptRecord, canReceiveAtPk, canReversePkReceipt, canSendPkToWh, handoverTarget,
+      canSell, canPlanOrders, canOrder, salesOnly, orderSource, isSentOrder, orderRequestsOf, openOrderRequest, ORDER_REQUEST_REASON_MAX, DECISION_NOTE_MAX },
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_ACTIONS = api;

@@ -89,7 +89,7 @@
 
   function emptyState() {
     return { version: 6, counters: {}, users: USERS.map((user) => ({ ...user })), compounds: [], items: [], boms: [], orders: [], jobs: [], audit: [], colors: [], colorSets: [], packages: [], processes: rules().DEFAULT_PROCESSES.map((entry) => ({ ...entry })), routings: [], stock: [], stockMoves: [], rodLots: [], rodMoves: [],
-      grConfig: [], grPlans: [], grRecords: [], rodRequests: [], grHandovers: [], grWorkers: [] };
+      grConfig: [], grPlans: [], grRecords: [], rodRequests: [], grHandovers: [], grWorkers: [], orderRequests: [] };
   }
 
   // คลังแท่งยาว (SR) สาธิต: แท่งของงาน RB ที่ผูก WO ของใบ DEMO-26006 (ฮูล่า 60 ชุด ต้องใช้ 36 เส้น) และสต็อกกลางจากใบ DEMO-26008 ที่ปิดแล้ว

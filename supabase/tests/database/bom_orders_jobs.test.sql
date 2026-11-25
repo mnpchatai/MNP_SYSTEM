@@ -648,7 +648,8 @@ select set_config('test.b2', (public.app_bom_master() ->> 'version'), true);
 select is(public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.ord')::jsonb || '{"id":"251106-25009"}'::jsonb))), current_setting('test.b2')::bigint, 'createOrder')
   -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'id', '251106-25009', 'the first planner takes PI 251106-25009');
-select public.app_sandbox_enter(current_setting('test.p_sbx_rb_mgr')::uuid);
+-- ผู้วางแผนคนที่สอง: ผู้ช่วยผู้จัดการโรงงาน (ผู้จัดการแผนกในสายผลิตไม่ใช่ผู้เขียนใบสั่งผลิตตั้งแต่ 20261225010000)
+select public.app_sandbox_enter(current_setting('test.p_sbx_ft_afm')::uuid);
 select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.ord')::jsonb || '{"id":"251106-25009","customer":"อีกคน"}'::jsonb))), current_setting('test.b2')::bigint, 'createOrder') $$,
   'BOM_STALE', 'a second planner creating the same PI number from the same base is stale (retry gets the next number)');
@@ -659,7 +660,7 @@ select throws_ok($$ select public.app_bom_save_master(jsonb_build_object('orders
 select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'orders') o where o ->> 'customer' = 'อีกคน'), 0, 'the stale call wrote nothing');
 select is(public.app_bom_save_master(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(
   current_setting('test.ord')::jsonb || '{"id":"251106-25010","orderedAt":1762473600000}'::jsonb))), (public.app_bom_master() ->> 'version')::bigint, 'createOrder')
-  -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'id', '251106-25010', 'from the current base the next number is accepted (a department manager is a planner)');
+  -> 'changes' -> 'orders' -> 'upsert' -> 0 ->> 'id', '251106-25010', 'from the current base the next number is accepted (an assistant factory manager plans orders)');
 select is(public.app_bom_master() -> 'orders' -> 0 ->> 'id', '251106-25010', 'the latest order date is listed first');
 
 -- 9b. สำเนาเก่าของ client ต้องได้ BOM_STALE (ชนก่อนสิทธิ์) ไม่ใช่ BOM_FORBIDDEN ---------------------------------------
