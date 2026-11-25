@@ -19,7 +19,7 @@ migration: `supabase/migrations/20261212010000_itrp_repair_requests.sql` + `2026
 ## เลขที่เอกสาร
 `IT01-YY/NNN` (เช่น `IT01-26/050`) · ปีตามเวลาไทย · ใบทดสอบ `TEST-IT01-YY/NNN` ตัวนับแยก · ออกฝั่งฐานข้อมูลเท่านั้น (หน้าเว็บไม่ส่งเลข)
 
-## ตาราง (9 ของใบแจ้งซ่อม + อีก 5 ของประวัติการซ่อมเครื่อง ดูหัวข้อท้ายเอกสาร)
+## ตาราง (9 ของใบแจ้งซ่อม + อีก 5 ของประวัติการซ่อมเครื่อง + 1 ของการเปลี่ยนชิ้นส่วน ดูหัวข้อท้ายเอกสาร)
 | ตาราง | หน้าที่ | เพิ่มได้อย่างเดียว |
 |---|---|---|
 | `itrp_requests` | ใบแจ้งซ่อม (id, is_test, doc_no, doc_year, doc_seq, requester_id, department_id, asset_code, device_name, request_kind, request_kind_note, repair_target, repair_target_note, symptom, is_urgent, status, info_return_status, created_at) | ลบไม่ได้ · เปลี่ยนได้แค่ status |
@@ -136,6 +136,49 @@ trigger บน `itrp_events` เรียก `private.office_notify` (ชุด�
 (ข) `itrp_history_entries` source `import` (นำเข้าจาก Excel ด้วยสคริปต์แยก: เขียนตรงด้วยสิทธิ์ผู้ดูแลฐานข้อมูล ต้องใส่ `created_by` = พนักงานที่สั่งรัน และ `source = 'import'` · วันที่ "-" ใส่ null ได้)
 (ค) `itrp_history_entries` source `manual` (IT ลงย้อนหลังด้วย `app_itrp_history_add`)
 แยกโหมดจริง/ทดสอบตาม `is_test` (โหมดทดสอบเห็นเฉพาะข้อมูลทดสอบ)
+
+## เปลี่ยน/ถอด/ย้ายชิ้นส่วนจากใบแจ้งซ่อม → อัปเดตทะเบียนอุปกรณ์ (itas) — migration `20261225010000_itrp_itas_part_changes.sql` · ทดสอบ `itrp_itas_part_changes.test.sql`
+ฐานข้อมูลอย่างเดียว (หน้าเว็บทำรอบถัดไป) · หลักคิด: IT **เลือกจากรายการ** ไม่พิมพ์ข้อความอิสระ → หน้าเว็บเรียก `context` เพื่อได้ตัวเลือก แล้วส่งสิ่งที่เลือกกลับใน `apply` ครั้งเดียว (atomic ทั้งก้อน) · **ไม่แก้ `app_itrp_complete` และไม่แก้ `app_itrp_get_detail`** (ใช้ RPC แยก)
+
+### สิทธิ์
+ต้องเป็น **ทั้งสองอย่าง**: ผู้ดูแลงาน IT ของ itrp (`itwo_staff.is_it_admin`) **และ** อยู่ใน `itas_admins` (ทะเบียนอุปกรณ์) → ตอนนี้ = `IT3462` (โหมดทดสอบ = persona `SBX-IT-ADMIN`) · `context` และ `apply` เรียกได้เฉพาะคนนี้ · `get_part_changes` ใครเห็นใบนั้นได้ก็อ่านได้ (ผู้แจ้ง/ผู้อนุมัติขั้นแผนก/ทีม IT) · anon เรียกไม่ได้ · ข้อความผิดสิทธิ์ (`42501`): "เฉพาะผู้ดูแลงาน IT เท่านั้นที่บันทึกการเปลี่ยนชิ้นส่วนได้" (ไม่ใช่ผู้ดูแลงานของ itrp) หรือ "เฉพาะผู้ดูแลงาน IT เท่านั้นที่ใช้ทะเบียนอุปกรณ์ได้" (ไม่อยู่ใน itas_admins)
+
+### RPC (3)
+| RPC | พารามิเตอร์ | คืน |
+|---|---|---|
+| `app_itrp_part_changes_context(p_request_id)` | uuid | jsonb ดูด้านล่าง · อ่านอย่างเดียว |
+| `app_itrp_apply_part_changes(p_request_id, p_changes)` | uuid, jsonb array 1–20 แถว | `{request_id, doc_no, batch_id, applied, changes[]}` · `changes[]` รูปเดียวกับ `items[]` ของ `get_part_changes` |
+| `app_itrp_get_part_changes(p_request_id)` | uuid | `{request_id, doc_no, items[]}` เรียงตามลำดับที่บันทึก (ใหม่ท้ายสุด) |
+
+**`context`** = `{request: {id, doc_no, status, is_test, asset_code, device_name}, can_apply, blocked_reason, max_changes: 20, result_statuses: ["broken","spare","retired"], hosts[], spares[], move_targets[]}`
+- `hosts[]` = เครื่องของใบ: `{host_code, source: "request"|"report", device: อุปกรณ์ตัวเครื่อง|null, parts: [อุปกรณ์ที่ host_code = รหัสนี้]}` · `request` = รหัสที่ผู้แจ้งกรอก (`asset_code`) · `report` = เครื่องที่ IT ระบุตอนส่งงาน (`itrp_report_devices` ทุกรอบ) · `parts` ไม่รวมตัวเครื่องเอง และไม่รวมที่ยกเลิกใช้งานแล้ว (ชำรุดยังรวม)
+- `spares[]` = `[{type_code, type_name, items[]}]` ชิ้นที่สถานะสำรองและยังไม่ผูกเครื่อง เรียงตามลำดับชนิดในทะเบียน
+- `move_targets[]` = `[{device_code, name, type_code}]` เครื่อง/อุปกรณ์ที่มีรหัสอุปกรณ์และยังไม่ยกเลิกใช้งาน (ใช้เลือกปลายทางของ `move`)
+- อุปกรณ์แต่ละชิ้น = `{id, type_code, type_name, reg_no, device_code, name, model, serial, status, host_code, slot, place, updated_at}` (ไม่มี attrs/ช่องลับ) · `id` ใช้ส่งกลับใน `apply`
+- `can_apply = false` + `blocked_reason` (ไทย) เมื่อใบไม่อยู่สถานะ `in_progress`/`it_closed` หรือใบไม่มีรหัสเครื่องเลย (ให้ระบุเครื่องตอนส่งงานก่อน) · เมื่อ `can_apply=false` หน้าเว็บควรซ่อนฟอร์ม แสดงเหตุผล
+
+**`apply` — แต่ละแถวของ `p_changes`** (ช่องที่รับ: `action, host_code, asset_id, new_asset_id, to_host_code, result_status, slot, note` · ช่องอื่น = error · ส่งเฉพาะช่องที่เกี่ยว ช่องที่ไม่เกี่ยวส่งมา = error):
+| action | ต้องส่ง | ผลในทะเบียน |
+|---|---|---|
+| `replace` | `host_code`, `asset_id` (ชิ้นเดิม), `new_asset_id` (ชิ้นใหม่), `result_status` (`broken`/`spare`/`retired` ของชิ้นเดิม) · ไม่บังคับ `slot`, `note` | ชิ้นเดิม: ถอดออก (host/slot = null) + status = `result_status` · ชิ้นใหม่: status `in_use`, host = เครื่อง, slot = ที่ส่ง **หรือช่องเดิมของชิ้นเดิม** |
+| `remove` | `host_code`, `asset_id`, `result_status` · `note` | ถอดออก (host/slot = null) + status = `result_status` |
+| `move` | `host_code` (ต้นทาง), `asset_id`, `to_host_code` · `slot`, `note` | host = ปลายทาง, slot = ที่ส่ง (ไม่ส่ง = ล้าง) สถานะคงเดิม |
+| `install` | `host_code`, `asset_id` (ชิ้นสำรอง) · `slot`, `note` | status `in_use`, host = เครื่อง, slot = ที่ส่ง |
+- รหัสเครื่อง (`host_code`/`to_host_code`) trim + ตัวพิมพ์ใหญ่ให้เอง · ไม่แก้ `install_date`/`place`/ข้อมูลอื่นของชิ้นส่วน (แก้เฉพาะ `status`, `host_code`, `slot`) ถ้าต้องการวันที่ติดตั้งให้แก้ผ่าน `app_itas_save_asset`
+- **ตรวจที่ฐานข้อมูล (error `23514` ภาษาไทย ขึ้นต้น "แถวที่ N: …")**: เครื่องต้องเป็นเครื่องของใบ · ชิ้นเดิม/ชิ้นที่ย้าย ต้อง **ติดตั้งที่เครื่องนั้นจริงตอนนี้** และสถานะ `in_use`/`broken` (กดซ้ำ/ข้อมูลเก่า = ถูกปฏิเสธ → ให้หน้าเว็บโหลด `context` ใหม่) · ชิ้นใหม่/ชิ้นที่ติดตั้ง ต้องสถานะ `spare` และ host ว่าง · `replace` ต้อง **ชนิดเดียวกัน** (`type_code`) · ปลายทาง `move` ต้องมีอยู่ในทะเบียน (`device_code` ตรง) ไม่ยกเลิกใช้งาน และไม่ใช่เครื่องเดียวกับต้นทาง · ห้ามใช้ชิ้นเดียวกันซ้ำในก้อนเดียว (รวม `asset_id` กับ `new_asset_id`) · ทุกชิ้นต้องอยู่โหมดเดียวกับใบ (`is_test`) · ใบต้องอยู่สถานะ `in_progress` หรือ `it_closed`
+- แถวใดผิด = **ทั้งก้อนไม่เกิดขึ้นเลย** · ล็อกชิ้นส่วนเรียงตาม id (กันสองคนแก้พร้อมกัน/deadlock)
+- ผู้บันทึก = ผู้เรียก · เวลา = เวลาฐานข้อมูล
+
+### ผลในประวัติ
+- **ตารางใหม่ `itrp_part_changes`** (เพิ่มได้อย่างเดียว RLS deny-all ไม่มี grant ตรง อยู่ใน `sandbox_unguarded_tables`): 1 แถวต่อรายการ · `batch_id` (ชุดที่กดพร้อมกัน), `line_no`, `action`, `host_code`, `to_host_code`, ภาพถ่ายของชิ้นส่วน ณ ตอนทำรายการ (`type_code`, `asset_reg_no`, `asset_device_code`, `asset_name`, `new_asset_*`), `result_status`, `slot`, `note`, `actor_id`, `created_at` · **ไม่มี FK ไป `itas_assets`** (ล้างข้อมูลทดสอบของ itrp กับ itas เป็นคนละฟังก์ชัน)
+- **ประวัติของ itas อ้างเลขที่ใบ**: `itas_asset_moves` และ `itas_asset_log` เพิ่มคอลัมน์ `source_request_id`, `source_doc_no` (null = แก้ตามปกติผ่านทะเบียน) · `app_itas_asset_history` คืนสองคีย์นี้ในทุกแถวของ `log[]` และ `moves[]` → หน้าประวัติของอุปกรณ์แสดง "จากใบแจ้งซ่อม IT01-26/0xx" ได้ · เติมโดย trigger จากแถว `itrp_part_changes` ที่เพิ่งเขียนในธุรกรรมเดียวกัน (ผู้เรียกปลอมเลขที่ใบไม่ได้)
+- **`get_part_changes` → `items[]`**: `{id, line_no, action, host_code, to_host_code, asset{type_code, type_name, reg_no, device_code, name}, new_asset{…}|null, result_status, slot, note, actor_employee_no, actor_full_name, created_at}` · **ไม่คืน id ของอุปกรณ์/ช่องลับ** (ผู้แจ้งอ่านได้ จึงเป็นป้ายอย่างเดียว) · `new_asset` มีเฉพาะ `replace` · ใช้แสดงในหน้ารายละเอียด/ใบพิมพ์ของใบ
+
+### ข้อควรรู้สำหรับหน้าเว็บ
+- ลำดับใช้งาน: เปิดรายละเอียดใบ → (IT) เรียก `context` → แสดงเครื่องของใบ + ชิ้นส่วนปัจจุบัน → IT เลือกแถวละ 1 action จากรายการ (ชิ้นสำรองเลือกจาก `spares` ชนิดเดียวกับชิ้นเดิม, ปลายทางย้ายเลือกจาก `move_targets`) → ส่ง `apply` → ถ้าสำเร็จโหลด `get_part_changes` ใหม่
+- ถ้า `apply` ตอบ "ไม่ได้ติดตั้งที่เครื่อง … ในทะเบียนแล้ว" ให้โหลด `context` ใหม่แล้วให้ IT เลือกใหม่ (ทะเบียนเปลี่ยนไปแล้ว)
+- ใบที่ผู้แจ้งไม่ได้กรอกรหัสเครื่อง: ต้องส่งงานโดยระบุเครื่อง (`p_devices`) ก่อน จึงจะมีเครื่องให้เลือก (ใบ `it_closed` ยังบันทึกชิ้นส่วนได้ จนกว่าผู้แจ้งยืนยันรับงาน)
+- ใบทดสอบ/ใบจริงแยกกัน: persona เห็นเฉพาะชิ้นส่วนทดสอบ (ในโหมดทดสอบต้องเพิ่มอุปกรณ์ทดสอบในทะเบียนเองก่อน) · ล้างข้อมูลทดสอบ: `app_sandbox_purge_itrp` ลบ `itrp_part_changes` ของทดสอบ, `app_sandbox_purge_itas` ลบอุปกรณ์/ประวัติของ itas (เรียกแยกกัน ลำดับไหนก็ได้)
 
 ## ที่ไม่ได้ทำในงานฐานข้อมูล
 หน้าเว็บ/เมนู/ใบพิมพ์/ลิงก์แจ้งเตือน (`app.js`, `modules/`, `sw.js`, `index.html`, Edge Functions) · การตั้ง `request_types.IT_REPAIR is_active=false` (ของเพื่อน)
