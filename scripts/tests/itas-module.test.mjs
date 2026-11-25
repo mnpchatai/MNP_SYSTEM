@@ -1367,3 +1367,54 @@ test("editing a row from the 'all' view uses the row's own type; changing a chip
   assert.equal(w.calls.confirms.length, 0, "ชิปไม่ถามและไม่ปิดฟอร์ม");
   assert.match(w.hosts["itas-form-area"], /ชนิด: <strong>เมาส์<\/strong>/);
 });
+
+/* ---------- รอบแก้ตามผลตรวจ auditor: หยุดส่งหลายเครื่องเมื่อออกจากหน้า/สลับบริบท + ช่องที่ผู้ใช้ล้างเองต้องคงว่าง ---------- */
+test("batch stops sending the remaining lines when the user closes the form or switches persona/mode mid-way", async () => {
+  for (const [name, leave] of [
+    ["form closed", async (w) => { await w.click(w.button("itas-form-cancel")); }],
+    ["persona switched", async (w) => { w.stateObj.employee = { id: "persona-9" }; }],
+    ["mode switched", async (w) => { w.stateObj.sandbox = { active: true }; }],
+  ]) {
+    let sent = 0;
+    const holder = {};
+    const w = await world({ ...MULTI, rpcHandlers: { ...MULTI.rpcHandlers, app_itas_save_asset: async () => { sent += 1; if (sent === 1) await leave(holder.w); return { asset: ASSET, created: true, changed: true }; } } });
+    holder.w = w;
+    const form = await openBatch(w, { values: { name: "x" }, lines: "SN1\nSN2\nSN3\nSN4" });
+    await w.submit(form);
+    assert.equal(sent, 1, `${name}: ส่งแค่บรรทัดแรก ที่เหลือไม่ถูกส่งต่อ`);
+    assert.equal(w.calls.toasts.length, 0, `${name}: ไม่แสดงผลของบริบทที่ออกมาแล้ว`);
+    assert.deepEqual([...w.storage.keys()].filter((key) => key.includes("persona-9") || key.endsWith(":test")), [], `${name}: ไม่เขียนความจำของบริบทอื่น`);
+  }
+});
+
+test("batch: an unexpected exception while finishing still releases the 'submitting' flag so the form can be sent again", async () => {
+  let attempts = 0;
+  const w = await world({ ...MULTI, rpcHandlers: { ...MULTI.rpcHandlers, app_itas_save_asset: (params) => { attempts += 1; if (params.p_data.serial === "SN2") throw Object.assign(new Error("เลขทะเบียน COM-X ซ้ำกับอุปกรณ์อื่น"), { code: "23514" }); return { asset: ASSET, created: true, changed: true }; } } });
+  const form = await openBatch(w, { values: { name: "x" }, lines: "SN1\nSN2" });
+  // กล่องรายการที่เขียนค่ากลับไม่ได้ (exception กลางขั้นสรุปผล): ต้องไม่ทำให้ฟอร์มค้างที่ "กำลังส่ง"
+  const box = form.elements.batch_lines;
+  let text = box.value;
+  Object.defineProperty(box, "value", { configurable: true, get: () => text, set: (next) => { if (next === "SN2") throw new Error("write failed"); text = next; } });
+  await w.submit(form).catch(() => {});
+  assert.equal(attempts, 2);
+  assert.equal(w.calls.busy.at(-1), false, "ปลดสถานะรอแม้มี exception");
+  form.elements.batch_lines.value = "SN3";
+  await w.submit(form);
+  assert.equal(attempts, 3, "ส่งซ้ำได้ ไม่ค้างที่ submitting");
+});
+
+test("changing type keeps a remembered field (brand/model) empty when the user cleared the auto-filled value themselves; untouched fields still get the new type's remembered value", async () => {
+  const w = await world(MULTI);
+  w.storage.set(MEMORY_KEY, JSON.stringify({ lastType: "COMPUTER", types: { COMPUTER: { model: "Dell", place: "สำนักงาน" }, MOUSE: { model: "Logitech", place: "คลัง" } } }));
+  await w.render();
+  await w.click(chip("COMPUTER"));
+  w.forms.current = assetForm({ values: { model: "Dell", place: "สำนักงาน" } }); // ฟอร์มจำลองที่ระบบเติมให้แล้ว (ค่าตั้งต้นของฟอร์ม)
+  await w.click(w.button("itas-add"));
+  assert.match(w.hosts["itas-form-area"], /name="model"[^>]*value="Dell"/);
+  w.forms.current = assetForm({ values: { model: "", place: "สำนักงาน" } }); // ผู้ใช้ลบยี่ห้อ/รุ่นที่ระบบเติมให้ทิ้ง
+  await change(w, { name: "type_code", value: "MOUSE" });
+  const form = w.hosts["itas-form-area"];
+  assert.match(form, /name="model"[^>]*value=""/, "ช่องที่ผู้ใช้ล้างเองคงว่าง ไม่ถูกเติมซ้ำ");
+  assert.match(form, /name="place"[^>]*value="คลัง"/, "ช่องที่ไม่ได้แตะ ได้ค่าที่จำของชนิดใหม่");
+  assert.doesNotMatch(form, /id="itas-remembered"[^>]*>[^<]*<strong>[^<]*ยี่ห้อ/, "ข้อความเติมให้ ไม่อ้างช่องที่ผู้ใช้ล้างเอง");
+});

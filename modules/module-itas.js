@@ -654,7 +654,10 @@
     // ยกเฉพาะที่ผู้ใช้พิมพ์เอง (ค่าที่ระบบเติมให้จากชนิดเดิมไม่ยกไป) · ชนิดใหม่เติมค่าที่จำของมันเองให้ ยกเว้นช่องที่ผู้ใช้พิมพ์ทับ
     const typed = model.typedSince(readFormValues(formEl(), state0.type), JSON.parse(state0.initial));
     const { values, applied } = freshAddValues(next);
-    const shown = applied.filter((item) => !typed.core[item.key]);
+    // ช่องที่ผู้ใช้แตะแล้ว (key อยู่ใน typed.core) ไม่เติมค่าที่จำไว้ให้ รวมถึงช่องที่ผู้ใช้ล้างเองเป็นค่าว่าง (ต้องคงว่าง) ไม่ใช่แค่ช่องที่มีค่า
+    const touched = (key) => Object.prototype.hasOwnProperty.call(typed.core, key);
+    for (const item of applied) if (touched(item.key)) values.core[item.key] = "";
+    const shown = applied.filter((item) => !touched(item.key));
     mountForm("add", next, null, values, { carry: typed, draftId: state0.draftId, remembered: shown, batch: readBatchState(formEl()) });
   }
   // ติ๊ก/เลิกติ๊ก "เพิ่มหลายเครื่องรุ่นเดียวกัน": เปิดกล่องรายการ ซ่อนช่องลับ (โหมดนี้ไม่รองรับช่องลับ · ช่องลับที่พิมพ์ไว้ต้องยืนยันก่อนล้าง)
@@ -873,11 +876,25 @@
     if (!(await confirmDialog({ title: `เพิ่มอุปกรณ์ ${count} รายการ?`, message: `ชนิด ${type.name} · ${count} เครื่อง ใช้ข้อมูลช่องอื่นร่วมกัน ต่างกันที่ ${plan.option.label} · ถ้าบางรายการไม่สำเร็จ ที่เหลือจะถูกเก็บไว้ในกล่องรายการ`, confirmLabel: `เพิ่ม ${count} รายการ`, cancelLabel: "กลับไปแก้" }))) return;
     state0.submitting = true;
     setFormBusy(form, true);
+    try {
+      await sendBatch(form, state0, plan, base);
+    } finally {
+      // ไม่ว่าจบแบบไหน (รวมถึงมี exception) ต้องปลดสถานะกำลังส่งเสมอ ไม่งั้นฟอร์มกดส่งซ้ำไม่ได้อีก
+      state0.submitting = false;
+      if (ui?.form === state0) setFormBusy(form, false);
+    }
+  }
+  async function sendBatch(form, state0, plan, base) {
+    const { type } = state0;
+    const context0 = contextKey();
+    // ผู้ใช้ออกจากหน้า/ปิดหรือเปิดฟอร์มอื่น/สลับโหมดจริง-ทดสอบ/สลับผู้ใช้ระหว่างส่ง = หยุดทันที ไม่ส่งบรรทัดที่เหลือต่อโดยไม่มีผลให้เห็น
+    const stillHere = () => ui?.form === state0 && contextKey() === context0;
     const done = [];
     const failed = [];
     const notTried = [];
     let stopped = false;
     for (const item of plan.items) {
+      if (!stopped && !stillHere()) stopped = true;
       if (stopped) { notTried.push(item); continue; }
       let id = state0.batchIds.get(item.raw);
       if (!id) {
@@ -894,9 +911,10 @@
         if (STOP_KINDS.has(info.kind)) stopped = true;
       }
     }
+    if (contextKey() !== context0) return; // สลับผู้ใช้/โหมดไปแล้ว: ไม่เขียนความจำหรือโหลดรายการของบริบทอื่น (เครื่องที่เพิ่มไปแล้วอยู่ในฐานข้อมูลแล้ว)
     if (done.length) writeMemory(model.rememberAdded(readMemory(), type.code, base));
     if (done.length) { try { await refreshData(); } catch { /* รายการในตารางจะอัปเดตเมื่อโหลดหน้าใหม่ · เครื่องที่เพิ่มไปแล้วไม่ได้หาย */ } }
-    if (ui?.form !== state0) return; // ผู้ใช้ออกจากหน้า/เปิดฟอร์มอื่นระหว่างรอ: ไม่วาดทับ
+    if (!stillHere()) return; // ผู้ใช้ออกจากหน้า/เปิดฟอร์มอื่นระหว่างรอ: ไม่วาดทับ
     if (!failed.length && !notTried.length) {
       showToast(`เพิ่มอุปกรณ์ ${done.length} รายการแล้ว`);
       closeForm({ force: true });
@@ -905,8 +923,6 @@
     // เหลือรายการที่ยังไม่สำเร็จ: เก็บเฉพาะบรรทัดเหล่านั้นไว้ในกล่อง (เรียงตามบรรทัดเดิม) พร้อมแสดงสาเหตุรายบรรทัด
     const remaining = [...failed.map((entry) => entry.item), ...notTried].sort((a, b) => a.line - b.line);
     if (form.elements?.batch_lines) form.elements.batch_lines.value = remaining.map((item) => item.raw).join("\n");
-    setFormBusy(form, false);
-    state0.submitting = false;
     const target = byId("itas-batch-result");
     if (target) target.innerHTML = pages.batchResult({ added: done.length, failed: failed.map((entry) => ({ line: entry.item.line, label: entry.item.label, message: entry.message })), notTried: notTried.map((item) => ({ line: item.line, label: item.label })) });
     if (done.length) showToast(`เพิ่มอุปกรณ์แล้ว ${done.length} รายการ · ยังไม่สำเร็จ ${failed.length + notTried.length} รายการ`, "error");
