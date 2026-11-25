@@ -8,8 +8,8 @@
 
   const YEAR_OFFSET = 543;
   // เลขเวอร์ชันของโมดูล (ป้ายบนการ์ด + มุมขวาล่างทุกหน้า) รูปแบบ <ใหญ่>.<ย่อย 2 หลัก> · กติกาเดียวกับใบสั่งงาน/ใบแจ้งซ่อม (ถามเจ้าของก่อนเปลี่ยนทุกครั้ง)
-  const MODULE_VERSION = "1.00";
-  const VERSION_DATE = "2026-11-24";
+  const MODULE_VERSION = "1.01";
+  const VERSION_DATE = "2026-11-25";
   // ธง "กำลังพัฒนา" (จุดเดียว): true = การ์ดมีป้าย "กำลังพัฒนา" และทุกหน้าของโมดูลมีแถบข้อความว่ายังไม่เปิดใช้งานจริง · ถอดเมื่อเจ้าของสั่ง
   const IN_DEVELOPMENT = true;
   const ASSET_CODE = "IT_ASSET_REGISTER"; // รหัสโมดูลสำหรับสิทธิ์แผนกของการ์ด
@@ -92,7 +92,7 @@
     { key: "reg_no", label: "เลขทะเบียน", type: "text", max: 50, code: true, group: "identity" },
     { key: "device_code", label: "รหัสอุปกรณ์", type: "text", max: 50, code: true, group: "identity", needsDeviceCode: true },
     { key: "name", label: "ชื่อ", type: "text", max: 200, group: "identity" },
-    { key: "model", label: "รุ่น", type: "text", max: 200, group: "identity" },
+    { key: "model", label: "ยี่ห้อ / รุ่น", type: "text", max: 200, group: "identity" },
     { key: "serial", label: "Serial", type: "text", max: 200, group: "identity" },
     { key: "status", label: "สถานะ", type: "status", group: "identity" },
     { key: "host_code", label: "ติดตั้งที่ (Used by)", type: "text", max: 50, code: true, group: "place", hint: "รหัสเครื่องที่อุปกรณ์นี้ติดตั้งอยู่ เช่น COM12" },
@@ -144,6 +144,221 @@
     for (const field of coreFieldsOf(type)) if (field.key === "status") values.core.status = asset?.status ?? "in_use"; else values.core[field.key] = fieldText(field, asset?.[field.key]);
     for (const field of plainFields(type)) values.attrs[field.key] = fieldText(field, asset?.attrs?.[field.key]);
     return values;
+  }
+
+  /* ---------- ช่องหลักของฟอร์ม (เห็นเสมอ) กับช่องที่พับไว้ใต้ "รายละเอียดเพิ่มเติม" ---------- */
+  // เจ้าของกำหนด: รหัส ชื่อ ยี่ห้อ/รุ่น ผู้ใช้ (+ ชนิด และสถานะ) · "รหัส" = เลขทะเบียน + รหัสอุปกรณ์ (ถ้าชนิดนั้นมี) · "ยี่ห้อ/รุ่น" = ช่องรุ่น (ฐานข้อมูลไม่มีช่องยี่ห้อแยก)
+  // "ผู้ใช้" = ช่อง user_name ของชนิด (เครื่องคอมพิวเตอร์) ถ้ามี ไม่มีก็ใช้ "ติดตั้งที่" (host_code) · ชื่อช่องแบบเดียวกับ validateAsset: คีย์ช่องกลาง หรือ "attrs.<key>"
+  const userFieldName = (type) => (plainFields(type).some((field) => field.key === USER_ATTR_KEY) ? `attrs.${USER_ATTR_KEY}` : "host_code");
+  function primaryFieldNames(type) {
+    return ["reg_no", ...(type?.has_device_code ? ["device_code"] : []), "name", "model", userFieldName(type), "status"];
+  }
+  const isPrimaryField = (type, name) => primaryFieldNames(type).includes(name);
+  // ป้ายชื่อของช่องหลักที่เปลี่ยนจากป้ายปกติ (เฉพาะในฟอร์ม): "ติดตั้งที่" ที่ทำหน้าที่เป็น "ผู้ใช้"
+  const PRIMARY_LABEL_OVERRIDES = Object.freeze({ host_code: "ผู้ใช้ / ติดตั้งที่ (Used by)" });
+  // ช่องที่ไม่ใช่ช่องหลักมีค่าอยู่หรือไม่ (ใช้ตัดสินว่าจะเปิด "รายละเอียดเพิ่มเติม" ให้เองตอนแก้/คัดลอก) · values = { core, attrs } (บางส่วนก็ได้)
+  function extraFieldsHaveValues(type, values) {
+    const filled = (value) => textOf(value) !== "";
+    for (const field of coreFieldsOf(type)) if (!isPrimaryField(type, field.key) && filled(values?.core?.[field.key])) return true;
+    for (const field of plainFields(type)) if (!isPrimaryField(type, `attrs.${field.key}`) && filled(values?.attrs?.[field.key])) return true;
+    return false;
+  }
+  // มีข้อผิดพลาดตรวจค่าในช่องที่พับอยู่หรือไม่ (ต้องเปิดให้เห็นก่อนแสดงกรอบแดง)
+  const errorsInExtraFields = (type, errors) => (Array.isArray(errors) ? errors : []).some((error) => !isPrimaryField(type, error.field));
+
+  /* ---------- คัดลอกเป็นเครื่องใหม่ ---------- */
+  // ช่องที่ต้องไม่ซ้ำกันระหว่างอุปกรณ์ (เว้นว่างไว้ให้กรอกใหม่): เลขทะเบียน รหัสอุปกรณ์ Serial เลขทะเบียนทรัพย์สินบัญชี + ช่องเฉพาะชนิดที่เป็นเลขเฉพาะตัว
+  // ช่องลับไม่เคยอยู่ใน values (ฟอร์มกรอกช่องลับแยกผ่านตู้เซฟ) จึงไม่ถูกคัดลอกแน่นอน
+  const COPY_SKIP_CORE = Object.freeze(["reg_no", "device_code", "serial", "account_no"]);
+  const COPY_SKIP_ATTR_KEYS = Object.freeze(["doc_code"]);
+  const isUniqueAttrKey = (key) => COPY_SKIP_ATTR_KEYS.includes(key) || /serial|reg_no/i.test(key);
+  // คืน { values, skipped } · values = ค่าฟอร์มของอุปกรณ์ใหม่ (สถานะ ใช้งาน) · skipped = ป้ายชื่อช่องที่เว้นว่างไว้ (เฉพาะช่องที่ต้นฉบับมีค่า) ไว้บอกผู้ใช้
+  function copyValuesFromAsset(asset, type) {
+    const values = formValuesFromAsset(asset, type);
+    const skipped = [];
+    for (const field of coreFieldsOf(type)) {
+      if (!COPY_SKIP_CORE.includes(field.key)) continue;
+      if (textOf(values.core[field.key]) !== "") skipped.push(field.label);
+      values.core[field.key] = "";
+    }
+    for (const field of plainFields(type)) {
+      if (!isUniqueAttrKey(field.key)) continue;
+      if (textOf(values.attrs[field.key]) !== "") skipped.push(field.label);
+      values.attrs[field.key] = "";
+    }
+    values.core.status = "in_use";
+    return { values, skipped };
+  }
+
+  /* ---------- คำแนะนำช่องพิมพ์ (datalist) จากค่าที่เคยกรอกในชนิดเดียวกัน ---------- */
+  // ใช้เฉพาะช่องไม่ลับ: ช่องกลาง (ยี่ห้อ/รุ่น สถานที่ ติดตั้งที่/ผู้ใช้ ผู้ขาย) + ช่องเฉพาะชนิดที่เป็นข้อความ (ไม่ใช่ตัวเลข/วันที่/ตัวเลือก/ช่องลับ)
+  // ค่าจากแถวที่โหลดมาแล้ว เรียงตามความถี่ (มากไปน้อย แล้วตามตัวอักษร) · ข้ามค่ายาวผิดปกติ · ไม่เกิน MAX_SUGGESTIONS ต่อช่อง
+  const SUGGEST_CORE_KEYS = Object.freeze(["model", "place", "host_code", "vendor"]);
+  const MAX_SUGGESTIONS = 40;
+  const MAX_SUGGESTION_LENGTH = 80;
+  function rankedValues(values) {
+    const counts = new Map();
+    for (const value of values) {
+      const text = textOf(value);
+      if (!text || charCount(text) > MAX_SUGGESTION_LENGTH) continue;
+      counts.set(text, (counts.get(text) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || collator.compare(a[0], b[0])).slice(0, MAX_SUGGESTIONS).map(([text]) => text);
+  }
+  // คืน { core: { <key>: [ค่า…] }, attrs: { <key>: [ค่า…] } } เฉพาะช่องที่มีคำแนะนำ
+  function suggestionsFor(rows, type) {
+    const own = (Array.isArray(rows) ? rows : []).filter((row) => row?.type_code === type?.code);
+    const result = { core: {}, attrs: {} };
+    for (const field of coreFieldsOf(type)) {
+      if (!SUGGEST_CORE_KEYS.includes(field.key)) continue;
+      const list = rankedValues(own.map((row) => row[field.key]));
+      if (list.length) result.core[field.key] = list;
+    }
+    for (const field of plainFields(type)) {
+      if (field.type !== "text") continue;
+      const list = rankedValues(own.map((row) => row.attrs?.[field.key]));
+      if (list.length) result.attrs[field.key] = list;
+    }
+    return result;
+  }
+
+  /* ---------- จำค่าล่าสุดต่อชนิด (เก็บในเครื่องผู้ใช้ ต่อบัญชีต่อโหมด) ---------- */
+  // จำเฉพาะ ยี่ห้อ/รุ่น กับ สถานที่ ของรายการที่เพิ่งเพิ่มล่าสุดในชนิดนั้น + ชนิดล่าสุดที่เพิ่ม · ห้ามจำช่องอื่นและห้ามจำช่องลับเด็ดขาด (ฟังก์ชันรับเฉพาะคีย์ที่ระบุไว้ที่นี่)
+  const REMEMBER_KEYS = Object.freeze(["model", "place"]);
+  const MAX_REMEMBERED_TYPES = 40;
+  const TYPE_CODE_PATTERN = /^[A-Z][A-Z0-9_]{1,29}$/;
+  const emptyMemory = () => ({ lastType: "", types: {} });
+  const cleanRemembered = (source) => {
+    const clean = {};
+    for (const key of REMEMBER_KEYS) {
+      const text = typeof source?.[key] === "string" ? source[key].trim() : "";
+      if (text && charCount(text) <= 200) clean[key] = text;
+    }
+    return clean;
+  };
+  // อ่านข้อความที่เก็บไว้ (อาจเสีย/ถูกแก้/ไม่มี) → โครงที่ปลอดภัยเสมอ
+  function parseMemory(text) {
+    const memory = emptyMemory();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+    if (!data || typeof data !== "object" || Array.isArray(data)) return memory;
+    if (typeof data.lastType === "string" && TYPE_CODE_PATTERN.test(data.lastType)) memory.lastType = data.lastType;
+    const types = data.types && typeof data.types === "object" && !Array.isArray(data.types) ? data.types : {};
+    for (const [code, value] of Object.entries(types).slice(0, MAX_REMEMBERED_TYPES)) {
+      if (!TYPE_CODE_PATTERN.test(code)) continue;
+      const clean = cleanRemembered(value);
+      if (Object.keys(clean).length) memory.types[code] = clean;
+    }
+    return memory;
+  }
+  const serializeMemory = (memory) => JSON.stringify({ lastType: memory?.lastType ?? "", types: memory?.types ?? {} });
+  // บันทึกว่าเพิ่มรายการชนิดนี้ล่าสุดด้วยค่าเหล่านี้ (values = ค่าฟอร์ม { core, attrs }) · คืนโครงใหม่ ไม่แก้ของเดิม
+  function rememberAdded(memory, typeCode, values) {
+    const next = parseMemory(serializeMemory(memory));
+    if (!TYPE_CODE_PATTERN.test(String(typeCode ?? ""))) return next;
+    next.lastType = typeCode;
+    const clean = cleanRemembered(values?.core);
+    if (Object.keys(clean).length) next.types[typeCode] = clean; else delete next.types[typeCode];
+    return next;
+  }
+  const forgetType = (memory, typeCode) => { const next = parseMemory(serializeMemory(memory)); delete next.types[typeCode]; return next; };
+  // เติมค่าที่จำไว้ลงฟอร์มเปล่าของชนิดนี้ (เฉพาะช่องที่ชนิดนี้มี) · คืน { values, applied: [{ key, label, value }] }
+  function applyRemembered(type, values, memory) {
+    const saved = memory?.types?.[type?.code] ?? {};
+    const applied = [];
+    const next = { core: { ...values.core }, attrs: { ...values.attrs } };
+    for (const field of coreFieldsOf(type)) {
+      if (!REMEMBER_KEYS.includes(field.key) || !saved[field.key] || textOf(next.core[field.key]) !== "") continue;
+      next.core[field.key] = saved[field.key];
+      applied.push({ key: field.key, label: field.label, value: saved[field.key] });
+    }
+    return { values: next, applied };
+  }
+  // ค่าที่ผู้ใช้พิมพ์เองจริง ๆ = ช่องที่ต่างจากค่าตั้งต้นของฟอร์ม (ใช้ตอนเปลี่ยนชนิด: ไม่ยกค่าที่ระบบเติมให้ไปชนิดอื่น)
+  function typedSince(current, initial) {
+    const out = { core: {}, attrs: {} };
+    for (const part of ["core", "attrs"]) for (const [key, value] of Object.entries(current?.[part] ?? {})) if (value !== initial?.[part]?.[key]) out[part][key] = value;
+    return out;
+  }
+
+  /* ---------- เพิ่มหลายเครื่องรุ่นเดียวกัน (เฉพาะช่องไม่ลับ) ---------- */
+  // ผู้ใช้พิมพ์ 1 บรรทัด = 1 เครื่อง ในช่องที่ต่างกันต่อเครื่อง (Serial / เลขทะเบียน / รหัสอุปกรณ์ หรือคู่ รหัส + Serial) ช่องอื่นใช้ค่าจากฟอร์มร่วมกันทุกเครื่อง
+  // ไม่มีช่องลับในโหมดนี้ (ช่องลับต้องเข้ารหัสทีละเครื่องด้วย id ของเครื่องนั้น) · ฐานข้อมูลบังคับเลขทะเบียน/รหัสอุปกรณ์ไม่ซ้ำ จึงต้องเว้นช่องนั้นในฟอร์มแล้วใส่ในรายการแทน
+  const MAX_BATCH = 50;
+  const BATCH_ALWAYS_EMPTY = Object.freeze(["reg_no", "device_code"]);
+  function batchColumnOptions(type) {
+    const label = (key) => CORE_BY_KEY[key].label;
+    const make = (fields, example) => ({ value: fields.join(","), fields, label: fields.map(label).join(" + "), example });
+    return [
+      make(["serial"], "SN001\nSN002\nSN003"),
+      make(["reg_no"], "COM-101\nCOM-102\nCOM-103"),
+      ...(type?.has_device_code ? [make(["device_code"], "COM101\nCOM102\nCOM103"), make(["device_code", "serial"], "COM101, SN001\nCOM102, SN002")] : []),
+      make(["reg_no", "serial"], "COM-101, SN001\nCOM-102, SN002"),
+    ];
+  }
+  const batchOptionOf = (type, value) => batchColumnOptions(type).find((option) => option.value === value) ?? batchColumnOptions(type)[0];
+  // แยกข้อความเป็นรายการ: บรรทัดว่างข้าม · ช่องเดียว = ทั้งบรรทัดคือค่า · สองช่อง = คั่นด้วยแท็บหรือจุลภาค · ซ้ำกันเองในรายการ = ผิดทั้งสองบรรทัด
+  // คืน { items:[{ line, raw, values:{<key>:text} }], errors:[{ line, message }] } (line = เลขบรรทัดในกล่องข้อความ เริ่มที่ 1)
+  function parseBatchLines(text, fields) {
+    const items = [];
+    const errors = [];
+    const seen = fields.map(() => new Map());
+    String(text ?? "").split(/\r?\n/).forEach((rawLine, index) => {
+      const raw = rawLine.trim();
+      if (!raw) return;
+      const line = index + 1;
+      const cells = fields.length === 1 ? [raw] : (raw.includes("\t") ? raw.split("\t") : raw.split(/[,，]/)).map((cell) => cell.trim());
+      if (cells.length !== fields.length || cells.some((cell) => !cell)) {
+        errors.push({ line, message: `บรรทัด ${line}: ต้องมี ${fields.length} ค่า คั่นด้วยเครื่องหมายจุลภาค (,) หรือแท็บ` });
+        return;
+      }
+      const values = Object.fromEntries(fields.map((key, position) => [key, cells[position]]));
+      let clash = false;
+      fields.forEach((key, position) => {
+        const normal = (CORE_BY_KEY[key].code ? normalizeCode(cells[position]) : cells[position]).toLowerCase();
+        const first = seen[position].get(normal);
+        if (first !== undefined) { errors.push({ line, message: `บรรทัด ${line}: ${CORE_BY_KEY[key].label} ซ้ำกับบรรทัด ${first}` }); clash = true; } else seen[position].set(normal, line);
+      });
+      if (!clash) items.push({ line, raw, values });
+    });
+    if (items.length + errors.length > MAX_BATCH) errors.unshift({ line: 0, message: `เพิ่มพร้อมกันได้ครั้งละไม่เกิน ${MAX_BATCH} รายการ` });
+    return { items, errors };
+  }
+  // ตรวจทั้งชุดก่อนส่งแม้แต่รายการเดียว · คืน { ok, fieldErrors:[{ field, message }], lineErrors:[{ line, message }], items:[{ line, raw, label, values }] }
+  // fieldErrors = ปัญหาที่ช่องของฟอร์มร่วม (ใช้กรอบแดงตามช่อง) · lineErrors = ปัญหาของบรรทัดนั้น ๆ · values = ค่าฟอร์มเต็มของเครื่องนั้น ({ core, attrs }) พร้อมส่งเข้า buildSavePayload
+  function buildBatchPlan({ type, base, columns, text }) {
+    const option = batchOptionOf(type, columns);
+    const parsed = parseBatchLines(text, option.fields);
+    const fieldErrors = [];
+    const lineErrors = parsed.errors.map((error) => ({ ...error }));
+    for (const key of new Set([...BATCH_ALWAYS_EMPTY, ...option.fields])) {
+      if (!coreFieldsOf(type).some((field) => field.key === key)) continue;
+      if (textOf(base?.core?.[key]) !== "") fieldErrors.push({ field: key, message: `${CORE_BY_KEY[key].label}: เว้นว่างไว้เมื่อเพิ่มหลายเครื่อง (ใส่ในรายการด้านล่างแทน ฐานข้อมูลไม่ให้ซ้ำกัน)` });
+    }
+    if (!parsed.items.length && !parsed.errors.length) lineErrors.push({ line: 0, message: `ยังไม่มีรายการ: พิมพ์ ${option.label} ของแต่ละเครื่อง บรรทัดละ 1 เครื่อง` });
+    const items = [];
+    const sharedSeen = new Set();
+    for (const entry of parsed.items) {
+      const values = { core: { ...base.core, ...entry.values }, attrs: { ...base.attrs } };
+      const found = validateAsset({ type, values });
+      for (const error of found) {
+        if (option.fields.includes(error.field)) lineErrors.push({ line: entry.line, message: `บรรทัด ${entry.line}: ${error.message}` });
+        else if (!sharedSeen.has(error.field)) { sharedSeen.add(error.field); if (!fieldErrors.some((item) => item.field === error.field)) fieldErrors.push({ field: error.field, message: error.message }); }
+      }
+      items.push({ ...entry, label: entry.values[option.fields[0]], values });
+    }
+    return { ok: !fieldErrors.length && !lineErrors.length && items.length > 0, fieldErrors, lineErrors, items, option };
+  }
+
+  // เปลี่ยนชนิดในฟอร์มเพิ่ม: ยกค่าที่พิมพ์ไว้ (ไม่ว่าง) ไปให้ช่องที่มีชื่อเดียวกันในชนิดใหม่ · คืน { core, attrs } เฉพาะช่องที่จะตั้ง (ไม่ยกช่องลับ ช่องลับไม่เคยอยู่ใน values)
+  function carryOver(type, carried) {
+    const core = {};
+    const attrs = {};
+    const coreKeys = new Set(coreFieldsOf(type).map((field) => field.key));
+    for (const [key, value] of Object.entries(carried?.core ?? {})) if (coreKeys.has(key) && textOf(value) !== "") core[key] = value;
+    const attrKeys = new Set(plainFields(type).map((field) => field.key));
+    for (const [key, value] of Object.entries(carried?.attrs ?? {})) if (attrKeys.has(key) && textOf(value) !== "") attrs[key] = value;
+    return { core, attrs };
   }
 
   /* ---------- ตรวจค่าก่อนส่ง (ฐานข้อมูลตรวจซ้ำเสมอ) ---------- */
@@ -271,23 +486,54 @@
     for (const field of plainFields(type).slice(0, MAX_TYPE_COLUMNS)) columns.push({ key: `attrs.${field.key}`, label: field.label, field: attrField(field) });
     return columns;
   }
+  // ช่อง "ผู้ใช้" ที่แสดงในตาราง/ฟอร์มหลัก: ชนิดที่มีช่อง user_name (เครื่องคอมพิวเตอร์) ใช้ช่องนั้น · ชนิดอื่นใช้ "ติดตั้งที่" (host_code = รหัสเครื่องที่ใช้อุปกรณ์นี้)
+  const USER_ATTR_KEY = "user_name";
+  const userValueOf = (row) => textOf(row?.attrs?.[USER_ATTR_KEY]) || textOf(row?.host_code);
+
+  // ชิปกรองชนิด: ชนิดที่มีของอยู่ขึ้นก่อน (คงลำดับ sort ของฐานข้อมูล) ชนิดว่างแยกไว้ใต้ "ชนิดอื่นๆ"
+  function typeChipGroups(types) {
+    const list = (Array.isArray(types) ? types : []).filter(Boolean);
+    const hasAssets = (type) => Number(type.asset_count) > 0;
+    return { used: list.filter(hasAssets), empty: list.filter((type) => !hasAssets(type)) };
+  }
+  const TYPE_ALL_LABEL = "ทั้งหมด";
+
+  // ตารางมุมมอง "ทั้งหมด" (รวมทุกชนิด): คอลัมน์กลางที่ทุกชนิดมีเหมือนกัน · valueFn = ค่าที่แสดง · sortFn = ค่าที่ใช้เรียง (ชนิดเรียงตามลำดับของฐานข้อมูล ไม่ใช่ตัวอักษร)
+  function allColumns(types) {
+    const list = Array.isArray(types) ? types : [];
+    const names = new Map(list.map((type) => [type.code, type.name]));
+    const order = new Map(list.map((type, index) => [type.code, index]));
+    const text = { type: "text" };
+    return [
+      { key: "reg_no", label: "เลขทะเบียน", field: CORE_BY_KEY.reg_no, role: "no" },
+      { key: "device_code", label: "รหัสอุปกรณ์", field: CORE_BY_KEY.device_code },
+      { key: "type", label: "ชนิด", field: text, valueFn: (row) => names.get(row?.type_code) ?? row?.type_code ?? "", sortFn: (row) => `${String(order.get(row?.type_code) ?? 999).padStart(3, "0")} ${names.get(row?.type_code) ?? ""}` },
+      { key: "name", label: "ชื่อ / ยี่ห้อ · รุ่น", field: CORE_BY_KEY.name, role: "subject", composite: true },
+      { key: "user", label: "ผู้ใช้ / ติดตั้งที่", field: text, valueFn: userValueOf },
+      { key: "place", label: "สถานที่", field: CORE_BY_KEY.place },
+      { key: "status", label: "สถานะ", field: CORE_BY_KEY.status, role: "status" },
+    ];
+  }
   const cellValue = (row, column) => {
+    if (column.valueFn) return column.valueFn(row);
     if (column.key.startsWith("attrs.")) return row?.attrs?.[column.key.slice(6)];
     if (column.key === "name") return [textOf(row?.name), textOf(row?.model)].filter(Boolean).join(" · ");
     return row?.[column.key];
   };
   const cellText = (row, column) => (column.key === "name" ? cellValue(row, column) : formatCell(column.field, cellValue(row, column)));
 
-  // ค้นหา + กรองสถานะฝั่งหน้าเว็บ (โหลดครบ ≤ 2,000 แถวต่อชนิด): คำค้นหลายคำคั่นด้วยช่องว่าง ทุกคำต้องเจอใน ช่องกลางที่เป็นข้อความ + ช่องเฉพาะชนิดที่ไม่ลับ (ไม่สนตัวพิมพ์)
-  // ค้นช่องลับไม่ได้จากตรงนี้ (ค่าลับเป็น ciphertext) · status = "" หรือ "all" = ทุกสถานะ
-  function filterAssets(rows, { query = "", status = "" } = {}) {
+  // ค้นหา + กรองฝั่งหน้าเว็บ (โหลดครบ ≤ 2,000 แถว): คำค้นหลายคำคั่นด้วยช่องว่าง ทุกคำต้องเจอใน ช่องกลางที่เป็นข้อความ + ช่องเฉพาะชนิดที่ไม่ลับ + ชื่อชนิด (ไม่สนตัวพิมพ์)
+  // ค้นช่องลับไม่ได้จากตรงนี้ (ค่าลับเป็น ciphertext และไม่ถูกนำมารวมในข้อความค้นหา) · status = "" หรือ "all" = ทุกสถานะ · typeCode = "" = ทุกชนิด · typeNames = { รหัสชนิด: ชื่อชนิด }
+  function filterAssets(rows, { query = "", status = "", typeCode = "", typeNames = null } = {}) {
     const terms = textOf(query).toLowerCase().split(/\s+/).filter(Boolean);
     const wanted = status && status !== "all" ? status : "";
     return (Array.isArray(rows) ? rows : []).filter((row) => {
       if (wanted && row.status !== wanted) return false;
+      if (typeCode && row.type_code !== typeCode) return false;
       if (!terms.length) return true;
       const haystack = [
         row.reg_no, row.device_code, row.name, row.model, row.serial, row.host_code, row.slot, row.place, row.vendor, row.note, row.express_code, row.account_no, row.warranty_text,
+        typeNames?.[row.type_code],
         ...Object.values(row.attrs ?? {}).map((value) => (value === null ? "" : String(value))),
       ].map((part) => String(part ?? "").toLowerCase()).join("\n");
       return terms.every((term) => haystack.includes(term));
@@ -297,7 +543,7 @@
   // เรียงตามคอลัมน์ (ค่าว่างไปท้ายเสมอ) · ตัวเลขเรียงตามค่า วันที่ตามลำดับเวลา ที่เหลือตามตัวอักษรไทย/อังกฤษแบบ natural (COM2 ก่อน COM10)
   function sortAssets(rows, column, direction = "ascending") {
     const sign = direction === "descending" ? -1 : 1;
-    const valueOf = (row) => cellValue(row, column);
+    const valueOf = (row) => (column.sortFn ? column.sortFn(row) : cellValue(row, column));
     const empty = (value) => value === null || value === undefined || value === "";
     return rows.slice().sort((a, b) => {
       const left = valueOf(a); const right = valueOf(b);
@@ -424,8 +670,8 @@
     STATUSES, CORE_FIELDS, GROUP_LABELS, GROUP_ORDER, IDENTITY_KEYS,
     assetsUrl, readView, isUuid, statusLabel, statusBadgeClass,
     formatDate, formatDateTime, parseDateInput, dateInputText, isRealDate,
-    typeFields, plainFields, secretFields, coreFieldsOf, normalizeCode, emptyFormValues, formValuesFromAsset, parseField, validateAsset, buildSavePayload, payloadIsEmpty,
-    tableColumns, cellValue, cellText, formatCell, filterAssets, sortAssets, countText,
+    typeFields, plainFields, secretFields, coreFieldsOf, normalizeCode, emptyFormValues, formValuesFromAsset, carryOver, copyValuesFromAsset, MAX_BATCH, batchColumnOptions, batchOptionOf, parseBatchLines, buildBatchPlan, suggestionsFor, MAX_SUGGESTIONS, REMEMBER_KEYS, parseMemory, serializeMemory, rememberAdded, forgetType, applyRemembered, typedSince, userFieldName, primaryFieldNames, isPrimaryField, PRIMARY_LABEL_OVERRIDES, extraFieldsHaveValues, errorsInExtraFields, parseField, validateAsset, buildSavePayload, payloadIsEmpty,
+    tableColumns, allColumns, typeChipGroups, TYPE_ALL_LABEL, USER_ATTR_KEY, userValueOf, cellValue, cellText, formatCell, filterAssets, sortAssets, countText,
     labelOfKey, logChanges, historyView, passwordStrength,
     describeError, isAlreadyExists, purgeSummary,
   };
