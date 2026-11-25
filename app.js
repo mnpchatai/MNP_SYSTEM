@@ -91,6 +91,10 @@ document.addEventListener("focusin", closePopupsOutside);
 // ให้ขึ้นปุ่มให้ผู้ใช้กดโหลดเอง ไม่รีโหลดอัตโนมัติ เพื่อไม่ให้ข้อมูลที่กรอกค้างไว้หาย
 // ยกเว้นตอนเปิดหน้าครั้งแรก: มือถือมักเปิดจาก index.html ที่ cache ไว้ (หน้าเก่า) ขณะที่ยังไม่มีข้อมูลที่กรอก
 // จึงเช็กทันทีและรีโหลดให้เองหนึ่งครั้งต่อเวอร์ชัน (จำใน sessionStorage กันวนซ้ำ) ถ้ายังไม่ตรงค่อยขึ้นปุ่ม
+// ธงเสียงแจ้งเตือนของบริษัท (sounds/notify.mp3): เจ้าของสั่งปิด 25/11/2026 เพราะเจ้านายไม่ชอบเสียงนี้
+// false = ไม่เล่นเสียงบริษัททุกกรณี (Push, รอบถามยังไม่อ่าน) และตอบ sw.js ว่าไม่เล่นเอง → แจ้งเตือนไม่ถูกทำเป็น silent
+// ระบบปฏิบัติการจึงดังด้วยเสียงปกติของอุปกรณ์ทั้งตอนเปิดแอปอยู่และตอนปิด · เปิดกลับ = เปลี่ยนเป็น true (ไฟล์เสียงและโค้ดเล่นเสียงยังอยู่ครบ)
+const COMPANY_NOTIFY_SOUND_ENABLED = false;
 const APP_VERSION = new URL(document.querySelector('script[src*="app.js"]').src).searchParams.get("v");
 const VERSION_RELOAD_KEY = "mnp-version-reload";
 let lastVersionCheck = 0;
@@ -2122,7 +2126,7 @@ async function loadUnread({ announce = true } = {}) {
   const owner = state.employee.id;
   // เล่นเสียงเมื่อตัวเลขเพิ่มจากครั้งก่อนของบัญชีเดียวกันเท่านั้น (ครั้งแรก/ตัวเลขลด/โหลดไม่สำเร็จไม่เล่น) — โหมดทดสอบไม่เล่น
   // ระหว่างพักแจ้งเตือนไม่เล่นเสียง (ตัวเลขกระดิ่งยังอัปเดตและจำเป็นค่าอ้างอิงตามปกติ ครบเวลาพักแล้วของใหม่จึงดังเมื่อเพิ่มจากค่านี้)
-  const observe = (count) => notifySound.observeUnread(owner, count, { announce: announce && !isSandboxMode() && !isPushPaused() });
+  const observe = (count) => notifySound.observeUnread(owner, count, { announce: announce && COMPANY_NOTIFY_SOUND_ENABLED && !isSandboxMode() && !isPushPaused() });
   if (isDeptRestricted()) {
     // นับหลังกรอง ตัวเลขบนเมนูจึงตรงกับรายการที่หน้าการแจ้งเตือนแสดง
     try {
@@ -5334,7 +5338,7 @@ async function refreshPushPanel({ reloadPause = true } = {}) {
 // กติกา/ตัวจัดการเสียงอยู่ใน modules/notification-sound.js (ทดสอบแล้ว) ที่นี่เป็นส่วนต่อกับหน้าเว็บ:
 //   1) push ทันที: sw.js ส่งข้อความ "mnp-notification" มาที่หน้า → รีเฟรชตัวเลขกระดิ่ง และถ้าหน้านี้โฟกัสอยู่จะถูกถามว่าเล่นเสียงเองไหม
 //   2) ถามฐานข้อมูลเป็นระยะ (สำรองสำหรับเครื่องที่ไม่ได้เปิด Push): เฉพาะตอนหน้าเห็นอยู่ ทุก ~60 วินาที และตอนกลับมาเห็นหน้า
-// เสียงเปิดเสมอ ไม่มีสวิตช์ให้ผู้ใช้ · ไฟล์ sounds/notify.wav ยังไม่มี = ทุกอย่างเงียบ และ sw.js ไม่ทำแจ้งเตือนเป็น silent
+// ตอนนี้ปิดด้วยธง COMPANY_NOTIFY_SOUND_ENABLED (ต้นไฟล์) = ใช้เสียงปกติของระบบปฏิบัติการแทน · เมื่อเปิด: เสียงเปิดเสมอ ไม่มีสวิตช์ให้ผู้ใช้ · ไฟล์ sounds/notify.wav ยังไม่มี = ทุกอย่างเงียบ และ sw.js ไม่ทำแจ้งเตือนเป็น silent
 function createNotifySound() {
   const sound = window.MNP_NOTIFY_SOUND;
   let channel = null;
@@ -5359,7 +5363,7 @@ let soundProbedFor = null;
 // (เล่นจริงแล้วถูกปฏิเสธ → ตัวจัดการเสียงกลับเป็นยังไม่ปลดล็อก) ปลดล็อกอยู่แล้วคืนค่าทันทีไม่มีค่าใช้จ่าย
 function armSoundUnlock() {
   const tryUnlock = () => {
-    if (notifySound.isReady()) notifySound.unlock();
+    if (COMPANY_NOTIFY_SOUND_ENABLED && notifySound.isReady()) notifySound.unlock();
   };
   ["pointerdown", "keydown"].forEach((name) => document.addEventListener(name, tryUnlock, true));
 }
@@ -5371,7 +5375,8 @@ async function pollUnreadForSound() {
   // เจ้าของอาจกดพักแจ้งเตือนจากมือถือ: ให้รู้ก่อนตัดสินเรื่องเสียงของรอบนี้ (ถามจริงไม่ถี่กว่าทุก 15 นาที) · รอไม่เกิน 3 วินาที ไม่ให้ขวางรอบ poll
   await withTimeout(Promise.resolve(syncPushPauseIfStale()), 3000, "PUSH_PAUSE_SYNC_TIMEOUT").catch(() => {});
   // ไฟล์เสียงยังไม่พร้อม (เช่น เน็ตหลุดตอนเปิดหน้า): ลองตรวจใหม่รอบละครั้ง ยังไม่ถามฐานข้อมูล
-  if (!notifySound.isReady()) {
+  // (ธงปิด: ไม่ตรวจไฟล์เสียง ถามตัวเลขยังไม่อ่านอย่างเดียวเพื่ออัปเดตป้ายกระดิ่ง)
+  if (COMPANY_NOTIFY_SOUND_ENABLED && !notifySound.isReady()) {
     await notifySound.probe();
     return;
   }
@@ -5389,7 +5394,8 @@ async function onNotificationPushMessage(message, replyPort) {
   // ต้องล้างก่อนตัดสินเรื่องเสียง ไม่งั้นสรุปที่มาตอน 07:00 พอดีจะเงียบ · ส่วนที่เหลือเดินตามกติกาปกติ (ตัวเลขใหม่ + เสียงของบริษัท)
   if (typeof message?.tag === "string" && message.tag.startsWith("pause-digest-")) setPushPause(null);
   // กำลังพัก: ตอบ sw.js ว่าไม่เล่นเสียง (แจ้งเตือนที่หลุดมาจะไม่ถูกทำเป็น silent) และไม่เล่นเสียงของบริษัท
-  const canPlay = Boolean(state.employee) && !isLabOnly() && !isSandboxMode() && notifySound.canHandle() && !isPushPaused();
+  // ธงเสียงบริษัทปิด → canPlay เป็น false เสมอ: sw.js จะไม่ทำแจ้งเตือนเป็น silent และระบบปฏิบัติการเล่นเสียงปกติเอง
+  const canPlay = COMPANY_NOTIFY_SOUND_ENABLED && Boolean(state.employee) && !isLabOnly() && !isSandboxMode() && notifySound.canHandle() && !isPushPaused();
   // ตอบก่อนอย่างอื่น: sw.js รอไม่เกิน 1 วินาทีก่อนแสดงแจ้งเตือน · ตอบ true = แจ้งเตือนบนหน้าจอจะไม่มีเสียงของระบบ เราต้องเล่นเสียงให้
   try {
     replyPort?.postMessage({ willPlaySound: canPlay });
@@ -6548,7 +6554,7 @@ async function renderRoute() {
   // ตรวจไฟล์เสียงแจ้งเตือนหนึ่งครั้งต่อบัญชีต่อการโหลดหน้า (ไม่มีไฟล์ = เงียบ) · โหมดทดสอบ/lab-only ไม่มีแจ้งเตือนจึงไม่ตรวจ
   if (soundProbedFor !== state.employee.id) {
     soundProbedFor = state.employee.id;
-    if (!isLabOnly() && !isSandboxMode()) notifySound.probe();
+    if (COMPANY_NOTIFY_SOUND_ENABLED && !isLabOnly() && !isSandboxMode()) notifySound.probe();
   }
   await loadUnread();
   try {
