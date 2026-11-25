@@ -270,7 +270,7 @@ const ROW = (id, status, extra = {}) => ({ id, doc_no: `IT01-26/${id}`, status, 
 /* ---------- ลงทะเบียนการ์ดและตัวเลขบนการ์ด ---------- */
 test("the module announces itself for the IT SUPPORT card with its own version", async () => {
   const w = world();
-  assert.equal(w.context.window.MNP_ITRP.version, "1.03");
+  assert.equal(w.context.window.MNP_ITRP.version, "1.04");
   assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_COMPUTER_REPAIR, w.context.window.MNP_ITRP);
   assert.equal(typeof w.context.window.MNP_ITRP.loadCardSummary, "function");
   assert.equal(typeof w.context.window.MNP_ITRP.unsavedCount, "function");
