@@ -579,7 +579,7 @@ test("a database without the pause functions is recognised, other errors are not
 });
 
 // โลกจำลองของส่วนพักแจ้งเตือนใน app.js: ใช้โค้ดจริงของฟังก์ชัน ส่วนฐานข้อมูล/เสียง/นาฬิกาเป็นของปลอมที่ควบคุมได้
-function buildPauseWorld({ rpc = async () => ({ data: null, error: null }), labOnly = false, sandbox = false, key = "key" } = {}) {
+function buildPauseWorld({ rpc = async () => ({ data: null, error: null }), labOnly = false, sandbox = false, key = "key", soundEnabled = true } = {}) {
   const clock = { now: Date.parse("2026-11-21T08:00:00Z") };
   class FakeDate extends Date { static now() { return clock.now; } }
   const log = { rpc: [], warned: 0, toasts: [], refreshedPrompt: 0, played: 0, counted: [], replies: [], unreadAnnounce: [] };
@@ -597,7 +597,7 @@ function buildPauseWorld({ rpc = async () => ({ data: null, error: null }), labO
   const pushWorld = { pushState: "on" };
   const context = vm.createContext({
     state, document, Date: FakeDate, Intl, String, Number, Promise, console: { warn: () => { log.warned += 1; }, error() {} },
-    PUSH_PUBLIC_KEY: key, isLabOnly: () => labOnly, isSandboxMode: () => sandbox,
+    PUSH_PUBLIC_KEY: key, COMPANY_NOTIFY_SOUND_ENABLED: soundEnabled, isLabOnly: () => labOnly, isSandboxMode: () => sandbox,
     sb: { rpc: async (name, args) => { log.rpc.push(name); return rpc(name, args); } },
     window: { MNP_PUSH: require("../../modules/push-notifications.js") },
     refreshPushPrompt: () => { log.refreshedPrompt += 1; },
@@ -904,4 +904,20 @@ test("the prompt is not shown while the person is paused", () => {
   assert.match(buildPrompt().html, /id="push-prompt"/);
   assert.equal(buildPrompt({ paused: true }).html, "");
   assert.equal(buildPrompt({ paused: true, environment: { permission: "denied" } }).html, "");
+});
+
+// ธงเสียงบริษัทปิด (เจ้าของสั่ง 25/11/2026): ไม่รับปากเล่นเสียง (sw.js จึงไม่ silent → ระบบปฏิบัติการดังปกติ) และไม่เล่นเสียงจาก push/รอบถามยังไม่อ่าน
+test("with the company sound flag off a push is answered willPlaySound false and nothing plays", async () => {
+  const world = buildPauseWorld({ soundEnabled: false });
+  const port = { log: [], postMessage(message) { this.log.push(message); }, close() {} };
+  world.context.__port = port;
+  await world.call("onNotificationPushMessage({ tag: 'n-1', title: 't', url: '#/x' }, __port)");
+  assert.deepEqual(JSON.parse(JSON.stringify(port.log)), [{ willPlaySound: false }]);
+  assert.equal(world.log.played, 0);
+});
+
+test("with the company sound flag off the unread poll counts but never announces", async () => {
+  const world = buildPauseWorld({ soundEnabled: false });
+  await world.call("loadUnread()");
+  assert.deepEqual(world.log.unreadAnnounce, [false]);
 });
