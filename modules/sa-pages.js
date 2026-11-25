@@ -335,7 +335,27 @@
       }).join("");
       cards.push(ui.card(`<ul class="bom-request-list">${items}</ul>`, { title: esc(`แจ้งจากฝ่ายขาย (${open.length})`) }));
     }
+    if (orderId) cards.push(extraJobsCard(ctx, ctx.data.orders.find((order) => order.id === orderId)));
     return cards.join("");
+  }
+  // ฝ่ายขายเพิ่มสินค้า / จำนวนในใบที่เริ่มงานแล้ว (หน้าใบของฝ่ายวางแผน): สินค้าที่เพิ่ม + งานที่จะเปิดรายแผนก (งานใหม่ / เพิ่มจาก A เป็น B) แล้วปุ่มเดียว "เปิดงานเพิ่ม"
+  // (ยืนยันแล้วส่งทันที) · มีข้อห้าม (ไม่มี BOM งานปิดแล้ว WO เริ่มแล้ว) = แสดงข้อห้ามแทนปุ่ม · ค่าเดิม → ใหม่ของจำนวนสั่งอยู่ในการแจ้ง "ฝ่ายขายแก้ใบ" แล้ว ที่นี่บอกแค่ส่วนที่เพิ่ม
+  function extraJobsCard(ctx, order) {
+    const { ui, rules, helpers } = ctx;
+    if (!order || !["released", "in_progress"].includes(order.status) || helpers.salesCancelled(order) || typeof helpers.extraJobsFor !== "function") return "";
+    const plan = helpers.extraJobsFor(ctx.data, order, shared().rfOrdersOf?.(ctx) ?? null);
+    if (!plan.lines.length || !(plan.jobs.length || plan.blockers.length)) return "";
+    const added = plan.lines.map((line) => `${ui.mono(line.fgCode)} ${esc(`+${rules.fmtQty(line.added)}`)}`).join(" · ");
+    const flow = (dept) => { const at = rules.FLOW_DEPTS.indexOf(dept); return at === -1 ? 99 : at; };
+    const rows = plan.jobs.slice().sort((a, b) => flow(a.dept) - flow(b.dept) || a.itemCode.localeCompare(b.itemCode)).map((entry) => {
+      const what = entry.mode === "new" ? `งานใหม่ ${rules.fmtQty(entry.diff)}` : `เพิ่มจาก ${rules.fmtQty(entry.from)} เป็น ${rules.fmtQty(entry.to)}`;
+      return `<tr><td>${F.deptChip(entry.dept, rules.DEPT_LABEL)}</td><td>${ui.mono(entry.itemCode)}<div class="small muted">${esc(entry.name)}</div></td><td class="nowrap">${esc(`${what} ${uomText(ctx, entry.uom)}`)}${entry.woId ? `<div class="small muted">${esc(`${entry.woId} เพิ่มยอดตาม`)}</div>` : ""}</td></tr>`;
+    });
+    const action = plan.blockers.length
+      ? ui.callout("warn", `<strong>${esc("ยังเปิดงานเพิ่มไม่ได้")}</strong><ul>${plan.blockers.map((text) => `<li>${esc(text)}</li>`).join("")}</ul>`)
+      : `<div class="rf-row">${ui.button("เปิดงานเพิ่ม", { action: "addJobsForChanges", args: { orderId: order.id }, className: "", success: `เปิดงานเพิ่มของใบ ${order.id} แล้ว ({result})`, confirmText: `เปิดงานเพิ่มของใบ ${order.id}? งานใหม่ ${plan.jobs.filter((entry) => entry.mode === "new").length} งาน และเพิ่มยอดงานเดิม ${plan.jobs.filter((entry) => entry.mode === "raise").length} งาน ตามที่ฝ่ายขายเพิ่ม งานที่มีอยู่ไม่ลดลง`, ariaLabel: `เปิดงานเพิ่มของใบ ${order.id}` })}</div>`;
+    const body = `<p>${esc("สินค้าที่เพิ่ม")} ${added}</p>${rows.length ? ui.table(["แผนก", "งาน", "ที่จะเปิด"], rows) : ""}${action}`;
+    return ui.card(body, { title: esc("ฝ่ายขายเพิ่มสินค้า/จำนวน — เปิดงานเพิ่ม") });
   }
 
   // ---------- หน้าแรกของโมดูล ----------

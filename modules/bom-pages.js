@@ -2877,6 +2877,6 @@
     return { html };
   };
   // ชิ้นส่วนที่โมดูลฝ่ายขาย (modules/sa-pages.js) ใช้ร่วม ไม่คัดลอก: ป้ายสถานะ ที่มาของใบ กติกาแก้ใบ ทะเบียนลูกค้า
-  pages.sales = { status, orderStatus, sourceChip, sourceText, visibleToPlanning, orderEditState, customersView, customersOf, IN_PLACE_TEXT, SALES_CANCEL_STATE, salesCancelKey, itemOf: (ctx, code) => itemOf(ctx, code), approvedBomOf: (ctx, code) => approvedBomOf(ctx, code) };
+  pages.sales = { status, orderStatus, sourceChip, sourceText, visibleToPlanning, orderEditState, rfOrdersOf, customersView, customersOf, IN_PLACE_TEXT, SALES_CANCEL_STATE, salesCancelKey, itemOf: (ctx, code) => itemOf(ctx, code), approvedBomOf: (ctx, code) => approvedBomOf(ctx, code) };
   pages.audit.actionText = auditActionText; // ให้เทสต์ตรวจชื่อการกระทำของแถวจากฐานข้อมูลได้โดยไม่ต้องมี store ระยะไกล
 })(typeof window !== "undefined" ? window : globalThis);

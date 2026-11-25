@@ -498,6 +498,158 @@ select is((select count(*)::integer from jsonb_array_elements(public.app_bom_mas
 select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'orderRequests') r where r ->> 'status' = 'open'), 2,
   'two are still open (the cancelled draft 28105 and the second edit of 28103)');
 
+-- 10. ฝ่ายวางแผนเปิดงานเพิ่มจากฝ่ายขายแก้ใบ (addJobsForChanges · private.bom_add_change_jobs) -------------------------------------------------
+-- คู่ (แผนก, ชิ้นงาน) ใหม่ = งานใหม่ · คู่เดิม = เพิ่มยอดแผนอย่างเดียว · WO ที่ยังวางแผนอยู่เพิ่มยอดตาม · งาน RB ใหม่ได้ WO ของตัวเอง (WO หนึ่งใบต่องาน)
+select ok(array['addJobsForChanges'] <@ private.bom_client_actions() and not (array['addJobsForChanges'] <@ private.bom_sales_actions())
+          and not (array['addJobsForChanges'] <@ private.bom_staff_actions()),
+  'opening extra jobs is a planning action: not on the sales or staff lists');
+select ok((select p.prosecdef and p.proconfig @> array['search_path=""'] from pg_proc p
+           where p.oid = 'private.bom_add_change_jobs(public.employees,text,boolean,jsonb,jsonb,bigint,bigint)'::regprocedure)
+          and not has_function_privilege('authenticated', 'private.bom_add_change_jobs(public.employees,text,boolean,jsonb,jsonb,bigint,bigint)', 'execute')
+          and not has_function_privilege('anon', 'private.bom_add_change_jobs(public.employees,text,boolean,jsonb,jsonb,bigint,bigint)', 'execute'),
+  'the extra-jobs writer is security definer with an empty search_path and clients cannot call it');
+-- ข้อมูลตั้งต้น: วัตถุดิบ สูตร RCS-1 (อนุมัติ) คอมปาวด์ DMS1 เส้นยาง RB-S8 / RB-S9 ชิ้นยาง SE-S9 สินค้า FG-S9
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select public.app_rf_save(jsonb_build_object('materials', jsonb_build_object('upsert', jsonb_build_array(
+  '{"code":"MAT-SO-A","name":"ยาง EPDM","category":"วัตถุดิบ","storage":"A-1","uom":"kg","active":true}'::jsonb,
+  '{"code":"MAT-SO-B","name":"เขม่าดำ","category":"วัตถุดิบ","storage":"A-1","uom":"kg","active":true}'::jsonb))),
+  (public.app_rf_master() ->> 'version')::bigint, 'saveMaterial');
+select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
+  '{"id":"RCS-1","revision":1,"productCode":"P-S1","uom":"m","batchKg":60,"stages":[{"stage":1,"mixerTemp":80,"dumpTemp":115,"mixMin":3},{"stage":2,"mixerTemp":90,"dumpTemp":140,"mixMin":2}],"dumpTol":6,"restHours":4,"yieldPerKg":6.1,"items":[{"materialCode":"MAT-SO-A","phr":100,"stage":1},{"materialCode":"MAT-SO-B","phr":50,"stage":1}],"status":"draft"}'::jsonb))),
+  (public.app_rf_master() ->> 'version')::bigint, 'createRecipe');
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_mgr')::uuid);
+select public.app_rf_save(jsonb_build_object('recipes', jsonb_build_object('upsert', jsonb_build_array(
+  (select r || '{"status":"approved"}'::jsonb from jsonb_array_elements(public.app_rf_master() -> 'recipes') r where r ->> 'id' = 'RCS-1')))),
+  (public.app_rf_master() ->> 'version')::bigint, 'approveRecipe');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select so_t.save($json$
+{"compounds": {"upsert": [{"code": "DMS1", "name": "EPDM ขาย", "recipeId": "RCS-1", "recipeName": "สูตร S1"}]},
+ "items": {"upsert": [
+   {"code": "FG-S9", "kind": "FG", "name": "สินค้า S9", "ownerDept": "PK", "uom": "set"},
+   {"code": "SE-S9", "kind": "SE", "name": "ชิ้นยาง S9", "ownerDept": "GR", "uom": "pcs"},
+   {"code": "DMS1", "kind": "CP", "name": "EPDM ขาย", "ownerDept": "RB", "uom": "kg"},
+   {"code": "RB-S8", "kind": "RB", "name": "เส้นยาง S8", "ownerDept": "RB", "uom": "pcs", "rubber": {"compound": "DMS1", "kgPerRoll": 2}},
+   {"code": "RB-S9", "kind": "RB", "name": "เส้นยาง S9", "ownerDept": "RB", "uom": "pcs", "rubber": {"compound": "DMS1", "kgPerRoll": 2}}]}}
+$json$::jsonb, 'importFlat');
+-- ตัวช่วย: งานตามเลข · แถวงานสำหรับปล่อยผลิต / งานใหม่ · คำสั่งเปิดงานเพิ่ม (แถวใบปัจจุบัน + ผลระเบิดใหม่ + งาน)
+create function so_t.job(p_id text) returns jsonb language sql stable as $$
+  select j from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = p_id
+$$;
+create function so_t.new_job(p_id text, p_order text, p_dept text, p_code text, p_kind text, p_qty numeric) returns jsonb language sql immutable as $$
+  select jsonb_build_object('id', p_id, 'orderId', p_order, 'dept', p_dept, 'itemCode', p_code, 'name', 'งาน ' || p_code, 'kind', p_kind, 'uom', 'pcs',
+    'qtyPlanned', p_qty, 'qtyRequired', p_qty, 'stockCounted', null, 'qtyDone', 0, 'qtyReject', 0, 'dueAt', 1769212800000, 'status', 'queued',
+    'externalRef', null, 'fgCodes', jsonb_build_array('FG-S9'), 'reports', '[]'::jsonb)
+$$;
+create function so_t.add(p_order text, p_jobs jsonb, p_order_extra jsonb default '{}'::jsonb) returns jsonb language sql volatile as $$
+  select so_t.save(jsonb_build_object(
+    'orders', jsonb_build_object('upsert', jsonb_build_array(so_t.order_row(p_order) || jsonb_build_object('explosion',
+      jsonb_build_array(jsonb_build_object('itemCode', 'FG-S9', 'fgCode', 'FG-S9', 'kind', 'FG', 'level', 0, 'fgQty', 7, 'required', 7))) || p_order_extra)),
+    'jobs', jsonb_build_object('upsert', p_jobs)), 'addJobsForChanges')
+$$;
+-- ใบของฝ่ายวางแผน 251225-28301: ปล่อยผลิตพร้อมงาน PK (FG-S9 × 5) และงาน RB (RB-S9 × 10 · ได้ WO อัตโนมัติ) แล้ว PK เริ่มงาน
+select lives_ok($$ select so_t.orders(jsonb_build_array(so_t.sa_order('251225-28301', '{"items":[{"fgCode":"FG-S9","qty":5,"colorSet":"","note":""}]}'::jsonb)), 'createOrder') $$,
+  'planning opens an order of FG-S9');
+select lives_ok($$ select so_t.save(jsonb_build_object(
+    'orders', jsonb_build_object('upsert', jsonb_build_array(so_t.order_row('251225-28301') || jsonb_build_object('status', 'released',
+      'explosion', jsonb_build_array(jsonb_build_object('itemCode', 'FG-S9', 'fgCode', 'FG-S9', 'kind', 'FG', 'level', 0, 'fgQty', 5, 'required', 5))))),
+    'jobs', jsonb_build_object('upsert', jsonb_build_array(
+      so_t.new_job('JOB-8-X1', '251225-28301', 'PK', 'FG-S9', 'FG', 5), so_t.new_job('JOB-8-X2', '251225-28301', 'RB', 'RB-S9', 'RB', 10)))), 'releaseOrder') $$,
+  'and releases it');
+select ok(so_t.job('JOB-8-X2') -> 'externalRef' ->> 'woId' is not null, 'the RB job got its work order at release');
+select set_config('test.wo_x2', so_t.job('JOB-8-X2') -> 'externalRef' ->> 'woId', true);
+select public.app_sandbox_enter(current_setting('test.p_sbx_pk_staff')::uuid);
+select lives_ok($$ select so_t.start('JOB-8-X1') $$, 'PK starts the job: the order is in progress');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select set_config('test.ver_before', so_t.ver()::text, true);
+-- ปฏิเสธ: ผู้ที่ไม่ใช่กลุ่มวางแผนของใบสั่งผลิต
+select public.app_sandbox_enter(current_setting('test.p_sbx_sa_staff')::uuid);
+select throws_ok($$ select so_t.add('251225-28301', jsonb_build_array(so_t.job('JOB-8-X1') || '{"qtyPlanned":7}'::jsonb)) $$, 'BOM_FORBIDDEN',
+  'sales cannot open extra jobs (coarse gate)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pk_mgr')::uuid);
+select throws_ok($$ select so_t.add('251225-28301', jsonb_build_array(so_t.job('JOB-8-X1') || '{"qtyPlanned":7}'::jsonb)) $$, 'BOM_FORBIDDEN',
+  'nor a production head (a BOM planner but not an order planner)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+-- ปฏิเสธ: รูปของคำสั่ง ใบ และงาน
+select throws_ok($$ select so_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(so_t.order_row('251225-28301')))), 'addJobsForChanges') $$,
+  'BOM_INVALID_PAYLOAD', 'an order row without jobs is refused');
+select throws_ok($$ select so_t.save(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(so_t.order_row('251225-28301'))),
+    'jobs', jsonb_build_object('upsert', jsonb_build_array(so_t.job('JOB-8-X1') || '{"qtyPlanned":7}'::jsonb)),
+    'customers', jsonb_build_object('upsert', jsonb_build_array('{"name":"ลูกค้าแถม","country":"TH","orderType":"SA","note":""}'::jsonb))), 'addJobsForChanges') $$,
+  'BOM_INVALID_PAYLOAD', 'only the order row and jobs travel with the action');
+select throws_ok($$ select so_t.add('251225-28301', jsonb_build_array(so_t.job('JOB-8-X1') || '{"qtyPlanned":7}'::jsonb), '{"note":"แก้หมายเหตุ"}'::jsonb) $$,
+  'BOM_INVALID_ORDER', 'the order changes only its explosion');
+select throws_ok($$ select so_t.add('251225-28301', jsonb_build_array(so_t.job('JOB-8-X1') || '{"qtyPlanned":4}'::jsonb)) $$, 'BOM_INVALID_JOB',
+  'a decrease of an existing job is refused');
+select throws_ok($$ select so_t.add('251225-28301', jsonb_build_array(so_t.job('JOB-8-X1'))) $$, 'BOM_INVALID_JOB', 'so is an unchanged plan');
+select throws_ok($$ select so_t.add('251225-28301', jsonb_build_array(so_t.job('JOB-8-X1') || '{"qtyPlanned":7,"name":"ชื่อใหม่"}'::jsonb)) $$, 'BOM_INVALID_JOB',
+  'another field of an existing job is refused');
+select throws_ok($$ select so_t.add('251225-28301', jsonb_build_array(so_t.job('JOB-8-X1') || '{"qtyPlanned":7,"dueAt":1769299200000}'::jsonb)) $$, 'BOM_INVALID_JOB',
+  'including its due date');
+select throws_ok($$ select so_t.add('251225-28301', jsonb_build_array(so_t.job('JOB-8-X1') || '{"qtyPlanned":7,"status":"queued"}'::jsonb)) $$, 'BOM_INVALID_JOB',
+  'and its status');
+select throws_ok($$ select so_t.add('251225-28301', jsonb_build_array(so_t.new_job('JOB-8-X9', '251225-28301', 'GR', 'SE-S9', 'SE', 4) || '{"qtyDone":1}'::jsonb)) $$, 'BOM_INVALID_JOB',
+  'a new job with a done quantity is refused');
+select throws_ok($$ select so_t.add('251225-28301', jsonb_build_array(so_t.new_job('JOB-8-X9', '251225-28301', 'GR', 'SE-S9', 'SE', 4) || '{"status":"in_progress"}'::jsonb)) $$, 'BOM_INVALID_JOB',
+  'so is a new job that is not queued');
+select throws_ok($$ select so_t.add('251225-28301', jsonb_build_array(so_t.new_job('JOB-8-X9', '251225-28301', 'PK', 'FG-S9', 'FG', 2))) $$, 'BOM_INVALID_JOB',
+  'a second job for a department and item the order already has is refused (raise the existing one)');
+select throws_ok($$ select so_t.add('251225-28301', jsonb_build_array(so_t.new_job('JOB-8-X9', '251225-28001', 'GR', 'SE-S9', 'SE', 4))) $$, 'BOM_INVALID_JOB',
+  'a job of another order is refused');
+select is(so_t.ver()::text, current_setting('test.ver_before'), 'none of the refused calls wrote anything');
+-- อนุญาต: เพิ่มยอด PK 5 → 7 (งานที่เริ่มแล้ว) · RB 10 → 14 (WO ยังวางแผนอยู่ เพิ่มยอดตาม) · งานใหม่ GR SE-S9 × 4 และ RB RB-S8 × 6 (ได้ WO ของตัวเอง)
+select lives_ok($$ select so_t.add('251225-28301', jsonb_build_array(
+    so_t.job('JOB-8-X1') || '{"qtyPlanned":7}'::jsonb, so_t.job('JOB-8-X2') || '{"qtyPlanned":14}'::jsonb,
+    so_t.new_job('JOB-8-X3', '251225-28301', 'GR', 'SE-S9', 'SE', 4), so_t.new_job('JOB-8-X4', '251225-28301', 'RB', 'RB-S8', 'RB', 6))) $$,
+  'planning opens the extra jobs of an order in progress');
+select is(so_t.job('JOB-8-X1') ->> 'qtyPlanned' || '/' || (so_t.job('JOB-8-X1') ->> 'qtyDone') || '/' || (so_t.job('JOB-8-X1') ->> 'status'), '7/1/in_progress',
+  'the started PK job keeps its work and plans 7');
+select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'orderId' = '251225-28301'), 4,
+  'two raised jobs and two new ones: no second row for a pair');
+select is(so_t.job('JOB-8-X3') ->> 'status' || '/' || (so_t.job('JOB-8-X3') ->> 'qtyPlanned') || '/' || coalesce(so_t.job('JOB-8-X3') -> 'externalRef' ->> 'woId', '-'), 'queued/4/-',
+  'the new GR job is queued with its plan');
+select ok(so_t.job('JOB-8-X4') -> 'externalRef' ->> 'woId' is not null and so_t.job('JOB-8-X4') -> 'externalRef' ->> 'woId' <> current_setting('test.wo_x2'),
+  'the new RB job gets its own work order');
+select is(so_t.order_row('251225-28301') ->> 'status' || '/' || (so_t.order_row('251225-28301') -> 'explosion' -> 0 ->> 'required'), 'in_progress/7',
+  'the order keeps its status and holds the new explosion');
+reset role;
+select is((select count(*)::integer from public.rf_orders o where o.is_test and o.source_job_no = 'JOB-8-X2'), 1, 'the raised RB job keeps its one work order');
+select is((select o.status || '/' || trim_scale(o.target_qty)::text from public.rf_orders o where o.is_test and o.wo_no = current_setting('test.wo_x2')), 'planned/14',
+  'and that planned work order now targets 14');
+select is((select (j.external_ref ->> 'kg')::numeric = o.target_kg from public.bom_jobs j join public.rf_orders o on o.is_test and o.wo_no = j.external_ref ->> 'woId'
+           where j.is_test and j.job_no = 'JOB-8-X2'), true, 'the job carries the new kilograms of its work order');
+select is((select count(*)::integer from public.rf_orders o where o.is_test and o.source_job_no = 'JOB-8-X4' and o.status = 'planned'), 1, 'one planned work order for the new RB job');
+select ok(exists (select 1 from public.audit_logs a where a.action = 'RF_SAVE' and a.metadata ->> 'client_action' = 'bom:addJobsForChanges' and (a.metadata ->> 'is_test')::boolean),
+  'RubberFlow records the work orders opened and raised by the extra jobs');
+select ok(exists (select 1 from public.audit_logs a where a.action = 'BOM_MASTER_SAVE' and a.metadata ->> 'client_action' = 'addJobsForChanges'
+                  and (a.metadata -> 'counts' -> 'jobs' ->> 'upsert')::integer = 4 and (a.metadata ->> 'is_test')::boolean),
+  'the save is audited with its four job rows');
+set local role authenticated;
+-- งานที่ปิดแล้ว: ฝ่ายวางแผนปิดงาน GR พร้อมเหตุผล แล้วเพิ่มยอดไม่ได้ · WO ที่เลยวางแผนแล้วเพิ่มยอดไม่ได้
+select lives_ok($$ select so_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(so_t.job('JOB-8-X3') || jsonb_build_object('status', 'done',
+    'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 0, 'reject', 0, 'note', 'ปิดงานส่วนนี้')))))), 'setJobStatus') $$,
+  'planning closes the GR job with a reason');
+select throws_ok($$ select so_t.add('251225-28301', jsonb_build_array(so_t.job('JOB-8-X3') || '{"qtyPlanned":6}'::jsonb)) $$, 'BOM_INVALID_TRANSITION',
+  'a closed job is not raised (open a new order for the extra part)');
+reset role;
+update public.rf_orders set status = 'released' where is_test and wo_no = current_setting('test.wo_x2');
+set local role authenticated;
+select throws_ok($$ select so_t.add('251225-28301', jsonb_build_array(so_t.job('JOB-8-X2') || '{"qtyPlanned":16}'::jsonb)) $$, 'BOM_INVALID_TRANSITION',
+  'nor a job whose work order left planning');
+-- ใบที่ไม่อยู่ในสถานะผลิต / ฝ่ายขายยกเลิกไว้
+select lives_ok($$ select so_t.orders(jsonb_build_array(so_t.sa_order('251225-28302', '{"items":[{"fgCode":"FG-S9","qty":5,"colorSet":"","note":""}]}'::jsonb)), 'createOrder') $$,
+  'planning opens a draft');
+select throws_ok($$ select so_t.add('251225-28302', jsonb_build_array(so_t.new_job('JOB-8-X5', '251225-28302', 'PK', 'FG-S9', 'FG', 5))) $$, 'BOM_INVALID_TRANSITION',
+  'a draft gets jobs only by release');
+select throws_ok($$ select so_t.add('251225-28106', jsonb_build_array(so_t.new_job('JOB-8-X6', '251225-28106', 'GR', 'SE-S9', 'SE', 1))) $$, 'BOM_INVALID_TRANSITION',
+  'a cancelled order gets no extra jobs');
+select throws_ok($$ select so_t.add('251225-28103', jsonb_build_array(so_t.new_job('JOB-8-X7', '251225-28103', 'GR', 'SE-S9', 'SE', 1))) $$, 'BOM_INVALID_TRANSITION',
+  'nor an order sales cancelled mid-way (even when planning chose to produce to the end)');
+reset role;
+update public.bom_orders set status = 'completed' where is_test and pi_no = '251225-28301';
+set local role authenticated;
+select throws_ok($$ select so_t.add('251225-28301', jsonb_build_array(so_t.job('JOB-8-X1') || '{"qtyPlanned":9}'::jsonb)) $$, 'BOM_INVALID_TRANSITION',
+  'nor a completed order');
+
 reset role;
 select is((select count(*)::integer from public.bom_order_requests where not is_test), 0, 'test requests never land in the real data');
 select ok((select bool_and(o.source = 'SA') from public.bom_orders o where o.is_test and o.pi_no in ('251225-28101', '251225-28102', '251225-28103'))

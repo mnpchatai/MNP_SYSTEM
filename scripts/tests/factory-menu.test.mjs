@@ -2162,6 +2162,40 @@ test("SA rights in the pages: the cancel dialog says what happens; planning sees
   assert.match(await env.open("FACTORY_SA", "order=SA-T-5"), /ยกเลิกแล้ว ฝ่ายวางแผนให้ผลิตต่อจนจบส่ง WH/);
 });
 
+test("the planning order page shows what sales added and the jobs it opens (new / raised from A to B) with one confirm button; a closed job is a blocker instead; sales never sees it", async () => {
+  const env = salesScene();
+  env.setEmployee(emp("PP"));
+  env.store.setUser("B03");
+  // SA-T-4: เริ่มงานแล้ว ฝ่ายขายเพิ่ม 6 → 8
+  const page = await env.open("BOM", "p=orders&sel=SA-T-4");
+  assert.match(page, /ฝ่ายขายเพิ่มสินค้า\/จำนวน — เปิดงานเพิ่ม/);
+  assert.match(page, /สินค้าที่เพิ่ม <span class="rf-mono">DEMO-HL-24\(B\)-A<\/span> \+2/);
+  assert.match(page, /เพิ่มจาก 6 เป็น 8 /, "the PK job is raised, not doubled");
+  assert.match(page, /data-rf-action="addJobsForChanges" data-rf-args="\{&quot;orderId&quot;:&quot;SA-T-4&quot;\}" data-rf-confirm="เปิดงานเพิ่มของใบ SA-T-4\? งานใหม่ 0 งาน และเพิ่มยอดงานเดิม \d+ งาน/);
+  assert.equal((page.match(/data-rf-action="addJobsForChanges"/g) ?? []).length, 1, "one button");
+  assert.doesNotMatch(await env.open("BOM", "p=orders&sel=SA-T-3"), /เปิดงานเพิ่ม/, "nothing added = no card");
+  assert.doesNotMatch(await env.open("BOM", "p=orders&sel=SA-T-5"), /data-rf-action="addJobsForChanges"/, "an order cancelled by sales gets no card");
+  // งานที่ปิดแล้ว: ข้อห้ามแทนปุ่ม
+  const bg = env.store.data().jobs.find((job) => job.orderId === "SA-T-4" && job.dept === "BG");
+  bg.status = "done";
+  const blocked = await env.open("BOM", "p=orders&sel=SA-T-4");
+  assert.match(blocked, /ยังเปิดงานเพิ่มไม่ได้/);
+  assert.match(blocked, /งาน BG BG-0092 ปิดแล้ว — เปิดใบใหม่สำหรับส่วนเพิ่ม/);
+  assert.doesNotMatch(blocked, /data-rf-action="addJobsForChanges"/);
+  bg.status = "queued";
+  // กดแล้ว: งานเพิ่มยอด การ์ดหายไป
+  const before = env.store.data().jobs.filter((job) => job.orderId === "SA-T-4").length;
+  const out = env.store.run("addJobsForChanges", { orderId: "SA-T-4" });
+  assert.equal(out.ok, true, out.error?.message);
+  assert.equal(env.store.data().jobs.filter((job) => job.orderId === "SA-T-4").length, before);
+  assert.equal(env.store.data().jobs.find((job) => job.orderId === "SA-T-4" && job.dept === "PK").qtyPlanned, 8);
+  assert.doesNotMatch(await env.open("BOM", "p=orders&sel=SA-T-4"), /เปิดงานเพิ่ม/);
+  // ฝ่ายขายไม่เห็นการ์ดนี้ (หน้าใบของฝ่ายขาย)
+  env.setEmployee(emp("SA"));
+  env.store.setUser("B13");
+  assert.doesNotMatch(await env.open("FACTORY_SA", "order=SA-T-4"), /เปิดงานเพิ่ม/);
+});
+
 test("the demo seed has the sales demo on request: one order sent to planning, one unsent draft, a started order sales edited and a started order sales cancelled mid-way", () => {
   const env = load();
   const seeded = env.context.MNP_BOM_SEED.buildSeed(Date.now(), { sales: true });

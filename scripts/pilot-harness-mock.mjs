@@ -1172,7 +1172,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     "receiveRods", "decideRods", "issueRods", "reverseRodIssue", "adjustRods", "receiveRodsOpening", "setRodLocation",
     "saveGrConfig", "setGrJobSteps", "addGrRecord", "editGrRecord", "voidGrRecord", "requestRods", "cancelRodRequest", "sendGrToPk", "receiveGrAtPk", "cancelGrHandover",
     "sendToPk", "receiveAtPk", "cancelHandover", "sendPkToWh", "cancelPkToWh",
-    "updateOrderHeader", "sendOrderToPlanning", "decideOrderRequest"];
+    "updateOrderHeader", "sendOrderToPlanning", "decideOrderRequest", "addJobsForChanges"];
   // reverseFg (20261128020000) ไม่อยู่ในรายการของพนักงาน: พนักงาน WH ได้ BOM_FORBIDDEN ที่ด่านหยาบ · ผู้จัดการแผนก WH อยู่ในกลุ่มวางแผนอยู่แล้ว
   // คลังยางเส้นยาว (20261202010000 · 20261204010000): adjustRods อยู่ในรายการของพนักงานแล้ว (SR ปรับยอดเองได้ สิทธิ์จริงตรวจในตัวเขียน) · receiveRodsOpening / setRodLocation ของ SR
   const BOM_STAFF_ACTIONS = ["setStockCount", "setStockCounts", "reportJob", "setJobStatus", "linkJobToRubberFlow", "countPartStock", "issueOrderParts", "undoOrderParts", "returnOrderParts",
@@ -2003,7 +2003,10 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       if (count > 0 && ((list === "orderRequests" && !BOM_REQUEST_ACTIONS.includes(action))
         || (action === "decideOrderRequest" && !(list === "orderRequests" || (list === "orders" && !entry?.delete?.length && entry?.upsert?.length === 1))))) fail("BOM_INVALID_REQUEST");
       if (count > 0 && ((list === "stock" && action !== "countPartStock") || (action === "countPartStock" && list !== "stock") || (action === "issueOrderParts" && !(list === "jobs" && !entry?.delete?.length)))) fail("BOM_INVALID_PAYLOAD");
+      // เปิดงานเพิ่มจากฝ่ายขายแก้ใบ (20261226010000): แถวใบหนึ่งแถว + งาน (upsert) เท่านั้น
+      if (count > 0 && action === "addJobsForChanges" && !((list === "orders" || list === "jobs") && !entry?.delete?.length)) fail("BOM_INVALID_PAYLOAD");
     }
+    if (action === "addJobsForChanges" && (changes.orders?.upsert?.length !== 1 || !(changes.jobs?.upsert?.length > 0))) fail("BOM_INVALID_PAYLOAD");
     if (bomFgKind(action) && !(Array.isArray(changes.fgMoves?.upsert) && changes.fgMoves.upsert.length > 0)) fail("BOM_INVALID_FG");
     if (bomRodAction(action) && !(Array.isArray(changes[bomRodAction(action)]?.upsert) && changes[bomRodAction(action)].upsert.length > 0)) fail("BOM_INVALID_ROD");
     if (bomGrSection(action) && !(Array.isArray(changes[bomGrSection(action)]?.upsert) && changes[bomGrSection(action)].upsert.length > 0)) fail("BOM_INVALID_GR");
@@ -2054,7 +2057,60 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     next.versions.orderRequests[request.id] = nextVersion;
     return changed;
   }
+  // ฝ่ายวางแผนเปิดงานเพิ่มจากฝ่ายขายแก้ใบ (ตรงกับ private.bom_add_change_jobs ของ 20261226010000)
+  // ลำดับตรวจ: สิทธิ์ (กลุ่มวางแผนของใบสั่งผลิต · BOM_FORBIDDEN) → แถวใบ (BOM_INVALID_ORDER) → ชนรุ่น (BOM_STALE) → สถานะใบ (BOM_INVALID_TRANSITION) → ช่องอื่นของใบต้องเท่าเดิม
+  // งาน: ใหม่ = รอคิว ยอดแผน > 0 ไม่มียอด / รายงาน / WO และยังไม่มีงานคู่ (แผนก, ชิ้นงาน) เดียวกันในใบ · เดิม = เพิ่มยอดแผนอย่างเดียว (ช่องอื่นเท่าเดิม ไม่ลด · BOM_INVALID_JOB)
+  // งานเดิมที่ปิดแล้ว (done) หรือผูก WO ที่ไม่ใช่ planned = BOM_INVALID_TRANSITION · WO planned เพิ่มยอดตามงาน (bomRfFollow) · งาน RB ที่ยังไม่มี WO เปิด WO เหมือนปล่อยผลิต
+  const BOM_CHANGE_JOB_KEYS = ["dept", "itemCode", "name", "kind", "uom", "qtyRequired", "stockCounted", "dueAt", "fgCodes", "status", "qtyDone", "qtyReject", "reports", "externalRef"];
+  const BOM_CHANGE_ORDER_KEYS = ["customer", "country", "orderType", "orderedAt", "whDue", "due", "dueDefaults", "items", "stockCounts", "note", "status"];
+  function bomAddChangeJobs(next, changes, base, cur, nextVersion, actor, at, rfOps) {
+    if (!bomCanPlanOrders(actor)) fail("BOM_FORBIDDEN");
+    const row = changes.orders.upsert[0];
+    if (!row || typeof row !== "object") fail("BOM_INVALID_ORDER");
+    const order = next.orders.find((entry) => entry.id === String(row.id ?? "").trim().toUpperCase()) ?? fail("BOM_INVALID_ORDER");
+    const changedLater = (list, id) => (next.versions[list][id] ?? 0) > base && (next.versions[list][id] ?? 0) <= cur;
+    if (changedLater("orders", order.id)) fail("BOM_STALE");
+    if (!["released", "in_progress"].includes(order.status) || bomSalesCancelled(order)) fail("BOM_INVALID_TRANSITION");
+    if (BOM_CHANGE_ORDER_KEYS.some((key) => bomCanon(order[key] ?? null) !== bomCanon(row[key] ?? null)) || !Array.isArray(row.explosion) || !row.explosion.length) fail("BOM_INVALID_ORDER");
+    const raise = [];
+    const seen = new Set();
+    for (const record of changes.jobs.upsert) {
+      if (!record || typeof record !== "object" || !/^[A-Za-z0-9._-]{1,40}$/.test(String(record.id ?? "")) || seen.has(record.id)) fail("BOM_INVALID_JOB");
+      seen.add(record.id);
+      if (String(record.orderId ?? "").trim().toUpperCase() !== order.id) fail("BOM_INVALID_JOB");
+      const prev = next.jobs.find((job) => job.id === record.id);
+      if (!prev) {
+        if (next.tombstones.some((grave) => grave.list === "jobs" && grave.code === record.id && grave.version > base && grave.version <= cur)) fail("BOM_STALE");
+        if (!JOB_DEPTS.includes(record.dept) || !JOB_STATUSES.includes(record.status)) fail("BOM_INVALID_JOB");
+        if (record.status !== "queued" || Number(record.qtyDone) > 0 || Number(record.qtyReject) > 0 || record.externalRef || (Array.isArray(record.reports) && record.reports.length) || !(Number(record.qtyPlanned) > 0)) fail("BOM_INVALID_JOB");
+        if (next.jobs.some((job) => job.orderId === order.id && job.dept === record.dept && job.itemCode === record.itemCode)) fail("BOM_INVALID_JOB");
+        next.tombstones = next.tombstones.filter((grave) => !(grave.list === "jobs" && grave.code === record.id));
+        next.jobs.push(bomStamp("jobs", record, undefined, actor, at));
+        next.versions.jobs[record.id] = nextVersion;
+        continue;
+      }
+      if (changedLater("jobs", prev.id)) fail("BOM_STALE");
+      if (prev.orderId !== order.id || BOM_CHANGE_JOB_KEYS.some((key) => bomCanon(prev[key] ?? null) !== bomCanon(record[key] ?? null))) fail("BOM_INVALID_JOB");
+      if (!(Number(record.qtyPlanned) > Number(prev.qtyPlanned)) || Number(record.qtyPlanned) > 1e9) fail("BOM_INVALID_JOB");
+      if (prev.status === "done") fail("BOM_INVALID_TRANSITION");
+      if (prev.externalRef?.woId) {
+        const wo = rfLoad().orders.find((entry) => entry.id === prev.externalRef.woId && entry.sourceJobId === prev.id);
+        if (!wo || wo.status !== "planned") fail("BOM_INVALID_TRANSITION");
+        raise.push(prev.id);
+      }
+      prev.qtyPlanned = Number(record.qtyPlanned);
+      next.versions.jobs[prev.id] = nextVersion;
+    }
+    order.explosion = clone(row.explosion);
+    order.explodedAt = at;
+    next.versions.orders[order.id] = nextVersion;
+    rfOps.release = [order.id];
+    rfOps.raise = raise;
+    rfOps.label = "bom:addJobsForChanges";
+    return next;
+  }
   function bomApply(current, changes, base, actor, at, rfOps = { release: [], cancel: [] }, action = "", meta = {}) {
+    if (action === "addJobsForChanges") return bomAddChangeJobs(clone(current), changes, base, current.version, current.version + 1, actor, at, rfOps);
     const next = clone(current);
     const nextVersion = current.version + 1;
     // แถวงานของซื้อที่ issueOrderParts ส่งมาตรวจโดย bomIssueParts ด้านล่าง
@@ -3521,6 +3577,30 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     const key = `WO-${day.getFullYear()}${String(day.getMonth() + 1).padStart(2, "0")}${String(day.getDate()).padStart(2, "0")}`;
     const top = () => rf.orders.reduce((max, row) => { const match = /^WO-(\d{8})-(\d+)$/.exec(String(row.id)); return match && `WO-${match[1]}` === key ? Math.max(max, Number(match[2])) : max; }, 0);
     const start = new Date(at).setHours(0, 0, 0, 0);
+    // kg = rbJobKg ของหน้า: บรรทัดแรกของ BOM ที่อนุมัติแล้วเป็น kg/g ใช้ปริมาณ + % เผื่อเสียของบรรทัดนั้น ไม่เช่นนั้น kg/เส้น หรือน้ำหนักต่อชิ้น เผื่อ 5% (private.bom_rb_job_kg)
+    const jobKg = (job, item, qty) => {
+      const line = next.boms.find((row) => row.itemCode === job.itemCode && row.status === "approved")?.lines?.[0];
+      const perKg = { kg: 1, g: 0.001 }[line?.uom];
+      if (line && perKg && Number(line.qty) > 0) return Math.round(qty * Number(line.qty) * perKg * (1 + (Number(line.scrapPct) || 0) / 100) * 100) / 100;
+      let kg = 0;
+      if (item?.uom === "kg") kg = qty;
+      else if (item?.rubber?.kgPerRoll) kg = qty * Number(item.rubber.kgPerRoll);
+      else if (item?.weightG) kg = qty * Number(item.weightG) / 1000;
+      return Math.round(kg * 1.05 * 100) / 100;
+    };
+    // เปิดงานเพิ่มจากฝ่ายขายแก้ใบ: WO ที่ยังวางแผนอยู่ของงานที่เพิ่มยอด ได้ยอดและกิโลกรัมตามงาน (ตรงกับ private.bom_add_change_jobs) · bomAddChangeJobs ตรวจสถานะ WO แล้ว
+    out.raised = [];
+    for (const jobId of rfOps.raise ?? []) {
+      const job = next.jobs.find((row) => row.id === jobId);
+      const wo = job ? rf.orders.find((row) => row.id === job.externalRef?.woId && row.sourceJobId === job.id && row.status === "planned") : null;
+      if (!wo) continue;
+      const qty = Math.max(0, Number(job.qtyPlanned) - Number(job.qtyDone || 0));
+      const kg = jobKg(job, next.items.find((row) => row.code === job.itemCode), qty);
+      Object.assign(wo, { targetQty: qty, targetKg: kg, kgPerUnit: qty > 0 ? Number((kg / qty).toPrecision(12)) : 0 });
+      rf.versions.orders[wo.id] = version;
+      job.externalRef = { ...job.externalRef, kg };
+      out.raised.push({ jobId: job.id, woId: wo.id, kg });
+    }
     let openedCount = 0;
     for (const orderId of rfOps.release) {
       const pi = next.orders.find((row) => row.id === orderId);
@@ -3531,17 +3611,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         const compound = compoundCode ? next.compounds.find((row) => row.code === compoundCode) : null;
         const recipe = compound?.recipeId ? rf.recipes.find((row) => row.id === compound.recipeId && row.status === "approved") : null;
         const qty = Math.max(0, Number(job.qtyPlanned) - Number(job.qtyDone || 0));
-        // kg = rbJobKg ของหน้า: บรรทัดแรกของ BOM ที่อนุมัติแล้วเป็น kg/g ใช้ปริมาณ + % เผื่อเสียของบรรทัดนั้น ไม่เช่นนั้น kg/เส้น หรือน้ำหนักต่อชิ้น เผื่อ 5%
-        const line = next.boms.find((row) => row.itemCode === job.itemCode && row.status === "approved")?.lines?.[0];
-        const perKg = { kg: 1, g: 0.001 }[line?.uom];
-        let kg = 0;
-        if (line && perKg && Number(line.qty) > 0) kg = Math.round(qty * Number(line.qty) * perKg * (1 + (Number(line.scrapPct) || 0) / 100) * 100) / 100;
-        else {
-          if (item?.uom === "kg") kg = qty;
-          else if (item?.rubber?.kgPerRoll) kg = qty * Number(item.rubber.kgPerRoll);
-          else if (item?.weightG) kg = qty * Number(item.weightG) / 1000;
-          kg = Math.round(kg * 1.05 * 100) / 100;
-        }
+        const kg = jobKg(job, item, qty);
         // เพดานเท่าคอลัมน์ target_kg / kg_per_unit ของฐานข้อมูล: เกินแล้วข้ามเหมือน SQL
         const reason = !compoundCode ? "ไม่มีรหัสสูตรยาง" : !compound?.recipeId ? "ยังไม่ผูกสูตร RubberFlow" : !recipe ? `สูตร ${compound.recipeId} ยังไม่อนุมัติ` : !(qty > 0) ? "ไม่มียอดให้ผลิต" : !(kg > 0) || kg > 1e9 || kg / qty > 1e9 ? "คำนวณกิโลกรัมไม่ได้" : "";
         if (reason) { out.skipped.push({ jobId: job.id, itemCode: job.itemCode, reason }); continue; }
@@ -3558,7 +3628,9 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         openedCount += 1;
       }
     }
-    if (openedCount) audits.push({ action: "bom:releaseOrder", count: openedCount });
+    // เปิดงานเพิ่ม: WO ที่เปิดใหม่และที่เพิ่มยอดนับรวมแถวเดียว (ตรงกับ app_bom_save_master)
+    if (rfOps.label) { if (openedCount + out.raised.length) audits.push({ action: rfOps.label, count: openedCount + out.raised.length }); }
+    else if (openedCount) audits.push({ action: "bom:releaseOrder", count: openedCount });
     if (audits.length) {
       rf.version = version;
       for (const row of audits) rf.audit.push({ at: iso(at), user: actor.name, action: row.action, detail: `orders +${row.count}`, entries: [] });
@@ -3930,8 +4002,9 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       }).filter(Boolean).join(", ");
       const rubberflow = bomRfFollow(next, rfOps, actor, at);
       const row = { at: iso(at), user: actor.name, action: p_action, detail: counts, entries: auditIn.map((entry) => ({ action: entry.action, detail: entry.detail })) };
-      const tally = { opened: rubberflow.opened.length, skipped: rubberflow.skipped.length, cancelled: rubberflow.cancelled.length };
-      const touchedRf = tally.opened + tally.skipped + tally.cancelled > 0;
+      const tally = { opened: rubberflow.opened.length, skipped: rubberflow.skipped.length, cancelled: rubberflow.cancelled.length, ...(rubberflow.raised.length ? { raised: rubberflow.raised.length } : {}) };
+      if (!rubberflow.raised.length) delete rubberflow.raised; // คำตอบรูปเดิมเมื่อไม่มี WO ที่เพิ่มยอด
+      const touchedRf = tally.opened + tally.skipped + tally.cancelled + (tally.raised ?? 0) > 0;
       if (touchedRf) row.rubberflow = tally;
       next.audit = [...next.audit, row].slice(-2000);
       bomMaster = next;

@@ -477,3 +477,160 @@ test("mock: a sales payload that still carries jobs.delete of its reopened order
   const shaped = storeApi.diffMaster({ orders: [{ id: "O", status: "released" }], jobs: [{ id: "J", orderId: "O" }] }, { orders: [{ id: "O", status: "draft" }], jobs: [] });
   assert.deepEqual(shaped.jobs, { delete: [{ id: "J" }] });
 });
+
+// ---------- ฝ่ายวางแผนเปิดงานเพิ่มจากฝ่ายขายแก้ใบ (addJobsForChanges · "เพิ่มในใบเดิม ฝ่ายวางแผนสร้างงานเพิ่ม") ----------
+// คู่ (แผนก, ชิ้นงาน) ที่ยังไม่มีงาน = งานใหม่ · มีงานแล้ว = เพิ่มยอดแผนของงานนั้น (unique (order_pk, dept, item_code) คงเดิม) · ลด / ลบ = ข้าม
+const jobsOfOrder = (d, pi) => d.jobs.filter((job) => job.orderId === pi);
+const planOf = (d, pi, rfOrders = []) => A.helpers.extraJobsFor(d, orderOf(d, pi), rfOrders);
+const pairsUnique = (d, pi) => new Set(jobsOfOrder(d, pi).map((job) => `${job.dept}|${job.itemCode}`)).size === jobsOfOrder(d, pi).length;
+const plannerRf = (rfOrders = []) => ctx("planner", { rfOrders });
+
+test("extra jobs: sales raising a quantity raises the existing jobs of the order (never a second row); planning presses once; lowered quantities open nothing", () => {
+  const d = fresh();
+  startedOrder(d, "SA-X1", 3);
+  const count = jobsOfOrder(d, "SA-X1").length;
+  assert.deepEqual(planOf(d, "SA-X1"), { lines: [], jobs: [], blockers: [], explosion: null }, "nothing added = nothing to open");
+  rejects(() => A.addJobsForChanges(d, { orderId: "SA-X1" }, plannerRf()), /ไม่ได้เพิ่มสินค้าหรือจำนวน/);
+  A.updateOrderItem(d, { orderId: "SA-X1", fgCode: FG, qty: 5 }, ctx("sa"));
+  const plan = planOf(d, "SA-X1");
+  assert.deepEqual(plan.lines, [{ fgCode: FG, before: 3, after: 5, added: 2 }]);
+  assert.deepEqual(plan.blockers, []);
+  assert.ok(plan.jobs.length > 0 && plan.jobs.every((entry) => entry.mode === "raise"), "every pair already has a job");
+  const pk = plan.jobs.find((entry) => entry.dept === "PK");
+  assert.deepEqual([pk.from, pk.to, pk.diff], [3, 5, 2]);
+  rejects(() => A.addJobsForChanges(d, { orderId: "SA-X1" }, ctx("sa")), /ฝ่ายวางแผนหรือผู้จัดการเท่านั้น/);
+  rejects(() => A.addJobsForChanges(d, { orderId: "SA-X1" }, ctx("pkHead")), /ฝ่ายวางแผนหรือผู้จัดการเท่านั้น/);
+  const before = new Map(jobsOfOrder(d, "SA-X1").map((job) => [job.id, { ...job }]));
+  const out = A.addJobsForChanges(d, { orderId: "SA-X1" }, plannerRf());
+  assert.deepEqual([out.created, out.raised], [0, plan.jobs.length]);
+  assert.equal(jobsOfOrder(d, "SA-X1").length, count, "no second row for any department and item");
+  for (const job of jobsOfOrder(d, "SA-X1")) {
+    const old = before.get(job.id);
+    const entry = plan.jobs.find((row) => row.jobId === job.id);
+    assert.deepEqual({ ...job, qtyPlanned: old.qtyPlanned }, old, `${job.dept} ${job.itemCode}: only the plan changes`);
+    if (entry) assert.equal(job.qtyPlanned, entry.to);
+  }
+  const pkJob = jobsOfOrder(d, "SA-X1").find((job) => job.dept === "PK");
+  assert.deepEqual([pkJob.qtyPlanned, pkJob.qtyDone, pkJob.status], [5, 1, "in_progress"], "the started PK job keeps its work and now plans 5");
+  const rb = jobsOfOrder(d, "SA-X1").find((job) => job.dept === "RB");
+  assert.equal(rb.qtyPlanned, Math.ceil(rb.qtyPlanned), "rods stay whole like at release");
+  assert.ok(jobsOfOrder(d, "SA-X1").some((job) => job.dept === "ST" && job.qtyPlanned > before.get(job.id).qtyPlanned), "purchased parts are raised too");
+  assert.deepEqual([d.audit[0].action, d.audit[0].detail.startsWith(`SA-X1 ${FG} +2`)], ["ฝ่ายวางแผนเปิดงานเพิ่มจากฝ่ายขายแก้ใบ", true]);
+  assert.deepEqual(planOf(d, "SA-X1").lines, [], "the stored explosion now matches: the card goes away");
+  // ฝ่ายขายลดจำนวน: ไม่มีอะไรให้เปิด (งานไม่ลด)
+  A.updateOrderItem(d, { orderId: "SA-X1", fgCode: FG, qty: 4 }, ctx("sa"));
+  assert.deepEqual([planOf(d, "SA-X1").lines, planOf(d, "SA-X1").jobs], [[], []]);
+  assert.equal(pkJob.qtyPlanned, 5);
+});
+
+test("extra jobs: a new product opens new jobs for its own parts and raises the jobs of parts it shares; removing it later opens nothing", () => {
+  const d = fresh();
+  startedOrder(d, "SA-X2", 3);
+  const shared = new Map(jobsOfOrder(d, "SA-X2").map((job) => [`${job.dept}|${job.itemCode}`, job.qtyPlanned]));
+  A.addOrderItem(d, { orderId: "SA-X2", fgCode: FG2, qty: 2 }, ctx("sa"));
+  const plan = planOf(d, "SA-X2");
+  assert.deepEqual(plan.lines, [{ fgCode: FG2, before: 0, after: 2, added: 2 }]);
+  const pkNew = plan.jobs.find((entry) => entry.dept === "PK" && entry.itemCode === FG2);
+  assert.deepEqual([pkNew.mode, pkNew.diff, pkNew.kind], ["new", 2, "FG"], "a packing job for the new product");
+  const raisedShared = plan.jobs.filter((entry) => entry.mode === "raise");
+  assert.ok(raisedShared.length > 0 && raisedShared.every((entry) => shared.has(`${entry.dept}|${entry.itemCode}`)), "the shared parts raise their existing jobs");
+  assert.ok(plan.jobs.filter((entry) => entry.mode === "new").every((entry) => !shared.has(`${entry.dept}|${entry.itemCode}`)), "new jobs only for pairs the order does not have");
+  A.addJobsForChanges(d, { orderId: "SA-X2" }, plannerRf());
+  assert.ok(pairsUnique(d, "SA-X2"), "still one job per department and item");
+  const created = jobsOfOrder(d, "SA-X2").find((job) => job.dept === "PK" && job.itemCode === FG2);
+  assert.deepEqual([created.status, created.qtyDone, created.qtyPlanned, created.qtyRequired, created.externalRef, created.fgCodes], ["queued", 0, 2, 2, null, [FG2]], "shaped like a released job");
+  A.removeOrderItem(d, { orderId: "SA-X2", fgCode: FG2 }, ctx("sa"));
+  assert.deepEqual(planOf(d, "SA-X2").jobs, [], "a removed product opens nothing and closes nothing");
+});
+
+test("extra jobs: a closed job, a work order past planning or an unknown work order list block the button; a planned work order is raised with its job", () => {
+  const d = fresh();
+  startedOrder(d, "SA-X3", 3);
+  A.updateOrderItem(d, { orderId: "SA-X3", fgCode: FG, qty: 5 }, ctx("sa"));
+  const bg = jobsOfOrder(d, "SA-X3").find((job) => job.dept === "BG");
+  bg.status = "done";
+  assert.deepEqual(planOf(d, "SA-X3").blockers, [`งาน BG ${bg.itemCode} ปิดแล้ว — เปิดใบใหม่สำหรับส่วนเพิ่ม`]);
+  rejects(() => A.addJobsForChanges(d, { orderId: "SA-X3" }, plannerRf()), /เปิดงานเพิ่มไม่ได้: งาน BG .* ปิดแล้ว/);
+  bg.status = "queued";
+  const rb = jobsOfOrder(d, "SA-X3").find((job) => job.dept === "RB");
+  rb.externalRef = { system: "rubberflow", woId: "WO-T1", kg: 5 };
+  assert.match(planOf(d, "SA-X3", null).blockers[0], /ยังโหลดข้อมูล RubberFlow ไม่ได้/);
+  assert.match(planOf(d, "SA-X3", [{ id: "WO-T1", sourceJobId: rb.id, status: "released" }]).blockers[0], /WO-T1 ที่ปล่อยหรือเริ่มผลิตแล้ว เพิ่มยอดไม่ได้ — เปิดใบใหม่สำหรับส่วนเพิ่ม/);
+  const planned = planOf(d, "SA-X3", [{ id: "WO-T1", sourceJobId: rb.id, status: "planned" }]);
+  assert.deepEqual([planned.blockers, planned.jobs.find((entry) => entry.dept === "RB").woId], [[], "WO-T1"]);
+  // ใบที่ฝ่ายขายยกเลิกกลางทาง / ไม่อยู่ในสถานะผลิต: ปฏิเสธ
+  A.cancelOrder(d, { orderId: "SA-X3", reason: "ลูกค้ายกเลิก" }, ctx("sa"));
+  rejects(() => A.addJobsForChanges(d, { orderId: "SA-X3" }, plannerRf([{ id: "WO-T1", sourceJobId: rb.id, status: "planned" }])), /ฝ่ายขายยกเลิกใบนี้แล้ว/);
+  saOrder(d, "SA-X4", { send: true });
+  rejects(() => A.addJobsForChanges(d, { orderId: "SA-X4" }, plannerRf()), /เฉพาะใบที่ปล่อยผลิตแล้ว/);
+});
+
+// ผ่าน store จริงกับ Supabase จำลอง: SA-M1 งาน RB ผูก WO-M1 (planned) · SA-M2 งาน RB ผูก WO-M2 (in_progress) และงาน BG ปิดแล้ว · ฝ่ายขายเพิ่มจำนวน 3 → 5 ทั้งสองใบ
+function extraJobsScene() {
+  const rbIds = {};
+  const prepare = (d) => {
+    for (const pi of ["SA-M1", "SA-M2"]) {
+      startedOrder(d, pi, 3);
+      A.updateOrderItem(d, { orderId: pi, fgCode: FG, qty: 5 }, ctx("sa"));
+      const rb = jobsOfOrder(d, pi).find((job) => job.dept === "RB");
+      rb.externalRef = { system: "rubberflow", woId: pi === "SA-M1" ? "WO-M1" : "WO-M2", kg: 4 };
+      rbIds[pi] = rb.id;
+    }
+    d.orderRequests = [];
+    jobsOfOrder(d, "SA-M2").find((job) => job.dept === "BG").status = "done";
+  };
+  const data = fresh();
+  prepare(data);
+  const wo = (id, status, sourceJobId) => ({ id, customer: "ลูกค้าฝ่ายขาย", customerPo: "SA", recipeId: "RC-1", recipeRevision: 1, productCode: "", uom: "rod", color: "ดำ", targetQty: 2, producedQty: 0,
+    startDate: NOW, dueDate: NOW + DAY, priority: "normal", note: "", status, sourceJobId, createdAt: NOW - DAY, createdBy: "x" });
+  const rf = { version: 3, epoch: "e-rf", versions: Object.fromEntries(RF_LISTS.map((list) => [list, {}])), audit: [], ...Object.fromEntries(RF_LISTS.map((list) => [list, []])) };
+  rf.orders = [wo("WO-M1", "planned", rbIds["SA-M1"]), wo("WO-M2", "in_progress", rbIds["SA-M2"])];
+  return mockScene({ prepare: (d) => { for (const list of LISTS) d[list] = data[list]; }, rf });
+}
+
+test("mock store: planning opens the extra jobs in one save — existing jobs raised, the planned work order follows; the database refuses sales, a production head, decreases, other fields and closed or started work", async () => {
+  const s = extraJobsScene();
+  await s.call("app_sandbox_enter", { p_persona_id: "persona-pp" });
+  const woList = (await s.call("app_rf_master")).orders;
+  const pp = await s.storeFor("persona-pp", { rfOrders: () => woList });
+  const plan = A.helpers.extraJobsFor(pp.store.data(), orderOf(pp.store.data(), "SA-M1"), woList);
+  assert.deepEqual(plan.blockers, []);
+  const blocked = A.helpers.extraJobsFor(pp.store.data(), orderOf(pp.store.data(), "SA-M2"), woList).blockers;
+  assert.equal(blocked.length, 2, blocked.join(" | "));
+  const count = (await s.view()).jobs.filter((job) => job.orderId === "SA-M1").length;
+  const run = pp.store.run("addJobsForChanges", { orderId: "SA-M1" });
+  assert.equal(run.ok, true, run.error?.message);
+  const saved = await run.saving;
+  assert.equal(saved.ok, true, saved.error?.message);
+  assert.deepEqual(Object.keys(pp.sent.at(-1).changes).sort(), ["jobs", "orders"], "the order row and the jobs travel together");
+  const view = await s.view();
+  assert.equal(view.jobs.filter((job) => job.orderId === "SA-M1").length, count, "no new row: every pair had a job");
+  assert.equal(view.jobs.find((job) => job.orderId === "SA-M1" && job.dept === "PK").qtyPlanned, 5);
+  const rb = view.jobs.find((job) => job.orderId === "SA-M1" && job.dept === "RB");
+  const wo1 = (await s.call("app_rf_master")).orders.find((row) => row.id === "WO-M1");
+  assert.deepEqual([wo1.status, wo1.targetQty, rb.externalRef.kg === wo1.targetKg], ["planned", rb.qtyPlanned - rb.qtyDone, true], "the planned work order takes the raised plan");
+  assert.deepEqual(saved.rubberflow?.raised?.map((row) => row.woId) ?? [], ["WO-M1"]);
+  const audit = (await s.call("app_bom_audit", { p_limit: 1 }))[0];
+  assert.deepEqual([audit.action, audit.entries[0].action, audit.rubberflow?.raised], ["addJobsForChanges", "ฝ่ายวางแผนเปิดงานเพิ่มจากฝ่ายขายแก้ใบ", 1]);
+  assert.equal(A.helpers.rubberflowNotice("addJobsForChanges", { orderId: "SA-M1" }, saved.rubberflow).text, "เปิดงานเพิ่มของ SA-M1 แล้ว · เพิ่มยอด WO-M1 ใน RubberFlow");
+
+  // ฐานข้อมูลปฏิเสธ (payload ตรง)
+  const row2 = await s.orderRow("SA-M2");
+  const jobs2 = (await s.view()).jobs.filter((job) => job.orderId === "SA-M2");
+  const pk2 = jobs2.find((job) => job.dept === "PK");
+  const pay = (orderRow, jobs) => ({ orders: { upsert: [{ ...orderRow, explosion: [{ itemCode: FG, kind: "FG", level: 0, fgCode: FG, required: 5 }] }] }, jobs: { upsert: jobs } });
+  const raisePk = pay(row2, [{ ...pk2, qtyPlanned: pk2.qtyPlanned + 1 }]);
+  assert.equal(await codeOf(s.save("persona-sa", "addJobsForChanges", raisePk)), "BOM_FORBIDDEN", "sales cannot open jobs (coarse gate)");
+  assert.equal(await codeOf(s.save("persona-pkh", "addJobsForChanges", raisePk)), "BOM_FORBIDDEN", "nor a production head");
+  assert.equal(await codeOf(s.save("persona-pp", "addJobsForChanges", pay(row2, [{ ...pk2, qtyPlanned: pk2.qtyPlanned - 1 }]))), "BOM_INVALID_JOB", "a decrease is refused");
+  assert.equal(await codeOf(s.save("persona-pp", "addJobsForChanges", pay(row2, [{ ...pk2, qtyPlanned: pk2.qtyPlanned + 1, name: "ชื่อใหม่" }]))), "BOM_INVALID_JOB", "another field is refused");
+  assert.equal(await codeOf(s.save("persona-pp", "addJobsForChanges", pay({ ...row2, note: "แก้หมายเหตุ" }, [{ ...pk2, qtyPlanned: pk2.qtyPlanned + 1 }]))), "BOM_INVALID_ORDER", "the order changes only its explosion");
+  assert.equal(await codeOf(s.save("persona-pp", "addJobsForChanges", { ...raisePk, customers: { upsert: [{ name: "ลูกค้า", country: "Thailand", orderType: "SA", note: "" }] } })), "BOM_INVALID_PAYLOAD", "orders and jobs only");
+  assert.equal(await codeOf(s.save("persona-pp", "addJobsForChanges", pay(row2, [{ ...pk2, id: "JOB-NEW-X", qtyPlanned: 1, qtyDone: 0, status: "queued", reports: [] }]))), "BOM_INVALID_JOB", "a second row for the same department and item is refused");
+  assert.equal(await codeOf(s.save("persona-pp", "addJobsForChanges", pay(row2, [{ ...pk2, id: "JOB-NEW-Y", itemCode: FG2, qtyPlanned: 1, qtyDone: 1, status: "queued", reports: [] }]))), "BOM_INVALID_JOB", "a new job starts empty");
+  const bg2 = jobs2.find((job) => job.dept === "BG");
+  assert.equal(await codeOf(s.save("persona-pp", "addJobsForChanges", pay(row2, [{ ...bg2, qtyPlanned: bg2.qtyPlanned + 1 }]))), "BOM_INVALID_TRANSITION", "a closed job is not reopened");
+  const rb2 = jobs2.find((job) => job.dept === "RB");
+  assert.equal(await codeOf(s.save("persona-pp", "addJobsForChanges", pay(row2, [{ ...rb2, qtyPlanned: rb2.qtyPlanned + 1 }]))), "BOM_INVALID_TRANSITION", "nor a job whose work order is past planning");
+  assert.ok((await s.save("persona-pp", "addJobsForChanges", raisePk)).data, "the plain raise is accepted");
+});

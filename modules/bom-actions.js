@@ -1143,6 +1143,95 @@
     audit(d, ctx, "ปล่อยผลิต", `${order.id} สร้างงาน ${d.jobs.filter((job) => job.orderId === order.id).length} รายการ${covered ? ` · ${covered} ชิ้นมีคงคลังพอ ไม่สร้างงาน` : ""}${stockText}${rodText}`);
     return order.id;
   }
+
+  // ---------- ฝ่ายขายเพิ่มสินค้า / จำนวนในใบที่เริ่มงานแล้ว: ฝ่ายวางแผนเปิดงานเพิ่ม (โรงงานขั้น 8 · 20261226010000) ----------
+  // กติกาเจ้าของ: "เพิ่มในใบเดิม ฝ่ายวางแผนสร้างงานเพิ่ม" · ไม่มีอะไรเปลี่ยนเอง ฝ่ายวางแผนกดปุ่มเดียว
+  // ระเบิดรายการสินค้าปัจจุบันของใบด้วยกติกาเดียวกับปล่อยผลิต (netRequirements + ยอดที่ตั้งใช้จากสต็อกเดิมของใบ · ไม่หยิบสต็อกสินค้าสำเร็จรูป / ยางเส้นยาวเพิ่ม)
+  // แล้วเทียบยอดที่ต้องมีต่อ (แผนก, ชิ้นงาน) กับงานที่มีอยู่ของใบ (หนึ่งงานต่อคู่ · unique (order_pk, dept, item_code)):
+  //   ไม่มีงาน = งานใหม่ (รอคิว ยอด = ส่วนต่าง) · มีงาน = เพิ่มยอดแผนของงานนั้นเท่าส่วนต่าง (ไม่ลด ไม่แตะช่องอื่น) · ส่วนต่าง ≤ 0 (ฝ่ายขายลด / ลบ) = ข้าม
+  // ข้อห้าม (blockers): ชิ้นที่ไม่มี BOM · งานที่ปิดแล้ว (done) · งาน RB ที่ผูก WO ซึ่งไม่ใช่ "วางแผน" (planned) หรือตรวจไม่ได้ (WO หนึ่งใบต่องาน: rf_orders_source_job_idx)
+  //   มีข้อห้าม = ไม่มีปุ่ม (เปิดบางส่วนแล้วผลระเบิดถูกบันทึก ส่วนที่เหลือจะหายจากการ์ด) · WO ที่ยังวางแผนอยู่: ฐานข้อมูลเพิ่มยอดของ WO ตามงาน
+  // lines = สินค้าที่จำนวนในใบมากกว่าในผลระเบิดที่เก็บไว้ (ฝ่ายขายเพิ่ม) · ไม่มี = ไม่มีอะไรให้เปิด (การ์ดไม่แสดง แม้ BOM จะเปลี่ยนหลังปล่อยผลิต)
+  function extraJobsFor(d, order, rfOrders = null) {
+    const R = rules();
+    const out = { lines: [], jobs: [], blockers: [], explosion: null };
+    if (!order || !Array.isArray(order.items) || !order.items.length) return out;
+    const stored = (code) => qtyRound((order.explosion ?? []).filter((line) => line.level === 0 && line.fgCode === code && line.itemCode === code).reduce((sum, line) => sum + (Number(line.required) || 0), 0));
+    for (const item of order.items) {
+      const before = stored(item.fgCode);
+      if (Number(item.qty) > before + 1e-9) out.lines.push({ fgCode: item.fgCode, before, after: Number(item.qty), added: qtyRound(Number(item.qty) - before) });
+    }
+    if (!out.lines.length) return out;
+    const lines = [];
+    const missing = new Set();
+    for (const item of order.items) {
+      const result = R.explode(item.fgCode, item.qty, { itemOf: (code) => itemOf(d, code), approvedBomOf: (code) => approvedBomOf(d, code) });
+      result.lines.forEach((line) => lines.push({ ...line, fgQty: item.qty }));
+      result.missing.forEach((code) => missing.add(code));
+    }
+    if (missing.size) { out.blockers.push(`ไม่พบชิ้นงาน ${[...missing].join(", ")}`); return out; }
+    const noBom = [...new Set(lines.filter((line) => line.noBom).map((line) => line.itemCode))];
+    if (noBom.length) { out.blockers.push(`ชิ้นที่ต้องผลิตแต่ยังไม่มี BOM: ${noBom.join(", ")}`); return out; }
+    out.explosion = lines;
+    const counts = order.stockCounts ?? {};
+    const net = R.netRequirements(lines, counts);
+    const wanted = [];
+    for (const entry of net) {
+      if (R.MANUFACTURED.includes(entry.kind) && entry.kind !== "FG" && entry.toMake > 0) wanted.push({ dept: entry.dept, itemCode: entry.itemCode, name: entry.name, kind: entry.kind, uom: entry.uom, qty: R.wholeRods(entry.kind, entry.uom, entry.toMake), required: entry.required, stock: entry.stock ?? null, fgCodes: entry.fgCodes });
+    }
+    for (const item of order.items) {
+      const fg = itemOf(d, item.fgCode);
+      if (!fg) continue;
+      // ยอดที่ใบนี้ตั้งใช้จากสต็อกสินค้าสำเร็จรูป (หยิบไปแล้วตอนปล่อยผลิต) · สินค้าใหม่ไม่มี = ผลิตเต็มจำนวน
+      const taken = Math.min(Number(item.qty) || 0, Math.max(0, Number(counts[item.fgCode]) || 0));
+      const counted = counts[item.fgCode];
+      wanted.push({ dept: "PK", itemCode: fg.code, name: fg.name, kind: "FG", uom: fg.uom, qty: qtyRound(Number(item.qty) - taken), required: Number(item.qty), stock: counted === undefined || counted === null || counted === "" ? null : Number(counted) || 0, fgCodes: [fg.code] });
+    }
+    for (const entry of net) {
+      if (entry.kind === "PURCHASED" && entry.required > 0) wanted.push({ dept: "ST", itemCode: entry.itemCode, name: entry.name, kind: "PURCHASED", uom: entry.uom, qty: entry.required, required: entry.required, stock: null, fgCodes: entry.fgCodes });
+    }
+    for (const want of wanted) {
+      const job = d.jobs.find((row) => row.orderId === order.id && row.dept === want.dept && row.itemCode === want.itemCode);
+      const diff = qtyRound(want.qty - (Number(job?.qtyPlanned) || 0));
+      if (!(diff > 1e-9)) continue;
+      const label = `${want.dept} ${want.itemCode}`;
+      if (!job) { out.jobs.push({ ...want, mode: "new", from: 0, to: diff, diff }); continue; }
+      if (job.status === "done") { out.blockers.push(`งาน ${label} ปิดแล้ว — เปิดใบใหม่สำหรับส่วนเพิ่ม`); continue; }
+      if (job.externalRef?.woId) {
+        const wo = Array.isArray(rfOrders) ? rfOrders.find((row) => row.id === job.externalRef.woId && row.sourceJobId === job.id) : null;
+        if (!Array.isArray(rfOrders)) { out.blockers.push(`งาน ${label} ผูก ${job.externalRef.woId} แต่ยังโหลดข้อมูล RubberFlow ไม่ได้ ตรวจสถานะ WO ไม่ได้`); continue; }
+        if (!wo || wo.status !== "planned") { out.blockers.push(`งาน ${label} ผูก ${job.externalRef.woId} ที่${wo ? "ปล่อยหรือเริ่มผลิตแล้ว" : "หาไม่พบ"} เพิ่มยอดไม่ได้ — เปิดใบใหม่สำหรับส่วนเพิ่ม`); continue; }
+      }
+      out.jobs.push({ ...want, mode: "raise", jobId: job.id, from: Number(job.qtyPlanned) || 0, to: qtyRound((Number(job.qtyPlanned) || 0) + diff), diff, woId: job.externalRef?.woId ?? null });
+    }
+    return out;
+  }
+  // ฝ่ายวางแผนเปิดงานเพิ่ม: งานใหม่รูปเดียวกับปล่อยผลิต (รอคิว) · งานเดิมเพิ่มยอดแผนอย่างเดียว · ผลระเบิดของใบเป็นของรายการปัจจุบัน
+  // โหมดฐานข้อมูล: เซิร์ฟเวอร์ (private.bom_add_change_jobs) ตรวจซ้ำ เพิ่มยอดของ WO ที่ยังวางแผนอยู่ และเปิด WO ให้งาน RB ใหม่เหมือนปล่อยผลิต
+  function addJobsForChanges(d, { orderId }, ctx) {
+    requireOrderPlanner(ctx, "เปิดงานเพิ่ม");
+    const order = orderById(d, orderId);
+    if (!["released", "in_progress"].includes(order.status)) fail("เปิดงานเพิ่มได้เฉพาะใบที่ปล่อยผลิตแล้วและยังไม่ปิด");
+    if (salesCancelled(order)) fail("ฝ่ายขายยกเลิกใบนี้แล้ว เปิดงานเพิ่มไม่ได้");
+    const plan = extraJobsFor(d, order, ctx.rfOrders);
+    if (plan.blockers.length) fail(`เปิดงานเพิ่มไม่ได้: ${plan.blockers.join(" · ")}`);
+    if (!plan.lines.length || !plan.jobs.length) fail("ฝ่ายขายไม่ได้เพิ่มสินค้าหรือจำนวน ไม่มีงานให้เปิดเพิ่ม");
+    let created = 0;
+    let raised = 0;
+    for (const entry of plan.jobs) {
+      if (entry.mode === "raise") {
+        jobById(d, entry.jobId).qtyPlanned = entry.to;
+        raised += 1;
+        continue;
+      }
+      d.jobs.push({ id: masterId(d, "JOB", ctx), orderId: order.id, dept: entry.dept, itemCode: entry.itemCode, name: entry.name, kind: entry.kind, uom: entry.uom, qtyPlanned: entry.diff, qtyRequired: entry.required, stockCounted: entry.stock, qtyDone: 0, qtyReject: 0, dueAt: order.due?.[entry.dept] ?? order.whDue, status: "queued", externalRef: null, fgCodes: entry.fgCodes, createdAt: ctx.now, reports: [] });
+      created += 1;
+    }
+    order.explosion = plan.explosion;
+    order.explodedAt = ctx.now;
+    audit(d, ctx, "ฝ่ายวางแผนเปิดงานเพิ่มจากฝ่ายขายแก้ใบ", `${order.id} ${plan.lines.map((line) => `${line.fgCode} +${rules().fmtQty(line.added)}`).join(", ")} · งานใหม่ ${created} · เพิ่มยอด ${raised}`);
+    return { orderId: order.id, created, raised, summary: `งานใหม่ ${created} งาน · เพิ่มยอด ${raised} งาน` };
+  }
   // สินค้าที่ใบร่างตั้งใช้จากสต็อกสินค้าสำเร็จรูป (stockCounts[รหัสสินค้า] > 0) พร้อมใบต้นทางที่จะได้ของ (ใบที่ปล่อยผลิตก่อนมาก่อน ตามที่ฐานข้อมูลหัก)
   // ตรวจตอนปล่อยผลิต: ไม่เกินจำนวนสั่ง และสต็อกต้องพอ (ใบอื่นปล่อยผลิตไปก่อนและหักไปแล้ว = ตัวเลขเปลี่ยน ต้องกลับไปตั้งยอดใหม่ที่ขั้นตรวจของ)
   function fgTaking(d, order) {
@@ -2477,12 +2566,20 @@
     const opened = Array.isArray(info.opened) ? info.opened : [];
     const skipped = Array.isArray(info.skipped) ? info.skipped : [];
     const cancelled = Array.isArray(info.cancelled) ? info.cancelled : [];
+    const raised = Array.isArray(info.raised) ? info.raised : [];
     const release = name === "releaseOrder";
-    if (!skipped.length && !cancelled.length && !(release && opened.length)) return null;
+    // เปิดงานเพิ่มจากฝ่ายขายแก้ใบ: WO ใหม่ของงาน RB ใหม่ และ WO ที่ยังวางแผนอยู่ซึ่งเพิ่มยอดตามงาน
+    const extra = name === "addJobsForChanges";
+    if (!skipped.length && !cancelled.length && !((release || extra) && (opened.length || raised.length))) return null;
     const parts = [];
     if (release) {
       parts.push(`ปล่อยผลิต ${payload?.orderId ?? ""} แล้ว`);
       if (opened.length) parts.push(`เปิด WO ใน RubberFlow ${opened.length} ใบ`);
+    }
+    if (extra) {
+      parts.push(`เปิดงานเพิ่มของ ${payload?.orderId ?? ""} แล้ว`);
+      if (opened.length) parts.push(`เปิด WO ใหม่ใน RubberFlow ${opened.length} ใบ`);
+      if (raised.length) parts.push(`เพิ่มยอด ${raised.map((row) => row.woId).join(", ")} ใน RubberFlow`);
     }
     // ยกเลิกใบ / เปิดใบกลับมาแก้: WO ที่ยังไม่เริ่มถูกยกเลิก ที่กำลังผลิตหรือพักอยู่ถูกหยุด (20261128010000)
     if (cancelled.length) parts.push(`ยกเลิกหรือหยุด WO ${cancelled.join(", ")} ใน RubberFlow ด้วย`);
@@ -2497,7 +2594,7 @@
   const api = {
     saveItem, saveBom, saveBomTree, linkCompound, importFlat,
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
-    saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder,
+    saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, addJobsForChanges, setStockCount, setStockCounts, cancelOrder,
     updateOrderHeader, sendOrderToPlanning, decideOrderRequest, receiveFg, deliverFg, closeOrderShort, closeOrder, reverseFg, receiveRods, decideRods, issueRods, reverseRodIssue, adjustRods, receiveRodsOpening, setRodLocation,
     saveGrConfig, setGrJobSteps, addGrRecord, editGrRecord, voidGrRecord, requestRods, cancelRodRequest, sendGrToPk, receiveGrAtPk, cancelGrHandover,
     sendToPk, receiveAtPk, cancelHandover, sendPkToWh, cancelPkToWh,
@@ -2506,7 +2603,7 @@
       isDeptHead, canGrLead, canGrRecord, canReceiveGr, canReverseGrReceipt, isGrPlanned, isGrClosedShort, hasGrRecords, grJobBlock, grRecordBlock,
       STEP_DEPTS, canDeptLead, canDeptRecord, canReceiveAtPk, canReversePkReceipt, canSendPkToWh, handoverTarget,
       canSell, canPlanOrders, canOrder, salesOnly, orderSource, isSentOrder, orderRequestsOf, openOrderRequests, noticeMode, orderLocked, salesCancelled, salesCancelPending,
-      salesChangeSummary, SALES_PENDING_TEXT, DECISION_LABEL },
+      salesChangeSummary, SALES_PENDING_TEXT, DECISION_LABEL, extraJobsFor },
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_ACTIONS = api;

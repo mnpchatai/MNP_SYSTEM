@@ -61,6 +61,9 @@
 --       ผู้ตัดสิน = ผู้ยกเลิกใบ) ยกเว้นการแจ้งที่เพิ่งเขียนในคำสั่งนี้ จึงไม่มีการแจ้งเก่าค้างบนใบที่ยกเลิกแล้ว
 --   บันทึกการใช้งาน: แถว BOM_MASTER_SAVE เดิม (client_action + จำนวนต่อส่วน + entries ของ client เช่น "ฝ่ายขายแก้ใบ" "ฝ่ายขายยกเลิกใบ" "ฝ่ายวางแผนรับทราบ"
 --     "ฝ่ายวางแผนเลือกผลิตต่อจนจบส่ง WH" "ฝ่ายวางแผนเลือกหยุดและเก็บยางเส้นยาวที่ SR") · ผู้แจ้ง / ผู้ตัดสิน / ทางเลือกเก็บในแถวการแจ้ง
+--   ฝ่ายวางแผนเปิดงานเพิ่มจากฝ่ายขายแก้ใบ (addJobsForChanges · ฝ่ายวางแผนกดปุ่มเดียว): ส่วน orders (แถวเดียว ผลระเบิดใหม่) + jobs (งานใหม่ / เพิ่มยอดแผนของงานเดิม)
+--     ไปที่ private.bom_add_change_jobs แทนตัวเขียนใบ / ตัวเขียนงาน (กติกาที่หัวฟังก์ชัน 6b) แล้ว private.bom_open_rf_orders ของใบ · WO ที่ยังวางแผนอยู่เพิ่มยอดตามงาน
+--     คำตอบ rubberflow + raised [{jobId, woId, kg}] (เฉพาะเมื่อมี) · audit ของ RF แถว bom:addJobsForChanges · บันทึกการใช้งาน "ฝ่ายวางแผนเปิดงานเพิ่มจากฝ่ายขายแก้ใบ" (entries ของ client)
 --   รหัสข้อผิดพลาดใหม่: BOM_INVALID_REQUEST
 --
 -- รูปเรคอร์ดที่ส่งกลับ: orders + source ('PP' | 'SA') และ sentAt / sentBy (เฉพาะใบที่ส่งแล้ว) · salesCancelAt / salesCancelBy / salesCancelReason / salesCancelChoice
@@ -78,7 +81,8 @@
 --   - private.bom_fg_free(uuid, text)  จาก 20261130010000_bom_rf_go_live.sql (+ ใบที่ฝ่ายวางแผนเลือกผลิตต่อ นับจำนวนสั่ง = 0)
 --   ใหม่: private.bom_can_sell(public.employees), private.bom_can_plan_orders(public.employees), private.bom_can_order(public.employees),
 --     private.bom_sales_actions(), private.bom_sa_items_ok(jsonb, jsonb), private.bom_order_locked(uuid), private.bom_sa_change_summary(public.bom_orders, text, text, text, bigint, text, jsonb),
---     private.bom_save_order_request(public.employees, boolean, text, jsonb, uuid[], bigint, bigint)
+--     private.bom_save_order_request(public.employees, boolean, text, jsonb, uuid[], bigint, bigint),
+--     private.bom_add_change_jobs(public.employees, text, boolean, jsonb, jsonb, bigint, bigint)
 --   ไม่แตะ: private.bom_can_edit · private.bom_staff_actions · private.bom_save_customers · private.bom_save_jobs · private.bom_real_open() · private.bom_actor()
 --
 -- ก่อน apply / ลำดับ deploy: Pilot Web ที่ใช้ action / ช่องใหม่ (โมดูล SA) ต้องรอให้ apply ไฟล์นี้ที่ production (ด้วยการอนุมัติของผู้ใช้ ครั้งนี้เท่านั้น) ก่อน merge
@@ -90,7 +94,8 @@
 --
 -- Rollback (ข้อมูลทดสอบเท่านั้น · ใบของฝ่ายขายเป็นใบธรรมดาหลัง rollback) ลำดับสำคัญ:
 --   1) create or replace แปดฟังก์ชันกลับด้วยนิยามต้นทางที่ระบุข้างบน (ลายเซ็นเดิม สิทธิ์เดิมคงอยู่)
---   2) drop function private.bom_save_order_request(public.employees, boolean, text, jsonb, uuid[], bigint, bigint),
+--   2) drop function private.bom_add_change_jobs(public.employees, text, boolean, jsonb, jsonb, bigint, bigint),
+--      private.bom_save_order_request(public.employees, boolean, text, jsonb, uuid[], bigint, bigint),
 --      private.bom_sa_change_summary(public.bom_orders, text, text, text, bigint, text, jsonb), private.bom_order_locked(uuid), private.bom_sa_items_ok(jsonb, jsonb),
 --      private.bom_sales_actions(), private.bom_can_order(public.employees), private.bom_can_plan_orders(public.employees), private.bom_can_sell(public.employees)
 --   3) drop table public.bom_order_requests (การแจ้งทดสอบหายไป)
@@ -252,7 +257,8 @@ $$;
 revoke all on function private.bom_sa_items_ok(jsonb, jsonb) from public, anon, authenticated;
 
 -- 4. รายการ action ------------------------------------------------------------------------------------------------------------------
--- private.bom_client_actions() จาก 20261224010000_bom_dept_steps.sql (+ สาม action ของฝ่ายขาย / การแจ้ง: updateOrderHeader sendOrderToPlanning decideOrderRequest)
+-- private.bom_client_actions() จาก 20261224010000_bom_dept_steps.sql (+ สาม action ของฝ่ายขาย / การแจ้ง: updateOrderHeader sendOrderToPlanning decideOrderRequest
+--   + addJobsForChanges ของฝ่ายวางแผน: เปิดงานเพิ่มจากฝ่ายขายแก้ใบ · ไม่อยู่ใน bom_sales_actions / bom_staff_actions)
 create or replace function private.bom_client_actions()
 returns text[]
 language sql
@@ -270,7 +276,7 @@ as $$
     'receiveRods', 'decideRods', 'issueRods', 'reverseRodIssue', 'adjustRods', 'receiveRodsOpening', 'setRodLocation',
     'saveGrConfig', 'setGrJobSteps', 'addGrRecord', 'editGrRecord', 'voidGrRecord', 'requestRods', 'cancelRodRequest', 'sendGrToPk', 'receiveGrAtPk', 'cancelGrHandover',
     'sendToPk', 'receiveAtPk', 'cancelHandover', 'sendPkToWh', 'cancelPkToWh',
-    'updateOrderHeader', 'sendOrderToPlanning', 'decideOrderRequest']
+    'updateOrderHeader', 'sendOrderToPlanning', 'decideOrderRequest', 'addJobsForChanges']
 $$;
 revoke all on function private.bom_client_actions() from public, anon, authenticated;
 
@@ -807,6 +813,176 @@ end;
 $$;
 revoke all on function private.bom_save_order_request(public.employees, boolean, text, jsonb, uuid[], bigint, bigint) from public, anon, authenticated;
 
+-- 6b. ฝ่ายวางแผนเปิดงานเพิ่มจากฝ่ายขายแก้ใบ (action addJobsForChanges · กติกาเจ้าของ "เพิ่มในใบเดิม ฝ่ายวางแผนสร้างงานเพิ่ม" · ฝ่ายวางแผนกดปุ่มเดียว)
+--     ฝ่ายขายเพิ่มสินค้า / จำนวนในใบที่เริ่มงานแล้ว (แก้ตรง ผลระเบิดและงานเดิมคงเดิม) → client (modules/bom-actions.js extraJobsFor) ระเบิดรายการปัจจุบันด้วยกติกาเดียวกับปล่อยผลิต
+--     แล้วส่งแถวใบหนึ่งแถว (ผลระเบิดใหม่) + งาน: คู่ (แผนก, ชิ้นงาน) ที่ยังไม่มีงาน = งานใหม่ · มีงานแล้ว = เพิ่มยอดแผนของงานนั้น (unique (order_pk, dept, item_code) คงเดิม)
+--     รับเฉพาะ (ไม่ใช่ = ทั้งคำสั่งไม่เขียนอะไร):
+--       ผู้เรียกเป็นกลุ่มวางแผนของใบสั่งผลิต (private.bom_can_plan_orders · ไม่ใช่ = BOM_FORBIDDEN · ผู้จัดการแผนกในสายผลิตก็ไม่ได้)
+--       ใบ: มีอยู่ · ไม่ถูกแก้หลังเวอร์ชันฐาน (BOM_STALE) · released / in_progress และฝ่ายขายไม่ได้ยกเลิกไว้ (BOM_INVALID_TRANSITION) · ทุกช่องเท่าเดิมยกเว้นผลระเบิด (BOM_INVALID_ORDER)
+--       งานใหม่: ของใบนี้ รอคิว ยอดแผน > 0 ยอดดี / เสีย 0 ไม่มีรายงาน / WO และยังไม่มีงานคู่เดียวกันในใบ (BOM_INVALID_JOB) · หลุมฝังศพหลังเวอร์ชันฐาน = BOM_STALE
+--       งานเดิม: ของใบนี้ ไม่ถูกแก้หลังเวอร์ชันฐาน · ทุกช่องเท่าเดิมยกเว้นยอดแผนที่ "เพิ่มขึ้น" (ลด / เท่าเดิม / ช่องอื่นเปลี่ยน = BOM_INVALID_JOB)
+--         งานที่ปิดแล้ว (done) = BOM_INVALID_TRANSITION · ผูก WO: WO ต้องชี้กลับมาที่งานนี้และยัง planned (ไม่งั้น BOM_INVALID_TRANSITION · WO หนึ่งใบต่องาน rf_orders_source_job_idx
+--         จึงเปิด WO ใบที่สองไม่ได้) แล้ว WO ได้ยอด = ยอดแผน − ยอดดี และกิโลกรัมใหม่ (private.bom_rb_job_kg) · external_ref.kg ของงานตาม
+--     ผลระเบิดของใบเป็นของรายการปัจจุบัน (exploded_at = now) · ผู้เรียก (app_bom_save_master) เปิด WO ให้งาน RB ที่ยังไม่มี WO ของใบนี้ (private.bom_open_rf_orders)
+--     คืน {orderPk, raised: [{jobId, woId, kg}]}
+create or replace function private.bom_add_change_jobs(
+  p_actor public.employees, p_actor_name text, p_planner boolean, p_orders jsonb, p_jobs jsonb, p_base bigint, p_cur bigint)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_row jsonb;
+  v_el jsonb;
+  v_node jsonb;
+  v_old public.bom_orders%rowtype;
+  v_job public.bom_jobs%rowtype;
+  v_item public.bom_items%rowtype;
+  v_pi text;
+  v_expl jsonb;
+  v_seen text[] := '{}';
+  v_no text;
+  v_dept text;
+  v_code text;
+  v_name text;
+  v_kind text;
+  v_uom text;
+  v_planned numeric;
+  v_required numeric;
+  v_stock numeric;
+  v_due numeric;
+  v_status text;
+  v_fg jsonb;
+  v_ext jsonb;
+  v_wo public.rf_orders%rowtype;
+  v_qty numeric;
+  v_kg numeric;
+  v_locked boolean := false;
+  v_raised jsonb := '[]'::jsonb;
+begin
+  if not p_planner then raise exception 'BOM_FORBIDDEN'; end if;
+  if jsonb_typeof(p_orders) <> 'array' or jsonb_array_length(p_orders) <> 1 or jsonb_typeof(p_jobs) <> 'array' or jsonb_array_length(p_jobs) = 0 then
+    raise exception 'BOM_INVALID_PAYLOAD';
+  end if;
+
+  -- ใบ: ทุกช่องเท่าเดิมยกเว้นผลระเบิด (การจัดรูปเดียวกับ private.bom_save_orders)
+  v_row := p_orders -> 0;
+  if jsonb_typeof(v_row) <> 'object' then raise exception 'BOM_INVALID_ORDER'; end if;
+  v_pi := upper(private.bom_text(v_row, 'id', 40, 1, 'BOM_INVALID_ORDER'));
+  select * into v_old from public.bom_orders o where o.is_test = (select private.bom_test_mode()) and o.pi_no = v_pi for update;
+  if not found then raise exception 'BOM_INVALID_ORDER'; end if;
+  if v_old.changed_version > p_base and v_old.changed_version <= p_cur then raise exception 'BOM_STALE'; end if;
+  if v_old.status not in ('released', 'in_progress') or v_old.sales_cancel_at is not null then raise exception 'BOM_INVALID_TRANSITION'; end if;
+  v_node := coalesce(v_row -> 'dueDefaults', '[]'::jsonb);
+  if jsonb_typeof(v_node) = 'null' then v_node := '[]'::jsonb; end if;
+  if btrim(regexp_replace(private.bom_text(v_row, 'customer', 120, 1, 'BOM_INVALID_ORDER'), '\s+', ' ', 'g')) <> v_old.customer
+     or private.bom_text(v_row, 'country', 60, 1, 'BOM_INVALID_ORDER') <> v_old.country
+     or upper(private.bom_text(v_row, 'orderType', 2, 1, 'BOM_INVALID_ORDER')) <> v_old.order_type
+     or private.bom_num(v_row -> 'orderedAt', 'BOM_INVALID_ORDER', 1, 100000000000000) is distinct from v_old.ordered_at::numeric
+     or private.bom_num(v_row -> 'whDue', 'BOM_INVALID_ORDER', 1, 100000000000000) is distinct from v_old.wh_due::numeric
+     or private.bom_parse_due(v_row -> 'due') <> v_old.due
+     or v_node <> v_old.due_defaults
+     or private.bom_parse_order_items(v_row -> 'items') <> v_old.items
+     or private.bom_parse_stock_counts(v_row -> 'stockCounts') <> v_old.stock_counts
+     or private.bom_text(v_row, 'note', 300, 0, 'BOM_INVALID_ORDER') <> v_old.note
+     or private.bom_text(v_row, 'status', 20, 1, 'BOM_INVALID_ORDER') <> v_old.status then
+    raise exception 'BOM_INVALID_ORDER';
+  end if;
+  v_expl := private.bom_parse_explosion(v_row -> 'explosion');
+  if v_expl is null or jsonb_array_length(v_expl) = 0 then raise exception 'BOM_INVALID_ORDER'; end if;
+
+  for v_row in select value from jsonb_array_elements(p_jobs) loop
+    if jsonb_typeof(v_row) <> 'object' then raise exception 'BOM_INVALID_JOB'; end if;
+    v_no := private.bom_text(v_row, 'id', 40, 1, 'BOM_INVALID_JOB');
+    if v_no !~ '^[A-Za-z0-9._-]{1,40}$' or v_no = any (v_seen) then raise exception 'BOM_INVALID_JOB'; end if;
+    v_seen := v_seen || v_no;
+    if upper(private.bom_text(v_row, 'orderId', 40, 1, 'BOM_INVALID_JOB')) <> v_pi then raise exception 'BOM_INVALID_JOB'; end if;
+    v_dept := private.bom_dept(private.bom_text(v_row, 'dept', 10, 1, 'BOM_INVALID_DEPT'));
+    v_code := private.bom_code(private.bom_text(v_row, 'itemCode', 60, 1, 'BOM_INVALID_JOB'));
+    v_name := private.bom_text(v_row, 'name', 160, 1, 'BOM_INVALID_JOB');
+    v_kind := private.bom_text(v_row, 'kind', 20, 1, 'BOM_INVALID_JOB');
+    v_uom := private.bom_text(v_row, 'uom', 20, 1, 'BOM_INVALID_JOB');
+    v_planned := private.bom_num(v_row -> 'qtyPlanned', 'BOM_INVALID_JOB', 0, 1000000000);
+    v_required := private.bom_num(v_row -> 'qtyRequired', 'BOM_INVALID_JOB', 0, 1000000000);
+    if v_planned is null or v_required is null or v_planned <= 0 then raise exception 'BOM_INVALID_JOB'; end if;
+    v_stock := private.bom_num(v_row -> 'stockCounted', 'BOM_INVALID_JOB', 0, 1000000000);
+    v_due := private.bom_num(v_row -> 'dueAt', 'BOM_INVALID_JOB', 1, 100000000000000);
+    if v_due is not null and v_due <> trunc(v_due) then raise exception 'BOM_INVALID_JOB'; end if;
+    v_status := private.bom_text(v_row, 'status', 20, 1, 'BOM_INVALID_JOB');
+    v_node := v_row -> 'fgCodes';
+    if v_node is null or jsonb_typeof(v_node) = 'null' then v_node := '[]'::jsonb; end if;
+    if jsonb_typeof(v_node) <> 'array' or jsonb_array_length(v_node) > 500 then raise exception 'BOM_INVALID_JOB'; end if;
+    v_fg := '[]'::jsonb;
+    for v_el in select value from jsonb_array_elements(v_node) loop
+      if jsonb_typeof(v_el) <> 'string' or char_length(btrim(v_el #>> '{}')) not between 1 and 60 then raise exception 'BOM_INVALID_JOB'; end if;
+      v_fg := v_fg || jsonb_build_array(private.bom_code(v_el #>> '{}'));
+    end loop;
+    v_ext := private.bom_parse_external_ref(v_row -> 'externalRef');
+
+    select * into v_job from public.bom_jobs j where j.is_test = (select private.bom_test_mode()) and j.job_no = v_no for update;
+    if not found then
+      -- งานใหม่ (รูปเดียวกับงานที่ปล่อยผลิตสร้าง): รอคิวว่าง ยังไม่มีงานคู่ (แผนก, ชิ้นงาน) เดียวกันในใบ
+      if exists (select 1 from public.bom_deleted_keys k where k.is_test = (select private.bom_test_mode()) and k.list = 'jobs' and k.code = v_no
+                 and k.changed_version > p_base and k.changed_version <= p_cur) then
+        raise exception 'BOM_STALE';
+      end if;
+      if v_kind not in ('FG', 'SE', 'RB', 'PT', 'BG', 'PURCHASED', 'SUBPART', 'CP') or not (v_uom = any (private.bom_uoms())) then raise exception 'BOM_INVALID_JOB'; end if;
+      if v_status <> 'queued' or coalesce(private.bom_num(v_row -> 'qtyDone', 'BOM_INVALID_JOB', 0, 1000000000), 0) <> 0
+         or coalesce(private.bom_num(v_row -> 'qtyReject', 'BOM_INVALID_JOB', 0, 1000000000), 0) <> 0 or v_ext is not null
+         or jsonb_array_length(private.bom_parse_reports(v_row -> 'reports', '[]'::jsonb, p_actor_name)) > 0 then
+        raise exception 'BOM_INVALID_JOB';
+      end if;
+      if exists (select 1 from public.bom_jobs j where j.order_pk = v_old.id and j.dept = v_dept and j.item_code = v_code) then raise exception 'BOM_INVALID_JOB'; end if;
+      delete from public.bom_deleted_keys k where k.is_test = (select private.bom_test_mode()) and k.list = 'jobs' and k.code = v_no;
+      insert into public.bom_jobs (
+        is_test, job_no, order_pk, dept, item_code, name, kind, uom, qty_planned, qty_required, stock_counted, due_at, fg_codes, created_by)
+      values ((select private.bom_test_mode()), v_no, v_old.id, v_dept, v_code, v_name, v_kind, v_uom, v_planned, v_required, v_stock, v_due::bigint, v_fg, p_actor.id);
+      continue;
+    end if;
+
+    -- งานเดิม: เพิ่มยอดแผนอย่างเดียว
+    if v_job.changed_version > p_base and v_job.changed_version <= p_cur then raise exception 'BOM_STALE'; end if;
+    if v_job.order_pk <> v_old.id
+       or v_job.dept <> v_dept or v_job.item_code <> v_code or v_job.name <> v_name or v_job.kind <> v_kind or v_job.uom <> v_uom
+       or v_job.qty_required <> v_required or v_job.stock_counted is distinct from v_stock or v_job.due_at is distinct from v_due::bigint or v_job.fg_codes <> v_fg
+       or v_job.status <> v_status
+       or v_job.qty_done <> coalesce(private.bom_num(v_row -> 'qtyDone', 'BOM_INVALID_JOB', 0, 1000000000), 0)
+       or v_job.qty_reject <> coalesce(private.bom_num(v_row -> 'qtyReject', 'BOM_INVALID_JOB', 0, 1000000000), 0)
+       or private.bom_parse_reports(v_row -> 'reports', v_job.reports, p_actor_name) <> v_job.reports
+       or (v_job.external_ref is null) <> (v_ext is null)
+       or (v_ext is not null and (v_job.external_ref - 'linkedAt' - 'by' - 'auto') <> v_ext)
+       or v_planned <= v_job.qty_planned then
+      raise exception 'BOM_INVALID_JOB';
+    end if;
+    if v_job.status = 'done' then raise exception 'BOM_INVALID_TRANSITION'; end if;
+    v_wo := null;
+    if (v_job.external_ref ->> 'woId') is not null then
+      select * into v_wo from public.rf_orders o
+      where o.is_test = (select private.bom_test_mode()) and o.wo_no = (v_job.external_ref ->> 'woId') and o.source_job_no = v_job.job_no
+      for update;
+      if not found or v_wo.status <> 'planned' then raise exception 'BOM_INVALID_TRANSITION'; end if;
+    end if;
+    update public.bom_jobs set qty_planned = v_planned, updated_at = now() where id = v_job.id returning * into v_job;
+    if v_wo.id is not null then
+      -- WO ที่ยังวางแผนอยู่ได้ยอดและกิโลกรัมตามงาน (เพดานเท่าคอลัมน์ของ rf_orders เหมือน private.bom_open_rf_orders · คำนวณไม่ได้ = ไม่เพิ่ม)
+      if not v_locked then perform private.bom_lock_rf(); v_locked := true; end if;
+      select * into v_item from public.bom_items i where i.is_test = (select private.bom_test_mode()) and i.code = v_job.item_code;
+      v_qty := greatest(0, v_job.qty_planned - v_job.qty_done);
+      v_kg := private.bom_rb_job_kg(v_job, v_item);
+      if v_qty <= 0 or v_kg is null or v_kg <= 0 or v_kg > 1000000000 or v_kg / v_qty > 1000000000 then raise exception 'BOM_INVALID_TRANSITION'; end if;
+      update public.rf_orders set target_qty = v_qty, target_kg = v_kg, kg_per_unit = private.bom_kg_per_unit(v_kg, v_qty), updated_at = now() where id = v_wo.id;
+      update public.bom_jobs set external_ref = external_ref || jsonb_build_object('kg', v_kg), updated_at = now() where id = v_job.id;
+      v_raised := v_raised || jsonb_build_array(jsonb_build_object('jobId', v_job.job_no, 'woId', v_wo.wo_no, 'kg', v_kg));
+    end if;
+  end loop;
+
+  update public.bom_orders set explosion = v_expl, exploded_at = now(), updated_at = now() where id = v_old.id;
+  return jsonb_build_object('orderPk', v_old.id, 'raised', v_raised);
+end;
+$$;
+revoke all on function private.bom_add_change_jobs(public.employees, text, boolean, jsonb, jsonb, bigint, bigint) from public, anon, authenticated;
+
 -- 7. ชุดเรคอร์ด -------------------------------------------------------------------------------------------------------------------
 -- private.bom_records(bigint) จาก 20261224010000_bom_dept_steps.sql (orders + source / sentAt / sentBy · ชุดใหม่ orderRequests)
 create or replace function private.bom_records(p_since bigint)
@@ -1128,6 +1304,9 @@ declare
   v_orderer boolean;
   v_cancelled_orders uuid[] := '{}';
   v_notices uuid[] := '{}';
+  -- เปิดงานเพิ่มจากฝ่ายขายแก้ใบ (addJobsForChanges): ส่วน orders / jobs ไปที่ private.bom_add_change_jobs แทนตัวเขียนใบและตัวเขียนงาน (v_std = ส่วนที่ตัวเขียนเดิมเห็น)
+  v_std jsonb := p_changes;
+  v_rf_raised jsonb := '[]'::jsonb;
 begin
   perform private.lab_only_block();
   -- ล็อกเดียวกับ app_rf_save (ธุรกรรมละหนึ่งตัว ปล่อยเมื่อจบ): ฟังก์ชันนี้ล็อก BOM ก่อนแล้วเปิด/ยกเลิก WO ใน RF ส่วน app_rf_save ล็อก RF ก่อนแล้ว BOM ถ้าไม่มีล็อกนี้จะวนกันได้
@@ -1207,6 +1386,8 @@ begin
                       or (p_action = 'decideOrderRequest' and not (v_key = 'orderRequests' or (v_key = 'orders' and v_sub = 'upsert' and v_n = 1)))) then
         raise exception 'BOM_INVALID_REQUEST';
       end if;
+      -- เปิดงานเพิ่มจากฝ่ายขายแก้ใบ (20261226010000): ส่งได้เฉพาะแถวใบ (orders upsert) และงาน (jobs upsert) · ผิด = BOM_INVALID_PAYLOAD
+      if v_n > 0 and p_action = 'addJobsForChanges' and not (v_key in ('orders', 'jobs') and v_sub = 'upsert') then raise exception 'BOM_INVALID_PAYLOAD'; end if;
       -- ข้อมูลหลักเขียนได้เฉพาะกลุ่มวางแผน · ลูกค้าเขียนได้เฉพาะผู้เขียนใบสั่งผลิต (ฝ่ายขาย ฝ่ายวางแผน ผู้จัดการ admin · 20261226010000)
       if v_n > 0 and v_key = any (v_planner_sections) and not v_planner then raise exception 'BOM_FORBIDDEN'; end if;
       if v_n > 0 and v_key = 'customers' and not v_orderer then raise exception 'BOM_FORBIDDEN'; end if;
@@ -1234,6 +1415,13 @@ begin
   -- การแจ้งของฝ่ายขาย: decideOrderRequest ต้องมีแถวเดียวในส่วน orderRequests เสมอ (ไม่มี / ว่าง / เกินหนึ่งแถว = BOM_INVALID_REQUEST)
   if p_action = 'decideOrderRequest' and coalesce(jsonb_array_length(p_changes #> '{orderRequests,upsert}'), 0) <> 1 then
     raise exception 'BOM_INVALID_REQUEST';
+  end if;
+  -- เปิดงานเพิ่ม: แถวใบหนึ่งแถว และงานอย่างน้อยหนึ่งงานเสมอ (ไม่มี = BOM_INVALID_PAYLOAD) · ตัวเขียนใบ / ตัวเขียนงานเดิมไม่เห็นสองส่วนนี้
+  if p_action = 'addJobsForChanges' then
+    if coalesce(jsonb_array_length(p_changes #> '{orders,upsert}'), 0) <> 1 or coalesce(jsonb_array_length(p_changes #> '{jobs,upsert}'), 0) = 0 then
+      raise exception 'BOM_INVALID_PAYLOAD';
+    end if;
+    v_std := p_changes - 'orders' - 'jobs';
   end if;
 
   -- ล็อกตัวนับก่อนตรวจชน: บันทึกพร้อมกันต่อคิวกัน คนที่สองเห็นเวอร์ชันของระเบียนที่คนแรกเพิ่งแก้ (changed_version) แล้วได้ BOM_STALE เฉพาะที่ชนกัน
@@ -1298,8 +1486,8 @@ begin
     -- ลูกค้า → ใบสั่งผลิต (รวมเปลี่ยนสถานะ ลบงานของใบที่ยกเลิก/เปิดกลับมาแก้) → ลบงานตรง ๆ → งาน (เพิ่ม/แก้) ตามลำดับนี้เสมอ
     perform private.bom_save_customers(v_actor.id, coalesce(p_changes #> '{customers,upsert}', '[]'::jsonb), p_base_version, v_version);
     -- ตัวเขียนใบได้กลุ่มวางแผนของใบสั่งผลิต (ไม่ใช่ v_planner): ผู้จัดการแผนกในสายผลิตแก้ใบได้เท่าพนักงานแผนกของตน (ST / WH นับคงคลัง) · ฝ่ายขายตรวจในตัวเขียน
-    v_res := private.bom_save_orders(v_actor, v_actor_name, v_order_planner, coalesce(p_changes #> '{orders,upsert}', '[]'::jsonb),
-                                     coalesce(p_changes #> '{jobs,upsert}', '[]'::jsonb), p_base_version, v_version);
+    v_res := private.bom_save_orders(v_actor, v_actor_name, v_order_planner, coalesce(v_std #> '{orders,upsert}', '[]'::jsonb),
+                                     coalesce(v_std #> '{jobs,upsert}', '[]'::jsonb), p_base_version, v_version);
     v_released := array(select t.value::uuid from jsonb_array_elements_text(v_res -> 'released') as t(value));
     v_rf_cancel_n := jsonb_array_length(v_res -> 'cancelled');
     v_rf_reopen_n := jsonb_array_length(v_res -> 'reopened');
@@ -1365,8 +1553,16 @@ begin
     v_rod_orders_n := coalesce((v_res ->> 'rodMoves')::integer, 0);
     if v_rod_orders_n > 0 then v_counts := v_counts || jsonb_build_object('rodMoves', jsonb_build_object('upsert', v_rod_orders_n)); end if;
     perform private.bom_delete_jobs(v_planner, coalesce(p_changes #> '{jobs,delete}', '[]'::jsonb), p_base_version, v_version);
-    v_jobs := private.bom_save_jobs(v_actor, v_actor_name, v_planner, p_action, coalesce(p_changes #> '{jobs,upsert}', '[]'::jsonb),
+    v_jobs := private.bom_save_jobs(v_actor, v_actor_name, v_planner, p_action, coalesce(v_std #> '{jobs,upsert}', '[]'::jsonb),
                                     v_released, p_base_version, v_version);
+    -- เปิดงานเพิ่มจากฝ่ายขายแก้ใบ (20261226010000): งานใหม่ / เพิ่มยอดแผน + ผลระเบิดใหม่ของใบ (WO ที่ยังวางแผนอยู่เพิ่มยอดตาม) แล้วเปิด WO ให้งาน RB ของใบที่ยังไม่มี WO
+    if p_action = 'addJobsForChanges' then
+      v_res := private.bom_add_change_jobs(v_actor, v_actor_name, v_order_planner, p_changes #> '{orders,upsert}', p_changes #> '{jobs,upsert}', p_base_version, v_version);
+      v_rf_raised := coalesce(v_res -> 'raised', '[]'::jsonb);
+      v_res := private.bom_open_rf_orders(v_actor, v_actor_name, (v_res ->> 'orderPk')::uuid);
+      v_rf_opened := v_rf_opened || (v_res -> 'opened');
+      v_rf_skipped := v_rf_skipped || (v_res -> 'skipped');
+    end if;
     v_started := array(select t.value::uuid from jsonb_array_elements_text(v_jobs -> 'started') as t(value));
     -- ฝ่ายวางแผนปิดงานที่ผูก WO (20261129010000): WO ที่ยกเลิก / หยุดรวมใน rubberflow.cancelled ของคำตอบ และ audit ของ RF แถว bom:closeJob
     v_rf_close_n := jsonb_array_length(v_jobs -> 'cancelled');
@@ -1509,7 +1705,7 @@ begin
 
   -- WO ที่เปิด/ยกเลิกในคำสั่งนี้: เพิ่ม version ของ RF อีก 1 ครั้งเดียว (แถวถูก trigger rf_stamp_version ประทับ version + 1 แล้ว) และเขียน audit ของ RF ให้ app_rf_master_since / หน้า audit เห็น
   -- ล็อกแถวตัวนับ RF ถูกถือแล้ว (bom_lock_rf ตอนเขียน WO) ไม่มี WO ที่เปิด/ยกเลิก = ไม่แตะ RF เลย
-  v_rf_n := jsonb_array_length(v_rf_opened) + jsonb_array_length(v_rf_cancelled);
+  v_rf_n := jsonb_array_length(v_rf_opened) + jsonb_array_length(v_rf_cancelled) + jsonb_array_length(v_rf_raised);
   if v_rf_n > 0 then
     update public.rf_master_state set version = version + 1, updated_at = now(), updated_by = v_actor.id where is_test = (select private.bom_test_mode()) returning version into v_rf_version;
     -- แถว audit ละชนิด (ปล่อยผลิต / ยกเลิกใบ / เปิดใบกลับเป็นร่าง) ใช้ version ใหม่ตัวเดียวกัน
@@ -1519,14 +1715,17 @@ begin
                               'counts', jsonb_build_object('orders', jsonb_build_object('upsert', k.n)),
                               'is_test', (select private.bom_test_mode()), 'persona_employee_no', v_actor.employee_no, 'persona_name', v_actor_name,
                               'entries', '[]'::jsonb)
-    from (values (1, 'bom:releaseOrder', jsonb_array_length(v_rf_opened)), (2, 'bom:cancelOrder', v_rf_cancel_n), (3, 'bom:reopenOrder', v_rf_reopen_n),
+    -- เปิดงานเพิ่มจากฝ่ายขายแก้ใบ: WO ที่เปิดใหม่และที่เพิ่มยอดนับรวมแถวเดียว bom:addJobsForChanges
+    from (values (1, case when p_action = 'addJobsForChanges' then 'bom:addJobsForChanges' else 'bom:releaseOrder' end, jsonb_array_length(v_rf_opened) + jsonb_array_length(v_rf_raised)),
+                 (2, 'bom:cancelOrder', v_rf_cancel_n), (3, 'bom:reopenOrder', v_rf_reopen_n),
                  (4, 'bom:closeJob', v_rf_close_n)) as k(ord, action, n)
     where k.n > 0
     order by k.ord;
   end if;
   if v_rf_n > 0 or jsonb_array_length(v_rf_skipped) > 0 then
     v_rf_meta := jsonb_build_object('rubberflow', jsonb_build_object(
-      'opened', jsonb_array_length(v_rf_opened), 'skipped', jsonb_array_length(v_rf_skipped), 'cancelled', jsonb_array_length(v_rf_cancelled)));
+      'opened', jsonb_array_length(v_rf_opened), 'skipped', jsonb_array_length(v_rf_skipped), 'cancelled', jsonb_array_length(v_rf_cancelled))
+      || case when jsonb_array_length(v_rf_raised) > 0 then jsonb_build_object('raised', jsonb_array_length(v_rf_raised)) else '{}'::jsonb end);
   end if;
 
   v_version := v_version + 1;
@@ -1538,7 +1737,8 @@ begin
                              'entries', v_audit) || v_rf_meta);
   v_delta := private.bom_delta(p_base_version);
   if v_rf_meta <> '{}'::jsonb then
-    v_delta := v_delta || jsonb_build_object('rubberflow', jsonb_build_object('opened', v_rf_opened, 'skipped', v_rf_skipped, 'cancelled', v_rf_cancelled));
+    v_delta := v_delta || jsonb_build_object('rubberflow', jsonb_build_object('opened', v_rf_opened, 'skipped', v_rf_skipped, 'cancelled', v_rf_cancelled)
+      || case when jsonb_array_length(v_rf_raised) > 0 then jsonb_build_object('raised', v_rf_raised) else '{}'::jsonb end);
   end if;
   return v_delta;
 end;
