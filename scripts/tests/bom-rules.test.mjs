@@ -945,8 +945,15 @@ test("fgPosition: per product ordered, PK made, received, delivered, what can st
   const move = (kind, fgCode, qty, at = 1, note = "") => ({ id: `${kind}${fgCode}${at}`, orderId: "PI-1", fgCode, kind, qty, note, at, by: "x" });
   const rowOf = (data) => rules.fgPosition(data, order).products.map((p) => [p.fgCode, p.ordered, p.pkDone, p.received, p.delivered, p.receivable, p.deliverable]);
   assert.deepEqual(rowOf({ jobs: [], fgMoves: undefined }), [["A", 10, 0, 0, 0, 0, 0], ["B", 4, 0, 0, 0, 0, 0]], "no jobs, no history");
-  const data = { jobs: [job("A", 6), job("B", 4, "done"), { orderId: "PI-1", dept: "PK", kind: "SUBPART", itemCode: "XP", qtyDone: 1, status: "in_progress" }, { orderId: "PI-2", dept: "PK", kind: "FG", itemCode: "A", qtyDone: 99, status: "done" }], fgMoves: [move("receive", "A", 2.5), move("receive", "A", 0.1), move("deliver", "A", 1, 2), move("receive", "B", 4), { ...move("receive", "A", 50), orderId: "PI-2" }] };
+  // PK ส่งให้ WH (20261224010000): WH รับได้ไม่เกิน min(ยอดที่ PK ทำ, ที่ PK ส่ง) − ที่รับแล้ว · ที่ยกเลิกไม่นับ
+  const send = (fgCode, qty, status = "sent", orderId = "PI-1") => ({ id: `send-${orderId}-${fgCode}-${qty}-${status}`, jobId: "J", orderId, itemCode: fgCode, qty, status, fromDept: "PK", toDept: "WH" });
+  const data = { jobs: [job("A", 6), job("B", 4, "done"), { orderId: "PI-1", dept: "PK", kind: "SUBPART", itemCode: "XP", qtyDone: 1, status: "in_progress" }, { orderId: "PI-2", dept: "PK", kind: "FG", itemCode: "A", qtyDone: 99, status: "done" }], fgMoves: [move("receive", "A", 2.5), move("receive", "A", 0.1), move("deliver", "A", 1, 2), move("receive", "B", 4), { ...move("receive", "A", 50), orderId: "PI-2" }],
+    grHandovers: [send("A", 6), send("B", 4), send("A", 99, "sent", "PI-2")] };
   assert.deepEqual(rowOf(data), [["A", 10, 6, 2.6, 1, 3.4, 1.6], ["B", 4, 4, 4, 0, 0, 4]], "sums are per order and rounded to four decimals; the SUBPART job and another order's job are not counted");
+  assert.deepEqual(rowOf({ ...data, grHandovers: [send("A", 3), send("A", 2, "cancelled"), { ...send("A", 5), toDept: "PK" }] }).map((row) => row[5]), [0.4, 0],
+    "WH receives no more than PK sent to WH (3 − 2.6); a cancelled send and a send to PK do not count");
+  assert.deepEqual(rowOf({ ...data, grHandovers: [send("A", 50)] }).map((row) => row[5]), [3.4, 0], "a send above what PK made is capped by what PK made");
+  assert.equal(rules.fgPosition({ ...data, grHandovers: [send("A", 3)] }, order).products[0].pkSent, 3, "the product carries what PK sent");
   const position = rules.fgPosition(data, order);
   assert.equal(position.pkAllDone, false, "A and the sub-part of PK are not done");
   assert.equal(position.canCloseShort, false);
@@ -982,19 +989,20 @@ const pkJob = (orderId, qtyDone, itemCode = "A") => ({ orderId, dept: "PK", kind
 
 test("fg stock figures: own, in, out and have per product; deliverable is have minus out minus delivered; free is only what is beyond the order's own claim", () => {
   const order = stockOrder("SRC", "in_progress", 10);
-  const data = { jobs: [pkJob("SRC", 15)], orders: [order], fgMoves: [fgMove("receive", "SRC", "A", 15), fgMove("transfer", "DST", "A", 3, { fromOrderId: "SRC" }), fgMove("deliver", "SRC", "A", 4)] };
+  const whSends = [["SRC", 15], ["DST", 7]].map(([orderId, qty]) => ({ id: `send-${orderId}`, jobId: "J", orderId, itemCode: "A", qty, status: "sent", fromDept: "PK", toDept: "WH" }));
+  const data = { jobs: [pkJob("SRC", 15)], orders: [order], fgMoves: [fgMove("receive", "SRC", "A", 15), fgMove("transfer", "DST", "A", 3, { fromOrderId: "SRC" }), fgMove("deliver", "SRC", "A", 4)], grHandovers: whSends };
   const [a] = rules.fgPosition(data, order).products;
   assert.deepEqual([a.own, a.fromStock, a.givenAway, a.have, a.delivered, a.receivable, a.deliverable, a.free], [15, 0, 3, 15, 4, 0, 8, 2], "free = 15 − 3 − max(10, 4)");
   assert.equal(a.owed, 6, "the customer of this order still waits for 10 − 4; the rest of the 8 is surplus");
   // the order that took stock: have = own + in, no receivable beyond PK, free only beyond its own claim
   const dest = stockOrder("DST", "released", 10);
-  const taken = rules.fgPosition({ jobs: [pkJob("DST", 7)], orders: [order, dest], fgMoves: data.fgMoves }, dest).products[0];
+  const taken = rules.fgPosition({ jobs: [pkJob("DST", 7)], orders: [order, dest], fgMoves: data.fgMoves, grHandovers: whSends }, dest).products[0];
   assert.deepEqual([taken.own, taken.fromStock, taken.have, taken.receivable, taken.deliverable, taken.free], [0, 3, 3, 7, 3, 0]);
   const position = rules.fgPosition({ jobs: [pkJob("DST", 7)], orders: [order, dest], fgMoves: [fgMove("transfer", "DST", "A", 3, { fromOrderId: "SRC" }), fgMove("receive", "DST", "A", 7)] }, dest);
   assert.equal(position.allReceived, true, "7 received + 3 from stock covers the 10 ordered");
   // receivable also on a closed order (the surplus PK made beyond the order), capped by PK only
   const closed = stockOrder("SRC", "completed", 10);
-  assert.equal(rules.fgPosition({ jobs: [pkJob("SRC", 12)], orders: [closed], fgMoves: [fgMove("receive", "SRC", "A", 10)] }, closed).products[0].receivable, 2);
+  assert.equal(rules.fgPosition({ jobs: [pkJob("SRC", 12)], orders: [closed], fgMoves: [fgMove("receive", "SRC", "A", 10)], grHandovers: [{ ...whSends[0], qty: 12 }] }, closed).products[0].receivable, 2);
   // an untransfer cancels the transfer on both sides
   const back = [...data.fgMoves, fgMove("untransfer", "DST", "A", 3, { fromOrderId: "SRC" })];
   assert.deepEqual(rules.fgPosition({ ...data, fgMoves: back }, order).products.map((p) => [p.givenAway, p.free]), [[0, 5]]);

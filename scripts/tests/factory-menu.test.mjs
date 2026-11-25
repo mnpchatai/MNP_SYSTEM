@@ -495,7 +495,8 @@ test("GR shows its open jobs on the shared job card with the same buttons as BOM
   const shared = (list) => list.map((buttons) => buttons.filter((name) => !["grRodRequest", "grSendPk"].includes(name)));
   assert.deepEqual(plain(shared(buttonsByCard(html))), plain(buttonsByCard(work.html)), "the dept page offers what BOM work offers for this user, plus the GR buttons");
   // งานที่ตั้งขั้นตอนแล้ว: ไม่มีปุ่มรายงานผลแบบเดิม ปุ่มหลักพาไปบันทึกผลรายวันของงานนั้น
-  const planned = data.jobs.find((job) => (data.grPlans ?? []).some((plan) => plan.jobId === job.id));
+  // แผนขั้นตอนมีของ PT / BG / PK ด้วยตั้งแต่ 20261224010000: เลือกงาน GR ที่ตั้งขั้นตอนแล้ว
+  const planned = data.jobs.find((job) => job.dept === "GR" && (data.grPlans ?? []).some((plan) => plan.jobId === job.id));
   const plannedCard = html.split('<article class="card rf-card bom-job').find((card) => card.includes(`job=${planned.id}"`));
   assert.ok(plannedCard.includes(`href="#/gr?tab=log&amp;j=${planned.id}"`));
   assert.doesNotMatch(plannedCard, /jobReport/);
@@ -558,7 +559,8 @@ test("production departments PT, BG and PK use the same landing: their own jobs 
   const open = data.jobs.filter((job) => job.dept === "PK" && liveOrder(data, job) && job.status !== "done");
   const html = await pk.open("FACTORY_PK");
   // การ์ด "รับจาก GR" (งานที่ GR ส่งให้ PK และยังไม่รับ) อยู่หน้าการ์ดงานผลิต
-  const fromGr = (data.grHandovers ?? []).filter((row) => row.status === "sent").length;
+  // เฉพาะที่ GR ส่งให้ PK (ชุดเดียวกันมีการส่งของ PT / BG และ PK → WH ด้วยตั้งแต่ 20261224010000 · หน้า PK ของขั้นถัดไปแสดงแยก)
+  const fromGr = (data.grHandovers ?? []).filter((row) => row.status === "sent" && (row.fromDept ?? "GR") === "GR" && (row.toDept ?? "PK") === "PK").length;
   assert.equal([...html.matchAll(/class="card rf-card bom-job/g)].length, open.length + fromGr);
   assert.doesNotMatch(html, /#\/bom\?p=work/);
   assert.equal(h1Of(html), "งานของฉัน");
@@ -690,6 +692,11 @@ function makeReceivable(env) {
   const data = env.store.data();
   const order = data.orders.find((entry) => entry.status === "released" || entry.status === "in_progress");
   for (const job of data.jobs.filter((entry) => entry.orderId === order.id && entry.dept === "PK")) { job.qtyDone = job.qtyPlanned; job.status = "done"; }
+  // 20261224010000: WH รับได้ไม่เกินที่ PK ส่งให้ WH · แถวส่ง PK → WH ครบยอดที่ PK ทำ (การส่งจริงตรวจใน scripts/tests/bom-dept-steps.test.mjs)
+  data.grHandovers ??= [];
+  for (const job of data.jobs.filter((entry) => entry.orderId === order.id && entry.dept === "PK" && entry.kind === "FG")) {
+    data.grHandovers.push({ id: `ship-${job.id}`, jobId: job.id, orderId: order.id, itemCode: job.itemCode, qty: job.qtyDone, status: "sent", note: "", fromDept: "PK", toDept: "WH", sentBy: "x", sentAt: 1, receivedBy: null, receivedAt: null, cancelledBy: null, cancelledAt: null, cancelReason: null, moves: [] });
+  }
   return order;
 }
 

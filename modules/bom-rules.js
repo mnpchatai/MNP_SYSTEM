@@ -1151,16 +1151,19 @@
     const figures = fgLedger(fgMoves);
     const moves = fgMoves.filter((move) => move.orderId === order.id);
     const pkJobs = jobs.filter((job) => job.orderId === order.id && job.dept === "PK");
+    // PK → WH (20261224010000): WH รับได้ไม่เกินที่ PK ส่งให้ WH แล้ว (ไม่นับยกเลิก) · เพดาน = min(ยอดที่ PK ทำ, ที่ PK ส่ง) − ที่รับแล้ว (ตรงกับ private.bom_fg_move)
+    const sends = (data?.grHandovers ?? []).filter((row) => row.orderId === order.id && (row.toDept ?? "PK") === "WH" && row.status !== "cancelled");
     const products = [...orderedByCode(order)].map(([fgCode, qty]) => {
       const f = figures(order.id, fgCode);
       const pkDone = fgRound(pkJobs.filter((job) => job.kind === "FG" && job.itemCode === fgCode).reduce((sum, job) => sum + (Number(job.qtyDone) || 0), 0));
+      const pkSent = fgRound(sends.filter((row) => row.itemCode === fgCode).reduce((sum, row) => sum + (Number(row.qty) || 0), 0));
       const have = fgRound(f.own + f.inn);
       const deliverable = Math.max(0, fgRound(have - f.out - f.delivered));
       return {
-        fgCode, ordered: qty, pkDone,
+        fgCode, ordered: qty, pkDone, pkSent,
         received: f.own, own: f.own, fromStock: f.inn, givenAway: f.out, have, delivered: f.delivered,
         free: fgHolds(order) ? fgFreeOf(fgOrderedFor(order, qty), f) : 0,
-        receivable: Math.max(0, fgRound(pkDone - f.own)),
+        receivable: Math.max(0, fgRound(Math.min(pkDone, pkSent) - f.own)),
         deliverable,
         // ส่วนที่ลูกค้าของใบนี้ยังรอ (ส่งมอบได้และยังไม่ครบตามที่สั่ง) · ส่วนที่ส่งมอบได้เกินนี้คือสต็อกสินค้าสำเร็จรูปของใบ (ส่งให้ลูกค้าได้หรือเก็บไว้ให้ใบอื่น)
         owed: Math.min(deliverable, Math.max(0, fgRound(qty - f.delivered))),
@@ -1666,12 +1669,39 @@
   const GR_HANDOVER_STATUS_LABEL = Object.freeze({ sent: "รอ PK รับ", received: "PK รับแล้ว", cancelled: "ยกเลิกแล้ว" });
   const GR_REQUEST_STATUS_LABEL = Object.freeze({ open: "รอ SR จ่าย", covered: "SR จ่ายครบแล้ว", cancelled: "ยกเลิกแล้ว" });
   const grRound = (n) => Math.round((Number(n) || 0) * 1e4) / 1e4;
-  // ตั้งค่าที่ใช้อยู่ { steps (เรียงตาม seq), reasons, targets, stored } · stored = มีแถวตั้งค่าในฐานข้อมูลแล้ว
-  function grConfig(data) {
-    const row = (data?.grConfig ?? [])[0] ?? null;
-    const source = row && Array.isArray(row.steps) && row.steps.length ? row : GR_DEFAULT_CONFIG;
+
+  // ---------- ขั้นตอนรายแผนก PT / BG / PK แบบเดียวกับ GR (โรงงาน ขั้น 7 · 20261224010000_bom_dept_steps.sql) ----------
+  // ชุดเดียวกับ GR: grConfig (หนึ่งแถวต่อแผนก มี dept · แถวที่ไม่มี dept = GR) · grPlans / grRecords (แผนกดูจากงาน) · grHandovers (fromDept / toDept ไม่มี = GR → PK) · grWorkers (dept ไม่มี = GR)
+  // ค่าเริ่มต้น (ตรงกับ private.bom_dept_default_config): รหัสขั้นใช้รหัสขั้นตอนผลิตเดิม (DEFAULT_PROCESSES) · PT ขึ้นรูป · BG เย็บ (BG-02) · PK ประกอบ → ใส่กระเป๋า → บรรจุกล่อง
+  const STEP_DEPTS = Object.freeze(["GR", "PT", "BG", "PK"]);
+  const deptConfigOf = (steps, reasons) => Object.freeze({
+    steps: Object.freeze(steps.map(([code, name, kind], index) => Object.freeze({ code, name, kind, seq: index + 1, active: true }))),
+    reasons: Object.freeze(reasons), targets: Object.freeze([]),
+  });
+  const DEPT_DEFAULT_CONFIG = Object.freeze({
+    GR: GR_DEFAULT_CONFIG,
+    PT: deptConfigOf([["PT-01", "ขึ้นรูป", "main"]], ["ขึ้นรูปไม่เต็ม", "ขนาดไม่ได้", "ผิวไม่สวย/มีรอย", "สีไม่ตรง", "วัตถุดิบมีตำหนิ", "อื่นๆ"]),
+    BG: deptConfigOf([["BG-02", "เย็บ", "main"]], ["ฝีเข็มไม่สวย/หลุด", "เย็บผิดตำแหน่ง", "ขนาดไม่ได้", "ผ้า/ซิปมีตำหนิ", "อื่นๆ"]),
+    PK: deptConfigOf([["PK-01", "ประกอบ", "main"], ["PK-02", "ใส่กระเป๋า", "main"], ["PK-03", "บรรจุกล่อง", "main"]], ["ประกอบไม่ได้", "ชิ้นส่วนมีตำหนิ", "ชิ้นส่วนไม่ครบ", "กระเป๋า/กล่องเสียหาย", "อื่นๆ"]),
+  });
+  // รูปรหัสขั้นของแผนก (<แผนก>-<ตัวอักษร/ตัวเลข 1-10>) · ตรงกับ private.bom_gr_save_config
+  const deptStepCode = (dept) => new RegExp(`^${String(dept ?? "GR")}-[A-Z0-9]{1,10}$`);
+  const isStepDept = (dept) => STEP_DEPTS.includes(dept);
+  // แผนกของแถวตั้งค่า / ผู้ทำ / การส่ง (แถวรุ่นก่อนที่ไม่มีช่องแผนก = GR → PK)
+  const configDept = (row) => row?.dept ?? (row?.key && row.key !== "gr" ? String(row.key).toUpperCase() : "GR");
+  const handoverFrom = (row) => row?.fromDept ?? "GR";
+  const handoverTo = (row) => row?.toDept ?? "PK";
+  // แผนกของผลรายวัน = แผนกของงาน (ผลไม่มีช่องแผนก) · งานที่ไม่พบ = GR (ข้อมูลรุ่นก่อน)
+  const recordDept = (data, record) => record?.dept ?? (data?.jobs ?? []).find((job) => job.id === record?.jobId)?.dept ?? "GR";
+  // พนักงานของแผนก (ชุด grWorkers ของ snapshot · ไม่มี dept = GR) ให้หัวหน้าเลือกผู้ทำ
+  const stepWorkers = (data, dept = "GR") => (data?.grWorkers ?? []).filter((worker) => (worker.dept ?? "GR") === dept);
+  // ตั้งค่าที่ใช้อยู่ของแผนก { steps (เรียงตาม seq), reasons, targets, stored, dept } · stored = มีแถวตั้งค่าในฐานข้อมูลแล้ว · ไม่ระบุแผนก = GR
+  function grConfig(data, dept = "GR") {
+    const fallback = DEPT_DEFAULT_CONFIG[dept] ?? GR_DEFAULT_CONFIG;
+    const row = (data?.grConfig ?? []).find((entry) => configDept(entry) === dept) ?? null;
+    const source = row && Array.isArray(row.steps) && row.steps.length ? row : fallback;
     const steps = [...source.steps].map((step) => ({ ...step })).sort((a, b) => (Number(a.seq) || 0) - (Number(b.seq) || 0) || String(a.code).localeCompare(String(b.code)));
-    return { steps, reasons: [...(source.reasons ?? GR_DEFAULT_CONFIG.reasons)], targets: [...(source.targets ?? [])].map((target) => ({ ...target })), stored: Boolean(row) };
+    return { steps, reasons: [...(source.reasons ?? fallback.reasons)], targets: [...(source.targets ?? [])].map((target) => ({ ...target })), stored: Boolean(row), dept };
   }
   const grStepOf = (config, code) => (config?.steps ?? []).find((step) => step.code === code) ?? null;
   const grStepName = (config, code) => grStepOf(config, code)?.name ?? String(code ?? "");
@@ -1687,7 +1717,8 @@
   const grPlanOf = (data, jobId) => (data?.grPlans ?? []).find((plan) => plan.jobId === jobId) ?? null;
   // ขั้นตอนเริ่มต้นของงานตอนตั้งครั้งแรก (เจ้าของสั่ง 2026-11-23 "เริ่มครบ 9 ขั้นทุกงาน"): ทุกขั้นสายหลักที่ใช้อยู่ในตั้งค่า ตามลำดับในตั้งค่า
   // หัวหน้า GR เอาขั้นที่งานนี้ไม่ทำออก หรือเพิ่มขั้นแยกเองในหน้าต่างตั้งขั้นตอน · ต้องทำของแต่ละขั้น = จำนวนแผนของงาน (ปัดขึ้นเป็นจำนวนเต็ม อย่างน้อย 1)
-  function grDefaultSteps(data, job, config = grConfig(data)) {
+  // ขั้นตอนรายแผนก (20261224010000): ตั้งค่าของแผนกของงาน (PT / BG / PK เริ่มด้วยทุกขั้นสายหลักของแผนกนั้นเหมือนกัน)
+  function grDefaultSteps(data, job, config = grConfig(data, isStepDept(job?.dept) ? job.dept : "GR")) {
     const qtyTarget = Math.max(1, Math.ceil(Number(job?.qtyPlanned) || 0));
     return (config?.steps ?? []).filter((step) => step.kind === "main" && step.active !== false).map((step) => ({ code: step.code, qtyTarget }));
   }
@@ -1716,8 +1747,71 @@
     const sent = sum(["sent", "received"]);
     return { rows, sent, received: sum(["received"]), pendingAtPk: sum(["sent"]), waitingAtGr: grRound((Number(job?.qtyDone) || 0) - sent) };
   }
+  // การส่งงานของงานแผนกใดก็ได้ (20261224010000): { dept, to (PK | WH), rows, sent, received, pending, waiting } · waiting = ยอดดีที่ยังไม่ได้ส่ง (รอที่แผนก · ส่งได้อีกเท่านี้)
+  // งาน PK ส่งให้ WH: received = ส่วนที่ WH รับเข้าคลังแล้วของใบ × สินค้า (ไม่เกินที่ส่ง · WH รับรวมต่อใบ จึงนับรวมทุกงาน PK ของสินค้าเดียวกัน) pending = ส่งแล้ว WH ยังไม่รับ
+  function deptHandoverSummary(data, job) {
+    const base = grHandoverSummary(data, job);
+    const to = job?.dept === "PK" ? "WH" : "PK";
+    if (to === "PK") return { dept: job?.dept ?? "GR", to, rows: base.rows, sent: base.sent, received: base.received, pending: base.pendingAtPk, waiting: base.waitingAtGr };
+    const wh = pkToWhPosition(data, job?.orderId, job?.itemCode);
+    const received = Math.min(base.sent, wh.received);
+    return { dept: "PK", to, rows: base.rows, sent: base.sent, received, pending: grRound(Math.max(0, base.sent - received)), waiting: base.waitingAtGr };
+  }
+  // PK → WH ของใบ × สินค้า: { pkDone (Σ ยอดของงาน PK / FG), sent (Σ ที่ PK ส่งให้ WH ไม่นับยกเลิก), received (WH รับสุทธิ), waitingAtWh (ส่งแล้วยังไม่รับ), waitingAtPk (ทำแล้วยังไม่ส่ง) }
+  // เพดานรับของ WH = min(pkDone, sent) − received (ตรงกับ private.bom_fg_move ของ 20261224010000)
+  function pkToWhPosition(data, orderId, fgCode) {
+    const pkDone = grRound((data?.jobs ?? []).filter((job) => job.orderId === orderId && job.dept === "PK" && job.kind === "FG" && job.itemCode === fgCode)
+      .reduce((total, job) => total + (Number(job.qtyDone) || 0), 0));
+    const sent = grRound((data?.grHandovers ?? []).filter((row) => row.orderId === orderId && row.itemCode === fgCode && handoverTo(row) === "WH" && row.status !== "cancelled")
+      .reduce((total, row) => total + (Number(row.qty) || 0), 0));
+    let received = 0;
+    for (const move of data?.fgMoves ?? []) {
+      if (move.orderId !== orderId || move.fgCode !== fgCode) continue;
+      if (move.kind === "receive") received += Number(move.qty) || 0;
+      else if (move.kind === "unreceive") received -= Number(move.qty) || 0;
+    }
+    received = grRound(received);
+    return { pkDone, sent, received, waitingAtWh: grRound(Math.max(0, sent - received)), waitingAtPk: grRound(Math.max(0, pkDone - sent)) };
+  }
+  // ความพร้อมของ PK ต่อใบ (เจ้าของสั่ง 2026-11-25 "แสดงสถานะให้เห็น"): ต่อแหล่ง = งาน GR / PT / BG ของใบ { job, dept, needed (แผน), sent, received (PK รับแล้ว), ready }
+  // และของซื้อที่ ST จ่ายให้ PK (rules.partReceivers มี PK) { itemCode, name, uom, needed (แผนของงานของซื้อ), issued (ที่ ST จ่ายแล้วทั้งใบ), ready }
+  // ready = ทุกแหล่งได้ครบ (ไม่มีแหล่งเลย = พร้อม) · PK บันทึกผลได้เสมอแม้ยังไม่พร้อม · งาน PK ทำชิ้นย่อยเองไม่นับเป็นแหล่ง
+  function pkReadiness(data, order) {
+    const jobs = (data?.jobs ?? []).filter((job) => job.orderId === order?.id);
+    const sources = jobs.filter((job) => ["GR", "PT", "BG"].includes(job.dept)).map((job) => {
+      const summary = grHandoverSummary(data, job);
+      const needed = grRound(Number(job.qtyPlanned) || 0);
+      return { job, dept: job.dept, itemCode: job.itemCode, needed, sent: summary.sent, received: summary.received, ready: summary.received + 1e-9 >= needed };
+    }).sort((a, b) => flowStepOf(a.dept) - flowStepOf(b.dept) || String(a.itemCode).localeCompare(String(b.itemCode)));
+    const receivers = partReceivers(order);
+    const parts = jobs.filter((job) => job.dept === "ST" && job.kind === "PURCHASED" && (receivers.get(job.itemCode) ?? []).includes("PK")).map((job) => {
+      const needed = grRound(Number(job.qtyPlanned) || 0);
+      const issued = grRound(Number(job.qtyDone) || 0);
+      return { job, itemCode: job.itemCode, name: job.name, uom: job.uom, needed, issued, ready: job.status === "done" || issued + 1e-9 >= needed };
+    }).sort((a, b) => String(a.itemCode).localeCompare(String(b.itemCode)));
+    const all = [...sources, ...parts];
+    return { sources, parts, ready: all.every((entry) => entry.ready), total: all.length, readyCount: all.filter((entry) => entry.ready).length };
+  }
+  // วัตถุดิบที่ ST จ่ายให้งาน PT / BG (ใช้แสดงอย่างเดียว ไม่มีข้อมูลรายงาน): งานของซื้อ (ST / PURCHASED) ของใบเดียวกันที่ rules.partReceivers มีแผนกของงานนี้
+  // [{ itemCode, name, uom, planned, issued, returned, shared (หลายแผนกใช้รหัสนี้: ยอดเป็นของทั้งใบ), moves: [{ kind: issue | return, qty, at, by }] เก่าก่อน, lastAt, lastBy }]
+  // การเบิกจ่ายเป็นรายใบ (หนึ่งงานต่อรหัสต่อใบ) ไม่แยกตามแผนก จึงเป็นยอดของทั้งใบ
+  function deptMaterials(data, job) {
+    const order = (data?.orders ?? []).find((entry) => entry.id === job?.orderId) ?? null;
+    if (!order) return [];
+    const receivers = partReceivers(order);
+    return (data?.jobs ?? []).filter((entry) => entry.orderId === order.id && entry.dept === "ST" && entry.kind === "PURCHASED" && (receivers.get(entry.itemCode) ?? []).includes(job.dept))
+      .map((entry) => {
+        const moves = (data?.stockMoves ?? []).filter((move) => move.ref === order.id && move.itemCode === entry.itemCode && (move.kind === "issue" || move.kind === "return"))
+          .map((move) => ({ kind: move.kind, qty: grRound(Math.abs(Number(move.qty) || 0)), at: move.at ?? null, by: move.by ?? "" }))
+          .sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0));
+        const last = moves.filter((move) => move.kind === "issue").at(-1) ?? null;
+        return { itemCode: entry.itemCode, name: entry.name, uom: entry.uom, planned: grRound(Number(entry.qtyPlanned) || 0), issued: grRound(Number(entry.qtyDone) || 0),
+          returned: partReturned(data?.stockMoves, order.id, entry.itemCode), shared: (receivers.get(entry.itemCode) ?? []).length > 1, moves, lastAt: last?.at ?? null, lastBy: last?.by ?? "" };
+      })
+      .sort((a, b) => String(a.itemCode).localeCompare(String(b.itemCode)));
+  }
   // ความคืบหน้ารายขั้นของงาน: [{ code, name, kind, qtyTarget, good, reject, hours, done }] ตามลำดับแผน + ยอดรวม (ไม่มีแผน = steps [] planned false)
-  function grJobProgress(data, job, config = grConfig(data)) {
+  function grJobProgress(data, job, config = grConfig(data, isStepDept(job?.dept) ? job.dept : "GR")) {
     const plan = grPlanOf(data, job?.id);
     const records = grActiveRecords(data, job?.id);
     const steps = (plan?.steps ?? []).map((step) => {
@@ -1782,9 +1876,11 @@
   };
   // สรุปผลรายวัน (หน้า "สรุปผล"): กรองตาม { month: "YYYY-MM", workerId, stepCode, itemCode, customer, orderId, status = "active" } · คืน { records, byDay, byStep, byWorker, byReason }
   // แต่ละกลุ่ม { key, label, hours, good, reject, required (เฉพาะผลที่มีเป้า), percent } · required / percent = null เมื่อไม่มีผลใดที่มีเป้า
-  function grSummary(data, filters = {}, config = grConfig(data)) {
+  // filters.dept (ค่าเริ่มต้น GR · 20261224010000) = เฉพาะผลของงานแผนกนั้น
+  function grSummary(data, filters = {}, config = grConfig(data, filters.dept ?? "GR")) {
     const orders = new Map((data?.orders ?? []).map((order) => [order.id, order]));
-    const records = (data?.grRecords ?? []).filter((record) => (filters.status === "all" || record.status === (filters.status ?? "active"))
+    const dept = filters.dept ?? "GR";
+    const records = (data?.grRecords ?? []).filter((record) => recordDept(data, record) === dept && (filters.status === "all" || record.status === (filters.status ?? "active"))
       && (!filters.month || String(record.workDate ?? "").startsWith(filters.month)) && (!filters.workerId || record.workerId === filters.workerId)
       && (!filters.stepCode || record.stepCode === filters.stepCode) && (!filters.itemCode || record.itemCode === filters.itemCode)
       && (!filters.orderId || record.orderId === filters.orderId) && (!filters.customer || orders.get(record.orderId)?.customer === filters.customer))
@@ -1865,6 +1961,8 @@
     ROD_SPEC_KEYS, ROD_SPEC_LABEL, ROD_STATUS_LABEL, ROD_DECISION_LABEL, ROD_FREE_ORDER, rodBalance, rodOwnerFree, rodBuckets, rodFree, rodOwned, rodFifo, qcVerdict, rodCodesOf, rodStockForDraft, rodTaken, rodIssued, rodReversedIds, rodIssueNeeds, rodSummary,
     ROD_LOCATION_MAX, ROD_LOT_NO_MAX, ROD_RESERVED_LOT_PREFIX, ROD_SOURCE_LABEL, rodAttrs,
     GR_DEFAULT_CONFIG, GR_LIMITS, GR_STEP_CODE, GR_STEP_KIND_LABEL, GR_TARGET_FACTOR, GR_RECORD_STATUS_LABEL, GR_HANDOVER_STATUS_LABEL, GR_REQUEST_STATUS_LABEL,
+    STEP_DEPTS, DEPT_DEFAULT_CONFIG, deptStepCode, isStepDept, configDept, handoverFrom, handoverTo, recordDept, stepWorkers,
+    deptHandoverSummary, pkToWhPosition, pkReadiness, deptMaterials,
     grConfig, grStepOf, grStepName, grTarget, grRequired, grPercent, grPlanOf, grDefaultSteps, grActiveRecords, grJobTotals, grHandoverSummary, grJobProgress,
     grIssuedSince, grRequestState, grOpenRequests, grRodCodesOf, grLotsIssued, grDay, grSummary,
     DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,

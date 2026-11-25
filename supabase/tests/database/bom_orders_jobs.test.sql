@@ -7,6 +7,22 @@ begin;
 create or replace function private.bom_real_open() returns boolean language sql stable set search_path = '' as $$ select true $$;
 create extension if not exists pgtap with schema extensions;
 select no_plan();
+create schema shp_t;
+-- 20261224010000: WH รับได้ไม่เกินที่ PK ส่งให้ WH (sendPkToWh) · ก่อนรับเข้าคลังเทสต์นี้ให้ PK ส่งครบยอดที่ทำแล้วของทุกงาน PK / FG ของใบ เพดานจึงเท่ายอดที่ PK ทำเหมือนเดิม
+-- ใส่แถวตรงด้วยสิทธิ์เจ้าของตาราง (security definer ของเทสต์) · การส่งผ่าน sendPkToWh และสิทธิ์ของมันตรวจใน bom_dept_steps.test.sql
+create function shp_t.ship(p_order text) returns integer language sql volatile security definer set search_path = '' as $$
+  with todo as (
+    select j.id, j.is_test, j.order_pk, j.item_code,
+           j.qty_done - coalesce((select sum(h.qty) from public.bom_gr_handovers h where h.job_id = j.id and h.status <> 'cancelled'), 0) as qty
+    from public.bom_jobs j join public.bom_orders o on o.id = j.order_pk
+    where o.pi_no = upper(btrim(p_order)) and j.is_test = (select private.bom_test_mode()) and j.dept = 'PK' and j.kind = 'FG'),
+  ins as (
+    insert into public.bom_gr_handovers (is_test, job_id, order_pk, item_code, qty, from_dept, to_dept, note)
+    select t.is_test, t.id, t.order_pk, t.item_code, round(t.qty, 4), 'PK', 'WH', 'เทสต์: ส่งครบยอดที่ PK ทำ' from todo t where round(t.qty, 4) > 0
+    returning 1)
+  select count(*)::integer from ins
+$$;
+grant usage on schema shp_t to authenticated;
 
 -- 1. โครงสร้างและสิทธิ์ของตารางใหม่ ------------------------------------------------------------
 create temp table bom_new_tables(name text) on commit drop;
@@ -498,6 +514,7 @@ select throws_ok($$ select public.app_bom_save_master('{"fgMoves":{"upsert":[{"o
 -- ปิดใบ: WH รับครบตามที่สั่ง (10 ชุด PK ทำไว้ 100) ขณะที่งาน GR / RB ยังเปิด = ใบยังไม่ปิด (20261125010000)
 -- ฝ่ายวางแผนปิดงาน GR / RB ที่จะไม่รายงานต่อพร้อมเหตุผล แล้ว WH ปิดใบ (closeOrder) · กติกาเต็มอยู่ใน bom_close_rules.test.sql
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select shp_t.ship('251106-25001');
 select set_config('test.res', public.app_bom_save_master('{"fgMoves":{"upsert":[{"orderId":"251106-25001","kind":"receive","lines":[{"fgCode":"FG-A","qty":10}]}]}}'::jsonb,
   (public.app_bom_master() ->> 'version')::bigint, 'receiveFg')::text, true);
 select is(current_setting('test.res')::jsonb -> 'changes' -> 'orders' -> 'upsert', '[]'::jsonb, 'WH receives everything ordered while GR and RB are open: the order stays open');

@@ -135,9 +135,13 @@
   // ฟอร์มใหญ่สำหรับมือถือ: วันที่ (ค่าเริ่ม วันนี้) · ผู้ทำ (พนักงาน = ตัวเอง · หัวหน้า / ฝ่ายวางแผนเลือกจากพนักงาน GR: ค่าเริ่ม = ตัวเองเฉพาะเมื่ออยู่ในรายชื่อ ไม่งั้นว่างและต้องเลือก) · งาน · ขั้นตอน (ของงานนั้น) · ชั่วโมง · คน (ค่าเริ่ม 1) · ดี · เสีย + เหตุผล (เมื่อมีของเสีย) · หมายเหตุ
   // เป้าของชิ้นงาน × ขั้น (ถ้ามี) บอกต้องทำและ % ขณะกรอก (bindRecordForm) · action ตรวจกติกาซ้ำทั้งหมด
   // ตัวเลือกผู้ทำ = พนักงานแผนก GR (grWorkers · ชุดเดียวกับที่ฐานข้อมูลตรวจ) + ผู้ทำเดิมของผลที่แก้ (คงไว้ได้โดยไม่ตรวจซ้ำ) · ผู้ใช้ที่ไม่อยู่ในรายชื่อไม่ถูกเติมเข้าไป
-  const isGrWorker = (ctx, id) => (ctx.data.grWorkers ?? []).some((row) => row.id === id);
+  // ชุด grWorkers / grRecords / grHandovers มีของแผนก PT / BG / PK ด้วยตั้งแต่ 20261224010000: หน้าของ GR อ่านเฉพาะของ GR (rules.stepWorkers / recordDept / handoverFrom)
+  const grWorkerRows = (ctx) => (ctx.rules.stepWorkers ? ctx.rules.stepWorkers(ctx.data, "GR") : ctx.data.grWorkers ?? []);
+  const grRecordRows = (data, rules) => (data.grRecords ?? []).filter((record) => !rules.recordDept || rules.recordDept(data, record) === "GR");
+  const grSendRows = (data, rules) => (data.grHandovers ?? []).filter((row) => !rules.handoverFrom || (rules.handoverFrom(row) === "GR" && rules.handoverTo(row) === "PK"));
+  const isGrWorker = (ctx, id) => grWorkerRows(ctx).some((row) => row.id === id);
   function workerOptions(ctx, extra = null) {
-    const list = [...(ctx.data.grWorkers ?? [])];
+    const list = [...grWorkerRows(ctx)];
     if (extra?.id && !list.some((row) => row.id === extra.id)) list.unshift({ id: extra.id, name: extra.name });
     return list.map((row) => ({ value: row.id, label: row.name || row.id }));
   }
@@ -187,7 +191,7 @@
   function logView(ctx) {
     const { ui, data, rules, user } = ctx;
     const lead = canLead(ctx);
-    const all = (data.grRecords ?? []).slice().sort(byNewest);
+    const all = grRecordRows(data, rules).slice().sort(byNewest);
     if (!lead) {
       // พนักงาน: ผลของตัวเองวันนี้และเมื่อวาน (แก้ / ยกเลิกได้เฉพาะที่บันทึกวันนี้)
       const since = rules.grDay(ctx.now, -1);
@@ -283,7 +287,7 @@
       return `<tr${rowAttr(jobHref(job.id))}><td>${mainLink(ctx, job.name, jobHref(job.id))}<div class="small muted">${esc(`${job.itemCode} · ใบ ${job.orderId}`)}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(job.qtyDone)} ${unit}`)}</td><td class="right rf-mono" title="${attr(`PK รับแล้ว ${rules.fmtQty(sum.received)} · รอ PK รับ ${rules.fmtQty(sum.pendingAtPk)}`)}">${esc(rules.fmtQty(sum.sent))}</td><td class="right rf-mono">${sum.waitingAtGr > 0 ? `<strong>${esc(rules.fmtQty(sum.waitingAtGr))}</strong>` : esc("0")}</td><td class="right">${button}</td></tr>`;
     });
     const jobsCard = ui.card(ui.table(["งาน", { label: "ยอดดี", className: "right", title: "ยอดดีของขั้นสุดท้ายของงาน" }, { label: "ส่งแล้ว", className: "right", title: "รวมที่ PK รับแล้วและที่รอ PK รับ (ไม่นับที่ยกเลิก)" }, { label: "รอที่ GR", className: "right", title: "ของดีที่ยังไม่ได้ส่งให้ PK" }, ""], rows, { emptyText: "ยังไม่มีงานที่มีของดีให้ส่ง" }), { title: esc("ของดีของแต่ละงาน"), flush: true });
-    const sends = (data.grHandovers ?? []).slice().sort((a, b) => num(b.sentAt) - num(a.sentAt) || String(b.id).localeCompare(String(a.id)));
+    const sends = grSendRows(data, rules).slice().sort((a, b) => num(b.sentAt) - num(a.sentAt) || String(b.id).localeCompare(String(a.id)));
     const { shown, more } = F.limited(ctx, sends);
     const sendsCard = ui.card(`${ui.table(handoverHead(), handoverRows(ctx, shown), { emptyText: "ยังไม่เคยส่งให้ PK" })}${more}`, { title: esc("รายการส่ง"), flush: true });
     return `${jobsCard}${sendsCard}`;
@@ -307,7 +311,7 @@
     const month = monthParam === "all" ? "" : monthParam;
     const filters = { month, workerId: ctx.params.get("w") ?? "", stepCode: ctx.params.get("s") ?? "", itemCode: ctx.params.get("item") ?? "", customer: ctx.params.get("cust") ?? "", orderId: ctx.params.get("ord") ?? "" };
     const sum = rules.grSummary(data, filters, config);
-    const records = (data.grRecords ?? []).filter((record) => record.status === "active");
+    const records = grRecordRows(data, rules).filter((record) => record.status === "active");
     const orders = new Map(data.orders.map((order) => [order.id, order]));
     const distinct = (list) => [...new Set(list.filter(Boolean))];
     const months = distinct([thisMonth, ...records.map((record) => String(record.workDate ?? "").slice(0, 7))]).sort().reverse();
@@ -546,7 +550,7 @@
     const { ui, rules, data } = ctx;
     const jobs = new Map(data.jobs.map((job) => [job.id, job]));
     const can = Boolean(ctx.helpers.canReceiveGr?.(ctx.user));
-    return (data.grHandovers ?? []).filter((row) => row.status === "sent" && ACTIVE.includes(orderOf(ctx, row.orderId)?.status))
+    return grSendRows(data, rules).filter((row) => row.status === "sent" && ACTIVE.includes(orderOf(ctx, row.orderId)?.status))
       .sort((a, b) => num(a.sentAt) - num(b.sentAt) || String(a.id).localeCompare(String(b.id)))
       .map((row) => {
         const job = jobs.get(row.jobId);

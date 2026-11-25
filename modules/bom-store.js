@@ -199,6 +199,7 @@
   // rodLots / rodMoves = คลังแท่งยาว SR (20261202010000): ล็อตแท่งจากล็อตตกแต่งของ RubberFlow และประวัติของแท่งที่ใช้ได้ · เซิร์ฟเวอร์เขียนเอง client ส่งเฉพาะแถวคำขอของคำสั่งคลังแท่ง (ROD_ACTIONS)
   // grConfig / grPlans / grRecords / rodRequests / grHandovers = แปรรูปยาง GR (20261216010000): ตั้งค่า ขั้นตอนของงาน ผลรายวัน คำขอเบิกยางเส้นยาว ส่งงานให้ PK · เซิร์ฟเวอร์เขียนเอง
   // client ส่งเฉพาะแถวคำขอของคำสั่ง GR (GR_ACTIONS) · grWorkers = พนักงาน active ของแผนก GR (มากับ snapshot เท่านั้น ส่วนต่างว่างเสมอ) อ่านอย่างเดียว
+  // 20261224010000: ชุดเดียวกันใช้กับ PT / BG / PK ด้วย (grConfig + dept · grHandovers + fromDept / toDept รวม PK → WH · grWorkers + dept) · action ส่งงานใหม่ใน DEPT_ACTIONS
   const WORK_LISTS = Object.freeze(["customers", "orders", "jobs", "stock", "stockMoves", "fgMoves", "rodLots", "rodMoves", "grConfig", "grPlans", "grRecords", "rodRequests", "grHandovers", "grWorkers"]);
   const REMOTE_LISTS = Object.freeze([...MASTER_LISTS, ...WORK_LISTS]);
   const LOCAL_KEY = "mnp-bom-local-v1"; // รุ่นก่อนหน้าเก็บใบสั่งผลิต/งาน/บันทึกการใช้งานไว้ที่นี่ · ตอนนี้ไม่อ่านไม่เขียน (ข้อมูลทดสอบเก่าไม่ย้ายเข้าฐานข้อมูล)
@@ -268,6 +269,10 @@
   // แปรรูปยาง GR (20261216010000_bom_gr_module.sql): action → ส่วนที่ส่งแถวคำขอเดียว (action คืน result.request เป็นอาร์เรย์หนึ่งแถว) · ยอดของงาน GR เซิร์ฟเวอร์คำนวณเองในธุรกรรมเดียวกัน
   const GR_ACTIONS = Object.freeze({ saveGrConfig: "grConfig", setGrJobSteps: "grPlans", addGrRecord: "grRecords", editGrRecord: "grRecords", voidGrRecord: "grRecords",
     requestRods: "rodRequests", cancelRodRequest: "rodRequests", sendGrToPk: "grHandovers", receiveGrAtPk: "grHandovers", cancelGrHandover: "grHandovers" });
+  // ขั้นตอนรายแผนก PT / BG / PK (20261224010000_bom_dept_steps.sql): ส่งงาน GR / PT / BG → PK · PK รับ · ยกเลิก / ย้อนรับ · PK → WH · ยกเลิกการส่งให้ WH = ส่วน grHandovers (แถวคำขอเดียว)
+  // ตั้งค่า ขั้นตอนของงาน และผลรายวันของ PT / BG / PK ใช้ action เดิมของ GR (แผนกมาจากงาน หรือ dept ของแถวตั้งค่า)
+  const DEPT_ACTIONS = Object.freeze({ sendToPk: "grHandovers", receiveAtPk: "grHandovers", cancelHandover: "grHandovers", sendPkToWh: "grHandovers", cancelPkToWh: "grHandovers" });
+  const SECTION_ACTIONS = Object.freeze({ ...GR_ACTIONS, ...DEPT_ACTIONS });
   function diffMaster(before, after, action = "") {
     const changes = {};
     for (const list of REMOTE_LISTS) {
@@ -406,10 +411,10 @@
       BOM_INVALID_STOCK: "รหัสที่นับไม่ใช่ของซื้อ หรือตัวเลขไม่ถูกต้อง (ต้อง 0 ขึ้นไป)",
       BOM_INVALID_RETURN: "คืนของซื้อไม่ได้: จำนวนเกินที่คืนได้ ไม่มีของที่เบิกจ่ายแล้ว หรือไม่ได้ระบุเหตุผล (อาจมีผู้อื่นคืนไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว",
       BOM_INVALID_FG: "รับเข้าคลัง ส่งมอบ หรือปิดใบไม่ได้: ข้อมูลไม่ถูกต้อง (จำนวนต้องมากกว่า 0 สินค้าต้องอยู่ในใบ เหตุผลที่ปิดใบอย่างน้อย 3 ตัวอักษร)",
-      BOM_FG_EXCEEDS: "ตัวเลขเปลี่ยนไปแล้ว: จำนวนที่รับเข้าคลังเกินที่ PK ส่งมอบ จำนวนที่ส่งมอบเกินที่มีในใบ หรือสต็อกสินค้าสำเร็จรูปที่ใบนี้ตั้งใช้ไม่พอ (อาจมีผู้อื่นบันทึกหรือปล่อยผลิตใบอื่นไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาตรวจตัวเลขแล้วทำรายการอีกครั้ง",
+      BOM_FG_EXCEEDS: "ตัวเลขเปลี่ยนไปแล้ว: จำนวนที่รับเข้าคลังเกินที่ PK ส่งให้ WH จำนวนที่ส่งมอบเกินที่มีในใบ สต็อกสินค้าสำเร็จรูปที่ใบนี้ตั้งใช้ไม่พอ หรือยกเลิกการส่งให้ WH ในส่วนที่ WH รับเข้าคลังแล้ว (ให้ผู้จัดการ WH ย้อนรับเข้าก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาตรวจตัวเลขแล้วทำรายการอีกครั้ง",
       BOM_INVALID_ROD: "ทำรายการคลังยางเส้นยาวไม่ได้: ข้อมูลไม่ถูกต้อง (จำนวนรับต้องมากกว่า 0 และไม่เกินที่ส่งมา ค่าที่วัดครบตามสเปกและผลตรงกับค่าที่วัด ตำแหน่งจัดเก็บ 1-40 ตัวอักษร เหตุผลอย่างน้อย 3 ตัวอักษร เลขล็อตซ้ำ รหัสที่ไม่ใช่เส้นยาง (RB) หรือหยิบยางเส้นยาวจากถังของใบอื่น)",
-      BOM_INVALID_GR: "ทำรายการของแผนก GR ไม่ได้: ข้อมูลไม่ถูกต้อง (ขั้นต้องอยู่ในขั้นตอนของงาน ดี + เสียมากกว่า 0 ของเสียต้องมีเหตุผลจากรายการ ผู้ทำต้องเป็นพนักงาน GR วันที่ไม่เกินวันนี้ ขั้นที่มีผลแล้วลบไม่ได้ หรือรายการนี้ถูกบันทึกไปแล้ว)",
-      BOM_GR_EXCEEDS: "ตัวเลขเปลี่ยนไปแล้ว: ของดีของงานต้องไม่น้อยกว่าที่ส่งให้ PK (ส่งเกินของดีที่ยังไม่ได้ส่ง หรือแก้ / ยกเลิกผล / เปลี่ยนขั้นตอนจนของดีต่ำกว่าที่ส่งแล้ว ให้ยกเลิกการส่งหรือให้หัวหน้าแผนก PK ย้อนการรับก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาตรวจตัวเลขแล้วทำรายการอีกครั้ง",
+      BOM_INVALID_GR: "ทำรายการขั้นตอนหรือการส่งงานของแผนกไม่ได้: ข้อมูลไม่ถูกต้อง (ขั้นต้องอยู่ในขั้นตอนของงาน ดี + เสียมากกว่า 0 ของเสียต้องมีเหตุผลจากรายการของแผนก ผู้ทำต้องเป็นพนักงานของแผนกงาน วันที่ไม่เกินวันนี้ ขั้นที่มีผลแล้วลบไม่ได้ งานหรือการส่งไม่ตรงกับแผนก หรือรายการนี้ถูกบันทึกไปแล้ว)",
+      BOM_GR_EXCEEDS: "ตัวเลขเปลี่ยนไปแล้ว: ของดีของงานต้องไม่น้อยกว่าที่ส่งต่อไปแล้ว (ส่งให้ PK หรือ WH เกินของดีที่ยังไม่ได้ส่ง หรือแก้ / ยกเลิกผล / เปลี่ยนขั้นตอนจนของดีต่ำกว่าที่ส่งแล้ว ให้ยกเลิกการส่งหรือให้หัวหน้าแผนก PK ย้อนการรับก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาตรวจตัวเลขแล้วทำรายการอีกครั้ง",
       BOM_ROD_EXCEEDS: "ตัวเลขเปลี่ยนไปแล้ว: ยางเส้นยาวในคลังยางเส้นยาว (SR) ไม่พอที่จะจ่าย ปรับ หรือใช้ตอนปล่อยผลิต (อาจมีผู้อื่นจ่ายหรือปล่อยผลิตใบอื่นไปก่อน) ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาตรวจตัวเลขแล้วทำรายการอีกครั้ง",
       BOM_INVALID_ORDER: "ใบสั่งผลิตไม่ผ่านการตรวจของฐานข้อมูล (เช่น ยกเลิกใบโดยไม่มีเหตุผล 3–200 ตัวอักษร หรือยอดที่ใช้จากสต็อกสินค้าสำเร็จรูปเกินจำนวนสั่ง) ตรวจแล้วทำรายการอีกครั้ง",
       BOM_INVALID_JOB: "บันทึกงานไม่ได้: ยอดหรือรายงานไม่ถูกต้อง (พักงานต้องมีเหตุผล 3–200 ตัวอักษร · งานที่ผูก WO ของ RubberFlow รับยอดจาก RubberFlow เท่านั้น รายงานผลที่นี่ไม่ได้)",
@@ -735,7 +740,7 @@
       const sent = RETURN_ACTIONS.includes(name) && result?.request ? { partReturns: { upsert: [clone(result.request)] } }
         : FG_ACTIONS.includes(name) && result?.request ? { fgMoves: { upsert: [clone(result.request)] } }
         : Object.hasOwn(ROD_ACTIONS, name) && Array.isArray(result?.request) ? { [ROD_ACTIONS[name]]: { upsert: clone(result.request) } }
-        : Object.hasOwn(GR_ACTIONS, name) && Array.isArray(result?.request) ? { [GR_ACTIONS[name]]: { upsert: clone(result.request) } }
+        : Object.hasOwn(SECTION_ACTIONS, name) && Array.isArray(result?.request) ? { [SECTION_ACTIONS[name]]: { upsert: clone(result.request) } }
         : canPlan(user) ? changes : shapeForActor(changes, before);
       if (!hasChanges(sent)) return { ok: true, result: result ?? true, saving: Promise.resolve({ ok: true }) };
       // แบ่งเฉพาะการนำเข้าจาก Excel: ทำซ้ำได้ปลอดภัย (ชิ้นงานที่มีแล้วรวม BOM ที่มีแล้วข้าม) · คำสั่งอื่นที่ทำซ้ำอาจสร้าง revision ซ้ำ จึงส่งครั้งเดียวเสมอ
@@ -966,7 +971,7 @@
     return { load, data: getData, user: getUser, setUser, run, reset, isPersisted: () => persisted, size, now, isRemote: () => false, status: () => "ready", error: () => null, isSaving: () => false, hasNewer: () => false, version: () => null, ensureLoaded: () => Promise.resolve(), reload: () => Promise.resolve(), catchUp: () => Promise.resolve(false), audit: () => ({ status: "ready", entries: getData().audit, error: null }), loadAudit: () => Promise.resolve(), purge: () => Promise.resolve({ ok: false, error: new Error("ล้างข้อมูล BOM ทดสอบได้เฉพาะโหมดฐานข้อมูล") }), subscribe: () => () => {} };
   }
 
-  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, NAV, SETUP_PAGES, NAV_PARENT, navLabel, findModule, canSee, homeOf, DEPT_ROUTES, deptRoute, isValidState, migrate, createStore, MASTER_LISTS, WORK_LISTS, REMOTE_LISTS, diffMaster, splitForSave, combineDeltas, SAVE_BATCH_RECORDS, SAVE_BATCH_BYTES, sameMaster, customerName, customerKey, mapRemoteError, roleOfEmployee, personaUser, usesBom, isPlanner, PRODUCTION_DEPTS, ROD_ACTIONS, GR_ACTIONS };
+  const api = { STATE_KEY, USER_KEY, LOCAL_KEY, STATE_VERSION, MODULES, MODULE_IDS, GROUPS, ROLES, NAV, SETUP_PAGES, NAV_PARENT, navLabel, findModule, canSee, homeOf, DEPT_ROUTES, deptRoute, isValidState, migrate, createStore, MASTER_LISTS, WORK_LISTS, REMOTE_LISTS, diffMaster, splitForSave, combineDeltas, SAVE_BATCH_RECORDS, SAVE_BATCH_BYTES, sameMaster, customerName, customerKey, mapRemoteError, roleOfEmployee, personaUser, usesBom, isPlanner, PRODUCTION_DEPTS, ROD_ACTIONS, GR_ACTIONS, DEPT_ACTIONS };
   if (isNode) module.exports = api;
   else root.MNP_BOM_STORE = api;
 })(typeof window !== "undefined" ? window : globalThis);

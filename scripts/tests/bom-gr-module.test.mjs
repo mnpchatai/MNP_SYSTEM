@@ -87,7 +87,10 @@ test("rules: a rod request is covered by what SR issues to that order and code a
 test("rules: the summary groups records by day, step, worker and reject reason with targets where set", () => {
   const d = fresh();
   const all = R.grSummary(d, {});
-  assert.equal(all.records.length, d.grRecords.length);
+  // ชุดเดียวกันมีผลของ PT / BG / PK ด้วยตั้งแต่ 20261224010000: สรุปของ GR (ค่าเริ่มต้น) นับเฉพาะผลของงาน GR
+  const grOnly = d.grRecords.filter((record) => R.recordDept(d, record) === "GR");
+  assert.ok(grOnly.length < d.grRecords.length, "the demo has records of other departments too");
+  assert.equal(all.records.length, grOnly.length);
   const step = (code) => all.byStep.find((row) => row.key === code);
   assert.equal(step("GR-04").good, 115);
   assert.equal(step("GR-04").required, 304, "two days of 8 h × 20 × 0.95");
@@ -362,7 +365,8 @@ test("mock: the config and the job steps — GR staff and other departments are 
   assert.ok((await s.gr("persona-grh", "setGrJobSteps", "grPlans", plan)).data);
   const view = await s.view();
   assert.deepEqual(view.grPlans.find((row) => row.jobId === tp.id).steps, plan.steps);
-  assert.deepEqual(view.grWorkers.map((row) => row.id), ["persona-gr", "persona-grh"], "the snapshot lists the GR workers");
+  assert.deepEqual(view.grWorkers.filter((row) => row.dept === "GR").map((row) => row.id), ["persona-gr", "persona-grh"], "the snapshot lists the GR workers");
+  assert.deepEqual(view.grWorkers.slice(0, 2).map((row) => row.dept), ["GR", "GR"], "GR first, then the workers of PT / BG / PK (20261224010000)");
   assert.deepEqual((await s.call("app_bom_master_since", { p_version: 0 })).changes.grWorkers, { upsert: [], delete: [] }, "the delta never carries them");
 });
 

@@ -2268,6 +2268,7 @@ test("creating a product does not navigate when the code already exists", async 
 
 test("my jobs for the warehouse and for a read-only account: no job cards of other departments and no report buttons", () => {
   const env = load();
+  clearDemoWhSends(env);
   env.store.setUser("B03");
   const work = env.context.MNP_BOM_PAGES.work;
   for (const user of [{ id: "W1", role: "wh", dept: "WH", name: "คลังสินค้า" }, { id: "V1", role: "viewer", dept: "HR", name: "ผู้ดู" }, { id: "V2", role: "viewer", name: "ไม่มีแผนก" }]) {
@@ -2924,7 +2925,28 @@ const pkReport = (env, made, backTo = "B09") => {
     const qty = job.kind === "FG" ? made[job.itemCode] ?? 0 : job.qtyPlanned; // จำนวนที่รายงานเพิ่มครั้งนี้
     if (qty > 0) assert.equal(env.store.run("reportJob", { jobId: job.id, qtyDone: qty }).ok, true);
   }
+  // 20261224010000: WH รับได้ไม่เกินที่ PK ส่งให้ WH · ฝ่ายวางแผนส่งที่ PK ทำครบให้ WH (การส่งเองตรวจใน scripts/tests/bom-dept-steps.test.mjs)
+  shipPk(env);
   env.store.setUser(backTo);
+};
+// ข้อมูลสาธิตมีการส่ง PK → WH ของใบ DEMO-26006 ที่ WH ยังไม่รับ (20261224010000) · เทสต์ที่เริ่มจากคลังสินค้าที่ไม่มีอะไรรอรับ ให้ฝ่ายวางแผนยกเลิกการส่งนั้นก่อน
+const clearDemoWhSends = (env) => {
+  const back = env.store.user()?.id ?? "B09";
+  env.store.setUser("B03");
+  for (const row of env.store.data().grHandovers.filter((entry) => entry.toDept === "WH" && entry.status === "sent")) {
+    const own = env.store.data().fgMoves.filter((move) => move.orderId === row.orderId && move.fgCode === row.itemCode && move.kind === "receive").length;
+    if (own) continue;
+    const out = env.store.run("cancelPkToWh", { handoverId: row.id, reason: "เทสต์เริ่มจากคลังว่าง" });
+    assert.equal(out.ok, true, out.error?.message);
+  }
+  env.store.setUser(back);
+};
+const shipPk = (env, orderId = FG_PI) => {
+  const data = env.store.data();
+  for (const job of data.jobs.filter((entry) => entry.orderId === orderId && entry.dept === "PK" && entry.kind === "FG")) {
+    const left = Math.round(((Number(job.qtyDone) || 0) - env.context.MNP_BOM_RULES.grHandoverSummary(data, job).sent) * 1e4) / 1e4;
+    if (left > 0) { const out = env.store.run("sendPkToWh", { jobId: job.id, qty: left }); assert.equal(out.ok, true, out.error?.message); }
+  }
 };
 const fgRun = (env, action, lines, extra = {}) => { const result = env.store.run(action, { orderId: FG_PI, lines: lines.map(([fgCode, qty]) => ({ fgCode, qty })), ...extra }); assert.equal(result.ok, true, result.error?.message); return result; };
 const count = (html, pattern) => (html.match(pattern) ?? []).length;
@@ -3126,6 +3148,7 @@ test("closing short: only when PK is done and everything PK made is received; th
 
 test("closing short (U6): the warehouse gets a card and the menu count follows; everyone else reads at step 4 what the warehouse waits for, also while PK is still open", async () => {
   const env = whLoad();
+  clearDemoWhSends(env);
   env.store.setUser("B09");
   pkReport(env, { [FG_TP]: 70, [FG_HL]: 40 });
   fgRun(env, "receiveFg", [[FG_TP, 70], [FG_HL, 40]]);
@@ -3352,6 +3375,7 @@ test("close rules: everything received while RB and GR are open: step 5 names th
 
 test("my jobs for the warehouse: a card to receive per PI with something waiting, a card to deliver per closed PI with stock left, linked to the right step", async () => {
   const env = whLoad();
+  clearDemoWhSends(env);
   env.store.setUser("B09");
   let html = await env.render("p=work");
   clean(html);
@@ -3384,6 +3408,7 @@ test("my jobs for the warehouse: a card to receive per PI with something waiting
 
 test("the work count used by the department modules is the open tab's card count for every role: admin, planner, both kinds of manager, the warehouse and each department", async () => {
   const env = whLoad();
+  clearDemoWhSends(env);
   pkReport(env, { [FG_TP]: 30 }, "B01"); // a card to receive for the warehouse
   const tab = (html) => Number(/>ต้องทำ (\d+)</.exec(html)?.[1] ?? 0);
   const seen = {};

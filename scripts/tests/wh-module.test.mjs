@@ -86,7 +86,21 @@ function makeReceivable(env) {
   const data = env.store.data();
   const order = data.orders.find((entry) => entry.status === "released" || entry.status === "in_progress");
   for (const job of data.jobs.filter((entry) => entry.orderId === order.id && entry.dept === "PK")) { job.qtyDone = job.qtyPlanned; job.status = "done"; }
+  shipPkRows(data, order.id);
   return order;
+}
+// 20261224010000: WH รับได้ไม่เกินที่ PK ส่งให้ WH · ตัวช่วยของเทสต์ = แถวส่ง PK → WH ครบยอดที่ PK ทำของทุกงาน PK / FG ของใบ (การส่งจริงตรวจใน scripts/tests/bom-dept-steps.test.mjs)
+function shipPkRows(data, orderId) {
+  data.grHandovers ??= [];
+  for (const job of data.jobs.filter((entry) => entry.orderId === orderId && entry.dept === "PK" && entry.kind === "FG")) {
+    const sent = data.grHandovers.filter((row) => row.jobId === job.id && row.status !== "cancelled").reduce((sum, row) => sum + (Number(row.qty) || 0), 0);
+    const left = Math.round(((Number(job.qtyDone) || 0) - sent) * 1e4) / 1e4;
+    if (left > 0) data.grHandovers.push({ id: `ship-${job.id}-${data.grHandovers.length}`, jobId: job.id, orderId, itemCode: job.itemCode, qty: left, status: "sent", note: "", fromDept: "PK", toDept: "WH", sentBy: "x", sentAt: 1, receivedBy: null, receivedAt: null, cancelledBy: null, cancelledAt: null, cancelReason: null, moves: [] });
+  }
+}
+// ข้อมูลสาธิตมีการส่ง PK → WH ของใบ DEMO-26006 ที่ WH ยังไม่รับ (20261224010000) · เทสต์ของหน้านี้เริ่มจากคลังที่มีเฉพาะงานที่เทสต์สร้างเอง จึงยกเลิกการส่งนั้นในข้อมูล
+function clearDemoWhSends(env) {
+  for (const row of env.store.data().grHandovers ?? []) if (row.toDept === "WH" && row.status === "sent" && row.orderId === "DEMO-26006") row.status = "cancelled";
 }
 
 
@@ -118,7 +132,7 @@ function seedBoxes(env) {
   return rf;
 }
 const WH_USERS = Object.freeze({ staff: ["B09", emp("WH")], head: ["B10", emp("WH", "department_manager")], admin: ["B01", emp("AD", "admin")], planner: ["B03", emp("PP")], manager: ["B02", emp("PP", "factory_manager")] });
-const whEnv = (who) => { const [bomUser, employee] = WH_USERS[who]; const env = load({ employee }); env.store.setUser(bomUser); seedBoxes(env); return env; };
+const whEnv = (who) => { const [bomUser, employee] = WH_USERS[who]; const env = load({ employee }); env.store.setUser(bomUser); seedBoxes(env); clearDemoWhSends(env); return env; };
 const wh = (env, query = "") => env.open("FACTORY_WH", query);
 
 test("WH is visible in test mode to the warehouse (staff and head), PP and the managers; other departments' staff and heads, the Indesign department, an office employee and anyone outside test mode never see it", () => {
