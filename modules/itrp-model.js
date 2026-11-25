@@ -24,8 +24,8 @@
   // เลขเวอร์ชันของโมดูล (แสดงมุมขวาล่างทุกหน้า) รูปแบบ <ใหญ่>.<ย่อย 2 หลัก> · กติกาเดียวกับใบสั่งงาน IT (เจ้าของตัดสิน 20/11/2026)
   // อัปเดตย่อย (แก้คำ หน้าตา บั๊ก ช่องเล็ก ๆ) = +0.01 · อัปเดตใหญ่ (เปลี่ยนขั้นตอนงาน/สถานะ/ฟีเจอร์ใหม่ที่ผู้ใช้ต้องเรียนรู้) = ขึ้นหลักหน่วย .00
   // ถามเจ้าของทุกครั้งว่าเป็นอัปเดตย่อยหรือใหญ่ แล้วแก้ทั้งสองค่านี้ใน PR เดียวกับการเปลี่ยนแปลง (VERSION_DATE = วันที่ปล่อย YYYY-MM-DD)
-  const MODULE_VERSION = "1.02";
-  const VERSION_DATE = "2026-11-23";
+  const MODULE_VERSION = "1.03";
+  const VERSION_DATE = "2026-11-25";
   // ธง "กำลังพัฒนา" (จุดเดียว): true = การ์ดใบแจ้งซ่อม IT ในเมนูมีป้าย "กำลังพัฒนา" และทุกหน้าของโมดูลมีแถบข้อความว่ายังไม่เปิดใช้งานจริง
   // ป้ายกับแถบเป็นข้อความอย่างเดียว ไม่ปิดกั้นการกดเข้าหรือการใช้งาน · ถอดป้ายเมื่อเจ้าของสั่งเปิดใช้งานจริง: เปลี่ยนเป็น false ที่นี่ที่เดียว
   const IN_DEVELOPMENT = true;
@@ -1046,7 +1046,228 @@
     return info.kind === "unknown" ? { kind: "unknown", message: "เชื่อมต่อระบบไม่ได้ สัญญาณอาจขาด กดลองอีกครั้งได้เลย" } : info;
   }
 
+  /* ---------- เปลี่ยน / ถอด / ย้ายชิ้นส่วนจากใบแจ้งซ่อม (สัญญา RPC: docs/itrp-contract.md หัวข้อ "เปลี่ยน/ถอด/ย้ายชิ้นส่วนจากใบแจ้งซ่อม") ---------- */
+  // IT เลือกรายการจาก context ของฐานข้อมูล (ไม่พิมพ์ข้อความอิสระ) สะสมเป็นรายการ แล้วส่ง app_itrp_apply_part_changes ครั้งเดียวทั้งก้อน
+  // ที่นี่ตรวจซ้ำให้ผู้ใช้เห็นข้อความไทยก่อนส่ง (ชิ้นเดียวกันซ้ำ ชนิดไม่ตรง ฯลฯ) · ฐานข้อมูลตรวจซ้ำทุกข้อเสมอและเป็นผู้ตัดสิน
+  const MAX_PART_CHANGES = 20; // ตรงกับ max_changes ของ context / p_changes ของ apply
+  const MAX_PART_SLOT = 50; // ช่อง/Slot
+  const MAX_PART_NOTE = 200; // หมายเหตุของรายการ
+  const PART_ACTIONS = Object.freeze({
+    replace: { label: "เปลี่ยน", historyLabel: "เปลี่ยนชิ้นส่วน" },
+    remove: { label: "ถอดออก", historyLabel: "ถอดออก" },
+    move: { label: "ย้ายไปเครื่องอื่น", historyLabel: "ย้ายไปเครื่องอื่น" },
+    install: { label: "ติดตั้งชิ้นสำรองเพิ่ม", historyLabel: "ติดตั้งเพิ่ม" },
+  });
+  // สถานะของชิ้นเดิมหลังถอดออก (ตรงกับ result_statuses ของ context) · ค่าเริ่มต้นของฟอร์ม = ชำรุด (เหตุที่เปลี่ยนมากที่สุด)
+  const PART_RESULT_STATUSES = Object.freeze([
+    { value: "broken", label: "ชำรุด" },
+    { value: "spare", label: "สำรอง" },
+    { value: "retired", label: "ยกเลิกใช้งาน" },
+  ]);
+  const PART_ASSET_STATUS_LABELS = Object.freeze({ in_use: "ใช้งาน", broken: "ชำรุด", spare: "สำรอง", retired: "ยกเลิกใช้งาน" });
+  const PART_HOST_SOURCE_LABELS = Object.freeze({ request: "รหัสที่ผู้แจ้งกรอก", report: "เครื่องที่ IT ระบุตอนส่งงาน" });
+  const PARTS_MOVABLE_STATUSES = Object.freeze(["in_use", "broken"]); // ชิ้นที่ถอด/เปลี่ยน/ย้ายได้ (ตรงกับที่ฐานข้อมูลตรวจ)
+  const partAssetStatusLabel = (status) => PART_ASSET_STATUS_LABELS[status] ?? "";
+  const partResultLabel = (status) => PART_RESULT_STATUSES.find((item) => item.value === status)?.label ?? "";
+  const partActionLabel = (action) => PART_ACTIONS[action]?.label ?? "";
+  const partHostSourceLabel = (source) => PART_HOST_SOURCE_LABELS[source] ?? "";
+  const listOf = (value) => (Array.isArray(value) ? value : []);
+
+  // ชื่อที่ใช้เรียกชิ้นส่วน: เลขทะเบียน (หรือรหัสอุปกรณ์) · ชื่อ/รุ่น
+  function partAssetLabel(asset) {
+    if (!asset || typeof asset !== "object") return "";
+    const code = textOf(asset.reg_no) || textOf(asset.device_code);
+    const name = textOf(asset.name) || textOf(asset.model) || textOf(asset.type_name);
+    return [code, name].filter((part, index, all) => part && all.indexOf(part) === index).join(" · ") || "ชิ้นส่วนไม่มีชื่อ";
+  }
+  // ข้อความยาวขึ้นสำหรับรายการเลือก: ชื่อ + รุ่น/ซีเรียล/ที่เก็บ (ช่วยแยกชิ้นสำรองที่หน้าตาคล้ายกัน)
+  function partAssetDetail(asset) {
+    const bits = [asset?.model, asset?.serial ? `S/N ${asset.serial}` : "", asset?.place].map(textOf).filter(Boolean);
+    const label = partAssetLabel(asset);
+    const rest = bits.filter((bit) => !label.includes(bit));
+    return rest.length ? `${label} (${rest.join(" · ")})` : label;
+  }
+
+  // ทำคำตอบของ app_itrp_part_changes_context ให้เป็นรูปที่หน้าเว็บใช้ต่อ (ข้อมูลผิดรูป/ไม่ใช่อ็อบเจ็กต์ = null → ซ่อนส่วนนี้)
+  function normalizePartContext(data) {
+    if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+    const hosts = listOf(data.hosts).filter((host) => host && textOf(host.host_code)).map((host) => ({
+      code: textOf(host.host_code), source: host.source ?? "", device: host.device && typeof host.device === "object" ? host.device : null,
+      parts: listOf(host.parts).filter((part) => part && part.id),
+    }));
+    const spares = listOf(data.spares).filter((group) => group && textOf(group.type_code)).map((group) => ({
+      typeCode: textOf(group.type_code), typeName: textOf(group.type_name) || textOf(group.type_code), items: listOf(group.items).filter((item) => item && item.id),
+    })).filter((group) => group.items.length);
+    const moveTargets = listOf(data.move_targets).filter((target) => target && textOf(target.device_code)).map((target) => ({
+      code: textOf(target.device_code), name: textOf(target.name), typeCode: textOf(target.type_code),
+    }));
+    return {
+      requestId: data.request?.id ?? "", docNo: data.request?.doc_no ?? "", canApply: data.can_apply === true, blockedReason: textOf(data.blocked_reason),
+      max: Number.isInteger(data.max_changes) && data.max_changes > 0 ? data.max_changes : MAX_PART_CHANGES, hosts, spares, moveTargets,
+    };
+  }
+  // ชิ้นส่วนของเครื่องจัดกลุ่มตามชนิด (ลำดับตามที่ฐานข้อมูลส่งมา)
+  function partGroups(parts) {
+    const groups = [];
+    for (const part of listOf(parts)) {
+      let group = groups.find((item) => item.typeCode === part.type_code);
+      if (!group) { group = { typeCode: part.type_code ?? "", typeName: textOf(part.type_name) || textOf(part.type_code) || "อื่นๆ", items: [] }; groups.push(group); }
+      group.items.push(part);
+    }
+    return groups;
+  }
+  const canChangePart = (part) => PARTS_MOVABLE_STATUSES.includes(part?.status);
+  function findPartHost(ctx, hostCode) { return ctx?.hosts.find((host) => host.code === hostCode) ?? null; }
+  function findInstalledPart(ctx, hostCode, assetId) { return findPartHost(ctx, hostCode)?.parts.find((part) => part.id === assetId) ?? null; }
+  function findSparePart(ctx, assetId) {
+    for (const group of ctx?.spares ?? []) { const item = group.items.find((part) => part.id === assetId); if (item) return item; }
+    return null;
+  }
+  // ชิ้นส่วนที่เลือกไว้ในรายการแล้ว (ทั้งชิ้นเดิมและชิ้นใหม่) ห้ามใช้ซ้ำในก้อนเดียว
+  function usedPartIds(rows) {
+    const ids = new Set();
+    for (const row of listOf(rows)) { if (row.asset_id) ids.add(row.asset_id); if (row.new_asset_id) ids.add(row.new_asset_id); }
+    return ids;
+  }
+  // ค้นหาตามเลขทะเบียน/รหัส/ชื่อ/รุ่น/ซีเรียล/ที่เก็บ (ไม่สนตัวพิมพ์ใหญ่เล็ก)
+  function partMatches(asset, query) {
+    const needle = textOf(query).toLowerCase();
+    if (!needle) return true;
+    return [asset.reg_no, asset.device_code, asset.name, asset.model, asset.serial, asset.place, asset.type_name].some((value) => String(value ?? "").toLowerCase().includes(needle));
+  }
+  // ชิ้นสำรองที่เลือกได้ตอนนี้: ตัดชิ้นที่อยู่ในรายการแล้ว · typeCode ระบุ = เฉพาะชนิดนั้น (เปลี่ยนแทนกันได้เฉพาะชนิดเดียวกัน) · คืนเป็นกลุ่มตามชนิด
+  function availableSpares(ctx, rows, { typeCode = null, query = "" } = {}) {
+    const used = usedPartIds(rows);
+    return (ctx?.spares ?? [])
+      .filter((group) => !typeCode || group.typeCode === typeCode)
+      .map((group) => ({ ...group, items: group.items.filter((item) => !used.has(item.id) && partMatches(item, query)) }))
+      .filter((group) => group.items.length);
+  }
+  // เครื่องปลายทางที่ย้ายไปได้: ไม่ใช่เครื่องเดิม · พิมพ์ค้นหาได้ (รหัส/ชื่อ)
+  function availableMoveTargets(ctx, hostCode, query = "") {
+    const needle = textOf(query).toLowerCase();
+    return (ctx?.moveTargets ?? []).filter((target) => target.code !== hostCode && (!needle || `${target.code} ${target.name}`.toLowerCase().includes(needle)));
+  }
+
+  // ตรวจรายการที่จะเพิ่ม · คืนข้อความไทยของข้อผิดพลาดข้อแรก หรือ "" ถ้าใช้ได้ · rows = รายการที่เลือกไว้แล้ว (ไม่รวมรายการนี้)
+  function checkPartChange(change, rows, ctx) {
+    const action = change?.action;
+    if (!PART_ACTIONS[action]) return "กรุณาเลือกประเภทรายการ";
+    if (listOf(rows).length >= (ctx?.max ?? MAX_PART_CHANGES)) return `เลือกได้ครั้งละไม่เกิน ${ctx?.max ?? MAX_PART_CHANGES} รายการ กรุณาบันทึกชุดนี้ก่อน`;
+    const host = findPartHost(ctx, change.host_code);
+    if (!host) return "กรุณาเลือกเครื่อง";
+    if (!change.asset_id) return action === "install" ? "กรุณาเลือกชิ้นสำรองที่จะติดตั้ง" : "กรุณาเลือกชิ้นส่วน";
+    const used = usedPartIds(rows);
+    if (used.has(change.asset_id) || (change.new_asset_id && used.has(change.new_asset_id))) return "ชิ้นส่วนนี้อยู่ในรายการที่เลือกไว้แล้ว ใช้ซ้ำในการบันทึกครั้งเดียวไม่ได้";
+    if (textOf(change.slot).length > MAX_PART_SLOT) return `ช่อง/Slot ต้องไม่เกิน ${MAX_PART_SLOT} ตัวอักษร`;
+    if (textOf(change.note).length > MAX_PART_NOTE) return `หมายเหตุต้องไม่เกิน ${MAX_PART_NOTE} ตัวอักษร`;
+    if (action === "install") {
+      return findSparePart(ctx, change.asset_id) ? "" : "ไม่พบชิ้นสำรองนี้ในรายการ (อาจถูกใช้ไปแล้ว) กรุณาเลือกใหม่";
+    }
+    const part = findInstalledPart(ctx, change.host_code, change.asset_id);
+    if (!part) return "ไม่พบชิ้นส่วนนี้ในเครื่อง (อาจถูกถอดหรือย้ายไปแล้ว) กรุณาเลือกใหม่";
+    if (!canChangePart(part)) return `ชิ้นส่วนนี้มีสถานะ "${partAssetStatusLabel(part.status)}" เปลี่ยน/ถอด/ย้ายไม่ได้ (ต้องเป็นใช้งานหรือชำรุด)`;
+    if ((action === "replace" || action === "remove") && !PART_RESULT_STATUSES.some((item) => item.value === change.result_status)) {
+      return "กรุณาเลือกสถานะของชิ้นเดิมที่ถอดออก (ชำรุด สำรอง หรือยกเลิกใช้งาน)";
+    }
+    if (action === "replace") {
+      if (!change.new_asset_id) return "กรุณาเลือกชิ้นสำรองที่จะใส่แทน";
+      const spare = findSparePart(ctx, change.new_asset_id);
+      if (!spare) return "ไม่พบชิ้นสำรองนี้ในรายการ (อาจถูกใช้ไปแล้ว) กรุณาเลือกใหม่";
+      if (spare.type_code !== part.type_code) return `ชนิดไม่ตรงกัน: ชิ้นเดิมเป็น ${part.type_name ?? part.type_code} แต่ชิ้นใหม่เป็น ${spare.type_name ?? spare.type_code} (เปลี่ยนแทนกันได้เฉพาะชนิดเดียวกัน)`;
+    }
+    if (action === "move") {
+      const target = textOf(change.to_host_code);
+      if (!target) return "กรุณาเลือกเครื่องปลายทางที่จะย้ายไป";
+      if (target === change.host_code) return "เครื่องปลายทางต้องเป็นคนละเครื่องกับเครื่องเดิม";
+      if (!ctx.moveTargets.some((item) => item.code === target)) return "ไม่พบเครื่องปลายทางนี้ในทะเบียน (เลือกจากรายการที่แสดง)";
+    }
+    return "";
+  }
+  // ต่อรายการใหม่ท้ายรายการ (ไม่แก้ rows เดิม) · ผ่าน = { rows } · ไม่ผ่าน = { error }
+  function addPartChange(rows, change, ctx) {
+    const error = checkPartChange(change, rows, ctx);
+    if (error) return { error };
+    return { rows: [...listOf(rows), cleanPartChange(change)] };
+  }
+  // ทำรายการให้ตรงตามสัญญา: เก็บเฉพาะช่องที่ action นั้นรับ (ช่องที่ไม่เกี่ยวส่งไป = ฐานข้อมูลปฏิเสธ) ช่องว่างไม่ส่ง
+  const PART_FIELDS_BY_ACTION = Object.freeze({
+    replace: ["new_asset_id", "result_status", "slot", "note"],
+    remove: ["result_status", "note"],
+    move: ["to_host_code", "slot", "note"],
+    install: ["slot", "note"],
+  });
+  function cleanPartChange(change) {
+    const clean = { action: change.action, host_code: textOf(change.host_code), asset_id: change.asset_id };
+    for (const field of PART_FIELDS_BY_ACTION[change.action] ?? []) {
+      const value = textOf(change[field]);
+      if (value) clean[field] = value;
+    }
+    return clean;
+  }
+  const partChangePayload = (rows) => listOf(rows).map(cleanPartChange);
+
+  // ประโยคสรุปของรายการที่เลือกไว้ (แสดงก่อนกดบันทึก)
+  function partChangeSummary(change, ctx) {
+    const hostLabel = `เครื่อง ${change.host_code}`;
+    const oldLabel = partAssetLabel(findInstalledPart(ctx, change.host_code, change.asset_id) ?? findSparePart(ctx, change.asset_id));
+    const slot = textOf(change.slot) ? ` · ช่อง ${textOf(change.slot)}` : "";
+    const note = textOf(change.note) ? ` · หมายเหตุ: ${textOf(change.note)}` : "";
+    switch (change.action) {
+      case "replace": return `${hostLabel}: เปลี่ยน ${oldLabel} เป็น ${partAssetLabel(findSparePart(ctx, change.new_asset_id))} · ชิ้นเดิมเป็น${partResultLabel(change.result_status)}${slot}${note}`;
+      case "remove": return `${hostLabel}: ถอด ${oldLabel} ออก · ชิ้นเดิมเป็น${partResultLabel(change.result_status)}${note}`;
+      case "move": return `${hostLabel}: ย้าย ${oldLabel} ไปเครื่อง ${change.to_host_code}${slot}${note}`;
+      case "install": return `${hostLabel}: ติดตั้ง ${oldLabel}${slot}${note}`;
+      default: return "";
+    }
+  }
+  // context ใหม่หลังฐานข้อมูลปฏิเสธ/ผลไม่แน่ชัด: ตัดรายการที่ใช้ไม่ได้แล้วออก (ชิ้นส่วนถูกถอด/ย้าย/ใช้ไปแล้ว) · คืน { rows, dropped }
+  function pruneStalePartChanges(rows, ctx) {
+    const kept = [];
+    for (const row of listOf(rows)) {
+      if (checkPartChange(row, kept, { ...ctx, max: Number.MAX_SAFE_INTEGER })) continue;
+      kept.push(row);
+    }
+    return { rows: kept, dropped: listOf(rows).length - kept.length };
+  }
+  // ข้อความผิดของฐานข้อมูลขึ้นต้น "แถวที่ N: …" (N เริ่ม 1 ตามลำดับที่ส่ง) → เลขแถว หรือ null
+  function partChangeErrorRow(message) {
+    const match = /^แถวที่ (\d+):/.exec(String(message ?? "").trim());
+    return match ? Number(match[1]) : null;
+  }
+
+  // ประวัติที่บันทึกแล้ว (app_itrp_get_part_changes → items[]) · ผู้อ่านทุกคนที่เห็นใบ (ไม่มีรหัสภายในของอุปกรณ์)
+  function partChangeText(item) {
+    const named = (value) => `${value?.type_name ? `${value.type_name} ` : ""}${partAssetLabel(value)}`;
+    const status = partResultLabel(item?.result_status);
+    switch (item?.action) {
+      case "replace": return `เปลี่ยน ${named(item.asset)} เป็น ${named(item.new_asset)}${status ? ` · ชิ้นเดิมเป็น${status}` : ""}`;
+      case "remove": return `ถอด ${named(item.asset)} ออก${status ? ` · เป็น${status}` : ""}`;
+      case "move": return `ย้าย ${named(item.asset)} ไปเครื่อง ${item.to_host_code ?? "—"}`;
+      case "install": return `ติดตั้ง ${named(item.asset)}`;
+      default: return "";
+    }
+  }
+  function partChangeItems(data) {
+    return listOf(data?.items).filter((item) => item && PART_ACTIONS[item.action]).map((item, index) => ({
+      id: item.id ?? index,
+      no: index + 1,
+      action: item.action,
+      actionLabel: PART_ACTIONS[item.action].historyLabel,
+      host: item.host_code ?? "",
+      text: partChangeText(item),
+      slot: textOf(item.slot),
+      note: textOf(item.note),
+      by: textOf(item.actor_full_name) || textOf(item.actor_employee_no) || "—",
+      at: item.created_at ?? "",
+      atText: item.created_at ? formatDateTime(item.created_at) : "—",
+    }));
+  }
+
   const api = {
+    MAX_PART_CHANGES, MAX_PART_SLOT, MAX_PART_NOTE, PART_ACTIONS, PART_RESULT_STATUSES, partAssetStatusLabel, partResultLabel, partActionLabel, partHostSourceLabel, partAssetLabel, partAssetDetail,
+    normalizePartContext, partGroups, canChangePart, findPartHost, findInstalledPart, findSparePart, usedPartIds, partMatches, availableSpares, availableMoveTargets,
+    checkPartChange, addPartChange, cleanPartChange, partChangePayload, partChangeSummary, pruneStalePartChanges, partChangeErrorRow, partChangeText, partChangeItems,
     MODULE_VERSION, VERSION_DATE, IN_DEVELOPMENT, YEAR_OFFSET, MAX_SYMPTOM, MAX_LONG_TEXT, MAX_ASSET_CODE, MAX_DEVICE_NAME, MAX_NOTE, MAX_PR_PO, MAX_PARTS, MAX_DEVICES, MAX_DEVICE_CODE, MAX_REMARK, MAX_INFO_BODY, MAX_REASON, MAX_REASON_ON_BEHALF, CANCEL_ON_BEHALF, isCancelOnBehalf, cancelReasonSpec, MAX_FILES, MAX_FILE_BYTES,
     REQUEST_KINDS, REPAIR_TARGETS, CAUSE_KINDS, REPAIR_METHODS, FILE_MIME_BY_EXTENSION, FILE_ACCEPT, FILE_HINT, FILES_PREPARING_MESSAGE, EMPTY_REPAIR_FORM, EMPTY_COMPLETE_FORM, EMPTY_PART_ROW, EMPTY_REWORK_FORM, STATUS_LABELS, EVENT_LABELS, ACTION_BUTTONS, ACTION_ORDER, IT_GROUPS, APPROVAL_STATE_LABELS,
     requestKindLabel, repairTargetLabel, causeKindLabel, repairMethodLabel, requestKindText, repairTargetText, causeKindText, repairMethodText, deviceText,
