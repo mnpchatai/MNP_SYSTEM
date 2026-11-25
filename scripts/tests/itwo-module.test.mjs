@@ -1873,5 +1873,5 @@ test("v1.02: the module announces its version for the card (the same value shown
   assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_WORK_ORDER.version, "1.07", "announced to the office menu cards (central mechanism)");
   assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_WORK_ORDER.loadCardSummary, w.context.window.MNP_ITWO.loadCardSummary);
   await w.open("");
-  assert.match(w.html, />V1\.06</);
+  assert.match(w.html, />V1.07</);
 });
