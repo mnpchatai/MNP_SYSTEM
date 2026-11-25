@@ -1658,7 +1658,7 @@ begin
     perform private.bom_delete_jobs(v_planner, coalesce(p_changes #> '{jobs,delete}', '[]'::jsonb), p_base_version, v_version);
     v_jobs := private.bom_save_jobs(v_actor, v_actor_name, v_planner, p_action, coalesce(v_std #> '{jobs,upsert}', '[]'::jsonb),
                                     v_released, p_base_version, v_version);
-    -- เปิดงานเพิ่มจากฝ่ายขายแก้ใบ (20261226010000): งานใหม่ / เพิ่มยอดแผน + ผลระเบิดใหม่ของใบ (WO ที่ยังวางแผนอยู่เพิ่มยอดตาม) แล้วเปิด WO ให้งาน RB ของใบที่ยังไม่มี WO
+    -- เปิดงานเพิ่มจากฝ่ายขายแก้ใบ (20261226010000): งานใหม่ / เพิ่มยอดแผน + ผลระเบิดใหม่ของใบ (WO ที่ยังวางแผนอยู่เพิ่มยอดตาม) แล้วเปิด WO ให้เฉพาะงาน RB ที่คำสั่งนี้สร้าง
     if p_action = 'addJobsForChanges' then
       v_res := private.bom_add_change_jobs(v_actor, v_actor_name, v_order_planner, p_changes #> '{orders,upsert}', p_changes #> '{jobs,upsert}', p_base_version, v_version);
       v_rf_raised := coalesce(v_res -> 'raised', '[]'::jsonb);
