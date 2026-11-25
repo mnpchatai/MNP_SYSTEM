@@ -270,7 +270,7 @@ const ROW = (id, status, extra = {}) => ({ id, doc_no: `IT01-26/${id}`, status, 
 /* ---------- ลงทะเบียนการ์ดและตัวเลขบนการ์ด ---------- */
 test("the module announces itself for the IT SUPPORT card with its own version", async () => {
   const w = world();
-  assert.equal(w.context.window.MNP_ITRP.version, "1.04");
+  assert.equal(w.context.window.MNP_ITRP.version, "1.05");
   assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_COMPUTER_REPAIR, w.context.window.MNP_ITRP);
   assert.equal(typeof w.context.window.MNP_ITRP.loadCardSummary, "function");
   assert.equal(typeof w.context.window.MNP_ITRP.unsavedCount, "function");
@@ -1481,6 +1481,14 @@ test("a blocked request shows the reason and offers no buttons", async () => {
   assert.equal(pcHost(w).hidden, false);
   assert.match(pcHost(w).innerHTML, /ใบนี้ยังไม่มีรหัสเครื่อง/);
   assert.doesNotMatch(pcHost(w).innerHTML, /data-pc-act=/);
+});
+
+test("a request that cannot apply and is not in progress or sent off hides the whole part change card", async () => {
+  const w = pcWorld({ context: () => PC_CONTEXT({ request: { id: ID, doc_no: "IT01-26/050", status: "it_approved" }, can_apply: false, blocked_reason: "ใบนี้ยังไม่ถึงขั้นทำงาน" }) });
+  await w.open(`view=order&id=${ID}`);
+  assert.equal(pcHost(w).hidden, true);
+  assert.doesNotMatch(pcHost(w).innerHTML, /ใบนี้ยังไม่ถึงขั้นทำงาน/);
+  assert.match(w.screen, /ข้อมูลใบแจ้งซ่อม/);
 });
 
 test("replace: choose, review the summary, confirm, and one RPC call saves the whole batch; then context and history reload", async () => {
