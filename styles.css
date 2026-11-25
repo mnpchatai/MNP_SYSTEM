@@ -3915,6 +3915,11 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 /* ฟอร์ม */
 .itas-form-card { margin-bottom: 16px; border-color: var(--primary); }
 .itas-form-card .form-actions { flex-wrap: wrap; justify-content: flex-start; }
+/* หัวฟอร์ม: ย้อนกลับ + ชื่อ + บันทึก ค้างใต้แถบบนสุดระหว่างเลื่อน (ถ้าเบราว์เซอร์ไม่รองรับ sticky ก็แค่อยู่ที่หัวฟอร์มปกติ) */
+.itas-form-head { position: sticky; top: 64px; z-index: 4; margin: 0 0 12px; padding: 8px 0; display: flex; align-items: center; gap: 10px; background: var(--paper); border-bottom: 1px solid var(--line); }
+.itas-form-head h2 { flex: 1 1 auto; min-width: 0; margin: 0; font-size: var(--text-heading); overflow-wrap: anywhere; }
+.itas-form-head .btn { flex: none; white-space: nowrap; }
+@media (max-width: 760px) { .itas-form-head { top: 58px; } }
 .itas-group { margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-md); min-width: 0; }
 .itas-group legend { padding: 0 6px; font-weight: 700; }
 .itas-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0 16px; }
@@ -3938,3 +3943,133 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .itas-log { padding: 8px 0; border-top: 1px solid var(--soft-line); }
 .itas-log h4 { margin: 0 0 4px; font-size: var(--text-ui); }
 .itas-log ul { margin: 0; padding-left: 18px; }
+
+/* ---------- ใบแจ้งซ่อม (itrp) V1.03: เปลี่ยน / ย้ายชิ้นส่วนในหน้ารายละเอียดใบ + ตารางท้ายใบพิมพ์ · modules/itrp-pages.js ---------- */
+.itrp-partchg-card > .muted { margin: 0 0 12px; }
+.itrp-partchg-host { margin: 0 0 18px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper); }
+.itrp-partchg-host > h3 { margin: 0 0 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: var(--text-ui); overflow-wrap: anywhere; }
+.itrp-partchg-group { margin: 0 0 10px; }
+.itrp-partchg-group > h4 { margin: 0 0 4px; font-size: var(--text-meta); color: var(--muted); }
+.itrp-partchg-parts { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.itrp-partchg-part { padding: 8px 10px; display: grid; gap: 6px; border: 1px solid var(--soft-line); border-radius: var(--radius-md); }
+.itrp-partchg-part.is-pending { opacity: .7; border-style: dashed; }
+.itrp-partchg-part-main { min-width: 0; overflow-wrap: anywhere; }
+.itrp-partchg-part-actions, .itrp-partchg-host-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.itrp-partchg-host-actions { margin-top: 6px; }
+.badge.itrp-partchg-status.is-in_use { color: var(--success-ink); background: var(--success-soft); }
+.badge.itrp-partchg-status.is-broken { color: var(--danger-ink); background: var(--danger-soft); }
+.badge.itrp-partchg-pending, .badge.itrp-partchg-source { color: var(--warning-ink); background: var(--warning-soft); }
+.badge.itrp-partchg-source { color: var(--muted); background: var(--shell); font-weight: 600; }
+.itrp-partchg-editor { margin-top: 6px; padding: 12px; display: grid; gap: 10px; border: 1px solid var(--primary); border-radius: var(--radius-md); background: var(--paper); }
+.itrp-partchg-editor h4 { margin: 0; font-size: var(--text-ui); overflow-wrap: anywhere; }
+.itrp-partchg-editor .form-actions { flex-wrap: wrap; justify-content: flex-start; }
+.itrp-partchg-editor .select { min-width: 0; width: 100%; }
+.itrp-partchg-pending-box { margin-top: 8px; padding: 12px; border: 1px solid var(--primary); border-radius: var(--radius-md); background: var(--primary-soft); }
+.itrp-partchg-pending-box > h3 { margin: 0 0 8px; font-size: var(--text-ui); }
+.itrp-partchg-pending-list { margin: 0 0 10px; padding-left: 22px; display: grid; gap: 6px; }
+.itrp-partchg-pending-row { padding-left: 4px; }
+.itrp-partchg-pending-row > .itrp-text { display: inline; margin-right: 8px; }
+.itrp-partchg-pending-row.is-error { color: var(--danger-ink); background: var(--danger-soft); border-radius: var(--radius-sm); }
+.itrp-partchg-card .form-actions { flex-wrap: wrap; justify-content: flex-start; }
+.itrp-sheet-partchg { table-layout: fixed; }
+.itrp-sheet-partchg th, .itrp-sheet-partchg td { font-size: 9.5pt; }
+.itrp-sheet-partchg th:nth-child(1) { width: 11mm; }
+.itrp-sheet-partchg th:nth-child(2) { width: 30mm; }
+.itrp-sheet-partchg th:nth-child(3) { width: 24mm; }
+.itrp-sheet-partchg th:nth-child(5) { width: 28mm; }
+@media print {
+  .itrp-sheet-partchg thead { display: table-header-group; }
+}
+/* ===== ทะเบียนอุปกรณ์ IT รุ่น 1.02: หน้าตาแบบผสม ===== */
+/* การ์ดสว่างอ่านง่าย + กลิ่นไอที: รหัส/สเปกเป็นฟอนต์ monospace, แถบหัวเครื่องพื้นเข้มแบบคอนโซล, ไอคอนเส้นต่อชนิด
+   สีแยกหมวด: ชิ้นส่วนภายใน = ม่วง · อุปกรณ์ต่อพ่วง = เขียวอมฟ้า · เครื่องคอมพิวเตอร์ = น้ำเงิน · สถานะ ใช้งาน เขียว / สำรอง ฟ้า / ชำรุด แดง / ยกเลิกใช้งาน เทา
+   ตัวแปรสีประกาศที่ .itas-page เท่านั้น (ไม่กระทบโมดูลอื่น) และกลับค่าอ่อนสำหรับธีมมืด */
+.itas-page {
+  --itas-internal: #7c3aed;
+  --itas-internal-ink: #5b21b6;
+  --itas-peripheral: #0d9488;
+  --itas-peripheral-ink: #0f766e;
+  --itas-host: var(--primary);
+  --itas-host-ink: var(--primary-ink);
+  --itas-mono-font: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", "Anuphan", monospace;
+}
+:root[data-theme="dark"] .itas-page {
+  --itas-internal: #a78bfa;
+  --itas-internal-ink: #c4b5fd;
+  --itas-peripheral: #2dd4bf;
+  --itas-peripheral-ink: #5eead4;
+}
+.itas-mono { font-family: var(--itas-mono-font); font-size: .95em; letter-spacing: .01em; }
+.itas-glyph { width: 1.2em; height: 1.2em; flex: none; vertical-align: -.25em; }
+/* ป้ายหมวด (ชนิดอุปกรณ์): พื้นอ่อนของสีหมวด ตัวอักษรเข้ม */
+.itas-kind.is-host, .itas-chip.is-host, .itas-part.is-host, .itas-group-card.is-host { --itas-c: var(--itas-host); --itas-ink: var(--itas-host-ink); }
+.itas-kind.is-internal, .itas-chip.is-internal, .itas-part.is-internal, .itas-group-card.is-internal { --itas-c: var(--itas-internal); --itas-ink: var(--itas-internal-ink); }
+.itas-kind.is-peripheral, .itas-chip.is-peripheral, .itas-part.is-peripheral, .itas-group-card.is-peripheral { --itas-c: var(--itas-peripheral); --itas-ink: var(--itas-peripheral-ink); }
+.itas-kind { padding: 2px 10px 2px 8px; display: inline-flex; align-items: center; gap: 6px; color: var(--itas-ink, var(--ink)); font-size: var(--text-caption); font-weight: 700; white-space: nowrap; background: color-mix(in srgb, var(--itas-c, var(--muted)) 13%, var(--paper)); border: 1px solid color-mix(in srgb, var(--itas-c, var(--muted)) 34%, var(--paper)); border-radius: var(--radius-pill); }
+/* ป้ายสถานะ */
+.badge.itas-status { gap: 6px; color: var(--itas-st-ink, var(--muted)); background: color-mix(in srgb, var(--itas-st, var(--muted)) 14%, var(--paper)); border: 1px solid color-mix(in srgb, var(--itas-st, var(--muted)) 34%, var(--paper)); }
+.badge.itas-status::before { content: ""; width: 6px; height: 6px; flex: none; border-radius: 50%; background: currentColor; }
+.badge.itas-status.is-ok { --itas-st: var(--success); --itas-st-ink: var(--success-ink); }
+.badge.itas-status.is-spare { --itas-st: var(--primary); --itas-st-ink: var(--primary-ink); }
+.badge.itas-status.is-bad { --itas-st: var(--danger); --itas-st-ink: var(--danger-ink); }
+.badge.itas-status.is-off { --itas-st: var(--muted); --itas-st-ink: var(--muted); }
+/* ชิปกรองชนิด: ไอคอน + สีหมวด */
+.itas-chip .itas-glyph { color: var(--itas-ink, var(--muted)); }
+.itas-chip.is-selected { border-color: var(--itas-c, var(--primary)); background: color-mix(in srgb, var(--itas-c, var(--primary)) 14%, var(--paper)); }
+.itas-chip:hover { border-color: var(--itas-c, var(--primary)); }
+/* ตาราง: การ์ดสะอาด หัวตารางพื้นอ่อน แถวเครื่องคอมมีแถบสีน้ำเงินด้านซ้าย */
+.itas-scroll { background: var(--paper); border-radius: var(--radius-lg); box-shadow: var(--elev-1); overflow-x: auto; }
+.itas-table th { background: var(--shell); border-bottom: 1px solid var(--line); }
+.itas-table th:first-child { border-top-left-radius: var(--radius-lg); }
+.itas-table th:last-child { border-top-right-radius: var(--radius-lg); }
+.itas-table td.itas-mono { font-size: var(--text-meta); }
+.itas-row.is-host td:first-child { box-shadow: inset 3px 0 0 var(--itas-host); }
+.itas-partcount { padding: 2px 9px; display: inline-block; color: var(--itas-internal-ink); font-size: var(--text-caption); font-weight: 700; white-space: nowrap; background: color-mix(in srgb, var(--itas-internal) 11%, var(--paper)); border: 1px solid color-mix(in srgb, var(--itas-internal) 30%, var(--paper)); border-radius: var(--radius-pill); }
+.itas-link { min-height: 32px; padding: 0 2px; font: inherit; font-family: var(--itas-mono-font); font-weight: 700; color: var(--primary-ink); text-decoration: underline; background: none; border: 0; cursor: pointer; }
+.itas-link:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+/* หน้ารายละเอียดเครื่องคอมพิวเตอร์ */
+.itas-host-nav { margin: 0 0 12px; }
+.itas-host-bar { margin: 0 0 14px; padding: 18px 20px; display: grid; gap: 14px; color: #e6edf7; background: linear-gradient(135deg, #0b1424, #14243c); border: 1px solid #243a5a; border-radius: var(--radius-lg); box-shadow: var(--elev-2); }
+.itas-host-id { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 14px; }
+.itas-host-glyph { flex: 0 0 52px; width: 52px; height: 52px; display: grid; place-items: center; color: #7dd3fc; background: rgba(125, 211, 252, .12); border: 1px solid rgba(125, 211, 252, .3); border-radius: 14px; }
+.itas-host-glyph .itas-glyph { width: 28px; height: 28px; }
+.itas-host-heading { flex: 1 1 200px; min-width: 0; }
+.itas-host-code { margin: 0; color: #7dd3fc; font-size: var(--text-title); font-weight: 700; letter-spacing: .05em; overflow-wrap: anywhere; }
+.itas-host-heading h2 { margin: 2px 0 0; color: #fff; font-size: var(--text-heading); overflow-wrap: anywhere; }
+.itas-facts { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 18px; }
+.itas-facts > div { min-width: 0; }
+.itas-facts dt { color: #9fb3cc; font-size: var(--text-caption); }
+.itas-facts dd { margin: 2px 0 0; color: #e6edf7; overflow-wrap: anywhere; }
+.itas-host-foot { padding-top: 12px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid rgba(255, 255, 255, .14); }
+.itas-host-counts { color: #cfe3ff; font-weight: 700; }
+.itas-group-card { margin-bottom: 14px; }
+.itas-group-title { margin: 0 0 12px; display: flex; align-items: center; gap: 10px; font-size: var(--text-ui); }
+/* การ์ดชิ้นส่วนทุกชนิดอยู่ grid เดียว เรียงซ้ายไปขวา: จอใหญ่ 3-4 คอลัมน์ มือถือ 1 คอลัมน์ (minmax(0,..) กันข้อความสเปกยาวดันการ์ดล้น) */
+.itas-parts { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr)); gap: 10px; }
+.itas-parts > li { min-width: 0; display: flex; }
+.itas-part { width: 100%; min-width: 0; min-height: 52px; padding: 8px 12px; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 6px; font: inherit; text-align: left; color: inherit; background: var(--paper); border: 1px solid var(--line); border-left: 4px solid var(--itas-c, var(--line)); border-radius: var(--radius-md); cursor: pointer; }
+.itas-part:hover { background: color-mix(in srgb, var(--itas-c, var(--primary)) 8%, var(--paper)); }
+.itas-part:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.itas-part.is-retired { opacity: .65; }
+.itas-part-type { min-width: 0; display: flex; align-items: center; gap: 6px; color: var(--itas-ink, var(--muted)); font-size: var(--text-caption); font-weight: 700; }
+.itas-part-type > span:not(.itas-part-slot) { min-width: 0; overflow-wrap: anywhere; }
+.itas-part-type .itas-part-slot { margin-left: auto; flex: none; }
+.itas-part-foot { margin-top: auto; }
+.itas-part-main { min-width: 0; display: grid; gap: 2px; }
+.itas-part-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+.itas-part-code { font-weight: 700; overflow-wrap: anywhere; }
+.itas-part-name { overflow-wrap: anywhere; }
+.itas-part-spec { color: var(--muted); font-size: var(--text-meta); overflow-wrap: anywhere; }
+.itas-part-slot { padding: 1px 8px; color: var(--muted); font-size: var(--text-caption); border: 1px solid var(--line); border-radius: var(--radius-pill); }
+.itas-host-history h3 { margin: 0 0 8px; }
+.itas-log-part { margin: 0 0 4px; color: var(--muted); }
+/* มือถือ: แถบหัวเครื่องและการ์ดเรียงลงแนวตั้ง ไม่ล้นจอ · ช่องชิ้นส่วนว่าง (แถวที่ไม่ใช่เครื่องคอม) ไม่แสดงในการ์ดแถว */
+@media (max-width: 719px) {
+  .itas-host-bar { padding: 14px; }
+  .itas-host-foot { flex-direction: column; align-items: stretch; }
+  .itas-host-foot .btn { width: 100%; }
+  .itas-parts { grid-template-columns: minmax(0, 1fr); }
+  .itas-table td.itas-cell-empty { display: none; }
+  .itas-row.is-host td:first-child { box-shadow: none; }
+  .itas-table tr.itas-row.is-host { border-left: 4px solid var(--itas-host); }
+}

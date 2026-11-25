@@ -63,7 +63,7 @@
     pk: { label: "แผนก PK (บรรจุ)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "jobs", "orders", "check"]) },
     st: { label: "หัวหน้าคลังวัตถุดิบ (ST)", modules: Object.freeze(["count", "dashboard", "items", "product", "structure", "variants", "orders", "jobs", "check"]) },
     wh: { label: "คลังสินค้า (WH)", modules: Object.freeze(["count", "dashboard", "items", "product", "structure", "variants", "orders", "jobs", "check"]) },
-    // ฝ่ายขาย (SA · โรงงาน ขั้น 8 · 20261225010000): เปิด / แก้ / ส่ง / ยกเลิกใบสั่งผลิตของฝ่ายขาย (หลังเริ่มงานแก้ตรงและยกเลิกกลางทางได้ ฝ่ายวางแผนได้รับแจ้ง) และทะเบียนลูกค้า (หน้าจออยู่ที่โมดูลฝ่ายขาย)
+    // ฝ่ายขาย (SA · โรงงาน ขั้น 8 · 20261226010000): เปิด / แก้ / ส่ง / ยกเลิกใบสั่งผลิตของฝ่ายขาย (หลังเริ่มงานแก้ตรงและยกเลิกกลางทางได้ ฝ่ายวางแผนได้รับแจ้ง) และทะเบียนลูกค้า (หน้าจออยู่ที่โมดูลฝ่ายขาย)
     sa: { label: "ฝ่ายขาย (SA)", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "orders", "customers", "check"]) },
     // บัญชีทดสอบที่ไม่ใช่แผนกด้านบน (โหมดฐานข้อมูล): ดูข้อมูลได้อย่างเดียว
     viewer: { label: "ดูข้อมูลอย่างเดียว", modules: Object.freeze(["dashboard", "items", "product", "structure", "variants", "orders", "jobs", "check"]) },
@@ -202,7 +202,7 @@
   // grConfig / grPlans / grRecords / rodRequests / grHandovers = แปรรูปยาง GR (20261216010000): ตั้งค่า ขั้นตอนของงาน ผลรายวัน คำขอเบิกยางเส้นยาว ส่งงานให้ PK · เซิร์ฟเวอร์เขียนเอง
   // client ส่งเฉพาะแถวคำขอของคำสั่ง GR (GR_ACTIONS) · grWorkers = พนักงาน active ของแผนก GR (มากับ snapshot เท่านั้น ส่วนต่างว่างเสมอ) อ่านอย่างเดียว
   // 20261224010000: ชุดเดียวกันใช้กับ PT / BG / PK ด้วย (grConfig + dept · grHandovers + fromDept / toDept รวม PK → WH · grWorkers + dept) · action ส่งงานใหม่ใน DEPT_ACTIONS
-  // orderRequests = การแจ้งฝ่ายวางแผนของฝ่ายขาย (20261225010000_bom_sales_orders.sql รอบ 2): ตัวเขียนใบของเซิร์ฟเวอร์เขียนเองตอนฝ่ายขายแก้ใบที่เริ่มงานแล้ว / ยกเลิกใบ
+  // orderRequests = การแจ้งฝ่ายวางแผนของฝ่ายขาย (20261226010000_bom_sales_orders.sql รอบ 2): ตัวเขียนใบของเซิร์ฟเวอร์เขียนเองตอนฝ่ายขายแก้ใบที่เริ่มงานแล้ว / ยกเลิกใบ
   //   client ส่งเฉพาะแถวตัดสินของ REQUEST_ACTIONS · [{ id, orderId, kind: cancel | change, reason, status: open | done, decision: ack | continue | stop | null,
   //   requestedBy, requestedById, requestedAt, decidedBy, decidedAt }]
   //   ใบสั่งผลิตมี source ('PP' | 'SA' · ไม่มี = 'PP' ของฐานข้อมูลรุ่นก่อน) และ sentAt / sentBy เมื่อฝ่ายขายส่งให้ฝ่ายวางแผนแล้ว · salesCancelAt / By / Reason / Choice
@@ -282,7 +282,7 @@
   // ตั้งค่า ขั้นตอนของงาน และผลรายวันของ PT / BG / PK ใช้ action เดิมของ GR (แผนกมาจากงาน หรือ dept ของแถวตั้งค่า)
   const DEPT_ACTIONS = Object.freeze({ sendToPk: "grHandovers", receiveAtPk: "grHandovers", cancelHandover: "grHandovers", sendPkToWh: "grHandovers", cancelPkToWh: "grHandovers" });
   const SECTION_ACTIONS = Object.freeze({ ...GR_ACTIONS, ...DEPT_ACTIONS });
-  // การแจ้งของฝ่ายขาย (20261225010000_bom_sales_orders.sql รอบ 2): ฝ่ายวางแผนตัดสิน (รับทราบ / ผลิตต่อ / หยุด) = ส่วน orderRequests (แถวเดียว)
+  // การแจ้งของฝ่ายขาย (20261226010000_bom_sales_orders.sql รอบ 2): ฝ่ายวางแผนตัดสิน (รับทราบ / ผลิตต่อ / หยุด) = ส่วน orderRequests (แถวเดียว)
   // หยุด ส่งแถวยกเลิกใบ · ผลิตต่อ ส่งแถวใบ (ส่วน orders แถวเดียว) ไปพร้อมกันในคำสั่งเดียว
   const REQUEST_ACTIONS = Object.freeze({ decideOrderRequest: "orderRequests" });
   function diffMaster(before, after, action = "") {
@@ -496,7 +496,7 @@
   // (ตรงกับ private.bom_can_read ที่ RPC ของ BOM ใช้ปฏิเสธข้อมูลจริง: คนอื่นได้ BOM_FORBIDDEN · SR และ QA ตั้งแต่ 20261202010000 คลังแท่งยาว)
   const FLOW_DEPTS = Object.freeze(["PP", "RB", "GR", "PT", "BG", "PK", "ST", "WH", "SR", "QA"]);
   const isPlanner = (employee) => ["admin", "manager", "planner"].includes(roleOfEmployee(employee));
-  // ผู้เขียนใบสั่งผลิตและลูกค้า (20261225010000 · คำตอบเจ้าของข้อ 7): ฝ่ายขาย (แผนก SA ทุกบทบาท = private.bom_can_sell) และกลุ่มวางแผนของใบสั่งผลิต
+  // ผู้เขียนใบสั่งผลิตและลูกค้า (20261226010000 · คำตอบเจ้าของข้อ 7): ฝ่ายขาย (แผนก SA ทุกบทบาท = private.bom_can_sell) และกลุ่มวางแผนของใบสั่งผลิต
   // (แผนก PP · ผู้ช่วยผู้จัดการโรงงานขึ้นไป · admin = private.bom_can_plan_orders) · ผู้จัดการแผนกในสายผลิตยังเป็น isPlanner สำหรับส่วนอื่น แต่ไม่ใช่ผู้เขียนใบ
   const deptOfEmployee = (employee) => String(employee?.department?.code ?? employee?.department_code ?? "").toUpperCase();
   const roleCodeOf = (employee) => employee?.role?.code ?? employee?.role_code ?? "";

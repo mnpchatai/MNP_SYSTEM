@@ -8,7 +8,7 @@
 
   const YEAR_OFFSET = 543;
   // เลขเวอร์ชันของโมดูล (ป้ายบนการ์ด + มุมขวาล่างทุกหน้า) รูปแบบ <ใหญ่>.<ย่อย 2 หลัก> · กติกาเดียวกับใบสั่งงาน/ใบแจ้งซ่อม (ถามเจ้าของก่อนเปลี่ยนทุกครั้ง)
-  const MODULE_VERSION = "1.01";
+  const MODULE_VERSION = "1.03";
   const VERSION_DATE = "2026-11-25";
   // ธง "กำลังพัฒนา" (จุดเดียว): true = การ์ดมีป้าย "กำลังพัฒนา" และทุกหน้าของโมดูลมีแถบข้อความว่ายังไม่เปิดใช้งานจริง · ถอดเมื่อเจ้าของสั่ง
   const IN_DEVELOPMENT = true;
@@ -472,12 +472,20 @@
     return String(value);
   };
   const MAX_TYPE_COLUMNS = 3; // ช่องเฉพาะชนิดที่แสดงในตาราง (ที่เหลือดูในฟอร์ม)
+  // คอลัมน์ "ชิ้นส่วน" (เฉพาะแถวเครื่องคอม): index = ผลของ buildHostIndex · ไม่ส่ง index = ไม่มีคอลัมน์นี้ (เช่น รายการที่โหลดมาไม่ครบ นับชิ้นส่วนไม่ได้)
+  // เรียง: เครื่องที่มีชิ้นส่วนมากกว่าอยู่ท้าย (เลขเติมศูนย์เทียบเป็นข้อความ) แถวที่ไม่ใช่เครื่องคอมเป็นค่าว่าง = ท้ายสุดเสมอ
+  const partsColumn = (index) => ({
+    key: "parts", label: "ชิ้นส่วน", field: { type: "text" }, role: "parts",
+    valueFn: (row) => index.summaryText(row),
+    sortFn: (row) => (isHostTypeCode(row?.type_code) ? String(index.summaryOf(row).total).padStart(4, "0") : ""),
+  });
   // คอลัมน์ของตารางชนิดนั้น: ช่องหลัก + ช่องเฉพาะชนิดที่ไม่ลับ 3 ช่องแรก · key ใช้เรียง/เซลล์
-  function tableColumns(type) {
+  function tableColumns(type, index = null) {
     const columns = [{ key: "reg_no", label: "เลขทะเบียน", field: CORE_BY_KEY.reg_no, role: "no" }];
     if (type?.has_device_code) columns.push({ key: "device_code", label: "รหัสอุปกรณ์", field: CORE_BY_KEY.device_code });
+    columns.push({ key: "name", label: "ชื่อ / รุ่น", field: CORE_BY_KEY.name, role: "subject", composite: true });
+    if (index && isHostTypeCode(type?.code)) columns.push(partsColumn(index));
     columns.push(
-      { key: "name", label: "ชื่อ / รุ่น", field: CORE_BY_KEY.name, role: "subject", composite: true },
       { key: "serial", label: "Serial", field: CORE_BY_KEY.serial },
       { key: "status", label: "สถานะ", field: CORE_BY_KEY.status, role: "status" },
       { key: "host_code", label: "ติดตั้งที่", field: CORE_BY_KEY.host_code },
@@ -499,16 +507,17 @@
   const TYPE_ALL_LABEL = "ทั้งหมด";
 
   // ตารางมุมมอง "ทั้งหมด" (รวมทุกชนิด): คอลัมน์กลางที่ทุกชนิดมีเหมือนกัน · valueFn = ค่าที่แสดง · sortFn = ค่าที่ใช้เรียง (ชนิดเรียงตามลำดับของฐานข้อมูล ไม่ใช่ตัวอักษร)
-  function allColumns(types) {
+  function allColumns(types, index = null) {
     const list = Array.isArray(types) ? types : [];
     const names = new Map(list.map((type) => [type.code, type.name]));
-    const order = new Map(list.map((type, index) => [type.code, index]));
+    const order = new Map(list.map((type, position) => [type.code, position]));
     const text = { type: "text" };
     return [
       { key: "reg_no", label: "เลขทะเบียน", field: CORE_BY_KEY.reg_no, role: "no" },
       { key: "device_code", label: "รหัสอุปกรณ์", field: CORE_BY_KEY.device_code },
-      { key: "type", label: "ชนิด", field: text, valueFn: (row) => names.get(row?.type_code) ?? row?.type_code ?? "", sortFn: (row) => `${String(order.get(row?.type_code) ?? 999).padStart(3, "0")} ${names.get(row?.type_code) ?? ""}` },
+      { key: "type", label: "ชนิด", field: text, role: "type", valueFn: (row) => names.get(row?.type_code) ?? row?.type_code ?? "", sortFn: (row) => `${String(order.get(row?.type_code) ?? 999).padStart(3, "0")} ${names.get(row?.type_code) ?? ""}` },
       { key: "name", label: "ชื่อ / ยี่ห้อ · รุ่น", field: CORE_BY_KEY.name, role: "subject", composite: true },
+      ...(index ? [partsColumn(index)] : []),
       { key: "user", label: "ผู้ใช้ / ติดตั้งที่", field: text, valueFn: userValueOf },
       { key: "place", label: "สถานที่", field: CORE_BY_KEY.place },
       { key: "status", label: "สถานะ", field: CORE_BY_KEY.status, role: "status" },
@@ -559,6 +568,170 @@
     const base = shown === total ? `${total} รายการ` : `พบ ${shown} จาก ${total} รายการ`;
     return loaded < total ? `${base} (โหลดมาแสดง ${loaded} รายการแรก)` : base;
   };
+
+  /* ---------- สี/ไอคอนตามหมวดของชนิดอุปกรณ์ ---------- */
+  // หมวด: host = เครื่องคอมพิวเตอร์ (มีชิ้นส่วนผูกอยู่) · internal = ชิ้นส่วนภายในเครื่อง · peripheral = อุปกรณ์ต่อพ่วง/อื่นๆ ที่ติดตั้งกับเครื่อง
+  // รหัสชนิดตามชนิดตั้งต้น 23 ชนิดของฐานข้อมูล (docs/itas-contract.md) · ชนิดที่เพิ่มเองภายหลัง (ไม่อยู่ในรายการ) นับเป็นอุปกรณ์ต่อพ่วง
+  const HOST_TYPE_CODES = Object.freeze(["COMPUTER", "LAPTOP"]);
+  // ลำดับแสดงของชิ้นส่วนภายใน (ที่เหลือตามลำดับของฐานข้อมูล)
+  const INTERNAL_TYPE_CODES = Object.freeze(["MAINBOARD", "CPU", "RAM", "STORAGE", "VGA", "LAN_CARD", "ROM", "PSU", "CASE"]);
+  const PERIPHERAL_FIRST_CODES = Object.freeze(["MONITOR", "PRINTER", "UPS"]);
+  const isHostTypeCode = (code) => HOST_TYPE_CODES.includes(code);
+  const typeKind = (code) => (isHostTypeCode(code) ? "host" : INTERNAL_TYPE_CODES.includes(code) ? "internal" : "peripheral");
+  const KIND_LABELS = Object.freeze({ host: "เครื่องคอมพิวเตอร์", internal: "ชิ้นส่วนภายใน", peripheral: "อุปกรณ์ต่อพ่วง" });
+  // ไอคอนเส้น 24×24 ของแต่ละชนิด (SVG inline เฉพาะ path/circle/rect เหมือนชุดไอคอนกลางของ Pilot · ไม่ใช้อีโมจิ) · ชนิดที่ไม่รู้จักใช้รูปกล่อง
+  const TYPE_ICON_PATHS = Object.freeze({
+    COMPUTER: '<rect x="6" y="3" width="12" height="18" rx="1.5"/><path d="M9 7h6M12 17h.01"/>',
+    LAPTOP: '<rect x="5" y="5" width="14" height="10" rx="1.2"/><path d="M3 19h18"/>',
+    MONITOR: '<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8.5 20h7M12 16v4"/>',
+    PRINTER: '<path d="M7 9V4h10v5"/><rect x="4" y="9" width="16" height="8" rx="1.5"/><path d="M7 14h10v6H7z"/>',
+    UPS: '<rect x="3" y="7" width="16" height="10" rx="1.5"/><path d="M21 10.5v3M11 9.5l-2 3h4l-2 3"/>',
+    PSU: '<rect x="3" y="6" width="18" height="12" rx="1.5"/><circle cx="9" cy="12" r="3"/><path d="M15 10h3M15 14h3"/>',
+    MAINBOARD: '<rect x="4" y="4" width="16" height="16" rx="1.5"/><rect x="8" y="8" width="5" height="5"/><path d="M16 8v8M8 16h5"/>',
+    CPU: '<rect x="7" y="7" width="10" height="10" rx="1"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/>',
+    RAM: '<rect x="3" y="8" width="18" height="8" rx="1"/><path d="M7 12h.01M11 12h.01M15 12h.01M6 16v3M10 16v3M14 16v3M18 16v3"/>',
+    STORAGE: '<rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="12" cy="12" r="3"/><path d="M17 8h.01"/>',
+    CASE: '<rect x="5" y="3" width="14" height="18" rx="1.5"/><path d="M5 8h14M9 17h6"/>',
+    VGA: '<rect x="3" y="7" width="18" height="9" rx="1"/><circle cx="9" cy="11.5" r="2.5"/><path d="M14 10h4M14 13h4M5 16v3"/>',
+    ROM: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2"/>',
+    LAN_CARD: '<rect x="4" y="6" width="16" height="10" rx="1"/><path d="M8 16v3M12 16v3M16 16v3M8 10h8"/>',
+    NETWORK: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>',
+    MOUSE: '<rect x="7" y="3" width="10" height="18" rx="5"/><path d="M12 3v7"/>',
+    KEYBOARD: '<rect x="3" y="6" width="18" height="12" rx="1.5"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/>',
+    ACCESSORY: '<path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="6" rx="1"/><rect x="17" y="14" width="4" height="6" rx="1"/>',
+    SOFTWARE: '<rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+    INK_TONER: '<path d="M12 3c3.5 4 6 7 6 10a6 6 0 0 1-12 0c0-3 2.5-6 6-10z"/>',
+    PHONE_SIM: '<rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 18h2"/>',
+    PROJECTOR: '<rect x="3" y="8" width="18" height="9" rx="1.5"/><circle cx="15" cy="12.5" r="2.5"/><path d="M6 17v2M18 17v2"/>',
+  });
+  const DEFAULT_ICON_PATHS = '<path d="M3.5 7.5 12 3l8.5 4.5v9L12 21l-8.5-4.5z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v9"/>';
+  const typeIconPaths = (code) => TYPE_ICON_PATHS[code] ?? DEFAULT_ICON_PATHS;
+  // สถานะ → โทนสี (ใช้ แทนป้ายเดิม): ใช้งาน เขียว · สำรอง ฟ้า · ชำรุด แดง · ยกเลิกใช้งาน เทา
+  const STATUS_TONES = Object.freeze({ in_use: "ok", spare: "spare", broken: "bad", retired: "off" });
+  const statusTone = (status) => STATUS_TONES[status] ?? "off";
+
+  /* ---------- เครื่องคอมพิวเตอร์ ↔ ชิ้นส่วน / อุปกรณ์ต่อพ่วง ---------- */
+  // ชิ้นส่วนผูกกับเครื่องด้วยช่อง "ติดตั้งที่" (host_code) = รหัสอุปกรณ์ (device_code) ของเครื่อง เช่น COM12 (ฐานข้อมูลแปลงเป็นตัวพิมพ์ใหญ่ให้ทั้งสองฝั่ง)
+  // เครื่องที่ไม่มีรหัสอุปกรณ์ใช้เลขทะเบียนแทน · ตัวเครื่องเองไม่นับเป็นชิ้นส่วนของเครื่องอื่น · ไม่มีช่องลับในผลลัพธ์ใด ๆ ที่นี่
+  const hostKeyOf = (row) => normalizeCode(row?.device_code) || normalizeCode(row?.reg_no);
+  const isRetired = (row) => row?.status === "retired";
+  // นับชิ้นส่วน/ต่อพ่วงที่ยังใช้อยู่ (ไม่นับที่ยกเลิกใช้งานแล้ว) · retired = จำนวนที่ยกเลิกใช้งานแล้ว (แสดงแยก)
+  function countParts(rows) {
+    const counts = { internal: 0, peripheral: 0, total: 0, retired: 0 };
+    for (const row of Array.isArray(rows) ? rows : []) {
+      if (isHostTypeCode(row?.type_code)) continue;
+      if (isRetired(row)) { counts.retired += 1; continue; }
+      counts[typeKind(row?.type_code) === "internal" ? "internal" : "peripheral"] += 1;
+    }
+    counts.total = counts.internal + counts.peripheral;
+    return counts;
+  }
+  // "8 ชิ้น · 3 ต่อพ่วง" (เครื่องที่ไม่มีอะไรผูก = "ไม่มีชิ้นส่วน")
+  function partsSummaryText(counts) {
+    const parts = [];
+    if (counts?.internal) parts.push(`${counts.internal} ชิ้น`);
+    if (counts?.peripheral) parts.push(`${counts.peripheral} ต่อพ่วง`);
+    return parts.length ? parts.join(" · ") : "ไม่มีชิ้นส่วน";
+  }
+  // ดัชนีจากรายการที่โหลดมาทั้งหมด (734 แถวไม่หนัก) · เครื่องที่มีรหัสอุปกรณ์ได้สิทธิ์จับคู่ก่อนเครื่องที่ใช้เลขทะเบียนแทน (กันรหัสชนกัน)
+  function buildHostIndex(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    const hosts = new Map();
+    const hostRows = list.filter((row) => isHostTypeCode(row?.type_code) && hostKeyOf(row));
+    for (const row of hostRows.filter((item) => normalizeCode(item.device_code))) if (!hosts.has(hostKeyOf(row))) hosts.set(hostKeyOf(row), row);
+    for (const row of hostRows.filter((item) => !normalizeCode(item.device_code))) if (!hosts.has(hostKeyOf(row))) hosts.set(hostKeyOf(row), row);
+    const parts = new Map();
+    for (const row of list) {
+      if (isHostTypeCode(row?.type_code)) continue;
+      const key = normalizeCode(row?.host_code);
+      if (!key || !hosts.has(key)) continue;
+      if (!parts.has(key)) parts.set(key, []);
+      parts.get(key).push(row);
+    }
+    const partsOf = (host) => (host?.id && hosts.get(hostKeyOf(host))?.id === host.id ? parts.get(hostKeyOf(host)) ?? [] : []);
+    const summaryOf = (host) => countParts(partsOf(host));
+    return {
+      hosts, partsOf, summaryOf,
+      // เครื่องที่ชิ้นส่วนนี้ติดตั้งอยู่ (ไม่พบ/ชิ้นส่วนที่เป็นเครื่องเอง = null)
+      hostOf: (row) => (!row || isHostTypeCode(row.type_code) ? null : hosts.get(normalizeCode(row.host_code)) ?? null),
+      summaryText: (row) => (isHostTypeCode(row?.type_code) ? partsSummaryText(summaryOf(row)) : ""),
+    };
+  }
+  const labelOfAsset = (row) => textOf(row?.reg_no) || textOf(row?.device_code) || textOf(row?.name) || "—";
+  // จัดกลุ่มชิ้นส่วนของเครื่องหนึ่งเป็น 2 กลุ่ม (ภายใน / ต่อพ่วง) แยกตามชนิด · ชนิดเรียงตามลำดับที่กำหนด แล้วตามลำดับของฐานข้อมูล · ในชนิดเรียงตามช่อง/ตำแหน่ง แล้วเลขทะเบียน (ที่ยกเลิกใช้งานไปท้ายสุด)
+  // คืน { internal:[{ type_code, type_name, kind, items }], peripheral:[…], counts }
+  function groupParts(rows, types) {
+    const list = (Array.isArray(rows) ? rows : []).filter((row) => row && !isHostTypeCode(row.type_code));
+    const typeList = Array.isArray(types) ? types : [];
+    const dbOrder = new Map(typeList.map((type, position) => [type.code, position]));
+    const names = new Map(typeList.map((type) => [type.code, type.name]));
+    const rank = (code) => {
+      const kind = typeKind(code);
+      const fixed = kind === "internal" ? INTERNAL_TYPE_CODES : PERIPHERAL_FIRST_CODES;
+      const at = fixed.indexOf(code);
+      return at >= 0 ? at : fixed.length + (dbOrder.get(code) ?? 999);
+    };
+    const byType = new Map();
+    for (const row of list) { if (!byType.has(row.type_code)) byType.set(row.type_code, []); byType.get(row.type_code).push(row); }
+    const compare = (a, b) => (Number(isRetired(a)) - Number(isRetired(b))) || collator.compare(textOf(a.slot), textOf(b.slot)) || collator.compare(labelOfAsset(a), labelOfAsset(b));
+    const groups = { internal: [], peripheral: [] };
+    for (const [code, items] of [...byType.entries()].sort((a, b) => rank(a[0]) - rank(b[0]))) {
+      const kind = typeKind(code);
+      groups[kind === "internal" ? "internal" : "peripheral"].push({ type_code: code, type_name: names.get(code) ?? code, kind, items: items.slice().sort(compare) });
+    }
+    return { ...groups, counts: countParts(list) };
+  }
+  // สเปกสั้น ๆ ของชิ้นส่วนในหน้าเครื่อง: รุ่น + ช่องเฉพาะชนิดที่ไม่ลับและมีค่า (ไม่เกิน 3 ช่อง) เช่น "Kingston · ความจุ: 500 GB" · ไม่แตะช่องลับเลย
+  const MAX_SPEC_FIELDS = 3;
+  function partSpecText(asset, type) {
+    const parts = [];
+    if (textOf(asset?.model)) parts.push(textOf(asset.model));
+    for (const field of plainFields(type)) {
+      if (parts.length >= 1 + MAX_SPEC_FIELDS) break;
+      const text = formatCell(attrField(field), asset?.attrs?.[field.key]);
+      if (text) parts.push(`${field.label}: ${text}`);
+    }
+    return parts.join(" · ");
+  }
+  // ข้อมูลหัวเครื่อง (ป้าย → ค่า) เฉพาะที่มีค่า: ยี่ห้อ/รุ่น · ผู้ใช้ · แผนก (ช่องเฉพาะชนิดที่ชื่อ/ป้ายเกี่ยวกับแผนก) · สถานที่ · เลขทะเบียน · Serial
+  const DEPARTMENT_FIELD = /dept|department|แผนก/i;
+  function hostFacts(host, type) {
+    const facts = [];
+    const add = (label, value) => { if (textOf(value)) facts.push({ label, value: textOf(value) }); };
+    add("ยี่ห้อ / รุ่น", host?.model);
+    add("ผู้ใช้", host?.attrs?.[USER_ATTR_KEY]);
+    const department = plainFields(type).find((field) => DEPARTMENT_FIELD.test(field.key) || DEPARTMENT_FIELD.test(field.label));
+    if (department) add("แผนก", formatCell(attrField(department), host?.attrs?.[department.key]));
+    add("สถานที่", host?.place);
+    add("เลขทะเบียน", host?.reg_no);
+    add("Serial", host?.serial);
+    return facts;
+  }
+  // ประวัติการย้ายชิ้นส่วนที่เกี่ยวกับเครื่องนี้ จากประวัติรายชิ้น (entries = [{ asset, moves }] ผลของ app_itas_asset_history ของชิ้นส่วนที่ติดตั้งอยู่)
+  // ไม่มี RPC ที่ถามตามเครื่องโดยตรง → รวมจากประวัติของแต่ละชิ้นแล้วกรองเฉพาะที่ต้นทางหรือปลายทางเป็นเครื่องนี้ · ชิ้นที่ย้ายออกไปแล้วไม่อยู่ในรายการนี้ (หน้าเว็บต้องบอกผู้ใช้)
+  const MAX_HOST_MOVES = 100;
+  function hostMoveHistory(entries, hostKey, types) {
+    const key = normalizeCode(hostKey);
+    const names = new Map((Array.isArray(types) ? types : []).map((type) => [type.code, type.name]));
+    const rows = [];
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      for (const move of Array.isArray(entry?.moves) ? entry.moves : []) {
+        const from = normalizeCode(move.from_host);
+        const to = normalizeCode(move.to_host);
+        if (from !== key && to !== key) continue;
+        const details = [];
+        if (from !== key && to === key) details.push(`ติดตั้งเข้าเครื่องนี้${from ? ` (จาก ${from})` : ""}`);
+        else if (from === key && to !== key) details.push(`ย้ายออกจากเครื่องนี้${to ? ` ไปที่ ${to}` : ""}`);
+        if (move.from_slot !== move.to_slot) details.push(`ช่อง/ตำแหน่ง: ${move.from_slot || "—"} → ${move.to_slot || "—"}`);
+        if (move.from_status !== move.to_status) details.push(`สถานะ: ${move.from_status ? statusLabel(move.from_status) : "—"} → ${move.to_status ? statusLabel(move.to_status) : "—"}`);
+        if (!details.length) continue;
+        const asset = entry.asset ?? {};
+        rows.push({ id: `${asset.id ?? ""}:${move.id ?? ""}`, atRaw: String(move.created_at ?? ""), at: formatDateTime(move.created_at), by: [move.actor_employee_no, move.actor_full_name].filter(Boolean).join(" "), part: `${names.get(asset.type_code) ?? asset.type_code ?? ""} ${labelOfAsset(asset)}`.trim(), details });
+      }
+    }
+    const time = (value) => { const stamp = Date.parse(value); return Number.isNaN(stamp) ? 0 : stamp; };
+    return rows.sort((a, b) => time(b.atRaw) - time(a.atRaw)).slice(0, MAX_HOST_MOVES);
+  }
 
   /* ---------- ประวัติของอุปกรณ์ ---------- */
   const ACTION_LABELS = Object.freeze({ created: "เพิ่มอุปกรณ์", updated: "แก้ไข" });
@@ -673,6 +846,7 @@
     typeFields, plainFields, secretFields, coreFieldsOf, normalizeCode, emptyFormValues, formValuesFromAsset, carryOver, copyValuesFromAsset, MAX_BATCH, batchColumnOptions, batchOptionOf, parseBatchLines, buildBatchPlan, suggestionsFor, MAX_SUGGESTIONS, REMEMBER_KEYS, parseMemory, serializeMemory, rememberAdded, forgetType, applyRemembered, typedSince, userFieldName, primaryFieldNames, isPrimaryField, PRIMARY_LABEL_OVERRIDES, extraFieldsHaveValues, errorsInExtraFields, parseField, validateAsset, buildSavePayload, payloadIsEmpty,
     tableColumns, allColumns, typeChipGroups, TYPE_ALL_LABEL, USER_ATTR_KEY, userValueOf, cellValue, cellText, formatCell, filterAssets, sortAssets, countText,
     labelOfKey, logChanges, historyView, passwordStrength,
+    HOST_TYPE_CODES, INTERNAL_TYPE_CODES, KIND_LABELS, TYPE_ICON_PATHS, isHostTypeCode, typeKind, typeIconPaths, statusTone, hostKeyOf, countParts, partsSummaryText, buildHostIndex, groupParts, partSpecText, hostFacts, hostMoveHistory, labelOfAsset, MAX_HOST_MOVES,
     describeError, isAlreadyExists, purgeSummary,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

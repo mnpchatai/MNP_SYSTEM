@@ -49,7 +49,7 @@
   const canPlan = (user) => isBoss(user) || user?.role === "planner"; // สร้าง/แก้ item, BOM, ใบสั่งผลิต
   // สต็อกขั้นต่ำของของซื้อ: กลุ่มวางแผน หรือแผนก ST (ตรงกับ private.bom_save_stock ใน 20261120010000_st_sets_safety_stock.sql) · WH นับได้อย่างเดียว
   const canSetSafety = (user) => canPlan(user) || user?.role === "st";
-  // ผู้เขียนใบสั่งผลิตและลูกค้า (20261225010000_bom_sales_orders.sql · คำตอบเจ้าของข้อ 7): กลุ่มวางแผนของใบสั่งผลิต (admin · ฝ่ายวางแผน PP · ผู้จัดการโรงงาน /
+  // ผู้เขียนใบสั่งผลิตและลูกค้า (20261226010000_bom_sales_orders.sql · คำตอบเจ้าของข้อ 7): กลุ่มวางแผนของใบสั่งผลิต (admin · ฝ่ายวางแผน PP · ผู้จัดการโรงงาน /
   // ผู้ช่วย / ผู้จัดการทั่วไป = private.bom_can_plan_orders) และฝ่ายขาย (แผนก SA = private.bom_can_sell) · ผู้จัดการแผนกในสายผลิต (role manager ที่ roleCode
   // department_manager) ยังเป็น canPlan สำหรับ BOM / งาน แต่ไม่ใช่ผู้เขียนใบสั่งผลิต / ลูกค้าแล้ว · บทบาทสาธิตของโหมดในเครื่องไม่มี roleCode: manager = ผู้จัดการโรงงาน
   const canPlanOrders = (user) => Boolean(user) && (user.role === "admin" || user.role === "planner" || (user.role === "manager" && user.roleCode !== "department_manager"));
@@ -505,7 +505,7 @@
   }
 
   // ---------- ใบสั่งผลิต (PI) ----------
-  // ฝ่ายขาย (20261225010000): เปิดใบได้ (ที่มา SA) แต่ไม่ตั้งกำหนดเสร็จรายแผนก · lines = [{ fgCode, qty, note }] เพิ่มสินค้าในคำสั่งเดียวกัน (ทุกผู้เปิด)
+  // ฝ่ายขาย (20261226010000): เปิดใบได้ (ที่มา SA) แต่ไม่ตั้งกำหนดเสร็จรายแผนก · lines = [{ fgCode, qty, note }] เพิ่มสินค้าในคำสั่งเดียวกัน (ทุกผู้เปิด)
   // send = ส่งให้ฝ่ายวางแผนพร้อมเปิด (ใบของฝ่ายขายที่มีสินค้าเท่านั้น) · ฐานข้อมูลตั้ง source / sentAt / sentBy เอง
   function createOrder(d, p, ctx) {
     const user = requireOrderer(ctx, "เปิดใบสั่งผลิต");
@@ -702,7 +702,7 @@
     order.explodedAt = null; // ยอดคงคลังที่นับไว้คงอยู่ (ของในคลังไม่เปลี่ยนเพราะแก้ใบ) และถูกหักอีกครั้งตอนปล่อยผลิตใหม่
     audit(d, ctx, "เปิดใบที่ปล่อยผลิตแล้วกลับมาแก้", `${order.id} REV.${order.revision} ลบงานรายแผนก ${removed} รายการ${returned.length ? ` · คืนสต็อกสินค้าสำเร็จรูป ${returned.length} รายการ` : ""}`);
   }
-  // ใบที่ "เริ่มงานแล้ว" สำหรับฝ่ายขาย (ตรงกับ private.bom_order_locked ของ 20261225010000): เปิดกลับเป็นร่าง / ยกเลิกทันทีไม่ได้ตามกติกาเดิม
+  // ใบที่ "เริ่มงานแล้ว" สำหรับฝ่ายขาย (ตรงกับ private.bom_order_locked ของ 20261226010000): เปิดกลับเป็นร่าง / ยกเลิกทันทีไม่ได้ตามกติกาเดิม
   // = มีงานเริ่ม (startedJobs รวม WO ที่เลย released) · SR จ่ายยางเส้นยาวให้ใบสุทธิ > 0 · ส่งมอบแล้ว หรือให้สต็อกใบอื่นแล้ว (fgStockLock.blocked)
   const orderLocked = (d, order, rfOrders = null) => startedJobs(d, order, rfOrders).length > 0 || rules().rodIssued(d, order.id) > 1e-9 || rules().fgStockLock(d, order).blocked;
   // ฝ่ายขายแก้ใบ (รอบ 2): ร่าง = แก้ได้เลย ("draft") · ปล่อยแล้วยังไม่เริ่มงาน = กลับเป็นร่าง ("reopened" · editableItems) · เริ่มงานแล้ว = แก้ตรง ("inPlace":
@@ -1089,7 +1089,7 @@
     const user = requireOrderPlanner(ctx, "ปล่อยผลิต");
     const order = orderById(d, orderId);
     editable(order);
-    // ใบของฝ่ายขายที่ยังไม่ส่งให้ฝ่ายวางแผนปล่อยผลิตไม่ได้ (ตรงกับ bom_save_orders ของ 20261225010000)
+    // ใบของฝ่ายขายที่ยังไม่ส่งให้ฝ่ายวางแผนปล่อยผลิตไม่ได้ (ตรงกับ bom_save_orders ของ 20261226010000)
     if (orderSource(order) === "SA" && !isSentOrder(order)) fail("ใบนี้ฝ่ายขายยังไม่ส่งให้ฝ่ายวางแผน ปล่อยผลิตไม่ได้");
     explodeOrder(d, { orderId }, ctx);
     const R = rules();
@@ -1239,7 +1239,7 @@
     if (why.length > CANCEL_REASON_MAX) fail(`เหตุผลยาวเกิน ${CANCEL_REASON_MAX} ตัวอักษร`);
     return why;
   };
-  // ฝ่ายขาย (รอบ 2 · 20261225010000): ร่าง / ปล่อยแล้วแต่ยังไม่เริ่มงาน = ยกเลิกทันที (แจ้งฝ่ายวางแผน "ฝ่ายขายยกเลิกใบ" ถ้าเคยส่งแล้ว)
+  // ฝ่ายขาย (รอบ 2 · 20261226010000): ร่าง / ปล่อยแล้วแต่ยังไม่เริ่มงาน = ยกเลิกทันที (แจ้งฝ่ายวางแผน "ฝ่ายขายยกเลิกใบ" ถ้าเคยส่งแล้ว)
   // เริ่มงานแล้ว (orderLocked) = ยกเลิกกลางทาง: สถานะคงเดิม ใบหยุดรับงานใหม่ แจ้งฝ่ายวางแผนให้เลือกผลิตต่อจนจบส่ง WH หรือหยุด (decideOrderRequest)
   function cancelOrder(d, { orderId, reason }, ctx) {
     const user = requireOrderer(ctx, "ยกเลิกใบ");
@@ -1275,7 +1275,7 @@
     return order.id;
   }
   // ใบถูกยกเลิก (ยกเลิกตรง / เลือกหยุด / ฝ่ายขายยกเลิกทันที): การแจ้งของใบที่ยังเปิดอยู่ปิดเอง decision ack · การแจ้งยกเลิกของใบที่เลือกหยุด = stop
-  // ตรงกับ app_bom_save_master ของ 20261225010000 (โหมดฐานข้อมูลเซิร์ฟเวอร์ปิดเองแล้วส่งแถวกลับ ค่าในเครื่องใช้แสดงจนคำตอบมาถึง) · การแจ้งยกเลิกใหม่ของคำสั่งนี้เขียนหลังจากนี้
+  // ตรงกับ app_bom_save_master ของ 20261226010000 (โหมดฐานข้อมูลเซิร์ฟเวอร์ปิดเองแล้วส่งแถวกลับ ค่าในเครื่องใช้แสดงจนคำตอบมาถึง) · การแจ้งยกเลิกใหม่ของคำสั่งนี้เขียนหลังจากนี้
   function closeOpenRequests(d, order, ctx) {
     for (const row of d.orderRequests ?? []) {
       if (row.orderId !== order.id || row.status !== "open") continue;
@@ -1283,7 +1283,7 @@
     }
   }
 
-  // ---------- การแจ้งฝ่ายวางแผนของฝ่ายขาย (20261225010000_bom_sales_orders.sql รอบ 2): ฝ่ายวางแผนรับทราบ / เลือกทางของใบที่ยกเลิกกลางทาง ----------
+  // ---------- การแจ้งฝ่ายวางแผนของฝ่ายขาย (20261226010000_bom_sales_orders.sql รอบ 2): ฝ่ายวางแผนรับทราบ / เลือกทางของใบที่ยกเลิกกลางทาง ----------
   // ชุด orderRequests: { id, orderId, kind: change | cancel, reason, status: open | done, decision: ack | continue | stop | null, requestedBy, requestedById, requestedAt, decidedBy, decidedAt }
   // change = ฝ่ายขายแก้ใบที่เริ่มงานแล้ว (reason = สรุปค่าเดิม → ค่าใหม่) · cancel = ฝ่ายขายยกเลิกใบ (reason = เหตุผล) · ตัวเขียนใบเขียนเอง (ไม่มี action ขอของฝ่ายขายแล้ว)
   // ตัดสิน = กลุ่มวางแผนของใบสั่งผลิต: ack = รับทราบ (แจ้งแก้ใบ / ใบที่ยกเลิกทันที) · continue = ผลิตต่อจนจบส่ง WH · stop = หยุด ยกเลิกใบด้วยเหตุผลของฝ่ายขาย

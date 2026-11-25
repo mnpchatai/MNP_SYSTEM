@@ -222,7 +222,7 @@ test("Thai messages for the BOM RPC errors, whatever shape the error arrives in"
   assert.match(message({ message: "BOM_CONFLICT" }), /ซ้ำกับที่มีอยู่แล้ว.*ลองทำรายการอีกครั้ง/);
   assert.match(message({ message: "BOM_INVALID_TRANSITION" }), /สถานะที่ทำรายการนี้ไม่ได้/);
   assert.match(message({ message: "BOM_FORBIDDEN" }), /แผนกอื่นบันทึกได้เฉพาะงานของแผนกตน/, "the per-field rule is explained");
-  // กติกาขั้น 8 (20261225010000): ใบสั่งผลิตและลูกค้า = ฝ่ายขาย ฝ่ายวางแผน ผู้จัดการ · โครงสร้างสินค้า = ฝ่ายวางแผน · ไม่ใช้คำว่า BOM เป็นชื่อโมดูล
+  // กติกาขั้น 8 (20261226010000): ใบสั่งผลิตและลูกค้า = ฝ่ายขาย ฝ่ายวางแผน ผู้จัดการ · โครงสร้างสินค้า = ฝ่ายวางแผน · ไม่ใช้คำว่า BOM เป็นชื่อโมดูล
   assert.match(message({ message: "BOM_FORBIDDEN" }), /ใบสั่งผลิตและทะเบียนลูกค้า: ฝ่ายขาย ฝ่ายวางแผน และผู้จัดการ.*โครงสร้างสินค้า: ฝ่ายวางแผน/);
   assert.doesNotMatch(message({ message: "BOM_FORBIDDEN" }), /BOM/);
   const again = storeApi.mapRemoteError(storeApi.mapRemoteError({ message: "BOM_STALE" }));

@@ -427,7 +427,7 @@ select throws_ok($$ select fgs_t.release('251123-25004', '{}'::jsonb) $$, 'BOM_I
 
 -- 16. snapshot / delta ---------------------------------------------------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
-select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 23::bigint, 'the snapshot has twenty-three lists (rodLots and rodMoves since 20261202010000) · six GR lists since 20261216010000 · orderRequests since 20261225010000');
+select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 23::bigint, 'the snapshot has twenty-three lists (rodLots and rodMoves since 20261202010000) · six GR lists since 20261216010000 · orderRequests since 20261226010000');
 select is((select array_agg(k order by k) from jsonb_object_keys((select m from jsonb_array_elements(public.app_bom_master() -> 'fgMoves') m where m ->> 'kind' = 'receive' limit 1)) k),
   array['at', 'by', 'fgCode', 'id', 'kind', 'note', 'orderId', 'qty'], 'a receive record keeps its eight fields (no fromOrderId)');
 select ok(not exists (select 1 from jsonb_array_elements(public.app_bom_master() -> 'fgMoves') m where m ->> 'kind' in ('receive', 'deliver', 'close') and m ? 'fromOrderId'),

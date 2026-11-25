@@ -128,7 +128,7 @@
 
   // typeCode "" = มุมมอง "ทั้งหมด" (ค่าเริ่มต้น) · loadedFor = ขอบเขตที่โหลดมาจากฐานข้อมูลล่าสุด ("" = ทุกชนิด) · showEmptyTypes = ขยายชิป "ชนิดอื่นๆ" (ชนิดที่ยังไม่มีของ)
   function resetUi() {
-    ui = { context: contextKey(), types: [], typeCode: "", loadedFor: "", showEmptyTypes: false, rows: [], total: 0, query: "", status: "", sort: defaultSort(""), form: null, isTest: false, busy: false };
+    ui = { context: contextKey(), types: [], typeCode: "", loadedFor: "", showEmptyTypes: false, rows: [], total: 0, query: "", status: "", sort: defaultSort(""), form: null, host: null, isTest: false, busy: false };
   }
   const currentType = () => ui.types.find((type) => type.code === ui.typeCode) ?? null;
   const typeByCode = (code) => ui.types.find((type) => type.code === code) ?? null;
@@ -168,6 +168,7 @@
     vault.ensureContext();
     if (!ui || ui.context !== contextKey()) resetUi();
     ui.form = null; // วาดหน้าใหม่ = ฟอร์มที่เปิดค้างไม่เกี่ยวแล้ว (ผู้ใช้ยืนยันทิ้งไปแล้วหรือไม่มีอะไรค้าง)
+    ui.host = null; // วาดหน้าใหม่ = กลับมาที่รายการทะเบียน (หน้ารายละเอียดเครื่องอยู่ในหน้านี้ ไม่มีเส้นทางของตัวเอง)
     // สิทธิ์ตรวจซ้ำอีกชั้น (module-office.js ตรวจแล้ว ใช้ผลที่เก็บไว้) · ไม่มีสิทธิ์จริง = พากลับหน้าหลักโดยไม่เรียก RPC อื่น
     // ตรวจไม่ได้ชั่วคราว (เน็ตหลุด) = แจ้งให้ลองใหม่ ไม่เด้งกลับเงียบ ๆ · ผู้ใช้ออกจากหน้านี้ไปแล้วระหว่างรอ = ไม่ทำอะไรต่อ (ไม่ไปทับหน้าที่เขาอยู่)
     const outcome = await checkAccess();
@@ -198,9 +199,12 @@
     ui.rows = Array.isArray(data?.items) ? data.items : [];
     ui.total = Number.isFinite(data?.total) ? data.total : ui.rows.length;
   }
+  // ดัชนีเครื่อง ↔ ชิ้นส่วน (ใช้นับ "8 ชิ้น · 3 ต่อพ่วง" ในตาราง) · ใช้ได้เมื่อโหลดทะเบียนมาครบเท่านั้น: โหลดแยกชนิด/ถูกตัดที่เพดานจะนับผิดจึงไม่แสดงคอลัมน์
+  const listIndex = () => (ui.loadedFor === "" && ui.total <= ui.rows.length ? model.buildHostIndex(ui.rows) : null);
   const visibleRows = () => {
     const type = currentType();
-    const columns = type ? model.tableColumns(type) : model.allColumns(ui.types);
+    const index = listIndex();
+    const columns = type ? model.tableColumns(type, index) : model.allColumns(ui.types, index);
     const filtered = model.filterAssets(ui.rows, { query: ui.query, status: ui.status, typeCode: ui.typeCode, typeNames: typeNameMap() });
     const column = columns.find((item) => item.key === ui.sort.key) ?? columns[0];
     return { columns, rows: model.sortAssets(filtered, column, ui.sort.direction) };
@@ -246,6 +250,7 @@
     await loadAssets();
     updateChips();
     updateTable();
+    if (ui.host) await refreshHost(); // อยู่ในหน้าเครื่อง: ชิ้นส่วนที่เพิ่งบันทึกต้องเห็นทันที
   }
 
   /* ---------- ตู้เซฟ: แถบสถานะ แผง และเหตุการณ์ ---------- */
@@ -365,7 +370,7 @@
     for (const name of ["copy", "cut", "dragstart"]) host.addEventListener(name, (event) => { if (event.target?.closest?.("input[data-mask]")) event.preventDefault(); });
     host.addEventListener("keydown", (event) => {
       const row = event.target.closest?.("[data-itas-row]");
-      if (row && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); openForm("edit", row.dataset.itasRow); }
+      if (row && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); openRow(row.dataset.itasRow); }
     });
     host.addEventListener("focusout", (event) => {
       const input = event.target.closest?.("[data-date-text]");
@@ -385,11 +390,17 @@
     "itas-vault-cancel": () => { vault.cancelPending(); wipeInputs(byId("itas-vault-panel")); closeVaultPanel(); refreshVaultBar(); },
     "itas-add": () => openForm("add"),
     "itas-form-cancel": () => closeForm(),
+    // ปุ่มย้อนกลับบนหัวฟอร์ม = ปุ่มยกเลิกล่างฟอร์ม (ฟอร์มเปิดทับหน้าเดิม ปิดแล้วกลับหน้าเครื่อง/รายการเดิมเอง · ถามก่อนทิ้งข้อมูลที่ยังไม่บันทึก) ไม่ทำงานขณะกำลังส่ง
+    "itas-form-back": () => (ui?.form?.submitting ? undefined : closeForm()),
     "itas-copy-asset": () => copyAsset(),
     "itas-clear-remembered": () => clearRemembered(),
     "itas-history-load": () => loadHistory(),
     "itas-purge": (button) => purge(button),
     "itas-reload-asset": () => reloadAfterConflict(),
+    "itas-host-back": () => backToList(),
+    "itas-host-retry": () => (ui.host ? loadHost(ui.host.id) : undefined),
+    "itas-host-edit": () => (ui.host ? openForm("edit", ui.host.id) : undefined),
+    "itas-host-moves-load": () => loadHostMoves(),
   };
   function onClick(event) {
     const target = event.target;
@@ -400,7 +411,9 @@
     if (button.dataset.itasType !== undefined) return switchType(button.dataset.itasType);
     if (button.dataset.itasSort !== undefined) return toggleSort(button.dataset.itasSort);
     if (button.dataset.secretAct !== undefined) return secretAction(button);
-    if (button.dataset.itasRow !== undefined && target.closest("[data-itas-row]")) return openForm("edit", button.dataset.itasRow);
+    if (button.dataset.itasPart !== undefined) return openForm("edit", button.dataset.itasPart); // ชิ้นส่วนในหน้าเครื่อง → ฟอร์มของชิ้นนั้น
+    if (button.dataset.itasHost !== undefined) return openHost(button.dataset.itasHost); // "ติดตั้งอยู่ที่ COMxx" → หน้าเครื่องนั้น
+    if (button.dataset.itasRow !== undefined && target.closest("[data-itas-row]")) return openRow(button.dataset.itasRow);
     return undefined;
   }
   function onInput(event) {
@@ -547,6 +560,107 @@
     updateTable();
   }
 
+  /* ---------- หน้ารายละเอียดเครื่องคอมพิวเตอร์ ---------- */
+  // แถวเครื่องคอมพิวเตอร์ (Computer/Laptop) เปิดหน้าเครื่อง (ชิ้นส่วน + ต่อพ่วง) · แถวอื่นเปิดฟอร์มแก้ไขเหมือนเดิม
+  function openRow(id) {
+    const row = ui.rows.find((item) => item.id === id);
+    return row && model.isHostTypeCode(row.type_code) ? openHost(id) : openForm("edit", id);
+  }
+  const MOVE_HISTORY_CHUNK = 6; // ขอประวัติรายชิ้นทีละกลุ่ม ไม่ยิงพร้อมกันทั้งหมด
+  const MOVE_HISTORY_MAX_PARTS = 100;
+  function hostBodyHtml() {
+    const state0 = ui.host;
+    if (!state0 || state0.status === "loading") return pages.hostLoading();
+    if (state0.status === "error") return pages.hostError(state0.message);
+    return pages.hostBody({ host: state0.host, type: typeByCode(state0.host.type_code), parts: state0.parts, types: ui.types, moves: state0.moves, partsNotice: state0.notice });
+  }
+  // วาดเฉพาะส่วนเนื้อหา (ไม่แตะช่องฟอร์มที่อาจเปิดค้างอยู่)
+  function repaintHost() {
+    const target = byId("itas-host-host");
+    if (target) target.innerHTML = hostBodyHtml();
+  }
+  async function openHost(id) {
+    if (ui.busy || !model.isUuid(id)) return;
+    if (!(await confirmDiscard())) return;
+    clearReveals();
+    ui.form = null;
+    ui.host = { id, status: "loading", host: null, parts: [], moves: null, notice: "", token: {} };
+    const main = byId("itas-main-host");
+    if (!main) return;
+    main.innerHTML = pages.hostShell(hostBodyHtml());
+    main.scrollIntoView?.({ block: "start" });
+    await loadHost(id);
+  }
+  // โหลดเครื่อง + ชิ้นส่วนที่ผูกอยู่ (ถามฐานข้อมูลด้วย "ติดตั้งที่" = รหัสเครื่อง ไม่พึ่งรายการที่โหลดไว้ในตาราง) · quiet = โหลดซ้ำหลังบันทึก (คงหน้าเดิมไว้ ไม่กลับไปแสดงกำลังโหลด)
+  async function loadHost(id, { quiet = false } = {}) {
+    const state0 = ui.host;
+    if (!state0 || state0.id !== id) return;
+    const token = {};
+    state0.token = token;
+    if (!quiet) { state0.status = "loading"; repaintHost(); }
+    const stale = () => ui?.host !== state0 || state0.token !== token;
+    try {
+      const host = await rpc("app_itas_get_asset", { p_id: id });
+      if (stale()) return;
+      if (!host || !model.isHostTypeCode(host.type_code)) throw Object.assign(new Error("ไม่พบเครื่องคอมพิวเตอร์นี้"), { code: "", message: "ไม่พบเครื่องคอมพิวเตอร์นี้" });
+      const key = model.hostKeyOf(host);
+      let parts = [];
+      let notice = "";
+      if (key) {
+        const data = await rpc("app_itas_list_assets", { p_host_code: key, p_limit: model.MAX_LISTED, p_offset: 0 });
+        if (stale()) return;
+        const items = Array.isArray(data?.items) ? data.items : [];
+        parts = items.filter((row) => !model.isHostTypeCode(row.type_code));
+        const total = Number.isFinite(data?.total) ? data.total : items.length;
+        if (total > items.length) notice = `มี ${total} รายการ แต่โหลดมาแสดงได้ ${items.length} รายการแรก`;
+      }
+      Object.assign(state0, { status: "ready", host, parts, notice, moves: null });
+    } catch (error) {
+      if (stale()) return;
+      const info = failure(error);
+      if (quiet && state0.status === "ready") { showToast(info.message, "error"); return; }
+      Object.assign(state0, { status: "error", message: info.message });
+    }
+    repaintHost();
+  }
+  const refreshHost = () => (ui.host ? loadHost(ui.host.id, { quiet: true }) : undefined);
+  async function backToList() {
+    if (!ui.host) return;
+    if (!(await confirmDiscard())) return;
+    clearReveals();
+    ui.form = null;
+    ui.host = null;
+    const main = byId("itas-main-host");
+    if (main) { main.innerHTML = mainPanelHtml(); main.scrollIntoView?.({ block: "start" }); }
+  }
+  // ประวัติการย้ายชิ้นส่วนของเครื่องนี้: รวมจากประวัติรายชิ้นที่ติดตั้งอยู่ (ไม่มี RPC ที่ถามตามเครื่อง) ทีละกลุ่มเล็ก ๆ
+  async function loadHostMoves() {
+    const state0 = ui?.host;
+    if (!state0 || state0.status !== "ready" || state0.moves?.status === "loading") return;
+    const token = state0.token;
+    const key = model.hostKeyOf(state0.host);
+    const targets = state0.parts.slice(0, MOVE_HISTORY_MAX_PARTS);
+    state0.moves = { status: "loading" };
+    repaintHost();
+    const stale = () => ui?.host !== state0 || state0.token !== token;
+    try {
+      const entries = [];
+      for (let start = 0; start < targets.length; start += MOVE_HISTORY_CHUNK) {
+        const chunk = targets.slice(start, start + MOVE_HISTORY_CHUNK);
+        entries.push(...await Promise.all(chunk.map(async (asset) => {
+          const data = await rpc("app_itas_asset_history", { p_id: asset.id, p_limit: 100 });
+          return { asset, moves: Array.isArray(data?.moves) ? data.moves : [] };
+        })));
+        if (stale()) return;
+      }
+      state0.moves = { status: "ready", items: model.hostMoveHistory(entries, key, ui.types) };
+    } catch (error) {
+      if (stale()) return;
+      state0.moves = { status: "error", message: failure(error).message };
+    }
+    repaintHost();
+  }
+
   /* ---------- ฟอร์มเพิ่ม/แก้ ---------- */
   const formEl = () => byId("itas-form");
   function readFormValues(form, type) {
@@ -633,7 +747,7 @@
       }
       const type = typeByCode(original?.type_code); // ชนิดมาจากตัวอุปกรณ์เอง (มุมมอง "ทั้งหมด" ไม่มีชนิดที่เลือก)
       if (!type) { showToast("ไม่พบชนิดของอุปกรณ์นี้ กรุณาโหลดหน้าใหม่", "error"); return; }
-      mountForm("edit", type, original, model.formValuesFromAsset(original, type));
+      mountForm("edit", type, original, model.formValuesFromAsset(original, type), { hostLink: hostLinkFor(original) });
       return;
     }
     const type = defaultAddType();
@@ -698,7 +812,13 @@
     for (const [key, value] of Object.entries(values.core ?? {})) if (form.elements?.[key]) form.elements[key].value = value;
     for (const [key, value] of Object.entries(values.attrs ?? {})) if (form.elements?.[`attrs.${key}`]) form.elements[`attrs.${key}`].value = value;
   }
-  function mountForm(mode, type, original, values, { carry = null, draftId: keepDraftId = null, openMore = null, notice = "", remembered = [], batch = null } = {}) {
+  // ชิ้นส่วน/ต่อพ่วงที่ติดตั้งกับเครื่องคอมที่อยู่ในรายการที่โหลดไว้ → ลิงก์ไปหน้าเครื่อง (ไม่พบ = ไม่แสดง)
+  function hostLinkFor(asset) {
+    const hostRow = model.buildHostIndex(ui.rows).hostOf(asset);
+    if (!hostRow) return null;
+    return { id: hostRow.id, label: [model.labelOfAsset(hostRow), hostRow.name].filter(Boolean).join(" · ") };
+  }
+  function mountForm(mode, type, original, values, { carry = null, draftId: keepDraftId = null, openMore = null, notice = "", remembered = [], batch = null, hostLink = null } = {}) {
     const host = byId("itas-form-area");
     if (!host) return;
     clearReveals();
@@ -716,7 +836,7 @@
     ui.form = { mode, type, original, draftId, initial: "", submitting: false, remembered, batch: mode === "add" && Boolean(batch?.on), batchIds: new Map() };
     // "รายละเอียดเพิ่มเติม" เปิดให้เองเมื่อมีค่าอยู่ในช่องที่พับไว้ (แก้ไขอุปกรณ์ที่กรอกไว้แล้ว · ค่าที่ยกมาตอนเปลี่ยนชนิด) · เพิ่มใหม่เริ่มแบบพับ
     const extrasFilled = model.extraFieldsHaveValues(type, carry ? model.carryOver(type, carry) : mode === "edit" ? values : null);
-    host.innerHTML = pages.assetForm({ mode, type, values, asset: original, vaultStatus: vault.status(), types: mode === "add" ? ui.types : null, openMore: openMore ?? extrasFilled, notice, remembered, batch, suggestions: model.suggestionsFor(ui.rows, type) });
+    host.innerHTML = pages.assetForm({ mode, type, values, asset: original, vaultStatus: vault.status(), types: mode === "add" ? ui.types : null, openMore: openMore ?? extrasFilled, notice, remembered, batch, hostLink, suggestions: model.suggestionsFor(ui.rows, type) });
     hardenSecretInputs(host);
     const form = formEl();
     ui.form.initial = JSON.stringify(readFormValues(form, type));
@@ -934,7 +1054,7 @@
     if (!(await confirmDialog({ title: "โหลดข้อมูลล่าสุด?", message: "ข้อมูลที่คุณพิมพ์ไว้ในฟอร์มนี้จะหาย แล้วแสดงข้อมูลล่าสุดที่คนอื่นบันทึกไว้", confirmLabel: "โหลดข้อมูลล่าสุด", cancelLabel: "อยู่ต่อ", danger: true }))) return;
     try {
       const fresh = await rpc("app_itas_get_asset", { p_id: state0.original.id });
-      mountForm("edit", state0.type, fresh, model.formValuesFromAsset(fresh, state0.type));
+      mountForm("edit", state0.type, fresh, model.formValuesFromAsset(fresh, state0.type), { hostLink: hostLinkFor(fresh) });
       await refreshData();
     } catch (error) {
       formMessage(failure(error).message);

@@ -1,4 +1,4 @@
--- ใบสั่งผลิตจากฝ่ายขาย (SA) ส่งให้ฝ่ายวางแผน (PP) · ฝ่ายขายแก้ / ยกเลิกใบเองแล้วแจ้งฝ่ายวางแผน · ผู้เขียนใบสั่งผลิตและลูกค้า (โรงงาน ขั้น 8 · 20261225010000_bom_sales_orders.sql)
+-- ใบสั่งผลิตจากฝ่ายขาย (SA) ส่งให้ฝ่ายวางแผน (PP) · ฝ่ายขายแก้ / ยกเลิกใบเองแล้วแจ้งฝ่ายวางแผน · ผู้เขียนใบสั่งผลิตและลูกค้า (โรงงาน ขั้น 8 · 20261226010000_bom_sales_orders.sql)
 -- ตรวจทั้งฝั่งอนุญาตและปฏิเสธ: โครงสร้าง (คอลัมน์ ตารางการแจ้ง ฟังก์ชันใหม่ รายการ action) · นอกโหมดทดสอบ = BOM_TEST_MODE_ONLY
 -- · ฝ่ายขายเปิด / แก้ / ส่ง / ยกเลิกร่างของใบฝ่ายขาย · แตะใบของฝ่ายวางแผน ปล่อยผลิต คำนวณ ตั้งกำหนดเสร็จรายแผนก ยอดจากสต็อก ไม่ได้
 -- · หลังปล่อยผลิต (รอบ 2): ยังไม่เริ่มงาน = ยกเลิกทันที / เปิดกลับเป็นร่าง · เริ่มงานแล้ว = แก้ใบตรง (แจ้งฝ่ายวางแผน รับทราบ) / ยกเลิกกลางทาง (ไม่รับงานใหม่
@@ -491,7 +491,7 @@ select throws_ok($$ select so_t.edit('251225-28107', '{"note":"แก้หล�
   'a cancelled order is not edited');
 
 -- 9. ชุดเรคอร์ด ----------------------------------------------------------------------------------------------------------------------
-select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 23::bigint, 'the snapshot has twenty-three lists (orderRequests since 20261225010000)');
+select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 23::bigint, 'the snapshot has twenty-three lists (orderRequests since 20261226010000)');
 select is((select count(*) from jsonb_object_keys(public.app_bom_master_since(0) -> 'changes')), 23::bigint, 'and so has the delta');
 -- แจ้ง: 28101 ยกเลิก · 28105 ยกเลิก · 28103 แก้ 2 + ยกเลิก · 28106 ยกเลิก · 28107 แก้ + ยกเลิก (คำสั่งที่ถูกปฏิเสธไม่เขียนอะไร)
 select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'orderRequests')), 8, 'the eight notices written above are listed');

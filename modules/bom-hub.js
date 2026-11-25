@@ -918,7 +918,7 @@
     const { ui, rules } = ctx;
     const rows = rules.fgStockForDraft(ctx.data, order).filter((row) => row.stock > 0 || (row.planned ?? 0) > 0);
     if (!rows.length) return "";
-    const canSet = ctx.helpers.canPlanOrders(ctx.user); // ตั้งยอดที่ใช้จากสต็อก = กลุ่มวางแผนของใบสั่งผลิต (20261225010000)
+    const canSet = ctx.helpers.canPlanOrders(ctx.user); // ตั้งยอดที่ใช้จากสต็อก = กลุ่มวางแผนของใบสั่งผลิต (20261226010000)
     const unit = (row) => esc(uomText(ctx, itemOf(ctx, row.fgCode)?.uom ?? "set"));
     const editable = (row) => canSet && (row.max > 0 || row.planned !== null);
     const cell = (row) => {
@@ -1385,7 +1385,7 @@
     const { ui, rules } = ctx;
     const rows = rules.rodStockForDraft(ctx.data, order).filter((row) => row.stock > 0 || (row.planned ?? 0) > 0);
     if (!rows.length) return "";
-    const canSet = ctx.helpers.canPlanOrders(ctx.user); // ตั้งยอดที่ใช้จากสต็อก = กลุ่มวางแผนของใบสั่งผลิต (20261225010000)
+    const canSet = ctx.helpers.canPlanOrders(ctx.user); // ตั้งยอดที่ใช้จากสต็อก = กลุ่มวางแผนของใบสั่งผลิต (20261226010000)
     const editable = (row) => canSet && (row.max > 0 || row.planned !== null);
     const hint = (row) => `คลัง SR มีสต็อกกลางที่ใช้ได้กับใบนี้ ${rules.fmtQty(row.available)} ${uomText(ctx, row.uom)}${row.taken > 0 ? ` (ใบร่างที่คำนวณก่อนตั้งใช้ไว้ ${rules.fmtQty(row.taken)})` : ""} · ใบนี้ต้องใช้ ${rules.fmtNum(row.required, 2)}`;
     const cell = (row) => {

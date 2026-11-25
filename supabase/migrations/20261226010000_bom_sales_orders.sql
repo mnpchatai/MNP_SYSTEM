@@ -74,7 +74,7 @@
 --   - private.bom_delta(bigint)  จาก 20261216010000_bom_gr_module.sql
 --   - private.bom_client_actions()  จาก 20261224010000_bom_dept_steps.sql
 --   - public.app_sandbox_purge_bom()  จาก 20261216010000_bom_gr_module.sql
---   - private.sandbox_unguarded_tables()  จาก 20261222010000_itas_asset_register.sql
+--   - private.sandbox_unguarded_tables()  จาก 20261225010000_itrp_itas_part_changes.sql
 --   - private.bom_fg_free(uuid, text)  จาก 20261130010000_bom_rf_go_live.sql (+ ใบที่ฝ่ายวางแผนเลือกผลิตต่อ นับจำนวนสั่ง = 0)
 --   ใหม่: private.bom_can_sell(public.employees), private.bom_can_plan_orders(public.employees), private.bom_can_order(public.employees),
 --     private.bom_sales_actions(), private.bom_sa_items_ok(jsonb, jsonb), private.bom_order_locked(uuid), private.bom_sa_change_summary(public.bom_orders, text, text, text, bigint, text, jsonb),
@@ -104,7 +104,7 @@ alter table public.bom_orders
   add column sent_at timestamptz,
   add column sent_by uuid references public.employees(id) on delete set null;
 alter table public.bom_orders add constraint bom_orders_sent_check check ((sent_at is null and sent_by is null) or source = 'SA');
-comment on column public.bom_orders.source is 'ที่มาของใบ: PP = ฝ่ายวางแผนเปิดเอง · SA = ฝ่ายขายเปิด (เซิร์ฟเวอร์ตั้งจากแผนกของผู้เปิด · 20261225010000)';
+comment on column public.bom_orders.source is 'ที่มาของใบ: PP = ฝ่ายวางแผนเปิดเอง · SA = ฝ่ายขายเปิด (เซิร์ฟเวอร์ตั้งจากแผนกของผู้เปิด · 20261226010000)';
 comment on column public.bom_orders.sent_at is 'เวลาที่ฝ่ายขายส่งใบให้ฝ่ายวางแผน (ครั้งเดียว · null = ยังไม่ส่ง หรือใบของฝ่ายวางแผน)';
 -- ฝ่ายขายยกเลิกใบที่เริ่มงานแล้ว (รอบ 2): สถานะของใบคงเดิม · ใบหยุดรับงานใหม่จนฝ่ายวางแผนเลือก continue (ผลิตต่อจนจบส่ง WH) หรือ stop (ใบ cancelled)
 alter table public.bom_orders
@@ -156,7 +156,7 @@ alter table public.bom_order_requests enable row level security;
 create policy bom_order_requests_no_direct_access on public.bom_order_requests for all to authenticated using (false) with check (false);
 select private.lab_only_guard_table('public.bom_order_requests');
 
--- ตารางใหม่รู้จักโหมดทดสอบแล้ว: private.sandbox_unguarded_tables() จาก 20261222010000_itas_asset_register.sql ทุกชื่อ (+ bom_order_requests ต่อท้ายชุด BOM)
+-- ตารางใหม่รู้จักโหมดทดสอบแล้ว: private.sandbox_unguarded_tables() จาก 20261225010000_itrp_itas_part_changes.sql ทุกชื่อ (+ bom_order_requests ต่อท้ายชุด BOM)
 create or replace function private.sandbox_unguarded_tables()
 returns text[] language sql stable set search_path = '' as $$
   select array['ncr_reports','ncr_responsibilities','ncr_losses','ncr_status_history','ncr_attachments',
@@ -175,7 +175,7 @@ returns text[] language sql stable set search_path = '' as $$
                                       'itrp_requests','itrp_events','itrp_doc_counters','itrp_admin_log','itrp_reworks',
                                       'itrp_comments','itrp_attachments','itrp_repair_reports','itrp_repair_parts',
                                       'itrp_devices','itrp_device_log','itrp_report_devices','itrp_history_entries',
-                                      'itrp_history_entry_revisions',
+                                      'itrp_history_entry_revisions','itrp_part_changes',
                                       'itas_types','itas_type_log','itas_assets','itas_asset_log','itas_asset_moves',
                                       'itas_vault','itas_vault_log','itas_admins']) as t
            where to_regclass('public.' || t) is not null)
@@ -414,7 +414,7 @@ declare
   v_src record;
   v_moves integer := 0;
   v_rod_moves integer := 0;
-  -- ฝ่ายขาย (20261225010000): ผู้เรียกที่ไม่ใช่กลุ่มวางแผนของใบสั่งผลิตแต่อยู่แผนก SA · ขอส่งใบให้ฝ่ายวางแผน · ใบที่ยกเลิกในคำสั่งนี้ (ฝ่ายวางแผนเลือกหยุด)
+  -- ฝ่ายขาย (20261226010000): ผู้เรียกที่ไม่ใช่กลุ่มวางแผนของใบสั่งผลิตแต่อยู่แผนก SA · ขอส่งใบให้ฝ่ายวางแผน · ใบที่ยกเลิกในคำสั่งนี้ (ฝ่ายวางแผนเลือกหยุด)
   v_seller boolean := not p_planner and private.bom_can_sell(p_actor);
   v_send boolean;
   v_send_changed boolean;
@@ -458,7 +458,7 @@ begin
     v_reason := private.bom_text(v_row, 'cancelReason', 200, 0, 'BOM_INVALID_ORDER');
     v_status := private.bom_text(v_row, 'status', 20, 1, 'BOM_INVALID_ORDER');
     if v_status not in ('draft', 'released', 'in_progress', 'completed', 'cancelled') then raise exception 'BOM_INVALID_ORDER'; end if;
-    -- ส่งใบให้ฝ่ายวางแผน (20261225010000): sentAt ไม่มี / null = ไม่ขอส่ง · ตัวเลข = ขอส่ง (เวลาและผู้ส่งเซิร์ฟเวอร์ตั้งเอง ส่งแล้วไม่เปลี่ยน)
+    -- ส่งใบให้ฝ่ายวางแผน (20261226010000): sentAt ไม่มี / null = ไม่ขอส่ง · ตัวเลข = ขอส่ง (เวลาและผู้ส่งเซิร์ฟเวอร์ตั้งเอง ส่งแล้วไม่เปลี่ยน)
     -- source ของแถวที่ client ส่งมาถูกเมินเสมอ (เซิร์ฟเวอร์ตั้งตอนเปิดใบ)
     v_node := v_row -> 'sentAt';
     v_send := v_node is not null and jsonb_typeof(v_node) <> 'null';
@@ -471,7 +471,7 @@ begin
     if not found then
       if v_sc_reason <> '' then raise exception 'BOM_INVALID_TRANSITION'; end if;
       -- ใบใหม่: กลุ่มวางแผนของใบสั่งผลิต (p_planner) หรือฝ่ายขาย เริ่มที่ draft เสมอ (revision 0, ผู้สร้าง/เวลา เซิร์ฟเวอร์ตั้ง)
-      -- ที่มาของใบเซิร์ฟเวอร์ตั้งจากแผนกของผู้เปิด: แผนก SA = 'SA' · แผนกอื่น = 'PP' (20261225010000)
+      -- ที่มาของใบเซิร์ฟเวอร์ตั้งจากแผนกของผู้เปิด: แผนก SA = 'SA' · แผนกอื่น = 'PP' (20261226010000)
       -- ฝ่ายขายเปิดได้เฉพาะหัวใบและรายการสินค้า: ไม่มีกำหนดเสร็จรายแผนก ผลระเบิด ยอดที่ใช้จากสต็อก และชุดสีของบรรทัดตรงกับรหัสสินค้า (ไม่งั้น BOM_FORBIDDEN)
       -- ขอส่งให้ฝ่ายวางแผนพร้อมเปิดได้เฉพาะใบ 'SA' ที่มีสินค้า (ไม่งั้น BOM_INVALID_TRANSITION)
       if not (p_planner or v_seller) then raise exception 'BOM_FORBIDDEN'; end if;
@@ -521,7 +521,7 @@ begin
     -- (เทียบสิทธิ์/เนื้อหากับแถวล่าสุดไม่ได้ ไม่งั้นสำเนาเก่าถูกมองเป็นการแก้ที่ไม่มีสิทธิ์) ให้ตามทันแล้วทำใหม่
     if v_old.changed_version > p_base and v_old.changed_version <= p_cur then raise exception 'BOM_STALE'; end if;
 
-    -- สิทธิ์: กลุ่มวางแผนของใบสั่งผลิตแก้ได้ทุกอย่าง · ฝ่ายขายแก้ได้เฉพาะใบของฝ่ายขายตามกติกาข้างล่าง (20261225010000)
+    -- สิทธิ์: กลุ่มวางแผนของใบสั่งผลิตแก้ได้ทุกอย่าง · ฝ่ายขายแก้ได้เฉพาะใบของฝ่ายขายตามกติกาข้างล่าง (20261226010000)
     -- · ST/WH แก้ได้เฉพาะ stockCounts ของใบ draft · คนอื่น (รวมผู้จัดการแผนกในสายผลิต) แก้ไม่ได้
     if v_seller then
       if v_old.source <> 'SA' then raise exception 'BOM_FORBIDDEN'; end if;
@@ -611,7 +611,7 @@ begin
       returning id into v_nid;
       v_notices := v_notices || v_nid;
     end if;
-    -- ส่งให้ฝ่ายวางแผน: เฉพาะใบของฝ่ายขายที่เป็นร่างและมีสินค้า (20261225010000)
+    -- ส่งให้ฝ่ายวางแผน: เฉพาะใบของฝ่ายขายที่เป็นร่างและมีสินค้า (20261226010000)
     if v_send_changed and (v_old.source <> 'SA' or v_old.status <> 'draft' or v_status <> 'draft' or jsonb_array_length(v_items) = 0) then
       raise exception 'BOM_INVALID_TRANSITION';
     end if;
@@ -622,7 +622,7 @@ begin
     if v_status_changed then
       if v_old.status = 'draft' and v_status = 'released' then
         if jsonb_array_length(v_items) = 0 or v_expl is null then raise exception 'BOM_INVALID_TRANSITION'; end if;
-        -- ใบของฝ่ายขายที่ยังไม่ส่งให้ฝ่ายวางแผนปล่อยผลิตไม่ได้ (20261225010000)
+        -- ใบของฝ่ายขายที่ยังไม่ส่งให้ฝ่ายวางแผนปล่อยผลิตไม่ได้ (20261226010000)
         if v_old.source = 'SA' and v_old.sent_at is null then raise exception 'BOM_INVALID_TRANSITION'; end if;
         v_released := v_released || v_old.id;
         v_release := true;
@@ -887,7 +887,7 @@ as $$
           'revision', o.revision, 'status', o.status, 'items', o.items, 'explosion', o.explosion,
           'explodedAt', private.bom_ms(o.exploded_at), 'stockCounts', o.stock_counts, 'note', o.note,
           'createdBy', coalesce(private.bom_person(o.created_by), ''), 'createdAt', private.bom_ms(o.created_at), 'source', o.source)
-        -- ฝ่ายขาย (20261225010000): ส่งให้ฝ่ายวางแผนแล้ว = sentAt / sentBy (ยังไม่ส่ง หรือใบของฝ่ายวางแผน = ไม่มีสองช่องนี้)
+        -- ฝ่ายขาย (20261226010000): ส่งให้ฝ่ายวางแผนแล้ว = sentAt / sentBy (ยังไม่ส่ง หรือใบของฝ่ายวางแผน = ไม่มีสองช่องนี้)
         || case when o.sent_at is null then '{}'::jsonb
                 else jsonb_build_object('sentAt', private.bom_ms(o.sent_at), 'sentBy', coalesce(private.bom_person(o.sent_by), '')) end
         -- ฝ่ายขายยกเลิกกลางทาง (รอบ 2): เวลา ผู้ยกเลิก เหตุผล และทางเลือกของฝ่ายวางแผน (null = รอตัดสิน) · ใบที่ไม่ได้ถูกยกเลิกแบบนี้ไม่มีสี่ช่องนี้
@@ -1015,7 +1015,7 @@ as $$
         order by h.sent_at, h.id)
       from public.bom_gr_handovers h join public.bom_jobs j on j.id = h.job_id join public.bom_orders o on o.id = h.order_pk
       where h.is_test = (select private.bom_test_mode()) and h.changed_version > p_since), '[]'::jsonb),
-    -- การแจ้งฝ่ายวางแผนของฝ่ายขาย (20261225010000): เลข PI แทน uuid ของใบ · ผู้ตัดสิน / ทางเลือก null = ยังไม่ตัดสิน
+    -- การแจ้งฝ่ายวางแผนของฝ่ายขาย (20261226010000): เลข PI แทน uuid ของใบ · ผู้ตัดสิน / ทางเลือก null = ยังไม่ตัดสิน
     'orderRequests', coalesce((
       select jsonb_agg(jsonb_build_object(
           'id', q.id::text, 'orderId', o.pi_no, 'kind', q.kind, 'reason', q.reason, 'status', q.status, 'decision', q.decision,
@@ -1080,7 +1080,7 @@ declare
   v_sections constant text[] := array['items', 'compounds', 'colors', 'colorSets', 'packages', 'boms', 'processes', 'routings',
                                       'customers', 'orders', 'jobs', 'stock', 'partReturns', 'fgMoves', 'rodLots', 'rodMoves',
                                       'grConfig', 'grPlans', 'grRecords', 'rodRequests', 'grHandovers', 'orderRequests'];
-  -- ส่วนที่เขียนได้เฉพาะกลุ่มวางแผน (orders / jobs ตรวจรายช่องในตัวเขียน · customers = ผู้เขียนใบสั่งผลิต private.bom_can_order ตั้งแต่ 20261225010000)
+  -- ส่วนที่เขียนได้เฉพาะกลุ่มวางแผน (orders / jobs ตรวจรายช่องในตัวเขียน · customers = ผู้เขียนใบสั่งผลิต private.bom_can_order ตั้งแต่ 20261226010000)
   v_planner_sections constant text[] := array['items', 'compounds', 'colors', 'colorSets', 'packages', 'boms', 'processes', 'routings'];
   v_key text;
   v_sub text;
@@ -1134,7 +1134,7 @@ begin
   perform pg_advisory_xact_lock(hashtext('mnp_bom_rf_master'));
   v_actor := private.bom_reader();
   v_planner := private.bom_can_edit(v_actor);
-  -- ผู้เขียนใบสั่งผลิตและลูกค้า (20261225010000): กลุ่มวางแผนของใบสั่งผลิต (แผนก PP · ผู้ช่วยผู้จัดการโรงงานขึ้นไป · admin) หรือฝ่ายขาย (แผนก SA)
+  -- ผู้เขียนใบสั่งผลิตและลูกค้า (20261226010000): กลุ่มวางแผนของใบสั่งผลิต (แผนก PP · ผู้ช่วยผู้จัดการโรงงานขึ้นไป · admin) หรือฝ่ายขาย (แผนก SA)
   -- ผู้จัดการแผนกในสายผลิตยังอยู่ใน v_planner สำหรับส่วนอื่นทั้งหมด แต่ไม่ใช่ผู้เขียนใบสั่งผลิต / ลูกค้าแล้ว
   v_order_planner := private.bom_can_plan_orders(v_actor);
   v_orderer := private.bom_can_order(v_actor);
@@ -1201,13 +1201,13 @@ begin
                       or (v_gr_section is not null and v_key <> v_gr_section)) then
         raise exception 'BOM_INVALID_GR';
       end if;
-      -- การแจ้งของฝ่ายขาย (20261225010000 รอบ 2): ส่วน orderRequests ส่งได้เฉพาะ decideOrderRequest · decideOrderRequest ส่งได้เฉพาะส่วนนี้และแถวใบสั่งผลิตหนึ่งแถว
+      -- การแจ้งของฝ่ายขาย (20261226010000 รอบ 2): ส่วน orderRequests ส่งได้เฉพาะ decideOrderRequest · decideOrderRequest ส่งได้เฉพาะส่วนนี้และแถวใบสั่งผลิตหนึ่งแถว
       -- (หยุด = แถวยกเลิกใบในคำสั่งเดียวกัน · ผลิตต่อ = แถวใบที่ไม่เปลี่ยน) · ผิด = BOM_INVALID_REQUEST
       if v_n > 0 and ((v_key = 'orderRequests' and p_action <> 'decideOrderRequest')
                       or (p_action = 'decideOrderRequest' and not (v_key = 'orderRequests' or (v_key = 'orders' and v_sub = 'upsert' and v_n = 1)))) then
         raise exception 'BOM_INVALID_REQUEST';
       end if;
-      -- ข้อมูลหลักเขียนได้เฉพาะกลุ่มวางแผน · ลูกค้าเขียนได้เฉพาะผู้เขียนใบสั่งผลิต (ฝ่ายขาย ฝ่ายวางแผน ผู้จัดการ admin · 20261225010000)
+      -- ข้อมูลหลักเขียนได้เฉพาะกลุ่มวางแผน · ลูกค้าเขียนได้เฉพาะผู้เขียนใบสั่งผลิต (ฝ่ายขาย ฝ่ายวางแผน ผู้จัดการ admin · 20261226010000)
       if v_n > 0 and v_key = any (v_planner_sections) and not v_planner then raise exception 'BOM_FORBIDDEN'; end if;
       if v_n > 0 and v_key = 'customers' and not v_orderer then raise exception 'BOM_FORBIDDEN'; end if;
       v_total := v_total + v_n;
@@ -1304,7 +1304,7 @@ begin
     v_rf_cancel_n := jsonb_array_length(v_res -> 'cancelled');
     v_rf_reopen_n := jsonb_array_length(v_res -> 'reopened');
     v_rf_cancelled := (v_res -> 'cancelled') || (v_res -> 'reopened');
-    -- การแจ้งฝ่ายวางแผนของฝ่ายขาย (20261225010000 รอบ 2): ตัวเขียนใบเขียนเองตอนฝ่ายขายแก้ใบที่เริ่มงานแล้ว / ยกเลิกใบ (นับเป็น orderRequests ของบันทึกการใช้งาน)
+    -- การแจ้งฝ่ายวางแผนของฝ่ายขาย (20261226010000 รอบ 2): ตัวเขียนใบเขียนเองตอนฝ่ายขายแก้ใบที่เริ่มงานแล้ว / ยกเลิกใบ (นับเป็น orderRequests ของบันทึกการใช้งาน)
     -- · ฝ่ายวางแผนตัดสิน (หยุด = มาพร้อมแถวยกเลิกใบที่ตัวเขียนใบเพิ่งยกเลิกให้ในคำสั่งนี้ · ผลิตต่อ = ตัวตัดสินตั้งทางเลือกของใบเอง นับ orders)
     v_cancelled_orders := array(select t.value::uuid from jsonb_array_elements_text(coalesce(v_res -> 'cancelledOrders', '[]'::jsonb)) as t(value));
     v_notices := array(select t.value::uuid from jsonb_array_elements_text(coalesce(v_res -> 'notices', '[]'::jsonb)) as t(value));
@@ -1332,7 +1332,7 @@ begin
         v_counts := v_counts || jsonb_build_object('orderRequests', jsonb_build_object('upsert', coalesce((v_counts #>> '{orderRequests,upsert}')::integer, 0) + v_n));
       end if;
     end if;
-    -- ใบที่ฝ่ายขายยกเลิกกลางทางรอฝ่ายวางแผนตัดสิน (20261225010000 รอบ 2): ไม่รับงานใหม่ · SR จ่ายยางเส้นยาวให้ใบ (issueRods) ST เบิกของซื้อให้ใบ (issueOrderParts)
+    -- ใบที่ฝ่ายขายยกเลิกกลางทางรอฝ่ายวางแผนตัดสิน (20261226010000 รอบ 2): ไม่รับงานใหม่ · SR จ่ายยางเส้นยาวให้ใบ (issueRods) ST เบิกของซื้อให้ใบ (issueOrderParts)
     -- GR ขอเบิกยางเส้นยาวของใบ (requestRods) = BOM_INVALID_TRANSITION (ตรวจก่อนตัวเขียนของ action จากใบที่คำสั่งอ้าง ก่อนสิทธิ์ของตัวเขียน · ทั้งคำสั่งไม่เขียนอะไร) · งานที่ทำอยู่บันทึกผล / ปิดงานได้ตามเดิม
     if p_action in ('issueRods', 'issueOrderParts', 'requestRods') and exists (
          select 1 from public.bom_orders o

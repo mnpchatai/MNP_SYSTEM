@@ -18,6 +18,11 @@
   const emptyBlock = (text, hint = "") => (typeof emptyState === "function"
     ? emptyState(text, { hint })
     : `<div class="empty"><p>${esc(text)}</p>${hint ? `<small>${esc(hint)}</small>` : ""}</div>`);
+  // ไอคอนเส้นต่อชนิด (path จาก model.TYPE_ICON_PATHS ไม่มีข้อมูลผู้ใช้) · ป้ายหมวดสี: ชิ้นส่วนภายใน = ม่วง, อุปกรณ์ต่อพ่วง = เขียวอมฟ้า, เครื่องคอมพิวเตอร์ = น้ำเงิน
+  const glyph = (code) => `<svg class="ui-icon itas-glyph" viewBox="0 0 24 24" aria-hidden="true">${model.typeIconPaths(code)}</svg>`;
+  const kindPill = (code, label) => `<span class="itas-kind is-${esc(model.typeKind(code))}">${glyph(code)}<span>${esc(label)}</span></span>`;
+  // ป้ายสถานะ: ใช้งาน เขียว · สำรอง ฟ้า · ชำรุด แดง · ยกเลิกใช้งาน เทา (สีมาจากโทนใน model ไม่ใช่คลาส badge เดิมที่ใช้สีผิดความหมาย)
+  const statusPill = (status) => `<span class="badge itas-status is-${esc(model.statusTone(status))}">${esc(model.statusLabel(status))}</span>`;
   const testTag = (isTest) => (isTest ? '<span class="badge itas-test-tag" title="ข้อมูลทดสอบ แยกจากระบบจริง">ทดสอบ</span>' : "");
 
   /* ---------- หัวหน้า / เปลือกหน้า ---------- */
@@ -138,7 +143,8 @@
     const { used, empty } = model.typeChipGroups(types);
     const chip = (code, label, count, { off = false } = {}) => {
       const selected = code === selectedCode;
-      return `<button type="button" class="itas-chip${selected ? " is-selected" : ""}${off ? " is-off" : ""}" data-itas-type="${esc(code)}" aria-pressed="${selected ? "true" : "false"}"><span class="itas-chip-name">${esc(label)}</span><span class="itas-chip-count" aria-label="${esc(String(count))} รายการ">${esc(String(count))}</span></button>`;
+      const kind = code ? ` is-${esc(model.typeKind(code))}` : "";
+      return `<button type="button" class="itas-chip${kind}${selected ? " is-selected" : ""}${off ? " is-off" : ""}" data-itas-type="${esc(code)}" aria-pressed="${selected ? "true" : "false"}">${code ? glyph(code) : ""}<span class="itas-chip-name">${esc(label)}</span><span class="itas-chip-count" aria-label="${esc(String(count))} รายการ">${esc(String(count))}</span></button>`;
     };
     const typeChip = (type) => chip(type.code, type.name, type.asset_count ?? 0, { off: type.is_active === false });
     const more = empty.length
@@ -154,7 +160,16 @@
         ${canAdd ? '<button type="button" class="btn" id="itas-add">+ เพิ่มอุปกรณ์</button>' : ""}
       </div>`;
   }
-  // rows = แถวหลังกรอง/เรียง · sort = { key, direction } · ตารางกว้างเลื่อนในกล่องของตัวเอง (ไม่ดันทั้งหน้า)
+  // รหัส/เลขทะเบียน/Serial แสดงเป็นฟอนต์ monospace (กลิ่นไอที) · ช่องชิ้นส่วนของแถวที่ไม่ใช่เครื่องคอมเป็นค่าว่าง (ซ่อนบนมือถือ)
+  const MONO_COLUMNS = new Set(["reg_no", "device_code", "serial", "host_code"]);
+  function cellHtml(row, column) {
+    const text = model.cellText(row, column);
+    if (column.key === "status") return { inner: statusPill(row.status), cls: "" };
+    if (column.role === "type") return { inner: text ? kindPill(row.type_code, text) : "—", cls: "" };
+    if (column.role === "parts") return text ? { inner: `<span class="itas-partcount itas-mono">${esc(text)}</span>`, cls: "" } : { inner: "", cls: " itas-cell-empty" };
+    return { inner: esc(text) || "—", cls: MONO_COLUMNS.has(column.key) ? " itas-mono" : "" };
+  }
+  // rows = แถวหลังกรอง/เรียง · sort = { key, direction } · ตารางกว้างเลื่อนในกล่องของตัวเอง (ไม่ดันทั้งหน้า) · แถวเครื่องคอมพิวเตอร์ (is-host) กดแล้วเปิดหน้ารายละเอียดเครื่อง
   function assetTable({ rows, columns, sort = null, typeName = "" }) {
     if (!rows.length) return `<section class="card">${emptyBlock("ไม่พบอุปกรณ์", "ลองเปลี่ยนคำค้นหรือสถานะ หรือกด \"เพิ่มอุปกรณ์\"")}</section>`;
     const head = columns.map((column) => {
@@ -162,10 +177,9 @@
       const aria = active ? ` aria-sort="${sort.direction === "descending" ? "descending" : "ascending"}"` : "";
       return `<th scope="col"${aria}><button type="button" class="itas-sort" data-itas-sort="${esc(column.key)}">${esc(column.label)}${active ? (sort.direction === "descending" ? " ▼" : " ▲") : ""}</button></th>`;
     }).join("");
-    const body = rows.map((row) => `<tr class="itas-row status-${esc(row.status)}" data-itas-row="${esc(row.id)}" tabindex="0">${columns.map((column) => {
-      const text = model.cellText(row, column);
-      const inner = column.key === "status" ? `<span class="badge ${esc(model.statusBadgeClass(row.status))}">${esc(model.statusLabel(row.status))}</span>` : esc(text) || "—";
-      return `<td data-label="${esc(column.label)}">${inner}</td>`;
+    const body = rows.map((row) => `<tr class="itas-row status-${esc(row.status)}${model.isHostTypeCode(row.type_code) ? " is-host" : ""}" data-itas-row="${esc(row.id)}" tabindex="0">${columns.map((column) => {
+      const { inner, cls } = cellHtml(row, column);
+      return `<td${cls.trim() ? ` class="${cls.trim()}"` : ""} data-label="${esc(column.label)}">${inner}</td>`;
     }).join("")}</tr>`).join("");
     return `<div class="table-wrap itas-scroll"><table class="itas-table" aria-label="${esc(typeName ? `ทะเบียน${typeName}` : "ทะเบียนอุปกรณ์")}"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
   }
@@ -268,7 +282,7 @@
   // ช่องหลัก 4 อย่างที่เจ้าของกำหนด (รหัส ชื่อ ยี่ห้อ/รุ่น ผู้ใช้ + สถานะ) เห็นเสมอ · ช่องที่เหลือพับไว้ใต้ "รายละเอียดเพิ่มเติม" (openMore = เปิดอยู่)
   // ช่องลับอยู่นอกส่วนที่พับ เหมือนเดิม
   const attrFieldOf = (field) => ({ ...field, max: field.type === "text" ? (field.max ?? 200) : field.max });
-  function assetForm({ mode = "add", type, values, asset = null, vaultStatus = "locked", types = null, openMore = false, notice = "", suggestions = null, remembered = null, batch = null }) {
+  function assetForm({ mode = "add", type, values, asset = null, vaultStatus = "locked", types = null, openMore = false, notice = "", suggestions = null, remembered = null, batch = null, hostLink = null }) {
     const edit = mode === "edit";
     const coreList = model.coreFieldsOf(type);
     const attrList = model.plainFields(type);
@@ -294,11 +308,17 @@
     }).join("");
     const more = `<details class="itas-more" id="itas-more"${openMore ? " open" : ""}><summary>รายละเอียดเพิ่มเติม <span class="muted small">(Serial สถานที่ วันที่ ราคา ประกัน หมายเหตุ ฯลฯ)</span></summary>${groups}</details>`;
     const title = edit ? `แก้ไข ${esc(asset?.reg_no || asset?.device_code || asset?.name || "อุปกรณ์")}` : "เพิ่มอุปกรณ์";
-    const typeBlock = edit ? `<p class="muted small itas-type-line">ชนิด: <strong>${esc(type.name)}</strong></p>` : types ? `<div class="itas-grid">${typeSelect(types, type.code)}</div>` : "";
+    // ชิ้นส่วน/อุปกรณ์ต่อพ่วงที่ติดตั้งกับเครื่องคอมที่พบในรายการ: กดไปหน้ารายละเอียดเครื่องนั้นได้ (hostLink = { id, label })
+    const installed = edit && hostLink?.id ? ` · ติดตั้งอยู่ที่ <button type="button" class="itas-link" data-itas-host="${esc(hostLink.id)}">${esc(hostLink.label)}</button>` : "";
+    const typeBlock = edit ? `<p class="muted small itas-type-line">ชนิด: <strong>${esc(type.name)}</strong>${installed}</p>` : types ? `<div class="itas-grid">${typeSelect(types, type.code)}</div>` : "";
     return `<section class="card itas-form-card" id="itas-form-card" aria-labelledby="itas-form-title">
-        <h2 id="itas-form-title">${title}</h2>
         <div id="itas-form-message" role="status"></div>
         <form id="itas-form" novalidate autocomplete="off">
+          <div class="itas-form-head">
+            <button type="button" class="btn secondary" id="itas-form-back">‹ ย้อนกลับ</button>
+            <h2 id="itas-form-title">${title}</h2>
+            <button type="submit" class="btn is-primary itas-form-head-save">${edit ? "บันทึก" : "เพิ่ม"}</button>
+          </div>
           ${notice ? `<p class="rf-callout itas-form-notice" id="itas-form-notice" role="status">${esc(notice)}</p>` : ""}
           ${rememberedNotice(remembered)}
           ${typeBlock}
@@ -326,6 +346,77 @@
     return `<div class="itas-history-body"><h3>ประวัติการแก้ไข <span class="detail-section-count">${view.log.length}</span></h3>${log}<h3>ประวัติการย้าย / เปลี่ยนสถานะ <span class="detail-section-count">${view.moves.length}</span></h3>${moves}</div>`;
   }
 
+  /* ---------- หน้ารายละเอียดเครื่องคอมพิวเตอร์ (ชิ้นส่วนภายใน + อุปกรณ์ต่อพ่วง) ---------- */
+  // ไม่แสดงช่องลับเลย (ใช้เฉพาะช่องที่ไม่ลับ) · ทุกค่าผ่าน esc() · data-* มีแค่ uuid
+  const hostBack = '<div class="itas-host-nav no-print"><button type="button" class="btn secondary" id="itas-host-back">‹ กลับไปทะเบียนอุปกรณ์</button></div>';
+  const hostLoading = () => `${hostBack}<section class="card itas-host-card"><p class="muted" role="status">กำลังโหลดข้อมูลเครื่อง…</p></section>`;
+  const hostError = (message) => `${hostBack}<section class="card itas-host-card"><div class="form-message error" role="alert">${esc(message)}</div><button type="button" class="btn secondary" id="itas-host-retry">ลองอีกครั้ง</button></section>`;
+  function partButton(row, types) {
+    const type = (Array.isArray(types) ? types : []).find((item) => item.code === row.type_code);
+    const spec = model.partSpecText(row, type);
+    const code = row.reg_no || row.device_code || "";
+    // การ์ดชิ้นส่วนเรียงใน grid เดียวกันทุกชนิด จึงมีป้ายชนิด (ไอคอน + ชื่อ) บนการ์ดเอง
+    const typeLabel = row.type_name || type?.name || row.type_code || "";
+    return `<li><button type="button" class="itas-part is-${esc(model.typeKind(row.type_code))}${row.status === "retired" ? " is-retired" : ""}" data-itas-part="${esc(row.id)}">
+        <span class="itas-part-type">${glyph(row.type_code)}<span>${esc(typeLabel)}</span>${row.slot ? `<span class="itas-part-slot" title="ช่อง/ตำแหน่ง">${esc(row.slot)}</span>` : ""}</span>
+        <span class="itas-part-main"><span class="itas-part-top"><span class="itas-mono itas-part-code">${esc(code || "—")}</span>${row.name ? `<span class="itas-part-name">${esc(row.name)}</span>` : ""}</span>${spec ? `<span class="itas-mono itas-part-spec">${esc(spec)}</span>` : ""}</span>
+        <span class="itas-part-foot">${statusPill(row.status)}</span>
+      </button></li>`;
+  }
+  // รวมการ์ดของทุกชนิดในหมวดเดียวเป็น grid เดียว (เรียงชนิดต่อกัน) · ชื่อชนิดดึงจากกลุ่มที่จัดไว้แล้ว
+  function partGroupCard(kind, groups, count, types) {
+    const label = model.KIND_LABELS[kind];
+    const items = groups.flatMap((group) => group.items.map((row) => ({ ...row, type_name: group.type_name })));
+    const inner = items.length
+      ? `<ul class="itas-parts">${items.map((row) => partButton(row, types)).join("")}</ul>`
+      : `<p class="muted small">ไม่มี${esc(label)}ที่ผูกกับเครื่องนี้</p>`;
+    return `<section class="card itas-group-card is-${esc(kind)}" aria-label="${esc(label)}"><h3 class="itas-group-title"><span class="itas-kind is-${esc(kind)}">${esc(label)}</span><span class="detail-section-count">${esc(String(count))}</span></h3>${inner}</section>`;
+  }
+  // ประวัติการย้าย (รวมจากประวัติรายชิ้น): moves = null ยังไม่ได้โหลด · { status: "loading" | "error" | "ready", message, items }
+  function hostMovesSection(moves, hasParts) {
+    if (!hasParts) return "";
+    const note = '<p class="muted small">รวมจากประวัติของชิ้นส่วนที่ติดตั้งอยู่ในเครื่องนี้ตอนนี้ (ชิ้นที่ย้ายออกไปแล้วไม่แสดงที่นี่ · ดูประวัติของแต่ละชิ้นได้ในหน้าแก้ไขชิ้นนั้น)</p>';
+    let inner;
+    if (!moves) inner = `${note}<button type="button" class="btn secondary" id="itas-host-moves-load">ดูประวัติการย้ายชิ้นส่วน</button>`;
+    else if (moves.status === "loading") inner = '<p class="muted" role="status">กำลังโหลดประวัติ…</p>';
+    else if (moves.status === "error") inner = `<div class="form-message error" role="alert">${esc(moves.message)}</div><button type="button" class="btn secondary" id="itas-host-moves-load">ลองอีกครั้ง</button>`;
+    else {
+      const items = Array.isArray(moves.items) ? moves.items : [];
+      inner = `${note}${items.length
+        ? items.map((item) => `<article class="itas-log"><h4>${esc(item.at)} <span class="muted small">โดย ${esc(item.by || "—")}</span></h4><p class="itas-mono itas-log-part">${esc(item.part)}</p><ul>${item.details.map((line) => `<li>${esc(line)}</li>`).join("")}</ul></article>`).join("")
+        : '<p class="muted">ยังไม่มีประวัติการย้ายของชิ้นส่วนในเครื่องนี้</p>'}`;
+    }
+    return `<section class="card itas-host-history" aria-label="ประวัติการย้ายชิ้นส่วน"><h3>ประวัติการย้ายชิ้นส่วน</h3>${inner}</section>`;
+  }
+  // host = เครื่องที่โหลดมาใหม่ · parts = ชิ้นส่วนที่ผูกกับเครื่อง (ทั้งหมดที่ฐานข้อมูลส่งมา รวมที่ยกเลิกใช้งาน) · types = ทุกชนิด · moves = ดูด้านบน · partsNotice = ข้อความเตือนถ้ารายการถูกตัด
+  function hostBody({ host, type, parts, types, moves = null, partsNotice = "" }) {
+    const grouped = model.groupParts(parts, types);
+    const counts = grouped.counts;
+    const code = host.device_code || host.reg_no || "";
+    const title = host.name || host.model || type?.name || "เครื่องคอมพิวเตอร์";
+    const facts = model.hostFacts(host, type);
+    const retired = counts.retired ? ` · เลิกใช้ ${counts.retired}` : "";
+    const hasParts = grouped.internal.length + grouped.peripheral.length > 0;
+    const groupsHtml = hasParts
+      ? `${partGroupCard("internal", grouped.internal, counts.internal, types)}${partGroupCard("peripheral", grouped.peripheral, counts.peripheral, types)}`
+      : `<section class="card itas-group-card">${emptyBlock("ยังไม่มีชิ้นส่วนหรืออุปกรณ์ต่อพ่วงที่ผูกกับเครื่องนี้", code ? `ใส่ "ติดตั้งที่" = ${code} ที่ชิ้นส่วน/อุปกรณ์นั้น แล้วจะมาแสดงที่นี่` : "เครื่องนี้ยังไม่มีรหัสอุปกรณ์หรือเลขทะเบียน จึงผูกชิ้นส่วนไม่ได้")}</section>`;
+    return `${hostBack}
+      <section class="itas-host-bar" aria-labelledby="itas-host-title">
+        <div class="itas-host-id">
+          <span class="itas-host-glyph">${glyph(host.type_code)}</span>
+          <div class="itas-host-heading"><p class="itas-host-code itas-mono">${esc(code || "—")}</p><h2 id="itas-host-title">${esc(title)}</h2></div>
+          ${statusPill(host.status)}
+        </div>
+        ${facts.length ? `<dl class="itas-facts">${facts.map((fact) => `<div><dt>${esc(fact.label)}</dt><dd class="itas-mono">${esc(fact.value)}</dd></div>`).join("")}</dl>` : ""}
+        <div class="itas-host-foot"><span class="itas-host-counts itas-mono">${esc(`${model.partsSummaryText(counts)}${retired}`)}</span><button type="button" class="btn" id="itas-host-edit">แก้ไขเครื่องนี้</button></div>
+      </section>
+      ${partsNotice ? `<p class="rf-callout is-warn">${esc(partsNotice)}</p>` : ""}
+      ${groupsHtml}
+      ${hostMovesSection(moves, hasParts)}`;
+  }
+  // เปลือกหน้า: ช่องฟอร์ม (แก้ไขเครื่อง/ชิ้นส่วน) อยู่นอกส่วนที่วาดซ้ำ เพื่อไม่ให้ฟอร์มที่เปิดค้างถูกลบตอนรีเฟรชรายการชิ้นส่วน
+  const hostShell = (bodyHtml) => `<div id="itas-form-area"></div><div id="itas-host-host">${bodyHtml}</div>`;
+
   /* ---------- โครงหน้าหลัก ---------- */
   // ช่อง id ที่ module วาดทับเป็นส่วน ๆ: itas-vault-bar · itas-vault-panel · itas-types-host · itas-main · itas-form-area
   function mainPage({ isTest = false, vault = {}, content = "" } = {}) {
@@ -350,7 +441,7 @@
 
   const api = {
     TITLE, MASK, head, page, messageBox, errorCard, purgeRow, versionTag, devNotice, vaultBar, vaultSetupForm, recoveryShow, unlockForm, forgotForm, changeForm, newRecoveryForm, strengthText,
-    typeChips, toolbar, assetTable, fieldBlock, suggestionLists, batchSection, batchResult, batchProblems, secretsSection, assetForm, historyPanel, mainPage, layout, mainPanel, listTitle,
+    typeChips, toolbar, assetTable, glyph, kindPill, statusPill, hostLoading, hostError, hostBody, hostShell, hostMovesSection, partButton, fieldBlock, suggestionLists, batchSection, batchResult, batchProblems, secretsSection, assetForm, historyPanel, mainPage, layout, mainPanel, listTitle,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_ITAS_PAGES = Object.freeze(api);
