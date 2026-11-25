@@ -414,6 +414,8 @@
   function onChange(event) {
     if (event.target.id === "itas-status") { ui.status = event.target.value; updateTable(); }
     if (event.target.name === "type_code") return changeFormType(event.target);
+    if (event.target.id === "itas-batch-toggle") return toggleBatch(event.target);
+    if (event.target.name === "batch_columns") return changeBatchColumns(event.target);
     return undefined;
   }
   function onSubmit(event) {
@@ -558,8 +560,12 @@
     const form = ui?.form && formEl();
     if (!form || !onAssetsPage()) return false;
     if (JSON.stringify(readFormValues(form, ui.form.type)) !== ui.form.initial) return true;
+    if (batchLinesText(form) !== "") return true; // รายการเพิ่มหลายเครื่องที่พิมพ์ค้าง
     return hasSecretWork();
   }
+  const batchLinesText = (form) => String(form?.elements?.batch_lines?.value ?? "").trim();
+  // สถานะ "เพิ่มหลายเครื่อง" ของฟอร์มที่เปิดอยู่ (ยกไปให้ฟอร์มใหม่ตอนเปลี่ยนชนิด)
+  const readBatchState = (form) => ({ on: Boolean(ui?.form?.batch), columns: form?.elements?.batch_columns?.value ?? "", lines: String(form?.elements?.batch_lines?.value ?? "") });
   // ช่องลับที่ผู้ใช้พิมพ์ค้างหรือสั่งลบไว้ (ล็อกตู้เซฟแล้วส่วนนี้ถูกล้าง)
   function hasSecretWork() {
     const form = ui?.form && formEl();
@@ -648,7 +654,29 @@
     const typed = model.typedSince(readFormValues(formEl(), state0.type), JSON.parse(state0.initial));
     const { values, applied } = freshAddValues(next);
     const shown = applied.filter((item) => !typed.core[item.key]);
-    mountForm("add", next, null, values, { carry: typed, draftId: state0.draftId, remembered: shown });
+    mountForm("add", next, null, values, { carry: typed, draftId: state0.draftId, remembered: shown, batch: readBatchState(formEl()) });
+  }
+  // ติ๊ก/เลิกติ๊ก "เพิ่มหลายเครื่องรุ่นเดียวกัน": เปิดกล่องรายการ ซ่อนช่องลับ (โหมดนี้ไม่รองรับช่องลับ · ช่องลับที่พิมพ์ไว้ต้องยืนยันก่อนล้าง)
+  async function toggleBatch(box) {
+    const state0 = ui?.form;
+    if (!state0 || state0.mode !== "add") return;
+    const on = Boolean(box.checked);
+    if (on && hasSecretWork()) {
+      if (!(await confirmDialog({ title: "เพิ่มหลายเครื่อง?", message: "โหมดนี้ไม่รองรับช่องลับ ช่องลับที่พิมพ์ไว้จะถูกล้าง", confirmLabel: "ล้างช่องลับและต่อไป", cancelLabel: "อยู่ต่อ", danger: true }))) { box.checked = false; return; }
+      clearSecretInputs(formEl());
+    }
+    state0.batch = on;
+    const panel = byId("itas-batch-panel");
+    if (panel) panel.hidden = !on;
+    const secrets = byId("itas-secrets-host");
+    if (secrets) secrets.hidden = on;
+  }
+  // เปลี่ยนรูปแบบบรรทัด: ตัวอย่างในกล่อง (placeholder) เปลี่ยนตาม
+  function changeBatchColumns(select) {
+    const state0 = ui?.form;
+    const box = formEl()?.elements?.batch_lines;
+    if (!state0 || !box) return;
+    box.placeholder = model.batchOptionOf(state0.type, select.value).example;
   }
   // คัดลอกเป็นเครื่องใหม่: เปิดฟอร์มเพิ่มชนิดเดียวกัน เติมช่องไม่ลับจากรายการที่บันทึกไว้ (ไม่ใช่ที่แก้ค้างอยู่) · เลขทะเบียน/รหัส/Serial เว้นว่าง · ช่องลับไม่คัดลอก
   async function copyAsset() {
@@ -666,7 +694,7 @@
     for (const [key, value] of Object.entries(values.core ?? {})) if (form.elements?.[key]) form.elements[key].value = value;
     for (const [key, value] of Object.entries(values.attrs ?? {})) if (form.elements?.[`attrs.${key}`]) form.elements[`attrs.${key}`].value = value;
   }
-  function mountForm(mode, type, original, values, { carry = null, draftId: keepDraftId = null, openMore = null, notice = "", remembered = [] } = {}) {
+  function mountForm(mode, type, original, values, { carry = null, draftId: keepDraftId = null, openMore = null, notice = "", remembered = [], batch = null } = {}) {
     const host = byId("itas-form-area");
     if (!host) return;
     clearReveals();
@@ -680,10 +708,11 @@
         return;
       }
     }
-    ui.form = { mode, type, original, draftId, initial: "", submitting: false, remembered };
+    // batch = เพิ่มหลายเครื่องอยู่หรือไม่ · batchIds = รายการ (ข้อความบรรทัด) → uuid ที่ใช้ไปแล้ว ลองซ้ำหลังเน็ตหลุดจะไม่เพิ่มซ้ำ
+    ui.form = { mode, type, original, draftId, initial: "", submitting: false, remembered, batch: mode === "add" && Boolean(batch?.on), batchIds: new Map() };
     // "รายละเอียดเพิ่มเติม" เปิดให้เองเมื่อมีค่าอยู่ในช่องที่พับไว้ (แก้ไขอุปกรณ์ที่กรอกไว้แล้ว · ค่าที่ยกมาตอนเปลี่ยนชนิด) · เพิ่มใหม่เริ่มแบบพับ
     const extrasFilled = model.extraFieldsHaveValues(type, carry ? model.carryOver(type, carry) : mode === "edit" ? values : null);
-    host.innerHTML = pages.assetForm({ mode, type, values, asset: original, vaultStatus: vault.status(), types: mode === "add" ? ui.types : null, openMore: openMore ?? extrasFilled, notice, remembered, suggestions: model.suggestionsFor(ui.rows, type) });
+    host.innerHTML = pages.assetForm({ mode, type, values, asset: original, vaultStatus: vault.status(), types: mode === "add" ? ui.types : null, openMore: openMore ?? extrasFilled, notice, remembered, batch, suggestions: model.suggestionsFor(ui.rows, type) });
     hardenSecretInputs(host);
     const form = formEl();
     ui.form.initial = JSON.stringify(readFormValues(form, type));
@@ -784,6 +813,7 @@
     const { type, original } = state0;
     window.MNP_FORM_STEPS?.clearFieldErrors?.(form);
     byId("itas-form-message").innerHTML = "";
+    if (state0.mode === "add" && state0.batch) return submitBatch(form, state0);
     const values = readFormValues(form, type);
     const errors = model.validateAsset({ type, values });
     if (errors.length) {
@@ -818,6 +848,67 @@
       const info = failure(error, { write: true });
       formMessage(info.message, { reload: info.kind === "conflict" });
     }
+  }
+  // เพิ่มหลายเครื่องรุ่นเดียวกัน (เฉพาะช่องไม่ลับ): ตรวจทั้งชุดก่อน (ผิดข้อเดียว = ไม่ส่งอะไรเลย) → ถามยืนยันจำนวน → บันทึกทีละเครื่องต่อกัน
+  // เครื่องที่ไม่สำเร็จคงไว้ในกล่องรายการ (ที่สำเร็จแล้วถูกเอาออก) แก้แล้วกดซ้ำได้ · ส่งแล้วไม่แน่ใจผล (เน็ตหลุด) ใช้ uuid เดิมของบรรทัดนั้นเสมอ ลองซ้ำไม่เพิ่มซ้ำ
+  // เซสชันหมด/ไม่มีสิทธิ์/เน็ตหลุด = หยุดทันที ไม่ยิงบรรทัดที่เหลือต่อ (บรรทัดที่เหลือคงไว้ในกล่อง)
+  const STOP_KINDS = new Set(["session", "missing", "access", "unknown"]);
+  async function submitBatch(form, state0) {
+    const { type } = state0;
+    const resultHost = byId("itas-batch-result");
+    if (resultHost) resultHost.innerHTML = "";
+    const base = readFormValues(form, type);
+    const plan = model.buildBatchPlan({ type, base, columns: form.elements?.batch_columns?.value, text: form.elements?.batch_lines?.value });
+    if (!plan.ok) {
+      if (resultHost && plan.lineErrors.length) resultHost.innerHTML = pages.batchProblems(plan.lineErrors);
+      if (plan.fieldErrors.length) {
+        if (model.errorsInExtraFields(type, plan.fieldErrors)) { const more = form.querySelector?.("#itas-more"); if (more) more.open = true; }
+        const focus = window.MNP_FORM_STEPS?.showFieldErrors?.(form, plan.fieldErrors.map((item) => ({ name: item.field, message: item.message })));
+        focus?.focus?.();
+      }
+      return;
+    }
+    const count = plan.items.length;
+    if (!(await confirmDialog({ title: `เพิ่มอุปกรณ์ ${count} รายการ?`, message: `ชนิด ${type.name} · ${count} เครื่อง ใช้ข้อมูลช่องอื่นร่วมกัน ต่างกันที่ ${plan.option.label} · ถ้าบางรายการไม่สำเร็จ ที่เหลือจะถูกเก็บไว้ในกล่องรายการ`, confirmLabel: `เพิ่ม ${count} รายการ`, cancelLabel: "กลับไปแก้" }))) return;
+    state0.submitting = true;
+    setFormBusy(form, true);
+    const done = [];
+    const failed = [];
+    const notTried = [];
+    let stopped = false;
+    for (const item of plan.items) {
+      if (stopped) { notTried.push(item); continue; }
+      let id = state0.batchIds.get(item.raw);
+      if (!id) {
+        try { id = vaultApi.newUuid(window.crypto); } catch (error) { failed.push({ item, message: failure(error).message }); stopped = true; continue; }
+        state0.batchIds.set(item.raw, id);
+      }
+      try {
+        await rpc("app_itas_save_asset", model.buildSavePayload({ type, values: item.values, assetId: id }));
+        done.push(item);
+      } catch (error) {
+        if (model.isAlreadyExists(error)) { done.push(item); continue; } // ครั้งก่อนบันทึกไปแล้ว (ผลไม่แน่ชัด) = นับว่าสำเร็จ
+        const info = failure(error, { write: true });
+        failed.push({ item, message: info.message });
+        if (STOP_KINDS.has(info.kind)) stopped = true;
+      }
+    }
+    if (done.length) writeMemory(model.rememberAdded(readMemory(), type.code, base));
+    if (done.length) { try { await refreshData(); } catch { /* รายการในตารางจะอัปเดตเมื่อโหลดหน้าใหม่ · เครื่องที่เพิ่มไปแล้วไม่ได้หาย */ } }
+    if (ui?.form !== state0) return; // ผู้ใช้ออกจากหน้า/เปิดฟอร์มอื่นระหว่างรอ: ไม่วาดทับ
+    if (!failed.length && !notTried.length) {
+      showToast(`เพิ่มอุปกรณ์ ${done.length} รายการแล้ว`);
+      closeForm({ force: true });
+      return;
+    }
+    // เหลือรายการที่ยังไม่สำเร็จ: เก็บเฉพาะบรรทัดเหล่านั้นไว้ในกล่อง (เรียงตามบรรทัดเดิม) พร้อมแสดงสาเหตุรายบรรทัด
+    const remaining = [...failed.map((entry) => entry.item), ...notTried].sort((a, b) => a.line - b.line);
+    if (form.elements?.batch_lines) form.elements.batch_lines.value = remaining.map((item) => item.raw).join("\n");
+    setFormBusy(form, false);
+    state0.submitting = false;
+    const target = byId("itas-batch-result");
+    if (target) target.innerHTML = pages.batchResult({ added: done.length, failed: failed.map((entry) => ({ line: entry.item.line, label: entry.item.label, message: entry.message })), notTried: notTried.map((item) => ({ line: item.line, label: item.label })) });
+    if (done.length) showToast(`เพิ่มอุปกรณ์แล้ว ${done.length} รายการ · ยังไม่สำเร็จ ${failed.length + notTried.length} รายการ`, "error");
   }
   // แก้ชนกัน: ผู้ใช้เลือกโหลดข้อมูลล่าสุดเอง (ทิ้งสิ่งที่พิมพ์ หลังถามก่อน) ไม่ทิ้งเงียบ ๆ
   async function reloadAfterConflict() {

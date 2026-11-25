@@ -205,6 +205,35 @@ test("suggestions render as escaped datalists attached to plain text inputs only
   assert.doesNotMatch(plainForm, /datalist|itas-remembered|list=/);
 });
 
+test("batch section: only in the add form; checkbox + hidden panel; options follow the type; the lines box is escaped; secrets host is hidden while batch is on; results and problems escape everything", () => {
+  const add = pages.assetForm({ mode: "add", type: TYPE, values: model.emptyFormValues(TYPE) });
+  assert.match(add, /<input type="checkbox" id="itas-batch-toggle" name="batch_on"> เพิ่มหลายเครื่องรุ่นเดียวกัน/);
+  assert.match(add, /<div id="itas-batch-panel" hidden>/);
+  assert.match(add, /<option value="device_code,serial">รหัสอุปกรณ์ \+ Serial<\/option>/);
+  assert.match(add, /name="batch_lines"/);
+  assert.doesNotMatch(add, /id="itas-secrets-host" hidden/);
+  const on = pages.assetForm({ mode: "add", type: TYPE, values: model.emptyFormValues(TYPE), batch: { on: true, columns: "device_code,serial", lines: `a${XSS}` } });
+  assert.match(on, /id="itas-batch-toggle" name="batch_on" checked>/);
+  assert.match(on, /<div id="itas-batch-panel">/);
+  assert.match(on, /<option value="device_code,serial" selected>/);
+  assert.match(on, /<textarea[^>]*name="batch_lines"[^>]*>a&lt;img/);
+  assert.match(on, /id="itas-secrets-host" hidden>/, "โหมดนี้ไม่รองรับช่องลับ");
+  assert.doesNotMatch(on, /<img/);
+  assert.doesNotMatch(pages.assetForm({ mode: "edit", type: TYPE, values: model.formValuesFromAsset(ASSET, TYPE), asset: ASSET }), /itas-batch/, "แก้ไขไม่มีเพิ่มหลายเครื่อง");
+  const noCode = pages.assetForm({ mode: "add", type: { code: "MOUSE", name: "เมาส์", fields: [], has_device_code: false }, values: model.emptyFormValues({ fields: [] }) });
+  assert.doesNotMatch(noCode, /value="device_code/);
+  const result = pages.batchResult({ added: 2, failed: [{ line: 3, label: `SN${XSS}`, message: "เลขทะเบียนซ้ำ" }], notTried: [{ line: 4, label: "SN4" }] });
+  assert.match(result, /เพิ่มสำเร็จ 2 รายการ/);
+  assert.match(result, /ยังไม่สำเร็จ 2 รายการ/);
+  assert.match(result, /<strong>SN&lt;img[^<]*<\/strong>: เลขทะเบียนซ้ำ/);
+  assert.match(result, /ยังไม่ได้ส่ง: SN4/);
+  assert.match(pages.batchResult({ added: 3 }), /form-message success/);
+  assert.doesNotMatch(result, /<img/);
+  const problems = pages.batchProblems([{ message: `บรรทัด 2: ${XSS}` }]);
+  assert.match(problems, /ยังไม่ได้เพิ่มอะไร/);
+  assert.doesNotMatch(problems, /<img/);
+});
+
 test("asset form (edit): values escaped, history button, secret fields masked and never carry ciphertext or plaintext", () => {
   const values = model.formValuesFromAsset(ASSET, TYPE);
   const html = pages.assetForm({ mode: "edit", type: TYPE, values, asset: ASSET, vaultStatus: "locked" });

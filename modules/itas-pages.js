@@ -240,10 +240,35 @@
     return `<div class="field itas-wide" data-field="type_code"><label for="itas-f-type_code">ชนิดอุปกรณ์ ${REQUIRED}</label><select class="select" id="itas-f-type_code" name="type_code">${used.map(option).join("")}${empty.length ? `<optgroup label="ชนิดอื่นๆ (ยังไม่มีรายการ)">${empty.map(option).join("")}</optgroup>` : ""}</select></div>`;
   }
   // mode = "add" | "edit" · type = นิยามชนิด · values = { core, attrs } (ข้อความ) · asset = แถวเดิม (edit) · types = ทุกชนิด (ใช้เลือกชนิดในฟอร์มเพิ่ม)
+  // เพิ่มหลายเครื่องรุ่นเดียวกัน (เฉพาะฟอร์มเพิ่ม · ไม่มีช่องลับ): ติ๊กแล้วกรอกรายการ 1 บรรทัด = 1 เครื่อง · batch = { on, columns, lines }
+  function batchSection(type, batch = {}) {
+    const on = Boolean(batch.on);
+    const options = model.batchColumnOptions(type);
+    const current = model.batchOptionOf(type, batch.columns);
+    return `<div class="itas-batch" id="itas-batch">
+        <label class="itas-batch-toggle" for="itas-batch-toggle"><input type="checkbox" id="itas-batch-toggle" name="batch_on"${on ? " checked" : ""}> เพิ่มหลายเครื่องรุ่นเดียวกัน</label>
+        <div id="itas-batch-panel"${on ? "" : " hidden"}>
+          <p class="muted small">กรอกช่องอื่นด้านบน (ชื่อ ยี่ห้อ/รุ่น ผู้ใช้ ฯลฯ) ครั้งเดียว ใช้ร่วมกันทุกเครื่อง · เฉพาะช่องที่ต่างกันต่อเครื่องให้พิมพ์ในรายการนี้ · เลขทะเบียน/รหัสอุปกรณ์ในช่องด้านบนต้องเว้นว่าง · ไม่รองรับช่องลับ (ใส่ทีหลังทีละเครื่อง) · ครั้งละไม่เกิน ${model.MAX_BATCH} เครื่อง</p>
+          <div class="field" data-field="batch_columns"><label for="itas-f-batch_columns">แต่ละบรรทัดคือ</label><select class="select" id="itas-f-batch_columns" name="batch_columns">${options.map((option) => `<option value="${esc(option.value)}"${option.value === current.value ? " selected" : ""}>${esc(option.label)}</option>`).join("")}</select></div>
+          <div class="field" data-field="batch_lines"><label for="itas-f-batch_lines">รายการ (บรรทัดละ 1 เครื่อง)</label><textarea class="textarea" id="itas-f-batch_lines" name="batch_lines" rows="6" spellcheck="false" autocapitalize="characters" placeholder="${esc(current.example)}">${esc(batch.lines ?? "")}</textarea></div>
+          <div id="itas-batch-result" role="status"></div>
+        </div>
+      </div>`;
+  }
+  // ผลการเพิ่มหลายรายการ: result = { added, failed:[{ line, label, message }], notTried:[{ line, label }] } (escape ทุกค่า)
+  function batchResult({ added = 0, failed = [], notTried = [] } = {}) {
+    const parts = [`<p><strong>เพิ่มสำเร็จ ${esc(String(added))} รายการ</strong>${failed.length || notTried.length ? ` · ยังไม่สำเร็จ ${esc(String(failed.length + notTried.length))} รายการ (คงไว้ในกล่องรายการให้แก้แล้วกดเพิ่มอีกครั้ง)` : ""}</p>`];
+    // อ้างถึงรายการด้วยค่าที่พิมพ์ (ไม่ใช้เลขบรรทัด เพราะกล่องรายการถูกเหลือแต่ที่ยังไม่สำเร็จ เลขบรรทัดจึงเปลี่ยน)
+    if (failed.length) parts.push(`<ul class="itas-batch-failed">${failed.map((item) => `<li><strong>${esc(item.label)}</strong>: ${esc(item.message)}</li>`).join("")}</ul>`);
+    if (notTried.length) parts.push(`<p class="muted small">หยุดก่อน จึงยังไม่ได้ส่ง: ${notTried.map((item) => esc(item.label)).join(", ")}</p>`);
+    return `<div class="form-message ${failed.length || notTried.length ? "error" : "success"}" role="status">${parts.join("")}</div>`;
+  }
+  // ปัญหาของรายการที่ตรวจพบก่อนส่ง (ยังไม่ได้ส่งอะไรขึ้นฐานข้อมูล)
+  const batchProblems = (errors) => `<div class="form-message error" role="alert"><p>ยังไม่ได้เพิ่มอะไร กรุณาแก้ตามนี้แล้วกดเพิ่มอีกครั้ง</p><ul class="itas-batch-failed">${errors.map((error) => `<li>${esc(error.message)}</li>`).join("")}</ul></div>`;
   // ช่องหลัก 4 อย่างที่เจ้าของกำหนด (รหัส ชื่อ ยี่ห้อ/รุ่น ผู้ใช้ + สถานะ) เห็นเสมอ · ช่องที่เหลือพับไว้ใต้ "รายละเอียดเพิ่มเติม" (openMore = เปิดอยู่)
   // ช่องลับอยู่นอกส่วนที่พับ เหมือนเดิม
   const attrFieldOf = (field) => ({ ...field, max: field.type === "text" ? (field.max ?? 200) : field.max });
-  function assetForm({ mode = "add", type, values, asset = null, vaultStatus = "locked", types = null, openMore = false, notice = "", suggestions = null, remembered = null }) {
+  function assetForm({ mode = "add", type, values, asset = null, vaultStatus = "locked", types = null, openMore = false, notice = "", suggestions = null, remembered = null, batch = null }) {
     const edit = mode === "edit";
     const coreList = model.coreFieldsOf(type);
     const attrList = model.plainFields(type);
@@ -278,9 +303,10 @@
           ${rememberedNotice(remembered)}
           ${typeBlock}
           ${primary}
+          ${edit ? "" : batchSection(type, batch ?? {})}
           ${more}
           ${suggestionLists(suggestions)}
-          <div id="itas-secrets-host">${secretsSection({ fields: model.secretFields(type), asset, vaultStatus })}</div>
+          <div id="itas-secrets-host"${batch?.on ? " hidden" : ""}>${secretsSection({ fields: model.secretFields(type), asset, vaultStatus })}</div>
           <div class="form-actions"><button type="button" class="btn secondary" id="itas-form-cancel">${edit ? "ปิด" : "ยกเลิก"}</button>${edit ? '<button type="button" class="btn secondary" id="itas-copy-asset">คัดลอกเป็นเครื่องใหม่</button>' : ""}<button type="submit" class="btn is-primary">${edit ? "บันทึกการแก้ไข" : "เพิ่มอุปกรณ์"}</button></div>
         </form>
         ${edit ? `<div class="itas-history" id="itas-history"><button type="button" class="btn secondary" id="itas-history-load">ดูประวัติการแก้ไขและการย้าย</button></div>` : ""}
@@ -324,7 +350,7 @@
 
   const api = {
     TITLE, MASK, head, page, messageBox, errorCard, purgeRow, versionTag, devNotice, vaultBar, vaultSetupForm, recoveryShow, unlockForm, forgotForm, changeForm, newRecoveryForm, strengthText,
-    typeChips, toolbar, assetTable, fieldBlock, suggestionLists, secretsSection, assetForm, historyPanel, mainPage, layout, mainPanel, listTitle,
+    typeChips, toolbar, assetTable, fieldBlock, suggestionLists, batchSection, batchResult, batchProblems, secretsSection, assetForm, historyPanel, mainPage, layout, mainPanel, listTitle,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_ITAS_PAGES = Object.freeze(api);

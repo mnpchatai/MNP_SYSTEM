@@ -395,6 +395,57 @@ test("applying remembered values fills only the type's own empty brand/place fie
   assert.deepEqual(plain(model.typedSince(current, initial)), { core: { name: "ชื่อใหม่" }, attrs: { cpu: "i7" } });
 });
 
+test("batch lines: one device per line, blank lines skipped, two-column lines split on tab or comma, duplicates inside the batch flagged, bounded", () => {
+  const one = model.parseBatchLines("SN001\n\n  SN002  \r\nSN001\nsn002", ["serial"]);
+  assert.deepEqual(one.items.map((item) => [item.line, item.values.serial]), [[1, "SN001"], [3, "SN002"]]);
+  assert.deepEqual(one.errors.map((error) => error.message), ["บรรทัด 4: Serial ซ้ำกับบรรทัด 1", "บรรทัด 5: Serial ซ้ำกับบรรทัด 3"]);
+  const two = model.parseBatchLines("COM01, SN1\nCOM02\tSN2\nCOM03\ncom01, SN9\nCOM05, ", ["device_code", "serial"]);
+  assert.deepEqual(two.items.map((item) => [item.values.device_code, item.values.serial]), [["COM01", "SN1"], ["COM02", "SN2"]]);
+  assert.deepEqual(two.errors.map((error) => error.line), [3, 4, 5]);
+  assert.match(two.errors[0].message, /ต้องมี 2 ค่า/);
+  assert.match(two.errors[1].message, /รหัสอุปกรณ์ ซ้ำกับบรรทัด 1/, "รหัสเทียบแบบไม่สนตัวพิมพ์เล็กใหญ่");
+  const huge = model.parseBatchLines(Array.from({ length: 51 }, (_, index) => `SN${index}`).join("\n"), ["serial"]);
+  assert.equal(huge.errors[0].line, 0);
+  assert.match(huge.errors[0].message, /ไม่เกิน 50/);
+  assert.deepEqual(model.parseBatchLines("", ["serial"]), { items: [], errors: [] });
+});
+
+test("batch options follow the type: device code choices only when the type has one", () => {
+  assert.deepEqual(model.batchColumnOptions(COMPUTER).map((option) => option.value), ["serial", "reg_no", "device_code", "device_code,serial", "reg_no,serial"]);
+  assert.deepEqual(model.batchColumnOptions(MOUSE).map((option) => option.value), ["serial", "reg_no", "reg_no,serial"]);
+  assert.equal(model.batchOptionOf(MOUSE, "device_code").value, "serial", "ตัวเลือกที่ชนิดนี้ไม่มี = ใช้ตัวแรก");
+});
+
+test("batch plan: shared fields come from the form, the per-line fields from the list; unique fields in the form must be empty; one bad line blocks the whole batch", () => {
+  const base = model.emptyFormValues(COMPUTER);
+  Object.assign(base.core, { name: "เครื่องออฟฟิศ", model: "Dell 3050", place: "สำนักงาน", host_code: "" });
+  base.attrs.cpu = "i5";
+  const ok = model.buildBatchPlan({ type: COMPUTER, base, columns: "device_code,serial", text: "COM01, SN1\ncom02, SN2" });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.items.map((item) => item.label), ["COM01", "com02"]);
+  assert.equal(ok.items[1].values.core.device_code, "com02");
+  assert.equal(ok.items[1].values.core.name, "เครื่องออฟฟิศ");
+  assert.equal(ok.items[0].values.attrs.cpu, "i5");
+  const payload = model.buildSavePayload({ type: COMPUTER, values: ok.items[1].values, assetId: ID });
+  assert.deepEqual(plain(payload.p_data), { device_code: "COM02", serial: "SN2", name: "เครื่องออฟฟิศ", model: "Dell 3050", status: "in_use", place: "สำนักงาน" });
+  assert.deepEqual(plain(payload.p_secrets), {}, "ไม่มีช่องลับในโหมดนี้");
+  assert.equal(payload.p_type_code, "COMPUTER");
+  // เลขทะเบียน/รหัสอุปกรณ์/ช่องที่ใช้ในรายการ ต้องเว้นว่างในฟอร์ม
+  const clash = structuredClone(base); clash.core.reg_no = "COM-1"; clash.core.serial = "SN-X";
+  const bad = model.buildBatchPlan({ type: COMPUTER, base: clash, columns: "serial", text: "SN1" });
+  assert.equal(bad.ok, false);
+  assert.deepEqual(bad.fieldErrors.map((error) => error.field).sort(), ["reg_no", "serial"]);
+  // ค่าผิดในบรรทัดเดียว = ทั้งชุดไม่ผ่าน และบอกเลขบรรทัด · ข้อผิดของฟอร์มร่วมรายงานครั้งเดียว
+  const long = model.buildBatchPlan({ type: COMPUTER, base, columns: "serial", text: `SN1\n${"x".repeat(201)}\nSN3` });
+  assert.equal(long.ok, false);
+  assert.deepEqual(long.lineErrors.map((error) => error.line), [2]);
+  const price = structuredClone(base); price.core.price = "abc";
+  const shared = model.buildBatchPlan({ type: COMPUTER, base: price, columns: "serial", text: "A\nB\nC" });
+  assert.deepEqual(shared.fieldErrors.map((error) => error.field), ["price"]);
+  assert.equal(shared.lineErrors.length, 0);
+  assert.equal(model.buildBatchPlan({ type: COMPUTER, base, columns: "serial", text: "  \n " }).ok, false, "ไม่มีรายการ");
+});
+
 test("changing the type inside the add form carries over only typed values whose field exists in the new type", () => {
   const carried = { core: { reg_no: "X1", device_code: "COM9", name: "ชื่อ", model: "", status: "spare" }, attrs: { cpu: "i7", ram_gb: "", kind: "PC" } };
   const next = model.carryOver(MOUSE, carried);

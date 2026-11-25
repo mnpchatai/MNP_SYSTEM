@@ -281,6 +281,75 @@
     return out;
   }
 
+  /* ---------- เพิ่มหลายเครื่องรุ่นเดียวกัน (เฉพาะช่องไม่ลับ) ---------- */
+  // ผู้ใช้พิมพ์ 1 บรรทัด = 1 เครื่อง ในช่องที่ต่างกันต่อเครื่อง (Serial / เลขทะเบียน / รหัสอุปกรณ์ หรือคู่ รหัส + Serial) ช่องอื่นใช้ค่าจากฟอร์มร่วมกันทุกเครื่อง
+  // ไม่มีช่องลับในโหมดนี้ (ช่องลับต้องเข้ารหัสทีละเครื่องด้วย id ของเครื่องนั้น) · ฐานข้อมูลบังคับเลขทะเบียน/รหัสอุปกรณ์ไม่ซ้ำ จึงต้องเว้นช่องนั้นในฟอร์มแล้วใส่ในรายการแทน
+  const MAX_BATCH = 50;
+  const BATCH_ALWAYS_EMPTY = Object.freeze(["reg_no", "device_code"]);
+  function batchColumnOptions(type) {
+    const label = (key) => CORE_BY_KEY[key].label;
+    const make = (fields, example) => ({ value: fields.join(","), fields, label: fields.map(label).join(" + "), example });
+    return [
+      make(["serial"], "SN001\nSN002\nSN003"),
+      make(["reg_no"], "COM-101\nCOM-102\nCOM-103"),
+      ...(type?.has_device_code ? [make(["device_code"], "COM101\nCOM102\nCOM103"), make(["device_code", "serial"], "COM101, SN001\nCOM102, SN002")] : []),
+      make(["reg_no", "serial"], "COM-101, SN001\nCOM-102, SN002"),
+    ];
+  }
+  const batchOptionOf = (type, value) => batchColumnOptions(type).find((option) => option.value === value) ?? batchColumnOptions(type)[0];
+  // แยกข้อความเป็นรายการ: บรรทัดว่างข้าม · ช่องเดียว = ทั้งบรรทัดคือค่า · สองช่อง = คั่นด้วยแท็บหรือจุลภาค · ซ้ำกันเองในรายการ = ผิดทั้งสองบรรทัด
+  // คืน { items:[{ line, raw, values:{<key>:text} }], errors:[{ line, message }] } (line = เลขบรรทัดในกล่องข้อความ เริ่มที่ 1)
+  function parseBatchLines(text, fields) {
+    const items = [];
+    const errors = [];
+    const seen = fields.map(() => new Map());
+    String(text ?? "").split(/\r?\n/).forEach((rawLine, index) => {
+      const raw = rawLine.trim();
+      if (!raw) return;
+      const line = index + 1;
+      const cells = fields.length === 1 ? [raw] : (raw.includes("\t") ? raw.split("\t") : raw.split(/[,，]/)).map((cell) => cell.trim());
+      if (cells.length !== fields.length || cells.some((cell) => !cell)) {
+        errors.push({ line, message: `บรรทัด ${line}: ต้องมี ${fields.length} ค่า คั่นด้วยเครื่องหมายจุลภาค (,) หรือแท็บ` });
+        return;
+      }
+      const values = Object.fromEntries(fields.map((key, position) => [key, cells[position]]));
+      let clash = false;
+      fields.forEach((key, position) => {
+        const normal = (CORE_BY_KEY[key].code ? normalizeCode(cells[position]) : cells[position]).toLowerCase();
+        const first = seen[position].get(normal);
+        if (first !== undefined) { errors.push({ line, message: `บรรทัด ${line}: ${CORE_BY_KEY[key].label} ซ้ำกับบรรทัด ${first}` }); clash = true; } else seen[position].set(normal, line);
+      });
+      if (!clash) items.push({ line, raw, values });
+    });
+    if (items.length + errors.length > MAX_BATCH) errors.unshift({ line: 0, message: `เพิ่มพร้อมกันได้ครั้งละไม่เกิน ${MAX_BATCH} รายการ` });
+    return { items, errors };
+  }
+  // ตรวจทั้งชุดก่อนส่งแม้แต่รายการเดียว · คืน { ok, fieldErrors:[{ field, message }], lineErrors:[{ line, message }], items:[{ line, raw, label, values }] }
+  // fieldErrors = ปัญหาที่ช่องของฟอร์มร่วม (ใช้กรอบแดงตามช่อง) · lineErrors = ปัญหาของบรรทัดนั้น ๆ · values = ค่าฟอร์มเต็มของเครื่องนั้น ({ core, attrs }) พร้อมส่งเข้า buildSavePayload
+  function buildBatchPlan({ type, base, columns, text }) {
+    const option = batchOptionOf(type, columns);
+    const parsed = parseBatchLines(text, option.fields);
+    const fieldErrors = [];
+    const lineErrors = parsed.errors.map((error) => ({ ...error }));
+    for (const key of new Set([...BATCH_ALWAYS_EMPTY, ...option.fields])) {
+      if (!coreFieldsOf(type).some((field) => field.key === key)) continue;
+      if (textOf(base?.core?.[key]) !== "") fieldErrors.push({ field: key, message: `${CORE_BY_KEY[key].label}: เว้นว่างไว้เมื่อเพิ่มหลายเครื่อง (ใส่ในรายการด้านล่างแทน ฐานข้อมูลไม่ให้ซ้ำกัน)` });
+    }
+    if (!parsed.items.length && !parsed.errors.length) lineErrors.push({ line: 0, message: `ยังไม่มีรายการ: พิมพ์ ${option.label} ของแต่ละเครื่อง บรรทัดละ 1 เครื่อง` });
+    const items = [];
+    const sharedSeen = new Set();
+    for (const entry of parsed.items) {
+      const values = { core: { ...base.core, ...entry.values }, attrs: { ...base.attrs } };
+      const found = validateAsset({ type, values });
+      for (const error of found) {
+        if (option.fields.includes(error.field)) lineErrors.push({ line: entry.line, message: `บรรทัด ${entry.line}: ${error.message}` });
+        else if (!sharedSeen.has(error.field)) { sharedSeen.add(error.field); if (!fieldErrors.some((item) => item.field === error.field)) fieldErrors.push({ field: error.field, message: error.message }); }
+      }
+      items.push({ ...entry, label: entry.values[option.fields[0]], values });
+    }
+    return { ok: !fieldErrors.length && !lineErrors.length && items.length > 0, fieldErrors, lineErrors, items, option };
+  }
+
   // เปลี่ยนชนิดในฟอร์มเพิ่ม: ยกค่าที่พิมพ์ไว้ (ไม่ว่าง) ไปให้ช่องที่มีชื่อเดียวกันในชนิดใหม่ · คืน { core, attrs } เฉพาะช่องที่จะตั้ง (ไม่ยกช่องลับ ช่องลับไม่เคยอยู่ใน values)
   function carryOver(type, carried) {
     const core = {};
@@ -601,7 +670,7 @@
     STATUSES, CORE_FIELDS, GROUP_LABELS, GROUP_ORDER, IDENTITY_KEYS,
     assetsUrl, readView, isUuid, statusLabel, statusBadgeClass,
     formatDate, formatDateTime, parseDateInput, dateInputText, isRealDate,
-    typeFields, plainFields, secretFields, coreFieldsOf, normalizeCode, emptyFormValues, formValuesFromAsset, carryOver, copyValuesFromAsset, suggestionsFor, MAX_SUGGESTIONS, REMEMBER_KEYS, parseMemory, serializeMemory, rememberAdded, forgetType, applyRemembered, typedSince, userFieldName, primaryFieldNames, isPrimaryField, PRIMARY_LABEL_OVERRIDES, extraFieldsHaveValues, errorsInExtraFields, parseField, validateAsset, buildSavePayload, payloadIsEmpty,
+    typeFields, plainFields, secretFields, coreFieldsOf, normalizeCode, emptyFormValues, formValuesFromAsset, carryOver, copyValuesFromAsset, MAX_BATCH, batchColumnOptions, batchOptionOf, parseBatchLines, buildBatchPlan, suggestionsFor, MAX_SUGGESTIONS, REMEMBER_KEYS, parseMemory, serializeMemory, rememberAdded, forgetType, applyRemembered, typedSince, userFieldName, primaryFieldNames, isPrimaryField, PRIMARY_LABEL_OVERRIDES, extraFieldsHaveValues, errorsInExtraFields, parseField, validateAsset, buildSavePayload, payloadIsEmpty,
     tableColumns, allColumns, typeChipGroups, TYPE_ALL_LABEL, USER_ATTR_KEY, userValueOf, cellValue, cellText, formatCell, filterAssets, sortAssets, countText,
     labelOfKey, logChanges, historyView, passwordStrength,
     describeError, isAlreadyExists, purgeSummary,

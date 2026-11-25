@@ -3916,6 +3916,10 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .itas-more > summary { min-height: 44px; padding: 10px 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-weight: 700; cursor: pointer; }
 .itas-more > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .itas-type-line { margin: 0 0 8px; }
+.itas-batch { margin: 0 0 16px; padding: 10px 14px; border: 1px dashed var(--line); border-radius: var(--radius-md); }
+.itas-batch-toggle { min-height: 44px; display: flex; align-items: center; gap: 10px; font-weight: 700; cursor: pointer; }
+.itas-batch-toggle input { width: 20px; height: 20px; }
+.itas-batch-failed { margin: 4px 0 0; padding-left: 18px; }
 .itas-secret-mask { color: var(--muted); letter-spacing: .08em; }
 .itas-secret-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .itas-secret-line .input { flex: 1 1 180px; min-width: 0; }

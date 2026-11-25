@@ -1179,6 +1179,139 @@ test("a browser that cannot store, and tampered stored text, never block adding:
   assert.doesNotMatch(form, /<img src=x>|10\.0\.0\.1/, "ค่าที่ถูกแก้ผ่านการ escape และคีย์แปลกไม่ถูกใช้");
 });
 
+/* ---------- เพิ่มหลายเครื่องรุ่นเดียวกัน ---------- */
+// ฟอร์มจำลองที่มีช่องของโหมดเพิ่มหลายเครื่อง (checkbox/ช่องเลือกรูปแบบ/กล่องรายการ)
+const batchForm = ({ values = {}, columns = "serial", lines = "" } = {}) => {
+  const form = assetForm({ values });
+  form.elements.batch_columns = { value: columns };
+  form.elements.batch_lines = { value: lines };
+  return form;
+};
+const openBatch = async (w, options = {}) => {
+  await w.render();
+  await w.click(chip("COMPUTER"));
+  await w.click(w.button("itas-add"));
+  await change(w, { id: "itas-batch-toggle", checked: true });
+  w.forms.current = batchForm(options);
+  return w.forms.current;
+};
+
+test("add several of the same model: the toggle shows the list box and hides secrets; each line is saved one after another with its own new id, the shared fields repeated, and no secret key", async () => {
+  // id แรกถูกใช้เป็น uuid ร่างของฟอร์มเพิ่มตอนเปิด (ไม่ใช้ในโหมดหลายเครื่อง) · แต่ละบรรทัดได้ id ใหม่ของตัวเอง
+  const ids = ["aaaaaaaa-aaaa-4aaa-8aaa-00000000000a", "aaaaaaaa-aaaa-4aaa-8aaa-00000000000b", "aaaaaaaa-aaaa-4aaa-8aaa-00000000000c", "aaaaaaaa-aaaa-4aaa-8aaa-00000000000d"];
+  let next = 0;
+  const w = await world(MULTI);
+  w.context.crypto.randomUUID = () => ids[next++];
+  const form = await openBatch(w, { values: { name: "เครื่องเลขา", model: "Dell 3050", place: "สำนักงาน" }, columns: "device_code,serial", lines: "com01, SN1\n\ncom02, SN2\ncom03, SN3" });
+  assert.equal(w.elements["itas-batch-panel"].hidden, false, "เปิดกล่องรายการ");
+  assert.equal(w.elements["itas-secrets-host"].hidden, true, "ซ่อนช่องลับ");
+  await w.submit(form);
+  assert.equal(w.calls.confirms.at(-1), "เพิ่มอุปกรณ์ 3 รายการ?");
+  const saves = w.calls.rpc.filter((call) => call.name === "app_itas_save_asset");
+  assert.equal(saves.length, 3);
+  assert.deepEqual(saves.map((call) => call.args.p_id), ids.slice(1));
+  assert.deepEqual(saves.map((call) => call.args.p_data.device_code), ["COM01", "COM02", "COM03"]);
+  assert.deepEqual(saves.map((call) => call.args.p_data.serial), ["SN1", "SN2", "SN3"]);
+  for (const call of saves) {
+    assert.equal(call.args.p_type_code, "COMPUTER");
+    assert.equal(call.args.p_data.name, "เครื่องเลขา");
+    assert.equal(call.args.p_data.model, "Dell 3050");
+    assert.deepEqual(call.args.p_secrets, {});
+    assert.equal(call.args.p_expected_updated_at, null);
+  }
+  assert.match(w.calls.toasts.at(-1).message, /เพิ่มอุปกรณ์ 3 รายการแล้ว/);
+  assert.equal(w.hosts["itas-form-area"], "", "ทั้งหมดสำเร็จ = ปิดฟอร์ม");
+  assert.deepEqual(JSON.parse(w.storage.get(MEMORY_KEY)).types.COMPUTER, { model: "Dell 3050", place: "สำนักงาน" });
+});
+
+test("a failing line is reported by its own value, never dropped: the box keeps only the lines that did not go through, and a retry does not re-add the ones that did", async () => {
+  const w = await world({ ...MULTI, rpcHandlers: { ...MULTI.rpcHandlers, app_itas_save_asset: (params) => { if (params.p_data.serial === "SN2") throw Object.assign(new Error("เลขทะเบียน COM-X ซ้ำกับอุปกรณ์อื่น"), { code: "23514" }); return { asset: { ...ASSET }, created: true, changed: true }; } } });
+  const form = await openBatch(w, { values: { name: "x" }, lines: "SN1\nSN2\nSN3" });
+  await w.submit(form);
+  assert.equal(w.calls.rpc.filter((call) => call.name === "app_itas_save_asset").length, 3, "บรรทัดที่ล้มไม่หยุดบรรทัดอื่น");
+  assert.equal(form.elements.batch_lines.value, "SN2", "เหลือเฉพาะบรรทัดที่ยังไม่สำเร็จ");
+  const result = w.hosts["itas-batch-result"];
+  assert.match(result, /เพิ่มสำเร็จ 2 รายการ/);
+  assert.match(result, /<strong>SN2<\/strong>: เลขทะเบียน COM-X ซ้ำกับอุปกรณ์อื่น/);
+  assert.notEqual(w.hosts["itas-form-area"], "", "ฟอร์มยังเปิดอยู่");
+  assert.equal(w.calls.busy.at(-1), false, "ปลดสถานะรอ");
+  // แก้แล้วกดซ้ำ: ส่งเฉพาะบรรทัดที่เหลือ ด้วย id เดิมของบรรทัดนั้น
+  const firstId = w.calls.rpc.filter((call) => call.name === "app_itas_save_asset")[1].args.p_id;
+  form.elements.batch_lines.value = "SN2";
+  await w.submit(form);
+  const saves = w.calls.rpc.filter((call) => call.name === "app_itas_save_asset");
+  assert.equal(saves.length, 4);
+  assert.equal(saves[3].args.p_id, firstId, "ลองซ้ำใช้ uuid เดิมของบรรทัดนั้น");
+});
+
+test("a lost connection or expired session stops the batch right there: nothing further is sent and the remaining lines stay in the box", async () => {
+  let calls = 0;
+  const w = await world({ ...MULTI, rpcHandlers: { ...MULTI.rpcHandlers, app_itas_save_asset: () => { calls += 1; if (calls === 2) throw Object.assign(new Error("Failed to fetch"), { code: "" }); return { asset: ASSET, created: true, changed: true }; } } });
+  const form = await openBatch(w, { values: { name: "x" }, lines: "SN1\nSN2\nSN3\nSN4" });
+  await w.submit(form);
+  assert.equal(calls, 2, "หยุดหลังเน็ตหลุด ไม่ยิงบรรทัดที่เหลือ");
+  assert.equal(form.elements.batch_lines.value, "SN2\nSN3\nSN4");
+  assert.match(w.hosts["itas-batch-result"], /ผลไม่แน่ชัด/);
+  assert.match(w.hosts["itas-batch-result"], /ยังไม่ได้ส่ง: SN3, SN4/);
+});
+
+test("when the first try of a line actually saved (retry hits 'already exists'), the line counts as added instead of failing", async () => {
+  const w = await world({ ...MULTI, rpcHandlers: { ...MULTI.rpcHandlers, app_itas_save_asset: () => { throw Object.assign(new Error("อุปกรณ์นี้มีอยู่แล้ว กรุณาโหลดข้อมูลล่าสุด"), { code: "23514" }); } } });
+  const form = await openBatch(w, { values: { name: "x" }, lines: "SN1" });
+  await w.submit(form);
+  assert.match(w.calls.toasts.at(-1).message, /เพิ่มอุปกรณ์ 1 รายการแล้ว/);
+  assert.equal(w.hosts["itas-form-area"], "");
+});
+
+test("problems found before sending block the whole batch (nothing reaches the database): list problems per line, unique fields left filled in the form, an empty list, nothing confirmed", async () => {
+  const w = await world(MULTI);
+  const form = await openBatch(w, { values: { name: "x" }, lines: "SN1\nSN1\n" });
+  await w.submit(form);
+  assert.match(w.hosts["itas-batch-result"], /บรรทัด 2: Serial ซ้ำกับบรรทัด 1/);
+  const filled = batchForm({ values: { name: "x", reg_no: "COM-1" }, lines: "SN1" });
+  w.forms.current = filled;
+  await w.submit(filled);
+  const empty = batchForm({ values: { name: "x" }, lines: "" });
+  w.forms.current = empty;
+  await w.submit(empty);
+  assert.match(w.hosts["itas-batch-result"], /ยังไม่มีรายการ/);
+  assert.ok(!w.calls.rpc.some((call) => call.name === "app_itas_save_asset"));
+  assert.equal(w.calls.confirms.length, 0);
+});
+
+test("declining the count confirmation sends nothing; turning batch mode on with a typed secret asks first and keeps the secret if declined", async () => {
+  const w = await world({ ...MULTI, confirm: false });
+  const form = await openBatch(w, { values: { name: "x" }, lines: "SN1\nSN2" });
+  await w.submit(form);
+  assert.ok(!w.calls.rpc.some((call) => call.name === "app_itas_save_asset"));
+  assert.equal(w.calls.confirms.at(-1), "เพิ่มอุปกรณ์ 2 รายการ?");
+  assert.equal(w.calls.busy.includes(true), false, "ยังไม่เริ่มบันทึก");
+  const s = await world({ ...MULTI, confirm: false });
+  await s.render();
+  await s.click(chip("COMPUTER"));
+  await s.click(s.button("itas-add"));
+  s.forms.current = assetForm({ values: {}, secrets: { ip: { value: "x" } } });
+  const box = { id: "itas-batch-toggle", checked: true };
+  await change(s, box);
+  assert.equal(s.calls.confirms.at(-1), "เพิ่มหลายเครื่อง?");
+  assert.equal(box.checked, false);
+  assert.equal(s.forms.current.rows[0].input.value, "x", "ไม่ยืนยัน = ช่องลับที่พิมพ์ไว้ไม่ถูกล้าง");
+});
+
+test("typed batch lines count as unsaved work and survive a change of type", async () => {
+  const w = await world(MULTI);
+  const form = await openBatch(w, { values: {}, lines: "SN1\nSN2" });
+  assert.equal(w.itas.unsavedCount(), 1);
+  form.elements.batch_lines.value = "";
+  assert.equal(w.itas.unsavedCount(), 0);
+  form.elements.batch_lines.value = "A\nB";
+  await change(w, { name: "type_code", value: "MOUSE" });
+  const html = w.hosts["itas-form-area"];
+  assert.match(html, /name="batch_on" checked>/);
+  assert.match(html, /<textarea[^>]*name="batch_lines"[^>]*>A\nB<\/textarea>/);
+  assert.match(html, /id="itas-secrets-host" hidden>|<div id="itas-secrets-host" hidden>/, "ยังซ่อนช่องลับ");
+});
+
 test("'copy as a new device' opens an add form for the same type with the non-secret fields filled, unique ones blank, a notice, a fresh id, and no secrets", async () => {
   const CIPHER = "Y2lwaGVydGV4dC10ZXN0LW9ubHktMDAwMDAwMDA=";
   const source = { ...ASSET, secrets: { ip: { v: 1, n: "AAAAAAAAAAAAAAAA", c: CIPHER } } };
