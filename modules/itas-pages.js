@@ -312,9 +312,13 @@
     const installed = edit && hostLink?.id ? ` · ติดตั้งอยู่ที่ <button type="button" class="itas-link" data-itas-host="${esc(hostLink.id)}">${esc(hostLink.label)}</button>` : "";
     const typeBlock = edit ? `<p class="muted small itas-type-line">ชนิด: <strong>${esc(type.name)}</strong>${installed}</p>` : types ? `<div class="itas-grid">${typeSelect(types, type.code)}</div>` : "";
     return `<section class="card itas-form-card" id="itas-form-card" aria-labelledby="itas-form-title">
-        <h2 id="itas-form-title">${title}</h2>
         <div id="itas-form-message" role="status"></div>
         <form id="itas-form" novalidate autocomplete="off">
+          <div class="itas-form-head">
+            <button type="button" class="btn secondary" id="itas-form-back">‹ ย้อนกลับ</button>
+            <h2 id="itas-form-title">${title}</h2>
+            <button type="submit" class="btn is-primary itas-form-head-save">${edit ? "บันทึก" : "เพิ่ม"}</button>
+          </div>
           ${notice ? `<p class="rf-callout itas-form-notice" id="itas-form-notice" role="status">${esc(notice)}</p>` : ""}
           ${rememberedNotice(remembered)}
           ${typeBlock}
@@ -351,16 +355,20 @@
     const type = (Array.isArray(types) ? types : []).find((item) => item.code === row.type_code);
     const spec = model.partSpecText(row, type);
     const code = row.reg_no || row.device_code || "";
+    // การ์ดชิ้นส่วนเรียงใน grid เดียวกันทุกชนิด จึงมีป้ายชนิด (ไอคอน + ชื่อ) บนการ์ดเอง
+    const typeLabel = row.type_name || type?.name || row.type_code || "";
     return `<li><button type="button" class="itas-part is-${esc(model.typeKind(row.type_code))}${row.status === "retired" ? " is-retired" : ""}" data-itas-part="${esc(row.id)}">
+        <span class="itas-part-type">${glyph(row.type_code)}<span>${esc(typeLabel)}</span>${row.slot ? `<span class="itas-part-slot" title="ช่อง/ตำแหน่ง">${esc(row.slot)}</span>` : ""}</span>
         <span class="itas-part-main"><span class="itas-part-top"><span class="itas-mono itas-part-code">${esc(code || "—")}</span>${row.name ? `<span class="itas-part-name">${esc(row.name)}</span>` : ""}</span>${spec ? `<span class="itas-mono itas-part-spec">${esc(spec)}</span>` : ""}</span>
-        ${row.slot ? `<span class="itas-part-slot" title="ช่อง/ตำแหน่ง">${esc(row.slot)}</span>` : ""}
-        ${statusPill(row.status)}
+        <span class="itas-part-foot">${statusPill(row.status)}</span>
       </button></li>`;
   }
+  // รวมการ์ดของทุกชนิดในหมวดเดียวเป็น grid เดียว (เรียงชนิดต่อกัน) · ชื่อชนิดดึงจากกลุ่มที่จัดไว้แล้ว
   function partGroupCard(kind, groups, count, types) {
     const label = model.KIND_LABELS[kind];
-    const inner = groups.length
-      ? groups.map((group) => `<div class="itas-typegroup"><h4>${glyph(group.type_code)}<span>${esc(group.type_name)}</span><span class="detail-section-count">${esc(String(group.items.length))}</span></h4><ul class="itas-parts">${group.items.map((row) => partButton(row, types)).join("")}</ul></div>`).join("")
+    const items = groups.flatMap((group) => group.items.map((row) => ({ ...row, type_name: group.type_name })));
+    const inner = items.length
+      ? `<ul class="itas-parts">${items.map((row) => partButton(row, types)).join("")}</ul>`
       : `<p class="muted small">ไม่มี${esc(label)}ที่ผูกกับเครื่องนี้</p>`;
     return `<section class="card itas-group-card is-${esc(kind)}" aria-label="${esc(label)}"><h3 class="itas-group-title"><span class="itas-kind is-${esc(kind)}">${esc(label)}</span><span class="detail-section-count">${esc(String(count))}</span></h3>${inner}</section>`;
   }

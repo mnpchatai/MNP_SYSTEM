@@ -245,9 +245,9 @@ test("render without access goes home and calls nothing else; with access it loa
   assert.match(html, /data-itas-type="" aria-pressed="true"/, "ชิป ทั้งหมด ถูกเลือกตั้งต้น");
   assert.match(html, /data-itas-type="COMPUTER" aria-pressed="false"/);
   assert.doesNotMatch(html, /itas-purge/, "ไม่ใช่โหมดทดสอบ");
-  assert.equal(w.itas.version, "1.02");
+  assert.equal(w.itas.version, "1.03");
   assert.equal(w.itas.inDevelopment, true);
-  assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_ASSET_REGISTER.version, "1.02");
+  assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_ASSET_REGISTER.version, "1.03");
   // โหมดทดสอบ: มีปุ่มล้างข้อมูล + แท็ก ทดสอบ
   const test = await world({ isTest: true });
   await test.render();
@@ -1579,4 +1579,41 @@ test("leaving the page and coming back shows the register list again (the comput
   const source = read("modules/module-itas.js");
   const hostPart = source.slice(source.indexOf("async function loadHost"), source.indexOf("async function backToList"));
   assert.doesNotMatch(hostPart, /secrets|decrypt|vault\./, "หน้าเครื่องไม่แตะช่องลับ/ตู้เซฟ");
+});
+
+/* ---------- รุ่น 1.03: ปุ่ม "ย้อนกลับ" บนหัวฟอร์ม ---------- */
+test("form header has a back button next to the title (add and edit); it closes the form like the cancel button and returns to the computer page when opened from there", async () => {
+  const w = await world(HOSTWORLD());
+  await w.render();
+  await w.click(w.button("itas-add"));
+  assert.match(w.hosts["itas-form-area"], /<div class="itas-form-head">\s*<button type="button" class="btn secondary" id="itas-form-back">‹ ย้อนกลับ<\/button>\s*<h2 id="itas-form-title">เพิ่มอุปกรณ์<\/h2>/);
+  await w.click(w.button("itas-form-back"));
+  assert.equal(w.hosts["itas-form-area"], "", "ยังไม่ได้กรอก = ปิดทันทีไม่ถาม");
+  assert.equal(w.calls.confirms.length, 0);
+  // เปิดจากหน้าเครื่องคอม: ปิดฟอร์มแล้วอยู่หน้าเครื่องเดิม (ไม่กลับรายการ)
+  await w.click(rowClick(ASSET_ID));
+  await w.click(w.button("itas-host-edit"));
+  assert.match(w.hosts["itas-form-area"], /id="itas-form-back"/);
+  await w.click(w.button("itas-form-back"));
+  assert.equal(w.hosts["itas-form-area"], "");
+  assert.match(w.hosts["itas-host-host"], /itas-host-code itas-mono">COM12</, "ยังอยู่หน้าเครื่อง");
+});
+
+test("back button asks before dropping a half-typed form; declining keeps the form, accepting closes it", async () => {
+  const keep = await world(HOSTWORLD({ confirm: false }));
+  await keep.render();
+  await keep.click(rowClick(ASSET_ID));
+  await keep.click(keep.button("itas-host-edit"));
+  keep.forms.current = assetForm({ values: { reg_no: "COM-001", name: "แก้ค้างไว้" } });
+  await keep.click(keep.button("itas-form-back"));
+  assert.equal(keep.calls.confirms.at(-1), "ยังไม่ได้บันทึกสิ่งที่กรอก");
+  assert.match(keep.hosts["itas-form-area"], /id="itas-form"/, "เลือกอยู่ต่อ = ฟอร์มยังอยู่");
+  const drop = await world(HOSTWORLD({ confirm: true }));
+  await drop.render();
+  await drop.click(rowClick(ASSET_ID));
+  await drop.click(drop.button("itas-host-edit"));
+  drop.forms.current = assetForm({ values: { reg_no: "COM-001", name: "แก้ค้างไว้" } });
+  await drop.click(drop.button("itas-form-back"));
+  assert.equal(drop.calls.confirms.at(-1), "ยังไม่ได้บันทึกสิ่งที่กรอก");
+  assert.equal(drop.hosts["itas-form-area"], "", "ยืนยันทิ้ง = ปิดฟอร์ม");
 });

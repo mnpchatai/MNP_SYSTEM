@@ -235,7 +235,7 @@ test("routes and version metadata", () => {
   assert.equal(model.assetsUrl(), "#/office?module=assets");
   assert.equal(model.readView(new URLSearchParams("module=assets")), "main");
   assert.equal(model.readView(new URLSearchParams("module=assets&view=other")), null);
-  assert.equal(model.MODULE_VERSION, "1.02");
+  assert.equal(model.MODULE_VERSION, "1.03");
   assert.equal(model.IN_DEVELOPMENT, true);
   assert.equal(model.ASSET_CODE, "IT_ASSET_REGISTER");
   assert.ok(model.isUuid(ID) && !model.isUuid("x"));

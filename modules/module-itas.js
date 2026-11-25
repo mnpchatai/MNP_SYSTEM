@@ -390,6 +390,8 @@
     "itas-vault-cancel": () => { vault.cancelPending(); wipeInputs(byId("itas-vault-panel")); closeVaultPanel(); refreshVaultBar(); },
     "itas-add": () => openForm("add"),
     "itas-form-cancel": () => closeForm(),
+    // ปุ่มย้อนกลับบนหัวฟอร์ม = ปุ่มยกเลิกล่างฟอร์ม (ฟอร์มเปิดทับหน้าเดิม ปิดแล้วกลับหน้าเครื่อง/รายการเดิมเอง · ถามก่อนทิ้งข้อมูลที่ยังไม่บันทึก) ไม่ทำงานขณะกำลังส่ง
+    "itas-form-back": () => (ui?.form?.submitting ? undefined : closeForm()),
     "itas-copy-asset": () => copyAsset(),
     "itas-clear-remembered": () => clearRemembered(),
     "itas-history-load": () => loadHistory(),
