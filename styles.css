@@ -3874,7 +3874,7 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .itas-main { min-width: 0; }
 .itas-chips { margin: 0 0 8px; padding: 2px 0 6px; display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
 @media (min-width: 960px) { .itas-chips { flex-wrap: wrap; overflow-x: visible; } }
-.itas-chip { flex: 0 0 auto; min-height: 36px; padding: 4px 12px; display: inline-flex; align-items: center; gap: 8px; font: inherit; font-size: var(--text-meta); color: inherit; white-space: nowrap; background: var(--paper); border: 1px solid var(--line); border-radius: 999px; cursor: pointer; }
+.itas-chip { flex: 0 0 auto; min-height: 40px; padding: 4px 12px; display: inline-flex; align-items: center; gap: 8px; font: inherit; font-size: var(--text-meta); color: inherit; white-space: nowrap; background: var(--paper); border: 1px solid var(--line); border-radius: 999px; cursor: pointer; }
 .itas-chip:hover { border-color: var(--primary); }
 .itas-chip:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .itas-chip.is-selected { border-color: var(--primary); background: var(--primary-soft); font-weight: 700; }

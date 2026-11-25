@@ -34,7 +34,7 @@ test("head: one h1, back link to IT SUPPORT, test tag only in test mode, dev not
   assert.doesNotMatch(html, /itas-test-tag/);
   assert.match(pages.head({ isTest: true }), /<span class="badge itas-test-tag"[^>]*>ทดสอบ<\/span>/);
   assert.match(html, /กำลังพัฒนาและทดสอบ ยังไม่เปิดใช้งานจริง/);
-  assert.match(html, /<p class="itas-version no-print"[^>]*>V1\.00<\/p>/);
+  assert.match(html, /<p class="itas-version no-print"[^>]*>V1\.01<\/p>/);
 });
 
 test("vault bar: shows state for every status with the right buttons; test vault is labelled", () => {

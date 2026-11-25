@@ -240,9 +240,9 @@ test("render without access goes home and calls nothing else; with access it loa
   assert.match(html, /data-itas-type="" aria-pressed="true"/, "ชิป ทั้งหมด ถูกเลือกตั้งต้น");
   assert.match(html, /data-itas-type="COMPUTER" aria-pressed="false"/);
   assert.doesNotMatch(html, /itas-purge/, "ไม่ใช่โหมดทดสอบ");
-  assert.equal(w.itas.version, "1.00");
+  assert.equal(w.itas.version, "1.01");
   assert.equal(w.itas.inDevelopment, true);
-  assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_ASSET_REGISTER.version, "1.00");
+  assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_ASSET_REGISTER.version, "1.01");
   // โหมดทดสอบ: มีปุ่มล้างข้อมูล + แท็ก ทดสอบ
   const test = await world({ isTest: true });
   await test.render();
