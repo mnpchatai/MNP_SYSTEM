@@ -143,7 +143,7 @@ create table public.bom_order_requests (
     (status = 'open' and decision is null and decided_at is null)
     or (status = 'done' and decision is not null and decided_at is not null)),
   -- ผลิตต่อ / หยุด เป็นทางเลือกของการแจ้งยกเลิกเท่านั้น · การแจ้งแก้ใบรับทราบอย่างเดียว
-  constraint bom_order_requests_decision_check check (decision is null or decision = 'ack' or kind = 'cancel')
+  constraint bom_order_requests_decision_kind_check check (decision is null or decision = 'ack' or kind = 'cancel')
 );
 comment on table public.bom_order_requests is 'การแจ้งฝ่ายวางแผนของฝ่ายขาย: change = ฝ่ายขายแก้ใบที่เริ่มงานแล้ว · cancel = ฝ่ายขายยกเลิกใบ (open -> done: ack รับทราบ / continue ผลิตต่อ / stop หยุด) · เซิร์ฟเวอร์เขียนใน app_bom_save_master (ตัวเขียนใบ และ decideOrderRequest) เท่านั้น';
 -- การแจ้งยกเลิกที่ยังเปิดต่อใบได้หนึ่งรายการ (ฝ่ายขายยกเลิกใบได้ครั้งเดียว · ดัชนีนี้กันซ้ำอีกชั้น) · แจ้งแก้ใบเปิดพร้อมกันได้หลายรายการ
