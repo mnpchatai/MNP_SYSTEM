@@ -188,6 +188,23 @@ test("asset form: only code, name, brand/model, user (+ status) are always visib
   assert.doesNotMatch(pages.assetForm({ mode: "add", type: mouse, values: model.emptyFormValues(mouse) }), /name="device_code"/);
 });
 
+test("suggestions render as escaped datalists attached to plain text inputs only; the remembered-values notice has a clear button", () => {
+  const suggestions = { core: { model: ["Dell 3050", XSS], place: ["สำนักงาน"], install_date: ["01/01/2568"] }, attrs: { cpu: ["i5"], kind: ["PC"] } };
+  const html = pages.assetForm({ mode: "add", type: TYPE, values: model.emptyFormValues(TYPE), suggestions, remembered: [{ key: "model", label: "ยี่ห้อ / รุ่น", value: "Dell 3050" }, { key: "place", label: "สถานที่", value: XSS }] });
+  assert.match(html, /<datalist id="itas-dl-model"><option value="Dell 3050"><\/option><option value="&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;"><\/option><\/datalist>/);
+  assert.match(html, /<datalist id="itas-dl-attrs-cpu">/);
+  assert.match(html, /name="model" type="text" autocomplete="off" list="itas-dl-model"/);
+  assert.match(html, /name="place" type="text" autocomplete="off" list="itas-dl-place"/);
+  assert.match(html, /name="attrs.cpu" type="text" autocomplete="off" list="itas-dl-attrs-cpu"/);
+  assert.doesNotMatch(html, /name="install_date"[^>]*list=/, "ช่องวันที่ไม่มีคำแนะนำ");
+  assert.doesNotMatch(html, /name="attrs.kind"[^>]*list=/, "ช่องตัวเลือกไม่มีคำแนะนำ");
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /id="itas-remembered"[^>]*>เติมให้จากรายการล่าสุดของชนิดนี้: <strong>ยี่ห้อ \/ รุ่น<\/strong> Dell 3050 · <strong>สถานที่<\/strong> &lt;img/);
+  assert.match(html, /id="itas-clear-remembered">ล้างค่าที่เติมให้/);
+  const plainForm = pages.assetForm({ mode: "add", type: TYPE, values: model.emptyFormValues(TYPE) });
+  assert.doesNotMatch(plainForm, /datalist|itas-remembered|list=/);
+});
+
 test("asset form (edit): values escaped, history button, secret fields masked and never carry ciphertext or plaintext", () => {
   const values = model.formValuesFromAsset(ASSET, TYPE);
   const html = pages.assetForm({ mode: "edit", type: TYPE, values, asset: ASSET, vaultStatus: "locked" });

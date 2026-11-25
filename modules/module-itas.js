@@ -385,6 +385,7 @@
     "itas-add": () => openForm("add"),
     "itas-form-cancel": () => closeForm(),
     "itas-copy-asset": () => copyAsset(),
+    "itas-clear-remembered": () => clearRemembered(),
     "itas-history-load": () => loadHistory(),
     "itas-purge": (button) => purge(button),
     "itas-reload-asset": () => reloadAfterConflict(),
@@ -570,12 +571,47 @@
     if (location.hash !== pageHash || !onAssetsPage()) { ui.form = null; return 0; }
     return isDirty() ? 1 : 0;
   }
-  // ชนิดตั้งต้นของฟอร์มเพิ่ม: ชนิดที่กรองอยู่ (ถ้าเปิดใช้งาน) · ไม่ได้กรอง = ชนิดแรกที่มีของ (ไม่มีก็ชนิดเปิดใช้งานชนิดแรก)
+  /* ---------- จำค่าล่าสุดต่อชนิด ---------- */
+  // เก็บในเครื่องผู้ใช้ ต่อบัญชีต่อโหมด (จริง/ทดสอบ) · เฉพาะ ยี่ห้อ/รุ่น + สถานที่ ของรายการที่เพิ่งเพิ่ม + ชนิดล่าสุด (model.REMEMBER_KEYS) · ห้ามเก็บช่องลับเด็ดขาด
+  // ที่เก็บใช้ไม่ได้/เต็ม/ยังไม่ล็อกอิน = ข้ามเงียบ ๆ (ฟีเจอร์นี้แค่ช่วยกรอก ไม่กระทบการบันทึก)
+  const memoryKey = () => (state.session?.user?.id ? `mnp.itas.last.v1:${state.session.user.id}:${isSandbox() ? "test" : "real"}` : "");
+  function readMemory() {
+    try {
+      const key = memoryKey();
+      return model.parseMemory(key ? window.localStorage?.getItem(key) : "");
+    } catch {
+      return model.parseMemory("");
+    }
+  }
+  function writeMemory(memory) {
+    try {
+      const key = memoryKey();
+      if (key) window.localStorage?.setItem(key, model.serializeMemory(memory));
+    } catch {
+      // ไม่มีที่เก็บหรือเต็ม: ข้าม
+    }
+  }
+  // ฟอร์มเพิ่มใหม่ของชนิดนี้ พร้อมค่าที่จำไว้ (ยี่ห้อ/รุ่น สถานที่) · applied = ช่องที่เติมให้ (ไว้แสดงข้อความ + ปุ่มล้าง)
+  const freshAddValues = (type) => model.applyRemembered(type, model.emptyFormValues(type), readMemory());
+  // ชนิดตั้งต้นของฟอร์มเพิ่ม: ชนิดที่กรองอยู่ (ถ้าเปิดใช้งาน) → ชนิดที่เพิ่มล่าสุด → ชนิดแรกที่มีของ (ไม่มีก็ชนิดเปิดใช้งานชนิดแรก)
   function defaultAddType() {
     const active = ui.types.filter((type) => type.is_active !== false);
     const filtered = currentType();
     if (filtered && filtered.is_active !== false) return filtered;
-    return active.find((type) => Number(type.asset_count) > 0) ?? active[0] ?? null;
+    const last = active.find((type) => type.code === readMemory().lastType);
+    return last ?? active.find((type) => Number(type.asset_count) > 0) ?? active[0] ?? null;
+  }
+  // ล้างค่าที่ระบบเติมให้: เฉพาะช่องที่ยังเป็นค่านั้นอยู่ (ที่ผู้ใช้พิมพ์ทับไว้แล้วไม่แตะ) + ลืมค่าที่จำของชนิดนี้
+  function clearRemembered() {
+    const state0 = ui?.form;
+    const form = formEl();
+    if (!state0 || state0.mode !== "add" || !form) return;
+    const wasDirty = isDirty();
+    for (const item of state0.remembered ?? []) { const input = form.elements?.[item.key]; if (input && input.value === item.value) input.value = ""; }
+    writeMemory(model.forgetType(readMemory(), state0.type.code));
+    state0.remembered = [];
+    byId("itas-remembered")?.remove?.();
+    if (!wasDirty) state0.initial = JSON.stringify(readFormValues(form, state0.type)); // ที่ล้างไปไม่นับเป็น "พิมพ์ค้าง"
   }
   async function openForm(mode, id = null) {
     if (ui.busy || (mode === "add" && !canAddAny())) return;
@@ -594,7 +630,9 @@
       return;
     }
     const type = defaultAddType();
-    if (type) mountForm("add", type, null, model.emptyFormValues(type));
+    if (!type) return;
+    const { values, applied } = freshAddValues(type);
+    mountForm("add", type, null, values, { remembered: applied });
   }
   // เปลี่ยนชนิดในฟอร์มเพิ่ม: วาดช่องใหม่ตามชนิด ยกค่าที่พิมพ์แล้วที่ชื่อช่องตรงกันไปให้ (ช่องลับล้าง ต้องถามก่อนถ้าพิมพ์ค้างอยู่) · uuid ร่างเดิมคงไว้
   async function changeFormType(select) {
@@ -606,8 +644,11 @@
       select.value = state0.type.code;
       return;
     }
-    const carried = readFormValues(formEl(), state0.type);
-    mountForm("add", next, null, model.emptyFormValues(next), { carry: carried, draftId: state0.draftId });
+    // ยกเฉพาะที่ผู้ใช้พิมพ์เอง (ค่าที่ระบบเติมให้จากชนิดเดิมไม่ยกไป) · ชนิดใหม่เติมค่าที่จำของมันเองให้ ยกเว้นช่องที่ผู้ใช้พิมพ์ทับ
+    const typed = model.typedSince(readFormValues(formEl(), state0.type), JSON.parse(state0.initial));
+    const { values, applied } = freshAddValues(next);
+    const shown = applied.filter((item) => !typed.core[item.key]);
+    mountForm("add", next, null, values, { carry: typed, draftId: state0.draftId, remembered: shown });
   }
   // คัดลอกเป็นเครื่องใหม่: เปิดฟอร์มเพิ่มชนิดเดียวกัน เติมช่องไม่ลับจากรายการที่บันทึกไว้ (ไม่ใช่ที่แก้ค้างอยู่) · เลขทะเบียน/รหัส/Serial เว้นว่าง · ช่องลับไม่คัดลอก
   async function copyAsset() {
@@ -625,7 +666,7 @@
     for (const [key, value] of Object.entries(values.core ?? {})) if (form.elements?.[key]) form.elements[key].value = value;
     for (const [key, value] of Object.entries(values.attrs ?? {})) if (form.elements?.[`attrs.${key}`]) form.elements[`attrs.${key}`].value = value;
   }
-  function mountForm(mode, type, original, values, { carry = null, draftId: keepDraftId = null, openMore = null, notice = "" } = {}) {
+  function mountForm(mode, type, original, values, { carry = null, draftId: keepDraftId = null, openMore = null, notice = "", remembered = [] } = {}) {
     const host = byId("itas-form-area");
     if (!host) return;
     clearReveals();
@@ -639,10 +680,10 @@
         return;
       }
     }
-    ui.form = { mode, type, original, draftId, initial: "", submitting: false };
+    ui.form = { mode, type, original, draftId, initial: "", submitting: false, remembered };
     // "รายละเอียดเพิ่มเติม" เปิดให้เองเมื่อมีค่าอยู่ในช่องที่พับไว้ (แก้ไขอุปกรณ์ที่กรอกไว้แล้ว · ค่าที่ยกมาตอนเปลี่ยนชนิด) · เพิ่มใหม่เริ่มแบบพับ
     const extrasFilled = model.extraFieldsHaveValues(type, carry ? model.carryOver(type, carry) : mode === "edit" ? values : null);
-    host.innerHTML = pages.assetForm({ mode, type, values, asset: original, vaultStatus: vault.status(), types: mode === "add" ? ui.types : null, openMore: openMore ?? extrasFilled, notice });
+    host.innerHTML = pages.assetForm({ mode, type, values, asset: original, vaultStatus: vault.status(), types: mode === "add" ? ui.types : null, openMore: openMore ?? extrasFilled, notice, remembered, suggestions: model.suggestionsFor(ui.rows, type) });
     hardenSecretInputs(host);
     const form = formEl();
     ui.form.initial = JSON.stringify(readFormValues(form, type));
@@ -767,6 +808,7 @@
         else throw error;
       }
       clearSecretInputs(form);
+      if (!original) writeMemory(model.rememberAdded(readMemory(), type.code, values)); // จำ ยี่ห้อ/รุ่น + สถานที่ ไว้เติมให้ครั้งหน้า (ไม่มีช่องลับ)
       showToast(result?.created ? "เพิ่มอุปกรณ์แล้ว" : result?.changed === false ? "ไม่มีการเปลี่ยนแปลง" : "บันทึกแล้ว");
       closeForm({ force: true });
       await refreshData();

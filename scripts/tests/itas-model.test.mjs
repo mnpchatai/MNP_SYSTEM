@@ -338,6 +338,63 @@ test("copy as a new device: every non-secret field is copied except the ones tha
   assert.deepEqual(model.copyValuesFromAsset({ ...ASSET, serial: null, reg_no: null, device_code: null }, COMPUTER).skipped, [], "ช่องที่ต้นฉบับไม่มีค่าไม่ต้องบอกว่าเว้นว่าง");
 });
 
+test("suggestions: from values already entered in the same type, most frequent first, only plain text fields, never secrets, bounded", () => {
+  const rows = [
+    { type_code: "COMPUTER", model: "Dell 3050", place: "สำนักงาน", host_code: null, vendor: "ร้าน A", attrs: { cpu: "i5", ram_gb: 8, os_installed: "2025-03-01", kind: "PC" }, secrets: { ip: ENVELOPE } },
+    { type_code: "COMPUTER", model: "HP 400", place: "โรงงาน", host_code: "COM1", vendor: null, attrs: { cpu: "i5" }, secrets: {} },
+    { type_code: "COMPUTER", model: "Dell 3050", place: "สำนักงาน", host_code: "COM1", vendor: "ร้าน A", attrs: { cpu: "i7" }, secrets: {} },
+    { type_code: "COMPUTER", model: "Dell 3050", place: "  ", host_code: "", vendor: "x".repeat(81), attrs: { cpu: "" }, secrets: {} },
+    { type_code: "MOUSE", model: "Logitech", place: "โรงงาน", attrs: {}, secrets: {} },
+  ];
+  const s = model.suggestionsFor(rows, COMPUTER);
+  assert.deepEqual(s.core.model, ["Dell 3050", "HP 400"], "ความถี่มากก่อน");
+  assert.deepEqual(s.core.place, ["สำนักงาน", "โรงงาน"]);
+  assert.deepEqual(s.core.host_code, ["COM1"]);
+  assert.deepEqual(s.core.vendor, ["ร้าน A"], "ค่ายาวเกิน 80 ตัวอักษรไม่แนะนำ");
+  assert.deepEqual(s.attrs.cpu, ["i5", "i7"]);
+  assert.ok(!("ram_gb" in s.attrs) && !("os_installed" in s.attrs) && !("kind" in s.attrs), "เฉพาะช่องข้อความ ไม่ใช่ตัวเลข/วันที่/ตัวเลือก");
+  assert.ok(!("ip" in s.attrs) && !JSON.stringify(s).includes(ENVELOPE.c), "ช่องลับไม่เข้าคำแนะนำ");
+  assert.deepEqual(model.suggestionsFor(rows, MOUSE).core, { model: ["Logitech"], place: ["โรงงาน"] }, "แยกตามชนิด ไม่ปนข้ามชนิด");
+  assert.deepEqual(model.suggestionsFor([], COMPUTER), { core: {}, attrs: {} });
+  const many = Array.from({ length: 100 }, (_, index) => ({ type_code: "MOUSE", model: `รุ่น ${index}`, attrs: {} }));
+  assert.equal(model.suggestionsFor(many, MOUSE).core.model.length, model.MAX_SUGGESTIONS);
+});
+
+test("remembered values: only brand/model and place per type (+ last type), sanitised on read, never anything else", () => {
+  const values = { core: { model: " Dell 3050 ", place: "สำนักงาน", serial: "SN9", reg_no: "COM-1", price: "100" }, attrs: { cpu: "i5", ip: "10.1.1.1" } };
+  const memory = model.rememberAdded(model.parseMemory(""), "COMPUTER", values);
+  assert.deepEqual(plain(memory), { lastType: "COMPUTER", types: { COMPUTER: { model: "Dell 3050", place: "สำนักงาน" } } });
+  const text = model.serializeMemory(memory);
+  for (const secretish of ["SN9", "COM-1", "10.1.1.1", "i5", "100"]) assert.ok(!text.includes(secretish), `ไม่เก็บ ${secretish}`);
+  assert.deepEqual(plain(model.parseMemory(text)), plain(memory));
+  // ชนิดอื่นไม่ทับกัน · ชนิดเดียวกันครั้งใหม่ทับครั้งเก่า
+  const next = model.rememberAdded(memory, "MOUSE", { core: { model: "Logitech", place: "" } });
+  assert.deepEqual(plain(next.types), { COMPUTER: { model: "Dell 3050", place: "สำนักงาน" }, MOUSE: { model: "Logitech" } });
+  assert.equal(next.lastType, "MOUSE");
+  assert.deepEqual(plain(model.rememberAdded(next, "MOUSE", { core: {} }).types), { COMPUTER: { model: "Dell 3050", place: "สำนักงาน" } }, "ครั้งล่าสุดไม่มีค่า = ลืมของชนิดนั้น");
+  // ข้อความที่เสีย/ถูกแก้ไม่ทำให้พัง และไม่ยอมรับคีย์แปลก ๆ
+  for (const bad of [null, "", "{", "[]", "123", '{"types":[]}']) assert.deepEqual(plain(model.parseMemory(bad)), { lastType: "", types: {} }, String(bad));
+  const hostile = model.parseMemory(JSON.stringify({ lastType: "bad code", types: { COMPUTER: { model: "ok", ip: "1.2.3.4", place: 5, serial: "S" }, "../x": { model: "y" }, MOUSE: { model: "m".repeat(201) } } }));
+  assert.deepEqual(plain(hostile), { lastType: "", types: { COMPUTER: { model: "ok" } } });
+  assert.deepEqual(plain(model.forgetType(memory, "COMPUTER").types), {});
+  assert.equal(model.forgetType(memory, "COMPUTER").lastType, "COMPUTER");
+});
+
+test("applying remembered values fills only the type's own empty brand/place fields and reports what it filled; typing wins over it when changing type", () => {
+  const memory = model.rememberAdded(model.parseMemory(""), "COMPUTER", { core: { model: "Dell", place: "สำนักงาน" } });
+  const { values, applied } = model.applyRemembered(COMPUTER, model.emptyFormValues(COMPUTER), memory);
+  assert.equal(values.core.model, "Dell");
+  assert.equal(values.core.place, "สำนักงาน");
+  assert.deepEqual(applied.map((item) => [item.key, item.label, item.value]), [["model", "ยี่ห้อ / รุ่น", "Dell"], ["place", "สถานที่", "สำนักงาน"]]);
+  assert.equal(values.core.reg_no, "");
+  assert.deepEqual(model.applyRemembered(MOUSE, model.emptyFormValues(MOUSE), memory).applied, [], "ชนิดอื่นไม่ได้รับ");
+  const typedAlready = model.emptyFormValues(COMPUTER); typedAlready.core.model = "HP";
+  assert.equal(model.applyRemembered(COMPUTER, typedAlready, memory).values.core.model, "HP", "ช่องที่มีค่าอยู่ไม่ถูกทับ");
+  // ค่าที่ระบบเติมให้ไม่นับเป็นที่พิมพ์เอง
+  const initial = values; const current = structuredClone(values); current.core.name = "ชื่อใหม่"; current.attrs.cpu = "i7";
+  assert.deepEqual(plain(model.typedSince(current, initial)), { core: { name: "ชื่อใหม่" }, attrs: { cpu: "i7" } });
+});
+
 test("changing the type inside the add form carries over only typed values whose field exists in the new type", () => {
   const carried = { core: { reg_no: "X1", device_code: "COM9", name: "ชื่อ", model: "", status: "spare" }, attrs: { cpu: "i7", ram_gb: "", kind: "PC" } };
   const next = model.carryOver(MOUSE, carried);

@@ -73,7 +73,7 @@ function el(props = {}) {
 }
 
 // clock = { time } ทำให้ Date.now() ในโมดูล/ตู้เซฟควบคุมได้ (ทดสอบเวลาไม่ใช้งานโดยไม่ต้องรอจริง)
-async function world({ allowed = true, accessFail = false, isTest = false, vaultRow = null, rpcHandlers = {}, assets = [ASSET], confirm = true, clock = null, employee = { id: "e1" } } = {}) {
+async function world({ allowed = true, accessFail = false, isTest = false, vaultRow = null, rpcHandlers = {}, assets = [ASSET], confirm = true, clock = null, employee = { id: "e1" }, storageFails = false } = {}) {
   const server = fakeVaultServer();
   if (vaultRow) server.db.row = vaultRow;
   const calls = { rpc: [], toasts: [], confirms: [], went: [], renderRoutes: 0, notFound: 0, busy: [] };
@@ -87,6 +87,11 @@ async function world({ allowed = true, accessFail = false, isTest = false, vault
   const session = { user: { id: "u1" } };
   const stateObj = { session, employee, sandbox: isTest ? { active: true } : null };
   const forms = { current: null };
+  // ที่เก็บในเครื่อง (localStorage) จำลอง: เก็บเป็น Map ให้เทสต์ตรวจว่ามีอะไรถูกเขียนลงไปบ้าง · storageFails = เบราว์เซอร์ที่เก็บไม่ได้ (โหมดส่วนตัว/เต็ม)
+  const storage = new Map();
+  const localStorage = storageFails
+    ? { getItem() { throw new Error("denied"); }, setItem() { throw new Error("denied"); } }
+    : { getItem: (key) => (storage.has(key) ? storage.get(key) : null), setItem: (key, value) => { storage.set(key, String(value)); }, removeItem: (key) => { storage.delete(key); } };
   const host = el();
   const handlers = {
     app_itas_my_access: () => { if (accessFail) throw Object.assign(new Error("x"), { code: "PGRST202" }); return { allowed, is_test: isTest }; },
@@ -106,7 +111,7 @@ async function world({ allowed = true, accessFail = false, isTest = false, vault
   };
   const context = vm.createContext({});
   Object.assign(context, {
-    window: context, console, URLSearchParams, Intl, Date: clock ? class FakeDate extends Date { static now() { return clock.time; } } : Date, Number, Object, Promise, Array, JSON, Math, Set, Map, String, Boolean, Uint8Array, TextEncoder, TextDecoder, atob, btoa, Error, clearTimeout, clearInterval,
+    window: context, localStorage, console, URLSearchParams, Intl, Date: clock ? class FakeDate extends Date { static now() { return clock.time; } } : Date, Number, Object, Promise, Array, JSON, Math, Set, Map, String, Boolean, Uint8Array, TextEncoder, TextDecoder, atob, btoa, Error, clearTimeout, clearInterval,
     // ตัวจับเวลาที่ unref แล้ว: ตู้เซฟที่ปลดล็อกค้างไว้ไม่ทำให้ process ของเทสต์ไม่จบ
     setTimeout: (fn, ms) => { const id = setTimeout(fn, ms); id.unref?.(); return id; }, setInterval: (fn, ms) => { const id = setInterval(fn, ms); id.unref?.(); return id; },
     crypto: { randomUUID: () => ID_NEW, subtle, getRandomValues: (bytes) => webcrypto.getRandomValues(bytes) },
@@ -147,7 +152,7 @@ async function world({ allowed = true, accessFail = false, isTest = false, vault
   const itas = context.window.MNP_ITAS;
   const fire = async (list, event = {}) => { for (const handler of list ?? []) await handler(event); await tick(); };
   const world0 = {
-    context, itas, calls, server, hosts, elements, host, forms, stateObj, session, rpcNames: () => calls.rpc.map((call) => call.name),
+    context, itas, calls, server, storage, hosts, elements, host, forms, stateObj, session, rpcNames: () => calls.rpc.map((call) => call.name),
     setHash: (value) => { hash = value; },
     html: () => painted + Object.values(hosts).join(""),
     // เหตุการณ์ของหน้าต่าง/เอกสาร
@@ -595,10 +600,14 @@ test("purging test data locks and resets the vault and reloads the page", async 
 });
 
 /* ---------- กฎความปลอดภัยของไฟล์ ---------- */
-test("source rules: no console, no storage, no Math.random, no draft autosave, no secret in data attributes, decrypted values only via textContent", () => {
+test("source rules: no console, storage only for the remembered brand/place (two calls, one key), no Math.random, no draft autosave, no secret in data attributes, decrypted values only via textContent", () => {
   const source = read("modules/module-itas.js").replace(/\/\/.*$/gm, "");
   assert.doesNotMatch(source, /console\./);
-  assert.doesNotMatch(source, /localStorage|sessionStorage|indexedDB/);
+  assert.doesNotMatch(source, /sessionStorage|indexedDB/);
+  // localStorage ใช้ได้จุดเดียว: จำ ยี่ห้อ/รุ่น + สถานที่ (อ่าน 1 เขียน 1 ผ่าน model.parseMemory/serializeMemory ที่รับเฉพาะคีย์ที่ระบุ) · ห้ามเก็บค่าอื่น
+  assert.equal((source.match(/localStorage/g) ?? []).length, 2);
+  assert.match(source, /window\.localStorage\?\.getItem\(key\)/);
+  assert.match(source, /window\.localStorage\?\.setItem\(key, model\.serializeMemory\(memory\)\)/);
   assert.doesNotMatch(source, /Math\.random/);
   assert.doesNotMatch(source, /MNP_FORM_DRAFT/);
   assert.doesNotMatch(source, /dataset\.[a-zA-Z]+\s*=\s*[^;]*decrypt/);
@@ -1071,6 +1080,103 @@ test("the folded 'more details' opens by itself: when editing a row that has val
   await w.submit(form);
   assert.equal(more.open, true);
   assert.ok(!w.calls.rpc.some((call) => call.name === "app_itas_save_asset"));
+});
+
+const MEMORY_KEY = "mnp.itas.last.v1:u1:real";
+
+test("the add form suggests values already used in the same type (datalist) and never mixes types", async () => {
+  const w = await world({ ...MULTI, assets: [], rpcHandlers: { ...MULTI.rpcHandlers, app_itas_list_assets: () => ({ total: 3, items: [{ ...ASSET, model: "Dell 3050", place: "สำนักงาน" }, { ...ASSET, id: "x2", model: "Dell 3050" }, { ...MOUSE_ASSET, model: "Logitech" }] }) } });
+  await w.render();
+  await w.click(chip("COMPUTER"));
+  await w.click(w.button("itas-add"));
+  const form = w.hosts["itas-form-area"];
+  assert.match(form, /<datalist id="itas-dl-model"><option value="Dell 3050"><\/option><\/datalist>/);
+  assert.doesNotMatch(form, /Logitech/, "ยี่ห้อของเมาส์ไม่มาโผล่ในคอมพิวเตอร์");
+  assert.match(form, /<datalist id="itas-dl-attrs-cpu"><option value="i5">/);
+});
+
+test("after adding, the next add form of that type is pre-filled with the last brand/model and place (and says so); only those two fields and the type are stored, never a secret", async () => {
+  const { row } = await initializedVaultRow();
+  const w = await world({ ...MULTI, vaultRow: row });
+  await w.render();
+  await unlockVia(w);
+  await w.click(chip("COMPUTER"));
+  await w.click(w.button("itas-add"));
+  assert.doesNotMatch(w.hosts["itas-form-area"], /id="itas-remembered"/, "ครั้งแรกยังไม่มีอะไรให้เติม");
+  w.forms.current = assetForm({ values: { reg_no: "COM-910", device_code: "COM910", serial: "SN-SECRETISH", name: "เครื่องใหม่", model: "Dell 3050", place: "สำนักงาน", "attrs.cpu": "i7" }, secrets: { ip: { value: PLAIN_IP } } });
+  await w.submit(w.forms.current);
+  const saved = [...w.storage.entries()];
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0][0], MEMORY_KEY, "ต่อบัญชีต่อโหมด");
+  assert.deepEqual(JSON.parse(saved[0][1]), { lastType: "COMPUTER", types: { COMPUTER: { model: "Dell 3050", place: "สำนักงาน" } } });
+  for (const text of [PLAIN_IP, "SN-SECRETISH", "COM-910", "COM910", "i7", "เครื่องใหม่"]) assert.ok(!saved[0][1].includes(text), `ไม่เก็บ ${text}`);
+  // เปิดฟอร์มเพิ่มชนิดเดิมอีกครั้ง: เติมให้ + บอกผู้ใช้
+  w.forms.current = null;
+  await w.click(w.button("itas-add"));
+  const form = w.hosts["itas-form-area"];
+  assert.match(form, /name="model"[^>]*value="Dell 3050"/);
+  assert.match(form, /name="place"[^>]*value="สำนักงาน"/);
+  assert.match(form, /id="itas-remembered"[^>]*>เติมให้จากรายการล่าสุดของชนิดนี้/);
+  assert.match(form, /name="reg_no"[^>]*value=""/, "ช่องอื่นไม่ถูกเติม");
+  assert.match(form, /name="serial"[^>]*value=""/);
+  assert.equal(w.calls.confirms.length, 0, "ฟอร์มที่เติมให้แต่ยังไม่ได้แก้ไม่ถือว่าพิมพ์ค้าง");
+});
+
+test("a different type, another mode and another account do not get each other's remembered values; with nothing chosen the form opens on the last type added", async () => {
+  const w = await world(MULTI);
+  w.storage.set(MEMORY_KEY, JSON.stringify({ lastType: "MOUSE", types: { MOUSE: { model: "Logitech" }, COMPUTER: { model: "Dell", place: "สำนักงาน" } } }));
+  w.storage.set("mnp.itas.last.v1:u1:test", JSON.stringify({ lastType: "COMPUTER", types: { COMPUTER: { model: "ทดสอบ" } } }));
+  w.storage.set("mnp.itas.last.v1:other:real", JSON.stringify({ lastType: "COMPUTER", types: { COMPUTER: { model: "ของคนอื่น" } } }));
+  await w.render();
+  await w.click(w.button("itas-add")); // ไม่ได้กรองชนิด: ใช้ชนิดที่เพิ่มล่าสุดคือเมาส์
+  let form = w.hosts["itas-form-area"];
+  assert.match(form, /<option value="MOUSE" selected>/);
+  assert.match(form, /name="model"[^>]*value="Logitech"/);
+  assert.doesNotMatch(form, /ทดสอบ|ของคนอื่น/);
+  // เปลี่ยนเป็นคอมพิวเตอร์ในฟอร์ม: ได้ค่าที่จำของคอมพิวเตอร์ ไม่ใช่ยี่ห้อของเมาส์ที่ระบบเติมให้
+  await change(w, { name: "type_code", value: "COMPUTER" });
+  form = w.hosts["itas-form-area"];
+  assert.match(form, /name="model"[^>]*value="Dell"/);
+  assert.doesNotMatch(form, /Logitech/);
+  const test = await world({ ...MULTI, isTest: true });
+  test.storage.set(MEMORY_KEY, JSON.stringify({ lastType: "COMPUTER", types: { COMPUTER: { model: "Dell" } } }));
+  await test.render();
+  await test.click(chip("COMPUTER"));
+  await test.click(test.button("itas-add"));
+  assert.match(test.hosts["itas-form-area"], /name="model"[^>]*value=""/, "โหมดทดสอบใช้ที่เก็บแยก ไม่ได้ค่าของโหมดจริง");
+  assert.doesNotMatch(test.hosts["itas-form-area"], /id="itas-remembered"/);
+});
+
+test("'clear the filled values' empties just the auto-filled fields and forgets them; what the user typed over is kept", async () => {
+  const w = await world(MULTI);
+  w.storage.set(MEMORY_KEY, JSON.stringify({ lastType: "COMPUTER", types: { COMPUTER: { model: "Dell", place: "สำนักงาน" }, MOUSE: { model: "Logitech" } } }));
+  await w.render();
+  await w.click(chip("COMPUTER"));
+  await w.click(w.button("itas-add"));
+  w.forms.current = assetForm({ values: { model: "Dell", place: "ที่ผู้ใช้พิมพ์ทับ", name: "" } }); // ผู้ใช้แก้สถานที่เองแล้ว
+  const before = w.forms.current.elements;
+  await w.click(w.button("itas-clear-remembered"));
+  assert.equal(before.model.value, "", "ยี่ห้อที่ระบบเติมให้ถูกล้าง");
+  assert.equal(before.place.value, "ที่ผู้ใช้พิมพ์ทับ", "ที่พิมพ์ทับไว้ไม่ถูกแตะ");
+  assert.deepEqual(JSON.parse(w.storage.get(MEMORY_KEY)).types, { MOUSE: { model: "Logitech" } }, "ลืมเฉพาะชนิดนี้");
+});
+
+test("a browser that cannot store, and tampered stored text, never block adding: the save still goes through and the form still opens", async () => {
+  const blocked = await world({ ...MULTI, storageFails: true });
+  await blocked.render();
+  await blocked.click(blocked.button("itas-add"));
+  assert.match(blocked.hosts["itas-form-area"], /name="type_code"/);
+  blocked.forms.current = assetForm({ values: { reg_no: "COM-920", name: "x", model: "Dell" } });
+  await blocked.submit(blocked.forms.current);
+  assert.ok(blocked.calls.rpc.some((call) => call.name === "app_itas_save_asset"));
+  assert.match(blocked.calls.toasts.at(-1).message, /เพิ่มอุปกรณ์แล้ว/);
+  const tampered = await world(MULTI);
+  tampered.storage.set(MEMORY_KEY, '{"lastType":"COMPUTER","types":{"COMPUTER":{"model":"<img src=x>","ip":"10.0.0.1"}}}');
+  await tampered.render();
+  await tampered.click(chip("COMPUTER"));
+  await tampered.click(tampered.button("itas-add"));
+  const form = tampered.hosts["itas-form-area"];
+  assert.doesNotMatch(form, /<img src=x>|10\.0\.0\.1/, "ค่าที่ถูกแก้ผ่านการ escape และคีย์แปลกไม่ถูกใช้");
 });
 
 test("'copy as a new device' opens an add form for the same type with the non-secret fields filled, unique ones blank, a notice, a fresh id, and no secrets", async () => {

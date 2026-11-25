@@ -190,6 +190,97 @@
     return { values, skipped };
   }
 
+  /* ---------- คำแนะนำช่องพิมพ์ (datalist) จากค่าที่เคยกรอกในชนิดเดียวกัน ---------- */
+  // ใช้เฉพาะช่องไม่ลับ: ช่องกลาง (ยี่ห้อ/รุ่น สถานที่ ติดตั้งที่/ผู้ใช้ ผู้ขาย) + ช่องเฉพาะชนิดที่เป็นข้อความ (ไม่ใช่ตัวเลข/วันที่/ตัวเลือก/ช่องลับ)
+  // ค่าจากแถวที่โหลดมาแล้ว เรียงตามความถี่ (มากไปน้อย แล้วตามตัวอักษร) · ข้ามค่ายาวผิดปกติ · ไม่เกิน MAX_SUGGESTIONS ต่อช่อง
+  const SUGGEST_CORE_KEYS = Object.freeze(["model", "place", "host_code", "vendor"]);
+  const MAX_SUGGESTIONS = 40;
+  const MAX_SUGGESTION_LENGTH = 80;
+  function rankedValues(values) {
+    const counts = new Map();
+    for (const value of values) {
+      const text = textOf(value);
+      if (!text || charCount(text) > MAX_SUGGESTION_LENGTH) continue;
+      counts.set(text, (counts.get(text) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || collator.compare(a[0], b[0])).slice(0, MAX_SUGGESTIONS).map(([text]) => text);
+  }
+  // คืน { core: { <key>: [ค่า…] }, attrs: { <key>: [ค่า…] } } เฉพาะช่องที่มีคำแนะนำ
+  function suggestionsFor(rows, type) {
+    const own = (Array.isArray(rows) ? rows : []).filter((row) => row?.type_code === type?.code);
+    const result = { core: {}, attrs: {} };
+    for (const field of coreFieldsOf(type)) {
+      if (!SUGGEST_CORE_KEYS.includes(field.key)) continue;
+      const list = rankedValues(own.map((row) => row[field.key]));
+      if (list.length) result.core[field.key] = list;
+    }
+    for (const field of plainFields(type)) {
+      if (field.type !== "text") continue;
+      const list = rankedValues(own.map((row) => row.attrs?.[field.key]));
+      if (list.length) result.attrs[field.key] = list;
+    }
+    return result;
+  }
+
+  /* ---------- จำค่าล่าสุดต่อชนิด (เก็บในเครื่องผู้ใช้ ต่อบัญชีต่อโหมด) ---------- */
+  // จำเฉพาะ ยี่ห้อ/รุ่น กับ สถานที่ ของรายการที่เพิ่งเพิ่มล่าสุดในชนิดนั้น + ชนิดล่าสุดที่เพิ่ม · ห้ามจำช่องอื่นและห้ามจำช่องลับเด็ดขาด (ฟังก์ชันรับเฉพาะคีย์ที่ระบุไว้ที่นี่)
+  const REMEMBER_KEYS = Object.freeze(["model", "place"]);
+  const MAX_REMEMBERED_TYPES = 40;
+  const TYPE_CODE_PATTERN = /^[A-Z][A-Z0-9_]{1,29}$/;
+  const emptyMemory = () => ({ lastType: "", types: {} });
+  const cleanRemembered = (source) => {
+    const clean = {};
+    for (const key of REMEMBER_KEYS) {
+      const text = typeof source?.[key] === "string" ? source[key].trim() : "";
+      if (text && charCount(text) <= 200) clean[key] = text;
+    }
+    return clean;
+  };
+  // อ่านข้อความที่เก็บไว้ (อาจเสีย/ถูกแก้/ไม่มี) → โครงที่ปลอดภัยเสมอ
+  function parseMemory(text) {
+    const memory = emptyMemory();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+    if (!data || typeof data !== "object" || Array.isArray(data)) return memory;
+    if (typeof data.lastType === "string" && TYPE_CODE_PATTERN.test(data.lastType)) memory.lastType = data.lastType;
+    const types = data.types && typeof data.types === "object" && !Array.isArray(data.types) ? data.types : {};
+    for (const [code, value] of Object.entries(types).slice(0, MAX_REMEMBERED_TYPES)) {
+      if (!TYPE_CODE_PATTERN.test(code)) continue;
+      const clean = cleanRemembered(value);
+      if (Object.keys(clean).length) memory.types[code] = clean;
+    }
+    return memory;
+  }
+  const serializeMemory = (memory) => JSON.stringify({ lastType: memory?.lastType ?? "", types: memory?.types ?? {} });
+  // บันทึกว่าเพิ่มรายการชนิดนี้ล่าสุดด้วยค่าเหล่านี้ (values = ค่าฟอร์ม { core, attrs }) · คืนโครงใหม่ ไม่แก้ของเดิม
+  function rememberAdded(memory, typeCode, values) {
+    const next = parseMemory(serializeMemory(memory));
+    if (!TYPE_CODE_PATTERN.test(String(typeCode ?? ""))) return next;
+    next.lastType = typeCode;
+    const clean = cleanRemembered(values?.core);
+    if (Object.keys(clean).length) next.types[typeCode] = clean; else delete next.types[typeCode];
+    return next;
+  }
+  const forgetType = (memory, typeCode) => { const next = parseMemory(serializeMemory(memory)); delete next.types[typeCode]; return next; };
+  // เติมค่าที่จำไว้ลงฟอร์มเปล่าของชนิดนี้ (เฉพาะช่องที่ชนิดนี้มี) · คืน { values, applied: [{ key, label, value }] }
+  function applyRemembered(type, values, memory) {
+    const saved = memory?.types?.[type?.code] ?? {};
+    const applied = [];
+    const next = { core: { ...values.core }, attrs: { ...values.attrs } };
+    for (const field of coreFieldsOf(type)) {
+      if (!REMEMBER_KEYS.includes(field.key) || !saved[field.key] || textOf(next.core[field.key]) !== "") continue;
+      next.core[field.key] = saved[field.key];
+      applied.push({ key: field.key, label: field.label, value: saved[field.key] });
+    }
+    return { values: next, applied };
+  }
+  // ค่าที่ผู้ใช้พิมพ์เองจริง ๆ = ช่องที่ต่างจากค่าตั้งต้นของฟอร์ม (ใช้ตอนเปลี่ยนชนิด: ไม่ยกค่าที่ระบบเติมให้ไปชนิดอื่น)
+  function typedSince(current, initial) {
+    const out = { core: {}, attrs: {} };
+    for (const part of ["core", "attrs"]) for (const [key, value] of Object.entries(current?.[part] ?? {})) if (value !== initial?.[part]?.[key]) out[part][key] = value;
+    return out;
+  }
+
   // เปลี่ยนชนิดในฟอร์มเพิ่ม: ยกค่าที่พิมพ์ไว้ (ไม่ว่าง) ไปให้ช่องที่มีชื่อเดียวกันในชนิดใหม่ · คืน { core, attrs } เฉพาะช่องที่จะตั้ง (ไม่ยกช่องลับ ช่องลับไม่เคยอยู่ใน values)
   function carryOver(type, carried) {
     const core = {};
@@ -510,7 +601,7 @@
     STATUSES, CORE_FIELDS, GROUP_LABELS, GROUP_ORDER, IDENTITY_KEYS,
     assetsUrl, readView, isUuid, statusLabel, statusBadgeClass,
     formatDate, formatDateTime, parseDateInput, dateInputText, isRealDate,
-    typeFields, plainFields, secretFields, coreFieldsOf, normalizeCode, emptyFormValues, formValuesFromAsset, carryOver, copyValuesFromAsset, userFieldName, primaryFieldNames, isPrimaryField, PRIMARY_LABEL_OVERRIDES, extraFieldsHaveValues, errorsInExtraFields, parseField, validateAsset, buildSavePayload, payloadIsEmpty,
+    typeFields, plainFields, secretFields, coreFieldsOf, normalizeCode, emptyFormValues, formValuesFromAsset, carryOver, copyValuesFromAsset, suggestionsFor, MAX_SUGGESTIONS, REMEMBER_KEYS, parseMemory, serializeMemory, rememberAdded, forgetType, applyRemembered, typedSince, userFieldName, primaryFieldNames, isPrimaryField, PRIMARY_LABEL_OVERRIDES, extraFieldsHaveValues, errorsInExtraFields, parseField, validateAsset, buildSavePayload, payloadIsEmpty,
     tableColumns, allColumns, typeChipGroups, TYPE_ALL_LABEL, USER_ATTR_KEY, userValueOf, cellValue, cellText, formatCell, filterAssets, sortAssets, countText,
     labelOfKey, logChanges, historyView, passwordStrength,
     describeError, isAlreadyExists, purgeSummary,
