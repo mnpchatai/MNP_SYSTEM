@@ -3851,6 +3851,30 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
   .lab-mdr-key small { display: none; }
 }
 
+/* ---------- ใบสั่งงาน IT (itwo) + ใบแจ้งซ่อม (itrp): ปรับตามความกว้างจอ/การซูม ----------
+   ทุกกฎขึ้นต้นด้วย .itwo-page / .itrp-page (ไม่แตะกฎกลางที่โมดูลของเพื่อนใช้ร่วม) · ไม่มีกฎใดอยู่ใน @media print (ใบพิมพ์ A4 ไม่เปลี่ยน)
+   หลักการ: เลขที่เอกสาร/รหัสเครื่อง/วันที่ ไม่ตัดกลางคำ · ตารางกว้างเลื่อนแนวนอนในกรอบของตัวเอง · ข้อความยาวตัดบรรทัดตามคำ */
+.itwo-page .view-tabs, .itrp-page .view-tabs { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+.itwo-page .view-tabs::-webkit-scrollbar, .itrp-page .view-tabs::-webkit-scrollbar { display: none; }
+.itwo-page .view-tab, .itrp-page .view-tab { flex: 0 0 auto; white-space: nowrap; }
+.itwo-page :is(.register-no, .request-no), .itrp-page :is(.register-no, .request-no) { white-space: nowrap; }
+/* จอกลาง (แถบเมนูซ้ายยังกินที่): บรรทัดรองของแถวรายการตัดเป็น 2 บรรทัดแทนที่จะดันตารางให้กว้างจนป้ายสถานะถูกตัด */
+@media (min-width: 761px) and (max-width: 1279px) {
+  .itwo-page .register-sub, .itrp-page .register-sub { max-width: 36ch; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; white-space: normal; }
+}
+/* ใบแจ้งซ่อม: ตารางอะไหล่/เครื่อง/ย้ายชิ้นส่วน — หัวคอลัมน์ ลำดับ และรหัสเครื่องไม่ตัดกลางคำ */
+.itrp-page .itrp-parts-table th { white-space: nowrap; }
+.itrp-page .itrp-parts-table td:first-child { white-space: nowrap; }
+.itrp-page .itrp-devices-table td:nth-child(2) { white-space: nowrap; }
+/* แท็บประวัติการซ่อม: เลขที่ใบไม่ตัดกลางคำ · ช่องปุ่มจัดการมีที่พอ · จอกลางเรียงรายการเครื่องไว้บนตาราง (ตารางจึงได้ความกว้างเต็ม) */
+.itrp-page .itrp-hist-table td:first-child { white-space: nowrap; }
+.itrp-page .itrp-hist-table .itrp-hist-tags { white-space: normal; }
+.itrp-page .itrp-hist-table td.itrp-hist-act { min-width: 13em; }
+@media (min-width: 960px) and (max-width: 1359px) {
+  .itrp-hist-layout { grid-template-columns: minmax(0, 1fr); }
+  .itrp-hist-devices { max-height: 40vh; }
+}
+
 /* ---------- ทะเบียนอุปกรณ์ IT (itas) · modules/itas-pages.js ---------- */
 .badge.itas-test-tag { color: var(--warning-ink); background: var(--warning-soft); border: 1px solid var(--warning); }
 .itas-head .itas-test-tag { margin-left: 10px; align-self: center; }
