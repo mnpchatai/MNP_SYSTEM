@@ -465,16 +465,21 @@
       </div>`);
   }
 
-  /* ---------- หน้าพิมพ์ A4 (เลย์เอาต์เหมือนฟอร์ม IT01-FM06) ---------- */
+  /* ---------- หน้าพิมพ์ A4 (ฟอร์ม IT01-FM06 หน้าตาเดียวกับใบแจ้งซ่อม IT: หัวใบมีไอคอน+กล่องเลขที่ · กรอบเส้นดำ · ช่องลายเซ็น) ---------- */
   const box = (checked) => `<span class="itwo-box" aria-hidden="true">${checked ? "☑" : "☐"}</span>`;
+  // กล่องลายเซ็น 1 ช่อง: ชื่อ + วันที่และเวลาที่กดในระบบ (ลายเซ็นอิเล็กทรอนิกส์) · ยังไม่มีการกด = เว้นว่าง
+  // note = "รับงาน: ชื่อ เวลา" ของช่อง IT · remark = หมายเหตุใต้ชื่อ (อนุมัติครั้งเดียวนับทั้งสองขั้น ฯลฯ)
+  const signBox = (slot) => `<div class="itwo-sign" data-slot="${esc(slot.key)}">
+        <div class="itwo-sign-label">${esc(slot.label)}</div>
+        ${slot.note ? `<div class="itwo-sign-note">${esc(slot.note.label)}: ${esc(slot.note.name)} ${esc(model.formatDateTime(slot.note.at))}</div>` : ""}
+        <div class="itwo-sign-name">${esc(slot.name ?? "")}</div>
+        ${slot.remark ? `<div class="itwo-sign-remark">(${esc(slot.remark)})</div>` : ""}
+        <div class="itwo-sign-time">${slot.at ? esc(model.formatDateTime(slot.at)) : ""}</div>
+      </div>`;
+  // ช่องลายเซ็นของผู้แจ้งอยู่ข้างรายละเอียด (เหมือนช่องผู้อนุมัติของใบแจ้งซ่อม) ที่เหลือ 4 ช่อง (อนุมัติ 2 ขั้น · IT ส่งงาน · ผู้รับงาน) เรียงแถวเดียวใต้แถบ
   function signatureGrid(events) {
-    return `<div class="itwo-signatures">${model.signatureSlots(events).map((slot) => `<div class="itwo-signature" data-slot="${slot.key}">
-        <div class="itwo-signature-label">${esc(slot.label)}</div>
-        ${slot.note ? `<div class="itwo-signature-note">${esc(slot.note.label)}: ${esc(slot.note.name)} ${esc(model.formatDateTime(slot.note.at))}</div>` : ""}
-        ${slot.remark ? `<div class="itwo-signature-note itwo-signature-remark">(${esc(slot.remark)})</div>` : ""}
-        <div class="itwo-signature-name">${esc(slot.name ?? "")}</div>
-        <div class="itwo-signature-time">${slot.at ? esc(model.formatDateTime(slot.at)) : ""}</div>
-      </div>`).join("")}</div>`;
+    const slots = model.signatureSlots(events).filter((slot) => slot.key !== "requester");
+    return `<div class="itwo-signs">${slots.map(signBox).join("")}</div>`;
   }
 
   // รายชื่อไฟล์แนบบนกระดาษ (ไม่แสดงรูป): "ชื่อไฟล์ (ขนาด)" บรรทัดละไฟล์ · files = รายการจาก get_detail
@@ -488,7 +493,7 @@
         <table class="itwo-sheet-table itwo-sheet-reworks"><thead><tr><th>ครั้งที่</th><th>ขอเมื่อ / โดย</th><th>รายละเอียดที่ต้องแก้</th><th>กำหนดเสร็จ</th><th>ไฟล์แนบ</th></tr></thead><tbody>${rounds.map((round) => `<tr>
           <td class="itwo-center">${round.roundNo}</td>
           <td>${esc(model.formatDateTime(round.createdAt))}<br>${esc(round.requestedBy)}</td>
-          <td class="itwo-sheet-details">${esc(round.details)}</td>
+          <td class="itwo-sheet-text">${esc(round.details)}</td>
           <td>${esc(model.formatDate(round.dueDate))}</td>
           <td>${round.files.length ? printFileList(round.files) : "—"}</td></tr>`).join("")}</tbody></table>`;
   }
@@ -527,27 +532,30 @@
     return `<article class="itwo-sheet${isTest ? " is-test" : ""}" aria-label="ใบสั่งงาน ${esc(detail.doc_no)}">
         ${isTest ? '<div class="itwo-watermark" aria-hidden="true">ทดสอบ</div>' : ""}
         <header class="itwo-sheet-title">
-          <div class="itwo-form-code">IT01-FM06</div>
-          <h1>ใบสั่งงานแผนก IT</h1>
-          ${isTest ? '<p class="itwo-test-note">ใบทดสอบ — ไม่ใช่เอกสารจริง</p>' : ""}
+          <img class="itwo-sheet-logo" src="./icons/icon-192.png" alt="">
+          <h1>ใบสั่งงานแผนก IT${detail.is_urgent ? ' <span class="itwo-urgent-mark">(งานด่วน)</span>' : ""}</h1>
+          <div class="itwo-docbox"><span>เลขที่ใบสั่งงาน</span><strong>${esc(detail.doc_no)}</strong><span class="itwo-form-code">รหัสฟอร์ม IT01-FM06</span></div>
         </header>
+        ${isTest ? '<p class="itwo-test-note">ใบทดสอบ — ไม่ใช่เอกสารจริง</p>' : ""}
         <table class="itwo-sheet-table"><tbody>
-          <tr><th scope="row">เลขที่</th><td><strong>${esc(detail.doc_no)}</strong>${detail.is_urgent ? ' <strong class="itwo-urgent-mark">(งานด่วน)</strong>' : ""}</td><th scope="row">วันที่แจ้ง</th><td>${esc(model.formatDateTime(detail.created_at))}</td></tr>
           <tr><th scope="row">ผู้แจ้ง</th><td>${esc(detail.requester?.full_name ?? "—")}</td><th scope="row">แผนก</th><td>${esc(detail.department?.name_th ?? "—")}</td></tr>
+          <tr><th scope="row">วันที่แจ้ง</th><td>${esc(model.formatDateOf(detail.created_at))}</td><th scope="row">เวลา</th><td>${esc(model.formatTimeOf(detail.created_at))}</td></tr>
           <tr><th scope="row">ประเภทคำขอ</th><td colspan="3">${typeChoices}</td></tr>
           <tr><th scope="row">ออเดอร์</th><td>${esc(detail.order_ref ?? "") || "—"}</td><th scope="row">เอกสารแนบ</th><td>${attachmentChoices}</td></tr>
           ${initialFiles.length ? `<tr><th scope="row">ไฟล์แนบ</th><td colspan="3">${printFileList(initialFiles)}</td></tr>` : ""}
-          <tr><th scope="row">รายละเอียด</th><td colspan="3" class="itwo-sheet-details">${esc(detail.details)}</td></tr>
           <tr><th scope="row">วันที่ต้องการงาน</th><td>${esc(model.formatDate(detail.needed_date))}</td><th scope="row">งานด่วน</th><td>${box(detail.is_urgent)} ด่วน</td></tr>
         </tbody></table>
+        <div class="itwo-detail-row">
+          <div class="itwo-detail"><div class="itwo-sheet-label">รายละเอียด</div><div class="itwo-sheet-text itwo-detail-text">${esc(detail.details)}</div></div>
+          ${signBox(model.signatureSlots(detail.events ?? []).find((slot) => slot.key === "requester"))}
+        </div>
         ${accessSection}
+        <div class="itwo-band">การอนุมัติและการดำเนินการ</div>
+        ${signatureGrid(detail.events ?? [])}
+        <p class="itwo-sheet-note">หมายเหตุ: ระยะเวลาทำงาน ${esc(model.DURATION_NOTE)}</p>
+        <p class="itwo-sheet-note itwo-sheet-status">ลงนามอิเล็กทรอนิกส์ผ่านระบบ (ชื่อและวันเวลาตามที่กดในระบบ) · สถานะใบสั่งงาน ณ ที่พิมพ์: ${esc(model.statusLabel(detail.status))}</p>
         ${printReworks(model.reworkRounds(detail))}
         ${printComments(model.commentRows(detail))}
-        <h2 class="itwo-sheet-section">ลายเซ็น</h2>
-        ${signatureGrid(detail.events ?? [])}
-        <p class="itwo-sheet-note">ลงนามอิเล็กทรอนิกส์ผ่านระบบ (ชื่อและวันเวลาตามที่กดในระบบ)</p>
-        <p class="itwo-sheet-note">หมายเหตุ: ระยะเวลาทำงาน ${esc(model.DURATION_NOTE)}</p>
-        <p class="itwo-sheet-note itwo-sheet-status">สถานะใบสั่งงาน ณ ที่พิมพ์: ${esc(model.statusLabel(detail.status))}</p>
       </article>`;
   }
 
