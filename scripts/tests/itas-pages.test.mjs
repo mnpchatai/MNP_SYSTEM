@@ -34,7 +34,7 @@ test("head: one h1, back link to IT SUPPORT, test tag only in test mode, dev not
   assert.doesNotMatch(html, /itas-test-tag/);
   assert.match(pages.head({ isTest: true }), /<span class="badge itas-test-tag"[^>]*>ทดสอบ<\/span>/);
   assert.match(html, /กำลังพัฒนาและทดสอบ ยังไม่เปิดใช้งานจริง/);
-  assert.match(html, /<p class="itas-version no-print"[^>]*>V1\.01<\/p>/);
+  assert.match(html, /<p class="itas-version no-print"[^>]*>V1\.02<\/p>/);
 });
 
 test("vault bar: shows state for every status with the right buttons; test vault is labelled", () => {
@@ -134,7 +134,7 @@ test("asset table: escapes every cell, status badge, sortable headers with aria-
   assert.match(html, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;/);
   assert.match(html, /aria-sort="descending"/);
   assert.match(html, /data-itas-sort="reg_no"[^>]*>เลขทะเบียน ▼/);
-  assert.match(html, /<span class="badge approved">ใช้งาน<\/span>/);
+  assert.match(html, /<span class="badge itas-status is-ok">ใช้งาน<\/span>/);
   assert.match(html, new RegExp(`data-itas-row="${ID}" tabindex="0"`));
   assert.match(html, /class="table-wrap itas-scroll"/);
   assert.match(html, /05\/03\/2568/);
@@ -304,4 +304,113 @@ test("no page string puts a user value into a data-* attribute other than ids/ke
     assert.doesNotMatch(match[2], /onerror|<|alert/, `${match[1]}`);
   }
   assert.doesNotMatch(html, /Y2lwaGVy|ciphertext/);
+});
+
+/* ---------- รุ่น 1.02: หน้าเครื่องคอมพิวเตอร์ + สีหมวด/สถานะ ---------- */
+const H_TYPES = [
+  { code: "COMPUTER", name: "เครื่องคอมพิวเตอร์", has_device_code: true, is_active: true, asset_count: 1, fields: TYPE.fields },
+  { code: "CPU", name: "CPU", has_device_code: false, is_active: true, asset_count: 1, fields: [{ key: "speed", label: "ความเร็ว", type: "text", secret: false, order: 1 }, { key: "pw", label: "รหัสลับ", type: "text", secret: true, order: 2 }] },
+  { code: "MONITOR", name: "จอภาพ", has_device_code: true, is_active: true, asset_count: 1, fields: [] },
+];
+const HOST = { ...ASSET, secrets: { ip: { v: 1, n: "AAAAAAAAAAAAAAAA", c: CIPHER } } };
+const PARTS = [
+  { id: "aaaaaaaa-0000-4000-8000-000000000001", type_code: "CPU", reg_no: "CPU-1", name: `ชิป ${XSS}`, model: "Intel", status: "in_use", slot: "CPU1", host_code: "COM12", attrs: { speed: "3.2 GHz", pw: "SECRET-SPEC" }, secrets: { pw: { v: 1, n: "AAAAAAAAAAAAAAAA", c: CIPHER } } },
+  { id: "aaaaaaaa-0000-4000-8000-000000000002", type_code: "MONITOR", reg_no: "MNT-1", device_code: "MNT1", name: "จอ 24", status: "retired", host_code: "COM12", attrs: {}, secrets: {} },
+];
+
+test("status pill: green in use, blue spare, red broken, grey retired; the badge colours are not borrowed from approval states any more", () => {
+  const html = ["in_use", "spare", "broken", "retired"].map(pages.statusPill).join("");
+  assert.match(html, /itas-status is-ok">ใช้งาน</);
+  assert.match(html, /itas-status is-spare">สำรอง</);
+  assert.match(html, /itas-status is-bad">ชำรุด</);
+  assert.match(html, /itas-status is-off">ยกเลิกใช้งาน</);
+  assert.doesNotMatch(html, /badge (approved|in_progress|rejected|cancelled)/);
+});
+
+test("type chips carry a line icon and the category colour; the all chip has none", () => {
+  const html = pages.typeChips({ types: H_TYPES, total: 3 });
+  assert.match(html, /<button type="button" class="itas-chip is-selected" data-itas-type="" [^>]*><span class="itas-chip-name">ทั้งหมด/, "ทั้งหมด: ไม่มีไอคอน/หมวด");
+  assert.match(html, /class="itas-chip is-host"[^>]*data-itas-type="COMPUTER"[^>]*><svg class="ui-icon itas-glyph"/);
+  assert.match(html, /class="itas-chip is-internal"[^>]*data-itas-type="CPU"/);
+  assert.match(html, /class="itas-chip is-peripheral"[^>]*data-itas-type="MONITOR"/);
+  assert.equal(count(html, /<svg/g), 3);
+});
+
+test("asset table (all types): type pill with icon, mono codes, parts count on computer rows only, host rows marked, empty parts cell on other rows", () => {
+  const index = model.buildHostIndex([HOST, ...PARTS]);
+  const columns = model.allColumns(H_TYPES, index);
+  const html = pages.assetTable({ rows: [HOST, PARTS[0]], columns, sort: null });
+  assert.match(html, /<tr class="itas-row status-in_use is-host" data-itas-row="2a500000-0000-4000-8000-000000000001" tabindex="0">/);
+  assert.match(html, /<span class="itas-kind is-host"><svg[^>]*>.*<\/svg><span>เครื่องคอมพิวเตอร์<\/span><\/span>/);
+  assert.match(html, /<span class="itas-kind is-internal">/);
+  assert.match(html, /<span class="itas-partcount itas-mono">1 ชิ้น<\/span>/, "จอที่ยกเลิกใช้งานไม่นับ");
+  assert.match(html, /<td class="itas-mono" data-label="เลขทะเบียน">COM-001<\/td>/);
+  assert.match(html, /<td class="itas-cell-empty" data-label="ชิ้นส่วน"><\/td>/);
+  assert.doesNotMatch(html, /<img/);
+  assert.ok(!html.includes("SECRET-SPEC") && !html.includes(CIPHER));
+  // ไม่มี index (โหลดไม่ครบ) = ไม่มีคอลัมน์ชิ้นส่วนเลย
+  assert.doesNotMatch(pages.assetTable({ rows: [HOST], columns: model.allColumns(H_TYPES) }), /ชิ้นส่วน/);
+});
+
+test("computer page: dark header with code/name/status/facts, grouped parts (internal then peripherals) as buttons carrying only the id, secrets never shown, everything escaped", () => {
+  const html = pages.hostBody({ host: { ...HOST, name: `เครื่อง ${XSS}` }, type: H_TYPES[0], parts: PARTS, types: H_TYPES });
+  assert.match(html, /id="itas-host-back"[^>]*>‹ กลับไปทะเบียนอุปกรณ์</);
+  assert.match(html, /<p class="itas-host-code itas-mono">COM12<\/p>/);
+  assert.match(html, /<h2 id="itas-host-title">เครื่อง &lt;img src=x/);
+  assert.match(html, /itas-status is-ok">ใช้งาน</);
+  assert.match(html, /<dt>ยี่ห้อ \/ รุ่น<\/dt><dd class="itas-mono">Dell<\/dd>/);
+  assert.match(html, /itas-host-counts itas-mono">1 ชิ้น · เลิกใช้ 1</, "ชิ้นส่วน 1 ต่อพ่วงที่ยกเลิกใช้งานแสดงแยก");
+  assert.match(html, /id="itas-host-edit"/);
+  const internal = html.indexOf('itas-group-card is-internal');
+  const peripheral = html.indexOf('itas-group-card is-peripheral');
+  assert.ok(internal > 0 && peripheral > internal, "ชิ้นส่วนภายในก่อนอุปกรณ์ต่อพ่วง");
+  assert.match(html, /<button type="button" class="itas-part is-internal" data-itas-part="aaaaaaaa-0000-4000-8000-000000000001">/);
+  assert.match(html, /<button type="button" class="itas-part is-peripheral is-retired" data-itas-part="aaaaaaaa-0000-4000-8000-000000000002">/);
+  assert.match(html, /itas-part-slot" title="ช่อง\/ตำแหน่ง">CPU1</);
+  assert.match(html, /Intel · ความเร็ว: 3\.2 GHz/);
+  assert.doesNotMatch(html, /<img/);
+  assert.ok(!html.includes("SECRET-SPEC") && !html.includes("รหัสลับ") && !html.includes(CIPHER) && !/10\.1\.1\.1/.test(html), "ช่องลับไม่ออกมาในหน้า");
+  assert.match(html, /id="itas-host-moves-load"/, "ปุ่มดูประวัติการย้าย");
+});
+
+test("computer page: no parts shows an empty state that tells how to link one; a computer without any code says it cannot be linked; truncation notice and error/loading states", () => {
+  const empty = pages.hostBody({ host: HOST, type: H_TYPES[0], parts: [], types: H_TYPES });
+  assert.match(empty, /ยังไม่มีชิ้นส่วนหรืออุปกรณ์ต่อพ่วงที่ผูกกับเครื่องนี้/);
+  assert.match(empty, /ใส่ &quot;ติดตั้งที่&quot; = COM12|ใส่ "ติดตั้งที่" = COM12/);
+  assert.doesNotMatch(empty, /itas-host-moves-load/, "ไม่มีชิ้นส่วน = ไม่มีประวัติให้ดึง");
+  assert.match(empty, /itas-host-counts itas-mono">ไม่มีชิ้นส่วน</);
+  assert.match(pages.hostBody({ host: { ...HOST, device_code: null, reg_no: null }, type: H_TYPES[0], parts: [], types: H_TYPES }), /ยังไม่มีรหัสอุปกรณ์หรือเลขทะเบียน/);
+  assert.match(pages.hostBody({ host: HOST, type: H_TYPES[0], parts: PARTS, types: H_TYPES, partsNotice: "มี 900 รายการ" }), /rf-callout is-warn">มี 900 รายการ</);
+  assert.match(pages.hostLoading(), /role="status">กำลังโหลดข้อมูลเครื่อง/);
+  const error = pages.hostError(`พัง ${XSS}`);
+  assert.match(error, /&lt;img/);
+  assert.doesNotMatch(error, /<img/);
+  assert.match(error, /id="itas-host-retry"/);
+  assert.match(error, /id="itas-host-back"/);
+  const shell = pages.hostShell("<p>x</p>");
+  assert.ok(shell.indexOf('id="itas-form-area"') < shell.indexOf('id="itas-host-host"'), "ช่องฟอร์มอยู่นอกส่วนที่วาดซ้ำ");
+});
+
+test("computer page: move history section — hidden without parts, a load button first, then loading / error / the list (escaped) / empty", () => {
+  assert.equal(pages.hostMovesSection(null, false), "");
+  assert.match(pages.hostMovesSection(null, true), /id="itas-host-moves-load"/);
+  assert.match(pages.hostMovesSection(null, true), /ชิ้นที่ย้ายออกไปแล้วไม่แสดง/);
+  assert.match(pages.hostMovesSection({ status: "loading" }, true), /กำลังโหลดประวัติ/);
+  assert.match(pages.hostMovesSection({ status: "error", message: "ล้ม" }, true), /role="alert">ล้ม/);
+  const list = pages.hostMovesSection({ status: "ready", items: [{ at: "20/11/2569 10:00", by: "IT3462 สุริยา", part: `RAM ${XSS}`, details: ["ติดตั้งเข้าเครื่องนี้ (จาก COM7)"] }] }, true);
+  assert.match(list, /20\/11\/2569 10:00/);
+  assert.match(list, /ติดตั้งเข้าเครื่องนี้ \(จาก COM7\)/);
+  assert.doesNotMatch(list, /<img/);
+  assert.match(pages.hostMovesSection({ status: "ready", items: [] }, true), /ยังไม่มีประวัติการย้ายของชิ้นส่วนในเครื่องนี้/);
+});
+
+test("edit form of a part shows 'installed at COMxx' as a button only when the computer is known; escaped; the add form never shows it", () => {
+  const type = H_TYPES[1];
+  const asset = { ...PARTS[0], attrs: {}, secrets: {} };
+  const values = model.formValuesFromAsset(asset, type);
+  const withLink = pages.assetForm({ mode: "edit", type, values, asset, hostLink: { id: ID, label: `COM12 · เครื่อง ${XSS}` } });
+  assert.match(withLink, new RegExp(`ติดตั้งอยู่ที่ <button type="button" class="itas-link" data-itas-host="${ID}">COM12 · เครื่อง &lt;img`));
+  assert.doesNotMatch(withLink, /<img/);
+  assert.doesNotMatch(pages.assetForm({ mode: "edit", type, values, asset }), /ติดตั้งอยู่ที่/);
+  assert.doesNotMatch(pages.assetForm({ mode: "add", type, values, hostLink: { id: ID, label: "COM12" } }), /ติดตั้งอยู่ที่/);
 });

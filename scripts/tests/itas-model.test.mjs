@@ -235,7 +235,7 @@ test("routes and version metadata", () => {
   assert.equal(model.assetsUrl(), "#/office?module=assets");
   assert.equal(model.readView(new URLSearchParams("module=assets")), "main");
   assert.equal(model.readView(new URLSearchParams("module=assets&view=other")), null);
-  assert.equal(model.MODULE_VERSION, "1.01");
+  assert.equal(model.MODULE_VERSION, "1.02");
   assert.equal(model.IN_DEVELOPMENT, true);
   assert.equal(model.ASSET_CODE, "IT_ASSET_REGISTER");
   assert.ok(model.isUuid(ID) && !model.isUuid("x"));
@@ -454,4 +454,149 @@ test("changing the type inside the add form carries over only typed values whose
   assert.equal(back.core.device_code, "COM9");
   assert.deepEqual(plain(back.attrs), { cpu: "i7", kind: "PC" });
   assert.ok(!JSON.stringify(model.carryOver(COMPUTER, { core: {}, attrs: { ip: "10.0.0.1" } })).includes("10.0.0.1"), "ช่องลับไม่ใช่ช่องธรรมดา จึงไม่ถูกยก");
+});
+
+/* ---------- รุ่น 1.02: เครื่องคอมพิวเตอร์ ↔ ชิ้นส่วน / อุปกรณ์ต่อพ่วง ---------- */
+const part = (id, type_code, extra = {}) => ({ id, type_code, reg_no: `${type_code}-${id}`, device_code: null, name: "", model: "", status: "in_use", host_code: "COM12", slot: null, attrs: {}, secrets: {}, ...extra });
+const FLEET = [
+  { id: "h1", type_code: "COMPUTER", reg_no: "COM-012", device_code: "COM12", name: "เครื่องบัญชี", status: "in_use", host_code: null },
+  { id: "h2", type_code: "LAPTOP", reg_no: "NBS-1", device_code: null, name: "โน้ตบุ๊ก", status: "in_use", host_code: null }, // ไม่มีรหัสอุปกรณ์ → ใช้เลขทะเบียน
+  part("c1", "CPU", { reg_no: "CPU-1", slot: "CPU1" }),
+  part("r1", "RAM", { reg_no: "RAM-1", slot: "DIMM2" }),
+  part("r2", "RAM", { reg_no: "RAM-2", slot: "DIMM1" }),
+  part("r3", "RAM", { reg_no: "RAM-3", slot: "DIMM3", status: "retired" }),
+  part("m1", "MONITOR", { reg_no: "MNT-1" }),
+  part("p1", "PRINTER", { reg_no: "PRT-1", host_code: "com12" }), // พิมพ์เล็กก็จับคู่ (ฐานข้อมูลแปลงเป็นตัวใหญ่ให้อยู่แล้ว แต่ไม่พึ่งพา)
+  part("x1", "CPU", { reg_no: "CPU-X", host_code: "COM99" }), // ติดตั้งที่เครื่องที่ไม่มีในรายการ
+  part("n1", "MOUSE", { reg_no: "MOU-1", host_code: "NBS-1" }),
+  part("o1", "CPU", { reg_no: "CPU-O", host_code: null }),
+];
+const TYPES_ORDER = [{ code: "COMPUTER", name: "เครื่องคอมพิวเตอร์" }, { code: "MONITOR", name: "จอภาพ" }, { code: "PRINTER", name: "เครื่องพิมพ์" }, { code: "MOUSE", name: "เมาส์" }, { code: "PSU", name: "PSU" }, { code: "CPU", name: "CPU" }, { code: "RAM", name: "RAM" }];
+
+test("kinds and icons: Computer/Laptop are hosts, internal parts are internal, everything else is peripheral; every known type has a line icon made only of path/circle/rect", () => {
+  assert.deepEqual(model.HOST_TYPE_CODES, ["COMPUTER", "LAPTOP"]);
+  assert.equal(model.typeKind("LAPTOP"), "host");
+  for (const code of ["MAINBOARD", "CPU", "RAM", "STORAGE", "VGA", "LAN_CARD", "ROM", "PSU", "CASE"]) assert.equal(model.typeKind(code), "internal", code);
+  for (const code of ["MONITOR", "PRINTER", "UPS", "MOUSE", "OTHER", "SOMETHING_NEW"]) assert.equal(model.typeKind(code), "peripheral", code);
+  for (const [code, markup] of Object.entries(model.TYPE_ICON_PATHS)) {
+    const tags = [...markup.matchAll(/<(\w+)/g)].map((match) => match[1]);
+    assert.ok(tags.length && tags.every((tag) => ["path", "circle", "rect"].includes(tag)), `${code} uses ${tags.join(",")}`);
+    assert.doesNotMatch(markup, /style=|<script|on\w+=|stroke-width/i);
+  }
+  assert.ok(Object.isFrozen(model.TYPE_ICON_PATHS));
+  assert.match(model.typeIconPaths("NO_SUCH"), /<path/, "ชนิดที่ไม่รู้จักใช้รูปกล่อง");
+  assert.deepEqual(["in_use", "spare", "broken", "retired", "weird"].map(model.statusTone), ["ok", "spare", "bad", "off", "off"]);
+});
+
+test("host index: parts are matched to the computer by host_code = device_code (reg_no when the computer has no device code), case-insensitive; retired parts are not counted", () => {
+  const index = model.buildHostIndex(FLEET);
+  const host = FLEET[0];
+  assert.deepEqual(index.partsOf(host).map((row) => row.id), ["c1", "r1", "r2", "r3", "m1", "p1"]);
+  assert.deepEqual(plain(index.summaryOf(host)), { internal: 3, peripheral: 2, total: 5, retired: 1 });
+  assert.equal(index.summaryText(host), "3 ชิ้น · 2 ต่อพ่วง");
+  assert.equal(index.summaryText(FLEET[1]), "1 ต่อพ่วง", "เครื่องที่ไม่มีรหัสอุปกรณ์ใช้เลขทะเบียน");
+  assert.equal(index.summaryText(FLEET.find((row) => row.id === "m1")), "", "ที่ไม่ใช่เครื่องคอม = ว่าง");
+  assert.equal(model.partsSummaryText({ internal: 0, peripheral: 0 }), "ไม่มีชิ้นส่วน");
+  assert.equal(model.partsSummaryText({ internal: 4, peripheral: 0 }), "4 ชิ้น");
+  assert.equal(model.partsSummaryText({ internal: 0, peripheral: 2 }), "2 ต่อพ่วง");
+  // ชิ้นส่วนที่ติดตั้งกับเครื่องที่ไม่มีในรายการ/ไม่มีเครื่อง = ไม่ผูกกับใคร
+  assert.equal(index.hostOf(FLEET.find((row) => row.id === "x1")), null);
+  assert.equal(index.hostOf(FLEET.find((row) => row.id === "o1")), null);
+  assert.equal(index.hostOf(FLEET.find((row) => row.id === "r1")).id, "h1");
+  assert.equal(index.hostOf(FLEET.find((row) => row.id === "n1")).id, "h2");
+  assert.equal(index.hostOf(host), null, "ตัวเครื่องไม่ใช่ชิ้นส่วนของเครื่องอื่น");
+  assert.equal(model.buildHostIndex(null).hosts.size, 0);
+  assert.deepEqual(index.partsOf({ id: "ghost", type_code: "COMPUTER", device_code: "COM12" }), [], "เครื่องที่ไม่ได้อยู่ในดัชนี");
+});
+
+test("host index: a device code beats another computer's registration number when they collide", () => {
+  const rows = [
+    { id: "a", type_code: "COMPUTER", reg_no: "COM5", device_code: null },
+    { id: "b", type_code: "COMPUTER", reg_no: "X-1", device_code: "COM5" },
+    part("p", "CPU", { host_code: "COM5" }),
+  ];
+  const index = model.buildHostIndex(rows);
+  assert.equal(index.hostOf(rows[2]).id, "b");
+  assert.deepEqual(index.partsOf(rows[0]), []);
+});
+
+test("grouping parts: internal parts in a fixed order, then peripherals (monitor, printer, UPS first); items by slot then number, retired last; names from the type list", () => {
+  const rows = FLEET.filter((row) => row.host_code?.toUpperCase() === "COM12");
+  const grouped = model.groupParts(rows, TYPES_ORDER);
+  assert.deepEqual(grouped.internal.map((group) => group.type_code), ["CPU", "RAM"]);
+  assert.deepEqual(grouped.internal[1].items.map((row) => row.id), ["r2", "r1", "r3"], "DIMM1, DIMM2 แล้วชิ้นที่ยกเลิกไปท้าย");
+  assert.deepEqual(grouped.peripheral.map((group) => group.type_code), ["MONITOR", "PRINTER"]);
+  assert.equal(grouped.internal[0].type_name, "CPU");
+  assert.equal(grouped.peripheral[0].kind, "peripheral");
+  assert.deepEqual(plain(grouped.counts), { internal: 3, peripheral: 2, total: 5, retired: 1 });
+  // ชนิดเกิดใหม่นอกรายการ: เป็นอุปกรณ์ต่อพ่วง เรียงหลัง 3 ชนิดแรกตามลำดับของฐานข้อมูล · ชนิดที่ไม่มีใน types ใช้รหัสเป็นชื่อ
+  const odd = model.groupParts([part("u", "UPS"), part("m", "MOUSE"), part("z", "ZZZ"), part("d", "MONITOR")], TYPES_ORDER);
+  assert.deepEqual(odd.peripheral.map((group) => group.type_code), ["MONITOR", "UPS", "MOUSE", "ZZZ"]);
+  assert.equal(odd.peripheral[3].type_name, "ZZZ");
+  assert.deepEqual(plain(model.groupParts([], null)), { internal: [], peripheral: [], counts: { internal: 0, peripheral: 0, total: 0, retired: 0 } });
+  assert.deepEqual(model.groupParts([{ id: "h", type_code: "COMPUTER" }], TYPES_ORDER).internal, [], "เครื่องคอมไม่ใช่ชิ้นส่วน");
+});
+
+test("part spec: model plus up to 3 non-secret type fields that have a value; secret fields never appear", () => {
+  const type = { code: "RAM", fields: [
+    { key: "capacity", label: "ความจุ", type: "text", secret: false, order: 1 }, { key: "speed", label: "ความเร็ว (MHz)", type: "number", secret: false, order: 2 },
+    { key: "empty", label: "ว่าง", type: "text", secret: false, order: 3 }, { key: "note2", label: "อื่น", type: "text", secret: false, order: 4 },
+    { key: "extra", label: "เกิน", type: "text", secret: false, order: 5 }, { key: "pw", label: "รหัส", type: "text", secret: true, order: 6 },
+  ] };
+  const asset = { model: "Kingston", attrs: { capacity: "8 GB", speed: 3200, note2: "DDR4", extra: "ไม่แสดง", pw: "SECRET-VALUE" }, secrets: { pw: ENVELOPE } };
+  assert.equal(model.partSpecText(asset, type), "Kingston · ความจุ: 8 GB · ความเร็ว (MHz): 3,200 · อื่น: DDR4");
+  assert.doesNotMatch(model.partSpecText(asset, type), /SECRET-VALUE|รหัส/);
+  assert.equal(model.partSpecText({ attrs: {} }, type), "");
+  assert.equal(model.partSpecText({ model: "X" }, null), "X");
+});
+
+test("host facts: brand/model, user, department (a type field named like one), place, registration, serial — only those with values", () => {
+  const type = { code: "COMPUTER", fields: [
+    { key: "user_name", label: "ชื่อผู้ใช้", type: "text", secret: false, order: 1 }, { key: "dept", label: "แผนก", type: "text", secret: false, order: 2 },
+    { key: "ip", label: "IP", type: "text", secret: true, order: 3 },
+  ] };
+  const facts = model.hostFacts({ model: "Dell 3050", reg_no: "COM-012", serial: "", place: "สำนักงาน", attrs: { user_name: "สมหญิง", dept: "บัญชี", ip: "10.1.1.1" }, secrets: { ip: ENVELOPE } }, type);
+  assert.deepEqual(plain(facts), [{ label: "ยี่ห้อ / รุ่น", value: "Dell 3050" }, { label: "ผู้ใช้", value: "สมหญิง" }, { label: "แผนก", value: "บัญชี" }, { label: "สถานที่", value: "สำนักงาน" }, { label: "เลขทะเบียน", value: "COM-012" }]);
+  assert.ok(!JSON.stringify(facts).includes("10.1.1.1"));
+  assert.deepEqual(model.hostFacts({}, null), []);
+});
+
+test("the parts column only exists when an index is given and only counts computers; it sorts by number of parts with non-computers last", () => {
+  const index = model.buildHostIndex(FLEET);
+  assert.ok(!model.tableColumns(COMPUTER).some((column) => column.key === "parts"), "ไม่ส่ง index = ไม่มีคอลัมน์");
+  assert.ok(!model.tableColumns(MOUSE, index).some((column) => column.key === "parts"), "ชนิดที่ไม่ใช่เครื่องคอม");
+  const keys = model.tableColumns(COMPUTER, index).map((column) => column.key);
+  assert.deepEqual(keys.slice(0, 4), ["reg_no", "device_code", "name", "parts"]);
+  const all = model.allColumns(TYPES_ORDER, index);
+  assert.deepEqual(all.map((column) => column.key), ["reg_no", "device_code", "type", "name", "parts", "user", "place", "status"]);
+  const column = all.find((item) => item.key === "parts");
+  assert.equal(model.cellText(FLEET[0], column), "3 ชิ้น · 2 ต่อพ่วง");
+  assert.equal(model.cellText(FLEET.find((row) => row.id === "r1"), column), "");
+  const computers = [FLEET[1], FLEET[0], FLEET.find((row) => row.id === "r1")];
+  assert.deepEqual(model.sortAssets(computers, column).map((row) => row.id), ["h2", "h1", "r1"], "น้อยไปมาก แถวที่ไม่ใช่เครื่องท้ายสุด");
+  assert.deepEqual(model.sortAssets(computers, column, "descending").map((row) => row.id), ["h1", "h2", "r1"], "ท้ายสุดทั้งสองทิศ");
+});
+
+test("host move history: keeps only moves into or out of this computer, newest first, with plain-language lines; other hosts are ignored", () => {
+  const entries = [
+    { asset: { id: "r1", type_code: "RAM", reg_no: "RAM-1" }, moves: [
+      { id: 1, from_host: "COM7", to_host: "COM12", from_slot: null, to_slot: "DIMM1", from_status: null, to_status: "in_use", created_at: "2026-11-20T03:00:00+00:00", actor_employee_no: "IT3462", actor_full_name: "สุริยา" },
+      { id: 2, from_host: "COM5", to_host: "COM6", from_slot: null, to_slot: null, from_status: "in_use", to_status: "in_use", created_at: "2026-11-21T03:00:00+00:00" },
+    ] },
+    { asset: { id: "m1", type_code: "MONITOR", reg_no: "MNT-1" }, moves: [
+      { id: 3, from_host: "COM12", to_host: "COM3", from_slot: null, to_slot: null, from_status: "in_use", to_status: "in_use", created_at: "2026-11-22T03:00:00+00:00" },
+      { id: 4, from_host: "COM12", to_host: "COM12", from_slot: "A", to_slot: "B", from_status: "in_use", to_status: "broken", created_at: "2026-11-23T03:00:00+00:00" },
+      { id: 5, from_host: "COM12", to_host: "COM12", from_slot: null, to_slot: null, from_status: "in_use", to_status: "in_use", created_at: "2026-11-24T03:00:00+00:00" },
+    ] },
+  ];
+  const rows = model.hostMoveHistory(entries, "com12", TYPES_ORDER);
+  assert.deepEqual(rows.map((row) => row.id), ["m1:4", "m1:3", "r1:1"], "ใหม่สุดก่อน ข้ามที่ไม่เกี่ยวกับเครื่องนี้ และข้ามแถวที่ไม่มีอะไรเปลี่ยน");
+  assert.deepEqual(rows[1].details, ["ย้ายออกจากเครื่องนี้ ไปที่ COM3"]);
+  assert.deepEqual(rows[2].details, ["ติดตั้งเข้าเครื่องนี้ (จาก COM7)", "ช่อง/ตำแหน่ง: — → DIMM1", "สถานะ: — → ใช้งาน"]);
+  assert.deepEqual(rows[0].details, ["ช่อง/ตำแหน่ง: A → B", "สถานะ: ใช้งาน → ชำรุด"]);
+  assert.equal(rows[2].part, "RAM RAM-1");
+  assert.equal(rows[2].by, "IT3462 สุริยา");
+  assert.deepEqual(model.hostMoveHistory(null, "COM12"), []);
+  const many = [{ asset: { id: "a", type_code: "RAM" }, moves: Array.from({ length: 150 }, (_, i) => ({ id: i, from_host: null, to_host: "COM12", created_at: `2026-01-01T00:00:${String(i % 60).padStart(2, "0")}+00:00` })) }];
+  assert.equal(model.hostMoveHistory(many, "COM12").length, model.MAX_HOST_MOVES);
 });

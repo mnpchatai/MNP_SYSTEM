@@ -187,6 +187,11 @@ const unlockVia = async (w) => {
   await w.click(w.button("itas-vault-unlock"));
   await w.submit(passwordForm(PASSWORD));
 };
+// แถวเครื่องคอมพิวเตอร์ (COMPUTER/LAPTOP) เปิดหน้ารายละเอียดเครื่องก่อน (รุ่น 1.02) → กด "แก้ไขเครื่องนี้" ถึงจะเปิดฟอร์มแก้ไข
+async function openEdit(w, id) {
+  await w.click({ closest: () => ({ dataset: { itasRow: id }, id: "" }), dataset: { itasRow: id }, id: "" });
+  await w.click(w.button("itas-host-edit"));
+}
 // ฟอร์มอุปกรณ์จำลอง: ค่าช่องธรรมดาตามชื่อ + แถวช่องลับ (data-secret) ที่มี input ของตัวเอง
 function assetForm({ values = {}, secrets = {} } = {}) {
   const elements = {};
@@ -240,9 +245,9 @@ test("render without access goes home and calls nothing else; with access it loa
   assert.match(html, /data-itas-type="" aria-pressed="true"/, "ชิป ทั้งหมด ถูกเลือกตั้งต้น");
   assert.match(html, /data-itas-type="COMPUTER" aria-pressed="false"/);
   assert.doesNotMatch(html, /itas-purge/, "ไม่ใช่โหมดทดสอบ");
-  assert.equal(w.itas.version, "1.01");
+  assert.equal(w.itas.version, "1.02");
   assert.equal(w.itas.inDevelopment, true);
-  assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_ASSET_REGISTER.version, "1.01");
+  assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_ASSET_REGISTER.version, "1.02");
   // โหมดทดสอบ: มีปุ่มล้างข้อมูล + แท็ก ทดสอบ
   const test = await world({ isTest: true });
   await test.render();
@@ -483,8 +488,7 @@ test("editing: only the secret fields the user touched are sent (null to delete)
   const w = await world({ vaultRow: row, assets: [withSecrets] });
   await w.render();
   await unlockVia(w);
-  await w.click(w.button("", { itasRow: ASSET_ID }));
-  await w.click({ closest: () => ({ dataset: { itasRow: ASSET_ID }, id: "" }), dataset: { itasRow: ASSET_ID }, id: "" });
+  await openEdit(w, ASSET_ID);
   w.forms.current = assetForm({ values: { reg_no: "COM-001", device_code: "COM12", name: "เครื่องบัญชี", model: "Dell", serial: "SN1", "attrs.cpu": "i5" }, secrets: { ip: { clear: true, hidden: true }, license_os: { value: PLAIN_LICENSE } } });
   await w.submit(w.forms.current);
   const save = w.calls.rpc.find((call) => call.name === "app_itas_save_asset");
@@ -502,7 +506,7 @@ test("a conflict (40001) keeps what the user typed, shows the message with a rel
   const conflict = Object.assign(new Error("ข้อมูลอุปกรณ์นี้ถูกแก้ไขไปแล้ว กรุณาโหลดข้อมูลล่าสุดแล้วลองใหม่"), { code: "40001" });
   const w = await world({ rpcHandlers: { app_itas_save_asset: () => { throw conflict; } } });
   await w.render();
-  await w.click({ closest: () => ({ dataset: { itasRow: ASSET_ID }, id: "" }), dataset: { itasRow: ASSET_ID }, id: "" });
+  await openEdit(w, ASSET_ID);
   w.forms.current = assetForm({ values: { reg_no: "COM-001", name: "ชื่อที่ฉันพิมพ์ไว้", "attrs.cpu": "i5" } });
   await w.submit(w.forms.current);
   const message = w.hosts["itas-form-message"];
@@ -513,7 +517,8 @@ test("a conflict (40001) keeps what the user typed, shows the message with a rel
   const before = w.calls.rpc.filter((call) => call.name === "app_itas_get_asset").length;
   await w.click(w.button("itas-reload-asset"));
   assert.equal(w.calls.confirms.at(-1), "โหลดข้อมูลล่าสุด?");
-  assert.equal(w.calls.rpc.filter((call) => call.name === "app_itas_get_asset").length, before + 1);
+  // โหลดแถวล่าสุดของฟอร์ม 1 ครั้ง + หน้าเครื่องที่เปิดอยู่ (แถวนี้เป็นเครื่องคอมพิวเตอร์) โหลดซ้ำหลังรีเฟรชข้อมูลอีก 1 ครั้ง
+  assert.equal(w.calls.rpc.filter((call) => call.name === "app_itas_get_asset").length, before + 2);
 });
 
 test("a retry after a lost connection reuses the same new id; if the first try had actually saved, the row is loaded instead of showing an error", async () => {
@@ -575,7 +580,7 @@ test("showing a secret decrypts only on request into textContent; a field that c
   const w = await world({ vaultRow: row, assets: [bad] });
   await w.render();
   await unlockVia(w);
-  await w.click({ closest: () => ({ dataset: { itasRow: ASSET_ID }, id: "" }), dataset: { itasRow: ASSET_ID }, id: "" });
+  await openEdit(w, ASSET_ID);
   const shown = el({ textContent: "••••••••" });
   const input = el({ hidden: true });
   const rowEl = el({ dataset: { secret: "ip", clear: "" }, querySelector: (selector) => ({ "[data-secret-shown]": shown, "[data-secret-input]": input, "[data-secret-note]": el() })[selector] ?? null });
@@ -1068,7 +1073,7 @@ test("the folded 'more details' opens by itself: when editing a row that has val
   await w.render();
   await w.click(w.button("itas-add"));
   assert.doesNotMatch(w.hosts["itas-form-area"], /<details class="itas-more" id="itas-more" open>/, "เพิ่มใหม่ = พับ");
-  await w.click({ closest: () => ({ dataset: { itasRow: ASSET_ID }, id: "" }), dataset: { itasRow: ASSET_ID }, id: "" });
+  await openEdit(w, ASSET_ID);
   assert.match(w.hosts["itas-form-area"], /<details class="itas-more" id="itas-more" open>/, "ASSET มี CPU ในช่องที่พับ = เปิดให้");
   await w.click({ closest: () => ({ dataset: { itasRow: MOUSE_ID }, id: "" }), dataset: { itasRow: MOUSE_ID }, id: "" });
   assert.match(w.hosts["itas-form-area"], /<details class="itas-more" id="itas-more" open>/, "เมาส์มี Serial ซึ่งอยู่ในช่องที่พับ = เปิดให้");
@@ -1317,7 +1322,7 @@ test("'copy as a new device' opens an add form for the same type with the non-se
   const source = { ...ASSET, secrets: { ip: { v: 1, n: "AAAAAAAAAAAAAAAA", c: CIPHER } } };
   const w = await world({ ...MULTI, rpcHandlers: { ...MULTI.rpcHandlers, app_itas_get_asset: () => source } });
   await w.render();
-  await w.click({ closest: () => ({ dataset: { itasRow: ASSET_ID }, id: "" }), dataset: { itasRow: ASSET_ID }, id: "" });
+  await openEdit(w, ASSET_ID);
   assert.match(w.hosts["itas-form-area"], /id="itas-copy-asset">คัดลอกเป็นเครื่องใหม่/);
   await w.click(w.button("itas-copy-asset"));
   const form = w.hosts["itas-form-area"];
@@ -1349,7 +1354,7 @@ test("'copy as a new device' opens an add form for the same type with the non-se
 test("copy asks before throwing away a half-edited form, and does nothing if declined", async () => {
   const w = await world({ ...MULTI, confirm: false });
   await w.render();
-  await w.click({ closest: () => ({ dataset: { itasRow: ASSET_ID }, id: "" }), dataset: { itasRow: ASSET_ID }, id: "" });
+  await openEdit(w, ASSET_ID);
   w.forms.current = assetForm({ values: { reg_no: "COM-001", name: "แก้ค้างไว้" } });
   await w.click(w.button("itas-copy-asset"));
   assert.equal(w.calls.confirms.at(-1), "ยังไม่ได้บันทึกสิ่งที่กรอก");
@@ -1417,4 +1422,161 @@ test("changing type keeps a remembered field (brand/model) empty when the user c
   assert.match(form, /name="model"[^>]*value=""/, "ช่องที่ผู้ใช้ล้างเองคงว่าง ไม่ถูกเติมซ้ำ");
   assert.match(form, /name="place"[^>]*value="คลัง"/, "ช่องที่ไม่ได้แตะ ได้ค่าที่จำของชนิดใหม่");
   assert.doesNotMatch(form, /id="itas-remembered"[^>]*>[^<]*<strong>[^<]*ยี่ห้อ/, "ข้อความเติมให้ ไม่อ้างช่องที่ผู้ใช้ล้างเอง");
+});
+
+/* ---------- รุ่น 1.02: หน้ารายละเอียดเครื่องคอมพิวเตอร์ ---------- */
+const CPU_TYPE = { code: "CPU", name: "CPU", reg_prefix: "CPU", has_device_code: false, is_active: true, asset_count: 1, fields: [{ key: "speed", label: "ความเร็ว", type: "text", secret: false, order: 1 }] };
+const CPU_ID = "2a500000-0000-4000-8000-000000000003";
+const CPU_ASSET = { id: CPU_ID, type_code: "CPU", reg_no: "CPU-001", device_code: null, name: "ซีพียู", model: "Intel", status: "in_use", host_code: "COM12", slot: "CPU1", attrs: { speed: "3.2 GHz" }, secrets: {}, updated_at: STAMP };
+const MOUSE_ON_HOST = { ...MOUSE_ASSET, id: "2a500000-0000-4000-8000-000000000004", reg_no: "MOU-002", host_code: "COM12" };
+const HOSTWORLD = (extra = {}) => {
+  const all = [ASSET, CPU_ASSET, MOUSE_ON_HOST, MOUSE_ASSET];
+  return {
+    assets: all,
+    ...extra,
+    rpcHandlers: {
+      app_itas_list_types: () => [TYPE, CPU_TYPE, MOUSE_TYPE],
+      app_itas_list_assets: ({ p_host_code, p_type_code }) => { const items = all.filter((row) => (!p_host_code || row.host_code === p_host_code) && (!p_type_code || row.type_code === p_type_code)); return { total: items.length, items }; },
+      app_itas_get_asset: ({ p_id }) => all.find((row) => row.id === p_id),
+      ...(extra.rpcHandlers ?? {}),
+    },
+  };
+};
+const rowClick = (id) => ({ closest: () => ({ dataset: { itasRow: id }, id: "" }), dataset: { itasRow: id }, id: "" });
+const getCalls = (w, name) => w.calls.rpc.filter((call) => call.name === name);
+
+test("computer rows show how many parts are attached (only when the whole register is loaded); other types and partial loads have no parts column", async () => {
+  const w = await world(HOSTWORLD());
+  await w.render();
+  assert.match(w.html(), /<span class="itas-partcount itas-mono">1 ชิ้น · 1 ต่อพ่วง<\/span>/);
+  assert.match(w.html(), /data-label="ชิ้นส่วน"/);
+  // ถูกตัดที่เพดาน (total > rows) = นับไม่ครบ ห้ามแสดงตัวเลขที่อาจผิด
+  const truncated = await world(HOSTWORLD({ rpcHandlers: { app_itas_list_assets: () => ({ total: 5000, items: [ASSET, CPU_ASSET] }) } }));
+  await truncated.render();
+  assert.doesNotMatch(truncated.html(), /itas-partcount|data-label="ชิ้นส่วน"/);
+});
+
+test("a computer row opens the computer page (the host and its linked parts are loaded by host code), not the edit form; a part row still opens the edit form", async () => {
+  const w = await world(HOSTWORLD());
+  await w.render();
+  await w.click(rowClick(ASSET_ID));
+  assert.deepEqual(getCalls(w, "app_itas_get_asset").map((call) => call.args.p_id), [ASSET_ID], "โหลดเครื่องล่าสุด");
+  const listing = getCalls(w, "app_itas_list_assets").at(-1).args;
+  assert.equal(listing.p_host_code, "COM12", "ถามชิ้นส่วนด้วยรหัสเครื่อง");
+  const page = w.hosts["itas-host-host"];
+  assert.match(page, /itas-host-code itas-mono">COM12</);
+  assert.match(page, /data-itas-part="2a500000-0000-4000-8000-000000000003"/);
+  assert.match(page, /data-itas-part="2a500000-0000-4000-8000-000000000004"/);
+  assert.doesNotMatch(page, /data-itas-part="2a500000-0000-4000-8000-000000000002"/, "เมาส์ที่ไม่ได้ติดตั้งกับเครื่องนี้ไม่แสดง");
+  assert.match(page, /ความเร็ว: 3\.2 GHz/);
+  assert.equal(w.hosts["itas-form-area"] ?? "", "", "ยังไม่เปิดฟอร์ม");
+  // ชิ้นส่วนที่ไม่ใช่เครื่องคอม: แถวเปิดฟอร์มแก้ไขตามเดิม
+  const parts = await world(HOSTWORLD());
+  await parts.render();
+  await parts.click(rowClick(CPU_ID));
+  assert.match(parts.hosts["itas-form-area"], /id="itas-form"/);
+  assert.equal(parts.hosts["itas-host-host"] ?? "", "");
+});
+
+test("clicking a part on the computer page opens that part's edit form above the page; the form links back to the computer; saving reloads the computer page", async () => {
+  const w = await world(HOSTWORLD());
+  await w.render();
+  await w.click(rowClick(ASSET_ID));
+  await w.click(w.button("", { itasPart: CPU_ID }));
+  assert.match(w.hosts["itas-form-area"], /id="itas-form"/);
+  assert.match(w.hosts["itas-form-area"], new RegExp(`ติดตั้งอยู่ที่ <button type="button" class="itas-link" data-itas-host="${ASSET_ID}">COM-001 · เครื่องบัญชี</button>`));
+  const hostLoads = getCalls(w, "app_itas_get_asset").filter((call) => call.args.p_id === ASSET_ID).length;
+  w.forms.current = assetForm({ values: { reg_no: "CPU-001", name: "ซีพียูใหม่" } });
+  await w.submit(w.forms.current);
+  assert.ok(getCalls(w, "app_itas_save_asset").length === 1);
+  assert.equal(getCalls(w, "app_itas_get_asset").filter((call) => call.args.p_id === ASSET_ID).length, hostLoads + 1, "โหลดเครื่องซ้ำหลังบันทึก");
+  assert.match(w.hosts["itas-host-host"], /itas-host-code/, "ยังอยู่ในหน้าเครื่อง");
+  assert.equal(w.hosts["itas-form-area"], "", "ฟอร์มปิดแล้ว");
+});
+
+test("the 'installed at' link goes to the computer page; the edit button of the computer opens its own form; back returns to the list with the same search/filters", async () => {
+  const w = await world(HOSTWORLD());
+  await w.render();
+  await w.click(rowClick(CPU_ID));
+  await w.click(w.button("", { itasHost: ASSET_ID }));
+  assert.match(w.hosts["itas-host-host"], /itas-host-code itas-mono">COM12</);
+  assert.match(w.hosts["itas-main-host"], /<div id="itas-form-area"><\/div><div id="itas-host-host">/, "เปลือกหน้าเครื่องใหม่ (ช่องฟอร์มว่าง ฟอร์มของชิ้นส่วนไม่ค้าง)");
+  await w.click(w.button("itas-host-edit"));
+  assert.match(w.hosts["itas-form-area"], /แก้ไข COM-001/);
+  w.hosts["itas-main-host"] = "";
+  await w.click(w.button("itas-host-back"));
+  assert.match(w.hosts["itas-main-host"], /id="itas-table-host"/, "กลับมารายการ");
+  assert.match(w.hosts["itas-main-host"], /id="itas-search"/);
+});
+
+test("leaving the computer page with a half-typed form asks first; declining keeps the page and the form", async () => {
+  const w = await world(HOSTWORLD({ confirm: false }));
+  await w.render();
+  await w.click(rowClick(ASSET_ID));
+  await w.click(w.button("itas-host-edit"));
+  w.forms.current = assetForm({ values: { reg_no: "COM-001", name: "แก้ค้างไว้" } });
+  await w.click(w.button("itas-host-back"));
+  assert.equal(w.calls.confirms.at(-1), "ยังไม่ได้บันทึกสิ่งที่กรอก");
+  assert.match(w.hosts["itas-form-area"], /id="itas-form"/, "ฟอร์มยังอยู่");
+  assert.doesNotMatch(w.hosts["itas-main-host"] ?? "", /id="itas-table-host"/, "ยังไม่กลับไปรายการ");
+});
+
+test("a failure loading the computer shows a message with retry and back; retry loads it; a page that is no longer the latest never paints", async () => {
+  let failing = true;
+  const w = await world(HOSTWORLD({ rpcHandlers: { app_itas_get_asset: ({ p_id }) => { if (failing && p_id === ASSET_ID) throw Object.assign(new Error("เซิร์ฟเวอร์ล้ม"), { code: "XX000" }); return [ASSET, CPU_ASSET, MOUSE_ON_HOST, MOUSE_ASSET].find((row) => row.id === p_id); } } }));
+  await w.render();
+  await w.click(rowClick(ASSET_ID));
+  assert.match(w.hosts["itas-host-host"], /role="alert"/);
+  assert.match(w.hosts["itas-host-host"], /id="itas-host-retry"/);
+  assert.match(w.hosts["itas-host-host"], /id="itas-host-back"/);
+  failing = false;
+  await w.click(w.button("itas-host-retry"));
+  assert.match(w.hosts["itas-host-host"], /itas-host-code itas-mono">COM12</);
+  // ผู้ใช้ออกจากหน้าเครื่องระหว่างที่ยังโหลด: ผลที่มาช้าต้องไม่วาดทับ
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const slow = await world(HOSTWORLD({ rpcHandlers: { app_itas_get_asset: async ({ p_id }) => { await gate; return [ASSET, CPU_ASSET, MOUSE_ON_HOST, MOUSE_ASSET].find((row) => row.id === p_id); } } }));
+  await slow.render();
+  const opening = slow.click(rowClick(ASSET_ID));
+  await tick(2);
+  await slow.click(slow.button("itas-host-back"));
+  slow.hosts["itas-host-host"] = "";
+  release();
+  await opening;
+  await tick();
+  assert.equal(slow.hosts["itas-host-host"], "", "ผลที่มาช้าไม่วาดทับหน้ารายการ");
+});
+
+test("move history of the computer: loaded only on request, from each part's own history in small groups, filtered to this computer; nothing secret is requested", async () => {
+  const history = ({ p_id }) => ({ asset_id: p_id, log: [], moves: p_id === CPU_ID
+    ? [{ id: 1, from_host: "COM7", to_host: "COM12", from_slot: null, to_slot: "CPU1", from_status: null, to_status: "in_use", created_at: "2026-11-20T03:00:00+00:00", actor_employee_no: "IT3462", actor_full_name: "สุริยา" }]
+    : [{ id: 2, from_host: "COM1", to_host: "COM2", from_slot: null, to_slot: null, from_status: "in_use", to_status: "in_use", created_at: "2026-11-21T03:00:00+00:00" }] });
+  const w = await world(HOSTWORLD({ rpcHandlers: { app_itas_asset_history: history } }));
+  await w.render();
+  await w.click(rowClick(ASSET_ID));
+  assert.equal(getCalls(w, "app_itas_asset_history").length, 0, "ยังไม่ถามประวัติจนกว่าจะกดปุ่ม");
+  await w.click(w.button("itas-host-moves-load"));
+  assert.deepEqual(getCalls(w, "app_itas_asset_history").map((call) => call.args.p_id).sort(), [CPU_ID, MOUSE_ON_HOST.id].sort());
+  const page = w.hosts["itas-host-host"];
+  assert.match(page, /ติดตั้งเข้าเครื่องนี้ \(จาก COM7\)/);
+  assert.match(page, /IT3462 สุริยา/);
+  assert.doesNotMatch(page, /COM1 → COM2/, "ย้ายระหว่างเครื่องอื่นไม่เกี่ยว");
+  const failed = await world(HOSTWORLD({ rpcHandlers: { app_itas_asset_history: () => { throw Object.assign(new Error("ล้ม"), { code: "XX000" }); } } }));
+  await failed.render();
+  await failed.click(rowClick(ASSET_ID));
+  await failed.click(failed.button("itas-host-moves-load"));
+  assert.match(failed.hosts["itas-host-host"], /role="alert"/);
+  assert.match(failed.hosts["itas-host-host"], /id="itas-host-moves-load"/, "ลองใหม่ได้");
+});
+
+test("leaving the page and coming back shows the register list again (the computer page has no route of its own); source: no secret field is read for the computer page", async () => {
+  const w = await world(HOSTWORLD());
+  await w.render();
+  await w.click(rowClick(ASSET_ID));
+  assert.ok(w.hosts["itas-host-host"]);
+  await w.render();
+  assert.match(w.html(), /id="itas-table-host"/);
+  const source = read("modules/module-itas.js");
+  const hostPart = source.slice(source.indexOf("async function loadHost"), source.indexOf("async function backToList"));
+  assert.doesNotMatch(hostPart, /secrets|decrypt|vault\./, "หน้าเครื่องไม่แตะช่องลับ/ตู้เซฟ");
 });
