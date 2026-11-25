@@ -167,7 +167,7 @@ $$;
 create function so_t.release(p_no text, p_job text) returns jsonb language sql volatile as $$
   select so_t.save(jsonb_build_object(
     'orders', jsonb_build_object('upsert', jsonb_build_array(so_t.order_row(p_no) || jsonb_build_object('status', 'released',
-      'explosion', jsonb_build_array(jsonb_build_object('itemCode', 'FG-S1', 'kind', 'FG', 'level', 0, 'fgQty', 5, 'required', 5)))))),
+      'explosion', jsonb_build_array(jsonb_build_object('itemCode', 'FG-S1', 'kind', 'FG', 'level', 0, 'fgQty', 5, 'required', 5))))),
     'jobs', jsonb_build_object('upsert', jsonb_build_array(jsonb_build_object(
       'id', p_job, 'orderId', p_no, 'dept', 'PK', 'itemCode', 'FG-S1', 'name', 'สินค้า S1', 'kind', 'FG', 'uom', 'set', 'qtyPlanned', 5, 'qtyRequired', 5,
       'stockCounted', null, 'qtyDone', 0, 'qtyReject', 0, 'dueAt', 1769212800000, 'status', 'queued', 'externalRef', null, 'fgCodes', jsonb_build_array('FG-S1'),
