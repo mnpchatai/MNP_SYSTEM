@@ -534,7 +534,7 @@
         <header class="itwo-sheet-title">
           <img class="itwo-sheet-logo" src="./icons/icon-192.png" alt="">
           <h1>ใบสั่งงานแผนก IT${detail.is_urgent ? ' <span class="itwo-urgent-mark">(งานด่วน)</span>' : ""}</h1>
-          <div class="itwo-docbox"><span>เลขที่ใบสั่งงาน</span><strong>${esc(detail.doc_no)}</strong><span class="itwo-form-code">รหัสฟอร์ม IT01-FM06</span></div>
+          <div class="itwo-docbox"><span>เลขที่ใบสั่งงาน</span><strong>${esc(detail.doc_no)}</strong></div>
         </header>
         ${isTest ? '<p class="itwo-test-note">ใบทดสอบ — ไม่ใช่เอกสารจริง</p>' : ""}
         <table class="itwo-sheet-table"><tbody>

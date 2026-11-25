@@ -471,9 +471,10 @@ test("the print sheet follows FM06: two request types ticked with the misc work,
   });
   assert.match(html, /<h1>ใบสั่งงานแผนก IT <span class="itwo-urgent-mark">\(งานด่วน\)<\/span><\/h1>/, "urgent mark sits in the title like the repair form");
   assert.match(pages.printSheet({ ...DETAIL, is_urgent: false }), /<h1>ใบสั่งงานแผนก IT<\/h1>/);
-  // หัวใบแบบเดียวกับใบแจ้งซ่อม: ไอคอนแอป + ชื่อฟอร์ม + กล่องเลขที่เอกสาร/รหัสฟอร์ม
+  // หัวใบแบบเดียวกับใบแจ้งซ่อม: ไอคอนแอป + ชื่อฟอร์ม + กล่องเลขที่เอกสาร (ไม่มีบรรทัดรหัสฟอร์ม)
   assert.match(html, /<header class="itwo-sheet-title">\s*<img class="itwo-sheet-logo" src="\.\/icons\/icon-192\.png" alt="">/);
-  assert.match(html, /<div class="itwo-docbox"><span>เลขที่ใบสั่งงาน<\/span><strong>IT06-26\/001<\/strong><span class="itwo-form-code">รหัสฟอร์ม IT01-FM06<\/span><\/div>/);
+  assert.match(html, /<div class="itwo-docbox"><span>เลขที่ใบสั่งงาน<\/span><strong>IT06-26\/001<\/strong><\/div>/);
+  assert.doesNotMatch(html, /IT01-FM06|itwo-form-code/, "no form code line in the doc box");
   assert.match(visibleText(html), /วันที่แจ้ง 19\/11\/2569 เวลา 08:00/, "date and time are separate fields");
   const text = visibleText(html);
   assert.match(text, /☐ งานออกแบบ ☑ เบ็ดเตล็ดอื่นๆ \(ระบุ: ซ่อมเมาส์ &lt;i&gt;\)/);

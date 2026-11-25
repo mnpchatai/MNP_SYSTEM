@@ -3317,7 +3317,6 @@ table.bom-tree td.right { white-space: nowrap; }
 .itwo-urgent-mark { font-size: 11pt; color: #000; }
 .itwo-docbox { flex: none; display: grid; gap: 1px; padding: 3px 10px; border: 1px solid #000; text-align: center; font-size: 9.5pt; }
 .itwo-docbox strong { font-size: 12pt; }
-.itwo-form-code { font-size: 8.5pt; }
 .itwo-test-note { margin: 0 0 6px; font-weight: 700; color: #000; text-align: center; }
 .itwo-sheet-table { width: 100%; margin-bottom: 6px; border-collapse: collapse; }
 .itwo-sheet-table tbody tr:last-child :is(td, th) { border-bottom: 1px solid #000; } /* กฎกลาง tbody tr:last-child td ตัดเส้นล่างของตาราง ฟอร์มกระดาษต้องมีเส้นปิด */
