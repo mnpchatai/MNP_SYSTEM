@@ -3869,18 +3869,18 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 /* ช่องรหัส/ค่าลับที่ module-itas.js เปลี่ยนเป็น type=text เพื่อไม่ให้ตัวจัดการรหัสผ่านเสนอเก็บ: ปิดบังตัวอักษรด้วย CSS · เบราว์เซอร์ที่ไม่รองรับ module ไม่เปลี่ยน type จึงยังเป็น password */
 .input.itas-mask { -webkit-text-security: disc; text-security: disc; }
 .itas-strength { min-height: 1.4em; margin: -4px 0 8px; }
-/* รายการชนิด + ตาราง */
+/* ชิปกรองชนิด + ตาราง */
 .itas-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
-.itas-main, .itas-types-card { min-width: 0; }
-@media (min-width: 960px) { .itas-layout { grid-template-columns: minmax(200px, 250px) minmax(0, 1fr); } .itas-types { max-height: 72vh; } }
-.itas-types-card h2 { margin-bottom: 10px; }
-.itas-types { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; max-height: 36vh; overflow-y: auto; }
-.itas-type { width: 100%; min-height: 44px; padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; font: inherit; color: inherit; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); cursor: pointer; }
-.itas-type:hover { border-color: var(--primary); }
-.itas-type:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
-.itas-type.is-selected { border-color: var(--primary); background: var(--primary-soft); font-weight: 700; }
-.itas-type.is-off { opacity: .6; }
-.itas-type-count { min-width: 2em; padding: 1px 8px; font-size: var(--text-meta); text-align: center; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; }
+.itas-main { min-width: 0; }
+.itas-chips { margin: 0 0 8px; padding: 2px 0 6px; display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
+@media (min-width: 960px) { .itas-chips { flex-wrap: wrap; overflow-x: visible; } }
+.itas-chip { flex: 0 0 auto; min-height: 36px; padding: 4px 12px; display: inline-flex; align-items: center; gap: 8px; font: inherit; font-size: var(--text-meta); color: inherit; white-space: nowrap; background: var(--paper); border: 1px solid var(--line); border-radius: 999px; cursor: pointer; }
+.itas-chip:hover { border-color: var(--primary); }
+.itas-chip:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.itas-chip.is-selected { border-color: var(--primary); background: var(--primary-soft); font-weight: 700; }
+.itas-chip.is-off { opacity: .6; }
+.itas-chip-more { color: var(--muted); border-style: dashed; }
+.itas-chip-count { min-width: 1.6em; padding: 0 6px; font-size: var(--text-caption); text-align: center; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; }
 .itas-toolbar { margin-bottom: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .itas-search { flex: 1 1 240px; margin: 0; }
 .itas-status-filter { margin: 0; }
@@ -3893,7 +3893,16 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .itas-row { cursor: pointer; }
 .itas-row:hover, .itas-row:focus-visible { background: var(--primary-soft); outline: none; }
 .itas-row.status-retired td { opacity: .65; }
-@media (max-width: 719px) { .itas-table { min-width: 720px; } }
+/* มือถือ: แต่ละอุปกรณ์เป็นการ์ดหนึ่งใบ (ไม่ต้องเลื่อนแนวนอน) · หัวตารางซ่อนไว้ให้โปรแกรมอ่านหน้าจอ · เรียงตามคอลัมน์ใช้บนจอกว้าง */
+@media (max-width: 719px) {
+  .itas-scroll { border: 0; }
+  .itas-table { min-width: 0; }
+  .itas-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .itas-table tbody, .itas-table tr, .itas-table td { display: block; }
+  .itas-table tr.itas-row { margin: 0 0 8px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper); }
+  .itas-table td { padding: 2px 0; border: 0; display: flex; gap: 8px; }
+  .itas-table td::before { content: attr(data-label); flex: 0 0 34%; max-width: 8em; color: var(--muted); font-size: var(--text-caption); }
+}
 /* ฟอร์ม */
 .itas-form-card { margin-bottom: 16px; border-color: var(--primary); }
 .itas-form-card .form-actions { flex-wrap: wrap; justify-content: flex-start; }

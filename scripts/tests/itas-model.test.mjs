@@ -240,3 +240,62 @@ test("routes and version metadata", () => {
   assert.equal(model.ASSET_CODE, "IT_ASSET_REGISTER");
   assert.ok(model.isUuid(ID) && !model.isUuid("x"));
 });
+
+/* ---------- หน้าทะเบียนรวม: ชิปชนิด ตารางทั้งหมด ค้นหาข้ามชนิด ---------- */
+const CHIP_TYPES = [
+  { code: "COMPUTER", name: "เครื่องคอมพิวเตอร์", asset_count: 5 },
+  { code: "MOUSE", name: "เมาส์", asset_count: 0 },
+  { code: "MONITOR", name: "จอภาพ", asset_count: 3 },
+  { code: "OLD", name: "ชนิดเก่า", asset_count: 0, is_active: false },
+];
+const ROWS = [
+  { id: "1", type_code: "COMPUTER", reg_no: "COM-2", device_code: "COM2", name: "เครื่องบัญชี", model: "Dell 3050", status: "in_use", host_code: null, place: "สำนักงาน", attrs: { user_name: "สมหญิง", cpu: "i5" }, secrets: { ip: ENVELOPE } },
+  { id: "2", type_code: "MONITOR", reg_no: "MNT-1", device_code: "MNT1", name: "จอ 24 นิ้ว", model: "LG", status: "spare", host_code: "COM2", place: "โรงงาน", attrs: {}, secrets: {} },
+  { id: "3", type_code: "COMPUTER", reg_no: "COM-10", device_code: "COM10", name: "เครื่องขาย", model: "HP", status: "broken", host_code: null, place: null, attrs: { user_name: "สมชาย" }, secrets: {} },
+];
+
+test("type chips: types that hold equipment come first (database order kept), empty types are grouped apart", () => {
+  const { used, empty } = model.typeChipGroups(CHIP_TYPES);
+  assert.deepEqual(used.map((type) => type.code), ["COMPUTER", "MONITOR"]);
+  assert.deepEqual(empty.map((type) => type.code), ["MOUSE", "OLD"]);
+  assert.deepEqual(model.typeChipGroups(null), { used: [], empty: [] });
+});
+
+test("all-types table: shared columns, the type name is shown but sorted by the database type order, 'user' falls back from user_name to host_code", () => {
+  const columns = model.allColumns(CHIP_TYPES);
+  assert.deepEqual(columns.map((column) => column.key), ["reg_no", "device_code", "type", "name", "user", "place", "status"]);
+  const byKey = Object.fromEntries(columns.map((column) => [column.key, column]));
+  assert.equal(model.cellText(ROWS[0], byKey.type), "เครื่องคอมพิวเตอร์");
+  assert.equal(model.cellText(ROWS[0], byKey.user), "สมหญิง", "ผู้ใช้จากช่อง user_name");
+  assert.equal(model.cellText(ROWS[1], byKey.user), "COM2", "ชนิดที่ไม่มี user_name ใช้ ติดตั้งที่");
+  assert.equal(model.cellText(ROWS[0], byKey.name), "เครื่องบัญชี · Dell 3050");
+  // ชนิดเรียงตามลำดับของฐานข้อมูล (COMPUTER ก่อน MONITOR) ไม่ใช่ตัวอักษรไทย (จอภาพ มาก่อน เครื่อง)
+  assert.deepEqual(model.sortAssets(ROWS, byKey.type).map((row) => row.id), ["1", "3", "2"]);
+  assert.deepEqual(model.sortAssets(ROWS, byKey.type, "descending").map((row) => row.id), ["2", "1", "3"]);
+  assert.deepEqual(model.sortAssets(ROWS, byKey.reg_no).map((row) => row.id), ["1", "3", "2"], "COM-2 ก่อน COM-10 แบบ natural");
+});
+
+test("search works across all types on non-secret fields only: reg no, code, name, brand/model, user, place, type name; secrets are never searchable", () => {
+  const typeNames = Object.fromEntries(CHIP_TYPES.map((type) => [type.code, type.name]));
+  const find = (query, extra = {}) => model.filterAssets(ROWS, { query, typeNames, ...extra }).map((row) => row.id);
+  assert.deepEqual(find("dell"), ["1"], "รุ่น/ยี่ห้อ ไม่สนตัวพิมพ์");
+  assert.deepEqual(find("สมชาย"), ["3"], "ผู้ใช้");
+  assert.deepEqual(find("โรงงาน"), ["2"], "สถานที่");
+  assert.deepEqual(find("com2"), ["1", "2"], "รหัสเครื่อง และ ติดตั้งที่");
+  assert.deepEqual(find("จอภาพ"), ["2"], "ชื่อชนิด");
+  assert.deepEqual(find("เครื่อง สมหญิง"), ["1"], "หลายคำ ทุกคำต้องเจอ");
+  assert.deepEqual(find(""), ["1", "2", "3"]);
+  assert.deepEqual(find("", { typeCode: "COMPUTER" }), ["1", "3"], "ชิปชนิด");
+  assert.deepEqual(find("", { status: "spare" }), ["2"]);
+  assert.deepEqual(find(ENVELOPE.c), [], "ciphertext ของช่องลับไม่เข้าไปในข้อความค้นหา");
+});
+
+test("changing the type inside the add form carries over only typed values whose field exists in the new type", () => {
+  const carried = { core: { reg_no: "X1", device_code: "COM9", name: "ชื่อ", model: "", status: "spare" }, attrs: { cpu: "i7", ram_gb: "", kind: "PC" } };
+  const next = model.carryOver(MOUSE, carried);
+  assert.deepEqual(plain(next), { core: { reg_no: "X1", name: "ชื่อ", status: "spare" }, attrs: {} }, "เมาส์ไม่มีรหัสอุปกรณ์/ช่องเฉพาะ · ค่าว่างไม่ถูกยก");
+  const back = model.carryOver(COMPUTER, carried);
+  assert.equal(back.core.device_code, "COM9");
+  assert.deepEqual(plain(back.attrs), { cpu: "i7", kind: "PC" });
+  assert.ok(!JSON.stringify(model.carryOver(COMPUTER, { core: {}, attrs: { ip: "10.0.0.1" } })).includes("10.0.0.1"), "ช่องลับไม่ใช่ช่องธรรมดา จึงไม่ถูกยก");
+});

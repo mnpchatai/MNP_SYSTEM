@@ -1,6 +1,6 @@
 // ทะเบียนอุปกรณ์ IT (itas) ของ Pilot Web — หน้าอยู่ใต้ #/office?module=assets (ระบบสำนักงาน › IT SUPPORT › ทะเบียนอุปกรณ์ IT)
 //
-// หน้าเดียว: รายการชนิดอุปกรณ์ (ซ้าย/บน) → ตารางของชนิดที่เลือก (ค้นหา/กรองสถานะ/เรียง) → ฟอร์มเพิ่ม/แก้ + ประวัติการแก้ไข/การย้าย · แถบสถานะตู้เซฟ (ตั้ง/ปลดล็อก/ล็อก/เปลี่ยนรหัส/รหัสกู้คืน)
+// หน้าเดียว: ช่องค้นหาข้ามทุกชนิด + ชิปกรองชนิด → ตารางรวมทุกชนิด (เรียง/กรองสถานะ) → ฟอร์มเพิ่ม/แก้ (เลือกชนิดในฟอร์ม) + ประวัติการแก้ไข/การย้าย · แถบสถานะตู้เซฟ (ตั้ง/ปลดล็อก/ล็อก/เปลี่ยนรหัส/รหัสกู้คืน)
 // ฐานข้อมูล: supabase/migrations/20261222010000_itas_asset_register.sql ทุกอย่างเรียกผ่าน RPC app_itas_* · สัญญา: docs/itas-contract.md
 // สิทธิ์: เฉพาะผู้อยู่ใน allowlist ของโมดูล (app_itas_my_access) · การ์ดและหน้านี้ซ่อน/พากลับเมื่อไม่มีสิทธิ์ เป็น UX ล้วน สิทธิ์จริงตัดสินที่ RPC ทุกตัว
 // ข้อมูลล้วนอยู่ที่ itas-model.js · HTML อยู่ที่ itas-pages.js · เข้ารหัส/ตู้เซฟอยู่ที่ itas-vault.js (กุญแจอยู่ในตัวแปรปิดของไฟล์นั้นเท่านั้น) · ไฟล์นี้ดูแลเฉพาะการเรียก RPC และผูกเหตุการณ์
@@ -125,10 +125,15 @@
     return new URLSearchParams(hash.split("?")[1] ?? "").get("module") === "assets";
   };
 
+  // typeCode "" = มุมมอง "ทั้งหมด" (ค่าเริ่มต้น) · loadedFor = ขอบเขตที่โหลดมาจากฐานข้อมูลล่าสุด ("" = ทุกชนิด) · showEmptyTypes = ขยายชิป "ชนิดอื่นๆ" (ชนิดที่ยังไม่มีของ)
   function resetUi() {
-    ui = { context: contextKey(), types: [], typeCode: "", rows: [], total: 0, query: "", status: "", sort: { key: "reg_no", direction: "ascending" }, form: null, isTest: false, busy: false };
+    ui = { context: contextKey(), types: [], typeCode: "", loadedFor: "", showEmptyTypes: false, rows: [], total: 0, query: "", status: "", sort: defaultSort(""), form: null, isTest: false, busy: false };
   }
   const currentType = () => ui.types.find((type) => type.code === ui.typeCode) ?? null;
+  const typeByCode = (code) => ui.types.find((type) => type.code === code) ?? null;
+  // เรียงตั้งต้น: มุมมองทั้งหมด = จัดกลุ่มตามชนิด · ชนิดเดียว = ตามเลขทะเบียน
+  const defaultSort = (typeCode) => ({ key: typeCode ? "reg_no" : "type", direction: "ascending" });
+  const typeNameMap = () => Object.fromEntries(ui.types.map((type) => [type.code, type.name]));
 
   /* ---------- วาดหน้า ---------- */
   function paint(html, title, version) {
@@ -172,40 +177,52 @@
     try {
       const [types] = await Promise.all([rpc("app_itas_list_types"), vault.load().catch((error) => { ui.vaultError = error; })]);
       ui.types = Array.isArray(types) ? types : [];
-      if (!ui.types.some((type) => type.code === ui.typeCode)) ui.typeCode = (ui.types.find((type) => type.is_active !== false) ?? ui.types[0])?.code ?? "";
-      await loadAssets();
+      if (ui.typeCode && !typeByCode(ui.typeCode)) { ui.typeCode = ""; ui.sort = defaultSort(""); }
+      await loadAssets(ui.typeCode);
     } catch (error) {
       return errorPage(error, version);
     }
-    const html = pages.mainPage({ isTest: ui.isTest, vault: vault.snapshot(), content: pages.layout({ types: ui.types, selectedCode: ui.typeCode, main: mainPanelHtml() }) });
+    const html = pages.mainPage({ isTest: ui.isTest, vault: vault.snapshot(), content: pages.layout({ main: mainPanelHtml() }) });
     if (!paint(html, TITLE, version)) return;
     bindPage();
     if (ui.vaultError) { showVaultMessage(ui.vaultError); ui.vaultError = null; }
   }
 
-  async function loadAssets() {
-    const type = currentType();
-    if (!type) { ui.rows = []; ui.total = 0; return; }
-    const data = await rpc("app_itas_list_assets", { p_type_code: type.code, p_limit: model.MAX_LISTED, p_offset: 0 });
+  // โหลดจากฐานข้อมูล: typeCode "" = ทุกชนิด (ค่าเริ่มต้น กรองชนิดในเบราว์เซอร์ทันที) · ระบุชนิด = โหลดเฉพาะชนิดนั้น (ใช้ตอนทั้งหมดเกินเพดาน 2,000 แถว)
+  async function loadAssets(typeCode = ui.loadedFor) {
+    const args = { p_limit: model.MAX_LISTED, p_offset: 0 };
+    if (typeCode) args.p_type_code = typeCode;
+    const data = await rpc("app_itas_list_assets", args);
+    ui.loadedFor = typeCode;
     ui.rows = Array.isArray(data?.items) ? data.items : [];
     ui.total = Number.isFinite(data?.total) ? data.total : ui.rows.length;
   }
   const visibleRows = () => {
     const type = currentType();
-    const columns = model.tableColumns(type);
-    const filtered = model.filterAssets(ui.rows, { query: ui.query, status: ui.status });
+    const columns = type ? model.tableColumns(type) : model.allColumns(ui.types);
+    const filtered = model.filterAssets(ui.rows, { query: ui.query, status: ui.status, typeCode: ui.typeCode, typeNames: typeNameMap() });
     const column = columns.find((item) => item.key === ui.sort.key) ?? columns[0];
     return { columns, rows: model.sortAssets(filtered, column, ui.sort.direction) };
   };
+  const grandTotal = () => ui.types.reduce((sum, type) => sum + (Number(type.asset_count) || 0), 0);
+  const truncatedNotice = () => (ui.total > ui.rows.length ? `มี ${ui.total} รายการ แต่โหลดมาแสดงได้ ${ui.rows.length} รายการแรก ใช้คำค้นหาหรือเลือกชนิดเพื่อให้ตรงมากขึ้น` : "");
+  // ชนิดที่เลือกอยู่แต่ว่าง ต้องไม่ถูกพับซ่อนไว้ใต้ "ชนิดอื่นๆ"
+  const chipsHtml = () => {
+    const selected = currentType();
+    const showEmpty = ui.showEmptyTypes || Boolean(selected && !(Number(selected.asset_count) > 0));
+    return pages.typeChips({ types: ui.types, selectedCode: ui.typeCode, total: grandTotal(), showEmpty });
+  };
+  const canAddAny = () => ui.types.some((type) => type.is_active !== false);
   function mainPanelHtml() {
     const type = currentType();
     const { columns, rows } = visibleRows();
     return pages.mainPanel({
       type,
-      toolbarHtml: pages.toolbar({ query: ui.query, status: ui.status, canAdd: Boolean(type) && type.is_active !== false }),
+      toolbarHtml: pages.toolbar({ query: ui.query, status: ui.status, canAdd: canAddAny() }),
+      chipsHtml: chipsHtml(),
       countText: model.countText(rows.length, ui.total, ui.rows.length),
       tableHtml: pages.assetTable({ rows, columns, sort: ui.sort, typeName: type?.name ?? "" }),
-      notice: ui.total > ui.rows.length ? `ชนิดนี้มี ${ui.total} รายการ แต่โหลดมาแสดงได้ ${ui.rows.length} รายการแรก ใช้คำค้นหาเพื่อให้ตรงมากขึ้น` : "",
+      notice: truncatedNotice(),
     });
   }
   function updateTable() {
@@ -216,12 +233,17 @@
     const count = byId("itas-count");
     if (count) count.textContent = model.countText(rows.length, ui.total, ui.rows.length);
   }
+  function updateChips() {
+    const host = byId("itas-types-host");
+    if (host) host.innerHTML = chipsHtml();
+    const title = byId("itas-list-title");
+    if (title) title.innerHTML = pages.listTitle(currentType());
+  }
   async function refreshData() {
     const types = await rpc("app_itas_list_types");
     ui.types = Array.isArray(types) ? types : ui.types;
     await loadAssets();
-    const typesHost = byId("itas-types-host");
-    if (typesHost) typesHost.innerHTML = pages.typeList(ui.types, ui.typeCode);
+    updateChips();
     updateTable();
   }
 
@@ -352,6 +374,7 @@
     });
   }
   const BUTTONS = {
+    "itas-types-more": () => { ui.showEmptyTypes = !ui.showEmptyTypes; updateChips(); },
     "itas-vault-setup": () => startSetup(),
     "itas-vault-unlock": () => showVaultPanel("unlock", pages.unlockForm({ isTest: vault.isTest === true })),
     "itas-vault-lock": () => vault.lock("manual"),
@@ -388,6 +411,8 @@
   }
   function onChange(event) {
     if (event.target.id === "itas-status") { ui.status = event.target.value; updateTable(); }
+    if (event.target.name === "type_code") return changeFormType(event.target);
+    return undefined;
   }
   function onSubmit(event) {
     const form = event.target;
@@ -489,22 +514,24 @@
     if (!isDirty()) return true;
     return confirmDialog({ title: "ยังไม่ได้บันทึกสิ่งที่กรอก", message: "ถ้าไปต่อ ข้อมูลที่พิมพ์ในฟอร์มจะหาย", confirmLabel: "ทิ้งและไปต่อ", cancelLabel: "อยู่ต่อ", danger: true });
   }
+  // ชิปกรองชนิดเปลี่ยนแค่รายการ ไม่แตะฟอร์มที่เปิดค้างอยู่ (ฟอร์มมีตัวเลือกชนิดของตัวเอง) · คำค้นหาและสถานะคงเดิม
+  // โหลดครบทุกชนิดแล้ว = กรองในเบราว์เซอร์ทันที · ถ้ารายการถูกตัดที่เพดาน 2,000 แถว (หรือเคยโหลดแยกชนิด) โหลดใหม่เฉพาะชนิดที่เลือก
   async function switchType(code) {
     if (code === ui.typeCode || ui.busy) return;
-    if (!(await confirmDiscard())) return;
     ui.busy = true;
+    const before = { typeCode: ui.typeCode, sort: ui.sort };
     try {
-      closeForm({ force: true });
+      const localFilter = ui.loadedFor === "" && ui.total <= ui.rows.length;
       ui.typeCode = code;
-      ui.query = "";
-      ui.status = "";
-      ui.sort = { key: "reg_no", direction: "ascending" };
-      await loadAssets();
-      const typesHost = byId("itas-types-host");
-      if (typesHost) typesHost.innerHTML = pages.typeList(ui.types, ui.typeCode);
-      const main = byId("itas-main-host");
-      if (main) main.innerHTML = mainPanelHtml();
+      ui.sort = defaultSort(code);
+      if (!localFilter) await loadAssets(code);
+      updateChips();
+      updateTable();
+      const notice = byId("itas-notice");
+      if (notice) notice.textContent = truncatedNotice();
     } catch (error) {
+      ui.typeCode = before.typeCode;
+      ui.sort = before.sort;
       showToast(failure(error).message, "error");
     } finally {
       ui.busy = false;
@@ -542,22 +569,51 @@
     if (location.hash !== pageHash || !onAssetsPage()) { ui.form = null; return 0; }
     return isDirty() ? 1 : 0;
   }
+  // ชนิดตั้งต้นของฟอร์มเพิ่ม: ชนิดที่กรองอยู่ (ถ้าเปิดใช้งาน) · ไม่ได้กรอง = ชนิดแรกที่มีของ (ไม่มีก็ชนิดเปิดใช้งานชนิดแรก)
+  function defaultAddType() {
+    const active = ui.types.filter((type) => type.is_active !== false);
+    const filtered = currentType();
+    if (filtered && filtered.is_active !== false) return filtered;
+    return active.find((type) => Number(type.asset_count) > 0) ?? active[0] ?? null;
+  }
   async function openForm(mode, id = null) {
-    const type = currentType();
-    if (!type || ui.busy) return;
+    if (ui.busy || (mode === "add" && !canAddAny())) return;
     if (!(await confirmDiscard())) return;
-    let original = null;
     if (mode === "edit") {
+      let original;
       try {
         original = await rpc("app_itas_get_asset", { p_id: id }); // โหลดแถวล่าสุด (updated_at ใช้กันแก้ชนกัน)
       } catch (error) {
         showToast(failure(error).message, "error");
         return;
       }
+      const type = typeByCode(original?.type_code); // ชนิดมาจากตัวอุปกรณ์เอง (มุมมอง "ทั้งหมด" ไม่มีชนิดที่เลือก)
+      if (!type) { showToast("ไม่พบชนิดของอุปกรณ์นี้ กรุณาโหลดหน้าใหม่", "error"); return; }
+      mountForm("edit", type, original, model.formValuesFromAsset(original, type));
+      return;
     }
-    mountForm(mode, type, original, original ? model.formValuesFromAsset(original, type) : model.emptyFormValues(type));
+    const type = defaultAddType();
+    if (type) mountForm("add", type, null, model.emptyFormValues(type));
   }
-  function mountForm(mode, type, original, values) {
+  // เปลี่ยนชนิดในฟอร์มเพิ่ม: วาดช่องใหม่ตามชนิด ยกค่าที่พิมพ์แล้วที่ชื่อช่องตรงกันไปให้ (ช่องลับล้าง ต้องถามก่อนถ้าพิมพ์ค้างอยู่) · uuid ร่างเดิมคงไว้
+  async function changeFormType(select) {
+    const state0 = ui?.form;
+    if (!state0 || state0.mode !== "add") return;
+    const next = typeByCode(select.value);
+    if (!next || next.code === state0.type.code) return;
+    if (hasSecretWork() && !(await confirmDialog({ title: "เปลี่ยนชนิดอุปกรณ์?", message: "ช่องลับที่พิมพ์ไว้จะถูกล้าง (ช่องอื่นที่ชื่อตรงกันยังอยู่)", confirmLabel: "เปลี่ยนชนิด", cancelLabel: "อยู่ต่อ", danger: true }))) {
+      select.value = state0.type.code;
+      return;
+    }
+    const carried = readFormValues(formEl(), state0.type);
+    mountForm("add", next, null, model.emptyFormValues(next), { carry: carried, draftId: state0.draftId });
+  }
+  // วางค่าที่ยกมาลงช่องของฟอร์มที่เพิ่งวาด (หลังเก็บค่าตั้งต้นไว้เทียบแล้ว ค่าเหล่านี้จึงนับเป็น "พิมพ์ค้าง")
+  function applyValues(form, type, values) {
+    for (const [key, value] of Object.entries(values.core ?? {})) if (form.elements?.[key]) form.elements[key].value = value;
+    for (const [key, value] of Object.entries(values.attrs ?? {})) if (form.elements?.[`attrs.${key}`]) form.elements[`attrs.${key}`].value = value;
+  }
+  function mountForm(mode, type, original, values, { carry = null, draftId: keepDraftId = null } = {}) {
     const host = byId("itas-form-area");
     if (!host) return;
     clearReveals();
@@ -565,18 +621,24 @@
     let draftId = original?.id;
     if (mode === "add") {
       try {
-        draftId = vaultApi.newUuid(window.crypto);
+        draftId = keepDraftId ?? vaultApi.newUuid(window.crypto);
       } catch (error) {
         showToast(failure(error).message, "error");
         return;
       }
     }
     ui.form = { mode, type, original, draftId, initial: "", submitting: false };
-    host.innerHTML = pages.assetForm({ mode, type, values, asset: original, vaultStatus: vault.status() });
+    host.innerHTML = pages.assetForm({ mode, type, values, asset: original, vaultStatus: vault.status(), types: mode === "add" ? ui.types : null });
     hardenSecretInputs(host);
-    ui.form.initial = JSON.stringify(readFormValues(formEl(), type));
+    const form = formEl();
+    ui.form.initial = JSON.stringify(readFormValues(form, type));
+    if (carry) {
+      applyValues(form, type, model.carryOver(type, carry));
+      form?.querySelector?.("#itas-f-type_code")?.focus?.(); // เปลี่ยนชนิดในฟอร์มที่เปิดอยู่: ไม่เลื่อนหน้า โฟกัสกลับที่ตัวเลือกชนิด
+      return;
+    }
     host.scrollIntoView?.({ block: "start" });
-    formEl()?.querySelector("input, select, textarea")?.focus();
+    form?.querySelector("input, select, textarea")?.focus();
   }
   function closeForm({ force = false } = {}) {
     if (!force && isDirty()) { confirmDiscard().then((ok) => { if (ok) closeForm({ force: true }); }); return; }

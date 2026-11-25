@@ -146,6 +146,17 @@
     return values;
   }
 
+  // เปลี่ยนชนิดในฟอร์มเพิ่ม: ยกค่าที่พิมพ์ไว้ (ไม่ว่าง) ไปให้ช่องที่มีชื่อเดียวกันในชนิดใหม่ · คืน { core, attrs } เฉพาะช่องที่จะตั้ง (ไม่ยกช่องลับ ช่องลับไม่เคยอยู่ใน values)
+  function carryOver(type, carried) {
+    const core = {};
+    const attrs = {};
+    const coreKeys = new Set(coreFieldsOf(type).map((field) => field.key));
+    for (const [key, value] of Object.entries(carried?.core ?? {})) if (coreKeys.has(key) && textOf(value) !== "") core[key] = value;
+    const attrKeys = new Set(plainFields(type).map((field) => field.key));
+    for (const [key, value] of Object.entries(carried?.attrs ?? {})) if (attrKeys.has(key) && textOf(value) !== "") attrs[key] = value;
+    return { core, attrs };
+  }
+
   /* ---------- ตรวจค่าก่อนส่ง (ฐานข้อมูลตรวจซ้ำเสมอ) ---------- */
   // คืนค่าที่ส่งฐานข้อมูลของช่องหนึ่ง: { ok, value } (value = null เมื่อว่าง) หรือ { ok:false, message }
   function parseField(field, rawText) {
@@ -271,23 +282,54 @@
     for (const field of plainFields(type).slice(0, MAX_TYPE_COLUMNS)) columns.push({ key: `attrs.${field.key}`, label: field.label, field: attrField(field) });
     return columns;
   }
+  // ช่อง "ผู้ใช้" ที่แสดงในตาราง/ฟอร์มหลัก: ชนิดที่มีช่อง user_name (เครื่องคอมพิวเตอร์) ใช้ช่องนั้น · ชนิดอื่นใช้ "ติดตั้งที่" (host_code = รหัสเครื่องที่ใช้อุปกรณ์นี้)
+  const USER_ATTR_KEY = "user_name";
+  const userValueOf = (row) => textOf(row?.attrs?.[USER_ATTR_KEY]) || textOf(row?.host_code);
+
+  // ชิปกรองชนิด: ชนิดที่มีของอยู่ขึ้นก่อน (คงลำดับ sort ของฐานข้อมูล) ชนิดว่างแยกไว้ใต้ "ชนิดอื่นๆ"
+  function typeChipGroups(types) {
+    const list = (Array.isArray(types) ? types : []).filter(Boolean);
+    const hasAssets = (type) => Number(type.asset_count) > 0;
+    return { used: list.filter(hasAssets), empty: list.filter((type) => !hasAssets(type)) };
+  }
+  const TYPE_ALL_LABEL = "ทั้งหมด";
+
+  // ตารางมุมมอง "ทั้งหมด" (รวมทุกชนิด): คอลัมน์กลางที่ทุกชนิดมีเหมือนกัน · valueFn = ค่าที่แสดง · sortFn = ค่าที่ใช้เรียง (ชนิดเรียงตามลำดับของฐานข้อมูล ไม่ใช่ตัวอักษร)
+  function allColumns(types) {
+    const list = Array.isArray(types) ? types : [];
+    const names = new Map(list.map((type) => [type.code, type.name]));
+    const order = new Map(list.map((type, index) => [type.code, index]));
+    const text = { type: "text" };
+    return [
+      { key: "reg_no", label: "เลขทะเบียน", field: CORE_BY_KEY.reg_no, role: "no" },
+      { key: "device_code", label: "รหัสอุปกรณ์", field: CORE_BY_KEY.device_code },
+      { key: "type", label: "ชนิด", field: text, valueFn: (row) => names.get(row?.type_code) ?? row?.type_code ?? "", sortFn: (row) => `${String(order.get(row?.type_code) ?? 999).padStart(3, "0")} ${names.get(row?.type_code) ?? ""}` },
+      { key: "name", label: "ชื่อ / ยี่ห้อ · รุ่น", field: CORE_BY_KEY.name, role: "subject", composite: true },
+      { key: "user", label: "ผู้ใช้ / ติดตั้งที่", field: text, valueFn: userValueOf },
+      { key: "place", label: "สถานที่", field: CORE_BY_KEY.place },
+      { key: "status", label: "สถานะ", field: CORE_BY_KEY.status, role: "status" },
+    ];
+  }
   const cellValue = (row, column) => {
+    if (column.valueFn) return column.valueFn(row);
     if (column.key.startsWith("attrs.")) return row?.attrs?.[column.key.slice(6)];
     if (column.key === "name") return [textOf(row?.name), textOf(row?.model)].filter(Boolean).join(" · ");
     return row?.[column.key];
   };
   const cellText = (row, column) => (column.key === "name" ? cellValue(row, column) : formatCell(column.field, cellValue(row, column)));
 
-  // ค้นหา + กรองสถานะฝั่งหน้าเว็บ (โหลดครบ ≤ 2,000 แถวต่อชนิด): คำค้นหลายคำคั่นด้วยช่องว่าง ทุกคำต้องเจอใน ช่องกลางที่เป็นข้อความ + ช่องเฉพาะชนิดที่ไม่ลับ (ไม่สนตัวพิมพ์)
-  // ค้นช่องลับไม่ได้จากตรงนี้ (ค่าลับเป็น ciphertext) · status = "" หรือ "all" = ทุกสถานะ
-  function filterAssets(rows, { query = "", status = "" } = {}) {
+  // ค้นหา + กรองฝั่งหน้าเว็บ (โหลดครบ ≤ 2,000 แถว): คำค้นหลายคำคั่นด้วยช่องว่าง ทุกคำต้องเจอใน ช่องกลางที่เป็นข้อความ + ช่องเฉพาะชนิดที่ไม่ลับ + ชื่อชนิด (ไม่สนตัวพิมพ์)
+  // ค้นช่องลับไม่ได้จากตรงนี้ (ค่าลับเป็น ciphertext และไม่ถูกนำมารวมในข้อความค้นหา) · status = "" หรือ "all" = ทุกสถานะ · typeCode = "" = ทุกชนิด · typeNames = { รหัสชนิด: ชื่อชนิด }
+  function filterAssets(rows, { query = "", status = "", typeCode = "", typeNames = null } = {}) {
     const terms = textOf(query).toLowerCase().split(/\s+/).filter(Boolean);
     const wanted = status && status !== "all" ? status : "";
     return (Array.isArray(rows) ? rows : []).filter((row) => {
       if (wanted && row.status !== wanted) return false;
+      if (typeCode && row.type_code !== typeCode) return false;
       if (!terms.length) return true;
       const haystack = [
         row.reg_no, row.device_code, row.name, row.model, row.serial, row.host_code, row.slot, row.place, row.vendor, row.note, row.express_code, row.account_no, row.warranty_text,
+        typeNames?.[row.type_code],
         ...Object.values(row.attrs ?? {}).map((value) => (value === null ? "" : String(value))),
       ].map((part) => String(part ?? "").toLowerCase()).join("\n");
       return terms.every((term) => haystack.includes(term));
@@ -297,7 +339,7 @@
   // เรียงตามคอลัมน์ (ค่าว่างไปท้ายเสมอ) · ตัวเลขเรียงตามค่า วันที่ตามลำดับเวลา ที่เหลือตามตัวอักษรไทย/อังกฤษแบบ natural (COM2 ก่อน COM10)
   function sortAssets(rows, column, direction = "ascending") {
     const sign = direction === "descending" ? -1 : 1;
-    const valueOf = (row) => cellValue(row, column);
+    const valueOf = (row) => (column.sortFn ? column.sortFn(row) : cellValue(row, column));
     const empty = (value) => value === null || value === undefined || value === "";
     return rows.slice().sort((a, b) => {
       const left = valueOf(a); const right = valueOf(b);
@@ -424,8 +466,8 @@
     STATUSES, CORE_FIELDS, GROUP_LABELS, GROUP_ORDER, IDENTITY_KEYS,
     assetsUrl, readView, isUuid, statusLabel, statusBadgeClass,
     formatDate, formatDateTime, parseDateInput, dateInputText, isRealDate,
-    typeFields, plainFields, secretFields, coreFieldsOf, normalizeCode, emptyFormValues, formValuesFromAsset, parseField, validateAsset, buildSavePayload, payloadIsEmpty,
-    tableColumns, cellValue, cellText, formatCell, filterAssets, sortAssets, countText,
+    typeFields, plainFields, secretFields, coreFieldsOf, normalizeCode, emptyFormValues, formValuesFromAsset, carryOver, parseField, validateAsset, buildSavePayload, payloadIsEmpty,
+    tableColumns, allColumns, typeChipGroups, TYPE_ALL_LABEL, USER_ATTR_KEY, userValueOf, cellValue, cellText, formatCell, filterAssets, sortAssets, countText,
     labelOfKey, logChanges, historyView, passwordStrength,
     describeError, isAlreadyExists, purgeSummary,
   };

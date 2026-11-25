@@ -227,12 +227,13 @@ test("render without access goes home and calls nothing else; with access it loa
   assert.deepEqual(w.calls.went, []);
   assert.deepEqual(new Set(w.rpcNames()), new Set(["app_itas_my_access", "app_itas_list_types", "app_itas_vault_get", "app_itas_list_assets"]));
   const list = w.calls.rpc.find((call) => call.name === "app_itas_list_assets");
-  assert.deepEqual(list.args, { p_type_code: "COMPUTER", p_limit: 2000, p_offset: 0 });
+  assert.deepEqual(list.args, { p_limit: 2000, p_offset: 0 }, "เริ่มที่มุมมองทั้งหมด: โหลดทุกชนิดครั้งเดียว ไม่ระบุชนิด");
   const html = w.html();
   assert.match(html, /ทะเบียนอุปกรณ์ IT/);
   assert.match(html, /ยังไม่ตั้ง/, "ตู้เซฟยังไม่ตั้ง");
   assert.match(html, /COM-001/);
-  assert.match(html, /data-itas-type="COMPUTER" aria-pressed="true"/);
+  assert.match(html, /data-itas-type="" aria-pressed="true"/, "ชิป ทั้งหมด ถูกเลือกตั้งต้น");
+  assert.match(html, /data-itas-type="COMPUTER" aria-pressed="false"/);
   assert.doesNotMatch(html, /itas-purge/, "ไม่ใช่โหมดทดสอบ");
   assert.equal(w.itas.version, "1.00");
   assert.equal(w.itas.inDevelopment, true);
@@ -946,4 +947,121 @@ test("auto-lock while the form is open says that the typed secret fields and del
   assert.match(marked, /เครื่องหมายลบค่าถูกล้าง/);
   assert.equal(await lockAndRead({ secrets: { ip: { value: "" } }, how: "idle" }), "", "ไม่มีอะไรหาย ไม่ต้องเตือน");
   assert.equal(await lockAndRead({ secrets: { ip: { value: "x" } }, how: "manual" }), "", "ผู้ใช้กดล็อกเอง ไม่ใช่ล็อกอัตโนมัติ");
+});
+
+/* ---------- หน้าทะเบียนรวม: ชิปชนิด ค้นหาข้ามชนิด เพิ่มอุปกรณ์ที่เดียว ---------- */
+const MOUSE_TYPE = { code: "MOUSE", name: "เมาส์", reg_prefix: "MOU", has_device_code: false, is_active: true, asset_count: 1, fields: [] };
+const EMPTY_TYPE = { code: "PROJECTOR", name: "โปรเจกเตอร์", reg_prefix: "PJT", has_device_code: false, is_active: true, asset_count: 0, fields: [] };
+const MOUSE_ID = "2a500000-0000-4000-8000-000000000002";
+const MOUSE_ASSET = { id: MOUSE_ID, type_code: "MOUSE", reg_no: "MOU-001", device_code: null, name: "เมาส์ไร้สาย", model: "Logitech", serial: "M1", status: "in_use", attrs: {}, secrets: {}, updated_at: STAMP };
+const MULTI = {
+  assets: [ASSET, MOUSE_ASSET],
+  rpcHandlers: {
+    app_itas_list_types: () => [TYPE, MOUSE_TYPE, EMPTY_TYPE],
+    app_itas_list_assets: ({ p_type_code }) => { const items = [ASSET, MOUSE_ASSET].filter((row) => !p_type_code || row.type_code === p_type_code); return { total: items.length, items }; },
+    app_itas_get_asset: ({ p_id }) => [ASSET, MOUSE_ASSET].find((row) => row.id === p_id),
+  },
+};
+const chip = (code) => { const node = { id: "", dataset: { itasType: code } }; node.closest = () => node; return node; };
+const change = async (w, target) => { for (const handler of w.host.listeners.change ?? []) await handler({ target }); await tick(); };
+const listCalls = (w) => w.calls.rpc.filter((call) => call.name === "app_itas_list_assets");
+
+test("the list opens on 'all' with every type in one table; a type chip filters in the browser without another request; empty types are folded", async () => {
+  const w = await world(MULTI);
+  await w.render();
+  const html = w.html();
+  assert.match(html, /COM-001/);
+  assert.match(html, /MOU-001/);
+  assert.match(html, /id="itas-types-more"[^>]*>ชนิดอื่นๆ \(1\)/);
+  assert.doesNotMatch(html, /data-itas-type="PROJECTOR"/, "ชนิดว่างถูกพับไว้");
+  assert.equal(listCalls(w).length, 1);
+  await w.click(chip("MOUSE"));
+  const table = w.hosts["itas-table-host"];
+  assert.match(table, /MOU-001/);
+  assert.doesNotMatch(table, /COM-001/);
+  assert.match(w.hosts["itas-types-host"], /data-itas-type="MOUSE" aria-pressed="true"/);
+  assert.match(w.hosts["itas-list-title"], /เมาส์/);
+  assert.equal(listCalls(w).length, 1, "กรองในเบราว์เซอร์ ไม่ยิง RPC ซ้ำ");
+  await w.click(chip(""));
+  assert.match(w.hosts["itas-table-host"], /COM-001/);
+  assert.match(w.hosts["itas-list-title"], /อุปกรณ์ทั้งหมด/);
+  await w.click(w.button("itas-types-more"));
+  assert.match(w.hosts["itas-types-host"], /data-itas-type="PROJECTOR"/, "กดชนิดอื่นๆ = ขยาย");
+});
+
+test("one search box looks across every type (non-secret fields); the chip and the status filter combine with it", async () => {
+  const w = await world(MULTI);
+  await w.render();
+  await w.fireInput({ id: "itas-search", value: "logitech" });
+  assert.match(w.hosts["itas-table-host"], /MOU-001/);
+  assert.doesNotMatch(w.hosts["itas-table-host"], /COM-001/);
+  await w.fireInput({ id: "itas-search", value: "เมาส์" });
+  assert.match(w.hosts["itas-table-host"], /MOU-001/, "ชื่อชนิดก็ค้นเจอ");
+  await w.fireInput({ id: "itas-search", value: "" });
+  await w.click(chip("COMPUTER"));
+  await w.fireInput({ id: "itas-search", value: "logitech" });
+  assert.match(w.hosts["itas-table-host"], /ไม่พบอุปกรณ์/, "ชิปชนิดกับคำค้นหาใช้ร่วมกัน");
+  assert.equal(listCalls(w).length, 1);
+});
+
+test("a list cut off at the 2,000-row ceiling reloads just the chosen type from the database, and 'all' reloads everything again", async () => {
+  const w = await world({ ...MULTI, rpcHandlers: { ...MULTI.rpcHandlers, app_itas_list_assets: ({ p_type_code }) => ({ total: p_type_code ? 1 : 2500, items: p_type_code === "MOUSE" ? [MOUSE_ASSET] : [ASSET] }) } });
+  await w.render();
+  assert.match(w.html(), /มี 2500 รายการ แต่โหลดมาแสดงได้ 1 รายการแรก/);
+  await w.click(chip("MOUSE"));
+  assert.deepEqual(listCalls(w).at(-1).args, { p_limit: 2000, p_offset: 0, p_type_code: "MOUSE" });
+  assert.match(w.hosts["itas-table-host"], /MOU-001/);
+  await w.click(chip(""));
+  assert.deepEqual(listCalls(w).at(-1).args, { p_limit: 2000, p_offset: 0 });
+});
+
+test("one 'add' button: the type is chosen inside the form (chip type preselected); changing it re-draws the fields and keeps what was typed; the save carries the chosen type", async () => {
+  const w = await world(MULTI);
+  await w.render();
+  await w.click(chip("MOUSE"));
+  await w.click(w.button("itas-add"));
+  let form = w.hosts["itas-form-area"];
+  assert.match(form, /name="type_code"/);
+  assert.match(form, /<option value="MOUSE" selected>/, "กรองเมาส์อยู่ = ตั้งชนิดเมาส์ไว้ให้");
+  assert.match(form, /<optgroup label="ชนิดอื่นๆ[^"]*"><option value="PROJECTOR">/, "ชนิดว่างแยกกลุ่ม");
+  assert.equal(w.calls.confirms.length, 0);
+  // พิมพ์ชื่อไว้แล้วเปลี่ยนเป็นคอมพิวเตอร์: ช่องเฉพาะของคอมพิวเตอร์โผล่ ค่าที่พิมพ์ยังอยู่
+  w.forms.current = assetForm({ values: { name: "เครื่องที่พิมพ์ไว้" } });
+  await change(w, { name: "type_code", value: "COMPUTER" });
+  form = w.hosts["itas-form-area"];
+  assert.match(form, /<option value="COMPUTER" selected>/);
+  assert.match(form, /name="attrs.cpu"/);
+  assert.match(form, /name="device_code"/);
+  assert.equal(w.forms.current.elements.name.value, "เครื่องที่พิมพ์ไว้");
+  w.forms.current.elements.reg_no.value = "com-900";
+  await w.submit(w.forms.current);
+  const save = w.calls.rpc.find((call) => call.name === "app_itas_save_asset");
+  assert.equal(save.args.p_type_code, "COMPUTER");
+  assert.equal(save.args.p_data.name, "เครื่องที่พิมพ์ไว้");
+  assert.equal(save.args.p_data.reg_no, "COM-900");
+});
+
+test("changing the type with a typed secret asks first; declining keeps the old type", async () => {
+  const w = await world({ ...MULTI, confirm: false });
+  await w.render();
+  await w.click(chip("COMPUTER"));
+  await w.click(w.button("itas-add"));
+  w.forms.current = assetForm({ values: {}, secrets: { ip: { value: "x" } } });
+  const select = { name: "type_code", value: "MOUSE" };
+  await change(w, select);
+  assert.equal(w.calls.confirms.at(-1), "เปลี่ยนชนิดอุปกรณ์?");
+  assert.equal(select.value, "COMPUTER", "ไม่ยืนยัน = เลือกชนิดเดิมคืน");
+  assert.match(w.hosts["itas-form-area"], /<option value="COMPUTER" selected>/);
+});
+
+test("editing a row from the 'all' view uses the row's own type; changing a chip does not close or ask about an open form", async () => {
+  const w = await world(MULTI);
+  await w.render();
+  await w.click({ closest: () => ({ dataset: { itasRow: MOUSE_ID }, id: "" }), dataset: { itasRow: MOUSE_ID }, id: "" });
+  const form = w.hosts["itas-form-area"];
+  assert.match(form, /ชนิด: <strong>เมาส์<\/strong>/);
+  assert.doesNotMatch(form, /name="type_code"/, "แก้ไข = เปลี่ยนชนิดไม่ได้");
+  await w.click(chip("COMPUTER"));
+  assert.equal(w.calls.confirms.length, 0, "ชิปไม่ถามและไม่ปิดฟอร์ม");
+  assert.match(w.hosts["itas-form-area"], /ชนิด: <strong>เมาส์<\/strong>/);
 });

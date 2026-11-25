@@ -99,19 +99,31 @@ test("vault forms: every secret/recovery input blocks autofill, password manager
   assert.equal(pages.strengthText({ label: "" }), "");
 });
 
-test("type list and toolbar", () => {
-  const types = [{ code: "COMPUTER", name: "เครื่องคอมพิวเตอร์", asset_count: 12, is_active: true }, { code: "OLD", name: `เก่า ${XSS}`, asset_count: 0, is_active: false }];
-  const html = pages.typeList(types, "COMPUTER");
+test("type chips: all + used types first, empty types folded under 'other types', selected state, escaping; toolbar has one search box and one add button", () => {
+  const types = [
+    { code: "COMPUTER", name: "เครื่องคอมพิวเตอร์", asset_count: 12, is_active: true },
+    { code: "MOUSE", name: "เมาส์", asset_count: 0, is_active: true },
+    { code: "OLD", name: `เก่า ${XSS}`, asset_count: 2, is_active: false },
+  ];
+  const html = pages.typeChips({ types, selectedCode: "COMPUTER", total: 14 });
+  assert.match(html, /data-itas-type="" aria-pressed="false"><span class="itas-chip-name">ทั้งหมด<\/span><span[^>]*>14</);
   assert.match(html, /data-itas-type="COMPUTER" aria-pressed="true"/);
   assert.match(html, /data-itas-type="OLD" aria-pressed="false"/);
   assert.match(html, /is-off/);
   assert.doesNotMatch(html, /<img/);
-  assert.match(html, />12</);
-  assert.match(pages.typeList([], ""), /ยังไม่มีชนิดอุปกรณ์/);
+  assert.ok(html.indexOf("COMPUTER") < html.indexOf("OLD") && html.indexOf("OLD") < html.indexOf("itas-types-more"), "ชนิดที่มีของมาก่อน ปุ่มชนิดอื่นๆ อยู่ท้าย");
+  assert.doesNotMatch(html, /data-itas-type="MOUSE"/, "ชนิดว่างถูกพับไว้");
+  assert.match(html, /id="itas-types-more" aria-expanded="false">ชนิดอื่นๆ \(1\) ▾/);
+  const open = pages.typeChips({ types, selectedCode: "MOUSE", total: 14, showEmpty: true });
+  assert.match(open, /data-itas-type="MOUSE" aria-pressed="true"/);
+  assert.match(open, /aria-expanded="true"/);
+  assert.doesNotMatch(pages.typeChips({ types: [types[0]], total: 12 }), /itas-types-more/, "ไม่มีชนิดว่าง = ไม่มีปุ่ม");
   const toolbar = pages.toolbar({ query: `"><b>`, status: "broken" });
   assert.match(toolbar, /value="&quot;&gt;&lt;b&gt;"/);
   assert.match(toolbar, /<option value="broken" selected>ชำรุด<\/option>/);
-  assert.match(toolbar, /id="itas-add"/);
+  assert.equal(count(toolbar, /type="search"/g), 1);
+  assert.match(toolbar, /placeholder="ค้นหาทุกชนิด[^"]*ผู้ใช้[^"]*สถานที่"/);
+  assert.match(toolbar, /id="itas-add">\+ เพิ่มอุปกรณ์/);
   assert.doesNotMatch(pages.toolbar({ canAdd: false }), /itas-add/);
 });
 
@@ -132,7 +144,8 @@ test("asset table: escapes every cell, status badge, sortable headers with aria-
 
 test("asset form (add): fields come from the type definition, dates are typed text, choices are selects, secret section is locked-safe", () => {
   const html = pages.assetForm({ mode: "add", type: TYPE, values: model.emptyFormValues(TYPE), vaultStatus: "locked" });
-  assert.match(html, /เพิ่มเครื่องคอมพิวเตอร์/);
+  assert.match(html, /<h2[^>]*>เพิ่มอุปกรณ์<\/h2>/);
+  assert.doesNotMatch(html, /name="type_code"/, "ไม่ส่ง types = ไม่มีตัวเลือกชนิด");
   assert.match(html, /name="reg_no"/);
   assert.match(html, /name="device_code"/);
   assert.match(html, /name="attrs.cpu"/);

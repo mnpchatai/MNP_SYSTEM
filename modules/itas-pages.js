@@ -132,20 +132,26 @@
   const strengthText = (strength) => (strength?.label ? `ความแข็งแรง: ${strength.label}` : "");
 
   /* ---------- รายการชนิด + ตารางทะเบียน ---------- */
-  function typeList(types, selectedCode = "") {
-    const list = Array.isArray(types) ? types : [];
-    if (!list.length) return '<p class="muted small">ยังไม่มีชนิดอุปกรณ์</p>';
-    return `<ul class="itas-types" id="itas-types">${list.map((type) => {
-      const selected = type.code === selectedCode;
-      return `<li><button type="button" class="itas-type${selected ? " is-selected" : ""}${type.is_active === false ? " is-off" : ""}" data-itas-type="${esc(type.code)}" aria-pressed="${selected ? "true" : "false"}"><span class="itas-type-name">${esc(type.name)}</span><span class="itas-type-count" aria-label="${esc(String(type.asset_count ?? 0))} รายการ">${esc(String(type.asset_count ?? 0))}</span></button></li>`;
-    }).join("")}</ul>`;
+  // แถบกรองชนิดแบบชิปเล็ก ๆ (มือถือเลื่อนแนวนอนในแถบเอง): "ทั้งหมด" + ชนิดที่มีของ + ปุ่ม "ชนิดอื่นๆ" ที่พับชนิดว่างไว้ (กดแล้วขยาย)
+  // total = จำนวนอุปกรณ์ทั้งหมด · showEmpty = ขยายชนิดว่างอยู่ · ชนิดที่เลือกอยู่แล้วว่างจะขยายให้เองโดย module
+  function typeChips({ types, selectedCode = "", total = 0, showEmpty = false } = {}) {
+    const { used, empty } = model.typeChipGroups(types);
+    const chip = (code, label, count, { off = false } = {}) => {
+      const selected = code === selectedCode;
+      return `<button type="button" class="itas-chip${selected ? " is-selected" : ""}${off ? " is-off" : ""}" data-itas-type="${esc(code)}" aria-pressed="${selected ? "true" : "false"}"><span class="itas-chip-name">${esc(label)}</span><span class="itas-chip-count" aria-label="${esc(String(count))} รายการ">${esc(String(count))}</span></button>`;
+    };
+    const typeChip = (type) => chip(type.code, type.name, type.asset_count ?? 0, { off: type.is_active === false });
+    const more = empty.length
+      ? `<button type="button" class="itas-chip itas-chip-more" id="itas-types-more" aria-expanded="${showEmpty ? "true" : "false"}">ชนิดอื่นๆ (${empty.length}) ${showEmpty ? "▴" : "▾"}</button>${showEmpty ? empty.map(typeChip).join("") : ""}`
+      : "";
+    return `<div class="itas-chips" role="group" aria-label="กรองตามชนิดอุปกรณ์">${chip("", model.TYPE_ALL_LABEL, total)}${used.map(typeChip).join("")}${more}</div>`;
   }
   function toolbar({ query = "", status = "", canAdd = true } = {}) {
     const options = [{ value: "", label: "ทุกสถานะ" }, ...model.STATUSES].map((item) => `<option value="${esc(item.value)}"${item.value === status ? " selected" : ""}>${esc(item.label)}</option>`).join("");
     return `<div class="itas-toolbar">
-        <div class="field itas-search"><label class="sr-only" for="itas-search">ค้นหาอุปกรณ์</label><input class="input" id="itas-search" type="search" autocomplete="off" placeholder="ค้นหา เลขทะเบียน / รหัส / ชื่อ / รุ่น / Serial / ติดตั้งที่" value="${esc(query)}"></div>
+        <div class="field itas-search"><label class="sr-only" for="itas-search">ค้นหาอุปกรณ์ทุกชนิด</label><input class="input" id="itas-search" type="search" autocomplete="off" placeholder="ค้นหาทุกชนิด: เลขทะเบียน / รหัส / ชื่อ / ยี่ห้อ รุ่น / ผู้ใช้ / สถานที่" value="${esc(query)}"></div>
         <div class="field itas-status-filter"><label class="sr-only" for="itas-status">กรองตามสถานะ</label><select class="select" id="itas-status">${options}</select></div>
-        ${canAdd ? '<button type="button" class="btn" id="itas-add">เพิ่มอุปกรณ์</button>' : ""}
+        ${canAdd ? '<button type="button" class="btn" id="itas-add">+ เพิ่มอุปกรณ์</button>' : ""}
       </div>`;
   }
   // rows = แถวหลังกรอง/เรียง · sort = { key, direction } · ตารางกว้างเลื่อนในกล่องของตัวเอง (ไม่ดันทั้งหน้า)
@@ -208,8 +214,14 @@
     }).join("");
     return `<fieldset class="itas-group itas-secrets" id="itas-secrets"><legend>ช่องลับ (เข้ารหัสในเบราว์เซอร์)</legend>${hint ? `<p class="muted small">${esc(hint)}</p>` : ""}<div class="itas-grid">${rows}</div></fieldset>`;
   }
-  // mode = "add" | "edit" · type = นิยามชนิด · values = { core, attrs } (ข้อความ) · asset = แถวเดิม (edit)
-  function assetForm({ mode = "add", type, values, asset = null, vaultStatus = "locked" }) {
+  // เลือกชนิดในฟอร์มเพิ่ม (เปลี่ยนแล้วฟอร์มเปลี่ยนช่องตามชนิด · ค่าที่พิมพ์แล้วที่ชื่อช่องตรงกันถูกยกไปให้) · เฉพาะชนิดที่เปิดใช้งาน · ชนิดที่มีของขึ้นก่อน
+  function typeSelect(types, selectedCode) {
+    const { used, empty } = model.typeChipGroups((Array.isArray(types) ? types : []).filter((type) => type.is_active !== false));
+    const option = (type) => `<option value="${esc(type.code)}"${type.code === selectedCode ? " selected" : ""}>${esc(type.name)}</option>`;
+    return `<div class="field itas-wide" data-field="type_code"><label for="itas-f-type_code">ชนิดอุปกรณ์ ${REQUIRED}</label><select class="select" id="itas-f-type_code" name="type_code">${used.map(option).join("")}${empty.length ? `<optgroup label="ชนิดอื่นๆ (ยังไม่มีรายการ)">${empty.map(option).join("")}</optgroup>` : ""}</select></div>`;
+  }
+  // mode = "add" | "edit" · type = นิยามชนิด · values = { core, attrs } (ข้อความ) · asset = แถวเดิม (edit) · types = ทุกชนิด (ใช้เลือกชนิดในฟอร์มเพิ่ม)
+  function assetForm({ mode = "add", type, values, asset = null, vaultStatus = "locked", types = null }) {
     const edit = mode === "edit";
     const groups = model.GROUP_ORDER.map((groupKey) => {
       const fields = model.coreFieldsOf(type).filter((field) => field.group === groupKey);
@@ -219,11 +231,13 @@
       const typed = extras.map((field) => fieldBlock({ ...field, max: field.type === "text" ? (field.max ?? 200) : field.max }, values.attrs[field.key] ?? "", `attrs.${field.key}`)).join("");
       return `<fieldset class="itas-group"><legend>${esc(model.GROUP_LABELS[groupKey])}</legend><div class="itas-grid">${core}${typed ? `<h3 class="itas-subhead itas-wide">ข้อมูลเฉพาะ${esc(type.name)}</h3>${typed}` : ""}</div></fieldset>`;
     }).join("");
-    const title = edit ? `แก้ไข ${esc(asset?.reg_no || asset?.device_code || asset?.name || "อุปกรณ์")}` : `เพิ่ม${esc(type.name)}`;
+    const title = edit ? `แก้ไข ${esc(asset?.reg_no || asset?.device_code || asset?.name || "อุปกรณ์")}` : "เพิ่มอุปกรณ์";
+    const typeBlock = edit ? `<p class="muted small itas-type-line">ชนิด: <strong>${esc(type.name)}</strong></p>` : types ? `<div class="itas-grid">${typeSelect(types, type.code)}</div>` : "";
     return `<section class="card itas-form-card" id="itas-form-card" aria-labelledby="itas-form-title">
         <h2 id="itas-form-title">${title}</h2>
         <div id="itas-form-message" role="status"></div>
         <form id="itas-form" novalidate autocomplete="off">
+          ${typeBlock}
           ${groups}
           <div id="itas-secrets-host">${secretsSection({ fields: model.secretFields(type), asset, vaultStatus })}</div>
           <div class="form-actions"><button type="button" class="btn secondary" id="itas-form-cancel">${edit ? "ปิด" : "ยกเลิก"}</button><button type="submit" class="btn is-primary">${edit ? "บันทึกการแก้ไข" : "เพิ่มอุปกรณ์"}</button></div>
@@ -254,22 +268,22 @@
       ${content}
       ${isTest ? purgeRow() : ""}`);
   }
-  const layout = ({ types, selectedCode, main }) => `<div class="itas-layout">
-      <section class="card itas-types-card" aria-labelledby="itas-types-title"><h2 id="itas-types-title">ชนิดอุปกรณ์</h2><div id="itas-types-host">${typeList(types, selectedCode)}</div></section>
-      <div class="itas-main" id="itas-main-host">${main}</div>
-    </div>`;
-  const mainPanel = ({ type, toolbarHtml, countText, tableHtml, notice = "" }) => `<div id="itas-form-area"></div>
+  const layout = ({ main }) => `<div class="itas-layout"><div class="itas-main" id="itas-main-host">${main}</div></div>`;
+  const listTitle = (type) => `${esc(type?.name ?? "อุปกรณ์ทั้งหมด")}${type?.is_active === false ? ' <span class="badge cancelled">ปิดใช้งาน</span>' : ""}`;
+  // เรียงบนลงล่าง: ช่องค้นหา + ปุ่มเพิ่ม → ชิปกรองชนิด → จำนวน → ตาราง (ฟอร์มเพิ่ม/แก้เปิดเหนือรายการ)
+  const mainPanel = ({ type, toolbarHtml, chipsHtml, countText, tableHtml, notice = "" }) => `<div id="itas-form-area"></div>
       <section class="card itas-list-card" aria-labelledby="itas-list-title">
-        <h2 id="itas-list-title">${esc(type?.name ?? "ทะเบียน")}${type?.is_active === false ? ' <span class="badge cancelled">ปิดใช้งาน</span>' : ""}</h2>
+        <h2 id="itas-list-title">${listTitle(type)}</h2>
         ${toolbarHtml}
+        <div id="itas-types-host">${chipsHtml}</div>
         <p class="muted small" id="itas-count" role="status">${esc(countText)}</p>
-        ${notice ? `<p class="rf-callout is-warn">${esc(notice)}</p>` : ""}
+        ${notice ? `<p class="rf-callout is-warn" id="itas-notice">${esc(notice)}</p>` : ""}
         <div id="itas-table-host">${tableHtml}</div>
       </section>`;
 
   const api = {
     TITLE, MASK, head, page, messageBox, errorCard, purgeRow, versionTag, devNotice, vaultBar, vaultSetupForm, recoveryShow, unlockForm, forgotForm, changeForm, newRecoveryForm, strengthText,
-    typeList, toolbar, assetTable, fieldBlock, secretsSection, assetForm, historyPanel, mainPage, layout, mainPanel,
+    typeChips, toolbar, assetTable, fieldBlock, secretsSection, assetForm, historyPanel, mainPage, layout, mainPanel, listTitle,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_ITAS_PAGES = Object.freeze(api);
