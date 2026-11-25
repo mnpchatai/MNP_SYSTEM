@@ -235,7 +235,7 @@ test("routes and version metadata", () => {
   assert.equal(model.assetsUrl(), "#/office?module=assets");
   assert.equal(model.readView(new URLSearchParams("module=assets")), "main");
   assert.equal(model.readView(new URLSearchParams("module=assets&view=other")), null);
-  assert.equal(model.MODULE_VERSION, "1.04");
+  assert.equal(model.MODULE_VERSION, "1.05");
   assert.equal(model.IN_DEVELOPMENT, true);
   assert.equal(model.ASSET_CODE, "IT_ASSET_REGISTER");
   assert.ok(model.isUuid(ID) && !model.isUuid("x"));
@@ -599,4 +599,26 @@ test("host move history: keeps only moves into or out of this computer, newest f
   assert.deepEqual(model.hostMoveHistory(null, "COM12"), []);
   const many = [{ asset: { id: "a", type_code: "RAM" }, moves: Array.from({ length: 150 }, (_, i) => ({ id: i, from_host: null, to_host: "COM12", created_at: `2026-01-01T00:00:${String(i % 60).padStart(2, "0")}+00:00` })) }];
   assert.equal(model.hostMoveHistory(many, "COM12").length, model.MAX_HOST_MOVES);
+});
+
+/* ---------- รุ่น 1.05: ชนิดสิ้นเปลือง (หมึก/โทนเนอร์) ไม่แสดงสถานะ ---------- */
+test("consumable type: primary fields drop status and bring purchase date + price up; other types keep status", () => {
+  const ink = { code: "INK_TONER", name: "หมึก / โทนเนอร์", fields: [] };
+  const names = model.primaryFieldNames(ink);
+  assert.ok(!names.includes("status"));
+  assert.deepEqual(names.slice(-2), ["purchase_date", "price"]);
+  assert.ok(model.isPrimaryField(ink, "purchase_date") && model.isPrimaryField(ink, "price"));
+  assert.ok(model.primaryFieldNames({ code: "MOUSE", fields: [] }).includes("status"));
+  assert.ok(!model.primaryFieldNames({ code: "MOUSE", fields: [] }).includes("price"));
+  assert.equal(model.isConsumableType("ink_toner"), true);
+  assert.equal(model.isConsumableType("COMPUTER"), false);
+  assert.equal(model.isConsumableType(undefined), false);
+  // ค่าสถานะที่ส่งให้ฐานข้อมูลยังเป็น in_use ตามค่าเริ่มต้น
+  assert.equal(model.emptyFormValues(ink).core.status, "in_use");
+});
+
+test("consumablePurchaseText: 'ซื้อ วว/ดด/ปปปป' only for consumable rows that have a purchase date", () => {
+  assert.equal(model.consumablePurchaseText({ type_code: "INK_TONER", purchase_date: "2026-03-05" }), "ซื้อ 05/03/2569");
+  assert.equal(model.consumablePurchaseText({ type_code: "INK_TONER", purchase_date: null }), "");
+  assert.equal(model.consumablePurchaseText({ type_code: "MONITOR", purchase_date: "2026-03-05" }), "");
 });

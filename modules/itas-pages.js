@@ -23,6 +23,8 @@
   // ป้ายชนิดในตารางใช้ชื่อสั้น (model.typeShortName) ชื่อเต็มอยู่ใน title
   const kindPill = (code, label) => `<span class="itas-kind is-${esc(model.typeKind(code))}" title="${esc(label)}">${glyph(code)}<span>${esc(model.typeShortName(label))}</span></span>`;
   // ป้ายสถานะ: ใช้งาน เขียว · สำรอง ฟ้า · ชำรุด แดง · ยกเลิกใช้งาน เทา (สีมาจากโทนใน model ไม่ใช่คลาส badge เดิมที่ใช้สีผิดความหมาย)
+  // แถวของชนิดสิ้นเปลือง (หมึก/โทนเนอร์) ไม่มีป้ายสถานะ: แสดง "ซื้อ วว/ดด/ปปปป" หรือว่าง
+  const rowStatusPill = (row) => (model.isConsumableType(row?.type_code) ? esc(model.consumablePurchaseText(row)) : statusPill(row?.status));
   const statusPill = (status) => `<span class="badge itas-status is-${esc(model.statusTone(status))}">${esc(model.statusLabel(status))}</span>`;
   const testTag = (isTest) => (isTest ? '<span class="badge itas-test-tag" title="ข้อมูลทดสอบ แยกจากระบบจริง">ทดสอบ</span>' : "");
 
@@ -165,7 +167,10 @@
   const MONO_COLUMNS = new Set(["reg_no", "device_code", "serial", "host_code"]);
   function cellHtml(row, column) {
     const text = model.cellText(row, column);
-    if (column.key === "status") return { inner: statusPill(row.status), cls: "" };
+    if (column.key === "status") {
+      if (model.isConsumableType(row.type_code)) { const bought = model.consumablePurchaseText(row); return bought ? { inner: esc(bought), cls: " itas-nowrap" } : { inner: "", cls: " itas-cell-empty" }; }
+      return { inner: statusPill(row.status), cls: "" };
+    }
     if (column.role === "type") return { inner: text ? kindPill(row.type_code, text) : "—", cls: "" };
     if (column.role === "parts") return text ? { inner: `<span class="itas-partcount itas-mono">${esc(text)}</span>`, cls: "" } : { inner: "", cls: " itas-cell-empty" };
     // รหัส/เลขทะเบียน (itas-mono) ห้ามตัดกลางคำ · วันที่ไม่ตัด · คอลัมน์ข้อความยาว (ชื่อ ยี่ห้อ ผู้ใช้ สถานที่) ตัดบรรทัดตามคำได้ (itas-text)
@@ -181,7 +186,7 @@
       const aria = active ? ` aria-sort="${sort.direction === "descending" ? "descending" : "ascending"}"` : "";
       return `<th scope="col"${aria}><button type="button" class="itas-sort" data-itas-sort="${esc(column.key)}">${esc(column.label)}${active ? (sort.direction === "descending" ? " ▼" : " ▲") : ""}</button></th>`;
     }).join("");
-    const body = rows.map((row) => `<tr class="itas-row status-${esc(row.status)}${model.isHostTypeCode(row.type_code) ? " is-host" : ""}" data-itas-row="${esc(row.id)}" tabindex="0">${columns.map((column) => {
+    const body = rows.map((row) => `<tr class="itas-row${model.isConsumableType(row.type_code) ? "" : ` status-${esc(row.status)}`}${model.isHostTypeCode(row.type_code) ? " is-host" : ""}" data-itas-row="${esc(row.id)}" tabindex="0">${columns.map((column) => {
       const { inner, cls } = cellHtml(row, column);
       return `<td${cls.trim() ? ` class="${cls.trim()}"` : ""} data-label="${esc(column.label)}">${inner}</td>`;
     }).join("")}</tr>`).join("");
@@ -290,6 +295,7 @@
     const edit = mode === "edit";
     const coreList = model.coreFieldsOf(type);
     const attrList = model.plainFields(type);
+    const consumable = model.isConsumableType(type?.code);
     const listOf = (part, key) => (suggestions?.[part]?.[key]?.length ? { listId: listIdOf(part === "attrs" ? `attrs.${key}` : key) } : {});
     const blockOf = (name) => {
       if (name.startsWith("attrs.")) {
@@ -303,7 +309,7 @@
     };
     const primary = `<fieldset class="itas-group itas-primary"><legend>ข้อมูลหลัก</legend><div class="itas-grid">${model.primaryFieldNames(type).map(blockOf).join("")}</div></fieldset>`;
     const groups = model.GROUP_ORDER.map((groupKey) => {
-      const fields = coreList.filter((field) => field.group === groupKey && !model.isPrimaryField(type, field.key));
+      const fields = coreList.filter((field) => field.group === groupKey && !model.isPrimaryField(type, field.key) && !(consumable && field.key === "status"));
       const extras = groupKey === "identity" ? attrList.filter((field) => !model.isPrimaryField(type, `attrs.${field.key}`)) : [];
       if (!fields.length && !extras.length) return "";
       const core = fields.map((field) => fieldBlock(field, values.core[field.key] ?? "", field.key, listOf("core", field.key))).join("");
@@ -327,6 +333,7 @@
           ${rememberedNotice(remembered)}
           ${typeBlock}
           ${primary}
+          ${consumable ? `<input type="hidden" name="status" value="${esc(values.core.status || "in_use")}">` : ""}
           ${edit ? "" : batchSection(type, batch ?? {})}
           ${more}
           ${suggestionLists(suggestions)}
@@ -364,7 +371,7 @@
     return `<li><button type="button" class="itas-part is-${esc(model.typeKind(row.type_code))}${row.status === "retired" ? " is-retired" : ""}" data-itas-part="${esc(row.id)}">
         <span class="itas-part-type">${glyph(row.type_code)}<span>${esc(typeLabel)}</span>${row.slot ? `<span class="itas-part-slot" title="ช่อง/ตำแหน่ง">${esc(row.slot)}</span>` : ""}</span>
         <span class="itas-part-main"><span class="itas-part-top"><span class="itas-mono itas-part-code">${esc(code || "—")}</span>${row.name ? `<span class="itas-part-name">${esc(row.name)}</span>` : ""}</span>${spec ? `<span class="itas-mono itas-part-spec">${esc(spec)}</span>` : ""}</span>
-        <span class="itas-part-foot">${statusPill(row.status)}</span>
+        <span class="itas-part-foot">${rowStatusPill(row)}</span>
       </button></li>`;
   }
   // รวมการ์ดของทุกชนิดในหมวดเดียวเป็น grid เดียว (เรียงชนิดต่อกัน) · ชื่อชนิดดึงจากกลุ่มที่จัดไว้แล้ว
