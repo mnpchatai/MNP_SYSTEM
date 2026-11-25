@@ -99,8 +99,8 @@ test("status labels, badge classes and the requester's own wording", () => {
   assert.equal(model.isTestDoc("IT01-26/001"), false);
 });
 
-test("the module version is 1.04 and no text of this module says 'ใบสั่งงาน'", () => {
-  assert.equal(model.MODULE_VERSION, "1.04");
+test("the module version is 1.05 and no text of this module says 'ใบสั่งงาน'", () => {
+  assert.equal(model.MODULE_VERSION, "1.05");
   assert.match(model.VERSION_DATE, /^\d{4}-\d{2}-\d{2}$/);
   for (const file of ["modules/itrp-model.js", "modules/itrp-pages.js", "modules/module-itrp.js"]) {
     // คอมเมนต์อ้างถึงใบสั่งงาน IT (โมดูลต้นแบบ) ได้ และหน้าตั้งค่ามีข้อความ 1 บรรทัดบอกว่าทีม IT แก้ที่ใบสั่งงาน IT · นอกนั้นข้อความที่ผู้ใช้เห็นต้องเป็น "ใบแจ้งซ่อม"

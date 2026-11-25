@@ -24,7 +24,7 @@
   // เลขเวอร์ชันของโมดูล (แสดงมุมขวาล่างทุกหน้า) รูปแบบ <ใหญ่>.<ย่อย 2 หลัก> · กติกาเดียวกับใบสั่งงาน IT (เจ้าของตัดสิน 20/11/2026)
   // อัปเดตย่อย (แก้คำ หน้าตา บั๊ก ช่องเล็ก ๆ) = +0.01 · อัปเดตใหญ่ (เปลี่ยนขั้นตอนงาน/สถานะ/ฟีเจอร์ใหม่ที่ผู้ใช้ต้องเรียนรู้) = ขึ้นหลักหน่วย .00
   // ถามเจ้าของทุกครั้งว่าเป็นอัปเดตย่อยหรือใหญ่ แล้วแก้ทั้งสองค่านี้ใน PR เดียวกับการเปลี่ยนแปลง (VERSION_DATE = วันที่ปล่อย YYYY-MM-DD)
-  const MODULE_VERSION = "1.04";
+  const MODULE_VERSION = "1.05";
   const VERSION_DATE = "2026-11-25";
   // ธง "กำลังพัฒนา" (จุดเดียว): true = การ์ดใบแจ้งซ่อม IT ในเมนูมีป้าย "กำลังพัฒนา" และทุกหน้าของโมดูลมีแถบข้อความว่ายังไม่เปิดใช้งานจริง
   // ป้ายกับแถบเป็นข้อความอย่างเดียว ไม่ปิดกั้นการกดเข้าหรือการใช้งาน · ถอดป้ายเมื่อเจ้าของสั่งเปิดใช้งานจริง: เปลี่ยนเป็น false ที่นี่ที่เดียว
@@ -1102,7 +1102,7 @@
       code: textOf(target.device_code), name: textOf(target.name), typeCode: textOf(target.type_code),
     }));
     return {
-      requestId: data.request?.id ?? "", docNo: data.request?.doc_no ?? "", canApply: data.can_apply === true, blockedReason: textOf(data.blocked_reason),
+      requestId: data.request?.id ?? "", docNo: data.request?.doc_no ?? "", status: textOf(data.request?.status), canApply: data.can_apply === true, blockedReason: textOf(data.blocked_reason),
       max: Number.isInteger(data.max_changes) && data.max_changes > 0 ? data.max_changes : MAX_PART_CHANGES, hosts, spares, moveTargets,
     };
   }

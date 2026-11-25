@@ -3366,6 +3366,9 @@ table.bom-tree td.right { white-space: nowrap; }
 @media print {
   body:has(.itwo-sheet) :is(.sidebar, .topbar, .mobile-nav-toggle, .nav-backdrop, .sandbox-banner, .push-prompt, .skip-link, .offline-banner, .update-banner, .toast, .install-banner, .no-print) { display: none !important; }
   body:has(.itwo-sheet), body:has(.itwo-sheet) .app-shell, body:has(.itwo-sheet) .main, body:has(.itwo-sheet) .content { display: block; margin: 0; padding: 0; background: #fff; max-width: none; }
+  /* พื้นหลังของระบบ (สีเทาอ่อน/ไล่สี/ธีมมืด) ต้องไม่ติดไปกับกระดาษ: เบราว์เซอร์ที่เปิด "พิมพ์พื้นหลัง" จะพิมพ์สีทั้งแผ่น · ใช้ :has เพื่อไม่กระทบการพิมพ์หน้าอื่น */
+  html:has(.itwo-sheet), body:has(.itwo-sheet) { background: #fff !important; background-image: none !important; box-shadow: none !important; color-scheme: light !important; }
+  :is(body:has(.itwo-sheet) .app-shell, body:has(.itwo-sheet) .main, body:has(.itwo-sheet) .content, .itwo-sheet) { box-shadow: none; }
   .itwo-sheet { max-width: none; margin: 0; padding: 0; border: 0; overflow: visible; }
   /* ใบปกติพอดี 1 หน้า: กล่องลายเซ็นและแถวของตารางไม่ถูกตัดกลาง · ประวัติแก้ไข/ถาม-ตอบยาวได้หลายรอบ ตัดข้ามหน้าได้แต่ไม่ตัดกลางแถว หัวตารางซ้ำทุกหน้า */
   .itwo-signs, .itwo-detail-row, .itwo-sheet-title, .itwo-sheet-table tr { break-inside: avoid; }
@@ -3524,6 +3527,9 @@ table.bom-tree td.right { white-space: nowrap; }
 @media print {
   body:has(.itrp-sheet) :is(.sidebar, .topbar, .mobile-nav-toggle, .nav-backdrop, .sandbox-banner, .push-prompt, .skip-link, .offline-banner, .update-banner, .toast, .install-banner, .no-print) { display: none !important; }
   body:has(.itrp-sheet), body:has(.itrp-sheet) .app-shell, body:has(.itrp-sheet) .main, body:has(.itrp-sheet) .content { display: block; margin: 0; padding: 0; background: #fff; max-width: none; }
+  /* พื้นหลังของระบบ (สีเทาอ่อน/ไล่สี/ธีมมืด) ต้องไม่ติดไปกับกระดาษ: เบราว์เซอร์ที่เปิด "พิมพ์พื้นหลัง" จะพิมพ์สีทั้งแผ่น · ใช้ :has เพื่อไม่กระทบการพิมพ์หน้าอื่น */
+  html:has(.itrp-sheet), body:has(.itrp-sheet) { background: #fff !important; background-image: none !important; box-shadow: none !important; color-scheme: light !important; }
+  :is(body:has(.itrp-sheet) .app-shell, body:has(.itrp-sheet) .main, body:has(.itrp-sheet) .content, .itrp-sheet) { box-shadow: none; }
   .itrp-sheet { max-width: none; margin: 0; padding: 0; border: 0; overflow: visible; }
   /* ใบปกติพอดี 1 หน้า: กล่องลายเซ็นและแถวของตารางไม่ถูกตัดกลาง · ข้อความยาวล้นไปหน้าถัดไปได้ (แถวต่อแถว) · ตารางประวัติหัวตารางซ้ำทุกหน้า */
   .itrp-signs, .itrp-symptom-row, .itrp-sheet-title, .itrp-sheet-table tr { break-inside: avoid; }
@@ -3876,6 +3882,8 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 /* จอกลาง (แถบเมนูซ้ายยังกินที่): บรรทัดรองของแถวรายการตัดเป็น 2 บรรทัดแทนที่จะดันตารางให้กว้างจนป้ายสถานะถูกตัด */
 @media (min-width: 761px) and (max-width: 1279px) {
   .itwo-page .register-sub, .itrp-page .register-sub { max-width: 36ch; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; white-space: normal; }
+  /* ตัดที่ 2 บรรทัดได้จริงต้องมี overflow: hidden · กฎกลาง .register-status .register-sub (จอ 761px ขึ้นไป) ตั้ง overflow: visible ไว้ ต้องแรงกว่าเฉพาะใน itwo */
+  .itwo-page .register-sub, .itwo-page .register-status .register-sub { overflow: hidden; }
 }
 /* ใบแจ้งซ่อม: ตารางอะไหล่/เครื่อง/ย้ายชิ้นส่วน — หัวคอลัมน์ ลำดับ และรหัสเครื่องไม่ตัดกลางคำ */
 .itrp-page .itrp-parts-table th { white-space: nowrap; }
@@ -4123,6 +4131,9 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 @media print {
   body:has(.itas-sheet) :is(.sidebar, .topbar, .mobile-nav-toggle, .nav-backdrop, .sandbox-banner, .push-prompt, .skip-link, .offline-banner, .update-banner, .toast, .install-banner, .no-print) { display: none !important; }
   body:has(.itas-sheet), body:has(.itas-sheet) .app-shell, body:has(.itas-sheet) .main, body:has(.itas-sheet) .content { display: block; margin: 0; padding: 0; background: #fff; max-width: none; }
+  /* พื้นหลังของระบบ (สีเทาอ่อน/ไล่สี/ธีมมืด) ต้องไม่ติดไปกับกระดาษ: เบราว์เซอร์ที่เปิด "พิมพ์พื้นหลัง" จะพิมพ์สีทั้งแผ่น · ใช้ :has เพื่อไม่กระทบการพิมพ์หน้าอื่น */
+  html:has(.itas-sheet), body:has(.itas-sheet) { background: #fff !important; background-image: none !important; box-shadow: none !important; color-scheme: light !important; }
+  :is(body:has(.itas-sheet) .app-shell, body:has(.itas-sheet) .main, body:has(.itas-sheet) .content, .itas-sheet) { box-shadow: none; }
   body:has(.itas-sheet) .itas-page { margin: 0; padding: 0; max-width: none; }
   /* ซ่อนทุกอย่างในหน้าทะเบียน เหลือแต่ใบพิมพ์ */
   body:has(.itas-sheet) .itas-page > :not(.itas-sheet) { display: none !important; }

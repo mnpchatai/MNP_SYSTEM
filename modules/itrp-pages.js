@@ -615,10 +615,15 @@
     return [part.model, part.serial ? `S/N ${part.serial}` : "", part.place].map((bit) => String(bit ?? "").trim()).filter((bit) => bit && !label.includes(bit)).join(" · ");
   }
 
+  const PART_CHANGE_VISIBLE_STATUSES = ["in_progress", "it_closed"];
+
   // การ์ดบันทึกการเปลี่ยนชิ้นส่วน (ผู้ดูแลงาน IT) · ctx = model.normalizePartContext · rows = รายการที่เลือกไว้ยังไม่บันทึก
   // message = ข้อความ (HTML ที่ escape แล้ว) เหนือรายการ · errorRow = เลขแถว (เริ่ม 1) ที่ฐานข้อมูลบอกว่าผิด
   function partChangesCard({ ctx, rows = [], editor = null, busy = false, message = "", errorRow = null } = {}) {
     const open = (inner) => `<section class="card itrp-partchg-card" id="itrp-partchg-card" aria-labelledby="itrp-partchg-title"${busy ? ' aria-busy="true"' : ""}><h2 id="itrp-partchg-title">เปลี่ยน / ย้ายชิ้นส่วน</h2>${inner}</section>`;
+    // ใบที่ยังไม่ถึงขั้นทำงาน/ส่งงาน (หรือปิดไปแล้ว) และบันทึกไม่ได้ = ไม่มีอะไรให้ทำ ซ่อนการ์ดทั้งใบ ไม่ต้องโชว์คำเตือน
+    // ใบที่กำลังทำ/ส่งงานแล้วแต่บันทึกไม่ได้ (เช่น ไม่มีรหัสเครื่อง) ยังแสดงเหตุผลให้ IT รู้ว่าต้องแก้อะไร
+    if (!ctx.canApply && !PART_CHANGE_VISIBLE_STATUSES.includes(ctx.status)) return "";
     if (!ctx.canApply) return open(`<p class="rf-callout is-warn" role="status">${esc(ctx.blockedReason || "ยังบันทึกการเปลี่ยนชิ้นส่วนไม่ได้")}</p>`);
     const used = model.usedPartIds(rows);
     const editorHtml = editor ? partChangeEditor({ ctx, rows, editor, busy }) : "";

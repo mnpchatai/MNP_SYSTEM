@@ -81,6 +81,7 @@ async function world({ allowed = true, accessFail = false, isTest = false, vault
   const elements = {};
   const winListeners = {};
   const docListeners = {};
+  const mediaLists = []; // ผลของ matchMedia("print") ที่โมดูลขอไป (ให้เทสต์สั่งเปลี่ยนเป็น false)
   const authListeners = [];
   let painted = "";
   let hash = "#/office?module=assets";
@@ -127,9 +128,12 @@ async function world({ allowed = true, accessFail = false, isTest = false, vault
       querySelector: (selector) => (selector === ".itas-page" ? host : null),
       querySelectorAll: (selector) => (selector === ".itas-sheet" ? sheets.filter((sheet) => !sheet.removed) : []),
       addEventListener: (type, handler) => { (docListeners[type] ??= []).push(handler); },
+      removeEventListener: (type, handler) => { docListeners[type] = (docListeners[type] ?? []).filter((item) => item !== handler); },
+      visibilityState: "visible",
       body: { appendChild() {} },
       createElement: () => ({ click() { downloads.at(-1).fileName = this.download; }, remove() {} }),
     },
+    matchMedia: (query) => { const mql = { media: query, matches: true, handlers: [], addEventListener(type, handler) { this.handlers.push(handler); }, removeEventListener(type, handler) { this.handlers = this.handlers.filter((item) => item !== handler); } }; mediaLists.push(mql); return mql; },
     print: () => { printed.push(sheets.filter((sheet) => !sheet.removed).map((sheet) => sheet.html)); },
     Blob: class { constructor(parts, options) { this.text = parts.join(""); this.type = options?.type; } },
     URL: { createObjectURL: (blob) => { downloads.push({ text: blob.text, type: blob.type }); return "blob:test"; }, revokeObjectURL() {} },
@@ -158,11 +162,12 @@ async function world({ allowed = true, accessFail = false, isTest = false, vault
   });
   Object.defineProperty(context, "location", { get: () => ({ get hash() { return hash; } }), configurable: true });
   Object.defineProperty(context, "addEventListener", { value: (type, handler) => { (winListeners[type] ??= []).push(handler); }, configurable: true });
+  Object.defineProperty(context, "removeEventListener", { value: (type, handler) => { winListeners[type] = (winListeners[type] ?? []).filter((item) => item !== handler); }, configurable: true });
   for (const file of ["ui-icons.js", "itas-model.js", "itas-vault.js", "itas-pages.js", "module-itas.js"]) vm.runInContext(read(`modules/${file}`), context);
   const itas = context.window.MNP_ITAS;
   const fire = async (list, event = {}) => { for (const handler of list ?? []) await handler(event); await tick(); };
   const world0 = {
-    context, itas, calls, server, storage, hosts, elements, host, forms, stateObj, session, sheets, printed, downloads, rpcNames: () => calls.rpc.map((call) => call.name),
+    context, itas, calls, server, storage, hosts, elements, host, forms, stateObj, session, sheets, printed, downloads, mediaLists, rpcNames: () => calls.rpc.map((call) => call.name),
     setHash: (value) => { hash = value; },
     html: () => painted + Object.values(hosts).join(""),
     // เหตุการณ์ของหน้าต่าง/เอกสาร
@@ -255,9 +260,9 @@ test("render without access goes home and calls nothing else; with access it loa
   assert.match(html, /data-itas-type="" aria-pressed="true"/, "ชิป ทั้งหมด ถูกเลือกตั้งต้น");
   assert.match(html, /data-itas-type="COMPUTER" aria-pressed="false"/);
   assert.doesNotMatch(html, /itas-purge/, "ไม่ใช่โหมดทดสอบ");
-  assert.equal(w.itas.version, "1.06");
+  assert.equal(w.itas.version, "1.07");
   assert.equal(w.itas.inDevelopment, true);
-  assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_ASSET_REGISTER.version, "1.06");
+  assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_ASSET_REGISTER.version, "1.07");
   // โหมดทดสอบ: มีปุ่มล้างข้อมูล + แท็ก ทดสอบ
   const test = await world({ isTest: true });
   await test.render();
@@ -1676,6 +1681,67 @@ test("print: the sheet follows the current search/type/status filter and sort, i
   await w.fireInput({ id: "itas-search", value: "" });
   await w.click(w.button("itas-print"));
   assert.match(w.printed.at(-1).join(""), /<dt>ชนิด:<\/dt><dd>เมาส์<\/dd>/);
+});
+
+// ทางลบใบพิมพ์สำรอง (afterprint ไม่ยิงในบางเบราว์เซอร์)
+const liveSheets = (w) => w.sheets.filter((sheet) => !sheet.removed).length;
+const listenerCount = (w) => ["afterprint"].reduce((sum, type) => sum + (w.registered.window[type]?.length ?? 0), 0) + ["pointerdown", "keydown", "visibilitychange"].reduce((sum, type) => sum + (w.registered.document[type]?.length ?? 0), 0) + w.mediaLists.reduce((sum, mql) => sum + mql.handlers.length, 0);
+// จำนวน listener ก่อนสั่งพิมพ์ (โมดูลมี listener ของตัวเองถาวรอยู่แล้ว เช่น ตู้เซฟจับเวลาไม่ใช้งาน) เพื่อเทียบว่า listener ของใบพิมพ์ถูกถอนครบ
+async function printOnce(w) {
+  await w.render();
+  w.baseline = listenerCount(w);
+  await w.click(w.button("itas-print"));
+  assert.equal(liveSheets(w), 1);
+}
+
+test("print fallback: the sheet is removed when matchMedia('print') turns false even if afterprint never fires, and only once", async () => {
+  const w = await world(printWorld());
+  await printOnce(w);
+  assert.equal(w.mediaLists.length, 1);
+  assert.equal(w.mediaLists[0].media, "print");
+  for (const handler of w.mediaLists[0].handlers) handler({ matches: true });
+  assert.equal(liveSheets(w), 1, "still printing while the print media matches");
+  for (const handler of [...w.mediaLists[0].handlers]) handler({ matches: false });
+  assert.equal(liveSheets(w), 0);
+  assert.equal(listenerCount(w), w.baseline, "every fallback listener is removed after the sheet is gone");
+  await w.windowEvent("afterprint"); // มาทีหลังก็ไม่ error ไม่ลบซ้ำ
+  assert.equal(liveSheets(w), 0);
+});
+
+test("print fallback: the next pointer/keyboard/return-to-tab after printing removes the sheet, and does not remove a newer sheet twice", async () => {
+  for (const [name, event] of [["pointerdown", {}], ["keydown", {}], ["visibilitychange", {}]]) {
+    const w = await world(printWorld());
+    await printOnce(w);
+    assert.equal(listenerCount(w), w.baseline + 1 + 2 + 1 + 1, name);
+    await w.documentEvent(name, event);
+    assert.equal(liveSheets(w), 0, name);
+    assert.equal(listenerCount(w), w.baseline, name);
+    await w.documentEvent(name, event);
+    assert.equal(liveSheets(w), 0, name);
+  }
+  const hidden = await world(printWorld());
+  await printOnce(hidden);
+  hidden.context.document.visibilityState = "hidden";
+  await hidden.documentEvent("visibilitychange");
+  assert.equal(liveSheets(hidden), 1, "going to the background does not remove it");
+});
+
+test("print fallback: a new print replaces the old sheet and the old listeners; window.print throwing still cleans up", async () => {
+  const w = await world(printWorld());
+  await printOnce(w);
+  await w.click(w.button("itas-print"));
+  assert.equal(liveSheets(w), 1);
+  assert.equal(listenerCount(w), w.baseline + 1 + 2 + 1 + 1, "one set of print listeners (afterprint, pointerdown+keydown, visibilitychange, media), not two");
+  assert.equal(w.mediaLists.filter((mql) => mql.handlers.length).length, 1);
+  await w.windowEvent("afterprint");
+  assert.equal(liveSheets(w), 0);
+  assert.equal(listenerCount(w), w.baseline);
+  const broken = await world(printWorld());
+  await broken.render();
+  broken.context.print = () => { throw new Error("print blocked"); };
+  await broken.click(broken.button("itas-print")).catch(() => {}); // ข้อผิดพลาดจาก window.print ไม่ทำให้ใบพิมพ์/listener ค้าง
+  assert.equal(liveSheets(broken), 0);
+  assert.equal(broken.registered.window.afterprint?.length ?? 0, 0);
 });
 
 test("print and export with nothing to list only say so", async () => {

@@ -217,6 +217,16 @@ test("a blocked request shows only the reason from the database", () => {
   assert.doesNotMatch(html, /<img /);
   assert.doesNotMatch(html, /data-pc-act=/);
   assert.match(pages.partChangesCard({ ctx: ctx({ can_apply: false, blocked_reason: null }) }), /ยังบันทึกการเปลี่ยนชิ้นส่วนไม่ได้/);
+  const closed = (status) => ctx({ request: { id: "r1", doc_no: "IT01-26/050", status }, can_apply: false, blocked_reason: "ใบนี้ยังไม่มีรหัสเครื่อง" });
+  assert.match(pages.partChangesCard({ ctx: closed("it_closed") }), /ใบนี้ยังไม่มีรหัสเครื่อง/, "a sent-off request that cannot apply still shows the reason");
+});
+
+test("a card that cannot apply on a request that is not in progress or sent off is hidden completely", () => {
+  for (const status of ["pending_dept", "it_approved", "received", "cancelled", "rejected", "need_info", ""]) {
+    const value = ctx({ request: { id: "r1", doc_no: "IT01-26/050", status }, can_apply: false, blocked_reason: "ใบนี้ยังไม่ถึงขั้นทำงาน" });
+    assert.equal(pages.partChangesCard({ ctx: value }), "", `status ${status || "(empty)"}`);
+  }
+  assert.notEqual(pages.partChangesCard({ ctx: ctx({ request: { id: "r1", doc_no: "x", status: "received" } }) }), "", "an applicable card is never hidden by this rule");
 });
 
 test("chosen rows appear in a summary with remove buttons, mark their parts as pending, and the failing row is highlighted", () => {
