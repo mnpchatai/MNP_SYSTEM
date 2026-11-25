@@ -1073,6 +1073,50 @@ test("the folded 'more details' opens by itself: when editing a row that has val
   assert.ok(!w.calls.rpc.some((call) => call.name === "app_itas_save_asset"));
 });
 
+test("'copy as a new device' opens an add form for the same type with the non-secret fields filled, unique ones blank, a notice, a fresh id, and no secrets", async () => {
+  const CIPHER = "Y2lwaGVydGV4dC10ZXN0LW9ubHktMDAwMDAwMDA=";
+  const source = { ...ASSET, secrets: { ip: { v: 1, n: "AAAAAAAAAAAAAAAA", c: CIPHER } } };
+  const w = await world({ ...MULTI, rpcHandlers: { ...MULTI.rpcHandlers, app_itas_get_asset: () => source } });
+  await w.render();
+  await w.click({ closest: () => ({ dataset: { itasRow: ASSET_ID }, id: "" }), dataset: { itasRow: ASSET_ID }, id: "" });
+  assert.match(w.hosts["itas-form-area"], /id="itas-copy-asset">คัดลอกเป็นเครื่องใหม่/);
+  await w.click(w.button("itas-copy-asset"));
+  const form = w.hosts["itas-form-area"];
+  assert.match(form, /<h2[^>]*>เพิ่มอุปกรณ์<\/h2>/);
+  assert.match(form, /name="type_code"/);
+  assert.match(form, /<option value="COMPUTER" selected>/);
+  assert.match(form, /name="reg_no"[^>]*value=""/);
+  assert.match(form, /name="device_code"[^>]*value=""/);
+  assert.match(form, /name="serial"[^>]*value=""/);
+  assert.match(form, /name="name"[^>]*value="เครื่องบัญชี"/);
+  assert.match(form, /name="model"[^>]*value="Dell"/);
+  assert.match(form, /name="attrs.cpu"[^>]*value="i5"/);
+  assert.match(form, /id="itas-form-notice"[^>]*>คัดลอกจาก COM-001: เลขทะเบียน, รหัสอุปกรณ์, Serial เว้นว่างไว้ให้กรอกใหม่/);
+  assert.match(form, /<details class="itas-more" id="itas-more" open>/, "มีค่าในช่องที่พับ = เปิดให้เห็น");
+  assert.doesNotMatch(form, /itas-copy-asset/, "ฟอร์มเพิ่มไม่มีปุ่มคัดลอก");
+  assert.doesNotMatch(form, /data-has-value|data-secret-input/, "ไม่มีค่าลับตามมา");
+  assert.ok(!form.includes(CIPHER));
+  assert.equal(w.calls.confirms.length, 0, "ฟอร์มยังไม่แก้ = ไม่ถามก่อนทิ้ง");
+  // บันทึกเป็นอุปกรณ์ใหม่: ไม่ใช้ id ของต้นฉบับ
+  w.forms.current = assetForm({ values: { reg_no: "COM-002", name: "เครื่องบัญชี", "attrs.cpu": "i5" } });
+  await w.submit(w.forms.current);
+  const save = w.calls.rpc.find((call) => call.name === "app_itas_save_asset");
+  assert.equal(save.args.p_id, ID_NEW);
+  assert.notEqual(save.args.p_id, ASSET_ID);
+  assert.equal(save.args.p_type_code, "COMPUTER");
+  assert.deepEqual(save.args.p_secrets, {});
+});
+
+test("copy asks before throwing away a half-edited form, and does nothing if declined", async () => {
+  const w = await world({ ...MULTI, confirm: false });
+  await w.render();
+  await w.click({ closest: () => ({ dataset: { itasRow: ASSET_ID }, id: "" }), dataset: { itasRow: ASSET_ID }, id: "" });
+  w.forms.current = assetForm({ values: { reg_no: "COM-001", name: "แก้ค้างไว้" } });
+  await w.click(w.button("itas-copy-asset"));
+  assert.equal(w.calls.confirms.at(-1), "ยังไม่ได้บันทึกสิ่งที่กรอก");
+  assert.doesNotMatch(w.hosts["itas-form-area"], /<h2[^>]*>เพิ่มอุปกรณ์<\/h2>/, "ยังเป็นฟอร์มแก้ไข");
+});
+
 test("editing a row from the 'all' view uses the row's own type; changing a chip does not close or ask about an open form", async () => {
   const w = await world(MULTI);
   await w.render();

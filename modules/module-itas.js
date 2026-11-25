@@ -384,6 +384,7 @@
     "itas-vault-cancel": () => { vault.cancelPending(); wipeInputs(byId("itas-vault-panel")); closeVaultPanel(); refreshVaultBar(); },
     "itas-add": () => openForm("add"),
     "itas-form-cancel": () => closeForm(),
+    "itas-copy-asset": () => copyAsset(),
     "itas-history-load": () => loadHistory(),
     "itas-purge": (button) => purge(button),
     "itas-reload-asset": () => reloadAfterConflict(),
@@ -608,12 +609,23 @@
     const carried = readFormValues(formEl(), state0.type);
     mountForm("add", next, null, model.emptyFormValues(next), { carry: carried, draftId: state0.draftId });
   }
+  // คัดลอกเป็นเครื่องใหม่: เปิดฟอร์มเพิ่มชนิดเดียวกัน เติมช่องไม่ลับจากรายการที่บันทึกไว้ (ไม่ใช่ที่แก้ค้างอยู่) · เลขทะเบียน/รหัส/Serial เว้นว่าง · ช่องลับไม่คัดลอก
+  async function copyAsset() {
+    const state0 = ui?.form;
+    if (!state0 || state0.mode !== "edit" || !state0.original || ui.busy) return;
+    if (!(await confirmDiscard())) return; // ถ้าแก้ค้างอยู่ การคัดลอกใช้ค่าที่บันทึกไว้ ไม่ใช่ที่พิมพ์ค้าง จึงถามก่อนทิ้ง
+    const { original, type } = state0;
+    const { values, skipped } = model.copyValuesFromAsset(original, type);
+    const source = original.reg_no || original.device_code || original.name || "อุปกรณ์เดิม";
+    const blanked = skipped.length ? `${skipped.join(", ")} เว้นว่างไว้ให้กรอกใหม่ (ต้องไม่ซ้ำกับเครื่องอื่น)` : "ตรวจเลขทะเบียน/รหัส/Serial ของเครื่องใหม่ให้ครบ (ต้องไม่ซ้ำกับเครื่องอื่น)";
+    mountForm("add", type, null, values, { notice: `คัดลอกจาก ${source}: ${blanked} · ช่องลับ (รหัสผ่าน/License/IP) ไม่ถูกคัดลอก`, openMore: model.extraFieldsHaveValues(type, values) });
+  }
   // วางค่าที่ยกมาลงช่องของฟอร์มที่เพิ่งวาด (หลังเก็บค่าตั้งต้นไว้เทียบแล้ว ค่าเหล่านี้จึงนับเป็น "พิมพ์ค้าง")
   function applyValues(form, type, values) {
     for (const [key, value] of Object.entries(values.core ?? {})) if (form.elements?.[key]) form.elements[key].value = value;
     for (const [key, value] of Object.entries(values.attrs ?? {})) if (form.elements?.[`attrs.${key}`]) form.elements[`attrs.${key}`].value = value;
   }
-  function mountForm(mode, type, original, values, { carry = null, draftId: keepDraftId = null, openMore = null } = {}) {
+  function mountForm(mode, type, original, values, { carry = null, draftId: keepDraftId = null, openMore = null, notice = "" } = {}) {
     const host = byId("itas-form-area");
     if (!host) return;
     clearReveals();
@@ -630,7 +642,7 @@
     ui.form = { mode, type, original, draftId, initial: "", submitting: false };
     // "รายละเอียดเพิ่มเติม" เปิดให้เองเมื่อมีค่าอยู่ในช่องที่พับไว้ (แก้ไขอุปกรณ์ที่กรอกไว้แล้ว · ค่าที่ยกมาตอนเปลี่ยนชนิด) · เพิ่มใหม่เริ่มแบบพับ
     const extrasFilled = model.extraFieldsHaveValues(type, carry ? model.carryOver(type, carry) : mode === "edit" ? values : null);
-    host.innerHTML = pages.assetForm({ mode, type, values, asset: original, vaultStatus: vault.status(), types: mode === "add" ? ui.types : null, openMore: openMore ?? extrasFilled });
+    host.innerHTML = pages.assetForm({ mode, type, values, asset: original, vaultStatus: vault.status(), types: mode === "add" ? ui.types : null, openMore: openMore ?? extrasFilled, notice });
     hardenSecretInputs(host);
     const form = formEl();
     ui.form.initial = JSON.stringify(readFormValues(form, type));

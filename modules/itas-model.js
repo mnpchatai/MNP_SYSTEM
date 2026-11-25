@@ -166,6 +166,30 @@
   // มีข้อผิดพลาดตรวจค่าในช่องที่พับอยู่หรือไม่ (ต้องเปิดให้เห็นก่อนแสดงกรอบแดง)
   const errorsInExtraFields = (type, errors) => (Array.isArray(errors) ? errors : []).some((error) => !isPrimaryField(type, error.field));
 
+  /* ---------- คัดลอกเป็นเครื่องใหม่ ---------- */
+  // ช่องที่ต้องไม่ซ้ำกันระหว่างอุปกรณ์ (เว้นว่างไว้ให้กรอกใหม่): เลขทะเบียน รหัสอุปกรณ์ Serial เลขทะเบียนทรัพย์สินบัญชี + ช่องเฉพาะชนิดที่เป็นเลขเฉพาะตัว
+  // ช่องลับไม่เคยอยู่ใน values (ฟอร์มกรอกช่องลับแยกผ่านตู้เซฟ) จึงไม่ถูกคัดลอกแน่นอน
+  const COPY_SKIP_CORE = Object.freeze(["reg_no", "device_code", "serial", "account_no"]);
+  const COPY_SKIP_ATTR_KEYS = Object.freeze(["doc_code"]);
+  const isUniqueAttrKey = (key) => COPY_SKIP_ATTR_KEYS.includes(key) || /serial|reg_no/i.test(key);
+  // คืน { values, skipped } · values = ค่าฟอร์มของอุปกรณ์ใหม่ (สถานะ ใช้งาน) · skipped = ป้ายชื่อช่องที่เว้นว่างไว้ (เฉพาะช่องที่ต้นฉบับมีค่า) ไว้บอกผู้ใช้
+  function copyValuesFromAsset(asset, type) {
+    const values = formValuesFromAsset(asset, type);
+    const skipped = [];
+    for (const field of coreFieldsOf(type)) {
+      if (!COPY_SKIP_CORE.includes(field.key)) continue;
+      if (textOf(values.core[field.key]) !== "") skipped.push(field.label);
+      values.core[field.key] = "";
+    }
+    for (const field of plainFields(type)) {
+      if (!isUniqueAttrKey(field.key)) continue;
+      if (textOf(values.attrs[field.key]) !== "") skipped.push(field.label);
+      values.attrs[field.key] = "";
+    }
+    values.core.status = "in_use";
+    return { values, skipped };
+  }
+
   // เปลี่ยนชนิดในฟอร์มเพิ่ม: ยกค่าที่พิมพ์ไว้ (ไม่ว่าง) ไปให้ช่องที่มีชื่อเดียวกันในชนิดใหม่ · คืน { core, attrs } เฉพาะช่องที่จะตั้ง (ไม่ยกช่องลับ ช่องลับไม่เคยอยู่ใน values)
   function carryOver(type, carried) {
     const core = {};
@@ -486,7 +510,7 @@
     STATUSES, CORE_FIELDS, GROUP_LABELS, GROUP_ORDER, IDENTITY_KEYS,
     assetsUrl, readView, isUuid, statusLabel, statusBadgeClass,
     formatDate, formatDateTime, parseDateInput, dateInputText, isRealDate,
-    typeFields, plainFields, secretFields, coreFieldsOf, normalizeCode, emptyFormValues, formValuesFromAsset, carryOver, userFieldName, primaryFieldNames, isPrimaryField, PRIMARY_LABEL_OVERRIDES, extraFieldsHaveValues, errorsInExtraFields, parseField, validateAsset, buildSavePayload, payloadIsEmpty,
+    typeFields, plainFields, secretFields, coreFieldsOf, normalizeCode, emptyFormValues, formValuesFromAsset, carryOver, copyValuesFromAsset, userFieldName, primaryFieldNames, isPrimaryField, PRIMARY_LABEL_OVERRIDES, extraFieldsHaveValues, errorsInExtraFields, parseField, validateAsset, buildSavePayload, payloadIsEmpty,
     tableColumns, allColumns, typeChipGroups, TYPE_ALL_LABEL, USER_ATTR_KEY, userValueOf, cellValue, cellText, formatCell, filterAssets, sortAssets, countText,
     labelOfKey, logChanges, historyView, passwordStrength,
     describeError, isAlreadyExists, purgeSummary,

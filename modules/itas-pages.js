@@ -224,7 +224,7 @@
   // ช่องหลัก 4 อย่างที่เจ้าของกำหนด (รหัส ชื่อ ยี่ห้อ/รุ่น ผู้ใช้ + สถานะ) เห็นเสมอ · ช่องที่เหลือพับไว้ใต้ "รายละเอียดเพิ่มเติม" (openMore = เปิดอยู่)
   // ช่องลับอยู่นอกส่วนที่พับ เหมือนเดิม
   const attrFieldOf = (field) => ({ ...field, max: field.type === "text" ? (field.max ?? 200) : field.max });
-  function assetForm({ mode = "add", type, values, asset = null, vaultStatus = "locked", types = null, openMore = false }) {
+  function assetForm({ mode = "add", type, values, asset = null, vaultStatus = "locked", types = null, openMore = false, notice = "" }) {
     const edit = mode === "edit";
     const coreList = model.coreFieldsOf(type);
     const attrList = model.plainFields(type);
@@ -254,11 +254,12 @@
         <h2 id="itas-form-title">${title}</h2>
         <div id="itas-form-message" role="status"></div>
         <form id="itas-form" novalidate autocomplete="off">
+          ${notice ? `<p class="rf-callout itas-form-notice" id="itas-form-notice" role="status">${esc(notice)}</p>` : ""}
           ${typeBlock}
           ${primary}
           ${more}
           <div id="itas-secrets-host">${secretsSection({ fields: model.secretFields(type), asset, vaultStatus })}</div>
-          <div class="form-actions"><button type="button" class="btn secondary" id="itas-form-cancel">${edit ? "ปิด" : "ยกเลิก"}</button><button type="submit" class="btn is-primary">${edit ? "บันทึกการแก้ไข" : "เพิ่มอุปกรณ์"}</button></div>
+          <div class="form-actions"><button type="button" class="btn secondary" id="itas-form-cancel">${edit ? "ปิด" : "ยกเลิก"}</button>${edit ? '<button type="button" class="btn secondary" id="itas-copy-asset">คัดลอกเป็นเครื่องใหม่</button>' : ""}<button type="submit" class="btn is-primary">${edit ? "บันทึกการแก้ไข" : "เพิ่มอุปกรณ์"}</button></div>
         </form>
         ${edit ? `<div class="itas-history" id="itas-history"><button type="button" class="btn secondary" id="itas-history-load">ดูประวัติการแก้ไขและการย้าย</button></div>` : ""}
       </section>`;

@@ -315,6 +315,29 @@ test("main form fields: code(s), name, brand/model, user, status; the user is us
   assert.equal(model.errorsInExtraFields(COMPUTER, [{ field: "attrs.cpu" }]), true);
 });
 
+test("copy as a new device: every non-secret field is copied except the ones that must be unique (reg no, device code, serial, accounting no, serial-like attrs); status resets; secrets are never in the values", () => {
+  const withSerial = { ...COMPUTER, fields: [...COMPUTER.fields, { key: "battery_serial", label: "Battery Serial", type: "text", secret: false, order: 8 }, { key: "doc_code", label: "รหัสเอกสาร", type: "text", secret: false, order: 9 }] };
+  const source = { ...ASSET, account_no: "ACC-9", status: "retired", attrs: { ...ASSET.attrs, battery_serial: "B1", doc_code: "D1" }, secrets: { ip: ENVELOPE, license_os: ENVELOPE } };
+  const { values, skipped } = model.copyValuesFromAsset(source, withSerial);
+  assert.equal(values.core.reg_no, "");
+  assert.equal(values.core.device_code, "");
+  assert.equal(values.core.serial, "");
+  assert.equal(values.core.account_no, "");
+  assert.equal(values.attrs.battery_serial, "");
+  assert.equal(values.attrs.doc_code, "");
+  assert.deepEqual(skipped, ["เลขทะเบียน", "รหัสอุปกรณ์", "Serial", "เลขทะเบียนทรัพย์สินทางบัญชี", "Battery Serial", "รหัสเอกสาร"]);
+  assert.equal(values.core.name, "เครื่องบัญชี");
+  assert.equal(values.core.model, "Dell 3050");
+  assert.equal(values.core.place, "ออฟฟิศ");
+  assert.equal(values.core.install_date, "05/03/2568");
+  assert.equal(values.core.price, "25000");
+  assert.equal(values.attrs.cpu, "i5");
+  assert.equal(values.core.status, "in_use", "เครื่องใหม่เริ่มที่ ใช้งาน แม้ต้นฉบับยกเลิกแล้ว");
+  assert.ok(!JSON.stringify(values).includes(ENVELOPE.c) && !("ip" in values.attrs) && !("license_os" in values.attrs), "ไม่คัดลอกช่องลับ");
+  assert.equal(source.reg_no, "COM-001", "ไม่แตะต้นฉบับ");
+  assert.deepEqual(model.copyValuesFromAsset({ ...ASSET, serial: null, reg_no: null, device_code: null }, COMPUTER).skipped, [], "ช่องที่ต้นฉบับไม่มีค่าไม่ต้องบอกว่าเว้นว่าง");
+});
+
 test("changing the type inside the add form carries over only typed values whose field exists in the new type", () => {
   const carried = { core: { reg_no: "X1", device_code: "COM9", name: "ชื่อ", model: "", status: "spare" }, attrs: { cpu: "i7", ram_gb: "", kind: "PC" } };
   const next = model.carryOver(MOUSE, carried);
