@@ -79,6 +79,12 @@
   const requireSalesOrder = (user, order) => { if (salesOnly(user) && orderSource(order) !== "SA") fail(`ฝ่ายขายแก้ได้เฉพาะใบที่ฝ่ายขายเปิด (${order.id} เป็นใบของฝ่ายวางแผน)`); };
   // ชุดสีของบรรทัดที่ฝ่ายขายเพิ่ม = ชุดสีในรหัสสินค้า (ตรงกับ private.bom_sa_items_ok)
   const codeColorSet = (code) => String(rules().parseFgCode(code).colorSet ?? "").slice(0, 10);
+  // ฝ่ายขายยกเลิกกลางทาง (รอบ 2 · bom_orders.sales_cancel_*): salesCancelAt มีค่า = ยกเลิกแล้ว · salesCancelChoice ไม่มี = รอฝ่ายวางแผนเลือก
+  // continue = ผลิตต่อจนจบส่ง WH (ของเป็นสต็อกสินค้าสำเร็จรูป ไม่ส่งลูกค้า) · stop = หยุด (ใบ cancelled) · ระหว่างรอตัดสินใบไม่รับงานใหม่ (จ่ายยางเส้นยาว เบิกของซื้อ ขอเบิก)
+  const salesCancelled = (order) => order?.salesCancelAt !== undefined && order?.salesCancelAt !== null;
+  const salesCancelPending = (order) => salesCancelled(order) && !order.salesCancelChoice && ["released", "in_progress"].includes(order?.status);
+  const SALES_PENDING_TEXT = "ฝ่ายขายยกเลิกใบนี้แล้ว รอฝ่ายวางแผนตัดสินของที่ทำค้าง ใบไม่รับงานใหม่";
+  const requireTakingWork = (order) => { if (salesCancelPending(order)) fail(`${order.id}: ${SALES_PENDING_TEXT}`); };
 
   // แปลงรหัสครั้งเดียวก่อนไล่หา (เดิมแปลงซ้ำทุกชิ้นที่ไล่ผ่าน) · งานที่ค้นเป็นพันครั้ง เช่น importFlat ใช้ดัชนี Map แทน
   const itemOf = (d, code) => {
@@ -627,9 +633,12 @@
     }
     const changed = ["customer", "country", "orderType", "whDue", "note", "due", "dueDefaults"].filter((key) => JSON.stringify(next[key]) !== JSON.stringify(order[key] ?? (key === "note" ? "" : key === "due" ? {} : key === "dueDefaults" ? [] : undefined)));
     if (!changed.length) fail("หัวใบเท่าเดิม");
-    editableItems(d, order, ctx); // ใบที่ปล่อยผลิตแล้ว (ยังไม่มีงานเริ่ม) กลับเป็นร่าง · ใบที่ปิด / ยกเลิกแล้วแก้ไม่ได้
+    const before = copyOrder(order);
+    // ใบที่ปล่อยผลิตแล้ว (ยังไม่มีงานเริ่ม) กลับเป็นร่าง · ฝ่ายขายแก้ใบที่เริ่มงานแล้วได้ตรง (แจ้งฝ่ายวางแผน) · ใบที่ปิด / ยกเลิกแล้วแก้ไม่ได้
+    const mode = editMode(d, order, ctx, user);
     if (newCustomer) d.customers.push(newCustomer);
     for (const key of changed) order[key] = next[key];
+    if (mode === "inPlace") salesChangeNotice(d, ctx, user, before, order);
     audit(d, ctx, "แก้หัวใบสั่งผลิต", `${order.id} ${changed.join(", ")}${newCustomer ? " · เพิ่มลูกค้าใหม่" : ""}`);
     return order.id;
   }
@@ -692,6 +701,63 @@
     delete order.releasedBy;
     order.explodedAt = null; // ยอดคงคลังที่นับไว้คงอยู่ (ของในคลังไม่เปลี่ยนเพราะแก้ใบ) และถูกหักอีกครั้งตอนปล่อยผลิตใหม่
     audit(d, ctx, "เปิดใบที่ปล่อยผลิตแล้วกลับมาแก้", `${order.id} REV.${order.revision} ลบงานรายแผนก ${removed} รายการ${returned.length ? ` · คืนสต็อกสินค้าสำเร็จรูป ${returned.length} รายการ` : ""}`);
+  }
+  // ใบที่ "เริ่มงานแล้ว" สำหรับฝ่ายขาย (ตรงกับ private.bom_order_locked ของ 20261225010000): เปิดกลับเป็นร่าง / ยกเลิกทันทีไม่ได้ตามกติกาเดิม
+  // = มีงานเริ่ม (startedJobs รวม WO ที่เลย released) · SR จ่ายยางเส้นยาวให้ใบสุทธิ > 0 · ส่งมอบแล้ว หรือให้สต็อกใบอื่นแล้ว (fgStockLock.blocked)
+  const orderLocked = (d, order, rfOrders = null) => startedJobs(d, order, rfOrders).length > 0 || rules().rodIssued(d, order.id) > 1e-9 || rules().fgStockLock(d, order).blocked;
+  // ฝ่ายขายแก้ใบ (รอบ 2): ร่าง = แก้ได้เลย ("draft") · ปล่อยแล้วยังไม่เริ่มงาน = กลับเป็นร่าง ("reopened" · editableItems) · เริ่มงานแล้ว = แก้ตรง ("inPlace":
+  // สถานะ งานรายแผนก ผลระเบิด ยอดที่ใช้จากสต็อกคงเดิม แล้วแจ้งฝ่ายวางแผน) · กลุ่มวางแผนแก้ใบที่เริ่มงานแล้วไม่ได้ตามเดิม · ใบที่ฝ่ายขายยกเลิกไว้แก้ไม่ได้
+  function editMode(d, order, ctx, user) {
+    if (order.status === "draft") return "draft";
+    if (salesCancelled(order) && ["released", "in_progress"].includes(order.status)) fail("ฝ่ายขายยกเลิกใบนี้แล้ว แก้ไม่ได้");
+    if (salesOnly(user) && ["released", "in_progress"].includes(order.status) && orderLocked(d, order, ctx?.rfOrders)) return "inPlace";
+    editableItems(d, order, ctx);
+    return "reopened";
+  }
+  // สรุปการแก้ใบของฝ่ายขาย (เหตุผลของการแจ้ง "ฝ่ายขายแก้ใบ") ตรงกับ private.bom_sa_change_summary ทุกตัวอักษร: หัวใบที่เปลี่ยน แล้วสินค้าตามลำดับใหม่
+  // (เพิ่ม / จำนวนเดิม → ใหม่ / แก้หมายเหตุ) แล้วสินค้าที่ลบตามลำดับเดิม · คั่น " · " · วันที่ไทย DD/MM/YYYY · ยาวเกิน 300 ตัด 299 + "…" · ไม่มีอะไร = "แก้รายการสินค้า"
+  const SUMMARY_MAX = 300;
+  const bangkokDate = (ms) => { const date = new Date(Number(ms) + 7 * 3600000); const pad = (n) => String(n).padStart(2, "0"); return `${pad(date.getUTCDate())}/${pad(date.getUTCMonth() + 1)}/${date.getUTCFullYear()}`; };
+  const qtyText = (qty) => String(Number(qty));
+  function salesChangeSummary(before, after) {
+    const parts = [];
+    if (before.customer !== after.customer) parts.push(`ลูกค้า ${before.customer} → ${after.customer}`);
+    if (before.country !== after.country) parts.push(`ประเทศ ${before.country} → ${after.country}`);
+    if (before.orderType !== after.orderType) parts.push(`ประเภท ${before.orderType} → ${after.orderType}`);
+    if (Number(before.whDue) !== Number(after.whDue)) parts.push(`กำหนดส่งคลัง ${bangkokDate(before.whDue)} → ${bangkokDate(after.whDue)}`);
+    if ((before.note ?? "") !== (after.note ?? "")) parts.push("แก้หมายเหตุ");
+    const oldItems = before.items ?? [];
+    const newItems = after.items ?? [];
+    for (const item of newItems) {
+      const old = oldItems.find((row) => row.fgCode === item.fgCode);
+      if (!old) parts.push(`เพิ่ม ${item.fgCode} × ${qtyText(item.qty)}`);
+      else if (Number(old.qty) !== Number(item.qty)) parts.push(`${item.fgCode} ${qtyText(old.qty)} → ${qtyText(item.qty)}`);
+      else if ((old.note ?? "") !== (item.note ?? "")) parts.push(`${item.fgCode} แก้หมายเหตุ`);
+    }
+    for (const old of oldItems) if (!newItems.some((item) => item.fgCode === old.fgCode)) parts.push(`ลบ ${old.fgCode} × ${qtyText(old.qty)}`);
+    const chars = [...parts.join(" · ")];
+    if (!chars.length) return "แก้รายการสินค้า";
+    return chars.length > SUMMARY_MAX ? `${chars.slice(0, SUMMARY_MAX - 1).join("")}…` : chars.join("");
+  }
+  const copyOrder = (order) => JSON.parse(JSON.stringify(order));
+  // การแจ้งฝ่ายวางแผน (ชุด orderRequests): โหมดในเครื่องเขียนเอง · โหมดฐานข้อมูลตัวเขียนใบของเซิร์ฟเวอร์เขียน (มากับคำตอบของการบันทึก)
+  function pushNotice(d, ctx, user, order, kind, reason) {
+    if (ctx.remote) return;
+    d.orderRequests ??= [];
+    d.orderRequests.push({ id: newUuid(), orderId: order.id, kind, reason, status: "open", decision: null, requestedBy: user.name, requestedById: user.id, requestedAt: ctx.now, decidedBy: null, decidedAt: null });
+  }
+  // ฝ่ายขายแก้ใบที่เริ่มงานแล้ว: จำนวนสั่ง (ลบ = 0) ต่ำกว่าที่ส่งมอบลูกค้าแล้วไม่ได้ (ตรงกับ BOM_FG_EXCEEDS ของ bom_save_orders) · ต่ำกว่าที่ WH รับเข้าแล้วได้ (ส่วนเกินเป็นสต็อก)
+  // แล้วแจ้ง "ฝ่ายขายแก้ใบ" พร้อมค่าเดิม → ค่าใหม่ ให้ฝ่ายวางแผนรับทราบและปรับงานเอง
+  function salesChangeNotice(d, ctx, user, before, order) {
+    const delivered = new Map(rules().fgPosition(d, before).products.map((product) => [product.fgCode, product.delivered]));
+    for (const [code, qty] of delivered) {
+      if (!(qty > 1e-9)) continue;
+      const left = (order.items ?? []).filter((item) => item.fgCode === code).reduce((sum, item) => sum + (Number(item.qty) || 0), 0);
+      if (left + 1e-9 < qty) fail(`ส่งมอบ ${code} ให้ลูกค้าแล้ว ${rules().fmtQty(qty)} ลดจำนวนสั่งต่ำกว่านี้หรือลบสินค้านี้ไม่ได้`);
+    }
+    const summary = salesChangeSummary(before, order);
+    pushNotice(d, ctx, user, order, "change", summary);
+    audit(d, ctx, "ฝ่ายขายแก้ใบ", `${order.id} — ${summary}`);
   }
   // ใบที่ส่งมอบแล้วยกเลิกไม่ได้: ทางที่ทำได้จริงคือฝ่ายวางแผนปิดงานที่เหลือพร้อมเหตุผล แล้วคลังสินค้า (WH) ปิดใบรับไม่ครบ
   const DELIVERED_TEXT = "ใบนี้ส่งมอบสินค้าให้ลูกค้าแล้ว ยกเลิกหรือเปิดกลับมาแก้ไม่ได้ ให้ฝ่ายวางแผนปิดงานที่เหลือพร้อมเหตุผล แล้วให้คลังสินค้า (WH) กด “ปิดใบ (รับไม่ครบ)” แทน";
@@ -919,7 +985,8 @@
     requireSalesOrder(user, order);
     const sales = salesOnly(user);
     if (sales && !p.fgCode) fail("ฝ่ายขายเลือกได้เฉพาะสินค้าที่มีรหัสในทะเบียนแล้ว (รุ่นสินค้าใหม่ให้ฝ่ายวางแผนสร้าง)");
-    editableItems(d, order, ctx);
+    const before = copyOrder(order);
+    const mode = editMode(d, order, ctx, user);
     const R = rules();
     const byParts = !p.fgCode && p.base;
     const pkg = String(p.pkg ?? "").trim().toUpperCase();
@@ -941,7 +1008,9 @@
     if (fg.active === false && !existing) fail(`${fg.code} เลิกใช้แล้ว เพิ่มในใบสั่งผลิตใหม่ไม่ได้`);
     if (existing) existing.qty += qty;
     else order.items.push({ fgCode: fg.code, qty, colorSet: sales ? codeColorSet(fg.code) : (colorSet || R.parseFgCode(fg.code).colorSet).slice(0, 10), note: String(p.note ?? "").trim().slice(0, 120) });
-    order.explosion = null;
+    // แก้ตรงใบที่เริ่มงานแล้ว: ผลระเบิดคงเดิม (งานไม่เปลี่ยน) แล้วแจ้งฝ่ายวางแผน · อื่น ๆ ต้องคำนวณใหม่
+    if (mode === "inPlace") salesChangeNotice(d, ctx, user, before, order);
+    else order.explosion = null;
     if (!options.quiet) audit(d, ctx, "เพิ่มสินค้าในใบสั่งผลิต", `${order.id} ${fg.code} × ${qty}`);
     return order.id;
   }
@@ -952,11 +1021,18 @@
     requireSalesOrder(user, order);
     const code = rules().canonicalCode(fgCode);
     if (!order.items.some((item) => item.fgCode === code)) fail("ไม่พบสินค้านี้ในใบ");
-    editableItems(d, order, ctx);
+    const before = copyOrder(order);
+    const mode = editMode(d, order, ctx, user);
+    if (mode === "inPlace" && order.items.length < 2) fail("ใบต้องมีสินค้าอย่างน้อยหนึ่งรายการ ถ้าลูกค้าไม่เอาแล้วให้ยกเลิกใบ");
     order.items = order.items.filter((item) => item.fgCode !== code);
-    // สินค้าที่ลบออกไม่ใช้สต็อกสินค้าสำเร็จรูปแล้ว: ล้างยอดที่ตั้งไว้ของรหัสนั้น
-    if (order.stockCounts && Object.hasOwn(order.stockCounts, code)) { const rest = { ...order.stockCounts }; delete rest[code]; order.stockCounts = rest; }
-    order.explosion = null;
+    if (mode === "inPlace") {
+      // แก้ตรงใบที่เริ่มงานแล้ว: ยอดที่ใช้จากสต็อกและผลระเบิดคงเดิม (หยิบไปแล้วตอนปล่อยผลิต) · แจ้งฝ่ายวางแผน
+      salesChangeNotice(d, ctx, user, before, order);
+    } else {
+      // สินค้าที่ลบออกไม่ใช้สต็อกสินค้าสำเร็จรูปแล้ว: ล้างยอดที่ตั้งไว้ของรหัสนั้น
+      if (order.stockCounts && Object.hasOwn(order.stockCounts, code)) { const rest = { ...order.stockCounts }; delete rest[code]; order.stockCounts = rest; }
+      order.explosion = null;
+    }
     audit(d, ctx, "ลบสินค้าออกจากใบสั่งผลิต", `${order.id} ${code}`);
     return order.id;
   }
@@ -970,14 +1046,18 @@
     const line = order.items.find((item) => item.fgCode === code) ?? fail("ไม่พบสินค้านี้ในใบ");
     const qty = num(p.qty, "จำนวนสั่ง");
     const note = p.note === undefined ? line.note ?? "" : String(p.note).trim().slice(0, 120);
-    editableItems(d, order, ctx); // ใบที่ล็อกบอกเหตุผลก่อน · ถ้าค่าเท่าเดิม fail ด้านล่างและ store ทิ้งร่างทั้งชุด
+    const copy = copyOrder(order);
+    const mode = editMode(d, order, ctx, user); // ใบที่ล็อกบอกเหตุผลก่อน · ถ้าค่าเท่าเดิม fail ด้านล่างและ store ทิ้งร่างทั้งชุด
     if (qty === line.qty && note === (line.note ?? "")) fail("จำนวนและหมายเหตุเท่าเดิม");
     const before = line.qty;
     line.qty = qty;
     line.note = note;
-    // ยอดที่ตั้งใช้จากสต็อกสินค้าสำเร็จรูปเกินจำนวนสั่งใหม่ไม่ได้: ตัดลงให้เท่าจำนวนสั่ง (ไม่งั้นขั้น 3 บอกว่าได้ครบจากสต็อกแต่ปล่อยผลิตไม่ผ่าน)
-    if (Number(order.stockCounts?.[code]) > qty) order.stockCounts = { ...order.stockCounts, [code]: qty };
-    order.explosion = null;
+    if (mode === "inPlace") salesChangeNotice(d, ctx, user, copy, order); // แก้ตรงใบที่เริ่มงานแล้ว: ยอดที่ใช้จากสต็อกและผลระเบิดคงเดิม · แจ้งฝ่ายวางแผน
+    else {
+      // ยอดที่ตั้งใช้จากสต็อกสินค้าสำเร็จรูปเกินจำนวนสั่งใหม่ไม่ได้: ตัดลงให้เท่าจำนวนสั่ง (ไม่งั้นขั้น 3 บอกว่าได้ครบจากสต็อกแต่ปล่อยผลิตไม่ผ่าน)
+      if (Number(order.stockCounts?.[code]) > qty) order.stockCounts = { ...order.stockCounts, [code]: qty };
+      order.explosion = null;
+    }
     audit(d, ctx, "แก้จำนวนสินค้าในใบสั่งผลิต", `${order.id} ${code} ${before} → ${qty}`);
     return order.id;
   }
@@ -1153,88 +1233,88 @@
   // สินค้าที่ใบนี้รับเข้าคลังเองเป็นสต็อกสินค้าสำเร็จรูป (rules.fgFreeList นับใบที่ยกเลิก สั่ง = 0)
   const CANCEL_REASON_MIN = 3;
   const CANCEL_REASON_MAX = 200;
-  // ฝ่ายขาย (20261225010000): ยกเลิกได้เฉพาะใบร่างของฝ่ายขาย · ใบที่ปล่อยผลิตแล้วส่ง "คำขอยกเลิก" (requestOrderCancel) ให้ฝ่ายวางแผนยืนยัน
+  const cancelReasonOf = (reason) => {
+    const why = typeof reason === "string" ? reason.trim() : "";
+    if (why.length < CANCEL_REASON_MIN) fail(`กรุณาระบุเหตุผลที่ยกเลิก (อย่างน้อย ${CANCEL_REASON_MIN} ตัวอักษร)`);
+    if (why.length > CANCEL_REASON_MAX) fail(`เหตุผลยาวเกิน ${CANCEL_REASON_MAX} ตัวอักษร`);
+    return why;
+  };
+  // ฝ่ายขาย (รอบ 2 · 20261225010000): ร่าง / ปล่อยแล้วแต่ยังไม่เริ่มงาน = ยกเลิกทันที (แจ้งฝ่ายวางแผน "ฝ่ายขายยกเลิกใบ" ถ้าเคยส่งแล้ว)
+  // เริ่มงานแล้ว (orderLocked) = ยกเลิกกลางทาง: สถานะคงเดิม ใบหยุดรับงานใหม่ แจ้งฝ่ายวางแผนให้เลือกผลิตต่อจนจบส่ง WH หรือหยุด (decideOrderRequest)
   function cancelOrder(d, { orderId, reason }, ctx) {
     const user = requireOrderer(ctx, "ยกเลิกใบ");
     const order = orderById(d, orderId);
     requireSalesOrder(user, order);
     if (order.status === "completed") fail("ใบที่เสร็จแล้วยกเลิกไม่ได้");
     if (order.status === "cancelled") fail("ใบนี้ถูกยกเลิกแล้ว");
-    if (salesOnly(user) && order.status !== "draft") fail("ใบที่ปล่อยผลิตแล้ว ฝ่ายขายส่งคำขอยกเลิกให้ฝ่ายวางแผนยืนยัน");
-    return cancelNow(d, order, reason, ctx);
+    if (!salesOnly(user)) return cancelNow(d, order, reason, ctx);
+    if (salesCancelled(order)) fail("ฝ่ายขายยกเลิกใบนี้ไว้แล้ว รอฝ่ายวางแผนตัดสินของที่ทำค้าง");
+    const why = cancelReasonOf(reason);
+    if (order.status !== "draft" && orderLocked(d, order, ctx.rfOrders)) {
+      Object.assign(order, { salesCancelAt: ctx.now, salesCancelBy: user.name, salesCancelReason: why });
+      pushNotice(d, ctx, user, order, "cancel", why);
+      audit(d, ctx, "ฝ่ายขายยกเลิกใบ", `${order.id} — ${why} · มีงานเริ่มแล้ว รอฝ่ายวางแผนเลือกผลิตต่อจนจบส่ง WH หรือหยุด`);
+      return order.id;
+    }
+    const sent = isSentOrder(order);
+    cancelNow(d, order, why, ctx);
+    if (sent) pushNotice(d, ctx, user, order, "cancel", why);
+    audit(d, ctx, "ฝ่ายขายยกเลิกใบ", `${order.id} — ${why}`);
+    return order.id;
   }
   function cancelNow(d, order, reason, ctx) {
-    const why = typeof reason === "string" ? reason.trim() : "";
-    if (why.length < CANCEL_REASON_MIN) fail(`กรุณาระบุเหตุผลที่ยกเลิก (อย่างน้อย ${CANCEL_REASON_MIN} ตัวอักษร)`);
-    if (why.length > CANCEL_REASON_MAX) fail(`เหตุผลยาวเกิน ${CANCEL_REASON_MAX} ตัวอักษร`);
+    const why = cancelReasonOf(reason);
     const returned = returnFgStock(d, ctx, order); // สินค้าที่ใบนี้ได้จากสต็อกคืนกลับให้ใบต้นทาง
     order.status = "cancelled";
     order.cancelledAt = ctx.now;
     order.cancelReason = why;
+    // ใบที่ฝ่ายขายยกเลิกกลางทางแล้วถูกยกเลิก (ฝ่ายวางแผนเลือกหยุด หรือยกเลิกตรง ๆ) = ทางเลือกหยุด (ตรงกับ bom_save_orders)
+    if (salesCancelled(order) && !order.salesCancelChoice) order.salesCancelChoice = "stop";
     closeOpenRequests(d, order, ctx);
     audit(d, ctx, "ยกเลิกใบสั่งผลิต", `${order.id} — ${why}${returned.length ? ` · คืนสต็อกสินค้าสำเร็จรูป ${returned.length} รายการ` : ""}`);
     return order.id;
   }
-  // ใบถูกยกเลิก (ยกเลิกตรง / ยืนยันคำขอยกเลิก / ฝ่ายขายยกเลิกใบร่าง): คำขอของใบที่ยังเปิดอยู่ปิดเอง ขอยกเลิก = done · ขอแก้ใบ = declined หมายเหตุ "ใบถูกยกเลิกแล้ว"
-  // ตรงกับ app_bom_save_master ของ 20261225010000 (โหมดฐานข้อมูลเซิร์ฟเวอร์ปิดเองแล้วส่งแถวกลับ ค่าในเครื่องใช้แสดงจนคำตอบมาถึง) · คำขอที่กำลังยืนยัน decideOrderRequest เขียนผลทับเอง
-  const ORDER_CANCELLED_NOTE = "ใบถูกยกเลิกแล้ว";
+  // ใบถูกยกเลิก (ยกเลิกตรง / เลือกหยุด / ฝ่ายขายยกเลิกทันที): การแจ้งของใบที่ยังเปิดอยู่ปิดเอง decision ack · การแจ้งยกเลิกของใบที่เลือกหยุด = stop
+  // ตรงกับ app_bom_save_master ของ 20261225010000 (โหมดฐานข้อมูลเซิร์ฟเวอร์ปิดเองแล้วส่งแถวกลับ ค่าในเครื่องใช้แสดงจนคำตอบมาถึง) · การแจ้งยกเลิกใหม่ของคำสั่งนี้เขียนหลังจากนี้
   function closeOpenRequests(d, order, ctx) {
     for (const row of d.orderRequests ?? []) {
       if (row.orderId !== order.id || row.status !== "open") continue;
-      Object.assign(row, { status: row.kind === "cancel" ? "done" : "declined", decidedBy: ctx.user?.name ?? "", decidedAt: ctx.now, decisionNote: ORDER_CANCELLED_NOTE });
+      Object.assign(row, { status: "done", decision: row.kind === "cancel" && order.salesCancelChoice === "stop" ? "stop" : "ack", decidedBy: ctx.user?.name ?? "", decidedAt: ctx.now });
     }
   }
 
-  // ---------- คำขอของฝ่ายขาย (20261225010000_bom_sales_orders.sql): ขอยกเลิก / ขอแก้ใบหลังปล่อยผลิต · ฝ่ายวางแผนตัดสิน ----------
-  // ชุด orderRequests: { id, orderId, kind: cancel | change, reason, status: open | done | declined, requestedBy, requestedById, requestedAt, decidedBy, decidedAt, decisionNote }
-  // ขอได้ = ฝ่ายขาย · ใบของฝ่ายขายที่ปล่อยผลิตแล้ว / กำลังผลิต · คำขอที่ยังเปิดชนิดเดียวกันต่อใบได้หนึ่งรายการ · เหตุผลขอยกเลิก 3-200 (เป็นเหตุผลที่ยกเลิกใบ) ขอแก้ 3-300
-  // ตัดสิน = กลุ่มวางแผนของใบสั่งผลิต: confirm (คำขอยกเลิก: ยกเลิกใบด้วยเหตุผลของฝ่ายขาย ในคำสั่งเดียวกัน) · decline (หมายเหตุ 3-200) · done (คำขอแก้ใบ: แก้แล้ว)
-  // โหมดฐานข้อมูลคืน request = [แถวคำขอเดียว] ที่ store ส่งในส่วน orderRequests (ยืนยันยกเลิกส่งแถวยกเลิกใบไปด้วย) · ฐานข้อมูลประทับผู้ขอ / ผู้ตัดสิน / เวลาเอง
-  const ORDER_REQUEST_REASON_MAX = Object.freeze({ cancel: CANCEL_REASON_MAX, change: 300 });
-  const DECISION_NOTE_MAX = 200;
+  // ---------- การแจ้งฝ่ายวางแผนของฝ่ายขาย (20261225010000_bom_sales_orders.sql รอบ 2): ฝ่ายวางแผนรับทราบ / เลือกทางของใบที่ยกเลิกกลางทาง ----------
+  // ชุด orderRequests: { id, orderId, kind: change | cancel, reason, status: open | done, decision: ack | continue | stop | null, requestedBy, requestedById, requestedAt, decidedBy, decidedAt }
+  // change = ฝ่ายขายแก้ใบที่เริ่มงานแล้ว (reason = สรุปค่าเดิม → ค่าใหม่) · cancel = ฝ่ายขายยกเลิกใบ (reason = เหตุผล) · ตัวเขียนใบเขียนเอง (ไม่มี action ขอของฝ่ายขายแล้ว)
+  // ตัดสิน = กลุ่มวางแผนของใบสั่งผลิต: ack = รับทราบ (แจ้งแก้ใบ / ใบที่ยกเลิกทันที) · continue = ผลิตต่อจนจบส่ง WH · stop = หยุด ยกเลิกใบด้วยเหตุผลของฝ่ายขาย
+  // (สองอย่างหลังเฉพาะใบที่ยกเลิกกลางทาง) · โหมดฐานข้อมูลคืน request = [แถวเดียว] ที่ store ส่งในส่วน orderRequests (หยุด / ผลิตต่อส่งแถวใบไปด้วย)
+  const ORDER_DECISIONS = Object.freeze(["ack", "continue", "stop"]);
+  const DECISION_LABEL = Object.freeze({ ack: "ฝ่ายวางแผนรับทราบ", continue: "ฝ่ายวางแผนเลือกผลิตต่อจนจบส่ง WH", stop: "ฝ่ายวางแผนเลือกหยุดและเก็บยางเส้นยาวที่ SR" });
   const orderRequestsOf = (d, orderId) => (d.orderRequests ?? []).filter((row) => row.orderId === orderId);
-  const openOrderRequest = (d, orderId, kind) => orderRequestsOf(d, orderId).find((row) => row.kind === kind && row.status === "open") ?? null;
-  const orderRequestOf = (d, id) => (d.orderRequests ?? []).find((row) => row.id === String(id ?? "").trim()) ?? fail("ไม่พบคำขอนี้ (อาจมีผู้อื่นตัดสินไปก่อน)");
-  function requestOrder(d, { orderId, reason }, ctx, kind) {
-    const user = requireUser(ctx);
-    if (!canSell(user)) fail(kind === "cancel" ? "ขอยกเลิกใบได้โดยฝ่ายขายเท่านั้น (ฝ่ายวางแผนยกเลิกใบได้เอง)" : "ขอแก้ใบได้โดยฝ่ายขายเท่านั้น (ฝ่ายวางแผนแก้ใบได้เอง)");
-    const why = typeof reason === "string" ? reason.trim() : "";
-    if (why.length < CANCEL_REASON_MIN) fail(`กรุณาระบุ${kind === "cancel" ? "เหตุผลที่ขอยกเลิก" : "สิ่งที่ต้องการแก้"} (อย่างน้อย ${CANCEL_REASON_MIN} ตัวอักษร)`);
-    if (why.length > ORDER_REQUEST_REASON_MAX[kind]) fail(`ข้อความยาวเกิน ${ORDER_REQUEST_REASON_MAX[kind]} ตัวอักษร`);
-    const order = orderById(d, orderId);
-    if (orderSource(order) !== "SA") fail(`ขอได้เฉพาะใบที่ฝ่ายขายเปิด (${order.id} เป็นใบของฝ่ายวางแผน)`);
-    if (order.status === "draft") fail(kind === "cancel" ? "ใบร่าง ฝ่ายขายยกเลิกได้เองโดยไม่ต้องขอ" : "ใบร่าง ฝ่ายขายแก้ได้เองโดยไม่ต้องขอ");
-    if (!["released", "in_progress"].includes(order.status)) fail("ใบที่ปิดหรือยกเลิกแล้วขอยกเลิก / แก้ไม่ได้");
-    if (openOrderRequest(d, order.id, kind)) fail(`ใบ ${order.id} มีคำขอ${kind === "cancel" ? "ยกเลิก" : "แก้ใบ"}ที่ฝ่ายวางแผนยังไม่ตัดสินอยู่แล้ว`);
-    const id = newUuid();
-    d.orderRequests ??= [];
-    d.orderRequests.push({ id, orderId: order.id, kind, reason: why, status: "open", requestedBy: user.name, requestedById: user.id, requestedAt: ctx.now, decidedBy: null, decidedAt: null, decisionNote: "" });
-    audit(d, ctx, kind === "cancel" ? "ฝ่ายขายขอยกเลิกใบ" : "ฝ่ายขายขอแก้ใบ", `${order.id} — ${why}`);
-    return { id, summary: `${order.id} — ${why}`, section: "orderRequests", request: [{ id, orderId: order.id, reason: why }] };
-  }
-  const requestOrderCancel = (d, p, ctx) => requestOrder(d, p, ctx, "cancel");
-  const requestOrderChange = (d, p, ctx) => requestOrder(d, p, ctx, "change");
-  // decision: confirm | decline | done · note: decline 3-200 (บังคับ) · อื่น ๆ ไม่บังคับ
-  function decideOrderRequest(d, { requestId, decision, note }, ctx) {
-    const user = requireOrderPlanner(ctx, "ตัดสินคำขอของฝ่ายขาย");
+  const openOrderRequests = (d, orderId) => orderRequestsOf(d, orderId).filter((row) => row.status === "open");
+  const orderRequestOf = (d, id) => (d.orderRequests ?? []).find((row) => row.id === String(id ?? "").trim()) ?? fail("ไม่พบการแจ้งนี้ (อาจมีผู้อื่นตัดสินไปก่อน)");
+  // ทางเลือกของการแจ้ง: "choose" = ใบที่ยกเลิกกลางทาง (ผลิตต่อ / หยุด) · "ack" = รับทราบอย่างเดียว
+  const noticeMode = (d, row) => (row.kind === "cancel" && salesCancelled((d.orders ?? []).find((order) => order.id === row.orderId)) ? "choose" : "ack");
+  function decideOrderRequest(d, { requestId, decision }, ctx) {
+    const user = requireOrderPlanner(ctx, "ตัดสินการแจ้งของฝ่ายขาย");
     const row = orderRequestOf(d, requestId);
-    if (row.status !== "open") fail("คำขอนี้ตัดสินไปแล้ว");
-    if (!["confirm", "decline", "done"].includes(decision)) fail("ไม่รู้จักผลการตัดสินนี้");
-    if (decision === "confirm" && row.kind !== "cancel") fail("ยืนยันยกเลิกได้เฉพาะคำขอยกเลิก");
-    if (decision === "done" && row.kind !== "change") fail("คำขอยกเลิกปิดได้ด้วยการยืนยันยกเลิกหรือไม่ยกเลิก");
-    const remark = typeof note === "string" ? note.trim() : "";
-    if (decision === "decline" && remark.length < CANCEL_REASON_MIN) fail(`กรุณาระบุเหตุผลที่ไม่ทำตามคำขอ (อย่างน้อย ${CANCEL_REASON_MIN} ตัวอักษร)`);
-    if (remark.length > DECISION_NOTE_MAX) fail(`หมายเหตุยาวเกิน ${DECISION_NOTE_MAX} ตัวอักษร`);
+    if (row.status !== "open") fail("การแจ้งนี้ตัดสินไปแล้ว");
+    if (!ORDER_DECISIONS.includes(decision)) fail("ไม่รู้จักผลการตัดสินนี้");
     const order = orderById(d, row.orderId);
-    // ยืนยันยกเลิก: ยกเลิกใบด้วยเหตุผลของฝ่ายขาย (กติกาเดียวกับ cancelOrder) · ใบที่ถูกยกเลิกไปก่อนแล้วปิดคำขอได้เลย
-    if (decision === "confirm" && order.status !== "cancelled") {
-      if (order.status === "completed") fail("ใบที่เสร็จแล้วยกเลิกไม่ได้");
-      cancelNow(d, order, row.reason, ctx);
+    const choose = noticeMode(d, row) === "choose";
+    if (row.kind === "change" && decision !== "ack") fail("การแจ้งแก้ใบรับทราบได้อย่างเดียว");
+    if (row.kind === "cancel" && (decision === "ack") === choose) fail(choose ? "ฝ่ายขายยกเลิกใบนี้กลางทาง ให้เลือกผลิตต่อจนจบส่ง WH หรือหยุด เก็บยางเส้นยาวที่ SR" : "ใบนี้ยกเลิกไปแล้ว กดรับทราบได้อย่างเดียว");
+    if (decision === "continue") {
+      if (order.salesCancelChoice || !["released", "in_progress", "completed"].includes(order.status)) fail("ใบนี้ตัดสินไปแล้วหรือถูกยกเลิกแล้ว");
+      order.salesCancelChoice = "continue";
+    } else if (decision === "stop") {
+      if (order.salesCancelChoice || order.status === "cancelled") fail("ใบนี้ตัดสินไปแล้วหรือถูกยกเลิกแล้ว");
+      if (order.status === "completed") fail("ใบนี้คลังสินค้ารับเข้าครบและปิดแล้ว หยุดไม่ได้ เลือกผลิตต่อจนจบส่ง WH (ของเป็นสต็อกสินค้าสำเร็จรูป)");
+      cancelNow(d, order, order.salesCancelReason, ctx); // ยกเลิกตามทางเดิม: คืนสต็อกที่หยิบ · ยางเส้นยาวของใบในคลัง SR เป็นสต็อกกลาง · WO ยกเลิก
     }
-    Object.assign(row, { status: decision === "decline" ? "declined" : "done", decidedBy: user.name, decidedAt: ctx.now, decisionNote: remark });
-    const label = decision === "confirm" ? "ฝ่ายวางแผนยืนยันยกเลิกตามคำขอ" : decision === "done" ? "ฝ่ายวางแผนแก้ใบตามคำขอแล้ว" : row.kind === "cancel" ? "ฝ่ายวางแผนไม่ยกเลิก" : "ฝ่ายวางแผนไม่แก้ตามคำขอ";
-    audit(d, ctx, label, `${order.id} — ${row.reason}${remark ? ` · ${remark}` : ""}`);
-    return { id: row.id, status: row.status, summary: `${order.id} — ${label}`, section: "orderRequests", request: [{ id: row.id, decision, note: remark }] };
+    Object.assign(row, { status: "done", decision, decidedBy: user.name, decidedAt: ctx.now });
+    audit(d, ctx, DECISION_LABEL[decision], `${order.id} — ${row.reason}`);
+    return { id: row.id, status: row.status, summary: `${order.id} — ${DECISION_LABEL[decision]}`, section: "orderRequests", request: [{ id: row.id, decision }] };
   }
 
   // ---------- สินค้าสำเร็จรูป (FG): คลังสินค้า (WH) รับเข้า · ใบปิดเองเมื่อรับครบ · ปิดใบ (รับครบ) · ปิดรับไม่ครบด้วยเหตุผล · ส่งมอบลูกค้า ----------
@@ -1320,6 +1400,8 @@
   function deliverFg(d, p, ctx) {
     const { order, lines, note, position } = fgRead(d, ctx, p, "deliver");
     if (!["released", "in_progress", "completed"].includes(order.status)) fail("ส่งมอบได้เฉพาะใบที่ปล่อยผลิตแล้ว");
+    // ใบที่ฝ่ายขายยกเลิกกลางทาง (รอตัดสิน / ผลิตต่อ): ส่งมอบให้ลูกค้าของใบไม่ได้ ของที่รับเข้าเป็นสต็อกสินค้าสำเร็จรูป (ตรงกับ app_bom_save_master)
+    if (salesCancelled(order)) fail(`ฝ่ายขายยกเลิกใบ ${order.id} แล้ว ส่งมอบให้ลูกค้าของใบนี้ไม่ได้ (ของที่รับเข้าคลังเป็นสต็อกสินค้าสำเร็จรูปให้ใบอื่นใช้)`);
     for (const line of lines) {
       const product = position.products.find((entry) => entry.fgCode === line.fgCode);
       if (line.qty > product.deliverable + 1e-9) fail(`${line.fgCode} ส่งมอบได้อีกไม่เกิน ${rules().fmtQty(product.deliverable)} (มีของในใบ ${rules().fmtQty(product.have)}${product.givenAway > 0 ? ` ให้ใบอื่นไปแล้ว ${rules().fmtQty(product.givenAway)}` : ""} ส่งมอบไปแล้ว ${rules().fmtQty(product.delivered)})`);
@@ -1552,6 +1634,7 @@
     if (!canIssueParts(user)) fail("เบิกจ่ายของซื้อได้โดยคลังวัตถุดิบ (ST) ฝ่ายวางแผน หรือผู้จัดการ");
     const order = orderById(d, orderId);
     if (!["released", "in_progress"].includes(order.status)) fail("เบิกจ่ายของซื้อได้เฉพาะใบที่ปล่อยผลิตแล้ว");
+    requireTakingWork(order);
     d.stock ??= [];
     const plan = partIssuePlan(d, order.id);
     if (!plan.lines.length) fail("ใบนี้ไม่มีของซื้อที่ต้องเบิกจ่าย (เบิกจ่ายครบแล้ว หรือปล่อยผลิตก่อนมีงานของซื้อ)");
@@ -1835,6 +1918,7 @@
     const code = R.canonicalCode(p?.itemCode);
     if (!canStoreRods(user)) fail("จ่ายยางเส้นยาวได้โดยคลังยางเส้นยาว (SR) หรือฝ่ายวางแผนเท่านั้น");
     if (!["released", "in_progress"].includes(order.status)) fail("จ่ายยางเส้นยาวได้เฉพาะใบที่ปล่อยผลิตแล้วและยังไม่ปิด");
+    requireTakingWork(order);
     if (!R.rodCodesOf(order).has(code)) fail(`${code} ไม่ใช่เส้นยางของใบ ${order.id}`);
     const qty = qtyRound(num(p?.qty, "จำนวนที่จ่าย"));
     if (qty <= 0) fail("จำนวนที่จ่ายต้องมากกว่า 0");
@@ -2226,6 +2310,7 @@
     const job = grJobOf(d, p?.jobId);
     const order = orderById(d, job.orderId);
     if (!GR_ACTIVE_ORDER.includes(order.status)) fail("ใบสั่งผลิตไม่อยู่ในสถานะผลิต");
+    requireTakingWork(order);
     if (job.status === "done") fail("งานนี้เสร็จแล้ว");
     const itemCode = R.canonicalCode(p?.itemCode);
     if (!R.grRodCodesOf(order, job).includes(itemCode)) fail(`${itemCode || "รหัสที่ระบุ"} ไม่ใช่ยางเส้นยาวของงาน ${job.id}`);
@@ -2412,14 +2497,15 @@
     saveItem, saveBom, saveBomTree, linkCompound, importFlat,
     saveColor, saveColorSet, removeColorSet, learnColorSet, savePackage, removePackage, createVariant,
     saveCustomer, createOrder, addOrderItem, removeOrderItem, updateOrderItem, explodeOrder, releaseOrder, setStockCount, setStockCounts, cancelOrder,
-    updateOrderHeader, sendOrderToPlanning, requestOrderCancel, requestOrderChange, decideOrderRequest, receiveFg, deliverFg, closeOrderShort, closeOrder, reverseFg, receiveRods, decideRods, issueRods, reverseRodIssue, adjustRods, receiveRodsOpening, setRodLocation,
+    updateOrderHeader, sendOrderToPlanning, decideOrderRequest, receiveFg, deliverFg, closeOrderShort, closeOrder, reverseFg, receiveRods, decideRods, issueRods, reverseRodIssue, adjustRods, receiveRodsOpening, setRodLocation,
     saveGrConfig, setGrJobSteps, addGrRecord, editGrRecord, voidGrRecord, requestRods, cancelRodRequest, sendGrToPk, receiveGrAtPk, cancelGrHandover,
     sendToPk, receiveAtPk, cancelHandover, sendPkToWh, cancelPkToWh,
     reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage, countPartStock, issueOrderParts, undoOrderParts, returnOrderParts,
     helpers: { customerName, customerKey, startedJobs, isPartJob, isOpenJob, isLinkedJob, jobCloseNote, jobHoldNote, deptText, canIssueParts, canHandleFg, canReverseFg, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canSetSafety, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS, canStoreRods, canDecideRods, canSeeRodHolds, canAdjustRods, newUuid,
       isDeptHead, canGrLead, canGrRecord, canReceiveGr, canReverseGrReceipt, isGrPlanned, isGrClosedShort, hasGrRecords, grJobBlock, grRecordBlock,
       STEP_DEPTS, canDeptLead, canDeptRecord, canReceiveAtPk, canReversePkReceipt, canSendPkToWh, handoverTarget,
-      canSell, canPlanOrders, canOrder, salesOnly, orderSource, isSentOrder, orderRequestsOf, openOrderRequest, ORDER_REQUEST_REASON_MAX, DECISION_NOTE_MAX },
+      canSell, canPlanOrders, canOrder, salesOnly, orderSource, isSentOrder, orderRequestsOf, openOrderRequests, noticeMode, orderLocked, salesCancelled, salesCancelPending,
+      salesChangeSummary, SALES_PENDING_TEXT, DECISION_LABEL },
   };
   if (isNode) module.exports = api;
   else root.MNP_BOM_ACTIONS = api;

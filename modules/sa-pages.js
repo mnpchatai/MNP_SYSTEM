@@ -1,8 +1,9 @@
 // หน้าของโมดูลฝ่ายขาย (SA) #/sa — โรงงานขั้น 8 (20261225010000_bom_sales_orders.sql) โหมดทดสอบเท่านั้น · โหลดก่อน modules/module-sa.js (ดู index.html)
-// ฝ่ายขายออกใบสั่งผลิตเอง (ที่มา SA) แล้วส่งให้ฝ่ายวางแผนคำนวณวัตถุดิบและปล่อยผลิต · ติดตามความคืบหน้ารายแผนกและยอดส่งมอบ · ขอยกเลิก / ขอแก้ใบหลังปล่อยผลิต · ทะเบียนลูกค้า
+// ฝ่ายขายออกใบสั่งผลิตเอง (ที่มา SA) แล้วส่งให้ฝ่ายวางแผนคำนวณวัตถุดิบและปล่อยผลิต · ติดตามความคืบหน้ารายแผนกและยอดส่งมอบ · ทะเบียนลูกค้า
+// รอบ 2 (เจ้าของ 2026-11-25): ฝ่ายขายแก้ / ยกเลิกใบเองได้ทุกขั้น ฝ่ายวางแผนแค่รับทราบ · เริ่มงานแล้ว = แก้ตรง (แจ้ง "ฝ่ายขายแก้ใบ") / ยกเลิกกลางทาง (ฝ่ายวางแผนเลือกผลิตต่อหรือหยุด)
 // หน้า: งานของฉัน (ค่าตั้งต้น) · ออกใบสั่งผลิต ?tab=new · ใบของฝ่ายขาย ?tab=orders · ทะเบียนลูกค้า ?tab=customers · หน้าใบ ?order=<เลขใบ>
-// คำสั่งใช้ action ของ BOM ชุดเดียวกัน (createOrder updateOrderHeader addOrderItem updateOrderItem removeOrderItem sendOrderToPlanning cancelOrder requestOrderCancel requestOrderChange) — สิทธิ์จริงตัดสินที่ action และฐานข้อมูล ปุ่มที่ซ่อนเป็นแค่ UX
-// ไฟล์นี้ยังมี planningCards: การ์ด "ใบใหม่จากฝ่ายขาย" และ "คำขอจากฝ่ายขาย" ที่ฝ่ายวางแผนเห็นบนหน้าแรกและหน้าใบสั่งผลิตของ #/pp (ตัดสินคำขอด้วย decideOrderRequest)
+// คำสั่งใช้ action ของ BOM ชุดเดียวกัน (createOrder updateOrderHeader addOrderItem updateOrderItem removeOrderItem sendOrderToPlanning cancelOrder) — สิทธิ์จริงตัดสินที่ action และฐานข้อมูล ปุ่มที่ซ่อนเป็นแค่ UX
+// ไฟล์นี้ยังมี planningCards: การ์ด "ใบใหม่จากฝ่ายขาย" และ "แจ้งจากฝ่ายขาย" ที่ฝ่ายวางแผนเห็นบนหน้าแรกและหน้าใบสั่งผลิตของ #/pp (ตัดสินด้วย decideOrderRequest)
 (function registerSaPages(root) {
   const F = root.MNP_FACTORY;
   const dialogs = (root.MNP_BOM_DIALOGS ??= {});
@@ -20,21 +21,37 @@
   const isUnsent = (ctx, order) => order.status === "draft" && !ctx.helpers.isSentOrder(order);
   const itemsText = (ctx, order) => (order.items.length ? order.items.map((item) => `${item.fgCode} × ${ctx.rules.fmtQty(item.qty)}`).join(", ") : "ยังไม่มีสินค้า");
   const newestFirst = (a, b) => (Number(b.orderedAt) || 0) - (Number(a.orderedAt) || 0) || (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
-  const requestsOf = (ctx, orderId) => ctx.helpers.orderRequestsOf(ctx.data, orderId).slice().sort((a, b) => (Number(b.requestedAt) || 0) - (Number(a.requestedAt) || 0));
-  const KIND_TEXT = Object.freeze({ cancel: "ขอยกเลิกใบ", change: "ขอแก้ใบ" });
+  const noticesOf = (ctx, orderId) => ctx.helpers.orderRequestsOf(ctx.data, orderId).slice().sort((a, b) => (Number(b.requestedAt) || 0) - (Number(a.requestedAt) || 0));
+  const orderOfNotice = (ctx, row) => ctx.data.orders.find((order) => order.id === row.orderId);
+  // ชื่อการแจ้ง: แก้ใบ · ยกเลิกใบ (ยกเลิกทันที) · ยกเลิกใบกลางทาง (มีงานเริ่มแล้ว ฝ่ายวางแผนเลือกผลิตต่อหรือหยุด)
+  const noticeTitle = (ctx, row) => (row.kind === "change" ? "ฝ่ายขายแก้ใบ" : ctx.helpers.noticeMode(ctx.data, row) === "choose" ? "ฝ่ายขายยกเลิกใบกลางทาง" : "ฝ่ายขายยกเลิกใบ");
+  // ผลจากฝ่ายวางแผน (ฝ่ายขายเห็น): รอ → รับทราบ / ผลิตต่อจนจบส่ง WH / หยุด
+  const DECIDED_TEXT = Object.freeze({ ack: "ฝ่ายวางแผนรับทราบแล้ว", continue: "ฝ่ายวางแผนเลือกผลิตต่อจนจบส่ง WH (ของเป็นสต็อก ไม่ส่งลูกค้า)", stop: "ฝ่ายวางแผนเลือกหยุด เก็บยางเส้นยาวที่ SR" });
+  const noticeOutcome = (ctx, row) => (row.status === "open"
+    ? { tone: "warn", text: ctx.helpers.noticeMode(ctx.data, row) === "choose" ? "รอฝ่ายวางแผนตัดสินของที่ทำค้าง" : "รอฝ่ายวางแผนรับทราบ", by: "" }
+    : { tone: row.decision === "stop" ? "bad" : "good", text: DECIDED_TEXT[row.decision] ?? "ฝ่ายวางแผนรับทราบแล้ว", by: `${row.decidedBy ?? ""} ${ctx.rules.fmtDate(row.decidedAt)}` });
   const workCount = (ctx) => salesOrders(ctx).filter((order) => isUnsent(ctx, order)).length;
 
   // สถานะที่ฝ่ายขายเห็น: ใบร่างที่ส่งแล้วรอฝ่ายวางแผนปล่อยผลิต (ฐานข้อมูลไม่มีสถานะแยก) แยกจากใบร่างที่ยังไม่ส่ง
-  const statusKey = (ctx, order) => (order.status === "draft" ? (ctx.helpers.isSentOrder(order) ? "waiting" : "unsent") : order.status);
+  // ใบที่ฝ่ายขายยกเลิกกลางทาง: รอฝ่ายวางแผนตัดสิน / ผลิตต่อจนจบส่ง WH (สถานะของใบในฐานข้อมูลคงเดิม)
+  const statusKey = (ctx, order) => {
+    if (order.status === "draft") return ctx.helpers.isSentOrder(order) ? "waiting" : "unsent";
+    const cancel = shared().salesCancelKey?.(order) ?? "";
+    if (cancel === "pending" || cancel === "continue") return `sales_${cancel}`;
+    return order.status;
+  };
   const statusBadge = (ctx, order) => {
     const key = statusKey(ctx, order);
     if (key === "unsent") return ctx.ui.badge("", "ร่าง ยังไม่ส่ง");
     if (key === "waiting") return ctx.ui.badge("warn", "รอฝ่ายวางแผนปล่อยผลิต");
+    if (key === "sales_pending") return ctx.ui.badge("bad", shared().SALES_CANCEL_STATE?.pending ?? "ยกเลิกแล้ว รอฝ่ายวางแผนตัดสินของที่ทำค้าง");
+    if (key === "sales_continue") return ctx.ui.badge("warn", shared().SALES_CANCEL_STATE?.continue ?? "ยกเลิกแล้ว ผลิตต่อจนจบส่ง WH");
     return shared().orderStatus(ctx, order);
   };
-  const STATUS_FILTERS = Object.freeze([["", "ทุกสถานะ"], ["unsent", "ร่าง ยังไม่ส่ง"], ["waiting", "รอฝ่ายวางแผนปล่อยผลิต"], ["released", "ปล่อยผลิต"], ["in_progress", "กำลังผลิต"], ["completed", "เสร็จสิ้น"], ["cancelled", "ยกเลิก"]]);
+  const STATUS_FILTERS = Object.freeze([["", "ทุกสถานะ"], ["unsent", "ร่าง ยังไม่ส่ง"], ["waiting", "รอฝ่ายวางแผนปล่อยผลิต"], ["released", "ปล่อยผลิต"], ["in_progress", "กำลังผลิต"],
+    ["sales_pending", "ยกเลิกแล้ว รอฝ่ายวางแผนตัดสิน"], ["sales_continue", "ยกเลิกแล้ว ผลิตต่อจนจบ"], ["completed", "เสร็จสิ้น"], ["cancelled", "ยกเลิก"]]);
 
-  const dueLate = (ctx, order) => !["completed", "cancelled"].includes(order.status) && Number(order.whDue) < ctx.now;
+  const dueLate = (ctx, order) => !["completed", "cancelled"].includes(order.status) && !ctx.helpers.salesCancelled(order) && Number(order.whDue) < ctx.now;
 
   // ---------- ตารางใบ ----------
   function orderRows(ctx, orders, { send = false } = {}) {
@@ -46,30 +63,28 @@
     });
   }
   const HEAD = ["เลข PI / ลูกค้า", "สินค้า", "กำหนดส่งคลัง", "สถานะ", "ผู้ออกใบ"];
-  const sendConfirm = (_ctx, order) => `ส่งใบ ${order.id} ให้ฝ่ายวางแผน? ฝ่ายวางแผนจะคำนวณวัตถุดิบและปล่อยผลิต · หลังส่งแล้วยังแก้ใบได้ (ถ้ายังไม่มีแผนกไหนเริ่มงาน ใบจะกลับไปให้ฝ่ายวางแผนปล่อยผลิตใหม่)`;
+  const sendConfirm = (_ctx, order) => `ส่งใบ ${order.id} ให้ฝ่ายวางแผน? ฝ่ายวางแผนจะคำนวณวัตถุดิบและปล่อยผลิต · หลังส่งแล้วยังแก้และยกเลิกใบได้ (ฝ่ายวางแผนได้รับแจ้ง)`;
 
   // ---------- งานของฉัน ----------
   function workView(ctx) {
     const { ui } = ctx;
     const mine = salesOrders(ctx).sort(newestFirst);
     const drafts = mine.filter((order) => isUnsent(ctx, order));
-    const requests = (ctx.data.orderRequests ?? []).filter((row) => mine.some((order) => order.id === row.orderId))
+    const notices = (ctx.data.orderRequests ?? []).filter((row) => mine.some((order) => order.id === row.orderId))
       .filter((row) => row.status === "open" || ctx.now - (Number(row.decidedAt) || 0) < 14 * DAY).sort((a, b) => (a.status === "open" ? 0 : 1) - (b.status === "open" ? 0 : 1) || (Number(b.requestedAt) || 0) - (Number(a.requestedAt) || 0));
-    const soon = mine.filter((order) => !["completed", "cancelled"].includes(order.status) && !isUnsent(ctx, order) && Number(order.whDue) < ctx.now + 7 * DAY).sort((a, b) => a.whDue - b.whDue);
+    const soon = mine.filter((order) => !["completed", "cancelled"].includes(order.status) && !ctx.helpers.salesCancelled(order) && !isUnsent(ctx, order) && Number(order.whDue) < ctx.now + 7 * DAY).sort((a, b) => a.whDue - b.whDue);
     const sections = [];
     if (drafts.length) sections.push(ui.card(ui.table([...HEAD, ""], orderRows(ctx, drafts, { send: true })), { title: esc(`ใบร่างที่ยังไม่ส่งให้ฝ่ายวางแผน (${drafts.length})`), flush: true }));
-    if (requests.length) sections.push(ui.card(ui.table(["ใบ", "คำขอ", "เหตุผล", "ผลจากฝ่ายวางแผน"], requests.map((row) => requestRow(ctx, row)), { emptyText: "" }), { title: esc("คำขอของฝ่ายขายและผลจากฝ่ายวางแผน"), flush: true }));
+    if (notices.length) sections.push(ui.card(ui.table(["ใบ", "เรื่อง", "รายละเอียด", "ฝ่ายวางแผน"], notices.map((row) => noticeRow(ctx, row)), { emptyText: "" }), { title: esc("แจ้งฝ่ายวางแผนและผลการตัดสิน"), flush: true }));
     if (soon.length) sections.push(ui.card(ui.table(HEAD, orderRows(ctx, soon, { send: null })), { title: esc(`ใบใกล้ถึงกำหนดส่งคลัง (ภายใน 7 วัน หรือเลยกำหนด · ${soon.length})`), flush: true }));
     const body = sections.length ? sections.join("") : ui.card(ui.empty("ไม่มีงานค้าง ออกใบสั่งผลิตใหม่ได้ที่เมนู ออกใบสั่งผลิต", ui.link("ออกใบสั่งผลิต", saUrl({ tab: "new" }), "btn rf-btn")));
     return `${F.viewHead(ctx, ctx.helpers.canOrder(ctx.user) ? ui.link("ออกใบสั่งผลิต", saUrl({ tab: "new" }), "btn rf-btn") : "")}${body}`;
   }
-  // แถวคำขอ: ผลของฝ่ายวางแผนอยู่ท้ายแถว (รอตัดสิน / ยืนยัน / ไม่ทำ + หมายเหตุ)
-  function requestRow(ctx, row) {
+  // แถวการแจ้ง: ผลของฝ่ายวางแผนอยู่ท้ายแถว (รอ / รับทราบ / ผลิตต่อ / หยุด + ผู้ตัดสิน)
+  function noticeRow(ctx, row) {
     const { ui, rules } = ctx;
-    const outcome = row.status === "open" ? ui.badge("warn", "รอฝ่ายวางแผนตัดสิน")
-      : row.status === "declined" ? `${ui.badge("bad", row.kind === "cancel" ? "ไม่ยกเลิก" : "ไม่แก้ใบ")}<div class="small muted">${esc(`${row.decidedBy ?? ""} ${rules.fmtDate(row.decidedAt)}${row.decisionNote ? ` — ${row.decisionNote}` : ""}`)}</div>`
-        : `${ui.badge("good", row.kind === "cancel" ? "ยกเลิกแล้ว" : "แก้ใบแล้ว")}<div class="small muted">${esc(`${row.decidedBy ?? ""} ${rules.fmtDate(row.decidedAt)}${row.decisionNote ? ` — ${row.decisionNote}` : ""}`)}</div>`;
-    return `<tr><td>${ui.link(row.orderId, saUrl({ order: row.orderId }), "rf-mono")}</td><td>${esc(KIND_TEXT[row.kind] ?? row.kind)}<div class="small muted">${esc(`${row.requestedBy ?? ""} ${rules.fmtDate(row.requestedAt)}`)}</div></td><td class="small">${esc(row.reason)}</td><td>${outcome}</td></tr>`;
+    const outcome = noticeOutcome(ctx, row);
+    return `<tr><td>${ui.link(row.orderId, saUrl({ order: row.orderId }), "rf-mono")}</td><td>${esc(noticeTitle(ctx, row))}<div class="small muted">${esc(`${row.requestedBy ?? ""} ${rules.fmtDate(row.requestedAt)}`)}</div></td><td class="small">${esc(row.reason)}</td><td>${ui.badge(outcome.tone, outcome.text)}${outcome.by.trim() ? `<div class="small muted">${esc(outcome.by)}</div>` : ""}</td></tr>`;
   }
 
   // ---------- ออกใบสั่งผลิต ----------
@@ -164,11 +179,11 @@
   function orderMissing(ctx, text) {
     return { html: `${backLink(saUrl({ tab: "orders" }), "‹ ใบของฝ่ายขาย")}${F.pageHead(ctx, "ไม่พบใบ")}${ctx.ui.card(ctx.ui.empty(text))}`, actions: true };
   }
-  const requestLines = (ctx, order) => requestsOf(ctx, order.id).map((row) => {
+  // การแจ้งของใบนี้ (ใหม่สุดก่อน): ชื่อเรื่อง · ผู้แจ้ง · รายละเอียด · ผลจากฝ่ายวางแผน
+  const noticeLines = (ctx, order) => noticesOf(ctx, order.id).map((row) => {
     const { ui, rules } = ctx;
-    const tone = row.status === "open" ? "warn" : row.status === "declined" ? "bad" : "good";
-    const result = row.status === "open" ? "รอฝ่ายวางแผนตัดสิน" : `${row.status === "declined" ? (row.kind === "cancel" ? "ฝ่ายวางแผนไม่ยกเลิก" : "ฝ่ายวางแผนไม่แก้ใบ") : (row.kind === "cancel" ? "ฝ่ายวางแผนยืนยันยกเลิกแล้ว" : "ฝ่ายวางแผนแก้ใบตามคำขอแล้ว")} · ${row.decidedBy ?? ""} ${rules.fmtDate(row.decidedAt)}${row.decisionNote ? ` — ${row.decisionNote}` : ""}`;
-    return ui.callout(tone, `<strong>${esc(KIND_TEXT[row.kind] ?? row.kind)}</strong> · ${esc(`${row.requestedBy ?? ""} ${rules.fmtDate(row.requestedAt)}`)}<br>${esc(row.reason)}<br><span class="small muted">${esc(result)}</span>`);
+    const outcome = noticeOutcome(ctx, row);
+    return ui.callout(outcome.tone, `<strong>${esc(noticeTitle(ctx, row))}</strong> · ${esc(`${row.requestedBy ?? ""} ${rules.fmtDate(row.requestedAt)}`)}<br>${esc(row.reason)}<br><span class="small muted">${esc(`${outcome.text}${outcome.by.trim() ? ` · ${outcome.by}` : ""}`)}</span>`);
   }).join("");
   function trackingCards(ctx, order) {
     const { ui, rules, data, helpers } = ctx;
@@ -191,43 +206,52 @@
     if (!order) return orderMissing(ctx, "ไม่พบใบสั่งผลิตนี้ (อาจถูกลบหรือยังโหลดไม่เสร็จ)");
     if (helpers.orderSource(order) !== "SA") return orderMissing(ctx, "ใบนี้เป็นของฝ่ายวางแผน ดูได้ที่โมดูลฝ่ายวางแผน (PP)");
     const state = shared().orderEditState(ctx, order);
-    const open = ["released", "in_progress"].includes(order.status);
-    const mayEdit = helpers.canOrder(user) && state.canEdit;
     const seller = helpers.canSell(user);
+    const salesCancelled = helpers.salesCancelled(order);
+    // แก้ใบ: ร่าง · ปล่อยแล้วยังไม่เริ่มงาน (กลับเป็นร่าง) · ฝ่ายขายแก้ใบที่เริ่มงานแล้วได้ตรง (ฝ่ายวางแผนได้รับแจ้ง)
+    const inPlace = seller && helpers.salesOnly(user) && state.inPlace;
+    const mayEdit = helpers.canOrder(user) && (state.canEdit || inPlace);
     const buttons = [];
     if (seller && isUnsent(ctx, order)) buttons.push(ui.button("ส่งให้ฝ่ายวางแผน", { action: "sendOrderToPlanning", args: { orderId: order.id }, className: "", confirmText: sendConfirm(ctx, order), ariaLabel: "ส่งให้ฝ่ายวางแผน" }));
     if (mayEdit) buttons.push(ui.openButton("แก้หัวใบ", "saOrderHeader", { orderId: order.id }), ui.openButton("เพิ่มสินค้า", "saItemAdd", { orderId: order.id }));
-    if (helpers.canOrder(user) && order.status === "draft" && !state.fgLock.blocked) buttons.push(ui.openButton("ยกเลิกใบ", "orderCancel", { orderId: order.id }));
-    if (seller && open && !helpers.openOrderRequest(ctx.data, order.id, "cancel")) buttons.push(ui.openButton("ขอยกเลิก", "saRequest", { orderId: order.id, kind: "cancel" }));
-    if (seller && open && !helpers.openOrderRequest(ctx.data, order.id, "change")) buttons.push(ui.openButton("ขอแก้ใบ", "saRequest", { orderId: order.id, kind: "change" }));
+    // ยกเลิก: ฝ่ายขาย = ร่าง / ปล่อยแล้ว / กำลังผลิต (เริ่มงานแล้ว = ยกเลิกกลางทาง) · กลุ่มวางแผนยกเลิกร่างของฝ่ายขายที่หน้านี้ (หลังปล่อยยกเลิกที่หน้าใบของฝ่ายวางแผน)
+    if (seller && helpers.salesOnly(user) && ["draft", "released", "in_progress"].includes(order.status) && !salesCancelled && !state.rfPending) buttons.push(ui.openButton("ยกเลิกใบ", "saCancel", { orderId: order.id }));
+    else if (!helpers.salesOnly(user) && helpers.canOrder(user) && order.status === "draft" && !state.fgLock.blocked) buttons.push(ui.openButton("ยกเลิกใบ", "orderCancel", { orderId: order.id }));
     const facts = ui.kv([
       ["ลูกค้า", esc(order.customer)], ["ประเทศ / ประเภท", `${esc(order.country)} ${shared().status(ctx, order.orderType)}`], ["ผู้ออกใบ", esc(order.createdBy ?? "")],
       ["วันที่สั่งผลิต", esc(rules.fmtDate(order.orderedAt))], ["กำหนดส่งคลัง (WH)", `<span${dueLate(ctx, order) ? ' class="bom-job-late"' : ""}>${esc(rules.fmtDate(order.whDue))}</span>`],
       ["ส่งให้ฝ่ายวางแผน", helpers.isSentOrder(order) ? esc(`${rules.fmtDateTime(order.sentAt)}${order.sentBy ? ` โดย ${order.sentBy}` : ""}`) : "ยังไม่ส่ง"],
-      order.note ? ["หมายเหตุ", esc(order.note)] : null, order.cancelReason ? ["เหตุผลยกเลิก", esc(order.cancelReason)] : null,
+      order.note ? ["หมายเหตุ", esc(order.note)] : null,
+      // เหตุผลยกเลิกแสดงครั้งเดียว: ยกเลิกกลางทางมีผู้ยกเลิกและเวลา (ใบที่ฝ่ายวางแผนเลือกหยุดใช้เหตุผลเดียวกัน)
+      salesCancelled ? ["ฝ่ายขายยกเลิก", esc(`${order.salesCancelReason ?? ""} · ${order.salesCancelBy ?? ""} ${rules.fmtDateTime(order.salesCancelAt)}`)] : null,
+      order.cancelReason && order.cancelReason !== order.salesCancelReason ? ["เหตุผลยกเลิก", esc(order.cancelReason)] : null,
     ]);
     // ข้อมูล RubberFlow ยังโหลดอยู่ (หน้าวาดใหม่เมื่อโหลดเสร็จ) หรือโหลดไม่สำเร็จ: ยังรู้ไม่ได้ว่างานยาง (RB) เริ่มแล้วหรือยัง จึงไม่บอกว่าแผนกเริ่มงานแล้ว
-    const pendingText = { loading: "กำลังโหลดข้อมูล RubberFlow เพื่อตรวจว่างานยาง (RB) เริ่มแล้วหรือยัง ปุ่มแก้ใบจะแสดงเมื่อโหลดเสร็จ", failed: "โหลดข้อมูล RubberFlow ไม่สำเร็จ จึงยังตรวจไม่ได้ว่างานยาง (RB) เริ่มแล้วหรือยัง โหลดหน้าใหม่อีกครั้ง หรือส่ง “ขอแก้ใบ” ให้ฝ่ายวางแผน" }[state.rfPending] ?? "";
-    const hint = state.reopen ? `<p class="small muted">${esc("ใบนี้ปล่อยผลิตแล้ว ยังไม่มีแผนกไหนเริ่มงาน แก้ได้ แต่ใบจะกลับไปให้ฝ่ายวางแผนปล่อยผลิตใหม่")}</p>`
+    const pendingText = { loading: "กำลังโหลดข้อมูล RubberFlow เพื่อตรวจว่างานยาง (RB) เริ่มแล้วหรือยัง ปุ่มแก้และยกเลิกใบจะแสดงเมื่อโหลดเสร็จ", failed: "โหลดข้อมูล RubberFlow ไม่สำเร็จ จึงยังตรวจไม่ได้ว่างานยาง (RB) เริ่มแล้วหรือยัง โหลดหน้าใหม่อีกครั้ง" }[state.rfPending] ?? "";
+    const hint = state.reopen && !salesCancelled ? `<p class="small muted">${esc("ใบนี้ปล่อยผลิตแล้ว ยังไม่มีแผนกไหนเริ่มงาน แก้ได้ แต่ใบจะกลับไปให้ฝ่ายวางแผนปล่อยผลิตใหม่")}</p>`
       : pendingText ? `<p class="small muted" role="status">${esc(pendingText)}</p>`
-        : open && !state.canEdit ? `<p class="small muted">${esc("แผนกเริ่มงานแล้ว แก้ใบโดยตรงไม่ได้ ส่ง “ขอแก้ใบ” ให้ฝ่ายวางแผนแทน")}</p>` : "";
-    const itemRows = order.items.map((item) => `<tr><td>${ui.mono(item.fgCode)}<div class="small muted">${esc(helpers.itemOf(ctx.data, item.fgCode)?.name ?? "")}${item.note ? ` · ${esc(item.note)}` : ""}</div></td><td class="right rf-mono">${esc(rules.fmtQty(item.qty))}</td><td class="nowrap">${mayEdit ? `${ui.openButton("แก้จำนวน", "orderItemEdit", { orderId: order.id, fgCode: item.fgCode }, { className: "secondary small", ariaLabel: `แก้จำนวน ${item.fgCode}` })} ${ui.button("ลบ", { action: "removeOrderItem", args: { orderId: order.id, fgCode: item.fgCode }, className: "secondary small", ariaLabel: `ลบ ${item.fgCode} ออกจากใบ`, confirmText: `ลบ ${item.fgCode} ออกจากใบ ${order.id}?${state.reopenNote}` })}` : ""}</td></tr>`);
+        : inPlace ? `<p class="small muted">${esc(shared().IN_PLACE_TEXT ?? "")}</p>` : "";
+    const inPlaceNote = inPlace ? " ใบเปลี่ยนทันที ฝ่ายวางแผนได้รับแจ้ง" : "";
+    const itemRows = order.items.map((item) => `<tr><td>${ui.mono(item.fgCode)}<div class="small muted">${esc(helpers.itemOf(ctx.data, item.fgCode)?.name ?? "")}${item.note ? ` · ${esc(item.note)}` : ""}</div></td><td class="right rf-mono">${esc(rules.fmtQty(item.qty))}</td><td class="nowrap">${mayEdit ? `${ui.openButton("แก้จำนวน", "orderItemEdit", { orderId: order.id, fgCode: item.fgCode }, { className: "secondary small", ariaLabel: `แก้จำนวน ${item.fgCode}` })} ${inPlace && order.items.length < 2 ? "" : ui.button("ลบ", { action: "removeOrderItem", args: { orderId: order.id, fgCode: item.fgCode }, className: "secondary small", ariaLabel: `ลบ ${item.fgCode} ออกจากใบ`, confirmText: `ลบ ${item.fgCode} ออกจากใบ ${order.id}?${state.reopenNote}${inPlaceNote}` })}` : ""}</td></tr>`);
     const items = ui.card(ui.table(["สินค้า", { label: "จำนวน", className: "right" }, ""], itemRows, { emptyText: "ยังไม่มีสินค้า เพิ่มสินค้าก่อนส่งให้ฝ่ายวางแผน" }), { title: esc("สินค้าที่สั่ง"), flush: true });
     const head = F.pageHead(ctx, `ใบ ${order.id}`, `${statusBadge(ctx, order)}<span class="small muted" role="status" data-bom-sync>${esc(root.MNP_BOM?.syncText?.() ?? "")}</span>`);
-    return { html: `${backLink(saUrl({ tab: "orders" }), "‹ ใบของฝ่ายขาย")}${head}${ui.card(`${facts}${buttons.length ? `<div class="rf-row">${buttons.join("")}</div>` : ""}${hint}`)}${requestLines(ctx, order)}${items}${trackingCards(ctx, order)}`, actions: true };
+    return { html: `${backLink(saUrl({ tab: "orders" }), "‹ ใบของฝ่ายขาย")}${head}${ui.card(`${facts}${buttons.length ? `<div class="rf-row">${buttons.join("")}</div>` : ""}${hint}`)}${noticeLines(ctx, order)}${items}${trackingCards(ctx, order)}`, actions: true };
   }
 
   // ---------- dialog ----------
   const orderOf = (ctx, orderId) => ctx.data.orders.find((row) => row.id === orderId && ctx.helpers.orderSource(row) === "SA");
-  const reopenCallout = (ctx, state) => (state.reopen ? ctx.ui.callout("warn", esc(state.reopenNote.trim())) : "");
+  // แก้ได้ = ร่าง / ปล่อยแล้วยังไม่เริ่ม (canEdit) หรือฝ่ายขายแก้ใบที่เริ่มงานแล้ว (inPlace)
+  const editable = (ctx, state) => ctx.helpers.canOrder(ctx.user) && (state.canEdit || (ctx.helpers.salesOnly(ctx.user) && state.inPlace));
+  const editCallout = (ctx, state) => (state.reopen ? ctx.ui.callout("warn", esc(state.reopenNote.trim()))
+    : state.inPlace && ctx.helpers.salesOnly(ctx.user) ? ctx.ui.callout("info", esc(shared().IN_PLACE_TEXT ?? "")) : "");
   dialogs.saOrderHeader = (ctx, { orderId }) => {
     const { ui, rules } = ctx;
     const order = orderOf(ctx, orderId);
     if (!order) return null;
     const state = shared().orderEditState(ctx, order);
-    if (!state.canEdit || !ctx.helpers.canOrder(ctx.user)) return null;
+    if (!editable(ctx, state)) return null;
     const body = `<form novalidate id="sa-header-form" data-rf-form="updateOrderHeader" data-rf-args="${attr(JSON.stringify({ orderId }))}" data-rf-success="แก้หัวใบ ${attr(orderId)} แล้ว">
-      ${reopenCallout(ctx, state)}
+      ${editCallout(ctx, state)}
       <div class="rf-grid rf-g2">
         ${ui.field("ชื่อลูกค้า", `${ui.input("customer", { required: true, value: order.customer, list: "sa-customer-list", extra: 'maxlength="120"' })}${customerDatalist(ctx)}`, { required: true })}
         ${ui.field("ประเทศ", ui.input("country", { required: true, value: order.country }), { required: true })}
@@ -243,10 +267,10 @@
     const order = orderOf(ctx, orderId);
     if (!order) return null;
     const state = shared().orderEditState(ctx, order);
-    if (!state.canEdit || !ctx.helpers.canOrder(ctx.user)) return null;
+    if (!editable(ctx, state)) return null;
     const taken = new Set(order.items.map((item) => item.fgCode));
     const body = `<form novalidate id="sa-item-form" data-rf-form="addOrderItem" data-rf-args="${attr(JSON.stringify({ orderId }))}" data-rf-success="เพิ่มสินค้าในใบ ${attr(orderId)} แล้ว">
-      ${reopenCallout(ctx, state)}
+      ${editCallout(ctx, state)}
       <div class="rf-grid rf-g2">
         ${ui.field("สินค้า", ui.select("fgCode", fgOptions(ctx).filter((option) => !taken.has(option.value)), { placeholder: "เลือกสินค้า…" }), { required: true })}
         ${ui.field("จำนวน", ui.input("qty", { type: "number", step: "any", min: 1, required: true }), { required: true })}
@@ -255,34 +279,27 @@
     </form>`;
     return { html: ui.dialog("saItemAdd", `เพิ่มสินค้าในใบ ${order.id}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="sa-item-form">เพิ่มสินค้า</button>` }) };
   };
-  // ขอยกเลิก / ขอแก้ใบหลังปล่อยผลิต: เหตุผลอย่างน้อย 3 ตัวอักษร (ฝ่ายวางแผนตัดสิน)
-  dialogs.saRequest = (ctx, { orderId, kind }) => {
+  // ฝ่ายขายยกเลิกใบพร้อมเหตุผล: ยังไม่เริ่มงาน = ยกเลิกทันที · เริ่มงานแล้ว = ใบหยุดรับงานใหม่ ฝ่ายวางแผนเลือกผลิตต่อจนจบส่ง WH หรือหยุด เก็บยางเส้นยาวที่ SR
+  dialogs.saCancel = (ctx, { orderId }) => {
     const { ui, helpers } = ctx;
     const order = orderOf(ctx, orderId);
-    if (!order || !["cancel", "change"].includes(kind) || !helpers.canSell(ctx.user) || !["released", "in_progress"].includes(order.status) || helpers.openOrderRequest(ctx.data, order.id, kind)) return null;
-    const cancel = kind === "cancel";
-    const max = helpers.ORDER_REQUEST_REASON_MAX?.[kind] ?? 200;
-    const body = `<form novalidate id="sa-request-form" data-rf-form="${cancel ? "requestOrderCancel" : "requestOrderChange"}" data-rf-args="${attr(JSON.stringify({ orderId }))}" data-rf-success="ส่ง${cancel ? "คำขอยกเลิก" : "คำขอแก้ใบ"} ${attr(orderId)} ให้ฝ่ายวางแผนแล้ว">
-      ${ui.callout("info", esc(cancel ? "ใบปล่อยผลิตแล้ว ฝ่ายวางแผนเป็นผู้ยกเลิกให้เมื่อยืนยันคำขอนี้ งานทุกแผนกหยุดเมื่อยกเลิก" : "ใบปล่อยผลิตแล้วและมีแผนกเริ่มงานแล้ว ฝ่ายวางแผนแก้ใบให้ตามที่ขอ"))}
-      ${ui.field(cancel ? "เหตุผลที่ขอยกเลิก" : "สิ่งที่ต้องการแก้", `<textarea class="textarea rf-textarea" name="reason" rows="3" required minlength="3" maxlength="${max}" placeholder="${attr(cancel ? "เช่น ลูกค้ายกเลิกคำสั่งซื้อ" : "เช่น เพิ่มจำนวน PK-1001 เป็น 500 ชิ้น")}"></textarea>`, { required: true })}
+    if (!order || !helpers.salesOnly(ctx.user) || !["draft", "released", "in_progress"].includes(order.status) || helpers.salesCancelled(order)) return null;
+    const state = shared().orderEditState(ctx, order);
+    if (state.rfPending) return null;
+    const midway = order.status !== "draft" && !state.reopen;
+    const info = midway
+      ? "แผนกเริ่มงานแล้ว: ใบหยุดรับงานใหม่ทันที ฝ่ายวางแผนได้รับแจ้งแล้วเลือกว่าจะผลิตต่อจนจบส่ง WH (ของเป็นสต็อก ไม่ส่งลูกค้า) หรือหยุด เก็บยางเส้นยาวที่ SR"
+      : helpers.isSentOrder(order) ? "ยังไม่มีแผนกไหนเริ่มงาน ใบถูกยกเลิกทันที ฝ่ายวางแผนได้รับแจ้ง" : "ใบร่างที่ยังไม่ส่ง ยกเลิกได้ทันที";
+    const body = `<form novalidate id="sa-cancel-form" data-rf-form="cancelOrder" data-rf-args="${attr(JSON.stringify({ orderId }))}" data-rf-success="ยกเลิกใบ ${attr(orderId)} แล้ว">
+      ${ui.callout(midway ? "warn" : "info", esc(info))}
+      ${ui.field("เหตุผลที่ยกเลิก", `<textarea class="textarea rf-textarea" name="reason" rows="3" required minlength="3" maxlength="200" placeholder="${attr("เช่น ลูกค้ายกเลิกคำสั่งซื้อ")}"></textarea>`, { required: true })}
     </form>`;
-    return { html: ui.dialog("saRequest", `${cancel ? "ขอยกเลิกใบ" : "ขอแก้ใบ"} ${order.id}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="sa-request-form">ส่งคำขอ</button>` }) };
-  };
-  // ฝ่ายวางแผนไม่ยกเลิก / ไม่แก้ตามคำขอ: ต้องมีหมายเหตุ (ฝ่ายขายเห็นในหน้าใบและงานของฉัน)
-  dialogs.saRequestDecline = (ctx, { requestId }) => {
-    const { ui, helpers } = ctx;
-    const row = (ctx.data.orderRequests ?? []).find((entry) => entry.id === requestId && entry.status === "open");
-    if (!row || !helpers.canPlanOrders(ctx.user)) return null;
-    const cancel = row.kind === "cancel";
-    const body = `<form novalidate id="sa-decline-form" data-rf-form="decideOrderRequest" data-rf-args="${attr(JSON.stringify({ requestId, decision: "decline" }))}" data-rf-success="${cancel ? "ไม่ยกเลิกใบตามคำขอ" : "ไม่แก้ใบตามคำขอ"}แล้ว">
-      <p class="small muted">${esc(`${KIND_TEXT[row.kind]} ${row.orderId}: ${row.reason}`)}</p>
-      ${ui.field(cancel ? "เหตุผลที่ไม่ยกเลิก" : "เหตุผลที่ไม่แก้ใบ", `<textarea class="textarea rf-textarea" name="note" rows="3" required minlength="3" maxlength="${helpers.DECISION_NOTE_MAX ?? 200}"></textarea>`, { required: true })}
-    </form>`;
-    return { html: ui.dialog("saRequestDecline", cancel ? `ไม่ยกเลิกใบ ${row.orderId}` : `ไม่แก้ใบ ${row.orderId}`, body, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="sa-decline-form">${cancel ? "ไม่ยกเลิก" : "ไม่แก้ใบ"}</button>` }) };
+    return { html: ui.dialog("saCancel", `ยกเลิกใบ ${order.id}`, body, { footer: `${ui.closeButton("ไม่ยกเลิก")}<button class="btn rf-btn" type="submit" form="sa-cancel-form">ยกเลิกใบ</button>` }) };
   };
 
   // ---------- การ์ดของฝ่ายวางแผน (วางที่หน้าแรกและหน้าใบสั่งผลิตของ #/pp) ----------
-  // options.orderId = เฉพาะคำขอของใบนั้น (หน้าใบ) · ไม่ให้ = ใบใหม่จากฝ่ายขาย + คำขอทั้งหมดที่ยังไม่ตัดสิน · ไม่มีอะไร = ว่าง
+  // options.orderId = เฉพาะการแจ้งของใบนั้น (หน้าใบ) · ไม่ให้ = ใบใหม่จากฝ่ายขาย + การแจ้งทั้งหมดที่ยังเปิด · ไม่มีอะไร = ว่าง
+  // การแจ้งแก้ใบ / ใบที่ยกเลิกทันที = ปุ่ม "รับทราบ" · ใบที่ยกเลิกกลางทาง = เลือก "ผลิตต่อจนจบส่ง WH" หรือ "หยุด เก็บยางเส้นยาวที่ SR"
   function planningCards(ctx, { orderId = "" } = {}) {
     const { ui, rules, helpers } = ctx;
     const cards = [];
@@ -293,19 +310,29 @@
         cards.push(ui.card(ui.table(["เลข PI / ลูกค้า", "สินค้า", "กำหนดส่งคลัง", "ฝ่ายขาย"], rows), { title: esc(`ใบใหม่จากฝ่ายขาย (${fresh.length})`), flush: true }));
       }
     }
-    // ใบที่ยกเลิกแล้วไม่มีอะไรให้ตัดสิน (ฐานข้อมูลปิดคำขอของใบที่ยกเลิกเอง · กันข้อมูลค้างจากก่อนกติกานี้หรือคำตอบที่ยังไม่มาถึง)
-    const cancelled = new Set(ctx.data.orders.filter((order) => order.status === "cancelled").map((order) => order.id));
-    const open = (ctx.data.orderRequests ?? []).filter((row) => row.status === "open" && !cancelled.has(row.orderId) && (!orderId || row.orderId === orderId));
+    const open = (ctx.data.orderRequests ?? []).filter((row) => row.status === "open" && (!orderId || row.orderId === orderId));
     if (open.length) {
       const items = open.sort((a, b) => (Number(a.requestedAt) || 0) - (Number(b.requestedAt) || 0)).map((row) => {
-        const cancel = row.kind === "cancel";
+        const order = orderOfNotice(ctx, row);
+        const choose = helpers.noticeMode(ctx.data, row) === "choose";
+        const title = noticeTitle(ctx, row);
         const orderLink = orderId ? "" : `${ui.link(row.orderId, ctx.url("orders", { sel: row.orderId }), "rf-mono")} · `;
-        const decide = cancel
-          ? `${ui.button("ยืนยันยกเลิก", { action: "decideOrderRequest", args: { requestId: row.id, decision: "confirm" }, className: "small", confirmText: `ยืนยันยกเลิกใบ ${row.orderId} ตามคำขอของฝ่ายขาย? ใบจะถูกยกเลิกด้วยเหตุผลที่ฝ่ายขายระบุ งานทุกแผนกหยุด`, ariaLabel: "ยกเลิกใบตามคำขอ" })}${ui.openButton("ไม่ยกเลิก", "saRequestDecline", { requestId: row.id }, { className: "secondary small" })}`
-          : `${ui.button("แก้ใบตามคำขอแล้ว", { action: "decideOrderRequest", args: { requestId: row.id, decision: "done" }, className: "small", confirmText: `ปิดคำขอแก้ใบ ${row.orderId}? ยืนยันว่าแก้ใบตามที่ฝ่ายขายขอครบแล้ว`, ariaLabel: "ปิดคำขอแก้ใบ" })}${ui.openButton("ไม่แก้ใบ", "saRequestDecline", { requestId: row.id }, { className: "secondary small" })}`;
-        return `<li class="bom-request"><div>${ui.badge(cancel ? "bad" : "warn", KIND_TEXT[row.kind])} ${orderLink}<span class="small muted">${esc(`${row.requestedBy ?? ""} ${rules.fmtDateTime(row.requestedAt)}`)}</span><p>${esc(row.reason)}</p></div><div class="rf-row">${decide}</div></li>`;
+        let decide;
+        if (!choose) {
+          decide = ui.button("รับทราบ", { action: "decideOrderRequest", args: { requestId: row.id, decision: "ack" }, className: "small", ariaLabel: `รับทราบ ${title} ${row.orderId}` });
+        } else {
+          // หยุด = ยกเลิกใบตามทางเดิม: ทำไม่ได้เมื่อใบปิดแล้ว (รับเข้าครบ) หรือส่งมอบ / ให้สต็อกใบอื่นไปแล้ว (fgStockLock) → เหลือทางผลิตต่อ
+          const lock = order ? rules.fgStockLock(ctx.data, order) : { blocked: false };
+          const stopBlock = order?.status === "completed" ? "ใบนี้คลังสินค้ารับเข้าครบและปิดแล้ว หยุดไม่ได้" : lock.blocked ? "ใบนี้ส่งมอบหรือให้สต็อกใบอื่นไปแล้ว ยกเลิกไม่ได้ หยุดไม่ได้" : "";
+          decide = `${ui.button("ผลิตต่อจนจบส่ง WH", { action: "decideOrderRequest", args: { requestId: row.id, decision: "continue" }, className: "small", confirmText: `ผลิตใบ ${row.orderId} ต่อจนจบส่ง WH? งานทุกแผนกเดินต่อ ของที่คลังสินค้ารับเข้าเป็นสต็อกสินค้าสำเร็จรูปให้ใบอื่นใช้ ไม่ส่งลูกค้าของใบนี้`, ariaLabel: `ผลิตใบ ${row.orderId} ต่อจนจบส่ง WH` })}${stopBlock
+            ? `<span class="small muted">${esc(stopBlock)}</span>`
+            : ui.button("หยุด เก็บยางเส้นยาวที่ SR", { action: "decideOrderRequest", args: { requestId: row.id, decision: "stop" }, className: "secondary small", confirmText: `หยุดใบ ${row.orderId}? ใบถูกยกเลิกด้วยเหตุผลของฝ่ายขาย ยางเส้นยาวของใบในคลัง SR และที่ RB ส่งแล้วรอรับเป็นสต็อกกลาง งานที่ค้างให้หัวหน้าแผนกปิดพร้อมเหตุผล`, ariaLabel: `หยุดใบ ${row.orderId} เก็บยางเส้นยาวที่ SR` })}`;
+        }
+        // หน้าใบของฝ่ายวางแผนแสดงเหตุผลยกเลิกกลางทางที่แถว "ที่มา" แล้ว: การ์ดบนหน้าใบไม่ซ้ำ
+        const detail = orderId && choose ? "" : `<p>${esc(row.reason)}</p>`;
+        return `<li class="bom-request"><div>${ui.badge(row.kind === "cancel" ? "bad" : "warn", title)} ${orderLink}<span class="small muted">${esc(`${row.requestedBy ?? ""} ${rules.fmtDateTime(row.requestedAt)}`)}</span>${detail}</div><div class="rf-row">${decide}</div></li>`;
       }).join("");
-      cards.push(ui.card(`<ul class="bom-request-list">${items}</ul>`, { title: esc(`คำขอจากฝ่ายขาย (${open.length})`) }));
+      cards.push(ui.card(`<ul class="bom-request-list">${items}</ul>`, { title: esc(`แจ้งจากฝ่ายขาย (${open.length})`) }));
     }
     return cards.join("");
   }

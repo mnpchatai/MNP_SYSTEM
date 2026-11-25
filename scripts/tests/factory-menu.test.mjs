@@ -1965,23 +1965,32 @@ test("the SR and GR files keep to ยางเส้นยาว wording, keep n
 
 // ---- โรงงานขั้น 8: โมดูลฝ่ายขาย (SA) #/sa และ BOM → ฝ่ายวางแผน (PP) #/pp ----
 const SA_DAY = 86400000;
-// ฉาก: ฝ่ายขาย (B13) ส่งใบให้ฝ่ายวางแผน 1 ใบ · เก็บร่างที่ยังไม่ส่ง 1 ใบ · ใบที่ฝ่ายวางแผนปล่อยผลิตแล้วพร้อมคำขอยกเลิกที่ยังไม่ตัดสิน
+// ฉาก (รอบ 2): ฝ่ายขาย (B13) ส่งใบให้ฝ่ายวางแผน 1 ใบ (SA-T-1) · ร่างที่ยังไม่ส่ง (SA-T-2) · ปล่อยแล้วยังไม่เริ่มงาน (SA-T-3)
+// · เริ่มงานแล้วที่ฝ่ายขายแก้ตรง 6 → 8 (SA-T-4 แจ้งแก้ใบรอรับทราบ) · เริ่มงานแล้วที่ฝ่ายขายยกเลิกกลางทาง (SA-T-5 รอฝ่ายวางแผนเลือก)
 function salesScene() {
   const env = load({ employee: emp("SA") });
   const now = Date.now();
   const header = (pi) => ({ pi, customer: "ลูกค้าสาธิต ระยอง", country: "Thailand", orderedAt: now - SA_DAY, whDue: now + 14 * SA_DAY });
   const run = (user, name, payload) => { env.store.setUser(user); const out = env.store.run(name, payload); assert.equal(out.ok, true, `${name}: ${out.error?.message ?? ""}`); return out.result; };
+  const released = (pi, qty) => {
+    run("B13", "createOrder", { ...header(pi), lines: [{ fgCode: "DEMO-HL-24(B)-A", qty }], send: true });
+    run("B03", "explodeOrder", { orderId: pi });
+    run("B03", "releaseOrder", { orderId: pi });
+  };
+  const start = (pi) => run("B03", "reportJob", { jobId: env.store.data().jobs.find((job) => job.orderId === pi && job.dept === "PK" && job.kind === "FG").id, qtyDone: 1, note: "ชุดแรก" });
   run("B13", "createOrder", { ...header("SA-T-1"), lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 12 }], send: true });
   run("B13", "createOrder", { ...header("SA-T-2"), lines: [{ fgCode: "DEMO-TP-01(P)-Y", qty: 30 }] });
-  run("B13", "createOrder", { ...header("SA-T-3"), lines: [{ fgCode: "DEMO-HL-24(B)-A", qty: 6 }], send: true });
-  run("B03", "explodeOrder", { orderId: "SA-T-3" });
-  run("B03", "releaseOrder", { orderId: "SA-T-3" });
-  run("B13", "requestOrderCancel", { orderId: "SA-T-3", reason: "ลูกค้าขอยกเลิกคำสั่งซื้อ" });
+  released("SA-T-3", 6);
+  released("SA-T-4", 6);
+  start("SA-T-4");
+  run("B13", "updateOrderItem", { orderId: "SA-T-4", fgCode: "DEMO-HL-24(B)-A", qty: 8 });
+  released("SA-T-5", 10);
+  start("SA-T-5");
+  run("B13", "cancelOrder", { orderId: "SA-T-5", reason: "ลูกค้าขอยกเลิกคำสั่งซื้อ" });
   env.setEmployee(emp("SA"));
   env.store.setUser("B13");
   return env;
 }
-
 test("an old #/bom address redirects to #/pp with the same query; the customers page goes to #/sa?tab=customers", async () => {
   const env = load({ employee: emp("PP") });
   const legacy = env.modules.BOM.pages.bom;
@@ -2017,18 +2026,22 @@ test("the sales module is visible to SA staff and heads, PP and the managers, an
   assert.equal(env.modules.FACTORY_SA.navAllowed({ department: { code: "SA" }, role: { code: "admin" } }), false);
 });
 
-test("SA pages: work (unsent drafts with the send button, requests and planning's answer), new order form, order list with the issuer, order tracking and the customer register", async () => {
+test("SA pages: work (unsent drafts with the send button, notices and planning's answer), new order form, order list with the issuer and states, order tracking and the customer register", async () => {
   const env = salesScene();
   const withNoise = (html, label) => { assert.doesNotMatch(html, /undefined|NaN|\[object/, label); return html; };
-  // งานของฉัน: ใบร่างที่ยังไม่ส่ง + คำขอที่รอตัดสิน
+  // งานของฉัน: ใบร่างที่ยังไม่ส่ง + การแจ้งที่รอฝ่ายวางแผน
   const work = withNoise(await env.open("FACTORY_SA"), "work");
   assert.match(work, /<h1>งานของฉัน<\/h1>/);
   assert.match(work, /ใบร่างที่ยังไม่ส่งให้ฝ่ายวางแผน \(1\)/);
   assert.match(work, /SA-T-2/);
   assert.doesNotMatch(work, />SA-T-1</, "a sent order is not in the unsent drafts");
   assert.match(work, /data-rf-action="sendOrderToPlanning" data-rf-args="\{&quot;orderId&quot;:&quot;SA-T-2&quot;\}"/);
-  assert.match(work, /ขอยกเลิกใบ/);
-  assert.match(work, /รอฝ่ายวางแผนตัดสิน/);
+  assert.match(work, /แจ้งฝ่ายวางแผนและผลการตัดสิน/);
+  assert.match(work, /ฝ่ายขายแก้ใบ/);
+  assert.match(work, /DEMO-HL-24\(B\)-A 6 → 8/);
+  assert.match(work, /ฝ่ายขายยกเลิกใบกลางทาง/);
+  assert.match(work, /รอฝ่ายวางแผนรับทราบ/);
+  assert.match(work, /รอฝ่ายวางแผนตัดสินของที่ทำค้าง/);
   // ออกใบสั่งผลิต: ฟอร์ม + สินค้าค้นหาได้จาก item master + สองปุ่ม
   const form = withNoise(await env.open("FACTORY_SA", "tab=new"), "new");
   assert.match(form, /<h1>ออกใบสั่งผลิต<\/h1>/);
@@ -2039,31 +2052,47 @@ test("SA pages: work (unsent drafts with the send button, requests and planning'
   assert.match(form, /data-sa-send="1">ส่งให้ฝ่ายวางแผน<\/button>/);
   assert.match(form, /<span class="field-required">\(จำเป็น\)<\/span>/);
   assert.match(form, /ว่าง = ออกเลขอัตโนมัติ/);
-  // ใบของฝ่ายขาย: ทุกใบของ SA พร้อมผู้ออกใบ · ใบของฝ่ายวางแผนไม่อยู่ที่นี่
+  // ใบของฝ่ายขาย: ทุกใบของ SA พร้อมผู้ออกใบ · ใบของฝ่ายวางแผนไม่อยู่ที่นี่ · ใบที่ยกเลิกกลางทางบอกสถานะ
   const list = withNoise(await env.open("FACTORY_SA", "tab=orders"), "orders");
-  for (const id of ["SA-T-1", "SA-T-2", "SA-T-3"]) assert.match(list, new RegExp(`>${id}<`));
+  for (const id of ["SA-T-1", "SA-T-2", "SA-T-3", "SA-T-4", "SA-T-5"]) assert.match(list, new RegExp(`>${id}<`));
   assert.doesNotMatch(list, />DEMO-26001</);
   assert.match(list, /สุนิสา ขายดี/, "the issuer is shown");
   assert.match(list, /data-sa-filter/);
   assert.match(list, /รอฝ่ายวางแผนปล่อยผลิต/);
   assert.match(list, /ร่าง ยังไม่ส่ง/);
+  assert.match(list, /ยกเลิกแล้ว รอฝ่ายวางแผนตัดสินของที่ทำค้าง/);
   const filtered = await env.open("FACTORY_SA", "tab=orders&st=unsent");
   assert.match(filtered, />SA-T-2</);
   assert.doesNotMatch(filtered, />SA-T-1</);
-  // หน้าใบที่ปล่อยผลิตแล้ว: ติดตามรายแผนก + WH + คำขอที่เปิดอยู่ · ไม่มีงานเริ่ม = แก้ได้ (ใบกลับไปให้ฝ่ายวางแผนปล่อยผลิตใหม่)
+  const pending = await env.open("FACTORY_SA", "tab=orders&st=sales_pending");
+  assert.match(pending, />SA-T-5</);
+  assert.doesNotMatch(pending, />SA-T-4</);
+  // ปล่อยแล้วยังไม่เริ่มงาน: แก้ได้ (ใบกลับไปให้ฝ่ายวางแผนปล่อยผลิตใหม่) · ยกเลิกได้ · ไม่มีปุ่มขอ
   const tracked = withNoise(await env.open("FACTORY_SA", "order=SA-T-3"), "order");
   assert.match(tracked, /ความคืบหน้ารายแผนก/);
   assert.match(tracked, /WH รับแล้ว/);
-  assert.match(tracked, /ขอยกเลิกใบ<\/strong>/);
-  assert.match(tracked, /data-rf-open="saRequest" data-rf-args="\{&quot;orderId&quot;:&quot;SA-T-3&quot;,&quot;kind&quot;:&quot;change&quot;\}"/, "a change request is offered, the cancel request is already open");
-  assert.doesNotMatch(tracked, /data-rf-args="\{&quot;orderId&quot;:&quot;SA-T-3&quot;,&quot;kind&quot;:&quot;cancel&quot;\}"/);
   assert.match(tracked, /data-rf-open="saOrderHeader"/);
   assert.match(tracked, /data-rf-action="removeOrderItem"[^>]*data-rf-confirm="[^"]*กลับไปให้ฝ่ายวางแผนปล่อยผลิตใหม่/);
-  // ใบร่างที่ยังไม่ส่ง: ส่ง · ยกเลิก (ร่างเท่านั้น) · ไม่มีปุ่มขอ
+  assert.match(tracked, /data-rf-open="saCancel"/);
+  assert.doesNotMatch(tracked, /saRequest|ขอแก้ใบ|ขอยกเลิก/, "no request buttons any more");
+  // เริ่มงานแล้ว: แก้ตรง (ฝ่ายวางแผนได้รับแจ้ง) · การแจ้งแก้ใบของใบนี้ · ยกเลิกกลางทางได้ · สินค้าบรรทัดเดียวลบไม่ได้ (ยกเลิกใบแทน)
+  const started = withNoise(await env.open("FACTORY_SA", "order=SA-T-4"), "started");
+  assert.match(started, /data-rf-open="saOrderHeader"/);
+  assert.match(started, /บันทึกแล้วใบเปลี่ยนทันที/);
+  assert.match(started, /<strong>ฝ่ายขายแก้ใบ<\/strong>/);
+  assert.match(started, /DEMO-HL-24\(B\)-A 6 → 8/);
+  assert.match(started, /data-rf-open="saCancel"/);
+  assert.doesNotMatch(started, /data-rf-action="removeOrderItem"/);
+  // ยกเลิกกลางทางรอตัดสิน: ป้ายสถานะ · ผู้ยกเลิกและเหตุผล · แก้ / ยกเลิกซ้ำไม่ได้
+  const cancelled = withNoise(await env.open("FACTORY_SA", "order=SA-T-5"), "cancelled");
+  assert.match(cancelled, /ยกเลิกแล้ว รอฝ่ายวางแผนตัดสินของที่ทำค้าง/);
+  assert.match(cancelled, /ฝ่ายขายยกเลิก/);
+  assert.match(cancelled, /ลูกค้าขอยกเลิกคำสั่งซื้อ/);
+  assert.doesNotMatch(cancelled, /data-rf-open="saOrderHeader"|data-rf-open="saCancel"/);
+  // ใบร่างที่ยังไม่ส่ง: ส่ง · ยกเลิก
   const draft = await env.open("FACTORY_SA", "order=SA-T-2");
   assert.match(draft, /data-rf-action="sendOrderToPlanning"/);
-  assert.match(draft, /data-rf-open="orderCancel"/);
-  assert.doesNotMatch(draft, /data-rf-open="saRequest"/);
+  assert.match(draft, /data-rf-open="saCancel"/);
   assert.match(draft, /ยังไม่มีงานรายแผนก|ใบร่าง ยังไม่ส่งให้ฝ่ายวางแผน/);
   assert.match(await env.open("FACTORY_SA", "order=DEMO-26001"), /ใบนี้เป็นของฝ่ายวางแผน/, "planning's own orders are not tracked here");
   assert.match(await env.open("FACTORY_SA", "order=NOPE"), /ไม่พบใบสั่งผลิตนี้/);
@@ -2083,53 +2112,63 @@ test("SA pages: work (unsent drafts with the send button, requests and planning'
   assert.equal(env.log.notFound > 0, true, "a GR head gets the not-found page");
 });
 
-test("SA rights in the pages: a planner viewing a sales order has no request buttons; sales cannot reach planning's buttons; the request dialog and the decline dialog follow the rules", async () => {
+test("SA rights in the pages: the cancel dialog says what happens; planning sees the notices with 'รับทราบ' or the two choices; sales cannot decide; planning's answer reaches sales", async () => {
   const env = salesScene();
   const D = env.context.MNP_BOM_DIALOGS;
   const ctxOf = (query) => env.context.MNP_BOM.context(new URLSearchParams(query));
-  // ฝ่ายขายขอแก้ใบได้ (ยังไม่มีคำขอแก้) · ขอยกเลิกซ้ำไม่ได้ · ใบร่างขอไม่ได้
-  assert.ok(D.saRequest(ctxOf("p=find"), { orderId: "SA-T-3", kind: "change" }));
-  assert.equal(D.saRequest(ctxOf("p=find"), { orderId: "SA-T-3", kind: "cancel" }), null, "one open request per kind");
-  assert.equal(D.saRequest(ctxOf("p=find"), { orderId: "SA-T-2", kind: "cancel" }), null, "a draft is cancelled directly");
-  assert.match(D.saRequest(ctxOf("p=find"), { orderId: "SA-T-3", kind: "change" }).html, /data-rf-form="requestOrderChange"[^>]*>[\s\S]*name="reason"[^>]*required/);
-  // ฝ่ายวางแผนตัดสิน: หน้า PP มีการ์ดของใบใหม่และคำขอ · ใบร่างที่ยังไม่ส่งไม่โผล่ · ปุ่มตัดสินครบ
+  // ยกเลิก: ยังไม่เริ่ม = ทันที · เริ่มแล้ว = กลางทาง (ฝ่ายวางแผนเลือก) · ยกเลิกไว้แล้ว = ไม่มี dialog
+  assert.match(D.saCancel(ctxOf("p=find"), { orderId: "SA-T-3" }).html, /ใบถูกยกเลิกทันที[\s\S]*data-rf-form="cancelOrder"|data-rf-form="cancelOrder"[\s\S]*ใบถูกยกเลิกทันที/);
+  const midway = D.saCancel(ctxOf("p=find"), { orderId: "SA-T-4" }).html;
+  assert.match(midway, /ใบหยุดรับงานใหม่ทันที/);
+  assert.match(midway, /name="reason"[^>]*required/);
+  assert.equal(D.saCancel(ctxOf("p=find"), { orderId: "SA-T-5" }), null, "cancelled once");
+  assert.equal(D.saRequest, undefined, "the request dialog is gone");
+  // ฝ่ายวางแผน: การ์ดใบใหม่และการแจ้ง · ใบร่างที่ยังไม่ส่งไม่โผล่
   env.setEmployee(emp("PP"));
   env.store.setUser("B03");
+  assert.equal(D.saCancel(ctxOf("p=find"), { orderId: "SA-T-3" }), null, "planning cancels on its own page");
   const pp = await env.open("BOM", "p=orders");
   assert.match(pp, /ใบใหม่จากฝ่ายขาย \(1\)/);
-  assert.match(pp, /คำขอจากฝ่ายขาย \(1\)/);
+  assert.match(pp, /แจ้งจากฝ่ายขาย \(2\)/);
   assert.match(pp, />SA-T-1</);
   assert.doesNotMatch(pp, />SA-T-2</, "an unsent sales draft is hidden from planning");
-  assert.match(pp, /data-rf-action="decideOrderRequest" data-rf-args="\{&quot;requestId&quot;:&quot;[^&]+&quot;,&quot;decision&quot;:&quot;confirm&quot;\}"/);
-  assert.match(pp, /data-rf-open="saRequestDecline"/);
+  assert.match(pp, /data-rf-action="decideOrderRequest" data-rf-args="\{&quot;requestId&quot;:&quot;[^&]+&quot;,&quot;decision&quot;:&quot;ack&quot;\}"[^>]*>รับทราบ</);
+  assert.match(pp, /ฝ่ายขายยกเลิกใบกลางทาง/);
+  assert.match(pp, /decision&quot;:&quot;continue&quot;\}"[^>]*>ผลิตต่อจนจบส่ง WH</);
+  assert.match(pp, /decision&quot;:&quot;stop&quot;\}"[^>]*>หยุด เก็บยางเส้นยาวที่ SR</);
+  assert.doesNotMatch(pp, /saRequestDecline|คำขอจากฝ่ายขาย/);
   assert.match(pp, /<span class="rf-badge is-info">ฝ่ายขาย<\/span>/, "the source chip");
-  const order = await env.open("BOM", "p=orders&sel=SA-T-3");
-  assert.match(order, /คำขอจากฝ่ายขาย \(1\)/, "the order page shows the request on top");
+  const order = await env.open("BOM", "p=orders&sel=SA-T-5");
+  assert.match(order, /แจ้งจากฝ่ายขาย \(1\)/, "the order page shows its notice on top");
+  assert.match(order, /ฝ่ายขายยกเลิกแล้ว รอฝ่ายวางแผนตัดสินของที่ทำค้าง/, "the source row says sales cancelled");
   assert.match(order, /ออกใบโดย สุนิสา ขายดี/);
   assert.equal((await env.open("BOM", "p=orders&sel=SA-T-2")).includes("ใบร่างของฝ่ายขายที่ยังไม่ส่ง"), false);
-  const requestId = env.store.data().orderRequests[0].id;
-  const decline = D.saRequestDecline(ctxOf("p=find"), { requestId });
-  assert.match(decline.html, /name="note"[^>]*required/);
-  assert.match(decline.html, /data-rf-form="decideOrderRequest"/);
-  // ฝ่ายขายตัดสินคำขอไม่ได้ (ฐานข้อมูลปฏิเสธด้วย)
+  const notices = env.store.data().orderRequests;
+  const cancelNotice = notices.find((row) => row.orderId === "SA-T-5");
+  const changeNotice = notices.find((row) => row.orderId === "SA-T-4");
+  // ฝ่ายขายตัดสินไม่ได้ (ฐานข้อมูลปฏิเสธด้วย)
   env.store.setUser("B13");
-  assert.equal(D.saRequestDecline(ctxOf("p=find"), { requestId }), null);
-  assert.equal(env.store.run("decideOrderRequest", { requestId, decision: "confirm" }).ok, false);
-  // ฝ่ายวางแผนยืนยันยกเลิก: ใบถูกยกเลิก คำขอปิด · งานของฉันของฝ่ายขายเห็นผล
+  assert.equal(env.store.run("decideOrderRequest", { requestId: cancelNotice.id, decision: "continue" }).ok, false);
+  // ฝ่ายวางแผนเลือกผลิตต่อ และรับทราบการแก้ · ฝ่ายขายเห็นผล
   env.store.setUser("B03");
-  assert.equal(env.store.run("decideOrderRequest", { requestId, decision: "confirm" }).ok, true);
-  assert.equal(env.store.data().orders.find((entry) => entry.id === "SA-T-3").status, "cancelled");
+  assert.equal(env.store.run("decideOrderRequest", { requestId: cancelNotice.id, decision: "continue" }).ok, true);
+  assert.equal(env.store.run("decideOrderRequest", { requestId: changeNotice.id, decision: "ack" }).ok, true);
+  assert.equal(env.store.data().orders.find((entry) => entry.id === "SA-T-5").salesCancelChoice, "continue");
   env.setEmployee(emp("SA"));
   env.store.setUser("B13");
-  assert.match(await env.open("FACTORY_SA"), /ยกเลิกแล้ว/);
+  const work = await env.open("FACTORY_SA");
+  assert.match(work, /ฝ่ายวางแผนเลือกผลิตต่อจนจบส่ง WH/);
+  assert.match(work, /ฝ่ายวางแผนรับทราบแล้ว/);
+  assert.match(await env.open("FACTORY_SA", "order=SA-T-5"), /ยกเลิกแล้ว ฝ่ายวางแผนให้ผลิตต่อจนจบส่ง WH/);
 });
 
-test("the demo seed has the sales demo on request: one order sent to planning, one unsent draft and a released order with an open cancel request", () => {
+test("the demo seed has the sales demo on request: one order sent to planning, one unsent draft, a started order sales edited and a started order sales cancelled mid-way", () => {
   const env = load();
   const seeded = env.context.MNP_BOM_SEED.buildSeed(Date.now(), { sales: true });
   const sales = seeded.orders.filter((order) => order.source === "SA");
-  assert.deepEqual(plain(sales.map((order) => [order.id, order.status, order.sentAt ? "sent" : "unsent"]).sort()), [["DEMO-SA-01", "draft", "sent"], ["DEMO-SA-02", "draft", "unsent"], ["DEMO-SA-03", "released", "sent"]]);
-  assert.deepEqual(plain(seeded.orderRequests.map((row) => [row.orderId, row.kind, row.status])), [["DEMO-SA-03", "cancel", "open"]]);
+  assert.deepEqual(plain(sales.map((order) => [order.id, order.status, order.sentAt ? "sent" : "unsent", order.salesCancelAt ? "salesCancel" : ""]).sort()),
+    [["DEMO-SA-01", "draft", "sent", ""], ["DEMO-SA-02", "draft", "unsent", ""], ["DEMO-SA-03", "in_progress", "sent", ""], ["DEMO-SA-04", "in_progress", "sent", "salesCancel"]]);
+  assert.deepEqual(plain(seeded.orderRequests.map((row) => [row.orderId, row.kind, row.status])), [["DEMO-SA-03", "change", "open"], ["DEMO-SA-04", "cancel", "open"]]);
   assert.equal(env.context.MNP_BOM_SEED.buildSeed(Date.now()).orders.some((order) => order.source === "SA"), false, "the default demo is unchanged");
   assert.equal(seeded.users.find((user) => user.role === "sa")?.dept, "SA");
 });
@@ -2168,23 +2207,23 @@ test("SA order page: while RubberFlow loads, a released order with a work-order-
   assert.match(await env.open("FACTORY_SA", "order=SA-T-3"), /แผนกเริ่มงานแล้ว/, "a job that really started still says so");
 });
 
-test("PP: an open sales request on a cancelled order offers no decision; cancelling an order closes its open requests", async () => {
+test("PP: a notice of an order sales cancelled outright offers only 'รับทราบ'; planning's direct cancel of a mid-way cancelled order closes its notices as a stop", async () => {
   const env = salesScene();
+  // ฝ่ายขายยกเลิกใบที่ยังไม่เริ่มงานทันที: ฝ่ายวางแผนรับทราบอย่างเดียว
+  assert.equal(env.store.run("cancelOrder", { orderId: "SA-T-3", reason: "ลูกค้าเปลี่ยนรุ่น" }).ok, true);
+  assert.equal(env.store.data().orders.find((entry) => entry.id === "SA-T-3").status, "cancelled");
   env.setEmployee(emp("PP"));
   env.store.setUser("B03");
-  assert.match(await env.open("BOM", "p=orders"), /คำขอจากฝ่ายขาย \(1\)/);
-  // คำขอที่ค้างบนใบที่ยกเลิกแล้ว (ข้อมูลก่อนกติกานี้): การ์ดไม่แสดง ไม่มีปุ่มตัดสิน
-  const order = env.store.data().orders.find((entry) => entry.id === "SA-T-3");
-  order.status = "cancelled";
-  const stale = await env.open("BOM", "p=orders");
-  assert.doesNotMatch(stale, /คำขอจากฝ่ายขาย/);
-  assert.doesNotMatch(stale, /data-rf-action="decideOrderRequest"|data-rf-open="saRequestDecline"/);
-  assert.doesNotMatch(await env.open("BOM", "p=orders&sel=SA-T-3"), /data-rf-action="decideOrderRequest"/);
-  // ฝ่ายวางแผนยกเลิกใบเอง: คำขอยกเลิกที่เปิดอยู่ปิดเองพร้อมหมายเหตุ ฝ่ายขายเห็นผล
-  order.status = "released";
-  assert.equal(env.store.run("cancelOrder", { orderId: "SA-T-3", reason: "ฝ่ายวางแผนยกเลิกเอง" }).ok, true);
-  assert.deepEqual(plain(env.store.data().orderRequests.map((row) => [row.orderId, row.status, row.decisionNote])), [["SA-T-3", "done", "ใบถูกยกเลิกแล้ว"]]);
+  const page = await env.open("BOM", "p=orders&sel=SA-T-3");
+  assert.match(page, /ฝ่ายขายยกเลิกใบ</);
+  assert.match(page, /ลูกค้าเปลี่ยนรุ่น/);
+  assert.match(page, /decision&quot;:&quot;ack&quot;\}"[^>]*>รับทราบ</);
+  assert.doesNotMatch(page, /decision&quot;:&quot;continue&quot;/);
+  // ฝ่ายวางแผนยกเลิกใบที่ฝ่ายขายยกเลิกกลางทางตรง ๆ = หยุด · การแจ้งของใบปิดเอง ฝ่ายขายเห็นผล
+  assert.equal(env.store.run("cancelOrder", { orderId: "SA-T-5", reason: "ฝ่ายวางแผนหยุดเอง" }).ok, true);
+  assert.deepEqual(plain(env.store.data().orderRequests.filter((row) => row.orderId === "SA-T-5").map((row) => [row.status, row.decision])), [["done", "stop"]]);
+  assert.equal(env.store.data().orders.find((entry) => entry.id === "SA-T-5").salesCancelChoice, "stop");
   env.setEmployee(emp("SA"));
   env.store.setUser("B13");
-  assert.match(await env.open("FACTORY_SA", "order=SA-T-3"), /ใบถูกยกเลิกแล้ว/);
+  assert.match(await env.open("FACTORY_SA", "order=SA-T-5"), /ฝ่ายวางแผนเลือกหยุด เก็บยางเส้นยาวที่ SR/);
 });

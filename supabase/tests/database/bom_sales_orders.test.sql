@@ -1,7 +1,8 @@
--- ใบสั่งผลิตจากฝ่ายขาย (SA) ส่งให้ฝ่ายวางแผน (PP) · คำขอยกเลิก / แก้ใบ · ผู้เขียนใบสั่งผลิตและลูกค้า (โรงงาน ขั้น 8 · 20261225010000_bom_sales_orders.sql)
--- ตรวจทั้งฝั่งอนุญาตและปฏิเสธ: โครงสร้าง (คอลัมน์ ตารางคำขอ ฟังก์ชันใหม่ รายการ action) · นอกโหมดทดสอบ = BOM_TEST_MODE_ONLY
+-- ใบสั่งผลิตจากฝ่ายขาย (SA) ส่งให้ฝ่ายวางแผน (PP) · ฝ่ายขายแก้ / ยกเลิกใบเองแล้วแจ้งฝ่ายวางแผน · ผู้เขียนใบสั่งผลิตและลูกค้า (โรงงาน ขั้น 8 · 20261225010000_bom_sales_orders.sql)
+-- ตรวจทั้งฝั่งอนุญาตและปฏิเสธ: โครงสร้าง (คอลัมน์ ตารางการแจ้ง ฟังก์ชันใหม่ รายการ action) · นอกโหมดทดสอบ = BOM_TEST_MODE_ONLY
 -- · ฝ่ายขายเปิด / แก้ / ส่ง / ยกเลิกร่างของใบฝ่ายขาย · แตะใบของฝ่ายวางแผน ปล่อยผลิต คำนวณ ตั้งกำหนดเสร็จรายแผนก ยอดจากสต็อก ไม่ได้
--- · หลังปล่อยผลิต: ยกเลิกเองไม่ได้ → คำขอ (ซ้ำไม่ได้) · ฝ่ายวางแผนยืนยัน / ไม่ยกเลิก / แก้แล้ว · เปิดใบกลับเมื่อยังไม่มีงานเริ่ม
+-- · หลังปล่อยผลิต (รอบ 2): ยังไม่เริ่มงาน = ยกเลิกทันที / เปิดกลับเป็นร่าง · เริ่มงานแล้ว = แก้ใบตรง (แจ้งฝ่ายวางแผน รับทราบ) / ยกเลิกกลางทาง (ไม่รับงานใหม่
+--   ฝ่ายวางแผนเลือกผลิตต่อจนจบส่ง WH หรือหยุด) · ฝ่ายขายและผู้จัดการแผนกในสายผลิตเลือกแทนไม่ได้
 -- · ผู้จัดการแผนกในสายผลิต (SBX-PK-MGR) เขียนใบสั่งผลิต / ลูกค้าไม่ได้แล้ว แต่สิทธิ์อื่นของกลุ่มวางแผน (ข้อมูลหลัก) คงเดิม · พนักงานแผนกอื่นไม่ได้
 -- ข้อควรระวัง: เรียก private.* ก่อนสลับเป็น authenticated เท่านั้น (สิทธิ์ execute ถูกถอนจาก authenticated · CI ขั้น 7) และอ่านตารางตรงด้วย reset role เท่านั้น
 begin;
@@ -13,7 +14,15 @@ select ok(exists (select 1 from information_schema.columns where table_schema = 
           and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'bom_orders' and column_name = 'sent_at')
           and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'bom_orders' and column_name = 'sent_by'),
   'an order has its source (default PP) and when / who sent it to planning');
-select ok(not exists (select 1 from public.bom_orders where source <> 'PP' or sent_at is not null), 'every order made before the migration is a planning order and not sent');
+select ok((select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'bom_orders'
+           and column_name in ('sales_cancel_at', 'sales_cancel_by', 'sales_cancel_reason', 'sales_cancel_choice')) = 4
+          and exists (select 1 from pg_constraint c where c.conrelid = 'public.bom_orders'::regclass and c.conname = 'bom_orders_sales_cancel_check'),
+  'an order records a mid-way cancel by sales and the choice of planning');
+select ok(exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'bom_order_requests' and column_name = 'decision')
+          and not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'bom_order_requests' and column_name = 'decision_note'),
+  'a notice records the decision of planning (ack / continue / stop)');
+select ok(not exists (select 1 from public.bom_orders where source <> 'PP' or sent_at is not null or sales_cancel_at is not null),
+  'every order made before the migration is a planning order, not sent and not cancelled by sales');
 select ok((select c.relrowsecurity from pg_class c where c.oid = 'public.bom_order_requests'::regclass)
           and not has_table_privilege('anon', 'public.bom_order_requests', 'select') and not has_table_privilege('authenticated', 'public.bom_order_requests', 'select')
           and not has_table_privilege('authenticated', 'public.bom_order_requests', 'insert') and not has_table_privilege('authenticated', 'public.bom_order_requests', 'update'),
@@ -24,17 +33,18 @@ select ok('bom_order_requests' = any (private.sandbox_unguarded_tables())
           and exists (select 1 from pg_trigger g where g.tgrelid = 'public.bom_order_requests'::regclass and g.tgname = 'bom_order_requests_stamp_version')
           and exists (select 1 from pg_policy p where p.polrelid = 'public.bom_order_requests'::regclass and p.polname = 'lab_only_no_access'),
   'the request table knows the test mode, is stamped, purged with the test data and guarded for lab-only accounts');
-select ok(exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'bom_order_requests_one_open_idx'),
-  'one open request per order and kind is also enforced by an index');
-select ok(array['updateOrderHeader', 'sendOrderToPlanning', 'requestOrderCancel', 'requestOrderChange', 'decideOrderRequest'] <@ private.bom_client_actions()
-          and array['createOrder', 'saveCustomer', 'sendOrderToPlanning', 'requestOrderCancel', 'requestOrderChange', 'cancelOrder'] <@ private.bom_sales_actions()
+select ok(exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'bom_order_requests_one_open_idx' and indexdef like '%cancel%'),
+  'one open cancel notice per order is also enforced by an index (change notices may stack)');
+select ok(array['updateOrderHeader', 'sendOrderToPlanning', 'decideOrderRequest'] <@ private.bom_client_actions()
+          and not (array['requestOrderCancel'] <@ private.bom_client_actions()) and not (array['requestOrderChange'] <@ private.bom_client_actions())
+          and array['createOrder', 'saveCustomer', 'sendOrderToPlanning', 'cancelOrder', 'updateOrderItem', 'updateOrderHeader'] <@ private.bom_sales_actions()
           and not (array['releaseOrder'] <@ private.bom_sales_actions()) and not (array['explodeOrder'] <@ private.bom_sales_actions())
           and not (array['decideOrderRequest'] <@ private.bom_sales_actions()) and not (array['setStockCount'] <@ private.bom_sales_actions())
-          and not (array['createOrder'] <@ private.bom_staff_actions()),
-  'the new actions are on the client list · sales may call order and request actions but not release, explode, decide or count');
+          and not (array['createOrder'] <@ private.bom_staff_actions()) and not (array['decideOrderRequest'] <@ private.bom_staff_actions()),
+  'the new actions are on the client list and the request actions are gone · sales may edit and cancel orders but not release, explode, decide or count');
 select ok((select bool_and(p.prosecdef and p.proconfig @> array['search_path=""']) from pg_proc p
            where p.oid in ('private.bom_can_sell(public.employees)'::regprocedure, 'private.bom_can_plan_orders(public.employees)'::regprocedure,
-                           'private.bom_can_order(public.employees)'::regprocedure,
+                           'private.bom_can_order(public.employees)'::regprocedure, 'private.bom_order_locked(uuid)'::regprocedure,
                            'private.bom_save_order_request(public.employees,boolean,text,jsonb,uuid[],bigint,bigint)'::regprocedure,
                            'private.bom_save_orders(public.employees,text,boolean,jsonb,jsonb,bigint,bigint)'::regprocedure,
                            'private.bom_records(bigint)'::regprocedure, 'public.app_bom_save_master(jsonb,bigint,text,jsonb,text)'::regprocedure)),
@@ -42,9 +52,28 @@ select ok((select bool_and(p.prosecdef and p.proconfig @> array['search_path=""'
 select ok(not exists (
     select 1 from pg_proc p
     where p.pronamespace = 'private'::regnamespace
-      and p.proname in ('bom_can_sell', 'bom_can_plan_orders', 'bom_can_order', 'bom_sales_actions', 'bom_sa_items_ok', 'bom_save_order_request', 'bom_save_orders')
+      and p.proname in ('bom_can_sell', 'bom_can_plan_orders', 'bom_can_order', 'bom_sales_actions', 'bom_sa_items_ok', 'bom_save_order_request', 'bom_save_orders',
+                        'bom_order_locked', 'bom_sa_change_summary', 'bom_fg_free')
       and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute'))),
   'clients cannot call the new helpers or the writers directly');
+select ok((select p.proconfig @> array['search_path=""'] from pg_proc p where p.oid = 'private.bom_sa_change_summary(public.bom_orders,text,text,text,bigint,text,jsonb)'::regprocedure),
+  'the change summary has an empty search_path');
+-- สรุปการแก้ใบ (เหตุผลของการแจ้ง kind change): หัวใบ แล้วสินค้าตามลำดับใหม่ แล้วสินค้าที่ลบ · วันที่ไทย DD/MM/YYYY · ตรงกับ salesChangeSummary ของ client ทุกตัวอักษร
+select is(private.bom_sa_change_summary(
+            jsonb_populate_record(null::public.bom_orders, '{"customer":"ลูกค้าเดิม","country":"TH","order_type":"SA","wh_due":1769212800000,"note":"",
+              "items":[{"fgCode":"FG-S1","qty":5,"colorSet":"","note":""},{"fgCode":"FG-S2-Y","qty":2.5,"colorSet":"Y","note":""}]}'::jsonb),
+            'ลูกค้าใหม่', 'TH', 'SA', 1769385600000, 'ด่วน',
+            '[{"fgCode":"FG-S1","qty":3,"colorSet":"","note":"แพ็กใหม่"},{"fgCode":"FG-S3","qty":4,"colorSet":"","note":""}]'::jsonb),
+  'ลูกค้า ลูกค้าเดิม → ลูกค้าใหม่ · กำหนดส่งคลัง 24/01/2026 → 26/01/2026 · แก้หมายเหตุ · FG-S1 5 → 3 · เพิ่ม FG-S3 × 4 · ลบ FG-S2-Y × 2.5',
+  'the change summary lists the header, then changed and added products, then removed ones');
+select is(private.bom_sa_change_summary(
+            jsonb_populate_record(null::public.bom_orders, '{"customer":"ก","country":"TH","order_type":"SA","wh_due":1769212800000,"note":"",
+              "items":[{"fgCode":"FG-S1","qty":5,"colorSet":"","note":""}]}'::jsonb),
+            'ก', 'TH', 'SA', 1769212800000, '', '[{"fgCode":"FG-S1","qty":5,"colorSet":"","note":"ห่อแยก"}]'::jsonb),
+  'FG-S1 แก้หมายเหตุ', 'a note on a product line is named without old and new text');
+select is(char_length(private.bom_sa_change_summary(
+            jsonb_populate_record(null::public.bom_orders, '{"customer":"ก","country":"TH","order_type":"SA","wh_due":1769212800000,"note":"","items":[]}'::jsonb),
+            repeat('ข', 400), 'TH', 'SA', 1769212800000, '', '[]'::jsonb)), 300, 'a long summary is cut to 300 characters');
 select is((select count(*)::integer from private.lab_only_unguarded_functions()), 0, 'every callable public function keeps the lab-only guard');
 select ok(private.bom_sa_items_ok('[]'::jsonb, '[{"fgCode":"FG-S2-Y","colorSet":"Y"},{"fgCode":"FG-S1","colorSet":""}]'::jsonb)
           and not private.bom_sa_items_ok('[]'::jsonb, '[{"fgCode":"FG-S1","colorSet":"Y"}]'::jsonb)
@@ -113,12 +142,26 @@ create function so_t.sa_order(p_no text, p_extra jsonb) returns jsonb language s
                             'items', '[{"fgCode":"FG-S1","qty":5,"colorSet":"","note":""}]'::jsonb, 'explosion', null, 'explodedAt', null,
                             'stockCounts', '{}'::jsonb, 'note', '') || p_extra
 $$;
--- คำขอ (แถวเดียวในส่วน orderRequests) · ส่วนอื่นที่มาพร้อมกัน (ยืนยันยกเลิก = แถวยกเลิกใบ) ส่งใน p_more
+-- ตัดสินการแจ้ง (แถวเดียวในส่วน orderRequests) · ส่วนอื่นที่มาพร้อมกัน (หยุด = แถวยกเลิกใบ) ส่งใน p_more
 create function so_t.req(p_row jsonb, p_action text, p_more jsonb default '{}'::jsonb) returns jsonb language sql volatile as $$
   select so_t.save(jsonb_build_object('orderRequests', jsonb_build_object('upsert', jsonb_build_array(p_row))) || p_more, p_action)
 $$;
 create function so_t.request(p_id text) returns jsonb language sql stable as $$
   select r from jsonb_array_elements(public.app_bom_master() -> 'orderRequests') r where r ->> 'id' = p_id
+$$;
+-- การแจ้งล่าสุดของใบ ชนิดหนึ่ง (เซิร์ฟเวอร์เขียนเอง จึงหาจากใบ) · null = ไม่มี
+create function so_t.notice(p_no text, p_kind text) returns jsonb language sql stable as $$
+  select r from jsonb_array_elements(public.app_bom_master() -> 'orderRequests') r
+  where r ->> 'orderId' = p_no and r ->> 'kind' = p_kind order by (r ->> 'requestedAt')::bigint desc, r ->> 'id' desc limit 1
+$$;
+create function so_t.decide(p_no text, p_kind text, p_decision text, p_more jsonb default '{}'::jsonb) returns jsonb language sql volatile as $$
+  select so_t.req(jsonb_build_object('id', so_t.notice(p_no, p_kind) ->> 'id', 'decision', p_decision), 'decideOrderRequest', p_more)
+$$;
+-- รายงานงานแรกของงาน (พนักงานแผนกของงาน): งานเริ่ม ใบเป็น in_progress
+create function so_t.start(p_job text) returns jsonb language sql volatile as $$
+  select so_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
+    (select j from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = p_job)
+    || jsonb_build_object('status', 'in_progress', 'qtyDone', 1, 'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'ใครก็ได้', 'good', 1, 'reject', 0, 'note', 'เริ่ม')))))), 'reportJob')
 $$;
 -- ปล่อยผลิต (ฝ่ายวางแผน): ผลระเบิดหนึ่งบรรทัดของ FG-S1 + งาน PK หนึ่งงาน
 create function so_t.release(p_no text, p_job text) returns jsonb language sql volatile as $$
@@ -136,10 +179,10 @@ select set_config('request.jwt.claims', '{"sub":"8fa00000-0000-0000-0000-0000000
 set local role authenticated;
 select throws_ok($$ select public.app_bom_save_master('{"orders":{"upsert":[{}]}}'::jsonb, 0, 'sendOrderToPlanning') $$, 'BOM_TEST_MODE_ONLY',
   'an admin outside test mode cannot send an order to planning');
-select throws_ok($$ select public.app_bom_save_master('{"orderRequests":{"upsert":[{}]}}'::jsonb, 0, 'requestOrderCancel') $$, 'BOM_TEST_MODE_ONLY',
-  'nor ask to cancel one');
+select throws_ok($$ select public.app_bom_save_master('{"orders":{"upsert":[{}]}}'::jsonb, 0, 'cancelOrder') $$, 'BOM_TEST_MODE_ONLY',
+  'nor cancel one');
 select throws_ok($$ select public.app_bom_save_master('{"orderRequests":{"upsert":[{}]}}'::jsonb, 0, 'decideOrderRequest') $$, 'BOM_TEST_MODE_ONLY',
-  'nor decide a request');
+  'nor decide a notice of sales');
 
 -- 4. ข้อมูลตั้งต้น (ฝ่ายวางแผน): สินค้า FG-S1 / FG-S2-Y และใบของฝ่ายวางแผน 251225-28001 ที่ปล่อยผลิตแล้ว ---------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
@@ -223,8 +266,8 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_gr_staff')::uuid);
 select throws_ok($$ select so_t.orders(jsonb_build_array(so_t.sa_order('251225-28201', '{}'::jsonb)), 'createOrder') $$, 'BOM_FORBIDDEN', 'GR staff cannot open an order');
 select throws_ok($$ select so_t.save('{"customers":{"upsert":[{"name":"ลูกค้า GR","country":"TH","orderType":"SA","note":""}]}}'::jsonb, 'saveCustomer') $$, 'BOM_FORBIDDEN',
   'nor add a customer');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(1), 'orderId', '251225-28001', 'reason', 'ลูกค้ายกเลิก'), 'requestOrderCancel') $$, 'BOM_FORBIDDEN',
-  'nor ask to cancel an order');
+select throws_ok($$ select so_t.edit('251225-28101', '{"status":"cancelled","cancelReason":"ลูกค้ายกเลิก"}'::jsonb, 'cancelOrder') $$, 'BOM_FORBIDDEN',
+  'nor cancel a sales order');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pk_mgr')::uuid);
 select throws_ok($$ select so_t.orders(jsonb_build_array(so_t.sa_order('251225-28202', '{"due":{"PK":1768000000000}}'::jsonb)), 'createOrder') $$, 'BOM_FORBIDDEN',
   'the PK department manager can no longer open an order');
@@ -232,8 +275,9 @@ select throws_ok($$ select so_t.save('{"customers":{"upsert":[{"name":"ลูก
   'nor add a customer');
 select throws_ok($$ select so_t.edit('251225-28001', '{"note":"แก้โดยหัวหน้า PK"}'::jsonb, 'updateOrderHeader') $$, 'BOM_FORBIDDEN', 'nor edit an order');
 select throws_ok($$ select so_t.edit('251225-28001', '{"status":"cancelled","cancelReason":"ลูกค้ายกเลิก"}'::jsonb, 'cancelOrder') $$, 'BOM_FORBIDDEN', 'nor cancel one');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(2), 'decision', 'decline', 'note', 'ไม่ได้'), 'decideOrderRequest') $$, 'BOM_FORBIDDEN',
-  'nor decide a sales request');
+select throws_ok($$ select so_t.edit('251225-28101', '{"status":"cancelled","cancelReason":"ลูกค้ายกเลิก"}'::jsonb, 'cancelOrder') $$, 'BOM_FORBIDDEN', 'nor a sales order');
+select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(2), 'decision', 'ack'), 'decideOrderRequest') $$, 'BOM_FORBIDDEN',
+  'nor decide a notice of sales');
 select lives_ok($$ select so_t.save('{"items":{"upsert":[{"code":"FG-S3","kind":"FG","name":"สินค้า S3 โดยหัวหน้า PK","ownerDept":"PK","uom":"set"}]}}'::jsonb, 'saveItem') $$,
   'but keeps writing master data like the rest of the BOM planner group');
 select public.app_sandbox_enter(current_setting('test.p_sbx_ft_afm')::uuid);
@@ -243,83 +287,52 @@ select is(so_t.order_row('251225-28203') ->> 'source', 'PP', 'with source PP');
 select lives_ok($$ select so_t.save('{"customers":{"upsert":[{"name":"ลูกค้าผู้จัดการ","country":"TH","orderType":"SA","note":""}]}}'::jsonb, 'saveCustomer') $$,
   'and adds a customer');
 
--- 7. ปล่อยผลิตแล้ว: ฝ่ายขายยกเลิกเองไม่ได้ → คำขอ · ฝ่ายวางแผนตัดสิน -------------------------------------------------------------------
+-- 7. ยังไม่เริ่มงาน: ฝ่ายขายยกเลิกทันที (ร่างที่ส่งแล้ว / ปล่อยผลิตแล้ว) + แจ้งฝ่ายวางแผน "ฝ่ายขายยกเลิกใบ" · ฝ่ายวางแผนรับทราบ ----------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select lives_ok($$ select so_t.release('251225-28101', 'JOB-8-SA1') $$, 'planning releases the sent sales order');
+select throws_ok($$ select so_t.save('{"orderRequests":{"upsert":[{}]}}'::jsonb, 'requestOrderCancel') $$, 'BOM_INVALID_ACTION',
+  'the request actions of the first round are gone');
 select public.app_sandbox_enter(current_setting('test.p_sbx_sa_staff')::uuid);
-select throws_ok($$ select so_t.edit('251225-28101', '{"status":"cancelled","cancelReason":"ลูกค้ายกเลิก"}'::jsonb, 'cancelOrder') $$, 'BOM_FORBIDDEN',
-  'sales cannot cancel a released order itself');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(10), 'orderId', '251225-28101', 'reason', 'ab'), 'requestOrderCancel') $$, 'BOM_INVALID_REQUEST',
-  'a request needs a reason of three characters');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', 'not-a-uuid', 'orderId', '251225-28101', 'reason', 'ลูกค้ายกเลิก'), 'requestOrderCancel') $$, 'BOM_INVALID_REQUEST',
-  'a request id is a uuid');
-select throws_ok($$ select so_t.save('{"orderRequests":{"upsert":[]}}'::jsonb, 'requestOrderCancel') $$, 'BOM_INVALID_REQUEST', 'an empty request is refused');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(10), 'orderId', '251225-28101', 'reason', 'ลูกค้ายกเลิก'), 'requestOrderCancel',
-  jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(so_t.order_row('251225-28101'))))) $$, 'BOM_INVALID_REQUEST',
-  'a request cannot carry order rows');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(10), 'orderId', '251225-28101', 'reason', 'ลูกค้ายกเลิก'), 'cancelOrder') $$, 'BOM_INVALID_REQUEST',
-  'the request section only goes with a request action');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(10), 'orderId', '251225-28001', 'reason', 'ลูกค้ายกเลิก'), 'requestOrderCancel') $$, 'BOM_FORBIDDEN',
-  'sales cannot ask about an order of planning');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(10), 'orderId', '251225-28103', 'reason', 'ลูกค้ายกเลิก'), 'requestOrderCancel') $$, 'BOM_INVALID_TRANSITION',
-  'a draft is cancelled directly, not by request');
-select lives_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(10), 'orderId', '251225-28101', 'reason', 'ลูกค้ายกเลิกคำสั่งซื้อ'), 'requestOrderCancel') $$,
-  'sales asks planning to cancel the released order');
-select is(so_t.request(so_t.uid(10)) ->> 'kind' || '/' || (so_t.request(so_t.uid(10)) ->> 'status') || '/' || (so_t.request(so_t.uid(10)) ->> 'orderId') || '/'
-          || (so_t.request(so_t.uid(10)) ->> 'requestedBy'),
-  'cancel/open/251225-28101/' || current_setting('test.n_sbx_sa_staff'), 'the request is open with who asked');
-select ok(so_t.request(so_t.uid(10)) -> 'decidedBy' = 'null'::jsonb and (so_t.request(so_t.uid(10)) ->> 'requestedAt')::bigint > 0, 'not decided yet');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(11), 'orderId', '251225-28101', 'reason', 'ขอยกเลิกอีกครั้ง'), 'requestOrderCancel') $$, 'BOM_REQUEST_OPEN',
-  'a second open cancel request on the same order is refused');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(10), 'orderId', '251225-28101', 'reason', 'ขอแก้จำนวน'), 'requestOrderChange') $$, 'BOM_INVALID_REQUEST',
-  'a request id cannot be reused');
-select lives_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(12), 'orderId', '251225-28101', 'reason', 'ขอเพิ่ม FG-S1 เป็น 8 ชุด'), 'requestOrderChange') $$,
-  'a change request is a different kind and may be open at the same time');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(10), 'decision', 'confirm', 'note', ''), 'decideOrderRequest') $$, 'BOM_FORBIDDEN',
-  'sales cannot decide its own request');
-select public.app_sandbox_enter(current_setting('test.p_sbx_sa_mgr_t')::uuid);
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(13), 'orderId', '251225-28101', 'reason', 'หัวหน้าขอยกเลิก'), 'requestOrderCancel') $$, 'BOM_REQUEST_OPEN',
-  'the sales head sees the same open request (every sales order belongs to sales)');
-select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(14), 'orderId', '251225-28101', 'reason', 'ฝ่ายวางแผนขอเอง'), 'requestOrderCancel') $$, 'BOM_FORBIDDEN',
-  'planning does not ask, it acts');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(12), 'decision', 'decline', 'note', ''), 'decideOrderRequest') $$, 'BOM_INVALID_REQUEST',
-  'declining needs a note');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(12), 'decision', 'confirm', 'note', ''), 'decideOrderRequest') $$, 'BOM_INVALID_REQUEST',
-  'a change request is not confirmed as a cancel');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(10), 'decision', 'done', 'note', ''), 'decideOrderRequest') $$, 'BOM_INVALID_REQUEST',
-  'a cancel request is not marked done without cancelling');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(10), 'decision', 'maybe', 'note', ''), 'decideOrderRequest') $$, 'BOM_INVALID_REQUEST',
-  'an unknown decision is refused');
-select lives_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(12), 'decision', 'decline', 'note', 'งาน PK เริ่มแล้ว เปิดใบใหม่แทน'), 'decideOrderRequest') $$,
-  'planning declines the change request with a note');
-select is(so_t.request(so_t.uid(12)) ->> 'status' || '/' || (so_t.request(so_t.uid(12)) ->> 'decidedBy') || '/' || (so_t.request(so_t.uid(12)) ->> 'decisionNote'),
-  'declined/' || current_setting('test.n_sbx_pp_staff') || '/งาน PK เริ่มแล้ว เปิดใบใหม่แทน', 'the request records who declined and why');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(12), 'decision', 'decline', 'note', 'ซ้ำ'), 'decideOrderRequest') $$, 'BOM_INVALID_TRANSITION',
-  'a decided request cannot be decided again');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(10), 'decision', 'confirm', 'note', ''), 'decideOrderRequest') $$, 'BOM_INVALID_TRANSITION',
-  'confirming a cancel needs the order cancelled in the same call');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(10), 'decision', 'confirm', 'note', ''), 'decideOrderRequest',
-  jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(so_t.order_row('251225-28101') || '{"status":"cancelled","cancelReason":"เหตุผลอื่น"}'::jsonb)))) $$,
-  'BOM_INVALID_TRANSITION', 'with the reason of the request');
-select is(so_t.order_row('251225-28101') ->> 'status', 'released', 'the refused confirm cancelled nothing');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(10), 'decision', 'confirm', 'note', ''), 'decideOrderRequest',
-  jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(so_t.order_row('251225-28101') || '{"status":"cancelled","cancelReason":"ลูกค้ายกเลิกคำสั่งซื้อ"}'::jsonb,
-                                                                               so_t.order_row('251225-28001'))))) $$,
-  'BOM_INVALID_REQUEST', 'a decision carries at most one order row');
-select lives_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(10), 'decision', 'confirm', 'note', ''), 'decideOrderRequest',
-  jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(so_t.order_row('251225-28101') || '{"status":"cancelled","cancelReason":"ลูกค้ายกเลิกคำสั่งซื้อ"}'::jsonb)))) $$,
-  'planning confirms the cancel request with the cancellation of the order');
+select throws_ok($$ select so_t.edit('251225-28101', '{"salesCancelReason":"ลูกค้ายกเลิก"}'::jsonb, 'cancelOrder') $$, 'BOM_INVALID_TRANSITION',
+  'no job started yet: sales cancels outright, not mid-way');
+select throws_ok($$ select so_t.edit('251225-28101', '{"status":"cancelled","cancelReason":"ab"}'::jsonb, 'cancelOrder') $$, 'BOM_INVALID_ORDER',
+  'a cancel needs a reason of three characters');
+select throws_ok($$ select so_t.edit('251225-28101', '{"status":"released","note":"แก้ไม่ได้"}'::jsonb, 'updateOrderHeader') $$, 'BOM_INVALID_TRANSITION',
+  'a released order with no job started is not edited in place (sales pulls it back to draft instead)');
+select lives_ok($$ select so_t.edit('251225-28101', '{"status":"cancelled","cancelReason":"ลูกค้ายกเลิกคำสั่งซื้อ"}'::jsonb, 'cancelOrder') $$,
+  'sales cancels its released order while no job started');
 select is(so_t.order_row('251225-28101') ->> 'status' || '/' || (so_t.order_row('251225-28101') ->> 'cancelReason'), 'cancelled/ลูกค้ายกเลิกคำสั่งซื้อ',
-  'the order is cancelled with the reason sales gave');
-select is(so_t.request(so_t.uid(10)) ->> 'status' || '/' || (so_t.request(so_t.uid(10)) ->> 'decidedBy'), 'done/' || current_setting('test.n_sbx_pp_staff'),
-  'and the request is done with who confirmed it');
-select public.app_sandbox_enter(current_setting('test.p_sbx_sa_staff')::uuid);
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(15), 'orderId', '251225-28101', 'reason', 'ขอแก้หลังยกเลิก'), 'requestOrderChange') $$, 'BOM_INVALID_TRANSITION',
-  'nothing is asked about a cancelled order');
-
--- 8. เปิดใบกลับเป็นร่าง (ยังไม่มีงานเริ่ม) · งานเริ่มแล้วเปิดกลับไม่ได้ → คำขอแก้ใบ -------------------------------------------------------
+  'the order is cancelled at once with the reason');
+select ok(not (so_t.order_row('251225-28101') ? 'salesCancelAt'), 'an outright cancel is not a mid-way cancel');
+select is(so_t.notice('251225-28101', 'cancel') ->> 'status' || '/' || (so_t.notice('251225-28101', 'cancel') ->> 'reason') || '/'
+          || (so_t.notice('251225-28101', 'cancel') ->> 'requestedBy'),
+  'open/ลูกค้ายกเลิกคำสั่งซื้อ/' || current_setting('test.n_sbx_sa_staff'), 'planning gets a notice "sales cancelled the order" with who and why');
+select ok(so_t.notice('251225-28101', 'cancel') -> 'decision' = 'null'::jsonb and so_t.notice('251225-28101', 'cancel') -> 'decidedBy' = 'null'::jsonb,
+  'not acknowledged yet');
+select throws_ok($$ select so_t.decide('251225-28101', 'cancel', 'ack') $$, 'BOM_FORBIDDEN', 'sales cannot acknowledge its own notice');
+-- ร่างที่ส่งแล้วยกเลิก = แจ้ง · ร่างที่ยังไม่เคยส่ง (251225-28102 ข้างบน) ไม่แจ้ง
+select lives_ok($$ select so_t.orders(jsonb_build_array(so_t.sa_order('251225-28105', '{"sentAt":1}'::jsonb)), 'createOrder') $$, 'sales opens and sends another order');
+select lives_ok($$ select so_t.edit('251225-28105', '{"status":"cancelled","cancelReason":"ลูกค้าเปลี่ยนใจ"}'::jsonb, 'cancelOrder') $$, 'and cancels the sent draft');
+select is(so_t.notice('251225-28105', 'cancel') ->> 'reason', 'ลูกค้าเปลี่ยนใจ', 'a sent draft that is cancelled is notified');
+select ok(so_t.notice('251225-28102', 'cancel') is null, 'a draft never sent is cancelled without a notice');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select throws_ok($$ select so_t.decide('251225-28101', 'cancel', 'continue') $$, 'BOM_INVALID_REQUEST', 'an outright cancel has no choice to make');
+select throws_ok($$ select so_t.decide('251225-28101', 'cancel', 'stop') $$, 'BOM_INVALID_REQUEST', 'neither stop');
+select throws_ok($$ select so_t.decide('251225-28101', 'cancel', 'maybe') $$, 'BOM_INVALID_REQUEST', 'an unknown decision is refused');
+select throws_ok($$ select so_t.save('{"orderRequests":{"upsert":[]}}'::jsonb, 'decideOrderRequest') $$, 'BOM_INVALID_REQUEST', 'an empty decision is refused');
+select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(9), 'decision', 'ack'), 'decideOrderRequest') $$, 'BOM_INVALID_REQUEST', 'an unknown notice is refused');
+select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.notice('251225-28101', 'cancel') ->> 'id', 'decision', 'ack'), 'cancelOrder') $$, 'BOM_INVALID_REQUEST',
+  'the notice section only goes with decideOrderRequest');
+select lives_ok($$ select so_t.decide('251225-28101', 'cancel', 'ack') $$, 'planning acknowledges the notice');
+select is(so_t.notice('251225-28101', 'cancel') ->> 'status' || '/' || (so_t.notice('251225-28101', 'cancel') ->> 'decision') || '/'
+          || (so_t.notice('251225-28101', 'cancel') ->> 'decidedBy'),
+  'done/ack/' || current_setting('test.n_sbx_pp_staff'), 'the notice is done with who acknowledged it');
+select throws_ok($$ select so_t.decide('251225-28101', 'cancel', 'ack') $$, 'BOM_INVALID_TRANSITION', 'a notice is acknowledged once');
+select ok(exists (select 1 from jsonb_array_elements(public.app_bom_master_since(so_t.ver() - 1) -> 'changes' -> 'orderRequests' -> 'upsert') r
+                  where r ->> 'id' = so_t.notice('251225-28101', 'cancel') ->> 'id'),
+  'the delta carries the acknowledged notice');
+
+-- 8. เปิดใบกลับเป็นร่าง (ยังไม่มีงานเริ่ม) · งานเริ่มแล้ว: ฝ่ายขายแก้ใบตรง (สถานะเท่าเดิม งานไม่เปลี่ยน) + แจ้ง "ฝ่ายขายแก้ใบ" -------------------------------
 select lives_ok($$ select so_t.release('251225-28103', 'JOB-8-SA3') $$, 'planning releases the order that was sent on opening');
 select public.app_sandbox_enter(current_setting('test.p_sbx_sa_staff')::uuid);
 -- ตัวลบงานตรง ๆ (jobs.delete) รับเฉพาะกลุ่มวางแผน: payload ของฝ่ายขายที่ยังพาการลบงานของใบที่เปิดกลับไปด้วยถูกปฏิเสธทั้งคำสั่ง (store ของหน้าไม่ส่งส่วนนี้ · ฐานข้อมูลลบงานของใบเอง)
@@ -334,6 +347,7 @@ select is(so_t.order_row('251225-28103') ->> 'status' || '/' || (so_t.order_row(
   'draft/1/7', 'the order is a draft again at revision 1 with the new quantity');
 select ok(so_t.order_row('251225-28103') ? 'sentAt' and not exists (select 1 from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'orderId' = '251225-28103'),
   'it stays sent to planning and its jobs are gone');
+select ok(so_t.notice('251225-28103', 'change') is null, 'pulling an order back to draft is not a notice (planning releases it again anyway)');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select lives_ok($$ select so_t.release('251225-28103', 'JOB-8-SA3B') $$, 'planning releases it again');
 -- แก้หัวใบของใบที่ปล่อยแล้ว (รูปที่หน้าส่งจริง: แถวใบแถวเดียว สถานะร่าง revision + 1 ผลระเบิดเดิม · ไม่มี jobs.delete) · วันส่งมอบคลังเลื่อนออกได้
@@ -349,45 +363,140 @@ select ok(not exists (select 1 from jsonb_array_elements(public.app_bom_master()
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select lives_ok($$ select so_t.release('251225-28103', 'JOB-8-SA3C') $$, 'planning releases it once more');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pk_staff')::uuid);
-select lives_ok($$ select so_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(
-  (select j from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-8-SA3C')
-  || jsonb_build_object('status', 'in_progress', 'qtyDone', 1, 'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'ใครก็ได้', 'good', 1, 'reject', 0, 'note', 'เริ่ม')))))), 'reportJob') $$,
-  'PK starts the job');
+select lives_ok($$ select so_t.start('JOB-8-SA3C') $$, 'PK starts the job');
 select public.app_sandbox_enter(current_setting('test.p_sbx_sa_staff')::uuid);
 select throws_ok($$ select so_t.edit('251225-28103', '{"status":"draft","revision":3,"explosion":null,"items":[{"fgCode":"FG-S1","qty":8,"colorSet":"","note":""}]}'::jsonb, 'updateOrderItem') $$,
   'BOM_INVALID_TRANSITION', 'once a job started sales cannot pull the order back');
-select lives_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(20), 'orderId', '251225-28103', 'reason', 'ขอเพิ่ม FG-S1 เป็น 8 ชุด'), 'requestOrderChange') $$,
-  'sales asks for the change instead');
+select throws_ok($$ select so_t.edit('251225-28103', '{"explosion":null,"items":[{"fgCode":"FG-S1","qty":9,"colorSet":"","note":""}]}'::jsonb, 'updateOrderItem') $$,
+  'BOM_INVALID_TRANSITION', 'an edit in place keeps the explosion (no new calculation)');
+select throws_ok($$ select so_t.edit('251225-28103', '{"status":"completed","items":[{"fgCode":"FG-S1","qty":9,"colorSet":"","note":""}]}'::jsonb, 'updateOrderItem') $$,
+  'BOM_FORBIDDEN', 'nor changes the status');
+select lives_ok($$ select so_t.edit('251225-28103', '{"whDue":1769472000000,"items":[{"fgCode":"FG-S1","qty":9,"colorSet":"","note":""},{"fgCode":"FG-S2-Y","qty":2,"colorSet":"Y","note":""}]}'::jsonb, 'updateOrderItem') $$,
+  'sales edits the started order directly: more of one product, a new product and a later warehouse date');
+select is(so_t.order_row('251225-28103') ->> 'status' || '/' || (so_t.order_row('251225-28103') ->> 'revision') || '/' || (so_t.order_row('251225-28103') -> 'items' -> 0 ->> 'qty')
+          || '/' || jsonb_array_length(so_t.order_row('251225-28103') -> 'items') || '/' || (so_t.order_row('251225-28103') ->> 'whDue'),
+  'in_progress/2/9/2/1769472000000', 'the order changes in place: status and revision stay');
+select ok((select (j ->> 'qtyPlanned')::numeric = 5 and j ->> 'status' = 'in_progress' from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-8-SA3C')
+          and (select count(*) from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'orderId' = '251225-28103') = 1,
+  'the department jobs are not changed (planning adjusts them itself)');
+select is(so_t.notice('251225-28103', 'change') ->> 'reason', 'กำหนดส่งคลัง 26/01/2026 → 27/01/2026 · FG-S1 7 → 9 · เพิ่ม FG-S2-Y × 2',
+  'planning gets a notice "sales edited the order" with the old and new values');
+select is(so_t.notice('251225-28103', 'change') ->> 'status' || '/' || (so_t.notice('251225-28103', 'change') ->> 'requestedBy'),
+  'open/' || current_setting('test.n_sbx_sa_staff'), 'the notice is open with who edited');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
-select lives_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(20), 'decision', 'done', 'note', 'เปิดใบ 251225-28104 เพิ่ม 1 ชุด'), 'decideOrderRequest') $$,
-  'planning marks the change request done');
-select is(so_t.request(so_t.uid(20)) ->> 'status' || '/' || (so_t.request(so_t.uid(20)) ->> 'decisionNote'), 'done/เปิดใบ 251225-28104 เพิ่ม 1 ชุด', 'with its note');
-select ok(exists (select 1 from jsonb_array_elements(public.app_bom_master_since(so_t.ver() - 1) -> 'changes' -> 'orderRequests' -> 'upsert') r where r ->> 'id' = so_t.uid(20)),
-  'the delta carries the decided request');
-
--- 8b. ใบถูกยกเลิก: คำขอที่ยังเปิดของใบปิดเอง (ขอยกเลิก = done · ขอแก้ใบ = declined · "ใบถูกยกเลิกแล้ว") -------------------------------------------
+select throws_ok($$ select so_t.edit('251225-28103', '{"note":"ฝ่ายวางแผนแก้เอง"}'::jsonb, 'updateOrderHeader') $$, 'BOM_INVALID_TRANSITION',
+  'planning still cannot edit a started order (it adjusts the jobs instead)');
+select throws_ok($$ select so_t.decide('251225-28103', 'change', 'continue') $$, 'BOM_INVALID_REQUEST', 'an edit notice is only acknowledged');
+select lives_ok($$ select so_t.decide('251225-28103', 'change', 'ack') $$, 'planning acknowledges the edit');
+select is(so_t.notice('251225-28103', 'change') ->> 'status' || '/' || (so_t.notice('251225-28103', 'change') ->> 'decision'), 'done/ack', 'the edit notice is done');
 select public.app_sandbox_enter(current_setting('test.p_sbx_sa_staff')::uuid);
-select lives_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(21), 'orderId', '251225-28103', 'reason', 'ลูกค้ายกเลิกคำสั่งซื้อ'), 'requestOrderCancel') $$,
-  'sales asks to cancel the order in production');
-select lives_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(22), 'orderId', '251225-28103', 'reason', 'ขอลดเหลือ 5 ชุด'), 'requestOrderChange') $$,
-  'and asks for a change at the same time');
+select lives_ok($$ select so_t.edit('251225-28103', '{"note":"ลูกค้าขอแพ็กใหม่"}'::jsonb, 'updateOrderHeader') $$, 'sales edits the note of the started order');
+select is(so_t.notice('251225-28103', 'change') ->> 'reason' || '/' || (so_t.notice('251225-28103', 'change') ->> 'status'), 'แก้หมายเหตุ/open',
+  'every edit is its own notice');
+
+-- 8b. เริ่มงานแล้ว: ฝ่ายขายยกเลิกกลางทาง → ไม่รับงานใหม่ · ฝ่ายวางแผนเลือกผลิตต่อจนจบส่ง WH --------------------------------------------------
+select throws_ok($$ select so_t.edit('251225-28103', '{"status":"cancelled","cancelReason":"ลูกค้ายกเลิก"}'::jsonb, 'cancelOrder') $$, 'BOM_INVALID_TRANSITION',
+  'sales cannot cancel a started order outright');
+select throws_ok($$ select so_t.edit('251225-28103', '{"salesCancelReason":"ab"}'::jsonb, 'cancelOrder') $$, 'BOM_INVALID_ORDER',
+  'a mid-way cancel needs a reason of three characters');
+select throws_ok($$ select so_t.edit('251225-28103', '{"salesCancelReason":"ลูกค้ายกเลิก","note":"พร้อมแก้"}'::jsonb, 'cancelOrder') $$, 'BOM_INVALID_TRANSITION',
+  'a mid-way cancel changes nothing else');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
-select lives_ok($$ select so_t.edit('251225-28103', '{"status":"cancelled","cancelReason":"ฝ่ายวางแผนยกเลิกเอง"}'::jsonb, 'cancelOrder') $$,
-  'planning cancels the order directly (not through the request)');
-select is(so_t.request(so_t.uid(21)) ->> 'status' || '/' || (so_t.request(so_t.uid(21)) ->> 'decisionNote') || '/' || (so_t.request(so_t.uid(21)) ->> 'decidedBy'),
-  'done/ใบถูกยกเลิกแล้ว/' || current_setting('test.n_sbx_pp_staff'), 'the open cancel request is done, noted, by who cancelled');
-select is(so_t.request(so_t.uid(22)) ->> 'status' || '/' || (so_t.request(so_t.uid(22)) ->> 'decisionNote'), 'declined/ใบถูกยกเลิกแล้ว', 'the open change request is declined');
-select is(so_t.request(so_t.uid(20)) ->> 'decisionNote', 'เปิดใบ 251225-28104 เพิ่ม 1 ชุด', 'a request decided earlier keeps its decision');
-select ok((select count(*) from jsonb_array_elements(public.app_bom_master_since(so_t.ver() - 1) -> 'changes' -> 'orderRequests' -> 'upsert') r
-           where r ->> 'id' in (so_t.uid(21), so_t.uid(22))) = 2, 'the delta of the cancel carries both closed requests');
-select throws_ok($$ select so_t.req(jsonb_build_object('id', so_t.uid(22), 'decision', 'done', 'note', ''), 'decideOrderRequest') $$, 'BOM_INVALID_TRANSITION',
-  'nothing is left to decide on the cancelled order');
+select throws_ok($$ select so_t.edit('251225-28103', '{"salesCancelReason":"ฝ่ายวางแผนยกเลิก"}'::jsonb, 'cancelOrder') $$, 'BOM_FORBIDDEN',
+  'planning does not cancel mid-way for sales (it cancels outright)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_sa_staff')::uuid);
+select lives_ok($$ select so_t.edit('251225-28103', '{"salesCancelReason":"ลูกค้ายกเลิกคำสั่งซื้อกลางทาง","salesCancelAt":1,"salesCancelChoice":"continue"}'::jsonb, 'cancelOrder') $$,
+  'sales cancels the started order mid-way');
+select is(so_t.order_row('251225-28103') ->> 'status' || '/' || (so_t.order_row('251225-28103') ->> 'salesCancelReason') || '/' || (so_t.order_row('251225-28103') ->> 'salesCancelBy'),
+  'in_progress/ลูกค้ายกเลิกคำสั่งซื้อกลางทาง/' || current_setting('test.n_sbx_sa_staff'), 'the order keeps its status and records who cancelled and why');
+select ok((so_t.order_row('251225-28103') ->> 'salesCancelAt')::bigint > 1 and so_t.order_row('251225-28103') -> 'salesCancelChoice' = 'null'::jsonb,
+  'the server stamps the time and waits for planning (the client choice is ignored)');
+select is(so_t.notice('251225-28103', 'cancel') ->> 'status' || '/' || (so_t.notice('251225-28103', 'cancel') ->> 'reason'), 'open/ลูกค้ายกเลิกคำสั่งซื้อกลางทาง',
+  'planning gets the notice "sales cancelled the order mid-way"');
+select throws_ok($$ select so_t.edit('251225-28103', '{"note":"แก้หลังยกเลิก"}'::jsonb, 'updateOrderHeader') $$, 'BOM_INVALID_TRANSITION',
+  'sales cannot edit an order it cancelled');
+select throws_ok($$ select so_t.decide('251225-28103', 'cancel', 'continue') $$, 'BOM_FORBIDDEN', 'sales cannot choose for planning');
+-- ใบหยุดรับงานใหม่: SR จ่ายยางเส้นยาว · GR ขอเบิกยางเส้นยาว · คลังสินค้าส่งมอบ
+select public.app_sandbox_enter(current_setting('test.p_sbx_sr_staff')::uuid);
+select throws_ok($$ select so_t.save(jsonb_build_object('rodMoves', jsonb_build_object('upsert', jsonb_build_array(jsonb_build_object(
+  'id', so_t.uid(30), 'kind', 'issue', 'lotId', so_t.uid(31), 'ownerOrderId', null, 'forOrderId', '251225-28103', 'itemCode', 'RB-S1', 'qty', -1)))), 'issueRods') $$,
+  'BOM_INVALID_TRANSITION', 'SR cannot issue long rods to the order while planning decides');
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_staff')::uuid);
+select throws_ok($$ select so_t.save(jsonb_build_object('rodRequests', jsonb_build_object('upsert', jsonb_build_array(jsonb_build_object(
+  'id', so_t.uid(32), 'jobId', 'JOB-8-SA3C', 'itemCode', 'RB-S1', 'qty', 1, 'note', '')))), 'requestRods') $$,
+  'BOM_INVALID_TRANSITION', 'GR cannot ask for long rods for the order');
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select throws_ok($$ select so_t.save(jsonb_build_object('fgMoves', jsonb_build_object('upsert', jsonb_build_array(jsonb_build_object(
+  'orderId', '251225-28103', 'kind', 'deliver', 'lines', jsonb_build_array(jsonb_build_object('fgCode', 'FG-S1', 'qty', 1)), 'note', '')))), 'deliverFg') $$,
+  'BOM_INVALID_TRANSITION', 'the warehouse cannot deliver to the customer who cancelled');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pk_mgr')::uuid);
+select throws_ok($$ select so_t.decide('251225-28103', 'cancel', 'continue') $$, 'BOM_FORBIDDEN', 'a production head cannot choose either');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select throws_ok($$ select so_t.decide('251225-28103', 'cancel', 'ack') $$, 'BOM_INVALID_REQUEST', 'a mid-way cancel needs a choice, not only an acknowledgement');
+select throws_ok($$ select so_t.decide('251225-28103', 'cancel', 'stop') $$, 'BOM_INVALID_TRANSITION', 'stop needs the cancellation of the order in the same call');
+select throws_ok($$ select so_t.decide('251225-28103', 'cancel', 'stop',
+  jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(so_t.order_row('251225-28103') || '{"status":"cancelled","cancelReason":"เหตุผลอื่น"}'::jsonb)))) $$,
+  'BOM_INVALID_TRANSITION', 'with the reason sales gave');
+select is(so_t.order_row('251225-28103') ->> 'status', 'in_progress', 'the refused stop cancelled nothing');
+select lives_ok($$ select so_t.decide('251225-28103', 'cancel', 'continue') $$, 'planning chooses to produce to the end and send to WH');
+select is(so_t.order_row('251225-28103') ->> 'status' || '/' || (so_t.order_row('251225-28103') ->> 'salesCancelChoice'), 'in_progress/continue',
+  'the order runs on with the choice recorded');
+select is(so_t.notice('251225-28103', 'cancel') ->> 'status' || '/' || (so_t.notice('251225-28103', 'cancel') ->> 'decision') || '/'
+          || (so_t.notice('251225-28103', 'cancel') ->> 'decidedBy'),
+  'done/continue/' || current_setting('test.n_sbx_pp_staff'), 'the notice records the choice and who made it');
+select throws_ok($$ select so_t.decide('251225-28103', 'cancel', 'stop') $$, 'BOM_INVALID_TRANSITION', 'the choice is made once');
+-- ผลิตต่อ: รับงานใหม่ได้อีก (คำขอเบิกถึงกติกาของ GR: งาน PK ไม่ใช่งาน GR) แต่ยังส่งมอบให้ลูกค้าไม่ได้ (ของเป็นสต็อกสินค้าสำเร็จรูป)
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_staff')::uuid);
+select throws_ok($$ select so_t.save(jsonb_build_object('rodRequests', jsonb_build_object('upsert', jsonb_build_array(jsonb_build_object(
+  'id', so_t.uid(33), 'jobId', 'JOB-8-SA3C', 'itemCode', 'RB-S1', 'qty', 1, 'note', '')))), 'requestRods') $$,
+  'BOM_INVALID_GR', 'after the choice the order takes work again (the request now reaches the GR rules)');
+select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
+select throws_ok($$ select so_t.save(jsonb_build_object('fgMoves', jsonb_build_object('upsert', jsonb_build_array(jsonb_build_object(
+  'orderId', '251225-28103', 'kind', 'deliver', 'lines', jsonb_build_array(jsonb_build_object('fgCode', 'FG-S1', 'qty', 1)), 'note', '')))), 'deliverFg') $$,
+  'BOM_INVALID_TRANSITION', 'but the warehouse still cannot deliver to that customer');
+
+-- 8c. ยกเลิกกลางทาง → ฝ่ายวางแผนเลือกหยุด (ยกเลิกใบตามทางเดิมด้วยเหตุผลของฝ่ายขาย) · ฝ่ายวางแผนยกเลิกใบที่รอตัดสินตรง ๆ = หยุดเช่นกัน ------------------
+select public.app_sandbox_enter(current_setting('test.p_sbx_sa_staff')::uuid);
+select lives_ok($$ select so_t.orders(jsonb_build_array(so_t.sa_order('251225-28106', '{"sentAt":1}'::jsonb), so_t.sa_order('251225-28107', '{"sentAt":1}'::jsonb)), 'createOrder') $$,
+  'sales opens and sends two more orders');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select lives_ok($$ select so_t.release('251225-28106', 'JOB-8-SA6') $$, 'planning releases the first');
+select lives_ok($$ select so_t.release('251225-28107', 'JOB-8-SA7') $$, 'and the second');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pk_staff')::uuid);
+select lives_ok($$ select so_t.start('JOB-8-SA6') $$, 'PK starts the first');
+select lives_ok($$ select so_t.start('JOB-8-SA7') $$, 'and the second');
+select public.app_sandbox_enter(current_setting('test.p_sbx_sa_staff')::uuid);
+select lives_ok($$ select so_t.edit('251225-28106', '{"salesCancelReason":"ลูกค้าเลิกสั่ง"}'::jsonb, 'cancelOrder') $$, 'sales cancels the first mid-way');
+select lives_ok($$ select so_t.edit('251225-28107', '{"items":[{"fgCode":"FG-S1","qty":4,"colorSet":"","note":""}]}'::jsonb, 'updateOrderItem') $$,
+  'sales lowers the second in place');
+select lives_ok($$ select so_t.edit('251225-28107', '{"salesCancelReason":"ลูกค้าปิดกิจการ"}'::jsonb, 'cancelOrder') $$, 'then cancels it mid-way');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select lives_ok($$ select so_t.decide('251225-28106', 'cancel', 'stop',
+  jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(so_t.order_row('251225-28106') || '{"status":"cancelled","cancelReason":"ลูกค้าเลิกสั่ง"}'::jsonb)))) $$,
+  'planning chooses to stop: the order is cancelled with the reason of sales');
+select is(so_t.order_row('251225-28106') ->> 'status' || '/' || (so_t.order_row('251225-28106') ->> 'cancelReason') || '/' || (so_t.order_row('251225-28106') ->> 'salesCancelChoice'),
+  'cancelled/ลูกค้าเลิกสั่ง/stop', 'cancelled, with the stop choice recorded');
+select is(so_t.notice('251225-28106', 'cancel') ->> 'status' || '/' || (so_t.notice('251225-28106', 'cancel') ->> 'decision'), 'done/stop', 'the notice records the stop');
+select ok(exists (select 1 from jsonb_array_elements(public.app_bom_master() -> 'jobs') j where j ->> 'id' = 'JOB-8-SA6'),
+  'the jobs of the cancelled order stay with their reports (heads close what is left)');
+select lives_ok($$ select so_t.edit('251225-28107', '{"status":"cancelled","cancelReason":"ฝ่ายวางแผนหยุดเอง"}'::jsonb, 'cancelOrder') $$,
+  'planning cancels the second directly instead of through the card');
+select is(so_t.order_row('251225-28107') ->> 'status' || '/' || (so_t.order_row('251225-28107') ->> 'salesCancelChoice'), 'cancelled/stop', 'that is a stop as well');
+select is(so_t.notice('251225-28107', 'cancel') ->> 'decision' || '/' || (so_t.notice('251225-28107', 'change') ->> 'decision') || '/'
+          || (so_t.notice('251225-28107', 'change') ->> 'decidedBy'),
+  'stop/ack/' || current_setting('test.n_sbx_pp_staff'), 'its open notices close themselves: the cancel as stop, the edit as acknowledged');
+select is(so_t.notice('251225-28107', 'change') ->> 'reason', 'FG-S1 5 → 4', 'the lowered quantity was notified');
+select public.app_sandbox_enter(current_setting('test.p_sbx_sa_staff')::uuid);
+select throws_ok($$ select so_t.edit('251225-28107', '{"note":"แก้หลังยกเลิก"}'::jsonb, 'updateOrderHeader') $$, 'BOM_INVALID_TRANSITION',
+  'a cancelled order is not edited');
 
 -- 9. ชุดเรคอร์ด ----------------------------------------------------------------------------------------------------------------------
 select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 23::bigint, 'the snapshot has twenty-three lists (orderRequests since 20261225010000)');
 select is((select count(*) from jsonb_object_keys(public.app_bom_master_since(0) -> 'changes')), 23::bigint, 'and so has the delta');
-select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'orderRequests')), 5, 'the five requests accepted above are listed (refused calls wrote nothing)');
-select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'orderRequests') r where r ->> 'status' = 'open'), 0, 'none is left open');
+-- แจ้ง: 28101 ยกเลิก · 28105 ยกเลิก · 28103 แก้ 2 + ยกเลิก · 28106 ยกเลิก · 28107 แก้ + ยกเลิก (คำสั่งที่ถูกปฏิเสธไม่เขียนอะไร)
+select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'orderRequests')), 8, 'the eight notices written above are listed');
+select is((select count(*)::integer from jsonb_array_elements(public.app_bom_master() -> 'orderRequests') r where r ->> 'status' = 'open'), 2,
+  'two are still open (the cancelled draft 28105 and the second edit of 28103)');
 
 reset role;
 select is((select count(*)::integer from public.bom_order_requests where not is_test), 0, 'test requests never land in the real data');

@@ -3,7 +3,7 @@ import test from "node:test";
 import { createRequire } from "node:module";
 import { createMockSupabase } from "../pilot-harness-mock.mjs";
 
-// ใบสั่งผลิตจากฝ่ายขาย (SA) ส่งให้ฝ่ายวางแผน (PP) · คำขอยกเลิก / แก้ใบ · ผู้เขียนใบสั่งผลิตและลูกค้า (โรงงาน ขั้น 8 · 20261225010000_bom_sales_orders.sql)
+// ใบสั่งผลิตจากฝ่ายขาย (SA) ส่งให้ฝ่ายวางแผน (PP) · ฝ่ายขายแก้ / ยกเลิกใบเองแล้วแจ้งฝ่ายวางแผน (รอบ 2) · ผู้เขียนใบสั่งผลิตและลูกค้า (โรงงาน ขั้น 8 · 20261225010000_bom_sales_orders.sql)
 // คำสั่ง (modules/bom-actions.js) · store (modules/bom-store.js) · Supabase จำลองของ harness ต้องตอบรหัสเดียวกับฐานข้อมูล
 // (pgTAP คู่กัน: supabase/tests/database/bom_sales_orders.test.sql)
 const require = createRequire(import.meta.url);
@@ -97,52 +97,140 @@ test("a production head no longer opens or edits orders or customers; the order 
   assert.equal(orderOf(d, "MGR-1").source, "PP");
 });
 
-test("after release: sales asks instead of cancelling; one open request per kind; planning confirms with the sales reason, declines with a note or marks a change done", () => {
+// ---------- รอบ 2: ฝ่ายขายแก้ / ยกเลิกใบเอง ฝ่ายวางแผนรับทราบหรือเลือกทางของใบที่ยกเลิกกลางทาง ----------
+// ใบของฝ่ายขายที่ปล่อยแล้วและงาน PK รายงานผลแล้ว (เริ่มงาน)
+const startedOrder = (d, pi, qty = 3) => {
+  saOrder(d, pi, { send: true, lines: [{ fgCode: FG, qty }] });
+  A.releaseOrder(d, { orderId: pi }, ctx("planner"));
+  const pk = d.jobs.find((job) => job.orderId === pi && job.dept === "PK" && job.kind === "FG");
+  A.reportJob(d, { jobId: pk.id, qtyDone: 1, note: "ชุดแรก" }, ctx("planner"));
+  return pk;
+};
+const noticesOf = (d, pi) => A.helpers.orderRequestsOf(d, pi).map((row) => [row.kind, row.status, row.decision, row.reason]);
+
+test("nothing started: sales cancels a released or sent order outright and planning gets a notice to acknowledge; an unsent draft is cancelled quietly", () => {
   const d = fresh();
   saOrder(d, "SA-T3", { send: true });
   A.releaseOrder(d, { orderId: "SA-T3" }, ctx("planner"));
-  assert.equal(orderOf(d, "SA-T3").status, "released");
-  rejects(() => A.cancelOrder(d, { orderId: "SA-T3", reason: "ลูกค้ายกเลิก" }, ctx("sa")), /ส่งคำขอยกเลิก/);
-  rejects(() => A.requestOrderCancel(d, { orderId: "SA-T3", reason: "ab" }, ctx("sa")), /อย่างน้อย 3/);
-  rejects(() => A.requestOrderCancel(d, { orderId: "SA-T3", reason: "ลูกค้ายกเลิก" }, ctx("planner")), /ฝ่ายขายเท่านั้น/);
-  rejects(() => A.requestOrderCancel(d, { orderId: "DEMO-26001", reason: "ลูกค้ายกเลิก" }, ctx("sa")), /ใบของฝ่ายวางแผน/);
-  const cancel = A.requestOrderCancel(d, { orderId: "SA-T3", reason: "ลูกค้ายกเลิกคำสั่งซื้อ" }, ctx("sa"));
-  assert.deepEqual(cancel.request, [{ id: cancel.id, orderId: "SA-T3", reason: "ลูกค้ายกเลิกคำสั่งซื้อ" }]);
-  assert.equal(cancel.section, "orderRequests");
-  assert.deepEqual(A.helpers.openOrderRequest(d, "SA-T3", "cancel"), { id: cancel.id, orderId: "SA-T3", kind: "cancel", reason: "ลูกค้ายกเลิกคำสั่งซื้อ", status: "open", requestedBy: USERS.sa.name, requestedById: "SA-1", requestedAt: NOW, decidedBy: null, decidedAt: null, decisionNote: "" });
-  rejects(() => A.requestOrderCancel(d, { orderId: "SA-T3", reason: "ขออีกครั้ง" }, ctx("saHead")), /ยังไม่ตัดสินอยู่แล้ว/);
-  const change = A.requestOrderChange(d, { orderId: "SA-T3", reason: "เพิ่มเป็น 5 ชุด" }, ctx("saHead"));
-  rejects(() => A.decideOrderRequest(d, { requestId: cancel.id, decision: "confirm" }, ctx("sa")), /ฝ่ายวางแผนหรือผู้จัดการเท่านั้น/);
-  rejects(() => A.decideOrderRequest(d, { requestId: cancel.id, decision: "confirm" }, ctx("pkHead")), /ฝ่ายวางแผนหรือผู้จัดการเท่านั้น/);
-  rejects(() => A.decideOrderRequest(d, { requestId: change.id, decision: "decline" }, ctx("planner")), /อย่างน้อย 3/);
-  rejects(() => A.decideOrderRequest(d, { requestId: change.id, decision: "confirm" }, ctx("planner")), /เฉพาะคำขอยกเลิก/);
-  rejects(() => A.decideOrderRequest(d, { requestId: cancel.id, decision: "done" }, ctx("planner")), /ยืนยันยกเลิกหรือไม่ยกเลิก/);
-  const done = A.decideOrderRequest(d, { requestId: change.id, decision: "done", note: "เปิดใบเพิ่มแล้ว" }, ctx("planner"));
-  assert.deepEqual(done.request, [{ id: change.id, decision: "done", note: "เปิดใบเพิ่มแล้ว" }]);
-  const confirm = A.decideOrderRequest(d, { requestId: cancel.id, decision: "confirm" }, ctx("planner"));
-  assert.equal(confirm.status, "done");
-  assert.deepEqual([orderOf(d, "SA-T3").status, orderOf(d, "SA-T3").cancelReason], ["cancelled", "ลูกค้ายกเลิกคำสั่งซื้อ"], "the order is cancelled with the reason sales gave");
-  assert.deepEqual(A.helpers.orderRequestsOf(d, "SA-T3").map((row) => [row.kind, row.status, row.decidedBy]), [["cancel", "done", USERS.planner.name], ["change", "done", USERS.planner.name]]);
-  assert.deepEqual(d.audit.slice(0, 3).map((row) => row.action), ["ฝ่ายวางแผนยืนยันยกเลิกตามคำขอ", "ยกเลิกใบสั่งผลิต", "ฝ่ายวางแผนแก้ใบตามคำขอแล้ว"]);
-  rejects(() => A.decideOrderRequest(d, { requestId: cancel.id, decision: "decline", note: "ไม่ได้" }, ctx("planner")), /ตัดสินไปแล้ว/);
-  rejects(() => A.requestOrderChange(d, { orderId: "SA-T3", reason: "ขอแก้หลังยกเลิก" }, ctx("sa")), /ปิดหรือยกเลิกแล้ว/);
+  rejects(() => A.cancelOrder(d, { orderId: "SA-T3", reason: "ab" }, ctx("sa")), /อย่างน้อย 3/);
+  A.cancelOrder(d, { orderId: "SA-T3", reason: "ลูกค้ายกเลิกคำสั่งซื้อ" }, ctx("sa"));
+  assert.deepEqual([orderOf(d, "SA-T3").status, orderOf(d, "SA-T3").cancelReason, orderOf(d, "SA-T3").salesCancelAt], ["cancelled", "ลูกค้ายกเลิกคำสั่งซื้อ", undefined],
+    "cancelled at once, not a mid-way cancel");
+  assert.deepEqual(noticesOf(d, "SA-T3"), [["cancel", "open", null, "ลูกค้ายกเลิกคำสั่งซื้อ"]]);
+  const notice = A.helpers.orderRequestsOf(d, "SA-T3")[0];
+  assert.equal(A.helpers.noticeMode(d, notice), "ack");
+  assert.ok(d.audit.some((row) => row.action === "ฝ่ายขายยกเลิกใบ"));
+  rejects(() => A.decideOrderRequest(d, { requestId: notice.id, decision: "ack" }, ctx("sa")), /ฝ่ายวางแผนหรือผู้จัดการเท่านั้น/);
+  rejects(() => A.decideOrderRequest(d, { requestId: notice.id, decision: "ack" }, ctx("pkHead")), /ฝ่ายวางแผนหรือผู้จัดการเท่านั้น/);
+  rejects(() => A.decideOrderRequest(d, { requestId: notice.id, decision: "continue" }, ctx("planner")), /รับทราบได้อย่างเดียว/);
+  rejects(() => A.decideOrderRequest(d, { requestId: notice.id, decision: "maybe" }, ctx("planner")), /ไม่รู้จัก/);
+  const ack = A.decideOrderRequest(d, { requestId: notice.id, decision: "ack" }, ctx("planner"));
+  assert.deepEqual([ack.section, ack.request], ["orderRequests", [{ id: notice.id, decision: "ack" }]]);
+  assert.deepEqual(noticesOf(d, "SA-T3"), [["cancel", "done", "ack", "ลูกค้ายกเลิกคำสั่งซื้อ"]]);
+  assert.equal(d.audit[0].action, "ฝ่ายวางแผนรับทราบ");
+  rejects(() => A.decideOrderRequest(d, { requestId: notice.id, decision: "ack" }, ctx("planner")), /ตัดสินไปแล้ว/);
+  // ร่างที่ส่งแล้ว = แจ้ง · ร่างที่ยังไม่เคยส่ง = ไม่แจ้ง
+  saOrder(d, "SA-T3B", { send: true });
+  A.cancelOrder(d, { orderId: "SA-T3B", reason: "ลูกค้าเปลี่ยนใจ" }, ctx("sa"));
+  saOrder(d, "SA-T3C");
+  A.cancelOrder(d, { orderId: "SA-T3C", reason: "เปิดซ้ำ" }, ctx("sa"));
+  assert.deepEqual([noticesOf(d, "SA-T3B").length, noticesOf(d, "SA-T3C").length], [1, 0]);
+  assert.equal(typeof A.requestOrderCancel, "undefined", "the request actions of the first round are gone");
 });
 
-test("sales edits a released sales order while no job started (back to draft, still sent); a draft is never asked about", () => {
+test("a started sales order: sales edits it in place (status, jobs and explosion stay) and planning gets 'ฝ่ายขายแก้ใบ' with old → new values", () => {
+  const d = fresh();
+  const pk = startedOrder(d, "SA-T5");
+  const before = orderOf(d, "SA-T5");
+  const explosion = JSON.stringify(before.explosion);
+  const jobs = d.jobs.filter((job) => job.orderId === "SA-T5").length;
+  assert.equal(before.status, "in_progress");
+  assert.ok(A.helpers.orderLocked(d, before), "a reported job means the order started");
+  A.updateOrderItem(d, { orderId: "SA-T5", fgCode: FG, qty: 5 }, ctx("sa"));
+  A.updateOrderHeader(d, { orderId: "SA-T5", whDue: Date.parse("2026-12-31T00:00:00+07:00") }, ctx("sa"));
+  A.addOrderItem(d, { orderId: "SA-T5", fgCode: "DEMO-TP-01(P)-Y", qty: 4 }, ctx("saHead"));
+  A.removeOrderItem(d, { orderId: "SA-T5", fgCode: "DEMO-TP-01(P)-Y" }, ctx("sa"));
+  const order = orderOf(d, "SA-T5");
+  assert.deepEqual([order.status, order.revision, order.items.map((item) => [item.fgCode, item.qty]), JSON.stringify(order.explosion), d.jobs.filter((job) => job.orderId === "SA-T5").length, d.jobs.find((job) => job.id === pk.id).qtyPlanned],
+    ["in_progress", 0, [[FG, 5]], explosion, jobs, pk.qtyPlanned], "the order changes in place; jobs and explosion stay for planning to adjust");
+  assert.deepEqual(noticesOf(d, "SA-T5").map((row) => row.slice(0, 2).concat(row[3])), [
+    ["change", "open", `${FG} 3 → 5`], ["change", "open", `กำหนดส่งคลัง ${new Date(NOW + 30 * DAY + 7 * 3600000).toISOString().slice(0, 10).split("-").reverse().join("/")} → 31/12/2026`],
+    ["change", "open", "เพิ่ม DEMO-TP-01(P)-Y × 4"], ["change", "open", "ลบ DEMO-TP-01(P)-Y × 4"]]);
+  assert.ok(d.audit.some((row) => row.action === "ฝ่ายขายแก้ใบ"));
+  rejects(() => A.removeOrderItem(d, { orderId: "SA-T5", fgCode: FG }, ctx("sa")), /อย่างน้อยหนึ่งรายการ/);
+  rejects(() => A.updateOrderItem(d, { orderId: "SA-T5", fgCode: FG, qty: 6 }, ctx("planner")), /มีงานที่เริ่มแล้ว/);
+  // ส่งมอบลูกค้าแล้ว 2: ลดต่ำกว่า 2 ไม่ได้ · ลดเหลือ 2 ได้ (ต่ำกว่าที่รับเข้าได้ ส่วนเกินเป็นสต็อก)
+  d.fgMoves.push({ id: "fg-r", orderId: "SA-T5", fgCode: FG, kind: "receive", qty: 3, note: "", at: NOW, by: "x" }, { id: "fg-d", orderId: "SA-T5", fgCode: FG, kind: "deliver", qty: 2, note: "", at: NOW, by: "x" });
+  rejects(() => A.updateOrderItem(d, { orderId: "SA-T5", fgCode: FG, qty: 1 }, ctx("sa")), /ส่งมอบ .* ให้ลูกค้าแล้ว 2/);
+  A.updateOrderItem(d, { orderId: "SA-T5", fgCode: FG, qty: 2 }, ctx("sa"));
+  assert.equal(A.decideOrderRequest(d, { requestId: A.helpers.orderRequestsOf(d, "SA-T5")[0].id, decision: "ack" }, ctx("planner")).status, "done");
+  rejects(() => A.decideOrderRequest(d, { requestId: A.helpers.orderRequestsOf(d, "SA-T5")[1].id, decision: "stop" }, ctx("planner")), /รับทราบได้อย่างเดียว/);
+  // สรุปเหมือน private.bom_sa_change_summary ทุกตัวอักษร (pgTAP ใช้ค่าชุดเดียวกัน)
+  const sqlCase = A.helpers.salesChangeSummary(
+    { customer: "ลูกค้าเดิม", country: "TH", orderType: "SA", whDue: 1769212800000, note: "", items: [{ fgCode: "FG-S1", qty: 5, note: "" }, { fgCode: "FG-S2-Y", qty: 2.5, note: "" }] },
+    { customer: "ลูกค้าใหม่", country: "TH", orderType: "SA", whDue: 1769385600000, note: "ด่วน", items: [{ fgCode: "FG-S1", qty: 3, note: "แพ็กใหม่" }, { fgCode: "FG-S3", qty: 4, note: "" }] });
+  assert.equal(sqlCase, "ลูกค้า ลูกค้าเดิม → ลูกค้าใหม่ · กำหนดส่งคลัง 24/01/2026 → 26/01/2026 · แก้หมายเหตุ · FG-S1 5 → 3 · เพิ่ม FG-S3 × 4 · ลบ FG-S2-Y × 2.5");
+  const long = A.helpers.salesChangeSummary({ customer: "ก", country: "TH", orderType: "SA", whDue: 1, note: "", items: [] }, { customer: "ข".repeat(400), country: "TH", orderType: "SA", whDue: 1, note: "", items: [] });
+  assert.deepEqual([[...long].length, long.endsWith("…")], [300, true]);
+});
+
+test("a started sales order: sales cancels mid-way, the order takes no new work, planning chooses to produce to the end (stock, no delivery) or to stop", () => {
+  const d = fresh();
+  startedOrder(d, "SA-T6");
+  A.cancelOrder(d, { orderId: "SA-T6", reason: "ลูกค้ายกเลิกกลางทาง" }, ctx("sa"));
+  const order = orderOf(d, "SA-T6");
+  assert.deepEqual([order.status, order.salesCancelAt, order.salesCancelBy, order.salesCancelReason, order.salesCancelChoice], ["in_progress", NOW, USERS.sa.name, "ลูกค้ายกเลิกกลางทาง", undefined]);
+  assert.ok(A.helpers.salesCancelPending(order));
+  const notice = A.helpers.orderRequestsOf(d, "SA-T6")[0];
+  assert.deepEqual([notice.kind, notice.status, A.helpers.noticeMode(d, notice)], ["cancel", "open", "choose"]);
+  rejects(() => A.cancelOrder(d, { orderId: "SA-T6", reason: "อีกครั้ง" }, ctx("sa")), /ยกเลิกใบนี้ไว้แล้ว/);
+  rejects(() => A.updateOrderItem(d, { orderId: "SA-T6", fgCode: FG, qty: 4 }, ctx("sa")), /ฝ่ายขายยกเลิกใบนี้แล้ว/);
+  rejects(() => A.issueOrderParts(d, { orderId: "SA-T6" }, ctx("planner")), /ไม่รับงานใหม่/);
+  rejects(() => A.decideOrderRequest(d, { requestId: notice.id, decision: "ack" }, ctx("planner")), /เลือกผลิตต่อจนจบส่ง WH หรือหยุด/);
+  rejects(() => A.decideOrderRequest(d, { requestId: notice.id, decision: "continue" }, ctx("sa")), /ฝ่ายวางแผนหรือผู้จัดการเท่านั้น/);
+  const go = A.decideOrderRequest(d, { requestId: notice.id, decision: "continue" }, ctx("planner"));
+  assert.deepEqual(go.request, [{ id: notice.id, decision: "continue" }]);
+  assert.deepEqual([orderOf(d, "SA-T6").status, orderOf(d, "SA-T6").salesCancelChoice, d.audit[0].action], ["in_progress", "continue", "ฝ่ายวางแผนเลือกผลิตต่อจนจบส่ง WH"]);
+  assert.equal(A.helpers.salesCancelPending(orderOf(d, "SA-T6")), false, "work resumes");
+  // ของที่รับเข้าเป็นสต็อกสินค้าสำเร็จรูป (นับสั่ง = 0) และส่งมอบให้ลูกค้าไม่ได้
+  d.fgMoves.push({ id: "fg-r6", orderId: "SA-T6", fgCode: FG, kind: "receive", qty: 2, note: "", at: NOW, by: "x" });
+  const R = globalThis.MNP_BOM_RULES;
+  assert.deepEqual(R.fgFreeList(d).get(FG)?.find((row) => row.orderId === "SA-T6")?.free, 2, "the received goods are free stock for other orders");
+  assert.deepEqual(R.fgPosition(d, orderOf(d, "SA-T6")).products.map((product) => [product.deliverable, product.owed]), [[0, 0]], "nothing to deliver to that customer");
+  rejects(() => A.deliverFg(d, { orderId: "SA-T6", lines: [{ fgCode: FG, qty: 1 }] }, { now: NOW, user: seed.USERS.find((row) => row.role === "wh") }), /ส่งมอบให้ลูกค้าของใบนี้ไม่ได้|ส่งมอบได้อีกไม่เกิน/);
+
+  // หยุด: ยกเลิกใบด้วยเหตุผลของฝ่ายขาย · การแจ้งแก้ใบที่ยังเปิดปิดเอง (รับทราบ)
+  startedOrder(d, "SA-T7");
+  A.updateOrderItem(d, { orderId: "SA-T7", fgCode: FG, qty: 2 }, ctx("sa"));
+  A.cancelOrder(d, { orderId: "SA-T7", reason: "ลูกค้าปิดกิจการ" }, ctx("sa"));
+  const stop = A.helpers.orderRequestsOf(d, "SA-T7").find((row) => row.kind === "cancel");
+  A.decideOrderRequest(d, { requestId: stop.id, decision: "stop" }, ctx("planner"));
+  assert.deepEqual([orderOf(d, "SA-T7").status, orderOf(d, "SA-T7").cancelReason, orderOf(d, "SA-T7").salesCancelChoice], ["cancelled", "ลูกค้าปิดกิจการ", "stop"]);
+  assert.deepEqual(noticesOf(d, "SA-T7").map((row) => row.slice(0, 3)), [["change", "done", "ack"], ["cancel", "done", "stop"]]);
+  assert.ok(d.audit.some((row) => row.action === "ฝ่ายวางแผนเลือกหยุดและเก็บยางเส้นยาวที่ SR"));
+  // ฝ่ายวางแผนยกเลิกใบที่รอตัดสินตรง ๆ = หยุดเช่นกัน
+  startedOrder(d, "SA-T8");
+  A.cancelOrder(d, { orderId: "SA-T8", reason: "ลูกค้ายกเลิก" }, ctx("sa"));
+  A.cancelOrder(d, { orderId: "SA-T8", reason: "ฝ่ายวางแผนหยุดเอง" }, ctx("planner"));
+  assert.deepEqual([orderOf(d, "SA-T8").salesCancelChoice, noticesOf(d, "SA-T8")[0].slice(0, 3)], ["stop", ["cancel", "done", "stop"]]);
+});
+
+test("database mode: the decision action returns one row; the store sends it in the notice section (with the order row for stop / continue); messages stay Thai", () => {
+  assert.deepEqual(storeApi.REQUEST_ACTIONS, { decideOrderRequest: "orderRequests" });
+  assert.deepEqual(storeApi.WORK_LISTS.slice(-2), ["orderRequests", "grWorkers"], "the notice list sits before the worker list, like the database delta");
+  assert.doesNotMatch(storeApi.mapRemoteError({ code: "BOM_INVALID_REQUEST" }).message, /BOM_/);
+  assert.match(storeApi.mapRemoteError({ code: "BOM_FG_EXCEEDS" }).message, /ส่งมอบลูกค้าแล้ว/);
+});
+
+test("sales edits a released sales order while no job started (back to draft, still sent, no notice)", () => {
   const d = fresh();
   saOrder(d, "SA-T4", { send: true });
-  rejects(() => A.requestOrderChange(d, { orderId: "SA-T4", reason: "เพิ่มจำนวน" }, ctx("sa")), /แก้ได้เองโดยไม่ต้องขอ/);
   A.releaseOrder(d, { orderId: "SA-T4" }, ctx("planner"));
   A.updateOrderItem(d, { orderId: "SA-T4", fgCode: FG, qty: 5 }, ctx("sa"));
   const order = orderOf(d, "SA-T4");
   assert.deepEqual([order.status, order.revision, order.items[0].qty, order.sentAt], ["draft", 1, 5, NOW]);
   assert.equal(d.jobs.filter((job) => job.orderId === "SA-T4").length, 0, "its jobs are gone until planning releases it again");
-});
-
-test("database mode: request actions return one request row; the store sends it in the request section (with the cancelled order for a confirm); new codes keep Thai messages", () => {
-  assert.deepEqual(storeApi.REQUEST_ACTIONS, { requestOrderCancel: "orderRequests", requestOrderChange: "orderRequests", decideOrderRequest: "orderRequests" });
-  assert.deepEqual(storeApi.WORK_LISTS.slice(-2), ["orderRequests", "grWorkers"], "the request list sits before the worker list, like the database delta");
-  for (const code of ["BOM_INVALID_REQUEST", "BOM_REQUEST_OPEN"]) assert.doesNotMatch(storeApi.mapRemoteError({ code }).message, /BOM_/);
+  assert.deepEqual(A.helpers.orderRequestsOf(d, "SA-T4"), [], "planning releases it again anyway: no notice");
 });
 
 // ---------- Supabase จำลองของ harness ----------
@@ -213,13 +301,16 @@ test("mock: sales personas exist; the database rules for sales, production heads
   assert.equal(await codeOf(orders("persona-pkh", "updateOrderHeader", [{ ...(await s.orderRow("DEMO-26002")), note: "หัวหน้า PK แก้" }])), "BOM_FORBIDDEN", "nor edit an order");
   assert.ok((await s.save("persona-sa", "saveCustomer", { customers: { upsert: [{ name: "ลูกค้าใหม่ฝ่ายขาย", country: "Thailand", orderType: "SA", note: "" }] } })).data, "sales adds a customer");
   assert.equal(await codeOf(s.save("persona-gr", "createOrder", { orders: { upsert: [newOrder("GR-M1")] } })), "BOM_FORBIDDEN", "GR staff cannot open an order");
-  assert.equal(await codeOf(s.save("persona-sa", "requestOrderCancel", { orderRequests: { upsert: [{ id: uid(1), orderId: "SA-M1", reason: "ลูกค้ายกเลิก" }] } })), "BOM_INVALID_TRANSITION", "a draft is not asked about");
-  assert.equal(await codeOf(s.save("persona-sa", "requestOrderCancel", { orderRequests: { upsert: [] } })), "BOM_INVALID_REQUEST", "an empty request is refused");
-  assert.equal(await codeOf(s.save("persona-sa", "cancelOrder", { orderRequests: { upsert: [{ id: uid(1), orderId: "SA-M1", reason: "ลูกค้ายกเลิก" }] } })), "BOM_INVALID_REQUEST", "the request section goes with a request action only");
-  assert.equal(await codeOf(s.save("persona-sa", "decideOrderRequest", { orderRequests: { upsert: [{ id: uid(1), decision: "decline", note: "ไม่ได้" }] } })), "BOM_FORBIDDEN", "sales cannot decide");
+  assert.equal(await codeOf(s.save("persona-sa", "requestOrderCancel", { orderRequests: { upsert: [{ id: uid(1), orderId: "SA-M1", reason: "ลูกค้ายกเลิก" }] } })), "BOM_FORBIDDEN", "the request actions of the first round are gone (coarse gate)");
+  assert.equal(await codeOf(s.save("persona-pp", "requestOrderCancel", { orderRequests: { upsert: [{ id: uid(1), orderId: "SA-M1", reason: "ลูกค้ายกเลิก" }] } })), "BOM_INVALID_ACTION", "even for planning");
+  assert.equal(await codeOf(s.save("persona-pp", "decideOrderRequest", { orderRequests: { upsert: [] } })), "BOM_INVALID_REQUEST", "an empty decision is refused");
+  assert.equal(await codeOf(s.save("persona-sa", "cancelOrder", { orderRequests: { upsert: [{ id: uid(1), decision: "ack" }] } })), "BOM_INVALID_REQUEST", "the notice section goes with decideOrderRequest only");
+  assert.equal(await codeOf(s.save("persona-sa", "decideOrderRequest", { orderRequests: { upsert: [{ id: uid(1), decision: "ack" }] } })), "BOM_FORBIDDEN", "sales cannot decide");
+  assert.equal(await codeOf(s.save("persona-pp", "decideOrderRequest", { orderRequests: { upsert: [{ id: uid(1), decision: "ack" }] } })), "BOM_INVALID_REQUEST", "an unknown notice is refused");
+  assert.equal(await codeOf(orders("persona-sa", "cancelOrder", [{ ...(await s.orderRow("SA-M1")), salesCancelReason: "ลูกค้ายกเลิก" }])), "BOM_INVALID_TRANSITION", "a draft is cancelled outright, not mid-way");
 });
 
-test("mock: the store round trip — sales opens and sends with products, planning releases, sales asks to cancel, planning confirms with the order row", async () => {
+test("mock: the store round trip — sales opens and sends, planning releases, PK starts; sales edits in place and cancels mid-way (server notices); the order takes no new work; planning continues", async () => {
   const s = mockScene();
   const sa = await s.storeFor("persona-sa");
   const opened = sa.store.run("createOrder", { pi: "SA-R1", customer: "ลูกค้ารอบเดียว", country: "Thailand", orderedAt: NOW, whDue: NOW + 30 * DAY, lines: [{ fgCode: FG, qty: 3 }], send: true });
@@ -232,27 +323,97 @@ test("mock: the store round trip — sales opens and sends with products, planni
   const released = pp.store.run("releaseOrder", { orderId: "SA-R1" });
   assert.equal(released.ok, true, released.error?.message);
   assert.equal((await released.saving).ok, true, "planning releases the sent sales order");
+  const pkJob = pp.store.data().jobs.find((job) => job.orderId === "SA-R1" && job.dept === "PK" && job.kind === "FG");
+  const reported = pp.store.run("reportJob", { jobId: pkJob.id, qtyDone: 1, note: "ชุดแรก" });
+  assert.equal(reported.ok, true, reported.error?.message);
+  assert.equal((await reported.saving).ok, true, "a job starts");
 
   await sa.enter();
   await sa.store.catchUp();
-  assert.equal(orderOf(sa.store.data(), "SA-R1").status, "released");
-  assert.equal(sa.store.run("cancelOrder", { orderId: "SA-R1", reason: "ลูกค้ายกเลิก" }).ok, false, "the page refuses a direct cancel after release");
-  const asked = sa.store.run("requestOrderCancel", { orderId: "SA-R1", reason: "ลูกค้ายกเลิกคำสั่งซื้อ" });
-  assert.equal(asked.ok, true, asked.error?.message);
-  assert.equal((await asked.saving).ok, true);
-  assert.deepEqual(Object.keys(sa.sent.at(-1).changes), ["orderRequests"], "only the request row travels");
-  assert.equal(sa.store.data().orderRequests.filter((row) => row.id === asked.result.id).length, 1, "the request arrives once with the id the page gave it");
+  assert.equal(orderOf(sa.store.data(), "SA-R1").status, "in_progress");
+  const edited = sa.store.run("updateOrderItem", { orderId: "SA-R1", fgCode: FG, qty: 5 });
+  assert.equal(edited.ok, true, edited.error?.message);
+  assert.equal((await edited.saving).ok, true, "the server accepts the edit in place");
+  assert.deepEqual(Object.keys(sa.sent.at(-1).changes), ["orders"], "only the order row travels (the server writes the notice)");
+  const view1 = await s.view();
+  assert.deepEqual([orderOf(view1, "SA-R1").status, orderOf(view1, "SA-R1").items[0].qty, view1.jobs.filter((job) => job.orderId === "SA-R1").length > 0],
+    ["in_progress", 5, true], "the order changed in place and kept its jobs");
+  assert.deepEqual(view1.orderRequests.map((row) => [row.orderId, row.kind, row.status, row.reason, row.requestedBy]), [["SA-R1", "change", "open", `${FG} 3 → 5`, "สุนิสา ขายดี"]]);
+  assert.deepEqual(sa.store.data().orderRequests.map((row) => row.reason), [`${FG} 3 → 5`], "the page shows the server notice once");
+  assert.match((await s.call("app_bom_audit", { p_limit: 1 }))[0].detail, /orderRequests \+1/, "the notice is counted in the audit row");
+
+  const cancelled = sa.store.run("cancelOrder", { orderId: "SA-R1", reason: "ลูกค้ายกเลิกคำสั่งซื้อ" });
+  assert.equal(cancelled.ok, true, cancelled.error?.message);
+  assert.equal((await cancelled.saving).ok, true, "sales cancels the started order mid-way");
+  assert.deepEqual(Object.keys(sa.sent.at(-1).changes), ["orders"]);
+  const row = await s.orderRow("SA-R1");
+  assert.deepEqual([row.status, row.salesCancelAt, row.salesCancelBy, row.salesCancelReason, row.salesCancelChoice], ["in_progress", NOW, "สุนิสา ขายดี", "ลูกค้ายกเลิกคำสั่งซื้อ", null]);
+  assert.equal(await codeOf(s.save("persona-wh", "deliverFg", { fgMoves: { upsert: [{ orderId: "SA-R1", kind: "deliver", lines: [{ fgCode: FG, qty: 1 }], note: "" }] } })), "BOM_INVALID_TRANSITION",
+    "the warehouse cannot deliver to the customer who cancelled");
+  assert.equal(await codeOf(s.save("persona-st", "issueOrderParts", { jobs: { upsert: [{ ...pkJob, orderId: "SA-R1" }] } })), "BOM_INVALID_TRANSITION", "no new issue for the order");
+  assert.equal(await codeOf(s.save("persona-sr", "issueRods", { rodMoves: { upsert: [{ id: uid(40), kind: "issue", lotId: uid(41), ownerOrderId: null, forOrderId: "SA-R1", itemCode: "X", qty: -1 }] } })),
+    "BOM_INVALID_TRANSITION", "nor long rods");
+  assert.equal(await codeOf(s.save("persona-sa", "updateOrderHeader", { orders: { upsert: [{ ...row, note: "แก้หลังยกเลิก" }] } })), "BOM_INVALID_TRANSITION", "sales cannot edit what it cancelled");
+  assert.equal(await codeOf(s.save("persona-pp", "cancelOrder", { orders: { upsert: [{ ...(await s.orderRow("DEMO-26002")), salesCancelReason: "ฝ่ายวางแผนขอ" }] } })), "BOM_FORBIDDEN",
+    "only sales cancels mid-way");
 
   await pp.enter();
   await pp.store.catchUp();
-  const confirm = pp.store.run("decideOrderRequest", { requestId: asked.result.id, decision: "confirm" });
-  assert.equal(confirm.ok, true, confirm.error?.message);
-  assert.equal((await confirm.saving).ok, true);
-  assert.deepEqual(Object.keys(pp.sent.at(-1).changes), ["orders", "orderRequests"], "the confirm carries the cancelled order and the request");
-  assert.deepEqual([orderOf(pp.store.data(), "SA-R1").status, orderOf(pp.store.data(), "SA-R1").cancelReason], ["cancelled", "ลูกค้ายกเลิกคำสั่งซื้อ"]);
-  assert.deepEqual(pp.store.data().orderRequests.map((row) => [row.status, row.decidedBy]), [["done", "สมศรี วางแผน"]]);
+  const notice = pp.store.data().orderRequests.find((row) => row.orderId === "SA-R1" && row.kind === "cancel");
+  assert.equal(await codeOf(s.save("persona-pp", "decideOrderRequest", { orderRequests: { upsert: [{ id: notice.id, decision: "ack" }] } })), "BOM_INVALID_REQUEST", "a mid-way cancel needs a choice");
+  assert.equal(await codeOf(s.save("persona-pkh", "decideOrderRequest", { orderRequests: { upsert: [{ id: notice.id, decision: "continue" }] } })), "BOM_FORBIDDEN", "a production head cannot choose");
+  assert.equal(await codeOf(s.save("persona-sa", "decideOrderRequest", { orderRequests: { upsert: [{ id: notice.id, decision: "continue" }] } })), "BOM_FORBIDDEN", "nor sales");
+  await pp.enter(); // s.save ด้านบนสลับ persona ไปแล้ว
+  const go = pp.store.run("decideOrderRequest", { requestId: notice.id, decision: "continue" });
+  assert.equal(go.ok, true, go.error?.message);
+  assert.equal((await go.saving).ok, true);
+  assert.deepEqual(Object.keys(pp.sent.at(-1).changes), ["orders", "orderRequests"], "the choice travels with the order row");
+  assert.deepEqual([(await s.orderRow("SA-R1")).salesCancelChoice, (await s.view()).orderRequests.find((r) => r.id === notice.id).decision], ["continue", "continue"]);
+  assert.equal(await codeOf(s.save("persona-wh", "deliverFg", { fgMoves: { upsert: [{ orderId: "SA-R1", kind: "deliver", lines: [{ fgCode: FG, qty: 1 }], note: "" }] } })), "BOM_INVALID_TRANSITION",
+    "still no delivery to that customer after the choice");
+  const change = pp.store.data().orderRequests.find((r) => r.orderId === "SA-R1" && r.kind === "change");
+  await pp.enter();
+  const ack = pp.store.run("decideOrderRequest", { requestId: change.id, decision: "ack" });
+  assert.equal((await ack.saving).ok, true);
+  assert.deepEqual(Object.keys(pp.sent.at(-1).changes), ["orderRequests"], "an acknowledgement sends only the decision");
+  assert.equal(await codeOf(s.save("persona-pp", "decideOrderRequest", { orderRequests: { upsert: [{ id: change.id, decision: "ack" }] } })), "BOM_INVALID_TRANSITION", "acknowledged once");
+});
+
+test("mock store: planning stops a mid-way cancel (order cancelled with the sales reason, notices closed by the server) or cancels such an order directly (also a stop)", async () => {
+  const s = mockScene();
+  const sa = await s.storeFor("persona-sa");
+  const pp = await s.storeFor("persona-pp");
+  for (const pi of ["SA-C3", "SA-C4"]) {
+    await sa.enter();
+    assert.equal((await sa.store.run("createOrder", { pi, customer: "ลูกค้ารอบเดียว", country: "Thailand", orderedAt: NOW, whDue: NOW + 30 * DAY, lines: [{ fgCode: FG, qty: 3 }], send: true }).saving).ok, true);
+    await pp.enter();
+    await pp.store.catchUp();
+    assert.equal((await pp.store.run("releaseOrder", { orderId: pi }).saving).ok, true);
+    const pkJob = pp.store.data().jobs.find((job) => job.orderId === pi && job.dept === "PK" && job.kind === "FG");
+    assert.equal((await pp.store.run("reportJob", { jobId: pkJob.id, qtyDone: 1, note: "ชุดแรก" }).saving).ok, true);
+    await sa.enter();
+    await sa.store.catchUp();
+    assert.equal((await sa.store.run("updateOrderItem", { orderId: pi, fgCode: FG, qty: 2 }).saving).ok, true);
+    assert.equal((await sa.store.run("cancelOrder", { orderId: pi, reason: "ลูกค้าเลิกสั่ง" }).saving).ok, true);
+  }
+  await pp.enter();
+  await pp.store.catchUp();
+  const notice = pp.store.data().orderRequests.find((row) => row.orderId === "SA-C3" && row.kind === "cancel");
+  const stop = pp.store.run("decideOrderRequest", { requestId: notice.id, decision: "stop" });
+  assert.equal(stop.ok, true, stop.error?.message);
+  assert.equal((await stop.saving).ok, true);
+  assert.deepEqual(Object.keys(pp.sent.at(-1).changes), ["orders", "orderRequests"], "stop carries the cancelled order and the decision");
   const view = await s.view();
-  assert.equal(view.orderRequests.length, 1, "the snapshot lists the request");
+  assert.deepEqual([orderOf(view, "SA-C3").status, orderOf(view, "SA-C3").cancelReason, orderOf(view, "SA-C3").salesCancelChoice], ["cancelled", "ลูกค้าเลิกสั่ง", "stop"]);
+  assert.deepEqual(view.orderRequests.filter((row) => row.orderId === "SA-C3").map((row) => [row.kind, row.status, row.decision, row.decidedBy]).sort(),
+    [["cancel", "done", "stop", "สมศรี วางแผน"], ["change", "done", "ack", "สมศรี วางแผน"]]);
+  assert.match((await s.call("app_bom_audit", { p_limit: 1 }))[0].detail, /orderRequests \+2/, "the decided notice and the one closed with the order are counted");
+  const direct = pp.store.run("cancelOrder", { orderId: "SA-C4", reason: "ฝ่ายวางแผนหยุดเอง" });
+  assert.equal((await direct.saving).ok, true);
+  const view2 = await s.view();
+  assert.deepEqual([orderOf(view2, "SA-C4").salesCancelChoice, view2.orderRequests.filter((row) => row.orderId === "SA-C4").map((row) => [row.kind, row.decision]).sort()],
+    ["stop", [["cancel", "stop"], ["change", "ack"]]]);
+  assert.deepEqual(pp.store.data().orderRequests.filter((row) => row.status === "open"), [], "the page shows nothing left to decide");
 });
 
 // ---------- ฝ่ายขายแก้ใบที่ปล่อยผลิตแล้ว (ยังไม่มีงานเริ่ม) ผ่าน store จริง ----------
@@ -313,49 +474,4 @@ test("mock: a sales payload that still carries jobs.delete of its reopened order
   // planning's payload keeps jobs.delete (the planner group may delete jobs; jobs deleted in the same call are skipped)
   const shaped = storeApi.diffMaster({ orders: [{ id: "O", status: "released" }], jobs: [{ id: "J", orderId: "O" }] }, { orders: [{ id: "O", status: "draft" }], jobs: [] });
   assert.deepEqual(shaped.jobs, { delete: [{ id: "J" }] });
-});
-
-// ---------- ยกเลิกใบ: คำขออื่นที่ยังเปิดของใบปิดเอง ----------
-test("cancelling an order closes its other open requests: a cancel request is done, a change request is declined, both noted 'ใบถูกยกเลิกแล้ว'", () => {
-  const d = fresh();
-  saOrder(d, "SA-C1", { send: true });
-  A.releaseOrder(d, { orderId: "SA-C1" }, ctx("planner"));
-  const change = A.requestOrderChange(d, { orderId: "SA-C1", reason: "เพิ่มเป็น 5 ชุด" }, ctx("sa"));
-  const cancel = A.requestOrderCancel(d, { orderId: "SA-C1", reason: "ลูกค้ายกเลิก" }, ctx("sa"));
-  A.cancelOrder(d, { orderId: "SA-C1", reason: "ฝ่ายวางแผนยกเลิกเอง" }, ctx("planner"));
-  assert.deepEqual(A.helpers.orderRequestsOf(d, "SA-C1").map((row) => [row.id, row.status, row.decisionNote, row.decidedBy]),
-    [[change.id, "declined", "ใบถูกยกเลิกแล้ว", USERS.planner.name], [cancel.id, "done", "ใบถูกยกเลิกแล้ว", USERS.planner.name]]);
-  rejects(() => A.decideOrderRequest(d, { requestId: change.id, decision: "done" }, ctx("planner")), /ตัดสินไปแล้ว/);
-  // ยืนยันคำขอยกเลิก: คำขอแก้ใบที่เปิดอยู่ปิดเอง · คำขอที่ยืนยันได้ผลของการยืนยัน
-  saOrder(d, "SA-C2", { send: true });
-  A.releaseOrder(d, { orderId: "SA-C2" }, ctx("planner"));
-  const change2 = A.requestOrderChange(d, { orderId: "SA-C2", reason: "ขอแก้จำนวน" }, ctx("sa"));
-  const cancel2 = A.requestOrderCancel(d, { orderId: "SA-C2", reason: "ลูกค้ายกเลิก" }, ctx("sa"));
-  A.decideOrderRequest(d, { requestId: cancel2.id, decision: "confirm", note: "ยืนยัน" }, ctx("planner"));
-  assert.deepEqual(A.helpers.orderRequestsOf(d, "SA-C2").map((row) => [row.id, row.status, row.decisionNote]), [[change2.id, "declined", "ใบถูกยกเลิกแล้ว"], [cancel2.id, "done", "ยืนยัน"]]);
-});
-
-test("mock store: planning cancels a sales order with open requests; the server closes them in the same call and the page shows the closed rows", async () => {
-  const s = mockScene();
-  const sa = await s.storeFor("persona-sa");
-  assert.equal((await sa.store.run("createOrder", { pi: "SA-C3", customer: "ลูกค้ารอบเดียว", country: "Thailand", orderedAt: NOW, whDue: NOW + 30 * DAY, lines: [{ fgCode: FG, qty: 3 }], send: true }).saving).ok, true);
-  const pp = await s.storeFor("persona-pp");
-  assert.equal((await pp.store.run("releaseOrder", { orderId: "SA-C3" }).saving).ok, true);
-  await sa.enter();
-  await sa.store.catchUp();
-  const change = sa.store.run("requestOrderChange", { orderId: "SA-C3", reason: "ขอเพิ่มจำนวน" });
-  assert.equal((await change.saving).ok, true);
-  const cancel = sa.store.run("requestOrderCancel", { orderId: "SA-C3", reason: "ลูกค้ายกเลิก" });
-  assert.equal((await cancel.saving).ok, true);
-  await pp.enter();
-  await pp.store.catchUp();
-  const cancelled = pp.store.run("cancelOrder", { orderId: "SA-C3", reason: "ฝ่ายวางแผนยกเลิกเอง" });
-  assert.equal(cancelled.ok, true, cancelled.error?.message);
-  assert.equal((await cancelled.saving).ok, true);
-  assert.deepEqual(Object.keys(pp.sent.at(-1).changes), ["orders"], "the requests are closed by the server, not sent");
-  const rows = (await s.view()).orderRequests.filter((row) => row.orderId === "SA-C3").map((row) => [row.id, row.status, row.decisionNote, row.decidedBy]).sort();
-  assert.deepEqual(rows, [[cancel.result.id, "done", "ใบถูกยกเลิกแล้ว", "สมศรี วางแผน"], [change.result.id, "declined", "ใบถูกยกเลิกแล้ว", "สมศรี วางแผน"]].sort());
-  assert.deepEqual(pp.store.data().orderRequests.filter((row) => row.orderId === "SA-C3").map((row) => row.status).sort(), ["declined", "done"]);
-  assert.match((await s.call("app_bom_audit", { p_limit: 1 }))[0].detail, /orderRequests \+2/, "the closed requests are counted in the audit row");
-  assert.equal(await codeOf(s.save("persona-pp", "decideOrderRequest", { orderRequests: { upsert: [{ id: change.result.id, decision: "done", note: "" }] } })), "BOM_INVALID_TRANSITION", "nothing is left to decide");
 });
