@@ -2614,6 +2614,11 @@
   };
 
   // ---------- งานของแผนก ----------
+  const DEPT_MODULE_JOBS = Object.freeze(["PT", "BG", "PK"]);
+  const moduleHref = (dept) => {
+    const employee = typeof state === "undefined" ? undefined : state?.employee;
+    return employee === undefined || !root.MNP_FACTORY?.deptLink ? root.MNP_BOM_STORE?.deptRoute?.(dept) ?? null : root.MNP_FACTORY.deptLink(employee, dept);
+  };
   pages.jobs = (ctx) => {
     const { data, ui, rules, user, params } = ctx;
     const dept = [...rules.DEPTS, "ALL"].includes(params.get("dept")) ? params.get("dept") : (ctx.helpers.canPlan(user) ? "ALL" : myDept(ctx));
@@ -2629,14 +2634,20 @@
       const part = ctx.helpers.isPartJob(job);
       const canWork = ctx.helpers.canWorkJob(user, job) && ["released", "in_progress"].includes(order?.status) && !part;
       const buttons = [];
+      // PT / BG / PK (โรงงานขั้น 7): งานทำที่โมดูลของแผนกเท่านั้น (บันทึกผลรายวัน ส่งต่อ พักงาน ปิดงาน) ตารางนี้อ่านอย่างเดียวพร้อมลิงก์ไปโมดูล
+      const ownModule = DEPT_MODULE_JOBS.includes(job.dept);
+      if (ownModule) {
+        const href = moduleHref(job.dept);
+        buttons.push(href ? ui.link(`ทำงานที่โมดูล ${job.dept}`, href, "btn rf-btn secondary small") : `<span class="small muted">ทำงานที่โมดูล ${esc(job.dept)}</span>`);
+      }
       // ใบที่ปิดแล้วเบิกจ่ายไม่ได้ (บรรทัดที่เบิกไม่ครบคืนของเหลือได้ที่หน้าใบ) จึงไม่ชี้ไปเบิก
       if (part && job.status !== "done" && ["released", "in_progress"].includes(order?.status) && ctx.helpers.canIssueParts(user) && typeof state !== "undefined" && root.MNP_ST_PAGES?.access?.(state.employee) === "full") buttons.push(ui.link("เบิกจ่ายที่คลังวัตถุดิบ (ST)", root.MNP_FACTORY.routeUrl("st", { tab: "issue", order: job.orderId }), "btn rf-btn secondary small"));
       // งานที่พักอยู่รายงานผลไม่ได้ ต้องกด "ทำต่อ" / "คืนคิว" (ปุ่มถัดไป) ก่อน
       // งาน GR ที่ตั้งขั้นตอนแล้ว: ยอดมาจาก "บันทึกผลรายวัน" ของโมดูล GR (#/gr) ไม่มีปุ่มรายงานผล
-      if (canWork && job.status !== "done" && job.status !== "hold" && !(job.dept === "GR" && ctx.helpers.isGrPlanned?.(data, job))) buttons.push(ctx.helpers.isLinkedJob?.(job) ? LINKED_NOTE : ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "small" }));
-      if (canWork && job.status !== "done") buttons.push(holdButton(ctx, job));
+      if (!ownModule && canWork && job.status !== "done" && job.status !== "hold" && !(job.dept === "GR" && ctx.helpers.isGrPlanned?.(data, job))) buttons.push(ctx.helpers.isLinkedJob?.(job) ? LINKED_NOTE : ui.openButton("รายงานผล", "jobReport", { jobId: job.id }, { className: "small" }));
+      if (!ownModule && canWork && job.status !== "done") buttons.push(holdButton(ctx, job));
       // งานที่จะไม่มีใครรายงานแล้ว: ฝ่ายวางแผนปิดงานพร้อมเหตุผล (ไม่เพิ่มยอด) ใบจึงปิดได้ · ไม่มีกับงานของซื้อ (ST เบิกจ่ายที่ใบ)
-      if (canWork && job.status !== "done" && ctx.helpers.canPlan(user)) buttons.push(ui.openButton("ปิดงานนี้", "jobClose", { jobId: job.id }, { className: "secondary small" }));
+      if (!ownModule && canWork && job.status !== "done" && ctx.helpers.canPlan(user)) buttons.push(ui.openButton("ปิดงานนี้", "jobClose", { jobId: job.id }, { className: "secondary small" }));
       if (job.status !== "done" && ctx.helpers.canLinkRubberflow(user, job) && ["released", "in_progress"].includes(order?.status) && !job.externalRef) buttons.push(ui.openButton("สร้าง WO ใน RubberFlow", "jobRubberflow", { jobId: job.id }, { className: "secondary small" }));
       return `<tr${late(ctx, job) ? ' class="is-late"' : ""}><td>${ui.mono(job.id)}<div class="small muted">${ui.link(job.orderId, ctx.url("orders", { sel: job.orderId, tab: "jobs" }))} · ${esc(order?.customer ?? "")}</div></td>${dept === "ALL" ? `<td>${deptBadge(ctx, job.dept)}</td>` : ""}<td>${ui.link(job.itemCode, ctx.url("items", { sel: job.itemCode }), "rf-mono")}<div class="small muted">${esc(job.name)}${item?.rubber?.compound ? ` · สูตร ${esc(item.rubber.compound)}` : ""}</div></td><td class="right rf-mono">${esc(`${rules.fmtQty(job.qtyPlanned)} ${uomText(ctx, job.uom)}`)}${job.qtyRequired && job.qtyRequired !== job.qtyPlanned ? `<div class="small muted" title="ยอดที่ใบต้องการหลังหักคงคลังของชั้นบนแล้ว ก่อนหักคงคลังของชิ้นนี้ · งานเส้นยางปัดแผนขึ้นเป็นเส้นเต็ม">${esc(`ต้องการ ${rules.fmtQty(job.qtyRequired)}${job.stockCounted !== null && job.stockCounted !== undefined ? ` · คลัง ${rules.fmtQty(job.stockCounted)}` : ""}`)}</div>` : ""}</td><td class="rf-progress-cell">${jobProgress(ctx, job)}</td><td class="nowrap">${esc(rules.fmtDate(job.dueAt))}${late(ctx, job) ? `<div class="small">${ui.badge("bad", "เลยกำหนด")}</div>` : ""}</td><td>${jobStatus(ctx, job)}${jobClosedLine(ctx, job)}${job.externalRef ? `<div class="small">${woRef(ctx, job.externalRef.woId, `WO ${job.externalRef.woId}`)}${job.externalRef.kg ? `<span class="muted"> · ${esc(rules.fmtQty(job.externalRef.kg, 2))} kg</span>` : ""}</div>` : ""}</td><td class="nowrap">${buttons.join(" ")}</td></tr>`;
     });
@@ -2782,7 +2793,7 @@
     items: "ชิ้นงาน", compounds: "สูตรยาง", colors: "สี", colorSets: "ชุดสี", packages: "แพ็กเกจ", boms: "BOM", processes: "ขั้นตอนผลิต", routings: "ขั้นตอนผลิตของชิ้นงาน",
     customers: "ลูกค้า", orders: "ใบสั่งผลิต", jobs: "งาน", stock: "สต็อกของซื้อ", partReturns: "คืนของซื้อ", fgMoves: "รับ/ส่งมอบสินค้าสำเร็จรูป",
     rodLots: "ล็อตยางเส้นยาว", rodMoves: "ประวัติยางเส้นยาว",
-    grConfig: "ตั้งค่า GR", grPlans: "ขั้นตอนของงาน GR", grRecords: "ผลรายวัน GR", rodRequests: "คำขอเบิกยางเส้นยาว", grHandovers: "ส่งงาน GR ให้ PK",
+    grConfig: "ตั้งค่าขั้นตอนแผนก", grPlans: "ขั้นตอนของงาน", grRecords: "ผลรายวัน", rodRequests: "คำขอเบิกยางเส้นยาว", grHandovers: "ส่งงานระหว่างแผนก (GR PT BG → PK · PK → WH)",
   });
   // "jobs +3 -1, orders +1" (เซิร์ฟเวอร์เขียน) → "งาน +3 -1, ใบสั่งผลิต +1"
   const auditCounts = (detail) => String(detail ?? "").split(", ").map((part) => part.replace(/^[A-Za-z]+/, (key) => AUDIT_SECTION_LABEL[key] ?? key)).join(", ");

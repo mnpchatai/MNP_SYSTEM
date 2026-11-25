@@ -2989,7 +2989,7 @@ test("step 5: the order page is read-only progress for everyone with one link to
   html = await env.render(`p=orders&sel=${FG_PI}&step=5`);
   clean(html);
   assert.match(html, /<li class="bom-step is-now" aria-current="step"><div><span class="bom-step-no">ขั้น 5/);
-  for (const head of ["สั่ง", "PK ส่งมอบแล้ว", "รับเข้า WH แล้ว", "รอรับ"]) assert.match(html, new RegExp(`<th class="right">${head}</th>`), head);
+  for (const head of ["สั่ง", "PK ส่งให้ WH แล้ว", "รับเข้า WH แล้ว", "รอรับ"]) assert.match(html, new RegExp(`<th class="right"[^>]*>${head}</th>`), head);
   assert.doesNotMatch(html, /รับครั้งนี้|data-rf-form="receiveFg"|name="qty\[\]"|data-rf-open="closeShort"|data-rf-action="closeOrder"/, "no controls on the order page: the warehouse acts in its own module");
   assert.match(html, /คลังสินค้า \(WH\) เป็นผู้รับเข้า ส่งมอบ และปิดใบ/, "someone who cannot open the module is told who acts");
   assert.doesNotMatch(html, /href="#\/wh/, "and gets no link");
@@ -3002,7 +3002,7 @@ test("step 5: the order page is read-only progress for everyone with one link to
   html = await env.whRender(`order=${FG_PI}`);
   clean(html);
   assert.match(html, /<h2>รับเข้า WH<\/h2>/);
-  for (const head of ["สั่ง", "PK ส่งมอบแล้ว", "รับเข้าแล้ว", "รอรับ", "รับครั้งนี้"]) assert.match(html, new RegExp(`<th class="right">${head}</th>`), head);
+  for (const head of ["สั่ง", "PK ส่งให้ WH แล้ว", "รับเข้าแล้ว", "รอรับ", "รับครั้งนี้"]) assert.match(html, new RegExp(`<th class="right"[^>]*>${head}</th>`), head);
   assert.match(html, /data-rf-form="receiveFg" data-rf-args="\{&quot;orderId&quot;:&quot;DEMO-26001&quot;\}"/);
   assert.equal(count(html, /name="qty\[\]"/g), 1, "one input: HL has nothing to receive and gets none, and nothing is deliverable yet");
   assert.match(html, /name="qty\[\]" type="number" inputmode="decimal" step="any" min="0" max="30" value="30"/, "prefilled with what is waiting");
@@ -3017,7 +3017,7 @@ test("step 5: the order page is read-only progress for everyone with one link to
     clean(html);
     if (id === "B01") { assert.match(html, /data-rf-form="receiveFg"/, "admin may receive"); continue; }
     assert.doesNotMatch(html, /data-rf-form="receiveFg"|name="qty\[\]"|data-rf-open="closeShort"/, `${id} cannot act`);
-    assert.match(html, /<th class="right">PK ส่งมอบแล้ว<\/th>/, `${id} sees the table`);
+    assert.match(html, /<th class="right"[^>]*>PK ส่งให้ WH แล้ว<\/th>/, `${id} sees the table`);
     assert.match(html, /คลังสินค้า \(WH\) เป็นผู้รับสินค้าเข้าคลัง/, `${id} is told who acts`);
   }
 });

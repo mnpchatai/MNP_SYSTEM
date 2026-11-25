@@ -152,10 +152,10 @@
     const closedOrder = order.status === "completed";
     const fg = canFg(ctx);
     const acting = (open || closedOrder) && fg && pos.anyReceivable;
-    const head = ["สินค้า", { label: "สั่ง", className: "right" }, { label: "PK ส่งมอบแล้ว", className: "right" }, { label: "รับเข้าแล้ว", className: "right" },
+    const head = ["สินค้า", { label: "สั่ง", className: "right" }, { label: "PK ส่งให้ WH แล้ว", className: "right", title: "จำนวนที่แผนก PK กดส่งให้ WH (รับเข้าได้ไม่เกินจำนวนนี้)" }, { label: "รับเข้าแล้ว", className: "right" },
       ...(pos.anyFromStock ? [{ label: "ได้จากสต็อก", className: "right", title: "สินค้าสำเร็จรูปที่ใบนี้รับมาจากสต็อกของใบอื่นตอนปล่อยผลิต ไม่ต้องรับเข้า" }] : []),
       { label: closedOrder ? "รอรับ (ส่วนเกิน)" : "รอรับ", className: "right" }, ...(acting ? [{ label: closedOrder ? "รับเป็นสต็อก" : "รับครั้งนี้", className: "right" }] : [])];
-    const rows = pos.products.map((product) => `<tr>${fgProductCell(ctx, product)}${fgNum(ctx, product.ordered)}${fgNum(ctx, product.pkDone)}${fgNum(ctx, product.own)}${pos.anyFromStock ? fgNum(ctx, product.fromStock) : ""}${fgNum(ctx, product.receivable)}${acting ? `<td class="right">${fgQtyInput(ctx, product, closedOrder ? "จำนวนที่รับเป็นสต็อก" : "จำนวนที่รับเข้า WH", product.receivable)}</td>` : ""}</tr>`);
+    const rows = pos.products.map((product) => `<tr>${fgProductCell(ctx, product)}${fgNum(ctx, product.ordered)}${fgNum(ctx, product.pkSent ?? product.pkDone)}${fgNum(ctx, product.own)}${pos.anyFromStock ? fgNum(ctx, product.fromStock) : ""}${fgNum(ctx, product.receivable)}${acting ? `<td class="right">${fgQtyInput(ctx, product, closedOrder ? "จำนวนที่รับเป็นสต็อก" : "จำนวนที่รับเข้า WH", product.receivable)}</td>` : ""}</tr>`);
     const table = ui.table(head, rows, { emptyText: "ใบนี้ไม่มีสินค้า" });
     const closeShort = pos.canCloseShort && fg ? ui.openButton("ปิดใบ (รับไม่ครบ)", "closeShort", { orderId: order.id }, { className: "secondary" }) : "";
     // รับครบและทุกแผนกปิดงานแล้วแต่ใบยังเปิด (รับครบก่อนงานสุดท้ายเสร็จ): WH ปิดใบ ยืนยันแล้วส่งทันที ไม่ต้องมีเหตุผล
@@ -169,7 +169,7 @@
       : "";
     const note = pos.canClose && !fg ? '<p class="small muted">ทุกแผนกปิดงานแล้ว รอคลังสินค้า (WH) ปิดใบ</p>'
       : !fg ? '<p class="small muted">คลังสินค้า (WH) เป็นผู้รับสินค้าเข้าคลัง</p>'
-      : open && !pos.anyReceivable && !pos.canCloseShort && !pos.allReceived ? '<p class="small muted">ยังไม่มีสินค้าที่รอรับ เมื่อ PK รายงานผลผลิต รับเข้า WH ได้ทันที ไม่ต้องรอผลิตครบทั้งใบ</p>' : "";
+      : open && !pos.anyReceivable && !pos.canCloseShort && !pos.allReceived ? '<p class="small muted">ยังไม่มีสินค้าที่รอรับ เมื่อ PK ส่งสินค้าให้ WH แล้ว รับเข้า WH ได้ทันที ไม่ต้องรอผลิตครบทั้งใบ</p>' : "";
     const closed = pos.shortClose ? ui.callout("info", `ปิดใบโดยรับไม่ครบ: ${esc(pos.shortClose.reason)} (${esc(pos.shortClose.by)} · ${esc(rules.fmtDateTime(pos.shortClose.at))})`) : "";
     const surplus = closedOrder && pos.anyReceivable ? ui.callout("info", "ใบนี้ปิดแล้ว ส่วนที่ PK ผลิตเกินจำนวนสั่งรับเข้า WH ได้ และเป็นสต็อกสินค้าสำเร็จรูปที่ใบสั่งผลิตอื่นนำไปใช้ได้") : "";
     const covered = pos.coveredByStock ? ui.callout("info", "ใบนี้ได้สินค้าครบจากสต็อกสินค้าสำเร็จรูป ไม่มีงานผลิตและไม่มีของให้รับเข้า ส่งมอบให้ลูกค้าได้เลย") : "";

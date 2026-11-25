@@ -13,7 +13,7 @@ const FILES = [
   "modules/rubberflow-rules.js", "modules/rubberflow-derive.js", "modules/rubberflow-actions.js", "modules/rubberflow-seed.js", "modules/rubberflow-store.js",
   "modules/rubberflow-ui.js", "modules/factory-kit.js", "modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js",
   "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js",
-  "modules/st-pages.js", "modules/module-st.js", "modules/module-sr.js", "modules/qa-pages.js", "modules/module-qa.js", "modules/gr-pages.js", "modules/module-gr.js", "modules/module-pt.js", "modules/module-bg.js", "modules/module-pk.js", "modules/wh-pages.js", "modules/module-wh.js",
+  "modules/st-pages.js", "modules/module-st.js", "modules/module-sr.js", "modules/qa-pages.js", "modules/module-qa.js", "modules/gr-pages.js", "modules/dept-pages.js", "modules/module-gr.js", "modules/module-pt.js", "modules/module-bg.js", "modules/module-pk.js", "modules/wh-pages.js", "modules/module-wh.js",
 ];
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 const read = (file) => fs.readFileSync(file, "utf8");
@@ -393,7 +393,7 @@ test("GR pages escape what users typed and keep to the wording rules; module fil
     assert.doesNotMatch(html, /แท่ง|undefined|NaN|\[object Object\]/);
   }
   assert.ok(pages[0].includes("&lt;img src=x onerror=alert(1)&gt;"));
-  for (const file of ["modules/gr-pages.js", "modules/module-gr.js"]) assert.doesNotMatch(read(file), /แท่ง/, file);
+  for (const file of ["modules/gr-pages.js", "modules/dept-pages.js", "modules/module-gr.js"]) assert.doesNotMatch(read(file), /แท่ง/, file);
   const html = read("index.html");
   const order = [...html.matchAll(/<script defer src="\.\/([^"?]+)/g)].map((match) => match[1]);
   assert.ok(order.indexOf("modules/gr-pages.js") > order.indexOf("modules/module-sr.js") && order.indexOf("modules/gr-pages.js") < order.indexOf("modules/module-gr.js"));

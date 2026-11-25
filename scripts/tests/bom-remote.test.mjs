@@ -4570,13 +4570,13 @@ test("on the screens the warehouse acts and everybody else reads: WH staff, the 
   // the order page of BOM is read-only progress for everyone
   for (const persona of ["persona-wh", "persona-whh", "persona-1", "persona-pp", "persona-st", "persona-rb", "persona-qa"]) {
     const page = await html(persona, "p=orders&sel=PI-W&step=5");
-    assert.match(page, /<th class="right">PK ส่งมอบแล้ว<\/th>/, `${persona} sees the table`);
+    assert.match(page, /<th class="right"[^>]*>PK ส่งให้ WH แล้ว<\/th>/, `${persona} sees the table`);
     assert.equal(form(page, "receiveFg"), 0, `${persona}: no receive form on the order page`);
   }
   // the warehouse module: the forms are for the warehouse and admin; the planning group reads; other departments cannot open it at all
   for (const [persona, acts] of [["persona-wh", true], ["persona-whh", true], ["persona-1", true], ["persona-pp", false]]) {
     const page = await whHtml(persona, "order=PI-W");
-    assert.match(page, /<th class="right">PK ส่งมอบแล้ว<\/th>/, `${persona} sees the table`);
+    assert.match(page, /<th class="right"[^>]*>PK ส่งให้ WH แล้ว<\/th>/, `${persona} sees the table`);
     assert.equal(form(page, "receiveFg"), acts ? 1 : 0, `${persona}: receive form`);
     assert.equal(/คลังสินค้า \(WH\) เป็นผู้รับสินค้าเข้าคลัง/.test(page), !acts, `${persona}: told who acts`);
     assert.doesNotMatch(page, /data-rf-action="completeOrder"/, `${persona}: no close button`);

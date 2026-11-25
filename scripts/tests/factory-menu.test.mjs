@@ -11,7 +11,7 @@ const FILES = [
   "modules/rubberflow-rules.js", "modules/rubberflow-derive.js", "modules/rubberflow-actions.js", "modules/rubberflow-seed.js", "modules/rubberflow-store.js",
   "modules/rubberflow-ui.js", "modules/factory-kit.js", "modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js",
   "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js",
-  "modules/st-pages.js", "modules/module-st.js", "modules/module-sr.js", "modules/qa-pages.js", "modules/module-qa.js", "modules/gr-pages.js", "modules/module-gr.js", "modules/module-pt.js", "modules/module-bg.js", "modules/module-pk.js", "modules/wh-pages.js", "modules/module-wh.js",
+  "modules/st-pages.js", "modules/module-st.js", "modules/module-sr.js", "modules/qa-pages.js", "modules/module-qa.js", "modules/gr-pages.js", "modules/dept-pages.js", "modules/module-gr.js", "modules/module-pt.js", "modules/module-bg.js", "modules/module-pk.js", "modules/wh-pages.js", "modules/module-wh.js",
 ];
 const DEPT_FILES = ["st", "sr", "qa", "gr", "pt", "bg", "pk", "wh"].map((dept) => `modules/module-${dept}.js`);
 const ALL_DEPTS = ["FACTORY_ST", "FACTORY_SR", "FACTORY_QA", "FACTORY_GR", "FACTORY_PT", "FACTORY_BG", "FACTORY_PK", "FACTORY_WH"];
@@ -473,6 +473,13 @@ test("WH: the store view lists the finished goods per code with the orders that 
 // ---- แผนกผลิต (GR PT BG PK): หน้าแรกสั่งงานได้เหมือน BOM "งานของฉัน" ----
 const ROUTE = { FACTORY_GR: "gr", FACTORY_PT: "pt", FACTORY_BG: "bg", FACTORY_PK: "pk" };
 const liveOrder = (data, job) => ["released", "in_progress", "completed"].includes(data.orders.find((order) => order.id === job.orderId)?.status);
+// งานที่ยังอยู่หน้า "งานของฉัน" ของแผนกที่ส่งต่อได้ (GR PT BG PK): ยังไม่เสร็จ หรือเสร็จแล้วแต่ยังมีของดีที่ยังไม่ได้ส่งต่อ (ใบกำลังผลิต · PK ส่งให้ WH ได้ถึงใบที่ปิดแล้ว)
+const stillOpen = (data, job) => {
+  if (job.status !== "done") return true;
+  const sent = (data.grHandovers ?? []).filter((row) => row.jobId === job.id && row.status !== "cancelled").reduce((sum, row) => sum + row.qty, 0);
+  const status = data.orders.find((order) => order.id === job.orderId)?.status;
+  return (job.dept === "PK" ? ["released", "in_progress", "completed"] : ["released", "in_progress"]).includes(status) && job.qtyDone - sent > 1e-9;
+};
 // ปุ่มต่อการ์ด (ตามลำดับการ์ด): ชื่อ dialog / action ที่การ์ดเสนอ · เทียบกับการ์ดเดียวกันที่หน้า BOM
 const buttonsByCard = (html) => html.split('<article class="card rf-card bom-job').slice(1).map((card) => [...card.matchAll(/data-rf-(?:open|action)="(\w+)"/g)].map((match) => match[1]));
 
@@ -540,27 +547,28 @@ test("the เสร็จแล้ว view lists finished jobs of the department
   assert.match(await env.open("FACTORY_GR", "st=done"), /ยังไม่มีงานที่เสร็จ/);
 });
 
-test("production departments PT, BG and PK use the same landing: their own jobs only, with the report button", async () => {
+test("production departments GR, PT, BG and PK use the same landing: their own jobs only, with the report or the daily-record button", async () => {
   for (const [code, dept, userId] of [["FACTORY_PT", "PT", "B06"], ["FACTORY_BG", "BG", "B07"], ["FACTORY_GR", "GR", "B05"]]) {
     const env = load({ employee: emp(dept) });
     env.store.setUser(userId);
     const data = env.store.data();
-    const open = data.jobs.filter((job) => job.dept === dept && liveOrder(data, job) && job.status !== "done");
+    const open = data.jobs.filter((job) => job.dept === dept && liveOrder(data, job) && stillOpen(data, job));
     const html = await env.open(code);
     assert.match(html, new RegExp(`<shell path="${ROUTE[code]}"`), code);
     assert.equal([...html.matchAll(/class="card rf-card bom-job/g)].length, open.length, `${dept}: one card per open job`);
     assert.match(html, /<span class="small muted" role="status" data-bom-sync>/);
-    if (open.length) assert.match(html, /data-rf-open="jobReport"/);
+    // งานที่ตั้งขั้นตอนแล้ว (PT BG PK GR) บันทึกผลที่หน้าบันทึกผลรายวัน · งานเดิมที่รายงานยอดไปแล้วยังรายงานผลที่การ์ด
+    if (open.length) assert.match(html, /data-rf-open="jobReport"|tab=log/);
   }
   // PK: ผู้วางแผนเห็นงาน PK ของใบที่ปล่อยผลิต พร้อมปุ่มรายงานผล
   const pk = load({ employee: emp("PP") });
   pk.store.setUser("B03");
   const data = pk.store.data();
-  const open = data.jobs.filter((job) => job.dept === "PK" && liveOrder(data, job) && job.status !== "done");
+  const open = data.jobs.filter((job) => job.dept === "PK" && liveOrder(data, job) && stillOpen(data, job));
   const html = await pk.open("FACTORY_PK");
   // การ์ด "รับจาก GR" (งานที่ GR ส่งให้ PK และยังไม่รับ) อยู่หน้าการ์ดงานผลิต
-  // เฉพาะที่ GR ส่งให้ PK (ชุดเดียวกันมีการส่งของ PT / BG และ PK → WH ด้วยตั้งแต่ 20261224010000 · หน้า PK ของขั้นถัดไปแสดงแยก)
-  const fromGr = (data.grHandovers ?? []).filter((row) => row.status === "sent" && (row.fromDept ?? "GR") === "GR" && (row.toDept ?? "PK") === "PK").length;
+  // การ์ด "รับจาก GR / PT / BG": ทุกรายการที่ส่งให้ PK และยังไม่รับ (การส่ง PK → WH ไม่ใช่การ์ดของ PK)
+  const fromGr = (data.grHandovers ?? []).filter((row) => row.status === "sent" && (row.toDept ?? "PK") === "PK").length;
   assert.equal([...html.matchAll(/class="card rf-card bom-job/g)].length, open.length + fromGr);
   assert.doesNotMatch(html, /#\/bom\?p=work/);
   assert.equal(h1Of(html), "งานของฉัน");
@@ -1251,7 +1259,7 @@ test("side menu: ST has งานของฉัน, ในคลัง, วั�
   }
 });
 
-test("side menu: GR (production) has งานของฉัน with the open-job count and its own pages (settings only for a head); PT, BG and PK have งานของฉัน and เสร็จแล้ว", async () => {
+test("side menu: GR (production) has งานของฉัน with the open-job count and its own pages (settings only for a head); PT, BG and PK have their own pages", async () => {
   const env = load({ employee: emp("GR") });
   env.store.setUser("B05");
   const data = env.store.data();
@@ -1275,7 +1283,12 @@ test("side menu: GR (production) has งานของฉัน with the open-j
     const other = load({ employee: emp(dept) });
     other.store.setUser(userId);
     await other.open(code);
-    assert.deepEqual(plain(navOf(other, code).items.map((item) => [item.label, item.href])), [["งานของฉัน", `#/${route}`], ["เสร็จแล้ว", `#/${route}?st=done`]], code);
+    const second = route === "pk" ? [["รอรับของ", "#/pk?tab=incoming"], ["ส่งให้ WH", "#/pk?tab=wh"]] : [["วัตถุดิบจาก ST", `#/${route}?tab=materials`], ["ส่งให้ PK", `#/${route}?tab=pk`]];
+    const head = [["งานของฉัน", `#/${route}`], ["บันทึกผลรายวัน", `#/${route}?tab=log`]];
+    const tail = [["สรุปผล", `#/${route}?tab=summary`]];
+    // PK: ผู้วางแผน (B03) เห็นตั้งค่า · PT / BG: พนักงานไม่เห็น (เสร็จแล้วเป็นลิงก์ที่หัวหน้า "งานของฉัน" ไม่ใช่รายการเมนู)
+    const settings = route === "pk" ? [["ตั้งค่าขั้นตอนและเป้า", "#/pk?tab=settings"]] : [];
+    assert.deepEqual(plain(navOf(other, code).items.map((item) => [item.label, item.href])), [...head, ...second, ...tail, ...settings], code);
   }
   // ไม่มีงานเปิดเลย: ไม่มีตัวเลข
   env.store.data().jobs = [];

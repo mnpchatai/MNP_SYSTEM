@@ -886,10 +886,10 @@
   function receiveProgress(ctx, order, pos) {
     const { ui, rules } = ctx;
     const closedOrder = order.status === "completed";
-    const head = ["สินค้า", { label: "สั่ง", className: "right" }, { label: "PK ส่งมอบแล้ว", className: "right" }, { label: "รับเข้า WH แล้ว", className: "right" },
+    const head = ["สินค้า", { label: "สั่ง", className: "right" }, { label: "PK ส่งให้ WH แล้ว", className: "right", title: "จำนวนที่แผนก PK กดส่งให้ WH (รับเข้าได้ไม่เกินจำนวนนี้)" }, { label: "รับเข้า WH แล้ว", className: "right" },
       ...(pos.anyFromStock ? [{ label: "ได้จากสต็อก", className: "right", title: "สินค้าสำเร็จรูปที่ใบนี้รับมาจากสต็อกของใบอื่นตอนปล่อยผลิต ไม่ต้องรับเข้า" }] : []),
       { label: closedOrder ? "รอรับ (ส่วนเกิน)" : "รอรับ", className: "right" }];
-    const rows = pos.products.map((product) => `<tr>${fgProductCell(ctx, product)}${fgNum(ctx, product.ordered)}${fgNum(ctx, product.pkDone)}${fgNum(ctx, product.own)}${pos.anyFromStock ? fgNum(ctx, product.fromStock) : ""}${fgNum(ctx, product.receivable)}</tr>`);
+    const rows = pos.products.map((product) => `<tr>${fgProductCell(ctx, product)}${fgNum(ctx, product.ordered)}${fgNum(ctx, product.pkSent ?? product.pkDone)}${fgNum(ctx, product.own)}${pos.anyFromStock ? fgNum(ctx, product.fromStock) : ""}${fgNum(ctx, product.receivable)}</tr>`);
     const waiting = pos.waitingProduction
       ? ui.callout("info", `ยังปิดใบไม่ได้: งานของแผนก ${esc(pos.openDepts.map((dept) => `${deptName(ctx, dept)} (${dept})`).join(", "))} ยังไม่เสร็จ · แผนกนั้นรายงานผลให้เสร็จ หรือฝ่ายวางแผนปิดงานที่จะไม่ทำต่อ แล้ว WH ปิดใบ`)
       : pos.canClose ? ui.callout("info", "ทุกแผนกปิดงานและรับสินค้าครบแล้ว รอคลังสินค้า (WH) ปิดใบ") : "";
