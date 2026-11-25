@@ -28,6 +28,22 @@
     try { return node.dataset.rfArgs ? JSON.parse(node.dataset.rfArgs) : {}; } catch { return {}; }
   }
 
+  // ปุ่มที่กดส่งคำสั่งแล้ว: ปิดไว้กันกดซ้ำระหว่างรอฐานข้อมูลตอบ และจดไว้ (data-rf-pending) · บันทึกไม่สำเร็จ = module-bom.js เรียก releasePending ให้กดได้อีก
+  // (ส่วนที่ยังไม่ถูกวาดใหม่ เช่น ฟอร์มที่ผู้ใช้พิมพ์ค้าง หรือหน้าที่ไม่วาดทับระหว่างเปิด dialog ไม่ค้างปุ่มที่กดไม่ได้)
+  function holdButtons(nodes) {
+    for (const node of nodes ?? []) {
+      if (!node) continue;
+      node.disabled = true;
+      if (node.dataset) node.dataset.rfPending = "1";
+    }
+  }
+  function releasePending(scope = root.document) {
+    for (const node of scope?.querySelectorAll?.("[data-rf-pending]") ?? []) {
+      node.disabled = false;
+      if (node.dataset) delete node.dataset.rfPending;
+    }
+  }
+
   // ตัวผูก event ตามกติกา data-rf-form / data-rf-action / data-rf-open / data-rf-go / data-rf-search ของ root ที่เพิ่งวาด
   // opts.run(name, payload, successText, after) → true/false หรือ Promise (ผู้เรียกส่งคำสั่งเข้า store ของตัวเอง แจ้งผลเอง)
   // opts.transforms = { ชื่อคำสั่ง: (raw) => payload } · opts.beforeSubmit(name, raw, payload, form) → { payload?, after? } | false (ตะขอเฉพาะโมดูล false = ไม่ส่ง)
@@ -63,7 +79,7 @@
       if (ok && typeof ok.then === "function") ok = await ok;
       if (!ok) return;
       form.closest?.("dialog")?.close?.();
-      form.querySelectorAll("button").forEach((node) => { node.disabled = true; });
+      holdButtons(form.querySelectorAll("button"));
       rerender();
     }));
     pick("[data-rf-action]").forEach((button) => button.addEventListener("click", async () => {
@@ -71,7 +87,7 @@
       let ok = opts.run(button.dataset.rfAction, parseArgs(button), button.dataset.rfSuccess, null);
       if (ok && typeof ok.then === "function") ok = await ok;
       if (!ok) return;
-      button.disabled = true;
+      holdButtons([button]);
       rerender();
     }));
     pick("[data-rf-open]").forEach((button) => button.addEventListener("click", () => opts.openDialog?.(button.dataset.rfOpen, parseArgs(button), ctx)));
@@ -528,7 +544,7 @@
   }
 
   root.MNP_FACTORY = Object.freeze({
-    esc, attr, formPayload, parseArgs, bindRoot, deptChip, dueText, jobCard, jobReportDialog, cardTitle, cardClass,
+    esc, attr, formPayload, parseArgs, bindRoot, holdButtons, releasePending, deptChip, dueText, jobCard, jobReportDialog, cardTitle, cardClass,
     FACTORY_GROUP, canSeeDept, canOpenDeptModule, deptLink, rfOrderHref, orderNavItems, registerDeptModule, productionLanding, mountDeptJobs,
     pageHead, searchForm, includesText, limited, deptWork, deptWorkSection, storeLanding, STORE_MENU, workItem, deptWorkCount, viewHead, actionLink, wake, failed, rubberflowFailed, deptCtx, routeUrl, onDeptRoute: onFactoryRoute,
     heldMaterialLots, heldMaterialWork, heldMaterialView, materialReleaseButton, materialReleaseText,

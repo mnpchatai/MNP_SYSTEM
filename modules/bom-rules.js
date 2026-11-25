@@ -1110,7 +1110,9 @@
   const FG_STOCK_STATUS = Object.freeze(["released", "in_progress", "completed"]);
   // ใบที่ยกเลิกแล้ว (20261128010000): ของที่ใบรับเข้าคลังเองอยู่ในคลังต่อเป็นสต็อก นับเป็นใบที่ถือของโดยจำนวนสั่ง = 0 (ตรงกับ private.bom_fg_free) · ใบที่ยกเลิกรับเข้า / ส่งมอบเองไม่ได้
   const fgHolds = (order) => FG_STOCK_STATUS.includes(order?.status) || order?.status === "cancelled";
-  const fgOrderedFor = (order, qty) => (order?.status === "cancelled" ? 0 : qty);
+  // ใบที่ฝ่ายขายยกเลิกกลางทางแล้วฝ่ายวางแผนเลือกผลิตต่อจนจบส่ง WH (salesCancelChoice continue · 20261226010000): นับสั่ง = 0 เหมือนใบที่ยกเลิก
+  // ของที่ใบมีและรับเข้าต่อจากนี้จึงเป็นสต็อกสินค้าสำเร็จรูปที่ใบอื่นใช้ได้ (ตรงกับ private.bom_fg_free)
+  const fgOrderedFor = (order, qty) => (order?.status === "cancelled" || order?.salesCancelChoice === "continue" ? 0 : qty);
   const fgKey = (orderId, code) => `${orderId}\u0000${code}`;
   const FG_ZERO = Object.freeze({ own: 0, inn: 0, out: 0, delivered: 0 });
   // ยอดรวมของประวัติต่อ (ใบ, รหัส) → ฟังก์ชันอ่านค่า { own, inn, out, delivered }
@@ -1153,12 +1155,14 @@
     const pkJobs = jobs.filter((job) => job.orderId === order.id && job.dept === "PK");
     // PK → WH (20261224010000): WH รับได้ไม่เกินที่ PK ส่งให้ WH แล้ว (ไม่นับยกเลิก) · เพดาน = min(ยอดที่ PK ทำ, ที่ PK ส่ง) − ที่รับแล้ว (ตรงกับ private.bom_fg_move)
     const sends = (data?.grHandovers ?? []).filter((row) => row.orderId === order.id && (row.toDept ?? "PK") === "WH" && row.status !== "cancelled");
+    // ใบที่ฝ่ายขายยกเลิกกลางทาง (salesCancelAt · รอตัดสิน / ผลิตต่อ): ส่งมอบให้ลูกค้าของใบไม่ได้ (ตรงกับ app_bom_save_master) ไม่มีของค้างส่งลูกค้า
+    const forCustomer = order.salesCancelAt === undefined || order.salesCancelAt === null;
     const products = [...orderedByCode(order)].map(([fgCode, qty]) => {
       const f = figures(order.id, fgCode);
       const pkDone = fgRound(pkJobs.filter((job) => job.kind === "FG" && job.itemCode === fgCode).reduce((sum, job) => sum + (Number(job.qtyDone) || 0), 0));
       const pkSent = fgRound(sends.filter((row) => row.itemCode === fgCode).reduce((sum, row) => sum + (Number(row.qty) || 0), 0));
       const have = fgRound(f.own + f.inn);
-      const deliverable = Math.max(0, fgRound(have - f.out - f.delivered));
+      const deliverable = forCustomer ? Math.max(0, fgRound(have - f.out - f.delivered)) : 0;
       return {
         fgCode, ordered: qty, pkDone, pkSent,
         received: f.own, own: f.own, fromStock: f.inn, givenAway: f.out, have, delivered: f.delivered,

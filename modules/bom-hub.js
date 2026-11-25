@@ -331,7 +331,11 @@
   pages.find = (ctx) => {
     const { ui, rules, params } = ctx;
     const code = params.get("code") ? rules.canonicalCode(params.get("code")) : "";
-    if (!code) return findList(ctx);
+    if (!code) {
+      const list = findList(ctx);
+      const cards = ctx.helpers.canPlanOrders(ctx.user) ? root.MNP_SA_PAGES?.planningCards?.(ctx) ?? "" : "";
+      return cards ? { ...list, html: `${cards}${list.html}` } : list;
+    }
     const item = itemOf(ctx, code);
     const back = `<p class="bom-back">${ui.link("← สินค้าทั้งหมด", ctx.url("find"))}</p>`;
     if (!item) return { html: `${back}${ui.callout("warn", `ไม่พบ <strong>${esc(code)}</strong> ในทะเบียนชิ้นงาน`)}` };
@@ -914,7 +918,7 @@
     const { ui, rules } = ctx;
     const rows = rules.fgStockForDraft(ctx.data, order).filter((row) => row.stock > 0 || (row.planned ?? 0) > 0);
     if (!rows.length) return "";
-    const canSet = ctx.helpers.canPlan(ctx.user);
+    const canSet = ctx.helpers.canPlanOrders(ctx.user); // ตั้งยอดที่ใช้จากสต็อก = กลุ่มวางแผนของใบสั่งผลิต (20261226010000)
     const unit = (row) => esc(uomText(ctx, itemOf(ctx, row.fgCode)?.uom ?? "set"));
     const editable = (row) => canSet && (row.max > 0 || row.planned !== null);
     const cell = (row) => {
@@ -1381,7 +1385,7 @@
     const { ui, rules } = ctx;
     const rows = rules.rodStockForDraft(ctx.data, order).filter((row) => row.stock > 0 || (row.planned ?? 0) > 0);
     if (!rows.length) return "";
-    const canSet = ctx.helpers.canPlan(ctx.user);
+    const canSet = ctx.helpers.canPlanOrders(ctx.user); // ตั้งยอดที่ใช้จากสต็อก = กลุ่มวางแผนของใบสั่งผลิต (20261226010000)
     const editable = (row) => canSet && (row.max > 0 || row.planned !== null);
     const hint = (row) => `คลัง SR มีสต็อกกลางที่ใช้ได้กับใบนี้ ${rules.fmtQty(row.available)} ${uomText(ctx, row.uom)}${row.taken > 0 ? ` (ใบร่างที่คำนวณก่อนตั้งใช้ไว้ ${rules.fmtQty(row.taken)})` : ""} · ใบนี้ต้องใช้ ${rules.fmtNum(row.required, 2)}`;
     const cell = (row) => {
@@ -1614,14 +1618,15 @@
 
   // ---------- ข้อมูลตั้งต้น: ทางเข้าหน้าข้อมูลหลักที่ไม่ได้ใช้ทุกวัน ----------
   const SETUP_NOTE = Object.freeze({
-    import: "นำเข้า BOM จากไฟล์ Excel", variants: "ชุดสีและแพ็กเกจของแต่ละสินค้า", compounds: "ผูกสูตรยางกับสูตรใน RubberFlow", customers: "รายชื่อลูกค้าของใบสั่งผลิต",
+    import: "นำเข้า BOM จากไฟล์ Excel", variants: "ชุดสีและแพ็กเกจของแต่ละสินค้า", compounds: "ผูกสูตรยางกับสูตรใน RubberFlow", customers: "รายชื่อลูกค้าของใบสั่งผลิต (อยู่ที่โมดูลฝ่ายขาย)",
     count: "กรอกยอดชิ้นงานที่มีอยู่ของใบที่ยังเป็นร่าง", check: "รายการข้อมูลที่ยังไม่ครบ", audit: "ใครทำอะไร เมื่อไร",
   });
   pages.setup = (ctx) => {
     const store = root.MNP_BOM_STORE;
-    const ids = (store?.SETUP_PAGES ?? Object.keys(SETUP_NOTE)).filter((id) => ctx.canSee(id));
+    const salesHref = typeof state === "undefined" ? null : root.MNP_FACTORY?.deptLink?.(state.employee, "SA") ?? null;
+    const ids = (store?.SETUP_PAGES ?? Object.keys(SETUP_NOTE)).filter((id) => ctx.canSee(id) && (id !== "customers" || salesHref));
     const label = (id) => store?.MODULES?.find((entry) => entry.id === id)?.label ?? id;
-    const cards = ids.map((id) => `<a class="card rf-card bom-setup-card" href="${attr(ctx.url(id))}"><span class="rf-mod-ico" aria-hidden="true">${pages.icon(id)}</span><span><strong>${esc(label(id))}</strong><span class="small muted">${esc(SETUP_NOTE[id] ?? "")}</span></span></a>`).join("");
+    const cards = ids.map((id) => `<a class="card rf-card bom-setup-card" href="${attr(id === "customers" ? `${salesHref}?tab=customers` : ctx.url(id))}"><span class="rf-mod-ico" aria-hidden="true">${pages.icon(id)}</span><span><strong>${esc(label(id))}</strong><span class="small muted">${esc(SETUP_NOTE[id] ?? "")}</span></span></a>`).join("");
     return { html: `${pageHead(ctx, "ข้อมูลตั้งต้น")}${ids.length ? `<div class="bom-setup-grid">${cards}</div>` : ctx.ui.card(ctx.ui.empty("บัญชีนี้ไม่มีหน้าข้อมูลตั้งต้นที่เปิดได้"))}` };
   };
 

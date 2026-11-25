@@ -29,7 +29,7 @@ const stubUi = { validateForm: () => true, confirmOptions: (node) => ({ title: n
 
 test("MNP_FACTORY exports the shared pieces and is frozen", () => {
   const { kit } = loadKit();
-  assert.deepEqual(Object.keys(kit).sort(), ["FACTORY_GROUP", "STORE_MENU", "actionLink", "attr", "bindRoot", "canOpenDeptModule", "canSeeDept", "cardClass", "cardTitle", "deptChip", "deptCtx", "deptLink", "deptWork", "deptWorkCount", "deptWorkSection", "dueText", "esc", "failed", "formPayload", "heldMaterialLots", "heldMaterialView", "heldMaterialWork", "includesText", "jobCard", "jobReportDialog", "limited", "materialReleaseButton", "materialReleaseText", "mountDeptJobs", "onDeptRoute", "orderNavItems", "pageHead", "parseArgs", "productionLanding", "registerDeptModule", "rfOrderHref", "routeUrl", "rubberflowFailed", "searchForm", "storeLanding", "viewHead", "wake", "workItem"]);
+  assert.deepEqual(Object.keys(kit).sort(), ["FACTORY_GROUP", "STORE_MENU", "actionLink", "attr", "bindRoot", "canOpenDeptModule", "canSeeDept", "cardClass", "cardTitle", "deptChip", "deptCtx", "deptLink", "deptWork", "deptWorkCount", "deptWorkSection", "dueText", "esc", "failed", "formPayload", "heldMaterialLots", "heldMaterialView", "heldMaterialWork", "holdButtons", "includesText", "jobCard", "jobReportDialog", "limited", "materialReleaseButton", "materialReleaseText", "mountDeptJobs", "onDeptRoute", "orderNavItems", "pageHead", "parseArgs", "productionLanding", "registerDeptModule", "releasePending", "rfOrderHref", "routeUrl", "rubberflowFailed", "searchForm", "storeLanding", "viewHead", "wake", "workItem"]);
   assert.ok(Object.isFrozen(kit));
   assert.equal(kit.esc("<b>"), "&lt;b&gt;");
   assert.equal(kit.attr(null), "");
@@ -68,10 +68,10 @@ test("bindRoot: a data-rf-action click and a data-rf-form submit reach opts.run 
   const submitBtn = fakeNode();
   const form = fakeNode({ dataset: { rfForm: "reportJob", rfArgs: '{"jobId":"J1","qtyDone":"9"}', rfSuccess: "saved {result}" }, __values: { qtyDone: "4", note: "n" }, closest: () => ({ close: () => { dialogClosed = true; } }), querySelectorAll: () => [submitBtn] });
   const openBtn = fakeNode({ dataset: { rfOpen: "jobReport", rfArgs: '{"jobId":"J2"}' } });
-  const goBtn = fakeNode({ dataset: { rfGo: "#/bom?p=work" } });
+  const goBtn = fakeNode({ dataset: { rfGo: "#/pp?p=work" } });
   const search = fakeNode({ __values: { q: "  abc  " } });
   const root = fakeRoot({ "form[data-rf-form]": [form], "[data-rf-action]": [button, confirmed], "[data-rf-open]": [openBtn], "[data-rf-go]": [goBtn], "form[data-rf-search]": [search] });
-  const ctx = { pageUrl: ({ q }) => `#/bom?q=${q}` };
+  const ctx = { pageUrl: ({ q }) => `#/pp?q=${q}` };
   kit.bindRoot(root, ctx, {
     ui: stubUi,
     run: (name, payload, successText, after) => { calls.push({ name, payload: JSON.parse(JSON.stringify(payload)), successText, after }); return true; },
@@ -93,9 +93,9 @@ test("bindRoot: a data-rf-action click and a data-rf-form submit reach opts.run 
   openBtn.handlers.click();
   assert.deepEqual(opened, [["jobReport", { jobId: "J2" }, true]]);
   goBtn.handlers.click();
-  assert.equal(log.hash, "#/bom?p=work");
+  assert.equal(log.hash, "#/pp?p=work");
   search.handlers.submit({ preventDefault() {} });
-  assert.equal(log.hash, "#/bom?q=abc");
+  assert.equal(log.hash, "#/pp?q=abc");
 });
 
 test("bindRoot: validation, a refused run, the beforeSubmit hook and transform errors", async () => {
@@ -120,6 +120,27 @@ test("bindRoot: validation, a refused run, the beforeSubmit hook and transform e
   assert.deepEqual(log.toasts.at(-1), ["bad value", "error"]);
 });
 
+test("bindRoot holds the pressed button and the submitted form's buttons as pending; releasePending makes them usable again", async () => {
+  const pending = [];
+  const { kit } = loadKit({ document: { querySelectorAll: (selector) => (selector === "[data-rf-pending]" ? pending.filter((node) => node.dataset.rfPending) : []) } });
+  const button = fakeNode({ dataset: { rfAction: "decideOrderRequest", rfArgs: "{}" } });
+  const submitBtn = fakeNode();
+  const form = fakeNode({ dataset: { rfForm: "addOrderItem" }, __values: {}, querySelectorAll: () => [submitBtn] });
+  pending.push(button, submitBtn);
+  kit.bindRoot(fakeRoot({ "[data-rf-action]": [button], "form[data-rf-form]": [form] }), {}, { ui: stubUi, run: () => true, rerender: () => {} });
+  await button.handlers.click();
+  await form.handlers.submit({ preventDefault() {} });
+  assert.deepEqual([button.disabled, button.dataset.rfPending, submitBtn.disabled, submitBtn.dataset.rfPending], [true, "1", true, "1"], "disabled while the save is in flight");
+  kit.releasePending();
+  assert.deepEqual([button.disabled, "rfPending" in button.dataset, submitBtn.disabled, "rfPending" in submitBtn.dataset], [false, false, false, false], "a failed save gives the buttons back");
+  // ปุ่มที่หน้าปิดไว้เองตามกติกา (ไม่ได้ถูกจดว่ารอบันทึก) ไม่ถูกเปิด
+  const ruled = fakeNode({ disabled: true });
+  pending.push(ruled);
+  assert.doesNotThrow(() => kit.holdButtons([null]));
+  kit.releasePending();
+  assert.equal(ruled.disabled, true);
+});
+
 // ---------- ส่วนที่ใช้ข้อมูล BOM ----------
 const FILES = [
   "modules/ui-icons.js",
@@ -135,8 +156,8 @@ function loadBom() {
   Object.assign(context, {
     window: context, addEventListener() {}, escapeHtml, showToast() {}, friendlyError: (error) => String(error?.message ?? error), renderRoute: async () => {}, confirmDialog: async () => true,
     URLSearchParams, Intl, Date, structuredClone, setInterval: () => 0, setTimeout: () => 0, encodeURIComponent,
-    location: { hash: "#/bom" }, app, state: { employee: { isSandbox: true } },
-    shell: (content) => content, bindShell() {}, loadingShell() {}, renderNotFound() {}, currentRoute: () => ({ path: "bom", params: new URLSearchParams("") }),
+    location: { hash: "#/pp" }, app, state: { employee: { isSandbox: true } },
+    shell: (content) => content, bindShell() {}, loadingShell() {}, renderNotFound() {}, currentRoute: () => ({ path: "pp", params: new URLSearchParams("") }),
     document: { querySelector: () => generic(), querySelectorAll: () => [], body: generic(), activeElement: null, createElement: generic },
     localStorage: { getItem: (key) => (storage.has(key) ? storage.get(key) : null), setItem: (key, value) => storage.set(key, String(value)), removeItem: (key) => storage.delete(key) },
     FormData: FormDataFake, MNP_REQUEST_MODULES: {}, TextDecoder, Uint8Array, DataView,

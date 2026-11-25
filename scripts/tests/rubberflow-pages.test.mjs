@@ -499,7 +499,8 @@ test("RubberFlow and BOM go live: real employees by role, every persona in test 
   for (const [file, gate] of [["modules/module-rubberflow.js", "canOpenRubberFlowPage"], ["modules/module-bom.js", "usesBom"]]) {
     const source = read(file);
     assert.ok(source.includes(`if (!storeApi.${gate}(state.employee)) return renderNotFound();`), `${file} refuses a typed URL from someone the module is not for`);
-    assert.ok(source.includes(`navAllowed: (employee) => storeApi.${gate}(employee),`), `${file} hides its menu from the same people`);
+    // BOM = ฝ่ายวางแผน (โรงงานขั้น 8): ประตูเดียวกัน แล้วในโหมดทดสอบจำกัดเมนูเพิ่มเป็น PP + ผู้จัดการ
+    assert.ok(source.includes(`navAllowed: (employee) => storeApi.${gate}(employee)`), `${file} hides its menu from the same people`);
     assert.doesNotMatch(source, /isSandbox\) return renderNotFound/, `${file} no longer refuses every real employee`);
     // ล้างข้อมูลทดสอบ: ปุ่มมีเฉพาะ admin ตัวจริงที่อยู่ในโหมดทดสอบ (state.sandbox.active) ฐานข้อมูลตรวจซ้ำ
     assert.match(source, /const canPurge = \(\) => store\.isRemote\(\) && Boolean\(state\.sandbox\?\.active\);/, `${file} keeps the purge button test-mode only`);

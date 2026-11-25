@@ -693,8 +693,8 @@ select is((select array_agg(k order by k collate "C") from jsonb_object_keys(sr_
 select is((select array_agg(k order by k collate "C") from jsonb_object_keys((select m from jsonb_array_elements(public.app_bom_master() -> 'rodMoves') m limit 1)) k),
   array['at', 'by', 'forOrderId', 'id', 'itemCode', 'kind', 'lotId', 'note', 'ownerOrderId', 'qty', 'reversesId'],
   'the rod move record has its eleven fields (by / at like fgMoves)');
-select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 22::bigint, 'the snapshot has twenty-two lists · six GR lists since 20261216010000');
-select is((select count(*) from jsonb_object_keys(public.app_bom_master_since(0) -> 'changes')), 22::bigint, 'and so has the delta · six GR lists since 20261216010000');
+select is((select count(*) from jsonb_object_keys(public.app_bom_master() - 'version' - 'epoch')), 23::bigint, 'the snapshot has twenty-three lists · six GR lists since 20261216010000 · orderRequests since 20261226010000');
+select is((select count(*) from jsonb_object_keys(public.app_bom_master_since(0) -> 'changes')), 23::bigint, 'and so has the delta · six GR lists since 20261216010000 · orderRequests since 20261226010000');
 select is(public.app_bom_master_since(0) -> 'changes' -> 'rodLots', jsonb_build_object('upsert', public.app_bom_master() -> 'rodLots', 'delete', '[]'::jsonb),
   'the delta from version 0 equals the snapshot for the rod lots');
 select is(public.app_bom_master_since(0) -> 'changes' -> 'rodMoves', jsonb_build_object('upsert', public.app_bom_master() -> 'rodMoves', 'delete', '[]'::jsonb),

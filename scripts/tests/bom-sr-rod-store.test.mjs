@@ -220,7 +220,7 @@ test("the remote store sends only the request rows of a rod action and leaves th
   for (const code of ["BOM_INVALID_ROD", "BOM_ROD_EXCEEDS"]) assert.doesNotMatch(storeApi.mapRemoteError({ code }).message, /BOM_/, `${code} has a Thai message`);
   assert.equal(storeApi.roleOfEmployee({ role: { code: "staff" }, department: { code: "SR" } }), "sr");
   assert.equal(storeApi.homeOf({ role: "qa" }), "orders");
-  // หน้า "คลังยางเส้นยาว" ของ BOM ย้ายไปโมดูล SR (#/sr): ไม่มีในเมนู รายการหน้า หรือสิทธิ์ของบทบาทใดใน BOM (#/bom?p=rods เปลี่ยนที่อยู่)
+  // หน้า "คลังยางเส้นยาว" ของ BOM ย้ายไปโมดูล SR (#/sr): ไม่มีในเมนู รายการหน้า หรือสิทธิ์ของบทบาทใดใน BOM (#/pp?p=rods เปลี่ยนที่อยู่)
   assert.ok(!storeApi.MODULE_IDS.includes("rods") && !("rods" in storeApi.NAV_PARENT) && !storeApi.NAV.includes("rods"));
   for (const role of ["admin", "manager", "planner", "gr", "sr", "qa"]) assert.equal(storeApi.canSee({ role }, "rods"), false, `${role} has no BOM rods page`);
   assert.ok(!storeApi.canSee({ role: "sr" }, "jobs"));
@@ -519,7 +519,7 @@ async function page() {
   const vm = await import("node:vm");
   const context = vm.createContext({});
   const app = { innerHTML: "" };
-  const log = { toasts: [], hash: "#/bom" };
+  const log = { toasts: [], hash: "#/pp" };
   const node = () => ({ handlers: {}, dataset: {}, value: "", addEventListener(type, handler) { this.handlers[type] = handler; }, querySelector: () => null, querySelectorAll: () => [], focus() {}, insertAdjacentHTML() {} });
   const storage = new Map();
   Object.assign(context, {
@@ -534,8 +534,8 @@ async function page() {
   });
   context.window.MNP_REQUEST_MODULES = context.MNP_REQUEST_MODULES;
   for (const file of FILES) vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file });
-  // ตารางงานเดิม (#/bom?p=work) ถูกถอดออกจาก BOM แล้ว (งานอยู่ที่โมดูลของแต่ละแผนก และ #/bom?p=work เปลี่ยนที่อยู่ไปที่นั่น) แต่ตัววาดยังอยู่ให้เทสต์ใช้เป็นตัวอย่างของ workBoard / boardCards จึงวาดตรงๆ ที่นี่
-  const render = async (query) => { log.hash = `#/bom?${query}`; app.innerHTML = ""; if (/(^|&)p=work(&|$)/.test(query)) app.innerHTML = context.MNP_BOM_PAGES.work(context.MNP_BOM.context(new URLSearchParams(query))).html; else await context.MNP_REQUEST_MODULES.BOM.pages.bom(new URLSearchParams(query)); return app.innerHTML; };
+  // ตารางงานเดิม (#/pp?p=work) ถูกถอดออกจาก BOM แล้ว (งานอยู่ที่โมดูลของแต่ละแผนก และ #/pp?p=work เปลี่ยนที่อยู่ไปที่นั่น) แต่ตัววาดยังอยู่ให้เทสต์ใช้เป็นตัวอย่างของ workBoard / boardCards จึงวาดตรงๆ ที่นี่
+  const render = async (query) => { log.hash = `#/pp?${query}`; app.innerHTML = ""; if (/(^|&)p=work(&|$)/.test(query)) app.innerHTML = context.MNP_BOM_PAGES.work(context.MNP_BOM.context(new URLSearchParams(query))).html; else await context.MNP_REQUEST_MODULES.BOM.pages.pp(new URLSearchParams(query)); return app.innerHTML; };
   return { context, log, render, store: context.MNP_BOM.store, ctx: (query = "") => context.MNP_BOM.context(new URLSearchParams(query)), dialogs: context.MNP_BOM_DIALOGS };
 }
 const clean = (html) => assert.doesNotMatch(html, /undefined|NaN|\[object Object\]/);
@@ -903,27 +903,27 @@ test("mock: receiveRods needs a location; receiveRodsOpening and setRodLocation 
   assert.equal(rules.rodBalance((await scene.master()).rodMoves, "9d000000-0000-4000-8000-000000000001", null), 6);
 });
 
-test("#/bom?p=rods changes the address: to the SR module's stock for whoever can open it, to GR's read view otherwise, else to the BOM home", async () => {
+test("#/pp?p=rods changes the address: to the SR module's stock for whoever can open it, to GR's read view otherwise, else to the BOM home", async () => {
   const env = await page();
   const person = (dept, role = "employee", extra = {}) => ({ isSandbox: true, department: { code: dept }, role: { code: role }, ...extra });
   const go = async (userId, employee, query = "p=rods") => {
     env.store.setUser(userId);
     env.context.state.employee = employee;
-    env.log.hash = `#/bom?${query}`;
-    await env.context.MNP_REQUEST_MODULES.BOM.pages.bom(new URLSearchParams(query));
+    env.log.hash = `#/pp?${query}`;
+    await env.context.MNP_REQUEST_MODULES.BOM.pages.pp(new URLSearchParams(query));
     return env.log.hash;
   };
   assert.equal(await go("B11", person("SR")), "#/sr?tab=stock", "SR");
   assert.equal(await go("B03", person("PP")), "#/sr?tab=stock", "a planner");
   assert.equal(await go("B01", person("MT", "admin")), "#/sr?tab=stock", "an admin");
   assert.equal(await go("B05", person("GR")), "#/gr?tab=rods", "GR gets its read view");
-  assert.equal(await go("B12", person("QA")), "#/bom?p=orders", "QA has no rod page now: the BOM home");
-  assert.equal(await go("B04", person("RB")), "#/bom?p=orders", "RB too");
-  assert.equal(await go("B01", person("ID", "admin")), "#/bom?p=find", "the Indesign department opens none of the factory modules: the BOM home");
+  assert.equal(await go("B12", person("QA")), "#/pp?p=orders", "QA has no rod page now: the BOM home");
+  assert.equal(await go("B04", person("RB")), "#/pp?p=orders", "RB too");
+  assert.equal(await go("B01", person("ID", "admin")), "#/pp?p=find", "the Indesign department opens none of the factory modules: the BOM home");
   // outside test mode BOM refuses first (nowhere to go)
-  assert.equal(await go("B11", person("SR", "employee", { isSandbox: false })), "#/bom?p=rods");
+  assert.equal(await go("B11", person("SR", "employee", { isSandbox: false })), "#/pp?p=rods");
   // other BOM pages are not redirected
-  assert.equal(await go("B03", person("PP"), "p=orders"), "#/bom?p=orders");
+  assert.equal(await go("B03", person("PP"), "p=orders"), "#/pp?p=orders");
 });
 
 test("pages: the opening receipt dialog offers RB codes only and the location dialog fills the place in; neither opens for GR, QA, WH or RB, or for a lot that is not in the store", async () => {

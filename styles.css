@@ -126,6 +126,7 @@
 [data-module="sr"], [data-dept-code="SR"], .nd .dpt-SR { --m50:#f7fee7; --m100:#ecfccb; --m200:#d9f99d; --m300:#bef264; --m400:#a3e635; --m500:#84cc16; --m600:#65a30d; --m700:#4d7c0f; --m800:#3f6212; --m900:#365314; --m950:#1a2e05; --p:#fde047; --p50:#fefce8; }
 [data-module="wh"], [data-dept-code="WH"], .nd .dpt-WH { --m50:#fbf6ef; --m100:#f4e8d6; --m200:#e8d0ad; --m300:#d9b27f; --m400:#c58f55; --m500:#a97040; --m600:#8f5c33; --m700:#7a5230; --m800:#62411f; --m900:#4d3319; --m950:#2b1b0a; --p:#fdba74; --p50:#fff7ed; }
 [data-module="id"], [data-dept-code="ID"], .nd .dpt-ID { --m50:#fdf4ff; --m100:#fae8ff; --m200:#f5d0fe; --m300:#f0abfc; --m400:#e879f9; --m500:#d946ef; --m600:#c026d3; --m700:#a21caf; --m800:#86198f; --m900:#701a75; --m950:#4a044e; --p:#fb7185; --p50:#fff1f2; }
+[data-module="sa"], [data-dept-code="SA"], .nd .dpt-SA { --m50:#fefce8; --m100:#fef9c3; --m200:#fef08a; --m300:#fde047; --m400:#facc15; --m500:#eab308; --m600:#ca8a04; --m700:#a16207; --m800:#854d0e; --m900:#713f12; --m950:#422006; --p:#38bdf8; --p50:#f0f9ff; }
 
 /* วิธีลงสีหนึ่งชุด ใช้ทุกพื้นผิว (การ์ดประเภท หัวโมดูล ชิปแผนก หัวส่วน NCR หัวตาราง แท็บ) — ค่าตามธีมผ่านตัวแปร --mod-* */
 :is([data-module], [data-dept-code]) {
@@ -3121,6 +3122,14 @@ table.bom-tree td.right { white-space: nowrap; }
 .bom-release-list { margin: 8px 0 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; max-width: 420px; }
 .bom-release-list dd { margin: 0; font-weight: 700; text-align: right; }
 /* งานของฉัน: การ์ดงาน */
+/* โมดูลฝ่ายขาย (modules/sa-pages.js): บรรทัดสินค้าในฟอร์มออกใบ · รายการคำขอที่ฝ่ายวางแผนตัดสิน */
+.sa-line { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 8px 12px; align-items: end; margin-bottom: 8px; }
+.sa-line-remove { min-height: 40px; display: flex; align-items: center; }
+@media (max-width: 640px) { .sa-line { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); padding-bottom: 8px; border-bottom: 1px solid var(--line); } .sa-line-product, .sa-line > :nth-child(3) { grid-column: 1 / -1; } }
+.bom-request-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.bom-request { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.bom-request:last-child { border-bottom: 0; padding-bottom: 0; }
+.bom-request p { margin: 4px 0 0; }
 .bom-job-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; align-items: start; }
 .bom-job { padding: 14px; display: grid; gap: 8px; }
 .bom-job.is-now { border: 2px solid var(--m600, var(--primary)); padding: 13px; }

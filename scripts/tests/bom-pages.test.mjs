@@ -25,7 +25,7 @@ const XSS = "<script>alert(1)</script>";
 function load({ sandbox = true, route = "", storage = new Map(), seed = null } = {}) {
   const context = vm.createContext({});
   const app = { innerHTML: "" };
-  const log = { listeners: {}, toasts: [], renders: 0, notFound: 0, hash: `#/bom${route ? `?${route}` : ""}`, dialogs: [], confirms: [], confirmAnswer: true };
+  const log = { listeners: {}, toasts: [], renders: 0, notFound: 0, hash: `#/pp${route ? `?${route}` : ""}`, dialogs: [], confirms: [], confirmAnswer: true };
   const fakes = {};
   const node = () => ({
     handlers: {}, dataset: {}, value: "", disabled: false, textContent: "", innerHTML: "", tagName: "DIV", classList: { toggle() {}, add() {}, remove() {} }, files: [],
@@ -61,15 +61,15 @@ function load({ sandbox = true, route = "", storage = new Map(), seed = null } =
   }
   const registered = context.MNP_REQUEST_MODULES.BOM;
   const renderRaw = async (query = route) => {
-    log.hash = `#/bom${query ? `?${query}` : ""}`;
+    log.hash = `#/pp${query ? `?${query}` : ""}`;
     app.innerHTML = "";
-    await registered.pages.bom(new URLSearchParams(query));
+    await registered.pages.pp(new URLSearchParams(query));
     return app.innerHTML;
   };
-  // ตารางงานเดิม (#/bom?p=work) ถูกถอดออกจาก BOM แล้ว (งานอยู่ที่โมดูลของแต่ละแผนก และ #/bom?p=work เปลี่ยนที่อยู่ไปที่นั่น) แต่ตัววาดยังอยู่ให้เทสต์ใช้เป็นตัวอย่างของ workBoard / boardCards จึงวาดตรงๆ ที่นี่
+  // ตารางงานเดิม (#/pp?p=work) ถูกถอดออกจาก BOM แล้ว (งานอยู่ที่โมดูลของแต่ละแผนก และ #/pp?p=work เปลี่ยนที่อยู่ไปที่นั่น) แต่ตัววาดยังอยู่ให้เทสต์ใช้เป็นตัวอย่างของ workBoard / boardCards จึงวาดตรงๆ ที่นี่
   const render = async (query = route) => {
     if (/(^|&)p=work(&|$)/.test(query)) {
-      log.hash = `#/bom?${query}`;
+      log.hash = `#/pp?${query}`;
       app.innerHTML = context.MNP_BOM_PAGES.work(context.MNP_BOM.context(new URLSearchParams(query))).html;
       return app.innerHTML;
     }
@@ -112,13 +112,13 @@ test("the module registers a sandbox-only standalone page, refuses users outside
   assert.equal(env.module.sandbox, true);
   assert.equal(env.module.standalone, true);
   assert.equal(env.module.nav[0].sandboxOnly, true);
-  assert.equal(env.module.nav[0].path, "bom");
+  assert.equal(env.module.nav[0].path, "pp");
   const html = await env.render();
   assert.match(html, /<select[^>]*data-rf-user/, "the role is picked from the toolbar select");
   assert.doesNotMatch(html, /data-rf-user-pick|rf-role-grid|data-rf-reset/, "no full-page role grid, and no reset before a role");
   assert.equal(env.module.nav[0].group, "โรงงาน", "listed under the factory group in the side menu (test mode)");
   assert.equal(env.module.nav[0].flowNo, 2, "after the sales step: PP is step 2 of the work tree");
-  assert.equal(env.module.nav[0].subnav("bom"), "", "no sub-menu before a role is chosen");
+  assert.equal(env.module.nav[0].subnav("pp"), "", "no sub-menu before a role is chosen");
   const outside = load({ sandbox: false });
   await outside.render();
   assert.equal(outside.log.notFound, 1);
@@ -129,18 +129,18 @@ test("every page renders for every role without undefined/NaN, menus follow the 
     const env = load();
     const user = env.store.data().users.find((row) => row.role === role);
     env.store.setUser(user.id);
-    for (const page of PAGES) {
+    for (const page of PAGES.filter((id) => id !== "customers")) { // the customers page moved to the sales module: its address redirects (tested with the customers register)
       const html = await env.render(`p=${page}`);
       clean(html);
       if (env.context.MNP_BOM_STORE.canSee(user, page)) assert.doesNotMatch(html, /ไม่มีสิทธิ์เข้าถึงหน้านี้/, `${role} sees ${page}`);
       else assert.match(html, /ไม่มีสิทธิ์เข้าถึงหน้านี้/, `${role} is denied ${page}`);
     }
-    const sub = env.module.nav[0].subnav("bom");
+    const sub = env.module.nav[0].subnav("pp");
     // เมนูข้างมีแค่เมนูหลัก 3 อัน (storeApi.NAV) ที่บทบาทนั้นเห็นได้ · หน้าอื่นเปิดจากลิงก์ในหน้าเหล่านั้น
     const NAV = env.context.MNP_BOM_STORE.NAV;
     for (const page of [...PAGES, ...NAV]) assert.equal(sub.includes(`p=${page}"`), NAV.includes(page) && env.context.MNP_BOM_STORE.canSee(user, page), `${role} menu ${page}`);
     await env.render("p=nothing");
-    assert.equal(env.log.hash, ["admin", "manager", "planner"].includes(role) ? "#/bom?p=find" : "#/bom?p=orders", "unknown page → home of the role (planners land on products, departments on the orders; their own jobs live in their department module)");
+    assert.equal(env.log.hash, ["admin", "manager", "planner"].includes(role) ? "#/pp?p=find" : "#/pp?p=orders", "unknown page → home of the role (planners land on products, departments on the orders; their own jobs live in their department module)");
   }
 });
 
@@ -277,7 +277,7 @@ test("the items page is read-only history: tree, where-used, revisions, and a li
   assert.doesNotMatch(html, /approveBom|data-rf-open="bomEdit"|แก้ BOM/, "no approval buttons and no editing for GR");
   env.store.setUser("B03");
   html = await env.render("p=items&sel=SE-TP01-OR01-100-18-65");
-  assert.match(html, /href="#\/bom\?p=build&amp;code=SE-TP01-OR01-100-18-65"/, "planner gets a link into the builder");
+  assert.match(html, /href="#\/pp\?p=build&amp;code=SE-TP01-OR01-100-18-65"/, "planner gets a link into the builder");
   html = await env.render("p=items&sel=RB-DM03-03-YE03-3000-3-130");
   assert.match(html, /สูตรคอมปาวด์อยู่ที่ RubberFlow/);
   assert.match(html, /ยังไม่ผูกสูตร RubberFlow/);
@@ -421,12 +421,18 @@ test("customers: the list escapes names, a new PI adds its customer, the form ad
   const env = load();
   env.store.setUser("B03"); // ฝ่ายวางแผน
   env.store.run("createOrder", { pi: "C-XSS-1", customer: XSS, country: "Thailand", orderedAt: Date.now(), whDue: Date.now() + 86400000 });
-  let html = await env.render("p=customers");
-  clean(html);
-  assert.ok(!html.includes(XSS), "the name is escaped");
-  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
-  assert.match(html, /ลูกค้าสาธิต เบลเยียม/, "the customers of the demo orders are listed");
-  assert.match(html, /data-rf-open="customerEdit"/);
+  // the register moved to the sales module: the old address (and the same page typed under #/pp) redirects there; the table is drawn by the shared view
+  env.log.hash = "";
+  await env.renderRaw("p=customers&q=abc");
+  assert.equal(env.log.hash, "#/sa?tab=customers&q=abc");
+  const view = env.context.MNP_BOM_PAGES.sales.customersView(env.ctx("p=find"));
+  clean(view.body);
+  assert.ok(!view.body.includes(XSS), "the name is escaped");
+  assert.match(view.body, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match(view.body, /ลูกค้าสาธิต เบลเยียม/, "the customers of the demo orders are listed");
+  assert.match(view.body, /data-rf-open="customerEdit"/);
+  assert.equal(view.canEdit, true);
+  assert.match(view.add, /data-rf-open="customerEdit"/);
   const D = env.context.MNP_BOM_DIALOGS;
   const c = env.ctx("p=customers");
   const add = D.customerEdit(c, {}).html;
@@ -440,17 +446,21 @@ test("customers: the list escapes names, a new PI adds its customer, the form ad
   assert.match(D.orderNew(c).html, /<option value="ลูกค้าสาธิต เบลเยียม">Belgium<\/option>/);
   assert.ok(!D.orderNew(c).html.includes(XSS), "the PI form escapes the list too");
 
-  await env.submit("p=customers", "saveCustomer", { name: "ลูกค้าใหม่", country: "Japan", orderType: "EX", note: "" }, { create: true });
+  await env.submit("p=orders", "saveCustomer", { name: "ลูกค้าใหม่", country: "Japan", orderType: "EX", note: "" }, { create: true });
   assert.deepEqual(json(env.store.data().customers.find((customer) => customer.name === "ลูกค้าใหม่")), { name: "ลูกค้าใหม่", country: "Japan", orderType: "EX", note: "" });
   assert.deepEqual(env.log.toasts.at(-1), ["ok ลูกค้าใหม่", "ok"]);
-  await env.submit("p=customers", "saveCustomer", { name: "ลูกค้าใหม่", country: "Japan", orderType: "EX", note: "" }, { create: true });
+  await env.submit("p=orders", "saveCustomer", { name: "ลูกค้าใหม่", country: "Japan", orderType: "EX", note: "" }, { create: true });
   assert.match(env.log.toasts.at(-1)[0], /มีลูกค้า ลูกค้าใหม่ อยู่แล้ว/);
   assert.equal(env.store.data().customers.filter((customer) => customer.name === "ลูกค้าใหม่").length, 1);
 
-  // ผู้ที่ไม่ใช่ฝ่ายวางแผนไม่มีเมนูลูกค้าและเปิดหน้าไม่ได้
+  // ผู้ที่ไม่ใช่ฝ่ายขายหรือฝ่ายวางแผน (GR) ดูได้อย่างเดียว · ฝ่ายขาย (B13) เพิ่ม/แก้ได้
   env.store.setUser("B05");
-  html = await env.render("p=customers");
-  assert.match(html, /ไม่มีสิทธิ์เข้าถึงหน้านี้/);
+  const readOnly = env.context.MNP_BOM_PAGES.sales.customersView(env.ctx("p=find"));
+  assert.equal(readOnly.canEdit, false);
+  assert.match(readOnly.body, /ดูได้อย่างเดียว/);
+  assert.doesNotMatch(readOnly.body, /data-rf-open="customerEdit"/);
+  env.store.setUser("B13");
+  assert.equal(env.context.MNP_BOM_PAGES.sales.customersView(env.ctx("p=find")).canEdit, true, "sales can add and edit customers");
 });
 
 test("forms go through the data-rf-* rules: a new order is created with dates converted, a bad form shows a toast and keeps the state", async () => {
@@ -462,7 +472,7 @@ test("forms go through the data-rf-* rules: a new order is created with dates co
   assert.equal(autoOrder.id, "261030-26001");
   assert.equal(new Date(autoOrder.due.PK).getDate(), 14);
   assert.deepEqual(json(autoOrder.dueDefaults), ["RB", "GR", "PT", "BG", "ST", "PK"]);
-  assert.equal(env.log.hash, `#/bom?p=orders&sel=${autoOrder.id}`, "a new order opens on its own page (U10), not the list");
+  assert.equal(env.log.hash, `#/pp?p=orders&sel=${autoOrder.id}`, "a new order opens on its own page (U10), not the list");
   assert.match(await env.render(`p=orders&sel=${autoOrder.id}`), /title="ค่าเริ่มต้นจากระยะเวลาจัดหา \(lead time\)"><b>PK<\/b> 14 ธ\.ค\. 2569\*/);
   await env.submit("p=orders", "createOrder", { pi: "PI-TEST-1", customer: "ลูกค้าทดสอบ", country: "Belgium", orderedAt: "2026-10-01", whDue: "2026-12-01", "due.RB": "2026-10-20", "due.PK": "" });
   const order = env.store.data().orders.find((entry) => entry.id === "PI-TEST-1");
@@ -656,7 +666,7 @@ test("the mobile count page lists draft orders, shows SE of the stock-check rule
   env.store.setUser("B08"); // คลัง
   let html = await env.render("p=count");
   clean(html);
-  assert.match(html, /href="#\/bom\?p=count&amp;order=DEMO-26002"/, "the exploded draft order can be picked");
+  assert.match(html, /href="#\/pp\?p=count&amp;order=DEMO-26002"/, "the exploded draft order can be picked");
   assert.doesNotMatch(html, /order=DEMO-26001/, "a released order is not offered");
   html = await env.render("p=count&order=DEMO-26002");
   clean(html);
@@ -736,20 +746,20 @@ test("leaving the count page with typed counts stops the link at once and goes o
   env.store.setUser("B08");
   const handlers = {};
   const form = { addEventListener: (type, handler) => { handlers.input = handler; } };
-  const link = { getAttribute: (name) => (name === "href" ? "#/bom?p=count" : null), addEventListener: (type, handler) => { handlers.click = handler; } };
+  const link = { getAttribute: (name) => (name === "href" ? "#/pp?p=count" : null), addEventListener: (type, handler) => { handlers.click = handler; } };
   env.context.MNP_BOM_PAGES.count(env.ctx("p=count&order=DEMO-26002")).bind({ querySelector: (selector) => (selector === ".bom-count-form" ? form : null), querySelectorAll: (selector) => (selector === "[data-bom-count-nav]" ? [link] : []) });
   const click = async () => { const event = { prevented: false, preventDefault() { this.prevented = true; } }; await handlers.click(event); return event.prevented; };
-  env.log.hash = "#/bom?p=count&order=DEMO-26002";
+  env.log.hash = "#/pp?p=count&order=DEMO-26002";
   assert.equal(await click(), false, "nothing typed: the link opens normally");
   assert.equal(env.log.confirms.length, 0);
   handlers.input();
   env.log.confirmAnswer = false;
   assert.equal(await click(), true);
-  assert.equal(env.log.hash, "#/bom?p=count&order=DEMO-26002", "a cancelled dialog stays on the page");
+  assert.equal(env.log.hash, "#/pp?p=count&order=DEMO-26002", "a cancelled dialog stays on the page");
   assert.equal(env.log.confirms.at(-1).title, "มียอดที่ยังไม่บันทึก ออกจากหน้านี้?");
   env.log.confirmAnswer = true;
   assert.equal(await click(), true);
-  assert.equal(env.log.hash, "#/bom?p=count");
+  assert.equal(env.log.hash, "#/pp?p=count");
 });
 
 test("leaving the BOM table from the step-3 card (switch product, back to the order) asks first when the table has unsaved edits", async () => {
@@ -762,16 +772,16 @@ test("leaving the BOM table from the step-3 card (switch product, back to the or
   const qty = { name: "qty[]", type: "text", value: "2" };
   const fields = [{ name: "itemName", type: "text", value: "ตอปิโด" }, qty];
   const form = { querySelectorAll: () => fields };
-  const link = { getAttribute: (name) => (name === "href" ? "#/bom?p=build&code=DEMO-TP-01(P)-B&focus=X&order=DEMO-26001" : null), addEventListener: (type, handler) => { handlers[type] = handler; } };
+  const link = { getAttribute: (name) => (name === "href" ? "#/pp?p=build&code=DEMO-TP-01(P)-B&focus=X&order=DEMO-26001" : null), addEventListener: (type, handler) => { handlers[type] = handler; } };
   env.context.MNP_BOM_PAGES.build(env.ctx(query)).bind({ querySelector: (selector) => (selector === "#bom-tree-form" ? form : null), querySelectorAll: (selector) => (selector === "[data-bom-build-nav]" ? [link] : []) });
   const click = async () => { const event = { prevented: false, preventDefault() { this.prevented = true; } }; await handlers.click(event); return event.prevented; };
-  env.log.hash = `#/bom?${query}`;
+  env.log.hash = `#/pp?${query}`;
   assert.equal(await click(), false, "nothing changed: the link opens normally");
   assert.equal(env.log.confirms.length, 0);
   qty.value = "3";
   env.log.confirmAnswer = false;
   assert.equal(await click(), true);
-  assert.equal(env.log.hash, `#/bom?${query}`, "a cancelled dialog stays on the table");
+  assert.equal(env.log.hash, `#/pp?${query}`, "a cancelled dialog stays on the table");
   assert.equal(env.log.confirms.at(-1).title, "ทิ้งการแก้ไขที่ยังไม่บันทึก?");
   assert.equal(env.log.confirms.at(-1).danger, true);
   fields.push({ name: "rowId[]", type: "hidden", value: "n1" });
@@ -779,7 +789,7 @@ test("leaving the BOM table from the step-3 card (switch product, back to the or
   assert.equal(await click(), true, "an added row counts as an edit too");
   env.log.confirmAnswer = true;
   assert.equal(await click(), true);
-  assert.equal(env.log.hash, "#/bom?p=build&code=DEMO-TP-01(P)-B&focus=X&order=DEMO-26001", "confirmed: the other product opens");
+  assert.equal(env.log.hash, "#/pp?p=build&code=DEMO-TP-01(P)-B&focus=X&order=DEMO-26001", "confirmed: the other product opens");
 });
 
 test("a data-rf-action button with data-rf-confirm runs only after the dialog confirms, and names the action on the confirm button", async () => {
@@ -818,13 +828,13 @@ test("the colour-set / package page shows learned and defined sets per base, the
   assert.match(html, /data-rf-action="removeColorSet"/);
   assert.match(html, /ถุงพลาสติก \+ ลังรวม 40 ชุด/);
   assert.match(html, /แพ็กเกจ \\ ชุดสี/);
-  assert.match(html, /href="#\/bom\?p=product&amp;code=DEMO-TP-01%28P%29-Y"/, "existing variant links to the per-department view");
+  assert.match(html, /href="#\/pp\?p=product&amp;code=DEMO-TP-01%28P%29-Y"/, "existing variant links to the per-department view");
   assert.match(html, /data-rf-action="createVariant" data-rf-args="\{&quot;base&quot;:&quot;DEMO-TP-01&quot;,&quot;pkg&quot;:&quot;B&quot;,&quot;colorSet&quot;:&quot;A&quot;\}"/, "missing variants get a create button");
   // สร้างรุ่นจากตาราง → ชิ้น SE/RB สีใหม่เกิดขึ้นและหน้าเปลี่ยนเป็นลิงก์
   const result = env.store.run("createVariant", { base: "DEMO-TP-01", pkg: "B", colorSet: "A" });
   assert.equal(result.ok, true, String(result.error?.message ?? ""));
   html = await env.render("p=variants&base=DEMO-TP-01");
-  assert.match(html, /href="#\/bom\?p=product&amp;code=DEMO-TP-01%28B%29-A"/);
+  assert.match(html, /href="#\/pp\?p=product&amp;code=DEMO-TP-01%28B%29-A"/);
   assert.ok(env.store.data().items.some((item) => item.code === "SE-TP01-RD01-100-18-65"), "a red SE item was created by the colour set");
   assert.ok(env.store.data().items.some((item) => item.code === "RB-DM01-02-RD01-202-18-70"), "and its red rod");
   // ฟอร์มชุดสีผ่านกติกา data-rf-*: slotKey[] + slotColor[] → slots
@@ -891,7 +901,7 @@ test("the sidebar sub-menu has no job count; reset rebuilds the demo", async () 
   const env = load();
   env.store.setUser("B05");
   await env.render("p=jobs");
-  const sub = env.module.nav[0].subnav("bom");
+  const sub = env.module.nav[0].subnav("pp");
   assert.doesNotMatch(sub, /rf-nav-count/, "no job count in the BOM menu: a department's work lives in its own module");
   assert.doesNotMatch(sub, /รออนุมัติ/);
   env.store.setUser("B01");
@@ -1295,7 +1305,7 @@ test("the data check page: groups with counts, links to the builder or the item 
   assert.match(html, /สินค้า \(FG\) ที่ยังไม่มี BOM/);
   assert.match(html, /รหัสที่ระบบสร้างให้ \(XP-…\)/);
   assert.doesNotMatch(html, /ใช้ใน BOM แล้วแต่ยังไม่มี BOM/, "a group with nothing to fix is not shown");
-  assert.match(html, /href="#\/bom\?p=build&amp;code=DEMO-BL-60%28K%29-Z"[^>]*>สร้าง BOM/, "the fix link opens the builder on that item");
+  assert.match(html, /href="#\/pp\?p=build&amp;code=DEMO-BL-60%28K%29-Z"[^>]*>สร้าง BOM/, "the fix link opens the builder on that item");
   assert.match(html, /data-rf-open="itemEdit" data-rf-args="[^"]*XP-00001[^"]*"/, "or the item dialog");
   assert.doesNotMatch(html, /BOM ยังไม่มีบรรทัดสูตรยาง/);
   // ชิ้นที่ถูกใช้แล้วไม่มี BOM (MEGA-BBL-06)
@@ -1531,7 +1541,7 @@ test("BOM keeps no part stock page: p=stock moves to the ST module's store view 
   env.context.MNP_ST_PAGES = { access: () => null };
   env.store.setUser("B04"); // RB: ไม่มีหน้าคลังของซื้อ
   await env.render("p=stock");
-  assert.equal(env.log.hash, "#/bom?p=orders", "someone who cannot open the ST store goes to BOM home");
+  assert.equal(env.log.hash, "#/pp?p=orders", "someone who cannot open the ST store goes to BOM home");
   assert.doesNotMatch(env.context.MNP_BOM_PAGES.setup(env.ctx("p=setup")).html, /คลังของซื้อ/);
   // ประวัติของชิ้น
   const D = env.context.MNP_BOM_DIALOGS;
@@ -1804,7 +1814,7 @@ test("import page: the group selected when pressing import is saved on new items
   assert.match(report.innerHTML, /แก้ได้ที่หน้า “สินค้า”/, "the note names the products page, not a menu that no longer exists");
   assert.doesNotMatch(report.innerHTML, /เมนู “สร้าง BOM”/);
   importButton.handlers.click({ currentTarget: importButton });
-  assert.equal(env.log.hash, "#/bom?p=find", "after importing the user lands on the products page");
+  assert.equal(env.log.hash, "#/pp?p=find", "after importing the user lands on the products page");
   const items = () => env.ctx("p=import").data.items;
   assert.equal(items().find((item) => item.code === "G-01(P)-Y")?.group, "IND");
   const subpart = items().filter((item) => item.kind === "SUBPART" && item.name === "แกน G");
@@ -1852,11 +1862,11 @@ test("the Thai date picker drops required from the hidden native date input, so 
 });
 
 // ---------- โครงใหม่ 4 เมนู (modules/bom-hub.js) ----------
-test("the menu has three entries and a bare #/bom opens the role's home: products for planners, orders for departments", async () => {
+test("the menu has three entries and a bare #/pp opens the role's home: products for planners, orders for departments", async () => {
   const env = load();
   env.store.setUser("B03");
-  const sub = env.module.nav[0].subnav("bom");
-  assert.deepEqual([...sub.matchAll(/href="#\/bom\?p=(\w+)"/g)].map((match) => match[1]), ["find", "orders", "setup"]);
+  const sub = env.module.nav[0].subnav("pp");
+  assert.deepEqual([...sub.matchAll(/href="#\/pp\?p=(\w+)"/g)].map((match) => match[1]), ["find", "orders", "setup"]);
   assert.match(await env.render(""), /<h1>สินค้า<\/h1>/, "planner home is the product search");
   env.store.setUser("B04");
   assert.match(await env.render(""), /<h1>ใบสั่งผลิต/, "a department lands on the orders (its own jobs are in its department module)");
@@ -1880,7 +1890,7 @@ test("the product page shows one item as a readable tree: an inverse ratio reads
     clean(html);
     assert.equal((html.match(/<h1>/g) ?? []).length, 1, `${tab}: the embedded page has no head of its own`);
     assert.doesNotMatch(html, /data-bom-pick/, `${tab}: no second product picker`);
-    assert.doesNotMatch(html, /href="#\/bom\?p=(items|product|structure)[&"]/, `${tab}: links stay on the product page`);
+    assert.doesNotMatch(html, /href="#\/pp\?p=(items|product|structure)[&"]/, `${tab}: links stay on the product page`);
   }
   assert.equal(env.context.MNP_BOM_PAGES.hub.ratioText(env.ctx(), 0.3, "pcs", "set"), "0.3000 ชิ้น", "a ratio that is not a whole inverse stays a plain quantity");
   env.store.setUser("B04");
@@ -2262,15 +2272,15 @@ test("creating a product does not navigate when the code already exists", async 
   const input = { value: "demo-tp-01(p)-y" };
   const fake = { querySelector: (selector) => (selector === "#bom-new-form" ? { addEventListener: (type, handler) => { handlers[type] = handler; } } : selector === "[data-new-code]" ? input : null) };
   dialog.bind(fake);
-  env.log.hash = "#/bom?p=find";
+  env.log.hash = "#/pp?p=find";
   handlers.submit();
-  assert.equal(env.log.hash, "#/bom?p=find", "an existing code stays on the list with the form's own message");
+  assert.equal(env.log.hash, "#/pp?p=find", "an existing code stays on the list with the form's own message");
   input.value = "TEST-NAV-01";
   handlers.submit();
-  assert.equal(env.log.hash, "#/bom?p=find", "nothing was created yet, so no navigation");
+  assert.equal(env.log.hash, "#/pp?p=find", "nothing was created yet, so no navigation");
   assert.equal(env.store.run("saveItem", { code: "TEST-NAV-01", name: "ทดสอบ", kind: "FG", uom: "set", create: true }).ok, true);
   handlers.submit();
-  assert.equal(env.log.hash, `#/bom?p=find&code=TEST-NAV-01`, "a code created after the dialog opened opens its page");
+  assert.equal(env.log.hash, `#/pp?p=find&code=TEST-NAV-01`, "a code created after the dialog opened opens its page");
 });
 
 test("my jobs for the warehouse and for a read-only account: no job cards of other departments and no report buttons", () => {
@@ -2291,7 +2301,7 @@ test("my jobs for the warehouse and for a read-only account: no job cards of oth
   assert.equal(env.context.MNP_BOM_STORE.homeOf({ role: "viewer" }), "find");
 });
 
-test("the My-work page is gone from the BOM: not in the menu or the page list, and #/bom?p=work goes to the department module", async () => {
+test("the My-work page is gone from the BOM: not in the menu or the page list, and #/pp?p=work goes to the department module", async () => {
   const env = load();
   const storeApi = env.context.MNP_BOM_STORE;
   assert.ok(!storeApi.NAV.includes("work") && !storeApi.MODULE_IDS.includes("work") && !("work" in storeApi.NAV_PARENT), "no work page in the menu, the page list or the menu parents");
@@ -2299,7 +2309,7 @@ test("the My-work page is gone from the BOM: not in the menu or the page list, a
   assert.equal(storeApi.NAV_PARENT.jobs, "orders", "the jobs table sits under the orders menu");
   assert.ok(!("rods" in storeApi.NAV_PARENT) && !storeApi.MODULE_IDS.includes("rods"), "the rod store page is the SR module now, not a BOM page");
   for (const role of ["rb", "gr", "pt", "bg", "pk", "st", "wh", "sr", "qa"]) assert.equal(storeApi.homeOf({ role }), "orders", `${role} lands on a page it can open`);
-  assert.deepEqual({ ...storeApi.DEPT_ROUTES }, { GR: "gr", PT: "pt", BG: "bg", PK: "pk", SR: "sr", ST: "st", WH: "wh", QA: "qa", RB: "rubberflow" });
+  assert.deepEqual({ ...storeApi.DEPT_ROUTES }, { GR: "gr", PT: "pt", BG: "bg", PK: "pk", SR: "sr", ST: "st", WH: "wh", QA: "qa", RB: "rubberflow", SA: "sa" });
   // พนักงานที่ล็อกอินตรงกับผู้ใช้ BOM (ไปได้เฉพาะโมดูลที่พนักงานคนนั้นเปิดได้)
   const asEmployee = (user) => ({ isSandbox: true, department: { code: user.dept }, role: { code: user.role === "admin" ? "admin" : user.role === "manager" ? "general_manager" : "employee" } });
   const go = async (userId, query) => {
@@ -2321,12 +2331,12 @@ test("the My-work page is gone from the BOM: not in the menu or the page list, a
   env.store.data().users.find((user) => user.id === "B03").dept = "PP";
   assert.equal(await go("B03", "p=work&dept=PT"), "#/pt");
   assert.equal(await go("B01", "p=work&dept=RB&order=DEMO-26001"), "#/rubberflow");
-  assert.equal(await go("B03", "p=work"), "#/bom?p=find", "a planner with no department → BOM home");
-  assert.equal(await go("B01", "p=work&dept=ALL"), "#/bom?p=find", "ALL is not a department → BOM home");
-  assert.equal(await go("B02", "p=work&dept=MT"), "#/bom?p=find", "a department with no module → BOM home");
-  assert.equal(await go("B03", "p=work&dept=constructor"), "#/bom?p=find", "an inherited property name is not a department");
+  assert.equal(await go("B03", "p=work"), "#/pp?p=find", "a planner with no department → BOM home");
+  assert.equal(await go("B01", "p=work&dept=ALL"), "#/pp?p=find", "ALL is not a department → BOM home");
+  assert.equal(await go("B02", "p=work&dept=MT"), "#/pp?p=find", "a department with no module → BOM home");
+  assert.equal(await go("B03", "p=work&dept=constructor"), "#/pp?p=find", "an inherited property name is not a department");
   // an ordinary page is not redirected
-  assert.equal(await go("B05", "p=orders"), "#/bom?p=orders");
+  assert.equal(await go("B05", "p=orders"), "#/pp?p=orders");
   // a department head of GR (BOM planner rights, but only the GR module in the menu) asking for another department goes to GR, never to a page it cannot open
   env.store.setUser("B05");
   env.context.state.employee = { isSandbox: true, department: { code: "GR" }, role: { code: "department_manager" } };
@@ -2341,7 +2351,7 @@ test("the My-work page is gone from the BOM: not in the menu or the page list, a
   // the all-departments job table is reachable from the orders page for the planning group
   env.store.setUser("B03");
   env.context.state.employee = asEmployee(env.store.data().users.find((user) => user.id === "B03"));
-  assert.match(await env.render("p=orders"), /href="#\/bom\?p=jobs"/);
+  assert.match(await env.render("p=orders"), /href="#\/pp\?p=jobs"/);
   // the planning group sees every department's link on an order
   env.store.data().users.find((user) => user.id === "B03").dept = "PK"; // the BOM persona of a planner sits in PK
   const planned = await env.render("p=orders&sel=DEMO-26006");
@@ -3267,12 +3277,12 @@ test("a reload while typing in a BOM form warns once; saved, closed or untouched
   assert.equal(unsaved(), false, "unnamed, hidden and disabled fields do not count");
   const fire = () => { const event = { prevented: false, returnValue: undefined, preventDefault() { this.prevented = true; } }; env.log.listeners.beforeunload[0](event); return event; };
   show(control({ value: "x" }));
-  env.log.hash = "#/bom?p=orders";
+  env.log.hash = "#/pp?p=orders";
   const warned = fire();
   assert.deepEqual([warned.prevented, warned.returnValue], [true, ""], "on a BOM page with typed input the browser is asked");
   env.log.hash = "#/requests";
   assert.equal(fire().prevented, false, "other pages are not this module's business");
-  env.log.hash = "#/bom?p=orders";
+  env.log.hash = "#/pp?p=orders";
   show();
   assert.equal(fire().prevented, false, "a page without form input (or after the form was saved and the page redrawn) does not warn");
 });
@@ -3305,7 +3315,8 @@ test("close rules: everything received while RB and GR are open: step 5 names th
   html = await env.render(`p=work&dept=RB&order=${FG_PI}`);
   assert.match(html, new RegExp(`data-rf-open="jobClose" data-rf-args="\\{&quot;jobId&quot;:&quot;${rbId}&quot;\\}"[^>]*>ปิดงานนี้</button>`));
   html = await env.render("p=jobs&dept=GR");
-  assert.match(html, new RegExp(`data-rf-open="jobClose" data-rf-args="\\{&quot;jobId&quot;:&quot;${grId}&quot;\\}"[^>]*>ปิดงานนี้</button>`));
+  assert.doesNotMatch(html, new RegExp(`data-rf-open="jobClose" data-rf-args="\\{&quot;jobId&quot;:&quot;${grId}&quot;`), "GR jobs are closed in the GR module, not in this table");
+  assert.match(html, /ทำงานที่โมดูล GR/);
   const D = env.context.MNP_BOM_DIALOGS;
   const built = D.jobClose(env.ctx("p=work"), { jobId: rbId });
   clean(built.html);
@@ -3424,7 +3435,7 @@ test("the work count used by the department modules is the open tab's card count
     const html = await env.render("p=work");
     clean(html);
     seen[user.id] = tab(html);
-    assert.doesNotMatch(env.module.nav[0].subnav("bom"), /rf-nav-count/, `${user.id}: no count in the BOM menu`);
+    assert.doesNotMatch(env.module.nav[0].subnav("pp"), /rf-nav-count/, `${user.id}: no count in the BOM menu`);
     assert.equal(env.context.MNP_BOM_PAGES.hub.workCount(env.ctx("p=work")), tab(html), `${user.id} (${user.role} ${user.dept}): the number the department modules show equals the cards on the board`);
   }
   assert.ok(seen.B01 > 0 && seen.B02 > 0 && seen.B03 > 0, "admin, manager and planner see every department's cards");
@@ -3463,13 +3474,13 @@ test("while RubberFlow is still loading, My jobs says so instead of showing noth
   status = "ready";
   release();
   await settle();
-  assert.equal(env.log.renders, renders, "not on #/bom: no redraw");
+  assert.equal(env.log.renders, renders, "not on #/pp: no redraw");
   html = work();
   assert.doesNotMatch(html, /กำลังโหลดข้อมูลเคมี/, "ready: no loading line, no noise");
   assert.equal(hooks, 1, "ready needs no hook");
-  // idle (never started) hooks too, and a redraw follows when still on #/bom
+  // idle (never started) hooks too, and a redraw follows when still on #/pp
   status = "idle";
-  env.log.hash = "#/bom?p=work";
+  env.log.hash = "#/pp?p=work";
   work();
   work();
   assert.equal(hooks, 2, "a new loading round hooks once");
@@ -3885,8 +3896,8 @@ test("a job linked to a WO has no report button and says its output comes from t
   assert.equal(env.store.run("setJobStatus", { jobId: gr.id, status: "hold", reason: "รอกาว" }).ok, true);
   html = await env.render("p=jobs&dept=GR");
   const grRow = html.split("<tr").find((entry) => entry.includes(gr.id));
-  assert.match(grRow, />ทำต่อ</);
-  assert.match(grRow, /in_progress/);
+  assert.match(grRow, /ทำงานที่โมดูล GR/, "GR rows only link to the module: resume lives on the GR card");
+  assert.doesNotMatch(grRow, />ทำต่อ</);
   // งานที่พัก: ไม่มีปุ่มรายงานผลที่ตารางและที่การ์ดงานของฉัน · dialog ไม่เปิด · action ปฏิเสธ (ต้องกด ทำต่อ ก่อน)
   assert.doesNotMatch(grRow, /data-rf-open="jobReport"/, "no report button on a held job");
   html = await env.render("p=work");
@@ -3897,7 +3908,8 @@ test("a job linked to a WO has no report button and says its output comes from t
   assert.equal(refused.ok, false);
   assert.match(refused.error.message, /พักอยู่ กด ทำต่อ ก่อนรายงานผล/);
   assert.equal(env.store.run("setJobStatus", { jobId: gr.id, status: "in_progress" }).ok, true);
-  assert.match(await env.render("p=jobs&dept=GR"), /data-rf-open="jobReport"/, "after resuming the report button is back");
+  assert.equal(env.store.data().jobs.find((job) => job.id === gr.id).status, "in_progress", "resumed");
+  assert.match(await env.render("p=jobs&dept=GR"), /ทำงานที่โมดูล GR/, "the table row only links to the GR module");
   assert.equal(env.store.run("reportJob", { jobId: gr.id, qtyDone: 1 }).ok, true);
 });
 

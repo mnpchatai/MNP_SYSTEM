@@ -1586,7 +1586,8 @@
     if (!rfWakeHooked) {
       rfWakeHooked = true;
       // ผู้ใช้กำลังแก้ฟอร์มหรือเปิด dialog อยู่ (MNP_BOM.isEditing): ไม่วาดทับสิ่งที่พิมพ์ค้าง ข้อมูลเคมีแสดงเมื่อหน้าวาดครั้งถัดไป
-      const done = () => { rfWakeHooked = false; try { if (currentRoute().path === "bom" && !root.MNP_BOM?.isEditing?.()) renderRoute(); } catch { /* ออกจากหน้า BOM แล้ว */ } };
+      // หน้าของโมดูลแผนก (#/sa ฯลฯ) ที่ใช้ตัวช่วยของหน้านี้ (เช่น orderEditState ของหน้าใบของฝ่ายขาย) วาดใหม่ด้วย (MNP_FACTORY.onDeptRoute)
+      const done = () => { rfWakeHooked = false; try { if ((currentRoute().path === "pp" || root.MNP_FACTORY?.onDeptRoute?.()) && !root.MNP_BOM?.isEditing?.()) renderRoute(); } catch { /* ออกจากหน้า BOM แล้ว */ } };
       store.ensureLoaded().then(done, done);
     }
     return true;
@@ -1928,17 +1929,57 @@
   const fgReturnText = (ctx, lock) => (lock.took.length ? ` สินค้าสำเร็จรูปที่ใบนี้ใช้จากสต็อก (${lock.took.map((entry) => `${entry.fgCode} × ${ctx.rules.fmtQty(entry.qty)} จากใบ ${entry.fromOrderId}`).join(", ")}) จะคืนเข้าสต็อกให้อัตโนมัติ` : "");
   // เหตุที่ยกเลิก/เปิดกลับมาแก้ไม่ได้ (rules.fgStockLock.blocked)
   const fgLockText = (lock) => (lock.delivered ? "ส่งมอบสินค้าให้ลูกค้าแล้ว ให้ปิดงานที่เหลือพร้อมเหตุผล แล้วให้คลังสินค้า (WH) ปิดใบ (รับไม่ครบ) แทน" : `ให้สินค้าจากสต็อกแก่ใบ ${[...new Set(lock.givenAway.map((entry) => entry.orderId))].join(", ")} ไปแล้ว (ต้องให้ใบนั้นคืนสต็อกก่อน)`);
+  // โรงงานขั้น 8: ที่มาของใบ (ฝ่ายขาย / ฝ่ายวางแผน) · ใบร่างของฝ่ายขายที่ยังไม่ส่งให้ฝ่ายวางแผนมองเห็นเฉพาะฝ่ายขาย · การ์ดใบใหม่และแจ้งจากฝ่ายขาย (modules/sa-pages.js)
+  const sourceChip = (ctx, order) => (ctx.helpers.orderSource(order) === "SA" ? ctx.ui.badge("info", "ฝ่ายขาย") : ctx.ui.badge("", "ฝ่ายวางแผน"));
+  const sourceText = (ctx, order) => {
+    if (ctx.helpers.orderSource(order) !== "SA") return `${sourceChip(ctx, order)} <span class="small muted">${esc(order.createdBy ?? "")}</span>`;
+    const sent = ctx.helpers.isSentOrder(order) ? `ส่งให้ฝ่ายวางแผน ${esc(ctx.rules.fmtDateTime(order.sentAt))}${order.sentBy ? ` โดย ${esc(order.sentBy)}` : ""}` : "ยังไม่ส่งให้ฝ่ายวางแผน";
+    return `${sourceChip(ctx, order)} <span class="small muted">ออกใบโดย ${esc(order.createdBy ?? "")} · ${sent}</span>${salesCancelText(ctx, order)}`;
+  };
+  // ฝ่ายขายยกเลิกกลางทาง (รอบ 2): รอฝ่ายวางแผนตัดสิน / ผลิตต่อจนจบส่ง WH / หยุด พร้อมเหตุผลและผู้ยกเลิก · ใบอื่น = ว่าง
+  const SALES_CANCEL_STATE = Object.freeze({ pending: "ยกเลิกแล้ว รอฝ่ายวางแผนตัดสินของที่ทำค้าง", continue: "ยกเลิกแล้ว ฝ่ายวางแผนให้ผลิตต่อจนจบส่ง WH (เป็นสต็อก ไม่ส่งลูกค้า)", stop: "ยกเลิกแล้ว ฝ่ายวางแผนให้หยุด เก็บยางเส้นยาวที่ SR" });
+  const salesCancelKey = (order) => (order?.salesCancelAt === undefined || order?.salesCancelAt === null ? "" : order.salesCancelChoice === "continue" ? "continue" : order.salesCancelChoice === "stop" || order.status === "cancelled" ? "stop" : "pending");
+  const salesCancelText = (ctx, order) => {
+    const key = salesCancelKey(order);
+    if (!key) return "";
+    return `<div class="small">${ctx.ui.badge(key === "pending" ? "bad" : "warn", `ฝ่ายขาย${SALES_CANCEL_STATE[key]}`)} <span class="muted">${esc(`${order.salesCancelReason ?? ""} · ${order.salesCancelBy ?? ""} ${ctx.rules.fmtDateTime(order.salesCancelAt)}`)}</span></div>`;
+  };
+  const visibleToPlanning = (ctx, order) => ctx.helpers.orderSource(order) !== "SA" || ctx.helpers.isSentOrder(order) || ctx.helpers.canSell(ctx.user);
+  const planningCards = (ctx, options = {}) => (ctx.helpers.canPlanOrders(ctx.user) ? root.MNP_SA_PAGES?.planningCards?.(ctx, options) ?? "" : "");
+  // ใบของฝ่ายขายแก้ได้เมื่อ: ยังเป็นร่าง หรือปล่อยผลิตแล้วแต่ยังไม่มีแผนกไหนเริ่มงาน (แก้แล้วใบกลับเป็นร่างให้ฝ่ายวางแผนปล่อยผลิตใหม่) · กติกาเดียวกับหน้าใบของฝ่ายวางแผน
+  // rfPending: ใบที่ปล่อยแล้วมีงานผูก WO ของ RubberFlow ที่ยังรู้ไม่ได้ว่าเริ่มแล้วหรือยัง เพราะข้อมูล RubberFlow ยังโหลดอยู่ ("loading" · หน้าวาดใหม่เมื่อโหลดเสร็จ: rfWake)
+  // หรือโหลดไม่สำเร็จ ("failed") · ระหว่างนั้นแก้ใบไม่ได้ (กฎเดิม: ไม่มีรายการ WO = นับว่าเริ่มแล้ว) แต่ไม่ใช่เพราะแผนกเริ่มงาน · null = รู้ครบแล้ว หรือมีงานเริ่มจริง
+  const orderEditState = (ctx, order) => {
+    const { data, rules } = ctx;
+    const draft = order.status === "draft";
+    const fgLock = rules.fgStockLock(data, order);
+    const released = ["released", "in_progress"].includes(order.status);
+    const rfOrders = released ? rfOrdersOf(ctx) : null;
+    const started = released ? ctx.helpers.startedJobs(data, order, rfOrders) : [];
+    const reopen = released && !started.length && !fgLock.blocked && !(rules.rodIssued(data, order.id) > 1e-9);
+    // ทุกงานที่นับว่าเริ่มเป็นงานรอคิวที่ไม่มียอดและรายงาน นับเพียงเพราะผูก WO แต่ยังไม่มีรายการ WO ให้ตรวจ
+    const onlyUnknownWo = started.length > 0 && started.every((job) => job.externalRef && job.status === "queued" && !(job.qtyDone > 0) && !(job.qtyReject > 0) && !job.reports?.length);
+    const rfPending = !Array.isArray(rfOrders) && rfRemote(ctx) && onlyUnknownWo ? (rfStore(ctx)?.status?.() === "error" ? "failed" : "loading") : null;
+    const reopenNote = reopen ? ` ใบนี้ปล่อยผลิตแล้ว แก้แล้วใบจะกลับไปให้ฝ่ายวางแผนปล่อยผลิตใหม่ งานรายแผนกถูกลบ${fgReturnText(ctx, fgLock)}${reopenRfText(ctx, order)}` : "";
+    // ฝ่ายขายแก้ใบที่เริ่มงานแล้วได้ตรง (รอบ 2 · inPlace): สถานะและงานรายแผนกคงเดิม ฝ่ายวางแผนได้รับแจ้ง · ไม่ใช่ตอนที่ยังรู้ไม่ได้ว่างานยางเริ่มหรือยัง (rfPending)
+    // และไม่ใช่ใบที่ฝ่ายขายยกเลิกไว้แล้ว · ตรงกับ editMode ของ modules/bom-actions.js
+    const salesCancelled = ctx.helpers.salesCancelled?.(order) ?? false;
+    const inPlace = released && !reopen && !rfPending && !salesCancelled;
+    return { draft, reopen, fgLock, canEdit: draft || (reopen && !salesCancelled), reopenNote, rfPending, inPlace, salesCancelled };
+  };
   pages.orders = (ctx) => {
     const { data, ui, rules, user, params } = ctx;
     const sel = String(params.get("sel") ?? "").toUpperCase();
-    const canPlan = ctx.helpers.canPlan(user);
+    // ปุ่มของใบสั่งผลิต = กลุ่มวางแผนของใบ (canPlanOrders) · แก้ BOM = canPlan เดิม · ใบร่างของฝ่ายขายที่ยังไม่ส่งให้ฝ่ายวางแผนซ่อนจากหน้านี้ (ยกเว้นฝ่ายขาย)
+    const canPlan = ctx.helpers.canPlanOrders(user);
+    const canEditBom = ctx.helpers.canPlan(user);
     // ใหม่สุดก่อน: วันที่สั่งผลิตใหม่กว่าก่อน วันเดียวกันใบที่เปิดทีหลัง (createdAt ถ้ามี ไม่มีก็เลขที่ใบมากกว่า) ก่อน · ฐานข้อมูลเรียงเลขที่ใบจากน้อยไปมากในวันเดียวกัน จึงเรียงที่หน้าอีกชั้น (ใบที่เพิ่งเปิดอยู่บนสุดทั้งโหมดในเครื่องและโหมดฐานข้อมูล)
     const newestFirst = (a, b) => (Number(b.orderedAt) || 0) - (Number(a.orderedAt) || 0) || (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
-    const list = data.orders.filter((order) => includes(`${order.id} ${order.customer} ${order.country} ${order.items.map((item) => item.fgCode).join(" ")}`, ctx.q)).sort(newestFirst);
-    const rows = list.map((order) => `<tr${order.id === sel ? ' class="is-selected"' : ""}><td>${ui.link(order.id, ctx.url("orders", { sel: order.id, q: ctx.q || null }), "rf-mono")}<div class="small muted">${esc(order.customer)}</div></td><td>${status(ctx, order.orderType)}<div class="small muted">${esc(order.country)}</div></td><td>${esc(String(order.items.length))} สินค้า<div class="small muted">${esc(order.items.map((item) => `${item.fgCode} × ${rules.fmtQty(item.qty)}`).join(", ").slice(0, 60))}</div></td><td class="nowrap">${esc(rules.fmtDate(order.whDue))}</td><td class="rf-progress-cell">${orderProgress(ctx, order)}</td><td>${orderStatus(ctx, order)}</td></tr>`);
+    const list = data.orders.filter((order) => visibleToPlanning(ctx, order) && includes(`${order.id} ${order.customer} ${order.country} ${order.items.map((item) => item.fgCode).join(" ")}`, ctx.q)).sort(newestFirst);
+    const rows = list.map((order) => `<tr${order.id === sel ? ' class="is-selected"' : ""}><td>${ui.link(order.id, ctx.url("orders", { sel: order.id, q: ctx.q || null }), "rf-mono")}<div class="small muted">${esc(order.customer)} ${sourceChip(ctx, order)}</div></td><td>${status(ctx, order.orderType)}<div class="small muted">${esc(order.country)}</div></td><td>${esc(String(order.items.length))} สินค้า<div class="small muted">${esc(order.items.map((item) => `${item.fgCode} × ${rules.fmtQty(item.qty)}`).join(", ").slice(0, 60))}</div></td><td class="nowrap">${esc(rules.fmtDate(order.whDue))}</td><td class="rf-progress-cell">${orderProgress(ctx, order)}</td><td>${orderStatus(ctx, order)}</td></tr>`);
     const listCard = ui.card(`${searchForm(ctx, "ค้นหาเลข PI ลูกค้า หรือรหัสสินค้า…")}${ui.table(["เลข PI", "ประเภท", "สินค้า", "ส่งมอบคลัง", "ความคืบหน้า", "สถานะ"], rows, { emptyText: ctx.q ? "ไม่พบใบสั่งผลิต" : "ยังไม่มีใบสั่งผลิต" })}`);
 
-    const order = sel ? data.orders.find((entry) => entry.id === sel) : null;
+    const order = sel ? data.orders.filter((entry) => visibleToPlanning(ctx, entry)).find((entry) => entry.id === sel) ?? null : null;
     let detail = "";
     let stepsBind = null;
     if (order) {
@@ -1947,7 +1988,7 @@
       const canCount = ctx.helpers.canCount(user) && draft;
       const poNote = openPoText(openPurchaseOrdersOf(ctx, order.id));
       const headerKv = ui.kv([
-        pages.orderSteps ? null : ["ลูกค้า", esc(order.customer)], ["ประเทศ / ประเภท", `${esc(order.country)} ${status(ctx, order.orderType)}`], ["วันที่สั่งผลิต", esc(rules.fmtDate(order.orderedAt))], ["ส่งมอบคลัง (WH)", esc(rules.fmtDate(order.whDue))],
+        pages.orderSteps ? null : ["ลูกค้า", esc(order.customer)], ["ที่มา", sourceText(ctx, order)], ["ประเทศ / ประเภท", `${esc(order.country)} ${status(ctx, order.orderType)}`], ["วันที่สั่งผลิต", esc(rules.fmtDate(order.orderedAt))], ["ส่งมอบคลัง (WH)", esc(rules.fmtDate(order.whDue))],
         ["กำหนดเสร็จรายแผนก", rules.DUE_DEPTS.map((dept) => `<span class="bom-due"${(order.dueDefaults ?? []).includes(dept) ? ' title="ค่าเริ่มต้นจากระยะเวลาจัดหา (lead time)"' : ""}><b>${esc(dept)}</b> ${esc(order.due[dept] ? rules.fmtDate(order.due[dept]) : "—")}${(order.dueDefaults ?? []).includes(dept) ? "*" : ""}</span>`).join(" ")],
         order.explodedAt ? ["คำนวณวัตถุดิบล่าสุด", esc(`${rules.fmtDateTime(order.explodedAt)} · ${order.explosion?.length ?? 0} บรรทัด${order.releasedAt ? ` · ล็อกฉบับแก้ไขเมื่อปล่อยผลิต ${rules.fmtDateTime(order.releasedAt)} โดย ${order.releasedBy}` : ""}`)] : null,
         order.stockCountedAt ? [stockCountLabel(order), esc(`${rules.fmtDateTime(order.stockCountedAt)} โดย ${order.stockCountedBy}`)] : null,
@@ -1962,7 +2003,7 @@
       const reopen = ["released", "in_progress"].includes(order.status) && !ctx.helpers.startedJobs(data, order, rfOrdersOf(ctx)).length && !fgLock.blocked && !(rules.rodIssued(data, order.id) > 1e-9);
       const canEditItems = canPlan && (draft || reopen);
       const reopenNote = reopen ? ` ใบนี้ปล่อยผลิตแล้ว แก้แล้วใบจะกลับเป็นร่าง งานรายแผนกถูกลบ ต้องคำนวณวัตถุดิบและปล่อยผลิตใหม่${fgReturnText(ctx, fgLock)}${reopenRfText(ctx, order)}` : "";
-      const itemRows = order.items.map((item) => `<tr><td>${ui.link(item.fgCode, ctx.url("items", { sel: item.fgCode }), "rf-mono")}<div class="small muted">${esc(itemOf(ctx, item.fgCode)?.name ?? "")}${item.note ? ` · ${esc(item.note)}` : ""}</div></td><td class="right rf-mono">${esc(rules.fmtQty(item.qty))}</td><td>${esc(item.colorSet || "-")}</td><td class="nowrap">${ui.link("งานทุกแผนก", ctx.url("product", { code: item.fgCode, qty: item.qty }), "btn rf-btn secondary small")} ${canPlan ? ui.link("แก้ BOM", pages.find ? ctx.url("find", { code: item.fgCode }) : buildUrl(ctx, item.fgCode), "btn rf-btn secondary small") : ""} ${canEditItems ? `${ui.openButton("แก้จำนวน", "orderItemEdit", { orderId: order.id, fgCode: item.fgCode }, { className: "secondary small", ariaLabel: `แก้จำนวน ${item.fgCode}` })} ${ui.button("ลบ", { action: "removeOrderItem", args: { orderId: order.id, fgCode: item.fgCode }, className: "secondary small", ariaLabel: `ลบ ${item.fgCode} ออกจากใบ`, confirmText: `ลบ ${item.fgCode} ออกจากใบ ${order.id}?${reopenNote}${poNote ? ` ${poNote}` : ""}` })}` : ""}</td></tr>`);
+      const itemRows = order.items.map((item) => `<tr><td>${ui.link(item.fgCode, ctx.url("items", { sel: item.fgCode }), "rf-mono")}<div class="small muted">${esc(itemOf(ctx, item.fgCode)?.name ?? "")}${item.note ? ` · ${esc(item.note)}` : ""}</div></td><td class="right rf-mono">${esc(rules.fmtQty(item.qty))}</td><td>${esc(item.colorSet || "-")}</td><td class="nowrap">${ui.link("งานทุกแผนก", ctx.url("product", { code: item.fgCode, qty: item.qty }), "btn rf-btn secondary small")} ${canEditBom ? ui.link("แก้ BOM", pages.find ? ctx.url("find", { code: item.fgCode }) : buildUrl(ctx, item.fgCode), "btn rf-btn secondary small") : ""} ${canEditItems ? `${ui.openButton("แก้จำนวน", "orderItemEdit", { orderId: order.id, fgCode: item.fgCode }, { className: "secondary small", ariaLabel: `แก้จำนวน ${item.fgCode}` })} ${ui.button("ลบ", { action: "removeOrderItem", args: { orderId: order.id, fgCode: item.fgCode }, className: "secondary small", ariaLabel: `ลบ ${item.fgCode} ออกจากใบ`, confirmText: `ลบ ${item.fgCode} ออกจากใบ ${order.id}?${reopenNote}${poNote ? ` ${poNote}` : ""}` })}` : ""}</td></tr>`);
       // ความต้องการสุทธิต่อรหัส (กฎ AK ของ BOMSHEET ไล่ชั้น): ใช้ร่วมกันทั้งแท็บใบคำนวณ แท็บรวม และ CSV
       const net = new Map(rules.netRequirements(order.explosion ?? [], order.stockCounts).map((entry) => [entry.itemCode, entry]));
       const buttons = [];
@@ -2036,8 +2077,8 @@
     // เปิดใบอยู่ (โครงใหม่): หัวหน้าเป็นเลขใบ ลูกค้า และสถานะ แทนชื่อหน้ากลาง · รายการใบทั้งหมดใช้หัวหน้าเดิม
     const orderHead = (target) => `<header class="rf-pagehead"><div class="rf-pagehead-main"><span class="rf-mod-ico" aria-hidden="true">${pages.icon("orders")}</span><div><h1>ใบสั่งผลิต <span class="rf-mono">${esc(target.id)}</span></h1><p class="bom-hero-sub">${esc(target.customer)} ${orderStatus(ctx, target)}</p></div></div></header>`;
     const html = pages.orderSteps && order
-      ? `<p class="bom-back">${ui.link("← ใบสั่งผลิตทั้งหมด", ctx.url("orders", { q: ctx.q || null }))}</p>${orderHead(order)}${detail}`
-      : `${head(ctx, "ใบสั่งผลิต (PI)", "เปิดใบ → เพิ่มสินค้า (3 ช่องเหมือนชีต ;}o) → คำนวณวัตถุดิบ (ร่างคำนวณซ้ำได้) → นับคงคลัง → ปล่อยผลิต (ล็อกฉบับแก้ไขแล้วแตกเป็นงานรายแผนก)", canPlan ? `${ctx.canSee("jobs") ? ui.link("ตารางงานทุกแผนก", ctx.url("jobs"), "btn rf-btn secondary") : ""}${woOpenButton(ctx)}${ui.openButton("เปิดใบใหม่", "orderNew", {}, { className: "" })}` : "")}${canPlan ? woWaitingCard(ctx) : ""}<div class="bom-split bom-split-wide">${listCard}${detail}</div>`;
+      ? `<p class="bom-back">${ui.link("← ใบสั่งผลิตทั้งหมด", ctx.url("orders", { q: ctx.q || null }))}</p>${orderHead(order)}${planningCards(ctx, { orderId: order.id })}${detail}`
+      : `${head(ctx, "ใบสั่งผลิต (PI)", "เปิดใบ → เพิ่มสินค้า (3 ช่องเหมือนชีต ;}o) → คำนวณวัตถุดิบ (ร่างคำนวณซ้ำได้) → นับคงคลัง → ปล่อยผลิต (ล็อกฉบับแก้ไขแล้วแตกเป็นงานรายแผนก)", canPlan ? `${ctx.canSee("jobs") ? ui.link("ตารางงานทุกแผนก", ctx.url("jobs"), "btn rf-btn secondary") : ""}${woOpenButton(ctx)}${ui.openButton("เปิดใบใหม่", "orderNew", {}, { className: "" })}` : "")}${canPlan ? woWaitingCard(ctx) : ""}${planningCards(ctx)}<div class="bom-split bom-split-wide">${listCard}${detail}</div>`;
     const bind = (rootNode) => {
       stepsBind?.(rootNode);
       bindRfScopes(ctx, rootNode);
@@ -2202,7 +2243,13 @@
   };
   const openPoText = (pos) => (pos.length ? `มีใบสั่งซื้อที่สั่งจากใบนี้และยังรับของไม่ครบ: ${pos.map((po) => (po.received ? `${po.id} (รับแล้ว ${po.received}/${po.total} บรรทัด)` : po.id)).join(", ")} ระบบไม่ยกเลิกหรือแก้ใบสั่งซื้อให้ ตรวจที่หน้าใบสั่งซื้อของ RubberFlow${pos.some((po) => po.touched) ? " · ใบที่รับเข้าหรือปิดยอดไปแล้วบางส่วนยกเลิกไม่ได้ (ปิดยอดที่เหลือได้)" : ""}` : "");
   const openPoCallout = (ctx, order) => { const text = order ? openPoText(openPurchaseOrdersOf(ctx, order.id)) : ""; return text ? ctx.ui.callout("warn", esc(text)) : ""; };
-  const reopenCallout = (ctx, order) => (order && order.status !== "draft" ? ctx.ui.callout("warn", `ใบนี้ปล่อยผลิตแล้ว บันทึกแล้วใบจะกลับเป็นร่าง (REV. +1) งานรายแผนกของใบถูกลบ ต้องคำนวณวัตถุดิบและปล่อยผลิตใหม่${esc(fgReturnText(ctx, ctx.rules.fgStockLock(ctx.data, order)))}${esc(reopenRfText(ctx, order))}`) : "");
+  // ฝ่ายขายแก้ใบที่เริ่มงานแล้ว (รอบ 2): ใบเปลี่ยนทันที ไม่กลับเป็นร่าง (orderEditState.inPlace) · อื่น ๆ ที่ไม่ใช่ร่าง = กลับเป็นร่าง
+  const IN_PLACE_TEXT = "แผนกเริ่มงานแล้ว: บันทึกแล้วใบเปลี่ยนทันที สถานะและงานของแผนกไม่เปลี่ยนเอง ฝ่ายวางแผนได้รับแจ้ง “ฝ่ายขายแก้ใบ” แล้วเปิดงานเพิ่มสำหรับส่วนที่เพิ่ม (ส่วนที่ลด ฝ่ายวางแผนปรับงานเอง)";
+  const reopenCallout = (ctx, order) => {
+    if (!order || order.status === "draft") return "";
+    if (ctx.helpers.salesOnly(ctx.user) && orderEditState(ctx, order).inPlace) return ctx.ui.callout("info", esc(IN_PLACE_TEXT));
+    return ctx.ui.callout("warn", `ใบนี้ปล่อยผลิตแล้ว บันทึกแล้วใบจะกลับเป็นร่าง (REV. +1) งานรายแผนกของใบถูกลบ ต้องคำนวณวัตถุดิบและปล่อยผลิตใหม่${esc(fgReturnText(ctx, ctx.rules.fgStockLock(ctx.data, order)))}${esc(reopenRfText(ctx, order))}`);
+  };
   // dialog: แก้จำนวนสั่ง/หมายเหตุของสินค้าหนึ่งตัวในใบ
   dialogs.orderItemEdit = (ctx, { orderId, fgCode }) => {
     const { ui, data } = ctx;
@@ -2339,15 +2386,15 @@
   // ---------- ลูกค้า ----------
   // รายการที่ใบสั่งผลิตใหม่เลือกจาก (ช่องชื่อลูกค้าในฟอร์มเปิดใบ) · เปิดใบด้วยชื่อใหม่ก็เพิ่มลูกค้าให้เอง ที่นี่เพิ่ม/แก้ประเทศ ประเภท และหมายเหตุได้ ชื่อเป็นกุญแจจึงไม่มีลบ
   const customersOf = (ctx) => [...(ctx.data.customers ?? [])].sort((a, b) => a.name.localeCompare(b.name, "th"));
-  pages.customers = (ctx) => {
+  // ทะเบียนลูกค้า (โรงงานขั้น 8): หน้าอยู่ที่โมดูลฝ่ายขาย #/sa?tab=customers (modules/sa-pages.js เรียกตัวนี้) · ฝ่ายขายและกลุ่มวางแผนของใบสั่งผลิตเพิ่ม/แก้ได้ (canOrder) · ช่อง dialog เดิม
+  const customersView = (ctx) => {
     const { ui, user } = ctx;
-    const canEdit = ctx.helpers.canPlan(user);
+    const canEdit = ctx.helpers.canOrder(user);
     const list = customersOf(ctx).filter((customer) => includes(`${customer.name} ${customer.country} ${customer.note ?? ""}`, ctx.q));
     const rows = list.map((customer) => `<tr><td>${esc(customer.name)}</td><td>${esc(customer.country)}</td><td>${status(ctx, customer.orderType)}</td><td class="small muted">${esc(customer.note ?? "")}</td><td class="nowrap">${canEdit ? ui.openButton("แก้ไข", "customerEdit", { name: customer.name }, { className: "secondary small", ariaLabel: `แก้ไขลูกค้า ${customer.name}` }) : ""}</td></tr>`);
-    const html = `${head(ctx, "ลูกค้า", "รายการที่ใช้เลือกตอนเปิดใบสั่งผลิต", `${searchForm(ctx, "ค้นหาชื่อลูกค้าหรือประเทศ…")}${canEdit ? ui.openButton("เพิ่มลูกค้า", "customerEdit", {}, { className: "" }) : ""}`)}
-      ${canEdit ? "" : ui.callout("warn", "บทบาทนี้ดูได้อย่างเดียว ฝ่ายวางแผนหรือผู้จัดการเพิ่ม/แก้ลูกค้า")}
-      ${ui.card(ui.table(["ชื่อลูกค้า", "ประเทศ", "ประเภท", "หมายเหตุ", ""], rows, { emptyText: "ยังไม่มีลูกค้า (เปิดใบสั่งผลิตด้วยชื่อใหม่ ระบบเพิ่มให้เอง)" }), { flush: true })}`;
-    return { html };
+    const add = canEdit ? ui.openButton("เพิ่มลูกค้า", "customerEdit", {}, { className: "" }) : "";
+    const body = `${canEdit ? "" : ui.callout("warn", "บทบาทนี้ดูได้อย่างเดียว ฝ่ายขายหรือฝ่ายวางแผนเพิ่ม/แก้ลูกค้า")}${ui.card(ui.table(["ชื่อลูกค้า", "ประเทศ", "ประเภท", "หมายเหตุ", ""], rows, { emptyText: "ยังไม่มีลูกค้า (เปิดใบสั่งผลิตด้วยชื่อใหม่ ระบบเพิ่มให้เอง)" }), { flush: true })}`;
+    return { canEdit, add, body };
   };
   dialogs.customerEdit = (ctx, { name = "" }) => {
     const { ui, rules } = ctx;
@@ -2586,7 +2633,7 @@
   dialogs.orderCancel = (ctx, { orderId }) => {
     const { ui, rules, data, user } = ctx;
     const order = data.orders.find((entry) => entry.id === orderId);
-    if (!order || ["completed", "cancelled"].includes(order.status) || !ctx.helpers.canPlan(user)) return null;
+    if (!order || ["completed", "cancelled"].includes(order.status) || !(ctx.helpers.canPlanOrders(user) || (ctx.helpers.salesOnly(user) && order.status === "draft"))) return null;
     const fgLock = rules.fgStockLock(data, order);
     if (fgLock.blocked) return null;
     const jobs = data.jobs.filter((job) => job.orderId === order.id);
@@ -2614,7 +2661,7 @@
   };
 
   // ---------- งานของแผนก ----------
-  const DEPT_MODULE_JOBS = Object.freeze(["PT", "BG", "PK"]);
+  const DEPT_MODULE_JOBS = Object.freeze(["GR", "PT", "BG", "PK"]);
   const moduleHref = (dept) => {
     const employee = typeof state === "undefined" ? undefined : state?.employee;
     return employee === undefined || !root.MNP_FACTORY?.deptLink ? root.MNP_BOM_STORE?.deptRoute?.(dept) ?? null : root.MNP_FACTORY.deptLink(employee, dept);
@@ -2779,7 +2826,7 @@
     createVariant: "สร้างรุ่นสินค้า", saveRouting: "บันทึกขั้นตอนผลิตของชิ้นงาน", saveProcess: "บันทึกขั้นตอนผลิตมาตรฐาน", setItemCost: "ตั้งต้นทุน", setItemImage: "ตั้งรูปชิ้นงาน",
     createOrder: "เปิดใบสั่งผลิต", addOrderItem: "เพิ่มสินค้าในใบ", removeOrderItem: "ลบสินค้าจากใบ", updateOrderItem: "แก้สินค้าในใบ", explodeOrder: "คำนวณวัตถุดิบ",
     releaseOrder: "ปล่อยผลิต", setStockCount: "นับคงคลัง", setStockCounts: "นับคงคลัง", cancelOrder: "ยกเลิกใบสั่งผลิต", completeOrder: "ปิดใบสั่งผลิต (เดิม)", receiveFg: "รับสินค้าเข้าคลัง", deliverFg: "ส่งมอบสินค้าให้ลูกค้า", closeOrderShort: "ปิดใบสั่งผลิต (รับไม่ครบ)", closeOrder: "ปิดใบสั่งผลิต (รับครบ)", reverseFg: "ย้อนรับเข้าคลัง / ย้อนส่งมอบสินค้าสำเร็จรูป",
-    reportJob: "รายงานผลงาน", setJobStatus: "เปลี่ยนสถานะงาน / ปิดงาน", linkJobToRubberFlow: "ผูก WO ของ RubberFlow", saveCustomer: "บันทึกลูกค้า",
+    reportJob: "รายงานผลงาน", setJobStatus: "เปลี่ยนสถานะงาน / ปิดงาน", linkJobToRubberFlow: "ผูก WO ของ RubberFlow", saveCustomer: "บันทึกลูกค้า", updateOrderHeader: "แก้หัวใบสั่งผลิต", sendOrderToPlanning: "ฝ่ายขายส่งใบให้ฝ่ายวางแผน", decideOrderRequest: "ฝ่ายวางแผนตัดสินการแจ้งของฝ่ายขาย",
     countPartStock: "นับสต็อกของซื้อ", issueOrderParts: "เบิกจ่ายของซื้อ", undoOrderParts: "ยกเลิกการเบิกจ่ายของซื้อ", returnOrderParts: "คืนของเหลือของซื้อ",
     receiveRods: "รับยางเส้นยาวเข้าคลัง (SR)", decideRods: "ตัดสินล็อตยางเส้นยาวที่กัก (QA)", issueRods: "จ่ายยางเส้นยาวให้ GR", reverseRodIssue: "ย้อนการจ่ายยางเส้นยาว", adjustRods: "ปรับยอดยางเส้นยาวในคลัง",
     receiveRodsOpening: "รับยางเส้นยาวนอกใบสั่ง (SR)", setRodLocation: "ย้ายตำแหน่งยางเส้นยาว (SR)",
@@ -2793,16 +2840,19 @@
     items: "ชิ้นงาน", compounds: "สูตรยาง", colors: "สี", colorSets: "ชุดสี", packages: "แพ็กเกจ", boms: "BOM", processes: "ขั้นตอนผลิต", routings: "ขั้นตอนผลิตของชิ้นงาน",
     customers: "ลูกค้า", orders: "ใบสั่งผลิต", jobs: "งาน", stock: "สต็อกของซื้อ", partReturns: "คืนของซื้อ", fgMoves: "รับ/ส่งมอบสินค้าสำเร็จรูป",
     rodLots: "ล็อตยางเส้นยาว", rodMoves: "ประวัติยางเส้นยาว",
-    grConfig: "ตั้งค่าขั้นตอนแผนก", grPlans: "ขั้นตอนของงาน", grRecords: "ผลรายวัน", rodRequests: "คำขอเบิกยางเส้นยาว", grHandovers: "ส่งงานระหว่างแผนก (GR PT BG → PK · PK → WH)",
+    orderRequests: "แจ้งฝ่ายวางแผนของฝ่ายขาย", grConfig: "ตั้งค่าขั้นตอนแผนก", grPlans: "ขั้นตอนของงาน", grRecords: "ผลรายวัน", rodRequests: "คำขอเบิกยางเส้นยาว", grHandovers: "ส่งงานระหว่างแผนก (GR PT BG → PK · PK → WH)",
   });
   // "jobs +3 -1, orders +1" (เซิร์ฟเวอร์เขียน) → "งาน +3 -1, ใบสั่งผลิต +1"
   const auditCounts = (detail) => String(detail ?? "").split(", ").map((part) => part.replace(/^[A-Za-z]+/, (key) => AUDIT_SECTION_LABEL[key] ?? key)).join(", ");
   // โหมดฐานข้อมูล: action เป็นคีย์เดิม (setStockCount / setStockCounts ที่ allowlist ของ SQL รู้จัก) จึงแยกยอดที่ใช้จากสต็อกสินค้าสำเร็จรูปด้วยข้อความที่ผู้บันทึกส่งมา · ทุกข้อความต้องเป็นข้อความนี้ (ชุดที่ปนกับการนับชิ้นอื่นยังเป็น "นับคงคลัง")
+  const DECISION_AUDIT_LABELS = Object.freeze(["ฝ่ายวางแผนยืนยันยกเลิกตามคำขอ", "ฝ่ายวางแผนไม่ยกเลิก", "ฝ่ายวางแผนแก้ใบตามคำขอแล้ว", "ฝ่ายวางแผนไม่แก้ตามคำขอ"]);
   const auditActionText = (rules, entry, remote) => {
     if (!remote) return entry.action;
     const notes = entry.entries ?? [];
     if (["setStockCount", "setStockCounts"].includes(entry.action) && notes.length && notes.every((note) => note.action === rules.FG_STOCK_AUDIT_TEXT)) return rules.FG_STOCK_AUDIT_TEXT;
     if (["setStockCount", "setStockCounts"].includes(entry.action) && notes.length && notes.every((note) => note.action === rules.ROD_STOCK_AUDIT_TEXT || note.action === rules.ROD_STOCK_AUDIT_TEXT_LEGACY)) return rules.ROD_STOCK_AUDIT_TEXT;
+    // การตัดสินคำขอของฝ่ายขายมีสี่ผล: ชื่อผลอยู่ในบรรทัดที่เซิร์ฟเวอร์บันทึกคู่กัน (ยืนยันยกเลิก / ไม่ยกเลิก / แก้แล้ว / ไม่แก้)
+    if (entry.action === "decideOrderRequest") { const decided = notes.map((note) => note.action).find((label) => DECISION_AUDIT_LABELS.includes(label)); if (decided) return decided; }
     return AUDIT_ACTION_LABEL[entry.action] ?? entry.action;
   };
   pages.audit = (ctx) => {
@@ -2826,5 +2876,7 @@
       ${note}${ui.card(ui.table(["เวลา", "ผู้ใช้", "การกระทำ", "รายละเอียด"], rows, { emptyText }), { flush: true })}`;
     return { html };
   };
+  // ชิ้นส่วนที่โมดูลฝ่ายขาย (modules/sa-pages.js) ใช้ร่วม ไม่คัดลอก: ป้ายสถานะ ที่มาของใบ กติกาแก้ใบ ทะเบียนลูกค้า
+  pages.sales = { status, orderStatus, sourceChip, sourceText, visibleToPlanning, orderEditState, rfOrdersOf, customersView, customersOf, IN_PLACE_TEXT, SALES_CANCEL_STATE, salesCancelKey, itemOf: (ctx, code) => itemOf(ctx, code), approvedBomOf: (ctx, code) => approvedBomOf(ctx, code) };
   pages.audit.actionText = auditActionText; // ให้เทสต์ตรวจชื่อการกระทำของแถวจากฐานข้อมูลได้โดยไม่ต้องมี store ระยะไกล
 })(typeof window !== "undefined" ? window : globalThis);

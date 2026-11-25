@@ -2239,7 +2239,7 @@ function sandboxBannerHtml() {
   const personas = state.sandbox?.personas ?? [];
   const current = state.employee.id;
   // RubberFlow/BOM/ใบสั่งงาน IT (path office) รีเซ็ตข้อมูลด้วยเครื่องมือของตัวเอง ปุ่มล้างข้อมูล NCR ทดสอบจึงไม่ขึ้นที่นั่น (มือถือเหลือแถบสั้น)
-  const showPurge = !["rubberflow", "bom", "office"].includes(currentRoute().path);
+  const showPurge = !["rubberflow", "pp", "office"].includes(currentRoute().path);
   return `<div class="sandbox-banner" role="status">
     <div class="sandbox-banner-copy"><strong>โหมดทดสอบ</strong><span>ข้อมูลแยกจากระบบจริง ไม่ส่งแจ้งเตือนหรืออีเมลถึงใคร · ทดลอง NCR (แนบไฟล์ได้) ใบตรวจ QC และใบสั่งงาน IT ได้</span></div>
     <div class="sandbox-banner-actions">

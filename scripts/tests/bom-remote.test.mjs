@@ -221,7 +221,10 @@ test("Thai messages for the BOM RPC errors, whatever shape the error arrives in"
   assert.equal(storeApi.mapRemoteError(new TypeError("Failed to fetch"), "โหลดไม่สำเร็จ").message, "โหลดไม่สำเร็จ");
   assert.match(message({ message: "BOM_CONFLICT" }), /ซ้ำกับที่มีอยู่แล้ว.*ลองทำรายการอีกครั้ง/);
   assert.match(message({ message: "BOM_INVALID_TRANSITION" }), /สถานะที่ทำรายการนี้ไม่ได้/);
-  assert.match(message({ message: "BOM_FORBIDDEN" }), /แผนกอื่นรายงานได้เฉพาะงานของแผนกตน/, "the per-field rule is explained");
+  assert.match(message({ message: "BOM_FORBIDDEN" }), /แผนกอื่นบันทึกได้เฉพาะงานของแผนกตน/, "the per-field rule is explained");
+  // กติกาขั้น 8 (20261226010000): ใบสั่งผลิตและลูกค้า = ฝ่ายขาย ฝ่ายวางแผน ผู้จัดการ · โครงสร้างสินค้า = ฝ่ายวางแผน · ไม่ใช้คำว่า BOM เป็นชื่อโมดูล
+  assert.match(message({ message: "BOM_FORBIDDEN" }), /ใบสั่งผลิตและทะเบียนลูกค้า: ฝ่ายขาย ฝ่ายวางแผน และผู้จัดการ.*โครงสร้างสินค้า: ฝ่ายวางแผน/);
+  assert.doesNotMatch(message({ message: "BOM_FORBIDDEN" }), /BOM/);
   const again = storeApi.mapRemoteError(storeApi.mapRemoteError({ message: "BOM_STALE" }));
   assert.equal(again.code, "BOM_STALE", "mapping twice keeps the code and the message");
 });
@@ -648,7 +651,7 @@ test("a rejected save reverts the whole action to the last server snapshot, and 
   assert.equal(env.store.data().orders[0].items.length, 1);
   assert.ok(env.store.data().items.some((item) => item.code === "TOY-01(B)-A"));
   const refused = await variant.saving;
-  assert.match(refused.error.message, /ไม่มีสิทธิ์แก้ข้อมูล BOM/);
+  assert.match(refused.error.message, /ไม่มีสิทธิ์ทำรายการนี้/);
   assert.equal(env.store.data().orders[0].items.length, 0, "the order line is gone with the product it pointed at");
   assert.equal(env.store.data().items.some((item) => item.code === "TOY-01(B)-A"), false);
   assert.deepEqual(env.store.data(), before);
@@ -1439,7 +1442,7 @@ async function pageEnv({ storage = memoryStorage(), pageStorage = memoryStorage(
   const status = data ?? { persona: { id: "persona-1", first_name: "ทดสอบ", last_name: "ระบบ", role: { code: "admin" }, department: { code: "MT" } } };
   const context = vm.createContext({});
   const app = { innerHTML: "" };
-  const log = { toasts: [], renders: 0, notFound: 0, hash: "#/bom", dialogs: [] };
+  const log = { toasts: [], renders: 0, notFound: 0, hash: "#/pp", dialogs: [] };
   const node = () => ({ handlers: {}, dataset: {}, value: "", disabled: false, textContent: "", innerHTML: "", addEventListener() {}, querySelector: (selector) => hooks.nodes?.[selector] ?? null, querySelectorAll: () => [], focus() {}, close() {}, remove() {}, showModal() {}, setAttribute() {}, insertAdjacentHTML(_, html) { log.dialogs.push(html); this.lastElementChild = { ...node(), tagName: "DIALOG" }; } });
   Object.assign(context, {
     window: context, escapeHtml, showToast: (message, kind) => log.toasts.push([message, kind ?? "ok"]), friendlyError: (error) => String(error?.message ?? error),
@@ -1449,19 +1452,19 @@ async function pageEnv({ storage = memoryStorage(), pageStorage = memoryStorage(
     shell: (content, path, title) => `<shell path="${path}" title="${escapeHtml(title)}">${content}</shell>`,
     bindShell() {}, loadingShell() {}, renderNotFound: () => { log.notFound += 1; app.innerHTML = "<notfound></notfound>"; },
     currentRoute: () => { const raw = log.hash.replace(/^#\/?/, ""); const [path, query = ""] = raw.split("?"); return { path, params: new URLSearchParams(query) }; },
-    document: { querySelector: (selector) => hooks.nodes?.[selector] ?? node(), querySelectorAll: (selector) => (["dialog[open]", "dialog[data-rf-dialog][open]"].includes(selector) && hooks.dialogOpen?.() ? [node()] : []), body: node(), createElement: node, addEventListener: (type, fn) => hooks.onDocument?.(type, fn) },
+    document: { querySelector: (selector) => hooks.nodes?.[selector] ?? node(), querySelectorAll: (selector) => hooks.all?.(selector) ?? (["dialog[open]", "dialog[data-rf-dialog][open]"].includes(selector) && hooks.dialogOpen?.() ? [node()] : []), body: node(), createElement: node, addEventListener: (type, fn) => hooks.onDocument?.(type, fn) },
     addEventListener: (type, fn) => hooks.onWindow?.(type, fn),
     localStorage: storage, FormData: class { entries() { return []; } }, MNP_REQUEST_MODULES: {}, TextDecoder, Uint8Array, DataView,
   });
   context.window.MNP_REQUEST_MODULES = context.MNP_REQUEST_MODULES;
   for (const file of FILES) vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file });
   const registered = context.MNP_REQUEST_MODULES.BOM;
-  // ตารางงานเดิม (#/bom?p=work) ถูกถอดออกจาก BOM แล้ว (งานอยู่ที่โมดูลของแต่ละแผนก และ #/bom?p=work เปลี่ยนที่อยู่ไปที่นั่น) แต่ตัววาดยังอยู่ให้เทสต์ใช้เป็นตัวอย่างของ workBoard / boardCards จึงวาดตรงๆ ที่นี่
+  // ตารางงานเดิม (#/pp?p=work) ถูกถอดออกจาก BOM แล้ว (งานอยู่ที่โมดูลของแต่ละแผนก และ #/pp?p=work เปลี่ยนที่อยู่ไปที่นั่น) แต่ตัววาดยังอยู่ให้เทสต์ใช้เป็นตัวอย่างของ workBoard / boardCards จึงวาดตรงๆ ที่นี่
   const render = async (query = "") => {
-    log.hash = `#/bom${query ? `?${query}` : ""}`;
+    log.hash = `#/pp${query ? `?${query}` : ""}`;
     app.innerHTML = "";
     if (/(^|&)p=work(&|$)/.test(query)) app.innerHTML = context.MNP_BOM_PAGES.work(context.MNP_BOM.context(new URLSearchParams(query))).html;
-    else await registered.pages.bom(new URLSearchParams(query));
+    else await registered.pages.pp(new URLSearchParams(query));
     return app.innerHTML;
   };
   // โมดูล WH (#/wh): รับเข้า ส่งมอบ ปิดใบ ย้อน · เปิดได้เฉพาะคนที่ประตูของโมดูลให้ผ่าน (แผนก WH · PP · ผู้จัดการ) คนอื่นได้หน้า "ไม่พบ"
@@ -1535,6 +1538,54 @@ test("when the parent's production steps cannot follow a WIP insert in database 
   assert.match(errors[0], /เปิดหน้าของ FG-W แล้วแก้ขั้นตอนผลิตเอง/, "what to do");
 });
 
+// บันทึกที่ฐานข้อมูลปฏิเสธต้องเห็นได้ชัด: ข้อความผิดพลาดภาษาไทยค้างอยู่ (ข้อความแจ้งของ store ไม่ทับ) ปุ่มที่กดไว้กดได้อีก และหน้าที่ไม่ได้วาดใหม่เพราะเปิด dialog อยู่ วาดใหม่เมื่อ dialog ปิด
+test("a save the database refuses surfaces a Thai error that stays, gives the pressed button back and repaints once the open dialog closes", async () => {
+  const docHandlers = {};
+  const pending = [];
+  let dialogOpen = false;
+  let errorShowing = false;
+  const button = { handlers: {}, dataset: { rfAction: "saveCustomer", rfArgs: JSON.stringify({ name: "ลูกค้าทดสอบล้ม", country: "Thailand", create: true }) }, disabled: false, addEventListener(type, handler) { this.handlers[type] = handler; }, closest: () => null };
+  const hooks = {
+    nodes: { "#toast": { classList: { contains: (name) => name === "error" && errorShowing } } },
+    all: (selector) => (selector === "[data-rf-pending]" ? pending.filter((node) => node.dataset.rfPending) : undefined),
+    dialogOpen: () => dialogOpen,
+    onDocument: (type, fn) => { (docHandlers[type] ??= []).push(fn); },
+  };
+  const env = await pageEnv({ hooks });
+  await env.store.ensureLoaded();
+  hooks.nodes[".content"] = { querySelector: () => null, querySelectorAll: (selector) => (selector === "[data-rf-action]" ? [button] : []), addEventListener() {} };
+  pending.push(button);
+  await env.render("p=dashboard");
+  const real = env.mock.client.rpc.bind(env.mock.client);
+  env.mock.client.rpc = async (name, args) => {
+    // ผู้ใช้เปิด dialog อื่นระหว่างรอคำตอบ: store ย้อนกลับโดยไม่วาดหน้าทับ
+    if (name === "app_bom_save_master") { dialogOpen = true; return { data: null, error: { code: "P0001", message: "BOM_FORBIDDEN" } }; }
+    return real(name, args);
+  };
+  const rendersBefore = env.log.renders;
+  await button.handlers.click();
+  assert.equal(button.disabled, true, "held while the save is in flight");
+  for (let i = 0; i < 6; i += 1) await new Promise((resolve) => setTimeout0(resolve));
+  env.mock.client.rpc = real;
+  const errors = env.log.toasts.filter(([, kind]) => kind === "error").map(([message]) => message);
+  assert.equal(errors.length, 1, errors.join(" | "));
+  assert.match(errors[0], /^บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้/, "the user reads the Thai reason, not a code");
+  assert.equal(button.disabled, false, "the pressed button is usable again");
+  assert.equal(env.store.data().customers.some((row) => row.name === "ลูกค้าทดสอบล้ม"), false, "the optimistic customer is gone");
+  assert.equal(env.log.renders, rendersBefore + 1, "only the optimistic redraw of the click: no redraw over the open dialog");
+  // ข้อความแจ้งของ store (ผู้อื่นบันทึก) ระหว่างที่ข้อผิดพลาดยังแสดงอยู่ ไม่ทับข้อผิดพลาด
+  errorShowing = true;
+  const other = await real("app_bom_save_master", { p_changes: { customers: { upsert: [{ name: "ลูกค้าคนอื่น", country: "Thailand", orderType: "SA", note: "" }] } }, p_base_version: env.store.version(), p_action: "saveCustomer" });
+  assert.equal(other.error, null, other.error?.message);
+  await env.store.catchUp();
+  for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setTimeout0(resolve));
+  assert.deepEqual(env.log.toasts.slice(1), [], "no note replaces the unread error");
+  // dialog ปิด: หน้าวาดใหม่จากข้อมูลที่ย้อนกลับแล้ว
+  dialogOpen = false;
+  for (const fn of docHandlers.close ?? []) fn({});
+  assert.equal(env.log.renders, rendersBefore + 2, "the page is redrawn once the dialog closes");
+});
+
 test("in the browser the module talks to the (mock) database: loading state, empty database points to the import page, no demo role picker or reset", async () => {
   const env = await pageEnv();
   assert.equal(env.store.isRemote(), true);
@@ -1546,9 +1597,9 @@ test("in the browser the module talks to the (mock) database: loading state, emp
   for (const page of ["dashboard", "items", "product", "structure", "variants"]) {
     html = await env.render(page === "dashboard" ? "" : `p=${page}`);
     assert.match(html, /ยังไม่มีข้อมูล BOM ในฐานข้อมูล/, `${page} explains the empty database`);
-    assert.match(html, /href="#\/bom\?p=import"/, `${page} points to the import page`);
-    assert.match(html, /class="empty empty-state rf-empty">[\s\S]*<p>ยังไม่มีข้อมูล BOM ในฐานข้อมูล · เริ่มจากนำเข้าไฟล์ Excel<\/p><a class="btn rf-btn" href="#\/bom\?p=import">นำเข้าจาก Excel<\/a>/, `${page}: the import action sits next to the text that asks for it`);
-    assert.equal((html.match(/class="btn rf-btn" href="#\/bom\?p=import"/g) ?? []).length, 1, `${page}: the import button is shown once (not also in the header)`);
+    assert.match(html, /href="#\/pp\?p=import"/, `${page} points to the import page`);
+    assert.match(html, /class="empty empty-state rf-empty">[\s\S]*<p>ยังไม่มีข้อมูล BOM ในฐานข้อมูล · เริ่มจากนำเข้าไฟล์ Excel<\/p><a class="btn rf-btn" href="#\/pp\?p=import">นำเข้าจาก Excel<\/a>/, `${page}: the import action sits next to the text that asks for it`);
+    assert.equal((html.match(/class="btn rf-btn" href="#\/pp\?p=import"/g) ?? []).length, 1, `${page}: the import button is shown once (not also in the header)`);
     assert.match(html, /data-bom-sync/, "status slot in the toolbar");
     assert.doesNotMatch(html, /undefined|NaN|\[object Object\]/);
   }
@@ -1775,8 +1826,8 @@ test("the mock sandbox offers switchable personas (the planner group, producing 
   const { client } = createMockSupabase({ sandbox: true, now: () => NOW, storage });
   const status = (await client.rpc("app_sandbox_status")).data;
   assert.equal(status.persona.id, "persona-1", "the first persona is the simulated admin, as before");
-  assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-rb", "persona-rbh", "persona-gr", "persona-grh", "persona-st", "persona-sth", "persona-sr", "persona-wh", "persona-whh", "persona-qa", "persona-qah", "persona-pth", "persona-bgh", "persona-pkh", "persona-pk", "persona-pt", "persona-bg"]);
-  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "rb", "manager", "gr", "gr", "st", "manager", "sr", "wh", "manager", "qa", "manager", "manager", "manager", "manager", "pk", "pt", "bg"], "each persona maps to a BOM role (the RB head, the ST head and the WH head are department managers; the GR head is an assistant department manager, so GR by department; SR runs the long-rod store and QA decides held rod lots; PK staff work their jobs by department)");
+  assert.deepEqual(status.personas.map((row) => row.id), ["persona-1", "persona-pp", "persona-sa", "persona-sah", "persona-rb", "persona-rbh", "persona-gr", "persona-grh", "persona-st", "persona-sth", "persona-sr", "persona-wh", "persona-whh", "persona-qa", "persona-qah", "persona-pth", "persona-bgh", "persona-pkh", "persona-pk", "persona-pt", "persona-bg"]);
+  assert.deepEqual(status.personas.map((row) => storeApi.roleOfEmployee(row)), ["admin", "planner", "sa", "sa", "rb", "manager", "gr", "gr", "st", "manager", "sr", "wh", "manager", "qa", "manager", "manager", "manager", "manager", "pk", "pt", "bg"], "each persona maps to a BOM role (the RB head, the ST head and the WH head are department managers; the GR head is an assistant department manager, so GR by department; SR runs the long-rod store and QA decides held rod lots; PK staff work their jobs by department; both sales personas are sales by department, the sales head is not a planner)");
   assert.deepEqual(status.personas.slice(-3).map((row) => [row.department.code, row.role.code]), [["PK", "staff"], ["PT", "staff"], ["BG", "staff"]], "PK, PT and BG staff can be tried too");
   assert.deepEqual(status.personas.slice(-3).map((row) => storeApi.personaUser(row).dept), ["PK", "PT", "BG"], "and work the jobs of their own department");
   assert.equal((await client.rpc("app_sandbox_enter", { p_persona_id: "persona-rb" })).error, null);
@@ -1968,7 +2019,7 @@ test("focusing the page catches up with other users' saves and redraws only when
   env.log.hash = "#/home";
   await fire();
   assert.equal(env.store.data().items.length, 0, "away from the BOM pages the focus does nothing");
-  env.log.hash = "#/bom";
+  env.log.hash = "#/pp";
   await fire("visibilitychange");
   assert.deepEqual(Array.from(env.store.data().items, (item) => item.code), ["P-OTHER"]);
   assert.equal(env.store.version(), 1);
@@ -1995,7 +2046,7 @@ test("a persona who may not write sees read-only pages and a save is refused by 
   assert.equal(out.ok, true);
   const failed = await out.saving;
   assert.equal(failed.ok, false);
-  assert.match(failed.error.message, /ไม่มีสิทธิ์แก้ข้อมูล BOM/);
+  assert.match(failed.error.message, /ไม่มีสิทธิ์ทำรายการนี้/);
   assert.equal(asPlanner.store.data().items.length, 0, "reverted");
 });
 
@@ -2302,7 +2353,7 @@ test("the screens show only what the persona may do: planner group everything, S
   for (const persona of ["persona-rb", "persona-st", "persona-wh", "persona-qa"]) assert.equal((await menu(persona)).includes("customers"), false, persona);
   for (const persona of ["persona-st", "persona-wh"]) assert.ok((await menu(persona)).includes("count"), persona);
   assert.equal((await menu("persona-rb")).includes("count"), false);
-  const denied = await sees("persona-rb", "p=customers");
+  const denied = await sees("persona-rb", "p=import");
   assert.match(denied.html, /ไม่มีสิทธิ์เข้าถึงหน้านี้/);
 
   // งานของแผนก: รายงาน/พักงานเฉพาะงานของแผนกตน (planner group ทุกแผนก) · WO ของ RubberFlow เฉพาะ RB และฝ่ายวางแผน
@@ -2313,10 +2364,13 @@ test("the screens show only what the persona may do: planner group everything, S
   assert.doesNotMatch(rowOf(rb, "JOB-RB1"), /data-rf-open="jobRubberflow"/, "but does not open the WO: planning does (factory step 6)");
   assert.doesNotMatch(rowOf(rb, "JOB-GR1"), /data-rf-open="jobReport"|data-rf-action="setJobStatus"/, "but not the GR job");
   const gr = await jobPage("persona-gr");
-  assert.match(rowOf(gr, "JOB-GR1"), /data-rf-open="jobReport"/);
+  assert.doesNotMatch(rowOf(gr, "JOB-GR1"), /data-rf-open="jobReport"/, "GR reports in its own module now");
+  assert.match(rowOf(gr, "JOB-GR1"), /ทำงานที่โมดูล GR/);
   assert.doesNotMatch(rowOf(gr, "JOB-RB1"), /data-rf-open="jobReport"|jobRubberflow/);
   const planner = await jobPage("persona-pp");
-  for (const id of ["JOB-RB1", "JOB-GR1"]) assert.match(rowOf(planner, id), /data-rf-open="jobReport"/, `the planner group reports ${id}`);
+  assert.match(rowOf(planner, "JOB-RB1"), /data-rf-open="jobReport"/, "the planner group reports the RB job");
+  assert.doesNotMatch(rowOf(planner, "JOB-GR1"), /data-rf-open="jobReport"/, "GR jobs are reported in the GR module");
+  assert.match(rowOf(planner, "JOB-GR1"), /ทำงานที่โมดูล GR/);
   assert.match(rowOf(planner, "JOB-RB1"), /jobRubberflow/);
   for (const persona of ["persona-qa", "persona-st", "persona-wh"]) {
     const html = await jobPage(persona);
@@ -2324,9 +2378,11 @@ test("the screens show only what the persona may do: planner group everything, S
   }
 
   // ลูกค้า: เพิ่ม/แก้เฉพาะฝ่ายวางแผนขึ้นไป · ฟอร์มเปิดใบมีรายการลูกค้าให้เลือก
-  const customers = await sees("persona-pp", "p=customers");
-  assert.match(customers.html, /Acme Trading/);
-  assert.equal(buttons(customers.html, "customerEdit") >= 2, true, "add + edit");
+  // (the register is the sales module's page now: the table body is shared, see modules/sa-pages.js)
+  const customers = await sees("persona-pp", "p=orders");
+  const customersView = customers.env.context.MNP_BOM_PAGES.sales.customersView(customers.env.ctx());
+  assert.match(customersView.body, /Acme Trading/);
+  assert.equal(buttons(customersView.body + customersView.add, "customerEdit") >= 2, true, "add + edit");
   const dialog = customers.env.context.MNP_BOM_DIALOGS.orderNew(customers.env.ctx());
   assert.match(dialog.html, /<datalist id="bom-customer-list"><option value="Acme Trading">/);
   assert.match(dialog.html, /list="bom-customer-list"/);
@@ -2988,7 +3044,7 @@ test("RubberFlow's store holds other users' data back only for its own forms on 
   let dialog = false;
   const env = await pageEnv({ persona: "persona-rb", sandboxAdmin: false, hooks: { dialogOpen: () => dialog } });
   const editing = env.context.MNP_RUBBERFLOW.isEditing;
-  env.log.hash = "#/bom?p=jobs";
+  env.log.hash = "#/pp?p=jobs";
   dialog = true;
   assert.equal(editing(), false, "the create-WO dialog of BOM is not a RubberFlow form");
   env.log.hash = "#/rubberflow?p=orders";

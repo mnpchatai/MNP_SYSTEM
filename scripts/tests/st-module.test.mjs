@@ -66,9 +66,9 @@ function load({ employee = emp("ST"), bomUser = "B08", rfUser = "U04" } = {}) {
     return app.innerHTML;
   };
   const bomOpen = async (query) => {
-    log.hash = `#/bom?${query}`;
+    log.hash = `#/pp?${query}`;
     app.innerHTML = "";
-    await modules.BOM.pages.bom(new URLSearchParams(query));
+    await modules.BOM.pages.pp(new URLSearchParams(query));
     return app.innerHTML;
   };
   return { context, app, log, fakes, modules, bom, rf, open, rfOpen, bomOpen, setEmployee: (next) => { context.state.employee = next; } };
@@ -302,7 +302,7 @@ test("ในคลัง: one list of purchased parts and chemical lots with sto
 });
 
 test("BOM p=stock moves to #/st?tab=stock for the ST module and WH, and to BOM home for anyone else", async () => {
-  for (const [employee, bomUser, target] of [[emp("ST"), "B08", "#/st?tab=stock"], [emp("WH"), "B09", "#/st?tab=stock"], [emp("PP"), "B03", "#/st?tab=stock"], [emp("RB"), "B04", "#/bom?p=orders"], [emp("GR"), "B05", "#/bom?p=orders"]]) {
+  for (const [employee, bomUser, target] of [[emp("ST"), "B08", "#/st?tab=stock"], [emp("WH"), "B09", "#/st?tab=stock"], [emp("PP"), "B03", "#/st?tab=stock"], [emp("RB"), "B04", "#/pp?p=orders"], [emp("GR"), "B05", "#/pp?p=orders"]]) {
     const env = load({ employee, bomUser });
     await env.bomOpen("p=stock");
     assert.equal(env.log.hash, target, `${employee.department.code}`);
