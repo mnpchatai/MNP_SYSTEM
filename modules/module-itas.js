@@ -448,21 +448,55 @@
   /* ---------- พิมพ์ทะเบียน A4 / ส่งออก CSV (รุ่น 1.06) ---------- */
   // ทั้งใบพิมพ์และไฟล์ส่งออกใช้เฉพาะช่องที่ไม่ลับ (model.printList / hostPrint / buildCsv ไม่แตะ secrets) · ตามตัวกรองและการเรียงที่เห็นบนหน้าจอ
   // ใบพิมพ์แทรกเป็นลูกของ .itas-page ชั่วคราว (หน้าจอซ่อนไว้ ตอนพิมพ์ CSS ซ่อนส่วนอื่นทั้งหมด) แล้วเอาออกเมื่อพิมพ์/ปิดหน้าต่างพิมพ์เสร็จ (afterprint)
+  // afterprint ไม่ยิงเสมอไปในทุกเบราว์เซอร์ (มือถือ/Safari บางรุ่น) จึงมีทางลบสำรอง: matchMedia("print") กลับเป็น false,
+  // หรือผู้ใช้แตะ/กดคีย์/สลับกลับมาที่หน้านี้หลังพิมพ์ · ทุกทางเรียก finish ตัวเดียวกัน ลบได้ครั้งเดียว ไม่ error ถ้าลบไปแล้ว
   const removePrintSheets = () => document.querySelectorAll(".itas-sheet").forEach((node) => node.remove());
+  let finishActivePrint = null; // ตัวเก็บกวาดของใบพิมพ์ที่ยังค้างอยู่ (มีได้ใบเดียว ใบใหม่แทนใบเก่าเสมอ)
   function printSheet(html) {
     const host = root();
     if (!host) return;
+    finishActivePrint?.();
     removePrintSheets();
     host.insertAdjacentHTML("beforeend", html);
     let finished = false;
-    const finish = () => {
+    let armed = false;
+    let printMedia = null;
+    const interactionEvents = ["pointerdown", "keydown"];
+    const onPrintMediaChange = (event) => { if (!event.matches) finish(); };
+    const onVisible = () => { if (document.visibilityState !== "hidden") finish(); };
+    function finish() {
       if (finished) return;
       finished = true;
+      if (finishActivePrint === finish) finishActivePrint = null;
       window.removeEventListener?.("afterprint", finish);
+      printMedia?.removeEventListener?.("change", onPrintMediaChange);
+      printMedia?.removeListener?.(onPrintMediaChange);
+      for (const type of interactionEvents) document.removeEventListener?.(type, finish, true);
+      document.removeEventListener?.("visibilitychange", onVisible);
       removePrintSheets();
-    };
+    }
+    // ทางสำรองเริ่มทำงานหลังสั่งพิมพ์แล้วเท่านั้น (ระหว่างหน้าต่างพิมพ์เปิดอยู่ห้ามเก็บใบทิ้ง ไม่งั้นตัวอย่างพิมพ์ว่าง)
+    function armFallbacks() {
+      if (finished || armed) return;
+      armed = true;
+      try {
+        printMedia = window.matchMedia?.("print") ?? null;
+        printMedia?.addEventListener?.("change", onPrintMediaChange);
+        if (printMedia && !printMedia.addEventListener) printMedia.addListener?.(onPrintMediaChange);
+      } catch { printMedia = null; }
+      for (const type of interactionEvents) document.addEventListener?.(type, finish, true);
+      document.addEventListener?.("visibilitychange", onVisible);
+    }
+    finishActivePrint = finish;
     window.addEventListener("afterprint", finish);
-    window.print();
+    try {
+      window.print();
+    } catch (error) {
+      finish(); // สั่งพิมพ์ไม่ได้ = ไม่มีอะไรต้องรอ เก็บกวาดทันที
+      throw error;
+    } finally {
+      armFallbacks();
+    }
   }
   function printList() {
     const { rows } = visibleRows();
