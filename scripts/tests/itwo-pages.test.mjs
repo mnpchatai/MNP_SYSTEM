@@ -649,3 +649,20 @@ test("every page of the module ends with the version tag at the bottom right, no
   const css = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
   assert.match(css, /\.itwo-version \{[^}]*text-align: right/);
 });
+
+test("v1.07: the print sheets of itwo/itrp/itas drop the app background (grey, gradient, dark canvas) only when their own sheet is on the page, and the list clamp keeps overflow hidden in itwo", () => {
+  const css = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
+  for (const cls of ["itwo-sheet", "itrp-sheet", "itas-sheet"]) {
+    const index = css.indexOf(`html:has(.${cls}), body:has(.${cls}) {`);
+    assert.ok(index >= 0, `missing print background rule for ${cls}`);
+    const rule = css.slice(index, css.indexOf("}", index));
+    assert.match(rule, /background: #fff !important/);
+    assert.match(rule, /background-image: none !important/);
+    assert.match(rule, /color-scheme: light !important/);
+    // กฎนี้อยู่ใน @media print เท่านั้น ไม่ใช่กฎหน้าจอ
+    assert.ok(css.lastIndexOf("@media print {", index) > css.lastIndexOf("\n}\n", index), `${cls} rule must be inside @media print`);
+  }
+  assert.doesNotMatch(css, /(^|\n)(html|body) \{[^}]*:has\(\.it/, "no screen-wide rule keyed on the sheets");
+  const clamp = css.indexOf(".itwo-page .register-sub, .itwo-page .register-status .register-sub {");
+  assert.ok(clamp >= 0 && css.slice(clamp, css.indexOf("}", clamp)).includes("overflow: hidden"), "the 2-line clamp must win over .register-status .register-sub { overflow: visible }");
+});

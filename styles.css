@@ -3882,6 +3882,8 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 /* จอกลาง (แถบเมนูซ้ายยังกินที่): บรรทัดรองของแถวรายการตัดเป็น 2 บรรทัดแทนที่จะดันตารางให้กว้างจนป้ายสถานะถูกตัด */
 @media (min-width: 761px) and (max-width: 1279px) {
   .itwo-page .register-sub, .itrp-page .register-sub { max-width: 36ch; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; white-space: normal; }
+  /* ตัดที่ 2 บรรทัดได้จริงต้องมี overflow: hidden · กฎกลาง .register-status .register-sub (จอ 761px ขึ้นไป) ตั้ง overflow: visible ไว้ ต้องแรงกว่าเฉพาะใน itwo */
+  .itwo-page .register-sub, .itwo-page .register-status .register-sub { overflow: hidden; }
 }
 /* ใบแจ้งซ่อม: ตารางอะไหล่/เครื่อง/ย้ายชิ้นส่วน — หัวคอลัมน์ ลำดับ และรหัสเครื่องไม่ตัดกลางคำ */
 .itrp-page .itrp-parts-table th { white-space: nowrap; }
