@@ -163,6 +163,31 @@ test("asset form (add): fields come from the type definition, dates are typed te
   assert.doesNotMatch(mouse, /itas-secrets"/);
 });
 
+test("asset form: only code, name, brand/model, user (+ status) are always visible; everything else is folded under 'more details'; secrets stay outside the fold", () => {
+  const split = (html) => { const at = html.indexOf('<details class="itas-more"'); const end = html.indexOf("</details>"); return { head: html.slice(0, at), fold: html.slice(at, end), tail: html.slice(end) }; };
+  const html = pages.assetForm({ mode: "add", type: TYPE, values: model.emptyFormValues(TYPE), vaultStatus: "locked", types: [TYPE] });
+  const { head, fold, tail } = split(html);
+  for (const name of ["type_code", "reg_no", "device_code", "name", "model", "host_code", "status"]) assert.match(head, new RegExp(`name="${name}"`), `${name} เห็นเสมอ`);
+  for (const name of ["serial", "slot", "place", "install_date", "purchase_date", "vendor", "price", "warranty_text", "express_code", "account_no", "note", "attrs.cpu", "attrs.kind", "attrs.installed"]) {
+    assert.doesNotMatch(head, new RegExp(`name="${name}"`), `${name} ต้องไม่อยู่ในช่องหลัก`);
+    assert.match(fold, new RegExp(`name="${name}"`), `${name} พับอยู่ใต้รายละเอียดเพิ่มเติม`);
+  }
+  assert.match(head, /ยี่ห้อ \/ รุ่น/);
+  assert.match(head, /ผู้ใช้ \/ ติดตั้งที่ \(Used by\)/, "ชนิดที่ไม่มี user_name ใช้ ติดตั้งที่ เป็นผู้ใช้");
+  assert.doesNotMatch(fold, /open/, "เพิ่มใหม่เริ่มแบบพับ");
+  assert.match(tail, /id="itas-secrets-host"/, "ช่องลับอยู่นอกส่วนที่พับ");
+  assert.match(pages.assetForm({ mode: "add", type: TYPE, values: model.emptyFormValues(TYPE), openMore: true }), /<details class="itas-more" id="itas-more" open>/);
+  // ชนิดที่มีช่อง user_name (เครื่องคอมพิวเตอร์จริง): ผู้ใช้เป็นช่อง user_name ส่วน ติดตั้งที่ ไปอยู่ในส่วนที่พับ
+  const computer = { ...TYPE, fields: [{ key: "user_name", label: "ชื่อผู้ใช้ (User)", type: "text", secret: false, order: 1 }, ...TYPE.fields] };
+  const pc = split(pages.assetForm({ mode: "add", type: computer, values: model.emptyFormValues(computer) }));
+  assert.match(pc.head, /name="attrs.user_name"/);
+  assert.doesNotMatch(pc.head, /name="host_code"/);
+  assert.match(pc.fold, /name="host_code"/);
+  // ชนิดที่ไม่มีรหัสอุปกรณ์ไม่มีช่องรหัสอุปกรณ์เลย
+  const mouse = { code: "MOUSE", name: "เมาส์", fields: [], has_device_code: false };
+  assert.doesNotMatch(pages.assetForm({ mode: "add", type: mouse, values: model.emptyFormValues(mouse) }), /name="device_code"/);
+});
+
 test("asset form (edit): values escaped, history button, secret fields masked and never carry ciphertext or plaintext", () => {
   const values = model.formValuesFromAsset(ASSET, TYPE);
   const html = pages.assetForm({ mode: "edit", type: TYPE, values, asset: ASSET, vaultStatus: "locked" });

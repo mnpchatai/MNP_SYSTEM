@@ -3911,6 +3911,11 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .itas-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0 16px; }
 .itas-grid .itas-wide { grid-column: 1 / -1; }
 .itas-subhead { margin: 8px 0; font-size: var(--text-ui); }
+/* ฟอร์ม: ช่องหลักเห็นเสมอ ช่องที่เหลือพับไว้ใต้ "รายละเอียดเพิ่มเติม" */
+.itas-more { margin: 0 0 16px; }
+.itas-more > summary { min-height: 44px; padding: 10px 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-weight: 700; cursor: pointer; }
+.itas-more > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.itas-type-line { margin: 0 0 8px; }
 .itas-secret-mask { color: var(--muted); letter-spacing: .08em; }
 .itas-secret-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .itas-secret-line .input { flex: 1 1 180px; min-width: 0; }

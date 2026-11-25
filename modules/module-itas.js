@@ -613,7 +613,7 @@
     for (const [key, value] of Object.entries(values.core ?? {})) if (form.elements?.[key]) form.elements[key].value = value;
     for (const [key, value] of Object.entries(values.attrs ?? {})) if (form.elements?.[`attrs.${key}`]) form.elements[`attrs.${key}`].value = value;
   }
-  function mountForm(mode, type, original, values, { carry = null, draftId: keepDraftId = null } = {}) {
+  function mountForm(mode, type, original, values, { carry = null, draftId: keepDraftId = null, openMore = null } = {}) {
     const host = byId("itas-form-area");
     if (!host) return;
     clearReveals();
@@ -628,7 +628,9 @@
       }
     }
     ui.form = { mode, type, original, draftId, initial: "", submitting: false };
-    host.innerHTML = pages.assetForm({ mode, type, values, asset: original, vaultStatus: vault.status(), types: mode === "add" ? ui.types : null });
+    // "รายละเอียดเพิ่มเติม" เปิดให้เองเมื่อมีค่าอยู่ในช่องที่พับไว้ (แก้ไขอุปกรณ์ที่กรอกไว้แล้ว · ค่าที่ยกมาตอนเปลี่ยนชนิด) · เพิ่มใหม่เริ่มแบบพับ
+    const extrasFilled = model.extraFieldsHaveValues(type, carry ? model.carryOver(type, carry) : mode === "edit" ? values : null);
+    host.innerHTML = pages.assetForm({ mode, type, values, asset: original, vaultStatus: vault.status(), types: mode === "add" ? ui.types : null, openMore: openMore ?? extrasFilled });
     hardenSecretInputs(host);
     const form = formEl();
     ui.form.initial = JSON.stringify(readFormValues(form, type));
@@ -732,6 +734,8 @@
     const values = readFormValues(form, type);
     const errors = model.validateAsset({ type, values });
     if (errors.length) {
+      // ช่องที่ผิดอยู่ในส่วนที่พับ: เปิด "รายละเอียดเพิ่มเติม" ก่อน ไม่งั้นกรอบแดงกับโฟกัสไปอยู่ในที่ที่มองไม่เห็น
+      if (model.errorsInExtraFields(type, errors)) { const more = form.querySelector?.("#itas-more"); if (more) more.open = true; }
       const focus = window.MNP_FORM_STEPS?.showFieldErrors?.(form, errors.map((item) => ({ name: item.field, message: item.message })));
       focus?.focus?.();
       return;

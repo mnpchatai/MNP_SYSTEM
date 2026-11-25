@@ -290,6 +290,31 @@ test("search works across all types on non-secret fields only: reg no, code, nam
   assert.deepEqual(find(ENVELOPE.c), [], "ciphertext ของช่องลับไม่เข้าไปในข้อความค้นหา");
 });
 
+test("main form fields: code(s), name, brand/model, user, status; the user is user_name when the type has it, otherwise the install host; the rest is folded", () => {
+  assert.deepEqual(model.primaryFieldNames(COMPUTER), ["reg_no", "device_code", "name", "model", "host_code", "status"]);
+  assert.deepEqual(model.primaryFieldNames(MOUSE), ["reg_no", "name", "model", "host_code", "status"], "ไม่มีรหัสอุปกรณ์ในชนิดนี้");
+  const withUser = { ...COMPUTER, fields: [{ key: "user_name", label: "ชื่อผู้ใช้", type: "text", secret: false, order: 0 }, ...COMPUTER.fields] };
+  assert.equal(model.userFieldName(withUser), "attrs.user_name");
+  assert.ok(model.isPrimaryField(withUser, "attrs.user_name") && !model.isPrimaryField(withUser, "host_code"));
+  const hiddenUser = { ...COMPUTER, fields: [{ key: "user_name", label: "ชื่อผู้ใช้", type: "text", secret: false, order: 0, hidden: true }] };
+  assert.equal(model.userFieldName(hiddenUser), "host_code", "ช่องที่ซ่อนไม่นับ");
+  assert.equal(model.CORE_FIELDS.find((field) => field.key === "model").label, "ยี่ห้อ / รุ่น");
+  // เปิดรายละเอียดเพิ่มเติมเมื่อช่องที่พับมีค่า (แก้ของเดิม) · ช่องหลักอย่างเดียวไม่นับ
+  assert.equal(model.extraFieldsHaveValues(COMPUTER, model.emptyFormValues(COMPUTER)), false);
+  const main = model.emptyFormValues(COMPUTER);
+  Object.assign(main.core, { reg_no: "COM-1", name: "x", model: "Dell", host_code: "COM2" });
+  assert.equal(model.extraFieldsHaveValues(COMPUTER, main), false);
+  const place = structuredClone(main); place.core.place = "ออฟฟิศ";
+  assert.equal(model.extraFieldsHaveValues(COMPUTER, place), true);
+  const cpu = structuredClone(main); cpu.attrs.cpu = "i5";
+  assert.equal(model.extraFieldsHaveValues(COMPUTER, cpu), true);
+  assert.equal(model.extraFieldsHaveValues(COMPUTER, model.formValuesFromAsset(ASSET, COMPUTER)), true);
+  assert.equal(model.extraFieldsHaveValues(COMPUTER, null), false);
+  assert.equal(model.errorsInExtraFields(COMPUTER, [{ field: "reg_no" }, { field: "status" }]), false);
+  assert.equal(model.errorsInExtraFields(COMPUTER, [{ field: "reg_no" }, { field: "price" }]), true);
+  assert.equal(model.errorsInExtraFields(COMPUTER, [{ field: "attrs.cpu" }]), true);
+});
+
 test("changing the type inside the add form carries over only typed values whose field exists in the new type", () => {
   const carried = { core: { reg_no: "X1", device_code: "COM9", name: "ชื่อ", model: "", status: "spare" }, attrs: { cpu: "i7", ram_gb: "", kind: "PC" } };
   const next = model.carryOver(MOUSE, carried);

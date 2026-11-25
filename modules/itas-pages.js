@@ -221,16 +221,33 @@
     return `<div class="field itas-wide" data-field="type_code"><label for="itas-f-type_code">ชนิดอุปกรณ์ ${REQUIRED}</label><select class="select" id="itas-f-type_code" name="type_code">${used.map(option).join("")}${empty.length ? `<optgroup label="ชนิดอื่นๆ (ยังไม่มีรายการ)">${empty.map(option).join("")}</optgroup>` : ""}</select></div>`;
   }
   // mode = "add" | "edit" · type = นิยามชนิด · values = { core, attrs } (ข้อความ) · asset = แถวเดิม (edit) · types = ทุกชนิด (ใช้เลือกชนิดในฟอร์มเพิ่ม)
-  function assetForm({ mode = "add", type, values, asset = null, vaultStatus = "locked", types = null }) {
+  // ช่องหลัก 4 อย่างที่เจ้าของกำหนด (รหัส ชื่อ ยี่ห้อ/รุ่น ผู้ใช้ + สถานะ) เห็นเสมอ · ช่องที่เหลือพับไว้ใต้ "รายละเอียดเพิ่มเติม" (openMore = เปิดอยู่)
+  // ช่องลับอยู่นอกส่วนที่พับ เหมือนเดิม
+  const attrFieldOf = (field) => ({ ...field, max: field.type === "text" ? (field.max ?? 200) : field.max });
+  function assetForm({ mode = "add", type, values, asset = null, vaultStatus = "locked", types = null, openMore = false }) {
     const edit = mode === "edit";
+    const coreList = model.coreFieldsOf(type);
+    const attrList = model.plainFields(type);
+    const blockOf = (name) => {
+      if (name.startsWith("attrs.")) {
+        const field = attrList.find((item) => `attrs.${item.key}` === name);
+        return field ? fieldBlock(attrFieldOf(field), values.attrs[field.key] ?? "", name) : "";
+      }
+      const field = coreList.find((item) => item.key === name);
+      if (!field) return "";
+      const label = model.PRIMARY_LABEL_OVERRIDES[name];
+      return fieldBlock(label ? { ...field, label } : field, values.core[name] ?? "", name);
+    };
+    const primary = `<fieldset class="itas-group itas-primary"><legend>ข้อมูลหลัก</legend><div class="itas-grid">${model.primaryFieldNames(type).map(blockOf).join("")}</div></fieldset>`;
     const groups = model.GROUP_ORDER.map((groupKey) => {
-      const fields = model.coreFieldsOf(type).filter((field) => field.group === groupKey);
-      const extras = groupKey === "identity" ? model.plainFields(type) : [];
+      const fields = coreList.filter((field) => field.group === groupKey && !model.isPrimaryField(type, field.key));
+      const extras = groupKey === "identity" ? attrList.filter((field) => !model.isPrimaryField(type, `attrs.${field.key}`)) : [];
       if (!fields.length && !extras.length) return "";
       const core = fields.map((field) => fieldBlock(field, values.core[field.key] ?? "", field.key)).join("");
-      const typed = extras.map((field) => fieldBlock({ ...field, max: field.type === "text" ? (field.max ?? 200) : field.max }, values.attrs[field.key] ?? "", `attrs.${field.key}`)).join("");
+      const typed = extras.map((field) => fieldBlock(attrFieldOf(field), values.attrs[field.key] ?? "", `attrs.${field.key}`)).join("");
       return `<fieldset class="itas-group"><legend>${esc(model.GROUP_LABELS[groupKey])}</legend><div class="itas-grid">${core}${typed ? `<h3 class="itas-subhead itas-wide">ข้อมูลเฉพาะ${esc(type.name)}</h3>${typed}` : ""}</div></fieldset>`;
     }).join("");
+    const more = `<details class="itas-more" id="itas-more"${openMore ? " open" : ""}><summary>รายละเอียดเพิ่มเติม <span class="muted small">(Serial สถานที่ วันที่ ราคา ประกัน หมายเหตุ ฯลฯ)</span></summary>${groups}</details>`;
     const title = edit ? `แก้ไข ${esc(asset?.reg_no || asset?.device_code || asset?.name || "อุปกรณ์")}` : "เพิ่มอุปกรณ์";
     const typeBlock = edit ? `<p class="muted small itas-type-line">ชนิด: <strong>${esc(type.name)}</strong></p>` : types ? `<div class="itas-grid">${typeSelect(types, type.code)}</div>` : "";
     return `<section class="card itas-form-card" id="itas-form-card" aria-labelledby="itas-form-title">
@@ -238,7 +255,8 @@
         <div id="itas-form-message" role="status"></div>
         <form id="itas-form" novalidate autocomplete="off">
           ${typeBlock}
-          ${groups}
+          ${primary}
+          ${more}
           <div id="itas-secrets-host">${secretsSection({ fields: model.secretFields(type), asset, vaultStatus })}</div>
           <div class="form-actions"><button type="button" class="btn secondary" id="itas-form-cancel">${edit ? "ปิด" : "ยกเลิก"}</button><button type="submit" class="btn is-primary">${edit ? "บันทึกการแก้ไข" : "เพิ่มอุปกรณ์"}</button></div>
         </form>

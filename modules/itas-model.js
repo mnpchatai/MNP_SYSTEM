@@ -92,7 +92,7 @@
     { key: "reg_no", label: "เลขทะเบียน", type: "text", max: 50, code: true, group: "identity" },
     { key: "device_code", label: "รหัสอุปกรณ์", type: "text", max: 50, code: true, group: "identity", needsDeviceCode: true },
     { key: "name", label: "ชื่อ", type: "text", max: 200, group: "identity" },
-    { key: "model", label: "รุ่น", type: "text", max: 200, group: "identity" },
+    { key: "model", label: "ยี่ห้อ / รุ่น", type: "text", max: 200, group: "identity" },
     { key: "serial", label: "Serial", type: "text", max: 200, group: "identity" },
     { key: "status", label: "สถานะ", type: "status", group: "identity" },
     { key: "host_code", label: "ติดตั้งที่ (Used by)", type: "text", max: 50, code: true, group: "place", hint: "รหัสเครื่องที่อุปกรณ์นี้ติดตั้งอยู่ เช่น COM12" },
@@ -145,6 +145,26 @@
     for (const field of plainFields(type)) values.attrs[field.key] = fieldText(field, asset?.attrs?.[field.key]);
     return values;
   }
+
+  /* ---------- ช่องหลักของฟอร์ม (เห็นเสมอ) กับช่องที่พับไว้ใต้ "รายละเอียดเพิ่มเติม" ---------- */
+  // เจ้าของกำหนด: รหัส ชื่อ ยี่ห้อ/รุ่น ผู้ใช้ (+ ชนิด และสถานะ) · "รหัส" = เลขทะเบียน + รหัสอุปกรณ์ (ถ้าชนิดนั้นมี) · "ยี่ห้อ/รุ่น" = ช่องรุ่น (ฐานข้อมูลไม่มีช่องยี่ห้อแยก)
+  // "ผู้ใช้" = ช่อง user_name ของชนิด (เครื่องคอมพิวเตอร์) ถ้ามี ไม่มีก็ใช้ "ติดตั้งที่" (host_code) · ชื่อช่องแบบเดียวกับ validateAsset: คีย์ช่องกลาง หรือ "attrs.<key>"
+  const userFieldName = (type) => (plainFields(type).some((field) => field.key === USER_ATTR_KEY) ? `attrs.${USER_ATTR_KEY}` : "host_code");
+  function primaryFieldNames(type) {
+    return ["reg_no", ...(type?.has_device_code ? ["device_code"] : []), "name", "model", userFieldName(type), "status"];
+  }
+  const isPrimaryField = (type, name) => primaryFieldNames(type).includes(name);
+  // ป้ายชื่อของช่องหลักที่เปลี่ยนจากป้ายปกติ (เฉพาะในฟอร์ม): "ติดตั้งที่" ที่ทำหน้าที่เป็น "ผู้ใช้"
+  const PRIMARY_LABEL_OVERRIDES = Object.freeze({ host_code: "ผู้ใช้ / ติดตั้งที่ (Used by)" });
+  // ช่องที่ไม่ใช่ช่องหลักมีค่าอยู่หรือไม่ (ใช้ตัดสินว่าจะเปิด "รายละเอียดเพิ่มเติม" ให้เองตอนแก้/คัดลอก) · values = { core, attrs } (บางส่วนก็ได้)
+  function extraFieldsHaveValues(type, values) {
+    const filled = (value) => textOf(value) !== "";
+    for (const field of coreFieldsOf(type)) if (!isPrimaryField(type, field.key) && filled(values?.core?.[field.key])) return true;
+    for (const field of plainFields(type)) if (!isPrimaryField(type, `attrs.${field.key}`) && filled(values?.attrs?.[field.key])) return true;
+    return false;
+  }
+  // มีข้อผิดพลาดตรวจค่าในช่องที่พับอยู่หรือไม่ (ต้องเปิดให้เห็นก่อนแสดงกรอบแดง)
+  const errorsInExtraFields = (type, errors) => (Array.isArray(errors) ? errors : []).some((error) => !isPrimaryField(type, error.field));
 
   // เปลี่ยนชนิดในฟอร์มเพิ่ม: ยกค่าที่พิมพ์ไว้ (ไม่ว่าง) ไปให้ช่องที่มีชื่อเดียวกันในชนิดใหม่ · คืน { core, attrs } เฉพาะช่องที่จะตั้ง (ไม่ยกช่องลับ ช่องลับไม่เคยอยู่ใน values)
   function carryOver(type, carried) {
@@ -466,7 +486,7 @@
     STATUSES, CORE_FIELDS, GROUP_LABELS, GROUP_ORDER, IDENTITY_KEYS,
     assetsUrl, readView, isUuid, statusLabel, statusBadgeClass,
     formatDate, formatDateTime, parseDateInput, dateInputText, isRealDate,
-    typeFields, plainFields, secretFields, coreFieldsOf, normalizeCode, emptyFormValues, formValuesFromAsset, carryOver, parseField, validateAsset, buildSavePayload, payloadIsEmpty,
+    typeFields, plainFields, secretFields, coreFieldsOf, normalizeCode, emptyFormValues, formValuesFromAsset, carryOver, userFieldName, primaryFieldNames, isPrimaryField, PRIMARY_LABEL_OVERRIDES, extraFieldsHaveValues, errorsInExtraFields, parseField, validateAsset, buildSavePayload, payloadIsEmpty,
     tableColumns, allColumns, typeChipGroups, TYPE_ALL_LABEL, USER_ATTR_KEY, userValueOf, cellValue, cellText, formatCell, filterAssets, sortAssets, countText,
     labelOfKey, logChanges, historyView, passwordStrength,
     describeError, isAlreadyExists, purgeSummary,

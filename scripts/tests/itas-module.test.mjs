@@ -1054,6 +1054,25 @@ test("changing the type with a typed secret asks first; declining keeps the old 
   assert.match(w.hosts["itas-form-area"], /<option value="COMPUTER" selected>/);
 });
 
+test("the folded 'more details' opens by itself: when editing a row that has values in it, and when validation fails in a folded field (never on a clean add)", async () => {
+  const w = await world(MULTI);
+  await w.render();
+  await w.click(w.button("itas-add"));
+  assert.doesNotMatch(w.hosts["itas-form-area"], /<details class="itas-more" id="itas-more" open>/, "เพิ่มใหม่ = พับ");
+  await w.click({ closest: () => ({ dataset: { itasRow: ASSET_ID }, id: "" }), dataset: { itasRow: ASSET_ID }, id: "" });
+  assert.match(w.hosts["itas-form-area"], /<details class="itas-more" id="itas-more" open>/, "ASSET มี CPU ในช่องที่พับ = เปิดให้");
+  await w.click({ closest: () => ({ dataset: { itasRow: MOUSE_ID }, id: "" }), dataset: { itasRow: MOUSE_ID }, id: "" });
+  assert.match(w.hosts["itas-form-area"], /<details class="itas-more" id="itas-more" open>/, "เมาส์มี Serial ซึ่งอยู่ในช่องที่พับ = เปิดให้");
+  // กรอกราคาผิดในช่องที่พับ: เปิดรายละเอียดก่อนแสดงกรอบแดง และไม่ส่งอะไรขึ้นฐานข้อมูล
+  const more = { open: false };
+  const form = assetForm({ values: { reg_no: "COM-5", price: "abc" } });
+  form.querySelector = (selector) => (selector === "#itas-more" ? more : null);
+  w.forms.current = form;
+  await w.submit(form);
+  assert.equal(more.open, true);
+  assert.ok(!w.calls.rpc.some((call) => call.name === "app_itas_save_asset"));
+});
+
 test("editing a row from the 'all' view uses the row's own type; changing a chip does not close or ask about an open form", async () => {
   const w = await world(MULTI);
   await w.render();
