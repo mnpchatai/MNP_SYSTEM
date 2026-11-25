@@ -440,7 +440,7 @@ test("settings: read-only IT team with a pointer to the work order module, plus 
 
 test("the purge button and the version tag", () => {
   assert.match(pages.purgeRow(), /id="itrp-purge"[^>]*>ล้างข้อมูลใบแจ้งซ่อมทดสอบ</);
-  assert.match(pages.page("<p>x</p>"), /<p class="itrp-version no-print" title="[^"]*1.02[^"]*">V1.02<\/p>/);
+  assert.match(pages.page("<p>x</p>"), /<p class="itrp-version no-print" title="[^"]*1.03[^"]*">V1.03<\/p>/);
   assert.match(pages.errorCard("พัง <b>"), /พัง &lt;b&gt;/);
   assert.doesNotMatch(pages.errorCard("x", { retry: false }), /itrp-retry/);
 });

@@ -69,6 +69,8 @@ function world({ role = ROLE_EMP, handlers = {}, draft = null, sandbox = false, 
     "#itrp-hist-panel": () => host("#itrp-hist-panel"),
     "#itrp-hist-forms": () => host("#itrp-hist-forms"),
     "#itrp-device-codes": () => host("#itrp-device-codes"),
+    "#itrp-partchg-apply": () => host("#itrp-partchg-apply", { hidden: true }),
+    "#itrp-partchg-history": () => host("#itrp-partchg-history", { hidden: true }),
     "#itrp-hist-search": () => el({ value: "" }),
   };
   const visible = () => painted + Object.values(hosts).join("");
@@ -268,7 +270,7 @@ const ROW = (id, status, extra = {}) => ({ id, doc_no: `IT01-26/${id}`, status, 
 /* ---------- ลงทะเบียนการ์ดและตัวเลขบนการ์ด ---------- */
 test("the module announces itself for the IT SUPPORT card with its own version", async () => {
   const w = world();
-  assert.equal(w.context.window.MNP_ITRP.version, "1.02");
+  assert.equal(w.context.window.MNP_ITRP.version, "1.03");
   assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_COMPUTER_REPAIR, w.context.window.MNP_ITRP);
   assert.equal(typeof w.context.window.MNP_ITRP.loadCardSummary, "function");
   assert.equal(typeof w.context.window.MNP_ITRP.unsavedCount, "function");
@@ -1397,4 +1399,254 @@ test("a database that has not been updated yet gives a readable message instead 
   fillComplete(complete);
   await complete.submit("#itrp-complete-form");
   assert.match(complete.elements["#itrp-complete-message"].innerHTML, /ฐานข้อมูลยังไม่ได้อัปเดตสำหรับใบแจ้งซ่อม/);
+});
+
+/* ---------- เปลี่ยน / ย้ายชิ้นส่วน (หน้ารายละเอียดใบ) ---------- */
+const pcPart = (id, type, regNo, extra = {}) => ({ id, type_code: type, type_name: type, reg_no: regNo, device_code: null, name: `${type} ${regNo}`, model: null, serial: null, status: "in_use", host_code: "PC-001", slot: null, place: null, ...extra });
+const PC_CONTEXT = (overrides = {}) => ({
+  request: { id: ID, doc_no: "IT01-26/050", status: "in_progress", is_test: false, asset_code: "PC-001", device_name: "Dell" },
+  can_apply: true, blocked_reason: null, max_changes: 20, result_statuses: ["broken", "spare", "retired"],
+  hosts: [{ host_code: "PC-001", source: "request", device: null, parts: [pcPart("p1", "RAM", "RAM-001", { slot: "DIMM1" }), pcPart("p2", "SSD", "SSD-001", { status: "broken" })] }],
+  spares: [{ type_code: "RAM", type_name: "RAM", items: [pcPart("s1", "RAM", "RAM-009", { status: "spare", host_code: null })] }, { type_code: "SSD", type_name: "SSD", items: [pcPart("s3", "SSD", "SSD-009", { status: "spare", host_code: null })] }],
+  move_targets: [{ device_code: "PC-001", name: "Dell", type_code: "COMPUTER" }, { device_code: "PC-002", name: "HP", type_code: "COMPUTER" }],
+  ...overrides,
+});
+const PC_ITEM = (overrides = {}) => ({ id: 1, line_no: 1, action: "replace", host_code: "PC-001", to_host_code: null, asset: { type_code: "RAM", type_name: "RAM", reg_no: "RAM-001", name: "RAM RAM-001" }, new_asset: { type_code: "RAM", type_name: "RAM", reg_no: "RAM-009", name: "RAM RAM-009" }, result_status: "broken", slot: "DIMM1", note: null, actor_employee_no: "IT3462", actor_full_name: "สุริยา", created_at: "2026-11-25T03:00:00Z", ...overrides });
+function pcWorld({ context = () => PC_CONTEXT(), items = () => ({ request_id: ID, doc_no: "IT01-26/050", items: [] }), apply = (args) => ({ request_id: ID, doc_no: "IT01-26/050", batch_id: "b1", applied: args.p_changes.length, changes: [] }), handlers = {}, ...options } = {}) {
+  return world({ role: ROLE_IT, handlers: { app_itrp_get_detail: IT_DETAIL, app_itrp_part_changes_context: context, app_itrp_get_part_changes: items, app_itrp_apply_part_changes: apply, ...handlers }, ...options });
+}
+const pcHost = (w) => w.context.document.querySelector("#itrp-partchg-apply");
+const pcHistory = (w) => w.context.document.querySelector("#itrp-partchg-history");
+async function pcClick(w, act, data = {}) {
+  const button = { dataset: { pcAct: act, ...data } };
+  await pcHost(w).listeners.click[0]({ target: { closest: (selector) => (selector === "[data-pc-act]" ? button : null) } });
+  await flush();
+}
+// ส่งฟอร์มเลือกรายละเอียด (ค่าที่ผู้ใช้เลือก) คืนข้อความที่ฟอร์มแสดง
+async function pcSubmit(w, values = {}) {
+  const message = el();
+  const controls = Object.fromEntries(Object.entries(values).map(([name, value]) => [name, { value }]));
+  const form = { querySelector: (selector) => (selector.includes("data-pc-editor-message") ? message : controls[/name="(\w+)"/.exec(selector)?.[1]] ?? null) };
+  let prevented = false;
+  await pcHost(w).listeners.submit[0]({ target: { closest: (selector) => (selector === "[data-pc-editor]" ? form : null) }, preventDefault() { prevented = true; } });
+  await flush();
+  assert.equal(prevented, true, "the editor form never navigates");
+  return message.innerHTML;
+}
+const toastTexts = (w) => w.calls.toasts.map((toast) => toast.message);
+
+test("an IT admin sees the part change card with the machines of the request, and the history place stays hidden while empty", async () => {
+  const w = pcWorld();
+  await w.open(`view=order&id=${ID}`);
+  assert.deepEqual(w.last("app_itrp_part_changes_context").args, { p_request_id: ID });
+  assert.deepEqual(w.last("app_itrp_get_part_changes").args, { p_request_id: ID });
+  assert.equal(pcHost(w).hidden, false);
+  assert.match(pcHost(w).innerHTML, /data-host="PC-001"/);
+  assert.match(pcHost(w).innerHTML, /data-pc-act="replace" data-pc-host="PC-001" data-pc-asset="p1"/);
+  assert.equal(pcHistory(w).hidden, true);
+  assert.equal(w.calls.toasts.length, 0);
+});
+
+test("a requester never calls the context RPC but reads the saved history of the request", async () => {
+  const w = world({ role: ROLE_EMP, handlers: { app_itrp_get_detail: () => DETAIL({ status: "it_closed" }), app_itrp_get_part_changes: () => ({ items: [PC_ITEM(), PC_ITEM({ id: 2, action: "install", new_asset: null, result_status: null })] }) } });
+  await w.open(`view=order&id=${ID}`);
+  assert.ok(!w.names().includes("app_itrp_part_changes_context"));
+  assert.equal(pcHost(w).hidden, true);
+  assert.equal(pcHistory(w).hidden, false);
+  assert.match(pcHistory(w).innerHTML, /ประวัติการเปลี่ยน \/ ย้ายชิ้นส่วน <span class="detail-section-count">2<\/span>/);
+  assert.match(pcHistory(w).innerHTML, /เปลี่ยน RAM RAM-001/);
+});
+
+test("the section hides quietly when the RPCs are missing or the database says no permission, and the request still draws", async () => {
+  const missing = Object.assign(new Error("Could not find the function"), { code: "PGRST202" });
+  const none = pcWorld({ context: () => { throw missing; }, items: () => { throw missing; } });
+  await none.open(`view=order&id=${ID}`);
+  assert.equal(pcHost(none).hidden, true);
+  assert.equal(pcHistory(none).hidden, true);
+  assert.match(none.screen, /ข้อมูลใบแจ้งซ่อม/);
+  assert.equal(none.calls.toasts.length, 0);
+  const denied = pcWorld({ context: () => { throw Object.assign(new Error("เฉพาะผู้ดูแลงาน IT เท่านั้นที่ใช้ทะเบียนอุปกรณ์ได้"), { code: "42501" }); } });
+  await denied.open(`view=order&id=${ID}`);
+  assert.equal(pcHost(denied).hidden, true);
+  assert.equal(denied.calls.toasts.length, 0);
+  assert.doesNotMatch(denied.screen, /เฉพาะผู้ดูแลงาน IT เท่านั้นที่ใช้ทะเบียน/, "no error text is shown");
+  const garbage = pcWorld({ context: () => "not an object" });
+  await garbage.open(`view=order&id=${ID}`);
+  assert.equal(pcHost(garbage).hidden, true);
+});
+
+test("a blocked request shows the reason and offers no buttons", async () => {
+  const w = pcWorld({ context: () => PC_CONTEXT({ can_apply: false, blocked_reason: "ใบนี้ยังไม่มีรหัสเครื่อง กรุณาระบุเครื่องที่ซ่อมตอนส่งงานก่อน" }) });
+  await w.open(`view=order&id=${ID}`);
+  assert.equal(pcHost(w).hidden, false);
+  assert.match(pcHost(w).innerHTML, /ใบนี้ยังไม่มีรหัสเครื่อง/);
+  assert.doesNotMatch(pcHost(w).innerHTML, /data-pc-act=/);
+});
+
+test("replace: choose, review the summary, confirm, and one RPC call saves the whole batch; then context and history reload", async () => {
+  let context = PC_CONTEXT();
+  const w = pcWorld({ context: () => context });
+  await w.open(`view=order&id=${ID}`);
+  await pcClick(w, "replace", { pcHost: "PC-001", pcAsset: "p1" });
+  assert.match(pcHost(w).innerHTML, /id="itrp-partchg-editor"/);
+  assert.equal(await pcSubmit(w, { new_asset_id: "s1", result_status: "broken", slot: "", note: " เสียบไม่แน่น " }), "");
+  assert.doesNotMatch(pcHost(w).innerHTML, /id="itrp-partchg-editor"/, "the editor closes once the row is added");
+  assert.match(pcHost(w).innerHTML, /รายการที่เลือก <span class="detail-section-count">1\/20/);
+  assert.match(pcHost(w).innerHTML, /เปลี่ยน RAM-001 · RAM RAM-001 เป็น RAM-009/);
+  assert.equal(w.context.window.MNP_ITRP.unsavedCount(), 1, "a chosen but unsaved row is unsaved work");
+  assert.ok(!w.names().includes("app_itrp_apply_part_changes"), "nothing is sent before the save button");
+  context = PC_CONTEXT({ hosts: [{ host_code: "PC-001", source: "request", device: null, parts: [pcPart("s1", "RAM", "RAM-009", { slot: "DIMM1" }), pcPart("p2", "SSD", "SSD-001", { status: "broken" })] }], spares: [] });
+  await pcClick(w, "save");
+  assert.equal(w.calls.confirms.at(-1).title, "บันทึกการเปลี่ยนชิ้นส่วน 1 รายการ?");
+  assert.deepEqual(w.last("app_itrp_apply_part_changes").args, { p_request_id: ID, p_changes: [{ action: "replace", host_code: "PC-001", asset_id: "p1", new_asset_id: "s1", result_status: "broken", note: "เสียบไม่แน่น" }] });
+  assert.ok(toastTexts(w).includes("บันทึกการเปลี่ยนชิ้นส่วนแล้ว 1 รายการ"));
+  assert.equal(w.names().filter((name) => name === "app_itrp_part_changes_context").length, 2, "context is reloaded after saving");
+  assert.equal(w.names().filter((name) => name === "app_itrp_get_part_changes").length, 2, "history is reloaded after saving");
+  assert.doesNotMatch(pcHost(w).innerHTML, /data-pc-act="save"/);
+  assert.match(pcHost(w).innerHTML, /RAM-009/);
+  assert.equal(w.context.window.MNP_ITRP.unsavedCount(), 0);
+  assert.equal(w.calls.renderRoutes, 0, "the whole page is not reloaded");
+});
+
+test("the save button asks first, sends nothing when declined, and a double click sends only one call", async () => {
+  const w = pcWorld();
+  await w.open(`view=order&id=${ID}`);
+  await pcClick(w, "remove", { pcHost: "PC-001", pcAsset: "p2" });
+  await pcSubmit(w, { result_status: "retired", note: "" });
+  w.answers.confirm = false;
+  await pcClick(w, "save");
+  assert.ok(!w.names().includes("app_itrp_apply_part_changes"));
+  assert.match(pcHost(w).innerHTML, /data-pc-act="save"/, "the chosen row stays after declining");
+  w.answers.confirm = true;
+  await Promise.all([pcClick(w, "save"), pcClick(w, "save")]);
+  assert.equal(w.names().filter((name) => name === "app_itrp_apply_part_changes").length, 1);
+  assert.deepEqual(w.last("app_itrp_apply_part_changes").args.p_changes, [{ action: "remove", host_code: "PC-001", asset_id: "p2", result_status: "retired" }]);
+});
+
+test("a wrong choice is explained inside the editor and nothing is added", async () => {
+  const w = pcWorld();
+  await w.open(`view=order&id=${ID}`);
+  await pcClick(w, "replace", { pcHost: "PC-001", pcAsset: "p1" });
+  assert.match(await pcSubmit(w, { new_asset_id: "", result_status: "broken" }), /กรุณาเลือกชิ้นสำรองที่จะใส่แทน/);
+  assert.match(await pcSubmit(w, { new_asset_id: "s3", result_status: "broken" }), /ชนิดไม่ตรงกัน/);
+  assert.match(pcHost(w).innerHTML, /id="itrp-partchg-editor"/, "the editor stays open so the user can fix it");
+  assert.doesNotMatch(pcHost(w).innerHTML, /รายการที่เลือก/);
+});
+
+test("move accepts a typed machine code in any letter case and install takes a spare chosen from the list", async () => {
+  const w = pcWorld();
+  await w.open(`view=order&id=${ID}`);
+  await pcClick(w, "move", { pcHost: "PC-001", pcAsset: "p1" });
+  assert.equal(await pcSubmit(w, { to_host_code: " pc-002 ", slot: "", note: "" }), "");
+  await pcClick(w, "install", { pcHost: "PC-001" });
+  assert.match(pcHost(w).innerHTML, /name="asset_id"/);
+  assert.equal(await pcSubmit(w, { asset_id: "s3", slot: "M.2", note: "" }), "");
+  await pcClick(w, "save");
+  assert.deepEqual(w.last("app_itrp_apply_part_changes").args.p_changes, [
+    { action: "move", host_code: "PC-001", asset_id: "p1", to_host_code: "PC-002" },
+    { action: "install", host_code: "PC-001", asset_id: "s3", slot: "M.2" },
+  ]);
+});
+
+test("cancelling the editor and removing a chosen row work before saving", async () => {
+  const w = pcWorld();
+  await w.open(`view=order&id=${ID}`);
+  await pcClick(w, "remove", { pcHost: "PC-001", pcAsset: "p2" });
+  await pcClick(w, "editor-cancel");
+  assert.doesNotMatch(pcHost(w).innerHTML, /id="itrp-partchg-editor"/);
+  await pcClick(w, "remove", { pcHost: "PC-001", pcAsset: "p2" });
+  await pcSubmit(w, { result_status: "broken", note: "" });
+  assert.equal(w.context.window.MNP_ITRP.unsavedCount(), 1);
+  await pcClick(w, "remove-row", { pcIndex: "0" });
+  assert.doesNotMatch(pcHost(w).innerHTML, /data-pc-act="save"/);
+  assert.equal(w.context.window.MNP_ITRP.unsavedCount(), 0);
+  assert.ok(!w.names().includes("app_itrp_apply_part_changes"));
+});
+
+test("a database refusal keeps the rows, shows the Thai message with the failing row highlighted, and reloads the register", async () => {
+  const w = pcWorld();
+  await w.open(`view=order&id=${ID}`);
+  await pcClick(w, "remove", { pcHost: "PC-001", pcAsset: "p2" });
+  await pcSubmit(w, { result_status: "broken", note: "" });
+  await pcClick(w, "move", { pcHost: "PC-001", pcAsset: "p1" });
+  await pcSubmit(w, { to_host_code: "PC-002" });
+  w.rpcFail.set("app_itrp_apply_part_changes", Object.assign(new Error("แถวที่ 2: ไม่ได้ติดตั้งที่เครื่อง PC-001 ในทะเบียนแล้ว"), { code: "23514" }));
+  await pcClick(w, "save");
+  const html = pcHost(w).innerHTML;
+  assert.match(html, /แถวที่ 2: ไม่ได้ติดตั้งที่เครื่อง PC-001 ในทะเบียนแล้ว/);
+  assert.match(html, /itrp-partchg-pending-row is-error" data-pc-line="2"/);
+  assert.doesNotMatch(html, /is-error" data-pc-line="1"/);
+  assert.match(html, /บันทึกการเปลี่ยนชิ้นส่วน \(2 รายการ\)/, "both rows are still there because the register is unchanged");
+  assert.equal(w.names().filter((name) => name === "app_itrp_part_changes_context").length, 2);
+  assert.equal(w.calls.toasts.length, 0, "no success toast");
+});
+
+test("if the register changed meanwhile, rows that no longer fit are dropped and the user is told", async () => {
+  let context = PC_CONTEXT();
+  const w = pcWorld({ context: () => context });
+  await w.open(`view=order&id=${ID}`);
+  await pcClick(w, "remove", { pcHost: "PC-001", pcAsset: "p2" });
+  await pcSubmit(w, { result_status: "broken", note: "" });
+  await pcClick(w, "remove", { pcHost: "PC-001", pcAsset: "p1" });
+  await pcSubmit(w, { result_status: "spare", note: "" });
+  context = PC_CONTEXT({ hosts: [{ host_code: "PC-001", source: "request", device: null, parts: [pcPart("p2", "SSD", "SSD-001", { status: "broken" })] }] }); // p1 ถูกคนอื่นถอดไปแล้ว
+  w.rpcFail.set("app_itrp_apply_part_changes", Object.assign(new Error("แถวที่ 2: RAM-001 ไม่ได้ติดตั้งที่เครื่อง PC-001 ในทะเบียนแล้ว"), { code: "23514" }));
+  await pcClick(w, "save");
+  const html = pcHost(w).innerHTML;
+  assert.match(html, /นำรายการที่ใช้ไม่ได้ออก 1 รายการ/);
+  assert.match(html, /บันทึกการเปลี่ยนชิ้นส่วน \(1 รายการ\)/);
+  assert.doesNotMatch(html, /is-error/);
+});
+
+test("an unknown result (network lost) warns to check before pressing again, and the form stays usable", async () => {
+  const w = pcWorld();
+  await w.open(`view=order&id=${ID}`);
+  await pcClick(w, "remove", { pcHost: "PC-001", pcAsset: "p2" });
+  await pcSubmit(w, { result_status: "broken", note: "" });
+  w.rpcFail.set("app_itrp_apply_part_changes", Object.assign(new Error("Failed to fetch"), { code: "" }));
+  await pcClick(w, "save");
+  assert.match(pcHost(w).innerHTML, /ผลไม่แน่ชัด กรุณาตรวจรายการก่อนกดซ้ำ/);
+  assert.doesNotMatch(pcHost(w).innerHTML, /aria-busy="true"/, "the card is usable again");
+  assert.doesNotMatch(pcHost(w).innerHTML, /<button[^>]*data-pc-act="save"[^>]*disabled/);
+});
+
+test("when the part data cannot be loaded (network) a retry button is shown and works", async () => {
+  let fail = true;
+  const w = pcWorld({ context: () => { if (fail) throw Object.assign(new Error("Failed to fetch"), { code: "" }); return PC_CONTEXT(); } });
+  await w.open(`view=order&id=${ID}`);
+  assert.equal(pcHost(w).hidden, false);
+  assert.match(pcHost(w).innerHTML, /โหลดข้อมูลชิ้นส่วนไม่สำเร็จ/);
+  fail = false;
+  await pcClick(w, "reload");
+  assert.match(pcHost(w).innerHTML, /data-host="PC-001"/);
+});
+
+test("typing in the spare search only changes the options of the select", async () => {
+  const w = pcWorld();
+  await w.open(`view=order&id=${ID}`);
+  await pcClick(w, "install", { pcHost: "PC-001" });
+  const select = { dataset: { spareType: "" }, innerHTML: "" };
+  const input = { name: "spare_q", value: "ssd-009", closest: (selector) => (selector === "[data-pc-editor]" ? { querySelector: () => select } : null) };
+  pcHost(w).listeners.input[0]({ target: input });
+  assert.match(select.innerHTML, /SSD-009/);
+  assert.doesNotMatch(select.innerHTML, /RAM-009/);
+  input.value = "ไม่มีแบบนี้";
+  pcHost(w).listeners.input[0]({ target: input });
+  assert.match(select.innerHTML, /ไม่พบชิ้นสำรองที่ตรงกัน/);
+  pcHost(w).listeners.input[0]({ target: { name: "slot", value: "x", closest: () => null } });
+});
+
+test("the print page adds the part change table only when there is history, and prints as before when the RPC is unavailable", async () => {
+  const withItems = world({ role: ROLE_EMP, handlers: { app_itrp_get_detail: () => DETAIL({ status: "it_closed" }), app_itrp_get_part_changes: () => ({ items: [PC_ITEM()] }) } });
+  await withItems.open(`view=print&id=${ID}`);
+  assert.deepEqual(withItems.last("app_itrp_get_part_changes").args, { p_request_id: ID });
+  assert.match(withItems.html, /ประวัติการเปลี่ยน \/ ย้ายชิ้นส่วน/);
+  assert.match(withItems.html, /itrp-sheet-partchg/);
+  const none = world({ role: ROLE_EMP, handlers: { app_itrp_get_detail: () => DETAIL({ status: "it_closed" }), app_itrp_get_part_changes: () => ({ items: [] }) } });
+  await none.open(`view=print&id=${ID}`);
+  assert.doesNotMatch(none.html, /itrp-sheet-partchg/);
+  const broken = world({ role: ROLE_EMP, handlers: { app_itrp_get_detail: () => DETAIL({ status: "it_closed" }) } }); // ไม่มี handler = PGRST202
+  await broken.open(`view=print&id=${ID}`);
+  assert.match(broken.html, /class="itrp-sheet/);
+  assert.doesNotMatch(broken.html, /itrp-sheet-partchg/);
 });

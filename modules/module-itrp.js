@@ -455,6 +455,7 @@
       bindInfoForm("ask");
       bindInfoForm("answer");
       hydrateFiles(detail);
+      bindPartChanges({ detail, role, version, watchUnsaved });
       return true;
     };
 
@@ -837,6 +838,167 @@
     draw();
   }
 
+  /* ---------- เปลี่ยน / ย้ายชิ้นส่วน (หน้ารายละเอียดใบ) ---------- */
+  // ประวัติ (app_itrp_get_part_changes): ทุกคนที่เห็นใบ · ฟอร์มเลือก (context + apply): ผู้ดูแลงาน IT เท่านั้น
+  // role.is_it_admin เป็นแค่ตัวช่วยไม่ให้เรียกเปล่า ๆ สิทธิ์จริงตัดสินที่ฐานข้อมูล: ตอบว่าไม่มีสิทธิ์/ยังไม่มี RPC/ข้อมูลผิดรูป = ซ่อนส่วนนี้เงียบ ๆ ใบยังใช้งานได้ตามปกติ
+  // รายการที่เลือกไว้อยู่ในหน่วยความจำของหน้า (ยังไม่ส่ง) · ส่งครั้งเดียวทั้งก้อน · ผูกกับ watchUnsaved เพื่อให้ app.js ถามก่อนทิ้งข้อมูลที่เลือกค้าง
+  function bindPartChanges({ detail, role, version, watchUnsaved }) {
+    const applyHost = document.querySelector("#itrp-partchg-apply");
+    const historyHost = document.querySelector("#itrp-partchg-history");
+    if (!applyHost && !historyHost) return;
+    const live = () => version === pageVersion && location.hash === pageHash && Boolean((applyHost ?? historyHost)?.isConnected);
+    const show = (host, html) => { if (!host) return; host.innerHTML = html; host.hidden = !html; };
+    let ctx = null;
+    let rows = [];
+    let editor = null;
+    let busy = false; // ระหว่างส่ง: ปุ่มทั้งหมดถูกปิด
+    let saving = false; // กันกด "บันทึก" ซ้ำ (รวมช่วงรอกล่องยืนยัน)
+    let message = "";
+    let errorRow = null;
+    let loadFailed = false;
+
+    function draw() {
+      if (!live() || !applyHost) return;
+      if (!ctx) { show(applyHost, loadFailed ? pages.partChangesLoadFailed() : ""); return; }
+      show(applyHost, pages.partChangesCard({ ctx, rows, editor, busy, message, errorRow }));
+    }
+    async function loadHistory() {
+      const result = await attempt(rpc("app_itrp_get_part_changes", { p_request_id: detail.id }));
+      if (!live()) return;
+      show(historyHost, result ? pages.partChangesHistoryCard(model.partChangeItems(result.value)) : "");
+    }
+    // ok = ได้ข้อมูลแล้ว · hidden = ไม่มีสิทธิ์/ไม่มี RPC/ข้อมูลผิดรูป (ซ่อน) · failed = เน็ตหลุด (ให้ลองใหม่)
+    async function loadContext() {
+      try {
+        const next = model.normalizePartContext(await rpc("app_itrp_part_changes_context", { p_request_id: detail.id }));
+        if (!next) return "hidden";
+        ctx = next;
+        return "ok";
+      } catch (error) {
+        return model.describeError(error).kind === "unknown" ? "failed" : "hidden";
+      }
+    }
+    async function startContext() {
+      const status = await loadContext();
+      if (!live()) return;
+      loadFailed = status === "failed";
+      if (status !== "hidden") draw();
+    }
+
+    // บันทึกไม่สำเร็จ (ฐานข้อมูลปฏิเสธ/ผลไม่แน่ชัด): โหลดข้อมูลชิ้นส่วนใหม่ แล้วตัดรายการที่ใช้ไม่ได้แล้วออก (ทะเบียนอาจเปลี่ยนไปแล้ว)
+    async function refreshAfterFailure() {
+      if (await loadContext() === "ok") {
+        const pruned = model.pruneStalePartChanges(rows, ctx);
+        rows = pruned.rows;
+        if (pruned.dropped) {
+          errorRow = null;
+          message += `<div class="form-message" role="status">ข้อมูลชิ้นส่วนในทะเบียนเปลี่ยนไปแล้ว ระบบนำรายการที่ใช้ไม่ได้ออก ${pruned.dropped} รายการ กรุณาตรวจรายการที่เหลือก่อนบันทึกอีกครั้ง</div>`;
+        }
+      }
+      await loadHistory();
+    }
+
+    async function save() {
+      if (saving || !ctx || !rows.length) return;
+      saving = true;
+      try {
+        if (!(await confirmDialog({ title: `บันทึกการเปลี่ยนชิ้นส่วน ${rows.length} รายการ?`, message: "ระบบจะอัปเดตทะเบียนอุปกรณ์ทันที และบันทึกประวัติที่แก้หรือลบย้อนหลังไม่ได้ · ถ้ามีแถวไหนผิดจะไม่บันทึกเลยทั้งชุด", confirmLabel: "บันทึก" }))) return;
+        if (!live()) return;
+        busy = true;
+        message = "";
+        errorRow = null;
+        draw();
+        try {
+          const data = await rpc("app_itrp_apply_part_changes", { p_request_id: detail.id, p_changes: model.partChangePayload(rows) });
+          showToast(`บันทึกการเปลี่ยนชิ้นส่วนแล้ว ${Number(data?.applied) || rows.length} รายการ`);
+          rows = [];
+          editor = null;
+          // บันทึกแล้วโหลดข้อมูลชิ้นส่วนใหม่ (ทะเบียนเปลี่ยนแล้ว) · โหลดไม่ได้ = เลิกแสดงข้อมูลเก่าที่ผิดแล้ว ให้ลองโหลดใหม่
+          if (await loadContext() !== "ok") { ctx = null; loadFailed = true; }
+          await loadHistory();
+        } catch (error) {
+          const info = failure(error, { write: true });
+          errorRow = model.partChangeErrorRow(info.message);
+          message = `<div class="form-message error" role="alert">${escapeHtml(info.message)}</div>`;
+          if (info.kind !== "session") await refreshAfterFailure();
+        }
+      } finally {
+        busy = false;
+        saving = false;
+        draw();
+      }
+    }
+
+    const openEditor = (next) => {
+      editor = next;
+      message = "";
+      errorRow = null;
+      draw();
+      const form = applyHost.querySelector("#itrp-partchg-editor");
+      form?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+      applyHost.querySelector("#itrp-pc-spare-q, #itrp-pc-target, #itrp-pc-result")?.focus?.({ preventScroll: true });
+    };
+    applyHost?.addEventListener("click", (event) => {
+      const button = event.target?.closest?.("[data-pc-act]");
+      if (!button || busy || saving) return;
+      const act = button.dataset.pcAct;
+      if (act === "replace" || act === "remove" || act === "move") openEditor({ action: act, host_code: button.dataset.pcHost, asset_id: button.dataset.pcAsset });
+      else if (act === "install") openEditor({ action: "install", host_code: button.dataset.pcHost, asset_id: "" });
+      else if (act === "editor-cancel") { editor = null; draw(); }
+      else if (act === "remove-row") {
+        rows = rows.filter((_, index) => index !== Number(button.dataset.pcIndex));
+        errorRow = null;
+        message = "";
+        draw();
+      } else if (act === "save") save();
+      else if (act === "reload") { startContext(); }
+    });
+    // พิมพ์ค้นหาชิ้นสำรอง: เปลี่ยนเฉพาะรายการใน select (ไม่วาดทั้งการ์ดใหม่ เพื่อไม่ให้ช่องค้นหาเสียโฟกัส)
+    applyHost?.addEventListener("input", (event) => {
+      const input = event.target;
+      if (input?.name !== "spare_q") return;
+      const select = input.closest?.("[data-pc-editor]")?.querySelector?.("select[data-spare-type]");
+      if (!select || !ctx) return;
+      const typeCode = select.dataset.spareType || null;
+      select.innerHTML = pages.spareOptions(model.availableSpares(ctx, rows, { typeCode, query: input.value }), { grouped: !typeCode });
+    });
+    applyHost?.addEventListener("submit", (event) => {
+      const form = event.target?.closest?.("[data-pc-editor]");
+      if (!form) return;
+      event.preventDefault();
+      if (busy || saving || !editor || !ctx) return;
+      const read = (name) => form.querySelector(`[name="${name}"]`)?.value ?? "";
+      // เครื่องปลายทางพิมพ์เองได้ (ไม่สนตัวพิมพ์ใหญ่เล็ก) แล้วใช้รหัสตามทะเบียน
+      const typedTarget = read("to_host_code").trim();
+      const target = ctx.moveTargets.find((item) => item.code.toLowerCase() === typedTarget.toLowerCase());
+      const result = model.addPartChange(rows, {
+        action: editor.action, host_code: editor.host_code, asset_id: editor.action === "install" ? read("asset_id") : editor.asset_id,
+        new_asset_id: read("new_asset_id"), result_status: read("result_status"), to_host_code: target ? target.code : typedTarget, slot: read("slot"), note: read("note"),
+      }, ctx);
+      if (result.error) {
+        const slot = form.querySelector("[data-pc-editor-message]");
+        if (slot) slot.innerHTML = `<div class="form-message error" role="alert">${escapeHtml(result.error)}</div>`;
+        return;
+      }
+      rows = result.rows;
+      editor = null;
+      message = "";
+      errorRow = null;
+      draw();
+    });
+
+    // ของที่เลือกไว้ยังไม่บันทึก = ของค้าง (ระหว่างส่งแผงจัดการเอง ไม่นับ)
+    watchUnsaved(() => (applyHost?.isConnected && !busy && !saving && rows.length ? 1 : 0));
+    const jobs = [loadHistory()];
+    if (applyHost && role?.is_it_admin) jobs.push(startContext());
+    Promise.all(jobs).catch((error) => {
+      // ส่วนเสริมล้ม (ข้อมูลผิดรูปฯ) ต้องไม่ทำให้หน้าใบพัง: ซ่อนส่วนนี้แล้วรายงาน
+      window.MNP_ERROR_LOG?.report(error);
+      show(applyHost, "");
+      show(historyHost, "");
+    });
+  }
+
   /* ---------- แท็บ "ประวัติการซ่อม" (ประวัติการซ่อมเครื่อง FM02 + ทะเบียนเครื่อง) ---------- */
   // รายการเครื่องโหลดครบครั้งเดียว (≤ 2,000 แถว) ค้นกรองฝั่งหน้าเว็บ · ?code= เลือกเครื่องตั้งแต่เปิดหน้า (ลิงก์กลับจากใบพิมพ์) · อ่านประวัติของเครื่องที่เลือกไม่ได้ = แจ้งในแผงขวา ไม่ล้มทั้งหน้า
   async function loadHistoryMain(params) {
@@ -1145,8 +1307,10 @@
     } catch (error) {
       return errorPage(error, version);
     }
+    // ประวัติเปลี่ยน/ย้ายชิ้นส่วนเป็นส่วนเสริมท้ายใบ: อ่านไม่ได้ (เช่น ยังไม่มี RPC) = พิมพ์ใบตามเดิมไม่มีส่วนนี้
+    const partChanges = await attempt(rpc("app_itrp_get_part_changes", { p_request_id: id }));
     // ชื่อแท็บ = เลขที่ใบ (เป็นชื่อไฟล์เริ่มต้นเมื่อบันทึกเป็น PDF)
-    if (!paint(pages.printPage(detail), "พิมพ์ใบแจ้งซ่อม", version, detail.doc_no)) return;
+    if (!paint(pages.printPage(detail, { partChanges: partChanges ? model.partChangeItems(partChanges.value) : [] }), "พิมพ์ใบแจ้งซ่อม", version, detail.doc_no)) return;
     document.querySelector("#itrp-print-button")?.addEventListener("click", () => window.print());
   }
 

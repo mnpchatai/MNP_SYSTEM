@@ -3929,3 +3929,40 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .itas-log { padding: 8px 0; border-top: 1px solid var(--soft-line); }
 .itas-log h4 { margin: 0 0 4px; font-size: var(--text-ui); }
 .itas-log ul { margin: 0; padding-left: 18px; }
+
+/* ---------- ใบแจ้งซ่อม (itrp) V1.03: เปลี่ยน / ย้ายชิ้นส่วนในหน้ารายละเอียดใบ + ตารางท้ายใบพิมพ์ · modules/itrp-pages.js ---------- */
+.itrp-partchg-card > .muted { margin: 0 0 12px; }
+.itrp-partchg-host { margin: 0 0 18px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper); }
+.itrp-partchg-host > h3 { margin: 0 0 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: var(--text-ui); overflow-wrap: anywhere; }
+.itrp-partchg-group { margin: 0 0 10px; }
+.itrp-partchg-group > h4 { margin: 0 0 4px; font-size: var(--text-meta); color: var(--muted); }
+.itrp-partchg-parts { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.itrp-partchg-part { padding: 8px 10px; display: grid; gap: 6px; border: 1px solid var(--soft-line); border-radius: var(--radius-md); }
+.itrp-partchg-part.is-pending { opacity: .7; border-style: dashed; }
+.itrp-partchg-part-main { min-width: 0; overflow-wrap: anywhere; }
+.itrp-partchg-part-actions, .itrp-partchg-host-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.itrp-partchg-host-actions { margin-top: 6px; }
+.badge.itrp-partchg-status.is-in_use { color: var(--success-ink); background: var(--success-soft); }
+.badge.itrp-partchg-status.is-broken { color: var(--danger-ink); background: var(--danger-soft); }
+.badge.itrp-partchg-pending, .badge.itrp-partchg-source { color: var(--warning-ink); background: var(--warning-soft); }
+.badge.itrp-partchg-source { color: var(--muted); background: var(--shell); font-weight: 600; }
+.itrp-partchg-editor { margin-top: 6px; padding: 12px; display: grid; gap: 10px; border: 1px solid var(--primary); border-radius: var(--radius-md); background: var(--paper); }
+.itrp-partchg-editor h4 { margin: 0; font-size: var(--text-ui); overflow-wrap: anywhere; }
+.itrp-partchg-editor .form-actions { flex-wrap: wrap; justify-content: flex-start; }
+.itrp-partchg-editor .select { min-width: 0; width: 100%; }
+.itrp-partchg-pending-box { margin-top: 8px; padding: 12px; border: 1px solid var(--primary); border-radius: var(--radius-md); background: var(--primary-soft); }
+.itrp-partchg-pending-box > h3 { margin: 0 0 8px; font-size: var(--text-ui); }
+.itrp-partchg-pending-list { margin: 0 0 10px; padding-left: 22px; display: grid; gap: 6px; }
+.itrp-partchg-pending-row { padding-left: 4px; }
+.itrp-partchg-pending-row > .itrp-text { display: inline; margin-right: 8px; }
+.itrp-partchg-pending-row.is-error { color: var(--danger-ink); background: var(--danger-soft); border-radius: var(--radius-sm); }
+.itrp-partchg-card .form-actions { flex-wrap: wrap; justify-content: flex-start; }
+.itrp-sheet-partchg { table-layout: fixed; }
+.itrp-sheet-partchg th, .itrp-sheet-partchg td { font-size: 9.5pt; }
+.itrp-sheet-partchg th:nth-child(1) { width: 11mm; }
+.itrp-sheet-partchg th:nth-child(2) { width: 30mm; }
+.itrp-sheet-partchg th:nth-child(3) { width: 24mm; }
+.itrp-sheet-partchg th:nth-child(5) { width: 28mm; }
+@media print {
+  .itrp-sheet-partchg thead { display: table-header-group; }
+}

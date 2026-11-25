@@ -182,3 +182,5 @@ trigger บน `itrp_events` เรียก `private.office_notify` (ชุด�
 
 ## ที่ไม่ได้ทำในงานฐานข้อมูล
 หน้าเว็บ/เมนู/ใบพิมพ์/ลิงก์แจ้งเตือน (`app.js`, `modules/`, `sw.js`, `index.html`, Edge Functions) · การตั้ง `request_types.IT_REPAIR is_active=false` (ของเพื่อน)
+
+**หน้าเว็บของส่วนเปลี่ยน/ย้ายชิ้นส่วน (itrp V1.03):** การ์ด "เปลี่ยน / ย้ายชิ้นส่วน" ในหน้ารายละเอียดใบ (`modules/itrp-pages.js` `partChangesCard`, ผูกใน `modules/module-itrp.js` `bindPartChanges`) · เรียก `context` เฉพาะ `is_it_admin` (ตอบไม่มีสิทธิ์/ไม่มี RPC = ซ่อนเงียบ) · `get_part_changes` เรียกทุกคนที่เปิดใบ และตอนพิมพ์ (ตารางท้ายใบพิมพ์ เฉพาะเมื่อมีรายการ) · ตรวจซ้ำฝั่งหน้าเว็บที่ `model.checkPartChange` (ชนิดตรง ไม่ซ้ำ ≤20) ฐานข้อมูลเป็นผู้ตัดสิน
