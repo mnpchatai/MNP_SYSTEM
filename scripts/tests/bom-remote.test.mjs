@@ -1452,7 +1452,7 @@ async function pageEnv({ storage = memoryStorage(), pageStorage = memoryStorage(
     shell: (content, path, title) => `<shell path="${path}" title="${escapeHtml(title)}">${content}</shell>`,
     bindShell() {}, loadingShell() {}, renderNotFound: () => { log.notFound += 1; app.innerHTML = "<notfound></notfound>"; },
     currentRoute: () => { const raw = log.hash.replace(/^#\/?/, ""); const [path, query = ""] = raw.split("?"); return { path, params: new URLSearchParams(query) }; },
-    document: { querySelector: (selector) => hooks.nodes?.[selector] ?? node(), querySelectorAll: (selector) => (["dialog[open]", "dialog[data-rf-dialog][open]"].includes(selector) && hooks.dialogOpen?.() ? [node()] : []), body: node(), createElement: node, addEventListener: (type, fn) => hooks.onDocument?.(type, fn) },
+    document: { querySelector: (selector) => hooks.nodes?.[selector] ?? node(), querySelectorAll: (selector) => hooks.all?.(selector) ?? (["dialog[open]", "dialog[data-rf-dialog][open]"].includes(selector) && hooks.dialogOpen?.() ? [node()] : []), body: node(), createElement: node, addEventListener: (type, fn) => hooks.onDocument?.(type, fn) },
     addEventListener: (type, fn) => hooks.onWindow?.(type, fn),
     localStorage: storage, FormData: class { entries() { return []; } }, MNP_REQUEST_MODULES: {}, TextDecoder, Uint8Array, DataView,
   });
@@ -1536,6 +1536,54 @@ test("when the parent's production steps cannot follow a WIP insert in database 
   assert.equal(errors.length, 1, errors.join(" | "));
   assert.match(errors[0], /^แทรก WIP WIP-W1 ใน BOM ของ FG-W แล้ว แต่ยังไม่ได้ปรับขั้นตอนผลิตของ FG-W ให้อ้าง WIP นี้แทน P-WA/, "what was saved and what was not");
   assert.match(errors[0], /เปิดหน้าของ FG-W แล้วแก้ขั้นตอนผลิตเอง/, "what to do");
+});
+
+// บันทึกที่ฐานข้อมูลปฏิเสธต้องเห็นได้ชัด: ข้อความผิดพลาดภาษาไทยค้างอยู่ (ข้อความแจ้งของ store ไม่ทับ) ปุ่มที่กดไว้กดได้อีก และหน้าที่ไม่ได้วาดใหม่เพราะเปิด dialog อยู่ วาดใหม่เมื่อ dialog ปิด
+test("a save the database refuses surfaces a Thai error that stays, gives the pressed button back and repaints once the open dialog closes", async () => {
+  const docHandlers = {};
+  const pending = [];
+  let dialogOpen = false;
+  let errorShowing = false;
+  const button = { handlers: {}, dataset: { rfAction: "saveCustomer", rfArgs: JSON.stringify({ name: "ลูกค้าทดสอบล้ม", country: "Thailand", create: true }) }, disabled: false, addEventListener(type, handler) { this.handlers[type] = handler; }, closest: () => null };
+  const hooks = {
+    nodes: { "#toast": { classList: { contains: (name) => name === "error" && errorShowing } } },
+    all: (selector) => (selector === "[data-rf-pending]" ? pending.filter((node) => node.dataset.rfPending) : undefined),
+    dialogOpen: () => dialogOpen,
+    onDocument: (type, fn) => { (docHandlers[type] ??= []).push(fn); },
+  };
+  const env = await pageEnv({ hooks });
+  await env.store.ensureLoaded();
+  hooks.nodes[".content"] = { querySelector: () => null, querySelectorAll: (selector) => (selector === "[data-rf-action]" ? [button] : []), addEventListener() {} };
+  pending.push(button);
+  await env.render("p=dashboard");
+  const real = env.mock.client.rpc.bind(env.mock.client);
+  env.mock.client.rpc = async (name, args) => {
+    // ผู้ใช้เปิด dialog อื่นระหว่างรอคำตอบ: store ย้อนกลับโดยไม่วาดหน้าทับ
+    if (name === "app_bom_save_master") { dialogOpen = true; return { data: null, error: { code: "P0001", message: "BOM_FORBIDDEN" } }; }
+    return real(name, args);
+  };
+  const rendersBefore = env.log.renders;
+  await button.handlers.click();
+  assert.equal(button.disabled, true, "held while the save is in flight");
+  for (let i = 0; i < 6; i += 1) await new Promise((resolve) => setTimeout0(resolve));
+  env.mock.client.rpc = real;
+  const errors = env.log.toasts.filter(([, kind]) => kind === "error").map(([message]) => message);
+  assert.equal(errors.length, 1, errors.join(" | "));
+  assert.match(errors[0], /^บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้/, "the user reads the Thai reason, not a code");
+  assert.equal(button.disabled, false, "the pressed button is usable again");
+  assert.equal(env.store.data().customers.some((row) => row.name === "ลูกค้าทดสอบล้ม"), false, "the optimistic customer is gone");
+  assert.equal(env.log.renders, rendersBefore + 1, "only the optimistic redraw of the click: no redraw over the open dialog");
+  // ข้อความแจ้งของ store (ผู้อื่นบันทึก) ระหว่างที่ข้อผิดพลาดยังแสดงอยู่ ไม่ทับข้อผิดพลาด
+  errorShowing = true;
+  const other = await real("app_bom_save_master", { p_changes: { customers: { upsert: [{ name: "ลูกค้าคนอื่น", country: "Thailand", orderType: "SA", note: "" }] } }, p_base_version: env.store.version(), p_action: "saveCustomer" });
+  assert.equal(other.error, null, other.error?.message);
+  await env.store.catchUp();
+  for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setTimeout0(resolve));
+  assert.deepEqual(env.log.toasts.slice(1), [], "no note replaces the unread error");
+  // dialog ปิด: หน้าวาดใหม่จากข้อมูลที่ย้อนกลับแล้ว
+  dialogOpen = false;
+  for (const fn of docHandlers.close ?? []) fn({});
+  assert.equal(env.log.renders, rendersBefore + 2, "the page is redrawn once the dialog closes");
 });
 
 test("in the browser the module talks to the (mock) database: loading state, empty database points to the import page, no demo role picker or reset", async () => {

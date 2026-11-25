@@ -133,8 +133,11 @@
       event.returnValue = "";
     });
   }
+  // ข้อความแจ้งของ store (ผู้อื่นบันทึก) ไม่ทับข้อผิดพลาดที่ยังแสดงอยู่: ข้อผิดพลาดค้างจนผู้ใช้กดปิด แต่ข้อความแจ้งหายเองใน 3.5 วินาที ทับแล้วข้อผิดพลาดหายไปด้วย
+  const errorShowing = () => Boolean(document.querySelector?.("#toast")?.classList?.contains?.("error"));
+  const noteToast = (text) => { if (!errorShowing()) showToast(text); };
   const refreshForOthers = () => {
-    if (isEditing()) showToast("มีผู้อื่นอัปเดตข้อมูล BOM ข้อมูลล่าสุดจะแสดงเมื่อเปิดหน้านี้ใหม่");
+    if (isEditing()) noteToast("มีผู้อื่นอัปเดตข้อมูล BOM ข้อมูลล่าสุดจะแสดงเมื่อเปิดหน้านี้ใหม่");
     else renderRoute();
   };
   // หน้า RubberFlow ภาพรวม: เติมเฉพาะช่องการ์ด BOM ใหม่ (อยู่นอก dialog และนอกฟอร์มของ RubberFlow จึงไม่ทับสิ่งที่พิมพ์ค้าง) · หน้าแผนก: จำไว้วาดเมื่อ dialog ปิด
@@ -144,8 +147,9 @@
     else repaintPending = true;
   };
   // close ไม่ลอยขึ้น แต่จับได้ที่ขั้นดักของ document · ยังมี dialog อื่นเปิดอยู่ (เช่น dialog ใหม่แทนที่อันเก่า) = รอต่อ
+  // หน้า BOM ด้วย: บันทึกที่ย้อนกลับระหว่างเปิด dialog (ดู event reverted) วาดหน้าใหม่เมื่อ dialog ปิด หน้าจึงไม่ค้างผลที่ไม่ได้บันทึก
   document.addEventListener?.("close", () => {
-    if (!repaintPending || !window.MNP_FACTORY?.onDeptRoute?.() || isEditing()) return;
+    if (!repaintPending || !(onBomRoute() || window.MNP_FACTORY?.onDeptRoute?.()) || isEditing()) return;
     repaintPending = false;
     renderRoute();
   }, true);
@@ -165,9 +169,14 @@
       if (event.held) return;
       if (event.others) refreshForOthers();
       else if (event.changed && !isEditing()) renderRoute();
-    } else if (event.type === "pending") showToast("มีผู้อื่นบันทึกข้อมูล BOM ไปแล้ว ระบบจะรวมข้อมูลล่าสุดให้เมื่อบันทึกหรือเปิดหน้านี้ใหม่");
+    } else if (event.type === "pending") noteToast("มีผู้อื่นบันทึกข้อมูล BOM ไปแล้ว ระบบจะรวมข้อมูลล่าสุดให้เมื่อบันทึกหรือเปิดหน้านี้ใหม่");
     else if (event.type === "synced") refreshForOthers();
-    else if (event.type === "reverted" && isEditing()) updateSync(); // ข้อมูลย้อนกลับแล้ว และ runAction แจ้งข้อความไทยของข้อผิดพลาดให้แล้ว · ไม่วาดหน้าใหม่ทับสิ่งที่พิมพ์ค้างในฟอร์มอื่น
+    else if (event.type === "reverted" && isEditing()) {
+      // ข้อมูลย้อนกลับแล้ว และ runAction แจ้งข้อความไทยของข้อผิดพลาดให้แล้ว (และปล่อยปุ่มที่กดไว้) · ไม่วาดหน้าใหม่ทับสิ่งที่พิมพ์ค้างในฟอร์มอื่น
+      // แต่จำไว้วาดเมื่อ dialog ปิด หน้าจึงไม่ค้างผลที่แสดงไว้ก่อน (optimistic) ซึ่งไม่ได้บันทึก
+      updateSync();
+      repaintPending = true;
+    }
     // โหลดเสร็จ/โหลดไม่สำเร็จ: นอกหน้า BOM ที่เปิด dialog หรือกรอกฟอร์มค้างระหว่างรอ BOM ไม่วาดทับ (ดู deferLoadedRepaint) · หน้า BOM วาดเหมือนเดิม
     else if (event.type === "loaded" || event.type === "load-failed") {
       if (onBomRoute() || !isEditing()) renderRoute();
@@ -549,9 +558,14 @@
       after?.(result.result);
       return true;
     }
-    // โหมดฐานข้อมูล: หน้าแสดงผลทันที (optimistic) แล้วแจ้งผลเมื่อฐานข้อมูลตอบ · ถ้าไม่สำเร็จ store ย้อนกลับและวาดหน้าใหม่ให้เอง
+    // โหมดฐานข้อมูล: หน้าแสดงผลทันที (optimistic) แล้วแจ้งผลเมื่อฐานข้อมูลตอบ · ถ้าไม่สำเร็จ store ย้อนกลับและวาดหน้าใหม่ให้เอง (event reverted มาก่อนข้อความนี้ จึงไม่ลบข้อความ)
+    // ปุ่มที่กดส่งไว้ (factory-kit holdButtons) กดได้อีก: ส่วนที่ไม่ได้วาดใหม่ (ฟอร์มที่พิมพ์ค้าง เช่น ออกใบสั่งผลิตของฝ่ายขาย) ไม่ค้างปุ่มที่กดไม่ได้
     result.saving.then((outcome) => {
-      if (!outcome.ok) { showToast(errorText(outcome.error), "error"); return; }
+      if (!outcome.ok) {
+        window.MNP_FACTORY?.releasePending?.();
+        showToast(errorText(outcome.error), "error");
+        return;
+      }
       report();
       after?.(result.result);
       const notice = actions.helpers.rubberflowNotice(name, payload, outcome.rubberflow);

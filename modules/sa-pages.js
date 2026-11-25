@@ -160,7 +160,8 @@
       if (send && !(await confirmDialog({ title: "ส่งใบให้ฝ่ายวางแผน?", message: "ฝ่ายวางแผนจะคำนวณวัตถุดิบและปล่อยผลิต หลังส่งแล้วยังแก้ใบได้", confirmLabel: "ส่งให้ฝ่ายวางแผน" }))) return;
       const payload = { pi: value("pi"), customer: value("customer"), country: value("country"), orderType: value("orderType"), orderedAt: rules.fromInputDate(value("orderedAt")), whDue: rules.fromInputDate(value("whDue")), note: value("note"), lines: picked, send };
       const ok = ctx.runAction("createOrder", payload, send ? "ส่งใบ {result} ให้ฝ่ายวางแผนแล้ว" : "บันทึกร่างใบ {result} แล้ว", (id) => { if (id) location.hash = saUrl({ order: id }); });
-      if (ok) form.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+      // ระหว่างรอฐานข้อมูลตอบกดซ้ำไม่ได้ · บันทึกไม่สำเร็จ = ปุ่มกดได้อีกโดยฟอร์มยังเก็บสิ่งที่กรอกไว้ (F.holdButtons / releasePending)
+      if (ok) F.holdButtons(form.querySelectorAll("button"));
     });
   }
 

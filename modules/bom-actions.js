@@ -1248,7 +1248,8 @@
     if (order.status === "completed") fail("ใบที่เสร็จแล้วยกเลิกไม่ได้");
     if (order.status === "cancelled") fail("ใบนี้ถูกยกเลิกแล้ว");
     if (!salesOnly(user)) return cancelNow(d, order, reason, ctx);
-    if (salesCancelled(order)) fail("ฝ่ายขายยกเลิกใบนี้ไว้แล้ว รอฝ่ายวางแผนตัดสินของที่ทำค้าง");
+    // ยกเลิกกลางทางไว้แล้ว: ข้อความตามทางเลือกของฝ่ายวางแผน (ยังไม่เลือก = รอตัดสิน · ผลิตต่อ = ใบเดินต่อจนจบ ของเข้าสต็อก)
+    if (salesCancelled(order)) fail(order.salesCancelChoice === "continue" ? "ฝ่ายขายยกเลิกใบนี้ไว้แล้ว ฝ่ายวางแผนเลือกผลิตต่อจนจบส่ง WH (เข้าสต็อก)" : "ฝ่ายขายยกเลิกใบนี้ไว้แล้ว รอฝ่ายวางแผนตัดสินของที่ทำค้าง");
     const why = cancelReasonOf(reason);
     if (order.status !== "draft" && orderLocked(d, order, ctx.rfOrders)) {
       Object.assign(order, { salesCancelAt: ctx.now, salesCancelBy: user.name, salesCancelReason: why });

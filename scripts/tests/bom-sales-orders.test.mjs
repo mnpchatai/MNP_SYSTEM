@@ -183,7 +183,7 @@ test("a started sales order: sales cancels mid-way, the order takes no new work,
   assert.ok(A.helpers.salesCancelPending(order));
   const notice = A.helpers.orderRequestsOf(d, "SA-T6")[0];
   assert.deepEqual([notice.kind, notice.status, A.helpers.noticeMode(d, notice)], ["cancel", "open", "choose"]);
-  rejects(() => A.cancelOrder(d, { orderId: "SA-T6", reason: "อีกครั้ง" }, ctx("sa")), /ยกเลิกใบนี้ไว้แล้ว/);
+  rejects(() => A.cancelOrder(d, { orderId: "SA-T6", reason: "อีกครั้ง" }, ctx("sa")), /^ฝ่ายขายยกเลิกใบนี้ไว้แล้ว รอฝ่ายวางแผนตัดสินของที่ทำค้าง$/);
   rejects(() => A.updateOrderItem(d, { orderId: "SA-T6", fgCode: FG, qty: 4 }, ctx("sa")), /ฝ่ายขายยกเลิกใบนี้แล้ว/);
   rejects(() => A.issueOrderParts(d, { orderId: "SA-T6" }, ctx("planner")), /ไม่รับงานใหม่/);
   rejects(() => A.decideOrderRequest(d, { requestId: notice.id, decision: "ack" }, ctx("planner")), /เลือกผลิตต่อจนจบส่ง WH หรือหยุด/);
@@ -192,6 +192,8 @@ test("a started sales order: sales cancels mid-way, the order takes no new work,
   assert.deepEqual(go.request, [{ id: notice.id, decision: "continue" }]);
   assert.deepEqual([orderOf(d, "SA-T6").status, orderOf(d, "SA-T6").salesCancelChoice, d.audit[0].action], ["in_progress", "continue", "ฝ่ายวางแผนเลือกผลิตต่อจนจบส่ง WH"]);
   assert.equal(A.helpers.salesCancelPending(orderOf(d, "SA-T6")), false, "work resumes");
+  // ยกเลิกซ้ำหลังฝ่ายวางแผนเลือกผลิตต่อ: ข้อความบอกทางเลือกที่เลือกแล้ว ไม่ใช่ "รอตัดสิน"
+  rejects(() => A.cancelOrder(d, { orderId: "SA-T6", reason: "อีกครั้ง" }, ctx("sa")), /^ฝ่ายขายยกเลิกใบนี้ไว้แล้ว ฝ่ายวางแผนเลือกผลิตต่อจนจบส่ง WH \(เข้าสต็อก\)$/);
   // ของที่รับเข้าเป็นสต็อกสินค้าสำเร็จรูป (นับสั่ง = 0) และส่งมอบให้ลูกค้าไม่ได้
   d.fgMoves.push({ id: "fg-r6", orderId: "SA-T6", fgCode: FG, kind: "receive", qty: 2, note: "", at: NOW, by: "x" });
   const R = globalThis.MNP_BOM_RULES;
