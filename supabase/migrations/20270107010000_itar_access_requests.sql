@@ -963,7 +963,8 @@ as $$
     and p_req.is_test = p_actor.is_test
     and (
       p_req.requester_id = p_actor.id
-      or p_req.subject_employee_id = p_actor.id
+      -- ผู้รับสิทธิ์อาจไม่มีบัญชี (null) ต้องไม่ให้ null ลามไปทั้งเงื่อนไข (null = ไม่ใช่คนนี้)
+      or coalesce(p_req.subject_employee_id = p_actor.id, false)
       or private.itar_is_staff(p_actor.id)
       or exists (select 1 from private.itar_dept_approvers(p_req.department_id, p_req.is_test) a(id) where a.id = p_actor.id)
     )
@@ -1059,7 +1060,7 @@ declare
   v_caps record;
 begin
   if p_req.id is null or p_actor.id is null or p_req.is_test <> p_actor.is_test
-     or p_req.requester_id = p_actor.id or p_req.subject_employee_id = p_actor.id then
+     or p_req.requester_id = p_actor.id or coalesce(p_req.subject_employee_id = p_actor.id, false) then
     return null;
   end if;
   if p_req.status in ('pending_dept', 'pending_it_mgr') then
