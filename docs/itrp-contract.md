@@ -8,7 +8,7 @@ migration: `supabase/migrations/20261212010000_itrp_repair_requests.sql` + `2026
 
 ## ผู้ใช้และสิทธิ์ (ตัดสินที่ฐานข้อมูล)
 - ผู้แจ้ง = พนักงาน active ทุกคน · ผู้อนุมัติขั้นแผนก = `department_manager` / `assistant_department_manager` ของแผนกผู้แจ้ง (ที่ผูกบัญชีล็อกอินแล้ว)
-- **ทีม IT อ่านจาก `public.itwo_staff` อย่างเดียว** (ไม่มี `itrp_staff`, ไม่มี RPC แก้สิทธิ์ใน itrp): `is_it_admin` = ผู้ดูแลงาน IT (เริ่ม/ส่งงาน/ถามระหว่างทำ/ตั้งเลขเอกสาร/ดูรายชื่อทีม) · `is_it_approver` = ผู้อนุมัติขั้น IT (อนุมัติ + ดูทุกใบ แต่เริ่ม/ส่งงานไม่ได้)
+- **ทีม IT อ่านจาก `public.itwo_staff` อย่างเดียว** (ไม่มี `itrp_staff`, ไม่มี RPC แก้สิทธิ์ใน itrp): `is_it_admin` = ผู้ดูแลงาน IT (เริ่ม/ส่งงาน/ถามระหว่างทำ/ตั้งเลขเอกสาร/ดูรายชื่อทีม) · `is_it_approver` = ผู้อนุมัติขั้น IT ของใบทั่วไป (อนุมัติ + ดูทุกใบ แต่เริ่ม/ส่งงานไม่ได้) · `is_it_viewer` = หัวหน้า IT ดูอย่างเดียว (เห็นทุกใบ/ประวัติ ไม่ทำงานฝั่ง IT ไม่ได้แจ้งเตือนใบทั่วไป อนุมัติขั้น IT ได้เฉพาะใบที่ผู้แจ้งเป็นผู้อนุมัติขั้น IT เอง) · ดูหัวข้อ "ผู้อนุมัติขั้น IT / หัวหน้า IT" ท้ายเอกสาร
 - ผู้เห็นใบ: ผู้แจ้ง / ทุกคนใน `itwo_staff` / ผู้อนุมัติขั้นแผนกของแผนกนั้น
 
 ## สถานะ (`itrp_requests.status`)
@@ -40,14 +40,14 @@ migration: `supabase/migrations/20261212010000_itrp_repair_requests.sql` + `2026
 ### อ่าน
 | RPC | พารามิเตอร์ | คืน |
 |---|---|---|
-| `app_itrp_my_role()` | — | jsonb `{employee_id, employee_no, full_name, is_test, department{id,code,name_th}, is_it_department, is_dept_approver, is_it_admin, is_it_approver}` ให้เลือกแท็บ/ปุ่ม (แท็บรออนุมัติ = is_dept_approver หรือ is_it_approver · แท็บงาน IT = is_it_admin หรือ is_it_approver · ตั้งค่า = is_it_admin) |
+| `app_itrp_my_role()` | — | jsonb `{employee_id, employee_no, full_name, is_test, department{id,code,name_th}, is_it_department, is_dept_approver, is_it_admin, is_it_approver, is_it_viewer}` ให้เลือกแท็บ/ปุ่ม (แท็บรออนุมัติ = is_dept_approver หรือ is_it_approver · แท็บงาน IT = is_it_admin หรือ is_it_approver · ตั้งค่า = is_it_admin) |
 | `app_itrp_list_mine()` | — | แถว: `id, doc_no, status, is_urgent, asset_code, device_name, request_kind, request_kind_note, repair_target, symptom, created_at, rework_round, rework_due_date, info_return_status, info_stage` (ใบของตัวเองในโหมดปัจจุบัน ใหม่สุดก่อน) |
 | `app_itrp_list_pending_approvals()` | — | แถวเหมือนข้างบน + `requester_name, department_name, pending_step` (`dept` / `it_mgr`) · ไม่มี rework_* · งานด่วนก่อน · รวมใบ `need_info` ที่ผู้อนุมัติยังค้าง (ปุ่มจริงดู allowed_actions) |
 | `app_itrp_pending_count()` | — | integer จำนวนใบที่รอผู้ทำรายการอนุมัติ (ป้ายตัวเลข) |
 | `app_itrp_list_it()` | — | เฉพาะทีม IT (`itwo_staff` ทุกคน) · แถว: `id, doc_no, status, is_urgent, asset_code, device_name, request_kind, request_kind_note, repair_target, symptom, created_at, requester_full_name, department_name, has_dept_approved, has_it_mgr_approved, rework_round, rework_due_date, info_return_status, info_stage` · เรียงงานด่วน → วันกำหนดเสร็จของรอบแก้ไข → เวลาแจ้ง |
 | `app_itrp_get_detail(p_request_id)` | uuid | jsonb ดูหัวข้อ "get_detail" ด้านล่าง |
 | `app_itrp_get_doc_counter(p_year default null)` | — | jsonb `{year, last_seq, next_seq, next_doc_no, is_test}` (it_admin) |
-| `app_itrp_list_staff()` | — | แถว `employee_id, employee_no, full_name, department_name, is_it_admin, is_it_approver, is_active` (it_admin · อ่านจาก `itwo_staff` อย่างเดียว แท็บตั้งค่าแสดงพร้อมข้อความว่าแก้ที่ใบสั่งงาน IT) |
+| `app_itrp_list_staff()` | — | แถว `employee_id, employee_no, full_name, department_name, is_it_admin, is_it_approver, is_active, is_it_viewer` (it_admin · อ่านจาก `itwo_staff` อย่างเดียว แท็บตั้งค่าแสดงพร้อมข้อความว่าแก้ที่ใบสั่งงาน IT) |
 
 "การ์ดสรุป N ยังไม่จบ" ให้คำนวณฝั่งหน้าเว็บจาก `list_mine` / `list_pending_approvals` / `list_it` เหมือนโมดูลใบสั่งงาน (ไม่มี RPC สรุปแยก) · `info_stage` = ขั้นของคำถามที่ค้าง (`dept` / `it_mgr` / `it`) เฉพาะใบ `need_info`
 
@@ -73,6 +73,7 @@ migration: `supabase/migrations/20261212010000_itrp_repair_requests.sql` + `2026
 
 ## `app_itrp_get_detail` (jsonb)
 `id, is_test, doc_no, doc_year, doc_seq, requester_id, department_id, asset_code, device_name, request_kind, request_kind_note, repair_target, repair_target_note, symptom, is_urgent, status, info_return_status, created_at` +
+- `work_minutes` (integer หรือ null · นาทีทำงานของ IT ตามเวลาทำงานจริง ดูหัวข้อ "สรุปเวลาทำงาน" ท้ายเอกสาร · null = IT ยังไม่เคยส่งงาน)
 - `rework_round` (0 = ไม่มี), `latest_due_date` (วันกำหนดเสร็จของรอบแก้ไขล่าสุด · null เมื่อไม่มีรอบ — ใบแจ้งซ่อมไม่มีวันที่ต้องการงานตอนแจ้ง)
 - `requester {employee_no, full_name}`, `department {code, name_th}`
 - `events[]` `{id, action, reason, created_at, actor_employee_no, actor_full_name}` เรียงตามลำดับจริง (ไทม์ไลน์)
@@ -100,7 +101,7 @@ trigger บน `itrp_events` เรียก `private.office_notify` (ชุด�
 สเปกต้นทาง: `Work-Order/docs/itrp-history-spec.md` · ฐานข้อมูลอย่างเดียว (หน้าเว็บทำแยก) · **ไม่นำเข้าข้อมูลเก่า** (478 แถว + ทะเบียนเครื่องเป็นสคริปต์แยก) · ไม่เก็บรหัสผ่าน/License key ใด ๆ
 
 ### สิทธิ์
-- **อ่าน** (`app_itrp_device_history`, `app_itrp_list_devices`, `app_itrp_history_get`) = ผู้ดูแลงาน IT (`is_it_admin`) หรือผู้อนุมัติขั้น IT (`is_it_approver`) จาก `itwo_staff` · **เขียน** (`app_itrp_save_device`, `app_itrp_history_add/_update/_void`) = ผู้ดูแลงาน IT เท่านั้น · anon เรียกไม่ได้ · พนักงานแผนก IT ที่ไม่อยู่ใน `itwo_staff`, ผู้แจ้ง, ผู้จัดการแผนก = อ่าน/เขียนไม่ได้ (แท็บ "ประวัติการซ่อม" ใช้ `app_itrp_my_role().is_it_admin || is_it_approver` ตัดสินการแสดง)
+- **อ่าน** (`app_itrp_device_history`, `app_itrp_list_devices`, `app_itrp_history_get`) = ผู้ดูแลงาน IT (`is_it_admin`) ผู้อนุมัติขั้น IT (`is_it_approver`) หรือหัวหน้า IT (`is_it_viewer`) จาก `itwo_staff` · **เขียน** (`app_itrp_save_device`, `app_itrp_history_add/_update/_void`) = ผู้ดูแลงาน IT เท่านั้น · anon เรียกไม่ได้ · พนักงานแผนก IT ที่ไม่อยู่ใน `itwo_staff`, ผู้แจ้ง, ผู้จัดการแผนก = อ่าน/เขียนไม่ได้ (แท็บ "ประวัติการซ่อม" ใช้ `app_itrp_my_role().is_it_admin || is_it_approver` ตัดสินการแสดง)
 - **โหมดทดสอบ**: ทะเบียนเครื่องและประวัติแยกแถวด้วย `is_test` เหมือนทุกตารางของ itrp (persona ไม่เห็น/แก้ของจริงได้เลย · โหมดทดสอบเริ่มจากทะเบียนว่าง ต้องเพิ่มเครื่องทดสอบเอง) · ล้างทิ้งด้วย `app_sandbox_purge_itrp` (ครอบ 5 ตารางใหม่แล้ว)
 - รหัสเครื่องทุกที่ = **trim + ตัวพิมพ์ใหญ่ 1–50 ตัว** (ฐานข้อมูลทำให้เอง ส่งตัวเล็กได้) ห้ามมีอักขระควบคุม (tab/ขึ้นบรรทัดใหม่)
 
@@ -184,3 +185,20 @@ trigger บน `itrp_events` เรียก `private.office_notify` (ชุด�
 หน้าเว็บ/เมนู/ใบพิมพ์/ลิงก์แจ้งเตือน (`app.js`, `modules/`, `sw.js`, `index.html`, Edge Functions) · การตั้ง `request_types.IT_REPAIR is_active=false` (ของเพื่อน)
 
 **หน้าเว็บของส่วนเปลี่ยน/ย้ายชิ้นส่วน (itrp V1.03):** การ์ด "เปลี่ยน / ย้ายชิ้นส่วน" ในหน้ารายละเอียดใบ (`modules/itrp-pages.js` `partChangesCard`, ผูกใน `modules/module-itrp.js` `bindPartChanges`) · เรียก `context` เฉพาะ `is_it_admin` (ตอบไม่มีสิทธิ์/ไม่มี RPC = ซ่อนเงียบ) · `get_part_changes` เรียกทุกคนที่เปิดใบ และตอนพิมพ์ (ตารางท้ายใบพิมพ์ เฉพาะเมื่อมีรายการ) · ตรวจซ้ำฝั่งหน้าเว็บที่ `model.checkPartChange` (ชนิดตรง ไม่ซ้ำ ≤20) ฐานข้อมูลเป็นผู้ตัดสิน
+
+## ผู้อนุมัติขั้น IT / หัวหน้า IT (migration `20261230010000_office_it_approver_worktime.sql` · เจ้าของตัดสิน 26/11/2026)
+ใช้กับ **ทั้งใบสั่งงาน IT (itwo) และใบแจ้งซ่อม (itrp)** ซึ่งอ่านสิทธิ์จาก `itwo_staff` ตารางเดียวกัน
+- ธงใหม่ `itwo_staff.is_it_viewer` = หัวหน้า IT (ดูอย่างเดียว) · CHECK ต้องมีอย่างน้อยหนึ่งใน admin / approver / viewer · ทุกแถวใน `itwo_staff` เห็นทุกใบ (ไม่เกี่ยวกับธง)
+- ข้อมูล: IT3462 = admin + approver · FANG = viewer · persona ทดสอบ SBX-IT-ADMIN = admin + approver, SBX-IT-APPROVER = viewer
+- **ผู้อนุมัติขั้น IT ของใบ** (ตัดสินที่ `private.{itwo,itrp}_is_it_stage_approver(ผู้แจ้ง, ผู้ทำรายการ)` ผ่าน `approval_caps` → `allowed_actions` / `list_pending_approvals` / `pending_count` / `decide`): ผู้แจ้งไม่ใช่ผู้อนุมัติขั้น IT → ผู้อนุมัติขั้น IT (`is_it_approver`) · ผู้แจ้งเป็นผู้อนุมัติขั้น IT เอง → หัวหน้า IT (`is_it_viewer`) เท่านั้น
+- **ใบที่ผู้อนุมัติขั้น IT แจ้งเอง ไม่ผ่านอัตโนมัติอีกแล้ว** (`created` อย่างเดียว ไม่มี dept_approved/it_mgr_approved ในชื่อผู้แจ้ง) · แผนก IT / แผนกไม่มีผจก. → `pending_it_mgr` หัวหน้า IT กดครั้งเดียวนับสองขั้น (บันทึก dept_approved + it_mgr_approved ในชื่อหัวหน้า IT) · แผนกที่มีผจก. → รอผจก.แผนกก่อน · ไม่มีหัวหน้า IT ที่ใช้งานอยู่ = ใบรอไว้ ไม่ปฏิเสธการแจ้ง
+- หัวหน้า IT อนุมัติ/ไม่อนุมัติ/ถามได้เฉพาะใบของผู้อนุมัติขั้น IT · ใบทั่วไปได้ `42501` "คุณไม่มีสิทธิ์พิจารณาใบ…นี้" · ผู้อนุมัติอนุมัติใบตัวเอง/ใบของผู้อนุมัติด้วยกันไม่ได้ · หัวหน้า IT เริ่ม/ส่งงาน/ถามระหว่างทำ/ตั้งเลข/ดูรายชื่อทีม/แก้ทะเบียนเครื่องไม่ได้ (ผูกกับ `is_it_admin` เหมือนเดิม) · **อ่าน**ประวัติการซ่อม/ทะเบียนเครื่องได้
+- แจ้งเตือน "รอคุณอนุมัติ" ขั้น IT: ใบของผู้อนุมัติขั้น IT → หัวหน้า IT ทุกคนที่มีธง · ใบอื่น → ผู้อนุมัติขั้น IT เหมือนเดิม (`private.{itwo,itrp}_notify_it_stage_ids`)
+- `app_itwo_my_role` / `app_itrp_my_role` เพิ่มคีย์ `is_it_viewer` · `app_itwo_list_staff` / `app_itrp_list_staff` เพิ่มคอลัมน์ `is_it_viewer` (ท้ายสุด) · `app_itwo_set_staff(p_employee_no, p_is_it_admin, p_is_it_approver, p_is_it_viewer default null)`: null = คงธงหัวหน้า IT เดิม (หน้าเว็บรุ่นเก่าที่ส่ง 3 พารามิเตอร์ยังเรียกได้) · ส่ง false = ถอด
+- **หน้าเว็บรุ่นเดิมจะซ่อนแท็บ "งาน IT"/"ประวัติการซ่อม" ของหัวหน้า IT** (เช็ก `is_it_admin || is_it_approver`) ต้องเพิ่ม `is_it_viewer` ในเงื่อนไขของแท็บ (itwo/itrp) พร้อมแสดงธง "หัวหน้า IT" ในแท็บตั้งค่า
+
+## สรุปเวลาทำงานของ IT (`work_minutes`)
+- `app_itwo_get_detail` / `app_itrp_get_detail` เพิ่มคีย์ `work_minutes` (integer นาที หรือ null) · คิดจากประวัติทุกครั้ง ไม่เก็บค่าซ้ำ
+- ช่วงงานเปิดเมื่อ `started` หรือ `rework_requested` ปิดเมื่อ `completed` · `info_requested` → `info_provided` ที่อยู่ในช่วงงานไม่นับ (คำถามนอกช่วงงานไม่มีผล) · รวมทุกช่วงที่ปิดแล้ว · ยังไม่เคย `completed` = null (ช่วงขอแก้ไขที่ยังเปิดอยู่ไม่นับ)
+- นับเฉพาะเวลาทำงานตามเขตเวลา Asia/Bangkok: `public.office_work_hours` (แถวเดียว ค่าเริ่มต้น 08:00–17:00 พัก 12:00–13:00 จันทร์–เสาร์ แก้ด้วย SQL) · ตัดวันที่ไม่ใช่วันทำงานและวันใน `public.company_holidays` (ตารางของระบบเพื่อน อ่านอย่างเดียว) · `private.office_working_minutes(from, to)` / `private.office_work_minutes_from_events`
+- หน้าเว็บแปลงเป็น "X วัน Y ชม. Z นาที" โดย 1 วัน = 1 วันทำงาน (ชั่วโมงทำงานต่อวัน = 8 ตามค่าเริ่มต้น) · ถ้า `company_holidays` ไม่มีวันหยุดของปีนั้น วันหยุดจะถูกนับเป็นวันทำงาน
