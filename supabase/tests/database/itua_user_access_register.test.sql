@@ -33,9 +33,9 @@ create function pg_temp.g(p_auth text) returns jsonb language sql as $$ select p
 create function pg_temp.ts(p_auth text) returns timestamptz language sql as $$ select (pg_temp.g(p_auth) -> 'user' ->> 'updated_at')::timestamptz $$;
 -- ระดับสิทธิ์โฟลเดอร์/สถานะของผู้ใช้ในรูปข้อความสั้น ๆ เช่น 'ACC:R,HR:F'
 create function pg_temp.fl(p_auth text) returns text language sql as $$
-  select coalesce(string_agg((f ->> 'code') || ':' || (f ->> 'level'), ',' order by f ->> 'code'), '') from jsonb_array_elements(pg_temp.g(p_auth) -> 'folders') f $$;
+  select coalesce(string_agg((f ->> 'code') || ':' || (f ->> 'level'), ',' order by (f ->> 'code') collate "C"), '') from jsonb_array_elements(pg_temp.g(p_auth) -> 'folders') f $$;
 create function pg_temp.pl(p_auth text) returns text language sql as $$
-  select coalesce(string_agg(p ->> 'code', ',' order by p ->> 'code'), '') from jsonb_array_elements(pg_temp.g(p_auth) -> 'programs') p $$;
+  select coalesce(string_agg(p ->> 'code', ',' order by (p ->> 'code') collate "C"), '') from jsonb_array_elements(pg_temp.g(p_auth) -> 'programs') p $$;
 create function pg_temp.codes(p_items jsonb) returns text language sql as $$
   select coalesce(string_agg(e ->> 'auth_id', ',' order by ord), '') from jsonb_array_elements(p_items) with ordinality t(e, ord) $$;
 
@@ -270,7 +270,7 @@ select throws_ok(format($$ select public.app_itua_close_email(%L, null) $$, (sel
 select is(public.app_itua_close_email((select (e ->> 'id')::uuid from jsonb_array_elements(pg_temp.g('somchai.k') -> 'emails') e where e ->> 'address' = 'somchai2@gmail.example'), 'ไม่ใช้แล้ว') ->> 'changed', 'true', 'an email is closed (not deleted)');
 select is(public.app_itua_close_email((select (e ->> 'id')::uuid from jsonb_array_elements(pg_temp.g('somchai.k') -> 'emails') e where e ->> 'address' = 'somchai2@gmail.example'), 'อีกครั้ง') ->> 'changed', 'false', 'closing it again changes nothing');
 select is(public.app_itua_add_email(pg_temp.uid('wanna.p'), 'somchai2@gmail.example') ->> 'created', 'true', 'a closed address can be used again by someone else (new row)');
-select is((select string_agg((e ->> 'address') || '=' || (e ->> 'status'), ',' order by e ->> 'address') from jsonb_array_elements(pg_temp.g('somchai.k') -> 'emails') e), 'somchai.k@mnp.example=active,somchai2@gmail.example=closed,somchai@gmail.example=active', 'the user keeps the closed address in the list (history)');
+select is((select string_agg((e ->> 'address') || '=' || (e ->> 'status'), ',' order by (e ->> 'address') collate "C") from jsonb_array_elements(pg_temp.g('somchai.k') -> 'emails') e), 'somchai.k@mnp.example=active,somchai2@gmail.example=closed,somchai@gmail.example=active', 'the user keeps the closed address in the list (history)');
 select is((select e ->> 'address' from jsonb_array_elements(pg_temp.g('somchai.k') -> 'emails') e limit 1), 'somchai.k@mnp.example', 'the active internal email is listed first');
 select is(public.app_itua_close_email((select (e ->> 'id')::uuid from jsonb_array_elements(pg_temp.g('somchai.k') -> 'emails') e where e ->> 'kind' = 'internal'), 'เปลี่ยนอีเมลภายใน') ->> 'changed', 'true', 'the internal email is closed');
 select is(public.app_itua_add_email(pg_temp.uid('somchai.k'), 'somchai.k@mnp.example', 'internal') ->> 'created', 'true', 'and the same internal address can be added again as a new row');
