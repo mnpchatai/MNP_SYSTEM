@@ -242,10 +242,23 @@
     if (total === 0) return "0 นาที";
     return `${Math.floor(total / WORK_MINUTES_PER_DAY)} วัน ${Math.floor((total % WORK_MINUTES_PER_DAY) / 60)} ชม. ${total % 60} นาที`;
   }
-  // ข้อความ "ใช้เวลาทำงาน …" ของใบ · ฐานข้อมูลเก่า/ใบที่ยังไม่เคยส่งงาน (ไม่มีคีย์หรือเป็น null) = "" (หน้าเว็บไม่วาดบรรทัด)
+  // ข้อความ "ใช้เวลาทำงาน …" ของใบ · ฐานข้อมูลเก่า/ใบที่ยังไม่ส่งงาน/กลับมาทำใหม่ (สถานะอื่นนอกจาก it_closed/received) หรือไม่มีคีย์/เป็น null = "" (หน้าเว็บไม่วาดบรรทัด)
+  // แสดงเวลาทำงานเฉพาะใบที่ IT ส่งงานแล้ว (it_closed) หรือจบงานแล้ว (received) · work_minutes ของ RPC คือยอดรอบที่ปิดแล้ว
+  // ใบที่ถูกขอแก้ไขแล้วกลับมาทำอีกรอบ (in_progress ฯลฯ) ยังไม่จบงาน จึงห้ามโชว์ยอดค้างของรอบก่อน
+  const WORK_TIME_STATUSES = Object.freeze(["it_closed", "received"]);
+  const showsWorkTime = (detail) => WORK_TIME_STATUSES.includes(detail?.status);
   function workTimeText(detail) {
-    const text = formatWorkMinutes(detail?.work_minutes);
+    const text = showsWorkTime(detail) ? formatWorkMinutes(detail?.work_minutes) : "";
     return text ? `ใช้เวลาทำงาน ${text}` : "";
+  }
+
+  // ระยะเวลาซ่อมของใบ: ส่งงาน/จบงานแล้วและมี work_minutes = เวลาทำงานจริงจากเซิร์ฟเวอร์ (พร้อมหมายเหตุ)
+  // นอกนั้น (ยังไม่ส่งงาน/กลับมาทำใหม่/ฐานข้อมูลเก่า) = คำนวณจากเวลาเริ่ม/เสร็จเหมือนเดิมก่อนมี work_minutes (note ว่าง) · ไม่มีข้อมูล = null
+  function workDuration(detail, holidays = []) {
+    const text = showsWorkTime(detail) ? formatWorkMinutes(detail?.work_minutes) : "";
+    if (text) return { text, note: WORK_TIME_NOTE };
+    const legacy = repairDuration(detail?.started?.at, detail?.completed?.at, holidays);
+    return legacy ? { text: legacy.text, note: "" } : null;
   }
 
   /* ---------- สิทธิ์ → แท็บ ---------- */
@@ -1302,7 +1315,7 @@
     requestKindLabel, repairTargetLabel, causeKindLabel, repairMethodLabel, requestKindText, repairTargetText, causeKindText, repairMethodText, deviceText,
     reworkTag, statusLabel, statusBadgeClass, myStatusLabel, isTestDoc, INFO_STAGE_LABELS, infoStageLabel, commentKindLabel, commentRows, allFiles, pendingQuestion, infoBadgeTitle,
     todayBangkok, formatDate, formatDateTime, formatDateOf, formatTimeOf, isRealDate, charCount, clip, repairDuration, formatQuantity, formatPrice,
-    VIEWER_LABEL, isItViewer, canSeeAllOrders, canApprove, staffSupportsViewer, WORK_MINUTES_PER_DAY, WORK_TIME_NOTE, formatWorkMinutes, workTimeText,
+    VIEWER_LABEL, isItViewer, canSeeAllOrders, canApprove, staffSupportsViewer, WORK_MINUTES_PER_DAY, WORK_TIME_NOTE, WORK_TIME_STATUSES, showsWorkTime, formatWorkMinutes, workTimeText, workDuration,
     visibleTabs, canViewHistory, canEditHistory, readView, viewAllowed, repairUrl, isUuid,
     actionButtons, countsAsBothSteps, confirmMessageFor, BOTH_STEPS_NOTE, completeToast, answerToast, pendingStepLabel, eventLabel, eventLabelFor, CANCELLED_ON_BEHALF_LABEL, printSignoffs, printOutcome, approvalSummary,
     itGroupOf, groupItOrders, itActionableCount, awaitingMyReceiveCount, awaitingMyAnswerCount, mineWaiting, mineWaitingNote, waitingForMeCount, itApprovalProgress, CLOSED_STATUSES, openOrderCount, cardSummary,

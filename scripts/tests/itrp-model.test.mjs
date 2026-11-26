@@ -868,11 +868,24 @@ test("work minutes show as days (8 working hours) / hours / minutes; missing, nu
   assert.equal(model.formatWorkMinutes(479), "0 วัน 7 ชม. 59 นาที");
   assert.equal(model.formatWorkMinutes(2 * 480 + 5 * 60 + 7), "2 วัน 5 ชม. 7 นาที");
   for (const bad of [null, undefined, "", "660", -1, Number.NaN, {}]) assert.equal(model.formatWorkMinutes(bad), "", String(bad));
-  assert.equal(model.workTimeText({ work_minutes: 660 }), "ใช้เวลาทำงาน 1 วัน 3 ชม. 0 นาที");
-  assert.equal(model.workTimeText({ work_minutes: 0 }), "ใช้เวลาทำงาน 0 นาที");
+  assert.equal(model.workTimeText({ status: "it_closed", work_minutes: 660 }), "ใช้เวลาทำงาน 1 วัน 3 ชม. 0 นาที");
+  assert.equal(model.workTimeText({ status: "received", work_minutes: 0 }), "ใช้เวลาทำงาน 0 นาที");
+  // กลับมาทำใหม่หลังขอแก้ไข/ยังไม่จบ: มี work_minutes ของรอบก่อนแต่ห้ามแสดง
+  for (const status of ["in_progress", "approved", "pending_dept", "pending_it", "need_info", "cancelled", "rejected", undefined]) {
+    assert.equal(model.workTimeText({ status, work_minutes: 660 }), "", String(status));
+    assert.equal(model.showsWorkTime({ status }), false, String(status));
+  }
+  assert.equal(model.showsWorkTime({ status: "it_closed" }), true);
+  assert.equal(model.showsWorkTime({ status: "received" }), true);
   assert.equal(model.workTimeText({ work_minutes: null }), "");
   assert.equal(model.workTimeText({}), "");
   assert.equal(model.workTimeText(null), "");
+  // workDuration: ส่งงาน/จบงาน + work_minutes = เวลาจากเซิร์ฟเวอร์ · สถานะอื่น = คำนวณแบบเดิมจากเวลาเริ่ม/เสร็จ
+  const times = { started: { at: "2026-11-02T01:00:00Z" }, completed: { at: "2026-11-02T03:00:00Z" } };
+  assert.deepEqual(model.workDuration({ status: "it_closed", work_minutes: 660, ...times }), { text: "1 วัน 3 ชม. 0 นาที", note: model.WORK_TIME_NOTE });
+  assert.equal(model.workDuration({ status: "in_progress", work_minutes: 660, ...times }).note, "", "กลับมาทำใหม่ใช้แบบเดิม ไม่ใช้ work_minutes");
+  assert.notEqual(model.workDuration({ status: "in_progress", work_minutes: 660, ...times }).text, "1 วัน 3 ชม. 0 นาที");
+  assert.equal(model.workDuration({ status: "in_progress", work_minutes: 660 }), null);
   assert.match(model.WORK_TIME_NOTE, /จ\.–ส\..*ไม่นับวันอาทิตย์.*วันหยุดบริษัท.*ช่วงรอผู้แจ้งตอบ/);
 });
 

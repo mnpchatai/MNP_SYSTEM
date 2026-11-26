@@ -463,4 +463,9 @@ test("the repair time shows the database work minutes when present (detail, repo
     assert.match(sheet({ work_minutes: value }), /รวมเวลาในการซ่อม<\/th><td>5 ชม\.<\/td>/);
     assert.doesNotMatch(sheet({ work_minutes: value }), /หมายเหตุ: รวมเวลาในการซ่อม/);
   }
+  // ขอแก้ไขแล้วกลับมาทำรอบใหม่ (in_progress): ไม่ใช้ work_minutes ของรอบก่อน คงช่อง "รวมเวลาในการซ่อม" แบบเดิม
+  const reopened = detail({ status: "in_progress", work_minutes: 660 });
+  assert.doesNotMatch(pages.detailPage(reopened), /ใช้เวลาทำงาน|1 วัน 3 ชม/);
+  assert.doesNotMatch(sheet({ status: "in_progress", work_minutes: 660 }), /1 วัน 3 ชม|หมายเหตุ: รวมเวลาในการซ่อม/);
+  assert.match(sheet({ status: "in_progress", work_minutes: 660 }), /รวมเวลาในการซ่อม<\/th><td>5 ชม\.<\/td>/);
 });

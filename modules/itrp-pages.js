@@ -369,13 +369,8 @@
         <td data-label="ข้อเสนอแนะ" class="itrp-text">${esc(device.remark) || "—"}</td></tr>`).join("")}</tbody></table></div>`;
   }
   // เนื้อหาของบันทึกการซ่อมหนึ่งชุด (ใช้ทั้งชุดล่าสุดและประวัติชุดก่อน) · duration = ผลของ model.repairDuration (เฉพาะชุดล่าสุด) หรือ null
-  // ระยะเวลาซ่อม: ฐานข้อมูลใหม่ส่ง work_minutes (นับเวลาทำงานจริง หักช่วงรอผู้แจ้งตอบ รวมทุกรอบแก้ไข) · ไม่มี = คำนวณจากเวลาเริ่ม/เสร็จเหมือนเดิม (note ว่าง)
-  function workDuration(detail) {
-    const text = model.formatWorkMinutes(detail?.work_minutes);
-    if (text) return { text, note: model.WORK_TIME_NOTE };
-    const legacy = model.repairDuration(detail?.started?.at, detail?.completed?.at, holidays());
-    return legacy ? { text: legacy.text, note: "" } : null;
-  }
+  // ระยะเวลาซ่อม: work_minutes แสดงเฉพาะใบที่ส่งงาน/จบงานแล้ว (ดู model.workDuration) · นอกนั้นคำนวณจากเวลาเริ่ม/เสร็จเหมือนเดิม (note ว่าง)
+  const workDuration = (detail) => model.workDuration(detail, holidays());
   const reportBody = (view, duration = null) => `<dl class="definition-grid">
       ${fact("สาเหตุ", esc(view.cause), true)}
       ${fact("สรุปสาเหตุเกิดจาก", esc(view.causeKind))}

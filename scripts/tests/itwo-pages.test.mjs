@@ -683,18 +683,22 @@ test("settings: the IT head checkbox and data flag appear only when the staff li
   assert.match(html, /data-staff-edit="IT3462"[^>]*data-staff-viewer="0"/);
 });
 
-test("the detail page and the A4 sheet show the work time only when the database sent a number", () => {
-  const done = { ...DETAIL, work_minutes: 660 };
+test("the detail page and the A4 sheet show the work time only when the order is sent/closed and the database sent a number", () => {
+  const done = { ...DETAIL, status: "it_closed", work_minutes: 660 };
   const detail = pages.detailPage(done);
   assert.match(detail, /ใช้เวลาทำงาน 1 วัน 3 ชม\. 0 นาที/);
   assert.match(detail, /นับเฉพาะเวลาทำงาน จ\.–ส\. ไม่นับวันอาทิตย์ วันหยุดบริษัท และช่วงรอผู้แจ้งตอบ/);
   const sheet = pages.printSheet(done);
   assert.match(sheet, /ใช้เวลาทำงาน 1 วัน 3 ชม\. 0 นาที \(นับเฉพาะเวลาทำงาน/);
   assert.equal(count(sheet, /ใช้เวลาทำงาน/g), 1, "one line on the paper");
-  assert.match(pages.detailPage({ ...DETAIL, work_minutes: 0 }), /ใช้เวลาทำงาน 0 นาที/);
+  assert.match(pages.detailPage({ ...DETAIL, status: "received", work_minutes: 0 }), /ใช้เวลาทำงาน 0 นาที/);
   for (const value of [null, undefined]) {
-    const none = { ...DETAIL, work_minutes: value };
+    const none = { ...DETAIL, status: "it_closed", work_minutes: value };
     assert.doesNotMatch(pages.detailPage(none), /ใช้เวลาทำงาน/);
     assert.doesNotMatch(pages.printSheet(none), /ใช้เวลาทำงาน/);
   }
+  // ขอแก้ไขแล้วกลับมาทำรอบใหม่ (in_progress): work_minutes ยังเป็นยอดรอบก่อน ห้ามโชว์ทั้งการ์ดและใบพิมพ์
+  const reopened = { ...DETAIL, status: "in_progress", work_minutes: 660 };
+  assert.doesNotMatch(pages.detailPage(reopened), /ใช้เวลาทำงาน/);
+  assert.doesNotMatch(pages.printSheet(reopened), /ใช้เวลาทำงาน/);
 });

@@ -206,9 +206,13 @@
     if (total === 0) return "0 นาที";
     return `${Math.floor(total / WORK_MINUTES_PER_DAY)} วัน ${Math.floor((total % WORK_MINUTES_PER_DAY) / 60)} ชม. ${total % 60} นาที`;
   }
-  // ข้อความ "ใช้เวลาทำงาน …" ของใบ · ฐานข้อมูลเก่า/ใบที่ยังไม่เคยส่งงาน (ไม่มีคีย์หรือเป็น null) = "" (หน้าเว็บไม่วาดบรรทัด)
+  // ข้อความ "ใช้เวลาทำงาน …" ของใบ · ฐานข้อมูลเก่า/ใบที่ยังไม่ส่งงาน/กลับมาทำใหม่ (สถานะอื่นนอกจาก it_closed/received) หรือไม่มีคีย์/เป็น null = "" (หน้าเว็บไม่วาดบรรทัด)
+  // แสดงเวลาทำงานเฉพาะใบที่ IT ส่งงานแล้ว (it_closed) หรือจบงานแล้ว (received) · work_minutes ของ RPC คือยอดรอบที่ปิดแล้ว
+  // ใบที่ถูกขอแก้ไขแล้วกลับมาทำอีกรอบ (in_progress ฯลฯ) ยังไม่จบงาน จึงห้ามโชว์ยอดค้างของรอบก่อน
+  const WORK_TIME_STATUSES = Object.freeze(["it_closed", "received"]);
+  const showsWorkTime = (detail) => WORK_TIME_STATUSES.includes(detail?.status);
   function workTimeText(detail) {
-    const text = formatWorkMinutes(detail?.work_minutes);
+    const text = showsWorkTime(detail) ? formatWorkMinutes(detail?.work_minutes) : "";
     return text ? `ใช้เวลาทำงาน ${text}` : "";
   }
 
@@ -765,7 +769,7 @@
     REQUEST_TYPES, LEGACY_REQUEST_TYPES, ATTACHMENT_FLAGS, ACCESS_SYSTEMS, ACCESS_ACTIONS, FILE_MIME_BY_EXTENSION, FILE_ACCEPT, FILE_HINT, FILES_PREPARING_MESSAGE, EMPTY_REWORK_FORM, STATUS_LABELS, EVENT_LABELS, ACTION_BUTTONS, ACTION_ORDER, IT_GROUPS, EMPTY_ORDER_FORM, SIGNATURE_SLOTS, APPROVAL_STATE_LABELS,
     requestTypeLabel, printRequestTypes, requestTypeText, reworkTag, attachmentFlagLabel, accessSystemLabel, accessActionLabel, statusLabel, statusBadgeClass, myStatusLabel, isTestDoc, INFO_STAGE_LABELS, infoStageLabel, commentKindLabel, commentRows, allFiles, pendingQuestion, infoBadgeTitle,
     todayBangkok, formatDate, formatDateTime, formatDateOf, formatTimeOf, isRealDate, charCount, clip,
-    VIEWER_LABEL, isItViewer, canSeeAllOrders, canApprove, staffSupportsViewer, WORK_MINUTES_PER_DAY, WORK_TIME_NOTE, formatWorkMinutes, workTimeText,
+    VIEWER_LABEL, isItViewer, canSeeAllOrders, canApprove, staffSupportsViewer, WORK_MINUTES_PER_DAY, WORK_TIME_NOTE, WORK_TIME_STATUSES, showsWorkTime, formatWorkMinutes, workTimeText,
     visibleTabs, readView, viewAllowed, workOrderUrl, isUuid,
     actionButtons, countsAsBothSteps, confirmMessageFor, BOTH_STEPS_NOTE, completeToast, answerToast, pendingStepLabel, eventLabel, eventLabelFor, CANCELLED_ON_BEHALF_LABEL, signatureSlots, approvalSummary,
     itGroupOf, groupItOrders, itActionableCount, awaitingMyReceiveCount, awaitingMyAnswerCount, mineWaiting, mineWaitingNote, waitingForMeCount, itApprovalProgress, CLOSED_STATUSES, openOrderCount, cardSummary,
