@@ -152,14 +152,14 @@ test("repair workflow: assign, start, finish, verify", async () => {
   assert.equal((await sb.rpc("app_verify_repair", { p_request_id: "req-mt-0390", p_result: "fail" })).error.message, "NOTE_REQUIRED");
   assert.equal((await sb.rpc("app_verify_repair", { p_request_id: "req-mt-0390", p_result: "pass", p_note: "ไฟติดครบ" })).error, null);
   assert.equal(db.requests.find((row) => row.id === "req-mt-0390").status, "completed");
-  assert.equal(db.request_verifications.length, 2); // + ผลตรวจรับของใบตัวอย่างที่ปิดงานแล้ว (req-mt-0385)
+  assert.equal(db.request_verifications.length, 1);
 });
 
 test("query coverage: head counts, in, not/is, ilike, order and limit", async () => {
   const { sb } = mock();
   const { count, data } = await sb.from("requests").select("id", { count: "exact", head: true }).eq("requester_id", "e1");
   assert.equal(data, null);
-  assert.equal(count, 3);
+  assert.equal(count, 4);
   assert.equal((await sb.from("notifications").select("id", { count: "exact", head: true }).eq("recipient_id", "e1").is("read_at", null)).count, 2);
   await sb.from("notifications").update({ read_at: new Date(NOW).toISOString() }).eq("recipient_id", "e1").is("read_at", null);
   assert.equal((await sb.from("notifications").select("id", { count: "exact", head: true }).is("read_at", null)).count, 0);

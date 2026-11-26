@@ -188,19 +188,24 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       steps: [["ผู้จัดการโรงงาน", "e5", "approved", 9.1], ["ผู้จัดการทั่วไป", "e7", "approved", 8.8]],
       history: [["pending_approval", "pending_assign", "e7", 8.8], ["pending_assign", "assigned", ME_ID, 8.7], ["assigned", "in_progress", "e8", 8], ["in_progress", "pending_verify", "e8", 0.5]],
     });
-    // ใบที่ปิดงานแล้ว: แดชบอร์ด MT มีเวลาแจ้ง → ปิดงานและเวลาแต่ละช่วงให้ดู (นับเฉพาะเวลาทำงาน)
+    // ใบที่ปิดงานแล้ว มีซ่อมซ้ำหลังตรวจไม่ผ่าน 1 รอบ: ท้ายประวัติเอกสารแสดงเวลาซ่อม (รวมทุกรอบ) และเวลารวมทั้งใบ
     seedRequest({
-      id: "req-mt-0385", no: "MT-2569-0385", type: "MT_REPAIR", title: "ประตูห้องอบ OV-01 ปิดไม่สนิท",
-      description: "ซีลประตูห้องอบฉีกขาด ความร้อนรั่ว", status: "completed", requester: "e4", machine: "m-mx01", created: 10, currentStep: 0,
-      assignee: "e2", techs: ["e2"], extra: { completed_at: ago(1), execution_plan: "immediate", inspector_opinion: "self_repair", cause_analysis: "ซีลหมดอายุ", parts_used: "ซีลประตู 1 เส้น" },
-      steps: [["ผู้จัดการโรงงาน", "e5", "approved", 9.8], ["ผู้จัดการทั่วไป", "e7", "approved", 9.6]],
-      history: [["pending_approval", "pending_assign", "e7", 9.6], ["pending_assign", "assigned", ME_ID, 9.4], ["assigned", "in_progress", "e2", 9], ["in_progress", "pending_verify", "e2", 2], ["pending_verify", "completed", "e4", 1]],
+      id: "req-mt-0385", no: "MT-2569-0385", type: "MT_REPAIR", title: "สายพานเครื่องบดยาง GR-02 ขาด",
+      description: "สายพานขาด", status: "completed", requester: ME_ID, machine: "m-cv02", created: 12, currentStep: 0,
+      assignee: "e8", techs: ["e8"], extra: { completed_at: ago(9), execution_plan: "immediate", inspector_opinion: "self_repair", cause_analysis: "สายพานหมดอายุ", parts_used: "สายพาน B-62 1 เส้น" },
+      steps: [["ผู้จัดการโรงงาน", "e5", "approved", 11.9], ["ผู้จัดการทั่วไป", "e7", "approved", 11.8]],
+      history: [["pending_approval", "pending_assign", "e7", 11.8], ["pending_assign", "assigned", ME_ID, 11.7], ["assigned", "in_progress", "e8", 11.7], ["in_progress", "pending_verify", "e8", 11.65],
+        ["pending_verify", "assigned", ME_ID, 11], ["assigned", "in_progress", "e8", 10.5], ["in_progress", "pending_verify", "e8", 10.48], ["pending_verify", "completed", ME_ID, 9]],
     });
-    db.request_verifications.push({ id: "req-mt-0385-v1", request_id: "req-mt-0385", result: "pass", note: null, verified_by: "e4", created_at: ago(1) });
     // วันหยุดบริษัทตัวอย่าง (วันธรรมดาวันแรกที่ไม่ใช่วันอาทิตย์ในช่วง 3–7 วันก่อน) ให้เห็นว่าเวลาทำงานไม่นับวันนี้
     const bangkokDay = (days) => new Date(Date.parse(ago(days)) + 7 * 3600000);
+    // และอีกวันในช่วง 10–11 วันก่อน ซึ่งอยู่ระหว่างแจ้ง → ปิดงานของ MT-2569-0385 (เวลารวมทั้งใบท้ายประวัติเอกสาร)
     const holidayAgo = [3, 4, 5, 6, 7].find((days) => bangkokDay(days).getUTCDay() !== 0);
-    db.company_holidays.push({ id: "hol-mock-1", holiday_date: bangkokDay(holidayAgo).toISOString().slice(0, 10), name_th: "วันหยุดบริษัท (ตัวอย่าง)", created_by: ME_ID, created_at: ago(30) });
+    const olderHolidayAgo = [10, 11].find((days) => bangkokDay(days).getUTCDay() !== 0);
+    db.company_holidays.push(
+      { id: "hol-mock-1", holiday_date: bangkokDay(holidayAgo).toISOString().slice(0, 10), name_th: "วันหยุดบริษัท (ตัวอย่าง)", created_by: ME_ID, created_at: ago(30) },
+      { id: "hol-mock-2", holiday_date: bangkokDay(olderHolidayAgo).toISOString().slice(0, 10), name_th: "วันหยุดบริษัท (ตัวอย่าง 2)", created_by: ME_ID, created_at: ago(30) },
+    );
     // NCR อยู่ตาราง ncr_reports แยกจากคำร้อง (modules/module-ncr.js) — หน้าหลักดึงใบที่ถึงขั้นของผู้ใช้และใบที่ผู้ใช้ออก
     // แถวเก็บ ncr_responsibilities ที่หน้าเว็บ embed ไว้ในตัว (expand ไม่ต้องต่อให้)
     const dateOnly = (days) => ago(days).slice(0, 10);
@@ -4424,7 +4429,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
 // ได้คำตอบว่างแทน หน้าจำลองจึงไม่ส่งอะไรออกนอกเครื่อง แล้วแทน window.supabase ด้วย client จำลอง (?empty=1 = ไม่มีคำร้องเลย)
 // options.sandbox = เปิดโหมดทดสอบโดยไม่ต้องมี ?sandbox=1 (หน้า /harness/ ที่ไม่มี URL ของ pilot-shell)
 export function installMockSupabase(win, create, options = {}) {
-  Object.defineProperty(win.navigator, "serviceWorker", { value: { register: () => Promise.resolve(), getRegistration: () => Promise.resolve(undefined), ready: new Promise(() => {}) } });
+  Object.defineProperty(win.navigator, "serviceWorker", { value: { register: () => Promise.resolve(), getRegistration: () => Promise.resolve(undefined), ready: new Promise(() => {}), addEventListener: () => {} } });
   const realFetch = win.fetch.bind(win);
   win.fetch = (input, init) => {
     let sameOrigin = false;
