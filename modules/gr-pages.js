@@ -77,6 +77,9 @@
     return rules.grRodCodesOf(order, job).map((code) => ({ code, need: needs.find((need) => need.itemCode === code) ?? null, open: open.filter((entry) => entry.request.itemCode === code) }));
   }
   const canRequestRods = (ctx, job) => job.dept === "GR" && recordFor(ctx, "GR") && isActive(ctx, job) && job.status !== "done";
+  // ใบที่ฝ่ายขายยกเลิกกลางทางและรอฝ่ายวางแผนตัดสิน: ขอเบิกยางเส้นยาวไม่ได้ (ฐานข้อมูลปฏิเสธ) · แสดงเหตุผลแทนปุ่ม (ข้อความสั้นในตาราง ข้อความเต็มใน title)
+  const rodsOnHold = (ctx, orderId) => Boolean(ctx.helpers.salesCancelPending?.(ctx.data.orders.find((row) => row.id === orderId)));
+  const holdNote = (ctx, full) => `<span class="small muted" title="${attr(ctx.helpers.SALES_PENDING_TEXT)}">${esc(full ? ctx.helpers.SALES_PENDING_TEXT : ctx.helpers.SALES_PENDING_SHORT)}</span>`;
 
   // ---------- การ์ดงาน (การ์ดกลาง MNP_FACTORY.jobCard + ความคืบหน้ารายขั้น) ----------
   // ตั้งขั้นตอนแล้ว: บรรทัดยอดของการ์ดเป็นรายขั้น (ทำแล้ว/ต้องทำ) · ปุ่มหลัก "บันทึกผล" พาไปหน้าบันทึกผลรายวันพร้อมงานนี้
@@ -93,7 +96,7 @@
     const more = [];
     const rods = rodsOfJob(ctx, job);
     const wantRods = rods.some((row) => !row.open.length && (row.need?.remaining ?? 0) > 1e-9);
-    if (canRequestRods(ctx, job) && wantRods) more.push(ui.openButton("ขอเบิกยางเส้นยาว", "grRodRequest", { jobId: job.id }, { className: "secondary small" }));
+    if (canRequestRods(ctx, job) && wantRods) more.push(rodsOnHold(ctx, job.orderId) ? holdNote(ctx, true) : ui.openButton("ขอเบิกยางเส้นยาว", "grRodRequest", { jobId: job.id }, { className: "secondary small" }));
     const to = targetOf(job.dept);
     const waiting = waitingOf(ctx, job);
     if (leadFor(ctx, job.dept) && canSendOrder(ctx, job) && waiting > 0) more.push(ui.openButton(`ส่งให้ ${to}`, to === "WH" ? "pkSendWh" : "grSendPk", { jobId: job.id }, { className: "secondary small" }));
@@ -264,7 +267,7 @@
       const asked = open.some((entry) => entry.request.orderId === need.order.id && entry.request.itemCode === need.itemCode);
       const job = need.grJobs.find((entry) => entry.status !== "done") ?? need.grJobs[0];
       // มีคำขอที่เปิดอยู่แล้ว: สถานะและปุ่มยกเลิกอยู่ในตารางคำขอ (ไม่แสดงซ้ำที่นี่)
-      const action = !asked && record && job && canRequestRods(ctx, job) ? ui.openButton("ขอเบิก", "grRodRequest", { jobId: job.id, itemCode: need.itemCode }, { className: "small", ariaLabel: `ขอเบิกยางเส้นยาว ${need.itemCode} ใบ ${need.order.id}` }) : "";
+      const action = !asked && record && job && canRequestRods(ctx, job) && rodsOnHold(ctx, need.order.id) ? holdNote(ctx, false) : !asked && record && job && canRequestRods(ctx, job) ? ui.openButton("ขอเบิก", "grRodRequest", { jobId: job.id, itemCode: need.itemCode }, { className: "small", ariaLabel: `ขอเบิกยางเส้นยาว ${need.itemCode} ใบ ${need.order.id}` }) : "";
       const href = job ? jobHref(ctx, job.id) : null;
       return `<tr${rowAttr(href)}><td>${href ? mainLink(ctx, need.order.id, href, "rf-mono") : ui.mono(need.order.id)}<div class="small muted">${esc(need.order.customer ?? "")}</div></td><td>${ui.mono(need.itemCode)}${need.name ? `<div class="small muted">${esc(need.name)}</div>` : ""}</td>`
         + `<td class="right rf-mono">${esc(`${rules.fmtQty(need.issued)}/${rules.fmtQty(need.need)} ${unit}`)}</td><td>${lotList(ctx, need.order.id, need.itemCode, need.uom)}</td><td class="right">${action}</td></tr>`;
@@ -449,7 +452,7 @@
     const buttons = [
       progress.planned && canRecord(ctx) && !block ? ui.link("บันทึกผล", logHref(ctx, job.id), "btn rf-btn") : "",
       canSetSteps(ctx, job) ? ui.openButton(progress.planned ? "แก้ขั้นตอน" : "ตั้งขั้นตอน", "grSteps", { jobId: job.id }, { className: progress.planned ? "secondary" : "" }) : "",
-      canRequestRods(ctx, job) && rods.length ? ui.openButton("ขอเบิกยางเส้นยาว", "grRodRequest", { jobId: job.id }, { className: "secondary" }) : "",
+      canRequestRods(ctx, job) && rods.length ? (rodsOnHold(ctx, job.orderId) ? holdNote(ctx, true) : ui.openButton("ขอเบิกยางเส้นยาว", "grRodRequest", { jobId: job.id }, { className: "secondary" })) : "",
       canLead(ctx) && canSendOrder(ctx, job) && waiting > 0 ? ui.openButton(`ส่งให้ ${to}`, to === "WH" ? "pkSendWh" : "grSendPk", { jobId: job.id }, { className: "secondary" }) : "",
     ].join("");
     const steps = progress.planned
@@ -551,7 +554,7 @@
   dialogs.grRodRequest = (ctx, { jobId, itemCode = "" }) => {
     const { ui, rules } = ctx;
     const job = rodJobOf(ctx, jobId);
-    if (!job || !canRequestRods(ctx, job)) return null;
+    if (!job || !canRequestRods(ctx, job) || rodsOnHold(ctx, job.orderId)) return null;
     const rods = rodsOfJob(ctx, job);
     if (!rods.length) return { html: ui.dialog("grRodRequest", "ขอเบิกยางเส้นยาว", ui.callout("info", esc("งานนี้ไม่มียางเส้นยาวใน BOM ของใบ")), { footer: ui.closeButton("ปิด") }) };
     const pick = rods.find((row) => row.code === itemCode) ?? rods.find((row) => !row.open.length && (row.need?.remaining ?? 0) > 0) ?? rods[0];

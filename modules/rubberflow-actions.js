@@ -706,9 +706,11 @@
   }
 
   // โหมดฐานข้อมูล: บันทึกล็อตของสถานีไหนก็ได้เฉพาะใบสั่งผลิตที่ปล่อยผลิต กำลังผลิต หรือพักงาน (ฐานข้อมูลปฏิเสธนอกนี้ด้วย RF_INVALID_TRANSITION)
-  function needOrderOpen(d, orderId, ctx) {
+  // 20261227010000: ล็อตตกแต่งของ WO ที่ยกเลิกพร้อมใบที่ฝ่ายวางแผนเลือกหยุด (ctx.salesStopped) บันทึกได้ · สถานีอื่นและ WO ที่ยกเลิกทางอื่นยังไม่ได้
+  function needOrderOpen(d, orderId, ctx, stage = "") {
     const order = d.orders.find((row) => row.id === orderId);
     if (!ctx.remote || !order || ["released", "in_progress", "on_hold"].includes(order.status)) return;
+    if (stage === "finishing" && order.status === "cancelled" && ctx.salesStopped?.(order)) return;
     const why = { planned: "ยังไม่ได้ปล่อยผลิต", completed: "ปิดแล้ว", cancelled: "ถูกยกเลิกแล้ว" }[order.status] ?? "ไม่อยู่ในสถานะที่ผลิตได้";
     fail(`ใบสั่งผลิต ${order.id} ${why} บันทึกการผลิตไม่ได้`);
   }
@@ -716,7 +718,7 @@
   function takeFromTransfer(d, transferId, stage, qty, ctx) {
     const transfer = find(d.transfers, transferId, "ใบส่งมอบ");
     if (transfer.to !== stage) fail("ใบส่งมอบนี้ไม่ได้ส่งมาที่สถานีนี้");
-    needOrderOpen(d, transfer.orderId, ctx);
+    needOrderOpen(d, transfer.orderId, ctx, stage);
     if (transfer.status !== "received") fail("ด่านรับมอบ: ต้องกดรับมอบงานก่อนจึงจะเริ่มผลิตได้");
     if (qty <= 0) fail("ปริมาณที่ใช้ต้องมากกว่า 0");
     if (qty > transfer.remaining + 1e-9) fail(`ปริมาณเกินที่รับมา (คงเหลือ ${transfer.remaining})`);
@@ -1095,6 +1097,8 @@
     // ไม่ระบุ = WO ที่ผูกงานไป sr · WO ที่ไม่ผูกงานไป customer เสมอ (หน้าฟอร์มให้ WO ที่ผูกงานเลือกเอง) · งานที่กักรอ QC ยังไม่มีปลายทาง
     const linked = Boolean(order.sourceJobId);
     let destination = String(p.destination ?? "").trim() || null;
+    // WO ที่ยกเลิกพร้อมใบ (ฝ่ายวางแผนเลือกหยุด): ผลที่ผ่านไปคลังยางเส้นยาว (SR) เท่านั้น เป็นสต็อกกลาง · ส่งมอบให้ลูกค้าไม่ได้ (ตรงกับ rf_save_lots: RF_INVALID_LOT)
+    if (order.status === "cancelled" && destination && destination !== "sr") fail("ใบสั่งผลิตนี้ถูกยกเลิกแล้ว ส่งมอบให้ลูกค้าไม่ได้ ยางเส้นยาวเข้าคลังยางเส้นยาว (SR) เป็นสต็อกกลางเท่านั้น");
     if (result === "pass") {
       destination = destination ?? (linked ? "sr" : "customer");
       if (!FINISH_DESTINATIONS.includes(destination)) fail("ปลายทางของงานที่ผ่านไม่ถูกต้อง");
@@ -1143,7 +1147,7 @@
     const add = Number(qty);
     if (!(add > 0)) return;
     // ฐานข้อมูลรับยอดเฉพาะใบ in_progress / on_hold / completed (ใบ released ต้องเริ่มงานก่อน)
-    if (ctx.remote && ["planned", "released", "cancelled"].includes(order.status)) fail(`ใบสั่งผลิต ${order.id} ${order.status === "planned" ? "ยังไม่ได้ปล่อยผลิต" : order.status === "released" ? "ยังไม่ได้เริ่มงาน" : "ถูกยกเลิกแล้ว"} บันทึกยอดผลิตเข้าใบไม่ได้`);
+    if (ctx.remote && (["planned", "released"].includes(order.status) || (order.status === "cancelled" && !ctx.salesStopped?.(order)))) fail(`ใบสั่งผลิต ${order.id} ${order.status === "planned" ? "ยังไม่ได้ปล่อยผลิต" : order.status === "released" ? "ยังไม่ได้เริ่มงาน" : "ถูกยกเลิกแล้ว"} บันทึกยอดผลิตเข้าใบไม่ได้`);
     order.producedQty = +(order.producedQty + add).toFixed(3);
     const mayClose = !ctx.remote || Boolean(ctx.user?.planner || ctx.user?.rb);
     if (mayClose && order.producedQty >= order.targetQty && order.status === "in_progress") {

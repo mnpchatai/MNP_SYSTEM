@@ -70,9 +70,22 @@
   // โหมดฐานข้อมูล: "ตอนนี้" ตามนาฬิกาเซิร์ฟเวอร์ (modules/server-clock.js จาก header Date ของคำตอบ Supabase) เพราะเวลาในข้อมูล (readyAt, createdAt)
   // ฐานข้อมูลประทับด้วยนาฬิกาเซิร์ฟเวอร์ ถ้านาฬิกาเครื่องคลาด เช่นช้ากว่า หลัง "ข้ามเวลาบ่ม" หน้าจอจะเห็นว่ายังบ่มอยู่ · โหมดในเครื่องใช้เวลาเครื่อง
   const clockNow = () => (remote && typeof window.MNP_SERVER_CLOCK?.now === "function" ? window.MNP_SERVER_CLOCK.now() : Date.now());
+  // WO ที่ยกเลิกพร้อมใบสั่งผลิตที่ฝ่ายวางแผนเลือก "หยุด" หลังฝ่ายขายยกเลิกกลางทาง (ตรงกับ private.rf_wo_sales_stopped · 20261227010000): WO cancelled ที่ผูกงานของใบ cancelled ทางเลือก stop
+  // และเวลายกเลิกตรงกัน · RB ยังบันทึกล็อตตกแต่งของ WO นี้ได้ (ผลผ่านไปคลังยางเส้นยาว SR เท่านั้น เป็นสต็อกกลาง) · ใช้ข้อมูล BOM ที่โหลดอยู่ (ยังไม่โหลด = false เซิร์ฟเวอร์ตัดสินซ้ำเสมอ)
+  const bomSalesStopped = (order) => {
+    if (!order || order.status !== "cancelled" || !order.sourceJobId || order.cancelledAt === undefined || order.cancelledAt === null) return false;
+    try {
+      const bom = bomStore();
+      if (!bom || bom.status() !== "ready") return false;
+      const bomData = bom.data();
+      const job = (bomData.jobs ?? []).find((row) => row.id === order.sourceJobId && row.externalRef?.woId === order.id);
+      const owner = job ? (bomData.orders ?? []).find((row) => row.id === job.orderId) : null;
+      return Boolean(owner) && owner.status === "cancelled" && owner.salesCancelChoice === "stop" && owner.cancelledAt === order.cancelledAt;
+    } catch { return false; }
+  };
   const store = storeApi.createStore({
     storage, seed: () => seed.buildSeed(Date.now()), actions, remote, now: clockNow,
-    persona: () => storeApi.personaUser(state.employee), shouldHold: () => isEditing(),
+    persona: () => storeApi.personaUser(state.employee), shouldHold: () => isEditing(), salesStopped: bomSalesStopped,
   });
   // context(params) ให้เทสต์เรียก dialog ด้วย ctx เดียวกับหน้า
   // bomJobOfAction / showBomFeedback: ขั้น "ตกแต่งผ่าน / QA ตัดสินผ่าน → ตามทัน BOM → แจ้งยอดที่งานได้รับ" (ให้เทสต์เรียกตรง)
@@ -553,6 +566,8 @@
         } catch { return []; }
       },
       bomItems: () => bomItems(),
+      // WO ที่ยกเลิกพร้อมใบที่ฝ่ายวางแผนเลือกหยุด: บันทึกล็อตตกแต่งได้ (ปลายทางคลังยางเส้นยาว SR เท่านั้น)
+      bomSalesStopped,
       // WO ที่ผูกงานของ BOM (กฎเดียวกับ private.bom_rod_wo_linked): มี sourceJobId และงานนั้นมีอยู่ใน BOM ที่โหลดแล้ว
       // BOM ยังไม่โหลด / โหมดในเครื่อง = ถือตาม sourceJobId อย่างเดียว · ใช้ซ่อนช่องจำนวนต่อกล่องและบอกว่าแท่งไปคลังแท่งยาว (SR)
       bomLinked: (order) => {

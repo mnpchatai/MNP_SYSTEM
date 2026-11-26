@@ -399,3 +399,19 @@ test("GR pages escape what users typed and keep to the wording rules; module fil
   assert.ok(order.indexOf("modules/gr-pages.js") > order.indexOf("modules/module-sr.js") && order.indexOf("modules/gr-pages.js") < order.indexOf("modules/module-gr.js"));
   assert.ok(order.indexOf("modules/module-gr.js") < order.indexOf("modules/module-pk.js"));
 });
+
+test("GR: an order sales cancelled mid-way and awaiting planning's choice offers no rod request — the buttons give way to the reason, and the dialog does not open", async () => {
+  const staff = as("staff");
+  const fresh = jobOf(staff, "SE-TP01-OR01-100-18-65");
+  const before = await gr(staff);
+  assert.match(cardsOf(before).find((entry) => entry.includes(`job=${fresh.id}"`)), /data-rf-open="grRodRequest"/);
+  const order = dataOf(staff).orders.find((entry) => entry.id === fresh.orderId);
+  Object.assign(order, { salesCancelAt: Date.now(), salesCancelBy: "สุนิสา ขายดี", salesCancelReason: "ลูกค้ายกเลิก" });
+  const held = await gr(staff);
+  const heldCard = cardsOf(held).find((entry) => entry.includes(`job=${fresh.id}"`));
+  assert.doesNotMatch(heldCard, /data-rf-open="grRodRequest"/);
+  assert.match(heldCard, /ฝ่ายขายยกเลิกใบนี้แล้ว รอฝ่ายวางแผนตัดสินของที่ทำค้าง ใบไม่รับงานใหม่/);
+  assert.equal(dialog(staff, "grRodRequest", { jobId: fresh.id }), null, "no dialog for a held order");
+  order.salesCancelChoice = "continue"; // ตัดสินแล้ว (ผลิตต่อ): ขอเบิกได้อีก
+  assert.match(cardsOf(await gr(staff)).find((entry) => entry.includes(`job=${fresh.id}"`)), /data-rf-open="grRodRequest"/);
+});

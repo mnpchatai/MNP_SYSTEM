@@ -522,3 +522,16 @@ test("wording: the store is named on its buttons, no rod word, and module-st.js 
   const index = read("index.html");
   assert.ok(index.indexOf("modules/st-pages.js") > 0 && index.indexOf("modules/st-pages.js") < index.indexOf("modules/module-st.js"), "st-pages.js loads before module-st.js");
 });
+
+test("จ่ายออก: an order sales cancelled mid-way and awaiting planning's choice shows the reason instead of the issue button (returns and undo stay)", async () => {
+  const env = load();
+  const html = await env.open("tab=issue");
+  const orderId = /data-rf-open="issueParts" data-rf-args="\{&quot;orderId&quot;:&quot;([^&]+)&quot;\}"/.exec(html)[1];
+  const order = env.bom.data().orders.find((row) => row.id === orderId);
+  Object.assign(order, { salesCancelAt: Date.now(), salesCancelBy: "สุนิสา ขายดี", salesCancelReason: "ลูกค้ายกเลิก" });
+  const held = await env.open("tab=issue");
+  assert.doesNotMatch(held, new RegExp(`data-rf-open="issueParts" data-rf-args="\{&quot;orderId&quot;:&quot;${orderId}&quot;`), "no issue button for that order");
+  assert.match(held, /ฝ่ายขายยกเลิกใบ รอฝ่ายวางแผนตัดสิน ใบไม่รับงานใหม่/);
+  order.salesCancelChoice = "continue";
+  assert.match(await env.open("tab=issue"), new RegExp(`data-rf-open="issueParts" data-rf-args="\{&quot;orderId&quot;:&quot;${orderId}&quot;`), "decided: the button is back");
+});

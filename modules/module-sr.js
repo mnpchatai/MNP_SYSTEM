@@ -124,7 +124,7 @@
     const needs = rules.rodIssueNeeds(data).filter((need) => need.remaining > 1e-9).sort((a, b) => String(a.order.id).localeCompare(String(b.order.id)) || a.itemCode.localeCompare(b.itemCode));
     const needRows = needs.map((need) => {
       const stock = Math.round((need.owned + need.free) * 1e4) / 1e4;
-      const action = !store ? "" : stock > 0 ? ui.openButton("จ่ายยางเส้นยาว", "rodIssue", { orderId: need.order.id, itemCode: need.itemCode }, { className: "small", ariaLabel: `จ่ายยางเส้นยาว ${need.itemCode} ให้ใบ ${need.order.id}` }) : emptyHint("ไม่มีในคลัง");
+      const action = !store ? "" : ctx.helpers.salesCancelPending?.(need.order) ? `<span class="small muted" title="${F.esc(ctx.helpers.SALES_PENDING_TEXT)}">${F.esc(ctx.helpers.SALES_PENDING_SHORT)}</span>` : stock > 0 ? ui.openButton("จ่ายยางเส้นยาว", "rodIssue", { orderId: need.order.id, itemCode: need.itemCode }, { className: "small", ariaLabel: `จ่ายยางเส้นยาว ${need.itemCode} ให้ใบ ${need.order.id}` }) : emptyHint("ไม่มีในคลัง");
       return `<tr${rowAttr(true)}><td>${ui.link(need.order.id, ctx.url("orders", { sel: need.order.id }), "rf-mono")}<div class="small muted">${F.esc(need.order.customer ?? "")}</div></td><td>${itemCell(ctx, need.itemCode, issueHref(need.order.id, need.itemCode))}</td><td class="right rf-mono">${F.esc(rod().rodQty(ctx, need.remaining, need.uom))}</td><td class="right rf-mono" title="${F.attr(`ของใบนี้ ${rules.fmtQty(need.owned)} · สต็อกกลาง ${rules.fmtQty(need.free)}`)}">${F.esc(rules.fmtQty(stock))}</td><td class="right">${action}</td></tr>`;
     });
     const reversed = rules.rodReversedIds(data.rodMoves);
@@ -163,7 +163,7 @@
     const reversed = rules.rodReversedIds(data.rodMoves);
     const issues = (data.rodMoves ?? []).filter((move) => move.kind === "issue" && move.forOrderId === order.id && move.itemCode === code).sort(byNewest);
     const history = ui.card(ui.table(moveHead(true, "ล็อต"), issues.map((move) => moveRow(ctx, move, { showItem: false, hideFor: true, reversed })), { emptyText: "ยังไม่เคยจ่ายให้ใบนี้" }), { title: F.esc("จ่ายไปแล้ว"), flush: true });
-    const button = open && canStore(ctx) && stock > 0 ? ui.openButton("จ่ายยางเส้นยาว", "rodIssue", { orderId: order.id, itemCode: code }, { className: "", ariaLabel: `จ่ายยางเส้นยาว ${code} ให้ใบ ${order.id}` }) : "";
+    const button = open && canStore(ctx) && ctx.helpers.salesCancelPending?.(order) ? `<span class="small muted">${F.esc(ctx.helpers.SALES_PENDING_TEXT)}</span>` : open && canStore(ctx) && stock > 0 ? ui.openButton("จ่ายยางเส้นยาว", "rodIssue", { orderId: order.id, itemCode: code }, { className: "", ariaLabel: `จ่ายยางเส้นยาว ${code} ให้ใบ ${order.id}` }) : "";
     return { html: `${back}${F.pageHead(ctx, "จ่ายยางเส้นยาวให้ GR", `${button}<span class="small muted" role="status" data-bom-sync>${F.esc(window.MNP_BOM?.syncText?.() ?? "")}</span>`)}<div class="sr-lot">${ui.card(facts, { className: "sr-lot-facts" })}${pick}</div>${history}` };
   }
 

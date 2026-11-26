@@ -27,7 +27,9 @@
   const noticeTitle = (ctx, row) => (row.kind === "change" ? "ฝ่ายขายแก้ใบ" : ctx.helpers.noticeMode(ctx.data, row) === "choose" ? "ฝ่ายขายยกเลิกใบกลางทาง" : "ฝ่ายขายยกเลิกใบ");
   // ผลจากฝ่ายวางแผน (ฝ่ายขายเห็น): รอ → รับทราบ / ผลิตต่อจนจบส่ง WH / หยุด
   const DECIDED_TEXT = Object.freeze({ ack: "ฝ่ายวางแผนรับทราบแล้ว", continue: "ฝ่ายวางแผนเลือกผลิตต่อจนจบส่ง WH (ของเป็นสต็อก ไม่ส่งลูกค้า)", stop: "ฝ่ายวางแผนเลือกหยุด เก็บยางเส้นยาวที่ SR" });
-  const noticeOutcome = (ctx, row) => (row.status === "open"
+  const noticeOutcome = (ctx, row) => (ctx.helpers.staleChangeNotice?.(ctx.data, row)
+    ? { tone: "good", text: "ใบปิดแล้ว ไม่ต้องรอฝ่ายวางแผนรับทราบ", by: "" }
+    : row.status === "open"
     ? { tone: "warn", text: ctx.helpers.noticeMode(ctx.data, row) === "choose" ? "รอฝ่ายวางแผนตัดสินของที่ทำค้าง" : "รอฝ่ายวางแผนรับทราบ", by: "" }
     : { tone: row.decision === "stop" ? "bad" : "good", text: DECIDED_TEXT[row.decision] ?? "ฝ่ายวางแผนรับทราบแล้ว", by: `${row.decidedBy ?? ""} ${ctx.rules.fmtDate(row.decidedAt)}` });
   const workCount = (ctx) => salesOrders(ctx).filter((order) => isUnsent(ctx, order)).length;
@@ -71,7 +73,7 @@
     const mine = salesOrders(ctx).sort(newestFirst);
     const drafts = mine.filter((order) => isUnsent(ctx, order));
     const notices = (ctx.data.orderRequests ?? []).filter((row) => mine.some((order) => order.id === row.orderId))
-      .filter((row) => row.status === "open" || ctx.now - (Number(row.decidedAt) || 0) < 14 * DAY).sort((a, b) => (a.status === "open" ? 0 : 1) - (b.status === "open" ? 0 : 1) || (Number(b.requestedAt) || 0) - (Number(a.requestedAt) || 0));
+      .filter((row) => (row.status === "open" && !ctx.helpers.staleChangeNotice?.(ctx.data, row)) || ctx.now - (Number(row.decidedAt) || 0) < 14 * DAY).sort((a, b) => (a.status === "open" ? 0 : 1) - (b.status === "open" ? 0 : 1) || (Number(b.requestedAt) || 0) - (Number(a.requestedAt) || 0));
     const soon = mine.filter((order) => !["completed", "cancelled"].includes(order.status) && !ctx.helpers.salesCancelled(order) && !isUnsent(ctx, order) && Number(order.whDue) < ctx.now + 7 * DAY).sort((a, b) => a.whDue - b.whDue);
     const sections = [];
     if (drafts.length) sections.push(ui.card(ui.table([...HEAD, ""], orderRows(ctx, drafts, { send: true })), { title: esc(`ใบร่างที่ยังไม่ส่งให้ฝ่ายวางแผน (${drafts.length})`), flush: true }));
@@ -228,7 +230,7 @@
       order.cancelReason && order.cancelReason !== order.salesCancelReason ? ["เหตุผลยกเลิก", esc(order.cancelReason)] : null,
     ]);
     // ข้อมูล RubberFlow ยังโหลดอยู่ (หน้าวาดใหม่เมื่อโหลดเสร็จ) หรือโหลดไม่สำเร็จ: ยังรู้ไม่ได้ว่างานยาง (RB) เริ่มแล้วหรือยัง จึงไม่บอกว่าแผนกเริ่มงานแล้ว
-    const pendingText = { loading: "กำลังโหลดข้อมูล RubberFlow เพื่อตรวจว่างานยาง (RB) เริ่มแล้วหรือยัง ปุ่มแก้และยกเลิกใบจะแสดงเมื่อโหลดเสร็จ", failed: "โหลดข้อมูล RubberFlow ไม่สำเร็จ จึงยังตรวจไม่ได้ว่างานยาง (RB) เริ่มแล้วหรือยัง โหลดหน้าใหม่อีกครั้ง" }[state.rfPending] ?? "";
+    const pendingText = { loading: "กำลังโหลดข้อมูล RubberFlow เพื่อตรวจว่างานยาง (RB) เริ่มแล้วหรือยัง ระหว่างนี้ยังแก้หรือยกเลิกใบไม่ได้", failed: "โหลดข้อมูล RubberFlow ไม่สำเร็จ จึงยังตรวจไม่ได้ว่างานยาง (RB) เริ่มแล้วหรือยัง โหลดหน้าใหม่อีกครั้ง" }[state.rfPending] ?? "";
     const hint = state.reopen && !salesCancelled ? `<p class="small muted">${esc("ใบนี้ปล่อยผลิตแล้ว ยังไม่มีแผนกไหนเริ่มงาน แก้ได้ แต่ใบจะกลับไปให้ฝ่ายวางแผนปล่อยผลิตใหม่")}</p>`
       : pendingText ? `<p class="small muted" role="status">${esc(pendingText)}</p>`
         : inPlace ? `<p class="small muted">${esc(shared().IN_PLACE_TEXT ?? "")}</p>` : "";
@@ -311,7 +313,8 @@
         cards.push(ui.card(ui.table(["เลข PI / ลูกค้า", "สินค้า", "กำหนดส่งคลัง", "ฝ่ายขาย"], rows), { title: esc(`ใบใหม่จากฝ่ายขาย (${fresh.length})`), flush: true }));
       }
     }
-    const open = (ctx.data.orderRequests ?? []).filter((row) => row.status === "open" && (!orderId || row.orderId === orderId));
+    // ใบที่ปิดแล้ว: การแจ้งแก้ใบที่ยังเปิดอยู่ไม่ต้องรับทราบ (เซิร์ฟเวอร์ปิดให้ · helpers.staleChangeNotice)
+    const open = (ctx.data.orderRequests ?? []).filter((row) => row.status === "open" && !helpers.staleChangeNotice?.(ctx.data, row) && (!orderId || row.orderId === orderId));
     if (open.length) {
       const items = open.sort((a, b) => (Number(a.requestedAt) || 0) - (Number(b.requestedAt) || 0)).map((row) => {
         const order = orderOfNotice(ctx, row);
@@ -338,24 +341,70 @@
     if (orderId) cards.push(extraJobsCard(ctx, ctx.data.orders.find((order) => order.id === orderId)));
     return cards.join("");
   }
-  // ฝ่ายขายเพิ่มสินค้า / จำนวนในใบที่เริ่มงานแล้ว (หน้าใบของฝ่ายวางแผน): สินค้าที่เพิ่ม + งานที่จะเปิดรายแผนก (งานใหม่ / เพิ่มจาก A เป็น B) แล้วปุ่มเดียว "เปิดงานเพิ่ม"
-  // (ยืนยันแล้วส่งทันที) · มีข้อห้าม (ไม่มี BOM งานปิดแล้ว WO เริ่มแล้ว) = แสดงข้อห้ามแทนปุ่ม · ค่าเดิม → ใหม่ของจำนวนสั่งอยู่ในการแจ้ง "ฝ่ายขายแก้ใบ" แล้ว ที่นี่บอกแค่ส่วนที่เพิ่ม
+  // ฝ่ายขายเพิ่มสินค้า / จำนวนในใบที่เริ่มงานแล้ว (หน้าใบของฝ่ายวางแผน · 20261227010000): นับเฉพาะส่วนที่ฝ่ายขายเพิ่ม (จำนวนสั่ง − จำนวนที่เปิดงานไว้แล้ว)
+  // ฝ่ายวางแผนใช้สต็อกกับส่วนที่เพิ่มได้แบบเดียวกับตอนปล่อยผลิต: สต็อกสินค้าสำเร็จรูป (WH) ต่อสินค้าที่เพิ่ม · ยางเส้นยาว (SR) ต่อเส้นยางของส่วนที่เพิ่ม (กรอกเฉพาะรหัสที่มีสต็อกว่าง)
+  // ตารางด้านล่างคำนวณใหม่ทุกครั้งที่กรอก (bindExtraJobs) บอกงานที่จะเปิดหลังหักสต็อก (งานใหม่ / เพิ่มจาก A เป็น B) ก่อนกดปุ่มเดียว "เปิดงานเพิ่ม" (ยืนยันแล้วส่งทันที)
+  // มีข้อห้าม (ไม่มี BOM งานปิดแล้ว WO เริ่มแล้ว) = แสดงข้อห้ามแทนฟอร์ม · ค่าเดิม → ใหม่ของจำนวนสั่งอยู่ในการแจ้ง "ฝ่ายขายแก้ใบ" แล้ว ที่นี่บอกแค่ส่วนที่เพิ่ม
+  const flowOf = (rules, dept) => { const at = rules.FLOW_DEPTS.indexOf(dept); return at === -1 ? 99 : at; };
+  function extraPreview(ctx, plan) {
+    const { ui, rules } = ctx;
+    const rows = plan.jobs.slice().sort((x, y) => flowOf(rules, x.dept) - flowOf(rules, y.dept) || x.itemCode.localeCompare(y.itemCode)).map((entry) => {
+      const what = entry.mode === "new" ? `งานใหม่ ${rules.fmtQty(entry.diff)}` : `เพิ่มจาก ${rules.fmtQty(entry.from)} เป็น ${rules.fmtQty(entry.to)}`;
+      return `<tr><td>${F.deptChip(entry.dept, rules.DEPT_LABEL)}</td><td>${ui.mono(entry.itemCode)}<div class="small muted">${esc(entry.name)}</div></td><td class="nowrap">${esc(`${what} ${uomText(ctx, entry.uom)}`)}${entry.woId ? `<div class="small muted">${esc(`${entry.woId} เพิ่มยอดตาม`)}</div>` : ""}</td></tr>`;
+    });
+    return rows.length ? ui.table(["แผนก", "งาน", "ที่จะเปิด"], rows) : `<p class="small muted">${esc("ไม่มีงานที่ต้องเปิด: ส่วนที่เพิ่มใช้จากสต็อกครบ")}</p>`;
+  }
+  const extraConfirm = (order, plan) => {
+    const stock = plan.stock.filter((row) => row.use > 0).length;
+    return `เปิดงานเพิ่มของใบ ${order.id}? งานใหม่ ${plan.jobs.filter((entry) => entry.mode === "new").length} งาน และเพิ่มยอดงานเดิม ${plan.jobs.filter((entry) => entry.mode === "raise").length} งาน ตามที่ฝ่ายขายเพิ่ม${stock ? ` ใช้จากสต็อก ${stock} รายการ ระบบหักสต็อกทันที` : ""} งานที่มีอยู่ไม่ลดลง`;
+  };
+  function extraStockTable(ctx, plan) {
+    const { ui, rules } = ctx;
+    const rows = plan.stock.filter((row) => row.max > 0 || row.requested > 0);
+    if (plan.legacy || !rows.length) return "";
+    const kindText = (row) => (row.kind === "FG" ? "สินค้าสำเร็จรูป (WH)" : "ยางเส้นยาว (SR)");
+    const body = rows.map((row) => {
+      const unit = uomText(ctx, row.uom);
+      const hint = row.kind === "FG" ? `ส่วนที่เพิ่ม ${rules.fmtQty(row.added)} · สต็อกสินค้าสำเร็จรูปที่ใบอื่นถืออยู่ ${rules.fmtQty(row.available)}` : `ต้องใช้ ${rules.fmtNum(row.added, 2)} · สต็อกกลางของคลัง SR ${rules.fmtQty(row.available)}`;
+      return `<tr><td>${ui.mono(row.itemCode)}<div class="small muted">${esc(row.name)} · ${esc(kindText(row))}</div></td><td class="right rf-mono">${esc(rules.fmtQty(row.available))}</td><td class="right"><input type="hidden" name="itemCode[]" value="${attr(row.itemCode)}"><label class="bom-count-input" title="${attr(hint)}"><span class="sr-only">${esc(`ใช้จากสต็อก ${row.itemCode} (ไม่เกิน ${rules.fmtQty(row.max)}) · ${hint}`)}</span><input class="input rf-input" name="qty[]" type="number" inputmode="decimal" step="any" min="0" max="${attr(row.max)}" value="${attr(row.requested > 0 ? row.requested : "")}" placeholder="${attr(`ไม่เกิน ${rules.fmtQty(row.max)}`)}"><span class="small muted">${esc(unit)}</span></label></td></tr>`;
+    });
+    return ui.table(["สินค้า / เส้นยาง", { label: "สต็อกที่ใช้ได้", className: "right", title: "สต็อกสินค้าสำเร็จรูปที่ใบอื่นถืออยู่ และสต็อกกลางของคลังยางเส้นยาว (SR) ที่ใช้ได้กับส่วนที่เพิ่ม" }, { label: "ใช้จากสต็อก", className: "right", title: "ลดงานผลิตของส่วนที่เพิ่มลงตามจำนวนนี้ ของถูกหักเมื่อกดเปิดงานเพิ่ม ล็อตเก่าก่อน ใบที่ปล่อยผลิตก่อนได้ก่อน" }], body);
+  }
   function extraJobsCard(ctx, order) {
     const { ui, rules, helpers } = ctx;
     if (!order || !["released", "in_progress"].includes(order.status) || helpers.salesCancelled(order) || typeof helpers.extraJobsFor !== "function") return "";
     const plan = helpers.extraJobsFor(ctx.data, order, shared().rfOrdersOf?.(ctx) ?? null);
-    if (!plan.lines.length || !(plan.jobs.length || plan.blockers.length)) return "";
+    if (!plan.lines.length || !(plan.jobs.length || plan.blockers.length || plan.stock.length)) return "";
     const added = plan.lines.map((line) => `${ui.mono(line.fgCode)} ${esc(`+${rules.fmtQty(line.added)}`)}`).join(" · ");
-    const flow = (dept) => { const at = rules.FLOW_DEPTS.indexOf(dept); return at === -1 ? 99 : at; };
-    const rows = plan.jobs.slice().sort((a, b) => flow(a.dept) - flow(b.dept) || a.itemCode.localeCompare(b.itemCode)).map((entry) => {
-      const what = entry.mode === "new" ? `งานใหม่ ${rules.fmtQty(entry.diff)}` : `เพิ่มจาก ${rules.fmtQty(entry.from)} เป็น ${rules.fmtQty(entry.to)}`;
-      return `<tr><td>${F.deptChip(entry.dept, rules.DEPT_LABEL)}</td><td>${ui.mono(entry.itemCode)}<div class="small muted">${esc(entry.name)}</div></td><td class="nowrap">${esc(`${what} ${uomText(ctx, entry.uom)}`)}${entry.woId ? `<div class="small muted">${esc(`${entry.woId} เพิ่มยอดตาม`)}</div>` : ""}</td></tr>`;
+    if (plan.blockers.length) {
+      const body = `<p>${esc("สินค้าที่เพิ่ม")} ${added}</p>${extraPreview(ctx, plan)}${ui.callout("warn", `<strong>${esc("ยังเปิดงานเพิ่มไม่ได้")}</strong><ul>${plan.blockers.map((text) => `<li>${esc(text)}</li>`).join("")}</ul>`)}`;
+      return ui.card(body, { title: esc("ฝ่ายขายเพิ่มสินค้า/จำนวน — เปิดงานเพิ่ม") });
+    }
+    const canOpen = plan.jobs.length > 0 || plan.increase;
+    const form = `<form novalidate data-extra-jobs data-order-id="${attr(order.id)}" data-rf-form="addJobsForChanges" data-rf-args="${attr(JSON.stringify({ orderId: order.id }))}" data-rf-success="${attr(`เปิดงานเพิ่มของใบ ${order.id} แล้ว ({result})`)}">
+      <p>${esc("สินค้าที่เพิ่ม")} ${added}</p>${extraStockTable(ctx, plan)}<div data-extra-preview>${extraPreview(ctx, plan)}</div>
+      <div class="rf-row"><button class="btn rf-btn" type="submit" data-extra-submit data-rf-confirm="${attr(extraConfirm(order, plan))}" aria-label="${attr(`เปิดงานเพิ่มของใบ ${order.id}`)}"${canOpen ? "" : " disabled"}>เปิดงานเพิ่ม</button></div>
+    </form>`;
+    return ui.card(form, { title: esc("ฝ่ายขายเพิ่มสินค้า/จำนวน — เปิดงานเพิ่ม") });
+  }
+  // กรอกยอดที่ใช้จากสต็อกแล้วคำนวณงานที่จะเปิดใหม่ทันที (ตารางที่จะเปิดและข้อความยืนยัน) · ข้อมูลที่ใช้คำนวณเป็นชุดเดียวกับตอนกด (helpers.extraJobsFor)
+  function bindExtraJobs(node, ctx) {
+    node.querySelectorAll("form[data-extra-jobs]").forEach((form) => {
+      const order = ctx.data.orders.find((row) => row.id === form.dataset.orderId);
+      if (!order) return;
+      const refresh = () => {
+        const codes = [...form.querySelectorAll('input[name="itemCode[]"]')];
+        const qtys = [...form.querySelectorAll('input[name="qty[]"]')];
+        const use = codes.map((input, index) => ({ itemCode: input.value, qty: qtys[index]?.value ?? "" }));
+        let plan;
+        try { plan = ctx.helpers.extraJobsFor(ctx.data, order, shared().rfOrdersOf?.(ctx) ?? null, use); } catch { return; }
+        const preview = form.querySelector("[data-extra-preview]");
+        if (preview) preview.innerHTML = extraPreview(ctx, plan);
+        const button = form.querySelector("[data-extra-submit]");
+        if (button) { button.disabled = !(plan.jobs.length || plan.increase); button.dataset.rfConfirm = extraConfirm(order, plan); }
+      };
+      form.addEventListener("input", refresh);
     });
-    const action = plan.blockers.length
-      ? ui.callout("warn", `<strong>${esc("ยังเปิดงานเพิ่มไม่ได้")}</strong><ul>${plan.blockers.map((text) => `<li>${esc(text)}</li>`).join("")}</ul>`)
-      : `<div class="rf-row">${ui.button("เปิดงานเพิ่ม", { action: "addJobsForChanges", args: { orderId: order.id }, className: "", success: `เปิดงานเพิ่มของใบ ${order.id} แล้ว ({result})`, confirmText: `เปิดงานเพิ่มของใบ ${order.id}? งานใหม่ ${plan.jobs.filter((entry) => entry.mode === "new").length} งาน และเพิ่มยอดงานเดิม ${plan.jobs.filter((entry) => entry.mode === "raise").length} งาน ตามที่ฝ่ายขายเพิ่ม งานที่มีอยู่ไม่ลดลง`, ariaLabel: `เปิดงานเพิ่มของใบ ${order.id}` })}</div>`;
-    const body = `<p>${esc("สินค้าที่เพิ่ม")} ${added}</p>${rows.length ? ui.table(["แผนก", "งาน", "ที่จะเปิด"], rows) : ""}${action}`;
-    return ui.card(body, { title: esc("ฝ่ายขายเพิ่มสินค้า/จำนวน — เปิดงานเพิ่ม") });
   }
 
   // ---------- หน้าแรกของโมดูล ----------
@@ -383,5 +432,5 @@
     { id: "customers", label: "ทะเบียนลูกค้า", icon: "building", params: { tab: "customers" } },
   ]);
 
-  root.MNP_SA_PAGES = Object.freeze({ landing, MENU, workCount, planningCards, statusKey, KEEP: Object.freeze(["st"]) });
+  root.MNP_SA_PAGES = Object.freeze({ landing, MENU, workCount, planningCards, bindExtraJobs, statusKey, KEEP: Object.freeze(["st"]) });
 })(window);

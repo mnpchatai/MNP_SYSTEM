@@ -375,7 +375,7 @@
   const AUDIT_FRESH_MS = 3000;
 
   // shouldHold() = หน้ามีฟอร์มที่แก้ค้าง/เปิด dialog อยู่ (หน้าส่งมา): ระหว่างนั้นข้อมูลของผู้อื่นที่มากับ catchUp หรือคำตอบของการบันทึกห้ามรวมเข้า data และห้ามขยับเวอร์ชันฐาน
-  function createRemoteStore({ actions, now, remote, persona, idSuffix, shouldHold: pageHolds = () => false }) {
+  function createRemoteStore({ actions, now, remote, persona, idSuffix, shouldHold: pageHolds = () => false, salesStopped = () => false }) {
     const shouldHold = () => { try { return Boolean(pageHolds()); } catch { return false; } };
     let snapshot = null; // ข้อมูลชุดล่าสุดจากฐานข้อมูล (null = ยังไม่โหลด)
     let data = null; // ข้อมูลที่หน้าใช้: ตามฐานข้อมูล + ที่เพิ่งแก้และรอบบันทึก · users / audit ว่างเสมอ · counters ว่าง (เลขเอกสารออกจากข้อมูลที่มี)
@@ -524,7 +524,7 @@
       draft.audit = []; // action เขียนบันทึกการใช้งานลงร่างนี้ แล้วส่งไปกับการบันทึก (ฐานข้อมูลเก็บ)
       let result;
       try {
-        result = action(draft, payload ?? {}, { now: now(), user, idSuffix, remote: true });
+        result = action(draft, payload ?? {}, { now: now(), user, idSuffix, remote: true, salesStopped });
       } catch (error) {
         return { ok: false, error };
       }
@@ -636,8 +636,9 @@
   // snapshot = { version, epoch, <ทั้ง 13 ชุด> } · delta = { version, epoch, changes: { <ชุด>: { upsert: [...], delete: [...] } } }
   // ไม่ส่ง remote = ทั้งชุดอยู่ใน localStorage เหมือนเดิม (ชุดสาธิต + บทบาทสาธิต) · persona() = ผู้ใช้ปัจจุบันของโหมดฐานข้อมูล
   // storage: { getItem, setItem, removeItem } · seed: buildSeed() · actions: ตาราง action · now: () => ms
-  function createStore({ storage = null, seed, actions, now = () => Date.now(), remote = null, persona = () => null, idSuffix, shouldHold } = {}) {
-    if (remote) return createRemoteStore({ actions, now, remote, persona, idSuffix, shouldHold });
+  // salesStopped(wo) = WO ที่ยกเลิกพร้อมใบที่ฝ่ายวางแผนเลือกหยุดหลังฝ่ายขายยกเลิกกลางทาง (ตรวจจากข้อมูล BOM ที่โหลดอยู่ · 20261227010000): ยังบันทึกล็อตตกแต่งได้
+  function createStore({ storage = null, seed, actions, now = () => Date.now(), remote = null, persona = () => null, idSuffix, shouldHold, salesStopped } = {}) {
+    if (remote) return createRemoteStore({ actions, now, remote, persona, idSuffix, shouldHold, salesStopped });
     let data = null;
     let userId = null;
     let loaded = false;
