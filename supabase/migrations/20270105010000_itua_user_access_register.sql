@@ -1320,7 +1320,8 @@ begin
   if v_reason is null then
     raise exception 'กรุณาระบุเหตุผลที่เปลี่ยนสิทธิ์ (บันทึกสำหรับ ISO)' using errcode = 'check_violation';
   end if;
-  if jsonb_typeof(p_changes) is distinct from 'array' or jsonb_array_length(p_changes) = 0 then
+  -- แยกด้วย CASE (OR ไม่รับประกันลำดับการประเมิน) กัน jsonb_array_length ของค่าที่ไม่ใช่ array แล้วได้ error ที่ไม่ใช่ภาษาไทย
+  if (case when jsonb_typeof(p_changes) is distinct from 'array' then true else jsonb_array_length(p_changes) = 0 end) then
     raise exception 'กรุณาระบุรายการสิทธิ์ที่จะเปลี่ยนอย่างน้อยหนึ่งรายการ' using errcode = 'check_violation';
   end if;
   if jsonb_array_length(p_changes) > 200 then
