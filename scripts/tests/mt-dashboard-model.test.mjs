@@ -5,6 +5,8 @@ const require = createRequire(import.meta.url);
 const model = require("../../modules/mt-dashboard-model.js");
 const center = require("../../modules/request-center.js");
 
+// Durations are company working hours (modules/working-time.js): 08–12 + 13–17 Bangkok, Mon–Sat. T00:00:00Z = 07:00 Bangkok,
+// T12:00:00Z = 19:00, so a whole UTC day from midnight is one 8-hour working day. 2026-10-04 is a Sunday.
 const TODAY = "2026-10-06";
 const req = (extra = {}) => ({
   id: "r1", request_no: "RB001/69", status: "in_progress", current_step: 0, is_urgent: false, doc_type: "repair",
@@ -119,18 +121,25 @@ test("urgent filter only keeps open urgent requests", () => {
 test("phase durations come from status history and only count once the phase has been left", () => {
   const history = [at("pending_approval", "2026-10-01T00:00:00Z"), at("pending_assign", "2026-10-03T00:00:00Z"), at("assigned", "2026-10-04T12:00:00Z"), at("in_progress", "2026-10-05T00:00:00Z"), at("pending_verify", "2026-10-08T12:00:00Z"), at("completed", "2026-10-09T12:00:00Z")];
   const [done] = derive([req({ id: "done", status: "completed", submitted_at: "2026-10-01T00:00:00Z", completed_at: "2026-10-09T12:00:00Z", history })]);
-  assert.deepEqual(done.phases, { approval: 2, assign: 1.5, repair: 4, verify: 1 });
-  assert.equal(done.cycleDays, 8.5);
+  // approval Thu+Fri = 16, assign Sat = 8 (Sunday skipped), repair Mon–Thu = 32, verify Fri = 8
+  assert.deepEqual(done.phases, { approval: 16, assign: 8, repair: 32, verify: 8 });
+  assert.equal(done.cycleHours, 64);
 
   const [running] = derive([req({ id: "running", status: "in_progress", submitted_at: "2026-10-01T00:00:00Z", history: history.slice(0, 4) })]);
-  assert.deepEqual(running.phases, { approval: 2, assign: 1.5, repair: null, verify: null });
-  assert.equal(running.cycleDays, null);
+  assert.deepEqual(running.phases, { approval: 16, assign: 8, repair: null, verify: null });
+  assert.equal(running.cycleHours, null);
+});
+
+test("company holidays passed to deriveRows are not counted", () => {
+  const done = req({ status: "completed", submitted_at: "2026-10-01T00:00:00Z", completed_at: "2026-10-03T00:00:00Z" }); // Thu 07:00 → Sat 07:00
+  assert.equal(model.deriveRows([done], TODAY)[0].cycleHours, 16);
+  assert.equal(model.deriveRows([done], TODAY, Date.now(), ["2026-10-02"])[0].cycleHours, 8);
 });
 
 test("a failed inspection counts as repair time, not inspection time", () => {
   const history = [at("pending_assign", "2026-10-03T00:00:00Z"), at("assigned", "2026-10-04T12:00:00Z"), at("pending_verify", "2026-10-06T12:00:00Z"), at("assigned", "2026-10-07T00:00:00Z"), at("pending_verify", "2026-10-08T12:00:00Z"), at("completed", "2026-10-09T12:00:00Z")];
   const [done] = derive([req({ status: "completed", submitted_at: "2026-10-01T00:00:00Z", completed_at: "2026-10-09T12:00:00Z", history, verifications: [{ result: "fail" }, { result: "pass" }] })]);
-  assert.equal(done.phases.repair, 4); assert.equal(done.phases.verify, 1);
+  assert.equal(done.phases.repair, 32); assert.equal(done.phases.verify, 8);
   // sent back and being reworked right now: the repair phase has not finished again
   const [rework] = derive([req({ status: "assigned", submitted_at: "2026-10-01T00:00:00Z", history: history.slice(0, 4), verifications: [{ result: "fail" }] })]);
   assert.equal(rework.phases.repair, null);
@@ -140,15 +149,16 @@ test("phase summary averages only requests that finished the phase and reports h
   const finished = (id, assignedAt) => req({ id, status: "assigned", submitted_at: "2026-10-01T00:00:00Z", history: [at("pending_assign", "2026-10-02T00:00:00Z"), at("assigned", assignedAt)] });
   const rows = derive([finished("a", "2026-10-03T00:00:00Z"), finished("b", "2026-10-05T00:00:00Z"), req({ id: "c", status: "pending_assign", history: [at("pending_assign", "2026-10-04T00:00:00Z")] })]);
   const assign = model.phaseSummary(rows).find((phase) => phase.key === "assign");
-  assert.equal(assign.n, 2); assert.equal(assign.avgDays, 2); assert.equal(assign.medianDays, 2);
+  assert.equal(assign.n, 2); assert.equal(assign.avgHours, 12); assert.equal(assign.medianHours, 12); // Fri = 8, Fri+Sat (Sun skipped) = 16
   const repair = model.phaseSummary(rows).find((phase) => phase.key === "repair");
-  assert.equal(repair.n, 0); assert.equal(repair.avgDays, null);
+  assert.equal(repair.n, 0); assert.equal(repair.avgHours, null);
 });
 
 test("cycle time is average and median over completed requests only", () => {
   const done = (id, days) => req({ id, status: "completed", submitted_at: "2026-09-01T00:00:00Z", completed_at: new Date(Date.parse("2026-09-01T00:00:00Z") + days * 86400000).toISOString() });
-  const sums = model.summarize(derive([done("a", 1), done("b", 2), done("c", 9), req({ id: "open" })]));
-  assert.equal(sums.cycleCount, 3); assert.equal(sums.avgCycle, 4); assert.equal(sums.medianCycle, 2);
+  const sums = model.summarize(derive([done("a", 1), done("b", 2), done("c", 10), req({ id: "open" })]));
+  // 2026-09-01 is a Tuesday: 1 day = 8 h, 2 days = 16 h, 10 days = 9 working days (Sunday 6 Sep skipped) = 72 h
+  assert.equal(sums.cycleCount, 3); assert.equal(sums.avgCycle, 32); assert.equal(sums.medianCycle, 16);
   assert.equal(model.summarize([]).avgCycle, null);
 });
 
@@ -233,8 +243,8 @@ test("repair hours sum every in-progress round, run to now while still being rep
     req({ id: "waiting", status: "assigned", history: [at("assigned", "2026-10-05T00:00:00Z")] }),
     req({ id: "no-history", status: "in_progress", history: [] }),
   ]));
-  assert.equal(rows.rework.repairHours, 18);       // 6h + 12h
-  assert.equal(rows.running.repairHours, 12);      // 00:00 -> now (12:00)
+  assert.equal(rows.rework.repairHours, 4);        // Fri 07:00–13:00 = 4 working h (lunch skipped) + Sunday round = 0
+  assert.equal(rows.running.repairHours, 8);       // Tue 07:00 -> now (19:00) = one working day
   assert.equal(rows.waiting.repairHours, 0);
   assert.equal(rows["no-history"].repairHours, 0);
 });
@@ -257,7 +267,7 @@ test("machines are keyed by department + code, and only real breakdown reports a
   assert.deepEqual(ranking.items.map((item) => item.key), ["RB|m1", "RB|m9", "GR|m1"]);
   const [top] = ranking.items;
   assert.equal(top.count, 3); assert.equal(top.open, 2); assert.equal(top.lastOn, "2026-10-05");
-  assert.equal(top.code, "M1"); assert.equal(top.name, "เครื่อง 1 (ใหม่)"); assert.equal(top.avgCycle, 2);
+  assert.equal(top.code, "M1"); assert.equal(top.name, "เครื่อง 1 (ใหม่)"); assert.equal(top.avgCycle, 16);
   assert.equal(top.share, 3 / 5);
   assert.equal(ranking.total, 5); assert.equal(ranking.machines, 3);
   assert.equal(ranking.unspecified, 2);            // placeholder machine + no code are reported, never ranked
@@ -286,7 +296,7 @@ test("department ranking counts breakdown reports per reporting department and k
   const ranking = model.deptRanking(rows, filters());
   assert.deepEqual(ranking.items.map((item) => item.dept), ["RB", "GR"]);
   const [rb, gr] = ranking.items;
-  assert.equal(rb.count, 3); assert.equal(rb.open, 1); assert.equal(rb.urgent, 1); assert.equal(rb.avgCycle, 3); assert.equal(rb.share, 0.75);
+  assert.equal(rb.count, 3); assert.equal(rb.open, 1); assert.equal(rb.urgent, 1); assert.equal(rb.avgCycle, 20); assert.equal(rb.share, 0.75);
   assert.equal(gr.count, 1); assert.equal(gr.avgCycle, null);
   assert.equal(ranking.total, 4);
   assert.deepEqual(model.deptRanking(rows, filters({ dept: "GR" })).items.map((item) => item.dept), ["RB", "GR"]);
@@ -307,9 +317,10 @@ test("technician ranking: hours from the period, current load from every open jo
   const ranking = model.technicianRanking(rows, october);
   assert.deepEqual(ranking.items.map((item) => item.id), ["t1", "t2", "t3"]);
   const [t1, t2, t3] = ranking.items;
-  assert.deepEqual([t1.jobs, t1.hours, t1.workedJobs, t1.avgHours, t1.running, t1.holding, t1.overdue], [2, 30, 2, 15, 1, 1, 1]);
-  assert.deepEqual([t2.jobs, t2.hours, t2.workedJobs, t2.avgHours, t2.running, t2.holding, t2.overdue], [2, 18, 1, 18, 0, 1, 0]);
-  assert.deepEqual([t3.jobs, t3.hours, t3.avgHours, t3.holding], [1, 6, 6, 1]);   // j6 waits on the requester (not held); j7 is an old open job
+  // worked(h) starts Fri 07:00 Bangkok: 18 clock h = Fri 8 working h, 6 clock h = 4 (lunch skipped); j2 runs Tue 07:00 → now = 8
+  assert.deepEqual([t1.jobs, t1.hours, t1.workedJobs, t1.avgHours, t1.running, t1.holding, t1.overdue], [2, 16, 2, 8, 1, 1, 1]);
+  assert.deepEqual([t2.jobs, t2.hours, t2.workedJobs, t2.avgHours, t2.running, t2.holding, t2.overdue], [2, 8, 1, 8, 0, 1, 0]);
+  assert.deepEqual([t3.jobs, t3.hours, t3.avgHours, t3.holding], [1, 4, 4, 1]);   // j6 waits on the requester (not held); j7 is an old open job
   assert.equal(ranking.jobs, 4);
 });
 
@@ -319,7 +330,7 @@ test("technician ranking follows the document filter but ignores the technician 
     req({ id: "b", doc_type: "request", technician_ids: ["t1", "t2"], history: [at("in_progress", "2026-10-06T00:00:00Z")] }),
   ]);
   const onlyRepair = model.technicianRanking(rows, filters({ doc: "repair" }));
-  assert.deepEqual(onlyRepair.items.map((item) => [item.id, item.jobs, item.hours, item.holding]), [["t1", 1, 6, 1]]);
+  assert.deepEqual(onlyRepair.items.map((item) => [item.id, item.jobs, item.hours, item.holding]), [["t1", 1, 4, 1]]); // 13:00 → 19:00 Bangkok = 13–17 = 4 working h
   assert.equal(model.technicianRanking(rows, filters({ tech: "t2" })).items.length, 2);
   assert.equal(model.technicianRanking([], filters()).items.length, 0);
 });

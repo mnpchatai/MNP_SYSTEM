@@ -840,7 +840,7 @@
       const formExport = window.MNP_MT_FORM_EXPORT;
       const nameOf = (personId) => (directory.has(personId) ? personName(directory, personId) : "");
       const formCells = formExport
-        ? formExport.buildMtFormCells({ request, steps, verifications, history, technicianNames: assignedTechIds.map(nameOf), nameOf })
+        ? formExport.buildMtFormCells({ request, steps, verifications, history, technicianNames: assignedTechIds.map(nameOf), nameOf, holidays: window.MNP_WORKING_TIME?.holidays() ?? [] })
         : null;
       formExportPayload = formExport?.EXPORT_URL ? formCells : null;
       currentRequestNo = request.request_no ?? "";

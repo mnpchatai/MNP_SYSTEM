@@ -152,7 +152,7 @@ test("repair workflow: assign, start, finish, verify", async () => {
   assert.equal((await sb.rpc("app_verify_repair", { p_request_id: "req-mt-0390", p_result: "fail" })).error.message, "NOTE_REQUIRED");
   assert.equal((await sb.rpc("app_verify_repair", { p_request_id: "req-mt-0390", p_result: "pass", p_note: "ไฟติดครบ" })).error, null);
   assert.equal(db.requests.find((row) => row.id === "req-mt-0390").status, "completed");
-  assert.equal(db.request_verifications.length, 1);
+  assert.equal(db.request_verifications.length, 2); // + ผลตรวจรับของใบตัวอย่างที่ปิดงานแล้ว (req-mt-0385)
 });
 
 test("query coverage: head counts, in, not/is, ilike, order and limit", async () => {
@@ -180,7 +180,7 @@ test("unknown tables, filters and RPCs warn once and return empty", async () => 
   const { sb, warnings } = mock();
   assert.deepEqual((await sb.from("no_such_table").select("*")).data, []);
   await sb.from("no_such_table").select("*");
-  assert.deepEqual((await sb.from("requests").select("*").textSearch("title", "x").textSearch("title", "y")).data.length, 8);
+  assert.deepEqual((await sb.from("requests").select("*").textSearch("title", "x").textSearch("title", "y")).data.length, 9);
   assert.equal((await sb.rpc("app_no_such_rpc")).data, null);
   await sb.rpc("app_no_such_rpc");
   assert.equal(warnings.length, 3);

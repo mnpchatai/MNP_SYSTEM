@@ -145,7 +145,7 @@ test("the detail page shows the machine facts once, the latest repair report, an
   assert.match(html, /RAM 8GB/);
   assert.match(html, /1,250\.50/);
   assert.match(html, /<th scope="col">ราคาต่อหน่วย<\/th>/, "the detail table header says unit price");
-  assert.match(html, /รวมเวลาในการซ่อม.*23 ชม\./s);
+  assert.match(html, /รวมเวลาในการซ่อม.*5 ชม\./s); // นับเฉพาะเวลาทำงาน: เสาร์ 11:00 → อาทิตย์ 10:00 = 11–12 + 13–17
   assert.match(html, /<details class="card itrp-report-history">/);
   assert.match(html, /สาเหตุรอบแรก/);
   assert.equal(count(html, /id="itrp-report-title"/g), 1);
@@ -348,7 +348,7 @@ test("start, finish, total time and the technician come from the events", () => 
   const html = sheet();
   assert.match(html, /เริ่มดำเนินการซ่อม<\/th><td>วันที่ 21\/11\/2569 เวลา 11:00<\/td>/);
   assert.match(html, /ซ่อมเสร็จ<\/th><td>วันที่ 22\/11\/2569 เวลา 10:00<\/td>/);
-  assert.match(html, /รวมเวลาในการซ่อม<\/th><td>23 ชม\.<\/td>/);
+  assert.match(html, /รวมเวลาในการซ่อม<\/th><td>5 ชม\.<\/td>/); // เวลาทำงานเท่านั้น (เสาร์ 11:00 → อาทิตย์ 10:00)
   assert.match(html, /ช่างผู้ดำเนินการซ่อม<\/th><td>ช่าง ไอที<\/td>/);
   const blank = sheet({ started: null, completed: null });
   assert.match(blank, /เริ่มดำเนินการซ่อม<\/th><td>วันที่ <span class="itrp-blank-line"><\/span> เวลา <span class="itrp-blank-line"><\/span><\/td>/);

@@ -4180,6 +4180,8 @@ async function renderRequestDetail(params) {
   const id = params.get("id");
   if (!id) return renderNotFound("ไม่พบรหัสคำร้อง");
   loadingShell("requests", "รายละเอียดคำร้อง");
+  // วันหยุดบริษัท: ช่อง "รวม … วัน … ชม." ของไฟล์ฟอร์ม MT นับเฉพาะเวลาทำงาน (modules/working-time.js) · โหลดครั้งเดียวต่อการเปิดหน้า
+  const holidaysReady = window.MNP_WORKING_TIME?.loadHolidays(sb);
   const [requestResult, stepsResult, attachmentsResult, historyResult, verificationsResult, techniciansResult, progressResult, dateChangesResult, repliesResult, directory] = await Promise.all([
     sb.from("requests").select("*,request_type:request_types(name_th,code,uses_repair_workflow,owning_department_id),department:departments(code)").eq("id", id).maybeSingle(),
     sb.from("approval_steps").select("*").eq("request_id", id).order("step_order"),
@@ -4193,6 +4195,7 @@ async function renderRequestDetail(params) {
     sb.from("request_comments").select("id,approval_step_id,author_id,body,created_at").eq("request_id", id).not("approval_step_id", "is", null).order("created_at"),
     loadEmployeeDirectory(),
   ]);
+  await holidaysReady;
   if (requestResult.error) throw requestResult.error;
   if (!requestResult.data || !deptModuleAllowed(relation(requestResult.data.request_type)?.code)) return renderNotFound("ไม่พบคำร้อง หรือคุณไม่มีสิทธิ์เข้าถึง");
   for (const result of [stepsResult, attachmentsResult, historyResult, verificationsResult, techniciansResult, progressResult, dateChangesResult]) if (result.error) throw result.error;

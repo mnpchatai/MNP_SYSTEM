@@ -10,7 +10,9 @@
 //   รายการใบที่กรองแล้วไม่อยู่ท้ายหน้า: แสดงต่อท้ายส่วนที่กดกรองทันทีและเลื่อนไปที่รายการ (placeDrill)
 // - ทางเข้าคือปุ่ม "แดชบอร์ด" ข้างปุ่ม "สร้างคำร้อง / แจ้งซ่อม" ในหัวโมดูล MT (headerLinks) ไม่มีเมนูข้างแยก
 //
-// โหลดหลัง modules/module-mt.js และ modules/mt-dashboard-model.js — helper ของ app.js
+// - เวลาที่แสดงเป็นชั่วโมงนับเฉพาะเวลาทำงานของบริษัท (modules/working-time.js) · ตัวนับ "ค้าง N วัน" ยังเป็นวันตามปฏิทิน
+//
+// โหลดหลัง modules/module-mt.js, modules/working-time.js และ modules/mt-dashboard-model.js — helper ของ app.js
 // (sb, state, shell, bindShell, loadingShell, escapeHtml, relation, bangkokToday, formatDate, statusBadge)
 // ถูกเรียกตอนเปิดหน้าเท่านั้น
 (function registerMtDashboard() {
@@ -41,8 +43,10 @@
 
   const fmtNumber = (value, digits = 0) => Number(value || 0).toLocaleString("th-TH", { maximumFractionDigits: digits });
   const fmtCount = (value) => `${fmtNumber(value)}\u00a0ใบ`; // เลขกับ "ใบ" ไม่แยกบรรทัด (ป้ายในการ์ดบนจอแคบ)
+  // ชั่วโมงทำงาน (กติกาบริษัท: 08–17 จ.–ส. หักพักเที่ยงและวันหยุด) · fmtDays ใช้กับค่าเฉลี่ยของ "ค้าง N วัน" ตามปฏิทินเท่านั้น
   const fmtHours = (value) => (value === null || value === undefined ? "—" : `${fmtNumber(value, 1)} ชม.`);
   const fmtDays = (value) => (value === null || value === undefined ? "—" : `${fmtNumber(value, 1)} วัน`);
+  const workDays = (hours) => fmtNumber(hours / (window.MNP_WORKING_TIME?.HOURS_PER_DAY ?? 8), 1);
   const fmtPercent = (value) => (value === null || value === undefined ? "—" : `${fmtNumber(value * 100, 1)}%`);
   const esc = (value) => escapeHtml(String(value));
   const monthName = (month, year) => `${MONTHS[month - 1]} ${Number(year) + 543}`;
@@ -96,13 +100,14 @@
     if (typeResult.error) throw typeResult.error;
     const typeId = typeResult.data?.id ?? null;
     // โหลดรายชื่อไม่ได้ก็ยังดูแดชบอร์ดได้ พร้อมข้อความว่าไม่พบชื่อ
-    const [requests, directory] = await Promise.all([
+    const [requests, directory, holidays] = await Promise.all([
       typeId
         ? allRows(() => sb.from("requests")
           .select("id,request_no,status,current_step,is_urgent,doc_type,machine_code,machine_name,requester_id,requester_name,submitted_at,completed_at,work_started_date,work_expected_date,department:departments(code),machine:machines(is_placeholder),request_technicians(technician_id),request_status_history(to_status,created_at),request_verifications(result),approval_steps(step_order,acted_at)")
           .eq("request_type_id", typeId).order("id"))
         : [],
       loadEmployeeDirectory().catch((error) => { console.warn("โหลดรายชื่อพนักงานสำหรับแดชบอร์ด MT ไม่สำเร็จ", error); return new Map(); }),
+      window.MNP_WORKING_TIME ? window.MNP_WORKING_TIME.loadHolidays(sb) : new Set(),
     ]);
     const today = bangkokToday();
     const rows = model.deriveRows(requests.map((row) => ({
@@ -113,7 +118,7 @@
       history: row.request_status_history ?? [],
       verifications: row.request_verifications ?? [],
       steps: row.approval_steps ?? [],
-    })), today);
+    })), today, Date.now(), holidays);
     const roleOwners = new Map();
     let roleOwnersFailed = false;
     const roleRequestIds = rows.filter((row) => row.stage === "assign" || row.stage === "approve_fm" || row.stage === "approve_gm").map((row) => row.id);
@@ -233,8 +238,8 @@
         ${back.urgentOpen ? `<a class="nd-pill crit" href="${hrefWith(filters, { scope: "urgent", stage: "" })}"><span class="nd-ico" aria-hidden="true"></span>ด่วน ${fmtCount(back.urgentOpen)}</a>` : ""}
         <span class="nd-note">นับทุกใบที่ยังไม่จบ ไม่จำกัดช่วงเวลา</span></div>
       ${measurable(period) ? `
-      <div class="nd-tile"><span class="nd-label">เวลาเฉลี่ย แจ้ง → ปิดงาน</span><span class="nd-value">${period.avgCycle === null ? "—" : fmtNumber(period.avgCycle, 1)}<small>วัน</small></span>
-        <span class="nd-note">${period.cycleCount ? `กลาง ${fmtDays(period.medianCycle)} · จาก ${fmtCount(period.cycleCount)} ที่ปิดแล้ว` : "ยังไม่มีใบที่ปิดงานในช่วงนี้"}</span></div>
+      <div class="nd-tile"><span class="nd-label" title="นับเฉพาะเวลาทำงาน 08:00–17:00 จันทร์–เสาร์ ไม่นับพักเที่ยงและวันหยุดบริษัท">เวลาเฉลี่ย แจ้ง → ปิดงาน</span><span class="nd-value">${period.avgCycle === null ? "—" : fmtNumber(period.avgCycle, 1)}<small>ชม.</small></span>
+        <span class="nd-note">${period.cycleCount ? `กลาง ${fmtHours(period.medianCycle)} · จาก ${fmtCount(period.cycleCount)} ที่ปิดแล้ว` : "ยังไม่มีใบที่ปิดงานในช่วงนี้"}</span></div>
       <div class="nd-tile"><span class="nd-label">ปิดงานทันกำหนด</span><span class="nd-value">${fmtPercent(period.onTimeRate)}</span>
         <span class="nd-meter" role="img" aria-label="ทันกำหนด ${fmtPercent(period.onTimeRate)}"><span style="width:${(period.onTimeRate ?? 0) * 100}%"></span></span>
         <span class="nd-note">${period.onTimeBase ? `ทัน ${fmtNumber(period.onTime)} จาก ${fmtNumber(period.onTimeBase)} ใบ (ใบที่ยังเลยกำหนดนับว่าไม่ทัน)` : "ยังไม่มีใบที่มีกำหนดเสร็จให้เทียบ"}</span></div>
@@ -282,10 +287,10 @@
 
   function phaseHtml(phases) {
     const known = phases.filter((phase) => phase.n > 0);
-    const max = known.length ? Math.max(...known.map((phase) => phase.avgDays)) : 0;
+    const max = known.length ? Math.max(...known.map((phase) => phase.avgHours)) : 0;
     const rows = phases.map((phase) => {
-      const width = phase.n && max ? Math.max((phase.avgDays / max) * 100, 0.8) : 0;
-      return `<div class="nd-brow static"><span class="nd-lab">${esc(phase.label)}${ownerNote(phase) ? `<br><span class="nd-muted">${esc(phase.owner)}</span>` : ""}</span><span class="nd-trk"><span class="nd-bar${phase.n && phase.avgDays === max ? "" : " rest"}" style="width:${width}%"></span></span><span class="nd-val">${phase.n ? esc(fmtDays(phase.avgDays)) : "—"}${phase.n ? `<small>กลาง ${esc(fmtDays(phase.medianDays))} · ${esc(fmtCount(phase.n))}</small>` : ""}</span></div>`;
+      const width = phase.n && max ? Math.max((phase.avgHours / max) * 100, 0.8) : 0;
+      return `<div class="nd-brow static"><span class="nd-lab">${esc(phase.label)}${ownerNote(phase) ? `<br><span class="nd-muted">${esc(phase.owner)}</span>` : ""}</span><span class="nd-trk"><span class="nd-bar${phase.n && phase.avgHours === max ? "" : " rest"}" style="width:${width}%"></span></span><span class="nd-val">${phase.n ? esc(fmtHours(phase.avgHours)) : "—"}${phase.n ? `<small>กลาง ${esc(fmtHours(phase.medianHours))} · ${esc(fmtCount(phase.n))}</small>` : ""}</span></div>`;
     }).join("");
     return `<div class="nd-head"><h2>เวลาที่ใช้แต่ละช่วง</h2><p>เวลาเฉลี่ยจากประวัติสถานะของใบที่แจ้งในช่วงที่เลือก นับเฉพาะช่วงที่เดินครบแล้ว แถบเข้มคือช่วงที่ใช้เวลานานสุด · ตรวจรับไม่ผ่านแล้วซ่อมใหม่ นับเป็นเวลาซ่อม ส่วนช่วง "อนุมัติ" รวมเวลาที่รอผู้แจ้งตอบข้อมูลเพิ่มด้วย</p></div>
       ${known.length ? `<div class="nd-bars">${rows}</div>` : `<p class="nd-empty">ยังไม่มีช่วงที่เดินครบในใบที่แจ้งในช่วงนี้</p>`}`;
@@ -296,7 +301,7 @@
     const max = items.length ? Math.max(...items.map((item) => item.count)) : 0;
     const resolve = (key) => {
         const item = items.find((entry) => entry.key === key);
-        return item && { title: machineLabelOf(item.code, item.name), lines: [["แผนกที่แจ้ง", item.dept || "—"], ["แจ้งซ่อมในช่วงนี้", `${fmtNumber(item.count)} ครั้ง`], ["สัดส่วนของใบที่ระบุเครื่อง", fmtPercent(item.share)], ["ยังไม่จบ", fmtCount(item.open)], ["เลยกำหนดเสร็จ", fmtCount(item.overdue)], ["แจ้งล่าสุด", formatDate(item.lastOn)], ["ปิดงานเฉลี่ย (เฉพาะที่ปิดแล้ว)", fmtDays(item.avgCycle)]], href: filters.machine === key ? null : hrefWith(filters, { scope: "", stage: "", machine: key }), linkLabel: "ดูเฉพาะใบของเครื่องนี้" };
+        return item && { title: machineLabelOf(item.code, item.name), lines: [["แผนกที่แจ้ง", item.dept || "—"], ["แจ้งซ่อมในช่วงนี้", `${fmtNumber(item.count)} ครั้ง`], ["สัดส่วนของใบที่ระบุเครื่อง", fmtPercent(item.share)], ["ยังไม่จบ", fmtCount(item.open)], ["เลยกำหนดเสร็จ", fmtCount(item.overdue)], ["แจ้งล่าสุด", formatDate(item.lastOn)], ["ปิดงานเฉลี่ย (เฉพาะที่ปิดแล้ว)", fmtHours(item.avgCycle)]], href: filters.machine === key ? null : hrefWith(filters, { scope: "", stage: "", machine: key }), linkLabel: "ดูเฉพาะใบของเครื่องนี้" };
     };
     const rows = items.map((item) => {
       const inner = `<span class="nd-lab">${esc(machineLabelOf(item.code, item.name))}<br><span class="nd-muted">แผนก ${esc(item.dept || "—")}</span></span><span class="nd-trk"><span class="nd-bar${item.count === max ? "" : " rest"}" style="width:${Math.max((item.count / max) * 100, 0.8)}%"></span></span><span class="nd-val">${esc(fmtNumber(item.count))} ครั้ง<small>ยังไม่จบ ${esc(fmtNumber(item.open))} · ล่าสุด ${esc(formatDate(item.lastOn))}</small></span>`;
@@ -317,12 +322,12 @@
     const { items } = ranking;
     const resolve = (key) => {
         const item = items.find((entry) => entry.dept === key);
-        return item && { title: item.dept ? `แผนก ${item.dept}` : "ไม่ระบุแผนก", lines: [["แจ้งซ่อมในช่วงนี้", fmtCount(item.count)], ["สัดส่วนของใบแจ้งซ่อมทั้งหมด", fmtPercent(item.share)], ["ยังไม่จบ", fmtCount(item.open)], ["ด่วน", fmtCount(item.urgent)], ["ปิดงานเฉลี่ย (เฉพาะที่ปิดแล้ว)", fmtDays(item.avgCycle)]], href: item.dept && filters.dept !== key ? hrefWith(filters, { scope: "", stage: "", dept: key }) : null, linkLabel: "ดูเฉพาะแผนกนี้" };
+        return item && { title: item.dept ? `แผนก ${item.dept}` : "ไม่ระบุแผนก", lines: [["แจ้งซ่อมในช่วงนี้", fmtCount(item.count)], ["สัดส่วนของใบแจ้งซ่อมทั้งหมด", fmtPercent(item.share)], ["ยังไม่จบ", fmtCount(item.open)], ["ด่วน", fmtCount(item.urgent)], ["ปิดงานเฉลี่ย (เฉพาะที่ปิดแล้ว)", fmtHours(item.avgCycle)]], href: item.dept && filters.dept !== key ? hrefWith(filters, { scope: "", stage: "", dept: key }) : null, linkLabel: "ดูเฉพาะแผนกนี้" };
     };
     const detailRow = (key) => { const detail = detailUnder("deptrank", key, resolve); return detail ? `<tr class="nd-detail-row"><td colspan="6">${detail}</td></tr>` : ""; };
     return `<div class="nd-head"><h2>แผนกที่แจ้งซ่อมบ่อย</h2><p>จำนวนใบแจ้งซ่อมต่อแผนกที่แจ้งในช่วงที่เลือก (ไม่นับใบคำร้องและใบที่ไม่อนุมัติ) ตารางนี้ไม่ถูกย่อด้วยตัวกรองแผนก แผนกที่เลือกอยู่จะถูกเน้น</p></div>
       ${items.length ? `<div class="table-wrap" tabindex="0" role="region" aria-label="ตารางแผนกที่แจ้งซ่อมบ่อย"><table><thead><tr><th>แผนก</th><th class="nd-num">ใบแจ้งซ่อม</th><th class="nd-num">สัดส่วน</th><th class="nd-num">ยังไม่จบ</th><th class="nd-num">ด่วน</th><th class="nd-num">ปิดงานเฉลี่ย</th></tr></thead><tbody>
-      ${items.map((item) => `<tr><td>${selectButton("deptrank", item.dept, esc(item.dept || "ไม่ระบุแผนก"), "nd-rowbtn")}${filters.dept === item.dept ? ` <span class="nd-muted">(กรองอยู่)</span>` : ""}</td><td class="nd-num">${esc(fmtNumber(item.count))}</td><td class="nd-num">${esc(fmtPercent(item.share))}</td><td class="nd-num">${esc(fmtNumber(item.open))}</td><td class="nd-num">${esc(fmtNumber(item.urgent))}</td><td class="nd-num">${esc(fmtDays(item.avgCycle))}</td></tr>${detailRow(item.dept)}`).join("")}</tbody></table></div>` : `<p class="nd-empty">ไม่มีใบแจ้งซ่อมในช่วงที่เลือก</p>`}
+      ${items.map((item) => `<tr><td>${selectButton("deptrank", item.dept, esc(item.dept || "ไม่ระบุแผนก"), "nd-rowbtn")}${filters.dept === item.dept ? ` <span class="nd-muted">(กรองอยู่)</span>` : ""}</td><td class="nd-num">${esc(fmtNumber(item.count))}</td><td class="nd-num">${esc(fmtPercent(item.share))}</td><td class="nd-num">${esc(fmtNumber(item.open))}</td><td class="nd-num">${esc(fmtNumber(item.urgent))}</td><td class="nd-num">${esc(fmtHours(item.avgCycle))}</td></tr>${detailRow(item.dept)}`).join("")}</tbody></table></div>` : `<p class="nd-empty">ไม่มีใบแจ้งซ่อมในช่วงที่เลือก</p>`}
       ${detailHintIfIdle("deptrank", "ชื่อแผนก", resolve)}`;
   }
 
@@ -331,7 +336,7 @@
     const max = items.length ? Math.max(...items.map((item) => item.hours)) : 0;
     const resolve = (key) => {
         const item = items.find((entry) => entry.id === key);
-        return item && { title: techName(item.id), lines: [["ใบที่ได้รับมอบหมายในช่วงนี้", fmtCount(item.jobs)], ["เวลากำลังซ่อมรวม", `${fmtHours(item.hours)} (${fmtDays(item.hours / 24)})`], ["เฉลี่ยต่อใบ (เฉพาะใบที่เริ่มซ่อมแล้ว)", fmtHours(item.avgHours)], ["กำลังซ่อมอยู่ (ในช่วงนี้)", fmtCount(item.running)], ["ถืออยู่ตอนนี้ (ทุกช่วงเวลา)", fmtCount(item.holding)], ["ในนั้นเลยกำหนดเสร็จ", fmtCount(item.overdue)]], href: filters.tech === key ? null : hrefWith(filters, { scope: "", stage: "", tech: key }), linkLabel: "ดูเฉพาะใบของช่างคนนี้" };
+        return item && { title: techName(item.id), lines: [["ใบที่ได้รับมอบหมายในช่วงนี้", fmtCount(item.jobs)], ["เวลากำลังซ่อมรวม", `${fmtHours(item.hours)} (${workDays(item.hours)} วันทำงาน)`], ["เฉลี่ยต่อใบ (เฉพาะใบที่เริ่มซ่อมแล้ว)", fmtHours(item.avgHours)], ["กำลังซ่อมอยู่ (ในช่วงนี้)", fmtCount(item.running)], ["ถืออยู่ตอนนี้ (ทุกช่วงเวลา)", fmtCount(item.holding)], ["ในนั้นเลยกำหนดเสร็จ", fmtCount(item.overdue)]], href: filters.tech === key ? null : hrefWith(filters, { scope: "", stage: "", tech: key }), linkLabel: "ดูเฉพาะใบของช่างคนนี้" };
     };
     const rows = items.map((item) => {
       const width = item.hours && max ? Math.max((item.hours / max) * 100, 0.8) : 0;
@@ -365,7 +370,7 @@
       const names = row.technicianIds.map(techName).join(", ") || "ยังไม่ได้มอบหมายช่าง";
       return `${status}<br><span class="nd-muted">ช่างผู้รับผิดชอบ: ${esc(names)}</span>`;
     };
-    const timeCell = (row) => (row.isCompleted ? fmtDays(row.cycleDays) : row.isOpen ? `ค้าง ${fmtNumber(row.daysInStatus)} วัน` : "—");
+    const timeCell = (row) => (row.isCompleted ? fmtHours(row.cycleHours) : row.isOpen ? `ค้าง ${fmtNumber(row.daysInStatus)} วัน` : "—");
     // ปุ่มยกเลิกการกรองอยู่มุมขวาบนของรายการที่กรองแล้ว (ล้างตัวกรองที่กำหนดรายการนี้ทั้งหมด) กดแล้ววนกลับไปจุดที่กดกรองมา
     const cancel = hasDrillFilter(filters)
       ? `<a class="btn secondary small nd-cancel" data-cancel href="${hrefWith(filters, { scope: "", stage: "", machine: "", tech: "", dept: "" })}">ยกเลิกการกรอง</a>`
@@ -384,7 +389,8 @@
     <li><b>เวลาแจ้ง → ปิดงาน และเวลาแต่ละช่วง:</b> นับเฉพาะใบที่ปิดงานแล้ว (เวลาแต่ละช่วงนับเมื่อช่วงนั้นเดินครบ) จากประวัติสถานะ ใบที่ไม่อนุมัติไม่นับเวลา</li>
     <li><b>ตรวจรับไม่ผ่าน:</b> ใบที่เคยถูกตรวจรับไม่ผ่านอย่างน้อยหนึ่งครั้ง ÷ ใบที่ถูกตรวจรับแล้วทั้งหมด</li>
     <li><b>เครื่องจักรที่เสียบ่อย / แผนกที่แจ้งซ่อมบ่อย:</b> นับเฉพาะใบแจ้งซ่อมในช่วงที่เลือก ไม่นับใบคำร้อง ใบที่ไม่อนุมัติ และฉบับร่าง เครื่องจักรแยกด้วย แผนกที่แจ้ง + รหัสเครื่อง (รหัสเดียวกันต่างแผนกถือเป็นคนละเครื่อง) ใบที่เลือก "ไม่มี" หรือ "สร้างใหม่" ไม่นับเป็นเครื่อง</li>
-    <li><b>เวลาซ่อมของช่าง:</b> ไม่ใช่ชั่วโมงทำงานจริง แต่คือเวลาตามนาฬิกาที่ใบอยู่ในสถานะ "กำลังซ่อม" รวมทุกรอบ (ตรวจรับไม่ผ่านแล้วซ่อมใหม่ก็นับ) ใบที่ยังซ่อมอยู่นับถึงเวลาที่เปิดหน้านี้ ช่างหลายคนในใบเดียวนับเต็มทุกคน และรู้เฉพาะรายชื่อช่างปัจจุบันของใบ ส่วน "ถืออยู่" นับทุกใบที่ช่างต้องทำตอนนี้ ไม่ขึ้นกับช่วงเวลา</li></ol></div></details>`;
+    <li><b>ชั่วโมง (ชม.) ในหน้านี้:</b> นับเฉพาะเวลาทำงานของบริษัท 08:00–17:00 วันจันทร์–เสาร์ ไม่นับพักเที่ยง 12:00–13:00 วันอาทิตย์ และวันหยุดบริษัทที่ผู้ดูแลระบบตั้งไว้ (1 วันทำงาน = 8 ชม.) ส่วน "ค้าง N วัน" ยังนับเป็นวันตามปฏิทิน</li>
+    <li><b>เวลาซ่อมของช่าง:</b> ไม่ใช่ชั่วโมงที่ช่างลงบันทึก แต่คือเวลาทำงานที่ใบอยู่ในสถานะ "กำลังซ่อม" รวมทุกรอบ (ตรวจรับไม่ผ่านแล้วซ่อมใหม่ก็นับ) ใบที่ยังซ่อมอยู่นับถึงเวลาที่เปิดหน้านี้ ช่างหลายคนในใบเดียวนับเต็มทุกคน และรู้เฉพาะรายชื่อช่างปัจจุบันของใบ ส่วน "ถืออยู่" นับทุกใบที่ช่างต้องทำตอนนี้ ไม่ขึ้นกับช่วงเวลา</li></ol></div></details>`;
 
   function pageBody() {
     const { rows, today, loadedAt } = cache;

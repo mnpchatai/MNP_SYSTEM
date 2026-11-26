@@ -126,9 +126,12 @@ test("dates are dd/mm/yyyy in the Buddhist year, times are Bangkok", () => {
 
 test("total repair time is whole hours from the start event to the latest completion", () => {
   const at = (iso) => iso;
-  assert.deepEqual(plain(model.repairDuration(at("2026-11-21T01:00:00Z"), at("2026-11-21T03:59:59Z"))), { days: 0, hours: 2, totalHours: 2, text: "2 ชม." });
-  assert.deepEqual(plain(model.repairDuration(at("2026-11-21T01:00:00Z"), at("2026-11-23T04:00:00Z"))), { days: 2, hours: 3, totalHours: 51, text: "2 วัน 3 ชม." });
-  assert.equal(model.repairDuration("2026-11-21T01:00:00Z", "2026-11-22T01:00:00Z").text, "1 วัน");
+  // นับเฉพาะเวลาทำงาน 08–12 + 13–17 เวลากรุงเทพ จ.–ส. · 1 วัน = 8 ชม.ทำงาน · 2026-11-21 = เสาร์, 22 = อาทิตย์, 23 = จันทร์
+  assert.deepEqual(plain(model.repairDuration(at("2026-11-21T01:00:00Z"), at("2026-11-21T03:59:59Z"))), { days: 0, hours: 2, totalHours: 2, text: "2 ชม." }); // 08:00–10:59
+  assert.deepEqual(plain(model.repairDuration(at("2026-11-21T01:00:00Z"), at("2026-11-23T04:00:00Z"))), { days: 1, hours: 3, totalHours: 11, text: "1 วัน 3 ชม." }); // เสาร์ 8 + จันทร์ 08–11 (อาทิตย์ไม่นับ)
+  assert.equal(model.repairDuration("2026-11-20T01:00:00Z", "2026-11-21T01:00:00Z").text, "1 วัน"); // ศุกร์ 08:00 → เสาร์ 08:00
+  assert.equal(model.repairDuration("2026-11-21T01:00:00Z", "2026-11-24T01:00:00Z", ["2026-11-23"]).text, "1 วัน"); // จันทร์เป็นวันหยุดบริษัท
+  assert.equal(model.repairDuration("2026-11-21T10:30:00Z", "2026-11-22T23:59:00Z").text, "น้อยกว่า 1 ชม."); // หลัง 17:00 เสาร์ถึงก่อน 08:00 จันทร์
   assert.equal(model.repairDuration("2026-11-21T01:00:00Z", "2026-11-21T01:59:00Z").text, "น้อยกว่า 1 ชม.");
   assert.equal(model.repairDuration("2026-11-21T01:00:00Z", "2026-11-21T01:00:00Z").text, "น้อยกว่า 1 ชม.");
   assert.equal(model.repairDuration("2026-11-22T01:00:00Z", "2026-11-21T01:00:00Z"), null, "time never runs backwards");

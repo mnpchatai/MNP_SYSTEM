@@ -188,6 +188,19 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       steps: [["ผู้จัดการโรงงาน", "e5", "approved", 9.1], ["ผู้จัดการทั่วไป", "e7", "approved", 8.8]],
       history: [["pending_approval", "pending_assign", "e7", 8.8], ["pending_assign", "assigned", ME_ID, 8.7], ["assigned", "in_progress", "e8", 8], ["in_progress", "pending_verify", "e8", 0.5]],
     });
+    // ใบที่ปิดงานแล้ว: แดชบอร์ด MT มีเวลาแจ้ง → ปิดงานและเวลาแต่ละช่วงให้ดู (นับเฉพาะเวลาทำงาน)
+    seedRequest({
+      id: "req-mt-0385", no: "MT-2569-0385", type: "MT_REPAIR", title: "ประตูห้องอบ OV-01 ปิดไม่สนิท",
+      description: "ซีลประตูห้องอบฉีกขาด ความร้อนรั่ว", status: "completed", requester: "e4", machine: "m-mx01", created: 10, currentStep: 0,
+      assignee: "e2", techs: ["e2"], extra: { completed_at: ago(1), execution_plan: "immediate", inspector_opinion: "self_repair", cause_analysis: "ซีลหมดอายุ", parts_used: "ซีลประตู 1 เส้น" },
+      steps: [["ผู้จัดการโรงงาน", "e5", "approved", 9.8], ["ผู้จัดการทั่วไป", "e7", "approved", 9.6]],
+      history: [["pending_approval", "pending_assign", "e7", 9.6], ["pending_assign", "assigned", ME_ID, 9.4], ["assigned", "in_progress", "e2", 9], ["in_progress", "pending_verify", "e2", 2], ["pending_verify", "completed", "e4", 1]],
+    });
+    db.request_verifications.push({ id: "req-mt-0385-v1", request_id: "req-mt-0385", result: "pass", note: null, verified_by: "e4", created_at: ago(1) });
+    // วันหยุดบริษัทตัวอย่าง (วันธรรมดาวันแรกที่ไม่ใช่วันอาทิตย์ในช่วง 3–7 วันก่อน) ให้เห็นว่าเวลาทำงานไม่นับวันนี้
+    const bangkokDay = (days) => new Date(Date.parse(ago(days)) + 7 * 3600000);
+    const holidayAgo = [3, 4, 5, 6, 7].find((days) => bangkokDay(days).getUTCDay() !== 0);
+    db.company_holidays.push({ id: "hol-mock-1", holiday_date: bangkokDay(holidayAgo).toISOString().slice(0, 10), name_th: "วันหยุดบริษัท (ตัวอย่าง)", created_by: ME_ID, created_at: ago(30) });
     // NCR อยู่ตาราง ncr_reports แยกจากคำร้อง (modules/module-ncr.js) — หน้าหลักดึงใบที่ถึงขั้นของผู้ใช้และใบที่ผู้ใช้ออก
     // แถวเก็บ ncr_responsibilities ที่หน้าเว็บ embed ไว้ในตัว (expand ไม่ต้องต่อให้)
     const dateOnly = (days) => ago(days).slice(0, 10);

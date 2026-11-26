@@ -6,6 +6,9 @@
 (function (root) {
   "use strict";
 
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const workingTime = () => (typeof module !== "undefined" && module.exports ? require("./working-time.js") : root.MNP_WORKING_TIME);
+
   const YEAR_OFFSET = 543;
   const MAX_SYMPTOM = 2000; // อาการเสีย · ตรงกับ app_itrp_create
   const MAX_LONG_TEXT = 2000; // สาเหตุ / การซ่อม-แก้ไข / รายละเอียดขอแก้ไข · ตรงกับ app_itrp_complete และ app_itrp_request_rework
@@ -204,14 +207,13 @@
     return chars.length <= max ? chars.join("") : `${chars.slice(0, max).join("")}…`;
   };
   // รวมเวลาในการซ่อม: จากเริ่มดำเนินการ (event started) ถึงซ่อมเสร็จ (event completed ล่าสุด) เป็นวัน/ชั่วโมง (ปัดชั่วโมงลง)
+  // นับเฉพาะเวลาทำงานของบริษัท (modules/working-time.js: 08–12 + 13–17 จ.–ส. ไม่นับวันอาทิตย์และวันหยุดใน holidays) · 1 วัน = 8 ชม.ทำงาน
   // ข้อมูลไม่ครบหรือเวลาย้อนกลับ = null (ช่องว่าง) · น้อยกว่า 1 ชั่วโมงแสดง "น้อยกว่า 1 ชม."
-  function repairDuration(startedAt, completedAt) {
+  function repairDuration(startedAt, completedAt, holidays = []) {
     const start = Date.parse(startedAt ?? "");
     const end = Date.parse(completedAt ?? "");
     if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
-    const totalHours = Math.floor((end - start) / 3600000);
-    const days = Math.floor(totalHours / 24);
-    const hours = totalHours % 24;
+    const { totalHours, days, hours } = workingTime().splitWorkingHours(workingTime().workingMs(start, end, holidays));
     const text = totalHours < 1 ? "น้อยกว่า 1 ชม." : [days > 0 ? `${days} วัน` : "", hours > 0 ? `${hours} ชม.` : ""].filter(Boolean).join(" ");
     return { days, hours, totalHours, text };
   }
