@@ -581,7 +581,7 @@
   // ผลตัดสินของล็อตตกแต่ง: ค่า = qcResult หรือ qcResult:ปลายทาง (แยกเป็น qcResult + destination ที่ TRANSFORMS ของ module-rubberflow.js) · ต้องเลือกเอง ไม่มีค่าตั้งต้น (20261207010000)
   // WO ที่มาจากงาน RB ของ BOM (linked): ยางเส้นยาวเข้าคลังยางเส้นยาว (SR) · ส่งมอบให้ลูกค้าผ่านคลังสินค้าสำเร็จรูป (WH) · กักรอ QC · WO ที่ไม่ผูกงาน: ไม่มี SR
   const FINISH_RESULT_PLACEHOLDER = "เลือกผลตัดสิน…";
-  // stopped = WO ที่ยกเลิกพร้อมใบที่ฝ่ายวางแผนเลือกหยุด (20261227010000): ไม่มีทางส่งมอบให้ลูกค้า · ยางเส้นยาวเข้าคลัง SR เป็นสต็อกกลาง
+  // stopped = WO ที่ยกเลิก (หน้าฟอร์มส่ง true ทุก WO ที่ยกเลิก: เซิร์ฟเวอร์รับเฉพาะที่ยกเลิกพร้อมใบที่ฝ่ายวางแผนเลือกหยุด · 20261227010000): ไม่มีทางส่งมอบให้ลูกค้า · ยางเส้นยาวเข้าคลัง SR เป็นสต็อกกลาง
   const finishResultOptions = (linked, stopped = false) => [
     ...(linked ? [{ value: "pass:sr", label: "ผ่าน — ส่งเข้าคลังยางเส้นยาว (SR)" }] : []),
     ...(stopped ? [] : [{ value: "pass:customer", label: "ผ่าน — ส่งมอบให้ลูกค้า ผ่านคลังสินค้าสำเร็จรูป (WH)" }]),
@@ -659,7 +659,20 @@
       const baseSuccess = form.dataset?.rfSuccess;
       const isLinked = (order) => (typeof ctx.bomLinked === "function" ? ctx.bomLinked(order) : Boolean(order?.sourceJobId));
       const linkedOrder = () => { const transfer = currentTransfer(); const order = transfer ? data.orders.find((row) => row.id === transfer.orderId) : null; return order && isLinked(order) ? order : null; };
-      const stoppedOrder = () => { const transfer = currentTransfer(); const order = transfer ? data.orders.find((row) => row.id === transfer.orderId) : null; return Boolean(order && order.status === "cancelled" && ctx.bomSalesStopped?.(order)); };
+      // WO ที่ยกเลิก: ไม่มีทางส่งมอบให้ลูกค้าเสมอ (เซิร์ฟเวอร์รับเฉพาะ WO ที่ยกเลิกพร้อมใบที่เลือกหยุด และรับแค่ SR) · ข้อความ "ใบถูกยกเลิก…" แสดงเมื่อรู้แน่ว่าหยุด (ctx.bomSalesStopped = true)
+      // BOM ยังไม่โหลด (null): ยังไม่แสดงข้อความ รอ ctx.bomLoaded แล้วปรับตัวเลือกและข้อความใหม่ครั้งเดียว (ฟอร์มที่กรอกค้างไม่ถูกวาดทั้งหน้าใหม่)
+      const pickedOrder = () => { const transfer = currentTransfer(); return transfer ? data.orders.find((row) => row.id === transfer.orderId) ?? null : null; };
+      const cancelledOrder = () => pickedOrder()?.status === "cancelled";
+      const stoppedOrder = () => { const order = pickedOrder(); if (!order || order.status !== "cancelled") return false; const stopped = ctx.bomSalesStopped?.(order); return stopped === null ? null : stopped === true; };
+      let bomWaited = false;
+      const waitForBom = () => {
+        if (bomWaited) return;
+        const loaded = typeof ctx.bomLoaded === "function" ? ctx.bomLoaded() : null;
+        if (!loaded || typeof loaded.then !== "function") return;
+        bomWaited = true;
+        const again = () => { if (form.isConnected === false) return; result.innerHTML = resultOptions(Boolean(linkedOrder()), result.value, cancelledOrder()); sync(); };
+        loaded.then(again, again);
+      };
       const resultOptions = (linked, keep, stopped = false) => [`<option value="">${esc(FINISH_RESULT_PLACEHOLDER)}</option>`, ...finishResultOptions(linked, stopped).map((option) => `<option value="${esc(option.value)}"${option.value === keep ? " selected" : ""}>${esc(option.label)}</option>`)].join("");
       const paint = () => {
         const boxed = !linkedOrder() || result.value === "pass:customer";
@@ -673,7 +686,9 @@
         const boxed = !linked || choice === "pass:customer";
         if (perBoxField) perBoxField.hidden = !boxed;
         if (linkedNote) linkedNote.hidden = !linked;
-        if (stoppedNote) stoppedNote.hidden = !stoppedOrder();
+        const stopped = stoppedOrder();
+        if (stoppedNote) stoppedNote.hidden = stopped !== true;
+        if (stopped === null) waitForBom();
         perBox.required = boxed;
         if (!boxed) perBox.value = "";
         else if (transfer && !perBox.value) perBox.value = transfer.uom === "m" ? "100" : "2000";
@@ -682,7 +697,7 @@
         paint();
       };
       form.querySelector("[data-rf-inbound]").addEventListener("change", () => {
-        result.innerHTML = resultOptions(Boolean(linkedOrder()), result.value, stoppedOrder());
+        result.innerHTML = resultOptions(Boolean(linkedOrder()), result.value, cancelledOrder());
         sync();
       });
       result.addEventListener("change", sync);

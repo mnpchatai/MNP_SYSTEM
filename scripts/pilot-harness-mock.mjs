@@ -2345,12 +2345,12 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     if (bomRodAction(action) === "rodMoves") meta.rod = bomRodMoves(next, changes.rodMoves?.upsert ?? [], nextVersion, actor, at, action);
     // แปรรูปยาง GR (private.bom_gr_save): ยอดของงาน / สถานะใบที่เปลี่ยนนับเป็น jobs / orders ของบันทึกการใช้งาน
     if (bomGrSection(action)) meta.gr = bomGrSave(next, changes[bomGrSection(action)]?.upsert ?? [], base, current.version, nextVersion, actor, at, action);
-    // ใบที่ปิด (completed · 20261227010000): การแจ้งแก้ใบที่ยังเปิดปิดเองแบบเดียวกับตอนยกเลิกใบ (decision ack · ผู้ตัดสิน = ผู้เรียก) ยกเว้นที่เพิ่งเขียนในคำสั่งนี้ · นับเป็น orderRequests
+    // ใบที่ปิด (completed · 20261227010000): การแจ้งแก้ใบที่ยังเปิดปิดเอง (decision ack · ผู้ตัดสิน = ระบบ: decided_by null ซึ่ง app_bom_master ส่งเป็น decidedBy "") ยกเว้นที่เพิ่งเขียนในคำสั่งนี้ · นับเป็น orderRequests
     // ตรวจครั้งเดียวหลังตัวเขียนทั้งหมด · การแจ้งยกเลิกกลางทางที่รอตัดสินของใบที่ปิดแล้วไม่ถูกปิดเอง (ฝ่ายวางแผนยังเลือกผลิตต่อได้)
     for (const request of next.orderRequests ?? []) {
       if (request.status !== "open" || request.kind !== "change" || notices.includes(request.id)) continue;
       if (next.orders.find((row) => row.id === request.orderId)?.status !== "completed") continue;
-      Object.assign(request, { status: "done", decision: "ack", decidedBy: actor.name, decidedAt: at });
+      Object.assign(request, { status: "done", decision: "ack", decidedBy: "", decidedAt: at });
       next.versions.orderRequests[request.id] = nextVersion;
       meta.requestsClosed = (meta.requestsClosed ?? 0) + 1;
     }

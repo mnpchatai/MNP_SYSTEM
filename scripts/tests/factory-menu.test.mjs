@@ -2359,6 +2359,14 @@ test("a completed order shows no open edit notice (planning card, SA page); a co
   const sales = await env.open("FACTORY_SA", "order=SA-T-4");
   assert.match(sales, /ใบปิดแล้ว ไม่ต้องรอฝ่ายวางแผนรับทราบ/);
   assert.doesNotMatch(sales, /muted">รอฝ่ายวางแผนรับทราบ</);
+  // การแจ้งที่ปิดเองเมื่อใบปิด (ระบบรับทราบ decidedBy ""): ข้อความเดียวกัน ไม่ใช่ "ฝ่ายวางแผนรับทราบแล้ว" และไม่มีชื่อผู้ที่ปิดใบ
+  const notice = data.orderRequests.find((row) => row.orderId === "SA-T-4" && row.kind === "change");
+  Object.assign(notice, { status: "done", decision: "ack", decidedBy: "", decidedAt: Date.now() });
+  const closed = await env.open("FACTORY_SA", "order=SA-T-4");
+  assert.match(closed, /ใบปิดแล้ว ไม่ต้องรอฝ่ายวางแผนรับทราบ/);
+  assert.doesNotMatch(closed, /ฝ่ายวางแผนรับทราบแล้ว/);
+  const work = await env.open("FACTORY_SA");
+  assert.doesNotMatch(work, /ฝ่ายวางแผนรับทราบแล้ว/, "the notices card of the work page says the same");
 });
 
 test("SR: an order sales cancelled mid-way and awaiting planning's choice has no issue button — task card, issue table and detail page show the reason; other orders keep theirs", async () => {

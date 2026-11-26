@@ -27,8 +27,12 @@
   const noticeTitle = (ctx, row) => (row.kind === "change" ? "ฝ่ายขายแก้ใบ" : ctx.helpers.noticeMode(ctx.data, row) === "choose" ? "ฝ่ายขายยกเลิกใบกลางทาง" : "ฝ่ายขายยกเลิกใบ");
   // ผลจากฝ่ายวางแผน (ฝ่ายขายเห็น): รอ → รับทราบ / ผลิตต่อจนจบส่ง WH / หยุด
   const DECIDED_TEXT = Object.freeze({ ack: "ฝ่ายวางแผนรับทราบแล้ว", continue: "ฝ่ายวางแผนเลือกผลิตต่อจนจบส่ง WH (ของเป็นสต็อก ไม่ส่งลูกค้า)", stop: "ฝ่ายวางแผนเลือกหยุด เก็บยางเส้นยาวที่ SR" });
+  // การแจ้งแก้ใบที่ปิดเองเมื่อใบปิด (ระบบรับทราบ ไม่มีผู้ตัดสิน · 20261227010000) ใช้ข้อความเดียวกับการแจ้งที่ค้างของใบที่ปิดแล้ว ไม่แสดงชื่อผู้ที่ปิดใบ
+  const CLOSED_WITH_ORDER = "ใบปิดแล้ว ไม่ต้องรอฝ่ายวางแผนรับทราบ";
   const noticeOutcome = (ctx, row) => (ctx.helpers.staleChangeNotice?.(ctx.data, row)
-    ? { tone: "good", text: "ใบปิดแล้ว ไม่ต้องรอฝ่ายวางแผนรับทราบ", by: "" }
+    ? { tone: "good", text: CLOSED_WITH_ORDER, by: "" }
+    : row.status === "done" && row.decision === "ack" && !String(row.decidedBy ?? "").trim()
+    ? { tone: "good", text: CLOSED_WITH_ORDER, by: ctx.rules.fmtDate(row.decidedAt) }
     : row.status === "open"
     ? { tone: "warn", text: ctx.helpers.noticeMode(ctx.data, row) === "choose" ? "รอฝ่ายวางแผนตัดสินของที่ทำค้าง" : "รอฝ่ายวางแผนรับทราบ", by: "" }
     : { tone: row.decision === "stop" ? "bad" : "good", text: DECIDED_TEXT[row.decision] ?? "ฝ่ายวางแผนรับทราบแล้ว", by: `${row.decidedBy ?? ""} ${ctx.rules.fmtDate(row.decidedAt)}` });

@@ -51,7 +51,7 @@
 --     ข้อจำกัด: ค่าคำนวณตอนส่งแถวใบ · ใน delta แถวใบถูกส่งใหม่เมื่อแถวใบเปลี่ยน (เช่นงานแรกเริ่ม released → in_progress)
 --       แต่ WO เริ่มผลิตใน RubberFlow / SR จ่ายยางเส้นยาว ไม่แตะแถวใบ ค่าใน client จึงอาจค้างจนโหลดชุดใหม่ (เซิร์ฟเวอร์ยังตรวจกติกาเองทุกครั้ง)
 --   ข้อ 6 · app_bom_save_master ท้ายตัวเขียนทั้งหมด (ทุกทางที่ใบเป็น completed อยู่ในฟังก์ชันนี้: ปล่อยผลิตได้ครบจากสต็อก private.bom_save_orders,
---       รับเข้าครบ / closeOrder / closeOrderShort ของ private.bom_fg_move): การแจ้ง kind change ที่ยังเปิดของใบ completed = done / ack / ผู้ตัดสิน = ผู้เรียก
+--       รับเข้าครบ / closeOrder / closeOrderShort ของ private.bom_fg_move): การแจ้ง kind change ที่ยังเปิดของใบ completed = done / ack / ผู้ตัดสิน = ระบบ (decided_by null เหมือน backfill: ผู้ที่ปิดใบไม่ได้รับทราบการแจ้ง)
 --       ยกเว้นการแจ้งที่เขียนในคำสั่งนี้ · นับเป็น orderRequests ของบันทึกการใช้งาน
 --     การแจ้งยกเลิกกลางทางที่ยังรอตัดสินของใบที่ปิดแล้วไม่ถูกปิดเอง: ฝ่ายวางแผนยังต้องเลือก "ผลิตต่อ" (decideOrderRequest รับใบ completed อยู่แล้ว)
 --       ถ้าปิดเป็น ack ทางเลือกของใบเป็น null ตลอด ของในคลังถูกนับเป็นของลูกค้าที่ยกเลิก (private.bom_fg_free) และส่งมอบไม่ได้
@@ -1774,11 +1774,11 @@ begin
     if cardinality(v_started) > 0 then
       update public.bom_orders set status = 'in_progress', updated_at = now() where is_test = (select private.bom_test_mode()) and status = 'released' and id = any (v_started);
     end if;
-    -- ใบที่ปิด (completed · 20261227010000): การแจ้งแก้ใบที่ยังเปิดปิดเองแบบเดียวกับตอนยกเลิกใบ (decision ack · ผู้ตัดสิน = ผู้เรียก) ยกเว้นที่เพิ่งเขียนในคำสั่งนี้
+    -- ใบที่ปิด (completed · 20261227010000): การแจ้งแก้ใบที่ยังเปิดปิดเอง (decision ack · ผู้ตัดสิน = ระบบ decided_by null เหมือน backfill ข้อ 9: ผู้ที่ปิดใบไม่ได้รับทราบการแจ้ง) ยกเว้นที่เพิ่งเขียนในคำสั่งนี้
     --   ตรวจครั้งเดียวหลังตัวเขียนทั้งหมด (ทุกทางที่ใบเป็น completed อยู่ในคำสั่งนี้: ปล่อยผลิตได้ครบจากสต็อก / รับเข้าครบ / closeOrder / closeOrderShort)
     --   การแจ้งยกเลิกกลางทางที่ยังรอตัดสินไม่ถูกปิด (ฝ่ายวางแผนยังเลือกผลิตต่อกับใบที่ปิดแล้วได้) · นับเป็น orderRequests ของบันทึกการใช้งาน
     update public.bom_order_requests q
-    set status = 'done', decision = 'ack', decided_by = v_actor.id, decided_at = clock_timestamp()
+    set status = 'done', decision = 'ack', decided_by = null, decided_at = clock_timestamp()
     from public.bom_orders o
     where q.is_test = (select private.bom_test_mode()) and q.status = 'open' and q.kind = 'change'
       and o.id = q.order_pk and o.status = 'completed' and not (q.id = any (v_notices));

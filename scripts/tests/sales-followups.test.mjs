@@ -322,6 +322,7 @@ test("a closed order's open change notice closes itself when the order closes (l
   assert.ok(released.data, released.code);
   assert.equal((await s.orderRow("SA-C2")).status, "completed", "all from stock: the order closes in the same call");
   assert.deepEqual(await rowsOf(), [["change", "done", "ack"], ["cancel", "open", null]], "the edit notice acknowledged itself; the cancel notice stays open for planning's choice");
+  assert.equal((await s.view()).orderRequests.find((row) => row.orderId === "SA-C2" && row.kind === "change").decidedBy, "", "closed by the system, not by who released the order");
 });
 
 // ---------- 6) RB บันทึกล็อตตกแต่งของ WO ที่ยกเลิกพร้อมใบที่เลือกหยุด ----------
@@ -399,4 +400,16 @@ test("the database refuses a finishing lot of a cancelled work order that was no
   const refused = await settled(cont.store.run("recordFinishing", { transferId: "TR-S", useQty: 10, passedQty: 10, scrapQty: 0, grade: "A", shift: "D" }));
   assert.equal(refused.ok, false);
   assert.equal(refused.error.code, "RF_INVALID_TRANSITION", "an order planning chose to continue is not 'stopped'");
+});
+
+test("while the page does not know yet (BOM not loaded = null) it sends the finishing lot of a cancelled work order and the database decides: the stopped one is recorded to SR, the other cancel is refused", async () => {
+  const s = await stopScene();
+  s.stopped.current = () => null;
+  const finish = (transferId) => settled(s.store.run("recordFinishing", { transferId, useQty: 10, passedQty: 10, scrapQty: 0, grade: "A", shift: "D" }));
+  const ok = await finish("TR-S");
+  assert.equal(ok.ok, true, ok.error?.message);
+  assert.equal((await s.call("app_rf_master")).lots.find((row) => row.stage === "finishing" && row.orderId === "WO-S").destination, "sr");
+  const other = await finish("TR-X");
+  assert.equal(other.ok, false);
+  assert.equal(other.error.code, "RF_INVALID_TRANSITION", other.error.message);
 });

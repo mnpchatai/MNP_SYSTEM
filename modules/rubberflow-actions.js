@@ -707,10 +707,16 @@
 
   // โหมดฐานข้อมูล: บันทึกล็อตของสถานีไหนก็ได้เฉพาะใบสั่งผลิตที่ปล่อยผลิต กำลังผลิต หรือพักงาน (ฐานข้อมูลปฏิเสธนอกนี้ด้วย RF_INVALID_TRANSITION)
   // 20261227010000: ล็อตตกแต่งของ WO ที่ยกเลิกพร้อมใบที่ฝ่ายวางแผนเลือกหยุด (ctx.salesStopped) บันทึกได้ · สถานีอื่นและ WO ที่ยกเลิกทางอื่นยังไม่ได้
+  // ctx.salesStopped(order): true = หยุด · false = ไม่ใช่ · null = ยังไม่รู้ (BOM ยังไม่โหลด) → หน้าไม่ห้ามเอง เซิร์ฟเวอร์ตัดสิน (rf_save_lots)
+  const maySalesStopped = (ctx, order) => {
+    if (order.status !== "cancelled" || !order.sourceJobId || typeof ctx.salesStopped !== "function") return false;
+    const stopped = ctx.salesStopped(order);
+    return stopped === true || stopped === null;
+  };
   function needOrderOpen(d, orderId, ctx, stage = "") {
     const order = d.orders.find((row) => row.id === orderId);
     if (!ctx.remote || !order || ["released", "in_progress", "on_hold"].includes(order.status)) return;
-    if (stage === "finishing" && order.status === "cancelled" && ctx.salesStopped?.(order)) return;
+    if (stage === "finishing" && maySalesStopped(ctx, order)) return;
     const why = { planned: "ยังไม่ได้ปล่อยผลิต", completed: "ปิดแล้ว", cancelled: "ถูกยกเลิกแล้ว" }[order.status] ?? "ไม่อยู่ในสถานะที่ผลิตได้";
     fail(`ใบสั่งผลิต ${order.id} ${why} บันทึกการผลิตไม่ได้`);
   }
@@ -1147,7 +1153,7 @@
     const add = Number(qty);
     if (!(add > 0)) return;
     // ฐานข้อมูลรับยอดเฉพาะใบ in_progress / on_hold / completed (ใบ released ต้องเริ่มงานก่อน)
-    if (ctx.remote && (["planned", "released"].includes(order.status) || (order.status === "cancelled" && !ctx.salesStopped?.(order)))) fail(`ใบสั่งผลิต ${order.id} ${order.status === "planned" ? "ยังไม่ได้ปล่อยผลิต" : order.status === "released" ? "ยังไม่ได้เริ่มงาน" : "ถูกยกเลิกแล้ว"} บันทึกยอดผลิตเข้าใบไม่ได้`);
+    if (ctx.remote && (["planned", "released"].includes(order.status) || (order.status === "cancelled" && !maySalesStopped(ctx, order)))) fail(`ใบสั่งผลิต ${order.id} ${order.status === "planned" ? "ยังไม่ได้ปล่อยผลิต" : order.status === "released" ? "ยังไม่ได้เริ่มงาน" : "ถูกยกเลิกแล้ว"} บันทึกยอดผลิตเข้าใบไม่ได้`);
     order.producedQty = +(order.producedQty + add).toFixed(3);
     const mayClose = !ctx.remote || Boolean(ctx.user?.planner || ctx.user?.rb);
     if (mayClose && order.producedQty >= order.targetQty && order.status === "in_progress") {

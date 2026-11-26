@@ -1640,12 +1640,12 @@
     const rows = kind === "close" ? [{ fgCode: "", qty: 0 }] : lines;
     rows.forEach((line) => d.fgMoves.push({ id: `local-${ctx.now}-${d.fgMoves.length + 1}`, orderId: order.id, fgCode: line.fgCode, kind, qty: line.qty, note, at: ctx.now, by: ctx.user?.name ?? "", ...(line.fromOrderId ? { fromOrderId: line.fromOrderId } : {}) }));
   }
-  // ใบที่ปิดแล้ว (20261227010000): การแจ้ง "ฝ่ายขายแก้ใบ" ที่ยังเปิดปิดเอง (รับทราบ · ผู้ตัดสิน = ผู้ทำรายการ) ตรงกับ app_bom_save_master · การแจ้งยกเลิกกลางทางที่รอตัดสินไม่ถูกปิดเอง (ฝ่ายวางแผนยังเลือกผลิตต่อได้)
+  // ใบที่ปิดแล้ว (20261227010000): การแจ้ง "ฝ่ายขายแก้ใบ" ที่ยังเปิดปิดเอง (รับทราบ · ผู้ตัดสิน = ระบบ decidedBy "" ไม่ใช่ผู้ทำรายการ) ตรงกับ app_bom_save_master · การแจ้งยกเลิกกลางทางที่รอตัดสินไม่ถูกปิดเอง (ฝ่ายวางแผนยังเลือกผลิตต่อได้)
   function closeOrderNow(order, ctx, d) {
     order.status = "completed";
     order.completedAt = ctx.now;
     for (const row of d?.orderRequests ?? []) {
-      if (row.orderId === order.id && row.kind === "change" && row.status === "open") Object.assign(row, { status: "done", decision: "ack", decidedBy: ctx.user?.name ?? "", decidedAt: ctx.now });
+      if (row.orderId === order.id && row.kind === "change" && row.status === "open") Object.assign(row, { status: "done", decision: "ack", decidedBy: "", decidedAt: ctx.now });
     }
   }
   const fgSummary = (lines) => `${lines.length} รายการ`;

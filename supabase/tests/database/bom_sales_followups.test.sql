@@ -1,5 +1,6 @@
 -- งานตามหลังของใบสั่งผลิตจากฝ่ายขาย (โรงงาน ขั้น 9 · 20261227010000_bom_sales_followups.sql) ตรวจทั้งฝั่งอนุญาตและปฏิเสธ:
--- 1) ระหว่างฝ่ายขายยกเลิกกลางทางรอตัดสิน: รายงานผล / ล็อตตกแต่ง RB / WH รับเข้า ยังทำได้ · ส่งมอบ / SR จ่ายยางเส้นยาว / ST เบิกของซื้อ ไม่ได้
+-- 1) ระหว่างฝ่ายขายยกเลิกกลางทางรอตัดสิน: รายงานผล / ล็อตตกแต่ง RB / WH รับเข้า / ST จ่ายเคมี / RB เบิกผสมและล็อตผสมที่เริ่ม WO
+--    / ส่งงาน GR → PK (PK รับ) และ PK → WH ยังทำได้ · ส่งมอบ / SR จ่ายยางเส้นยาว / ST เบิกของซื้อ ไม่ได้
 -- 2) ฝ่ายวางแผนเลือกหยุดแล้ว RB ยังบันทึกล็อตตกแต่งของ WO ที่การหยุดยกเลิกได้ ยางเส้นยาวเข้าสต็อกกลาง SR · WO ที่ยกเลิกทางอื่นไม่ได้ · ไปลูกค้าไม่ได้
 -- 3) เปิดงานเพิ่มใช้สต็อกสินค้าสำเร็จรูป / ยางเส้นยาวกับส่วนที่เพิ่ม (ไม่เกินส่วนที่เพิ่ม ไม่เกินสต็อก ลดไม่ได้)
 -- 4) planned_items: ตั้งตอนปล่อยผลิต / เปิดงานเพิ่ม · ล้างตอนเปิดกลับเป็นร่าง · ไม่มีอะไรเพิ่ม = เปิดงานเพิ่มไม่ได้ · ความต้องการของงานเดิมเพิ่มตาม
@@ -49,8 +50,8 @@ select count(set_config('test.p_' || lower(replace(employee_no, '-', '_')), id::
 select count(set_config('test.n_' || lower(replace(employee_no, '-', '_')), first_name || ' ' || last_name, true)) from public.employees where is_test;
 select is((select count(*)::integer from public.employees e join public.departments d on d.id = e.department_id
            where e.is_test and e.employee_no in ('SBX-SA-STAFF', 'SBX-PP-STAFF', 'SBX-PK-STAFF', 'SBX-RB-STAFF', 'SBX-RB-MGR', 'SBX-SR-STAFF',
-                                                 'SBX-WH-STAFF', 'SBX-ST-STAFF', 'SBX-QA-MGR')
-             and d.code = split_part(e.employee_no, '-', 2)), 9,
+                                                 'SBX-WH-STAFF', 'SBX-ST-STAFF', 'SBX-QA-MGR', 'SBX-GR-STAFF', 'SBX-GR-AMGR')
+             and d.code = split_part(e.employee_no, '-', 2)), 11,
   'the personas used below belong to the departments the rules name');
 
 create schema sf_t;
@@ -249,6 +250,41 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select lives_ok($$ select sf_t.finish('FN-F0', current_setting('test.wo_a2'), 'TR-F1', 'CU-F1', 4, '{}'::jsonb) $$,
   'and RB still records a finishing lot of the running work order');
 select is(sf_t.rod_lot('FN-F0') ->> 'status', 'pending', 'its rods wait for SR');
+-- ระหว่างรอตัดสิน: ST จ่ายเคมีเข้าคลัง RB · RB เบิกผสมจากคลัง RB แล้วบันทึกล็อตผสมที่เริ่ม WO ของงาน RB-F2 (ปล่อยผลิตแล้ว ใส่ตรง)
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select sf_t.rf(jsonb_build_object('materialLots', jsonb_build_object('upsert', jsonb_build_array(
+  jsonb_build_object('lotNo', 'RM-SF-A1', 'materialCode', 'MAT-SF-A', 'qtyKg', 100, 'expiry', (extract(epoch from now()) * 1000)::bigint + 864000000,
+                     'supplier', 'บจก. โพลีเคม', 'location', 'A-1', 'status', 'available', 'coa', true),
+  jsonb_build_object('lotNo', 'RM-SF-B1', 'materialCode', 'MAT-SF-B', 'qtyKg', 100, 'expiry', (extract(epoch from now()) * 1000)::bigint + 864000000,
+                     'supplier', 'บจก. โพลีเคม', 'location', 'A-1', 'status', 'available', 'coa', true)))), 'receiveMaterial');
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select sf_t.rf(jsonb_build_object('chemDocs', jsonb_build_object('upsert', jsonb_build_array(
+  '{"id":"CR-20261227-01","kind":"request","status":"open","note":"","lines":[{"materialCode":"MAT-SF-A","qtyKg":50},{"materialCode":"MAT-SF-B","qtyKg":30}]}'::jsonb))),
+  'requestChemicals');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select lives_ok($$ select sf_t.rf(jsonb_build_object('chemDocs', jsonb_build_object('upsert', jsonb_build_array(
+  (select d || jsonb_build_object('lines', (select jsonb_agg(t.e || jsonb_build_object('issuedKg', (t.e ->> 'qtyKg')::numeric) order by t.ord)
+                                            from jsonb_array_elements(d -> 'lines') with ordinality as t(e, ord)))
+   from jsonb_array_elements(public.app_rf_master() -> 'chemDocs') d where d ->> 'id' = 'CR-20261227-01')))), 'issueChemicals') $$,
+  'while planning decides ST still issues chemicals to the RB store');
+select is((select d ->> 'status' from jsonb_array_elements(public.app_rf_master() -> 'chemDocs') d where d ->> 'id' = 'CR-20261227-01'), 'done',
+  'the chemical request is fully issued');
+reset role;
+update public.rf_orders set status = 'released' where is_test and wo_no = current_setting('test.wo_a3');
+update public.rf_master_state set version = version + 1 where is_test;
+set local role authenticated;
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select lives_ok($$ select sf_t.rf(jsonb_build_object('requisitions', jsonb_build_object('upsert', jsonb_build_array(
+  jsonb_build_object('id', 'REQ-SF-1', 'orderId', current_setting('test.wo_a3'), 'batches', 1, 'note', '')))), 'createRequisition') $$,
+  'RB still draws a mixing requisition from its store for the work order of RB-F2');
+select lives_ok($$ select sf_t.rf(jsonb_build_object('lots', jsonb_build_object('upsert', jsonb_build_array(jsonb_build_object(
+  'id', 'MX-SF-1', 'stage', 'mixing', 'orderId', current_setting('test.wo_a3'), 'recipeId', 'RCF-1', 'uom', 'kg', 'machine', 'KN-01 Kneader 75L', 'shift', 'D',
+  'sources', jsonb_build_array(jsonb_build_object('type', 'requisition', 'id', 'REQ-SF-1')),
+  'params', '{"stages":[{"stage":1,"mixerTemp":80,"dumpTemp":116,"mixMin":3},{"stage":2,"mixerTemp":90,"dumpTemp":141,"mixMin":2}],"batches":1}'::jsonb,
+  'goodQty', 58, 'scrapQty', 1.5, 'scrapReason', '', 'qc', 'pass', 'holdReasons', '[]'::jsonb)))), 'recordMixing') $$,
+  'and records the mixing lot');
+select is((select w ->> 'status' from jsonb_array_elements(public.app_rf_master() -> 'orders') w where w ->> 'id' = current_setting('test.wo_a3')), 'in_progress',
+  'the first mixing starts the work order while the cancel waits');
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
 select throws_ok($$ select sf_t.save(jsonb_build_object('fgMoves', jsonb_build_object('upsert', jsonb_build_array(jsonb_build_object(
   'orderId', '251227-29001', 'kind', 'deliver', 'lines', jsonb_build_array(jsonb_build_object('fgCode', 'FG-F1', 'qty', 1)), 'note', '')))), 'deliverFg') $$,
@@ -390,6 +426,25 @@ select is((sf_t.job('JOB-9-B1') ->> 'qtyPlanned') || '/' || (sf_t.job('JOB-9-B1'
 select public.app_sandbox_enter(current_setting('test.p_sbx_sa_staff')::uuid);
 select lives_ok($$ select sf_t.edit('251227-29002', '{"salesCancelReason":"ลูกค้ายกเลิกส่วนที่เหลือ"}'::jsonb, 'cancelOrder') $$, 'sales cancels order B mid-way');
 select is(sf_t.notices('251227-29002', 'change', 'open'), 3, 'the three edit notices of order B are still open');
+-- ระหว่างรอตัดสิน: งาน GR รายงานผล · หัวหน้า GR ส่งให้ PK · PK รับ · ส่งงาน PK → WH (กลุ่มวางแผนทำได้แทนหัวหน้า PK) ยังทำได้
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_staff')::uuid);
+select lives_ok($$ select sf_t.report('JOB-9-B3') $$, 'while planning decides GR still reports its job');
+select public.app_sandbox_enter(current_setting('test.p_sbx_gr_amgr')::uuid);
+select lives_ok($$ select sf_t.save(jsonb_build_object('grHandovers', jsonb_build_object('upsert', jsonb_build_array(jsonb_build_object(
+  'id', '00000000-0000-4000-8000-000000000911', 'jobId', 'JOB-9-B3', 'qty', 1, 'note', '')))), 'sendGrToPk') $$,
+  'the GR head still sends GR work to PK');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pk_staff')::uuid);
+select lives_ok($$ select sf_t.save(jsonb_build_object('grHandovers', jsonb_build_object('upsert', jsonb_build_array(jsonb_build_object(
+  'id', '00000000-0000-4000-8000-000000000911')))), 'receiveGrAtPk') $$,
+  'PK still receives it');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select lives_ok($$ select sf_t.save(jsonb_build_object('grHandovers', jsonb_build_object('upsert', jsonb_build_array(jsonb_build_object(
+  'id', '00000000-0000-4000-8000-000000000912', 'jobId', 'JOB-9-B1', 'qty', 1, 'note', '')))), 'sendPkToWh') $$,
+  'and PK work still goes to WH');
+select is((select string_agg((h ->> 'fromDept') || '>' || (h ->> 'toDept') || ':' || (h ->> 'status'), ',' order by h ->> 'id')
+           from jsonb_array_elements(public.app_bom_master() -> 'grHandovers') h
+           where h ->> 'id' in ('00000000-0000-4000-8000-000000000911', '00000000-0000-4000-8000-000000000912')),
+  'GR>PK:received,PK>WH:sent', 'both hand-overs of the order waiting for planning are recorded');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select lives_ok($$ select sf_t.close_job('JOB-9-B1') $$, 'planning closes the PK job with a reason');
 select lives_ok($$ select sf_t.close_job('JOB-9-B3') $$, 'and the GR job');
@@ -405,7 +460,7 @@ select lives_ok($$ select sf_t.save(jsonb_build_object('fgMoves', jsonb_build_ob
 select is(sf_t.order_row('251227-29002') ->> 'status', 'completed', 'order B is completed');
 select is(sf_t.notices('251227-29002', 'change', 'open') || '/' || sf_t.notices('251227-29002', 'change', 'done'), '0/3', 'closing the order closes its three edit notices');
 select is(sf_t.notice('251227-29002', 'change') ->> 'decision' || '/' || (sf_t.notice('251227-29002', 'change') ->> 'decidedBy'),
-  'ack/' || current_setting('test.n_sbx_wh_staff'), 'as acknowledged, by who closed the order');
+  'ack/', 'as acknowledged by the system: no name, not the warehouse clerk who closed the order');
 select is(sf_t.notice('251227-29002', 'cancel') ->> 'status', 'open', 'the mid-way cancel waiting for a choice stays open');
 select is((sf_t.order_row('251227-29002') ->> 'started') || '/' || (sf_t.order_row('251227-29002') ->> 'locked'), 'false/false',
   'a closed order is neither started nor locked for the client');
@@ -413,6 +468,10 @@ reset role;
 select ok(exists (select 1 from public.audit_logs a where a.action = 'BOM_MASTER_SAVE' and a.metadata ->> 'client_action' = 'closeOrder'
                   and (a.metadata -> 'counts' -> 'orderRequests' ->> 'upsert')::integer = 3 and (a.metadata ->> 'is_test')::boolean),
   'the close is audited with the three notices it closed');
+select is((select count(*)::integer from public.bom_order_requests q join public.bom_orders o on o.id = q.order_pk
+           where o.is_test and o.pi_no = '251227-29002' and q.kind = 'change' and q.status = 'done' and q.decision = 'ack'
+             and q.decided_by is null and q.decided_at is not null), 3,
+  'the three edit notices are closed by the system (decided_by null, like the backfill), not by the caller');
 set local role authenticated;
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select lives_ok($$ select sf_t.decide('251227-29002', 'cancel', 'continue') $$, 'planning still chooses to produce to the end for the closed order');
