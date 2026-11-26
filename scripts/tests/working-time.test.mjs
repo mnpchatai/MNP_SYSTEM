@@ -86,9 +86,28 @@ test("holiday loader reads company_holidays once and retries after a failure", a
   assert.ok(loader.holidays().has("2026-12-05"));
 });
 
-test("the notify-email Edge Function keeps the same working window", () => {
+test("the notify-email Edge Function counts working time exactly like the pilot helper", () => {
   const source = readFileSync(new URL("../../supabase/functions/notify-email/index.ts", import.meta.url), "utf8");
-  assert.match(source, /WORK_BLOCKS = \[\[8, 12\], \[13, 17\]\]/);
-  assert.match(source, /BANGKOK_OFFSET_MS = 7 \* HOUR_MS/);
   assert.match(source, /from\("company_holidays"\)/);
+  // ตัดค่าคงที่และ workingMs ของฝั่ง TypeScript ออกมา ลบ type annotation แล้วรันเทียบกับ modules/working-time.js
+  const start = source.indexOf("const HOUR_MS = 3_600_000;");
+  const end = source.indexOf("\n}", source.indexOf("function workingMs(")) + 2;
+  assert.ok(start > 0 && end > start, "workingMs block found in the Edge Function");
+  const js = source.slice(start, end)
+    .replace(" as const", "")
+    .replace(/\((startMs): number, (endMs): number, (holidays): Set<string>\)/, "($1, $2, $3)");
+  assert.doesNotMatch(js, /: (number|Set)/, "every type annotation was stripped");
+  const edgeWorkingMs = new Function(`${js}\nreturn workingMs;`)();
+  const holidays = new Set(["2026-11-24"]);
+  const cases = [
+    ["2026-11-23T09:00:00", "2026-11-23T11:30:00"], ["2026-11-23T11:00:00", "2026-11-23T14:00:00"],
+    ["2026-11-23T16:00:00", "2026-11-25T09:00:00"], ["2026-11-28T16:00:00", "2026-11-30T09:00:00"],
+    ["2026-11-23T06:00:00", "2026-11-23T22:00:00"], ["2026-11-24T10:00:00", "2026-11-23T10:00:00"],
+    ["2026-11-01T00:00:00", "2026-12-31T23:59:00"],
+  ];
+  for (const [from, to] of cases) {
+    const a = Date.parse(bkk(from));
+    const b = Date.parse(bkk(to));
+    assert.equal(edgeWorkingMs(a, b, holidays), wt.workingMs(a, b, holidays), `${from} → ${to}`);
+  }
 });
