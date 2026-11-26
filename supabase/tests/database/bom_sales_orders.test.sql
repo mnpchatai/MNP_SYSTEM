@@ -576,6 +576,11 @@ set local role authenticated;
 select lives_ok($$ select so_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(so_t.job('JOB-8-X6') || jsonb_build_object('status', 'done',
     'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 0, 'reject', 0, 'note', 'ไม่ทำส่วนนี้แล้ว')))))), 'setJobStatus') $$,
   'planning closes the RB job that lost its work order');
+-- จำนวนสั่ง FG-S9 5 → 7 (20261227010000: เปิดงานเพิ่มได้เฉพาะเมื่อมีสินค้าที่จำนวนสั่งมากกว่าที่เปิดงานไว้ planned_items
+--   · ใบนี้เป็นของฝ่ายวางแผน ฝ่ายขายแก้ไม่ได้ จึงตั้งตรงที่ตาราง แทนการแก้ใบตรงของฝ่ายขาย)
+reset role;
+update public.bom_orders set items = jsonb_set(items, '{0,qty}', '7'::jsonb) where is_test and pi_no = '251225-28301';
+set local role authenticated;
 select set_config('test.ver_before', so_t.ver()::text, true);
 -- ปฏิเสธ: ผู้ที่ไม่ใช่กลุ่มวางแผนของใบสั่งผลิต
 select public.app_sandbox_enter(current_setting('test.p_sbx_sa_staff')::uuid);
@@ -647,6 +652,10 @@ set local role authenticated;
 select lives_ok($$ select so_t.save(jsonb_build_object('jobs', jsonb_build_object('upsert', jsonb_build_array(so_t.job('JOB-8-X3') || jsonb_build_object('status', 'done',
     'reports', jsonb_build_array(jsonb_build_object('at', 1, 'by', 'x', 'good', 0, 'reject', 0, 'note', 'ปิดงานส่วนนี้')))))), 'setJobStatus') $$,
   'planning closes the GR job with a reason');
+-- จำนวนสั่งเพิ่มอีก 7 → 9 (ตั้งตรงแบบเดียวกับข้างบน) สองกรณีข้างล่างจึงถูกปฏิเสธเพราะงาน / WO ไม่ใช่เพราะไม่มีอะไรเพิ่มจาก planned_items
+reset role;
+update public.bom_orders set items = jsonb_set(items, '{0,qty}', '9'::jsonb) where is_test and pi_no = '251225-28301';
+set local role authenticated;
 select throws_ok($$ select so_t.add('251225-28301', jsonb_build_array(so_t.job('JOB-8-X3') || '{"qtyPlanned":6}'::jsonb)) $$, 'BOM_INVALID_TRANSITION',
   'a closed job is not raised (open a new order for the extra part)');
 reset role;
@@ -659,9 +668,10 @@ select lives_ok($$ select so_t.orders(jsonb_build_array(so_t.sa_order('251225-28
   'planning opens a draft');
 select throws_ok($$ select so_t.add('251225-28302', jsonb_build_array(so_t.new_job('JOB-8-X5', '251225-28302', 'PK', 'FG-S9', 'FG', 5))) $$, 'BOM_INVALID_TRANSITION',
   'a draft gets jobs only by release');
-select throws_ok($$ select so_t.add('251225-28106', jsonb_build_array(so_t.new_job('JOB-8-X6', '251225-28106', 'GR', 'SE-S9', 'SE', 1))) $$, 'BOM_INVALID_TRANSITION',
+-- เลขงานของสองกรณีนี้ไม่ซ้ำกับงาน X6 / X7 ของใบ 28301 ข้างบน (เลขซ้ำ = ตัวเขียนเห็นเป็นงานเดิมของใบอื่น ไม่ใช่งานใหม่)
+select throws_ok($$ select so_t.add('251225-28106', jsonb_build_array(so_t.new_job('JOB-8-X10', '251225-28106', 'GR', 'SE-S9', 'SE', 1))) $$, 'BOM_INVALID_TRANSITION',
   'a cancelled order gets no extra jobs');
-select throws_ok($$ select so_t.add('251225-28103', jsonb_build_array(so_t.new_job('JOB-8-X7', '251225-28103', 'GR', 'SE-S9', 'SE', 1))) $$, 'BOM_INVALID_TRANSITION',
+select throws_ok($$ select so_t.add('251225-28103', jsonb_build_array(so_t.new_job('JOB-8-X11', '251225-28103', 'GR', 'SE-S9', 'SE', 1))) $$, 'BOM_INVALID_TRANSITION',
   'nor an order sales cancelled mid-way (even when planning chose to produce to the end)');
 reset role;
 update public.bom_orders set status = 'completed' where is_test and pi_no = '251225-28301';
