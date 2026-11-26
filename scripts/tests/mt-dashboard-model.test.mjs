@@ -349,3 +349,26 @@ test("days in the approval stage count from when the current approval step was r
   const [repair] = derive([req({ status: "in_progress", current_step: 0, history: [at("in_progress", "2026-10-03T02:00:00Z")], steps: [{ step_order: 2, acted_at: "2026-10-05T02:00:00Z" }] })]);
   assert.equal(repair.daysInStatus, 3);
 });
+
+test("repairTimes: repair time sums every in_progress round; total runs submitted → completed", () => {
+  const history = [
+    { to_status: "pending_verify", created_at: "2026-11-20T08:56:00Z" },
+    { to_status: "in_progress", created_at: "2026-11-20T07:12:00Z" },
+    { to_status: "assigned", created_at: "2026-11-20T09:00:00Z" },
+    { to_status: "in_progress", created_at: "2026-11-21T01:00:00Z" },
+    { to_status: "pending_verify", created_at: "2026-11-21T01:30:00Z" },
+    { to_status: "completed", created_at: "2026-11-23T02:51:00Z" },
+  ];
+  const times = model.repairTimes({ submitted_at: "2026-11-20T06:31:00Z", completed_at: "2026-11-23T02:51:00Z" }, history);
+  assert.equal(model.formatDuration(times.repairMs), "2 ชม. 14 นาที");
+  assert.equal(model.formatDuration(times.totalMs), "2 วัน 20 ชม. 20 นาที");
+});
+
+test("repairTimes: no repair round or no close gives no figure", () => {
+  const times = model.repairTimes({ submitted_at: "2026-11-20T06:31:00Z", completed_at: null }, [{ to_status: "pending_approval", created_at: "2026-11-20T06:31:00Z" }]);
+  assert.equal(times.repairMs, null);
+  assert.equal(times.totalMs, null);
+  assert.equal(model.formatDuration(null), "");
+  assert.equal(model.formatDuration(20000), "น้อยกว่า 1 นาที");
+  assert.equal(model.formatDuration(3600000), "1 ชม.");
+});

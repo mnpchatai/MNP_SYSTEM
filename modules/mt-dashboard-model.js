@@ -86,6 +86,30 @@
     return total / HOUR_MS;
   }
 
+  // Closing summary of a completed repair (end of the history card): the same two figures the dashboard uses.
+  // repairMs = time in in_progress over every round (technician ranking hours); totalMs = submitted_at → completed_at (cycle time).
+  function repairTimes(request, history) {
+    const sorted = [...(history ?? [])].filter((item) => item && item.created_at).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
+    const completedAt = request?.completed_at ?? [...sorted].reverse().find((item) => item.to_status === "completed")?.created_at ?? null;
+    const submittedAt = request?.submitted_at ?? sorted[0]?.created_at ?? null;
+    const total = submittedAt && completedAt ? Date.parse(completedAt) - Date.parse(submittedAt) : NaN;
+    return {
+      repairMs: sorted.some((item) => item.to_status === "in_progress") ? Math.round(repairHoursOf(sorted, "completed", 0) * HOUR_MS) : null,
+      totalMs: Number.isFinite(total) && total >= 0 ? total : null,
+    };
+  }
+
+  // "2 วัน 20 ชม. 20 นาที" — zero parts are left out; under a minute reads "น้อยกว่า 1 นาที".
+  function formatDuration(ms) {
+    if (ms === null || ms === undefined || !Number.isFinite(ms) || ms < 0) return "";
+    const minutes = Math.floor(ms / 60000);
+    if (!minutes) return "น้อยกว่า 1 นาที";
+    const days = Math.floor(minutes / 1440);
+    const hours = Math.floor((minutes % 1440) / 60);
+    const rest = minutes % 60;
+    return [days && `${days} วัน`, hours && `${hours} ชม.`, rest && `${rest} นาที`].filter(Boolean).join(" ");
+  }
+
   function stageOf(row) {
     switch (row.status) {
       case "pending_approval": return Number(row.current_step) >= 2 ? "approve_gm" : "approve_fm";
@@ -346,7 +370,7 @@
     return { items, jobs: periodRows.length };
   }
 
-  const api = { STAGES, STAGE_BY_KEY, PHASES, EXCLUDED_STATUSES, bangkokDate, daysBetween, deriveRows, select, backlog, listFor, summarize, stageSummary, phaseSummary, priority, machineRanking, deptRanking, technicianRanking };
+  const api = { STAGES, STAGE_BY_KEY, PHASES, EXCLUDED_STATUSES, bangkokDate, daysBetween, deriveRows, repairTimes, formatDuration, select, backlog, listFor, summarize, stageSummary, phaseSummary, priority, machineRanking, deptRanking, technicianRanking };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_MT_DASHBOARD = api;
 })(typeof window !== "undefined" ? window : globalThis);

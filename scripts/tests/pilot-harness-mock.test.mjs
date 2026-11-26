@@ -159,7 +159,7 @@ test("query coverage: head counts, in, not/is, ilike, order and limit", async ()
   const { sb } = mock();
   const { count, data } = await sb.from("requests").select("id", { count: "exact", head: true }).eq("requester_id", "e1");
   assert.equal(data, null);
-  assert.equal(count, 3);
+  assert.equal(count, 4);
   assert.equal((await sb.from("notifications").select("id", { count: "exact", head: true }).eq("recipient_id", "e1").is("read_at", null)).count, 2);
   await sb.from("notifications").update({ read_at: new Date(NOW).toISOString() }).eq("recipient_id", "e1").is("read_at", null);
   assert.equal((await sb.from("notifications").select("id", { count: "exact", head: true }).is("read_at", null)).count, 0);
@@ -180,7 +180,7 @@ test("unknown tables, filters and RPCs warn once and return empty", async () => 
   const { sb, warnings } = mock();
   assert.deepEqual((await sb.from("no_such_table").select("*")).data, []);
   await sb.from("no_such_table").select("*");
-  assert.deepEqual((await sb.from("requests").select("*").textSearch("title", "x").textSearch("title", "y")).data.length, 8);
+  assert.deepEqual((await sb.from("requests").select("*").textSearch("title", "x").textSearch("title", "y")).data.length, 9);
   assert.equal((await sb.rpc("app_no_such_rpc")).data, null);
   await sb.rpc("app_no_such_rpc");
   assert.equal(warnings.length, 3);
