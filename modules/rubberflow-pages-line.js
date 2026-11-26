@@ -581,11 +581,13 @@
   // ผลตัดสินของล็อตตกแต่ง: ค่า = qcResult หรือ qcResult:ปลายทาง (แยกเป็น qcResult + destination ที่ TRANSFORMS ของ module-rubberflow.js) · ต้องเลือกเอง ไม่มีค่าตั้งต้น (20261207010000)
   // WO ที่มาจากงาน RB ของ BOM (linked): ยางเส้นยาวเข้าคลังยางเส้นยาว (SR) · ส่งมอบให้ลูกค้าผ่านคลังสินค้าสำเร็จรูป (WH) · กักรอ QC · WO ที่ไม่ผูกงาน: ไม่มี SR
   const FINISH_RESULT_PLACEHOLDER = "เลือกผลตัดสิน…";
-  const finishResultOptions = (linked) => [
+  // stopped = WO ที่ยกเลิก (หน้าฟอร์มส่ง true ทุก WO ที่ยกเลิก: เซิร์ฟเวอร์รับเฉพาะที่ยกเลิกพร้อมใบที่ฝ่ายวางแผนเลือกหยุด · 20261227010000): ไม่มีทางส่งมอบให้ลูกค้า · ยางเส้นยาวเข้าคลัง SR เป็นสต็อกกลาง
+  const finishResultOptions = (linked, stopped = false) => [
     ...(linked ? [{ value: "pass:sr", label: "ผ่าน — ส่งเข้าคลังยางเส้นยาว (SR)" }] : []),
-    { value: "pass:customer", label: "ผ่าน — ส่งมอบให้ลูกค้า ผ่านคลังสินค้าสำเร็จรูป (WH)" },
+    ...(stopped ? [] : [{ value: "pass:customer", label: "ผ่าน — ส่งมอบให้ลูกค้า ผ่านคลังสินค้าสำเร็จรูป (WH)" }]),
     { value: "hold", label: "กักรอ QC" },
   ];
+  const STOPPED_NOTE = "ใบถูกยกเลิก ยางเส้นยาวเข้าคลัง SR เป็นสต็อกกลาง";
   // ข้อความแจ้งผลหลังบันทึก ตามทางที่เลือก
   const finishSuccessText = (linked, choice, base = "บันทึก {result} และสร้างป้ายกล่องแล้ว") => (choice === "pass:sr" ? "บันทึก {result} แล้ว ยางเส้นยาวส่งเข้าคลังยางเส้นยาว (SR)"
     : choice === "pass:customer" ? "บันทึก {result} และสร้างป้ายกล่องแล้ว กล่องรอคลังสินค้าสำเร็จรูป (WH) รับเข้า"
@@ -623,7 +625,7 @@
         ${ui.field("เกรด", ui.select("grade", ["A", "B"]))}
         ${ui.field("ผลตัดสินของล็อต", ui.select("qcResult", finishResultOptions(false), { placeholder: FINISH_RESULT_PLACEHOLDER, extra: 'required data-rf-result title="ผ่าน = นับยอดเข้าใบสั่งผลิต · WO ที่มาจากงาน RB ของ BOM เลือกได้ว่าส่งเข้าคลังยางเส้นยาว (SR) หรือส่งมอบให้ลูกค้าผ่านคลังสินค้าสำเร็จรูป (WH) · WO ที่ไม่ผูกงานส่งมอบให้ลูกค้าผ่าน WH · กักรอ QC = รอ QA ตัดสิน"' }), { required: true })}
         ${ui.field("กะ", ui.select("shift", shiftOptions(rules)))}
-      </div><div data-rf-linked-note hidden>${ui.callout("info", "WO นี้มาจากงาน RB ของใบสั่งผลิต (BOM): ถ้าส่งเข้าคลังยางเส้นยาว (SR) ไม่สร้างกล่องสินค้า · SR รับเข้าและตรวจขนาด แล้วงาน RB ของใบจึงนับยอด · ถ้าส่งมอบให้ลูกค้าผ่านคลังสินค้าสำเร็จรูป (WH) สร้างกล่อง · WH รับเข้าแล้วงาน RB ของใบจึงนับยอด")}</div><div class="rf-row">${ui.submitButton("บันทึกและพิมพ์ป้ายกล่อง")}</div></form>`, { title: "บันทึกการตกแต่งและบรรจุ" }) : "";
+      </div><div data-rf-stopped-note hidden>${ui.callout("warn", STOPPED_NOTE)}</div><div data-rf-linked-note hidden>${ui.callout("info", "WO นี้มาจากงาน RB ของใบสั่งผลิต (BOM): ถ้าส่งเข้าคลังยางเส้นยาว (SR) ไม่สร้างกล่องสินค้า · SR รับเข้าและตรวจขนาด แล้วงาน RB ของใบจึงนับยอด · ถ้าส่งมอบให้ลูกค้าผ่านคลังสินค้าสำเร็จรูป (WH) สร้างกล่อง · WH รับเข้าแล้วงาน RB ของใบจึงนับยอด")}</div><div class="rf-row">${ui.submitButton("บันทึกและพิมพ์ป้ายกล่อง")}</div></form>`, { title: "บันทึกการตกแต่งและบรรจุ" }) : "";
     const html = `${ui.pageHead("สถานีที่ 4 · ตกแต่งและบรรจุ", "ตัดแต่งครีบ ตรวจ 100% แล้วบรรจุกล่อง ระบบสร้างเลขกล่องให้อัตโนมัติ แล้วคลังสินค้าสำเร็จรูป (WH) รับเข้า")}
       ${ui.stats([
         { label: "อัตราได้ของดี ตกแต่ง", value: stageYieldText(lots), sub: "เป้าหมาย ≥ 99.0%" },
@@ -652,11 +654,26 @@
       const result = form.querySelector("[data-rf-result]");
       const perBoxField = form.querySelector(".rf-perbox-field");
       const linkedNote = form.querySelector("[data-rf-linked-note]");
+      const stoppedNote = form.querySelector("[data-rf-stopped-note]");
       const submit = form.querySelector('button[type="submit"]');
       const baseSuccess = form.dataset?.rfSuccess;
       const isLinked = (order) => (typeof ctx.bomLinked === "function" ? ctx.bomLinked(order) : Boolean(order?.sourceJobId));
       const linkedOrder = () => { const transfer = currentTransfer(); const order = transfer ? data.orders.find((row) => row.id === transfer.orderId) : null; return order && isLinked(order) ? order : null; };
-      const resultOptions = (linked, keep) => [`<option value="">${esc(FINISH_RESULT_PLACEHOLDER)}</option>`, ...finishResultOptions(linked).map((option) => `<option value="${esc(option.value)}"${option.value === keep ? " selected" : ""}>${esc(option.label)}</option>`)].join("");
+      // WO ที่ยกเลิก: ไม่มีทางส่งมอบให้ลูกค้าเสมอ (เซิร์ฟเวอร์รับเฉพาะ WO ที่ยกเลิกพร้อมใบที่เลือกหยุด และรับแค่ SR) · ข้อความ "ใบถูกยกเลิก…" แสดงเมื่อรู้แน่ว่าหยุด (ctx.bomSalesStopped = true)
+      // BOM ยังไม่โหลด (null): ยังไม่แสดงข้อความ รอ ctx.bomLoaded แล้วปรับตัวเลือกและข้อความใหม่ครั้งเดียว (ฟอร์มที่กรอกค้างไม่ถูกวาดทั้งหน้าใหม่)
+      const pickedOrder = () => { const transfer = currentTransfer(); return transfer ? data.orders.find((row) => row.id === transfer.orderId) ?? null : null; };
+      const cancelledOrder = () => pickedOrder()?.status === "cancelled";
+      const stoppedOrder = () => { const order = pickedOrder(); if (!order || order.status !== "cancelled") return false; const stopped = ctx.bomSalesStopped?.(order); return stopped === null ? null : stopped === true; };
+      let bomWaited = false;
+      const waitForBom = () => {
+        if (bomWaited) return;
+        const loaded = typeof ctx.bomLoaded === "function" ? ctx.bomLoaded() : null;
+        if (!loaded || typeof loaded.then !== "function") return;
+        bomWaited = true;
+        const again = () => { if (form.isConnected === false) return; result.innerHTML = resultOptions(Boolean(linkedOrder()), result.value, cancelledOrder()); sync(); };
+        loaded.then(again, again);
+      };
+      const resultOptions = (linked, keep, stopped = false) => [`<option value="">${esc(FINISH_RESULT_PLACEHOLDER)}</option>`, ...finishResultOptions(linked, stopped).map((option) => `<option value="${esc(option.value)}"${option.value === keep ? " selected" : ""}>${esc(option.label)}</option>`)].join("");
       const paint = () => {
         const boxed = !linkedOrder() || result.value === "pass:customer";
         const boxes = boxed && Number(perBox.value) > 0 && Number(passed.value) > 0 ? Math.ceil(Number(passed.value) / Number(perBox.value)) : 0;
@@ -669,6 +686,9 @@
         const boxed = !linked || choice === "pass:customer";
         if (perBoxField) perBoxField.hidden = !boxed;
         if (linkedNote) linkedNote.hidden = !linked;
+        const stopped = stoppedOrder();
+        if (stoppedNote) stoppedNote.hidden = stopped !== true;
+        if (stopped === null) waitForBom();
         perBox.required = boxed;
         if (!boxed) perBox.value = "";
         else if (transfer && !perBox.value) perBox.value = transfer.uom === "m" ? "100" : "2000";
@@ -677,7 +697,7 @@
         paint();
       };
       form.querySelector("[data-rf-inbound]").addEventListener("change", () => {
-        result.innerHTML = resultOptions(Boolean(linkedOrder()), result.value);
+        result.innerHTML = resultOptions(Boolean(linkedOrder()), result.value, cancelledOrder());
         sync();
       });
       result.addEventListener("change", sync);

@@ -507,6 +507,8 @@
     // ฟอร์มชุดสี: slotKey[] + slotColor[] → slots · ฟอร์มแพ็กเกจ: childCode[] + qty[] → lines (แถวว่างถูกข้าม)
     saveColorSet: (p) => ({ ...p, slots: listOf(p, "slotKey").map((key, index) => ({ key, color: listOf(p, "slotColor")[index] ?? "" })) }),
     setStockCounts: (p) => ({ ...p, counts: listOf(p, "itemCode").map((itemCode, index) => ({ itemCode, qty: listOf(p, "qty")[index] ?? "" })) }),
+    // เปิดงานเพิ่ม (20261227010000): itemCode[] + qty[] ของยอดที่ใช้จากสต็อกกับส่วนที่เพิ่ม → use (ช่องว่าง = ไม่ใช้)
+    addJobsForChanges: (p) => ({ orderId: p.orderId, use: listOf(p, "itemCode").map((itemCode, index) => ({ itemCode, qty: listOf(p, "qty")[index] ?? "" })) }),
     // ฟอร์มคลังของซื้อ: itemCode[] + qty[] (+ safetyQty[] ถ้าแก้สต็อกขั้นต่ำได้) ตามลำดับแถว · ช่องว่าง = ไม่แตะค่าเดิม
     countPartStock: (p) => ({ counts: listOf(p, "itemCode").map((itemCode, index) => ({ itemCode, qty: listOf(p, "qty")[index] ?? "", safetyQty: listOf(p, "safetyQty")[index] ?? "" })) }),
     // ฟอร์มเบิกจ่ายของซื้อ: itemCode[] + qty[] ของบรรทัดที่เลือก (บรรทัดที่ไม่เลือกถูก disabled จึงไม่อยู่ในฟอร์ม) → lines · ไม่เลือกเลย = lines ว่าง (action แจ้งให้เลือก)

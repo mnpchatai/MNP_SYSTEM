@@ -396,7 +396,7 @@
         ? partLines(ctx, order, plan.lines, (line) => `<li><span>${esc(line.name || line.itemCode)}</span><span class="nowrap">${esc(`${rules.fmtQty(line.remaining)} ${rules.uomLabel(line.uom)}`)}${line.short > 0 ? ` ${ui.badge("bad", `ขาด ${rules.fmtQty(line.short)}`)}` : ""}</span></li>`)
         : `<span class="small muted">${esc(order.status === "cancelled" ? "ใบถูกยกเลิก คืนของที่เบิกไปแล้ว" : back.length ? "เบิกจ่ายครบแล้ว" : "ไม่มีของซื้อที่ต้องเบิก")}</span>`;
       const buttons = may ? [
-        open && plan.lines.length ? ui.openButton("เบิกจ่าย", "issueParts", { orderId: order.id }, { className: "small", ariaLabel: `เบิกจ่ายของซื้อของใบ ${order.id}` }) : "",
+        open && plan.lines.length && ctx.helpers.salesCancelPending?.(order) ? `<span class="small muted" title="${esc(ctx.helpers.SALES_PENDING_TEXT)}">${esc(ctx.helpers.SALES_PENDING_SHORT)}</span>` : open && plan.lines.length ? ui.openButton("เบิกจ่าย", "issueParts", { orderId: order.id }, { className: "small", ariaLabel: `เบิกจ่ายของซื้อของใบ ${order.id}` }) : "",
         returnable ? ui.openButton("คืนของเหลือ", "returnParts", { orderId: order.id }, { className: "secondary small", ariaLabel: `คืนของเหลือของใบ ${order.id}` }) : "",
         open && back.length ? ui.openButton("ยกเลิกการเบิกจ่าย", "undoParts", { orderId: order.id }, { className: "secondary small", ariaLabel: `ยกเลิกการเบิกจ่ายของใบ ${order.id}` }) : "",
       ].filter(Boolean).join("") : "";

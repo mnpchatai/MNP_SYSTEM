@@ -1956,10 +1956,13 @@
     const released = ["released", "in_progress"].includes(order.status);
     const rfOrders = released ? rfOrdersOf(ctx) : null;
     const started = released ? ctx.helpers.startedJobs(data, order, rfOrders) : [];
-    const reopen = released && !started.length && !fgLock.blocked && !(rules.rodIssued(data, order.id) > 1e-9);
+    // 20261227010000: ฝ่ายขายอ่าน WO ของ RubberFlow ไม่ได้ · เซิร์ฟเวอร์ส่ง started / locked ต่อใบ (startedJobs / orderLocked ใช้ธงนั้นเมื่อไม่มีรายการ WO) จึงรู้ครบแล้วไม่ต้องรอโหลด
+    // ธง locked ครอบยางเส้นยาวที่ SR จ่ายและการส่งมอบที่ฝ่ายขายมองไม่เห็น: เปิดกลับเป็นร่างได้เมื่อไม่ถูกล็อกเท่านั้น
+    const flagged = typeof order.started === "boolean";
+    const reopen = released && !started.length && !fgLock.blocked && !(rules.rodIssued(data, order.id) > 1e-9) && !(!Array.isArray(rfOrders) && order.locked === true);
     // ทุกงานที่นับว่าเริ่มเป็นงานรอคิวที่ไม่มียอดและรายงาน นับเพียงเพราะผูก WO แต่ยังไม่มีรายการ WO ให้ตรวจ
     const onlyUnknownWo = started.length > 0 && started.every((job) => job.externalRef && job.status === "queued" && !(job.qtyDone > 0) && !(job.qtyReject > 0) && !job.reports?.length);
-    const rfPending = !Array.isArray(rfOrders) && rfRemote(ctx) && onlyUnknownWo ? (rfStore(ctx)?.status?.() === "error" ? "failed" : "loading") : null;
+    const rfPending = !flagged && !Array.isArray(rfOrders) && rfRemote(ctx) && onlyUnknownWo ? (rfStore(ctx)?.status?.() === "error" ? "failed" : "loading") : null;
     const reopenNote = reopen ? ` ใบนี้ปล่อยผลิตแล้ว แก้แล้วใบจะกลับไปให้ฝ่ายวางแผนปล่อยผลิตใหม่ งานรายแผนกถูกลบ${fgReturnText(ctx, fgLock)}${reopenRfText(ctx, order)}` : "";
     // ฝ่ายขายแก้ใบที่เริ่มงานแล้วได้ตรง (รอบ 2 · inPlace): สถานะและงานรายแผนกคงเดิม ฝ่ายวางแผนได้รับแจ้ง · ไม่ใช่ตอนที่ยังรู้ไม่ได้ว่างานยางเริ่มหรือยัง (rfPending)
     // และไม่ใช่ใบที่ฝ่ายขายยกเลิกไว้แล้ว · ตรงกับ editMode ของ modules/bom-actions.js
@@ -2000,7 +2003,7 @@
       // ใบที่ส่งมอบแล้วหรือให้สินค้าจากสต็อกแก่ใบอื่นไปแล้ว ยกเลิก/เปิดกลับมาแก้ไม่ได้ (ฐานข้อมูลปฏิเสธ) · ที่ใบนี้ได้จากสต็อกคืนกลับให้ใบต้นทางเอง
       const fgLock = rules.fgStockLock(data, order);
       // แท่งที่คลังแท่งยาว (SR) จ่ายให้ GR ตามใบนี้แล้วนับว่างานเริ่มแล้วเช่นกัน (เปิดกลับมาแก้ไม่ได้)
-      const reopen = ["released", "in_progress"].includes(order.status) && !ctx.helpers.startedJobs(data, order, rfOrdersOf(ctx)).length && !fgLock.blocked && !(rules.rodIssued(data, order.id) > 1e-9);
+      const reopen = ["released", "in_progress"].includes(order.status) && !ctx.helpers.orderLocked(data, order, rfOrdersOf(ctx));
       const canEditItems = canPlan && (draft || reopen);
       const reopenNote = reopen ? ` ใบนี้ปล่อยผลิตแล้ว แก้แล้วใบจะกลับเป็นร่าง งานรายแผนกถูกลบ ต้องคำนวณวัตถุดิบและปล่อยผลิตใหม่${fgReturnText(ctx, fgLock)}${reopenRfText(ctx, order)}` : "";
       const itemRows = order.items.map((item) => `<tr><td>${ui.link(item.fgCode, ctx.url("items", { sel: item.fgCode }), "rf-mono")}<div class="small muted">${esc(itemOf(ctx, item.fgCode)?.name ?? "")}${item.note ? ` · ${esc(item.note)}` : ""}</div></td><td class="right rf-mono">${esc(rules.fmtQty(item.qty))}</td><td>${esc(item.colorSet || "-")}</td><td class="nowrap">${ui.link("งานทุกแผนก", ctx.url("product", { code: item.fgCode, qty: item.qty }), "btn rf-btn secondary small")} ${canEditBom ? ui.link("แก้ BOM", pages.find ? ctx.url("find", { code: item.fgCode }) : buildUrl(ctx, item.fgCode), "btn rf-btn secondary small") : ""} ${canEditItems ? `${ui.openButton("แก้จำนวน", "orderItemEdit", { orderId: order.id, fgCode: item.fgCode }, { className: "secondary small", ariaLabel: `แก้จำนวน ${item.fgCode}` })} ${ui.button("ลบ", { action: "removeOrderItem", args: { orderId: order.id, fgCode: item.fgCode }, className: "secondary small", ariaLabel: `ลบ ${item.fgCode} ออกจากใบ`, confirmText: `ลบ ${item.fgCode} ออกจากใบ ${order.id}?${reopenNote}${poNote ? ` ${poNote}` : ""}` })}` : ""}</td></tr>`);
@@ -2081,6 +2084,7 @@
       : `${head(ctx, "ใบสั่งผลิต (PI)", "เปิดใบ → เพิ่มสินค้า (3 ช่องเหมือนชีต ;}o) → คำนวณวัตถุดิบ (ร่างคำนวณซ้ำได้) → นับคงคลัง → ปล่อยผลิต (ล็อกฉบับแก้ไขแล้วแตกเป็นงานรายแผนก)", canPlan ? `${ctx.canSee("jobs") ? ui.link("ตารางงานทุกแผนก", ctx.url("jobs"), "btn rf-btn secondary") : ""}${woOpenButton(ctx)}${ui.openButton("เปิดใบใหม่", "orderNew", {}, { className: "" })}` : "")}${canPlan ? woWaitingCard(ctx) : ""}${planningCards(ctx)}<div class="bom-split bom-split-wide">${listCard}${detail}</div>`;
     const bind = (rootNode) => {
       stepsBind?.(rootNode);
+      root.MNP_SA_PAGES?.bindExtraJobs?.(rootNode, ctx);
       bindRfScopes(ctx, rootNode);
       rootNode.querySelectorAll("[data-bom-csv]").forEach((button) => button.addEventListener("click", () => {
         const target = data.orders.find((entry) => entry.id === button.dataset.bomOrder);

@@ -1485,7 +1485,7 @@
       return `<article class="card rf-card bom-job is-now${cardClass(href)}"><div class="bom-job-top"><span class="bom-job-state">รอจ่ายให้ GR</span>${Number.isFinite(due) ? dueText(due, false) : ""}</div>
         <h2>${cardTitle(`จ่ายยางเส้นยาวให้ GR ตามใบ ${need.order.id}`, href)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "SR")} ` : ""}<span class="rf-mono">${esc(need.itemCode)}</span> · ${esc(need.order.customer ?? "")}</p>
         <div class="bom-job-amount"><span title="${attr(`GR ต้องใช้ ${rules.fmtQty(need.need)} จ่ายแล้ว ${rules.fmtQty(need.issued)}`)}">${esc(`ต้องจ่าย ${rodQty(ctx, need.remaining, need.uom)}`)}</span></div>
-        ${gated("canStoreRods", ui.openButton("จ่ายยางเส้นยาว", "rodIssue", { orderId: need.order.id, itemCode: need.itemCode }, { className: "bom-job-main" }))}</article>`;
+        ${ctx.helpers.salesCancelPending?.(need.order) ? `<p class="small muted">${esc(ctx.helpers.SALES_PENDING_TEXT)}</p>` : gated("canStoreRods", ui.openButton("จ่ายยางเส้นยาว", "rodIssue", { orderId: need.order.id, itemCode: need.itemCode }, { className: "bom-job-main" }))}</article>`;
     }
     // คำขอเบิกยางเส้นยาวของ GR: การ์ดเปิดหน้ารายละเอียดการจ่ายของใบ × เส้นยาง (#/sr?issue=) · ปุ่มจ่ายเปิด dialog จ่ายตัวเดิม (ค่าเริ่ม = ที่คำขอยังขาด) · คลังไม่มีของ = บอกแทนปุ่ม
     if (task.kind === "rodRequest") {
@@ -1494,7 +1494,8 @@
       const href = srHref({ issue: request.orderId, code: request.itemCode });
       const uom = need?.uom ?? itemOf(ctx, request.itemCode)?.uom ?? "";
       const stock = need ? Math.round((need.owned + need.free) * 1e4) / 1e4 : 0;
-      const button = !need ? '<p class="small muted">ใบนี้ไม่มีงาน GR ที่ใช้เส้นยางนี้ค้างอยู่</p>' : stock > 0
+      const pendingOrder = order ?? ctx.data.orders.find((row) => row.id === request.orderId);
+      const button = ctx.helpers.salesCancelPending?.(pendingOrder) ? `<p class="small muted">${esc(ctx.helpers.SALES_PENDING_TEXT)}</p>` : !need ? '<p class="small muted">ใบนี้ไม่มีงาน GR ที่ใช้เส้นยางนี้ค้างอยู่</p>' : stock > 0
         ? gated("canStoreRods", ui.openButton("จ่ายยางเส้นยาว", "rodIssue", { orderId: request.orderId, itemCode: request.itemCode, qty: entry.remaining }, { className: "bom-job-main" }))
         : '<p class="small muted">ไม่มีในคลัง</p>';
       const amount = entry.issued > 0 ? `ขอ ${rules.fmtQty(request.qty)} · ยังขาด ${rodQty(ctx, entry.remaining, uom)}` : `ขอ ${rodQty(ctx, request.qty, uom)}`;
@@ -1582,7 +1583,7 @@
         const jobs = partGroups.get(entry.parts);
         const order = orderOf(entry.parts);
         const finished = show === "done";
-        const button = !finished && ctx.helpers.canIssueParts(user) && ["released", "in_progress"].includes(order?.status) ? ui.openButton("เบิกจ่าย", "issueParts", { orderId: entry.parts }, { className: "bom-job-main", ariaLabel: `เบิกจ่ายของซื้อของใบ ${entry.parts}` }) : ui.link("เปิดใบสั่งผลิต", ctx.url("orders", { sel: entry.parts }), "btn rf-btn secondary bom-job-main");
+        const button = !finished && ctx.helpers.canIssueParts(user) && ctx.helpers.salesCancelPending?.(order) ? `<p class="small muted">${esc(ctx.helpers.SALES_PENDING_TEXT)}</p>` : !finished && ctx.helpers.canIssueParts(user) && ["released", "in_progress"].includes(order?.status) ? ui.openButton("เบิกจ่าย", "issueParts", { orderId: entry.parts }, { className: "bom-job-main", ariaLabel: `เบิกจ่ายของซื้อของใบ ${entry.parts}` }) : ui.link("เปิดใบสั่งผลิต", ctx.url("orders", { sel: entry.parts }), "btn rf-btn secondary bom-job-main");
         return `<article class="card rf-card bom-job"><div class="bom-job-top"><span class="bom-job-state">${finished ? "เบิกแล้ว" : "รอเบิก"}</span>${dueText(Math.min(...jobs.map((job) => job.dueAt)), finished)}</div>
           <h2>${esc(`เบิกของตามใบ ${entry.parts}`)}</h2><p class="small muted">${planner && dept === "ALL" ? `${deptChip(ctx, "ST")} ` : ""}${esc(order?.customer ?? "")}</p>
           ${partLinesByDept(ctx, order, jobs, (job) => `<li><span>${esc(job.name)}</span><span class="nowrap">${esc(`${rules.fmtQty(finished ? job.qtyDone : Math.max(0, job.qtyPlanned - (Number(job.qtyDone) || 0)))} ${uomText(ctx, job.uom)}`)}</span></li>`)}${button}</article>`;

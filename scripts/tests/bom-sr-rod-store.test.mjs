@@ -757,6 +757,65 @@ test("pages: the RubberFlow finishing result is a required choice with no defaul
   }
 });
 
+test("pages: a cancelled work order never offers the customer way at finishing; with the BOM store not loaded yet the page starts loading it, shows no 'stopped' note, does not refuse the lot itself, and shows the note once BOM is ready (20261227010000)", async () => {
+  const env = await page();
+  // BOM ในโหมดฐานข้อมูลที่ยังไม่โหลด (หน้า RB เปิดก่อนหน้า BOM)
+  let status = "idle";
+  let ensureCalls = 0;
+  let finishLoad = () => {};
+  const loaded = new Promise((resolve) => { finishLoad = resolve; });
+  const bomData = {
+    items: [], rodLots: [],
+    orders: [{ id: "PI-S", status: "cancelled", cancelledAt: NOW, salesCancelChoice: "stop" }, { id: "PI-X", status: "cancelled", cancelledAt: NOW - 5000 }],
+    jobs: [{ id: "JOB-S", orderId: "PI-S", externalRef: { woId: "WO-S" } }, { id: "JOB-X", orderId: "PI-X", externalRef: { woId: "WO-X" } }],
+  };
+  env.context.MNP_BOM.store = { isRemote: () => true, status: () => status, data: () => bomData, catchUp: async () => false,
+    ensureLoaded: () => { ensureCalls += 1; if (status === "idle") status = "loading"; return loaded; } };
+  const base = env.context.MNP_RUBBERFLOW.context(new URLSearchParams("p=finishing"));
+  const data = {
+    lots: [], fgBoxes: [],
+    orders: [{ id: "WO-S", status: "cancelled", cancelledAt: NOW, sourceJobId: "JOB-S", uom: "pcs" }, { id: "WO-X", status: "cancelled", cancelledAt: NOW - 5000, sourceJobId: "JOB-X", uom: "pcs" }],
+    transfers: ["WO-S", "WO-X"].map((orderId, n) => ({ id: `TR-${n}`, lotId: `CU-${n}`, orderId, to: "finishing", status: "received", remaining: 10, qtySent: 10, uom: "pcs" })),
+  };
+  assert.equal(base.bomSalesStopped(data.orders[0]), null, "BOM not loaded: unknown");
+  assert.ok(ensureCalls >= 1, "asking starts the BOM load");
+  // หน้าไม่ห้ามเองขณะยังไม่รู้ (โหมดฐานข้อมูล): เซิร์ฟเวอร์ตัดสิน · รู้แน่ว่าไม่ใช่ = ห้าม
+  const actions = env.context.MNP_RUBBERFLOW_ACTIONS;
+  const station = { id: "u-rb", name: "พนักงาน RB", role: "operator", rb: true, rights: ["station"] };
+  const finishOn = (salesStopped) => {
+    const d = { ...structuredClone(data), counters: {}, audit: [] };
+    try { actions.recordFinishing(d, { transferId: "TR-0", useQty: 5, passedQty: 5, scrapQty: 0, grade: "A", shift: "D" }, { now: NOW, user: station, remote: true, salesStopped }); return "ok"; } catch (error) { return error.message; }
+  };
+  assert.doesNotMatch(finishOn(() => null), /ถูกยกเลิกแล้ว/, "unknown: the page leaves it to the server");
+  assert.match(finishOn(() => false), /ถูกยกเลิกแล้ว บันทึกการผลิตไม่ได้/, "known not stopped: refused");
+  const built = env.context.MNP_RUBBERFLOW_PAGES.finishing({ ...base, data });
+  assert.match(built.html, /data-rf-stopped-note hidden/);
+  const el = (extra = {}) => ({ value: "", hidden: false, required: false, textContent: "", innerHTML: "", dataset: {}, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; }, ...extra });
+  const nodes = {
+    "[data-rf-inbound]": el(), '[name="useQty"]': el(), "[data-rf-remaining]": el(), "[data-rf-passed]": el(), "[data-rf-perbox]": el({ required: true }),
+    ".rf-perbox-field": el(), "[data-rf-linked-note]": el({ hidden: true }), "[data-rf-stopped-note]": el({ hidden: true }), "[data-rf-result]": el(),
+    'button[type="submit"]': el({ textContent: "บันทึกและพิมพ์ป้ายกล่อง" }), "[data-rf-boxes]": el(),
+  };
+  const form = { dataset: { rfSuccess: "บันทึก {result} และสร้างป้ายกล่องแล้ว" }, querySelector: (selector) => nodes[selector] ?? null };
+  built.bind({ querySelector: (selector) => (selector === "[data-rf-finishing]" ? form : null) });
+  const pickTransfer = (id) => { nodes["[data-rf-inbound]"].value = id; nodes["[data-rf-inbound]"].handlers.change(); };
+  const offered = () => [...nodes["[data-rf-result]"].innerHTML.matchAll(/<option value="([^"]*)"/g)].map((match) => match[1]);
+  pickTransfer("TR-0");
+  assert.deepEqual(offered(), ["", "pass:sr", "hold"], "cancelled, BOM unknown: SR or hold, no customer way");
+  assert.equal(nodes["[data-rf-stopped-note]"].hidden, true, "no 'stopped' note while unknown");
+  status = "ready";
+  finishLoad();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(base.bomSalesStopped(data.orders[0]), true);
+  assert.deepEqual(offered(), ["", "pass:sr", "hold"]);
+  assert.equal(nodes["[data-rf-stopped-note]"].hidden, false, "BOM ready: the form shows the note by itself");
+  // WO ที่ยกเลิกทางอื่น: ไม่มีทางส่งมอบให้ลูกค้าเช่นกัน ไม่มีข้อความ
+  pickTransfer("TR-1");
+  assert.equal(base.bomSalesStopped(data.orders[1]), false);
+  assert.deepEqual(offered(), ["", "pass:sr", "hold"]);
+  assert.equal(nodes["[data-rf-stopped-note]"].hidden, true);
+});
+
 // ---------- โมดูลคลังยางเส้นยาว SR (โรงงาน ขั้น 1 · 20261204010000_bom_sr_store_module.sql · pgTAP คู่กัน: bom_sr_store_module.test.sql) ----------
 // ตำแหน่งจัดเก็บจำเป็นทุกการรับเข้า · รับนอกใบสั่ง (receiveRodsOpening) และย้ายตำแหน่ง (setRodLocation) โดย SR หรือฝ่ายวางแผน · SR ปรับยอดเองได้
 const BK = "RB-DM02-02-BK01-225-3-20";

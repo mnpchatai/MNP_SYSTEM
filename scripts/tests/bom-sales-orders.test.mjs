@@ -489,7 +489,7 @@ test("extra jobs: sales raising a quantity raises the existing jobs of the order
   const d = fresh();
   startedOrder(d, "SA-X1", 3);
   const count = jobsOfOrder(d, "SA-X1").length;
-  assert.deepEqual(planOf(d, "SA-X1"), { lines: [], jobs: [], blockers: [], explosion: null }, "nothing added = nothing to open");
+  assert.deepEqual([planOf(d, "SA-X1").lines, planOf(d, "SA-X1").jobs, planOf(d, "SA-X1").blockers, planOf(d, "SA-X1").explosion], [[], [], [], null], "nothing added = nothing to open");
   rejects(() => A.addJobsForChanges(d, { orderId: "SA-X1" }, plannerRf()), /ไม่ได้เพิ่มสินค้าหรือจำนวน/);
   A.updateOrderItem(d, { orderId: "SA-X1", fgCode: FG, qty: 5 }, ctx("sa"));
   const plan = planOf(d, "SA-X1");
@@ -507,8 +507,9 @@ test("extra jobs: sales raising a quantity raises the existing jobs of the order
   for (const job of jobsOfOrder(d, "SA-X1")) {
     const old = before.get(job.id);
     const entry = plan.jobs.find((row) => row.jobId === job.id);
-    assert.deepEqual({ ...job, qtyPlanned: old.qtyPlanned }, old, `${job.dept} ${job.itemCode}: only the plan changes`);
-    if (entry) assert.equal(job.qtyPlanned, entry.to);
+    assert.deepEqual({ ...job, qtyPlanned: old.qtyPlanned, qtyRequired: old.qtyRequired, stockCounted: old.stockCounted }, old, `${job.dept} ${job.itemCode}: only the plan and the requirement change`);
+    // 20261227010000: "ต้องการ" เพิ่มตามยอดแผนที่เพิ่ม (ไม่เหลือ "8 ชุด ต้องการ 6")
+    if (entry) assert.deepEqual([job.qtyPlanned, job.qtyRequired], [entry.to, entry.requiredTo]);
   }
   const pkJob = jobsOfOrder(d, "SA-X1").find((job) => job.dept === "PK");
   assert.deepEqual([pkJob.qtyPlanned, pkJob.qtyDone, pkJob.status], [5, 1, "in_progress"], "the started PK job keeps its work and now plans 5");

@@ -2171,17 +2171,20 @@ test("the planning order page shows what sales added and the jobs it opens (new 
   assert.match(page, /ฝ่ายขายเพิ่มสินค้า\/จำนวน — เปิดงานเพิ่ม/);
   assert.match(page, /สินค้าที่เพิ่ม <span class="rf-mono">DEMO-HL-24\(B\)-A<\/span> \+2/);
   assert.match(page, /เพิ่มจาก 6 เป็น 8 /, "the PK job is raised, not doubled");
-  assert.match(page, /data-rf-action="addJobsForChanges" data-rf-args="\{&quot;orderId&quot;:&quot;SA-T-4&quot;\}" data-rf-confirm="เปิดงานเพิ่มของใบ SA-T-4\? งานใหม่ 0 งาน และเพิ่มยอดงานเดิม \d+ งาน/);
-  assert.equal((page.match(/data-rf-action="addJobsForChanges"/g) ?? []).length, 1, "one button");
+  // 20261227010000: ฟอร์มเดียว (ใช้สต็อกกับส่วนที่เพิ่มได้) + ปุ่มส่งปุ่มเดียวที่ยืนยันก่อนส่ง
+  assert.match(page, /data-rf-form="addJobsForChanges" data-rf-args="\{&quot;orderId&quot;:&quot;SA-T-4&quot;\}"/);
+  assert.match(page, /data-rf-confirm="เปิดงานเพิ่มของใบ SA-T-4\? งานใหม่ 0 งาน และเพิ่มยอดงานเดิม \d+ งาน/);
+  assert.equal((page.match(/data-rf-form="addJobsForChanges"/g) ?? []).length, 1, "one form");
+  assert.equal((page.match(/data-extra-submit/g) ?? []).length, 1, "one button");
   assert.doesNotMatch(await env.open("BOM", "p=orders&sel=SA-T-3"), /เปิดงานเพิ่ม/, "nothing added = no card");
-  assert.doesNotMatch(await env.open("BOM", "p=orders&sel=SA-T-5"), /data-rf-action="addJobsForChanges"/, "an order cancelled by sales gets no card");
+  assert.doesNotMatch(await env.open("BOM", "p=orders&sel=SA-T-5"), /data-rf-form="addJobsForChanges"/, "an order cancelled by sales gets no card");
   // งานที่ปิดแล้ว: ข้อห้ามแทนปุ่ม
   const bg = env.store.data().jobs.find((job) => job.orderId === "SA-T-4" && job.dept === "BG");
   bg.status = "done";
   const blocked = await env.open("BOM", "p=orders&sel=SA-T-4");
   assert.match(blocked, /ยังเปิดงานเพิ่มไม่ได้/);
   assert.match(blocked, /งาน BG BG-0092 ปิดแล้ว — เปิดใบใหม่สำหรับส่วนเพิ่ม/);
-  assert.doesNotMatch(blocked, /data-rf-action="addJobsForChanges"/);
+  assert.doesNotMatch(blocked, /data-rf-form="addJobsForChanges"/);
   bg.status = "queued";
   // กดแล้ว: งานเพิ่มยอด การ์ดหายไป
   const before = env.store.data().jobs.filter((job) => job.orderId === "SA-T-4").length;
@@ -2194,7 +2197,7 @@ test("the planning order page shows what sales added and the jobs it opens (new 
   env.setEmployee(emp("SA"));
   env.store.setUser("B13");
   const salesPage = await env.open("FACTORY_SA", "order=SA-T-4");
-  assert.doesNotMatch(salesPage, /data-rf-action="addJobsForChanges"/);
+  assert.doesNotMatch(salesPage, /data-rf-form="addJobsForChanges"/);
   assert.doesNotMatch(salesPage, /ฝ่ายขายเพิ่มสินค้า\/จำนวน — เปิดงานเพิ่ม/);
 });
 
@@ -2262,4 +2265,127 @@ test("PP: a notice of an order sales cancelled outright offers only 'รับ�
   env.setEmployee(emp("SA"));
   env.store.setUser("B13");
   assert.match(await env.open("FACTORY_SA", "order=SA-T-5"), /ฝ่ายวางแผนเลือกหยุด เก็บยางเส้นยาวที่ SR/);
+});
+// ---- โรงงานขั้น 9 (20261227010000): หน้าฝ่ายขาย / ฝ่ายวางแผนใช้ธงของเซิร์ฟเวอร์ · ใช้สต็อกกับส่วนที่เพิ่ม · ใบที่ปิดแล้ว · ใบที่รอตัดสิน ----------
+test("SA order page: the server's started / locked flags replace the wait for RubberFlow; locked without started is not reopened to draft; the loading note never promises the edit", async () => {
+  const env = salesScene();
+  const order = env.store.data().orders.find((entry) => entry.id === "SA-T-3");
+  const job = env.store.data().jobs.find((entry) => entry.orderId === "SA-T-3" && entry.status === "queued");
+  job.externalRef = { system: "rubberflow", woId: "WO-SA-T-3", kg: 1 };
+  const rf = env.rf.store;
+  rf.isRemote = () => true;
+  rf.status = () => "loading";
+  rf.ensureLoaded = () => new Promise(() => {});
+  rf.data = () => ({ orders: [] });
+  // ไม่มีธง (ฐานข้อมูลรุ่นเก่า) = รอ RubberFlow · ข้อความไม่สัญญาว่าจะแก้ได้
+  const waiting = await env.open("FACTORY_SA", "order=SA-T-3");
+  assert.match(waiting, /กำลังโหลดข้อมูล RubberFlow/);
+  assert.match(waiting, /ระหว่างนี้ยังแก้หรือยกเลิกใบไม่ได้/);
+  assert.doesNotMatch(waiting, /จะแสดงเมื่อโหลดเสร็จ/, "no promise of an edit the lock could still block");
+  // ธงเซิร์ฟเวอร์: ไม่เริ่ม ไม่ล็อก → ไม่ต้องรอ แก้แล้วใบกลับเป็นร่าง
+  Object.assign(order, { started: false, locked: false });
+  const idle = await env.open("FACTORY_SA", "order=SA-T-3");
+  assert.doesNotMatch(idle, /กำลังโหลดข้อมูล RubberFlow/);
+  assert.match(idle, /data-rf-open="saOrderHeader"/);
+  assert.match(idle, /ยังไม่มีแผนกไหนเริ่มงาน/, "back-to-draft edit");
+  // ไม่เริ่มแต่ล็อก (เช่น SR จ่ายยางเส้นยาวแล้ว): เปิดกลับเป็นร่างไม่ได้ แก้ตรงแทน
+  Object.assign(order, { started: false, locked: true });
+  const locked = await env.open("FACTORY_SA", "order=SA-T-3");
+  assert.doesNotMatch(locked, /ยังไม่มีแผนกไหนเริ่มงาน/);
+  assert.match(locked, /แผนกเริ่มงานแล้ว: บันทึกแล้วใบเปลี่ยนทันที/);
+  Object.assign(order, { started: true, locked: true });
+  assert.match(await env.open("FACTORY_SA", "order=SA-T-3"), /แผนกเริ่มงานแล้ว: บันทึกแล้วใบเปลี่ยนทันที/);
+});
+
+test("the planning order page: a free-stock row for the added product, the jobs preview, one submit; stock use moves finished goods on press and the live preview recomputes the jobs after stock", async () => {
+  const env = salesScene();
+  const data = env.store.data();
+  const FG = "DEMO-HL-24(B)-A";
+  data.orders.push({ id: "SRC-9", source: "PP", status: "completed", customer: "x", country: "Thailand", orderType: "SA", orderedAt: Date.now() - SA_DAY, whDue: Date.now(), due: {}, dueDefaults: [], revision: 0,
+    items: [{ fgCode: FG, qty: 2, colorSet: "A", note: "" }], explosion: [], stockCounts: {}, releasedAt: Date.now() - 2 * SA_DAY, note: "", createdAt: Date.now() - SA_DAY, createdBy: "x" });
+  (data.fgMoves ??= []).push({ id: "fg-9", orderId: "SRC-9", fgCode: FG, kind: "receive", qty: 5, note: "", at: Date.now() - SA_DAY, by: "x" });
+  env.setEmployee(emp("PP"));
+  env.store.setUser("B03");
+  const page = await env.open("BOM", "p=orders&sel=SA-T-4");
+  assert.match(page, /name="itemCode\[\]" value="DEMO-HL-24\(B\)-A"/, "the added product can take stock");
+  assert.match(page, /name="qty\[\]"[^>]*max="2"[^>]*placeholder="ไม่เกิน 2"/, "up to the added part (2) from the 3 free");
+  assert.match(page, /สต็อกที่ใช้ได้/);
+  assert.match(page, /เพิ่มจาก 6 เป็น 8 /, "the preview: the PK job before any stock");
+  assert.equal((page.match(/data-extra-submit/g) ?? []).length, 1, "one submit button");
+  // ตัวอย่างหลังใช้สต็อก (ตัวเดียวกับที่ bind คำนวณทุกครั้งที่กรอก)
+  const ctx = env.context.MNP_BOM.context(new URLSearchParams());
+  const half = ctx.helpers.extraJobsFor(ctx.data, ctx.data.orders.find((row) => row.id === "SA-T-4"), [], [{ itemCode: FG, qty: "1" }]);
+  assert.deepEqual([half.jobs.find((entry) => entry.dept === "PK").from, half.jobs.find((entry) => entry.dept === "PK").to], [6, 7], "one set from stock: the PK job rises by one");
+  // bind: กรอกแล้วตารางที่จะเปิดและข้อความยืนยันเปลี่ยนตาม
+  const listeners = {};
+  const preview = { innerHTML: "" };
+  const submit = { disabled: false, dataset: {} };
+  const inputs = { 'input[name="itemCode[]"]': [{ value: FG }], 'input[name="qty[]"]': [{ value: "2" }] };
+  const form = { dataset: { orderId: "SA-T-4" }, addEventListener: (type, handler) => { listeners[type] = handler; },
+    querySelectorAll: (selector) => inputs[selector] ?? [], querySelector: (selector) => (selector === "[data-extra-preview]" ? preview : selector === "[data-extra-submit]" ? submit : null) };
+  env.context.MNP_SA_PAGES.bindExtraJobs({ querySelectorAll: (selector) => (selector === "form[data-extra-jobs]" ? [form] : []) }, ctx);
+  listeners.input();
+  assert.match(preview.innerHTML, /ไม่มีงานที่ต้องเปิด: ส่วนที่เพิ่มใช้จากสต็อกครบ/, "all of the added part from stock: no jobs to open");
+  assert.equal(submit.disabled, false, "still savable: it uses stock");
+  assert.match(submit.dataset.rfConfirm, /ใช้จากสต็อก 1 รายการ ระบบหักสต็อกทันที/);
+  inputs['input[name="qty[]"]'][0].value = "";
+  listeners.input();
+  assert.match(preview.innerHTML, /เพิ่มจาก 6 เป็น 8 /);
+  // กดจริง: โอนสต็อก ยอดนับ plannedItems
+  const out = env.store.run("addJobsForChanges", { orderId: "SA-T-4", use: [{ itemCode: FG, qty: "2" }] });
+  assert.equal(out.ok, true, out.error?.message);
+  const order = env.store.data().orders.find((row) => row.id === "SA-T-4");
+  assert.deepEqual([order.stockCounts[FG], order.plannedItems[FG]], [2, 8]);
+  assert.deepEqual(env.store.data().fgMoves.filter((move) => move.orderId === "SA-T-4" && move.kind === "transfer").map((move) => [move.fromOrderId, move.qty]), [["SRC-9", 2]]);
+  assert.doesNotMatch(await env.open("BOM", "p=orders&sel=SA-T-4"), /data-extra-submit/, "nothing left to open: the card goes away");
+});
+
+test("a completed order shows no open edit notice (planning card, SA page); a completed order with a mid-way cancel offers only 'ผลิตต่อจนจบส่ง WH' with the reason why stop is not offered", async () => {
+  const env = salesScene();
+  const data = env.store.data();
+  data.orders.find((entry) => entry.id === "SA-T-4").status = "completed";
+  data.orders.find((entry) => entry.id === "SA-T-5").status = "completed";
+  env.setEmployee(emp("PP"));
+  env.store.setUser("B03");
+  const plan4 = await env.open("BOM", "p=orders&sel=SA-T-4");
+  assert.doesNotMatch(plan4, /แจ้งจากฝ่ายขาย \(/, "the open change notice of a completed order is not a card");
+  assert.doesNotMatch(plan4, /decision&quot;:&quot;ack&quot;/);
+  const plan5 = await env.open("BOM", "p=orders&sel=SA-T-5");
+  assert.match(plan5, /decision&quot;:&quot;continue&quot;/, "continue stays");
+  assert.doesNotMatch(plan5, /decision&quot;:&quot;stop&quot;/, "stop is not offered");
+  assert.match(plan5, /ใบนี้คลังสินค้ารับเข้าครบและปิดแล้ว หยุดไม่ได้/);
+  env.setEmployee(emp("SA"));
+  env.store.setUser("B13");
+  const sales = await env.open("FACTORY_SA", "order=SA-T-4");
+  assert.match(sales, /ใบปิดแล้ว ไม่ต้องรอฝ่ายวางแผนรับทราบ/);
+  assert.doesNotMatch(sales, /muted">รอฝ่ายวางแผนรับทราบ</);
+  // การแจ้งที่ปิดเองเมื่อใบปิด (ระบบรับทราบ decidedBy ""): ข้อความเดียวกัน ไม่ใช่ "ฝ่ายวางแผนรับทราบแล้ว" และไม่มีชื่อผู้ที่ปิดใบ
+  const notice = data.orderRequests.find((row) => row.orderId === "SA-T-4" && row.kind === "change");
+  Object.assign(notice, { status: "done", decision: "ack", decidedBy: "", decidedAt: Date.now() });
+  const closed = await env.open("FACTORY_SA", "order=SA-T-4");
+  assert.match(closed, /ใบปิดแล้ว ไม่ต้องรอฝ่ายวางแผนรับทราบ/);
+  assert.doesNotMatch(closed, /ฝ่ายวางแผนรับทราบแล้ว/);
+  const work = await env.open("FACTORY_SA");
+  assert.doesNotMatch(work, /ฝ่ายวางแผนรับทราบแล้ว/, "the notices card of the work page says the same");
+});
+
+test("SR: an order sales cancelled mid-way and awaiting planning's choice has no issue button — task card, issue table and detail page show the reason; other orders keep theirs", async () => {
+  const env = load({ employee: emp("SR") });
+  env.store.setUser("B11");
+  const order = env.store.data().orders.find((entry) => entry.id === "DEMO-26006");
+  const cardOf = (html) => cardsOf(html).find((card) => card.includes("ตามใบ DEMO-26006"));
+  assert.match(cardOf(await env.open("FACTORY_SR")), /data-rf-open="rodIssue"/);
+  Object.assign(order, { salesCancelAt: Date.now(), salesCancelBy: "สุนิสา ขายดี", salesCancelReason: "ลูกค้ายกเลิก" });
+  const home = await env.open("FACTORY_SR");
+  assert.doesNotMatch(cardOf(home), /data-rf-open="rodIssue"/);
+  assert.match(cardOf(home), /ฝ่ายขายยกเลิกใบนี้แล้ว รอฝ่ายวางแผนตัดสินของที่ทำค้าง/);
+  assert.match(cardsOf(home).find((card) => card.includes("ตามใบ DEMO-26007")), /data-rf-open="rodIssue"/, "another order keeps its button");
+  const table = await env.open("FACTORY_SR", "tab=issue");
+  assert.doesNotMatch(table, /data-rf-open="rodIssue" data-rf-args="\{&quot;orderId&quot;:&quot;DEMO-26006&quot;/);
+  assert.match(table, /ฝ่ายขายยกเลิกใบ รอฝ่ายวางแผนตัดสิน ใบไม่รับงานใหม่/);
+  const code = order.explosion.find((line) => line.kind === "RB").itemCode;
+  const detail = await env.open("FACTORY_SR", `issue=DEMO-26006&code=${encodeURIComponent(code)}`);
+  assert.doesNotMatch(detail, /data-rf-open="rodIssue"/);
+  order.salesCancelChoice = "stop";
+  assert.match(cardOf(await env.open("FACTORY_SR")), /data-rf-open="rodIssue"/, "once decided it is no longer 'pending'");
 });

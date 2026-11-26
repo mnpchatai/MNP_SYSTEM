@@ -207,7 +207,7 @@ function world({ as = "emp", draft = null } = {}) {
     buttons: () => documentStub.querySelectorAll("[data-itwo-action]").map((button) => button.dataset.itwoAction),
     async create(overrides = {}) {
       current = "emp";
-      const values = { request_type: "design", details: "ออกแบบกล่อง", needed_date: "2026-11-25", ...overrides };
+      const values = { request_type: "design", details: "ออกแบบกล่อง", needed_date: "2099-11-25", ...overrides };
       const created = await context.sb.rpc("app_itwo_create", { p_request_type: values.request_type, p_order_ref: null, p_attachment_flag: values.attachment_flag ?? "no", p_attachment_note: null, p_details: values.details, p_needed_date: values.needed_date, p_is_urgent: Boolean(values.is_urgent) });
       calls.rpc.length = 0;
       return created.data[0];
@@ -286,7 +286,7 @@ test("v1.03: the card's open count is the orders I can see that are not finished
   assert.equal(await open(), new Set(itList.map((row) => row.id)).size);
   // ผู้ดูแลงาน IT: แจ้งใบของตัวเอง (อยู่ทั้งใบของฉันและงาน IT) นับครั้งเดียว
   w.as("itadm");
-  const own = (await w.context.sb.rpc("app_itwo_create", { p_request_type: "design", p_order_ref: null, p_attachment_flag: "no", p_attachment_note: null, p_details: "ใบของ IT", p_needed_date: "2026-11-25", p_is_urgent: false })).data[0];
+  const own = (await w.context.sb.rpc("app_itwo_create", { p_request_type: "design", p_order_ref: null, p_attachment_flag: "no", p_attachment_note: null, p_details: "ใบของ IT", p_needed_date: "2099-11-25", p_is_urgent: false })).data[0];
   const ids = new Set([...(await w.context.sb.rpc("app_itwo_list_mine")).data, ...(await w.context.sb.rpc("app_itwo_list_it")).data].filter((row) => !FINISHED.includes(row.status)).map((row) => row.id));
   assert.equal(await open(), ids.size);
   assert.ok(ids.has(own.id) && ids.has(first.id));
@@ -354,7 +354,7 @@ test("another tab of a user who also has orders waiting shows the count on 'ใ�
   const w = world();
   // ผู้อนุมัติขั้น IT (มีหลายแท็บ) แจ้งงานเอง: อนุมัติครบทันที → IT เริ่ม/ปิด → กลับมาหาผู้แจ้งคือผู้อนุมัติเอง
   w.as("itapp");
-  const created = await w.context.sb.rpc("app_itwo_create", { p_request_type: "design", p_order_ref: null, p_attachment_flag: "no", p_attachment_note: null, p_details: "งานของฉัน", p_needed_date: "2026-11-25", p_is_urgent: false });
+  const created = await w.context.sb.rpc("app_itwo_create", { p_request_type: "design", p_order_ref: null, p_attachment_flag: "no", p_attachment_note: null, p_details: "งานของฉัน", p_needed_date: "2099-11-25", p_is_urgent: false });
   w.as("itadm");
   await w.context.sb.rpc("app_itwo_start", { p_work_order_id: created.data[0].id });
   await w.context.sb.rpc("app_itwo_complete", { p_work_order_id: created.data[0].id });
@@ -805,12 +805,12 @@ test("an incomplete form is not sent; each missing field is reported in Thai", a
 test("a good form is sent once with only the fields the user filled; success clears the draft and opens the order", async () => {
   const w = world();
   await w.open("view=new");
-  w.fill({ request_type: "design", order_ref: " SO-7 ", attachment_flag: "no", attachment_note: "ไม่ส่ง", details: " ออกแบบ ", needed_date: "2026-11-25", is_urgent: true });
+  w.fill({ request_type: "design", order_ref: " SO-7 ", attachment_flag: "no", attachment_note: "ไม่ส่ง", details: " ออกแบบ ", needed_date: "2099-11-25", is_urgent: true });
   await Promise.all([w.submit(), w.submit()]); // กดซ้ำทันที
   await flush();
   const created = w.calls.rpc.filter((call) => call.name === "app_itwo_create");
   assert.equal(created.length, 1, "a double click sends one order");
-  assert.deepEqual(created[0].args, { p_request_type: "design", p_misc_detail: null, p_order_ref: "SO-7", p_attachment_flag: "no", p_attachment_note: null, p_details: "ออกแบบ", p_needed_date: "2026-11-25", p_is_urgent: true });
+  assert.deepEqual(created[0].args, { p_request_type: "design", p_misc_detail: null, p_order_ref: "SO-7", p_attachment_flag: "no", p_attachment_note: null, p_details: "ออกแบบ", p_needed_date: "2099-11-25", p_is_urgent: true });
   assert.equal(w.names().includes("app_itwo_add_attachment"), false, "no files, no upload step");
   assert.equal(w.calls.draftCleared, 1);
   assert.equal(w.calls.autosaveStopped >= 1, true);
@@ -821,7 +821,7 @@ test("a good form is sent once with only the fields the user filled; success cle
 test("a failed send keeps everything: a database refusal shows its Thai message, a lost connection says the result is uncertain and links to 'ใบของฉัน'", async () => {
   const w = world();
   await w.open("view=new");
-  w.fill({ request_type: "design", details: "ทำกล่อง", needed_date: "2026-11-25" });
+  w.fill({ request_type: "design", details: "ทำกล่อง", needed_date: "2099-11-25" });
   w.rpcFail.set("app_itwo_create", Object.assign(new Error("กรุณากรอกรายละเอียดงาน"), { code: "23514" }));
   await w.submit();
   assert.match(w.elements["#itwo-message"].innerHTML, /กรุณากรอกรายละเอียดงาน/);
@@ -854,17 +854,17 @@ test("a saved draft is offered, not applied silently, and the draft key belongs 
 test("choosing 'เบ็ดเตล็ดอื่นๆ' shows the 'what work' field and requires it; the text is sent as p_misc_detail", async () => {
   const w = world();
   await w.open("view=new");
-  w.fill({ request_type: "misc", details: "เมาส์เสีย", needed_date: "2026-11-25" });
+  w.fill({ request_type: "misc", details: "เมาส์เสีย", needed_date: "2099-11-25" });
   await w.submit();
   assert.deepEqual(w.form.lastErrors.map((error) => [error.name, error.message]), [["misc_detail", "กรุณาระบุว่าเป็นงานเบ็ดเตล็ดอะไร"]]);
   assert.equal(w.names().includes("app_itwo_create"), false);
   // เปลี่ยนใจเป็นงานออกแบบ: ไม่ต้องระบุ และข้อความที่ค้างไม่ถูกส่ง
-  w.fill({ request_type: "design", misc_detail: "ค้างอยู่", details: "ออกแบบ", needed_date: "2026-11-25" });
+  w.fill({ request_type: "design", misc_detail: "ค้างอยู่", details: "ออกแบบ", needed_date: "2099-11-25" });
   await w.submit();
   assert.equal(w.calls.rpc.find((call) => call.name === "app_itwo_create").args.p_misc_detail, null);
   const w2 = world();
   await w2.open("view=new");
-  w2.fill({ request_type: "misc", misc_detail: " ซ่อมเมาส์ ", details: "เมาส์เสีย", needed_date: "2026-11-25" });
+  w2.fill({ request_type: "misc", misc_detail: " ซ่อมเมาส์ ", details: "เมาส์เสีย", needed_date: "2099-11-25" });
   await w2.submit();
   await flush();
   assert.equal(w2.calls.rpc.find((call) => call.name === "app_itwo_create").args.p_misc_detail, "ซ่อมเมาส์");
@@ -891,7 +891,7 @@ test("the misc and file fields follow the choices: misc text only for 'เบ็
 test("a form with files: the order is created first, then each file is uploaded and registered in turn; the panel shows progress and then opens the order", async () => {
   const w = world();
   await w.open("view=new");
-  w.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบกล่อง", needed_date: "2026-11-25", files: [noFile("แบบกล่อง.pdf", 2048), noFile("Photo.JPEG", 4096), noFile("ราคา.xlsx", 512)] });
+  w.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบกล่อง", needed_date: "2099-11-25", files: [noFile("แบบกล่อง.pdf", 2048), noFile("Photo.JPEG", 4096), noFile("ราคา.xlsx", 512)] });
   await w.submit();
   await flush();
   const names = w.names().filter((name) => ["app_itwo_create", "app_itwo_add_attachment"].includes(name));
@@ -919,7 +919,7 @@ test("a form with files: the order is created first, then each file is uploaded 
 test("a file that fails is shown with its reason, the order is not lost, and retrying uploads only what is left (same path, no second order)", async () => {
   const w = world();
   await w.open("view=new");
-  w.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2026-11-25", files: [noFile("a.pdf"), noFile("b.png"), noFile("c.txt")] });
+  w.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2099-11-25", files: [noFile("a.pdf"), noFile("b.png"), noFile("c.txt")] });
   w.fail.upload = (path, file) => (file.name === "b.png" ? Object.assign(new Error("Failed to fetch"), { code: "" }) : null);
   await w.submit();
   await flush();
@@ -947,7 +947,7 @@ test("a file that fails is shown with its reason, the order is not lost, and ret
 test("when the registration step fails the file is not uploaded twice on retry; a refusal from the database is shown in Thai and 'ไปที่ใบสั่งงาน' still works", async () => {
   const w = world();
   await w.open("view=new");
-  w.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2026-11-25", files: [noFile("a.pdf")] });
+  w.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2099-11-25", files: [noFile("a.pdf")] });
   // 30 นาทีผ่านไปแล้วตามฐานข้อมูล: ลงทะเบียนไม่ได้ (ข้อความไทยของฐานข้อมูล)
   const real = w.context.sb.rpc;
   w.context.sb.rpc = async (name, args) => {
@@ -971,7 +971,7 @@ test("when the registration step fails the file is not uploaded twice on retry; 
 test("the file is sent to Storage with the type of its extension, not the browser's guess: a Windows .csv (application/vnd.ms-excel), a .docx with an empty type and an octet-stream .pdf are all registered", async () => {
   const w = world();
   await w.open("view=new");
-  w.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2026-11-25", files: [noFile("ราคา.csv", 300, "application/vnd.ms-excel"), noFile("สเปก.docx", 400, ""), noFile("แบบ.pdf", 500, "application/octet-stream")] });
+  w.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2099-11-25", files: [noFile("ราคา.csv", 300, "application/vnd.ms-excel"), noFile("สเปก.docx", 400, ""), noFile("แบบ.pdf", 500, "application/octet-stream")] });
   await w.submit();
   await flush();
   const wordType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -986,7 +986,7 @@ test("the file is sent to Storage with the type of its extension, not the browse
 test("the form is novalidate: while attachment-image.js is still converting a picture (validationMessage set) nothing is sent; once it is done the form goes through", async () => {
   const w = world();
   await w.open("view=new");
-  w.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2026-11-25", files: [noFile("รูป.heic", 800)] });
+  w.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2099-11-25", files: [noFile("รูป.heic", 800)] });
   w.form.controls["#itwo-files"].validationMessage = "กำลังเตรียมรูป กรุณารอสักครู่";
   await w.submit();
   assert.match(w.elements["#itwo-message"].innerHTML, /กำลังเตรียมไฟล์ รอสักครู่ แล้วกดส่งอีกครั้ง/);
@@ -1001,7 +1001,7 @@ test("the form is novalidate: while attachment-image.js is still converting a pi
 
   const ready = world();
   await ready.open("view=new");
-  ready.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2026-11-25", files: [noFile("รูป.jpg", 800)] });
+  ready.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2099-11-25", files: [noFile("รูป.jpg", 800)] });
   ready.form.controls["#itwo-files"].validationMessage = "";
   await ready.submit();
   await flush();
@@ -1027,7 +1027,7 @@ test("the rework form is novalidate too: it does not send while a picture is sti
 test("a file the database refuses because of the file itself is not registered again under the same path: the retry uploads it afresh under a new path", async () => {
   const w = world();
   await w.open("view=new");
-  w.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2026-11-25", files: [noFile("ราคา.csv", 300, "text/csv")] });
+  w.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2099-11-25", files: [noFile("ราคา.csv", 300, "text/csv")] });
   w.rpcFail.set("app_itwo_add_attachment", Object.assign(new Error("นามสกุลไฟล์ไม่ตรงกับชนิดของไฟล์ กรุณาอัปโหลดไฟล์ใหม่"), { code: "23514" }));
   await w.submit();
   await flush();
@@ -1047,7 +1047,7 @@ test("a file the database refuses because of the file itself is not registered a
 test("when the real database window (30 minutes) has closed, the mock refuses the registration just like the database", async () => {
   const w = world();
   await w.open("view=new");
-  w.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2026-11-25", files: [noFile("a.pdf")] });
+  w.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2099-11-25", files: [noFile("a.pdf")] });
   w.clock.offset = 3 * 3600 * 1000;
   await w.submit();
   await flush();
@@ -1057,7 +1057,7 @@ test("when the real database window (30 minutes) has closed, the mock refuses th
 test("a file the user picked but then 'ไม่มี' attachments: nothing is uploaded; a bad file type or more than 10 files stops before the order is created", async () => {
   const w = world();
   await w.open("view=new");
-  w.fill({ request_type: "design", attachment_flag: "no", details: "ออกแบบ", needed_date: "2026-11-25", files: [noFile("a.pdf")] });
+  w.fill({ request_type: "design", attachment_flag: "no", details: "ออกแบบ", needed_date: "2099-11-25", files: [noFile("a.pdf")] });
   await w.submit();
   await flush();
   assert.equal(w.calls.uploads.length, 0, "attachment = ไม่มี: the picked file is not sent");
@@ -1065,14 +1065,14 @@ test("a file the user picked but then 'ไม่มี' attachments: nothing is 
 
   const bad = world();
   await bad.open("view=new");
-  bad.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2026-11-25", files: [noFile("ok.pdf"), noFile("virus.exe")] });
+  bad.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2099-11-25", files: [noFile("ok.pdf"), noFile("virus.exe")] });
   await bad.submit();
   assert.match(bad.elements["#itwo-message"].innerHTML, /virus\.exe: ชนิดไฟล์นี้ไม่รองรับ/);
   assert.equal(bad.names().includes("app_itwo_create"), false, "no order is created with a file that can never be attached");
 
   const many = world();
   await many.open("view=new");
-  many.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2026-11-25", files: Array.from({ length: 11 }, (_, index) => noFile(`${index}.pdf`)) });
+  many.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2099-11-25", files: Array.from({ length: 11 }, (_, index) => noFile(`${index}.pdf`)) });
   await many.submit();
   assert.match(many.elements["#itwo-message"].innerHTML, /ไม่เกิน 10 ไฟล์/);
   assert.equal(many.names().includes("app_itwo_create"), false);
@@ -1081,12 +1081,12 @@ test("a file the user picked but then 'ไม่มี' attachments: nothing is 
 test("the review step lists the chosen files only when attachment is 'มี'", async () => {
   const w = world();
   await w.open("view=new");
-  w.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2026-11-25", files: [noFile("แบบ.pdf", 1536)] });
+  w.fill({ request_type: "design", attachment_flag: "yes", details: "ออกแบบ", needed_date: "2099-11-25", files: [noFile("แบบ.pdf", 1536)] });
   w.context.window.MNP_FORM_STEPS.bindStepper = undefined;
   const review = w.form.controls["#itwo-review"];
   const pages = w.context.window.MNP_ITWO_PAGES;
   // ขั้นทบทวนวาดผ่าน orderReview (ตรวจเต็มที่ itwo-pages.test.mjs): ที่นี่ยืนยันว่าโมดูลส่งรายชื่อไฟล์เข้าไป
-  const html = pages.orderReview({ request_type: "design", attachment_flag: "yes", details: "x", needed_date: "2026-11-25" }, [{ name: "แบบ.pdf", size: 1536 }]);
+  const html = pages.orderReview({ request_type: "design", attachment_flag: "yes", details: "x", needed_date: "2099-11-25" }, [{ name: "แบบ.pdf", size: 1536 }]);
   assert.match(visibleText(html), /ไฟล์แนบ 1 ไฟล์: แบบ\.pdf \(1\.5 KB\)/);
   assert.ok(review);
 });
@@ -1278,7 +1278,7 @@ test("settings: the staff picker (real mode) lists only active, non-test, non-de
 test("approve: the IT-step approver is told when one click counts as both steps (department without a manager); a plain department-step approval is not", async () => {
   const w = world();
   w.as("other"); // แผนกที่ไม่มีผู้จัดการ: ผู้อนุมัติขั้น IT กดครั้งเดียวนับทั้งสองขั้น
-  const created = await w.context.sb.rpc("app_itwo_create", { p_request_type: "design", p_order_ref: null, p_attachment_flag: "no", p_attachment_note: null, p_details: "ใบทดสอบ", p_needed_date: "2026-11-25", p_is_urgent: false });
+  const created = await w.context.sb.rpc("app_itwo_create", { p_request_type: "design", p_order_ref: null, p_attachment_flag: "no", p_attachment_note: null, p_details: "ใบทดสอบ", p_needed_date: "2099-11-25", p_is_urgent: false });
   const orderId = created.data[0].id;
   w.as("itapp");
   await w.open(`view=order&id=${orderId}`);

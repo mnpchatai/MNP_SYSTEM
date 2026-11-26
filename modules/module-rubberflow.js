@@ -70,9 +70,24 @@
   // โหมดฐานข้อมูล: "ตอนนี้" ตามนาฬิกาเซิร์ฟเวอร์ (modules/server-clock.js จาก header Date ของคำตอบ Supabase) เพราะเวลาในข้อมูล (readyAt, createdAt)
   // ฐานข้อมูลประทับด้วยนาฬิกาเซิร์ฟเวอร์ ถ้านาฬิกาเครื่องคลาด เช่นช้ากว่า หลัง "ข้ามเวลาบ่ม" หน้าจอจะเห็นว่ายังบ่มอยู่ · โหมดในเครื่องใช้เวลาเครื่อง
   const clockNow = () => (remote && typeof window.MNP_SERVER_CLOCK?.now === "function" ? window.MNP_SERVER_CLOCK.now() : Date.now());
+  // WO ที่ยกเลิกพร้อมใบสั่งผลิตที่ฝ่ายวางแผนเลือก "หยุด" หลังฝ่ายขายยกเลิกกลางทาง (ตรงกับ private.rf_wo_sales_stopped · 20261227010000): WO cancelled ที่ผูกงานของใบ cancelled ทางเลือก stop
+  // และเวลายกเลิกตรงกัน · RB ยังบันทึกล็อตตกแต่งของ WO นี้ได้ (ผลผ่านไปคลังยางเส้นยาว SR เท่านั้น เป็นสต็อกกลาง) · ใช้ข้อมูล BOM ที่โหลดอยู่ เซิร์ฟเวอร์ตัดสินซ้ำเสมอ
+  // ค่า: true = หยุด · false = ไม่ใช่ · null = ยังไม่รู้ (โหมดฐานข้อมูลที่ BOM ยังไม่โหลด เช่นเปิดหน้า RB ก่อน: สั่งโหลด BOM แล้ววาดหน้าใหม่เมื่อเสร็จ · หน้าไม่ห้ามเอง ให้เซิร์ฟเวอร์ตัดสิน)
+  const bomSalesStopped = (order) => {
+    if (!order || order.status !== "cancelled" || !order.sourceJobId || order.cancelledAt === undefined || order.cancelledAt === null) return false;
+    try {
+      const bom = bomStore();
+      if (!bom) return false;
+      if (bom.status() !== "ready") { wakeBom(bom); return null; }
+      const bomData = bom.data();
+      const job = (bomData.jobs ?? []).find((row) => row.id === order.sourceJobId && row.externalRef?.woId === order.id);
+      const owner = job ? (bomData.orders ?? []).find((row) => row.id === job.orderId) : null;
+      return Boolean(owner) && owner.status === "cancelled" && owner.salesCancelChoice === "stop" && owner.cancelledAt === order.cancelledAt;
+    } catch { return false; }
+  };
   const store = storeApi.createStore({
     storage, seed: () => seed.buildSeed(Date.now()), actions, remote, now: clockNow,
-    persona: () => storeApi.personaUser(state.employee), shouldHold: () => isEditing(),
+    persona: () => storeApi.personaUser(state.employee), shouldHold: () => isEditing(), salesStopped: bomSalesStopped,
   });
   // context(params) ให้เทสต์เรียก dialog ด้วย ctx เดียวกับหน้า
   // bomJobOfAction / showBomFeedback: ขั้น "ตกแต่งผ่าน / QA ตัดสินผ่าน → ตามทัน BOM → แจ้งยอดที่งานได้รับ" (ให้เทสต์เรียกตรง)
@@ -285,19 +300,27 @@
   // ชิ้นงานใน item master ของ BOM (ใช้หาชื่อของซื้อในใบสั่งซื้อ ซึ่งเก็บแต่รหัส): null = ไม่ใช่โหมดฐานข้อมูลหรือ BOM ยังไม่พร้อม
   // BOM ยังไม่ได้โหลด (เปิดหน้านี้ก่อนหน้า BOM): สั่งโหลดให้ครั้งเดียวต่อรอบ แล้ววาดหน้าใหม่เมื่อเสร็จ ถ้าผู้ใช้ยังอยู่ที่หน้านี้และไม่ได้แก้ฟอร์ม
   let bomWakeHooked = false;
+  function wakeBom(bom) {
+    const status = bom.status();
+    if ((status !== "idle" && status !== "loading") || bomWakeHooked) return;
+    bomWakeHooked = true;
+    const done = () => { bomWakeHooked = false; try { if (onRfRoute() && !isEditing()) renderRoute(); } catch { /* ออกจากหน้านี้แล้ว */ } };
+    bom.ensureLoaded().then(done, done);
+  }
   function bomItems() {
     const bom = bomStore();
     if (!bom) return null;
     try {
-      const status = bom.status();
-      if (status === "ready") return bom.data().items ?? null;
-      if ((status === "idle" || status === "loading") && !bomWakeHooked) {
-        bomWakeHooked = true;
-        const done = () => { bomWakeHooked = false; try { if (onRfRoute() && !isEditing()) renderRoute(); } catch { /* ออกจากหน้านี้แล้ว */ } };
-        bom.ensureLoaded().then(done, done);
-      }
+      if (bom.status() === "ready") return bom.data().items ?? null;
+      wakeBom(bom);
     } catch { /* ไม่มีชื่อก็แสดงรหัสอย่างเดียว */ }
     return null;
+  }
+  // ฟอร์มที่กำลังกรอก (หน้าไม่ถูกวาดใหม่ระหว่างแก้): รอ BOM โหลดเสร็จแล้วให้ฟอร์มปรับเอง · null = ไม่ใช่โหมดฐานข้อมูล
+  function bomLoaded() {
+    const bom = bomStore();
+    if (!bom) return null;
+    try { return bom.status() === "ready" ? Promise.resolve() : bom.ensureLoaded(); } catch { return null; }
   }
   function bomJobOfAction(name, payload) {
     if (name !== "recordFinishing" && name !== "addQcRecord") return null;
@@ -553,6 +576,9 @@
         } catch { return []; }
       },
       bomItems: () => bomItems(),
+      // WO ที่ยกเลิกพร้อมใบที่ฝ่ายวางแผนเลือกหยุด: บันทึกล็อตตกแต่งได้ (ปลายทางคลังยางเส้นยาว SR เท่านั้น) · null = BOM ยังไม่โหลด (bomLoaded รอได้)
+      bomSalesStopped,
+      bomLoaded: () => bomLoaded(),
       // WO ที่ผูกงานของ BOM (กฎเดียวกับ private.bom_rod_wo_linked): มี sourceJobId และงานนั้นมีอยู่ใน BOM ที่โหลดแล้ว
       // BOM ยังไม่โหลด / โหมดในเครื่อง = ถือตาม sourceJobId อย่างเดียว · ใช้ซ่อนช่องจำนวนต่อกล่องและบอกว่าแท่งไปคลังแท่งยาว (SR)
       bomLinked: (order) => {
