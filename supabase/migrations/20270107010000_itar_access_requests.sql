@@ -1510,3 +1510,2424 @@ with check (bucket_id = 'itar-test-files' and owner_id = (select auth.uid())::te
   and private.itar_storage_can_upload(name, true));
 create policy itar_test_files_delete on storage.objects for delete to authenticated
 using (bucket_id = 'itar-test-files' and private.itar_storage_test_file_removable(name));
+
+-- 10. RPC: ยื่น · อนุมัติ · ยกเลิก · เริ่ม · ถามผู้ยื่น/ตอบ -------------------------------------------
+-- ผู้ใช้เรียกผ่าน public.app_itar_* เท่านั้น (SECURITY DEFINER + search_path ว่าง · anon เรียกไม่ได้) ทุกตัวเริ่มด้วยด่าน lab-only และหาผู้ทำรายการจาก private.itar_actor()
+-- ข้อความ error เป็นภาษาไทยแสดงให้ผู้ใช้เห็นตรง ๆ
+
+-- ผู้ทำรายการ + บทบาทของตัวเองในโมดูลนี้ (ให้หน้าเว็บเลือกแท็บ/ปุ่ม)
+create or replace function public.app_itar_my_role()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_is_admin boolean;
+  v_is_dept_approver boolean;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+  v_is_admin := private.itar_is_it_admin(v_actor.id);
+  v_is_dept_approver := private.itar_is_dept_approver(v_actor.id, v_actor.department_id, v_actor.is_test);
+  return jsonb_build_object(
+    'employee_id', v_actor.id,
+    'employee_no', v_actor.employee_no,
+    'full_name', v_actor.first_name || ' ' || v_actor.last_name,
+    'is_test', v_actor.is_test,
+    'department', (select jsonb_build_object('id', d.id, 'code', d.code, 'name_th', d.name_th)
+                   from public.departments d where d.id = v_actor.department_id),
+    'is_it_department', private.itar_is_it_department(v_actor.department_id),
+    'is_dept_approver', v_is_dept_approver,
+    'is_it_admin', v_is_admin,
+    'is_it_approver', private.itar_is_it_approver(v_actor.id),
+    'is_it_viewer', private.itar_is_it_viewer(v_actor.id),
+    -- บันทึกลงทะเบียนสิทธิ์ได้ (ต้องเป็นทั้งผู้ดูแลงาน IT และอยู่ใน itas_admins ของโหมดนี้)
+    'is_itas_admin', private.itar_is_itas_admin(v_actor.id, v_actor.is_test),
+    -- ยื่นแทนผู้อื่นได้: IT ทุกประเภท · ผู้จัดการ/ผู้ช่วยแผนกเฉพาะ "ยกเลิกทั้งหมด" ของคนในแผนกตัวเอง
+    'can_file_for_others', v_is_admin or v_is_dept_approver
+  );
+end;
+$$;
+
+-- หาผู้รับสิทธิ์ของใบที่กำลังยื่น + ตรวจว่าผู้ยื่นมีสิทธิ์ยื่นให้คนนี้ (จุดตัดสินเดียวของ create และ form_context)
+--   p_subject (jsonb ไม่บังคับ) ช่อง: employee_id (พนักงานที่มีบัญชี) · user_id (ผู้ใช้ในทะเบียนสิทธิ์ — เฉพาะ IT หรือผู้จัดการแผนกที่ยกเลิกทั้งหมด)
+--     name_th / name_en / department_id / division (ใช้เมื่อผู้รับสิทธิ์ไม่มีบัญชีและไม่มีในทะเบียน — เฉพาะ IT)
+--   ไม่ระบุช่องใดเลย = ตัวผู้ยื่นเอง
+--   คืน: employee_id (null = ไม่มีบัญชี), user_id (null = ยังไม่ผูกทะเบียน), ชื่อ/แผนก/ฝ่าย (snapshot), department_id ที่ใช้เดินอนุมัติ
+create or replace function private.itar_resolve_subject(
+  p_actor public.employees, p_type text, p_subject jsonb,
+  out o_employee_id uuid, out o_user_id uuid, out o_name_th text, out o_name_en text,
+  out o_department_id uuid, out o_department_code text, out o_division text)
+returns record
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_subject jsonb := coalesce(p_subject, '{}'::jsonb);
+  v_is_admin boolean := private.itar_is_it_admin(p_actor.id);
+  v_emp_id uuid;
+  v_user_id uuid;
+  v_emp public.employees%rowtype;
+  v_user public.itua_users%rowtype;
+  v_linked public.itua_users%rowtype;
+  v_dept public.departments%rowtype;
+  v_name_th text;
+  v_name_en text;
+  v_division text;
+  v_dept_param uuid;
+begin
+  if jsonb_typeof(v_subject) <> 'object' then
+    raise exception 'ข้อมูลผู้รับสิทธิ์ต้องเป็นรูปแบบ {ช่อง: ค่า}' using errcode = 'check_violation';
+  end if;
+  begin
+    v_emp_id := nullif(btrim(coalesce(v_subject ->> 'employee_id', '')), '')::uuid;
+    v_user_id := nullif(btrim(coalesce(v_subject ->> 'user_id', '')), '')::uuid;
+    v_dept_param := nullif(btrim(coalesce(v_subject ->> 'department_id', '')), '')::uuid;
+  exception when others then
+    raise exception 'รหัสผู้รับสิทธิ์หรือแผนกไม่ถูกต้อง' using errcode = 'check_violation';
+  end;
+  v_name_th := private.itar_clean(v_subject ->> 'name_th');
+  v_name_en := private.itar_clean(v_subject ->> 'name_en');
+  v_division := private.itar_clean(v_subject ->> 'division');
+  if v_name_th is not null and (char_length(v_name_th) > 200 or v_name_th ~ '[[:cntrl:]]') then
+    raise exception 'ชื่อ (ไทย) ของผู้รับสิทธิ์ต้องไม่เกิน 200 ตัวอักษรและไม่มีอักขระควบคุม' using errcode = 'check_violation';
+  end if;
+  if v_name_en is not null and (char_length(v_name_en) > 200 or v_name_en ~ '[[:cntrl:]]') then
+    raise exception 'ชื่อ (อังกฤษ) ของผู้รับสิทธิ์ต้องไม่เกิน 200 ตัวอักษรและไม่มีอักขระควบคุม' using errcode = 'check_violation';
+  end if;
+  if v_division is not null and v_division not in ('office', 'factory', 'manager', 'office_indesign') then
+    raise exception 'ฝ่ายต้องเป็น สำนักงาน โรงงาน ผู้จัดการ หรือ สำนักงาน (InDesign)' using errcode = 'check_violation';
+  end if;
+
+  -- ไม่ระบุอะไรเลย = ตัวผู้ยื่นเอง
+  if v_emp_id is null and v_user_id is null and v_name_th is null and v_name_en is null then
+    v_emp_id := p_actor.id;
+  end if;
+
+  if v_user_id is not null then
+    select * into v_user from public.itua_users u where u.id = v_user_id and u.is_test = p_actor.is_test;
+    if v_user.id is null then
+      raise exception 'ไม่พบผู้ใช้นี้ในทะเบียนสิทธิ์' using errcode = 'check_violation';
+    end if;
+    -- ผู้ใช้ทะเบียนที่ผูกกับพนักงานแล้ว = ใช้พนักงานคนนั้นเป็นผู้รับสิทธิ์ (เพื่อรับทราบในเว็บได้)
+    if v_user.employee_id is not null then
+      if v_emp_id is not null and v_emp_id <> v_user.employee_id then
+        raise exception 'ผู้ใช้ในทะเบียนนี้ผูกกับพนักงานคนอื่นอยู่' using errcode = 'check_violation';
+      end if;
+      v_emp_id := v_user.employee_id;
+    end if;
+  end if;
+
+  if v_emp_id is not null then
+    select * into v_emp from public.employees e where e.id = v_emp_id and e.is_test = p_actor.is_test and e.deleted_at is null;
+    if v_emp.id is null then
+      raise exception 'ไม่พบพนักงานที่จะรับสิทธิ์' using errcode = 'check_violation';
+    end if;
+    if v_emp.id <> p_actor.id and not v_is_admin
+       and not (p_type = 'revoke_all' and private.itar_is_dept_approver(p_actor.id, v_emp.department_id, p_actor.is_test)) then
+      raise exception 'ยื่นใบขอสิทธิ์แทนผู้อื่นได้เฉพาะผู้ดูแลงาน IT (ทุกประเภท) หรือผู้จัดการ/ผู้ช่วยผู้จัดการของแผนกนั้น (เฉพาะยกเลิกสิทธิ์ทั้งหมด)'
+        using errcode = 'insufficient_privilege';
+    end if;
+    select * into v_linked from public.itua_users u where u.employee_id = v_emp.id and u.is_test = p_actor.is_test;
+    if v_user.id is not null and v_linked.id is not null and v_linked.id <> v_user.id then
+      raise exception 'พนักงานคนนี้ผูกกับผู้ใช้อื่นในทะเบียนสิทธิ์แล้ว' using errcode = 'check_violation';
+    end if;
+    if v_user.id is null then
+      v_user := v_linked;
+    elsif v_user.employee_id is null and not v_is_admin then
+      -- ผู้ใช้ทะเบียนที่ยังไม่ผูกกับพนักงาน: เฉพาะผู้ดูแลงาน IT ที่จับคู่กับพนักงานให้ได้ (กันผูกข้ามคน)
+      raise exception 'เฉพาะผู้ดูแลงาน IT ที่ผูกพนักงานกับผู้ใช้ในทะเบียนสิทธิ์ได้' using errcode = 'insufficient_privilege';
+    end if;
+    select * into v_dept from public.departments d where d.id = v_emp.department_id;
+    v_name_th := v_emp.first_name || ' ' || v_emp.last_name;
+    v_name_en := coalesce(v_user.name_en, v_name_en);
+  else
+    -- ไม่มีบัญชีพนักงาน: ผู้ดูแลงาน IT ยื่นแทนได้ทุกประเภท · ผู้จัดการ/ผู้ช่วยแผนกยื่น "ยกเลิกทั้งหมด" ให้ผู้ใช้ทะเบียนของแผนกตัวเอง (รหัสแผนกตรงกัน)
+    if v_user.id is not null then
+      select * into v_dept from public.departments d where upper(d.code) = upper(v_user.department_code);
+    end if;
+    if not v_is_admin and not (
+         p_type = 'revoke_all' and v_user.id is not null and v_dept.id is not null
+         and private.itar_is_dept_approver(p_actor.id, v_dept.id, p_actor.is_test)) then
+      raise exception 'ยื่นใบขอสิทธิ์ให้คนที่ไม่มีบัญชีได้เฉพาะผู้ดูแลงาน IT (หรือผู้จัดการแผนกที่ยกเลิกสิทธิ์ทั้งหมดของผู้ใช้ในแผนกตัวเอง)'
+        using errcode = 'insufficient_privilege';
+    end if;
+    if v_user.id is not null then
+      v_name_th := v_user.name_th;
+      v_name_en := v_user.name_en;
+    end if;
+    if v_dept.id is null then
+      select * into v_dept from public.departments d where d.id = v_dept_param;
+      if v_dept.id is null then
+        raise exception 'กรุณาเลือกแผนกของผู้รับสิทธิ์' using errcode = 'check_violation';
+      end if;
+    end if;
+    if v_name_th is null and v_name_en is null then
+      raise exception 'กรุณาระบุชื่อผู้รับสิทธิ์ (ไทยหรืออังกฤษอย่างน้อยหนึ่ง)' using errcode = 'check_violation';
+    end if;
+  end if;
+
+  if not v_dept.is_active then
+    raise exception 'แผนกของผู้รับสิทธิ์ถูกปิดใช้งาน กรุณาติดต่อ IT' using errcode = 'check_violation';
+  end if;
+  if p_type = 'new' and v_user.id is not null then
+    raise exception 'ผู้ใช้นี้มีอยู่ในทะเบียนสิทธิ์แล้ว กรุณาเลือกประเภท "เปลี่ยนแปลง" แทน' using errcode = 'check_violation';
+  end if;
+  if p_type <> 'new' and v_user.id is not null and v_user.status <> 'active' then
+    raise exception 'ผู้ใช้นี้ลาออกแล้วในทะเบียนสิทธิ์ ไม่สามารถขอเปลี่ยนแปลงหรือยกเลิกสิทธิ์ได้' using errcode = 'check_violation';
+  end if;
+  v_division := coalesce(v_user.division, v_division);
+  if p_type = 'new' and v_division is null then
+    raise exception 'กรุณาเลือกฝ่ายของผู้ใช้ใหม่ (สำนักงาน โรงงาน ผู้จัดการ หรือ สำนักงาน InDesign)' using errcode = 'check_violation';
+  end if;
+
+  o_employee_id := v_emp.id;
+  o_user_id := v_user.id;
+  o_name_th := v_name_th;
+  o_name_en := v_name_en;
+  o_department_id := v_dept.id;
+  o_department_code := coalesce(v_user.department_code, v_dept.code);
+  o_division := v_division;
+end;
+$$;
+
+-- ยื่นใบขอสิทธิ์
+--   p_request_type: new | change | revoke_all · p_reason: เหตุผลรวม (บังคับ ≤2,000)
+--   p_items: array ของรายการที่ขอ (≤80 · ประเภท revoke_all ต้องว่าง · new/change ต้องมีอย่างน้อย 1) แต่ละรายการ
+--     {kind:'folder', target:'<รหัสโฟลเดอร์>', from: null|'R'|'F', to: null|'R'|'F'}
+--     {kind:'internet', from: boolean, to: boolean, note:'<เหตุผล บังคับเมื่อขอเพิ่ม>'}
+--     {kind:'program', target:'<รหัสโปรแกรม>', from: boolean, to: boolean, note:'<ระบุ บังคับเมื่อ OTHER>'}
+--     {kind:'email', target:'<ที่อยู่อีเมล>', to:'add'|'close', email_kind:'internal'|'extra' (เมื่อ add)}
+--     from = ค่าปัจจุบันที่ผู้ยื่นเห็น (ต้องตรงกับทะเบียน ไม่ตรง = 40001) · ผู้รับสิทธิ์ที่ยังไม่ผูกทะเบียน/ขอใหม่ ไม่ต้องส่ง from (ขอใหม่ต้องเป็นการเพิ่มเท่านั้น)
+--   p_subject: ผู้รับสิทธิ์ (ดู private.itar_resolve_subject) ไม่ส่ง = ตัวเอง
+--   คืน id + เลขที่เอกสาร
+create or replace function public.app_itar_create(
+  p_request_type text,
+  p_reason text,
+  p_items jsonb default '[]'::jsonb,
+  p_subject jsonb default null
+)
+returns table(id uuid, doc_no text)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_type text := private.itar_clean(p_request_type);
+  v_reason text := private.itar_clean(p_reason);
+  v_subj record;
+  v_items jsonb := coalesce(p_items, '[]'::jsonb);
+  v_el jsonb;
+  v_ord integer := 0;
+  v_norm jsonb := '[]'::jsonb;
+  v_seen text[] := '{}';
+  v_key text;
+  v_known boolean;
+  v_kind text;
+  v_target text;
+  v_from text;
+  v_to text;
+  v_note text;
+  v_email_kind text;
+  v_folder public.itua_folders%rowtype;
+  v_program public.itua_programs%rowtype;
+  v_cur_level text;
+  v_cur_exists boolean;
+  v_cur_internet boolean;
+  v_label text;
+  v_user public.itua_users%rowtype;
+  v_dept_is_it boolean;
+  v_actor_is_dept_role boolean;
+  v_has_dept_approvers boolean;
+  v_involves boolean;
+  v_status text;
+  v_doc_year integer;
+  v_doc_seq integer;
+  v_doc_no text;
+  v_request_id uuid;
+  v_item jsonb;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+
+  if v_type is null or v_type not in ('new', 'change', 'revoke_all') then
+    raise exception 'กรุณาเลือกประเภทคำขอ (ขอใหม่ เปลี่ยนแปลง หรือยกเลิกทั้งหมด)' using errcode = 'check_violation';
+  end if;
+  if v_reason is null then
+    raise exception 'กรุณาระบุเหตุผลที่ขอ' using errcode = 'check_violation';
+  end if;
+  if char_length(v_reason) > 2000 then
+    raise exception 'เหตุผลต้องไม่เกิน 2,000 ตัวอักษร' using errcode = 'check_violation';
+  end if;
+
+  select * into v_subj from private.itar_resolve_subject(v_actor, v_type, p_subject);
+  -- ผู้รับสิทธิ์ที่ผูกทะเบียนแล้ว: รู้ค่าปัจจุบัน -> เทียบ from ได้ · ขอใหม่: ไม่มีสิทธิ์อะไรเลย (ค่าเดิม = ว่าง/ไม่มี)
+  v_known := v_subj.o_user_id is not null or v_type = 'new';
+  if v_subj.o_user_id is not null then
+    select * into v_user from public.itua_users u where u.id = v_subj.o_user_id;
+  end if;
+
+  -- ตรวจรายการที่ขอ -> สร้างรายการแบบ normalize (v_norm) ยังไม่เขียนข้อมูล
+  if jsonb_typeof(v_items) is distinct from 'array' then
+    raise exception 'รายการสิทธิ์ที่ขอต้องเป็นรูปแบบ array' using errcode = 'check_violation';
+  end if;
+  if jsonb_array_length(v_items) > 80 then
+    raise exception 'ขอสิทธิ์ได้ครั้งละไม่เกิน 80 รายการ' using errcode = 'check_violation';
+  end if;
+  if v_type = 'revoke_all' and jsonb_array_length(v_items) > 0 then
+    raise exception 'ประเภทยกเลิกสิทธิ์ทั้งหมดไม่ต้องระบุรายการสิทธิ์ (ระบบถอดสิทธิ์ทั้งหมดของผู้ใช้ให้)' using errcode = 'check_violation';
+  end if;
+  if v_type <> 'revoke_all' and jsonb_array_length(v_items) = 0 then
+    raise exception 'กรุณาเลือกสิทธิ์ที่ต้องการอย่างน้อยหนึ่งรายการ' using errcode = 'check_violation';
+  end if;
+
+  for v_el in select e.value from jsonb_array_elements(v_items) e loop
+    v_ord := v_ord + 1;
+    if jsonb_typeof(v_el) <> 'object' then
+      raise exception 'รายการที่ % ต้องเป็นรูปแบบ {ช่อง: ค่า}', v_ord using errcode = 'check_violation';
+    end if;
+    v_kind := private.itar_clean(v_el ->> 'kind');
+    v_note := private.itar_clean(v_el ->> 'note');
+    if v_note is not null and (char_length(v_note) > 500 or v_note ~ '[[:cntrl:]]') then
+      raise exception 'รายการที่ %: หมายเหตุต้องไม่เกิน 500 ตัวอักษรและไม่มีอักขระควบคุม', v_ord using errcode = 'check_violation';
+    end if;
+    v_target := null;
+    v_from := null;
+    v_to := null;
+    v_email_kind := null;
+
+    if v_kind = 'folder' then
+      v_target := upper(private.itar_clean(v_el ->> 'target'));
+      v_label := 'โฟลเดอร์ ' || coalesce(v_target, '?');
+      if v_target is null then
+        raise exception 'รายการที่ %: กรุณาระบุรหัสโฟลเดอร์', v_ord using errcode = 'check_violation';
+      end if;
+      select * into v_folder from public.itua_folders f where f.is_test = v_actor.is_test and f.code = v_target;
+      if v_folder.id is null then
+        raise exception 'ไม่พบโฟลเดอร์ %', v_target using errcode = 'check_violation';
+      end if;
+      if not (v_el ? 'to') or jsonb_typeof(v_el -> 'to') not in ('null', 'string')
+         or (jsonb_typeof(v_el -> 'to') = 'string' and (v_el ->> 'to') not in ('R', 'F')) then
+        raise exception '%: สิทธิ์ที่ขอ (to) ต้องเป็น R, F หรือ null (ไม่มีสิทธิ์)', v_label using errcode = 'check_violation';
+      end if;
+      v_to := case when jsonb_typeof(v_el -> 'to') = 'string' then v_el ->> 'to' end;
+      if v_to is not null and not v_folder.is_active then
+        raise exception '%: โฟลเดอร์ปิดการใช้งานอยู่ ขอสิทธิ์ไม่ได้', v_label using errcode = 'check_violation';
+      end if;
+      if v_type = 'new' and v_to is null then
+        raise exception '%: ขอสิทธิ์ใหม่เพิ่มสิทธิ์ได้อย่างเดียว', v_label using errcode = 'check_violation';
+      end if;
+      if v_known and v_type <> 'new' then
+        if not (v_el ? 'from') or jsonb_typeof(v_el -> 'from') not in ('null', 'string')
+           or (jsonb_typeof(v_el -> 'from') = 'string' and (v_el ->> 'from') not in ('R', 'F')) then
+          raise exception '%: สิทธิ์ปัจจุบัน (from) ต้องเป็น R, F หรือ null (ไม่มีสิทธิ์)', v_label using errcode = 'check_violation';
+        end if;
+        v_from := case when jsonb_typeof(v_el -> 'from') = 'string' then v_el ->> 'from' end;
+        select g.level into v_cur_level from public.itua_folder_grants g where g.user_id = v_subj.o_user_id and g.folder_id = v_folder.id;
+        if v_cur_level is distinct from v_from then
+          raise exception '%: สิทธิ์ปัจจุบันไม่ตรงกับที่หน้าจอเห็น (ถูกแก้ไปแล้ว) กรุณาโหลดข้อมูลล่าสุดแล้วลองใหม่', v_label using errcode = '40001';
+        end if;
+      end if;
+      if v_known and v_from is not distinct from v_to then
+        raise exception '%: สิทธิ์ที่ขอเหมือนเดิม ไม่มีการเปลี่ยนแปลง', v_label using errcode = 'check_violation';
+      end if;
+      v_key := 'folder:' || v_target;
+
+    elsif v_kind = 'internet' then
+      v_label := 'อินเทอร์เน็ต';
+      if not (v_el ? 'to') or jsonb_typeof(v_el -> 'to') <> 'boolean' then
+        raise exception '%: สิทธิ์ที่ขอ (to) ต้องเป็น true หรือ false', v_label using errcode = 'check_violation';
+      end if;
+      v_to := (v_el ->> 'to');
+      if v_type = 'new' and v_to <> 'true' then
+        raise exception '%: ขอสิทธิ์ใหม่เพิ่มสิทธิ์ได้อย่างเดียว', v_label using errcode = 'check_violation';
+      end if;
+      if v_known then
+        if v_type = 'new' then
+          v_from := 'false';
+        else
+          if not (v_el ? 'from') or jsonb_typeof(v_el -> 'from') <> 'boolean' then
+            raise exception '%: สิทธิ์ปัจจุบัน (from) ต้องเป็น true หรือ false', v_label using errcode = 'check_violation';
+          end if;
+          v_from := (v_el ->> 'from');
+          select u.internet into v_cur_internet from public.itua_users u where u.id = v_subj.o_user_id;
+          if v_cur_internet::text <> v_from then
+            raise exception '%: สิทธิ์ปัจจุบันไม่ตรงกับที่หน้าจอเห็น (ถูกแก้ไปแล้ว) กรุณาโหลดข้อมูลล่าสุดแล้วลองใหม่', v_label using errcode = '40001';
+          end if;
+        end if;
+        if v_from = v_to then
+          raise exception '%: สิทธิ์ที่ขอเหมือนเดิม ไม่มีการเปลี่ยนแปลง', v_label using errcode = 'check_violation';
+        end if;
+      end if;
+      -- ขอเพิ่มอินเทอร์เน็ตต้องบอกเหตุผล (ตามฟอร์ม)
+      if v_to = 'true' and v_note is null then
+        raise exception 'กรุณาระบุเหตุผลที่ขอใช้อินเทอร์เน็ต' using errcode = 'check_violation';
+      end if;
+      v_key := 'internet:';
+
+    elsif v_kind = 'program' then
+      v_target := upper(private.itar_clean(v_el ->> 'target'));
+      v_label := 'โปรแกรม ' || coalesce(v_target, '?');
+      if v_target is null then
+        raise exception 'รายการที่ %: กรุณาระบุรหัสโปรแกรม', v_ord using errcode = 'check_violation';
+      end if;
+      select * into v_program from public.itua_programs p where p.is_test = v_actor.is_test and p.code = v_target;
+      if v_program.id is null then
+        raise exception 'ไม่พบโปรแกรม %', v_target using errcode = 'check_violation';
+      end if;
+      if not (v_el ? 'to') or jsonb_typeof(v_el -> 'to') <> 'boolean' then
+        raise exception '%: สิทธิ์ที่ขอ (to) ต้องเป็น true หรือ false', v_label using errcode = 'check_violation';
+      end if;
+      v_to := (v_el ->> 'to');
+      if v_to = 'true' and not v_program.is_active then
+        raise exception '%: โปรแกรมปิดการใช้งานอยู่ ขอสิทธิ์ไม่ได้', v_label using errcode = 'check_violation';
+      end if;
+      if v_type = 'new' and v_to <> 'true' then
+        raise exception '%: ขอสิทธิ์ใหม่เพิ่มสิทธิ์ได้อย่างเดียว', v_label using errcode = 'check_violation';
+      end if;
+      if v_to = 'true' and v_program.code = 'OTHER' and v_note is null then
+        raise exception '%: ต้องระบุว่าเป็นโปรแกรมอะไร', v_label using errcode = 'check_violation';
+      end if;
+      if v_known then
+        if v_type = 'new' then
+          v_from := 'false';
+        else
+          if not (v_el ? 'from') or jsonb_typeof(v_el -> 'from') <> 'boolean' then
+            raise exception '%: สิทธิ์ปัจจุบัน (from) ต้องเป็น true หรือ false', v_label using errcode = 'check_violation';
+          end if;
+          v_from := (v_el ->> 'from');
+          select exists (select 1 from public.itua_program_grants g where g.user_id = v_subj.o_user_id and g.program_id = v_program.id) into v_cur_exists;
+          if v_cur_exists::text <> v_from then
+            raise exception '%: สิทธิ์ปัจจุบันไม่ตรงกับที่หน้าจอเห็น (ถูกแก้ไปแล้ว) กรุณาโหลดข้อมูลล่าสุดแล้วลองใหม่', v_label using errcode = '40001';
+          end if;
+        end if;
+        if v_from = v_to then
+          raise exception '%: สิทธิ์ที่ขอเหมือนเดิม ไม่มีการเปลี่ยนแปลง', v_label using errcode = 'check_violation';
+        end if;
+      end if;
+      v_key := 'program:' || v_target;
+
+    elsif v_kind = 'email' then
+      v_target := lower(private.itar_clean(v_el ->> 'target'));
+      v_label := 'อีเมล ' || coalesce(v_target, '?');
+      if v_target is null or char_length(v_target) > 200 or v_target !~ '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$' then
+        raise exception 'รายการที่ %: รูปแบบอีเมลไม่ถูกต้อง', v_ord using errcode = 'check_violation';
+      end if;
+      v_to := private.itar_clean(v_el ->> 'to');
+      if v_to is null or v_to not in ('add', 'close') then
+        raise exception '%: ต้องระบุ to เป็น add (ขออีเมลใหม่) หรือ close (ปิดอีเมล)', v_label using errcode = 'check_violation';
+      end if;
+      if v_type = 'new' and v_to <> 'add' then
+        raise exception '%: ขอสิทธิ์ใหม่เพิ่มสิทธิ์ได้อย่างเดียว', v_label using errcode = 'check_violation';
+      end if;
+      if v_to = 'add' then
+        v_email_kind := coalesce(private.itar_clean(v_el ->> 'email_kind'), 'extra');
+        if v_email_kind not in ('internal', 'extra') then
+          raise exception '%: ชนิดอีเมลต้องเป็น internal (อีเมลภายใน) หรือ extra (อื่น ๆ)', v_label using errcode = 'check_violation';
+        end if;
+        if exists (select 1 from public.itua_emails m where m.is_test = v_actor.is_test and m.address = v_target and m.status = 'active') then
+          raise exception '%: ที่อยู่นี้ถูกใช้งานอยู่ในทะเบียนแล้ว', v_label using errcode = 'check_violation';
+        end if;
+        if v_email_kind = 'internal' and v_subj.o_user_id is not null and exists (
+             select 1 from public.itua_emails m where m.user_id = v_subj.o_user_id and m.kind = 'internal' and m.status = 'active') then
+          raise exception '%: ผู้ใช้นี้มีอีเมลภายในที่ใช้งานอยู่แล้ว (มีได้ 1 ที่อยู่)', v_label using errcode = 'check_violation';
+        end if;
+      elsif v_subj.o_user_id is not null and not exists (
+             select 1 from public.itua_emails m where m.user_id = v_subj.o_user_id and m.address = v_target and m.status = 'active') then
+        raise exception '%: ไม่พบอีเมลนี้ที่ใช้งานอยู่ของผู้ใช้', v_label using errcode = 'check_violation';
+      end if;
+      v_key := 'email:' || v_target;
+
+    else
+      raise exception 'รายการที่ %: kind ต้องเป็น folder, internet, program หรือ email', v_ord using errcode = 'check_violation';
+    end if;
+
+    if v_key = any (v_seen) then
+      raise exception '% ซ้ำกันในรายการเดียวกัน', v_label using errcode = 'check_violation';
+    end if;
+    v_seen := v_seen || v_key;
+    v_norm := v_norm || jsonb_build_array(jsonb_build_object(
+      'line_no', v_ord, 'kind', v_kind, 'target', v_target, 'from_known', v_known,
+      'from_value', v_from, 'to_value', v_to, 'note', v_note, 'email_kind', v_email_kind));
+  end loop;
+
+  -- เลือกเส้นทางอนุมัติ (กติกาเดียวกับ itwo/itrp · แผนก = แผนกของผู้รับสิทธิ์)
+  v_involves := private.itar_involves_it_approver(v_actor.id, v_subj.o_employee_id);
+  v_dept_is_it := private.itar_is_it_department(v_subj.o_department_id);
+  v_actor_is_dept_role := private.itar_is_dept_approver(v_actor.id, v_subj.o_department_id, v_actor.is_test);
+  v_has_dept_approvers := exists (
+    select 1 from private.itar_dept_approvers(v_subj.o_department_id, v_actor.is_test) a(id)
+    where a.id <> v_actor.id and a.id is distinct from v_subj.o_employee_id);
+
+  -- ใบทั่วไปต้องมีผู้อนุมัติขั้น IT ที่ใช้งานอยู่ (ไม่เช่นนั้นใบค้างโดยไม่มีใครอนุมัติได้) · ใบที่เกี่ยวกับผู้อนุมัติขั้น IT เอง รอหัวหน้า IT
+  -- ถ้าตอนนี้ไม่มีหัวหน้า IT ที่ใช้งานอยู่ ใบรอไว้ (ไม่ผ่านอัตโนมัติ) และไม่ปฏิเสธการยื่น
+  if not v_involves and not private.itar_has_active_stage_pool(v_actor.is_test, false) then
+    raise exception 'ยังไม่มีผู้อนุมัติขั้น IT ที่ใช้งานอยู่ กรุณาติดต่อ IT' using errcode = 'check_violation';
+  end if;
+  if v_dept_is_it then
+    -- ผู้รับสิทธิ์อยู่แผนก IT: ผู้อนุมัติขั้น IT กดครั้งเดียวนับทั้งสองขั้น (บันทึกตอนอนุมัติ)
+    v_status := 'pending_it_mgr';
+  elsif v_actor_is_dept_role then
+    -- ผู้ยื่นเป็นผู้จัดการ/ผู้ช่วยของแผนกผู้รับสิทธิ์: ข้ามขั้นแผนก (บันทึก dept_approved ด้านล่าง)
+    v_status := 'pending_it_mgr';
+  elsif not v_has_dept_approvers then
+    -- แผนกไม่มีผู้จัดการ/ผู้ช่วย: ส่งให้ผู้อนุมัติขั้น IT กดครั้งเดียวนับทั้งสองขั้น
+    v_status := 'pending_it_mgr';
+  else
+    v_status := 'pending_dept';
+  end if;
+
+  -- เลขที่เอกสาร: ล็อกแถวตัวนับของปีนั้นจนจบ transaction จึงไม่ซ้ำแม้กดพร้อมกัน
+  select n.year_ce, n.seq_no, n.doc_no
+    into v_doc_year, v_doc_seq, v_doc_no
+  from private.itar_next_doc_no(v_actor.is_test) n;
+
+  insert into public.itar_requests as rq (
+    is_test, doc_no, doc_year, doc_seq, requester_id, request_type, reason, department_id,
+    subject_employee_id, subject_user_id, subject_name_th, subject_name_en, subject_department_code, subject_division, status
+  ) values (
+    v_actor.is_test, v_doc_no, v_doc_year, v_doc_seq, v_actor.id, v_type, v_reason, v_subj.o_department_id,
+    v_subj.o_employee_id, v_subj.o_user_id, v_subj.o_name_th, v_subj.o_name_en, v_subj.o_department_code, v_subj.o_division, v_status
+  ) returning rq.id into v_request_id;
+
+  for v_item in select e.value from jsonb_array_elements(v_norm) e loop
+    insert into public.itar_request_items (is_test, request_id, line_no, kind, target, from_known, from_value, to_value, note, email_kind)
+    values (v_actor.is_test, v_request_id, (v_item ->> 'line_no')::smallint, v_item ->> 'kind', v_item ->> 'target',
+            (v_item ->> 'from_known')::boolean, v_item ->> 'from_value', v_item ->> 'to_value', v_item ->> 'note', v_item ->> 'email_kind');
+  end loop;
+
+  -- ประวัติ ISO (ลำดับ: created ก่อน แล้วจึง dept_approved)
+  insert into public.itar_events (is_test, request_id, actor_id, action, reason)
+  values (
+    v_actor.is_test, v_request_id, v_actor.id, 'created',
+    case when not v_dept_is_it and not v_actor_is_dept_role and not v_has_dept_approvers
+         then 'แผนกของผู้รับสิทธิ์ไม่มีผู้จัดการหรือผู้ช่วยผู้จัดการ ส่งให้ผู้อนุมัติขั้น IT อนุมัติครั้งเดียวนับเป็นทั้งสองขั้น'
+    end);
+
+  if v_actor_is_dept_role and not v_dept_is_it then
+    insert into public.itar_events (is_test, request_id, actor_id, action, reason)
+    values (v_actor.is_test, v_request_id, v_actor.id, 'dept_approved', 'ผู้ยื่นเป็นผู้จัดการ/ผู้ช่วยผู้จัดการแผนกของผู้รับสิทธิ์ อนุมัติในตัวเมื่อยื่นใบขอสิทธิ์');
+  end if;
+
+  id := v_request_id;
+  doc_no := v_doc_no;
+  return next;
+end;
+$$;
+
+-- ตัดสินใจอนุมัติ/ไม่อนุมัติของผู้ทำรายการ (ใช้ร่วมของ app_itar_approve / app_itar_reject)
+create or replace function private.itar_decide(p_request_id uuid, p_approve boolean, p_reason text)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_reason text := private.itar_clean(p_reason);
+  v_req public.itar_requests%rowtype;
+  v_caps record;
+  v_dept_done boolean;
+  v_it_done boolean;
+  v_new_status text;
+begin
+  v_actor := private.itar_actor();
+
+  -- ไม่อนุมัติต้องมีเหตุผล (ตรวจก่อนแตะข้อมูลใบ)
+  if not coalesce(p_approve, false) then
+    if v_reason is null then
+      raise exception 'กรุณาระบุเหตุผลที่ไม่อนุมัติ' using errcode = 'check_violation';
+    end if;
+    if char_length(v_reason) > 500 then
+      raise exception 'เหตุผลต้องไม่เกิน 500 ตัวอักษร' using errcode = 'check_violation';
+    end if;
+  end if;
+
+  select * into v_req from public.itar_requests w where w.id = p_request_id for update;
+  if v_req.id is null or v_req.is_test <> v_actor.is_test then
+    raise exception 'ไม่พบใบขอสิทธิ์นี้' using errcode = 'check_violation';
+  end if;
+  if v_req.requester_id = v_actor.id or v_req.subject_employee_id is not distinct from v_actor.id then
+    raise exception 'ไม่สามารถอนุมัติหรือไม่อนุมัติใบขอสิทธิ์ที่ตัวเองเป็นผู้ยื่นหรือผู้รับสิทธิ์ได้' using errcode = 'insufficient_privilege';
+  end if;
+  if v_req.status not in ('pending_dept', 'pending_it_mgr', 'need_info') then
+    raise exception '%', private.itar_status_message(v_req.status) using errcode = 'check_violation';
+  end if;
+
+  select * into v_caps from private.itar_approval_caps(v_req.id, v_actor.id);
+  if v_caps.rejected then
+    raise exception 'ใบขอสิทธิ์นี้ไม่อนุมัติไปแล้ว' using errcode = 'check_violation';
+  end if;
+
+  if not v_caps.can_dept and not v_caps.can_it then
+    -- บอกเหตุผลให้ตรงที่สุด · ผู้อนุมัติขั้น IT "ของใบนี้" (ใบที่เกี่ยวกับผู้อนุมัติขั้น IT เอง = หัวหน้า IT) ไม่ใช่ทุกคนที่มีธง approver
+    if private.itar_is_it_stage_approver(v_req.requester_id, v_req.subject_employee_id, v_actor.id) then
+      if v_caps.it_done then
+        raise exception 'ใบขอสิทธิ์นี้ผู้อนุมัติขั้น IT พิจารณาไปแล้ว' using errcode = 'check_violation';
+      end if;
+      raise exception 'ต้องรอผู้จัดการแผนกอนุมัติก่อน' using errcode = 'check_violation';
+    elsif v_caps.actor_is_dept_role and not v_caps.dept_is_it then
+      raise exception 'ใบขอสิทธิ์นี้ผู้จัดการแผนกพิจารณาไปแล้ว' using errcode = 'check_violation';
+    end if;
+    raise exception 'คุณไม่มีสิทธิ์พิจารณาใบขอสิทธิ์นี้' using errcode = 'insufficient_privilege';
+  end if;
+
+  -- รอผู้ยื่นตอบคำถามอยู่: ทั้งอนุมัติและไม่อนุมัติไม่ได้จนกว่าจะมีคำตอบ · ตรวจหลังตรวจสิทธิ์ เพื่อให้คนที่ไม่มีสิทธิ์ได้ข้อความสิทธิ์ตามเดิม
+  if v_req.status = 'need_info' then
+    if p_approve then
+      raise exception 'ใบขอสิทธิ์นี้รอผู้ยื่นตอบคำถามอยู่ ต้องรอคำตอบก่อนจึงจะอนุมัติได้' using errcode = 'check_violation';
+    end if;
+    raise exception 'ใบนี้กำลังรอผู้ยื่นตอบคำถาม กรุณารอคำตอบก่อน' using errcode = 'check_violation';
+  end if;
+
+  v_dept_done := v_caps.dept_done;
+  v_it_done := v_caps.it_done;
+
+  if p_approve then
+    if v_caps.can_it then
+      -- ผู้อนุมัติขั้น IT: ถ้าขั้นแผนกยังไม่ผ่านและไม่ต้องรอใคร กดครั้งเดียวบันทึกทั้งสองขั้นในชื่อเขา
+      if not v_dept_done then
+        insert into public.itar_events (is_test, request_id, actor_id, action, reason)
+        values (v_req.is_test, v_req.id, v_actor.id, 'dept_approved',
+          case
+            when v_caps.dept_is_it then 'ผู้รับสิทธิ์อยู่แผนก IT ผู้อนุมัติขั้น IT อนุมัติครั้งเดียวนับเป็นทั้งสองขั้น'
+            when v_caps.actor_is_dept_role then 'ผู้อนุมัติเป็นผู้จัดการ/ผู้ช่วยผู้จัดการของแผนกผู้รับสิทธิ์และเป็นผู้อนุมัติขั้น IT อนุมัติครั้งเดียวนับเป็นทั้งสองขั้น'
+            else 'แผนกของผู้รับสิทธิ์ไม่มีผู้จัดการหรือผู้ช่วยผู้จัดการ ผู้อนุมัติขั้น IT อนุมัติครั้งเดียวนับเป็นทั้งสองขั้น'
+          end);
+        v_dept_done := true;
+      end if;
+      insert into public.itar_events (is_test, request_id, actor_id, action)
+      values (v_req.is_test, v_req.id, v_actor.id, 'it_mgr_approved');
+      v_it_done := true;
+    else
+      insert into public.itar_events (is_test, request_id, actor_id, action)
+      values (v_req.is_test, v_req.id, v_actor.id, 'dept_approved');
+      v_dept_done := true;
+    end if;
+  else
+    insert into public.itar_events (is_test, request_id, actor_id, action, reason)
+    values (v_req.is_test, v_req.id, v_actor.id,
+            case when v_caps.can_it then 'it_mgr_rejected' else 'dept_rejected' end, v_reason);
+  end if;
+
+  -- เปลี่ยนสถานะ: ไม่อนุมัติ = จบทันที · อนุมัติ = เลื่อนตามขั้นที่ผ่าน
+  if not p_approve then
+    v_new_status := 'rejected';
+  else
+    v_new_status := case
+      when v_dept_done and v_it_done then 'approved'
+      when v_dept_done then 'pending_it_mgr'
+      else v_req.status
+    end;
+  end if;
+  if v_new_status is distinct from v_req.status then
+    update public.itar_requests set status = v_new_status, info_return_status = null where id = v_req.id;
+  end if;
+end;
+$$;
+
+create or replace function public.app_itar_approve(p_request_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform private.lab_only_block();
+  perform private.itar_decide(p_request_id, true, null);
+end;
+$$;
+
+create or replace function public.app_itar_reject(p_request_id uuid, p_reason text)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform private.lab_only_block();
+  perform private.itar_decide(p_request_id, false, p_reason);
+end;
+$$;
+
+-- ยกเลิก: ผู้ยื่นก่อน IT บันทึกลงทะเบียน · IT (ผู้ดูแลงาน) ยกเลิกแทนผู้ยื่นได้ก่อนบันทึกลงทะเบียนเช่นกัน (เหตุผลบังคับ ประวัติขึ้นต้น "IT ยกเลิกแทนผู้ยื่น: ")
+-- หลังบันทึกลงทะเบียนแล้ว (รอรับทราบ/จบ) ยกเลิกไม่ได้ทุกกรณี
+create or replace function public.app_itar_cancel(p_request_id uuid, p_reason text)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_reason text := private.itar_clean(p_reason);
+  v_req public.itar_requests%rowtype;
+  -- IT ยกเลิกแทนผู้ยื่น: ขึ้นต้นเหตุผลในประวัติด้วยข้อความนี้ ให้ไทม์ไลน์/ผู้ตรวจ ISO เห็นว่าไม่ใช่ผู้ยื่นยกเลิกเอง
+  c_it_prefix constant text := 'IT ยกเลิกแทนผู้ยื่น: ';
+  v_on_behalf boolean := false;
+  v_max_reason integer := 500;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+
+  select * into v_req from public.itar_requests w where w.id = p_request_id for update;
+  if v_req.id is null or v_req.is_test <> v_actor.is_test then
+    raise exception 'ไม่พบใบขอสิทธิ์นี้' using errcode = 'check_violation';
+  end if;
+  if v_req.requester_id <> v_actor.id then
+    -- ไม่ใช่ผู้ยื่น: เฉพาะผู้ดูแลงาน IT เท่านั้น
+    if not private.itar_is_it_admin(v_actor.id) then
+      raise exception 'เฉพาะผู้ยื่นหรือผู้ดูแลงาน IT เท่านั้นที่ยกเลิกใบขอสิทธิ์ได้' using errcode = 'insufficient_privilege';
+    end if;
+    v_on_behalf := true;
+    v_max_reason := 500 - char_length(c_it_prefix);
+  end if;
+  if v_req.status not in ('pending_dept', 'pending_it_mgr', 'approved', 'in_progress', 'need_info') then
+    raise exception '%', private.itar_status_message(v_req.status) using errcode = 'check_violation';
+  end if;
+  if exists (select 1 from public.itar_events e where e.request_id = v_req.id and e.action = 'applied') then
+    raise exception 'ใบนี้ IT บันทึกสิทธิ์ลงทะเบียนแล้ว ยกเลิกไม่ได้ (ต้องยื่นใบใหม่เพื่อย้อนสิทธิ์)' using errcode = 'check_violation';
+  end if;
+  if v_reason is null then
+    raise exception 'กรุณาระบุเหตุผลที่ยกเลิก' using errcode = 'check_violation';
+  end if;
+  if char_length(v_reason) > v_max_reason then
+    raise exception 'เหตุผลต้องไม่เกิน % ตัวอักษร', v_max_reason using errcode = 'check_violation';
+  end if;
+
+  -- info_return_status ต้องเคลียร์คู่กับการออกจาก need_info (CHECK + guard บังคับ)
+  update public.itar_requests set status = 'cancelled', info_return_status = null where id = v_req.id;
+  insert into public.itar_events (is_test, request_id, actor_id, action, reason)
+  values (v_req.is_test, v_req.id, v_actor.id, 'cancelled',
+          case when v_on_behalf then c_it_prefix || v_reason else v_reason end);
+end;
+$$;
+
+-- IT กดรับงาน (เริ่มดำเนินการ) เมื่ออนุมัติครบแล้วเท่านั้น (ไม่มีงานด่วน)
+create or replace function public.app_itar_start(p_request_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_req public.itar_requests%rowtype;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+  if not private.itar_is_it_admin(v_actor.id) then
+    raise exception 'เฉพาะผู้ดูแลงาน IT เท่านั้นที่รับงานใบขอสิทธิ์ได้' using errcode = 'insufficient_privilege';
+  end if;
+
+  select * into v_req from public.itar_requests w where w.id = p_request_id for update;
+  if v_req.id is null or v_req.is_test <> v_actor.is_test then
+    raise exception 'ไม่พบใบขอสิทธิ์นี้' using errcode = 'check_violation';
+  end if;
+  if v_req.status <> 'approved' then
+    raise exception '%', case
+      when v_req.status in ('pending_dept', 'pending_it_mgr')
+        then 'ใบขอสิทธิ์ต้องอนุมัติครบทั้งสองขั้นก่อนจึงจะรับงานได้'
+      else private.itar_status_message(v_req.status)
+    end using errcode = 'check_violation';
+  end if;
+
+  update public.itar_requests set status = 'in_progress' where id = v_req.id;
+  insert into public.itar_events (is_test, request_id, actor_id, action)
+  values (v_req.is_test, v_req.id, v_actor.id, 'started');
+end;
+$$;
+
+-- 11. ถามผู้ยื่น / ตอบ -----------------------------------------------------------------------
+create or replace function public.app_itar_request_info(p_request_id uuid, p_body text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_body text := private.itar_clean(p_body);
+  v_req public.itar_requests%rowtype;
+  v_stage text;
+  v_comment_id bigint;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+
+  if v_body is null then
+    raise exception 'กรุณาพิมพ์ข้อความที่ต้องการถามผู้ยื่น' using errcode = 'check_violation';
+  end if;
+  if char_length(v_body) > 2000 then
+    raise exception 'ข้อความต้องไม่เกิน 2,000 ตัวอักษร' using errcode = 'check_violation';
+  end if;
+
+  -- คนที่ไม่เห็นใบนี้ได้ข้อความเดียวกับใบที่ไม่มีอยู่ (ไม่บอกสถานะของใบที่ตัวเองไม่มีสิทธิ์ดู)
+  select * into v_req from public.itar_requests w where w.id = p_request_id for update;
+  if v_req.id is null or v_req.is_test <> v_actor.is_test or not private.itar_can_view(v_req, v_actor) then
+    raise exception 'ไม่พบใบขอสิทธิ์นี้' using errcode = 'check_violation';
+  end if;
+  if v_req.requester_id = v_actor.id then
+    raise exception 'ผู้ยื่นถามกลับใบขอสิทธิ์ของตัวเองไม่ได้' using errcode = 'insufficient_privilege';
+  end if;
+  if v_req.status = 'need_info' then
+    raise exception 'ใบขอสิทธิ์นี้มีคำถามที่รอผู้ยื่นตอบอยู่แล้ว ถามเพิ่มได้หลังผู้ยื่นตอบ' using errcode = 'check_violation';
+  end if;
+  if v_req.status not in ('pending_dept', 'pending_it_mgr', 'approved', 'in_progress') then
+    raise exception '%', private.itar_status_message(v_req.status) using errcode = 'check_violation';
+  end if;
+
+  v_stage := private.itar_info_stage(v_req, v_actor);
+  if v_stage is null then
+    raise exception 'คุณไม่มีสิทธิ์ถามผู้ยื่นในใบขอสิทธิ์นี้ในขั้นตอนนี้' using errcode = 'insufficient_privilege';
+  end if;
+
+  insert into public.itar_comments (is_test, request_id, kind, stage, author_id, body)
+  values (v_req.is_test, v_req.id, 'question', v_stage, v_actor.id, v_body)
+  returning itar_comments.id into v_comment_id;
+
+  update public.itar_requests set status = 'need_info', info_return_status = v_req.status where id = v_req.id;
+  insert into public.itar_events (is_test, request_id, actor_id, action, reason)
+  values (v_req.is_test, v_req.id, v_actor.id, 'info_requested',
+          'ถามผู้ยื่น (' || case v_stage when 'dept' then 'ผู้จัดการแผนก' when 'it_mgr' then 'ผู้อนุมัติขั้น IT' else 'ทีม IT' end
+          || '): ' || left(v_body, 300));
+
+  return jsonb_build_object('comment_id', v_comment_id);
+end;
+$$;
+
+create or replace function public.app_itar_provide_info(p_request_id uuid, p_body text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_body text := private.itar_clean(p_body);
+  v_req public.itar_requests%rowtype;
+  v_question public.itar_comments%rowtype;
+  v_comment_id bigint;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+
+  if v_body is null then
+    raise exception 'กรุณาพิมพ์คำตอบ' using errcode = 'check_violation';
+  end if;
+  if char_length(v_body) > 2000 then
+    raise exception 'ข้อความต้องไม่เกิน 2,000 ตัวอักษร' using errcode = 'check_violation';
+  end if;
+
+  select * into v_req from public.itar_requests w where w.id = p_request_id for update;
+  if v_req.id is null or v_req.is_test <> v_actor.is_test then
+    raise exception 'ไม่พบใบขอสิทธิ์นี้' using errcode = 'check_violation';
+  end if;
+  if v_req.requester_id <> v_actor.id then
+    raise exception 'เฉพาะผู้ยื่นเท่านั้นที่ตอบคำถามได้' using errcode = 'insufficient_privilege';
+  end if;
+  if v_req.status <> 'need_info' then
+    raise exception 'ใบขอสิทธิ์นี้ไม่มีคำถามที่รอตอบ' using errcode = 'check_violation';
+  end if;
+
+  v_question := private.itar_pending_question(v_req.id);
+  if v_question.id is null then
+    raise exception 'ไม่พบคำถามที่รอตอบของใบขอสิทธิ์นี้' using errcode = 'check_violation';
+  end if;
+
+  insert into public.itar_comments (is_test, request_id, kind, stage, author_id, body, reply_to)
+  values (v_req.is_test, v_req.id, 'answer', v_question.stage, v_actor.id, v_body, v_question.id)
+  returning itar_comments.id into v_comment_id;
+
+  update public.itar_requests set status = v_req.info_return_status, info_return_status = null where id = v_req.id;
+  insert into public.itar_events (is_test, request_id, actor_id, action, reason)
+  values (v_req.is_test, v_req.id, v_actor.id, 'info_provided', 'ผู้ยื่นตอบคำถาม: ' || left(v_body, 300));
+
+  return jsonb_build_object('comment_id', v_comment_id);
+end;
+$$;
+
+-- 12. ไฟล์แนบ: ลงทะเบียนไฟล์ที่อัปโหลดแล้ว ------------------------------------------------------
+-- ตอนยื่น · ผู้ยื่นเท่านั้น · แนบได้ภายใน 30 นาทีหลังยื่นและก่อนมีผู้อื่นอนุมัติจริง · ≤10 ไฟล์ต่อครั้งที่ยื่น
+create or replace function public.app_itar_add_attachment(p_request_id uuid, p_storage_path text, p_file_name text, p_mime_type text, p_size_bytes bigint)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_req public.itar_requests%rowtype;
+  v_file_name text := private.itar_clean(p_file_name);
+  v_existing public.itar_attachments%rowtype;
+  v_file record;
+  v_id uuid;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+
+  select * into v_req from public.itar_requests w where w.id = p_request_id for update;
+  if v_req.id is null or v_req.is_test <> v_actor.is_test then
+    raise exception 'ไม่พบใบขอสิทธิ์นี้' using errcode = 'check_violation';
+  end if;
+  if v_req.requester_id <> v_actor.id then
+    raise exception 'เฉพาะผู้ยื่นเท่านั้นที่แนบไฟล์ให้ใบขอสิทธิ์ได้' using errcode = 'insufficient_privilege';
+  end if;
+
+  -- path ต้องอยู่ใต้โฟลเดอร์ของใบนี้ และรูปแบบถูกต้อง
+  if p_storage_path is null or private.itar_file_path_request_id(p_storage_path) is distinct from v_req.id then
+    raise exception 'ที่อยู่ไฟล์ไม่ถูกต้อง หรือไม่ใช่ไฟล์ของใบขอสิทธิ์นี้' using errcode = 'check_violation';
+  end if;
+  if v_file_name is null then
+    raise exception 'กรุณาระบุชื่อไฟล์' using errcode = 'check_violation';
+  end if;
+  if char_length(v_file_name) > 200 then
+    raise exception 'ชื่อไฟล์ต้องไม่เกิน 200 ตัวอักษร' using errcode = 'check_violation';
+  end if;
+
+  -- ลองใหม่หลังเน็ตหลุด: path เดิมของใบเดียวกันที่ลงทะเบียนแล้ว = คืนทะเบียนเดิม (ไฟล์ของข้อความ/ใบรับทราบกระดาษใช้ RPC ของตัวเอง)
+  select * into v_existing from public.itar_attachments a where a.storage_path = p_storage_path;
+  if v_existing.id is not null then
+    if v_existing.request_id = v_req.id and v_existing.comment_id is null and not v_existing.is_paper_ack then
+      return v_existing.id;
+    end if;
+    raise exception 'ไฟล์นี้ถูกลงทะเบียนไว้แล้ว' using errcode = 'check_violation';
+  end if;
+
+  if v_req.status not in ('pending_dept', 'pending_it_mgr', 'approved', 'in_progress', 'need_info') then
+    raise exception 'ใบขอสิทธิ์นี้สิ้นสุดแล้วหรือบันทึกลงทะเบียนแล้ว แนบไฟล์ไม่ได้' using errcode = 'check_violation';
+  end if;
+  if now() - v_req.created_at > private.itar_attach_window() then
+    raise exception 'หมดเวลาแนบไฟล์แล้ว (แนบได้ภายใน 30 นาทีหลังยื่นใบขอสิทธิ์)' using errcode = 'check_violation';
+  end if;
+  if private.itar_has_real_approval(v_req.id, v_req.requester_id) then
+    raise exception 'มีผู้อนุมัติใบขอสิทธิ์นี้แล้ว แนบไฟล์เพิ่มไม่ได้' using errcode = 'check_violation';
+  end if;
+  if (select count(*) from public.itar_attachments a where a.request_id = v_req.id and a.comment_id is null and not a.is_paper_ack) >= 10 then
+    raise exception 'แนบไฟล์ได้ไม่เกิน 10 ไฟล์ต่อครั้งที่ยื่น' using errcode = 'check_violation';
+  end if;
+
+  -- ไฟล์ต้องอยู่ใน Storage จริง ในบัคเก็ตตามโหมดของใบ และผู้เรียกเป็นคนอัปโหลดเอง
+  -- ชนิดและขนาดใช้ค่าจาก metadata ของ Storage เท่านั้น (ค่า p_mime_type / p_size_bytes ที่ผู้เรียกส่งมาไม่ถูกเชื่อ)
+  select * into v_file from private.itar_read_stored_file(v_req.is_test, p_storage_path);
+
+  insert into public.itar_attachments (is_test, request_id, storage_path, file_name, mime_type, size_bytes, uploaded_by)
+  values (v_req.is_test, v_req.id, p_storage_path, v_file_name, v_file.mime_type, v_file.size_bytes, v_actor.id)
+  returning itar_attachments.id into v_id;
+  return v_id;
+end;
+$$;
+
+-- ไฟล์ของข้อความถาม/ตอบ · ผู้เขียนข้อความเท่านั้น · ≤10 ไฟล์ต่อข้อความ ภายใน 30 นาทีหลังส่งข้อความ
+create or replace function public.app_itar_add_comment_attachment(p_request_id uuid, p_comment_id bigint, p_storage_path text, p_file_name text, p_mime_type text, p_size_bytes bigint)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_req public.itar_requests%rowtype;
+  v_comment public.itar_comments%rowtype;
+  v_file_name text := private.itar_clean(p_file_name);
+  v_existing public.itar_attachments%rowtype;
+  v_file record;
+  v_id uuid;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+
+  select * into v_req from public.itar_requests w where w.id = p_request_id for update;
+  if v_req.id is null or v_req.is_test <> v_actor.is_test or not private.itar_can_view(v_req, v_actor) then
+    raise exception 'ไม่พบใบขอสิทธิ์นี้' using errcode = 'check_violation';
+  end if;
+  select * into v_comment from public.itar_comments c where c.id = p_comment_id and c.request_id = v_req.id;
+  if v_comment.id is null then
+    raise exception 'ไม่พบข้อความนี้ในใบขอสิทธิ์' using errcode = 'check_violation';
+  end if;
+  if v_comment.author_id <> v_actor.id then
+    raise exception 'เฉพาะผู้เขียนข้อความเท่านั้นที่แนบไฟล์ให้ข้อความนั้นได้' using errcode = 'insufficient_privilege';
+  end if;
+
+  if p_storage_path is null or private.itar_file_path_request_id(p_storage_path) is distinct from v_req.id then
+    raise exception 'ที่อยู่ไฟล์ไม่ถูกต้อง หรือไม่ใช่ไฟล์ของใบขอสิทธิ์นี้' using errcode = 'check_violation';
+  end if;
+  if v_file_name is null then
+    raise exception 'กรุณาระบุชื่อไฟล์' using errcode = 'check_violation';
+  end if;
+  if char_length(v_file_name) > 200 then
+    raise exception 'ชื่อไฟล์ต้องไม่เกิน 200 ตัวอักษร' using errcode = 'check_violation';
+  end if;
+
+  -- ลองใหม่หลังเน็ตหลุด: path เดิมของข้อความเดียวกันที่ลงทะเบียนแล้ว = คืนทะเบียนเดิม
+  select * into v_existing from public.itar_attachments a where a.storage_path = p_storage_path;
+  if v_existing.id is not null then
+    if v_existing.request_id = v_req.id and v_existing.comment_id is not distinct from v_comment.id then
+      return v_existing.id;
+    end if;
+    raise exception 'ไฟล์นี้ถูกลงทะเบียนไว้แล้ว' using errcode = 'check_violation';
+  end if;
+
+  if v_req.status in ('rejected', 'cancelled', 'done') then
+    raise exception 'ใบขอสิทธิ์นี้สิ้นสุดแล้ว แนบไฟล์ไม่ได้' using errcode = 'check_violation';
+  end if;
+  if now() - v_comment.created_at > private.itar_attach_window() then
+    raise exception 'หมดเวลาแนบไฟล์แล้ว (แนบได้ภายใน 30 นาทีหลังส่งข้อความ)' using errcode = 'check_violation';
+  end if;
+  if (select count(*) from public.itar_attachments a where a.comment_id = v_comment.id) >= 10 then
+    raise exception 'แนบไฟล์ได้ไม่เกิน 10 ไฟล์ต่อข้อความ' using errcode = 'check_violation';
+  end if;
+
+  select * into v_file from private.itar_read_stored_file(v_req.is_test, p_storage_path);
+
+  insert into public.itar_attachments (is_test, request_id, comment_id, storage_path, file_name, mime_type, size_bytes, uploaded_by)
+  values (v_req.is_test, v_req.id, v_comment.id, p_storage_path, v_file_name, v_file.mime_type, v_file.size_bytes, v_actor.id)
+  returning itar_attachments.id into v_id;
+  return v_id;
+end;
+$$;
+
+-- รูปใบรับทราบที่เซ็นด้วยกระดาษ · ผู้ดูแลงาน IT เท่านั้น · ใบต้องรอรับทราบและผู้รับสิทธิ์ไม่มีบัญชี · ≤10 ไฟล์ · ไม่จำกัดเวลา
+create or replace function public.app_itar_add_paper_attachment(p_request_id uuid, p_storage_path text, p_file_name text, p_mime_type text, p_size_bytes bigint)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_req public.itar_requests%rowtype;
+  v_file_name text := private.itar_clean(p_file_name);
+  v_existing public.itar_attachments%rowtype;
+  v_file record;
+  v_id uuid;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+  if not private.itar_is_it_admin(v_actor.id) then
+    raise exception 'เฉพาะผู้ดูแลงาน IT เท่านั้นที่แนบรูปใบรับทราบที่เซ็นแล้วได้' using errcode = 'insufficient_privilege';
+  end if;
+
+  select * into v_req from public.itar_requests w where w.id = p_request_id for update;
+  if v_req.id is null or v_req.is_test <> v_actor.is_test then
+    raise exception 'ไม่พบใบขอสิทธิ์นี้' using errcode = 'check_violation';
+  end if;
+  if v_req.status <> 'awaiting_ack' then
+    raise exception 'แนบรูปใบรับทราบได้เฉพาะใบที่ IT บันทึกสิทธิ์ลงทะเบียนแล้วและรอผู้ใช้รับทราบ' using errcode = 'check_violation';
+  end if;
+  if v_req.subject_employee_id is not null then
+    raise exception 'ผู้รับสิทธิ์คนนี้มีบัญชีในระบบ ต้องกดรับทราบเองในระบบ (ไม่ใช้ใบกระดาษ)' using errcode = 'check_violation';
+  end if;
+
+  if p_storage_path is null or private.itar_file_path_request_id(p_storage_path) is distinct from v_req.id then
+    raise exception 'ที่อยู่ไฟล์ไม่ถูกต้อง หรือไม่ใช่ไฟล์ของใบขอสิทธิ์นี้' using errcode = 'check_violation';
+  end if;
+  if v_file_name is null then
+    raise exception 'กรุณาระบุชื่อไฟล์' using errcode = 'check_violation';
+  end if;
+  if char_length(v_file_name) > 200 then
+    raise exception 'ชื่อไฟล์ต้องไม่เกิน 200 ตัวอักษร' using errcode = 'check_violation';
+  end if;
+
+  select * into v_existing from public.itar_attachments a where a.storage_path = p_storage_path;
+  if v_existing.id is not null then
+    if v_existing.request_id = v_req.id and v_existing.is_paper_ack then
+      return v_existing.id;
+    end if;
+    raise exception 'ไฟล์นี้ถูกลงทะเบียนไว้แล้ว' using errcode = 'check_violation';
+  end if;
+  if (select count(*) from public.itar_attachments a where a.request_id = v_req.id and a.is_paper_ack) >= 10 then
+    raise exception 'แนบรูปใบรับทราบได้ไม่เกิน 10 ไฟล์' using errcode = 'check_violation';
+  end if;
+
+  select * into v_file from private.itar_read_stored_file(v_req.is_test, p_storage_path);
+
+  insert into public.itar_attachments (is_test, request_id, is_paper_ack, storage_path, file_name, mime_type, size_bytes, uploaded_by)
+  values (v_req.is_test, v_req.id, true, p_storage_path, v_file_name, v_file.mime_type, v_file.size_bytes, v_actor.id)
+  returning itar_attachments.id into v_id;
+  return v_id;
+end;
+$$;
+
+-- 13. ฟอร์มยื่นใบ + ค้นหาผู้รับสิทธิ์ ---------------------------------------------------------
+-- ข้อมูลประกอบหน้าฟอร์มยื่น: ผู้รับสิทธิ์ที่ตัดสินแล้ว (ตัวเองหรือผู้ที่ยื่นแทนได้) + สิทธิ์ปัจจุบันของเขา (ถ้าผูกทะเบียนแล้ว) + รายการโฟลเดอร์/โปรแกรมที่ขอได้ + นโยบาย
+--   สิทธิ์ปัจจุบันเปิดเฉพาะของผู้รับสิทธิ์ที่ผู้เรียกมีสิทธิ์ยื่นให้ (ตัดสินที่ private.itar_resolve_subject) ไม่เปิดทะเบียนคนอื่น
+create or replace function public.app_itar_form_context(p_request_type text default 'change', p_subject jsonb default null)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_type text := coalesce(private.itar_clean(p_request_type), 'change');
+  v_subj record;
+  v_is_admin boolean;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+  if v_type not in ('new', 'change', 'revoke_all') then
+    raise exception 'ประเภทคำขอต้องเป็น new, change หรือ revoke_all' using errcode = 'check_violation';
+  end if;
+  v_is_admin := private.itar_is_it_admin(v_actor.id);
+  select * into v_subj from private.itar_resolve_subject(v_actor, v_type, p_subject);
+  return jsonb_build_object(
+    'request_type', v_type,
+    'subject', jsonb_build_object(
+      'employee_id', v_subj.o_employee_id,
+      'user_id', v_subj.o_user_id,
+      'name_th', v_subj.o_name_th,
+      'name_en', v_subj.o_name_en,
+      'department_id', v_subj.o_department_id,
+      'department_code', v_subj.o_department_code,
+      'department_name', (select d.name_th from public.departments d where d.id = v_subj.o_department_id),
+      'division', v_subj.o_division),
+    -- ผูกทะเบียนแล้ว = รู้สิทธิ์ปัจจุบัน (ฟอร์มส่งเป็น from) · ยังไม่ผูก = ขอได้เฉพาะ "to" แล้ว IT เลือกผู้ใช้ตอนดำเนินการ
+    'linked', v_subj.o_user_id is not null,
+    'rights', case when v_subj.o_user_id is not null then private.itar_subject_rights(v_subj.o_user_id) end,
+    'catalog', jsonb_build_object(
+      'folders', coalesce((
+        select jsonb_agg(jsonb_build_object('code', f.code, 'name', f.name, 'description', f.description) order by f.sort, f.code)
+        from public.itua_folders f where f.is_test = v_actor.is_test and f.is_active), '[]'::jsonb),
+      'programs', coalesce((
+        select jsonb_agg(jsonb_build_object('code', p.code, 'name', p.name) order by p.sort, p.code)
+        from public.itua_programs p where p.is_test = v_actor.is_test and p.is_active), '[]'::jsonb)),
+    -- รายชื่อแผนกให้ผู้ดูแลงาน IT เลือกเมื่อยื่นแทนคนที่ไม่มีบัญชี
+    'departments', case when v_is_admin then coalesce((
+        select jsonb_agg(jsonb_build_object('id', d.id, 'code', d.code, 'name_th', d.name_th) order by d.name_th)
+        from public.departments d where d.is_active), '[]'::jsonb) end,
+    'policy', private.itar_policy()
+  );
+end;
+$$;
+
+-- ค้นหาผู้รับสิทธิ์ตอนยื่นแทน (ผู้ดูแลงาน IT: พนักงานทุกคน + ผู้ใช้ในทะเบียน · ผู้จัดการ/ผู้ช่วยแผนก: เฉพาะคนในแผนกตัวเอง สำหรับยกเลิกทั้งหมด)
+--   ผู้ใช้ในทะเบียนเปิดให้เฉพาะผู้อยู่ใน itas_admins และผู้จัดการแผนก (เฉพาะรหัสแผนกตรงกับแผนกตัวเอง) · คืนสูงสุด 20 รายการต่อกลุ่ม
+create or replace function public.app_itar_search_subjects(p_search text)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_q text := lower(coalesce(private.itar_clean(p_search), ''));
+  v_is_admin boolean;
+  v_is_register_admin boolean;
+  v_is_dept_approver boolean;
+  v_dept_code text;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+  v_is_admin := private.itar_is_it_admin(v_actor.id);
+  v_is_register_admin := private.itar_is_itas_admin(v_actor.id, v_actor.is_test);
+  v_is_dept_approver := private.itar_is_dept_approver(v_actor.id, v_actor.department_id, v_actor.is_test);
+  if not v_is_admin and not v_is_dept_approver then
+    raise exception 'เฉพาะผู้ดูแลงาน IT หรือผู้จัดการ/ผู้ช่วยผู้จัดการแผนกเท่านั้นที่ค้นหาผู้รับสิทธิ์ได้' using errcode = 'insufficient_privilege';
+  end if;
+  if char_length(v_q) < 2 or char_length(v_q) > 100 then
+    raise exception 'กรุณาพิมพ์คำค้นอย่างน้อย 2 ตัวอักษร' using errcode = 'check_violation';
+  end if;
+  select d.code into v_dept_code from public.departments d where d.id = v_actor.department_id;
+
+  return jsonb_build_object(
+    'employees', coalesce((
+      select jsonb_agg(x.j order by x.ord) from (
+        select jsonb_build_object('id', e.id, 'employee_no', e.employee_no, 'full_name', e.first_name || ' ' || e.last_name,
+                                  'department_id', e.department_id, 'department_name', d.name_th,
+                                  'user_id', (select u.id from public.itua_users u where u.employee_id = e.id and u.is_test = e.is_test
+                                              and v_is_register_admin)) as j,
+               e.employee_no as ord
+        from public.employees e
+        join public.departments d on d.id = e.department_id
+        where e.is_test = v_actor.is_test and e.deleted_at is null and (e.is_test or e.is_active)
+          and (v_is_admin or e.department_id = v_actor.department_id)
+          and (position(v_q in lower(e.employee_no)) > 0 or position(v_q in lower(e.first_name || ' ' || e.last_name)) > 0)
+        order by e.employee_no
+        limit 20) x), '[]'::jsonb),
+    'users', coalesce((
+      select jsonb_agg(x.j order by x.ord) from (
+        select jsonb_build_object('id', u.id, 'auth_id', u.auth_id, 'name_th', u.name_th, 'name_en', u.name_en,
+                                  'department_code', u.department_code, 'status', u.status, 'employee_id', u.employee_id) as j,
+               u.auth_id as ord
+        from public.itua_users u
+        where u.is_test = v_actor.is_test
+          and (v_is_register_admin or (v_is_dept_approver and u.status = 'active' and upper(u.department_code) = upper(v_dept_code)))
+          and (position(v_q in lower(u.auth_id)) > 0 or position(v_q in lower(coalesce(u.name_th, ''))) > 0
+               or position(v_q in lower(coalesce(u.name_en, ''))) > 0)
+        order by u.auth_id
+        limit 20) x), '[]'::jsonb)
+  );
+end;
+$$;
+
+-- 14. IT บันทึกสิทธิ์ลงทะเบียน ----------------------------------------------------------------
+-- ข้อมูลประกอบหน้า "ปรับสิทธิ์ตามใบ" (ผู้ดูแลงาน IT ที่อยู่ใน itas_admins เท่านั้น): รายการที่ขอ + ค่าปัจจุบันในทะเบียน + ผู้ใช้ที่น่าจะตรงกับผู้รับสิทธิ์
+--   current_value ต่อรายการ (เมื่อผูกผู้ใช้ทะเบียนแล้ว): folder = R/F/null · internet/program = 'true'/'false' · email = 'active'/null
+create or replace function public.app_itar_apply_context(p_request_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_req public.itar_requests%rowtype;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+  if not (private.itar_is_it_admin(v_actor.id) and private.itar_is_itas_admin(v_actor.id, v_actor.is_test)) then
+    raise exception 'เฉพาะผู้ดูแลงาน IT ที่อยู่ในรายชื่อผู้ใช้ทะเบียนสิทธิ์เท่านั้นที่บันทึกสิทธิ์ลงทะเบียนได้' using errcode = 'insufficient_privilege';
+  end if;
+  select * into v_req from public.itar_requests w where w.id = p_request_id;
+  if v_req.id is null or v_req.is_test <> v_actor.is_test then
+    raise exception 'ไม่พบใบขอสิทธิ์นี้' using errcode = 'check_violation';
+  end if;
+
+  return jsonb_build_object(
+    'request', jsonb_build_object(
+      'id', v_req.id, 'doc_no', v_req.doc_no, 'request_type', v_req.request_type, 'status', v_req.status, 'reason', v_req.reason,
+      'subject_employee_id', v_req.subject_employee_id, 'subject_user_id', v_req.subject_user_id,
+      'subject_name_th', v_req.subject_name_th, 'subject_name_en', v_req.subject_name_en,
+      'subject_department_code', v_req.subject_department_code, 'subject_division', v_req.subject_division),
+    -- ต้องเลือกผู้ใช้ทะเบียนตอนบันทึก (change/revoke_all ที่ยังไม่ผูก) · new = สร้างผู้ใช้ใหม่ (ต้องระบุ Auth. Name)
+    'needs_user_choice', v_req.request_type <> 'new' and v_req.subject_user_id is null,
+    'needs_new_user', v_req.request_type = 'new',
+    'can_apply', v_req.status = 'in_progress',
+    'items', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'id', i.id, 'line_no', i.line_no, 'kind', i.kind, 'target', i.target, 'from_known', i.from_known,
+               'from_value', i.from_value, 'to_value', i.to_value, 'note', i.note, 'email_kind', i.email_kind,
+               'target_name', case i.kind
+                 when 'folder' then (select f.name from public.itua_folders f where f.is_test = v_req.is_test and f.code = i.target)
+                 when 'program' then (select p.name from public.itua_programs p where p.is_test = v_req.is_test and p.code = i.target) end,
+               'current_known', v_req.subject_user_id is not null or v_req.request_type = 'new',
+               'current_value', case
+                 when v_req.subject_user_id is null then null
+                 when i.kind = 'folder' then (select g.level from public.itua_folder_grants g join public.itua_folders f on f.id = g.folder_id
+                                              where g.user_id = v_req.subject_user_id and f.code = i.target and f.is_test = v_req.is_test)
+                 when i.kind = 'internet' then (select u.internet::text from public.itua_users u where u.id = v_req.subject_user_id)
+                 when i.kind = 'program' then (select exists (select 1 from public.itua_program_grants g join public.itua_programs p on p.id = g.program_id
+                                                              where g.user_id = v_req.subject_user_id and p.code = i.target and p.is_test = v_req.is_test)::text)
+                 when i.kind = 'email' then (select 'active' from public.itua_emails m
+                                             where m.user_id = v_req.subject_user_id and m.address = i.target and m.status = 'active')
+               end,
+               'result', (select jsonb_build_object('decision', r.decision, 'reason', r.reason, 'at', r.created_at)
+                          from public.itar_item_results r where r.item_id = i.id)
+             ) order by i.line_no)
+      from public.itar_request_items i where i.request_id = v_req.id), '[]'::jsonb),
+    'subject_rights', case when v_req.subject_user_id is not null then private.itar_subject_rights(v_req.subject_user_id) end,
+    -- ผู้ใช้ทะเบียนที่น่าจะเป็นคนเดียวกัน: ผูกกับพนักงานเดียวกัน หรือชื่อไทย/อังกฤษตรงกัน (ใช้ช่วยเลือก หรือเตือนซ้ำเมื่อขอใหม่)
+    'suggested_users', coalesce((
+      select jsonb_agg(jsonb_build_object('id', u.id, 'auth_id', u.auth_id, 'name_th', u.name_th, 'name_en', u.name_en,
+                                          'department_code', u.department_code, 'status', u.status, 'employee_id', u.employee_id)
+                       order by u.auth_id)
+      from (
+        select u0.* from public.itua_users u0
+        where u0.is_test = v_req.is_test
+          and ((v_req.subject_employee_id is not null and u0.employee_id = v_req.subject_employee_id)
+               or (v_req.subject_name_th is not null and lower(u0.name_th) = lower(v_req.subject_name_th))
+               or (v_req.subject_name_en is not null and lower(u0.name_en) = lower(v_req.subject_name_en)))
+        order by u0.auth_id
+        limit 10) u), '[]'::jsonb)
+  );
+end;
+$$;
+
+-- IT บันทึกสิทธิ์ลงทะเบียนตามใบ (ครั้งเดียวต่อใบ · atomic ทั้งใบ: ข้อใดผิด/ข้อมูลเก่าไม่ตรง = ไม่เปลี่ยนอะไรเลย รวมทั้งประวัติ)
+--   ต้องเป็นทั้งผู้ดูแลงาน IT (itwo_staff) และอยู่ใน itas_admins ของโหมดนั้น · ใบต้อง in_progress (IT กดรับงานแล้ว)
+--   p_decisions: array ครบทุกรายการของใบ [{item_id, decision:'applied'|'rejected', reason}] (rejected ต้องมีเหตุผล) · ประเภท revoke_all ส่งว่าง
+--   p_user_id: ผู้ใช้ในทะเบียน (บังคับเมื่อใบ change/revoke_all ยังไม่ผูกผู้ใช้) · p_new_user: {auth_id, name_th?, name_en?} (บังคับเมื่อใบ new)
+--   p_link_employee: true = ผูก employee_id ของผู้ใช้ทะเบียนกับพนักงานผู้รับสิทธิ์ (เมื่อผู้รับสิทธิ์มีบัญชีและผู้ใช้ทะเบียนยังไม่ผูก)
+--   ก่อนเขียนทะเบียน ค่า "เดิม" ของทุกรายการต้องตรงกับทะเบียนปัจจุบัน (ไม่ตรง = 40001 ให้โหลดใหม่) · เขียนผ่าน app_itua_* เดิมจึงลง itua_log ครบ พร้อมอ้างเลขใบ
+--   ใบ new/change: ไป awaiting_ack (รอผู้ใช้รับทราบ) · ใบ revoke_all: ถอดสิทธิ์ทั้งหมด + ปิดอีเมล + สถานะ resigned แล้วไป done เลย
+create or replace function public.app_itar_apply(
+  p_request_id uuid,
+  p_decisions jsonb,
+  p_user_id uuid default null,
+  p_new_user jsonb default null,
+  p_link_employee boolean default false
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_req public.itar_requests%rowtype;
+  v_item public.itar_request_items%rowtype;
+  v_decisions jsonb := coalesce(p_decisions, '[]'::jsonb);
+  v_dec jsonb;
+  v_dec_id text;
+  v_decision text;
+  v_dec_reason text;
+  v_map jsonb := '{}'::jsonb;
+  v_total integer;
+  v_applied integer := 0;
+  v_rejected integer := 0;
+  v_user public.itua_users%rowtype;
+  v_user_id uuid;
+  v_link boolean := false;
+  v_new jsonb;
+  v_data jsonb;
+  v_event_id bigint;
+  v_before jsonb;
+  v_after jsonb;
+  v_changes jsonb := '[]'::jsonb;
+  v_reg_reason text;
+  v_from_level text;
+  v_to_level text;
+  v_from_flag boolean;
+  v_to_flag boolean;
+  v_cur_exists boolean;
+  v_email public.itua_emails%rowtype;
+  v_today text := to_char((now() at time zone 'Asia/Bangkok')::date, 'YYYY-MM-DD');
+  v_summary_items jsonb := '[]'::jsonb;
+  v_new_status text;
+  v_label text;
+  v_grant record;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+  if not (private.itar_is_it_admin(v_actor.id) and private.itar_is_itas_admin(v_actor.id, v_actor.is_test)) then
+    raise exception 'เฉพาะผู้ดูแลงาน IT ที่อยู่ในรายชื่อผู้ใช้ทะเบียนสิทธิ์เท่านั้นที่บันทึกสิทธิ์ลงทะเบียนได้' using errcode = 'insufficient_privilege';
+  end if;
+
+  select * into v_req from public.itar_requests w where w.id = p_request_id for update;
+  if v_req.id is null or v_req.is_test <> v_actor.is_test then
+    raise exception 'ไม่พบใบขอสิทธิ์นี้' using errcode = 'check_violation';
+  end if;
+  if v_req.status <> 'in_progress' then
+    raise exception '%', case v_req.status
+      when 'approved' then 'ต้องกดรับงานก่อนจึงจะบันทึกสิทธิ์ลงทะเบียนได้'
+      when 'pending_dept' then 'ใบขอสิทธิ์ต้องอนุมัติครบทั้งสองขั้นก่อน'
+      when 'pending_it_mgr' then 'ใบขอสิทธิ์ต้องอนุมัติครบทั้งสองขั้นก่อน'
+      else private.itar_status_message(v_req.status)
+    end using errcode = 'check_violation';
+  end if;
+  v_reg_reason := 'ตามใบขอสิทธิ์ ' || v_req.doc_no;
+
+  -- 1) ตรวจการตัดสินต่อรายการ: ครบทุกรายการ ไม่ซ้ำ ไม่เกิน rejected ต้องมีเหตุผล · ใบ revoke_all ไม่มีรายการ
+  select count(*) into v_total from public.itar_request_items i where i.request_id = v_req.id;
+  if jsonb_typeof(v_decisions) is distinct from 'array' then
+    raise exception 'การตัดสินต่อรายการต้องเป็นรูปแบบ array' using errcode = 'check_violation';
+  end if;
+  for v_dec in select e.value from jsonb_array_elements(v_decisions) e loop
+    if jsonb_typeof(v_dec) <> 'object' then
+      raise exception 'การตัดสินต่อรายการต้องเป็นรูปแบบ {item_id, decision, reason}' using errcode = 'check_violation';
+    end if;
+    v_dec_id := private.itar_clean(v_dec ->> 'item_id');
+    v_decision := private.itar_clean(v_dec ->> 'decision');
+    v_dec_reason := private.itar_clean(v_dec ->> 'reason');
+    if v_dec_id is null or not exists (select 1 from public.itar_request_items i where i.request_id = v_req.id and i.id::text = v_dec_id) then
+      raise exception 'การตัดสินอ้างรายการที่ไม่อยู่ในใบนี้' using errcode = 'check_violation';
+    end if;
+    if v_decision is null or v_decision not in ('applied', 'rejected') then
+      raise exception 'การตัดสินต่อรายการต้องเป็น applied (บันทึกลงทะเบียน) หรือ rejected (ไม่บันทึก)' using errcode = 'check_violation';
+    end if;
+    if v_decision = 'rejected' then
+      if v_dec_reason is null then
+        raise exception 'กรุณาระบุเหตุผลที่ไม่บันทึกรายการนี้ลงทะเบียน' using errcode = 'check_violation';
+      end if;
+      if char_length(v_dec_reason) > 500 then
+        raise exception 'เหตุผลต้องไม่เกิน 500 ตัวอักษร' using errcode = 'check_violation';
+      end if;
+      v_rejected := v_rejected + 1;
+    else
+      v_dec_reason := null;
+      v_applied := v_applied + 1;
+    end if;
+    if v_map ? v_dec_id then
+      raise exception 'มีการตัดสินซ้ำสำหรับรายการเดียวกัน' using errcode = 'check_violation';
+    end if;
+    v_map := v_map || jsonb_build_object(v_dec_id, jsonb_build_object('decision', v_decision, 'reason', v_dec_reason));
+  end loop;
+  if v_req.request_type = 'revoke_all' then
+    if jsonb_array_length(v_decisions) > 0 then
+      raise exception 'ใบยกเลิกสิทธิ์ทั้งหมดไม่มีรายการให้ตัดสิน' using errcode = 'check_violation';
+    end if;
+  else
+    if jsonb_array_length(v_decisions) <> v_total then
+      raise exception 'ต้องตัดสินให้ครบทุกรายการของใบ (บันทึกลงทะเบียน หรือไม่บันทึกพร้อมเหตุผล)' using errcode = 'check_violation';
+    end if;
+    if v_applied = 0 then
+      raise exception 'ต้องบันทึกลงทะเบียนอย่างน้อยหนึ่งรายการ (ถ้าไม่ดำเนินการเลย ให้ยกเลิกใบพร้อมเหตุผลแทน)' using errcode = 'check_violation';
+    end if;
+  end if;
+
+  -- 2) หาผู้ใช้ในทะเบียน
+  if v_req.request_type = 'new' then
+    if p_user_id is not null or v_req.subject_user_id is not null then
+      raise exception 'ใบขอสิทธิ์ใหม่สร้างผู้ใช้ใหม่ในทะเบียน ไม่ต้องเลือกผู้ใช้เดิม' using errcode = 'check_violation';
+    end if;
+    v_new := coalesce(p_new_user, '{}'::jsonb);
+    if jsonb_typeof(v_new) <> 'object' or private.itar_clean(v_new ->> 'auth_id') is null then
+      raise exception 'กรุณาระบุ Auth. Name ของผู้ใช้ใหม่ (เช่น somchai.k)' using errcode = 'check_violation';
+    end if;
+    -- ข้อมูลผู้ใช้ใหม่: ชื่อ/แผนก/ฝ่ายจาก snapshot ของใบ (แก้ชื่อได้ผ่าน p_new_user) · ลงเลขใบและวันที่ให้สิทธิ์ตั้งแต่สร้าง
+    v_data := jsonb_strip_nulls(jsonb_build_object(
+      'auth_id', v_new ->> 'auth_id',
+      'name_th', coalesce(private.itar_clean(v_new ->> 'name_th'), v_req.subject_name_th),
+      'name_en', coalesce(private.itar_clean(v_new ->> 'name_en'), v_req.subject_name_en),
+      'department_code', v_req.subject_department_code,
+      'division', v_req.subject_division,
+      'granted_doc_no', v_req.doc_no,
+      'granted_on', v_today,
+      'employee_id', v_req.subject_employee_id));
+  else
+    v_user_id := coalesce(v_req.subject_user_id, p_user_id);
+    if v_req.subject_user_id is not null and p_user_id is not null and p_user_id <> v_req.subject_user_id then
+      raise exception 'ใบนี้ผูกกับผู้ใช้ในทะเบียนไว้แล้ว เลือกผู้ใช้อื่นไม่ได้' using errcode = 'check_violation';
+    end if;
+    if v_user_id is null then
+      raise exception 'กรุณาเลือกผู้ใช้ในทะเบียนสิทธิ์ที่ตรงกับผู้รับสิทธิ์' using errcode = 'check_violation';
+    end if;
+    select * into v_user from public.itua_users u where u.id = v_user_id and u.is_test = v_req.is_test;
+    if v_user.id is null then
+      raise exception 'ไม่พบผู้ใช้นี้ในทะเบียนสิทธิ์' using errcode = 'check_violation';
+    end if;
+    if v_user.status <> 'active' then
+      raise exception 'ผู้ใช้นี้ลาออกแล้วในทะเบียนสิทธิ์ บันทึกสิทธิ์ตามใบนี้ไม่ได้' using errcode = 'check_violation';
+    end if;
+    if v_req.subject_employee_id is not null and v_user.employee_id is not null and v_user.employee_id <> v_req.subject_employee_id then
+      raise exception 'ผู้ใช้ในทะเบียนนี้ผูกกับพนักงานคนอื่น เลือกผู้ใช้ไม่ตรงกับผู้รับสิทธิ์' using errcode = 'check_violation';
+    end if;
+    v_link := coalesce(p_link_employee, false) and v_req.subject_employee_id is not null and v_user.employee_id is null;
+  end if;
+
+  -- 3) เหตุการณ์ applied ก่อนเขียนทะเบียน: เป็นหลักฐานที่มาของ itua_log (private.itua_log ตรวจกับเหตุการณ์นี้) · ทั้งใบ rollback ได้ถ้าข้อใดล้ม
+  insert into public.itar_events (is_test, request_id, actor_id, action, reason)
+  values (v_req.is_test, v_req.id, v_actor.id, 'applied',
+          case when v_req.request_type = 'revoke_all'
+               then 'IT ถอดสิทธิ์ทั้งหมด ปิดอีเมล และเปลี่ยนสถานะผู้ใช้เป็นลาออกในทะเบียนแล้ว (ไม่ต้องรอรับทราบ)'
+               else 'IT บันทึกสิทธิ์ลงทะเบียนแล้ว ' || v_applied || ' รายการ'
+                    || case when v_rejected > 0 then ' ไม่บันทึก ' || v_rejected || ' รายการ' else '' end end)
+  returning itar_events.id into v_event_id;
+
+  for v_item in select * from public.itar_request_items i where i.request_id = v_req.id order by i.line_no loop
+    v_dec := v_map -> v_item.id::text;
+    insert into public.itar_item_results (is_test, request_id, item_id, decision, reason, decided_by)
+    values (v_req.is_test, v_req.id, v_item.id, v_dec ->> 'decision', v_dec ->> 'reason', v_actor.id);
+    v_summary_items := v_summary_items || jsonb_build_array(jsonb_build_object(
+      'line_no', v_item.line_no, 'kind', v_item.kind, 'target', v_item.target, 'to', v_item.to_value,
+      'decision', v_dec ->> 'decision', 'reason', v_dec ->> 'reason'));
+  end loop;
+
+  perform private.itar_begin_apply(v_event_id);
+
+  -- 4) เขียนทะเบียน (ผ่าน RPC ของทะเบียนเดิมทั้งหมด จึงตรวจสิทธิ์/ค่าเดิม/ลง itua_log ตามกติกาของทะเบียน)
+  if v_req.request_type = 'new' then
+    v_new := public.app_itua_save_user(null, v_data, null, null);
+    v_user_id := (v_new -> 'user' ->> 'id')::uuid;
+  end if;
+  v_before := private.itar_subject_rights(v_user_id);
+
+  if v_req.request_type = 'revoke_all' then
+    -- ถอดสิทธิ์ทั้งหมดที่มีอยู่ตามทะเบียนตอนนี้ (ค่าเดิมอ่านจากทะเบียนเอง)
+    for v_grant in
+      select f.code as code, g.level as level
+      from public.itua_folder_grants g join public.itua_folders f on f.id = g.folder_id
+      where g.user_id = v_user_id order by f.code
+    loop
+      v_changes := v_changes || jsonb_build_array(jsonb_build_object('kind', 'folder', 'code', v_grant.code, 'from', v_grant.level, 'to', null));
+    end loop;
+    if (select u.internet from public.itua_users u where u.id = v_user_id) then
+      v_changes := v_changes || jsonb_build_array(jsonb_build_object('kind', 'internet', 'from', true, 'to', false));
+    end if;
+    for v_grant in
+      select p.code as code
+      from public.itua_program_grants g join public.itua_programs p on p.id = g.program_id
+      where g.user_id = v_user_id order by p.code
+    loop
+      v_changes := v_changes || jsonb_build_array(jsonb_build_object('kind', 'program', 'code', v_grant.code, 'from', true, 'to', false));
+    end loop;
+    if jsonb_array_length(v_changes) > 0 then
+      perform public.app_itua_set_grants(v_user_id, v_changes, v_reg_reason || ' (ยกเลิกสิทธิ์ทั้งหมด)');
+    end if;
+    for v_email in select * from public.itua_emails m where m.user_id = v_user_id and m.status = 'active' order by m.address loop
+      perform public.app_itua_close_email(v_email.id, v_reg_reason || ' (ยกเลิกสิทธิ์ทั้งหมด)');
+    end loop;
+    perform public.app_itua_set_status(v_user_id, 'resigned', v_reg_reason || ' (ลาออก/ยกเลิกสิทธิ์ทั้งหมด)');
+  else
+    -- (ก) โฟลเดอร์/อินเทอร์เน็ต/โปรแกรม: รวมเป็นชุดเดียวให้ app_itua_set_grants (atomic) · ค่าเดิมของรายการที่ผู้ยื่นเห็น (from_known) ต้องตรงกับทะเบียน (set_grants ตรวจให้ = 40001)
+    --      ผู้รับสิทธิ์ที่ยังไม่ผูกทะเบียนตอนยื่น (ไม่รู้ค่าเดิม): อ่านค่าเดิมจากทะเบียนตอนนี้ ถ้าตรงกับที่ขออยู่แล้วให้ IT เลือก "ไม่บันทึก" แทน
+    for v_item in select * from public.itar_request_items i where i.request_id = v_req.id and i.kind in ('folder', 'internet', 'program') order by i.line_no loop
+      continue when (v_map -> v_item.id::text ->> 'decision') <> 'applied';
+      if v_item.kind = 'folder' then
+        v_label := 'โฟลเดอร์ ' || v_item.target;
+        v_to_level := v_item.to_value;
+        if v_item.from_known then
+          v_from_level := v_item.from_value;
+        else
+          select g.level into v_from_level
+          from public.itua_folder_grants g join public.itua_folders f on f.id = g.folder_id
+          where g.user_id = v_user_id and f.code = v_item.target and f.is_test = v_req.is_test;
+          if v_from_level is not distinct from v_to_level then
+            raise exception '%: ทะเบียนมีสิทธิ์ตามที่ขออยู่แล้ว กรุณาเลือก "ไม่บันทึก" พร้อมเหตุผล', v_label using errcode = 'check_violation';
+          end if;
+        end if;
+        v_changes := v_changes || jsonb_build_array(jsonb_build_object(
+          'kind', 'folder', 'code', v_item.target, 'from', v_from_level, 'to', v_to_level));
+      elsif v_item.kind = 'internet' then
+        v_label := 'อินเทอร์เน็ต';
+        v_to_flag := v_item.to_value::boolean;
+        if v_item.from_known then
+          v_from_flag := v_item.from_value::boolean;
+        else
+          select u.internet into v_from_flag from public.itua_users u where u.id = v_user_id;
+          if v_from_flag = v_to_flag then
+            raise exception '%: ทะเบียนมีสิทธิ์ตามที่ขออยู่แล้ว กรุณาเลือก "ไม่บันทึก" พร้อมเหตุผล', v_label using errcode = 'check_violation';
+          end if;
+        end if;
+        v_changes := v_changes || jsonb_build_array(jsonb_build_object('kind', 'internet', 'from', v_from_flag, 'to', v_to_flag));
+      else
+        v_label := 'โปรแกรม ' || v_item.target;
+        v_to_flag := v_item.to_value::boolean;
+        if v_item.from_known then
+          v_from_flag := v_item.from_value::boolean;
+        else
+          select exists (
+            select 1 from public.itua_program_grants g join public.itua_programs p on p.id = g.program_id
+            where g.user_id = v_user_id and p.code = v_item.target and p.is_test = v_req.is_test) into v_cur_exists;
+          v_from_flag := v_cur_exists;
+          if v_from_flag = v_to_flag then
+            raise exception '%: ทะเบียนมีสิทธิ์ตามที่ขออยู่แล้ว กรุณาเลือก "ไม่บันทึก" พร้อมเหตุผล', v_label using errcode = 'check_violation';
+          end if;
+        end if;
+        v_changes := v_changes || jsonb_build_array(jsonb_strip_nulls(jsonb_build_object(
+          'kind', 'program', 'code', v_item.target, 'from', v_from_flag, 'to', v_to_flag, 'note', v_item.note)));
+      end if;
+    end loop;
+    if jsonb_array_length(v_changes) > 0 then
+      perform public.app_itua_set_grants(v_user_id, v_changes, v_reg_reason);
+    end if;
+
+    -- (ข) อีเมล: เพิ่ม/ปิดทีละรายการ (ที่อยู่ซ้ำ/อีเมลภายในซ้ำ/ไม่พบอีเมล = ทะเบียน raise ข้อความไทยและทั้งใบ rollback)
+    for v_item in select * from public.itar_request_items i where i.request_id = v_req.id and i.kind = 'email' order by i.line_no loop
+      continue when (v_map -> v_item.id::text ->> 'decision') <> 'applied';
+      if v_item.to_value = 'add' then
+        perform public.app_itua_add_email(v_user_id, v_item.target, v_item.email_kind, v_reg_reason);
+      else
+        select * into v_email from public.itua_emails m where m.user_id = v_user_id and m.address = v_item.target and m.status = 'active';
+        if v_email.id is null then
+          raise exception 'อีเมล %: ไม่พบอีเมลนี้ที่ใช้งานอยู่ของผู้ใช้ในทะเบียน กรุณาเลือก "ไม่บันทึก" พร้อมเหตุผล', v_item.target using errcode = 'check_violation';
+        end if;
+        perform public.app_itua_close_email(v_email.id, v_reg_reason);
+      end if;
+    end loop;
+
+    -- (ค) เลขใบ/วันที่ให้สิทธิ์ล่าสุดของผู้ใช้ (ผู้ใช้ใหม่ลงตั้งแต่สร้างแล้ว) · ผูกพนักงานให้เมื่อ IT สั่ง
+    if v_req.request_type = 'change' then
+      select * into v_user from public.itua_users u where u.id = v_user_id;
+      v_data := jsonb_build_object('granted_doc_no', v_req.doc_no, 'granted_on', v_today);
+      if v_link then
+        v_data := v_data || jsonb_build_object('employee_id', v_req.subject_employee_id);
+      end if;
+      perform public.app_itua_save_user(v_user_id, v_data, v_reg_reason, v_user.updated_at);
+    end if;
+  end if;
+
+  v_after := private.itar_subject_rights(v_user_id);
+  perform private.itar_end_apply();
+
+  v_new_status := case when v_req.request_type = 'revoke_all' then 'done' else 'awaiting_ack' end;
+  update public.itar_requests
+  set status = v_new_status,
+      subject_user_id = v_user_id,
+      applied_summary = jsonb_build_object(
+        'before', v_before, 'after', v_after, 'items', v_summary_items,
+        'applied_count', v_applied, 'rejected_count', v_rejected, 'user_id', v_user_id)
+  where id = v_req.id;
+
+  return jsonb_build_object('status', v_new_status, 'user_id', v_user_id, 'doc_no', v_req.doc_no,
+                            'applied', v_applied, 'rejected', v_rejected);
+end;
+$$;
+
+-- 15. รับทราบสิทธิ์ ------------------------------------------------------------------------------
+-- ผู้รับสิทธิ์ที่มีบัญชีกด "รับทราบและยอมรับนโยบาย" เอง (ชื่อ + วันเวลา = ลายเซ็นอิเล็กทรอนิกส์) · เก็บ snapshot สิทธิ์ทั้งหมดหลังเปลี่ยนลง itua_acknowledgements · ใบจบ
+create or replace function public.app_itar_acknowledge(p_request_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_req public.itar_requests%rowtype;
+  v_policy jsonb := private.itar_policy();
+  v_rights jsonb;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+
+  select * into v_req from public.itar_requests w where w.id = p_request_id for update;
+  if v_req.id is null or v_req.is_test <> v_actor.is_test or not private.itar_can_view(v_req, v_actor) then
+    raise exception 'ไม่พบใบขอสิทธิ์นี้' using errcode = 'check_violation';
+  end if;
+  if v_req.subject_employee_id is distinct from v_actor.id then
+    raise exception 'เฉพาะผู้รับสิทธิ์เท่านั้นที่กดรับทราบสิทธิ์ของตัวเองได้' using errcode = 'insufficient_privilege';
+  end if;
+  if v_req.status <> 'awaiting_ack' then
+    raise exception '%', case when v_req.status = 'done' then 'ใบขอสิทธิ์นี้รับทราบและจบงานแล้ว' else private.itar_status_message(v_req.status) end
+      using errcode = 'check_violation';
+  end if;
+  v_rights := private.itar_subject_rights(v_req.subject_user_id);
+  if v_rights is null then
+    raise exception 'ไม่พบผู้ใช้ในทะเบียนสิทธิ์ของใบนี้ กรุณาติดต่อ IT' using errcode = 'check_violation';
+  end if;
+
+  insert into public.itua_acknowledgements (is_test, user_id, request_id, acknowledged_by, snapshot, policy_version)
+  values (v_req.is_test, v_req.subject_user_id, v_req.id, v_actor.id,
+          v_rights || jsonb_build_object('method', 'online', 'doc_no', v_req.doc_no, 'policy_text', v_policy ->> 'text'),
+          v_policy ->> 'version');
+  insert into public.itar_events (is_test, request_id, actor_id, action, reason)
+  values (v_req.is_test, v_req.id, v_actor.id, 'acknowledged', 'ผู้ใช้รับทราบสิทธิ์และยอมรับนโยบาย (' || (v_policy ->> 'version') || ')');
+  update public.itar_requests set status = 'done' where id = v_req.id;
+
+  return jsonb_build_object('status', 'done', 'doc_no', v_req.doc_no);
+end;
+$$;
+
+-- IT กด "รับทราบแล้ว (กระดาษ)" แทนผู้รับสิทธิ์ที่ไม่มีบัญชี · ต้องแนบรูปใบที่เซ็นแล้วอย่างน้อย 1 ไฟล์ (app_itar_add_paper_attachment) · เก็บ snapshot ลง itua_acknowledgements (method = paper)
+create or replace function public.app_itar_acknowledge_paper(p_request_id uuid, p_note text default null)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_req public.itar_requests%rowtype;
+  v_note text := private.itar_clean(p_note);
+  v_policy jsonb := private.itar_policy();
+  v_rights jsonb;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+  if not private.itar_is_it_admin(v_actor.id) then
+    raise exception 'เฉพาะผู้ดูแลงาน IT เท่านั้นที่บันทึกการรับทราบด้วยกระดาษได้' using errcode = 'insufficient_privilege';
+  end if;
+  if v_note is not null and char_length(v_note) > 300 then
+    raise exception 'หมายเหตุต้องไม่เกิน 300 ตัวอักษร' using errcode = 'check_violation';
+  end if;
+
+  select * into v_req from public.itar_requests w where w.id = p_request_id for update;
+  if v_req.id is null or v_req.is_test <> v_actor.is_test then
+    raise exception 'ไม่พบใบขอสิทธิ์นี้' using errcode = 'check_violation';
+  end if;
+  if v_req.status <> 'awaiting_ack' then
+    raise exception '%', private.itar_status_message(v_req.status) using errcode = 'check_violation';
+  end if;
+  if v_req.subject_employee_id is not null then
+    raise exception 'ผู้รับสิทธิ์คนนี้มีบัญชีในระบบ ต้องกดรับทราบเองในระบบ (ไม่ใช้ใบกระดาษ)' using errcode = 'check_violation';
+  end if;
+  if not exists (select 1 from public.itar_attachments a where a.request_id = v_req.id and a.is_paper_ack) then
+    raise exception 'กรุณาแนบรูปใบรับทราบที่เซ็นแล้วอย่างน้อย 1 ไฟล์ก่อน' using errcode = 'check_violation';
+  end if;
+  v_rights := private.itar_subject_rights(v_req.subject_user_id);
+  if v_rights is null then
+    raise exception 'ไม่พบผู้ใช้ในทะเบียนสิทธิ์ของใบนี้' using errcode = 'check_violation';
+  end if;
+
+  insert into public.itua_acknowledgements (is_test, user_id, request_id, acknowledged_by, snapshot, policy_version)
+  values (v_req.is_test, v_req.subject_user_id, v_req.id, v_actor.id,
+          v_rights || jsonb_build_object('method', 'paper', 'doc_no', v_req.doc_no, 'policy_text', v_policy ->> 'text', 'note', v_note),
+          v_policy ->> 'version');
+  insert into public.itar_events (is_test, request_id, actor_id, action, reason)
+  values (v_req.is_test, v_req.id, v_actor.id, 'acknowledged',
+          'IT บันทึกการรับทราบด้วยกระดาษ (แนบรูปใบที่เซ็นแล้ว)' || case when v_note is not null then ': ' || v_note else '' end);
+  update public.itar_requests set status = 'done' where id = v_req.id;
+
+  return jsonb_build_object('status', 'done', 'doc_no', v_req.doc_no);
+end;
+$$;
+
+-- 16. อ่านข้อมูล ----------------------------------------------------------------------
+-- รายละเอียดใบ (ผู้ยื่น/ผู้รับสิทธิ์/ทีม IT/ผู้อนุมัติแผนกของใบนั้น) · สิทธิ์ที่แสดงมีเฉพาะของผู้รับสิทธิ์ในใบนี้ (ไม่เปิดทะเบียนคนอื่น ไม่มีรหัสผ่าน/ช่องลับ)
+create or replace function public.app_itar_get_detail(p_request_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_req public.itar_requests%rowtype;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+  select * into v_req from public.itar_requests w where w.id = p_request_id;
+  if v_req.id is null or not private.itar_can_view(v_req, v_actor) then
+    raise exception 'ไม่พบใบขอสิทธิ์นี้หรือคุณไม่มีสิทธิ์ดูใบนี้' using errcode = 'insufficient_privilege';
+  end if;
+
+  return jsonb_build_object(
+    'id', v_req.id,
+    'is_test', v_req.is_test,
+    'doc_no', v_req.doc_no,
+    'doc_year', v_req.doc_year,
+    'doc_seq', v_req.doc_seq,
+    'request_type', v_req.request_type,
+    'reason', v_req.reason,
+    'status', v_req.status,
+    'info_return_status', v_req.info_return_status,
+    'created_at', v_req.created_at,
+    'requester_id', v_req.requester_id,
+    'department_id', v_req.department_id,
+    'requester', (
+      select jsonb_build_object('employee_no', r.employee_no, 'full_name', r.first_name || ' ' || r.last_name)
+      from public.employees r where r.id = v_req.requester_id),
+    'department', (
+      select jsonb_build_object('code', d.code, 'name_th', d.name_th)
+      from public.departments d where d.id = v_req.department_id),
+    -- ผู้รับสิทธิ์: snapshot ตอนยื่น · has_account = มีบัญชีพนักงาน (รับทราบในเว็บ) · user_id = ผู้ใช้ในทะเบียนที่ผูกแล้ว
+    'subject', jsonb_build_object(
+      'employee_id', v_req.subject_employee_id,
+      'employee_no', (select s.employee_no from public.employees s where s.id = v_req.subject_employee_id),
+      'user_id', v_req.subject_user_id,
+      'name_th', v_req.subject_name_th,
+      'name_en', v_req.subject_name_en,
+      'department_code', v_req.subject_department_code,
+      'division', v_req.subject_division,
+      'has_account', v_req.subject_employee_id is not null),
+    -- รายการสิทธิ์ที่ขอ (ก่อน -> หลัง) พร้อมผลที่ IT ตัดสิน (ถ้าตัดสินแล้ว)
+    'items', (
+      select coalesce(jsonb_agg(jsonb_build_object(
+               'id', i.id,
+               'line_no', i.line_no,
+               'kind', i.kind,
+               'target', i.target,
+               'target_name', case i.kind
+                 when 'folder' then (select f.name from public.itua_folders f where f.is_test = v_req.is_test and f.code = i.target)
+                 when 'program' then (select p.name from public.itua_programs p where p.is_test = v_req.is_test and p.code = i.target) end,
+               'from_known', i.from_known,
+               'from_value', i.from_value,
+               'to_value', i.to_value,
+               'note', i.note,
+               'email_kind', i.email_kind,
+               'result', (select jsonb_build_object('decision', r.decision, 'reason', r.reason, 'at', r.created_at)
+                          from public.itar_item_results r where r.item_id = i.id)
+             ) order by i.line_no), '[]'::jsonb)
+      from public.itar_request_items i where i.request_id = v_req.id),
+    -- สิทธิ์ปัจจุบันของผู้รับสิทธิ์ในทะเบียน (ถ้าผูกแล้ว)
+    'subject_rights', case when v_req.subject_user_id is not null then private.itar_subject_rights(v_req.subject_user_id) end,
+    'applied_summary', v_req.applied_summary,
+    -- ประวัติ ISO เรียงตาม id (identity = ลำดับเหตุการณ์จริง) พร้อมชื่อผู้ทำ
+    'events', (
+      select coalesce(jsonb_agg(jsonb_build_object(
+               'id', ev.id,
+               'action', ev.action,
+               'reason', ev.reason,
+               'created_at', ev.created_at,
+               'actor_employee_no', a.employee_no,
+               'actor_full_name', a.first_name || ' ' || a.last_name
+             ) order by ev.id), '[]'::jsonb)
+      from public.itar_events ev
+      join public.employees a on a.id = ev.actor_id
+      where ev.request_id = v_req.id),
+    -- ไฟล์ตอนยื่น (ไฟล์ของข้อความถาม/ตอบอยู่ใน comments[].attachments · รูปใบรับทราบกระดาษอยู่ใน paper_attachments)
+    'attachments', (
+      select coalesce(jsonb_agg(jsonb_build_object(
+               'id', att.id,
+               'storage_path', att.storage_path,
+               'bucket', case when att.is_test then 'itar-test-files' else 'itar-files' end,
+               'file_name', att.file_name,
+               'mime_type', att.mime_type,
+               'size_bytes', att.size_bytes,
+               'created_at', att.created_at,
+               'uploaded_by_full_name', a.first_name || ' ' || a.last_name
+             ) order by att.created_at, att.id), '[]'::jsonb)
+      from public.itar_attachments att
+      join public.employees a on a.id = att.uploaded_by
+      where att.request_id = v_req.id and att.comment_id is null and not att.is_paper_ack),
+    'paper_attachments', (
+      select coalesce(jsonb_agg(jsonb_build_object(
+               'id', att.id,
+               'storage_path', att.storage_path,
+               'bucket', case when att.is_test then 'itar-test-files' else 'itar-files' end,
+               'file_name', att.file_name,
+               'mime_type', att.mime_type,
+               'size_bytes', att.size_bytes,
+               'created_at', att.created_at,
+               'uploaded_by_full_name', a.first_name || ' ' || a.last_name
+             ) order by att.created_at, att.id), '[]'::jsonb)
+      from public.itar_attachments att
+      join public.employees a on a.id = att.uploaded_by
+      where att.request_id = v_req.id and att.is_paper_ack),
+    -- ถามตอบ (ทุกคนที่เห็นใบเห็นครบ) เรียงตามลำดับจริง (id)
+    'comments', (
+      select coalesce(jsonb_agg(jsonb_build_object(
+               'id', c.id,
+               'kind', c.kind,
+               'stage', c.stage,
+               'body', c.body,
+               'reply_to', c.reply_to,
+               'created_at', c.created_at,
+               'author_employee_no', a.employee_no,
+               'author_full_name', a.first_name || ' ' || a.last_name,
+               'attachments', (
+                 select coalesce(jsonb_agg(jsonb_build_object(
+                          'id', att.id,
+                          'storage_path', att.storage_path,
+                          'bucket', case when att.is_test then 'itar-test-files' else 'itar-files' end,
+                          'file_name', att.file_name,
+                          'mime_type', att.mime_type,
+                          'size_bytes', att.size_bytes,
+                          'created_at', att.created_at
+                        ) order by att.created_at, att.id), '[]'::jsonb)
+                 from public.itar_attachments att
+                 where att.comment_id = c.id)
+             ) order by c.id), '[]'::jsonb)
+      from public.itar_comments c
+      join public.employees a on a.id = c.author_id
+      where c.request_id = v_req.id),
+    -- คำถามที่ค้างอยู่ (เฉพาะตอนใบ need_info) ไม่มี = null
+    'info_pending', case when v_req.status = 'need_info' then (
+      select jsonb_build_object(
+               'comment_id', q.id,
+               'stage', q.stage,
+               'body', q.body,
+               'asked_at', q.created_at,
+               'asked_by_employee_no', a.employee_no,
+               'asked_by_full_name', a.first_name || ' ' || a.last_name)
+      from public.itar_comments q
+      join public.employees a on a.id = q.author_id
+      where q.id = (private.itar_pending_question(v_req.id)).id) end,
+    -- ลายเซ็นอนุมัติ (event แรกของแต่ละขั้น) ยังไม่อนุมัติ = null
+    'approvals', jsonb_build_object(
+      'dept', (
+        select jsonb_build_object('by', a.first_name || ' ' || a.last_name, 'at', ev.created_at, 'reason', ev.reason)
+        from public.itar_events ev join public.employees a on a.id = ev.actor_id
+        where ev.request_id = v_req.id and ev.action = 'dept_approved'
+        order by ev.id limit 1),
+      'it_mgr', (
+        select jsonb_build_object('by', a.first_name || ' ' || a.last_name, 'at', ev.created_at, 'reason', ev.reason)
+        from public.itar_events ev join public.employees a on a.id = ev.actor_id
+        where ev.request_id = v_req.id and ev.action = 'it_mgr_approved'
+        order by ev.id limit 1)
+    ),
+    -- ช่องลงนามบนใบพิมพ์: IT ผู้บันทึกสิทธิ์ (applied) · ผู้รับสิทธิ์รับทราบ (acknowledged · online = ผู้รับสิทธิ์เอง / paper = IT บันทึกแทน)
+    'started', (
+      select jsonb_build_object('by', a.first_name || ' ' || a.last_name, 'at', ev.created_at)
+      from public.itar_events ev join public.employees a on a.id = ev.actor_id
+      where ev.request_id = v_req.id and ev.action = 'started'
+      order by ev.id limit 1),
+    'applied', (
+      select jsonb_build_object('by', a.first_name || ' ' || a.last_name, 'at', ev.created_at, 'reason', ev.reason)
+      from public.itar_events ev join public.employees a on a.id = ev.actor_id
+      where ev.request_id = v_req.id and ev.action = 'applied'
+      order by ev.id limit 1),
+    'acknowledged', (
+      select jsonb_build_object('by', a.first_name || ' ' || a.last_name, 'at', ev.created_at, 'reason', ev.reason,
+                                'method', case when ev.actor_id = v_req.subject_employee_id then 'online' else 'paper' end)
+      from public.itar_events ev join public.employees a on a.id = ev.actor_id
+      where ev.request_id = v_req.id and ev.action = 'acknowledged'
+      order by ev.id desc limit 1),
+    'policy', private.itar_policy(),
+    'allowed_actions', to_jsonb(private.itar_allowed_actions(v_req, v_actor))
+  );
+end;
+$$;
+
+-- ใบของฉัน: ที่ผู้ทำรายการเป็นผู้ยื่น หรือเป็นผู้รับสิทธิ์ (needs_my_ack = ใบที่รอตัวเองกดรับทราบ)
+create or replace function public.app_itar_list_mine()
+returns table(
+  id uuid, doc_no text, status text, request_type text, subject_name text, department_name text, requester_name text,
+  created_at timestamptz, item_count integer, info_return_status text, info_stage text, is_requester boolean, needs_my_ack boolean)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+  return query
+  select rq.id, rq.doc_no, rq.status, rq.request_type, private.itar_subject_name(rq), d.name_th,
+         req.first_name || ' ' || req.last_name, rq.created_at,
+         (select count(*)::integer from public.itar_request_items i where i.request_id = rq.id),
+         rq.info_return_status,
+         case when rq.status = 'need_info' then (private.itar_pending_question(rq.id)).stage end,
+         rq.requester_id = v_actor.id,
+         rq.status = 'awaiting_ack' and rq.subject_employee_id = v_actor.id
+  from public.itar_requests rq
+  join public.departments d on d.id = rq.department_id
+  join public.employees req on req.id = rq.requester_id
+  where rq.is_test = v_actor.is_test
+    and (rq.requester_id = v_actor.id or rq.subject_employee_id = v_actor.id)
+  order by rq.created_at desc, rq.doc_year desc, rq.doc_seq desc;
+end;
+$$;
+
+-- รออนุมัติ: ใบที่ผู้ทำรายการเป็นผู้พิจารณาของขั้นที่ค้างอยู่ (ขั้นแผนกหรือขั้น IT) · ใบ need_info (รอผู้ยื่นตอบ) แสดงด้วยให้ผู้อนุมัติเห็นว่ายังค้างคำตอบ
+-- ปุ่มที่กดได้จริงดูจาก allowed_actions ของ app_itar_get_detail (ระหว่างรอผู้ยื่นตอบ อนุมัติ/ไม่อนุมัติไม่ได้)
+create or replace function public.app_itar_list_pending_approvals()
+returns table(
+  id uuid, doc_no text, status text, request_type text, subject_name text, department_name text, requester_name text,
+  created_at timestamptz, item_count integer, pending_step text, info_return_status text, info_stage text)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+  return query
+  select rq.id, rq.doc_no, rq.status, rq.request_type, private.itar_subject_name(rq), d.name_th,
+         req.first_name || ' ' || req.last_name, rq.created_at,
+         (select count(*)::integer from public.itar_request_items i where i.request_id = rq.id),
+         case when caps.can_it then 'it_mgr' else 'dept' end,
+         rq.info_return_status,
+         case when rq.status = 'need_info' then (private.itar_pending_question(rq.id)).stage end
+  from public.itar_requests rq
+  join public.departments d on d.id = rq.department_id
+  join public.employees req on req.id = rq.requester_id
+  cross join lateral private.itar_approval_caps(rq.id, v_actor.id) caps
+  where rq.is_test = v_actor.is_test
+    and rq.requester_id <> v_actor.id
+    and rq.status in ('pending_dept', 'pending_it_mgr', 'need_info')
+    and (caps.can_dept or caps.can_it)
+  order by rq.created_at, rq.doc_year, rq.doc_seq;
+end;
+$$;
+
+-- จำนวนใบที่รอผู้ทำรายการอนุมัติ (ป้ายตัวเลข)
+create or replace function public.app_itar_pending_count()
+returns integer
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_count integer;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+  select count(*)::integer into v_count
+  from public.itar_requests rq
+  cross join lateral private.itar_approval_caps(rq.id, v_actor.id) caps
+  where rq.is_test = v_actor.is_test
+    and rq.requester_id <> v_actor.id
+    and rq.status in ('pending_dept', 'pending_it_mgr')
+    and (caps.can_dept or caps.can_it);
+  return v_count;
+end;
+$$;
+
+-- งาน IT: ทุกใบในโหมดของผู้ทำรายการ (ทีม IT ใน itwo_staff เท่านั้น รวมหัวหน้า IT ดูอย่างเดียว) ใบที่รอ IT ลงมือ (อนุมัติครบ/กำลังดำเนินการ) อยู่บนสุด
+create or replace function public.app_itar_list_it()
+returns table(
+  id uuid, doc_no text, status text, request_type text, subject_name text, department_name text, requester_name text,
+  created_at timestamptz, item_count integer, has_dept_approved boolean, has_it_mgr_approved boolean,
+  info_return_status text, info_stage text)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+  if not private.itar_is_staff(v_actor.id) then
+    raise exception 'เฉพาะทีม IT เท่านั้นที่ดูรายการงานทั้งหมดได้' using errcode = 'insufficient_privilege';
+  end if;
+  return query
+  select rq.id, rq.doc_no, rq.status, rq.request_type, private.itar_subject_name(rq), d.name_th,
+         req.first_name || ' ' || req.last_name, rq.created_at,
+         (select count(*)::integer from public.itar_request_items i where i.request_id = rq.id),
+         exists (select 1 from public.itar_events ev where ev.request_id = rq.id and ev.action = 'dept_approved'),
+         exists (select 1 from public.itar_events ev where ev.request_id = rq.id and ev.action = 'it_mgr_approved'),
+         rq.info_return_status,
+         case when rq.status = 'need_info' then (private.itar_pending_question(rq.id)).stage end
+  from public.itar_requests rq
+  join public.departments d on d.id = rq.department_id
+  join public.employees req on req.id = rq.requester_id
+  where rq.is_test = v_actor.is_test
+  order by (rq.status in ('approved', 'in_progress')) desc, rq.created_at, rq.doc_year, rq.doc_seq;
+end;
+$$;
+
+-- 17. เลขที่เอกสาร + รายชื่อทีม IT (อ่านอย่างเดียว) ---------------------------------------------
+-- ดูตัวนับเลขที่เอกสาร (ผู้ดูแลงาน IT เท่านั้น)
+create or replace function public.app_itar_get_doc_counter(p_year integer default null)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_year integer := coalesce(p_year, extract(year from (now() at time zone 'Asia/Bangkok'))::integer);
+  v_last integer;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+  if not private.itar_is_it_admin(v_actor.id) then
+    raise exception 'เฉพาะผู้ดูแลงาน IT เท่านั้นที่ดูตัวนับเลขที่เอกสารได้' using errcode = 'insufficient_privilege';
+  end if;
+  select coalesce(max(c.last_seq), 0) into v_last
+  from public.itar_doc_counters c where c.is_test = v_actor.is_test and c.doc_year = v_year;
+  return jsonb_build_object(
+    'year', v_year, 'last_seq', v_last, 'next_seq', v_last + 1,
+    'next_doc_no', private.itar_format_doc_no(v_actor.is_test, v_year, v_last + 1),
+    'is_test', v_actor.is_test);
+end;
+$$;
+
+-- ตั้งเลขที่เอกสารถัดไป (เดินหน้าอย่างเดียว ห้ามถอยหรือชนเลขที่ใช้แล้ว · ตั้งตามโหมดของผู้ทำรายการ) พร้อมบันทึกลง itar_admin_log
+create or replace function public.app_itar_set_next_doc_seq(p_next integer, p_year integer default null)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+  v_this_year integer := extract(year from (now() at time zone 'Asia/Bangkok'))::integer;
+  v_year integer := coalesce(p_year, extract(year from (now() at time zone 'Asia/Bangkok'))::integer);
+  v_last integer;
+  v_max_used integer;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+  if not private.itar_is_it_admin(v_actor.id) then
+    raise exception 'เฉพาะผู้ดูแลงาน IT เท่านั้นที่ตั้งเลขที่เอกสารถัดไปได้' using errcode = 'insufficient_privilege';
+  end if;
+  if p_next is null or p_next < 1 or p_next > 9999 then
+    raise exception 'เลขถัดไปต้องเป็นจำนวนเต็ม 1 ถึง 9999' using errcode = 'check_violation';
+  end if;
+  if v_year < v_this_year or v_year > v_this_year + 1 then
+    raise exception 'ตั้งเลขได้เฉพาะปีนี้หรือปีหน้า' using errcode = 'check_violation';
+  end if;
+
+  -- ล็อกแถวตัวนับ (สร้างถ้ายังไม่มี) กันชนกับการออกเลขที่กำลังเกิดขึ้น
+  insert into public.itar_doc_counters (is_test, doc_year, last_seq)
+  values (v_actor.is_test, v_year, 0)
+  on conflict (is_test, doc_year) do nothing;
+  select c.last_seq into v_last
+  from public.itar_doc_counters c
+  where c.is_test = v_actor.is_test and c.doc_year = v_year
+  for update;
+  select coalesce(max(rq.doc_seq), 0) into v_max_used
+  from public.itar_requests rq
+  where rq.is_test = v_actor.is_test and rq.doc_year = v_year;
+  v_last := greatest(v_last, v_max_used);
+
+  if p_next < v_last + 1 then
+    raise exception 'ตั้งเลขถอยหลังหรือซ้ำเลขที่ใช้แล้วไม่ได้ (เลขที่ใช้ไปแล้วถึง %, เลขถัดไปต้องไม่น้อยกว่า %)', v_last, v_last + 1
+      using errcode = 'check_violation';
+  end if;
+
+  if p_next > v_last + 1 then
+    update public.itar_doc_counters set last_seq = p_next - 1, updated_at = now()
+    where is_test = v_actor.is_test and doc_year = v_year;
+    insert into public.itar_admin_log (is_test, actor_id, action, detail)
+    values (v_actor.is_test, v_actor.id, 'doc_seq_set',
+            jsonb_build_object('year', v_year, 'previous_next', v_last + 1, 'new_next', p_next));
+  end if;
+  return jsonb_build_object(
+    'year', v_year, 'next_seq', p_next,
+    'next_doc_no', private.itar_format_doc_no(v_actor.is_test, v_year, p_next), 'is_test', v_actor.is_test);
+end;
+$$;
+
+-- รายชื่อทีม IT (อ่านอย่างเดียว จาก itwo_staff) ให้แท็บตั้งค่าแสดง · แก้สิทธิ์ที่ใบสั่งงาน IT (app_itwo_set_staff) ที่เดียว ใบขอสิทธิ์ไม่มี RPC แก้สิทธิ์
+create or replace function public.app_itar_list_staff()
+returns table(employee_id uuid, employee_no text, full_name text, department_name text, is_it_admin boolean, is_it_approver boolean, is_it_viewer boolean,
+              is_itas_admin boolean, is_active boolean)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor public.employees%rowtype;
+begin
+  perform private.lab_only_block();
+  v_actor := private.itar_actor();
+  if not private.itar_is_it_admin(v_actor.id) then
+    raise exception 'เฉพาะผู้ดูแลงาน IT เท่านั้นที่ดูรายชื่อทีม IT ได้' using errcode = 'insufficient_privilege';
+  end if;
+  return query
+  select e.id, e.employee_no, e.first_name || ' ' || e.last_name, d.name_th, s.is_it_admin, s.is_it_approver, s.is_it_viewer,
+         private.itar_is_itas_admin(e.id, e.is_test), e.is_active
+  from public.itwo_staff s
+  join public.employees e on e.id = s.employee_id
+  join public.departments d on d.id = e.department_id
+  where e.is_test = v_actor.is_test
+  order by e.employee_no;
+end;
+$$;
+
+-- 18. ล้างข้อมูลทดสอบ -----------------------------------------------------------------
+-- ลบเฉพาะแถว is_test ของตารางโมดูลนี้ (ประวัติ ISO ของจริงไม่ถูกแตะ) แล้วเริ่มนับเลข TEST-… ใหม่ · คืนรายการไฟล์ในบัคเก็ตทดสอบให้หน้าเว็บลบผ่าน Storage API
+-- (storage.objects ลบด้วย SQL ไม่ได้ ต้องลบผ่าน Storage API) · เฉพาะ admin ที่อยู่ในโหมดทดสอบ (private.sandbox_persona)
+-- ไม่แตะทะเบียนสิทธิ์ (itua_*) — ล้างด้วย app_sandbox_purge_itua แยกต่างหาก (itua_acknowledgements ที่อ้างใบทดสอบไม่มี FK จึงไม่ติดขัด)
+create or replace function public.app_sandbox_purge_itar()
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_admin public.employees%rowtype;
+  v_persona public.employees%rowtype;
+  v_table text;
+  v_n integer;
+  v_deleted integer := 0;
+  v_files text[];
+  v_claim_sub text;
+  v_claims text;
+begin
+  perform private.lab_only_block();
+  v_admin := private.sandbox_admin();
+  v_persona := private.sandbox_persona();
+  if v_persona.id is null then
+    raise exception 'SANDBOX_NOT_ACTIVE';
+  end if;
+
+  -- ล็อกตารางเขียนของโมดูลทั้งหมดไว้จนจบ transaction (ยังอ่านได้) กันคนอื่นยื่น/อนุมัติใบทดสอบพร้อมกันระหว่างล้าง
+  -- ลำดับล็อกเรียงตามลำดับที่ RPC อื่นแตะ (ตัวนับ -> ใบ -> รายการ -> ข้อความ/ไฟล์แนบ -> ประวัติ/ผลต่อรายการ -> admin_log) กัน deadlock
+  lock table public.itar_doc_counters, public.itar_requests, public.itar_request_items, public.itar_comments, public.itar_attachments,
+             public.itar_events, public.itar_item_results, public.itar_admin_log in exclusive mode;
+
+  -- ตรวจสิทธิ์ครบแล้วและลบเฉพาะ is_test: พักค่า claims ไว้แล้วเคลียร์ (transaction-local) ให้ trigger โหมดทดสอบไม่ต้องหา persona ทุกแถว
+  -- ตั้ง itar.purge = on (transaction-local) ให้ trigger ประวัติยอมให้ลบแถวทดสอบเท่านั้น
+  v_claim_sub := current_setting('request.jwt.claim.sub', true);
+  v_claims := current_setting('request.jwt.claims', true);
+  perform set_config('request.jwt.claim.sub', '', true);
+  perform set_config('request.jwt.claims', '', true);
+  perform set_config('itar.purge', 'on', true);
+
+  -- ลูกก่อนแม่: ผลต่อรายการ -> รายการ -> ไฟล์แนบ (อ้างข้อความ) -> ข้อความ -> ประวัติ -> admin_log -> ใบ -> ตัวนับ
+  foreach v_table in array array['itar_item_results', 'itar_request_items', 'itar_attachments', 'itar_comments',
+                                 'itar_events', 'itar_admin_log', 'itar_requests', 'itar_doc_counters'] loop
+    execute format('delete from public.%I where is_test', v_table);
+    get diagnostics v_n = row_count;
+    v_deleted := v_deleted + v_n;
+  end loop;
+
+  perform set_config('itar.purge', 'off', true);
+  perform set_config('request.jwt.claim.sub', coalesce(v_claim_sub, ''), true);
+  perform set_config('request.jwt.claims', coalesce(v_claims, ''), true);
+
+  select coalesce(array_agg(o.name order by o.name), '{}'::text[]) into v_files
+  from storage.objects o where o.bucket_id = 'itar-test-files';
+
+  insert into public.audit_logs (actor_id, action, entity_type, entity_id, metadata)
+  values (v_admin.id, 'ITAR_SANDBOX_PURGE', 'itar_requests', v_admin.id::text,
+          jsonb_build_object('deleted', v_deleted, 'is_test', true, 'persona_employee_no', v_persona.employee_no,
+                             'files_to_remove', cardinality(v_files)));
+  return jsonb_build_object('deleted', v_deleted, 'files', to_jsonb(v_files));
+end;
+$$;
+
+-- 19. แจ้งเตือน (กระดิ่ง/อีเมล/Push ผ่าน private.office_notify กลางของระบบสำนักงาน · ไม่ replace ตัวกลาง) --------------------
+-- trigger หลังเพิ่ม event ในประวัติ (ธุรกรรมเดียวกับการอนุมัติ/บันทึกลงทะเบียน) · ใบทดสอบไม่ส่งเลย · started ไม่แจ้ง
+-- ลิงก์เปิดใบตรง = /office/access/<uuid> (ต้องรองรับใน app.js notificationHref, notify-email, notify-push ฝั่งหน้าเว็บ/Edge Function — ขั้นที่ 5)
+-- ผู้รับขั้นอนุมัติ: ขั้นแผนก -> ผู้อนุมัติของแผนกผู้รับสิทธิ์ · ขั้น IT -> ผู้อนุมัติขั้น IT (ใบที่เกี่ยวกับผู้อนุมัติขั้น IT เอง -> หัวหน้า IT)
+
+-- ผู้อนุมัติขั้นแผนกที่ควรได้แจ้ง (ไม่นับผู้ยื่น/ผู้รับสิทธิ์)
+create or replace function private.itar_notify_dept_approver_ids(p_req public.itar_requests)
+returns uuid[]
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select array(
+    select a.id
+    from private.itar_dept_approvers(p_req.department_id, p_req.is_test) a(id)
+    where a.id <> p_req.requester_id and a.id is distinct from p_req.subject_employee_id
+    order by a.id)
+$$;
+
+-- ผู้ดูแลงาน IT ทุกคนใน itwo_staff (อ่านอย่างเดียว)
+create or replace function private.itar_notify_it_admin_ids()
+returns uuid[]
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select array(select s.employee_id from public.itwo_staff s where s.is_it_admin order by s.employee_id)
+$$;
+
+-- รายชื่อผู้ที่ต้องได้แจ้ง "รอคุณอนุมัติ" ขั้น IT ของใบนี้ (ใบที่เกี่ยวกับผู้อนุมัติขั้น IT เอง -> หัวหน้า IT · ใบอื่น -> ผู้อนุมัติขั้น IT)
+-- ไม่นับผู้ยื่น/ผู้รับสิทธิ์ (อนุมัติใบตัวเองไม่ได้)
+create or replace function private.itar_notify_it_stage_ids(p_req public.itar_requests)
+returns uuid[]
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select array(
+    select s.employee_id
+    from public.itwo_staff s
+    where case when private.itar_involves_it_approver(p_req.requester_id, p_req.subject_employee_id) then s.is_it_viewer else s.is_it_approver end
+      and s.employee_id <> p_req.requester_id and s.employee_id is distinct from p_req.subject_employee_id
+    order by s.employee_id)
+$$;
+
+-- ผู้อนุมัติของขั้นที่ใบรออยู่ตอนนี้ (ใช้ตอนผู้ยื่นยกเลิกเอง)
+create or replace function private.itar_notify_stage_approver_ids(p_req public.itar_requests)
+returns uuid[]
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_dept_done boolean;
+  v_it_done boolean;
+  v_dept_ids uuid[];
+begin
+  select s.dept_done, s.it_done into v_dept_done, v_it_done from private.itar_event_state(p_req.id) s;
+  if v_dept_done and v_it_done then
+    return '{}';
+  end if;
+  if not v_dept_done and not private.itar_is_it_department(p_req.department_id) then
+    v_dept_ids := private.itar_notify_dept_approver_ids(p_req);
+    if cardinality(v_dept_ids) > 0 then
+      return v_dept_ids;
+    end if;
+  end if;
+  return private.itar_notify_it_stage_ids(p_req);
+end;
+$$;
+
+-- ส่งถึงหลายคนโดยไม่ซ้ำคน (คืนรายชื่อที่ส่งแล้วสะสม)
+create or replace function private.itar_notify_each(p_recipients uuid[], p_already uuid[], p_actor_id uuid, p_title text, p_body text, p_action_url text)
+returns uuid[]
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_done uuid[] := coalesce(p_already, '{}');
+  v_id uuid;
+begin
+  for v_id in
+    select distinct r.id from unnest(coalesce(p_recipients, '{}')) r(id) where r.id is not null order by r.id
+  loop
+    if v_id = any (v_done) then
+      continue;
+    end if;
+    perform private.office_notify(v_id, p_title, p_body, p_action_url, p_actor_id);
+    v_done := v_done || v_id;
+  end loop;
+  return v_done;
+end;
+$$;
+
+create or replace function private.itar_notify_on_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_req public.itar_requests%rowtype;
+  v_requester_name text;
+  v_dept_name text;
+  v_actor_name text;
+  v_type_text text;
+  v_summary text;
+  v_title text;
+  v_started boolean;
+  v_url text;
+  v_done uuid[] := '{}';
+  v_ids uuid[];
+  v_dept_done boolean;
+  v_it_done boolean;
+  v_question public.itar_comments%rowtype;
+  v_answer public.itar_comments%rowtype;
+begin
+  -- ใบทดสอบ ไม่ insert เลย · started ไม่แจ้ง
+  if new.is_test or new.action = 'started' then
+    return new;
+  end if;
+
+  begin
+    select * into v_req from public.itar_requests w where w.id = new.request_id;
+    if v_req.id is null or v_req.is_test then
+      return new;
+    end if;
+
+    select e.first_name || ' ' || e.last_name into v_requester_name from public.employees e where e.id = v_req.requester_id;
+    select e.first_name || ' ' || e.last_name into v_actor_name from public.employees e where e.id = new.actor_id;
+    select d.name_th into v_dept_name from public.departments d where d.id = v_req.department_id;
+    v_type_text := private.itar_type_text(v_req.request_type);
+    -- สรุป "<ชื่อผู้ยื่น> · ผู้รับสิทธิ์ <ชื่อ> · <แผนก> · <ประเภทคำขอ>"
+    v_summary := concat_ws(' · ', v_requester_name, 'ผู้รับสิทธิ์ ' || private.itar_subject_name(v_req), v_dept_name, v_type_text);
+    v_title := 'ใบขอสิทธิ์ ' || v_req.doc_no;
+    v_url := '/office/access/' || v_req.id::text;
+
+    if new.action = 'created' then
+      -- ปลายทางแรกของใบ: รอขั้นแผนก -> ผู้อนุมัติแผนก · รอขั้น IT ทันที -> ผู้อนุมัติขั้น IT (ใบที่เกี่ยวกับผู้อนุมัติขั้น IT เอง -> หัวหน้า IT)
+      if v_req.status = 'pending_dept' then
+        v_ids := private.itar_notify_dept_approver_ids(v_req);
+      elsif v_req.status = 'pending_it_mgr' then
+        v_ids := private.itar_notify_it_stage_ids(v_req);
+      else
+        v_ids := '{}';
+      end if;
+      v_done := private.itar_notify_each(v_ids, v_done, new.actor_id, v_title || ' รอคุณอนุมัติ', v_summary, v_url);
+
+    elsif new.action = 'dept_approved' then
+      -- ข้ามเมื่ออนุมัติในตัว (ผู้ยื่นเอง) หรือผู้กดเป็นผู้อนุมัติขั้น IT ของใบนี้ (it_mgr_approved ตามมาในธุรกรรมเดียวกันเสมอ)
+      if new.actor_id <> v_req.requester_id
+         and not private.itar_is_it_stage_approver(v_req.requester_id, v_req.subject_employee_id, new.actor_id) then
+        v_done := private.itar_notify_each(private.itar_notify_it_stage_ids(v_req), v_done, new.actor_id,
+                                           v_title || ' รอคุณอนุมัติ', v_summary, v_url);
+      end if;
+
+    elsif new.action = 'it_mgr_approved' then
+      -- อนุมัติครบ: ผู้ยื่นและผู้รับสิทธิ์ที่มีบัญชีก่อน แล้วผู้ดูแลงาน IT
+      v_done := private.itar_notify_each(array[v_req.requester_id, v_req.subject_employee_id], v_done, new.actor_id,
+                                         v_title || ' อนุมัติครบแล้ว',
+                                         'รอ IT ดำเนินการ · ' || v_type_text,
+                                         v_url);
+      v_done := private.itar_notify_each(private.itar_notify_it_admin_ids(), v_done, new.actor_id,
+                                         v_title || ' อนุมัติครบ พร้อมให้ IT รับงาน', v_summary, v_url);
+
+    elsif new.action in ('dept_rejected', 'it_mgr_rejected') then
+      v_done := private.itar_notify_each(array[v_req.requester_id, v_req.subject_employee_id], v_done, new.actor_id,
+                                         v_title || ' ไม่ได้รับอนุมัติ',
+                                         concat_ws(' · ', 'เหตุผล: ' || private.office_clip(new.reason, 200), 'โดย ' || v_actor_name),
+                                         v_url);
+
+    elsif new.action = 'info_requested' then
+      select * into v_question from public.itar_comments c
+      where c.request_id = v_req.id and c.kind = 'question' order by c.id desc limit 1;
+      v_done := private.itar_notify_each(array[v_req.requester_id], v_done, new.actor_id,
+                                         v_title || ' มีคำถามถึงคุณ',
+                                         v_actor_name || ': ' || private.office_clip(coalesce(v_question.body, new.reason), 200),
+                                         v_url);
+
+    elsif new.action = 'info_provided' then
+      -- แจ้งคนที่ถามคำถามข้อที่ผู้ยื่นเพิ่งตอบ (คำตอบล่าสุดของใบ -> คำถามที่มันตอบ -> ผู้ถาม)
+      select * into v_answer from public.itar_comments a
+      where a.request_id = v_req.id and a.kind = 'answer' order by a.id desc limit 1;
+      select * into v_question from public.itar_comments q
+      where q.id = v_answer.reply_to and q.request_id = v_req.id;
+      if v_question.id is not null then
+        v_done := private.itar_notify_each(array[v_question.author_id], v_done, new.actor_id,
+                                           v_title || ' ผู้ยื่นตอบคำถามแล้ว',
+                                           v_actor_name || ': ' || private.office_clip(v_answer.body, 200),
+                                           v_url);
+      end if;
+
+    elsif new.action = 'applied' then
+      if v_req.request_type = 'revoke_all' then
+        -- ยกเลิกทั้งหมดจบทันที (ไม่ต้องรอรับทราบ): แจ้งผู้ยื่น
+        v_done := private.itar_notify_each(array[v_req.requester_id], v_done, new.actor_id,
+                                           v_title || ' ยกเลิกสิทธิ์ทั้งหมดเรียบร้อยแล้ว', v_summary, v_url);
+      elsif v_req.subject_employee_id is not null then
+        -- ผู้รับสิทธิ์ที่มีบัญชี: ต้องกดรับทราบเอง · ผู้ยื่น (ถ้าเป็นคนละคน) ทราบว่า IT บันทึกแล้ว
+        v_done := private.itar_notify_each(array[v_req.subject_employee_id], v_done, new.actor_id,
+                                           v_title || ' IT ปรับสิทธิ์ให้แล้ว กรุณากดรับทราบ',
+                                           'เปิดใบเพื่อตรวจสิทธิ์ของคุณและกดรับทราบ · ' || v_type_text, v_url);
+        v_done := private.itar_notify_each(array[v_req.requester_id], v_done, new.actor_id,
+                                           v_title || ' IT บันทึกสิทธิ์ลงทะเบียนแล้ว รอผู้ใช้รับทราบ', v_summary, v_url);
+      else
+        v_done := private.itar_notify_each(array[v_req.requester_id], v_done, new.actor_id,
+                                           v_title || ' IT บันทึกสิทธิ์ลงทะเบียนแล้ว รอใบรับทราบ (กระดาษ)', v_summary, v_url);
+      end if;
+
+    elsif new.action = 'acknowledged' then
+      v_done := private.itar_notify_each(array[v_req.requester_id], v_done, new.actor_id,
+                                         v_title || ' ผู้ใช้รับทราบสิทธิ์แล้ว ใบจบงาน',
+                                         concat_ws(' · ', 'โดย ' || v_actor_name, private.itar_subject_name(v_req)),
+                                         v_url);
+
+    elsif new.action = 'cancelled' then
+      if new.actor_id = v_req.requester_id then
+        -- ผู้ยื่นยกเลิกเอง: ผู้อนุมัติของขั้นที่ใบรออยู่ · ผู้ดูแลงาน IT เมื่ออนุมัติครบแล้วหรือ IT รับงานแล้ว
+        v_ids := private.itar_notify_stage_approver_ids(v_req);
+        select s.dept_done, s.it_done into v_dept_done, v_it_done from private.itar_event_state(v_req.id) s;
+        select exists (select 1 from public.itar_events e where e.request_id = v_req.id and e.action = 'started') into v_started;
+        if (v_dept_done and v_it_done) or v_started then
+          v_ids := v_ids || private.itar_notify_it_admin_ids();
+        end if;
+        v_done := private.itar_notify_each(v_ids, v_done, new.actor_id, v_title || ' ถูกยกเลิก',
+                                           concat_ws(' · ', 'ผู้ยื่นยกเลิก', private.office_clip(new.reason, 200), v_summary),
+                                           v_url);
+      else
+        -- IT ยกเลิกแทนผู้ยื่น (เหตุผลขึ้นต้นด้วย "IT ยกเลิกแทนผู้ยื่น: " อยู่แล้ว): แจ้งผู้ยื่นและผู้รับสิทธิ์ที่มีบัญชี
+        v_done := private.itar_notify_each(array[v_req.requester_id, v_req.subject_employee_id], v_done, new.actor_id, v_title || ' ถูกยกเลิก',
+                                           concat_ws(' · ', v_actor_name, private.office_clip(new.reason, 200)),
+                                           v_url);
+      end if;
+    end if;
+  exception when others then
+    -- แจ้งเตือนเป็นเรื่องรอง ห้ามทำให้การอนุมัติ/บันทึกลงทะเบียน (และบันทึก ISO) ล้มตาม
+    raise warning 'itar_notify: สร้างแจ้งเตือนของ event % (ใบ %) ไม่สำเร็จ: % [%]', new.id, new.request_id, sqlerrm, sqlstate;
+  end;
+  return new;
+end;
+$$;
+
+create trigger itar_events_notify
+  after insert on public.itar_events
+  for each row execute function private.itar_notify_on_event();
+
+-- 20. สิทธิ์เรียกฟังก์ชัน ---------------------------------------------------------------------
+-- private.itar_*: ถอนจาก public/anon/authenticated ทั้งหมด (เรียกได้เฉพาะผ่าน SECURITY DEFINER ของ RPC/trigger)
+--   ยกเว้นตัวช่วยของ policy Storage 3 ตัวที่ต้องเรียกด้วยสิทธิ์ผู้ใช้ (คืนแค่ true/false ตามสิทธิ์ของผู้เรียกเอง)
+--   private.itar_begin_apply / itar_end_apply (ตั้งที่มาของประวัติทะเบียน) ถอนสิทธิ์เหมือนตัวอื่น = ผู้ใช้เรียกเองไม่ได้ ปลอมที่มาไม่ได้
+-- public.app_itar_* และ app_sandbox_purge_itar: เฉพาะผู้ล็อกอินแล้ว (ภายในตรวจพนักงานและบทบาทซ้ำอีกชั้น) anon เรียกไม่ได้
+do $$
+declare
+  v_sig text;
+begin
+  for v_sig in
+    select p.oid::regprocedure::text
+    from pg_catalog.pg_proc p
+    where p.pronamespace = 'private'::regnamespace and p.proname like 'itar\_%'
+  loop
+    execute format('revoke all on function %s from public, anon, authenticated', v_sig);
+  end loop;
+  for v_sig in
+    select p.oid::regprocedure::text
+    from pg_catalog.pg_proc p
+    where p.pronamespace = 'private'::regnamespace
+      and p.proname in ('itar_storage_can_read', 'itar_storage_can_upload', 'itar_storage_test_file_removable')
+  loop
+    execute format('grant execute on function %s to authenticated', v_sig);
+  end loop;
+  for v_sig in
+    select p.oid::regprocedure::text
+    from pg_catalog.pg_proc p
+    where p.pronamespace = 'public'::regnamespace
+      and (p.proname like 'app\_itar\_%' or p.proname = 'app_sandbox_purge_itar')
+  loop
+    execute format('revoke all on function %s from public, anon', v_sig);
+    execute format('grant execute on function %s to authenticated', v_sig);
+  end loop;
+  -- ฟังก์ชันเดิมที่ replace (private.itua_log, private.sandbox_unguarded_tables) คงสิทธิ์เดิม: ถอนจากผู้ใช้ทุกคนเหมือนเดิม
+  revoke all on function private.itua_log() from public, anon, authenticated;
+end $$;
