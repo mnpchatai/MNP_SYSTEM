@@ -100,7 +100,7 @@ test("status labels, badge classes and the requester's own wording", () => {
 });
 
 test("the module version is 1.05 and no text of this module says 'ใบสั่งงาน'", () => {
-  assert.equal(model.MODULE_VERSION, "1.05");
+  assert.equal(model.MODULE_VERSION, "1.06");
   assert.match(model.VERSION_DATE, /^\d{4}-\d{2}-\d{2}$/);
   for (const file of ["modules/itrp-model.js", "modules/itrp-pages.js", "modules/module-itrp.js"]) {
     // คอมเมนต์อ้างถึงใบสั่งงาน IT (โมดูลต้นแบบ) ได้ และหน้าตั้งค่ามีข้อความ 1 บรรทัดบอกว่าทีม IT แก้ที่ใบสั่งงาน IT · นอกนั้นข้อความที่ผู้ใช้เห็นต้องเป็น "ใบแจ้งซ่อม"
@@ -825,4 +825,74 @@ test("the device register form sends every field every time (the database clears
   assert.deepEqual(model.DEVICE_KINDS.map((kind) => kind.value), ["computer", "laptop", "monitor", "printer", "ups", "other"]);
   assert.equal(model.deviceKindLabel("ups"), "UPS");
   assert.equal(model.deviceStatusLabel("retired"), "ยกเลิกการใช้งาน");
+});
+
+/* ---------- หัวหน้า IT (ดูอย่างเดียว) + เวลาทำงาน (สเปก it-approver-worktime 26/11/2026) ---------- */
+test("the IT head (is_it_viewer) sees the approvals and IT-work tabs read-only, never settings; an old database (no key) behaves as before", () => {
+  const keys = (role) => model.visibleTabs(role).map((tab) => tab.key);
+  assert.ok(keys({ is_it_viewer: true }).includes("approvals"), "approves the requests an IT-step approver raised himself");
+  assert.ok(keys({ is_it_viewer: true }).includes("it"));
+  assert.ok(!keys({ is_it_viewer: true }).includes("settings"), "viewer is not an admin");
+  assert.deepEqual(keys({ is_it_viewer: false }), ["mine"]);
+  assert.deepEqual(keys({ is_it_approver: true }), keys({ is_it_approver: true, is_it_viewer: undefined }), "no key = old database = same as before");
+  assert.equal(model.isItViewer({ is_it_viewer: true }), true);
+  assert.equal(model.isItViewer({}), false);
+  assert.equal(model.isItViewer(null), false);
+  assert.equal(model.canSeeAllOrders({ is_it_viewer: true }), true);
+  assert.equal(model.canSeeAllOrders({ is_dept_approver: true }), false);
+  assert.equal(model.canApprove({ is_it_viewer: true }), true);
+  assert.equal(model.canApprove({}), false);
+});
+
+test("staffRoleText names the IT head role, and the viewer flag is only offered when the database list carries it", () => {
+  assert.equal(model.staffRoleText({ is_it_viewer: true }), "หัวหน้า IT (ดูอย่างเดียว)");
+  assert.equal(model.staffRoleText({ is_it_admin: true, is_it_approver: true, is_it_viewer: false }), "ผู้ดูแลงาน IT · ผู้อนุมัติขั้น IT");
+  assert.equal(model.VIEWER_LABEL, "หัวหน้า IT (ดูอย่างเดียว)");
+  assert.equal(model.staffSupportsViewer([{ employee_no: "A", is_it_admin: true }]), false, "old database list: no column");
+  assert.equal(model.staffSupportsViewer([{ employee_no: "A", is_it_admin: true, is_it_viewer: false }]), true);
+  assert.equal(model.staffSupportsViewer([]), false);
+  assert.equal(model.staffSupportsViewer(undefined), false);
+});
+
+test("a viewer in an IT-approver request counts as both steps in the confirm text (same as the approver)", () => {
+  const detail = { approvals: { dept: null, it_mgr: null } };
+  assert.match(model.confirmMessageFor("approve", detail, { is_it_viewer: true }), /ทั้งขั้นแผนกและขั้น IT/);
+  assert.doesNotMatch(model.confirmMessageFor("approve", detail, {}), /ทั้งขั้นแผนกและขั้น IT/);
+});
+
+test("work minutes show as days (8 working hours) / hours / minutes; missing, null or garbage shows nothing", () => {
+  assert.equal(model.formatWorkMinutes(0), "0 นาที");
+  assert.equal(model.formatWorkMinutes(45), "0 วัน 0 ชม. 45 นาที");
+  assert.equal(model.formatWorkMinutes(660), "1 วัน 3 ชม. 0 นาที", "11 working hours = 1 day 3 hours");
+  assert.equal(model.formatWorkMinutes(480), "1 วัน 0 ชม. 0 นาที");
+  assert.equal(model.formatWorkMinutes(479), "0 วัน 7 ชม. 59 นาที");
+  assert.equal(model.formatWorkMinutes(2 * 480 + 5 * 60 + 7), "2 วัน 5 ชม. 7 นาที");
+  for (const bad of [null, undefined, "", "660", -1, Number.NaN, {}]) assert.equal(model.formatWorkMinutes(bad), "", String(bad));
+  assert.equal(model.workTimeText({ status: "it_closed", work_minutes: 660 }), "ใช้เวลาทำงาน 1 วัน 3 ชม. 0 นาที");
+  assert.equal(model.workTimeText({ status: "received", work_minutes: 0 }), "ใช้เวลาทำงาน 0 นาที");
+  // กลับมาทำใหม่หลังขอแก้ไข/ยังไม่จบ: มี work_minutes ของรอบก่อนแต่ห้ามแสดง
+  for (const status of ["in_progress", "approved", "pending_dept", "pending_it", "need_info", "cancelled", "rejected", undefined]) {
+    assert.equal(model.workTimeText({ status, work_minutes: 660 }), "", String(status));
+    assert.equal(model.showsWorkTime({ status }), false, String(status));
+  }
+  assert.equal(model.showsWorkTime({ status: "it_closed" }), true);
+  assert.equal(model.showsWorkTime({ status: "received" }), true);
+  assert.equal(model.workTimeText({ work_minutes: null }), "");
+  assert.equal(model.workTimeText({}), "");
+  assert.equal(model.workTimeText(null), "");
+  // workDuration: ส่งงาน/จบงาน + work_minutes = เวลาจากเซิร์ฟเวอร์ · สถานะอื่น = คำนวณแบบเดิมจากเวลาเริ่ม/เสร็จ
+  const times = { started: { at: "2026-11-02T01:00:00Z" }, completed: { at: "2026-11-02T03:00:00Z" } };
+  assert.deepEqual(model.workDuration({ status: "it_closed", work_minutes: 660, ...times }), { text: "1 วัน 3 ชม. 0 นาที", note: model.WORK_TIME_NOTE });
+  assert.equal(model.workDuration({ status: "in_progress", work_minutes: 660, ...times }).note, "", "กลับมาทำใหม่ใช้แบบเดิม ไม่ใช้ work_minutes");
+  assert.notEqual(model.workDuration({ status: "in_progress", work_minutes: 660, ...times }).text, "1 วัน 3 ชม. 0 นาที");
+  assert.equal(model.workDuration({ status: "in_progress", work_minutes: 660 }), null);
+  assert.match(model.WORK_TIME_NOTE, /จ\.–ส\..*ไม่นับวันอาทิตย์.*วันหยุดบริษัท.*ช่วงรอผู้แจ้งตอบ/);
+});
+
+test("the IT head reads the repair history (read-only): tab and print are allowed but editing is admin only", () => {
+  assert.equal(model.canViewHistory({ is_it_viewer: true }), true);
+  assert.equal(model.canEditHistory({ is_it_viewer: true }), false);
+  assert.ok(model.visibleTabs({ is_it_viewer: true }).some((tab) => tab.key === "history"));
+  assert.equal(model.viewAllowed("history-print", { is_it_viewer: true }), true);
+  assert.equal(model.viewAllowed("history-print", {}), false);
 });

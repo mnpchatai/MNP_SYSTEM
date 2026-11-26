@@ -27,8 +27,8 @@
   // เลขเวอร์ชันของโมดูล (แสดงมุมขวาล่างทุกหน้า) รูปแบบ <ใหญ่>.<ย่อย 2 หลัก> · กติกาเดียวกับใบสั่งงาน IT (เจ้าของตัดสิน 20/11/2026)
   // อัปเดตย่อย (แก้คำ หน้าตา บั๊ก ช่องเล็ก ๆ) = +0.01 · อัปเดตใหญ่ (เปลี่ยนขั้นตอนงาน/สถานะ/ฟีเจอร์ใหม่ที่ผู้ใช้ต้องเรียนรู้) = ขึ้นหลักหน่วย .00
   // ถามเจ้าของทุกครั้งว่าเป็นอัปเดตย่อยหรือใหญ่ แล้วแก้ทั้งสองค่านี้ใน PR เดียวกับการเปลี่ยนแปลง (VERSION_DATE = วันที่ปล่อย YYYY-MM-DD)
-  const MODULE_VERSION = "1.05";
-  const VERSION_DATE = "2026-11-25";
+  const MODULE_VERSION = "1.06";
+  const VERSION_DATE = "2026-11-26";
   // ธง "กำลังพัฒนา" (จุดเดียว): true = การ์ดใบแจ้งซ่อม IT ในเมนูมีป้าย "กำลังพัฒนา" และทุกหน้าของโมดูลมีแถบข้อความว่ายังไม่เปิดใช้งานจริง
   // ป้ายกับแถบเป็นข้อความอย่างเดียว ไม่ปิดกั้นการกดเข้าหรือการใช้งาน · ถอดป้ายเมื่อเจ้าของสั่งเปิดใช้งานจริง: เปลี่ยนเป็น false ที่นี่ที่เดียว
   const IN_DEVELOPMENT = true;
@@ -222,15 +222,54 @@
   const formatQuantity = (value) => (finite(value) === null ? "" : finite(value).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 }));
   const formatPrice = (value) => (finite(value) === null ? "" : finite(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 
+  /* ---------- หัวหน้า IT (ดูอย่างเดียว) + สรุปเวลาทำงาน (ตามสเปก it-approver-worktime 26/11/2026) ---------- */
+  // หัวหน้า IT = แถวใน itwo_staff ที่มีธง is_it_viewer: เห็นทุกใบและประวัติ ไม่มีปุ่มทำงาน IT (ปุ่มยึด allowed_actions จากฐานข้อมูลอยู่แล้ว)
+  // ฐานข้อมูลเก่า (ยังไม่มีธงนี้) ไม่ส่งคีย์ is_it_viewer → undefined = ไม่ใช่หัวหน้า IT ทำงานแบบเดิมทุกอย่าง
+  const VIEWER_LABEL = "หัวหน้า IT (ดูอย่างเดียว)";
+  const isItViewer = (role) => role?.is_it_viewer === true;
+  // เห็นรายการใบทั้งหมด/แท็บ "งาน IT" ได้: ผู้ดูแลงาน IT + ผู้อนุมัติขั้น IT + หัวหน้า IT
+  const canSeeAllOrders = (role) => Boolean(role?.is_it_admin || role?.is_it_approver || isItViewer(role));
+  // รายชื่อทีม IT จากฐานข้อมูลใหม่มีคอลัมน์ is_it_viewer ทุกแถว · ไม่มีคีย์ = ฐานข้อมูลเก่า ห้ามส่งพารามิเตอร์ viewer / ห้ามโชว์ช่องตั้งธง
+  // เห็นแท็บ "รออนุมัติ" ได้: ผู้อนุมัติขั้นแผนก/ขั้น IT + หัวหน้า IT (อนุมัติแทนในใบที่ผู้อนุมัติขั้น IT แจ้งเอง · ฐานข้อมูลคืนรายการให้เฉพาะที่กดได้จริง ไม่มีใบ = รายการว่าง)
+  const canApprove = (role) => Boolean(role?.is_dept_approver || role?.is_it_approver || isItViewer(role));
+  const staffSupportsViewer = (staff) => Array.isArray(staff) && staff.some((row) => row && Object.prototype.hasOwnProperty.call(row, "is_it_viewer"));
+  // เวลาทำงานจาก RPC (work_minutes เป็นนาทีทำงานจริง จ.–ส. หักรอผู้แจ้งตอบ) · 1 วัน = 1 วันทำงาน 8 ชม. = 480 นาที
+  const WORK_MINUTES_PER_DAY = 480;
+  const WORK_TIME_NOTE = "นับเฉพาะเวลาทำงาน จ.–ส. ไม่นับวันอาทิตย์ วันหยุดบริษัท และช่วงรอผู้แจ้งตอบ";
+  function formatWorkMinutes(minutes) {
+    if (typeof minutes !== "number" || !Number.isFinite(minutes) || minutes < 0) return "";
+    const total = Math.floor(minutes);
+    if (total === 0) return "0 นาที";
+    return `${Math.floor(total / WORK_MINUTES_PER_DAY)} วัน ${Math.floor((total % WORK_MINUTES_PER_DAY) / 60)} ชม. ${total % 60} นาที`;
+  }
+  // ข้อความ "ใช้เวลาทำงาน …" ของใบ · ฐานข้อมูลเก่า/ใบที่ยังไม่ส่งงาน/กลับมาทำใหม่ (สถานะอื่นนอกจาก it_closed/received) หรือไม่มีคีย์/เป็น null = "" (หน้าเว็บไม่วาดบรรทัด)
+  // แสดงเวลาทำงานเฉพาะใบที่ IT ส่งงานแล้ว (it_closed) หรือจบงานแล้ว (received) · work_minutes ของ RPC คือยอดรอบที่ปิดแล้ว
+  // ใบที่ถูกขอแก้ไขแล้วกลับมาทำอีกรอบ (in_progress ฯลฯ) ยังไม่จบงาน จึงห้ามโชว์ยอดค้างของรอบก่อน
+  const WORK_TIME_STATUSES = Object.freeze(["it_closed", "received"]);
+  const showsWorkTime = (detail) => WORK_TIME_STATUSES.includes(detail?.status);
+  function workTimeText(detail) {
+    const text = showsWorkTime(detail) ? formatWorkMinutes(detail?.work_minutes) : "";
+    return text ? `ใช้เวลาทำงาน ${text}` : "";
+  }
+
+  // ระยะเวลาซ่อมของใบ: ส่งงาน/จบงานแล้วและมี work_minutes = เวลาทำงานจริงจากเซิร์ฟเวอร์ (พร้อมหมายเหตุ)
+  // นอกนั้น (ยังไม่ส่งงาน/กลับมาทำใหม่/ฐานข้อมูลเก่า) = คำนวณจากเวลาเริ่ม/เสร็จเหมือนเดิมก่อนมี work_minutes (note ว่าง) · ไม่มีข้อมูล = null
+  function workDuration(detail, holidays = []) {
+    const text = showsWorkTime(detail) ? formatWorkMinutes(detail?.work_minutes) : "";
+    if (text) return { text, note: WORK_TIME_NOTE };
+    const legacy = repairDuration(detail?.started?.at, detail?.completed?.at, holidays);
+    return legacy ? { text: legacy.text, note: "" } : null;
+  }
+
   /* ---------- สิทธิ์ → แท็บ ---------- */
   // role = ผลของ app_itrp_my_role · แท็บเป็น UX ล้วน ฐานข้อมูลตรวจสิทธิ์ซ้ำทุก RPC
   // อ่านประวัติการซ่อมเครื่อง (FM02) / ทะเบียนเครื่องได้เฉพาะผู้ดูแลงาน IT กับผู้อนุมัติขั้น IT · แก้ไข/ลงเพิ่มได้เฉพาะผู้ดูแลงาน IT (ฐานข้อมูลตรวจซ้ำทุก RPC)
-  const canViewHistory = (role) => Boolean(role?.is_it_admin || role?.is_it_approver);
+  const canViewHistory = (role) => canSeeAllOrders(role);
   const canEditHistory = (role) => Boolean(role?.is_it_admin);
   function visibleTabs(role) {
     const tabs = [{ key: "mine", label: "ใบของฉัน" }];
-    if (role?.is_dept_approver || role?.is_it_approver) tabs.push({ key: "approvals", label: "รออนุมัติ" });
-    if (role?.is_it_admin || role?.is_it_approver) tabs.push({ key: "it", label: "งาน IT" });
+    if (canApprove(role)) tabs.push({ key: "approvals", label: "รออนุมัติ" });
+    if (canSeeAllOrders(role)) tabs.push({ key: "it", label: "งาน IT" });
     if (canViewHistory(role)) tabs.push({ key: "history", label: "ประวัติการซ่อม" });
     if (role?.is_it_admin) tabs.push({ key: "settings", label: "ตั้งค่า" });
     return tabs;
@@ -289,7 +328,8 @@
   // หน้าเว็บตัดสินได้แค่นี้ (ข้อมูลไม่ครบก็ใช้ข้อความมาตรฐาน) ตัวตัดสินจริงคือฐานข้อมูล
   const BOTH_STEPS_NOTE = "ใบนี้จะนับเป็นการอนุมัติทั้งขั้นแผนกและขั้น IT";
   function countsAsBothSteps(detail, role) {
-    return Boolean(role?.is_it_approver) && Boolean(detail?.approvals) && !detail.approvals.dept && !detail.approvals.it_mgr;
+    // หัวหน้า IT (is_it_viewer) อนุมัติแทนในใบที่ผู้อนุมัติขั้น IT แจ้งเอง → นับสองขั้นแบบเดียวกัน (ฐานข้อมูลตัดสินสิทธิ์จริงผ่าน allowed_actions)
+    return Boolean(role?.is_it_approver || role?.is_it_viewer) && Boolean(detail?.approvals) && !detail.approvals.dept && !detail.approvals.it_mgr;
   }
   function confirmMessageFor(action, detail, role) {
     const base = ACTION_BUTTONS[action]?.confirmMessage ?? "";
@@ -829,7 +869,7 @@
     return null;
   }
   // รายชื่อทีม IT อ่านจากตาราง itwo_staff ชุดเดียวกับใบสั่งงาน IT (อ่านอย่างเดียว แก้ที่ใบสั่งงาน IT)
-  const staffRoleText = (row) => [row?.is_it_admin ? "ผู้ดูแลงาน IT" : "", row?.is_it_approver ? "ผู้อนุมัติขั้น IT" : ""].filter(Boolean).join(" · ");
+  const staffRoleText = (row) => [row?.is_it_admin ? "ผู้ดูแลงาน IT" : "", row?.is_it_approver ? "ผู้อนุมัติขั้น IT" : "", row?.is_it_viewer ? VIEWER_LABEL : ""].filter(Boolean).join(" · ");
 
   /* ---------- ประวัติการซ่อมเครื่อง (IT01-FM02) + ทะเบียนเครื่อง ---------- */
   // แท็บ "ประวัติการซ่อม": เลือกรหัสเครื่อง → ตาราง 7 คอลัมน์ตามฟอร์ม FM02 (เลขที่ใบแจ้งซ่อม วันที่ อาการเสีย การแก้ไข ซ่อมเสร็จ ข้อเสนอแนะ ผู้แจ้ง) → พิมพ์ A4
@@ -1275,6 +1315,7 @@
     requestKindLabel, repairTargetLabel, causeKindLabel, repairMethodLabel, requestKindText, repairTargetText, causeKindText, repairMethodText, deviceText,
     reworkTag, statusLabel, statusBadgeClass, myStatusLabel, isTestDoc, INFO_STAGE_LABELS, infoStageLabel, commentKindLabel, commentRows, allFiles, pendingQuestion, infoBadgeTitle,
     todayBangkok, formatDate, formatDateTime, formatDateOf, formatTimeOf, isRealDate, charCount, clip, repairDuration, formatQuantity, formatPrice,
+    VIEWER_LABEL, isItViewer, canSeeAllOrders, canApprove, staffSupportsViewer, WORK_MINUTES_PER_DAY, WORK_TIME_NOTE, WORK_TIME_STATUSES, showsWorkTime, formatWorkMinutes, workTimeText, workDuration,
     visibleTabs, canViewHistory, canEditHistory, readView, viewAllowed, repairUrl, isUuid,
     actionButtons, countsAsBothSteps, confirmMessageFor, BOTH_STEPS_NOTE, completeToast, answerToast, pendingStepLabel, eventLabel, eventLabelFor, CANCELLED_ON_BEHALF_LABEL, printSignoffs, printOutcome, approvalSummary,
     itGroupOf, groupItOrders, itActionableCount, awaitingMyReceiveCount, awaitingMyAnswerCount, mineWaiting, mineWaitingNote, waitingForMeCount, itApprovalProgress, CLOSED_STATUSES, openOrderCount, cardSummary,

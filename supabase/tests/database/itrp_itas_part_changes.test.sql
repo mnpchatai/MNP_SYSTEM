@@ -11,7 +11,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(247);
+select plan(248);
 
 -- ตัวช่วย (ชั่วคราว) ---------------------------------------------------------
 -- claims ของผู้ใช้ทดสอบเลขที่ n
@@ -407,8 +407,9 @@ select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_p
 select set_config('t.s1', (select id::text from public.app_itrp_create('sbx-com1', 'เครื่องทดสอบ', 'repair', null, 'computer', null, 'อาการทดสอบ', false)), true);
 select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_p_mgr')::uuid) $$, 'switching to the manager persona');
 select lives_ok($$ select public.app_itrp_approve(current_setting('t.s1')::uuid) $$, 'the persona manager approves');
-select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_approver')::uuid) $$, 'switching to the IT approver persona');
+select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_admin')::uuid) $$, 'switching to the IT admin persona (also the IT approver since 26/11/2026)');
 select lives_ok($$ select public.app_itrp_approve(current_setting('t.s1')::uuid) $$, 'the persona IT approver approves');
+select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_approver')::uuid) $$, 'switching to the IT head persona (view only)');
 select throws_ok($$ select public.app_itrp_part_changes_context(current_setting('t.s1')::uuid) $$, '42501', 'เฉพาะผู้ดูแลงาน IT เท่านั้นที่บันทึกการเปลี่ยนชิ้นส่วนได้', 'the IT approver persona cannot use the part changes');
 select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_admin')::uuid) $$, 'switching to the IT admin persona');
 select lives_ok($$ select public.app_itrp_start(current_setting('t.s1')::uuid) $$, 'the IT admin persona starts the test request');

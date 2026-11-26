@@ -10,7 +10,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(435);
+select plan(439);
 
 -- ตัวช่วย (ชั่วคราว): claims ของผู้ใช้ทดสอบเลขที่ n · สร้างใบ · ส่งงานแบบกรอกขั้นต่ำ · สรุป events/สถานะ
 create function pg_temp.sub(n integer) returns text language sql as $$
@@ -64,7 +64,7 @@ insert into public.departments (code, name_th, name_en) values
   ('ZRF', 'แผนกทดสอบ F (ผู้จัดการเป็นผู้อนุมัติ IT)', 'ZR F');
 insert into auth.users (id, email, raw_user_meta_data)
 select ('1d800000-0000-0000-0000-' || lpad(n::text, 12, '0'))::uuid, 'itrp-u' || n || '@test.local', '{}'::jsonb
-from generate_series(1, 17) n;
+from generate_series(1, 18) n;
 insert into public.employees (employee_no, first_name, last_name, email, department_id, role_id, auth_user_id, is_active)
 select v.no, 'ทดสอบ', v.no, lower(v.no) || '@itrp.test', d.id, r.id,
        case when v.n is null then null else ('1d800000-0000-0000-0000-' || lpad(v.n::text, 12, '0'))::uuid end, v.active
@@ -85,12 +85,13 @@ from (values
   (15, 'ITRP-REQF', 'ZRF', 'staff', true),
   (16, 'ITRP-SBXADMIN', 'MGT', 'admin', true),
   (17, 'MNPLAB001', 'ZRA', 'staff', true),
+  (18, 'ITRP-HEAD', 'MGT', 'staff', true),
   (null, 'ITRP-MGRD-OFF', 'ZRD', 'department_manager', false)
 ) as v(n, no, dep, role, active)
 join public.departments d on d.code = v.dep join public.roles r on r.code = v.role;
 -- สิทธิ์ทีม IT อยู่ที่ itwo_staff (itrp อ่านอย่างเดียว): ADM = ผู้ดูแลงาน · APPR = ผู้อนุมัติขั้น IT (หัวหน้า IT แบบ v4 ไม่ใช่ผู้ดูแลงาน) · AP2 = ผจก.ZRF ที่เป็นผู้อนุมัติขั้น IT ด้วย
-insert into public.itwo_staff (employee_id, is_it_admin, is_it_approver)
-select e.id, v.adm, v.appr from (values ('ITRP-ADM', true, false), ('ITRP-APPR', false, true), ('ITRP-AP2', false, true)) v(no, adm, appr)
+insert into public.itwo_staff (employee_id, is_it_admin, is_it_approver, is_it_viewer)
+select e.id, v.adm, v.appr, v.head from (values ('ITRP-ADM', true, false, false), ('ITRP-APPR', false, true, false), ('ITRP-AP2', false, true, false), ('ITRP-HEAD', false, false, true)) v(no, adm, appr, head)
 join public.employees e on e.employee_no = v.no;
 insert into public.employees (employee_no, first_name, last_name, email, department_id, role_id, is_active, is_test) values
   ('SBX-ZR-STAFF', 'ทดสอบ', 'ผู้แจ้ง ZRA', 'sbx-zr-staff@sandbox.local', (select id from public.departments where code = 'ZRA'), (select id from public.roles where code = 'staff'), false, true),
@@ -132,13 +133,18 @@ select is(pg_temp.st(current_setting('t.o5')::uuid), 'pending_it_mgr', 'a depart
 select is(pg_temp.acts(current_setting('t.o5')::uuid), 'created', 'no department approval is recorded yet for a department without manager');
 select ok((public.app_itrp_get_detail(current_setting('t.o5')::uuid)->'events'->0->>'reason') like '%ไม่มีผู้จัดการ%', 'the created event says why the department step is skipped');
 select is(pg_temp.st(current_setting('t.o6')::uuid), 'pending_it_mgr', 'an IT department requester waits for the IT approver only');
-select is(pg_temp.st(current_setting('t.o7')::uuid), 'approved', 'an IT approver filing is approved immediately');
-select is(pg_temp.acts(current_setting('t.o7')::uuid), 'created,dept_approved,it_mgr_approved', 'the IT approver signs both steps at filing');
+select is(pg_temp.st(current_setting('t.o7')::uuid), 'pending_it_mgr', 'an IT approver filing is not approved in his own name: it waits at the IT step for the IT head (26/11/2026)');
+select is(pg_temp.acts(current_setting('t.o7')::uuid), 'created', 'the IT approver signs nothing at filing');
 select is(pg_temp.st(current_setting('t.o8')::uuid), 'pending_it_mgr', 'an inactive manager does not count: the department is treated as having no manager');
 select is(pg_temp.st(current_setting('t.o9')::uuid), 'pending_dept', 'a department whose manager is also an IT approver waits for the department step');
 select is(public.app_itrp_get_detail(current_setting('t.o9')::uuid)->>'doc_no', 'IT01-' || pg_temp.yy() || '/009', 'document numbers run IT01-YY/NNN in order');
 select is(public.app_itrp_get_detail(current_setting('t.o1')::uuid)->>'doc_no', 'IT01-' || pg_temp.yy() || '/001', 'the first document of the year is IT01-YY/001');
 select is(public.app_itrp_get_detail(current_setting('t.o10')::uuid)->>'is_urgent', 'true', 'the urgent flag is stored');
+-- หัวหน้า IT (ITRP-HEAD ดูอย่างเดียว) อนุมัติใบที่ผู้อนุมัติขั้น IT แจ้งเอง: แผนกไม่มีผู้จัดการ กดครั้งเดียวนับสองขั้น
+select set_config('request.jwt.claims', pg_temp.sub(18), true);
+select lives_ok($$ select public.app_itrp_approve(current_setting('t.o7')::uuid) $$, 'the IT head approves the request of the IT approver (one click counts both steps)');
+select is(pg_temp.acts(current_setting('t.o7')::uuid), 'created,dept_approved,it_mgr_approved', 'both steps are signed by the IT head');
+select is(public.app_itrp_get_detail(current_setting('t.o7')::uuid)->'events'->2->>'actor_employee_no', 'ITRP-HEAD', 'the IT step signature of an IT approver request is the IT head');
 reset role;
 select set_config('request.jwt.claims', '', true);
 select is((select last_seq::int from public.itrp_doc_counters where is_test = false and doc_year = extract(year from now() at time zone 'Asia/Bangkok')::int), 10, 'the counter advanced once per filed request');
@@ -405,8 +411,10 @@ select set_config('request.jwt.claims', pg_temp.sub(8), true);
 -- ซ่อมภายใน / ผู้ซ่อมภายนอก: vendor ถูกล้างเมื่อซ่อมภายใน และเป็นทางเลือกเมื่อเรียกผู้ซ่อมภายนอก
 select set_config('request.jwt.claims', pg_temp.sub(9), true);
 select set_config('t.o16', pg_temp.new_req(), true);
+select set_config('request.jwt.claims', pg_temp.sub(18), true);
+select lives_ok($$ select public.app_itrp_approve(current_setting('t.o16')::uuid) $$, 'the IT head approves the second request of the IT approver');
 select set_config('request.jwt.claims', pg_temp.sub(8), true);
-select lives_ok($$ select public.app_itrp_start(current_setting('t.o16')::uuid) $$, 'the IT admin starts a second request (filed by the IT approver, approved at filing)');
+select lives_ok($$ select public.app_itrp_start(current_setting('t.o16')::uuid) $$, 'the IT admin starts a second request (filed by the IT approver, approved by the IT head)');
 select lives_ok($$ select public.app_itrp_complete(current_setting('t.o16')::uuid, 'ก', 'part_expired', null, 'internal', 'ต้องถูกล้าง', 'เปลี่ยนแบตเตอรี่', null) $$, 'a delivery without parts (the default) and an internal repair works');
 select is(public.app_itrp_get_detail(current_setting('t.o16')::uuid)->'repair_report'->>'repair_vendor', null, 'an internal repair clears the vendor');
 select is(public.app_itrp_get_detail(current_setting('t.o16')::uuid)->'repair_report'->>'cause_kind_note', null, 'a cause kind note given with a kind other than "other" is cleared');
@@ -643,7 +651,7 @@ select set_config('request.jwt.claims', pg_temp.sub(8), true);
 select ok((select bool_or(employee_no = 'ITRP-ADM' and is_it_admin and not is_it_approver) and bool_or(employee_no = 'ITRP-APPR' and is_it_approver and not is_it_admin) from public.app_itrp_list_staff()), 'the IT admin sees the IT team as stored in itwo_staff (read-only)');
 reset role;
 select set_config('request.jwt.claims', '', true);
-select is((select count(*)::text from public.itwo_staff), (current_setting('t.itwo_staff_before')::int + 3)::text, 'itwo_staff holds only the three rows this test added (the module never wrote to it)');
+select is((select count(*)::text from public.itwo_staff), (current_setting('t.itwo_staff_before')::int + 4)::text, 'itwo_staff holds only the four rows this test added (the module never wrote to it)');
 select is((select count(*)::int from public.itwo_work_orders), current_setting('t.itwo_orders_before')::int, 'no itwo work order was created or touched');
 select is((select count(*)::int from public.itwo_doc_counters where doc_year = extract(year from now() at time zone 'Asia/Bangkok')::int and not is_test), 0, 'the itwo document counter did not move (itrp numbers come from itrp_doc_counters)');
 select is((select count(*)::int from public.itwo_events) + (select count(*)::int from public.itwo_admin_log), current_setting('t.itwo_log_before')::int, 'no itwo history row was written');
@@ -661,7 +669,7 @@ select is((select count(*)::int from public.app_itrp_list_mine()), 1, 'the perso
 select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_zr_mgr')::uuid) $$, 'switching to the manager persona');
 select is(public.app_itrp_pending_count(), 1, 'the persona manager has the test request pending');
 select lives_ok($$ select public.app_itrp_approve(current_setting('t.t1')::uuid) $$, 'the persona manager approves');
-select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_approver')::uuid) $$, 'switching to the IT approver persona');
+select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_admin')::uuid) $$, 'switching to the IT admin persona (also the IT approver since 26/11/2026)');
 select is((select count(*)::int from public.app_itrp_list_pending_approvals()), 1, 'the IT approver persona sees the test request only (not the real ones)');
 select lives_ok($$ select public.app_itrp_approve(current_setting('t.t1')::uuid) $$, 'the IT approver persona approves');
 select is(pg_temp.st(current_setting('t.t1')::uuid), 'approved', 'approved in the test world');
@@ -678,7 +686,7 @@ select is(pg_temp.st(current_setting('t.t1')::uuid), 'received', 'the test reque
 select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_staff')::uuid) $$, 'the IT department requester persona');
 select set_config('t.t2', pg_temp.new_req(), true);
 select is(public.app_itrp_get_detail(current_setting('t.t2')::uuid)->>'doc_no', 'TEST-IT01-' || pg_temp.yy() || '/010', 'the test number continues from the value that was set');
-select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_approver')::uuid) $$, 'IT approver persona again');
+select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_admin')::uuid) $$, 'IT admin persona again');
 select lives_ok($$ select public.app_itrp_approve(current_setting('t.t2')::uuid) $$, 'one click for the IT department test request');
 select is(pg_temp.acts(current_setting('t.t2')::uuid), 'created,dept_approved,it_mgr_approved', 'one click recorded both steps in the test world');
 set local role authenticated;

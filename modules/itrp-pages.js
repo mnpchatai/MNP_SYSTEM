@@ -369,20 +369,22 @@
         <td data-label="ข้อเสนอแนะ" class="itrp-text">${esc(device.remark) || "—"}</td></tr>`).join("")}</tbody></table></div>`;
   }
   // เนื้อหาของบันทึกการซ่อมหนึ่งชุด (ใช้ทั้งชุดล่าสุดและประวัติชุดก่อน) · duration = ผลของ model.repairDuration (เฉพาะชุดล่าสุด) หรือ null
+  // ระยะเวลาซ่อม: work_minutes แสดงเฉพาะใบที่ส่งงาน/จบงานแล้ว (ดู model.workDuration) · นอกนั้นคำนวณจากเวลาเริ่ม/เสร็จเหมือนเดิม (note ว่าง)
+  const workDuration = (detail) => model.workDuration(detail, holidays());
   const reportBody = (view, duration = null) => `<dl class="definition-grid">
       ${fact("สาเหตุ", esc(view.cause), true)}
       ${fact("สรุปสาเหตุเกิดจาก", esc(view.causeKind))}
       ${fact("การตรวจซ่อม", esc(view.repairMethod))}
       ${fact("การซ่อม-แก้ไขที่เกิดขึ้น", esc(view.repairAction), true)}
       ${view.prPoNo ? fact("เอกสารอ้างอิง ใบ PR./PO.No.", esc(view.prPoNo)) : ""}
-      ${duration ? fact("รวมเวลาในการซ่อม", esc(duration.text)) : ""}
+      ${duration ? fact(duration.note ? "ใช้เวลาทำงาน" : "รวมเวลาในการซ่อม", esc(duration.text) + (duration.note ? `<br><span class="muted small">${esc(duration.note)}</span>` : "")) : ""}
     </dl>${devicesTable(view.devices ?? [])}${partsTable(view.parts)}`;
   // การ์ดบันทึกการซ่อมล่าสุด + ประวัติชุดก่อน (พับไว้) · ยังไม่เคยส่งงาน = ไม่วาดอะไร
   function reportCards(detail) {
     const { latest, earlier } = model.repairReports(detail);
     if (!latest && !earlier.length) return "";
     const latestView = model.reportView(latest);
-    const duration = model.repairDuration(detail.started?.at, detail.completed?.at, holidays());
+    const duration = workDuration(detail);
     const history = earlier.length
       ? `<details class="card itrp-report-history"><summary><h2>บันทึกการซ่อมครั้งก่อน <span class="detail-section-count">${earlier.length}</span></h2></summary>
         ${earlier.map((report) => {
@@ -762,7 +764,7 @@
     const report = model.reportView(latest);
     const sign = model.printSignoffs(detail);
     const outcome = model.printOutcome(detail);
-    const duration = model.repairDuration(detail.started?.at, detail.completed?.at, holidays());
+    const duration = workDuration(detail);
     // ข้อความ "(ระบุ: …)" ต่อท้ายเฉพาะตัวเลือก "อื่นๆ" ที่ถูกเลือก
     const otherNote = (note) => (option) => (option.value === "other" ? `(ระบุ: ${esc(note ?? "")})` : "");
     const kindChoices = printChoices(model.REQUEST_KINDS, detail.request_kind, otherNote(detail.request_kind_note));
@@ -812,6 +814,7 @@
           <tr><th scope="row">เริ่มดำเนินการซ่อม</th><td>วันที่ ${blank(model.formatDateOf(detail.started?.at))} เวลา ${blank(model.formatTimeOf(detail.started?.at))}</td><th scope="row">ซ่อมเสร็จ</th><td>วันที่ ${blank(model.formatDateOf(detail.completed?.at))} เวลา ${blank(model.formatTimeOf(detail.completed?.at))}</td></tr>
           <tr><th scope="row">รวมเวลาในการซ่อม</th><td>${blank(duration?.text ?? "")}</td><th scope="row">ช่างผู้ดำเนินการซ่อม</th><td>${blank(detail.completed?.by ?? "")}</td></tr>
         </tbody></table>
+        ${duration?.note ? `<p class="itrp-sheet-note">หมายเหตุ: รวมเวลาในการซ่อม ${esc(duration.note)}</p>` : ""}
         <div class="itrp-outcome"><strong>สรุปผลการซ่อม</strong> <span class="itrp-outcome-item" data-outcome="complete">${box(outcome.complete)} ใช้งานได้สมบูรณ์</span> <span class="itrp-outcome-item" data-outcome="rework">${box(outcome.rework)} ส่งแก้ไข เลขที่ <span class="itrp-blank-line"></span></span></div>
         <div class="itrp-signs">
           ${signBox("delivered", "ส่งมอบงาน (แผนก IT)", sign.delivered)}
