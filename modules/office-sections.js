@@ -7,6 +7,7 @@
 //   #/office?module=repair      = ใบแจ้งซ่อม IT (ใบแจ้งซ่อมคอมพิวเตอร์) หน้าจริงอยู่ที่ modules/module-itrp.js · ที่นี่รู้แค่ว่าเป็นหน้าย่อยของ IT SUPPORT และสิทธิ์แผนก (IT_COMPUTER_REPAIR)
 //   #/office?module=work-order  = ใบสั่งงาน IT (IT01-FM06) หน้าจริงอยู่ที่ modules/module-itwo.js · ที่นี่รู้แค่ว่าเป็นหน้าย่อยของ IT SUPPORT และสิทธิ์แผนก (IT_WORK_ORDER)
 //   #/office?module=assets      = ทะเบียนอุปกรณ์ IT (โมดูล itas) หน้าจริงอยู่ที่ modules/module-itas.js · การ์ดแสดงเฉพาะผู้อยู่ใน allowlist ของโมดูล (app_itas_my_access) รหัสโมดูลคือ IT_ASSET_REGISTER
+//   #/office?module=access      = ทะเบียนสิทธิ์ผู้ใช้ (โมดูล itua) หน้าจริงอยู่ที่ modules/module-itua.js · สิทธิ์ใช้ allowlist เดียวกับทะเบียนอุปกรณ์ IT (itas_admins ผ่าน app_itas_my_access) รหัสโมดูลคือ IT_USER_ACCESS
 //   #/office?module=hr          = หน้า "ระบบกำลังพัฒนา" (เปิดได้จาก URL ตรง ๆ เท่านั้น)
 //
 // สิทธิ์แผนก: ทุกการ์ดมีรหัสโมดูลของตัวเอง และกรองด้วย allowed(code) (= deptModuleAllowed ของ app.js ซึ่งอ่านรายการที่อนุญาตจาก department-access.js)
@@ -41,6 +42,9 @@
   // ทะเบียนอุปกรณ์ IT (itas): สิทธิ์ตัดสินที่ฐานข้อมูล (allowlist เฉพาะผู้ดูแลงาน IT) การ์ดจึงขึ้นเมื่อ module-office.js ตรวจ app_itas_my_access แล้วเท่านั้น (ดู modeAllowed) · รหัสนี้ไม่อยู่ในรายการอนุญาตของแผนกที่จำกัดโมดูล (แผนก ID ไม่เห็น)
   const ASSETS = "assets";
   const ASSET_CODE = "IT_ASSET_REGISTER";
+  // ทะเบียนสิทธิ์ผู้ใช้ (itua): สิทธิ์ตัดสินที่ฐานข้อมูล (allowlist เดียวกับทะเบียนอุปกรณ์ IT) การ์ดจึงขึ้นเมื่อ module-office.js ตรวจ app_itas_my_access แล้วเท่านั้น (ดู modeAllowed) · รหัสนี้ไม่อยู่ในรายการอนุญาตของแผนกที่จำกัดโมดูล (แผนก ID ไม่เห็น)
+  const ACCESS = "access";
+  const ACCESS_CODE = "IT_USER_ACCESS";
   const ALLOW_ALL = () => true;
   const DEV_LABEL = "กำลังพัฒนา";
   // code = รหัสโมดูลที่ใช้ตัดสินสิทธิ์แผนก · ระบบที่มี cards ไม่มี code ของตัวเอง ดูจากการ์ดลูก
@@ -52,6 +56,7 @@
     { key: "repair", label: "ใบแจ้งซ่อม IT", palette: "it", icon: "monitor", open: true, code: "IT_COMPUTER_REPAIR", action: "แจ้งซ่อมและติดตามใบแจ้งซ่อม →" },
     { key: "work-order", label: "ใบสั่งงาน IT", palette: "it", icon: "clipboard-check", open: true, code: "IT_WORK_ORDER", action: "แจ้งงานและติดตามใบสั่งงาน →" },
     { key: "assets", label: "ทะเบียนอุปกรณ์ IT", palette: "it", icon: "box", open: true, code: "IT_ASSET_REGISTER", action: "ดูและบันทึกทะเบียนอุปกรณ์ →" },
+    { key: "access", label: "ทะเบียนสิทธิ์ผู้ใช้", palette: "it", icon: "shield", open: true, code: "IT_USER_ACCESS", action: "ดูและบันทึกสิทธิ์ผู้ใช้ →" },
   ].map((card) => Object.freeze({ ...card })));
   const SECTIONS = Object.freeze([
     { key: "it-support", label: "IT SUPPORT", palette: "it", icon: "wrench", open: true, action: "เปิดระบบ →", cards: IT_SUPPORT_CARDS },
@@ -76,15 +81,16 @@
   function readSection(params) {
     const key = params?.get?.("module");
     if (key === null || key === undefined || key === "") return HOME;
-    if (key === WORK_ORDER || key === REPAIR || key === ASSETS) return key;
+    if (key === WORK_ORDER || key === REPAIR || key === ASSETS || key === ACCESS) return key;
     return find(key)?.key ?? null;
   }
   const workOrderVisible = (allowed = ALLOW_ALL) => Boolean(allowed(WORK_ORDER_CODE));
   const repairVisible = (allowed = ALLOW_ALL) => Boolean(allowed(REPAIR_CODE));
   const assetsVisible = (allowed = ALLOW_ALL) => Boolean(allowed(ASSET_CODE));
+  const accessVisible = (allowed = ALLOW_ALL) => Boolean(allowed(ACCESS_CODE));
 
   function sectionUrl(key) {
-    if (key === WORK_ORDER || key === REPAIR || key === ASSETS) return `#/office?module=${key}`;
+    if (key === WORK_ORDER || key === REPAIR || key === ASSETS || key === ACCESS) return `#/office?module=${key}`;
     const section = find(key);
     return section ? `#/office?module=${encodeURIComponent(section.key)}` : "#/office";
   }
@@ -168,7 +174,7 @@
     </div>`;
   }
 
-  const api = { SECTIONS, IT_SUPPORT_CARDS, HOME, WORK_ORDER, WORK_ORDER_CODE, workOrderVisible, REPAIR, REPAIR_CODE, repairVisible, ASSETS, ASSET_CODE, assetsVisible, visibleCards, sectionVisible, visibleSections, hasVisibleSection, readSection, sectionUrl, chooserPage, moduleHead, itSupportPage, notReadyPage };
+  const api = { SECTIONS, IT_SUPPORT_CARDS, HOME, WORK_ORDER, WORK_ORDER_CODE, workOrderVisible, REPAIR, REPAIR_CODE, repairVisible, ASSETS, ASSET_CODE, assetsVisible, ACCESS, ACCESS_CODE, accessVisible, visibleCards, sectionVisible, visibleSections, hasVisibleSection, readSection, sectionUrl, chooserPage, moduleHead, itSupportPage, notReadyPage };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_OFFICE_SECTIONS = api;
 })(typeof window !== "undefined" ? window : globalThis);

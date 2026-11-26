@@ -26,16 +26,18 @@
   // โหมดทดสอบของ admin: เหลือเฉพาะใบแจ้งซ่อม IT กับใบสั่งงาน IT (ฐานข้อมูลแยกข้อมูลทดสอบให้แล้ว) HR ยังซ่อนเหมือนเดิม
   // isSandboxMode เป็นของ app.js (อ้างตอนเรียกใช้เท่านั้น)
   const inSandbox = () => typeof isSandboxMode === "function" && isSandboxMode();
-  // ทะเบียนอุปกรณ์ IT (IT_ASSET_REGISTER): นอกจากสิทธิ์แผนก ต้องเป็นผู้อยู่ใน allowlist ของโมดูล (window.MNP_ITAS.hasAccess = ผลของ app_itas_my_access ที่ resolveAccess ตรวจก่อนวาดหน้า) · ไม่มีผล/ล้ม = ซ่อน
+  // ทะเบียนอุปกรณ์ IT (IT_ASSET_REGISTER) และทะเบียนสิทธิ์ผู้ใช้ (IT_USER_ACCESS): นอกจากสิทธิ์แผนก ต้องเป็นผู้อยู่ใน allowlist เดียวกัน (window.MNP_ITAS.hasAccess = ผลของ app_itas_my_access ที่ resolveAccess ตรวจก่อนวาดหน้า) · ไม่มีผล/ล้ม = ซ่อน
+  // สองการ์ดนี้ใช้ผลตรวจสิทธิ์ชุดเดียว (RPC เดียว) จึงนับเป็น "การ์ดที่ต้องรอผลสิทธิ์" ด้วยกัน (isGated)
+  const isGated = (code) => code === sections.ASSET_CODE || code === sections.ACCESS_CODE;
   const modeAllowed = (code) => deptModuleAllowed(code)
-    && (!inSandbox() || code === sections.WORK_ORDER_CODE || code === sections.REPAIR_CODE || code === sections.ASSET_CODE)
-    && (code !== sections.ASSET_CODE || Boolean(window.MNP_ITAS?.hasAccess?.()));
+    && (!inSandbox() || code === sections.WORK_ORDER_CODE || code === sections.REPAIR_CODE || isGated(code))
+    && (!isGated(code) || Boolean(window.MNP_ITAS?.hasAccess?.()));
 
   // การ์ดของโมดูลที่ประกาศตัวเองใน window.MNP_OFFICE_CARDS[<รหัสโมดูล>] = { version, loadCardSummary } (วิธีเพิ่มโมดูลใหม่ดูหัวไฟล์ office-sections.js)
   // คืน { <รหัสโมดูล>: { version, inDevelopment, openCount, waiting, title } } (inDevelopment = ป้าย "กำลังพัฒนา" การ์ดยังกดเข้าได้) เฉพาะการ์ดที่ผู้ใช้เห็น (สิทธิ์แผนก/โหมดทดสอบ) · ไม่ประกาศ = ไม่มีรายการ การ์ดไม่แสดงป้าย
   // loadCardSummary ล้ม/คืน null = openCount เป็น null (การ์ดแสดง "ดูสถานะ") · โมดูลที่ไม่มี loadCardSummary = ไม่มีป้ายตัวเลข
   // การ์ดทะเบียนอุปกรณ์ IT (ประกาศแค่เลขเวอร์ชัน/ป้ายกำลังพัฒนา ไม่มีตัวเลขงาน) เก็บข้อมูลไว้ก่อนโดยไม่รอผลสิทธิ์ · การแสดงจริงตัดสินที่ itSupportPage ด้วย modeAllowed (ไม่มีสิทธิ์ = ไม่แสดงการ์ด)
-  const poolAllowed = (code) => (code === sections.ASSET_CODE ? deptModuleAllowed(code) : modeAllowed(code));
+  const poolAllowed = (code) => (isGated(code) ? deptModuleAllowed(code) : modeAllowed(code));
   async function loadDeclaredCards() {
     const declared = window.MNP_OFFICE_CARDS ?? {};
     const entries = await Promise.all(sections.visibleCards(poolAllowed).filter((card) => declared[card.code]).map(async (card) => {
@@ -74,17 +76,18 @@
     // หน้าทะเบียน (ASSETS) และหน้าที่ทะเบียนเป็นการ์ดเดียวที่แผนกนี้มี ต้องรู้ผลก่อนตัดสินว่าเปิดได้ไหม จึงรอ (ส่วนใหญ่มีผลเก็บไว้แล้ว ไม่เสียเวลา)
     // หน้า IT SUPPORT ที่มีการ์ดอื่นอยู่แล้วไม่รอก่อนวาด: ขอสิทธิ์ขนานกับการโหลดตัวเลขบนการ์ด · หน้าเลือกระบบไม่แสดงการ์ดทะเบียน จึงไม่ต้องขอเลยถ้ามีระบบอื่นให้เห็น
     const itas = window.MNP_ITAS;
-    const assetCheckAllowed = deptModuleAllowed(sections.ASSET_CODE);
-    const assetDecidesPage = assetCheckAllowed && sections.visibleSections((code) => code !== sections.ASSET_CODE && modeAllowed(code)).length === 0;
+    const assetCheckAllowed = deptModuleAllowed(sections.ASSET_CODE) || deptModuleAllowed(sections.ACCESS_CODE);
+    const assetDecidesPage = assetCheckAllowed && sections.visibleSections((code) => !isGated(code) && modeAllowed(code)).length === 0;
+    const gatedPage = section === sections.ASSETS || section === sections.ACCESS;
     let accessCheck = null;
-    if (assetCheckAllowed && (section === sections.ASSETS || (assetDecidesPage && [sections.HOME, "it-support"].includes(section)))) {
+    if (assetCheckAllowed && (gatedPage || (assetDecidesPage && [sections.HOME, "it-support"].includes(section)))) {
       await itas?.resolveAccess?.();
       if (version !== pageVersion) return; // ผู้ใช้ไปหน้าอื่นระหว่างรอ: ห้ามทำส่วนที่เหลือกับหน้าที่ออกไปแล้ว
     } else if (assetCheckAllowed && section === "it-support") {
       accessCheck = Promise.resolve(itas?.resolveAccess?.()).catch(() => false);
     }
     // ตรวจสิทธิ์ไม่ได้ชั่วคราว (เน็ตหลุด) ที่หน้าทะเบียน: ให้โมดูลแสดง "ตรวจสิทธิ์ไม่ได้ ลองใหม่" แทนการเด้งกลับเงียบ ๆ (ไม่มีสิทธิ์จริง = เด้งตามเดิมข้างล่าง)
-    if (section === sections.ASSETS && assetCheckAllowed && itas?.accessStatus?.() === "error") return itas.render(params);
+    if (gatedPage && assetCheckAllowed && itas?.accessStatus?.() === "error") return (section === sections.ACCESS ? window.MNP_ITUA : itas).render(params);
     // ระบบที่แผนกนี้ไม่มีสิทธิ์ (หรือไม่เหลือระบบใดเลย) พากลับหน้าหลักเหมือน routeAllowed ของหน้าโมดูลอื่น ก่อนเรียกข้อมูลใด ๆ
     // หน้าใบแจ้งซ่อม IT / ใบสั่งงาน IT (ย่อยของ IT SUPPORT) ดูจากรหัสโมดูล IT_COMPUTER_REPAIR / IT_WORK_ORDER ของมันเอง · โหมดทดสอบพากลับหน้าเลือกระบบ (หน้าหลักไม่อยู่ในโหมดนี้)
     const visible = sections.visibleSections(modeAllowed);
@@ -92,7 +95,8 @@
       : section === sections.WORK_ORDER ? !sections.workOrderVisible(modeAllowed)
         : section === sections.REPAIR ? !sections.repairVisible(modeAllowed)
           : section === sections.ASSETS ? !sections.assetsVisible(modeAllowed)
-            : !visible.some((item) => item.key === section);
+            : section === sections.ACCESS ? !sections.accessVisible(modeAllowed)
+              : !visible.some((item) => item.key === section);
     if (hidden) {
       go(inSandbox() && visible.length ? "office" : "dashboard");
       return;
@@ -100,6 +104,7 @@
     if (section === sections.WORK_ORDER) return window.MNP_ITWO.render(params);
     if (section === sections.REPAIR) return window.MNP_ITRP.render(params);
     if (section === sections.ASSETS) return window.MNP_ITAS.render(params);
+    if (section === sections.ACCESS) return window.MNP_ITUA.render(params);
     if (section === sections.HOME) return paint(sections.chooserPage({ allowed: modeAllowed }), TITLE, version);
     if (section === "it-support") {
       loadingShell(PATH, TITLE);

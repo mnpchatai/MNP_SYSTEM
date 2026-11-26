@@ -4162,3 +4162,162 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
   .itas-sheet-table .itas-sheet-mono { font-family: var(--itas-mono-font, ui-monospace, Consolas, monospace); white-space: nowrap; }
   .itas-sheet-table .itas-sheet-nowrap { white-space: nowrap; }
 }
+/* ---------- ทะเบียนสิทธิ์ผู้ใช้ (itua) · modules/itua-pages.js ---------- */
+/* ตัวแปรสีประกาศที่ .itua-page เท่านั้น (ไม่กระทบโมดูลอื่น) · R = อ่านอย่างเดียว (น้ำเงิน) · F = เต็ม (เหลืองส้ม เพราะเสี่ยงกว่า) */
+.itua-page { --itua-mono-font: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", "Anuphan", monospace; }
+.badge.itua-test-tag { color: var(--warning-ink); background: var(--warning-soft); border: 1px solid var(--warning); }
+.itua-head .itua-test-tag { margin-left: 10px; align-self: center; }
+.itua-dev-notice { margin: 0 0 14px; font-weight: 600; }
+.itua-version { margin: 24px 0 0; text-align: right; font-size: 12px; color: var(--muted, #6b7280); }
+.itua-purge-row { margin-top: 18px; display: flex; justify-content: flex-end; }
+.itua-mono { font-family: var(--itua-mono-font); font-size: .95em; letter-spacing: .01em; }
+.itua-yes { color: var(--success-ink); font-weight: 700; }
+.itua-tabs { margin: 0 0 14px; display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); }
+.itua-tab { min-height: 44px; padding: 8px 16px; display: inline-flex; align-items: center; color: inherit; font-weight: 600; white-space: nowrap; text-decoration: none; border-bottom: 3px solid transparent; }
+.itua-tab:hover { color: var(--primary-ink); }
+.itua-tab:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.itua-tab.is-current { color: var(--primary-ink); border-bottom-color: var(--primary); }
+.badge.itua-status { gap: 6px; color: var(--itua-st-ink, var(--muted)); background: color-mix(in srgb, var(--itua-st, var(--muted)) 14%, var(--paper)); border: 1px solid color-mix(in srgb, var(--itua-st, var(--muted)) 34%, var(--paper)); }
+.badge.itua-status::before { content: ""; width: 6px; height: 6px; flex: none; border-radius: 50%; background: currentColor; }
+.badge.itua-status.is-ok { --itua-st: var(--success); --itua-st-ink: var(--success-ink); }
+.badge.itua-status.is-off { --itua-st: var(--muted); --itua-st-ink: var(--muted); }
+/* ตารางรวมผู้ใช้ */
+.itua-toolbar { margin-bottom: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.itua-search { flex: 1 1 240px; margin: 0; }
+.itua-filter { margin: 0; }
+.itua-toolbar .btn[disabled] { opacity: .5; cursor: not-allowed; }
+.itua-scroll { position: relative; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--elev-1); overflow-x: auto; }
+.itua-table { width: 100%; min-width: 860px; border-collapse: collapse; font-size: var(--text-meta); }
+.itua-table th, .itua-table td { padding: 8px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--soft-line); overflow-wrap: break-word; }
+.itua-table th { background: var(--shell); border-bottom: 1px solid var(--line); white-space: nowrap; }
+.itua-table td.itua-mono, .itua-table td.itua-nowrap { white-space: nowrap; }
+.itua-table td.itua-text { min-width: 8em; max-width: 24em; }
+.itua-row { cursor: pointer; }
+.itua-row:hover, .itua-row:focus-visible { background: var(--primary-soft); outline: none; }
+.itua-row a { color: var(--primary-ink); font-weight: 700; }
+.itua-row.is-resigned td { opacity: .65; }
+/* มือถือ: แต่ละผู้ใช้เป็นการ์ดหนึ่งใบ (ไม่ต้องเลื่อนแนวนอน) · หัวตารางซ่อนไว้ให้โปรแกรมอ่านหน้าจอยังอ่านได้ */
+@media (max-width: 719px) {
+  .itua-scroll { border: 0; }
+  .itua-table { min-width: 0; }
+  .itua-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .itua-table tbody, .itua-table tr, .itua-table td { display: block; }
+  .itua-table tr.itua-row { margin: 0 0 8px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper); }
+  .itua-table td { padding: 2px 0; border: 0; display: flex; gap: 8px; }
+  .itua-table td.itua-mono, .itua-table td.itua-nowrap { white-space: normal; overflow-wrap: anywhere; }
+  .itua-table td.itua-text { min-width: 0; max-width: none; }
+  .itua-table td::before { content: attr(data-label); flex: 0 0 34%; max-width: 8em; color: var(--muted); font-size: var(--text-caption); }
+  .itua-catalog-table tr { margin: 0 0 8px; padding: 8px 12px; display: block; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper); }
+  .itua-catalog-table td:last-child { justify-content: flex-end; }
+  .itua-catalog-table td:last-child::before { content: none; }
+}
+/* เมทริกซ์ ผู้ใช้ × โฟลเดอร์: หัวคอลัมน์ค้างบน คอลัมน์ชื่อค้างซ้าย เลื่อนในกรอบของตัวเอง */
+.itua-matrix-scroll { position: relative; max-height: 72vh; overflow: auto; overscroll-behavior: contain; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--elev-1); }
+.itua-matrix-scroll:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.itua-matrix { border-collapse: separate; border-spacing: 0; font-size: var(--text-meta); }
+.itua-matrix th, .itua-matrix td { padding: 4px 6px; text-align: center; background: var(--paper); border-right: 1px solid var(--soft-line); border-bottom: 1px solid var(--soft-line); }
+.itua-matrix thead th { position: sticky; top: 0; z-index: 3; vertical-align: bottom; background: var(--shell); border-bottom: 1px solid var(--line); }
+.itua-matrix .itua-sticky-col { position: sticky; left: 0; z-index: 2; min-width: 170px; max-width: 260px; text-align: left; background: var(--paper); box-shadow: 1px 0 0 var(--line); }
+.itua-matrix thead .itua-sticky-col { z-index: 4; background: var(--shell); }
+.itua-matrix .itua-sticky-col a { color: inherit; text-decoration: none; }
+.itua-matrix .itua-sticky-col a:hover { color: var(--primary-ink); text-decoration: underline; }
+.itua-matrix-name { color: var(--muted); font-weight: 400; }
+.itua-matrix-dept { white-space: nowrap; }
+.itua-matrix .itua-col { width: 34px; min-width: 34px; height: 170px; padding: 6px 2px; }
+.itua-matrix .itua-col span { display: inline-block; max-height: 158px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; writing-mode: vertical-rl; transform: rotate(180deg); font-size: var(--text-caption); font-weight: 700; }
+.itua-cell { font-weight: 700; }
+.itua-cell.is-r { color: var(--primary-ink); background: color-mix(in srgb, var(--primary) 14%, var(--paper)); }
+.itua-cell.is-f { color: var(--warning-ink); background: color-mix(in srgb, var(--warning) 22%, var(--paper)); }
+.itua-matrix tr.is-resigned > * { opacity: .6; }
+.itua-legend { margin: 8px 0 0; }
+@media (max-width: 719px) { .itua-matrix .itua-sticky-col { min-width: 120px; max-width: 150px; } }
+/* หน้าต่อคน */
+.itua-user-bar { margin: 0 0 14px; padding: 18px 20px; display: grid; gap: 14px; color: #e6edf7; background: linear-gradient(135deg, #0b1424, #14243c); border: 1px solid #243a5a; border-radius: var(--radius-lg); box-shadow: var(--elev-2); }
+.itua-user-id { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 14px; }
+.itua-user-glyph { flex: 0 0 48px; width: 48px; height: 48px; display: grid; place-items: center; color: #7dd3fc; background: rgba(125, 211, 252, .12); border: 1px solid rgba(125, 211, 252, .3); border-radius: 14px; }
+.itua-user-glyph .ui-icon { width: 26px; height: 26px; }
+.itua-user-heading { flex: 1 1 200px; min-width: 0; }
+.itua-user-code { margin: 0; color: #7dd3fc; font-size: var(--text-title); font-weight: 700; letter-spacing: .05em; overflow-wrap: anywhere; }
+.itua-user-heading h2 { margin: 2px 0 0; color: #fff; font-size: var(--text-heading); overflow-wrap: anywhere; }
+.itua-facts { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px 18px; }
+.itua-facts > div { min-width: 0; }
+.itua-facts .itua-fact-wide { grid-column: 1 / -1; }
+.itua-facts dt { color: #9fb3cc; font-size: var(--text-caption); }
+.itua-facts dd { margin: 2px 0 0; color: #e6edf7; overflow-wrap: anywhere; }
+.itua-user-foot { padding-top: 12px; display: flex; flex-wrap: wrap; gap: 10px; border-top: 1px solid rgba(255, 255, 255, .14); }
+@media (max-width: 719px) { .itua-user-bar { padding: 14px; } .itua-user-foot .btn { flex: 1 1 100%; } }
+.itua-card { margin-bottom: 14px; }
+.itua-card-head { margin: 0 0 10px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.itua-card-head h2 { margin: 0; font-size: var(--text-heading); }
+.itua-section-title { margin: 14px 0 8px; font-size: var(--text-ui); }
+.itua-chips { margin: 0 0 8px; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 8px; }
+.itua-grant { padding: 4px 12px 4px 5px; display: inline-flex; align-items: center; gap: 8px; background: var(--paper); border: 1px solid var(--line); border-radius: 999px; overflow-wrap: anywhere; }
+.itua-grant.is-program { padding-left: 12px; }
+.itua-grant.is-off { opacity: .6; }
+.itua-level { width: 1.9em; height: 1.9em; flex: none; display: inline-grid; place-items: center; font-size: var(--text-caption); font-weight: 700; border-radius: 50%; }
+.itua-level.is-r { color: var(--primary-ink); background: color-mix(in srgb, var(--primary) 16%, var(--paper)); }
+.itua-level.is-f { color: var(--warning-ink); background: color-mix(in srgb, var(--warning) 26%, var(--paper)); }
+.itua-emails { margin: 0 0 8px; padding: 0; list-style: none; display: grid; gap: 8px; }
+.itua-emails li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.itua-emails li.is-closed { opacity: .65; }
+.itua-log { padding: 8px 0; border-top: 1px solid var(--soft-line); }
+.itua-log h4 { margin: 0 0 4px; font-size: var(--text-ui); }
+.itua-log ul { margin: 0 0 4px; padding-left: 18px; }
+/* ฟอร์ม: หัวติดขอบบน (ย้อนกลับ + ชื่อ + บันทึก) · สูงเท่าแถบบนของระบบ จึงเว้นขอบบนให้ช่องที่โฟกัสไม่โดนบัง */
+.itua-form-card { margin-bottom: 16px; border-color: var(--primary); }
+.itua-form-card .form-actions { flex-wrap: wrap; justify-content: flex-start; }
+.itua-form-head { position: sticky; top: 64px; z-index: 4; margin: 0 0 12px; padding: 8px 0; display: flex; align-items: center; gap: 10px; background: var(--paper); border-bottom: 1px solid var(--line); }
+.itua-form-head h2 { flex: 1 1 auto; min-width: 0; margin: 0; font-size: var(--text-heading); overflow-wrap: anywhere; }
+.itua-form-head .btn { flex: none; white-space: nowrap; }
+@media (max-width: 760px) { .itua-form-head { top: 58px; } }
+.itua-form :is(input, select, textarea), #itua-form-message { scroll-margin-top: 130px; }
+.itua-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0 16px; }
+.itua-grid .itua-wide { grid-column: 1 / -1; }
+.itua-group { margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-md); min-width: 0; }
+.itua-group legend { padding: 0 6px; font-weight: 700; }
+.itua-grant-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 220px); align-items: center; gap: 6px 14px; margin-bottom: 10px; }
+.itua-grant-row label { overflow-wrap: anywhere; }
+@media (max-width: 560px) { .itua-grant-row { grid-template-columns: minmax(0, 1fr); } }
+.itua-check-label { min-height: 44px; display: flex; align-items: center; gap: 10px; font-weight: 600; cursor: pointer; }
+.itua-check-label input { width: 20px; height: 20px; flex: none; }
+.itua-note-line { margin: 0 0 6px 30px; }
+.itua-note-line .input { width: 100%; }
+/* ใบพิมพ์: อยู่ใน DOM เฉพาะตอนกดพิมพ์ ซ่อนบนหน้าจอเสมอ · A4 แนวนอน */
+.itua-sheet { display: none; }
+@page itua-list { size: A4 landscape; margin: 10mm 10mm 14mm; @bottom-center { content: "หน้า " counter(page) " / " counter(pages); font-size: 9pt; } }
+@media print {
+  body:has(.itua-sheet) :is(.sidebar, .topbar, .mobile-nav-toggle, .nav-backdrop, .sandbox-banner, .push-prompt, .skip-link, .offline-banner, .update-banner, .toast, .install-banner, .no-print) { display: none !important; }
+  body:has(.itua-sheet), body:has(.itua-sheet) .app-shell, body:has(.itua-sheet) .main, body:has(.itua-sheet) .content { display: block; margin: 0; padding: 0; background: #fff; max-width: none; }
+  /* พื้นหลังของระบบ (สีเทาอ่อน/ไล่สี/ธีมมืด) ต้องไม่ติดไปกับกระดาษ */
+  html:has(.itua-sheet), body:has(.itua-sheet) { background: #fff !important; background-image: none !important; box-shadow: none !important; color-scheme: light !important; }
+  :is(body:has(.itua-sheet) .app-shell, body:has(.itua-sheet) .main, body:has(.itua-sheet) .content, .itua-sheet) { box-shadow: none; }
+  body:has(.itua-sheet) .itua-page { margin: 0; padding: 0; max-width: none; }
+  /* ซ่อนทุกอย่างในหน้าทะเบียน เหลือแต่ใบพิมพ์ */
+  body:has(.itua-sheet) .itua-page > :not(.itua-sheet) { display: none !important; }
+  .itua-sheet { display: block; page: itua-list; margin: 0; padding: 0; color: #000; background: #fff; font-size: 9.5pt; line-height: 1.35; }
+  .itua-sheet-title h2 { margin: 0 0 4px; font-size: 15pt; line-height: 1.3; letter-spacing: 0; color: #000; }
+  .itua-sheet-test { margin: 0 0 4px; font-weight: 700; color: #000; }
+  .itua-sheet-meta { margin: 0 0 8px; display: flex; flex-wrap: wrap; gap: 2px 18px; }
+  .itua-sheet-meta > div { display: flex; gap: 5px; }
+  .itua-sheet-meta dt { font-weight: 700; }
+  .itua-sheet-meta dd { margin: 0; }
+  .itua-sheet-legend { margin: 6px 0 0; font-size: 8.5pt; }
+  .itua-sheet-table { width: 100%; margin-bottom: 6px; border-collapse: collapse; }
+  .itua-sheet-table thead { display: table-header-group; } /* หัวตารางซ้ำทุกหน้า */
+  .itua-sheet-table tr { break-inside: avoid; }
+  .itua-sheet-table tbody tr:last-child :is(td, th) { border-bottom: 1px solid #000; } /* กฎกลาง tbody tr:last-child td ตัดเส้นล่างของตาราง ต้องมีเส้นปิดตาราง */
+  .itua-sheet-table th, .itua-sheet-table td { padding: 2px 5px; text-align: left; vertical-align: top; border: 1px solid #000; overflow-wrap: anywhere; color: #000; background: transparent; font-size: 9pt; }
+  .itua-sheet-table thead th { text-align: center; font-weight: 700; background: #f0f0f0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .itua-sheet-table .itua-sheet-center { text-align: center; }
+  .itua-sheet-table .itua-sheet-mono { font-family: var(--itua-mono-font, ui-monospace, Consolas, monospace); white-space: nowrap; }
+  .itua-sheet-table .itua-sheet-nowrap { white-space: nowrap; }
+  /* เมทริกซ์: โฟลเดอร์ ~32 คอลัมน์ แคบมาก → หัวคอลัมน์ตัวหนังสือแนวตั้ง ช่องเป็นตัวอักษร R/F ตรงกลาง */
+  .itua-sheet.is-matrix .itua-sheet-table { table-layout: fixed; }
+  .itua-sheet.is-matrix .itua-sheet-table :is(th, td) { padding: 1px 2px; font-size: 7.5pt; }
+  .itua-sheet.is-matrix .itua-sheet-table th:nth-child(1) { width: 52mm; }
+  .itua-sheet.is-matrix .itua-sheet-table th:nth-child(2) { width: 15mm; }
+  .itua-sheet.is-matrix .itua-sheet-table th:nth-child(3) { width: 8mm; }
+  .itua-sheet-table .itua-sheet-level { text-align: center; font-weight: 700; }
+  .itua-sheet-table thead th.itua-sheet-level { height: 40mm; vertical-align: bottom; }
+  .itua-sheet-table thead th.itua-sheet-level span { display: inline-block; max-height: 38mm; overflow: hidden; white-space: nowrap; writing-mode: vertical-rl; transform: rotate(180deg); font-size: 7pt; }
+}

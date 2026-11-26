@@ -1248,7 +1248,7 @@ function unsavedTextCount() {
 }
 // ออกจากหน้าเมื่อยังมีไฟล์ที่ยังไม่อัปโหลดหรือข้อความที่พิมพ์ค้าง: ถามก่อน (ไฟล์มาก่อนเพราะลบไม่ได้หลังอัปโหลด)
 function leaveWarningPending() {
-  return pendingAttachmentCount() > 0 || unsavedTextCount() > 0 || (window.MNP_ITRP?.unsavedCount?.() ?? 0) > 0 || (window.MNP_ITAS?.unsavedCount?.() ?? 0) > 0; // + ของค้างในใบแจ้งซ่อม IT (itrp): ฟอร์มส่งงาน ขอแก้ไขงาน ถาม-ตอบที่พิมพ์หรือเลือกไฟล์ค้าง และไฟล์แนบที่อัปโหลดไม่สำเร็จ (modules/module-itrp.js) · + ฟอร์มเพิ่ม/แก้อุปกรณ์ในทะเบียนอุปกรณ์ IT (itas) ที่พิมพ์ค้างหรือพิมพ์ช่องลับไว้ (modules/module-itas.js)
+  return pendingAttachmentCount() > 0 || unsavedTextCount() > 0 || (window.MNP_ITRP?.unsavedCount?.() ?? 0) > 0 || (window.MNP_ITAS?.unsavedCount?.() ?? 0) > 0 || (window.MNP_ITUA?.unsavedCount?.() ?? 0) > 0; // + ของค้างในใบแจ้งซ่อม IT (itrp): ฟอร์มส่งงาน ขอแก้ไขงาน ถาม-ตอบที่พิมพ์หรือเลือกไฟล์ค้าง และไฟล์แนบที่อัปโหลดไม่สำเร็จ (modules/module-itrp.js) · + ฟอร์มเพิ่ม/แก้อุปกรณ์ในทะเบียนอุปกรณ์ IT (itas) ที่พิมพ์ค้างหรือพิมพ์ช่องลับไว้ (modules/module-itas.js) · + ฟอร์มแก้ไขในทะเบียนสิทธิ์ผู้ใช้ (itua) ที่พิมพ์ค้าง (modules/module-itua.js)
 }
 async function confirmLeave() {
   const files = pendingAttachmentCount();
