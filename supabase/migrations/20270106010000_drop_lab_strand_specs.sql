@@ -12,8 +12,9 @@
 -- trigger sandbox_guard และ policy ของตารางถูกลบไปพร้อมกับตาราง
 -- แถวใน audit_logs (LAB_STRAND_SPEC_*) ถ้ามี ยังเก็บไว้เป็นประวัติ
 --
--- Rollback: ไม่มีข้อมูลถูกลบ (ตารางต้องว่างจึงลบได้) ถ้าต้องการคืน ให้รัน
--- supabase/migrations/20261019010000_lab_strand_specs.sql จาก branch claude/sleepy-dijkstra-hhu4co เป็น migration ใหม่
+-- Rollback: ไม่มีข้อมูลถูกลบ (ตารางต้องว่างจึงลบได้) ถ้าต้องการคืน ให้นำ
+-- supabase/migrations/20261019010000_lab_strand_specs.sql จาก commit 9020d30 (PR #196) มาเป็น migration ใหม่
+-- และเพิ่มด่าน private.can_write_lab() ในฟังก์ชัน save/delete (20261219010000 เติมด่านนี้ให้ฟังก์ชัน LAB ที่เขียนข้อมูล)
 -- ============================================================================
 
 do $$
@@ -22,6 +23,8 @@ declare
   v_fn regprocedure;
 begin
   if to_regclass('public.lab_strand_specs') is not null then
+    -- ล็อกก่อนนับ ไม่ให้มีแถวใหม่เข้ามาระหว่างนับกับลบ
+    execute 'lock table public.lab_strand_specs in access exclusive mode';
     execute 'select count(*) from public.lab_strand_specs' into v_rows;
     if v_rows > 0 then
       raise exception 'LAB_STRAND_SPECS_NOT_EMPTY: % rows, back them up and get the owner''s decision first', v_rows;
@@ -38,7 +41,8 @@ begin
   loop
     execute format('drop function %s', v_fn);
   end loop;
+
+  -- อยู่ใน block เดียวกับการนับ: ถ้าการนับหยุดด้วย error ตารางจะไม่ถูกลบ ไม่ว่าจะรันไฟล์นี้ด้วยวิธีใด
+  execute 'drop table if exists public.lab_strand_specs';
 end;
 $$;
-
-drop table if exists public.lab_strand_specs;
