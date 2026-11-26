@@ -243,7 +243,7 @@ select set_config('t.of', (select id::text from public.app_itwo_create('design',
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"2d700000-0000-0000-0000-000000000005","role":"authenticated"}', true);
 select set_config('t.oh', (select id::text from public.app_itwo_create('design', null, 'yes', null, 'ผู้อนุมัติ IT แจ้งเอง', ((now() at time zone 'Asia/Bangkok')::date + 3), false)), true);
-select is((public.app_itwo_get_detail(current_setting('t.oh')::uuid)->>'status'), 'approved', 'the IT approver request is approved at once (auto approvals are not real approvals)');
+select is((public.app_itwo_get_detail(current_setting('t.oh')::uuid)->>'status'), 'pending_it_mgr', 'the IT approver request waits for the IT head (no auto approval since 26/11/2026)');
 
 -- 7.1 อัปโหลดผ่าน policy (ผู้แจ้งเท่านั้น ใน path ของใบตัวเอง)
 set local role authenticated;
@@ -434,7 +434,7 @@ select set_config('request.jwt.claims', '{"sub":"2d700000-0000-0000-0000-0000000
 select lives_ok($$ select public.app_itwo_add_attachment(current_setting('t.of')::uuid, null, current_setting('t.of') || '/dddddddd-0000-0000-0000-000000000006.pdf', 'ผจก.pdf', 'application/pdf', 100) $$, 'the automatic department approval of a manager who files does not close the window');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"2d700000-0000-0000-0000-000000000005","role":"authenticated"}', true);
-select lives_ok($$ select public.app_itwo_add_attachment(current_setting('t.oh')::uuid, null, current_setting('t.oh') || '/dddddddd-0000-0000-0000-000000000007.pdf', 'อนุมัติเอง.pdf', 'application/pdf', 100) $$, 'the automatic double approval of the IT approver who files does not close the window either');
+select lives_ok($$ select public.app_itwo_add_attachment(current_setting('t.oh')::uuid, null, current_setting('t.oh') || '/dddddddd-0000-0000-0000-000000000007.pdf', 'อนุมัติเอง.pdf', 'application/pdf', 100) $$, 'an order filed by the IT approver (nothing signed at filing) keeps the window open too');
 reset role;
 select set_config('request.jwt.claims', '', true);
 
@@ -548,7 +548,7 @@ select is((select count(*)::int from storage.objects where bucket_id = 'itwo-fil
 select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_zv_mgr')::uuid) $$, 'switching to the department manager persona');
 select is((select count(*)::int from storage.objects where bucket_id = 'itwo-test-files' and name = current_setting('t.t1') || '/44444444-0000-0000-0000-000000000002.pdf'), 1, 'the department manager persona sees the test file (it can view the order)');
 select lives_ok($$ select public.app_itwo_approve(current_setting('t.t1')::uuid) $$, 'the manager persona approves the test order');
-select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_approver')::uuid) $$, 'switching to the IT approver persona');
+select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_admin')::uuid) $$, 'switching to the IT admin persona (also the IT approver since 26/11/2026)');
 select lives_ok($$ select public.app_itwo_approve(current_setting('t.t1')::uuid) $$, 'the IT approver persona approves');
 select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_admin')::uuid) $$, 'switching to the IT admin persona');
 select lives_ok($$ select public.app_itwo_start(current_setting('t.t1')::uuid) $$, 'the IT admin persona starts');

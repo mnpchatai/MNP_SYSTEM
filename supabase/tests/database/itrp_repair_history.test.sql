@@ -9,7 +9,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(315);
+select plan(316);
 
 -- ตัวช่วย (ชั่วคราว): claims ของผู้ใช้ทดสอบเลขที่ n · ใบที่อนุมัติครบและเริ่มทำแล้ว (ผู้แจ้งคนที่ p_req) · ส่งงานแบบกรอกขั้นต่ำพร้อมเครื่อง
 create function pg_temp.sub(n integer) returns text language sql as $$
@@ -454,9 +454,10 @@ select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_h
 select set_config('t.s1', (select id::text from public.app_itrp_create('th-hx1', 'เครื่องทดสอบ', 'repair', null, 'computer', null, 'อาการทดสอบ', false)), true);
 select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_h_mgr')::uuid) $$, 'switching to the manager persona');
 select lives_ok($$ select public.app_itrp_approve(current_setting('t.s1')::uuid) $$, 'the persona manager approves');
-select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_approver')::uuid) $$, 'switching to the IT approver persona');
+select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_admin')::uuid) $$, 'switching to the IT admin persona (also the IT approver since 26/11/2026)');
 select lives_ok($$ select public.app_itrp_approve(current_setting('t.s1')::uuid) $$, 'the persona IT approver approves');
-select is(jsonb_array_length(pg_temp.hist('th-hx1')), 0, 'the IT approver persona (test mode) sees no history of a real device (separate worlds)');
+select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_approver')::uuid) $$, 'switching to the IT head persona (view only)');
+select is(jsonb_array_length(pg_temp.hist('th-hx1')), 0, 'the IT head persona (test mode) reads history but sees none of a real device (separate worlds)');
 select is(public.app_itrp_device_history('th-hx1')->'device', 'null'::jsonb, 'and no registry header of the real device');
 select is((select count(*)::int from public.app_itrp_list_devices()), 0, 'the test registry is empty at the start of the test mode');
 select throws_ok($$ select public.app_itrp_save_device('TH-HX1', 'computer', 'ทดสอบ') $$, '42501', 'เฉพาะผู้ดูแลงาน IT เท่านั้นที่เพิ่ม/แก้ทะเบียนเครื่องได้', 'the IT approver persona cannot write the registry');

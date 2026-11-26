@@ -34,7 +34,7 @@ select ok(not exists (select 1 from pg_proc p where p.pronamespace = 'private'::
 select ok(not exists (select 1 from private.lab_only_unguarded_functions() f where f like '%itwo%'), 'every itwo RPC has the lab-only guard');
 select ok(position('Asia/Bangkok' in pg_get_functiondef('private.itwo_next_doc_no(boolean, timestamptz)'::regprocedure)) > 0, 'the document year is computed in Asia/Bangkok time');
 select is((select count(*)::int from public.employees where is_test and employee_no in ('SBX-IT-STAFF', 'SBX-IT-ADMIN', 'SBX-IT-APPROVER') and not is_active and auth_user_id is null), 3, 'the three IT test personas exist and cannot log in');
-select is((select count(*)::int from public.itwo_staff s join public.employees e on e.id = s.employee_id where e.employee_no in ('SBX-IT-ADMIN', 'SBX-IT-APPROVER') and (s.is_it_admin = (e.employee_no = 'SBX-IT-ADMIN')) and (s.is_it_approver = (e.employee_no = 'SBX-IT-APPROVER'))), 2, 'the IT test personas have the matching IT rights (admin only / approver only: the IT approver does not do the IT work, v4)');
+select is((select count(*)::int from public.itwo_staff s join public.employees e on e.id = s.employee_id where e.is_test and ((e.employee_no = 'SBX-IT-ADMIN' and s.is_it_admin and s.is_it_approver and not s.is_it_viewer) or (e.employee_no = 'SBX-IT-APPROVER' and not s.is_it_admin and not s.is_it_approver and s.is_it_viewer))), 2, 'the IT test personas follow the real rules (26/11/2026): SBX-IT-ADMIN = admin + approver, SBX-IT-APPROVER = IT head view only');
 select is((select d.code from public.employees e join public.departments d on d.id = e.department_id where e.employee_no = 'SBX-IT-STAFF'), 'IT', 'SBX-IT-STAFF is in the IT department');
 
 -- 2. ข้อมูลทดสอบ (ผู้ใช้จริง ไม่ใช่ persona) — แผนกใหม่ 6 แผนก ----------
@@ -134,8 +134,8 @@ select is((public.app_itwo_get_detail(current_setting('t.o5')::uuid)->>'status')
 select is((select string_agg(e->>'action', ',' order by (e->>'id')::bigint) from jsonb_array_elements(public.app_itwo_get_detail(current_setting('t.o5')::uuid)->'events') e), 'created', 'no department approval is recorded yet for a department without manager');
 select ok((public.app_itwo_get_detail(current_setting('t.o5')::uuid)->'events'->0->>'reason') like '%ไม่มีผู้จัดการ%', 'the created event says why the department step is skipped');
 select is((public.app_itwo_get_detail(current_setting('t.o6')::uuid)->>'status'), 'pending_it_mgr', 'an IT department requester waits for the IT approver only');
-select is((public.app_itwo_get_detail(current_setting('t.o7')::uuid)->>'status'), 'approved', 'an IT approver filing is approved immediately');
-select is((select string_agg(e->>'action', ',' order by (e->>'id')::bigint) from jsonb_array_elements(public.app_itwo_get_detail(current_setting('t.o7')::uuid)->'events') e), 'created,dept_approved,it_mgr_approved', 'the IT approver signs both steps at filing');
+select is((public.app_itwo_get_detail(current_setting('t.o7')::uuid)->>'status'), 'pending_it_mgr', 'an IT approver filing is no longer approved in his own name: the order waits at the IT step for the IT head (26/11/2026)');
+select is((select string_agg(e->>'action', ',' order by (e->>'id')::bigint) from jsonb_array_elements(public.app_itwo_get_detail(current_setting('t.o7')::uuid)->'events') e), 'created', 'the IT approver signs nothing at filing (only "created" is recorded)');
 select is((public.app_itwo_get_detail(current_setting('t.o8')::uuid)->>'status'), 'pending_it_mgr', 'an inactive manager does not count: the department is treated as having no manager');
 select is((public.app_itwo_get_detail(current_setting('t.o9')::uuid)->>'status'), 'pending_dept', 'a department whose manager is also an IT approver waits for the department step');
 select is((public.app_itwo_get_detail(current_setting('t.o9')::uuid)->>'doc_no'), 'IT06-' || to_char(now() at time zone 'Asia/Bangkok', 'YY') || '/009', 'document numbers run IT06-YY/NNN in order');
@@ -664,7 +664,7 @@ select is((select count(*)::int from public.app_itwo_list_mine()), 1, 'the perso
 select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_zt_mgr')::uuid) $$, 'switching to the manager persona');
 select is(public.app_itwo_pending_count(), 1, 'the persona manager has the test request pending');
 select lives_ok($$ select public.app_itwo_approve(current_setting('t.t1')::uuid) $$, 'the persona manager approves');
-select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_approver')::uuid) $$, 'switching to the IT approver persona');
+select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_admin')::uuid) $$, 'switching to the IT admin persona (also the IT approver since 26/11/2026)');
 select is((select count(*)::int from public.app_itwo_list_pending_approvals()), 1, 'the IT approver persona sees the test request only (not the real ones)');
 select lives_ok($$ select public.app_itwo_approve(current_setting('t.t1')::uuid) $$, 'the IT approver persona approves');
 select is((public.app_itwo_get_detail(current_setting('t.t1')::uuid)->>'status'), 'approved', 'approved in the test world');
@@ -683,7 +683,7 @@ select is((public.app_itwo_get_detail(current_setting('t.t1')::uuid)->>'status')
 select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_staff')::uuid) $$, 'the IT department requester persona');
 select set_config('t.t2', (select id::text from public.app_itwo_create('design', null, 'no', null, 'ทดสอบแผนก IT', ((now() at time zone 'Asia/Bangkok')::date + 3), false)), true);
 select is(public.app_itwo_get_detail(current_setting('t.t2')::uuid)->>'doc_no', 'TEST-IT06-' || to_char(now() at time zone 'Asia/Bangkok', 'YY') || '/010', 'the test number continues from the value that was set');
-select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_approver')::uuid) $$, 'IT approver persona again');
+select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_admin')::uuid) $$, 'IT admin persona again (approves the IT department test request)');
 select lives_ok($$ select public.app_itwo_approve(current_setting('t.t2')::uuid) $$, 'one click for the IT department test request');
 select is((select string_agg(e->>'action', ',' order by (e->>'id')::bigint) from jsonb_array_elements(public.app_itwo_get_detail(current_setting('t.t2')::uuid)->'events') e), 'created,dept_approved,it_mgr_approved', 'one click recorded both steps in the test world');
 set local role authenticated;
@@ -716,7 +716,7 @@ select set_config('request.jwt.claims', '{"sub":"1d700000-0000-0000-0000-0000000
 select lives_ok($$ select public.app_sandbox_exit() $$, 'the admin leaves the test mode');
 select throws_ok($$ select public.app_sandbox_purge_itwo() $$, null, 'SANDBOX_NOT_ACTIVE', 'the purge only works from inside the test mode');
 select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_zt_staff')::uuid) $$, 'the admin re-enters the test mode');
-select is((public.app_sandbox_purge_itwo()->>'deleted')::int, 15, 'the purge deletes every test row (requests, history, access rows, log including the row written by the v4 migration, counters)');
+select is((public.app_sandbox_purge_itwo()->>'deleted')::int, 17, 'the purge deletes every test row (requests, history, access rows, log including the rows written by the v4 and 26/11/2026 migrations, counters)');
 reset role;
 select set_config('request.jwt.claims', '', true);
 select is((select count(*)::int from public.itwo_work_orders where is_test) + (select count(*)::int from public.itwo_events where is_test) + (select count(*)::int from public.itwo_access_changes where is_test) + (select count(*)::int from public.itwo_admin_log where is_test) + (select count(*)::int from public.itwo_doc_counters where is_test), 0, 'no test row is left');

@@ -47,7 +47,7 @@ select is(private.itrp_request_kind_text('other', '  ย้ายเครื่
 insert into public.departments (code, name_th, name_en) values
   ('ZRNA', 'แผนกทดสอบ R-A (มีผู้จัดการ)', 'ZRN A'), ('ZRNB', 'แผนกทดสอบ R-B (ไม่มีผู้จัดการ)', 'ZRN B');
 insert into auth.users (id, email, raw_user_meta_data)
-select ('4e900000-0000-0000-0000-' || lpad(n::text, 12, '0'))::uuid, 'itr-u' || n || '@test.local', '{}'::jsonb from generate_series(1, 12) n;
+select ('4e900000-0000-0000-0000-' || lpad(n::text, 12, '0'))::uuid, 'itr-u' || n || '@test.local', '{}'::jsonb from generate_series(1, 13) n;
 insert into public.employees (employee_no, first_name, last_name, email, department_id, role_id, auth_user_id, is_active)
 select v.no, 'ทดสอบ', v.no, lower(v.no) || '@itr.test', d.id, r.id, ('4e900000-0000-0000-0000-' || lpad(v.n::text, 12, '0'))::uuid, v.active
 from (values
@@ -62,7 +62,8 @@ from (values
   (9, 'NR-INACT', 'ZRNA', 'assistant_department_manager', false),
   (10, 'NR-DUAL', 'ZRNA', 'staff', true),
   (11, 'NR-SBXADM', 'MGT', 'admin', true),
-  (12, 'NR-REQ2', 'ZRNA', 'staff', true)
+  (12, 'NR-REQ2', 'ZRNA', 'staff', true),
+  (13, 'NR-HEAD', 'MGT', 'staff', true)
 ) as v(n, no, dep, role, active)
 join public.departments d on d.code = v.dep join public.roles r on r.code = v.role;
 -- ผู้อนุมัติแผนกที่ล็อกอินไม่ได้ (ยังไม่ผูกบัญชี) ต้องไม่ถูกนับเป็นผู้รับ
@@ -70,9 +71,10 @@ insert into public.employees (employee_no, first_name, last_name, email, departm
 select 'NR-NOAUTH', 'ทดสอบ', 'NR-NOAUTH', 'nr-noauth@itr.test', d.id, r.id, null, true
 from public.departments d, public.roles r where d.code = 'ZRNA' and r.code = 'assistant_department_manager';
 -- NR-ADM, NR-ADM2 = ผู้ดูแลงาน IT · NR-APPR, NR-APPR2 = ผู้อนุมัติขั้น IT อย่างเดียว · NR-DUAL = ผู้ดูแลงาน IT ที่เป็นผู้แจ้งด้วย
-insert into public.itwo_staff (employee_id, is_it_admin, is_it_approver)
-select e.id, v.adm, v.appr
-from (values ('NR-ADM', true, false), ('NR-ADM2', true, false), ('NR-APPR', false, true), ('NR-APPR2', false, true), ('NR-DUAL', true, false)) v(no, adm, appr)
+-- NR-HEAD = หัวหน้า IT (ดูอย่างเดียว) ผู้อนุมัติขั้น IT ของใบที่ผู้อนุมัติขั้น IT แจ้งเอง (26/11/2026)
+insert into public.itwo_staff (employee_id, is_it_admin, is_it_approver, is_it_viewer)
+select e.id, v.adm, v.appr, v.head
+from (values ('NR-ADM', true, false, false), ('NR-ADM2', true, false, false), ('NR-APPR', false, true, false), ('NR-APPR2', false, true, false), ('NR-DUAL', true, false, false), ('NR-HEAD', false, false, true)) v(no, adm, appr, head)
 join public.employees e on e.employee_no = v.no;
 insert into public.employees (employee_no, first_name, last_name, email, department_id, role_id, is_active, is_test) values
   ('SBX-ZRN-STAFF', 'ทดสอบ', 'ผู้แจ้ง ZRNA', 'sbx-zrn-staff@sandbox.local', (select id from public.departments where code = 'ZRNA'), (select id from public.roles where code = 'staff'), false, true),
@@ -244,8 +246,8 @@ select set_config('request.jwt.claims', pg_temp.sub(6), true);
 select set_config('t.oi', pg_temp.new_req(), true);
 reset role;
 select set_config('request.jwt.claims', '', true);
-select is(pg_temp.who(current_setting('t.oi')), 'NR-ADM,NR-ADM2,NR-DUAL', 'an IT approver filing: approved at filing, the IT admins are told (the requester who clicked is not)');
-select is(pg_temp.total(current_setting('t.oi')), 3, 'and nobody else');
+select is(pg_temp.who(current_setting('t.oi')), 'NR-HEAD', 'an IT approver filing: nothing is approved at filing, only the IT head is asked (not the requester, not the other IT approvers, not the IT admins)');
+select is(pg_temp.total(current_setting('t.oi')), 1, 'and nobody else');
 -- ผู้แจ้งเป็นผู้ดูแลงาน IT ด้วย: ได้ข้อความเดียว ไม่ซ้ำ
 set local role authenticated;
 select set_config('request.jwt.claims', pg_temp.sub(10), true);
@@ -292,7 +294,7 @@ select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_z
 select set_config('t.t1', pg_temp.new_req(true), true);
 select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_zrn_mgr')::uuid) $$, 'switching to the manager persona');
 select lives_ok($$ select public.app_itrp_approve(current_setting('t.t1')::uuid) $$, 'the persona manager approves the urgent test request');
-select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_approver')::uuid) $$, 'switching to the IT approver persona');
+select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_admin')::uuid) $$, 'switching to the IT admin persona (also the IT approver since 26/11/2026)');
 select lives_ok($$ select public.app_itrp_approve(current_setting('t.t1')::uuid) $$, 'the IT approver persona approves');
 select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_admin')::uuid) $$, 'switching to the IT admin persona');
 select lives_ok($$ select public.app_itrp_start(current_setting('t.t1')::uuid) $$, 'IT admin persona starts');

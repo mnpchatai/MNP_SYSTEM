@@ -13,7 +13,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(173);
+select plan(174);
 
 -- ตัวช่วย: รหัสพนักงานของผู้รับแจ้งเตือนของใบ (เรียงตามรหัส) ที่หัวข้อตรงรูปแบบ
 create function pg_temp.who(p_order text, p_title_like text default '%') returns text language sql as $$
@@ -47,7 +47,7 @@ insert into public.departments (code, name_th, name_en)
 select 'ID', 'อินดีไซน์ (ทดสอบ)', 'Indesign' where not exists (select 1 from public.departments where code = 'ID');
 insert into auth.users (id, email, raw_user_meta_data)
 select ('4e800000-0000-0000-0000-0000000000' || n)::uuid, 'itn-u' || n || '@test.local', '{}'::jsonb
-from unnest(array['01', '02', '03', '04', '05', '06', '07', '08', '09', '11', '12', '13', '14']) n;
+from unnest(array['01', '02', '03', '04', '05', '06', '07', '08', '09', '11', '12', '13', '14', '21']) n;
 insert into public.employees (employee_no, first_name, last_name, email, department_id, role_id, auth_user_id, is_active)
 select v.no, 'ทดสอบ', v.no, lower(v.no) || '@itn.test', d.id, r.id, v.uid::uuid, v.active
 from (values
@@ -62,7 +62,8 @@ from (values
   ('NT-INACT', 'ZNA', 'assistant_department_manager', '4e800000-0000-0000-0000-000000000009', false),
   ('NT-DUAL', 'ZNA', 'staff', '4e800000-0000-0000-0000-000000000011', true),
   ('NT-SBXADM', 'MGT', 'admin', '4e800000-0000-0000-0000-000000000012', true),
-  ('NT-IDUSER', 'ID', 'staff', '4e800000-0000-0000-0000-000000000013', true)
+  ('NT-IDUSER', 'ID', 'staff', '4e800000-0000-0000-0000-000000000013', true),
+  ('NT-HEAD', 'MGT', 'staff', '4e800000-0000-0000-0000-000000000021', true)
 ) as v(no, dep, role, uid, active)
 join public.departments d on d.code = v.dep join public.roles r on r.code = v.role;
 -- พนักงานที่ถูกลบ (soft delete)
@@ -74,9 +75,10 @@ insert into public.employees (employee_no, first_name, last_name, email, departm
 select 'NT-NOAUTH', 'ทดสอบ', 'NT-NOAUTH', 'nt-noauth@itn.test', d.id, r.id, null, true
 from public.departments d, public.roles r where d.code = 'ZNA' and r.code = 'assistant_department_manager';
 -- NT-ADM, NT-ADM2 = ผู้ดูแลงาน IT · NT-APPR, NT-APPR2 = ผู้อนุมัติขั้น IT อย่างเดียว · NT-DUAL = ผู้แจ้งที่จะเป็นผู้ดูแลงาน IT ด้วยเฉพาะข้อ 10
-insert into public.itwo_staff (employee_id, is_it_admin, is_it_approver)
-select e.id, v.adm, v.appr
-from (values ('NT-ADM', true, false), ('NT-ADM2', true, false), ('NT-APPR', false, true), ('NT-APPR2', false, true)) v(no, adm, appr)
+-- NT-HEAD = หัวหน้า IT (ดูอย่างเดียว) ผู้อนุมัติขั้น IT ของใบที่ผู้อนุมัติขั้น IT แจ้งเอง (26/11/2026)
+insert into public.itwo_staff (employee_id, is_it_admin, is_it_approver, is_it_viewer)
+select e.id, v.adm, v.appr, v.head
+from (values ('NT-ADM', true, false, false), ('NT-ADM2', true, false, false), ('NT-APPR', false, true, false), ('NT-APPR2', false, true, false), ('NT-HEAD', false, false, true)) v(no, adm, appr, head)
 join public.employees e on e.employee_no = v.no;
 select count(set_config('test.p_' || lower(replace(employee_no, '-', '_')), id::text, true)) from public.employees where employee_no like 'NT-%' or employee_no in ('SBX-IT-STAFF', 'SBX-IT-ADMIN', 'SBX-IT-APPROVER');
 
@@ -200,14 +202,14 @@ select set_config('request.jwt.claims', '', true);
 select is(pg_temp.who(current_setting('t.oc'), '% อนุมัติครบแล้ว'), 'NT-MGR', 'the manager who filed it is told it is fully approved');
 select is(pg_temp.who(current_setting('t.oc'), '% พร้อมให้ IT รับงาน'), 'NT-ADM,NT-ADM2', 'and the IT admins');
 
--- 8. ผู้อนุมัติขั้น IT แจ้งเอง: อนุมัติครบทันที แจ้งเฉพาะผู้ดูแลงาน IT ----------------------
+-- 8. ผู้อนุมัติขั้น IT แจ้งเอง: ไม่ผ่านอัตโนมัติ (26/11/2026) แจ้งเฉพาะหัวหน้า IT ----------------------
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"4e800000-0000-0000-0000-000000000006","role":"authenticated"}', true);
 select set_config('t.od', (select id::text from public.app_itwo_create('design', null, 'no', null, 'ผู้อนุมัติ IT แจ้งเอง', ((now() at time zone 'Asia/Bangkok')::date + 3), false)), true);
 reset role;
 select set_config('request.jwt.claims', '', true);
-select is(pg_temp.who(current_setting('t.od')), 'NT-ADM,NT-ADM2', 'an IT approver filing an order (approved at once): only the IT admins are told, once each');
-select is(pg_temp.total(current_setting('t.od')), 2, 'no row for the requester himself and none for the other IT approver');
+select is(pg_temp.who(current_setting('t.od')), 'NT-HEAD', 'an IT approver filing an order (waits for the IT head, nothing is approved at filing): only the IT head is told');
+select is(pg_temp.total(current_setting('t.od')), 1, 'one row only: none for the requester himself, none for the other IT approver and none for the IT admins');
 
 -- 9. แผนกไม่มีผู้จัดการ: ผู้อนุมัติขั้น IT กดครั้งเดียวนับสองขั้น ---------------------------
 set local role authenticated;
@@ -369,11 +371,11 @@ select set_config('request.jwt.claims', '{"sub":"4e800000-0000-0000-0000-0000000
 select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_staff')::uuid) $$, 'the admin enters the test mode as the IT requester persona');
 select set_config('t.t1', (select id::text from public.app_itwo_create('design', null, 'no', null, 'ใบทดสอบ', ((now() at time zone 'Asia/Bangkok')::date + 3), false)), true);
 select is(public.app_itwo_get_detail(current_setting('t.t1')::uuid)->>'is_test', 'true', 'filing in the test mode makes a test order (the notification trigger runs in test mode without error)');
-select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_approver')::uuid) $$, 'switch to the IT approver persona');
+select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_admin')::uuid) $$, 'switch to the IT admin persona (also the IT approver since 26/11/2026)');
 select lives_ok($$ select public.app_itwo_request_info(current_setting('t.t1')::uuid, 'ถามในโหมดทดสอบ') $$, 'the persona asks');
 select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_staff')::uuid) $$, 'back to the requester persona');
 select lives_ok($$ select public.app_itwo_provide_info(current_setting('t.t1')::uuid, 'ตอบในโหมดทดสอบ') $$, 'the persona answers');
-select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_approver')::uuid) $$, 'switch to the IT approver persona again');
+select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_admin')::uuid) $$, 'switch to the IT admin persona again');
 select lives_ok($$ select public.app_itwo_approve(current_setting('t.t1')::uuid) $$, 'the persona approves (both steps)');
 select lives_ok($$ select public.app_sandbox_enter(current_setting('test.p_sbx_it_admin')::uuid) $$, 'switch to the IT admin persona');
 select lives_ok($$ select public.app_itwo_start(current_setting('t.t1')::uuid) $$, 'the persona starts');
@@ -502,8 +504,9 @@ select set_config('request.jwt.claims', '{"sub":"4e800000-0000-0000-0000-0000000
 select set_config('t.ov', (select id::text from public.app_itwo_create('design', null, 'no', null, 'ผู้อนุมัติ IT แจ้งงานด่วน', ((now() at time zone 'Asia/Bangkok')::date + 1), true)), true);
 reset role;
 select set_config('request.jwt.claims', '', true);
-select is(pg_temp.who(current_setting('t.ov')), 'NT-ADM,NT-ADM2', 'an IT approver filing an urgent order (approved at once): each admin gets one message, not two');
-select is((select count(*)::int from public.notifications n where n.action_url = '/office/work-order/' || current_setting('t.ov') and n.title like '🚨 [ด่วน] % อนุมัติครบ พร้อมให้ IT รับงาน'), 2, 'and it is the "approved in full, ready for IT" one, with the urgent mark');
+select is(pg_temp.who(current_setting('t.ov')), 'NT-ADM,NT-ADM2,NT-HEAD', 'an IT approver filing an urgent order (not approved at filing): each admin and the IT head get one message, not two');
+select is((select count(*)::int from public.notifications n where n.action_url = '/office/work-order/' || current_setting('t.ov') and n.title like '🚨 [ด่วน] % แจ้งงานด่วน เริ่มทำได้ก่อนอนุมัติครบ'), 2, 'the admins got the urgent "can start before full approval" message, with the urgent mark');
+select is(pg_temp.who(current_setting('t.ov'), '🚨 [ด่วน] % รอคุณอนุมัติ'), 'NT-HEAD', 'and the IT head alone got the "waiting for your approval" message');
 
 select * from finish();
 rollback;

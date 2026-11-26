@@ -74,7 +74,7 @@ select set_config('t.oh', pg_temp.new_req(), true);
 select set_config('request.jwt.claims', pg_temp.sub(1), true);
 select lives_ok($$ select public.app_itrp_cancel(current_setting('t.og')::uuid, 'ยกเลิกเพื่อทดสอบ') $$, 'one request is cancelled for the "ended request" cases');
 select set_config('request.jwt.claims', pg_temp.sub(5), true);
-select is(public.app_itrp_get_detail(current_setting('t.oh')::uuid)->>'status', 'approved', 'the IT approver request is approved at once (auto approvals are not real approvals)');
+select is(public.app_itrp_get_detail(current_setting('t.oh')::uuid)->>'status', 'pending_it_mgr', 'the IT approver request is not approved in his own name (26/11/2026): it waits for the IT head');
 select set_config('request.jwt.claims', pg_temp.sub(1), true);
 
 -- 3. อัปโหลดผ่าน policy (ผู้แจ้งเท่านั้น ใน path ของใบตัวเอง) ------------------
@@ -226,7 +226,7 @@ insert into storage.objects (bucket_id, name, owner_id, metadata) values
   ('itrp-files', current_setting('t.oh') || '/' || pg_temp.fn('dddddddd-', 6), pg_temp.uid(5), '{"size": 100, "mimetype": "application/pdf"}');
 set local role authenticated;
 select set_config('request.jwt.claims', pg_temp.sub(5), true);
-select lives_ok($$ select pg_temp.reg(current_setting('t.oh'), pg_temp.fn('dddddddd-', 6)) $$, 'the automatic approvals of an IT approver filing are not real approvals: the files can still be registered');
+select lives_ok($$ select pg_temp.reg(current_setting('t.oh'), pg_temp.fn('dddddddd-', 6)) $$, 'an IT approver filing signs nothing, so nothing has been approved: the files can still be registered');
 
 -- 6. ไฟล์ของรอบขอแก้ไข ----------------------------------------------------
 select set_config('request.jwt.claims', pg_temp.sub(3), true);
