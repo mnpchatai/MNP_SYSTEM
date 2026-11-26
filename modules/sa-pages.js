@@ -31,7 +31,8 @@
   const CLOSED_WITH_ORDER = "ใบปิดแล้ว ไม่ต้องรอฝ่ายวางแผนรับทราบ";
   const noticeOutcome = (ctx, row) => (ctx.helpers.staleChangeNotice?.(ctx.data, row)
     ? { tone: "good", text: CLOSED_WITH_ORDER, by: "" }
-    : row.status === "done" && row.decision === "ack" && !String(row.decidedBy ?? "").trim()
+    : row.kind === "change" && row.status === "done" && row.decision === "ack" && !String(row.decidedBy ?? "").trim()
+      && (ctx.data.orders ?? []).some((order) => order.id === row.orderId && order.status === "completed")
     ? { tone: "good", text: CLOSED_WITH_ORDER, by: ctx.rules.fmtDate(row.decidedAt) }
     : row.status === "open"
     ? { tone: "warn", text: ctx.helpers.noticeMode(ctx.data, row) === "choose" ? "รอฝ่ายวางแผนตัดสินของที่ทำค้าง" : "รอฝ่ายวางแผนรับทราบ", by: "" }
