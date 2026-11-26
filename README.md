@@ -437,6 +437,8 @@ admin / `requests.view_all` / `requests.operate` ผลคือ **หัวห�
 **เพิ่มโมดูลให้แผนก ID ต้องแก้สองที่:** `POLICIES` ใน `modules/department-access.js` และแถวใน
 `private.department_notification_modules` (migration ใหม่) ไม่งั้นเว็บแสดงโมดูลแต่อีเมล/Push ของโมดูลนั้นถูกตัด
 
+**ทะเบียนสิทธิ์ผู้ใช้ (itua)** — การ์ดที่สี่ใน IT SUPPORT (`#/office?module=access` · รหัสโมดูล `IT_USER_ACCESS` · V1.00 ป้าย "กำลังพัฒนา" ธง `IN_DEVELOPMENT` ใน `modules/itua-model.js`) หน้าเว็บของฐานข้อมูล `itua_*` (migration `20270105010000_itua_user_access_register.sql` · สัญญา `docs/itua-contract.md`) · ใช้สิทธิ์ชุดเดียวกับทะเบียนอุปกรณ์ IT (allowlist `itas_admins` ผ่าน `app_itas_my_access` เก็บผลชุดเดียว) การ์ดและหน้าจึงขึ้นเฉพาะผู้ดูแลงาน IT · หน้า: ตารางผู้ใช้ (ค้นหา/กรองแผนก ฝ่าย สถานะ) `&view=matrix` เมทริกซ์ผู้ใช้ × โฟลเดอร์ (ดูอย่างเดียว) `&view=catalog` ตั้งค่ารายการโฟลเดอร์/โปรแกรม `&user=<uuid>` หน้าต่อคน (ข้อมูลหลัก สิทธิ์ R/F อินเทอร์เน็ต โปรแกรม อีเมล ประวัติ) · แก้ไขโดย IT ได้ทุกอย่างผ่าน RPC โดยต้องใส่เหตุผลตามที่ฐานข้อมูลบังคับ (บันทึกสำหรับ ISO) สิทธิ์แก้เป็นชุดเดียว (`app_itua_set_grants` ส่งค่า from/to ชนกัน 40001 = ให้โหลดใหม่) · พิมพ์เมทริกซ์ A4 แนวนอนและส่งออก CSV ตามตัวกรอง ไม่มีช่องลับ (โมดูลนี้ไม่มีรหัสผ่าน) · ไฟล์: `modules/itua-model.js` (ข้อมูลล้วน) · `itua-pages.js` (HTML) · `module-itua.js` (RPC + เหตุการณ์) · เทสต์ `scripts/tests/itua-*.test.mjs`
+
 **ลำดับ deploy:** นำ migration ขึ้นฐานข้อมูลจริงผ่านกระบวนการที่อนุมัติก่อน แล้วค่อยเผยแพร่ Pilot Web รุ่น `20261017indesign1`
 (ถ้าเผยแพร่ก่อนไม่เสียหาย: ฟอร์มกรองแผนกที่ฐานข้อมูลยังไม่มีออกเอง ปุ่ม ID แค่ยังไม่โผล่) Rollback:
 `update public.departments set is_repair_site = false where code = 'ID';` (อย่าลบแผนกหรือเครื่อง เพราะใบและพนักงานอาจอ้างอยู่)
