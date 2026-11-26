@@ -8,7 +8,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(128);
+select plan(148);
 
 create function pg_temp.sub(n integer) returns text language sql as $$
   select format('{"sub":"2c400000-0000-0000-0000-%s","role":"authenticated"}', lpad(n::text, 12, '0')) $$;
@@ -293,6 +293,50 @@ select is((select e.employee_no from public.itua_acknowledgements a join public.
 select is((select a.snapshot ->> 'note' from public.itua_acknowledgements a where a.request_id = current_setting('t.op')::uuid), 'ผู้ใช้เซ็นต่อหน้า', 'with the note');
 select is((select is_paper_ack from public.itar_attachments where id = current_setting('t.paper1')::uuid), true, 'the photo is flagged as a paper acknowledgement file');
 
+-- 7b. ผู้รับสิทธิ์มีบัญชีแต่บัญชีถูกปิดภายหลัง (ใบค้าง awaiting_ack): IT ใช้ใบรับทราบกระดาษได้ · ตอนบัญชียังใช้งานอยู่ต้องกดเองเท่านั้น ----------
+reset role;
+select set_config('request.jwt.claims', '', true);
+insert into auth.users (id, email, raw_user_meta_data) values (pg_temp.uid(9)::uuid, 'itaf-u9@test.local', '{}'::jsonb);
+insert into public.employees (employee_no, first_name, last_name, email, department_id, role_id, auth_user_id, is_active)
+select 'F-REQ4', 'ทดสอบ', 'F-REQ4', 'f-req4@itaf.test', d.id, r.id, pg_temp.uid(9)::uuid, true
+from public.departments d, public.roles r where d.code = 'ZXB' and r.code = 'staff';
+select count(set_config('t.e_f_req4', (select id::text from public.employees where employee_no = 'F-REQ4'), true));
+set local role authenticated;
+select set_config('request.jwt.claims', pg_temp.sub(4), true);
+select lives_ok(format($$ select public.app_itua_save_user(null, '{"auth_id": "f.dis", "name_th": "ผู้ใช้บัญชีถูกปิด", "department_code": "ZXB", "division": "office", "employee_id": "%s"}'::jsonb) $$, current_setting('t.e_f_req4')), 'a register user linked to the employee F-REQ4');
+select set_config('request.jwt.claims', pg_temp.sub(9), true);
+select set_config('t.od2', (select id::text from public.app_itar_create('change', 'ขอสิทธิ์ก่อนบัญชีถูกปิด', '[{"kind":"folder","target":"FF","from":null,"to":"R"}]'::jsonb)), true);
+select set_config('request.jwt.claims', pg_temp.sub(4), true);
+select lives_ok($$ select public.app_itar_approve(current_setting('t.od2')::uuid) $$, 'the IT approver approves (department without a manager)');
+select lives_ok($$ select public.app_itar_start(current_setting('t.od2')::uuid) $$, 'IT takes the work');
+select lives_ok($$ select public.app_itar_apply(current_setting('t.od2')::uuid, (select jsonb_agg(jsonb_build_object('item_id', i ->> 'id', 'decision', 'applied')) from jsonb_array_elements(public.app_itar_get_detail(current_setting('t.od2')::uuid) -> 'items') i)) $$, 'IT records the rights');
+select is(public.app_itar_get_detail(current_setting('t.od2')::uuid) ->> 'status', 'awaiting_ack', 'the request waits for the subject (the account is still active)');
+select ok(not (public.app_itar_get_detail(current_setting('t.od2')::uuid) -> 'allowed_actions' ?| array['acknowledge_paper', 'add_paper_attachment']), 'while the account is active IT is not offered the paper acknowledgement');
+select is(pg_temp.try(format($$ select public.app_itar_acknowledge_paper('%s') $$, current_setting('t.od2'))), '23514: ผู้รับสิทธิ์คนนี้มีบัญชีในระบบ ต้องกดรับทราบเองในระบบ (ไม่ใช้ใบกระดาษ)', 'and cannot record the paper acknowledgement');
+select is(pg_temp.try(format($$ select public.app_itar_add_paper_attachment('%s', '%s/%s', 'x.jpg', 'image/jpeg', 1) $$, current_setting('t.od2'), current_setting('t.od2'), pg_temp.fn('eeeeeeee-', 21, 'jpg'))), '23514: ผู้รับสิทธิ์คนนี้มีบัญชีในระบบ ต้องกดรับทราบเองในระบบ (ไม่ใช้ใบกระดาษ)', 'nor register a paper photo');
+select throws_ok($$ select pg_temp.up('itar-files', current_setting('t.od2') || '/' || pg_temp.fn('eeeeeeee-', 21, 'jpg'), 4, '{"size": 5000, "mimetype": "image/jpeg"}') $$, '42501', null, 'nor upload one into the folder');
+reset role;
+select set_config('request.jwt.claims', '', true);
+update public.employees set is_active = false where employee_no = 'F-REQ4';
+set local role authenticated;
+select set_config('request.jwt.claims', pg_temp.sub(9), true);
+select is(pg_temp.try(format($$ select public.app_itar_acknowledge('%s') $$, current_setting('t.od2'))), '42501: ไม่พบบัญชีพนักงานที่เปิดใช้งาน กรุณาเข้าสู่ระบบใหม่หรือติดต่อ IT', 'after the account is closed the subject cannot acknowledge online any more');
+select set_config('request.jwt.claims', pg_temp.sub(4), true);
+select ok(public.app_itar_get_detail(current_setting('t.od2')::uuid) -> 'allowed_actions' ?& array['acknowledge_paper', 'add_paper_attachment'], 'IT is now offered the paper acknowledgement and the upload');
+select ok(not (public.app_itar_get_detail(current_setting('t.od2')::uuid) -> 'allowed_actions' ? 'acknowledge'), 'but not the online acknowledgement');
+select is(pg_temp.try(format($$ select public.app_itar_acknowledge_paper('%s') $$, current_setting('t.od2'))), '23514: กรุณาแนบรูปใบรับทราบที่เซ็นแล้วอย่างน้อย 1 ไฟล์ก่อน', 'the photo of the signed paper is still required');
+select lives_ok($$ select pg_temp.up('itar-files', current_setting('t.od2') || '/' || pg_temp.fn('eeeeeeee-', 21, 'jpg'), 4, '{"size": 5000, "mimetype": "image/jpeg"}') $$, 'IT uploads the photo of the signed paper');
+select lives_ok($$ select public.app_itar_add_paper_attachment(current_setting('t.od2')::uuid, current_setting('t.od2') || '/' || pg_temp.fn('eeeeeeee-', 21, 'jpg'), 'ใบเซ็น.jpg', 'image/jpeg', 1) $$, 'and registers it');
+select set_config('request.jwt.claims', pg_temp.sub(5), true);
+select is(pg_temp.try(format($$ select public.app_itar_acknowledge_paper('%s') $$, current_setting('t.od2'))), '42501: เฉพาะผู้ดูแลงาน IT เท่านั้นที่บันทึกการรับทราบด้วยกระดาษได้', 'the IT head (read only) still cannot record it');
+select set_config('request.jwt.claims', pg_temp.sub(4), true);
+select lives_ok($$ select public.app_itar_acknowledge_paper(current_setting('t.od2')::uuid, 'ลาออกก่อนรับทราบ') $$, 'IT records the paper acknowledgement for the closed account');
+select is(public.app_itar_get_detail(current_setting('t.od2')::uuid) ->> 'status', 'done', 'the request is done');
+select is(public.app_itar_get_detail(current_setting('t.od2')::uuid) -> 'acknowledged' ->> 'method', 'paper', 'the acknowledgement is marked as paper');
+select ok((public.app_itar_get_detail(current_setting('t.od2')::uuid) -> 'events' -> -1 ->> 'reason') like '%บัญชีของผู้รับสิทธิ์ถูกปิดใช้งานแล้ว%', 'and the history says why the paper was used');
+reset role;
+select set_config('request.jwt.claims', '', true);
+
 -- 8. ผู้รับสิทธิ์ (ไม่ใช่ผู้ยื่น) อ่านไฟล์ของใบที่ IT ยื่นแทน ---------------------
 insert into storage.objects (bucket_id, name, owner_id, metadata) values
   ('itar-files', current_setting('t.os') || '/' || pg_temp.fn('ffffffff-', 1), pg_temp.uid(4), '{"size": 100, "mimetype": "application/pdf"}');
@@ -323,7 +367,7 @@ select lives_ok($$ select public.app_sandbox_exit() $$, 'the admin leaves the te
 reset role;
 select set_config('request.jwt.claims', '', true);
 select is((select count(*)::int from public.itar_attachments where is_test), 0, 'and removed the test registrations');
-select is((select count(*)::int from public.itar_attachments where not is_test), 14, 'the real registrations survived the purge (11 on oa/ob, 2 comment files, 1 paper photo)');
+select is((select count(*)::int from public.itar_attachments where not is_test), 15, 'the real registrations survived the purge (11 on oa/ob, 2 comment files, 2 paper photos)');
 
 select * from finish();
 rollback;

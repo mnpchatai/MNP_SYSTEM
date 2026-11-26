@@ -915,9 +915,11 @@ as $$
   end
 $$;
 
--- มีผู้ที่ทำหน้าที่ผู้อนุมัติขั้น IT ใช้งานอยู่ในโหมดนี้หรือไม่ (p_involves = ใบที่เกี่ยวกับผู้อนุมัติขั้น IT -> นับหัวหน้า IT · ไม่ใช่ -> นับผู้อนุมัติ)
--- ของจริงนับเฉพาะคนที่ active + ผูกบัญชีล็อกอินแล้ว + ไม่ใช่บัญชี lab-only
-create or replace function private.itar_has_active_stage_pool(p_is_test boolean, p_involves boolean)
+-- มีผู้อนุมัติขั้น IT ที่ "อนุมัติใบนี้ได้จริง" ในโหมดนี้หรือไม่ (ใช้ตอนยื่น: ถ้าไม่มี ใบจะค้างถาวรจึงต้องปฏิเสธการยื่น)
+--   ใช้กติกาเดียวกับ itar_approval_caps: ผู้อนุมัติของใบ = itar_is_it_stage_approver (ใบทั่วไป = is_it_approver · ใบที่ผู้ยื่น/ผู้รับสิทธิ์
+--   เป็นผู้อนุมัติขั้น IT เอง = หัวหน้า IT is_it_viewer) และห้ามเป็นผู้ยื่นหรือผู้รับสิทธิ์ของใบเอง (อนุมัติใบตัวเองไม่ได้)
+--   ของจริงนับเฉพาะคนที่ active + ผูกบัญชีล็อกอินแล้ว + ไม่ใช่บัญชี lab-only (เหมือนผู้อนุมัติขั้นแผนก)
+create or replace function private.itar_it_stage_has_approver(p_is_test boolean, p_requester_id uuid, p_subject_employee_id uuid)
 returns boolean
 language sql
 stable
@@ -928,7 +930,9 @@ as $$
     select 1
     from public.itwo_staff s
     join public.employees e on e.id = s.employee_id
-    where case when p_involves then s.is_it_viewer else s.is_it_approver end
+    where e.id <> p_requester_id
+      and e.id is distinct from p_subject_employee_id
+      and private.itar_is_it_stage_approver(p_requester_id, p_subject_employee_id, e.id)
       and e.is_test = p_is_test and e.deleted_at is null
       and (
         p_is_test
@@ -948,6 +952,25 @@ security definer
 set search_path = ''
 as $$
   select exists (select 1 from public.departments d where d.id = p_department_id and d.code = 'IT')
+$$;
+
+-- ผู้รับสิทธิ์ของใบนี้ต้องรับทราบด้วยกระดาษ (IT กดแทน) ไหม = ไม่มีบัญชีพนักงานเลย หรือมีบัญชีแต่ถูกปิด/ลบแล้ว (กดรับทราบเองในระบบไม่ได้อีก)
+--   ของจริง: บัญชีที่กดได้ต้อง active + ผูกบัญชีล็อกอิน (เงื่อนไขเดียวกับ itar_actor) · โหมดทดสอบ: persona is_active เป็น false เสมอ จึงดูแค่ยังไม่ถูกลบ
+--   ผู้รับที่บัญชียังใช้งานอยู่ต้องกดรับทราบเองเท่านั้น
+create or replace function private.itar_subject_needs_paper_ack(p_req public.itar_requests)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select p_req.subject_employee_id is null
+    or not exists (
+      select 1 from public.employees e
+      where e.id = p_req.subject_employee_id
+        and e.deleted_at is null
+        and (p_req.is_test or (e.is_active and e.auth_user_id is not null))
+    )
 $$;
 
 -- ผู้ทำรายการเห็นใบนี้ได้ไหม: ผู้ยื่น / ผู้รับสิทธิ์ที่มีบัญชี / ทีม IT ใน itwo_staff (ทุกคน รวมหัวหน้า IT) / ผู้อนุมัติขั้นแผนกของแผนกผู้รับสิทธิ์
@@ -1251,7 +1274,7 @@ begin
     if p_req.subject_employee_id = p_actor.id then
       v_actions := array_append(v_actions, 'acknowledge');
     end if;
-    if v_is_admin and p_req.subject_employee_id is null then
+    if v_is_admin and private.itar_subject_needs_paper_ack(p_req) then
       v_actions := v_actions || array['acknowledge_paper', 'add_paper_attachment'];
     end if;
   end if;
@@ -1371,7 +1394,7 @@ as $$
     and p_actor.id is not null
     and p_req.is_test = p_actor.is_test
     and p_req.status = 'awaiting_ack'
-    and p_req.subject_employee_id is null
+    and private.itar_subject_needs_paper_ack(p_req)
     and private.itar_is_it_admin(p_actor.id)
 $$;
 
@@ -1746,7 +1769,6 @@ declare
   v_dept_is_it boolean;
   v_actor_is_dept_role boolean;
   v_has_dept_approvers boolean;
-  v_involves boolean;
   v_status text;
   v_doc_year integer;
   v_doc_seq integer;
@@ -1932,7 +1954,10 @@ begin
         if v_email_kind not in ('internal', 'extra') then
           raise exception '%: ชนิดอีเมลต้องเป็น internal (อีเมลภายใน) หรือ extra (อื่น ๆ)', v_label using errcode = 'check_violation';
         end if;
-        if exists (select 1 from public.itua_emails m where m.is_test = v_actor.is_test and m.address = v_target and m.status = 'active') then
+        -- กันเดาว่าอีเมลใดมีในทะเบียน: พนักงานทั่วไปเช็กได้เฉพาะอีเมลของผู้รับสิทธิ์เอง · ผู้ดูแลงาน IT เช็กทั้งทะเบียน (ตอน apply เช็กทั้งทะเบียนอีกครั้งเสมอ)
+        if exists (select 1 from public.itua_emails m
+                   where m.is_test = v_actor.is_test and m.address = v_target and m.status = 'active'
+                     and (private.itar_is_it_admin(v_actor.id) or m.user_id is not distinct from v_subj.o_user_id)) then
           raise exception '%: ที่อยู่นี้ถูกใช้งานอยู่ในทะเบียนแล้ว', v_label using errcode = 'check_violation';
         end if;
         if v_email_kind = 'internal' and v_subj.o_user_id is not null and exists (
@@ -1959,17 +1984,16 @@ begin
   end loop;
 
   -- เลือกเส้นทางอนุมัติ (กติกาเดียวกับ itwo/itrp · แผนก = แผนกของผู้รับสิทธิ์)
-  v_involves := private.itar_involves_it_approver(v_actor.id, v_subj.o_employee_id);
   v_dept_is_it := private.itar_is_it_department(v_subj.o_department_id);
   v_actor_is_dept_role := private.itar_is_dept_approver(v_actor.id, v_subj.o_department_id, v_actor.is_test);
   v_has_dept_approvers := exists (
     select 1 from private.itar_dept_approvers(v_subj.o_department_id, v_actor.is_test) a(id)
     where a.id <> v_actor.id and a.id is distinct from v_subj.o_employee_id);
 
-  -- ใบทั่วไปต้องมีผู้อนุมัติขั้น IT ที่ใช้งานอยู่ (ไม่เช่นนั้นใบค้างโดยไม่มีใครอนุมัติได้) · ใบที่เกี่ยวกับผู้อนุมัติขั้น IT เอง รอหัวหน้า IT
-  -- ถ้าตอนนี้ไม่มีหัวหน้า IT ที่ใช้งานอยู่ ใบรอไว้ (ไม่ผ่านอัตโนมัติ) และไม่ปฏิเสธการยื่น
-  if not v_involves and not private.itar_has_active_stage_pool(v_actor.is_test, false) then
-    raise exception 'ยังไม่มีผู้อนุมัติขั้น IT ที่ใช้งานอยู่ กรุณาติดต่อ IT' using errcode = 'check_violation';
+  -- ต้องมีผู้อนุมัติขั้น IT ที่อนุมัติใบนี้ได้จริงอย่างน้อย 1 คน ไม่เช่นนั้นใบจะค้างถาวร (ตัวอย่าง: ผู้ยื่นเป็นผู้อนุมัติขั้น IT และผู้รับสิทธิ์เป็นหัวหน้า IT คนเดียวที่ใช้งานอยู่
+  -- หรือกลับกัน) -> ปฏิเสธตั้งแต่ยื่นพร้อมบอกทางออก · ตรวจก่อนออกเลขที่เอกสาร จึงไม่เปลือง/ไม่ทิ้งใบค้าง
+  if not private.itar_it_stage_has_approver(v_actor.is_test, v_actor.id, v_subj.o_employee_id) then
+    raise exception 'ใบนี้ไม่มีผู้อนุมัติขั้น IT ที่อนุมัติได้ (ไม่มีผู้อนุมัติที่ใช้งานอยู่ หรือผู้อนุมัติเป็นผู้ยื่นหรือผู้รับสิทธิ์ของใบนี้เอง) กรุณาให้ผู้ดูแลงาน IT คนอื่นยื่นแทน หรือติดต่อหัวหน้า IT' using errcode = 'check_violation';
   end if;
   if v_dept_is_it then
     -- ผู้รับสิทธิ์อยู่แผนก IT: ผู้อนุมัติขั้น IT กดครั้งเดียวนับทั้งสองขั้น (บันทึกตอนอนุมัติ)
@@ -2522,7 +2546,7 @@ begin
   if v_req.status <> 'awaiting_ack' then
     raise exception 'แนบรูปใบรับทราบได้เฉพาะใบที่ IT บันทึกสิทธิ์ลงทะเบียนแล้วและรอผู้ใช้รับทราบ' using errcode = 'check_violation';
   end if;
-  if v_req.subject_employee_id is not null then
+  if not private.itar_subject_needs_paper_ack(v_req) then
     raise exception 'ผู้รับสิทธิ์คนนี้มีบัญชีในระบบ ต้องกดรับทราบเองในระบบ (ไม่ใช้ใบกระดาษ)' using errcode = 'check_violation';
   end if;
 
@@ -3130,7 +3154,7 @@ begin
   if v_req.status <> 'awaiting_ack' then
     raise exception '%', private.itar_status_message(v_req.status) using errcode = 'check_violation';
   end if;
-  if v_req.subject_employee_id is not null then
+  if not private.itar_subject_needs_paper_ack(v_req) then
     raise exception 'ผู้รับสิทธิ์คนนี้มีบัญชีในระบบ ต้องกดรับทราบเองในระบบ (ไม่ใช้ใบกระดาษ)' using errcode = 'check_violation';
   end if;
   if not exists (select 1 from public.itar_attachments a where a.request_id = v_req.id and a.is_paper_ack) then
@@ -3147,7 +3171,9 @@ begin
           v_policy ->> 'version');
   insert into public.itar_events (is_test, request_id, actor_id, action, reason)
   values (v_req.is_test, v_req.id, v_actor.id, 'acknowledged',
-          'IT บันทึกการรับทราบด้วยกระดาษ (แนบรูปใบที่เซ็นแล้ว)' || case when v_note is not null then ': ' || v_note else '' end);
+          'IT บันทึกการรับทราบด้วยกระดาษ (แนบรูปใบที่เซ็นแล้ว)'
+          || case when v_req.subject_employee_id is not null then ' · บัญชีของผู้รับสิทธิ์ถูกปิดใช้งานแล้ว จึงกดรับทราบในระบบไม่ได้' else '' end
+          || case when v_note is not null then ': ' || v_note else '' end);
   update public.itar_requests set status = 'done' where id = v_req.id;
 
   return jsonb_build_object('status', 'done', 'doc_no', v_req.doc_no);

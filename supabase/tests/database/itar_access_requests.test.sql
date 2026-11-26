@@ -12,7 +12,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(504);
+select plan(516);
 
 -- ตัวช่วย (ชั่วคราว) ---------------------------------------------------------
 create function pg_temp.sub(n integer) returns text language sql as $$
@@ -815,6 +815,56 @@ select is(pg_temp.doc(current_setting('t.t3')::uuid), 'TEST-IT08-01-' || pg_temp
 select lives_ok($$ select public.app_sandbox_exit() $$, 'the admin leaves the test mode at the end');
 reset role;
 select set_config('request.jwt.claims', '', true);
+
+-- 12c. ใบที่ไม่มีผู้อนุมัติขั้น IT อนุมัติได้ต้องถูกปฏิเสธตอนยื่น + ตอนยื่นไม่เปิดให้เดาว่าอีเมลใดมีในทะเบียน ------------
+-- ตัวช่วย: ลองยื่นจริงแล้วย้อนกลับเสมอ (subtransaction) ได้ 'OK' ถ้ายื่นผ่าน จึงไม่ทิ้งใบ/เลขที่เอกสารไว้กระทบข้อมูลอื่น
+create function pg_temp.probe(p_sql text) returns text language plpgsql as $$
+begin
+  begin
+    execute p_sql;
+    raise exception 'probe_ok';
+  exception when others then
+    if sqlerrm = 'probe_ok' then return 'OK'; end if;
+    return sqlstate || ': ' || sqlerrm;
+  end;
+end $$;
+select count(set_config('t.n_before', (select count(*)::text from public.itar_requests), true));
+select count(set_config('t.seq_before', (select last_seq::text from public.itar_doc_counters where not is_test and doc_year = extract(year from now() at time zone 'Asia/Bangkok')::int), true));
+
+-- ข้อ 3: อีเมลที่มีในทะเบียนของคนอื่น พนักงานทั่วไปเช็กไม่ได้ (ยื่นผ่าน) · ผู้ดูแลงาน IT เช็กทั้งทะเบียน
+set local role authenticated;
+select set_config('request.jwt.claims', pg_temp.sub(12), true);
+select is(pg_temp.probe($$ select pg_temp.mk('change', 'เหตุผล', '[{"kind":"email","target":"old.user@itar.test","to":"add","email_kind":"extra"}]'::jsonb) $$), 'OK', 'a plain employee asking for an address that belongs to someone else is not told that it exists (no oracle)');
+select is(pg_temp.probe($$ select pg_temp.mk('change', 'เหตุผล', '[{"kind":"email","target":"fresh.one@itar.test","to":"add","email_kind":"extra"}]'::jsonb) $$), 'OK', 'a brand-new address is accepted (control)');
+select set_config('request.jwt.claims', pg_temp.sub(5), true);
+select is(pg_temp.probe($$ select pg_temp.mk('change', 'เหตุผล', '[{"kind":"email","target":"old.user@itar.test","to":"add","email_kind":"extra"}]'::jsonb) $$), '23514: อีเมล old.user@itar.test: ที่อยู่นี้ถูกใช้งานอยู่ในทะเบียนแล้ว', 'the IT admin is checked against the whole register');
+
+-- ข้อ 1: ผู้อนุมัติขั้น IT ที่อนุมัติได้จริง
+select is(pg_temp.probe($$ select pg_temp.mk('change', 'เหตุผล', '[{"kind":"internet","to":true,"note":"x"}]'::jsonb) $$), 'OK', 'the IT approver filing for himself is accepted while the IT head is active (control)');
+select is(pg_temp.probe(format($$ select pg_temp.mk('change', 'เหตุผล', '[{"kind":"internet","to":true,"note":"x"}]'::jsonb, '{"employee_id": "%s"}'::jsonb) $$, current_setting('t.e_ar_head'))), '23514: ใบนี้ไม่มีผู้อนุมัติขั้น IT ที่อนุมัติได้ (ไม่มีผู้อนุมัติที่ใช้งานอยู่ หรือผู้อนุมัติเป็นผู้ยื่นหรือผู้รับสิทธิ์ของใบนี้เอง) กรุณาให้ผู้ดูแลงาน IT คนอื่นยื่นแทน หรือติดต่อหัวหน้า IT', 'the IT approver filing for the only IT head is refused (the head cannot approve his own request)');
+select set_config('request.jwt.claims', pg_temp.sub(6), true);
+select is(pg_temp.probe(format($$ select pg_temp.mk('change', 'เหตุผล', '[{"kind":"internet","to":true,"note":"x"}]'::jsonb) $$)), 'OK', 'the IT head filing for himself is accepted (the IT approver approves, control)');
+reset role;
+select set_config('request.jwt.claims', '', true);
+update public.itwo_staff set is_it_viewer = false, is_it_admin = true where employee_id = pg_temp.e('AR-HEAD');
+set local role authenticated;
+select set_config('request.jwt.claims', pg_temp.sub(5), true);
+select is(pg_temp.try($$ select pg_temp.mk('change', 'เหตุผล', '[{"kind":"internet","to":true,"note":"x"}]'::jsonb) $$), '23514: ใบนี้ไม่มีผู้อนุมัติขั้น IT ที่อนุมัติได้ (ไม่มีผู้อนุมัติที่ใช้งานอยู่ หรือผู้อนุมัติเป็นผู้ยื่นหรือผู้รับสิทธิ์ของใบนี้เอง) กรุณาให้ผู้ดูแลงาน IT คนอื่นยื่นแทน หรือติดต่อหัวหน้า IT', 'with no active IT head, a request of the IT approver is refused at filing instead of waiting forever');
+select set_config('request.jwt.claims', pg_temp.sub(12), true);
+select is(pg_temp.probe($$ select pg_temp.mk('change', 'เหตุผล', '[{"kind":"internet","to":true,"note":"x"}]'::jsonb) $$), 'OK', 'an ordinary request is still accepted without an IT head (the IT approver can approve it)');
+reset role;
+select set_config('request.jwt.claims', '', true);
+update public.itwo_staff set is_it_viewer = true, is_it_admin = false where employee_id = pg_temp.e('AR-HEAD');
+update public.itwo_staff set is_it_approver = false where employee_id = pg_temp.e('AR-ADM');
+set local role authenticated;
+select set_config('request.jwt.claims', pg_temp.sub(12), true);
+select is(pg_temp.try($$ select pg_temp.mk('change', 'เหตุผล', '[{"kind":"internet","to":true,"note":"x"}]'::jsonb) $$), '23514: ใบนี้ไม่มีผู้อนุมัติขั้น IT ที่อนุมัติได้ (ไม่มีผู้อนุมัติที่ใช้งานอยู่ หรือผู้อนุมัติเป็นผู้ยื่นหรือผู้รับสิทธิ์ของใบนี้เอง) กรุณาให้ผู้ดูแลงาน IT คนอื่นยื่นแทน หรือติดต่อหัวหน้า IT', 'an ordinary request is refused at filing when nobody is an active IT approver');
+reset role;
+select set_config('request.jwt.claims', '', true);
+update public.itwo_staff set is_it_approver = true where employee_id = pg_temp.e('AR-ADM');
+select is((select count(*)::int from public.itar_requests), current_setting('t.n_before')::int, 'no request was left behind by the probes or by the refusals');
+select is((select last_seq::text from public.itar_doc_counters where not is_test and doc_year = extract(year from now() at time zone 'Asia/Bangkok')::int), current_setting('t.seq_before'), 'and no document number was used');
+select is((select string_agg(s.employee_no || ':' || st.is_it_admin::text || ':' || st.is_it_approver::text || ':' || st.is_it_viewer::text, ',' order by s.employee_no) from public.itwo_staff st join public.employees s on s.id = st.employee_id where s.employee_no in ('AR-ADM', 'AR-HEAD')), 'AR-ADM:true:true:false,AR-HEAD:false:false:true', 'the IT roles used by this section are restored');
 
 -- 13. สิ่งที่ไม่ถูกแตะ -------------------------------------------------------
 select is((select count(*)::text from public.itwo_staff), (current_setting('t.itwo_staff_before')::int + 3)::text, 'itwo_staff holds only the three rows this test added (the module never wrote to it)');
