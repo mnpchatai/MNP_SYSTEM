@@ -1869,9 +1869,9 @@ test("v1.02: the status 'received' is labelled 'จบงานแล้ว' on 
 test("v1.02: the module announces its version for the card (the same value shown at the bottom of every page)", async () => {
   const w = world();
   assert.equal(w.context.window.MNP_ITWO.version, w.context.window.MNP_ITWO_MODEL.MODULE_VERSION);
-  assert.equal(w.context.window.MNP_ITWO.version, "1.07");
-  assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_WORK_ORDER.version, "1.07", "announced to the office menu cards (central mechanism)");
+  assert.equal(w.context.window.MNP_ITWO.version, "1.08");
+  assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_WORK_ORDER.version, "1.08", "announced to the office menu cards (central mechanism)");
   assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_WORK_ORDER.loadCardSummary, w.context.window.MNP_ITWO.loadCardSummary);
   await w.open("");
-  assert.match(w.html, />V1.07</);
+  assert.match(w.html, />V1.08</);
 });

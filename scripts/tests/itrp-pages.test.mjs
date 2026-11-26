@@ -440,7 +440,27 @@ test("settings: read-only IT team with a pointer to the work order module, plus 
 
 test("the purge button and the version tag", () => {
   assert.match(pages.purgeRow(), /id="itrp-purge"[^>]*>ล้างข้อมูลใบแจ้งซ่อมทดสอบ</);
-  assert.match(pages.page("<p>x</p>"), /<p class="itrp-version no-print" title="[^"]*1.05[^"]*">V1.05<\/p>/);
+  assert.match(pages.page("<p>x</p>"), /<p class="itrp-version no-print" title="[^"]*1.06[^"]*">V1.06<\/p>/);
   assert.match(pages.errorCard("พัง <b>"), /พัง &lt;b&gt;/);
   assert.doesNotMatch(pages.errorCard("x", { retry: false }), /itrp-retry/);
+});
+
+/* ---------- เวลาทำงานจากฐานข้อมูล (work_minutes) ---------- */
+test("the repair time shows the database work minutes when present (detail, report card and A4), and falls back to the old computed figure otherwise", () => {
+  const html = pages.detailPage(detail({ work_minutes: 660 }));
+  assert.match(html, /ใช้เวลาทำงาน.*1 วัน 3 ชม\. 0 นาที/s);
+  assert.match(html, /นับเฉพาะเวลาทำงาน จ\.–ส\. ไม่นับวันอาทิตย์ วันหยุดบริษัท และช่วงรอผู้แจ้งตอบ/);
+  assert.doesNotMatch(html, /รวมเวลาในการซ่อม/, "the old figure is replaced, not doubled");
+  const paper = sheet({ work_minutes: 660 });
+  assert.match(paper, /รวมเวลาในการซ่อม<\/th><td>1 วัน 3 ชม\. 0 นาที<\/td>/);
+  assert.match(paper, /หมายเหตุ: รวมเวลาในการซ่อม นับเฉพาะเวลาทำงาน/);
+  assert.match(sheet({ work_minutes: 0 }), /รวมเวลาในการซ่อม<\/th><td>0 นาที<\/td>/);
+  // ฐานข้อมูลเก่า (ไม่มีคีย์) / ยังไม่เคยส่งงาน (null) = เหมือนเดิมทุกอย่าง
+  for (const value of [undefined, null]) {
+    const old = detail({ work_minutes: value });
+    assert.match(pages.detailPage(old), /รวมเวลาในการซ่อม.*5 ชม\./s);
+    assert.doesNotMatch(pages.detailPage(old), /ใช้เวลาทำงาน/);
+    assert.match(sheet({ work_minutes: value }), /รวมเวลาในการซ่อม<\/th><td>5 ชม\.<\/td>/);
+    assert.doesNotMatch(sheet({ work_minutes: value }), /หมายเหตุ: รวมเวลาในการซ่อม/);
+  }
 });

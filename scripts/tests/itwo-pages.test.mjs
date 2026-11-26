@@ -666,3 +666,35 @@ test("v1.07: the print sheets of itwo/itrp/itas drop the app background (grey, g
   const clamp = css.indexOf(".itwo-page .register-sub, .itwo-page .register-status .register-sub {");
   assert.ok(clamp >= 0 && css.slice(clamp, css.indexOf("}", clamp)).includes("overflow: hidden"), "the 2-line clamp must win over .register-status .register-sub { overflow: visible }");
 });
+
+/* ---------- หัวหน้า IT (ดูอย่างเดียว) + เวลาทำงาน ---------- */
+test("settings: the IT head checkbox and data flag appear only when the staff list carries is_it_viewer (old database = form as before)", () => {
+  const old = [{ employee_id: "x", employee_no: "FANG", full_name: "รสริน", department_name: "ฝ่ายบริหาร", is_it_admin: false, is_it_approver: true, is_active: true }];
+  const oldHtml = pages.settingsPage({ staff: old, counter: null, myEmployeeId: "me", isTest: false });
+  assert.doesNotMatch(oldHtml, /name="is_it_viewer"/);
+  const next = [
+    { employee_id: "me", employee_no: "IT3462", full_name: "สุริยา", department_name: "IT", is_it_admin: true, is_it_approver: true, is_it_viewer: false, is_active: true },
+    { employee_id: "x", employee_no: "FANG", full_name: "รสริน", department_name: "ฝ่ายบริหาร", is_it_admin: false, is_it_approver: false, is_it_viewer: true, is_active: true },
+  ];
+  const html = pages.settingsPage({ staff: next, counter: null, myEmployeeId: "me", isTest: false });
+  assert.match(html, /name="is_it_viewer"/);
+  assert.match(html, /หัวหน้า IT \(ดูอย่างเดียว\)/);
+  assert.match(html, /data-staff-edit="FANG"[^>]*data-staff-viewer="1"/);
+  assert.match(html, /data-staff-edit="IT3462"[^>]*data-staff-viewer="0"/);
+});
+
+test("the detail page and the A4 sheet show the work time only when the database sent a number", () => {
+  const done = { ...DETAIL, work_minutes: 660 };
+  const detail = pages.detailPage(done);
+  assert.match(detail, /ใช้เวลาทำงาน 1 วัน 3 ชม\. 0 นาที/);
+  assert.match(detail, /นับเฉพาะเวลาทำงาน จ\.–ส\. ไม่นับวันอาทิตย์ วันหยุดบริษัท และช่วงรอผู้แจ้งตอบ/);
+  const sheet = pages.printSheet(done);
+  assert.match(sheet, /ใช้เวลาทำงาน 1 วัน 3 ชม\. 0 นาที \(นับเฉพาะเวลาทำงาน/);
+  assert.equal(count(sheet, /ใช้เวลาทำงาน/g), 1, "one line on the paper");
+  assert.match(pages.detailPage({ ...DETAIL, work_minutes: 0 }), /ใช้เวลาทำงาน 0 นาที/);
+  for (const value of [null, undefined]) {
+    const none = { ...DETAIL, work_minutes: value };
+    assert.doesNotMatch(pages.detailPage(none), /ใช้เวลาทำงาน/);
+    assert.doesNotMatch(pages.printSheet(none), /ใช้เวลาทำงาน/);
+  }
+});

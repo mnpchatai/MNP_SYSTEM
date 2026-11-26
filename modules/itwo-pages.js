@@ -427,6 +427,15 @@
   }
 
   // ใบทั้งใบ · isViewOnly = ไม่ใช่เรื่องของหน้านี้ (ปุ่มซ่อนตาม allowed_actions อยู่แล้ว)
+  // เวลาทำงานของ IT (work_minutes จากฐานข้อมูล · คิดจากประวัติทุกครั้ง) · ฐานข้อมูลเก่า/ยังไม่เคยส่งงาน = ไม่วาด
+  const workTimeBlock = (detail) => {
+    const text = model.workTimeText(detail);
+    return text ? `<p class="itwo-worktime"><strong>${esc(text)}</strong><br><span class="muted small">${esc(model.WORK_TIME_NOTE)}</span></p>` : "";
+  };
+  const workTimeSheetNote = (detail) => {
+    const text = model.workTimeText(detail);
+    return text ? `<p class="itwo-sheet-note">${esc(text)} (${esc(model.WORK_TIME_NOTE)})</p>` : "";
+  };
   function detailPage(detail, { back } = {}) {
     const buttons = model.actionButtons(detail.allowed_actions);
     const canRework = buttons.some((button) => button.action === "request_rework");
@@ -453,6 +462,7 @@
               ${fact("รายละเอียด", esc(detail.details), true)}
             </dl>
             <p class="muted small itwo-duration">หมายเหตุ: ระยะเวลาทำงาน ${esc(model.DURATION_NOTE)}</p>
+            ${workTimeBlock(detail)}
           </section>
           ${commentsCard(comments, { pendingId: detail.info_pending?.comment_id ?? null, hideId: pending ? pending.commentId : null })}
           ${filesAndReworks(detail)}
@@ -552,6 +562,7 @@
         ${accessSection}
         <div class="itwo-band">การอนุมัติและการดำเนินการ</div>
         ${signatureGrid(detail.events ?? [])}
+        ${workTimeSheetNote(detail)}
         <p class="itwo-sheet-note">หมายเหตุ: ระยะเวลาทำงาน ${esc(model.DURATION_NOTE)}</p>
         <p class="itwo-sheet-note itwo-sheet-status">ลงนามอิเล็กทรอนิกส์ผ่านระบบ (ชื่อและวันเวลาตามที่กดในระบบ) · สถานะใบสั่งงาน ณ ที่พิมพ์: ${esc(model.statusLabel(detail.status))}</p>
         ${printReworks(model.reworkRounds(detail))}
@@ -586,7 +597,7 @@
           cells: {
             who: `<strong class="register-title">${esc(row.full_name)}</strong>${subText([row.employee_no, row.department_name, row.is_active ? "" : "ปิดใช้งานแล้ว"].filter(Boolean).join(" · "))}`,
             roles: esc(model.staffRoleText(row)),
-            act: `<span class="register-badges"><button type="button" class="btn secondary small" data-staff-edit="${esc(row.employee_no)}" data-staff-admin="${row.is_it_admin ? "1" : "0"}" data-staff-approver="${row.is_it_approver ? "1" : "0"}"${disabled}>แก้ไข</button><button type="button" class="btn danger small" data-staff-remove="${esc(row.employee_no)}"${disabled}>ถอนสิทธิ์</button></span>${note}`,
+            act: `<span class="register-badges"><button type="button" class="btn secondary small" data-staff-edit="${esc(row.employee_no)}" data-staff-admin="${row.is_it_admin ? "1" : "0"}" data-staff-approver="${row.is_it_approver ? "1" : "0"}" data-staff-viewer="${row.is_it_viewer ? "1" : "0"}"${disabled}>แก้ไข</button><button type="button" class="btn danger small" data-staff-remove="${esc(row.employee_no)}"${disabled}>ถอนสิทธิ์</button></span>${note}`,
           },
         };
       }),
@@ -595,7 +606,8 @@
 
   // candidates = [{ value: รหัสพนักงาน, label }] จาก model.staffCandidateOptions: มีรายชื่อ = กล่องเลือกที่พิมพ์ค้นหาได้ (searchable-select เสริม <select> ให้เอง)
   // โหลดรายชื่อไม่ได้ = ช่องกรอกรหัสพนักงานเองเหมือนเดิม
-  function staffForm({ isTest, candidates = [] }) {
+  // supportsViewer = ฐานข้อมูลรองรับธงหัวหน้า IT แล้ว (รายชื่อทีมมีคอลัมน์ is_it_viewer) · ยังไม่รองรับ = ไม่แสดงช่องนี้ ฟอร์มเหมือนเดิม
+  function staffForm({ isTest, candidates = [], supportsViewer = false }) {
     const picker = candidates.length
       ? `<select class="select" id="itwo-staff-no" name="employee_no"${isTest ? " disabled" : ""}><option value="">ค้นหาด้วยรหัสหรือชื่อ</option>${candidates.map((option) => `<option value="${esc(option.value)}">${esc(option.label)}</option>`).join("")}</select>`
       : `<input class="input" id="itwo-staff-no" name="employee_no" maxlength="20" autocomplete="off"${isTest ? " disabled" : ""}>`;
@@ -606,7 +618,9 @@
           <div class="itwo-choices" data-invalid-target>
             <label class="itwo-choice"><input type="checkbox" name="is_it_admin"${isTest ? " disabled" : ""}> <span>ผู้ดูแลงาน IT</span></label>
             <label class="itwo-choice"><input type="checkbox" name="is_it_approver"${isTest ? " disabled" : ""}> <span>ผู้อนุมัติขั้น IT</span></label>
+            ${supportsViewer ? `<label class="itwo-choice"><input type="checkbox" name="is_it_viewer"${isTest ? " disabled" : ""}> <span>${esc(model.VIEWER_LABEL)}</span></label>` : ""}
           </div>
+          ${supportsViewer ? '<p class="muted small">หัวหน้า IT เห็นทุกใบและประวัติ แต่ไม่ทำงาน IT · อนุมัติขั้น IT ได้เฉพาะใบที่ผู้อนุมัติขั้น IT แจ้งเอง</p>' : ""}
         </fieldset>
       </div>
       <div class="form-actions"><button type="submit" class="btn is-primary"${isTest ? " disabled" : ""}>บันทึกสิทธิ์</button></div>
@@ -631,7 +645,7 @@
       </section>
       <section class="card" aria-labelledby="itwo-staff-form-title"><h2 id="itwo-staff-form-title">เพิ่มหรือแก้สิทธิ์</h2>
         ${isTest ? '<p class="muted small">ตั้งสิทธิ์ทีม IT ในโหมดทดสอบไม่ได้ (ใช้ได้เฉพาะระบบจริง)</p>' : ""}
-        ${staffForm({ isTest, candidates })}
+        ${staffForm({ isTest, candidates, supportsViewer: model.staffSupportsViewer(staff) })}
       </section>
       ${docCounterCard(counter)}
     </div>`;

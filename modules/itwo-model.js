@@ -18,8 +18,8 @@
   // เลขเวอร์ชันของโมดูล (แสดงมุมขวาล่างทุกหน้า) รูปแบบ <ใหญ่>.<ย่อย 2 หลัก> · เจ้าของตัดสิน 20/11/2026
   // อัปเดตย่อย (แก้คำ หน้าตา บั๊ก ช่องเล็ก ๆ) = +0.01 · อัปเดตใหญ่ (เปลี่ยนขั้นตอนงาน/สถานะ/ฟีเจอร์ใหม่ที่ผู้ใช้ต้องเรียนรู้) = ขึ้นหลักหน่วย .00
   // ถามเจ้าของทุกครั้งว่าเป็นอัปเดตย่อยหรือใหญ่ แล้วแก้ทั้งสองค่านี้ใน PR เดียวกับการเปลี่ยนแปลง (VERSION_DATE = วันที่ปล่อย YYYY-MM-DD)
-  const MODULE_VERSION = "1.07";
-  const VERSION_DATE = "2026-11-25";
+  const MODULE_VERSION = "1.08";
+  const VERSION_DATE = "2026-11-26";
   const DURATION_NOTE = "งานออกแบบ 3–7 วันนับจากวันที่ได้ข้อมูลครบ · งานเบ็ดเตล็ดตามตกลง";
 
   // ตัวเลือกบนฟอร์มแจ้งงาน: ไม่มี "สิทธิ์ในระบบ" แล้ว (เจ้าของสั่ง 19/11/2026 จะแยกเป็นโมดูลขอสิทธิ์) · ใบเก่าที่เป็น system_access ยังแสดงชื่อได้ที่ LEGACY_REQUEST_TYPES
@@ -186,12 +186,38 @@
   };
   // ชื่อแผนกจากฐานข้อมูลเป็นชื่อไทยเต็มอยู่แล้ว (เช่น "เทคโนโลยีสารสนเทศ") ไม่เติมคำนำหน้า
 
+  /* ---------- หัวหน้า IT (ดูอย่างเดียว) + สรุปเวลาทำงาน (ตามสเปก it-approver-worktime 26/11/2026) ---------- */
+  // หัวหน้า IT = แถวใน itwo_staff ที่มีธง is_it_viewer: เห็นทุกใบและประวัติ ไม่มีปุ่มทำงาน IT (ปุ่มยึด allowed_actions จากฐานข้อมูลอยู่แล้ว)
+  // ฐานข้อมูลเก่า (ยังไม่มีธงนี้) ไม่ส่งคีย์ is_it_viewer → undefined = ไม่ใช่หัวหน้า IT ทำงานแบบเดิมทุกอย่าง
+  const VIEWER_LABEL = "หัวหน้า IT (ดูอย่างเดียว)";
+  const isItViewer = (role) => role?.is_it_viewer === true;
+  // เห็นรายการใบทั้งหมด/แท็บ "งาน IT" ได้: ผู้ดูแลงาน IT + ผู้อนุมัติขั้น IT + หัวหน้า IT
+  const canSeeAllOrders = (role) => Boolean(role?.is_it_admin || role?.is_it_approver || isItViewer(role));
+  // รายชื่อทีม IT จากฐานข้อมูลใหม่มีคอลัมน์ is_it_viewer ทุกแถว · ไม่มีคีย์ = ฐานข้อมูลเก่า ห้ามส่งพารามิเตอร์ viewer / ห้ามโชว์ช่องตั้งธง
+  // เห็นแท็บ "รออนุมัติ" ได้: ผู้อนุมัติขั้นแผนก/ขั้น IT + หัวหน้า IT (อนุมัติแทนในใบที่ผู้อนุมัติขั้น IT แจ้งเอง · ฐานข้อมูลคืนรายการให้เฉพาะที่กดได้จริง ไม่มีใบ = รายการว่าง)
+  const canApprove = (role) => Boolean(role?.is_dept_approver || role?.is_it_approver || isItViewer(role));
+  const staffSupportsViewer = (staff) => Array.isArray(staff) && staff.some((row) => row && Object.prototype.hasOwnProperty.call(row, "is_it_viewer"));
+  // เวลาทำงานจาก RPC (work_minutes เป็นนาทีทำงานจริง จ.–ส. หักรอผู้แจ้งตอบ) · 1 วัน = 1 วันทำงาน 8 ชม. = 480 นาที
+  const WORK_MINUTES_PER_DAY = 480;
+  const WORK_TIME_NOTE = "นับเฉพาะเวลาทำงาน จ.–ส. ไม่นับวันอาทิตย์ วันหยุดบริษัท และช่วงรอผู้แจ้งตอบ";
+  function formatWorkMinutes(minutes) {
+    if (typeof minutes !== "number" || !Number.isFinite(minutes) || minutes < 0) return "";
+    const total = Math.floor(minutes);
+    if (total === 0) return "0 นาที";
+    return `${Math.floor(total / WORK_MINUTES_PER_DAY)} วัน ${Math.floor((total % WORK_MINUTES_PER_DAY) / 60)} ชม. ${total % 60} นาที`;
+  }
+  // ข้อความ "ใช้เวลาทำงาน …" ของใบ · ฐานข้อมูลเก่า/ใบที่ยังไม่เคยส่งงาน (ไม่มีคีย์หรือเป็น null) = "" (หน้าเว็บไม่วาดบรรทัด)
+  function workTimeText(detail) {
+    const text = formatWorkMinutes(detail?.work_minutes);
+    return text ? `ใช้เวลาทำงาน ${text}` : "";
+  }
+
   /* ---------- สิทธิ์ → แท็บ ---------- */
   // role = ผลของ app_itwo_my_role · แท็บเป็น UX ล้วน ฐานข้อมูลตรวจสิทธิ์ซ้ำทุก RPC
   function visibleTabs(role) {
     const tabs = [{ key: "mine", label: "ใบของฉัน" }];
-    if (role?.is_dept_approver || role?.is_it_approver) tabs.push({ key: "approvals", label: "รออนุมัติ" });
-    if (role?.is_it_admin || role?.is_it_approver) tabs.push({ key: "it", label: "งาน IT" });
+    if (canApprove(role)) tabs.push({ key: "approvals", label: "รออนุมัติ" });
+    if (canSeeAllOrders(role)) tabs.push({ key: "it", label: "งาน IT" });
     if (role?.is_it_admin) tabs.push({ key: "settings", label: "ตั้งค่า" });
     return tabs;
   }
@@ -248,7 +274,8 @@
   // หน้าเว็บตัดสินได้แค่นี้ (ข้อมูลไม่ครบก็ใช้ข้อความมาตรฐาน) ตัวตัดสินจริงคือฐานข้อมูล
   const BOTH_STEPS_NOTE = "ใบนี้จะนับเป็นการอนุมัติทั้งขั้นแผนกและขั้น IT";
   function countsAsBothSteps(detail, role) {
-    return Boolean(role?.is_it_approver) && Boolean(detail?.approvals) && !detail.approvals.dept && !detail.approvals.it_mgr;
+    // หัวหน้า IT (is_it_viewer) อนุมัติแทนในใบที่ผู้อนุมัติขั้น IT แจ้งเอง → นับสองขั้นแบบเดียวกัน (ฐานข้อมูลตัดสินสิทธิ์จริงผ่าน allowed_actions)
+    return Boolean(role?.is_it_approver || role?.is_it_viewer) && Boolean(detail?.approvals) && !detail.approvals.dept && !detail.approvals.it_mgr;
   }
   function confirmMessageFor(action, detail, role) {
     const base = ACTION_BUTTONS[action]?.confirmMessage ?? "";
@@ -685,13 +712,13 @@
       .sort((a, b) => (a.value === b.value ? 0 : a.value < b.value ? -1 : 1));
   }
   // myEmployeeNo = รหัสของผู้ใช้เอง: ฐานข้อมูลห้ามแก้สิทธิ์ตัวเองทุกกรณี หน้าเว็บบอกก่อนส่ง (เทียบไม่สนตัวพิมพ์)
-  function validateStaffForm({ employeeNo, isAdmin, isApprover, myEmployeeNo = "" }) {
+  function validateStaffForm({ employeeNo, isAdmin, isApprover, isViewer = false, myEmployeeNo = "" }) {
     if (!String(employeeNo ?? "").trim()) return "กรุณาเลือกหรือกรอกรหัสพนักงาน";
     if (myEmployeeNo && String(employeeNo).trim().toUpperCase() === String(myEmployeeNo).trim().toUpperCase()) return "แก้สิทธิ์ของตัวเองไม่ได้ ให้ผู้ดูแลงาน IT คนอื่นตั้งให้";
-    if (!isAdmin && !isApprover) return "เลือกสิทธิ์อย่างน้อย 1 อย่าง (ถ้าต้องการถอนสิทธิ์ใช้ปุ่ม \"ถอนสิทธิ์\" ในรายชื่อ)";
+    if (!isAdmin && !isApprover && !isViewer) return "เลือกสิทธิ์อย่างน้อย 1 อย่าง (ถ้าต้องการถอนสิทธิ์ใช้ปุ่ม \"ถอนสิทธิ์\" ในรายชื่อ)";
     return null;
   }
-  const staffRoleText = (row) => [row?.is_it_admin ? "ผู้ดูแลงาน IT" : "", row?.is_it_approver ? "ผู้อนุมัติขั้น IT" : ""].filter(Boolean).join(" · ");
+  const staffRoleText = (row) => [row?.is_it_admin ? "ผู้ดูแลงาน IT" : "", row?.is_it_approver ? "ผู้อนุมัติขั้น IT" : "", row?.is_it_viewer ? VIEWER_LABEL : ""].filter(Boolean).join(" · ");
 
   /* ---------- error จาก RPC ---------- */
   // kind: "session" เซสชันหมดอายุ · "unknown" ไม่ได้คำตอบจากเซิร์ฟเวอร์ (ผลไม่แน่ชัด) · "missing" ฐานข้อมูลยังไม่มีฟังก์ชัน · "rejected" เซิร์ฟเวอร์ตอบปฏิเสธ
@@ -738,6 +765,7 @@
     REQUEST_TYPES, LEGACY_REQUEST_TYPES, ATTACHMENT_FLAGS, ACCESS_SYSTEMS, ACCESS_ACTIONS, FILE_MIME_BY_EXTENSION, FILE_ACCEPT, FILE_HINT, FILES_PREPARING_MESSAGE, EMPTY_REWORK_FORM, STATUS_LABELS, EVENT_LABELS, ACTION_BUTTONS, ACTION_ORDER, IT_GROUPS, EMPTY_ORDER_FORM, SIGNATURE_SLOTS, APPROVAL_STATE_LABELS,
     requestTypeLabel, printRequestTypes, requestTypeText, reworkTag, attachmentFlagLabel, accessSystemLabel, accessActionLabel, statusLabel, statusBadgeClass, myStatusLabel, isTestDoc, INFO_STAGE_LABELS, infoStageLabel, commentKindLabel, commentRows, allFiles, pendingQuestion, infoBadgeTitle,
     todayBangkok, formatDate, formatDateTime, formatDateOf, formatTimeOf, isRealDate, charCount, clip,
+    VIEWER_LABEL, isItViewer, canSeeAllOrders, canApprove, staffSupportsViewer, WORK_MINUTES_PER_DAY, WORK_TIME_NOTE, formatWorkMinutes, workTimeText,
     visibleTabs, readView, viewAllowed, workOrderUrl, isUuid,
     actionButtons, countsAsBothSteps, confirmMessageFor, BOTH_STEPS_NOTE, completeToast, answerToast, pendingStepLabel, eventLabel, eventLabelFor, CANCELLED_ON_BEHALF_LABEL, signatureSlots, approvalSummary,
     itGroupOf, groupItOrders, itActionableCount, awaitingMyReceiveCount, awaitingMyAnswerCount, mineWaiting, mineWaitingNote, waitingForMeCount, itApprovalProgress, CLOSED_STATUSES, openOrderCount, cardSummary,

@@ -78,8 +78,8 @@
     } catch {
       return null;
     }
-    const hasApprovals = Boolean(role?.is_dept_approver || role?.is_it_approver);
-    const hasIt = Boolean(role?.is_it_admin || role?.is_it_approver);
+    const hasApprovals = model.canApprove(role);
+    const hasIt = model.canSeeAllOrders(role);
     const [approvals, approvalRows, itRows, mine] = await Promise.all([
       hasApprovals ? attempt(rpc("app_itrp_pending_count")) : null,
       hasApprovals ? attempt(rpc("app_itrp_list_pending_approvals")) : null,
@@ -131,8 +131,8 @@
 
   /* ---------- แท็บ: ใบของฉัน / รออนุมัติ / งาน IT / ตั้งค่า ---------- */
   async function renderTab(view, role, version, params) {
-    const hasApprovals = Boolean(role.is_dept_approver || role.is_it_approver);
-    const hasIt = Boolean(role.is_it_admin || role.is_it_approver);
+    const hasApprovals = model.canApprove(role);
+    const hasIt = model.canSeeAllOrders(role);
     const mainCall = {
       mine: () => rpc("app_itrp_list_mine"),
       approvals: () => rpc("app_itrp_list_pending_approvals"),

@@ -9,7 +9,7 @@
 //
 // รุ่น 2 (เจ้าของสั่ง 19/11/2026): ไม่มีประเภท "สิทธิ์ในระบบ" และไม่มีส่วน "สำหรับแผนก IT : สิทธิ์ในระบบ" แล้ว · เบ็ดเตล็ดต้องระบุงาน ·
 // แนบไฟล์ได้เมื่อเอกสารแนบ = "มี" (สร้างใบ → อัปโหลดขึ้น Storage → app_itwo_add_attachment ทีละไฟล์) · ผู้แจ้งขอแก้ไขงานได้หลัง IT ปิดงาน (app_itwo_request_rework)
-// รุ่น 1.02 (เจ้าของสั่ง 20/11/2026): ผู้อนุมัติขั้น IT ที่ไม่ใช่ผู้ดูแลงาน IT (เช่น FANG หลังเจ้าของถอดสิทธิ์) ทำได้แค่อนุมัติ/ไม่อนุมัติ/ถามตอนรออนุมัติและดูข้อมูล (แท็บ "งาน IT" เป็นแบบดูอย่างเดียว ไม่เห็นแท็บตั้งค่า)
+// รุ่น 1.02 (เจ้าของสั่ง 20/11/2026): ผู้อนุมัติขั้น IT ที่ไม่ใช่ผู้ดูแลงาน IT (เช่น FANG ก่อนรุ่น 1.08 · ตั้งแต่ 1.08 FANG เป็น "หัวหน้า IT ดูอย่างเดียว" is_it_viewer) ทำได้แค่อนุมัติ/ไม่อนุมัติ/ถามตอนรออนุมัติและดูข้อมูล (แท็บ "งาน IT" เป็นแบบดูอย่างเดียว ไม่เห็นแท็บตั้งค่า)
 // ระหว่าง "รอผู้แจ้งตอบ" ผู้อนุมัติไม่อนุมัติไม่ได้ (ต้องรอคำตอบ) · ป้ายสถานะ received = "จบงานแล้ว" · เลขเวอร์ชันแสดงที่มุมบนขวาของการ์ดบนหน้า IT SUPPORT
 // รุ่น 3 (เจ้าของสั่ง 19/11/2026): "ปิดงาน" ของ IT เปลี่ยนชื่อเป็น "ส่งงาน" (สถานะ it_closed / action complete เดิม) · ผู้อนุมัติ/IT ถามผู้แจ้งได้ (app_itwo_request_info → สถานะ need_info "รอผู้แจ้งตอบ")
 // ผู้แจ้งตอบ (app_itwo_provide_info → ใบกลับสถานะเดิม) ทั้งถามและตอบแนบไฟล์ได้ (app_itwo_add_comment_attachment ภายใน 30 นาทีหลังส่งข้อความ)
@@ -78,8 +78,8 @@
     } catch {
       return null;
     }
-    const hasApprovals = Boolean(role?.is_dept_approver || role?.is_it_approver);
-    const hasIt = Boolean(role?.is_it_admin || role?.is_it_approver);
+    const hasApprovals = model.canApprove(role);
+    const hasIt = model.canSeeAllOrders(role);
     const [approvals, approvalRows, itRows, mine] = await Promise.all([
       hasApprovals ? attempt(rpc("app_itwo_pending_count")) : null,
       hasApprovals ? attempt(rpc("app_itwo_list_pending_approvals")) : null,
@@ -130,8 +130,8 @@
 
   /* ---------- แท็บ: ใบของฉัน / รออนุมัติ / งาน IT / ตั้งค่า ---------- */
   async function renderTab(view, role, version) {
-    const hasApprovals = Boolean(role.is_dept_approver || role.is_it_approver);
-    const hasIt = Boolean(role.is_it_admin || role.is_it_approver);
+    const hasApprovals = model.canApprove(role);
+    const hasIt = model.canSeeAllOrders(role);
     const mainCall = {
       mine: () => rpc("app_itwo_list_mine"),
       approvals: () => rpc("app_itwo_list_pending_approvals"),
@@ -677,24 +677,29 @@
   /* ---------- ตั้งค่า (it_admin) ---------- */
   function bindSettings(role, counter) {
     const staffForm = document.querySelector("#itwo-staff-form");
-    const fieldsOf = (form) => ({ no: form.querySelector('[name="employee_no"]'), admin: form.querySelector('[name="is_it_admin"]'), approver: form.querySelector('[name="is_it_approver"]') });
-    const setStaff = async (employeeNo, isAdmin, isApprover) => {
-      await rpc("app_itwo_set_staff", { p_employee_no: employeeNo, p_is_it_admin: isAdmin, p_is_it_approver: isApprover });
+    const fieldsOf = (form) => ({ no: form.querySelector('[name="employee_no"]'), admin: form.querySelector('[name="is_it_admin"]'), approver: form.querySelector('[name="is_it_approver"]'), viewer: form.querySelector('[name="is_it_viewer"]') });
+    // ส่งพารามิเตอร์หัวหน้า IT เฉพาะเมื่อฐานข้อมูลรองรับ (ฟอร์มมีช่อง is_it_viewer) · ไม่ส่ง = ฐานข้อมูลเก่ารับ 3 พารามิเตอร์เหมือนเดิม
+    // isViewer เป็น boolean ชัดเจนเสมอ (ถอนสิทธิ์ต้องส่ง false ไม่งั้นฐานข้อมูลคงธงเดิมไว้)
+    const supportsViewer = Boolean(staffForm?.querySelector('[name="is_it_viewer"]'));
+    const setStaff = async (employeeNo, isAdmin, isApprover, isViewer = false) => {
+      const params = { p_employee_no: employeeNo, p_is_it_admin: isAdmin, p_is_it_approver: isApprover };
+      if (supportsViewer) params.p_is_it_viewer = Boolean(isViewer);
+      await rpc("app_itwo_set_staff", params);
     };
     const fail = (error) => showToast(failure(error, { write: true }).message, "error");
 
     staffForm?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const fields = fieldsOf(staffForm);
-      const problem = model.validateStaffForm({ employeeNo: fields.no.value, isAdmin: fields.admin.checked, isApprover: fields.approver.checked, myEmployeeNo: role.employee_no });
+      const problem = model.validateStaffForm({ employeeNo: fields.no.value, isAdmin: fields.admin.checked, isApprover: fields.approver.checked, isViewer: Boolean(fields.viewer?.checked), myEmployeeNo: role.employee_no });
       if (problem) { window.MNP_FORM_STEPS.showFieldErrors(staffForm, [{ name: "employee_no", message: problem }]); fields.no.focus(); return; }
       window.MNP_FORM_STEPS.clearFieldErrors(staffForm);
-      const roles = [fields.admin.checked ? "ผู้ดูแลงาน IT" : "", fields.approver.checked ? "ผู้อนุมัติขั้น IT" : ""].filter(Boolean).join(" และ ");
+      const roles = [fields.admin.checked ? "ผู้ดูแลงาน IT" : "", fields.approver.checked ? "ผู้อนุมัติขั้น IT" : "", fields.viewer?.checked ? model.VIEWER_LABEL : ""].filter(Boolean).join(" และ ");
       const no = fields.no.value.trim().toUpperCase();
       if (!(await confirmDialog({ title: `ตั้งสิทธิ์ทีม IT ให้ ${no}?`, message: `สิทธิ์: ${roles} · การตั้งสิทธิ์บันทึกในประวัติที่ลบไม่ได้`, confirmLabel: "บันทึกสิทธิ์" }))) return;
       setFormBusy(staffForm, true);
       try {
-        await setStaff(no, fields.admin.checked, fields.approver.checked);
+        await setStaff(no, fields.admin.checked, fields.approver.checked, Boolean(fields.viewer?.checked));
         showToast(`ตั้งสิทธิ์ทีม IT ให้ ${no} แล้ว`);
         await renderRoute();
       } catch (error) {
@@ -711,6 +716,7 @@
       fields.no.dispatchEvent(new Event("change", { bubbles: true }));
       fields.admin.checked = button.dataset.staffAdmin === "1";
       fields.approver.checked = button.dataset.staffApprover === "1";
+      if (fields.viewer) fields.viewer.checked = button.dataset.staffViewer === "1";
       staffForm.scrollIntoView?.({ block: "center" });
       fields.admin.focus({ preventScroll: true });
     }));

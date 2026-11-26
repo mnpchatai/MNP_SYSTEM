@@ -869,7 +869,7 @@ test("the module version is <major>.<two-digit minor> with a real release date (
 
 /* ---------- รุ่น 1.02 (20/11/2026) ---------- */
 test("v1.02/v1.04: the module version is 1.07 (the 1.02 statuses and labels are unchanged), 'received' is labelled 'จบงานแล้ว' with its own badge, and the event wording is unchanged", () => {
-  assert.equal(model.MODULE_VERSION, "1.07");
+  assert.equal(model.MODULE_VERSION, "1.08");
   assert.equal(model.statusLabel("received"), "จบงานแล้ว");
   assert.equal(model.myStatusLabel("received"), "จบงานแล้ว");
   assert.equal(model.statusBadgeClass("received"), "completed");
@@ -883,4 +883,58 @@ test("v1.02: the ask confirmation no longer tells the approver they can reject w
   assert.match(model.ACTION_BUTTONS.request_info.confirmMessage, /อนุมัติ ไม่อนุมัติ เริ่มงาน หรือส่งงานไม่ได้ ต้องรอคำตอบก่อน/);
   // allowed_actions ของใบ need_info (ผู้อนุมัติ) มาจากฐานข้อมูลเป็น [] · ปุ่มมาจาก allowed_actions เท่านั้น
   assert.deepEqual(model.actionButtons([]), []);
+});
+
+/* ---------- หัวหน้า IT (ดูอย่างเดียว) + เวลาทำงาน (สเปก it-approver-worktime 26/11/2026) ---------- */
+test("the IT head (is_it_viewer) sees the approvals and IT-work tabs read-only, never settings; an old database (no key) behaves as before", () => {
+  const keys = (role) => model.visibleTabs(role).map((tab) => tab.key);
+  assert.ok(keys({ is_it_viewer: true }).includes("approvals"), "approves the requests an IT-step approver raised himself");
+  assert.ok(keys({ is_it_viewer: true }).includes("it"));
+  assert.ok(!keys({ is_it_viewer: true }).includes("settings"), "viewer is not an admin");
+  assert.deepEqual(keys({ is_it_viewer: false }), ["mine"]);
+  assert.deepEqual(keys({ is_it_approver: true }), keys({ is_it_approver: true, is_it_viewer: undefined }), "no key = old database = same as before");
+  assert.equal(model.isItViewer({ is_it_viewer: true }), true);
+  assert.equal(model.isItViewer({}), false);
+  assert.equal(model.isItViewer(null), false);
+  assert.equal(model.canSeeAllOrders({ is_it_viewer: true }), true);
+  assert.equal(model.canSeeAllOrders({ is_dept_approver: true }), false);
+  assert.equal(model.canApprove({ is_it_viewer: true }), true);
+  assert.equal(model.canApprove({}), false);
+});
+
+test("staffRoleText names the IT head role, and the viewer flag is only offered when the database list carries it", () => {
+  assert.equal(model.staffRoleText({ is_it_viewer: true }), "หัวหน้า IT (ดูอย่างเดียว)");
+  assert.equal(model.staffRoleText({ is_it_admin: true, is_it_approver: true, is_it_viewer: false }), "ผู้ดูแลงาน IT · ผู้อนุมัติขั้น IT");
+  assert.equal(model.VIEWER_LABEL, "หัวหน้า IT (ดูอย่างเดียว)");
+  assert.equal(model.staffSupportsViewer([{ employee_no: "A", is_it_admin: true }]), false, "old database list: no column");
+  assert.equal(model.staffSupportsViewer([{ employee_no: "A", is_it_admin: true, is_it_viewer: false }]), true);
+  assert.equal(model.staffSupportsViewer([]), false);
+  assert.equal(model.staffSupportsViewer(undefined), false);
+});
+
+test("a viewer in an IT-approver request counts as both steps in the confirm text (same as the approver)", () => {
+  const detail = { approvals: { dept: null, it_mgr: null } };
+  assert.match(model.confirmMessageFor("approve", detail, { is_it_viewer: true }), /ทั้งขั้นแผนกและขั้น IT/);
+  assert.doesNotMatch(model.confirmMessageFor("approve", detail, {}), /ทั้งขั้นแผนกและขั้น IT/);
+});
+
+test("work minutes show as days (8 working hours) / hours / minutes; missing, null or garbage shows nothing", () => {
+  assert.equal(model.formatWorkMinutes(0), "0 นาที");
+  assert.equal(model.formatWorkMinutes(45), "0 วัน 0 ชม. 45 นาที");
+  assert.equal(model.formatWorkMinutes(660), "1 วัน 3 ชม. 0 นาที", "11 working hours = 1 day 3 hours");
+  assert.equal(model.formatWorkMinutes(480), "1 วัน 0 ชม. 0 นาที");
+  assert.equal(model.formatWorkMinutes(479), "0 วัน 7 ชม. 59 นาที");
+  assert.equal(model.formatWorkMinutes(2 * 480 + 5 * 60 + 7), "2 วัน 5 ชม. 7 นาที");
+  for (const bad of [null, undefined, "", "660", -1, Number.NaN, {}]) assert.equal(model.formatWorkMinutes(bad), "", String(bad));
+  assert.equal(model.workTimeText({ work_minutes: 660 }), "ใช้เวลาทำงาน 1 วัน 3 ชม. 0 นาที");
+  assert.equal(model.workTimeText({ work_minutes: 0 }), "ใช้เวลาทำงาน 0 นาที");
+  assert.equal(model.workTimeText({ work_minutes: null }), "");
+  assert.equal(model.workTimeText({}), "");
+  assert.equal(model.workTimeText(null), "");
+  assert.match(model.WORK_TIME_NOTE, /จ\.–ส\..*ไม่นับวันอาทิตย์.*วันหยุดบริษัท.*ช่วงรอผู้แจ้งตอบ/);
+});
+
+test("validateStaffForm accepts the IT head flag alone as a role", () => {
+  assert.equal(model.validateStaffForm({ employeeNo: "FANG", isAdmin: false, isApprover: false, isViewer: true, myEmployeeNo: "IT3462" }), null);
+  assert.match(model.validateStaffForm({ employeeNo: "FANG", isAdmin: false, isApprover: false, isViewer: false }), /อย่างน้อย 1/);
 });
