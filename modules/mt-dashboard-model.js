@@ -15,11 +15,14 @@
 // - Rankings (machines, departments) count ใบแจ้งซ่อม only, never ใบคำร้อง, rejected requests or requests without a real
 //   machine code (placeholder machines "ไม่มี"/"สร้างใหม่" are not machines). A machine is identified by reporting
 //   department + machine code, because codes repeat across departments and the code is snapshotted on the request.
-// - Technician "hours" are NOT worked hours (the system records none). They are the clock time a job spent in
+// - Every duration (cycle time, phases, technician hours) counts company working time only (modules/working-time.js:
+//   08:00–12:00 + 13:00–17:00 Bangkok, Monday–Saturday, minus company_holidays), and is reported in hours. Whole-day
+//   counts (days in the current stage, days overdue) stay calendar days.
+// - Technician "hours" are NOT logged hours (the system records none). They are the working time a job spent in
 //   in_progress, summed over every round including rework, and each assigned technician gets the job's full time.
 //   Only the current assignee set is known, so a technician removed from a job no longer appears on it.
 //
-// No DOM and no Supabase here: the loader passes plain rows and today's Bangkok date, so Node tests cover it.
+// No DOM and no Supabase here: the loader passes plain rows, today's Bangkok date and the company holidays, so Node tests cover it.
 (function registerMtDashboardModel(root) {
   // UMD: this static Pilot helper is also tested directly in Node without a bundler.
   const pendingStatuses = () => {
@@ -27,9 +30,10 @@
     const center = typeof module !== "undefined" && module.exports ? require("./request-center.js") : root.MNP_REQUEST_CENTER;
     return center.pendingStatuses("MT_REPAIR");
   };
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const workingTime = typeof module !== "undefined" && module.exports ? require("./working-time.js") : root.MNP_WORKING_TIME;
 
   const DAY_MS = 86400000;
-  const HOUR_MS = 3600000;
   const EXCLUDED_STATUSES = ["draft", "cancelled"];
   const TECHNICIAN_STATUSES = ["assigned", "in_progress"];
   const TECHNICIAN_STAGES = ["start", "repair"];
@@ -60,8 +64,8 @@
   const bangkokDate = (timestamp) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date(timestamp));
   const dayNumber = (iso) => Date.parse(`${iso}T00:00:00Z`) / DAY_MS;
   const daysBetween = (from, to) => Math.round(dayNumber(to) - dayNumber(from));
-  // Fractional days between two timestamps, or null while either end is missing.
-  const gapDays = (from, to) => (from && to ? Math.max(0, (Date.parse(to) - Date.parse(from)) / DAY_MS) : null);
+  // Working hours between two timestamps, or null while either end is missing.
+  const gapHours = (from, to, holidays) => (from && to ? workingTime.workingHours(from, to, holidays) : null);
   const rate = (part, whole) => (whole ? part / whole : null);
   const mean = (values) => (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null);
   const median = (values) => {
@@ -73,39 +77,43 @@
 
   const normalizeCode = (code) => String(code ?? "").trim().toLocaleLowerCase("th-TH");
 
-  // Clock hours the job spent in "in_progress" (every round, rework included). A job still being repaired runs to nowMs.
-  function repairHoursOf(history, status, nowMs) {
+  // Working hours the job spent in "in_progress" (every round, rework included). A job still being repaired runs to nowMs.
+  function repairHoursOf(history, status, nowMs, holidays) {
     let total = 0;
     history.forEach((item, index) => {
       if (item.to_status !== "in_progress") return;
       const start = Date.parse(item.created_at);
       const next = history[index + 1];
       const end = next ? Date.parse(next.created_at) : status === "in_progress" ? nowMs : start;
-      total += Math.max(0, end - start);
+      total += workingTime.workingMs(start, end, holidays);
     });
-    return total / HOUR_MS;
+    return total / workingTime.HOUR_MS;
   }
 
   // Closing summary of a completed repair (end of the history card): the same two figures the dashboard uses.
-  // repairMs = time in in_progress over every round (technician ranking hours); totalMs = submitted_at → completed_at (cycle time).
-  function repairTimes(request, history) {
+  // repairMs = working time in in_progress over every round (technician ranking hours); totalMs = working time
+  // submitted_at → completed_at (cycle time). holidays: company holiday dates, as for deriveRows.
+  function repairTimes(request, history, holidays = new Set()) {
+    const holidaySet = workingTime.holidaySetOf(holidays);
     const sorted = [...(history ?? [])].filter((item) => item && item.created_at).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
     const completedAt = request?.completed_at ?? [...sorted].reverse().find((item) => item.to_status === "completed")?.created_at ?? null;
     const submittedAt = request?.submitted_at ?? sorted[0]?.created_at ?? null;
     const total = submittedAt && completedAt ? Date.parse(completedAt) - Date.parse(submittedAt) : NaN;
     return {
-      repairMs: sorted.some((item) => item.to_status === "in_progress") ? Math.round(repairHoursOf(sorted, "completed", 0) * HOUR_MS) : null,
-      totalMs: Number.isFinite(total) && total >= 0 ? total : null,
+      repairMs: sorted.some((item) => item.to_status === "in_progress") ? Math.round(repairHoursOf(sorted, "completed", 0, holidaySet) * workingTime.HOUR_MS) : null,
+      totalMs: Number.isFinite(total) && total >= 0 ? workingTime.workingMs(submittedAt, completedAt, holidaySet) : null,
     };
   }
 
-  // "2 วัน 20 ชม. 20 นาที" — zero parts are left out; under a minute reads "น้อยกว่า 1 นาที".
+  // Working time as "1 วัน 5 ชม. 20 นาที" where one day = 8 working hours — zero parts are left out; under a minute
+  // reads "น้อยกว่า 1 นาที".
   function formatDuration(ms) {
     if (ms === null || ms === undefined || !Number.isFinite(ms) || ms < 0) return "";
     const minutes = Math.floor(ms / 60000);
     if (!minutes) return "น้อยกว่า 1 นาที";
-    const days = Math.floor(minutes / 1440);
-    const hours = Math.floor((minutes % 1440) / 60);
+    const dayMinutes = workingTime.HOURS_PER_DAY * 60;
+    const days = Math.floor(minutes / dayMinutes);
+    const hours = Math.floor((minutes % dayMinutes) / 60);
     const rest = minutes % 60;
     return [days && `${days} วัน`, hours && `${hours} ชม.`, rest && `${rest} นาที`].filter(Boolean).join(" ");
   }
@@ -127,8 +135,10 @@
   //   { id, request_no, status, current_step, is_urgent, doc_type, machine_code, machine_name, requester_name,
   //     dept (department code), machine_is_placeholder, technician_ids, submitted_at, completed_at, work_started_date, work_expected_date,
   //     history: [{ to_status, created_at }], verifications: [{ result }] }
-  function deriveRows(requests, today, nowMs = Date.now()) {
+  // holidays: company holiday dates (Set or array of "YYYY-MM-DD"), skipped by every working-time figure.
+  function deriveRows(requests, today, nowMs = Date.now(), holidays = new Set()) {
     const open = pendingStatuses();
+    const holidaySet = workingTime.holidaySetOf(holidays);
     return requests.filter((request) => !EXCLUDED_STATUSES.includes(request.status)).map((request) => {
       const history = [...(request.history ?? [])].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
       const firstTo = (status) => history.find((item) => item.to_status === status)?.created_at ?? null;
@@ -173,20 +183,20 @@
         daysOverdue: overdue ? daysBetween(expected, today) : 0,
         lateStart,
         daysLateStart: lateStart ? daysBetween(startOn, today) : 0,
-        cycleDays: isCompleted ? gapDays(request.submitted_at, request.completed_at) : null,
+        cycleHours: isCompleted ? gapHours(request.submitted_at, request.completed_at, holidaySet) : null,
         onTime: isCompleted && expected && completedOn ? completedOn <= expected : null,
         phases: status === "rejected" ? {} : {
-          approval: gapDays(request.submitted_at, firstTo("pending_assign")),
-          assign: gapDays(firstTo("pending_assign"), firstTo("assigned")),
+          approval: gapHours(request.submitted_at, firstTo("pending_assign"), holidaySet),
+          assign: gapHours(firstTo("pending_assign"), firstTo("assigned"), holidaySet),
           // A failed inspection sends the job back to the technician, so its rework counts as repair time.
-          repair: pastRepair ? gapDays(firstTo("assigned"), lastTo("pending_verify")) : null,
-          verify: isCompleted ? gapDays(lastTo("pending_verify"), request.completed_at) : null,
+          repair: pastRepair ? gapHours(firstTo("assigned"), lastTo("pending_verify"), holidaySet) : null,
+          verify: isCompleted ? gapHours(lastTo("pending_verify"), request.completed_at, holidaySet) : null,
         },
         // doc_type is null on very old rows; only an explicit ใบคำร้อง is excluded from breakdown rankings.
         isRepairDoc: request.doc_type !== "request",
         machineKey: code && !request.machine_is_placeholder ? `${request.dept ?? ""}|${normalizeCode(code)}` : null,
         technicianIds: [...new Set(request.technician_ids ?? [])],
-        repairHours: repairHoursOf(history, status, nowMs),
+        repairHours: repairHoursOf(history, status, nowMs, holidaySet),
         verifyCount: verifications.length,
         verifyFailed: verifications.some((item) => item.result === "fail"),
         hadMoreInfo: history.some((item) => item.to_status === "more_info"),
@@ -235,7 +245,7 @@
       if (row.isRejected) result.rejected += 1;
       if (row.isOpen && row.isUrgent) result.urgentOpen += 1;
       if (row.overdue) result.overdue += 1;
-      if (row.cycleDays !== null) cycles.push(row.cycleDays);
+      if (row.cycleHours !== null) cycles.push(row.cycleHours);
       // A job still overdue counts as late, so on-time cannot be flattered by leaving late jobs open.
       if (row.onTime !== null) { result.onTimeBase += 1; if (row.onTime) result.onTime += 1; }
       else if (row.overdue) result.onTimeBase += 1;
@@ -271,7 +281,7 @@
   function phaseSummary(list) {
     return PHASES.map((phase) => {
       const values = list.map((row) => row.phases?.[phase.key]).filter((value) => value !== null && value !== undefined);
-      return { ...phase, n: values.length, avgDays: mean(values), medianDays: median(values) };
+      return { ...phase, n: values.length, avgHours: mean(values), medianHours: median(values) };
     });
   }
 
@@ -308,7 +318,7 @@
       if (row.machine_name) group.name = String(row.machine_name).trim();
       if (row.isOpen) group.open += 1;
       if (row.overdue) group.overdue += 1;
-      if (row.cycleDays !== null) group.cycles.push(row.cycleDays);
+      if (row.cycleHours !== null) group.cycles.push(row.cycleHours);
       group.lastOn = row.submittedOn;
     }
     const total = list.length - unspecified;
@@ -328,7 +338,7 @@
       group.count += 1;
       if (row.isOpen) group.open += 1;
       if (row.isUrgent) group.urgent += 1;
-      if (row.cycleDays !== null) group.cycles.push(row.cycleDays);
+      if (row.cycleHours !== null) group.cycles.push(row.cycleHours);
       groups.set(key, group);
     }
     const items = [...groups.values()]

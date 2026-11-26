@@ -11,6 +11,8 @@
   const model = root.MNP_ITRP_MODEL;
   const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
   const iconOf = (name) => root.MNP_UI_ICONS?.icon(name) ?? "";
+  // วันหยุดบริษัทที่ module-itrp.js โหลดไว้ก่อนวาดหน้า (เวลาซ่อมนับเฉพาะเวลาทำงาน)
+  const holidays = () => root.MNP_WORKING_TIME?.holidays?.() ?? [];
   const REQUIRED = '<span class="field-required">(จำเป็น)</span>';
   const PALETTE = "it";
   const TITLE = "ใบแจ้งซ่อม";
@@ -380,7 +382,7 @@
     const { latest, earlier } = model.repairReports(detail);
     if (!latest && !earlier.length) return "";
     const latestView = model.reportView(latest);
-    const duration = model.repairDuration(detail.started?.at, detail.completed?.at);
+    const duration = model.repairDuration(detail.started?.at, detail.completed?.at, holidays());
     const history = earlier.length
       ? `<details class="card itrp-report-history"><summary><h2>บันทึกการซ่อมครั้งก่อน <span class="detail-section-count">${earlier.length}</span></h2></summary>
         ${earlier.map((report) => {
@@ -760,7 +762,7 @@
     const report = model.reportView(latest);
     const sign = model.printSignoffs(detail);
     const outcome = model.printOutcome(detail);
-    const duration = model.repairDuration(detail.started?.at, detail.completed?.at);
+    const duration = model.repairDuration(detail.started?.at, detail.completed?.at, holidays());
     // ข้อความ "(ระบุ: …)" ต่อท้ายเฉพาะตัวเลือก "อื่นๆ" ที่ถูกเลือก
     const otherNote = (note) => (option) => (option.value === "other" ? `(ระบุ: ${esc(note ?? "")})` : "");
     const kindChoices = printChoices(model.REQUEST_KINDS, detail.request_kind, otherNote(detail.request_kind_note));

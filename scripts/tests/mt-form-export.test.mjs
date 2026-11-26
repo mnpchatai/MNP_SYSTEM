@@ -59,6 +59,7 @@ test("a finished request fills every section of the form", () => {
   assert.equal(cells.B36, "วันที่  21/10/69");
   assert.equal(cells.B37, "เวลา  15:00");
   assert.equal(cells.K37, "เวลา  16:36");
+  // นับเฉพาะเวลาทำงาน: พุธ 15:00–17:00 = 2 ชม. + พฤหัส 08–12, 13–16:36 = 7 ชม.เต็ม → 9 ชม. = 1 วัน (8 ชม.) 1 ชม.
   assert.deepEqual([cells.V36, cells.Y36], ["1", "1"]);
   assert.equal(cells.C39, true);
   assert.equal(cells.T40, "วันที่  22/10/69");
@@ -161,6 +162,17 @@ test("the export web app is its own project, not one of the sheet sync web apps"
 /* ---------- Apps Script ---------- */
 
 const gsSource = readFileSync(new URL("../../apps-script/mt-form-export/Code.gs", import.meta.url), "utf8");
+test("the total repair time counts company working time only: one day = 8 working hours, Sundays and holidays skipped", () => {
+  // 2026-11-21 = เสาร์, 22 = อาทิตย์, 23 = จันทร์ · เวลาเป็น UTC (+7 = เวลากรุงเทพ)
+  assert.deepEqual(formExport.duration("2026-11-21T01:00:00Z", "2026-11-23T04:00:00Z"), { days: 1, hours: 3 });
+  assert.deepEqual(formExport.duration("2026-11-21T01:00:00Z", "2026-11-23T04:00:00Z", ["2026-11-23"]), { days: 1, hours: 0 });
+  assert.deepEqual(formExport.duration("2026-11-21T11:00:00Z", "2026-11-22T11:00:00Z"), { days: 0, hours: 0 });
+  assert.equal(formExport.duration("2026-11-23T04:00:00Z", "2026-11-21T01:00:00Z"), null);
+  const history = [{ to_status: "in_progress", created_at: "2026-11-21T01:00:00Z" }, { to_status: "pending_verify", created_at: "2026-11-24T01:00:00Z" }];
+  const { cells } = formExport.buildMtFormCells({ request: baseRequest(), history, holidays: ["2026-11-23"] });
+  assert.deepEqual([cells.V36, cells.Y36], ["1", "0"]);
+});
+
 const context = vm.createContext({});
 vm.runInContext(gsSource, context);
 const gs = vm.runInContext("({ validateCells_, safeFileName_, errorCode_ })", context);

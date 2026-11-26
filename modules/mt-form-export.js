@@ -9,6 +9,8 @@
 // ตำแหน่งเซลล์ผูกกับเลย์เอาต์ปัจจุบันของฟอร์ม ถ้าย้าย/แทรกแถวในชีต "เอกสาร" ต้องแก้ CELLS ที่นี่ด้วย
 // ค่า boolean = ช่องติ๊ก (Apps Script แปลงเป็น ☑/☐) ค่าข้อความว่าง = ล้างค่าตัวอย่างที่ค้างในแบบฟอร์ม
 (function registerMtFormExport(root) {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const workingTime = () => (typeof module === "object" && module.exports ? require("./working-time.js") : root.MNP_WORKING_TIME);
   // URL ของ Web App (Deploy > Web app) ตั้งหลังติดตั้งตาม apps-script/mt-form-export/README.md
   // ค่าว่าง = ยังไม่ได้ติดตั้ง ปุ่มดาวน์โหลดจะถูกซ่อน
   // ต้องเป็นโปรเจกต์แยก ห้ามซ้ำกับ URL ซิงก์ของ module-mt.js (เทสต์ตรวจไว้)
@@ -53,12 +55,14 @@
     return time ? `${date} ${time}` : date;
   }
 
-  // ระยะเวลาเริ่ม → เสร็จ เป็นวันกับชั่วโมงเต็ม (ช่อง "รวม ... วัน ... ชม.")
-  function duration(startAt, endAt) {
-    const ms = new Date(endAt).getTime() - new Date(startAt).getTime();
-    if (!Number.isFinite(ms) || ms < 0) return null;
-    const hours = Math.floor(ms / 3600000);
-    return { days: Math.floor(hours / 24), hours: hours % 24 };
+  // ระยะเวลาเริ่ม → เสร็จ เป็นวันกับชั่วโมงเต็ม (ช่อง "รวม ... วัน ... ชม.") นับเฉพาะเวลาทำงานของบริษัท
+  // (modules/working-time.js: 08–12 + 13–17 จ.–ส. ไม่นับวันอาทิตย์และวันหยุดใน holidays) · 1 วัน = 8 ชม.ทำงาน
+  function duration(startAt, endAt, holidays = []) {
+    const start = new Date(startAt).getTime();
+    const end = new Date(endAt).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+    const { days, hours } = workingTime().splitWorkingHours(workingTime().workingMs(start, end, holidays));
+    return { days, hours };
   }
 
   // ครั้งแรกที่เข้าสถานะ "กำลังซ่อม" และครั้งล่าสุดที่ส่งให้ผู้แจ้งตรวจรับ (ซ่อมซ้ำหลังตรวจไม่ผ่านนับรวมทั้งหมด)
@@ -98,8 +102,8 @@
   }
 
   // ข้อมูลเข้า: request (แถว requests พร้อม department), steps (approval_steps), verifications (ใหม่ → เก่า),
-  // history (request_status_history), technicianNames (ชื่อช่างตามลำดับ), nameOf(id) คืนชื่อพนักงาน
-  function buildMtFormCells({ request, steps = [], verifications = [], history = [], technicianNames = [], nameOf = () => "" }) {
+  // history (request_status_history), technicianNames (ชื่อช่างตามลำดับ), nameOf(id) คืนชื่อพนักงาน, holidays (วันหยุดบริษัท "YYYY-MM-DD")
+  function buildMtFormCells({ request, steps = [], verifications = [], history = [], technicianNames = [], nameOf = () => "", holidays = [] }) {
     // จับคู่ด้วยชื่อขั้น ไม่ใช่ step_order: ขั้นที่ไม่มีผู้ถือบทบาทถูกข้ามตอนสร้างใบ (20260921080000)
     // ใบที่ไม่มีผู้จัดการโรงงานจึงมีผู้จัดการทั่วไปเป็นขั้นที่ 1
     const stepNamed = (name) => steps.find((step) => step.step_name === name) ?? null;
@@ -116,7 +120,7 @@
     const allApproved = activeSteps.length > 0 && activeSteps.every((step) => step.status === "approved");
     const technicians = technicianNames.map(text).filter(Boolean).join(", ");
     const { startedAt, finishedAt } = workTimes(history);
-    const total = startedAt && finishedAt ? duration(startedAt, finishedAt) : null;
+    const total = startedAt && finishedAt ? duration(startedAt, finishedAt, holidays) : null;
     const latest = verifications[0] ?? null;
     const passedAt = latest?.result === "pass" ? latest.created_at : null;
     const dateLine = (value) => (value ? `วันที่  ${formDate(value)}` : BLANK_DATE);

@@ -420,8 +420,10 @@
     return { href: model.repairUrl("mine"), label: "‹ ใบแจ้งซ่อม" };
   }
 
+  // โหลดวันหยุดบริษัทไปพร้อมกัน: "รวมเวลาในการซ่อม" นับเฉพาะเวลาทำงาน (modules/working-time.js)
   async function loadDetail(id) {
-    return rpc("app_itrp_get_detail", { p_request_id: id });
+    const [detail] = await Promise.all([rpc("app_itrp_get_detail", { p_request_id: id }), window.MNP_WORKING_TIME?.loadHolidays(sb)]);
+    return detail;
   }
 
   // ไฟล์แนบของใบ (ตอนแจ้ง ทุกรอบแก้ไข และไฟล์ของข้อความถาม-ตอบ) ในกล่องดูไฟล์เดิมของ app.js: ขอ signed URL แล้วเติมตัวอย่าง/ลิงก์ดาวน์โหลด (hydrateAttachmentGallery · ใบแจ้งซ่อมไม่มีภาพย่อ)

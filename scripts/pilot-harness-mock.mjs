@@ -197,6 +197,15 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       history: [["pending_approval", "pending_assign", "e7", 11.8], ["pending_assign", "assigned", ME_ID, 11.7], ["assigned", "in_progress", "e8", 11.7], ["in_progress", "pending_verify", "e8", 11.65],
         ["pending_verify", "assigned", ME_ID, 11], ["assigned", "in_progress", "e8", 10.5], ["in_progress", "pending_verify", "e8", 10.48], ["pending_verify", "completed", ME_ID, 9]],
     });
+    // วันหยุดบริษัทตัวอย่าง (วันธรรมดาวันแรกที่ไม่ใช่วันอาทิตย์ในช่วง 3–7 วันก่อน) ให้เห็นว่าเวลาทำงานไม่นับวันนี้
+    const bangkokDay = (days) => new Date(Date.parse(ago(days)) + 7 * 3600000);
+    // และอีกวันในช่วง 10–11 วันก่อน ซึ่งอยู่ระหว่างแจ้ง → ปิดงานของ MT-2569-0385 (เวลารวมทั้งใบท้ายประวัติเอกสาร)
+    const holidayAgo = [3, 4, 5, 6, 7].find((days) => bangkokDay(days).getUTCDay() !== 0);
+    const olderHolidayAgo = [10, 11].find((days) => bangkokDay(days).getUTCDay() !== 0);
+    db.company_holidays.push(
+      { id: "hol-mock-1", holiday_date: bangkokDay(holidayAgo).toISOString().slice(0, 10), name_th: "วันหยุดบริษัท (ตัวอย่าง)", created_by: ME_ID, created_at: ago(30) },
+      { id: "hol-mock-2", holiday_date: bangkokDay(olderHolidayAgo).toISOString().slice(0, 10), name_th: "วันหยุดบริษัท (ตัวอย่าง 2)", created_by: ME_ID, created_at: ago(30) },
+    );
     // NCR อยู่ตาราง ncr_reports แยกจากคำร้อง (modules/module-ncr.js) — หน้าหลักดึงใบที่ถึงขั้นของผู้ใช้และใบที่ผู้ใช้ออก
     // แถวเก็บ ncr_responsibilities ที่หน้าเว็บ embed ไว้ในตัว (expand ไม่ต้องต่อให้)
     const dateOnly = (days) => ago(days).slice(0, 10);

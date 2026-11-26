@@ -233,8 +233,8 @@ test("the page has no permanent explanation paragraphs and no fact said twice", 
   assert.match(html, /<p class="nd-muted">ข้อมูล ณ [^<]*<\/p>/);
   assert.match(source, /window\.MNP_NOTES\?\.toggle\("ข้อมูลของแดชบอร์ด", "<p>ตัวเลขนับเฉพาะใบที่บัญชีนี้มีสิทธิ์เห็น · ตัวเลขไม่ตรงกับหน้างาน แจ้งเลขที่ใบที่ไม่ตรงได้เลย<\/p>"\)/, "the request to report mismatches sits behind the ⓘ button (a button works on touch, a title does not)");
   assert.doesNotMatch(html, /ค้างมากสุดที่ขั้น/, "the busiest stage is the dark bar in งานค้างอยู่ที่ใคร");
-  assert.match(html, /<h2>ช่างที่ใช้เวลาซ่อมมากสุด<\/h2><p>[^<]*ไม่ใช่ชั่วโมงทำงานจริง/, "the technician-hours caveat is in the card note that dashboard-notes.js folds into วิธีนับ");
-  assert.match(source, /<span>เวลาตามนาฬิกา ไม่ใช่ชั่วโมงทำงาน<\/span><\/div>/, "and a short reminder stays in its legend");
+  assert.match(html, /<h2>ช่างที่ใช้เวลาซ่อมมากสุด<\/h2><p>[^<]*ไม่ใช่ชั่วโมงที่ช่างลงบันทึก/, "the technician-hours caveat is in the card note that dashboard-notes.js folds into วิธีนับ");
+  assert.match(source, /<span>นับเฉพาะเวลาทำงาน 08:00–17:00 จ\.–ส\.<\/span><\/div>/, "and the legend says the hours are company working time");
   assert.match(html, /<table class="nd-act nd-rowlink">[\s\S]*<td class="nd-num" data-label="ค้างมา">/, "the act-now table can become cards on a phone, and the whole row opens the request");
   assert.doesNotMatch(html, /ตรงกับจำนวนใน/, "no reconciliation sentence repeating a tile's number");
 });

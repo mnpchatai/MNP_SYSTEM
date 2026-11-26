@@ -235,7 +235,7 @@ function world({ role = ROLE_EMP, handlers = {}, draft = null, sandbox = false, 
     createAutosave: () => ({ schedule() {}, start() {}, stop() {} }), offerDraft() {},
   };
   // inDevelopment: false = จำลองการถอดธง "กำลังพัฒนา" (แก้ค่าธงเดียวใน itrp-model.js ตามที่ผู้ดูแลจะทำจริง)
-  for (const file of ["modules/itrp-model.js", "modules/itrp-pages.js", "modules/itrp-history-pages.js", "modules/module-itrp.js"]) {
+  for (const file of ["modules/working-time.js", "modules/itrp-model.js", "modules/itrp-pages.js", "modules/itrp-history-pages.js", "modules/module-itrp.js"]) {
     const source = read(file);
     vm.runInContext(inDevelopment || file !== "modules/itrp-model.js" ? source : source.replace("const IN_DEVELOPMENT = true;", "const IN_DEVELOPMENT = false;"), context);
   }

@@ -756,12 +756,53 @@ function itemLink(item: DigestItem) {
     : `${base}/#/request?id=${encodeURIComponent(item.item_id)}`;
 }
 
-/** ระยะเวลาที่ค้างนับจากตอนที่งานมาถึงมือ — อ่านง่ายกว่าวันเวลาเต็ม */
-function waitingFor(since: string | null) {
+/* ---------- เวลาทำงานของบริษัท ---------- */
+
+// กติกาเจ้าของ 2026-11-26: ตัวเลข "ชั่วโมง" นับเฉพาะเวลาทำงาน 08:00–12:00 + 13:00–17:00 เวลากรุงเทพ จันทร์–เสาร์
+// ไม่นับวันอาทิตย์และวันใน company_holidays · ตัวเลข "วัน" ยังเป็นวันตามปฏิทิน
+// ตรรกะเดียวกับ workingMs ใน modules/working-time.js ของ Pilot Web (เทสต์ scripts/tests/working-time.test.mjs ตรวจค่าคงที่) แก้ที่หนึ่งต้องแก้อีกที่
+const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
+const BANGKOK_OFFSET_MS = 7 * HOUR_MS;
+const WORK_BLOCKS = [[8, 12], [13, 17]] as const;
+
+function workingMs(startMs: number, endMs: number, holidays: Set<string>) {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return 0;
+  const from = startMs + BANGKOK_OFFSET_MS;
+  const to = endMs + BANGKOK_OFFSET_MS;
+  let total = 0;
+  for (let midnight = Math.floor(from / DAY_MS) * DAY_MS; midnight < to; midnight += DAY_MS) {
+    const date = new Date(midnight);
+    if (date.getUTCDay() === 0 || holidays.has(date.toISOString().slice(0, 10))) continue;
+    for (const [open, close] of WORK_BLOCKS) {
+      const overlap = Math.min(to, midnight + close * HOUR_MS) - Math.max(from, midnight + open * HOUR_MS);
+      if (overlap > 0) total += overlap;
+    }
+  }
+  return total;
+}
+
+// วันหยุดบริษัทที่ Admin ตั้งไว้ อ่านครั้งเดียวต่อการเรียกฟังก์ชัน · อ่านไม่ได้ = นับเฉพาะวันอาทิตย์ (ไม่ให้คิวอีเมลหยุด)
+async function companyHolidays(admin: Admin): Promise<Set<string>> {
+  const { data, error } = await admin.from("company_holidays").select("holiday_date");
+  if (error) {
+    console.warn("notify-email: company_holidays unavailable", { error: error.message });
+    return new Set();
+  }
+  return new Set(((data ?? []) as { holiday_date: string | null }[]).map((row) => String(row.holiday_date ?? "").slice(0, 10)));
+}
+
+/** ระยะเวลาที่ค้างนับจากตอนที่งานมาถึงมือ — อ่านง่ายกว่าวันเวลาเต็ม
+ *  ไม่ถึง 24 ชั่วโมงตามนาฬิกา = ชั่วโมงทำงาน · ตั้งแต่ 24 ชั่วโมงขึ้นไป = วันตามปฏิทิน */
+function waitingFor(since: string | null, holidays: Set<string>) {
   if (!since) return null;
-  const hours = Math.floor((Date.now() - new Date(since).getTime()) / 3_600_000);
-  if (!Number.isFinite(hours) || hours < 1) return "ไม่ถึง 1 ชั่วโมง";
-  return hours < 24 ? `${hours} ชั่วโมง` : `${Math.floor(hours / 24)} วัน`;
+  const sinceMs = new Date(since).getTime();
+  const nowMs = Date.now();
+  const clockHours = Math.floor((nowMs - sinceMs) / HOUR_MS);
+  if (!Number.isFinite(clockHours)) return "ไม่ถึง 1 ชั่วโมง";
+  if (clockHours >= 24) return `${Math.floor(clockHours / 24)} วัน`;
+  const hours = Math.floor(workingMs(sinceMs, nowMs, holidays) / HOUR_MS);
+  return hours < 1 ? "ไม่ถึง 1 ชั่วโมง" : `${hours} ชั่วโมง`;
 }
 
 function dueLabel(item: DigestItem) {
@@ -770,7 +811,7 @@ function dueLabel(item: DigestItem) {
   return item.status === "awaiting_response" ? `กำหนดตอบ ${date}` : `กำหนดเสร็จ ${date}`;
 }
 
-function buildDigestMessage(row: PendingNotification, items: DigestItem[]): Message {
+function buildDigestMessage(row: PendingNotification, items: DigestItem[], holidays: Set<string>): Message {
   const escalation = row.kind === "escalation";
   const urgent = row.title.startsWith(URGENT_PREFIX) || items.some((item) => item.is_urgent);
   const color = escalation ? colors.danger : colors.warning;
@@ -791,7 +832,7 @@ function buildDigestMessage(row: PendingNotification, items: DigestItem[]): Mess
     !escalation && item.title ? `"${item.title}"` : null,
     `— ${item.action}`,
     dueLabel(item) ? `· ${dueLabel(item)}` : null,
-    waitingFor(item.waiting_since) ? `· ค้าง ${waitingFor(item.waiting_since)}` : null,
+    waitingFor(item.waiting_since, holidays) ? `· ค้าง ${waitingFor(item.waiting_since, holidays)}` : null,
     `\n  ${itemLink(item)}`,
   ].filter(Boolean).join(" ");
 
@@ -812,7 +853,7 @@ function buildDigestMessage(row: PendingNotification, items: DigestItem[]): Mess
 
   const rows = items.map((item, index) => {
     const due = dueLabel(item);
-    const waiting = waitingFor(item.waiting_since);
+    const waiting = waitingFor(item.waiting_since, holidays);
     return `
               <tr>
                 <td style="padding:12px 14px;${index ? "border-top:1px solid #eaecf0;" : ""}vertical-align:top">
@@ -963,6 +1004,8 @@ async function dispatch(admin: Admin, requestId: string | null) {
     [...new Set(rows.map((row) => row.request_id).filter((id): id is string => Boolean(id)))],
   );
 
+  // อ่านวันหยุดเฉพาะเมื่อมีอีเมลสรุปงานค้าง (มีบรรทัด "ค้าง N ชั่วโมง") ในรอบนี้
+  const holidays = rows.some((row) => digestItems(row)) ? await companyHolidays(admin) : new Set<string>();
   const now = () => new Date().toISOString();
   let sent = 0;
   let skipped = 0;
@@ -998,7 +1041,7 @@ async function dispatch(admin: Admin, requestId: string | null) {
       }
       const items = digestItems(row);
       const message = items
-        ? buildDigestMessage(row, items)
+        ? buildDigestMessage(row, items, holidays)
         : buildMessage(row, row.request_id ? details.get(row.request_id) : undefined, setup);
       await sendOne(String(recipient!.email), message);
       sent++;
