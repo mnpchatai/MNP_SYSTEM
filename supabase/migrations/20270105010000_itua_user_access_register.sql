@@ -483,7 +483,7 @@ begin
     return old;
   elsif tg_op = 'INSERT' then
     if not exists (select 1 from public.itua_users u where u.id = new.user_id and u.is_test = new.is_test and u.status = 'active') then
-      raise exception 'ผู้ใช้ที่ลาออกแล้วเพิ่มสิทธิ์โฟลเดอร์ไม่ได้' using errcode = 'insufficient_privilege';
+      raise exception 'เพิ่มสิทธิ์โฟลเดอร์ไม่ได้: ผู้ใช้ไม่ได้ใช้งานอยู่ (ลาออกแล้วหรืออยู่คนละโหมด)' using errcode = 'insufficient_privilege';
     end if;
     return new;
   end if;
@@ -509,7 +509,7 @@ begin
     return old;
   elsif tg_op = 'INSERT' then
     if not exists (select 1 from public.itua_users u where u.id = new.user_id and u.is_test = new.is_test and u.status = 'active') then
-      raise exception 'ผู้ใช้ที่ลาออกแล้วเพิ่มสิทธิ์โปรแกรมไม่ได้' using errcode = 'insufficient_privilege';
+      raise exception 'เพิ่มสิทธิ์โปรแกรมไม่ได้: ผู้ใช้ไม่ได้ใช้งานอยู่ (ลาออกแล้วหรืออยู่คนละโหมด)' using errcode = 'insufficient_privilege';
     end if;
   else
     if (new.user_id, new.program_id, new.is_test, new.created_by, new.created_at) is distinct from (old.user_id, old.program_id, old.is_test, old.created_by, old.created_at) then
