@@ -4280,6 +4280,17 @@ async function renderRequestDetail(params) {
   const upcomingSteps = ["pending_approval", "more_info"].includes(request.status)
     ? [...steps].filter((step) => step.status === "pending" && step.step_order > request.current_step).sort((a, b) => a.step_order - b.step_order)
     : [];
+  // ใบแจ้งซ่อมที่ปิดงานแล้ว: ท้ายการ์ดประวัติเอกสารบอกเวลาซ่อมจริง (รวมช่วงกำลังซ่อมทุกรอบ) และเวลารวมทั้งใบ (แจ้ง → ปิดงาน)
+  // นับแบบเดียวกับแดชบอร์ด MT (MNP_MT_DASHBOARD.repairTimes) ผู้ใช้เลือกแสดงทั้งสองค่า 2026-11-26
+  const repairTimesHtml = (() => {
+    const model = window.MNP_MT_DASHBOARD;
+    if (!isRepair || request.status !== "completed" || !model?.repairTimes) return "";
+    const { repairMs, totalMs } = model.repairTimes(request, history);
+    const rows = [["เวลาซ่อม (ช่างซ่อมจริง)", repairMs], ["เวลารวมทั้งใบ (แจ้ง → ปิดงาน)", totalMs]]
+      .map(([label, ms]) => [label, model.formatDuration(ms)])
+      .filter(([, text]) => text);
+    return rows.length ? `<dl class="detail-history-times">${rows.map(([label, text]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(text)}</dd></div>`).join("")}</dl>` : "";
+  })();
   const receipt = recentDecisionFor(id);
   const description = (request.description ?? "").trim();
   // หัวใบเป็นก้อนสีโมดูล ยกเว้นใบแจ้งซ่อม IT ที่ใช้ฟอร์มของทีม IT เอง (ORIGINAL_FORM_TYPES)
@@ -4332,7 +4343,7 @@ async function renderRequestDetail(params) {
         ${canApprove ? "" : detailView?.asideHtml ?? ""}
         ${canOperate ? `<section class="card action-panel" id="operate-panel" aria-labelledby="operate-panel-title"><div class="action-panel-head"><h2 id="operate-panel-title">ดำเนินงาน</h2></div><details class="action-panel-files"><summary>แนบไฟล์ประกอบ (ถ้ามี)</summary>${extraFilesFieldHtml("status-files", "เลือกไฟล์", { hint: false })}</details><div class="action-panel-buttons">${request.status === "approved" ? `<button class="btn status-button" data-status="in_progress">รับงานและเริ่มดำเนินการ</button>` : `<button class="btn success status-button" data-status="completed">บันทึกว่าเสร็จแล้ว</button>`}</div></section>` : ""}
         ${receipt && !canApprove && !canOperate && !detailView?.asideHtml ? nextItemPanelHtml() : ""}
-        ${historyCardHtml(timeline.map((item) => `<div class="timeline-item"><strong>${escapeHtml(item.title)}</strong><p class="timeline-item-detail">${escapeHtml(item.detail)}</p>${item.message ? `<p class="timeline-item-message">${escapeHtml(item.message)}</p>` : ""}<time class="timeline-item-time" datetime="${escapeHtml(item.at)}">${formatDate(item.at, true)}</time></div>`).join(""), upcomingSteps.length ? `<p class="detail-history-next">ขั้นอนุมัติที่ยังไม่ถึง: ${upcomingSteps.map((step) => escapeHtml(step.step_name)).join(" → ")}</p>` : "")}
+        ${historyCardHtml(timeline.map((item) => `<div class="timeline-item"><strong>${escapeHtml(item.title)}</strong><p class="timeline-item-detail">${escapeHtml(item.detail)}</p>${item.message ? `<p class="timeline-item-message">${escapeHtml(item.message)}</p>` : ""}<time class="timeline-item-time" datetime="${escapeHtml(item.at)}">${formatDate(item.at, true)}</time></div>`).join(""), upcomingSteps.length ? `<p class="detail-history-next">ขั้นอนุมัติที่ยังไม่ถึง: ${upcomingSteps.map((step) => escapeHtml(step.step_name)).join(" → ")}</p>` : repairTimesHtml)}
       </aside>
     </div>`;
   // แถบบนบอกโมดูล (เลขที่ใบอยู่ที่หัวใบแล้ว ไม่ซ้ำบนจอเดียวกัน) ชื่อแท็บยังเป็นเลขที่ใบ

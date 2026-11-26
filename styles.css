@@ -600,6 +600,10 @@ button.summary { width: 100%; margin: 0; display: flex; flex-direction: column; 
 .detail-reply-more[open] > summary { margin-bottom: 8px; }
 .nd-chip-note { font-weight: 500; opacity: .8; }
 .detail-history-next { margin: 14px 0 0; padding-top: 12px; color: var(--muted); border-top: 1px solid var(--soft-line); font-size: var(--text-meta); }
+.detail-history-times { display: grid; gap: 6px; margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--soft-line); font-size: var(--text-meta); }
+.detail-history-times > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; }
+.detail-history-times dt { color: var(--muted); }
+.detail-history-times dd { margin: 0; font-weight: 600; color: var(--ink); }
 .card-heading { min-height: 52px; padding: 0 17px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--soft-line); }
 .card-heading h2, .card h2, .card h3 { margin: 0; font-size: var(--text-title); line-height: 1.4; }
 .card-heading a { color: var(--primary); font-size: var(--text-meta); font-weight: 600; }

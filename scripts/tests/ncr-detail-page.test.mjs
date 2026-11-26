@@ -815,10 +815,10 @@ test("long step forms keep a local draft: respond, submit prevention and answer 
   assert.match(source, /bindStepDraft\(form, ncr\.id, state\.employee\?\.id, \{ updatedAt: ncr\.updated_at \?\? null \}\)/);
 
   // ฟอร์มตอบที่ QA ส่งกลับมีคำตอบเดิมจากเซิร์ฟเวอร์: แตะฟอร์มโดยไม่ได้เปลี่ยนค่า ไม่ปิดแถบและไม่บันทึกทับร่าง (auditor รอบ 23)
-  const savedDraft = { v: 1, savedAt: Date.parse("2026-11-12T03:00:00Z"), values: { causes: ["man"], root_cause: "ร่างของฉัน" } };
+  const savedDraft = { v: 1, savedAt: Date.now() - 2 * 3600000, values: { causes: ["man"], root_cause: "ร่างของฉัน" } };
   memory.set(key, JSON.stringify(savedDraft));
   const returned = draftForm("respond", { root_cause: "คำตอบเดิมที่ถูกส่งกลับ" });
-  bindStepDraft(returned, "ncr-1", "emp-rb", { updatedAt: "2026-11-13T01:00:00Z" });
+  bindStepDraft(returned, "ncr-1", "emp-rb", { updatedAt: new Date(Date.now() - 3600000).toISOString() });
   assert.equal(returned.banner.hidden, false);
   assert.match(returned.banner.innerHTML, /ใบนี้มีการอัปเดตหลังร่างนี้/, "the banner warns that the NCR changed after the draft");
   returned.listeners.input.forEach((handler) => handler({ isTrusted: true, target: {} }));
