@@ -2507,7 +2507,7 @@ function homeQueueItems(pending, repairTasks, ncrTasks, officeTasks = []) {
       priority: overdue ? "high" : null, createdAt: ncr.step_since ?? ncr.updated_at ?? ncr.created_at,
     })),
     // งานของระบบสำนักงาน (ใบสั่งงาน IT, ใบแจ้งซ่อม IT …) ลิงก์ไปหน้าของใบอย่างเดียว · แปลงด้วยกติกากลาง modules/office-home.js
-    ...officeTasks.map(window.MNP_OFFICE_HOME_RULES.queueItem),
+    ...officeTasks.map(window.MNP_OFFICE_HOME_RULES?.queueItem ?? (() => null)).filter(Boolean),
   ]);
 }
 // งานของคิวที่ลงมือในหน้าของใบเอง (งานซ่อม ขั้นของ NCR) ใช้คำของงาน เช่น "มอบหมายช่าง"
@@ -2530,9 +2530,12 @@ function ncrHomeModule() {
   return entry?.enabled && deptModuleAllowed(entry.code) ? entry.home ?? null : null;
 }
 // งานของระบบสำนักงานบนหน้าหลัก (ใบสั่งงาน IT, ใบแจ้งซ่อม IT) จากทุกโมดูลที่ลงทะเบียนใน window.MNP_OFFICE_HOME (สัญญาอยู่ที่หัว modules/office-home.js)
-// แผนกที่จำกัดโมดูล (แผนก ID) ไม่เรียกโมดูลที่ไม่ได้สิทธิ์ · ไม่ throw: โมดูลที่ล้ม/ช้าเกิน 6 วินาทีถูกข้าม และคืนชื่อใน failed ให้ผู้เรียกบอกผู้ใช้ หน้าหลักส่วนอื่นขึ้นตามปกติ
+// แผนกที่จำกัดโมดูล (แผนก ID) ไม่เรียกโมดูลที่ไม่ได้สิทธิ์ · ไม่ throw: โมดูลที่ล้ม/ช้าเกิน 3 วินาทีถูกข้าม และคืนชื่อใน failed ให้ผู้เรียกบอกผู้ใช้ หน้าหลักส่วนอื่นขึ้นตามปกติ
 async function loadOfficeHome(employee) {
-  return window.MNP_OFFICE_HOME_RULES.collect(window.MNP_OFFICE_HOME, employee, { isAllowed: deptModuleAllowed });
+  const rules = window.MNP_OFFICE_HOME_RULES;
+  // modules/office-home.js โหลดไม่ขึ้น (แคชเก่า/เครือข่าย): ข้ามงานสำนักงานเงียบ ๆ หน้าหลักและแผง "งานถัดไป" ของส่วนอื่นยังขึ้นตามปกติ
+  if (typeof rules?.collect !== "function") return { tasks: [], mine: [], failed: [] };
+  return rules.collect(window.MNP_OFFICE_HOME, employee, { isAllowed: deptModuleAllowed });
 }
 // ใบอนุมัติ + งานซ่อมของคิว พร้อมเวลาที่ขั้นมาถึง (อ่านต่อทันทีที่ได้รายการ ขนานกับการโหลดส่วนอื่นของหน้า)
 async function loadQueueWork() {
@@ -2596,7 +2599,7 @@ async function renderDashboard(params = new URLSearchParams()) {
     // NCR ที่ฉันออกและยังไม่ปิด (ใบที่ถึงขั้นของฉันอยู่ในคิว "ต้องจัดการ" แล้ว) เรียงรวมกับคำร้อง ใบใหม่ก่อน
     .concat(ncrItems.mine.map((ncr) => ({ at: ncr.created_at, html: `<li><a class="home-mine-row" href="${escapeHtml(ncrHref(ncr))}"><span class="home-mine-head"><span class="queue-item-icon" data-module="ncr" aria-hidden="true">${requestTypeIcon("NCR_CAR")}</span><span class="request-no">${escapeHtml(ncr.ncr_no)}</span></span><strong>${escapeHtml(ncr.product_name)}</strong>${progressTracker(ncr.status, false, { stages: ncrHome.PROGRESS_STAGES, label: ncrHome.statusLabel(ncr) })}</a></li>` })))
     // ใบของระบบสำนักงานที่ฉันแจ้งและยังไม่จบ (ใบที่ถึงขั้นของฉันอยู่ในคิว "ต้องจัดการ" แล้ว) แถวหน้าตาเดียวกัน พร้อมแถบขั้นตอนของโมดูลนั้น
-    .concat(officeItems.mine.map((row) => ({ at: row.at, html: window.MNP_OFFICE_HOME_RULES.mineRowHtml(row, { escapeHtml, requestTypeIcon, requestPalette, progressTracker }) })))
+    .concat(officeItems.mine.map((row) => ({ at: row.at, html: window.MNP_OFFICE_HOME_RULES?.mineRowHtml?.(row, { escapeHtml, requestTypeIcon, requestPalette, progressTracker }) ?? "" })))
     .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
     .slice(0, HOME_QUEUE_PAGE);
   const showQueue = items.length > 0 || recent.length > 0 || hasApprovalDuty(employee);

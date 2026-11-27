@@ -181,7 +181,7 @@ test("collect never rejects: no registry, empty result, or a module that never a
   assert.deepEqual(ids(result.tasks), ["ok"]);
   assert.deepEqual(result.failed, [{ code: "SLOW", label: "ช้า" }]);
   // ไม่มีตัวจับเวลาค้างหลังตอบเสร็จ (ไม่ทำให้โปรเซสไม่จบ)
-  assert.equal(rules.LOAD_TIMEOUT_MS, 6000);
+  assert.equal(rules.LOAD_TIMEOUT_MS, 3000);
 });
 
 test("collect drops malformed rows: no id, or a link that is not an in-app route", async () => {
@@ -201,11 +201,11 @@ const read = (file) => require("node:fs").readFileSync(new URL(`../../${file}`, 
 test("the home page wires office work in: loader is isolated, tasks join the queue as link rows, mine rows are merged, the keyboard shortcuts skip them", () => {
   const app = read("app.js");
   assert.match(app, /function homeQueueItems\(pending, repairTasks, ncrTasks, officeTasks = \[\]\)/);
-  assert.match(app, /\.\.\.officeTasks\.map\(window\.MNP_OFFICE_HOME_RULES\.queueItem\)/);
-  assert.match(app, /window\.MNP_OFFICE_HOME_RULES\.collect\(window\.MNP_OFFICE_HOME, employee, \{ isAllowed: deptModuleAllowed \}\)/, "departments restricted to some modules (ID) do not load the others");
+  assert.ok(app.includes("...officeTasks.map(window.MNP_OFFICE_HOME_RULES?.queueItem"));
+  assert.ok(app.includes("rules.collect(window.MNP_OFFICE_HOME, employee, { isAllowed: deptModuleAllowed })"), "departments restricted to some modules (ID) do not load the others");
   // ทั้งหน้าหลักและแผง "งานถัดไป" (loadHomeQueueItems) นับงานชุดเดียวกัน
   assert.equal(app.match(/homeQueueItems\(pending, repairTasks, ncrItems\.tasks, officeItems\.tasks\)/g)?.length, 2);
-  assert.match(app, /officeItems\.mine\.map\(\(row\) => \(\{ at: row\.at, html: window\.MNP_OFFICE_HOME_RULES\.mineRowHtml\(row, \{ escapeHtml, requestTypeIcon, requestPalette, progressTracker \}\) \}\)\)/);
+  assert.ok(app.includes("officeItems.mine.map((row) => ({ at: row.at, html: window.MNP_OFFICE_HOME_RULES?.mineRowHtml?.("));
   // ลิงก์อย่างเดียว: แถว office ใช้แถวแบบ is-task ไม่มีปุ่มตัดสินใจ และคีย์ลัด A/R ข้ามแถว is-task
   assert.match(app, /item\.kind === "repair" \|\| item\.kind === "ncr" \|\| item\.kind === "office"/);
   assert.match(app, /if \(target instanceof HTMLElement && target\.closest\("\.queue-item\.is-task"\)\) return;/);
@@ -235,4 +235,22 @@ test("each office module announces its home work under the same code as its card
   const idDept = { department: { code: "ID" } };
   assert.equal(access.moduleAllowed(idDept, "IT_WORK_ORDER"), false);
   assert.equal(access.moduleAllowed(idDept, "IT_COMPUTER_REPAIR"), true);
+});
+
+test("if office-home.js fails to load, the home page and the next-item panel skip office work instead of throwing", () => {
+  const app = read("app.js");
+  // loader: ไม่มี collect = ผลว่างทันที (ไม่เรียก property ของ undefined)
+  assert.ok(app.includes('if (typeof rules?.collect !== "function") return { tasks: [], mine: [], failed: [] };'));
+  assert.ok(app.includes("window.MNP_OFFICE_HOME_RULES?.queueItem ?? (() => null)).filter(Boolean)"));
+  assert.ok(app.includes('window.MNP_OFFICE_HOME_RULES?.mineRowHtml?.(row, { escapeHtml, requestTypeIcon, requestPalette, progressTracker }) ?? ""'));
+  assert.ok(!app.includes("window.MNP_OFFICE_HOME_RULES.queueItem") && !app.includes("window.MNP_OFFICE_HOME_RULES.collect") && !app.includes("window.MNP_OFFICE_HOME_RULES.mineRowHtml"), "every use is guarded");
+  // รันตัวเลือกจริงของ loadOfficeHome ใน context ที่ไม่มี RULES
+  const start = app.indexOf("async function loadOfficeHome(employee) {") + "async function loadOfficeHome(employee) {".length;
+  const body = app.slice(start, app.indexOf(String.fromCharCode(10) + "}", start));
+  assert.ok(body, "loadOfficeHome found");
+  const run = new Function("window", "deptModuleAllowed", "employee", `return (async () => {${body}})();`);
+  return Promise.all([
+    run({}, () => true, {}).then((result) => assert.deepEqual(result, { tasks: [], mine: [], failed: [] })),
+    run({ MNP_OFFICE_HOME_RULES: {} }, () => true, {}).then((result) => assert.deepEqual(result, { tasks: [], mine: [], failed: [] })),
+  ]);
 });

@@ -15,7 +15,7 @@
   "use strict";
 
   // โมดูลที่ตอบช้ากว่านี้ถือว่าล้ม (ไม่ให้หน้าแรกของส่วนอื่นรอไม่จบ)
-  const LOAD_TIMEOUT_MS = 6000;
+  const LOAD_TIMEOUT_MS = 3000;
   // ใบที่จบแล้ว (ไม่ใช่งานค้าง) ตรงกับ CLOSED_STATUSES ของ itwo-model.js / itrp-model.js
   const CLOSED_STATUSES = Object.freeze(["received", "rejected", "cancelled"]);
 
