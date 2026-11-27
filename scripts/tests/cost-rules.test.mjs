@@ -263,3 +263,105 @@ test("ST ไม่เห็นต้นทุน · ผู้เห็นต้�
     if (cost && !(employee.role?.code === "admin" || employee.role_code === "admin")) assert.equal(edit, false);
   }
 });
+
+// ---------- ค่าแรง (เฟส 2): อัตราบาท/ชม. ต่อแผนก + เวลามาตรฐานของ RB ต่อรหัสสินค้า ----------
+const rate = (departmentCode, ratePerHour, effectiveFrom = "2026-01-01", createdAt = 1) => ({ id: `${departmentCode}-${effectiveFrom}-${createdAt}`, departmentCode, ratePerHour, effectiveFrom, note: "", createdAt, createdBy: "ผู้ทดสอบ" });
+const STEP_IDS = ["prep", "mix1", "mix2", "mix3", "extrusion", "curing", "finishing"];
+const standard = (productCode, minutes, workers, effectiveFrom = "2026-01-01", createdAt = 1) => ({
+  id: `${productCode}-${effectiveFrom}-${createdAt}`, productCode, effectiveFrom, note: "", createdAt, createdBy: "ผู้ทดสอบ",
+  steps: STEP_IDS.map((step, index) => ({ step, minutes: minutes[index], workers: workers[index] })),
+});
+// ชั่วโมงคน: 30×2 + 12×2 + 6×2 + 0 + 60×3 + 45×1 + 30×4 = 441 นาทีคน = 7.35 ชม.
+const STD = standard("FG-91", [30, 12, 6, 0, 60, 45, 30], [2, 2, 2, 0, 3, 1, 4]);
+const RATES = [rate("RB", 60), rate("GR", 999)];
+
+test("ขั้นของเวลามาตรฐาน: 7 ขั้นตามลำดับงาน สถานีผสมมี 4 ส่วน", () => {
+  assert.deepEqual(C.STEPS.map((step) => step.id), STEP_IDS);
+  assert.deepEqual(C.STEPS.filter((step) => step.station === "mixing").map((step) => step.id), ["prep", "mix1", "mix2", "mix3"]);
+  assert.deepEqual(C.STATIONS.map((station) => station.id), ["mixing", "extrusion", "curing", "finishing"]);
+  assert.deepEqual(C.LABOUR_DEPTS, ["RB", "GR", "PT", "BG", "PK"]);
+});
+
+test("labourCost: ค่าแรงต่อชุดผสม = Σ นาที ÷ 60 × คน × อัตรา RB · ต่อ kg · แยกขั้นและสถานี", () => {
+  const out = C.labourCost(DEMO, [STD], RATES, "2026-11-27", 75.6);
+  assert.equal(out.complete, true);
+  assert.equal(out.reason, "");
+  assert.equal(out.productCode, "FG-91");
+  assert.equal(out.ratePerHour, 60, "อัตราของ RB ไม่ใช่ของแผนกอื่น");
+  assert.equal(out.minutes, 183);
+  close(out.manHours, 7.35);
+  close(out.cost, 441);
+  close(out.costPerKg, 441 / 75.6);
+  assert.deepEqual(out.steps.map((step) => step.step), STEP_IDS);
+  close(out.steps[0].cost, 60, "เตรียมวัตถุดิบ 30 นาที × 2 คน × 60 บาท/ชม.");
+  close(out.steps[3].cost, 0, "ขั้นที่ไม่ทำ = 0");
+  close(out.steps[5].cost, 45, "อบ 45 นาที × 1 คน");
+  const mixing = out.stations.find((station) => station.station === "mixing");
+  assert.equal(mixing.minutes, 48, "ผสม = เตรียม + ขั้น 1-3");
+  close(mixing.cost, 96);
+  close(out.stations.reduce((sum, station) => sum + station.cost, 0), out.cost, "สถานีรวมกันเท่ายอดรวม");
+});
+
+test("labourCost: คิดไม่ได้ = cost null พร้อมเหตุ (ไม่เดาเป็น 0)", () => {
+  const noProduct = C.labourCost({ ...DEMO, productCode: "" }, [STD], RATES, "2026-11-27", 75.6);
+  assert.deepEqual([noProduct.reason, noProduct.cost, noProduct.costPerKg, noProduct.complete], ["noProduct", null, null, false]);
+  assert.equal(C.labourCost({ ...DEMO, productCode: null }, [STD], RATES, "2026-11-27", 75.6).reason, "noProduct");
+  const noStandard = C.labourCost({ ...DEMO, productCode: "FG-OTHER" }, [STD], RATES, "2026-11-27", 75.6);
+  assert.deepEqual([noStandard.reason, noStandard.cost, noStandard.minutes], ["noStandard", null, 0]);
+  const early = C.labourCost(DEMO, [STD], RATES, "2025-12-31", 75.6);
+  assert.equal(early.reason, "noStandard", "เวลามาตรฐานยังไม่ถึงวันมีผล");
+  const noRate = C.labourCost(DEMO, [STD], [rate("GR", 50)], "2026-11-27", 75.6);
+  assert.deepEqual([noRate.reason, noRate.cost, noRate.complete], ["noRate", null, false]);
+  assert.equal(noRate.minutes, 183, "แผนก RB (ไม่มีอัตรา) ยังเห็นเวลา");
+  close(noRate.manHours, 7.35);
+  assert.equal(noRate.steps[0].cost, null);
+  assert.equal(noRate.stations[0].cost, null);
+  assert.equal(C.labourCost(DEMO, [STD], RATES, "2026-11-27", 0).costPerKg, null, "น้ำหนัก 0 = ไม่มีค่าแรงต่อ kg");
+  assert.equal(C.labourCost(DEMO, null, null, "2026-11-27", 75.6).reason, "noStandard");
+});
+
+test("rateAt / standardAt: ประวัติ · แก้ในวันเดียวกัน (บันทึกล่าสุดชนะ) · ค่าล่วงหน้ายังไม่ถูกใช้ · การแก้ภายหลังไม่เปลี่ยนต้นทุนย้อนหลัง", () => {
+  const rates = [rate("RB", 50, "2026-01-01", 1), rate("RB", 60, "2026-06-01", 2), rate("RB", 61, "2026-06-01", 3), rate("RB", 70, "2027-01-01", 4)];
+  assert.equal(C.rateAt(rates, "RB", "2025-12-31"), null);
+  assert.equal(C.rateAt(rates, "RB", "2026-05-31").ratePerHour, 50);
+  assert.equal(C.rateAt(rates, "RB", "2026-06-01").ratePerHour, 61);
+  assert.equal(C.rateAt(rates, "RB", "2026-12-31").ratePerHour, 61);
+  assert.equal(C.rateAt(rates, "RB", "2027-01-01").ratePerHour, 70);
+  assert.equal(C.rateAt(rates, "PK", "2026-06-01"), null);
+  assert.equal(C.rateAt([rate("RB", 0), rate("RB", "x")], "RB", "2026-06-01"), null, "อัตราที่ไม่ใช่ตัวเลขบวกไม่ถูกใช้");
+  assert.deepEqual(C.rateHistory(rates, "RB").map((row) => row.ratePerHour), [70, 61, 60, 50]);
+  const slower = standard("FG-91", [60, 12, 6, 0, 60, 45, 30], [2, 2, 2, 0, 3, 1, 4], "2026-07-01", 2);
+  const standards = [STD, slower, standard("FG-OTHER", [1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1])];
+  assert.equal(C.standardAt(standards, "FG-91", "2026-06-30"), STD);
+  assert.equal(C.standardAt(standards, "FG-91", "2026-07-01"), slower);
+  assert.equal(C.standardAt(standards, "", "2026-07-01"), null);
+  assert.deepEqual(C.standardHistory(standards, "FG-91"), [slower, STD]);
+  assert.equal(C.standardMinutes(slower), 213);
+  close(C.labourCost(DEMO, standards, rates, "2026-05-01", 75.6).cost, 7.35 * 50, "ก่อนแก้: เวลาเดิม อัตราเดิม");
+  close(C.labourCost(DEMO, standards, rates, "2026-08-01", 75.6).cost, 8.35 * 61, "หลังแก้: เวลาใหม่ อัตราใหม่");
+});
+
+test("standardSteps: ขั้นที่ขาดหรือค่าที่ไม่ใช่ตัวเลข = 0 ตามลำดับ STEPS เสมอ", () => {
+  const steps = C.standardSteps({ steps: [{ step: "curing", minutes: 45, workers: 1 }, { step: "prep", minutes: "x", workers: -2 }, { step: "unknown", minutes: 9, workers: 9 }] });
+  assert.deepEqual(steps.map((step) => [step.step, step.minutes, step.workers]), [["prep", 0, 0], ["mix1", 0, 0], ["mix2", 0, 0], ["mix3", 0, 0], ["extrusion", 0, 0], ["curing", 45, 1], ["finishing", 0, 0]]);
+  assert.equal(C.stepLabel("prep"), "ผสม · ขั้นเตรียมวัตถุดิบ");
+  assert.equal(C.fmtMinutes(12.5), "12.5");
+});
+
+test("สิทธิ์ค่าแรง: อัตรา = ผู้เห็นต้นทุน · เวลามาตรฐาน อ่าน = ผู้เห็นต้นทุน + แผนก RB · แก้ = ผู้เห็นต้นทุน + หัวหน้าแผนก RB", () => {
+  // [role, dept, เห็นเวลา, แก้เวลา, แก้อัตรา]
+  const cases = [
+    ["general_manager", "MGT", true, true, true], ["factory_manager", "FT", true, true, true], ["admin", "IT", true, true, true],
+    ["employee", "PP", true, true, true], ["assistant_factory_manager", "PP", true, true, true],
+    ["employee", "RB", true, false, false], ["department_manager", "RB", true, true, false], ["assistant_department_manager", "RB", true, true, false],
+    ["assistant_factory_manager", "FT", false, false, false], ["department_manager", "GR", false, false, false],
+    ["employee", "ST", false, false, false], ["department_manager", "ST", false, false, false], ["employee", "QA", false, false, false], ["employee", "WH", false, false, false],
+  ];
+  for (const shape of ["nested", "flat"]) {
+    for (const [role, dept, see, edit, rates] of cases) {
+      const who = emp(role, dept, shape);
+      assert.deepEqual([C.canSeeStandards(who), C.canEditStandards(who), C.canEditRates(who)], [see, edit, rates], `${role} ${dept} ${shape}`);
+    }
+  }
+  assert.deepEqual([C.canSeeStandards(null), C.canEditStandards(undefined), C.canEditRates(null)], [false, false, false]);
+});

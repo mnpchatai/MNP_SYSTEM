@@ -10,7 +10,7 @@ const FILES = [
   "modules/rubberflow-rules.js", "modules/rubberflow-derive.js", "modules/rubberflow-actions.js", "modules/rubberflow-seed.js", "modules/rubberflow-store.js",
   "modules/rubberflow-ui.js", "modules/factory-kit.js", "modules/rubberflow-pages-plan.js", "modules/rubberflow-pages-line.js", "modules/rubberflow-pages-quality.js", "modules/rubberflow-documents.js", "modules/module-rubberflow.js",
   "modules/bom-rules.js", "modules/bom-xlsx.js", "modules/bom-actions.js", "modules/bom-seed.js", "modules/bom-store.js", "modules/bom-pages.js", "modules/bom-hub.js", "modules/module-bom.js",
-  "modules/cost-rules.js", "modules/cost-data.js",
+  "modules/cost-rules.js", "modules/cost-data.js", "modules/cost-labour-ui.js",
   "modules/st-pages.js", "modules/module-st.js", "modules/module-sr.js", "modules/qa-pages.js", "modules/module-qa.js", "modules/gr-pages.js", "modules/dept-pages.js", "modules/module-gr.js", "modules/module-pt.js", "modules/module-bg.js", "modules/module-pk.js", "modules/wh-pages.js", "modules/module-wh.js", "modules/sa-pages.js", "modules/module-sa.js",
   "modules/cost-pages.js", "modules/module-cost.js",
 ];
@@ -48,6 +48,14 @@ const COST_DATA = {
   lots: [lotOf("MX-100", Date.now() - DAY, 23), lotOf("MX-101", Date.now() - 2 * DAY, 21)],
 };
 
+// ค่าแรง (เฟส 2): อัตรา RB 60 บาท/ชม. · เวลามาตรฐานของสินค้า FG-91 = 441 นาทีคน (7.35 ชม.) ต่อชุดผสม → ค่าแรง 441.00 บาท · RC-OLD ไม่มีเวลามาตรฐาน
+const STEP_IDS = ["prep", "mix1", "mix2", "mix3", "extrusion", "curing", "finishing"];
+const stepsOf = (minutes, workers) => STEP_IDS.map((step, index) => ({ step, minutes: minutes[index], workers: workers[index] }));
+const LABOUR = {
+  rates: [{ id: "r1", departmentCode: "RB", ratePerHour: 60, effectiveFrom: "2026-01-01", note: "อัตราเปิด", createdAt: 1, createdBy: "ผู้ทดสอบ" }],
+  standards: [{ id: "s1", productCode: "FG-91", effectiveFrom: "2026-01-01", steps: stepsOf([30, 12, 6, 0, 60, 45, 30], [2, 2, 2, 0, 3, 1, 4]), note: "", createdAt: 1, createdBy: "ผู้ทดสอบ" }],
+};
+
 // Supabase จำลอง: สิทธิ์ตามผู้ใช้ที่ทำหน้าที่อยู่ (ตรงกับ RPC จริง: เห็นต้นทุน = GM/FM/admin/PP · เห็นราคา = เห็นต้นทุน + ST · เขียน = ST/admin)
 function fakeSb(getEmployee, log) {
   const roleOf = () => getEmployee()?.role?.code ?? "";
@@ -66,6 +74,22 @@ function fakeSb(getEmployee, log) {
         log.prices = [...log.prices, price(args.p_material_code, args.p_unit_price, args.p_effective_from, 99, { kind: args.p_kind, note: args.p_note })];
         return { data: { canWrite: true, prices: log.prices }, error: null };
       }
+      // ค่าแรง: อ่าน = ผู้เห็นต้นทุน + แผนก RB (RB ไม่ได้อัตรา) · แก้อัตรา = ผู้เห็นต้นทุน · แก้เวลามาตรฐาน = ผู้เห็นต้นทุน + หัวหน้าแผนก RB
+      const rbHead = () => deptOf() === "RB" && ["department_manager", "assistant_department_manager"].includes(roleOf());
+      const labourOut = () => ({ data: { canSeeRates: seeCost(), canWriteRates: seeCost(), canWriteStandards: seeCost() || rbHead(), rates: seeCost() ? log.labour.rates : [], standards: log.labour.standards }, error: null });
+      if (name === "app_rf_labour") return seeCost() || deptOf() === "RB" ? labourOut() : refuse();
+      if (name === "app_rf_labour_rate_save") {
+        if (!seeCost()) return refuse();
+        if (log.invalid) return { data: null, error: { message: "RF_INVALID_LABOUR" } };
+        log.labour = { ...log.labour, rates: [...log.labour.rates, { id: "r-new", departmentCode: args.p_department_code, ratePerHour: args.p_rate_per_hour, effectiveFrom: args.p_effective_from, note: args.p_note, createdAt: 99, createdBy: "ผู้ทดสอบ" }] };
+        return labourOut();
+      }
+      if (name === "app_rf_station_standard_save") {
+        if (!(seeCost() || rbHead())) return refuse();
+        if (log.invalid) return { data: null, error: { message: "RF_INVALID_STANDARD" } };
+        log.labour = { ...log.labour, standards: [...log.labour.standards, { id: "s-new", productCode: args.p_product_code, effectiveFrom: args.p_effective_from, steps: args.p_steps, note: args.p_note, createdAt: 99, createdBy: "ผู้ทดสอบ" }] };
+        return labourOut();
+      }
       if (name === "app_rf_cost_data") return seeCost() ? { data: { ...COST_DATA, prices: log.prices }, error: null } : refuse();
       return { data: null, error: { message: "unknown rpc" } };
     },
@@ -75,7 +99,7 @@ function fakeSb(getEmployee, log) {
 function load({ employee = emp("ST") } = {}) {
   const context = vm.createContext({});
   const app = { innerHTML: "" };
-  const log = { renders: 0, notFound: 0, hash: "#/st", toasts: [], rpc: [], prices: PRICES, invalid: false };
+  const log = { renders: 0, notFound: 0, hash: "#/st", toasts: [], rpc: [], prices: PRICES, labour: LABOUR, invalid: false };
   const fakes = {};
   const node = () => ({
     handlers: {}, dataset: {}, value: "", disabled: false, textContent: "", innerHTML: "", tagName: "DIV", classList: { toggle() {}, add() {}, remove() {} }, files: [],
@@ -493,10 +517,12 @@ test("#/cost?recipe=: ต้นทุนต่อชุดผสม/kg · แย
   const env = load({ employee: emp("OFFICE", "general_manager") });
   const html = await settled(env.openCost, "recipe=DEMO-W01");
   assert.equal(h1Of(html), "DEMO-W01 · FG-91");
-  assert.match(html, /ต้นทุนต่อชุดผสม/);
+  assert.match(html, /วัตถุดิบต่อชุดผสม/);
   assert.match(html, /≥ 605\.10 บาท/);
-  assert.match(html, /≥ 8\.00 บาท/, "ต้นทุนต่อ kg เป็นยอดบางส่วนด้วย");
-  assert.equal((html.match(/≥/g) ?? []).length, 2, "เครื่องหมาย ≥ เฉพาะสองยอดหัวหน้า ไม่ซ้ำที่ยอดรวมแต่ละขั้น");
+  assert.match(html, /ค่าแรงต่อชุดผสม<\/span><strong class="rf-stat-value">441\.00 บาท/, "ค่าแรงครบ ไม่มีเครื่องหมาย ≥");
+  assert.match(html, /≥ 1,046\.10 บาท/, "รวม = วัตถุดิบ + ค่าแรง เป็นยอดบางส่วนเพราะราคาเคมีไม่ครบ");
+  assert.match(html, /≥ 13\.84 บาท/, "รวมต่อ kg เป็นยอดบางส่วนด้วย");
+  assert.equal((html.match(/≥/g) ?? []).length, 3, "เครื่องหมาย ≥ เฉพาะสามยอดหัวหน้า ไม่ซ้ำที่ยอดรวมแต่ละขั้น");
   assert.doesNotMatch(html, /ยังไม่ครบ/, "ข้อเท็จจริงว่าราคาไม่ครบแสดงที่กล่องเตือนกล่องเดียว");
   assert.match(html, /แยกตามขั้น/);
   assert.match(html, /ยังไม่มีราคา 2 รายการ/);
@@ -567,10 +593,11 @@ test("#/cost: ฐานข้อมูลปฏิเสธ = ไม่มีส
   assert.doesNotMatch(html, /boom/);
   const env = load({ employee: emp("PP", "employee", { id: "a" }) });
   await settled(env.openCost);
-  assert.equal(env.log.rpc.length, 1);
+  assert.deepEqual(env.log.rpc.map(([name]) => name).sort(), ["app_rf_cost_data", "app_rf_labour"]);
   env.setEmployee(emp("PP", "employee", { id: "b" }));
   assert.match(await env.openCost(), /กำลังโหลดข้อมูลต้นทุน/, "บัญชีใหม่ไม่เห็นข้อมูลของบัญชีเดิม");
-  assert.equal(env.log.rpc.length, 2);
+  assert.equal(env.log.rpc.filter(([name]) => name === "app_rf_cost_data").length, 2);
+  assert.equal(env.log.rpc.filter(([name]) => name === "app_rf_labour").length, 2, "ข้อมูลค่าแรงของบัญชีเดิมถูกทิ้งด้วย");
 });
 
 test("#/cost: ตัวเลือกฉบับ/วันที่เปลี่ยน URL · ไม่เก็บราคาลงเครื่อง · โหลดครั้งเดียว", async () => {
@@ -596,4 +623,182 @@ test("wording และไฟล์: โมดูลลงทะเบียน�
   assert.doesNotMatch(html, /data-rf-form|data-rf-action/);
   assert.doesNotMatch(html, /<b>x<\/b>/);
   assert.match(html, /&lt;b&gt;x&lt;\/b&gt;/);
+});
+
+// ---------- ค่าแรง (เฟส 2) ----------
+test("#/cost: รายการสูตรมีค่าแรงและยอดรวมต่อชุดผสม / ต่อ kg · สูตรที่คิดค่าแรงไม่ได้มีป้ายบอกเหตุ · ปุ่มอัตราค่าแรง", async () => {
+  const env = load({ employee: emp("PP") });
+  const html = await settled(env.openCost);
+  const rows = (html.match(/<tbody>([\s\S]*?)<\/tbody>/) ?? [])[1].split("<tr").slice(1);
+  assert.match(rows[0], /441\.00/, "ค่าแรงของ DEMO-W01 (สินค้า FG-91)");
+  assert.match(rows[0], /≥ 1,046\.10/);
+  assert.match(rows[0], /≥ 13\.84/);
+  assert.doesNotMatch(rows[0], /ยังไม่มีค่าแรง/);
+  assert.match(rows[1], /RC-OLD/);
+  assert.match(rows[1], /ยังไม่มีค่าแรง/);
+  assert.match(rows[1], /title="(สูตรยังไม่มีรหัสสินค้า|สินค้านี้ยังไม่มีเวลามาตรฐาน)/, "เหตุอยู่ใน title");
+  assert.match(html, /data-rf-open="labourRates"/);
+  assert.equal((html.match(/<th[ >]/g) ?? []).length, 7, "สูตร น้ำหนัก วัตถุดิบ ค่าแรง รวม รวม/kg และป้าย");
+});
+
+test("#/cost?recipe=&tab=labour: ค่าแรงแยกตามขั้นและสถานี · อัตราที่ใช้ · ปุ่มเวลามาตรฐาน / อัตราค่าแรง · คิดไม่ได้ = บอกเหตุ", async () => {
+  const env = load({ employee: emp("OFFICE", "general_manager") });
+  const html = await settled(env.openCost, "recipe=DEMO-W01&tab=labour");
+  assert.match(html, /ค่าแรงแยกตามขั้น/);
+  assert.match(html, /อัตรา RB 60\.00 บาท\/ชม\./);
+  assert.match(html, /ผสม · ขั้นเตรียมวัตถุดิบ<\/td><td class="right rf-mono">30<\/td><td class="right rf-mono">2<\/td><td class="right rf-mono">1\.00<\/td><td class="right rf-mono">60\.00/);
+  // ตารางเดียว: แถวรวมของสถานีผสม (4 ส่วน) ต่อจากขั้น 3 · แถวรวมท้ายมีแค่นาทีและชั่วโมงคน (ค่าแรงรวมอยู่ที่ตัวเลขด้านบนที่เดียว) · ไม่มีการ์ดตามสถานีที่ซ้ำตัวเลขเดิม
+  assert.match(html, /ผสม · ขั้น 3<\/td>(?:(?!<\/tr>).)*<\/tr><tr class="cost-sum"><td title="[^"]*">รวมสถานีผสมยาง<\/td><td class="right rf-mono">48<\/td><td><\/td><td class="right rf-mono">1\.60<\/td><td class="right rf-mono">96\.00<\/td><\/tr><tr><td>ฉีดขึ้นรูป/);
+  assert.match(html, /<strong>รวม<\/strong><\/td><td class="right rf-mono">183<\/td><td><\/td><td class="right rf-mono">7\.35<\/td><td><\/td><\/tr>/);
+  assert.equal((html.match(/441\.00/g) ?? []).length, 1, "the labour total appears once (the summary figure)");
+  assert.doesNotMatch(html, /ค่าแรงตามสถานี/);
+  assert.equal((html.match(/<table/g) ?? []).length, 1, "one labour table");
+  assert.match(html, /data-rf-open="stationStandard" data-rf-args="[^"]*FG-91/);
+  assert.match(html, /data-rf-open="labourRates"/);
+  assert.doesNotMatch(html, /ยังคิดค่าแรงไม่ได้/);
+  // วันที่ก่อนเวลามาตรฐานมีผล: คิดไม่ได้ บอกเหตุ และยอดรวมเป็นยอดบางส่วน
+  const early = await env.openCost("recipe=DEMO-W01&tab=labour&asof=2025-06-01");
+  assert.match(early, /ยังคิดค่าแรงไม่ได้/);
+  assert.match(early, /สินค้านี้ยังไม่มีเวลามาตรฐานที่มีผล/);
+  assert.match(early, /ค่าแรงต่อชุดผสม<\/span><strong class="rf-stat-value">-</);
+  // สูตรที่ไม่มีรหัสสินค้า / ไม่มีเวลามาตรฐาน
+  const legacy = await env.openCost("recipe=RC-OLD&tab=labour");
+  assert.match(legacy, /ยังคิดค่าแรงไม่ได้/);
+  // ไม่มีอัตราของ RB
+  const noRate = load({ employee: emp("PP") });
+  noRate.log.labour = { ...LABOUR, rates: [] };
+  const plain = await settled(noRate.openCost, "recipe=DEMO-W01&tab=labour");
+  assert.match(plain, /ยังไม่มีอัตราค่าแรงของแผนก RB ที่มีผล/);
+  assert.match(plain, /ผสม · ขั้น 1<\/td><td class="right rf-mono">12</, "เวลายังแสดง แม้ยังไม่มีอัตรา");
+});
+
+test("ค่าแรง: ระหว่างโหลดไม่มีป้าย · โหลดไม่สำเร็จ = บรรทัดเดียวเหนือตารางพร้อมลองอีกครั้ง (ไม่ใช่ป้ายทุกแถว) หน้าต้นทุนวัตถุดิบยังใช้ได้", async () => {
+  // ระหว่างโหลด: ช่องค่าแรงเป็นขีด ไม่มีแถวไหนบอกว่ายังไม่มีค่าแรง
+  const waiting = load({ employee: emp("PP") });
+  const realWaiting = waiting.context.sb;
+  waiting.context.sb = { rpc: (name, args) => (name === "app_rf_labour" ? new Promise(() => {}) : realWaiting.rpc(name, args)) };
+  const pending = await settled(waiting.openCost);
+  assert.equal(waiting.context.MNP_COST_DATA.labour().status, "loading");
+  assert.match(pending, /605\.10/);
+  assert.doesNotMatch(pending, /ยังไม่มีค่าแรง|data-cost-retry/);
+
+  const env = load({ employee: emp("PP") });
+  const real = env.context.sb;
+  env.context.sb = { rpc: async (name, args) => (name === "app_rf_labour" ? { data: null, error: { message: "boom" } } : real.rpc(name, args)) };
+  const html = await settled(env.openCost);
+  assert.match(html, /605\.10/);
+  assert.doesNotMatch(html, /ยังไม่มีค่าแรง/, "no row claims that the labour cost is missing");
+  assert.equal((html.match(/data-cost-retry="labour"/g) ?? []).length, 1, "one retry line above the table");
+  assert.match(html, /โหลดข้อมูลค่าแรงไม่สำเร็จ <button[^>]*data-cost-retry="labour"[^>]*>ลองอีกครั้ง<\/button><\/p>[\s\S]*<table/, "the line sits above the table");
+  assert.doesNotMatch(html, /boom/);
+  const tab = await env.openCost("recipe=DEMO-W01&tab=labour");
+  assert.match(tab, /โหลดข้อมูลค่าแรงไม่สำเร็จ/);
+  assert.match(tab, /data-cost-retry="labour"/);
+  // ลองอีกครั้ง: โหลดค่าแรงใหม่ทันที (error ไม่โหลดซ้ำเองเมื่อวาดหน้า) แล้วตารางมีค่าแรง
+  const calls = () => env.log.rpc.filter(([name]) => name === "app_rf_labour").length;
+  assert.equal(env.context.MNP_COST_DATA.needsLabour(), false, "an error is not retried by a repaint");
+  env.context.sb = real;
+  assert.equal(calls(), 0, "the failing stub logs nothing");
+  const retry = { disabled: false, handlers: {}, getAttribute: (name) => (name === "data-cost-retry" ? "labour" : null), addEventListener(type, handler) { this.handlers[type] = handler; } };
+  env.fakes["[data-cost-retry]"] = [retry];
+  await env.openCost();
+  retry.handlers.click();
+  assert.equal(retry.disabled, true);
+  await tick(); await tick();
+  assert.equal(calls(), 1, "the retry called app_rf_labour");
+  assert.equal(env.context.MNP_COST_DATA.labour().status, "ready");
+  delete env.fakes["[data-cost-retry]"];
+  const fixed = await env.openCost();
+  assert.doesNotMatch(fixed, /data-cost-retry/);
+  assert.match(fixed, /441\.00/);
+});
+
+test("หน้าสูตรยาง: ตารางเวลามาตรฐานของรหัสสินค้า · แผนก RB เห็นเวลา ไม่เห็นค่าแรง · หัวหน้า RB แก้ได้ · คนอื่นไม่เห็นอะไร", async () => {
+  const section = async (employee, recipe = DEMO) => {
+    const env = load({ employee });
+    env.context.MNP_COST_LABOUR.recipeSection(recipe);
+    await tick(); await tick();
+    return { env, html: env.context.MNP_COST_LABOUR.recipeSection(recipe) };
+  };
+  const staff = await section(emp("RB"));
+  assert.match(staff.html, /เวลามาตรฐานต่อชุดผสม/);
+  assert.match(staff.html, /ผสม · ขั้นเตรียมวัตถุดิบ<\/td><td class="right rf-mono">30<\/td><td class="right rf-mono">2</);
+  assert.match(staff.html, /สินค้า FG-91 · รวม 183 นาที/);
+  assert.match(staff.html, />ประวัติเวลามาตรฐาน</, "พนักงาน RB ดูประวัติได้ แก้ไม่ได้");
+  assert.doesNotMatch(staff.html, /บาท|แก้เวลามาตรฐาน/, "ไม่มีค่าแรงหรือปุ่มแก้");
+  assert.deepEqual(staff.env.log.rpc.map(([name]) => name), ["app_rf_labour"], "โหลดครั้งเดียว ไม่เรียกข้อมูลต้นทุน");
+  const head = await section(emp("RB", "department_manager"));
+  assert.match(head.html, />แก้เวลามาตรฐาน</);
+  const fresh = await section(emp("RB", "assistant_department_manager"), { ...DEMO, productCode: "FG-NEW" });
+  assert.match(fresh.html, /สินค้า FG-NEW ยังไม่มีเวลามาตรฐาน/);
+  assert.match(fresh.html, />ตั้งเวลามาตรฐาน</);
+  const blank = await section(emp("RB", "department_manager"), { ...DEMO, productCode: "" });
+  assert.match(blank.html, /ยังไม่มีรหัสสินค้า/);
+  assert.doesNotMatch(blank.html, /data-rf-open/);
+  for (const who of [emp("QA"), emp("ST"), emp("GR", "department_manager"), emp("FT", "assistant_factory_manager"), { ...emp("RB"), isSandbox: false }]) {
+    const other = await section(who);
+    assert.equal(other.html, "", "ไม่แสดงส่วนนี้");
+    assert.equal(other.env.log.rpc.length, 0, "และไม่เรียก RPC");
+  }
+});
+
+test("dialog เวลามาตรฐาน / อัตราค่าแรง: ฟอร์มเฉพาะผู้มีสิทธิ์แก้ · ประวัติ · แผนก RB ไม่มี dialog อัตรา · ข้อความถูก escape", async () => {
+  const ready = async (employee, labour = LABOUR) => {
+    const env = load({ employee });
+    env.log.labour = labour;
+    env.context.MNP_COST_LABOUR.labourReady();
+    await tick(); await tick();
+    return env.context.MNP_COST_LABOUR;
+  };
+  const noted = { ...LABOUR, standards: [{ ...LABOUR.standards[0], note: NOTE_XSS }], rates: [{ ...LABOUR.rates[0], note: NOTE_XSS }] };
+  const pp = await ready(emp("PP"), noted);
+  const standard = pp.standardDialog({ productCode: "FG-91" }).html;
+  assert.match(standard, /เวลามาตรฐาน · สินค้า FG-91/);
+  assert.match(standard, /data-cost-standard/);
+  assert.equal((standard.match(/name="minutes\./g) ?? []).length, 7);
+  assert.equal((standard.match(/name="workers\./g) ?? []).length, 7);
+  assert.match((standard.match(/<input[^>]*name="minutes\.prep"[^>]*>/) ?? [""])[0], /value="30"/, "ค่าตั้งต้น = แถวล่าสุด");
+  assert.match(standard, /ใช้อยู่/);
+  assert.doesNotMatch(standard, /<img src=x/);
+  assert.doesNotMatch(standard, /data-rf-form/, "ไม่ผ่านคำสั่งของ RubberFlow");
+  const rates = pp.ratesDialog().html;
+  assert.match(rates, /data-cost-rate/);
+  assert.match(rates, /60\.00/);
+  assert.match(rates, /ยังไม่มีอัตรา/, "แผนกที่ยังไม่มีอัตรา");
+  assert.doesNotMatch(rates, /<img src=x/);
+  assert.equal(pp.standardDialog({ productCode: "" }), null);
+  const staff = await ready(emp("RB"));
+  const view = staff.standardDialog({ productCode: "FG-91" }).html;
+  assert.doesNotMatch(view, /data-cost-standard|บันทึกเวลามาตรฐาน/, "พนักงาน RB ดูอย่างเดียว");
+  assert.match(view, /183/);
+  assert.equal(staff.ratesDialog(), null, "แผนก RB ไม่มี dialog อัตราค่าแรง");
+  const head = await ready(emp("RB", "department_manager"));
+  assert.match(head.standardDialog({ productCode: "FG-91" }).html, /data-cost-standard/);
+  assert.equal(head.ratesDialog(), null);
+  const qa = await ready(emp("QA"));
+  assert.equal(qa.standardDialog({ productCode: "FG-91" }), null);
+});
+
+test("ตัวโหลดค่าแรง: บันทึกแล้วข้อมูลใหม่ใช้ทันที · ข้อผิดพลาดเป็นข้อความไทย · ไม่เก็บลงเครื่อง", async () => {
+  const env = load({ employee: emp("PP") });
+  const D = env.context.MNP_COST_DATA;
+  await D.loadLabour();
+  assert.equal(D.labour().status, "ready");
+  assert.equal(D.labour().rates.length, 1);
+  const saved = await D.saveRate({ departmentCode: "GR", ratePerHour: 55, effectiveFrom: "2026-11-01", note: "x" });
+  assert.equal(saved.ok, true);
+  assert.equal(JSON.stringify(env.log.rpc.at(-1)), JSON.stringify(["app_rf_labour_rate_save", { p_department_code: "GR", p_rate_per_hour: 55, p_effective_from: "2026-11-01", p_note: "x" }]));
+  assert.equal(D.labour().rates.length, 2);
+  const steps = stepsOf([1, 2, 3, 4, 5, 6, 7], [1, 1, 1, 1, 1, 1, 1]);
+  assert.equal((await D.saveStandard({ productCode: "FG-91", effectiveFrom: "2026-11-01", steps })).ok, true);
+  assert.equal(JSON.stringify(env.log.rpc.at(-1)), JSON.stringify(["app_rf_station_standard_save", { p_product_code: "FG-91", p_effective_from: "2026-11-01", p_steps: steps, p_note: "" }]));
+  assert.equal(D.labour().standards.length, 2);
+  env.log.invalid = true;
+  assert.match((await D.saveRate({ departmentCode: "GR", ratePerHour: 55, effectiveFrom: "2026-11-01" })).message, /ข้อมูลอัตราค่าแรงไม่ถูกต้อง/);
+  assert.match((await D.saveStandard({ productCode: "FG-91", effectiveFrom: "2026-11-01", steps })).message, /ข้อมูลเวลามาตรฐานไม่ถูกต้อง/);
+  assert.equal(D.labour().standards.length, 2, "ข้อมูลเดิมคงอยู่เมื่อบันทึกไม่ผ่าน");
+  assert.equal((env.log.stored ?? []).filter((entry) => /labour|rate|standard/i.test(entry)).length, 0);
+  const rb = load({ employee: emp("RB") });
+  const denied = await rb.context.MNP_COST_DATA.saveRate({ departmentCode: "RB", ratePerHour: 1, effectiveFrom: "2026-11-01" });
+  assert.deepEqual([denied.ok, denied.forbidden], [false, true]);
 });

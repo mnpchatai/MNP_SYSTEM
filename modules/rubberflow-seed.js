@@ -99,7 +99,7 @@
     },
     {
       // สูตรสาธิตแบบน้ำหนัก (ข้อมูลสมมติ): ขั้นเตรียมวัตถุดิบ 71 kg + ขั้น 1 1.51 kg + ขั้น 2 2.68 kg + ขั้น 3 0.41 kg = 75.6 kg ต่อชุดผสม (บรรทัด kg = 0 คือ "ไม่ใส่")
-      id: "DEMO-W01", productCode: "",
+      id: "DEMO-W01", productCode: "DEMO-P01",
       uom: "m", batchKg: 75.6, dumpTol: 6, restHours: 4, yieldPerKg: 6, revision: 1,
       stages: [{ stage: 1, mixerTemp: 80, dumpTemp: 115, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 140, mixMin: 2 }],
       items: [

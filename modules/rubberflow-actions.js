@@ -341,6 +341,14 @@
     return { items, batchKg: weight ? weightBatchKg(items) : null };
   }
 
+  // ค่าที่เป็น 0 ได้ (ค่าเผื่ออุณหภูมิปล่อยยาง · เวลาบ่มขั้นต่ำ): ว่าง / ไม่ส่ง = ค่าเริ่มต้น · 0 = 0 จริง (เดิม 0 ถูกแทนด้วยค่าเริ่มต้น) · ช่วงเดียวกับฐานข้อมูล (private.rf_save_recipes)
+  function zeroOk(value, fallback, max, label) {
+    if (value === undefined || value === null || String(value).trim() === "") return fallback;
+    const number = Number(value);
+    if (!Number.isFinite(number) || number < 0 || number > max) fail(`${label}ต้องเป็นตัวเลข 0 ถึง ${max}`);
+    return number;
+  }
+
   function recipeFields(p) {
     const { items, batchKg } = recipeItems(p);
     const productCode = String(p.productCode ?? "").trim();
@@ -352,8 +360,8 @@
       uom: p.uom || "m",
       batchKg: batchKg ?? num(p.batchKg, "น้ำหนักต่อชุดผสม"),
       stages: rules().MIX_STAGES.map((stage) => stageValues((p.stages ?? []).find((row) => Number(row?.stage) === stage), stage)),
-      dumpTol: Number(p.dumpTol) || 5,
-      restHours: Number(p.restHours) || 4,
+      dumpTol: zeroOk(p.dumpTol, 5, 100, "ค่าเผื่ออุณหภูมิปล่อยยาง"),
+      restHours: zeroOk(p.restHours, 4, 1000, "เวลาบ่มขั้นต่ำ"),
       yieldPerKg: num(p.yieldPerKg, "ผลผลิตต่อกิโลกรัม"),
       items,
     };

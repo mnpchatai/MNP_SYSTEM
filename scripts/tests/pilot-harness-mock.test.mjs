@@ -333,3 +333,99 @@ test("cost RPCs: permissions follow the acting persona, prices are append-only h
     assert.equal(await error("app_rf_cost_data", {}), seeCost ? null : "RF_FORBIDDEN", `${persona} cost`);
   }
 });
+
+// ค่าแรง (เฟส 2 · app_rf_labour / app_rf_labour_rate_save / app_rf_station_standard_save) และต้นทุนต่อหน่วยของชิ้นงาน BOM: สิทธิ์ตามบัญชีที่ทำหน้าที่อยู่ ตรงกับฐานข้อมูล
+test("labour RPCs: rates for cost viewers only, time standards for cost viewers and RB, append-only history, validation", async () => {
+  const { client: sb, rf } = createMockSupabase({ sandbox: true, now: () => NOW });
+  const as = async (id) => { assert.equal((await sb.rpc("app_sandbox_enter", { p_persona_id: id })).error, null); };
+  const error = async (name, args) => (await sb.rpc(name, args)).error?.message ?? null;
+  rf.edit((current) => {
+    current.materials.push({ code: "ZNO", name: "ซิงค์ออกไซด์", category: "สารกระตุ้น" });
+    current.recipes.push({ id: "RC-1", revision: 1, status: "approved", productCode: "FG-1", batchKg: 10, items: [{ materialCode: "ZNO", stage: 1, kg: 10, unit: "kg", phr: 0 }] });
+  });
+  const steps = ["prep", "mix1", "mix2", "mix3", "extrusion", "curing", "finishing"].map((step, index) => ({ step, minutes: index + 1, workers: 2 }));
+  const first = (await sb.rpc("app_rf_labour", {})).data;
+  assert.deepEqual([first.canSeeRates, first.canWriteRates, first.canWriteStandards], [true, true, true]);
+  assert.ok(first.rates.filter((row) => row.departmentCode === "RB").length >= 2, "the demo data has a rate history for RB");
+  const okRate = { p_department_code: "RB", p_rate_per_hour: 61.25, p_effective_from: "2026-11-03", p_note: " ปรับ " };
+  const saved = (await sb.rpc("app_rf_labour_rate_save", okRate)).data;
+  assert.equal(saved.rates.length, first.rates.length + 1);
+  assert.deepEqual([saved.rates.at(-1).ratePerHour, saved.rates.at(-1).note], [61.25, "ปรับ"]);
+  assert.equal((await sb.rpc("app_rf_labour_rate_save", okRate)).data.rates.length, first.rates.length + 1, "the same rate again adds no row");
+  for (const bad of [{ p_department_code: "ST" }, { p_department_code: null }, { p_rate_per_hour: 0 }, { p_rate_per_hour: -1 }, { p_rate_per_hour: 100001 }, { p_rate_per_hour: 1.234 }, { p_rate_per_hour: "60" },
+    { p_effective_from: "2026-13-01" }, { p_effective_from: null }, { p_effective_from: "1999-12-31" }, { p_effective_from: "2028-01-01" }, { p_note: "x".repeat(301) }]) {
+    assert.equal(await error("app_rf_labour_rate_save", { ...okRate, ...bad }), "RF_INVALID_LABOUR", JSON.stringify(bad));
+  }
+  const okStd = { p_product_code: "FG-1", p_effective_from: "2026-11-03", p_steps: steps, p_note: "" };
+  const std = (await sb.rpc("app_rf_station_standard_save", okStd)).data;
+  assert.deepEqual(std.standards.at(-1).steps, steps);
+  assert.equal((await sb.rpc("app_rf_station_standard_save", okStd)).data.standards.length, std.standards.length, "the same standard again adds no row");
+  assert.equal((await sb.rpc("app_rf_station_standard_save", { ...okStd, p_note: "จับเวลาใหม่" })).data.standards.length, std.standards.length + 1, "a correction is a new row");
+  const withStep = (index, change) => steps.map((row, at) => (at === index ? { ...row, ...change } : row));
+  for (const bad of [{ p_product_code: "FG-NONE" }, { p_product_code: "" }, { p_product_code: null }, { p_effective_from: "2028-01-01" }, { p_effective_from: null }, { p_note: "x".repeat(301) },
+    { p_steps: null }, { p_steps: {} }, { p_steps: steps.slice(0, 6) }, { p_steps: withStep(6, { step: "prep" }) }, { p_steps: withStep(6, { step: "packing" }) }, { p_steps: withStep(0, { minutes: -1 }) },
+    { p_steps: withStep(0, { minutes: 100001 }) }, { p_steps: withStep(0, { minutes: 1.234 }) }, { p_steps: withStep(0, { minutes: "10" }) }, { p_steps: withStep(0, { workers: 1001 }) },
+    { p_steps: withStep(0, { workers: null }) }, { p_steps: steps.map((row) => ({ ...row, minutes: 0 })) }, { p_steps: [1, 2, 3, 4, 5, 6, 7] }]) {
+    assert.equal(await error("app_rf_station_standard_save", { ...okStd, ...bad }), "RF_INVALID_STANDARD", JSON.stringify(bad).slice(0, 80));
+  }
+  // [บัญชี, อ่าน, เห็น/แก้อัตรา, แก้เวลามาตรฐาน]
+  const matrix = [
+    ["persona-pp", true, true, true], ["persona-fm", true, true, true], ["persona-gm", true, true, true],
+    ["persona-rb", true, false, false], ["persona-rbh", true, false, true],
+    ["persona-afm", false, false, false], ["persona-st", false, false, false], ["persona-sth", false, false, false], ["persona-grh", false, false, false],
+    ["persona-wh", false, false, false], ["persona-sa", false, false, false], ["persona-qah", false, false, false],
+  ];
+  for (const [persona, read, rates, standards] of matrix) {
+    await as(persona);
+    const got = await sb.rpc("app_rf_labour", {});
+    assert.equal(got.error?.message ?? null, read ? null : "RF_FORBIDDEN", `${persona} read`);
+    if (read) {
+      assert.deepEqual([got.data.canSeeRates, got.data.canWriteRates, got.data.canWriteStandards], [rates, rates, standards], `${persona} flags`);
+      assert.equal(got.data.rates.length > 0, rates, `${persona} rates are ${rates ? "listed" : "hidden"}`);
+      assert.ok(got.data.standards.length > 0, `${persona} sees the time standards`);
+    }
+    assert.equal(await error("app_rf_labour_rate_save", { ...okRate, p_rate_per_hour: 70 }), rates ? null : "RF_FORBIDDEN", `${persona} rate save`);
+    assert.equal(await error("app_rf_station_standard_save", { ...okStd, p_note: persona }), standards ? null : "RF_FORBIDDEN", `${persona} standard save`);
+  }
+  // ล้างข้อมูล RubberFlow ทดสอบ: ลบอัตราและเวลามาตรฐานของโหมดทดสอบด้วย (เหมือนฐานข้อมูล) และไม่ใส่ตัวเลขสาธิตกลับ
+  await as("persona-pp");
+  assert.equal(await error("app_sandbox_purge_rf", {}), null);
+  const purged = (await sb.rpc("app_rf_labour", {})).data;
+  assert.deepEqual([purged.rates, purged.standards], [[], []], "the purge clears the test labour rates and time standards");
+});
+
+test("BOM unit cost: sent to cost viewers only, and a save by someone who cannot see it keeps the stored value", async () => {
+  const { client: sb, bom } = createMockSupabase({ sandbox: true, now: () => NOW });
+  const as = async (id) => { assert.equal((await sb.rpc("app_sandbox_enter", { p_persona_id: id })).error, null); };
+  bom.edit((current) => {
+    current.items.push({ code: "P-A", kind: "PURCHASED", name: "ของซื้อ A", ownerDept: "ST", uom: "pcs", unitCost: 5.5 }, { code: "P-B", kind: "PURCHASED", name: "ของซื้อ B", ownerDept: "ST", uom: "pcs" });
+  });
+  const itemOf = async (code) => (await sb.rpc("app_bom_master", {})).data.items.find((item) => item.code === code);
+  for (const [persona, sees] of [["persona-pp", true], ["persona-fm", true], ["persona-gm", true], ["persona-rb", false], ["persona-rbh", false], ["persona-st", false], ["persona-afm", false], ["persona-wh", false]]) {
+    await as(persona);
+    const item = await itemOf("P-A");
+    assert.equal(item.name, "ของซื้อ A", `${persona} reads the item`);
+    assert.equal(item.unitCost, sees ? 5.5 : undefined, `${persona} unit cost`);
+  }
+  // หัวหน้าแผนก RB เป็นกลุ่มวางแผนของ BOM (แก้ชิ้นงานได้) แต่ไม่เห็นต้นทุน: ส่งค่าใหม่ / ไม่ส่ง = ค่าที่เก็บไว้คงเดิม
+  await as("persona-rbh");
+  const version = (await sb.rpc("app_bom_master", {})).data.version;
+  const edit = await sb.rpc("app_bom_save_master", { p_changes: { items: { upsert: [{ code: "P-A", kind: "PURCHASED", name: "ของซื้อ A2", ownerDept: "ST", uom: "pcs", unitCost: 99 }, { code: "P-B", kind: "PURCHASED", name: "ของซื้อ B2", ownerDept: "ST", uom: "pcs", unitCost: 7 }] } }, p_base_version: version, p_action: "saveItem" });
+  assert.equal(edit.error, null);
+  assert.equal(edit.data.changes.items.upsert.some((row) => "unitCost" in row), false, "the answer to a non-viewer carries no unit cost");
+  await as("persona-pp");
+  assert.deepEqual([(await itemOf("P-A")).name, (await itemOf("P-A")).unitCost], ["ของซื้อ A2", 5.5], "the stored cost survived and the value sent was ignored");
+  assert.deepEqual([(await itemOf("P-B")).name, (await itemOf("P-B")).unitCost], ["ของซื้อ B2", undefined], "an item without a cost stays without one");
+  const next = (await sb.rpc("app_bom_master", {})).data.version;
+  assert.equal((await sb.rpc("app_bom_save_master", { p_changes: { items: { upsert: [{ ...(await itemOf("P-A")), unitCost: 6.25 }] } }, p_base_version: next, p_action: "setItemCost" })).error, null);
+  assert.equal((await itemOf("P-A")).unitCost, 6.25, "a cost viewer changes the cost");
+  // บันทึกการใช้งาน: รายการตั้งราคาที่หน้าเว็บรุ่นก่อนเขียนตัวเลขไว้ ส่งรายละเอียดเฉพาะผู้เห็นต้นทุน · รายการอื่นของคำสั่งเดียวกันคงเดิม
+  const last = (await sb.rpc("app_bom_master", {})).data.version;
+  assert.equal((await sb.rpc("app_bom_save_master", { p_changes: { items: { upsert: [{ ...(await itemOf("P-A")), unitCost: 3.25 }] } }, p_base_version: last, p_action: "setItemCost",
+    p_audit: [{ action: "ตั้งราคาต้นทุน", detail: "P-A = 3.25 บาท/ชิ้น" }, { action: "หมายเหตุทดสอบ", detail: "ข้อความอื่น" }] })).error, null);
+  const entries = async () => (await sb.rpc("app_bom_audit", {})).data.find((row) => row.entries.some((entry) => entry.action === "ตั้งราคาต้นทุน")).entries;
+  for (const [persona, sees] of [["persona-pp", true], ["persona-fm", true], ["persona-gm", true], ["persona-rb", false], ["persona-rbh", false], ["persona-st", false], ["persona-afm", false]]) {
+    await as(persona);
+    assert.deepEqual(await entries(), [{ action: "ตั้งราคาต้นทุน", detail: sees ? "P-A = 3.25 บาท/ชิ้น" : "" }, { action: "หมายเหตุทดสอบ", detail: "ข้อความอื่น" }], `${persona} audit detail`);
+  }
+});
