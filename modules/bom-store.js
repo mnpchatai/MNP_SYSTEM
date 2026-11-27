@@ -471,6 +471,9 @@
   const MANAGER_ROLE_CODES = Object.freeze(["assistant_factory_manager", "factory_manager", "general_manager"]);
   // แผนกในสายผลิต (private.bom_production_depts): ผู้จัดการแผนก (department_manager) ของแผนกเหล่านี้อยู่ในกลุ่มวางแผน
   const PRODUCTION_DEPTS = Object.freeze(["RB", "GR", "PT", "BG", "PK", "ST", "WH", "QA", "SR"]);
+  // กฎผู้เห็นต้นทุน (modules/cost-rules.js โหลดหลังไฟล์นี้ในเบราว์เซอร์ จึงอ้างตอนเรียกเท่านั้น · ใน Node require ตรง)
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const costRules = () => (isNode ? require("./cost-rules.js") : root.MNP_COST_RULES ?? null);
   const DEPT_ROLES = Object.freeze({ PP: "planner", RB: "rb", GR: "gr", PT: "pt", BG: "bg", PK: "pk", ST: "st", WH: "wh", SR: "sr", QA: "qa", SA: "sa" });
   function roleOfEmployee(employee) {
     if (!employee) return "viewer";
@@ -489,7 +492,9 @@
     const dept = depts.includes(deptCode) ? deptCode : role === "planner" ? "PK" : role === "admin" ? "AD" : deptCode;
     const name = `${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim() || employee.display_name || employee.employee_no || "ผู้ใช้ทดสอบ";
     // roleCode = รหัสบทบาทจริงของบัญชีทดสอบ (เช่น department_manager): สิทธิ์ที่ผูกกับตำแหน่งเฉพาะ เช่น ย้อนรับเข้าคลัง (ผู้จัดการแผนก WH เท่านั้น) ใช้ค่านี้
-    return { id: String(employee.id ?? employee.employee_no ?? name), role, dept, name, roleCode: String(employee.role?.code ?? employee.role_code ?? "") };
+    // costViewer = ผู้เห็นต้นทุน (MNP_COST_RULES.canSeeCost = private.rf_cost_viewer) ใช้ผ่าน helpers.canSeeCost ของ bom-actions · ยังไม่โหลดกฎต้นทุน = ไม่จำกัดที่หน้าจอ (ฐานข้อมูลตัดสินเอง)
+    const cost = costRules();
+    return { id: String(employee.id ?? employee.employee_no ?? name), role, dept, name, roleCode: String(employee.role?.code ?? employee.role_code ?? ""), costViewer: cost ? Boolean(cost.canSeeCost(employee)) : true };
   }
   // ใครเห็นเมนูและหน้า BOM (UX ล้วน สิทธิ์จริงตัดสินที่ฐานข้อมูล 20261130010000): โหมดทดสอบ = ทุกบัญชีทดสอบเหมือนเดิม ·
   // ใช้งานจริง = กลุ่มวางแผน (admin · ผู้ช่วยผู้จัดการโรงงานขึ้นไป · ผู้จัดการแผนกในสายผลิต · แผนก PP) และพนักงานแผนก RB GR PT BG PK ST WH SR QA
@@ -607,6 +612,24 @@
     let auditLoading = null;
     const listeners = new Set();
     const emit = (event) => { for (const listener of [...listeners]) { try { listener(event); } catch { /* ผู้ฟังพังไม่ทำให้ store พัง */ } } };
+    // ชุดข้อมูลเป็นของบัญชีที่ทำหน้าที่ตอนโหลด: ฐานข้อมูลส่งราคาต้นทุนของชิ้นงาน (unitCost) และรายละเอียดการตั้งราคาในบันทึกการใช้งานเฉพาะผู้เห็นต้นทุน (20270110010000)
+    // เปลี่ยนบัญชีทดสอบแล้ว (persona().id ไม่ตรง snapshotFor) = ทิ้งชุดเดิมและบันทึกการใช้งานแล้วโหลดใหม่ทั้งชุด ไม่งั้นระเบียนที่โหลดมาในนามผู้ไม่เห็นต้นทุน (ไม่มี unitCost)
+    // ถูกส่งทั้งระเบียนในนามผู้เห็นต้นทุนแล้วฐานข้อมูลล้างราคาที่เก็บไว้ หรือผู้ไม่เห็นต้นทุนยังมีราคาค้างในหน่วยความจำ · ระหว่างบันทึกไม่ทิ้ง (คำตอบรวมเข้าชุดเดิม ครั้งถัดไปจึงโหลดใหม่)
+    // run() ปฏิเสธคำสั่งของชุดที่ไม่ใช่ของบัญชีปัจจุบันเสมอ (ฟอร์มที่กรอกค้างจากก่อนเปลี่ยนบัญชีจึงไม่ถูกส่งไปกับชุดเก่า)
+    const personaKey = () => { try { return persona()?.id ?? null; } catch { return null; } };
+    let snapshotFor = null; // personaKey() ตอนเริ่มโหลดชุดที่ถืออยู่ (หรือกำลังโหลด)
+    let loadToken = 0; // การโหลดทั้งชุดครั้งล่าสุด: ผลของครั้งก่อนที่มาถึงทีหลังถูกทิ้ง
+    const PERSONA_RELOAD_TEXT = "เปลี่ยนบัญชีที่ทำหน้าที่แล้ว ระบบกำลังโหลดข้อมูล BOM ของบัญชีนี้ใหม่ ทำรายการอีกครั้งเมื่อโหลดเสร็จ";
+    function syncPersona() {
+      if (status === "idle" || busy || snapshotFor === personaKey()) return false;
+      snapshot = null;
+      data = null;
+      newerPending = false;
+      auditView = { status: "idle", entries: [], error: null };
+      auditStale = true;
+      reload();
+      return true;
+    }
 
     function assemble() {
       const lists = Object.fromEntries(REMOTE_LISTS.map((list) => [list, clone(snapshot?.[list] ?? [])]));
@@ -689,15 +712,18 @@
     // เวอร์ชันของเราล้ำหน้าฐานข้อมูล (BOM_INVALID_PAYLOAD เช่น ล้างข้อมูลทดสอบ) = โหลดทั้งชุดแทนส่วนต่าง (เงียบ ไม่เปลี่ยนสถานะเป็นกำลังโหลด · ไม่ทำถ้ามีฟอร์มค้าง)
     function catchUp(extraHold = () => false) {
       const holding = () => shouldHold() || Boolean(extraHold());
+      if (syncPersona()) return loading.then(() => false);
       if (status !== "ready" || busy) return Promise.resolve(false);
       if (catching) return catching;
       const base = snapshot.version;
+      // เปลี่ยนบัญชีระหว่างรอ: ส่วนต่างที่ได้เป็นมุมมองของบัญชีใหม่ ไม่รวมเข้าชุดของบัญชีเดิม (syncPersona โหลดทั้งชุดใหม่)
+      const moved = () => !snapshot || snapshot.version !== base || snapshotFor !== personaKey();
       // โหลดทั้งชุดแทนส่วนต่าง (เวอร์ชันล้ำหน้าฐานข้อมูล หรือเปลี่ยนรอบข้อมูล) เงียบ ไม่เปลี่ยนสถานะเป็นกำลังโหลด
       const fullReload = async () => {
         let full;
         try { full = normalizeSnapshot(await fetchSnapshot()); } catch { return false; }
         // ระหว่างรอโหลดทั้งชุด ผู้ใช้อาจเริ่มบันทึก/แก้ฟอร์ม หรือมีคนขยับเวอร์ชันฐาน: ทิ้งผล (รอบโฟกัสถัดไปลองใหม่)
-        if (busy || snapshot.version !== base || holding()) return false;
+        if (busy || moved() || holding()) return false;
         snapshot = full;
         newerPending = false;
         auditStale = true;
@@ -707,7 +733,7 @@
       };
       catching = Promise.resolve().then(() => remote.since(base)).then(normalizeDelta).then(
         (delta) => {
-          if (busy || snapshot.version !== base) return false;
+          if (busy || moved()) return false;
           if (holding()) {
             if ((deltaHasRecords(delta) || epochChanged(delta)) && !newerPending) { newerPending = true; emit({ type: "pending" }); }
             return false;
@@ -719,7 +745,7 @@
           return changed;
         },
         async (error) => {
-          if (busy || snapshot.version !== base || holding() || mapRemoteError(error).code !== "BOM_INVALID_PAYLOAD") return false;
+          if (busy || moved() || holding() || mapRemoteError(error).code !== "BOM_INVALID_PAYLOAD") return false;
           return fullReload();
         },
       ).finally(() => { catching = null; });
@@ -729,16 +755,19 @@
       init();
       status = "loading";
       loadError = null;
+      snapshotFor = personaKey();
+      const token = ++loadToken;
       emit({ type: "status" });
       loading = fetchSnapshot().then(normalizeSnapshot).then(
-        (value) => { snapshot = value; newerPending = false; auditStale = true; assemble(); status = "ready"; emit({ type: "loaded" }); },
-        (error) => { loadError = mapRemoteError(error, "โหลดข้อมูล BOM ไม่สำเร็จ"); status = "error"; emit({ type: "load-failed", error: loadError }); },
+        (value) => { if (token !== loadToken) return; snapshot = value; newerPending = false; auditStale = true; assemble(); status = "ready"; emit({ type: "loaded" }); },
+        (error) => { if (token !== loadToken) return; loadError = mapRemoteError(error, "โหลดข้อมูล BOM ไม่สำเร็จ"); status = "error"; emit({ type: "load-failed", error: loadError }); },
       );
       return loading;
     }
-    // โหลดครั้งแรกเท่านั้น: หลังโหลดไม่สำเร็จไม่โหลดซ้ำเองทุกครั้งที่วาดหน้า (วนไม่จบ) ผู้ใช้กดลองอีกครั้ง = reload()
+    // โหลดครั้งแรกเท่านั้น: หลังโหลดไม่สำเร็จไม่โหลดซ้ำเองทุกครั้งที่วาดหน้า (วนไม่จบ) ผู้ใช้กดลองอีกครั้ง = reload() · เปลี่ยนบัญชีที่ทำหน้าที่ = โหลดใหม่ (syncPersona)
     function ensureLoaded() {
       init();
+      if (syncPersona()) return loading;
       if (status === "idle") return reload();
       return status === "loading" ? loading : Promise.resolve();
     }
@@ -748,9 +777,11 @@
       init();
       const action = actions[name];
       if (typeof action !== "function") return { ok: false, error: new Error(`ไม่รู้จักคำสั่ง ${name}`) };
+      if (syncPersona()) return blocked(PERSONA_RELOAD_TEXT);
       // ทีละรายการ: ระหว่างบันทึกรายการก่อนหน้า (รอผลจากฐานข้อมูลเพื่อรู้เลขรุ่นใหม่) รายการถัดไปถูกปฏิเสธ ไม่เข้าคิว
       if (status !== "ready") return blocked(status === "loading" ? "กำลังโหลดข้อมูล BOM รอสักครู่แล้วลองอีกครั้ง" : "ยังโหลดข้อมูล BOM ไม่ได้ โหลดหน้าใหม่แล้วลองอีกครั้ง");
       if (busy) return blocked("กำลังบันทึกรายการก่อนหน้า รอสักครู่แล้วลองอีกครั้ง", { busy: true });
+      if (snapshotFor !== personaKey()) return blocked(PERSONA_RELOAD_TEXT);
       const before = data;
       const user = persona();
       const draft = clone(data);
@@ -879,9 +910,12 @@
         return Promise.resolve();
       }
       auditView = { ...auditView, status: auditView.entries.length ? "ready" : "loading" };
+      // รายละเอียดการตั้งราคาขึ้นกับบัญชีที่อ่าน: คำตอบที่มาถึงหลังเปลี่ยนบัญชีถูกทิ้ง (ครั้งถัดไปอ่านใหม่ในนามบัญชีปัจจุบัน)
+      const forKey = personaKey();
+      const samePersona = () => forKey === personaKey();
       auditLoading = Promise.resolve().then(() => remote.audit(200)).then(normalizeAudit).then(
-        (entries) => { auditView = { status: "ready", entries, error: null }; auditStale = false; },
-        (error) => { auditView = { status: "error", entries: auditView.entries, error: mapRemoteError(error, "โหลดบันทึกการใช้งานไม่สำเร็จ") }; auditStale = false; },
+        (entries) => { if (!samePersona()) { auditStale = true; return; } auditView = { status: "ready", entries, error: null }; auditStale = false; },
+        (error) => { if (!samePersona()) { auditStale = true; return; } auditView = { status: "error", entries: auditView.entries, error: mapRemoteError(error, "โหลดบันทึกการใช้งานไม่สำเร็จ") }; auditStale = false; },
       ).then(() => { auditAt = now(); auditLoading = null; emit({ type: "audit" }); });
       return auditLoading;
     }
@@ -912,9 +946,11 @@
     }
 
     const reset = () => { init(); return data; }; // โหมดฐานข้อมูลไม่มีการรีเซ็ตในเครื่อง (ล้างข้อมูลทดสอบ = purge)
+    // อ่านข้อมูล / สถานะ = ตรวจบัญชีที่ทำหน้าที่ก่อนเสมอ (หน้าที่อ่าน status() === "ready" ก่อนใช้ data() จึงไม่ได้ชุดของบัญชีก่อน)
+    const current = () => { syncPersona(); init(); return data; };
     return {
-      load: () => { init(); return data; }, data: () => { init(); return data; }, user: () => persona(), setUser: () => persona(), run, reset, isPersisted: () => true, size: () => 0, now,
-      isRemote: () => true, status: () => status, error: () => loadError, isSaving: () => busy, saveProgress: () => (busy && progress ? { ...progress } : null), hasNewer: () => newerPending, version: () => snapshot?.version ?? null,
+      load: current, data: current, user: () => persona(), setUser: () => persona(), run, reset, isPersisted: () => true, size: () => 0, now,
+      isRemote: () => true, status: () => { syncPersona(); return status; }, error: () => loadError, isSaving: () => busy, saveProgress: () => (busy && progress ? { ...progress } : null), hasNewer: () => newerPending, version: () => snapshot?.version ?? null,
       ensureLoaded, reload, catchUp, idSuffix, audit: () => auditView, loadAudit, purge, subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
     };
   }

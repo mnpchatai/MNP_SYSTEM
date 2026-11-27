@@ -819,11 +819,21 @@ test("routings and unit costs: each save is a new revision, costs only on parts 
   assert.equal(A.helpers.itemOf(d, "PT-00320").image, undefined);
   A.setItemCost(d, { code: "XP-00001", unitCost: "0.75" }, ctx("planner"));
   assert.equal(A.helpers.itemOf(d, "XP-00001").unitCost, 0.75);
+  // บันทึกการใช้งานอ่านได้ทุกบัญชีที่อ่าน BOM: บอกแค่ว่าตั้ง / ล้างราคาของรหัสไหน ไม่มีตัวเลข
+  assert.deepEqual([d.audit[0].action, d.audit[0].detail], ["ตั้งราคาต้นทุน", "XP-00001: ตั้งราคาแล้ว"]);
   A.setItemCost(d, { code: "XP-00001", unitCost: "" }, ctx("planner"));
   assert.equal(A.helpers.itemOf(d, "XP-00001").unitCost, undefined, "an empty value clears the cost");
+  assert.equal(d.audit[0].detail, "XP-00001: ล้างราคา");
+  assert.equal(d.audit.slice(0, 2).some((entry) => /0\.75|บาท/.test(entry.detail)), false, "no figure in the audit text");
   rejects(() => A.setItemCost(d, { code: "PT-00320", unitCost: 5 }, ctx("planner")), /มี BOM แล้ว/);
   rejects(() => A.setItemCost(d, { code: "P-BOX-01", unitCost: -1 }, ctx("planner")), /ราคาต้นทุน/);
   rejects(() => A.setItemCost(d, { code: "P-BOX-01", unitCost: 1 }, ctx("st")), /ฝ่ายวางแผน/);
+  // โหมดฐานข้อมูล: ผู้ใช้จาก personaUser มี costViewer · กลุ่มวางแผนที่ไม่เห็นต้นทุน (เช่น หัวหน้าแผนก RB) ตั้งราคาไม่ได้ · บทบาทสาธิต (ไม่มี costViewer) ตั้งได้เหมือนเดิม
+  rejects(() => A.setItemCost(d, { code: "P-BOX-01", unitCost: 1 }, { now: NOW, user: { ...user("manager"), costViewer: false } }), /ผู้เห็นต้นทุน/);
+  assert.equal(A.helpers.itemOf(d, "P-BOX-01").unitCost, 25, "the demo cost stays");
+  A.setItemCost(d, { code: "P-BOX-01", unitCost: 1 }, { now: NOW, user: { ...user("planner"), costViewer: true } });
+  assert.equal(A.helpers.itemOf(d, "P-BOX-01").unitCost, 1);
+  assert.deepEqual([A.helpers.canSeeCost(user("planner")), A.helpers.canSeeCost({ ...user("admin"), costViewer: false }), A.helpers.canSeeCost(null)], [true, false, false]);
 });
 
 test("dragging BOM lines into a new order saves a new revision that keeps the order", () => {

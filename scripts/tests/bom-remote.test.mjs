@@ -184,7 +184,11 @@ test("the persona (state.employee of the sandbox) decides the BOM role: admin, m
   assert.equal(role("technician", "PP"), "planner", "any non-manager member of PP plans");
 
   const user = storeApi.personaUser(employee("staff", "PP"));
-  assert.deepEqual(user, { id: "x", role: "planner", dept: "PK", name: "สมหมาย ใจดี", roleCode: "staff" }, "the planning department takes over PK jobs, like the demo planner (the role code travels for rights bound to a position)");
+  assert.deepEqual(user, { id: "x", role: "planner", dept: "PK", name: "สมหมาย ใจดี", roleCode: "staff", costViewer: true }, "the planning department takes over PK jobs, like the demo planner (the role code travels for rights bound to a position)");
+  // ผู้เห็นต้นทุน (MNP_COST_RULES.canSeeCost = private.rf_cost_viewer): แผนก PP · ผู้จัดการทั่วไป · ผู้จัดการโรงงาน · admin · หัวหน้าแผนกผลิตและผู้ช่วยผู้จัดการโรงงานนอก PP ไม่เห็น
+  const sees = (code, dept) => storeApi.personaUser(employee(code, dept)).costViewer;
+  assert.deepEqual([sees("staff", "PP"), sees("general_manager", "MGT"), sees("factory_manager", "FT"), sees("admin", "MT"), sees("department_manager", "RB"), sees("assistant_factory_manager", "FT"), sees("staff", "ST")],
+    [true, true, true, true, false, false, false]);
   // ย้อนรับเข้า / ส่งมอบ (20261128020000): ผู้จัดการแผนก WH หรือ admin เท่านั้น · ผู้บริหารระดับอื่นที่อยู่แผนก WH และพนักงาน WH ไม่ได้
   const reverser = (code, dept) => A.helpers.canReverseFg(storeApi.personaUser(employee(code, dept)));
   assert.deepEqual([reverser("department_manager", "WH"), reverser("admin", "MT"), reverser("staff", "WH"), reverser("assistant_factory_manager", "WH"), reverser("department_manager", "PK")], [true, true, false, false, false]);
@@ -4945,4 +4949,51 @@ test("the BOM 'create WO' dialog opened while RubberFlow is still loading shows 
   const built = env.context.MNP_BOM_DIALOGS.jobRubberflow(env.ctx("p=jobs&dept=RB"), { jobId: "JOB-RB1" });
   assert.match(built.html, /กำลังโหลดข้อมูล RubberFlow รอสักครู่แล้วเปิดหน้าต่างนี้ใหม่/);
   assert.doesNotMatch(built.html, /ไม่พบสูตร|รีเซ็ตข้อมูลสาธิต/, "the not-found line only appears once the data is loaded");
+});
+
+// เปลี่ยนบัญชีทดสอบบนหน้าเดิม (afterSandboxChange ของ app.js แค่วาดหน้าใหม่): ฐานข้อมูลส่ง unitCost ของชิ้นงานเฉพาะผู้เห็นต้นทุน (20270110010000)
+// store ต้องทิ้งชุดของบัญชีก่อนแล้วโหลดใหม่ ไม่งั้นระเบียนที่โหลดในนามผู้ไม่เห็นต้นทุน (ไม่มี unitCost) ถูกส่งทั้งระเบียนในนามผู้เห็นต้นทุน แล้วฐานข้อมูลล้างราคาที่เก็บไว้
+test("switching the test persona drops the BOM snapshot: an item save after the switch keeps the stored unit cost, and a non-viewer keeps no cost in memory", async () => {
+  const { client, bom } = createMockSupabase({ sandbox: true, now: () => NOW });
+  bom.edit((current) => { current.items.push({ code: "P-A", kind: "PURCHASED", name: "ของซื้อ A", ownerDept: "ST", uom: "pcs", unitCost: 5.5 }); });
+  const rows = Object.fromEntries(unwrapReply(await client.rpc("app_sandbox_status")).personas.map((row) => [row.id, row]));
+  let who = null;
+  // ลำดับเดียวกับหน้าเว็บ: เซิร์ฟเวอร์เปลี่ยนบัญชีก่อน (app_sandbox_enter) แล้ว state.employee จึงเปลี่ยน (loadEmployee)
+  const enter = async (id) => { unwrapReply(await client.rpc("app_sandbox_enter", { p_persona_id: id })); who = id; };
+  const remote = {
+    load: async () => unwrapReply(await client.rpc("app_bom_master")),
+    save: async (changes, baseVersion, action, audit, epoch) => unwrapReply(await client.rpc("app_bom_save_master", { p_changes: changes, p_base_version: baseVersion, p_action: action, p_audit: audit, p_epoch: epoch })),
+    since: async (version) => unwrapReply(await client.rpc("app_bom_master_since", { p_version: version })),
+    audit: async (limit) => unwrapReply(await client.rpc("app_bom_audit", { p_limit: limit })),
+  };
+  const store = storeApi.createStore({ actions: A, now: () => NOW, remote, persona: () => storeApi.personaUser({ ...rows[who], isSandbox: true }) });
+  const local = () => store.data().items.find((item) => item.code === "P-A");
+  const stored = async () => unwrapReply(await client.rpc("app_bom_master")).items.find((item) => item.code === "P-A");
+  const edit = (name) => store.run("saveItem", { code: "P-A", kind: "PURCHASED", name, uom: "pcs", ownerDept: "ST" });
+
+  // หัวหน้าแผนก RB: กลุ่มวางแผนของ BOM ที่ไม่เห็นต้นทุน
+  await enter("persona-rbh");
+  await store.ensureLoaded();
+  assert.equal(local().unitCost, undefined, "a non-viewer loads no unit cost");
+  assert.match(store.run("setItemCost", { code: "P-A", unitCost: 1 }).error.message, /ผู้เห็นต้นทุน/, "and cannot set one");
+  await enter("persona-pp");
+  // คำสั่งแรกหลังเปลี่ยนบัญชี (เช่น ฟอร์มที่กรอกค้างไว้) ไม่ถูกส่งไปกับชุดเก่า: ถูกปฏิเสธ แล้ว store โหลดชุดของบัญชีใหม่
+  const early = edit("ของซื้อ A2");
+  assert.equal(early.ok, false);
+  assert.match(early.error.message, /เปลี่ยนบัญชีที่ทำหน้าที่แล้ว/);
+  assert.equal(store.status(), "loading");
+  await store.ensureLoaded();
+  assert.equal(store.status(), "ready");
+  assert.equal(local().unitCost, 5.5, "the cost viewer's snapshot carries the cost");
+  const saved = edit("ของซื้อ A2");
+  assert.equal(saved.ok, true);
+  assert.equal((await saved.saving).ok, true);
+  assert.deepEqual([(await stored()).name, (await stored()).unitCost], ["ของซื้อ A2", 5.5], "the whole-record save of the viewer kept the stored unit cost");
+
+  // กลับทาง: ผู้เห็นต้นทุน → พนักงาน RB · ข้อมูลที่หน้าอ่านหลังเปลี่ยนบัญชีไม่มีราคาค้างจากชุดเดิม
+  await enter("persona-rb");
+  assert.equal(store.status(), "loading", "reading the status after the switch starts the reload");
+  assert.equal(store.data().items.length, 0, "the old snapshot is dropped at once");
+  await store.ensureLoaded();
+  assert.deepEqual([local().name, local().unitCost], ["ของซื้อ A2", undefined], "the non-viewer keeps no cost in memory");
 });

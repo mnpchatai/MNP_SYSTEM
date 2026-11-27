@@ -41,12 +41,13 @@ select is((select count(*)::integer from pg_proc p
                            'private.rf_labour_out(public.employees)'::regprocedure, 'private.bom_records(bigint)'::regprocedure,
                            'private.bom_save_items(uuid,jsonb,bigint,bigint)'::regprocedure,
                            'public.app_rf_labour()'::regprocedure, 'public.app_rf_labour_rate_save(text,numeric,date,text)'::regprocedure,
-                           'public.app_rf_station_standard_save(text,date,jsonb,text)'::regprocedure, 'public.app_sandbox_purge_rf()'::regprocedure)
-             and p.prosecdef and p.proconfig @> array['search_path=""']), 9,
+                           'public.app_rf_station_standard_save(text,date,jsonb,text)'::regprocedure, 'public.app_sandbox_purge_rf()'::regprocedure,
+                           'public.app_bom_audit(integer)'::regprocedure)
+             and p.prosecdef and p.proconfig @> array['search_path=""']), 10,
   'the helpers, the patched BOM functions and the RPCs are security definer with an empty search_path');
 select ok(not exists (
     select 1 from unnest(array['public.app_rf_labour()', 'public.app_rf_labour_rate_save(text,numeric,date,text)',
-                               'public.app_rf_station_standard_save(text,date,jsonb,text)', 'public.app_sandbox_purge_rf()']) f(sig)
+                               'public.app_rf_station_standard_save(text,date,jsonb,text)', 'public.app_sandbox_purge_rf()', 'public.app_bom_audit(integer)']) f(sig)
     where has_function_privilege('anon', f.sig, 'execute') or not has_function_privilege('authenticated', f.sig, 'execute')),
   'the public RPCs are for authenticated only');
 select is((select count(*)::integer from private.lab_only_unguarded_functions()), 0, 'every callable public function keeps the lab-only guard');
@@ -56,6 +57,10 @@ select ok(position('rf_cost_viewer' in pg_get_functiondef('private.bom_records(b
 select is((length(pg_get_functiondef('private.bom_save_items(uuid,jsonb,bigint,bigint)'::regprocedure))
            - length(replace(pg_get_functiondef('private.bom_save_items(uuid,jsonb,bigint,bigint)'::regprocedure), 'rf_cost_viewer', ''))) / length('rf_cost_viewer'), 2,
   'bom_save_items checks the cost viewer on insert and on update');
+select ok(position('rf_cost_viewer' in pg_get_functiondef('public.app_bom_audit(integer)'::regprocedure)) > 0
+      and position('lab_only_block' in pg_get_functiondef('public.app_bom_audit(integer)'::regprocedure)) > 0
+      and position('bom_test_mode' in pg_get_functiondef('public.app_bom_audit(integer)'::regprocedure)) > 0,
+  'app_bom_audit was patched in place: the cost check is added, the lab-only guard and the test-mode filter are kept');
 
 -- 2. บัญชีทดสอบและตัวช่วย ---------------------------------------------------------------------------
 insert into auth.users (id, email, raw_user_meta_data) values ('8ed00000-0000-0000-0000-000000000001', 'labour-admin@test.local', '{}');
@@ -93,6 +98,13 @@ $$;
 create function lab_t.bver() returns bigint language sql stable as $$ select (public.app_bom_master() ->> 'version')::bigint $$;
 create function lab_t.item(p_code text) returns jsonb language sql stable as $$
   select i from jsonb_array_elements(public.app_bom_master() -> 'items') i where i ->> 'code' = p_code
+$$;
+-- รายการของผู้บันทึก (entries) ในบันทึกการใช้งาน BOM ที่ชื่อรายการตรงกัน (แถวใหม่สุดก่อน) ในนามบัญชีที่ทำหน้าที่อยู่
+create function lab_t.audit_entries(p_action text) returns jsonb language sql stable as $$
+  select coalesce(jsonb_agg(e order by r.ord, t.ord), '[]'::jsonb)
+  from jsonb_array_elements(public.app_bom_audit(50)) with ordinality as r(row_, ord),
+       jsonb_array_elements(r.row_ -> 'entries') with ordinality as t(e, ord)
+  where t.e ->> 'action' = p_action
 $$;
 -- steps ครบ 7 ขั้น: นาทีของแต่ละขั้นตามลำดับ prep mix1 mix2 mix3 extrusion curing finishing คนละ p_workers คน
 create function lab_t.steps(p_minutes numeric[], p_workers numeric default 2) returns jsonb language sql immutable as $$
@@ -282,6 +294,27 @@ select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select ok(lab_t.item('P-L-BOX') is not null and not (lab_t.item('P-L-BOX') ? 'unitCost'), 'and ST staff (their prices live in the price table)');
 select public.app_sandbox_enter(current_setting('test.p_sbx_ft_afm_l')::uuid);
 select ok(lab_t.item('P-L-BOX') is not null and not (lab_t.item('P-L-BOX') ? 'unitCost'), 'and the assistant factory manager');
+-- บันทึกการใช้งาน: รายการ "ตั้งราคาต้นทุน" ที่หน้าเว็บรุ่นก่อนเขียนตัวเลขไว้ ส่งรายละเอียดเฉพาะผู้เห็นต้นทุน · รายการอื่นของคำสั่งเดียวกันไม่เปลี่ยน
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select lives_ok($$ select public.app_bom_save_master(jsonb_build_object('items', jsonb_build_object('upsert', jsonb_build_array(
+    '{"code":"P-L-AUD","kind":"PURCHASED","name":"ถุงสาธิต","ownerDept":"ST","uom":"pcs","weightG":0,"rubber":null,"legacyCodes":[],"active":true,"group":"TOY","unitCost":3.25}'::jsonb))),
+    lab_t.bver(), 'setItemCost',
+    '[{"action":"ตั้งราคาต้นทุน","detail":"P-L-AUD = 3.25 บาท/ชิ้น"},{"action":"หมายเหตุทดสอบ","detail":"ข้อความอื่น"}]'::jsonb) $$,
+  'PP staff set a unit cost with an audit entry that carries the figure (as the earlier web client wrote it)');
+select is(lab_t.audit_entries('ตั้งราคาต้นทุน'), '[{"action":"ตั้งราคาต้นทุน","detail":"P-L-AUD = 3.25 บาท/ชิ้น"}]'::jsonb, 'PP staff read the price entry with its detail');
+select public.app_sandbox_enter(current_setting('test.p_sbx_mgt_gm')::uuid);
+select is(lab_t.audit_entries('ตั้งราคาต้นทุน') -> 0 ->> 'detail', 'P-L-AUD = 3.25 บาท/ชิ้น', 'so does the general manager');
+select public.app_sandbox_enter(current_setting('test.p_sbx_admin_l')::uuid);
+select is(lab_t.audit_entries('ตั้งราคาต้นทุน') -> 0 ->> 'detail', 'P-L-AUD = 3.25 บาท/ชิ้น', 'and the admin');
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select is(lab_t.audit_entries('ตั้งราคาต้นทุน'), '[{"action":"ตั้งราคาต้นทุน","detail":""}]'::jsonb, 'RB staff see that a price was set, without the figure');
+select is(lab_t.audit_entries('หมายเหตุทดสอบ'), '[{"action":"หมายเหตุทดสอบ","detail":"ข้อความอื่น"}]'::jsonb, 'and the other entry of the same save unchanged');
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_mgr')::uuid);
+select is(lab_t.audit_entries('ตั้งราคาต้นทุน') -> 0 ->> 'detail', '', 'the RB department manager gets no figure');
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select is(lab_t.audit_entries('ตั้งราคาต้นทุน') -> 0 ->> 'detail', '', 'nor do ST staff');
+select public.app_sandbox_enter(current_setting('test.p_sbx_ft_afm_l')::uuid);
+select is(lab_t.audit_entries('ตั้งราคาต้นทุน') -> 0 ->> 'detail', '', 'nor does the assistant factory manager');
 -- เขียนโดยผู้ที่ไม่เห็นต้นทุน: ค่าที่เก็บไว้คงอยู่ ไม่ว่าจะส่งค่าใหม่ ส่ง null หรือไม่ส่งเลย · ชิ้นใหม่ไม่มีต้นทุน (เรียกตัวบันทึกตรงในฐานะ persona นั้น)
 reset role;
 select lives_ok(format($$ select private.bom_save_items(%L::uuid, '[{"code":"P-L-BOX","kind":"PURCHASED","name":"กล่องสาธิต 2","ownerDept":"ST","uom":"box","weightG":0,"rubber":null,"legacyCodes":[],"active":true,"group":"TOY","unitCost":99}]'::jsonb, 1000000, 1000000) $$,

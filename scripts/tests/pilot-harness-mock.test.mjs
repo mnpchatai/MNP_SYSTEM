@@ -387,6 +387,11 @@ test("labour RPCs: rates for cost viewers only, time standards for cost viewers 
     assert.equal(await error("app_rf_labour_rate_save", { ...okRate, p_rate_per_hour: 70 }), rates ? null : "RF_FORBIDDEN", `${persona} rate save`);
     assert.equal(await error("app_rf_station_standard_save", { ...okStd, p_note: persona }), standards ? null : "RF_FORBIDDEN", `${persona} standard save`);
   }
+  // ล้างข้อมูล RubberFlow ทดสอบ: ลบอัตราและเวลามาตรฐานของโหมดทดสอบด้วย (เหมือนฐานข้อมูล) และไม่ใส่ตัวเลขสาธิตกลับ
+  await as("persona-pp");
+  assert.equal(await error("app_sandbox_purge_rf", {}), null);
+  const purged = (await sb.rpc("app_rf_labour", {})).data;
+  assert.deepEqual([purged.rates, purged.standards], [[], []], "the purge clears the test labour rates and time standards");
 });
 
 test("BOM unit cost: sent to cost viewers only, and a save by someone who cannot see it keeps the stored value", async () => {
@@ -414,4 +419,13 @@ test("BOM unit cost: sent to cost viewers only, and a save by someone who cannot
   const next = (await sb.rpc("app_bom_master", {})).data.version;
   assert.equal((await sb.rpc("app_bom_save_master", { p_changes: { items: { upsert: [{ ...(await itemOf("P-A")), unitCost: 6.25 }] } }, p_base_version: next, p_action: "setItemCost" })).error, null);
   assert.equal((await itemOf("P-A")).unitCost, 6.25, "a cost viewer changes the cost");
+  // บันทึกการใช้งาน: รายการตั้งราคาที่หน้าเว็บรุ่นก่อนเขียนตัวเลขไว้ ส่งรายละเอียดเฉพาะผู้เห็นต้นทุน · รายการอื่นของคำสั่งเดียวกันคงเดิม
+  const last = (await sb.rpc("app_bom_master", {})).data.version;
+  assert.equal((await sb.rpc("app_bom_save_master", { p_changes: { items: { upsert: [{ ...(await itemOf("P-A")), unitCost: 3.25 }] } }, p_base_version: last, p_action: "setItemCost",
+    p_audit: [{ action: "ตั้งราคาต้นทุน", detail: "P-A = 3.25 บาท/ชิ้น" }, { action: "หมายเหตุทดสอบ", detail: "ข้อความอื่น" }] })).error, null);
+  const entries = async () => (await sb.rpc("app_bom_audit", {})).data.find((row) => row.entries.some((entry) => entry.action === "ตั้งราคาต้นทุน")).entries;
+  for (const [persona, sees] of [["persona-pp", true], ["persona-fm", true], ["persona-gm", true], ["persona-rb", false], ["persona-rbh", false], ["persona-st", false], ["persona-afm", false]]) {
+    await as(persona);
+    assert.deepEqual(await entries(), [{ action: "ตั้งราคาต้นทุน", detail: sees ? "P-A = 3.25 บาท/ชิ้น" : "" }, { action: "หมายเหตุทดสอบ", detail: "ข้อความอื่น" }], `${persona} audit detail`);
+  }
 });

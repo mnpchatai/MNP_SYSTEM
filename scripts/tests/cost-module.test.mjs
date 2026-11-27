@@ -647,9 +647,12 @@ test("#/cost?recipe=&tab=labour: ค่าแรงแยกตามขั้�
   assert.match(html, /ค่าแรงแยกตามขั้น/);
   assert.match(html, /อัตรา RB 60\.00 บาท\/ชม\./);
   assert.match(html, /ผสม · ขั้นเตรียมวัตถุดิบ<\/td><td class="right rf-mono">30<\/td><td class="right rf-mono">2<\/td><td class="right rf-mono">1\.00<\/td><td class="right rf-mono">60\.00/);
-  assert.match(html, /<strong>รวม<\/strong><\/td><td class="right rf-mono">183<\/td><td><\/td><td class="right rf-mono">7\.35<\/td><td class="right rf-mono"><strong>441\.00/);
-  assert.match(html, /ค่าแรงตามสถานี/);
-  assert.match(html, /ผสมยาง<\/td><td class="right rf-mono">48<\/td><td class="right rf-mono">96\.00/);
+  // ตารางเดียว: แถวรวมของสถานีผสม (4 ส่วน) ต่อจากขั้น 3 · แถวรวมท้ายมีแค่นาทีและชั่วโมงคน (ค่าแรงรวมอยู่ที่ตัวเลขด้านบนที่เดียว) · ไม่มีการ์ดตามสถานีที่ซ้ำตัวเลขเดิม
+  assert.match(html, /ผสม · ขั้น 3<\/td>(?:(?!<\/tr>).)*<\/tr><tr class="cost-sum"><td title="[^"]*">รวมสถานีผสมยาง<\/td><td class="right rf-mono">48<\/td><td><\/td><td class="right rf-mono">1\.60<\/td><td class="right rf-mono">96\.00<\/td><\/tr><tr><td>ฉีดขึ้นรูป/);
+  assert.match(html, /<strong>รวม<\/strong><\/td><td class="right rf-mono">183<\/td><td><\/td><td class="right rf-mono">7\.35<\/td><td><\/td><\/tr>/);
+  assert.equal((html.match(/441\.00/g) ?? []).length, 1, "the labour total appears once (the summary figure)");
+  assert.doesNotMatch(html, /ค่าแรงตามสถานี/);
+  assert.equal((html.match(/<table/g) ?? []).length, 1, "one labour table");
   assert.match(html, /data-rf-open="stationStandard" data-rf-args="[^"]*FG-91/);
   assert.match(html, /data-rf-open="labourRates"/);
   assert.doesNotMatch(html, /ยังคิดค่าแรงไม่ได้/);
@@ -669,14 +672,45 @@ test("#/cost?recipe=&tab=labour: ค่าแรงแยกตามขั้�
   assert.match(plain, /ผสม · ขั้น 1<\/td><td class="right rf-mono">12</, "เวลายังแสดง แม้ยังไม่มีอัตรา");
 });
 
-test("ค่าแรง: โหลดไม่สำเร็จ = หน้าต้นทุนวัตถุดิบยังใช้ได้ สูตรขึ้นว่ายังไม่มีค่าแรง", async () => {
+test("ค่าแรง: ระหว่างโหลดไม่มีป้าย · โหลดไม่สำเร็จ = บรรทัดเดียวเหนือตารางพร้อมลองอีกครั้ง (ไม่ใช่ป้ายทุกแถว) หน้าต้นทุนวัตถุดิบยังใช้ได้", async () => {
+  // ระหว่างโหลด: ช่องค่าแรงเป็นขีด ไม่มีแถวไหนบอกว่ายังไม่มีค่าแรง
+  const waiting = load({ employee: emp("PP") });
+  const realWaiting = waiting.context.sb;
+  waiting.context.sb = { rpc: (name, args) => (name === "app_rf_labour" ? new Promise(() => {}) : realWaiting.rpc(name, args)) };
+  const pending = await settled(waiting.openCost);
+  assert.equal(waiting.context.MNP_COST_DATA.labour().status, "loading");
+  assert.match(pending, /605\.10/);
+  assert.doesNotMatch(pending, /ยังไม่มีค่าแรง|data-cost-retry/);
+
   const env = load({ employee: emp("PP") });
   const real = env.context.sb;
   env.context.sb = { rpc: async (name, args) => (name === "app_rf_labour" ? { data: null, error: { message: "boom" } } : real.rpc(name, args)) };
   const html = await settled(env.openCost);
   assert.match(html, /605\.10/);
-  assert.match(html, /ยังไม่มีค่าแรง/);
-  assert.match(await env.openCost("recipe=DEMO-W01&tab=labour"), /โหลดข้อมูลค่าแรงไม่สำเร็จ/);
+  assert.doesNotMatch(html, /ยังไม่มีค่าแรง/, "no row claims that the labour cost is missing");
+  assert.equal((html.match(/data-cost-retry="labour"/g) ?? []).length, 1, "one retry line above the table");
+  assert.match(html, /โหลดข้อมูลค่าแรงไม่สำเร็จ <button[^>]*data-cost-retry="labour"[^>]*>ลองอีกครั้ง<\/button><\/p>[\s\S]*<table/, "the line sits above the table");
+  assert.doesNotMatch(html, /boom/);
+  const tab = await env.openCost("recipe=DEMO-W01&tab=labour");
+  assert.match(tab, /โหลดข้อมูลค่าแรงไม่สำเร็จ/);
+  assert.match(tab, /data-cost-retry="labour"/);
+  // ลองอีกครั้ง: โหลดค่าแรงใหม่ทันที (error ไม่โหลดซ้ำเองเมื่อวาดหน้า) แล้วตารางมีค่าแรง
+  const calls = () => env.log.rpc.filter(([name]) => name === "app_rf_labour").length;
+  assert.equal(env.context.MNP_COST_DATA.needsLabour(), false, "an error is not retried by a repaint");
+  env.context.sb = real;
+  assert.equal(calls(), 0, "the failing stub logs nothing");
+  const retry = { disabled: false, handlers: {}, getAttribute: (name) => (name === "data-cost-retry" ? "labour" : null), addEventListener(type, handler) { this.handlers[type] = handler; } };
+  env.fakes["[data-cost-retry]"] = [retry];
+  await env.openCost();
+  retry.handlers.click();
+  assert.equal(retry.disabled, true);
+  await tick(); await tick();
+  assert.equal(calls(), 1, "the retry called app_rf_labour");
+  assert.equal(env.context.MNP_COST_DATA.labour().status, "ready");
+  delete env.fakes["[data-cost-retry]"];
+  const fixed = await env.openCost();
+  assert.doesNotMatch(fixed, /data-cost-retry/);
+  assert.match(fixed, /441\.00/);
 });
 
 test("หน้าสูตรยาง: ตารางเวลามาตรฐานของรหัสสินค้า · แผนก RB เห็นเวลา ไม่เห็นค่าแรง · หัวหน้า RB แก้ได้ · คนอื่นไม่เห็นอะไร", async () => {

@@ -4305,11 +4305,15 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       return touchedRf ? { ...delta, rubberflow } : delta;
     },
     // บันทึกการใช้งาน: ใหม่สุดก่อน (ตรงกับ app_bom_audit) ทุกบัญชีทดสอบอ่านได้
+    // รายการ "ตั้งราคาต้นทุน" ของผู้บันทึก (entries · แถวเก่ามีตัวเลขราคา): รายละเอียดว่างสำหรับผู้ที่ไม่เห็นต้นทุน (20270110010000)
     app_bom_audit({ p_limit } = {}) {
-      requireActor("BOM_FORBIDDEN");
+      const actor = requireActor("BOM_FORBIDDEN");
       const limit = p_limit === undefined || p_limit === null ? 200 : p_limit;
       if (!Number.isInteger(limit) || limit < 1 || limit > 1000) fail("BOM_INVALID_PAYLOAD");
-      return [...bomLoad().audit].reverse().slice(0, limit);
+      const rows = [...bomLoad().audit].reverse().slice(0, limit);
+      if (costSeeCost(actor)) return rows;
+      return rows.map((row) => (Array.isArray(row.entries) && row.entries.some((entry) => entry?.action === "ตั้งราคาต้นทุน")
+        ? { ...row, entries: row.entries.map((entry) => (entry?.action === "ตั้งราคาต้นทุน" ? { ...entry, detail: "" } : entry)) } : row));
     },
     // ล้างข้อมูล BOM ทดสอบทั้งหมด: เฉพาะ admin ตัวจริง (ผู้ใช้จำลอง ไม่ใช่บัญชีทดสอบที่ทำหน้าที่อยู่) ในโหมดทดสอบ · เวอร์ชันกลับเป็น 0 และมีบันทึกการล้างหนึ่งแถว
     // ลำดับเดียวกับ app_sandbox_purge_bom: ไม่ใช่ admin ตัวจริง = NOT_AUTHORIZED · admin ที่ไม่ได้อยู่ในโหมดทดสอบ = SANDBOX_NOT_ACTIVE (ข้อมูลจริงล้างไม่ได้)
@@ -4466,6 +4470,9 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       rfMaster.version = version;
       rfMaster.audit = [...audit, { at: iso(now()), user: bomActor().name, action: "ล้างข้อมูล RubberFlow ทดสอบ", detail: `ลบ ${deleted} แถว`, entries: [] }];
       rfPersist();
+      // ค่าแรง (อัตรา + เวลามาตรฐาน) ของโหมดทดสอบถูกลบด้วย เหมือนฐานข้อมูลลบ rf_labour_rates / rf_station_standards (ว่างแล้วไม่ใส่ตัวเลขสาธิตกลับ)
+      labourStore = { rates: [], standards: [] };
+      labourPersist();
       return { deleted };
     },
     // โหมดทดสอบ: ทำหน้าที่เป็นบัญชีทดสอบ — หน้าเว็บตั้ง state.employee เป็น persona ที่เลือก (ตัวแรกใช้แถวของผู้ใช้จำลองเอง ที่เหลือเป็นพนักงานของแต่ละแผนก)

@@ -67,6 +67,9 @@
   // งานที่ผูก WO ของ RubberFlow: ยอดดี / เสียมาจาก RubberFlow เท่านั้น (ล็อตตกแต่งที่ผ่าน QC) รายงานผลด้วยมือไม่ได้ (ตรงกับ bom_save_jobs ของ 20261128010000)
   const isLinkedJob = (job) => Boolean(job?.externalRef?.woId);
   const canIssueParts = (user) => canPlan(user) || user?.role === "st";
+  // ผู้เห็นต้นทุน (ราคาต้นทุนของชิ้นงาน · 20270110010000 private.rf_cost_viewer): โหมดฐานข้อมูล personaUser ของ bom-store ตั้ง costViewer จาก MNP_COST_RULES.canSeeCost
+  // บทบาทสาธิตของโหมดในเครื่อง / เทสต์ไม่มี costViewer = เห็นเหมือนเดิม · หน้า (โครงสร้างสินค้า หน้าสินค้า) ใช้ตัวนี้ตัวเดียวซ่อนราคา
+  const canSeeCost = (user) => Boolean(user) && user.costViewer !== false;
   const requireUser = (ctx) => ctx.user ?? fail("กรุณาเลือกบทบาทสาธิตก่อน");
   const requirePlanner = (ctx, what) => { const user = requireUser(ctx); if (!canPlan(user)) fail(`${what} ได้โดยฝ่ายวางแผนหรือผู้จัดการเท่านั้น`); return user; };
   // ใบสั่งผลิต / ลูกค้า: requireOrderer = ฝ่ายขายหรือกลุ่มวางแผนของใบ · requireOrderPlanner = กลุ่มวางแผนของใบเท่านั้น (คำนวณ ปล่อยผลิต กำหนดเสร็จรายแผนก ตัดสินคำขอ)
@@ -378,14 +381,16 @@
     audit(d, ctx, existing ? "แก้ขั้นตอนผลิต" : "เพิ่มขั้นตอนผลิต", `${code} ${name} (${dept})`);
     return { summary: code };
   }
-  // ราคาต้นทุนตั้งเองได้เฉพาะชิ้นที่ไม่มี BOM (ของซื้อ เส้นยาง ชิ้นทำเองที่ยังไม่ลง BOM) · ค่าว่าง = ล้างราคา
+  // ราคาต้นทุนตั้งเองได้เฉพาะชิ้นที่ไม่มี BOM (ของซื้อ เส้นยาง ชิ้นทำเองที่ยังไม่ลง BOM) · ค่าว่าง = ล้างราคา · เฉพาะผู้เห็นต้นทุนในกลุ่มวางแผน
+  // บันทึกการใช้งานไม่มีตัวเลขราคา (ทุกบัญชีที่อ่าน BOM อ่านบันทึกนี้ได้) บอกแค่ว่าตั้งหรือล้างราคาของรหัสไหน
   function setItemCost(d, { code, unitCost }, ctx) {
-    requirePlanner(ctx, "ตั้งราคาต้นทุน");
+    const user = requirePlanner(ctx, "ตั้งราคาต้นทุน");
+    if (!canSeeCost(user)) fail("ตั้งราคาต้นทุนได้เฉพาะผู้เห็นต้นทุน (ผู้จัดการทั่วไป ผู้จัดการโรงงาน ผู้ดูแลระบบ และฝ่ายวางแผน PP)");
     const item = itemOf(d, code) ?? fail("ไม่พบชิ้นงาน");
     if (approvedBomOf(d, item.code)) fail(`${item.code} มี BOM แล้ว ต้นทุนคำนวณจากส่วนประกอบและขั้นตอนผลิต`);
     if (unitCost === "" || unitCost === null || unitCost === undefined) delete item.unitCost;
     else item.unitCost = num(unitCost, "ราคาต้นทุนต่อหน่วย", { allowZero: true });
-    audit(d, ctx, "ตั้งราคาต้นทุน", `${item.code} = ${item.unitCost === undefined ? "ไม่ระบุ" : `${rules().fmtNum(item.unitCost)} บาท/${rules().uomLabel(item.uom)}`}`);
+    audit(d, ctx, "ตั้งราคาต้นทุน", `${item.code}: ${item.unitCost === undefined ? "ล้างราคา" : "ตั้งราคาแล้ว"}`);
     return { summary: item.code };
   }
   // รูปชิ้นงาน (จำลอง): รูปย่อที่เบราว์เซอร์ย่อแล้วเป็น data URL เก็บใน state ของเบราว์เซอร์ · ระบบจริงใช้ Supabase Storage แบบ private
@@ -2779,7 +2784,7 @@
     saveGrConfig, setGrJobSteps, addGrRecord, editGrRecord, voidGrRecord, requestRods, cancelRodRequest, sendGrToPk, receiveGrAtPk, cancelGrHandover,
     sendToPk, receiveAtPk, cancelHandover, sendPkToWh, cancelPkToWh,
     reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage, countPartStock, issueOrderParts, undoOrderParts, returnOrderParts,
-    helpers: { customerName, customerKey, startedJobs, isPartJob, isOpenJob, isLinkedJob, jobCloseNote, jobHoldNote, deptText, canIssueParts, canHandleFg, canReverseFg, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canCount, canSetSafety, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS, canStoreRods, canDecideRods, canSeeRodHolds, canAdjustRods, newUuid,
+    helpers: { customerName, customerKey, startedJobs, isPartJob, isOpenJob, isLinkedJob, jobCloseNote, jobHoldNote, deptText, canIssueParts, canHandleFg, canReverseFg, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canSeeCost, canCount, canSetSafety, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS, canStoreRods, canDecideRods, canSeeRodHolds, canAdjustRods, newUuid,
       isDeptHead, canGrLead, canGrRecord, canReceiveGr, canReverseGrReceipt, isGrPlanned, isGrClosedShort, hasGrRecords, grJobBlock, grRecordBlock,
       STEP_DEPTS, canDeptLead, canDeptRecord, canReceiveAtPk, canReversePkReceipt, canSendPkToWh, handoverTarget,
       canSell, canPlanOrders, canOrder, salesOnly, orderSource, isSentOrder, orderRequestsOf, openOrderRequests, staleChangeNotice, noticeMode, orderLocked, salesCancelled, salesCancelPending, SALES_PENDING_SHORT,

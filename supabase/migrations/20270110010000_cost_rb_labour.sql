@@ -21,18 +21,23 @@
 --         private.sandbox_unguarded_tables() + 'rf_labour_rates', 'rf_station_standards' · public.app_sandbox_purge_rf() + ลบสองตารางนี้ของโหมดทดสอบ
 --         private.bom_records(bigint): unitCost เฉพาะผู้เห็นต้นทุน
 --         private.bom_save_items(uuid, jsonb, bigint, bigint): ผู้ที่ไม่เห็นต้นทุน = unit_cost เดิมคงอยู่ (ชิ้นใหม่ = null) ไม่ว่าจะส่งค่าอะไรมา
+--         public.app_bom_audit(integer) (นิยามล่าสุด = 20261130010000_bom_rf_go_live.sql): รายการ "ตั้งราคาต้นทุน" ของผู้บันทึก (entries) มีรายละเอียดว่างสำหรับผู้ที่ไม่เห็นต้นทุน
+--         (แถวเก่ามีตัวเลขราคา) · security definer / search_path / สิทธิ์ / lab_only_block คงเดิม
 --   ไม่แตะ: public.app_rf_cost_data() และฟังก์ชันของเฟส 1 ทั้งหมด (หน้าต้นทุนเรียก app_rf_labour เพิ่มอีกหนึ่งตัว)
 --
 -- ลำดับ deploy: apply migration นี้ก่อน merge หน้าเว็บ (หน้าเว็บใหม่เรียก app_rf_labour และ RPC บันทึกสองตัว)
 --   หน้าเว็บรุ่นก่อนใช้กับฐานข้อมูลนี้ได้ ยกเว้นข้อเดียว: ผู้วางแผนที่ไม่ใช่ผู้เห็นต้นทุนจะไม่เห็นราคาในหน้าต้นทุน BOM และปุ่ม "ราคา" ของหน้าเว็บรุ่นก่อนบันทึกแล้วไม่มีผล
+--   (หน้าเว็บรุ่นก่อนยังเขียนตัวเลขราคาลงบันทึกการใช้งาน แต่ app_bom_audit ส่งรายละเอียดนั้นเฉพาะผู้เห็นต้นทุน)
 --   migration รุ่นหลังที่ replace private.sandbox_unguarded_tables() / public.app_sandbox_purge_rf() ต้องคง rf_material_prices rf_labour_rates rf_station_standards ไว้
 --   migration รุ่นหลังที่ replace private.bom_records / private.bom_save_items ต้องคงเงื่อนไข private.rf_cost_viewer ของ unit_cost ไว้
---   (ไฟล์นี้แก้ในนิยามที่ใช้อยู่ จึงไม่มีนิยามเต็มของสี่ตัวนั้นในไฟล์นี้ให้คัดลอก · ถ้าข้อความที่ต้องแทนไม่อยู่ในนิยามที่ใช้อยู่ migration หยุดพร้อมข้อความ)
+--   migration รุ่นหลังที่ replace public.app_bom_audit ต้องคงการทำรายละเอียดของรายการ "ตั้งราคาต้นทุน" ให้ว่างสำหรับผู้ที่ไม่เห็นต้นทุน (private.rf_cost_viewer)
+--   (ไฟล์นี้แก้ในนิยามที่ใช้อยู่ จึงไม่มีนิยามเต็มของห้าตัวนั้นในไฟล์นี้ให้คัดลอก · ถ้าข้อความที่ต้องแทนไม่อยู่ในนิยามที่ใช้อยู่ migration หยุดพร้อมข้อความ)
 --
 -- Rollback (ยังเป็นข้อมูลทดสอบทั้งหมด): drop function public.app_rf_station_standard_save(text, date, jsonb, text), public.app_rf_labour_rate_save(text, numeric, date, text),
 --   public.app_rf_labour(), private.rf_labour_out(public.employees), private.rf_parse_standard_steps(jsonb), private.rf_standard_writer(public.employees),
 --   private.rf_standard_reader(public.employees), private.rf_standard_steps(), private.rf_labour_depts() · เอาสองชื่อตารางออกจาก private.sandbox_unguarded_tables() และ
 --   public.app_sandbox_purge_rf() · create or replace private.bom_records / private.bom_save_items กลับเป็นนิยามของ 20261227010000 / 20261130010000 ·
+--   create or replace public.app_bom_audit(integer) กลับเป็นนิยามของ 20261130010000 (ข้อมูลในบันทึกไม่ถูกแก้ จึงไม่มีอะไรต้องคืน) ·
 --   drop table public.rf_station_standards, public.rf_labour_rates
 -- ============================================================================
 
@@ -46,8 +51,8 @@ begin
     raise exception 'private.sandbox_unguarded_tables() ไม่มี rf_material_prices (ฐานไม่ใช่ฉบับที่คาดไว้)';
   end if;
   if to_regprocedure('private.bom_records(bigint)') is null or to_regprocedure('private.bom_save_items(uuid,jsonb,bigint,bigint)') is null
-     or to_regprocedure('private.bom_actor()') is null then
-    raise exception 'ไม่พบ private.bom_records / private.bom_save_items / private.bom_actor';
+     or to_regprocedure('private.bom_actor()') is null or to_regprocedure('public.app_bom_audit(integer)') is null then
+    raise exception 'ไม่พบ private.bom_records / private.bom_save_items / private.bom_actor / public.app_bom_audit';
   end if;
 end $$;
 
@@ -165,6 +170,31 @@ begin
 end $$;
 revoke all on function private.bom_records(bigint) from public, anon, authenticated;
 revoke all on function private.bom_save_items(uuid, jsonb, bigint, bigint) from public, anon, authenticated;
+
+-- 3.1 บันทึกการใช้งาน BOM: รายการ "ตั้งราคาต้นทุน" ที่ผู้บันทึกเขียนไว้ (entries) ส่งรายละเอียดเฉพาะผู้เห็นต้นทุน (แก้ในนิยามที่ใช้อยู่) --------------------------
+--   หน้าเว็บตั้งแต่ migration นี้ไม่เขียนตัวเลขราคาลงบันทึกแล้ว แต่แถวที่บันทึกไว้ก่อนหน้ามี ("P-BOX = 5.50 บาท/กล่อง") · ผู้ที่ไม่เห็นต้นทุนได้รายละเอียดว่าง
+--   (ชื่อรายการ เวลา และผู้บันทึกยังอยู่) · ผู้เห็นต้นทุนเห็นเหมือนเดิม · รายการอื่นและบรรทัดหลัก (จำนวนระเบียนต่อส่วน) ไม่เปลี่ยน
+do $$
+declare
+  v_def text;
+  v_new text;
+begin
+  v_def := pg_get_functiondef('public.app_bom_audit(integer)'::regprocedure);
+  if position('rf_cost_viewer' in v_def) = 0 then
+    v_new := replace(v_def, 'then a.metadata -> ''entries'' else ''[]''::jsonb end as entries',
+      'then (case when (select coalesce(private.rf_cost_viewer(private.bom_actor()), false)) then a.metadata -> ''entries''
+                        else (select coalesce(jsonb_agg(case when jsonb_typeof(x.value) = ''object'' and x.value ->> ''action'' = ''ตั้งราคาต้นทุน''
+                                                             then x.value || jsonb_build_object(''detail'', '''') else x.value end order by x.ord), ''[]''::jsonb)
+                              from jsonb_array_elements(a.metadata -> ''entries'') with ordinality as x(value, ord)) end)
+                  else ''[]''::jsonb end as entries');
+    if v_new = v_def then
+      raise exception 'แก้ public.app_bom_audit ไม่ได้ (ไม่พบ then a.metadata -> ''entries'' else ''[]''::jsonb end as entries ในนิยาม)';
+    end if;
+    execute v_new;
+  end if;
+end $$;
+revoke all on function public.app_bom_audit(integer) from public, anon;
+grant execute on function public.app_bom_audit(integer) to authenticated;
 
 -- 4. ค่าคงที่และสิทธิ์ -------------------------------------------------------------------------------------------------------------
 -- แผนกผลิตที่ตั้งอัตราค่าแรงได้ (เฟส 2 ใช้ RB · GR PT BG PK ใช้ในเฟส 3)

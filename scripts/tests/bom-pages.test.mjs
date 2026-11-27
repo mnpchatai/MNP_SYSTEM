@@ -1005,6 +1005,11 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   assert.deepEqual(json(bought[0].map((entry) => [entry.open, entry.args.code])), [["itemCost", "P-BAG-01"], ["routingEdit", "DEMO-TP-01(P)-Y"], ["itemImage", "P-BAG-01"]], "a material row edits its own price and its parent's steps");
   assert.deepEqual(labels(bought)[1], ["แก้บรรทัดนี้ใน BOM ของ DEMO-TP-01(P)-Y", "ประวัติ BOM / ใช้ในสินค้าไหน"], "a bought part has no structure of its own");
   assert.ok(labels(menu(planner, { code: "PT-00320", parent: "DEMO-TP-01(P)-Y", root: "DEMO-TP-01(P)-Y" }))[1].includes("เปิดโครงสร้างของ PT-00320"));
+  // ผู้วางแผนที่ไม่เห็นต้นทุน (โหมดฐานข้อมูล personaUser costViewer false เช่น หัวหน้าแผนก RB): ไม่มีคำสั่งตั้งราคา และ dialog ราคาไม่เปิด
+  const noCost = { ...planner, user: { ...planner.user, costViewer: false } };
+  assert.deepEqual(labels(menu(noCost, { code: "P-BAG-01", parent: "DEMO-TP-01(P)-Y", root: "DEMO-TP-01(P)-Y" }))[0], ["เข้าที่ขั้นไหน… (ขั้นตอนของ DEMO-TP-01(P)-Y)", "รูป…"]);
+  assert.equal(env.context.MNP_BOM_DIALOGS.itemCost(noCost, { code: "P-BAG-01" }), null);
+  assert.ok(env.context.MNP_BOM_DIALOGS.itemCost(planner, { code: "P-BAG-01" }).html.includes("bom-cost-form"));
   env.store.setUser("B05"); // หัวหน้า GR ดูอย่างเดียว
   assert.deepEqual(labels(menu(env.ctx("p=structure"), { code: "P-BAG-01", parent: "DEMO-TP-01(P)-Y", root: "DEMO-TP-01(P)-Y" })), [["ประวัติ BOM / ใช้ในสินค้าไหน"], ["คัดลอกรหัส", "คัดลอกรหัส + ชื่อ (วางใน Excel ได้ 2 ช่อง)"]], "read-only roles get only go-to and copy");
   assert.deepEqual(json(menu(env.ctx("p=structure"), { code: "NOPE" })), []);
@@ -4347,4 +4352,22 @@ test("choosing a base that has exactly one product in the registry pre-selects i
   set.handlers.change();
   assert.equal(panel.hidden, false);
   assert.equal(name.value, "ตอปิโดยาง TP-01 (3 ชิ้น/ชุด)");
+});
+
+// ผู้ไม่เห็นต้นทุน (โหมดฐานข้อมูล: personaUser ตั้ง costViewer false · ฐานข้อมูลไม่ส่ง unitCost มา): มุมมองลำดับผลิตไม่มีป้ายไม่มีราคา ตัวเลขบาท และไอคอนต้นทุนไม่ครบ
+test("the production-flow view of someone who cannot see costs has no price badge, baht figure or cost warning", async () => {
+  const env = load();
+  env.store.setUser("B03"); // ฝ่ายวางแผน (บทบาทสาธิต ไม่มี costViewer = เห็นต้นทุน)
+  const seen = await env.render("p=structure&code=DEMO-TP-01(P)-Y");
+  assert.match(seen, /ไม่มีราคา<\/span>/, "the viewer sees the missing-price badge of the demo part");
+  assert.match(seen, /บาท\//);
+  assert.match(seen, /bom-cost-warn/);
+  assert.match(seen, /ค่าแรง [\d.,]+ บาท\/ชิ้น/);
+  env.store.user().costViewer = false;
+  const hidden = await env.render("p=structure&code=DEMO-TP-01(P)-Y");
+  const flow = hidden.slice(hidden.indexOf('<div class="bom-flow">'));
+  assert.ok(flow.length > 0 && flow.includes("bom-flow-item"), "the flow is still drawn");
+  assert.doesNotMatch(flow, /ไม่มีราคา|บาท|bom-cost-warn/, "no price badge, no baht figure, no cost warning");
+  assert.doesNotMatch(hidden, /ต้นทุนยังไม่ครบ|view=table|data-rf-open="itemCost"/, "and no cost table, cost callout or price button on the page");
+  assert.match(hidden, /เวลาผลิตต่อแผนก/, "the minutes per department stay");
 });
