@@ -192,8 +192,81 @@
         <small>${esc(model.FILE_HINT)}</small>
       </div>`;
 
+  /* ---------- ส่วนเลือกอุปกรณ์จากทะเบียน (ฟอร์มแจ้งซ่อมขั้นที่ 2) ---------- */
+  // state = { host (เครื่องที่ค้นพบ หรือ null), hostUnknown, picks, lookup: "idle" | "loading" | "notfound" | "error" }
+  // ส่วนบนสุด (ช่องรหัส ปุ่มค้นหา ช่องติ๊กไม่ทราบ) วาดครั้งเดียว · สถานะผลค้นหา (#itrp-host-status) กับรายการชนิดอุปกรณ์ (#itrp-pick-body) วาดใหม่ตามสถานะ
+  // แยกกันเพื่อไม่ให้ปุ่ม/ช่องที่ผู้ใช้กำลังกดถูกแทนที่กลางการกด (บนมือถือ blur ของช่องรหัสเกิดก่อน click)
+  function hostStatus(state = {}) {
+    if (state.hostUnknown) return `<p class="muted small itrp-host-note">ไม่ต้องค้นรหัส · เลือกอุปกรณ์ที่มีปัญหาแล้วพิมพ์รหัสเองได้ (ไม่ทราบเว้นว่างได้ IT จะเติมให้)</p>`;
+    if (state.lookup === "loading") return `<p class="muted small itrp-host-note" role="status">กำลังค้นหา…</p>`;
+    if (state.host) {
+      const rest = model.hostConfirmText(state.host).slice(String(state.host.code).length); // " · ชื่อ/รุ่น · ผู้ใช้ …" (ข้อความเริ่มด้วยรหัสเสมอ)
+      return `<div class="itrp-host-card" role="status"><strong>${esc(state.host.code)}</strong>${rest ? `<span>${esc(rest)}</span>` : ""}</div>
+        <p class="muted small itrp-host-note">ตรวจว่าเป็นเครื่องของคุณ ถ้าไม่ใช่ให้แก้รหัสแล้วกด "ค้นหา" ใหม่</p>`;
+    }
+    if (state.lookup === "notfound") return `<p class="field-error itrp-host-note" role="alert">ไม่พบรหัสนี้ในทะเบียน ตรวจรหัสที่ติดบนเครื่อง หรือติ๊ก "ไม่ทราบรหัสเครื่อง"</p>`;
+    if (state.lookup === "error") return `<p class="field-error itrp-host-note" role="alert">ค้นหาไม่สำเร็จ ตรวจอินเทอร์เน็ตแล้วกด "ค้นหา" อีกครั้ง หรือติ๊ก "ไม่ทราบรหัสเครื่อง"</p>`;
+    return "";
+  }
+  // แถวหนึ่งของชนิดที่ติ๊ก · index = ตำแหน่งใน picks · showUse = มีหลายแถวในชนิดเดียวกัน (ให้ติ๊กตัวที่เสีย) · canRemove = แถวที่ผู้แจ้งเพิ่มเอง
+  function pickRow(row, index, { showUse, label }) {
+    const isOther = row.type_code === "OTHER";
+    return `<li class="itrp-pick-row" data-pick-row="${index}">
+        ${showUse ? `<label class="itrp-pick-use"><input type="checkbox" data-pick-use="${index}"${row.on ? " checked" : ""} aria-label="${esc(label)} ${esc(row.code || "ไม่ระบุรหัส")} มีปัญหา"></label>` : ""}
+        <div class="itrp-pick-fields">
+          ${isOther ? `<input class="input" data-pick-note="${index}" maxlength="${model.MAX_NOTE}" autocomplete="off" placeholder="ระบุอุปกรณ์ (จำเป็น) เช่น เครื่องสแกน" aria-label="ระบุอุปกรณ์อื่นๆ" value="${esc(row.note)}">` : ""}
+          <input class="input itrp-pick-code" data-pick-code="${index}" list="itrp-pick-codes-${esc(row.type_code)}" maxlength="${model.MAX_DEVICE_CODE}" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="รหัส (ไม่ทราบเว้นว่างได้)" aria-label="รหัส ${esc(label)}" value="${esc(row.code)}">
+          ${row.meta ? `<small class="muted itrp-pick-meta">${esc(row.meta)}</small>` : ""}
+        </div>
+        ${row.added ? `<button type="button" class="btn secondary small" data-pick-remove="${index}" aria-label="ลบรายการ ${esc(label)}">ลบ</button>` : ""}
+      </li>`;
+  }
+  function pickTypes(state = {}) {
+    const picks = Array.isArray(state.picks) ? state.picks : [];
+    if (!state.host && !state.hostUnknown) {
+      return `<p class="muted small itrp-pick-gate">ค้นหารหัสเครื่องคอมของคุณ หรือติ๊ก "ไม่ทราบรหัสเครื่อง" ก่อน แล้วจึงเลือกอุปกรณ์ที่มีปัญหาได้</p>`;
+    }
+    return model.PICK_TYPES.map((type) => {
+      const rows = model.rowsOfKey(picks, type.key);
+      const on = rows.length > 0;
+      const first = on ? rows[0].row : null;
+      const label = first ? model.requestDeviceLabel(first.type_code) : type.label;
+      const registered = (state.host?.devices ?? []).filter((device) => device.type_code === type.key);
+      const options = registered.map((device) => `<option value="${esc(device.code)}" label="${esc([device.name, device.model].filter(Boolean).join(" · "))}"></option>`).join("");
+      const hint = on && !registered.length && type.key !== "COMPUTER" && type.key !== "OTHER" ? `<small class="muted">ไม่มีรายการในทะเบียน พิมพ์รหัสเอง ไม่ทราบเว้นว่างได้ IT จะเติมให้</small>` : "";
+      const add = on && type.multi ? `<button type="button" class="btn secondary small" data-pick-add="${esc(type.key)}"${model.pickedCount(picks) >= model.MAX_REQUEST_DEVICES ? " disabled" : ""}>+ เพิ่มอีกรายการ</button>` : "";
+      return `<div class="itrp-pick-type${on ? " is-on" : ""}" data-pick-type-box="${esc(type.key)}">
+        <label class="itrp-choice itrp-pick-head"><input type="checkbox" data-pick-type="${esc(type.key)}"${on ? " checked" : ""}> <span>${esc(type.label)}</span></label>
+        ${on ? `${options ? `<datalist id="itrp-pick-codes-${esc(type.key)}">${options}</datalist>` : ""}<ul class="itrp-pick-rows">${rows.map(({ row, index }) => pickRow(row, index, { showUse: rows.length > 1, label })).join("")}</ul>${hint}${add}` : ""}
+      </div>`;
+    }).join("");
+  }
+  // ส่วนเลือกอุปกรณ์ทั้งก้อน (วาดตอนเปิดฟอร์ม · state ตั้งต้น/ร่างที่กู้)
+  function devicePicker(state = {}, { hostInput = "" } = {}) {
+    return `<div class="itrp-picker" id="itrp-picker">
+        <div class="field" data-field="host">
+          <label for="itrp-host-input">รหัสเครื่องคอมของคุณ</label>
+          <div class="itrp-host-row"><input class="input" id="itrp-host-input" name="host_input" maxlength="${model.MAX_ASSET_CODE}" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="เช่น COM24" value="${esc(hostInput)}"${state.hostUnknown ? " disabled" : ""}><button type="button" class="btn secondary" id="itrp-host-search"${state.hostUnknown ? " disabled" : ""}>ค้นหา</button></div>
+          <small>รหัสติดอยู่บนตัวเครื่อง เช่น COM24 หรือ NBD01</small>
+          <div id="itrp-host-status" aria-live="polite">${hostStatus(state)}</div>
+          <label class="itrp-choice itrp-host-unknown"><input type="checkbox" id="itrp-host-unknown" name="host_unknown"${state.hostUnknown ? " checked" : ""}> <span>ไม่ทราบรหัสเครื่อง / ไม่มีคอมประจำ</span></label>
+        </div>
+        <div class="field" data-field="devices">
+          <span class="field-label">อุปกรณ์ที่มีปัญหา (เลือกได้หลายอย่าง) ${REQUIRED}</span>
+          <div id="itrp-pick-body">${pickTypes(state)}</div>
+        </div>
+      </div>`;
+  }
+  // ช่องแบบเดิม (ใช้เมื่อฐานข้อมูลยังไม่มีฟังก์ชันค้นทะเบียน): รหัสเครื่อง ชื่อเครื่อง ประเภทงานซ่อม
+  const legacyMachineFields = () => `<div class="field" data-field="asset_code"><label for="itrp-asset-code">รหัสเครื่องคอมพิวเตอร์ (ไม่บังคับ)</label><input class="input" id="itrp-asset-code" name="asset_code" maxlength="${model.MAX_ASSET_CODE}" autocomplete="off"></div>
+          <div class="field" data-field="device_name"><label for="itrp-device-name">ชื่อเครื่องคอมพิวเตอร์ / อุปกรณ์ ${REQUIRED}</label><input class="input" id="itrp-device-name" name="device_name" maxlength="${model.MAX_DEVICE_NAME}" autocomplete="off"></div>
+          ${choiceGroup({ name: "repair_target", field: "repair_target", legend: "ประเภทงานซ่อม", options: model.REPAIR_TARGETS, value: "", required: true })}
+          <div class="field" data-field="repair_target_note" id="itrp-target-note-field" hidden><label for="itrp-target-note">ระบุประเภทงานซ่อม ${REQUIRED}</label><input class="input" id="itrp-target-note" name="repair_target_note" maxlength="${model.MAX_NOTE}" autocomplete="off"></div>`;
+
   // requester = { name, department } จาก my_role · ระบบเติมชื่อ/แผนก/วันเวลาให้เอง จึงบอกไว้ครั้งเดียวที่ขั้นแรก
-  function orderForm({ requester = null } = {}) {
+  // picker = true: ขั้นที่ 2 เป็นส่วนเลือกอุปกรณ์จากทะเบียน (state/hostInput = ค่าตั้งต้นหรือร่างที่กู้) · false: ช่องแบบเดิม (ฐานข้อมูลยังไม่มีฟังก์ชันใหม่)
+  // ลำดับขั้น: 1 ประเภทคำขอ → 2 เครื่องและอุปกรณ์ → 3 อาการเสีย → 4 ทบทวน
+  function orderForm({ requester = null, picker = false, state = {}, hostInput = "" } = {}) {
     const steps = root.MNP_FORM_STEPS;
     const who = requester ? `${esc(requester.name)}${requester.department ? ` · ${esc(requester.department)}` : ""}` : "";
     return `<section class="card form-card" id="itrp-form-card"><div id="itrp-message" role="status"></div>
@@ -201,22 +274,22 @@
       <form id="itrp-form" class="stepped-form" novalidate>
         ${steps?.headHtml?.() ?? ""}
         <fieldset class="form-step" data-step="1">
-          <legend class="form-step-title">เครื่องที่แจ้งซ่อม</legend>
+          <legend class="form-step-title">ประเภทคำขอ</legend>
           ${who ? `<p class="muted small itrp-requester">ผู้แจ้ง ${who} · ระบบบันทึกวันและเวลาที่แจ้งให้เอง</p>` : ""}
-          <div class="field" data-field="asset_code"><label for="itrp-asset-code">รหัสเครื่องคอมพิวเตอร์ (ไม่บังคับ)</label><input class="input" id="itrp-asset-code" name="asset_code" maxlength="${model.MAX_ASSET_CODE}" autocomplete="off"></div>
-          <div class="field" data-field="device_name"><label for="itrp-device-name">ชื่อเครื่องคอมพิวเตอร์ / อุปกรณ์ ${REQUIRED}</label><input class="input" id="itrp-device-name" name="device_name" maxlength="${model.MAX_DEVICE_NAME}" autocomplete="off"></div>
           ${choiceGroup({ name: "request_kind", field: "request_kind", legend: "ประเภทคำขอ", options: model.REQUEST_KINDS, value: "", required: true })}
           <div class="field" data-field="request_kind_note" id="itrp-kind-note-field" hidden><label for="itrp-kind-note">ระบุประเภทคำขอ ${REQUIRED}</label><input class="input" id="itrp-kind-note" name="request_kind_note" maxlength="${model.MAX_NOTE}" autocomplete="off"></div>
-          ${choiceGroup({ name: "repair_target", field: "repair_target", legend: "ประเภทงานซ่อม", options: model.REPAIR_TARGETS, value: "", required: true })}
-          <div class="field" data-field="repair_target_note" id="itrp-target-note-field" hidden><label for="itrp-target-note">ระบุประเภทงานซ่อม ${REQUIRED}</label><input class="input" id="itrp-target-note" name="repair_target_note" maxlength="${model.MAX_NOTE}" autocomplete="off"></div>
         </fieldset>
         <fieldset class="form-step" data-step="2">
+          <legend class="form-step-title">เครื่องที่แจ้งซ่อม</legend>
+          ${picker ? devicePicker(state, { hostInput }) : legacyMachineFields()}
+        </fieldset>
+        <fieldset class="form-step" data-step="3">
           <legend class="form-step-title">อาการเสีย</legend>
           <div class="field" data-field="symptom"><label for="itrp-symptom">ระบุอาการเสีย-ขัดข้องที่เกิดขึ้นเบื้องต้น ${REQUIRED}</label><textarea class="textarea" id="itrp-symptom" name="symptom" rows="5" maxlength="${model.MAX_SYMPTOM}"></textarea><small>บอกให้ชัดว่าเกิดอะไรขึ้น เพื่อให้ IT ไม่ต้องถามซ้ำ (ไม่เกิน ${model.MAX_SYMPTOM.toLocaleString("en-US")} ตัวอักษร)</small></div>
           ${fileField({ id: "itrp-files", field: "attachment_files", label: "แนบรูปหรือไฟล์ (ถ้ามี)" })}
           <div class="field"><label class="itrp-choice itrp-urgent"><input type="checkbox" id="itrp-urgent" name="is_urgent"> <span>งานด่วน</span></label><small>IT เริ่มทำได้ก่อนอนุมัติครบ แต่ผู้จัดการยังต้องอนุมัติตามหลัง และใบจะส่งงานได้เมื่ออนุมัติครบแล้วเท่านั้น</small></div>
         </fieldset>
-        <fieldset class="form-step form-step-review" data-step="3">
+        <fieldset class="form-step form-step-review" data-step="4">
           <legend class="form-step-title">ทบทวนก่อนส่ง</legend>
           <div id="itrp-review"></div>
         </fieldset>
@@ -226,14 +299,18 @@
   // รายการไฟล์ที่เลือก "ชื่อ (ขนาด)" คั่นด้วยจุลภาค · files = [{ name, size }]
   const fileListText = (files) => files.map((file) => `${file.name} (${model.formatFileSize(file.size)})`).join(", ");
   // ขั้นทบทวน: ช่องที่ไม่ได้กรอกไม่ขึ้น (รหัสเครื่อง ไฟล์) · values = ค่าในฟอร์ม · files = ไฟล์ที่เลือก
-  function orderReview(values, files = []) {
+  // picker = true: แสดงเครื่องคอม + อุปกรณ์ที่เลือกแทนช่องรหัส/ชื่อ/ประเภทงานซ่อมแบบเดิม
+  function orderReview(values, files = [], { picker = false } = {}) {
     const row = (label, value, wide = false) => (value ? `<div class="definition${wide ? " wide" : ""}"><dt>${esc(label)}</dt><dd${wide ? ' class="review-text"' : ""}>${esc(value)}</dd></div>` : "");
     const attached = files.length ? `${files.length} ไฟล์: ${fileListText(files)}` : "";
+    const machine = picker
+      ? model.pickerReviewRows(values).map((item) => row(item.label, item.value, true)).join("\n        ")
+      : `${row("รหัสเครื่องคอมพิวเตอร์", String(values.asset_code ?? "").trim())}
+        ${row("ชื่อเครื่องคอมพิวเตอร์ / อุปกรณ์", String(values.device_name ?? "").trim())}`;
     return `<dl class="definition-grid review-grid">
-        ${row("รหัสเครื่องคอมพิวเตอร์", String(values.asset_code ?? "").trim())}
-        ${row("ชื่อเครื่องคอมพิวเตอร์ / อุปกรณ์", String(values.device_name ?? "").trim())}
+        ${machine}
         ${row("ประเภทคำขอ", model.requestKindText(values.request_kind, values.request_kind_note))}
-        ${row("ประเภทงานซ่อม", model.repairTargetText(values.repair_target, values.repair_target_note))}
+        ${picker ? "" : row("ประเภทงานซ่อม", model.repairTargetText(values.repair_target, values.repair_target_note))}
         ${row("ไฟล์แนบ", attached, true)}
         ${row("ความเร่งด่วน", values.is_urgent ? "งานด่วน" : "ปกติ")}
         ${row("อาการเสีย", String(values.symptom ?? "").trim(), true)}
@@ -358,6 +435,16 @@
         <td data-label="ราคาต่อหน่วย">${esc(part.price) || "—"}</td>
         <td data-label="หมายเหตุ">${esc(part.note) || "—"}</td></tr>`).join("")}</tbody></table></div>`;
   }
+  // อุปกรณ์ที่ผู้แจ้งเลือกตอนแจ้ง (อ่านอย่างเดียว) · info = model.requestDevices(detail) · ใบเก่าที่ไม่มีรายการ = ไม่แสดง
+  // "จากทะเบียน" = รหัสนี้ระบบเติมจากทะเบียน (ฐานข้อมูลคำนวณ) · ไม่มีเครื่องหมาย = ผู้แจ้งพิมพ์เอง/แก้เอง
+  function requestedDevicesTable(info) {
+    if (!info?.rows?.length) return "";
+    return `<h3 class="itrp-subhead">อุปกรณ์ที่แจ้ง</h3><div class="table-wrap"><table class="itrp-parts-table itrp-reqdev-table"><thead><tr><th scope="col">ลำดับ</th><th scope="col">ชนิด</th><th scope="col">รหัส</th><th scope="col">หมายเหตุ</th></tr></thead><tbody>${info.rows.map((device) => `<tr>
+        <td data-label="ลำดับ">${esc(device.no)}</td>
+        <td data-label="ชนิด">${esc(device.type)}</td>
+        <td data-label="รหัส">${device.code ? `<strong>${esc(device.code)}</strong>${device.fromRegister ? ' <span class="itrp-from-register">จากทะเบียน</span>' : ""}` : '<span class="muted">ไม่ทราบรหัส</span>'}</td>
+        <td data-label="หมายเหตุ" class="itrp-text">${esc(device.note) || "—"}</td></tr>`).join("")}</tbody></table></div>`;
+  }
   // เครื่อง/อุปกรณ์ที่ซ่อมในรอบนี้ (อ่านอย่างเดียว) · devices = reportView(...).devices · อาการ/การแก้ไขเฉพาะเครื่องว่าง = ใช้ของใบ (แสดง "—")
   function devicesTable(devices) {
     if (!devices.length) return "";
@@ -437,10 +524,10 @@
   // ตัวเลือกรหัสเครื่องของ datalist (ฟอร์มส่งงาน / ฟอร์มลงประวัติย้อนหลัง) · เครื่องที่ยกเลิกการใช้งานแล้วมีหมายเหตุใน label · devices = ผลของ app_itrp_list_devices
   const codeOptions = (devices) => (Array.isArray(devices) ? devices : []).map((device) => `<option value="${esc(device.code)}" label="${esc(model.deviceOptionText(device))}"></option>`).join("");
   // ตารางเครื่องที่ซ่อม: ต้องมีอย่างน้อย 1 เครื่อง หรือติ๊ก "งานนี้ไม่มีรหัสเครื่อง" (ติ๊กแล้วซ่อมตาราง ส่งรายการว่าง) · ช่องติ๊กอยู่ท้ายตารางเพื่อให้ช่องแรกที่โฟกัสเมื่อผิดคือรหัสเครื่องแถวแรก
-  const devicesEditor = (assetCode = "") => `<div class="field itrp-devices" data-field="devices">
+  const devicesEditor = (assetCode = "", requestedCodes = []) => `<div class="field itrp-devices" data-field="devices">
       <span class="field-label">เครื่อง / อุปกรณ์ที่ซ่อม ${REQUIRED}</span>
       <div id="itrp-devices-wrap">
-        <ul class="itrp-devices-list" id="itrp-devices-body">${model.initialDeviceRows(assetCode).map((row, index) => deviceRow(index, row)).join("")}</ul>
+        <ul class="itrp-devices-list" id="itrp-devices-body">${model.initialDeviceRows(assetCode, requestedCodes).map((row, index) => deviceRow(index, row)).join("")}</ul>
         <datalist id="itrp-device-codes"></datalist>
         <div class="itrp-parts-tools"><button type="button" class="btn secondary small" id="itrp-device-add">เพิ่มเครื่อง</button><small>ไม่เกิน ${model.MAX_DEVICES} เครื่อง · พิมพ์รหัสเองได้แม้ยังไม่มีในทะเบียน · ใช้เป็นประวัติการซ่อมของแต่ละเครื่อง</small></div>
       </div>
@@ -456,7 +543,8 @@
   // ฟอร์มส่งงาน (ผู้ดูแลงาน IT) ซ่อนไว้จนกดปุ่ม "ส่งงาน" · ส่วน "สำหรับแผนก IT": สาเหตุ สรุปสาเหตุ การตรวจซ่อม การซ่อม-แก้ไข PR./PO. อะไหล่
   // ชื่อผู้ซ่อม/สถานที่ส่งซ่อมใช้ช่องเดียว: ซ่อมภายในซ่อนช่อง · เรียกผู้ซ่อมภายนอกไม่บังคับ · ส่งซ่อมที่บังคับ (ป้ายช่องเปลี่ยนที่ module-itrp.js)
   // assetCode = รหัสเครื่องที่ผู้แจ้งกรอกไว้ในใบ (เติมให้แถวแรกของตารางเครื่อง แก้ได้)
-  function completeFormCard({ assetCode = "" } = {}) {
+  // requestedCodes = รหัสอุปกรณ์ที่ผู้แจ้งเลือกไว้ตอนแจ้ง (มี = เติมเป็นแถวเริ่มต้นแทนรหัสเครื่องเดี่ยว IT แก้/ลบได้)
+  function completeFormCard({ assetCode = "", requestedCodes = [] } = {}) {
     return `<section class="card itrp-complete-card" id="itrp-complete-card" aria-labelledby="itrp-complete-title" hidden>
       <h2 id="itrp-complete-title">ส่งงาน · บันทึกการซ่อม (สำหรับแผนก IT)</h2>
       <p class="muted small">กรอกผลการซ่อมก่อนส่งใบกลับให้ผู้แจ้งตรวจ · ระบบบันทึกคุณเป็นช่างผู้ดำเนินการซ่อมพร้อมวันและเวลา</p>
@@ -469,7 +557,7 @@
         <div class="field" data-field="repair_vendor" id="itrp-vendor-field" hidden><label for="itrp-vendor" id="itrp-vendor-label">ชื่อผู้ซ่อม</label><input class="input" id="itrp-vendor" name="repair_vendor" maxlength="${model.MAX_NOTE}" autocomplete="off"></div>
         <div class="field" data-field="repair_action"><label for="itrp-repair-action">การซ่อม-แก้ไขที่เกิดขึ้น ${REQUIRED}</label><textarea class="textarea" id="itrp-repair-action" name="repair_action" rows="3" maxlength="${model.MAX_LONG_TEXT}"></textarea></div>
         <div class="field" data-field="pr_po_no"><label for="itrp-pr-po">เอกสารสำคัญอ้างอิง ใบ PR./PO.No. (ไม่บังคับ)</label><input class="input" id="itrp-pr-po" name="pr_po_no" maxlength="${model.MAX_PR_PO}" autocomplete="off"></div>
-        ${devicesEditor(assetCode)}
+        ${devicesEditor(assetCode, requestedCodes)}
         ${partsEditor()}
         <div class="form-actions"><button type="button" class="btn secondary" id="itrp-complete-cancel">ยกเลิก</button><button type="submit" class="btn is-primary">ส่งงาน</button></div>
       </form>
@@ -674,22 +762,25 @@
     const pending = has("provide_info") ? model.pendingQuestion(detail) : null;
     const comments = model.commentRows(detail);
     const hasFiles = model.allFiles(detail).length > 0;
+    const requested = model.requestDevices(detail);
     return page(`${detailHead(detail, back)}
       <div class="detail-grid">
         <div class="stack"${hasFiles ? ' id="attachment-gallery"' : ""}>
           ${pending ? answerCard(pending) : ""}
           ${actionsCard(buttons)}
-          ${has("complete") ? completeFormCard({ assetCode: detail.asset_code }) : ""}
+          ${has("complete") ? completeFormCard({ assetCode: detail.asset_code, requestedCodes: model.requestedDeviceCodes(detail) }) : ""}
           ${has("request_rework") ? reworkFormCard() : ""}
           ${has("request_info") ? askFormCard() : ""}
           <section class="card itrp-facts" aria-labelledby="itrp-facts-title"><h2 id="itrp-facts-title">ข้อมูลใบแจ้งซ่อม</h2>
             <dl class="definition-grid">
-              ${fact("รหัสเครื่องคอมพิวเตอร์", esc(detail.asset_code ?? "") || "—")}
-              ${fact("ชื่อเครื่องคอมพิวเตอร์ / อุปกรณ์", esc(detail.device_name))}
+              ${requested.isNew
+                ? fact("เครื่องคอม", esc(requested.hostText) || "—")
+                : `${fact("รหัสเครื่องคอมพิวเตอร์", esc(detail.asset_code ?? "") || "—")}
+              ${fact("ชื่อเครื่องคอมพิวเตอร์ / อุปกรณ์", esc(detail.device_name))}`}
               ${fact("ประเภทคำขอ", esc(model.requestKindText(detail.request_kind, detail.request_kind_note)))}
-              ${fact("ประเภทงานซ่อม", esc(model.repairTargetText(detail.repair_target, detail.repair_target_note)))}
+              ${requested.isNew ? "" : fact("ประเภทงานซ่อม", esc(model.repairTargetText(detail.repair_target, detail.repair_target_note)))}
               ${fact("อาการเสีย", esc(detail.symptom), true)}
-            </dl>
+            </dl>${requestedDevicesTable(requested)}
           </section>
           ${reportCards(detail)}
           ${partChangesPlaceholders()}
@@ -764,6 +855,7 @@
     const report = model.reportView(latest);
     const sign = model.printSignoffs(detail);
     const outcome = model.printOutcome(detail);
+    const requestedInfo = model.requestDevices(detail);
     const duration = workDuration(detail);
     // ข้อความ "(ระบุ: …)" ต่อท้ายเฉพาะตัวเลือก "อื่นๆ" ที่ถูกเลือก
     const otherNote = (note) => (option) => (option.value === "other" ? `(ระบุ: ${esc(note ?? "")})` : "");
@@ -793,7 +885,9 @@
         <table class="itrp-sheet-table"><tbody>
           <tr><th scope="row">ผู้แจ้งซ่อม</th><td>${esc(detail.requester?.full_name ?? "—")}</td><th scope="row">หน่วยงาน</th><td>${esc(detail.department?.name_th ?? "—")}</td></tr>
           <tr><th scope="row">วันที่แจ้งซ่อม</th><td>${esc(model.formatDateOf(detail.created_at))}</td><th scope="row">เวลา</th><td>${esc(model.formatTimeOf(detail.created_at))}</td></tr>
-          <tr><th scope="row">รหัสเครื่องคอมพิวเตอร์</th><td>${esc(detail.asset_code ?? "")}</td><th scope="row">ชื่อเครื่อง / อุปกรณ์</th><td>${esc(detail.device_name)}</td></tr>
+          ${requestedInfo.isNew
+    ? `<tr><th scope="row">เครื่องคอม</th><td>${esc(requestedInfo.hostText)}</td><th scope="row">อุปกรณ์ที่แจ้ง</th><td>${esc(model.requestDevicesInline(detail))}</td></tr>`
+    : `<tr><th scope="row">รหัสเครื่องคอมพิวเตอร์</th><td>${esc(detail.asset_code ?? "")}</td><th scope="row">ชื่อเครื่อง / อุปกรณ์</th><td>${esc(detail.device_name)}</td></tr>`}
           <tr><th scope="row">ประเภทคำขอ</th><td colspan="3">${kindChoices}</td></tr>
           <tr><th scope="row">ประเภทงานซ่อม</th><td colspan="3">${targetChoices}</td></tr>
         </tbody></table>
@@ -879,7 +973,7 @@
   // ล้างข้อมูลใบแจ้งซ่อมทดสอบ: เฉพาะ admin ตัวจริงที่อยู่ในโหมดทดสอบ (state.sandbox ตั้งโดย app.js)
   const purgeRow = () => `<div class="itrp-purge"><button type="button" class="btn danger small" id="itrp-purge">ล้างข้อมูลใบแจ้งซ่อมทดสอบ</button></div>`;
 
-  const api = { head, newButton, tabs, page, errorCard, mineList, approvalsList, itList, orderForm, orderReview, uploadPanel, detailPage, detailHead, completeFormCard, partRow, deviceRow, devicesTable, codeOptions, vendorLabel, reworkFormCard, askFormCard, answerCard, commentsCard, reportCards, partsTable, printComments, reworkRoundsCard, filesAndReworks, historyCard, actionsCard, partChangesCard, partChangesLoadFailed, partChangeEditor, partChangesHistoryCard, spareOptions, printPartChanges, printSheet, printPage, settingsPage, staffTable, docCounterCard, purgeRow, testTag };
+  const api = { head, newButton, tabs, page, errorCard, mineList, approvalsList, itList, orderForm, orderReview, hostStatus, pickTypes, devicePicker, requestedDevicesTable, uploadPanel, detailPage, detailHead, completeFormCard, partRow, deviceRow, devicesTable, codeOptions, vendorLabel, reworkFormCard, askFormCard, answerCard, commentsCard, reportCards, partsTable, printComments, reworkRoundsCard, filesAndReworks, historyCard, actionsCard, partChangesCard, partChangesLoadFailed, partChangeEditor, partChangesHistoryCard, spareOptions, printPartChanges, printSheet, printPage, settingsPage, staffTable, docCounterCard, purgeRow, testTag };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_ITRP_PAGES = Object.freeze(api);
 })(typeof window !== "undefined" ? window : globalThis);

@@ -119,7 +119,7 @@
       return;
     }
     try {
-      if (view === "new") return renderNew(role, version);
+      if (view === "new") return await renderNew(role, version);
       if (view === "order") return await renderOrder(params.get("id"), role, version);
       if (view === "print") return await renderPrint(params.get("id"), version);
       if (view === "history-print") return await renderHistoryPrint(params.get("code"), version);
@@ -275,13 +275,27 @@
   }
 
   /* ---------- แจ้งซ่อมใหม่ ---------- */
-  function renderNew(role, version) {
-    const requester = { name: role.full_name, department: role.department?.name_th };
-    const html = pages.page(`${pages.head({ title: "แจ้งซ่อมใหม่", back: { href: model.repairUrl("mine"), label: "‹ ใบแจ้งซ่อม" }, isTest: Boolean(role.is_test) })}${pages.orderForm({ requester })}`);
-    if (paint(html, "แจ้งซ่อมใหม่", version)) bindOrderForm(role, version);
+  // ฐานข้อมูลมีฟังก์ชันค้นทะเบียน (app_itrp_lookup_host) แล้วหรือยัง: เรียกด้วยรหัสว่างซึ่งฟังก์ชันจริงตอบ "กรุณาระบุรหัสเครื่อง" (ไม่ใช่ error แบบไม่มีฟังก์ชัน)
+  // ไม่มีฟังก์ชัน (เจ้าของ merge หน้าเว็บก่อน apply migration) = ใช้ฟอร์มแบบเดิมเงียบ ๆ · error อื่น (เน็ตหลุด ฯลฯ) นับว่ามี เพราะการค้นจริงจะแจ้งข้อผิดพลาดในฟอร์มเอง
+  async function pickerAvailable() {
+    try {
+      await rpc("app_itrp_lookup_host", { p_code: "" });
+      return true;
+    } catch (error) {
+      return !model.isMissingFunction(error);
+    }
   }
 
-  function bindOrderForm(role, version) {
+  async function renderNew(role, version) {
+    const picker = await pickerAvailable();
+    if (version !== pageVersion) return;
+    const requester = { name: role.full_name, department: role.department?.name_th };
+    const html = pages.page(`${pages.head({ title: "แจ้งซ่อมใหม่", back: { href: model.repairUrl("mine"), label: "‹ ใบแจ้งซ่อม" }, isTest: Boolean(role.is_test) })}${pages.orderForm({ requester, picker })}`);
+    if (paint(html, "แจ้งซ่อมใหม่", version)) bindOrderForm(role, version, { picker });
+  }
+
+  // picker = true: ขั้นที่ 2 เป็นส่วนเลือกอุปกรณ์จากทะเบียน (ค้นรหัสเครื่องคอม → ติ๊กชนิดอุปกรณ์) · false: ช่องรหัส/ชื่อเครื่องแบบเดิม
+  function bindOrderForm(role, version, { picker = false } = {}) {
     const form = document.querySelector("#itrp-form");
     const card = document.querySelector("#itrp-form-card");
     const message = document.querySelector("#itrp-message");
@@ -289,34 +303,74 @@
     const draftApi = window.MNP_FORM_DRAFT;
     const kindNoteField = form.querySelector("#itrp-kind-note-field");
     const kindNoteInput = form.querySelector("#itrp-kind-note");
-    const targetNoteField = form.querySelector("#itrp-target-note-field");
-    const targetNoteInput = form.querySelector("#itrp-target-note");
+    // ช่องประเภทงานซ่อม (แบบเดิม) มีเฉพาะโหมดเดิม จึงหาตอนใช้ ไม่เก็บไว้ล่วงหน้า
+    const targetNoteField = () => form.querySelector("#itrp-target-note-field");
+    const targetNoteInput = () => form.querySelector("#itrp-target-note");
     const filesInput = form.querySelector("#itrp-files");
     const checked = (name) => form.querySelector(`[name="${name}"]:checked`)?.value ?? "";
+    const valueOf = (selector) => form.querySelector(selector)?.value ?? "";
     // ไฟล์ที่ส่งจริง: หลัง modules/attachment-image.js เตรียมไฟล์แล้ว (แนบได้เสมอ ไม่มีตัวเลือก "มี/ไม่มี")
     const chosenFiles = () => Array.from(filesInput.files ?? []);
     let submitted = false;
     let submitting = false; // กันกดส่งซ้ำระหว่างรอคำตอบ (ปุ่มถูกปิดด้วย setFormBusy อีกชั้น)
 
+    // ---- ส่วนเลือกอุปกรณ์จากทะเบียน (เฉพาะโหมด picker) ----
+    // สถานะเก็บเป็นตัวแปรเดียวกับที่ใช้เก็บร่าง: host = เครื่องที่ค้นพบ · hostUnknown · picks = แถวที่ติ๊ก · lookup = สถานะการค้น (ไม่เก็บในร่าง)
+    let host = null;
+    let hostUnknown = false;
+    let picks = [];
+    let lookup = "idle"; // idle | loading | notfound | error
+    let lookupSeq = 0; // ผลค้นที่ตอบช้ากว่าการกระทำใหม่ (แก้รหัส/ติ๊กไม่ทราบ) ถูกทิ้ง
+    let searchingCode = ""; // รหัสที่กำลังค้นอยู่ (กันค้นรหัสเดียวกันซ้ำ)
+    const hostInput = () => form.querySelector("#itrp-host-input");
+    const normalizeHostCode = (value) => String(value ?? "").trim().toUpperCase();
+    const pickerState = () => ({ host, hostUnknown, picks, lookup });
+
     const currentValues = () => ({
-      asset_code: form.querySelector("#itrp-asset-code").value,
-      device_name: form.querySelector("#itrp-device-name").value,
+      asset_code: valueOf("#itrp-asset-code"),
+      device_name: valueOf("#itrp-device-name"),
       request_kind: checked("request_kind"),
       request_kind_note: kindNoteInput.value,
       repair_target: checked("repair_target"),
-      repair_target_note: targetNoteInput.value,
+      repair_target_note: targetNoteInput()?.value ?? "",
       symptom: form.querySelector("#itrp-symptom").value,
       is_urgent: form.querySelector("#itrp-urgent").checked,
+      host_input: picker ? valueOf("#itrp-host-input") : "",
+      host: picker ? host : null,
+      host_unknown: picker ? hostUnknown : false,
+      picks: picker ? picks : [],
     });
+    // ข้อความผิดของส่วนเลือกอุปกรณ์ ณ ตอนนี้ (โหมดเดิมไม่มี) · ระหว่างค้นอยู่ให้รอ ไม่ฟ้องว่ายังไม่ได้ยืนยัน (บนมือถือ blur ของช่องรหัสเกิดก่อนกดปุ่มถัดไป)
+    const pickerProblem = () => {
+      if (!picker) return "";
+      if (lookup === "loading") return "กำลังค้นหารหัสเครื่อง รอสักครู่แล้วกดอีกครั้ง";
+      return model.pickerProblem(currentValues());
+    };
     // เลือก "อื่นๆ" ต้องระบุ: ช่องข้อความโผล่เมื่อเลือก (ซ่อนแล้วล้างข้อผิดพลาดของช่องนั้น)
     const syncNotes = () => {
       const kindOther = checked("request_kind") === "other";
       kindNoteField.hidden = !kindOther;
       if (!kindOther) stepsApi.clearFieldError(form, "request_kind_note");
-      const targetOther = checked("repair_target") === "other";
-      targetNoteField.hidden = !targetOther;
-      if (!targetOther) stepsApi.clearFieldError(form, "repair_target_note");
+      const targetField = targetNoteField();
+      if (targetField) {
+        const targetOther = checked("repair_target") === "other";
+        targetField.hidden = !targetOther;
+        if (!targetOther) stepsApi.clearFieldError(form, "repair_target_note");
+      }
     };
+    const redrawHost = () => { const box = form.querySelector("#itrp-host-status"); if (box) box.innerHTML = pages.hostStatus(pickerState()); };
+    const redrawPicks = () => { const box = form.querySelector("#itrp-pick-body"); if (box) box.innerHTML = pages.pickTypes(pickerState()); };
+    // ช่องรหัส/ปุ่มค้นหาปิดเมื่อติ๊ก "ไม่ทราบรหัสเครื่อง"
+    const syncHostControls = () => {
+      const input = hostInput();
+      const search = form.querySelector("#itrp-host-search");
+      const unknownBox = form.querySelector("#itrp-host-unknown");
+      if (input) input.disabled = hostUnknown;
+      if (search) search.disabled = hostUnknown;
+      if (unknownBox) unknownBox.checked = hostUnknown;
+    };
+    // เปลี่ยนเครื่อง/โหมดแล้วรายการที่ติ๊กไว้ไม่ตรงกับเครื่องใหม่ → ล้างทิ้ง (ไม่ให้รหัสของเครื่องเก่าติดไปกับใบ)
+    const resetPicker = () => { lookupSeq += 1; host = null; picks = []; lookup = "idle"; redrawHost(); redrawPicks(); };
     const drafts = draftApi.createDraftStore({ key: draftApi.draftKey("ITRP", role.employee_id) });
     const autosave = draftApi.createAutosave({ store: drafts, values: currentValues });
     form.addEventListener("input", () => autosave.schedule());
@@ -324,14 +378,27 @@
 
     const restoreDraft = (values) => {
       const setRadio = (name, value) => form.querySelectorAll(`[name="${name}"]`).forEach((radio) => { radio.checked = radio.value === value; });
-      form.querySelector("#itrp-asset-code").value = values.asset_code ?? "";
-      form.querySelector("#itrp-device-name").value = values.device_name ?? "";
+      const setValue = (selector, value) => { const input = form.querySelector(selector); if (input) input.value = value ?? ""; };
+      setValue("#itrp-asset-code", values.asset_code);
+      setValue("#itrp-device-name", values.device_name);
       setRadio("request_kind", values.request_kind);
       kindNoteInput.value = values.request_kind_note ?? "";
       setRadio("repair_target", values.repair_target);
-      targetNoteInput.value = values.repair_target_note ?? "";
+      setValue("#itrp-target-note", values.repair_target_note);
       form.querySelector("#itrp-symptom").value = values.symptom ?? "";
       form.querySelector("#itrp-urgent").checked = Boolean(values.is_urgent);
+      if (picker) {
+        // ร่างจากฟอร์มแบบเดิมไม่มีส่วนเลือกอุปกรณ์ → เริ่มส่วนนี้ใหม่ · ร่างแบบใหม่กู้ครบ (ผลค้นที่เก็บไว้ใช้ต่อ ฐานข้อมูลตรวจซ้ำตอนส่งอยู่แล้ว)
+        lookupSeq += 1;
+        hostUnknown = Boolean(values.host_unknown);
+        host = !hostUnknown && values.host?.code ? values.host : null;
+        picks = Array.isArray(values.picks) ? values.picks : [];
+        lookup = "idle";
+        setValue("#itrp-host-input", values.host_input);
+        syncHostControls();
+        redrawHost();
+        redrawPicks();
+      }
       syncNotes();
     };
     const draft = drafts.load();
@@ -341,7 +408,7 @@
       draftApi.offerDraft({
         banner: document.querySelector("#itrp-draft"),
         message: `มีร่างใบแจ้งซ่อมค้างจาก ${formatDate(new Date(draft.savedAt).toISOString(), true)}`,
-        onUse: () => { draftPending = false; autosave.start(); restoreDraft(draft.values); form.querySelector("#itrp-device-name").focus(); },
+        onUse: () => { draftPending = false; autosave.start(); restoreDraft(draft.values); form.querySelector(picker ? "#itrp-host-input" : "#itrp-device-name")?.focus(); },
         onDiscard: () => { draftPending = false; autosave.start(); drafts.clear(); focusFirstStep(form); },
         // กรอกเองโดยไม่ตอบแถบ = เริ่มใบใหม่ ร่างเดิมถูกแทนด้วยสิ่งที่กรอก
         form,
@@ -356,11 +423,99 @@
       onDiscard: () => { autosave.stop(); drafts.clear(); },
     });
 
-    const renderReview = () => { form.querySelector("#itrp-review").innerHTML = pages.orderReview(currentValues(), chosenFiles().map((file) => ({ name: file.name, size: file.size }))); };
+    const renderReview = () => { form.querySelector("#itrp-review").innerHTML = pages.orderReview(currentValues(), chosenFiles().map((file) => ({ name: file.name, size: file.size })), { picker }); };
+    // ช่อง "devices" ของกติกา = ข้อความผิดของส่วนเลือกอุปกรณ์ (ว่าง = ผ่าน) ไม่ใช่ค่าที่ผู้ใช้กรอก จึงเติมตอนตรวจเท่านั้น ไม่อยู่ในร่าง
     const stepper = stepsApi.bindStepper({
-      form, count: 3, rules: model.repairRules({ requestKind: () => checked("request_kind"), repairTarget: () => checked("repair_target") }), values: currentValues, onReview: renderReview, scrollTarget: card,
+      form, count: 4,
+      rules: model.repairRules({ requestKind: () => checked("request_kind"), repairTarget: () => checked("repair_target"), picker: () => picker, pickerProblem }),
+      values: () => ({ ...currentValues(), devices: pickerProblem() }), onReview: renderReview, scrollTarget: card,
     });
     syncNotes();
+
+    /* ---- ส่วนเลือกอุปกรณ์: ค้นรหัสเครื่อง ติ๊กชนิด แก้รหัส ---- */
+    // หลังติ๊ก/แก้รายการ: ล้างข้อความผิดของช่อง devices แล้วเก็บร่าง
+    const picksChanged = () => { stepsApi.clearFieldError(form, "devices"); autosave.schedule(); };
+    async function runLookup() {
+      const input = hostInput();
+      const typed = normalizeHostCode(input?.value);
+      if (!input || hostUnknown) return;
+      if (!typed) { if (host || lookup !== "idle") resetPicker(); return; }
+      if (host && host.code === typed) return; // ยืนยันเครื่องนี้ไว้แล้ว ไม่ต้องค้นซ้ำ (blur แล้วตามด้วยกดปุ่มค้นหา)
+      if (lookup === "loading" && searchingCode === typed) return; // กำลังค้นรหัสเดียวกันอยู่ (blur แล้วตามด้วยกดปุ่ม)
+      const seq = ++lookupSeq;
+      lookup = "loading";
+      searchingCode = typed;
+      redrawHost();
+      let data;
+      try {
+        data = await rpc("app_itrp_lookup_host", { p_code: typed });
+      } catch (error) {
+        if (seq !== lookupSeq || version !== pageVersion) return;
+        // ไม่ใช่ error แบบ "ไม่มีฟังก์ชัน" ที่ควรส่งเข้า log: ผู้แจ้งยังติ๊ก "ไม่ทราบรหัสเครื่อง" แล้วแจ้งต่อได้
+        if (!model.isMissingFunction(error)) failure(error);
+        host = null; picks = []; lookup = "error";
+        redrawHost(); redrawPicks();
+        return;
+      }
+      if (seq !== lookupSeq || version !== pageVersion || !form.isConnected) return;
+      const found = model.normalizeLookup(data);
+      if (!found) {
+        host = null; picks = []; lookup = "notfound";
+      } else {
+        if (host?.code !== found.code) picks = []; // เครื่องใหม่ = รายการที่ติ๊กของเครื่องเก่าไม่ใช้
+        host = found; lookup = "idle";
+        input.value = found.code; // แสดงรหัสมาตรฐานของเครื่อง (พิมพ์ pd-reg2 ได้ PD-COM2)
+      }
+      redrawHost(); redrawPicks();
+      stepsApi.clearFieldError(form, "devices");
+      autosave.schedule();
+    }
+    if (picker) {
+      form.addEventListener("click", (event) => {
+        const target = event.target;
+        if (target?.closest?.("#itrp-host-search")) { event.preventDefault?.(); runLookup(); return; }
+        const add = target?.closest?.("[data-pick-add]");
+        if (add) { picks = model.addPickRow(picks, add.dataset.pickAdd); redrawPicks(); picksChanged(); return; }
+        const remove = target?.closest?.("[data-pick-remove]");
+        if (remove) { picks = model.removePickRow(picks, Number(remove.dataset.pickRemove)); redrawPicks(); picksChanged(); }
+      });
+      form.addEventListener("change", (event) => {
+        const target = event.target;
+        if (target?.id === "itrp-host-unknown") {
+          hostUnknown = Boolean(target.checked);
+          resetPicker(); // เปลี่ยนโหมด: ผลค้นและรายการที่ติ๊กของโหมดเก่าไม่ใช้
+          syncHostControls();
+          stepsApi.clearFieldError(form, "devices");
+          if (!hostUnknown) hostInput()?.focus?.();
+          return;
+        }
+        const type = target?.closest?.("[data-pick-type]") ?? (target?.dataset?.pickType ? target : null);
+        if (type) { picks = model.toggleType(picks, type.dataset.pickType, { host, unknown: hostUnknown }); redrawPicks(); picksChanged(); return; }
+        const use = target?.dataset?.pickUse;
+        if (use !== undefined) { picks = model.setPickField(picks, Number(use), "on", target.checked); redrawPicks(); picksChanged(); }
+      });
+      form.addEventListener("input", (event) => {
+        const target = event.target;
+        if (target?.id === "itrp-host-input") {
+          // แก้รหัสหลังยืนยันเครื่องแล้ว (รหัสต่างจากเครื่องที่พบ) = ยืนยันใหม่ · ผลค้นที่ค้างอยู่ถูกทิ้ง
+          lookupSeq += 1;
+          if (lookup === "loading") { lookup = "idle"; redrawHost(); }
+          if (host && normalizeHostCode(target.value) !== host.code) resetPicker();
+          else if (lookup === "notfound" || lookup === "error") { lookup = "idle"; redrawHost(); }
+          return;
+        }
+        const code = target?.dataset?.pickCode;
+        if (code !== undefined) { picks = model.setPickField(picks, Number(code), "code", target.value); picksChanged(); return; }
+        const note = target?.dataset?.pickNote;
+        if (note !== undefined) { picks = model.setPickField(picks, Number(note), "note", target.value); picksChanged(); }
+      });
+      form.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && event.target?.id === "itrp-host-input") { event.preventDefault(); runLookup(); }
+      });
+      // ออกจากช่องรหัสแล้วค้นเลย (ไม่ต้องกดปุ่ม) · ผลค้นที่เพิ่งยืนยันไว้ หรือกำลังค้นรหัสเดิม จะไม่ค้นซ้ำ
+      form.addEventListener("focusout", (event) => { if (event.target?.id === "itrp-host-input") runLookup(); });
+      syncHostControls();
+    }
 
     const showFormError = (html) => {
       message.innerHTML = `<div class="form-message error" role="alert">${html}</div>`;
@@ -377,12 +532,19 @@
       if (files.length && filesInput.validationMessage) { showFormError(escapeHtml(model.FILES_PREPARING_MESSAGE)); return; }
       const fileProblem = model.validateFiles(files);
       if (fileProblem) { showFormError(escapeHtml(fileProblem)); return; }
-      const params = model.createParams(currentValues());
+      const params = model.createParams(currentValues(), { picker });
       submitting = true;
       setFormBusy(form, true);
       let created;
       try {
-        const data = await rpc("app_itrp_create", params);
+        let data;
+        try {
+          data = await rpc("app_itrp_create", params);
+        } catch (error) {
+          // ฐานข้อมูลยังไม่มีพารามิเตอร์ใหม่ (migration ยังไม่ขึ้น): ส่งแบบ 8 พารามิเตอร์เดิมด้วยรหัสเครื่อง/ชื่ออุปกรณ์ที่คำนวณไว้แล้ว
+          if (!picker || !model.isMissingFunction(error)) throw error;
+          data = await rpc("app_itrp_create", model.legacyCreateParams(params));
+        }
         created = Array.isArray(data) ? data[0] : data;
         if (!created?.id) throw Object.assign(new Error("ไม่ได้รับเลขที่เอกสารจากระบบ"), { code: "" });
       } catch (error) {
@@ -392,6 +554,7 @@
         showFormError(`${escapeHtml(info.message)}${check}`);
         submitting = false;
         setFormBusy(form, false);
+        if (picker) syncHostControls(); // setFormBusy เปิดทุกช่องกลับ แต่ช่องรหัสต้องปิดอยู่ถ้าติ๊ก "ไม่ทราบรหัส"
         form.querySelector("[data-step-submit]")?.focus({ preventScroll: true });
         return;
       }
