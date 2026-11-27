@@ -552,7 +552,7 @@ test("the IT complete form starts from the codes the requester picked", () => {
 
 test("the purge button and the version tag", () => {
   assert.match(pages.purgeRow(), /id="itrp-purge"[^>]*>ล้างข้อมูลใบแจ้งซ่อมทดสอบ</);
-  assert.match(pages.page("<p>x</p>"), /<p class="itrp-version no-print" title="[^"]*2.00[^"]*">V2.00<\/p>/);
+  assert.match(pages.page("<p>x</p>"), /<p class="itrp-version no-print" title="[^"]*2.01[^"]*">V2.01<\/p>/);
   assert.match(pages.errorCard("พัง <b>"), /พัง &lt;b&gt;/);
   assert.doesNotMatch(pages.errorCard("x", { retry: false }), /itrp-retry/);
 });

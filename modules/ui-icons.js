@@ -62,6 +62,8 @@
     MT_REPAIR: "wrench",
     NCR_CAR: "tag",
     IT_REPAIR: "monitor",
+    IT_COMPUTER_REPAIR: "monitor",
+    IT_WORK_ORDER: "clipboard-check",
     MANAGEMENT: "stamp",
     QC: "clipboard-check",
     MNP_LAB: "test-tube",

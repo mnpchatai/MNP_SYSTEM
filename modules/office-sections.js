@@ -21,6 +21,7 @@
 //        loadCardSummary() = async คืน { openCount, badge, title } หรือ null/ throw ถ้าอ่านไม่ได้ (ไม่ต้องมีก็ได้)
 //          openCount = จำนวนเอกสารที่ผู้ใช้เห็นและยังไม่จบ (number) · null = นับไม่ได้ การ์ดแสดง "ดูสถานะ" แทน ไม่ทำให้หน้าล้ม
 //          badge = ป้ายรอง เช่น "2 รอคุณ" (ว่างได้) · title = คำอธิบายตัวเลข (tooltip)
+//   3) (ถ้าอยากให้งานของโมดูลขึ้นหน้าแรก "งานของคุณวันนี้") (window.MNP_OFFICE_HOME ??= {})[<code>] = { label, load(employee) → { tasks, mine } } · สัญญาอยู่ที่หัว modules/office-home.js · ไม่ต้องแตะ app.js
 //   module-office.js อ่านตัวประกาศนี้แล้วส่งให้ itSupportPage({ modules }) · ใบแจ้งซ่อม IT (IT_COMPUTER_REPAIR) และใบสั่งงาน IT (IT_WORK_ORDER) ประกาศตัวเองแล้วทั้งคู่
 //   (โมดูล IT_REPAIR เดิมของคำร้องกลางยังอยู่ แต่ไม่มีการ์ดชี้ไปแล้ว)
 //

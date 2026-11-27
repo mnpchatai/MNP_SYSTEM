@@ -98,6 +98,26 @@
     });
   }
 
+  /* ---------- งานบนหน้าแรก "งานของคุณวันนี้" (app.js renderDashboard ผ่าน window.MNP_OFFICE_HOME) ---------- */
+  // ต้องจัดการ = งานที่ต้องกดทำจริง: ใบที่รอฉันอนุมัติ · งาน IT (เฉพาะผู้ดูแลงาน IT) · ใบของฉันที่รอฉันตอบ/รอฉันยืนยันรับ · ใบอื่นของฉันที่ยังไม่จบอยู่ใน "ใบของฉันที่ยังไม่จบ"
+  // กติกาเลือกงานอยู่ที่ modules/office-home.js (build) ซึ่งใช้ model ของโมดูลนี้ตัวเดียวกับตัวเลขบนแท็บ/การ์ด · ดึงรายการแค่ที่ my_role บอกว่ามีสิทธิ์ · ล้มแล้ว throw ให้หน้าแรกซ่อนเฉพาะโมดูลนี้
+  const homeSource = {
+    code: "IT_COMPUTER_REPAIR",
+    typeName: "ใบแจ้งซ่อม IT",
+    urlOf: (id) => model.repairUrl("order", { id }),
+    titleOf: (row) => model.clip([model.deviceText(row), model.clip(row.symptom, 70)].filter(Boolean).join(" · "), 90) || model.requestKindText(row.request_kind, row.request_kind_note),
+  };
+  async function loadHome() {
+    const [role, mine] = await Promise.all([rpc("app_itrp_my_role"), rpc("app_itrp_list_mine")]);
+    const hasApprovals = model.canApprove(role);
+    const hasItWork = Boolean(role?.is_it_admin);
+    const [approvals, it] = await Promise.all([
+      hasApprovals ? rpc("app_itrp_list_pending_approvals") : [],
+      hasItWork ? rpc("app_itrp_list_it") : [],
+    ]);
+    return window.MNP_OFFICE_HOME_RULES.build({ model, role, approvals, it, mine, source: homeSource });
+  }
+
   /* ---------- เส้นทาง ---------- */
   async function render(params) {
     pageVersion += 1;
@@ -1517,4 +1537,6 @@
   // ประกาศตัวเองให้การ์ดในเมนู "ระบบสำนักงาน" (วิธีเพิ่มโมดูลใหม่ดูที่หัวไฟล์ modules/office-sections.js) key = รหัสโมดูลของการ์ด
   // version = เลขเวอร์ชัน (ป้าย V…) · loadCardSummary() คืน { openCount, badge, title } หรือ null ถ้าอ่านไม่ได้ (การ์ดแสดง "ดูสถานะ")
   (window.MNP_OFFICE_CARDS ??= {}).IT_COMPUTER_REPAIR = api;
+  // ประกาศงานให้หน้าแรก (สัญญาอยู่ที่หัวไฟล์ modules/office-home.js) key = รหัสโมดูลของการ์ด เหมือน MNP_OFFICE_CARDS
+  (window.MNP_OFFICE_HOME ??= {}).IT_COMPUTER_REPAIR = { label: "ใบแจ้งซ่อม IT", load: loadHome };
 })();

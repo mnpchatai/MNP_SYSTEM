@@ -98,6 +98,26 @@
     });
   }
 
+  /* ---------- งานบนหน้าแรก "งานของคุณวันนี้" (app.js renderDashboard ผ่าน window.MNP_OFFICE_HOME) ---------- */
+  // ต้องจัดการ = งานที่ต้องกดทำจริง: ใบที่รอฉันอนุมัติ · งาน IT (เฉพาะผู้ดูแลงาน IT) · ใบของฉันที่รอฉันตอบ/รอฉันยืนยันรับ · ใบอื่นของฉันที่ยังไม่จบอยู่ใน "ใบของฉันที่ยังไม่จบ"
+  // กติกาเลือกงานอยู่ที่ modules/office-home.js (build) ซึ่งใช้ model ของโมดูลนี้ตัวเดียวกับตัวเลขบนแท็บ/การ์ด · ดึงรายการแค่ที่ my_role บอกว่ามีสิทธิ์ · ล้มแล้ว throw ให้หน้าแรกซ่อนเฉพาะโมดูลนี้
+  const homeSource = {
+    code: "IT_WORK_ORDER",
+    typeName: "ใบสั่งงาน IT",
+    urlOf: (id) => model.workOrderUrl("order", { id }),
+    titleOf: (row) => model.clip([model.requestTypeText(row.request_type, row.misc_detail), model.clip(row.details, 70)].filter(Boolean).join(" · "), 90),
+  };
+  async function loadHome() {
+    const [role, mine] = await Promise.all([rpc("app_itwo_my_role"), rpc("app_itwo_list_mine")]);
+    const hasApprovals = model.canApprove(role);
+    const hasItWork = Boolean(role?.is_it_admin);
+    const [approvals, it] = await Promise.all([
+      hasApprovals ? rpc("app_itwo_list_pending_approvals") : [],
+      hasItWork ? rpc("app_itwo_list_it") : [],
+    ]);
+    return window.MNP_OFFICE_HOME_RULES.build({ model, role, approvals, it, mine, source: homeSource });
+  }
+
   /* ---------- เส้นทาง ---------- */
   async function render(params) {
     pageVersion += 1;
@@ -772,4 +792,6 @@
   // ประกาศตัวเองให้การ์ดในเมนู "ระบบสำนักงาน" (วิธีเพิ่มโมดูลใหม่ดูที่หัวไฟล์ modules/office-sections.js) key = รหัสโมดูลของการ์ด
   // version = เลขเวอร์ชัน (ป้าย V…) · loadCardSummary() คืน { openCount, badge, title } หรือ null ถ้าอ่านไม่ได้ (การ์ดแสดง "ดูสถานะ")
   (window.MNP_OFFICE_CARDS ??= {}).IT_WORK_ORDER = api;
+  // ประกาศงานให้หน้าแรก (สัญญาอยู่ที่หัวไฟล์ modules/office-home.js) key = รหัสโมดูลของการ์ด เหมือน MNP_OFFICE_CARDS
+  (window.MNP_OFFICE_HOME ??= {}).IT_WORK_ORDER = { label: "ใบสั่งงาน IT", load: loadHome };
 })();
