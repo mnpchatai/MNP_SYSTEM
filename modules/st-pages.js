@@ -705,8 +705,13 @@
         ${ui.field("มีผลตั้งแต่", ui.input("effectiveFrom", { type: "date", value: today, required: true }), { required: true, hint: esc("บันทึกแล้วแก้ไม่ได้ ถ้าผิดให้บันทึกราคาใหม่ (วันเดียวกันใช้ราคาที่บันทึกล่าสุด)") })}</div>
         ${ui.field("หมายเหตุ", ui.input("note", { placeholder: "เช่น ใบเสนอราคาเลขที่ …", extra: 'maxlength="300"' }))}</form>` : "";
     const title = `${part ? "ราคาของซื้อ" : "ราคาเคมี"} · ${code}`;
-    const html = ui.dialog("costPrice", title, `${nameLine ? `<p class="muted small">${esc(nameLine)}</p>` : ""}${categoryForm}${form}${compare}${historyTable}`, { wide: true, footer: `${ui.closeButton(prices.canWrite ? "ยกเลิก" : "ปิด")}${prices.canWrite ? '<button class="btn rf-btn" type="submit" form="st-price-form">บันทึกราคา</button>' : ""}` });
+    const html = ui.dialog("costPrice", title, `${nameLine ? `<p class="muted small">${esc(nameLine)}</p>` : ""}${history.length ? `<div>${compare}${historyTable}</div>${prices.canWrite ? "<p><strong>บันทึกราคาใหม่</strong></p>" : ""}${form}${categoryForm}` : `${categoryForm}${form}${compare}${historyTable}`}`, { wide: true, footer: `${ui.closeButton(prices.canWrite ? "ยกเลิก" : "ปิด")}${prices.canWrite ? '<button class="btn rf-btn" type="submit" form="st-price-form">บันทึกราคา</button>' : ""}` });
     const bind = (dialog) => {
+      // เปิดจากปุ่ม "ดูประวัติราคา": ให้เห็นประวัติก่อน (เบราว์เซอร์จะโฟกัสช่องราคาแล้วเลื่อนผ่านตารางไป) → โฟกัสปุ่มปิดและเลื่อนกลับบนสุด
+      if (history.length) setTimeout(() => {
+        dialog.querySelector("button")?.focus?.({ preventScroll: true });
+        dialog.querySelectorAll?.("*").forEach((node) => { if (node.scrollTop) node.scrollTop = 0; });
+      }, 0);
       const catNode = dialog.querySelector("form[data-cost-category]");
       catNode?.addEventListener("submit", async (event) => {
         event.preventDefault();
