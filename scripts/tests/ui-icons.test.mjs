@@ -30,7 +30,10 @@ test("every live and sandbox request module has its own type icon, and unknown t
     assert.equal(icons.typeIcon(code), icons.icon(name));
   }
   assert.equal(new Set(codes.map((code) => icons.TYPE_ICONS[code])).size, codes.length, "no two modules share an icon");
-  assert.deepEqual(Object.keys(icons.TYPE_ICONS).sort(), [...codes].sort());
+  // งานของระบบสำนักงานบนหน้าแรก (modules/office-home.js) ใช้รหัสโมดูลของการ์ดเป็นรหัสประเภท: มีไอคอนของตัวเอง (ใช้ชื่อไอคอนร่วมกับ IT_REPAIR / QC ได้ เพราะไม่ได้อยู่ในรายการคำร้องเดียวกัน)
+  const officeCodes = ["IT_COMPUTER_REPAIR", "IT_WORK_ORDER"];
+  for (const code of officeCodes) assert.ok(Object.hasOwn(icons.PATHS, icons.TYPE_ICONS[code]), `${code} has an icon`);
+  assert.deepEqual(Object.keys(icons.TYPE_ICONS).sort(), [...codes, ...officeCodes].sort());
   assert.equal(icons.typeIconName("HR_LEAVE"), "document");
   // รหัสโมดูลในตารางต้องตรงกับที่โมดูลลงทะเบียนจริง
   for (const code of codes) {

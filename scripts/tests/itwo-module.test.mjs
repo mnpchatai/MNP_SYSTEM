@@ -102,7 +102,7 @@ function world({ as = "emp", draft = null } = {}) {
     },
   };
   Object.assign(context, {
-    window: context, console, URLSearchParams, Intl, Date, Number, Object, Promise, Array, JSON, Math, Set, Map, String, Boolean, Event: class {}, document: documentStub,
+    window: context, console, setTimeout, clearTimeout, URLSearchParams, Intl, Date, Number, Object, Promise, Array, JSON, Math, Set, Map, String, Boolean, Event: class {}, document: documentStub,
     File, escapeHtml, formatDate: (value) => `D(${value})`, location: { hash: "" }, app,
     state: { employee: { id: "me" }, sandbox: null },
     crypto: { randomUUID: () => `aaaaaaaa-aaaa-4aaa-8aaa-${String(++uuidCounter).padStart(12, "0")}` },
@@ -163,7 +163,7 @@ function world({ as = "emp", draft = null } = {}) {
     createAutosave: () => ({ schedule() {}, start() {}, stop() { calls.autosaveStopped += 1; } }),
     offerDraft: (options) => { calls.offered = options; },
   };
-  for (const file of ["modules/itwo-model.js", "modules/itwo-pages.js", "modules/module-itwo.js"]) vm.runInContext(read(file), context);
+  for (const file of ["modules/office-home.js", "modules/itwo-model.js", "modules/itwo-pages.js", "modules/module-itwo.js"]) vm.runInContext(read(file), context);
 
   function makeForm() {
     const radios = { request_type: ["design", "misc"].map((value) => el({ value })), attachment_flag: ["yes", "no", "other"].map((value) => el({ value, checked: value === "no" })) };
@@ -1869,9 +1869,67 @@ test("v1.02: the status 'received' is labelled 'จบงานแล้ว' on 
 test("v1.02: the module announces its version for the card (the same value shown at the bottom of every page)", async () => {
   const w = world();
   assert.equal(w.context.window.MNP_ITWO.version, w.context.window.MNP_ITWO_MODEL.MODULE_VERSION);
-  assert.equal(w.context.window.MNP_ITWO.version, "1.08");
-  assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_WORK_ORDER.version, "1.08", "announced to the office menu cards (central mechanism)");
+  assert.equal(w.context.window.MNP_ITWO.version, "1.09");
+  assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_WORK_ORDER.version, "1.09", "announced to the office menu cards (central mechanism)");
   assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_WORK_ORDER.loadCardSummary, w.context.window.MNP_ITWO.loadCardSummary);
   await w.open("");
-  assert.match(w.html, />V1.08</);
+  assert.match(w.html, />V1.09</);
+});
+
+/* ---------- งานบนหน้าแรก "งานของคุณวันนี้" (window.MNP_OFFICE_HOME → modules/office-home.js) ---------- */
+test("home: the module registers its work for the home page under its card code, and the order walks through the right person's queue at every step", async () => {
+  const w = world();
+  const home = w.context.window.MNP_OFFICE_HOME.IT_WORK_ORDER;
+  assert.equal(home.label, "ใบสั่งงาน IT");
+  const load = async (key) => { w.as(key); w.calls.rpc.length = 0; return plain(await home.load({ id: "x" })); };
+  const order = await w.create({ details: "ออกแบบกล่องใหม่", is_urgent: true });
+
+  // ผู้แจ้งเห็นใบใน "ใบของฉันที่ยังไม่จบ" (ยังไม่มีงานให้ทำ) · เรียกแค่ my_role + list_mine เพราะไม่มีสิทธิ์อนุมัติ/IT
+  let result = await load("emp");
+  assert.deepEqual(result.tasks, []);
+  assert.deepEqual(result.mine.map((row) => [row.id, row.progressStatus, row.urgent, row.label]), [[order.id, "pending_dept", true, "รอผู้จัดการแผนก"]]);
+  assert.deepEqual([...new Set(w.names())].sort(), ["app_itwo_list_mine", "app_itwo_my_role"]);
+  assert.equal(result.mine[0].href, `#/office?module=work-order&view=order&id=${order.id}`);
+  assert.match(result.mine[0].title, /^งานออกแบบ · ออกแบบกล่องใหม่/);
+
+  // ผู้จัดการแผนก: ใบรอตัวเองอนุมัติ → ต้องจัดการ (คนอื่นที่ไม่ใช่ผู้อนุมัติไม่เห็น)
+  result = await load("mgr");
+  assert.deepEqual(result.tasks.map((task) => [task.id, task.task, task.typeName, task.urgent, task.meta]), [[order.id, "รออนุมัติ", "ใบสั่งงาน IT", true, "สมชาย ใจดี · การตลาด"]]);
+  assert.equal(w.names().includes("app_itwo_list_it"), false, "the IT list is not fetched for someone who is not IT staff");
+  assert.deepEqual((await load("other")).tasks, []);
+
+  w.as("mgr");
+  await w.context.sb.rpc("app_itwo_approve", { p_work_order_id: order.id });
+  assert.deepEqual((await load("mgr")).tasks, [], "once approved it leaves the manager's queue");
+  // ผู้อนุมัติขั้น IT
+  result = await load("itapp");
+  assert.deepEqual(result.tasks.map((task) => task.task), ["รออนุมัติ"]);
+  await w.context.sb.rpc("app_itwo_approve", { p_work_order_id: order.id });
+
+  // IT: เริ่มงาน → ส่งงาน
+  result = await load("itadm");
+  assert.deepEqual(result.tasks.map((task) => task.task), ["เริ่มงาน"]);
+  assert.ok(w.names().includes("app_itwo_list_it"));
+  await w.context.sb.rpc("app_itwo_start", { p_work_order_id: order.id });
+  assert.deepEqual((await load("itadm")).tasks.map((task) => task.task), ["ส่งงาน"]);
+  await w.context.sb.rpc("app_itwo_complete", { p_work_order_id: order.id });
+  assert.deepEqual((await load("itadm")).tasks, [], "after the hand-over it waits for the requester, not for IT");
+
+  // ผู้แจ้ง: ใบย้ายจาก "ใบของฉันที่ยังไม่จบ" ไปคิว "ต้องจัดการ" (ไม่ซ้ำสองที่)
+  result = await load("emp");
+  assert.deepEqual(result.tasks.map((task) => [task.id, task.task]), [[order.id, "IT ส่งงานแล้ว รอคุณยืนยัน"]]);
+  assert.deepEqual(result.mine, []);
+  await w.context.sb.rpc("app_itwo_receive", { p_work_order_id: order.id });
+  result = await load("emp");
+  assert.deepEqual([result.tasks, result.mine], [[], []], "a finished order is on neither list");
+});
+
+test("home: a failing read is not hidden — load rejects so the home page can tell the user which module is missing", async () => {
+  const w = world();
+  const home = w.context.window.MNP_OFFICE_HOME.IT_WORK_ORDER;
+  w.rpcFail.set("app_itwo_list_mine", Object.assign(new Error("boom"), { code: "XX000" }));
+  await assert.rejects(() => home.load({ id: "x" }), /boom/);
+  w.rpcFail.set("app_itwo_my_role", new Error("no role"));
+  const result = await w.context.window.MNP_OFFICE_HOME_RULES.collect(w.context.window.MNP_OFFICE_HOME, { id: "x" });
+  assert.deepEqual(plain(result.failed), [{ code: "IT_WORK_ORDER", label: "ใบสั่งงาน IT" }]);
 });

@@ -2495,7 +2495,7 @@ async function attachQueueArrivals(pending, repairTasks) {
   }
 }
 
-function homeQueueItems(pending, repairTasks, ncrTasks) {
+function homeQueueItems(pending, repairTasks, ncrTasks, officeTasks = []) {
   return window.MNP_HOME_QUEUE.sortQueue([
     ...pending.map((step) => ({ kind: "approval", id: step.request.id, step, request: step.request, priority: step.request.priority, createdAt: step.arrivedAt ?? step.request.submitted_at ?? step.request.created_at })),
     ...repairTasks.map((task) => ({ kind: "repair", id: task.id, request: task, priority: task.priority, createdAt: task.arrivedAt ?? task.created_at })),
@@ -2506,6 +2506,8 @@ function homeQueueItems(pending, repairTasks, ncrTasks) {
       request: { request_no: ncr.ncr_no, title: ncr.product_name, request_type: { code: "NCR_CAR", name_th: "NCR/CAR" } },
       priority: overdue ? "high" : null, createdAt: ncr.step_since ?? ncr.updated_at ?? ncr.created_at,
     })),
+    // งานของระบบสำนักงาน (ใบสั่งงาน IT, ใบแจ้งซ่อม IT …) ลิงก์ไปหน้าของใบอย่างเดียว · แปลงด้วยกติกากลาง modules/office-home.js
+    ...officeTasks.map(window.MNP_OFFICE_HOME_RULES?.queueItem ?? (() => null)).filter(Boolean),
   ]);
 }
 // งานของคิวที่ลงมือในหน้าของใบเอง (งานซ่อม ขั้นของ NCR) ใช้คำของงาน เช่น "มอบหมายช่าง"
@@ -2527,6 +2529,14 @@ function ncrHomeModule() {
   const entry = requestModule("NCR_CAR");
   return entry?.enabled && deptModuleAllowed(entry.code) ? entry.home ?? null : null;
 }
+// งานของระบบสำนักงานบนหน้าหลัก (ใบสั่งงาน IT, ใบแจ้งซ่อม IT) จากทุกโมดูลที่ลงทะเบียนใน window.MNP_OFFICE_HOME (สัญญาอยู่ที่หัว modules/office-home.js)
+// แผนกที่จำกัดโมดูล (แผนก ID) ไม่เรียกโมดูลที่ไม่ได้สิทธิ์ · ไม่ throw: โมดูลที่ล้ม/ช้าเกิน 3 วินาทีถูกข้าม และคืนชื่อใน failed ให้ผู้เรียกบอกผู้ใช้ หน้าหลักส่วนอื่นขึ้นตามปกติ
+async function loadOfficeHome(employee) {
+  const rules = window.MNP_OFFICE_HOME_RULES;
+  // modules/office-home.js โหลดไม่ขึ้น (แคชเก่า/เครือข่าย): ข้ามงานสำนักงานเงียบ ๆ หน้าหลักและแผง "งานถัดไป" ของส่วนอื่นยังขึ้นตามปกติ
+  if (typeof rules?.collect !== "function") return { tasks: [], mine: [], failed: [] };
+  return rules.collect(window.MNP_OFFICE_HOME, employee, { isAllowed: deptModuleAllowed });
+}
 // ใบอนุมัติ + งานซ่อมของคิว พร้อมเวลาที่ขั้นมาถึง (อ่านต่อทันทีที่ได้รายการ ขนานกับการโหลดส่วนอื่นของหน้า)
 async function loadQueueWork() {
   const [pending, repairTasks] = await Promise.all([getPendingApprovals(), getMyRepairActionItems()]);
@@ -2536,11 +2546,12 @@ async function loadQueueWork() {
 
 async function loadHomeQueueItems() {
   const ncrHome = ncrHomeModule();
-  const [[pending, repairTasks], ncrItems] = await Promise.all([
+  const [[pending, repairTasks], ncrItems, officeItems] = await Promise.all([
     loadQueueWork(),
     ncrHome ? ncrHome.load(state.employee).catch(() => ({ tasks: [] })) : { tasks: [] },
+    loadOfficeHome(state.employee),
   ]);
-  return homeQueueItems(pending, repairTasks, ncrItems.tasks);
+  return homeQueueItems(pending, repairTasks, ncrItems.tasks, officeItems.tasks);
 }
 
 async function renderDashboard(params = new URLSearchParams()) {
@@ -2549,7 +2560,7 @@ async function renderDashboard(params = new URLSearchParams()) {
   const rules = window.MNP_HOME_QUEUE;
   // NCR อยู่ในตาราง ncr_reports แยกจากคำร้อง โมดูลจึงดึงงานของตัวเอง (modules/module-ncr.js home)
   const ncrHome = ncrHomeModule();
-  const [[pending, repairTasks], directory, mineResult, ncrItems] = await Promise.all([
+  const [[pending, repairTasks], directory, mineResult, ncrItems, officeItems] = await Promise.all([
     loadQueueWork(),
     loadEmployeeDirectory(),
     sb.from("requests")
@@ -2560,9 +2571,12 @@ async function renderDashboard(params = new URLSearchParams()) {
       .limit(HOME_QUEUE_PAGE),
     // ดึง NCR ไม่ได้ก็ยังแสดงคิวส่วนอื่น (อนุมัติ งานซ่อม ใบของฉัน) และบอกผู้ใช้ว่างาน NCR ขาดไป
     ncrHome ? ncrHome.load(employee).catch(() => { showToast("โหลดงาน NCR ไม่สำเร็จ งาน NCR ไม่ได้แสดงในหน้านี้ ลองโหลดหน้าใหม่", "error"); return { tasks: [], mine: [] }; }) : { tasks: [], mine: [] },
+    // งานระบบสำนักงาน (ใบสั่งงาน IT, ใบแจ้งซ่อม IT): ไม่ throw ล้มแล้วหน้านี้ของส่วนอื่นยังขึ้น
+    loadOfficeHome(employee),
   ]);
   if (mineResult.error) throw mineResult.error;
-  const items = homeQueueItems(pending, repairTasks, ncrItems.tasks);
+  if (officeItems.failed.length) showToast(`โหลดงาน${officeItems.failed.map((item) => item.label).join(" และ ")}ไม่สำเร็จ งานเหล่านั้นไม่ได้แสดงในหน้านี้ ลองโหลดหน้าใหม่`, "error");
+  const items = homeQueueItems(pending, repairTasks, ncrItems.tasks, officeItems.tasks);
   const approvalIds = items.filter((item) => item.kind === "approval").map((item) => item.id);
   // ใบที่เปิด: ใบที่ลิงก์ขอมา > ใบที่เปิดค้างไว้ > ใบแรก (หลังตัดสินใบหนึ่ง ใบถัดไปจึงเปิดเอง)
   // จอแคบที่ผู้ใช้ยุบเองไว้ไม่เปิดใหม่จนกว่าจะแตะ
@@ -2584,6 +2598,8 @@ async function renderDashboard(params = new URLSearchParams()) {
     .map((row) => ({ at: row.created_at, html: `<li><a class="home-mine-row" href="#/request?id=${encodeURIComponent(row.id)}"><span class="home-mine-head"><span class="queue-item-icon" data-module="${requestPalette(row.request_type?.code)}" aria-hidden="true">${requestTypeIcon(row.request_type?.code)}</span><span class="request-no">${escapeHtml(row.request_no)}</span></span><strong>${escapeHtml(row.title)}</strong>${progressTracker(row.status, Boolean(row.request_type?.uses_repair_workflow), { typeCode: row.request_type?.code })}</a></li>` }))
     // NCR ที่ฉันออกและยังไม่ปิด (ใบที่ถึงขั้นของฉันอยู่ในคิว "ต้องจัดการ" แล้ว) เรียงรวมกับคำร้อง ใบใหม่ก่อน
     .concat(ncrItems.mine.map((ncr) => ({ at: ncr.created_at, html: `<li><a class="home-mine-row" href="${escapeHtml(ncrHref(ncr))}"><span class="home-mine-head"><span class="queue-item-icon" data-module="ncr" aria-hidden="true">${requestTypeIcon("NCR_CAR")}</span><span class="request-no">${escapeHtml(ncr.ncr_no)}</span></span><strong>${escapeHtml(ncr.product_name)}</strong>${progressTracker(ncr.status, false, { stages: ncrHome.PROGRESS_STAGES, label: ncrHome.statusLabel(ncr) })}</a></li>` })))
+    // ใบของระบบสำนักงานที่ฉันแจ้งและยังไม่จบ (ใบที่ถึงขั้นของฉันอยู่ในคิว "ต้องจัดการ" แล้ว) แถวหน้าตาเดียวกัน พร้อมแถบขั้นตอนของโมดูลนั้น
+    .concat(officeItems.mine.map((row) => ({ at: row.at, html: window.MNP_OFFICE_HOME_RULES?.mineRowHtml?.(row, { escapeHtml, requestTypeIcon, requestPalette, progressTracker }) ?? "" })))
     .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
     .slice(0, HOME_QUEUE_PAGE);
   const showQueue = items.length > 0 || recent.length > 0 || hasApprovalDuty(employee);
@@ -2637,7 +2653,8 @@ function homeQueueItemHtml(item, { selected, directory, hidden }) {
   // NCR ไม่มีระดับความเร่งด่วน ส่งป้ายของตัวเองมา (เลยกำหนดตอบ)
   const flag = item.flag ?? (["high", "urgent"].includes(request.priority) ? priorityLabel(request.priority, isRepairType(type)) : null);
   // ประเภทบอกด้วยสีและไอคอนของแถวกับคำนำหน้าเลขที่แล้ว ชื่อเต็มอยู่ใน title ของไอคอนและข้อความสำหรับผู้อ่านหน้าจอ · อายุงานอยู่ข้างชิปงาน
-  const meta = item.kind === "approval" ? `โดย ${personName(directory, request.requester_id)}` : "";
+  // งานระบบสำนักงานส่งผู้แจ้ง · แผนกมาเอง (item.meta จากฐานข้อมูล escape ตอนวาดด้านล่าง)
+  const meta = item.kind === "approval" ? `โดย ${personName(directory, request.requester_id)}` : item.kind === "office" ? item.meta ?? "" : "";
   const age = rules.waitingLabel(rules.waitingDays(item.createdAt));
   // ทุกแถวบอกว่าต้องทำอะไร: ชิปสีโมดูลของใบท้ายบรรทัดเลขที่ (ไม่เบียดชื่อเรื่อง) · งานที่ลงมือในหน้าของใบเองมีลูกศร (พาไปหน้านั้น)
   // แถวอนุมัติเปิดในคิวจึงไม่มีลูกศร
@@ -2650,7 +2667,7 @@ function homeQueueItemHtml(item, { selected, directory, hidden }) {
     </span>`;
   const hiddenAttr = hidden ? " hidden" : "";
   // งานที่ต้องลงมือในหน้าของใบเอง (งานซ่อม, ขั้นของ NCR): แถวเป็นลิงก์ไปหน้านั้น ไม่มีแถบตัดสินใจในคิว
-  if (item.kind === "repair" || item.kind === "ncr") {
+  if (item.kind === "repair" || item.kind === "ncr" || item.kind === "office") {
     return `<li class="queue-item is-task"${hiddenAttr}><a class="queue-item-main" href="${escapeHtml(item.href ?? `#/request?id=${encodeURIComponent(item.id)}`)}">${head}</a></li>`;
   }
   const check = isOwnApprovalStep(item.step)

@@ -188,7 +188,7 @@ function world({ role = ROLE_EMP, handlers = {}, draft = null, sandbox = false, 
     },
   };
   Object.assign(context, {
-    window: context, console, URLSearchParams, Intl, Date, Number, Object, Promise, Array, JSON, Math, Set, Map, String, Boolean, Event: class {}, document: documentStub,
+    window: context, console, setTimeout, clearTimeout, URLSearchParams, Intl, Date, Number, Object, Promise, Array, JSON, Math, Set, Map, String, Boolean, Event: class {}, document: documentStub,
     File, print() { calls.printed = (calls.printed ?? 0) + 1; }, escapeHtml, formatDate: (value) => `D(${value})`, location: { hash: "" }, state: { employee: { id: "me" }, sandbox: sandbox ? { active: true } : null },
     app: { set innerHTML(value) { painted = value; }, get innerHTML() { return painted; } },
     crypto: { randomUUID: () => `aaaaaaaa-aaaa-4aaa-8aaa-${String(++uuid).padStart(12, "0")}` },
@@ -237,7 +237,7 @@ function world({ role = ROLE_EMP, handlers = {}, draft = null, sandbox = false, 
     createAutosave: () => ({ schedule() {}, start() {}, stop() {} }), offerDraft(options) { calls.draftOffer = options; },
   };
   // inDevelopment: true = จำลองการเปิดธง "กำลังพัฒนา" กลับ (ค่าจริงใน itrp-model.js ถอดป้ายแล้ว = false)
-  for (const file of ["modules/working-time.js", "modules/itrp-model.js", "modules/itrp-pages.js", "modules/itrp-history-pages.js", "modules/module-itrp.js"]) {
+  for (const file of ["modules/office-home.js", "modules/working-time.js", "modules/itrp-model.js", "modules/itrp-pages.js", "modules/itrp-history-pages.js", "modules/module-itrp.js"]) {
     const source = read(file);
     vm.runInContext(!inDevelopment || file !== "modules/itrp-model.js" ? source : source.replace("const IN_DEVELOPMENT = false;", "const IN_DEVELOPMENT = true;"), context);
   }
@@ -277,7 +277,7 @@ const ROW = (id, status, extra = {}) => ({ id, doc_no: `IT01-26/${id}`, status, 
 /* ---------- ลงทะเบียนการ์ดและตัวเลขบนการ์ด ---------- */
 test("the module announces itself for the IT SUPPORT card with its own version", async () => {
   const w = world();
-  assert.equal(w.context.window.MNP_ITRP.version, "2.00");
+  assert.equal(w.context.window.MNP_ITRP.version, "2.01");
   assert.equal(w.context.window.MNP_OFFICE_CARDS.IT_COMPUTER_REPAIR, w.context.window.MNP_ITRP);
   assert.equal(typeof w.context.window.MNP_ITRP.loadCardSummary, "function");
   assert.equal(typeof w.context.window.MNP_ITRP.unsavedCount, "function");
@@ -1937,4 +1937,33 @@ test("the print page adds the part change table only when there is history, and 
   await broken.open(`view=print&id=${ID}`);
   assert.match(broken.html, /class="itrp-sheet/);
   assert.doesNotMatch(broken.html, /itrp-sheet-partchg/);
+});
+
+/* ---------- งานบนหน้าแรก "งานของคุณวันนี้" (window.MNP_OFFICE_HOME → modules/office-home.js) ---------- */
+test("home: the module registers its work for the home page under its card code with device/symptom as the title", async () => {
+  const mine = [ROW(7, "it_closed", { asset_code: "PC-001" }), ROW(8, "need_info"), ROW(9, "pending_it_mgr", { is_urgent: true }), ROW(3, "received")];
+  const w = world({ role: { ...ROLE_IT, is_dept_approver: true }, handlers: {
+    app_itrp_list_mine: () => mine,
+    app_itrp_list_pending_approvals: () => [ROW(1, "pending_dept", { requester_name: "สมหญิง", department_name: "การตลาด" }), ROW(2, "need_info")],
+    app_itrp_list_it: () => [ROW(4, "approved"), ROW(5, "in_progress", { rework_round: 2 }), ROW(6, "it_closed")],
+  } });
+  const home = w.context.window.MNP_OFFICE_HOME.IT_COMPUTER_REPAIR;
+  assert.equal(home.label, "ใบแจ้งซ่อม IT");
+  const result = JSON.parse(JSON.stringify(await home.load({ id: "x" })));
+  assert.deepEqual(result.tasks.map((task) => [task.id, task.task]), [[1, "รออนุมัติ"], [4, "เริ่มงาน"], [5, "แก้ไขงานครั้งที่ 2"], [7, "IT ส่งงานแล้ว รอคุณยืนยัน"], [8, "รอคุณตอบ"]]);
+  assert.equal(result.tasks[0].title, "เครื่อง 1 · x");
+  assert.equal(result.tasks[3].title, "PC-001 · เครื่อง 7 · x");
+  assert.equal(result.tasks[0].typeCode, "IT_COMPUTER_REPAIR");
+  assert.equal(result.tasks[0].href, `#/office?module=repair&view=order&id=1`);
+  assert.deepEqual(result.mine.map((row) => [row.id, row.progressStatus, row.urgent]), [[9, "pending_it_mgr", true]]);
+});
+
+test("home: only the lists the role allows are read, and a failing read rejects so the home page can name the missing module", async () => {
+  const plainUser = world({ role: ROLE_EMP, handlers: { app_itrp_list_mine: () => [ROW(1, "pending_dept")] } });
+  const result = JSON.parse(JSON.stringify(await plainUser.context.window.MNP_OFFICE_HOME.IT_COMPUTER_REPAIR.load({ id: "x" })));
+  assert.equal(result.mine.length, 1);
+  assert.deepEqual([...new Set(plainUser.names())].sort(), ["app_itrp_list_mine", "app_itrp_my_role"]);
+  const broken = world({ role: ROLE_EMP, handlers: { app_itrp_list_mine: () => { throw Object.assign(new Error("boom"), { code: "XX000" }); } } });
+  const failed = await broken.context.window.MNP_OFFICE_HOME_RULES.collect(broken.context.window.MNP_OFFICE_HOME, { id: "x" });
+  assert.deepEqual(JSON.parse(JSON.stringify(failed.failed)), [{ code: "IT_COMPUTER_REPAIR", label: "ใบแจ้งซ่อม IT" }]);
 });
