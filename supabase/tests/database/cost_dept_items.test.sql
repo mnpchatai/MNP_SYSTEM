@@ -1,6 +1,7 @@
 -- ต้นทุนการผลิต เฟส 3 (20270111010000_cost_dept_items.sql)
 --   หมวดของของซื้อ (อ่าน: ผู้เห็นต้นทุน + แผนก ST · แก้: แผนก ST + admin) · จำนวนคน people ของเป้าต่อชั่วโมง (saveGrConfig ของ GR / PT / BG / PK)
 --   สูตร PHR เปลี่ยนเป็นแบบน้ำหนักใน revision ใหม่ได้ (ฐานข้อมูลไม่ห้ามอยู่แล้ว ไฟล์ migration ไม่แตะ ตรวจไว้กันถอยหลัง)
+--   ร้าน / ผู้ขายของราคา (rf_material_prices.supplier · app_rf_price_save หกอาร์กิวเมนต์ตัวเดียว · อาร์กิวเมนต์ห้าตัวเดิมยังเรียกได้)
 --   ตรวจทั้งฝั่งอนุญาตและปฏิเสธของทุกบทบาท / แผนก · ข้อมูลทดสอบสมมติทั้งหมด
 -- (authenticated อ่านตาราง rf_* ตรงไม่ได้ จึงอ่านตารางด้วย reset role เสมอ)
 begin;
@@ -31,19 +32,31 @@ select ok(position('rf_part_categories' in pg_get_functiondef('public.app_sandbo
   'the RubberFlow purge deletes the test categories and still deletes the earlier tables');
 select ok(not exists (
     select 1 from unnest(array['private.rf_part_category_out(public.employees)', 'private.bom_gr_save_config(public.employees,boolean,jsonb,bigint,bigint)',
-                               'private.sandbox_unguarded_tables()']) f(sig)
+                               'private.sandbox_unguarded_tables()', 'private.rf_price_rows()']) f(sig)
     where has_function_privilege('anon', f.sig, 'execute') or has_function_privilege('authenticated', f.sig, 'execute')),
   'clients cannot call the private helpers');
 select is((select count(*)::integer from pg_proc p
            where p.oid in ('private.rf_part_category_out(public.employees)'::regprocedure, 'public.app_rf_part_categories()'::regprocedure,
                            'public.app_rf_part_category_save(text,text)'::regprocedure, 'public.app_sandbox_purge_rf()'::regprocedure,
-                           'private.bom_gr_save_config(public.employees,boolean,jsonb,bigint,bigint)'::regprocedure)
-             and p.prosecdef and p.proconfig @> array['search_path=""']), 5,
-  'the helper, the RPCs and the patched functions are security definer with an empty search_path');
+                           'private.bom_gr_save_config(public.employees,boolean,jsonb,bigint,bigint)'::regprocedure,
+                           'private.rf_price_rows()'::regprocedure, 'public.app_rf_price_save(text,text,numeric,date,text,text)'::regprocedure)
+             and p.prosecdef and p.proconfig @> array['search_path=""']), 7,
+  'the helpers, the RPCs and the patched / replaced functions are security definer with an empty search_path');
 select ok(not exists (
-    select 1 from unnest(array['public.app_rf_part_categories()', 'public.app_rf_part_category_save(text,text)', 'public.app_sandbox_purge_rf()']) f(sig)
+    select 1 from unnest(array['public.app_rf_part_categories()', 'public.app_rf_part_category_save(text,text)', 'public.app_sandbox_purge_rf()',
+                               'public.app_rf_price_save(text,text,numeric,date,text,text)']) f(sig)
     where has_function_privilege('anon', f.sig, 'execute') or not has_function_privilege('authenticated', f.sig, 'execute')),
   'the public RPCs are for authenticated only');
+-- ราคาบันทึกด้วยฟังก์ชันตัวเดียว (ตัวห้าอาร์กิวเมนต์ถูก drop) มีค่าเริ่มต้นของ p_note และ p_supplier
+select is((select count(*)::integer from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'app_rf_price_save'), 1,
+  'only one function is named app_rf_price_save');
+select is(to_regprocedure('public.app_rf_price_save(text,text,numeric,date,text)'), null, 'the five-argument function is gone');
+select is((select array[p.pronargs, p.pronargdefaults]::integer[] from pg_proc p where p.oid = 'public.app_rf_price_save(text,text,numeric,date,text,text)'::regprocedure),
+  array[6, 2], 'the six-argument function defaults the note and the supplier');
+select ok(position('private.lab_only_block()' in pg_get_functiondef('public.app_rf_price_save(text,text,numeric,date,text,text)'::regprocedure)) > 0
+      and position('rf_price_writer' in pg_get_functiondef('public.app_rf_price_save(text,text,numeric,date,text,text)'::regprocedure)) > 0
+      and position('PURCHASED' in pg_get_functiondef('public.app_rf_price_save(text,text,numeric,date,text,text)'::regprocedure)) > 0,
+  'the recreated price save keeps the lab-only guard, the writer check and the purchased-part rule');
 select is((select count(*)::integer from private.lab_only_unguarded_functions()), 0, 'every callable public function keeps the lab-only guard');
 select ok(position('v_people' in pg_get_functiondef('private.bom_gr_save_config(public.employees,boolean,jsonb,bigint,bigint)'::regprocedure)) > 0
       and position('bom_gr_is_head' in pg_get_functiondef('private.bom_gr_save_config(public.employees,boolean,jsonb,bigint,bigint)'::regprocedure)) > 0
@@ -74,6 +87,15 @@ select set_config('test.cfg_gr', private.bom_dept_default_config('GR')::text, tr
 insert into public.bom_items (code, kind, name, owner_dept, uom) values ('DEMO-REAL-1', 'PURCHASED', 'ของซื้อสมมติ (จริง)', 'ST', 'pcs');
 insert into public.rf_part_categories (item_code, category) values ('DEMO-REAL-1', 'หมวดสมมติ');
 select is((select count(*)::integer from public.rf_part_categories where not is_test), 1, 'a row written outside test mode is a real row');
+-- ร้าน / ผู้ขายของราคา: แถวที่ไม่ระบุร้านได้ค่าว่าง · ตารางเองรับแต่ร้านที่ตัดช่องว่างแล้ว ไม่เกิน 80 ตัวอักษร ไม่มีอักขระควบคุม
+insert into public.rf_material_prices (kind, material_code, unit_price, effective_from) values ('part', 'DEMO-REAL-1', 3, date '2026-01-01');
+select is((select supplier from public.rf_material_prices where not is_test and material_code = 'DEMO-REAL-1'), '', 'a price row without a supplier stores an empty one');
+select throws_ok($$ insert into public.rf_material_prices (kind, material_code, unit_price, effective_from, supplier) values ('part', 'DEMO-REAL-1', 3, date '2026-01-02', repeat('ก', 81)) $$,
+  '23514', null, 'the table refuses a supplier over 80 characters');
+select throws_ok($$ insert into public.rf_material_prices (kind, material_code, unit_price, effective_from, supplier) values ('part', 'DEMO-REAL-1', 3, date '2026-01-02', ' ร้าน') $$,
+  '23514', null, 'and an untrimmed supplier');
+select throws_ok($$ insert into public.rf_material_prices (kind, material_code, unit_price, effective_from, supplier) values ('part', 'DEMO-REAL-1', 3, date '2026-01-02', 'ร้าน' || chr(10) || 'ก') $$,
+  '23514', null, 'and a supplier with a line break');
 
 create schema cat_t;
 grant usage on schema cat_t to authenticated;
@@ -233,7 +255,46 @@ select lives_ok($$ select cat_t.recipe(cat_t.rec('DEMO-R1') || '{"revision":2,"s
 select is(jsonb_build_array((cat_t.rec('DEMO-R1', 2) ->> 'batchKg')::numeric, cat_t.rec('DEMO-R1', 2) -> 'items' -> 0 -> 'kg', cat_t.rec('DEMO-R1', 1) -> 'items' -> 0 -> 'kg'),
   '[10.5, 10, null]'::jsonb, 'revision 2 is a weight recipe (batch = sum of the weights) and revision 1 stays PHR');
 
--- 7. นอกโหมดทดสอบ / ไม่มี session ---------------------------------------------------------------------
+-- 7. ร้าน / ผู้ขายของราคา (ไว้เทียบ · ราคาที่ใช้ยังเป็นแถวล่าสุดของวันมีผล ไม่ว่าร้านไหน) ---------------------------------
+-- 7.1 ผู้ที่ไม่ใช่ผู้บันทึกราคายังถูกปฏิเสธ (ตรวจสิทธิ์ก่อนข้อมูล แม้ร้านผิดกติกา)
+select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
+select throws_ok($$ select public.app_rf_price_save('part', 'DEMO-BOX-1', 5, date '2026-06-01', '', 'ร้านสมมติ ก') $$, 'RF_FORBIDDEN', 'RB staff cannot save a price with a supplier');
+select throws_ok($$ select public.app_rf_price_save('part', 'DEMO-BOX-1', 5, date '2026-06-01', '', repeat('ก', 81)) $$, 'RF_FORBIDDEN', 'the right is checked before the supplier');
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select throws_ok($$ select public.app_rf_price_save('part', 'DEMO-BOX-1', 5, date '2026-06-01', '', 'ร้านสมมติ ก') $$, 'RF_FORBIDDEN', 'a cost viewer (PP staff) cannot save a price either');
+-- 7.2 แผนก ST: อาร์กิวเมนต์ชื่อห้าตัวของหน้าเว็บรุ่นก่อน · ร้านตัดช่องว่าง · ร้านต่างกันวันเดียวกัน = แถวใหม่ · กดซ้ำไม่เพิ่มแถว
+select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
+select lives_ok($$ select public.app_rf_price_save(p_kind => 'part', p_material_code => 'DEMO-BOX-1', p_unit_price => 5, p_effective_from => date '2026-06-01', p_note => 'ราคาเก่า') $$,
+  'the five named arguments of the earlier web page still save a price');
+select is((select p ->> 'supplier' from jsonb_array_elements(public.app_rf_prices() -> 'prices') p where p ->> 'materialCode' = 'DEMO-BOX-1'), '',
+  'and that price has an empty supplier');
+select lives_ok($$ select public.app_rf_price_save('part', 'DEMO-BOX-1', 4.75, date '2026-07-01', '', '  ร้านสมมติ ก  ') $$, 'ST staff save a price with a supplier');
+select lives_ok($$ select public.app_rf_price_save(p_kind => 'part', p_material_code => 'DEMO-BOX-1', p_unit_price => 4.5, p_effective_from => date '2026-07-01', p_supplier => 'ร้านสมมติ ข') $$,
+  'another supplier on the same date (named arguments, note left out)');
+select lives_ok($$ select public.app_rf_price_save('part', 'DEMO-BOX-1', 4.5, date '2026-07-01', '', 'ร้านสมมติ ข') $$, 'pressing save twice with the same supplier adds nothing');
+select lives_ok($$ select public.app_rf_price_save('part', 'DEMO-BOX-1', 4.5, date '2026-07-01', '', 'ร้านสมมติ ค') $$, 'the same price from a third supplier is a new row');
+select is((select jsonb_agg(jsonb_build_array((p ->> 'unitPrice')::numeric, p ->> 'effectiveFrom', p ->> 'supplier', p ->> 'note') order by t.ord)
+           from jsonb_array_elements(public.app_rf_prices() -> 'prices') with ordinality as t(p, ord) where p ->> 'materialCode' = 'DEMO-BOX-1'),
+  '[[4.5, "2026-07-01", "ร้านสมมติ ค", ""], [4.5, "2026-07-01", "ร้านสมมติ ข", ""], [4.75, "2026-07-01", "ร้านสมมติ ก", ""], [5, "2026-06-01", "", "ราคาเก่า"]]'::jsonb,
+  'every row keeps its (trimmed) supplier and the list stays newest first: the latest entry of a date comes first whatever the supplier');
+select lives_ok($$ select public.app_rf_price_save('chem', 'DEMO-M1', 30, date '2026-06-01', '', 'ร้านเคมีสมมติ') $$, 'a chemical price takes a supplier too');
+select lives_ok($$ select public.app_rf_price_save('chem', 'DEMO-M2', 12, date '2026-06-01', '', null) $$, 'a null supplier is an empty one');
+select lives_ok($$ select public.app_rf_price_save('chem', 'DEMO-M2', 13, date '2026-06-01', '', repeat('ข', 80)) $$, 'a supplier of exactly 80 characters is accepted');
+select throws_ok($$ select public.app_rf_price_save('chem', 'DEMO-M1', 31, date '2026-06-01', '', repeat('ข', 81)) $$, 'RF_INVALID_PRICE', 'a supplier over 80 characters is refused');
+select throws_ok($$ select public.app_rf_price_save('chem', 'DEMO-M1', 31, date '2026-06-01', '', 'ร้าน' || chr(9) || 'ก') $$, 'RF_INVALID_PRICE', 'a tab inside the supplier is refused');
+select throws_ok($$ select public.app_rf_price_save('chem', 'DEMO-M1', 31, date '2026-06-01', '', 'ร้าน' || chr(10) || 'ก') $$, 'RF_INVALID_PRICE', 'a line break inside the supplier is refused');
+select throws_ok($$ select public.app_rf_price_save('part', 'DEMO-PT-1', 31, date '2026-06-01', '', 'ร้านสมมติ ก') $$, 'RF_INVALID_PRICE', 'only purchased parts take a price, supplier or not');
+-- 7.3 ผู้เห็นต้นทุนเห็นร้านทั้งใน app_rf_prices และ app_rf_cost_data
+select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
+select is((select jsonb_agg(p ->> 'supplier' order by t.ord) from jsonb_array_elements(public.app_rf_cost_data() -> 'prices') with ordinality as t(p, ord) where p ->> 'materialCode' in ('DEMO-M1', 'DEMO-M2')),
+  jsonb_build_array('ร้านเคมีสมมติ', repeat('ข', 80), ''), 'the cost data carries the supplier of every price row');
+select ok(not exists (select 1 from jsonb_array_elements(public.app_rf_prices() -> 'prices') p where not (p ? 'supplier')), 'every price row says its supplier');
+reset role;
+select is((select count(*)::integer from public.rf_material_prices where is_test and created_by is null), 0, 'every test price row records who entered it');
+select is((select count(*)::integer from public.rf_material_prices where is_test and material_code = 'DEMO-BOX-1'), 4, 'four rows for the box (the repeated save added none)');
+set local role authenticated;
+
+-- 8. นอกโหมดทดสอบ / ไม่มี session ---------------------------------------------------------------------
 select public.app_sandbox_enter(current_setting('test.p_sbx_admin_k')::uuid);
 select lives_ok('select public.app_sandbox_exit()', 'the admin leaves test mode');
 select throws_ok($$ select public.app_rf_part_categories() $$, 'RF_TEST_MODE_ONLY', 'outside test mode the part categories are closed');
@@ -242,7 +303,7 @@ select set_config('request.jwt.claims', '{"role":"authenticated"}', true);
 select throws_ok($$ select public.app_rf_part_categories() $$, 'AUTH_REQUIRED', 'no session, no categories');
 select throws_ok($$ select public.app_rf_part_category_save('DEMO-BOX-1', 'กล่อง') $$, 'AUTH_REQUIRED', 'no session, no category entry');
 
--- 8. ตารางปิดจากการเข้าถึงตรง และการล้างข้อมูลทดสอบ ---------------------------------------------------------
+-- 9. ตารางปิดจากการเข้าถึงตรง และการล้างข้อมูลทดสอบ ---------------------------------------------------------
 select set_config('request.jwt.claims', '{"sub":"8f300000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 select throws_ok($$ select count(*) from public.rf_part_categories $$, '42501', null, 'authenticated cannot read the category table directly');
 select throws_ok($$ insert into public.rf_part_categories (item_code, category) values ('DEMO-BOX-1', 'x') $$, '42501', null, 'nor insert a category');

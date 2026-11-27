@@ -36,7 +36,7 @@
   const errorText = (error) => {
     const text = codeOf(error);
     if (text.includes("RF_FORBIDDEN")) return "บัญชีนี้ไม่มีสิทธิ์ดูข้อมูลนี้";
-    if (text.includes("RF_INVALID_PRICE")) return "ข้อมูลราคาไม่ถูกต้อง ตรวจชนิด รหัสวัตถุดิบหรือของซื้อ ราคา (มากกว่า 0 และไม่เกิน 10,000,000 ทศนิยมไม่เกิน 4 ตำแหน่ง) วันที่มีผล (ไม่ล่วงหน้าเกิน 366 วัน) และหมายเหตุ (ไม่เกิน 300 ตัวอักษร)";
+    if (text.includes("RF_INVALID_PRICE")) return "ข้อมูลราคาไม่ถูกต้อง ตรวจชนิด รหัสวัตถุดิบหรือของซื้อ ราคา (มากกว่า 0 และไม่เกิน 10,000,000 ทศนิยมไม่เกิน 4 ตำแหน่ง) ร้าน / ผู้ขาย (ไม่เกิน 80 ตัวอักษร) วันที่มีผล (ไม่ล่วงหน้าเกิน 366 วัน) และหมายเหตุ (ไม่เกิน 300 ตัวอักษร)";
     if (text.includes("RF_INVALID_LABOUR")) return "ข้อมูลอัตราค่าแรงไม่ถูกต้อง ตรวจแผนก อัตรา (มากกว่า 0 และไม่เกิน 100,000 ทศนิยมไม่เกิน 2 ตำแหน่ง) วันที่มีผล (ไม่ล่วงหน้าเกิน 366 วัน) และหมายเหตุ (ไม่เกิน 300 ตัวอักษร)";
     if (text.includes("RF_INVALID_CATEGORY")) return "หมวดไม่ถูกต้อง ตรวจรหัสของซื้อ (ต้องเป็นของซื้อในทะเบียน BOM) และหมวด (ไม่เกิน 40 ตัวอักษร)";
     if (text.includes("RF_INVALID_STANDARD")) return "ข้อมูลเวลามาตรฐานไม่ถูกต้อง ตรวจรหัสสินค้า (ต้องเป็นรหัสสินค้าของสูตรยาง) เวลา (0 ถึง 100,000 นาที มีอย่างน้อยหนึ่งขั้นที่มากกว่า 0) จำนวนคน (0 ถึง 1,000) ทศนิยมไม่เกิน 2 ตำแหน่ง และวันที่มีผล";
@@ -49,7 +49,7 @@
   }
   const rowsOf = (list) => (Array.isArray(list) ? list : []).map((row) => ({
     id: row.id, kind: row.kind === "part" ? "part" : "chem", materialCode: String(row.materialCode ?? ""), unitPrice: Number(row.unitPrice), effectiveFrom: String(row.effectiveFrom ?? "").slice(0, 10),
-    note: String(row.note ?? ""), createdAt: Number(row.createdAt) || 0, createdBy: String(row.createdBy ?? ""),
+    note: String(row.note ?? ""), supplier: String(row.supplier ?? ""), createdAt: Number(row.createdAt) || 0, createdBy: String(row.createdBy ?? ""),
   }));
 
   // ---------- ราคาวัตถุดิบ: เคมี (ต่อ kg) และของซื้อ (ต่อหน่วยของชิ้น) · ผู้ที่เห็นราคา ----------
@@ -75,11 +75,13 @@
     return inflight.prices;
   }
   // บันทึกราคาใหม่ของเคมี (kind "chem" ต่อ kg) หรือของซื้อ (kind "part" ต่อหน่วยของชิ้น) (แถวใหม่ ไม่แก้แถวเดิม) · คืน { ok: true } หรือ { ok: false, message }
-  async function savePrice({ kind, materialCode, unitPrice, effectiveFrom, note }) {
+  // supplier = ร้าน / ผู้ขาย (ไม่บังคับ) ส่งเป็น p_supplier เฉพาะเมื่อกรอก: ฐานข้อมูลก่อน 20270111010000 (ห้าอาร์กิวเมนต์) ยังรับราคาที่ไม่กรอกร้านได้
+  async function savePrice({ kind, materialCode, unitPrice, effectiveFrom, note, supplier }) {
     checkOwner();
     const version = pricesState.version;
+    const shop = String(supplier ?? "").trim();
     try {
-      const data = await call("app_rf_price_save", { p_kind: kind, p_material_code: materialCode, p_unit_price: unitPrice, p_effective_from: effectiveFrom, p_note: note ?? "" });
+      const data = await call("app_rf_price_save", { p_kind: kind, p_material_code: materialCode, p_unit_price: unitPrice, p_effective_from: effectiveFrom, p_note: note ?? "", ...(shop ? { p_supplier: shop } : {}) });
       if (pricesState.version === version) applyPrices(data);
       costState = { ...costState, at: 0 }; // ต้นทุนที่โหลดไว้เป็นของราคาเก่า: เปิดหน้าต้นทุนครั้งหน้าโหลดใหม่
       return { ok: true };

@@ -159,6 +159,32 @@ test("priceHistory: ใหม่ก่อน (วันมีผลแล้ว�
   assert.equal(C.fmtBaht(1234.5), "1,234.50");
 });
 
+test("ร้าน / ผู้ขาย: ราคาล่าสุดของแต่ละร้าน ถูกสุดก่อน · ไม่นับแถวที่ไม่ระบุร้าน · ชื่อร้านที่เคยใช้ · ราคาที่ใช้ไม่ดูร้าน", () => {
+  const at = (materialCode, unitPrice, effectiveFrom, createdAt, supplier, kind = "chem") => ({ ...row(materialCode, unitPrice, effectiveFrom, createdAt, `${materialCode}-${createdAt}`, kind), supplier });
+  const prices = [
+    at("ZNO", 62, "2026-01-01", 1, "ร้าน ข"), at("ZNO", 60, "2026-03-01", 2, " ร้าน ข "), at("ZNO", 70, "2026-10-01", 3, "ร้าน ก"), at("ZNO", 65, "2026-10-01", 4, "ร้าน ค"),
+    at("ZNO", 50, "2026-11-01", 5, ""), at("ZNO", 59, "2026-02-01", 6, "ร้าน ง"), at("ZNO", 59, "2026-02-01", 7, "ร้าน จ"), at("ZNO", 58, "2026-02-01", 8, "ร้าน จ"),
+    at("ZNO", 1, "2026-01-01", 9, "ร้าน ก", "part"), at("CBS", 5, "2026-06-01", 10, "ร้าน ฉ"),
+  ];
+  const list = C.latestBySupplier(prices, "ZNO");
+  // ร้าน ข: แถวล่าสุด (มี.ค. · ชื่อร้านตัดช่องว่าง) · ร้าน จ: วันเดียวกันใช้แถวที่บันทึกล่าสุด (58) · ไม่ระบุร้านไม่อยู่ในรายการ · ของซื้อรหัสเดียวกันไม่ปน
+  assert.deepEqual(list.map(({ supplier, row: entry }) => [supplier, entry.unitPrice, entry.effectiveFrom]),
+    [["ร้าน จ", 58, "2026-02-01"], ["ร้าน ง", 59, "2026-02-01"], ["ร้าน ข", 60, "2026-03-01"], ["ร้าน ค", 65, "2026-10-01"], ["ร้าน ก", 70, "2026-10-01"]]);
+  // ราคาเท่ากัน: วันมีผลใหม่กว่าก่อน แล้วตามชื่อร้าน
+  const tie = [at("X", 10, "2026-01-01", 1, "ร้าน ข"), at("X", 10, "2026-05-01", 2, "ร้าน ค"), at("X", 10, "2026-01-01", 3, "ร้าน ก")];
+  assert.deepEqual(C.latestBySupplier(tie, "X").map((entry) => entry.supplier), ["ร้าน ค", "ร้าน ก", "ร้าน ข"]);
+  assert.deepEqual(C.latestBySupplier(prices, "ZNO", "part").map((entry) => entry.supplier), ["ร้าน ก"], "ของซื้อแยกจากเคมี");
+  assert.deepEqual(C.latestBySupplier([row("ZNO", 1, "2026-01-01", 1)], "ZNO"), [], "แถวที่ไม่มีช่องร้าน (ข้อมูลเก่า) ไม่นับ");
+  assert.deepEqual(C.latestBySupplier(null, "ZNO"), []);
+  // ราคาที่ใช้ยังเป็นแถวล่าสุดของวันมีผล ไม่ว่าร้านไหน (ร้านที่ไม่ระบุชื่อก็ใช้ได้)
+  assert.equal(C.priceAt(prices, "ZNO", "2026-11-27").unitPrice, 50);
+  assert.equal(C.priceAt(prices, "ZNO", "2026-10-15").supplier, "ร้าน ค");
+  assert.equal(C.supplierOf({ supplier: "  ร้าน ก  " }), "ร้าน ก");
+  assert.equal(C.supplierOf({}), "");
+  assert.deepEqual(C.supplierNames(prices), ["ร้าน ก", "ร้าน ข", "ร้าน ค", "ร้าน ง", "ร้าน จ", "ร้าน ฉ"], "ไม่ซ้ำ ทุกชนิด ไม่มีค่าว่าง");
+  assert.deepEqual(C.supplierNames(undefined), []);
+});
+
 test("ราคาของวันที่เลือกใช้กับต้นทุนสูตร (as of)", () => {
   const recipe = { id: "R", revision: 1, status: "approved", batchKg: 10, items: [w("ZNO", 1, 10)] };
   const history = [row("ZNO", 62, "2026-01-01", 1), row("ZNO", 70, "2026-10-01", 2)];

@@ -1,6 +1,7 @@
 // ต้นทุนการผลิต (โหมดทดสอบ) — กฎล้วน ไม่มี DOM/Supabase: ใครเห็นราคา/ต้นทุน · ราคาเคมีต่อ kg ที่มีผลในวันหนึ่ง · ต้นทุนสูตรผสม (ต่อ batch / ต่อ kg) · ต้นทุนจริงของล็อตผสมเทียบสูตร
 // โหลดก่อน modules/cost-data.js และ modules/st-pages.js (ดู index.html) · เทสต์ด้วย node --test (scripts/tests/cost-rules.test.mjs)
-// ราคา: ทุกแถวที่เคยบันทึก { id, kind: "chem"|"part", materialCode, unitPrice, effectiveFrom: "YYYY-MM-DD", note, createdAt: ms, createdBy } ไม่มีการแก้/ลบ — แก้ราคา = เพิ่มแถวใหม่
+// ราคา: ทุกแถวที่เคยบันทึก { id, kind: "chem"|"part", materialCode, unitPrice, effectiveFrom: "YYYY-MM-DD", note, supplier, createdAt: ms, createdBy } ไม่มีการแก้/ลบ — แก้ราคา = เพิ่มแถวใหม่
+//   supplier = ร้าน / ผู้ขายที่ซื้อ (ข้อความอิสระ 0-80 ตัวอักษร · "" = ไม่ได้ระบุ รวมแถวก่อนมีช่องนี้) ไว้เทียบราคาระหว่างร้านเท่านั้น ไม่มีผลกับราคาที่ใช้
 //   chem = เคมี RubberFlow ราคาต่อ kg · part = ของซื้อ (ชิ้นงาน BOM ชนิด PURCHASED) ราคาต่อหน่วยของชิ้นนั้น · รหัสของซื้ออาจซ้ำรหัสเคมีได้ จึงแยกตาม kind เสมอ (ต้นทุนสูตรใช้เฉพาะ chem)
 //   ราคาที่ใช้ในวัน D = แถวที่ effectiveFrom ล่าสุดที่ไม่เกิน D · วันเดียวกันหลายแถว = แถวที่ createdAt ใหม่สุด (ราคาที่ตั้งล่วงหน้ายังไม่ถูกใช้จนถึงวันนั้น)
 // สูตร: โหมดน้ำหนัก { materialCode, stage 0|1|2|3, kg (ต่อ batch), unit "kg"|"g" (หน่วยที่กรอก ไม่เปลี่ยนค่า kg), phr } · โหมดเดิม { materialCode, phr, stage 1|2 } (kg ต่อ batch = phr ÷ Σphr × batchKg)
@@ -92,6 +93,23 @@
   // ประวัติราคาของรหัสหนึ่งตัว (kind) ใหม่ก่อน (วันมีผลใหม่สุดก่อน แล้วตามเวลาที่บันทึก)
   const priceHistory = (prices, materialCode, kind = "chem") => (prices ?? []).filter((row) => row.materialCode === materialCode && kindOf(row) === kind)
     .sort((a, b) => (dayKey(b.effectiveFrom) < dayKey(a.effectiveFrom) ? -1 : dayKey(b.effectiveFrom) > dayKey(a.effectiveFrom) ? 1 : (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0)));
+  // ร้าน / ผู้ขายของแถวราคา (ตัดช่องว่างหัวท้าย · ไม่มี = "")
+  const supplierOf = (row) => String(row?.supplier ?? "").trim();
+  // ราคาล่าสุดของแต่ละร้านของรหัสหนึ่งตัว (kind) ไว้เทียบ: แถวที่วันมีผลใหม่สุด (ซ้ำวันใช้ createdAt ใหม่สุด) ของแต่ละร้านที่ระบุชื่อ
+  //   แถวที่ไม่ระบุร้านไม่นับ · เรียงถูกสุดก่อน (เท่ากัน = วันมีผลใหม่กว่าก่อน แล้วตามชื่อร้าน) · คืน [{ supplier, row }]
+  //   ไม่เกี่ยวกับราคาที่ใช้ (priceAt ไม่ดูร้าน)
+  function latestBySupplier(prices, materialCode, kind = "chem") {
+    const out = new Map();
+    for (const row of priceHistory(prices, materialCode, kind)) {
+      const supplier = supplierOf(row);
+      if (supplier && validPrice(row) && !out.has(supplier)) out.set(supplier, row);
+    }
+    return [...out].map(([supplier, row]) => ({ supplier, row })).sort((a, b) => Number(a.row.unitPrice) - Number(b.row.unitPrice)
+      || (dayKey(b.row.effectiveFrom) < dayKey(a.row.effectiveFrom) ? -1 : dayKey(b.row.effectiveFrom) > dayKey(a.row.effectiveFrom) ? 1 : 0)
+      || a.supplier.localeCompare(b.supplier, "th"));
+  }
+  // ชื่อร้านที่เคยใช้ในทุกแถวราคา (ทุกชนิด ไม่ซ้ำ เรียงตามชื่อ) ไว้เป็นตัวเลือกของช่องร้าน
+  const supplierNames = (prices) => [...new Set((prices ?? []).map(supplierOf).filter(Boolean))].sort((a, b) => a.localeCompare(b, "th"));
 
   // ---------- น้ำหนักตามสูตร ----------
   const PREP_LABEL = "ขั้นเตรียมวัตถุดิบ";
@@ -346,7 +364,7 @@
   const api = {
     canSeeCost, canSeePrices, canEditPrices, roleCodeOf, deptCodeOf,
     PRICE_KINDS, bangkokDay, dayKey, fmtDay, fmtBaht, fmtPrice, fmtWeight, round,
-    priceAt, pricesAt, priceHistory, recipeWeights, formulaCost, lotCost, PREP_LABEL, stageLabel, isWeightMode, revisionsOf, currentRevision, recipeOfLot,
+    priceAt, pricesAt, priceHistory, supplierOf, latestBySupplier, supplierNames, recipeWeights, formulaCost, lotCost, PREP_LABEL, stageLabel, isWeightMode, revisionsOf, currentRevision, recipeOfLot,
     canSeeStandards, canEditStandards, canEditRates, LABOUR_DEPTS, RB_DEPT, STEPS, STATIONS, stepLabel, fmtMinutes, rateAt, rateHistory, standardAt, standardHistory, standardSteps, standardMinutes, labourCost,
     STEP_DEPTS, hasItemCost, deptTargetsOf, itemCost, fmtPerHour, fmtQtyPer,
   };

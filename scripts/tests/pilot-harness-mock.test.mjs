@@ -283,12 +283,17 @@ test("cost RPCs: permissions follow the acting persona, prices are append-only h
   for (const code of ["DM-RUB-A", "DM-RUB-B", "DM-FIL-A", "DM-FIL-B", "DM-PLS-A", "DM-OIL-A", "DM-CH-01", "DM-CH-02", "DM-CH-03", "DM-CH-04", "DM-CH-06", "DM-CH-07", "DM-CH-08", "DM-CH-09", "DM-CH-10", "DM-CH-11", "DM-CH-12", "DM-CH-13", "EPDM-55", "S-80"]) assert.ok(first.prices.some((row) => row.materialCode === code), `${code} has a demo price`);
   assert.ok(!first.prices.some((row) => ["DM-CH-05", "DM-FIL-C"].includes(row.materialCode)), "the no-price state stays visible");
   assert.ok(first.prices.every((row) => row.id && ["chem", "part"].includes(row.kind) && typeof row.unitPrice === "number" && /^\d{4}-\d{2}-\d{2}$/.test(row.effectiveFrom) && Number.isFinite(row.createdAt) && typeof row.createdBy === "string"));
-  assert.deepEqual(first.prices.filter((row) => row.kind === "part").map((row) => row.materialCode), ["P-A", "P-B"], "demo part prices: the third part has none, FG items never");
+  assert.deepEqual([...new Set(first.prices.filter((row) => row.kind === "part").map((row) => row.materialCode))], ["P-A", "P-B"], "demo part prices: the third part has none, FG items never");
+  // ร้าน / ผู้ขาย (ชื่อสมมติ): ทุกแถวสาธิตมีร้าน · เคมี ZNO / S-80 และของซื้อชิ้นแรก (P-A) มีราคาจากสองร้าน · ราคาที่ใช้ของ P-A ยังเป็นแถวล่าสุด (ร้านที่สองถูกกว่าแต่เก่ากว่า)
+  assert.ok(first.prices.every((row) => typeof row.supplier === "string" && row.supplier.startsWith("ร้านสาธิต")), "every demo price names a fictional shop");
+  const shopsOf = (code, kind) => new Set(first.prices.filter((row) => row.materialCode === code && row.kind === kind).map((row) => row.supplier)).size;
+  assert.deepEqual([shopsOf("ZNO", "chem"), shopsOf("S-80", "chem"), shopsOf("P-A", "part"), shopsOf("P-B", "part")], [2, 2, 2, 1]);
+  assert.deepEqual(first.prices.filter((row) => row.materialCode === "P-A").map((row) => [row.unitPrice, row.supplier]), [[4.05, "ร้านสาธิต ข"], [4.5, "ร้านสาธิต ก"]], "oldest first");
   assert.ok(first.prices.filter((row) => row.kind === "chem").every((row) => !row.materialCode.startsWith("P-")));
   const saved = (await sb.rpc("app_rf_price_save", { p_kind: "chem", p_material_code: "DM-CH-05", p_unit_price: 125.5, p_effective_from: "2026-11-03", p_note: "  ใบเสนอราคา " })).data;
   assert.equal(saved.prices.length, first.prices.length + 1);
   const row = saved.prices.at(-1);
-  assert.deepEqual([row.kind, row.materialCode, row.unitPrice, row.effectiveFrom, row.note], ["chem", "DM-CH-05", 125.5, "2026-11-03", "ใบเสนอราคา"]);
+  assert.deepEqual([row.kind, row.materialCode, row.unitPrice, row.effectiveFrom, row.note, row.supplier], ["chem", "DM-CH-05", 125.5, "2026-11-03", "ใบเสนอราคา", ""], "no p_supplier (five arguments) = an empty supplier");
   const zno = first.prices.filter((entry) => entry.materialCode === "ZNO");
   await sb.rpc("app_rf_price_save", { p_kind: "chem", p_material_code: "ZNO", p_unit_price: 99, p_effective_from: zno[0].effectiveFrom, p_note: "" });
   assert.equal((await sb.rpc("app_rf_prices", {})).data.prices.length, first.prices.length + 2, "a correction is a new row, old rows stay");
@@ -297,12 +302,22 @@ test("cost RPCs: permissions follow the acting persona, prices are append-only h
   assert.equal((await sb.rpc("app_rf_prices", {})).data.prices.length, first.prices.length + 2, "saving the same price and note again adds no row");
   await sb.rpc("app_rf_price_save", { p_kind: "chem", p_material_code: "ZNO", p_unit_price: 99, p_effective_from: zno[0].effectiveFrom, p_note: "ยืนยันราคา" });
   assert.equal((await sb.rpc("app_rf_prices", {})).data.prices.length, first.prices.length + 3, "a different note is a new row");
+  // ร้าน: ตัดช่องว่าง · ร้านต่างกันวันเดียวกันราคาเดียวกัน = แถวใหม่ · ร้านเดิมซ้ำ = ไม่เพิ่ม · null = ว่าง
+  const shopSave = { p_kind: "chem", p_material_code: "ZNO", p_unit_price: 99, p_effective_from: zno[0].effectiveFrom, p_note: "ยืนยันราคา" };
+  const shopRows = async () => (await sb.rpc("app_rf_prices", {})).data.prices.length;
+  const beforeShops = await shopRows();
+  assert.equal((await sb.rpc("app_rf_price_save", { ...shopSave, p_supplier: "  ร้านทดสอบ  " })).data.prices.at(-1).supplier, "ร้านทดสอบ");
+  await sb.rpc("app_rf_price_save", { ...shopSave, p_supplier: "ร้านทดสอบ" });
+  assert.equal(await shopRows(), beforeShops + 1, "the same supplier again adds no row");
+  await sb.rpc("app_rf_price_save", { ...shopSave, p_supplier: null });
+  assert.equal(await shopRows(), beforeShops + 2, "back to no supplier is a new row");
+  assert.equal((await sb.rpc("app_rf_prices", {})).data.prices.at(-1).supplier, "");
   // ตรวจข้อมูล
   const ok = { p_kind: "chem", p_material_code: "ZNO", p_unit_price: 10, p_effective_from: "2026-11-03", p_note: "" };
-  for (const bad of [{ p_material_code: "NOPE" }, { p_material_code: null }, { p_kind: null }, { p_kind: "other" }, { p_kind: "part" }, { p_kind: "part", p_material_code: "FG-1" }, { p_kind: "chem", p_material_code: "P-A" }, { p_unit_price: 0 }, { p_unit_price: -1 }, { p_unit_price: 10000001 }, { p_unit_price: 1.23456 }, { p_unit_price: "10" }, { p_effective_from: null }, { p_effective_from: "03/11/2026" }, { p_effective_from: "2026-02-31" }, { p_effective_from: "2028-01-01" }, { p_note: "x".repeat(301) }]) {
+  for (const bad of [{ p_supplier: "x".repeat(81) }, { p_supplier: "ร้าน\tก" }, { p_supplier: "ร้าน\nก" }, { p_supplier: 5 }, { p_material_code: "NOPE" }, { p_material_code: null }, { p_kind: null }, { p_kind: "other" }, { p_kind: "part" }, { p_kind: "part", p_material_code: "FG-1" }, { p_kind: "chem", p_material_code: "P-A" }, { p_unit_price: 0 }, { p_unit_price: -1 }, { p_unit_price: 10000001 }, { p_unit_price: 1.23456 }, { p_unit_price: "10" }, { p_effective_from: null }, { p_effective_from: "03/11/2026" }, { p_effective_from: "2026-02-31" }, { p_effective_from: "2028-01-01" }, { p_note: "x".repeat(301) }]) {
     assert.equal(await error("app_rf_price_save", { ...ok, ...bad }), "RF_INVALID_PRICE", JSON.stringify(bad));
   }
-  assert.equal(await error("app_rf_price_save", { ...ok, p_unit_price: 10000000, p_effective_from: "2027-11-03", p_note: "x".repeat(300) }), null, "the limits themselves are accepted (366 days ahead)");
+  assert.equal(await error("app_rf_price_save", { ...ok, p_unit_price: 10000000, p_effective_from: "2027-11-03", p_note: "x".repeat(300), p_supplier: "ร".repeat(80) }), null, "the limits themselves are accepted (366 days ahead, an 80-character supplier)");
   // ของซื้อ: บันทึกราคาต่อหน่วยของชิ้น (kind part) · ไม่ปนกับเคมี · ซ้ำ (ชนิด + รหัส + วัน + ราคา + หมายเหตุ) ไม่เพิ่มแถว
   const partSave = { p_kind: "part", p_material_code: "P-C", p_unit_price: 7.25, p_effective_from: "2026-11-03", p_note: "ใบเสนอราคา" };
   const partSaved = (await sb.rpc("app_rf_price_save", partSave)).data;
@@ -332,6 +347,21 @@ test("cost RPCs: permissions follow the acting persona, prices are append-only h
     assert.equal(await error("app_rf_price_save", ok), write ? null : "RF_FORBIDDEN", `${persona} save`);
     assert.equal(await error("app_rf_cost_data", {}), seeCost ? null : "RF_FORBIDDEN", `${persona} cost`);
   }
+});
+
+// ชุดราคาที่เก็บไว้ก่อนมีร้าน (ไม่มีช่อง supplier) ยังโหลดได้: ร้านว่าง · บันทึกราคาใหม่พร้อมร้านได้
+test("cost RPCs: a stored price set from before suppliers loads with empty suppliers", async () => {
+  const store = new Map([["mnp-harness-rf-prices", JSON.stringify({ rows: [
+    { id: "price-1", kind: "chem", materialCode: "ZNO", unitPrice: 62, effectiveFrom: "2026-01-01", note: "", createdAt: 1, createdBy: "ผู้ทดสอบ" },
+    { id: "price-2", materialCode: "S-80", pricePerKg: 145, effectiveFrom: "2026-01-01", note: "", createdAt: 2, createdBy: "ผู้ทดสอบ" },
+  ], partsSeeded: true, categories: [], categoriesSeeded: true })]]);
+  const storage = { getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, String(value)) };
+  const { client: sb, rf } = createMockSupabase({ sandbox: true, now: () => NOW, storage });
+  rf.edit((current) => { current.materials.push({ code: "ZNO", name: "ซิงค์ออกไซด์", category: "สารกระตุ้น" }); });
+  const read = (await sb.rpc("app_rf_prices", {})).data.prices;
+  assert.deepEqual(read.map((row) => [row.materialCode, row.unitPrice, row.supplier]), [["ZNO", 62, ""], ["S-80", 145, ""]]);
+  const saved = (await sb.rpc("app_rf_price_save", { p_kind: "chem", p_material_code: "ZNO", p_unit_price: 63, p_effective_from: "2026-02-01", p_note: "", p_supplier: "ร้านทดสอบ" })).data.prices;
+  assert.deepEqual(saved.map((row) => row.supplier), ["", "", "ร้านทดสอบ"]);
 });
 
 // หมวดของซื้อ (ต้นทุนเฟส 3 · app_rf_part_categories / app_rf_part_category_save): สิทธิ์ชุดเดียวกับราคา · ของซื้อของ BOM เท่านั้น · แถวเพิ่มอย่างเดียว ล้างด้วยหมวดว่าง · ล้างข้อมูล RubberFlow ทดสอบลบราคาและหมวดด้วย

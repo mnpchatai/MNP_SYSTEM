@@ -171,7 +171,7 @@
       const item = row.kind === "chem" ? `${ui.mono(row.code)}<div class="small muted">${note}</div>` : `${main || ui.mono(row.code)}<div class="small muted">${note}</div>`;
       const lot = row.kind === "chem" && row.lotNo ? `${main}<div class="small muted">${esc(`หมดอายุ ${rules.fmtDate(row.expiry)}`)}</div>` : dash;
       const badges = [row.kind === "chem" && row.lotNo && row.state !== "available" ? ui.status(row.state) : "", row.low ? ui.badge("warn", "ต่ำกว่าขั้นต่ำ") : ""].filter(Boolean).join(" ");
-      // ราคาของวัตถุดิบหนึ่งตัว (และปุ่มตั้งราคา / ราคาใหม่ / ประวัติ) แสดงที่แถวแรกของวัตถุดิบนั้นในรายการที่แสดงอยู่เท่านั้น (ล็อตของเคมีตัวเดียวกันอยู่ติดกัน แถวถัดไปเว้นว่าง)
+      // ราคาของวัตถุดิบหนึ่งตัว (และปุ่มตั้งราคา / ดูประวัติราคา) แสดงที่แถวแรกของวัตถุดิบนั้นในรายการที่แสดงอยู่เท่านั้น (ล็อตของเคมีตัวเดียวกันอยู่ติดกัน แถวถัดไปเว้นว่าง)
       const priceKey = `${row.kind}:${row.code}`;
       const price = priced ? `<td class="right">${priceShown.has(priceKey) ? "" : priceCell(ctx, book, { kind: row.kind, code: row.code, unit: row.unit })}</td>` : "";
       priceShown.add(priceKey);
@@ -209,7 +209,7 @@
     const unit = rules.uomLabel(item.uom);
     const reserved = rules.partReserved(data.jobs, data.orders).get(item.code) || 0;
     const onOrder = partOnOrder(ctx);
-    // ราคา (เฉพาะผู้ที่เห็นราคา): ราคาต่อหน่วยของชิ้นนี้ที่มีผลวันนี้ + ปุ่มตั้งราคา / ราคาใหม่ / ประวัติ
+    // ราคา (เฉพาะผู้ที่เห็นราคา): ราคาต่อหน่วยของชิ้นนี้ที่มีผลวันนี้ + ปุ่มตั้งราคา / ดูประวัติราคา
     const book = priceBook(ctx);
     const priceFact = book?.status === "ready" ? [[`ราคา/${unit}`, priceCell(ctx, book, { kind: "part", code: item.code, unit })]] : book?.status === "loading" ? [["ราคา", '<span class="small muted" role="status">กำลังโหลดราคา…</span>']] : [];
     // หมวดของซื้อ (ผู้ที่เห็นราคา · ตั้งใน dialog ราคา) · ไม่มีหมวด = ไม่มีแถวนี้
@@ -266,7 +266,7 @@
     const days = Math.ceil((lot.expiry - ctx.now) / R.DAY);
     const transit = R.lotInTransitKg(rf.data, lot.lotNo);
     const material = materialOf(rf, lot.materialCode);
-    // ราคา (เฉพาะผู้ที่เห็นราคา): ราคาต่อ kg ของวัตถุดิบนี้ที่มีผลวันนี้ + ปุ่มตั้งราคา / ราคาใหม่ / ประวัติ
+    // ราคา (เฉพาะผู้ที่เห็นราคา): ราคาต่อ kg ของวัตถุดิบนี้ที่มีผลวันนี้ + ปุ่มตั้งราคา / ดูประวัติราคา
     const book = priceBook(ctx);
     const priceFact = book?.status === "ready" ? [["ราคา/kg", priceCell(ctx, book, { kind: "chem", code: lot.materialCode, unit: "kg" })]] : book?.status === "loading" ? [["ราคา/kg", '<span class="small muted" role="status">กำลังโหลดราคา…</span>']] : [];
     const facts = ui.kv([
@@ -608,6 +608,7 @@
   const repaintPrices = () => { try { if (F.onDeptRoute() && !root.MNP_BOM?.isEditing?.()) renderRoute(); } catch { /* ออกจากหน้าแล้ว */ } };
   const PRICE_FILTERS = Object.freeze([{ value: "missing", label: "ยังไม่มีราคา" }, { value: "priced", label: "มีราคาแล้ว" }]);
   const CATEGORY_MAX = 40;
+  const SUPPLIER_MAX = 80; // ร้าน / ผู้ขายของราคา (ฐานข้อมูลตรวจซ้ำ RF_INVALID_PRICE)
   const hasControlChar = (text) => [...text].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127);
   // ราคาที่มีผลวันนี้ของทุกรายการ (null = ผู้ชมนี้ไม่เห็นราคา) · status: loading = กำลังโหลด · error = โหลดไม่สำเร็จ (ผู้ใช้กดลองอีกครั้ง) · forbidden = ฐานข้อมูลไม่ให้ดู (ซ่อนส่วนราคา) · ready = ใช้ได้
   function priceBook(ctx) {
@@ -646,10 +647,11 @@
     if (failed) return `<p class="small muted" role="status">${esc(costData().errorText(failed.error))} <button class="btn rf-btn secondary small" type="button" data-cost-retry>ลองอีกครั้ง</button></p>`;
     return "";
   }
-  // ปุ่มของราคา: ผู้บันทึกได้ = "ตั้งราคา" (ยังไม่มี) / "ราคาใหม่" · ผู้อ่านอย่างเดียว = "ประวัติราคา" (เฉพาะที่เคยมีราคาบันทึกไว้ ไม่มีก็ไม่มีปุ่ม)
+  // ปุ่มของราคา (เปิด dialog เดียวกัน): ผู้บันทึกได้ = "ตั้งราคา" (ยังไม่มีราคาที่ใช้) / "ดูประวัติราคา" (ในนั้นบันทึกราคาใหม่ได้)
+  //   ผู้อ่านอย่างเดียว = "ดูประวัติราคา" เฉพาะที่เคยมีราคาบันทึกไว้ ไม่มีก็ไม่มีปุ่ม (เจ้าของสั่ง 2026-11-27: เปลี่ยนชื่อปุ่ม "ราคาใหม่" เป็น "ดูประวัติราคา")
   function priceButton(ctx, book, kind, code, hasCurrent) {
     if (!book.canWrite && !book.known(kind, code)) return "";
-    const label = book.canWrite ? (hasCurrent ? "ราคาใหม่" : "ตั้งราคา") : "ประวัติราคา";
+    const label = book.canWrite && !hasCurrent ? "ตั้งราคา" : "ดูประวัติราคา";
     return `<div>${ctx.ui.openButton(label, "costPrice", { kind, code }, { className: book.canWrite && !hasCurrent ? "small" : "secondary small", ariaLabel: `${label} ${code}` })}</div>`;
   }
   // ช่องราคาของวัตถุดิบหนึ่งตัว: ราคาที่มีผลวันนี้ต่อหน่วย (หรือ "ยังไม่มีราคา") + ราคาล่วงหน้า + ปุ่ม
@@ -661,7 +663,7 @@
     const upcoming = next ? `<div class="small muted">${esc(`ราคาใหม่ ${C.fmtPrice(next.unitPrice)} มีผล ${C.fmtDay(next.effectiveFrom)}`)}</div>` : "";
     return `${price}${upcoming}${priceButton(ctx, book, kind, code, Boolean(current))}`;
   }
-  // dialog ราคาของเคมี (kind "chem") หรือของซื้อ (kind "part") หนึ่งตัว (ลงทะเบียนใน dialog ของ BOM: เปิดด้วยตัวผูกของหน้าแผนก · ctx = ctx ของหน้า ST) · ฟอร์มบันทึกราคาใหม่ (เฉพาะผู้เขียน) + ประวัติราคาทุกแถว
+  // dialog ราคาของเคมี (kind "chem") หรือของซื้อ (kind "part") หนึ่งตัว (ลงทะเบียนใน dialog ของ BOM: เปิดด้วยตัวผูกของหน้าแผนก · ctx = ctx ของหน้า ST) · ฟอร์มบันทึกราคาใหม่ (เฉพาะผู้เขียน) + ราคาล่าสุดของแต่ละร้าน (เมื่อมีสองร้านขึ้นไป) + ประวัติราคาทุกแถวพร้อมร้าน
   // ฟอร์มส่งเองที่นี่ (ไม่ผ่านคำสั่งของ BOM): ตรวจช่อง → app_rf_price_save → ปิด dialog แล้ววาดหน้าใหม่
   (root.MNP_BOM_DIALOGS ??= {}).costPrice = (ctx, { kind = "chem", code }) => {
     const C = costRules();
@@ -679,9 +681,16 @@
     const history = C.priceHistory(prices.prices, code, kind);
     const rows = history.map((row) => {
       const tag = row === current ? ui.badge("good", "ใช้อยู่") : C.dayKey(row.effectiveFrom) > today ? ui.badge("info", "ยังไม่ถึงวันมีผล") : "";
-      return `<tr><td class="nowrap">${esc(C.fmtDay(row.effectiveFrom))}${tag ? ` ${tag}` : ""}</td><td class="right rf-mono">${esc(C.fmtPrice(row.unitPrice))}</td><td class="small">${esc(row.note)}</td><td class="small">${esc(row.createdBy)}<div class="muted">${esc(C.fmtDay(row.createdAt))}</div></td></tr>`;
+      const supplier = C.supplierOf(row);
+      return `<tr><td class="nowrap">${esc(C.fmtDay(row.effectiveFrom))}${tag ? ` ${tag}` : ""}</td><td class="right rf-mono">${esc(C.fmtPrice(row.unitPrice))}</td><td class="small">${supplier ? esc(supplier) : '<span class="muted">—</span>'}</td><td class="small">${esc(row.note)}</td><td class="small">${esc(row.createdBy)}<div class="muted">${esc(C.fmtDay(row.createdAt))}</div></td></tr>`;
     });
-    const historyTable = ui.table(["มีผลตั้งแต่", { label: `บาท/${unit}`, className: "right" }, "หมายเหตุ", "บันทึกโดย"], rows, { emptyText: "ยังไม่เคยบันทึกราคา" });
+    const historyTable = ui.table(["มีผลตั้งแต่", { label: `บาท/${unit}`, className: "right" }, "ร้าน / ผู้ขาย", "หมายเหตุ", "บันทึกโดย"], rows, { emptyText: "ยังไม่เคยบันทึกราคา" });
+    // เทียบราคาระหว่างร้าน: ราคาล่าสุดของแต่ละร้าน ถูกสุดก่อน · แสดงเฉพาะเมื่อมีราคาจากร้านที่ระบุชื่ออย่างน้อยสองร้าน (ร้านเดียวซ้ำกับตารางประวัติ)
+    //   ไม่เปลี่ยนราคาที่ใช้ (ป้าย "ใช้อยู่" ในตารางยังเป็นแถวล่าสุดของวันมีผล ไม่ว่าร้านไหน)
+    const bySupplier = C.latestBySupplier(prices.prices, code, kind);
+    const compare = bySupplier.length >= 2
+      ? `<section class="st-supplier-compare" aria-labelledby="st-supplier-compare-title"><h3 id="st-supplier-compare-title">ราคาล่าสุดของแต่ละร้าน</h3><ol class="small">${bySupplier.map(({ supplier, row }) => `<li>${esc(supplier)} <span class="rf-mono">${esc(C.fmtPrice(row.unitPrice))}</span> ${esc(`บาท/${unit}`)} <span class="muted">${esc(`มีผล ${C.fmtDay(row.effectiveFrom)}`)}</span></li>`).join("")}</ol></section>`
+      : "";
     // หมวดของของซื้อ (เคมีใช้หมวดของวัตถุดิบ RubberFlow ไม่ได้ตั้งที่นี่): ผู้ตั้งหมวดได้ช่อง "หมวด" กับปุ่มบันทึกของตัวเอง (ตัวเลือก = หมวดที่ใช้อยู่ · ว่าง = ไม่มีหมวด) · ผู้อ่านเห็นหมวดเป็นข้อความใต้ชื่อ
     const cats = part ? categoryBook(ctx) : null;
     const category = cats?.status === "ready" ? cats.of(code) : "";
@@ -689,12 +698,14 @@
       ? `<form novalidate class="rf-row st-category-form" data-cost-category>${ui.field("หมวด", ui.input("category", { id: "st-part-category", value: category, list: "st-part-categories", placeholder: PART_CATEGORY, extra: `maxlength="${CATEGORY_MAX}" title="เว้นว่าง = ไม่มีหมวด (อยู่ใต้ ${PART_CATEGORY})"` }), { id: "st-part-category" })}<button class="btn rf-btn secondary small" type="submit">บันทึกหมวด</button><datalist id="st-part-categories">${cats.used.map((value) => `<option value="${attr(value)}"></option>`).join("")}</datalist></form>`
       : "";
     const nameLine = [name ?? "", category && !categoryForm ? `หมวด ${category}` : ""].filter(Boolean).join(" · ");
+    // ร้าน / ผู้ขาย (ไม่บังคับ): ตัวเลือก = ชื่อร้านที่เคยใช้ในราคาทุกแถว (เคมีและของซื้อ) · พิมพ์ชื่อใหม่ได้
     const form = prices.canWrite ? `<form novalidate id="st-price-form" data-cost-price>
-        <div class="rf-grid rf-g2">${ui.field(`ราคา (บาท/${unit})`, ui.input("unitPrice", { type: "number", step: "any", min: "0.0001", max: "10000000", required: true, placeholder: current ? C.fmtPrice(current.unitPrice) : "", extra: 'inputmode="decimal"' }), { required: true })}
+        <div class="rf-grid rf-g3">${ui.field(`ราคา (บาท/${unit})`, ui.input("unitPrice", { type: "number", step: "any", min: "0.0001", max: "10000000", required: true, placeholder: current ? C.fmtPrice(current.unitPrice) : "", extra: 'inputmode="decimal"' }), { required: true })}
+        ${ui.field("ซื้อจากร้าน / ผู้ขาย", ui.input("supplier", { id: "st-price-supplier", list: "st-price-suppliers", placeholder: "ชื่อร้านที่ซื้อ", extra: `maxlength="${SUPPLIER_MAX}" title="เลือกร้านที่เคยใช้หรือพิมพ์ชื่อใหม่ · เว้นว่างได้"` }), { id: "st-price-supplier" })}<datalist id="st-price-suppliers">${C.supplierNames(prices.prices).map((value) => `<option value="${attr(value)}"></option>`).join("")}</datalist>
         ${ui.field("มีผลตั้งแต่", ui.input("effectiveFrom", { type: "date", value: today, required: true }), { required: true, hint: esc("บันทึกแล้วแก้ไม่ได้ ถ้าผิดให้บันทึกราคาใหม่ (วันเดียวกันใช้ราคาที่บันทึกล่าสุด)") })}</div>
         ${ui.field("หมายเหตุ", ui.input("note", { placeholder: "เช่น ใบเสนอราคาเลขที่ …", extra: 'maxlength="300"' }))}</form>` : "";
     const title = `${part ? "ราคาของซื้อ" : "ราคาเคมี"} · ${code}`;
-    const html = ui.dialog("costPrice", title, `${nameLine ? `<p class="muted small">${esc(nameLine)}</p>` : ""}${categoryForm}${form}${historyTable}`, { wide: true, footer: `${ui.closeButton(prices.canWrite ? "ยกเลิก" : "ปิด")}${prices.canWrite ? '<button class="btn rf-btn" type="submit" form="st-price-form">บันทึกราคา</button>' : ""}` });
+    const html = ui.dialog("costPrice", title, `${nameLine ? `<p class="muted small">${esc(nameLine)}</p>` : ""}${categoryForm}${form}${compare}${historyTable}`, { wide: true, footer: `${ui.closeButton(prices.canWrite ? "ยกเลิก" : "ปิด")}${prices.canWrite ? '<button class="btn rf-btn" type="submit" form="st-price-form">บันทึกราคา</button>' : ""}` });
     const bind = (dialog) => {
       const catNode = dialog.querySelector("form[data-cost-category]");
       catNode?.addEventListener("submit", async (event) => {
@@ -719,9 +730,12 @@
         const price = String(node.elements.unitPrice.value).trim();
         // ราคามากกว่า 0 ไม่เกิน 10,000,000 ทศนิยมไม่เกิน 4 ตำแหน่ง (ฐานข้อมูลตรวจซ้ำ RF_INVALID_PRICE)
         if (!/^\d+(\.\d{1,4})?$/.test(price) || !(Number(price) > 0) || Number(price) > 10000000) { showToast("ราคาต้องมากกว่า 0 ไม่เกิน 10,000,000 และทศนิยมไม่เกิน 4 ตำแหน่ง", "error"); return; }
+        // ร้านไม่เกิน 80 ตัวอักษร ไม่มีอักขระควบคุม (ฐานข้อมูลตรวจซ้ำ RF_INVALID_PRICE)
+        const supplier = String(node.elements.supplier?.value ?? "").trim();
+        if ([...supplier].length > SUPPLIER_MAX || hasControlChar(supplier)) { showToast(`ชื่อร้าน / ผู้ขายยาวได้ไม่เกิน ${SUPPLIER_MAX} ตัวอักษร`, "error"); return; }
         const buttons = [...dialog.querySelectorAll("button")];
         buttons.forEach((node2) => { node2.disabled = true; });
-        const result = await D.savePrice({ kind, materialCode: code, unitPrice: Number(price), effectiveFrom: node.elements.effectiveFrom.value, note: node.elements.note.value.trim() });
+        const result = await D.savePrice({ kind, materialCode: code, unitPrice: Number(price), effectiveFrom: node.elements.effectiveFrom.value, note: node.elements.note.value.trim(), supplier });
         if (!result.ok) { showToast(result.message, "error"); buttons.forEach((node2) => { node2.disabled = false; }); return; }
         showToast(`บันทึกราคา ${code} แล้ว`);
         dialog.close?.();

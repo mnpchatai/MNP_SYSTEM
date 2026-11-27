@@ -71,7 +71,7 @@ function fakeSb(getEmployee, log) {
       if (name === "app_rf_price_save") {
         if (!write()) return refuse();
         if (log.invalid) return { data: null, error: { message: "RF_INVALID_PRICE" } };
-        log.prices = [...log.prices, price(args.p_material_code, args.p_unit_price, args.p_effective_from, 99, { kind: args.p_kind, note: args.p_note })];
+        log.prices = [...log.prices, price(args.p_material_code, args.p_unit_price, args.p_effective_from, 99, { kind: args.p_kind, note: args.p_note, supplier: args.p_supplier ?? "" })];
         return { data: { canWrite: true, prices: log.prices }, error: null };
       }
       // ค่าแรง: อ่าน = ผู้เห็นต้นทุน + แผนก RB (RB ไม่ได้อัตรา) · แก้อัตรา = ผู้เห็นต้นทุน · แก้เวลามาตรฐาน = ผู้เห็นต้นทุน + หัวหน้าแผนก RB
@@ -223,7 +223,8 @@ test("ST ในคลัง: ผู้ที่เห็นราคาได้
   assert.match(epdm[0], /10\.00<\/span> <span class="small muted">\/kg/, "ราคาอยู่แถวแรกของวัตถุดิบ");
   assert.ok(epdm.slice(1).every((row) => row.includes('<td class="right"></td>') && !/\/kg<\/span>|costPrice|ยังไม่มีราคา/.test(row)), "แถวถัดไปของวัตถุดิบเดียวกันเว้นช่องราคา");
   assert.equal(epdm.filter((row) => row.includes("data-rf-open=\"costPrice\"")).length, 1, "ปุ่มเดียวต่อวัตถุดิบ");
-  assert.match(epdm[0], /data-rf-args="\{&quot;kind&quot;:&quot;chem&quot;,&quot;code&quot;:&quot;EPDM-55&quot;\}"[^>]*>ราคาใหม่</);
+  assert.match(epdm[0], /data-rf-args="\{&quot;kind&quot;:&quot;chem&quot;,&quot;code&quot;:&quot;EPDM-55&quot;\}"[^>]*>ดูประวัติราคา</);
+  assert.doesNotMatch(html, />ราคาใหม่</, "ไม่มีปุ่มชื่อ ราคาใหม่ แล้ว (เจ้าของสั่งเปลี่ยนเป็น ดูประวัติราคา)");
   // แถวแรกตามรายการที่แสดง: ค้นหาล็อตที่สองของ EPDM-55 แถวนั้นได้ราคาและปุ่ม
   const secondLot = (epdm[1].match(/href="#\/st\?lot=([^"]+)"/) ?? [])[1];
   assert.ok(secondLot);
@@ -314,7 +315,7 @@ test("ST ในคลัง: ผู้อ่านอย่างเดียว
     const env = load({ employee });
     const html = await settled(env.openSt, "tab=stock");
     assert.match(html, /<th[^>]*>ราคา\/หน่วย \(บาท\)<\/th>/, JSON.stringify(employee));
-    assert.match(html, /data-rf-open="costPrice"[^>]*>ประวัติราคา</, JSON.stringify(employee));
+    assert.match(html, /data-rf-open="costPrice"[^>]*>ดูประวัติราคา</, JSON.stringify(employee));
     assert.doesNotMatch(html, />ตั้งราคา<|>ราคาใหม่</, `ผู้อ่านไม่มีปุ่มตั้งราคา ${JSON.stringify(employee)}`);
     const unpriced = bodyRows(html).find((row) => row.includes(">AO-6PPD<"));
     assert.match(unpriced, /ยังไม่มีราคา/);
@@ -322,7 +323,9 @@ test("ST ในคลัง: ผู้อ่านอย่างเดียว
     assert.match(html, /name="price"/, "ผู้อ่านใช้ตัวกรองราคาได้");
   }
   const admin = load({ employee: emp("AD", "admin") });
-  assert.match(await settled(admin.openSt, "tab=stock"), />ตั้งราคา<|>ราคาใหม่</, "admin ตั้งราคาได้");
+  const adminHtml = await settled(admin.openSt, "tab=stock");
+  assert.match(adminHtml, />ตั้งราคา</, "admin ตั้งราคาให้ของที่ยังไม่มีราคาได้");
+  assert.match(adminHtml, />ดูประวัติราคา</, "และดูประวัติราคา (บันทึกราคาใหม่ในนั้น) ของที่มีราคาแล้ว");
 });
 
 test("ST ในคลัง: ผู้ที่ไม่เห็นราคาและผู้เข้าชม (RB / WH) ไม่มีคอลัมน์ ตัวกรอง ปุ่ม และไม่เรียก RPC ราคา · ?tab=prices กลับมาที่ในคลัง", async () => {
@@ -378,17 +381,17 @@ test("ST หน้าล็อตเคมีและหน้าของซ�
   const lotNo = [...(await settled(env.openSt, "tab=stock")).matchAll(/href="#\/st\?lot=([^"]+)"/g)].map((match) => match[1]).find((value) => value.includes("EPDM-55"));
   assert.ok(lotNo, lot);
   const lotPage = await env.openSt(`lot=${lotNo}`);
-  assert.match(lotPage, /ราคา\/kg[\s\S]*10\.00[\s\S]*data-rf-open="costPrice"[^>]*>ราคาใหม่</);
+  assert.match(lotPage, /ราคา\/kg[\s\S]*10\.00[\s\S]*data-rf-open="costPrice"[^>]*>ดูประวัติราคา</);
   assert.match(lotPage, /หมวด[\s\S]*โพลิเมอร์/);
   const partPage = await env.openSt("part=P-BOX-01");
-  assert.match(partPage, /ราคา\/กล่อง[\s\S]*4\.50[\s\S]*data-rf-open="costPrice"[^>]*>ราคาใหม่</);
+  assert.match(partPage, /ราคา\/กล่อง[\s\S]*4\.50[\s\S]*data-rf-open="costPrice"[^>]*>ดูประวัติราคา</);
   assert.match(await env.openSt("part=P-STK-01"), /ยังไม่มีราคา[\s\S]*>ตั้งราคา</);
   // ผู้อ่านอย่างเดียว: ราคาและประวัติ ไม่มีปุ่มตั้งราคา
   const reader = load({ employee: emp("PP") });
   await settled(reader.openSt, "tab=stock");
   const readerPart = await reader.openSt("part=P-BOX-01");
   assert.match(readerPart, /4\.50/);
-  assert.match(readerPart, />ประวัติราคา</);
+  assert.match(readerPart, />ดูประวัติราคา</);
   assert.doesNotMatch(readerPart, />ราคาใหม่<|>ตั้งราคา</);
   // ไม่เห็นราคา: ไม่มีแถวราคา ไม่เรียก RPC
   const afm = load({ employee: emp("OFFICE", "assistant_factory_manager") });
@@ -439,6 +442,47 @@ test("dialog ราคา: เคมีและของซื้อ · ปร�
   assert.equal(none.context.MNP_BOM_DIALOGS.costPrice({ ...none.context.MNP_BOM.context(new URLSearchParams()), guest: "rb" }, { kind: "chem", code: "ZNO" }), null);
 });
 
+test("dialog ราคา: ร้าน / ผู้ขาย · ช่องร้าน (ตัวเลือกจากทุกแถว) ระหว่างราคากับวันที่ · คอลัมน์ร้านในประวัติ · ราคาล่าสุดของแต่ละร้านเฉพาะเมื่อมีสองร้านขึ้นไป · ไม่ขึ้นในรายการคลัง", async () => {
+  const env = load({ employee: emp("ST") });
+  env.log.prices = [...PRICES,
+    price("ZNO", 66, "2026-05-01", 5, { supplier: "ร้าน <b>ข</b>" }), price("ZNO", 64, "2026-03-01", 6, { supplier: "ร้านทดสอบ ก" }),
+    price("P-BOX-01", 4.2, "2025-12-01", 7, { kind: "part", supplier: "ร้านทดสอบ ค" })];
+  const list = await settled(env.openSt, "tab=stock");
+  assert.doesNotMatch(list, /ร้านทดสอบ|ร้าน &lt;b|ร้าน \/ ผู้ขาย/, "รายการคลังไม่แสดงร้าน (อยู่ใน dialog)");
+  const base = env.context.MNP_BOM.context(new URLSearchParams());
+  const zno = env.context.MNP_BOM_DIALOGS.costPrice({ ...base, guest: null }, { kind: "chem", code: "ZNO" }).html;
+  // ช่องร้าน: ไม่บังคับ ไม่เกิน 80 ตัวอักษร อยู่ระหว่างราคากับวันที่ · ตัวเลือก = ร้านที่เคยใช้ทุกแถว (เคมีและของซื้อ) ไม่ซ้ำ
+  assert.match(zno, /<label for="st-price-supplier">ซื้อจากร้าน \/ ผู้ขาย<\/label>/);
+  assert.match(zno, /name="supplier" id="st-price-supplier"[^>]*list="st-price-suppliers"[^>]*maxlength="80"/);
+  assert.doesNotMatch(zno, /name="supplier"[^>]* required/);
+  assert.ok(zno.indexOf('name="unitPrice"') < zno.indexOf('name="supplier"') && zno.indexOf('name="supplier"') < zno.indexOf('name="effectiveFrom"'), "ราคา → ร้าน → วันที่");
+  const options = [...zno.match(/<datalist id="st-price-suppliers">([\s\S]*?)<\/datalist>/)[1].matchAll(/value="([^"]*)"/g)].map((match) => match[1]);
+  assert.deepEqual([...options].sort(), ["ร้าน &lt;b&gt;ข&lt;/b&gt;", "ร้านทดสอบ ก", "ร้านทดสอบ ค"].sort());
+  // ประวัติ: คอลัมน์ร้าน (— เมื่อไม่ระบุ) · ราคาที่ใช้ยังเป็นแถวล่าสุดของวันมีผล (70 ไม่ระบุร้าน)
+  assert.match(zno, /<th>ร้าน \/ ผู้ขาย<\/th>/);
+  const body = zno.match(/<tbody>([\s\S]*)<\/tbody>/)[1];
+  assert.equal((body.match(/<span class="muted">—<\/span>/g) ?? []).length, 2, "สองแถวที่ไม่ระบุร้าน");
+  assert.match(body, /ใช้อยู่[\s\S]*?70\.00[\s\S]*?—/, "แถวที่ใช้อยู่ = แถวล่าสุด แม้ไม่ระบุร้าน");
+  // ราคาล่าสุดของแต่ละร้าน: ถูกสุดก่อน พร้อมวันมีผล · ชื่อร้าน escape · อยู่เหนือตารางประวัติ
+  const compare = zno.match(/<section class="st-supplier-compare"[\s\S]*?<\/section>/)?.[0] ?? "";
+  assert.match(compare, /ราคาล่าสุดของแต่ละร้าน/);
+  assert.deepEqual([...compare.matchAll(/<li>([^<]*) <span class="rf-mono">([^<]*)<\/span>/g)].map((match) => [match[1], match[2]]), [["ร้านทดสอบ ก", "64.00"], ["ร้าน &lt;b&gt;ข&lt;/b&gt;", "66.00"]]);
+  assert.match(compare, /มีผล 1 มี\.ค\. 2569/);
+  assert.doesNotMatch(zno, /<b>ข<\/b>/, "escaped");
+  assert.ok(zno.indexOf("st-supplier-compare") < zno.indexOf("<table"), "เหนือตารางประวัติ");
+  // ของซื้อที่มีร้านระบุชื่อร้านเดียว: มีร้านในประวัติ แต่ไม่มีรายการเทียบ (ซ้ำกับตาราง)
+  const box = env.context.MNP_BOM_DIALOGS.costPrice({ ...base, guest: null }, { kind: "part", code: "P-BOX-01" }).html;
+  assert.match(box, /<td class="small">ร้านทดสอบ ค<\/td>/);
+  assert.doesNotMatch(box, /st-supplier-compare|ราคาล่าสุดของแต่ละร้าน/);
+  // ผู้อ่านอย่างเดียวเห็นร้านและรายการเทียบ ไม่มีช่องกรอก
+  const reader = load({ employee: emp("PP") });
+  reader.log.prices = env.log.prices;
+  await settled(reader.openSt, "tab=stock");
+  const readOnly = reader.context.MNP_BOM_DIALOGS.costPrice({ ...reader.context.MNP_BOM.context(new URLSearchParams()), guest: null }, { kind: "chem", code: "ZNO" }).html;
+  assert.match(readOnly, /ราคาล่าสุดของแต่ละร้าน/);
+  assert.doesNotMatch(readOnly, /name="supplier"|st-price-suppliers/);
+});
+
 test("dialog ราคา: ส่ง app_rf_price_save พร้อมชนิดและราคาต่อหน่วย · ผิดกติกา/ถูกปฏิเสธไม่ปิด dialog · สำเร็จวาดหน้าใหม่", async () => {
   const env = load({ employee: emp("ST") });
   await settled(env.openSt, "tab=stock");
@@ -446,7 +490,7 @@ test("dialog ราคา: ส่ง app_rf_price_save พร้อมชนิ�
   const open = (args) => {
     const built = env.context.MNP_BOM_DIALOGS.costPrice({ ...base, guest: null }, args);
     const field = (value) => ({ value });
-    const form = { elements: { unitPrice: field("125.5"), effectiveFrom: field("2026-01-02"), note: field("  ใบเสนอราคา 15  ") }, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
+    const form = { elements: { unitPrice: field("125.5"), supplier: field("  ร้านทดสอบ ก  "), effectiveFrom: field("2026-01-02"), note: field("  ใบเสนอราคา 15  ") }, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
     const buttons = [{ disabled: false }, { disabled: false }];
     const dialog = { querySelector: (selector) => (selector === "form[data-cost-price]" ? form : null), querySelectorAll: () => buttons, closed: false, close() { this.closed = true; } };
     built.bind(dialog);
@@ -460,9 +504,18 @@ test("dialog ราคา: ส่ง app_rf_price_save พร้อมชนิ�
   }
   assert.equal(env.log.rpc.filter(([name]) => name === "app_rf_price_save").length, 0, "ราคาที่ผิดไม่ถูกส่ง");
   assert.equal(env.log.toasts.length >= 5, true);
+  // ร้านยาวเกิน 80 ตัวอักษร / มีอักขระควบคุม = ไม่ส่ง
+  chem.form.elements.unitPrice.value = "125.5";
+  for (const bad of ["ร".repeat(81), "ร้าน\tก"]) {
+    env.log.toasts.length = 0;
+    chem.form.elements.supplier.value = bad;
+    await chem.submit();
+    assert.deepEqual(env.log.toasts.at(-1), ["ชื่อร้าน / ผู้ขายยาวได้ไม่เกิน 80 ตัวอักษร", "error"], JSON.stringify(bad));
+  }
+  assert.equal(env.log.rpc.filter(([name]) => name === "app_rf_price_save").length, 0, "ร้านที่ผิดไม่ถูกส่ง");
+  chem.form.elements.supplier.value = "  ร้านทดสอบ ก  ";
   // ฐานข้อมูลปฏิเสธ
   env.log.toasts.length = 0;
-  chem.form.elements.unitPrice.value = "125.5";
   env.log.invalid = true;
   await chem.submit();
   assert.equal(chem.dialog.closed, false);
@@ -474,14 +527,16 @@ test("dialog ราคา: ส่ง app_rf_price_save พร้อมชนิ�
   const renders = env.log.renders;
   await chem.submit();
   const saved = env.log.rpc.filter(([name]) => name === "app_rf_price_save").at(-1);
-  assert.deepEqual(JSON.parse(JSON.stringify(saved[1])), { p_kind: "chem", p_material_code: "TMTD", p_unit_price: 125.5, p_effective_from: "2026-01-02", p_note: "ใบเสนอราคา 15" });
+  assert.deepEqual(JSON.parse(JSON.stringify(saved[1])), { p_kind: "chem", p_material_code: "TMTD", p_unit_price: 125.5, p_effective_from: "2026-01-02", p_note: "ใบเสนอราคา 15", p_supplier: "ร้านทดสอบ ก" });
   assert.equal(chem.dialog.closed, true);
   assert.deepEqual(env.log.toasts.at(-1), ["บันทึกราคา TMTD แล้ว", "ok"]);
   assert.ok(env.log.renders > renders, "วาดหน้าใหม่");
   assert.match(await env.openSt("tab=stock&q=TMTD"), /125\.50/, "ราคาใหม่ขึ้นในรายการ");
   // สำเร็จ (ของซื้อ): ส่ง kind part และราคาเป็นของซื้อ ไม่ปนกับเคมี
+  // ไม่กรอกร้าน = ไม่ส่ง p_supplier (อาร์กิวเมนต์ห้าตัวเดิม ใช้ได้ทั้งฐานข้อมูลก่อนและหลัง 20270111010000)
   const part = open({ kind: "part", code: "P-STK-01" });
   part.form.elements.unitPrice.value = "0.75";
+  part.form.elements.supplier.value = "   ";
   await part.submit();
   const savedPart = env.log.rpc.filter(([name]) => name === "app_rf_price_save").at(-1);
   assert.deepEqual(JSON.parse(JSON.stringify(savedPart[1])), { p_kind: "part", p_material_code: "P-STK-01", p_unit_price: 0.75, p_effective_from: "2026-01-02", p_note: "ใบเสนอราคา 15" });

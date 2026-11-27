@@ -3638,6 +3638,10 @@ table.bom-tree td.right { white-space: nowrap; }
 .cost-diff.is-partial { opacity: .6; }
 /* หมวดของซื้อใน dialog ราคา (ST) · ส่วนของฟอร์มสูตรตามรูปแบบที่เลือก (PHR / น้ำหนัก) ในฉบับแก้ไขใหม่ของสูตร PHR */
 .st-category-form { align-items: flex-end; margin-bottom: 12px; }
+/* ราคาล่าสุดของแต่ละร้านใน dialog ราคา (ST): รายการสั้นเหนือตารางประวัติ ถูกสุดก่อน */
+.st-supplier-compare { margin: 12px 0; }
+.st-supplier-compare h3 { margin: 0 0 4px; font-size: .95rem; }
+.st-supplier-compare ol { margin: 0; padding-left: 1.4rem; display: grid; gap: 2px; }
 .rf-mode-part { min-width: 0; margin: 0; padding: 0; border: 0; }
 .sr-lot { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); align-items: start; }
 .sr-label-wrap { display: grid; gap: 14px; justify-items: start; }
