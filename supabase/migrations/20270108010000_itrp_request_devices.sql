@@ -3,29 +3,30 @@
 --
 -- ที่มา: เจ้าของตัดสิน 27/11/2026 · ฟอร์มแจ้งซ่อม: พนักงานพิมพ์รหัสเครื่องคอมที่ IT ติดไว้ (เช่น COM24, AIO01, NBD01) -> ระบบแสดงชื่อเครื่อง + ชื่อผู้ใช้ให้ยืนยัน
 --   -> ติ๊กชนิดอุปกรณ์ที่มีปัญหา (คอมพิวเตอร์/โน้ตบุ๊ก, จอ, เครื่องพิมพ์, คีย์บอร์ด, เมาส์, UPS, โปรเจกเตอร์, อื่นๆ) -> ระบบเติมรหัสอุปกรณ์ที่ผูกกับเครื่องนั้นให้ พนักงานแก้ได้
---   ไม่ทราบรหัส/พิมพ์แล้วไม่พบ/ไม่มีคอมประจำ -> ติ๊ก "ไม่ทราบรหัส" ยังเลือกชนิดและพิมพ์รหัสเองได้ (ไม่บังคับ) ส่งใบได้
+--   เจ้าของตัดสินเพิ่ม 27/11/2026: **ไม่มีตัวเลือก "ไม่ทราบรหัสเครื่อง"** พนักงานต้องรู้รหัสและค้นพบเครื่องในทะเบียนก่อนเสมอจึงแจ้งซ่อมแบบเลือกอุปกรณ์ได้
+--   (ไม่พบ = ตรวจรหัสที่ติดบนเครื่องหรือติดต่อ IT) · รหัสของอุปกรณ์แต่ละตัวที่ไม่ทราบยังเว้นว่างได้ IT จะเติมให้
 --
 -- สิ่งที่เพิ่ม
 --   1) public.app_itrp_lookup_host(p_code)  ผู้แจ้ง (ผู้ใช้ที่สร้างใบแจ้งซ่อมได้) ค้นเครื่องคอมจากทะเบียน itas แบบ "ตรงตัวเท่านั้น"
 --        คืนเฉพาะ {found, host:{code,type_code,name,model,user_name}, devices:[{type_code,code,name,model}]} ไม่คืน serial/IP/แผนก/สถานที่/ราคา/attrs อื่น/ช่องลับ
 --        ไม่ขยายสิทธิ์ RPC ของ itas (ทุก RPC itas ยังล็อกเฉพาะ itas_admins) · อ่านทะเบียนผ่านฟังก์ชันนี้ฟังก์ชันเดียวและเฉพาะช่องข้างบน
 --   2) ตาราง public.itrp_request_devices  อุปกรณ์ที่ผู้แจ้งเลือกต่อใบ (1–10 แถว) เพิ่มได้อย่างเดียว (แก้/ลบ/ล้างไม่ได้) เขียนผ่าน app_itrp_create เท่านั้น
---   3) itrp_requests เพิ่มคอลัมน์ host_code (รหัสเครื่องคอมที่ระบบตรวจพบในทะเบียนตอนแจ้ง) + host_unknown (ผู้แจ้งเลือก "ไม่ทราบรหัสเครื่อง")
---   4) app_itrp_create รับพารามิเตอร์ใหม่ท้ายสุด p_host_code / p_host_unknown / p_devices (ซิกเนเจอร์เดียว ไม่มี overload)
---   5) app_itrp_get_detail คืนเพิ่ม host_code, host_unknown, devices[]
+--   3) itrp_requests เพิ่มคอลัมน์ host_code (รหัสเครื่องคอมที่ระบบตรวจพบในทะเบียนตอนแจ้ง)
+--   4) app_itrp_create รับพารามิเตอร์ใหม่ท้ายสุด p_host_code / p_devices (10 พารามิเตอร์ ซิกเนเจอร์เดียว ไม่มี overload)
+--   5) app_itrp_get_detail คืนเพิ่ม host_code, devices[]
 --
 -- การตัดสินใจ (ผู้ตรวจ/หน้าเว็บโปรดทราบ)
 --   - ใช้คอลัมน์ใหม่ host_code แยกจาก asset_code เดิม: asset_code เป็นข้อความที่ผู้แจ้ง/หน้าเว็บกรอกอิสระ (ใบเก่าและการเรียกแบบเดิมยังใช้) ส่วน host_code
 --     "มีค่าก็ต่อเมื่อฐานข้อมูลตรวจเจอเครื่องนั้นในทะเบียนตอนส่งใบ" (ไม่เชื่อหน้าเว็บ) จึงเชื่อใจได้ว่ามีอยู่จริงในโหมดนั้น · เก็บรหัสมาตรฐานของเครื่อง
---     (device_code ถ้ามี ไม่งั้น reg_no) ไม่ใช่ข้อความที่พิมพ์ · เมื่อยืนยันเครื่องในทะเบียนแล้ว (host_unknown = false)
---     ฐานข้อมูลตั้ง asset_code = รหัสมาตรฐานของเครื่องที่พบเอง ทับค่าที่หน้าเว็บส่ง (ฟังก์ชันประวัติซ่อม/เปลี่ยนชิ้นส่วนอ่านเครื่องของใบจาก asset_code) · host_unknown = true เก็บ asset_code ตามที่ส่ง
---   - host_unknown = true -> host_code เป็น null เสมอ (ข้อความที่ผู้แจ้งพิมพ์แล้วไม่พบไม่ถูกเก็บใน host_code เพื่อไม่ปนกับรหัสที่ยืนยันแล้ว) · CHECK บังคับที่ตาราง
---   - ใบเดิม/การเรียกแบบเดิม (ไม่ส่งทั้งสามพารามิเตอร์ใหม่) ได้ host_code null, host_unknown false และไม่มีแถวอุปกรณ์ · ตรวจแบบ "ส่งแบบใหม่" เมื่อมีอย่างใดอย่างหนึ่ง:
---     p_host_code ไม่ว่าง, p_host_unknown = true, หรือ p_devices ไม่ใช่ null (ส่ง [] มา = แบบใหม่ที่ไม่มีอุปกรณ์ = ถูกปฏิเสธ)
---     p_devices ตั้ง default เป็น null (ไม่ใช่ '[]' เหมือน app_itrp_complete) เพื่อแยก "ไม่ส่ง" ออกจาก "ส่งแล้วไม่ได้เลือก" ให้ชัด · หน้าเว็บรุ่นเก่าที่ยังเปิดค้างเรียกได้ต่อ
---   - แบบใหม่: host_unknown = false ต้องมี host_code ที่พบในทะเบียน (โหมดเดียวกับผู้แจ้ง ไม่นับเครื่องที่เลิกใช้) · ต้องมีอุปกรณ์ ≥1 แถว (ข้ามแถวว่างทุกช่อง) · ≤10 แถว · ชนิดซ้ำได้ (จอ 2 จอ)
---   - from_register คำนวณที่ฐานข้อมูลเอง: true เมื่อผู้แจ้งยืนยันเครื่องที่พบในทะเบียน (host_unknown = false) และรหัสของแถวนั้นตรงกับอุปกรณ์ที่ทะเบียนผูกกับเครื่องนั้น
---     (ชนิดเดียวกัน และรหัสตรง device_code หรือ reg_no ของอุปกรณ์) หรือเป็นรหัสของเครื่องคอมนั้นเองสำหรับแถวชนิด COMPUTER/LAPTOP · นอกนั้น false (ผู้แจ้งพิมพ์เอง/แก้เอง/ไม่ทราบรหัส)
+--     (device_code ถ้ามี ไม่งั้น reg_no) ไม่ใช่ข้อความที่พิมพ์ · เมื่อส่งแบบใหม่ ฐานข้อมูลตั้ง asset_code
+--     = รหัสมาตรฐานของเครื่องที่พบเอง ทับค่าที่หน้าเว็บส่ง (ฟังก์ชันประวัติซ่อม/เปลี่ยนชิ้นส่วนอ่านเครื่องของใบจาก asset_code)
+--   - ใบเดิม/การเรียกแบบเดิม 8 พารามิเตอร์ (ไม่ส่งทั้ง p_host_code และ p_devices) ยังใช้ได้เหมือนเดิม ได้ host_code null และไม่มีแถวอุปกรณ์ ·
+--     เหตุผลที่คงไว้: หน้าเว็บรุ่นเก่าที่เปิดค้าง และ fallback ของหน้าเว็บรุ่นใหม่เมื่อ migration ยังไม่ขึ้น · "ส่งแบบใหม่" = ส่ง p_devices (ไม่ใช่ null; ส่ง [] มา = แบบใหม่ที่ไม่มีอุปกรณ์ = ถูกปฏิเสธ)
+--   - ส่งแบบใหม่ต้องส่งคู่กัน: p_devices ≠ null ต้องมี p_host_code ที่พบในทะเบียน (โหมดเดียวกับผู้แจ้ง ไม่นับเครื่องที่เลิกใช้) ไม่งั้น error "ไม่พบรหัสเครื่องในทะเบียน กรุณาตรวจรหัสที่ติดบนเครื่อง หรือติดต่อ IT" ·
+--     ส่ง p_host_code โดยไม่ส่ง p_devices = error (ต้องส่งคู่กัน) · p_devices ตั้ง default เป็น null (ไม่ใช่ '[]' เหมือน app_itrp_complete) เพื่อแยก "ไม่ส่ง" ออกจาก "ส่งแล้วไม่ได้เลือก" ให้ชัด
+--   - แบบใหม่: ต้องมีอุปกรณ์ ≥1 แถว (ข้ามแถวว่างทุกช่อง) · ≤10 แถว · ชนิดซ้ำได้ (จอ 2 จอ)
+--   - from_register คำนวณที่ฐานข้อมูลเอง: true เมื่อรหัสของแถวตรงกับอุปกรณ์ที่ทะเบียนผูกกับเครื่องที่ยืนยัน
+--     (ชนิดเดียวกัน และรหัสตรง device_code หรือ reg_no ของอุปกรณ์) หรือเป็นรหัสของเครื่องคอมนั้นเองสำหรับแถวชนิด COMPUTER/LAPTOP · นอกนั้น false (ผู้แจ้งพิมพ์เอง/แก้เอง/เว้นรหัส)
 --   - หน้า lookup ไม่แยกข้อความ "ไม่พบ" ออกจาก "เลิกใช้งานแล้ว" และไม่แยกรหัสสะกดผิดรูปแบบ: ทุกกรณีคืน {found:false} เหมือนกัน (กันการไล่เดาสถานะอุปกรณ์)
 --
 -- ข้อสังเกตสำหรับ auditor (ไม่ได้ทำ rate limit ตามที่เจ้าของสั่ง)
@@ -36,9 +37,9 @@
 -- ฟังก์ชันเดิมที่ replace (เริ่มจากนิยามล่าสุดบน main ณ 27/11/2026 แก้เฉพาะจุดที่ระบุ · ก่อน apply ที่ production ให้เทียบ md5(pg_get_functiondef(oid)) กับค่าฐาน)
 --   1) private.sandbox_unguarded_tables()      จาก 20270107010000_itar_access_requests.sql  แก้: ต่อชื่อ itrp_request_devices ท้ายกลุ่ม itrp (ชื่อเดิมครบ 105 ชื่อ -> 106 ชื่อ)
 --   2) public.app_sandbox_purge_itrp()         จาก 20261225010000_itrp_itas_part_changes.sql  แก้: ล็อก + ลบแถว is_test ของ itrp_request_devices ก่อนตารางใบ
---   3) private.itrp_request_guard()            จาก 20261212010000_itrp_repair_requests.sql  แก้: เพิ่ม host_code, host_unknown ในรายการคอลัมน์ที่ห้ามแก้
---   4) public.app_itrp_get_detail(uuid)        จาก 20261230010000_office_it_approver_worktime.sql  แก้: เพิ่มคีย์ host_code, host_unknown, devices
---   5) public.app_itrp_create(8 พารามิเตอร์)   จาก 20261230010000_office_it_approver_worktime.sql  -> drop แล้ว create ฉบับ 11 พารามิเตอร์ (เนื้อหาเดิมครบ เพิ่มเฉพาะส่วนอุปกรณ์)
+--   3) private.itrp_request_guard()            จาก 20261212010000_itrp_repair_requests.sql  แก้: เพิ่ม host_code ในรายการคอลัมน์ที่ห้ามแก้
+--   4) public.app_itrp_get_detail(uuid)        จาก 20261230010000_office_it_approver_worktime.sql  แก้: เพิ่มคีย์ host_code, devices
+--   5) public.app_itrp_create(8 พารามิเตอร์)   จาก 20261230010000_office_it_approver_worktime.sql  -> drop แล้ว create ฉบับ 10 พารามิเตอร์ (เนื้อหาเดิมครบ เพิ่มเฉพาะส่วนอุปกรณ์)
 --   md5 ฐาน ฉบับ PGlite (ค่าจาก PGlite หลัง apply migration ถึง 20270107010000 · การจัดรูปนิยามบน prod ต่างจาก PGlite จึงใช้เทียบกับ prod ตรง ๆ ไม่ได้ ดูค่าฉบับ prod ด้านล่าง):
 --     private.sandbox_unguarded_tables()                    e2a33acbff59e1ae9d784d8858ff543f  (105 ชื่อ)
 --     public.app_sandbox_purge_itrp()                       532ef8075a0fd8a6bb8150185314b7f2
@@ -54,13 +55,13 @@
 --
 -- ไม่แตะ: ตาราง/ฟังก์ชันของ itwo/itas/itua/itar, itrp_request_machine_codes และฟังก์ชันประวัติซ่อม/เปลี่ยนชิ้นส่วน (ยังอ่าน asset_code), ฟังก์ชันกลางของเพื่อน, storage policy, bucket
 --
--- ลำดับ deploy: apply migration นี้ก่อนหน้าเว็บจะเรียก app_itrp_lookup_host / ส่ง p_host_code, p_host_unknown, p_devices · หน้าเว็บรุ่นปัจจุบันบน main เรียก app_itrp_create แบบเดิมได้ปกติ
+-- ลำดับ deploy: apply migration นี้ก่อนหน้าเว็บจะเรียก app_itrp_lookup_host / ส่ง p_host_code, p_devices · หน้าเว็บรุ่นปัจจุบันบน main เรียก app_itrp_create แบบเดิมได้ปกติ
 --   หลัง apply ตรวจ: itrp_request_devices relrowsecurity + ไม่มี grant ตรง, trigger 3 ตัว, app_itrp_lookup_host anon เรียกไม่ได้ authenticated เรียกได้,
---   app_itrp_create เหลือฟังก์ชันเดียว (11 พารามิเตอร์), unguarded 106 ชื่อ
+--   app_itrp_create เหลือฟังก์ชันเดียว (10 พารามิเตอร์), unguarded 106 ชื่อ
 --
 -- ย้อน (ยังไม่มีข้อมูลจริงในตารางใหม่): drop function public.app_itrp_lookup_host · drop function private.itrp_find_host / itrp_host_devices ·
---   drop function public.app_itrp_create(11 พารามิเตอร์) แล้ว create ฉบับ 8 พารามิเตอร์จาก 20261230010000 กลับ (+ revoke/grant ตามส่วน 8 ท้ายไฟล์) ·
---   create or replace ฟังก์ชันข้อ 1–4 กลับเป็นนิยามของไฟล์ต้นทาง · drop table itrp_request_devices · alter table itrp_requests drop column host_code, host_unknown
+--   drop function public.app_itrp_create(10 พารามิเตอร์) แล้ว create ฉบับ 8 พารามิเตอร์จาก 20261230010000 กลับ (+ revoke/grant ตามส่วน 8 ท้ายไฟล์) ·
+--   create or replace ฟังก์ชันข้อ 1–4 กลับเป็นนิยามของไฟล์ต้นทาง · drop table itrp_request_devices · alter table itrp_requests drop column host_code
 --   ถ้ามีใบจริงที่เลือกอุปกรณ์แล้ว ห้ามย้อนด้วยการ drop (เป็นข้อมูลบันทึก) ให้แก้ไปข้างหน้าด้วย migration ใหม่
 -- ============================================================================
 
@@ -92,16 +93,11 @@ create temp table itrp_picker_old_unguarded as
   select t from unnest(private.sandbox_unguarded_tables()) as t;
 
 -- 1. คอลัมน์ใหม่ของใบแจ้งซ่อม ----------------------------------------------------------
--- host_code: รหัสมาตรฐานของเครื่องคอมที่ฐานข้อมูลตรวจพบในทะเบียนตอนส่งใบ (null = ใบเดิม/ไม่ทราบรหัส)
--- host_unknown: ผู้แจ้งเลือก "ไม่ทราบรหัสเครื่อง" (ใบเดิม = false)
+-- host_code: รหัสมาตรฐานของเครื่องคอมที่ฐานข้อมูลตรวจพบในทะเบียนตอนส่งใบ (null = ใบเดิม หรือแจ้งแบบเดิม 8 พารามิเตอร์)
 alter table public.itrp_requests
-  add column host_code text check (host_code is null or (host_code = upper(btrim(host_code)) and char_length(host_code) between 1 and 50 and host_code !~ '[[:cntrl:]]')),
-  add column host_unknown boolean not null default false,
-  add constraint itrp_requests_host_ck check (not (host_unknown and host_code is not null));
+  add column host_code text check (host_code is null or (host_code = upper(btrim(host_code)) and char_length(host_code) between 1 and 50 and host_code !~ '[[:cntrl:]]'));
 comment on column public.itrp_requests.host_code is
-  'รหัสเครื่องคอมพิวเตอร์ที่ฐานข้อมูลตรวจพบในทะเบียนอุปกรณ์ (itas) ตอนส่งใบ · รหัสมาตรฐาน (device_code หรือ reg_no) · null = ใบเดิม หรือผู้แจ้งเลือกไม่ทราบรหัส · แก้ไม่ได้';
-comment on column public.itrp_requests.host_unknown is
-  'ผู้แจ้งเลือก "ไม่ทราบรหัสเครื่อง" (true แล้ว host_code ต้องเป็น null) · ใบเดิม = false · แก้ไม่ได้';
+  'รหัสเครื่องคอมพิวเตอร์ที่ฐานข้อมูลตรวจพบในทะเบียนอุปกรณ์ (itas) ตอนส่งใบ · รหัสมาตรฐาน (device_code หรือ reg_no) · null = ใบเดิม หรือแจ้งแบบเดิมที่ไม่ได้เลือกอุปกรณ์ · แก้ไม่ได้';
 
 -- 2. ตารางอุปกรณ์ที่ผู้แจ้งเลือกต่อใบ ---------------------------------------------------
 -- เพิ่มได้อย่างเดียว (trigger เดียวกับตารางประวัติอื่นของ itrp) · เขียนผ่าน app_itrp_create เท่านั้น
@@ -156,8 +152,8 @@ create trigger itrp_request_devices_append_only before update or delete on publi
 create trigger itrp_request_devices_no_truncate before truncate on public.itrp_request_devices
   for each statement execute function private.itrp_append_only_guard();
 
--- 3. ด่านของใบ: host_code / host_unknown แก้ไม่ได้ -------------------------------------
--- เหมือน 20261212010000 ทุกบรรทัด เพิ่มเฉพาะสองคอลัมน์ใหม่ในรายการที่ต้องไม่เปลี่ยน
+-- 3. ด่านของใบ: host_code แก้ไม่ได้ -------------------------------------
+-- เหมือน 20261212010000 ทุกบรรทัด เพิ่มเฉพาะคอลัมน์ใหม่ในรายการที่ต้องไม่เปลี่ยน
 create or replace function private.itrp_request_guard()
 returns trigger
 language plpgsql
@@ -176,11 +172,11 @@ begin
   -- UPDATE: ทุกคอลัมน์ยกเว้น status (และ info_return_status ที่เปลี่ยนคู่กับ status) ต้องไม่เปลี่ยน
   if (new.id, new.is_test, new.doc_no, new.doc_year, new.doc_seq, new.requester_id, new.department_id,
       new.asset_code, new.device_name, new.request_kind, new.request_kind_note, new.repair_target, new.repair_target_note,
-      new.symptom, new.is_urgent, new.created_at, new.host_code, new.host_unknown)
+      new.symptom, new.is_urgent, new.created_at, new.host_code)
      is distinct from
      (old.id, old.is_test, old.doc_no, old.doc_year, old.doc_seq, old.requester_id, old.department_id,
       old.asset_code, old.device_name, old.request_kind, old.request_kind_note, old.repair_target, old.repair_target_note,
-      old.symptom, old.is_urgent, old.created_at, old.host_code, old.host_unknown) then
+      old.symptom, old.is_urgent, old.created_at, old.host_code) then
     raise exception 'ใบแจ้งซ่อมแก้ไขเนื้อหาไม่ได้ เปลี่ยนได้แค่สถานะ (ถ้าต้องแก้ ให้ยกเลิกแล้วแจ้งใหม่)' using errcode = 'insufficient_privilege';
   end if;
 
@@ -428,11 +424,11 @@ $$;
 
 -- 7. แจ้งซ่อม: เพิ่มรหัสเครื่องคอม + อุปกรณ์ที่เลือก ----------------------------------------
 -- ต้อง drop ฉบับ 8 พารามิเตอร์ก่อน: create or replace เพิ่มพารามิเตอร์ไม่ได้ และถ้าเก็บไว้คู่กันการเรียกที่ไม่ส่งพารามิเตอร์ใหม่จะกำกวม (ทั้ง Postgres และ PostgREST)
--- ฉบับใหม่ให้ทั้งสามพารามิเตอร์ใหม่มี default จึงรับการเรียกแบบเดิมได้ทุกรูปแบบ (ตามตำแหน่งหรือตามชื่อ) · ที่เหลือเหมือน 20261230010000 ทุกบรรทัด
---   p_host_code    รหัสเครื่องคอมที่ผู้แจ้งยืนยัน (ฐานข้อมูลตรวจในทะเบียนเอง ไม่เชื่อหน้าเว็บ) · p_host_unknown = true -> host_code ถูกเก็บเป็น null
+-- ฉบับใหม่ให้ทั้งสองพารามิเตอร์ใหม่มี default จึงรับการเรียกแบบเดิมได้ทุกรูปแบบ (ตามตำแหน่งหรือตามชื่อ) · ที่เหลือเหมือน 20261230010000 ทุกบรรทัด
+--   p_host_code    รหัสเครื่องคอมที่ผู้แจ้งยืนยัน (ฐานข้อมูลตรวจในทะเบียนเอง ไม่เชื่อหน้าเว็บ)
 --   p_devices      jsonb array ≤10 แถว แต่ละแถว {"type_code": ชนิด 9 ค่า, "device_code": ข้อความ 1–50 หรือ null, "note": ≤200 (บังคับเมื่อ OTHER)}
 --                  แถวว่างทุกช่องข้าม · รหัสซ้ำกันในใบเดียวกันไม่ได้ · ผิดได้ข้อความ "แถวที่ N: …" ภาษาไทย
---   "แบบเดิม" = ไม่ส่งทั้งสามพารามิเตอร์ (host null, unknown false, p_devices null) · นอกนั้นเป็น "แบบใหม่" ที่ต้องมี host_code ที่พบในทะเบียนหรือ host_unknown และมีอุปกรณ์ ≥1 แถว
+--   "แบบเดิม" = ไม่ส่งทั้งสองพารามิเตอร์ (host null, p_devices null) · "แบบใหม่" = ส่ง p_devices ซึ่งต้องมี host_code ที่พบในทะเบียนคู่กันและมีอุปกรณ์ ≥1 แถว · ส่ง host_code โดยไม่ส่ง p_devices = error
 drop function public.app_itrp_create(text, text, text, text, text, text, text, boolean);
 
 create or replace function public.app_itrp_create(
@@ -445,7 +441,6 @@ create or replace function public.app_itrp_create(
   p_symptom text,
   p_is_urgent boolean default false,
   p_host_code text default null,
-  p_host_unknown boolean default false,
   p_devices jsonb default null
 )
  returns table(id uuid, doc_no text)
@@ -463,7 +458,6 @@ declare
   v_symptom text := private.itrp_clean(p_symptom);
   v_is_urgent boolean := coalesce(p_is_urgent, false);
   v_host_input text := private.itrp_norm_code(p_host_code);
-  v_host_unknown boolean := coalesce(p_host_unknown, false);
   v_devices jsonb := case when p_devices is null or jsonb_typeof(p_devices) = 'null' then null else p_devices end;
   v_new_style boolean;
   v_host_id uuid;
@@ -543,29 +537,29 @@ begin
   end if;
 
   -- เครื่องคอมพิวเตอร์ + อุปกรณ์ที่เลือก (เฉพาะการส่งแบบใหม่ · การเรียกแบบเดิมข้ามทั้งส่วนนี้)
-  v_new_style := v_host_input is not null or v_host_unknown or v_devices is not null;
+  -- ส่ง p_host_code กับ p_devices ต้องมาคู่กัน (ส่งรหัสเครื่องอย่างเดียว = error ไม่ปล่อยให้ใบเลือกอุปกรณ์ครึ่งเดียว)
+  if v_host_input is not null and v_devices is null then
+    raise exception 'ต้องส่งรหัสเครื่องและรายการอุปกรณ์ที่มีปัญหาพร้อมกัน' using errcode = 'check_violation';
+  end if;
+  v_new_style := v_devices is not null;
   if v_new_style then
-    if v_host_unknown then
-      -- ผู้แจ้งไม่ทราบรหัส: ไม่เก็บข้อความที่พิมพ์ไว้ใน host_code (host_code ต้องเป็นรหัสที่ฐานข้อมูลตรวจพบแล้วเท่านั้น)
-      v_host_input := null;
-    else
-      if v_host_input is null then
-        raise exception 'กรุณาระบุรหัสเครื่องคอมพิวเตอร์ หรือเลือก "ไม่ทราบรหัสเครื่อง"' using errcode = 'check_violation';
-      end if;
-      v_code_error := private.itrp_code_error(v_host_input);
-      if v_code_error is not null then
-        raise exception '%', v_code_error using errcode = 'check_violation';
-      end if;
-      -- ตรวจในทะเบียนโหมดเดียวกับผู้แจ้ง (ไม่เชื่อว่าหน้าเว็บค้นเจอ) · ไม่พบ/เลิกใช้งานแล้ว/ไม่ใช่เครื่องคอม = ข้อความเดียวกัน
-      select h.id, h.code, h.device_code, h.reg_no into v_host_id, v_host_code, v_host_dev, v_host_reg
-      from private.itrp_find_host(v_actor.is_test, v_host_input) h;
-      if v_host_id is null then
-        raise exception 'ไม่พบรหัสเครื่อง % ในทะเบียนอุปกรณ์ กรุณาตรวจสอบรหัสที่ติดบนเครื่อง หรือเลือก "ไม่ทราบรหัสเครื่อง"', v_host_input using errcode = 'check_violation';
-      end if;
-      -- เครื่องที่ยืนยันในทะเบียนแล้ว: asset_code = รหัสมาตรฐานของเครื่องนั้นเสมอ (ไม่เชื่อ p_asset_code ที่หน้าเว็บส่งมา)
-      -- ประวัติการซ่อมและการเปลี่ยนชิ้นส่วน (private.itrp_request_machine_codes) อ่านเครื่องของใบจาก asset_code จึงต้องผูกเครื่องที่ถูกต้องเสมอ
-      v_asset_code := v_host_code;
+    -- ไม่มีทางเลือก "ไม่ทราบรหัส": ต้องมีรหัสเครื่องที่พบในทะเบียนเสมอ
+    if v_host_input is null then
+      raise exception 'ไม่พบรหัสเครื่องในทะเบียน กรุณาตรวจรหัสที่ติดบนเครื่อง หรือติดต่อ IT' using errcode = 'check_violation';
     end if;
+    v_code_error := private.itrp_code_error(v_host_input);
+    if v_code_error is not null then
+      raise exception '%', v_code_error using errcode = 'check_violation';
+    end if;
+    -- ตรวจในทะเบียนโหมดเดียวกับผู้แจ้ง (ไม่เชื่อว่าหน้าเว็บค้นเจอ) · ไม่พบ/เลิกใช้งานแล้ว/ไม่ใช่เครื่องคอม = ข้อความเดียวกัน
+    select h.id, h.code, h.device_code, h.reg_no into v_host_id, v_host_code, v_host_dev, v_host_reg
+    from private.itrp_find_host(v_actor.is_test, v_host_input) h;
+    if v_host_id is null then
+      raise exception 'ไม่พบรหัสเครื่องในทะเบียน กรุณาตรวจรหัสที่ติดบนเครื่อง หรือติดต่อ IT' using errcode = 'check_violation';
+    end if;
+    -- เครื่องที่ยืนยันในทะเบียนแล้ว: asset_code = รหัสมาตรฐานของเครื่องนั้นเสมอ (ไม่เชื่อ p_asset_code ที่หน้าเว็บส่งมา)
+    -- ประวัติการซ่อมและการเปลี่ยนชิ้นส่วน (private.itrp_request_machine_codes) อ่านเครื่องของใบจาก asset_code จึงต้องผูกเครื่องที่ถูกต้องเสมอ
+    v_asset_code := v_host_code;
 
     if v_devices is null or jsonb_typeof(v_devices) <> 'array' then
       raise exception 'กรุณาเลือกอุปกรณ์ที่มีปัญหาอย่างน้อย 1 รายการ' using errcode = 'check_violation';
@@ -605,7 +599,7 @@ begin
         raise exception 'แถวที่ %: กรุณาระบุอุปกรณ์ (เมื่อเลือก "อื่นๆ")', v_i + 1 using errcode = 'check_violation';
       end if;
 
-      -- from_register: รหัสนี้ตรงกับที่ทะเบียนผูกกับเครื่องที่ผู้แจ้งยืนยัน (ฐานข้อมูลคำนวณเอง) · ผู้แจ้งพิมพ์เอง/แก้เอง/ไม่ทราบรหัส = false
+      -- from_register: รหัสนี้ตรงกับที่ทะเบียนผูกกับเครื่องที่ผู้แจ้งยืนยัน (ฐานข้อมูลคำนวณเอง) · ผู้แจ้งพิมพ์เอง/แก้เอง/เว้นรหัส = false
       -- (coalesce: เครื่องที่มีแค่ device_code หรือแค่ reg_no ทำให้การเทียบอีกฝั่งเป็น null ต้องไม่หลุดเป็น null)
       v_from_register := coalesce(case
         when v_host_id is null or v_dev_code is null then false
@@ -660,11 +654,11 @@ begin
   insert into public.itrp_requests as rq (
     is_test, doc_no, doc_year, doc_seq, requester_id, department_id,
     asset_code, device_name, request_kind, request_kind_note, repair_target, repair_target_note, symptom, is_urgent, status,
-    host_code, host_unknown
+    host_code
   ) values (
     v_actor.is_test, v_doc_no, v_doc_year, v_doc_seq, v_actor.id, v_dept.id,
     v_asset_code, v_device_name, p_request_kind, v_kind_note, p_repair_target, v_target_note, v_symptom, v_is_urgent, v_status,
-    v_host_code, v_host_unknown
+    v_host_code
   ) returning rq.id into v_request_id;
 
   -- อุปกรณ์ที่ผู้แจ้งเลือก (ตรวจครบแล้วด้านบน) · ลำดับ seq ตามที่ส่งมา
@@ -694,8 +688,8 @@ begin
 end;
 $function$;
 
--- 8. รายละเอียดใบ: เพิ่ม host_code, host_unknown, devices ----------------------------------------
--- เหมือน 20261230010000 ทุกบรรทัด เพิ่มเฉพาะสามคีย์หลัง asset_code · คีย์เดิมไม่เปลี่ยน
+-- 8. รายละเอียดใบ: เพิ่ม host_code, devices ----------------------------------------
+-- เหมือน 20261230010000 ทุกบรรทัด เพิ่มเฉพาะสองคีย์หลัง asset_code · คีย์เดิมไม่เปลี่ยน
 -- devices = [{seq, type_code, device_code, from_register, note}] เรียงตาม seq · ใบเดิม/ไม่ได้เลือก = []
 CREATE OR REPLACE FUNCTION public.app_itrp_get_detail(p_request_id uuid)
  RETURNS jsonb
@@ -724,7 +718,6 @@ begin
     'department_id', v_req.department_id,
     'asset_code', v_req.asset_code,
     'host_code', v_req.host_code,
-    'host_unknown', v_req.host_unknown,
     'devices', (
       select coalesce(jsonb_agg(jsonb_build_object(
                'seq', d.seq,

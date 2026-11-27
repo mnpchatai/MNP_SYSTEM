@@ -3,14 +3,14 @@
 --   2) app_itrp_lookup_host: พบ/ไม่พบ/เครื่องเลิกใช้/ไม่ใช่เครื่องคอม/รูปแบบผิด/ค้นตรงตัวเท่านั้น, คืนเฉพาะช่องที่อนุญาต (ไม่มี serial/IP/แผนก/สถานที่/ราคา/attrs อื่น),
 --      อุปกรณ์ที่ผูกกับเครื่อง (ชนิดที่รองรับ ไม่เลิกใช้ เรียงตามชนิดแล้วรหัส), จับคู่ด้วย device_code หรือ reg_no, ผู้ใช้ไม่ active/anon เรียกไม่ได้
 --   3) app_itrp_create: แบบเดิม (ไม่ส่งพารามิเตอร์ใหม่) ยังใช้ได้, แบบใหม่ (host พบในทะเบียน/ไม่ทราบรหัส + อุปกรณ์ 1–10 แถว), from_register คำนวณที่ฐานข้อมูล, ข้อความผิดพลาดทุกกรณี
---   4) รายละเอียดใบ: คีย์ใหม่ host_code / host_unknown / devices[]
+--   4) รายละเอียดใบ: คีย์ใหม่ host_code / devices[]
 --   5) ISO: อุปกรณ์ของใบแก้/ลบ/ล้างไม่ได้, host_code แก้ไม่ได้, เขียนตรงไม่ได้
 --   6) โหมดทดสอบ: ทะเบียนแยกโลก (persona เห็นเฉพาะเครื่องทดสอบ), ล้างข้อมูลทดสอบลบอุปกรณ์ของใบทดสอบโดยไม่แตะของจริง
 -- ผู้ใช้ทดสอบเป็นบัญชีจริงใหม่ (ITD-*) ในแผนกทดสอบ ZPD ที่สร้างในไฟล์นี้ · persona SBX-IT-* มาจาก migration ใบสั่งงาน IT
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(166);
+select plan(157);
 
 -- ตัวช่วย (ชั่วคราว) ---------------------------------------------------------
 -- claims ของผู้ใช้ทดสอบเลขที่ n
@@ -34,12 +34,12 @@ create function pg_temp.lkdev(p_code text) returns text language sql as $$
   select coalesce(string_agg((d ->> 'type_code') || ':' || (d ->> 'code'), ',' order by o), '-')
   from jsonb_array_elements(public.app_itrp_lookup_host(p_code) -> 'devices') with ordinality x(d, o) $$;
 -- แจ้งซ่อมแบบใหม่ · คืน id ของใบ (ข้อความ)
-create function pg_temp.req(p_host text, p_unknown boolean, p_devices jsonb) returns text language sql as $$
-  select (select c.id::text from public.app_itrp_create(null, 'เครื่องทดสอบ', 'repair', null, 'computer', null, 'อาการทดสอบ', false, p_host, p_unknown, p_devices) c) $$;
+create function pg_temp.req(p_host text, p_devices jsonb) returns text language sql as $$
+  select (select c.id::text from public.app_itrp_create(null, 'เครื่องทดสอบ', 'repair', null, 'computer', null, 'อาการทดสอบ', false, p_host, p_devices) c) $$;
 -- คำสั่งแจ้งซ่อมแบบใหม่ (ข้อความ SQL ให้ throws_ok/try)
-create function pg_temp.reqsql(p_host text, p_unknown boolean, p_devices jsonb) returns text language sql as $$
-  select format('select public.app_itrp_create(null, %L, %L, null, %L, null, %L, false, %L, %L, %L::jsonb)',
-                'เครื่องทดสอบ', 'repair', 'computer', 'อาการทดสอบ', p_host, p_unknown, p_devices::text) $$;
+create function pg_temp.reqsql(p_host text, p_devices jsonb) returns text language sql as $$
+  select format('select public.app_itrp_create(null, %L, %L, null, %L, null, %L, false, %L, %L::jsonb)',
+                'เครื่องทดสอบ', 'repair', 'computer', 'อาการทดสอบ', p_host, p_devices::text) $$;
 -- แถวอุปกรณ์ใน jsonb
 create function pg_temp.d(p_type text, p_code text default null, p_note text default null) returns jsonb language sql as $$
   select jsonb_strip_nulls(jsonb_build_object('type_code', p_type, 'device_code', p_code, 'note', p_note)) $$;
@@ -73,14 +73,14 @@ select is((select count(*)::int from pg_trigger t join pg_class c on c.oid = t.t
 select ok('itrp_request_devices' = any (private.sandbox_unguarded_tables()), 'itrp_request_devices is registered in private.sandbox_unguarded_tables()');
 select is(cardinality(private.sandbox_unguarded_tables()), 106, 'sandbox_unguarded_tables has 106 names (the 105 earlier names + itrp_request_devices)');
 select ok(array['itrp_requests', 'itrp_part_changes', 'itas_assets', 'itwo_work_orders', 'itua_users', 'itar_requests', 'ncr_reports', 'audit_logs', 'sandbox_sessions', 'bom_gr_config', 'rf_chem_docs'] <@ private.sandbox_unguarded_tables(), 'the earlier names (itrp, itas, itwo, itua, itar, BOM and central) are still there');
-select is((select count(*)::int from information_schema.columns c where c.table_schema = 'public' and c.table_name = 'itrp_requests' and c.column_name in ('host_code', 'host_unknown')), 2, 'itrp_requests has the two new columns');
-select is((select c.column_default from information_schema.columns c where c.table_schema = 'public' and c.table_name = 'itrp_requests' and c.column_name = 'host_unknown'), 'false', 'host_unknown defaults to false (old requests keep the old meaning)');
+select is((select count(*)::int from information_schema.columns c where c.table_schema = 'public' and c.table_name = 'itrp_requests' and c.column_name = 'host_code'), 1, 'itrp_requests has the host_code column');
+select is((select count(*)::int from information_schema.columns c where c.table_schema = 'public' and c.table_name = 'itrp_requests' and c.column_name = 'host_unknown'), 0, 'there is no host_unknown column (the "unknown host" option was removed)');
 select is((select count(*)::int from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = 'app_itrp_create'), 1, 'app_itrp_create has exactly one signature (no ambiguous overload)');
-select is((select p.pronargs::int from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = 'app_itrp_create'), 11, 'the signature has 11 arguments (8 old + host_code, host_unknown, devices)');
-select is((select p.pronargdefaults::int from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = 'app_itrp_create'), 4, 'p_is_urgent and the three new arguments have defaults (old callers still work)');
+select is((select p.pronargs::int from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = 'app_itrp_create'), 10, 'the signature has 10 arguments (8 old + host_code, devices)');
+select is((select p.pronargdefaults::int from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = 'app_itrp_create'), 3, 'p_is_urgent and the two new arguments have defaults (old callers still work)');
 select ok(to_regprocedure('public.app_itrp_create(text, text, text, text, text, text, text, boolean)') is null, 'the old 8-argument signature is gone');
 select ok(not has_function_privilege('anon', 'public.app_itrp_lookup_host(text)', 'execute') and has_function_privilege('authenticated', 'public.app_itrp_lookup_host(text)', 'execute'), 'the lookup RPC is callable by authenticated and not by anon');
-select ok(not has_function_privilege('anon', 'public.app_itrp_create(text, text, text, text, text, text, text, boolean, text, boolean, jsonb)', 'execute') and has_function_privilege('authenticated', 'public.app_itrp_create(text, text, text, text, text, text, text, boolean, text, boolean, jsonb)', 'execute'), 'app_itrp_create keeps its grants (authenticated only)');
+select ok(not has_function_privilege('anon', 'public.app_itrp_create(text, text, text, text, text, text, text, boolean, text, jsonb)', 'execute') and has_function_privilege('authenticated', 'public.app_itrp_create(text, text, text, text, text, text, text, boolean, text, jsonb)', 'execute'), 'app_itrp_create keeps its grants (authenticated only)');
 select ok((select bool_and(p.prosecdef and p.proconfig @> array['search_path=""']) from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname in ('app_itrp_lookup_host', 'app_itrp_create', 'app_itrp_get_detail', 'app_sandbox_purge_itrp')), 'the lookup, create, detail and purge functions are SECURITY DEFINER with an empty search_path');
 select ok(not exists (select 1 from pg_proc p where p.pronamespace = 'private'::regnamespace and p.proname in ('itrp_find_host', 'itrp_host_devices') and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute') or not p.prosecdef or not (p.proconfig @> array['search_path=""']))), 'the two private register helpers are closed to users and have an empty search_path');
 select ok(not exists (select 1 from private.lab_only_unguarded_functions() f where f like '%itrp%'), 'every itrp RPC (including the new lookup) has the lab-only guard');
@@ -197,81 +197,72 @@ select throws_ok($$ select public.app_itas_list_assets() $$, null, null, 'nor th
 -- 4. แจ้งซ่อม: แบบเดิมยังใช้ได้ ------------------------------------------------
 select set_config('t.old1', (select c.id::text from public.app_itrp_create(null, 'PC-01', 'repair', null, 'computer', null, 'เปิดไม่ติด', false) c), true);
 select is((pg_temp.det(current_setting('t.old1')) ->> 'host_code'), null, 'a request made the old way has no host_code');
-select is((pg_temp.det(current_setting('t.old1')) ->> 'host_unknown'), 'false', 'and host_unknown is false');
 select is(pg_temp.det(current_setting('t.old1')) -> 'devices', '[]'::jsonb, 'and an empty devices list');
 select lives_ok($$ select public.app_itrp_create(p_asset_code => null, p_device_name => 'PC-02', p_request_kind => 'repair', p_request_kind_note => null, p_repair_target => 'computer', p_repair_target_note => null, p_symptom => 'เรียกแบบเดิมตามชื่อ') $$, 'the old call by argument names (no urgency, no new arguments) still works');
 select lives_ok($$ select public.app_itrp_create('COM24', 'PC-03', 'repair', null, 'computer', null, 'ส่ง asset_code แบบเดิม', true) $$, 'the old positional call with an urgent flag still works');
 select is(pg_temp.q('select count(*) from public.itrp_request_devices')::int, 0, 'no device row is created by old-style calls');
 
 -- 5. แจ้งซ่อม: แบบใหม่ ---------------------------------------------------------
-select set_config('t.n1', pg_temp.req('pd-com1', false, jsonb_build_array(
+select set_config('t.n1', pg_temp.req('pd-com1', jsonb_build_array(
   pg_temp.d('COMPUTER', 'pd-com1'), pg_temp.d('MONITOR', 'pd-mnt1'), pg_temp.d('monitor', ' pd-mnt2 '), pg_temp.d('KEYBOARD', 'PD-KYB1'),
   pg_temp.d('PRINTER', 'typed-prt'), pg_temp.d('OTHER', null, 'กล้องวงจรปิด'))), true);
 select is(pg_temp.det(current_setting('t.n1')) ->> 'host_code', 'PD-COM1', 'the host_code is the canonical code found in the register');
-select is(pg_temp.det(current_setting('t.n1')) ->> 'host_unknown', 'false', 'host_unknown is false');
 select is(pg_temp.dv(current_setting('t.n1')), 'COMPUTER:PD-COM1:t,MONITOR:PD-MNT1:t,MONITOR:PD-MNT2:t,KEYBOARD:PD-KYB1:t,PRINTER:TYPED-PRT:f,OTHER:-:f', 'six devices in order; the ones the register binds to the machine are from_register = true (codes are normalized), a typed code and an OTHER row are false');
 select is(pg_temp.q(format($q$ select string_agg(seq::text, ',' order by seq) from public.itrp_request_devices where request_id = %L::uuid $q$, current_setting('t.n1'))), '1,2,3,4,5,6', 'seq runs 1..6');
 select is(pg_temp.q(format($q$ select note from public.itrp_request_devices where request_id = %L::uuid and type_code = 'OTHER' $q$, current_setting('t.n1'))), 'กล้องวงจรปิด', 'the OTHER row keeps its note');
 select is(pg_temp.q(format($q$ select count(*) from public.itrp_request_devices where request_id = %L::uuid and not is_test $q$, current_setting('t.n1')))::int, 6, 'the rows are real (is_test false)');
-select set_config('t.n2', pg_temp.req('PD-REG2', false, jsonb_build_array(pg_temp.d('COMPUTER', 'pd-reg2'), pg_temp.d('MONITOR', 'pd-mnt-r2'), pg_temp.d('MONITOR', 'pd-mnt3'))), true);
+select set_config('t.n2', pg_temp.req('PD-REG2', jsonb_build_array(pg_temp.d('COMPUTER', 'pd-reg2'), pg_temp.d('MONITOR', 'pd-mnt-r2'), pg_temp.d('MONITOR', 'pd-mnt3'))), true);
 select is(pg_temp.det(current_setting('t.n2')) ->> 'host_code', 'PD-COM2', 'the host given by its register number is stored under its device code');
 select is(pg_temp.dv(current_setting('t.n2')), 'COMPUTER:PD-REG2:t,MONITOR:PD-MNT-R2:t,MONITOR:PD-MNT3:t', 'a computer row with the register number is from_register; both monitors bound to that machine are too');
-select set_config('t.n3', pg_temp.req('pd-nbs1', false, jsonb_build_array(pg_temp.d('LAPTOP', 'pd-nbs1'), pg_temp.d('MONITOR', 'pd-mnt-nb'))), true);
+select set_config('t.n3', pg_temp.req('pd-nbs1', jsonb_build_array(pg_temp.d('LAPTOP', 'pd-nbs1'), pg_temp.d('MONITOR', 'pd-mnt-nb'))), true);
 select is(pg_temp.dv(current_setting('t.n3')), 'LAPTOP:PD-NBS1:t,MONITOR:PD-MNT-NB:t', 'a laptop host works the same way');
-select set_config('t.n4', pg_temp.req('pd-com1', false, jsonb_build_array(
+select set_config('t.n4', pg_temp.req('pd-com1', jsonb_build_array(
   pg_temp.d('COMPUTER', 'pd-com2'), pg_temp.d('MOUSE', 'pd-mnt1'), pg_temp.d('MONITOR', 'pd-mnt3'), pg_temp.d('MONITOR', 'pd-mou1'), pg_temp.d('PRINTER'))), true);
 select is(pg_temp.dv(current_setting('t.n4')), 'COMPUTER:PD-COM2:f,MOUSE:PD-MNT1:f,MONITOR:PD-MNT3:f,MONITOR:PD-MOU1:f,PRINTER:-:f', 'from_register is false for another machine, a wrong type, a device of another machine, a retired device and a row without a code');
-select set_config('t.n5', pg_temp.req('pd-com1', true, jsonb_build_array(pg_temp.d('COMPUTER', 'pd-com1'), pg_temp.d('MONITOR', 'pd-mnt1'), pg_temp.d('KEYBOARD'))), true);
-select is(pg_temp.det(current_setting('t.n5')) ->> 'host_code', null, 'with "unknown" the typed host is not stored in host_code');
-select is(pg_temp.det(current_setting('t.n5')) ->> 'host_unknown', 'true', 'host_unknown is true');
-select is(pg_temp.dv(current_setting('t.n5')), 'COMPUTER:PD-COM1:f,MONITOR:PD-MNT1:f,KEYBOARD:-:f', 'with "unknown" nothing is from_register, even if the typed codes happen to exist (the system did not fill them)');
-select set_config('t.n6', pg_temp.req(null, true, jsonb_build_array(pg_temp.d('MONITOR'), pg_temp.d('MONITOR'), pg_temp.d('UPS'))), true);
-select is(pg_temp.dv(current_setting('t.n6')), 'MONITOR:-:f,MONITOR:-:f,UPS:-:f', 'unknown host, no codes: the same type may repeat (two monitors) and codes may stay empty');
-select set_config('t.n7', pg_temp.req('PD-COM1', false, jsonb_build_array('{}'::jsonb, pg_temp.d('MONITOR', 'pd-mnt1'), '{"note": "  "}'::jsonb, pg_temp.d('PRINTER', 'pd-prt1'))), true);
+select set_config('t.n7', pg_temp.req('PD-COM1', jsonb_build_array('{}'::jsonb, pg_temp.d('MONITOR', 'pd-mnt1'), '{"note": "  "}'::jsonb, pg_temp.d('PRINTER', 'pd-prt1'))), true);
 select is(pg_temp.dv(current_setting('t.n7')), 'MONITOR:PD-MNT1:t,PRINTER:PD-PRT1:t', 'rows empty in every field are skipped and seq stays contiguous');
 select is(pg_temp.q(format($q$ select max(seq) from public.itrp_request_devices where request_id = %L::uuid $q$, current_setting('t.n7')))::int, 2, 'seq of the kept rows is 1 and 2');
-select lives_ok(pg_temp.reqsql('PD-COM1', false, (select jsonb_agg(pg_temp.d('MONITOR')) from generate_series(1, 10))), 'ten devices are accepted');
+select lives_ok(pg_temp.reqsql('PD-COM1', (select jsonb_agg(pg_temp.d('MONITOR')) from generate_series(1, 10))), 'ten devices are accepted');
 select is(pg_temp.q('select count(*) from public.itrp_request_devices where request_id = (select r.id from public.itrp_requests r order by r.doc_seq desc limit 1)')::int, 10, 'all ten rows were stored');
 
 -- asset_code: เครื่องที่ยืนยันในทะเบียนแล้วถูกผูกด้วยรหัสมาตรฐานฝั่งฐานข้อมูล ไม่เชื่อค่าที่หน้าเว็บส่งมา (ประวัติซ่อม/เปลี่ยนชิ้นส่วนอ่านเครื่องของใบจาก asset_code)
-select set_config('t.a1', (select c.id::text from public.app_itrp_create('WRONG-CODE', 'หน้าจอ', 'repair', null, 'device', null, 'ทดสอบ asset_code', false, 'pd-reg2', false, jsonb_build_array(pg_temp.d('MONITOR', 'pd-mnt3'))) c), true);
+select set_config('t.a1', (select c.id::text from public.app_itrp_create('WRONG-CODE', 'หน้าจอ', 'repair', null, 'device', null, 'ทดสอบ asset_code', false, 'pd-reg2', jsonb_build_array(pg_temp.d('MONITOR', 'pd-mnt3'))) c), true);
 select is(pg_temp.det(current_setting('t.a1')) ->> 'asset_code', 'PD-COM2', 'a confirmed host replaces the asset_code sent by the page with the canonical register code (found here by its register number)');
-select set_config('t.a2', (select c.id::text from public.app_itrp_create(null, 'คอม', 'repair', null, 'computer', null, 'ไม่ส่ง asset_code', false, 'pd-com1', false, jsonb_build_array(pg_temp.d('COMPUTER', 'pd-com1'))) c), true);
+select set_config('t.a2', (select c.id::text from public.app_itrp_create(null, 'คอม', 'repair', null, 'computer', null, 'ไม่ส่ง asset_code', false, 'pd-com1', jsonb_build_array(pg_temp.d('COMPUTER', 'pd-com1'))) c), true);
 select is(pg_temp.det(current_setting('t.a2')) ->> 'asset_code', 'PD-COM1', 'a request that sends no asset_code still gets the host code, so the repair history knows the machine');
-select set_config('t.a3', (select c.id::text from public.app_itrp_create('typed-x', 'หน้าจอ', 'repair', null, 'device', null, 'ไม่ทราบรหัสเครื่อง', false, null, true, jsonb_build_array(pg_temp.d('MONITOR'))) c), true);
-select is(pg_temp.det(current_setting('t.a3')) ->> 'asset_code', 'typed-x', 'with "unknown host" the typed asset_code is kept as sent (there is no confirmed machine to replace it)');
 
 -- 6. แจ้งซ่อม: ผิดกติกา (ทั้งใบไม่เกิดขึ้น) --------------------------------------
 select set_config('t.req_count', pg_temp.q('select count(*) from public.itrp_requests'), true);
 select set_config('t.dev_count', pg_temp.q('select count(*) from public.itrp_request_devices'), true);
-select throws_ok(pg_temp.reqsql('PD-NOPE', false, jsonb_build_array(pg_temp.d('MONITOR'))), '23514', 'ไม่พบรหัสเครื่อง PD-NOPE ในทะเบียนอุปกรณ์ กรุณาตรวจสอบรหัสที่ติดบนเครื่อง หรือเลือก "ไม่ทราบรหัสเครื่อง"', 'a host that is not in the register is rejected (not unknown)');
-select is(replace(pg_temp.try(pg_temp.reqsql('PD-COMR', false, jsonb_build_array(pg_temp.d('MONITOR')))), 'PD-COMR', 'X'), replace(pg_temp.try(pg_temp.reqsql('PD-NOPE', false, jsonb_build_array(pg_temp.d('MONITOR')))), 'PD-NOPE', 'X'), 'a retired host gets the same error as a missing one (no hint about its state)');
-select throws_ok(pg_temp.reqsql('PD-MNT1', false, jsonb_build_array(pg_temp.d('MONITOR'))), '23514', 'ไม่พบรหัสเครื่อง PD-MNT1 ในทะเบียนอุปกรณ์ กรุณาตรวจสอบรหัสที่ติดบนเครื่อง หรือเลือก "ไม่ทราบรหัสเครื่อง"', 'a code of a non-computer is not accepted as the host');
-select throws_ok(pg_temp.reqsql('PD COM1', false, jsonb_build_array(pg_temp.d('MONITOR'))), '23514', 'ไม่พบรหัสเครื่อง PD COM1 ในทะเบียนอุปกรณ์ กรุณาตรวจสอบรหัสที่ติดบนเครื่อง หรือเลือก "ไม่ทราบรหัสเครื่อง"', 'a host with a space is not found');
-select throws_ok(pg_temp.reqsql(repeat('A', 51), false, jsonb_build_array(pg_temp.d('MONITOR'))), '23514', 'รหัสเครื่องต้องไม่เกิน 50 ตัวอักษร', 'a host longer than 50 characters is rejected');
-select throws_ok(pg_temp.reqsql(null, false, jsonb_build_array(pg_temp.d('MONITOR'))), '23514', 'กรุณาระบุรหัสเครื่องคอมพิวเตอร์ หรือเลือก "ไม่ทราบรหัสเครื่อง"', 'devices without a host and without "unknown" are rejected');
-select throws_ok(pg_temp.reqsql('  ', false, jsonb_build_array(pg_temp.d('MONITOR'))), '23514', 'กรุณาระบุรหัสเครื่องคอมพิวเตอร์ หรือเลือก "ไม่ทราบรหัสเครื่อง"', 'a blank host is the same as no host');
-select throws_ok($$ select public.app_itrp_create(null, 'x', 'repair', null, 'computer', null, 'x', false, 'PD-COM1', false, null) $$, '23514', 'กรุณาเลือกอุปกรณ์ที่มีปัญหาอย่างน้อย 1 รายการ', 'a host with no devices argument is rejected');
-select throws_ok(pg_temp.reqsql('PD-COM1', false, '[]'::jsonb), '23514', 'กรุณาเลือกอุปกรณ์ที่มีปัญหาอย่างน้อย 1 รายการ', 'an empty devices list is rejected in the new style');
-select throws_ok(pg_temp.reqsql('PD-COM1', false, jsonb_build_array('{}'::jsonb, '{"note": " "}'::jsonb)), '23514', 'กรุณาเลือกอุปกรณ์ที่มีปัญหาอย่างน้อย 1 รายการ', 'only empty rows count as none');
-select throws_ok(pg_temp.reqsql(null, true, '[]'::jsonb), '23514', 'กรุณาเลือกอุปกรณ์ที่มีปัญหาอย่างน้อย 1 รายการ', '"unknown" still needs at least one device');
-select throws_ok($$ select public.app_itrp_create(null, 'x', 'repair', null, 'computer', null, 'x', false, null, true, null) $$, '23514', 'กรุณาเลือกอุปกรณ์ที่มีปัญหาอย่างน้อย 1 รายการ', '"unknown" with no devices argument is rejected');
-select throws_ok($$ select public.app_itrp_create(null, 'x', 'repair', null, 'computer', null, 'x', false, null, false, '[]'::jsonb) $$, '23514', 'กรุณาระบุรหัสเครื่องคอมพิวเตอร์ หรือเลือก "ไม่ทราบรหัสเครื่อง"', 'an explicit empty list without a host is the new style and is rejected');
-select throws_ok($$ select public.app_itrp_create(null, 'x', 'repair', null, 'computer', null, 'x', false, 'PD-COM1', false, '{"type_code": "MONITOR"}'::jsonb) $$, '23514', 'กรุณาเลือกอุปกรณ์ที่มีปัญหาอย่างน้อย 1 รายการ', 'devices that are not a list are rejected');
-select throws_ok(pg_temp.reqsql('PD-COM1', false, (select jsonb_agg(pg_temp.d('MONITOR')) from generate_series(1, 11))), '23514', 'อุปกรณ์ที่มีปัญหาต้องไม่เกิน 10 รายการ', 'more than ten devices are rejected');
-select throws_ok(pg_temp.reqsql('PD-COM1', false, jsonb_build_array(pg_temp.d('MONITOR'), '"x"'::jsonb)), '23514', 'แถวที่ 2 ของรายการอุปกรณ์ไม่ถูกต้อง', 'a row that is not an object is rejected with its number');
-select throws_ok(pg_temp.reqsql('PD-COM1', false, jsonb_build_array(pg_temp.d('SCANNER', 'x1'))), '23514', 'แถวที่ 1: กรุณาเลือกชนิดอุปกรณ์', 'an unsupported type is rejected');
-select throws_ok(pg_temp.reqsql('PD-COM1', false, jsonb_build_array(pg_temp.d('MONITOR'), pg_temp.d(null, 'pd-mnt1'))), '23514', 'แถวที่ 2: กรุณาเลือกชนิดอุปกรณ์', 'a row with a code but no type is rejected');
-select throws_ok(pg_temp.reqsql('PD-COM1', false, jsonb_build_array(pg_temp.d('OTHER', 'abc'))), '23514', 'แถวที่ 1: กรุณาระบุอุปกรณ์ (เมื่อเลือก "อื่นๆ")', 'OTHER needs a note');
-select throws_ok(pg_temp.reqsql('PD-COM1', false, jsonb_build_array(pg_temp.d('OTHER', null, repeat('ก', 201)))), '23514', 'แถวที่ 1: หมายเหตุอุปกรณ์ต้องไม่เกิน 200 ตัวอักษร', 'a note longer than 200 characters is rejected');
-select throws_ok(pg_temp.reqsql('PD-COM1', false, jsonb_build_array(pg_temp.d('MONITOR', repeat('B', 51)))), '23514', 'แถวที่ 1: รหัสเครื่องต้องไม่เกิน 50 ตัวอักษร', 'a device code longer than 50 characters is rejected');
-select throws_ok(pg_temp.reqsql('PD-COM1', false, jsonb_build_array(pg_temp.d('MONITOR', 'pd-mnt1'), pg_temp.d('PRINTER', 'PD-MNT1'))), '23514', 'แถวที่ 2: รหัสอุปกรณ์ PD-MNT1 ซ้ำกับแถวก่อนหน้า (ใส่รหัสเดียวกันสองครั้งในใบเดียวกันไม่ได้)', 'the same code twice in one request is rejected');
+select set_config('t.seq_count', pg_temp.q('select coalesce(sum(last_seq), 0) from public.itrp_doc_counters'), true);
+select throws_ok(pg_temp.reqsql('PD-NOPE', jsonb_build_array(pg_temp.d('MONITOR'))), '23514', 'ไม่พบรหัสเครื่องในทะเบียน กรุณาตรวจรหัสที่ติดบนเครื่อง หรือติดต่อ IT', 'a host that is not in the register is rejected (not unknown)');
+select is(replace(pg_temp.try(pg_temp.reqsql('PD-COMR', jsonb_build_array(pg_temp.d('MONITOR')))), 'PD-COMR', 'X'), replace(pg_temp.try(pg_temp.reqsql('PD-NOPE', jsonb_build_array(pg_temp.d('MONITOR')))), 'PD-NOPE', 'X'), 'a retired host gets the same error as a missing one (no hint about its state)');
+select throws_ok(pg_temp.reqsql('PD-MNT1', jsonb_build_array(pg_temp.d('MONITOR'))), '23514', 'ไม่พบรหัสเครื่องในทะเบียน กรุณาตรวจรหัสที่ติดบนเครื่อง หรือติดต่อ IT', 'a code of a non-computer is not accepted as the host');
+select throws_ok(pg_temp.reqsql('PD COM1', jsonb_build_array(pg_temp.d('MONITOR'))), '23514', 'ไม่พบรหัสเครื่องในทะเบียน กรุณาตรวจรหัสที่ติดบนเครื่อง หรือติดต่อ IT', 'a host with a space is not found');
+select throws_ok(pg_temp.reqsql(repeat('A', 51), jsonb_build_array(pg_temp.d('MONITOR'))), '23514', 'รหัสเครื่องต้องไม่เกิน 50 ตัวอักษร', 'a host longer than 50 characters is rejected');
+select throws_ok(pg_temp.reqsql(null, jsonb_build_array(pg_temp.d('MONITOR'))), '23514', 'ไม่พบรหัสเครื่องในทะเบียน กรุณาตรวจรหัสที่ติดบนเครื่อง หรือติดต่อ IT', 'devices without a host and without "unknown" are rejected');
+select throws_ok(pg_temp.reqsql('  ', jsonb_build_array(pg_temp.d('MONITOR'))), '23514', 'ไม่พบรหัสเครื่องในทะเบียน กรุณาตรวจรหัสที่ติดบนเครื่อง หรือติดต่อ IT', 'a blank host is the same as no host');
+select throws_ok($$ select public.app_itrp_create(null, 'x', 'repair', null, 'computer', null, 'x', false, 'PD-COM1', null) $$, '23514', 'ต้องส่งรหัสเครื่องและรายการอุปกรณ์ที่มีปัญหาพร้อมกัน', 'a host without the devices argument is rejected (the two must come together)');
+select throws_ok(pg_temp.reqsql('PD-COM1', '[]'::jsonb), '23514', 'กรุณาเลือกอุปกรณ์ที่มีปัญหาอย่างน้อย 1 รายการ', 'an empty devices list is rejected in the new style');
+select throws_ok(pg_temp.reqsql('PD-COM1', jsonb_build_array('{}'::jsonb, '{"note": " "}'::jsonb)), '23514', 'กรุณาเลือกอุปกรณ์ที่มีปัญหาอย่างน้อย 1 รายการ', 'only empty rows count as none');
+select throws_ok($$ select public.app_itrp_create(null, 'x', 'repair', null, 'computer', null, 'x', false, null, '[]'::jsonb) $$, '23514', 'ไม่พบรหัสเครื่องในทะเบียน กรุณาตรวจรหัสที่ติดบนเครื่อง หรือติดต่อ IT', 'an explicit empty list without a host is the new style and is rejected');
+select throws_ok($$ select public.app_itrp_create(null, 'x', 'repair', null, 'computer', null, 'x', false, 'PD-COM1', '{"type_code": "MONITOR"}'::jsonb) $$, '23514', 'กรุณาเลือกอุปกรณ์ที่มีปัญหาอย่างน้อย 1 รายการ', 'devices that are not a list are rejected');
+select throws_ok(pg_temp.reqsql('PD-COM1', (select jsonb_agg(pg_temp.d('MONITOR')) from generate_series(1, 11))), '23514', 'อุปกรณ์ที่มีปัญหาต้องไม่เกิน 10 รายการ', 'more than ten devices are rejected');
+select throws_ok(pg_temp.reqsql('PD-COM1', jsonb_build_array(pg_temp.d('MONITOR'), '"x"'::jsonb)), '23514', 'แถวที่ 2 ของรายการอุปกรณ์ไม่ถูกต้อง', 'a row that is not an object is rejected with its number');
+select throws_ok(pg_temp.reqsql('PD-COM1', jsonb_build_array(pg_temp.d('SCANNER', 'x1'))), '23514', 'แถวที่ 1: กรุณาเลือกชนิดอุปกรณ์', 'an unsupported type is rejected');
+select throws_ok(pg_temp.reqsql('PD-COM1', jsonb_build_array(pg_temp.d('MONITOR'), pg_temp.d(null, 'pd-mnt1'))), '23514', 'แถวที่ 2: กรุณาเลือกชนิดอุปกรณ์', 'a row with a code but no type is rejected');
+select throws_ok(pg_temp.reqsql('PD-COM1', jsonb_build_array(pg_temp.d('OTHER', 'abc'))), '23514', 'แถวที่ 1: กรุณาระบุอุปกรณ์ (เมื่อเลือก "อื่นๆ")', 'OTHER needs a note');
+select throws_ok(pg_temp.reqsql('PD-COM1', jsonb_build_array(pg_temp.d('OTHER', null, repeat('ก', 201)))), '23514', 'แถวที่ 1: หมายเหตุอุปกรณ์ต้องไม่เกิน 200 ตัวอักษร', 'a note longer than 200 characters is rejected');
+select throws_ok(pg_temp.reqsql('PD-COM1', jsonb_build_array(pg_temp.d('MONITOR', repeat('B', 51)))), '23514', 'แถวที่ 1: รหัสเครื่องต้องไม่เกิน 50 ตัวอักษร', 'a device code longer than 50 characters is rejected');
+select throws_ok(pg_temp.reqsql('PD-COM1', jsonb_build_array(pg_temp.d('MONITOR', 'pd-mnt1'), pg_temp.d('PRINTER', 'PD-MNT1'))), '23514', 'แถวที่ 2: รหัสอุปกรณ์ PD-MNT1 ซ้ำกับแถวก่อนหน้า (ใส่รหัสเดียวกันสองครั้งในใบเดียวกันไม่ได้)', 'the same code twice in one request is rejected');
 select is(pg_temp.q('select count(*) from public.itrp_requests'), current_setting('t.req_count'), 'no request was created by any of the rejected calls');
 select is(pg_temp.q('select count(*) from public.itrp_request_devices'), current_setting('t.dev_count'), 'and no device row either');
+select is(pg_temp.q('select coalesce(sum(last_seq), 0) from public.itrp_doc_counters'), current_setting('t.seq_count'), 'a rejected call (host not found, host or devices missing) does not use up a document number');
 
 -- 7. รายละเอียดใบ -----------------------------------------------------------
-select is((select count(*)::int from jsonb_object_keys(pg_temp.det(current_setting('t.n1')))), 39, 'get_detail has 39 keys (the 36 before + host_code, host_unknown, devices)');
-select ok(pg_temp.det(current_setting('t.n1')) ?& array['host_code', 'host_unknown', 'devices'], 'the three new keys are present');
+select is((select count(*)::int from jsonb_object_keys(pg_temp.det(current_setting('t.n1')))), 38, 'get_detail has 38 keys (the 36 before + host_code, devices)');
+select ok(pg_temp.det(current_setting('t.n1')) ?& array['host_code', 'devices'], 'the two new keys are present');
+select ok(not (pg_temp.det(current_setting('t.n1')) ? 'host_unknown'), 'get_detail has no host_unknown key');
 select is(pg_temp.keys(pg_temp.det(current_setting('t.n1')) -> 'devices' -> 0), 'device_code,from_register,note,seq,type_code', 'a device in the detail has exactly seq, type_code, device_code, from_register and note');
 select is(pg_temp.det(current_setting('t.n1')) -> 'devices' -> 0 ->> 'type_code', 'COMPUTER', 'the first device is the computer');
 select set_config('request.jwt.claims', pg_temp.sub(2), true);
@@ -291,8 +282,6 @@ select throws_ok(format($$ update public.itrp_request_devices set from_register 
 select throws_ok(format($$ delete from public.itrp_request_devices where request_id = %L::uuid $$, current_setting('t.n1')), '42501', 'ประวัติการดำเนินการลบไม่ได้ (บันทึกสำหรับ ISO)', 'a device row cannot be deleted');
 select throws_ok($$ truncate public.itrp_request_devices $$, '42501', 'ประวัติการดำเนินการล้างทั้งตารางไม่ได้ (บันทึกสำหรับ ISO)', 'the table cannot be truncated');
 select throws_ok(format($$ update public.itrp_requests set host_code = 'HACK' where id = %L::uuid $$, current_setting('t.n1')), '42501', 'ใบแจ้งซ่อมแก้ไขเนื้อหาไม่ได้ เปลี่ยนได้แค่สถานะ (ถ้าต้องแก้ ให้ยกเลิกแล้วแจ้งใหม่)', 'host_code of a request cannot be changed');
-select throws_ok(format($$ update public.itrp_requests set host_unknown = true where id = %L::uuid $$, current_setting('t.n1')), '42501', 'ใบแจ้งซ่อมแก้ไขเนื้อหาไม่ได้ เปลี่ยนได้แค่สถานะ (ถ้าต้องแก้ ให้ยกเลิกแล้วแจ้งใหม่)', 'host_unknown of a request cannot be changed');
-select throws_ok($$ insert into public.itrp_requests (is_test, doc_no, doc_year, doc_seq, requester_id, department_id, device_name, request_kind, repair_target, symptom, host_code, host_unknown) select false, 'ZZ-1', 2999, 1, r.requester_id, r.department_id, 'x', 'repair', 'computer', 'x', 'PD-COM1', true from public.itrp_requests r limit 1 $$, '23514', null, 'host_unknown together with a host_code violates the table check');
 select throws_ok($$ insert into public.itrp_request_devices (is_test, request_id, seq, type_code, device_code) select false, r.id, 9, 'SCANNER', 'Z1' from public.itrp_requests r limit 1 $$, '23514', null, 'the table only accepts the nine documented types');
 select throws_ok($$ insert into public.itrp_request_devices (is_test, request_id, seq, type_code) select false, r.id, 9, 'OTHER' from public.itrp_requests r limit 1 $$, '23514', null, 'the table itself requires a note for OTHER');
 select lives_ok(format($$ update public.itrp_requests set status = status where id = %L::uuid $$, current_setting('t.n1')), 'a no-op update of the request still works (the guard only blocks content changes)');
@@ -323,8 +312,8 @@ select is(pg_temp.lk('sbx-pc1') -> 'host' ->> 'user_name', 'ผู้ใช้�
 select is(pg_temp.lkdev('sbx-pc1'), 'MONITOR:SBX-MNT1', 'and its test devices');
 select is(pg_temp.lk('pd-com1'), '{"found": false}'::jsonb, 'the persona cannot find a real machine (the answer is the same as for a missing code)');
 select ok(position('PD-' in pg_temp.lk('sbx-pc1')::text) = 0, 'no real device shows up in a test answer');
-select throws_ok(pg_temp.reqsql('pd-com1', false, jsonb_build_array(pg_temp.d('MONITOR', 'pd-mnt1'))), '23514', 'ไม่พบรหัสเครื่อง PD-COM1 ในทะเบียนอุปกรณ์ กรุณาตรวจสอบรหัสที่ติดบนเครื่อง หรือเลือก "ไม่ทราบรหัสเครื่อง"', 'a test request cannot use a real machine as its host');
-select set_config('t.s1', pg_temp.req('sbx-pc1', false, jsonb_build_array(pg_temp.d('COMPUTER', 'sbx-pc1'), pg_temp.d('MONITOR', 'sbx-mnt1'), pg_temp.d('MOUSE'))), true);
+select throws_ok(pg_temp.reqsql('pd-com1', jsonb_build_array(pg_temp.d('MONITOR', 'pd-mnt1'))), '23514', 'ไม่พบรหัสเครื่องในทะเบียน กรุณาตรวจรหัสที่ติดบนเครื่อง หรือติดต่อ IT', 'a test request cannot use a real machine as its host');
+select set_config('t.s1', pg_temp.req('sbx-pc1', jsonb_build_array(pg_temp.d('COMPUTER', 'sbx-pc1'), pg_temp.d('MONITOR', 'sbx-mnt1'), pg_temp.d('MOUSE'))), true);
 select is(pg_temp.dv(current_setting('t.s1')), 'COMPUTER:SBX-PC1:t,MONITOR:SBX-MNT1:t,MOUSE:-:f', 'a test request keeps its devices with from_register computed against the test register');
 select is(pg_temp.det(current_setting('t.s1')) ->> 'host_code', 'SBX-PC1', 'and its host_code');
 select ok(pg_temp.det(current_setting('t.s1')) ->> 'doc_no' like 'TEST-IT01-%', 'the test request has a TEST- number');
@@ -337,7 +326,7 @@ select is((select count(*)::int from public.itrp_request_devices where not is_te
 set local role authenticated;
 select set_config('request.jwt.claims', pg_temp.sub(1), true);
 select is(pg_temp.lk('sbx-pc1'), '{"found": false}'::jsonb, 'a real user cannot find a test machine');
-select throws_ok(pg_temp.reqsql('sbx-pc1', false, jsonb_build_array(pg_temp.d('MONITOR'))), '23514', 'ไม่พบรหัสเครื่อง SBX-PC1 ในทะเบียนอุปกรณ์ กรุณาตรวจสอบรหัสที่ติดบนเครื่อง หรือเลือก "ไม่ทราบรหัสเครื่อง"', 'nor use it as the host of a real request');
+select throws_ok(pg_temp.reqsql('sbx-pc1', jsonb_build_array(pg_temp.d('MONITOR'))), '23514', 'ไม่พบรหัสเครื่องในทะเบียน กรุณาตรวจรหัสที่ติดบนเครื่อง หรือติดต่อ IT', 'nor use it as the host of a real request');
 reset role;
 select set_config('request.jwt.claims', '', true);
 select count(set_config('t.test_rows', ((select count(*) from public.itrp_request_devices where is_test) + (select count(*) from public.itrp_requests where is_test) + (select count(*) from public.itrp_events where is_test) + (select count(*) from public.itrp_doc_counters where is_test))::text, true));
