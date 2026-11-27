@@ -35,7 +35,34 @@
     { code: "CBS", name: "สารเร่ง CBS", category: "สารเร่ง", storage: "ห้องเคมีควบคุมความชื้น D-2" },
     { code: "TMTD", name: "สารเร่ง TMTD", category: "สารเร่ง", storage: "ห้องเคมีควบคุมความชื้น D-2" },
     { code: "AO-6PPD", name: "สารกันเสื่อม 6PPD", category: "สารกันเสื่อม", storage: "ห้องเคมี D-1" },
+    // วัตถุดิบของสูตรสาธิตแบบน้ำหนัก DEMO-W01 (ข้อมูลสมมติทั้งหมด): ขั้นเตรียมวัตถุดิบ (kg) และเคมีขั้น 1–3 (g) · ต่อท้ายรายการเดิมเพื่อไม่ให้ประวัติสาธิตเดิมเปลี่ยน
+    { code: "DM-RUB-A", name: "ยางสาธิต A", category: "โพลิเมอร์", storage: "โกดัง B-1" },
+    { code: "DM-RUB-B", name: "ยางสาธิต B", category: "โพลิเมอร์", storage: "โกดัง B-1" },
+    { code: "DM-FIL-A", name: "สารตัวเติมสาธิต A", category: "สารตัวเติม", storage: "โกดัง B-2" },
+    { code: "DM-FIL-B", name: "สารตัวเติมสาธิต B", category: "สารตัวเติม", storage: "โกดัง B-2" },
+    { code: "DM-PLS-A", name: "พลาสติกสาธิต A", category: "โพลิเมอร์", storage: "โกดัง B-1" },
+    { code: "DM-OIL-A", name: "น้ำมันสาธิต A", category: "น้ำมัน", storage: "ห้องเก็บของเหลว C-1" },
+    { code: "DM-FIL-C", name: "สารตัวเติมสาธิต C", category: "สารตัวเติม", storage: "โกดัง B-2" },
+    { code: "DM-CH-01", name: "เคมีสาธิต 01", category: "สารเคมี", storage: "ห้องเคมี D-1" },
+    { code: "DM-CH-02", name: "เคมีสาธิต 02", category: "สารเคมี", storage: "ห้องเคมี D-1" },
+    { code: "DM-CH-03", name: "เคมีสาธิต 03", category: "สารเคมี", storage: "ห้องเคมี D-1" },
+    { code: "DM-CH-04", name: "เคมีสาธิต 04", category: "สารเคมี", storage: "ห้องเคมี D-1" },
+    { code: "DM-CH-05", name: "เคมีสาธิต 05", category: "สารเคมี", storage: "ห้องเคมี D-1" },
+    { code: "DM-CH-06", name: "เคมีสาธิต 06", category: "สารเคมี", storage: "ห้องเคมี D-1" },
+    { code: "DM-CH-07", name: "เคมีสาธิต 07", category: "สารเคมี", storage: "ห้องเคมี D-1" },
+    { code: "DM-CH-08", name: "เคมีสาธิต 08", category: "สารเคมี", storage: "ห้องเคมี D-1" },
+    { code: "DM-CH-09", name: "เคมีสาธิต 09", category: "สารเคมี", storage: "ห้องเคมี D-1" },
+    { code: "DM-CH-10", name: "เคมีสาธิต 10", category: "สารเคมี", storage: "ห้องเคมี D-1" },
+    { code: "DM-CH-11", name: "เคมีสาธิต 11", category: "สารเคมี", storage: "ห้องเคมี D-1" },
+    { code: "DM-CH-12", name: "เคมีสาธิต 12", category: "สารเคมี", storage: "ห้องเคมี D-1" },
+    { code: "DM-CH-13", name: "เคมีสาธิต 13", category: "สารเคมี", storage: "ห้องเคมี D-1" },
   ].map((material) => Object.freeze(material)));
+
+  // สูตรแบบน้ำหนัก: บรรทัด { materialCode, stage 0..3, kg, unit, phr = kg } · amount ตามหน่วยที่กรอก (g → kg ÷ 1000)
+  const wLine = (materialCode, stage, amount, unit = "kg") => {
+    const kg = Math.round(amount * (unit === "g" ? 1e-3 : 1) * 1e9) / 1e9;
+    return { materialCode, stage, kg, unit, phr: kg };
+  };
 
   const RECIPES = [
     {
@@ -68,6 +95,18 @@
         { materialCode: "NR-SVR10", phr: 100, stage: 1 }, { materialCode: "CB-N330", phr: 45, stage: 1 }, { materialCode: "ZNO", phr: 5, stage: 1 },
         { materialCode: "STA", phr: 2, stage: 1 }, { materialCode: "S-80", phr: 2.5, stage: 2 }, { materialCode: "CBS", phr: 1.2, stage: 2 },
         { materialCode: "AO-6PPD", phr: 1.5, stage: 1 },
+      ],
+    },
+    {
+      // สูตรสาธิตแบบน้ำหนัก (ข้อมูลสมมติ): ขั้นเตรียมวัตถุดิบ 71 kg + ขั้น 1 1.51 kg + ขั้น 2 2.68 kg + ขั้น 3 0.41 kg = 75.6 kg ต่อชุดผสม (บรรทัด kg = 0 คือ "ไม่ใส่")
+      id: "DEMO-W01", productCode: "",
+      uom: "m", batchKg: 75.6, dumpTol: 6, restHours: 4, yieldPerKg: 6, revision: 1,
+      stages: [{ stage: 1, mixerTemp: 80, dumpTemp: 115, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 140, mixMin: 2 }],
+      items: [
+        wLine("DM-RUB-A", 0, 11), wLine("DM-RUB-B", 0, 4), wLine("DM-FIL-A", 0, 9), wLine("DM-FIL-B", 0, 14), wLine("DM-PLS-A", 0, 12), wLine("DM-OIL-A", 0, 6), wLine("DM-FIL-C", 0, 15),
+        wLine("DM-CH-01", 1, 350, "g"), wLine("DM-CH-02", 1, 150, "g"), wLine("DM-CH-03", 1, 800, "g"), wLine("DM-CH-04", 1, 120, "g"), wLine("DM-CH-05", 1, 90, "g"), wLine("DM-CH-06", 1, 0, "g"), wLine("DM-CH-07", 1, 0, "g"),
+        wLine("DM-CH-08", 2, 900, "g"), wLine("DM-CH-09", 2, 1600, "g"), wLine("DM-CH-10", 2, 180, "g"),
+        wLine("DM-CH-11", 3, 310, "g"), wLine("DM-CH-12", 3, 75, "g"), wLine("DM-CH-13", 3, 25, "g"),
       ],
     },
   ];

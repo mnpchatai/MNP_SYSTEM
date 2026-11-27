@@ -18,7 +18,7 @@
   const MODULES = Object.freeze([
     { id: "dashboard", label: "ภาพรวม RB", group: "ภาพรวม" },
     { id: "orders", label: "ใบสั่งผลิต", group: "ใบสั่งผลิตและสูตร" },
-    { id: "recipes", label: "สูตรยาง (BOM/PHR)", group: "ใบสั่งผลิตและสูตร" },
+    { id: "recipes", label: "สูตรยาง", group: "ใบสั่งผลิตและสูตร" },
     { id: "requisition", label: "เบิกเคมี", group: "สายการผลิต" },
     { id: "mixing", label: "1 · ผสมยาง", group: "สายการผลิต" },
     { id: "extrusion", label: "2 · ฉีดขึ้นรูป", group: "สายการผลิต" },
@@ -136,7 +136,7 @@
   const DIALOG_ACTION = Object.freeze({
     receiveMaterial: "receiveMaterial", createRequisition: "createRequisition", transfer: "createTransfer", receive: "receiveTransfer", qcRecord: "addQcRecord", ncr: "createNcr",
     purchase: "createPurchaseOrder", receivePurchase: "receivePurchaseLine", closePurchase: "closePurchaseLine", skipRest: "endRest", returnRequisition: "returnRequisition",
-    moldEdit: "saveMold", materialEdit: "saveMaterial", createOrder: "createOrder", recipeEdit: "saveRecipe", recipeNew: "createRecipe",
+    moldEdit: "saveMold", materialEdit: "saveMaterial", createOrder: "createOrder", recipeEdit: "saveRecipe", recipeStandards: "saveRecipe", recipeNew: "createRecipe",
     // คลังเคมี ST / RB (20261220010000): ขอเบิก คืน นับ (หน้าคลังเคมี RB) · จ่าย ปิดยอด ไม่รับคืน (โมดูล ST #/st)
     chemRequest: "requestChemicals", chemReturn: "returnChemicals", rbCount: "countRbStock", chemIssue: "issueChemicals", chemClose: "closeChemicalRequest", chemReject: "rejectChemicalReturn",
   });

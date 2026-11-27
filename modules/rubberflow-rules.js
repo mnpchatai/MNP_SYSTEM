@@ -104,16 +104,73 @@
 
   // สูตรผสมสองขั้น: แต่ละบรรทัดวัตถุดิบมี stage 1|2 (ไม่ระบุ = 1) · ค่าของแต่ละขั้น { stage, mixerTemp (°C), dumpTemp (°C), mixMin (นาที) }
   const MIX_STAGES = Object.freeze([1, 2]);
-  const itemStage = (item) => (Number(item?.stage) === 2 ? 2 : 1);
+  // สูตรตามใบสูตรจริงของโรงงาน (สูตรแบบน้ำหนัก): หนึ่งชุดผสมมี 4 ส่วน = ขั้นเตรียมวัตถุดิบ (0) + ผสมขั้น 1 2 3 · แต่ละบรรทัดใส่เป็นน้ำหนักต่อชุดผสม { materialCode, stage 0..3, kg, unit "kg"|"g", phr = kg }
+  // kg เป็นกิโลกรัมเสมอ (ไม่เกิน 4 ตำแหน่ง) unit คือหน่วยที่ผู้ใช้กรอก/แสดง · phr เขียนเท่า kg เพื่อให้ตัวคำนวณเดิมที่แบ่งตาม phr ÷ รวม phr × batchKg ได้ kg เดิมเป๊ะ · batchKg = ผลรวม kg (คำนวณ ไม่ได้กรอก)
+  // ค่าผสม (mixerTemp dumpTemp mixMin) ยังมีเฉพาะขั้น 1 และ 2 (MIX_STAGES) · ขั้นเตรียมและขั้น 3 เป็นแค่ส่วนของรายการวัตถุดิบ · สูตรเดิมแบบ PHR (stage 1|2) ใช้ได้เหมือนเดิม
+  const PARTS = Object.freeze([0, 1, 2, 3]);
+  const partLabel = (stage) => (Number(stage) === 0 ? "ขั้นเตรียมวัตถุดิบ" : `ขั้น ${Number(stage)}`);
+  const isWeightItem = (item) => typeof item?.kg === "number" && Number.isFinite(item.kg);
+  const isWeightRecipe = (recipe) => Array.isArray(recipe?.items) && recipe.items.length > 0 && recipe.items.every(isWeightItem);
+  const round4 = (value) => Math.round(Number(value) * 1e4) / 1e4;
+  const weightBatchKg = (items) => round4((items ?? []).reduce((sum, item) => sum + (Number(item?.kg) || 0), 0));
+  // จำนวนที่กรอกตามหน่วย → กิโลกรัม (g ÷ 1000) ปัดเศษทศนิยมของเครื่องที่ 9 ตำแหน่ง ไม่ตัดทิ้งเงียบ ๆ ที่ 4 ตำแหน่ง (action ตรวจเอง) · ว่าง = "" ให้ action แจ้งให้กรอก
+  const amountToKg = (amount, unit) => (amount === undefined || amount === null || String(amount).trim() === "" ? "" : Math.round(Number(amount) * (unit === "g" ? 1e-3 : 1) * 1e9) / 1e9);
+  function itemStage(item) {
+    const raw = item?.stage;
+    const n = raw === undefined || raw === null || raw === "" ? NaN : Number(raw);
+    if (isWeightItem(item)) return PARTS.includes(n) ? n : 1;
+    return n === 2 ? 2 : 1;
+  }
   const recipeStage = (recipe, stage) => (recipe?.stages ?? []).find((row) => Number(row.stage) === stage) ?? null;
+  // ค่ามาตรฐานการผสมของสูตร (ฐานข้อมูลบังคับทุกค่า การผสมเทียบอุณหภูมิปล่อยยางกับค่านี้): ฟอร์มสูตรแบบน้ำหนักกรอกแค่รหัสสูตรกับวัตถุดิบ
+  // สูตรใหม่ได้ค่าเริ่มต้นด้านล่าง · ฉบับแก้ไขใหม่รับค่าต่อจากฉบับที่แก้ · แก้ค่าได้ที่ปุ่ม "ค่ามาตรฐานการผสม" ของร่างสูตร
+  const RECIPE_DEFAULTS = Object.freeze({
+    productCode: "", uom: "m", yieldPerKg: 6, restHours: 4, dumpTol: 5,
+    stages: Object.freeze([{ stage: 1, mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 130, mixMin: 2 }]),
+  });
+  function recipeStandards(recipe) {
+    const stages = MIX_STAGES.map((stage) => {
+      const row = recipeStage(recipe, stage) ?? RECIPE_DEFAULTS.stages.find((fallback) => fallback.stage === stage);
+      return { stage, mixerTemp: row.mixerTemp, dumpTemp: row.dumpTemp, mixMin: row.mixMin };
+    });
+    return {
+      productCode: recipe?.productCode ?? RECIPE_DEFAULTS.productCode,
+      uom: recipe?.uom ?? RECIPE_DEFAULTS.uom,
+      yieldPerKg: recipe?.yieldPerKg ?? RECIPE_DEFAULTS.yieldPerKg,
+      restHours: recipe?.restHours ?? RECIPE_DEFAULTS.restHours,
+      dumpTol: recipe?.dumpTol ?? RECIPE_DEFAULTS.dumpTol,
+      stages,
+      ...(recipe?.extrusionSpec ? { extrusionSpec: recipe.extrusionSpec } : {}),
+    };
+  }
 
   // น้ำหนักวัตถุดิบต่อ batch จาก PHR (ส่วนต่อยาง 100 ส่วน) · เรียงตามขั้น (ขั้น 1 ก่อน ขั้น 2) ลำดับเดิมในขั้นเดียวกัน
+  // สูตรแบบน้ำหนัก: kgPerBatch = kg ของบรรทัดตรง ๆ · เรียงตามส่วน (ขั้นเตรียม → ขั้น 1 → 2 → 3) ลำดับเดิมในส่วนเดียวกัน
   function recipeLines(recipe) {
+    const weight = isWeightRecipe(recipe);
     const total = recipe.items.reduce((sum, item) => sum + Number(item.phr), 0);
     return recipe.items
-      .map((item) => ({ ...item, stage: itemStage(item), kgPerBatch: total ? (Number(item.phr) / total) * recipe.batchKg : 0 }))
+      .map((item) => ({ ...item, stage: itemStage(item), kgPerBatch: weight ? Number(item.kg) : total ? (Number(item.phr) / total) * recipe.batchKg : 0 }))
       .sort((a, b) => a.stage - b.stage);
   }
+
+  // น้ำหนักของบรรทัดในหน่วยที่กรอก ("13 kg" · "500 g" · ศูนย์ = "ไม่ใส่") · รับบรรทัดของสูตร (kg) หรือผลของ recipeLines (kgPerBatch)
+  const plainNum = (value, digits) => Number(value).toLocaleString("th-TH", { minimumFractionDigits: 0, maximumFractionDigits: digits });
+  function lineWeightText(line) {
+    const kg = Number(line?.kg ?? line?.kgPerBatch);
+    if (!(kg > 0)) return "ไม่ใส่";
+    return line?.unit === "g" ? `${plainNum(kg * 1000, 1)} g` : `${plainNum(kg, 4)} kg`;
+  }
+  // ผลรวมต่อส่วนของสูตรแบบน้ำหนัก (เฉพาะส่วนที่มีบรรทัด): { stage, kg, unit, lines } · unit = "g" เมื่อทุกบรรทัดที่ใส่ของส่วนนั้นกรอกเป็น g (แสดงผลรวมเป็น g ต่อท้าย)
+  function partTotals(recipe) {
+    const lines = recipeLines(recipe);
+    return PARTS.filter((stage) => lines.some((line) => line.stage === stage)).map((stage) => {
+      const rows = lines.filter((line) => line.stage === stage);
+      const used = rows.filter((line) => line.kgPerBatch > 0);
+      return { stage, kg: round4(rows.reduce((sum, line) => sum + line.kgPerBatch, 0)), unit: used.length && used.every((line) => line.unit === "g") ? "g" : "kg", lines: rows };
+    });
+  }
+  const partTotalText = (total) => (total.unit === "g" ? `${plainNum(total.kg, 4)} kg (${plainNum(total.kg * 1000, 1)} g)` : `${plainNum(total.kg, 4)} kg`);
 
   // สูตร/สินค้าที่แสดงบนจอ: สูตรไม่มีชื่อ ใช้รหัสสูตร (+ รหัสสินค้าถ้ามี) · ใบสั่งผลิตและกล่อง FG เก็บ recipeId + productCode ของสูตร
   const recipeLabel = (recipe) => (recipe ? (recipe.productCode ? `${recipe.id} · ${recipe.productCode}` : String(recipe.id)) : "-");
@@ -545,7 +602,7 @@
   const api = {
     QA_RELEASE_TEXT, canQaRelease, MATERIAL_RELEASE_TEXT, canReleaseMaterial,
     DAY, HOUR, STAGES, STAGE_LABEL, NEXT_STAGE, PREV_STAGE, SHIFTS, MACHINES, SPECS, WEIGH_TOL_PCT, WEIGH_TOL_MIN_KG,
-    MIX_STAGES, itemStage, recipeStage, recipeLabel, orderLabel, unitText, inSpec, specText, specLimits, EXTRUSION_KEYS, extrusionSpecOf, orderExtrusionSpec, extrusionHoldReasons, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, OPEN_ORDER, orderRemainingKg, MAX_REQ_BATCHES, remainingBatches, nextRequisitionBatches, suggestOrderKg, chemicalNeeds, stats, cpkVerdict,
+    MIX_STAGES, PARTS, partLabel, isWeightRecipe, weightBatchKg, amountToKg, plainNum, lineWeightText, partTotals, partTotalText, itemStage, recipeStage, RECIPE_DEFAULTS, recipeStandards, recipeLabel, orderLabel, unitText, inSpec, specText, specLimits, EXTRUSION_KEYS, extrusionSpecOf, orderExtrusionSpec, extrusionHoldReasons, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, OPEN_ORDER, orderRemainingKg, MAX_REQ_BATCHES, remainingBatches, nextRequisitionBatches, suggestOrderKg, chemicalNeeds, stats, cpkVerdict,
     fmtDate, fmtDateTime, fmtNum, fmtDuration, ymd, toInputDate, fromInputDate, niceScale,
     issuedKgOf, requisitionReturnState, returnableRequisitions, mixableRequisitions, requisitionStore,
     poLineReceived, poLineReceipts, poLineClosed, poLineOpen, poLineDone, poTouched,

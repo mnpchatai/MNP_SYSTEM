@@ -300,9 +300,49 @@
     return Object.keys(out).length ? out : undefined;
   }
 
-  function recipeFields(p) {
-    const items = (p.items ?? []).filter((item) => item.materialCode && Number(item.phr) > 0);
+  // รายการวัตถุดิบของสูตร (ตรงกับ private.rf_parse_items): สูตรแบบน้ำหนัก (ทุกบรรทัดใส่ kg) หรือสูตรเดิมแบบ PHR · ปนกันไม่ได้ · รหัสวัตถุดิบซ้ำไม่ได้ · ไม่เกิน 100 รายการ
+  // แบบน้ำหนัก: บรรทัดคือ { materialCode, stage 0..3, kg (กิโลกรัม: 0 หรือ 0.001–10000 ไม่เกิน 4 ตำแหน่ง), unit kg|g (หน่วยที่กรอก), phr = kg } · kg = 0 เก็บไว้เป็นบรรทัด "ไม่ใส่" (ไม่เบิก ไม่ชั่ง) · ต้องมีอย่างน้อยหนึ่งบรรทัดที่ kg > 0
+  const blankValue = (value) => value === undefined || value === null || String(value).trim() === "";
+  const MAX_RECIPE_ITEMS = 100;
+  function recipeItems(p) {
+    const { PARTS, weightBatchKg } = rules();
+    const raw = (Array.isArray(p.items) ? p.items : []).filter((item) => item && typeof item === "object");
+    const weight = raw.some((item) => item.kg !== undefined);
+    const items = [];
+    for (const item of raw) {
+      const code = String(item.materialCode ?? "").trim();
+      if (!weight) {
+        if (code && Number(item.phr) > 0) items.push({ materialCode: code, phr: Number(item.phr), stage: Number(item.stage) === 2 ? 2 : 1 });
+        continue;
+      }
+      if (!code && blankValue(item.kg)) continue;
+      if (!code) fail("มีปริมาณที่ยังไม่ได้เลือกวัตถุดิบ");
+      if (item.kg === undefined) fail("สูตรต้องใส่เป็นน้ำหนักทุกรายการ ผสมกับ PHR ไม่ได้");
+      if (blankValue(item.kg)) fail(`กรุณาระบุปริมาณของ ${code} (ไม่ใส่ให้กรอก 0)`);
+      const kg = Number(item.kg);
+      if (!Number.isFinite(kg) || kg < 0 || kg > 10000) fail(`ปริมาณของ ${code} ต้องเป็นตัวเลข 0 ขึ้นไปและไม่เกิน 10,000 kg`);
+      if (Math.abs(kg * 1e4 - Math.round(kg * 1e4)) > 1e-6) fail(`ปริมาณของ ${code} ใส่ได้ไม่เกิน 4 ตำแหน่งทศนิยมของกิโลกรัม`);
+      if (kg > 0 && kg < 0.001) fail(`ปริมาณของ ${code} ถ้าใส่ต้องไม่น้อยกว่า 0.001 kg (1 g) ไม่ใส่ให้กรอก 0`);
+      const unit = blankValue(item.unit) ? "kg" : String(item.unit);
+      if (unit !== "kg" && unit !== "g") fail(`หน่วยของ ${code} ต้องเป็น kg หรือ g`);
+      const stage = blankValue(item.stage) ? 1 : Number(item.stage);
+      if (!PARTS.includes(stage)) fail(`ขั้นของ ${code} ต้องเป็นขั้นเตรียมวัตถุดิบ หรือขั้น 1–3`);
+      const rounded = Math.round(kg * 1e4) / 1e4;
+      items.push({ materialCode: code, stage, kg: rounded, unit, phr: rounded });
+    }
     if (!items.length) fail("สูตรต้องมีวัตถุดิบอย่างน้อย 1 รายการ");
+    if (items.length > MAX_RECIPE_ITEMS) fail(`สูตรมีวัตถุดิบได้ไม่เกิน ${MAX_RECIPE_ITEMS} รายการ`);
+    const seen = new Set();
+    for (const item of items) {
+      if (seen.has(item.materialCode)) fail(`วัตถุดิบ ${item.materialCode} ซ้ำในสูตร`);
+      seen.add(item.materialCode);
+    }
+    if (weight && !items.some((item) => item.kg > 0)) fail("สูตรต้องมีวัตถุดิบที่ใส่ปริมาณมากกว่า 0 อย่างน้อย 1 รายการ");
+    return { items, batchKg: weight ? weightBatchKg(items) : null };
+  }
+
+  function recipeFields(p) {
+    const { items, batchKg } = recipeItems(p);
     const productCode = String(p.productCode ?? "").trim();
     if (productCode.length > 60) fail("รหัสสินค้ายาวเกิน 60 ตัวอักษร");
     const extrusionSpec = extrusionSpecField(p.extrusionSpec);
@@ -310,12 +350,12 @@
       ...(extrusionSpec ? { extrusionSpec } : {}),
       productCode,
       uom: p.uom || "m",
-      batchKg: num(p.batchKg, "น้ำหนักต่อชุดผสม"),
+      batchKg: batchKg ?? num(p.batchKg, "น้ำหนักต่อชุดผสม"),
       stages: rules().MIX_STAGES.map((stage) => stageValues((p.stages ?? []).find((row) => Number(row?.stage) === stage), stage)),
       dumpTol: Number(p.dumpTol) || 5,
       restHours: Number(p.restHours) || 4,
       yieldPerKg: num(p.yieldPerKg, "ผลผลิตต่อกิโลกรัม"),
-      items: items.map((item) => ({ materialCode: item.materialCode, phr: Number(item.phr), stage: Number(item.stage) === 2 ? 2 : 1 })),
+      items,
     };
   }
 
@@ -424,6 +464,7 @@
     const lines = [];
     const shortages = [];
     for (const item of recipeLines(recipe)) {
+      if (!(item.kgPerBatch > 0)) continue; // บรรทัด "ไม่ใส่" (kg = 0) ไม่เบิกและไม่ชั่ง
       const need = item.kgPerBatch * n;
       const { picks, shortage } = allocateFefo(d.materialLots, item.materialCode, need, ctx.now, reserved, "RB");
       if (shortage > 0.0001) shortages.push(`${item.materialCode} ขาด ${shortage.toFixed(2)} kg`);

@@ -14,7 +14,7 @@
 // real = นอกโหมดทดสอบ ให้ผู้ใช้จำลองเป็นพนักงานจริงของแผนก/ตำแหน่งเดียวกับบัญชีทดสอบชื่อนั้น (?real=rb · pp rbh gr st sr wh whh qa pk pt bg) เพื่อลองเส้นทางใช้งานจริงของ BOM / RubberFlow
 import { createItwoMock } from "./pilot-harness-itwo-mock.mjs";
 
-export function createMockSupabase({ empty = false, sandbox = false, itwo = false, ncr = false, master = false, as = null, real = null, now = () => Date.now(), warn = () => {}, objectUrl = null, storage = null } = {}) {
+export function createMockSupabase({ empty = false, sandbox = false, itwo = false, ncr = false, master = false, as = null, real = null, rfDemo = false, now = () => Date.now(), warn = () => {}, objectUrl = null, storage = null } = {}) {
   const YEAR = "2569";
   const DAY = 86400000;
   const startedAt = now();
@@ -557,6 +557,11 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     ["persona-pth", "ประภา", "หัวหน้าฉีดพลาสติก", "หัวหน้าแผนก PT (ฉีดพลาสติก)", "PT", "ฝ่ายผลิต PT", "department_manager"],
     ["persona-bgh", "บุษบา", "หัวหน้าเย็บกระเป๋า", "หัวหน้าแผนก BG (เย็บกระเป๋า)", "BG", "ฝ่ายผลิต BG", "department_manager"],
     ["persona-pkh", "ปกรณ์", "หัวหน้าบรรจุ", "หัวหน้าแผนก PK (ประกอบและบรรจุ)", "PK", "ฝ่ายผลิต PK", "department_manager"],
+    // ผู้จัดการโรงงาน / ผู้จัดการทั่วไป (ต้นทุนการผลิต): เห็นราคาและต้นทุนอ่านอย่างเดียว (บันทึกราคาไม่ได้) · บทบาท factory_manager / general_manager (ไม่ใช่ผู้จัดการแผนก) แผนกสมมติของโปรแกรมทดสอบ
+    ["persona-fm", "ศิริพร", "วงศ์ใหญ่", "ผู้จัดการโรงงาน", "FM", "ผู้บริหารโรงงาน", "factory_manager"],
+    ["persona-gm", "กมล", "รัตนชัย", "ผู้จัดการทั่วไป", "GM", "ผู้บริหาร", "general_manager"],
+    // ผู้ช่วยผู้จัดการโรงงาน: เห็นโมดูลโรงงานทุกโมดูลแต่ไม่เห็นราคา/ต้นทุน (ใช้ลองกติกาซ่อนเมนู)
+    ["persona-afm", "ธีรพงษ์", "ผู้ช่วยโรงงาน", "ผู้ช่วยผู้จัดการโรงงาน", "AF", "ผู้บริหารโรงงาน", "assistant_factory_manager"],
     // พนักงานแผนกผลิตที่เหลือ (PK บรรจุ · PT ฉีดพลาสติก · BG เย็บกระเป๋า): ลองรายงานผล / พักงานของแผนกตัวเอง และดูว่าแผนกอื่นทำแทนไม่ได้
     ["persona-pk", "ปรีชา", "บรรจุ", "พนักงานแผนก PK (บรรจุ)", "PK", "ฝ่ายผลิต PK"],
     ["persona-pt", "พิมพ์ใจ", "ฉีดพลาสติก", "พนักงานแผนก PT (ฉีดพลาสติก)", "PT", "ฝ่ายผลิต PT"],
@@ -2417,6 +2422,70 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     for (const job of next.jobs) if (!next.orders.some((order) => order.id === job.orderId)) fail("BOM_INVALID_JOB");
     return next;
   }
+  // ---- ราคาวัตถุดิบ (เคมี + ของซื้อ) และต้นทุนการผลิต (#/st?tab=stock · #/cost): app_rf_prices / app_rf_price_save / app_rf_cost_data ----
+  // สิทธิ์ตรงกับฐานข้อมูล (ปฏิเสธ RF_FORBIDDEN): เห็นต้นทุนและราคา = ผู้จัดการทั่วไป / ผู้จัดการโรงงาน / admin / แผนก PP · เห็นราคาอย่างเดียว = แผนก ST (ทุกตำแหน่ง) · บันทึกราคา = แผนก ST / admin
+  // ราคาเป็นแถวที่เพิ่มอย่างเดียว (ประวัติ แก้/ลบไม่ได้) เก็บใน storage ข้างข้อมูล RubberFlow · ว่างอยู่ = ใส่ราคาสาธิตให้วัตถุดิบสาธิต (ยกเว้น DM-CH-05 และ DM-FIL-C ไว้ให้เห็นสถานะ "ยังไม่มีราคา") · ZNO มีสองแถวให้เห็นประวัติ
+  // ข้อมูลสูตร / ใบเบิก / ล็อตผสมอ่านจากข้อมูล RubberFlow ของ mock (rfLoad) · ยังว่างอยู่ (ยังไม่ได้นำเข้า) = ใช้ชุดสาธิตของ RubberFlow (MNP_RUBBERFLOW_SEED) ถ้าหน้ามีไฟล์นั้น
+  const COST_KEY = sandbox ? "mnp-harness-rf-prices" : "mnp-harness-rf-prices-real";
+  const costSeeCost = (actor) => ["general_manager", "factory_manager", "admin"].includes(actor.role) || actor.dept === "PP";
+  const costSeePrices = (actor) => costSeeCost(actor) || actor.dept === "ST";
+  const costWrite = (actor) => actor.dept === "ST" || actor.role === "admin";
+  const COST_DEMO_PRICES = [
+    ["DM-RUB-A", 60], ["DM-RUB-B", 44.5], ["DM-FIL-A", 28], ["DM-FIL-B", 33.25], ["DM-PLS-A", 71], ["DM-OIL-A", 52.5],
+    ["DM-CH-01", 290], ["DM-CH-02", 155], ["DM-CH-03", 85], ["DM-CH-04", 420], ["DM-CH-06", 110], ["DM-CH-07", 35.5], ["DM-CH-08", 64], ["DM-CH-09", 190], ["DM-CH-10", 720], ["DM-CH-11", 960], ["DM-CH-12", 1480], ["DM-CH-13", 2100],
+    ["EPDM-55", 112], ["NBR-33", 98], ["NR-SVR10", 62], ["CB-N550", 41], ["CB-N330", 44], ["CACO3", 6.5], ["OIL-PAR", 38], ["ZNO", 68.5], ["STA", 52], ["S-80", 145], ["CBS", 210], ["TMTD", 230], ["AO-6PPD", 185],
+  ];
+  const COST_UNPRICED = ["DM-CH-05", "DM-FIL-C"];
+  const costBangkokDay = (ms) => { const date = new Date(ms + 7 * 3600000); return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`; };
+  let costPrices = null;
+  function costLoad() {
+    if (!costPrices) {
+      try { costPrices = JSON.parse(storage?.getItem?.(COST_KEY) ?? "null"); } catch { costPrices = null; }
+      if (!costPrices || !Array.isArray(costPrices.rows)) {
+        const by = "วิชัย คลังวัตถุดิบ";
+        const rows = COST_DEMO_PRICES.map(([materialCode, unitPrice], index) => ({ id: `price-${index + 1}`, kind: "chem", materialCode, unitPrice, effectiveFrom: costBangkokDay(startedAt - 30 * DAY), note: "ราคาตั้งต้นของข้อมูลสาธิต", createdAt: startedAt - 30 * DAY + index, createdBy: by }));
+        const next = rows.length;
+        rows.push({ id: `price-${next + 1}`, kind: "chem", materialCode: "ZNO", unitPrice: 62, effectiveFrom: costBangkokDay(startedAt - 120 * DAY), note: "ราคาเดิมก่อนปรับ", createdAt: startedAt - 120 * DAY, createdBy: by });
+        rows.push({ id: `price-${next + 2}`, kind: "chem", materialCode: "S-80", unitPrice: 150, effectiveFrom: costBangkokDay(startedAt + 10 * DAY), note: "ราคาใหม่ตามใบเสนอราคา มีผลล่วงหน้า", createdAt: startedAt - 2 * DAY, createdBy: by });
+        costPrices = { rows };
+      }
+      // ข้อมูลเก่า (ก่อนมีราคาของซื้อ): pricePerKg → unitPrice และทุกแถวเป็นเคมี
+      for (const row of costPrices.rows) {
+        if (row.unitPrice === undefined && row.pricePerKg !== undefined) { row.unitPrice = row.pricePerKg; delete row.pricePerKg; }
+        if (row.kind !== "part") row.kind = "chem";
+      }
+    }
+    // ราคาสาธิตของของซื้อ (ชิ้นงาน BOM ชนิด PURCHASED): ใส่ครั้งเดียวเมื่อ BOM ของ mock มีของซื้อแล้ว · เว้นทุกชิ้นที่สามไว้ไม่มีราคา (ให้ลองตั้งราคา)
+    if (!costPrices.partsSeeded) {
+      const parts = (bomLoad().items ?? []).filter((item) => item.kind === "PURCHASED").map((item) => item.code).sort();
+      if (parts.length) {
+        const DEMO_PART_PRICES = [4.5, 12, 0.85, 36.5];
+        const by = "วิชัย คลังวัตถุดิบ";
+        parts.forEach((materialCode, index) => {
+          if (index % 3 === 2) return;
+          costPrices.rows.push({ id: `price-${costPrices.rows.length + 1}`, kind: "part", materialCode, unitPrice: DEMO_PART_PRICES[index % DEMO_PART_PRICES.length], effectiveFrom: costBangkokDay(startedAt - 30 * DAY), note: "ราคาตั้งต้นของข้อมูลสาธิต", createdAt: startedAt - 30 * DAY + 500 + index, createdBy: by });
+        });
+        costPrices.partsSeeded = true;
+        costPersist();
+      }
+    }
+    return costPrices;
+  }
+  function costPersist() {
+    try { storage?.setItem?.(COST_KEY, JSON.stringify(costPrices)); } catch { warnOnce("cost-storage", "[pilot harness] เก็บราคาเคมีลง storage ไม่ได้ ข้อมูลอยู่ในหน่วยความจำของหน้านี้เท่านั้น"); }
+  }
+  const costPricesOut = (actor) => ({ canWrite: costWrite(actor), prices: clone(costLoad().rows).sort((a, b) => a.createdAt - b.createdAt) });
+  // ข้อมูล RubberFlow สำหรับต้นทุน: ของ mock ก่อน ไม่มี = ชุดสาธิตของ RubberFlow (ถ้ามี)
+  let costSeed = null;
+  function costRfData() {
+    const live = rfLoad();
+    if (live.recipes.length || live.materials.length) return live;
+    const seedApi = globalThis.MNP_RUBBERFLOW_SEED;
+    if (!costSeed && seedApi?.buildSeed) { try { costSeed = seedApi.buildSeed(startedAt); } catch { costSeed = null; } }
+    return costSeed ?? live;
+  }
+  let costLastAt = 0;
+
   // ---- ข้อมูลของ RubberFlow (โมดูลทดสอบ #/rubberflow): app_rf_master / app_rf_master_since / app_rf_save / app_rf_audit และ app_sandbox_purge_rf ----
   // โครงเดียวกับข้อมูลหลักของ BOM ด้านบน (ทุกระเบียนจำเลขรุ่นที่แก้ล่าสุด ชนรายระเบียน RF_STALE ก่อนตรวจสิทธิ์ ส่วนต่าง {version, epoch, changes} รอบข้อมูล epoch) เก็บที่ storage คีย์ mnp-harness-rf-master
   // 11 ชุด: materials (code) · recipes (รหัสสูตร + revision ทุก revision) · orders (WO) · materialLots (lotNo) · requisitions · lots (MX/EX/CU/FN) · transfers · fgBoxes · qcRecords · ncrs · molds · ไม่มีการลบ
@@ -2495,7 +2564,28 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       for (const lot of rfMaster.materialLots) if (lot && typeof lot.rbKg !== "number") lot.rbKg = 0;
       for (const requisition of rfMaster.requisitions) if (requisition && requisition.store !== "RB" && requisition.store !== "ST") requisition.store = "ST";
     }
+    rfDemoSeed();
     return rfMaster;
+  }
+  // ?rfdemo=1: ฐานว่าง (ยังไม่มีวัตถุดิบและสูตร) = ใส่ชุดสาธิตของ RubberFlow ครั้งเดียว ทุกระเบียนเป็นรุ่น 1 · ชุดสาธิตโหลดทีหลังสคริปต์นี้ จึงลองใหม่จนกว่าจะมี
+  let rfDemoDone = !rfDemo;
+  function rfDemoSeed() {
+    if (rfDemoDone) return;
+    if (rfMaster.materials.length || rfMaster.recipes.length) { rfDemoDone = true; return; }
+    const seedApi = globalThis.MNP_RUBBERFLOW_SEED;
+    if (!seedApi?.buildSeed) return;
+    rfDemoDone = true;
+    let demo = null;
+    try { demo = seedApi.buildSeed(startedAt); } catch { demo = null; }
+    if (!demo) return;
+    rfMaster.version += 1;
+    for (const list of RF_LISTS) {
+      rfMaster[list] = clone(Array.isArray(demo[list]) ? demo[list] : []).sort(rfSorter(list));
+      rfMaster.versions[list] = Object.fromEntries(rfMaster[list].map((record) => [RF_ID[list](record), rfMaster.version]));
+    }
+    for (const lot of rfMaster.materialLots) if (lot && typeof lot.rbKg !== "number") lot.rbKg = 0;
+    for (const requisition of rfMaster.requisitions) if (requisition && requisition.store !== "RB" && requisition.store !== "ST") requisition.store = "ST";
+    rfPersist();
   }
   function rfPersist() {
     try { storage?.setItem?.(RF_KEY, JSON.stringify(rfMaster)); } catch { warnOnce("rf-storage", "[pilot harness] เก็บข้อมูล RubberFlow ลง storage ไม่ได้ ข้อมูลอยู่ในหน่วยความจำของหน้านี้เท่านั้น"); }
@@ -3385,11 +3475,25 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
           // วัตถุดิบในสูตรต้องมีอยู่ ไม่ซ้ำ phr > 0 · วัตถุดิบที่เลิกใช้แล้วใส่ได้เฉพาะที่ revision ก่อนหน้า/แถวเดิมใช้อยู่
           const before = prev ?? siblings.slice().sort((a, b) => b.revision - a.revision)[0];
           const codes = new Set();
+          // สูตรแบบน้ำหนัก (ตรงกับ private.rf_parse_items): ทุกบรรทัดมี kg เป็นตัวเลข 0 หรือ 0.001–10000 ไม่เกิน 4 ตำแหน่ง unit kg|g stage 0..3 · ปนกับ PHR ไม่ได้ · ต้องมี kg > 0 อย่างน้อยหนึ่งบรรทัด
+          // เซิร์ฟเวอร์เขียน phr = kg และ batchKg = ผลรวม kg (ปัด 4 ตำแหน่ง) เอง ไม่ใช้ค่าที่ client ส่งมา
+          const weightItems = record.items.filter((item) => rfPlain(item) && item.kg !== undefined);
+          const weightMode = weightItems.length > 0;
+          if (weightMode && weightItems.length !== record.items.length) fail(bad);
           for (const item of record.items) {
             const material = next.materials.find((row) => row.code === item?.materialCode);
-            if (!material || codes.has(item.materialCode) || !(Number(item?.phr) > 0) || ![1, 2].includes(item.stage)) fail(bad);
+            if (!material || codes.has(item.materialCode)) fail(bad);
+            if (weightMode) {
+              if (typeof item.kg !== "number" || !Number.isFinite(item.kg) || item.kg < 0 || item.kg > 10000 || (item.kg > 0 && item.kg < 0.001) || Math.abs(item.kg * 1e4 - Math.round(item.kg * 1e4)) > 1e-6) fail(bad);
+              if (!["kg", "g"].includes(item.unit ?? "kg") || !Number.isInteger(item.stage) || item.stage < 0 || item.stage > 3) fail(bad);
+            } else if (!(Number(item?.phr) > 0) || ![1, 2].includes(item.stage)) fail(bad);
             codes.add(item.materialCode);
             if (material.active === false && !(before?.items ?? []).some((row) => row.materialCode === item.materialCode)) fail(bad);
+          }
+          if (weightMode) {
+            if (!record.items.some((item) => item.kg > 0)) fail(bad);
+            record.items = record.items.map((item) => ({ ...item, unit: item.unit ?? "kg", phr: item.kg }));
+            record.batchKg = Math.round(record.items.reduce((sum, item) => sum + item.kg, 0) * 1e4) / 1e4;
           }
           if (!(Number(record.batchKg) > 0) || !(Number(record.yieldPerKg) > 0)) fail(bad);
           if (record.extrusionSpec !== undefined && !rfExtrusionSpecValid(record.extrusionSpec)) fail(bad);
@@ -4189,6 +4293,56 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       rfApplyBomOps(ops, actor, at, p_action);
       return rfDelta(rfMaster, p_base_version);
     },
+    // ราคาวัตถุดิบ: เคมี (kind chem ต่อ kg) และของซื้อ (kind part ต่อหน่วยของชิ้น) แถวที่เคยบันทึกทั้งหมด · ผู้เห็นราคาเท่านั้น (RF_FORBIDDEN)
+    app_rf_prices() {
+      const actor = bomActor();
+      if (!costSeePrices(actor)) fail("RF_FORBIDDEN");
+      return costPricesOut(actor);
+    },
+    // บันทึกราคาใหม่ (แถวใหม่ ไม่แก้แถวเดิม) · ผู้เขียนเท่านั้น (RF_FORBIDDEN) · ข้อมูลไม่ถูกต้อง = RF_INVALID_PRICE (ชนิดไม่ใช่ chem/part · chem ต้องเป็นวัตถุดิบ RubberFlow ที่มีอยู่ · part ต้องเป็นชิ้นงาน BOM ชนิด PURCHASED ที่มีอยู่)
+    app_rf_price_save({ p_kind, p_material_code, p_unit_price, p_effective_from, p_note } = {}) {
+      const actor = bomActor();
+      if (!costWrite(actor)) fail("RF_FORBIDDEN");
+      if (p_kind !== "chem" && p_kind !== "part") fail("RF_INVALID_PRICE");
+      const known = p_kind === "part"
+        ? new Set((bomLoad().items ?? []).filter((item) => item.kind === "PURCHASED").map((item) => item.code))
+        : new Set([...(costRfData().materials ?? []).map((row) => row.code), ...COST_DEMO_PRICES.map(([code]) => code), ...COST_UNPRICED]);
+      const price = typeof p_unit_price === "number" ? p_unit_price : Number.NaN;
+      const note = p_note === undefined || p_note === null ? "" : p_note;
+      const horizon = costBangkokDay(now() + 366 * DAY);
+      if (typeof p_material_code !== "string" || !known.has(p_material_code)) fail("RF_INVALID_PRICE");
+      if (!Number.isFinite(price) || !(price > 0) || price > 10000000 || Math.abs(price * 10000 - Math.round(price * 10000)) > 1e-6) fail("RF_INVALID_PRICE");
+      if (typeof p_effective_from !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(p_effective_from) || costBangkokDay(Date.parse(p_effective_from) + 7 * 3600000) !== p_effective_from || p_effective_from > horizon) fail("RF_INVALID_PRICE");
+      if (typeof note !== "string" || note.length > 300) fail("RF_INVALID_PRICE");
+      const data = costLoad();
+      // เหมือนฐานข้อมูล: แถวล่าสุด (ตาม createdAt) ของชนิด + รหัส + วันที่มีผลเดียวกัน ราคาและหมายเหตุเท่าเดิม = ไม่เพิ่มแถวซ้ำ
+      const latest = data.rows.filter((row) => row.kind === p_kind && row.materialCode === p_material_code && row.effectiveFrom === p_effective_from).sort((a, b) => b.createdAt - a.createdAt)[0];
+      if (latest && latest.unitPrice === price && latest.note === note.trim()) return costPricesOut(actor);
+      costLastAt = Math.max(now(), costLastAt + 1);
+      data.rows.push({ id: `price-${data.rows.length + 1}`, kind: p_kind, materialCode: p_material_code, unitPrice: price, effectiveFrom: p_effective_from, note: note.trim(), createdAt: costLastAt, createdBy: actor.name });
+      costPersist();
+      return costPricesOut(actor);
+    },
+    // ข้อมูลต้นทุน: ราคาทุกแถว + วัตถุดิบ + สูตรทุก revision + ล็อตผสมล่าสุด 200 ล็อตพร้อมใบเบิกที่ผสมจาก · ผู้เห็นต้นทุนเท่านั้น (RF_FORBIDDEN)
+    app_rf_cost_data() {
+      const actor = bomActor();
+      if (!costSeeCost(actor)) fail("RF_FORBIDDEN");
+      const rf = costRfData();
+      const requisitions = new Map((rf.requisitions ?? []).map((row) => [row.id, row]));
+      const lots = (rf.lots ?? []).filter((lot) => lot.stage === "mixing").sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0)).slice(0, 200).map((lot) => {
+        const mixed = (lot.sources ?? []).filter((source) => source?.type === "requisition").map((source) => requisitions.get(source.id)).filter(Boolean);
+        return {
+          lotNo: lot.id, orderId: lot.orderId, recipeId: lot.recipeId, recipeRevision: mixed[0]?.recipeRevision ?? lot.recipeRevision ?? null, batches: Number(lot.params?.batches) || 0, createdAt: Number(lot.createdAt) || 0,
+          requisitions: mixed.map((row) => ({ id: row.id, issuedAt: row.issuedAt ?? null, lines: (row.lines ?? []).map((line) => ({ materialCode: line.materialCode, stage: line.stage ?? 1, targetKg: line.targetKg ?? null, actualKg: line.actualKg ?? null, weighedAt: line.weighedAt ?? null })) })),
+        };
+      });
+      return clone({
+        prices: costPricesOut(actor).prices,
+        materials: (rf.materials ?? []).map((row) => ({ code: row.code, name: row.name ?? "", category: row.category ?? "" })),
+        recipes: (rf.recipes ?? []).map((row) => ({ id: row.id, revision: row.revision, status: row.status, productCode: row.productCode ?? null, batchKg: row.batchKg, items: row.items ?? [] })),
+        lots,
+      });
+    },
     app_rf_audit({ p_limit } = {}) {
       requireActor("RF_FORBIDDEN");
       const limit = p_limit === undefined || p_limit === null ? 200 : p_limit;
@@ -4446,6 +4600,8 @@ export function installMockSupabase(win, create, options = {}) {
     as: params.get("as"),
     // ?real=rb = นอกโหมดทดสอบ ผู้ใช้จำลองเป็นพนักงานจริงของแผนก RB (รหัสเดียวกับบัญชีทดสอบ: pp rbh gr st sr wh whh qa pk pt bg)
     real: params.get("real"),
+    // ?rfdemo=1 = ฐานข้อมูลจำลองของ RubberFlow ที่ยังว่าง เริ่มด้วยชุดสาธิตของ modules/rubberflow-seed.js (สูตร DEMO-W01 ใบเบิก ล็อตผสม)
+    rfDemo: params.has("rfdemo"),
     sandbox: Boolean(options.sandbox) || new win.URLSearchParams(win.location.search).has("sandbox"),
     // ?itwo=1 (ใช้คู่กับ ?sandbox=1) = ฐานข้อมูลจำลองของใบสั่งงาน IT + persona SBX-IT-*
     itwo: params.has("itwo") || Boolean(options.itwo),

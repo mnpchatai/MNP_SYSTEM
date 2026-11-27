@@ -127,6 +127,7 @@
 [data-module="wh"], [data-dept-code="WH"], .nd .dpt-WH { --m50:#fbf6ef; --m100:#f4e8d6; --m200:#e8d0ad; --m300:#d9b27f; --m400:#c58f55; --m500:#a97040; --m600:#8f5c33; --m700:#7a5230; --m800:#62411f; --m900:#4d3319; --m950:#2b1b0a; --p:#fdba74; --p50:#fff7ed; }
 [data-module="id"], [data-dept-code="ID"], .nd .dpt-ID { --m50:#fdf4ff; --m100:#fae8ff; --m200:#f5d0fe; --m300:#f0abfc; --m400:#e879f9; --m500:#d946ef; --m600:#c026d3; --m700:#a21caf; --m800:#86198f; --m900:#701a75; --m950:#4a044e; --p:#fb7185; --p50:#fff1f2; }
 [data-module="sa"], [data-dept-code="SA"], .nd .dpt-SA { --m50:#fefce8; --m100:#fef9c3; --m200:#fef08a; --m300:#fde047; --m400:#facc15; --m500:#eab308; --m600:#ca8a04; --m700:#a16207; --m800:#854d0e; --m900:#713f12; --m950:#422006; --p:#38bdf8; --p50:#f0f9ff; }
+[data-module="cost"] { --m50:#f0fdf4; --m100:#dcfce7; --m200:#bbf7d0; --m300:#86efac; --m400:#4ade80; --m500:#22c55e; --m600:#16a34a; --m700:#15803d; --m800:#166534; --m900:#14532d; --m950:#052e16; --p:#fbbf24; --p50:#fffbeb; }
 
 /* วิธีลงสีหนึ่งชุด ใช้ทุกพื้นผิว (การ์ดประเภท หัวโมดูล ชิปแผนก หัวส่วน NCR หัวตาราง แท็บ) — ค่าตามธีมผ่านตัวแปร --mod-* */
 :is([data-module], [data-dept-code]) {
@@ -3626,6 +3627,14 @@ table.bom-tree td.right { white-space: nowrap; }
 /* โมดูล SR (คลังยางเส้นยาว): แถบตัวกรองของหน้าในคลัง/ประวัติ · หน้าล็อต · ป้ายล็อต (พิมพ์) */
 .sr-toolbar { align-items: flex-end; }
 .sr-filter { flex: 0 1 200px; min-width: 150px; margin: 0; }
+/* โมดูลต้นทุนการผลิต (#/cost) และราคาเคมีของ ST: รายการเคมีที่ยังไม่มีราคา · แถบสัดส่วนต้นทุนต่อรายการ · ผลต่างต้นทุนจริงเทียบสูตร (บวก = แพงกว่าสูตร) */
+.cost-missing { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+.cost-share { display: grid; gap: 4px; min-width: 96px; justify-items: end; }
+.cost-share .rf-bar { width: 100%; }
+.cost-diff { font-variant-numeric: tabular-nums; font-weight: 600; }
+.cost-diff.is-up { color: var(--danger); }
+.cost-diff.is-down { color: var(--success); }
+.cost-diff.is-partial { opacity: .6; }
 .sr-lot { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); align-items: start; }
 .sr-label-wrap { display: grid; gap: 14px; justify-items: start; }
 .sr-label { width: min(100%, 460px); overflow: hidden; border: 2px solid var(--m700); border-radius: var(--radius-lg); background: #fff; color: #111; box-shadow: 0 6px 18px -8px rgba(16, 32, 59, .3); }

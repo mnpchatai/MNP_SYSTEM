@@ -1969,3 +1969,44 @@ test("a purchase order can carry purchased-part lines: the unit comes from the B
   assert.equal(bom().stock[0].safetyQty, 12);
   assert.equal(await sendPo(s, "persona-st", { purchaseOrders: { upsert: [{ id: `PO-${rules.ymd(NOW)}-31`, status: "ordered", sourcePi: null, sourceRequisition: null, note: "", lines: [{ ...part, safetyKg: 9, storedSafetyKg: "9" }] }] } }), "RF_INVALID_PURCHASE", "a malformed stored value is refused");
 });
+
+test("weight recipes: the client saves kg lines in four parts through the whole stack; the database computes phr = kg and batchKg, refuses mixed / no-weight / bad part or unit / more than 4 decimals, and keeps PHR recipes as they are", async () => {
+  const s = await session();
+  const rig = await s.make();
+  await s.as("persona-rb");
+  await withMaterials(s, rig);
+  await s.as("persona-rb");
+  const [one, two] = RECIPE.stages;
+  const stages = [one, two];
+  // ฟอร์ม → action ของ client → ส่วนต่างไปที่ฐานข้อมูล (เก็บ kg phr unit stage 0..3 และ batchKg ผลรวม)
+  await saved(rig.store.run("createRecipe", { id: "B-W1", productCode: "", uom: "m", yieldPerKg: 6, stages, items: [
+    { materialCode: "EPDM-55", stage: 0, kg: 10, unit: "kg" }, { materialCode: "CB-N550", stage: 3, kg: 0.04, unit: "g" },
+  ] }));
+  const stored = unwrap(await s.mock.client.rpc("app_rf_master")).recipes.find((row) => row.id === "B-W1");
+  assert.equal(stored.batchKg, 10.04);
+  assert.deepEqual(stored.items.map((item) => [item.materialCode, item.stage, item.kg, item.unit, item.phr]), [["EPDM-55", 0, 10, "kg", 10], ["CB-N550", 3, 0.04, "g", 0.04]]);
+  // ส่งตรงถึงฐานข้อมูลโดยไม่ผ่าน client: ฐานข้อมูลเขียน phr = kg และ batchKg เองจาก kg ไม่ใช้ค่าที่ส่งมา
+  const direct = async (items, over = {}) => {
+    const snapshot = unwrap(await s.mock.client.rpc("app_rf_master"));
+    return s.mock.client.rpc("app_rf_save", { p_changes: { recipes: { upsert: [{ ...RECIPE, id: "B-W2", revision: 1, status: "draft", items, ...over }] } }, p_base_version: snapshot.version, p_action: "createRecipe" });
+  };
+  const line = (over = {}) => ({ materialCode: "EPDM-55", stage: 1, kg: 2, unit: "kg", phr: 2, ...over });
+  for (const [label, items] of [
+    ["mixed with PHR", [line(), { materialCode: "CB-N550", phr: 5, stage: 1 }]],
+    ["no weight above zero", [line({ kg: 0, phr: 0 })]],
+    ["part 4", [line({ stage: 4 })]],
+    ["a bad unit", [line({ unit: "lb" })]],
+    ["5 decimals", [line({ kg: 0.00001, phr: 0.00001 })]],
+    ["a weight under 0.001 kg", [line({ kg: 0.0005, phr: 0.0005 })]],
+    ["a weight above 10000 kg", [line({ kg: 10000.5, phr: 10000.5 })]],
+    ["a negative weight", [line({ kg: -1, phr: -1 }), line({ materialCode: "CB-N550" })]],
+    ["a duplicate material", [line(), line({ stage: 2 })]],
+  ]) assert.equal((await direct(items)).error?.code, "RF_INVALID_RECIPE", label);
+  const accepted = await direct([line({ stage: 0, kg: 1.5, phr: 99 }), line({ materialCode: "CB-N550", stage: 2, kg: 0, phr: 0, unit: "g" })], { batchKg: 7 });
+  assert.ok(!accepted.error, "a weight recipe with a zero line is accepted");
+  const edges = await direct([line({ kg: 10000, phr: 10000 }), line({ materialCode: "CB-N550", kg: 0.001, phr: 0.001, unit: "g" })], { id: "B-W3" });
+  assert.ok(!edges.error, "0.001 kg and 10000 kg are the accepted limits");
+  const second = unwrap(await s.mock.client.rpc("app_rf_master")).recipes.find((row) => row.id === "B-W2");
+  assert.equal(second.batchKg, 1.5, "batchKg is the sum, not the typed 7");
+  assert.deepEqual(second.items.map((item) => item.phr), [1.5, 0], "phr = kg, not the typed 99");
+});
