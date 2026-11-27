@@ -1,6 +1,7 @@
 // หน้าของโมดูลต้นทุนการผลิต #/cost (โหมดทดสอบ · เมนูกลุ่ม "โรงงาน") — โหลดก่อน modules/module-cost.js (ดู index.html) · กฎอยู่ที่ modules/cost-rules.js ข้อมูลที่ modules/cost-data.js
 // หน้า: ต้นทุนสูตร (ค่าตั้งต้น · ทุกสูตร revision ที่ใช้งาน ต้นทุนต่อชุดผสม / ต่อ kg) · ?recipe=<รหัสสูตร> (&rev=<revision> &asof=<YYYY-MM-DD> &tab=lots) รายละเอียด: แยกตามขั้น รายการเรียงตามต้นทุน เคมีที่ยังไม่มีราคา และเทียบกับจริงรายล็อตผสม
 //       · ?tab=lots สูตรเทียบจริง (ล็อตผสมล่าสุดทุกสูตร) · ?q= ค้นหา · ?n= แสดงเพิ่ม
+// ค่าแรง (เฟส 2): ทุกสูตรมีค่าแรงต่อชุดผสมคู่กับต้นทุนวัตถุดิบ และยอดรวม · หน้าสูตรมีแท็บ "ค่าแรง" (แยกตามขั้นและสถานี) · อัตราค่าแรงแก้ที่ปุ่ม "อัตราค่าแรง" เวลามาตรฐานแก้ที่ปุ่ม "เวลามาตรฐาน" หรือที่หน้าสูตรยางของ RubberFlow (modules/cost-labour-ui.js)
 // เห็นเฉพาะผู้ที่เห็นต้นทุน (canSeeCost: ผู้จัดการทั่วไป · ผู้จัดการโรงงาน · admin · แผนก PP) ในโหมดทดสอบ · ราคาต้นทุนทั้งหมดมาจาก app_rf_cost_data (RF_FORBIDDEN = แสดงว่าไม่มีสิทธิ์) ไม่เก็บลงเครื่อง
 // อ่านอย่างเดียว: ราคาตั้งในรายการ "ในคลัง" ของ ST (#/st?tab=stock&price=missing ·แผนก ST และ admin) · ซ่อนเมนู/หน้าเป็นแค่ UX สิทธิ์จริงตัดสินที่ฐานข้อมูล
 // app / state / shell / bindShell / renderRoute / renderNotFound / currentRoute เป็น global ของ app.js (อ้างตอนวาดเท่านั้น)
@@ -42,7 +43,14 @@
 
   // ---------- ส่วนประกอบ ----------
   const rowLink = (ui, text, href) => ui.link(text, href, "rf-mono row-link-main");
-  const approx = (partial, text) => (partial ? `<span title="ยังไม่รวมเคมีที่ไม่มีราคา">≥ ${esc(text)}</span>` : esc(text));
+  const approx = (partial, text, title = "ยังไม่รวมเคมีที่ไม่มีราคา") => (partial ? `<span title="${attr(title)}">≥ ${esc(text)}</span>` : esc(text));
+  // ค่าแรง: ข้อมูลที่โหลดแล้ว (ยังไม่พร้อม = ว่าง ทุกสูตรขึ้นว่ายังไม่มีค่าแรง) · เหตุที่คิดค่าแรงไม่ได้ · ยอดรวมวัตถุดิบ + ค่าแรง (ขาดส่วนใด = ยอดบางส่วน)
+  const NO_LABOUR = Object.freeze({ status: "idle", rates: [], standards: [], canSeeRates: false, canWriteRates: false, canWriteStandards: false });
+  const labourData = () => { const labour = costData().labour(); return labour.status === "ready" ? labour : { ...NO_LABOUR, status: labour.status }; };
+  const LABOUR_REASON = Object.freeze({ noProduct: "สูตรยังไม่มีรหัสสินค้า (เวลามาตรฐานผูกกับรหัสสินค้า)", noStandard: "สินค้านี้ยังไม่มีเวลามาตรฐานที่มีผล", noRate: "ยังไม่มีอัตราค่าแรงของแผนก RB ที่มีผล" });
+  const PARTIAL_TOTAL = "ยอดบางส่วน: ยังไม่รวมเคมีที่ไม่มีราคา หรือค่าแรงที่ยังคิดไม่ได้";
+  const labourBadge = (ui, labour) => (labour.complete ? "" : `<span title="${attr(LABOUR_REASON[labour.reason] ?? "")}">${ui.badge("warn", "ยังไม่มีค่าแรง")}</span>`);
+  const totalOf = (cost, labour) => { const total = cost.cost + (labour.cost ?? 0); return { total, perKg: cost.batchKg > 0 ? total / cost.batchKg : null, partial: !cost.complete || !labour.complete }; };
   const nameOf = (data) => { const map = new Map((data.materials ?? []).map((material) => [material.code, material.name ?? ""])); return (code) => map.get(code) ?? ""; };
   const missingBadge = (ui, missing) => (missing.length ? `<span title="${attr(missing.join(", "))}">${ui.badge("warn", `ขาดราคา ${missing.length}`)}</span>` : "");
   const backLink = (href, text) => `<a class="request-back-link" href="${attr(href)}">${esc(text)}</a>`;
@@ -51,20 +59,22 @@
   function recipesView(ctx, data) {
     const C = costRules();
     const { ui, q } = ctx;
+    const pay = labourData();
     const today = C.bangkokDay(ctx.now);
     const ids = [...new Set(data.recipes.map((recipe) => recipe.id))].sort((a, b) => String(a).localeCompare(String(b)));
     const list = ids.map((id) => C.currentRevision(data.recipes, id)).filter((recipe) => recipe && F.includesText(`${recipe.id} ${recipe.productCode ?? ""}`, q))
-      .map((recipe) => ({ recipe, cost: C.formulaCost(recipe, data.prices, today) }));
+      .map((recipe) => { const cost = C.formulaCost(recipe, data.prices, today); return { recipe, cost, labour: C.labourCost(recipe, pay.standards, pay.rates, today, cost.batchKg) }; });
     const { shown, more } = F.limited(ctx, list);
-    const rows = shown.map(({ recipe, cost }) => {
+    const rows = shown.map(({ recipe, cost, labour }) => {
+      const sum = totalOf(cost, labour);
       const href = costUrl({ recipe: recipe.id });
       const sub = [recipe.productCode ? `${recipe.productCode}` : "", `rev ${recipe.revision}`].filter(Boolean).join(" · ");
       const state = recipe.status === "approved" ? "" : ` ${ui.status(recipe.status)}`;
-      return `<tr class="row-link"><td>${rowLink(ui, recipe.id, href)}${state}<div class="small muted">${esc(sub)}</div></td><td class="right rf-mono">${esc(C.fmtWeight(cost.batchKg))}</td><td class="right rf-mono">${approx(!cost.complete, C.fmtBaht(cost.cost))}</td><td class="right rf-mono">${cost.costPerKg === null ? dash : approx(!cost.complete, C.fmtBaht(cost.costPerKg))}</td><td>${missingBadge(ui, cost.missing)}</td></tr>`;
+      return `<tr class="row-link"><td>${rowLink(ui, recipe.id, href)}${state}<div class="small muted">${esc(sub)}</div></td><td class="right rf-mono">${esc(C.fmtWeight(cost.batchKg))}</td><td class="right rf-mono">${approx(!cost.complete, C.fmtBaht(cost.cost))}</td><td class="right rf-mono">${labour.cost === null ? dash : esc(C.fmtBaht(labour.cost))}</td><td class="right rf-mono">${approx(sum.partial, C.fmtBaht(sum.total), PARTIAL_TOTAL)}</td><td class="right rf-mono">${sum.perKg === null ? dash : approx(sum.partial, C.fmtBaht(sum.perKg), PARTIAL_TOTAL)}</td><td>${missingBadge(ui, cost.missing)} ${labourBadge(ui, labour)}</td></tr>`;
     });
-    const toolbar = `<div class="rf-row sr-toolbar">${F.searchForm(ctx, "ค้นหารหัสสูตรหรือรหัสสินค้า")}${q ? ui.link("ล้างคำค้น", ctx.pageUrl({ q: null, n: null }), "btn rf-btn secondary small") : ""}</div>`;
+    const toolbar = `<div class="rf-row sr-toolbar">${F.searchForm(ctx, "ค้นหารหัสสูตรหรือรหัสสินค้า")}${q ? ui.link("ล้างคำค้น", ctx.pageUrl({ q: null, n: null }), "btn rf-btn secondary small") : ""}${pay.canSeeRates ? ui.openButton("อัตราค่าแรง", "labourRates", {}, { className: "secondary small", title: "อัตราค่าแรง บาท/ชม. ต่อแผนก" }) : ""}</div>`;
     const empty = q ? "ไม่พบสูตรที่ค้นหา" : "ยังไม่มีสูตรในทะเบียน RubberFlow";
-    const head = ["สูตร", { label: "น้ำหนักต่อชุดผสม", className: "right" }, { label: "ต้นทุนต่อชุดผสม (บาท)", className: "right" }, { label: "ต้นทุน/kg (บาท)", className: "right" }, ""];
+    const head = ["สูตร", { label: "น้ำหนักต่อชุดผสม", className: "right" }, { label: "วัตถุดิบ (บาท)", className: "right", title: "ต้นทุนวัตถุดิบต่อชุดผสม" }, { label: "ค่าแรง (บาท)", className: "right", title: "ค่าแรงต่อชุดผสม ตามเวลามาตรฐานของสินค้าและอัตราค่าแรงของแผนก RB" }, { label: "รวมต่อชุดผสม (บาท)", className: "right" }, { label: "รวม/kg (บาท)", className: "right" }, ""];
     return `${F.pageHead(ctx, LABEL)}${toolbar}${ui.card(`${ui.table(head, rows, { emptyText: empty })}${more}`, { flush: true })}`;
   }
 
@@ -105,6 +115,28 @@
     if (!F.canOpenDeptModule(employee, "ST", "FACTORY_ST")) return '<p class="small muted">ราคาตั้งที่รายการ "ในคลัง" ของโมดูลคลังวัตถุดิบ (ST)</p>';
     return `<p>${ctx.ui.link(C.canEditPrices(employee) ? "ไปตั้งราคาที่ในคลัง (ST)" : "ดูรายการที่ยังไม่มีราคาที่ในคลัง (ST)", "#/st?tab=stock&price=missing", "btn rf-btn secondary small")}</p>`;
   }
+  // ค่าแรงของสูตร: แยกตามขั้น (นาทีต่อชุดผสม × จำนวนคน × อัตราของแผนก RB) และรวมตามสถานี · คิดไม่ได้ = บอกเหตุและปุ่มไปตั้งค่า
+  function labourView(ctx, pay, labour) {
+    const C = costRules();
+    const { ui } = ctx;
+    if (pay.status !== "ready") return ui.card(ui.empty(pay.status === "error" ? "โหลดข้อมูลค่าแรงไม่สำเร็จ เปิดหน้านี้ใหม่อีกครั้ง" : pay.status === "forbidden" ? "บัญชีนี้ไม่มีสิทธิ์ดูค่าแรง" : "กำลังโหลดข้อมูลค่าแรง…"));
+    const standardButton = labour.productCode && (pay.canWriteStandards || labour.standard) ? ui.openButton(pay.canWriteStandards ? "เวลามาตรฐาน" : "ประวัติเวลามาตรฐาน", "stationStandard", { productCode: labour.productCode }, { className: "secondary small" }) : "";
+    const rateButton = pay.canSeeRates ? ui.openButton("อัตราค่าแรง", "labourRates", {}, { className: "secondary small" }) : "";
+    const warn = labour.complete ? "" : ui.callout("warn", `<strong>${esc("ยังคิดค่าแรงไม่ได้")}</strong> ${esc(LABOUR_REASON[labour.reason] ?? "")}${labour.reason === "noProduct" ? `<p class="small muted">${esc('กรอกรหัสสินค้าที่ "ค่ามาตรฐานการผสม" ของร่างสูตรในหน้าสูตรยาง (RubberFlow)')}</p>` : ""}`);
+    if (!labour.standard) return `${warn}${ui.card(ui.empty("ยังไม่มีเวลามาตรฐานให้แสดง", `<div class="rf-row">${standardButton}${rateButton}</div>`))}`;
+    const money = (value) => (value === null ? dash : esc(C.fmtBaht(value)));
+    const rows = labour.steps.map((step) => `<tr><td>${esc(step.label)}</td><td class="right rf-mono">${esc(C.fmtMinutes(step.minutes))}</td><td class="right rf-mono">${esc(C.fmtMinutes(step.workers))}</td><td class="right rf-mono">${esc(C.fmtBaht(step.manHours))}</td><td class="right rf-mono">${money(step.cost)}</td></tr>`);
+    rows.push(`<tr class="cost-sum"><td><strong>รวม</strong></td><td class="right rf-mono">${esc(C.fmtMinutes(labour.minutes))}</td><td></td><td class="right rf-mono">${esc(C.fmtBaht(labour.manHours))}</td><td class="right rf-mono"><strong>${money(labour.cost)}</strong></td></tr>`);
+    const head = ["ขั้น", { label: "นาที / ชุดผสม", className: "right" }, { label: "จำนวนคน", className: "right" }, { label: "ชั่วโมงคน", className: "right", title: "นาที ÷ 60 × จำนวนคน" }, { label: "ค่าแรง (บาท)", className: "right" }];
+    const rateText = labour.ratePerHour === null ? "" : `<span class="small muted">${esc(`อัตรา RB ${C.fmtBaht(labour.ratePerHour)} บาท/ชม.`)}</span>`;
+    const steps = ui.card(`${ui.table(head, rows)}<p class="small muted cost-note">${esc(`เวลามาตรฐานของสินค้า ${labour.productCode} มีผลตั้งแต่ ${C.fmtDay(labour.standard.effectiveFrom)}`)}</p>`, { title: esc("ค่าแรงแยกตามขั้น"), actions: `${rateText}${standardButton}${rateButton}`, flush: true });
+    const stationRows = labour.stations.map((station) => {
+      const share = station.cost !== null && labour.cost > 0 ? station.cost / labour.cost : null;
+      return `<tr><td>${esc(station.label)}</td><td class="right rf-mono">${esc(C.fmtMinutes(station.minutes))}</td><td class="right rf-mono">${money(station.cost)}</td><td class="right">${share === null ? dash : `<div class="cost-share"><span class="rf-mono">${esc(`${C.fmtBaht(share * 100, 1)}%`)}</span>${ui.progress(share * 100, 100)}</div>`}</td></tr>`;
+    });
+    const stations = ui.card(ui.table(["สถานี", { label: "นาที / ชุดผสม", className: "right" }, { label: "ค่าแรง (บาท)", className: "right" }, { label: "สัดส่วน", className: "right" }], stationRows), { title: esc("ค่าแรงตามสถานี"), flush: true });
+    return `${warn}${steps}${stations}`;
+  }
   function detailView(ctx, data, recipeId) {
     const C = costRules();
     const { ui, params } = ctx;
@@ -115,10 +147,13 @@
     const recipe = revisions.find((entry) => String(entry.revision) === params.get("rev")) ?? C.currentRevision(data.recipes, recipeId);
     const asof = C.dayKey(params.get("asof")) || today;
     const cost = C.formulaCost(recipe, data.prices, asof);
+    const pay = labourData();
+    const labour = C.labourCost(recipe, pay.standards, pay.rates, asof, cost.batchKg);
+    const sum = totalOf(cost, labour);
     const nameFor = nameOf(data);
     const partial = !cost.complete;
-    const stat = (label, value) => ui.stat({ label, value, tone: partial && label !== "น้ำหนักต่อชุดผสม" ? "warn" : "" });
-    const stats = `<div class="rf-grid rf-g3">${stat("ต้นทุนต่อชุดผสม", `${partial ? "≥ " : ""}${C.fmtBaht(cost.cost)} บาท`)}${stat("ต้นทุนต่อ kg", cost.costPerKg === null ? "-" : `${partial ? "≥ " : ""}${C.fmtBaht(cost.costPerKg)} บาท`)}${stat("น้ำหนักต่อชุดผสม", C.fmtWeight(cost.batchKg))}</div>`;
+    const money = (value, part) => `${part ? "≥ " : ""}${C.fmtBaht(value)} บาท`;
+    const stats = `<div class="rf-grid rf-g4">${ui.stat({ label: "วัตถุดิบต่อชุดผสม", value: money(cost.cost, partial), tone: partial ? "warn" : "" })}${ui.stat({ label: "ค่าแรงต่อชุดผสม", value: labour.cost === null ? "-" : money(labour.cost, false), tone: labour.complete ? "" : "warn" })}${ui.stat({ label: "รวมต่อชุดผสม", value: money(sum.total, sum.partial), sub: `ชุดผสมละ ${C.fmtWeight(cost.batchKg)}`, tone: sum.partial ? "warn" : "" })}${ui.stat({ label: "รวมต่อ kg", value: sum.perKg === null ? "-" : money(sum.perKg, sum.partial), tone: sum.partial ? "warn" : "" })}</div>`;
     const revisionPick = revisions.length > 1
       ? `<div class="field rf-field sr-filter"><label class="sr-only" for="cost-rev">ฉบับของสูตร</label>${ui.select("rev", revisions.map((entry) => ({ value: String(entry.revision), label: `rev ${entry.revision} · ${ui.statusLabel(entry.status)}` })), { value: String(recipe.revision), id: "cost-rev", extra: `data-cost-filter title="ฉบับของสูตร"` })}</div>` : "";
     const datePick = ui.field("ราคา ณ วันที่", ui.input("asof", { type: "date", value: asof, id: "cost-asof", extra: 'data-cost-filter title="ใช้ราคาที่มีผลในวันนี้"' }), { id: "cost-asof", className: "sr-filter" });
@@ -126,13 +161,15 @@
     const missing = partial
       ? ui.callout("warn", `<strong>${esc(`ยังไม่มีราคา ${cost.missing.length} รายการ`)}</strong> ${esc("ต้นทุนข้างบนเป็นยอดบางส่วน ยังไม่รวมรายการเหล่านี้")}<ul class="cost-missing">${cost.missing.map((code) => `<li>${ui.badge("warn", nameFor(code) ? `${code} · ${nameFor(code)}` : code)}</li>`).join("")}</ul>${priceLink(ctx)}`)
       : "";
-    const tab = params.get("tab") === "lots" ? "lots" : "cost";
+    const tab = ["lots", "labour"].includes(params.get("tab")) ? params.get("tab") : "cost";
     const lotCount = data.lots.filter((lot) => lot.recipeId === recipeId).length;
-    const tabs = ui.tabs([{ id: "cost", label: "แยกตามขั้น" }, { id: "lots", label: `เทียบกับจริง${lotCount ? ` (${lotCount})` : ""}` }], tab, (id) => ctx.pageUrl({ tab: id === "cost" ? null : id, n: null }));
+    const tabs = ui.tabs([{ id: "cost", label: "วัตถุดิบแยกตามขั้น" }, { id: "labour", label: "ค่าแรง" }, { id: "lots", label: `เทียบกับจริง${lotCount ? ` (${lotCount})` : ""}` }], tab, (id) => ctx.pageUrl({ tab: id === "cost" ? null : id, n: null }));
     let body;
     if (tab === "lots") {
       const lots = data.lots.filter((lot) => lot.recipeId === recipeId).sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
       body = lotsTable(ctx, data, lots, { emptyText: "ยังไม่มีล็อตผสมของสูตรนี้" });
+    } else if (tab === "labour") {
+      body = labourView(ctx, pay, labour);
     } else {
       const head = ["วัตถุดิบ", { label: "น้ำหนักต่อชุดผสม", className: "right" }, { label: "ราคา (บาท/kg)", className: "right" }, { label: "ต้นทุน (บาท)", className: "right" }, { label: "สัดส่วน", className: "right" }];
       body = cost.parts.map((part) => {
@@ -169,6 +206,7 @@
     ui.module = "";
     const ctx = pageCtx(params);
     if (D.needsCost()) D.loadCost().then(repaint);
+    if (D.needsLabour()) D.loadLabour().then(repaint);
     const cost = D.cost();
     let body;
     if (cost.status === "forbidden") body = `${F.pageHead(ctx, LABEL)}${ui.card(ui.empty("บัญชีนี้ไม่มีสิทธิ์ดูต้นทุนการผลิต"))}`;
@@ -180,7 +218,7 @@
     app.innerHTML = shell(`<div class="rf-page bom-page" data-module="cost" data-rf-mod="">${body}</div>`, ROUTE, LABEL);
     bindShell();
     const node = document.querySelector(".content");
-    F.bindRoot(node, ctx, { run: () => false, ui });
+    F.bindRoot(node, ctx, { run: () => false, ui, openDialog: (name, args) => root.MNP_COST_LABOUR?.open(name, args) });
     ui.labelTables(node);
     ui.enhanceDates(node);
     bindControls(node, ctx);

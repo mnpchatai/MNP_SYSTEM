@@ -224,6 +224,7 @@
           <div><span class="small muted">น้ำหนักต่อชุดผสม</span><strong>${esc(`${selected.batchKg} kg`)}</strong></div>
           <div><span class="small muted">บ่มขั้นต่ำ</span><strong>${esc(`${selected.restHours} ชม.`)}</strong></div></div>
         ${ui.table(["ขั้นผสม", { label: "เครื่องผสม (°C)", className: "right" }, { label: "อุณหภูมิปล่อยยาง (°C)", className: "right" }, { label: "เวลาผสม (นาที)", className: "right" }], stageRows)}
+        ${root.MNP_COST_LABOUR?.recipeSection?.(selected) ?? ""}
         ${weight ? partTables : ui.table(["รหัส", "วัตถุดิบ", "หมวด", "ขั้น", { label: "PHR", className: "right" }, { label: "kg / ชุดผสม", className: "right" }, "การจัดเก็บ"], lines)}
         ${ui.kv([["หน่วยสินค้า", esc(selected.uom)], ["ผลผลิตโดยประมาณ", esc(`${selected.yieldPerKg} ${selected.uom} ต่อคอมปาวด์ 1 kg`)],
           ["สเปกมิติการฉีด", esc(Object.values(rules.extrusionSpecOf(selected)).map((spec) => `${spec.label} ${rules.specText(spec)}`).join(" · ") || "ไม่กำหนด (ล็อตฉีดไม่ถูกกักตามมิติ)")],

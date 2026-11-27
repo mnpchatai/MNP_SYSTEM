@@ -1,4 +1,5 @@
 // ต้นทุนการผลิต (โหมดทดสอบ) — ตัวโหลดข้อมูลราคาวัตถุดิบ (เคมี + ของซื้อ) / ต้นทุนจากฐานข้อมูล (RPC app_rf_prices · app_rf_price_save · app_rf_cost_data) ไว้ในหน่วยความจำของหน้าเท่านั้น
+// ค่าแรง (เฟส 2): อัตราค่าแรงและเวลามาตรฐานของ RB (RPC app_rf_labour · app_rf_labour_rate_save · app_rf_station_standard_save) ใช้โดยหน้าต้นทุนและหน้าสูตรยางของ RubberFlow (modules/cost-labour-ui.js)
 // ไม่เก็บลง localStorage/sessionStorage (ราคาเป็นความลับ) · เปลี่ยนผู้ใช้/บัญชีทดสอบ (state.employee.id) = ทิ้งข้อมูลที่ถือไว้
 // ใช้ร่วมกันโดยหน้า ST (ราคาในรายการ "ในคลัง" · modules/st-pages.js) และโมดูลต้นทุนการผลิต (modules/cost-pages.js) · โหลดหลัง modules/cost-rules.js ก่อนสองไฟล์นั้น
 // sb / state เป็น global ของ app.js (อ้างตอนเรียกเท่านั้น) · สิทธิ์จริงตัดสินที่ฐานข้อมูล: ไม่มีสิทธิ์ = RPC ตอบ RF_FORBIDDEN → สถานะ "forbidden"
@@ -8,7 +9,9 @@
   let owner = "";
   let pricesState = { ...blank(), canWrite: false, prices: [] };
   let costState = { ...blank(), data: null };
-  const inflight = { prices: null, cost: null };
+  const noLabour = () => ({ canSeeRates: false, canWriteRates: false, canWriteStandards: false, rates: [], standards: [] });
+  let labourState = { ...blank(), ...noLabour() };
+  const inflight = { prices: null, cost: null, labour: null };
 
   const currentOwner = () => { try { return String(state?.employee?.id ?? ""); } catch { return ""; } };
   function checkOwner() {
@@ -17,8 +20,10 @@
     owner = now;
     pricesState = { ...blank(), canWrite: false, prices: [], version: pricesState.version + 1 };
     costState = { ...blank(), data: null, version: costState.version + 1 };
+    labourState = { ...blank(), ...noLabour(), version: labourState.version + 1 };
     inflight.prices = null;
     inflight.cost = null;
+    inflight.labour = null;
   }
   // รหัสผิดพลาดของฐานข้อมูลอยู่ใน error.message (หรือ details/hint) · RF_FORBIDDEN = ไม่มีสิทธิ์
   const codeOf = (error) => [error?.message, error?.details, error?.hint, error?.code].map((part) => String(part ?? "")).join(" ");
@@ -27,6 +32,8 @@
     const text = codeOf(error);
     if (text.includes("RF_FORBIDDEN")) return "บัญชีนี้ไม่มีสิทธิ์ดูข้อมูลนี้";
     if (text.includes("RF_INVALID_PRICE")) return "ข้อมูลราคาไม่ถูกต้อง ตรวจชนิด รหัสวัตถุดิบหรือของซื้อ ราคา (มากกว่า 0 และไม่เกิน 10,000,000 ทศนิยมไม่เกิน 4 ตำแหน่ง) วันที่มีผล (ไม่ล่วงหน้าเกิน 366 วัน) และหมายเหตุ (ไม่เกิน 300 ตัวอักษร)";
+    if (text.includes("RF_INVALID_LABOUR")) return "ข้อมูลอัตราค่าแรงไม่ถูกต้อง ตรวจแผนก อัตรา (มากกว่า 0 และไม่เกิน 100,000 ทศนิยมไม่เกิน 2 ตำแหน่ง) วันที่มีผล (ไม่ล่วงหน้าเกิน 366 วัน) และหมายเหตุ (ไม่เกิน 300 ตัวอักษร)";
+    if (text.includes("RF_INVALID_STANDARD")) return "ข้อมูลเวลามาตรฐานไม่ถูกต้อง ตรวจรหัสสินค้า (ต้องเป็นรหัสสินค้าของสูตรยาง) เวลา (0 ถึง 100,000 นาที มีอย่างน้อยหนึ่งขั้นที่มากกว่า 0) จำนวนคน (0 ถึง 1,000) ทศนิยมไม่เกิน 2 ตำแหน่ง และวันที่มีผล";
     return "ติดต่อฐานข้อมูลไม่สำเร็จ ลองอีกครั้ง";
   };
   async function call(name, args) {
@@ -95,8 +102,55 @@
     }).then(() => { inflight.cost = null; return costState; });
     return inflight.cost;
   }
+  // ---------- ค่าแรง: อัตราบาท/ชม. ต่อแผนก (เฉพาะผู้เห็นต้นทุน) + เวลามาตรฐานของ RB ต่อรหัสสินค้า (ผู้เห็นต้นทุน + แผนก RB) · RPC app_rf_labour ----------
+  const rateRows = (list) => (Array.isArray(list) ? list : []).map((row) => ({
+    id: row.id, departmentCode: String(row.departmentCode ?? ""), ratePerHour: Number(row.ratePerHour), effectiveFrom: String(row.effectiveFrom ?? "").slice(0, 10),
+    note: String(row.note ?? ""), createdAt: Number(row.createdAt) || 0, createdBy: String(row.createdBy ?? ""),
+  }));
+  const standardRows = (list) => (Array.isArray(list) ? list : []).map((row) => ({
+    id: row.id, productCode: String(row.productCode ?? ""), effectiveFrom: String(row.effectiveFrom ?? "").slice(0, 10),
+    steps: (Array.isArray(row.steps) ? row.steps : []).map((step) => ({ step: String(step?.step ?? ""), minutes: Number(step?.minutes) || 0, workers: Number(step?.workers) || 0 })),
+    note: String(row.note ?? ""), createdAt: Number(row.createdAt) || 0, createdBy: String(row.createdBy ?? ""),
+  }));
+  const labour = () => { checkOwner(); return labourState; };
+  const needsLabour = () => { checkOwner(); return !inflight.labour && stale(labourState); };
+  function applyLabour(data) {
+    labourState = {
+      ...labourState, status: "ready", error: null, at: Date.now(),
+      canSeeRates: Boolean(data?.canSeeRates), canWriteRates: Boolean(data?.canWriteRates), canWriteStandards: Boolean(data?.canWriteStandards),
+      rates: rateRows(data?.rates), standards: standardRows(data?.standards),
+    };
+  }
+  function loadLabour({ force = false } = {}) {
+    checkOwner();
+    if (inflight.labour) return inflight.labour;
+    if (!force && labourState.status === "ready" && Date.now() - labourState.at < MAX_AGE_MS) return Promise.resolve(labourState);
+    const version = labourState.version;
+    labourState = { ...labourState, status: labourState.status === "ready" ? "ready" : "loading" };
+    inflight.labour = call("app_rf_labour", {}).then((data) => {
+      if (labourState.version === version) applyLabour(data);
+    }, (error) => {
+      if (labourState.version === version) labourState = { ...labourState, ...noLabour(), status: isForbidden(error) ? "forbidden" : "error", error };
+    }).then(() => { inflight.labour = null; return labourState; });
+    return inflight.labour;
+  }
+  // บันทึกแถวใหม่ (ไม่แก้แถวเดิม) · คืน { ok: true } หรือ { ok: false, message }
+  async function saveLabour(name, args) {
+    checkOwner();
+    const version = labourState.version;
+    try {
+      const data = await call(name, args);
+      if (labourState.version === version) applyLabour(data);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, message: errorText(error), forbidden: isForbidden(error) };
+    }
+  }
+  const saveRate = ({ departmentCode, ratePerHour, effectiveFrom, note }) => saveLabour("app_rf_labour_rate_save", { p_department_code: departmentCode, p_rate_per_hour: ratePerHour, p_effective_from: effectiveFrom, p_note: note ?? "" });
+  const saveStandard = ({ productCode, effectiveFrom, steps, note }) => saveLabour("app_rf_station_standard_save", { p_product_code: productCode, p_effective_from: effectiveFrom, p_steps: steps, p_note: note ?? "" });
+
   // ออกจากระบบ / เปลี่ยนบัญชี: ทิ้งข้อมูลทั้งหมด
   function reset() { owner = "\u0000"; checkOwner(); }
 
-  root.MNP_COST_DATA = Object.freeze({ prices, needsPrices, loadPrices, savePrice, cost, needsCost, loadCost, reset, errorText, isForbidden });
+  root.MNP_COST_DATA = Object.freeze({ prices, needsPrices, loadPrices, savePrice, cost, needsCost, loadCost, labour, needsLabour, loadLabour, saveRate, saveStandard, reset, errorText, isForbidden });
 })(window);

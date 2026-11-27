@@ -3631,6 +3631,8 @@ table.bom-tree td.right { white-space: nowrap; }
 .cost-missing { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
 .cost-share { display: grid; gap: 4px; min-width: 96px; justify-items: end; }
 .cost-share .rf-bar { width: 100%; }
+.cost-note { margin: 0; padding: 8px 16px 12px; }
+.cost-sum td { border-top: 2px solid var(--border, #d9d4cc); }
 .cost-diff { font-variant-numeric: tabular-nums; font-weight: 600; }
 .cost-diff.is-up { color: var(--danger); }
 .cost-diff.is-down { color: var(--success); }

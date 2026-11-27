@@ -948,7 +948,25 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       .some((code) => { const f = bomFgFigures(master.fgMoves, orderId, code); return f.delivered > 1e-9 || f.out > 1e-9; });
   const bomOrderFlags = (master, order) => (["released", "in_progress"].includes(order.status)
     ? { started: bomOrderStarted(master, order.id), locked: bomOrderLockedOf(master, order.id) } : { started: false, locked: false });
-  const bomOrdersOut = (master, list, rows) => (list === "orders" ? rows.map((row) => ({ ...row, ...bomOrderFlags(master, row) })) : rows);
+  // ต้นทุนต่อหน่วยของชิ้นงาน (items[].unitCost · 20270110010000): ออกเฉพาะผู้เห็นต้นทุน (costSeeCost = private.rf_cost_viewer)
+  const bomOrdersOut = (master, list, rows) => {
+    if (list === "orders") return rows.map((row) => ({ ...row, ...bomOrderFlags(master, row) }));
+    if (list === "items" && !costSeeCost(bomActor())) return rows.map((row) => { const { unitCost, ...rest } = row; void unitCost; return rest; });
+    return rows;
+  };
+  // บันทึกชิ้นงานโดยผู้ที่ไม่เห็นต้นทุน: ต้นทุนที่เก็บไว้คงเดิม (ชิ้นใหม่ไม่มีต้นทุน) ไม่ว่าจะส่งค่าอะไรมา (ตรงกับ private.bom_save_items)
+  function bomKeepCost(current, changes, actor) {
+    const rows = changes?.items?.upsert;
+    if (!Array.isArray(rows) || costSeeCost(actor)) return changes;
+    const stored = new Map((current.items ?? []).map((item) => [item.code, item.unitCost]));
+    return { ...changes, items: { ...changes.items, upsert: rows.map((row) => {
+      if (!row || typeof row !== "object") return row;
+      const { unitCost, ...rest } = row;
+      void unitCost;
+      const kept = stored.get(row.code);
+      return kept === undefined || kept === null ? rest : { ...rest, unitCost: kept };
+    }) } };
+  }
   // ยกเลิกใบ / เปิดใบกลับมาแก้: WO ที่ผูกงานของใบ planned / released = ยกเลิก · in_progress / on_hold = หยุด (cancelled เหมือนกัน ยอดและล็อตคงอยู่) · completed / cancelled คงเดิม
   // ไม่ปฏิเสธด้วย BOM_RF_ORDER_STARTED อีก (ตรงกับ private.bom_cancel_rf_orders ของ 20261128010000) · เปิดใบกลับมาแก้ยังห้ามเมื่อ WO เลย released (bomJobStarted ด้านบน)
   const RF_WO_STOPPABLE = ["planned", "released", "in_progress", "on_hold"];
@@ -2485,6 +2503,46 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     return costSeed ?? live;
   }
   let costLastAt = 0;
+  // ---- ค่าแรง (เฟส 2 · 20270110010000): app_rf_labour / app_rf_labour_rate_save / app_rf_station_standard_save ----
+  // อัตราค่าแรง บาท/ชม. ต่อแผนก: อ่าน + แก้ = ผู้เห็นต้นทุน · เวลามาตรฐานของ RB ต่อรหัสสินค้า (7 ขั้น นาทีต่อชุดผสม + จำนวนคน): อ่าน = ผู้เห็นต้นทุน + แผนก RB · แก้ = ผู้เห็นต้นทุน + หัวหน้าแผนก RB
+  // แถวเพิ่มอย่างเดียว เก็บใน storage · ว่างอยู่ = ใส่ตัวเลขสาธิต (สมมติทั้งหมด): อัตรา RB สองแถว (ให้เห็นประวัติ) + GR · เวลามาตรฐานของ DEMO-P01 และ DS-1825 (สินค้าอื่นเว้นไว้ให้ลองตั้ง)
+  const LABOUR_KEY = sandbox ? "mnp-harness-rf-labour" : "mnp-harness-rf-labour-real";
+  const LABOUR_DEPTS = ["RB", "GR", "PT", "BG", "PK"];
+  const LABOUR_STEPS = ["prep", "mix1", "mix2", "mix3", "extrusion", "curing", "finishing"];
+  const labourReads = (actor) => costSeeCost(actor) || actor.dept === "RB";
+  const labourWritesStandard = (actor) => costSeeCost(actor) || (actor.dept === "RB" && ["department_manager", "assistant_department_manager"].includes(actor.role));
+  const labourStepsOf = (minutes, workers) => LABOUR_STEPS.map((step, index) => ({ step, minutes: minutes[index], workers: workers[index] }));
+  let labourStore = null;
+  function labourLoad() {
+    if (!labourStore) {
+      try { labourStore = JSON.parse(storage?.getItem?.(LABOUR_KEY) ?? "null"); } catch { labourStore = null; }
+      if (!labourStore || !Array.isArray(labourStore.rates) || !Array.isArray(labourStore.standards)) {
+        const by = "สมชาย วางแผน";
+        labourStore = {
+          rates: [
+            { id: "rate-1", departmentCode: "RB", ratePerHour: 52, effectiveFrom: costBangkokDay(startedAt - 200 * DAY), note: "อัตราเดิมของข้อมูลสาธิต", createdAt: startedAt - 200 * DAY, createdBy: by },
+            { id: "rate-2", departmentCode: "RB", ratePerHour: 56.5, effectiveFrom: costBangkokDay(startedAt - 30 * DAY), note: "ปรับอัตรา (ข้อมูลสาธิต)", createdAt: startedAt - 30 * DAY, createdBy: by },
+            { id: "rate-3", departmentCode: "GR", ratePerHour: 50, effectiveFrom: costBangkokDay(startedAt - 30 * DAY), note: "ข้อมูลสาธิต", createdAt: startedAt - 30 * DAY + 1, createdBy: by },
+          ],
+          standards: [
+            { id: "std-1", productCode: "DEMO-P01", effectiveFrom: costBangkokDay(startedAt - 30 * DAY), steps: labourStepsOf([12, 6, 4, 3, 35, 50, 25], [2, 2, 2, 2, 3, 1, 4]), note: "เวลาตั้งต้นของข้อมูลสาธิต", createdAt: startedAt - 30 * DAY, createdBy: by },
+            { id: "std-2", productCode: "DS-1825", effectiveFrom: costBangkokDay(startedAt - 30 * DAY), steps: labourStepsOf([10, 5, 4, 0, 30, 45, 20], [2, 2, 2, 0, 2, 1, 3]), note: "เวลาตั้งต้นของข้อมูลสาธิต", createdAt: startedAt - 30 * DAY + 1, createdBy: by },
+          ],
+        };
+      }
+    }
+    return labourStore;
+  }
+  function labourPersist() {
+    try { storage?.setItem?.(LABOUR_KEY, JSON.stringify(labourStore)); } catch { warnOnce("labour-storage", "[pilot harness] เก็บข้อมูลค่าแรงลง storage ไม่ได้ ข้อมูลอยู่ในหน่วยความจำของหน้านี้เท่านั้น"); }
+  }
+  const labourOut = (actor) => {
+    const data = labourLoad();
+    const viewer = costSeeCost(actor);
+    return clone({ canSeeRates: viewer, canWriteRates: viewer, canWriteStandards: labourWritesStandard(actor), rates: viewer ? data.rates : [], standards: data.standards });
+  };
+  const labourDayOk = (value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && costBangkokDay(Date.parse(value) + 7 * 3600000) === value && value >= "2000-01-01" && value <= costBangkokDay(now() + 366 * DAY);
+  const labourDec2 = (value, max) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max && Math.abs(value * 100 - Math.round(value * 100)) < 1e-6;
 
   // ---- ข้อมูลของ RubberFlow (โมดูลทดสอบ #/rubberflow): app_rf_master / app_rf_master_since / app_rf_save / app_rf_audit และ app_sandbox_purge_rf ----
   // โครงเดียวกับข้อมูลหลักของ BOM ด้านบน (ทุกระเบียนจำเลขรุ่นที่แก้ล่าสุด ชนรายระเบียน RF_STALE ก่อนตรวจสิทธิ์ ส่วนต่าง {version, epoch, changes} รอบข้อมูล epoch) เก็บที่ storage คีย์ mnp-harness-rf-master
@@ -2571,7 +2629,13 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
   let rfDemoDone = !rfDemo;
   function rfDemoSeed() {
     if (rfDemoDone) return;
-    if (rfMaster.materials.length || rfMaster.recipes.length) { rfDemoDone = true; return; }
+    if (rfMaster.materials.length || rfMaster.recipes.length) {
+      rfDemoDone = true;
+      // ชุดสาธิตที่เก็บไว้ก่อนเฟส 2: สูตรสาธิต DEMO-W01 ยังไม่มีรหัสสินค้า (เวลามาตรฐานผูกกับรหัสสินค้า) → ใส่รหัสสินค้าสาธิตให้ครั้งเดียว
+      const stale = rfMaster.recipes.filter((recipe) => recipe.id === "DEMO-W01" && !recipe.productCode);
+      if (stale.length) { for (const recipe of stale) recipe.productCode = "DEMO-P01"; rfPersist(); }
+      return;
+    }
     const seedApi = globalThis.MNP_RUBBERFLOW_SEED;
     if (!seedApi?.buildSeed) return;
     rfDemoDone = true;
@@ -4204,7 +4268,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       const at = now();
       const rfOps = { release: [], cancel: [] };
       const meta = {};
-      const next = bomApply(current, p_changes, p_base_version, actor, at, rfOps, p_action, meta);
+      const next = bomApply(current, bomKeepCost(current, p_changes, actor), p_base_version, actor, at, rfOps, p_action, meta);
       // ไม่มีการเปลี่ยนแปลงเลย = ไม่เพิ่มเวอร์ชัน (เหมือน RPC จริง) คืนส่วนต่างตั้งแต่ base
       const touched = [...BOM_LISTS, "partReturns"].some((list) => (p_changes[list]?.upsert?.length ?? 0) + (p_changes[list]?.delete?.length ?? 0) > 0);
       if (!touched) return bomDelta(current, p_base_version);
@@ -4322,6 +4386,47 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       data.rows.push({ id: `price-${data.rows.length + 1}`, kind: p_kind, materialCode: p_material_code, unitPrice: price, effectiveFrom: p_effective_from, note: note.trim(), createdAt: costLastAt, createdBy: actor.name });
       costPersist();
       return costPricesOut(actor);
+    },
+    // ค่าแรง: อัตราต่อแผนก (เฉพาะผู้เห็นต้นทุน) + เวลามาตรฐานของ RB ต่อรหัสสินค้า · ผู้เห็นต้นทุนและแผนก RB เท่านั้น (RF_FORBIDDEN)
+    app_rf_labour() {
+      const actor = bomActor();
+      if (!labourReads(actor)) fail("RF_FORBIDDEN");
+      return labourOut(actor);
+    },
+    app_rf_labour_rate_save({ p_department_code, p_rate_per_hour, p_effective_from, p_note } = {}) {
+      const actor = bomActor();
+      if (!costSeeCost(actor)) fail("RF_FORBIDDEN");
+      const note = p_note === undefined || p_note === null ? "" : p_note;
+      if (!LABOUR_DEPTS.includes(p_department_code) || !labourDec2(p_rate_per_hour, 100000) || !(p_rate_per_hour > 0) || !labourDayOk(p_effective_from) || typeof note !== "string" || note.trim().length > 300) fail("RF_INVALID_LABOUR");
+      const data = labourLoad();
+      const latest = data.rates.filter((row) => row.departmentCode === p_department_code && row.effectiveFrom === p_effective_from).sort((a, b) => b.createdAt - a.createdAt)[0];
+      if (latest && latest.ratePerHour === p_rate_per_hour && latest.note === note.trim()) return labourOut(actor);
+      costLastAt = Math.max(now(), costLastAt + 1);
+      data.rates.push({ id: `rate-${data.rates.length + 1}`, departmentCode: p_department_code, ratePerHour: p_rate_per_hour, effectiveFrom: p_effective_from, note: note.trim(), createdAt: costLastAt, createdBy: actor.name });
+      labourPersist();
+      return labourOut(actor);
+    },
+    app_rf_station_standard_save({ p_product_code, p_effective_from, p_steps, p_note } = {}) {
+      const actor = bomActor();
+      if (!labourWritesStandard(actor)) fail("RF_FORBIDDEN");
+      const note = p_note === undefined || p_note === null ? "" : p_note;
+      const code = typeof p_product_code === "string" ? p_product_code.trim() : "";
+      const known = new Set((costRfData().recipes ?? []).map((row) => String(row.productCode ?? "")).filter(Boolean));
+      if (!code || !known.has(code) || !labourDayOk(p_effective_from) || typeof note !== "string" || note.trim().length > 300) fail("RF_INVALID_STANDARD");
+      if (!Array.isArray(p_steps) || p_steps.length !== LABOUR_STEPS.length || p_steps.some((row) => !row || typeof row !== "object" || typeof row.step !== "string")) fail("RF_INVALID_STANDARD");
+      const steps = LABOUR_STEPS.map((step) => {
+        const row = p_steps.find((entry) => entry.step === step);
+        if (!row || !labourDec2(row.minutes, 100000) || !labourDec2(row.workers, 1000)) fail("RF_INVALID_STANDARD");
+        return { step, minutes: row.minutes, workers: row.workers };
+      });
+      if (!steps.some((row) => row.minutes > 0)) fail("RF_INVALID_STANDARD");
+      const data = labourLoad();
+      const latest = data.standards.filter((row) => row.productCode === code && row.effectiveFrom === p_effective_from).sort((a, b) => b.createdAt - a.createdAt)[0];
+      if (latest && JSON.stringify(latest.steps) === JSON.stringify(steps) && latest.note === note.trim()) return labourOut(actor);
+      costLastAt = Math.max(now(), costLastAt + 1);
+      data.standards.push({ id: `std-${data.standards.length + 1}`, productCode: code, effectiveFrom: p_effective_from, steps, note: note.trim(), createdAt: costLastAt, createdBy: actor.name });
+      labourPersist();
+      return labourOut(actor);
     },
     // ข้อมูลต้นทุน: ราคาทุกแถว + วัตถุดิบ + สูตรทุก revision + ล็อตผสมล่าสุด 200 ล็อตพร้อมใบเบิกที่ผสมจาก · ผู้เห็นต้นทุนเท่านั้น (RF_FORBIDDEN)
     app_rf_cost_data() {

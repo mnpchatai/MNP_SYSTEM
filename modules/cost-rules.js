@@ -4,6 +4,7 @@
 //   chem = เคมี RubberFlow ราคาต่อ kg · part = ของซื้อ (ชิ้นงาน BOM ชนิด PURCHASED) ราคาต่อหน่วยของชิ้นนั้น · รหัสของซื้ออาจซ้ำรหัสเคมีได้ จึงแยกตาม kind เสมอ (ต้นทุนสูตรใช้เฉพาะ chem)
 //   ราคาที่ใช้ในวัน D = แถวที่ effectiveFrom ล่าสุดที่ไม่เกิน D · วันเดียวกันหลายแถว = แถวที่ createdAt ใหม่สุด (ราคาที่ตั้งล่วงหน้ายังไม่ถูกใช้จนถึงวันนั้น)
 // สูตร: โหมดน้ำหนัก { materialCode, stage 0|1|2|3, kg (ต่อ batch), unit "kg"|"g" (หน่วยที่กรอก ไม่เปลี่ยนค่า kg), phr } · โหมดเดิม { materialCode, phr, stage 1|2 } (kg ต่อ batch = phr ÷ Σphr × batchKg)
+// ค่าแรง (เฟส 2): อัตราบาท/ชม. ต่อแผนก + เวลามาตรฐานของ RB ต่อรหัสสินค้า (นาทีต่อชุดผสม + จำนวนคน 7 ขั้น) → ค่าแรงต่อชุดผสม / ต่อ kg ของสูตร (labourCost)
 // ตัวเลขเก็บเต็มความละเอียด ปัดเฉพาะตอนแสดง (fmtBaht / fmtKg) · การซ่อนเมนู/หน้าเป็นแค่ UX สิทธิ์จริงตัดสินที่ฐานข้อมูล (RF_FORBIDDEN)
 (function (root) {
   const COST_ROLES = Object.freeze(["general_manager", "factory_manager", "admin"]);
@@ -170,6 +171,84 @@
     return { actual, formula, diff, diffPct: diff !== null && formula > 0 ? (diff / formula) * 100 : null, actualKg, formulaKg, complete: all.length === 0, missing: all };
   }
 
+  // ---------- ค่าแรง (เฟส 2): อัตราบาท/ชม. ต่อแผนก + เวลามาตรฐานของ RB ต่อรหัสสินค้า ----------
+  // อัตรา: { id, departmentCode, ratePerHour, effectiveFrom, note, createdAt, createdBy } · เวลามาตรฐาน: { id, productCode, effectiveFrom, steps: [{ step, minutes, workers }], note, createdAt, createdBy }
+  //   ทั้งสองเพิ่มอย่างเดียว (แก้ = แถวใหม่) · ค่าที่ใช้ในวัน D = แถวที่ effectiveFrom ล่าสุดที่ไม่เกิน D ซ้ำวันใช้ createdAt ใหม่สุด (กติกาเดียวกับราคา)
+  //   minutes = นาทีต่อ 1 ชุดผสม (โม่) ของขั้นนั้น · workers = จำนวนคนของขั้นนั้น · ค่าแรงของขั้น = minutes ÷ 60 × workers × อัตราของแผนก RB
+  // ใครทำอะไร (ฐานข้อมูลบังคับ RF_FORBIDDEN): อัตราค่าแรง อ่าน + แก้ = ผู้เห็นต้นทุน · เวลามาตรฐาน อ่าน = ผู้เห็นต้นทุน + แผนก RB ทุกบทบาท · แก้ = ผู้เห็นต้นทุน + หัวหน้าแผนก RB
+  const RB_DEPT = "RB";
+  const LABOUR_DEPTS = Object.freeze(["RB", "GR", "PT", "BG", "PK"]);
+  const RB_HEAD_ROLES = Object.freeze(["department_manager", "assistant_department_manager"]);
+  const canEditRates = (employee) => canSeeCost(employee);
+  const canSeeStandards = (employee) => canSeeCost(employee) || (Boolean(employee) && deptCodeOf(employee) === RB_DEPT);
+  const canEditStandards = (employee) => canSeeCost(employee) || (Boolean(employee) && deptCodeOf(employee) === RB_DEPT && RB_HEAD_ROLES.includes(roleCodeOf(employee)));
+  // 7 ขั้นตามลำดับงาน (ตรงกับ private.rf_standard_steps): สถานีผสมแยก 4 ส่วน แล้วฉีดขึ้นรูป อบ ตกแต่งและบรรจุ
+  const STATIONS = Object.freeze([
+    Object.freeze({ id: "mixing", label: "ผสมยาง" }), Object.freeze({ id: "extrusion", label: "ฉีดขึ้นรูป" }),
+    Object.freeze({ id: "curing", label: "อบ HCM" }), Object.freeze({ id: "finishing", label: "ตกแต่งและบรรจุ" }),
+  ]);
+  const STEPS = Object.freeze([
+    { id: "prep", label: "ผสม · ขั้นเตรียมวัตถุดิบ", station: "mixing" }, { id: "mix1", label: "ผสม · ขั้น 1", station: "mixing" },
+    { id: "mix2", label: "ผสม · ขั้น 2", station: "mixing" }, { id: "mix3", label: "ผสม · ขั้น 3", station: "mixing" },
+    { id: "extrusion", label: "ฉีดขึ้นรูป", station: "extrusion" }, { id: "curing", label: "อบ HCM", station: "curing" },
+    { id: "finishing", label: "ตกแต่งและบรรจุ", station: "finishing" },
+  ].map((step) => Object.freeze(step)));
+  const stepLabel = (id) => STEPS.find((step) => step.id === id)?.label ?? String(id);
+  // นาที: ตัดเลข 0 ท้าย ไม่เกิน 2 ทศนิยม
+  const fmtMinutes = (value) => { const number = finite(value); return number === null ? "-" : number.toLocaleString("th-TH", { maximumFractionDigits: 2 }); };
+  // แถวที่มีผลในวัน date จากแถวที่ผ่าน match (กติกา effectiveFrom / createdAt เดียวกับ priceAt)
+  function effectiveRow(rows, date, match) {
+    const day = dayKey(date);
+    if (!day) return null;
+    let best = null;
+    for (const row of rows ?? []) {
+      if (!row || !match(row)) continue;
+      const from = dayKey(row.effectiveFrom);
+      if (!from || from > day) continue;
+      const bestFrom = best ? dayKey(best.effectiveFrom) : "";
+      if (!best || from > bestFrom || (from === bestFrom && (Number(row.createdAt) || 0) >= (Number(best.createdAt) || 0))) best = row;
+    }
+    return best;
+  }
+  const newestFirst = (a, b) => (dayKey(b.effectiveFrom) < dayKey(a.effectiveFrom) ? -1 : dayKey(b.effectiveFrom) > dayKey(a.effectiveFrom) ? 1 : (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+  const validRate = (row) => finite(row.ratePerHour) !== null && Number(row.ratePerHour) > 0;
+  const rateAt = (rates, departmentCode, date) => effectiveRow(rates, date, (row) => row.departmentCode === departmentCode && validRate(row));
+  const rateHistory = (rates, departmentCode) => (rates ?? []).filter((row) => row.departmentCode === departmentCode).sort(newestFirst);
+  const standardAt = (standards, productCode, date) => (productCode ? effectiveRow(standards, date, (row) => row.productCode === productCode && Array.isArray(row.steps)) : null);
+  const standardHistory = (standards, productCode) => (standards ?? []).filter((row) => row.productCode === productCode).sort(newestFirst);
+  // ค่าของแต่ละขั้นจากแถวเวลามาตรฐาน (ขั้นที่ไม่มีในแถว = 0 นาที 0 คน) ตามลำดับ STEPS
+  const standardSteps = (standard) => STEPS.map((step) => {
+    const row = (standard?.steps ?? []).find((entry) => entry?.step === step.id);
+    return { step: step.id, label: step.label, station: step.station, minutes: Math.max(0, finite(row?.minutes) ?? 0), workers: Math.max(0, finite(row?.workers) ?? 0) };
+  });
+  const standardMinutes = (standard) => round(standardSteps(standard).reduce((sum, step) => sum + step.minutes, 0), 6);
+  // ค่าแรงต่อชุดผสมของสูตรในวัน date · batchKg = น้ำหนักต่อชุดผสม (จาก formulaCost) ใช้หาค่าแรงต่อ kg
+  // คืน { productCode, standard, rate, ratePerHour, steps, stations, minutes, manHours, cost, costPerKg, complete, reason }
+  //   reason: "" (ครบ) · "noProduct" (สูตรไม่มีรหัสสินค้า) · "noStandard" (สินค้ายังไม่มีเวลามาตรฐานที่มีผลในวันนั้น) · "noRate" (ยังไม่มีอัตราค่าแรงของ RB ที่มีผล)
+  //   ไม่ครบ = cost / costPerKg เป็น null (ไม่เดาเป็น 0) · เวลาและชั่วโมงคนยังคำนวณได้เมื่อมีเวลามาตรฐาน (แผนก RB เห็นเวลาโดยไม่มีอัตรา)
+  function labourCost(recipe, standards, rates, date, batchKg) {
+    const productCode = String(recipe?.productCode ?? "").trim();
+    const standard = standardAt(standards, productCode, date);
+    const rate = rateAt(rates, RB_DEPT, date);
+    const ratePerHour = rate ? Number(rate.ratePerHour) : null;
+    const steps = standardSteps(standard).map((step) => {
+      const manHours = (step.minutes / 60) * step.workers;
+      return { ...step, manHours, cost: standard && ratePerHour !== null ? manHours * ratePerHour : null };
+    });
+    const stations = STATIONS.map((station) => {
+      const own = steps.filter((step) => step.station === station.id);
+      return { station: station.id, label: station.label, minutes: round(own.reduce((sum, step) => sum + step.minutes, 0), 6), manHours: own.reduce((sum, step) => sum + step.manHours, 0), cost: standard && ratePerHour !== null ? own.reduce((sum, step) => sum + (step.cost ?? 0), 0) : null };
+    });
+    const reason = !productCode ? "noProduct" : !standard ? "noStandard" : ratePerHour === null ? "noRate" : "";
+    const cost = reason ? null : steps.reduce((sum, step) => sum + (step.cost ?? 0), 0);
+    const kg = finite(batchKg);
+    return {
+      productCode, standard, rate, ratePerHour, steps, stations,
+      minutes: round(steps.reduce((sum, step) => sum + step.minutes, 0), 6), manHours: steps.reduce((sum, step) => sum + step.manHours, 0),
+      cost, costPerKg: cost !== null && kg !== null && kg > 0 ? cost / kg : null, complete: reason === "", reason,
+    };
+  }
+
   // revision ที่ใช้งานของสูตรหนึ่งรหัส: อนุมัติแล้ว ไม่มีก็ร่างล่าสุด ไม่มีก็ revision ล่าสุด (กติกาเดียวกับ RubberFlow ไม่ต้องพึ่ง export ของมัน)
   const revisionsOf = (recipes, id) => (recipes ?? []).filter((recipe) => recipe.id === id).sort((a, b) => Number(b.revision) - Number(a.revision));
   const currentRevision = (recipes, id) => { const rows = revisionsOf(recipes, id); return rows.find((r) => r.status === "approved") ?? rows.find((r) => r.status === "draft") ?? rows[0] ?? null; };
@@ -182,6 +261,7 @@
     canSeeCost, canSeePrices, canEditPrices, roleCodeOf, deptCodeOf,
     PRICE_KINDS, bangkokDay, dayKey, fmtDay, fmtBaht, fmtPrice, fmtWeight, round,
     priceAt, pricesAt, priceHistory, recipeWeights, formulaCost, lotCost, PREP_LABEL, stageLabel, isWeightMode, revisionsOf, currentRevision, recipeOfLot,
+    canSeeStandards, canEditStandards, canEditRates, LABOUR_DEPTS, RB_DEPT, STEPS, STATIONS, stepLabel, fmtMinutes, rateAt, rateHistory, standardAt, standardHistory, standardSteps, standardMinutes, labourCost,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_COST_RULES = api;

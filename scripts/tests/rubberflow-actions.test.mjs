@@ -804,3 +804,21 @@ test("weight recipes: a requisition of DEMO-W01 issues the lines of all four par
   assert.equal(req.status, "consumed");
   rejects(() => A.createRequisition(d, { orderId: order }, ctx("store")), /เบิกเคมีครบตามที่ใบสั่งผลิตต้องใช้แล้ว/);
 });
+
+test("สูตร: ค่าเผื่ออุณหภูมิปล่อยยางและเวลาบ่มตั้งเป็น 0 ได้ · ว่าง = ค่าเริ่มต้น · นอกช่วงถูกปฏิเสธ", () => {
+  const d = fresh();
+  A.createRecipe(d, recipeForm({ id: "RC-ZERO", dumpTol: "0", restHours: 0 }), ctx("qc"));
+  const zero = d.recipes.find((row) => row.id === "RC-ZERO");
+  assert.equal(zero.dumpTol, 0, "0 ไม่ถูกแทนด้วยค่าเริ่มต้น");
+  assert.equal(zero.restHours, 0);
+  A.createRecipe(d, recipeForm({ id: "RC-BLANK", dumpTol: " ", restHours: null }), ctx("qc"));
+  const blank = d.recipes.find((row) => row.id === "RC-BLANK");
+  assert.deepEqual([blank.dumpTol, blank.restHours], [5, 4]);
+  A.createRecipe(d, recipeForm({ id: "RC-SET", dumpTol: "7.5", restHours: "12" }), ctx("qc"));
+  const set = d.recipes.find((row) => row.id === "RC-SET");
+  assert.deepEqual([set.dumpTol, set.restHours], [7.5, 12]);
+  rejects(() => A.createRecipe(d, recipeForm({ id: "RC-BAD", dumpTol: "-1" }), ctx("qc")), /ค่าเผื่ออุณหภูมิปล่อยยาง/);
+  rejects(() => A.createRecipe(d, recipeForm({ id: "RC-BAD", dumpTol: "101" }), ctx("qc")), /0 ถึง 100/);
+  rejects(() => A.createRecipe(d, recipeForm({ id: "RC-BAD", restHours: "abc" }), ctx("qc")), /เวลาบ่มขั้นต่ำ/);
+  rejects(() => A.createRecipe(d, recipeForm({ id: "RC-BAD", restHours: "1001" }), ctx("qc")), /0 ถึง 1000/);
+});

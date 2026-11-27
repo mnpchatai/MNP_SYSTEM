@@ -1162,7 +1162,9 @@
     const canEdit = ctx.helpers.canPlan(user);
     const code = params.get("code") ? rules.canonicalCode(params.get("code")) : "";
     const qty = Math.max(Number(params.get("qty")) || 0, 0) || 1;
-    const view = ["table", "steps"].includes(params.get("view")) ? params.get("view") : "flow";
+    // ต้นทุนต่อหน่วยของชิ้นงานส่งมาเฉพาะผู้เห็นต้นทุน (20270110010000 · ผู้จัดการทั่วไป ผู้จัดการโรงงาน admin แผนก PP): คนอื่นไม่มีตารางต้นทุน คอลัมน์ต้นทุน และคำเตือนราคาไม่ครบ (ไม่มีข้อมูลให้คิด) · นอกหน้าเว็บจริง (เทสต์ / สาธิต) = เห็น
+    const seesCost = typeof state === "undefined" || !state?.employee || !root.MNP_COST_RULES || root.MNP_COST_RULES.canSeeCost(state.employee);
+    const view = [...(seesCost ? ["table"] : []), "steps"].includes(params.get("view")) ? params.get("view") : "flow";
     const roots = data.items.filter((item) => item.kind === "FG" || approvedBomOf(ctx, item.code)).sort((a, b) => a.code.localeCompare(b.code));
     const picker = ctx.embed ? "" : ui.card(`<form novalidate class="bom-pick" data-bom-pick>
         <div class="rf-grid rf-g4">
@@ -1186,14 +1188,14 @@
     if (!code) {
       const rows = roots.filter((item) => item.kind === "FG").map((item) => {
         const tree = rules.structureTree(item.code, structureDeps(ctx));
-        return `<tr><td><div class="bom-flow-pick">${picture(tree.root, " is-mini")}<span>${ui.mono(item.code)}<div class="small muted">${esc(item.name)}</div></span></div></td><td class="num nowrap">${tree.root.complete ? baht(ctx, tree.root.unitCost) : ui.badge("warn", "ไม่ครบ")}</td><td>${ui.link("ดูโครงสร้าง", ctx.url("structure", { code: item.code }), "btn rf-btn secondary small")}</td></tr>`;
+        return `<tr><td><div class="bom-flow-pick">${picture(tree.root, " is-mini")}<span>${ui.mono(item.code)}<div class="small muted">${esc(item.name)}</div></span></div></td>${seesCost ? `<td class="num nowrap">${tree.root.complete ? baht(ctx, tree.root.unitCost) : ui.badge("warn", "ไม่ครบ")}</td>` : ""}<td>${ui.link("ดูโครงสร้าง", ctx.url("structure", { code: item.code }), "btn rf-btn secondary small")}</td></tr>`;
       });
-      return { html: `${pageHead}${picker}${ui.card(ui.table(["สินค้า", "ต้นทุน/หน่วย (บาท)", ""], rows, { emptyText: "ยังไม่มีสินค้า" }), { title: "สินค้าสำเร็จรูป", flush: true })}`, bind };
+      return { html: `${pageHead}${picker}${ui.card(ui.table(["สินค้า", ...(seesCost ? ["ต้นทุน/หน่วย (บาท)"] : []), ""], rows, { emptyText: "ยังไม่มีสินค้า" }), { title: "สินค้าสำเร็จรูป", flush: true })}`, bind };
     }
     const item = itemOf(ctx, code);
     if (!item) return { html: `${pageHead}${picker}${ui.callout("warn", `ไม่พบ <strong>${esc(code)}</strong> ในทะเบียนชิ้นงาน`)}`, bind };
     const tree = rules.structureTree(item.code, structureDeps(ctx));
-    const views = `<nav class="rf-pagenav" aria-label="มุมมองโครงสร้าง">${[["flow", "ลำดับผลิต (ขั้นแรกอยู่บน)"], ["steps", "ขั้นตอนตามลำดับ (ใช้อะไร ได้อะไร)"], ["table", "ตารางต้นทุน (สินค้าอยู่บน)"]].map(([id, label]) => `<a class="filter${id === view ? " active" : ""}" href="${attr(ctx.url("structure", { code: item.code, qty: String(qty), view: id }))}"${id === view ? ' aria-current="page"' : ""}>${esc(label)}</a>`).join("")}</nav>`;
+    const views = `<nav class="rf-pagenav" aria-label="มุมมองโครงสร้าง">${[["flow", "ลำดับผลิต (ขั้นแรกอยู่บน)"], ["steps", "ขั้นตอนตามลำดับ (ใช้อะไร ได้อะไร)"], ["table", "ตารางต้นทุน (สินค้าอยู่บน)"]].filter(([id]) => seesCost || id !== "table").map(([id, label]) => `<a class="filter${id === view ? " active" : ""}" href="${attr(ctx.url("structure", { code: item.code, qty: String(qty), view: id }))}"${id === view ? ' aria-current="page"' : ""}>${esc(label)}</a>`).join("")}</nav>`;
     let body;
     if (view === "flow") {
       body = `<div class="bom-flow">${flowHtml(ctx, tree.root, canEdit)}</div>`;
@@ -1237,12 +1239,12 @@
     const minutesRows = depts.map((dept) => `<tr><td>${esc(rules.DEPT_LABEL[dept] ?? dept)}</td><td class="num">${rules.fmtNum(tree.minutesByDept[dept])}</td><td class="num">${rules.fmtNum(tree.minutesByDept[dept] * qty / 60, 1)}</td></tr>`);
     if (depts.length > 1) minutesRows.push(`<tr><td><strong>รวม</strong></td><td class="num"><strong>${rules.fmtNum(tree.totalMinutes)}</strong></td><td class="num"><strong>${rules.fmtNum(tree.totalMinutes * qty / 60, 1)}</strong></td></tr>`);
     const warnings = [
-      tree.missingCost.length ? ui.callout("warn", `ต้นทุนยังไม่ครบ: ไม่มีราคาของ ${tree.missingCost.map((entry) => `<strong>${esc(entry)}</strong>`).join(", ")}${canEdit ? ` (ตั้งราคาได้ที่ ${ui.link("ตารางต้นทุน", ctx.url("structure", { code: item.code, qty: String(qty), view: "table" }))})` : ""}`) : "",
+      seesCost && tree.missingCost.length ? ui.callout("warn", `ต้นทุนยังไม่ครบ: ไม่มีราคาของ ${tree.missingCost.map((entry) => `<strong>${esc(entry)}</strong>`).join(", ")}${canEdit ? ` (ตั้งราคาได้ที่ ${ui.link("ตารางต้นทุน", ctx.url("structure", { code: item.code, qty: String(qty), view: "table" }))})` : ""}`) : "",
       tree.missing.length ? ui.callout("bad", `ไม่พบในทะเบียนชิ้นงานหรือเป็นวงจร: ${tree.missing.map((entry) => esc(entry)).join(", ")}`) : "",
     ].join("");
     const html = `${pageHead}${picker}${warnings}${views}
       ${ctx.embed ? ui.card(body, { flush: view !== "flow" }) : ui.card(body, { title: `${esc(item.code)} — ${esc(item.name)}`, actions: canEdit ? ui.link("แก้ส่วนประกอบ (สร้าง BOM)", buildUrl(ctx, item.code), "btn rf-btn secondary small") : "", flush: view !== "flow" })}
-      ${ui.card(ui.table(["แผนก", "นาที ต่อ 1 หน่วย", `ชั่วโมง สำหรับ ${rules.fmtNum(qty)} หน่วย`], minutesRows, { emptyText: "ยังไม่มีขั้นตอนผลิตในโครงสร้างนี้" }), { title: `เวลาผลิตต่อแผนก · ค่าแรงสาธิต (บาท/นาที): ${esc(rates)}`, flush: true })}`;
+      ${ui.card(ui.table(["แผนก", "นาที ต่อ 1 หน่วย", `ชั่วโมง สำหรับ ${rules.fmtNum(qty)} หน่วย`], minutesRows, { emptyText: "ยังไม่มีขั้นตอนผลิตในโครงสร้างนี้" }), { title: seesCost ? `เวลาผลิตต่อแผนก · ค่าแรงสาธิต (บาท/นาที): ${esc(rates)}` : "เวลาผลิตต่อแผนก", flush: true })}`;
     return { html, bind };
   };
   pages.structure.menu = structureMenu; // ให้เทสต์ตรวจรายการคำสั่งได้โดยไม่ต้องมี DOM
