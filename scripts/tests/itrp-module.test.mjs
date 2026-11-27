@@ -528,7 +528,34 @@ test("losing the connection during the search shows an error without losing the 
   const f = await openPicker(w);
   down = true;
   await findHost(w);
-  assert.match(f.controls["#itrp-host-status"].innerHTML, /ค้นหาไม่สำเร็จ/);
+  assert.match(f.controls["#itrp-host-status"].innerHTML, /ค้นหาไม่สำเร็จ ตรวจอินเทอร์เน็ต/);
+});
+
+test("a Thai error from the database is shown as it is, not as 'check the internet'", async () => {
+  let reject = true;
+  const w = world({ handlers: { app_itrp_lookup_host: (args) => { if (reject && args.p_code) throw Object.assign(new Error("ไม่พบบัญชีพนักงานที่เปิดใช้งาน กรุณาเข้าสู่ระบบใหม่หรือติดต่อ IT"), { code: "42501" }); return lookupHandler(args); } } });
+  const f = await openPicker(w);
+  await findHost(w);
+  assert.match(f.controls["#itrp-host-status"].innerHTML, /ไม่พบบัญชีพนักงานที่เปิดใช้งาน กรุณาเข้าสู่ระบบใหม่หรือติดต่อ IT/);
+  assert.doesNotMatch(f.controls["#itrp-host-status"].innerHTML, /ตรวจอินเทอร์เน็ต/);
+  reject = false;
+  await findHost(w);
+  assert.match(f.controls["#itrp-host-status"].innerHTML, /<strong>COM24<\/strong>/, "a later successful search clears the message");
+});
+
+test("after redrawing the types the focus returns to the same tick, and a new row gets the focus in its code box", async () => {
+  const w = world({ handlers: { app_itrp_lookup_host: lookupHandler } });
+  const f = await openPicker(w);
+  await findHost(w);
+  const focused = [];
+  f.controls["#itrp-pick-body"].querySelector = (selector) => ({ focus() { focused.push(selector); } });
+  await w.fire("change", tickType("MONITOR"));
+  assert.equal(focused.at(-1), '[data-pick-type="MONITOR"]');
+  await w.fire("change", tgt({ dataset: { pickUse: "0" }, checked: true }));
+  assert.equal(focused.at(-1), '[data-pick-use="0"]');
+  const rows = f.controls["#itrp-pick-body"].innerHTML.match(/data-pick-row="\d+"/g).length;
+  await w.fire("click", tgt({ dataset: { pickAdd: "MONITOR" } }));
+  assert.equal(focused.at(-1), `[data-pick-code="${rows}"]`, "the added row is the next index");
 });
 
 test("the same code is not searched twice (blur then the search button), and a new code resets the ticked devices", async () => {

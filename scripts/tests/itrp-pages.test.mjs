@@ -544,6 +544,9 @@ test("the IT complete form starts from the codes the requester picked", () => {
   assert.deepEqual(rows(pages.detailPage(detail({ ...REQUESTED, allowed_actions: ["complete"] }))), ["MNT53", "SCN01"]);
   assert.deepEqual(rows(pages.detailPage(detail({ allowed_actions: ["complete"] }))), ["PC-001"], "an old request starts from the asset code as before");
   assert.deepEqual(rows(pages.completeFormCard({ assetCode: "COM24", requestedCodes: [] })), ["COM24"]);
+  // ใบใหม่ที่ผู้แจ้งไม่มีรหัสอุปกรณ์เลย (เสียแค่จอที่ไม่ทราบรหัส): เริ่มว่าง ไม่เติมรหัสคอมลงแถว
+  const noCodes = { asset_code: "COM24", host_code: "COM24", host_unknown: false, devices: [{ seq: 1, type_code: "MONITOR", device_code: null, from_register: false, note: null }], allowed_actions: ["complete"] };
+  assert.deepEqual(rows(pages.detailPage(detail(noCodes))), [""]);
 });
 
 test("the purge button and the version tag", () => {

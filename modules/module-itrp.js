@@ -322,9 +322,10 @@
     let lookup = "idle"; // idle | loading | notfound | error
     let lookupSeq = 0; // ผลค้นที่ตอบช้ากว่าการกระทำใหม่ (แก้รหัส/ติ๊กไม่ทราบ) ถูกทิ้ง
     let searchingCode = ""; // รหัสที่กำลังค้นอยู่ (กันค้นรหัสเดียวกันซ้ำ)
+    let lookupMessage = ""; // ข้อความไทยจากฐานข้อมูลเมื่อค้นไม่สำเร็จ (ว่าง = ใช้ข้อความ "ตรวจอินเทอร์เน็ต")
     const hostInput = () => form.querySelector("#itrp-host-input");
     const normalizeHostCode = (value) => String(value ?? "").trim().toUpperCase();
-    const pickerState = () => ({ host, hostUnknown, picks, lookup });
+    const pickerState = () => ({ host, hostUnknown, picks, lookup, message: lookupMessage });
 
     const currentValues = () => ({
       asset_code: valueOf("#itrp-asset-code"),
@@ -359,7 +360,13 @@
       }
     };
     const redrawHost = () => { const box = form.querySelector("#itrp-host-status"); if (box) box.innerHTML = pages.hostStatus(pickerState()); };
-    const redrawPicks = () => { const box = form.querySelector("#itrp-pick-body"); if (box) box.innerHTML = pages.pickTypes(pickerState()); };
+    // วาดรายการชนิดอุปกรณ์ใหม่ทั้งก้อน แล้วคืนโฟกัสให้ช่องเดิม (focusSelector) ไม่งั้นผู้ใช้คีย์บอร์ด/โปรแกรมอ่านหน้าจอหลุดโฟกัสทุกครั้งที่ติ๊ก
+    const redrawPicks = (focusSelector = "") => {
+      const box = form.querySelector("#itrp-pick-body");
+      if (!box) return;
+      box.innerHTML = pages.pickTypes(pickerState());
+      if (focusSelector) box.querySelector?.(focusSelector)?.focus?.({ preventScroll: true });
+    };
     // ช่องรหัส/ปุ่มค้นหาปิดเมื่อติ๊ก "ไม่ทราบรหัสเครื่อง"
     const syncHostControls = () => {
       const input = hostInput();
@@ -444,6 +451,7 @@
       if (lookup === "loading" && searchingCode === typed) return; // กำลังค้นรหัสเดียวกันอยู่ (blur แล้วตามด้วยกดปุ่ม)
       const seq = ++lookupSeq;
       lookup = "loading";
+      lookupMessage = "";
       searchingCode = typed;
       redrawHost();
       let data;
@@ -452,7 +460,9 @@
       } catch (error) {
         if (seq !== lookupSeq || version !== pageVersion) return;
         // ไม่ใช่ error แบบ "ไม่มีฟังก์ชัน" ที่ควรส่งเข้า log: ผู้แจ้งยังติ๊ก "ไม่ทราบรหัสเครื่อง" แล้วแจ้งต่อได้
-        if (!model.isMissingFunction(error)) failure(error);
+        const info = model.isMissingFunction(error) ? { kind: "missing", message: "" } : failure(error);
+        // ข้อความไทยจากฐานข้อมูล (เช่น บัญชีไม่พร้อมใช้งาน) แสดงตามนั้น · ข้อความ "ตรวจอินเทอร์เน็ต" ใช้เฉพาะเน็ตหลุดจริง (kind = unknown) หรือไม่มีฟังก์ชัน
+        lookupMessage = info.kind === "unknown" || info.kind === "missing" ? "" : info.message;
         host = null; picks = []; lookup = "error";
         redrawHost(); redrawPicks();
         return;
@@ -475,7 +485,13 @@
         const target = event.target;
         if (target?.closest?.("#itrp-host-search")) { event.preventDefault?.(); runLookup(); return; }
         const add = target?.closest?.("[data-pick-add]");
-        if (add) { picks = model.addPickRow(picks, add.dataset.pickAdd); redrawPicks(); picksChanged(); return; }
+        if (add) {
+          const before = picks.length;
+          picks = model.addPickRow(picks, add.dataset.pickAdd);
+          redrawPicks(picks.length > before ? `[data-pick-code="${picks.length - 1}"]` : `[data-pick-add="${add.dataset.pickAdd}"]`); // แถวใหม่รับโฟกัสให้พิมพ์รหัสได้เลย
+          picksChanged();
+          return;
+        }
         const remove = target?.closest?.("[data-pick-remove]");
         if (remove) { picks = model.removePickRow(picks, Number(remove.dataset.pickRemove)); redrawPicks(); picksChanged(); }
       });
@@ -490,9 +506,9 @@
           return;
         }
         const type = target?.closest?.("[data-pick-type]") ?? (target?.dataset?.pickType ? target : null);
-        if (type) { picks = model.toggleType(picks, type.dataset.pickType, { host, unknown: hostUnknown }); redrawPicks(); picksChanged(); return; }
+        if (type) { picks = model.toggleType(picks, type.dataset.pickType, { host, unknown: hostUnknown }); redrawPicks(`[data-pick-type="${type.dataset.pickType}"]`); picksChanged(); return; }
         const use = target?.dataset?.pickUse;
-        if (use !== undefined) { picks = model.setPickField(picks, Number(use), "on", target.checked); redrawPicks(); picksChanged(); }
+        if (use !== undefined) { picks = model.setPickField(picks, Number(use), "on", target.checked); redrawPicks(`[data-pick-use="${use}"]`); picksChanged(); }
       });
       form.addEventListener("input", (event) => {
         const target = event.target;

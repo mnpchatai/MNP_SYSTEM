@@ -205,7 +205,11 @@
         <p class="muted small itrp-host-note">ตรวจว่าเป็นเครื่องของคุณ ถ้าไม่ใช่ให้แก้รหัสแล้วกด "ค้นหา" ใหม่</p>`;
     }
     if (state.lookup === "notfound") return `<p class="field-error itrp-host-note" role="alert">ไม่พบรหัสนี้ในทะเบียน ตรวจรหัสที่ติดบนเครื่อง หรือติ๊ก "ไม่ทราบรหัสเครื่อง"</p>`;
-    if (state.lookup === "error") return `<p class="field-error itrp-host-note" role="alert">ค้นหาไม่สำเร็จ ตรวจอินเทอร์เน็ตแล้วกด "ค้นหา" อีกครั้ง หรือติ๊ก "ไม่ทราบรหัสเครื่อง"</p>`;
+    if (state.lookup === "error") {
+      // ข้อความไทยจากฐานข้อมูล (เช่น บัญชีไม่พร้อมใช้งาน) แสดงตามนั้น · ไม่มี = ค้นไม่ถึง (เน็ตหลุด)
+      if (state.message) return `<p class="field-error itrp-host-note" role="alert">${esc(state.message)}</p>`;
+      return `<p class="field-error itrp-host-note" role="alert">ค้นหาไม่สำเร็จ ตรวจอินเทอร์เน็ตแล้วกด "ค้นหา" อีกครั้ง หรือติ๊ก "ไม่ทราบรหัสเครื่อง"</p>`;
+    }
     return "";
   }
   // แถวหนึ่งของชนิดที่ติ๊ก · index = ตำแหน่งใน picks · showUse = มีหลายแถวในชนิดเดียวกัน (ให้ติ๊กตัวที่เสีย) · canRemove = แถวที่ผู้แจ้งเพิ่มเอง
@@ -768,7 +772,7 @@
         <div class="stack"${hasFiles ? ' id="attachment-gallery"' : ""}>
           ${pending ? answerCard(pending) : ""}
           ${actionsCard(buttons)}
-          ${has("complete") ? completeFormCard({ assetCode: detail.asset_code, requestedCodes: model.requestedDeviceCodes(detail) }) : ""}
+          ${has("complete") ? completeFormCard({ assetCode: requested.isNew ? "" : detail.asset_code, requestedCodes: model.requestedDeviceCodes(detail) }) : ""}
           ${has("request_rework") ? reworkFormCard() : ""}
           ${has("request_info") ? askFormCard() : ""}
           <section class="card itrp-facts" aria-labelledby="itrp-facts-title"><h2 id="itrp-facts-title">ข้อมูลใบแจ้งซ่อม</h2>
