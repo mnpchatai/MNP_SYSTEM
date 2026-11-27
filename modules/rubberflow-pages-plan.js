@@ -210,6 +210,7 @@
       const newestIsApproved = history[0]?.status === "approved";
       const actions = [
         selected.status === "draft" && mayEdit ? ui.openButton("แก้ร่างสูตร", "recipeEdit", { id: selected.id }, { className: "secondary small" }) : "",
+        selected.status === "draft" && mayEdit && weight ? ui.openButton("ค่ามาตรฐานการผสม", "recipeStandards", { id: selected.id }, { className: "secondary small" }) : "",
         selected.status === "approved" && newestIsApproved && mayEdit ? ui.openButton("ออกฉบับแก้ไขใหม่", "recipeEdit", { id: selected.id }, { className: "secondary small" }) : "",
         selected.status === "draft" && ctx.can("approveRecipe") ? ui.button("อนุมัติสูตร", { action: "approveRecipe", args: { id: selected.id, revision: selected.revision }, className: "small", confirmText: "" }) : "",
       ].filter(Boolean).join(" ");
@@ -235,6 +236,40 @@
     return { html };
   };
 
+  // ช่องค่ามาตรฐานการผสมของสูตร (ค่าที่ฐานข้อมูลบังคับ แต่ฟอร์มสูตรแบบน้ำหนักไม่ถาม): ฟอร์มสูตรเดิมแบบ PHR ใช้ครบ · สูตรแบบน้ำหนักแก้ที่ dialog "ค่ามาตรฐานการผสม" (dialogs.recipeStandards)
+  // current = null = ค่าเริ่มต้น (rules.RECIPE_DEFAULTS)
+  function standardsFields(ctx, current) {
+    const { ui, rules } = ctx;
+    const standards = rules.recipeStandards(current);
+    // ผสมสองขั้น: สองแถว แถวละสามช่อง (อุณหภูมิเครื่องผสม อุณหภูมิปล่อยยาง เวลา)
+    const stageFields = standards.stages.map((value) => {
+      const stage = value.stage;
+      return `${ui.field(`อุณหภูมิเครื่องผสม ขั้น ${stage} (°C)`, ui.input(`mixerTemp${stage}`, { type: "number", step: "any", min: 0, max: 1000, required: true, value: String(value.mixerTemp) }), { required: true })}
+        ${ui.field(`อุณหภูมิปล่อยยาง ขั้น ${stage} (°C)`, ui.input(`dumpTemp${stage}`, { type: "number", step: "any", min: 0, max: 1000, required: true, value: String(value.dumpTemp) }), { required: true })}
+        ${ui.field(`เวลาผสม ขั้น ${stage} (นาที)`, ui.input(`mixMin${stage}`, { type: "number", step: "any", min: 0, required: true, value: String(value.mixMin) }), { required: true })}`;
+    }).join("");
+    // สเปกมิติการฉีด (ไม่บังคับ · 20261129010000): ต่อค่ากรอกค่ามาตรฐานและค่าเผื่อคู่กัน · เว้นว่างทั้งคู่ = ล็อตฉีดของสูตรนี้ไม่ถูกกักตามค่านั้น
+    // ฉบับที่อนุมัติแล้วแก้ไม่ได้ (ฐานข้อมูลเทียบสเปกตอนอนุมัติด้วย) จึงแก้ได้ในร่างหรือฉบับแก้ไขใหม่เท่านั้น
+    const spec = rules.extrusionSpecOf(current);
+    const specFields = rules.EXTRUSION_KEYS.map((key) => {
+      const meta = rules.SPECS.extrusion[key];
+      const hint = 'title="เว้นว่างทั้งค่ามาตรฐานและค่าเผื่อ = ไม่กักล็อตฉีดตามค่านี้"';
+      return `${ui.field(`${meta.label} มาตรฐาน (${meta.unit})`, ui.input(`extrusionSpec.${key}.target`, { type: "number", step: "any", min: 0, value: spec[key] ? String(spec[key].target) : "", extra: hint }))}
+        ${ui.field(`${meta.label} ค่าเผื่อ ± (${meta.unit})`, ui.input(`extrusionSpec.${key}.tol`, { type: "number", step: "any", min: 0, value: spec[key] ? String(spec[key].tol) : "", extra: hint }))}`;
+    }).join("");
+    return {
+      product: ui.field("รหัสสินค้า", ui.input("productCode", { value: standards.productCode })),
+      uom: ui.field("หน่วยสินค้า", ui.select("uom", [{ value: "m", label: "เมตร (m)" }, { value: "pcs", label: "ชิ้น (pcs)" }], { value: standards.uom })),
+      yieldPerKg: ui.field("ผลผลิตต่อ kg", ui.input("yieldPerKg", { type: "number", value: String(standards.yieldPerKg), step: "any" })),
+      restHours: ui.field("เวลาบ่มขั้นต่ำ (ชม.)", ui.input("restHours", { type: "number", value: String(standards.restHours), step: "any" })),
+      mixing: `<div class="rf-grid rf-g3">${stageFields}
+        ${ui.field("ค่าเผื่ออุณหภูมิปล่อยยางทั้งสองขั้น (±°C)", ui.input("dumpTol", { type: "number", value: String(standards.dumpTol), step: "any", min: 0 }))}
+      </div>`,
+      spec: `<div class="rf-stack rf-tight"><strong class="small">สเปกมิติการฉีด</strong><div class="rf-grid rf-g2">${specFields}</div></div>`,
+    };
+  }
+
+
   // ฟอร์มสูตร: สร้างใหม่ (current = null) หรือแก้/ออก revision ใหม่ของรหัสเดิม (current = revision ที่ใช้งาน · รหัสสูตรแก้ไม่ได้)
   function recipeDialog(ctx, current) {
     const { data, ui, rules } = ctx;
@@ -252,38 +287,25 @@
     const weightRow = (code, amount, unit = "kg", stage = 1) => `<tr class="rf-recipe-row"><td>${ui.select("materialCode[]", materialOptions, { value: code })}</td><td>${ui.select("stage[]", partOptions, { value: stage })}</td><td>${ui.input("amount[]", { type: "number", value: String(amount), step: "any", min: 0, required: true, extra: 'aria-label="ปริมาณ" title="ไม่ใส่ในสูตรนี้ให้กรอก 0"' })}</td><td>${ui.select("unit[]", unitOptions, { value: unit, extra: 'aria-label="หน่วย"' })}</td><td><button class="btn rf-btn secondary small" type="button" data-rf-remove aria-label="ลบรายการ">ลบ</button></td></tr>`;
     const row = (code, phr, stage = 1) =>`<tr class="rf-recipe-row"><td>${ui.select("materialCode[]", materialOptions, { value: code })}</td><td>${ui.select("stage[]", stageOptions, { value: stage })}</td><td>${ui.input("phr[]", { type: "number", value: String(phr), step: "any", min: 0 })}</td><td class="right rf-mono" data-rf-kg>-</td><td><button class="btn rf-btn secondary small" type="button" data-rf-remove aria-label="ลบรายการ">ลบ</button></td></tr>`;
     const draft = current?.status === "draft";
-    // ผสมสองขั้น: สองแถว แถวละสามช่อง (อุณหภูมิเครื่องผสม อุณหภูมิปล่อยยาง เวลา) ค่าเริ่มต้นของสูตรใหม่
-    const stageDefaults = { 1: { mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, 2: { mixerTemp: 90, dumpTemp: 130, mixMin: 2 } };
-    const stageFields = rules.MIX_STAGES.map((stage) => {
-      const value = rules.recipeStage(current, stage) ?? stageDefaults[stage];
-      return `${ui.field(`อุณหภูมิเครื่องผสม ขั้น ${stage} (°C)`, ui.input(`mixerTemp${stage}`, { type: "number", step: "any", min: 0, max: 1000, required: true, value: String(value.mixerTemp) }), { required: true })}
-        ${ui.field(`อุณหภูมิปล่อยยาง ขั้น ${stage} (°C)`, ui.input(`dumpTemp${stage}`, { type: "number", step: "any", min: 0, max: 1000, required: true, value: String(value.dumpTemp) }), { required: true })}
-        ${ui.field(`เวลาผสม ขั้น ${stage} (นาที)`, ui.input(`mixMin${stage}`, { type: "number", step: "any", min: 0, required: true, value: String(value.mixMin) }), { required: true })}`;
-    }).join("");
-    // สเปกมิติการฉีด (ไม่บังคับ · 20261129010000): ต่อค่ากรอกค่ามาตรฐานและค่าเผื่อคู่กัน · เว้นว่างทั้งคู่ = ล็อตฉีดของสูตรนี้ไม่ถูกกักตามค่านั้น
-    // ฉบับที่อนุมัติแล้วแก้ไม่ได้ (ฐานข้อมูลเทียบสเปกตอนอนุมัติด้วย) จึงแก้ได้ในร่างหรือฉบับแก้ไขใหม่เท่านั้น
-    const spec = rules.extrusionSpecOf(current);
-    const specFields = rules.EXTRUSION_KEYS.map((key) => {
-      const meta = rules.SPECS.extrusion[key];
-      const hint = 'title="เว้นว่างทั้งค่ามาตรฐานและค่าเผื่อ = ไม่กักล็อตฉีดตามค่านี้"';
-      return `${ui.field(`${meta.label} มาตรฐาน (${meta.unit})`, ui.input(`extrusionSpec.${key}.target`, { type: "number", step: "any", min: 0, value: spec[key] ? String(spec[key].target) : "", extra: hint }))}
-        ${ui.field(`${meta.label} ค่าเผื่อ ± (${meta.unit})`, ui.input(`extrusionSpec.${key}.tol`, { type: "number", step: "any", min: 0, value: spec[key] ? String(spec[key].tol) : "", extra: hint }))}`;
-    }).join("");
-    const body = `<div class="rf-grid rf-g3">
-        ${ui.field("รหัสสูตร", current ? `<input class="input rf-input" name="id" value="${esc(current.id)}" readonly>` : ui.input("id", { placeholder: "RC-EPDM-XX01", required: true }), { required: true })}
-        ${ui.field("รหัสสินค้า", ui.input("productCode", { value: current?.productCode ?? "" }))}
-        ${ui.field("หน่วยสินค้า", ui.select("uom", [{ value: "m", label: "เมตร (m)" }, { value: "pcs", label: "ชิ้น (pcs)" }], { value: current?.uom ?? "m" }))}
-        ${weight ? ui.field("น้ำหนักต่อชุดผสม (kg)", '<input class="input rf-input" readonly tabindex="-1" data-rf-batch-out title="รวมน้ำหนักทุกรายการ ระบบคำนวณให้">') : ui.field("น้ำหนักต่อชุดผสม (kg)", ui.input("batchKg", { type: "number", value: String(current?.batchKg ?? 50), step: "any", extra: "data-rf-batch" }))}
-        ${ui.field("ผลผลิตต่อ kg", ui.input("yieldPerKg", { type: "number", value: String(current?.yieldPerKg ?? 6), step: "any" }))}
-        ${ui.field("เวลาบ่มขั้นต่ำ (ชม.)", ui.input("restHours", { type: "number", value: String(current?.restHours ?? 4), step: "any" }))}
+    const fields = standardsFields(ctx, current);
+    // สูตรแบบน้ำหนัก (สร้างใหม่ ร่าง ฉบับแก้ไขใหม่): ฟอร์มมีแค่รหัสสูตรกับวัตถุดิบ · ค่ามาตรฐานการผสมอื่นไม่อยู่ในฟอร์ม: สูตรใหม่ใช้ค่าเริ่มต้น ฉบับแก้ไขรับค่าต่อจากฉบับเดิม (TRANSFORMS ใน module-rubberflow.js) แก้ได้ที่ปุ่ม "ค่ามาตรฐานการผสม" ของร่างสูตร
+    const codeField = ui.field("รหัสสูตร", current ? `<input class="input rf-input" name="id" value="${esc(current.id)}" readonly>` : ui.input("id", { placeholder: "RC-EPDM-XX01", required: true }), { required: true });
+    const body = weight
+      ? `<div class="rf-grid rf-g3">${codeField}</div>
+      <div class="table-wrap"><table class="rf-table"><thead><tr><th>วัตถุดิบ</th><th>ขั้น</th><th class="rf-col-phr">ปริมาณ</th><th>หน่วย</th><th></th></tr></thead><tbody data-rf-items>${weightStarting.map(([code, amount, unit, stage]) => weightRow(code, amount, unit, stage)).join("")}</tbody></table></div>
+      <div class="rf-row rf-between"><button class="btn rf-btn secondary small" type="button" data-rf-add>เพิ่มวัตถุดิบ</button><span class="muted small" data-rf-total></span></div>
+      <p class="small" aria-live="polite"><span class="muted">น้ำหนักต่อชุดผสมรวม </span><strong class="rf-mono" data-rf-batch-out></strong></p>`
+      : `<div class="rf-grid rf-g3">
+        ${codeField}
+        ${fields.product}
+        ${fields.uom}
+        ${ui.field("น้ำหนักต่อชุดผสม (kg)", ui.input("batchKg", { type: "number", value: String(current?.batchKg ?? 50), step: "any", extra: "data-rf-batch" }))}
+        ${fields.yieldPerKg}
+        ${fields.restHours}
       </div>
-      <div class="rf-grid rf-g3">${stageFields}
-        ${ui.field("ค่าเผื่ออุณหภูมิปล่อยยางทั้งสองขั้น (±°C)", ui.input("dumpTol", { type: "number", value: String(current?.dumpTol ?? 5), step: "any", min: 0 }))}
-      </div>
-      <div class="rf-stack rf-tight"><strong class="small">สเปกมิติการฉีด</strong><div class="rf-grid rf-g2">${specFields}</div></div>
-      <div class="table-wrap">${weight
-    ? `<table class="rf-table"><thead><tr><th>วัตถุดิบ</th><th>ขั้น</th><th class="rf-col-phr">ปริมาณ</th><th>หน่วย</th><th></th></tr></thead><tbody data-rf-items>${weightStarting.map(([code, amount, unit, stage]) => weightRow(code, amount, unit, stage)).join("")}</tbody></table>`
-    : `<table class="rf-table"><thead><tr><th>วัตถุดิบ</th><th>ขั้น</th><th class="rf-col-phr">PHR</th><th class="right">kg / ชุดผสม</th><th></th></tr></thead><tbody data-rf-items>${phrStarting.map(([code, phr, stage]) => row(code, phr, stage)).join("")}</tbody></table>`}</div>
+      ${fields.mixing}
+      ${fields.spec}
+      <div class="table-wrap"><table class="rf-table"><thead><tr><th>วัตถุดิบ</th><th>ขั้น</th><th class="rf-col-phr">PHR</th><th class="right">kg / ชุดผสม</th><th></th></tr></thead><tbody data-rf-items>${phrStarting.map(([code, phr, stage]) => row(code, phr, stage)).join("")}</tbody></table></div>
       <div class="rf-row rf-between"><button class="btn rf-btn secondary small" type="button" data-rf-add>เพิ่มวัตถุดิบ</button><span class="muted small" data-rf-total></span></div>`;
     const name = current ? "recipeEdit" : "createRecipe";
     const formId = current ? "rf-edit-recipe" : "rf-create-recipe";
@@ -294,7 +316,7 @@
       const tbody = dialog.querySelector("[data-rf-items]");
       const total = dialog.querySelector("[data-rf-total]");
       if (weight) {
-        // น้ำหนักต่อชุดผสม = ผลรวมของทุกรายการ (อ่านอย่างเดียว) · ผลรวมต่อส่วนอยู่ใต้ตาราง
+        // ผลรวมต่อส่วนและน้ำหนักต่อชุดผสม (ผลรวมของทุกรายการ) เป็นข้อความอ่านอย่างเดียวใต้ตาราง
         const batchOut = dialog.querySelector("[data-rf-batch-out]");
         const paintWeight = () => {
           const rows = [...tbody.querySelectorAll(".rf-recipe-row")].map((tr) => ({
@@ -303,7 +325,7 @@
           }));
           total.textContent = rules.PARTS.filter((stage) => rows.some((item) => item.stage === stage))
             .map((stage) => `${rules.partLabel(stage)} ${rules.plainNum(rules.weightBatchKg(rows.filter((item) => item.stage === stage)), 4)} kg`).join(" · ");
-          batchOut.value = `${rules.plainNum(rules.weightBatchKg(rows), 4)} kg`;
+          batchOut.textContent = `${rules.plainNum(rules.weightBatchKg(rows), 4)} kg`;
         };
         const wireWeight = (tr) => {
           tr.querySelector("[data-rf-remove]").addEventListener("click", () => { tr.remove(); paintWeight(); });
@@ -345,6 +367,18 @@
     return { html, bind };
   }
   dialogs.createRecipe = (ctx) => recipeDialog(ctx, null);
+  // ค่ามาตรฐานการผสมของร่างสูตรแบบน้ำหนัก (ช่องที่เอาออกจากฟอร์มสูตร): บันทึกผ่าน saveRecipe โดยรายการวัตถุดิบคงเดิม (keepItems · TRANSFORMS ใน module-rubberflow.js ดึงรายการจากร่างเอง)
+  dialogs.recipeStandards = (ctx, { id }) => {
+    const { ui, rules } = ctx;
+    const draft = rules.revisionsOf(ctx.data.recipes, id).find((recipe) => recipe.status === "draft");
+    if (!draft || !rules.isWeightRecipe(draft)) return null;
+    const fields = standardsFields(ctx, draft);
+    const body = `<div class="rf-grid rf-g3">${fields.product}${fields.uom}${fields.yieldPerKg}${fields.restHours}</div>
+      ${fields.mixing}
+      ${fields.spec}`;
+    const html = ui.dialog("recipeStandards", `ค่ามาตรฐานการผสม ${draft.id} Rev.${draft.revision}`, `<form novalidate data-rf-form="saveRecipe" data-rf-args="${esc(JSON.stringify({ id: draft.id, keepItems: true }))}" data-rf-success="บันทึกค่ามาตรฐานการผสมแล้ว (รออนุมัติ)" id="rf-recipe-standards">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="rf-recipe-standards">บันทึกค่ามาตรฐาน</button>`, wide: true });
+    return { html };
+  };
   dialogs.recipeEdit = (ctx, { id }) => {
     // มีร่างค้างอยู่ = แก้ร่างนั้น (ฐานข้อมูลมีร่างได้หนึ่งฉบับต่อรหัส) · ไม่มี = ออก revision ใหม่จาก revision ที่ใช้งาน
     const current = ctx.rules.revisionsOf(ctx.data.recipes, id).find((recipe) => recipe.status === "draft") ?? ctx.rules.currentRecipe(ctx.data.recipes, id);

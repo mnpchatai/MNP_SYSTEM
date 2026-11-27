@@ -2,7 +2,7 @@
 // หน้า: ต้นทุนสูตร (ค่าตั้งต้น · ทุกสูตร revision ที่ใช้งาน ต้นทุนต่อชุดผสม / ต่อ kg) · ?recipe=<รหัสสูตร> (&rev=<revision> &asof=<YYYY-MM-DD> &tab=lots) รายละเอียด: แยกตามขั้น รายการเรียงตามต้นทุน เคมีที่ยังไม่มีราคา และเทียบกับจริงรายล็อตผสม
 //       · ?tab=lots สูตรเทียบจริง (ล็อตผสมล่าสุดทุกสูตร) · ?q= ค้นหา · ?n= แสดงเพิ่ม
 // เห็นเฉพาะผู้ที่เห็นต้นทุน (canSeeCost: ผู้จัดการทั่วไป · ผู้จัดการโรงงาน · admin · แผนก PP) ในโหมดทดสอบ · ราคาต้นทุนทั้งหมดมาจาก app_rf_cost_data (RF_FORBIDDEN = แสดงว่าไม่มีสิทธิ์) ไม่เก็บลงเครื่อง
-// อ่านอย่างเดียว: บันทึกราคาอยู่ที่ #/st?tab=prices (แผนก ST และ admin) · ซ่อนเมนู/หน้าเป็นแค่ UX สิทธิ์จริงตัดสินที่ฐานข้อมูล
+// อ่านอย่างเดียว: ราคาตั้งในรายการ "ในคลัง" ของ ST (#/st?tab=stock&price=missing ·แผนก ST และ admin) · ซ่อนเมนู/หน้าเป็นแค่ UX สิทธิ์จริงตัดสินที่ฐานข้อมูล
 // app / state / shell / bindShell / renderRoute / renderNotFound / currentRoute เป็น global ของ app.js (อ้างตอนวาดเท่านั้น)
 (function registerCostPages(root) {
   const F = root.MNP_FACTORY;
@@ -97,12 +97,13 @@
   }
 
   // ---------- รายละเอียดสูตร ----------
-  // ลิงก์ไปบันทึกราคา: เฉพาะผู้ที่เปิดโมดูล ST ได้ (ไม่พาไปหน้า "ไม่พบ")
+  // ลิงก์ไปรายการที่ยังไม่มีราคาในหน้า "ในคลัง" ของ ST (ราคาอยู่ในรายการคลัง ไม่มีเมนูแยก): เฉพาะผู้ที่เปิดโมดูล ST ได้ (ไม่พาไปหน้า "ไม่พบ") · เปิดไม่ได้ = ข้อความบอกว่าตั้งราคาที่ไหน ไม่มีลิงก์
   function priceLink(ctx) {
     const C = costRules();
     const employee = state.employee;
-    if (!C.canSeePrices(employee) || !F.canOpenDeptModule(employee, "ST", "FACTORY_ST")) return "";
-    return `<p>${ctx.ui.link(C.canEditPrices(employee) ? "ไปตั้งราคาที่คลังวัตถุดิบ (ST)" : "ดูราคาที่คลังวัตถุดิบ (ST)", "#/st?tab=prices", "btn rf-btn secondary small")}</p>`;
+    if (!C.canSeePrices(employee)) return "";
+    if (!F.canOpenDeptModule(employee, "ST", "FACTORY_ST")) return '<p class="small muted">ราคาตั้งที่รายการ "ในคลัง" ของโมดูลคลังวัตถุดิบ (ST)</p>';
+    return `<p>${ctx.ui.link(C.canEditPrices(employee) ? "ไปตั้งราคาที่ในคลัง (ST)" : "ดูรายการที่ยังไม่มีราคาที่ในคลัง (ST)", "#/st?tab=stock&price=missing", "btn rf-btn secondary small")}</p>`;
   }
   function detailView(ctx, data, recipeId) {
     const C = costRules();

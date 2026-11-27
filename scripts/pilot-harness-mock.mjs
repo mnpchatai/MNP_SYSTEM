@@ -2422,7 +2422,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     for (const job of next.jobs) if (!next.orders.some((order) => order.id === job.orderId)) fail("BOM_INVALID_JOB");
     return next;
   }
-  // ---- ราคาเคมีและต้นทุนการผลิต (#/st?tab=prices · #/cost): app_rf_prices / app_rf_price_save / app_rf_cost_data ----
+  // ---- ราคาวัตถุดิบ (เคมี + ของซื้อ) และต้นทุนการผลิต (#/st?tab=stock · #/cost): app_rf_prices / app_rf_price_save / app_rf_cost_data ----
   // สิทธิ์ตรงกับฐานข้อมูล (ปฏิเสธ RF_FORBIDDEN): เห็นต้นทุนและราคา = ผู้จัดการทั่วไป / ผู้จัดการโรงงาน / admin / แผนก PP · เห็นราคาอย่างเดียว = แผนก ST (ทุกตำแหน่ง) · บันทึกราคา = แผนก ST / admin
   // ราคาเป็นแถวที่เพิ่มอย่างเดียว (ประวัติ แก้/ลบไม่ได้) เก็บใน storage ข้างข้อมูล RubberFlow · ว่างอยู่ = ใส่ราคาสาธิตให้วัตถุดิบสาธิต (ยกเว้น DM-CH-05 และ DM-FIL-C ไว้ให้เห็นสถานะ "ยังไม่มีราคา") · ZNO มีสองแถวให้เห็นประวัติ
   // ข้อมูลสูตร / ใบเบิก / ล็อตผสมอ่านจากข้อมูล RubberFlow ของ mock (rfLoad) · ยังว่างอยู่ (ยังไม่ได้นำเข้า) = ใช้ชุดสาธิตของ RubberFlow (MNP_RUBBERFLOW_SEED) ถ้าหน้ามีไฟล์นั้น
@@ -2443,11 +2443,30 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       try { costPrices = JSON.parse(storage?.getItem?.(COST_KEY) ?? "null"); } catch { costPrices = null; }
       if (!costPrices || !Array.isArray(costPrices.rows)) {
         const by = "วิชัย คลังวัตถุดิบ";
-        const rows = COST_DEMO_PRICES.map(([materialCode, pricePerKg], index) => ({ id: `price-${index + 1}`, materialCode, pricePerKg, effectiveFrom: costBangkokDay(startedAt - 30 * DAY), note: "ราคาตั้งต้นของข้อมูลสาธิต", createdAt: startedAt - 30 * DAY + index, createdBy: by }));
+        const rows = COST_DEMO_PRICES.map(([materialCode, unitPrice], index) => ({ id: `price-${index + 1}`, kind: "chem", materialCode, unitPrice, effectiveFrom: costBangkokDay(startedAt - 30 * DAY), note: "ราคาตั้งต้นของข้อมูลสาธิต", createdAt: startedAt - 30 * DAY + index, createdBy: by }));
         const next = rows.length;
-        rows.push({ id: `price-${next + 1}`, materialCode: "ZNO", pricePerKg: 62, effectiveFrom: costBangkokDay(startedAt - 120 * DAY), note: "ราคาเดิมก่อนปรับ", createdAt: startedAt - 120 * DAY, createdBy: by });
-        rows.push({ id: `price-${next + 2}`, materialCode: "S-80", pricePerKg: 150, effectiveFrom: costBangkokDay(startedAt + 10 * DAY), note: "ราคาใหม่ตามใบเสนอราคา มีผลล่วงหน้า", createdAt: startedAt - 2 * DAY, createdBy: by });
+        rows.push({ id: `price-${next + 1}`, kind: "chem", materialCode: "ZNO", unitPrice: 62, effectiveFrom: costBangkokDay(startedAt - 120 * DAY), note: "ราคาเดิมก่อนปรับ", createdAt: startedAt - 120 * DAY, createdBy: by });
+        rows.push({ id: `price-${next + 2}`, kind: "chem", materialCode: "S-80", unitPrice: 150, effectiveFrom: costBangkokDay(startedAt + 10 * DAY), note: "ราคาใหม่ตามใบเสนอราคา มีผลล่วงหน้า", createdAt: startedAt - 2 * DAY, createdBy: by });
         costPrices = { rows };
+      }
+      // ข้อมูลเก่า (ก่อนมีราคาของซื้อ): pricePerKg → unitPrice และทุกแถวเป็นเคมี
+      for (const row of costPrices.rows) {
+        if (row.unitPrice === undefined && row.pricePerKg !== undefined) { row.unitPrice = row.pricePerKg; delete row.pricePerKg; }
+        if (row.kind !== "part") row.kind = "chem";
+      }
+    }
+    // ราคาสาธิตของของซื้อ (ชิ้นงาน BOM ชนิด PURCHASED): ใส่ครั้งเดียวเมื่อ BOM ของ mock มีของซื้อแล้ว · เว้นทุกชิ้นที่สามไว้ไม่มีราคา (ให้ลองตั้งราคา)
+    if (!costPrices.partsSeeded) {
+      const parts = (bomLoad().items ?? []).filter((item) => item.kind === "PURCHASED").map((item) => item.code).sort();
+      if (parts.length) {
+        const DEMO_PART_PRICES = [4.5, 12, 0.85, 36.5];
+        const by = "วิชัย คลังวัตถุดิบ";
+        parts.forEach((materialCode, index) => {
+          if (index % 3 === 2) return;
+          costPrices.rows.push({ id: `price-${costPrices.rows.length + 1}`, kind: "part", materialCode, unitPrice: DEMO_PART_PRICES[index % DEMO_PART_PRICES.length], effectiveFrom: costBangkokDay(startedAt - 30 * DAY), note: "ราคาตั้งต้นของข้อมูลสาธิต", createdAt: startedAt - 30 * DAY + 500 + index, createdBy: by });
+        });
+        costPrices.partsSeeded = true;
+        costPersist();
       }
     }
     return costPrices;
@@ -4274,18 +4293,21 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       rfApplyBomOps(ops, actor, at, p_action);
       return rfDelta(rfMaster, p_base_version);
     },
-    // ราคาเคมี (แถวที่เคยบันทึกทั้งหมด) · ผู้เห็นราคาเท่านั้น (RF_FORBIDDEN)
+    // ราคาวัตถุดิบ: เคมี (kind chem ต่อ kg) และของซื้อ (kind part ต่อหน่วยของชิ้น) แถวที่เคยบันทึกทั้งหมด · ผู้เห็นราคาเท่านั้น (RF_FORBIDDEN)
     app_rf_prices() {
       const actor = bomActor();
       if (!costSeePrices(actor)) fail("RF_FORBIDDEN");
       return costPricesOut(actor);
     },
-    // บันทึกราคาใหม่ (แถวใหม่ ไม่แก้แถวเดิม) · ผู้เขียนเท่านั้น (RF_FORBIDDEN) · ข้อมูลไม่ถูกต้อง = RF_INVALID_PRICE
-    app_rf_price_save({ p_material_code, p_price_per_kg, p_effective_from, p_note } = {}) {
+    // บันทึกราคาใหม่ (แถวใหม่ ไม่แก้แถวเดิม) · ผู้เขียนเท่านั้น (RF_FORBIDDEN) · ข้อมูลไม่ถูกต้อง = RF_INVALID_PRICE (ชนิดไม่ใช่ chem/part · chem ต้องเป็นวัตถุดิบ RubberFlow ที่มีอยู่ · part ต้องเป็นชิ้นงาน BOM ชนิด PURCHASED ที่มีอยู่)
+    app_rf_price_save({ p_kind, p_material_code, p_unit_price, p_effective_from, p_note } = {}) {
       const actor = bomActor();
       if (!costWrite(actor)) fail("RF_FORBIDDEN");
-      const known = new Set([...(costRfData().materials ?? []).map((row) => row.code), ...COST_DEMO_PRICES.map(([code]) => code), ...COST_UNPRICED]);
-      const price = typeof p_price_per_kg === "number" ? p_price_per_kg : Number.NaN;
+      if (p_kind !== "chem" && p_kind !== "part") fail("RF_INVALID_PRICE");
+      const known = p_kind === "part"
+        ? new Set((bomLoad().items ?? []).filter((item) => item.kind === "PURCHASED").map((item) => item.code))
+        : new Set([...(costRfData().materials ?? []).map((row) => row.code), ...COST_DEMO_PRICES.map(([code]) => code), ...COST_UNPRICED]);
+      const price = typeof p_unit_price === "number" ? p_unit_price : Number.NaN;
       const note = p_note === undefined || p_note === null ? "" : p_note;
       const horizon = costBangkokDay(now() + 366 * DAY);
       if (typeof p_material_code !== "string" || !known.has(p_material_code)) fail("RF_INVALID_PRICE");
@@ -4293,11 +4315,11 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       if (typeof p_effective_from !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(p_effective_from) || costBangkokDay(Date.parse(p_effective_from) + 7 * 3600000) !== p_effective_from || p_effective_from > horizon) fail("RF_INVALID_PRICE");
       if (typeof note !== "string" || note.length > 300) fail("RF_INVALID_PRICE");
       const data = costLoad();
-      // เหมือนฐานข้อมูล: แถวล่าสุด (ตาม createdAt) ของวัตถุดิบและวันที่มีผลเดียวกัน ราคาและหมายเหตุเท่าเดิม = ไม่เพิ่มแถวซ้ำ
-      const latest = data.rows.filter((row) => row.materialCode === p_material_code && row.effectiveFrom === p_effective_from).sort((a, b) => b.createdAt - a.createdAt)[0];
-      if (latest && latest.pricePerKg === price && latest.note === note.trim()) return costPricesOut(actor);
+      // เหมือนฐานข้อมูล: แถวล่าสุด (ตาม createdAt) ของชนิด + รหัส + วันที่มีผลเดียวกัน ราคาและหมายเหตุเท่าเดิม = ไม่เพิ่มแถวซ้ำ
+      const latest = data.rows.filter((row) => row.kind === p_kind && row.materialCode === p_material_code && row.effectiveFrom === p_effective_from).sort((a, b) => b.createdAt - a.createdAt)[0];
+      if (latest && latest.unitPrice === price && latest.note === note.trim()) return costPricesOut(actor);
       costLastAt = Math.max(now(), costLastAt + 1);
-      data.rows.push({ id: `price-${data.rows.length + 1}`, materialCode: p_material_code, pricePerKg: price, effectiveFrom: p_effective_from, note: note.trim(), createdAt: costLastAt, createdBy: actor.name });
+      data.rows.push({ id: `price-${data.rows.length + 1}`, kind: p_kind, materialCode: p_material_code, unitPrice: price, effectiveFrom: p_effective_from, note: note.trim(), createdAt: costLastAt, createdBy: actor.name });
       costPersist();
       return costPricesOut(actor);
     },

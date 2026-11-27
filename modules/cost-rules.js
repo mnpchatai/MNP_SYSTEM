@@ -1,6 +1,7 @@
 // ต้นทุนการผลิต (โหมดทดสอบ) — กฎล้วน ไม่มี DOM/Supabase: ใครเห็นราคา/ต้นทุน · ราคาเคมีต่อ kg ที่มีผลในวันหนึ่ง · ต้นทุนสูตรผสม (ต่อ batch / ต่อ kg) · ต้นทุนจริงของล็อตผสมเทียบสูตร
 // โหลดก่อน modules/cost-data.js และ modules/st-pages.js (ดู index.html) · เทสต์ด้วย node --test (scripts/tests/cost-rules.test.mjs)
-// ราคา: ทุกแถวที่เคยบันทึก { id, materialCode, pricePerKg, effectiveFrom: "YYYY-MM-DD", note, createdAt: ms, createdBy } ไม่มีการแก้/ลบ — แก้ราคา = เพิ่มแถวใหม่
+// ราคา: ทุกแถวที่เคยบันทึก { id, kind: "chem"|"part", materialCode, unitPrice, effectiveFrom: "YYYY-MM-DD", note, createdAt: ms, createdBy } ไม่มีการแก้/ลบ — แก้ราคา = เพิ่มแถวใหม่
+//   chem = เคมี RubberFlow ราคาต่อ kg · part = ของซื้อ (ชิ้นงาน BOM ชนิด PURCHASED) ราคาต่อหน่วยของชิ้นนั้น · รหัสของซื้ออาจซ้ำรหัสเคมีได้ จึงแยกตาม kind เสมอ (ต้นทุนสูตรใช้เฉพาะ chem)
 //   ราคาที่ใช้ในวัน D = แถวที่ effectiveFrom ล่าสุดที่ไม่เกิน D · วันเดียวกันหลายแถว = แถวที่ createdAt ใหม่สุด (ราคาที่ตั้งล่วงหน้ายังไม่ถูกใช้จนถึงวันนั้น)
 // สูตร: โหมดน้ำหนัก { materialCode, stage 0|1|2|3, kg (ต่อ batch), unit "kg"|"g" (หน่วยที่กรอก ไม่เปลี่ยนค่า kg), phr } · โหมดเดิม { materialCode, phr, stage 1|2 } (kg ต่อ batch = phr ÷ Σphr × batchKg)
 // ตัวเลขเก็บเต็มความละเอียด ปัดเฉพาะตอนแสดง (fmtBaht / fmtKg) · การซ่อนเมนู/หน้าเป็นแค่ UX สิทธิ์จริงตัดสินที่ฐานข้อมูล (RF_FORBIDDEN)
@@ -60,14 +61,16 @@
   }
 
   // ---------- ราคา ----------
-  const validPrice = (row) => row && finite(row.pricePerKg) !== null && Number(row.pricePerKg) > 0 && dayKey(row.effectiveFrom) !== "";
-  // ราคาที่มีผลของวัตถุดิบในวัน date (ms หรือ "YYYY-MM-DD") · คืนแถวราคา หรือ null (ไม่มีราคา / ราคาแรกยังไม่ถึงวันมีผล)
-  function priceAt(prices, materialCode, date) {
+  const PRICE_KINDS = Object.freeze(["chem", "part"]);
+  const kindOf = (row) => (row?.kind === "part" ? "part" : "chem");
+  const validPrice = (row) => row && finite(row.unitPrice) !== null && Number(row.unitPrice) > 0 && dayKey(row.effectiveFrom) !== "";
+  // ราคาที่มีผลของเคมี (kind "chem") หรือของซื้อ (kind "part") ในวัน date (ms หรือ "YYYY-MM-DD") · คืนแถวราคา หรือ null (ไม่มีราคา / ราคาแรกยังไม่ถึงวันมีผล)
+  function priceAt(prices, materialCode, date, kind = "chem") {
     const day = dayKey(date);
     if (!day) return null;
     let best = null;
     for (const row of prices ?? []) {
-      if (row.materialCode !== materialCode || !validPrice(row)) continue;
+      if (row.materialCode !== materialCode || kindOf(row) !== kind || !validPrice(row)) continue;
       const from = dayKey(row.effectiveFrom);
       if (from > day) continue;
       const bestFrom = best ? dayKey(best.effectiveFrom) : "";
@@ -75,17 +78,17 @@
     }
     return best;
   }
-  // ราคาที่มีผลของทุกวัตถุดิบในวัน date: Map รหัส → แถวราคา (ไม่มีราคา = ไม่มีใน Map)
-  function pricesAt(prices, date) {
+  // ราคาที่มีผลของทุกรหัสของ kind นั้นในวัน date: Map รหัส → แถวราคา (ไม่มีราคา = ไม่มีใน Map)
+  function pricesAt(prices, date, kind = "chem") {
     const out = new Map();
-    for (const code of new Set((prices ?? []).map((row) => row.materialCode))) {
-      const row = priceAt(prices, code, date);
+    for (const code of new Set((prices ?? []).filter((row) => kindOf(row) === kind).map((row) => row.materialCode))) {
+      const row = priceAt(prices, code, date, kind);
       if (row) out.set(code, row);
     }
     return out;
   }
-  // ประวัติราคาของวัตถุดิบหนึ่งตัว ใหม่ก่อน (วันมีผลใหม่สุดก่อน แล้วตามเวลาที่บันทึก)
-  const priceHistory = (prices, materialCode) => (prices ?? []).filter((row) => row.materialCode === materialCode)
+  // ประวัติราคาของรหัสหนึ่งตัว (kind) ใหม่ก่อน (วันมีผลใหม่สุดก่อน แล้วตามเวลาที่บันทึก)
+  const priceHistory = (prices, materialCode, kind = "chem") => (prices ?? []).filter((row) => row.materialCode === materialCode && kindOf(row) === kind)
     .sort((a, b) => (dayKey(b.effectiveFrom) < dayKey(a.effectiveFrom) ? -1 : dayKey(b.effectiveFrom) > dayKey(a.effectiveFrom) ? 1 : (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0)));
 
   // ---------- น้ำหนักตามสูตร ----------
@@ -107,11 +110,11 @@
   // คืน { batchKg, cost, costPerKg, complete, missing, parts, lines } · ทุกบรรทัดคิดราคาที่มีผลในวัน date · บรรทัดน้ำหนัก 0 = ต้นทุน 0 ไม่นับเป็น "ไม่มีราคา"
   // ราคาขาด (มีน้ำหนักแต่ไม่มีราคา) → ยอดรวมเป็นยอดบางส่วน complete = false · lines เรียงต้นทุนมากไปน้อย (ไม่มีราคาไว้ท้าย) · share = สัดส่วน 0–1 ของต้นทุนรวม (null = ไม่มีราคา)
   function formulaCost(recipe, prices, date) {
-    const priced = pricesAt(prices, date);
+    const priced = pricesAt(prices, date, "chem");
     const weights = recipeWeights(recipe);
     const lines = weights.map((line) => {
       const row = priced.get(line.materialCode) ?? null;
-      const pricePerKg = row ? Number(row.pricePerKg) : null;
+      const pricePerKg = row ? Number(row.unitPrice) : null;
       const cost = line.kg > 0 ? (pricePerKg === null ? null : line.kg * pricePerKg) : 0;
       return { ...line, pricePerKg, cost, share: null };
     });
@@ -147,7 +150,7 @@
         actualKg += kg;
         if (!(kg > 0)) continue;
         const row = at === null ? null : priceAt(prices, line.materialCode, at);
-        if (row) actual += kg * Number(row.pricePerKg);
+        if (row) actual += kg * Number(row.unitPrice);
         else missing.add(line.materialCode);
       }
     }
@@ -177,7 +180,7 @@
 
   const api = {
     canSeeCost, canSeePrices, canEditPrices, roleCodeOf, deptCodeOf,
-    bangkokDay, dayKey, fmtDay, fmtBaht, fmtPrice, fmtWeight, round,
+    PRICE_KINDS, bangkokDay, dayKey, fmtDay, fmtBaht, fmtPrice, fmtWeight, round,
     priceAt, pricesAt, priceHistory, recipeWeights, formulaCost, lotCost, PREP_LABEL, stageLabel, isWeightMode, revisionsOf, currentRevision, recipeOfLot,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

@@ -4,7 +4,8 @@
 --   1) ใบสูตรจริงมี 4 ส่วนต่อโม่: ขั้นเตรียมวัตถุดิบ + ขั้นผสม 1, 2, 3 กรอกเป็นน้ำหนัก (kg หรือ g) ไม่ใช่ PHR
 --      บรรทัดที่ระบุเคมีแต่ไม่มีน้ำหนัก เก็บเป็นบรรทัดน้ำหนัก 0 (ไม่เบิก ไม่ชั่ง ต้นทุน 0)
 --      ค่ามาตรฐานการผสม (อุณหภูมิเครื่องผสม อุณหภูมิปล่อยยาง เวลาผสม) คงเดิม เฉพาะขั้น 1 และ 2
---   2) ราคาเคมีต่อ kg กรอกและเก็บในโมดูล ST มีวันที่เริ่มใช้ เก็บประวัติทุกครั้ง
+--   2) ราคาวัตถุดิบกรอกและเก็บในโมดูล ST (หน้า "ในคลัง") มีวันที่เริ่มใช้ เก็บประวัติทุกครั้ง · ครอบคลุมเคมี (ต่อ kg) และของซื้อของ BOM (ต่อหน่วย)
+--      (ผู้ใช้ 2026-11-27 รอบทดสอบ: ราคาอยู่ในคลัง ไม่แยกเมนู และไม่ใช่เฉพาะเคมี) · bom_items.unit_cost เดิมไม่ถูกแตะในไฟล์นี้
 --   3) ใครเห็นอะไร (บังคับที่ RPC):
 --      - ต้นทุนและราคาทั้งหมด: บทบาท general_manager / factory_manager / admin หรือแผนก PP ทุกบทบาท
 --      - ราคาวัตถุดิบอย่างเดียว (อ่านและแก้): แผนก ST ทุกบทบาท · admin แก้ราคาได้ด้วย
@@ -16,7 +17,7 @@
 --         แถวเพิ่มอย่างเดียว ไม่มี RPC ใดแก้หรือลบ (แก้ราคา = เพิ่มแถวใหม่) · ราคาที่ใช้ ณ วันที่ D = แถวที่ effective_from มากสุดที่ไม่เกิน D
 --         ซ้ำวันเดียวกันใช้แถวที่ created_at ล่าสุด
 --   ใหม่: private.rf_cost_viewer / rf_price_writer / rf_price_reader (public.employees) · private.rf_price_rows() · private.rf_items_by_weight(jsonb)
---         public.app_rf_prices() · public.app_rf_price_save(text, numeric, date, text) · public.app_rf_cost_data()
+--         public.app_rf_prices() · public.app_rf_price_save(text, text, numeric, date, text) · public.app_rf_cost_data()
 --   replace: private.rf_parse_items(jsonb, jsonb) จาก 20261130010000_bom_rf_go_live.sql
 --            (+ บรรทัดแบบน้ำหนัก {materialCode, stage 0-3, kg, unit} · บรรทัด PHR เดิมไม่เปลี่ยน)
 --   replace: private.rf_save_recipes(uuid, boolean, jsonb, bigint, bigint) จาก 20261130010000_bom_rf_go_live.sql
@@ -42,7 +43,7 @@
 --   ก่อน apply ที่ production: เทียบ md5(pg_get_functiondef(...)) ของ private.rf_parse_items(jsonb, jsonb) และ
 --   private.rf_save_recipes(uuid, boolean, jsonb, bigint, bigint) กับ stack ที่ apply ถึง 20270107010000 (ต้องยังเป็นนิยามของ 20261130010000)
 --
--- Rollback (ยังเป็นข้อมูลทดสอบทั้งหมด): drop function public.app_rf_cost_data(), public.app_rf_price_save(text, numeric, date, text), public.app_rf_prices(),
+-- Rollback (ยังเป็นข้อมูลทดสอบทั้งหมด): drop function public.app_rf_cost_data(), public.app_rf_price_save(text, text, numeric, date, text), public.app_rf_prices(),
 --   private.rf_price_rows(), private.rf_price_reader(public.employees), private.rf_price_writer(public.employees), private.rf_cost_viewer(public.employees) ·
 --   create or replace private.rf_parse_items / private.rf_save_recipes กลับเป็นนิยามของ 20261130010000 (สูตรแบบน้ำหนักที่บันทึกแล้วยังอ่านได้ แต่แก้ไม่ได้) ·
 --   drop function private.rf_items_by_weight(jsonb) · เอา 'rf_material_prices' ออกจาก private.sandbox_unguarded_tables() และ public.app_sandbox_purge_rf() ·
@@ -67,10 +68,12 @@ end $$;
 create table public.rf_material_prices (
   id uuid primary key default gen_random_uuid(),
   is_test boolean not null default false,
-  -- รหัสวัตถุดิบของ rf_materials (โหมดเดียวกัน) ตรวจว่ามีอยู่จริงใน app_rf_price_save · ไม่ผูก FK เพราะ rf_materials ไม่มี unique (code, is_test) ให้อ้าง
-  material_code text not null check (material_code ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$'),
-  -- บาทต่อกิโลกรัม ทศนิยมไม่เกิน 4 ตำแหน่ง
-  price_per_kg numeric not null check (price_per_kg > 0 and price_per_kg <= 10000000 and price_per_kg = round(price_per_kg, 4)),
+  -- chem = เคมีของ RubberFlow (rf_materials.code ราคาต่อ kg) · part = ของซื้อของ BOM (bom_items.code ชนิด PURCHASED ราคาต่อหน่วยของรายการ)
+  kind text not null default 'chem' check (kind in ('chem', 'part')),
+  -- รหัสของโหมดเดียวกัน ตรวจว่ามีอยู่จริงใน app_rf_price_save · ไม่ผูก FK (ตารางต้นทางไม่มี unique (code, is_test) ให้อ้าง)
+  material_code text not null check (char_length(material_code) between 1 and 60),
+  -- บาทต่อหน่วย (เคมี = ต่อ kg) ทศนิยมไม่เกิน 4 ตำแหน่ง
+  unit_price numeric not null check (unit_price > 0 and unit_price <= 10000000 and unit_price = round(unit_price, 4)),
   effective_from date not null check (effective_from >= date '2000-01-01'),
   note text not null default '' check (char_length(note) <= 300),
   created_by uuid references public.employees(id) on delete set null,
@@ -78,8 +81,8 @@ create table public.rf_material_prices (
   created_at timestamptz not null default clock_timestamp(),
   unique (id, is_test)
 );
-create index rf_material_prices_lookup_idx on public.rf_material_prices (is_test, material_code, effective_from desc, created_at desc);
-comment on table public.rf_material_prices is 'ราคาเคมีต่อ kg ของวัตถุดิบ RubberFlow มีวันที่เริ่มใช้ · เพิ่มอย่างเดียว (แก้ราคา = แถวใหม่) · อ่าน/เขียนผ่าน app_rf_prices / app_rf_price_save / app_rf_cost_data เท่านั้น';
+create index rf_material_prices_lookup_idx on public.rf_material_prices (is_test, kind, material_code, effective_from desc, created_at desc);
+comment on table public.rf_material_prices is 'ราคาวัตถุดิบต่อหน่วย (เคมีของ RubberFlow ต่อ kg และของซื้อของ BOM ต่อหน่วยของรายการ) มีวันที่เริ่มใช้ · เพิ่มอย่างเดียว (แก้ราคา = แถวใหม่) · อ่าน/เขียนผ่าน app_rf_prices / app_rf_price_save / app_rf_cost_data เท่านั้น';
 comment on column public.rf_material_prices.effective_from is 'วันที่เริ่มใช้ราคา · ราคาที่ใช้ ณ วันที่ D = แถวที่ effective_from มากสุดที่ไม่เกิน D ซ้ำวันใช้ created_at ล่าสุด';
 
 create trigger rf_material_prices_sandbox_scope before insert or update or delete on public.rf_material_prices
@@ -419,15 +422,15 @@ set search_path = ''
 as $$
   select coalesce((
     select jsonb_agg(jsonb_build_object(
-        'id', p.id, 'materialCode', p.material_code, 'pricePerKg', p.price_per_kg, 'effectiveFrom', to_char(p.effective_from, 'YYYY-MM-DD'),
+        'id', p.id, 'kind', p.kind, 'materialCode', p.material_code, 'unitPrice', p.unit_price, 'effectiveFrom', to_char(p.effective_from, 'YYYY-MM-DD'),
         'note', p.note, 'createdAt', private.bom_ms(p.created_at), 'createdBy', coalesce(private.bom_person(p.created_by), ''))
-      order by p.material_code collate "C", p.effective_from desc, p.created_at desc, p.id)
+      order by p.kind, p.material_code collate "C", p.effective_from desc, p.created_at desc, p.id)
     from public.rf_material_prices p where p.is_test = (select private.bom_test_mode())), '[]'::jsonb)
 $$;
 revoke all on function private.rf_price_rows() from public, anon, authenticated;
 
 -- 5. RPC ---------------------------------------------------------------------------------------------------------------------------
--- อ่านราคาเคมี: { canWrite, prices: [{id, materialCode, pricePerKg, effectiveFrom, note, createdAt, createdBy}] }
+-- อ่านราคาวัตถุดิบ: { canWrite, prices: [{id, kind, materialCode, unitPrice, effectiveFrom, note, createdAt, createdBy}] }
 create or replace function public.app_rf_prices()
 returns jsonb
 language plpgsql
@@ -448,7 +451,7 @@ revoke all on function public.app_rf_prices() from public, anon;
 grant execute on function public.app_rf_prices() to authenticated;
 
 -- บันทึกราคาเคมี (เพิ่มแถวใหม่เสมอ ไม่แก้แถวเดิม) คืนรูปเดียวกับ app_rf_prices
-create or replace function public.app_rf_price_save(p_material_code text, p_price_per_kg numeric, p_effective_from date, p_note text default '')
+create or replace function public.app_rf_price_save(p_kind text, p_material_code text, p_unit_price numeric, p_effective_from date, p_note text default '')
 returns jsonb
 language plpgsql
 security definer
@@ -456,7 +459,9 @@ set search_path = ''
 as $$
 declare
   v_actor public.employees%rowtype;
+  v_kind text := coalesce(p_kind, '');
   v_code text := btrim(coalesce(p_material_code, ''));
+  v_test boolean;
   v_note text := btrim(coalesce(p_note, ''));
   v_today date := (now() at time zone 'Asia/Bangkok')::date;
   v_last public.rf_material_prices%rowtype;
@@ -464,26 +469,28 @@ begin
   perform private.lab_only_block();
   v_actor := private.rf_actor();
   if not private.rf_price_writer(v_actor) then raise exception 'RF_FORBIDDEN'; end if;
-  if p_price_per_kg is null or p_price_per_kg = 'NaN'::numeric or p_price_per_kg <= 0 or p_price_per_kg > 10000000
-     or p_price_per_kg <> round(p_price_per_kg, 4)
+  v_test := private.bom_test_mode();
+  if v_kind not in ('chem', 'part') or p_unit_price is null or p_unit_price = 'NaN'::numeric or p_unit_price <= 0 or p_unit_price > 10000000
+     or p_unit_price <> round(p_unit_price, 4)
      or p_effective_from is null or p_effective_from < date '2000-01-01' or p_effective_from > v_today + 366
      or char_length(v_note) > 300
-     or not exists (select 1 from public.rf_materials m where m.is_test = (select private.bom_test_mode()) and m.code = v_code) then
+     or (v_kind = 'chem' and not exists (select 1 from public.rf_materials m where m.is_test = v_test and m.code = v_code))
+     or (v_kind = 'part' and not exists (select 1 from public.bom_items i where i.is_test = v_test and i.code = v_code and i.kind = 'PURCHASED')) then
     raise exception 'RF_INVALID_PRICE';
   end if;
   -- กันกดซ้ำ: แถวที่ใช้อยู่ของวันเดียวกันเหมือนกันทุกช่องแล้ว ไม่เพิ่มแถว
   select * into v_last from public.rf_material_prices p
-  where p.is_test = (select private.bom_test_mode()) and p.material_code = v_code and p.effective_from = p_effective_from
+  where p.is_test = v_test and p.kind = v_kind and p.material_code = v_code and p.effective_from = p_effective_from
   order by p.created_at desc, p.id desc limit 1;
-  if not found or v_last.price_per_kg <> p_price_per_kg or v_last.note <> v_note then
-    insert into public.rf_material_prices (is_test, material_code, price_per_kg, effective_from, note, created_by)
-    values ((select private.bom_test_mode()), v_code, p_price_per_kg, p_effective_from, v_note, v_actor.id);
+  if not found or v_last.unit_price <> p_unit_price or v_last.note <> v_note then
+    insert into public.rf_material_prices (is_test, kind, material_code, unit_price, effective_from, note, created_by)
+    values (v_test, v_kind, v_code, p_unit_price, p_effective_from, v_note, v_actor.id);
   end if;
   return jsonb_build_object('canWrite', true, 'prices', private.rf_price_rows());
 end;
 $$;
-revoke all on function public.app_rf_price_save(text, numeric, date, text) from public, anon;
-grant execute on function public.app_rf_price_save(text, numeric, date, text) to authenticated;
+revoke all on function public.app_rf_price_save(text, text, numeric, date, text) from public, anon;
+grant execute on function public.app_rf_price_save(text, text, numeric, date, text) to authenticated;
 
 -- ข้อมูลต้นทุนสูตร: ราคา + วัตถุดิบ + สูตรทุก revision + ล็อตผสมล่าสุด 200 ล็อตพร้อมบรรทัดที่ชั่งจริงของใบเบิกที่ใช้ผสม
 --   เฉพาะผู้เห็นต้นทุน (ST อ่านราคาได้จาก app_rf_prices แต่เรียกตัวนี้ไม่ได้)

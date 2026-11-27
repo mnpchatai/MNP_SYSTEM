@@ -34,12 +34,12 @@ select is((select count(*)::integer from pg_proc p
            where p.oid in ('private.rf_cost_viewer(public.employees)'::regprocedure, 'private.rf_price_writer(public.employees)'::regprocedure,
                            'private.rf_price_reader(public.employees)'::regprocedure, 'private.rf_price_rows()'::regprocedure,
                            'private.rf_parse_items(jsonb,jsonb)'::regprocedure, 'private.rf_save_recipes(uuid,boolean,jsonb,bigint,bigint)'::regprocedure,
-                           'public.app_rf_prices()'::regprocedure, 'public.app_rf_price_save(text,numeric,date,text)'::regprocedure,
+                           'public.app_rf_prices()'::regprocedure, 'public.app_rf_price_save(text,text,numeric,date,text)'::regprocedure,
                            'public.app_rf_cost_data()'::regprocedure, 'public.app_sandbox_purge_rf()'::regprocedure)
              and p.prosecdef and p.proconfig @> array['search_path=""']), 10,
   'the helpers and the RPCs are security definer with an empty search_path');
 select ok(not exists (
-    select 1 from unnest(array['public.app_rf_prices()', 'public.app_rf_price_save(text,numeric,date,text)', 'public.app_rf_cost_data()', 'public.app_sandbox_purge_rf()']) f(sig)
+    select 1 from unnest(array['public.app_rf_prices()', 'public.app_rf_price_save(text,text,numeric,date,text)', 'public.app_rf_cost_data()', 'public.app_sandbox_purge_rf()']) f(sig)
     where has_function_privilege('anon', f.sig, 'execute') or not has_function_privilege('authenticated', f.sig, 'execute')),
   'the public RPCs are for authenticated only');
 select is((select count(*)::integer from private.lab_only_unguarded_functions()), 0, 'every callable public function keeps the lab-only guard');
@@ -66,7 +66,9 @@ select set_config('test.now_ms', (extract(epoch from now()) * 1000)::bigint::tex
 select set_config('test.today', to_char((now() at time zone 'Asia/Bangkok')::date, 'YYYY-MM-DD'), true);
 -- ข้อมูลจริง (ไม่ใช่โหมดทดสอบ) ใส่ตรง: โหมดทดสอบต้องมองไม่เห็น และการล้างข้อมูลทดสอบต้องไม่ลบ
 insert into public.rf_materials (code, name) values ('REAL-MAT', 'วัตถุดิบจริง');
-insert into public.rf_material_prices (material_code, price_per_kg, effective_from) values ('REAL-MAT', 10, date '2026-01-01');
+insert into public.rf_material_prices (material_code, unit_price, effective_from) values ('REAL-MAT', 10, date '2026-01-01');
+-- ของซื้อของข้อมูลจริง: โหมดทดสอบตั้งราคาให้ไม่ได้
+insert into public.bom_items (code, kind, name, owner_dept, uom) values ('P-REAL', 'PURCHASED', 'ของซื้อจริง', 'ST', 'pcs');
 select is((select count(*)::integer from public.rf_material_prices where not is_test), 1, 'a row written outside test mode is a real row');
 
 create schema cost_t;
@@ -158,6 +160,11 @@ insert into public.rf_material_lots (is_test, lot_no, material_code, qty_kg, ini
   (true, 'L-S1', 'M-S1', 0, 10, current_setting('test.now_ms')::bigint + 864000000, 10),
   (true, 'L-S3', 'M-S3', 0, 10, current_setting('test.now_ms')::bigint + 864000000, 10);
 update public.rf_master_state set version = version + 1 where is_test;
+-- ของซื้อของ BOM ในโหมดทดสอบ (ใส่ตรงขณะสวม persona เหมือนล็อตข้างบน): P-BOX เป็นของซื้อ ตั้งราคาได้ · FG-X ไม่ใช่ของซื้อ
+insert into public.bom_items (is_test, code, kind, name, owner_dept, uom) values
+  (true, 'P-BOX', 'PURCHASED', 'กล่องสาธิต', 'ST', 'box'), (true, 'FG-X', 'FG', 'สินค้าสาธิต', 'PK', 'pcs');
+select is((select count(*)::integer from public.bom_items where is_test and code in ('P-BOX', 'FG-X')), 2, 'the two test BOM items exist');
+select is((select count(*)::integer from public.bom_items where not is_test and code = 'P-REAL'), 1, 'and the real purchased part is a real row');
 set local role authenticated;
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select lives_ok($$ select cost_t.rf(jsonb_build_object('orders', jsonb_build_object('upsert', jsonb_build_array(current_setting('test.wo')::jsonb || '{"id":"WO-C1"}'::jsonb))), 'createOrder') $$,
@@ -183,49 +190,55 @@ select lives_ok($$ select cost_t.rf(jsonb_build_object('lots', jsonb_build_objec
 -- 5.1 ไม่เห็นอะไรเลย: RB (พนักงาน / หัวหน้า) QA WH ผู้ช่วย ผจก.โรงงาน (แผนก FT)
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_staff')::uuid);
 select throws_ok($$ select public.app_rf_prices() $$, 'RF_FORBIDDEN', 'RB staff cannot read prices');
-select throws_ok($$ select public.app_rf_price_save('M-PREP', 50, current_setting('test.today')::date) $$, 'RF_FORBIDDEN', 'RB staff cannot write a price');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 50, current_setting('test.today')::date) $$, 'RF_FORBIDDEN', 'RB staff cannot write a price');
 select throws_ok($$ select public.app_rf_cost_data() $$, 'RF_FORBIDDEN', 'RB staff cannot read cost data');
 select public.app_sandbox_enter(current_setting('test.p_sbx_rb_mgr')::uuid);
 select throws_ok($$ select public.app_rf_prices() $$, 'RF_FORBIDDEN', 'the RB department manager cannot read prices');
-select throws_ok($$ select public.app_rf_price_save('M-PREP', 50, current_setting('test.today')::date) $$, 'RF_FORBIDDEN', 'nor write one');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 50, current_setting('test.today')::date) $$, 'RF_FORBIDDEN', 'nor write one');
 select throws_ok($$ select public.app_rf_cost_data() $$, 'RF_FORBIDDEN', 'nor read cost data');
 select public.app_sandbox_enter(current_setting('test.p_sbx_qa_staff')::uuid);
 select throws_ok($$ select public.app_rf_prices() $$, 'RF_FORBIDDEN', 'QA cannot read prices');
-select throws_ok($$ select public.app_rf_price_save('M-PREP', 50, current_setting('test.today')::date) $$, 'RF_FORBIDDEN', 'QA cannot write a price');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 50, current_setting('test.today')::date) $$, 'RF_FORBIDDEN', 'QA cannot write a price');
 select throws_ok($$ select public.app_rf_cost_data() $$, 'RF_FORBIDDEN', 'QA cannot read cost data');
 select public.app_sandbox_enter(current_setting('test.p_sbx_wh_staff')::uuid);
 select throws_ok($$ select public.app_rf_prices() $$, 'RF_FORBIDDEN', 'WH cannot read prices');
-select throws_ok($$ select public.app_rf_price_save('M-PREP', 50, current_setting('test.today')::date) $$, 'RF_FORBIDDEN', 'WH cannot write a price');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 50, current_setting('test.today')::date) $$, 'RF_FORBIDDEN', 'WH cannot write a price');
 select throws_ok($$ select public.app_rf_cost_data() $$, 'RF_FORBIDDEN', 'WH cannot read cost data');
 select public.app_sandbox_enter(current_setting('test.p_sbx_ft_afm_c')::uuid);
 select throws_ok($$ select public.app_rf_prices() $$, 'RF_FORBIDDEN', 'the assistant factory manager cannot read prices');
-select throws_ok($$ select public.app_rf_price_save('M-PREP', 50, current_setting('test.today')::date) $$, 'RF_FORBIDDEN', 'nor write one');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 50, current_setting('test.today')::date) $$, 'RF_FORBIDDEN', 'nor write one');
 select throws_ok($$ select public.app_rf_cost_data() $$, 'RF_FORBIDDEN', 'nor read cost data');
 
 -- 5.2 แผนก ST: อ่านและแก้ราคา แต่ไม่เห็นต้นทุน
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_staff')::uuid);
 select is(public.app_rf_prices(), '{"canWrite": true, "prices": []}'::jsonb, 'ST staff read the (empty) test price list and may write; the real price row is not listed');
 select throws_ok($$ select public.app_rf_cost_data() $$, 'RF_FORBIDDEN', 'ST staff cannot read cost data');
-select lives_ok($$ select public.app_rf_price_save('M-PREP', 50, date '2026-01-01', 'ราคาเปิด') $$, 'ST staff enter a price');
-select throws_ok($$ select public.app_rf_price_save('M-NONE', 50, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'the material must exist');
-select throws_ok($$ select public.app_rf_price_save('REAL-MAT', 50, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'a real material is not a test material');
-select throws_ok($$ select public.app_rf_price_save('M-PREP', 0, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'the price must be above zero');
-select throws_ok($$ select public.app_rf_price_save('M-PREP', -5, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'a negative price is refused');
-select throws_ok($$ select public.app_rf_price_save('M-PREP', null, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'a missing price is refused');
-select throws_ok($$ select public.app_rf_price_save('M-PREP', 'NaN'::numeric, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'NaN is refused');
-select throws_ok($$ select public.app_rf_price_save('M-PREP', 10000001, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'a price above the ceiling is refused');
-select throws_ok($$ select public.app_rf_price_save('M-PREP', 1.00001, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'more than four decimals is refused');
-select throws_ok($$ select public.app_rf_price_save('M-PREP', 50, null) $$, 'RF_INVALID_PRICE', 'the effective date is required');
-select throws_ok($$ select public.app_rf_price_save('M-PREP', 50, current_setting('test.today')::date + 400) $$, 'RF_INVALID_PRICE', 'an effective date more than a year ahead is refused');
-select throws_ok($$ select public.app_rf_price_save('M-PREP', 50, date '1999-12-31') $$, 'RF_INVALID_PRICE', 'an effective date before 2000 is refused');
-select throws_ok($$ select public.app_rf_price_save('M-PREP', 50, current_setting('test.today')::date, repeat('x', 301)) $$, 'RF_INVALID_PRICE', 'a note over 300 characters is refused');
+select lives_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 50, date '2026-01-01', 'ราคาเปิด') $$, 'ST staff enter a price');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-NONE', 50, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'the material must exist');
+select throws_ok($$ select public.app_rf_price_save('chem', 'REAL-MAT', 50, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'a real material is not a test material');
+select throws_ok($$ select public.app_rf_price_save('other', 'M-PREP', 50, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'the kind is chem or part only');
+select throws_ok($$ select public.app_rf_price_save(null, 'M-PREP', 50, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'the kind is required');
+select throws_ok($$ select public.app_rf_price_save('part', 'M-PREP', 50, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'a chemical code is not a purchased part');
+select throws_ok($$ select public.app_rf_price_save('chem', 'P-BOX', 50, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'a purchased part code is not a chemical');
+select throws_ok($$ select public.app_rf_price_save('part', 'FG-X', 50, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'only purchased parts take a price, not other BOM items');
+select throws_ok($$ select public.app_rf_price_save('part', 'P-REAL', 50, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'a real purchased part is not a test part');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 0, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'the price must be above zero');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-PREP', -5, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'a negative price is refused');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-PREP', null, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'a missing price is refused');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 'NaN'::numeric, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'NaN is refused');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 10000001, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'a price above the ceiling is refused');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 1.00001, current_setting('test.today')::date) $$, 'RF_INVALID_PRICE', 'more than four decimals is refused');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 50, null) $$, 'RF_INVALID_PRICE', 'the effective date is required');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 50, current_setting('test.today')::date + 400) $$, 'RF_INVALID_PRICE', 'an effective date more than a year ahead is refused');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 50, date '1999-12-31') $$, 'RF_INVALID_PRICE', 'an effective date before 2000 is refused');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 50, current_setting('test.today')::date, repeat('x', 301)) $$, 'RF_INVALID_PRICE', 'a note over 300 characters is refused');
 select public.app_sandbox_enter(current_setting('test.p_sbx_st_mgr_c')::uuid);
-select lives_ok($$ select public.app_rf_price_save('M-PREP', 55, current_setting('test.today')::date) $$, 'the ST department manager enters a newer price');
-select lives_ok($$ select public.app_rf_price_save('M-PREP', 56, current_setting('test.today')::date, 'แก้ราคา') $$, 'a correction on the same date is a new row');
-select lives_ok($$ select public.app_rf_price_save('M-PREP', 56, current_setting('test.today')::date, 'แก้ราคา') $$, 'pressing save twice with the same values adds nothing');
-select lives_ok($$ select public.app_rf_price_save('M-S1', 120.5, current_setting('test.today')::date + 30) $$, 'a price may start in the future');
+select lives_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 55, current_setting('test.today')::date) $$, 'the ST department manager enters a newer price');
+select lives_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 56, current_setting('test.today')::date, 'แก้ราคา') $$, 'a correction on the same date is a new row');
+select lives_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 56, current_setting('test.today')::date, 'แก้ราคา') $$, 'pressing save twice with the same values adds nothing');
+select lives_ok($$ select public.app_rf_price_save('chem', 'M-S1', 120.5, current_setting('test.today')::date + 30) $$, 'a price may start in the future');
 select throws_ok($$ select public.app_rf_cost_data() $$, 'RF_FORBIDDEN', 'the ST department manager cannot read cost data');
-select is((select jsonb_agg(jsonb_build_array(p ->> 'materialCode', (p ->> 'pricePerKg')::numeric, p ->> 'effectiveFrom', p ->> 'note') order by t.ord)
+select is((select jsonb_agg(jsonb_build_array(p ->> 'materialCode', (p ->> 'unitPrice')::numeric, p ->> 'effectiveFrom', p ->> 'note') order by t.ord)
            from jsonb_array_elements(public.app_rf_prices() -> 'prices') with ordinality as t(p, ord)),
   jsonb_build_array(
     jsonb_build_array('M-PREP', 56, current_setting('test.today'), 'แก้ราคา'),
@@ -240,26 +253,30 @@ select ok((public.app_rf_prices() -> 'prices' -> 0 ->> 'createdBy') like 'ทด
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select is(public.app_rf_prices() -> 'canWrite', 'false'::jsonb, 'PP staff read prices without the right to write');
 select is(jsonb_array_length(public.app_rf_prices() -> 'prices'), 4, 'PP staff see every price row');
-select throws_ok($$ select public.app_rf_price_save('M-PREP', 60, current_setting('test.today')::date) $$, 'RF_FORBIDDEN', 'PP staff cannot write a price');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 60, current_setting('test.today')::date) $$, 'RF_FORBIDDEN', 'PP staff cannot write a price');
 select lives_ok($$ select public.app_rf_cost_data() $$, 'PP staff read cost data');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_afm_c')::uuid);
 select lives_ok($$ select public.app_rf_cost_data() $$, 'an assistant factory manager who belongs to PP reads cost data (PP sees everything)');
-select throws_ok($$ select public.app_rf_price_save('M-PREP', 60, current_setting('test.today')::date) $$, 'RF_FORBIDDEN', 'but cannot write a price');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 60, current_setting('test.today')::date) $$, 'RF_FORBIDDEN', 'but cannot write a price');
 select public.app_sandbox_enter(current_setting('test.p_sbx_mgt_gm')::uuid);
 select is(public.app_rf_prices() -> 'canWrite', 'false'::jsonb, 'the general manager reads prices without the right to write');
-select throws_ok($$ select public.app_rf_price_save('M-PREP', 60, current_setting('test.today')::date) $$, 'RF_FORBIDDEN', 'the general manager cannot write a price');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 60, current_setting('test.today')::date) $$, 'RF_FORBIDDEN', 'the general manager cannot write a price');
 select lives_ok($$ select public.app_rf_cost_data() $$, 'the general manager reads cost data');
 select public.app_sandbox_enter(current_setting('test.p_sbx_ft_fm')::uuid);
 select is(public.app_rf_prices() -> 'canWrite', 'false'::jsonb, 'the factory manager reads prices without the right to write');
-select throws_ok($$ select public.app_rf_price_save('M-PREP', 60, current_setting('test.today')::date) $$, 'RF_FORBIDDEN', 'the factory manager cannot write a price');
+select throws_ok($$ select public.app_rf_price_save('chem', 'M-PREP', 60, current_setting('test.today')::date) $$, 'RF_FORBIDDEN', 'the factory manager cannot write a price');
 select lives_ok($$ select public.app_rf_cost_data() $$, 'the factory manager reads cost data');
 
 -- 5.4 admin: ทุกอย่าง
 select public.app_sandbox_enter(current_setting('test.p_sbx_admin_c')::uuid);
 select is(public.app_rf_prices() -> 'canWrite', 'true'::jsonb, 'the admin may write prices');
-select lives_ok($$ select public.app_rf_price_save('M-S3', 900, date '2026-06-01') $$, 'the admin enters a price');
+select lives_ok($$ select public.app_rf_price_save('chem', 'M-S3', 900, date '2026-06-01') $$, 'the admin enters a price');
+select lives_ok($$ select public.app_rf_price_save('part', 'P-BOX', 12.5, date '2026-06-01', 'ต่อกล่อง') $$, 'and the price of a purchased part (per its own unit)');
+select is((select jsonb_agg(jsonb_build_array(p ->> 'kind', p ->> 'materialCode', (p ->> 'unitPrice')::numeric) order by t.ord)
+           from jsonb_array_elements(public.app_rf_prices() -> 'prices') with ordinality as t(p, ord) where p ->> 'materialCode' in ('P-BOX', 'M-S3')),
+  '[["chem", "M-S3", 900], ["part", "P-BOX", 12.5]]'::jsonb, 'each row says whether it prices a chemical or a purchased part');
 select set_config('test.cost', public.app_rf_cost_data()::text, true);
-select is(jsonb_array_length(current_setting('test.cost')::jsonb -> 'prices'), 5, 'cost data carries every test price row');
+select is(jsonb_array_length(current_setting('test.cost')::jsonb -> 'prices'), 6, 'cost data carries every test price row');
 select is((select jsonb_agg(m ->> 'code' order by m ->> 'code') from jsonb_array_elements(current_setting('test.cost')::jsonb -> 'materials') m),
   '["M-PREP", "M-S1", "M-S3", "M-ZERO"]'::jsonb, 'the test materials only');
 select is((select jsonb_build_array(r ->> 'status', (r ->> 'batchKg')::numeric, jsonb_array_length(r -> 'items'))
@@ -280,7 +297,7 @@ select ok((current_setting('test.cost')::jsonb -> 'lots' -> 0 -> 'requisitions' 
 -- 6. นอกโหมดทดสอบ: ปิด (private.bom_real_open() = false) -------------------------------------------------------
 select lives_ok('select public.app_sandbox_exit()', 'the admin leaves test mode');
 select throws_ok($$ select public.app_rf_prices() $$, 'RF_TEST_MODE_ONLY', 'outside test mode the price list is closed');
-select throws_ok($$ select public.app_rf_price_save('REAL-MAT', 50, current_setting('test.today')::date) $$, 'RF_TEST_MODE_ONLY', 'so is the price entry');
+select throws_ok($$ select public.app_rf_price_save('chem', 'REAL-MAT', 50, current_setting('test.today')::date) $$, 'RF_TEST_MODE_ONLY', 'so is the price entry');
 select throws_ok($$ select public.app_rf_cost_data() $$, 'RF_TEST_MODE_ONLY', 'and the cost data');
 select set_config('request.jwt.claims', '{"role":"authenticated"}', true);
 select throws_ok($$ select public.app_rf_prices() $$, 'AUTH_REQUIRED', 'no session, no prices');
@@ -288,18 +305,19 @@ select throws_ok($$ select public.app_rf_cost_data() $$, 'AUTH_REQUIRED', 'no se
 
 -- 7. ตารางเพิ่มอย่างเดียว และการล้างข้อมูลทดสอบ ---------------------------------------------------------------
 reset role;
-select is((select count(*)::integer from public.rf_material_prices where is_test), 5, 'five test price rows were written (the repeated save added none)');
+select is((select count(*)::integer from public.rf_material_prices where is_test), 6, 'six test price rows were written (the repeated save added none)');
 select is((select count(*)::integer from public.rf_material_prices where is_test and created_by is null), 0, 'every test row records who entered it');
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"8ec00000-0000-0000-0000-000000000001","role":"authenticated"}', true);
 select throws_ok($$ select count(*) from public.rf_material_prices $$, '42501', null, 'authenticated cannot read the price table directly');
-select throws_ok($$ insert into public.rf_material_prices (material_code, price_per_kg, effective_from) values ('M-PREP', 1, date '2026-01-01') $$, '42501', null,
+select throws_ok($$ insert into public.rf_material_prices (material_code, unit_price, effective_from) values ('M-PREP', 1, date '2026-01-01') $$, '42501', null,
   'nor insert into it');
 select public.app_sandbox_enter(current_setting('test.p_sbx_pp_staff')::uuid);
 select lives_ok('select public.app_sandbox_purge_rf()', 'the admin in test mode purges the RubberFlow test data');
 reset role;
 select is((select count(*)::integer from public.rf_material_prices where is_test), 0, 'the purge removed the test prices');
 select is((select count(*)::integer from public.rf_material_prices where not is_test), 1, 'and kept the real price row');
+select is((select count(*)::integer from public.rf_material_prices where kind not in ('chem', 'part')), 0, 'every row is a chemical or a purchased part price');
 
 select * from finish();
 rollback;

@@ -203,6 +203,15 @@
   });
   // ฟอร์มสูตรและฟอร์มผสมมีช่อง mixerTemp1 dumpTemp1 mixMin1 / ...2 (ขั้น 1 และขั้น 2) รวมเป็น stages
   const stagesOf = (p) => rules.MIX_STAGES.map((stage) => ({ stage, mixerTemp: p[`mixerTemp${stage}`], dumpTemp: p[`dumpTemp${stage}`], mixMin: p[`mixMin${stage}`] }));
+  // ฟอร์มสูตรแบบน้ำหนักมีแค่รหัสสูตรกับวัตถุดิบ (ไม่มีช่อง uom): ค่ามาตรฐานการผสมที่ฐานข้อมูลบังคับมาจากค่าเริ่มต้น (สูตรใหม่) หรือจากฉบับที่แก้ต่อ (ร่างที่ค้างอยู่ ไม่มีก็ฉบับที่ใช้งาน)
+  // ฟอร์ม "ค่ามาตรฐานการผสม" ส่งค่ามาตรฐานพร้อม keepItems = รายการวัตถุดิบมาจากร่างเดิม · ฟอร์มสูตรเดิมแบบ PHR ส่งครบทุกช่องเหมือนเดิม
+  const recipeItemsOf = (recipe) => (recipe?.items ?? []).map((item) => ({ materialCode: item.materialCode, stage: item.stage, unit: item.unit, kg: item.kg, phr: item.phr }));
+  function recipePayload(p, recipes) {
+    const id = String(p.id ?? "").trim();
+    const base = recipes && id ? (rules.revisionsOf(recipes, id).find((recipe) => recipe.status === "draft") ?? rules.currentRecipe(recipes, id)) : null;
+    const standards = p.uom === undefined ? rules.recipeStandards(base) : { stages: stagesOf(p) };
+    return { ...p, ...standards, items: p.keepItems ? recipeItemsOf(base) : itemsOf(p) };
+  }
   // ฟอร์มบางอันส่งค่าที่ action ต้องการคนละรูปแบบ (วันที่เป็น ms, รายการวัตถุดิบ, ตัวเลือกใช่/ไม่ใช่)
   const TRANSFORMS = {
     createOrder: (p) => ({ ...p, startDate: rules.fromInputDate(p.startDate), dueDate: rules.fromInputDate(p.dueDate) }),
@@ -217,8 +226,8 @@
       // safety มีเฉพาะแถวที่ผู้ใช้แก้จริง (ต่างจากค่าที่หน้าต่างแสดงตอนเปิด): แถวที่ไม่ได้แตะไม่ส่งค่าเก่าไปทับค่าที่ผู้อื่นเพิ่งตั้ง
       return { lines, safety: Object.fromEntries(lines.filter((line) => line.storedSafetyKg === undefined || String(line.safetyKg ?? "").trim() !== String(line.storedSafetyKg ?? "").trim()).map((line) => [line.materialCode, line.safetyKg])), sourcePi: p.sourcePi, sourceRequisition: p.sourceRequisition, note: p.note };
     },
-    createRecipe: (p) => ({ ...p, items: itemsOf(p), stages: stagesOf(p) }),
-    saveRecipe: (p) => ({ ...p, items: itemsOf(p), stages: stagesOf(p) }),
+    createRecipe: (p) => recipePayload(p, null),
+    saveRecipe: (p) => recipePayload(p, store.data().recipes),
     recordMixing: (p) => ({ ...p, stages: stagesOf(p) }),
     // ผลตัดสินของล็อตตกแต่ง: ค่าของช่องเลือก = qcResult หรือ qcResult:ปลายทาง (pass:sr / pass:customer / hold) แยกเป็น qcResult + destination (modules/rubberflow-pages-line.js finishResultOptions)
     recordFinishing: (p) => { const [qcResult, destination] = String(p.qcResult ?? "").split(":"); return destination ? { ...p, qcResult, destination } : { ...p, qcResult }; },

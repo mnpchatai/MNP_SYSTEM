@@ -122,6 +122,27 @@
     return n === 2 ? 2 : 1;
   }
   const recipeStage = (recipe, stage) => (recipe?.stages ?? []).find((row) => Number(row.stage) === stage) ?? null;
+  // ค่ามาตรฐานการผสมของสูตร (ฐานข้อมูลบังคับทุกค่า การผสมเทียบอุณหภูมิปล่อยยางกับค่านี้): ฟอร์มสูตรแบบน้ำหนักกรอกแค่รหัสสูตรกับวัตถุดิบ
+  // สูตรใหม่ได้ค่าเริ่มต้นด้านล่าง · ฉบับแก้ไขใหม่รับค่าต่อจากฉบับที่แก้ · แก้ค่าได้ที่ปุ่ม "ค่ามาตรฐานการผสม" ของร่างสูตร
+  const RECIPE_DEFAULTS = Object.freeze({
+    productCode: "", uom: "m", yieldPerKg: 6, restHours: 4, dumpTol: 5,
+    stages: Object.freeze([{ stage: 1, mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 130, mixMin: 2 }]),
+  });
+  function recipeStandards(recipe) {
+    const stages = MIX_STAGES.map((stage) => {
+      const row = recipeStage(recipe, stage) ?? RECIPE_DEFAULTS.stages.find((fallback) => fallback.stage === stage);
+      return { stage, mixerTemp: row.mixerTemp, dumpTemp: row.dumpTemp, mixMin: row.mixMin };
+    });
+    return {
+      productCode: recipe?.productCode ?? RECIPE_DEFAULTS.productCode,
+      uom: recipe?.uom ?? RECIPE_DEFAULTS.uom,
+      yieldPerKg: recipe?.yieldPerKg ?? RECIPE_DEFAULTS.yieldPerKg,
+      restHours: recipe?.restHours ?? RECIPE_DEFAULTS.restHours,
+      dumpTol: recipe?.dumpTol ?? RECIPE_DEFAULTS.dumpTol,
+      stages,
+      ...(recipe?.extrusionSpec ? { extrusionSpec: recipe.extrusionSpec } : {}),
+    };
+  }
 
   // น้ำหนักวัตถุดิบต่อ batch จาก PHR (ส่วนต่อยาง 100 ส่วน) · เรียงตามขั้น (ขั้น 1 ก่อน ขั้น 2) ลำดับเดิมในขั้นเดียวกัน
   // สูตรแบบน้ำหนัก: kgPerBatch = kg ของบรรทัดตรง ๆ · เรียงตามส่วน (ขั้นเตรียม → ขั้น 1 → 2 → 3) ลำดับเดิมในส่วนเดียวกัน
@@ -581,7 +602,7 @@
   const api = {
     QA_RELEASE_TEXT, canQaRelease, MATERIAL_RELEASE_TEXT, canReleaseMaterial,
     DAY, HOUR, STAGES, STAGE_LABEL, NEXT_STAGE, PREV_STAGE, SHIFTS, MACHINES, SPECS, WEIGH_TOL_PCT, WEIGH_TOL_MIN_KG,
-    MIX_STAGES, PARTS, partLabel, isWeightRecipe, weightBatchKg, amountToKg, plainNum, lineWeightText, partTotals, partTotalText, itemStage, recipeStage, recipeLabel, orderLabel, unitText, inSpec, specText, specLimits, EXTRUSION_KEYS, extrusionSpecOf, orderExtrusionSpec, extrusionHoldReasons, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, OPEN_ORDER, orderRemainingKg, MAX_REQ_BATCHES, remainingBatches, nextRequisitionBatches, suggestOrderKg, chemicalNeeds, stats, cpkVerdict,
+    MIX_STAGES, PARTS, partLabel, isWeightRecipe, weightBatchKg, amountToKg, plainNum, lineWeightText, partTotals, partTotalText, itemStage, recipeStage, RECIPE_DEFAULTS, recipeStandards, recipeLabel, orderLabel, unitText, inSpec, specText, specLimits, EXTRUSION_KEYS, extrusionSpecOf, orderExtrusionSpec, extrusionHoldReasons, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, OPEN_ORDER, orderRemainingKg, MAX_REQ_BATCHES, remainingBatches, nextRequisitionBatches, suggestOrderKg, chemicalNeeds, stats, cpkVerdict,
     fmtDate, fmtDateTime, fmtNum, fmtDuration, ymd, toInputDate, fromInputDate, niceScale,
     issuedKgOf, requisitionReturnState, returnableRequisitions, mixableRequisitions, requisitionStore,
     poLineReceived, poLineReceipts, poLineClosed, poLineOpen, poLineDone, poTouched,

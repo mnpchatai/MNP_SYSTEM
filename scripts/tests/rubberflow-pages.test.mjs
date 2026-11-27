@@ -556,7 +556,8 @@ test("two-stage recipe: the recipe form and the mixing station have six stage in
     assert.doesNotMatch(html, /name="mixSec"|name="name"|name="productName"|เวลาผสม \(s\)/);
   };
   // dialog สร้างสูตร: ช่องของสองขั้น + เลือกขั้นต่อบรรทัดวัตถุดิบ ไม่มีชื่อสูตร/ชื่อสินค้า
-  const built = env.context.MNP_RUBBERFLOW_DIALOGS.createRecipe(env.ctx(), {});
+  // (ฟอร์มสูตรเดิมแบบ PHR ของ RC-EPDM-DS01 ยังมีครบทุกช่อง · ฟอร์มสูตรแบบน้ำหนักมีแค่รหัสสูตรกับวัตถุดิบ ทดสอบแยก)
+  const built = env.context.MNP_RUBBERFLOW_DIALOGS.recipeEdit(env.ctx(), { id: "RC-EPDM-DS01" });
   stageInputs(built.html);
   assert.match(built.html, /name="stage\[\]"/, "each material line has a stage select");
   assert.match(built.html, /name="productCode"/);
@@ -1291,7 +1292,7 @@ test("the extrusion spec lives on the recipe: the recipe form edits it, the reci
   env.store.setUser("U01");
   const dialogs = env.context.MNP_RUBBERFLOW_DIALOGS;
   // ฟอร์มสูตร: หกช่องไม่บังคับ (ค่ามาตรฐาน + ค่าเผื่อ ต่อมิติ) · สูตร Door Seal ที่อนุมัติแล้วตั้งต้นด้วยสเปกเดิมในฉบับแก้ไขใหม่
-  const blank = dialogs.createRecipe(env.ctx(), {}).html;
+  const blank = dialogs.recipeEdit(env.ctx(), { id: "RC-NBR-OR02" }).html;
   for (const key of ["thickness", "width", "weightPerM"]) {
     assert.match(blank, new RegExp(`name="extrusionSpec\\.${key}\\.target"[^>]*value=""`), `${key} target is optional and empty`);
     assert.match(blank, new RegExp(`name="extrusionSpec\\.${key}\\.tol"[^>]*value=""`));
@@ -1520,4 +1521,89 @@ test("weight recipes on the pages: the form is by weight for new recipes and wei
   const detail = await env.render(`p=requisition&sel=${made2.result}`);
   assert.match(text(detail), /ขั้นเตรียมวัตถุดิบ[\s\S]*ขั้น 1[\s\S]*ขั้น 2[\s\S]*ขั้น 3/);
   assert.doesNotMatch(detail, /DM-CH-06|ขั้น undefined|NaN/);
+});
+
+test("the weight recipe form asks only for the recipe code and the materials: new recipes get the default standards, a new revision carries the previous standards, and the standards dialog edits them without touching the items", async () => {
+  const env = load();
+  env.store.setUser("U01");
+  const dialogs = env.context.MNP_RUBBERFLOW_DIALOGS;
+  const plain = (value) => JSON.parse(JSON.stringify(value));
+  const REMOVED = ["productCode", "uom", "batchKg", "yieldPerKg", "restHours", "dumpTol", "mixerTemp1", "dumpTemp1", "mixMin1", "mixerTemp2", "dumpTemp2", "mixMin2", "extrusionSpec", "phr[]"];
+  const onlyCodeAndMaterials = (html) => {
+    for (const name of REMOVED) assert.equal(html.includes(`name="${name}`), false, `no ${name} field`);
+    assert.doesNotMatch(html, /รหัสสินค้า|หน่วยสินค้า|ผลผลิตต่อ|เวลาบ่ม|อุณหภูมิ|เวลาผสม|สเปกมิติ|ค่าเผื่อ/, "none of the removed labels");
+    assert.match(html, /name="id"/);
+    for (const name of ["materialCode[]", "stage[]", "amount[]", "unit[]"]) assert.ok(html.includes(`name="${name}"`), name);
+    assert.match(html, /<strong[^>]*data-rf-batch-out><\/strong>/, "the batch weight is a read-out, not an input");
+    assert.doesNotMatch(html, /<input[^>]*data-rf-batch-out/);
+    assert.match(html, /data-rf-total/, "per-part totals sit under the table");
+  };
+  // สร้างใหม่: แค่รหัสสูตรกับวัตถุดิบ
+  onlyCodeAndMaterials(dialogs.createRecipe(env.ctx(), {}).html);
+  const submit = async (values, dataset = {}) => {
+    const form = { ...env.root, dataset: { rfForm: values.rfForm ?? "createRecipe", rfSuccess: "ok", ...dataset }, handlers: {}, __values: { ...values } };
+    delete form.__values.rfForm;
+    form.addEventListener = (type, handler) => { form.handlers[type] = handler; };
+    env.fakes["form[data-rf-form]"] = [form];
+    await env.render("p=recipes");
+    await form.handlers.submit({ preventDefault() {} });
+    delete env.fakes["form[data-rf-form]"];
+  };
+  const recipe = (id, revision) => env.store.data().recipes.find((row) => row.id === id && (revision === undefined || row.revision === revision));
+  await submit({ id: "RC-ONLY-01", "materialCode[]": ["ZNO", "S-80"], "stage[]": ["0", "2"], "amount[]": ["5", "300"], "unit[]": ["kg", "g"] });
+  const made = recipe("RC-ONLY-01");
+  assert.ok(made, env.log.toasts.at(-1)?.[0]);
+  assert.equal(made.batchKg, 5.3, "the batch weight is computed from the materials");
+  assert.deepEqual(plain(made.items), [{ materialCode: "ZNO", stage: 0, kg: 5, unit: "kg", phr: 5 }, { materialCode: "S-80", stage: 2, kg: 0.3, unit: "g", phr: 0.3 }]);
+  assert.deepEqual([made.productCode, made.uom, made.yieldPerKg, made.restHours, made.dumpTol], ["", "m", 6, 4, 5]);
+  assert.deepEqual(plain(made.stages), [{ stage: 1, mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 130, mixMin: 2 }]);
+  assert.equal("extrusionSpec" in made, false);
+  assert.equal(made.status, "draft");
+
+  // ฉบับแก้ไขใหม่ของสูตรที่อนุมัติแล้ว (DEMO-W01: ค่ามาตรฐานไม่ใช่ค่าเริ่มต้น): ฟอร์มมีแค่รหัสสูตรกับวัตถุดิบ และค่ามาตรฐานตามฉบับเดิมทุกค่า
+  const approved = recipe("DEMO-W01");
+  const revisionHtml = dialogs.recipeEdit(env.ctx(), { id: "DEMO-W01" }).html;
+  onlyCodeAndMaterials(revisionHtml);
+  assert.match(revisionHtml, /ออกฉบับแก้ไขใหม่ของสูตร DEMO-W01/);
+  await submit({ rfForm: "saveRecipe", id: "DEMO-W01", "materialCode[]": ["DM-RUB-A", "DM-CH-01"], "stage[]": ["0", "1"], "amount[]": ["12", "400"], "unit[]": ["kg", "g"] });
+  const next = recipe("DEMO-W01", approved.revision + 1);
+  assert.ok(next, env.log.toasts.at(-1)?.[0]);
+  assert.equal(next.status, "draft");
+  assert.equal(next.batchKg, 12.4);
+  assert.deepEqual(plain(next.stages), plain(approved.stages), "stage standards carried over");
+  assert.deepEqual([next.productCode, next.uom, next.yieldPerKg, next.restHours, next.dumpTol], [approved.productCode, approved.uom, approved.yieldPerKg, approved.restHours, approved.dumpTol]);
+  assert.equal(next.dumpTol, 6, "not the default");
+  assert.equal(recipe("DEMO-W01", approved.revision).status, "approved", "the approved revision is untouched");
+
+  // แก้ร่างต่อ: ค่ามาตรฐานของร่างเองคงเดิม (ไม่กลับเป็นค่าเริ่มต้น)
+  await submit({ rfForm: "saveRecipe", id: "DEMO-W01", "materialCode[]": ["DM-RUB-A"], "stage[]": ["0"], "amount[]": ["20"], "unit[]": ["kg"] });
+  assert.equal(recipe("DEMO-W01", approved.revision + 1).batchKg, 20);
+  assert.deepEqual(plain(recipe("DEMO-W01", approved.revision + 1).stages), plain(approved.stages));
+
+  // ปุ่ม "ค่ามาตรฐานการผสม": เฉพาะร่างสูตรแบบน้ำหนักของผู้แก้สูตรได้
+  assert.doesNotMatch(await env.render("p=recipes&sel=DEMO-W01"), /data-rf-open="recipeStandards"/, "the approved revision has no standards button");
+  const draftView = await env.render(`p=recipes&sel=DEMO-W01&rev=${approved.revision + 1}`);
+  assert.match(draftView, /data-rf-open="recipeStandards"[^>]*>[^<]*ค่ามาตรฐานการผสม</);
+  assert.doesNotMatch(await env.render("p=recipes&sel=RC-EPDM-DS01"), /data-rf-open="recipeStandards"/, "no button on an approved or PHR recipe");
+  assert.equal(dialogs.recipeStandards(env.ctx(), { id: "RC-EPDM-DS01" }), null);
+  const standards = dialogs.recipeStandards(env.ctx(), { id: "DEMO-W01" }).html;
+  for (const name of ["productCode", "uom", "yieldPerKg", "restHours", "dumpTol", "mixerTemp1", "dumpTemp1", "mixMin1", "mixerTemp2", "dumpTemp2", "mixMin2", "extrusionSpec.thickness.target", "extrusionSpec.weightPerM.tol"]) assert.ok(standards.includes(`name="${name}"`), name);
+  for (const name of ["materialCode[]", "amount[]", "batchKg", "id"]) assert.equal(standards.includes(`name="${name}"`), false, `${name} is not in the standards dialog`);
+  assert.match(standards, /name="dumpTemp1"[^>]*value="115"/);
+  assert.match(standards, /\(จำเป็น\)/, "required marks stay");
+  const args = JSON.parse(standards.match(/data-rf-args="([^"]*)"/)[1].replaceAll("&quot;", '"'));
+  const before = plain(recipe("DEMO-W01", approved.revision + 1).items);
+  await submit({ rfForm: "saveRecipe", productCode: "FG-77", uom: "pcs", yieldPerKg: "7.5", restHours: "6", dumpTol: "3", mixerTemp1: "82", dumpTemp1: "118", mixMin1: "4", mixerTemp2: "92", dumpTemp2: "141", mixMin2: "3", "extrusionSpec.thickness.target": "2.5", "extrusionSpec.thickness.tol": "0.1" }, { rfArgs: JSON.stringify(args) });
+  const edited = recipe("DEMO-W01", approved.revision + 1);
+  assert.deepEqual([edited.productCode, edited.uom, edited.yieldPerKg, edited.restHours, edited.dumpTol], ["FG-77", "pcs", 7.5, 6, 3]);
+  assert.deepEqual(plain(edited.stages), [{ stage: 1, mixerTemp: 82, dumpTemp: 118, mixMin: 4 }, { stage: 2, mixerTemp: 92, dumpTemp: 141, mixMin: 3 }]);
+  assert.deepEqual(plain(edited.extrusionSpec), { thickness: { target: 2.5, tol: 0.1 } });
+  assert.deepEqual(plain(edited.items), before, "the items are untouched");
+  assert.equal(edited.batchKg, 20);
+  assert.equal(edited.revision, approved.revision + 1, "same draft, no new revision");
+  assert.equal(edited.status, "draft");
+  // ค่าที่ผิดช่วงยังถูก action ปฏิเสธ (ไม่ผ่อนกติกา)
+  await submit({ rfForm: "saveRecipe", productCode: "", uom: "m", yieldPerKg: "9", restHours: "4", dumpTol: "5", mixerTemp1: "80", dumpTemp1: "", mixMin1: "3", mixerTemp2: "90", dumpTemp2: "130", mixMin2: "2" }, { rfArgs: JSON.stringify(args) });
+  assert.match(env.log.toasts.at(-1)[0], /อุณหภูมิปล่อยยาง ขั้น 1/);
+  assert.equal(recipe("DEMO-W01", approved.revision + 1).yieldPerKg, 7.5);
 });

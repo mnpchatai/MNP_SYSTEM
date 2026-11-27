@@ -407,3 +407,12 @@ test("weight recipes: a PHR recipe keeps its lines, its split and its totals unc
   const needs = rules.chemicalNeeds({ orders: [order], recipes: [weight], materials: [], materialLots: [], requisitions: [], purchaseOrders: [] }, ["WO-1"], NOW);
   assert.deepEqual(needs.rows.map((row) => [row.materialCode, row.needKg]), [["A", 20], ["B", 5]], "two batches of 12.5 kg: kg per batch times two, the zero line needs nothing");
 });
+
+test("recipeStandards: a new recipe gets the defaults, a revision carries every standard of the recipe it starts from", () => {
+  const plain = (value) => JSON.parse(JSON.stringify(value));
+  assert.deepEqual(plain(rules.recipeStandards(null)), { productCode: "", uom: "m", yieldPerKg: 6, restHours: 4, dumpTol: 5, stages: [{ stage: 1, mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, { stage: 2, mixerTemp: 90, dumpTemp: 130, mixMin: 2 }] });
+  const from = { productCode: "FG-9", uom: "pcs", yieldPerKg: 7.5, restHours: 6, dumpTol: 3, stages: [{ stage: 2, mixerTemp: 95, dumpTemp: 141, mixMin: 4 }, { stage: 1, mixerTemp: 82, dumpTemp: 118, mixMin: 5 }], extrusionSpec: { thickness: { target: 2.5, tol: 0.1 } }, items: [] };
+  assert.deepEqual(plain(rules.recipeStandards(from)), { productCode: "FG-9", uom: "pcs", yieldPerKg: 7.5, restHours: 6, dumpTol: 3, stages: [{ stage: 1, mixerTemp: 82, dumpTemp: 118, mixMin: 5 }, { stage: 2, mixerTemp: 95, dumpTemp: 141, mixMin: 4 }], extrusionSpec: { thickness: { target: 2.5, tol: 0.1 } } }, "stages in order, items left out");
+  assert.equal("extrusionSpec" in rules.recipeStandards({ ...from, extrusionSpec: undefined }), false);
+  assert.deepEqual(plain(rules.recipeStandards({ uom: "m", stages: [{ stage: 1, mixerTemp: 1, dumpTemp: 2, mixMin: 3 }] }).stages[1]), { stage: 2, mixerTemp: 90, dumpTemp: 130, mixMin: 2 }, "a missing stage falls back to its default");
+});

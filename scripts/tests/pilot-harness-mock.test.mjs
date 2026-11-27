@@ -261,11 +261,15 @@ test("?ncr=1 has only NCRs, one per step, and each role moves an NCR to the next
   assert.equal(mock({ as: "e5" }).db.employees.find((row) => row.id === "e1").auth_user_id, "u1", "?as= only applies to the NCR scenario");
 });
 
-// ราคาเคมีและต้นทุนการผลิต (app_rf_prices / app_rf_price_save / app_rf_cost_data): สิทธิ์ตามแผนก/ตำแหน่งของบัญชีทดสอบ · ตรวจข้อมูลเหมือนฐานข้อมูล · ราคาสาธิตและประวัติ
+// ราคาวัตถุดิบ (เคมี + ของซื้อ) และต้นทุนการผลิต (app_rf_prices / app_rf_price_save / app_rf_cost_data): สิทธิ์ตามแผนก/ตำแหน่งของบัญชีทดสอบ · ตรวจข้อมูลเหมือนฐานข้อมูล · ราคาสาธิตและประวัติ
 test("cost RPCs: permissions follow the acting persona, prices are append-only history, validation answers RF_INVALID_PRICE", async () => {
-  const { client: sb, rf } = createMockSupabase({ sandbox: true, now: () => NOW });
+  const { client: sb, rf, bom } = createMockSupabase({ sandbox: true, now: () => NOW });
   const as = async (id) => { assert.equal((await sb.rpc("app_sandbox_enter", { p_persona_id: id })).error, null); };
   const error = async (name, args) => (await sb.rpc(name, args)).error?.message ?? null;
+  // ของซื้อของ BOM (ชนิด PURCHASED) ก่อนโหลดราคาครั้งแรก: ราคาสาธิตของซื้อใส่ให้ 2 ใน 3 ชิ้น (เรียงตามรหัส ชิ้นที่สามยังไม่มีราคา) ชิ้นงานชนิดอื่นไม่ได้ราคา
+  bom.edit((current) => {
+    current.items.push({ code: "P-A", kind: "PURCHASED", name: "ของซื้อ A", uom: "pcs" }, { code: "P-B", kind: "PURCHASED", name: "ของซื้อ B", uom: "kg" }, { code: "P-C", kind: "PURCHASED", name: "ของซื้อ C", uom: "m" }, { code: "FG-1", kind: "FG", name: "สินค้า", uom: "pcs" });
+  });
   rf.edit((current) => {
     current.materials.push({ code: "ZNO", name: "ซิงค์ออกไซด์", category: "สารกระตุ้น" });
     current.recipes.push({ id: "RC-1", revision: 2, status: "approved", productCode: "FG-1", batchKg: 10, items: [{ materialCode: "ZNO", stage: 1, kg: 10, unit: "kg", phr: 0 }] });
@@ -278,25 +282,36 @@ test("cost RPCs: permissions follow the acting persona, prices are append-only h
   assert.ok(first.prices.filter((row) => row.materialCode === "ZNO").length >= 2, "history of one material");
   for (const code of ["DM-RUB-A", "DM-RUB-B", "DM-FIL-A", "DM-FIL-B", "DM-PLS-A", "DM-OIL-A", "DM-CH-01", "DM-CH-02", "DM-CH-03", "DM-CH-04", "DM-CH-06", "DM-CH-07", "DM-CH-08", "DM-CH-09", "DM-CH-10", "DM-CH-11", "DM-CH-12", "DM-CH-13", "EPDM-55", "S-80"]) assert.ok(first.prices.some((row) => row.materialCode === code), `${code} has a demo price`);
   assert.ok(!first.prices.some((row) => ["DM-CH-05", "DM-FIL-C"].includes(row.materialCode)), "the no-price state stays visible");
-  assert.ok(first.prices.every((row) => row.id && typeof row.pricePerKg === "number" && /^\d{4}-\d{2}-\d{2}$/.test(row.effectiveFrom) && Number.isFinite(row.createdAt) && typeof row.createdBy === "string"));
-  const saved = (await sb.rpc("app_rf_price_save", { p_material_code: "DM-CH-05", p_price_per_kg: 125.5, p_effective_from: "2026-11-03", p_note: "  ใบเสนอราคา " })).data;
+  assert.ok(first.prices.every((row) => row.id && ["chem", "part"].includes(row.kind) && typeof row.unitPrice === "number" && /^\d{4}-\d{2}-\d{2}$/.test(row.effectiveFrom) && Number.isFinite(row.createdAt) && typeof row.createdBy === "string"));
+  assert.deepEqual(first.prices.filter((row) => row.kind === "part").map((row) => row.materialCode), ["P-A", "P-B"], "demo part prices: the third part has none, FG items never");
+  assert.ok(first.prices.filter((row) => row.kind === "chem").every((row) => !row.materialCode.startsWith("P-")));
+  const saved = (await sb.rpc("app_rf_price_save", { p_kind: "chem", p_material_code: "DM-CH-05", p_unit_price: 125.5, p_effective_from: "2026-11-03", p_note: "  ใบเสนอราคา " })).data;
   assert.equal(saved.prices.length, first.prices.length + 1);
   const row = saved.prices.at(-1);
-  assert.deepEqual([row.materialCode, row.pricePerKg, row.effectiveFrom, row.note], ["DM-CH-05", 125.5, "2026-11-03", "ใบเสนอราคา"]);
+  assert.deepEqual([row.kind, row.materialCode, row.unitPrice, row.effectiveFrom, row.note], ["chem", "DM-CH-05", 125.5, "2026-11-03", "ใบเสนอราคา"]);
   const zno = first.prices.filter((entry) => entry.materialCode === "ZNO");
-  await sb.rpc("app_rf_price_save", { p_material_code: "ZNO", p_price_per_kg: 99, p_effective_from: zno[0].effectiveFrom, p_note: "" });
+  await sb.rpc("app_rf_price_save", { p_kind: "chem", p_material_code: "ZNO", p_unit_price: 99, p_effective_from: zno[0].effectiveFrom, p_note: "" });
   assert.equal((await sb.rpc("app_rf_prices", {})).data.prices.length, first.prices.length + 2, "a correction is a new row, old rows stay");
   // เหมือนฐานข้อมูล: บันทึกซ้ำด้วยราคาและหมายเหตุเดียวกับแถวล่าสุดของวัตถุดิบและวันที่มีผลเดียวกัน = ไม่เพิ่มแถว
-  await sb.rpc("app_rf_price_save", { p_material_code: "ZNO", p_price_per_kg: 99, p_effective_from: zno[0].effectiveFrom, p_note: " " });
+  await sb.rpc("app_rf_price_save", { p_kind: "chem", p_material_code: "ZNO", p_unit_price: 99, p_effective_from: zno[0].effectiveFrom, p_note: " " });
   assert.equal((await sb.rpc("app_rf_prices", {})).data.prices.length, first.prices.length + 2, "saving the same price and note again adds no row");
-  await sb.rpc("app_rf_price_save", { p_material_code: "ZNO", p_price_per_kg: 99, p_effective_from: zno[0].effectiveFrom, p_note: "ยืนยันราคา" });
+  await sb.rpc("app_rf_price_save", { p_kind: "chem", p_material_code: "ZNO", p_unit_price: 99, p_effective_from: zno[0].effectiveFrom, p_note: "ยืนยันราคา" });
   assert.equal((await sb.rpc("app_rf_prices", {})).data.prices.length, first.prices.length + 3, "a different note is a new row");
   // ตรวจข้อมูล
-  const ok = { p_material_code: "ZNO", p_price_per_kg: 10, p_effective_from: "2026-11-03", p_note: "" };
-  for (const bad of [{ p_material_code: "NOPE" }, { p_material_code: null }, { p_price_per_kg: 0 }, { p_price_per_kg: -1 }, { p_price_per_kg: 10000001 }, { p_price_per_kg: 1.23456 }, { p_price_per_kg: "10" }, { p_effective_from: null }, { p_effective_from: "03/11/2026" }, { p_effective_from: "2026-02-31" }, { p_effective_from: "2028-01-01" }, { p_note: "x".repeat(301) }]) {
+  const ok = { p_kind: "chem", p_material_code: "ZNO", p_unit_price: 10, p_effective_from: "2026-11-03", p_note: "" };
+  for (const bad of [{ p_material_code: "NOPE" }, { p_material_code: null }, { p_kind: null }, { p_kind: "other" }, { p_kind: "part" }, { p_kind: "part", p_material_code: "FG-1" }, { p_kind: "chem", p_material_code: "P-A" }, { p_unit_price: 0 }, { p_unit_price: -1 }, { p_unit_price: 10000001 }, { p_unit_price: 1.23456 }, { p_unit_price: "10" }, { p_effective_from: null }, { p_effective_from: "03/11/2026" }, { p_effective_from: "2026-02-31" }, { p_effective_from: "2028-01-01" }, { p_note: "x".repeat(301) }]) {
     assert.equal(await error("app_rf_price_save", { ...ok, ...bad }), "RF_INVALID_PRICE", JSON.stringify(bad));
   }
-  assert.equal(await error("app_rf_price_save", { ...ok, p_price_per_kg: 10000000, p_effective_from: "2027-11-03", p_note: "x".repeat(300) }), null, "the limits themselves are accepted (366 days ahead)");
+  assert.equal(await error("app_rf_price_save", { ...ok, p_unit_price: 10000000, p_effective_from: "2027-11-03", p_note: "x".repeat(300) }), null, "the limits themselves are accepted (366 days ahead)");
+  // ของซื้อ: บันทึกราคาต่อหน่วยของชิ้น (kind part) · ไม่ปนกับเคมี · ซ้ำ (ชนิด + รหัส + วัน + ราคา + หมายเหตุ) ไม่เพิ่มแถว
+  const partSave = { p_kind: "part", p_material_code: "P-C", p_unit_price: 7.25, p_effective_from: "2026-11-03", p_note: "ใบเสนอราคา" };
+  const partSaved = (await sb.rpc("app_rf_price_save", partSave)).data;
+  assert.equal(partSaved.prices.at(-1).kind, "part");
+  assert.deepEqual(partSaved.prices.filter((entry) => entry.materialCode === "P-C").map((entry) => [entry.kind, entry.unitPrice]), [["part", 7.25]]);
+  await sb.rpc("app_rf_price_save", partSave);
+  assert.equal((await sb.rpc("app_rf_prices", {})).data.prices.filter((entry) => entry.materialCode === "P-C").length, 1, "the same part price again adds no row");
+  await sb.rpc("app_rf_price_save", { ...partSave, p_kind: "chem", p_material_code: "ZNO" });
+  assert.ok((await sb.rpc("app_rf_prices", {})).data.prices.some((entry) => entry.kind === "chem" && entry.materialCode === "ZNO" && entry.unitPrice === 7.25), "the same date and price on a chemical is its own row");
   // ต้นทุน: สูตรทุก revision · ล็อตผสมพร้อมใบเบิก (ล็อตสถานีอื่นไม่มี)
   const cost = (await sb.rpc("app_rf_cost_data", {})).data;
   assert.deepEqual(cost.materials, [{ code: "ZNO", name: "ซิงค์ออกไซด์", category: "สารกระตุ้น" }]);

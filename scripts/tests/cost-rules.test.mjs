@@ -22,7 +22,7 @@ const DEMO = {
 };
 // ขั้น 1 กรอกเป็นกรัม 350 / 150 / 800 / 120 / 90 g (+ 0 / 0) = 1510 g = 1.51 kg ต่อ batch
 const ALL_CODES = DEMO.items.map((item) => item.materialCode);
-const row = (materialCode, pricePerKg, effectiveFrom = "2026-01-01", createdAt = 1, id = `${materialCode}-${createdAt}`) => ({ id, materialCode, pricePerKg, effectiveFrom, note: "", createdAt, createdBy: "ทดสอบ" });
+const row = (materialCode, unitPrice, effectiveFrom = "2026-01-01", createdAt = 1, id = `${materialCode}-${createdAt}`, kind = "chem") => ({ id, kind, materialCode, unitPrice, effectiveFrom, note: "", createdAt, createdBy: "ทดสอบ" });
 // ราคาสมมติ: ทุกตัว 10 บาท/kg ยกเว้น DM-CH-11 = 100 และ DM-CH-13 = 1000 · ไม่มีราคา DM-FIL-C และ DM-CH-05 (เหมือนข้อมูลสาธิตของฮาร์เนส)
 const PRICES = ALL_CODES.filter((code) => !["DM-FIL-C", "DM-CH-05"].includes(code)).map((code) => row(code, code === "DM-CH-11" ? 100 : code === "DM-CH-13" ? 1000 : 10));
 const FULL = [...PRICES, row("DM-FIL-C", 10), row("DM-CH-05", 10)];
@@ -108,7 +108,7 @@ test("priceAt: ประวัติราคา · แก้ในวันเ�
   const history = [
     row("ZNO", 62, "2026-01-01", 1), row("ZNO", 68.5, "2026-10-01", 2), row("ZNO", 70, "2026-10-01", 3), row("ZNO", 80, "2027-01-01", 4), row("CBS", 5, "2026-06-01", 5),
   ];
-  const at = (date) => C.priceAt(history, "ZNO", date)?.pricePerKg ?? null;
+  const at = (date) => C.priceAt(history, "ZNO", date)?.unitPrice ?? null;
   assert.equal(at("2025-12-31"), null, "ก่อนราคาแรก");
   assert.equal(at("2026-01-01"), 62);
   assert.equal(at("2026-09-30"), 62);
@@ -120,13 +120,35 @@ test("priceAt: ประวัติราคา · แก้ในวันเ�
   assert.equal(at(bkk(2026, 9, 30, 23, 59)), 62);
   assert.equal(at(bkk(2026, 10, 1, 0, 0)), 70);
   // ลำดับของแถวที่ส่งมาไม่มีผล
-  assert.equal(C.priceAt([...history].reverse(), "ZNO", "2026-10-01").pricePerKg, 70);
+  assert.equal(C.priceAt([...history].reverse(), "ZNO", "2026-10-01").unitPrice, 70);
   assert.equal(at("ไม่ใช่วันที่"), null);
+});
+
+test("ราคาแยกตามชนิด: ของซื้อกับเคมีรหัสเดียวกันไม่ปนกัน · ต้นทุนสูตรใช้เฉพาะราคาเคมี", () => {
+  const prices = [row("ZNO", 62, "2026-01-01", 1), row("ZNO", 5, "2026-02-01", 2, "p-part", "part"), row("P-BOX-01", 4.5, "2026-01-01", 3, "p-box", "part")];
+  assert.equal(C.priceAt(prices, "ZNO", "2026-11-27").unitPrice, 62, "เริ่มต้น = เคมี");
+  assert.equal(C.priceAt(prices, "ZNO", "2026-11-27", "chem").unitPrice, 62);
+  assert.equal(C.priceAt(prices, "ZNO", "2026-11-27", "part").unitPrice, 5);
+  assert.equal(C.priceAt(prices, "P-BOX-01", "2026-11-27"), null, "รหัสของซื้อไม่ใช่เคมี");
+  assert.equal(C.priceAt(prices, "P-BOX-01", "2026-11-27", "part").unitPrice, 4.5);
+  assert.deepEqual([...C.pricesAt(prices, "2026-11-27", "part").keys()].sort(), ["P-BOX-01", "ZNO"]);
+  assert.deepEqual([...C.pricesAt(prices, "2026-11-27").keys()], ["ZNO"]);
+  assert.deepEqual(C.priceHistory(prices, "ZNO", "part").map((entry) => entry.unitPrice), [5]);
+  assert.deepEqual(C.priceHistory(prices, "ZNO").map((entry) => entry.unitPrice), [62]);
+  // แถวที่ไม่มี kind ถือเป็นเคมี
+  assert.equal(C.priceAt([{ materialCode: "ZNO", unitPrice: 9, effectiveFrom: "2026-01-01", createdAt: 1 }], "ZNO", "2026-11-27").unitPrice, 9);
+  // ต้นทุนสูตรไม่หยิบราคาของซื้อที่รหัสซ้ำกับเคมี (ราคาของซื้อใหม่กว่า)
+  const recipe = { id: "R", revision: 1, status: "approved", batchKg: 10, items: [w("ZNO", 1, 10)] };
+  assert.equal(C.formulaCost(recipe, prices, "2026-11-27").cost, 620);
+  assert.deepEqual(C.formulaCost(recipe, [row("ZNO", 5, "2026-01-01", 1, "only-part", "part")], "2026-11-27").missing, ["ZNO"], "มีแต่ราคาของซื้อ = เคมียังไม่มีราคา");
+  // ต้นทุนจริงของล็อตผสมก็ใช้เฉพาะราคาเคมี
+  const lot = { lotNo: "L1", batches: 1, createdAt: Date.UTC(2026, 10, 1), requisitions: [{ id: "REQ", issuedAt: Date.UTC(2026, 10, 1), lines: [{ materialCode: "ZNO", stage: 1, targetKg: 10, actualKg: 10 }] }] };
+  assert.equal(C.lotCost(lot, recipe, prices).actual, 620);
 });
 
 test("priceHistory: ใหม่ก่อน (วันมีผลแล้วเวลาที่บันทึก) · bangkokDay / dayKey / fmtDay", () => {
   const history = [row("ZNO", 62, "2026-01-01", 1), row("ZNO", 70, "2026-10-01", 3), row("ZNO", 68.5, "2026-10-01", 2), row("CBS", 5, "2026-06-01", 5)];
-  assert.deepEqual(C.priceHistory(history, "ZNO").map((entry) => entry.pricePerKg), [70, 68.5, 62]);
+  assert.deepEqual(C.priceHistory(history, "ZNO").map((entry) => entry.unitPrice), [70, 68.5, 62]);
   assert.equal(C.bangkokDay(Date.UTC(2026, 8, 30, 17, 0)), "2026-10-01");
   assert.equal(C.dayKey("2026-10-01T05:00:00Z"), "2026-10-01");
   assert.equal(C.dayKey(null), "");
