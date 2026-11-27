@@ -505,10 +505,10 @@
 
   /* ---------- ฟอร์มแจ้งซ่อม ---------- */
   // ช่องแบบเดิม (asset_code, device_name, repair_target) ใช้เมื่อฐานข้อมูลยังไม่มีฟังก์ชันเลือกอุปกรณ์จากทะเบียน
-  // ช่องแบบใหม่ (host_input, host, host_unknown, picks) ใช้เมื่อมี · ทุกช่องเป็นข้อมูลล้วน (JSON) เพื่อเก็บเป็นร่างในเบราว์เซอร์ได้
+  // ช่องแบบใหม่ (host_input, host, picks) ใช้เมื่อมี (ไม่มีตัวเลือก "ไม่ทราบรหัสเครื่อง" ต้องค้นพบเครื่องในทะเบียนก่อนเสมอ) · ทุกช่องเป็นข้อมูลล้วน (JSON) เพื่อเก็บเป็นร่างในเบราว์เซอร์ได้
   const EMPTY_REPAIR_FORM = Object.freeze({
     asset_code: "", device_name: "", request_kind: "", request_kind_note: "", repair_target: "", repair_target_note: "", symptom: "", is_urgent: false,
-    host_input: "", host: null, host_unknown: false, picks: [],
+    host_input: "", host: null, picks: [],
   });
   // กติกาตามรูปแบบของ MNP_FORM_STEPS (modules/form-steps.js): step 1 = ประเภทคำขอ · step 2 = เครื่องและอุปกรณ์ที่แจ้งซ่อม · step 3 = อาการเสีย
   // required ของข้อความระบุ "อื่นๆ" เป็น getter เพราะขึ้นกับค่าที่เลือก ณ ตอนตรวจ · ข้อความผิดพลาดตรงกับของ app_itrp_create
@@ -560,13 +560,12 @@
       p_is_urgent: Boolean(values.is_urgent),
     };
     if (!picker) return params;
-    return { ...params, p_host_code: values.host_unknown ? null : (textOf(values.host?.code) || null), p_host_unknown: Boolean(values.host_unknown), p_devices: pickerDevices(values.picks) };
+    return { ...params, p_host_code: textOf(values.host?.code) || null, p_devices: pickerDevices(values.picks) };
   }
-  // ฐานข้อมูลยังไม่มีพารามิเตอร์ใหม่ (migration ยังไม่ขึ้น): ตัด 3 ตัวท้ายออกส่งเป็น 8 พารามิเตอร์แบบเดิม (รหัสเครื่อง/ชื่ออุปกรณ์ที่คำนวณไว้ยังอยู่ครบ)
+  // ฐานข้อมูลยังไม่มีพารามิเตอร์ใหม่ (migration ยังไม่ขึ้น): ตัด 2 ตัวท้ายออกส่งเป็น 8 พารามิเตอร์แบบเดิม (รหัสเครื่อง/ชื่ออุปกรณ์ที่คำนวณไว้ยังอยู่ครบ)
   function legacyCreateParams(params) {
     const rest = { ...params };
     delete rest.p_host_code;
-    delete rest.p_host_unknown;
     delete rest.p_devices;
     return rest;
   }
@@ -627,10 +626,10 @@
   const pickedRows = (picks) => PICK_TYPES.flatMap((type) => rowsOfKey(picks, type.key).filter(({ index }) => isPicked(picks, index)).map(({ row }) => row));
   const pickedCount = (picks) => pickedRows(picks).length;
 
-  // แถวเริ่มต้นของชนิดที่เพิ่งติ๊ก (host = เครื่องที่ค้นพบ หรือ null · unknown = ติ๊ก "ไม่ทราบรหัสเครื่อง")
+  // แถวเริ่มต้นของชนิดที่เพิ่งติ๊ก (host = เครื่องที่ค้นพบในทะเบียน)
   // คอม/โน้ตบุ๊ก = รหัสเครื่องที่พบ · อื่นๆ = แถวว่าง · ชนิดอื่น = อุปกรณ์ที่ทะเบียนผูกกับเครื่อง (ตัวเดียวติ๊กให้เลย หลายตัวให้ผู้แจ้งเลือก) ไม่มีในทะเบียน = แถวว่างให้พิมพ์เอง
-  function defaultPickRows(key, { host = null, unknown = false } = {}) {
-    const known = unknown ? null : host;
+  function defaultPickRows(key, { host = null } = {}) {
+    const known = host;
     if (key === "COMPUTER") return [{ type_code: hostTypeCode(known), code: known?.code ?? "", on: true, note: "", added: false, meta: known ? metaOf(known) : "" }];
     if (key === "OTHER") return [{ type_code: "OTHER", code: "", on: true, note: "", added: false, meta: "" }];
     const devices = (known?.devices ?? []).filter((device) => device.type_code === key);
@@ -667,10 +666,10 @@
   function pickerIssues(values) {
     const picks = Array.isArray(values?.picks) ? values.picks : [];
     const issues = [];
-    if (!values?.host_unknown && !values?.host?.code) {
+    if (!values?.host?.code) {
       issues.push({ message: textOf(values?.host_input)
-        ? "ยังไม่ได้ยืนยันรหัสเครื่อง กดปุ่ม \"ค้นหา\" ก่อน หรือติ๊ก \"ไม่ทราบรหัสเครื่อง / ไม่มีคอมประจำ\""
-        : "กรุณาค้นหารหัสเครื่องคอมของคุณ หรือติ๊ก \"ไม่ทราบรหัสเครื่อง / ไม่มีคอมประจำ\"" });
+        ? "ยังไม่ได้ยืนยันรหัสเครื่อง กดปุ่ม \"ค้นหา\" ก่อน (ถ้าไม่พบ ตรวจรหัสที่ติดบนเครื่องหรือติดต่อ IT)"
+        : "กรุณาค้นหารหัสเครื่องคอมของคุณก่อน (รหัสติดอยู่บนตัวเครื่อง)" });
       return issues;
     }
     if (!picks.length) { issues.push({ message: "กรุณาเลือกอุปกรณ์ที่มีปัญหาอย่างน้อย 1 รายการ" }); return issues; }
@@ -700,11 +699,10 @@
     return pickedRows(picks).map((row) => ({ type_code: row.type_code, device_code: normalizeCode(row.code) || null, note: textOf(row.note) || null }));
   }
   // ค่าเดิมของใบที่ระบบเติมให้จากสิ่งที่เลือก (ใบรุ่นเก่า/ประวัติการซ่อมยังอ่านจากช่องเหล่านี้):
-  // asset_code = รหัสเครื่องที่พบ (ไม่ทราบรหัส = รหัสที่พิมพ์ในแถวคอม ถ้ามี) · device_name = ชื่อชนิดที่เลือก "หน้าจอ, เมาส์" (≤200)
+  // asset_code = รหัสเครื่องที่พบในทะเบียน · device_name = ชื่อชนิดที่เลือก "หน้าจอ, เมาส์" (≤200)
   // repair_target: มีอุปกรณ์ที่ไม่ใช่คอม/"อื่นๆ" → device · ไม่งั้นมี "อื่นๆ" → other พร้อมข้อความที่ระบุ · ที่เหลือ (มีแต่คอม) → computer
   function pickerSummary(values) {
     const rows = pickedRows(values?.picks);
-    const computer = rows.find((row) => pickKeyOf(row.type_code) === "COMPUTER");
     const others = rows.filter((row) => row.type_code === "OTHER");
     const peripherals = rows.filter((row) => pickKeyOf(row.type_code) !== "COMPUTER" && row.type_code !== "OTHER");
     const labels = [];
@@ -714,7 +712,7 @@
     }
     const target = peripherals.length ? "device" : (others.length ? "other" : "computer");
     return {
-      asset_code: values?.host_unknown ? normalizeCode(computer?.code) : textOf(values?.host?.code),
+      asset_code: textOf(values?.host?.code),
       device_name: fit(labels.join(", "), MAX_DEVICE_NAME),
       repair_target: rows.length ? target : "",
       repair_target_note: target === "other" ? fit(others.map((row) => textOf(row.note)).join("; "), MAX_NOTE) : "",
@@ -722,7 +720,7 @@
   }
   // บรรทัดสรุปของส่วนเลือกอุปกรณ์ในขั้นทบทวน: [{ label, value }]
   function pickerReviewRows(values) {
-    const rows = [{ label: "เครื่องคอมของคุณ", value: values?.host_unknown ? "ไม่ทราบรหัสเครื่อง / ไม่มีคอมประจำ" : hostConfirmText(values?.host) }];
+    const rows = [{ label: "เครื่องคอมของคุณ", value: hostConfirmText(values?.host) }];
     const items = pickedRows(values?.picks).map((row) => {
       const code = normalizeCode(row.code);
       const label = row.type_code === "OTHER" ? `อื่นๆ: ${textOf(row.note)}` : requestDeviceLabel(row.type_code);
@@ -732,13 +730,14 @@
     return rows;
   }
 
-  // ใบที่แจ้งแบบเลือกอุปกรณ์ (host_code / host_unknown / devices) แปลงเป็นข้อมูลแสดงผล · ใบเก่าที่ไม่มีสามอย่างนี้ isNew = false (แสดงแบบเดิม)
+  // ใบที่แจ้งแบบเลือกอุปกรณ์ (host_code / devices) แปลงเป็นข้อมูลแสดงผล · ใบเก่าที่ไม่มีสองอย่างนี้ isNew = false (แสดงแบบเดิม)
+  // ใบรุ่นที่เคยมี host_unknown ไม่เคยขึ้น prod จึงไม่ต้องรับมือคีย์นี้
   function requestDevices(detail) {
     const list = Array.isArray(detail?.devices) ? detail.devices : [];
-    const isNew = Boolean(textOf(detail?.host_code)) || Boolean(detail?.host_unknown) || list.length > 0;
+    const isNew = Boolean(textOf(detail?.host_code)) || list.length > 0;
     return {
       isNew,
-      hostText: textOf(detail?.host_code) || (detail?.host_unknown ? "ไม่ทราบรหัส" : ""),
+      hostText: textOf(detail?.host_code),
       rows: list.slice().sort((a, b) => Number(a.seq) - Number(b.seq)).map((device, index) => ({
         no: Number(device.seq) || index + 1,
         typeCode: device.type_code,

@@ -80,7 +80,6 @@ function world({ role = ROLE_EMP, handlers = {}, draft = null, sandbox = false, 
   const createForm = (() => {
     const radios = { request_kind: ["repair", "replace_part", "inspect", "install", "other"].map((value) => el({ value })), repair_target: ["computer", "device", "other"].map((value) => el({ value })) };
     const controls = Object.fromEntries(["#itrp-asset-code", "#itrp-device-name", "#itrp-symptom", "#itrp-urgent", "#itrp-kind-note", "#itrp-target-note", "#itrp-review", "[data-step-submit]", "#itrp-host-input", "#itrp-host-search", "#itrp-host-status", "#itrp-pick-body"].map((key) => [key, el()]));
-    controls["#itrp-host-unknown"] = el({ checked: false });
     controls["#itrp-kind-note-field"] = el({ hidden: true });
     controls["#itrp-target-note-field"] = el({ hidden: true });
     controls["#itrp-files"] = el({ files: [] });
@@ -235,7 +234,7 @@ function world({ role = ROLE_EMP, handlers = {}, draft = null, sandbox = false, 
   context.window.MNP_FORM_DRAFT = {
     draftKey: (code, id) => `${code}:${id}`, isEmptyDraft: (values) => Object.values(values).every((value) => !value),
     createDraftStore: () => ({ load: () => draft, clear: () => { calls.draftCleared += 1; } }),
-    createAutosave: () => ({ schedule() {}, start() {}, stop() {} }), offerDraft() {},
+    createAutosave: () => ({ schedule() {}, start() {}, stop() {} }), offerDraft(options) { calls.draftOffer = options; },
   };
   // inDevelopment: false = จำลองการถอดธง "กำลังพัฒนา" (แก้ค่าธงเดียวใน itrp-model.js ตามที่ผู้ดูแลจะทำจริง)
   for (const file of ["modules/working-time.js", "modules/itrp-model.js", "modules/itrp-pages.js", "modules/itrp-history-pages.js", "modules/module-itrp.js"]) {
@@ -497,7 +496,7 @@ test("the form uses the register picker when the database has the lookup (the em
 test("searching a code shows the confirm card, fills the canonical code and unlocks the device types", async () => {
   const w = world({ handlers: { app_itrp_lookup_host: lookupHandler } });
   const f = await openPicker(w);
-  assert.match(w.html, /ค้นหารหัสเครื่องคอมของคุณ หรือติ๊ก "ไม่ทราบรหัสเครื่อง" ก่อน/, "locked until the host is found");
+  assert.match(w.html, /ค้นหารหัสเครื่องคอมของคุณก่อน แล้วจึงเลือกอุปกรณ์/, "locked until the host is found");
   await findHost(w, " com24 ");
   assert.deepEqual(w.last("app_itrp_lookup_host").args, { p_code: "COM24" });
   assert.match(f.controls["#itrp-host-status"].innerHTML, /<strong>COM24<\/strong><span> · Dell OptiPlex · 3080 · ผู้ใช้ สมชาย ใจดี<\/span>/);
@@ -507,22 +506,21 @@ test("searching a code shows the confirm card, fills the canonical code and unlo
   assert.match(f.controls["#itrp-pick-body"].innerHTML, /data-pick-use="\d+"/, "two registered monitors: pick the broken one");
 });
 
-test("a code that is not in the register shows the Thai message and blocks the form until 'unknown' is ticked", async () => {
+test("a code that is not in the register shows the Thai message, opens no device types and blocks the form (no way around it)", async () => {
   const w = world({ handlers: { app_itrp_lookup_host: lookupHandler } });
   const f = await openPicker(w);
   await findHost(w, "ZZZ9");
-  assert.match(f.controls["#itrp-host-status"].innerHTML, /ไม่พบรหัสนี้ในทะเบียน ตรวจรหัสที่ติดบนเครื่อง หรือติ๊ก "ไม่ทราบรหัสเครื่อง"/);
+  assert.match(f.controls["#itrp-host-status"].innerHTML, /ไม่พบรหัสนี้ในทะเบียน กรุณาตรวจรหัสที่ติดบนเครื่อง หรือติดต่อ IT/);
+  assert.doesNotMatch(f.controls["#itrp-pick-body"].innerHTML, /data-pick-type="/, "no device types without a found host");
   fill(w, {});
   await w.submit("#itrp-form");
   assert.deepEqual(f.lastErrors.map((error) => error.name), ["devices"]);
-  assert.match(f.lastErrors[0].message, /กรุณาค้นหารหัสเครื่องคอมของคุณ|ยังไม่ได้ยืนยันรหัสเครื่อง/);
+  assert.match(f.lastErrors[0].message, /ยังไม่ได้ยืนยันรหัสเครื่อง|กรุณาค้นหารหัสเครื่องคอมของคุณ/);
   assert.ok(!w.names().includes("app_itrp_create"));
-  await w.fire("change", tgt({ id: "itrp-host-unknown", checked: true }));
-  assert.equal(f.controls["#itrp-host-input"].disabled, true, "the code box is locked while 'unknown' is ticked");
-  assert.match(f.controls["#itrp-pick-body"].innerHTML, /data-pick-type="MONITOR"/);
+  assert.doesNotMatch(w.html, /itrp-host-unknown|ไม่ทราบรหัสเครื่อง/, "the 'unknown host' tick is gone");
 });
 
-test("losing the connection during the search shows an error without losing the form, and 'unknown' still works", async () => {
+test("losing the connection during the search shows an error without losing the form", async () => {
   let down = false;
   const w = world({ handlers: { app_itrp_lookup_host: (args) => { if (down) throw Object.assign(new Error("Failed to fetch"), { code: "" }); return lookupHandler(args); } } });
   const f = await openPicker(w);
@@ -581,21 +579,46 @@ test("the same code is not searched twice (blur then the search button), and a n
   assert.doesNotMatch(f.controls["#itrp-pick-body"].innerHTML, /data-pick-type="MOUSE" checked/, "the ticked devices belong to the old host");
 });
 
-test("an answer that arrives after the requester ticked 'unknown' is dropped", async () => {
+test("an answer that arrives after the requester changed the code is dropped", async () => {
   const w = world({ handlers: { app_itrp_lookup_host: lookupHandler } });
   const f = await openPicker(w);
   let release;
   w.holds.set("app_itrp_lookup_host", new Promise((resolve) => { release = resolve; }));
   await findHost(w);
-  await w.fire("change", tgt({ id: "itrp-host-unknown", checked: true }));
+  f.controls["#itrp-host-input"].value = "COM25";
+  await w.fire("input", tgt({ id: "itrp-host-input", value: "COM25" }));
   release();
   await flush();
   assert.doesNotMatch(f.controls["#itrp-host-status"].innerHTML, /<strong>COM24/, "the late answer does not bring the confirm card back");
-  await w.fire("change", tickType("MONITOR"));
-  assert.doesNotMatch(f.controls["#itrp-pick-body"].innerHTML, /MNT53/, "unknown host: nothing from the register");
+  assert.doesNotMatch(f.controls["#itrp-pick-body"].innerHTML, /data-pick-type="/, "and the device types stay locked");
 });
 
-test("send with the picker: 11 parameters, the old code/name/target filled from the choice, files untouched", async () => {
+test("an old saved draft (host_unknown flag, picks, no found host) loads, drops the flag and still requires the lookup", async () => {
+  const draft = { savedAt: Date.now(), values: { request_kind: "repair", symptom: "x", host_input: "COM24", host: null, host_unknown: true, picks: [{ type_code: "MONITOR", code: "", on: true, note: "", added: false, meta: "" }] } };
+  const w = world({ draft, handlers: { app_itrp_lookup_host: lookupHandler, app_itrp_create: () => [{ id: ID, doc_no: "x" }] } });
+  const f = await openPicker(w);
+  w.calls.draftOffer.onUse();
+  assert.equal(f.controls["#itrp-host-input"].value, "COM24", "the typed code comes back");
+  assert.doesNotMatch(f.controls["#itrp-pick-body"].innerHTML, /data-pick-type="/, "the ticked devices of a host that was never found are dropped");
+  fill(w, {});
+  await w.submit("#itrp-form");
+  assert.equal(f.lastErrors[0].name, "devices");
+  assert.ok(!w.names().includes("app_itrp_create"));
+});
+
+test("a draft with a found host keeps the host and the ticked devices", async () => {
+  const host = { code: "COM24", type_code: "COMPUTER", name: "Dell", model: "", user_name: "", devices: [] };
+  const draft = { savedAt: Date.now(), values: { request_kind: "repair", symptom: "x", host_input: "COM24", host, picks: [{ type_code: "COMPUTER", code: "COM24", on: true, note: "", added: false, meta: "" }] } };
+  const w = world({ draft, handlers: { app_itrp_lookup_host: lookupHandler, app_itrp_create: () => [{ id: ID, doc_no: "x" }] } });
+  const f = await openPicker(w);
+  w.calls.draftOffer.onUse();
+  assert.match(f.controls["#itrp-pick-body"].innerHTML, /data-pick-type="COMPUTER" checked/);
+  fill(w, { symptom: "จากร่าง" });
+  await w.submit("#itrp-form");
+  assert.deepEqual(w.last("app_itrp_create").args.p_devices, [{ type_code: "COMPUTER", device_code: "COM24", note: null }]);
+});
+
+test("send with the picker: 10 parameters (no unknown-host flag), the old code/name/target filled from the choice, files untouched", async () => {
   const w = world({ handlers: { app_itrp_lookup_host: lookupHandler, app_itrp_create: () => [{ id: ID, doc_no: "IT01-26/050" }] } });
   const f = await openPicker(w);
   await findHost(w);
@@ -608,15 +631,15 @@ test("send with the picker: 11 parameters, the old code/name/target filled from 
   await w.submit("#itrp-form");
   assert.deepEqual(w.last("app_itrp_create").args, {
     p_asset_code: "COM24", p_device_name: "หน้าจอ, เมาส์", p_request_kind: "repair", p_request_kind_note: null, p_repair_target: "device", p_repair_target_note: null, p_symptom: "เปิดไม่ติด", p_is_urgent: true,
-    p_host_code: "COM24", p_host_unknown: false, p_devices: [{ type_code: "MONITOR", device_code: "MNT54", note: null }, { type_code: "MOUSE", device_code: "MOU09", note: null }],
+    p_host_code: "COM24", p_devices: [{ type_code: "MONITOR", device_code: "MNT54", note: null }, { type_code: "MOUSE", device_code: "MOU09", note: null }],
   });
   assert.equal(w.hash, `#/office?module=repair&view=order&id=${ID}`);
 });
 
-test("send as unknown host: no host code, typed codes go to p_devices, editing the computer code is allowed", async () => {
+test("send: the confirmed host is always sent, typed codes and the 'other' text go to p_devices, editing the computer row code is allowed", async () => {
   const w = world({ handlers: { app_itrp_lookup_host: lookupHandler, app_itrp_create: () => [{ id: ID, doc_no: "IT01-26/050" }] } });
   const f = await openPicker(w);
-  await w.fire("change", tgt({ id: "itrp-host-unknown", checked: true }));
+  await findHost(w);
   await w.fire("change", tickType("COMPUTER"));
   await w.fire("change", tickType("OTHER"));
   const html = f.controls["#itrp-pick-body"].innerHTML;
@@ -628,9 +651,9 @@ test("send as unknown host: no host code, typed codes go to p_devices, editing t
   fill(w, {});
   await w.submit("#itrp-form");
   const args = w.last("app_itrp_create").args;
-  assert.equal(args.p_host_code, null);
-  assert.equal(args.p_host_unknown, true);
-  assert.equal(args.p_asset_code, "COM99");
+  assert.equal(args.p_host_code, "COM24");
+  assert.equal("p_host_unknown" in args, false);
+  assert.equal(args.p_asset_code, "COM24", "the old asset code is the confirmed host even if the row code was edited");
   assert.equal(args.p_repair_target, "other");
   assert.equal(args.p_repair_target_note, "เครื่องสแกน");
   assert.deepEqual(args.p_devices, [{ type_code: "COMPUTER", device_code: "COM99", note: null }, { type_code: "OTHER", device_code: null, note: "เครื่องสแกน" }]);
@@ -661,7 +684,7 @@ test("a database that lost the new parameters between the probe and the send get
   await w.fire("change", tickType("COMPUTER"));
   fill(w, {});
   await w.submit("#itrp-form");
-  assert.deepEqual(sent, [11, 8]);
+  assert.deepEqual(sent, [10, 8]);
   const retried = w.last("app_itrp_create").args;
   assert.equal(retried.p_asset_code, "COM24");
   assert.equal(retried.p_device_name, "คอมพิวเตอร์");
@@ -669,7 +692,7 @@ test("a database that lost the new parameters between the probe and the send get
   assert.equal(w.hash, `#/office?module=repair&view=order&id=${ID}`);
 });
 
-test("a data error from the 11-parameter call is shown, not retried as the old call", async () => {
+test("a data error from the 10-parameter call is shown, not retried as the old call", async () => {
   const w = world({ handlers: { app_itrp_lookup_host: lookupHandler, app_itrp_create: () => { throw Object.assign(new Error("ไม่พบรหัสเครื่อง X ในทะเบียนอุปกรณ์"), { code: "23514" }); } } });
   const f = await openPicker(w);
   await findHost(w);

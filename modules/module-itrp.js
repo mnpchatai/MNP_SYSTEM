@@ -315,17 +315,17 @@
     let submitting = false; // กันกดส่งซ้ำระหว่างรอคำตอบ (ปุ่มถูกปิดด้วย setFormBusy อีกชั้น)
 
     // ---- ส่วนเลือกอุปกรณ์จากทะเบียน (เฉพาะโหมด picker) ----
-    // สถานะเก็บเป็นตัวแปรเดียวกับที่ใช้เก็บร่าง: host = เครื่องที่ค้นพบ · hostUnknown · picks = แถวที่ติ๊ก · lookup = สถานะการค้น (ไม่เก็บในร่าง)
+    // สถานะเก็บเป็นตัวแปรเดียวกับที่ใช้เก็บร่าง: host = เครื่องที่ค้นพบ · picks = แถวที่ติ๊ก · lookup = สถานะการค้น (ไม่เก็บในร่าง)
+    // ไม่มีตัวเลือก "ไม่ทราบรหัสเครื่อง": ต้องค้นพบเครื่องก่อนจึงเลือกอุปกรณ์ได้ (ร่างเก่าที่มี host_unknown โหลดได้ แต่ค่านั้นถูกทิ้ง)
     let host = null;
-    let hostUnknown = false;
     let picks = [];
     let lookup = "idle"; // idle | loading | notfound | error
-    let lookupSeq = 0; // ผลค้นที่ตอบช้ากว่าการกระทำใหม่ (แก้รหัส/ติ๊กไม่ทราบ) ถูกทิ้ง
+    let lookupSeq = 0; // ผลค้นที่ตอบช้ากว่าการกระทำใหม่ (แก้รหัสในช่อง) ถูกทิ้ง
     let searchingCode = ""; // รหัสที่กำลังค้นอยู่ (กันค้นรหัสเดียวกันซ้ำ)
     let lookupMessage = ""; // ข้อความไทยจากฐานข้อมูลเมื่อค้นไม่สำเร็จ (ว่าง = ใช้ข้อความ "ตรวจอินเทอร์เน็ต")
     const hostInput = () => form.querySelector("#itrp-host-input");
     const normalizeHostCode = (value) => String(value ?? "").trim().toUpperCase();
-    const pickerState = () => ({ host, hostUnknown, picks, lookup, message: lookupMessage });
+    const pickerState = () => ({ host, picks, lookup, message: lookupMessage });
 
     const currentValues = () => ({
       asset_code: valueOf("#itrp-asset-code"),
@@ -338,7 +338,6 @@
       is_urgent: form.querySelector("#itrp-urgent").checked,
       host_input: picker ? valueOf("#itrp-host-input") : "",
       host: picker ? host : null,
-      host_unknown: picker ? hostUnknown : false,
       picks: picker ? picks : [],
     });
     // ข้อความผิดของส่วนเลือกอุปกรณ์ ณ ตอนนี้ (โหมดเดิมไม่มี) · ระหว่างค้นอยู่ให้รอ ไม่ฟ้องว่ายังไม่ได้ยืนยัน (บนมือถือ blur ของช่องรหัสเกิดก่อนกดปุ่มถัดไป)
@@ -367,16 +366,7 @@
       box.innerHTML = pages.pickTypes(pickerState());
       if (focusSelector) box.querySelector?.(focusSelector)?.focus?.({ preventScroll: true });
     };
-    // ช่องรหัส/ปุ่มค้นหาปิดเมื่อติ๊ก "ไม่ทราบรหัสเครื่อง"
-    const syncHostControls = () => {
-      const input = hostInput();
-      const search = form.querySelector("#itrp-host-search");
-      const unknownBox = form.querySelector("#itrp-host-unknown");
-      if (input) input.disabled = hostUnknown;
-      if (search) search.disabled = hostUnknown;
-      if (unknownBox) unknownBox.checked = hostUnknown;
-    };
-    // เปลี่ยนเครื่อง/โหมดแล้วรายการที่ติ๊กไว้ไม่ตรงกับเครื่องใหม่ → ล้างทิ้ง (ไม่ให้รหัสของเครื่องเก่าติดไปกับใบ)
+    // เปลี่ยนเครื่องแล้วรายการที่ติ๊กไว้ไม่ตรงกับเครื่องใหม่ → ล้างทิ้ง (ไม่ให้รหัสของเครื่องเก่าติดไปกับใบ)
     const resetPicker = () => { lookupSeq += 1; host = null; picks = []; lookup = "idle"; redrawHost(); redrawPicks(); };
     const drafts = draftApi.createDraftStore({ key: draftApi.draftKey("ITRP", role.employee_id) });
     const autosave = draftApi.createAutosave({ store: drafts, values: currentValues });
@@ -397,12 +387,11 @@
       if (picker) {
         // ร่างจากฟอร์มแบบเดิมไม่มีส่วนเลือกอุปกรณ์ → เริ่มส่วนนี้ใหม่ · ร่างแบบใหม่กู้ครบ (ผลค้นที่เก็บไว้ใช้ต่อ ฐานข้อมูลตรวจซ้ำตอนส่งอยู่แล้ว)
         lookupSeq += 1;
-        hostUnknown = Boolean(values.host_unknown);
-        host = !hostUnknown && values.host?.code ? values.host : null;
-        picks = Array.isArray(values.picks) ? values.picks : [];
+        // ร่างรุ่นที่เคยมี host_unknown: ค่านั้นถูกทิ้ง (ไม่มีตัวเลือกนี้แล้ว) และไม่มีเครื่องที่ยืนยัน = ต้องค้นใหม่ ไม่ใช้รายการที่ติ๊กไว้
+        host = values.host?.code ? values.host : null;
+        picks = host && Array.isArray(values.picks) ? values.picks : [];
         lookup = "idle";
         setValue("#itrp-host-input", values.host_input);
-        syncHostControls();
         redrawHost();
         redrawPicks();
       }
@@ -445,7 +434,7 @@
     async function runLookup() {
       const input = hostInput();
       const typed = normalizeHostCode(input?.value);
-      if (!input || hostUnknown) return;
+      if (!input) return;
       if (!typed) { if (host || lookup !== "idle") resetPicker(); return; }
       if (host && host.code === typed) return; // ยืนยันเครื่องนี้ไว้แล้ว ไม่ต้องค้นซ้ำ (blur แล้วตามด้วยกดปุ่มค้นหา)
       if (lookup === "loading" && searchingCode === typed) return; // กำลังค้นรหัสเดียวกันอยู่ (blur แล้วตามด้วยกดปุ่ม)
@@ -497,16 +486,8 @@
       });
       form.addEventListener("change", (event) => {
         const target = event.target;
-        if (target?.id === "itrp-host-unknown") {
-          hostUnknown = Boolean(target.checked);
-          resetPicker(); // เปลี่ยนโหมด: ผลค้นและรายการที่ติ๊กของโหมดเก่าไม่ใช้
-          syncHostControls();
-          stepsApi.clearFieldError(form, "devices");
-          if (!hostUnknown) hostInput()?.focus?.();
-          return;
-        }
         const type = target?.closest?.("[data-pick-type]") ?? (target?.dataset?.pickType ? target : null);
-        if (type) { picks = model.toggleType(picks, type.dataset.pickType, { host, unknown: hostUnknown }); redrawPicks(`[data-pick-type="${type.dataset.pickType}"]`); picksChanged(); return; }
+        if (type) { picks = model.toggleType(picks, type.dataset.pickType, { host }); redrawPicks(`[data-pick-type="${type.dataset.pickType}"]`); picksChanged(); return; }
         const use = target?.dataset?.pickUse;
         if (use !== undefined) { picks = model.setPickField(picks, Number(use), "on", target.checked); redrawPicks(`[data-pick-use="${use}"]`); picksChanged(); }
       });
@@ -530,7 +511,6 @@
       });
       // ออกจากช่องรหัสแล้วค้นเลย (ไม่ต้องกดปุ่ม) · ผลค้นที่เพิ่งยืนยันไว้ หรือกำลังค้นรหัสเดิม จะไม่ค้นซ้ำ
       form.addEventListener("focusout", (event) => { if (event.target?.id === "itrp-host-input") runLookup(); });
-      syncHostControls();
     }
 
     const showFormError = (html) => {
@@ -570,7 +550,6 @@
         showFormError(`${escapeHtml(info.message)}${check}`);
         submitting = false;
         setFormBusy(form, false);
-        if (picker) syncHostControls(); // setFormBusy เปิดทุกช่องกลับ แต่ช่องรหัสต้องปิดอยู่ถ้าติ๊ก "ไม่ทราบรหัส"
         form.querySelector("[data-step-submit]")?.focus({ preventScroll: true });
         return;
       }

@@ -4329,7 +4329,6 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .itrp-host-row .btn { flex: none; min-height: 44px; }
 .itrp-host-note { margin: 6px 0 0; overflow-wrap: anywhere; }
 .itrp-host-card { margin-top: 8px; padding: 10px 12px; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; border: 1px solid var(--primary); border-radius: var(--radius-md); background: var(--primary-soft); overflow-wrap: anywhere; }
-.itrp-host-unknown { margin-top: 10px; }
 .itrp-pick-gate { margin: 0; padding: 10px 12px; border: 1px dashed var(--line); border-radius: var(--radius-md); }
 /* ชนิดอุปกรณ์: ช่องติ๊กเต็มความกว้าง เรียงลงมา (ไม่ล้นจอมือถือ) · ชนิดที่ติ๊กแล้วมีรายการรหัสอยู่ใต้ช่อง */
 .itrp-pick-type { margin-bottom: 8px; }

@@ -193,22 +193,21 @@
       </div>`;
 
   /* ---------- ส่วนเลือกอุปกรณ์จากทะเบียน (ฟอร์มแจ้งซ่อมขั้นที่ 2) ---------- */
-  // state = { host (เครื่องที่ค้นพบ หรือ null), hostUnknown, picks, lookup: "idle" | "loading" | "notfound" | "error" }
-  // ส่วนบนสุด (ช่องรหัส ปุ่มค้นหา ช่องติ๊กไม่ทราบ) วาดครั้งเดียว · สถานะผลค้นหา (#itrp-host-status) กับรายการชนิดอุปกรณ์ (#itrp-pick-body) วาดใหม่ตามสถานะ
+  // state = { host (เครื่องที่ค้นพบ หรือ null), picks, lookup: "idle" | "loading" | "notfound" | "error", message }
+  // ส่วนบนสุด (ช่องรหัส ปุ่มค้นหา) วาดครั้งเดียว · สถานะผลค้นหา (#itrp-host-status) กับรายการชนิดอุปกรณ์ (#itrp-pick-body) วาดใหม่ตามสถานะ
   // แยกกันเพื่อไม่ให้ปุ่ม/ช่องที่ผู้ใช้กำลังกดถูกแทนที่กลางการกด (บนมือถือ blur ของช่องรหัสเกิดก่อน click)
   function hostStatus(state = {}) {
-    if (state.hostUnknown) return `<p class="muted small itrp-host-note">ไม่ต้องค้นรหัส · เลือกอุปกรณ์ที่มีปัญหาแล้วพิมพ์รหัสเองได้ (ไม่ทราบเว้นว่างได้ IT จะเติมให้)</p>`;
     if (state.lookup === "loading") return `<p class="muted small itrp-host-note" role="status">กำลังค้นหา…</p>`;
     if (state.host) {
       const rest = model.hostConfirmText(state.host).slice(String(state.host.code).length); // " · ชื่อ/รุ่น · ผู้ใช้ …" (ข้อความเริ่มด้วยรหัสเสมอ)
       return `<div class="itrp-host-card" role="status"><strong>${esc(state.host.code)}</strong>${rest ? `<span>${esc(rest)}</span>` : ""}</div>
         <p class="muted small itrp-host-note">ตรวจว่าเป็นเครื่องของคุณ ถ้าไม่ใช่ให้แก้รหัสแล้วกด "ค้นหา" ใหม่</p>`;
     }
-    if (state.lookup === "notfound") return `<p class="field-error itrp-host-note" role="alert">ไม่พบรหัสนี้ในทะเบียน ตรวจรหัสที่ติดบนเครื่อง หรือติ๊ก "ไม่ทราบรหัสเครื่อง"</p>`;
+    if (state.lookup === "notfound") return `<p class="field-error itrp-host-note" role="alert">ไม่พบรหัสนี้ในทะเบียน กรุณาตรวจรหัสที่ติดบนเครื่อง หรือติดต่อ IT</p>`;
     if (state.lookup === "error") {
       // ข้อความไทยจากฐานข้อมูล (เช่น บัญชีไม่พร้อมใช้งาน) แสดงตามนั้น · ไม่มี = ค้นไม่ถึง (เน็ตหลุด)
       if (state.message) return `<p class="field-error itrp-host-note" role="alert">${esc(state.message)}</p>`;
-      return `<p class="field-error itrp-host-note" role="alert">ค้นหาไม่สำเร็จ ตรวจอินเทอร์เน็ตแล้วกด "ค้นหา" อีกครั้ง หรือติ๊ก "ไม่ทราบรหัสเครื่อง"</p>`;
+      return `<p class="field-error itrp-host-note" role="alert">ค้นหาไม่สำเร็จ ตรวจอินเทอร์เน็ตแล้วกด "ค้นหา" อีกครั้ง</p>`;
     }
     return "";
   }
@@ -227,8 +226,8 @@
   }
   function pickTypes(state = {}) {
     const picks = Array.isArray(state.picks) ? state.picks : [];
-    if (!state.host && !state.hostUnknown) {
-      return `<p class="muted small itrp-pick-gate">ค้นหารหัสเครื่องคอมของคุณ หรือติ๊ก "ไม่ทราบรหัสเครื่อง" ก่อน แล้วจึงเลือกอุปกรณ์ที่มีปัญหาได้</p>`;
+    if (!state.host) {
+      return `<p class="muted small itrp-pick-gate">ค้นหารหัสเครื่องคอมของคุณก่อน แล้วจึงเลือกอุปกรณ์ที่มีปัญหาได้</p>`;
     }
     return model.PICK_TYPES.map((type) => {
       const rows = model.rowsOfKey(picks, type.key);
@@ -250,10 +249,9 @@
     return `<div class="itrp-picker" id="itrp-picker">
         <div class="field" data-field="host">
           <label for="itrp-host-input">รหัสเครื่องคอมของคุณ</label>
-          <div class="itrp-host-row"><input class="input" id="itrp-host-input" name="host_input" maxlength="${model.MAX_ASSET_CODE}" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="เช่น COM24" value="${esc(hostInput)}"${state.hostUnknown ? " disabled" : ""}><button type="button" class="btn secondary" id="itrp-host-search"${state.hostUnknown ? " disabled" : ""}>ค้นหา</button></div>
+          <div class="itrp-host-row"><input class="input" id="itrp-host-input" name="host_input" maxlength="${model.MAX_ASSET_CODE}" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="เช่น COM24" value="${esc(hostInput)}"><button type="button" class="btn secondary" id="itrp-host-search">ค้นหา</button></div>
           <small>รหัสติดอยู่บนตัวเครื่อง เช่น COM24 หรือ NBD01</small>
           <div id="itrp-host-status" aria-live="polite">${hostStatus(state)}</div>
-          <label class="itrp-choice itrp-host-unknown"><input type="checkbox" id="itrp-host-unknown" name="host_unknown"${state.hostUnknown ? " checked" : ""}> <span>ไม่ทราบรหัสเครื่อง / ไม่มีคอมประจำ</span></label>
         </div>
         <div class="field" data-field="devices">
           <span class="field-label">อุปกรณ์ที่มีปัญหา (เลือกได้หลายอย่าง) ${REQUIRED}</span>
@@ -446,7 +444,7 @@
     return `<h3 class="itrp-subhead">อุปกรณ์ที่แจ้ง</h3><div class="table-wrap"><table class="itrp-parts-table itrp-reqdev-table"><thead><tr><th scope="col">ลำดับ</th><th scope="col">ชนิด</th><th scope="col">รหัส</th><th scope="col">หมายเหตุ</th></tr></thead><tbody>${info.rows.map((device) => `<tr>
         <td data-label="ลำดับ">${esc(device.no)}</td>
         <td data-label="ชนิด">${esc(device.type)}</td>
-        <td data-label="รหัส">${device.code ? `<strong>${esc(device.code)}</strong>${device.fromRegister ? ' <span class="itrp-from-register">จากทะเบียน</span>' : ""}` : '<span class="muted">ไม่ทราบรหัส</span>'}</td>
+        <td data-label="รหัส">${device.code ? `<strong>${esc(device.code)}</strong>${device.fromRegister ? ' <span class="itrp-from-register">จากทะเบียน</span>' : ""}` : '<span class="muted">ยังไม่ระบุรหัส</span>'}</td>
         <td data-label="หมายเหตุ" class="itrp-text">${esc(device.note) || "—"}</td></tr>`).join("")}</tbody></table></div>`;
   }
   // เครื่อง/อุปกรณ์ที่ซ่อมในรอบนี้ (อ่านอย่างเดียว) · devices = reportView(...).devices · อาการ/การแก้ไขเฉพาะเครื่องว่าง = ใช้ของใบ (แสดง "—")

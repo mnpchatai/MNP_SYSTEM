@@ -98,26 +98,28 @@ test("the repair form has the paper form's fields and none of the work order's",
   assert.doesNotMatch(html, /itrp-host-input/, "the old fields are used when the database has no register lookup");
 });
 
-test("the picker form: host search, unknown tick, device types after confirming, no old machine fields", () => {
+test("the picker form: host search only (no 'unknown host' tick), device types after confirming, no old machine fields", () => {
   const html = pages.orderForm({ requester: { name: "สมชาย", department: "การตลาด" }, picker: true });
   assert.match(html, /id="itrp-host-input"[^>]*autocapitalize="characters"[^>]*placeholder="เช่น COM24"/);
   assert.match(html, /id="itrp-host-search"[^>]*>ค้นหา<\/button>/);
-  assert.match(html, /id="itrp-host-unknown" name="host_unknown"> <span>ไม่ทราบรหัสเครื่อง \/ ไม่มีคอมประจำ<\/span>/);
+  assert.doesNotMatch(html, /host-unknown|host_unknown|ไม่ทราบรหัสเครื่อง|ไม่มีคอมประจำ/, "the way around the lookup is gone");
   assert.match(html, /data-field="devices"/);
-  assert.match(html, /ค้นหารหัสเครื่องคอมของคุณ หรือติ๊ก "ไม่ทราบรหัสเครื่อง" ก่อน แล้วจึงเลือกอุปกรณ์ที่มีปัญหาได้/, "no device types until the host is confirmed or unknown is ticked");
+  assert.match(html, /ค้นหารหัสเครื่องคอมของคุณก่อน แล้วจึงเลือกอุปกรณ์ที่มีปัญหาได้/, "no device types until the host is found");
   assert.equal(count(html, /data-pick-type="/g), 0);
   for (const gone of ['data-field="asset_code"', 'data-field="device_name"', 'name="repair_target"']) assert.doesNotMatch(html, new RegExp(gone), gone);
   assert.equal(count(html, /data-step="/g), 4);
 });
 
-test("host status: found card, not found, error, loading, unknown", () => {
+test("host status: found card, not found, error, loading", () => {
   const host = model.normalizeLookup({ found: true, host: { code: "COM24", type_code: "COMPUTER", name: "Dell OptiPlex", model: "3080", user_name: "สมชาย" }, devices: [] });
   const found = pages.hostStatus({ host, lookup: "idle" });
   assert.match(found, /<strong>COM24<\/strong><span> · Dell OptiPlex · 3080 · ผู้ใช้ สมชาย<\/span>/);
-  assert.match(pages.hostStatus({ lookup: "notfound" }), /ไม่พบรหัสนี้ในทะเบียน ตรวจรหัสที่ติดบนเครื่อง หรือติ๊ก "ไม่ทราบรหัสเครื่อง"/);
-  assert.match(pages.hostStatus({ lookup: "error" }), /ค้นหาไม่สำเร็จ/);
+  assert.match(pages.hostStatus({ lookup: "notfound" }), /ไม่พบรหัสนี้ในทะเบียน กรุณาตรวจรหัสที่ติดบนเครื่อง หรือติดต่อ IT/);
+  assert.match(pages.hostStatus({ lookup: "error" }), /ค้นหาไม่สำเร็จ ตรวจอินเทอร์เน็ต/);
+  assert.doesNotMatch(pages.hostStatus({ lookup: "error" }) + pages.hostStatus({ lookup: "notfound" }), /ไม่ทราบรหัส/);
+  assert.match(pages.hostStatus({ lookup: "error", message: "ไม่พบบัญชีพนักงาน" }), /ไม่พบบัญชีพนักงาน/);
+  assert.doesNotMatch(pages.hostStatus({ lookup: "error", message: "ไม่พบบัญชีพนักงาน" }), /ตรวจอินเทอร์เน็ต/);
   assert.match(pages.hostStatus({ lookup: "loading" }), /กำลังค้นหา/);
-  assert.match(pages.hostStatus({ hostUnknown: true }), /พิมพ์รหัสเองได้/);
   assert.equal(pages.hostStatus({}), "");
   const hostile = pages.hostStatus({ host: { ...host, code: XSS, name: XSS, model: "", user_name: "" } });
   assert.doesNotMatch(hostile, /<img/);
@@ -145,7 +147,8 @@ test("device types: ticking shows rows, several registered devices get a tick ea
   assert.doesNotMatch(html, /data-pick-remove/, "register rows cannot be removed");
   const added = pages.pickTypes({ host, picks: model.addPickRow(picks, "MOUSE") });
   assert.match(added, /data-pick-remove="\d+"/);
-  assert.match(pages.pickTypes({ host: null, hostUnknown: false, picks: [] }), /ค้นหารหัสเครื่องคอมของคุณ/);
+  assert.match(pages.pickTypes({ host: null, picks: [] }), /ค้นหารหัสเครื่องคอมของคุณ/);
+  assert.equal(count(pages.pickTypes({ host: null, hostUnknown: true, picks: [] }), /data-pick-type="/g), 0, "an old 'unknown' flag opens nothing");
   const escaped = pages.pickTypes({ host, picks: [{ type_code: "OTHER", code: XSS, on: true, note: XSS, added: false, meta: XSS }] });
   assert.doesNotMatch(escaped, /<img/);
 });
@@ -153,12 +156,11 @@ test("device types: ticking shows rows, several registered devices get a tick ea
 test("the picker review lists the host and the chosen devices", () => {
   const host = model.normalizeLookup({ found: true, host: { code: "COM24", type_code: "COMPUTER", name: "Dell", user_name: "สมชาย" }, devices: [{ type_code: "MOUSE", code: "MOU09" }] });
   const picks = model.toggleType(model.toggleType([], "MOUSE", { host }), "COMPUTER", { host });
-  const html = pages.orderReview({ request_kind: "repair", symptom: "เปิดไม่ติด", is_urgent: false, host, host_unknown: false, picks }, [], { picker: true });
+  const html = pages.orderReview({ request_kind: "repair", symptom: "เปิดไม่ติด", is_urgent: false, host, picks }, [], { picker: true });
   assert.match(html, /เครื่องคอมของคุณ<\/dt><dd class="review-text">COM24 · Dell · ผู้ใช้ สมชาย/);
   assert.match(html, /อุปกรณ์ที่มีปัญหา<\/dt><dd class="review-text">คอมพิวเตอร์ COM24 · เมาส์ MOU09/);
   assert.doesNotMatch(html, /ประเภทงานซ่อม/);
-  const unknown = pages.orderReview({ request_kind: "repair", symptom: "x", host: null, host_unknown: true, picks: model.toggleType([], "MONITOR", { host: null, unknown: true }) }, [], { picker: true });
-  assert.match(unknown, /ไม่ทราบรหัสเครื่อง \/ ไม่มีคอมประจำ/);
+  assert.doesNotMatch(html, /ไม่ทราบรหัส/);
 });
 
 test("the review step shows only filled fields and escapes text", () => {
@@ -504,7 +506,7 @@ test("settings: read-only IT team with a pointer to the work order module, plus 
 });
 
 /* ---------- อุปกรณ์ที่ผู้แจ้งเลือก: รายละเอียด ใบพิมพ์ ฟอร์มส่งงาน ---------- */
-const REQUESTED = { host_code: "COM24", host_unknown: false, devices: [
+const REQUESTED = { host_code: "COM24", devices: [
   { seq: 1, type_code: "MONITOR", device_code: "MNT53", from_register: true, note: null },
   { seq: 2, type_code: "MOUSE", device_code: null, from_register: false, note: null },
   { seq: 3, type_code: "OTHER", device_code: "SCN01", from_register: false, note: "เครื่องสแกน" },
@@ -518,11 +520,10 @@ test("the detail page of a picked request shows the host and a devices table wit
   assert.match(html, /<strong>MNT53<\/strong> <span class="itrp-from-register">จากทะเบียน<\/span>/);
   assert.equal(count(html, /itrp-from-register/g), 1, "typed codes are not marked");
   assert.match(html, /<strong>SCN01<\/strong>/);
-  assert.match(html, /ไม่ทราบรหัส<\/span>/, "a device without a code says so");
+  assert.match(html, /ยังไม่ระบุรหัส<\/span>/, "a device without a code says so");
+  assert.doesNotMatch(html, /ไม่ทราบรหัส/, "no 'unknown host' wording any more");
   assert.match(html, /เครื่องสแกน/);
-  const unknown = pages.detailPage(detail({ host_code: null, host_unknown: true, devices: [REQUESTED.devices[1]] }));
-  assert.match(unknown, /<dt>เครื่องคอม<\/dt><dd>ไม่ทราบรหัส<\/dd>/);
-  const old = pages.detailPage(detail({ host_code: null, host_unknown: false, devices: [] }));
+  const old = pages.detailPage(detail({ host_code: null, devices: [] }));
   assert.match(old, /<dt>รหัสเครื่องคอมพิวเตอร์<\/dt>/);
   assert.doesNotMatch(old, /อุปกรณ์ที่แจ้ง|itrp-reqdev-table/);
   const noKeys = pages.detailPage(detail());
@@ -534,7 +535,7 @@ test("the A4 sheet puts the host and a compact device list in the same row as be
   const html = sheet(REQUESTED);
   assert.match(html, /<th scope="row">เครื่องคอม<\/th><td>COM24<\/td><th scope="row">อุปกรณ์ที่แจ้ง<\/th><td>หน้าจอ MNT53 · เมาส์ · อื่นๆ \(เครื่องสแกน SCN01\)<\/td>/);
   assert.equal(count(html, /<tr>/g), count(sheet({}), /<tr>/g), "no extra table row, so the form stays on one page");
-  assert.match(sheet({ host_code: null, host_unknown: true, devices: [] }), /<th scope="row">เครื่องคอม<\/th><td>ไม่ทราบรหัส<\/td>/);
+  assert.doesNotMatch(html, /ไม่ทราบรหัส/);
   assert.match(sheet({}), /<th scope="row">รหัสเครื่องคอมพิวเตอร์<\/th><td>PC-001<\/td><th scope="row">ชื่อเครื่อง \/ อุปกรณ์<\/th>/);
   assert.doesNotMatch(sheet({ ...REQUESTED, devices: [{ ...REQUESTED.devices[0], device_code: XSS }] }), /<img src=x/);
 });
@@ -545,7 +546,7 @@ test("the IT complete form starts from the codes the requester picked", () => {
   assert.deepEqual(rows(pages.detailPage(detail({ allowed_actions: ["complete"] }))), ["PC-001"], "an old request starts from the asset code as before");
   assert.deepEqual(rows(pages.completeFormCard({ assetCode: "COM24", requestedCodes: [] })), ["COM24"]);
   // ใบใหม่ที่ผู้แจ้งไม่มีรหัสอุปกรณ์เลย (เสียแค่จอที่ไม่ทราบรหัส): เริ่มว่าง ไม่เติมรหัสคอมลงแถว
-  const noCodes = { asset_code: "COM24", host_code: "COM24", host_unknown: false, devices: [{ seq: 1, type_code: "MONITOR", device_code: null, from_register: false, note: null }], allowed_actions: ["complete"] };
+  const noCodes = { asset_code: "COM24", host_code: "COM24", devices: [{ seq: 1, type_code: "MONITOR", device_code: null, from_register: false, note: null }], allowed_actions: ["complete"] };
   assert.deepEqual(rows(pages.detailPage(detail(noCodes))), [""]);
 });
 

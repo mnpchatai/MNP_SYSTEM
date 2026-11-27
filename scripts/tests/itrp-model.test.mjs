@@ -237,9 +237,6 @@ test("ticking a type fills the code from the register: one device is ticked for 
   assert.deepEqual(model.toggleType(computer, "COMPUTER", ctx), [], "ticking again removes the type");
   const laptop = model.toggleType([], "COMPUTER", { host: { ...HOST, code: "NBD01", type_code: "LAPTOP" } });
   assert.equal(laptop[0].type_code, "LAPTOP", "a laptop host sends LAPTOP");
-  const unknown = model.toggleType([], "COMPUTER", { host: null, unknown: true });
-  assert.deepEqual(plain(unknown.map((row) => [row.type_code, row.code])), [["COMPUTER", ""]], "unknown host: COMPUTER with an empty code");
-  assert.deepEqual(plain(model.toggleType([], "MONITOR", { host: HOST, unknown: true }).map((row) => row.code)), [""], "unknown host ignores the register");
 });
 
 test("rows: the code stays editable, rows can be added (and removed only if added), a lone row always counts", () => {
@@ -268,11 +265,12 @@ test("only multi types can add rows; the computer has one row; the 10 device lim
 });
 
 test("picker problems: confirm the host first, then at least one device, 'other' needs text, codes are not duplicated", () => {
-  const base = { host_input: "", host: null, host_unknown: false, picks: [] };
-  assert.equal(model.pickerProblem(base), "กรุณาค้นหารหัสเครื่องคอมของคุณ หรือติ๊ก \"ไม่ทราบรหัสเครื่อง / ไม่มีคอมประจำ\"");
+  const base = { host_input: "", host: null, picks: [] };
+  assert.equal(model.pickerProblem(base), "กรุณาค้นหารหัสเครื่องคอมของคุณก่อน (รหัสติดอยู่บนตัวเครื่อง)");
   assert.match(model.pickerProblem({ ...base, host_input: "COM24" }), /ยังไม่ได้ยืนยันรหัสเครื่อง กดปุ่ม "ค้นหา"/);
+  assert.doesNotMatch(model.pickerProblem(base) + model.pickerProblem({ ...base, host_input: "x" }), /ไม่ทราบรหัส/, "there is no way around the lookup");
   assert.equal(model.pickerProblem({ ...base, host: HOST }), "กรุณาเลือกอุปกรณ์ที่มีปัญหาอย่างน้อย 1 รายการ");
-  assert.equal(model.pickerProblem({ ...base, host_unknown: true }), "กรุณาเลือกอุปกรณ์ที่มีปัญหาอย่างน้อย 1 รายการ", "'unknown' skips the lookup only");
+  assert.match(model.pickerProblem({ ...base, host_unknown: true }), /กรุณาค้นหารหัสเครื่อง/, "an old draft flag host_unknown changes nothing");
   const monitors = model.toggleType([], "MONITOR", { host: HOST });
   assert.equal(model.pickerProblem({ ...base, host: HOST, picks: monitors }), "กรุณาเลือกรายการ \"หน้าจอ\" ที่มีปัญหา หรือติ๊กชนิดนี้ออก");
   assert.equal(model.pickerProblem({ ...base, host: HOST, picks: model.setPickField(monitors, 0, "on", true) }), "");
@@ -296,13 +294,14 @@ test("with the picker the machine fields are not required, and the 'devices' rul
   assert.deepEqual(errors({ request_kind: "repair", symptom: "", devices: "x" }).map((error) => error[0]), ["devices", "symptom"], "devices (step 2) comes before symptom (step 3)");
 });
 
-test("createParams with the picker: 11 parameters, summary fields filled by the form, host code from the register", () => {
-  const form = { request_kind: "repair", request_kind_note: "", symptom: " เปิดไม่ติด ", is_urgent: false, host_input: "com24", host: HOST, host_unknown: false };
+test("createParams with the picker: 10 parameters, summary fields filled by the form, host code from the register", () => {
+  const form = { request_kind: "repair", request_kind_note: "", symptom: " เปิดไม่ติด ", is_urgent: false, host_input: "com24", host: HOST };
   const computerOnly = model.createParams({ ...form, picks: model.toggleType([], "COMPUTER", { host: HOST }) }, { picker: true });
   assert.deepEqual(plain(computerOnly), {
     p_asset_code: "COM24", p_device_name: "คอมพิวเตอร์", p_request_kind: "repair", p_request_kind_note: null, p_repair_target: "computer", p_repair_target_note: null, p_symptom: "เปิดไม่ติด", p_is_urgent: false,
-    p_host_code: "COM24", p_host_unknown: false, p_devices: [{ type_code: "COMPUTER", device_code: "COM24", note: null }],
+    p_host_code: "COM24", p_devices: [{ type_code: "COMPUTER", device_code: "COM24", note: null }],
   });
+  assert.equal("p_host_unknown" in computerOnly, false, "no 'unknown host' parameter any more");
   let picks = model.toggleType(model.toggleType([], "MOUSE", { host: HOST }), "MONITOR", { host: HOST });
   picks = model.setPickField(picks, 2, "on", true);
   const mixed = model.createParams({ ...form, picks }, { picker: true });
@@ -316,20 +315,17 @@ test("createParams with the picker: 11 parameters, summary fields filled by the 
   assert.deepEqual(plain(withOther.p_devices), [{ type_code: "OTHER", device_code: null, note: "เครื่องสแกน" }]);
   const both = model.createParams({ ...form, picks: [...model.toggleType([], "COMPUTER", { host: HOST }), ...model.setPickField(model.toggleType([], "OTHER", { host: HOST }), 0, "note", "x")] }, { picker: true });
   assert.equal(both.p_repair_target, "other", "computer + other (no peripheral) is 'other' with the typed text");
-  const unknown = model.createParams({ ...form, host: null, host_unknown: true, host_input: "ทดลอง", picks: model.setPickField(model.toggleType([], "COMPUTER", { host: null, unknown: true }), 0, "code", " com99 ") }, { picker: true });
-  assert.equal(unknown.p_host_code, null, "unknown host sends no host code");
-  assert.equal(unknown.p_host_unknown, true);
-  assert.equal(unknown.p_asset_code, "COM99", "the typed computer code still goes to the old asset code field");
-  assert.equal(unknown.p_devices[0].device_code, "COM99");
-  const noCode = model.createParams({ ...form, host: null, host_unknown: true, picks: model.toggleType([], "COMPUTER", { host: null, unknown: true }) }, { picker: true });
-  assert.equal(noCode.p_asset_code, null);
-  assert.equal(noCode.p_devices[0].device_code, null, "an unknown code is null, not an empty string");
+  const edited = model.createParams({ ...form, picks: model.setPickField(model.toggleType([], "COMPUTER", { host: HOST }), 0, "code", " com99 ") }, { picker: true });
+  assert.equal(edited.p_asset_code, "COM24", "the old asset code field is the confirmed host, not what was typed in the row");
+  assert.equal(edited.p_devices[0].device_code, "COM99", "the row code the requester edited is sent as typed (normalised)");
+  const noCode = model.createParams({ ...form, picks: model.setPickField(model.toggleType([], "MONITOR", { host: { ...HOST, devices: [] } }), 0, "code", "  ") }, { picker: true });
+  assert.equal(noCode.p_devices[0].device_code, null, "a blank code is null, not an empty string");
   const longOther = model.createParams({ ...form, picks: model.setPickField(model.toggleType([], "OTHER", { host: HOST }), 0, "note", "ก".repeat(200)) }, { picker: true });
   assert.ok(Array.from(longOther.p_device_name).length <= 200 && Array.from(longOther.p_repair_target_note).length <= 200, "summaries never pass the database limits");
 });
 
-test("old database fallback: the three new parameters are dropped and everything else stays", () => {
-  const form = { request_kind: "repair", symptom: "x", host: HOST, host_unknown: false, picks: model.toggleType([], "COMPUTER", { host: HOST }) };
+test("old database fallback: the two new parameters are dropped and everything else stays", () => {
+  const form = { request_kind: "repair", symptom: "x", host: HOST, picks: model.toggleType([], "COMPUTER", { host: HOST }) };
   const full = model.createParams(form, { picker: true });
   const legacy = model.legacyCreateParams(full);
   assert.deepEqual(Object.keys(legacy).sort(), ["p_asset_code", "p_device_name", "p_is_urgent", "p_repair_target", "p_repair_target_note", "p_request_kind", "p_request_kind_note", "p_symptom"]);
@@ -343,10 +339,10 @@ test("old database fallback: the three new parameters are dropped and everything
 });
 
 test("detail of a request: new requests show the host and devices, old ones show the old fields", () => {
-  const old = { asset_code: "PC-001", device_name: "Dell", host_code: null, host_unknown: false, devices: [] };
+  const old = { asset_code: "PC-001", device_name: "Dell", host_code: null, devices: [] };
   assert.equal(model.requestDevices(old).isNew, false);
   assert.equal(model.requestDevices({ ...old, devices: undefined }).isNew, false);
-  const fresh = { host_code: "COM24", host_unknown: false, devices: [
+  const fresh = { host_code: "COM24", devices: [
     { seq: 2, type_code: "OTHER", device_code: null, from_register: false, note: "เครื่องสแกน" },
     { seq: 1, type_code: "MONITOR", device_code: "MNT53", from_register: true, note: null },
     { seq: 3, type_code: "MOUSE", device_code: null, from_register: false, note: null },
@@ -356,7 +352,6 @@ test("detail of a request: new requests show the host and devices, old ones show
   assert.equal(view.hostText, "COM24");
   assert.deepEqual(plain(view.rows).map((row) => [row.no, row.type, row.code, row.fromRegister]), [[1, "หน้าจอ", "MNT53", true], [2, "อื่นๆ", "", false], [3, "เมาส์", "", false]]);
   assert.equal(model.requestDevicesInline(fresh), "หน้าจอ MNT53 · อื่นๆ (เครื่องสแกน) · เมาส์");
-  assert.equal(model.requestDevices({ host_code: null, host_unknown: true, devices: [] }).hostText, "ไม่ทราบรหัส");
   assert.deepEqual(model.requestedDeviceCodes({ ...fresh, devices: [...fresh.devices, { seq: 4, type_code: "MONITOR", device_code: "mnt53", note: null }] }), ["MNT53"], "codes are unique and upper case");
   assert.deepEqual(model.requestedDeviceCodes(old), []);
 });
