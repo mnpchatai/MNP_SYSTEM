@@ -32,7 +32,7 @@ function el(props = {}) {
   return Object.defineProperties(node, Object.getOwnPropertyDescriptors(props));
 }
 
-function world({ role = ROLE_EMP, handlers = {}, draft = null, sandbox = false, inDevelopment = true } = {}) {
+function world({ role = ROLE_EMP, handlers = {}, draft = null, sandbox = false, inDevelopment = false } = {}) {
   const calls = { rpc: [], toasts: [], confirms: [], prompts: [], notFound: 0, busy: [], renderRoutes: 0, uploads: [], removes: [], fieldErrors: null, draftCleared: 0, hydrated: [] };
   const objects = new Map();
   const hosts = {};
@@ -236,10 +236,10 @@ function world({ role = ROLE_EMP, handlers = {}, draft = null, sandbox = false, 
     createDraftStore: () => ({ load: () => draft, clear: () => { calls.draftCleared += 1; } }),
     createAutosave: () => ({ schedule() {}, start() {}, stop() {} }), offerDraft(options) { calls.draftOffer = options; },
   };
-  // inDevelopment: false = จำลองการถอดธง "กำลังพัฒนา" (แก้ค่าธงเดียวใน itrp-model.js ตามที่ผู้ดูแลจะทำจริง)
+  // inDevelopment: true = จำลองการเปิดธง "กำลังพัฒนา" กลับ (ค่าจริงใน itrp-model.js ถอดป้ายแล้ว = false)
   for (const file of ["modules/working-time.js", "modules/itrp-model.js", "modules/itrp-pages.js", "modules/itrp-history-pages.js", "modules/module-itrp.js"]) {
     const source = read(file);
-    vm.runInContext(inDevelopment || file !== "modules/itrp-model.js" ? source : source.replace("const IN_DEVELOPMENT = true;", "const IN_DEVELOPMENT = false;"), context);
+    vm.runInContext(!inDevelopment || file !== "modules/itrp-model.js" ? source : source.replace("const IN_DEVELOPMENT = false;", "const IN_DEVELOPMENT = true;"), context);
   }
 
   return {
@@ -1002,7 +1002,7 @@ test("asking the requester and answering use their RPCs with the comment id for 
 /* ---------- ป้าย/แถบ "กำลังพัฒนา" ---------- */
 const DEV_BAR = "ระบบใบแจ้งซ่อมคอมพิวเตอร์กำลังพัฒนาและทดสอบ ยังไม่เปิดใช้งานจริง";
 test("while the module is in development every screen shows the notice bar, the print page does not, and use is not blocked", async () => {
-  const w = world({ role: ROLE_IT, handlers: { app_itrp_get_detail: () => DETAIL() } });
+  const w = world({ role: ROLE_IT, inDevelopment: true, handlers: { app_itrp_get_detail: () => DETAIL() } });
   assert.equal(w.context.window.MNP_ITRP.inDevelopment, true, "the card reads the flag from the module announcement");
   for (const query of ["", "view=new", "view=settings", `view=order&id=${ID}`]) {
     await w.open(query);
@@ -1018,7 +1018,7 @@ test("while the module is in development every screen shows the notice bar, the 
 });
 
 test("turning the flag off removes the notice bar from every screen and the card announcement", async () => {
-  const w = world({ role: ROLE_IT, inDevelopment: false, handlers: { app_itrp_get_detail: () => DETAIL() } });
+  const w = world({ role: ROLE_IT, handlers: { app_itrp_get_detail: () => DETAIL() } });
   assert.equal(w.context.window.MNP_ITRP.inDevelopment, false);
   for (const query of ["", "view=new", "view=settings", `view=order&id=${ID}`, `view=print&id=${ID}`]) {
     await w.open(query);
