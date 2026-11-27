@@ -17,7 +17,8 @@
 -- การตัดสินใจ (ผู้ตรวจ/หน้าเว็บโปรดทราบ)
 --   - ใช้คอลัมน์ใหม่ host_code แยกจาก asset_code เดิม: asset_code เป็นข้อความที่ผู้แจ้ง/หน้าเว็บกรอกอิสระ (ใบเก่าและการเรียกแบบเดิมยังใช้) ส่วน host_code
 --     "มีค่าก็ต่อเมื่อฐานข้อมูลตรวจเจอเครื่องนั้นในทะเบียนตอนส่งใบ" (ไม่เชื่อหน้าเว็บ) จึงเชื่อใจได้ว่ามีอยู่จริงในโหมดนั้น · เก็บรหัสมาตรฐานของเครื่อง
---     (device_code ถ้ามี ไม่งั้น reg_no) ไม่ใช่ข้อความที่พิมพ์ · หน้าเว็บยังเติม asset_code = รหัสเครื่องตามเดิม (ฟังก์ชันประวัติซ่อม/เปลี่ยนชิ้นส่วนอ่าน asset_code อยู่)
+--     (device_code ถ้ามี ไม่งั้น reg_no) ไม่ใช่ข้อความที่พิมพ์ · เมื่อยืนยันเครื่องในทะเบียนแล้ว (host_unknown = false)
+--     ฐานข้อมูลตั้ง asset_code = รหัสมาตรฐานของเครื่องที่พบเอง ทับค่าที่หน้าเว็บส่ง (ฟังก์ชันประวัติซ่อม/เปลี่ยนชิ้นส่วนอ่านเครื่องของใบจาก asset_code) · host_unknown = true เก็บ asset_code ตามที่ส่ง
 --   - host_unknown = true -> host_code เป็น null เสมอ (ข้อความที่ผู้แจ้งพิมพ์แล้วไม่พบไม่ถูกเก็บใน host_code เพื่อไม่ปนกับรหัสที่ยืนยันแล้ว) · CHECK บังคับที่ตาราง
 --   - ใบเดิม/การเรียกแบบเดิม (ไม่ส่งทั้งสามพารามิเตอร์ใหม่) ได้ host_code null, host_unknown false และไม่มีแถวอุปกรณ์ · ตรวจแบบ "ส่งแบบใหม่" เมื่อมีอย่างใดอย่างหนึ่ง:
 --     p_host_code ไม่ว่าง, p_host_unknown = true, หรือ p_devices ไม่ใช่ null (ส่ง [] มา = แบบใหม่ที่ไม่มีอุปกรณ์ = ถูกปฏิเสธ)
@@ -38,12 +39,18 @@
 --   3) private.itrp_request_guard()            จาก 20261212010000_itrp_repair_requests.sql  แก้: เพิ่ม host_code, host_unknown ในรายการคอลัมน์ที่ห้ามแก้
 --   4) public.app_itrp_get_detail(uuid)        จาก 20261230010000_office_it_approver_worktime.sql  แก้: เพิ่มคีย์ host_code, host_unknown, devices
 --   5) public.app_itrp_create(8 พารามิเตอร์)   จาก 20261230010000_office_it_approver_worktime.sql  -> drop แล้ว create ฉบับ 11 พารามิเตอร์ (เนื้อหาเดิมครบ เพิ่มเฉพาะส่วนอุปกรณ์)
---   md5 ฐาน (ค่าจาก PGlite หลัง apply migration ถึง 20270107010000 · นิยามที่ prod อาจจัดรูปต่างได้ ให้เทียบกับ prod จริงก่อน apply และเทียบ 1 ตัวที่ไม่ได้แก้กับ main):
+--   md5 ฐาน ฉบับ PGlite (ค่าจาก PGlite หลัง apply migration ถึง 20270107010000 · การจัดรูปนิยามบน prod ต่างจาก PGlite จึงใช้เทียบกับ prod ตรง ๆ ไม่ได้ ดูค่าฉบับ prod ด้านล่าง):
 --     private.sandbox_unguarded_tables()                    e2a33acbff59e1ae9d784d8858ff543f  (105 ชื่อ)
 --     public.app_sandbox_purge_itrp()                       532ef8075a0fd8a6bb8150185314b7f2
 --     private.itrp_request_guard()                          65befcdb2b523f61c70b60ac1df9bd32
 --     public.app_itrp_get_detail(uuid)                      c8dca113f68524335b4f07133e2a6e59
 --     public.app_itrp_create(text,text,text,text,text,text,text,boolean)  b9c2f5657d7dc6203335fd228d141236
+--   md5 ฐาน ฉบับ prod (วัดจาก prod ตอนตรวจก่อน apply ณ 27/11/2026 · ใช้เทียบก่อน apply จริง ถ้าไม่ตรงให้หยุดแล้วตรวจว่ามี migration อื่นแก้ฟังก์ชันเหล่านี้ไปก่อน):
+--     private.sandbox_unguarded_tables()                    b53fd7ee91918a9d5a22312a19cc865c  (105 ชื่อ · md5 ของรายชื่อ ba98d4fa7e5978a20ebf86f20af77715)
+--     public.app_sandbox_purge_itrp()                       e9d3999eb86958790e3e448e3520efd5
+--     private.itrp_request_guard()                          67b857a6e3321005a1ab4c6c7b35520e
+--     public.app_itrp_get_detail(uuid)                      a16772df1a65e4a10abf16caba4610cd
+--     public.app_itrp_create(text,text,text,text,text,text,text,boolean)  354590ba8cd4d2c93ef8897c6e59fc19
 --
 -- ไม่แตะ: ตาราง/ฟังก์ชันของ itwo/itas/itua/itar, itrp_request_machine_codes และฟังก์ชันประวัติซ่อม/เปลี่ยนชิ้นส่วน (ยังอ่าน asset_code), ฟังก์ชันกลางของเพื่อน, storage policy, bucket
 --
