@@ -99,8 +99,8 @@ test("status labels, badge classes and the requester's own wording", () => {
   assert.equal(model.isTestDoc("IT01-26/001"), false);
 });
 
-test("the module version is 1.05 and no text of this module says 'ใบสั่งงาน'", () => {
-  assert.equal(model.MODULE_VERSION, "1.06");
+test("the module version is 2.00 and no text of this module says 'ใบสั่งงาน'", () => {
+  assert.equal(model.MODULE_VERSION, "2.00");
   assert.match(model.VERSION_DATE, /^\d{4}-\d{2}-\d{2}$/);
   for (const file of ["modules/itrp-model.js", "modules/itrp-pages.js", "modules/module-itrp.js"]) {
     // คอมเมนต์อ้างถึงใบสั่งงาน IT (โมดูลต้นแบบ) ได้ และหน้าตั้งค่ามีข้อความ 1 บรรทัดบอกว่าทีม IT แก้ที่ใบสั่งงาน IT · นอกนั้นข้อความที่ผู้ใช้เห็นต้องเป็น "ใบแจ้งซ่อม"
@@ -148,8 +148,8 @@ test("the repair form: only the device name, request kind, repair target and sym
   assert.deepEqual(repairErrors(GOOD_FORM), []);
   assert.deepEqual(repairErrors({ ...GOOD_FORM, asset_code: "" }), [], "the asset code is optional");
   assert.deepEqual(repairErrors(model.EMPTY_REPAIR_FORM), [
-    ["device_name", "กรุณาระบุชื่อเครื่องคอมพิวเตอร์ / อุปกรณ์"],
     ["request_kind", "กรุณาเลือกประเภทคำขอ"],
+    ["device_name", "กรุณาระบุชื่อเครื่องคอมพิวเตอร์ / อุปกรณ์"],
     ["repair_target", "กรุณาเลือกประเภทงานซ่อม"],
     ["symptom", "กรุณาระบุอาการเสีย-ขัดข้องที่เกิดขึ้นเบื้องต้น"],
   ]);
@@ -177,9 +177,9 @@ test("the repair form lengths match the database", () => {
   assert.equal(model.MAX_FILE_BYTES, 20 * 1024 * 1024);
 });
 
-test("every repair field is on step 1 or step 2 in screen order", () => {
+test("every repair field is on its step in screen order (kind, machine, symptom)", () => {
   const rules = model.repairRules();
-  assert.deepEqual(rules.map((rule) => [rule.name, rule.step]), [["asset_code", 1], ["device_name", 1], ["request_kind", 1], ["request_kind_note", 1], ["repair_target", 1], ["repair_target_note", 1], ["symptom", 2]]);
+  assert.deepEqual(rules.map((rule) => [rule.name, rule.step]), [["request_kind", 1], ["request_kind_note", 1], ["asset_code", 2], ["device_name", 2], ["repair_target", 2], ["repair_target_note", 2], ["devices", 2], ["symptom", 3]]);
   const form = model.repairRules({ requestKind: () => "other" });
   assert.equal(form.find((rule) => rule.name === "request_kind_note").required, true, "required reads the current choice each time");
   assert.equal(model.repairRules().find((rule) => rule.name === "request_kind_note").required, false);
@@ -195,6 +195,171 @@ test("createParams trims, sends null for blank/unused text, and never sends a do
   assert.equal(other.p_repair_target_note, "จอ");
   assert.deepEqual(Object.keys(model.createParams(GOOD_FORM)).sort(), ["p_asset_code", "p_device_name", "p_is_urgent", "p_repair_target", "p_repair_target_note", "p_request_kind", "p_request_kind_note", "p_symptom"]);
   assert.equal(model.createParams({ ...GOOD_FORM, is_urgent: undefined }).p_is_urgent, false);
+});
+
+/* ---------- เลือกอุปกรณ์จากทะเบียนตอนแจ้งซ่อม ---------- */
+const LOOKUP = {
+  found: true,
+  host: { code: "COM24", type_code: "COMPUTER", name: "Dell OptiPlex", model: "OptiPlex 3080", user_name: "สมชาย ใจดี" },
+  devices: [
+    { type_code: "MONITOR", code: "MNT53", name: "จอ Dell", model: "P2419H" },
+    { type_code: "MONITOR", code: "MNT54", name: "จอ Dell", model: "P2419H" },
+    { type_code: "MOUSE", code: "MOU09", name: "", model: "" },
+  ],
+};
+const HOST = model.normalizeLookup(LOOKUP);
+const picked = (picks) => plain(model.pickedRows(picks)).map((row) => [row.type_code, row.code]);
+
+test("lookup result: only a found computer counts, the confirm line is 'code · name/model · user'", () => {
+  assert.equal(model.normalizeLookup({ found: false }), null);
+  assert.equal(model.normalizeLookup(null), null);
+  assert.equal(model.normalizeLookup({ found: true, host: { code: " " } }), null);
+  assert.equal(HOST.code, "COM24");
+  assert.equal(HOST.devices.length, 3);
+  assert.equal(model.hostConfirmText(HOST), "COM24 · Dell OptiPlex · OptiPlex 3080 · ผู้ใช้ สมชาย ใจดี");
+  assert.equal(model.hostConfirmText({ code: "NBD01", name: "Dell", model: "Dell", user_name: "" }), "NBD01 · Dell", "same name and model show once, no user = no user part");
+  assert.equal(model.normalizeLookup({ found: true, host: { code: "NBD01", type_code: "LAPTOP" }, devices: [] }).type_code, "LAPTOP");
+});
+
+test("ticking a type fills the code from the register: one device is ticked for you, several are left for the requester to choose", () => {
+  const ctx = { host: HOST };
+  const computer = model.toggleType([], "COMPUTER", ctx);
+  assert.deepEqual(picked(computer), [["COMPUTER", "COM24"]], "the computer is the found host itself");
+  const mouse = model.toggleType([], "MOUSE", ctx);
+  assert.deepEqual(picked(mouse), [["MOUSE", "MOU09"]], "a single registered device is picked");
+  const monitors = model.toggleType([], "MONITOR", ctx);
+  assert.equal(monitors.length, 2);
+  assert.deepEqual(picked(monitors), [], "two monitors: the requester picks the broken one");
+  assert.deepEqual(picked(model.setPickField(monitors, 1, "on", true)), [["MONITOR", "MNT54"]]);
+  assert.equal(monitors[0].meta, "จอ Dell · P2419H");
+  const printer = model.toggleType([], "PRINTER", ctx);
+  assert.deepEqual(plain(printer.map((row) => [row.type_code, row.code, row.on])), [["PRINTER", "", true]], "not in the register: one empty row to type into");
+  assert.deepEqual(model.toggleType(computer, "COMPUTER", ctx), [], "ticking again removes the type");
+  const laptop = model.toggleType([], "COMPUTER", { host: { ...HOST, code: "NBD01", type_code: "LAPTOP" } });
+  assert.equal(laptop[0].type_code, "LAPTOP", "a laptop host sends LAPTOP");
+});
+
+test("rows: the code stays editable, rows can be added (and removed only if added), a lone row always counts", () => {
+  let picks = model.toggleType([], "MONITOR", { host: HOST });
+  picks = model.setPickField(picks, 0, "on", true);
+  picks = model.setPickField(picks, 0, "code", " mnt99 ");
+  assert.deepEqual(plain(model.pickerDevices(picks)).map((row) => [row.type_code, row.device_code]), [["MONITOR", "MNT99"]], "an edited code is normalised when sent");
+  picks = model.addPickRow(picks, "MONITOR");
+  assert.equal(picks.length, 3);
+  assert.equal(picks[2].added, true);
+  assert.deepEqual(model.removePickRow(picks, 0), picks, "a register row cannot be removed, only unticked");
+  assert.equal(model.removePickRow(picks, 2).length, 2, "a row the requester added can be removed");
+  const single = model.addPickRow(model.toggleType([], "MOUSE", { host: HOST }), "MOUSE");
+  assert.equal(single[0].on, true);
+  const back = model.removePickRow(model.setPickField(single, 0, "on", false), 1);
+  assert.deepEqual(plain(back.map((row) => row.on)), [true], "back to one row: it counts again even if it was unticked");
+});
+
+test("only multi types can add rows; the computer has one row; the 10 device limit stops adding", () => {
+  const computer = model.toggleType([], "COMPUTER", { host: HOST });
+  assert.equal(model.addPickRow(computer, "COMPUTER").length, 1);
+  assert.equal(model.addPickRow([], "MOUSE").length, 0, "the type must be ticked first");
+  let picks = model.toggleType([], "OTHER", { host: HOST });
+  for (let i = 0; i < 15; i += 1) picks = model.addPickRow(picks, "OTHER");
+  assert.equal(model.pickedCount(picks), model.MAX_REQUEST_DEVICES);
+});
+
+test("picker problems: confirm the host first, then at least one device, 'other' needs text, codes are not duplicated", () => {
+  const base = { host_input: "", host: null, picks: [] };
+  assert.equal(model.pickerProblem(base), "กรุณาค้นหารหัสเครื่องคอมของคุณก่อน (รหัสติดอยู่บนตัวเครื่อง)");
+  assert.match(model.pickerProblem({ ...base, host_input: "COM24" }), /ยังไม่ได้ยืนยันรหัสเครื่อง กดปุ่ม "ค้นหา"/);
+  assert.doesNotMatch(model.pickerProblem(base) + model.pickerProblem({ ...base, host_input: "x" }), /ไม่ทราบรหัส/, "there is no way around the lookup");
+  assert.equal(model.pickerProblem({ ...base, host: HOST }), "กรุณาเลือกอุปกรณ์ที่มีปัญหาอย่างน้อย 1 รายการ");
+  assert.match(model.pickerProblem({ ...base, host_unknown: true }), /กรุณาค้นหารหัสเครื่อง/, "an old draft flag host_unknown changes nothing");
+  const monitors = model.toggleType([], "MONITOR", { host: HOST });
+  assert.equal(model.pickerProblem({ ...base, host: HOST, picks: monitors }), "กรุณาเลือกรายการ \"หน้าจอ\" ที่มีปัญหา หรือติ๊กชนิดนี้ออก");
+  assert.equal(model.pickerProblem({ ...base, host: HOST, picks: model.setPickField(monitors, 0, "on", true) }), "");
+  const other = model.toggleType([], "OTHER", { host: HOST });
+  assert.equal(model.pickerProblem({ ...base, host: HOST, picks: other }), "กรุณาระบุอุปกรณ์ (เมื่อเลือก \"อื่นๆ\")");
+  assert.equal(model.pickerProblem({ ...base, host: HOST, picks: model.setPickField(other, 0, "note", "เครื่องสแกน") }), "");
+  const twice = model.setPickField(model.addPickRow(model.toggleType([], "PRINTER", { host: HOST }), "PRINTER"), 0, "code", "prt01");
+  assert.equal(model.pickerProblem({ ...base, host: HOST, picks: model.setPickField(twice, 1, "code", "PRT01") }), "รหัสอุปกรณ์ PRT01 ซ้ำกัน");
+  assert.equal(model.pickerProblem({ ...base, host: HOST, picks: model.setPickField(twice, 0, "code", "x".repeat(51)) }), "รหัสอุปกรณ์ต้องไม่เกิน 50 ตัวอักษร");
+});
+
+test("with the picker the machine fields are not required, and the 'devices' rule shows the live problem", () => {
+  let problem = "";
+  const rules = model.repairRules({ picker: () => true, pickerProblem: () => problem });
+  const errors = (values) => validate(rules, values).map((error) => [error.name, error.message]);
+  assert.deepEqual(errors({ request_kind: "repair", symptom: "x", devices: "" }), []);
+  problem = "ยังไม่ได้เลือก";
+  assert.deepEqual(errors({ request_kind: "repair", symptom: "x", devices: problem }), [["devices", "ยังไม่ได้เลือก"]]);
+  problem = "ข้อความใหม่";
+  assert.deepEqual(errors({ request_kind: "repair", symptom: "x", devices: "ยังไม่ได้เลือก" }), [["devices", "ข้อความใหม่"]], "the message is read when the rule fails");
+  assert.deepEqual(errors({ request_kind: "repair", symptom: "", devices: "x" }).map((error) => error[0]), ["devices", "symptom"], "devices (step 2) comes before symptom (step 3)");
+});
+
+test("createParams with the picker: 10 parameters, summary fields filled by the form, host code from the register", () => {
+  const form = { request_kind: "repair", request_kind_note: "", symptom: " เปิดไม่ติด ", is_urgent: false, host_input: "com24", host: HOST };
+  const computerOnly = model.createParams({ ...form, picks: model.toggleType([], "COMPUTER", { host: HOST }) }, { picker: true });
+  assert.deepEqual(plain(computerOnly), {
+    p_asset_code: "COM24", p_device_name: "คอมพิวเตอร์", p_request_kind: "repair", p_request_kind_note: null, p_repair_target: "computer", p_repair_target_note: null, p_symptom: "เปิดไม่ติด", p_is_urgent: false,
+    p_host_code: "COM24", p_devices: [{ type_code: "COMPUTER", device_code: "COM24", note: null }],
+  });
+  assert.equal("p_host_unknown" in computerOnly, false, "no 'unknown host' parameter any more");
+  let picks = model.toggleType(model.toggleType([], "MOUSE", { host: HOST }), "MONITOR", { host: HOST });
+  picks = model.setPickField(picks, 2, "on", true);
+  const mixed = model.createParams({ ...form, picks }, { picker: true });
+  assert.equal(mixed.p_device_name, "หน้าจอ, เมาส์", "types in screen order, each once");
+  assert.equal(mixed.p_repair_target, "device");
+  assert.deepEqual(plain(mixed.p_devices), [{ type_code: "MONITOR", device_code: "MNT54", note: null }, { type_code: "MOUSE", device_code: "MOU09", note: null }]);
+  const withOther = model.createParams({ ...form, picks: model.setPickField(model.toggleType([], "OTHER", { host: HOST }), 0, "note", " เครื่องสแกน ") }, { picker: true });
+  assert.equal(withOther.p_repair_target, "other");
+  assert.equal(withOther.p_repair_target_note, "เครื่องสแกน");
+  assert.equal(withOther.p_device_name, "อื่นๆ (เครื่องสแกน)");
+  assert.deepEqual(plain(withOther.p_devices), [{ type_code: "OTHER", device_code: null, note: "เครื่องสแกน" }]);
+  const both = model.createParams({ ...form, picks: [...model.toggleType([], "COMPUTER", { host: HOST }), ...model.setPickField(model.toggleType([], "OTHER", { host: HOST }), 0, "note", "x")] }, { picker: true });
+  assert.equal(both.p_repair_target, "other", "computer + other (no peripheral) is 'other' with the typed text");
+  const edited = model.createParams({ ...form, picks: model.setPickField(model.toggleType([], "COMPUTER", { host: HOST }), 0, "code", " com99 ") }, { picker: true });
+  assert.equal(edited.p_asset_code, "COM24", "the old asset code field is the confirmed host, not what was typed in the row");
+  assert.equal(edited.p_devices[0].device_code, "COM99", "the row code the requester edited is sent as typed (normalised)");
+  const noCode = model.createParams({ ...form, picks: model.setPickField(model.toggleType([], "MONITOR", { host: { ...HOST, devices: [] } }), 0, "code", "  ") }, { picker: true });
+  assert.equal(noCode.p_devices[0].device_code, null, "a blank code is null, not an empty string");
+  const longOther = model.createParams({ ...form, picks: model.setPickField(model.toggleType([], "OTHER", { host: HOST }), 0, "note", "ก".repeat(200)) }, { picker: true });
+  assert.ok(Array.from(longOther.p_device_name).length <= 200 && Array.from(longOther.p_repair_target_note).length <= 200, "summaries never pass the database limits");
+});
+
+test("old database fallback: the two new parameters are dropped and everything else stays", () => {
+  const form = { request_kind: "repair", symptom: "x", host: HOST, picks: model.toggleType([], "COMPUTER", { host: HOST }) };
+  const full = model.createParams(form, { picker: true });
+  const legacy = model.legacyCreateParams(full);
+  assert.deepEqual(Object.keys(legacy).sort(), ["p_asset_code", "p_device_name", "p_is_urgent", "p_repair_target", "p_repair_target_note", "p_request_kind", "p_request_kind_note", "p_symptom"]);
+  assert.equal(legacy.p_asset_code, "COM24");
+  assert.ok("p_devices" in full, "the original is not changed");
+  assert.equal(model.isMissingFunction({ code: "PGRST202", message: "x" }), true);
+  assert.equal(model.isMissingFunction({ code: "42883", message: "function app_itrp_lookup_host(text) does not exist" }), true);
+  assert.equal(model.isMissingFunction({ message: "Could not find the function public.app_itrp_create(p_asset_code) in the schema cache" }), true);
+  assert.equal(model.isMissingFunction({ code: "23514", message: "ไม่พบรหัสเครื่อง" }), false);
+  assert.equal(model.isMissingFunction(null), false);
+});
+
+test("detail of a request: new requests show the host and devices, old ones show the old fields", () => {
+  const old = { asset_code: "PC-001", device_name: "Dell", host_code: null, devices: [] };
+  assert.equal(model.requestDevices(old).isNew, false);
+  assert.equal(model.requestDevices({ ...old, devices: undefined }).isNew, false);
+  const fresh = { host_code: "COM24", devices: [
+    { seq: 2, type_code: "OTHER", device_code: null, from_register: false, note: "เครื่องสแกน" },
+    { seq: 1, type_code: "MONITOR", device_code: "MNT53", from_register: true, note: null },
+    { seq: 3, type_code: "MOUSE", device_code: null, from_register: false, note: null },
+  ] };
+  const view = model.requestDevices(fresh);
+  assert.equal(view.isNew, true);
+  assert.equal(view.hostText, "COM24");
+  assert.deepEqual(plain(view.rows).map((row) => [row.no, row.type, row.code, row.fromRegister]), [[1, "หน้าจอ", "MNT53", true], [2, "อื่นๆ", "", false], [3, "เมาส์", "", false]]);
+  assert.equal(model.requestDevicesInline(fresh), "หน้าจอ MNT53 · อื่นๆ (เครื่องสแกน) · เมาส์");
+  assert.deepEqual(model.requestedDeviceCodes({ ...fresh, devices: [...fresh.devices, { seq: 4, type_code: "MONITOR", device_code: "mnt53", note: null }] }), ["MNT53"], "codes are unique and upper case");
+  assert.deepEqual(model.requestedDeviceCodes(old), []);
+});
+
+test("the IT complete form starts from the requested device codes, or the single asset code as before", () => {
+  assert.deepEqual(plain(model.initialDeviceRows("COM24", ["MNT53", "mou09"])).map((row) => row.device_code), ["MNT53", "MOU09"]);
+  assert.deepEqual(plain(model.initialDeviceRows("COM24", [])).map((row) => row.device_code), ["COM24"]);
+  assert.deepEqual(plain(model.initialDeviceRows(null, [])).map((row) => row.device_code), [""]);
 });
 
 /* ---------- ฟอร์มส่งงาน (ส่วนสำหรับแผนก IT) ---------- */

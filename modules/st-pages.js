@@ -169,7 +169,7 @@
     const filtered = Boolean(q || (kind && !forced) || category || priceFilter);
     const kindFilter = forced ? "" : filterSelect(ctx, "kind", "ชนิด", KIND_FILTERS, kind, "ทุกชนิด");
     const categoryFilter = !ctx.guest && categories.length > 1 ? filterSelect(ctx, "cat", "หมวด", categories.map((value) => ({ value, label: value })), category, "ทุกหมวด") : "";
-    const priceOptions = priced ? PRICE_FILTERS.map((option) => ({ ...option, label: option.value === "missing" ? `${option.label} (${missingCount(ctx, rf, book)})` : option.label })) : [];
+    const priceOptions = priced ? PRICE_FILTERS : [];
     const priceFilterSelect = priced ? filterSelect(ctx, "price", "ราคา", priceOptions, priceFilter, "ทุกราคา") : "";
     const toolbar = `<div class="rf-row sr-toolbar">${F.searchForm(ctx, forced === "chem" ? "ค้นหารหัส ชื่อ หรือล็อต" : forced === "part" ? "ค้นหารหัสหรือชื่อของซื้อ" : "ค้นหารหัส ชื่อ หรือล็อต")}${kindFilter}${categoryFilter}${priceFilterSelect}${filtered ? ui.link("ล้างตัวกรอง", stUrl(ctx.view.params), "btn rf-btn secondary small") : ""}</div>`;
     const empty = q || category ? "ไม่พบรายการที่ค้นหา" : priceFilter === "missing" ? "ทุกรายการมีราคาแล้ว" : priceFilter === "priced" ? "ยังไม่มีรายการในคลังที่มีราคา" : kind === "chem" ? "ยังไม่มีเคมีในคลัง ST" : kind === "part" ? "ยังไม่มีของซื้อในคลัง" : "ยังไม่มีของในคลัง";
@@ -617,13 +617,6 @@
     if (book.status === "loading") return '<p class="small muted" role="status">กำลังโหลดราคา…</p>';
     if (book.status === "error") return `<p class="small muted" role="status">${esc(costData().errorText(book.error))} <button class="btn rf-btn secondary small" type="button" data-cost-retry>ลองอีกครั้ง</button></p>`;
     return "";
-  }
-  // เคมีที่ใช้งานอยู่ + ของซื้อที่ใช้งานอยู่ ที่ยังไม่มีราคาที่มีผลวันนี้ (นับรวมที่ไม่มียอดในคลัง)
-  function missingCount(ctx, rf, book) {
-    let count = 0;
-    if (rf.status === "ready") for (const material of rf.data.materials ?? []) if (material.active !== false && !book.current("chem", material.code)) count += 1;
-    for (const item of partRegister(ctx)) if (item.active !== false && !book.current("part", item.code)) count += 1;
-    return count;
   }
   // ปุ่มของราคา: ผู้บันทึกได้ = "ตั้งราคา" (ยังไม่มี) / "ราคาใหม่" · ผู้อ่านอย่างเดียว = "ประวัติราคา" (เฉพาะที่เคยมีราคาบันทึกไว้ ไม่มีก็ไม่มีปุ่ม)
   function priceButton(ctx, book, kind, code, hasCurrent) {

@@ -224,7 +224,7 @@ test("ST ในคลัง: ตัวกรอง ยังไม่มีร�
   assert.match(zeroPart, /&quot;kind&quot;:&quot;part&quot;/);
   assert.doesNotMatch(missing, /ZZ-OLD|P-ZERO-OFF/, "ที่เลิกใช้แล้วไม่ขึ้น");
   assert.ok(!rows.some((row) => row.includes(">EPDM-55<")), "ที่มีราคาแล้วไม่ขึ้น");
-  assert.match(missing, /ยังไม่มีราคา \(\d+\)/, "จำนวนที่ยังไม่มีราคาอยู่ที่ตัวเลือก");
+  assert.doesNotMatch(missing, /ยังไม่มีราคา \(\d+\)/, "ตัวเลือกไม่มีจำนวน (จำนวนรวมไม่ตรงกับรายการหลังกรองชนิด / หมวด)");
   // ค้นหารหัส / ชื่อ ในตัวกรองนี้
   assert.match(await env.openSt("tab=stock&price=missing&q=ZZ-NEW"), /ZZ-NEW/);
   const byName = await env.openSt("tab=stock&price=missing&q=ยังไม่รับเข้า");

@@ -41,7 +41,7 @@
 --   migration รุ่นหลังที่ replace private.sandbox_unguarded_tables() หรือ public.app_sandbox_purge_rf() ต้องคง rf_material_prices ไว้
 --   (ไฟล์นี้แทรกชื่อในนิยามที่ใช้อยู่ จึงไม่มีนิยามเต็มของสองตัวนั้นในไฟล์นี้ให้คัดลอก)
 --   ก่อน apply ที่ production: เทียบ md5(pg_get_functiondef(...)) ของ private.rf_parse_items(jsonb, jsonb) และ
---   private.rf_save_recipes(uuid, boolean, jsonb, bigint, bigint) กับ stack ที่ apply ถึง 20270107010000 (ต้องยังเป็นนิยามของ 20261130010000)
+--   private.rf_save_recipes(uuid, boolean, jsonb, bigint, bigint) กับ stack ที่ apply ถึง 20270108010000_itrp_request_devices.sql (ต้องยังเป็นนิยามของ 20261130010000)
 --
 -- Rollback (ยังเป็นข้อมูลทดสอบทั้งหมด): drop function public.app_rf_cost_data(), public.app_rf_price_save(text, text, numeric, date, text), public.app_rf_prices(),
 --   private.rf_price_rows(), private.rf_price_reader(public.employees), private.rf_price_writer(public.employees), private.rf_cost_viewer(public.employees) ·
@@ -294,7 +294,7 @@ begin
     v_has_latest := found;
     v_node := case when v_found then v_old.items when v_has_latest then v_latest.items end;
     v_items := private.rf_parse_items(v_row -> 'items', v_node);
-    -- สูตรแบบน้ำหนัก (20270108010000): น้ำหนักต่อชุดผสม = ผลรวมน้ำหนักทุกบรรทัด เซิร์ฟเวอร์คำนวณเอง ไม่ใช้ค่าที่ client ส่ง
+    -- สูตรแบบน้ำหนัก (20270109010000): น้ำหนักต่อชุดผสม = ผลรวมน้ำหนักทุกบรรทัด เซิร์ฟเวอร์คำนวณเอง ไม่ใช้ค่าที่ client ส่ง
     if private.rf_items_by_weight(v_items) then
       v_batch := (select trim_scale(sum((e ->> 'kg')::numeric)) from jsonb_array_elements(v_items) e);
     end if;
