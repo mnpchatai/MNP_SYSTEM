@@ -327,7 +327,7 @@ test("RubberFlow menu: five groups with RB words, the warehouse is the RB chemic
   const menu = env.modules.RUBBERFLOW.nav[0].subnav("rubberflow");
   const groups = [...menu.matchAll(/<li class="rf-nav-group"><span>([^<]*)<\/span>/g)].map((match) => match[1]);
   assert.deepEqual(groups, ["ภาพรวม", "ใบสั่งผลิตและสูตร", "สายการผลิต", "คุณภาพ", "คลังเคมีและเครื่องมือ"]);
-  for (const label of ["ภาพรวม RB", "คลังเคมี RB", "ใบสั่งผลิต", "สูตรยาง (BOM/PHR)"]) assert.ok(menu.includes(`<span class="rf-nav-text">${label}</span>`), label);
+  for (const label of ["ภาพรวม RB", "คลังเคมี RB", "ใบสั่งผลิต", "สูตรยาง"]) assert.ok(menu.includes(`<span class="rf-nav-text">${label}</span>`), label);
   assert.doesNotMatch(menu, /ภาพรวมโรงงาน|คลังวัตถุดิบและสินค้า|คลังและเครื่องมือ/);
   for (const id of ["dashboard", "orders", "recipes", "requisition", "mixing", "extrusion", "curing", "finishing", "wip", "ncr", "warehouse", "molds", "audit"]) assert.ok(menu.includes(id === "dashboard" ? 'href="#/rubberflow"' : `href="#/rubberflow?p=${id}"`), `p=${id} kept`);
 });

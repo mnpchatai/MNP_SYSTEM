@@ -260,3 +260,61 @@ test("?ncr=1 has only NCRs, one per step, and each role moves an NCR to the next
   assert.equal((await as("e5").sb.from("ncr_reports").select("*").eq("id", issued.id).maybeSingle()).data.status, "awaiting_disposition");
   assert.equal(mock({ as: "e5" }).db.employees.find((row) => row.id === "e1").auth_user_id, "u1", "?as= only applies to the NCR scenario");
 });
+
+// ราคาเคมีและต้นทุนการผลิต (app_rf_prices / app_rf_price_save / app_rf_cost_data): สิทธิ์ตามแผนก/ตำแหน่งของบัญชีทดสอบ · ตรวจข้อมูลเหมือนฐานข้อมูล · ราคาสาธิตและประวัติ
+test("cost RPCs: permissions follow the acting persona, prices are append-only history, validation answers RF_INVALID_PRICE", async () => {
+  const { client: sb, rf } = createMockSupabase({ sandbox: true, now: () => NOW });
+  const as = async (id) => { assert.equal((await sb.rpc("app_sandbox_enter", { p_persona_id: id })).error, null); };
+  const error = async (name, args) => (await sb.rpc(name, args)).error?.message ?? null;
+  rf.edit((current) => {
+    current.materials.push({ code: "ZNO", name: "ซิงค์ออกไซด์", category: "สารกระตุ้น" });
+    current.recipes.push({ id: "RC-1", revision: 2, status: "approved", productCode: "FG-1", batchKg: 10, items: [{ materialCode: "ZNO", stage: 1, kg: 10, unit: "kg", phr: 0 }] });
+    current.requisitions.push({ id: "REQ-1", orderId: "WO-1", recipeId: "RC-1", recipeRevision: 2, batches: 1, status: "consumed", issuedAt: NOW - 1000, lines: [{ materialCode: "ZNO", stage: 1, lotNo: "L1", targetKg: 10, actualKg: 10.2, weighedAt: NOW - 2000 }] });
+    current.lots.push({ id: "MX-1", stage: "mixing", orderId: "WO-1", recipeId: "RC-1", createdAt: NOW - 500, sources: [{ type: "requisition", id: "REQ-1" }], params: { batches: 1 } }, { id: "EX-1", stage: "extrusion", createdAt: NOW });
+  });
+  // admin (บัญชีแรก): เห็นทุกอย่างและบันทึกราคาได้ · ราคาสาธิตมีประวัติ ZNO สองแถว และ DM-CH-05 / DM-FIL-C ยังไม่มีราคา
+  const first = (await sb.rpc("app_rf_prices", {})).data;
+  assert.equal(first.canWrite, true);
+  assert.ok(first.prices.filter((row) => row.materialCode === "ZNO").length >= 2, "history of one material");
+  for (const code of ["DM-RUB-A", "DM-RUB-B", "DM-FIL-A", "DM-FIL-B", "DM-PLS-A", "DM-OIL-A", "DM-CH-01", "DM-CH-02", "DM-CH-03", "DM-CH-04", "DM-CH-06", "DM-CH-07", "DM-CH-08", "DM-CH-09", "DM-CH-10", "DM-CH-11", "DM-CH-12", "DM-CH-13", "EPDM-55", "S-80"]) assert.ok(first.prices.some((row) => row.materialCode === code), `${code} has a demo price`);
+  assert.ok(!first.prices.some((row) => ["DM-CH-05", "DM-FIL-C"].includes(row.materialCode)), "the no-price state stays visible");
+  assert.ok(first.prices.every((row) => row.id && typeof row.pricePerKg === "number" && /^\d{4}-\d{2}-\d{2}$/.test(row.effectiveFrom) && Number.isFinite(row.createdAt) && typeof row.createdBy === "string"));
+  const saved = (await sb.rpc("app_rf_price_save", { p_material_code: "DM-CH-05", p_price_per_kg: 125.5, p_effective_from: "2026-11-03", p_note: "  ใบเสนอราคา " })).data;
+  assert.equal(saved.prices.length, first.prices.length + 1);
+  const row = saved.prices.at(-1);
+  assert.deepEqual([row.materialCode, row.pricePerKg, row.effectiveFrom, row.note], ["DM-CH-05", 125.5, "2026-11-03", "ใบเสนอราคา"]);
+  const zno = first.prices.filter((entry) => entry.materialCode === "ZNO");
+  await sb.rpc("app_rf_price_save", { p_material_code: "ZNO", p_price_per_kg: 99, p_effective_from: zno[0].effectiveFrom, p_note: "" });
+  assert.equal((await sb.rpc("app_rf_prices", {})).data.prices.length, first.prices.length + 2, "a correction is a new row, old rows stay");
+  // เหมือนฐานข้อมูล: บันทึกซ้ำด้วยราคาและหมายเหตุเดียวกับแถวล่าสุดของวัตถุดิบและวันที่มีผลเดียวกัน = ไม่เพิ่มแถว
+  await sb.rpc("app_rf_price_save", { p_material_code: "ZNO", p_price_per_kg: 99, p_effective_from: zno[0].effectiveFrom, p_note: " " });
+  assert.equal((await sb.rpc("app_rf_prices", {})).data.prices.length, first.prices.length + 2, "saving the same price and note again adds no row");
+  await sb.rpc("app_rf_price_save", { p_material_code: "ZNO", p_price_per_kg: 99, p_effective_from: zno[0].effectiveFrom, p_note: "ยืนยันราคา" });
+  assert.equal((await sb.rpc("app_rf_prices", {})).data.prices.length, first.prices.length + 3, "a different note is a new row");
+  // ตรวจข้อมูล
+  const ok = { p_material_code: "ZNO", p_price_per_kg: 10, p_effective_from: "2026-11-03", p_note: "" };
+  for (const bad of [{ p_material_code: "NOPE" }, { p_material_code: null }, { p_price_per_kg: 0 }, { p_price_per_kg: -1 }, { p_price_per_kg: 10000001 }, { p_price_per_kg: 1.23456 }, { p_price_per_kg: "10" }, { p_effective_from: null }, { p_effective_from: "03/11/2026" }, { p_effective_from: "2026-02-31" }, { p_effective_from: "2028-01-01" }, { p_note: "x".repeat(301) }]) {
+    assert.equal(await error("app_rf_price_save", { ...ok, ...bad }), "RF_INVALID_PRICE", JSON.stringify(bad));
+  }
+  assert.equal(await error("app_rf_price_save", { ...ok, p_price_per_kg: 10000000, p_effective_from: "2027-11-03", p_note: "x".repeat(300) }), null, "the limits themselves are accepted (366 days ahead)");
+  // ต้นทุน: สูตรทุก revision · ล็อตผสมพร้อมใบเบิก (ล็อตสถานีอื่นไม่มี)
+  const cost = (await sb.rpc("app_rf_cost_data", {})).data;
+  assert.deepEqual(cost.materials, [{ code: "ZNO", name: "ซิงค์ออกไซด์", category: "สารกระตุ้น" }]);
+  assert.deepEqual(cost.recipes.map((entry) => [entry.id, entry.revision, entry.status, entry.productCode, entry.batchKg]), [["RC-1", 2, "approved", "FG-1", 10]]);
+  assert.equal(cost.lots.length, 1);
+  assert.deepEqual(cost.lots[0], { lotNo: "MX-1", orderId: "WO-1", recipeId: "RC-1", recipeRevision: 2, batches: 1, createdAt: NOW - 500, requisitions: [{ id: "REQ-1", issuedAt: NOW - 1000, lines: [{ materialCode: "ZNO", stage: 1, targetKg: 10, actualKg: 10.2, weighedAt: NOW - 2000 }] }] });
+  assert.ok(cost.prices.length > first.prices.length);
+  // ใครทำอะไรได้ (ตรงกับฐานข้อมูล): [บัญชี, เห็นราคา, บันทึกราคา, เห็นต้นทุน]
+  const matrix = [
+    ["persona-st", true, true, false], ["persona-sth", true, true, false], ["persona-pp", true, false, true], ["persona-fm", true, false, true], ["persona-gm", true, false, true],
+    ["persona-afm", false, false, false], ["persona-rb", false, false, false], ["persona-rbh", false, false, false], ["persona-wh", false, false, false], ["persona-sa", false, false, false], ["persona-qah", false, false, false],
+  ];
+  for (const [persona, prices, write, seeCost] of matrix) {
+    await as(persona);
+    const read = await sb.rpc("app_rf_prices", {});
+    assert.equal(read.error?.message ?? null, prices ? null : "RF_FORBIDDEN", `${persona} prices`);
+    if (prices) assert.equal(read.data.canWrite, write, `${persona} canWrite`);
+    assert.equal(await error("app_rf_price_save", ok), write ? null : "RF_FORBIDDEN", `${persona} save`);
+    assert.equal(await error("app_rf_cost_data", {}), seeCost ? null : "RF_FORBIDDEN", `${persona} cost`);
+  }
+});

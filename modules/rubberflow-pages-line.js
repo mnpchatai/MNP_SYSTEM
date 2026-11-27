@@ -138,7 +138,7 @@
       const lineRows = selected.lines.map((line, i) => {
         const lot = data.materialLots.find((row) => row.lotNo === line.lotNo);
         const material = data.materials.find((row) => row.code === line.materialCode);
-        return `<tr><td>${i + 1}</td><td>${esc(material?.name ?? "")}<div class="small muted rf-mono">${esc(line.materialCode)}</div></td><td class="nowrap">${esc(`ขั้น ${line.stage ?? 1}`)}</td><td class="rf-mono small">${esc(line.lotNo)}</td>
+        return `<tr><td>${i + 1}</td><td>${esc(material?.name ?? "")}<div class="small muted rf-mono">${esc(line.materialCode)}</div></td><td class="nowrap">${esc(rules.partLabel(line.stage ?? 1))}</td><td class="rf-mono small">${esc(line.lotNo)}</td>
           <td class="small nowrap">${esc(fmtDate(lot?.expiry))}<div class="muted">${esc(lot?.location ?? "")}</div></td><td class="right rf-mono">${esc(fmtNum(line.actualKg ?? line.targetKg, 3))}</td>
           ${lineStatus ? `<td>${line.actualKg === null ? ui.badge("warn", "รอจ่าย") : ui.badge("good", "จ่ายแล้ว")}</td>` : ""}${returnedNote ? `<td class="right rf-mono">${esc(fmtNum(line.returnedKg ?? 0, 3))}</td>` : ""}</tr>`;
       });
@@ -186,7 +186,8 @@
         // เหลือเกิน 10 batch: ใบนี้เบิกได้ 10 ที่เหลือเบิกเป็นใบถัดไป (บอกใน title ไม่เพิ่มข้อความถาวร)
         const left = order && recipe ? rules.remainingBatches(order, recipe, data.requisitions) : 0;
         batches.title = left > n ? `ใบนี้เบิกได้สูงสุด ${n} ชุดผสม · เหลืออีก ${left - n} ชุดผสม ต้องเบิกเป็นใบถัดไป` : "";
-        const preview = recipe ? recipeLines(recipe).map((line) => ({ ...line, need: line.kgPerBatch * n, ...allocateFefo(data.materialLots, line.materialCode, line.kgPerBatch * n, now, reserved, "RB") })) : [];
+        // บรรทัด "ไม่ใส่" (kg = 0) ไม่เบิกจึงไม่อยู่ในตัวอย่าง
+        const preview = recipe ? recipeLines(recipe).filter((line) => line.kgPerBatch > 0).map((line) => ({ ...line, need: line.kgPerBatch * n, ...allocateFefo(data.materialLots, line.materialCode, line.kgPerBatch * n, now, reserved, "RB") })) : [];
         const short = preview.some((row) => row.shortage > 0.0001);
         // ปุ่ม "ขอเบิกจาก ST" เปิดหน้าต่างขอเบิกพร้อมจำนวนที่คลัง RB ขาดของใบเบิกนี้ (รวมต่อวัตถุดิบ)
         const shortBy = new Map();
@@ -194,7 +195,7 @@
         shortRows = [...shortBy].map(([materialCode, qtyKg]) => ({ materialCode, qtyKg }));
         dialog.querySelector("[data-rf-recipe-line]").textContent = recipe ? `สูตร ${rules.recipeLabel(recipe)} · น้ำหนักรวม ${fmtNum(recipe.batchKg * n, 2)} kg` : "";
         dialog.querySelector("[data-rf-shortage]").innerHTML = short ? ui.callout("bad", `<div>คลังเคมี RB มีพร้อมใช้ไม่พอ (ไม่นับล็อตหมดอายุหรือกักกัน)</div>${mayRequest ? '<button class="btn rf-btn secondary small" type="button" data-rf-po-short>ขอเบิกจาก ST</button>' : "<div>ให้แผนก RB ขอเบิกจาก ST ก่อน</div>"}`) : "";
-        dialog.querySelector("[data-rf-preview]").innerHTML = ui.table(["วัตถุดิบ", "ขั้น", { label: "ต้องใช้ (kg)", className: "right" }, "ล็อตที่ระบบจะจ่าย (FEFO)"], preview.map((row) => `<tr><td class="rf-mono">${esc(row.materialCode)}</td><td class="nowrap">${esc(`ขั้น ${row.stage}`)}</td><td class="right rf-mono">${esc(fmtNum(row.need, 3))}</td><td class="small">${row.picks.map((pick) => `<div class="rf-mono">${esc(`${pick.lotNo} → ${pick.kg.toFixed(3)} kg`)}</div>`).join("")}${row.shortage > 0.0001 ? ui.badge("bad", `ขาด ${row.shortage.toFixed(2)} kg`) : ""}</td></tr>`), { emptyText: "เลือกใบสั่งผลิตก่อน" });
+        dialog.querySelector("[data-rf-preview]").innerHTML = ui.table(["วัตถุดิบ", "ขั้น", { label: "ต้องใช้ (kg)", className: "right" }, "ล็อตที่ระบบจะจ่าย (FEFO)"], preview.map((row) => `<tr><td class="rf-mono">${esc(row.materialCode)}</td><td class="nowrap">${esc(rules.partLabel(row.stage))}</td><td class="right rf-mono">${esc(fmtNum(row.need, 3))}</td><td class="small">${row.picks.map((pick) => `<div class="rf-mono">${esc(`${pick.lotNo} → ${pick.kg.toFixed(3)} kg`)}</div>`).join("")}${row.shortage > 0.0001 ? ui.badge("bad", `ขาด ${row.shortage.toFixed(2)} kg`) : ""}</td></tr>`), { emptyText: "เลือกใบสั่งผลิตก่อน" });
         if (submit) submit.disabled = !order || short;
       };
       orderSelect.addEventListener("change", paint);
@@ -414,7 +415,11 @@
           hint(`dumpTemp${stage}`, standard ? `มาตรฐาน ${standard.dumpTemp} ± ${recipe.dumpTol} °C` : "");
           hint(`mixMin${stage}`, standard ? `มาตรฐาน ${standard.mixMin} นาที` : "");
         }
-        form.querySelector("[data-rf-issued]").textContent = requisition ? `วัตถุดิบที่จ่าย ${fmtNum(issuedKg, 2)} kg` : "";
+        const issuedNode = form.querySelector("[data-rf-issued]");
+        issuedNode.textContent = requisition ? `วัตถุดิบที่จ่าย ${fmtNum(issuedKg, 2)} kg` : "";
+        // ใบเบิกที่มีหลายส่วน (ขั้นเตรียมวัตถุดิบ / ขั้น 1–3): แยกกิโลที่จ่ายต่อส่วนไว้ใน title (ไม่เพิ่มข้อความถาวร)
+        const byPart = requisition ? ctx.rules.PARTS.map((stage) => [stage, requisition.lines.filter((line) => (line.stage ?? 1) === stage).reduce((sum, line) => sum + line.actualKg, 0)]).filter(([, kg]) => kg > 0) : [];
+        issuedNode.title = byPart.length > 1 ? byPart.map(([stage, kg]) => `${ctx.rules.partLabel(stage)} ${fmtNum(kg, 2)} kg`).join(" · ") : "";
         form.querySelector("[data-rf-rest]").textContent = recipe ? `บันทึกแล้วต้องบ่มขั้นต่ำ ${recipe.restHours} ชม. ก่อนส่งต่อ` : "";
         // อุณหภูมิปล่อยยาง (Dump temp) แต่ละขั้นเทียบกับค่าของสูตรในขั้นนั้น (ค่าเผื่อเดียวกัน) · ขั้นไหนหลุด ล็อตถูกกักกัน
         const outStages = [];

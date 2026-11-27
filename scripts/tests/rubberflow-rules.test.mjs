@@ -356,3 +356,54 @@ test("unitText shows the BOM's Thai label for a BOM unit code, keeps RubberFlow'
     globalThis.MNP_BOM_RULES = saved;
   }
 });
+
+// สูตรแบบน้ำหนัก (ใบสูตรจริง 4 ส่วน: ขั้นเตรียมวัตถุดิบ + ขั้น 1-3): kg ต่อชุดผสมใส่ตรง ๆ phr = kg ตัวคำนวณเดิมจึงได้ kg เดิมเป๊ะ
+test("weight recipes: DEMO-W01 has four parts, batchKg is the sum of the lines, phr equals kg and the line weights keep their entered unit", () => {
+  const recipe = seed.buildSeed(NOW).recipes.find((row) => row.id === "DEMO-W01");
+  assert.equal(recipe.status, "approved");
+  assert.equal(rules.isWeightRecipe(recipe), true);
+  assert.equal(recipe.batchKg, 75.6);
+  assert.equal(rules.weightBatchKg(recipe.items), 75.6, "batchKg is the sum of every line, rounded to 4 decimals");
+  assert.ok(recipe.items.every((item) => item.phr === item.kg && ["kg", "g"].includes(item.unit)), "phr is written equal to kg");
+  assert.deepEqual(rules.PARTS, [0, 1, 2, 3]);
+  assert.deepEqual(rules.MIX_STAGES, [1, 2], "the mixing parameters stay on stages 1 and 2");
+  assert.equal(recipe.stages.length, 2);
+  const totals = rules.partTotals(recipe);
+  assert.deepEqual(totals.map((total) => [total.stage, total.kg, total.unit, total.lines.length]), [[0, 71, "kg", 7], [1, 1.51, "g", 7], [2, 2.68, "g", 3], [3, 0.41, "g", 3]]);
+  assert.deepEqual(totals.map(rules.partTotalText), ["71 kg", "1.51 kg (1,510 g)", "2.68 kg (2,680 g)", "0.41 kg (410 g)"]);
+  const lines = rules.recipeLines(recipe);
+  assert.deepEqual(lines.map((line) => line.stage), [...lines.map((line) => line.stage)].sort((a, b) => a - b), "lines are sorted by part");
+  assert.deepEqual(lines.slice(0, 3).map((line) => [line.materialCode, line.kgPerBatch]), [["DM-RUB-A", 11], ["DM-RUB-B", 4], ["DM-FIL-A", 9]], "the original order is kept inside a part");
+  assert.equal(+lines.reduce((sum, line) => sum + line.kgPerBatch, 0).toFixed(4), 75.6);
+  assert.equal(+rules.totalPhr(recipe).toFixed(4), 75.6, "the existing PHR consumers see kg");
+  assert.deepEqual(["DM-CH-01", "DM-CH-06", "DM-RUB-A"].map((code) => rules.lineWeightText(lines.find((line) => line.materialCode === code))), ["350 g", "ไม่ใส่", "11 kg"]);
+  assert.equal(rules.lineWeightText({ kg: 0.2, unit: "g" }), "200 g");
+  assert.equal(rules.lineWeightText({ kg: 1, unit: "g" }), "1,000 g");
+  assert.equal(rules.lineWeightText({ kg: 0.0005, unit: "g" }), "0.5 g");
+});
+
+test("weight recipes: itemStage returns 0..3 for weight lines, legacy lines stay 1|2, partLabel names the four parts", () => {
+  assert.deepEqual([0, 1, 2, 3].map((stage) => rules.itemStage({ kg: 1, stage })), [0, 1, 2, 3]);
+  assert.equal(rules.itemStage({ kg: 1 }), 1, "a missing stage is 1");
+  assert.equal(rules.itemStage({ kg: 1, stage: null }), 1, "null is not part 0");
+  assert.equal(rules.itemStage({ kg: 1, stage: 7 }), 1);
+  assert.deepEqual([undefined, 1, 2, 3, 0].map((stage) => rules.itemStage({ phr: 5, stage })), [1, 1, 2, 1, 1], "a PHR line is stage 1 or 2 as before");
+  assert.deepEqual([0, 1, 2, 3].map(rules.partLabel), ["ขั้นเตรียมวัตถุดิบ", "ขั้น 1", "ขั้น 2", "ขั้น 3"]);
+  assert.equal(rules.isWeightRecipe({ items: [{ kg: 1 }, { phr: 5 }] }), false, "a mixed recipe is not a weight recipe");
+  assert.equal(rules.isWeightRecipe({ items: [] }), false);
+  assert.equal(rules.isWeightRecipe({ items: [{ phr: 5, stage: 1 }] }), false);
+  assert.equal(rules.amountToKg("500", "g"), 0.5);
+  assert.equal(rules.amountToKg("1.4", "kg"), 1.4);
+  assert.equal(rules.amountToKg(" ", "g"), "", "a blank amount stays blank for the action to name");
+});
+
+test("weight recipes: a PHR recipe keeps its lines, its split and its totals unchanged; chemicalNeeds follows kg of a weight recipe", () => {
+  const legacy = { id: "L", revision: 1, status: "approved", batchKg: 100, items: [{ materialCode: "A", phr: 100 }, { materialCode: "B", phr: 100, stage: 2 }] };
+  assert.equal(rules.isWeightRecipe(legacy), false);
+  assert.deepEqual(rules.recipeLines(legacy).map((line) => [line.materialCode, line.stage, line.kgPerBatch]), [["A", 1, 50], ["B", 2, 50]]);
+  assert.equal(rules.lineWeightText(rules.recipeLines(legacy)[0]), "50 kg", "no unit means kg");
+  const weight = { id: "W", revision: 1, status: "approved", batchKg: 12.5, items: [{ materialCode: "A", stage: 0, kg: 10, unit: "kg", phr: 10 }, { materialCode: "B", stage: 1, kg: 2.5, unit: "g", phr: 2.5 }, { materialCode: "Z", stage: 2, kg: 0, unit: "g", phr: 0 }] };
+  const order = { id: "WO-1", status: "released", recipeId: "W", recipeRevision: 1, targetKg: 25, uom: "kg" };
+  const needs = rules.chemicalNeeds({ orders: [order], recipes: [weight], materials: [], materialLots: [], requisitions: [], purchaseOrders: [] }, ["WO-1"], NOW);
+  assert.deepEqual(needs.rows.map((row) => [row.materialCode, row.needKg]), [["A", 20], ["B", 5]], "two batches of 12.5 kg: kg per batch times two, the zero line needs nothing");
+});

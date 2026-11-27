@@ -1453,3 +1453,71 @@ test("finishing page: the CoA button becomes a link to #/qa?tab=coa&lot= for rol
   assert.doesNotMatch(without, /tab=coa|data-rf-open="coa"/, "RB sees the QC badge of the lot but no CoA");
   assert.doesNotMatch(without, /<th[^>]*>CoA<\/th>/, "and no empty CoA column");
 });
+
+test("weight recipes on the pages: the form is by weight for new recipes and weight recipes, a PHR recipe keeps its PHR form, the view groups lines by part with subtotals, and the requisition shows the four parts", async () => {
+  const env = load();
+  env.store.setUser("U01");
+  const dialogs = env.context.MNP_RUBBERFLOW_DIALOGS;
+  const blank = dialogs.createRecipe(env.ctx(), {}).html;
+  assert.match(blank, /name="amount\[\]"[^>]*required/, "the amount of every line is required");
+  assert.match(blank, /name="unit\[\]"/);
+  assert.match(blank, /<option value="0" selected>ขั้นเตรียมวัตถุดิบ<\/option>[\s\S]*<option value="3">ขั้น 3<\/option>/, "four parts to choose from");
+  assert.match(blank, /data-rf-batch-out/, "the batch weight is a read-out");
+  assert.doesNotMatch(blank, /name="batchKg"|name="phr\[\]"/, "no typed batch weight and no PHR column");
+  const phrEdit = dialogs.recipeEdit(env.ctx(), { id: "RC-EPDM-DS01" }).html;
+  assert.match(phrEdit, /name="phr\[\]"/);
+  assert.match(phrEdit, /name="batchKg"/);
+  assert.doesNotMatch(phrEdit, /name="amount\[\]"/, "an existing PHR recipe keeps the PHR form");
+  const weightEdit = dialogs.recipeEdit(env.ctx(), { id: "DEMO-W01" }).html;
+  assert.match(weightEdit, /name="amount\[\]"[^>]*value="350"[\s\S]*<option value="g" selected>g<\/option>/, "DM-CH-01 is shown as 350 g");
+  assert.match(weightEdit, /name="amount\[\]"[^>]*value="11"/);
+  assert.match(weightEdit, /ออกฉบับแก้ไขใหม่ของสูตร DEMO-W01/);
+  // หน้าสูตร: ตารางต่อส่วนพร้อมผลรวม น้ำหนักในหน่วยที่กรอก บรรทัด 0 = ไม่ใส่
+  const view = text(await env.render("p=recipes&sel=DEMO-W01"));
+  assert.match(view, /ขั้นเตรียมวัตถุดิบ รวม 71 kg/);
+  assert.match(view, /ขั้น 1 รวม 1.51 kg \(1,510 g\)/);
+  assert.match(view, /ขั้น 2 รวม 2.68 kg \(2,680 g\)/);
+  assert.match(view, /ขั้น 3 รวม 0.41 kg \(410 g\)/);
+  assert.match(view, /DM-CH-01 เคมีสาธิต 01 [^ ]* ?350 g/);
+  assert.match(view, /DM-CH-06 เคมีสาธิต 06[\s\S]*?ไม่ใส่/);
+  assert.match(view, /น้ำหนักต่อชุดผสม 75.6 kg/);
+  assert.doesNotMatch(view, /PHR รวม|undefined|NaN/);
+  assert.match(text(await env.render("p=recipes&sel=RC-EPDM-DS01")), /PHR รวม/, "a PHR recipe page is unchanged");
+  // ฟอร์มสูตรแบบน้ำหนักส่ง amount[] unit[] ผ่าน TRANSFORMS เป็น kg (g ÷ 1000)
+  const form = { ...env.root, dataset: { rfForm: "createRecipe", rfSuccess: "ok" }, handlers: {}, __values: {
+    id: "B-FORM-01", productCode: "", uom: "m", yieldPerKg: "6", restHours: "4", dumpTol: "5",
+    mixerTemp1: "80", dumpTemp1: "110", mixMin1: "3", mixerTemp2: "90", dumpTemp2: "130", mixMin2: "2",
+    "materialCode[]": ["ZNO", "S-80", "STA"], "stage[]": ["0", "1", "3"], "amount[]": ["5", "200", "0"], "unit[]": ["kg", "g", "g"],
+  } };
+  form.addEventListener = (type, handler) => { form.handlers[type] = handler; };
+  env.fakes["form[data-rf-form]"] = [form];
+  await env.render("p=recipes");
+  await form.handlers.submit({ preventDefault() {} });
+  const made = env.store.data().recipes.find((row) => row.id === "B-FORM-01");
+  assert.deepEqual(JSON.parse(JSON.stringify(made.items)), [
+    { materialCode: "ZNO", stage: 0, kg: 5, unit: "kg", phr: 5 }, { materialCode: "S-80", stage: 1, kg: 0.2, unit: "g", phr: 0.2 }, { materialCode: "STA", stage: 3, kg: 0, unit: "g", phr: 0 },
+  ]);
+  assert.equal(made.batchKg, 5.2);
+  assert.equal(made.stages.length, 2);
+  delete env.fakes["form[data-rf-form]"];
+  // ใบเบิกของ DEMO-W01: ตัวอย่างในหน้าต่างและรายละเอียดใบเบิกเรียกส่วนด้วยชื่อ บรรทัดไม่ใส่ไม่ถูกเบิก
+  const now = Date.now();
+  const open = (targetKg) => {
+    const created = env.store.run("createOrder", { recipeId: "DEMO-W01", customer: "ลูกค้าทดสอบ", customerPo: "PO-W01", targetQty: 100, targetKg, startDate: now, dueDate: now + 86400000 });
+    assert.equal(created.ok, true, created.error);
+    assert.equal(env.store.run("setOrderStatus", { id: created.result, status: "released" }).ok, true);
+    return created.result;
+  };
+  const previewOrder = open(75.6);
+  const nodes = { "[data-rf-order]": { value: previewOrder, addEventListener() {} }, "[data-rf-batches]": { value: "" }, "[data-rf-submit]": { disabled: false }, "[data-rf-recipe-line]": {}, "[data-rf-preview]": {}, "[data-rf-shortage]": { innerHTML: "", addEventListener() {} } };
+  dialogs.createRequisition(env.ctx()).bind({ querySelector: (selector) => nodes[selector] }, { openDialog() {} });
+  assert.match(nodes["[data-rf-recipe-line]"].textContent, /น้ำหนักรวม 75.60 kg/);
+  assert.match(nodes["[data-rf-preview]"].innerHTML, /DM-RUB-A[\s\S]*ขั้นเตรียมวัตถุดิบ/);
+  assert.match(nodes["[data-rf-preview]"].innerHTML, /DM-CH-13[\s\S]*ขั้น 3/);
+  assert.doesNotMatch(nodes["[data-rf-preview]"].innerHTML, /DM-CH-06|DM-CH-07/, "zero lines are not previewed");
+  const made2 = env.store.run("createRequisition", { orderId: previewOrder });
+  assert.equal(made2.ok, true, made2.error);
+  const detail = await env.render(`p=requisition&sel=${made2.result}`);
+  assert.match(text(detail), /ขั้นเตรียมวัตถุดิบ[\s\S]*ขั้น 1[\s\S]*ขั้น 2[\s\S]*ขั้น 3/);
+  assert.doesNotMatch(detail, /DM-CH-06|ขั้น undefined|NaN/);
+});

@@ -713,3 +713,94 @@ test("closing the rest of a purchase order line is refused with its own wording,
   // ST passes the rights check (and then fails on the missing order, which is a different message)
   rejects(close({ st: true }), /ไม่พบใบสั่งซื้อ/);
 });
+
+// สูตรแบบน้ำหนัก: บรรทัดคือ { materialCode, stage 0..3, kg, unit, phr = kg } · batchKg คำนวณเป็นผลรวม kg
+const weightForm = (over = {}) => ({
+  id: "B-TEST", stages: STAGES, yieldPerKg: "6", dumpTol: "6",
+  items: [
+    { materialCode: "EPDM-55", stage: "0", kg: "10", unit: "kg" }, { materialCode: "ZNO", stage: "0", kg: "2", unit: "kg" },
+    { materialCode: "STA", stage: "1", kg: "0.5", unit: "g" }, { materialCode: "CBS", stage: "1", kg: "0", unit: "g" },
+    { materialCode: "S-80", stage: "2", kg: "0.24", unit: "g" }, { materialCode: "TMTD", stage: "3", kg: "0.04", unit: "g" },
+  ], ...over,
+});
+
+test("weight recipes: createRecipe stores kg lines with phr equal to kg, keeps zero lines, computes batchKg and ignores a typed one", () => {
+  const d = fresh();
+  A.createRecipe(d, weightForm({ batchKg: "999" }), ctx("qc"));
+  const recipe = d.recipes.find((row) => row.id === "B-TEST");
+  assert.equal(recipe.batchKg, 12.78, "batchKg = 10 + 2 + 0.5 + 0 + 0.24 + 0.04");
+  assert.deepEqual(recipe.items.map((item) => [item.materialCode, item.stage, item.kg, item.unit, item.phr]), [
+    ["EPDM-55", 0, 10, "kg", 10], ["ZNO", 0, 2, "kg", 2], ["STA", 1, 0.5, "g", 0.5], ["CBS", 1, 0, "g", 0], ["S-80", 2, 0.24, "g", 0.24], ["TMTD", 3, 0.04, "g", 0.04],
+  ]);
+  assert.equal(recipe.stages.length, 2, "only stages 1 and 2 carry mixing parameters");
+  assert.equal(recipe.status, "draft");
+  assert.deepEqual(rules.partTotals(recipe).map((total) => [total.stage, total.kg]), [[0, 12], [1, 0.5], [2, 0.24], [3, 0.04]]);
+  // ฉบับแก้ไขใหม่ของสูตรแบบน้ำหนักเป็นแบบน้ำหนัก และ batchKg คิดใหม่
+  A.approveRecipe(d, { id: "B-TEST" }, ctx("manager"));
+  const revision = A.saveRecipe(d, weightForm({ items: [{ materialCode: "ZNO", stage: 0, kg: 3.5, unit: "kg" }] }), ctx("qc"));
+  assert.equal(revision, 2);
+  const next = d.recipes.find((row) => row.id === "B-TEST" && row.revision === 2);
+  assert.deepEqual([next.batchKg, next.items], [3.5, [{ materialCode: "ZNO", stage: 0, kg: 3.5, unit: "kg", phr: 3.5 }]]);
+  assert.equal(d.recipes.find((row) => row.id === "B-TEST" && row.revision === 1).batchKg, 12.78, "the approved revision is untouched");
+});
+
+test("weight recipes: invalid input is refused in Thai — mixed with PHR, no weight above zero, bad part, bad unit, too many decimals, blank or negative amounts, duplicate material", () => {
+  const d = fresh();
+  const make = (items, over = {}) => () => A.createRecipe(d, weightForm({ items, ...over }), ctx("qc"));
+  rejects(make([{ materialCode: "ZNO", stage: 0, kg: 1 }, { materialCode: "STA", stage: 1, phr: 5 }]), /ผสมกับ PHR ไม่ได้/);
+  rejects(make([{ materialCode: "ZNO", stage: 0, kg: 0 }, { materialCode: "STA", stage: 1, kg: "0" }]), /มากกว่า 0 อย่างน้อย 1 รายการ/);
+  rejects(make([{ materialCode: "ZNO", stage: 4, kg: 1 }]), /ขั้นของ ZNO/);
+  rejects(make([{ materialCode: "ZNO", stage: -1, kg: 1 }]), /ขั้นของ ZNO/);
+  rejects(make([{ materialCode: "ZNO", stage: 0, kg: 1, unit: "lb" }]), /หน่วยของ ZNO/);
+  rejects(make([{ materialCode: "ZNO", stage: 0, kg: 0.00001 }]), /4 ตำแหน่ง/);
+  rejects(make([{ materialCode: "ZNO", stage: 0, kg: 0.0005 }]), /ไม่น้อยกว่า 0.001 kg/, "a non-zero weight under 1 g is refused like the database");
+  rejects(make([{ materialCode: "ZNO", stage: 0, kg: 10000.5 }]), /ไม่เกิน 10,000 kg/);
+  rejects(make([{ materialCode: "ZNO", stage: 0, kg: 1e6 }]), /ไม่เกิน 10,000 kg/);
+  rejects(make([{ materialCode: "ZNO", stage: 0, kg: "" }]), /กรุณาระบุปริมาณของ ZNO/);
+  rejects(make([{ materialCode: "ZNO", stage: 0, kg: -1 }]), /0 ขึ้นไป/);
+  rejects(make([{ materialCode: "ZNO", stage: 0, kg: "abc" }]), /0 ขึ้นไป/);
+  rejects(make([{ materialCode: "ZNO", stage: 0, kg: 1 }, { materialCode: "ZNO", stage: 1, kg: 2 }]), /ซ้ำในสูตร/);
+  rejects(make([{ materialCode: "", stage: 0, kg: 3 }]), /ยังไม่ได้เลือกวัตถุดิบ/);
+  rejects(make([]), /อย่างน้อย 1 รายการ/);
+  assert.ok(!d.recipes.some((row) => row.id === "B-TEST"), "nothing was saved");
+  // ขอบเขต: 0.001 kg (1 g) และ 10000 kg รับได้ · 0 = ไม่ใส่
+  A.createRecipe(d, weightForm({ id: "B-LIMIT", items: [{ materialCode: "ZNO", stage: 0, kg: 10000 }, { materialCode: "STA", stage: 1, kg: 0.001, unit: "g" }, { materialCode: "CBS", stage: 2, kg: 0 }] }), ctx("qc"));
+  assert.equal(d.recipes.find((row) => row.id === "B-LIMIT").batchKg, 10000.001);
+  // แถวว่างทั้งแถวถูกข้าม · ไม่ระบุขั้น = ขั้น 1 · ไม่ระบุหน่วย = kg
+  A.createRecipe(d, weightForm({ items: [{ materialCode: "ZNO", kg: 2 }, { materialCode: "", kg: "" }] }), ctx("qc"));
+  assert.deepEqual(d.recipes.find((row) => row.id === "B-TEST").items, [{ materialCode: "ZNO", stage: 1, kg: 2, unit: "kg", phr: 2 }]);
+});
+
+test("weight recipes: a PHR recipe saves exactly as before (stage 1|2, no kg, typed batchKg) and refuses a duplicate material", () => {
+  const d = fresh();
+  A.createRecipe(d, recipeForm({ items: [{ materialCode: "ZNO", phr: "5", stage: "2" }, { materialCode: "STA", phr: "1" }] }), ctx("qc"));
+  const recipe = d.recipes.find((row) => row.id === "RC-NEW");
+  assert.deepEqual(recipe.items, [{ materialCode: "ZNO", phr: 5, stage: 2 }, { materialCode: "STA", phr: 1, stage: 1 }]);
+  assert.equal(recipe.batchKg, 40);
+  assert.equal(rules.isWeightRecipe(recipe), false);
+  rejects(() => A.createRecipe(d, recipeForm({ id: "RC-DUP", items: [{ materialCode: "ZNO", phr: 5 }, { materialCode: "ZNO", phr: 1 }] }), ctx("qc")), /ซ้ำในสูตร/);
+  // สูตร PHR ที่มีอยู่เดิมในชุดสาธิตไม่ถูกแปลง
+  assert.ok(d.recipes.filter((row) => row.id.startsWith("RC-")).every((row) => !rules.isWeightRecipe(row) && row.items.every((item) => !("kg" in item))));
+});
+
+test("weight recipes: a requisition of DEMO-W01 issues the lines of all four parts, skips the zero lines and mixing works on it", () => {
+  const d = fresh();
+  const order = A.createOrder(d, { customer: "ลูกค้าทดสอบ", customerPo: "PO-W01", recipeId: "DEMO-W01", targetQty: 900, color: "ดำ", startDate: NOW, dueDate: NOW + 5 * DAY }, ctx("planner"));
+  A.setOrderStatus(d, { id: order, status: "released" }, ctx("planner"));
+  const reqId = A.createRequisition(d, { orderId: order }, ctx("store"));
+  const req = d.requisitions.find((row) => row.id === reqId);
+  assert.equal(req.batches, 2, "900 m ÷ 6 m per kg = 150 kg ÷ 75.6 kg per batch, rounded up");
+  assert.equal(req.totalKg, 151.2);
+  assert.deepEqual([...new Set(req.lines.map((line) => line.stage))], [0, 1, 2, 3], "lines carry stages 0..3 in part order");
+  assert.ok(!req.lines.some((line) => ["DM-CH-06", "DM-CH-07"].includes(line.materialCode)), "zero-weight lines are never requisitioned");
+  const kgOf = (code) => req.lines.filter((line) => line.materialCode === code).reduce((sum, line) => sum + line.actualKg, 0);
+  assert.equal(+kgOf("DM-RUB-A").toFixed(4), 22, "2 batches × 11 kg");
+  assert.equal(+kgOf("DM-CH-03").toFixed(4), 1.6, "2 batches × 800 g");
+  assert.equal(+req.lines.reduce((sum, line) => sum + line.actualKg, 0).toFixed(4), 151.2, "every kilogram of the sheet is issued");
+  // ผสมจากใบเบิกนี้: ยางที่ได้เทียบกับวัตถุดิบที่จ่ายทั้งสี่ส่วน
+  const stages = d.recipes.find((row) => row.id === "DEMO-W01").stages;
+  const lotId = A.recordMixing(d, { reqId, stages, outputKg: 140 }, ctx("mixer"));
+  assert.equal(d.lots.find((row) => row.id === lotId).params.batches, 2);
+  assert.equal(req.status, "consumed");
+  rejects(() => A.createRequisition(d, { orderId: order }, ctx("store")), /เบิกเคมีครบตามที่ใบสั่งผลิตต้องใช้แล้ว/);
+});

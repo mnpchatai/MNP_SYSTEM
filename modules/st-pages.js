@@ -1,6 +1,6 @@
 // หน้าของโมดูลคลังวัตถุดิบ (ST) #/st — โหลดก่อน modules/module-st.js (ดู index.html) · ที่เดียวที่ ST จ่ายเคมีให้ RB รับคืน รับเข้าตามใบสั่งซื้อ เบิกจ่ายของซื้อ และนับสต็อก (ไม่มีสำเนาที่สองในหน้า BOM / RubberFlow)
 // ของในคลังมาจากสองทาง: ของซื้อ (store ของ BOM: stock / stockMoves) และล็อตเคมี (store ของ RubberFlow: materialLots ยอดคลัง ST = qtyKg · คลังเคมีของ RB = rbKg · 20261220010000)
-// หน้า: งานของฉัน (ค่าตั้งต้น) · ในคลัง ?tab=stock (หน้าของซื้อ ?part=<รหัส> · หน้าล็อตเคมี ?lot=<ล็อต>) · วัตถุดิบที่กัก ?tab=hold · ใบสั่งซื้อ ?tab=po · จ่ายออก ?tab=issue (&order=<ใบ>) · รับคืน ?tab=returns · นับสต็อก ?tab=count
+// หน้า: งานของฉัน (ค่าตั้งต้น) · ในคลัง ?tab=stock (หน้าของซื้อ ?part=<รหัส> · หน้าล็อตเคมี ?lot=<ล็อต>) · วัตถุดิบที่กัก ?tab=hold · ใบสั่งซื้อ ?tab=po · จ่ายออก ?tab=issue (&order=<ใบ>) · รับคืน ?tab=returns · นับสต็อก ?tab=count · ราคาเคมี ?tab=prices (ผู้ที่เห็นราคา · ต้นทุนการผลิต)
 // คำสั่งของของซื้อวิ่งไป store ของ BOM (dialog issueParts / returnParts / undoParts และฟอร์ม countPartStock ผ่านตัวผูกของหน้าแผนก)
 // ส่วนของ RubberFlow (ใบสั่งซื้อ เคมี ใบขอเบิก ใบคืน ป้าย กักกัน) อยู่ใน [data-rf-scope] ที่ตัวผูกของ RubberFlow ผูกเอง (dialog และคำสั่งชุดเดียวกับหน้า RubberFlow · ตัวผูกของหน้าแผนกข้ามส่วนนี้)
 // ผู้เข้าชม (ไม่อยู่ในเมนู เข้าทางลิงก์ · access): แผนก RB ดูเคมีในคลัง ST อย่างเดียว · แผนก WH ดูและนับของซื้อ
@@ -526,10 +526,106 @@
     return { html: ui.dialog("chemReject", `ไม่รับคืน · ${doc.id}`, `<form novalidate data-rf-form="rejectChemicalReturn" data-rf-args='${esc(JSON.stringify({ id: doc.id }))}' data-rf-success="ไม่รับคืนตามใบ {result} แล้ว ยอดกลับเข้าคลัง RB" id="st-chem-reject">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="st-chem-reject">ไม่รับคืน</button>` }) };
   };
 
+  // ---------- ราคาเคมี (ต้นทุนการผลิต · ?tab=prices) ----------
+  // เห็นเฉพาะผู้ที่เห็นราคา (modules/cost-rules.js canSeePrices: แผนก ST · แผนก PP · ผู้จัดการทั่วไป / ผู้จัดการโรงงาน · admin) · บันทึกราคาได้เฉพาะแผนก ST และ admin (canWrite ที่ app_rf_prices ตอบ · ปุ่มซ่อนเป็นแค่ UX ฐานข้อมูลตัดสินจริง)
+  // ราคาเป็นแถวที่เพิ่มอย่างเดียว (ประวัติ): แก้ราคา = บันทึกแถวใหม่ · ข้อมูลอยู่ในหน่วยความจำของหน้า (modules/cost-data.js) ไม่เก็บลงเครื่อง · ผู้เข้าชม (RB / WH) ไม่มีหน้านี้
+  const costRules = () => root.MNP_COST_RULES ?? null;
+  const costData = () => root.MNP_COST_DATA ?? null;
+  const actingEmployee = () => { try { return state.employee; } catch { return null; } };
+  const mayPrices = (ctx) => Boolean(!ctx.guest && costRules() && costData() && costRules().canSeePrices(actingEmployee()));
+  const repaintPrices = () => { try { if (F.onDeptRoute() && !root.MNP_BOM?.isEditing?.()) renderRoute(); } catch { /* ออกจากหน้าแล้ว */ } };
+  const PRICE_FILTERS = Object.freeze([{ value: "missing", label: "ยังไม่มีราคา" }, { value: "priced", label: "มีราคาแล้ว" }]);
+  // วัตถุดิบ RubberFlow ที่ใช้งานอยู่ทีละแถว พร้อมราคาที่มีผลวันนี้ (current) และราคาล่วงหน้าที่ใกล้ที่สุด (next) · ยังไม่มีราคาขึ้นก่อน แล้วเรียงตามรหัส
+  function priceRows(ctx, rf, prices) {
+    const C = costRules();
+    const today = C.bangkokDay(ctx.now);
+    const byCode = new Map();
+    for (const row of prices) { const list = byCode.get(row.materialCode); if (list) list.push(row); else byCode.set(row.materialCode, [row]); }
+    return (rf.data.materials ?? []).filter((material) => material.active !== false).map((material) => {
+      const own = byCode.get(material.code) ?? [];
+      const next = own.filter((row) => C.dayKey(row.effectiveFrom) > today).sort((a, b) => (C.dayKey(a.effectiveFrom) < C.dayKey(b.effectiveFrom) ? -1 : 1))[0] ?? null;
+      return { material, current: C.priceAt(own, material.code, today), next };
+    }).sort((a, b) => (a.current ? 1 : 0) - (b.current ? 1 : 0) || String(a.material.code).localeCompare(String(b.material.code)));
+  }
+  function priceView(ctx, rf) {
+    const { ui, q } = ctx;
+    const C = costRules();
+    const D = costData();
+    if (D.needsPrices()) D.loadPrices().then(repaintPrices);
+    const prices = D.prices();
+    if (prices.status === "forbidden") return ui.card(ui.empty("บัญชีนี้ไม่มีสิทธิ์ดูราคาเคมี"));
+    if (prices.status === "error") return ui.card(ui.empty(D.errorText(prices.error), '<div class="rf-row"><button class="btn rf-btn secondary" type="button" data-cost-retry>ลองอีกครั้ง</button></div>'));
+    if (rf.status !== "ready") return rfNote(ctx, rf, "วัตถุดิบ") || ui.card(ui.empty("ไม่มีข้อมูล RubberFlow"));
+    if (prices.status !== "ready") return '<p class="small muted" role="status">กำลังโหลดราคาเคมี…</p>';
+    const all = priceRows(ctx, rf, prices.prices);
+    const missingCount = all.filter((row) => !row.current).length;
+    const show = PRICE_FILTERS.some((option) => option.value === ctx.params.get("price")) ? ctx.params.get("price") : "";
+    const list = all.filter((row) => (show === "missing" ? !row.current : show === "priced" ? Boolean(row.current) : true) && F.includesText(`${row.material.code} ${row.material.name ?? ""}`, q));
+    const { shown, more } = F.limited(ctx, list);
+    const rows = shown.map((row) => {
+      const code = row.material.code;
+      const price = row.current ? `<span class="rf-mono">${esc(C.fmtPrice(row.current.pricePerKg))}</span>` : ui.badge("warn", "ยังไม่มีราคา");
+      const upcoming = row.next ? `<div class="small muted">${esc(`ราคาใหม่ ${C.fmtPrice(row.next.pricePerKg)} มีผล ${C.fmtDay(row.next.effectiveFrom)}`)}</div>` : "";
+      const label = prices.canWrite ? (row.current ? "ราคาใหม่" : "ตั้งราคา") : "ประวัติ";
+      const button = ui.openButton(label, "costPrice", { code }, { className: prices.canWrite && !row.current ? "small" : "secondary small", ariaLabel: `${label} ${code}` });
+      return `<tr><td>${ui.mono(code)}<div class="small muted">${esc(row.material.name ?? "")}</div></td><td class="right">${price}${upcoming}</td><td class="nowrap small">${row.current ? esc(C.fmtDay(row.current.effectiveFrom)) : dash}</td><td class="right">${button}</td></tr>`;
+    });
+    const options = PRICE_FILTERS.map((option) => ({ ...option, label: `${option.label} (${option.value === "missing" ? missingCount : all.length - missingCount})` }));
+    const filtered = Boolean(q || show);
+    const toolbar = `<div class="rf-row sr-toolbar">${F.searchForm(ctx, "ค้นหารหัสหรือชื่อวัตถุดิบ")}${filterSelect(ctx, "price", "ราคา", options, show, "ทั้งหมด")}${filtered ? ui.link("ล้างตัวกรอง", stUrl(ctx.view.params), "btn rf-btn secondary small") : ""}</div>`;
+    const empty = q || show ? "ไม่พบวัตถุดิบที่ค้นหา" : "ยังไม่มีวัตถุดิบในทะเบียน RubberFlow";
+    return `${toolbar}${ui.card(`${ui.table(["วัตถุดิบ", { label: "ราคา (บาท/kg)", className: "right" }, "มีผลตั้งแต่", { label: "", className: "right" }], rows, { emptyText: empty })}${more}`, { flush: true })}`;
+  }
+  // dialog ราคาของวัตถุดิบหนึ่งตัว (ลงทะเบียนใน dialog ของ BOM: เปิดด้วยตัวผูกของหน้าแผนก · ctx = ctx ของหน้า ST) · ฟอร์มบันทึกราคาใหม่ (เฉพาะผู้เขียน) + ประวัติราคาทุกแถว
+  // ฟอร์มส่งเองที่นี่ (ไม่ผ่านคำสั่งของ BOM): ตรวจช่อง → app_rf_price_save → ปิด dialog แล้ววาดหน้าใหม่
+  (root.MNP_BOM_DIALOGS ??= {}).costPrice = (ctx, { code }) => {
+    const C = costRules();
+    const D = costData();
+    const { ui } = ctx;
+    if (!C || !D || !mayPrices(ctx)) return null;
+    const prices = D.prices();
+    if (prices.status !== "ready") return null;
+    const material = materialOf(rfState(ctx), code);
+    const today = C.bangkokDay(ctx.now);
+    const current = C.priceAt(prices.prices, code, today);
+    const history = C.priceHistory(prices.prices, code);
+    const rows = history.map((row) => {
+      const tag = row === current ? ui.badge("good", "ใช้อยู่") : C.dayKey(row.effectiveFrom) > today ? ui.badge("info", "ยังไม่ถึงวันมีผล") : "";
+      return `<tr><td class="nowrap">${esc(C.fmtDay(row.effectiveFrom))}${tag ? ` ${tag}` : ""}</td><td class="right rf-mono">${esc(C.fmtPrice(row.pricePerKg))}</td><td class="small">${esc(row.note)}</td><td class="small">${esc(row.createdBy)}<div class="muted">${esc(C.fmtDay(row.createdAt))}</div></td></tr>`;
+    });
+    const historyTable = ui.table(["มีผลตั้งแต่", { label: "บาท/kg", className: "right" }, "หมายเหตุ", "บันทึกโดย"], rows, { emptyText: "ยังไม่เคยบันทึกราคา" });
+    const form = prices.canWrite ? `<form novalidate id="st-price-form" data-cost-price>
+        <div class="rf-grid rf-g2">${ui.field("ราคา (บาท/kg)", ui.input("pricePerKg", { type: "number", step: "any", min: "0.0001", max: "10000000", required: true, placeholder: current ? C.fmtPrice(current.pricePerKg) : "", extra: 'inputmode="decimal"' }), { required: true })}
+        ${ui.field("มีผลตั้งแต่", ui.input("effectiveFrom", { type: "date", value: today, required: true }), { required: true, hint: esc("บันทึกแล้วแก้ไม่ได้ ถ้าผิดให้บันทึกราคาใหม่ (วันเดียวกันใช้ราคาที่บันทึกล่าสุด)") })}</div>
+        ${ui.field("หมายเหตุ", ui.input("note", { placeholder: "เช่น ใบเสนอราคาเลขที่ …", extra: 'maxlength="300"' }))}</form>` : "";
+    const title = `ราคาเคมี · ${code}`;
+    const html = ui.dialog("costPrice", title, `${material?.name ? `<p class="muted small">${esc(material.name)}</p>` : ""}${form}${historyTable}`, { wide: true, footer: `${ui.closeButton(prices.canWrite ? "ยกเลิก" : "ปิด")}${prices.canWrite ? '<button class="btn rf-btn" type="submit" form="st-price-form">บันทึกราคา</button>' : ""}` });
+    const bind = (dialog) => {
+      const node = dialog.querySelector("form[data-cost-price]");
+      if (!node) return;
+      node.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!ui.validateForm(node)) return;
+        const price = String(node.elements.pricePerKg.value).trim();
+        // ราคามากกว่า 0 ไม่เกิน 10,000,000 ทศนิยมไม่เกิน 4 ตำแหน่ง (ฐานข้อมูลตรวจซ้ำ RF_INVALID_PRICE)
+        if (!/^\d+(\.\d{1,4})?$/.test(price) || !(Number(price) > 0) || Number(price) > 10000000) { showToast("ราคาต้องมากกว่า 0 ไม่เกิน 10,000,000 และทศนิยมไม่เกิน 4 ตำแหน่ง", "error"); return; }
+        const buttons = [...dialog.querySelectorAll("button")];
+        buttons.forEach((node2) => { node2.disabled = true; });
+        const result = await D.savePrice({ materialCode: code, pricePerKg: Number(price), effectiveFrom: node.elements.effectiveFrom.value, note: node.elements.note.value.trim() });
+        if (!result.ok) { showToast(result.message, "error"); buttons.forEach((node2) => { node2.disabled = false; }); return; }
+        showToast(`บันทึกราคา ${code} แล้ว`);
+        dialog.close?.();
+        repaintPrices();
+      });
+    };
+    return { html, bind };
+  };
+
   // ---------- หน้าแรกของโมดูล ----------
   // ตัวกรองชนิด (select) เปลี่ยนแล้วไปหน้าเดิมพร้อมตัวกรองใหม่ · ส่วนของ RubberFlow ผูกด้วยตัวผูกของ RubberFlow (ctx ของ RubberFlow: dialog คำสั่ง และการซ่อนปุ่มตามสิทธิ์ชุดเดียวกับหน้า RubberFlow)
   function bindPage(node, pageCtx) {
     node.querySelectorAll("[data-st-filter]").forEach((select) => select.addEventListener("change", () => { location.hash = pageCtx.pageUrl({ [select.name]: select.value || null, n: null }); }));
+    node.querySelectorAll("[data-cost-retry]").forEach((button) => button.addEventListener("click", () => { button.disabled = true; costData()?.loadPrices({ force: true }).then(repaintPrices); }));
     const slots = [...node.querySelectorAll("[data-rf-scope]")];
     if (!slots.length || typeof root.MNP_RUBBERFLOW_BIND !== "function") return;
     let rfCtx = null;
@@ -545,9 +641,11 @@
     if (lotNo && (!ctx.guest || GUEST_KIND[ctx.guest] === "chem")) return done(lotView(ctx, rf, lotNo));
     if (part && (!ctx.guest || GUEST_KIND[ctx.guest] === "part")) return done(partView(ctx, part));
     const allowed = ctx.guest ? GUEST_VIEWS[ctx.guest] : null;
-    const id = allowed && !allowed.includes(ctx.view?.id) ? "stock" : ctx.view?.id;
+    // ราคาเคมี: ผู้ที่ไม่เห็นราคา (เช่น ผู้ช่วยผู้จัดการโรงงานที่เปิดโมดูล ST ได้) พิมพ์ ?tab=prices เองได้หน้างานของฉันแทน · ผู้เข้าชมได้หน้าในคลังตามกติกาของผู้เข้าชม
+    const priceBlocked = ctx.view?.id === "prices" && !ctx.guest && !mayPrices(ctx);
+    const id = priceBlocked ? "work" : allowed && !allowed.includes(ctx.view?.id) ? "stock" : ctx.view?.id;
     // ผู้เข้าชมไม่มีเมนูข้าง: แท็บในหน้า (WH: ในคลัง · นับสต็อก) · หัวข้อ = หน้าที่เปิด
-    const view = allowed && id !== ctx.view?.id ? (ctx.factory.menu.find((item) => item.id === id) ?? ctx.view) : ctx.view;
+    const view = priceBlocked || (allowed && id !== ctx.view?.id) ? (ctx.factory.menu.find((item) => item.id === id) ?? ctx.view) : ctx.view;
     const head = (extra = "") => F.viewHead({ ...ctx, view }, extra);
     const guestTabs = allowed && allowed.length > 1 ? ui.tabs(allowed.map((key) => ({ id: key, label: ctx.factory.menu.find((item) => item.id === key)?.label ?? key })), id, (key) => stUrl({ tab: key })) : "";
     if (id === "stock") {
@@ -561,6 +659,7 @@
     if (id === "po") return done(`${head(poActions(ctx, rf))}${poView(ctx, rf)}`);
     if (id === "issue") return done(`${head()}${issueView(ctx, rf)}`);
     if (id === "returns") return done(`${head()}${returnsView(ctx, rf)}`);
+    if (id === "prices") return done(`${head()}${priceView(ctx, rf)}`);
     return done(`${head()}${workView(ctx, rf)}`);
   }
 
@@ -572,7 +671,9 @@
     { id: "issue", label: "จ่ายออก", icon: "box", params: { tab: "issue" } },
     { id: "returns", label: "รับคืน", icon: "cycle", params: { tab: "returns" } },
     { id: "count", label: "นับสต็อก", icon: "scale", params: { tab: "count" } },
+    // ราคาเคมี: เมนูเฉพาะผู้ที่เห็นราคา (เมนูข้างเรียก when ด้วยผู้ใช้ BOM ซึ่งไม่มีรหัสตำแหน่งครบ จึงตัดสินจากบัญชีที่ทำหน้าที่อยู่เอง)
+    { id: "prices", label: "ราคาเคมี", icon: "tag", params: { tab: "prices" }, when: () => Boolean(costRules()?.canSeePrices(actingEmployee())) },
   ]);
 
-  root.MNP_ST_PAGES = Object.freeze({ landing, MENU, KEEP: Object.freeze(["kind", "low", "order"]), access, guest, stockRows, workCount, workCards, holdCards, lowParts, lowChems });
+  root.MNP_ST_PAGES = Object.freeze({ landing, MENU, KEEP: Object.freeze(["kind", "low", "order", "price"]), access, guest, stockRows, workCount, workCards, holdCards, lowParts, lowChems });
 })(window);

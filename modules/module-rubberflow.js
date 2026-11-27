@@ -194,7 +194,13 @@
 
   const listOf = (value) => (Array.isArray(value) ? value : value === undefined ? [] : [value]);
   const filled = (value) => value !== undefined && value !== null && String(value).trim() !== "";
-  const itemsOf = (p) => listOf(p.materialCode).map((materialCode, index) => ({ materialCode, phr: listOf(p.phr)[index], stage: listOf(p.stage)[index] }));
+  // ฟอร์มสูตรแบบน้ำหนักส่ง amount[] + unit[] (จำนวนตามหน่วยที่กรอก) → kg เป็นกิโลกรัมเสมอ · ฟอร์มสูตรเดิมแบบ PHR ส่ง phr[] ไม่มี kg
+  const itemsOf = (p) => listOf(p.materialCode).map((materialCode, index) => {
+    const stage = listOf(p.stage)[index];
+    if (p.amount === undefined) return { materialCode, phr: listOf(p.phr)[index], stage };
+    const unit = listOf(p.unit)[index];
+    return { materialCode, stage, unit, kg: rules.amountToKg(listOf(p.amount)[index], unit) };
+  });
   // ฟอร์มสูตรและฟอร์มผสมมีช่อง mixerTemp1 dumpTemp1 mixMin1 / ...2 (ขั้น 1 และขั้น 2) รวมเป็น stages
   const stagesOf = (p) => rules.MIX_STAGES.map((stage) => ({ stage, mixerTemp: p[`mixerTemp${stage}`], dumpTemp: p[`dumpTemp${stage}`], mixMin: p[`mixMin${stage}`] }));
   // ฟอร์มบางอันส่งค่าที่ action ต้องการคนละรูปแบบ (วันที่เป็น ms, รายการวัตถุดิบ, ตัวเลือกใช่/ไม่ใช่)

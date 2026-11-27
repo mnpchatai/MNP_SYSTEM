@@ -18,7 +18,7 @@
   const MODULES = Object.freeze([
     { id: "dashboard", label: "ภาพรวม RB", group: "ภาพรวม" },
     { id: "orders", label: "ใบสั่งผลิต", group: "ใบสั่งผลิตและสูตร" },
-    { id: "recipes", label: "สูตรยาง (BOM/PHR)", group: "ใบสั่งผลิตและสูตร" },
+    { id: "recipes", label: "สูตรยาง", group: "ใบสั่งผลิตและสูตร" },
     { id: "requisition", label: "เบิกเคมี", group: "สายการผลิต" },
     { id: "mixing", label: "1 · ผสมยาง", group: "สายการผลิต" },
     { id: "extrusion", label: "2 · ฉีดขึ้นรูป", group: "สายการผลิต" },

@@ -193,8 +193,17 @@
     }).join("");
     let detail = ui.card(ui.empty("เลือกสูตรจากรายการด้านซ้าย"));
     if (selected) {
-      const lines = recipeLines(selected).map((line) => {
-        const material = data.materials.find((row) => row.code === line.materialCode);
+      const weight = rules.isWeightRecipe(selected);
+      const materialOf = (code) => data.materials.find((row) => row.code === code);
+      // สูตรแบบน้ำหนัก: ตารางแยกตามส่วน (ขั้นเตรียมวัตถุดิบ / ขั้น 1–3) พร้อมผลรวมของส่วน · น้ำหนักแสดงในหน่วยที่กรอก · บรรทัด kg = 0 แสดง "ไม่ใส่"
+      const weightRow = (line) => {
+        const material = materialOf(line.materialCode);
+        return `<tr><td class="rf-mono">${esc(line.materialCode)}</td><td>${esc(material?.name ?? "")}</td><td class="small">${esc(material?.category ?? "")}</td><td class="right rf-mono${line.kgPerBatch > 0 ? "" : " muted"}">${esc(rules.lineWeightText(line))}</td><td class="small muted">${esc(material?.storage ?? "")}</td></tr>`;
+      };
+      const partTables = weight ? rules.partTotals(selected).map((total) => `<div class="rf-stack rf-tight"><div class="rf-row rf-between"><strong>${esc(rules.partLabel(total.stage))}</strong><span class="small muted rf-mono">${esc(`รวม ${rules.partTotalText(total)}`)}</span></div>
+          ${ui.table(["รหัส", "วัตถุดิบ", "หมวด", { label: "น้ำหนัก / ชุดผสม", className: "right" }, "การจัดเก็บ"], total.lines.map(weightRow))}</div>`).join("") : "";
+      const lines = weight ? [] : recipeLines(selected).map((line) => {
+        const material = materialOf(line.materialCode);
         return `<tr><td class="rf-mono">${esc(line.materialCode)}</td><td>${esc(material?.name ?? "")}</td><td class="small">${esc(material?.category ?? "")}</td><td class="nowrap">${esc(`ขั้น ${line.stage}`)}</td><td class="right">${esc(String(line.phr))}</td><td class="right rf-mono">${esc(fmtNum(line.kgPerBatch, 3))}</td><td class="small muted">${esc(material?.storage ?? "")}</td></tr>`;
       });
       const mayEdit = ctx.can("editMaster");
@@ -210,18 +219,18 @@
         return row ? `<tr><td class="nowrap">${esc(`ขั้น ${stage}`)}</td><td class="right rf-mono">${esc(String(row.mixerTemp))}</td><td class="right rf-mono">${esc(`${row.dumpTemp} ± ${selected.dumpTol}`)}</td><td class="right rf-mono">${esc(String(row.mixMin))}</td></tr>` : "";
       });
       detail = ui.card(`${revisions}<div class="rf-grid rf-g3 rf-facts">
-          <div><span class="small muted">PHR รวม</span><strong>${esc(fmtNum(totalPhr(selected), 1))}</strong></div>
+          ${weight ? "" : `<div><span class="small muted">PHR รวม</span><strong>${esc(fmtNum(totalPhr(selected), 1))}</strong></div>`}
           <div><span class="small muted">น้ำหนักต่อชุดผสม</span><strong>${esc(`${selected.batchKg} kg`)}</strong></div>
           <div><span class="small muted">บ่มขั้นต่ำ</span><strong>${esc(`${selected.restHours} ชม.`)}</strong></div></div>
         ${ui.table(["ขั้นผสม", { label: "เครื่องผสม (°C)", className: "right" }, { label: "อุณหภูมิปล่อยยาง (°C)", className: "right" }, { label: "เวลาผสม (นาที)", className: "right" }], stageRows)}
-        ${ui.table(["รหัส", "วัตถุดิบ", "หมวด", "ขั้น", { label: "PHR", className: "right" }, { label: "kg / ชุดผสม", className: "right" }, "การจัดเก็บ"], lines)}
+        ${weight ? partTables : ui.table(["รหัส", "วัตถุดิบ", "หมวด", "ขั้น", { label: "PHR", className: "right" }, { label: "kg / ชุดผสม", className: "right" }, "การจัดเก็บ"], lines)}
         ${ui.kv([["หน่วยสินค้า", esc(selected.uom)], ["ผลผลิตโดยประมาณ", esc(`${selected.yieldPerKg} ${selected.uom} ต่อคอมปาวด์ 1 kg`)],
           ["สเปกมิติการฉีด", esc(Object.values(rules.extrusionSpecOf(selected)).map((spec) => `${spec.label} ${rules.specText(spec)}`).join(" · ") || "ไม่กำหนด (ล็อตฉีดไม่ถูกกักตามมิติ)")],
           ["ฉบับแก้ไข", esc(`Rev.${selected.revision}`)],
           ["ผู้สร้าง", esc(`${selected.createdBy ?? "-"} · ${fmtDate(selected.createdAt)}`)], ["ผู้อนุมัติ", esc(selected.approvedBy ? `${selected.approvedBy} · ${fmtDate(selected.approvedAt)}` : selected.status === "draft" ? "รออนุมัติ" : "-")]])}`,
       { title: esc(rules.recipeLabel(selected)), actions });
     }
-    const html = `${ui.pageHead("สูตรยาง (BOM / PHR)", "สูตรคิดเป็น PHR (ส่วนต่อยาง 100 ส่วน) ระบบคำนวณน้ำหนักต่อชุดผสมให้อัตโนมัติ สูตรต้องได้รับอนุมัติก่อนใช้เปิดใบสั่งผลิต · สูตรที่อนุมัติแล้วแก้ตรงๆ ไม่ได้ ต้องออกฉบับแก้ไขใหม่", ctx.can("editMaster") ? ui.openButton("สร้างสูตรใหม่", "createRecipe", {}, { className: "" }) : "")}
+    const html = `${ui.pageHead("สูตรยาง", "สูตรใส่เป็นน้ำหนักต่อชุดผสมตามใบสูตรของโรงงาน (ขั้นเตรียมวัตถุดิบ + ขั้น 1–3) สูตรเดิมแบบ PHR ยังใช้ได้ สูตรต้องได้รับอนุมัติก่อนใช้เปิดใบสั่งผลิต · สูตรที่อนุมัติแล้วแก้ตรงๆ ไม่ได้ ต้องออกฉบับแก้ไขใหม่", ctx.can("editMaster") ? ui.openButton("สร้างสูตรใหม่", "createRecipe", {}, { className: "" }) : "")}
       <div class="rf-split">${ui.card(`<div class="rf-list">${list || ui.empty("ยังไม่มีสูตร")}</div>`, { title: "สูตรทั้งหมด", flush: true })}${detail}</div>`;
     return { html };
   };
@@ -230,10 +239,18 @@
   function recipeDialog(ctx, current) {
     const { data, ui, rules } = ctx;
     const { fmtNum } = rules;
+    // สูตรใหม่และฉบับแก้ไขของสูตรแบบน้ำหนักกรอกเป็นน้ำหนักต่อชุดผสมตามใบสูตรจริง (4 ส่วน: ขั้นเตรียมวัตถุดิบ + ขั้น 1–3) · สูตรเดิมแบบ PHR แก้ต่อเป็น PHR (ไม่แปลงข้อมูลเดิม)
+    const weight = !current || rules.isWeightRecipe(current);
     const materialOptions = data.materials.filter((material) => material.active !== false).map((material) => ({ value: material.code, label: `${material.code} · ${material.name}` }));
-    const starting = current ? current.items.map((item) => [item.materialCode, item.phr, rules.itemStage(item)]) : [["EPDM-55", 100, 1], ["CB-N550", 70, 1], ["ZNO", 5, 1], ["STA", 1, 1], ["S-80", 1.5, 2]].filter(([code]) => materialOptions.some((option) => option.value === code));
+    const phrStarting = current ? current.items.map((item) => [item.materialCode, item.phr, rules.itemStage(item)]) : [["EPDM-55", 100, 1], ["CB-N550", 70, 1], ["ZNO", 5, 1], ["STA", 1, 1], ["S-80", 1.5, 2]].filter(([code]) => materialOptions.some((option) => option.value === code));
+    // ปริมาณที่แสดงในช่องตามหน่วยที่กรอกไว้ (g = kg × 1000 ปัดเศษทศนิยมของเครื่อง)
+    const amountText = (item) => String(item.unit === "g" ? Math.round(item.kg * 1e7) / 1e4 : item.kg);
+    const weightStarting = current ? current.items.map((item) => [item.materialCode, amountText(item), item.unit === "g" ? "g" : "kg", rules.itemStage(item)]) : [[materialOptions[0]?.value ?? "", "", "kg", 0]];
     const stageOptions = rules.MIX_STAGES.map((stage) => ({ value: stage, label: `ขั้น ${stage}` }));
-    const row = (code, phr, stage = 1) => `<tr class="rf-recipe-row"><td>${ui.select("materialCode[]", materialOptions, { value: code })}</td><td>${ui.select("stage[]", stageOptions, { value: stage })}</td><td>${ui.input("phr[]", { type: "number", value: String(phr), step: "any", min: 0 })}</td><td class="right rf-mono" data-rf-kg>-</td><td><button class="btn rf-btn secondary small" type="button" data-rf-remove aria-label="ลบรายการ">ลบ</button></td></tr>`;
+    const partOptions = rules.PARTS.map((stage) => ({ value: stage, label: rules.partLabel(stage) }));
+    const unitOptions = [{ value: "kg", label: "kg" }, { value: "g", label: "g" }];
+    const weightRow = (code, amount, unit = "kg", stage = 1) => `<tr class="rf-recipe-row"><td>${ui.select("materialCode[]", materialOptions, { value: code })}</td><td>${ui.select("stage[]", partOptions, { value: stage })}</td><td>${ui.input("amount[]", { type: "number", value: String(amount), step: "any", min: 0, required: true, extra: 'aria-label="ปริมาณ" title="ไม่ใส่ในสูตรนี้ให้กรอก 0"' })}</td><td>${ui.select("unit[]", unitOptions, { value: unit, extra: 'aria-label="หน่วย"' })}</td><td><button class="btn rf-btn secondary small" type="button" data-rf-remove aria-label="ลบรายการ">ลบ</button></td></tr>`;
+    const row = (code, phr, stage = 1) =>`<tr class="rf-recipe-row"><td>${ui.select("materialCode[]", materialOptions, { value: code })}</td><td>${ui.select("stage[]", stageOptions, { value: stage })}</td><td>${ui.input("phr[]", { type: "number", value: String(phr), step: "any", min: 0 })}</td><td class="right rf-mono" data-rf-kg>-</td><td><button class="btn rf-btn secondary small" type="button" data-rf-remove aria-label="ลบรายการ">ลบ</button></td></tr>`;
     const draft = current?.status === "draft";
     // ผสมสองขั้น: สองแถว แถวละสามช่อง (อุณหภูมิเครื่องผสม อุณหภูมิปล่อยยาง เวลา) ค่าเริ่มต้นของสูตรใหม่
     const stageDefaults = { 1: { mixerTemp: 80, dumpTemp: 110, mixMin: 3 }, 2: { mixerTemp: 90, dumpTemp: 130, mixMin: 2 } };
@@ -256,7 +273,7 @@
         ${ui.field("รหัสสูตร", current ? `<input class="input rf-input" name="id" value="${esc(current.id)}" readonly>` : ui.input("id", { placeholder: "RC-EPDM-XX01", required: true }), { required: true })}
         ${ui.field("รหัสสินค้า", ui.input("productCode", { value: current?.productCode ?? "" }))}
         ${ui.field("หน่วยสินค้า", ui.select("uom", [{ value: "m", label: "เมตร (m)" }, { value: "pcs", label: "ชิ้น (pcs)" }], { value: current?.uom ?? "m" }))}
-        ${ui.field("น้ำหนักต่อชุดผสม (kg)", ui.input("batchKg", { type: "number", value: String(current?.batchKg ?? 50), step: "any", extra: "data-rf-batch" }))}
+        ${weight ? ui.field("น้ำหนักต่อชุดผสม (kg)", '<input class="input rf-input" readonly tabindex="-1" data-rf-batch-out title="รวมน้ำหนักทุกรายการ ระบบคำนวณให้">') : ui.field("น้ำหนักต่อชุดผสม (kg)", ui.input("batchKg", { type: "number", value: String(current?.batchKg ?? 50), step: "any", extra: "data-rf-batch" }))}
         ${ui.field("ผลผลิตต่อ kg", ui.input("yieldPerKg", { type: "number", value: String(current?.yieldPerKg ?? 6), step: "any" }))}
         ${ui.field("เวลาบ่มขั้นต่ำ (ชม.)", ui.input("restHours", { type: "number", value: String(current?.restHours ?? 4), step: "any" }))}
       </div>
@@ -264,7 +281,9 @@
         ${ui.field("ค่าเผื่ออุณหภูมิปล่อยยางทั้งสองขั้น (±°C)", ui.input("dumpTol", { type: "number", value: String(current?.dumpTol ?? 5), step: "any", min: 0 }))}
       </div>
       <div class="rf-stack rf-tight"><strong class="small">สเปกมิติการฉีด</strong><div class="rf-grid rf-g2">${specFields}</div></div>
-      <div class="table-wrap"><table class="rf-table"><thead><tr><th>วัตถุดิบ</th><th>ขั้น</th><th class="rf-col-phr">PHR</th><th class="right">kg / ชุดผสม</th><th></th></tr></thead><tbody data-rf-items>${starting.map(([code, phr, stage]) => row(code, phr, stage)).join("")}</tbody></table></div>
+      <div class="table-wrap">${weight
+    ? `<table class="rf-table"><thead><tr><th>วัตถุดิบ</th><th>ขั้น</th><th class="rf-col-phr">ปริมาณ</th><th>หน่วย</th><th></th></tr></thead><tbody data-rf-items>${weightStarting.map(([code, amount, unit, stage]) => weightRow(code, amount, unit, stage)).join("")}</tbody></table>`
+    : `<table class="rf-table"><thead><tr><th>วัตถุดิบ</th><th>ขั้น</th><th class="rf-col-phr">PHR</th><th class="right">kg / ชุดผสม</th><th></th></tr></thead><tbody data-rf-items>${phrStarting.map(([code, phr, stage]) => row(code, phr, stage)).join("")}</tbody></table>`}</div>
       <div class="rf-row rf-between"><button class="btn rf-btn secondary small" type="button" data-rf-add>เพิ่มวัตถุดิบ</button><span class="muted small" data-rf-total></span></div>`;
     const name = current ? "recipeEdit" : "createRecipe";
     const formId = current ? "rf-edit-recipe" : "rf-create-recipe";
@@ -274,6 +293,33 @@
     const bind = (dialog) => {
       const tbody = dialog.querySelector("[data-rf-items]");
       const total = dialog.querySelector("[data-rf-total]");
+      if (weight) {
+        // น้ำหนักต่อชุดผสม = ผลรวมของทุกรายการ (อ่านอย่างเดียว) · ผลรวมต่อส่วนอยู่ใต้ตาราง
+        const batchOut = dialog.querySelector("[data-rf-batch-out]");
+        const paintWeight = () => {
+          const rows = [...tbody.querySelectorAll(".rf-recipe-row")].map((tr) => ({
+            stage: Number(tr.querySelector('select[name="stage[]"]').value),
+            kg: Number(rules.amountToKg(tr.querySelector('input[name="amount[]"]').value, tr.querySelector('select[name="unit[]"]').value)) || 0,
+          }));
+          total.textContent = rules.PARTS.filter((stage) => rows.some((item) => item.stage === stage))
+            .map((stage) => `${rules.partLabel(stage)} ${rules.plainNum(rules.weightBatchKg(rows.filter((item) => item.stage === stage)), 4)} kg`).join(" · ");
+          batchOut.value = `${rules.plainNum(rules.weightBatchKg(rows), 4)} kg`;
+        };
+        const wireWeight = (tr) => {
+          tr.querySelector("[data-rf-remove]").addEventListener("click", () => { tr.remove(); paintWeight(); });
+          tr.addEventListener("input", paintWeight);
+          tr.addEventListener("change", paintWeight);
+        };
+        tbody.querySelectorAll(".rf-recipe-row").forEach(wireWeight);
+        dialog.querySelector("[data-rf-add]").addEventListener("click", () => {
+          const last = [...tbody.querySelectorAll(".rf-recipe-row")].at(-1);
+          tbody.insertAdjacentHTML("beforeend", weightRow(materialOptions[0]?.value ?? "", "", "kg", last ? Number(last.querySelector('select[name="stage[]"]').value) : 0));
+          wireWeight(tbody.lastElementChild);
+          paintWeight();
+        });
+        paintWeight();
+        return;
+      }
       const batch = dialog.querySelector("[data-rf-batch]");
       const paint = () => {
         const rows = [...tbody.querySelectorAll(".rf-recipe-row")];
