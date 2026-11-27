@@ -10,7 +10,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(163);
+select plan(166);
 
 -- ตัวช่วย (ชั่วคราว) ---------------------------------------------------------
 -- claims ของผู้ใช้ทดสอบเลขที่ n
@@ -84,8 +84,8 @@ select ok(not has_function_privilege('anon', 'public.app_itrp_create(text, text,
 select ok((select bool_and(p.prosecdef and p.proconfig @> array['search_path=""']) from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname in ('app_itrp_lookup_host', 'app_itrp_create', 'app_itrp_get_detail', 'app_sandbox_purge_itrp')), 'the lookup, create, detail and purge functions are SECURITY DEFINER with an empty search_path');
 select ok(not exists (select 1 from pg_proc p where p.pronamespace = 'private'::regnamespace and p.proname in ('itrp_find_host', 'itrp_host_devices') and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute') or not p.prosecdef or not (p.proconfig @> array['search_path=""']))), 'the two private register helpers are closed to users and have an empty search_path');
 select ok(not exists (select 1 from private.lab_only_unguarded_functions() f where f like '%itrp%'), 'every itrp RPC (including the new lookup) has the lab-only guard');
-select ok(pg_get_functiondef('public.app_itrp_lookup_host(text)'::regprocedure) !~* 'y(serial|secret|secrets|price|place|auth_name|vendor|attrs)y' and pg_get_functiondef('private.itrp_host_devices(boolean, text, text)'::regprocedure) !~* 'y(serial|secret|secrets|price|place|auth_name|vendor|attrs)y', 'the lookup and the device helper never read serial, price, place, secrets or attrs');
-select ok(pg_get_functiondef('private.itrp_find_host(boolean, text)'::regprocedure) !~* 'y(serial|secret|secrets|price|place|auth_name|vendor)y' and (length(pg_get_functiondef('private.itrp_find_host(boolean, text)'::regprocedure)) - length(replace(pg_get_functiondef('private.itrp_find_host(boolean, text)'::regprocedure), 'attrs', ''))) / 5 = 1 and position('attrs ->> ''user_name''' in pg_get_functiondef('private.itrp_find_host(boolean, text)'::regprocedure)) > 0, 'the host helper reads exactly one key of attrs (user_name) and no serial, price, place or secret');
+select ok(pg_get_functiondef('public.app_itrp_lookup_host(text)'::regprocedure) !~* '\y(serial|secret|secrets|price|place|auth_name|vendor|attrs)\y' and pg_get_functiondef('private.itrp_host_devices(boolean, text, text)'::regprocedure) !~* '\y(serial|secret|secrets|price|place|auth_name|vendor|attrs)\y', 'the lookup and the device helper never read serial, price, place, secrets or attrs');
+select ok(pg_get_functiondef('private.itrp_find_host(boolean, text)'::regprocedure) !~* '\y(serial|secret|secrets|price|place|auth_name|vendor)\y' and (length(pg_get_functiondef('private.itrp_find_host(boolean, text)'::regprocedure)) - length(replace(pg_get_functiondef('private.itrp_find_host(boolean, text)'::regprocedure), 'attrs', ''))) / 5 = 1 and position('attrs ->> ''user_name''' in pg_get_functiondef('private.itrp_find_host(boolean, text)'::regprocedure)) > 0, 'the host helper reads exactly one key of attrs (user_name) and no serial, price, place or secret');
 select ok(not exists (select 1 from pg_proc p where p.pronamespace in ('public'::regnamespace, 'private'::regnamespace) and p.proname in ('app_itrp_lookup_host', 'itrp_find_host', 'itrp_host_devices') and pg_get_functiondef(p.oid) ~* '(like|ilike|similar to|~~)\s'), 'the lookup and its helpers never use LIKE (exact match only)');
 select ok(not exists (select 1 from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname in ('app_itrp_lookup_host', 'app_itrp_create') and pg_get_functiondef(p.oid) like '%ใบสั่งงาน%'), 'the new messages say "ใบแจ้งซ่อม", never "ใบสั่งงาน"');
 
@@ -232,6 +232,14 @@ select is(pg_temp.dv(current_setting('t.n7')), 'MONITOR:PD-MNT1:t,PRINTER:PD-PRT
 select is(pg_temp.q(format($q$ select max(seq) from public.itrp_request_devices where request_id = %L::uuid $q$, current_setting('t.n7')))::int, 2, 'seq of the kept rows is 1 and 2');
 select lives_ok(pg_temp.reqsql('PD-COM1', false, (select jsonb_agg(pg_temp.d('MONITOR')) from generate_series(1, 10))), 'ten devices are accepted');
 select is(pg_temp.q('select count(*) from public.itrp_request_devices where request_id = (select r.id from public.itrp_requests r order by r.doc_seq desc limit 1)')::int, 10, 'all ten rows were stored');
+
+-- asset_code: เครื่องที่ยืนยันในทะเบียนแล้วถูกผูกด้วยรหัสมาตรฐานฝั่งฐานข้อมูล ไม่เชื่อค่าที่หน้าเว็บส่งมา (ประวัติซ่อม/เปลี่ยนชิ้นส่วนอ่านเครื่องของใบจาก asset_code)
+select set_config('t.a1', (select c.id::text from public.app_itrp_create('WRONG-CODE', 'หน้าจอ', 'repair', null, 'device', null, 'ทดสอบ asset_code', false, 'pd-reg2', false, jsonb_build_array(pg_temp.d('MONITOR', 'pd-mnt3'))) c), true);
+select is(pg_temp.det(current_setting('t.a1')) ->> 'asset_code', 'PD-COM2', 'a confirmed host replaces the asset_code sent by the page with the canonical register code (found here by its register number)');
+select set_config('t.a2', (select c.id::text from public.app_itrp_create(null, 'คอม', 'repair', null, 'computer', null, 'ไม่ส่ง asset_code', false, 'pd-com1', false, jsonb_build_array(pg_temp.d('COMPUTER', 'pd-com1'))) c), true);
+select is(pg_temp.det(current_setting('t.a2')) ->> 'asset_code', 'PD-COM1', 'a request that sends no asset_code still gets the host code, so the repair history knows the machine');
+select set_config('t.a3', (select c.id::text from public.app_itrp_create('typed-x', 'หน้าจอ', 'repair', null, 'device', null, 'ไม่ทราบรหัสเครื่อง', false, null, true, jsonb_build_array(pg_temp.d('MONITOR'))) c), true);
+select is(pg_temp.det(current_setting('t.a3')) ->> 'asset_code', 'typed-x', 'with "unknown host" the typed asset_code is kept as sent (there is no confirmed machine to replace it)');
 
 -- 6. แจ้งซ่อม: ผิดกติกา (ทั้งใบไม่เกิดขึ้น) --------------------------------------
 select set_config('t.req_count', pg_temp.q('select count(*) from public.itrp_requests'), true);

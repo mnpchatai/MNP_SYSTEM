@@ -555,6 +555,9 @@ begin
       if v_host_id is null then
         raise exception 'ไม่พบรหัสเครื่อง % ในทะเบียนอุปกรณ์ กรุณาตรวจสอบรหัสที่ติดบนเครื่อง หรือเลือก "ไม่ทราบรหัสเครื่อง"', v_host_input using errcode = 'check_violation';
       end if;
+      -- เครื่องที่ยืนยันในทะเบียนแล้ว: asset_code = รหัสมาตรฐานของเครื่องนั้นเสมอ (ไม่เชื่อ p_asset_code ที่หน้าเว็บส่งมา)
+      -- ประวัติการซ่อมและการเปลี่ยนชิ้นส่วน (private.itrp_request_machine_codes) อ่านเครื่องของใบจาก asset_code จึงต้องผูกเครื่องที่ถูกต้องเสมอ
+      v_asset_code := v_host_code;
     end if;
 
     if v_devices is null or jsonb_typeof(v_devices) <> 'array' then
