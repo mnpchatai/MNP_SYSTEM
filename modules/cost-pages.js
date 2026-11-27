@@ -231,13 +231,14 @@
     const today = C.bangkokDay(ctx.now);
     const inputs = itemInputs(bom);
     const list = (bom.items ?? []).filter((item) => item.active !== false && C.hasItemCost(item) && F.includesText(`${item.code} ${item.name ?? ""}`, q))
-      .sort((a, b) => String(a.code).localeCompare(String(b.code)))
-      .map((item) => ({ item, cost: costOfItem(item, inputs, data, pay, today) }));
+      .sort((a, b) => String(a.code).localeCompare(String(b.code)));
+    // คิดต้นทุนเฉพาะแถวที่แสดง (ทะเบียนจริงมีหลายพันรหัส)
     const { shown, more } = F.limited(ctx, list);
-    const rows = shown.map(({ item, cost }) => {
+    const rows = shown.map((item) => {
+      const cost = costOfItem(item, inputs, data, pay, today);
       const labour = cost.labour.steps.length ? approx(!cost.labour.complete, C.fmtPrice(cost.labour.cost), ITEM_PARTIAL) : dash;
       const sub = [item.name ?? "", item.ownerDept ? deptName(item.ownerDept) : ""].filter(Boolean).join(" · ");
-      return `<tr class="row-link"><td>${rowLink(ui, item.code, costUrl({ item: item.code }))}<div class="small muted">${esc(sub)}</div></td><td class="right rf-mono">${labour}</td><td class="right rf-mono">${approx(!cost.materials.complete, C.fmtPrice(cost.materials.cost))}</td><td class="right rf-mono">${approx(cost.partial, C.fmtPrice(cost.own), ITEM_PARTIAL)}</td><td>${itemBadges(ui, cost)}</td></tr>`;
+      return `<tr class="row-link"><td>${rowLink(ui, item.code, costUrl({ item: item.code }))}<div class="small muted">${esc(sub)}</div></td><td class="right rf-mono">${labour}</td><td class="right rf-mono">${approx(!cost.materials.complete, C.fmtPrice(cost.materials.cost), "ยังไม่รวมของซื้อที่ยังไม่มีราคา")}</td><td class="right rf-mono">${approx(cost.partial, C.fmtPrice(cost.own), ITEM_PARTIAL)}</td><td>${itemBadges(ui, cost)}</td></tr>`;
     });
     const toolbar = `<div class="rf-row sr-toolbar">${F.searchForm(ctx, "ค้นหารหัสหรือชื่อชิ้นงาน")}${q ? ui.link("ล้างคำค้น", ctx.pageUrl({ q: null, n: null }), "btn rf-btn secondary small") : ""}${pay.canSeeRates ? ui.openButton("อัตราค่าแรง", "labourRates", {}, { className: "secondary small", title: "อัตราค่าแรง บาท/ชม. ต่อแผนก" }) : ""}</div>`;
     const head = ["ชิ้นงาน", { label: "ค่าแรงแผนก (บาท/ชิ้น)", className: "right", title: "อัตราของแผนก × จำนวนคน ÷ เป้าชิ้น/ชม. ทุกขั้นที่ตั้งเป้าไว้" }, { label: "วัตถุดิบ (บาท/ชิ้น)", className: "right", title: "ของซื้อในบรรทัด BOM ของชิ้นนี้ รวมเผื่อเสีย" }, { label: "รวมที่ชิ้นนี้ (บาท/ชิ้น)", className: "right", title: "ยังไม่รวมชิ้นที่ผลิตเองข้างใต้และคอมปาวด์ยาง" }, ""];
@@ -257,7 +258,7 @@
     const noRate = cost.labour.reasons.filter((row) => row.reason === "noRate").map((row) => row.dept);
     if (noRate.length) {
       const fix = pay.canSeeRates ? `<p>${ui.openButton("อัตราค่าแรง", "labourRates", {}, { className: "secondary small" })}</p>` : "";
-      out.push(ui.callout("warn", `<strong>${esc(`ยังไม่มีอัตราค่าแรงของแผนก ${noRate.join(", ")} ที่มีผลในวันนี้`)}</strong> ${esc("ค่าแรงของขั้นเหล่านี้ยังไม่รวมในยอด")}${fix}`));
+      out.push(ui.callout("warn", `<strong>${esc(`ยังไม่มีอัตราค่าแรงของแผนก ${noRate.join(", ")} ที่มีผล ณ วันที่เลือก`)}</strong> ${esc("ค่าแรงของขั้นเหล่านี้ยังไม่รวมในยอด")}${fix}`));
     }
     if (cost.materials.missing.length) {
       out.push(ui.callout("warn", `<strong>${esc(`ของซื้อยังไม่มีราคา ${cost.materials.missing.length} รายการ`)}</strong> ${esc("ยังไม่รวมในยอดวัตถุดิบ")}<ul class="cost-missing">${cost.materials.missing.map((code) => `<li>${ui.badge("warn", code)}</li>`).join("")}</ul>${priceLink(ctx)}`));

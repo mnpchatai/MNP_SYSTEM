@@ -1004,7 +1004,7 @@ test("#/cost?item=: ค่าแรงแยกตามขั้น (อัต�
   assert.match(bg, /href="#\/bg\?tab=settings"/, "ไปตั้งเป้าที่หน้าตั้งค่าของแผนก");
   // วันที่ก่อนมีราคาและอัตรา: ทุกอย่างยังคิดไม่ได้
   const early = await env.openCost("item=DEMO-HL-24(B)-A&asof=2025-06-01");
-  assert.match(early, /ยังไม่มีอัตราค่าแรงของแผนก PK ที่มีผลในวันนี้/);
+  assert.match(early, /ยังไม่มีอัตราค่าแรงของแผนก PK ที่มีผล ณ วันที่เลือก/);
   assert.match(early, /ของซื้อยังไม่มีราคา 2 รายการ/);
   assert.match(await env.openCost("item=P-BOX-01"), /ไม่มีต้นทุนต่อชิ้น/);
   assert.match(await env.openCost("item=RB-DM02-02-YE03-204-19-34"), /ไปที่ต้นทุนสูตร/);

@@ -406,7 +406,7 @@
     return `<tr data-gr-row="target" data-gr-text="${attr(`${target?.itemCode ?? ""} ${steps.find((row) => row.code === target?.stepCode)?.name ?? ""}`.toLowerCase())}"><td>${ui.input("target.itemCode[]", { value: target?.itemCode ?? "", list: "gr-item-codes", required: true, placeholder: "รหัสชิ้นงาน", extra: 'aria-label="รหัสชิ้นงาน"' })}</td>`
       + `<td>${ui.select("target.stepCode[]", steps.map((row) => ({ value: row.code, label: row.name })), { value: target?.stepCode ?? "", placeholder: "เลือกขั้นตอน", extra: 'required aria-label="ขั้นตอน"' })}</td>`
       + `<td>${ui.input("target.perHour[]", { type: "number", value: target?.perHour ?? "", step: "any", min: 0.01, max: ctx.rules.GR_LIMITS.perHour, required: true, placeholder: "ชิ้น/ชม.", extra: 'aria-label="ชิ้นต่อชั่วโมง"' })}</td>`
-      + `<td>${ui.input("target.people[]", { type: "number", value: String(target ? ctx.rules.grPeople(target.people) : 1), step: 1, min: 1, max: ctx.rules.GR_LIMITS.people, required: true, extra: 'inputmode="numeric" aria-label="จำนวนคน"' })}</td>`
+      + `<td>${ui.input("target.people[]", { type: "number", value: String(target ? ctx.rules.grPeople(target.people) : 1), step: 1, min: 1, max: ctx.rules.GR_LIMITS.people, required: true, extra: 'aria-label="จำนวนคน"' })}</td>`
       + `<td class="right"><button class="btn rf-btn secondary small" type="button" data-gr-remove aria-label="ลบเป้า">ลบ</button></td></tr>`;
   }
   function settingsView(ctx) {
