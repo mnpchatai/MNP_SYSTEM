@@ -4321,3 +4321,30 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
   .itua-sheet-table thead th.itua-sheet-level { height: 40mm; vertical-align: bottom; }
   .itua-sheet-table thead th.itua-sheet-level span { display: inline-block; max-height: 38mm; overflow: hidden; white-space: nowrap; writing-mode: vertical-rl; transform: rotate(180deg); font-size: 7pt; }
 }
+
+/* ---------- ใบแจ้งซ่อม (itrp) 2.00: เลือกอุปกรณ์จากทะเบียนตอนแจ้งซ่อม · modules/itrp-pages.js (devicePicker / pickTypes / requestedDevicesTable) ---------- */
+/* ช่องรหัสเครื่อง + ปุ่มค้นหา: ช่องกว้างเต็มแถว ปุ่มชิดขวา (มือถือกดง่าย สูงอย่างน้อย 44px ตามปุ่มทั่วไป) */
+.itrp-host-row { display: flex; gap: 8px; align-items: stretch; }
+.itrp-host-row .input { flex: 1 1 auto; min-width: 0; text-transform: uppercase; }
+.itrp-host-row .btn { flex: none; min-height: 44px; }
+.itrp-host-note { margin: 6px 0 0; overflow-wrap: anywhere; }
+.itrp-host-card { margin-top: 8px; padding: 10px 12px; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; border: 1px solid var(--primary); border-radius: var(--radius-md); background: var(--primary-soft); overflow-wrap: anywhere; }
+.itrp-host-unknown { margin-top: 10px; }
+.itrp-pick-gate { margin: 0; padding: 10px 12px; border: 1px dashed var(--line); border-radius: var(--radius-md); }
+/* ชนิดอุปกรณ์: ช่องติ๊กเต็มความกว้าง เรียงลงมา (ไม่ล้นจอมือถือ) · ชนิดที่ติ๊กแล้วมีรายการรหัสอยู่ใต้ช่อง */
+.itrp-pick-type { margin-bottom: 8px; }
+.itrp-pick-head { width: 100%; }
+.itrp-pick-type.is-on { padding-bottom: 8px; border-bottom: 1px solid var(--soft-line); }
+.itrp-pick-rows { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.itrp-pick-row { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper); }
+.itrp-pick-use { flex: none; min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.itrp-pick-use input { width: 20px; height: 20px; margin: 0; }
+.itrp-pick-fields { flex: 1 1 auto; min-width: 0; display: grid; gap: 6px; }
+.itrp-pick-fields .input { min-width: 0; width: 100%; }
+.itrp-pick-code { text-transform: uppercase; }
+.itrp-pick-meta { overflow-wrap: anywhere; }
+.itrp-pick-type .btn.small { margin-top: 8px; }
+.itrp-pick-type > small { display: block; margin-top: 6px; }
+/* หน้ารายละเอียด: ตารางอุปกรณ์ที่แจ้ง + เครื่องหมาย "จากทะเบียน" (ฐานข้อมูลคำนวณ ไม่ใช่ที่ผู้แจ้งอ้าง) */
+.itrp-from-register { display: inline-block; padding: 0 6px; font-size: var(--text-caption); font-weight: 700; color: var(--primary-ink); background: var(--primary-soft); border-radius: 999px; white-space: nowrap; }
+.itrp-page .itrp-reqdev-table td:first-child { white-space: nowrap; }
