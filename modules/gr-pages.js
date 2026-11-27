@@ -390,7 +390,7 @@
 
   // ---------- ตั้งค่าขั้นตอนและเป้า (หัวหน้าแผนก GR และฝ่ายวางแผน) ----------
   // ขั้นตอน: ชื่อ ประเภท (สายหลัก / ขั้นเสริม) สถานะ เลื่อนขึ้นลง ลบ (ขั้นที่มีผลหรืออยู่ในขั้นตอนของงานลบไม่ได้ ตั้งไม่ใช้แทน) · เหตุผลของเสีย (บรรทัดละข้อ)
-  // เป้าชิ้นต่อชั่วโมงที่ 100% ต่อชิ้นงาน × ขั้น (ค้นหาในตารางได้ เพิ่ม/แก้/ลบ) · ส่งทั้งชุดครั้งเดียว (saveGrConfig)
+  // เป้าชิ้นต่อชั่วโมงที่ 100% ต่อชิ้นงาน × ขั้น พร้อมจำนวนคนที่ทำ (ต้นทุนเฟส 3 · ตั้งต้น 1) (ค้นหาในตารางได้ เพิ่ม/แก้/ลบ) · ส่งทั้งชุดครั้งเดียว (saveGrConfig)
   function stepRow(ctx, step, used) {
     const { ui } = ctx;
     const kinds = Object.entries(ctx.rules.GR_STEP_KIND_LABEL).map(([value, label]) => ({ value, label }));
@@ -406,6 +406,7 @@
     return `<tr data-gr-row="target" data-gr-text="${attr(`${target?.itemCode ?? ""} ${steps.find((row) => row.code === target?.stepCode)?.name ?? ""}`.toLowerCase())}"><td>${ui.input("target.itemCode[]", { value: target?.itemCode ?? "", list: "gr-item-codes", required: true, placeholder: "รหัสชิ้นงาน", extra: 'aria-label="รหัสชิ้นงาน"' })}</td>`
       + `<td>${ui.select("target.stepCode[]", steps.map((row) => ({ value: row.code, label: row.name })), { value: target?.stepCode ?? "", placeholder: "เลือกขั้นตอน", extra: 'required aria-label="ขั้นตอน"' })}</td>`
       + `<td>${ui.input("target.perHour[]", { type: "number", value: target?.perHour ?? "", step: "any", min: 0.01, max: ctx.rules.GR_LIMITS.perHour, required: true, placeholder: "ชิ้น/ชม.", extra: 'aria-label="ชิ้นต่อชั่วโมง"' })}</td>`
+      + `<td>${ui.input("target.people[]", { type: "number", value: String(target ? ctx.rules.grPeople(target.people) : 1), step: 1, min: 1, max: ctx.rules.GR_LIMITS.people, required: true, extra: 'inputmode="numeric" aria-label="จำนวนคน"' })}</td>`
       + `<td class="right"><button class="btn rf-btn secondary small" type="button" data-gr-remove aria-label="ลบเป้า">ลบ</button></td></tr>`;
   }
   function settingsView(ctx) {
@@ -420,7 +421,7 @@
       <template data-gr-template="step">${stepRow(ctx, null, false)}</template><div class="rf-row"><button class="btn rf-btn secondary" type="button" data-gr-add="step">เพิ่มขั้นตอน</button></div>`, { title: esc("ขั้นตอน") });
     const reasonsCard = ui.card(ui.field("เหตุผลของเสีย", `<textarea class="textarea rf-textarea" id="gr-reasons" name="reasons" rows="${Math.min(12, config.reasons.length + 2)}" required title="หนึ่งบรรทัดต่อหนึ่งเหตุผล" placeholder="หนึ่งบรรทัดต่อหนึ่งเหตุผล">${esc(config.reasons.join("\n"))}</textarea>`, { id: "gr-reasons", required: true }), { title: esc("เหตุผลของเสีย") });
     const search = `<div class="rf-row"><label class="sr-only" for="gr-target-search">ค้นหาเป้า</label><input class="input rf-input" id="gr-target-search" type="search" placeholder="ค้นหารหัสชิ้นงานหรือขั้นตอน" autocomplete="off" data-gr-target-search></div>`;
-    const targetsCard = ui.card(`${search}${ui.table(["ชิ้นงาน", "ขั้นตอน", { label: "ชิ้น/ชม.", title: "เป้าที่ 100% · ต้องทำ = ชั่วโมง × เป้า × 0.95" }, { label: "", className: "right" }], config.targets.map((target) => targetRow(ctx, target, config.steps)), { emptyText: "ยังไม่ได้ตั้งเป้า", className: "gr-settings-table" }).replace("<tbody>", '<tbody data-gr-rows="target">')}
+    const targetsCard = ui.card(`${search}${ui.table(["ชิ้นงาน", "ขั้นตอน", { label: "ชิ้น/ชม.", title: "เป้าที่ 100% · ต้องทำ = ชั่วโมง × เป้า × 0.95" }, { label: "จำนวนคน", title: "คนที่ทำขั้นนี้พร้อมกันจนได้ตามเป้า ใช้คิดค่าแรงต่อชิ้นในโมดูลต้นทุน ไม่เปลี่ยนยอดต้องทำ" }, { label: "", className: "right" }], config.targets.map((target) => targetRow(ctx, target, config.steps)), { emptyText: "ยังไม่ได้ตั้งเป้า", className: "gr-settings-table" }).replace("<tbody>", '<tbody data-gr-rows="target">')}
       <template data-gr-template="target">${targetRow(ctx, null, config.steps)}</template><datalist id="gr-item-codes">${codes.map((code) => `<option value="${attr(code)}"></option>`).join("")}</datalist>
       <div class="rf-row"><button class="btn rf-btn secondary" type="button" data-gr-add="target">เพิ่มเป้า</button></div>`, { title: esc("เป้าชิ้นต่อชั่วโมง (ที่ 100%)"), flush: true });
     const note = config.stored ? "" : '<p class="small muted">ยังใช้ขั้นตอนและเหตุผลตั้งต้น บันทึกครั้งแรกแล้วแก้ได้ตามต้องการ</p>';

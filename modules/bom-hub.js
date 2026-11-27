@@ -1,6 +1,6 @@
 // BOM รายแผนก (โหมดทดสอบ) — หน้าโครงใหม่ 4 เมนู: สินค้า (find) · ใบสั่งผลิต (แถบขั้นตอนของหน้า orders) · งานของฉัน (work) · ข้อมูลตั้งต้น (setup)
 // โหลดต่อจาก modules/bom-pages.js และลงทะเบียนใน window.MNP_BOM_PAGES / _DIALOGS ชุดเดียวกัน · กติกา ข้อมูล และคำสั่ง (actions) เป็นของเดิมทั้งหมด ไฟล์นี้เปลี่ยนเฉพาะการจัดหน้า
-// หน้าสินค้าวางหน้าเดิม (งานทุกแผนก โครงสร้าง/ต้นทุน) เป็นแท็บด้วย ctx.embed · ลิงก์ในแท็บเหล่านั้นถูกพากลับมาที่หน้าสินค้า (hubCtx)
+// หน้าสินค้าวางหน้าเดิม (งานทุกแผนก โครงสร้าง/ลำดับผลิต) เป็นแท็บด้วย ctx.embed · ลิงก์ในแท็บเหล่านั้นถูกพากลับมาที่หน้าสินค้า (hubCtx)
 (function (root) {
   const pages = (root.MNP_BOM_PAGES ??= {});
   const dialogs = (root.MNP_BOM_DIALOGS ??= {});
@@ -343,7 +343,7 @@
     const bom = approvedBomOf(ctx, item.code);
     const leaf = ctx.helpers.NO_BOM_KINDS.includes(item.kind);
     const qty = Math.max(Number(params.get("qty")) || 0, 0) || 1;
-    const tabIds = [["tree", "โครงสร้าง"], ...(bom ? [["depts", "งานรายแผนก"], ["cost", ctx.helpers.canSeeCost(ctx.user) ? "ต้นทุน / เวลา" : "ลำดับผลิต / เวลา"]] : []), ["history", "ประวัติ"]];
+    const tabIds = [["tree", "โครงสร้าง"], ...(bom ? [["depts", "งานรายแผนก"], ["cost", "ลำดับผลิต / เวลา"]] : []), ["history", "ประวัติ"]];
     const tab = tabIds.some(([id]) => id === params.get("tab")) ? params.get("tab") : leaf ? "history" : "tree";
     const tabs = ui.tabs(tabIds.map(([id, label]) => ({ id, label })), tab, (id) => ctx.url("find", { code: item.code, tab: id === "tree" ? null : id, qty: qty === 1 ? null : String(qty) }));
     const sub = [esc(rules.KINDS[item.kind]?.label ?? item.kind), bom ? esc(`BOM Rev.${bom.revision} บันทึก ${rules.fmtDate(bom.approvedAt)}`) : leaf ? "" : "ยังไม่มี BOM", item.active === false ? "เลิกใช้" : ""].filter(Boolean).join(" · ");
@@ -355,7 +355,7 @@
     const hero = `<header class="rf-pagehead bom-hero"><div class="rf-pagehead-main"><span class="rf-mod-ico" aria-hidden="true">${pages.icon("find")}</span><div><p class="bom-hero-code rf-mono">${esc(item.code)}</p><h1>${esc(item.name)}</h1><p class="bom-hero-sub">${sub}</p></div></div>${actions ? `<div class="rf-row">${actions}</div>` : ""}</header>`;
     let built;
     if (tab === "depts") built = pages.product(hubCtx(ctx, "product", { code: item.code, qty: String(qty) }));
-    else if (tab === "cost") built = pages.structure(hubCtx(ctx, "structure", { code: item.code, qty: String(qty), view: ["flow", "steps"].includes(params.get("view")) ? params.get("view") : "table" }));
+    else if (tab === "cost") built = pages.structure(hubCtx(ctx, "structure", { code: item.code, qty: String(qty), view: params.get("view") === "steps" ? "steps" : "flow" }));
     else if (tab === "history") built = historyTab(ctx, item);
     else built = treeTab(ctx, item, qty);
     return { html: `${back}${hero}${tabs}<div class="bom-hub-body">${built.html}</div>`, bind: built.bind };

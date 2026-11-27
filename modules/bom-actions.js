@@ -320,7 +320,7 @@
     return { code: rootCode, saved, created, patched, changed, summary: changed ? `บันทึกแล้ว — ${parts.join(" · ")}` : "ไม่มีการเปลี่ยนแปลง" };
   }
 
-  // ---------- โครงสร้างสินค้า: ขั้นตอนผลิต (routing) และราคาต้นทุน (จำลอง) ----------
+  // ---------- โครงสร้างสินค้า: ขั้นตอนผลิต (routing) (จำลอง) ----------
   // routing ต่อชิ้นงานเก็บเป็น revision แบบเดียวกับ BOM: บันทึกแล้วใช้ทันที ตัวเก่า superseded (ไม่แก้ทับของที่อาจถูกใช้ไปแล้ว)
   const routingOf = (d, code) => (d.routings ?? []).find((routing) => routing.itemCode === code && routing.status === "approved") ?? null;
   // ขั้นตอนมาตรฐานที่เลือกได้ = ที่เก็บในข้อมูล + ขั้นตอนเริ่มต้นใน bom-rules ที่ข้อมูลยังไม่มี (เช่น GR รีด/ปั๊ม/เปเปอร์/เจียร์(หยาบ), PK ใส่กระเป๋า ที่เพิ่มทีหลัง)
@@ -381,18 +381,8 @@
     audit(d, ctx, existing ? "แก้ขั้นตอนผลิต" : "เพิ่มขั้นตอนผลิต", `${code} ${name} (${dept})`);
     return { summary: code };
   }
-  // ราคาต้นทุนตั้งเองได้เฉพาะชิ้นที่ไม่มี BOM (ของซื้อ เส้นยาง ชิ้นทำเองที่ยังไม่ลง BOM) · ค่าว่าง = ล้างราคา · เฉพาะผู้เห็นต้นทุนในกลุ่มวางแผน
-  // บันทึกการใช้งานไม่มีตัวเลขราคา (ทุกบัญชีที่อ่าน BOM อ่านบันทึกนี้ได้) บอกแค่ว่าตั้งหรือล้างราคาของรหัสไหน
-  function setItemCost(d, { code, unitCost }, ctx) {
-    const user = requirePlanner(ctx, "ตั้งราคาต้นทุน");
-    if (!canSeeCost(user)) fail("ตั้งราคาต้นทุนได้เฉพาะผู้เห็นต้นทุน (ผู้จัดการทั่วไป ผู้จัดการโรงงาน ผู้ดูแลระบบ และฝ่ายวางแผน PP)");
-    const item = itemOf(d, code) ?? fail("ไม่พบชิ้นงาน");
-    if (approvedBomOf(d, item.code)) fail(`${item.code} มี BOM แล้ว ต้นทุนคำนวณจากส่วนประกอบและขั้นตอนผลิต`);
-    if (unitCost === "" || unitCost === null || unitCost === undefined) delete item.unitCost;
-    else item.unitCost = num(unitCost, "ราคาต้นทุนต่อหน่วย", { allowZero: true });
-    audit(d, ctx, "ตั้งราคาต้นทุน", `${item.code}: ${item.unitCost === undefined ? "ล้างราคา" : "ตั้งราคาแล้ว"}`);
-    return { summary: item.code };
-  }
+  // ราคาต้นทุนของชิ้นงาน (unitCost) เลิกใช้ที่หน้าเว็บแล้ว (ต้นทุนเฟส 3 · เจ้าของสั่ง 2026-11-27): ไม่มีคำสั่งตั้งราคาที่นี่ ราคาของซื้อตั้งที่ราคาวัตถุดิบของ ST (rf_material_prices kind part)
+  // ค่าที่ฐานข้อมูลเก็บไว้ยังอยู่และไม่ถูกอ่าน/เขียนโดยหน้าเว็บ: saveItem แก้ระเบียนเดิม (Object.assign) จึงส่ง unitCost ที่โหลดมาคืนไปตามเดิม ไม่ล้างค่าของผู้เห็นต้นทุน
   // รูปชิ้นงาน (จำลอง): รูปย่อที่เบราว์เซอร์ย่อแล้วเป็น data URL เก็บใน state ของเบราว์เซอร์ · ระบบจริงใช้ Supabase Storage แบบ private
   // ค่าว่าง = ลบรูป · รับเฉพาะ PNG/JPEG/WebP base64 ไม่เกิน 80,000 ตัวอักษร
   const IMAGE_MAX = 80000;
@@ -2379,7 +2369,7 @@
     if (good + 1e-9 < sent) fail(`${what}ไม่ได้: ยอดดีของงานจะเหลือ ${R.fmtQty(good)} ต่ำกว่าที่ส่งให้ ${to} แล้ว ${R.fmtQty(sent)} ${undo}`);
   }
 
-  // ตั้งค่า GR: { steps: [{ code?, name, kind: main | side, active }] (ลำดับในอาร์เรย์ = ลำดับขั้น), reasons: [ข้อความ], targets: [{ itemCode, stepCode, perHour }] }
+  // ตั้งค่า GR: { steps: [{ code?, name, kind: main | side, active }] (ลำดับในอาร์เรย์ = ลำดับขั้น), reasons: [ข้อความ], targets: [{ itemCode, stepCode, perHour, people? }] }
   // ขั้นใหม่ที่ไม่ส่ง code ได้รหัส GR-<เลขถัดไป> · ขั้นที่มีผลบันทึกแล้วหรืออยู่ในขั้นตอนของงานใด ลบไม่ได้ (ตั้ง active = false แทน)
   // ขั้นตอนรายแผนก (20261224010000): p.dept = GR (ค่าเริ่มต้น) | PT | BG | PK · รหัสขั้นขึ้นต้นด้วยแผนก · สิทธิ์ = หัวหน้าแผนกนั้น · ขั้นที่ใช้อยู่ตรวจเฉพาะงานของแผนกนั้น
   function saveGrConfig(d, p, ctx) {
@@ -2426,7 +2416,11 @@
       const perHour = Number(target?.perHour);
       if (!Number.isFinite(perHour) || perHour <= 0) fail(`เป้าของ ${itemCode} ขั้น ${stepCode} ต้องมากกว่า 0 ชิ้นต่อชั่วโมง`);
       if (perHour > L.perHour) fail(`เป้าของ ${itemCode} ขั้น ${stepCode} ต้องไม่เกิน ${R_fmt(L.perHour)} ชิ้นต่อชั่วโมง`);
-      return { itemCode, stepCode, perHour };
+      // จำนวนคนที่ทำขั้นนี้ตามเป้า (ต้นทุนเฟส 3): ไม่ส่ง / ว่าง = 1 · จำนวนเต็ม 1–50 · ไม่เปลี่ยน "ต้องทำ" ใช้คิดค่าแรงต่อชิ้นเท่านั้น
+      const rawPeople = target?.people;
+      const people = rawPeople === undefined || rawPeople === null || String(rawPeople).trim() === "" ? 1 : Number(rawPeople);
+      if (!Number.isInteger(people) || people < 1 || people > L.people) fail(`จำนวนคนของเป้า ${itemCode} ขั้น ${stepCode} ต้องเป็นจำนวนเต็ม 1 ถึง ${L.people}`);
+      return { itemCode, stepCode, perHour, people };
     });
     // ขั้นที่ใช้อยู่ (ผล / แผนของงานแผนกนี้) ลบไม่ได้
     const config = R.grConfig(d, dept);
@@ -2783,7 +2777,7 @@
     updateOrderHeader, sendOrderToPlanning, decideOrderRequest, receiveFg, deliverFg, closeOrderShort, closeOrder, reverseFg, receiveRods, decideRods, issueRods, reverseRodIssue, adjustRods, receiveRodsOpening, setRodLocation,
     saveGrConfig, setGrJobSteps, addGrRecord, editGrRecord, voidGrRecord, requestRods, cancelRodRequest, sendGrToPk, receiveGrAtPk, cancelGrHandover,
     sendToPk, receiveAtPk, cancelHandover, sendPkToWh, cancelPkToWh,
-    reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemCost, setItemImage, countPartStock, issueOrderParts, undoOrderParts, returnOrderParts,
+    reportJob, setJobStatus, linkJobToRubberFlow, saveRouting, saveProcess, setItemImage, countPartStock, issueOrderParts, undoOrderParts, returnOrderParts,
     helpers: { customerName, customerKey, startedJobs, isPartJob, isOpenJob, isLinkedJob, jobCloseNote, jobHoldNote, deptText, canIssueParts, canHandleFg, canReverseFg, partIssuePlan, stockRowOf, itemOf, approvedBomOf, routingOf, processOf, processesOf, bomById, canPlan, canSeeCost, canCount, canSetSafety, canWorkJob, canLinkRubberflow, isBoss, rbJobKg, rubberflowNotice, siblingsOf, pickSibling, colorSetOf, packageOf, NO_BOM_KINDS, canStoreRods, canDecideRods, canSeeRodHolds, canAdjustRods, newUuid,
       isDeptHead, canGrLead, canGrRecord, canReceiveGr, canReverseGrReceipt, isGrPlanned, isGrClosedShort, hasGrRecords, grJobBlock, grRecordBlock,
       STEP_DEPTS, canDeptLead, canDeptRecord, canReceiveAtPk, canReversePkReceipt, canSendPkToWh, handoverTarget,

@@ -24,7 +24,7 @@
     { id: "build", label: "สร้าง BOM", group: "BOM" },
     { id: "items", label: "ค้นหาชิ้นงาน / ประวัติ BOM", group: "BOM" },
     { id: "product", label: "สินค้า 1 ตัว → งานทุกแผนก", group: "BOM" },
-    { id: "structure", label: "โครงสร้างสินค้า (ต้นทุน/เวลา)", group: "BOM" },
+    { id: "structure", label: "โครงสร้างสินค้า (ลำดับผลิต/เวลา)", group: "BOM" },
     { id: "variants", label: "ชุดสี / แพ็กเกจ", group: "BOM" },
     { id: "compounds", label: "สูตรยาง ↔ RubberFlow", group: "BOM" },
     { id: "import", label: "นำเข้าจาก Excel", group: "BOM" },
@@ -492,9 +492,9 @@
     const dept = depts.includes(deptCode) ? deptCode : role === "planner" ? "PK" : role === "admin" ? "AD" : deptCode;
     const name = `${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim() || employee.display_name || employee.employee_no || "ผู้ใช้ทดสอบ";
     // roleCode = รหัสบทบาทจริงของบัญชีทดสอบ (เช่น department_manager): สิทธิ์ที่ผูกกับตำแหน่งเฉพาะ เช่น ย้อนรับเข้าคลัง (ผู้จัดการแผนก WH เท่านั้น) ใช้ค่านี้
-    // costViewer = ผู้เห็นต้นทุน (MNP_COST_RULES.canSeeCost = private.rf_cost_viewer) ใช้ผ่าน helpers.canSeeCost ของ bom-actions · ยังไม่โหลดกฎต้นทุน = ไม่จำกัดที่หน้าจอ (ฐานข้อมูลตัดสินเอง)
+    // costViewer = ผู้เห็นต้นทุน (MNP_COST_RULES.canSeeCost = private.rf_cost_viewer) ใช้ผ่าน helpers.canSeeCost ของ bom-actions · โหลดกฎต้นทุนไม่ได้ = ไม่ใช่ผู้เห็นต้นทุน (ปิดไว้ก่อน: ไม่มีลิงก์ไปหน้าต้นทุน · ฐานข้อมูลตัดสินเองอยู่แล้ว)
     const cost = costRules();
-    return { id: String(employee.id ?? employee.employee_no ?? name), role, dept, name, roleCode: String(employee.role?.code ?? employee.role_code ?? ""), costViewer: cost ? Boolean(cost.canSeeCost(employee)) : true };
+    return { id: String(employee.id ?? employee.employee_no ?? name), role, dept, name, roleCode: String(employee.role?.code ?? employee.role_code ?? ""), costViewer: cost ? Boolean(cost.canSeeCost(employee)) : false };
   }
   // ใครเห็นเมนูและหน้า BOM (UX ล้วน สิทธิ์จริงตัดสินที่ฐานข้อมูล 20261130010000): โหมดทดสอบ = ทุกบัญชีทดสอบเหมือนเดิม ·
   // ใช้งานจริง = กลุ่มวางแผน (admin · ผู้ช่วยผู้จัดการโรงงานขึ้นไป · ผู้จัดการแผนกในสายผลิต · แผนก PP) และพนักงานแผนก RB GR PT BG PK ST WH SR QA

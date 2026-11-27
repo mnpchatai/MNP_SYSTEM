@@ -237,6 +237,17 @@ test("GR settings: hidden from staff (the page refuses too); a head edits steps,
   assert.equal(payload.targets.length, 1, "an empty target row is skipped");
   const result = head.store.run("saveGrConfig", payload);
   assert.equal(result.ok, true, String(result.error?.message ?? ""));
+  assert.equal(head.R.grConfig(dataOf(head)).targets.find((target) => target.stepCode === "GR-04").people, 1, "a form without the people column saves one worker");
+  // จำนวนคนของเป้า (ต้นทุนเฟส 3): ช่องต่อแถว ตั้งต้น 1 · ค่าที่บันทึกแสดงกลับ · ส่งไปกับ payload · ค่าผิดถูกปฏิเสธ
+  assert.match(html, /<th[^>]*>จำนวนคน<\/th>/);
+  assert.match(html, /<template data-gr-template="target">[\s\S]*?name="target\.people\[\]"[^>]*value="1"/, "a new target row starts with one worker");
+  const withPeople = transform({ step: payload.steps.reduce((acc, step) => ({ code: [...acc.code, step.code], name: [...acc.name, step.name], kind: [...acc.kind, step.kind], active: [...acc.active, step.active ? "1" : "0"] }), { code: [], name: [], kind: [], active: [] }), reasons: "อื่นๆ", target: { itemCode: [HL], stepCode: ["GR-04"], perHour: ["25"], people: ["3"] } });
+  assert.equal(withPeople.targets[0].people, "3");
+  assert.equal(head.store.run("saveGrConfig", withPeople).ok, true);
+  assert.equal(head.R.grConfig(dataOf(head)).targets[0].people, 3);
+  assert.match(await gr(head, "tab=settings"), /name="target\.people\[\]"[^>]*value="3"/);
+  for (const bad of ["0", "51", "1.5", "x"]) assert.match(head.store.run("saveGrConfig", { ...withPeople, targets: [{ ...withPeople.targets[0], people: bad }] }).error?.message ?? "", /จำนวนคน/, `people ${bad} is refused`);
+  assert.equal(head.R.grRequired(8, head.R.grTarget(head.R.grConfig(dataOf(head)), HL, "GR-04")), 190, "ต้องทำ ignores the people (8 h × 25 × 0.95)");
   assert.equal(head.R.grConfig(dataOf(head)).steps.at(-1).code, "GR-13", "a new step gets the next code");
   assert.equal(staff.store.run("saveGrConfig", payload).ok, false, "staff cannot save settings");
 });

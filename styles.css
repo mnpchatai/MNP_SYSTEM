@@ -2966,7 +2966,6 @@ a.bom-count-order:hover { border-color: var(--rf-mod); }
 .bom-flow-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px; border-radius: var(--radius-md); border: 1px solid color-mix(in srgb, var(--success) 45%, var(--line)); background: var(--success-soft); overflow-wrap: anywhere; }
 .bom-flow-item.is-root { border-width: 2px; }
 .bom-flow-item-body { min-width: 0; display: grid; gap: 2px; }
-.bom-cost-warn { color: var(--warning); }
 .bom-flow-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .bom-flow-order { padding: 0 6px; font-size: var(--text-caption); font-weight: 700; border-radius: var(--radius-sm); color: var(--paper); background: var(--success); white-space: nowrap; }
 .bom-flow-order.is-quiet { color: var(--success-ink); background: var(--success-soft); }
@@ -3637,6 +3636,9 @@ table.bom-tree td.right { white-space: nowrap; }
 .cost-diff.is-up { color: var(--danger); }
 .cost-diff.is-down { color: var(--success); }
 .cost-diff.is-partial { opacity: .6; }
+/* หมวดของซื้อใน dialog ราคา (ST) · ส่วนของฟอร์มสูตรตามรูปแบบที่เลือก (PHR / น้ำหนัก) ในฉบับแก้ไขใหม่ของสูตร PHR */
+.st-category-form { align-items: flex-end; margin-bottom: 12px; }
+.rf-mode-part { min-width: 0; margin: 0; padding: 0; border: 0; }
 .sr-lot { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); align-items: start; }
 .sr-label-wrap { display: grid; gap: 14px; justify-items: start; }
 .sr-label { width: min(100%, 460px); overflow: hidden; border: 2px solid var(--m700); border-radius: var(--radius-lg); background: #fff; color: #111; box-shadow: 0 6px 18px -8px rgba(16, 32, 59, .3); }

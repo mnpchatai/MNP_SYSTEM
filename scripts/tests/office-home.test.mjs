@@ -220,7 +220,7 @@ test("index.html loads office-home.js before app.js with the same cache token as
   assert.ok(position("modules/office-home.js") >= 0, "office-home.js is loaded");
   assert.ok(position("modules/office-home.js") < position("app.js"), "before app.js");
   assert.equal(new Set(scripts.map((script) => script.token)).size, 1, "one token for every script");
-  assert.equal(scripts[0].token, "20261127labour2");
+  assert.equal(scripts[0].token, "20261127dept2");
 });
 
 test("each office module announces its home work under the same code as its card, and the department rule keeps the work-order module away from department ID", () => {

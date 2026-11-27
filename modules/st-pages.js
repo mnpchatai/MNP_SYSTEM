@@ -1,6 +1,6 @@
 // หน้าของโมดูลคลังวัตถุดิบ (ST) #/st — โหลดก่อน modules/module-st.js (ดู index.html) · ที่เดียวที่ ST จ่ายเคมีให้ RB รับคืน รับเข้าตามใบสั่งซื้อ เบิกจ่ายของซื้อ และนับสต็อก (ไม่มีสำเนาที่สองในหน้า BOM / RubberFlow)
 // ของในคลังมาจากสองทาง: ของซื้อ (store ของ BOM: stock / stockMoves) และล็อตเคมี (store ของ RubberFlow: materialLots ยอดคลัง ST = qtyKg · คลังเคมีของ RB = rbKg · 20261220010000)
-// หน้า: งานของฉัน (ค่าตั้งต้น) · ในคลัง ?tab=stock (หน้าของซื้อ ?part=<รหัส> · หน้าล็อตเคมี ?lot=<ล็อต>) · วัตถุดิบที่กัก ?tab=hold · ใบสั่งซื้อ ?tab=po · จ่ายออก ?tab=issue (&order=<ใบ>) · รับคืน ?tab=returns · นับสต็อก ?tab=count · ราคาเคมีและของซื้ออยู่ในรายการ ในคลัง (คอลัมน์ ราคา/หน่วย และตัวกรอง ?price=missing|priced ?cat=<หมวด> เฉพาะผู้ที่เห็นราคา · ต้นทุนการผลิต · ?tab=prices กลับมาที่ ในคลัง)
+// หน้า: งานของฉัน (ค่าตั้งต้น) · ในคลัง ?tab=stock (หน้าของซื้อ ?part=<รหัส> · หน้าล็อตเคมี ?lot=<ล็อต>) · วัตถุดิบที่กัก ?tab=hold · ใบสั่งซื้อ ?tab=po · จ่ายออก ?tab=issue (&order=<ใบ>) · รับคืน ?tab=returns · นับสต็อก ?tab=count · ราคาเคมีและของซื้ออยู่ในรายการ ในคลัง (คอลัมน์ ราคา/หน่วย และตัวกรอง ?price=missing|priced เฉพาะผู้ที่เห็นราคา · ?cat=<หมวด> · หมวดของของซื้อตั้งใน dialog ราคา · ต้นทุนการผลิต · ?tab=prices กลับมาที่ ในคลัง)
 // คำสั่งของของซื้อวิ่งไป store ของ BOM (dialog issueParts / returnParts / undoParts และฟอร์ม countPartStock ผ่านตัวผูกของหน้าแผนก)
 // ส่วนของ RubberFlow (ใบสั่งซื้อ เคมี ใบขอเบิก ใบคืน ป้าย กักกัน) อยู่ใน [data-rf-scope] ที่ตัวผูกของ RubberFlow ผูกเอง (dialog และคำสั่งชุดเดียวกับหน้า RubberFlow · ตัวผูกของหน้าแผนกข้ามส่วนนี้)
 // ผู้เข้าชม (ไม่อยู่ในเมนู เข้าทางลิงก์ · access): แผนก RB ดูเคมีในคลัง ST อย่างเดียว · แผนก WH ดูและนับของซื้อ
@@ -87,19 +87,24 @@
 
   // ---------- ในคลัง: รายการเดียวของของซื้อที่มียอด และล็อตเคมีที่คลัง ST มียอด · ผู้ที่เห็นราคาเห็นราคา/หน่วยและตัวกรองราคาในรายการเดียวกัน ----------
   const KIND_FILTERS = Object.freeze([{ value: "part", label: "ของซื้อ" }, { value: "chem", label: "เคมี" }]);
-  // หมวด: เคมีใช้หมวดของวัตถุดิบ RubberFlow (ว่าง = ไม่ระบุหมวด) · ของซื้อของ BOM ไม่มีหมวดของตัวเอง (group ของชิ้นงานเป็นกลุ่มสินค้า ไม่ใช่ชนิดของ) จึงรวมเป็น "ของซื้อ"
+  // หมวด: เคมีใช้หมวดของวัตถุดิบ RubberFlow (ว่าง = ไม่ระบุหมวด) · ของซื้อใช้หมวดที่ ST ตั้งไว้ (rf_part_categories · เฉพาะผู้ที่เห็นราคา) ไม่มีหมวด = รวมเป็น "ของซื้อ"
+  // (group ของชิ้นงาน BOM เป็นกลุ่มสินค้า ไม่ใช่ชนิดของ จึงไม่ใช้เป็นหมวด) · ownCategory = หมวดของตัวเอง (แสดงใต้ชื่อเมื่อไม่ได้กรองหมวด)
   const PART_CATEGORY = "ของซื้อ";
   const NO_CATEGORY = "ไม่ระบุหมวด";
   const filterSelect = (ctx, name, label, options, value, placeholder) => `<div class="field rf-field sr-filter"><label class="sr-only" for="st-${name}">${esc(label)}</label>${ctx.ui.select(name, options, { value, placeholder, id: `st-${name}`, extra: `data-st-filter title="${attr(label)}"` })}</div>`;
   const chemCategory = (rf, code) => materialOf(rf, code)?.category || NO_CATEGORY;
-  function stockRows(ctx, rf) {
-    const { rules } = ctx;
+  // แถวของซื้อหนึ่งตัว · cats = categoryBook (null / ยังไม่พร้อม = ทุกชิ้นอยู่ใต้ "ของซื้อ")
+  function partRow(ctx, stockOf, item, qty, cats) {
+    const own = cats?.of?.(item.code) ?? "";
+    return { key: `part:${item.code}`, kind: "part", code: item.code, name: item.name ?? "", category: own || PART_CATEGORY, ownCategory: Boolean(own), qty, unit: ctx.rules.uomLabel(item.uom), lotNo: "", expiry: null, state: "", low: partLow(stockOf, item.code), href: partHref(item.code) };
+  }
+  function stockRows(ctx, rf, cats = null) {
     const stockOf = stockMap(ctx);
     const rows = [];
     for (const item of partRegister(ctx, stockOf)) {
       const qty = partQty(stockOf, item.code);
       if (!(qty > 0)) continue;
-      rows.push({ key: `part:${item.code}`, kind: "part", code: item.code, name: item.name ?? "", category: PART_CATEGORY, qty, unit: rules.uomLabel(item.uom), lotNo: "", expiry: null, state: "", low: partLow(stockOf, item.code), href: partHref(item.code) });
+      rows.push(partRow(ctx, stockOf, item, qty, cats));
     }
     const R = rfRules();
     if (rf.status === "ready" && R) {
@@ -108,28 +113,29 @@
         const qty = R.lotKg(lot, "ST");
         if (!(qty > 0.0001)) continue;
         const safety = chemSafety(rf, lot.materialCode);
-        rows.push({ key: `chem:${lot.lotNo}`, kind: "chem", code: lot.materialCode, name: materialOf(rf, lot.materialCode)?.name ?? "", category: chemCategory(rf, lot.materialCode), qty, unit: "kg", lotNo: lot.lotNo, expiry: lot.expiry, state: R.lotState(lot, ctx.now, "ST"), low: safety > 0 && (onHand.get(lot.materialCode) ?? 0) < safety, href: lotHref(lot.lotNo) });
+        const category = chemCategory(rf, lot.materialCode);
+        rows.push({ key: `chem:${lot.lotNo}`, kind: "chem", code: lot.materialCode, name: materialOf(rf, lot.materialCode)?.name ?? "", category, ownCategory: category !== NO_CATEGORY, qty, unit: "kg", lotNo: lot.lotNo, expiry: lot.expiry, state: R.lotState(lot, ctx.now, "ST"), low: safety > 0 && (onHand.get(lot.materialCode) ?? 0) < safety, href: lotHref(lot.lotNo) });
       }
     }
     return sortStock(rows);
   }
   const sortStock = (rows) => rows.sort((a, b) => String(a.code).localeCompare(String(b.code)) || num(a.expiry) - num(b.expiry) || String(a.key).localeCompare(String(b.key)));
   // ของที่ใช้งานอยู่แต่ไม่มียอดในคลัง ST (ยอด 0 · ไม่มีล็อต): แสดงเฉพาะในตัวกรอง "ยังไม่มีราคา" เพื่อให้ตั้งราคาของที่ยังไม่เคยรับเข้าได้ · หน้าเริ่มต้นไม่แสดง (ทะเบียนของซื้อมีของ 0 ยอดจำนวนมาก)
-  function emptyRows(ctx, rf, inStock) {
-    const { rules } = ctx;
+  function emptyRows(ctx, rf, inStock, cats = null) {
     const have = new Set(inStock.map((row) => `${row.kind}:${row.code}`));
     const stockOf = stockMap(ctx);
     const rows = [];
     for (const item of partRegister(ctx, stockOf)) {
       if (item.active === false || have.has(`part:${item.code}`)) continue;
-      rows.push({ key: `part:${item.code}`, kind: "part", code: item.code, name: item.name ?? "", category: PART_CATEGORY, qty: 0, unit: rules.uomLabel(item.uom), lotNo: "", expiry: null, state: "", low: partLow(stockOf, item.code), href: partHref(item.code) });
+      rows.push(partRow(ctx, stockOf, item, 0, cats));
     }
     if (rf.status === "ready") {
       const { onHand } = chemPosition(ctx, rf);
       for (const material of rf.data.materials ?? []) {
         if (material.active === false || have.has(`chem:${material.code}`)) continue;
         const safety = chemSafety(rf, material.code);
-        rows.push({ key: `chem:${material.code}`, kind: "chem", code: material.code, name: material.name ?? "", category: chemCategory(rf, material.code), qty: 0, unit: "kg", lotNo: "", expiry: null, state: "", low: safety > 0 && (onHand.get(material.code) ?? 0) < safety, href: null });
+        const category = chemCategory(rf, material.code);
+        rows.push({ key: `chem:${material.code}`, kind: "chem", code: material.code, name: material.name ?? "", category, ownCategory: category !== NO_CATEGORY, qty: 0, unit: "kg", lotNo: "", expiry: null, state: "", low: safety > 0 && (onHand.get(material.code) ?? 0) < safety, href: null });
       }
     }
     return rows;
@@ -145,25 +151,30 @@
     const askedPrice = PRICE_FILTERS.find((option) => option.value === ctx.params.get("price"))?.value ?? "";
     if (book?.status === "loading" && askedPrice) return `${rfNote(ctx, rf)}<p class="small muted" role="status">กำลังโหลดราคา…</p>`;
     const priceFilter = priced ? askedPrice : "";
-    let pool = stockRows(ctx, rf);
-    if (priceFilter === "missing") pool = [...pool, ...emptyRows(ctx, rf, pool)];
+    // หมวดของของซื้อ (ผู้ที่เห็นราคาเท่านั้น · ยังไม่พร้อม = ของซื้อทุกชิ้นอยู่ใต้ "ของซื้อ" แล้ววาดใหม่เมื่อโหลดเสร็จ)
+    const cats = categoryBook(ctx);
+    let pool = stockRows(ctx, rf, cats);
+    if (priceFilter === "missing") pool = [...pool, ...emptyRows(ctx, rf, pool, cats)];
     pool = pool.filter((row) => (!kind || row.kind === kind) && (!priceFilter || (priceFilter === "missing") === !book.current(row.kind, row.code)));
     const categories = [...new Set(pool.map((row) => row.category))].sort((a, b) => a.localeCompare(b, "th"));
     // ผู้เข้าชม (RB / WH) ดูอย่างเดียว ไม่มีตัวกรองหมวด (เหมือนที่ไม่มีตัวกรองชนิด)
-    const category = !ctx.guest && categories.includes(ctx.params.get("cat")) ? ctx.params.get("cat") : "";
+    const askedCategory = ctx.guest ? "" : ctx.params.get("cat") ?? "";
+    if (askedCategory && !categories.includes(askedCategory) && cats?.status === "loading") return `${rfNote(ctx, rf)}<p class="small muted" role="status">กำลังโหลดหมวด…</p>`;
+    const category = categories.includes(askedCategory) ? askedCategory : "";
     const list = sortStock(pool.filter((row) => (!category || row.category === category) && F.includesText(`${row.code} ${row.name} ${row.lotNo}`, q)));
     const { shown, more } = F.limited(ctx, list);
-    const withButton = new Set();
+    const priceShown = new Set();
     const rows = shown.map((row) => {
       const main = row.href ? mainLink(ctx, row.kind === "chem" ? row.lotNo : row.code, row.href) : "";
-      const note = esc([row.name, row.kind === "chem" && !category && row.category !== NO_CATEGORY ? row.category : ""].filter(Boolean).join(" · "));
+      // หมวดแสดงครั้งเดียวใต้ชื่อ (ไม่แสดงเมื่อกรองหมวดอยู่แล้ว · ของซื้อที่ไม่มีหมวดของตัวเองไม่ต้องบอก "ของซื้อ")
+      const note = esc([row.name, !category && row.ownCategory ? row.category : ""].filter(Boolean).join(" · "));
       const item = row.kind === "chem" ? `${ui.mono(row.code)}<div class="small muted">${note}</div>` : `${main || ui.mono(row.code)}<div class="small muted">${note}</div>`;
       const lot = row.kind === "chem" && row.lotNo ? `${main}<div class="small muted">${esc(`หมดอายุ ${rules.fmtDate(row.expiry)}`)}</div>` : dash;
       const badges = [row.kind === "chem" && row.lotNo && row.state !== "available" ? ui.status(row.state) : "", row.low ? ui.badge("warn", "ต่ำกว่าขั้นต่ำ") : ""].filter(Boolean).join(" ");
-      // ราคาของวัตถุดิบหนึ่งตัวแสดงทุกแถวของมัน (ล็อตของเคมีตัวเดียวกันอยู่ติดกัน) แต่ปุ่มตั้งราคา / ราคาใหม่ / ประวัติอยู่แถวแรกของวัตถุดิบนั้นเท่านั้น
+      // ราคาของวัตถุดิบหนึ่งตัว (และปุ่มตั้งราคา / ราคาใหม่ / ประวัติ) แสดงที่แถวแรกของวัตถุดิบนั้นในรายการที่แสดงอยู่เท่านั้น (ล็อตของเคมีตัวเดียวกันอยู่ติดกัน แถวถัดไปเว้นว่าง)
       const priceKey = `${row.kind}:${row.code}`;
-      const price = priced ? `<td class="right">${priceCell(ctx, book, { kind: row.kind, code: row.code, unit: row.unit, button: !withButton.has(priceKey) })}</td>` : "";
-      withButton.add(priceKey);
+      const price = priced ? `<td class="right">${priceShown.has(priceKey) ? "" : priceCell(ctx, book, { kind: row.kind, code: row.code, unit: row.unit })}</td>` : "";
+      priceShown.add(priceKey);
       return `<tr${rowAttr(row.href)}><td>${item}</td><td class="right rf-mono">${esc(`${rules.fmtQty(row.qty)} ${row.unit}`)}</td><td>${lot}</td>${price}<td>${badges}</td></tr>`;
     });
     const filtered = Boolean(q || (kind && !forced) || category || priceFilter);
@@ -175,7 +186,7 @@
     const empty = q || category ? "ไม่พบรายการที่ค้นหา" : priceFilter === "missing" ? "ทุกรายการมีราคาแล้ว" : priceFilter === "priced" ? "ยังไม่มีรายการในคลังที่มีราคา" : kind === "chem" ? "ยังไม่มีเคมีในคลัง ST" : kind === "part" ? "ยังไม่มีของซื้อในคลัง" : "ยังไม่มีของในคลัง";
     const head = ["รายการ", { label: "คงเหลือ", className: "right" }, "ล็อต", ...(priced ? [{ label: "ราคา/หน่วย (บาท)", className: "right" }] : []), "สถานะ"];
     const table = ui.card(`${ui.table(head, rows, { emptyText: empty })}${more}`, { flush: true });
-    return `${forced === "part" ? "" : rfNote(ctx, rf)}${priceNote(book)}${toolbar}${table}`;
+    return `${forced === "part" ? "" : rfNote(ctx, rf)}${priceNote(book, cats)}${toolbar}${table}`;
   }
 
   // ---------- หน้าของซื้อ (?part=) ----------
@@ -201,8 +212,12 @@
     // ราคา (เฉพาะผู้ที่เห็นราคา): ราคาต่อหน่วยของชิ้นนี้ที่มีผลวันนี้ + ปุ่มตั้งราคา / ราคาใหม่ / ประวัติ
     const book = priceBook(ctx);
     const priceFact = book?.status === "ready" ? [[`ราคา/${unit}`, priceCell(ctx, book, { kind: "part", code: item.code, unit })]] : book?.status === "loading" ? [["ราคา", '<span class="small muted" role="status">กำลังโหลดราคา…</span>']] : [];
+    // หมวดของซื้อ (ผู้ที่เห็นราคา · ตั้งใน dialog ราคา) · ไม่มีหมวด = ไม่มีแถวนี้
+    const cats = categoryBook(ctx);
+    const ownCategory = cats?.status === "ready" ? cats.of(item.code) : "";
     const facts = ui.kv([
       ["ชื่อ", esc(item.name ?? "")],
+      ...(ownCategory ? [["หมวด", esc(ownCategory)]] : []),
       ...priceFact,
       ["คงเหลือ", `${esc(`${rules.fmtQty(row?.qty ?? 0)} ${unit}`)}${partLow(stockOf, item.code) ? ` ${ui.badge("warn", "ต่ำกว่าขั้นต่ำ")}` : ""}`],
       ["จองแล้ว", esc(`${rules.fmtQty(reserved)} ${unit}`)],
@@ -592,6 +607,8 @@
   const mayPrices = (ctx) => Boolean(!ctx.guest && costRules() && costData() && costRules().canSeePrices(actingEmployee()));
   const repaintPrices = () => { try { if (F.onDeptRoute() && !root.MNP_BOM?.isEditing?.()) renderRoute(); } catch { /* ออกจากหน้าแล้ว */ } };
   const PRICE_FILTERS = Object.freeze([{ value: "missing", label: "ยังไม่มีราคา" }, { value: "priced", label: "มีราคาแล้ว" }]);
+  const CATEGORY_MAX = 40;
+  const hasControlChar = (text) => [...text].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127);
   // ราคาที่มีผลวันนี้ของทุกรายการ (null = ผู้ชมนี้ไม่เห็นราคา) · status: loading = กำลังโหลด · error = โหลดไม่สำเร็จ (ผู้ใช้กดลองอีกครั้ง) · forbidden = ฐานข้อมูลไม่ให้ดู (ซ่อนส่วนราคา) · ready = ใช้ได้
   function priceBook(ctx) {
     if (!mayPrices(ctx)) return null;
@@ -611,11 +628,22 @@
       known: (kind, code) => history(kind, code).length > 0,
     };
   }
-  // ข้อความสถานะของราคา (กำลังโหลด / โหลดไม่สำเร็จ + ปุ่มลองอีกครั้ง) · ready / forbidden / ผู้ที่ไม่เห็นราคา = ว่าง
-  function priceNote(book) {
+  // หมวดของของซื้อของทุกชิ้น (null = ผู้ชมนี้ไม่เห็นราคา) · status แบบเดียวกับ priceBook · of(code) = หมวดของชิ้น ("" = ไม่มี) · used = หมวดที่ใช้อยู่ (ตัวเลือกในช่องหมวด)
+  function categoryBook(ctx) {
+    if (!mayPrices(ctx) || typeof costData().loadPartCategories !== "function") return null;
+    const D = costData();
+    if (D.needsPartCategories()) D.loadPartCategories().then(repaintPrices);
+    const store = D.partCategories();
+    if (store.status !== "ready") return { status: store.status === "error" || store.status === "forbidden" ? store.status : "loading", error: store.error, canWrite: false, of: () => "", used: [] };
+    const map = new Map(store.categories.map((row) => [row.itemCode, row.category]));
+    return { status: "ready", canWrite: store.canWrite, of: (code) => map.get(code) ?? "", used: [...new Set(map.values())].sort((a, b) => a.localeCompare(b, "th")) };
+  }
+  // ข้อความสถานะของราคาและหมวด (กำลังโหลด / โหลดไม่สำเร็จ + ปุ่มลองอีกครั้งปุ่มเดียว) · ready / forbidden / ผู้ที่ไม่เห็นราคา = ว่าง
+  function priceNote(book, cats = null) {
     if (!book) return "";
     if (book.status === "loading") return '<p class="small muted" role="status">กำลังโหลดราคา…</p>';
-    if (book.status === "error") return `<p class="small muted" role="status">${esc(costData().errorText(book.error))} <button class="btn rf-btn secondary small" type="button" data-cost-retry>ลองอีกครั้ง</button></p>`;
+    const failed = book.status === "error" ? book : cats?.status === "error" ? cats : null;
+    if (failed) return `<p class="small muted" role="status">${esc(costData().errorText(failed.error))} <button class="btn rf-btn secondary small" type="button" data-cost-retry>ลองอีกครั้ง</button></p>`;
     return "";
   }
   // ปุ่มของราคา: ผู้บันทึกได้ = "ตั้งราคา" (ยังไม่มี) / "ราคาใหม่" · ผู้อ่านอย่างเดียว = "ประวัติราคา" (เฉพาะที่เคยมีราคาบันทึกไว้ ไม่มีก็ไม่มีปุ่ม)
@@ -625,13 +653,13 @@
     return `<div>${ctx.ui.openButton(label, "costPrice", { kind, code }, { className: book.canWrite && !hasCurrent ? "small" : "secondary small", ariaLabel: `${label} ${code}` })}</div>`;
   }
   // ช่องราคาของวัตถุดิบหนึ่งตัว: ราคาที่มีผลวันนี้ต่อหน่วย (หรือ "ยังไม่มีราคา") + ราคาล่วงหน้า + ปุ่ม
-  function priceCell(ctx, book, { kind, code, unit, button = true }) {
+  function priceCell(ctx, book, { kind, code, unit }) {
     const C = costRules();
     const current = book.current(kind, code);
     const next = book.next(kind, code);
     const price = current ? `<span class="rf-mono">${esc(C.fmtPrice(current.unitPrice))}</span> <span class="small muted">/${esc(unit)}</span>` : ctx.ui.badge("warn", "ยังไม่มีราคา");
     const upcoming = next ? `<div class="small muted">${esc(`ราคาใหม่ ${C.fmtPrice(next.unitPrice)} มีผล ${C.fmtDay(next.effectiveFrom)}`)}</div>` : "";
-    return `${price}${upcoming}${button ? priceButton(ctx, book, kind, code, Boolean(current)) : ""}`;
+    return `${price}${upcoming}${priceButton(ctx, book, kind, code, Boolean(current))}`;
   }
   // dialog ราคาของเคมี (kind "chem") หรือของซื้อ (kind "part") หนึ่งตัว (ลงทะเบียนใน dialog ของ BOM: เปิดด้วยตัวผูกของหน้าแผนก · ctx = ctx ของหน้า ST) · ฟอร์มบันทึกราคาใหม่ (เฉพาะผู้เขียน) + ประวัติราคาทุกแถว
   // ฟอร์มส่งเองที่นี่ (ไม่ผ่านคำสั่งของ BOM): ตรวจช่อง → app_rf_price_save → ปิด dialog แล้ววาดหน้าใหม่
@@ -654,13 +682,35 @@
       return `<tr><td class="nowrap">${esc(C.fmtDay(row.effectiveFrom))}${tag ? ` ${tag}` : ""}</td><td class="right rf-mono">${esc(C.fmtPrice(row.unitPrice))}</td><td class="small">${esc(row.note)}</td><td class="small">${esc(row.createdBy)}<div class="muted">${esc(C.fmtDay(row.createdAt))}</div></td></tr>`;
     });
     const historyTable = ui.table(["มีผลตั้งแต่", { label: `บาท/${unit}`, className: "right" }, "หมายเหตุ", "บันทึกโดย"], rows, { emptyText: "ยังไม่เคยบันทึกราคา" });
+    // หมวดของของซื้อ (เคมีใช้หมวดของวัตถุดิบ RubberFlow ไม่ได้ตั้งที่นี่): ผู้ตั้งหมวดได้ช่อง "หมวด" กับปุ่มบันทึกของตัวเอง (ตัวเลือก = หมวดที่ใช้อยู่ · ว่าง = ไม่มีหมวด) · ผู้อ่านเห็นหมวดเป็นข้อความใต้ชื่อ
+    const cats = part ? categoryBook(ctx) : null;
+    const category = cats?.status === "ready" ? cats.of(code) : "";
+    const categoryForm = cats?.status === "ready" && cats.canWrite
+      ? `<form novalidate class="rf-row st-category-form" data-cost-category>${ui.field("หมวด", ui.input("category", { id: "st-part-category", value: category, list: "st-part-categories", placeholder: PART_CATEGORY, extra: `maxlength="${CATEGORY_MAX}" title="เว้นว่าง = ไม่มีหมวด (อยู่ใต้ ${PART_CATEGORY})"` }), { id: "st-part-category" })}<button class="btn rf-btn secondary small" type="submit">บันทึกหมวด</button><datalist id="st-part-categories">${cats.used.map((value) => `<option value="${attr(value)}"></option>`).join("")}</datalist></form>`
+      : "";
+    const nameLine = [name ?? "", category && !categoryForm ? `หมวด ${category}` : ""].filter(Boolean).join(" · ");
     const form = prices.canWrite ? `<form novalidate id="st-price-form" data-cost-price>
         <div class="rf-grid rf-g2">${ui.field(`ราคา (บาท/${unit})`, ui.input("unitPrice", { type: "number", step: "any", min: "0.0001", max: "10000000", required: true, placeholder: current ? C.fmtPrice(current.unitPrice) : "", extra: 'inputmode="decimal"' }), { required: true })}
         ${ui.field("มีผลตั้งแต่", ui.input("effectiveFrom", { type: "date", value: today, required: true }), { required: true, hint: esc("บันทึกแล้วแก้ไม่ได้ ถ้าผิดให้บันทึกราคาใหม่ (วันเดียวกันใช้ราคาที่บันทึกล่าสุด)") })}</div>
         ${ui.field("หมายเหตุ", ui.input("note", { placeholder: "เช่น ใบเสนอราคาเลขที่ …", extra: 'maxlength="300"' }))}</form>` : "";
     const title = `${part ? "ราคาของซื้อ" : "ราคาเคมี"} · ${code}`;
-    const html = ui.dialog("costPrice", title, `${name ? `<p class="muted small">${esc(name)}</p>` : ""}${form}${historyTable}`, { wide: true, footer: `${ui.closeButton(prices.canWrite ? "ยกเลิก" : "ปิด")}${prices.canWrite ? '<button class="btn rf-btn" type="submit" form="st-price-form">บันทึกราคา</button>' : ""}` });
+    const html = ui.dialog("costPrice", title, `${nameLine ? `<p class="muted small">${esc(nameLine)}</p>` : ""}${categoryForm}${form}${historyTable}`, { wide: true, footer: `${ui.closeButton(prices.canWrite ? "ยกเลิก" : "ปิด")}${prices.canWrite ? '<button class="btn rf-btn" type="submit" form="st-price-form">บันทึกราคา</button>' : ""}` });
     const bind = (dialog) => {
+      const catNode = dialog.querySelector("form[data-cost-category]");
+      catNode?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const value = String(catNode.elements.category.value ?? "").trim();
+        // ไม่เกิน 40 ตัวอักษร ไม่มีอักขระควบคุม (ฐานข้อมูลตรวจซ้ำ RF_INVALID_CATEGORY)
+        if (value.length > CATEGORY_MAX || hasControlChar(value)) { showToast(`หมวดยาวได้ไม่เกิน ${CATEGORY_MAX} ตัวอักษร`, "error"); return; }
+        if (value === category) { dialog.close?.(); return; }
+        const buttons = [...dialog.querySelectorAll("button")];
+        buttons.forEach((node2) => { node2.disabled = true; });
+        const result = await D.savePartCategory({ itemCode: code, category: value });
+        if (!result.ok) { showToast(result.message, "error"); buttons.forEach((node2) => { node2.disabled = false; }); return; }
+        showToast(value ? `บันทึกหมวดของ ${code} แล้ว` : `ล้างหมวดของ ${code} แล้ว (อยู่ใต้ ${PART_CATEGORY})`);
+        dialog.close?.();
+        repaintPrices();
+      });
       const node = dialog.querySelector("form[data-cost-price]");
       if (!node) return;
       node.addEventListener("submit", async (event) => {
@@ -685,7 +735,12 @@
   // ตัวกรองชนิด (select) เปลี่ยนแล้วไปหน้าเดิมพร้อมตัวกรองใหม่ · ส่วนของ RubberFlow ผูกด้วยตัวผูกของ RubberFlow (ctx ของ RubberFlow: dialog คำสั่ง และการซ่อนปุ่มตามสิทธิ์ชุดเดียวกับหน้า RubberFlow)
   function bindPage(node, pageCtx) {
     node.querySelectorAll("[data-st-filter]").forEach((select) => select.addEventListener("change", () => { location.hash = pageCtx.pageUrl({ tab: "stock", [select.name]: select.value || null, n: null }); })); // ตัวกรองมีเฉพาะหน้าในคลัง (tab ระบุเองเพราะลิงก์เก่า ?tab=prices เปิดหน้าในคลังโดยที่เมนูไม่ได้ชี้มาที่นี่)
-    node.querySelectorAll("[data-cost-retry]").forEach((button) => button.addEventListener("click", () => { button.disabled = true; costData()?.loadPrices({ force: true }).then(repaintPrices); }));
+    // ลองอีกครั้ง: โหลดราคาและหมวดของซื้อใหม่พร้อมกัน (ปุ่มเดียวของสองอย่าง)
+    node.querySelectorAll("[data-cost-retry]").forEach((button) => button.addEventListener("click", () => {
+      button.disabled = true;
+      const D = costData();
+      Promise.all([D?.loadPrices({ force: true }), D?.loadPartCategories?.({ force: true })]).then(repaintPrices, repaintPrices);
+    }));
     const slots = [...node.querySelectorAll("[data-rf-scope]")];
     if (!slots.length || typeof root.MNP_RUBBERFLOW_BIND !== "function") return;
     let rfCtx = null;

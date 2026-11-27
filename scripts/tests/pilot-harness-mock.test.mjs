@@ -334,6 +334,40 @@ test("cost RPCs: permissions follow the acting persona, prices are append-only h
   }
 });
 
+// หมวดของซื้อ (ต้นทุนเฟส 3 · app_rf_part_categories / app_rf_part_category_save): สิทธิ์ชุดเดียวกับราคา · ของซื้อของ BOM เท่านั้น · แถวเพิ่มอย่างเดียว ล้างด้วยหมวดว่าง · ล้างข้อมูล RubberFlow ทดสอบลบราคาและหมวดด้วย
+test("part category RPCs: price readers read, price writers save purchased parts only, an empty category clears it, and the purge clears prices and categories", async () => {
+  const { client: sb, bom } = createMockSupabase({ sandbox: true, now: () => NOW });
+  const as = async (id) => { assert.equal((await sb.rpc("app_sandbox_enter", { p_persona_id: id })).error, null); };
+  const error = async (name, args) => (await sb.rpc(name, args)).error?.message ?? null;
+  bom.edit((current) => {
+    current.items.push({ code: "P-A", kind: "PURCHASED", name: "ของซื้อ A", uom: "pcs" }, { code: "P-B", kind: "PURCHASED", name: "ของซื้อ B", uom: "kg" }, { code: "FG-1", kind: "FG", name: "สินค้า", uom: "pcs" });
+  });
+  const first = (await sb.rpc("app_rf_part_categories", {})).data;
+  assert.deepEqual(first, { categories: [], canWrite: true }, "no demo category for parts outside the demo BOM");
+  const saved = (await sb.rpc("app_rf_part_category_save", { p_item_code: "P-B", p_category: "  หมวดทดสอบ  " })).data;
+  assert.deepEqual(saved.categories, [{ itemCode: "P-B", category: "หมวดทดสอบ" }]);
+  await sb.rpc("app_rf_part_category_save", { p_item_code: "P-A", p_category: "x".repeat(40) });
+  assert.deepEqual((await sb.rpc("app_rf_part_categories", {})).data.categories.map((row) => row.itemCode), ["P-A", "P-B"], "sorted by code, the 40-character limit is accepted");
+  assert.deepEqual((await sb.rpc("app_rf_part_category_save", { p_item_code: "P-A", p_category: "" })).data.categories.map((row) => row.itemCode), ["P-B"], "an empty category clears it");
+  for (const bad of [{ p_item_code: "FG-1" }, { p_item_code: "NOPE" }, { p_item_code: "" }, { p_item_code: null }, { p_category: "x".repeat(41) }, { p_category: "a\tb" }, { p_category: 5 }]) {
+    assert.equal(await error("app_rf_part_category_save", { p_item_code: "P-A", p_category: "ok", ...bad }), "RF_INVALID_CATEGORY", JSON.stringify(bad));
+  }
+  // [บัญชี, อ่าน, ตั้งหมวด] (เหมือนราคา)
+  for (const [persona, read, write] of [["persona-st", true, true], ["persona-sth", true, true], ["persona-pp", true, false], ["persona-fm", true, false], ["persona-gm", true, false], ["persona-afm", false, false], ["persona-rb", false, false], ["persona-wh", false, false], ["persona-sa", false, false]]) {
+    await as(persona);
+    const got = await sb.rpc("app_rf_part_categories", {});
+    assert.equal(got.error?.message ?? null, read ? null : "RF_FORBIDDEN", `${persona} read`);
+    if (read) assert.equal(got.data.canWrite, write, `${persona} canWrite`);
+    assert.equal(await error("app_rf_part_category_save", { p_item_code: "P-A", p_category: persona }), write ? null : "RF_FORBIDDEN", `${persona} save`);
+  }
+  // ล้างข้อมูล RubberFlow ทดสอบ (admin): ราคาและหมวดของโหมดทดสอบหายไป และไม่ใส่ข้อมูลสาธิตกลับ
+  await as("persona-pp");
+  assert.ok((await sb.rpc("app_rf_prices", {})).data.prices.length > 0);
+  assert.equal(await error("app_sandbox_purge_rf", {}), null);
+  assert.deepEqual((await sb.rpc("app_rf_prices", {})).data.prices, [], "the purge clears the test prices");
+  assert.deepEqual((await sb.rpc("app_rf_part_categories", {})).data.categories, [], "the purge clears the test categories");
+});
+
 // ค่าแรง (เฟส 2 · app_rf_labour / app_rf_labour_rate_save / app_rf_station_standard_save) และต้นทุนต่อหน่วยของชิ้นงาน BOM: สิทธิ์ตามบัญชีที่ทำหน้าที่อยู่ ตรงกับฐานข้อมูล
 test("labour RPCs: rates for cost viewers only, time standards for cost viewers and RB, append-only history, validation", async () => {
   const { client: sb, rf } = createMockSupabase({ sandbox: true, now: () => NOW });
@@ -427,5 +461,44 @@ test("BOM unit cost: sent to cost viewers only, and a save by someone who cannot
   for (const [persona, sees] of [["persona-pp", true], ["persona-fm", true], ["persona-gm", true], ["persona-rb", false], ["persona-rbh", false], ["persona-st", false], ["persona-afm", false]]) {
     await as(persona);
     assert.deepEqual(await entries(), [{ action: "ตั้งราคาต้นทุน", detail: sees ? "P-A = 3.25 บาท/ชิ้น" : "" }, { action: "หมายเหตุทดสอบ", detail: "ข้อความอื่น" }], `${persona} audit detail`);
+  }
+});
+
+// ต้นทุนเฟส 3: ?bomdemo=1 ใส่ชุดสาธิตของ BOM ครั้งเดียวเมื่อฐานจำลองยังว่าง (เป้าพร้อมจำนวนคนของ GR / PT / PK · BG ไม่มีเป้า) · อัตราสาธิตของ PT / BG / PK · ไม่มี ?bomdemo = ว่างเหมือนเดิม
+test("?bomdemo=1 seeds the BOM demo once with targets and people; the labour demo has rates for GR, PT, BG and PK", async () => {
+  const { createRequire } = await import("node:module");
+  const require = createRequire(import.meta.url);
+  const keys = ["MNP_BOM_RULES", "MNP_BOM_ACTIONS", "MNP_BOM_SEED", "MNP_RUBBERFLOW_RULES"];
+  const saved = Object.fromEntries(keys.map((key) => [key, globalThis[key]]));
+  try {
+    globalThis.MNP_BOM_RULES = require("../../modules/bom-rules.js");
+    globalThis.MNP_RUBBERFLOW_RULES = require("../../modules/rubberflow-rules.js");
+    globalThis.MNP_BOM_ACTIONS = require("../../modules/bom-actions.js");
+    globalThis.MNP_BOM_SEED = require("../../modules/bom-seed.js");
+    const plain = createMockSupabase({ sandbox: true, now: () => NOW });
+    assert.equal((await plain.client.rpc("app_bom_master", {})).data.items.length, 0, "without the flag the BOM stays empty");
+    const { client: sb } = createMockSupabase({ sandbox: true, bomDemo: true, now: () => NOW });
+    const master = (await sb.rpc("app_bom_master", {})).data;
+    assert.ok(master.items.some((item) => item.code === "DEMO-HL-24(B)-A") && master.boms.length > 0, "the demo items and BOMs are there");
+    assert.equal(master.items.some((item) => "unitCost" in item), false, "the demo sets no unit cost");
+    const targets = (dept) => master.grConfig.find((row) => (row.dept ?? "GR") === dept)?.targets ?? [];
+    assert.deepEqual(targets("GR").map((row) => [row.stepCode, row.people]), [["GR-04", 2], ["GR-09", 1]]);
+    assert.deepEqual(targets("PT").map((row) => [row.itemCode, row.people]), [["PT-00320", 2]]);
+    assert.equal(targets("PK").length, 3);
+    assert.deepEqual(targets("BG"), [], "BG has no target (the cost page shows ยังไม่มีเป้า)");
+    const again = (await sb.rpc("app_bom_master", {})).data;
+    assert.equal(again.version, master.version, "seeded once");
+    const labour = (await sb.rpc("app_rf_labour", {})).data;
+    assert.deepEqual(["GR", "PT", "BG", "PK"].map((dept) => labour.rates.some((row) => row.departmentCode === dept)), [true, true, true, true]);
+    // ราคาสาธิตของของซื้อ: บางชิ้นมี บางชิ้นไม่มี (ให้เห็นยอดบางส่วน)
+    const parts = (await sb.rpc("app_rf_prices", {})).data.prices.filter((row) => row.kind === "part").map((row) => row.materialCode);
+    const bought = master.items.filter((item) => item.kind === "PURCHASED").map((item) => item.code);
+    assert.ok(parts.length > 0 && parts.length < bought.length, "some purchased parts have a price, some do not");
+    // หมวดสาธิตของซื้อสองหมวด (ชื่อสมมติ) · ชิ้นอื่นไม่มีหมวด (อยู่ใต้ ของซื้อ)
+    const categories = (await sb.rpc("app_rf_part_categories", {})).data.categories;
+    assert.equal(new Set(categories.map((row) => row.category)).size, 2);
+    assert.ok(categories.length > 0 && categories.length < bought.length && categories.every((row) => bought.includes(row.itemCode)));
+  } finally {
+    for (const key of keys) { if (saved[key] === undefined) delete globalThis[key]; else globalThis[key] = saved[key]; }
   }
 });

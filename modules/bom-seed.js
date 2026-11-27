@@ -160,8 +160,9 @@
     // เวลาบันทึก: วันก่อนหน้า k วัน เวลา 17:00 (เวลาไทย)
     const evening = (k) => Date.parse(`${R.grDay(now, -k)}T17:00:00+07:00`);
     const config = R.grConfig(d);
+    // เป้าสมมติ: ตัดยาง 20 ชิ้น/ชม. ใช้ 2 คน · เจาะ 12 ชิ้น/ชม. คนเดียว (จำนวนคนใช้คิดค่าแรงต่อชิ้นในโมดูลต้นทุนเท่านั้น)
     A.saveGrConfig(d, { steps: config.steps, reasons: config.reasons, targets: [
-      { itemCode: job.itemCode, stepCode: "GR-04", perHour: 20 }, { itemCode: job.itemCode, stepCode: "GR-09", perHour: 12 },
+      { itemCode: job.itemCode, stepCode: "GR-04", perHour: 20, people: 2 }, { itemCode: job.itemCode, stepCode: "GR-09", perHour: 12, people: 1 },
     ] }, at(evening(6), "planner"));
     A.setGrJobSteps(d, { jobId: job.id, steps: R.grDefaultSteps(d, job) }, at(evening(6) + 60000, "planner"));
     // หัวหน้า / ฝ่ายวางแผนบันทึกแทนพนักงานย้อนหลัง k วัน
@@ -259,9 +260,22 @@
     }
     fixGrDemoIds(d);
   }
+  // เป้าสมมติพร้อมจำนวนคนของ PT และ PK (ต้นทุนเฟส 3 · buildSeed { costTargets: true } ที่ harness ?bomdemo=1 ใช้ · ปิดไว้ตามค่าตั้งต้นเพื่อไม่เปลี่ยนชุดสาธิตที่เทสต์นับ)
+  // PT ขึ้นรูปแกน PT-00320 25 ชิ้น/ชม. 2 คน · PK ประกอบ / ใส่กระเป๋า / บรรจุฮูล่า DEMO-HL-24(B)-A · BG ยังไม่ตั้งเป้า (ให้เห็น "ยังไม่มีเป้า" ที่หน้าต้นทุนต่อชิ้น)
+  function addCostTargets(d, now) {
+    const R = rules();
+    const A = actions();
+    const at = (t) => ({ now: Math.round(t), user: USERS.find((row) => row.role === "planner") });
+    const targets = (dept, rows) => {
+      const config = R.grConfig(d, dept);
+      A.saveGrConfig(d, { dept, steps: config.steps, reasons: config.reasons, targets: rows.map(([itemCode, stepCode, perHour, people]) => ({ itemCode, stepCode, perHour, people })) }, at(now - 5 * R.DAY));
+    };
+    if (d.items.some((item) => item.code === "PT-00320")) targets("PT", [["PT-00320", "PT-01", 25, 2]]);
+    if (d.items.some((item) => item.code === "DEMO-HL-24(B)-A")) targets("PK", [["DEMO-HL-24(B)-A", "PK-01", 30, 2], ["DEMO-HL-24(B)-A", "PK-02", 40, 1], ["DEMO-HL-24(B)-A", "PK-03", 60, 1]]);
+  }
 
   // parts = false: ไม่มีการเบิกจ่ายของซื้อสาธิตของ DEMO-26001 (เทสต์ขั้นตอนเบิก / คืนของซื้อเริ่มจากใบที่ยังไม่เบิกเลย)
-  function buildSeed(now = Date.now(), { rods = true, gr = true, parts = true, sales = false } = {}) {
+  function buildSeed(now = Date.now(), { rods = true, gr = true, parts = true, sales = false, costTargets = false } = {}) {
     const { DAY } = rules();
     const A = actions();
     const d = emptyState();
@@ -289,11 +303,7 @@
     // แก้ BOM ครั้งหนึ่งให้มีประวัติ revision (ลูกตอปิโดเปลี่ยนอัตราส่วนเส้นหัว) และ FG บอลยางที่ยังไม่มี BOM
     A.saveBom(d, { itemCode: "SE-TP01-OR01-100-18-65", lines: [["RB-DM01-02-OR01-202-18-70", rbQty("RB-DM01-02-OR01-202-18-70")], ["RB-DM01-01-OR01-200-0-72", rbQty("RB-DM01-01-OR01-200-0-72")]].map(([childCode, qty]) => ({ childCode, qty, note: childCode.endsWith("72") ? "ตัด 4 ซม." : "" })), note: "ระบุความยาวตัดของเส้นหัว" }, at(now - 3 * DAY, "planner"));
 
-    // โครงสร้างสินค้า (จำลอง): ราคาต้นทุนสาธิตของชิ้นที่ไม่มี BOM (บาทต่อหน่วยนับ) และขั้นตอนผลิต (นาที/ชิ้น)
-    // XP-00001 จงใจไม่ตั้งราคา เพื่อให้เห็นคำเตือนต้นทุนไม่ครบ
-    [["P-BOX-01", 25], ["P-STK-01", 0.5], ["P-BAG-01", 120], ["P-PEL-BK", 45], ["P-FAB-BL", 30], ["P-ZIP-05", 8], ["P-ROPE-01", 90],
-      ["RB-DM01-02-OR01-202-18-70", 130], ["RB-DM01-01-OR01-200-0-72", 119.4], ["RB-DM02-02-BK01-225-3-20", 16.2], ["RB-DM03-03-YE03-3000-3-130", 89.6], ["RB-DM02-02-YE03-204-19-34", 23.3],
-    ].forEach(([code, unitCost], index) => A.setItemCost(d, { code, unitCost }, at(t0 + 4 * DAY + index * 60000, "planner")));
+    // โครงสร้างสินค้า (จำลอง): ขั้นตอนผลิต (นาที/ชิ้น) · ไม่มีราคาต้นทุนของชิ้นงานแล้ว (ต้นทุนเฟส 3: ราคาของซื้อตั้งที่ราคาวัตถุดิบของ ST ต้นทุนต่อชิ้นอยู่ที่โมดูลต้นทุน)
     // RB ตามผังงาน 13 ขั้น รวม 3.5 นาที/เส้น · ขั้นพักยาง (RB-04, RB-07) 0 นาที
     const rbSteps = [["RB-01", 0.2], ["RB-02", 0.3], ["RB-03", 0.3], ["RB-04", 0], ["RB-05", 0.3], ["RB-06", 0.3], ["RB-07", 0], ["RB-08", 0.2], ["RB-09", 0.4], ["RB-10", 0.5], ["RB-11", 0.4], ["RB-12", 0.4], ["RB-13", 0.2]];
     [
@@ -384,6 +394,7 @@
     if (gr) addDeptDemo(d, now);
     // sales = ใบสาธิตของฝ่ายขาย (ส่งให้ฝ่ายวางแผน ร่างที่ยังไม่ส่ง เริ่มงานแล้วที่ฝ่ายขายแก้ตรง เริ่มงานแล้วที่ฝ่ายขายยกเลิกกลางทาง) · ปิดไว้ตามค่าตั้งต้นเพื่อไม่เพิ่มใบ/งานให้ชุดสาธิตเดิม (เทสต์นับจากชุดนั้น) · harness เปิดด้วย { sales: true }
     if (sales) addSalesDemo(d, now);
+    if (costTargets) addCostTargets(d, now);
     return d;
   }
 

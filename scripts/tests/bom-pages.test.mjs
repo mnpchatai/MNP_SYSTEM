@@ -915,17 +915,23 @@ test("the sidebar sub-menu has no job count; reset rebuilds the demo", async () 
   assert.ok(env.storage.has("mnp-bom-v1"));
 });
 
-test("the structure page rolls up cost and minutes per department, edits steps and costs through data-rf-*, and is read-only for departments", async () => {
+test("the structure page rolls up minutes per department without money, edits steps through data-rf-*, links cost viewers to the item's cost page, and is read-only for departments", async () => {
   const env = load();
   env.store.setUser("B03"); // ฝ่ายวางแผน
   let html = await env.render("p=structure");
   clean(html);
   assert.match(html, /DEMO-HL-24\(B\)-A[\s\S]*?ดูโครงสร้าง/, "the list shows finished goods");
-  assert.match(html, /ไม่ครบ/, "the torpedo misses a part cost in the demo");
+  const listBody = html.slice(html.indexOf("สินค้าสำเร็จรูป"));
+  assert.equal(listBody.match(/.{0,60}(?:ไม่ครบ|ต้นทุน\/หน่วย|\d บาท|บาท\/).{0,60}/s)?.[0] ?? null, null, "no cost column in the list (cost phase 3)");
   // มุมมองลำดับผลิต (ค่าเริ่มต้น): ขั้นแรกอยู่บน สายป้อนอยู่เหนือพ่อ วัตถุดิบอยู่ที่ขั้นที่ routing ระบุ สินค้าอยู่ล่างสุด
   html = await env.render("p=structure&code=DEMO-TP-01(P)-Y&qty=80");
   clean(html);
-  assert.match(html, /ต้นทุนยังไม่ครบ: ไม่มีราคาของ <strong>XP-00001<\/strong>/);
+  assert.equal(html.match(/.{0,60}(?:ต้นทุนยังไม่ครบ|ไม่มีราคา|\d บาท|บาท\/|bom-cost-warn|ค่าแรงสาธิต|view=table|data-rf-open="itemCost").{0,60}/s)?.[0] ?? null, null, "no money figure, price badge or cost table anywhere on the structure page");
+  // ผู้เห็นต้นทุน (บทบาทสาธิตไม่มี costViewer = เห็น) ได้ลิงก์เดียวไปหน้าต้นทุนต่อชิ้นของโมดูลต้นทุน เมื่อโมดูลต้นทุนโหลดอยู่
+  env.context.MNP_COST_PAGES = env.context.MNP_COST_PAGES ?? {};
+  const linked = await env.render("p=structure&code=DEMO-TP-01(P)-Y&qty=80");
+  assert.equal((linked.match(/href="#\/cost\?item=DEMO-TP-01\(P\)-Y"[^>]*>ต้นทุนของชิ้นนี้</g) ?? []).length, 1, "one link to the cost page");
+  assert.match(await env.render("p=structure&code=DEMO-TP-01(P)-Y&view=table"), /class="filter active" href="[^"]*view=flow" aria-current="page">ลำดับผลิต/, "an old table link opens the flow view");
   assert.match(html, /<li class="bom-flow-input"[^>]*>[\s\S]*?P-PEL-BK<\/[^>]+> <span class="bom-flow-input-name">เม็ดพลาสติก PE-LD สีดำ<\/span>/, "a material row shows its name next to the code, not only in a tooltip");
   const fedRows = html.match(/<li class="bom-flow-input is-fed"[^>]*>[\s\S]*?<\/li>/g) ?? [];
   assert.ok(fedRows.length > 0 && fedRows.every((row) => !row.includes("bom-flow-input-name")), "a row fed from a lane above keeps only its code (the lane card shows the name)");
@@ -945,18 +951,9 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   const laneOrder = [...html.matchAll(/<details class="bom-flow-lane" open><summary><span class="rf-mono">([A-Z]{2})-/g)].map((match) => match[1]).filter((prefix) => prefix !== "RB"); // สาย RB ซ้อนอยู่ในสาย SE
   assert.deepEqual(laneOrder, ["SE", "SE", "SE", "PT", "XP"], "rubber lanes (GR, 7) come before the plastic lane (PT, 8) and the PK sub-part (10)");
   assert.match(html, /aria-label="ลำดับ 8 · PT · ฉีดพลาสติก · PT-00320/);
-  // มุมมองตารางต้นทุน: สินค้าอยู่บน ราคาตั้งได้เฉพาะชิ้นที่ไม่มี BOM
-  html = await env.render("p=structure&code=DEMO-TP-01(P)-Y&view=table");
-  clean(html);
-  assert.match(html, /PK-01 1\.5′/);
-  assert.match(html, /data-rf-open="itemCost" data-rf-args="\{&quot;code&quot;:&quot;XP-00001&quot;\}"/);
-  assert.doesNotMatch(html, /data-rf-open="itemCost" data-rf-args="\{&quot;code&quot;:&quot;PT-00320&quot;\}"/, "parts with a BOM have no manual cost");
-  await env.submit("p=structure&code=DEMO-TP-01(P)-Y", "setItemCost", { unitCost: "0.4" }, { code: "XP-00001" });
   await env.submit("p=structure&code=DEMO-TP-01(P)-Y", "saveRouting", { "processCode[]": ["PK-02", "", "PK-01"], "minutesPerPc[]": ["0.5", "9", "1"], "inputCode[]": ["P-BOX-01", "PT-00320", "P-STK-01"], "inputStep[]": ["PK-01", "PK-02", ""] }, { itemCode: "DEMO-TP-01(P)-Y" });
   const routing = env.context.MNP_BOM_ACTIONS.helpers.routingOf(env.store.data(), "DEMO-TP-01(P)-Y");
   assert.deepEqual(json(routing.steps.map((step) => [step.processCode, step.minutesPerPc, step.inputs])), [["PK-02", 0.5, ["PT-00320"]], ["PK-01", 1, ["P-BOX-01"]]], "blank rows are skipped, the order is kept and inputs follow their step");
-  html = await env.render("p=structure&code=DEMO-TP-01(P)-Y");
-  assert.doesNotMatch(html, /ต้นทุนยังไม่ครบ/);
   // รูปชิ้นงาน: data URL ที่ผ่านการตรวจแสดงเป็น <img> ค่าอื่นถูกปฏิเสธ
   const png = "data:image/png;base64,iVBORw0KGgo=";
   await env.submit("p=structure&code=DEMO-TP-01(P)-Y", "setItemImage", { image: png }, { code: "DEMO-TP-01(P)-Y" });
@@ -1001,15 +998,11 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   assert.deepEqual(labels(rootMenu), [["ขั้นตอนผลิต…", "รูป…"], ["แก้ส่วนประกอบ (สร้าง BOM)", "ประวัติ BOM / ใช้ในสินค้าไหน"], ["คัดลอกรหัส", "คัดลอกรหัส + ชื่อ (วางใน Excel ได้ 2 ช่อง)"]], "a product with a BOM has no price command and no link to itself");
   assert.equal(rootMenu[2][1].copy, `DEMO-TP-01(P)-Y\t${A.helpers.itemOf(live, "DEMO-TP-01(P)-Y").name}`, "code and name paste into two Excel cells");
   const bought = menu(planner, { code: "P-BAG-01", parent: "DEMO-TP-01(P)-Y", root: "DEMO-TP-01(P)-Y" });
-  assert.deepEqual(labels(bought)[0], ["ตั้งราคา…", "เข้าที่ขั้นไหน… (ขั้นตอนของ DEMO-TP-01(P)-Y)", "รูป…"]);
-  assert.deepEqual(json(bought[0].map((entry) => [entry.open, entry.args.code])), [["itemCost", "P-BAG-01"], ["routingEdit", "DEMO-TP-01(P)-Y"], ["itemImage", "P-BAG-01"]], "a material row edits its own price and its parent's steps");
+  assert.deepEqual(labels(bought)[0], ["เข้าที่ขั้นไหน… (ขั้นตอนของ DEMO-TP-01(P)-Y)", "รูป…"], "no price command (prices of parts are set in the ST stock list)");
+  assert.deepEqual(json(bought[0].map((entry) => [entry.open, entry.args.code])), [["routingEdit", "DEMO-TP-01(P)-Y"], ["itemImage", "P-BAG-01"]], "a material row edits its parent's steps");
   assert.deepEqual(labels(bought)[1], ["แก้บรรทัดนี้ใน BOM ของ DEMO-TP-01(P)-Y", "ประวัติ BOM / ใช้ในสินค้าไหน"], "a bought part has no structure of its own");
   assert.ok(labels(menu(planner, { code: "PT-00320", parent: "DEMO-TP-01(P)-Y", root: "DEMO-TP-01(P)-Y" }))[1].includes("เปิดโครงสร้างของ PT-00320"));
-  // ผู้วางแผนที่ไม่เห็นต้นทุน (โหมดฐานข้อมูล personaUser costViewer false เช่น หัวหน้าแผนก RB): ไม่มีคำสั่งตั้งราคา และ dialog ราคาไม่เปิด
-  const noCost = { ...planner, user: { ...planner.user, costViewer: false } };
-  assert.deepEqual(labels(menu(noCost, { code: "P-BAG-01", parent: "DEMO-TP-01(P)-Y", root: "DEMO-TP-01(P)-Y" }))[0], ["เข้าที่ขั้นไหน… (ขั้นตอนของ DEMO-TP-01(P)-Y)", "รูป…"]);
-  assert.equal(env.context.MNP_BOM_DIALOGS.itemCost(noCost, { code: "P-BAG-01" }), null);
-  assert.ok(env.context.MNP_BOM_DIALOGS.itemCost(planner, { code: "P-BAG-01" }).html.includes("bom-cost-form"));
+  assert.equal(env.context.MNP_BOM_DIALOGS.itemCost, undefined, "the unit cost dialog is gone");
   env.store.setUser("B05"); // หัวหน้า GR ดูอย่างเดียว
   assert.deepEqual(labels(menu(env.ctx("p=structure"), { code: "P-BAG-01", parent: "DEMO-TP-01(P)-Y", root: "DEMO-TP-01(P)-Y" })), [["ประวัติ BOM / ใช้ในสินค้าไหน"], ["คัดลอกรหัส", "คัดลอกรหัส + ชื่อ (วางใน Excel ได้ 2 ช่อง)"]], "read-only roles get only go-to and copy");
   assert.deepEqual(json(menu(env.ctx("p=structure"), { code: "NOPE" })), []);
@@ -1046,7 +1039,6 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   assert.match(stepList, /aria-current="page">ขั้นตอนตามลำดับ/);
   assert.match(numberedFlow, /is-root" data-bom-menu="DEMO-TP-01\(P\)-Y"[^>]*>(?:<img[^>]*>|<span[^>]*>[^<]*<\/span>)<div class="bom-flow-item-body"><div class="bom-flow-tags"><span class="bom-flow-order"[^>]*>ลำดับ \d+<\/span><span class="bom-flow-dept" title="แผนกที่รับผิดชอบ">PK · บรรจุ\/ประกอบ<\/span>/, "the card names its responsible department");
   env.store.setUser("B03");
-  clean(D.itemCost(c, { code: "XP-00001" }).html);
   const imageDialog = D.itemImage(c, { code: "DEMO-TP-01(P)-Y" });
   clean(imageDialog.html);
   assert.match(imageDialog.html, /data-rf-action="setItemImage"[^>]*>ลบรูป/);
@@ -1055,6 +1047,10 @@ test("the structure page rolls up cost and minutes per department, edits steps a
   html = await env.render("p=structure&code=DEMO-TP-01(P)-Y");
   clean(html);
   assert.doesNotMatch(html, /data-rf-open="routingEdit"|data-rf-open="itemCost"|data-rf-open="itemImage"/);
+  // ผู้ไม่เห็นต้นทุน (โหมดฐานข้อมูล costViewer false): ไม่มีลิงก์ไปหน้าต้นทุน
+  const viewerCtx = env.ctx("p=structure&code=DEMO-TP-01(P)-Y");
+  const hiddenLink = env.context.MNP_BOM_PAGES.structure({ ...viewerCtx, user: { ...viewerCtx.user, costViewer: false } }).html;
+  assert.doesNotMatch(hiddenLink, /#\/cost\?item=|ต้นทุนของชิ้นนี้/);
 });
 
 test("kinds are chosen by category (สินค้า / WIP / วัตถุดิบ / สูตรยาง) and a rod's compound line shows as its own card and as the rod's input", async () => {
@@ -4354,15 +4350,14 @@ test("choosing a base that has exactly one product in the registry pre-selects i
   assert.equal(name.value, "ตอปิโดยาง TP-01 (3 ชิ้น/ชุด)");
 });
 
-// ผู้ไม่เห็นต้นทุน (โหมดฐานข้อมูล: personaUser ตั้ง costViewer false · ฐานข้อมูลไม่ส่ง unitCost มา): มุมมองลำดับผลิตไม่มีป้ายไม่มีราคา ตัวเลขบาท และไอคอนต้นทุนไม่ครบ
-test("the production-flow view of someone who cannot see costs has no price badge, baht figure or cost warning", async () => {
+// ต้นทุนเฟส 3 (เจ้าของสั่ง 2026-11-27): มุมมองลำดับผลิตไม่มีตัวเลขเงินสำหรับทุกคน ทั้งผู้เห็นต้นทุนและคนอื่น (ต้นทุนต่อชิ้นอยู่ที่ #/cost?item=)
+test("the production-flow view has no price badge, baht figure or cost warning for anyone, cost viewers included", async () => {
   const env = load();
   env.store.setUser("B03"); // ฝ่ายวางแผน (บทบาทสาธิต ไม่มี costViewer = เห็นต้นทุน)
   const seen = await env.render("p=structure&code=DEMO-TP-01(P)-Y");
-  assert.match(seen, /ไม่มีราคา<\/span>/, "the viewer sees the missing-price badge of the demo part");
-  assert.match(seen, /บาท\//);
-  assert.match(seen, /bom-cost-warn/);
-  assert.match(seen, /ค่าแรง [\d.,]+ บาท\/ชิ้น/);
+  const seenFlow = seen.slice(seen.indexOf('<div class="bom-flow">'));
+  assert.ok(seenFlow.includes("bom-flow-item"));
+  assert.equal(seenFlow.match(/.{0,60}(?:ไม่มีราคา|\d บาท|บาท\/|bom-cost-warn|ค่าแรง).{0,60}/s)?.[0] ?? null, null, "a cost viewer sees no money on the BOM page either");
   env.store.user().costViewer = false;
   const hidden = await env.render("p=structure&code=DEMO-TP-01(P)-Y");
   const flow = hidden.slice(hidden.indexOf('<div class="bom-flow">'));

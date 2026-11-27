@@ -5,6 +5,7 @@
 //   ราคาที่ใช้ในวัน D = แถวที่ effectiveFrom ล่าสุดที่ไม่เกิน D · วันเดียวกันหลายแถว = แถวที่ createdAt ใหม่สุด (ราคาที่ตั้งล่วงหน้ายังไม่ถูกใช้จนถึงวันนั้น)
 // สูตร: โหมดน้ำหนัก { materialCode, stage 0|1|2|3, kg (ต่อ batch), unit "kg"|"g" (หน่วยที่กรอก ไม่เปลี่ยนค่า kg), phr } · โหมดเดิม { materialCode, phr, stage 1|2 } (kg ต่อ batch = phr ÷ Σphr × batchKg)
 // ค่าแรง (เฟส 2): อัตราบาท/ชม. ต่อแผนก + เวลามาตรฐานของ RB ต่อรหัสสินค้า (นาทีต่อชุดผสม + จำนวนคน 7 ขั้น) → ค่าแรงต่อชุดผสม / ต่อ kg ของสูตร (labourCost)
+// ต้นทุนต่อชิ้น (เฟส 3): itemCost = ค่าแรงแผนก GR / PT / BG / PK จากเป้าชิ้น/ชม. × จำนวนคน + ของซื้อในบรรทัด BOM ของชิ้นนั้น (ชิ้นที่ผลิตเองข้างใต้ยังไม่รวม)
 // ตัวเลขเก็บเต็มความละเอียด ปัดเฉพาะตอนแสดง (fmtBaht / fmtKg) · การซ่อนเมนู/หน้าเป็นแค่ UX สิทธิ์จริงตัดสินที่ฐานข้อมูล (RF_FORBIDDEN)
 (function (root) {
   const COST_ROLES = Object.freeze(["general_manager", "factory_manager", "admin"]);
@@ -249,6 +250,91 @@
     };
   }
 
+  // ---------- ต้นทุนต่อชิ้น (เฟส 3): ค่าแรงแผนก GR / PT / BG / PK + ของซื้อในบรรทัด BOM ของชิ้นนั้นเอง (ยังไม่รวมชิ้นที่ผลิตเองข้างใต้และคอมปาวด์ยาง) ----------
+  // เวลามาตรฐาน = เป้าชิ้น/ชม. ที่หัวหน้าแผนกตั้งใน "ตั้งค่าขั้นตอนและเป้า" (bom_gr_config.targets { itemCode, stepCode, perHour, people })
+  // ค่าแรงของขั้นต่อชิ้น = อัตราของแผนก (บาท/ชม. ที่มีผลในวันนั้น) × จำนวนคน ÷ เป้าชิ้น/ชม. · นาทีต่อชิ้น = 60 ÷ เป้า · ชั่วโมงคนต่อชิ้น = จำนวนคน ÷ เป้า
+  // ของซื้อ = ราคา kind "part" ที่มีผลในวันนั้น × ปริมาณต่อชิ้นรวมเผื่อเสีย (qty × (1 + scrapPct ÷ 100) เหมือนโครงสร้างสินค้าของ BOM)
+  const STEP_DEPTS = Object.freeze(["GR", "PT", "BG", "PK"]);
+  const MADE_SKIP_KINDS = Object.freeze(["PURCHASED", "CP", "RB"]);
+  // ชิ้นที่มีหน้าต้นทุนต่อชิ้น: ชิ้นที่ผลิตเองในแผนกที่มีเป้า (ไม่ใช่ของซื้อ สูตรยาง หรือเส้นยางที่คิดค่าแรงต่อชุดผสมที่ต้นทุนสูตร)
+  const hasItemCost = (item) => Boolean(item) && !MADE_SKIP_KINDS.includes(item.kind);
+  // จำนวนคนของเป้า: จำนวนเต็ม 1–50 · ไม่มี/ผิด = 1 (ตรงกับ bom-rules grPeople และฐานข้อมูล)
+  const peopleOf = (value) => { const n = Number(value); return Number.isInteger(n) && n >= 1 && n <= 50 ? n : 1; };
+  const configDeptOf = (config) => String(config?.dept ?? "GR").toUpperCase();
+  // เป้าของชิ้นหนึ่งจากตั้งค่าของทุกแผนก (configs = [{ dept, steps, targets }] หรือ { GR: config, ... }) เรียงตามแผนก GR → PT → BG → PK แล้วตามลำดับขั้นในตั้งค่า
+  // คืน [{ dept, stepCode, stepName, seq, perHour, people }] · เป้าที่ไม่ใช่ตัวเลขบวกข้าม · ขั้นที่ไม่ใช้แล้ว (active false) ยังนับถ้ายังมีเป้า (หัวหน้าลบเป้าเพื่อหยุด)
+  function deptTargetsOf(configs, itemCode) {
+    const list = Array.isArray(configs) ? configs : Object.entries(configs ?? {}).map(([dept, config]) => ({ ...config, dept: config?.dept ?? dept }));
+    const out = [];
+    for (const config of list) {
+      const dept = configDeptOf(config);
+      const steps = Array.isArray(config?.steps) ? config.steps : [];
+      for (const target of Array.isArray(config?.targets) ? config.targets : []) {
+        if (!target || target.itemCode !== itemCode) continue;
+        const perHour = finite(target.perHour);
+        if (perHour === null || perHour <= 0) continue;
+        const index = steps.findIndex((step) => step?.code === target.stepCode);
+        const step = index >= 0 ? steps[index] : null;
+        out.push({ dept, stepCode: String(target.stepCode ?? ""), stepName: String(step?.name ?? target.stepCode ?? ""), seq: finite(step?.seq) ?? (index >= 0 ? index + 1 : 1000), perHour, people: peopleOf(target.people) });
+      }
+    }
+    const deptRank = (dept) => (STEP_DEPTS.includes(dept) ? STEP_DEPTS.indexOf(dept) : STEP_DEPTS.length);
+    return out.sort((a, b) => deptRank(a.dept) - deptRank(b.dept) || a.seq - b.seq || a.stepCode.localeCompare(b.stepCode));
+  }
+  // ต้นทุนที่เพิ่มที่ชิ้นนี้ ต่อ 1 หน่วยของชิ้น ณ วัน date (ไม่ roll-up ลูกที่ผลิตเอง: เฟส 4)
+  // item = ชิ้นงาน BOM { code, name, kind, ownerDept, uom } · bom = BOM ที่อนุมัติของชิ้นนี้ (หรือ null) · itemOf(code) → ชิ้นงาน | null
+  // configs = ตั้งค่าขั้นตอนและเป้าของ GR / PT / BG / PK · prices = แถวราคา (ใช้เฉพาะ kind part) · rates = อัตราค่าแรงต่อแผนก
+  // ค่าที่ไม่รู้ = null ไม่เดาเป็น 0 · ยอดรวมนับเฉพาะส่วนที่รู้ partial = มีส่วนที่ยังคิดไม่ได้ (หน้าแสดง "≥")
+  function itemCost(item, { bom = null, itemOf = () => null, configs = [], prices = [], rates = [], date } = {}) {
+    const itemCode = String(item?.code ?? "");
+    const day = dayKey(date);
+    const steps = deptTargetsOf(configs, itemCode).map((target) => {
+      const rate = rateAt(rates, target.dept, day);
+      const ratePerHour = rate ? Number(rate.ratePerHour) : null;
+      return {
+        dept: target.dept, stepCode: target.stepCode, stepName: target.stepName, perHour: target.perHour, people: target.people,
+        minutes: 60 / target.perHour, manHours: target.people / target.perHour, ratePerHour, cost: ratePerHour === null ? null : (ratePerHour * target.people) / target.perHour,
+      };
+    });
+    const deptCodes = [...new Set(steps.map((step) => step.dept))];
+    const depts = deptCodes.map((dept) => {
+      const own = steps.filter((step) => step.dept === dept);
+      const ratePerHour = own[0].ratePerHour;
+      return { dept, minutes: own.reduce((sum, step) => sum + step.minutes, 0), manHours: own.reduce((sum, step) => sum + step.manHours, 0), ratePerHour, cost: ratePerHour === null ? null : own.reduce((sum, step) => sum + step.cost, 0) };
+    });
+    const reasons = [];
+    const owner = String(item?.ownerDept ?? "").toUpperCase();
+    if (STEP_DEPTS.includes(owner) && !deptCodes.includes(owner)) reasons.push({ dept: owner, reason: "noTarget" });
+    for (const row of depts) if (row.ratePerHour === null) reasons.push({ dept: row.dept, reason: "noRate" });
+    const labour = {
+      steps, depts,
+      minutes: steps.reduce((sum, step) => sum + step.minutes, 0), manHours: steps.reduce((sum, step) => sum + step.manHours, 0),
+      cost: steps.reduce((sum, step) => sum + (step.cost ?? 0), 0), complete: reasons.length === 0, reasons,
+    };
+    const priced = pricesAt(prices, day, "part");
+    const lines = [];
+    const made = [];
+    for (const line of Array.isArray(bom?.lines) ? bom.lines : []) {
+      const childCode = String(line?.childCode ?? "");
+      const child = itemOf(childCode) ?? null;
+      const scrapPct = finite(line?.scrapPct) ?? 0;
+      const factor = (finite(line?.qty) ?? 0) * (1 + scrapPct / 100);
+      if (child?.kind === "PURCHASED") {
+        const row = priced.get(childCode) ?? null;
+        const unitPrice = row ? Number(row.unitPrice) : null;
+        lines.push({ childCode, name: String(child.name ?? ""), uom: String(line?.uom ?? child.uom ?? ""), qty: finite(line?.qty) ?? 0, scrapPct, factor, unitPrice, cost: unitPrice === null ? null : factor * unitPrice });
+      } else {
+        made.push({ childCode, name: String(child?.name ?? ""), kind: child?.kind ?? null, factor });
+      }
+    }
+    const missing = [...new Set(lines.filter((line) => line.cost === null && line.factor > 0).map((line) => line.childCode))];
+    const materials = { lines, cost: lines.reduce((sum, line) => sum + (line.cost ?? 0), 0), complete: missing.length === 0, missing };
+    return { itemCode, labour, materials, made, own: labour.cost + materials.cost, partial: !labour.complete || !materials.complete };
+  }
+  // เป้าชิ้น/ชม. และปริมาณต่อชิ้น: ตัดเลข 0 ท้าย · ปริมาณเล็กมาก (เช่น 0.0036 kg) ต้องเห็นได้ จึงถึง 6 ทศนิยม
+  const fmtPerHour = (value) => { const number = finite(value); return number === null ? "-" : number.toLocaleString("th-TH", { maximumFractionDigits: 2 }); };
+  const fmtQtyPer = (value) => { const number = finite(value); return number === null ? "-" : number.toLocaleString("th-TH", { maximumFractionDigits: 6 }); };
+
   // revision ที่ใช้งานของสูตรหนึ่งรหัส: อนุมัติแล้ว ไม่มีก็ร่างล่าสุด ไม่มีก็ revision ล่าสุด (กติกาเดียวกับ RubberFlow ไม่ต้องพึ่ง export ของมัน)
   const revisionsOf = (recipes, id) => (recipes ?? []).filter((recipe) => recipe.id === id).sort((a, b) => Number(b.revision) - Number(a.revision));
   const currentRevision = (recipes, id) => { const rows = revisionsOf(recipes, id); return rows.find((r) => r.status === "approved") ?? rows.find((r) => r.status === "draft") ?? rows[0] ?? null; };
@@ -262,6 +348,7 @@
     PRICE_KINDS, bangkokDay, dayKey, fmtDay, fmtBaht, fmtPrice, fmtWeight, round,
     priceAt, pricesAt, priceHistory, recipeWeights, formulaCost, lotCost, PREP_LABEL, stageLabel, isWeightMode, revisionsOf, currentRevision, recipeOfLot,
     canSeeStandards, canEditStandards, canEditRates, LABOUR_DEPTS, RB_DEPT, STEPS, STATIONS, stepLabel, fmtMinutes, rateAt, rateHistory, standardAt, standardHistory, standardSteps, standardMinutes, labourCost,
+    STEP_DEPTS, hasItemCost, deptTargetsOf, itemCost, fmtPerHour, fmtQtyPer,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MNP_COST_RULES = api;

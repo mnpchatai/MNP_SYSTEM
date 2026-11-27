@@ -14,7 +14,7 @@
 // real = นอกโหมดทดสอบ ให้ผู้ใช้จำลองเป็นพนักงานจริงของแผนก/ตำแหน่งเดียวกับบัญชีทดสอบชื่อนั้น (?real=rb · pp rbh gr st sr wh whh qa pk pt bg) เพื่อลองเส้นทางใช้งานจริงของ BOM / RubberFlow
 import { createItwoMock } from "./pilot-harness-itwo-mock.mjs";
 
-export function createMockSupabase({ empty = false, sandbox = false, itwo = false, ncr = false, master = false, as = null, real = null, rfDemo = false, now = () => Date.now(), warn = () => {}, objectUrl = null, storage = null } = {}) {
+export function createMockSupabase({ empty = false, sandbox = false, itwo = false, ncr = false, master = false, as = null, real = null, rfDemo = false, bomDemo = false, now = () => Date.now(), warn = () => {}, objectUrl = null, storage = null } = {}) {
   const YEAR = "2569";
   const DAY = 86400000;
   const startedAt = now();
@@ -490,6 +490,7 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
   const JOB_STATUSES = ["queued", "in_progress", "done", "hold"];
   const JOB_DEPTS = ["PK", "GR", "RB", "PT", "BG", "ST"];
   let bomMaster = null;
+  let bomDemoDone = !bomDemo; // ?bomdemo=1 ดู bomDemoSeed
   // รหัสรอบข้อมูล (bom_master_state.epoch): เปลี่ยนเฉพาะตอนล้างข้อมูลทดสอบ · ตัวนับ version ไม่ถูกตั้งกลับ
   const newEpoch = () => globalThis.crypto?.randomUUID?.() ?? `e-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   const freshBom = () => ({ version: 0, epoch: newEpoch(), ...Object.fromEntries(BOM_LISTS.map((list) => [list, []])), versions: Object.fromEntries(BOM_LISTS.map((list) => [list, {}])), tombstones: [], audit: [] });
@@ -503,7 +504,26 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       if (!Array.isArray(bomMaster.tombstones)) bomMaster.tombstones = [];
       if (!Array.isArray(bomMaster.audit)) bomMaster.audit = [];
     }
+    bomDemoSeed();
     return bomMaster;
+  }
+  // ?bomdemo=1 (ต้นทุนเฟส 3): ฐานข้อมูล BOM จำลองที่ยังว่าง (ไม่มีชิ้นงาน) = ใส่ชุดสาธิตของ modules/bom-seed.js ครั้งเดียว (ตัวเลขสมมติทั้งหมด) ทุกระเบียนเป็นรุ่นเดียวกัน
+  // ชุดสาธิตโหลดทีหลังสคริปต์นี้ จึงลองใหม่จนกว่าจะมี (แบบเดียวกับ ?rfdemo=1) · ใช้ดูหน้าต้นทุนต่อชิ้น หน้าตั้งค่าเป้า และโครงสร้างสินค้าบน localhost
+  function bomDemoSeed() {
+    if (bomDemoDone) return;
+    if (bomMaster.items.length) { bomDemoDone = true; return; }
+    const seedApi = globalThis.MNP_BOM_SEED;
+    if (!seedApi?.buildSeed || !globalThis.MNP_BOM_RULES || !globalThis.MNP_BOM_ACTIONS) return;
+    bomDemoDone = true;
+    let demo = null;
+    try { demo = seedApi.buildSeed(startedAt, { costTargets: true }); } catch { demo = null; }
+    if (!demo) return;
+    bomMaster.version += 1;
+    for (const list of BOM_LISTS) {
+      bomMaster[list] = clone(Array.isArray(demo[list]) ? demo[list] : []).sort(bomSorter(list));
+      bomMaster.versions[list] = Object.fromEntries(bomMaster[list].map((record) => [BOM_ID[list](record), bomMaster.version]));
+    }
+    bomPersist();
   }
   function bomPersist() {
     try { storage?.setItem?.(BOM_KEY, JSON.stringify(bomMaster)); } catch { warnOnce("bom-storage", "[pilot harness] เก็บข้อมูล BOM ลง storage ไม่ได้ ข้อมูลอยู่ในหน่วยความจำของหน้านี้เท่านั้น"); }
@@ -1587,7 +1607,10 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         pairs.add(`${itemCode}|${stepCode}`);
         const perHour = bomGrNum(target.perHour, 0, 100000);
         if (perHour === null || perHour <= 0) bomGrBad();
-        return { itemCode, stepCode, perHour };
+        // จำนวนคน (20270111010000): ไม่ส่ง = 1 · ส่งมาต้องเป็นจำนวนเต็ม 1–50 ไม่งั้น BOM_INVALID_GR
+        const people = target.people === undefined || target.people === null ? 1 : target.people;
+        if (typeof people !== "number" || !Number.isInteger(people) || people < 1 || people > 50) bomGrBad();
+        return { itemCode, stepCode, perHour, people };
       });
       if (targets.some((target) => !next.items.some((item) => item.code === target.itemCode))) bomGrBad();
       if (!(planner || bomGrHead(actor, dept))) fail("BOM_FORBIDDEN");
@@ -2454,6 +2477,8 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
     ["EPDM-55", 112], ["NBR-33", 98], ["NR-SVR10", 62], ["CB-N550", 41], ["CB-N330", 44], ["CACO3", 6.5], ["OIL-PAR", 38], ["ZNO", 68.5], ["STA", 52], ["S-80", 145], ["CBS", 210], ["TMTD", 230], ["AO-6PPD", 185],
   ];
   const COST_UNPRICED = ["DM-CH-05", "DM-FIL-C"];
+  // หมวดสาธิตของของซื้อ (ของซื้อของชุดสาธิต modules/bom-seed.js · ชื่อหมวดสมมติ)
+  const COST_DEMO_CATEGORIES = [["P-BOX-01", "บรรจุภัณฑ์"], ["P-BAG-01", "บรรจุภัณฑ์"], ["P-STK-01", "บรรจุภัณฑ์"], ["P-FAB-BL", "ผ้าและซิป"], ["P-ZIP-05", "ผ้าและซิป"]];
   const costBangkokDay = (ms) => { const date = new Date(ms + 7 * 3600000); return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`; };
   let costPrices = null;
   function costLoad() {
@@ -2487,12 +2512,32 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
         costPersist();
       }
     }
+    // หมวดของซื้อ (เฟส 3 · app_rf_part_categories): แถวเพิ่มอย่างเดียว เก็บคู่กับราคา · หมวดสาธิตสองหมวด (ชื่อสมมติ) ใส่ครั้งเดียวให้ของซื้อสาธิตที่มีอยู่ใน BOM ของ mock · ชิ้นอื่นอยู่ใต้ "ของซื้อ"
+    if (!Array.isArray(costPrices.categories)) costPrices.categories = [];
+    if (!costPrices.categoriesSeeded) {
+      const parts = new Set((bomLoad().items ?? []).filter((item) => item.kind === "PURCHASED").map((item) => item.code));
+      if (parts.size) {
+        const by = "วิชัย คลังวัตถุดิบ";
+        COST_DEMO_CATEGORIES.filter(([itemCode]) => parts.has(itemCode)).forEach(([itemCode, category], index) => {
+          costPrices.categories.push({ id: `cat-${costPrices.categories.length + 1}`, itemCode, category, createdAt: startedAt - 30 * DAY + 900 + index, createdBy: by });
+        });
+        costPrices.categoriesSeeded = true;
+        costPersist();
+      }
+    }
     return costPrices;
   }
   function costPersist() {
     try { storage?.setItem?.(COST_KEY, JSON.stringify(costPrices)); } catch { warnOnce("cost-storage", "[pilot harness] เก็บราคาเคมีลง storage ไม่ได้ ข้อมูลอยู่ในหน่วยความจำของหน้านี้เท่านั้น"); }
   }
   const costPricesOut = (actor) => ({ canWrite: costWrite(actor), prices: clone(costLoad().rows).sort((a, b) => a.createdAt - b.createdAt) });
+  // หมวดล่าสุดของแต่ละรหัส (หมวดว่าง = ล้าง ไม่ส่ง) เรียงตามรหัส · เหมือน private.rf_part_category_out
+  const costCategoriesOut = (actor) => {
+    const latest = new Map();
+    for (const row of [...costLoad().categories].sort((a, b) => a.createdAt - b.createdAt)) latest.set(row.itemCode, row.category);
+    const categories = [...latest].filter(([, category]) => category !== "").sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([itemCode, category]) => ({ itemCode, category }));
+    return { categories, canWrite: costWrite(actor) };
+  };
   // ข้อมูล RubberFlow สำหรับต้นทุน: ของ mock ก่อน ไม่มี = ชุดสาธิตของ RubberFlow (ถ้ามี)
   let costSeed = null;
   function costRfData() {
@@ -2529,6 +2574,15 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
             { id: "std-2", productCode: "DS-1825", effectiveFrom: costBangkokDay(startedAt - 30 * DAY), steps: labourStepsOf([10, 5, 4, 0, 30, 45, 20], [2, 2, 2, 0, 2, 1, 3]), note: "เวลาตั้งต้นของข้อมูลสาธิต", createdAt: startedAt - 30 * DAY + 1, createdBy: by },
           ],
         };
+      }
+      // อัตราสาธิตของแผนก PT / BG / PK (ต้นทุนเฟส 3 · ตัวเลขสมมติ): ใส่ครั้งเดียว รวมถึงชุดที่เก็บไว้ก่อนเฟสนี้ (แผนกที่มีอัตราแล้วไม่ใส่ทับ)
+      if (!labourStore.deptRatesSeeded) {
+        const by = "สมชาย วางแผน";
+        [["PT", 46], ["BG", 44], ["PK", 42]].forEach(([departmentCode, ratePerHour], index) => {
+          if (labourStore.rates.some((row) => row.departmentCode === departmentCode)) return;
+          labourStore.rates.push({ id: `rate-${labourStore.rates.length + 1}`, departmentCode, ratePerHour, effectiveFrom: costBangkokDay(startedAt - 30 * DAY), note: "ข้อมูลสาธิต", createdAt: startedAt - 30 * DAY + 2 + index, createdBy: by });
+        });
+        labourStore.deptRatesSeeded = true;
       }
     }
     return labourStore;
@@ -4391,6 +4445,30 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       costPersist();
       return costPricesOut(actor);
     },
+    // หมวดของของซื้อ: ผู้เห็นราคาอ่าน (RF_FORBIDDEN) · { categories: [{ itemCode, category }], canWrite }
+    app_rf_part_categories() {
+      const actor = bomActor();
+      if (!costSeePrices(actor)) fail("RF_FORBIDDEN");
+      return costCategoriesOut(actor);
+    },
+    // ตั้งหมวดของของซื้อหนึ่งรหัส (แถวใหม่ · หมวดว่าง = ล้าง · เหมือนเดิม = ไม่เพิ่มแถว) · ผู้บันทึกราคาเท่านั้น (RF_FORBIDDEN)
+    // รหัสต้องเป็นชิ้นงาน BOM ชนิด PURCHASED · หมวดไม่เกิน 40 ตัวอักษร ไม่มีอักขระควบคุม (RF_INVALID_CATEGORY)
+    app_rf_part_category_save({ p_item_code, p_category } = {}) {
+      const actor = bomActor();
+      if (!costWrite(actor)) fail("RF_FORBIDDEN");
+      const code = typeof p_item_code === "string" ? p_item_code.trim() : "";
+      const category = p_category === undefined || p_category === null ? "" : typeof p_category === "string" ? p_category.trim() : null;
+      const parts = new Set((bomLoad().items ?? []).filter((item) => item.kind === "PURCHASED").map((item) => item.code));
+      if (!code || code.length > 60 || !parts.has(code) || category === null || category.length > 40 || [...category].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) fail("RF_INVALID_CATEGORY");
+      const data = costLoad();
+      const last = data.categories.filter((row) => row.itemCode === code).sort((a, b) => b.createdAt - a.createdAt)[0];
+      if (last ? last.category !== category : category !== "") {
+        costLastAt = Math.max(now(), costLastAt + 1);
+        data.categories.push({ id: `cat-${data.categories.length + 1}`, itemCode: code, category, createdAt: costLastAt, createdBy: actor.name });
+        costPersist();
+      }
+      return costCategoriesOut(actor);
+    },
     // ค่าแรง: อัตราต่อแผนก (เฉพาะผู้เห็นต้นทุน) + เวลามาตรฐานของ RB ต่อรหัสสินค้า · ผู้เห็นต้นทุนและแผนก RB เท่านั้น (RF_FORBIDDEN)
     app_rf_labour() {
       const actor = bomActor();
@@ -4471,8 +4549,11 @@ export function createMockSupabase({ empty = false, sandbox = false, itwo = fals
       rfMaster.audit = [...audit, { at: iso(now()), user: bomActor().name, action: "ล้างข้อมูล RubberFlow ทดสอบ", detail: `ลบ ${deleted} แถว`, entries: [] }];
       rfPersist();
       // ค่าแรง (อัตรา + เวลามาตรฐาน) ของโหมดทดสอบถูกลบด้วย เหมือนฐานข้อมูลลบ rf_labour_rates / rf_station_standards (ว่างแล้วไม่ใส่ตัวเลขสาธิตกลับ)
-      labourStore = { rates: [], standards: [] };
+      labourStore = { rates: [], standards: [], deptRatesSeeded: true };
       labourPersist();
+      // ราคาวัตถุดิบ (เคมี + ของซื้อ) และหมวดของซื้อของโหมดทดสอบถูกลบด้วย เหมือนฐานข้อมูลลบ rf_material_prices / rf_part_categories (ว่างแล้วไม่ใส่ราคาหรือหมวดสาธิตกลับ)
+      costPrices = { rows: [], partsSeeded: true, categories: [], categoriesSeeded: true };
+      costPersist();
       return { deleted };
     },
     // โหมดทดสอบ: ทำหน้าที่เป็นบัญชีทดสอบ — หน้าเว็บตั้ง state.employee เป็น persona ที่เลือก (ตัวแรกใช้แถวของผู้ใช้จำลองเอง ที่เหลือเป็นพนักงานของแต่ละแผนก)
@@ -4714,6 +4795,8 @@ export function installMockSupabase(win, create, options = {}) {
     real: params.get("real"),
     // ?rfdemo=1 = ฐานข้อมูลจำลองของ RubberFlow ที่ยังว่าง เริ่มด้วยชุดสาธิตของ modules/rubberflow-seed.js (สูตร DEMO-W01 ใบเบิก ล็อตผสม)
     rfDemo: params.has("rfdemo"),
+    // ?bomdemo=1 = ฐานข้อมูลจำลองของ BOM ที่ยังว่าง เริ่มด้วยชุดสาธิตของ modules/bom-seed.js (ชิ้นงาน BOM ใบสั่งผลิต เป้าพร้อมจำนวนคน)
+    bomDemo: params.has("bomdemo"),
     sandbox: Boolean(options.sandbox) || new win.URLSearchParams(win.location.search).has("sandbox"),
     // ?itwo=1 (ใช้คู่กับ ?sandbox=1) = ฐานข้อมูลจำลองของใบสั่งงาน IT + persona SBX-IT-*
     itwo: params.has("itwo") || Boolean(options.itwo),

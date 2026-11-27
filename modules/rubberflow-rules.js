@@ -144,6 +144,16 @@
     };
   }
 
+  // สูตรเดิมแบบ PHR → บรรทัดแบบน้ำหนัก (ค่าตั้งต้นเมื่อออกฉบับแก้ไขใหม่ของสูตร PHR เป็นแบบน้ำหนัก ผู้ใช้แก้ต่อแทนพิมพ์ใหม่)
+  // kg = phr ÷ รวม phr × น้ำหนักต่อชุดผสม (กฎเดียวกับ recipeLines) ปัด 4 ตำแหน่ง · ขั้นเดิม (1 | 2) · หน่วย kg · ลำดับเดิม · แปลงกลับเป็น PHR ไม่มี
+  function phrAsWeight(items, batchKg) {
+    const rows = (Array.isArray(items) ? items : []).filter((item) => item && typeof item === "object");
+    const phrOf = (item) => (Number(item.phr) > 0 ? Number(item.phr) : 0);
+    const total = rows.reduce((sum, item) => sum + phrOf(item), 0);
+    const batch = Number(batchKg) > 0 ? Number(batchKg) : 0;
+    return rows.map((item) => ({ materialCode: String(item.materialCode ?? ""), stage: Number(item.stage) === 2 ? 2 : 1, kg: total > 0 ? round4((phrOf(item) / total) * batch) : 0, unit: "kg" }));
+  }
+
   // น้ำหนักวัตถุดิบต่อ batch จาก PHR (ส่วนต่อยาง 100 ส่วน) · เรียงตามขั้น (ขั้น 1 ก่อน ขั้น 2) ลำดับเดิมในขั้นเดียวกัน
   // สูตรแบบน้ำหนัก: kgPerBatch = kg ของบรรทัดตรง ๆ · เรียงตามส่วน (ขั้นเตรียม → ขั้น 1 → 2 → 3) ลำดับเดิมในส่วนเดียวกัน
   function recipeLines(recipe) {
@@ -602,7 +612,7 @@
   const api = {
     QA_RELEASE_TEXT, canQaRelease, MATERIAL_RELEASE_TEXT, canReleaseMaterial,
     DAY, HOUR, STAGES, STAGE_LABEL, NEXT_STAGE, PREV_STAGE, SHIFTS, MACHINES, SPECS, WEIGH_TOL_PCT, WEIGH_TOL_MIN_KG,
-    MIX_STAGES, PARTS, partLabel, isWeightRecipe, weightBatchKg, amountToKg, plainNum, lineWeightText, partTotals, partTotalText, itemStage, recipeStage, RECIPE_DEFAULTS, recipeStandards, recipeLabel, orderLabel, unitText, inSpec, specText, specLimits, EXTRUSION_KEYS, extrusionSpecOf, orderExtrusionSpec, extrusionHoldReasons, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, OPEN_ORDER, orderRemainingKg, MAX_REQ_BATCHES, remainingBatches, nextRequisitionBatches, suggestOrderKg, chemicalNeeds, stats, cpkVerdict,
+    MIX_STAGES, PARTS, partLabel, isWeightRecipe, weightBatchKg, phrAsWeight, amountToKg, plainNum, lineWeightText, partTotals, partTotalText, itemStage, recipeStage, RECIPE_DEFAULTS, recipeStandards, recipeLabel, orderLabel, unitText, inSpec, specText, specLimits, EXTRUSION_KEYS, extrusionSpecOf, orderExtrusionSpec, extrusionHoldReasons, weighTolerance, recipeLines, totalPhr, revisionsOf, currentRecipe, recipeOf, currentRecipes, approvedRecipes, lotState, allocateFefo, OPEN_ORDER, orderRemainingKg, MAX_REQ_BATCHES, remainingBatches, nextRequisitionBatches, suggestOrderKg, chemicalNeeds, stats, cpkVerdict,
     fmtDate, fmtDateTime, fmtNum, fmtDuration, ymd, toInputDate, fromInputDate, niceScale,
     issuedKgOf, requisitionReturnState, returnableRequisitions, mixableRequisitions, requisitionStore,
     poLineReceived, poLineReceipts, poLineClosed, poLineOpen, poLineDone, poTouched,

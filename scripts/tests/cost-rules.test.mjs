@@ -365,3 +365,100 @@ test("สิทธิ์ค่าแรง: อัตรา = ผู้เห็
   }
   assert.deepEqual([C.canSeeStandards(null), C.canEditStandards(undefined), C.canEditRates(null)], [false, false, false]);
 });
+
+// ---------- ต้นทุนต่อชิ้น (เฟส 3): itemCost ----------
+// ชิ้นสมมติ: FG (เจ้าของ PK) = SE × 3 (ทำเอง) + กล่อง 0.25 (+4%) + สติ๊กเกอร์ 1 · SE (เจ้าของ GR) = เส้นยาง 0.1 · เป้า PK ประกอบ 30 ชิ้น/ชม. 2 คน · GR ตัด 20 ชิ้น/ชม. (ไม่ระบุคน = 1)
+const ITEMS = {
+  FG: { code: "FG", name: "สินค้า", kind: "FG", ownerDept: "PK", uom: "set" },
+  SE: { code: "SE", name: "ชิ้นยาง", kind: "SE", ownerDept: "GR", uom: "pcs" },
+  RB: { code: "RB", name: "เส้นยาง", kind: "RB", ownerDept: "RB", uom: "rod" },
+  BOX: { code: "BOX", name: "กล่อง", kind: "PURCHASED", ownerDept: "ST", uom: "box" },
+  STK: { code: "STK", name: "สติ๊กเกอร์", kind: "PURCHASED", ownerDept: "ST", uom: "pcs" },
+  BAG: { code: "BAG", name: "กระเป๋า", kind: "BG", ownerDept: "BG", uom: "pcs" },
+};
+const BOMS = {
+  FG: { itemCode: "FG", lines: [{ childCode: "SE", qty: 3 }, { childCode: "BOX", qty: 0.25, scrapPct: 4 }, { childCode: "STK", qty: 1 }] },
+  SE: { itemCode: "SE", lines: [{ childCode: "RB", qty: 0.1 }] },
+};
+const CONFIGS = [
+  { dept: "GR", steps: [{ code: "GR-04", name: "ตัดยาง", seq: 1, active: true }, { code: "GR-09", name: "เจาะ", seq: 2, active: false }], targets: [{ itemCode: "SE", stepCode: "GR-04", perHour: 20 }, { itemCode: "SE", stepCode: "GR-09", perHour: 0 }] },
+  { dept: "PK", steps: [{ code: "PK-01", name: "ประกอบ", seq: 1, active: true }, { code: "PK-03", name: "บรรจุกล่อง", seq: 2, active: false }], targets: [{ itemCode: "FG", stepCode: "PK-03", perHour: 60, people: 1 }, { itemCode: "FG", stepCode: "PK-01", perHour: 30, people: 2 }] },
+];
+const PART_PRICES = [row("BOX", 20, "2026-01-01", 1, "box-1", "part"), row("BOX", 25, "2026-12-01", 2, "box-2", "part"), row("STK", 7, "2026-01-01", 1, "stk-chem", "chem")];
+const UNIT_RATES = [rate("PK", 40), rate("GR", 50), rate("GR", 60, "2026-12-01", 2)];
+const costOf = (code, extra = {}) => C.itemCost(ITEMS[code], { bom: BOMS[code] ?? null, itemOf: (child) => ITEMS[child] ?? null, configs: CONFIGS, prices: PART_PRICES, rates: UNIT_RATES, date: "2026-11-27", ...extra });
+
+test("itemCost: ชิ้นที่ครบ · ค่าแรง = อัตรา × คน ÷ เป้า · นาที = 60 ÷ เป้า · ชั่วโมงคน = คน ÷ เป้า · ลูกที่ผลิตเองอยู่ใน made ไม่คิดเงิน", () => {
+  const out = costOf("SE");
+  assert.equal(out.itemCode, "SE");
+  assert.deepEqual(out.labour.steps.map((step) => [step.dept, step.stepCode, step.stepName, step.perHour, step.people, step.ratePerHour]), [["GR", "GR-04", "ตัดยาง", 20, 1, 50]], "a target without people counts one worker · a zero target is skipped");
+  close(out.labour.steps[0].minutes, 3);
+  close(out.labour.steps[0].manHours, 0.05);
+  close(out.labour.steps[0].cost, 2.5);
+  assert.deepEqual(out.labour.depts.map((row) => [row.dept, row.ratePerHour]), [["GR", 50]]);
+  close(out.labour.cost, 2.5);
+  assert.deepEqual([out.labour.complete, out.labour.reasons], [true, []]);
+  assert.deepEqual([out.materials.lines, out.materials.cost, out.materials.complete, out.materials.missing], [[], 0, true, []]);
+  assert.deepEqual(out.made, [{ childCode: "RB", name: "เส้นยาง", kind: "RB", factor: 0.1 }]);
+  close(out.own, 2.5);
+  assert.equal(out.partial, false);
+});
+
+test("itemCost: จำนวนคน > 1 · หลายขั้นเรียงตามลำดับในตั้งค่า · ขั้นที่ไม่ใช้แล้วยังคิดถ้ายังมีเป้า · ของซื้อรวมเผื่อเสีย · ราคาที่ขาด = ยอดบางส่วนที่ไม่รวมตัวนั้น", () => {
+  const out = costOf("FG");
+  assert.deepEqual(out.labour.steps.map((step) => [step.stepCode, step.people]), [["PK-01", 2], ["PK-03", 1]], "seq order, inactive step still costed");
+  close(out.labour.steps[0].cost, (40 * 2) / 30);
+  close(out.labour.steps[0].manHours, 2 / 30);
+  close(out.labour.steps[0].minutes, 2);
+  close(out.labour.cost, (40 * 2) / 30 + 40 / 60);
+  close(out.labour.depts[0].minutes, 3);
+  const box = out.materials.lines.find((line) => line.childCode === "BOX");
+  close(box.factor, 0.26, "0.25 × (1 + 4%)");
+  assert.deepEqual([box.name, box.uom, box.qty, box.scrapPct, box.unitPrice], ["กล่อง", "box", 0.25, 4, 20]);
+  close(box.cost, 5.2);
+  const stk = out.materials.lines.find((line) => line.childCode === "STK");
+  assert.deepEqual([stk.unitPrice, stk.cost], [null, null], "a chem price of the same code is not a part price");
+  assert.deepEqual([out.materials.complete, out.materials.missing], [false, ["STK"]]);
+  close(out.materials.cost, 5.2, "the cost leaves the unpriced part out");
+  assert.deepEqual(out.made.map((child) => [child.childCode, child.kind, child.factor]), [["SE", "SE", 3]], "made children are listed, not costed");
+  close(out.own, out.labour.cost + 5.2);
+  assert.equal(out.partial, true);
+});
+
+test("itemCost: เจ้าของเป็น GR/PT/BG/PK ที่ไม่มีเป้า = noTarget · แผนกที่มีขั้นแต่ไม่มีอัตรา = noRate (cost null ไม่เดาเป็น 0) · ไม่มี BOM", () => {
+  const bag = costOf("BAG");
+  assert.deepEqual(bag.labour.reasons, [{ dept: "BG", reason: "noTarget" }]);
+  assert.deepEqual([bag.labour.steps, bag.labour.cost, bag.labour.complete, bag.partial], [[], 0, false, true]);
+  assert.deepEqual([bag.materials.lines, bag.materials.complete, bag.made], [[], true, []], "no BOM: nothing to buy, nothing made below");
+  const noRate = costOf("FG", { rates: [rate("GR", 50)] });
+  assert.deepEqual(noRate.labour.reasons, [{ dept: "PK", reason: "noRate" }]);
+  assert.ok(noRate.labour.steps.every((step) => step.ratePerHour === null && step.cost === null));
+  assert.deepEqual([noRate.labour.depts[0].ratePerHour, noRate.labour.depts[0].cost, noRate.labour.cost], [null, null, 0]);
+  close(noRate.labour.minutes, 3, "minutes are known without a rate");
+  // เจ้าของไม่ใช่แผนกที่มีเป้า (เช่น RB) และไม่มีเป้า = ไม่มีเหตุ
+  assert.deepEqual(costOf("RB").labour.reasons, []);
+  // configs แบบ object ต่อแผนกก็ได้
+  assert.equal(C.itemCost(ITEMS.SE, { configs: { GR: { steps: CONFIGS[0].steps, targets: CONFIGS[0].targets } }, rates: UNIT_RATES, date: "2026-11-27" }).labour.steps[0].dept, "GR");
+});
+
+test("itemCost: ราคาและอัตราตามวันที่มีผล (asof) · ก่อนมีราคา/อัตรา = คิดไม่ได้", () => {
+  const later = costOf("FG", { date: "2026-12-15" });
+  assert.equal(later.materials.lines.find((line) => line.childCode === "BOX").unitPrice, 25, "the price in force on that day");
+  const se = costOf("SE", { date: "2026-12-15" });
+  close(se.labour.cost, 3, "GR 60 from December");
+  const early = costOf("FG", { date: "2025-06-01" });
+  assert.deepEqual([early.labour.reasons, early.materials.missing], [[{ dept: "PK", reason: "noRate" }], ["BOX", "STK"]]);
+  assert.equal(early.own, 0);
+  assert.equal(C.itemCost(ITEMS.FG, { bom: BOMS.FG, itemOf: (c) => ITEMS[c], configs: CONFIGS, prices: PART_PRICES, rates: UNIT_RATES, date: "nope" }).labour.complete, false, "a bad date knows no rate");
+});
+
+test("deptTargetsOf / hasItemCost / ตัวจัดรูป", () => {
+  assert.deepEqual(C.deptTargetsOf(CONFIGS, "FG").map((target) => [target.dept, target.stepCode, target.people]), [["PK", "PK-01", 2], ["PK", "PK-03", 1]]);
+  assert.deepEqual(C.deptTargetsOf([{ dept: "PT", steps: [], targets: [{ itemCode: "X", stepCode: "PT-01", perHour: 5, people: 99 }, { itemCode: "X", stepCode: "PT-02", perHour: 5, people: 2.5 }] }], "X").map((target) => target.people), [1, 1], "people outside 1–50 or not whole = 1");
+  assert.deepEqual(["FG", "SE", "PT", "BG", "SUBPART", "PURCHASED", "CP", "RB"].map((kind) => C.hasItemCost({ kind })), [true, true, true, true, true, false, false, false]);
+  assert.equal(C.hasItemCost(null), false);
+  assert.equal(C.fmtPerHour(12.5), "12.5");
+  assert.equal(C.fmtQtyPer(0.0036), "0.0036");
+  assert.equal(C.fmtQtyPer(null), "-");
+  assert.deepEqual([...C.STEP_DEPTS], ["GR", "PT", "BG", "PK"]);
+});

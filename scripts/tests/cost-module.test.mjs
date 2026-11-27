@@ -91,6 +91,14 @@ function fakeSb(getEmployee, log) {
         return labourOut();
       }
       if (name === "app_rf_cost_data") return seeCost() ? { data: { ...COST_DATA, prices: log.prices }, error: null } : refuse();
+      // หมวดของซื้อ: อ่าน = ผู้เห็นราคา · ตั้ง = ผู้บันทึกราคา (สิทธิ์ชุดเดียวกับราคา)
+      if (name === "app_rf_part_categories") return seePrices() ? { data: { categories: log.categories, canWrite: write() }, error: null } : refuse();
+      if (name === "app_rf_part_category_save") {
+        if (!write()) return refuse();
+        if (log.invalid) return { data: null, error: { message: "RF_INVALID_CATEGORY" } };
+        log.categories = [...log.categories.filter((row) => row.itemCode !== args.p_item_code), ...(args.p_category ? [{ itemCode: args.p_item_code, category: args.p_category }] : [])];
+        return { data: { categories: log.categories, canWrite: true }, error: null };
+      }
       return { data: null, error: { message: "unknown rpc" } };
     },
   };
@@ -99,7 +107,7 @@ function fakeSb(getEmployee, log) {
 function load({ employee = emp("ST") } = {}) {
   const context = vm.createContext({});
   const app = { innerHTML: "" };
-  const log = { renders: 0, notFound: 0, hash: "#/st", toasts: [], rpc: [], prices: PRICES, labour: LABOUR, invalid: false };
+  const log = { renders: 0, notFound: 0, hash: "#/st", toasts: [], rpc: [], prices: PRICES, labour: LABOUR, categories: [], invalid: false };
   const fakes = {};
   const node = () => ({
     handlers: {}, dataset: {}, value: "", disabled: false, textContent: "", innerHTML: "", tagName: "DIV", classList: { toggle() {}, add() {}, remove() {} }, files: [],
@@ -194,7 +202,7 @@ test("module: อยู่ในกลุ่มโรงงาน โหมด�
   const ordered = env.context.MNP_FACTORY.orderNavItems(Object.values(env.modules).filter((module) => module.navAllowed?.(emp("PP"))).flatMap((module) => module.nav ?? []));
   const group = ordered.filter((item) => item.group === "โรงงาน");
   assert.equal(group.at(-1).path, "cost", "ท้ายกลุ่มโรงงาน");
-  assert.deepEqual(costMenu(env), ["ต้นทุนสูตร", "สูตรเทียบจริง"]);
+  assert.deepEqual(costMenu(env), ["ต้นทุนสูตร", "สูตรเทียบจริง", "ต้นทุนต่อชิ้น"]);
   assert.equal(entry.nav[0].subnav("st"), "", "เมนูข้างโผล่เฉพาะตอนเปิดโมดูลนี้");
 });
 
@@ -209,12 +217,19 @@ test("ST ในคลัง: ผู้ที่เห็นราคาได้
   assert.match(html, /<th[^>]*>ราคา\/หน่วย \(บาท\)<\/th>/);
   assert.doesNotMatch(html, /กำลังโหลดราคา/);
   const rows = bodyRows(html);
-  // เคมี: EPDM-55 มีราคา 10 ต่อ kg · ล็อตของวัตถุดิบเดียวกันอยู่ติดกันและมีปุ่มที่แถวแรกเท่านั้น
+  // เคมี: EPDM-55 มีราคา 10 ต่อ kg · ล็อตของวัตถุดิบเดียวกันอยู่ติดกัน ราคาและปุ่มอยู่แถวแรกเท่านั้น แถวถัดไปช่องราคาว่าง (ไม่ซ้ำราคาทุกล็อต)
   const epdm = rows.filter((row) => row.includes(">EPDM-55<"));
   assert.ok(epdm.length >= 2, "เคมีตัวเดียวกันหลายล็อต");
-  assert.ok(epdm.every((row) => /10\.00<\/span> <span class="small muted">\/kg/.test(row)), "ราคาแสดงทุกแถวของล็อต");
+  assert.match(epdm[0], /10\.00<\/span> <span class="small muted">\/kg/, "ราคาอยู่แถวแรกของวัตถุดิบ");
+  assert.ok(epdm.slice(1).every((row) => row.includes('<td class="right"></td>') && !/\/kg<\/span>|costPrice|ยังไม่มีราคา/.test(row)), "แถวถัดไปของวัตถุดิบเดียวกันเว้นช่องราคา");
   assert.equal(epdm.filter((row) => row.includes("data-rf-open=\"costPrice\"")).length, 1, "ปุ่มเดียวต่อวัตถุดิบ");
   assert.match(epdm[0], /data-rf-args="\{&quot;kind&quot;:&quot;chem&quot;,&quot;code&quot;:&quot;EPDM-55&quot;\}"[^>]*>ราคาใหม่</);
+  // แถวแรกตามรายการที่แสดง: ค้นหาล็อตที่สองของ EPDM-55 แถวนั้นได้ราคาและปุ่ม
+  const secondLot = (epdm[1].match(/href="#\/st\?lot=([^"]+)"/) ?? [])[1];
+  assert.ok(secondLot);
+  const searched = bodyRows(await env.openSt(`tab=stock&q=${secondLot}`));
+  assert.equal(searched.length, 1);
+  assert.match(searched[0], /10\.00<\/span> <span class="small muted">\/kg[\s\S]*data-rf-open="costPrice"/);
   // เคมีที่ยังไม่มีราคา = ป้าย + ปุ่มตั้งราคา
   const unpriced = rows.find((row) => row.includes(">AO-6PPD<"));
   assert.match(unpriced, /ยังไม่มีราคา[\s\S]*data-rf-open="costPrice"[\s\S]*>ตั้งราคา</);
@@ -238,7 +253,7 @@ test("ST ในคลัง: ตัวกรอง ยังไม่มีร�
   addEmptyItems(env);
   const missing = await settled(env.openSt, "tab=stock&price=missing");
   const rows = bodyRows(missing);
-  assert.ok(rows.length > 0 && rows.every((row) => row.includes("ยังไม่มีราคา")), "ทุกแถวยังไม่มีราคา");
+  assert.ok(rows.length > 0 && rows.every((row) => row.includes("ยังไม่มีราคา") || row.includes('<td class="right"></td>')), "ทุกแถวยังไม่มีราคา (ล็อตถัดไปของเคมีตัวเดียวกันเว้นช่องราคา)");
   const zeroChem = rows.find((row) => row.includes(">ZZ-NEW<"));
   assert.match(zeroChem, /0 kg/);
   assert.match(zeroChem, /data-rf-open="costPrice"[\s\S]*>ตั้งราคา</, "ตั้งราคาให้เคมีที่ยังไม่เคยรับเข้าได้");
@@ -475,6 +490,90 @@ test("dialog ราคา: ส่ง app_rf_price_save พร้อมชนิ�
   assert.match(after[0], /0\.75<\/span> <span class="small muted">\/ชิ้น/);
 });
 
+test("หมวดของซื้อ: โหลดครั้งเดียวในหน่วยความจำ · ของซื้อที่มีหมวดอยู่ใต้หมวดนั้น (ตัวกรอง ?cat=) ที่เหลืออยู่ใต้ ของซื้อ · หมวดแสดงครั้งเดียวต่อแถว · ตั้งหมวดใน dialog ราคาของของซื้อ", async () => {
+  const env = load({ employee: emp("ST") });
+  env.log.categories = [{ itemCode: "P-BOX-01", category: "หีบห่อทดสอบ" }, { itemCode: "P-BAG-01", category: "หีบห่อทดสอบ" }];
+  const D = env.context.MNP_COST_DATA;
+  assert.equal(D.partCategories().status, "idle");
+  const html = await settled(env.openSt, "tab=stock");
+  assert.deepEqual([D.partCategories().status, D.partCategories().canWrite, D.partCategories().categories.length], ["ready", true, 2]);
+  assert.equal(env.log.rpc.filter(([name]) => name === "app_rf_part_categories").length, 1, "loaded once");
+  assert.ok(!(env.log.stored ?? []).some((entry) => entry.includes("หีบห่อทดสอบ")), "not stored on the device");
+  const options = [...html.match(/<select[^>]*name="cat"[\s\S]*?<\/select>/)[0].matchAll(/<option value="([^"]*)"/g)].map((match) => match[1]);
+  assert.ok(options.includes("หีบห่อทดสอบ") && options.includes("ของซื้อ"));
+  // หมวดอยู่ใต้ชื่อครั้งเดียว · ของซื้อที่ไม่มีหมวดไม่บอก "ของซื้อ" ซ้ำ
+  const box = bodyRows(html).find((row) => row.includes("P-BOX-01"));
+  assert.equal((box.match(/หีบห่อทดสอบ/g) ?? []).length, 1);
+  assert.doesNotMatch(bodyRows(html).find((row) => row.includes("P-STK-01")), /หีบห่อทดสอบ|· ของซื้อ/);
+  // ตัวกรองหมวด: เฉพาะสองชิ้น (ไม่ซ้ำหมวดในแถวเมื่อกรองอยู่) · ของซื้อ = ชิ้นที่ไม่มีหมวด
+  const packed = bodyRows(await env.openSt("tab=stock&cat=หีบห่อทดสอบ"));
+  assert.deepEqual(packed.map((row) => row.match(/\?part=([^"]+)"/)[1]).sort(), ["P-BAG-01", "P-BOX-01"]);
+  assert.ok(packed.every((row) => !row.includes("หีบห่อทดสอบ")));
+  const rest = bodyRows(await env.openSt("tab=stock&cat=ของซื้อ"));
+  assert.ok(rest.length === 5 && rest.every((row) => row.includes("?part=") && !row.includes("P-BOX-01") && !row.includes("P-BAG-01")));
+  assert.match(await env.openSt("part=P-BOX-01"), /หมวด[\s\S]*หีบห่อทดสอบ/, "the part page shows its category");
+  assert.doesNotMatch(await env.openSt("part=P-STK-01"), /หีบห่อทดสอบ|>หมวด</);
+  // dialog ราคาของของซื้อ (ผู้ตั้งหมวด): ช่องหมวด + ตัวเลือกหมวดที่ใช้อยู่ + ปุ่มบันทึกของตัวเอง · dialog ราคาเคมีไม่มี
+  const base = env.context.MNP_BOM.context(new URLSearchParams());
+  const built = env.context.MNP_BOM_DIALOGS.costPrice({ ...base, guest: null }, { kind: "part", code: "P-STK-01" });
+  assert.match(built.html, /<form novalidate class="rf-row st-category-form" data-cost-category>/);
+  assert.ok(built.html.includes('list="st-part-categories"') && built.html.includes('maxlength="40"'));
+  assert.match(built.html, /<datalist id="st-part-categories"><option value="หีบห่อทดสอบ"><\/option><\/datalist>/);
+  assert.match(built.html, /<button class="btn rf-btn secondary small" type="submit">บันทึกหมวด<\/button>/);
+  assert.match(env.context.MNP_BOM_DIALOGS.costPrice({ ...base, guest: null }, { kind: "part", code: "P-BOX-01" }).html, /name="category"[^>]*value="หีบห่อทดสอบ"/);
+  assert.doesNotMatch(env.context.MNP_BOM_DIALOGS.costPrice({ ...base, guest: null }, { kind: "chem", code: "ZNO" }).html, /data-cost-category|name="category"/);
+  // บันทึก: ตัดช่องว่าง · ยาวเกิน 40 ไม่ส่ง · ฐานข้อมูลปฏิเสธไม่ปิด dialog · สำเร็จปิดและวาดหน้าใหม่ · ว่าง = ล้างหมวด
+  const open = (code, value) => {
+    const form = { elements: { category: { value } }, handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } };
+    const buttons = [{ disabled: false }];
+    const dialog = { querySelector: (selector) => (selector === "form[data-cost-category]" ? form : null), querySelectorAll: () => buttons, closed: false, close() { this.closed = true; } };
+    env.context.MNP_BOM_DIALOGS.costPrice({ ...base, guest: null }, { kind: "part", code }).bind(dialog);
+    return { form, buttons, dialog, submit: () => form.handlers.submit({ preventDefault() {} }) };
+  };
+  const saves = () => env.log.rpc.filter(([name]) => name === "app_rf_part_category_save");
+  const long = open("P-STK-01", "ก".repeat(41));
+  await long.submit();
+  assert.equal(saves().length, 0, "too long is not sent");
+  assert.equal(env.log.toasts.at(-1)[1], "error");
+  env.log.invalid = true;
+  const refused = open("P-STK-01", "ฉลาก");
+  await refused.submit();
+  assert.equal(refused.dialog.closed, false);
+  assert.ok(refused.buttons.every((button) => button.disabled === false));
+  env.log.invalid = false;
+  const renders = env.log.renders;
+  const ok = open("P-STK-01", "  ฉลาก  ");
+  await ok.submit();
+  assert.deepEqual(JSON.parse(JSON.stringify(saves().at(-1)[1])), { p_item_code: "P-STK-01", p_category: "ฉลาก" });
+  assert.equal(ok.dialog.closed, true);
+  assert.ok(env.log.renders > renders);
+  assert.deepEqual(JSON.parse(JSON.stringify(D.partCategories().categories)).find((row) => row.itemCode === "P-STK-01"), { itemCode: "P-STK-01", category: "ฉลาก" }, "the new category is used at once");
+  assert.equal(bodyRows(await env.openSt("tab=stock&cat=ฉลาก")).length, 1);
+  await open("P-BOX-01", "").submit();
+  assert.deepEqual(JSON.parse(JSON.stringify(saves().at(-1)[1])), { p_item_code: "P-BOX-01", p_category: "" }, "empty clears the category");
+  assert.ok(bodyRows(await env.openSt("tab=stock&cat=ของซื้อ")).some((row) => row.includes("P-BOX-01")));
+  // ผู้อ่าน (PP): หมวดเป็นข้อความใต้ชื่อใน dialog ไม่มีช่องหมวด
+  const reader = load({ employee: emp("PP") });
+  reader.log.categories = [{ itemCode: "P-BOX-01", category: "หีบห่อทดสอบ" }];
+  await settled(reader.openSt, "tab=stock");
+  const readOnly = reader.context.MNP_BOM_DIALOGS.costPrice({ ...reader.context.MNP_BOM.context(new URLSearchParams()), guest: null }, { kind: "part", code: "P-BOX-01" }).html;
+  assert.doesNotMatch(readOnly, /data-cost-category|name="category"/);
+  assert.match(readOnly, /<p class="muted small">[^<]*· หมวด หีบห่อทดสอบ<\/p>/);
+  // โหลดหมวดไม่สำเร็จ: ของซื้อยังอยู่ใต้ ของซื้อ · บรรทัดเดียวพร้อมลองอีกครั้ง (ไม่เปิดเผยข้อความภายใน) · ปฏิเสธ = เงียบ
+  const broken = load({ employee: emp("ST") });
+  const real = broken.context.sb;
+  broken.context.sb = { rpc: async (name, args) => (name === "app_rf_part_categories" ? { data: null, error: { message: "down" } } : real.rpc(name, args)) };
+  const failed = await settled(broken.openSt, "tab=stock");
+  assert.equal((failed.match(/data-cost-retry/g) ?? []).length, 1);
+  assert.doesNotMatch(failed, /down/);
+  assert.match(failed, /<th[^>]*>ราคา\/หน่วย/, "prices still show");
+  const denied = load({ employee: emp("ST") });
+  const realDenied = denied.context.sb;
+  denied.context.sb = { rpc: async (name, args) => (name === "app_rf_part_categories" ? { data: null, error: { message: "RF_FORBIDDEN" } } : realDenied.rpc(name, args)) };
+  assert.doesNotMatch(await settled(denied.openSt, "tab=stock"), /data-cost-retry/);
+  assert.equal(denied.context.MNP_COST_DATA.partCategories().status, "forbidden");
+});
+
 test("#/cost: เฉพาะผู้เห็นต้นทุนในโหมดทดสอบ · ที่เหลือไม่พบหน้า และไม่เรียก RPC", async () => {
   for (const employee of [emp("ST"), emp("RB"), emp("OFFICE", "assistant_factory_manager"), { ...emp("PP"), isSandbox: false }]) {
     const env = load({ employee });
@@ -693,7 +792,11 @@ test("ค่าแรง: ระหว่างโหลดไม่มีป้
   assert.doesNotMatch(html, /boom/);
   const tab = await env.openCost("recipe=DEMO-W01&tab=labour");
   assert.match(tab, /โหลดข้อมูลค่าแรงไม่สำเร็จ/);
-  assert.match(tab, /data-cost-retry="labour"/);
+  assert.equal((tab.match(/data-cost-retry="labour"/g) ?? []).length, 1, "the labour tab keeps its own single retry");
+  // หน้าสูตร แท็บวัตถุดิบ: บรรทัดลองอีกครั้งบรรทัดเดียวเหนือตารางวัตถุดิบ (ช่อง ค่าแรงต่อชุดผสม ข้างบนเป็นขีด)
+  const materials = await env.openCost("recipe=DEMO-W01");
+  assert.equal((materials.match(/data-cost-retry="labour"/g) ?? []).length, 1, "one retry on the materials tab");
+  assert.match(materials, /ค่าแรงต่อชุดผสม<\/span><strong class="rf-stat-value">-<[\s\S]*โหลดข้อมูลค่าแรงไม่สำเร็จ <button[^>]*data-cost-retry="labour"[^>]*>ลองอีกครั้ง<\/button><\/p>[\s\S]*<table/, "the line sits above the materials table");
   // ลองอีกครั้ง: โหลดค่าแรงใหม่ทันที (error ไม่โหลดซ้ำเองเมื่อวาดหน้า) แล้วตารางมีค่าแรง
   const calls = () => env.log.rpc.filter(([name]) => name === "app_rf_labour").length;
   assert.equal(env.context.MNP_COST_DATA.needsLabour(), false, "an error is not retried by a repaint");
@@ -711,6 +814,17 @@ test("ค่าแรง: ระหว่างโหลดไม่มีป้
   const fixed = await env.openCost();
   assert.doesNotMatch(fixed, /data-cost-retry/);
   assert.match(fixed, /441\.00/);
+  assert.doesNotMatch(await env.openCost("recipe=DEMO-W01"), /data-cost-retry/, "no retry once the labour data is loaded");
+});
+
+test("ค่าแรงแยกตามขั้น: ขั้นนอกสถานีผสมเป็น 0 ทุกขั้น = ไม่มีแถวรวมสถานีผสม (ตัวเลขเท่าแถวรวม)", async () => {
+  const env = load({ employee: emp("PP") });
+  // ตัวเลขสมมติ: มีแต่ขั้นผสม (30 + 12 + 6 นาที)
+  env.log.labour = { ...LABOUR, standards: [{ ...LABOUR.standards[0], steps: stepsOf([30, 12, 6, 0, 0, 0, 0], [2, 2, 2, 0, 0, 0, 0]) }] };
+  const html = await settled(env.openCost, "recipe=DEMO-W01&tab=labour");
+  assert.doesNotMatch(html, /รวมสถานี/, "no subtotal that repeats the total");
+  assert.match(html, /<strong>รวม<\/strong><\/td><td class="right rf-mono">48<\/td>/);
+  assert.match(html, /ฉีดขึ้นรูป<\/td><td class="right rf-mono">0<\/td>/, "the zero steps still list");
 });
 
 test("หน้าสูตรยาง: ตารางเวลามาตรฐานของรหัสสินค้า · แผนก RB เห็นเวลา ไม่เห็นค่าแรง · หัวหน้า RB แก้ได้ · คนอื่นไม่เห็นอะไร", async () => {
@@ -801,4 +915,99 @@ test("ตัวโหลดค่าแรง: บันทึกแล้วข
   const rb = load({ employee: emp("RB") });
   const denied = await rb.context.MNP_COST_DATA.saveRate({ departmentCode: "RB", ratePerHour: 1, effectiveFrom: "2026-11-01" });
   assert.deepEqual([denied.ok, denied.forbidden], [false, true]);
+});
+
+// ---------- ต้นทุนต่อชิ้น (เฟส 3) ----------
+// ข้อมูลสาธิตของ BOM (modules/bom-seed.js): เป้า GR ของปลอกห่วงฮูล่า SE-HL24 (ตัดยาง 20 ชิ้น/ชม. 2 คน · เจาะ 12 ชิ้น/ชม. 1 คน) · เทสต์เพิ่มเป้า PK ของฮูล่า DEMO-HL-24(B)-A
+// อัตราสมมติ GR 50 · PK 40 บาท/ชม. · ราคาของซื้อ P-BOX-01 4.50 (P-STK-01 ไม่มีราคา)
+const RATE = (departmentCode, ratePerHour) => ({ id: `r-${departmentCode}`, departmentCode, ratePerHour, effectiveFrom: "2026-01-01", note: "", createdAt: 2, createdBy: "ผู้ทดสอบ" });
+function itemEnv({ employee = emp("PP"), rates = [RATE("GR", 50), RATE("PK", 40)] } = {}) {
+  const env = load({ employee });
+  env.log.labour = { ...LABOUR, rates: [...LABOUR.rates, ...rates] };
+  const store = env.context.MNP_BOM.store;
+  store.setUser("B03");
+  const R = env.context.MNP_BOM_RULES;
+  const pk = R.grConfig(store.data(), "PK");
+  const saved = store.run("saveGrConfig", { dept: "PK", steps: pk.steps, reasons: pk.reasons, targets: [{ itemCode: "DEMO-HL-24(B)-A", stepCode: "PK-01", perHour: 30, people: 2 }, { itemCode: "DEMO-HL-24(B)-A", stepCode: "PK-03", perHour: 60, people: 1 }] });
+  assert.equal(saved.ok, true, String(saved.error?.message ?? ""));
+  return env;
+}
+const rowOf = (html, code) => bodyRows(html).find((row) => row.includes(`>${code}</a>`)) ?? "";
+
+test("#/cost?tab=items: ต้นทุนต่อชิ้นของชิ้นที่ผลิตเอง · ค่าแรงแผนก วัตถุดิบ รวมที่ชิ้นนี้ · ≥ เมื่อไม่ครบ · ป้ายเตือนพร้อมรายละเอียด · ค้นหา", async () => {
+  const env = itemEnv();
+  const html = await settled(env.openCost, "tab=items");
+  assert.equal(h1Of(html), "ต้นทุนต่อชิ้น");
+  assert.match(costMenu(env).join("|"), /ต้นทุนต่อชิ้น/);
+  assert.match(env.modules.FACTORY_COST.nav[0].subnav("cost"), /href="#\/cost\?tab=items"/);
+  assert.match(html, /<th[^>]*>ค่าแรงแผนก \(บาท\/ชิ้น\)<\/th>/);
+  // ครบ: GR 50 × 2 ÷ 20 = 5 + 50 × 1 ÷ 12 = 4.1667 → 9.1667 · ไม่มีของซื้อ (เส้นยางเป็นชิ้นที่ผลิตเอง)
+  const se = rowOf(html, "SE-HL24-YE03-400-19-30");
+  assert.match(se, /9\.1667/);
+  assert.doesNotMatch(se, /≥|ขาดราคา|ยังไม่มี/);
+  // ไม่ครบ: PK 40 × 2 ÷ 30 + 40 ÷ 60 = 3.3333 · กล่อง 0.125 × 4.50 = 0.5625 · สติ๊กเกอร์ยังไม่มีราคา
+  const fg = rowOf(html, "DEMO-HL-24(B)-A");
+  assert.match(fg, /3\.3333/);
+  assert.match(fg, /≥ 0\.5625/);
+  assert.match(fg, /≥ 3\.8958/);
+  assert.match(fg, /title="P-STK-01"[^>]*>[\s\S]*?ขาดราคา 1/);
+  // BG ยังไม่ตั้งเป้า: ค่าแรงเป็นขีด ป้ายบอกแผนก
+  const bg = rowOf(html, "BG-0092");
+  assert.match(bg, /title="แผนก BG ยังไม่ได้ตั้งเป้าชิ้น\/ชม\. ของชิ้นนี้"[^>]*>[\s\S]*?ยังไม่มีเป้า/);
+  // ไม่มีของซื้อ สูตรยาง หรือเส้นยางในรายการ
+  assert.equal(rowOf(html, "P-BOX-01"), "");
+  assert.equal(rowOf(html, "RB-DM02-02-YE03-204-19-34"), "");
+  assert.equal(rowOf(html, "DM01"), "");
+  assert.doesNotMatch(html, /undefined|NaN/);
+  const found = await env.openCost("tab=items&q=hl24");
+  assert.ok(rowOf(found, "SE-HL24-YE03-400-19-30") && !rowOf(found, "BG-0092"), "ค้นหาตามรหัส");
+  assert.match(await env.openCost("tab=items&q=zzz"), /ไม่พบชิ้นงานที่ค้นหา/);
+  assert.ok(!(env.log.stored ?? []).some((entry) => /unitPrice|ratePerHour/.test(entry)), "ไม่มีราคา/อัตราลง localStorage (เป้าเป็นข้อมูล BOM ของโหมดในเครื่อง)");
+});
+
+test("#/cost?tab=items: อัตราค่าแรงที่ยังไม่มี = ป้าย ยังไม่มีอัตราค่าแรง (ไม่เดาเป็น 0) · ระหว่างโหลดค่าแรงไม่แสดงป้าย · ผู้ไม่เห็นต้นทุนไม่พบหน้า", async () => {
+  const env = itemEnv({ rates: [RATE("PK", 40)] });
+  const loading = await env.openCost("tab=items");
+  assert.doesNotMatch(loading, /ยังไม่มีอัตราค่าแรง/, "ยังไม่รู้อัตรา = ยังไม่ตัดสิน");
+  const html = await settled(env.openCost, "tab=items");
+  const se = rowOf(html, "SE-HL24-YE03-400-19-30");
+  assert.match(se, /title="ยังไม่มีอัตราค่าแรงที่มีผลของแผนก GR"[^>]*>[\s\S]*?ยังไม่มีอัตราค่าแรง/);
+  assert.match(se, /≥ 0\.00/);
+  for (const employee of [emp("ST"), emp("GR", "department_manager"), { ...emp("PP"), isSandbox: false }]) {
+    const other = load({ employee });
+    await other.openCost("tab=items");
+    await other.openCost("item=SE-HL24-YE03-400-19-30");
+    assert.equal(other.log.notFound, 2, JSON.stringify(employee));
+  }
+});
+
+test("#/cost?item=: ค่าแรงแยกตามขั้น (อัตราแสดงครั้งเดียว) · วัตถุดิบรวมเผื่อเสีย · ชิ้นที่ผลิตเองยังไม่รวม · ที่แก้สิ่งที่ขาด · ราคา ณ วันที่", async () => {
+  const env = itemEnv();
+  const se = await settled(env.openCost, "item=SE-HL24-YE03-400-19-30");
+  assert.match(h1Of(se), /^SE-HL24-YE03-400-19-30 · /);
+  assert.match(se, /href="#\/cost\?tab=items"[^>]*>‹ ต้นทุนต่อชิ้น/);
+  assert.match(se, /ค่าแรงแผนก<\/span><strong class="rf-stat-value">9\.1667 บาท/);
+  assert.match(se, /<td>GR · ตัดยาง<\/td><td class="right rf-mono">20<\/td><td class="right rf-mono">2<\/td><td class="right rf-mono">3<\/td><td class="right rf-mono">5\.00<\/td>/, "ตัดยาง: 3 นาที/ชิ้น 5.00 บาท/ชิ้น");
+  assert.equal((se.match(/อัตรา GR 50\.00 บาท\/ชม\./g) ?? []).length, 1, "อัตราของแผนกแสดงครั้งเดียว");
+  assert.match(se, /ชิ้นที่ผลิตเอง \(ยังไม่รวมในยอดนี้\)/);
+  assert.match(se, /RB-DM02-02-YE03-204-19-34[\s\S]*?คิดที่ต้นทุนสูตร/);
+  assert.match(se, /<input[^>]*name="asof"[^>]*type="date"|<input[^>]*type="date"[^>]*name="asof"/);
+  assert.match(se, /BOM ของชิ้นนี้ไม่มีของซื้อ/);
+  const fg = await env.openCost("item=DEMO-HL-24(B)-A");
+  assert.match(fg, /ของซื้อยังไม่มีราคา 1 รายการ/);
+  assert.match(fg, /href="#\/st\?tab=stock&amp;price=missing"/, "ไปตั้งราคาที่ในคลังของ ST");
+  assert.match(fg, /P-BOX-01[\s\S]*?0\.125 [^<]*<\/td><td class="right"><span class="rf-mono">4\.50<\/span><\/td><td class="right rf-mono">0\.5625<\/td>/);
+  assert.match(fg, /href="#\/cost\?item=SE-HL24-YE03-400-19-30"/, "ลูกที่ผลิตเองลิงก์ไปหน้าของตัวเอง");
+  assert.match(fg, /href="#\/cost\?item=BG-0092"/);
+  const bg = await env.openCost("item=BG-0092");
+  assert.match(bg, /แผนก BG ยังไม่มีเป้าของชิ้นนี้/);
+  assert.match(bg, /href="#\/bg\?tab=settings"/, "ไปตั้งเป้าที่หน้าตั้งค่าของแผนก");
+  // วันที่ก่อนมีราคาและอัตรา: ทุกอย่างยังคิดไม่ได้
+  const early = await env.openCost("item=DEMO-HL-24(B)-A&asof=2025-06-01");
+  assert.match(early, /ยังไม่มีอัตราค่าแรงของแผนก PK ที่มีผลในวันนี้/);
+  assert.match(early, /ของซื้อยังไม่มีราคา 2 รายการ/);
+  assert.match(await env.openCost("item=P-BOX-01"), /ไม่มีต้นทุนต่อชิ้น/);
+  assert.match(await env.openCost("item=RB-DM02-02-YE03-204-19-34"), /ไปที่ต้นทุนสูตร/);
+  assert.match(await env.openCost("item=NOPE-1"), /ไม่พบชิ้นงานนี้/);
+  assert.doesNotMatch(fg + bg + se, /undefined|NaN/);
 });
