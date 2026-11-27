@@ -27,8 +27,8 @@
   // เลขเวอร์ชันของโมดูล (แสดงมุมขวาล่างทุกหน้า) รูปแบบ <ใหญ่>.<ย่อย 2 หลัก> · กติกาเดียวกับใบสั่งงาน IT (เจ้าของตัดสิน 20/11/2026)
   // อัปเดตย่อย (แก้คำ หน้าตา บั๊ก ช่องเล็ก ๆ) = +0.01 · อัปเดตใหญ่ (เปลี่ยนขั้นตอนงาน/สถานะ/ฟีเจอร์ใหม่ที่ผู้ใช้ต้องเรียนรู้) = ขึ้นหลักหน่วย .00
   // ถามเจ้าของทุกครั้งว่าเป็นอัปเดตย่อยหรือใหญ่ แล้วแก้ทั้งสองค่านี้ใน PR เดียวกับการเปลี่ยนแปลง (VERSION_DATE = วันที่ปล่อย YYYY-MM-DD)
-  const MODULE_VERSION = "1.06";
-  const VERSION_DATE = "2026-11-26";
+  const MODULE_VERSION = "2.00";
+  const VERSION_DATE = "2026-11-27";
   // ธง "กำลังพัฒนา" (จุดเดียว): true = การ์ดใบแจ้งซ่อม IT ในเมนูมีป้าย "กำลังพัฒนา" และทุกหน้าของโมดูลมีแถบข้อความว่ายังไม่เปิดใช้งานจริง
   // ป้ายกับแถบเป็นข้อความอย่างเดียว ไม่ปิดกั้นการกดเข้าหรือการใช้งาน · ถอดป้ายเมื่อเจ้าของสั่งเปิดใช้งานจริง: เปลี่ยนเป็น false ที่นี่ที่เดียว
   const IN_DEVELOPMENT = true;
@@ -504,41 +504,265 @@
   }
 
   /* ---------- ฟอร์มแจ้งซ่อม ---------- */
-  const EMPTY_REPAIR_FORM = Object.freeze({ asset_code: "", device_name: "", request_kind: "", request_kind_note: "", repair_target: "", repair_target_note: "", symptom: "", is_urgent: false });
-  // กติกาตามรูปแบบของ MNP_FORM_STEPS (modules/form-steps.js): step 1 = เครื่องและประเภทงาน · step 2 = อาการเสีย
+  // ช่องแบบเดิม (asset_code, device_name, repair_target) ใช้เมื่อฐานข้อมูลยังไม่มีฟังก์ชันเลือกอุปกรณ์จากทะเบียน
+  // ช่องแบบใหม่ (host_input, host, picks) ใช้เมื่อมี (ไม่มีตัวเลือก "ไม่ทราบรหัสเครื่อง" ต้องค้นพบเครื่องในทะเบียนก่อนเสมอ) · ทุกช่องเป็นข้อมูลล้วน (JSON) เพื่อเก็บเป็นร่างในเบราว์เซอร์ได้
+  const EMPTY_REPAIR_FORM = Object.freeze({
+    asset_code: "", device_name: "", request_kind: "", request_kind_note: "", repair_target: "", repair_target_note: "", symptom: "", is_urgent: false,
+    host_input: "", host: null, picks: [],
+  });
+  // กติกาตามรูปแบบของ MNP_FORM_STEPS (modules/form-steps.js): step 1 = ประเภทคำขอ · step 2 = เครื่องและอุปกรณ์ที่แจ้งซ่อม · step 3 = อาการเสีย
   // required ของข้อความระบุ "อื่นๆ" เป็น getter เพราะขึ้นกับค่าที่เลือก ณ ตอนตรวจ · ข้อความผิดพลาดตรงกับของ app_itrp_create
-  function repairRules({ requestKind = () => "", repairTarget = () => "" } = {}) {
+  // picker() = true เมื่อใช้ฟอร์มเลือกอุปกรณ์จากทะเบียน (ช่องแบบเดิมไม่บังคับ) · pickerProblem() = ข้อความผิดของส่วนเลือกอุปกรณ์ (ว่าง = ผ่าน)
+  // ส่วนเลือกอุปกรณ์ตรวจผ่านช่อง "devices": ฟอร์มส่งค่าช่องนี้เป็นข้อความผิด (ว่างเมื่อผ่าน) มีค่า = ไม่ผ่านเสมอ และข้อความที่แสดงอ่านสดจาก pickerProblem()
+  function repairRules({ requestKind = () => "", repairTarget = () => "", picker = () => false, pickerProblem: problem = () => "" } = {}) {
     return [
-      { name: "asset_code", step: 1, check: (value) => charCount(value) <= MAX_ASSET_CODE, checkMessage: `รหัสเครื่องคอมพิวเตอร์ต้องไม่เกิน ${MAX_ASSET_CODE} ตัวอักษร` },
-      { name: "device_name", step: 1, required: true, message: "กรุณาระบุชื่อเครื่องคอมพิวเตอร์ / อุปกรณ์", check: (value) => charCount(value) <= MAX_DEVICE_NAME, checkMessage: `ชื่อเครื่องคอมพิวเตอร์ / อุปกรณ์ต้องไม่เกิน ${MAX_DEVICE_NAME} ตัวอักษร` },
       { name: "request_kind", step: 1, required: true, message: "กรุณาเลือกประเภทคำขอ" },
       {
         name: "request_kind_note", step: 1, message: "กรุณาระบุประเภทคำขอ (เมื่อเลือก \"อื่นๆ\")",
         get required() { return requestKind() === "other"; },
         check: (value) => charCount(value) <= MAX_NOTE, checkMessage: `ประเภทคำขอ (อื่นๆ) ต้องไม่เกิน ${MAX_NOTE} ตัวอักษร`,
       },
-      { name: "repair_target", step: 1, required: true, message: "กรุณาเลือกประเภทงานซ่อม" },
+      { name: "asset_code", step: 2, check: (value) => charCount(value) <= MAX_ASSET_CODE, checkMessage: `รหัสเครื่องคอมพิวเตอร์ต้องไม่เกิน ${MAX_ASSET_CODE} ตัวอักษร` },
       {
-        name: "repair_target_note", step: 1, message: "กรุณาระบุประเภทงานซ่อม (เมื่อเลือก \"อื่นๆ\")",
-        get required() { return repairTarget() === "other"; },
+        name: "device_name", step: 2, message: "กรุณาระบุชื่อเครื่องคอมพิวเตอร์ / อุปกรณ์",
+        get required() { return !picker(); },
+        check: (value) => charCount(value) <= MAX_DEVICE_NAME, checkMessage: `ชื่อเครื่องคอมพิวเตอร์ / อุปกรณ์ต้องไม่เกิน ${MAX_DEVICE_NAME} ตัวอักษร`,
+      },
+      { name: "repair_target", step: 2, message: "กรุณาเลือกประเภทงานซ่อม", get required() { return !picker(); } },
+      {
+        name: "repair_target_note", step: 2, message: "กรุณาระบุประเภทงานซ่อม (เมื่อเลือก \"อื่นๆ\")",
+        get required() { return !picker() && repairTarget() === "other"; },
         check: (value) => charCount(value) <= MAX_NOTE, checkMessage: `ประเภทงานซ่อม (อื่นๆ) ต้องไม่เกิน ${MAX_NOTE} ตัวอักษร`,
       },
-      { name: "symptom", step: 2, required: true, message: "กรุณาระบุอาการเสีย-ขัดข้องที่เกิดขึ้นเบื้องต้น", check: (value) => charCount(value) <= MAX_SYMPTOM, checkMessage: `อาการเสียต้องไม่เกิน ${MAX_SYMPTOM.toLocaleString("en-US")} ตัวอักษร` },
+      { name: "devices", step: 2, check: () => false, get checkMessage() { return problem(); } },
+      { name: "symptom", step: 3, required: true, message: "กรุณาระบุอาการเสีย-ขัดข้องที่เกิดขึ้นเบื้องต้น", check: (value) => charCount(value) <= MAX_SYMPTOM, checkMessage: `อาการเสียต้องไม่เกิน ${MAX_SYMPTOM.toLocaleString("en-US")} ตัวอักษร` },
     ];
   }
   const textOf = (value) => String(value ?? "").trim();
+  // ตัดข้อความให้ยาวไม่เกิน max ตัวอักษรพอดี (ถ้าเกินลงท้าย "…" รวมแล้วไม่เกิน max) ใช้กับช่องที่ฐานข้อมูลจำกัดความยาว
+  const fit = (text, max) => {
+    const chars = Array.from(String(text ?? "").replace(/\s+/g, " ").trim());
+    return chars.length <= max ? chars.join("") : `${chars.slice(0, max - 1).join("")}…`;
+  };
   // พารามิเตอร์ของ app_itrp_create (ตัดช่องว่าง ไม่ส่งข้อความระบุเมื่อไม่ได้เลือก "อื่นๆ") · เลขที่เอกสาร ผู้แจ้ง แผนก วันเวลา ฐานข้อมูลเติมเอง
-  function createParams(values) {
-    return {
-      p_asset_code: textOf(values.asset_code) || null,
-      p_device_name: textOf(values.device_name),
+  // picker = true: ฟอร์มเลือกอุปกรณ์จากทะเบียน → รหัสเครื่อง/ชื่ออุปกรณ์/ประเภทงานซ่อมคำนวณจากสิ่งที่เลือก (pickerSummary) และส่งพารามิเตอร์ใหม่ 3 ตัวต่อท้าย
+  // ไม่ใช่ picker = ฟอร์มแบบเดิม ส่ง 8 พารามิเตอร์เท่าเดิม (ใช้เมื่อฐานข้อมูลยังไม่มีฟังก์ชันใหม่)
+  function createParams(values, { picker = false } = {}) {
+    const base = picker ? { ...values, ...pickerSummary(values) } : values;
+    const params = {
+      p_asset_code: textOf(base.asset_code) || null,
+      p_device_name: textOf(base.device_name),
       p_request_kind: textOf(values.request_kind),
       p_request_kind_note: values.request_kind === "other" ? textOf(values.request_kind_note) : null,
-      p_repair_target: textOf(values.repair_target),
-      p_repair_target_note: values.repair_target === "other" ? textOf(values.repair_target_note) : null,
+      p_repair_target: textOf(base.repair_target),
+      p_repair_target_note: base.repair_target === "other" ? textOf(base.repair_target_note) : null,
       p_symptom: textOf(values.symptom),
       p_is_urgent: Boolean(values.is_urgent),
     };
+    if (!picker) return params;
+    return { ...params, p_host_code: textOf(values.host?.code) || null, p_devices: pickerDevices(values.picks) };
+  }
+  // ฐานข้อมูลยังไม่มีพารามิเตอร์ใหม่ (migration ยังไม่ขึ้น): ตัด 2 ตัวท้ายออกส่งเป็น 8 พารามิเตอร์แบบเดิม (รหัสเครื่อง/ชื่ออุปกรณ์ที่คำนวณไว้ยังอยู่ครบ)
+  function legacyCreateParams(params) {
+    const rest = { ...params };
+    delete rest.p_host_code;
+    delete rest.p_devices;
+    return rest;
+  }
+  // error จาก PostgREST/Postgres ที่แปลว่า "ไม่มีฟังก์ชันนี้ (หรือซิกเนเจอร์นี้) ในฐานข้อมูล" ไม่ใช่ข้อผิดพลาดของข้อมูล
+  function isMissingFunction(error) {
+    const code = String(error?.code ?? "");
+    const message = String(error?.message ?? "");
+    return code === "PGRST202" || code === "42883" || /could not find the function|schema cache|function [^\n]* does not exist/i.test(message);
+  }
+
+  /* ---------- เลือกอุปกรณ์จากทะเบียนตอนแจ้งซ่อม ---------- */
+  // ผู้แจ้งพิมพ์รหัสเครื่องคอม → app_itrp_lookup_host ตอบเครื่อง + อุปกรณ์ที่ทะเบียนผูกไว้ → ติ๊กชนิดที่มีปัญหา (ระบบเติมรหัสให้ แก้ได้)
+  // picks = แถวที่เลือก (ข้อมูลล้วน) [{ type_code, code, on, note, added, meta }] · ชนิดที่ถูกติ๊ก = ชนิดที่มีแถวอยู่ใน picks
+  // on = ติ๊กว่าอุปกรณ์ตัวนี้เสีย (ใช้เมื่อชนิดนั้นมีหลายแถว; ชนิดที่มีแถวเดียวนับว่า "เสีย" เสมอ) · added = ผู้แจ้งเพิ่มเอง (ลบได้) · meta = ชื่อ/รุ่นจากทะเบียน
+  const MAX_REQUEST_DEVICES = 10; // ตรงกับ app_itrp_create (p_devices ไม่เกิน 10 แถว)
+  const PICK_TYPES = Object.freeze([
+    { key: "COMPUTER", label: "คอมพิวเตอร์ / โน้ตบุ๊ก", multi: false },
+    { key: "MONITOR", label: "หน้าจอ", multi: true },
+    { key: "PRINTER", label: "เครื่องพิมพ์", multi: true },
+    { key: "KEYBOARD", label: "คีย์บอร์ด", multi: true },
+    { key: "MOUSE", label: "เมาส์", multi: true },
+    { key: "UPS", label: "เครื่องสำรองไฟ (UPS)", multi: true },
+    { key: "PROJECTOR", label: "โปรเจกเตอร์", multi: true },
+    { key: "OTHER", label: "อื่นๆ", multi: true },
+  ]);
+  // ชื่อชนิดในใบ/ตาราง (ตามค่า type_code ที่ฐานข้อมูลเก็บ)
+  const REQUEST_DEVICE_LABELS = Object.freeze({ COMPUTER: "คอมพิวเตอร์", LAPTOP: "โน้ตบุ๊ก", MONITOR: "หน้าจอ", PRINTER: "เครื่องพิมพ์", KEYBOARD: "คีย์บอร์ด", MOUSE: "เมาส์", UPS: "เครื่องสำรองไฟ (UPS)", PROJECTOR: "โปรเจกเตอร์", OTHER: "อื่นๆ" });
+  const requestDeviceLabel = (typeCode) => REQUEST_DEVICE_LABELS[String(typeCode ?? "").toUpperCase()] ?? String(typeCode ?? "");
+  const pickTypeOf = (key) => PICK_TYPES.find((type) => type.key === key) ?? null;
+  // โน้ตบุ๊กนับเป็นชนิด "คอมพิวเตอร์ / โน้ตบุ๊ก" ในรายการติ๊ก
+  const pickKeyOf = (typeCode) => (typeCode === "LAPTOP" ? "COMPUTER" : typeCode);
+  const hostTypeCode = (host) => (host?.type_code === "LAPTOP" ? "LAPTOP" : "COMPUTER");
+  const normalizeCode = (value) => textOf(value).toUpperCase();
+
+  // ผลของ app_itrp_lookup_host → เครื่องที่พบ (null = ไม่พบ/รูปแบบผิด) · คืนเฉพาะช่องที่ฟอร์มใช้
+  function normalizeLookup(data) {
+    if (!data || data.found !== true || !textOf(data.host?.code)) return null;
+    const host = data.host;
+    const devices = (Array.isArray(data.devices) ? data.devices : []).filter((device) => device?.type_code && textOf(device.code))
+      .map((device) => ({ type_code: String(device.type_code).toUpperCase(), code: textOf(device.code), name: textOf(device.name), model: textOf(device.model) }));
+    return { code: textOf(host.code), type_code: hostTypeCode(host), name: textOf(host.name), model: textOf(host.model), user_name: textOf(host.user_name), devices };
+  }
+  // ชื่อ/รุ่นของอุปกรณ์ในทะเบียนสำหรับแสดงใต้รหัส (ชื่อกับรุ่นซ้ำกันแสดงครั้งเดียว)
+  const metaOf = (item) => Array.from(new Set([textOf(item?.name), textOf(item?.model)].filter(Boolean))).join(" · ");
+  // บรรทัดยืนยันเครื่อง: "COM24 · ชื่อเครื่อง/รุ่น · ผู้ใช้ สมชาย"
+  function hostConfirmText(host) {
+    if (!host) return "";
+    return [host.code, metaOf(host), host.user_name ? `ผู้ใช้ ${host.user_name}` : ""].filter(Boolean).join(" · ");
+  }
+
+  const rowsOfKey = (picks, key) => (Array.isArray(picks) ? picks : []).map((row, index) => ({ row, index })).filter(({ row }) => pickKeyOf(row.type_code) === key);
+  // แถวนี้ถูกนับว่าเสียไหม: ชนิดที่มีแถวเดียวนับเสมอ (ไม่มีให้ติ๊กออก) · หลายแถวดูที่ on
+  function isPicked(picks, index) {
+    const row = picks?.[index];
+    if (!row) return false;
+    return rowsOfKey(picks, pickKeyOf(row.type_code)).length === 1 ? true : Boolean(row.on);
+  }
+  const pickedRows = (picks) => PICK_TYPES.flatMap((type) => rowsOfKey(picks, type.key).filter(({ index }) => isPicked(picks, index)).map(({ row }) => row));
+  const pickedCount = (picks) => pickedRows(picks).length;
+
+  // แถวเริ่มต้นของชนิดที่เพิ่งติ๊ก (host = เครื่องที่ค้นพบในทะเบียน)
+  // คอม/โน้ตบุ๊ก = รหัสเครื่องที่พบ · อื่นๆ = แถวว่าง · ชนิดอื่น = อุปกรณ์ที่ทะเบียนผูกกับเครื่อง (ตัวเดียวติ๊กให้เลย หลายตัวให้ผู้แจ้งเลือก) ไม่มีในทะเบียน = แถวว่างให้พิมพ์เอง
+  function defaultPickRows(key, { host = null } = {}) {
+    const known = host;
+    if (key === "COMPUTER") return [{ type_code: hostTypeCode(known), code: known?.code ?? "", on: true, note: "", added: false, meta: known ? metaOf(known) : "" }];
+    if (key === "OTHER") return [{ type_code: "OTHER", code: "", on: true, note: "", added: false, meta: "" }];
+    const devices = (known?.devices ?? []).filter((device) => device.type_code === key);
+    if (!devices.length) return [{ type_code: key, code: "", on: true, note: "", added: false, meta: "" }];
+    return devices.map((device) => ({ type_code: key, code: device.code, on: devices.length === 1, note: "", added: false, meta: metaOf(device) }));
+  }
+  // ติ๊ก/เลิกติ๊กชนิด: เลิกติ๊ก = ลบแถวของชนิดนั้นทั้งหมด
+  function toggleType(picks, key, context = {}) {
+    const list = Array.isArray(picks) ? picks : [];
+    if (rowsOfKey(list, key).length) return list.filter((row) => pickKeyOf(row.type_code) !== key);
+    return [...list, ...defaultPickRows(key, context)];
+  }
+  const withRow = (picks, index, change) => picks.map((row, at) => (at === index ? { ...row, ...change } : row));
+  function setPickField(picks, index, field, value) {
+    if (!picks?.[index] || !["code", "note", "on"].includes(field)) return picks;
+    return withRow(picks, index, { [field]: field === "on" ? Boolean(value) : String(value ?? "") });
+  }
+  // เพิ่มแถวว่างให้ชนิดที่ติ๊กอยู่ (พิมพ์รหัสเองได้) · คอม/โน้ตบุ๊กมีได้แถวเดียว · เลือกครบ MAX_REQUEST_DEVICES แล้วไม่เพิ่ม
+  function addPickRow(picks, key) {
+    const list = Array.isArray(picks) ? picks : [];
+    if (!pickTypeOf(key)?.multi || !rowsOfKey(list, key).length || pickedCount(list) >= MAX_REQUEST_DEVICES) return list;
+    return [...list, { type_code: key, code: "", on: true, note: "", added: true, meta: "" }];
+  }
+  // ลบแถวที่ผู้แจ้งเพิ่มเอง (แถวจากทะเบียนลบไม่ได้ ให้เอาติ๊กออก) · เหลือแถวเดียวของชนิดนั้นแล้วแถวนั้นนับเสมอ จึงตั้ง on ให้ตรง
+  function removePickRow(picks, index) {
+    const row = picks?.[index];
+    if (!row || !row.added) return picks;
+    const rest = picks.filter((_, at) => at !== index);
+    const left = rowsOfKey(rest, pickKeyOf(row.type_code));
+    return left.length === 1 ? withRow(rest, left[0].index, { on: true }) : rest;
+  }
+
+  // ปัญหาของส่วนเลือกอุปกรณ์ตามลำดับบนจอ: [{ message, index? }] (ว่าง = ผ่าน) · ข้อความตรงกับของ app_itrp_create เท่าที่ตรงกัน
+  function pickerIssues(values) {
+    const picks = Array.isArray(values?.picks) ? values.picks : [];
+    const issues = [];
+    if (!values?.host?.code) {
+      issues.push({ message: textOf(values?.host_input)
+        ? "ยังไม่ได้ยืนยันรหัสเครื่อง กดปุ่ม \"ค้นหา\" ก่อน (ถ้าไม่พบ ตรวจรหัสที่ติดบนเครื่องหรือติดต่อ IT)"
+        : "กรุณาค้นหารหัสเครื่องคอมของคุณก่อน (รหัสติดอยู่บนตัวเครื่อง)" });
+      return issues;
+    }
+    if (!picks.length) { issues.push({ message: "กรุณาเลือกอุปกรณ์ที่มีปัญหาอย่างน้อย 1 รายการ" }); return issues; }
+    const seen = new Set();
+    for (const type of PICK_TYPES) {
+      const rows = rowsOfKey(picks, type.key);
+      if (!rows.length) continue;
+      const chosen = rows.filter(({ index }) => isPicked(picks, index));
+      if (!chosen.length) issues.push({ message: `กรุณาเลือกรายการ "${type.label}" ที่มีปัญหา หรือติ๊กชนิดนี้ออก`, index: rows[0].index });
+      for (const { row, index } of chosen) {
+        const code = normalizeCode(row.code);
+        if (charCount(code) > MAX_DEVICE_CODE) issues.push({ message: `รหัสอุปกรณ์ต้องไม่เกิน ${MAX_DEVICE_CODE} ตัวอักษร`, index });
+        else if (/[\u0000-\u001f\u007f-\u009f]/.test(code)) issues.push({ message: "รหัสอุปกรณ์มีอักขระที่ใช้ไม่ได้", index });
+        else if (code && seen.has(code)) issues.push({ message: `รหัสอุปกรณ์ ${code} ซ้ำกัน`, index });
+        if (code) seen.add(code);
+        if (charCount(row.note) > MAX_NOTE) issues.push({ message: `หมายเหตุอุปกรณ์ต้องไม่เกิน ${MAX_NOTE} ตัวอักษร`, index });
+        if (row.type_code === "OTHER" && !textOf(row.note)) issues.push({ message: "กรุณาระบุอุปกรณ์ (เมื่อเลือก \"อื่นๆ\")", index });
+      }
+    }
+    if (pickedCount(picks) > MAX_REQUEST_DEVICES) issues.push({ message: `อุปกรณ์ที่มีปัญหาต้องไม่เกิน ${MAX_REQUEST_DEVICES} รายการ` });
+    return issues;
+  }
+  const pickerProblem = (values) => pickerIssues(values)[0]?.message ?? "";
+
+  // p_devices ของ app_itrp_create: แถวที่ติ๊กว่าเสีย เรียงตามชนิดบนจอ (รหัสว่าง = null · หมายเหตุส่งเฉพาะที่กรอก)
+  function pickerDevices(picks) {
+    return pickedRows(picks).map((row) => ({ type_code: row.type_code, device_code: normalizeCode(row.code) || null, note: textOf(row.note) || null }));
+  }
+  // ค่าเดิมของใบที่ระบบเติมให้จากสิ่งที่เลือก (ใบรุ่นเก่า/ประวัติการซ่อมยังอ่านจากช่องเหล่านี้):
+  // asset_code = รหัสเครื่องที่พบในทะเบียน · device_name = ชื่อชนิดที่เลือก "หน้าจอ, เมาส์" (≤200)
+  // repair_target: มีอุปกรณ์ที่ไม่ใช่คอม/"อื่นๆ" → device · ไม่งั้นมี "อื่นๆ" → other พร้อมข้อความที่ระบุ · ที่เหลือ (มีแต่คอม) → computer
+  function pickerSummary(values) {
+    const rows = pickedRows(values?.picks);
+    const others = rows.filter((row) => row.type_code === "OTHER");
+    const peripherals = rows.filter((row) => pickKeyOf(row.type_code) !== "COMPUTER" && row.type_code !== "OTHER");
+    const labels = [];
+    for (const row of rows) {
+      const label = row.type_code === "OTHER" ? `อื่นๆ (${textOf(row.note)})` : requestDeviceLabel(row.type_code);
+      if (!labels.includes(label)) labels.push(label);
+    }
+    const target = peripherals.length ? "device" : (others.length ? "other" : "computer");
+    return {
+      asset_code: textOf(values?.host?.code),
+      device_name: fit(labels.join(", "), MAX_DEVICE_NAME),
+      repair_target: rows.length ? target : "",
+      repair_target_note: target === "other" ? fit(others.map((row) => textOf(row.note)).join("; "), MAX_NOTE) : "",
+    };
+  }
+  // บรรทัดสรุปของส่วนเลือกอุปกรณ์ในขั้นทบทวน: [{ label, value }]
+  function pickerReviewRows(values) {
+    const rows = [{ label: "เครื่องคอมของคุณ", value: hostConfirmText(values?.host) }];
+    const items = pickedRows(values?.picks).map((row) => {
+      const code = normalizeCode(row.code);
+      const label = row.type_code === "OTHER" ? `อื่นๆ: ${textOf(row.note)}` : requestDeviceLabel(row.type_code);
+      return code ? `${label} ${code}` : label;
+    });
+    rows.push({ label: "อุปกรณ์ที่มีปัญหา", value: items.join(" · ") });
+    return rows;
+  }
+
+  // ใบที่แจ้งแบบเลือกอุปกรณ์ (host_code / devices) แปลงเป็นข้อมูลแสดงผล · ใบเก่าที่ไม่มีสองอย่างนี้ isNew = false (แสดงแบบเดิม)
+  // ใบรุ่นที่เคยมี host_unknown ไม่เคยขึ้น prod จึงไม่ต้องรับมือคีย์นี้
+  function requestDevices(detail) {
+    const list = Array.isArray(detail?.devices) ? detail.devices : [];
+    const isNew = Boolean(textOf(detail?.host_code)) || list.length > 0;
+    return {
+      isNew,
+      hostText: textOf(detail?.host_code),
+      rows: list.slice().sort((a, b) => Number(a.seq) - Number(b.seq)).map((device, index) => ({
+        no: Number(device.seq) || index + 1,
+        typeCode: device.type_code,
+        type: requestDeviceLabel(device.type_code),
+        code: textOf(device.device_code),
+        fromRegister: Boolean(device.from_register),
+        note: textOf(device.note),
+      })),
+    };
+  }
+  // รายการอุปกรณ์แบบกระชับ (ใบพิมพ์): "หน้าจอ MNT53 · เมาส์ · อื่นๆ (เครื่องสแกน SCN01)"
+  function requestDevicesInline(detail) {
+    return requestDevices(detail).rows.map((row) => {
+      if (row.typeCode === "OTHER") return `อื่นๆ (${[row.note, row.code].filter(Boolean).join(" ")})`;
+      return [row.type, row.code].filter(Boolean).join(" ");
+    }).join(" · ");
+  }
+  // รหัสที่ผู้แจ้งเลือกไว้ (ไม่ซ้ำ ไม่เกิน MAX_DEVICES) ใช้เติมแถวเริ่มต้นของฟอร์มส่งงาน IT
+  function requestedDeviceCodes(detail) {
+    const codes = [];
+    for (const row of requestDevices(detail).rows) {
+      const code = normalizeCode(row.code);
+      if (code && !codes.includes(code)) codes.push(code);
+    }
+    return codes.slice(0, MAX_DEVICES);
   }
 
   /* ---------- เหตุผลไม่อนุมัติ / ยกเลิก ---------- */
@@ -611,7 +835,11 @@
     return null;
   }
   // แถวแรกของฟอร์มส่งงานเติมรหัสที่ผู้แจ้งกรอกไว้ให้ก่อน (แก้ได้) · ไม่มีรหัส = แถวว่าง 1 แถว
-  const initialDeviceRows = (assetCode) => [{ ...EMPTY_DEVICE_ROW, device_code: normalizeDeviceCode(assetCode) }];
+  // requestedCodes = รหัสอุปกรณ์ที่ผู้แจ้งเลือกไว้ตอนแจ้ง (ถ้ามี ใช้แทนรหัสเครื่องเดี่ยว) · IT แก้/ลบได้
+  const initialDeviceRows = (assetCode, requestedCodes = []) => {
+    const seeds = Array.isArray(requestedCodes) && requestedCodes.length ? requestedCodes : [assetCode];
+    return seeds.map((code) => ({ ...EMPTY_DEVICE_ROW, device_code: normalizeDeviceCode(code) }));
+  };
   // ตรวจและเตรียมแถวเครื่องที่กรอก: rows = [{ device_code, remark, symptom_note, action_note }] (ข้อความจากช่องกรอก) · noDevice = ติ๊ก "งานนี้ไม่มีรหัสเครื่อง"
   // คืน { rows: แถวที่ส่งให้ฐานข้อมูล ([] เมื่อ noDevice) แถวว่างคงไว้ให้เลขแถวตรงกับจอ, errors: [ข้อความ], filled: จำนวนแถวที่มีข้อมูล,
   //       invalid: [{ row: ลำดับแถวเริ่มที่ 0, field: device_code|remark|symptom_note|action_note }] = ช่องที่ผิดจริง (ให้หน้าเว็บทำกรอบแดงถูกช่อง) }
@@ -1319,7 +1547,9 @@
     visibleTabs, canViewHistory, canEditHistory, readView, viewAllowed, repairUrl, isUuid,
     actionButtons, countsAsBothSteps, confirmMessageFor, BOTH_STEPS_NOTE, completeToast, answerToast, pendingStepLabel, eventLabel, eventLabelFor, CANCELLED_ON_BEHALF_LABEL, printSignoffs, printOutcome, approvalSummary,
     itGroupOf, groupItOrders, itActionableCount, awaitingMyReceiveCount, awaitingMyAnswerCount, mineWaiting, mineWaitingNote, waitingForMeCount, itApprovalProgress, CLOSED_STATUSES, openOrderCount, cardSummary,
-    repairRules, createParams, validateReason, infoRules, infoParams,
+    repairRules, createParams, legacyCreateParams, isMissingFunction, validateReason,
+    MAX_REQUEST_DEVICES, PICK_TYPES, REQUEST_DEVICE_LABELS, requestDeviceLabel, hostTypeCode, normalizeLookup, hostConfirmText, rowsOfKey, isPicked, pickedRows, pickedCount, defaultPickRows, toggleType, setPickField, addPickRow, removePickRow,
+    pickerIssues, pickerProblem, pickerDevices, pickerSummary, pickerReviewRows, requestDevices, requestDevicesInline, requestedDeviceCodes, infoRules, infoParams,
     normalizeParts, EMPTY_DEVICE_ROW, NO_DEVICE_LABEL, NO_DEVICE_ERROR, normalizeDeviceCode, deviceCodeError, initialDeviceRows, normalizeDevices, deviceOptionText,
     completeRules, completeParams, vendorField, repairReports, reportView,
     DEVICE_KINDS, DEVICE_STATUSES, deviceKindLabel, deviceStatusLabel, HISTORY_SOURCE_LABELS, historySourceLabel, historyUrl, historyPrintUrl, MIN_HISTORY_DATE, DATE_INPUT_HINT, parseDateInput, normalizeDateField, dateInputText, MAX_DOC_NO, MAX_REPORTER, filterDevices, deviceHeader, historyRowsView,

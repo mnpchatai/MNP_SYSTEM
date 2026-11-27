@@ -54,7 +54,7 @@ migration: `supabase/migrations/20261212010000_itrp_repair_requests.sql` + `2026
 ### เขียน
 | RPC | พารามิเตอร์ | คืน / หมายเหตุ |
 |---|---|---|
-| `app_itrp_create` | `p_asset_code text` (ว่างได้ ≤50), `p_device_name text` (บังคับ ≤200), `p_request_kind text`, `p_request_kind_note text`, `p_repair_target text`, `p_repair_target_note text`, `p_symptom text` (บังคับ ≤2000), `p_is_urgent boolean default false` | แถวเดียว `{id, doc_no}` · เลือกเส้นทางอนุมัติ + ออกเลข + บันทึก event ในธุรกรรมเดียว · ข้อความ "อื่นๆ" ที่ไม่ได้เลือก "อื่นๆ" ถูกล้างทิ้ง |
+| `app_itrp_create` | `p_asset_code text` (ว่างได้ ≤50), `p_device_name text` (บังคับ ≤200), `p_request_kind text`, `p_request_kind_note text`, `p_repair_target text`, `p_repair_target_note text`, `p_symptom text` (บังคับ ≤2000), `p_is_urgent boolean default false`, **`p_host_code text default null`, `p_devices jsonb default null` (ดูหัวข้อ "พนักงานเลือกอุปกรณ์จากทะเบียนตอนแจ้งซ่อม" ท้ายเอกสาร)** | แถวเดียว `{id, doc_no}` · เลือกเส้นทางอนุมัติ + ออกเลข + บันทึก event ในธุรกรรมเดียว · ข้อความ "อื่นๆ" ที่ไม่ได้เลือก "อื่นๆ" ถูกล้างทิ้ง |
 | `app_itrp_approve(p_request_id)` | uuid | void · กดครั้งเดียวนับทั้งสองขั้นเมื่อแผนกไม่มีผจก./ผู้แจ้งอยู่แผนก IT/ผู้อนุมัติเป็นผจก.แผนกนั้นเอง |
 | `app_itrp_reject(p_request_id, p_reason)` | uuid, text บังคับ ≤500 | void · ไม่อนุมัติ = จบทันที · ระหว่าง `need_info` ใช้ไม่ได้ |
 | `app_itrp_cancel(p_request_id, p_reason)` | uuid, text บังคับ | void · ผู้แจ้งก่อน IT เคยส่งงาน · IT (it_admin) ยกเลิกแทนได้เฉพาะใบ `need_info` (ประวัติขึ้นต้น "IT ยกเลิกแทนผู้แจ้ง: ") |
@@ -72,7 +72,7 @@ migration: `supabase/migrations/20261212010000_itrp_repair_requests.sql` + `2026
 ไม่มีใน itrp (เทียบ itwo): `app_itrp_save_access_changes`, `app_itrp_set_staff`, ส่วนสิทธิ์ในระบบ, วันที่ต้องการงาน, ออเดอร์, ตัวเลือกเอกสารแนบ มี/ไม่มี (แนบไฟล์ได้เสมอ), `misc_detail`
 
 ## `app_itrp_get_detail` (jsonb)
-`id, is_test, doc_no, doc_year, doc_seq, requester_id, department_id, asset_code, device_name, request_kind, request_kind_note, repair_target, repair_target_note, symptom, is_urgent, status, info_return_status, created_at` +
+`id, is_test, doc_no, doc_year, doc_seq, requester_id, department_id, asset_code, device_name, request_kind, request_kind_note, repair_target, repair_target_note, symptom, is_urgent, status, info_return_status, created_at` + **`host_code`, `devices[]` (ดูหัวข้อท้ายเอกสาร)** +
 - `work_minutes` (integer หรือ null · นาทีทำงานของ IT ตามเวลาทำงานจริง ดูหัวข้อ "สรุปเวลาทำงาน" ท้ายเอกสาร · null = IT ยังไม่เคยส่งงาน)
 - `rework_round` (0 = ไม่มี), `latest_due_date` (วันกำหนดเสร็จของรอบแก้ไขล่าสุด · null เมื่อไม่มีรอบ — ใบแจ้งซ่อมไม่มีวันที่ต้องการงานตอนแจ้ง)
 - `requester {employee_no, full_name}`, `department {code, name_th}`
@@ -202,3 +202,55 @@ trigger บน `itrp_events` เรียก `private.office_notify` (ชุด�
 - ช่วงงานเปิดเมื่อ `started` หรือ `rework_requested` ปิดเมื่อ `completed` · `info_requested` → `info_provided` ที่อยู่ในช่วงงานไม่นับ (คำถามนอกช่วงงานไม่มีผล) · รวมทุกช่วงที่ปิดแล้ว · ยังไม่เคย `completed` = null (ช่วงขอแก้ไขที่ยังเปิดอยู่ไม่นับ)
 - นับเฉพาะเวลาทำงานตามเขตเวลา Asia/Bangkok: `public.office_work_hours` (แถวเดียว ค่าเริ่มต้น 08:00–17:00 พัก 12:00–13:00 จันทร์–เสาร์ แก้ด้วย SQL) · ตัดวันที่ไม่ใช่วันทำงานและวันใน `public.company_holidays` (ตารางของระบบเพื่อน อ่านอย่างเดียว) · `private.office_working_minutes(from, to)` / `private.office_work_minutes_from_events`
 - หน้าเว็บแปลงเป็น "X วัน Y ชม. Z นาที" โดย 1 วัน = 1 วันทำงาน (ชั่วโมงทำงานต่อวัน = 8 ตามค่าเริ่มต้น) · ถ้า `company_holidays` ไม่มีวันหยุดของปีนั้น วันหยุดจะถูกนับเป็นวันทำงาน
+
+## พนักงานเลือกอุปกรณ์จากทะเบียนตอนแจ้งซ่อม — migration `20270108010000_itrp_request_devices.sql` · ทดสอบ `itrp_request_devices.test.sql`
+ฐานข้อมูลอย่างเดียว (หน้าเว็บทำต่อบน branch เดียวกัน) · เจ้าของตัดสิน 27/11/2026 · ฟอร์มแจ้งซ่อม: พิมพ์รหัสเครื่องคอม (เช่น `COM24`, `AIO01`, `NBD01`) → ระบบแสดง "ชื่อเครื่อง + ชื่อผู้ใช้" ให้ยืนยัน → ติ๊กชนิดอุปกรณ์ที่มีปัญหา → ระบบเติมรหัสอุปกรณ์ที่ทะเบียนผูกกับเครื่องนั้น (พนักงานแก้ได้) · **ไม่มีตัวเลือก "ไม่ทราบรหัสเครื่อง" (เจ้าของตัดสินเพิ่ม 27/11/2026): ต้องรู้รหัสและค้นพบเครื่องในทะเบียนก่อนเสมอ** (ไม่พบ = ตรวจรหัสที่ติดบนเครื่อง หรือติดต่อ IT) · รหัสอุปกรณ์แต่ละตัวที่ไม่ทราบยังเว้นว่างได้ IT จะเติมให้
+
+### หลักการ
+- ผู้แจ้งอ่านทะเบียน (itas) ผ่าน **`app_itrp_lookup_host` ฟังก์ชันเดียว** และเฉพาะช่องที่ระบุข้างล่าง · RPC ของ itas ยังล็อกเฉพาะ `itas_admins` (ไม่ขยายสิทธิ์) · ค้นแบบตรงตัวเท่านั้น (ไม่มี list/search/LIKE)
+- **การตรวจจริงทำที่ `app_itrp_create`** ไม่เชื่อสิ่งที่หน้าเว็บค้นเจอ: ตรวจเครื่องซ้ำในทะเบียนและคำนวณ `from_register` เอง
+- แยกโหมดจริง/ทดสอบตามผู้เรียก (persona เห็นเฉพาะเครื่องทดสอบ ผู้ใช้จริงเห็นเฉพาะเครื่องจริง)
+
+### RPC ใหม่: `app_itrp_lookup_host(p_code text)` → jsonb
+- ผู้เรียก = ผู้ใช้ที่ใช้งานอยู่ (เหมือน `app_itrp_create`) · anon เรียกไม่ได้ · ผู้ใช้ไม่ active / ไม่มีแถวพนักงาน = `42501` "ไม่พบบัญชีพนักงานที่เปิดใช้งาน …"
+- normalize: ตัดช่องว่างหัวท้าย + ตัวพิมพ์ใหญ่ · ว่าง/null = `23514` "กรุณาระบุรหัสเครื่อง" · ยาวเกิน 50 หรือไม่ตรงรูปแบบ `[A-Z0-9][A-Z0-9._/-]*` (เว้นวรรค ภาษาไทย `%` ฯลฯ) = `{"found": false}` ไม่ error
+- หาเครื่องชนิด `COMPUTER` / `LAPTOP` ที่ `status <> 'retired'` และ `device_code` หรือ `reg_no` ตรงทั้งรหัส · ไม่พบ / เครื่องเลิกใช้ / รหัสนั้นเป็นอุปกรณ์ชนิดอื่น / รูปแบบผิด = **คำตอบเดียวกัน** `{"found": false}` (ไม่บอกสถานะเครื่อง กันการไล่เดา)
+- พบ:
+```json
+{
+  "found": true,
+  "host": { "code": "COM24", "type_code": "COMPUTER", "name": "…", "model": "…", "user_name": "…" },
+  "devices": [ { "type_code": "MONITOR", "code": "MNT53", "name": "…", "model": "…" } ]
+}
+```
+  - `host.code` = รหัสมาตรฐาน (`device_code` ถ้ามี ไม่งั้น `reg_no`) · `user_name` มาจาก `attrs.user_name` (เครื่อง LAPTOP ส่วนมากเป็น `null`) ให้ผู้แจ้งตรวจว่าเป็นเครื่องของตัวเอง
+  - `devices` = อุปกรณ์ที่ทะเบียนผูกกับเครื่องนั้น (`host_code` ตรงกับ `device_code` หรือ `reg_no` ของเครื่อง) เฉพาะ `MONITOR, PRINTER, KEYBOARD, MOUSE, UPS, PROJECTOR` ที่ `status <> 'retired'` (ชำรุด/สำรองยังแสดง) เรียงตาม `type_code` แล้ว `code` (ไม่เกิน 50 แถว) · `code` = `device_code` ถ้ามี ไม่งั้น `reg_no` · อุปกรณ์ที่ไม่มีรหัสทั้งสองไม่แสดง · ชนิดที่ฟอร์มไม่รองรับ (RAM, HDD ฯลฯ) ไม่แสดง
+  - **ไม่คืน** serial, IP, MAC, แผนก, สถานที่, ราคา, วันที่, attrs ช่องอื่น, ช่องลับ ใดๆ · คีย์ทั้งหมดมีแค่ที่เห็นข้างบน
+- ฝั่งหน้าเว็บ: เรียกตอนพิมพ์เสร็จ/กดค้น (ไม่ต้องเรียกทุกตัวอักษร) · ไม่พบ → แสดง "ไม่พบรหัสนี้ในทะเบียน" ให้ตรวจรหัสที่ติดบนเครื่องหรือติดต่อ IT (ไม่มีทางข้าม)
+- ข้อสังเกต: ผู้ใช้ที่ล็อกอินแล้วทุกคนเดารหัสทีละรหัสแล้วเห็นชื่อผู้ใช้เครื่อง (`user_name`) ได้ (ไม่มี rate limit ตามที่เจ้าของสั่ง)
+
+### `app_itrp_create` — พารามิเตอร์ใหม่ท้ายสุด (ซิกเนเจอร์เดียว 10 พารามิเตอร์ ไม่มี overload)
+`p_asset_code, p_device_name, p_request_kind, p_request_kind_note, p_repair_target, p_repair_target_note, p_symptom, p_is_urgent default false,` **`p_host_code text default null, p_devices jsonb default null`** → แถวเดียว `{id, doc_no}` เหมือนเดิม
+- ฟิลด์เดิมคงกติกาเดิมทุกข้อ · **หน้าเว็บเติม `p_asset_code` = รหัสเครื่อง (host.code) และ `p_device_name` ให้ตามเดิม** · **เมื่อส่งแบบใหม่ (พบเครื่องในทะเบียน) ฐานข้อมูลตั้ง `asset_code` = รหัสมาตรฐานของเครื่องที่พบเองเสมอ (ทับค่าที่หน้าเว็บส่ง; ไม่ส่ง/ส่งผิดก็ได้ค่าถูก)** เพื่อให้ประวัติซ่อม/เปลี่ยนชิ้นส่วน (อ่านจาก `asset_code`) ผูกเครื่องถูกเสมอ · `p_repair_target` ให้หน้าเว็บเลือกเอง (ฐานข้อมูลไม่ตัดสินจากชนิดอุปกรณ์)
+- **การเรียกแบบเดิม** (ไม่ส่งทั้ง `p_host_code` และ `p_devices` = null ทั้งคู่) ใช้ได้เหมือนเดิม → `host_code` null ไม่มีแถวอุปกรณ์ (เหตุผล: หน้าเว็บรุ่นเก่าที่เปิดค้างระหว่าง deploy และ fallback ของหน้าเว็บรุ่นใหม่เมื่อ migration ยังไม่ขึ้น)
+- **การเรียกแบบใหม่** = ส่ง `p_devices` ไม่ใช่ null (ส่ง `[]` มาก็นับเป็นแบบใหม่) · **`p_host_code` กับ `p_devices` ต้องส่งคู่กัน**: ส่ง `p_host_code` โดยไม่ส่ง `p_devices` = `23514` "ต้องส่งรหัสเครื่องและรายการอุปกรณ์ที่มีปัญหาพร้อมกัน" กติกา:
+  - ต้องมี `p_host_code` ที่พบในทะเบียน (เครื่อง COMPUTER/LAPTOP ไม่เลิกใช้ โหมดเดียวกับผู้แจ้ง) ไม่งั้น `23514` "ไม่พบรหัสเครื่องในทะเบียน กรุณาตรวจรหัสที่ติดบนเครื่อง หรือติดต่อ IT" (เครื่องเลิกใช้/ไม่ใช่เครื่องคอม/ไม่มี/ไม่ส่ง/ว่าง ได้ข้อความเดียวกัน ไม่มีทางเลือก "ไม่ทราบรหัส") · ยาวเกิน 50 = "รหัสเครื่องต้องไม่เกิน 50 ตัวอักษร"
+  - `p_devices` = array ≤10 แถว ต้องมี ≥1 แถวที่ไม่ว่าง ไม่งั้น "กรุณาเลือกอุปกรณ์ที่มีปัญหาอย่างน้อย 1 รายการ" · เกิน 10 = "อุปกรณ์ที่มีปัญหาต้องไม่เกิน 10 รายการ" · ไม่ใช่ array = ข้อความแรก
+  - แถวละ `{"type_code": …, "device_code": …, "note": …}` : `type_code` ∈ `COMPUTER, LAPTOP, MONITOR, PRINTER, KEYBOARD, MOUSE, UPS, PROJECTOR, OTHER` (ตัวพิมพ์เล็กได้) · `device_code` ว่างได้ (trim + ตัวพิมพ์ใหญ่ ≤50 ห้ามซ้ำกันในใบเดียวกัน) · `note` ≤200 **บังคับเมื่อ `OTHER`** · แถวที่ว่างทุกช่องข้ามให้ (seq เรียงต่อเนื่องจาก 1) · ชนิดซ้ำได้ (จอ 2 จอ)
+  - ข้อผิดพลาดต่อแถวเป็น "แถวที่ N: …" (N นับจากแถวที่ส่ง รวมแถวว่าง): ชนิดไม่ถูก = "กรุณาเลือกชนิดอุปกรณ์" · OTHER ไม่มี note = "กรุณาระบุอุปกรณ์ (เมื่อเลือก "อื่นๆ")" · รหัสซ้ำ = "รหัสอุปกรณ์ X ซ้ำกับแถวก่อนหน้า …" · note เกิน = "หมายเหตุอุปกรณ์ต้องไม่เกิน 200 ตัวอักษร" · แถวที่ไม่ใช่ object = "แถวที่ N ของรายการอุปกรณ์ไม่ถูกต้อง"
+  - ผิดข้อใด = ทั้งใบไม่เกิดขึ้น (ไม่กินเลขที่เอกสาร ไม่มีแถวค้าง)
+- **`from_register`** (ฐานข้อมูลคำนวณเอง ไม่รับจากหน้าเว็บ) = `true` เมื่อรหัสของแถวตรงกับอุปกรณ์ที่ทะเบียนผูกกับเครื่องนั้น (ชนิดเดียวกัน, ตรง `device_code` หรือ `reg_no`) หรือ (ชนิด `COMPUTER`/`LAPTOP`) เป็นรหัสของเครื่องคอมนั้นเอง · นอกนั้น `false`: พิมพ์เอง/แก้เป็นรหัสอื่น/ชนิดไม่ตรง/อุปกรณ์ของเครื่องอื่น/เครื่องเลิกใช้/แถวไม่มีรหัส
+- `host_code` ที่เก็บ = **รหัสมาตรฐานของเครื่องที่พบ** (device_code ถ้ามี ไม่งั้น reg_no) ไม่ใช่ข้อความที่พิมพ์ (พิมพ์ `pd-reg2` ได้ `PD-COM2`)
+
+### `app_itrp_get_detail` — คีย์ใหม่ 2 คีย์ (คีย์เดิมไม่เปลี่ยน รวมเป็น 38 คีย์)
+- `host_code` (text หรือ null) · `devices[]` = `[{seq, type_code, device_code, from_register, note}]` เรียงตาม `seq` · ใบเดิม/ไม่ได้เลือก = `[]`
+- ใช้ได้ทั้งหน้ารายละเอียดและใบพิมพ์ (ผู้ที่เห็นใบเห็นอุปกรณ์เหมือนกัน · ไม่ขยายผู้ที่เห็นใบ) · ค่าที่แสดงควรแยก "ระบบเติม" (`from_register = true`) กับ "ผู้แจ้งพิมพ์เอง" (`false`)
+- `list_*` ยังไม่คืนคอลัมน์ใหม่
+
+### ตาราง `itrp_request_devices` (เพิ่มตารางที่ 16 ของ itrp)
+`id, is_test, request_id, seq (1–10), type_code (9 ค่า), device_code (null ได้ ≤50 ตัวพิมพ์ใหญ่), from_register, note (≤200 · OTHER ต้องมี), created_at` · เพิ่มได้อย่างเดียว (แก้/ลบ/ล้างไม่ได้ ยกเว้นล้างข้อมูลทดสอบ) · RLS deny-all ไม่มี grant ตรง (รวม service_role) · `itrp_requests` เพิ่ม `host_code` (null ได้) แก้ไม่ได้หลังสร้าง (ไม่มีคอลัมน์ `host_unknown` — ตัดตัวเลือก "ไม่ทราบรหัสเครื่อง" ออกแล้ว) · `app_sandbox_purge_itrp` ลบแถวอุปกรณ์ทดสอบด้วย · `private.sandbox_unguarded_tables()` 105 → 106 ชื่อ
+
+### ข้อควรรู้สำหรับหน้าเว็บ
+- ใบเดิม (ก่อน migration) ไม่มีอุปกรณ์ → ใบพิมพ์/รายละเอียดแสดง `asset_code` ตามเดิมเมื่อ `devices = []` และ `host_code = null`
+- ใบแบบเลือกอุปกรณ์ทุกใบมี `host_code` เสมอ (ใบเดิม/แบบเดิมเป็น `null`) · รหัสอุปกรณ์ที่ผู้แจ้งไม่ทราบเว้นว่างได้ (`devices[].device_code = null`) IT เติมให้ตอนส่งงาน
+- `private.itrp_request_machine_codes` (ใช้ตอน IT เปลี่ยนชิ้นส่วน) ยังอ่านจาก `asset_code` + เครื่องที่ IT ระบุตอนส่งงานเท่านั้น (ไม่ได้ดึง `host_code`/อุปกรณ์ที่ผู้แจ้งเลือก)
