@@ -372,7 +372,7 @@ select false, current_setting('t.r2')::uuid, (select id from public.employees wh
 from (values ('started', '2026-03-02 11:00+07'), ('completed', '2026-03-02 14:00+07'), ('rework_requested', '2026-03-05 09:00+07')) v(action, at);
 set local role authenticated;
 select set_config('request.jwt.claims', pg_temp.sub(7), true);
-select is((select count(*)::int from jsonb_object_keys(public.app_itrp_get_detail(current_setting('t.r2')::uuid))), 36, 'itrp get_detail has the 35 old keys plus work_minutes');
+select is((select count(*)::int from jsonb_object_keys(public.app_itrp_get_detail(current_setting('t.r2')::uuid))), 39, 'itrp get_detail has the 35 old keys plus work_minutes plus host_code, host_unknown and devices');
 select ok(public.app_itrp_get_detail(current_setting('t.r2')::uuid) ?& array['id', 'is_test', 'doc_no', 'status', 'requester', 'department', 'events', 'approvals', 'allowed_actions', 'work_minutes'], 'the old itrp keys are all still there');
 select is(public.app_itrp_get_detail(current_setting('t.r2')::uuid)->'work_minutes', '120'::jsonb, 'itrp: 11-14 minus lunch = 120, and the open rework round is not counted');
 select is(public.app_itrp_get_detail(current_setting('t.r1')::uuid)->'work_minutes', 'null'::jsonb, 'itrp: null before delivery');
