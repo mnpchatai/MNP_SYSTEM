@@ -930,9 +930,11 @@
     return Boolean(chosen && !chosen.linked);
   }
   // ตรวจก่อนส่ง → [{ name, message }] (ว่าง = ส่งได้) · name ตรงกับ data-field ของช่องในหน้า · ฐานข้อมูลตรวจซ้ำทุกข้อ
-  function applyProblems(ctx, state) {
+  function applyProblems(ctx, state, candidates = []) {
     const problems = [];
     if (ctx.needsUserChoice && !state.userId) problems.push({ name: "user", message: "กรุณาเลือกผู้ใช้ในทะเบียนสิทธิ์ที่ตรงกับผู้รับสิทธิ์" });
+    // ปุ่มเลือกของผู้ใช้ที่ลาออกแล้วปิดไว้ แต่ฟอร์มที่เปิดกลับหลังส่งไม่สำเร็จอาจเปิดช่องนั้นอีก · ตรวจซ้ำให้เห็นก่อนส่ง (ฐานข้อมูลปฏิเสธเช่นกัน)
+    else if (ctx.needsUserChoice && candidates.some((candidate) => candidate.id === String(state.userId) && !candidate.active)) problems.push({ name: "user", message: "ผู้ใช้นี้ลาออกแล้วในทะเบียนสิทธิ์ บันทึกสิทธิ์ตามใบนี้ไม่ได้ กรุณาเลือกผู้ใช้อื่น" });
     if (ctx.needsNewUser) {
       const authId = normalizeAuthId(state.newUser?.auth_id);
       if (!authId) problems.push({ name: "auth_id", message: "กรุณาระบุ Auth. Name ของผู้ใช้ใหม่ (เช่น somchai.k)" });

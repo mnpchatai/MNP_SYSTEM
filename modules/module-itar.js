@@ -5,7 +5,10 @@
 //   view=settings              ตั้งค่า (it_admin): รายชื่อทีม IT (อ่านอย่างเดียว) + เลขที่เอกสารถัดไป
 //   view=new                   ฟอร์มยื่น 2 ช่วง: (1) ประเภท + ผู้รับสิทธิ์ (2) ติ๊กสิทธิ์จากสิทธิ์ปัจจุบัน + เหตุผล + ไฟล์แนบ
 //   view=order&id=<uuid>       รายละเอียดใบ + ตาราง ก่อน→หลัง + ไทม์ไลน์ + ถาม-ตอบ + ปุ่มตาม allowed_actions
-//   (ส่วน B ยังไม่ทำ) ใบพิมพ์ USER-REQ / USER-Page · หน้าบันทึกลงทะเบียน (apply) · รับทราบสิทธิ์ / รับทราบด้วยกระดาษ
+//   view=apply&id=<uuid>       "ปรับสิทธิ์ตามใบ" (IT ผู้บันทึกทะเบียน): ติ๊กยืนยันทีละรายการ → "บันทึกลงทะเบียน" ครั้งเดียว (app_itar_apply atomic)
+//   view=print&id=<uuid>[&form=page]  ใบพิมพ์ A4: ใบคำร้อง (ค่าเริ่มต้น) หรือเอกสารชี้แจงสิทธิ์ (หลัง IT บันทึกลงทะเบียน)
+//   หน้ารายละเอียดมีการ์ด "รับทราบสิทธิ์" (ผู้รับสิทธิ์ที่มีบัญชี) และ "รับทราบด้วยกระดาษ" + แนบรูปใบที่เซ็น (IT) ตาม allowed_actions
+//   หน้าแรก "งานของคุณวันนี้": ลงทะเบียน window.MNP_OFFICE_HOME.IT_ACCESS_REQUEST (loadHome) · กติกาเลือกงานอยู่ที่ itar-model.js (homeWork)
 //
 // คัดโครงจากใบแจ้งซ่อม IT (module-itrp.js): กติกา flow เหมือนกัน (อนุมัติ 2 ขั้น · ถาม-ตอบ · IT ยกเลิกแทนผู้ยื่น) ที่ต่าง: ไม่มีงานด่วน · ผู้ยื่นกับผู้รับสิทธิ์เป็นคนละคนได้ · IT บันทึกลงทะเบียน แล้วผู้รับสิทธิ์รับทราบ
 // ฐานข้อมูล: supabase/migrations/20270107010000_itar_access_requests.sql ทุกอย่างเรียกผ่าน RPC app_itar_* (ตรวจบทบาท ลำดับขั้น เลขที่เอกสารที่ฝั่งฐานข้อมูล) · สัญญา: docs/itar-contract.md
@@ -94,6 +97,27 @@
     });
   }
 
+  /* ---------- งานบนหน้าแรก "งานของคุณวันนี้" (app.js renderDashboard ผ่าน window.MNP_OFFICE_HOME) ---------- */
+  // ต้องจัดการ = งานที่ต้องกดทำจริง: ใบที่รอฉันอนุมัติ · งาน IT (เฉพาะผู้ดูแลงาน IT: รับงาน / บันทึกลงทะเบียน / รับทราบด้วยกระดาษ) · ใบของฉันที่รอฉันตอบ / รอฉันรับทราบสิทธิ์
+  // กติกาเลือกงานอยู่ที่ model.homeWork (ชุดเดียวกับตัวเลขบนแท็บ/การ์ด) · ดึงรายการแค่ที่ my_role บอกว่ามีสิทธิ์ · ล้มแล้ว throw ให้หน้าแรกซ่อนเฉพาะโมดูลนี้ (office-home.js จับและแจ้งผู้ใช้)
+  // "รับทราบด้วยกระดาษ" รายการรอรับทราบไม่บอกว่าผู้รับสิทธิ์มีบัญชีหรือไม่ จึงอ่านรายละเอียดของใบที่รอรับทราบ (ไม่เกิน HOME_PAPER_CHECK_LIMIT ใบ) แล้วดู allowed_actions · อ่านใบไหนไม่ได้ = ไม่นับใบนั้น (ไม่ทำให้ทั้งหน้าแรกล้ม)
+  const HOME_PAPER_CHECK_LIMIT = 10;
+  async function loadHome() {
+    const [role, mine] = await Promise.all([rpc("app_itar_my_role"), rpc("app_itar_list_mine")]);
+    const hasItWork = Boolean(role?.is_it_admin);
+    const [approvals, it] = await Promise.all([
+      model.canApprove(role) ? rpc("app_itar_list_pending_approvals") : [],
+      hasItWork ? rpc("app_itar_list_it") : [],
+    ]);
+    let paperAckIds = [];
+    if (hasItWork) {
+      const waiting = (Array.isArray(it) ? it : []).filter((row) => row.status === "awaiting_ack").slice(0, HOME_PAPER_CHECK_LIMIT);
+      const details = await Promise.allSettled(waiting.map((row) => rpc("app_itar_get_detail", { p_request_id: row.id })));
+      paperAckIds = waiting.filter((row, index) => details[index].status === "fulfilled" && model.hasAction(details[index].value, "acknowledge_paper")).map((row) => row.id);
+    }
+    return model.homeWork({ role, approvals, it, mine, paperAckIds });
+  }
+
   /* ---------- เส้นทาง ---------- */
   async function render(params) {
     pageVersion += 1;
@@ -109,14 +133,17 @@
     } catch (error) {
       return errorPage(error, version);
     }
-    // แท็บที่ไม่มีสิทธิ์เห็น (พิมพ์ URL เอง) พากลับ "ใบของฉัน" ก่อนเรียกข้อมูลใด ๆ
+    // แท็บที่ไม่มีสิทธิ์เห็น (พิมพ์ URL เอง) พากลับ "ใบของฉัน" ก่อนเรียกข้อมูลใด ๆ · หน้า "ปรับสิทธิ์ตามใบ" ของคนที่ไม่ใช่ผู้บันทึกทะเบียนพากลับหน้ารายละเอียดของใบนั้น
     if (!model.viewAllowed(view, role)) {
-      navigate(model.accessUrl("mine"));
+      const id = params.get("id");
+      navigate(view === "apply" && model.isUuid(id) ? model.accessUrl("order", { id }) : model.accessUrl("mine"));
       return;
     }
     try {
       if (view === "new") return await renderNew(role, version);
       if (view === "order") return await renderOrder(params.get("id"), role, version);
+      if (view === "apply") return await renderApply(params.get("id"), role, version);
+      if (view === "print") return await renderPrint(params.get("id"), params.get("form"), version);
       return await renderTab(view, role, version);
     } catch (error) {
       return errorPage(error, version);
@@ -205,7 +232,8 @@
   // ใบถูกบันทึกแล้ว ไฟล์เป็นส่วนเสริม: ไฟล์ที่ล้มไม่ทำให้ใบหาย ลองซ้ำได้จากแผงความคืบหน้า (ตัวไฟล์อยู่ในหน่วยความจำของหน้านี้ ลองซ้ำได้จนกว่าจะออกจากหน้า
   // และต้องอยู่ในหน้าต่างแนบ 30 นาทีที่ฐานข้อมูลกำหนด) · ลองซ้ำใช้ path เดิม ไม่เกิดไฟล์ซ้ำ และข้ามขั้นที่สำเร็จแล้ว
   // host = element ที่แผงวาดทับ · version = รุ่นหน้า: ผู้ใช้ออกไปหน้าอื่นระหว่างอัปโหลด งานเดินต่อเงียบ ๆ แต่ไม่วาดทับหน้าอื่น · commentId = id ข้อความถาม/ตอบ (ไม่ส่ง = ไฟล์ของใบ)
-  async function attachFiles({ host, version, requestId, commentId = null, files, isTest, heading, intro, continueLabel = "ไปที่ใบขอสิทธิ์", onContinue }) {
+  // paper = รูปใบรับทราบกระดาษที่เซ็นแล้ว (IT แนบ · app_itar_add_paper_attachment · ไม่มีหน้าต่าง 30 นาที)
+  async function attachFiles({ host, version, requestId, commentId = null, paper = false, files, isTest, heading, intro, continueLabel = "ไปที่ใบขอสิทธิ์", onContinue }) {
     const bucket = sb.storage.from(model.fileBucket(isTest));
     const entries = model.makeUploadEntries(requestId, files, () => window.crypto.randomUUID());
     const stillHere = () => version === pageVersion && location.hash === pageHash;
@@ -215,7 +243,7 @@
       name: entry.file.name,
       size: entry.file.size,
       state: entry.registered ? "done" : entry === current ? "working" : entry.error ? "failed" : "waiting",
-      message: entry.error ? model.describeUploadError(entry.error, { comment: commentId !== null }).message : "",
+      message: entry.error ? model.describeUploadError(entry.error, { comment: commentId !== null, paper }).message : "",
     }));
     const draw = (busy) => {
       if (!stillHere() || host.isConnected === false) return false;
@@ -236,15 +264,23 @@
           const { error } = await bucket.upload(entry.path, typed, { upsert: false });
           if (error) throw error;
         },
-        register: (entry) => (commentId !== null
-          ? rpc("app_itar_add_comment_attachment", {
-            p_request_id: requestId, p_comment_id: commentId, p_storage_path: entry.path,
-            p_file_name: entry.file.name.slice(-200), p_mime_type: model.fileMime(entry.file), p_size_bytes: entry.file.size,
-          })
-          : rpc("app_itar_add_attachment", {
-            p_request_id: requestId, p_storage_path: entry.path,
-            p_file_name: entry.file.name.slice(-200), p_mime_type: model.fileMime(entry.file), p_size_bytes: entry.file.size,
-          })),
+        register: (entry) => {
+          if (paper) {
+            return rpc("app_itar_add_paper_attachment", {
+              p_request_id: requestId, p_storage_path: entry.path,
+              p_file_name: entry.file.name.slice(-200), p_mime_type: model.fileMime(entry.file), p_size_bytes: entry.file.size,
+            });
+          }
+          return commentId !== null
+            ? rpc("app_itar_add_comment_attachment", {
+              p_request_id: requestId, p_comment_id: commentId, p_storage_path: entry.path,
+              p_file_name: entry.file.name.slice(-200), p_mime_type: model.fileMime(entry.file), p_size_bytes: entry.file.size,
+            })
+            : rpc("app_itar_add_attachment", {
+              p_request_id: requestId, p_storage_path: entry.path,
+              p_file_name: entry.file.name.slice(-200), p_mime_type: model.fileMime(entry.file), p_size_bytes: entry.file.size,
+            });
+        },
         onStart: (entry) => { current = entry; draw(true); },
         onProgress: () => { current = null; },
       });
@@ -601,6 +637,8 @@
       bindActions();
       bindInfoForm("ask");
       bindInfoForm("answer");
+      bindAck();
+      bindPaper();
       hydrateFiles(detail);
       return true;
     };
@@ -611,6 +649,7 @@
       const spec = model.ACTION_BUTTONS[action];
       if (!spec) return;
       if (spec.opens === "ask") { openAsk(); return; }
+      if (spec.opens === "apply") { navigate(model.applyUrl(detail.id)); return; } // หน้า "ปรับสิทธิ์ตามใบ" เรียก app_itar_apply เอง
       const args = { p_request_id: detail.id };
       if (spec.reason) {
         // ยกเลิก: IT ยกเลิกแทนผู้ยื่นใช้ข้อความ/ความยาวของตัวเอง · ปุ่มอื่นใช้ค่าเดิม
@@ -637,7 +676,78 @@
       document.querySelectorAll("[data-itar-action]").forEach((button) => button.addEventListener("click", () => runAction(button)));
     }
 
-    // ของค้างที่ยังไม่ส่งของหน้ารายละเอียดนี้ (ฟอร์มถาม / ตอบ) ให้ app.js ถามก่อนออกจากหน้า
+    // ผู้รับสิทธิ์ที่มีบัญชีกด "รับทราบและยอมรับนโยบาย" (ชื่อ + วันเวลา = ลายเซ็นอิเล็กทรอนิกส์) · ปุ่มมีเฉพาะเมื่อ allowed_actions มี acknowledge
+    function bindAck() {
+      const button = document.querySelector("#itar-ack-button");
+      if (!button) return;
+      const spec = model.ACTION_BUTTONS.acknowledge;
+      button.addEventListener("click", async () => {
+        if (!(await confirmDialog({ title: spec.confirmTitle, message: spec.confirmMessage, confirmLabel: spec.confirmLabel }))) return;
+        setButtonBusy(button, true);
+        try {
+          await rpc(spec.rpc, { p_request_id: detail.id });
+          showToast(spec.done);
+        } catch (error) {
+          showToast(failure(error, { write: true }).message, "error");
+        }
+        // สำเร็จหรือไม่ก็โหลดใบใหม่ ปุ่มจึงตรงกับสถานะจริง (ผลไม่แน่ชัด = เห็นว่าบันทึกไปแล้วหรือยัง)
+        await renderRoute();
+      });
+    }
+
+    // รับทราบด้วยกระดาษ (IT): แนบรูปใบที่เซ็นแล้ว (≥ 1 ไฟล์) → กด "รับทราบแล้ว (กระดาษ)" · ปุ่มรับทราบกดไม่ได้จนกว่ามีรูปที่แนบสำเร็จแล้ว (ฐานข้อมูลตรวจซ้ำ)
+    function bindPaper() {
+      const card = document.querySelector("#itar-paper-card");
+      if (!card) return;
+      const message = card.querySelector("#itar-paper-message");
+      const showError = (html) => {
+        message.innerHTML = `<div class="form-message error" role="alert">${html}</div>`;
+        message.scrollIntoView?.({ block: "nearest" });
+      };
+      const form = card.querySelector("#itar-paper-form");
+      const filesInput = card.querySelector("#itar-paper-files");
+      let busy = false;
+      if (form && filesInput) {
+        watchUnsaved(() => (card.isConnected && !busy && Array.from(filesInput.files ?? []).length > 0 ? 1 : 0));
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          if (busy) return;
+          message.innerHTML = "";
+          const files = Array.from(filesInput.files ?? []); // อ่านก่อน setFormBusy
+          if (!files.length) { showError(escapeHtml("กรุณาเลือกรูปหรือไฟล์ใบที่เซ็นแล้วก่อน")); return; }
+          if (filesInput.validationMessage) { showError(escapeHtml(model.FILES_PREPARING_MESSAGE)); return; } // ฟอร์ม novalidate: ยังแปลงรูปอยู่
+          const fileProblem = model.validateFiles(files);
+          if (fileProblem) { showError(escapeHtml(fileProblem)); return; }
+          busy = true;
+          await attachFiles({
+            host: card, version, requestId: detail.id, paper: true, files, isTest: Boolean(detail.is_test || role.is_test),
+            heading: "แนบรูปใบรับทราบที่เซ็นแล้ว",
+            intro: "ระบบกำลังแนบไฟล์ให้ ถ้าไฟล์ไหนแนบไม่สำเร็จลองใหม่ได้ · เมื่อแนบครบแล้วกลับมากด \"รับทราบแล้ว (กระดาษ)\"",
+            continueLabel: "กลับไปที่ใบขอสิทธิ์",
+            onContinue: () => renderRoute(),
+          });
+        });
+      }
+      const ackButton = card.querySelector("#itar-paper-ack");
+      const spec = model.ACTION_BUTTONS.acknowledge_paper;
+      ackButton?.addEventListener("click", async () => {
+        message.innerHTML = "";
+        const note = card.querySelector("#itar-paper-note")?.value ?? "";
+        const problem = model.paperAckProblem(detail, note);
+        if (problem) { showError(escapeHtml(problem)); return; }
+        if (!(await confirmDialog({ title: spec.confirmTitle, message: spec.confirmMessage, confirmLabel: spec.confirmLabel }))) return;
+        setButtonBusy(ackButton, true);
+        try {
+          await rpc(spec.rpc, model.paperAckParams(detail.id, note));
+          showToast(spec.done);
+        } catch (error) {
+          showToast(failure(error, { write: true }).message, "error");
+        }
+        await renderRoute();
+      });
+    }
+
+    // ของค้างที่ยังไม่ส่งของหน้ารายละเอียดนี้ (ฟอร์มถาม / ตอบ / ไฟล์รับทราบกระดาษที่เลือกไว้) ให้ app.js ถามก่อนออกจากหน้า
     const unsavedProbes = [];
     function watchUnsaved(probe) {
       if (version !== pageVersion) return;
@@ -713,6 +823,217 @@
     draw();
   }
 
+  /* ---------- ปรับสิทธิ์ตามใบ (IT ผู้บันทึกทะเบียน) ---------- */
+  // ลำดับ: โหลด app_itar_apply_context (รายการที่ขอ + ค่าในทะเบียนตอนนี้ + ผู้ใช้ทะเบียนที่แนะนำ) → IT ตัดสินทีละรายการ (บันทึก / ไม่บันทึก + เหตุผล) → กด "บันทึกลงทะเบียน" ครั้งเดียว
+  // → app_itar_apply (atomic ทั้งใบ: ข้อใดผิดหรือทะเบียนเปลี่ยนไประหว่างกรอก = ไม่เปลี่ยนอะไรเลย · 40001 โหลด context ใหม่แล้วให้ตรวจและกดอีกครั้ง)
+  // ไม่มีช่องรหัสผ่านในหน้านี้ (ขั้นที่ 6 ยังไม่เปิด) · สถานะของหน้าอยู่ในตัวแปร ui (ไม่มีร่างบนเครื่อง เพราะสิทธิ์ในทะเบียนเปลี่ยนได้)
+  async function renderApply(id, role, version) {
+    if (!model.isUuid(id)) return renderNotFound("ไม่พบรหัสใบขอสิทธิ์");
+    let ctx;
+    try {
+      ctx = model.normalizeApplyContext(await rpc("app_itar_apply_context", { p_request_id: id }));
+    } catch (error) {
+      return errorPage(error, version);
+    }
+    const ui = { ctx, state: model.initialApplyState(ctx), found: [], search: { state: "idle", searched: false, message: "" }, submitted: false, submitting: false };
+    const stillHere = () => version === pageVersion && location.hash === pageHash;
+    const candidates = () => model.userCandidates(ui.ctx, ui.found);
+    const orderHref = () => model.accessUrl("order", { id });
+    const showMessage = (html) => {
+      const box = document.querySelector("#itar-message");
+      if (!box) return;
+      box.innerHTML = html ? `<div class="form-message error" role="alert">${html}</div>` : "";
+      if (html) box.scrollIntoView?.({ block: "nearest" });
+    };
+
+    function draw(notice = "") {
+      const head = pages.head({ title: "ปรับสิทธิ์ตามใบ", back: { href: orderHref(), label: "‹ กลับไปที่ใบ" }, isTest: Boolean(role.is_test) });
+      const html = pages.page(`${head}${pages.applyForm({ ctx: ui.ctx, state: ui.state, candidates: candidates(), search: ui.search })}`);
+      if (!paint(html, "ปรับสิทธิ์ตามใบ", version, `ปรับสิทธิ์ ${ui.ctx.request.doc_no ?? ""}`.trim())) return;
+      bind();
+      if (notice) showMessage(escapeHtml(notice));
+    }
+
+    // ส่วนเลือกผู้ใช้ทะเบียน: วาดใหม่เฉพาะรายการ/สถานะค้นหา/ช่องผูกพนักงาน (ช่องอื่นไม่ถูกแตะ จึงไม่เสียสิ่งที่กรอก)
+    function redrawUsers() {
+      const list = document.querySelector("#itar-user-choices");
+      if (list) list.innerHTML = pages.userChoices(candidates(), ui.state.userId);
+      const status = document.querySelector("#itar-user-search-status");
+      if (status) status.innerHTML = pages.userSearchStatus(ui.search);
+      syncLinkBox();
+    }
+    function syncLinkBox() {
+      const box = document.querySelector("#itar-link-box");
+      if (!box) return;
+      const available = model.canLinkEmployee(ui.ctx, ui.state, candidates());
+      box.hidden = !available;
+      if (!available) { ui.state.link = false; const checkbox = box.querySelector("input"); if (checkbox) checkbox.checked = false; }
+    }
+    async function searchUsers() {
+      const text = String(document.querySelector("#itar-user-search")?.value ?? "").trim();
+      if (Array.from(text).length < 2) {
+        ui.search = { state: "error", searched: false, message: "พิมพ์อย่างน้อย 2 ตัวอักษรก่อนค้นหา" };
+        redrawUsers();
+        return;
+      }
+      ui.search = { state: "loading", searched: false, message: "" };
+      redrawUsers();
+      try {
+        const data = await rpc("app_itar_search_subjects", { p_search: text });
+        if (!stillHere()) return;
+        // รวมผลใหม่กับที่เคยค้นไว้ (ผู้ใช้ที่เลือกไว้แล้วต้องไม่หายจากรายการ) · เฉพาะผู้ใช้ในทะเบียน (กลุ่ม users)
+        const merged = new Map(ui.found.map((user) => [String(user.id), user]));
+        for (const user of Array.isArray(data?.users) ? data.users : []) merged.set(String(user.id), user);
+        ui.found = [...merged.values()];
+        ui.search = { state: "idle", searched: true, message: "" };
+      } catch (error) {
+        if (!stillHere()) return;
+        const info = failure(error);
+        ui.search = { state: "error", searched: false, message: info.kind === "unknown" ? "" : info.message };
+      }
+      redrawUsers();
+    }
+
+    function bind() {
+      const form = document.querySelector("#itar-apply-form");
+      if (!form) { unsavedProbe = null; return; }
+      const steps = window.MNP_FORM_STEPS;
+      // ของค้างที่ยังไม่ส่ง: ตัดสินรายการแล้ว / เลือกผู้ใช้แล้ว / กรอกผู้ใช้ใหม่แล้ว · ส่งแล้วหรือกำลังส่งไม่นับ
+      const dirty = () => !ui.submitted && !ui.submitting && (
+        Object.values(ui.state.decisions).some((item) => item.decision !== "" || textFilled(item.reason))
+        || Boolean(ui.state.userId) || textFilled(ui.state.newUser.auth_id)
+      );
+      unsavedProbe = () => (dirty() ? 1 : 0);
+      bindFormCancel(form, { title: "ทิ้งการปรับสิทธิ์ที่กำลังทำ?", isDirty: dirty, onDiscard: () => { ui.submitted = true; unsavedProbe = null; } });
+
+      const decisionFor = (itemId) => (ui.state.decisions[itemId] ??= { decision: "", reason: "" });
+      const showReason = (itemId, on) => {
+        const field = form.querySelector(`[data-reason-for="${itemId}"]`);
+        if (field) field.hidden = !on;
+      };
+      form.addEventListener("change", (event) => {
+        const target = event.target;
+        const name = String(target?.name ?? "");
+        if (name.startsWith("decision:")) {
+          const itemId = name.slice("decision:".length);
+          decisionFor(itemId).decision = target.value;
+          showReason(itemId, target.value === "rejected");
+          steps.clearFieldError(form, name);
+          steps.clearFieldError(form, "items");
+        } else if (name === "user_id") {
+          ui.state.userId = target.value;
+          steps.clearFieldError(form, "user");
+          syncLinkBox();
+        } else if (name === "link") {
+          ui.state.link = Boolean(target.checked);
+        }
+      });
+      form.addEventListener("input", (event) => {
+        const target = event.target;
+        const name = String(target?.name ?? "");
+        if (name.startsWith("reason:")) {
+          decisionFor(name.slice("reason:".length)).reason = target.value;
+          steps.clearFieldError(form, `decision:${name.slice("reason:".length)}`);
+        } else if (name === "new_auth_id") { ui.state.newUser.auth_id = target.value; steps.clearFieldError(form, "auth_id"); }
+        else if (name === "new_name_th") { ui.state.newUser.name_th = target.value; steps.clearFieldError(form, "new_user_name"); }
+        else if (name === "new_name_en") { ui.state.newUser.name_en = target.value; steps.clearFieldError(form, "new_user_name"); }
+      });
+      form.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && event.target?.id === "itar-user-search") { event.preventDefault(); searchUsers(); }
+      });
+      form.addEventListener("click", (event) => {
+        const target = event.target;
+        if (target?.closest?.("#itar-user-search-go")) { event.preventDefault?.(); searchUsers(); return; }
+        if (target?.closest?.("#itar-apply-all")) {
+          // ยืนยันตามที่ขอเฉพาะรายการที่ยังไม่ได้ตัดสินและไม่มีคำเตือน (รายการที่ทะเบียนไม่ตรงต้องให้ IT ตัดสินเอง)
+          let marked = 0;
+          let skipped = 0;
+          for (const row of model.applyRows(ui.ctx)) {
+            if (model.decisionOf(ui.state, row.id).decision !== "") continue;
+            if (row.warning) { skipped += 1; continue; }
+            decisionFor(row.id).decision = "applied";
+            const radio = form.querySelector(`input[name="decision:${row.id}"][value="applied"]`);
+            if (radio) radio.checked = true;
+            marked += 1;
+          }
+          steps.clearFieldError(form, "items");
+          showToast(marked ? `ยืนยัน ${marked} รายการตามที่ขอ${skipped ? ` · ข้าม ${skipped} รายการที่มีคำเตือน (ให้ตัดสินเอง)` : ""}` : "ไม่มีรายการที่ยืนยันอัตโนมัติได้");
+        }
+      });
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (ui.submitting) return;
+        showMessage("");
+        steps.clearFieldErrors(form);
+        const problems = model.applyProblems(ui.ctx, ui.state, candidates());
+        if (problems.length) {
+          const first = steps.showFieldErrors(form, problems);
+          first?.focus?.();
+          if (!first) showMessage(escapeHtml(problems[0].message));
+          return;
+        }
+        const revoke = ui.ctx.request.request_type === "revoke_all";
+        if (!(await confirmDialog({
+          title: revoke ? "ยืนยันถอดสิทธิ์ทั้งหมด?" : "บันทึกสิทธิ์ลงทะเบียนตามใบนี้?",
+          message: model.applyConfirmMessage(ui.ctx, ui.state),
+          confirmLabel: "บันทึกลงทะเบียน",
+          danger: revoke,
+        }))) return;
+        const params = model.applyParams(ui.ctx, ui.state, candidates());
+        ui.submitting = true;
+        setFormBusy(form, true);
+        try {
+          await rpc("app_itar_apply", params);
+        } catch (error) {
+          ui.submitting = false;
+          // ทะเบียนถูกแก้ไประหว่างกรอก (40001): โหลดบริบทล่าสุดให้ เก็บสิ่งที่ IT ตัดสินไว้ แล้วให้ตรวจและกดบันทึกอีกครั้ง
+          if (model.isStaleRights(error)) {
+            try {
+              const fresh = model.normalizeApplyContext(await rpc("app_itar_apply_context", { p_request_id: id }));
+              if (!stillHere()) return;
+              ui.state = model.carryApplyState(ui.state, fresh);
+              ui.ctx = fresh;
+              draw(model.staleApplyMessage(error));
+              return;
+            } catch (reloadError) {
+              console.error(reloadError);
+            }
+          }
+          const info = failure(error, { write: true });
+          // ผลไม่แน่ชัด: ใบอาจถูกบันทึกไปแล้ว (บันทึกซ้ำไม่ได้ ฐานข้อมูลปฏิเสธ) ชวนไปตรวจที่หน้าใบก่อน
+          const check = info.kind === "unknown" ? ` <a href="${orderHref()}">ตรวจที่หน้าใบขอสิทธิ์</a>` : "";
+          showMessage(`${escapeHtml(info.message)}${check}`);
+          setFormBusy(form, false);
+          form.querySelector("[data-step-submit]")?.focus({ preventScroll: true });
+          return;
+        }
+        ui.submitted = true;
+        unsavedProbe = null;
+        showToast(revoke ? "ถอดสิทธิ์ทั้งหมดในทะเบียนแล้ว ใบนี้จบงาน" : "บันทึกสิทธิ์ลงทะเบียนแล้ว ส่งให้ผู้ใช้รับทราบ");
+        navigate(orderHref());
+      });
+    }
+    const textFilled = (value) => String(value ?? "").trim() !== "";
+    draw();
+  }
+
+  /* ---------- ใบพิมพ์ A4 ---------- */
+  // ข้อมูลทั้งหมดมาจาก app_itar_get_detail ที่เรียกครั้งเดียว (ไม่อ่านทะเบียนเพิ่ม) · ใบยังไม่บันทึกลงทะเบียนขอพิมพ์เอกสารชี้แจงสิทธิ์ = ได้ใบคำร้องแทน
+  async function renderPrint(id, formParam, version) {
+    if (!model.isUuid(id)) return renderNotFound("ไม่พบรหัสใบขอสิทธิ์");
+    let detail;
+    try {
+      detail = await rpc("app_itar_get_detail", { p_request_id: id });
+    } catch (error) {
+      return errorPage(error, version);
+    }
+    const form = model.resolvePrintForm(detail, formParam);
+    // ชื่อแท็บ = เลขที่ใบ (เป็นชื่อไฟล์เริ่มต้นเมื่อบันทึกเป็น PDF)
+    if (!paint(pages.printPage(detail, { form }), form === "page" ? "พิมพ์เอกสารชี้แจงสิทธิ์" : "พิมพ์ใบขอสิทธิ์", version, detail.doc_no)) return;
+    document.querySelector("#itar-print-button")?.addEventListener("click", () => window.print());
+  }
+
   /* ---------- ตั้งค่า (it_admin) ---------- */
   // รายชื่อทีม IT อ่านอย่างเดียว (ชุดเดียวกับใบสั่งงาน IT) จึงมีแค่การตั้งเลขที่เอกสารถัดไป
   function bindSettings(counter) {
@@ -755,4 +1076,6 @@
   window.MNP_ITAR = api;
   // ประกาศตัวเองให้การ์ดในเมนู "ระบบสำนักงาน" (วิธีเพิ่มโมดูลใหม่ดูที่หัวไฟล์ modules/office-sections.js) key = รหัสโมดูลของการ์ด
   (window.MNP_OFFICE_CARDS ??= {}).IT_ACCESS_REQUEST = api;
+  // งานของโมดูลนี้บนหน้าแรก (สัญญาอยู่ที่หัว modules/office-home.js) · key = รหัสโมดูลเดียวกับการ์ด
+  (window.MNP_OFFICE_HOME ??= {}).IT_ACCESS_REQUEST = { label: "ใบขอสิทธิ์ IT", load: loadHome };
 })();

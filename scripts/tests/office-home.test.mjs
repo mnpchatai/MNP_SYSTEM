@@ -224,7 +224,7 @@ test("index.html loads office-home.js before app.js with the same cache token as
 });
 
 test("each office module announces its home work under the same code as its card, and the department rule keeps the work-order module away from department ID", () => {
-  const registered = { "modules/module-itwo.js": "IT_WORK_ORDER", "modules/module-itrp.js": "IT_COMPUTER_REPAIR" };
+  const registered = { "modules/module-itwo.js": "IT_WORK_ORDER", "modules/module-itrp.js": "IT_COMPUTER_REPAIR", "modules/module-itar.js": "IT_ACCESS_REQUEST" };
   for (const [file, code] of Object.entries(registered)) {
     const source = read(file);
     assert.ok(source.includes(`(window.MNP_OFFICE_HOME ??= {}).${code} = { label: `), `${file} registers its home work`);

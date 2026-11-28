@@ -71,8 +71,15 @@ test("views and urls: unknown views are rejected, urls go to the access-request 
   assert.equal(model.readView(params("")), "mine");
   assert.equal(model.readView(params("view=order&id=1")), "order");
   assert.equal(model.readView(params("view=new")), "new");
-  assert.equal(model.readView(params("view=print")), null, "print belongs to the next part");
+  assert.equal(model.readView(params("view=print&id=1&form=page")), "print");
+  assert.equal(model.readView(params("view=apply&id=1")), "apply");
   assert.equal(model.readView(params("view=bogus")), null);
+  assert.equal(model.printUrl("abc"), "#/office?module=access-request&view=print&id=abc");
+  assert.equal(model.printUrl("abc", "page"), "#/office?module=access-request&view=print&id=abc&form=page");
+  assert.equal(model.applyUrl("abc"), "#/office?module=access-request&view=apply&id=abc");
+  assert.equal(model.viewAllowed("apply", { is_it_admin: true, is_itas_admin: true }), true);
+  assert.equal(model.viewAllowed("apply", { is_it_admin: true }), false, "an IT admin outside the register-admin list cannot apply");
+  assert.equal(model.viewAllowed("apply", { is_itas_admin: true }), false);
   assert.equal(model.accessUrl("mine"), "#/office?module=access-request");
   assert.equal(model.accessUrl("order", { id: "abc" }), "#/office?module=access-request&view=order&id=abc");
   assert.equal(model.accessUrl("it"), "#/office?module=access-request&view=it");
@@ -81,13 +88,18 @@ test("views and urls: unknown views are rejected, urls go to the access-request 
 });
 
 /* ---------- ปุ่ม ---------- */
-test("buttons come from allowed_actions only, in decision order, and unknown or part-B actions never become buttons", () => {
+test("buttons come from allowed_actions only, in decision order, and unknown actions never become buttons", () => {
   assert.deepEqual(model.actionButtons(["cancel", "reject", "approve", "request_info", "start"]).map((button) => button.action), ["approve", "reject", "request_info", "start", "cancel"]);
-  assert.deepEqual(model.actionButtons(["apply", "acknowledge", "acknowledge_paper", "add_paper_attachment", "bogus"]), []);
+  assert.deepEqual(model.actionButtons(["acknowledge_paper", "apply", "cancel", "bogus", "add_paper_attachment", "acknowledge"]).map((button) => button.action), ["apply", "acknowledge", "acknowledge_paper", "add_paper_attachment", "cancel"]);
+  assert.deepEqual(model.actionButtons(["bogus"]), []);
   assert.deepEqual(model.actionButtons(null), []);
   assert.equal(model.actionButtons(["provide_info"])[0].inline, true, "the answer form is drawn open in the page, not as a button");
-  assert.deepEqual(model.deferredActions(["approve", "apply", "acknowledge"]).map((item) => item.action), ["apply", "acknowledge"], "part-B steps are announced as in development");
-  assert.deepEqual(model.deferredActions(["approve"]), []);
+  for (const action of ["acknowledge", "acknowledge_paper", "add_paper_attachment"]) assert.equal(model.ACTION_BUTTONS[action].inline, true, `${action} has its own card`);
+  assert.equal(model.ACTION_BUTTONS.apply.opens, "apply", "the apply button opens its own page");
+  assert.ok(!model.ACTION_BUTTONS.apply.inline);
+  assert.equal(model.deferredActions, undefined, "no part-B step is announced as in development any more");
+  assert.equal(model.hasAction({ allowed_actions: ["apply"] }, "apply"), true);
+  assert.equal(model.hasAction({}, "apply"), false);
   for (const spec of Object.values(model.ACTION_BUTTONS)) assert.ok(spec.rpc.startsWith("app_itar_"), spec.rpc);
 });
 

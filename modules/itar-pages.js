@@ -612,6 +612,12 @@
     if (!candidates.length) return '<p class="muted small">ไม่พบผู้ใช้ในทะเบียนที่น่าจะตรงกับผู้รับสิทธิ์ ค้นหาด้วยชื่อหรือ Auth. Name ด้านล่าง</p>';
     return candidates.map((user) => `<label class="itar-choice${user.active ? "" : " is-disabled"}"><input type="radio" name="user_id" value="${esc(user.id)}"${String(selectedId) === user.id ? " checked" : ""}${user.active ? "" : " disabled"}> <span><strong>${esc(user.authId)}</strong> ${esc(user.name)}${user.department ? ` · ${esc(user.department)}` : ""}${user.active ? "" : ' <span class="badge cancelled">ลาออกแล้ว</span>'}${user.linked ? ' <small class="muted">ผูกพนักงานแล้ว</small>' : ""}</span></label>`).join("");
   }
+  // ข้อความสถานะใต้ช่องค้นหาผู้ใช้ทะเบียน · search = { state: "idle" | "loading" | "error", searched, message }
+  function userSearchStatus(search) {
+    if (search.state === "loading") return '<p class="muted small">กำลังค้นหา…</p>';
+    if (search.state === "error") return `<p class="field-error" role="alert">${esc(search.message || "ค้นหาไม่สำเร็จ ตรวจอินเทอร์เน็ตแล้วกดค้นหาอีกครั้ง")}</p>`;
+    return search.searched ? '<p class="muted small">แสดงผลที่พบรวมในรายการด้านบนแล้ว</p>' : "";
+  }
   function applyRowHtml(row, decision) {
     const applied = decision.decision === "applied";
     const rejected = decision.decision === "rejected";
@@ -644,7 +650,7 @@
           <p class="muted small">ผู้รับสิทธิ์ยังไม่ผูกกับผู้ใช้ในทะเบียน เลือกผู้ใช้ที่ตรงกับผู้รับสิทธิ์ (ระบบแนะนำจากชื่อ/บัญชีพนักงาน หรือค้นหาเอง)</p>
           <div class="itar-choices" id="itar-user-choices" role="radiogroup" data-invalid-target aria-label="ผู้ใช้ในทะเบียนสิทธิ์">${userChoices(candidates, state.userId)}</div>
           <div class="itar-search-row"><input class="input" id="itar-user-search" type="search" maxlength="100" autocomplete="off" placeholder="ค้นหาด้วยชื่อหรือ Auth. Name (อย่างน้อย 2 ตัวอักษร)" aria-label="ค้นหาผู้ใช้ในทะเบียน"><button type="button" class="btn secondary" id="itar-user-search-go">ค้นหา</button></div>
-          <div id="itar-user-search-status" aria-live="polite">${search.state === "loading" ? '<p class="muted small">กำลังค้นหา…</p>' : search.state === "error" ? `<p class="field-error" role="alert">${esc(search.message || "ค้นหาไม่สำเร็จ ตรวจอินเทอร์เน็ตแล้วกดค้นหาอีกครั้ง")}</p>` : search.searched ? '<p class="muted small">แสดงผลที่พบรวมในรายการด้านบนแล้ว</p>' : ""}</div>
+          <div id="itar-user-search-status" aria-live="polite">${userSearchStatus(search)}</div>
           <label class="itar-choice" id="itar-link-box"${model.canLinkEmployee(ctx, state, candidates) ? "" : " hidden"}><input type="checkbox" name="link"${state.link ? " checked" : ""}> <span>ผูกผู้ใช้ในทะเบียนนี้กับบัญชีพนักงานของผู้รับสิทธิ์ <small class="muted">(ใบต่อไปของคนนี้จะรู้สิทธิ์ปัจจุบันอัตโนมัติ)</small></span></label>
         </fieldset>`
       : "";
@@ -849,7 +855,7 @@
 
   const api = {
     head, newButton, tabs, page, errorCard, mineList, approvalsList, itList, chooserForm, modeBox, subjectBody, rightsForm, emailAddRow, emailAddRows, previewTable, rightsList,
-    uploadPanel, detailPage, detailHead, actionsCard, ackCard, paperCard, printCard, applyForm, userChoices, printRequestSheet, printRightsSheet, printPage, factsCard, itemsCard, afterCard, changeTable, askFormCard, answerCard, commentsCard, historyCard, filesCard,
+    uploadPanel, detailPage, detailHead, actionsCard, ackCard, paperCard, printCard, applyForm, userChoices, userSearchStatus, printRequestSheet, printRightsSheet, printPage, factsCard, itemsCard, afterCard, changeTable, askFormCard, answerCard, commentsCard, historyCard, filesCard,
     settingsPage, staffTable, docCounterCard, purgeRow, testTag, selectOptions, fileGrid,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

@@ -4459,3 +4459,43 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 .itar-upload-row.is-failed .itar-upload-state, .itar-upload-message { color: var(--danger); }
 .itar-upload-message { grid-column: 1 / -1; font-size: var(--text-meta); overflow-wrap: anywhere; }
 .itar-upload .form-actions { flex-wrap: wrap; justify-content: flex-start; }
+
+/* ใบขอสิทธิ์ส่วน B: รับทราบสิทธิ์ · รับทราบด้วยกระดาษ · หน้า "ปรับสิทธิ์ตามใบ" (modules/itar-pages.js) */
+.itar-ack-card, .itar-paper-card { border-color: var(--primary); }
+.itar-ack-card .form-actions, .itar-paper-card .form-actions { flex-wrap: wrap; justify-content: flex-start; }
+.itar-policy { margin: 14px 0; padding: 10px 14px; border-left: 3px solid var(--primary); background: var(--primary-soft); border-radius: var(--radius-md); }
+.itar-policy p { margin: 0 0 4px; }
+.itar-paper-card .field { margin: 12px 0; }
+.itar-apply-reason { margin: 0 0 16px; }
+.itar-apply-list { margin-top: 10px; display: grid; gap: 0; border: 1px solid var(--line); border-radius: var(--radius-md); overflow: hidden; }
+.itar-apply-row { padding: 12px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; align-items: start; background: var(--paper); border-bottom: 1px solid var(--soft-line); }
+.itar-apply-row:last-child { border-bottom: 0; }
+.itar-apply-row.has-warning { box-shadow: inset 3px 0 0 var(--warning); }
+.itar-apply-main { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.itar-apply-warning { color: var(--warning-ink); font-weight: 600; }
+.itar-apply-decide { flex-wrap: wrap; }
+.itar-apply-row .itar-note-field { grid-column: 1 / -1; }
+.itar-user-pick .itar-choices { margin-bottom: 10px; }
+.itar-user-pick .itar-search-row { margin-bottom: 6px; }
+.itar-choice.is-disabled { opacity: .6; cursor: not-allowed; }
+@media (max-width: 719px) {
+  .itar-apply-row { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ใบพิมพ์ A4 ของใบขอสิทธิ์: ใช้เปลือก .itrp-sheet* ร่วมกับใบแจ้งซ่อม (พื้นขาวตัวดำ การตั้งหน้า A4 และการซ่อนเมนูตอนพิมพ์มาจากกฎของ .itrp-sheet) · ส่วนที่ต่างอยู่ตรงนี้ */
+.itar-signs-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.itar-signs-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.itar-sheet-items { table-layout: fixed; }
+.itar-sheet-items th:nth-child(1) { width: 12mm; }
+.itar-sheet-items th:nth-child(3), .itar-sheet-items th:nth-child(4) { width: 34mm; }
+.itar-sheet-items small { display: block; }
+.itar-sheet-folders { table-layout: fixed; }
+.itar-sheet-folders th:nth-child(1), .itar-sheet-folders th:nth-child(4) { width: 15mm; }
+.itar-sheet-folders th:nth-child(3), .itar-sheet-folders th:nth-child(6) { width: 13mm; }
+.itar-sheet-folders th, .itar-sheet-folders td { font-size: 9pt; padding: 2px 5px; }
+.itar-sheet-policy { margin: 6px 0; padding: 4px 8px; border: 1px solid #000; }
+.itar-sheet-policy p { margin: 2px 0 0; }
+@media print {
+  .itar-sheet-policy, .itar-sheet-folders tr { break-inside: avoid; }
+  .itar-sheet-folders thead, .itar-sheet-items thead { display: table-header-group; }
+}

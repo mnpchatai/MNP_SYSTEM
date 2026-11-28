@@ -158,17 +158,19 @@ test("the detail page shows the facts, the table, the history, and escapes every
   assert.match(html, /ประวัติเอกสาร/);
   assert.match(html, /ยื่นใบขอสิทธิ์/);
   assert.doesNotMatch(html, /id="attachment-gallery"/, "no files, no gallery");
-  for (const host of ["itar-apply-host", "itar-ack-host", "itar-print-host"]) assert.match(html, new RegExp(`id="${host}" hidden`), `${host} is left for part B`);
+  assert.doesNotMatch(html, /itar-apply-host|itar-ack-host|itar-print-host/, "the part-B placeholders are replaced by real cards");
+  assert.match(html, /id="itar-print-req"/, "the request form can always be printed");
   assert.doesNotMatch(html, /type="password"|รหัสผ่าน/);
 });
 
-test("detail buttons come from allowed_actions and part-B steps are announced instead of hidden", () => {
+test("detail buttons come from allowed_actions: decisions and apply are buttons, acknowledge has its own card", () => {
   const html = pages.detailPage(detailOf({ allowed_actions: ["approve", "reject", "request_info", "cancel", "apply", "acknowledge"] }));
-  assert.deepEqual([...html.matchAll(/data-itar-action="([a-z_]+)"/g)].map((match) => match[1]), ["approve", "reject", "request_info", "cancel"]);
+  assert.deepEqual([...html.matchAll(/data-itar-action="([a-z_]+)"/g)].map((match) => match[1]), ["approve", "reject", "request_info", "apply", "cancel"]);
   assert.match(html, /id="itar-ask-card"[^>]*hidden/, "the question form waits for its button");
-  assert.match(html, /ปุ่มยังไม่เปิดให้ใช้ในหน้าเว็บรุ่นนี้ \(กำลังพัฒนา\): บันทึกลงทะเบียนสิทธิ์ · รับทราบสิทธิ์/);
+  assert.match(html, /id="itar-ack-card"/);
+  assert.doesNotMatch(html, /กำลังพัฒนา\): /, "nothing is announced as unavailable any more");
   const none = pages.detailPage(detailOf({ allowed_actions: [] }));
-  assert.doesNotMatch(none, /itar-actions-title|itar-ask-card|itar-deferred/);
+  assert.doesNotMatch(none, /itar-actions-title|itar-ask-card|itar-ack-card|itar-paper-card/);
   assert.doesNotMatch(none, /data-itar-action/);
 });
 
