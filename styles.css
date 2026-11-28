@@ -3888,15 +3888,15 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 }
 
 /* ---------- ใบสั่งงาน IT (itwo) + ใบแจ้งซ่อม (itrp): ปรับตามความกว้างจอ/การซูม ----------
-   ทุกกฎขึ้นต้นด้วย .itwo-page / .itrp-page (ไม่แตะกฎกลางที่โมดูลของเพื่อนใช้ร่วม) · ไม่มีกฎใดอยู่ใน @media print (ใบพิมพ์ A4 ไม่เปลี่ยน)
+   ทุกกฎขึ้นต้นด้วย .itwo-page / .itrp-page / .itar-page (ไม่แตะกฎกลางที่โมดูลของเพื่อนใช้ร่วม) · ไม่มีกฎใดอยู่ใน @media print (ใบพิมพ์ A4 ไม่เปลี่ยน)
    หลักการ: เลขที่เอกสาร/รหัสเครื่อง/วันที่ ไม่ตัดกลางคำ · ตารางกว้างเลื่อนแนวนอนในกรอบของตัวเอง · ข้อความยาวตัดบรรทัดตามคำ */
-.itwo-page .view-tabs, .itrp-page .view-tabs { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
-.itwo-page .view-tabs::-webkit-scrollbar, .itrp-page .view-tabs::-webkit-scrollbar { display: none; }
-.itwo-page .view-tab, .itrp-page .view-tab { flex: 0 0 auto; white-space: nowrap; }
-.itwo-page :is(.register-no, .request-no), .itrp-page :is(.register-no, .request-no) { white-space: nowrap; }
+.itwo-page .view-tabs, .itrp-page .view-tabs, .itar-page .view-tabs { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+.itwo-page .view-tabs::-webkit-scrollbar, .itrp-page .view-tabs::-webkit-scrollbar, .itar-page .view-tabs::-webkit-scrollbar { display: none; }
+.itwo-page .view-tab, .itrp-page .view-tab, .itar-page .view-tab { flex: 0 0 auto; white-space: nowrap; }
+.itwo-page :is(.register-no, .request-no), .itrp-page :is(.register-no, .request-no), .itar-page :is(.register-no, .request-no) { white-space: nowrap; }
 /* จอกลาง (แถบเมนูซ้ายยังกินที่): บรรทัดรองของแถวรายการตัดเป็น 2 บรรทัดแทนที่จะดันตารางให้กว้างจนป้ายสถานะถูกตัด */
 @media (min-width: 761px) and (max-width: 1279px) {
-  .itwo-page .register-sub, .itrp-page .register-sub { max-width: 36ch; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; white-space: normal; }
+  .itwo-page .register-sub, .itrp-page .register-sub, .itar-page .register-sub { max-width: 36ch; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; white-space: normal; }
   /* ตัดที่ 2 บรรทัดได้จริงต้องมี overflow: hidden · กฎกลาง .register-status .register-sub (จอ 761px ขึ้นไป) ตั้ง overflow: visible ไว้ ต้องแรงกว่าเฉพาะใน itwo */
   .itwo-page .register-sub, .itwo-page .register-status .register-sub { overflow: hidden; }
 }

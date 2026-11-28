@@ -404,9 +404,11 @@
   const subjectModeAllowed = (role, type, mode) => subjectModes(role, type).some((item) => item.value === mode);
   // ผลค้นหา (app_itar_search_subjects) → รายการให้เลือก: พนักงาน (มีบัญชี) และผู้ใช้ในทะเบียนที่ไม่ผูกพนักงาน (ไม่มีบัญชี)
   // ผู้ใช้ทะเบียนที่ผูกพนักงานอยู่แล้วไม่แสดงซ้ำ (เลือกผ่านพนักงานแล้วฐานข้อมูลผูกให้เอง)
-  function searchChoices(data) {
+  function searchChoices(data, role) {
+    // user_id ใน app_itar_search_subjects เป็น null เสมอถ้าผู้ค้นไม่อยู่ใน itas_admins → ป้ายสถานะทะเบียนแสดงเฉพาะผู้บันทึกทะเบียน (ไม่งั้นป้ายผิดทุกแถว)
+    const showRegistry = Boolean(role?.is_itas_admin);
     const employees = listOf(data?.employees).map((row) => ({
-      key: `e:${row.id}`, kind: "employee", id: row.id, name: textOf(row.full_name), meta: [row.employee_no, row.department_name, row.user_id ? "มีในทะเบียนสิทธิ์" : "ยังไม่มีในทะเบียนสิทธิ์"].filter(Boolean).join(" · "),
+      key: `e:${row.id}`, kind: "employee", id: row.id, name: textOf(row.full_name), meta: [row.employee_no, row.department_name, showRegistry ? (row.user_id ? "มีในทะเบียนสิทธิ์" : "ยังไม่มีในทะเบียนสิทธิ์") : ""].filter(Boolean).join(" · "),
     }));
     const users = listOf(data?.users).filter((row) => !row.employee_id).map((row) => ({
       key: `u:${row.id}`, kind: "user", id: row.id, name: subjectName({ name_th: row.name_th, name_en: row.name_en }), meta: [row.auth_id, row.department_code, row.status === "resigned" ? "ลาออกแล้ว" : "ไม่มีบัญชีพนักงาน"].filter(Boolean).join(" · "),

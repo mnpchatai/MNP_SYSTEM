@@ -161,14 +161,21 @@ test("subject problems are caught in Thai before the form context is requested",
 });
 
 test("search results: employees and registry users without an employee, never the same person twice", () => {
-  const rows = model.searchChoices({
+  const data = {
     employees: [{ id: "e1", employee_no: "AC100", full_name: "สมชาย ใจดี", department_name: "บัญชี", user_id: "u1" }, { id: "e2", employee_no: "AC101", full_name: "มาลี", department_name: "บัญชี", user_id: null }],
     users: [{ id: "u1", name_th: "สมชาย ใจดี", employee_id: "e1" }, { id: "u7", auth_id: "guest.g", name_th: "ผู้เยี่ยม", name_en: "Guest", department_code: "ACC", status: "active", employee_id: null }],
-  });
+  };
+  const rows = model.searchChoices(data, { is_itas_admin: true });
   assert.deepEqual(rows.map((row) => [row.kind, row.id]), [["employee", "e1"], ["employee", "e2"], ["user", "u7"]]);
   assert.match(rows[0].meta, /มีในทะเบียนสิทธิ์/);
   assert.match(rows[1].meta, /ยังไม่มีในทะเบียนสิทธิ์/);
   assert.match(rows[2].meta, /ไม่มีบัญชีพนักงาน/);
+  // ผู้ค้นที่ไม่ใช่ผู้บันทึกทะเบียน: ฐานข้อมูลคืน user_id เป็น null ทุกแถว → ไม่แสดงป้ายสถานะทะเบียน (ไม่งั้นป้ายผิด)
+  for (const role of [undefined, null, { is_it_admin: true }, { is_itas_admin: false }]) {
+    const plain = model.searchChoices(data, role);
+    assert.ok(plain.every((row) => !/ทะเบียนสิทธิ์/.test(row.meta)), "no registry label without is_itas_admin");
+    assert.equal(plain[0].meta, "AC100 · บัญชี");
+  }
   assert.deepEqual(model.searchChoices(null), []);
 });
 

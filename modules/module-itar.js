@@ -102,19 +102,31 @@
   // กติกาเลือกงานอยู่ที่ model.homeWork (ชุดเดียวกับตัวเลขบนแท็บ/การ์ด) · ดึงรายการแค่ที่ my_role บอกว่ามีสิทธิ์ · ล้มแล้ว throw ให้หน้าแรกซ่อนเฉพาะโมดูลนี้ (office-home.js จับและแจ้งผู้ใช้)
   // "รับทราบด้วยกระดาษ" รายการรอรับทราบไม่บอกว่าผู้รับสิทธิ์มีบัญชีหรือไม่ จึงอ่านรายละเอียดของใบที่รอรับทราบ (ไม่เกิน HOME_PAPER_CHECK_LIMIT ใบ) แล้วดู allowed_actions · อ่านใบไหนไม่ได้ = ไม่นับใบนั้น (ไม่ทำให้ทั้งหน้าแรกล้ม)
   const HOME_PAPER_CHECK_LIMIT = 10;
-  async function loadHome() {
-    const [role, mine] = await Promise.all([rpc("app_itar_my_role"), rpc("app_itar_list_mine")]);
-    const hasItWork = Boolean(role?.is_it_admin);
-    const [approvals, it] = await Promise.all([
-      model.canApprove(role) ? rpc("app_itar_list_pending_approvals") : [],
-      hasItWork ? rpc("app_itar_list_it") : [],
-    ]);
-    let paperAckIds = [];
-    if (hasItWork) {
-      const waiting = (Array.isArray(it) ? it : []).filter((row) => row.status === "awaiting_ack").slice(0, HOME_PAPER_CHECK_LIMIT);
-      const details = await Promise.allSettled(waiting.map((row) => rpc("app_itar_get_detail", { p_request_id: row.id })));
-      paperAckIds = waiting.filter((row, index) => details[index].status === "fulfilled" && model.hasAction(details[index].value, "acknowledge_paper")).map((row) => row.id);
+  // เวลารวมของ loadHome ต้องอยู่ในกรอบ 3 วิของ office-home.js · การอ่านรายละเอียดใบรอรับทราบเป็นขั้นท้ายสุดและเป็นแค่ตัวช่วยคัดงาน จึงมีกรอบเวลาของตัวเอง
+  // ใบไหนอ่านไม่ทันในกรอบนี้ = ไม่นับเป็นงานรับทราบด้วยกระดาษ (งานอื่นของโมดูลยังขึ้นปกติ)
+  const HOME_PAPER_CHECK_MS = 1200;
+  async function loadPaperAckIds(itRows) {
+    const waiting = (Array.isArray(itRows) ? itRows : []).filter((row) => row.status === "awaiting_ack").slice(0, HOME_PAPER_CHECK_LIMIT);
+    if (!waiting.length) return [];
+    let timer;
+    const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve(null), HOME_PAPER_CHECK_MS); });
+    try {
+      const details = await Promise.all(waiting.map((row) => Promise.race([rpc("app_itar_get_detail", { p_request_id: row.id }).catch(() => null), deadline])));
+      return waiting.filter((row, index) => details[index] && model.hasAction(details[index], "acknowledge_paper")).map((row) => row.id);
+    } finally {
+      clearTimeout(timer);
     }
+  }
+  async function loadHome() {
+    // ใบของฉันไม่ขึ้นกับสิทธิ์ จึงเริ่มพร้อม my_role · รายการอนุมัติ/งาน IT ต้องรู้สิทธิ์ก่อน แล้วเริ่มพร้อมกัน · อ่านรายละเอียดใบรอรับทราบต่อจากงาน IT ทันทีโดยไม่รอรายการอนุมัติ
+    const minePromise = rpc("app_itar_list_mine");
+    minePromise.catch(() => {}); // กัน unhandled rejection ถ้า my_role ล้มก่อน (ผลล้มของ mine ถูก throw ตอน await ด้านล่าง)
+    const role = await rpc("app_itar_my_role");
+    const hasItWork = Boolean(role?.is_it_admin);
+    const approvalsPromise = model.canApprove(role) ? rpc("app_itar_list_pending_approvals") : Promise.resolve([]);
+    const itPromise = hasItWork ? rpc("app_itar_list_it") : Promise.resolve([]);
+    const paperPromise = itPromise.then((rows) => (hasItWork ? loadPaperAckIds(rows) : []), () => []);
+    const [mine, approvals, it, paperAckIds] = await Promise.all([minePromise, approvalsPromise, itPromise, paperPromise]);
     return model.homeWork({ role, approvals, it, mine, paperAckIds });
   }
 
@@ -363,7 +375,7 @@
       try {
         const data = await rpc("app_itar_search_subjects", { p_search: text });
         if (!stillHere()) return;
-        ui.search = { state: "idle", results: model.searchChoices(data), searched: true, message: "" };
+        ui.search = { state: "idle", results: model.searchChoices(data, role), searched: true, message: "" };
       } catch (error) {
         if (!stillHere()) return;
         const info = failure(error);

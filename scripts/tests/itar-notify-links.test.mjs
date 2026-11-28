@@ -40,9 +40,11 @@ test("bell: the access request notification opens the order detail page, and the
   assert.equal(href({ action_url: "/office/accessories/x" }), null, "only the exact /office/access/ prefix counts");
 });
 
-test("bell: an access request notification uses the IT icon and colour", () => {
+test("bell: an access request notification uses the lock icon and the IT colour", () => {
   const app = read("app.js");
-  assert.match(app, /href\?\.startsWith\("#\/office\?module=access-request"\) \? "IT_REPAIR"/);
+  assert.match(app, /href\?\.startsWith\("#\/office\?module=access-request"\) \? "IT_ACCESS_REQUEST"/);
+  // IT_ACCESS_REQUEST ไม่มีโมดูลคำร้องกลางและไม่อยู่ใน requestTypePalettes → จานสีตกกลับเป็น "it" (สีเดียวกับเดิม)
+  assert.match(app, /requestTypePalettes\[code\] \?\? "it"/);
   assert.match(app, /const NOTIFICATION_TYPE_BY_PREFIX = Object\.freeze\(\{ MT: "MT_REPAIR", MG: "MANAGEMENT", IT: "IT_REPAIR" \}\);/);
 });
 

@@ -425,7 +425,11 @@ test("the module registers its home work under the card's code, handles apply an
   assert.match(moduleSource, /if \(view === "print"\) return await renderPrint\(params\.get\("id"\), params\.get\("form"\), version\);/);
   assert.match(moduleSource, /view === "apply" && model\.isUuid\(id\) \? model\.accessUrl\("order", \{ id \}\)/, "a non-register-admin is sent back to the request page");
   assert.match(moduleSource, /if \(spec\.opens === "apply"\) \{ navigate\(model\.applyUrl\(detail\.id\)\); return; \}/);
-  assert.match(moduleSource, /Promise\.allSettled\(waiting\.map/, "a detail that cannot be read does not break the home page");
+  // รายละเอียดใบรอรับทราบ: อ่านไม่ได้/ไม่ทันกรอบเวลา = ข้ามใบนั้น ไม่ทำให้ทั้งหน้าแรกล้ม · กรอบเวลาของตัวเองต้องสั้นกว่ากรอบ 3 วิของ office-home.js
+  assert.match(moduleSource, /Promise\.race\(\[rpc\("app_itar_get_detail", \{ p_request_id: row\.id \}\)\.catch\(\(\) => null\), deadline\]\)/, "a detail that cannot be read in time does not break the home page");
+  const paperLimit = Number(/const HOME_PAPER_CHECK_MS = (\d+);/.exec(moduleSource)?.[1]);
+  const homeLimit = Number(/const LOAD_TIMEOUT_MS = (\d+);/.exec(read("modules/office-home.js"))?.[1]);
+  assert.ok(paperLimit > 0 && paperLimit < homeLimit, "paper-ack detail reads have their own time limit below the office home limit");
   assert.match(moduleSource, /model\.isStaleRights\(error\)[\s\S]{0,400}app_itar_apply_context/, "40001 reloads the context");
   for (const file of ["modules/module-itar.js", "modules/itar-pages.js", "modules/itar-model.js"]) {
     assert.doesNotMatch(read(file), /type="password"|service_role|secret key|sb_secret|eyJ[A-Za-z0-9_-]{20}/i, `${file} has no password field or key`);

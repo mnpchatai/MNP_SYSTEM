@@ -5032,7 +5032,7 @@ function notificationItemHtml(item) {
   const href = notificationHref(item);
   const tag = href ? "a" : "div";
   // ใบสั่งงาน IT ใบแจ้งซ่อม IT (itrp) และใบขอสิทธิ์ IT (itar) ใช้ไอคอน/สีของ IT (เลขที่ IT06-26/012 IT01-26/050 และ IT08-01-26/003 ไม่ตรงรูปแบบ IT-ปปปป- ของใบแจ้งซ่อมเดิม)
-  const typeCode = href?.startsWith("#/ncr") ? "NCR_CAR" : href?.startsWith("#/office?module=work-order") ? "IT_REPAIR" : href?.startsWith("#/office?module=repair") ? "IT_REPAIR" : href?.startsWith("#/office?module=access-request") ? "IT_REPAIR" : NOTIFICATION_TYPE_BY_PREFIX[`${item.title ?? ""} ${item.body ?? ""}`.match(/(?:^|[^A-Z])(MT|MG|IT)-\d{4}-/)?.[1]] ?? null;
+  const typeCode = href?.startsWith("#/ncr") ? "NCR_CAR" : href?.startsWith("#/office?module=work-order") ? "IT_REPAIR" : href?.startsWith("#/office?module=repair") ? "IT_REPAIR" : href?.startsWith("#/office?module=access-request") ? "IT_ACCESS_REQUEST" : NOTIFICATION_TYPE_BY_PREFIX[`${item.title ?? ""} ${item.body ?? ""}`.match(/(?:^|[^A-Z])(MT|MG|IT)-\d{4}-/)?.[1]] ?? null;
   const reminder = ["reminder", "escalation"].includes(item.kind);
   const iconHtml = reminder || !typeCode ? uiIcon(reminder ? "clock" : "bell") : requestTypeIcon(typeCode);
   const palette = !reminder && typeCode ? ` data-module="${escapeHtml(requestPalette(typeCode))}"` : "";
