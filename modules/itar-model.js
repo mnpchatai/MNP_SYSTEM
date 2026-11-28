@@ -157,6 +157,19 @@
     const { year, month, day, hour, minute } = bangkokParts(date);
     return `${day}/${month}/${Number(year) + YEAR_OFFSET} ${hour}:${minute}`;
   }
+  // วันที่ / เวลาแยกช่อง (ช่อง "วันที่" "เวลา" บนใบพิมพ์) · ไม่มีค่า = ""
+  function formatDateOf(timestamp) {
+    const date = timestamp ? new Date(timestamp) : null;
+    if (!date || Number.isNaN(date.getTime())) return "";
+    const { year, month, day } = bangkokParts(date);
+    return `${day}/${month}/${Number(year) + YEAR_OFFSET}`;
+  }
+  function formatTimeOf(timestamp) {
+    const date = timestamp ? new Date(timestamp) : null;
+    if (!date || Number.isNaN(date.getTime())) return "";
+    const { hour, minute } = bangkokParts(date);
+    return `${hour}:${minute}`;
+  }
   const charCount = (value) => Array.from(String(value ?? "").trim()).length;
   const clip = (text, max) => {
     const chars = Array.from(String(text ?? "").replace(/\s+/g, " ").trim());
@@ -178,16 +191,18 @@
     if (role?.is_it_admin) tabs.push({ key: "settings", label: "ตั้งค่า" });
     return tabs;
   }
-  // ส่วน B จะเพิ่ม view ของใบพิมพ์ (print) และหน้าบันทึกลงทะเบียน (apply) ต่อท้ายรายการนี้
-  const VIEWS = Object.freeze(["mine", "approvals", "it", "settings", "new", "order"]);
+  // apply = หน้า "ปรับสิทธิ์ตามใบ" (IT) · print = ใบพิมพ์ A4 (form=req ใบคำร้อง / form=page เอกสารชี้แจงสิทธิ์) ทั้งสองหน้ารับ id ของใบ
+  const VIEWS = Object.freeze(["mine", "approvals", "it", "settings", "new", "order", "apply", "print"]);
   const TAB_VIEWS = Object.freeze(["mine", "approvals", "it", "settings"]);
   function readView(params) {
     const view = params?.get?.("view") ?? "";
     if (view === "") return "mine";
     return VIEWS.includes(view) ? view : null;
   }
-  // หน้าแท็บที่ผู้ใช้ไม่มีสิทธิ์เห็น (พิมพ์ URL เอง) ให้กลับ "ใบของฉัน"
-  const viewAllowed = (view, role) => !TAB_VIEWS.includes(view) || visibleTabs(role).some((tab) => tab.key === view);
+  // บันทึกลงทะเบียนได้: ต้องเป็นทั้งผู้ดูแลงาน IT และอยู่ในรายชื่อผู้บันทึกทะเบียนสิทธิ์ (ฐานข้อมูลตรวจซ้ำที่ RPC)
+  const canApply = (role) => Boolean(role?.is_it_admin && role?.is_itas_admin);
+  // หน้าแท็บที่ผู้ใช้ไม่มีสิทธิ์เห็น (พิมพ์ URL เอง) ให้กลับ "ใบของฉัน" · หน้า apply เฉพาะผู้บันทึกลงทะเบียน (คนอื่นพากลับหน้ารายละเอียดของใบ ที่ module-itar.js)
+  const viewAllowed = (view, role) => (view === "apply" ? canApply(role) : !TAB_VIEWS.includes(view) || visibleTabs(role).some((tab) => tab.key === view));
   function accessUrl(view = "mine", extra = {}) {
     const query = new URLSearchParams({ module: "access-request" });
     if (view && view !== "mine") query.set("view", view);
@@ -206,6 +221,12 @@
     request_info: { label: "ถามผู้ยื่น", tone: "secondary", opens: "ask", rpc: "app_itar_request_info", confirmTitle: "ส่งคำถามถึงผู้ยื่น?", confirmMessage: "ใบจะเปลี่ยนเป็น รอผู้ยื่นตอบ และกลับมาดำเนินการต่อได้เมื่อผู้ยื่นตอบ ระหว่างนี้อนุมัติหรือไม่อนุมัติไม่ได้ ต้องรอคำตอบก่อน · ระบบบันทึกชื่อ วันที่ และเวลาของคุณไว้ในประวัติเอกสาร", confirmLabel: "ส่งคำถาม", done: "ส่งคำถามถึงผู้ยื่นแล้ว" },
     provide_info: { label: "ตอบคำถาม", tone: "primary", opens: "answer", inline: true, rpc: "app_itar_provide_info", confirmTitle: "ส่งคำตอบ?", confirmMessage: "ใบจะกลับไปดำเนินการต่อทันที · ระบบบันทึกชื่อ วันที่ และเวลาของคุณไว้ในประวัติเอกสาร แก้ไขย้อนหลังไม่ได้", confirmLabel: "ส่งคำตอบ", done: "ส่งคำตอบแล้ว" },
     cancel: { label: "ยกเลิกใบขอสิทธิ์", tone: "danger", rpc: "app_itar_cancel", done: "ยกเลิกใบขอสิทธิ์แล้ว", reason: { title: "ยกเลิกใบขอสิทธิ์นี้?", label: "เหตุผลที่ยกเลิก", hint: "ใบที่ยกเลิกแล้วเปิดใหม่ไม่ได้ ต้องยื่นเป็นใบใหม่และได้เลขใหม่", confirmLabel: "ยกเลิกใบขอสิทธิ์" } },
+    // IT: เปิดหน้า "ปรับสิทธิ์ตามใบ" (view=apply) ซึ่งเป็นผู้เรียก app_itar_apply เอง จึงไม่มีกล่องยืนยันที่ปุ่มนี้
+    apply: { label: "ปรับสิทธิ์ตามใบ", tone: "primary", opens: "apply", rpc: "app_itar_apply" },
+    // ปุ่มสามตัวล่างมีการ์ดของตัวเองวาดเปิดไว้ในหน้ารายละเอียด (inline) ไม่ซ้ำเป็นปุ่มในแผง "สิ่งที่คุณทำได้"
+    acknowledge: { label: "รับทราบและยอมรับนโยบาย", tone: "success", inline: true, rpc: "app_itar_acknowledge", done: "รับทราบสิทธิ์แล้ว ใบนี้จบงาน", confirmTitle: "รับทราบสิทธิ์และยอมรับนโยบาย?", confirmMessage: "การกดรับทราบบันทึกชื่อ วันที่ และเวลาของคุณเป็นลายเซ็นอิเล็กทรอนิกส์ พร้อมสิทธิ์ทั้งหมดที่แสดงในหน้านี้ แก้ไขย้อนหลังไม่ได้ และใบจะจบงานทันที", confirmLabel: "รับทราบและยอมรับนโยบาย" },
+    acknowledge_paper: { label: "รับทราบแล้ว (กระดาษ)", tone: "success", inline: true, rpc: "app_itar_acknowledge_paper", done: "บันทึกการรับทราบด้วยกระดาษแล้ว ใบนี้จบงาน", confirmTitle: "บันทึกว่าผู้ใช้รับทราบด้วยกระดาษ?", confirmMessage: "ระบบบันทึกชื่อและเวลาของคุณว่าเป็นผู้บันทึกการรับทราบแทนผู้ใช้ โดยอ้างอิงรูปใบที่เซ็นแล้วที่แนบไว้ แก้ไขย้อนหลังไม่ได้ และใบจะจบงานทันที", confirmLabel: "รับทราบแล้ว (กระดาษ)" },
+    add_paper_attachment: { label: "แนบรูปใบรับทราบที่เซ็นแล้ว", tone: "secondary", inline: true, rpc: "app_itar_add_paper_attachment" },
   });
   // IT (ผู้ดูแลงาน) ยกเลิก "แทนผู้ยื่น": ใช้ปุ่ม cancel เดิม RPC เดิม แต่ข้อความกล่องเหตุผลบอกว่าเป็นการยกเลิกแทน
   // ฐานข้อมูลใส่คำนำหน้า "IT ยกเลิกแทนผู้ยื่น: " (21 ตัวอักษร) ลงในเหตุผลของประวัติ จึงจำกัดเหตุผลฝั่งนี้ที่ 470 ตัว (ฐานข้อมูลรับได้ถึง 479)
@@ -216,24 +237,13 @@
   function cancelReasonSpec(detail, role) {
     return isCancelOnBehalf(detail, role) ? CANCEL_ON_BEHALF : { ...ACTION_BUTTONS.cancel.reason, maxLength: MAX_REASON };
   }
-  const ACTION_ORDER = Object.freeze(["approve", "reject", "request_info", "start", "provide_info", "cancel"]);
-  // allowed = allowed_actions จาก app_itar_get_detail · action ที่ไม่รู้จักไม่ขึ้นเป็นปุ่ม
+  const ACTION_ORDER = Object.freeze(["approve", "reject", "request_info", "start", "apply", "provide_info", "acknowledge", "acknowledge_paper", "add_paper_attachment", "cancel"]);
+  // allowed = allowed_actions จาก app_itar_get_detail · action ที่ไม่รู้จักไม่ขึ้นเป็นปุ่ม · ตัดสินจาก allowed_actions เท่านั้น (ไม่ใช้ has_account เดาเอง)
   function actionButtons(allowed) {
     const set = new Set(Array.isArray(allowed) ? allowed : []);
     return ACTION_ORDER.filter((action) => set.has(action)).map((action) => ({ action, ...ACTION_BUTTONS[action] }));
   }
-  // การกระทำที่ฐานข้อมูลอนุญาตแต่หน้าเว็บส่วนนี้ยังไม่มีปุ่ม (ส่วน B: บันทึกลงทะเบียน · รับทราบสิทธิ์ · รับทราบด้วยกระดาษ · แนบรูปใบรับทราบ)
-  // ใช้แสดงข้อความ "กำลังพัฒนา" แทนปุ่ม เพื่อไม่ให้ผู้ใช้งงว่าทำไมใบค้าง · ส่วน B ลบรายการที่ทำปุ่มแล้วออกจากที่นี่
-  const DEFERRED_ACTIONS = Object.freeze({
-    apply: "บันทึกลงทะเบียนสิทธิ์",
-    acknowledge: "รับทราบสิทธิ์",
-    acknowledge_paper: "รับทราบแทนผู้ใช้ด้วยกระดาษ",
-    add_paper_attachment: "แนบรูปใบรับทราบที่เซ็นแล้ว",
-  });
-  function deferredActions(allowed) {
-    const set = new Set(Array.isArray(allowed) ? allowed : []);
-    return Object.keys(DEFERRED_ACTIONS).filter((action) => set.has(action)).map((action) => ({ action, label: DEFERRED_ACTIONS[action] }));
-  }
+  const hasAction = (detail, action) => Array.isArray(detail?.allowed_actions) && detail.allowed_actions.includes(action);
   // ข้อความในกล่องยืนยันของปุ่ม · "อนุมัติ" ของผู้อนุมัติขั้น IT ที่ขั้นแผนกยังไม่ผ่าน ฐานข้อมูลบันทึกทั้งสองขั้นในชื่อเขาครั้งเดียว จึงบอกก่อนกด
   const BOTH_STEPS_NOTE = "ใบนี้จะนับเป็นการอนุมัติทั้งขั้นแผนกและขั้น IT";
   function countsAsBothSteps(detail, role) {
@@ -825,6 +835,299 @@
   }
   const staffRoleText = (row) => [row?.is_it_admin ? "ผู้ดูแลงาน IT" : "", row?.is_it_approver ? "ผู้อนุมัติขั้น IT" : "", row?.is_it_viewer ? VIEWER_LABEL : "", row?.is_itas_admin ? "บันทึกลงทะเบียนสิทธิ์ได้" : ""].filter(Boolean).join(" · ");
 
+  /* ---------- ปรับสิทธิ์ตามใบ (IT: app_itar_apply_context → app_itar_apply) ---------- */
+  // รูปข้อมูลของ context ที่หน้าเว็บใช้ (ชื่อฟิลด์ตามสัญญา docs/itar-contract.md ส่วน "บันทึกลงทะเบียน (IT)")
+  function normalizeApplyContext(data) {
+    return {
+      request: data?.request ?? {},
+      needsUserChoice: Boolean(data?.needs_user_choice),
+      needsNewUser: Boolean(data?.needs_new_user),
+      canApply: Boolean(data?.can_apply),
+      items: listOf(data?.items).slice().sort((a, b) => Number(a.line_no) - Number(b.line_no)),
+      subjectRights: data?.subject_rights ?? null,
+      suggestedUsers: listOf(data?.suggested_users),
+    };
+  }
+  // ใบนี้ยังบันทึกลงทะเบียนไม่ได้เพราะอะไร (ว่าง = บันทึกได้) · ฐานข้อมูลตรวจสถานะซ้ำที่ RPC
+  function applyBlockedMessage(ctx) {
+    if (ctx.canApply) return "";
+    const status = ctx.request?.status;
+    if (status === "approved") return "ต้องกดรับงานก่อนจึงจะบันทึกสิทธิ์ลงทะเบียนได้";
+    if (["awaiting_ack", "done"].includes(status)) return "ใบนี้ IT บันทึกสิทธิ์ลงทะเบียนไปแล้ว (บันทึกซ้ำไม่ได้)";
+    return `ใบนี้ยังไม่อยู่ในขั้นที่บันทึกสิทธิ์ลงทะเบียนได้ (สถานะ: ${statusLabel(status)})`;
+  }
+  // ค่าในทะเบียนตอนนี้ของรายการ (current_value ของ apply_context): folder R/F/null · internet/program 'true'/'false' · email 'active'/null
+  function currentText(item) {
+    if (item.kind === "folder") return levelLabel(item.current_value || null);
+    if (item.kind === "email") return item.current_value === "active" ? "ใช้งานอยู่" : "ไม่มี";
+    return TRUE_FALSE[String(item.current_value) === "true" ? "true" : "false"];
+  }
+  // เตือนก่อนบันทึก: ทะเบียนไม่ตรงกับที่ผู้ยื่นเห็น (ฐานข้อมูลจะปฏิเสธทั้งใบ 40001) หรือทะเบียนมีสิทธิ์ตามที่ขออยู่แล้ว · ไม่รู้ค่าปัจจุบัน = ไม่เตือน
+  function applyWarning(item) {
+    if (item.current_known !== true) return "";
+    if (item.kind === "email") {
+      const active = item.current_value === "active";
+      if (item.to_value === "add" && active) return "มีอีเมลนี้ใช้งานอยู่ในทะเบียนแล้ว ให้เลือก \"ไม่บันทึก\" พร้อมเหตุผล";
+      if (item.to_value === "close" && !active) return "ไม่พบอีเมลนี้ที่ใช้งานอยู่ในทะเบียน ให้เลือก \"ไม่บันทึก\" พร้อมเหตุผล";
+      return "";
+    }
+    const norm = (value) => (item.kind === "folder" ? (value ? String(value) : null) : String(value) === "true");
+    const current = norm(item.current_value);
+    if (item.from_known) {
+      return current !== norm(item.from_value)
+        ? "ค่าในทะเบียนตอนนี้ไม่ตรงกับที่ผู้ยื่นเห็นตอนยื่น (มีผู้แก้ทะเบียนไปแล้ว) ถ้าบันทึกรายการนี้ระบบจะปฏิเสธ ให้เลือก \"ไม่บันทึก\" พร้อมเหตุผล"
+        : "";
+    }
+    return current === norm(item.to_value) ? "ทะเบียนมีสิทธิ์ตามที่ขออยู่แล้ว ให้เลือก \"ไม่บันทึก\" พร้อมเหตุผล" : "";
+  }
+  // แถวของหน้า "ปรับสิทธิ์ตามใบ": ก่อน → หลัง ตามที่ผู้ยื่นขอ + ค่าในทะเบียนตอนนี้ + คำเตือน
+  function applyRows(ctx) {
+    return ctx.items.map((item) => {
+      const base = itemRows({ items: [item] })[0];
+      return {
+        id: String(item.id), no: item.line_no, label: base.label, before: base.before, after: base.after, note: base.note,
+        current: item.current_known === true ? currentText(item) : "ตรวจกับทะเบียนตอนบันทึก",
+        warning: applyWarning(item),
+      };
+    });
+  }
+  const MAX_DECISION_REASON = 500;
+  const AUTH_ID_PATTERN = /^[a-z0-9]([a-z0-9._-]{0,58}[a-z0-9])?$/; // ตรงกับ itua_users.auth_id
+  const normalizeAuthId = (value) => textOf(value).toLowerCase();
+  // สถานะของหน้า: decisions[item id] = { decision: "" | "applied" | "rejected", reason } · เลือกผู้ใช้ทะเบียน (userId) · ผู้ใช้ใหม่ · ผูกพนักงาน
+  function initialApplyState(ctx) {
+    return {
+      decisions: {},
+      userId: "",
+      newUser: { auth_id: "", name_th: textOf(ctx.request?.subject_name_th), name_en: textOf(ctx.request?.subject_name_en) },
+      link: false,
+    };
+  }
+  // โหลด context ใหม่หลังทะเบียนเปลี่ยนระหว่างกรอก (40001): เก็บสิ่งที่ IT ตัดสินไว้แล้วเฉพาะรายการที่ยังอยู่ในใบ
+  function carryApplyState(oldState, ctx) {
+    const fresh = initialApplyState(ctx);
+    const ids = new Set(ctx.items.map((item) => String(item.id)));
+    for (const [id, decision] of Object.entries(oldState.decisions ?? {})) if (ids.has(id)) fresh.decisions[id] = { ...decision };
+    fresh.userId = oldState.userId ?? "";
+    fresh.newUser = { ...fresh.newUser, ...(oldState.newUser ?? {}) };
+    fresh.link = Boolean(oldState.link);
+    return fresh;
+  }
+  const decisionOf = (state, id) => state.decisions?.[String(id)] ?? { decision: "", reason: "" };
+  // ผู้ใช้ในทะเบียนที่เลือกได้ (คำแนะนำจาก context + ผลค้นหา ไม่ซ้ำ) · เลือกได้เฉพาะผู้ใช้ที่ยังใช้งานอยู่ (ผู้ที่ลาออกแล้วฐานข้อมูลปฏิเสธ)
+  function userCandidates(ctx, found = []) {
+    const byId = new Map();
+    for (const user of [...ctx.suggestedUsers, ...listOf(found)]) if (user?.id && !byId.has(String(user.id))) byId.set(String(user.id), user);
+    return [...byId.values()].map((user) => ({
+      id: String(user.id), authId: textOf(user.auth_id), name: subjectName(user), department: textOf(user.department_code),
+      active: user.status === "active", linked: Boolean(user.employee_id),
+    }));
+  }
+  // ผูกผู้ใช้ทะเบียนกับบัญชีพนักงานของผู้รับสิทธิ์ได้เมื่อ: ต้องเลือกผู้ใช้เอง · ผู้รับสิทธิ์มีบัญชีพนักงาน · ผู้ใช้ทะเบียนที่เลือกยังไม่ผูกพนักงาน
+  function canLinkEmployee(ctx, state, candidates) {
+    if (!ctx.needsUserChoice || !ctx.request?.subject_employee_id) return false;
+    const chosen = candidates.find((candidate) => candidate.id === String(state.userId));
+    return Boolean(chosen && !chosen.linked);
+  }
+  // ตรวจก่อนส่ง → [{ name, message }] (ว่าง = ส่งได้) · name ตรงกับ data-field ของช่องในหน้า · ฐานข้อมูลตรวจซ้ำทุกข้อ
+  function applyProblems(ctx, state) {
+    const problems = [];
+    if (ctx.needsUserChoice && !state.userId) problems.push({ name: "user", message: "กรุณาเลือกผู้ใช้ในทะเบียนสิทธิ์ที่ตรงกับผู้รับสิทธิ์" });
+    if (ctx.needsNewUser) {
+      const authId = normalizeAuthId(state.newUser?.auth_id);
+      if (!authId) problems.push({ name: "auth_id", message: "กรุณาระบุ Auth. Name ของผู้ใช้ใหม่ (เช่น somchai.k)" });
+      else if (!AUTH_ID_PATTERN.test(authId)) problems.push({ name: "auth_id", message: "Auth. Name ต้องเป็นตัวอักษรอังกฤษ ตัวเลข . _ - (ขึ้นต้นและลงท้ายด้วยตัวอักษรหรือตัวเลข ไม่เกิน 60 ตัว)" });
+      if (charCount(state.newUser?.name_th) > MAX_NAME || charCount(state.newUser?.name_en) > MAX_NAME) problems.push({ name: "new_user_name", message: `ชื่อต้องไม่เกิน ${MAX_NAME} ตัวอักษร` });
+    }
+    if (ctx.request?.request_type === "revoke_all") return problems;
+    let applied = 0;
+    let undecided = false;
+    for (const item of ctx.items) {
+      const { decision, reason } = decisionOf(state, item.id);
+      const name = `decision:${item.id}`;
+      if (decision === "applied") applied += 1;
+      else if (decision === "rejected") {
+        if (!textOf(reason)) problems.push({ name, message: `รายการที่ ${item.line_no}: กรุณาระบุเหตุผลที่ไม่บันทึกลงทะเบียน` });
+        else if (charCount(reason) > MAX_DECISION_REASON) problems.push({ name, message: `รายการที่ ${item.line_no}: เหตุผลต้องไม่เกิน ${MAX_DECISION_REASON} ตัวอักษร` });
+      } else {
+        undecided = true;
+        problems.push({ name, message: `รายการที่ ${item.line_no}: กรุณาเลือก "บันทึกลงทะเบียน" หรือ "ไม่บันทึก"` });
+      }
+    }
+    if (!undecided && applied === 0 && ctx.items.length) problems.push({ name: "items", message: "ต้องบันทึกลงทะเบียนอย่างน้อยหนึ่งรายการ (ถ้าไม่ดำเนินการเลย ให้ยกเลิกใบพร้อมเหตุผลแทน)" });
+    return problems;
+  }
+  // พารามิเตอร์ของ app_itar_apply · ส่งเฉพาะที่ใบนี้ต้องใช้ (ขอใหม่ = p_new_user · เปลี่ยน/ยกเลิกที่ยังไม่ผูก = p_user_id)
+  function applyParams(ctx, state, candidates = []) {
+    const revoke = ctx.request?.request_type === "revoke_all";
+    const params = {
+      p_request_id: ctx.request.id,
+      p_decisions: revoke ? [] : ctx.items.map((item) => {
+        const { decision, reason } = decisionOf(state, item.id);
+        return decision === "rejected" ? { item_id: item.id, decision: "rejected", reason: textOf(reason) } : { item_id: item.id, decision: "applied" };
+      }),
+    };
+    if (ctx.needsUserChoice) params.p_user_id = state.userId;
+    if (ctx.needsNewUser) {
+      const user = { auth_id: normalizeAuthId(state.newUser?.auth_id) };
+      if (textOf(state.newUser?.name_th)) user.name_th = textOf(state.newUser.name_th);
+      if (textOf(state.newUser?.name_en)) user.name_en = textOf(state.newUser.name_en);
+      params.p_new_user = user;
+    }
+    if (state.link && canLinkEmployee(ctx, state, candidates)) params.p_link_employee = true;
+    return params;
+  }
+  function applyCounts(ctx, state) {
+    let applied = 0;
+    let rejected = 0;
+    for (const item of ctx.items) {
+      const { decision } = decisionOf(state, item.id);
+      if (decision === "applied") applied += 1;
+      else if (decision === "rejected") rejected += 1;
+    }
+    return { applied, rejected, undecided: ctx.items.length - applied - rejected, total: ctx.items.length };
+  }
+  // ข้อความในกล่องยืนยันก่อนบันทึก (บันทึกได้ครั้งเดียวต่อใบ ย้อนไม่ได้)
+  function applyConfirmMessage(ctx, state) {
+    const subject = subjectName({ name_th: ctx.request?.subject_name_th, name_en: ctx.request?.subject_name_en });
+    if (ctx.request?.request_type === "revoke_all") {
+      const summary = ctx.subjectRights ? revokeText(rightsSummary(ctx.subjectRights)) : "จะถอดสิทธิ์โฟลเดอร์ อินเทอร์เน็ต โปรแกรม และปิดอีเมลทั้งหมดของผู้ใช้ที่เลือก";
+      return `${summary} · ผู้รับสิทธิ์: ${subject} · ผู้ใช้จะเปลี่ยนสถานะเป็นลาออกในทะเบียน และใบนี้จบงานทันที (ไม่ต้องรอรับทราบ) · บันทึกได้ครั้งเดียว ย้อนไม่ได้ ต้องยื่นใบใหม่ถ้าจะย้อน`;
+    }
+    const counts = applyCounts(ctx, state);
+    const next = ctx.needsNewUser ? "สร้างผู้ใช้ใหม่ในทะเบียน" : "เปลี่ยนสิทธิ์ในทะเบียน";
+    return `ผู้รับสิทธิ์: ${subject} · บันทึกลงทะเบียน ${counts.applied} รายการ${counts.rejected ? ` · ไม่บันทึก ${counts.rejected} รายการ` : ""} · ระบบจะ${next}ทั้งหมดพร้อมกัน (ข้อใดผิดจะไม่เปลี่ยนอะไรเลย) แล้วส่งให้ผู้ใช้รับทราบ · บันทึกได้ครั้งเดียว ยกเลิกใบหลังบันทึกไม่ได้`;
+  }
+  const APPLY_STALE_HINT = " (โหลดข้อมูลทะเบียนล่าสุดให้แล้ว กรุณาตรวจรายการแล้วกด \"บันทึกลงทะเบียน\" อีกครั้ง)";
+  // 40001 ตอน apply: ค่าในทะเบียนไม่ตรงกับที่ผู้ยื่นเห็น (ข้อความไทยของฐานข้อมูลบอกรายการ) · ไม่มีข้อความไทย = ข้อความกลาง
+  function staleApplyMessage(error) {
+    const message = textOf(error?.message);
+    if (!THAI.test(message)) return `ข้อมูลในทะเบียนสิทธิ์เปลี่ยนไปแล้ว${APPLY_STALE_HINT}`;
+    return message.includes("โหลดข้อมูลล่าสุด") ? message : `${message}${APPLY_STALE_HINT}`;
+  }
+
+  /* ---------- รับทราบสิทธิ์ / รับทราบด้วยกระดาษ ---------- */
+  // ข้อความนโยบายมาจาก detail.policy (ฐานข้อมูลเก็บเวอร์ชันลงบันทึกรับทราบ) · ไม่มีค่า = ใช้ประโยคเดิมบนฟอร์ม
+  const DEFAULT_POLICY_TEXT = "ผู้ใช้รับทราบและต้องปฏิบัติตามนโยบายการใช้งานระบบเครือข่ายและคอมพิวเตอร์";
+  const policyOf = (detail) => ({ version: textOf(detail?.policy?.version), text: textOf(detail?.policy?.text) || DEFAULT_POLICY_TEXT });
+  // สิทธิ์ทั้งหมดของผู้ใช้หลังเปลี่ยน: ภาพ ณ ตอน IT บันทึก (applied_summary.after) ก่อน ไม่มี = สิทธิ์ปัจจุบันในทะเบียน · ไม่มีเลย = null
+  const rightsAfter = (detail) => detail?.applied_summary?.after ?? detail?.subject_rights ?? null;
+  const MAX_PAPER_NOTE = 300; // หมายเหตุรับทราบกระดาษ ตรงกับ app_itar_acknowledge_paper
+  const paperFileCount = (detail) => listOf(detail?.paper_attachments).length;
+  function paperAckProblem(detail, note) {
+    if (!paperFileCount(detail)) return "กรุณาแนบรูปใบรับทราบที่เซ็นแล้วอย่างน้อย 1 ไฟล์ก่อน";
+    if (charCount(note) > MAX_PAPER_NOTE) return `หมายเหตุต้องไม่เกิน ${MAX_PAPER_NOTE} ตัวอักษร`;
+    return "";
+  }
+  const paperAckParams = (requestId, note) => (textOf(note) ? { p_request_id: requestId, p_note: textOf(note) } : { p_request_id: requestId });
+
+  /* ---------- ใบพิมพ์ A4 (USER-REQ ใบคำร้อง / USER-Page เอกสารชี้แจงสิทธิ์) ---------- */
+  // ข้อมูลทั้งหมดมาจาก app_itar_get_detail ที่เดียว (ไม่อ่านทะเบียนเพิ่ม · detail ไม่มีรหัสผ่านหรือช่องลับใด ๆ)
+  // เอกสารชี้แจงสิทธิ์มีเมื่อ IT บันทึกลงทะเบียนแล้ว (applied_summary) และไม่ใช่ใบยกเลิกทั้งหมด (ไม่มีสิทธิ์เหลือให้ชี้แจง)
+  const hasRightsDocument = (detail) => Boolean(detail?.applied_summary) && detail?.request_type !== "revoke_all";
+  const printForms = (detail) => (hasRightsDocument(detail) ? ["req", "page"] : ["req"]);
+  const resolvePrintForm = (detail, requested) => (requested === "page" && hasRightsDocument(detail) ? "page" : "req");
+  const PRINT_FORM_LABELS = Object.freeze({ req: "พิมพ์ใบคำร้อง (A4)", page: "พิมพ์เอกสารชี้แจงสิทธิ์ (A4)" });
+  const printUrl = (id, form = "req") => accessUrl("print", { id, form: form === "page" ? "page" : "" });
+  const applyUrl = (id) => accessUrl("apply", { id });
+  const SINGLE_CLICK_REMARK = "อนุมัติครั้งเดียว นับเป็นทั้งสองขั้น";
+  const SELF_APPROVED_REMARK = "อนุมัติในตัวเมื่อยื่นใบ";
+  const signoff = (entry) => ({ name: entry?.by ?? null, at: entry?.at ?? null });
+  // ช่องลงนามของใบคำร้อง: ผู้ยื่น (เวลาที่ยื่น) · ผู้จัดการแผนก · ผู้อนุมัติขั้น IT · IT ผู้บันทึกสิทธิ์ลงทะเบียน · ยังไม่เกิด = ช่องว่าง
+  function requestSignoffs(detail) {
+    const dept = detail?.approvals?.dept ?? null;
+    const itMgr = detail?.approvals?.it_mgr ?? null;
+    const created = listOf(detail?.events).find((event) => event.action === "created");
+    // คนเดียวกันอนุมัติทั้งสองขั้น (แผนกไม่มีผู้จัดการ / ผู้อนุมัติขั้น IT เกี่ยวข้อง) ขึ้นชื่อเดียวกันทั้งสองช่องพร้อมบอกเหตุ
+    const sameBoth = Boolean(dept && itMgr && dept.by === itMgr.by);
+    const selfApproved = Boolean(dept && detail?.requester?.full_name && dept.by === detail.requester.full_name);
+    return {
+      requester: { name: detail?.requester?.full_name ?? null, at: created?.created_at ?? detail?.created_at ?? null, remark: null },
+      dept: { ...signoff(dept), remark: dept && sameBoth ? SINGLE_CLICK_REMARK : dept && selfApproved ? SELF_APPROVED_REMARK : null },
+      itMgr: { ...signoff(itMgr), remark: itMgr && sameBoth ? SINGLE_CLICK_REMARK : null },
+      applied: { ...signoff(detail?.applied), remark: null },
+    };
+  }
+  // ช่องลงนามของเอกสารชี้แจงสิทธิ์: ผู้รับสิทธิ์รับทราบในระบบ = ชื่อ + เวลา · รับทราบด้วยกระดาษ = เว้นว่างให้เซ็นมือ (บอกว่า IT บันทึกเมื่อไร) · ยังไม่รับทราบ = เว้นว่างให้เซ็นมือ
+  // typed = ชื่อผู้รับสิทธิ์พิมพ์ใต้เส้นเซ็นเสมอ (กรณีเซ็นมือ)
+  function rightsDocumentSignoffs(detail) {
+    const ack = detail?.acknowledged ?? null;
+    const online = ack?.method === "online";
+    const paper = Boolean(ack) && !online;
+    return {
+      recipient: {
+        name: online ? ack.by : null, at: online ? ack.at : null,
+        remark: paper ? `รับทราบด้วยกระดาษ · IT บันทึกเมื่อ ${formatDateTime(ack.at)}` : null,
+        typed: subjectName(detail?.subject),
+      },
+      applied: { ...signoff(detail?.applied), remark: null },
+    };
+  }
+
+  /* ---------- หน้าแรก "งานของคุณวันนี้" (window.MNP_OFFICE_HOME) ---------- */
+  // ขั้นของแถบ "ไปถึงไหนแล้ว" ของใบขอสิทธิ์ (รูปแบบเดียวกับ PROGRESS_STAGES ของ office-home.js แต่ขั้นท้ายเป็น รอรับทราบ → จบ · แต่ละโมดูลส่ง stages ของตัวเองให้แถว mine ได้)
+  // "submitted" ไม่ใช่สถานะจริง ใช้เป็นชื่อกันไม่ให้ขั้นแรกไปตรงกับสถานะใด
+  const HOME_STAGES = Object.freeze([
+    Object.freeze({ statuses: Object.freeze(["submitted"]), label: "ยื่นใบขอสิทธิ์" }),
+    Object.freeze({ statuses: Object.freeze(["pending_dept"]), label: "ผู้จัดการแผนก" }),
+    Object.freeze({ statuses: Object.freeze(["pending_it_mgr"]), label: "ผู้อนุมัติ IT" }),
+    Object.freeze({ statuses: Object.freeze(["approved", "in_progress"]), label: "IT ดำเนินการ" }),
+    Object.freeze({ statuses: Object.freeze(["awaiting_ack"]), label: "รอรับทราบ" }),
+    Object.freeze({ statuses: Object.freeze(["done"]), label: "จบงาน" }),
+  ]);
+  // ใบที่รอผู้ยื่นตอบค้างอยู่ที่ขั้นที่ถามมา: ดูจากสถานะที่ใบจะกลับไป ไม่มี = ดูจากขั้นของผู้ถาม
+  const HOME_INFO_STAGE_STATUS = Object.freeze({ dept: "pending_dept", it_mgr: "pending_it_mgr", it: "in_progress" });
+  function homeProgressStatus(row) {
+    if (row?.status !== "need_info") return row?.status ?? "";
+    return row.info_return_status || HOME_INFO_STAGE_STATUS[row.info_stage] || row.status;
+  }
+  const homeTitle = (row) => clip([requestTypeLabel(row.request_type), textOf(row.subject_name)].filter(Boolean).join(" · "), 90) || "ใบขอสิทธิ์";
+  const HOME_TYPE_CODE = "IT_ACCESS_REQUEST";
+  const HOME_TYPE_NAME = "ใบขอสิทธิ์ IT";
+  const homeJoin = (...parts) => parts.map((part) => textOf(part)).filter(Boolean).join(" · ");
+  // เลือกงานของผู้ใช้จากรายการที่ RPC ส่งมา (pure · test ได้) · role = app_itar_my_role · approvals/it/mine = ผลของ list_pending_approvals / list_it / list_mine (ไม่ได้เรียก = [])
+  // paperAckIds = id ของใบ "รอรับทราบ" ที่ allowed_actions ของ IT มี acknowledge_paper (ตัดสินจาก allowed_actions ไม่เดาจากรายการ)
+  // งานที่ต้องกด (ไม่ซ้ำกันด้วย id): 1) รออนุมัติของฉัน (ตัดใบที่ถามผู้ยื่นไปแล้ว) 2) งาน IT (เฉพาะผู้ดูแลงาน IT: รับงาน · บันทึกลงทะเบียน (เฉพาะผู้บันทึกทะเบียน) · รับทราบกระดาษ) 3) ใบของฉันที่รอฉันตอบ/รอฉันรับทราบสิทธิ์
+  function homeWork({ role, approvals = [], it = [], mine = [], paperAckIds = [] }) {
+    const tasks = [];
+    const taken = new Set();
+    const addTask = (row, task, meta) => {
+      const id = String(row.id);
+      if (taken.has(id)) return;
+      taken.add(id);
+      tasks.push({ id: row.id, docNo: row.doc_no, typeCode: HOME_TYPE_CODE, typeName: HOME_TYPE_NAME, title: homeTitle(row), task, href: accessUrl("order", { id: row.id }), urgent: false, createdAt: row.created_at, meta });
+    };
+    if (canApprove(role)) {
+      for (const row of listOf(approvals)) {
+        if (row.status === "need_info") continue; // ถามผู้ยื่นไปแล้ว: รอคำตอบ ไม่ใช่งานที่ต้องกดอนุมัติ (ตรงกับ waitingForMeCount)
+        addTask(row, "รออนุมัติ", homeJoin(row.requester_name, row.department_name));
+      }
+    }
+    if (role?.is_it_admin) {
+      const paperIds = new Set(listOf(paperAckIds).map(String));
+      for (const row of listOf(it)) {
+        let task = null;
+        if (row.status === "approved") task = "รับงาน";
+        else if (row.status === "in_progress" && canApply(role)) task = "บันทึกลงทะเบียน";
+        else if (row.status === "awaiting_ack" && paperIds.has(String(row.id))) task = "รับทราบด้วยกระดาษ";
+        if (task) addTask(row, task, homeJoin(row.requester_name, row.department_name));
+      }
+    }
+    const mineRows = listOf(mine);
+    for (const row of mineRows) {
+      if (row.status === "need_info" && row.is_requester) addTask(row, myStatusLabel(row.status, row), "");
+      else if (row.status === "awaiting_ack" && row.needs_my_ack) addTask(row, myStatusLabel(row.status, row), "");
+    }
+    // ใบของฉันที่ยังไม่จบ: ตัดใบที่อยู่ในคิว "ต้องจัดการ" แล้ว (กันซ้ำ)
+    const mineOpen = mineRows
+      .filter((row) => row.id !== null && row.id !== undefined && !CLOSED_STATUSES.includes(row.status) && !taken.has(String(row.id)))
+      .map((row) => ({
+        id: row.id, at: row.created_at, docNo: row.doc_no, typeCode: HOME_TYPE_CODE, typeName: HOME_TYPE_NAME, title: homeTitle(row),
+        href: accessUrl("order", { id: row.id }), urgent: false, progressStatus: homeProgressStatus(row), stages: HOME_STAGES, label: myStatusLabel(row.status, row),
+      }));
+    return { tasks, mine: mineOpen };
+  }
+
   /* ---------- ข้อผิดพลาด ---------- */
   // error จาก PostgREST/Postgres ที่แปลว่า "ไม่มีฟังก์ชันนี้ในฐานข้อมูล" (เจ้าของ merge หน้าเว็บก่อน apply migration) ไม่ใช่ข้อผิดพลาดของข้อมูล
   function isMissingFunction(error) {
@@ -859,10 +1162,12 @@
   }
   // error ของการอัปโหลดไฟล์ขึ้น Storage (ข้อความอังกฤษของ Storage ไม่แสดงตรง ๆ) · ส่วน error ของ RPC ลงทะเบียนไฟล์ใช้ describeError ตามปกติ
   // comment = ไฟล์ของข้อความถาม/ตอบ (หน้าต่าง 30 นาทีนับจากส่งข้อความ ไม่เกี่ยวกับการอนุมัติ)
-  function describeUploadError(error, { comment = false } = {}) {
+  function describeUploadError(error, { comment = false, paper = false } = {}) {
     const status = String(error?.statusCode ?? error?.status ?? "");
     const message = String(error?.message ?? "");
     if (status === "403" || /row-level security|not authorized|unauthorized/i.test(message)) {
+      // รูปใบรับทราบกระดาษ: ไม่เกี่ยวกับหน้าต่าง 30 นาที (แนบได้ไม่จำกัดเวลา) · ถูกปฏิเสธเพราะสถานะใบหรือสิทธิ์
+      if (paper) return { kind: "rejected", message: "อัปโหลดไฟล์ไม่ได้ ใบนี้อาจไม่ได้อยู่ในขั้นรอผู้ใช้รับทราบแล้ว หรือผู้รับสิทธิ์มีบัญชีที่ใช้งานอยู่ (ต้องกดรับทราบเองในระบบ)" };
       return { kind: "rejected", message: comment ? "อัปโหลดไฟล์ไม่ได้ อาจหมดเวลาแนบไฟล์แล้ว (แนบได้ภายใน 30 นาทีหลังส่งข้อความ) หรือใบนี้สิ้นสุดแล้ว" : "อัปโหลดไฟล์ไม่ได้ อาจหมดเวลาแนบไฟล์แล้ว (แนบได้ภายใน 30 นาที) หรือมีผู้อนุมัติใบนี้แล้ว" };
     }
     if (status === "413" || /too large|exceeded the maximum/i.test(message)) return { kind: "rejected", message: `ไฟล์ต้องมีขนาดไม่เกิน ${MAX_FILE_BYTES / 1048576} MB` };
@@ -874,12 +1179,18 @@
   const api = {
     MODULE_VERSION, VERSION_DATE, IN_DEVELOPMENT, YEAR_OFFSET,
     MAX_REQUEST_REASON, MAX_REASON, MAX_REASON_ON_BEHALF, MAX_INFO_BODY, MAX_NOTE, MAX_ITEMS, MAX_NAME, MAX_EMAIL, MAX_FILES, MAX_FILE_BYTES,
-    REQUEST_TYPES, DIVISIONS, LEVELS, LEVEL_HELP, EMAIL_KINDS, STATUS_LABELS, EVENT_LABELS, ACTION_BUTTONS, ACTION_ORDER, DEFERRED_ACTIONS, IT_GROUPS, INFO_STAGE_LABELS, CANCEL_ON_BEHALF,
+    REQUEST_TYPES, DIVISIONS, LEVELS, LEVEL_HELP, EMAIL_KINDS, STATUS_LABELS, EVENT_LABELS, ACTION_BUTTONS, ACTION_ORDER, IT_GROUPS, INFO_STAGE_LABELS, CANCEL_ON_BEHALF,
     requestTypeLabel, divisionLabel, levelLabel, emailKindLabel, statusLabel, statusBadgeClass, myStatusLabel, isTestDoc,
     infoStageLabel, commentKindLabel, commentRows, allFiles, pendingQuestion, infoBadgeTitle,
-    formatDate, formatDateTime, charCount, clip,
-    VIEWER_LABEL, isItViewer, canSeeAllOrders, canApprove, visibleTabs, readView, viewAllowed, accessUrl, isUuid,
-    actionButtons, deferredActions, isCancelOnBehalf, cancelReasonSpec, countsAsBothSteps, confirmMessageFor, BOTH_STEPS_NOTE, answerToast, pendingStepLabel,
+    formatDate, formatDateTime, formatDateOf, formatTimeOf, charCount, clip,
+    VIEWER_LABEL, isItViewer, canSeeAllOrders, canApprove, canApply, visibleTabs, readView, viewAllowed, accessUrl, isUuid,
+    actionButtons, hasAction, isCancelOnBehalf,
+    MAX_DECISION_REASON, MAX_PAPER_NOTE, DEFAULT_POLICY_TEXT, PRINT_FORM_LABELS, HOME_STAGES,
+    normalizeApplyContext, applyBlockedMessage, currentText, applyWarning, applyRows, initialApplyState, carryApplyState, decisionOf, userCandidates, canLinkEmployee,
+    normalizeAuthId, applyProblems, applyParams, applyCounts, applyConfirmMessage, staleApplyMessage,
+    policyOf, rightsAfter, paperFileCount, paperAckProblem, paperAckParams,
+    hasRightsDocument, printForms, resolvePrintForm, printUrl, applyUrl, requestSignoffs, rightsDocumentSignoffs, SINGLE_CLICK_REMARK, SELF_APPROVED_REMARK,
+    homeProgressStatus, homeTitle, homeWork, cancelReasonSpec, countsAsBothSteps, confirmMessageFor, BOTH_STEPS_NOTE, answerToast, pendingStepLabel,
     eventLabel, eventLabelFor, CANCELLED_ON_BEHALF_LABEL, approvalSummary,
     subjectName, filedForOther, itGroupOf, groupItOrders, itActionableCount, awaitingMyAckCount, awaitingMyAnswerCount, mineWaiting, mineWaitingNote, waitingForMeCount, itApprovalProgress,
     CLOSED_STATUSES, openOrderCount, cardSummary,
