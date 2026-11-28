@@ -22,6 +22,8 @@ export function pushUrlFor(row: PushRow): string {
   if (action.startsWith("/office/work-order/")) return `#/office?module=work-order&view=order&id=${encodeURIComponent(action.slice("/office/work-order/".length))}`;
   // ใบแจ้งซ่อม IT (โมดูล itrp) เปิดหน้ารายละเอียดของใบนั้นตรง ๆ เช่นกัน
   if (action.startsWith("/office/repair/")) return `#/office?module=repair&view=order&id=${encodeURIComponent(action.slice("/office/repair/".length))}`;
+  // ใบขอสิทธิ์ IT (โมดูล itar) เปิดหน้ารายละเอียดของใบนั้นตรง ๆ เช่นกัน
+  if (action.startsWith("/office/access/")) return `#/office?module=access-request&view=order&id=${encodeURIComponent(action.slice("/office/access/".length))}`;
   if (action === "/") {
     // สรุปงานค้าง (reminder) ที่มีงานเดียวพาไปที่งานนั้นเลย (สำเนาถึงหัวหน้า kind=escalation ไปหน้าหลักเสมอ เพราะอาจไม่มีสิทธิ์เปิดเอกสาร)
     const items = Array.isArray(row.digest) ? row.digest : [];

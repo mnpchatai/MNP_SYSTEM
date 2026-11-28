@@ -23,14 +23,14 @@
   let pageVersion = 0; // หน้าเก่าที่โหลดช้ากว่าหน้าใหม่ต้องไม่วาดทับ
   let zoomTo = null;
 
-  // โหมดทดสอบของ admin: เหลือเฉพาะใบแจ้งซ่อม IT กับใบสั่งงาน IT (ฐานข้อมูลแยกข้อมูลทดสอบให้แล้ว) HR ยังซ่อนเหมือนเดิม
+  // โหมดทดสอบของ admin: เหลือเฉพาะใบแจ้งซ่อม IT กับใบสั่งงาน IT กับใบขอสิทธิ์ IT (และทะเบียนที่ผ่านสิทธิ์ itas) (ฐานข้อมูลแยกข้อมูลทดสอบให้แล้ว) HR ยังซ่อนเหมือนเดิม
   // isSandboxMode เป็นของ app.js (อ้างตอนเรียกใช้เท่านั้น)
   const inSandbox = () => typeof isSandboxMode === "function" && isSandboxMode();
   // ทะเบียนอุปกรณ์ IT (IT_ASSET_REGISTER) และทะเบียนสิทธิ์ผู้ใช้ (IT_USER_ACCESS): นอกจากสิทธิ์แผนก ต้องเป็นผู้อยู่ใน allowlist เดียวกัน (window.MNP_ITAS.hasAccess = ผลของ app_itas_my_access ที่ resolveAccess ตรวจก่อนวาดหน้า) · ไม่มีผล/ล้ม = ซ่อน
   // สองการ์ดนี้ใช้ผลตรวจสิทธิ์ชุดเดียว (RPC เดียว) จึงนับเป็น "การ์ดที่ต้องรอผลสิทธิ์" ด้วยกัน (isGated)
   const isGated = (code) => code === sections.ASSET_CODE || code === sections.ACCESS_CODE;
   const modeAllowed = (code) => deptModuleAllowed(code)
-    && (!inSandbox() || code === sections.WORK_ORDER_CODE || code === sections.REPAIR_CODE || isGated(code))
+    && (!inSandbox() || code === sections.WORK_ORDER_CODE || code === sections.REPAIR_CODE || code === sections.ACCESS_REQUEST_CODE || isGated(code))
     && (!isGated(code) || Boolean(window.MNP_ITAS?.hasAccess?.()));
 
   // การ์ดของโมดูลที่ประกาศตัวเองใน window.MNP_OFFICE_CARDS[<รหัสโมดูล>] = { version, loadCardSummary } (วิธีเพิ่มโมดูลใหม่ดูหัวไฟล์ office-sections.js)
@@ -94,6 +94,7 @@
     const hidden = section === sections.HOME ? visible.length === 0
       : section === sections.WORK_ORDER ? !sections.workOrderVisible(modeAllowed)
         : section === sections.REPAIR ? !sections.repairVisible(modeAllowed)
+          : section === sections.ACCESS_REQUEST ? !sections.accessRequestVisible(modeAllowed)
           : section === sections.ASSETS ? !sections.assetsVisible(modeAllowed)
             : section === sections.ACCESS ? !sections.accessVisible(modeAllowed)
               : !visible.some((item) => item.key === section);
@@ -103,6 +104,7 @@
     }
     if (section === sections.WORK_ORDER) return window.MNP_ITWO.render(params);
     if (section === sections.REPAIR) return window.MNP_ITRP.render(params);
+    if (section === sections.ACCESS_REQUEST) return window.MNP_ITAR.render(params);
     if (section === sections.ASSETS) return window.MNP_ITAS.render(params);
     if (section === sections.ACCESS) return window.MNP_ITUA.render(params);
     if (section === sections.HOME) return paint(sections.chooserPage({ allowed: modeAllowed }), TITLE, version);

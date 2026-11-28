@@ -4358,3 +4358,104 @@ tr.row-link :is(a:not(.row-link-main), button, input, select, textarea) { positi
 /* หน้ารายละเอียด: ตารางอุปกรณ์ที่แจ้ง + เครื่องหมาย "จากทะเบียน" (ฐานข้อมูลคำนวณ ไม่ใช่ที่ผู้แจ้งอ้าง) */
 .itrp-from-register { display: inline-block; padding: 0 6px; font-size: var(--text-caption); font-weight: 700; color: var(--primary-ink); background: var(--primary-soft); border-radius: 999px; white-space: nowrap; }
 .itrp-page .itrp-reqdev-table td:first-child { white-space: nowrap; }
+
+/* ---------- ใบขอสิทธิ์ IT (itar) · modules/itar-pages.js · โครงเดียวกับใบแจ้งซ่อม IT (.itrp-*) ---------- */
+.itar-page [hidden] { display: none !important; }
+.itar-tab-count { margin-left: 6px; min-width: 20px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; color: var(--primary-ink); background: var(--primary-soft); border-radius: 999px; font-size: var(--text-caption); font-weight: 700; line-height: 20px; }
+.view-tab.active .itar-tab-count { color: inherit; background: color-mix(in srgb, currentColor 16%, transparent); }
+.badge.itar-test-tag { color: var(--warning-ink); background: var(--warning-soft); border: 1px solid var(--warning); }
+.itar-head .itar-test-tag { margin-left: 10px; align-self: center; }
+.badge.itar-type-tag { margin-left: 8px; color: var(--primary-ink); background: var(--primary-soft); }
+.badge.itar-level.is-F { color: var(--warning-ink); background: var(--warning-soft); }
+.badge.itar-level.is-R { color: var(--primary-ink); background: var(--primary-soft); }
+.itar-dev-notice { margin: 0 0 14px; font-weight: 600; }
+.itar-version { margin: 24px 0 0; text-align: right; font-size: 12px; color: var(--muted, #6b7280); }
+.itar-step { display: block; color: var(--muted); font-size: var(--text-caption); white-space: nowrap; }
+.itar-step.is-done { color: var(--success-ink); font-weight: 700; }
+.itar-group > h2 { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.itar-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.itar-facts .definition.wide { grid-column: 1 / -1; }
+.itar-pending-steps { margin-top: 4px; color: var(--warning-ink); }
+.itar-counter-no { margin: 0 0 12px; font-size: var(--text-heading); }
+.itar-purge { margin-top: 24px; }
+.itar-file-field .file-pick { justify-self: start; }
+/* ตัวเลือกแบบกดเลือก (ประเภทคำขอ ผู้รับสิทธิ์ ติ๊กปิดอีเมล): ปุ่มสูง 44px แตะง่ายบนมือถือ */
+.itar-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.itar-choice { min-height: 44px; padding: 6px 14px; display: inline-flex; align-items: center; gap: 8px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); font-size: var(--text-ui); font-weight: 600; cursor: pointer; }
+.itar-choice input { width: 18px; height: 18px; margin: 0; flex: none; }
+.itar-choice:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); }
+.itar-choice:has(input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 2px; }
+[data-field]:has(> .field-error) .itar-choice { border-color: var(--danger); }
+.itar-choice-hint { display: block; font-weight: 400; }
+/* ฟอร์มยื่น 2 ช่วง */
+.itar-step-title { margin: 0 0 12px; font-size: var(--text-heading); }
+.itar-section { margin: 0 0 22px; }
+.itar-chooser .field { margin-bottom: 14px; }
+.itar-search-row { display: flex; gap: 8px; }
+.itar-search-row .input { flex: 1 1 auto; min-width: 0; }
+.itar-results { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; max-height: 320px; overflow-y: auto; }
+.itar-result { width: 100%; min-height: 44px; padding: 8px 12px; display: grid; gap: 2px; text-align: left; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md); cursor: pointer; font: inherit; color: inherit; }
+.itar-result:hover, .itar-result:focus-visible { border-color: var(--primary); background: var(--primary-soft); }
+.itar-picked { margin-top: 8px; padding: 10px 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; background: var(--primary-soft); border-radius: var(--radius-md); }
+.itar-subject-self { margin: 0 0 12px; }
+.itar-subject-box { margin: 0 0 18px; padding: 12px 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; background: var(--primary-soft); border-radius: var(--radius-md); }
+.itar-subject-box > div { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.itar-fieldset { margin: 0 0 18px; padding: 0; border: 0; min-width: 0; }
+.itar-fieldset > legend { margin: 0 0 8px; padding: 0; font-weight: 700; font-size: var(--text-ui); }
+.itar-right-list { display: grid; gap: 0; border: 1px solid var(--line); border-radius: var(--radius-md); overflow: hidden; }
+.itar-right-row { padding: 8px 12px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 15rem); align-items: center; gap: 4px 12px; border-bottom: 1px solid var(--soft-line); background: var(--paper); }
+.itar-right-row:last-child { border-bottom: 0; }
+.itar-right-row.is-changed { background: var(--primary-soft); box-shadow: inset 3px 0 0 var(--primary); }
+.itar-right-name { display: grid; gap: 2px; overflow-wrap: anywhere; font-size: var(--text-ui); }
+.itar-right-name small { font-size: var(--text-caption); }
+.itar-right-select { min-height: 44px; width: 100%; }
+.itar-note-field { grid-column: 1 / -1; margin-top: 4px; }
+.itar-email-closes { display: grid; gap: 6px; margin-bottom: 10px; }
+.itar-email-adds { margin: 6px 0 8px; padding: 0; list-style: none; display: grid; gap: 8px; }
+.itar-email-add { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 14rem) auto; gap: 8px; align-items: center; }
+.itar-current > summary { cursor: pointer; margin-top: 8px; }
+.itar-rights { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 12px; margin-top: 8px; }
+.itar-rights-group h4 { margin: 0 0 4px; font-size: var(--text-ui); }
+.itar-rights-group p { margin: 0; }
+.itar-rights-list { margin: 0; padding: 0 0 0 1.1em; }
+@media (max-width: 640px) {
+  .itar-right-row { grid-template-columns: minmax(0, 1fr); }
+  .itar-email-add { grid-template-columns: minmax(0, 1fr); }
+  .itar-search-row { flex-direction: column; }
+}
+/* ตาราง ก่อน → หลัง (หน้ารายละเอียดและสรุปก่อนส่ง): จอแคบเรียงเป็นการ์ดต่อแถว */
+.itar-table { width: 100%; border-collapse: collapse; font-size: var(--text-meta); }
+.itar-table th, .itar-table td { padding: 8px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--soft-line); overflow-wrap: anywhere; }
+.itar-table th { color: var(--muted); font-size: var(--text-caption); }
+.itar-table tr.is-rejected td { color: var(--muted); }
+.itar-table small { display: block; }
+@media (max-width: 640px) {
+  .itar-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .itar-table, .itar-table tbody, .itar-table tr, .itar-table td { display: block; width: 100%; }
+  .itar-table tr { margin-bottom: 8px; padding: 6px 0; border: 1px solid var(--line); border-radius: var(--radius-md); }
+  .itar-table td { padding: 4px 12px; border: 0; }
+  .itar-table td::before { content: attr(data-label) ": "; color: var(--muted); font-weight: 700; }
+}
+/* ถาม-ตอบ / ไฟล์ / ความคืบหน้าอัปโหลด */
+.itar-ask-card, .itar-answer-card { border-color: var(--primary); }
+.itar-ask-card .form-actions, .itar-answer-card .form-actions { flex-wrap: wrap; justify-content: flex-start; }
+.itar-comment { padding: 12px 0; border-top: 1px solid var(--soft-line); }
+.itar-comment:first-of-type { border-top: 0; padding-top: 0; }
+.itar-comment h3 { margin: 0 0 4px; font-size: var(--text-ui); }
+.itar-comment p { margin: 0 0 6px; }
+.itar-comment .attachment-grid, .itar-question .attachment-grid { margin: 8px 0 0; }
+.itar-comment-kind { font-weight: 700; }
+.itar-comment.is-answer { padding-left: 12px; border-left: 3px solid var(--soft-line); }
+.itar-question { margin: 0 0 14px; padding: 12px 14px; background: var(--primary-soft); border-radius: var(--radius-md); }
+.itar-question p { margin: 0 0 6px; }
+.itar-upload h2 { margin-bottom: 6px; }
+.itar-upload-summary { margin: 8px 0; font-weight: 700; }
+.itar-upload-list { margin: 0 0 14px; padding: 0; list-style: none; display: grid; gap: 6px; }
+.itar-upload-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); }
+.itar-upload-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.itar-upload-state { font-size: var(--text-caption); font-weight: 700; color: var(--muted); }
+.itar-upload-row.is-done .itar-upload-state { color: var(--success-ink); }
+.itar-upload-row.is-failed { border-color: var(--danger); }
+.itar-upload-row.is-failed .itar-upload-state, .itar-upload-message { color: var(--danger); }
+.itar-upload-message { grid-column: 1 / -1; font-size: var(--text-meta); overflow-wrap: anywhere; }
+.itar-upload .form-actions { flex-wrap: wrap; justify-content: flex-start; }

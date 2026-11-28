@@ -323,7 +323,7 @@ test("round 15: picked files show an unsent state and a leave warning; closed re
   assert.match(app, /confirmLabel: "ออกโดยไม่อัปโหลด", cancelLabel: "อยู่ต่อเพื่ออัปโหลด"/);
   // รอบรวม 24: ข้อความที่พิมพ์ค้างในฟอร์มของขั้นก็ถามก่อนออกเช่นกัน (leaveWarningPending = ไฟล์ค้าง หรือข้อความค้าง)
   assert.match(app, /window\.addEventListener\("beforeunload", \(event\) => \{\r?\n  if \(!leaveWarningPending\(\)\) return;/);
-  assert.match(app, /function leaveWarningPending\(\) \{\r?\n  return pendingAttachmentCount\(\) > 0 \|\| unsavedTextCount\(\) > 0( \|\| \(window\.MNP_ITRP\?\.unsavedCount\?\.\(\) \?\? 0\) > 0)?( \|\| \(window\.MNP_ITAS\?\.unsavedCount\?\.\(\) \?\? 0\) > 0)?( \|\| \(window\.MNP_ITUA\?\.unsavedCount\?\.\(\) \?\? 0\) > 0)?;/);
+  assert.match(app, /function leaveWarningPending\(\) \{\r?\n  return pendingAttachmentCount\(\) > 0 \|\| unsavedTextCount\(\) > 0( \|\| \(window\.MNP_ITRP\?\.unsavedCount\?\.\(\) \?\? 0\) > 0)?( \|\| \(window\.MNP_ITAS\?\.unsavedCount\?\.\(\) \?\? 0\) > 0)?( \|\| \(window\.MNP_ITUA\?\.unsavedCount\?\.\(\) \?\? 0\) > 0)?( \|\| \(window\.MNP_ITAR\?\.unsavedCount\?\.\(\) \?\? 0\) > 0)?;/);
   // รอบรวม 19: ยังไม่มีไฟล์ไม่พูดว่า "เพิ่ม"
   assert.match(app, /\$\{requestClosed \? \(attachments\.length \? "แนบไฟล์เพิ่มหลังปิดใบ" : "แนบไฟล์หลังปิดใบ"\) : attachments\.length \? "แนบไฟล์เพิ่ม" : "แนบไฟล์"\}/);
   // ไม่ถามระหว่างกำลังอัปโหลด · ปุ่ม/ท่าทางย้อนกลับถามด้วย (Navigation API) แล้วย้อนกลับต่อเมื่อยืนยัน
