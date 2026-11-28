@@ -2,7 +2,7 @@
 // การเชื่อมต่อ (เรียก RPC ผูกปุ่ม กล่องยืนยัน) อยู่ที่ modules/module-itar.js · ข้อมูลล้วน/กติกาอยู่ที่ modules/itar-model.js
 // คัดโครงจากใบแจ้งซ่อม IT (itrp-pages.js): แท็บ ใบของฉัน/รออนุมัติ/งาน IT/ตั้งค่า · ถาม-ตอบ · แนบไฟล์ · ไทม์ไลน์
 // ที่ต่าง: ฟอร์มยื่นมี 2 ช่วง (เลือกประเภท+ผู้รับสิทธิ์ → ติ๊กสิทธิ์จากสิทธิ์ปัจจุบัน) และหน้ารายละเอียดมีตาราง "ก่อน → หลัง"
-// ส่วน B (ยังไม่ทำที่นี่): ใบพิมพ์ USER-REQ / USER-Page · หน้าบันทึกลงทะเบียน (apply) · ปุ่มรับทราบ / รับทราบด้วยกระดาษ · แนบรูปใบรับทราบ — ดูที่ว่างที่ detailPage (#itar-apply-host, #itar-ack-host, #itar-print-host)
+// ส่วน B: หน้า "ปรับสิทธิ์ตามใบ" (applyForm) · การ์ดรับทราบสิทธิ์ (ackCard) · รับทราบด้วยกระดาษ + แนบรูปใบที่เซ็น (paperCard) · ใบพิมพ์ A4 ใบคำร้อง (printRequestSheet) และเอกสารชี้แจงสิทธิ์ (printRightsSheet)
 // ไม่มีรหัสผ่านหรือช่องลับใด ๆ ในหน้าเหล่านี้ (ข้อมูลของใบไม่มีช่องลับอยู่แล้ว)
 (function (root) {
   "use strict";
@@ -395,12 +395,46 @@
       <div class="form-message error" id="itar-action-error" role="alert" hidden></div>
     </section>`;
   }
-  // ขั้นตอนที่ฐานข้อมูลอนุญาตแต่หน้าเว็บรุ่นนี้ยังไม่มีปุ่ม (ส่วน B): แสดงข้อความแทน เพื่อไม่ให้ผู้ใช้งงว่าทำไมใบค้าง
-  function deferredCard(actions) {
-    if (!actions.length) return "";
-    return `<section class="card itar-deferred" aria-labelledby="itar-deferred-title"><h2 id="itar-deferred-title">ขั้นตอนถัดไป</h2>
-      <p class="rf-callout is-warn" role="status">คุณมีสิทธิ์ทำขั้นตอนต่อไปนี้กับใบนี้ แต่ปุ่มยังไม่เปิดให้ใช้ในหน้าเว็บรุ่นนี้ (กำลังพัฒนา): ${esc(actions.map((action) => action.label).join(" · "))}</p>
+  /* ---------- รับทราบสิทธิ์ (ผู้รับสิทธิ์ที่มีบัญชี) ---------- */
+  // เอกสารชี้แจงสิทธิ์ในหน้า: สิทธิ์ทั้งหมดหลังเปลี่ยน + ข้อความนโยบาย + ปุ่มรับทราบ (วาดเมื่อ allowed_actions มี acknowledge)
+  function ackCard(detail) {
+    const summary = model.rightsSummary(model.rightsAfter(detail));
+    const policy = model.policyOf(detail);
+    const button = model.ACTION_BUTTONS.acknowledge;
+    return `<section class="card itar-ack-card" id="itar-ack-card" aria-labelledby="itar-ack-title">
+      <h2 id="itar-ack-title">เอกสารชี้แจงสิทธิ์ของคุณ</h2>
+      <p class="muted small">IT บันทึกสิทธิ์ของคุณตามใบนี้แล้ว กรุณาตรวจสิทธิ์ทั้งหมดด้านล่าง ถ้าไม่ถูกต้องให้แจ้ง IT ก่อนกดรับทราบ</p>
+      ${summary ? rightsList(summary, { empty: "ไม่มีสิทธิ์ใดในทะเบียน" }) : '<p class="muted small">ไม่พบข้อมูลสิทธิ์ของคุณ กรุณาติดต่อ IT ก่อนกดรับทราบ</p>'}
+      <blockquote class="itar-policy"><p class="itar-text">${esc(policy.text)}</p>${policy.version ? `<small class="muted">นโยบายเวอร์ชัน ${esc(policy.version)}</small>` : ""}</blockquote>
+      <div class="form-actions"><button type="button" class="btn success" id="itar-ack-button">${esc(button.label)}</button></div>
     </section>`;
+  }
+
+  /* ---------- รับทราบด้วยกระดาษ (IT: ผู้รับสิทธิ์ไม่มีบัญชีหรือบัญชีถูกปิดแล้ว) ---------- */
+  // ขั้นตอน: พิมพ์เอกสารชี้แจงสิทธิ์ให้ผู้ใช้เซ็น → แนบรูป/ไฟล์ใบที่เซ็นแล้วอย่างน้อย 1 ไฟล์ → กด "รับทราบแล้ว (กระดาษ)" · ปุ่มรับทราบกดไม่ได้จนกว่าจะมีรูปที่แนบแล้ว
+  function paperCard(detail) {
+    const count = model.paperFileCount(detail);
+    const canAttach = model.hasAction(detail, "add_paper_attachment");
+    const canAck = model.hasAction(detail, "acknowledge_paper");
+    const button = model.ACTION_BUTTONS.acknowledge_paper;
+    return `<section class="card itar-paper-card" id="itar-paper-card" aria-labelledby="itar-paper-title">
+      <h2 id="itar-paper-title">รับทราบด้วยกระดาษ</h2>
+      <p class="muted small">ผู้รับสิทธิ์ไม่มีบัญชีใช้งานในระบบ จึงรับทราบด้วยกระดาษ: (1) พิมพ์เอกสารชี้แจงสิทธิ์ให้ผู้ใช้เซ็น (2) แนบรูปหรือไฟล์ใบที่เซ็นแล้วอย่างน้อย 1 ไฟล์ (3) กด "${esc(button.label)}"</p>
+      <div class="action-panel-buttons"><a class="btn secondary" id="itar-paper-print" href="${esc(model.printUrl(detail.id, "page"))}">${esc(model.PRINT_FORM_LABELS.page)}</a></div>
+      <div id="itar-paper-message" role="status"></div>
+      ${canAttach ? `<form id="itar-paper-form" novalidate>
+        ${fileField({ id: "itar-paper-files", field: "paper_files", label: "รูปหรือไฟล์ใบที่เซ็นแล้ว" })}
+        <p class="muted small" id="itar-paper-count">${count ? `แนบแล้ว ${count} ไฟล์ (ดูที่การ์ด "รูปใบรับทราบที่เซ็นแล้ว")` : "ยังไม่ได้แนบรูปใบที่เซ็น"}</p>
+        <div class="form-actions"><button type="submit" class="btn secondary" id="itar-paper-upload">แนบรูปใบที่เซ็นแล้ว</button></div>
+      </form>` : ""}
+      ${canAck ? `<div class="field" data-field="paper_note"><label for="itar-paper-note">หมายเหตุ (ไม่บังคับ)</label><input class="input" id="itar-paper-note" name="paper_note" maxlength="${model.MAX_PAPER_NOTE}" autocomplete="off"></div>
+      <div class="form-actions"><button type="button" class="btn success" id="itar-paper-ack"${count ? "" : " disabled"}>${esc(button.label)}</button></div>` : ""}
+    </section>`;
+  }
+
+  // พิมพ์: ใบคำร้องพิมพ์ได้เสมอ · เอกสารชี้แจงสิทธิ์พิมพ์ได้หลัง IT บันทึกลงทะเบียน (ใบยกเลิกทั้งหมดไม่มี)
+  function printCard(detail) {
+    return `<section class="card itar-print-card" aria-labelledby="itar-print-title"><h2 id="itar-print-title">เอกสาร</h2><div class="action-panel-buttons">${model.printForms(detail).map((form) => `<a class="btn secondary" id="itar-print-${form}" href="${esc(model.printUrl(detail.id, form))}">${esc(model.PRINT_FORM_LABELS[form])}</a>`).join("")}</div></section>`;
   }
 
   /* ---------- ไฟล์แนบ ---------- */
@@ -555,11 +589,10 @@
       <div class="detail-grid">
         <div class="stack"${hasFiles ? ' id="attachment-gallery"' : ""}>
           ${pending ? answerCard(pending) : ""}
+          ${has("acknowledge") ? ackCard(detail) : ""}
+          ${has("acknowledge_paper") || has("add_paper_attachment") ? paperCard(detail) : ""}
           ${actionsCard(buttons)}
           ${has("request_info") ? askFormCard() : ""}
-          ${deferredCard(model.deferredActions(detail.allowed_actions))}
-          <div id="itar-apply-host" hidden></div>
-          <div id="itar-ack-host" hidden></div>
           ${factsCard(detail)}
           ${itemsCard(detail)}
           ${afterCard(detail)}
@@ -567,10 +600,211 @@
           ${filesCard(detail)}
         </div>
         <aside class="stack">
-          <div id="itar-print-host" hidden></div>
+          ${printCard(detail)}
           ${historyCard(detail.events ?? [], detail.requester)}
         </aside>
       </div>`);
+  }
+
+  /* ---------- หน้า "ปรับสิทธิ์ตามใบ" (IT) ---------- */
+  // ตัวเลือกผู้ใช้ในทะเบียน (ปุ่มวิทยุ) · ผู้ใช้ที่ลาออกแล้วเลือกไม่ได้ (ฐานข้อมูลปฏิเสธ)
+  function userChoices(candidates, selectedId) {
+    if (!candidates.length) return '<p class="muted small">ไม่พบผู้ใช้ในทะเบียนที่น่าจะตรงกับผู้รับสิทธิ์ ค้นหาด้วยชื่อหรือ Auth. Name ด้านล่าง</p>';
+    return candidates.map((user) => `<label class="itar-choice${user.active ? "" : " is-disabled"}"><input type="radio" name="user_id" value="${esc(user.id)}"${String(selectedId) === user.id ? " checked" : ""}${user.active ? "" : " disabled"}> <span><strong>${esc(user.authId)}</strong> ${esc(user.name)}${user.department ? ` · ${esc(user.department)}` : ""}${user.active ? "" : ' <span class="badge cancelled">ลาออกแล้ว</span>'}${user.linked ? ' <small class="muted">ผูกพนักงานแล้ว</small>' : ""}</span></label>`).join("");
+  }
+  function applyRowHtml(row, decision) {
+    const applied = decision.decision === "applied";
+    const rejected = decision.decision === "rejected";
+    return `<div class="itar-apply-row${row.warning ? " has-warning" : ""}" data-field="decision:${esc(row.id)}" data-item="${esc(row.id)}">
+        <div class="itar-apply-main">
+          <strong><span class="itar-apply-no">${esc(row.no)}.</span> ${esc(row.label)}</strong>
+          ${row.note ? `<small class="muted itar-text">เหตุผลที่ขอ: ${esc(row.note)}</small>` : ""}
+          <span class="itar-apply-change">ที่ขอ: ${esc(row.before)} → <strong>${esc(row.after)}</strong></span>
+          <small class="muted">ทะเบียนตอนนี้: ${esc(row.current)}</small>
+          ${row.warning ? `<small class="itar-apply-warning" role="note">${esc(row.warning)}</small>` : ""}
+        </div>
+        <div class="itar-choices itar-apply-decide" data-invalid-target role="radiogroup" aria-label="รายการที่ ${esc(row.no)}">
+          <label class="itar-choice"><input type="radio" name="decision:${esc(row.id)}" value="applied"${applied ? " checked" : ""}> <span>บันทึกลงทะเบียน</span></label>
+          <label class="itar-choice"><input type="radio" name="decision:${esc(row.id)}" value="rejected"${rejected ? " checked" : ""}> <span>ไม่บันทึก</span></label>
+        </div>
+        <div class="field itar-note-field" data-reason-for="${esc(row.id)}"${rejected ? "" : " hidden"}><label for="itar-reason-${esc(row.id)}">เหตุผลที่ไม่บันทึก ${REQUIRED}</label><input class="input" id="itar-reason-${esc(row.id)}" name="reason:${esc(row.id)}" maxlength="${model.MAX_DECISION_REASON}" autocomplete="off" value="${esc(decision.reason)}"></div>
+      </div>`;
+  }
+  // ctx = model.normalizeApplyContext · state = model.initialApplyState · candidates = model.userCandidates · search = { state, searched, message } ผลค้นหาผู้ใช้ทะเบียน
+  function applyForm({ ctx, state, candidates = [], search = { state: "idle", searched: false, message: "" } }) {
+    const request = ctx.request;
+    const revoke = request.request_type === "revoke_all";
+    const subject = model.subjectName({ name_th: request.subject_name_th, name_en: request.subject_name_en });
+    const summaryBox = `<div class="itar-subject-box"><div><span class="muted small">ใบขอสิทธิ์ ${esc(request.doc_no)}</span><strong>${esc(subject)}</strong><span class="muted small">${esc([request.subject_department_code, request.subject_division ? `ฝ่าย${model.divisionLabel(request.subject_division)}` : ""].filter(Boolean).join(" · "))}</span></div><span class="badge itar-type-tag">${esc(model.requestTypeLabel(request.request_type))}</span></div>`;
+    const blocked = model.applyBlockedMessage(ctx);
+    if (blocked) return `<section class="card form-card" id="itar-apply-card">${summaryBox}<p class="rf-callout is-warn" role="status">${esc(blocked)}</p></section>`;
+
+    const userSection = ctx.needsUserChoice
+      ? `<fieldset class="itar-fieldset itar-user-pick" data-field="user"><legend>ผู้ใช้ในทะเบียนสิทธิ์ ${REQUIRED}</legend>
+          <p class="muted small">ผู้รับสิทธิ์ยังไม่ผูกกับผู้ใช้ในทะเบียน เลือกผู้ใช้ที่ตรงกับผู้รับสิทธิ์ (ระบบแนะนำจากชื่อ/บัญชีพนักงาน หรือค้นหาเอง)</p>
+          <div class="itar-choices" id="itar-user-choices" role="radiogroup" data-invalid-target aria-label="ผู้ใช้ในทะเบียนสิทธิ์">${userChoices(candidates, state.userId)}</div>
+          <div class="itar-search-row"><input class="input" id="itar-user-search" type="search" maxlength="100" autocomplete="off" placeholder="ค้นหาด้วยชื่อหรือ Auth. Name (อย่างน้อย 2 ตัวอักษร)" aria-label="ค้นหาผู้ใช้ในทะเบียน"><button type="button" class="btn secondary" id="itar-user-search-go">ค้นหา</button></div>
+          <div id="itar-user-search-status" aria-live="polite">${search.state === "loading" ? '<p class="muted small">กำลังค้นหา…</p>' : search.state === "error" ? `<p class="field-error" role="alert">${esc(search.message || "ค้นหาไม่สำเร็จ ตรวจอินเทอร์เน็ตแล้วกดค้นหาอีกครั้ง")}</p>` : search.searched ? '<p class="muted small">แสดงผลที่พบรวมในรายการด้านบนแล้ว</p>' : ""}</div>
+          <label class="itar-choice" id="itar-link-box"${model.canLinkEmployee(ctx, state, candidates) ? "" : " hidden"}><input type="checkbox" name="link"${state.link ? " checked" : ""}> <span>ผูกผู้ใช้ในทะเบียนนี้กับบัญชีพนักงานของผู้รับสิทธิ์ <small class="muted">(ใบต่อไปของคนนี้จะรู้สิทธิ์ปัจจุบันอัตโนมัติ)</small></span></label>
+        </fieldset>`
+      : "";
+    const newUserSection = ctx.needsNewUser
+      ? `<fieldset class="itar-fieldset" data-field="auth_id"><legend>ผู้ใช้ใหม่ในทะเบียนสิทธิ์</legend>
+          <p class="muted small">ใบขอใหม่ ระบบจะสร้างผู้ใช้ใหม่ในทะเบียนพร้อมสิทธิ์ที่บันทึก ชื่อ แผนก และฝ่ายมาจากใบ</p>
+          <div class="field"><label for="itar-new-auth">Auth. Name ${REQUIRED}</label><input class="input" id="itar-new-auth" name="new_auth_id" maxlength="60" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="เช่น somchai.k" value="${esc(state.newUser.auth_id)}"><small>ตัวอักษรอังกฤษ ตัวเลข . _ - (ระบบแปลงเป็นตัวพิมพ์เล็กให้)</small></div>
+          <div class="field" data-field="new_user_name"><label for="itar-new-name-th">ชื่อ (ไทย)</label><input class="input" id="itar-new-name-th" name="new_name_th" maxlength="${model.MAX_NAME}" autocomplete="off" value="${esc(state.newUser.name_th)}"></div>
+          <div class="field"><label for="itar-new-name-en">ชื่อ (อังกฤษ)</label><input class="input" id="itar-new-name-en" name="new_name_en" maxlength="${model.MAX_NAME}" autocomplete="off" value="${esc(state.newUser.name_en)}"></div>
+        </fieldset>`
+      : "";
+
+    let itemsSection;
+    if (revoke) {
+      const summary = model.rightsSummary(ctx.subjectRights);
+      itemsSection = `<section class="itar-section"><h2 class="itar-step-title">สิทธิ์ที่จะถูกถอดทั้งหมด</h2>
+          <p class="rf-callout is-warn" role="status">${esc(model.revokeText(summary))} · ผู้ใช้จะเปลี่ยนสถานะเป็นลาออกในทะเบียน และใบนี้จบงานทันที</p>
+          ${summary ? rightsList(summary) : '<p class="muted small">ยังไม่ทราบสิทธิ์ของผู้ใช้ที่จะเลือก ระบบถอดสิทธิ์ทั้งหมดที่มีในทะเบียนตอนบันทึก</p>'}
+        </section>`;
+    } else {
+      itemsSection = `<section class="itar-section" data-field="items"><h2 class="itar-step-title">รายการสิทธิ์ที่ขอ</h2>
+          <p class="muted small">เปรียบเทียบสิ่งที่ผู้ยื่นขอกับทะเบียนตอนนี้ แล้วเลือกทีละรายการ: "บันทึกลงทะเบียน" ตามที่ขอ หรือ "ไม่บันทึก" (ต้องระบุเหตุผล) · ระบบบันทึกทุกรายการพร้อมกัน ถ้ามีรายการใดผิดจะไม่เปลี่ยนอะไรเลย</p>
+          <div class="form-actions"><button type="button" class="btn secondary small" id="itar-apply-all">ยืนยันทุกรายการตามที่ขอ</button></div>
+          <div class="itar-apply-list" id="itar-apply-list">${model.applyRows(ctx).map((row) => applyRowHtml(row, model.decisionOf(state, row.id))).join("")}</div>
+        </section>`;
+    }
+    return `<section class="card form-card" id="itar-apply-card"><div id="itar-message" role="status"></div>
+      <form id="itar-apply-form" novalidate>
+        ${summaryBox}
+        <p class="muted small itar-apply-reason"><strong>เหตุผลของผู้ยื่น:</strong> <span class="itar-text">${esc(request.reason)}</span></p>
+        ${userSection}${newUserSection}${itemsSection}
+        <div class="form-actions"><a class="btn secondary" href="${esc(model.accessUrl("order", { id: request.id }))}" data-form-cancel>ยกเลิก</a><button type="submit" class="btn is-primary" data-step-submit>บันทึกลงทะเบียน</button></div>
+      </form></section>`;
+  }
+
+  /* ---------- ใบพิมพ์ A4 · USER-REQ (ใบคำร้อง) และ USER-Page (เอกสารชี้แจงสิทธิ์) ---------- */
+  // ใช้เปลือกและตารางของใบแจ้งซ่อม (.itrp-sheet*) ร่วมกันเพื่อให้หน้าตา/การตั้งหน้า A4/การซ่อนเมนูตอนพิมพ์เหมือนกัน · ข้อมูลทั้งหมดมาจาก detail ของ app_itar_get_detail (ไม่มีรหัสผ่านหรือช่องลับ)
+  const radio = (on) => `<span class="itrp-radio" aria-hidden="true">${on ? "●" : "○"}</span>`;
+  const printChoices = (options, selected) => options.map((option) => `<span class="itrp-choice-print" data-option="${esc(option.value)}"${option.value === selected ? ' data-selected="1"' : ""}>${radio(option.value === selected)} ${esc(option.label)}</span>`).join("");
+  // กล่องลายเซ็น: ชื่อ + วันที่และเวลาที่กดในระบบ · ว่าง = เว้นช่อง (เซ็นมือ) · typed = ชื่อพิมพ์ใต้เส้นเซ็นมือ · remark = หมายเหตุใต้ชื่อ
+  const signBox = (key, label, sign) => `<div class="itrp-sign" data-slot="${key}">
+        <div class="itrp-sign-label">${esc(label)}</div>
+        <div class="itrp-sign-name">${esc(sign.name ?? "")}</div>
+        ${sign.typed && !sign.name ? `<div class="itrp-sign-remark">(${esc(sign.typed)})</div>` : ""}
+        ${sign.remark ? `<div class="itrp-sign-remark">(${esc(sign.remark)})</div>` : ""}
+        <div class="itrp-sign-time">${sign.at ? esc(model.formatDateTime(sign.at)) : ""}</div>
+      </div>`;
+  const sheetHead = (title, detail, isTest) => `<header class="itrp-sheet-title">
+          <img class="itrp-sheet-logo" src="./icons/icon-192.png" alt="">
+          <h1>${esc(title)}</h1>
+          <div class="itrp-docbox"><span>เลขที่ใบขอสิทธิ์</span><strong>${esc(detail.doc_no)}</strong></div>
+        </header>
+        ${isTest ? '<p class="itrp-test-note">ใบทดสอบ — ไม่ใช่เอกสารจริง</p>' : ""}`;
+  const testMark = (isTest) => (isTest ? '<div class="itrp-watermark" aria-hidden="true">ทดสอบ</div>' : "");
+  const PRINT_FOOTER = "ลงนามอิเล็กทรอนิกส์ผ่านระบบ (ชื่อและวันเวลาตามที่กดในระบบ)";
+  const subjectDepartment = (detail) => [detail.subject?.department_code, detail.subject?.division ? `ฝ่าย${model.divisionLabel(detail.subject.division)}` : ""].filter(Boolean).join(" · ") || "—";
+
+  // ประวัติถาม-ตอบย่อ: ข้อความยาวตัดที่ 200 ตัวอักษร (ฉบับเต็มอยู่ในระบบ) ไม่มีข้อความ = ไม่มีส่วนนี้
+  const PRINT_COMMENT_CLIP = 200;
+  function printComments(rows) {
+    if (!rows.length) return "";
+    return `<h2 class="itrp-sheet-section">ประวัติถาม-ตอบ (ย่อ)</h2>
+        <table class="itrp-sheet-table itrp-sheet-comments"><thead><tr><th>ลำดับ</th><th>ถาม/ตอบ</th><th>ขั้น</th><th>โดย</th><th>วันเวลา</th><th>ข้อความ</th></tr></thead><tbody>${rows.map((row) => `<tr>
+          <td class="itrp-center">${esc(row.no)}</td><td>${esc(row.kindLabel)}</td><td>${esc(row.stageLabel)}</td><td>${esc(row.by)}</td><td>${esc(model.formatDateTime(row.at))}</td>
+          <td class="itrp-sheet-text">${esc(model.clip(row.body, PRINT_COMMENT_CLIP))}</td></tr>`).join("")}</tbody></table>`;
+  }
+
+  // ใบคำร้อง (USER-REQ): ผู้ยื่น/ผู้รับสิทธิ์ · ประเภท · เหตุผล · รายการก่อน→หลัง (+ผลที่ IT ตัดสิน) · ลงนาม 4 ช่อง · ถาม-ตอบย่อ
+  function printRequestSheet(detail) {
+    const isTest = Boolean(detail.is_test) || model.isTestDoc(detail.doc_no);
+    const sign = model.requestSignoffs(detail);
+    const rows = model.itemRows(detail);
+    const hasResult = rows.some((row) => row.result);
+    let itemsBlock;
+    if (detail.request_type === "revoke_all") {
+      const summary = model.rightsSummary(detail.applied_summary?.before ?? detail.subject_rights ?? null);
+      const applied = Boolean(detail.applied_summary);
+      itemsBlock = `<table class="itrp-sheet-table"><tbody><tr><th scope="row">รายการ</th><td>${esc(applied ? model.revokeText(summary).replace("จะถอด", "ถอด") : model.revokeText(summary))}</td></tr></tbody></table>`;
+    } else {
+      itemsBlock = `<table class="itrp-sheet-table itar-sheet-items"><thead><tr><th>ลำดับ</th><th>รายการสิทธิ์</th><th>ก่อน</th><th>หลัง</th>${hasResult ? "<th>ผลที่ IT บันทึก</th>" : ""}</tr></thead><tbody>${rows.map((row) => `<tr>
+          <td class="itrp-center">${esc(row.no)}</td>
+          <td>${esc(row.label)}${row.note ? `<br><small>เหตุผล: ${esc(row.note)}</small>` : ""}</td>
+          <td>${esc(row.before)}</td><td><strong>${esc(row.after)}</strong></td>
+          ${hasResult ? `<td>${row.result ? `${esc(row.result.label)}${row.result.reason ? `<br><small>${esc(row.result.reason)}</small>` : ""}` : ""}</td>` : ""}</tr>`).join("")}</tbody></table>`;
+    }
+    return `<article class="itrp-sheet itar-sheet${isTest ? " is-test" : ""}" data-form="req" aria-label="ใบขอสิทธิ์ ${esc(detail.doc_no)}">
+        ${testMark(isTest)}
+        ${sheetHead("ใบขอสิทธิ์การใช้งานระบบคอมพิวเตอร์", detail, isTest)}
+        <table class="itrp-sheet-table"><tbody>
+          <tr><th scope="row">ผู้ยื่นใบขอ</th><td>${esc(detail.requester?.full_name ?? "—")}</td><th scope="row">หน่วยงาน</th><td>${esc(detail.department?.name_th ?? "—")}</td></tr>
+          <tr><th scope="row">วันที่ยื่น</th><td>${esc(model.formatDateOf(detail.created_at))}</td><th scope="row">เวลา</th><td>${esc(model.formatTimeOf(detail.created_at))}</td></tr>
+          <tr><th scope="row">ผู้รับสิทธิ์</th><td>${esc(model.subjectName(detail.subject))}</td><th scope="row">แผนก / ฝ่าย</th><td>${esc(subjectDepartment(detail))}</td></tr>
+          <tr><th scope="row">ประเภทคำขอ</th><td colspan="3">${printChoices(model.REQUEST_TYPES, detail.request_type)}</td></tr>
+          <tr><th scope="row">เหตุผลที่ขอ</th><td colspan="3" class="itrp-sheet-text">${esc(detail.reason)}</td></tr>
+        </tbody></table>
+        <h2 class="itrp-sheet-section">รายการสิทธิ์ที่ขอ (ก่อน → หลัง)</h2>
+        ${itemsBlock}
+        <div class="itrp-signs itar-signs-4">
+          ${signBox("requester", "ผู้ยื่นใบขอ", sign.requester)}
+          ${signBox("dept", "ผู้อนุมัติ (ผู้จัดการแผนก)", sign.dept)}
+          ${signBox("it_mgr", "ผู้อนุมัติขั้น IT", sign.itMgr)}
+          ${signBox("applied", "IT ผู้ดำเนินการ", sign.applied)}
+        </div>
+        ${printComments(model.commentRows(detail))}
+        <p class="itrp-sheet-note">${PRINT_FOOTER} · สถานะใบขอสิทธิ์ ณ ที่พิมพ์: ${esc(model.statusLabel(detail.status))}</p>
+      </article>`;
+  }
+
+  // สิทธิ์ทั้งหมดของผู้ใช้ในตารางเล็ก ๆ: โฟลเดอร์เรียง 2 ชุดคอลัมน์ต่อแถว (ให้พอดีหน้าเดียว) · อินเทอร์เน็ต · โปรแกรม · อีเมล
+  function printRightsTables(summary) {
+    if (!summary) return '<p class="itrp-sheet-note">ไม่มีข้อมูลสิทธิ์ที่บันทึก</p>';
+    const half = Math.ceil(summary.folders.length / 2);
+    const left = summary.folders.slice(0, half);
+    const right = summary.folders.slice(half);
+    const cell = (row) => (row ? `<td>${esc(row.code)}</td><td>${esc(row.name)}</td><td class="itrp-center">${esc(row.level)}</td>` : "<td></td><td></td><td></td>");
+    const folderRows = left.map((row, index) => `<tr>${cell(row)}${cell(right[index])}</tr>`).join("");
+    return `<h2 class="itrp-sheet-section">สิทธิ์โฟลเดอร์แชร์ (R = อ่านอย่างเดียว · F = อ่าน-เขียน-แก้ไข-ลบ)</h2>
+        ${summary.folders.length ? `<table class="itrp-sheet-table itar-sheet-folders"><thead><tr><th>รหัส</th><th>โฟลเดอร์</th><th>สิทธิ์</th><th>รหัส</th><th>โฟลเดอร์</th><th>สิทธิ์</th></tr></thead><tbody>${folderRows}</tbody></table>` : '<p class="itrp-sheet-note">ไม่มีสิทธิ์โฟลเดอร์แชร์</p>'}
+        <table class="itrp-sheet-table"><tbody>
+          <tr><th scope="row">อินเทอร์เน็ต</th><td>${summary.internet ? "มีสิทธิ์" : "ไม่มี"}</td></tr>
+          <tr><th scope="row">โปรแกรม</th><td>${summary.programs.length ? esc(summary.programs.map((row) => (row.note ? `${row.name} (${row.note})` : row.name)).join(" · ")) : "ไม่มี"}</td></tr>
+          <tr><th scope="row">อีเมล</th><td>${summary.emails.length ? esc(summary.emails.map((row) => `${row.address} (${row.kindLabel})`).join(" · ")) : "ไม่มี"}</td></tr>
+        </tbody></table>`;
+  }
+
+  // เอกสารชี้แจงสิทธิ์ (USER-Page): สิทธิ์ทั้งหมดหลังเปลี่ยน · ข้อความนโยบาย · ลงนาม ผู้รับสิทธิ์ (รับทราบ) + IT ผู้บันทึกสิทธิ์
+  function printRightsSheet(detail) {
+    const isTest = Boolean(detail.is_test) || model.isTestDoc(detail.doc_no);
+    const sign = model.rightsDocumentSignoffs(detail);
+    const raw = model.rightsAfter(detail);
+    const summary = model.rightsSummary(raw);
+    const policy = model.policyOf(detail);
+    return `<article class="itrp-sheet itar-sheet${isTest ? " is-test" : ""}" data-form="page" aria-label="เอกสารชี้แจงสิทธิ์ ${esc(detail.doc_no)}">
+        ${testMark(isTest)}
+        ${sheetHead("เอกสารชี้แจงสิทธิ์การใช้งานระบบคอมพิวเตอร์", detail, isTest)}
+        <table class="itrp-sheet-table"><tbody>
+          <tr><th scope="row">ผู้รับสิทธิ์</th><td>${esc(model.subjectName(detail.subject))}</td><th scope="row">Auth. Name</th><td>${esc(raw?.auth_id ?? "")}</td></tr>
+          <tr><th scope="row">แผนก / ฝ่าย</th><td>${esc(subjectDepartment(detail))}</td><th scope="row">อ้างถึงใบขอสิทธิ์</th><td>${esc(detail.doc_no)}</td></tr>
+          <tr><th scope="row">ประเภทคำขอ</th><td>${esc(model.requestTypeLabel(detail.request_type))}</td><th scope="row">IT บันทึกสิทธิ์เมื่อ</th><td>${esc(model.formatDateTime(detail.applied?.at))}</td></tr>
+        </tbody></table>
+        ${printRightsTables(summary)}
+        <div class="itar-sheet-policy"><strong>นโยบาย${policy.version ? ` (${esc(policy.version)})` : ""}</strong>
+          <p class="itrp-sheet-text">${esc(policy.text)}</p></div>
+        <div class="itrp-signs itar-signs-2">
+          ${signBox("recipient", "ผู้รับสิทธิ์ (รับทราบ)", sign.recipient)}
+          ${signBox("applied", "IT ผู้บันทึกสิทธิ์", sign.applied)}
+        </div>
+        <p class="itrp-sheet-note">${PRINT_FOOTER}</p>
+      </article>`;
+  }
+
+  // หน้าพิมพ์: แถบเครื่องมือ (กลับ · สลับใบ · พิมพ์) ไม่พิมพ์ลงกระดาษ · form = "req" | "page" (model.resolvePrintForm ตัดสินแล้ว)
+  function printPage(detail, { form = "req" } = {}) {
+    const other = model.printForms(detail).filter((item) => item !== form);
+    return page(`<div class="itrp-print-toolbar no-print">
+        <a class="btn secondary" href="${esc(model.accessUrl("order", { id: detail.id }))}">‹ กลับไปรายละเอียด</a>
+        ${other.map((item) => `<a class="btn secondary" href="${esc(model.printUrl(detail.id, item))}">${esc(model.PRINT_FORM_LABELS[item])}</a>`).join("")}
+        <button type="button" class="btn is-primary" id="itar-print-button">พิมพ์</button>
+      </div>
+      ${form === "page" ? printRightsSheet(detail) : printRequestSheet(detail)}`, { showDevNotice: false });
   }
 
   /* ---------- ตั้งค่า (it_admin) ---------- */
@@ -615,7 +849,7 @@
 
   const api = {
     head, newButton, tabs, page, errorCard, mineList, approvalsList, itList, chooserForm, modeBox, subjectBody, rightsForm, emailAddRow, emailAddRows, previewTable, rightsList,
-    uploadPanel, detailPage, detailHead, actionsCard, deferredCard, factsCard, itemsCard, afterCard, changeTable, askFormCard, answerCard, commentsCard, historyCard, filesCard,
+    uploadPanel, detailPage, detailHead, actionsCard, ackCard, paperCard, printCard, applyForm, userChoices, printRequestSheet, printRightsSheet, printPage, factsCard, itemsCard, afterCard, changeTable, askFormCard, answerCard, commentsCard, historyCard, filesCard,
     settingsPage, staffTable, docCounterCard, purgeRow, testTag, selectOptions, fileGrid,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
