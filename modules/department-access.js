@@ -37,6 +37,7 @@
   // การแจ้งเตือน (แถว notifications) ที่แผนกนั้นยังเห็น — ปิดไว้ก่อนเมื่อไม่แน่ใจ:
   // - ผูกใบคำร้อง (request_id): เห็นเมื่อประเภทใบเป็นโมดูลที่อนุญาต (requestTypeOf(id) คืนรหัสประเภท หรือ null ถ้าอ่านใบไม่ได้)
   // - สรุปงานค้าง (action_url "/" + digest): เห็นเมื่อทุกงานในสรุปเป็นใบคำร้องของโมดูลที่อนุญาต
+  // - ใบขอสิทธิ์ IT (action_url /office/access/<id> ของโมดูล itar): เห็นเมื่อโมดูล IT_ACCESS_REQUEST อยู่ในรายการอนุญาต (แผนก ID ไม่เห็น)
   // - ใบแจ้งซ่อม IT (action_url /office/repair/<id> ของโมดูล itrp): เห็นเมื่อโมดูล IT_COMPUTER_REPAIR อยู่ในรายการอนุญาต (แผนก ID เห็น)
   // - เรื่องข้อมูลส่วนตัว (/profile): เห็น · อื่น ๆ (NCR, ใบสั่งงาน IT, ผู้ดูแลระบบ, ไม่มีลิงก์) ไม่เห็น
   const notificationAllowed = (employee, item, requestTypeOf) => {
@@ -44,6 +45,8 @@
     if (item?.request_id) return moduleAllowed(employee, requestTypeOf(item.request_id));
     if (item?.action_url === "/profile") return true;
     if (item?.action_url?.startsWith("/office/repair/")) return moduleAllowed(employee, "IT_COMPUTER_REPAIR");
+    // ใบขอสิทธิ์ IT (action_url /office/access/<id> ของโมดูล itar): แผนกที่จำกัดโมดูล (ID) ไม่มี IT_ACCESS_REQUEST ในรายการ จึงไม่เห็น เหมือนใบสั่งงาน IT
+    if (item?.action_url?.startsWith("/office/access/")) return moduleAllowed(employee, "IT_ACCESS_REQUEST");
     if (item?.action_url === "/") {
       const digest = Array.isArray(item.digest) ? item.digest : [];
       return digest.length > 0 && digest.every((entry) => entry?.item_type === "request" && typeof entry.item_id === "string" && moduleAllowed(employee, requestTypeOf(entry.item_id)));

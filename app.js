@@ -1248,7 +1248,7 @@ function unsavedTextCount() {
 }
 // ออกจากหน้าเมื่อยังมีไฟล์ที่ยังไม่อัปโหลดหรือข้อความที่พิมพ์ค้าง: ถามก่อน (ไฟล์มาก่อนเพราะลบไม่ได้หลังอัปโหลด)
 function leaveWarningPending() {
-  return pendingAttachmentCount() > 0 || unsavedTextCount() > 0 || (window.MNP_ITRP?.unsavedCount?.() ?? 0) > 0 || (window.MNP_ITAS?.unsavedCount?.() ?? 0) > 0 || (window.MNP_ITUA?.unsavedCount?.() ?? 0) > 0; // + ของค้างในใบแจ้งซ่อม IT (itrp): ฟอร์มส่งงาน ขอแก้ไขงาน ถาม-ตอบที่พิมพ์หรือเลือกไฟล์ค้าง และไฟล์แนบที่อัปโหลดไม่สำเร็จ (modules/module-itrp.js) · + ฟอร์มเพิ่ม/แก้อุปกรณ์ในทะเบียนอุปกรณ์ IT (itas) ที่พิมพ์ค้างหรือพิมพ์ช่องลับไว้ (modules/module-itas.js) · + ฟอร์มแก้ไขในทะเบียนสิทธิ์ผู้ใช้ (itua) ที่พิมพ์ค้าง (modules/module-itua.js)
+  return pendingAttachmentCount() > 0 || unsavedTextCount() > 0 || (window.MNP_ITRP?.unsavedCount?.() ?? 0) > 0 || (window.MNP_ITAS?.unsavedCount?.() ?? 0) > 0 || (window.MNP_ITUA?.unsavedCount?.() ?? 0) > 0 || (window.MNP_ITAR?.unsavedCount?.() ?? 0) > 0; // + ของค้างในใบแจ้งซ่อม IT (itrp): ฟอร์มส่งงาน ขอแก้ไขงาน ถาม-ตอบที่พิมพ์หรือเลือกไฟล์ค้าง และไฟล์แนบที่อัปโหลดไม่สำเร็จ (modules/module-itrp.js) · + ฟอร์มเพิ่ม/แก้อุปกรณ์ในทะเบียนอุปกรณ์ IT (itas) ที่พิมพ์ค้างหรือพิมพ์ช่องลับไว้ (modules/module-itas.js) · + ฟอร์มแก้ไขในทะเบียนสิทธิ์ผู้ใช้ (itua) ที่พิมพ์ค้าง (modules/module-itua.js) · + ฟอร์มยื่นขอสิทธิ์/ถาม-ตอบของใบขอสิทธิ์ IT (itar) ที่กรอกค้างหรือไฟล์ที่อัปโหลดไม่สำเร็จ (modules/module-itar.js)
 }
 async function confirmLeave() {
   const files = pendingAttachmentCount();
@@ -5011,6 +5011,8 @@ function notificationHref(item) {
   if (item.action_url?.startsWith("/office/work-order/")) return `#/office?module=work-order&view=order&id=${encodeURIComponent(item.action_url.slice("/office/work-order/".length))}`;
   // ใบแจ้งซ่อม IT (โมดูล itrp) เปิดหน้ารายละเอียดของใบนั้นตรง ๆ เช่นกัน · notify-email linkFor และ notify-push pushUrlFor ต้องตรงกัน
   if (item.action_url?.startsWith("/office/repair/")) return `#/office?module=repair&view=order&id=${encodeURIComponent(item.action_url.slice("/office/repair/".length))}`;
+  // ใบขอสิทธิ์ IT (โมดูล itar) เปิดหน้ารายละเอียดของใบนั้นตรง ๆ เช่นกัน · notify-email linkFor และ notify-push pushUrlFor ต้องตรงกัน
+  if (item.action_url?.startsWith("/office/access/")) return `#/office?module=access-request&view=order&id=${encodeURIComponent(item.action_url.slice("/office/access/".length))}`;
   // อีเมลสรุปงานค้าง (kind reminder/escalation): มีงานเดียวพาไปที่งานนั้นเลย (เฉพาะ reminder ซึ่งผู้รับคือผู้ถือลูก
   // และเปิดงานได้แน่นอน — สำเนาถึงหัวหน้าอาจไม่มีสิทธิ์อ่านเอกสาร) ถ้าหลายงานพาไปหน้าหลักที่มีการ์ด "งานที่ต้องจัดการ"
   if (item.action_url === "/") {
@@ -5029,8 +5031,8 @@ const NOTIFICATION_TYPE_BY_PREFIX = Object.freeze({ MT: "MT_REPAIR", MG: "MANAGE
 function notificationItemHtml(item) {
   const href = notificationHref(item);
   const tag = href ? "a" : "div";
-  // ใบสั่งงาน IT และใบแจ้งซ่อม IT (itrp) ใช้ไอคอน/สีของ IT (เลขที่ IT06-26/012 และ IT01-26/050 ไม่ตรงรูปแบบ IT-ปปปป- ของใบแจ้งซ่อมเดิม)
-  const typeCode = href?.startsWith("#/ncr") ? "NCR_CAR" : href?.startsWith("#/office?module=work-order") ? "IT_REPAIR" : href?.startsWith("#/office?module=repair") ? "IT_REPAIR" : NOTIFICATION_TYPE_BY_PREFIX[`${item.title ?? ""} ${item.body ?? ""}`.match(/(?:^|[^A-Z])(MT|MG|IT)-\d{4}-/)?.[1]] ?? null;
+  // ใบสั่งงาน IT ใบแจ้งซ่อม IT (itrp) และใบขอสิทธิ์ IT (itar) ใช้ไอคอน/สีของ IT (เลขที่ IT06-26/012 IT01-26/050 และ IT08-01-26/003 ไม่ตรงรูปแบบ IT-ปปปป- ของใบแจ้งซ่อมเดิม)
+  const typeCode = href?.startsWith("#/ncr") ? "NCR_CAR" : href?.startsWith("#/office?module=work-order") ? "IT_REPAIR" : href?.startsWith("#/office?module=repair") ? "IT_REPAIR" : href?.startsWith("#/office?module=access-request") ? "IT_ACCESS_REQUEST" : NOTIFICATION_TYPE_BY_PREFIX[`${item.title ?? ""} ${item.body ?? ""}`.match(/(?:^|[^A-Z])(MT|MG|IT)-\d{4}-/)?.[1]] ?? null;
   const reminder = ["reminder", "escalation"].includes(item.kind);
   const iconHtml = reminder || !typeCode ? uiIcon(reminder ? "clock" : "bell") : requestTypeIcon(typeCode);
   const palette = !reminder && typeCode ? ` data-module="${escapeHtml(requestPalette(typeCode))}"` : "";

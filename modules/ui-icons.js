@@ -64,6 +64,7 @@
     IT_REPAIR: "monitor",
     IT_COMPUTER_REPAIR: "monitor",
     IT_WORK_ORDER: "clipboard-check",
+    IT_ACCESS_REQUEST: "lock",
     MANAGEMENT: "stamp",
     QC: "clipboard-check",
     MNP_LAB: "test-tube",

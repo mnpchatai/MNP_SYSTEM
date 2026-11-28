@@ -160,6 +160,8 @@ function linkFor(row: PendingNotification) {
   if (row.action_url?.startsWith("/office/work-order/")) return `${base}/#/office?module=work-order&view=order&id=${encodeURIComponent(row.action_url.slice("/office/work-order/".length))}`;
   // ใบแจ้งซ่อม IT (โมดูล itrp) เปิดหน้ารายละเอียดของใบนั้นตรง ๆ เช่นกัน
   if (row.action_url?.startsWith("/office/repair/")) return `${base}/#/office?module=repair&view=order&id=${encodeURIComponent(row.action_url.slice("/office/repair/".length))}`;
+  // ใบขอสิทธิ์ IT (โมดูล itar) เปิดหน้ารายละเอียดของใบนั้นตรง ๆ เช่นกัน
+  if (row.action_url?.startsWith("/office/access/")) return `${base}/#/office?module=access-request&view=order&id=${encodeURIComponent(row.action_url.slice("/office/access/".length))}`;
   if (row.action_url === "/") return `${base}/#/dashboard`;
   return `${base}/#/notifications`;
 }
