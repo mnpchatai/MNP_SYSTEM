@@ -536,6 +536,35 @@
       emailCloses: [],
     };
   }
+  // โหลดบริบทใหม่หลังสิทธิ์ถูกแก้ระหว่างกรอก (40001): เก็บสิ่งที่ผู้ใช้ "ตั้งใจเปลี่ยน" ไว้ (ค่าที่ต่างจากค่าเริ่มต้นเดิม และยังเลือกได้ในบริบทใหม่) ส่วนที่ไม่ได้แตะใช้ค่าเริ่มต้นของบริบทใหม่
+  // ผลคือรายการที่ส่งใหม่ใช้ from จากทะเบียนล่าสุด · อีเมลที่ติ๊กปิดเก็บเฉพาะที่ยังใช้งานอยู่
+  function carryChoices(oldCtx, oldChoices, newCtx) {
+    const fresh = initialChoices(newCtx);
+    const oldFolders = new Map(folderRows(oldCtx).map((row) => [row.code, row]));
+    for (const row of folderRows(newCtx)) {
+      const before = oldFolders.get(row.code);
+      const value = oldChoices.folders?.[row.code];
+      if (before && value !== undefined && value !== before.initial && row.options.some((option) => option.value === value)) fresh.folders[row.code] = value;
+    }
+    const oldInternet = internetRow(oldCtx);
+    if (oldChoices.internet !== undefined && oldChoices.internet !== oldInternet.initial && internetRow(newCtx).options.some((option) => option.value === oldChoices.internet)) {
+      fresh.internet = oldChoices.internet;
+      fresh.internetNote = oldChoices.internetNote ?? "";
+    }
+    const oldPrograms = new Map(programRows(oldCtx).map((row) => [row.code, row]));
+    for (const row of programRows(newCtx)) {
+      const before = oldPrograms.get(row.code);
+      const value = oldChoices.programs?.[row.code];
+      if (before && value !== undefined && value !== before.initial && row.options.some((option) => option.value === value)) {
+        fresh.programs[row.code] = value;
+        if (oldChoices.programNotes?.[row.code]) fresh.programNotes[row.code] = oldChoices.programNotes[row.code];
+      }
+    }
+    fresh.emailAdds = listOf(oldChoices.emailAdds).map((email) => ({ ...email }));
+    const active = new Set(currentEmails(newCtx).map((email) => email.address));
+    fresh.emailCloses = listOf(oldChoices.emailCloses).filter((address) => active.has(address));
+    return fresh;
+  }
   const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; // ตรงกับ app_itar_create
   const normalizeEmail = (value) => textOf(value).toLowerCase();
 
@@ -855,7 +884,7 @@
     subjectName, filedForOther, itGroupOf, groupItOrders, itActionableCount, awaitingMyAckCount, awaitingMyAnswerCount, mineWaiting, mineWaitingNote, waitingForMeCount, itApprovalProgress,
     CLOSED_STATUSES, openOrderCount, cardSummary,
     subjectModes, subjectModeAllowed, searchChoices, subjectProblem, subjectParams,
-    normalizeContext, rightsIndex, KEEP, folderRows, internetRow, programRows, emailKindOptions, currentEmails, initialChoices, buildItems, requestRules, createParams,
+    normalizeContext, rightsIndex, KEEP, folderRows, internetRow, programRows, emailKindOptions, currentEmails, initialChoices, carryChoices, buildItems, requestRules, createParams,
     UNKNOWN_BEFORE, itemLabel, itemRows, previewRows, rightsSummary, revokeText,
     FILE_MIME_BY_EXTENSION, FILE_ACCEPT, FILE_HINT, FILES_PREPARING_MESSAGE, fileExtension, fileMime, fileBucket, filePath, formatFileSize, validateFiles,
     makeUploadEntries, isAlreadyUploaded, isFileRejection, runUploads, galleryFile, purgeSummary,

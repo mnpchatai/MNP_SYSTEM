@@ -209,14 +209,18 @@
       <p class="muted small">ผู้รับสิทธิ์ที่ไม่มีบัญชีรับทราบด้วยกระดาษ: IT พิมพ์เอกสารให้เซ็นแล้วกดรับทราบแทนพร้อมแนบรูปใบที่เซ็น</p>`;
   }
 
+  // ตัวเลือกผู้รับสิทธิ์ (ตัวเอง / ค้นรายชื่อ / กรอกเอง) · มีให้เลือกมากกว่า 1 อย่างเท่านั้นจึงแสดง (พนักงานทั่วไปได้แค่ตัวเอง)
+  function modeBox({ role, values }) {
+    const modes = model.subjectModes(role, values.type);
+    return modes.length > 1 ? choiceGroup({ name: "subject_mode", field: "subject_mode", legend: "ผู้รับสิทธิ์", options: modes, value: values.mode || "self" }) : "";
+  }
   // ฟอร์มช่วงที่ 1 · values = ค่าตั้งต้น/ที่กรอกไว้ · modes = model.subjectModes(role, type) (เปลี่ยนตามประเภท วาดใหม่ทั้งก้อนที่ module-itar.js)
   function chooserForm({ role, values, search, departments = [] }) {
-    const modes = model.subjectModes(role, values.type);
     return `<section class="card form-card" id="itar-form-card"><div id="itar-message" role="status"></div>
       <form id="itar-chooser" class="itar-chooser" novalidate>
         <h2 class="itar-step-title">1. เลือกประเภทและผู้รับสิทธิ์</h2>
         ${choiceGroup({ name: "request_type", field: "request_type", legend: "ประเภทคำขอ", options: model.REQUEST_TYPES, value: values.type, required: true, withHint: true })}
-        <div id="itar-mode-box">${modes.length > 1 ? choiceGroup({ name: "subject_mode", field: "subject_mode", legend: "ผู้รับสิทธิ์", options: modes, value: values.mode || "self" }) : ""}</div>
+        <div id="itar-mode-box">${modeBox({ role, values })}</div>
         <div id="itar-subject-body">${subjectBody({ role, values, search, departments })}</div>
         <div class="form-actions"><a class="btn secondary" href="${esc(model.accessUrl("mine"))}" data-form-cancel>ยกเลิก</a><button type="submit" class="btn is-primary" id="itar-next">ต่อไป · เลือกสิทธิ์ ›</button></div>
       </form></section>`;
@@ -610,7 +614,7 @@
   const purgeRow = () => `<div class="itar-purge"><button type="button" class="btn danger small" id="itar-purge">ล้างข้อมูลใบขอสิทธิ์ทดสอบ</button></div>`;
 
   const api = {
-    head, newButton, tabs, page, errorCard, mineList, approvalsList, itList, chooserForm, subjectBody, rightsForm, emailAddRow, emailAddRows, previewTable, rightsList,
+    head, newButton, tabs, page, errorCard, mineList, approvalsList, itList, chooserForm, modeBox, subjectBody, rightsForm, emailAddRow, emailAddRows, previewTable, rightsList,
     uploadPanel, detailPage, detailHead, actionsCard, deferredCard, factsCard, itemsCard, afterCard, changeTable, askFormCard, answerCard, commentsCard, historyCard, filesCard,
     settingsPage, staffTable, docCounterCard, purgeRow, testTag, selectOptions, fileGrid,
   };
