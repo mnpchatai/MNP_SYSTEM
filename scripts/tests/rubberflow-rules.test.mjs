@@ -76,6 +76,26 @@ test("weighing tolerance is 1.5% but never under 20 g, and recipe lines split th
   assert.equal(rules.orderLabel({ recipeId: "RC-1" }), "RC-1");
 });
 
+test("phrAsWeight converts a PHR recipe into weight lines with kg = phr ÷ total phr × batch weight, keeping the stage and order, in kg", () => {
+  const plain = (value) => JSON.parse(JSON.stringify(value));
+  // ตัวเลขสมมติ: รวม PHR 160 · ชุดผสม 48 kg
+  const items = [{ materialCode: "X-RUB", phr: 100, stage: 1 }, { materialCode: "X-FIL", phr: 50 }, { materialCode: "X-CUR", phr: 10, stage: 2 }];
+  assert.deepEqual(plain(rules.phrAsWeight(items, 48)), [
+    { materialCode: "X-RUB", stage: 1, kg: 30, unit: "kg" }, { materialCode: "X-FIL", stage: 1, kg: 15, unit: "kg" }, { materialCode: "X-CUR", stage: 2, kg: 3, unit: "kg" },
+  ]);
+  // ปัด 4 ตำแหน่ง (ค่าที่ action รับ) และผลรวมเท่าน้ำหนักต่อชุดผสมเดิม (ภายในการปัด) · ตรงกับ recipeLines ของสูตรเดิม
+  const odd = rules.phrAsWeight([{ materialCode: "A", phr: 100, stage: 1 }, { materialCode: "B", phr: 3, stage: 2 }, { materialCode: "C", phr: 7, stage: 1 }], 10);
+  assert.deepEqual(odd.map((line) => line.kg), [9.0909, 0.2727, 0.6364]);
+  assert.ok(Math.abs(odd.reduce((sum, line) => sum + line.kg, 0) - 10) < 0.001);
+  const lines = rules.recipeLines({ batchKg: 10, items: [{ materialCode: "A", phr: 100, stage: 1 }, { materialCode: "B", phr: 3, stage: 2 }, { materialCode: "C", phr: 7, stage: 1 }] });
+  for (const line of odd) assert.ok(Math.abs(lines.find((row) => row.materialCode === line.materialCode).kgPerBatch - line.kg) < 0.00005, line.materialCode);
+  // ผลเป็นสูตรแบบน้ำหนักที่ action รับได้ (ทุกบรรทัดมี kg) · ไม่มี PHR / น้ำหนัก 0 = 0 kg · ไม่มีบรรทัด = ว่าง
+  assert.equal(rules.isWeightRecipe({ items: rules.phrAsWeight(items, 48) }), true);
+  assert.deepEqual(rules.phrAsWeight(items, 0).map((line) => line.kg), [0, 0, 0]);
+  assert.deepEqual(rules.phrAsWeight([{ materialCode: "A", phr: 0 }], 10).map((line) => line.kg), [0]);
+  assert.deepEqual(plain(rules.phrAsWeight(null, 10)), []);
+});
+
 test("lotState and FEFO allocation skip held, empty and expired lots and take the earliest expiry first", () => {
   const lots = [
     { lotNo: "L-late", materialCode: "X", qtyKg: 100, expiry: NOW + 300 * DAY, receivedAt: NOW - DAY, status: "available" },

@@ -1468,7 +1468,8 @@ test("weight recipes on the pages: the form is by weight for new recipes and wei
   const phrEdit = dialogs.recipeEdit(env.ctx(), { id: "RC-EPDM-DS01" }).html;
   assert.match(phrEdit, /name="phr\[\]"/);
   assert.match(phrEdit, /name="batchKg"/);
-  assert.doesNotMatch(phrEdit, /name="amount\[\]"/, "an existing PHR recipe keeps the PHR form");
+  // ฉบับแก้ไขใหม่ของสูตร PHR: PHR ยังเป็นค่าตั้งต้น ส่วนแบบน้ำหนักซ่อนและปิดอยู่ (ไม่ถูกส่ง) จนกว่าจะเลือก (ทดสอบแยกด้านล่าง)
+  assert.match(phrEdit, /<fieldset class="rf-mode-part" data-rf-mode-part="phr">[\s\S]*name="phr\[\]"[\s\S]*<\/fieldset><fieldset class="rf-mode-part" data-rf-mode-part="weight" hidden disabled>[\s\S]*name="amount\[\]"/, "an existing PHR recipe keeps the PHR form by default");
   const weightEdit = dialogs.recipeEdit(env.ctx(), { id: "DEMO-W01" }).html;
   assert.match(weightEdit, /name="amount\[\]"[^>]*value="350"[\s\S]*<option value="g" selected>g<\/option>/, "DM-CH-01 is shown as 350 g");
   assert.match(weightEdit, /name="amount\[\]"[^>]*value="11"/);
@@ -1606,4 +1607,87 @@ test("the weight recipe form asks only for the recipe code and the materials: ne
   await submit({ rfForm: "saveRecipe", productCode: "", uom: "m", yieldPerKg: "9", restHours: "4", dumpTol: "5", mixerTemp1: "80", dumpTemp1: "", mixMin1: "3", mixerTemp2: "90", dumpTemp2: "130", mixMin2: "2" }, { rfArgs: JSON.stringify(args) });
   assert.match(env.log.toasts.at(-1)[0], /อุณหภูมิปล่อยยาง ขั้น 1/);
   assert.equal(recipe("DEMO-W01", approved.revision + 1).yieldPerKg, 7.5);
+});
+
+test("a new revision of a PHR recipe can switch to the weight form: one choice outside the form, starting weights converted from PHR, standards carried over, and weight never goes back to PHR", async () => {
+  const env = load();
+  env.store.setUser("U01");
+  const dialogs = env.context.MNP_RUBBERFLOW_DIALOGS;
+  const plain = (value) => JSON.parse(JSON.stringify(value));
+  const recipe = (id, revision) => env.store.data().recipes.find((row) => row.id === id && (revision === undefined || row.revision === revision));
+  // ฉบับแก้ไขใหม่ของ RC-EPDM-DS01 (PHR รวม 280 · ชุดผสม 60 kg): ตัวเลือกรูปแบบสูตรอยู่นอกฟอร์ม PHR เลือกไว้ก่อน
+  const html = dialogs.recipeEdit(env.ctx(), { id: "RC-EPDM-DS01" }).html;
+  const choice = html.slice(0, html.indexOf("<form"));
+  assert.match(choice, /<legend>รูปแบบสูตร<\/legend>/);
+  assert.match(choice, /name="rfRecipeMode" value="phr" checked> <span>PHR \(เดิม\)<\/span>/);
+  assert.match(choice, /name="rfRecipeMode" value="weight"> <span>น้ำหนักต่อชุดผสม<\/span>/);
+  assert.equal((html.match(/name="rfRecipeMode"/g) ?? []).length, 2, "the choice is outside the form, so it is never sent with the recipe");
+  // ส่วนแบบน้ำหนักเริ่มจาก kg = phr ÷ 280 × 60 (ขั้นเดิม · หน่วย kg) ให้แก้ต่อแทนพิมพ์ใหม่
+  const weightPart = html.slice(html.indexOf('data-rf-mode-part="weight"'));
+  const amounts = [...weightPart.matchAll(/name="amount\[\]"[^>]*value="([^"]*)"/g)].map((match) => match[1]);
+  assert.deepEqual(amounts, ["21.4286", "19.2857", "10.7143", "6.4286", "1.0714", "0.2143", "0.3214", "0.2143", "0.3214"]);
+  assert.doesNotMatch(weightPart, /<option value="g" selected>/, "every converted line is in kg");
+  assert.match(weightPart, /<option value="2" selected>ขั้น 2<\/option>/, "the stage is kept");
+  assert.doesNotMatch(weightPart, /name="phr\[\]"|name="batchKg"/);
+
+  // เลือก "น้ำหนักต่อชุดผสม": ส่วนแบบน้ำหนักเปิด ส่วน PHR ซ่อนและปิด · บรรทัดแปลงจาก PHR ที่กรอกอยู่ตอนนั้น (แก้ PHR แล้วค่อยเปลี่ยนก็ได้ค่าใหม่)
+  const el = (extra = {}) => ({ handlers: {}, hidden: false, disabled: false, value: "", textContent: "", innerHTML: "", addEventListener(type, handler) { (this.handlers[type] ??= []).push(handler); }, ...extra });
+  const phrRow = (code, stage, phr) => {
+    const cells = { 'select[name="materialCode[]"]': el({ value: code }), 'select[name="stage[]"]': el({ value: String(stage) }), 'input[name="phr[]"]': el({ value: String(phr) }), "[data-rf-kg]": el(), "[data-rf-remove]": el() };
+    return el({ querySelector: (selector) => cells[selector] ?? null });
+  };
+  const phrRows = [phrRow("EPDM-55", 1, 100), phrRow("ZNO", 1, 20), phrRow("S-80", 2, 0)];
+  const scope = (nodes, extra) => el({ querySelector: (selector) => nodes[selector] ?? null, ...extra });
+  const phrNodes = { "[data-rf-items]": el({ querySelectorAll: () => phrRows }), "[data-rf-total]": el(), "[data-rf-batch]": el({ value: "48" }), "[data-rf-add]": el() };
+  const weightBody = el({ querySelectorAll: () => [] });
+  const weightNodes = { "[data-rf-items]": weightBody, "[data-rf-total]": el(), "[data-rf-batch-out]": el(), "[data-rf-add]": el() };
+  const parts = { phr: scope(phrNodes), weight: scope(weightNodes, { hidden: true, disabled: true }) };
+  const radios = [el({ value: "phr", checked: true }), el({ value: "weight", checked: false })];
+  const dialog = { querySelector: (selector) => (selector === '[data-rf-mode-part="phr"]' ? parts.phr : selector === '[data-rf-mode-part="weight"]' ? parts.weight : null), querySelectorAll: (selector) => (selector === 'input[name="rfRecipeMode"]' ? radios : []) };
+  dialogs.recipeEdit(env.ctx(), { id: "RC-EPDM-DS01" }).bind(dialog);
+  const choose = (index) => { radios.forEach((radio, at) => { radio.checked = at === index; }); radios[index].handlers.change.forEach((handler) => handler()); };
+  choose(1);
+  assert.deepEqual([parts.weight.hidden, parts.weight.disabled, parts.phr.hidden, parts.phr.disabled], [false, false, true, true]);
+  // PHR รวม 120 · ชุดผสม 48 kg: EPDM-55 40 kg · ZNO 8 kg · S-80 (PHR 0) ไม่ยกมา
+  assert.deepEqual([...weightBody.innerHTML.matchAll(/name="amount\[\]"[^>]*value="([^"]*)"/g)].map((match) => match[1]), ["40", "8"]);
+  assert.doesNotMatch(weightBody.innerHTML, /S-80" selected/);
+  choose(0);
+  assert.deepEqual([parts.weight.hidden, parts.weight.disabled, parts.phr.hidden, parts.phr.disabled], [true, true, false, false], "back to PHR before saving is still possible");
+
+  // บันทึกเป็นแบบน้ำหนัก: ฉบับใหม่เป็นร่างแบบน้ำหนัก ค่ามาตรฐานการผสม รหัสสินค้า และสเปกการฉีดตามฉบับเดิม · ฉบับเดิมไม่ถูกแตะ
+  const approved = plain(recipe("RC-EPDM-DS01"));
+  const form = { ...env.root, dataset: { rfForm: "saveRecipe", rfSuccess: "ok" }, handlers: {}, __values: { id: "RC-EPDM-DS01", "materialCode[]": ["EPDM-55", "CB-N550", "S-80"], "stage[]": ["0", "1", "3"], "amount[]": ["21.4286", "19.2857", "320"], "unit[]": ["kg", "kg", "g"] } };
+  form.addEventListener = (type, handler) => { form.handlers[type] = handler; };
+  env.fakes["form[data-rf-form]"] = [form];
+  await env.render("p=recipes");
+  await form.handlers.submit({ preventDefault() {} });
+  delete env.fakes["form[data-rf-form]"];
+  const next = recipe("RC-EPDM-DS01", approved.revision + 1);
+  assert.ok(next, env.log.toasts.at(-1)?.[0]);
+  assert.equal(env.context.MNP_RUBBERFLOW_RULES.isWeightRecipe(next), true, "the new revision is in weight mode");
+  assert.equal(next.status, "draft");
+  assert.equal(next.batchKg, 41.0343);
+  assert.deepEqual([next.productCode, next.uom, next.yieldPerKg, next.restHours, next.dumpTol], [approved.productCode, approved.uom, approved.yieldPerKg, approved.restHours, approved.dumpTol]);
+  assert.deepEqual(plain(next.stages), approved.stages);
+  assert.deepEqual(plain(next.extrusionSpec), approved.extrusionSpec);
+  assert.equal(env.context.MNP_RUBBERFLOW_RULES.isWeightRecipe(recipe("RC-EPDM-DS01", approved.revision)), false, "the approved PHR revision is untouched");
+  // ร่างแบบน้ำหนักแก้ต่อเป็นน้ำหนัก ไม่มีตัวเลือกรูปแบบ (ไม่มีทางกลับเป็น PHR) · ฉบับแก้ไขใหม่ของสูตรแบบน้ำหนักก็ไม่มี
+  for (const id of ["RC-EPDM-DS01", "DEMO-W01"]) {
+    const edit = dialogs.recipeEdit(env.ctx(), { id }).html;
+    assert.doesNotMatch(edit, /rfRecipeMode|data-rf-mode-part|name="phr\[\]"/, `${id}: weight never goes back to PHR`);
+    assert.match(edit, /name="amount\[\]"/);
+  }
+  // ร่างของสูตร PHR แก้ต่อเป็น PHR (ไม่มีตัวเลือก) · สร้างสูตรใหม่ไม่มีตัวเลือก
+  const phrDraft = { ...env.root, dataset: { rfForm: "saveRecipe", rfSuccess: "ok" }, handlers: {}, __values: { id: "RC-NBR-OR02", productCode: "OR-4030", uom: "pcs", batchKg: "40", yieldPerKg: "240", restHours: "4", dumpTol: "5", mixerTemp1: "80", dumpTemp1: "110", mixMin1: "3", mixerTemp2: "90", dumpTemp2: "130", mixMin2: "2", "materialCode[]": ["NBR-33", "ZNO"], "phr[]": ["100", "5"], "stage[]": ["1", "1"] } };
+  phrDraft.addEventListener = (type, handler) => { phrDraft.handlers[type] = handler; };
+  env.fakes["form[data-rf-form]"] = [phrDraft];
+  await env.render("p=recipes");
+  await phrDraft.handlers.submit({ preventDefault() {} });
+  delete env.fakes["form[data-rf-form]"];
+  assert.ok(env.store.data().recipes.some((row) => row.id === "RC-NBR-OR02" && row.status === "draft"), env.log.toasts.at(-1)?.[0]);
+  const draftEdit = dialogs.recipeEdit(env.ctx(), { id: "RC-NBR-OR02" }).html;
+  assert.match(draftEdit, /แก้ร่างสูตร RC-NBR-OR02/);
+  assert.match(draftEdit, /name="phr\[\]"/);
+  assert.doesNotMatch(draftEdit, /rfRecipeMode|name="amount\[\]"/, "editing a PHR draft keeps PHR");
+  assert.doesNotMatch(dialogs.createRecipe(env.ctx(), {}).html, /rfRecipeMode/);
 });

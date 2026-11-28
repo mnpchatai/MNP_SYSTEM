@@ -77,5 +77,5 @@ test("index.html loads the three files model, pages, module in order, before app
   assert.ok(at("modules/itar-model.js") < at("modules/itar-pages.js") && at("modules/itar-pages.js") < at("modules/module-itar.js") && at("modules/module-itar.js") < at("app.js"));
   assert.ok(at("modules/module-office.js") < at("modules/module-itar.js"));
   assert.equal(new Set(scripts.map((script) => script.token)).size, 1, "one token for every script");
-  assert.equal(scripts[at("modules/module-itar.js")].token, "20261128itarweb");
+  assert.equal(scripts[at("modules/module-itar.js")].token, "20261128dept1");
 });

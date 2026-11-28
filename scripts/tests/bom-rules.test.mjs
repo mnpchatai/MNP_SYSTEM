@@ -523,12 +523,12 @@ test("CSV output quotes commas and quotes, and formatting helpers handle empty v
   assert.equal(rules.orderTypeOf("Belgium"), "EX");
 });
 
-test("the product structure rolls up material, labour and minutes per department, and flags parts without a cost", () => {
+test("the product structure rolls up minutes per department and carries no money figure (cost phase 3)", () => {
   const items = {
     FG: { code: "FG", name: "สินค้า", kind: "FG", uom: "set", ownerDept: "PK" },
     SE: { code: "SE", name: "ชิ้นยาง", kind: "SE", uom: "pcs", ownerDept: "GR" },
     RB: { code: "RB", name: "เส้นยาง", kind: "RB", uom: "rod", ownerDept: "RB", unitCost: 100 },
-    BOX: { code: "BOX", name: "กล่อง", kind: "PURCHASED", uom: "box", ownerDept: "ST", unitCost: 20 },
+    BOX: { code: "BOX", name: "กล่อง", kind: "PURCHASED", uom: "box", ownerDept: "ST" },
     XP: { code: "XP", name: "ชิ้นไม่มีราคา", kind: "SUBPART", uom: "pcs", ownerDept: "PK" },
   };
   const boms = {
@@ -540,17 +540,14 @@ test("the product structure rolls up material, labour and minutes per department
   const deps = { itemOf: (code) => items[code] ?? null, approvedBomOf: (code) => boms[code] ?? null, routingOf: (code) => routings[code] ?? null, processOf: (code) => processes[code] ?? null };
   const tree = rules.structureTree("FG", deps);
   assert.deepEqual(tree.rows.map((row) => [row.itemCode, row.level]), [["FG", 0], ["SE", 1], ["RB", 2], ["BOX", 1]]);
-  const se = tree.rows[1];
-  assert.equal(se.material, 10, "0.1 rod × 100");
-  assert.equal(se.labor, 1, "0.4 min × 2.5 baht/min (GR)");
-  assert.equal(se.unitCost, 11);
   assert.equal(tree.rows[3].qtyPerRoot, 0.26, "scrap is added to the quantity per product");
-  assert.equal(tree.root.material, 3 * 11 + 0.26 * 20);
-  assert.equal(tree.root.labor, 4, "2 min × 2 baht/min (PK)");
-  assert.equal(tree.root.complete, true);
+  // ไม่มีตัวเลขเงิน แม้ชิ้นงานยังมี unitCost ที่ฐานข้อมูลเก็บไว้ (ต้นทุนต่อชิ้นอยู่ที่โมดูลต้นทุน)
+  for (const row of tree.rows) for (const key of ["material", "labor", "unitCost", "ownCost", "costPerRoot", "complete"]) assert.equal(key in row, false, `${row.itemCode} has no ${key}`);
+  assert.ok(tree.rows.every((row) => row.steps.every((step) => !("cost" in step))), "steps carry minutes only");
+  assert.equal("missingCost" in tree, false);
+  assert.equal(rules.LABOR_BAHT_PER_MIN, undefined, "the demo labour rates are gone");
   assert.deepEqual(tree.minutesByDept, { PK: 2, GR: 1.2 }, "SE minutes count three times per product");
   assert.equal(tree.totalMinutes, 3.2);
-  assert.deepEqual(tree.missingCost, []);
   // ลำดับการผลิต = ลำดับของแผนกเจ้าของในผังงานบริษัท (ST 3 · RB 4 · GR 7 · PK 10) · แผนกจาก ownerDept
   assert.deepEqual(tree.rows.map((row) => [row.itemCode, row.order, row.dept]), [["FG", 10, "PK"], ["SE", 7, "GR"], ["RB", 4, "RB"], ["BOX", 3, "ST"]], "each part takes its department's place in the company flow");
   // ขั้นตอนตามลำดับตามผังงาน: ฝ่ายขาย (1) → วางแผน (2) → ST สั่งของซื้อ (3) → RB (4) → SR รับยางเส้นยาว (5) → QA ตรวจขนาด (6) → GR (7) → PK (10) → WH (11)
@@ -592,13 +589,11 @@ test("the product structure rolls up material, labour and minutes per department
     assert.equal(rules.flowOf(rules.structureTree("FG", deps).root).stages.length, 1);
   }
   delete boms.FG.lines[1].step;
-  // ชิ้นที่ไม่มี BOM และไม่มีราคา ทำให้ต้นทุนของพ่อทุกชั้นไม่ครบ · รหัสที่ไม่มีใน item master และวงจรถูกรายงาน
+  // รหัสที่ไม่มีใน item master และวงจรถูกรายงาน · ชิ้นที่ไม่มี BOM เป็นใบของต้นไม้ตามเดิม
   boms.FG.lines.push({ childCode: "XP", qty: 1 }, { childCode: "GONE", qty: 1 });
   boms.SE.lines.push({ childCode: "FG", qty: 1 });
   const broken = rules.structureTree("FG", deps);
-  assert.equal(broken.root.complete, false);
-  assert.equal(broken.rows.find((row) => row.itemCode === "SE").complete, false, "the cycle back to FG makes SE incomplete");
-  assert.deepEqual(broken.missingCost, ["XP"]);
+  assert.ok(broken.rows.some((row) => row.itemCode === "XP"), "a part without a BOM is a leaf");
   assert.deepEqual(broken.missing, ["FG (วงจร)", "GONE"]);
 });
 
@@ -623,7 +618,7 @@ test("categories group the kinds (สินค้า / WIP / วัตถุด�
   };
   const boms = { SE1: { revision: 1, lines: [{ childCode: "RB1", qty: 0.5 }, { childCode: "P1", qty: 1 }] }, RB1: { revision: 1, lines: [{ childCode: "DM01", qty: 1.5 }] } };
   const tree = rules.structureTree("SE1", { itemOf: (code) => items[code] ?? null, approvedBomOf: (code) => boms[code] ?? null, routingOf: () => null, processOf: () => null });
-  assert.equal(tree.rows.find((row) => row.itemCode === "RB1").unitCost, 120, "the rod costs its compound kilograms");
+  assert.equal(tree.rows.find((row) => row.itemCode === "DM01").qtyPerRoot, 0.75, "the compound kilograms per part");
   const steps = rules.productionSteps(tree);
   assert.deepEqual(steps.find((step) => step.type === "purchase").inputs.map((input) => input.itemCode), ["P1"], "the compound is not an ST purchase");
   assert.deepEqual(steps.find((step) => step.type === "make" && step.itemCode === "RB1").inputs.map((input) => [input.itemCode, input.from]), [["DM01", null]], "the rod lists its compound as an input");

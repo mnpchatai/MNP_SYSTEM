@@ -460,6 +460,7 @@
     // แปรรูปยาง GR (modules/gr-pages.js · 20261216010000): ขั้นตอนของงาน = ช่องติ๊ก code[] ตามลำดับขั้น + ต้องทำ qty.<รหัสขั้น>
     setGrJobSteps: (p) => ({ jobId: p.jobId, steps: listOf(p, "code").map((code) => ({ code, qtyTarget: p.qty?.[code] ?? "" })) }),
     // ตั้งค่า GR: แถวขั้นตอน step.code[] step.name[] step.kind[] step.active[] (1 / 0) ตามลำดับในฟอร์ม · เหตุผลของเสียหนึ่งบรรทัดต่อข้อ · แถวเป้า target.* (แถวว่างทั้งแถวถูกข้าม)
+    // ฟอร์มรุ่นก่อนที่ไม่มีช่องจำนวนคน = people "" (action ถือเป็น 1)
     saveGrConfig: (p) => {
       const step = p.step ?? {};
       const target = p.target ?? {};
@@ -467,7 +468,8 @@
         ...(p.dept ? { dept: p.dept } : {}), // PT / BG / PK (20261224010000): แผนกของตั้งค่า (ฟอร์มส่ง data-rf-args)
         steps: listOf(step, "name").map((name, index) => ({ code: listOf(step, "code")[index] ?? "", name, kind: listOf(step, "kind")[index] ?? "main", active: listOf(step, "active")[index] !== "0" })),
         reasons: String(p.reasons ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
-        targets: listOf(target, "itemCode").map((itemCode, index) => ({ itemCode, stepCode: listOf(target, "stepCode")[index] ?? "", perHour: listOf(target, "perHour")[index] ?? "" }))
+        // จำนวนคนของเป้า target.people[] (ต้นทุนเฟส 3): ช่องตั้งต้นเป็น 1 จึงไม่ใช้ตัดสินว่าแถวว่าง
+        targets: listOf(target, "itemCode").map((itemCode, index) => ({ itemCode, stepCode: listOf(target, "stepCode")[index] ?? "", perHour: listOf(target, "perHour")[index] ?? "", people: listOf(target, "people")[index] ?? "" }))
           .filter((row) => String(row.itemCode).trim() || String(row.perHour).trim()),
       };
     },

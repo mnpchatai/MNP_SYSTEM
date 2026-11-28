@@ -775,11 +775,10 @@
     return { lines, missing: [...new Set(missing)] };
   }
 
-  // ---------- โครงสร้างสินค้า: ขั้นตอนผลิต (routing) ต้นทุน และเวลา (จำลอง) ----------
+  // ---------- โครงสร้างสินค้า: ขั้นตอนผลิต (routing) และเวลา (จำลอง) ----------
   // แนวคิดจากเมนู "โครงสร้าง" ของ ERP เดิม (Utech): ต้นไม้สินค้ามีสองกิ่ง Bom = ส่วนประกอบ และ Build = WIP → Process (เวลา นาที/ชิ้น)
   // ที่นี่ BOM เดิมคือส่วนประกอบ ส่วนขั้นตอนผลิตเป็น routing ต่อชิ้นงาน (เก็บเป็น revision เหมือน BOM) แทนการแทรกแถว WIP/Process ลงในต้นไม้
-  // ต้นทุนต่อหน่วย = วัตถุดิบ (ลูกใน BOM × ปริมาณ × (1 + % เผื่อเสีย) หรือราคาที่ตั้งเองถ้าไม่มี BOM) + ค่าแรง (นาที/ชิ้น × อัตราของแผนก)
-  // ชิ้นที่ไม่มี BOM และยังไม่ตั้งราคา ทำให้ต้นทุนของพ่อทุกชั้น "ไม่ครบ" (complete=false) และอยู่ใน missingCost
+  // ไม่มีตัวเลขเงินที่นี่ (ต้นทุนเฟส 3 · เจ้าของสั่ง 2026-11-27): ต้นทุนต่อชิ้นอยู่ที่โมดูลต้นทุนการผลิตเท่านั้น (modules/cost-rules.js itemCost)
   const DEFAULT_PROCESSES = Object.freeze([
     // RB ตามผังงาน RB-01 ถึง RB-13 · ขั้นพักยางเป็นเวลารอ ไม่ใช่ค่าแรง (ใส่ 0 นาที/ชิ้น)
     { code: "RB-01", name: "ชั่งเคมี", dept: "RB" },
@@ -814,8 +813,6 @@
     { code: "PK-02", name: "ใส่สินค้าในกระเป๋า (จาก BG)", dept: "PK" },
     { code: "PK-03", name: "บรรจุลงกล่อง", dept: "PK" },
   ].map((entry) => Object.freeze(entry)));
-  // อัตราค่าแรงสาธิต (บาท/นาที) ต่อแผนก ไม่ใช่ตัวเลขจริงของบริษัท
-  const LABOR_BAHT_PER_MIN = Object.freeze({ RB: 3, GR: 2.5, PT: 2, BG: 2.5, ST: 1.5, PK: 2 });
   const round = (n, digits = 4) => Math.round(n * 10 ** digits) / 10 ** digits;
 
   // ชิ้นที่ต้องผลิตก่อน (สายป้อนในมุมมองลำดับผลิต): ชิ้นที่แผนกเราทำเอง (ไม่ใช่ของซื้อ) แม้ยังไม่มี BOM/ขั้นตอน
@@ -826,12 +823,11 @@
   const receiveOrder = (node) => (node.kind === "RB" && node.level > 0 ? flowStepOf("SR") : null);
   const inspectOrder = (node) => (receiveOrder(node) === null ? null : flowStepOf("QA"));
   const readyOrder = (node) => inspectOrder(node) ?? node.order;
-  // คืน { root, rows (เรียงแบบต้นไม้ ลึกก่อน), minutesByDept (ต่อ 1 หน่วยราก), missingCost, missing }
+  // คืน { root, rows (เรียงแบบต้นไม้ ลึกก่อน), minutesByDept (ต่อ 1 หน่วยราก), totalMinutes, missing (รหัสที่ไม่พบในทะเบียน / วงจร) }
   // routingOf(code) → { revision, steps: [{ processCode, minutesPerPc }] } | null · processOf(code) → { code, name, dept } | null
-  function structureTree(rootCode, { itemOf, approvedBomOf, routingOf, processOf, rates = LABOR_BAHT_PER_MIN, maxDepth = 8 }) {
+  function structureTree(rootCode, { itemOf, approvedBomOf, routingOf, processOf, maxDepth = 8 }) {
     const rows = [];
     const missing = [];
-    const missingCost = new Set();
     const minutesByDept = {};
     const build = (code, level, path, line, qtyPerRoot) => {
       const item = itemOf(code);
@@ -843,41 +839,27 @@
         const dept = process?.dept ?? item.ownerDept;
         const minutesPerPc = Number(step.minutesPerPc) || 0;
         minutesByDept[dept] = round((minutesByDept[dept] ?? 0) + minutesPerPc * qtyPerRoot);
-        return { processCode: step.processCode, name: process?.name ?? step.processCode, dept, minutesPerPc, cost: round(minutesPerPc * (rates[dept] ?? 0)), inputs: Array.isArray(step.inputs) ? [...step.inputs] : [] };
+        return { processCode: step.processCode, name: process?.name ?? step.processCode, dept, minutesPerPc, inputs: Array.isArray(step.inputs) ? [...step.inputs] : [] };
       });
       const node = {
         itemCode: item.code, name: item.name, kind: item.kind, uom: item.uom, dept: item.ownerDept ?? KINDS[item.kind]?.dept ?? "ST", image: item.image ?? null, level, qtyPerParent: line?.qty ?? 1, scrapPct: Number(line?.scrapPct) || 0, step: Number.isInteger(Number(line?.step)) && line.step >= 1 && line.step <= 20 ? Number(line.step) : null, qtyPerRoot,
-        bomRevision: bom?.revision ?? null, routingRevision: routing?.revision ?? null, steps, children: [], material: 0, labor: 0, unitCost: 0, complete: true, ownCost: null,
+        bomRevision: bom?.revision ?? null, routingRevision: routing?.revision ?? null, steps, children: [],
       };
       rows.push(node);
       if (bom) {
         for (const childLine of bom.lines) {
-          if (path.includes(childLine.childCode)) { missing.push(`${childLine.childCode} (วงจร)`); node.complete = false; continue; }
+          if (path.includes(childLine.childCode)) { missing.push(`${childLine.childCode} (วงจร)`); continue; }
           const factor = Number(childLine.qty) * (1 + (Number(childLine.scrapPct) || 0) / 100);
           const child = build(childLine.childCode, level + 1, [...path, childLine.childCode], childLine, qtyPerRoot * factor);
-          if (!child) { node.complete = false; continue; }
-          node.children.push(child);
-          node.material += child.unitCost * factor;
-          if (!child.complete) node.complete = false;
+          if (child) node.children.push(child);
         }
-      } else if (Number.isFinite(item.unitCost)) {
-        node.ownCost = item.unitCost;
-        node.material = item.unitCost;
-      } else {
-        node.complete = false;
-        missingCost.add(item.code);
       }
       // ลำดับการผลิต = ลำดับของแผนกเจ้าของในผังงานบริษัท (PROCESS_FLOW: RB 4 → SR 5 → QA 6 → GR 7 → PT 8 → BG 9 → PK 10)
       node.order = flowStepOf(node.dept);
-      node.labor = steps.reduce((sum, step) => sum + step.cost, 0);
-      node.material = round(node.material);
-      node.labor = round(node.labor);
-      node.unitCost = round(node.material + node.labor);
-      node.costPerRoot = round(node.unitCost * qtyPerRoot);
       return node;
     };
     const root = build(rootCode, 0, [rootCode], null, 1);
-    return { root, rows, minutesByDept, totalMinutes: round(Object.values(minutesByDept).reduce((sum, value) => sum + value, 0)), missingCost: [...missingCost], missing: [...new Set(missing)] };
+    return { root, rows, minutesByDept, totalMinutes: round(Object.values(minutesByDept).reduce((sum, value) => sum + value, 0)), missing: [...new Set(missing)] };
   }
 
   // มุมมองลำดับผลิต (ขั้นแรกอยู่บน) ของโหนดหนึ่งใน structureTree: ลูกที่มี BOM หรือขั้นตอนผลิตของตัวเองเป็น "สายป้อน" (feeds) วางเหนือพ่อ
@@ -1673,6 +1655,9 @@
   const GR_HANDOVER_STATUS_LABEL = Object.freeze({ sent: "รอ PK รับ", received: "PK รับแล้ว", cancelled: "ยกเลิกแล้ว" });
   const GR_REQUEST_STATUS_LABEL = Object.freeze({ open: "รอ SR จ่าย", covered: "SR จ่ายครบแล้ว", cancelled: "ยกเลิกแล้ว" });
   const grRound = (n) => Math.round((Number(n) || 0) * 1e4) / 1e4;
+  // จำนวนคนของเป้า (ต้นทุนเฟส 3 · 20270111010000): จำนวนเต็ม 1–50 · ไม่มี (เป้าที่ตั้งก่อนมีช่องนี้) หรือค่าผิด = 1
+  // ไม่ใช้กับ "ต้องทำ" (grRequired คงเดิม) ใช้คิดค่าแรงต่อชิ้นที่โมดูลต้นทุนเท่านั้น
+  const grPeople = (value) => { const n = Number(value); return Number.isInteger(n) && n >= 1 && n <= GR_LIMITS.people ? n : 1; };
 
   // ---------- ขั้นตอนรายแผนก PT / BG / PK แบบเดียวกับ GR (โรงงาน ขั้น 7 · 20261224010000_bom_dept_steps.sql) ----------
   // ชุดเดียวกับ GR: grConfig (หนึ่งแถวต่อแผนก มี dept · แถวที่ไม่มี dept = GR) · grPlans / grRecords (แผนกดูจากงาน) · grHandovers (fromDept / toDept ไม่มี = GR → PK) · grWorkers (dept ไม่มี = GR)
@@ -1705,7 +1690,7 @@
     const row = (data?.grConfig ?? []).find((entry) => configDept(entry) === dept) ?? null;
     const source = row && Array.isArray(row.steps) && row.steps.length ? row : fallback;
     const steps = [...source.steps].map((step) => ({ ...step })).sort((a, b) => (Number(a.seq) || 0) - (Number(b.seq) || 0) || String(a.code).localeCompare(String(b.code)));
-    return { steps, reasons: [...(source.reasons ?? fallback.reasons)], targets: [...(source.targets ?? [])].map((target) => ({ ...target })), stored: Boolean(row), dept };
+    return { steps, reasons: [...(source.reasons ?? fallback.reasons)], targets: [...(source.targets ?? [])].map((target) => ({ ...target, people: grPeople(target?.people) })), stored: Boolean(row), dept };
   }
   const grStepOf = (config, code) => (config?.steps ?? []).find((step) => step.code === code) ?? null;
   const grStepName = (config, code) => grStepOf(config, code)?.name ?? String(code ?? "");
@@ -1968,9 +1953,9 @@
     GR_DEFAULT_CONFIG, GR_LIMITS, GR_STEP_CODE, GR_STEP_KIND_LABEL, GR_TARGET_FACTOR, GR_RECORD_STATUS_LABEL, GR_HANDOVER_STATUS_LABEL, GR_REQUEST_STATUS_LABEL,
     STEP_DEPTS, DEPT_DEFAULT_CONFIG, deptStepCode, isStepDept, configDept, handoverFrom, handoverTo, recordDept, stepWorkers,
     deptHandoverSummary, pkToWhPosition, pkReadiness, deptMaterials,
-    grConfig, grStepOf, grStepName, grTarget, grRequired, grPercent, grPlanOf, grDefaultSteps, grActiveRecords, grJobTotals, grHandoverSummary, grJobProgress,
+    grConfig, grPeople, grStepOf, grStepName, grTarget, grRequired, grPercent, grPlanOf, grDefaultSteps, grActiveRecords, grJobTotals, grHandoverSummary, grJobProgress,
     grIssuedSince, grRequestState, grOpenRequests, grRodCodesOf, grLotsIssued, grDay, grSummary,
-    DEFAULT_PROCESSES, LABOR_BAHT_PER_MIN, structureTree, flowOf, productionSteps,
+    DEFAULT_PROCESSES, structureTree, flowOf, productionSteps,
     toCsv, fmtDate, fmtDateTime, fmtQty, fmtNum, toInputDate, fromInputDate, orderTypeOf,
   };
   if (isNode) module.exports = api;

@@ -778,11 +778,11 @@ test("the loop check stays fast on a whole sheet ordered either way (parents fir
   }
 });
 
-test("routings and unit costs: each save is a new revision, costs only on parts without a BOM, planners only", () => {
+test("routings: each save is a new revision, planners only · the client no longer sets unit costs (cost phase 3)", () => {
   const d = fresh();
   const steps = (code) => A.helpers.routingOf(d, code)?.steps.map((step) => [step.processCode, step.minutesPerPc]);
   assert.deepEqual(steps("DEMO-TP-01(P)-Y"), [["PK-01", 1.5], ["PK-03", 0.5]], "the demo seeds routings");
-  assert.equal(A.helpers.itemOf(d, "XP-00001").unitCost, undefined, "the demo leaves one part without a cost");
+  assert.equal(d.items.some((item) => "unitCost" in item), false, "the demo sets no unit cost (prices of parts live in the ST price list)");
   const first = A.helpers.routingOf(d, "DEMO-TP-01(P)-Y");
   const saved = A.saveRouting(d, { itemCode: "DEMO-TP-01(P)-Y", steps: [{ processCode: "PK-02", minutesPerPc: "0.3" }, { processCode: "PK-01", minutesPerPc: 1.2 }] }, ctx("planner"));
   assert.equal(saved.revision, 2);
@@ -817,22 +817,8 @@ test("routings and unit costs: each save is a new revision, costs only on parts 
   rejects(() => A.setItemImage(d, { code: "PT-00320", image: "" }, ctx("pt")), /ฝ่ายวางแผน/);
   A.setItemImage(d, { code: "PT-00320", image: "" }, ctx("planner"));
   assert.equal(A.helpers.itemOf(d, "PT-00320").image, undefined);
-  A.setItemCost(d, { code: "XP-00001", unitCost: "0.75" }, ctx("planner"));
-  assert.equal(A.helpers.itemOf(d, "XP-00001").unitCost, 0.75);
-  // บันทึกการใช้งานอ่านได้ทุกบัญชีที่อ่าน BOM: บอกแค่ว่าตั้ง / ล้างราคาของรหัสไหน ไม่มีตัวเลข
-  assert.deepEqual([d.audit[0].action, d.audit[0].detail], ["ตั้งราคาต้นทุน", "XP-00001: ตั้งราคาแล้ว"]);
-  A.setItemCost(d, { code: "XP-00001", unitCost: "" }, ctx("planner"));
-  assert.equal(A.helpers.itemOf(d, "XP-00001").unitCost, undefined, "an empty value clears the cost");
-  assert.equal(d.audit[0].detail, "XP-00001: ล้างราคา");
-  assert.equal(d.audit.slice(0, 2).some((entry) => /0\.75|บาท/.test(entry.detail)), false, "no figure in the audit text");
-  rejects(() => A.setItemCost(d, { code: "PT-00320", unitCost: 5 }, ctx("planner")), /มี BOM แล้ว/);
-  rejects(() => A.setItemCost(d, { code: "P-BOX-01", unitCost: -1 }, ctx("planner")), /ราคาต้นทุน/);
-  rejects(() => A.setItemCost(d, { code: "P-BOX-01", unitCost: 1 }, ctx("st")), /ฝ่ายวางแผน/);
-  // โหมดฐานข้อมูล: ผู้ใช้จาก personaUser มี costViewer · กลุ่มวางแผนที่ไม่เห็นต้นทุน (เช่น หัวหน้าแผนก RB) ตั้งราคาไม่ได้ · บทบาทสาธิต (ไม่มี costViewer) ตั้งได้เหมือนเดิม
-  rejects(() => A.setItemCost(d, { code: "P-BOX-01", unitCost: 1 }, { now: NOW, user: { ...user("manager"), costViewer: false } }), /ผู้เห็นต้นทุน/);
-  assert.equal(A.helpers.itemOf(d, "P-BOX-01").unitCost, 25, "the demo cost stays");
-  A.setItemCost(d, { code: "P-BOX-01", unitCost: 1 }, { now: NOW, user: { ...user("planner"), costViewer: true } });
-  assert.equal(A.helpers.itemOf(d, "P-BOX-01").unitCost, 1);
+  // ต้นทุนเฟส 3: ไม่มีคำสั่งตั้งราคาต้นทุนของชิ้นงานแล้ว · ตัวช่วย canSeeCost ยังใช้ซ่อนลิงก์ไปหน้าต้นทุน
+  assert.equal(A.setItemCost, undefined, "no setItemCost action");
   assert.deepEqual([A.helpers.canSeeCost(user("planner")), A.helpers.canSeeCost({ ...user("admin"), costViewer: false }), A.helpers.canSeeCost(null)], [true, false, false]);
 });
 
@@ -859,8 +845,8 @@ test("two tabs sharing one browser storage: a tab opened earlier re-reads before
   const saved = JSON.parse(shared.get(storeApi.STATE_KEY));
   assert.ok(saved.processes.some((process) => process.code === "GR-กาว"), "the newer tab's process survives the older tab's role switch");
   assert.ok(older.data().processes.some((process) => process.code === "GR-กาว"), "and the older tab now shows it");
-  assert.equal(older.run("setItemCost", { code: "XP-00001", unitCost: 1 }).ok, true);
-  assert.ok(newer.data().items.find((item) => item.code === "XP-00001").unitCost === 1 && newer.data().processes.some((process) => process.code === "GR-กาว"), "each tab sees both changes");
+  assert.equal(older.run("setItemImage", { code: "XP-00001", image: "data:image/png;base64,AAAA" }).ok, true);
+  assert.ok(newer.data().items.find((item) => item.code === "XP-00001").image === "data:image/png;base64,AAAA" && newer.data().processes.some((process) => process.code === "GR-กาว"), "each tab sees both changes");
 });
 
 test("the store persists through run(), rejects unknown actions and keeps working without storage", () => {

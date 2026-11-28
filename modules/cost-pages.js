@@ -1,6 +1,7 @@
 // หน้าของโมดูลต้นทุนการผลิต #/cost (โหมดทดสอบ · เมนูกลุ่ม "โรงงาน") — โหลดก่อน modules/module-cost.js (ดู index.html) · กฎอยู่ที่ modules/cost-rules.js ข้อมูลที่ modules/cost-data.js
 // หน้า: ต้นทุนสูตร (ค่าตั้งต้น · ทุกสูตร revision ที่ใช้งาน ต้นทุนต่อชุดผสม / ต่อ kg) · ?recipe=<รหัสสูตร> (&rev=<revision> &asof=<YYYY-MM-DD> &tab=lots) รายละเอียด: แยกตามขั้น รายการเรียงตามต้นทุน เคมีที่ยังไม่มีราคา และเทียบกับจริงรายล็อตผสม
 //       · ?tab=lots สูตรเทียบจริง (ล็อตผสมล่าสุดทุกสูตร) · ?q= ค้นหา · ?n= แสดงเพิ่ม
+//       · ?tab=items ต้นทุนต่อชิ้น (เฟส 3: ค่าแรงแผนก GR / PT / BG / PK + ของซื้อในบรรทัด BOM ของชิ้นนั้น) · ?item=<รหัส> (&asof=) รายละเอียดของชิ้น · ยังไม่รวมชิ้นที่ผลิตเองข้างใต้และคอมปาวด์ยาง
 // ค่าแรง (เฟส 2): ทุกสูตรมีค่าแรงต่อชุดผสมคู่กับต้นทุนวัตถุดิบ และยอดรวม · หน้าสูตรมีแท็บ "ค่าแรง" (แยกตามขั้นและสถานี) · อัตราค่าแรงแก้ที่ปุ่ม "อัตราค่าแรง" เวลามาตรฐานแก้ที่ปุ่ม "เวลามาตรฐาน" หรือที่หน้าสูตรยางของ RubberFlow (modules/cost-labour-ui.js)
 // เห็นเฉพาะผู้ที่เห็นต้นทุน (canSeeCost: ผู้จัดการทั่วไป · ผู้จัดการโรงงาน · admin · แผนก PP) ในโหมดทดสอบ · ราคาต้นทุนทั้งหมดมาจาก app_rf_cost_data (RF_FORBIDDEN = แสดงว่าไม่มีสิทธิ์) ไม่เก็บลงเครื่อง
 // อ่านอย่างเดียว: ราคาตั้งในรายการ "ในคลัง" ของ ST (#/st?tab=stock&price=missing ·แผนก ST และ admin) · ซ่อนเมนู/หน้าเป็นแค่ UX สิทธิ์จริงตัดสินที่ฐานข้อมูล
@@ -16,14 +17,15 @@
   const costData = () => root.MNP_COST_DATA;
   const dash = '<span class="muted">—</span>';
   const costUrl = (query = {}) => F.routeUrl(ROUTE, query);
-  const KEYS = Object.freeze(["recipe", "rev", "asof", "tab", "q"]);
+  const KEYS = Object.freeze(["recipe", "rev", "asof", "tab", "q", "item"]);
 
-  // เมนูข้าง: ต้นทุนสูตร (หน้าสูตรอยู่ใต้รายการนี้) · สูตรเทียบจริง
+  // เมนูข้าง: ต้นทุนสูตร (หน้าสูตรอยู่ใต้รายการนี้) · สูตรเทียบจริง · ต้นทุนต่อชิ้น (เฟส 3 · หน้าชิ้น ?item= อยู่ใต้รายการนี้)
   const VIEWS = Object.freeze([
     { id: "recipes", label: "ต้นทุนสูตร", icon: "flask", params: {} },
     { id: "lots", label: "สูตรเทียบจริง", icon: "scale", params: { tab: "lots" } },
+    { id: "items", label: "ต้นทุนต่อชิ้น", icon: "box", params: { tab: "items" } },
   ]);
-  const viewOf = (params) => (!params.get("recipe") && params.get("tab") === "lots" ? VIEWS[1] : VIEWS[0]);
+  const viewOf = (params) => (params.get("recipe") ? VIEWS[0] : params.get("item") || params.get("tab") === "items" ? VIEWS[2] : params.get("tab") === "lots" ? VIEWS[1] : VIEWS[0]);
   const iconHtml = (name) => root.MNP_UI_ICONS?.icon?.(name) ?? "";
   function subnav(active) {
     if (active !== ROUTE) return "";
@@ -131,7 +133,8 @@
     if (!labour.standard) return `${warn}${ui.card(ui.empty("ยังไม่มีเวลามาตรฐานให้แสดง", `<div class="rf-row">${standardButton}${rateButton}</div>`))}`;
     const money = (value) => (value === null ? dash : esc(C.fmtBaht(value)));
     const stepRow = (step) => `<tr><td>${esc(step.label)}</td><td class="right rf-mono">${esc(C.fmtMinutes(step.minutes))}</td><td class="right rf-mono">${esc(C.fmtMinutes(step.workers))}</td><td class="right rf-mono">${esc(C.fmtBaht(step.manHours))}</td><td class="right rf-mono">${money(step.cost)}</td></tr>`;
-    const mixing = labour.stations.find((station) => station.station === "mixing");
+    // แถวรวมสถานีผสม: ไม่แสดงเมื่อขั้นนอกสถานีผสมเป็น 0 ทุกขั้น (ตัวเลขเท่าแถว "รวม" ทุกช่อง ไม่บอกอะไรเพิ่ม)
+    const mixing = labour.steps.some((step) => step.station !== "mixing" && step.minutes > 0) ? labour.stations.find((station) => station.station === "mixing") : null;
     const mixingRow = mixing ? `<tr class="cost-sum"><td title="${attr("ขั้นเตรียมวัตถุดิบ + ขั้น 1–3")}">${esc(`รวมสถานี${mixing.label}`)}</td><td class="right rf-mono">${esc(C.fmtMinutes(mixing.minutes))}</td><td></td><td class="right rf-mono">${esc(C.fmtBaht(mixing.manHours))}</td><td class="right rf-mono">${money(mixing.cost)}</td></tr>` : "";
     const lastMix = labour.steps.reduce((at, step, index) => (step.station === "mixing" ? index : at), -1);
     const rows = labour.steps.flatMap((step, index) => (index === lastMix ? [stepRow(step), mixingRow] : [stepRow(step)])).filter(Boolean);
@@ -175,8 +178,10 @@
     } else if (tab === "labour") {
       body = labourView(ctx, pay, labour);
     } else {
+      // ค่าแรงโหลดไม่สำเร็จ: บรรทัดเดียวพร้อมลองอีกครั้งเหนือตารางวัตถุดิบ (ช่อง "ค่าแรงต่อชุดผสม" ข้างบนเป็นขีด) · แท็บค่าแรงมีปุ่มของตัวเอง
+      body = labourRetryLine(pay);
       const head = ["วัตถุดิบ", { label: "น้ำหนักต่อชุดผสม", className: "right" }, { label: "ราคา (บาท/kg)", className: "right" }, { label: "ต้นทุน (บาท)", className: "right" }, { label: "สัดส่วน", className: "right" }];
-      body = cost.parts.map((part) => {
+      body += cost.parts.map((part) => {
         const rows = part.lines.map((line) => {
           const name = nameFor(line.materialCode);
           const used = line.kg > 0;
@@ -192,6 +197,141 @@
     return `${back}${F.pageHead(ctx, title)}${toolbar}${stats}${missing}${tabs}${body}`;
   }
 
+  // ---------- ต้นทุนต่อชิ้น (เฟส 3) ----------
+  // ข้อมูล BOM มาจาก store ของ BOM ที่หน้าอื่นใช้ (window.MNP_BOM.store · ผู้เห็นต้นทุนอ่าน BOM ได้) · ราคาของซื้อ = แถว kind part ของ app_rf_cost_data · อัตรา = ตัวโหลดค่าแรง
+  // ชิ้นที่แสดง = ชิ้นงานที่ใช้อยู่ที่ผลิตเอง (C.hasItemCost: ไม่ใช่ของซื้อ สูตรยาง และเส้นยาง RB ซึ่งคิดค่าแรงต่อชุดผสมที่ต้นทุนสูตร)
+  const bomStore = () => root.MNP_BOM?.store ?? null;
+  const bomRules = () => root.MNP_BOM_RULES;
+  // ชุดข้อมูลของชิ้นงานที่ itemCost ใช้ (ตั้งค่าเป้าของ GR / PT / BG / PK · BOM ที่อนุมัติ · ชิ้นงานตามรหัส)
+  function itemInputs(bom) {
+    const R = bomRules();
+    const byCode = new Map((bom.items ?? []).map((item) => [item.code, item]));
+    const approved = new Map((bom.boms ?? []).filter((entry) => entry.status === "approved").map((entry) => [entry.itemCode, entry]));
+    const configs = (R?.STEP_DEPTS ?? ["GR", "PT", "BG", "PK"]).map((dept) => R?.grConfig?.(bom, dept) ?? { dept, steps: [], targets: [] });
+    return { byCode, approved, configs, itemOf: (code) => byCode.get(code) ?? null };
+  }
+  const costOfItem = (item, inputs, data, pay, date) => costRules().itemCost(item, { bom: inputs.approved.get(item.code) ?? null, itemOf: inputs.itemOf, configs: inputs.configs, prices: data.prices, rates: pay.rates, date });
+  const perPiece = (value) => esc(costRules().fmtPrice(value));
+  const ITEM_PARTIAL = "ยอดบางส่วน: ยังไม่รวมค่าแรงที่ยังคิดไม่ได้หรือของซื้อที่ยังไม่มีราคา";
+  const deptName = (dept) => bomRules()?.DEPT_LABEL?.[dept] ?? dept;
+  // ป้ายเตือนของชิ้น (รายละเอียดใน title): ขาดราคา n · ยังไม่มีเป้า · ยังไม่มีอัตราค่าแรง
+  function itemBadges(ui, cost) {
+    const reasonsOf = (kind) => cost.labour.reasons.filter((row) => row.reason === kind).map((row) => row.dept);
+    const noTarget = reasonsOf("noTarget");
+    const noRate = reasonsOf("noRate");
+    return [
+      missingBadge(ui, cost.materials.missing),
+      noTarget.length ? `<span title="${attr(`แผนก ${noTarget.join(", ")} ยังไม่ได้ตั้งเป้าชิ้น/ชม. ของชิ้นนี้`)}">${ui.badge("warn", "ยังไม่มีเป้า")}</span>` : "",
+      noRate.length ? `<span title="${attr(`ยังไม่มีอัตราค่าแรงที่มีผลของแผนก ${noRate.join(", ")}`)}">${ui.badge("warn", "ยังไม่มีอัตราค่าแรง")}</span>` : "",
+    ].filter(Boolean).join(" ");
+  }
+  function itemsView(ctx, data, bom, pay) {
+    const C = costRules();
+    const { ui, q } = ctx;
+    const today = C.bangkokDay(ctx.now);
+    const inputs = itemInputs(bom);
+    const list = (bom.items ?? []).filter((item) => item.active !== false && C.hasItemCost(item) && F.includesText(`${item.code} ${item.name ?? ""}`, q))
+      .sort((a, b) => String(a.code).localeCompare(String(b.code)));
+    // คิดต้นทุนเฉพาะแถวที่แสดง (ทะเบียนจริงมีหลายพันรหัส)
+    const { shown, more } = F.limited(ctx, list);
+    const rows = shown.map((item) => {
+      const cost = costOfItem(item, inputs, data, pay, today);
+      const labour = cost.labour.steps.length ? approx(!cost.labour.complete, C.fmtPrice(cost.labour.cost), ITEM_PARTIAL) : dash;
+      const sub = [item.name ?? "", item.ownerDept ? deptName(item.ownerDept) : ""].filter(Boolean).join(" · ");
+      return `<tr class="row-link"><td>${rowLink(ui, item.code, costUrl({ item: item.code }))}<div class="small muted">${esc(sub)}</div></td><td class="right rf-mono">${labour}</td><td class="right rf-mono">${approx(!cost.materials.complete, C.fmtPrice(cost.materials.cost), "ยังไม่รวมของซื้อที่ยังไม่มีราคา")}</td><td class="right rf-mono">${approx(cost.partial, C.fmtPrice(cost.own), ITEM_PARTIAL)}</td><td>${itemBadges(ui, cost)}</td></tr>`;
+    });
+    const toolbar = `<div class="rf-row sr-toolbar">${F.searchForm(ctx, "ค้นหารหัสหรือชื่อชิ้นงาน")}${q ? ui.link("ล้างคำค้น", ctx.pageUrl({ q: null, n: null }), "btn rf-btn secondary small") : ""}${pay.canSeeRates ? ui.openButton("อัตราค่าแรง", "labourRates", {}, { className: "secondary small", title: "อัตราค่าแรง บาท/ชม. ต่อแผนก" }) : ""}</div>`;
+    const head = ["ชิ้นงาน", { label: "ค่าแรงแผนก (บาท/ชิ้น)", className: "right", title: "อัตราของแผนก × จำนวนคน ÷ เป้าชิ้น/ชม. ทุกขั้นที่ตั้งเป้าไว้" }, { label: "วัตถุดิบ (บาท/ชิ้น)", className: "right", title: "ของซื้อในบรรทัด BOM ของชิ้นนี้ รวมเผื่อเสีย" }, { label: "รวมที่ชิ้นนี้ (บาท/ชิ้น)", className: "right", title: "ยังไม่รวมชิ้นที่ผลิตเองข้างใต้และคอมปาวด์ยาง" }, ""];
+    const empty = q ? "ไม่พบชิ้นงานที่ค้นหา" : "ยังไม่มีชิ้นงานที่ผลิตเองในทะเบียน BOM";
+    return `${F.pageHead(ctx, ctx.view.label)}${toolbar}${ui.card(`${ui.table(head, rows, { emptyText: empty })}${more}`, { flush: true })}`;
+  }
+  // ที่แก้สิ่งที่ขาด: เป้า = หน้าตั้งค่าของแผนกนั้น (เปิดได้เฉพาะผู้ที่เปิดโมดูลแผนกได้ ไม่งั้นบอกเป็นข้อความ) · อัตรา = ปุ่ม "อัตราค่าแรง" · ราคา = ลิงก์ในคลังของ ST (priceLink)
+  function itemCallouts(ctx, cost, pay) {
+    const { ui } = ctx;
+    const employee = state.employee;
+    const out = [];
+    for (const { dept } of cost.labour.reasons.filter((row) => row.reason === "noTarget")) {
+      const route = F.deptLink(employee, dept);
+      const fix = route ? ui.link(`ไปตั้งเป้าที่ ${dept}`, `${route}?tab=settings`, "btn rf-btn secondary small") : `<span class="small muted">${esc(`ตั้งที่ "ตั้งค่าขั้นตอนและเป้า" ของโมดูลแผนก ${dept} (หัวหน้าแผนก ${dept} หรือฝ่ายวางแผน)`)}</span>`;
+      out.push(ui.callout("warn", `<strong>${esc(`แผนก ${dept} ยังไม่มีเป้าของชิ้นนี้`)}</strong> ${esc("ค่าแรงของแผนกนี้ยังไม่รวมในยอด")}<p>${fix}</p>`));
+    }
+    const noRate = cost.labour.reasons.filter((row) => row.reason === "noRate").map((row) => row.dept);
+    if (noRate.length) {
+      const fix = pay.canSeeRates ? `<p>${ui.openButton("อัตราค่าแรง", "labourRates", {}, { className: "secondary small" })}</p>` : "";
+      out.push(ui.callout("warn", `<strong>${esc(`ยังไม่มีอัตราค่าแรงของแผนก ${noRate.join(", ")} ที่มีผล ณ วันที่เลือก`)}</strong> ${esc("ค่าแรงของขั้นเหล่านี้ยังไม่รวมในยอด")}${fix}`));
+    }
+    if (cost.materials.missing.length) {
+      out.push(ui.callout("warn", `<strong>${esc(`ของซื้อยังไม่มีราคา ${cost.materials.missing.length} รายการ`)}</strong> ${esc("ยังไม่รวมในยอดวัตถุดิบ")}<ul class="cost-missing">${cost.materials.missing.map((code) => `<li>${ui.badge("warn", code)}</li>`).join("")}</ul>${priceLink(ctx)}`));
+    }
+    return out.join("");
+  }
+  function itemDetailView(ctx, data, bom, pay, code) {
+    const C = costRules();
+    const { ui, params } = ctx;
+    const back = backLink(costUrl({ tab: "items" }), "‹ ต้นทุนต่อชิ้น");
+    const key = bomRules()?.canonicalCode?.(code) ?? code;
+    const inputs = itemInputs(bom);
+    const item = inputs.itemOf(key);
+    if (!item) return `${back}${F.pageHead(ctx, ctx.view.label)}${ui.card(ui.empty("ไม่พบชิ้นงานนี้ในทะเบียน BOM"))}`;
+    const title = `${item.code} · ${item.name ?? ""}`;
+    if (!C.hasItemCost(item)) {
+      const text = item.kind === "RB" ? "เส้นยางคิดค่าแรงต่อชุดผสมที่หน้าต้นทุนสูตร (เวลามาตรฐานของ RB) ยังไม่แยกมาเป็นต่อเส้น" : "ชิ้นนี้เป็นของซื้อหรือสูตรยาง จึงไม่มีต้นทุนต่อชิ้น (ราคาของซื้อตั้งที่ในคลังของ ST)";
+      return `${back}${F.pageHead(ctx, title)}${ui.card(ui.empty(text, item.kind === "RB" ? `<div class="rf-row">${ui.link("ไปที่ต้นทุนสูตร", costUrl(), "btn rf-btn secondary")}</div>` : ""))}`;
+    }
+    const today = C.bangkokDay(ctx.now);
+    const asof = C.dayKey(params.get("asof")) || today;
+    const cost = costOfItem(item, inputs, data, pay, asof);
+    const money = (value, part) => `${part ? "≥ " : ""}${C.fmtPrice(value)} บาท`;
+    const stats = `<div class="rf-grid rf-g3">${ui.stat({ label: "ค่าแรงแผนก", value: cost.labour.steps.length ? money(cost.labour.cost, !cost.labour.complete) : "-", tone: cost.labour.complete ? "" : "warn" })}${ui.stat({ label: "วัตถุดิบ", value: money(cost.materials.cost, !cost.materials.complete), tone: cost.materials.complete ? "" : "warn" })}${ui.stat({ label: "รวมที่ชิ้นนี้", value: money(cost.own, cost.partial), sub: `ต่อ 1 ${bomRules()?.uomLabel?.(item.uom) ?? item.uom ?? ""}`, tone: cost.partial ? "warn" : "" })}</div>`;
+    const datePick = ui.field("ราคา ณ วันที่", ui.input("asof", { type: "date", value: asof, id: "cost-asof", extra: 'data-cost-filter title="ใช้ราคาและอัตราค่าแรงที่มีผลในวันนี้"' }), { id: "cost-asof", className: "sr-filter" });
+    // ค่าแรงแยกตามขั้น: อัตราของแผนกแสดงครั้งเดียวที่หัวการ์ด (ไม่ซ้ำทุกแถว)
+    const stepRows = cost.labour.steps.map((step) => `<tr><td>${esc(`${step.dept} · ${step.stepName}`)}</td><td class="right rf-mono">${esc(C.fmtPerHour(step.perHour))}</td><td class="right rf-mono">${esc(String(step.people))}</td><td class="right rf-mono">${esc(C.fmtMinutes(step.minutes))}</td><td class="right rf-mono">${step.cost === null ? dash : perPiece(step.cost)}</td></tr>`);
+    const rateText = cost.labour.depts.filter((row) => row.ratePerHour !== null).map((row) => `อัตรา ${row.dept} ${C.fmtBaht(row.ratePerHour)} บาท/ชม.`).join(" · ");
+    const labourHead = ["แผนก · ขั้น", { label: "เป้าชิ้น/ชม.", className: "right" }, { label: "จำนวนคน", className: "right" }, { label: "นาที/ชิ้น", className: "right", title: "60 ÷ เป้าชิ้น/ชม." }, { label: "ค่าแรง/ชิ้น (บาท)", className: "right", title: "อัตราของแผนก × จำนวนคน ÷ เป้าชิ้น/ชม." }];
+    const labourCard = ui.card(ui.table(labourHead, stepRows, { emptyText: "ยังไม่มีเป้าของชิ้นนี้ในแผนกใด" }), { title: esc("ค่าแรงแยกตามขั้น"), actions: rateText ? `<span class="small muted">${esc(rateText)}</span>` : "", flush: true });
+    const lineRows = cost.materials.lines.map((line) => {
+      const uom = bomRules()?.uomLabel?.(line.uom) ?? line.uom;
+      const scrap = line.scrapPct ? `<div class="small muted">${esc(`${C.fmtQtyPer(line.qty)} + เผื่อเสีย ${C.fmtQtyPer(line.scrapPct)}%`)}</div>` : "";
+      const price = line.unitPrice === null ? ui.badge("warn", "ยังไม่มีราคา") : `<span class="rf-mono">${esc(C.fmtPrice(line.unitPrice))}</span>`;
+      return `<tr><td>${ui.mono(line.childCode)}${line.name ? `<div class="small muted">${esc(line.name)}</div>` : ""}</td><td class="right rf-mono">${esc(`${C.fmtQtyPer(line.factor)} ${uom}`)}${scrap}</td><td class="right">${price}</td><td class="right rf-mono">${line.cost === null ? dash : perPiece(line.cost)}</td></tr>`;
+    });
+    const hasBom = inputs.approved.has(item.code);
+    const materialsCard = ui.card(ui.table(["ของซื้อ", { label: "จำนวนต่อชิ้น", className: "right", title: "ปริมาณในบรรทัด BOM รวมเผื่อเสีย" }, { label: "ราคา/หน่วย (บาท)", className: "right" }, { label: "ต้นทุน (บาท)", className: "right" }], lineRows, { emptyText: hasBom ? "BOM ของชิ้นนี้ไม่มีของซื้อ" : "ชิ้นนี้ยังไม่มี BOM ที่อนุมัติ" }), { title: esc("วัตถุดิบ (ของซื้อ)"), flush: true });
+    // ชิ้นที่ผลิตเองข้างใต้: ยังไม่รวมในยอด (เฟส 4) · ชิ้นที่มีหน้าต้นทุนต่อชิ้นลิงก์ไปหน้านั้น · เส้นยาง / สูตรยางคิดที่ต้นทุนสูตร
+    const madeRows = cost.made.map((child) => {
+      const known = inputs.itemOf(child.childCode);
+      const uom = known ? bomRules()?.uomLabel?.(known.uom) ?? known.uom : "";
+      const link = known && C.hasItemCost(known) ? ui.link(child.childCode, costUrl({ item: child.childCode }), "rf-mono") : ui.mono(child.childCode);
+      const where = known && !C.hasItemCost(known) ? ` <span class="small muted">(${known.kind === "RB" || known.kind === "CP" ? "คิดที่ต้นทุนสูตร" : "ไม่มีต้นทุนต่อชิ้น"})</span>` : !known ? ` <span class="small muted">(ไม่พบในทะเบียน)</span>` : "";
+      return `<li>${link} ${esc(child.name)} <span class="muted nowrap">${esc(`× ${C.fmtQtyPer(child.factor)} ${uom}`.trim())}</span>${where}</li>`;
+    });
+    const madeCard = madeRows.length ? ui.card(`<p class="small muted">${esc("ยอดข้างบนยังไม่รวมต้นทุนของชิ้นเหล่านี้และคอมปาวด์ยาง (รวมทั้งโครงสร้างในขั้นต่อไป)")}</p><ul class="cost-made">${madeRows.join("")}</ul>`, { title: esc("ชิ้นที่ผลิตเอง (ยังไม่รวมในยอดนี้)") }) : "";
+    return `${back}${F.pageHead(ctx, title)}<div class="rf-row sr-toolbar">${datePick}</div>${stats}${itemCallouts(ctx, cost, pay)}${labourCard}${materialsCard}${madeCard}`;
+  }
+  // หน้าต้นทุนต่อชิ้นต้องมีข้อมูล BOM และค่าแรงครบก่อน (อัตราที่ยังไม่โหลดไม่ใช่ "ไม่มีอัตรา"): คืน HTML ของสถานะ หรือ "" = พร้อม
+  function itemsWaiting(ctx, pay) {
+    const { ui } = ctx;
+    const store = bomStore();
+    const head = F.pageHead(ctx, ctx.view.label);
+    if (!store) return `${head}${ui.card(ui.empty("ข้อมูล BOM ยังไม่พร้อม"))}`;
+    const status = store.status();
+    if (status === "error") return `${head}${ui.card(ui.empty("โหลดข้อมูล BOM ไม่สำเร็จ", '<div class="rf-row"><button class="btn rf-btn secondary" type="button" data-cost-retry="bom">ลองอีกครั้ง</button></div>'))}`;
+    if (status !== "ready") return `${head}${ui.card(ui.empty("กำลังโหลดข้อมูล BOM…"))}`;
+    if (pay.status === "error") return `${head}${ui.card(ui.empty("โหลดข้อมูลค่าแรงไม่สำเร็จ", '<div class="rf-row"><button class="btn rf-btn secondary" type="button" data-cost-retry="labour">ลองอีกครั้ง</button></div>'))}`;
+    if (pay.status === "forbidden") return `${head}${ui.card(ui.empty("บัญชีนี้ไม่มีสิทธิ์ดูค่าแรง"))}`;
+    if (pay.status !== "ready") return `${head}${ui.card(ui.empty("กำลังโหลดข้อมูลค่าแรง…"))}`;
+    return "";
+  }
+  // ขอโหลด BOM ครั้งเดียวต่อรอบ แล้ววาดหน้าใหม่เมื่อเสร็จ (ตัวรับ event ของ module-bom วาดเฉพาะหน้า BOM / หน้าแผนก)
+  let bomWaking = false;
+  function wakeBom() {
+    const store = bomStore();
+    if (!store || bomWaking || !["idle", "loading"].includes(store.status())) return;
+    bomWaking = true;
+    const done = () => { bomWaking = false; repaint(); };
+    Promise.resolve(store.ensureLoaded()).then(done, done);
+  }
+
   // ---------- วาดหน้า ----------
   const repaint = () => { try { if (currentRoute().path === ROUTE) renderRoute(); } catch { /* ออกจากหน้าแล้ว */ } };
   function bindControls(node, ctx) {
@@ -199,11 +339,13 @@
       const value = control.name === "asof" && control.value === costRules().bangkokDay(ctx.now) ? "" : control.value;
       location.hash = ctx.pageUrl({ [control.name]: value || null, n: null });
     }));
-    // ลองอีกครั้ง: data-cost-retry="labour" = โหลดค่าแรงใหม่ (force ข้ามสถานะผิดพลาดที่ไม่โหลดซ้ำเอง) · ไม่มีค่า = โหลดข้อมูลต้นทุนใหม่
+    // ลองอีกครั้ง: data-cost-retry="labour" = โหลดค่าแรงใหม่ (force ข้ามสถานะผิดพลาดที่ไม่โหลดซ้ำเอง) · "bom" = โหลดข้อมูล BOM ใหม่ · ไม่มีค่า = โหลดข้อมูลต้นทุนใหม่
     node.querySelectorAll("[data-cost-retry]").forEach((button) => button.addEventListener("click", () => {
       button.disabled = true;
       const D = costData();
-      (button.getAttribute?.("data-cost-retry") === "labour" ? D.loadLabour({ force: true }) : D.loadCost({ force: true })).then(repaint);
+      const which = button.getAttribute?.("data-cost-retry");
+      const job = which === "labour" ? D.loadLabour({ force: true }) : which === "bom" ? Promise.resolve(bomStore()?.reload?.()) : D.loadCost({ force: true });
+      job.then(repaint, repaint);
     }));
   }
   async function render(params) {
@@ -222,7 +364,11 @@
     else if (cost.status === "error") body = `${F.pageHead(ctx, LABEL)}${ui.card(ui.empty(D.errorText(cost.error), '<div class="rf-row"><button class="btn rf-btn secondary" type="button" data-cost-retry>ลองอีกครั้ง</button></div>'))}`;
     else if (cost.status !== "ready" || !cost.data) body = `${F.pageHead(ctx, LABEL)}${ui.card(ui.empty("กำลังโหลดข้อมูลต้นทุน…"))}`;
     else if (params.get("recipe")) body = detailView(ctx, cost.data, params.get("recipe"));
-    else if (ctx.view.id === "lots") body = lotsView(ctx, cost.data);
+    else if (ctx.view.id === "items") {
+      wakeBom();
+      const pay = labourData();
+      body = itemsWaiting(ctx, pay) || (params.get("item") ? itemDetailView(ctx, cost.data, bomStore().data(), pay, params.get("item")) : itemsView(ctx, cost.data, bomStore().data(), pay));
+    } else if (ctx.view.id === "lots") body = lotsView(ctx, cost.data);
     else body = recipesView(ctx, cost.data);
     app.innerHTML = shell(`<div class="rf-page bom-page" data-module="cost" data-rf-mod="">${body}</div>`, ROUTE, LABEL);
     bindShell();

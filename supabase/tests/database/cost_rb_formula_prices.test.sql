@@ -30,16 +30,17 @@ select ok(not exists (
                                'private.rf_save_recipes(uuid,boolean,jsonb,bigint,bigint)', 'private.sandbox_unguarded_tables()']) f(sig)
     where has_function_privilege('anon', f.sig, 'execute') or has_function_privilege('authenticated', f.sig, 'execute')),
   'clients cannot call the private helpers');
+-- app_rf_price_save มีหกอาร์กิวเมนต์ (+ p_supplier) ตั้งแต่ 20270111010000_cost_dept_items.sql · การเรียกด้วยสี่ / ห้าอาร์กิวเมนต์ในไฟล์นี้ยังใช้ได้
 select is((select count(*)::integer from pg_proc p
            where p.oid in ('private.rf_cost_viewer(public.employees)'::regprocedure, 'private.rf_price_writer(public.employees)'::regprocedure,
                            'private.rf_price_reader(public.employees)'::regprocedure, 'private.rf_price_rows()'::regprocedure,
                            'private.rf_parse_items(jsonb,jsonb)'::regprocedure, 'private.rf_save_recipes(uuid,boolean,jsonb,bigint,bigint)'::regprocedure,
-                           'public.app_rf_prices()'::regprocedure, 'public.app_rf_price_save(text,text,numeric,date,text)'::regprocedure,
+                           'public.app_rf_prices()'::regprocedure, 'public.app_rf_price_save(text,text,numeric,date,text,text)'::regprocedure,
                            'public.app_rf_cost_data()'::regprocedure, 'public.app_sandbox_purge_rf()'::regprocedure)
              and p.prosecdef and p.proconfig @> array['search_path=""']), 10,
   'the helpers and the RPCs are security definer with an empty search_path');
 select ok(not exists (
-    select 1 from unnest(array['public.app_rf_prices()', 'public.app_rf_price_save(text,text,numeric,date,text)', 'public.app_rf_cost_data()', 'public.app_sandbox_purge_rf()']) f(sig)
+    select 1 from unnest(array['public.app_rf_prices()', 'public.app_rf_price_save(text,text,numeric,date,text,text)', 'public.app_rf_cost_data()', 'public.app_sandbox_purge_rf()']) f(sig)
     where has_function_privilege('anon', f.sig, 'execute') or not has_function_privilege('authenticated', f.sig, 'execute')),
   'the public RPCs are for authenticated only');
 select is((select count(*)::integer from private.lab_only_unguarded_functions()), 0, 'every callable public function keeps the lab-only guard');

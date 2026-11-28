@@ -189,6 +189,13 @@ test("the persona (state.employee of the sandbox) decides the BOM role: admin, m
   const sees = (code, dept) => storeApi.personaUser(employee(code, dept)).costViewer;
   assert.deepEqual([sees("staff", "PP"), sees("general_manager", "MGT"), sees("factory_manager", "FT"), sees("admin", "MT"), sees("department_manager", "RB"), sees("assistant_factory_manager", "FT"), sees("staff", "ST")],
     [true, true, true, true, false, false, false]);
+  // หน้าเว็บที่โหลดกฎต้นทุน (modules/cost-rules.js) ไม่ได้: ไม่มีใครเป็นผู้เห็นต้นทุนที่หน้าจอ (ปิดไว้ก่อน) · โหลดได้ = ตามกฎ
+  const browser = vm.createContext({});
+  browser.window = browser;
+  for (const file of ["modules/bom-rules.js", "modules/bom-store.js"]) vm.runInContext(fs.readFileSync(file, "utf8"), browser, { filename: file });
+  assert.deepEqual(["PP", "MGT"].map((dept) => browser.MNP_BOM_STORE.personaUser(employee(dept === "PP" ? "staff" : "general_manager", dept)).costViewer), [false, false], "no cost rules = no cost viewer");
+  vm.runInContext(fs.readFileSync("modules/cost-rules.js", "utf8"), browser, { filename: "modules/cost-rules.js" });
+  assert.deepEqual([browser.MNP_BOM_STORE.personaUser(employee("staff", "PP")).costViewer, browser.MNP_BOM_STORE.personaUser(employee("staff", "ST")).costViewer], [true, false]);
   // ย้อนรับเข้า / ส่งมอบ (20261128020000): ผู้จัดการแผนก WH หรือ admin เท่านั้น · ผู้บริหารระดับอื่นที่อยู่แผนก WH และพนักงาน WH ไม่ได้
   const reverser = (code, dept) => A.helpers.canReverseFg(storeApi.personaUser(employee(code, dept)));
   assert.deepEqual([reverser("department_manager", "WH"), reverser("admin", "MT"), reverser("staff", "WH"), reverser("assistant_factory_manager", "WH"), reverser("department_manager", "PK")], [true, true, false, false, false]);
@@ -4975,7 +4982,7 @@ test("switching the test persona drops the BOM snapshot: an item save after the 
   await enter("persona-rbh");
   await store.ensureLoaded();
   assert.equal(local().unitCost, undefined, "a non-viewer loads no unit cost");
-  assert.match(store.run("setItemCost", { code: "P-A", unitCost: 1 }).error.message, /ผู้เห็นต้นทุน/, "and cannot set one");
+  assert.match(store.run("setItemCost", { code: "P-A", unitCost: 1 }).error.message, /ไม่รู้จักคำสั่ง/, "the client has no unit cost command any more (cost phase 3)");
   await enter("persona-pp");
   // คำสั่งแรกหลังเปลี่ยนบัญชี (เช่น ฟอร์มที่กรอกค้างไว้) ไม่ถูกส่งไปกับชุดเก่า: ถูกปฏิเสธ แล้ว store โหลดชุดของบัญชีใหม่
   const early = edit("ของซื้อ A2");

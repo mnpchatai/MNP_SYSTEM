@@ -354,6 +354,15 @@ test("mock: the config and the job steps — GR staff and other departments are 
   assert.ok((await s.gr("persona-grh", "saveGrConfig", "grConfig", body)).data, "the GR head saves");
   assert.equal(await codeOf(s.gr("persona-pp", "saveGrConfig", "grConfig", body, before)), "BOM_STALE", "a save from an older version is a conflict");
   assert.ok((await s.gr("persona-pp", "saveGrConfig", "grConfig", body)).data, "a planner saves");
+  // จำนวนคนของเป้า (20270111010000): ไม่ส่ง = 1 · จำนวนเต็ม 1–50 · ค่าอื่น BOM_INVALID_GR
+  const target = { itemCode: HL, stepCode: "GR-04", perHour: 20 };
+  assert.ok((await s.gr("persona-pp", "saveGrConfig", "grConfig", { ...body, targets: [target] })).data);
+  assert.deepEqual((await s.view()).grConfig.find((row) => (row.dept ?? "GR") === "GR").targets, [{ ...target, people: 1 }], "a target without people is stored with one worker");
+  assert.ok((await s.gr("persona-pp", "saveGrConfig", "grConfig", { ...body, targets: [{ ...target, people: 4 }] })).data);
+  assert.equal((await s.view()).grConfig.find((row) => (row.dept ?? "GR") === "GR").targets[0].people, 4);
+  for (const people of [0, 51, 1.5, "2"]) assert.equal(await codeOf(s.gr("persona-pp", "saveGrConfig", "grConfig", { ...body, targets: [{ ...target, people }] })), "BOM_INVALID_GR", `people ${people}`);
+  const actionOut = A.saveGrConfig(structuredClone(s.data), { ...body, targets: [{ ...target, people: "2" }] }, ctx("head"));
+  assert.deepEqual(JSON.parse(JSON.stringify(actionOut.request[0].targets)), [{ ...target, people: 2 }], "the client action sends a whole number the database accepts");
   const tp = jobOf(s.data, TP);
   const plan = { jobId: tp.id, steps: R.grDefaultSteps(s.data, tp) };
   assert.equal(await codeOf(s.gr("persona-gr", "setGrJobSteps", "grPlans", plan)), "BOM_FORBIDDEN");

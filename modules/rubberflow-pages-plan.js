@@ -275,28 +275,33 @@
   function recipeDialog(ctx, current) {
     const { data, ui, rules } = ctx;
     const { fmtNum } = rules;
-    // สูตรใหม่และฉบับแก้ไขของสูตรแบบน้ำหนักกรอกเป็นน้ำหนักต่อชุดผสมตามใบสูตรจริง (4 ส่วน: ขั้นเตรียมวัตถุดิบ + ขั้น 1–3) · สูตรเดิมแบบ PHR แก้ต่อเป็น PHR (ไม่แปลงข้อมูลเดิม)
+    const draft = current?.status === "draft";
+    // สูตรใหม่และฉบับแก้ไขของสูตรแบบน้ำหนักกรอกเป็นน้ำหนักต่อชุดผสมตามใบสูตรจริง (4 ส่วน: ขั้นเตรียมวัตถุดิบ + ขั้น 1–3) · ร่างของสูตรเดิมแบบ PHR แก้ต่อเป็น PHR
+    // ฉบับแก้ไขใหม่ของสูตร PHR (switchable): เลือก "รูปแบบสูตร" ได้ PHR (เดิม · ค่าตั้งต้น) หรือน้ำหนักต่อชุดผสม (เริ่มจากน้ำหนักที่แปลงจาก PHR: rules.phrAsWeight) · แบบน้ำหนักไม่มีทางกลับเป็น PHR
+    // หนึ่ง revision มีรูปแบบเดียว (ฐานข้อมูลรับ revision ใหม่แบบน้ำหนักต่อจาก revision PHR) · ค่ามาตรฐานการผสมของฉบับเดิมตามไปเหมือนฉบับแก้ไขแบบน้ำหนัก (TRANSFORMS ใน module-rubberflow.js)
     const weight = !current || rules.isWeightRecipe(current);
+    const switchable = Boolean(current) && !weight && !draft;
     const materialOptions = data.materials.filter((material) => material.active !== false).map((material) => ({ value: material.code, label: `${material.code} · ${material.name}` }));
     const phrStarting = current ? current.items.map((item) => [item.materialCode, item.phr, rules.itemStage(item)]) : [["EPDM-55", 100, 1], ["CB-N550", 70, 1], ["ZNO", 5, 1], ["STA", 1, 1], ["S-80", 1.5, 2]].filter(([code]) => materialOptions.some((option) => option.value === code));
     // ปริมาณที่แสดงในช่องตามหน่วยที่กรอกไว้ (g = kg × 1000 ปัดเศษทศนิยมของเครื่อง)
     const amountText = (item) => String(item.unit === "g" ? Math.round(item.kg * 1e7) / 1e4 : item.kg);
-    const weightStarting = current ? current.items.map((item) => [item.materialCode, amountText(item), item.unit === "g" ? "g" : "kg", rules.itemStage(item)]) : [[materialOptions[0]?.value ?? "", "", "kg", 0]];
+    // บรรทัด PHR → บรรทัดน้ำหนัก [รหัส, kg, "kg", ขั้น] (บรรทัดที่ไม่มีรหัสหรือ PHR ไม่มากกว่า 0 ไม่ถูกบันทึกในแบบ PHR อยู่แล้ว จึงไม่ยกมา)
+    const convertPhr = (items, batchKg) => rules.phrAsWeight(items.filter((item) => item.materialCode && Number(item.phr) > 0), batchKg).map((line) => [line.materialCode, String(line.kg), "kg", line.stage]);
+    const weightStarting = !current ? [[materialOptions[0]?.value ?? "", "", "kg", 0]] : weight ? current.items.map((item) => [item.materialCode, amountText(item), item.unit === "g" ? "g" : "kg", rules.itemStage(item)]) : convertPhr(current.items, current.batchKg);
     const stageOptions = rules.MIX_STAGES.map((stage) => ({ value: stage, label: `ขั้น ${stage}` }));
     const partOptions = rules.PARTS.map((stage) => ({ value: stage, label: rules.partLabel(stage) }));
     const unitOptions = [{ value: "kg", label: "kg" }, { value: "g", label: "g" }];
     const weightRow = (code, amount, unit = "kg", stage = 1) => `<tr class="rf-recipe-row"><td>${ui.select("materialCode[]", materialOptions, { value: code })}</td><td>${ui.select("stage[]", partOptions, { value: stage })}</td><td>${ui.input("amount[]", { type: "number", value: String(amount), step: "any", min: 0, required: true, extra: 'aria-label="ปริมาณ" title="ไม่ใส่ในสูตรนี้ให้กรอก 0"' })}</td><td>${ui.select("unit[]", unitOptions, { value: unit, extra: 'aria-label="หน่วย"' })}</td><td><button class="btn rf-btn secondary small" type="button" data-rf-remove aria-label="ลบรายการ">ลบ</button></td></tr>`;
     const row = (code, phr, stage = 1) =>`<tr class="rf-recipe-row"><td>${ui.select("materialCode[]", materialOptions, { value: code })}</td><td>${ui.select("stage[]", stageOptions, { value: stage })}</td><td>${ui.input("phr[]", { type: "number", value: String(phr), step: "any", min: 0 })}</td><td class="right rf-mono" data-rf-kg>-</td><td><button class="btn rf-btn secondary small" type="button" data-rf-remove aria-label="ลบรายการ">ลบ</button></td></tr>`;
-    const draft = current?.status === "draft";
     const fields = standardsFields(ctx, current);
     // สูตรแบบน้ำหนัก (สร้างใหม่ ร่าง ฉบับแก้ไขใหม่): ฟอร์มมีแค่รหัสสูตรกับวัตถุดิบ · ค่ามาตรฐานการผสมอื่นไม่อยู่ในฟอร์ม: สูตรใหม่ใช้ค่าเริ่มต้น ฉบับแก้ไขรับค่าต่อจากฉบับเดิม (TRANSFORMS ใน module-rubberflow.js) แก้ได้ที่ปุ่ม "ค่ามาตรฐานการผสม" ของร่างสูตร
     const codeField = ui.field("รหัสสูตร", current ? `<input class="input rf-input" name="id" value="${esc(current.id)}" readonly>` : ui.input("id", { placeholder: "RC-EPDM-XX01", required: true }), { required: true });
-    const body = weight
-      ? `<div class="rf-grid rf-g3">${codeField}</div>
-      <div class="table-wrap"><table class="rf-table"><thead><tr><th>วัตถุดิบ</th><th>ขั้น</th><th class="rf-col-phr">ปริมาณ</th><th>หน่วย</th><th></th></tr></thead><tbody data-rf-items>${weightStarting.map(([code, amount, unit, stage]) => weightRow(code, amount, unit, stage)).join("")}</tbody></table></div>
+    const weightRows = (rows) => rows.map(([code, amount, unit, stage]) => weightRow(code, amount, unit, stage)).join("");
+    const weightBody = `<div class="rf-grid rf-g3">${codeField}</div>
+      <div class="table-wrap"><table class="rf-table"><thead><tr><th>วัตถุดิบ</th><th>ขั้น</th><th class="rf-col-phr">ปริมาณ</th><th>หน่วย</th><th></th></tr></thead><tbody data-rf-items>${weightRows(weightStarting)}</tbody></table></div>
       <div class="rf-row rf-between"><button class="btn rf-btn secondary small" type="button" data-rf-add>เพิ่มวัตถุดิบ</button><span class="muted small" data-rf-total></span></div>
-      <p class="small" aria-live="polite"><span class="muted">น้ำหนักต่อชุดผสมรวม </span><strong class="rf-mono" data-rf-batch-out></strong></p>`
-      : `<div class="rf-grid rf-g3">
+      <p class="small" aria-live="polite"><span class="muted">น้ำหนักต่อชุดผสมรวม </span><strong class="rf-mono" data-rf-batch-out></strong></p>`;
+    const phrBody = `<div class="rf-grid rf-g3">
         ${codeField}
         ${fields.product}
         ${fields.uom}
@@ -312,38 +317,56 @@
     const formId = current ? "rf-edit-recipe" : "rf-create-recipe";
     const title = !current ? "สร้างสูตรการผลิตใหม่" : draft ? `แก้ร่างสูตร ${current.id} Rev.${current.revision}` : `ออกฉบับแก้ไขใหม่ของสูตร ${current.id} (Rev.${current.revision + 1})`;
     const success = !current ? "บันทึกสูตรแล้ว (รออนุมัติ)" : draft ? "บันทึกร่างสูตรแล้ว (รออนุมัติ)" : "ออกฉบับแก้ไขใหม่แล้ว Rev.{result} (รออนุมัติ · ฉบับเดิมใช้งานต่อจนกว่าจะอนุมัติ)";
-    const html = ui.dialog(name, title, `<form novalidate data-rf-form="${current ? "saveRecipe" : "createRecipe"}" data-rf-success="${esc(success)}" id="${formId}">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="${formId}">${current && !draft ? "บันทึกเป็นฉบับแก้ไขใหม่" : "บันทึกสูตร"}</button>`, wide: true });
-    const bind = (dialog) => {
-      const tbody = dialog.querySelector("[data-rf-items]");
-      const total = dialog.querySelector("[data-rf-total]");
-      if (weight) {
-        // ผลรวมต่อส่วนและน้ำหนักต่อชุดผสม (ผลรวมของทุกรายการ) เป็นข้อความอ่านอย่างเดียวใต้ตาราง
-        const batchOut = dialog.querySelector("[data-rf-batch-out]");
-        const paintWeight = () => {
-          const rows = [...tbody.querySelectorAll(".rf-recipe-row")].map((tr) => ({
-            stage: Number(tr.querySelector('select[name="stage[]"]').value),
-            kg: Number(rules.amountToKg(tr.querySelector('input[name="amount[]"]').value, tr.querySelector('select[name="unit[]"]').value)) || 0,
-          }));
-          total.textContent = rules.PARTS.filter((stage) => rows.some((item) => item.stage === stage))
-            .map((stage) => `${rules.partLabel(stage)} ${rules.plainNum(rules.weightBatchKg(rows.filter((item) => item.stage === stage)), 4)} kg`).join(" · ");
-          batchOut.textContent = `${rules.plainNum(rules.weightBatchKg(rows), 4)} kg`;
-        };
-        const wireWeight = (tr) => {
-          tr.querySelector("[data-rf-remove]").addEventListener("click", () => { tr.remove(); paintWeight(); });
-          tr.addEventListener("input", paintWeight);
-          tr.addEventListener("change", paintWeight);
-        };
-        tbody.querySelectorAll(".rf-recipe-row").forEach(wireWeight);
-        dialog.querySelector("[data-rf-add]").addEventListener("click", () => {
-          const last = [...tbody.querySelectorAll(".rf-recipe-row")].at(-1);
-          tbody.insertAdjacentHTML("beforeend", weightRow(materialOptions[0]?.value ?? "", "", "kg", last ? Number(last.querySelector('select[name="stage[]"]').value) : 0));
-          wireWeight(tbody.lastElementChild);
-          paintWeight();
-        });
+    // ฉบับแก้ไขใหม่ของสูตร PHR: ฟอร์มทั้งสองแบบอยู่ในฟอร์มเดียว แบบที่ไม่ได้เลือกซ่อนและปิด (fieldset disabled = ไม่ถูกส่ง ไม่ถูกตรวจ) · ตัวเลือกอยู่นอกฟอร์ม (ไม่ถูกส่งไปกับสูตร)
+    const MODES = [["phr", "PHR (เดิม)", "คงสูตรแบบ PHR เหมือนฉบับเดิม"], ["weight", "น้ำหนักต่อชุดผสม", "ฉบับใหม่กรอกเป็นน้ำหนักต่อชุดผสม (4 ส่วน) เริ่มจากน้ำหนักที่แปลงจาก PHR · ฉบับแบบน้ำหนักกลับเป็น PHR ไม่ได้"]];
+    const modeChoice = switchable
+      ? `<fieldset class="field" data-rf-mode-choice><legend>รูปแบบสูตร</legend><div class="rf-row">${MODES.map(([value, label, hint]) => `<label class="rf-row" title="${esc(hint)}"><input type="radio" name="rfRecipeMode" value="${value}"${value === "phr" ? " checked" : ""}> <span>${esc(label)}</span></label>`).join("")}</div></fieldset>`
+      : "";
+    const body = switchable
+      ? `<fieldset class="rf-mode-part" data-rf-mode-part="phr">${phrBody}</fieldset><fieldset class="rf-mode-part" data-rf-mode-part="weight" hidden disabled>${weightBody}</fieldset>`
+      : weight ? weightBody : phrBody;
+    const html = ui.dialog(name, title, `${modeChoice}<form novalidate data-rf-form="${current ? "saveRecipe" : "createRecipe"}" data-rf-success="${esc(success)}" id="${formId}">${body}</form>`, { footer: `${ui.closeButton()}<button class="btn rf-btn" type="submit" form="${formId}">${current && !draft ? "บันทึกเป็นฉบับแก้ไขใหม่" : "บันทึกสูตร"}</button>`, wide: true });
+    // ตัวผูกของฟอร์มแบบน้ำหนัก (scope = dialog หรือส่วนแบบน้ำหนัก) · คืน fill(แถว) ไว้ใส่บรรทัดที่แปลงจาก PHR ตอนเปลี่ยนรูปแบบ
+    const bindWeight = (scope) => {
+      const tbody = scope.querySelector("[data-rf-items]");
+      const total = scope.querySelector("[data-rf-total]");
+      // ผลรวมต่อส่วนและน้ำหนักต่อชุดผสม (ผลรวมของทุกรายการ) เป็นข้อความอ่านอย่างเดียวใต้ตาราง
+      const batchOut = scope.querySelector("[data-rf-batch-out]");
+      const paintWeight = () => {
+        const rows = [...tbody.querySelectorAll(".rf-recipe-row")].map((tr) => ({
+          stage: Number(tr.querySelector('select[name="stage[]"]').value),
+          kg: Number(rules.amountToKg(tr.querySelector('input[name="amount[]"]').value, tr.querySelector('select[name="unit[]"]').value)) || 0,
+        }));
+        total.textContent = rules.PARTS.filter((stage) => rows.some((item) => item.stage === stage))
+          .map((stage) => `${rules.partLabel(stage)} ${rules.plainNum(rules.weightBatchKg(rows.filter((item) => item.stage === stage)), 4)} kg`).join(" · ");
+        batchOut.textContent = `${rules.plainNum(rules.weightBatchKg(rows), 4)} kg`;
+      };
+      const wireWeight = (tr) => {
+        tr.querySelector("[data-rf-remove]").addEventListener("click", () => { tr.remove(); paintWeight(); });
+        tr.addEventListener("input", paintWeight);
+        tr.addEventListener("change", paintWeight);
+      };
+      tbody.querySelectorAll(".rf-recipe-row").forEach(wireWeight);
+      scope.querySelector("[data-rf-add]").addEventListener("click", () => {
+        const last = [...tbody.querySelectorAll(".rf-recipe-row")].at(-1);
+        tbody.insertAdjacentHTML("beforeend", weightRow(materialOptions[0]?.value ?? "", "", "kg", last ? Number(last.querySelector('select[name="stage[]"]').value) : 0));
+        wireWeight(tbody.lastElementChild);
         paintWeight();
-        return;
-      }
-      const batch = dialog.querySelector("[data-rf-batch]");
+      });
+      paintWeight();
+      return {
+        fill: (rows) => {
+          tbody.innerHTML = weightRows(rows);
+          tbody.querySelectorAll(".rf-recipe-row").forEach(wireWeight);
+          paintWeight();
+        },
+      };
+    };
+    // ตัวผูกของฟอร์มแบบ PHR · คืน lines() = บรรทัด PHR ที่กรอกอยู่ + น้ำหนักต่อชุดผสม (ใช้แปลงเป็นแบบน้ำหนัก)
+    const bindPhr = (scope) => {
+      const tbody = scope.querySelector("[data-rf-items]");
+      const total = scope.querySelector("[data-rf-total]");
+      const batch = scope.querySelector("[data-rf-batch]");
       const paint = () => {
         const rows = [...tbody.querySelectorAll(".rf-recipe-row")];
         const phrs = rows.map((tr) => Number(tr.querySelector('input[name="phr[]"]').value) || 0);
@@ -357,13 +380,34 @@
         tr.querySelector('input[name="phr[]"]').addEventListener("input", paint);
       };
       tbody.querySelectorAll(".rf-recipe-row").forEach(wire);
-      dialog.querySelector("[data-rf-add]").addEventListener("click", () => {
+      scope.querySelector("[data-rf-add]").addEventListener("click", () => {
         tbody.insertAdjacentHTML("beforeend", row(materialOptions[0]?.value ?? "", 1));
         wire(tbody.lastElementChild);
         paint();
       });
       batch.addEventListener("input", paint);
       paint();
+      return {
+        lines: () => ({
+          items: [...tbody.querySelectorAll(".rf-recipe-row")].map((tr) => ({ materialCode: tr.querySelector('select[name="materialCode[]"]').value, stage: tr.querySelector('select[name="stage[]"]').value, phr: tr.querySelector('input[name="phr[]"]').value })),
+          batchKg: batch.value,
+        }),
+      };
+    };
+    const bind = (dialog) => {
+      if (!switchable) { if (weight) bindWeight(dialog); else bindPhr(dialog); return; }
+      const parts = { phr: dialog.querySelector('[data-rf-mode-part="phr"]'), weight: dialog.querySelector('[data-rf-mode-part="weight"]') };
+      const phrPart = bindPhr(parts.phr);
+      const weightPart = bindWeight(parts.weight);
+      // ส่วนแบบน้ำหนักที่ผู้ใช้ยังไม่ได้แก้: เปลี่ยนเป็นแบบน้ำหนักทุกครั้ง = แปลงจาก PHR ที่กรอกอยู่ตอนนั้นใหม่ · แก้แล้วคงค่าที่แก้ไว้
+      let weightTouched = false;
+      parts.weight.addEventListener("input", () => { weightTouched = true; });
+      parts.weight.addEventListener("click", (event) => { if (event.target?.closest?.("[data-rf-add], [data-rf-remove]")) weightTouched = true; });
+      const setMode = (mode) => {
+        if (mode === "weight" && !weightTouched) { const { items, batchKg } = phrPart.lines(); weightPart.fill(convertPhr(items, batchKg)); }
+        for (const [key, part] of Object.entries(parts)) { part.hidden = key !== mode; part.disabled = key !== mode; }
+      };
+      dialog.querySelectorAll('input[name="rfRecipeMode"]').forEach((radio) => radio.addEventListener("change", () => { if (radio.checked) setMode(radio.value === "weight" ? "weight" : "phr"); }));
     };
     return { html, bind };
   }

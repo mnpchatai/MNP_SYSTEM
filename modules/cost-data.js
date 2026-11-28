@@ -1,5 +1,6 @@
 // ต้นทุนการผลิต (โหมดทดสอบ) — ตัวโหลดข้อมูลราคาวัตถุดิบ (เคมี + ของซื้อ) / ต้นทุนจากฐานข้อมูล (RPC app_rf_prices · app_rf_price_save · app_rf_cost_data) ไว้ในหน่วยความจำของหน้าเท่านั้น
 // ค่าแรง (เฟส 2): อัตราค่าแรงและเวลามาตรฐานของ RB (RPC app_rf_labour · app_rf_labour_rate_save · app_rf_station_standard_save) ใช้โดยหน้าต้นทุนและหน้าสูตรยางของ RubberFlow (modules/cost-labour-ui.js)
+// หมวดของของซื้อ (เฟส 3): RPC app_rf_part_categories · app_rf_part_category_save ใช้โดยรายการ "ในคลัง" ของ ST
 // ไม่เก็บลง localStorage/sessionStorage (ราคาเป็นความลับ) · เปลี่ยนผู้ใช้/บัญชีทดสอบ (state.employee.id) = ทิ้งข้อมูลที่ถือไว้
 // ใช้ร่วมกันโดยหน้า ST (ราคาในรายการ "ในคลัง" · modules/st-pages.js) และโมดูลต้นทุนการผลิต (modules/cost-pages.js) · โหลดหลัง modules/cost-rules.js ก่อนสองไฟล์นั้น
 // sb / state เป็น global ของ app.js (อ้างตอนเรียกเท่านั้น) · สิทธิ์จริงตัดสินที่ฐานข้อมูล: ไม่มีสิทธิ์ = RPC ตอบ RF_FORBIDDEN → สถานะ "forbidden"
@@ -11,7 +12,9 @@
   let costState = { ...blank(), data: null };
   const noLabour = () => ({ canSeeRates: false, canWriteRates: false, canWriteStandards: false, rates: [], standards: [] });
   let labourState = { ...blank(), ...noLabour() };
-  const inflight = { prices: null, cost: null, labour: null };
+  // หมวดของของซื้อ (เฟส 3 · app_rf_part_categories): ผู้อ่านราคาอ่าน · ผู้บันทึกราคาตั้งหมวด (canWrite) · ไม่มีหมวด = ไม่อยู่ในรายการ (หน้า ST จัดไว้ใต้ "ของซื้อ")
+  let categoryState = { ...blank(), canWrite: false, categories: [] };
+  const inflight = { prices: null, cost: null, labour: null, categories: null };
 
   const currentOwner = () => { try { return String(state?.employee?.id ?? ""); } catch { return ""; } };
   function checkOwner() {
@@ -21,9 +24,11 @@
     pricesState = { ...blank(), canWrite: false, prices: [], version: pricesState.version + 1 };
     costState = { ...blank(), data: null, version: costState.version + 1 };
     labourState = { ...blank(), ...noLabour(), version: labourState.version + 1 };
+    categoryState = { ...blank(), canWrite: false, categories: [], version: categoryState.version + 1 };
     inflight.prices = null;
     inflight.cost = null;
     inflight.labour = null;
+    inflight.categories = null;
   }
   // รหัสผิดพลาดของฐานข้อมูลอยู่ใน error.message (หรือ details/hint) · RF_FORBIDDEN = ไม่มีสิทธิ์
   const codeOf = (error) => [error?.message, error?.details, error?.hint, error?.code].map((part) => String(part ?? "")).join(" ");
@@ -31,8 +36,9 @@
   const errorText = (error) => {
     const text = codeOf(error);
     if (text.includes("RF_FORBIDDEN")) return "บัญชีนี้ไม่มีสิทธิ์ดูข้อมูลนี้";
-    if (text.includes("RF_INVALID_PRICE")) return "ข้อมูลราคาไม่ถูกต้อง ตรวจชนิด รหัสวัตถุดิบหรือของซื้อ ราคา (มากกว่า 0 และไม่เกิน 10,000,000 ทศนิยมไม่เกิน 4 ตำแหน่ง) วันที่มีผล (ไม่ล่วงหน้าเกิน 366 วัน) และหมายเหตุ (ไม่เกิน 300 ตัวอักษร)";
+    if (text.includes("RF_INVALID_PRICE")) return "ข้อมูลราคาไม่ถูกต้อง ตรวจชนิด รหัสวัตถุดิบหรือของซื้อ ราคา (มากกว่า 0 และไม่เกิน 10,000,000 ทศนิยมไม่เกิน 4 ตำแหน่ง) ร้าน / ผู้ขาย (ไม่เกิน 80 ตัวอักษร) วันที่มีผล (ไม่ล่วงหน้าเกิน 366 วัน) และหมายเหตุ (ไม่เกิน 300 ตัวอักษร)";
     if (text.includes("RF_INVALID_LABOUR")) return "ข้อมูลอัตราค่าแรงไม่ถูกต้อง ตรวจแผนก อัตรา (มากกว่า 0 และไม่เกิน 100,000 ทศนิยมไม่เกิน 2 ตำแหน่ง) วันที่มีผล (ไม่ล่วงหน้าเกิน 366 วัน) และหมายเหตุ (ไม่เกิน 300 ตัวอักษร)";
+    if (text.includes("RF_INVALID_CATEGORY")) return "หมวดไม่ถูกต้อง ตรวจรหัสของซื้อ (ต้องเป็นของซื้อในทะเบียน BOM) และหมวด (ไม่เกิน 40 ตัวอักษร)";
     if (text.includes("RF_INVALID_STANDARD")) return "ข้อมูลเวลามาตรฐานไม่ถูกต้อง ตรวจรหัสสินค้า (ต้องเป็นรหัสสินค้าของสูตรยาง) เวลา (0 ถึง 100,000 นาที มีอย่างน้อยหนึ่งขั้นที่มากกว่า 0) จำนวนคน (0 ถึง 1,000) ทศนิยมไม่เกิน 2 ตำแหน่ง และวันที่มีผล";
     return "ติดต่อฐานข้อมูลไม่สำเร็จ ลองอีกครั้ง";
   };
@@ -43,7 +49,7 @@
   }
   const rowsOf = (list) => (Array.isArray(list) ? list : []).map((row) => ({
     id: row.id, kind: row.kind === "part" ? "part" : "chem", materialCode: String(row.materialCode ?? ""), unitPrice: Number(row.unitPrice), effectiveFrom: String(row.effectiveFrom ?? "").slice(0, 10),
-    note: String(row.note ?? ""), createdAt: Number(row.createdAt) || 0, createdBy: String(row.createdBy ?? ""),
+    note: String(row.note ?? ""), supplier: String(row.supplier ?? ""), createdAt: Number(row.createdAt) || 0, createdBy: String(row.createdBy ?? ""),
   }));
 
   // ---------- ราคาวัตถุดิบ: เคมี (ต่อ kg) และของซื้อ (ต่อหน่วยของชิ้น) · ผู้ที่เห็นราคา ----------
@@ -69,11 +75,13 @@
     return inflight.prices;
   }
   // บันทึกราคาใหม่ของเคมี (kind "chem" ต่อ kg) หรือของซื้อ (kind "part" ต่อหน่วยของชิ้น) (แถวใหม่ ไม่แก้แถวเดิม) · คืน { ok: true } หรือ { ok: false, message }
-  async function savePrice({ kind, materialCode, unitPrice, effectiveFrom, note }) {
+  // supplier = ร้าน / ผู้ขาย (ไม่บังคับ) ส่งเป็น p_supplier เฉพาะเมื่อกรอก: ฐานข้อมูลก่อน 20270111010000 (ห้าอาร์กิวเมนต์) ยังรับราคาที่ไม่กรอกร้านได้
+  async function savePrice({ kind, materialCode, unitPrice, effectiveFrom, note, supplier }) {
     checkOwner();
     const version = pricesState.version;
+    const shop = String(supplier ?? "").trim();
     try {
-      const data = await call("app_rf_price_save", { p_kind: kind, p_material_code: materialCode, p_unit_price: unitPrice, p_effective_from: effectiveFrom, p_note: note ?? "" });
+      const data = await call("app_rf_price_save", { p_kind: kind, p_material_code: materialCode, p_unit_price: unitPrice, p_effective_from: effectiveFrom, p_note: note ?? "", ...(shop ? { p_supplier: shop } : {}) });
       if (pricesState.version === version) applyPrices(data);
       costState = { ...costState, at: 0 }; // ต้นทุนที่โหลดไว้เป็นของราคาเก่า: เปิดหน้าต้นทุนครั้งหน้าโหลดใหม่
       return { ok: true };
@@ -149,8 +157,42 @@
   const saveRate = ({ departmentCode, ratePerHour, effectiveFrom, note }) => saveLabour("app_rf_labour_rate_save", { p_department_code: departmentCode, p_rate_per_hour: ratePerHour, p_effective_from: effectiveFrom, p_note: note ?? "" });
   const saveStandard = ({ productCode, effectiveFrom, steps, note }) => saveLabour("app_rf_station_standard_save", { p_product_code: productCode, p_effective_from: effectiveFrom, p_steps: steps, p_note: note ?? "" });
 
+  // ---------- หมวดของของซื้อ (ผู้อ่านราคา · RPC app_rf_part_categories / app_rf_part_category_save) ----------
+  // categories = [{ itemCode, category }] หมวดล่าสุดที่ไม่ว่างของแต่ละรหัส · โหลด / ตั้งสถานะแบบเดียวกับราคา (idle / loading / ready / forbidden / error)
+  const categoryRows = (list) => (Array.isArray(list) ? list : []).map((row) => ({ itemCode: String(row?.itemCode ?? ""), category: String(row?.category ?? "") })).filter((row) => row.itemCode && row.category);
+  const partCategories = () => { checkOwner(); return categoryState; };
+  const needsPartCategories = () => { checkOwner(); return !inflight.categories && stale(categoryState); };
+  function applyCategories(data) {
+    categoryState = { ...categoryState, status: "ready", error: null, at: Date.now(), canWrite: Boolean(data?.canWrite), categories: categoryRows(data?.categories) };
+  }
+  function loadPartCategories({ force = false } = {}) {
+    checkOwner();
+    if (inflight.categories) return inflight.categories;
+    if (!force && categoryState.status === "ready" && Date.now() - categoryState.at < MAX_AGE_MS) return Promise.resolve(categoryState);
+    const version = categoryState.version;
+    categoryState = { ...categoryState, status: categoryState.status === "ready" ? "ready" : "loading" };
+    inflight.categories = call("app_rf_part_categories", {}).then((data) => {
+      if (categoryState.version === version) applyCategories(data);
+    }, (error) => {
+      if (categoryState.version === version) categoryState = { ...categoryState, status: isForbidden(error) ? "forbidden" : "error", error, categories: [], canWrite: false };
+    }).then(() => { inflight.categories = null; return categoryState; });
+    return inflight.categories;
+  }
+  // ตั้งหมวดของของซื้อหนึ่งรหัส (แถวใหม่ · หมวดว่าง = ล้างหมวด) · คืน { ok: true } หรือ { ok: false, message }
+  async function savePartCategory({ itemCode, category }) {
+    checkOwner();
+    const version = categoryState.version;
+    try {
+      const data = await call("app_rf_part_category_save", { p_item_code: itemCode, p_category: category ?? "" });
+      if (categoryState.version === version) applyCategories(data);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, message: errorText(error), forbidden: isForbidden(error) };
+    }
+  }
+
   // ออกจากระบบ / เปลี่ยนบัญชี: ทิ้งข้อมูลทั้งหมด
   function reset() { owner = "\u0000"; checkOwner(); }
 
-  root.MNP_COST_DATA = Object.freeze({ prices, needsPrices, loadPrices, savePrice, cost, needsCost, loadCost, labour, needsLabour, loadLabour, saveRate, saveStandard, reset, errorText, isForbidden });
+  root.MNP_COST_DATA = Object.freeze({ prices, needsPrices, loadPrices, savePrice, cost, needsCost, loadCost, labour, needsLabour, loadLabour, saveRate, saveStandard, partCategories, needsPartCategories, loadPartCategories, savePartCategory, reset, errorText, isForbidden });
 })(window);
