@@ -1,7 +1,7 @@
 # สัญญาฐานข้อมูลของโมดูล "ใบขอสิทธิ์ IT" (`itar_*`)
 
 migration: `supabase/migrations/20270107010000_itar_access_requests.sql` · ทดสอบ: `supabase/tests/database/itar_access_requests.test.sql` (แกน) · `itar_files.test.sql` (ไฟล์แนบ/Storage) · `itar_notify.test.sql` (แจ้งเตือน)
-สเปกต้นทาง: `Work-Order/docs/it-user-access-spec.md` (เจ้าของตอบ "ตามที่แนะนำ" ทั้ง 10 ข้อ 26/11/2026) + `Work-Order/docs/it-approver-worktime-spec.md` ส่วน A · **ขั้นที่ 4 = ฐานข้อมูลของ "ใบขอสิทธิ์" อย่างเดียว** (ยังไม่มีหน้าเว็บ ใบพิมพ์ USER-REQ/USER-Page และเส้นทางแจ้งเตือน `/office/access/` ใน app.js/notify-email/notify-push อยู่ขั้นที่ 5)
+สเปกต้นทาง: `Work-Order/docs/it-user-access-spec.md` (เจ้าของตอบ "ตามที่แนะนำ" ทั้ง 10 ข้อ 26/11/2026) + `Work-Order/docs/it-approver-worktime-spec.md` ส่วน A · **ขั้นที่ 4 = ฐานข้อมูลของ "ใบขอสิทธิ์"** · ขั้นที่ 5 (หน้าเว็บ `modules/itar-*.js` + `module-itar.js`) ทำแล้ว: ฟอร์มยื่น รายละเอียด อนุมัติ/ถาม-ตอบ หน้า "ปรับสิทธิ์ตามใบ" รับทราบสิทธิ์/กระดาษ ใบพิมพ์ USER-REQ/USER-Page งานบนหน้าแรก และเส้นทางแจ้งเตือน `/office/access/` ใน app.js/notify-email/notify-push
 
 โครงคัดจากใบแจ้งซ่อม (`itrp_*` — ดู `docs/itrp-contract.md`) ฉบับล่าสุดบน main แล้วปรับเป็นใบขอสิทธิ์ · ผู้อ่านหน้าเว็บที่เคยทำ itrp: ชื่อ RPC/รูปข้อมูลคล้ายกัน ต่างที่ "ผู้ยื่น (requester)" กับ "ผู้รับสิทธิ์ (subject)" แยกกัน, รายการสิทธิ์ที่ขอ (`items`), การบันทึกลงทะเบียน (`apply`) และการรับทราบ (`acknowledge`)
 
@@ -134,7 +134,7 @@ migration: `supabase/migrations/20270107010000_itar_access_requests.sql` · ท�
 - detail: `attachments[]` (ตอนยื่น) · `paper_attachments[]` (ใบรับทราบกระดาษ) · `comments[].attachments[]` · แต่ละไฟล์มี `bucket` ให้หน้าเว็บสร้าง signed URL
 
 ## แจ้งเตือน (กระดิ่ง/อีเมล/Push ผ่าน `private.office_notify` กลาง)
-action_url `/office/access/<uuid>` (**ขั้นที่ 5 ต้องเพิ่มเส้นทางนี้ใน `app.js` `notificationHref`, `notify-email`, `notify-push` แล้ว deploy Edge Function**) · ใบทดสอบไม่ส่ง · `started` ไม่แจ้ง · ไม่ส่งถึงคนที่กดเอง · แจ้งเตือนล้ม = การกระทำไม่ล้มตาม
+action_url `/office/access/<uuid>` (**ขั้นที่ 5 เพิ่มเส้นทางนี้แล้วใน `app.js` `notificationHref`, `notify-email`, `notify-push` — หลัง merge ยังต้อง deploy Edge Function `notify-email` + `notify-push` จาก main ก่อนลิงก์จะเปิดใบตรง**) · ใบทดสอบไม่ส่ง · `started` ไม่แจ้ง · ไม่ส่งถึงคนที่กดเอง · แจ้งเตือนล้ม = การกระทำไม่ล้มตาม
 | เหตุการณ์ | ผู้รับ |
 |---|---|
 | `created` | ผู้อนุมัติแผนก (ไม่นับผู้ยื่น/ผู้รับสิทธิ์) หรือผู้อนุมัติขั้น IT ทันที (ใบที่เกี่ยวกับผู้อนุมัติขั้น IT → หัวหน้า IT) |
